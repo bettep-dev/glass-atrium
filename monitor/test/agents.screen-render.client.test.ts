@@ -38,6 +38,8 @@ const UI_SCALARS: Record<string, unknown> = {
 const REAL_UI = (await loadScreenModule(resolve(__dirname, "../public/src/ui.jsx"))).UI as Record<string, unknown>;
 const REGION_MEMBERS = ["INITIAL_REGION_STATE", "getRegionSummary", "getSharedFailure", "putRegionRequest", "putRegionData", "putRegionFailure", "getRowFocusProps", "ROW_CONTROL_PROPS"];
 for (const name of REGION_MEMBERS) UI_SCALARS[name] = REAL_UI[name];
+// Count text rides the shipped formatter, so a KPI sub reads as it does on the page.
+UI_SCALARS.formatInt = REAL_UI.formatInt;
 
 function uiStub(overrides: Record<string, unknown> = {}): unknown {
   const scalars = { ...UI_SCALARS, ...overrides };
@@ -685,7 +687,7 @@ test("a P95 numeral is coloured only past the crit cut, and the glyph keeps ever
   }
 });
 
-test("a failing pair keeps its failure tint at any sample, and a small sample says so in words instead of grey italics", async () => {
+test("a failing pair keeps its failure tint at any sample, and a small sample carries the shared low-sample mark instead of grey italics", async () => {
   const mod = await loadAgentsScreen();
   const React = mod.React as { createElement: (t: unknown, p: unknown) => unknown };
   const rows = [
@@ -701,7 +703,8 @@ test("a failing pair keeps its failure tint at any sample, and a small sample sa
     const style = (rateCell?.props.style as Record<string, unknown> | undefined) ?? {};
     assert.ok(String(style.color ?? "").includes("--crit"), `${row.name}: rate text keeps the failure tint`);
     assert.notEqual(style.fontStyle, "italic", `${row.name}: no unexplained italics`);
-    assert.equal(/low sample/.test(collectText(rateCell)), row.isLowSample, `${row.name}: low-sample tag`);
+    const mark = findNodes(rateCell, (n) => n.props?.atom === "LowSampleMark")[0];
+    assert.equal(mark?.props.n, row.isLowSample ? row.rateDenominator : undefined, `${row.name}: shared low-sample mark`);
     const bar = findNodes(rateCell, (n) => n.props?.atom === "Bar")[0];
     assert.equal(bar?.props.tone, row.isLowSample ? "neutral" : "crit", `${row.name}: bar tint`);
   }
@@ -1031,4 +1034,123 @@ test("a drawer metric sits flat on its section rather than as a card inside a ca
   const root = tree as RenderedNode;
   assert.doesNotMatch(String(root.props.className), /ring-|bg-sunken|rounded/);
   assert.equal(collectText(root), "Runs 12");
+});
+
+function getBandTile(tree: RenderedNode | string | null, label: string): RenderedNode | null {
+  const labels = ["Unsafe to route", "Failed", "Over tool-use cap", "Needs context"];
+  return findNodes(tree, (n) => n.type === "div" && collectText(n).startsWith(label))
+    .filter((n) => labels.every((other) => other === label || !collectText(n).includes(other)))[0] ?? null;
+}
+
+test("the over-cap and needs-context tiles state their rate over runs, and the tone follows the rate rather than presence", async () => {
+  const ready = { status: "ready", data: [], error: null };
+  const agents = [{ agent_id: "a", runs: 600, needs_context_count: 2 }, { agent_id: "b", runs: 400, needs_context_count: 1 }];
+  const rows = [
+    { name: "none crossed", overCap: 0, tone: "ok", rate: null },
+    { name: "3 of 1,000 stays under the 5% step", overCap: 3, tone: null, rate: /0\.3% of 1,?000 runs/ },
+    { name: "60 of 1,000 crosses the 5% step", overCap: 60, tone: "warn", rate: /6\.0% of 1,?000 runs/ },
+  ];
+  for (const row of rows) {
+    const overageByAgent = new Map(Array.from({ length: row.overCap }, (_, i) => [`run-${i}`, { overage_count: 1 }]));
+    const tree = await renderComponent("AgentStatusBand", {
+      days: 14, summaryState: getSummaryState(null, agents), failureState: ready, overageState: ready,
+      failureByAgent: new Map(), overageByAgent, onRetry: () => undefined,
+    });
+    const overCap = getBandTile(tree, "Over tool-use cap");
+    assert.equal(findAtoms(overCap, "KpiValue")[0]?.props.tone ?? null, row.tone, `${row.name}: tone`);
+    if (row.rate) assert.match(collectText(overCap), row.rate, `${row.name}: rate`);
+    const needsContext = getBandTile(tree, "Needs context");
+    assert.match(collectText(needsContext), /0\.3% of 1,?000 runs/, "needs context states its rate over the same runs");
+    assert.equal(findAtoms(needsContext, "KpiValue")[0]?.props.tone ?? null, null, "3 of 1,000 needs-context outcomes stay untoned");
+  }
+});
+
+test("the P95 warn cut follows the fleet's upper quartile, so warn stays rare while the 10-minute floor holds", async () => {
+  const mod = await loadAgentsScreen();
+  const getP95WarnSec = mod.getP95WarnSecAg as (agents: unknown[]) => number;
+  const toAgents = (secs: number[]) => secs.map((s, i) => ({ agent_id: `a${i}`, agent_name: `a${i}`, status: "active", runs: 40, success_pct: 100, p95_ms: s * 1000 }));
+  const rows = [
+    { name: "a slow fleet raises the cut to its p75", secs: [300, 700, 800, 900, 1000, 1100, 1150, 1190], cut: 1100 },
+    { name: "a fast fleet keeps the 10-minute floor", secs: [60, 120, 180, 240, 300], cut: 600 },
+    { name: "fewer than four measured agents keep the floor", secs: [900, 1000, 1100], cut: 600 },
+  ];
+  for (const row of rows) {
+    const cut = getP95WarnSec([...toAgents(row.secs), { agent_id: "unmeasured", p95_ms: null }]);
+    assert.equal(cut, row.cut, row.name);
+    if (row.secs.length >= 4) {
+      assert.ok(row.secs.filter((s) => s > cut).length <= Math.ceil(row.secs.length / 4), `${row.name}: at most a quarter sit above the cut`);
+    }
+  }
+
+  const React = mod.React as { createElement: (t: unknown, p: unknown) => unknown };
+  const table = renderScreen(React.createElement(mod.AgentSummaryTable as Component, {
+    agents: toAgents(rows[0].secs), pseudoAgents: [], days: 30, selectedAgent: null, onSelect: () => {},
+  }));
+  const cuts = findNodes(table, (n) => n.type === "AgentSummaryRow").map((n) => n.props.p95WarnSec);
+  assert.deepEqual(Array.from(new Set(cuts)), [1100], "every ledger row reads the fleet cut");
+  const glyphOf = (sec: number) => {
+    const row = findNodes(table, (n) => n.type === "AgentSummaryRow" && (n.props.agent as { p95_ms: number }).p95_ms === sec * 1000)[0];
+    const cell = findCellByTitle(row, /^p95 latency tier/);
+    return findNodes(cell, (n) => n.type === "span" && n.props?.["aria-hidden"] === "true")[0]?.props.className;
+  };
+  assert.equal(glyphOf(1000), "text-ok", "under the fleet cut reads fast");
+  assert.equal(glyphOf(1150), "text-dim", "above the fleet cut takes the warn glyph");
+});
+
+test("the success bar reads a 90-100% window with the 95% target at its midpoint", async () => {
+  const mod = await loadAgentsScreen();
+  const rows = [
+    { name: "a perfect rate fills the bar", pct: 100, value: 1 },
+    { name: "97% sits past the target", pct: 97, value: 0.7 },
+    { name: "95% sits on the target", pct: 95, value: 0.5 },
+    { name: "a rate under the window floor empties the bar", pct: 80, value: 0 },
+  ];
+  for (const row of rows) {
+    const cell = findCellByTitle(renderToneRow(mod, { success_pct: row.pct, runs: 100, needs_context_count: 0 }, null), /^passed/);
+    const bar = findAtoms(cell, "BulletBar")[0];
+    assert.ok(Math.abs(Number(bar?.props.value) - row.value) < 1e-9, `${row.name}: ${bar?.props.value}`);
+    assert.equal(bar?.props.target, 0.5, `${row.name}: target tick`);
+    assert.match(String(bar?.props.ariaLabel), new RegExp(`success rate ${row.pct}\\.0%`), `${row.name}: label keeps the true rate`);
+  }
+});
+
+test("solid failing pairs rank above small samples, which sit below a divider, and the subtitle counts the rows shown", async () => {
+  const mod = await loadAgentsScreen();
+  const buildTopNFailing = mod.buildTopNFailing as (rows: unknown[], t: number, l: number) => { failingPairs: Array<{ task_type: string }>; failingTotal: number; measuredPairs: number };
+  const day = (task_type: string, success: number, failure: number) => ({ agent: "glass-atrium-dev-node", task_type, event_date: "2026-09-01", success_count: success, failure_count: failure, total_count: success + failure });
+  const rows = [day("tiny", 0, 3), day("solid", 5, 5), day("healthy", 20, 0)];
+  const out = buildTopNFailing(rows, 0.95, 1);
+  assert.deepEqual(Array.from(out.failingPairs, (p) => p.task_type), ["solid"], "the limit keeps the solid signal over a worse small sample");
+  assert.equal(out.failingTotal, 2);
+
+  const getSub = mod.getFailingPairsSub as (...a: unknown[]) => string;
+  const sub = getSub("ready", 7, 7, 40, 30);
+  assert.match(sub, /^7 of 40 pairs below 95%/);
+  assert.doesNotMatch(sub, /top \d/, "no cap is claimed when every failing pair is shown");
+  assert.match(getSub("ready", 8, 11, 40, 30), /showing 8 of 11/);
+
+  const React = mod.React as { createElement: (t: unknown, p: unknown) => unknown };
+  const pair = (task_type: string, successCount: number, rateDenominator: number) =>
+    ({ agent: "glass-atrium-dev-node", task_type, successCount, rateDenominator, pooledRate: successCount / rateDenominator, totalCount: rateDenominator });
+  const table = renderScreen(React.createElement(mod.TopNFailingAgentsTable as Component, {
+    pairs: [pair("low", 1, 3), pair("solid", 5, 10)], failureByAgent: new Map(), days: 14,
+  }));
+  const bodyRows = findNodes(table, (n) => n.type === "tr").slice(1).map((n) => collectText(n));
+  assert.equal(bodyRows.length, 3);
+  assert.match(bodyRows[0], /solid/);
+  assert.match(bodyRows[1], /low sample/i, "a divider names the low-sample group");
+  assert.match(bodyRows[2], /low/);
+});
+
+test("a drawer concern shows as a whole item clamped to two lines, with the full text on hover", async () => {
+  const idle = { status: "idle", data: null, error: null };
+  const concern = "hook exits 0 on empty history with no stderr, so the daemon cycle reads the gap as a pass";
+  const failureByAgent = new Map([["glass-atrium-dev-react", { total_breakages: 2, fail_count: 2, blocked_count: 0, reconstructed: 0, breakage_rate: 0.05 }]]);
+  const tree = await renderComponent("AgentReliabilityBreakages", {
+    drawerAgent: "glass-atrium-dev-react", failureByAgent, days: 30, onRetry: () => undefined, detailState: idle, blockedState: idle,
+    failureState: { status: "ready", data: { rows: [{ agent: "glass-atrium-dev-react", top_concerns: [concern] }] }, error: null },
+  });
+  const item = findNodes(tree, (n) => n.type === "div" && collectText(n) === concern && n.props?.title !== undefined)[0];
+  assert.equal(item?.props.title, concern, "the tooltip carries the whole item");
+  assert.equal((item?.props.style as Record<string, unknown> | undefined)?.WebkitLineClamp, 2, "clamped to two lines");
 });

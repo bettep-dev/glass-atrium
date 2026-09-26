@@ -72,6 +72,8 @@ const TOPN_MIN_SAMPLE = 3;
 const SPARK_WIDTH  = 60;
 const SPARK_HEIGHT = 20;
 
+// Whole concern items, two lines max → the full text rides the tooltip.
+const CONCERN_CLAMP_STYLE = { display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical', overflow: 'hidden' };
 // Every listed pair is failing, so its rate keeps the failure tint whatever its sample size.
 const PAIR_RATE_STYLE = { color: 'rgb(var(--crit))' };
 // Delete reads destructive without the filled weight of a primary action.
@@ -563,6 +565,9 @@ function AgentStatusBand({ days, summaryState, failureState, overageState, failu
   const needsContextCount = summaryState.status === 'ready'
     ? (summary?.agents ?? []).reduce((sum, agent) => sum + (Number(agent.needs_context_count) || 0), 0)
     : null;
+  const totalRuns = summaryState.status === 'ready'
+    ? (summary?.agents ?? []).reduce((sum, agent) => sum + (Number(agent.runs) || 0), 0)
+    : 0;
 
   return (
     <div className="grid grid-cols-2 xl:grid-cols-4 gap-4 mb-4 items-stretch">
@@ -589,24 +594,41 @@ function AgentStatusBand({ days, summaryState, failureState, overageState, failu
       />
       <AgentStatusTile
         label="Over tool-use cap"
-        sub={`runs that crossed their tool-use budget · last ${days}d`}
+        sub={joinSubAg(['runs that crossed their tool-use budget', getRunRateTextAg(overCapCount, totalRuns), `last ${days}d`])}
         status={overageState.status}
         value={overCapCount}
-        tone={overCapCount ? 'warn' : 'ok'}
+        tone={getRunRateToneAg(overCapCount, totalRuns)}
         error={overageState.error}
         onRetry={onRetry}
       />
       <AgentStatusTile
         label="Needs context"
-        sub={`needs_context outcomes · last ${days}d — fix the delegation prompt`}
+        sub={`${joinSubAg(['needs_context outcomes', getRunRateTextAg(needsContextCount, totalRuns), `last ${days}d`])} — fix the delegation prompt`}
         status={summaryState.status}
         value={needsContextCount}
-        tone={needsContextCount ? 'warn' : 'ok'}
+        tone={getRunRateToneAg(needsContextCount, totalRuns)}
         error={summaryState.error}
         onRetry={onRetry}
       />
     </div>
   );
+}
+
+// Share of runs at or past the step → warn · a nonzero count under it stays untoned.
+const KPI_RATE_WARN_SHARE = 0.05;
+
+function getRunRateToneAg(count, runs) {
+  if (!count) return 'ok';
+  return window.UI.outcomeShareTone(count, runs, KPI_RATE_WARN_SHARE, 'warn');
+}
+
+function getRunRateTextAg(count, runs) {
+  if (count == null || !(runs > 0)) return '';
+  return `${((count / runs) * 100).toFixed(1)}% of ${formatIntAg(runs)} runs`;
+}
+
+function joinSubAg(parts) {
+  return parts.filter(Boolean).join(' · ');
 }
 
 function AgentStatusTile({ label, sub, unavailableSub, status, value, tone, error, onRetry }) {
@@ -746,6 +768,7 @@ function AgentSummaryTable({ agents, pseudoAgents, days, selectedAgent, onSelect
   const [activeIndex, setActiveIndex] = useStateAg(0);
   const [activePseudoIndex, setActivePseudoIndex] = useStateAg(0);
   const pseudoRows = Array.isArray(pseudoAgents) ? pseudoAgents : [];
+  const p95WarnSec = getP95WarnSecAg(agents);
 
   // one roving set per tbody — arrow keys walk the rows of the set they start in
   const renderRow = (a, index, rowSet) => (
@@ -765,6 +788,7 @@ function AgentSummaryTable({ agents, pseudoAgents, days, selectedAgent, onSelect
       trend={trendByAgent ? trendByAgent.get(a.agent_id) : null}
       failure={failureByAgent ? failureByAgent.get(a.agent_id) : null}
       overage={overageByAgent ? overageByAgent.get(a.agent_id) : null}
+      p95WarnSec={p95WarnSec}
       failureStatus={failureStatus}
       trendStatus={trendStatus}
     />
@@ -807,8 +831,8 @@ function AgentSummaryTable({ agents, pseudoAgents, days, selectedAgent, onSelect
   );
 }
 
-function AgentSummaryRow({ agent, days, isSelected, onSelect, focusProps, trend, failure, overage, failureStatus = 'ready', trendStatus = 'ready' }) {
-  const { MiniBars, Bar, formatPctWithDenominator, LOW_N_MIN, Icon, TONE_ICON, AgentName } = window.UI;
+function AgentSummaryRow({ agent, days, isSelected, onSelect, focusProps, trend, failure, overage, p95WarnSec = P95_AGENT_WARN_SEC, failureStatus = 'ready', trendStatus = 'ready' }) {
+  const { MiniBars, Bar, BulletBar, formatPctWithDenominator, LOW_N_MIN, Icon, TONE_ICON, AgentName } = window.UI;
   // non-actionable 묶음을 2종으로 분기 — synthetic sentinel 은 'legacy/deprecated' 가 아님 (CF6).
   const isSyntheticAgent = agent.agent_id === SYNTHETIC_SENTINEL_AGENT_ID;
   const isUnknownAgent = isNonActionableAgentAg(agent.agent_id);
@@ -823,8 +847,8 @@ function AgentSummaryRow({ agent, days, isSelected, onSelect, focusProps, trend,
   // invocations = window 상대 spawn 빈도 (invocations_30d 는 deprecated alias — 1 release 유지).
   const invocations = agent.invocations !== undefined ? agent.invocations : agent.invocations_30d;
   const p95Sec = agent.p95_ms == null ? null : Number(agent.p95_ms) / 1000;
-  const p95Tone = p95LatencyTone(p95Sec);
-  const p95Glyph = p95GlyphTone(p95Sec);
+  const p95Tone = p95LatencyTone(p95Sec, p95WarnSec);
+  const p95Glyph = p95GlyphTone(p95Sec, p95WarnSec);
   // Budget crossing folds into the P95 fill-bar label — a separate pill beside a ✓ glyph read as a contradiction.
   const overageCount = overage ? Number(overage.overage_count) || 0 : 0;
   const overageNote = overageCount > 0
@@ -881,12 +905,13 @@ function AgentSummaryRow({ agent, days, isSelected, onSelect, focusProps, trend,
           </span>
           {isLowSample && <span className="fs-meta text-faint">low sample</span>}
         </span>
-        {/* 비례 막대 — % 숫자 옆 즉시-스캔 shape. 측정 불가(분모 0)면 미렌더. */}
         {successDenominator > 0 && (
-          <Bar
-            value={successPct / 100}
+          <BulletBar
+            value={getSuccessWindowAg(successPct)}
+            target={SUCCESS_WINDOW_TARGET}
             tone={failShareTone || 'neutral'}
-            ariaLabel={`success rate ${successPct.toFixed(1)}%`}
+            showValue={false}
+            ariaLabel={`success rate ${successPct.toFixed(1)}% · bar spans ${SUCCESS_WINDOW_FLOOR_PCT}–100%, tick at 95%`}
           />
         )}
       </td>
@@ -912,7 +937,7 @@ function AgentSummaryRow({ agent, days, isSelected, onSelect, focusProps, trend,
       </td>
       <td
         className="num"
-        title={p95Sec == null ? undefined : [`p95 latency tier: ${p95Glyph} (warn >${P95_AGENT_WARN_SEC / 60}m · crit >${P95_AGENT_CRIT_SEC / 60}m)`, overageNote].filter(Boolean).join(' · ')}>
+        title={p95Sec == null ? undefined : [`p95 latency tier: ${p95Glyph} (warn >${Math.round(p95WarnSec / 60)}m, fleet p75 · crit >${P95_AGENT_CRIT_SEC / 60}m)`, overageNote].filter(Boolean).join(' · ')}>
         {/* tier 글리프 — 초-도메인 톤(p95GlyphTone 600s/1200s) KEY 의 ✓/⚠/✕ (shape = 색 외 인코딩).
             종전 StatusDot 은 tone KEY 를 status enum 으로 오인받아 의미가 흐려졌고, 컷 도메인까지 어긋나
             전 에이전트가 단일 티어였다 — 글리프 + 분-도메인 컷으로 230s vs 1695s 가 가시적으로 분기.
@@ -1696,7 +1721,7 @@ function AgentReliabilityBreakages({ drawerAgent, failureByAgent, failureState, 
               <div className="fs-meta text-faint mb-2">Top concerns</div>
               <div className="flex flex-col gap-2">
                 {topConcerns.map((c, i) => (
-                  <div key={i} className="fs-body text-dim rounded border border-line px-2 py-1 leading-snug">{c}</div>
+                  <div key={i} className="fs-body text-dim rounded border border-line px-2 py-1 leading-snug" style={CONCERN_CLAMP_STYLE} title={c}>{c}</div>
                 ))}
               </div>
             </div>
@@ -2171,7 +2196,7 @@ function TopNFailingAgentsCard({ state, days, onRetry, failureByAgent }) {
   const { CardHead } = window.UI;
 
   // 매트릭스와 동일 row 입력 — duplicate fetch 회피.
-  const { failingPairs, measuredPairs } = useMemoAg(
+  const { failingPairs, failingTotal, measuredPairs } = useMemoAg(
     () => buildTopNFailing(readyData(state)?.rows ?? [], TOPN_FAILING_THRESHOLD, TOPN_FAILING_LIMIT),
     [state],
   );
@@ -2182,7 +2207,7 @@ function TopNFailingAgentsCard({ state, days, onRetry, failureByAgent }) {
     <div className="card h-full flex flex-col min-h-0">
       <CardHead
         title="Most-failing pairs"
-        sub={getFailingPairsSub(state.status, failingPairs.length, measuredPairs, days)}
+        sub={getFailingPairsSub(state.status, failingPairs.length, failingTotal, measuredPairs, days)}
       />
       <div className="card-body ag-card-body">
         <TopNFailingAgentsBody state={state} days={days} onRetry={onRetry} pairs={failingPairs} failureByAgent={failureByAgent}/>
@@ -2192,10 +2217,11 @@ function TopNFailingAgentsCard({ state, days, onRetry, failureByAgent }) {
 }
 
 // Loaded-only `n of N` head — a never-loaded zero is forbidden by the state contract.
-function getFailingPairsSub(status, failingCount, measuredCount, days) {
+function getFailingPairsSub(status, shownCount, failingTotal, measuredCount, days) {
   if (status === 'loading') return `last ${days} days`;
   if (status !== 'ready') return 'Failing pairs unavailable — payload not loaded';
-  return `${failingCount} of ${measuredCount} pairs below ${(TOPN_FAILING_THRESHOLD * 100).toFixed(0)}% · last ${days} days · top ${TOPN_FAILING_LIMIT}`;
+  const shown = failingTotal > shownCount ? ` · showing ${shownCount} of ${failingTotal}` : '';
+  return `${failingTotal} of ${measuredCount} pairs below ${(TOPN_FAILING_THRESHOLD * 100).toFixed(0)}%${shown} · last ${days} days`;
 }
 
 function TopNFailingAgentsBody({ state, days, onRetry, pairs, failureByAgent }) {
@@ -2251,6 +2277,42 @@ const TOPN_FAILING_COLUMNS = [
 
 function TopNFailingAgentsTable({ pairs, failureByAgent, days }) {
   const { TableHead } = window.UI;
+  const lowN = window.UI.LOW_N_MIN;
+  const solidPairs = pairs.filter((p) => p.rateDenominator >= lowN);
+  const lowPairs = pairs.filter((p) => p.rateDenominator < lowN);
+
+  const renderPairRow = (p) => {
+    const breakage = resolveLastBreakage(p, failureByAgent);
+    const isLowSample = p.rateDenominator < window.UI.LOW_N_MIN;
+    return (
+      <tr key={`${p.agent}|${p.task_type}`}>
+        <td className="text-left text-ink px-2 py-1.5 border-b border-line truncate" style={{ maxWidth: 160 }} title={`Open ${p.agent} · ${p.task_type} in Task results`}>
+          <a className="underline decoration-dotted" href={getPairOutcomesHref(p, days)}><window.UI.AgentName name={p.agent}/></a>
+        </td>
+        <td className="text-left text-dim px-2 py-1.5 border-b border-line">
+          {p.task_type}
+        </td>
+        <td
+          className="text-right px-2 py-1.5 border-b border-line font-semibold whitespace-nowrap"
+          style={PAIR_RATE_STYLE}
+          title={`pooled passed ${p.successCount} / (passed+failed) ${p.rateDenominator} · ${p.totalCount} total${isLowSample ? ` · small sample (n=${p.rateDenominator} < ${window.UI.LOW_N_MIN})` : ''}`}>
+          {window.UI.formatPctWithDenominator(p.successCount, p.rateDenominator)}
+          {isLowSample && <window.UI.LowSampleMark n={p.rateDenominator}/>}
+          {/* Pair success-rate bar — crit like the matrix, except n < LOW_N_MIN, which the legend keeps neutral. */}
+          <window.UI.Bar
+            value={p.pooledRate}
+            tone={isLowSample ? 'neutral' : 'crit'}
+            ariaLabel={`pair success rate ${(p.pooledRate * 100).toFixed(0)}%`}
+          />
+        </td>
+        <td
+          className={`text-right px-2 py-1.5 border-b border-line whitespace-nowrap ${breakage.fromServer ? 'text-dim' : 'text-faint'}`}
+          title={breakage.title}>
+          {breakage.text}
+        </td>
+      </tr>
+    );
+  };
 
   return (
     <div className="overflow-auto" style={{ flex: '1 1 auto', minHeight: 0 }}>
@@ -2265,38 +2327,15 @@ function TopNFailingAgentsTable({ pairs, failureByAgent, days }) {
           </tr>
         </thead>
         <tbody>
-          {pairs.map((p) => {
-            const breakage = resolveLastBreakage(p, failureByAgent);
-            const isLowSample = p.rateDenominator < window.UI.LOW_N_MIN;
-            return (
-              <tr key={`${p.agent}|${p.task_type}`}>
-                <td className="text-left text-ink px-2 py-1.5 border-b border-line truncate" style={{ maxWidth: 160 }} title={`Open ${p.agent} · ${p.task_type} in Task results`}>
-                  <a className="underline decoration-dotted" href={getPairOutcomesHref(p, days)}><window.UI.AgentName name={p.agent}/></a>
-                </td>
-                <td className="text-left text-dim px-2 py-1.5 border-b border-line">
-                  {p.task_type}
-                </td>
-                <td
-                  className="text-right px-2 py-1.5 border-b border-line font-semibold whitespace-nowrap"
-                  style={PAIR_RATE_STYLE}
-                  title={`pooled passed ${p.successCount} / (passed+failed) ${p.rateDenominator} · ${p.totalCount} total${isLowSample ? ` · small sample (n=${p.rateDenominator} < ${window.UI.LOW_N_MIN})` : ''}`}>
-                  {window.UI.formatPctWithDenominator(p.successCount, p.rateDenominator)}
-                  {isLowSample && <span className="fs-meta font-normal text-dim ml-1">low sample</span>}
-                  {/* Pair success-rate bar — crit like the matrix, except n < LOW_N_MIN, which the legend keeps neutral. */}
-                  <window.UI.Bar
-                    value={p.pooledRate}
-                    tone={isLowSample ? 'neutral' : 'crit'}
-                    ariaLabel={`pair success rate ${(p.pooledRate * 100).toFixed(0)}%`}
-                  />
-                </td>
-                <td
-                  className={`text-right px-2 py-1.5 border-b border-line whitespace-nowrap ${breakage.fromServer ? 'text-dim' : 'text-faint'}`}
-                  title={breakage.title}>
-                  {breakage.text}
-                </td>
-              </tr>
-            );
-          })}
+          {solidPairs.map(renderPairRow)}
+          {lowPairs.length > 0 && (
+            <tr>
+              <td colSpan={TOPN_FAILING_COLUMNS.length} className="text-left fs-meta text-dim px-2 pt-3 pb-1 border-b border-line">
+                Low sample — n under {lowN}, read as a hint
+              </td>
+            </tr>
+          )}
+          {lowPairs.map(renderPairRow)}
         </tbody>
       </table>
     </div>
@@ -2861,8 +2900,10 @@ function buildTopNFailing(rows, threshold, limit) {
     }
   }
 
-  failingPairs.sort((a, b) => a.pooledRate - b.pooledRate);
-  return { failingPairs: failingPairs.slice(0, limit), measuredPairs };
+  // solid samples rank first → the limit never drops a real signal for a worse small sample
+  const lowN = window.UI.LOW_N_MIN;
+  failingPairs.sort((a, b) => (Number(a.rateDenominator < lowN) - Number(b.rateDenominator < lowN)) || (a.pooledRate - b.pooledRate));
+  return { failingPairs: failingPairs.slice(0, limit), failingTotal: failingPairs.length, measuredPairs };
 }
 
 // Project /api/agents/revision-distribution rows → per-agent buckets map (Quality Health 좌측 input).
@@ -3073,6 +3114,14 @@ function getFailShareTone(failedCount, denominator) {
 }
 
 // Summary-row counts — passed ÷ (done+dwc+blocked+fail), the server success_pct population.
+// Live rates sit in 94–100%, where a 0–100 bar reads flat → a 90–100 window, the 95% target mid-bar.
+const SUCCESS_WINDOW_FLOOR_PCT = 90;
+const SUCCESS_WINDOW_TARGET = 0.5;
+
+function getSuccessWindowAg(pct) {
+  return Math.min(Math.max((pct - SUCCESS_WINDOW_FLOOR_PCT) / (100 - SUCCESS_WINDOW_FLOOR_PCT), 0), 1);
+}
+
 function getSummaryRateAg(agent) {
   const successPct = Number(agent.success_pct) || 0;
   const needsContextCount = Number(agent.needs_context_count) || 0;
@@ -3106,20 +3155,32 @@ function FailShareGlyph({ tone }) {
 // 작업 지연 기준으로 재조정: warn=10분(600s)·crit=20분(1200s) → 라이브에서 ok/warn/crit 3티어 실제 분포.
 const P95_AGENT_WARN_SEC = 600;
 const P95_AGENT_CRIT_SEC = 1200;
-function p95LatencyTone(p95Sec) {
+const P95_WARN_MIN_AGENTS = 4;
+
+// Warn cut = fleet p75 of per-agent p95 (nearest rank), floored at 10m → at most a quarter of the fleet warns.
+function getP95WarnSecAg(agents) {
+  const secs = (Array.isArray(agents) ? agents : [])
+    .filter((a) => a && a.p95_ms != null && Number.isFinite(Number(a.p95_ms)))
+    .map((a) => Number(a.p95_ms) / 1000)
+    .sort((x, y) => x - y);
+  if (secs.length < P95_WARN_MIN_AGENTS) return P95_AGENT_WARN_SEC;
+  return Math.max(P95_AGENT_WARN_SEC, secs[Math.ceil(secs.length * 0.75) - 1]);
+}
+
+function p95LatencyTone(p95Sec, warnSec = P95_AGENT_WARN_SEC) {
   if (p95Sec == null)            return 'text-faint';
   if (p95Sec > P95_AGENT_CRIT_SEC) return 'text-crit';
-  if (p95Sec > P95_AGENT_WARN_SEC) return 'text-dim'; // most agents sit here → shape only, amber would bury the crit rows
+  if (p95Sec > warnSec) return 'text-dim'; // most agents sit here → shape only, amber would bury the crit rows
   return '';
 }
 
 // 동일 초-도메인 컷 → TONE_GLYPH KEY. 빠른 구간을 명시적 'ok'(✓)로 매핑한다 —
 // p95LatencyTone 의 '' 무톤은 색 노이즈 회피용이라 barToneFromClass 로는 neutral(ℹ)이 되어
 // "빠름"을 표현하지 못한다. 글리프 인디케이터는 별도로 ok/warn/crit 3키를 직접 산출.
-function p95GlyphTone(p95Sec) {
+function p95GlyphTone(p95Sec, warnSec = P95_AGENT_WARN_SEC) {
   if (p95Sec == null)              return 'neutral';
   if (p95Sec > P95_AGENT_CRIT_SEC) return 'crit';
-  if (p95Sec > P95_AGENT_WARN_SEC) return 'warn';
+  if (p95Sec > warnSec)            return 'warn';
   return 'ok';
 }
 
