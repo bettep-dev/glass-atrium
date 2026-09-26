@@ -1190,6 +1190,13 @@ function AgentFailureBodyO({ state, onRetry, stickyStyle }) {
   );
 }
 
+// Bar fill = the shared breakage rule over this row's own count · low-sample rows claim no tone.
+function getFailureRateFillO(row) {
+  if (row.isLowSample) return '--faint';
+  const { outcomeShareTone, OUTCOME_BREAKAGE_CRIT_SHARE } = window.UI;
+  return outcomeShareTone(row.failed + row.blocked, row.total, OUTCOME_BREAKAGE_CRIT_SHARE, 'crit') ? '--crit' : '--ok';
+}
+
 function AgentFailureRateCellO({ row }) {
   const { LowSampleMark } = window.UI;
   const pct = row.rate * 100;
@@ -1200,7 +1207,7 @@ function AgentFailureRateCellO({ row }) {
       <span className="flex items-center gap-2">
         <span className={`font-mono ${row.isLowSample ? 'text-faint italic' : 'text-ink'}`}>{formatRateO(row.rate)}</span>
         <span aria-hidden="true" className="flex-1" style={{ minWidth: 40, height: 6, borderRadius: 3, background: 'rgb(var(--sunken))' }}>
-          <span style={{ display: 'block', height: '100%', width: `${Math.min(100, pct)}%`, borderRadius: 3, background: `rgb(var(${row.isLowSample ? '--faint' : '--crit'}))` }}/>
+          <span style={{ display: 'block', height: '100%', width: `${Math.min(100, pct)}%`, borderRadius: 3, background: `rgb(var(${getFailureRateFillO(row)}))` }}/>
         </span>
         <LowSampleMark n={row.total}/>
       </span>
