@@ -733,9 +733,9 @@ function ScreenOutcomes({ onNav }) {
       </window.UI.Disclosure>
 
       {/* Learning 에서 이관된 raw 데몬 사이클 이벤트 로그 — operational data (집계 신호 아님 · W3-T3/T7). */}
-      <DisclosureO title="Learning-run events" summary={loopEventsSummaryO(loopEventsState)}>
+      <window.UI.Disclosure kind="detail" title="Learning-run events" sub={loopEventsSummaryO(loopEventsState)} className="mt-4">
         <LoopEventsCard state={loopEventsState} onRetry={regionRetry}/>
-      </DisclosureO>
+      </window.UI.Disclosure>
 
       {detailRow && (
         <DetailModal
@@ -810,19 +810,6 @@ function WindowSeg({ value, onChange }) {
         </button>
       ))}
     </div>
-  );
-}
-
-// 닫힘이 기본인 개시 영역 — 여는 수고가 곧 빈도 순위다. 요약 줄은 열지 않고도 답을 주는 한 줄.
-function DisclosureO({ title, summary, children }) {
-  return (
-    <details className="card mt-4">
-      <summary className="px-4 py-3 cursor-pointer select-none flex items-center gap-3">
-        <span className="fs-title font-medium text-ink">{title}</span>
-        <span className="fs-meta font-mono text-faint ml-auto">{summary}</span>
-      </summary>
-      <div className="pb-1">{children}</div>
-    </details>
   );
 }
 
