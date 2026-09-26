@@ -1,5 +1,5 @@
 // 공용 UI atoms — window.UI 로 export, screens/*.jsx 가 destructure 임포트
-const { useEffect, useRef, useState } = React;
+const { useEffect, useLayoutEffect, useRef, useState } = React;
 
 // 포커스 가능 요소 셀렉터 SoT — focus-trap 진입/순환 공용 (DetailSurface).
 const FOCUSABLE_SELECTOR = 'a[href], button:not([disabled]), textarea, input, select, summary, iframe, [contenteditable="true"], [tabindex]:not([tabindex="-1"])';
@@ -531,14 +531,11 @@ function DetailSurface({ open, onClose, variant = 'drawer', title, sub, footer, 
   const panelRef = useRef(null);
   const titleIdRef = useRef(null);
   if (titleIdRef.current === null) titleIdRef.current = `detail-title-${++detailTitleSeq}`;
-  // 열리기 직전 포커스 트리거 — 닫힘 시 복원 (a11y 포커스 반환).
-  const triggerRef = useRef(null);
 
   // 마운트 전용 — 포커스 캡처/복원 + scroll-lock 은 surface 생애주기(열림→닫힘)에만 묶임.
   // onClose/nav 의존 금지 — 부모 re-render(인라인 onClose 신규 생성)에 캡처/복원이 재실행돼
   // triggerRef 가 상호작용 중 덮어쓰이고 포커스가 트리거로 튀는 회귀 차단. surface 는 open 시에만 마운트.
   useEffect(() => {
-    triggerRef.current = document.activeElement;
     setSurfaceOpen(panelRef, true);
 
     const panel = panelRef.current;
@@ -556,20 +553,18 @@ function DetailSurface({ open, onClose, variant = 'drawer', title, sub, footer, 
     return () => {
       setSurfaceOpen(panelRef, false);
       document.body.style.overflow = prevOverflow;
-      // background revived before the trigger refocus — an inert trigger rejects focus.
       for (const node of inertTargets) node.inert = false;
-      // 트리거 복원 — 닫힘 시 호출처 요소로 포커스 반환.
-      const trigger = triggerRef.current;
-      if (trigger && typeof trigger.focus === 'function') trigger.focus();
     };
   }, []);
 
-  // keydown 핸들러 — Esc 닫기 · Tab 순환 · Arrow nav. onClose/nav 최신 클로저 필요 →
+  // declared after the mount effect → its refocus runs once the background is live again (an inert trigger rejects focus).
+  useDismissFocus({ onDismiss: onClose, isKeyOwner: () => getTopSurface() === panelRef, panelRef });
+
+  // keydown 핸들러 — Tab 순환 · Arrow nav. onClose/nav 최신 클로저 필요 →
   // 재바인딩 무해 (리스너 add/remove 만 반복, 포커스/scroll 상태 무영향).
   useEffect(() => {
     const onKey = (e) => {
       if (getTopSurface() !== panelRef) return;
-      if (e.key === 'Escape') { onClose(); return; }
       if (e.key === 'Tab') {
         const panel = panelRef.current;
         if (!panel) return;
@@ -633,6 +628,46 @@ function DetailSurface({ open, onClose, variant = 'drawer', title, sub, footer, 
       {foot}
     </div>
   </div>;
+}
+
+const isAlwaysKeyOwner = () => true;
+
+/**
+ * Esc-close + focus return shared by the modal DetailSurface and the non-modal Popover.
+ * Call it AFTER the owner's own mount effect — cleanups run in declaration order, so the refocus lands after the owner's teardown.
+ * @param isKeyOwner - Esc gate; a surface stacked under another ignores the key
+ * @param panelRef - surface node; focus an outside click moved elsewhere is never pulled back
+ */
+function useDismissFocus({ onDismiss, isKeyOwner = isAlwaysKeyOwner, panelRef }) {
+  const triggerRef = useRef(null);
+
+  // layout phase → captured before any passive effect moves focus into the surface.
+  useLayoutEffect(() => { triggerRef.current = document.activeElement; }, []);
+
+  useEffect(() => {
+    const panel = panelRef.current;
+
+    return () => {
+      const trigger = triggerRef.current;
+      if (!isFocusLost(panel)) return;
+      if (trigger && typeof trigger.focus === 'function') trigger.focus();
+    };
+  }, []);
+
+  useEffect(() => {
+    const onKey = (e) => {
+      if (e.key === 'Escape' && isKeyOwner()) onDismiss();
+    };
+
+    document.addEventListener('keydown', onKey);
+    return () => document.removeEventListener('keydown', onKey);
+  }, [onDismiss, isKeyOwner]);
+}
+
+// focus dropped with the removed surface (body) or still inside it → the trigger may take it back.
+function isFocusLost(panel) {
+  const active = document.activeElement;
+  return !active || active === document.body || (panel != null && panel.contains(active));
 }
 
 /**
@@ -1676,7 +1711,7 @@ function resolveOutcomeRate(data) {
 }
 
 window.UI = {
-  Icon, Pill, Badge, EmptyState, SubCard, Sparkline, MiniBars, Bar, BulletBar, StatusDot, AgentBadge, AgentName, getAgentDisplayName, KPI, KpiValue, DetailSurface, getTrapFocusTarget, getInertTargets, setSurfaceOpen, getTopSurface, Modal, Tabs, CardHead, PageHeader,
+  Icon, Pill, Badge, EmptyState, SubCard, Sparkline, MiniBars, Bar, BulletBar, StatusDot, AgentBadge, AgentName, getAgentDisplayName, KPI, KpiValue, DetailSurface, useDismissFocus, getTrapFocusTarget, getInertTargets, setSurfaceOpen, getTopSurface, Modal, Tabs, CardHead, PageHeader,
   SectionLabel, Table, TableHead, DisclosureChevron, DisclosureButton, getSeverityTone, getWorstTone,
   Disclosure, getDisclosureOpen, SplitRow, SPLIT_ROW_RATIOS, TileSplit,
   getRovingIndex, getRovingTabIndex, ROW_CONTROL_PROPS, getRowKeyAction, getRowFocusProps, ChipGroup,
