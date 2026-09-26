@@ -58,6 +58,7 @@ const ANOMALY_SIGMA = 2;
 function ScreenCost({ onNav }) {
   const {
     PageHeader, TypeScaleStyle, FreshnessStamp, RefreshButton, PageErrorBanner, INITIAL_REGION_STATE, getRegionSummary,
+    PageVerdict, SplitRow, Disclosure,
   } = window.UI;
 
   const [days, setDays] = useStateC(30);
@@ -81,11 +82,13 @@ function ScreenCost({ onNav }) {
 
   // One derivation, two readers — the lane states the same verdict tile 1 renders.
   const hotVerdict = computeHotVerdict(kpiState.status === 'ready' ? (kpiState.data || {}) : {});
+  const latestOutsideBand = isLatestOutsideBand(tokenState);
   const alarmRows = computeAlarmRows({
     hot: hotVerdict,
-    latestOutsideBand: isLatestOutsideBand(tokenState),
+    latestOutsideBand,
     parseError: getParseErrorDayCounts(errorState),
   });
+  const spendVerdict = getSpendVerdictC({ hot: hotVerdict, latestOutsideBand, kpiStatus: kpiState.status });
 
   useEffectC(() => {
     const ctrl = new AbortController();
@@ -140,13 +143,6 @@ function ScreenCost({ onNav }) {
         .cost-tbl tbody td.num { color: rgb(var(--dim)); }
         .cost-foot { font-size: var(--fs-meta); line-height: 1.5; color: rgb(var(--dim)); }
         .cost-screen .kpi-hint { color: rgb(var(--dim)); }
-        .cost-disc > summary { list-style: none; }
-        .cost-disc > summary::-webkit-details-marker { display: none; }
-        .cost-disc > summary .disc-caret { transition: transform 140ms ease; color: rgb(var(--faint)); }
-        .cost-disc[open] > summary .disc-caret { transform: rotate(90deg); }
-        @media (prefers-reduced-motion: reduce) {
-          .cost-disc > summary .disc-caret { transition: none; }
-        }
       `}</style>
       <div className="flex-shrink-0">
         <PageHeader
@@ -182,6 +178,10 @@ function ScreenCost({ onNav }) {
 
       <AlarmLaneC rows={alarmRows}/>
 
+      <PageVerdict tone={spendVerdict.tone} label={spendVerdict.label} className="mb-4">
+        {spendVerdict.text}
+      </PageVerdict>
+
       {/* Decision tier — the facts a spend decision is made on, in priority order. */}
       <RefreshingRegionC states={[kpiState, tokenState, modelState]}>
         <KpiRowC
@@ -198,37 +198,42 @@ function ScreenCost({ onNav }) {
         <CostTrendCard state={tokenState} days={days} onRetry={regionRetry}/>
       </RefreshingRegionC>
 
-      <RefreshingRegionC states={[modelState]} className="mb-4">
-        <ModelCostCard state={modelState} days={days} onRetry={regionRetry} onNav={onNav}/>
-      </RefreshingRegionC>
+      <SplitRow ratio="1:1" className="mb-4">
+        <RefreshingRegionC states={[modelState]}>
+          <ModelCostCard state={modelState} days={days} onRetry={regionRetry} onNav={onNav}/>
+        </RefreshingRegionC>
+        <RefreshingRegionC states={[sessionState]}>
+          <SessionDistributionCard state={sessionState} days={days} onRetry={regionRetry} onNav={onNav}/>
+        </RefreshingRegionC>
+      </SplitRow>
 
-      <RefreshingRegionC states={[sessionState]} className="mb-4">
-        <SessionDistributionCard state={sessionState} days={days} onRetry={regionRetry} onNav={onNav}/>
-      </RefreshingRegionC>
-
-      {/* Instrumentation tier — rare reads, closed by default. */}
+      {/* Instrumentation tier — status summaries, open by default and foldable. */}
       <InstrumentationTierC>
-      <CostDisclosureC title="Token volume" hint="Category split over time, with the cache-hit line">
-        <div className="mb-3"><TokenLegend/></div>
-        <RefreshingRegionC states={[tokenState]}>
-          <TokenStackedBody state={tokenState} days={days} onRetry={regionRetry}/>
-        </RefreshingRegionC>
-        <RefreshingRegionC states={[cacheState]} className="mt-5">
-          <CacheHitBody state={cacheState} days={days} onRetry={regionRetry}/>
-        </RefreshingRegionC>
-      </CostDisclosureC>
+        <Disclosure kind="status" level={3} title="Token volume" sub="Category split over time, with the cache-hit line"
+          className="cost-inst mb-4">
+          <div className="mb-3"><TokenLegend/></div>
+          <RefreshingRegionC states={[tokenState]}>
+            <TokenStackedBody state={tokenState} days={days} onRetry={regionRetry}/>
+          </RefreshingRegionC>
+          <RefreshingRegionC states={[cacheState]} className="mt-5">
+            <CacheHitBody state={cacheState} days={days} onRetry={regionRetry}/>
+          </RefreshingRegionC>
+        </Disclosure>
 
-      <CostDisclosureC title="Turn statistics" hint="Stop reasons and per-turn aggregates">
-        <RefreshingRegionC states={[turnState]}>
-          <TurnStatsBody state={turnState} days={days} onRetry={regionRetry}/>
-        </RefreshingRegionC>
-      </CostDisclosureC>
-
-      <CostDisclosureC title="Log integrity" hint="Unreadable log entries over the window">
-        <RefreshingRegionC states={[errorState]}>
-          <ParseErrorBody state={errorState} days={days} onRetry={regionRetry}/>
-        </RefreshingRegionC>
-      </CostDisclosureC>
+        <SplitRow ratio="3:2">
+          <Disclosure kind="status" level={3} title="Turn statistics" sub="Stop reasons and per-turn aggregates"
+            className="cost-inst">
+            <RefreshingRegionC states={[turnState]}>
+              <TurnStatsBody state={turnState} days={days} onRetry={regionRetry}/>
+            </RefreshingRegionC>
+          </Disclosure>
+          <Disclosure kind="status" level={3} title="Log integrity" sub="Unreadable log entries over the window"
+            className="cost-inst">
+            <RefreshingRegionC states={[errorState]}>
+              <ParseErrorBody state={errorState} days={days} onRetry={regionRetry}/>
+            </RefreshingRegionC>
+          </Disclosure>
+        </SplitRow>
       </InstrumentationTierC>
     </div>
   );
@@ -254,37 +259,14 @@ function RefreshingRegionC({ states, className = '', children }) {
   );
 }
 
-// One h2 over one card → the three rare reads are hairline rows of a group, not three identical cards.
 function InstrumentationTierC({ children }) {
   const { SectionLabel } = window.UI;
 
   return (
     <section aria-labelledby="cost-instrumentation" className="mb-4">
       <SectionLabel id="cost-instrumentation" className="mb-2">Instrumentation</SectionLabel>
-      <div className="card">{children}</div>
+      {children}
     </section>
-  );
-}
-
-/**
- * Instrumentation shell — three rare-read groups over one cost-local <details>, not three card idioms.
- * Native disclosure keeps keyboard + screen-reader semantics without a new shared atom.
- */
-function CostDisclosureC({ title, hint, children }) {
-  const { Icon } = window.UI;
-
-  return (
-    <details className="cost-disc border-b border-line last:border-b-0">
-      <summary className="card-head cursor-pointer select-none">
-        {/* card-head is a flex container, which drops the native marker — the caret restores the affordance. */}
-        <Icon name="chevron-right" className="disc-caret mt-0.5" size={12}/>
-        <div className="flex-1 min-w-0">
-          <h3 className="card-title">{title}</h3>
-          {hint && <div className="card-sub mt-0.5">{hint}</div>}
-        </div>
-      </summary>
-      <div className="card-body">{children}</div>
-    </details>
   );
 }
 
@@ -315,6 +297,24 @@ function computeAlarmRows({ hot, latestOutsideBand, parseError }) {
 // The verdict lives in one place: the lane when a hot trigger fires it, tile 1 otherwise.
 function getTileVerdictTextC(hot) {
   return hot.isHot || hot.isPaceHot ? 'Running hot — today\'s pace is in the alert above.' : hot.verdict;
+}
+
+/**
+ * Page headline — names the spend state only; the figures stay in the lane or on tile 1.
+ * Tone mirrors the lane's hot row, so the two never disagree. No budget exists in the payload → no over-budget state.
+ */
+function getSpendVerdictC({ hot, latestOutsideBand, kpiStatus }) {
+  const cut = `${HOT_RATIO_CUT}x the 7-day daily normal`;
+
+  if (kpiStatus !== 'ready' || hot.ratio === null) {
+    const reason = kpiStatus === 'loading' ? 'Reading today\'s spend.'
+      : kpiStatus === 'error' ? 'Today\'s spend is unavailable.' : 'No 7-day cost to compare today against.';
+    return { tone: 'neutral', label: 'No signal', text: reason };
+  }
+  if (hot.isHot) return { tone: 'crit', label: 'Above normal', text: `Today's spend has passed ${cut}.` };
+  if (hot.isPaceHot) return { tone: 'warn', label: 'Above normal', text: `Today is heading past ${cut}.` };
+  if (latestOutsideBand) return { tone: 'warn', label: 'Above normal', text: 'The newest day ran outside its own normal band.' };
+  return { tone: 'ok', label: 'On pace', text: `Today's spend is under ${cut}.` };
 }
 
 function getHotAlarmText(hot, latestOutsideBand) {
@@ -536,6 +536,7 @@ function KpiRowC({ kpiState, hot, trendState, modelState, days, onRetry }) {
       <div className="grid grid-cols-2 xl:grid-cols-4 gap-3 mb-4">
         <CostTileC
           label="Today vs. normal"
+          windowTag="today"
           status={getTileStatus(kpiState, hot.ratio, false)}
           value={hot.todayCost === null ? '—' : formatUsdC(hot.todayCost)}
           hint={hot.normalDaily === null ? '' : `${formatUsdC(hot.normalDaily)} 7-day normal/day`}
@@ -545,6 +546,7 @@ function KpiRowC({ kpiState, hot, trendState, modelState, days, onRetry }) {
 
         <CostTileC
           label={`Cost, last ${days} days`}
+          windowTag={`${days}d`}
           status={getTileStatus(trendState, windowTotal.total, windowTotal.isEmpty)}
           value={windowTotal.total === null ? '—' : formatUsdC(windowTotal.total)}
           hint={windowTotal.total === null
@@ -556,6 +558,7 @@ function KpiRowC({ kpiState, hot, trendState, modelState, days, onRetry }) {
 
         <CostTileC
           label="Cost per finished task"
+          windowTag="7d fixed"
           status={getTileStatus(kpiState, costPerDone, false)}
           value={costPerDone === null ? '—' : formatUsdC(costPerDone)}
           hint={`7-day cost / ${formatIntC(doneCount)} finished`}
@@ -565,6 +568,7 @@ function KpiRowC({ kpiState, hot, trendState, modelState, days, onRetry }) {
 
         <CostTileC
           label="Cache share of cost"
+          windowTag={`${days}d`}
           status={getTileStatus(modelState, cacheShare.share, cacheShare.isEmpty)}
           value={cacheShare.share === null ? '—' : `${(cacheShare.share * 100).toFixed(0)}%`}
           hint={cacheShare.cacheCost === null ? '' : `${formatUsdC(cacheShare.cacheCost)} on cache reads + writes`}
@@ -580,14 +584,18 @@ function KpiRowC({ kpiState, hot, trendState, modelState, days, onRetry }) {
  * Cost-local tile shell — the shared KPI atom is a single-value button, tile 1 carries a bar + a verdict.
  * All four tiles take this one shell rather than mixing two tile idioms in one band.
  */
-function CostTileC({ label, status, value, hint, unavailableNote, children }) {
+function CostTileC({ label, windowTag, status, value, hint, unavailableNote, children }) {
   const { KpiValue } = window.UI;
   const isReady = status === 'ready';
   const note = getTileNote(status, unavailableNote);
 
   return (
     <div className="kpi" aria-busy={status === 'loading' ? 'true' : undefined}>
-      <div className="kpi-label">{label}</div>
+      {/* window tag at the label's right edge on every tile → the four windows compare at one glance */}
+      <div className="flex items-baseline justify-between gap-2">
+        <div className="kpi-label">{label}</div>
+        <span className="kpi-window fs-meta font-mono text-faint shrink-0">{windowTag}</span>
+      </div>
       <KpiValue>
         {status === 'loading' ? <SkelC w={110} h={26}/> : isReady ? value : '—'}
       </KpiValue>
@@ -2020,7 +2028,7 @@ function turnStopReasonMeta(reason) {
 }
 
 function TurnStatsBody({ state, days, onRetry }) {
-  const { LoadingPlaceholder, RegionUnavailable } = window.UI;
+  const { LoadingPlaceholder, RegionUnavailable, SplitRow } = window.UI;
 
   if (state.status === 'loading') {
     return <LoadingPlaceholder label="turn statistics" minHeight={220}/>;
@@ -2041,15 +2049,14 @@ function TurnStatsBody({ state, days, onRetry }) {
   const totalEvents = stopReasons.reduce((s, r) => s + (Number(r.event_count) || 0), 0);
 
   return (
-    <>
-      {/* turns 집계 — 평균/최대/총 턴 (세션당 턴 수). */}
+    <SplitRow ratio="2:1">
       {turns && <TurnAggregateRow turns={turns}/>}
       <TurnStopReasonTable
         rows={stopReasons}
         maxEvents={maxEvents}
         totalEvents={totalEvents}
         sessionPopulation={sessionPopulation}/>
-    </>
+    </SplitRow>
   );
 }
 
@@ -2063,7 +2070,7 @@ function TurnAggregateRow({ turns }) {
   const totalTurns = Number(turns.total_turns) || 0;
 
   return (
-    <div className="flex items-start gap-4 mb-3">
+    <div className="grid grid-cols-2 gap-3 content-start">
       <div>
         <div className="fs-meta text-dim">Avg turns/session</div>
         <div className="font-mono fs-stat font-semibold tracking-tight">

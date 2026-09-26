@@ -111,6 +111,11 @@ interface CostHelpers {
     nowMs: number,
   ) => ReadonlyArray<readonly [string, string]>;
   getTileVerdictTextC: (hot: HotVerdict) => string;
+  getSpendVerdictC: (input: {
+    hot: HotVerdict;
+    latestOutsideBand: boolean;
+    kpiStatus: string;
+  }) => { tone: string; label: string; text: string };
   getStopReasonSessionShare: (sessionCount: number, population: number) => number | null;
   markPartialDay: (rows: ReadonlyArray<{ actual: number }>) => ReadonlyArray<{
     actual: number;
@@ -616,8 +621,41 @@ test("the running-hot sentence is stated once — in the lane when it fires, on 
     const hot = { ...CALM, verdict, ...delta };
     const laneTexts = [...cost.computeAlarmRows({ hot, latestOutsideBand: outsideBand, parseError: { crit: 0, total: 9 } })]
       .map((r) => r.text);
+    const pageVerdict = cost.getSpendVerdictC({ hot, latestOutsideBand: outsideBand, kpiStatus: "ready" }).text;
+    assert.ok(!pageVerdict.includes(verdict), `${name}: the page verdict names the state, never the figures`);
     const places = [...laneTexts, cost.getTileVerdictTextC(hot)].filter((t) => t.includes(verdict)).length;
     assert.equal(places, 1, name);
+  }
+});
+
+test("the page verdict carries the lane's hot tone when it fires, and reads on pace when nothing fires", () => {
+  const cases: ReadonlyArray<readonly [string, Partial<HotVerdict>, boolean]> = [
+    ["calm", {}, false],
+    ["so-far ratio", { isHot: true }, false],
+    ["pace only", { isPaceHot: true }, false],
+    ["outlier day only", {}, true],
+    ["so-far and pace", { isHot: true, isPaceHot: true }, true],
+  ];
+  for (const [name, delta, outsideBand] of cases) {
+    const hot = { ...CALM, ...delta };
+    const hotRow = [...cost.computeAlarmRows({ hot, latestOutsideBand: outsideBand, parseError: { crit: 0, total: 9 } })]
+      .find((r) => r.key === "hot");
+    const verdict = cost.getSpendVerdictC({ hot, latestOutsideBand: outsideBand, kpiStatus: "ready" });
+    assert.equal(verdict.tone, hotRow ? hotRow.tone : "ok", name);
+    assert.equal(verdict.label, hotRow ? "Above normal" : "On pace", name);
+  }
+});
+
+test("the page verdict claims no spend state without a measured normal", () => {
+  const rows: ReadonlyArray<{ name: string; hot: HotVerdict; kpiStatus: string }> = [
+    { name: "kpi still loading", hot: CALM, kpiStatus: "loading" },
+    { name: "kpi failed", hot: { ...CALM, isHot: true }, kpiStatus: "error" },
+    { name: "no 7-day normal", hot: { ...CALM, ratio: null, normalDaily: null }, kpiStatus: "ready" },
+  ];
+  for (const row of rows) {
+    const verdict = cost.getSpendVerdictC({ hot: row.hot, latestOutsideBand: true, kpiStatus: row.kpiStatus });
+    assert.equal(verdict.tone, "neutral", row.name);
+    assert.ok(verdict.text.length > 0, `${row.name}: the line still says why there is no verdict`);
   }
 });
 
