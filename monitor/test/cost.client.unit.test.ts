@@ -56,6 +56,14 @@ interface SessionRollup {
   total: number;
 }
 
+interface ModelTokenRow {
+  model: string;
+  input_tokens: number;
+  output_tokens: number;
+  cache_read_tokens: number;
+  cache_creation_tokens: number;
+}
+
 interface CostHelpers {
   window: {
     getTokenRate?: (model: string) => Record<string, number> | null;
@@ -87,6 +95,12 @@ interface CostHelpers {
     sessions: ReadonlyArray<{ session_id: string; total_cost_usd: number }>,
     topN: number,
   ) => SessionRollup;
+  getModelTokenDetail: (row: ModelTokenRow) => string;
+  getSpendConcentration: (
+    sessions: ReadonlyArray<{ session_id: string; total_cost_usd: number }>,
+    topN: number,
+  ) => { count: number; share: number } | null;
+  turnStopReasonMeta: (reason: string | null) => { label: string; raw: string; desc: string };
   getTileStatus: (state: PanelState, value: unknown, isEmpty: boolean) => PanelStatus;
   getTileNote: (status: PanelStatus, unavailableNote: string) => string;
   getFreshnessInputC: (
@@ -734,4 +748,42 @@ test("the focus readout marks today's point as so far, never as a finished day",
   const today = { fullDate: "Sep 25", actual: 2, isPartial: true, rollingMean: null, lowerBand: null, upperBand: null };
   assert.match(cost.getTrendReadout(today, false), /Sep 25 so far/);
   assert.doesNotMatch(cost.getTrendReadout({ ...today, isPartial: false }, false), /so far/);
+});
+
+test("an expanded model detail line names the model it belongs to", () => {
+  const tokens = { input_tokens: 1_190_000, output_tokens: 5_840_000, cache_read_tokens: 9e8, cache_creation_tokens: 2e7 };
+  const models = ["opus 5", "fable 5.1", "Unattributed"];
+  const lines = models.map((model) => cost.getModelTokenDetail({ model, ...tokens }));
+  models.forEach((model, i) => assert.ok(lines[i].startsWith(model), lines[i]));
+  assert.strictEqual(new Set(lines).size, models.length);
+});
+
+test("the spend headline names the fewest top sessions holding half of spend, capped at the shown rows", () => {
+  const toSessions = (costs: readonly number[]) =>
+    costs.map((c, i) => ({ session_id: `s${i}`, total_cost_usd: c }));
+  const rows = [
+    { name: "two sessions reach half", costs: [30, 10, 40, 10, 5, 5] },
+    { name: "one session dominates", costs: [10, 80, 10] },
+    { name: "flat spend never reaches half inside the cap", costs: Array.from({ length: 20 }, () => 1) },
+  ];
+  const topN = 5;
+  for (const { name, costs } of rows) {
+    const got = cost.getSpendConcentration(toSessions(costs), topN);
+    assert.ok(got, name);
+    const sorted = costs.slice().sort((a, b) => b - a);
+    const total = costs.reduce((s, c) => s + c, 0);
+    const sumOf = (k: number) => sorted.slice(0, k).reduce((s, c) => s + c, 0);
+    assert.ok(Math.abs(got.share - sumOf(got.count) / total) < 1e-9, name);
+    assert.ok(got.count === topN || got.share >= 0.5, name);
+    assert.ok(got.count === 1 || sumOf(got.count - 1) / total < 0.5, name);
+  }
+  assert.strictEqual(cost.getSpendConcentration(toSessions([0, 0]), topN), null);
+});
+
+test("stop reasons read as plain words, with the raw id kept as the secondary label", () => {
+  for (const reason of ["no_assistant_in_turn", "end_turn", "tool_use", "unknown", "max_tokens"]) {
+    const meta = cost.turnStopReasonMeta(reason);
+    assert.strictEqual(meta.raw, reason);
+    if (reason !== "max_tokens") assert.doesNotMatch(meta.label, /_|^unknown$/, reason);
+  }
 });

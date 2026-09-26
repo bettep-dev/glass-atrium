@@ -1340,14 +1340,19 @@ function ModelCostRow({ r }) {
       </tr>
       {expanded && (
         <tr>
-          <td colSpan={4} className="fs-meta text-dim font-mono">
-            in {formatTokenCompactC(r.input_tokens)} · out {formatTokenCompactC(r.output_tokens)} ·
-            cache read {formatTokenCompactC(r.cache_read_tokens)} · cache write {formatTokenCompactC(r.cache_creation_tokens)}
+          <td colSpan={4} className="fs-meta text-dim font-mono pl-6">
+            <span aria-hidden="true">└ </span>{getModelTokenDetail(r)}
           </td>
         </tr>
       )}
     </>
   );
+}
+
+// Model name leads the line → still attributable once its header row scrolls out of view.
+function getModelTokenDetail(r) {
+  return `${r.model} — in ${formatTokenCompactC(r.input_tokens)} · out ${formatTokenCompactC(r.output_tokens)}`
+    + ` · cache read ${formatTokenCompactC(r.cache_read_tokens)} · cache write ${formatTokenCompactC(r.cache_creation_tokens)}`;
 }
 
 // 모델별 카테고리 USD 기여도 (sub-bar · computeCategoryCostRows 입력) — 단가 가중(tokens × rate/1M) 분배.
@@ -1535,18 +1540,45 @@ function rollupSessionRows(sessions, topN) {
   return { top: sorted.slice(0, topN), other, total: sorted.length };
 }
 
+/**
+ * Fewest top sessions holding half of spend, capped at the rows the table shows.
+ * A zero-spend population yields null — a share of nothing is not a headline.
+ */
+function getSpendConcentration(sessions, topN) {
+  const costs = sessions.map((s) => Number(s.total_cost_usd) || 0).sort((a, b) => b - a);
+  const total = costs.reduce((s, c) => s + c, 0);
+  if (total <= 0) return null;
+  let count = 0;
+  let held = 0;
+  while (count < Math.min(topN, costs.length) && held < total / 2) {
+    held += costs[count];
+    count += 1;
+  }
+  return { count, share: held / total };
+}
+
+function getSpendConcentrationText(concentration, sessionCount) {
+  if (!concentration) return null;
+  const pct = Math.round(concentration.share * 100);
+  const who = concentration.count === 1 ? 'Top session' : `Top ${concentration.count} sessions`;
+  return `${who} of ${formatIntC(sessionCount)} = ${pct}% of spend`;
+}
+
 function SessionDistributionCard({ state, days, onRetry, onNav }) {
   const { CardHead, Pill } = window.UI;
   const truncated = state.status === 'ready' && state.data?.truncated === true;
   const totalCount = state.status === 'ready' ? Number(state.data?.total_session_count) || 0 : 0;
   const visibleCount = state.status === 'ready' ? (state.data?.rows?.length ?? 0) : 0;
+  const concentrationText = state.status === 'ready'
+    ? getSpendConcentrationText(getSpendConcentration(state.data?.rows ?? [], SESSION_TOPN), visibleCount)
+    : null;
 
   return (
     <div className="card">
       <CardHead
         title="Most expensive sessions"
         sub={state.status === 'ready'
-          ? `top ${Math.min(SESSION_TOPN, visibleCount)} of ${formatIntC(visibleCount)} sessions`
+          ? concentrationText || `top ${Math.min(SESSION_TOPN, visibleCount)} of ${formatIntC(visibleCount)} sessions`
           : undefined}
         right={truncated
           ? <span title={`Showing ${visibleCount} of ${totalCount} sessions`}><Pill>{`${visibleCount} of ${totalCount} loaded`}</Pill></span>
@@ -1851,7 +1883,7 @@ function ParseErrorBody({ state, days, onRetry }) {
       {/* KPI 2-col (총 발생 + 마지막 발생) → 0건 분기에선 차트 생략 (action-trigger 부재). */}
       <div className="grid grid-cols-2 gap-3 mb-3">
         <div>
-          <div className="fs-meta text-dim">Total parse_error</div>
+          <div className="fs-meta text-dim">Unreadable log entries</div>
           <div className="font-mono fs-stat font-semibold tracking-tight">
             {formatIntC(totalErrors)}
           </div>
@@ -1860,7 +1892,9 @@ function ParseErrorBody({ state, days, onRetry }) {
           <div className="fs-meta text-dim">Last seen</div>
           {/* 날짜 = 보조 stat — fs-stat(18px). */}
           <div className="font-mono fs-stat text-fg/80">
-            {lastErrorDate || <span className="text-dim">—</span>}
+            {lastErrorDate
+              ? <span title={lastErrorDate}>{getDaysAgoText(lastErrorDate)}</span>
+              : <span className="text-dim">—</span>}
           </div>
         </div>
       </div>
@@ -1886,6 +1920,13 @@ function ParseErrorBody({ state, days, onRetry }) {
       )}
     </>
   );
+}
+
+// Day-granular event date → whole days only; an hour count would claim precision the row lacks.
+function getDaysAgoText(eventDate) {
+  const days = Math.floor((Date.now() - new Date(eventDate).getTime()) / 86400000);
+  if (!Number.isFinite(days)) return eventDate;
+  return days <= 0 ? 'today' : `${days}d ago`;
 }
 
 function ParseErrorChart({ rows }) {
@@ -2017,14 +2058,15 @@ const anomalyAxisLineStyle = { stroke: 'rgb(var(--line))' };
 
 // stop_reason 표시 메타 — 라벨 + 색상 토큰 + 한 줄 설명. 미정의 reason 은 폴백.
 const STOP_REASON_META = {
-  no_assistant_in_turn: { label: 'tool-only turn', colorVar: '--dim',    desc: 'no LLM reply (tool calls only)' },
-  end_turn:             { label: 'real LLM turn',   colorVar: '--accent', desc: 'ended with an assistant reply' },
-  tool_use:             { label: 'tool_use',     colorVar: '--info',   desc: 'ended on a tool call' },
-  unknown:              { label: 'unknown',      colorVar: '--faint',  desc: 'stop_reason not recorded' },
+  no_assistant_in_turn: { label: 'Tool calls only',   colorVar: '--dim',    desc: 'no model reply in the turn' },
+  end_turn:             { label: 'Model replied',     colorVar: '--accent', desc: 'ended with an assistant reply' },
+  tool_use:             { label: 'Stopped on a tool', colorVar: '--info',   desc: 'ended on a tool call' },
+  unknown:              { label: 'Not recorded',      colorVar: '--faint',  desc: 'no stop reason logged' },
 };
 
 function turnStopReasonMeta(reason) {
-  return STOP_REASON_META[reason] || { label: reason || '—', colorVar: '--faint', desc: '' };
+  const meta = STOP_REASON_META[reason] || { label: reason || '—', colorVar: '--faint', desc: '' };
+  return { ...meta, raw: reason || '' };
 }
 
 function TurnStatsBody({ state, days, onRetry }) {
@@ -2128,7 +2170,7 @@ function TurnStopReasonTable({ rows, maxEvents, totalEvents, sessionPopulation }
               {/* 라벨+desc 단일행 고정 — 좁은 뷰포트서 desc 래핑→행높이 1↔2줄 점프 차단:
                   flex 1행 + desc truncate(min-w-0) + 전문 title= 툴팁 보존. */}
               <td>
-                <div className="flex items-center min-w-0" title={meta.desc ? `${meta.label} — ${meta.desc}` : meta.label}>
+                <div className="flex items-center min-w-0" title={[meta.label, meta.desc, meta.raw].filter(Boolean).join(' — ')}>
                   <span
                     className="inline-block w-[3px] h-3 rounded-sm mr-3 shrink-0"
                     style={{ background: `rgb(var(${meta.colorVar}))` }}
