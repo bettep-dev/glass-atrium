@@ -472,7 +472,7 @@ describe("healthy live fixture", () => {
 		await ctx.page.waitForSelector(".arch-legend li", { timeout: 10_000 });
 		// one inline mapper — tsx wraps a named inner function in __name, which the browser lacks
 		const [status, ...legend] = await ctx.page.evaluate(() =>
-			[...document.querySelectorAll(".arch-caption p, .arch-legend li")].map((el) => ({
+			[...document.querySelectorAll(".arch-caption .page-verdict-text, .arch-legend li")].map((el) => ({
 				text: (el as HTMLElement).innerText,
 				transform: getComputedStyle(el).textTransform,
 				px: Number.parseFloat(getComputedStyle(el).fontSize),
@@ -879,30 +879,31 @@ describe("fault live fixture", () => {
 					const probe = document.createElement("style");
 					probe.textContent = `${sel} svg :is(rect.arch-ring, text.arch-ring-glyph, rect.arch-ring-glyph-pill) { pointer-events: auto !important; }`;
 					document.head.appendChild(probe);
-					const shapes = new Map(
-						Array.from(document.querySelectorAll(`${sel} svg :is(g.node, g.cluster)`)).map((group) => [
-							group,
-							(group.querySelector(":scope > :is(rect, path, polygon):not(.arch-ring)") as Element).getBoundingClientRect(),
-						]),
-					);
-					const zones = Array.from(document.querySelectorAll(`${sel} svg g.cluster`)).map((group) => shapes.get(group) as DOMRect);
-					// per-line text boxes, not the label's line box — the half-leading under the last line paints nothing
-					const labels = Array.from(document.querySelectorAll(`${sel} svg :is(g.node .nodeLabel, g.cluster .cluster-label)`))
-						.flatMap((label) => {
-							const rects: DOMRect[] = [];
-							const walker = document.createTreeWalker(label, NodeFilter.SHOW_TEXT);
-							for (let text = walker.nextNode(); text; text = walker.nextNode()) {
-								const range = document.createRange();
-								range.selectNodeContents(text);
-								rects.push(...Array.from(range.getClientRects()));
-							}
-							return rects;
-						})
-						.filter((box) => box.width > 0 && box.height > 0);
 					const readings = Array.from(document.querySelectorAll(`${sel} svg text.arch-ring-glyph`))
 						.filter((glyph) => getComputedStyle(glyph).display !== "none")
 						.map((glyph) => {
 							glyph.scrollIntoView({ block: "center", inline: "center" });
+							// every box read after this glyph's scroll — .arch-page scrolls, so boxes read earlier sit in another frame
+							const shapes = new Map(
+								Array.from(document.querySelectorAll(`${sel} svg :is(g.node, g.cluster)`)).map((group) => [
+									group,
+									(group.querySelector(":scope > :is(rect, path, polygon):not(.arch-ring)") as Element).getBoundingClientRect(),
+								]),
+							);
+							const zones = Array.from(document.querySelectorAll(`${sel} svg g.cluster`)).map((group) => shapes.get(group) as DOMRect);
+							// per-line text boxes, not the label's line box — the half-leading under the last line paints nothing
+							const labels = Array.from(document.querySelectorAll(`${sel} svg :is(g.node .nodeLabel, g.cluster .cluster-label)`))
+								.flatMap((label) => {
+									const rects: DOMRect[] = [];
+									const walker = document.createTreeWalker(label, NodeFilter.SHOW_TEXT);
+									for (let text = walker.nextNode(); text; text = walker.nextNode()) {
+										const range = document.createRange();
+										range.selectNodeContents(text);
+										rects.push(...Array.from(range.getClientRects()));
+									}
+									return rects;
+								})
+								.filter((box) => box.width > 0 && box.height > 0);
 							const owner = glyph.parentElement as Element;
 							const pill = owner.querySelector(":scope > rect.arch-ring-glyph-pill") as Element;
 							const g = glyph.getBoundingClientRect();

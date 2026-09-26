@@ -56,6 +56,37 @@ interface PageStateSandbox {
     hasMap: boolean,
   ) => { at: string | null; regions: RegionState[] };
   getFlowPeerLabelAR: (flow: Flow, direction: "in" | "out", nodeIndex: Map<string, { label: string }>) => string;
+  getPartHealthGroupsAR: (partRows: HealthRow[]) => { attention: HealthRow[]; rest: HealthRow[] };
+  getPartBoxAR: (row: HealthRow, nodeIndex: Map<string, { label: string }>) => { nodeId: string; label: string } | null;
+  getPartCauseAR: (facts: Record<string, unknown>) => string | null;
+  getDrillDaemonAR: (partRows: DaemonPartRow[], unscopedId: string) => string | null;
+  getRunSummaryAR: (runs: RunRow[]) => { text: string; failures: RunRow[] };
+  getMapLegendItemsAR: () => Array<{ key: string; mark?: string; text?: string }>;
+  getPageVerdictAR: (
+    partRows: HealthRow[],
+    caption: string,
+    nodeIndex: Map<string, { label: string }>,
+  ) => { tone: string; sentence: string; chips: Array<{ key: string; label: string; targetId: string }> };
+}
+
+interface DaemonPartRow {
+  id: string;
+  daemonName: string | null;
+  tone: string | null;
+  nodeIds: string[];
+}
+
+interface RunRow {
+  key: string;
+  verdict: string;
+  reasons: Array<{ message: string }>;
+}
+
+interface HealthRow {
+  id: string;
+  name: string;
+  tone: string | null;
+  nodeIds: string[];
 }
 
 const sandbox = await buildScreenSandbox<PageStateSandbox>(ARCH_SRC);
@@ -165,4 +196,100 @@ test("a drawer connection row names the other end of the edge, never the open no
 
   assert.strictEqual(sandbox.getFlowPeerLabelAR(inbound, "in", nodeIndex), "Peer node");
   assert.strictEqual(sandbox.getFlowPeerLabelAR(outbound, "out", nodeIndex), "Peer node");
+});
+
+function healthRow(id: string, tone: string | null, nodeIds: string[] = []): HealthRow {
+  return { id, name: `Part ${id}`, tone, nodeIds };
+}
+
+const MIXED_ROWS: HealthRow[] = [
+  healthRow("a", "ok"),
+  healthRow("b", "warn"),
+  healthRow("c", null),
+  healthRow("d", "crit"),
+  healthRow("e", "info"),
+  healthRow("f", "crit"),
+];
+
+test("the part health block holds every part once, flagged parts on the attention side, worst first", () => {
+  const { attention, rest } = sandbox.getPartHealthGroupsAR(MIXED_ROWS);
+  const rank = (tone: string | null) => ["crit", "warn", null, "info", "ok"].indexOf(tone);
+
+  assert.deepStrictEqual([...attention, ...rest].map((row) => row.id).sort(), MIXED_ROWS.map((row) => row.id).sort());
+  assert.ok(attention.every((row) => row.tone === "crit" || row.tone === "warn"), "a non-flagged part sits in attention");
+  assert.ok(rest.every((row) => row.tone !== "crit" && row.tone !== "warn"), "a flagged part sits in the other column");
+  for (const group of [attention, rest])
+    for (let i = 1; i < group.length; i++)
+      assert.ok(rank(group[i - 1].tone) <= rank(group[i].tone), `${group[i - 1].id} before ${group[i].id} breaks worst-first`);
+});
+
+test("a part names the map box it is bound to, and an unbound part names none", () => {
+  const nodeIndex = new Map([["canonical.cron", { label: "Scheduled background jobs" }]]);
+
+  assert.deepStrictEqual({ ...sandbox.getPartBoxAR(healthRow("x", "crit", ["cron"]), nodeIndex) }, {
+    nodeId: "canonical.cron",
+    label: "Scheduled background jobs",
+  });
+  assert.strictEqual(sandbox.getPartBoxAR(healthRow("y", "crit", []), nodeIndex), null);
+  assert.strictEqual(sandbox.getPartBoxAR(healthRow("z", "crit", ["gone"]), nodeIndex), null);
+});
+
+test("a part's cause line comes only from a fact that explains the state", () => {
+  const rows = [
+    { name: "an overdue daemon", facts: { isStale: true, daemon: {} }, cause: "Missed its expected run" },
+    { name: "an unreachable database", facts: { pgOk: false }, cause: "Database not reachable" },
+    { name: "unretried hook failures", facts: { unretried24h: 3 }, cause: "3 unretried failures in 24h" },
+    { name: "a daemon whose last run errored", facts: { daemon: { effective_status: "error" } }, cause: "Its last run reported an error" },
+    { name: "a healthy database", facts: { pgOk: true }, cause: null },
+    { name: "no explaining fact", facts: {}, cause: null },
+  ];
+  for (const row of rows) assert.strictEqual(sandbox.getPartCauseAR(row.facts), row.cause, row.name);
+});
+
+test("the page verdict takes the worst part tone, with one chip per flagged part focusing its row", () => {
+  const nodeIndex = new Map([["canonical.cron", { label: "Scheduled jobs" }]]);
+  const rows = [
+    { name: "a critical part outranks a warning", parts: [healthRow("a", "warn"), healthRow("b", "crit", ["cron"])], tone: "crit" },
+    { name: "a warning alone", parts: [healthRow("a", "warn"), healthRow("b", "ok")], tone: "warn" },
+    { name: "every part ok", parts: [healthRow("a", "ok"), healthRow("b", "ok")], tone: "ok" },
+    { name: "nothing judged yet", parts: [healthRow("a", null), healthRow("b", "info")], tone: "neutral" },
+  ];
+
+  for (const row of rows) {
+    const verdict = sandbox.getPageVerdictAR(row.parts, "caption", nodeIndex);
+    const flagged = row.parts.filter((part) => part.tone === "crit" || part.tone === "warn");
+
+    assert.strictEqual(verdict.tone, row.tone, row.name);
+    assert.deepStrictEqual([...verdict.chips.map((chip) => chip.targetId)].sort(), flagged.map((part) => `arch-part-${part.id}`).sort(), row.name);
+  }
+  const [chip] = sandbox.getPageVerdictAR([healthRow("b", "crit", ["cron"])], "caption", nodeIndex).chips;
+  assert.ok(chip.label.includes("Part b") && chip.label.includes("Scheduled jobs"), `chip "${chip.label}" pairs the part with its box`);
+});
+
+test("a drawer drills into its node's worst daemon part, and into the first one when none is flagged", () => {
+  const part = (id: string, tone: string | null, daemonName: string | null = id): DaemonPartRow => ({ id, daemonName, tone, nodeIds: ["cron"] });
+  const rows = [
+    { name: "a critical part after a healthy one", parts: [part("a", "ok"), part("b", "crit")], drill: "b" },
+    { name: "a warning before an unjudged part", parts: [part("a", null), part("b", "warn")], drill: "b" },
+    { name: "every part healthy", parts: [part("a", "ok"), part("b", "ok")], drill: "a" },
+    { name: "a flagged part with no daemon", parts: [part("a", "crit", null), part("b", "ok")], drill: "b" },
+    { name: "no part bound to the node", parts: [{ ...part("a", "crit"), nodeIds: ["pg"] }], drill: null },
+  ];
+  for (const row of rows) assert.strictEqual(sandbox.getDrillDaemonAR(row.parts, "cron"), row.drill, row.name);
+});
+
+test("the run history counts clean runs and keeps every other run as a row", () => {
+  const run = (key: string, verdict: string, reasons: string[] = []): RunRow => ({ key, verdict, reasons: reasons.map((message) => ({ message })) });
+  const runs = [run("1", "ok"), run("2", "ok", ["haiku quota"]), run("3", "unknown"), run("4", "ok"), run("5", "fail")];
+  const summary = sandbox.getRunSummaryAR(runs);
+
+  assert.strictEqual(summary.text, "2/5 runs clean");
+  assert.deepStrictEqual(summary.failures.map((row) => row.key), ["2", "3", "5"]);
+  assert.strictEqual(sandbox.getRunSummaryAR([]).text, "0/0 runs clean");
+});
+
+test("the map legend explains the multi-part count on a box's corner glyph", () => {
+  const count = sandbox.getMapLegendItemsAR().find((item) => item.mark?.endsWith("×N"));
+  assert.ok(count, "a legend item shows the ×N glyph");
+  assert.match(count.text ?? "", /N parts in this box/);
 });

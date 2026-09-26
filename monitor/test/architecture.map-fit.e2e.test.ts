@@ -18,13 +18,10 @@
 //
 // Viewport table: 1024 and 1440 are the widths the evaluators scored; 1396 is the width the user
 // actually runs; 1512 and 1920 are the two the fit was first reasoned about. Heights are the window heights
-// those widths plausibly come with — the pane is the viewport height minus a fixed 158px of
-// chrome (measured at the 800, 850 and 1080 heights: 800→642, 850→692, 1080→922). The fill
-// reading takes whichever axis binds, so the exact height is not load-bearing. The height is a
-// constant subtraction rather than a fraction because the chrome above it is pixel-fixed; the
-// earlier ~0.68 fraction was the shared `.card-body { max-height: 70vh }` cap, since released by
-// the screen. The 158 counts this harness's health-store alert strip (45px), which its fixture
-// raises — without that strip those three heights give 687 / 737 / 967.
+// those widths plausibly come with. The pane shares the viewport with the Part health block under
+// the map: `.arch-main` keeps a 62vh floor and the block takes the rest, so the pane height is no
+// longer a fixed subtraction. The fill reading takes whichever axis binds, so the exact height is not
+// load-bearing.
 //
 // A dagre fallback (the ELK loader losing its race) lays the same source ~44% wider and
 // is caught here as a containment failure — no separate layout-engine guard is needed.
@@ -498,3 +495,38 @@ test("a zone whose title repeats its lone member hides the title and keeps no ba
 	assert.ok(r.hiddenTitleCount > 0, "no hidden-title zone was measured — the band assertion below would be vacuous");
 	assert.deepEqual(r.titleBands, [], `a zone with a hidden title keeps its title band: ${r.titleBands.join("; ")}`);
 });
+
+// the part health block takes the band under the map — it has to start on the first screen, not after a scroll
+async function readPartHealthPlacement(width: number, height: number) {
+	assert.ok(browser, "browser must be up");
+	const page = await browser.newPage({ viewport: { width, height } });
+	try {
+		await page.goto(`${serverUrl}/#architecture`, { waitUntil: "load" });
+		await page.waitForFunction(
+			() => Number(document.querySelector(".svg-pan-zoom_viewport")?.getAttribute("data-arch-fit-scale")) > 0,
+			null,
+			{ timeout: 60_000 },
+		);
+		await page.waitForSelector(".arch-part-health", { timeout: 10_000 });
+
+		return await page.evaluate(() => {
+			const canvas = document.querySelector(".arch-mermaid-canvas") as HTMLElement;
+			const block = document.querySelector(".arch-part-health") as HTMLElement;
+			return {
+				canvasBottom: canvas.getBoundingClientRect().bottom,
+				blockTop: block.getBoundingClientRect().top,
+				viewportHeight: window.innerHeight,
+			};
+		});
+	} finally {
+		await page.close();
+	}
+}
+
+for (const { width, height } of VIEWPORTS) {
+	test(`the part health block starts under the map on the first screen at ${width}x${height}`, async () => {
+		const r = await readPartHealthPlacement(width, height);
+		assert.ok(r.blockTop >= r.canvasBottom - EPS_PX, `the block (top ${r.blockTop.toFixed(0)}) overlaps the map (bottom ${r.canvasBottom.toFixed(0)})`);
+		assert.ok(r.blockTop < r.viewportHeight, `the block starts at ${r.blockTop.toFixed(0)}px, below the ${r.viewportHeight}px screen`);
+	});
+}
