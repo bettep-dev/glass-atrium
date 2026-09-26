@@ -695,13 +695,17 @@ function Popover({ label, title, children, className = '' }) {
 function PopoverPanel({ id, title, rootRef, onClose, children }) {
   const panelRef = useRef(null);
 
+  // joins the surface stack → one Esc closes one layer, whichever of popover and modal is on top
   useEffect(() => {
+    setSurfaceOpen(panelRef, true);
     const panel = panelRef.current;
     const target = panel ? (panel.querySelectorAll(FOCUSABLE_SELECTOR)[0] || panel) : null;
     if (target) target.focus();
+
+    return () => setSurfaceOpen(panelRef, false);
   }, []);
 
-  useDismissFocus({ onDismiss: onClose, panelRef });
+  useDismissFocus({ onDismiss: onClose, isKeyOwner: () => getTopSurface() === panelRef, panelRef });
 
   // press, not click — closes before the pressed control takes focus; the trigger (inside root) keeps its own toggle.
   useEffect(() => {

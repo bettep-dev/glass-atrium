@@ -1,5 +1,5 @@
 // Popover: a non-modal panel under its trigger — Esc and outside press close it, focus comes back only when it was lost.
-import test, { describe } from "node:test";
+import test, { beforeEach, describe } from "node:test";
 import assert from "node:assert/strict";
 import { fileURLToPath } from "node:url";
 import { dirname, resolve } from "node:path";
@@ -43,7 +43,6 @@ function mountPanel(onClose: () => void) {
   const neighbour = createElement("neighbour");
   const focused: string[] = [];
   trigger.focus = () => { focused.push("trigger"); doc.activeElement = trigger; };
-  doc.reset();
   doc.activeElement = trigger;
 
   const mounted = effects.mount(
@@ -65,7 +64,19 @@ describe("Popover trigger", () => {
   });
 });
 
+// a live DetailSurface on the shared document; listeners from earlier mounts stay attached
+function mountModal(onClose: () => void) {
+  const panel = createElement("modal-panel");
+  const overlay = { name: "modal-overlay", tagName: "DIV", parentElement: null };
+  return effects.mount(
+    () => (ui.DetailSurface as Component)({ open: true, onClose, title: "Session cost", children: "body" }),
+    (element) => (element.props.role === "dialog" ? panel : overlay),
+  );
+}
+
 describe("PopoverPanel", () => {
+  beforeEach(() => doc.reset());
+
   test("stays non-modal: no aria-modal, no scroll lock, the page beside it untouched", () => {
     const popover = mountPanel(() => undefined);
     const dialog = findNodes(renderScreen(popover.tree) as RenderedNode, (n: RenderedNode) => n.props.role === "dialog")[0];
@@ -126,6 +137,25 @@ describe("PopoverPanel", () => {
       popover.unmount();
 
       assert.deepEqual(popover.focused, row.focused);
+    });
+  }
+
+  const layerRows = [
+    { name: "a modal opened over the open popover takes Esc alone", order: ["popover", "modal"], closes: { popover: 0, modal: 1 } },
+    { name: "a popover opened inside a modal takes Esc alone", order: ["modal", "popover"], closes: { popover: 1, modal: 0 } },
+  ] as const;
+
+  for (const row of layerRows) {
+    test(row.name, () => {
+      const closes = { popover: 0, modal: 0 };
+      const mounts = row.order.map((layer) => (layer === "popover"
+        ? mountPanel(() => { closes.popover += 1; })
+        : mountModal(() => { closes.modal += 1; })));
+
+      doc.dispatch("keydown", { key: "Escape" });
+      for (const mounted of mounts.reverse()) mounted.unmount();
+
+      assert.deepEqual(closes, row.closes);
     });
   }
 });
