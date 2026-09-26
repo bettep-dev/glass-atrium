@@ -633,8 +633,9 @@ function buildHarnessTile(harness) {
     // not a region fetch error → never joins the page banner, so the tile keeps its own Retry
     return { ...base, status: 'unavailable', tone: 'neutral', value: '—', hint: 'Harness readings unavailable.', canRetry: true };
   }
+  // sentence break, not ' · ' → the names list after it never reads as more down parts
   const unchecked = harness.uncheckedNames.length > 0
-    ? ` · ${harness.uncheckedNames.join(' · ')} checked on the System map`
+    ? `. ${harness.uncheckedNames.join(' · ')} checked on the System map`
     : '';
   const downCount = harness.downNames.length;
   const unreadSources = harness.unreadSources ?? [];

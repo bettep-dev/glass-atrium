@@ -293,6 +293,25 @@ test("the harness tile counts only the parts the shell actually polled", () => {
   assert.ok(tile.hint.includes("Hook Chain"), "the unchecked part is named, not silently dropped");
 });
 
+// A shared ' · ' separator let the unpolled list run on into the down list → an unpolled part read as down.
+test("the harness hint's down list names exactly the down parts, never an unpolled one", () => {
+  const rows = [
+    { name: "one down, one unpolled", downNames: ["autoagent"], uncheckedNames: ["Hook Chain"] },
+    { name: "two down, two unpolled", downNames: ["autoagent", "monitor"], uncheckedNames: ["Hook Chain", "PostgreSQL"] },
+  ];
+  for (const row of rows) {
+    const tile = tileOf(
+      dash.buildTiles({
+        harness: { ...HEALTHY, partsOk: 4, partsChecked: 4 + row.downNames.length, downNames: row.downNames, uncheckedNames: row.uncheckedNames },
+        costState: LOADING, agentsState: LOADING, outcomesState: LOADING,
+      }),
+      "harness",
+    );
+    const downClause = /Down: ([^.]*)/.exec(tile.hint)?.[1] ?? "";
+    assert.deepEqual(downClause.split(" · "), row.downNames, `${row.name}: hint was "${tile.hint}"`);
+  }
+});
+
 test("the outcome tile takes its verdict from the shared rule", () => {
   const crit = tileOf(
     dash.buildTiles({
