@@ -2532,7 +2532,7 @@ function LedgerLiveSectionI({ rows, maxFreq, onRowClick }) {
 	return (
 		<div className="px-3 pb-3 flex flex-col gap-1.5">
 			{head}
-			{groupLiveRowsI(rows).map((group) => (
+			{getLiveRowGroupsI(rows).map((group) => (
 				<div key={group.title} className="flex flex-col gap-1">
 					<div className="fs-meta text-ink truncate" title={group.title}>
 						{truncateI(group.title, 120)}
@@ -2553,7 +2553,7 @@ function LedgerLiveSectionI({ rows, maxFreq, onRowClick }) {
 }
 
 // Group by shared title — first-appearance order kept, rank stays the overall frequency rank.
-function groupLiveRowsI(rows) {
+function getLiveRowGroupsI(rows) {
 	const groups = new Map();
 	rows.forEach((pattern, i) => {
 		const title = patternNameI(pattern.pattern_signature, pattern.agent);
