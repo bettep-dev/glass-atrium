@@ -143,10 +143,10 @@ def report(failures):
 PY
 )"
 
-# $1 = python check source run after the prelude; the remaining args become sys.argv[2:].
+# stdin = python check source run after the prelude; the args become sys.argv[2:].
 run_parser_check() {
-  local check_src="${1}"
-  shift
+  local check_src
+  check_src="$(cat)"
   run python3 - "${HOOK_SH}" "$@" <<<"${PARSER_PRELUDE}"$'\n'"${check_src}"
   [ "${status}" -eq 0 ] || {
     printf '%s\n' "${output}"
@@ -156,9 +156,7 @@ run_parser_check() {
 }
 
 @test "a template key emitted after another field never joins that field's value" {
-  local check_src
-  check_src="$(
-    cat <<'PY'
+  run_parser_check <<'PY'
 rows = [
     ('token_usage then agent_version',
      'result: done\ntoken_usage: input=5, output=6\nagent_version: 1.0.0',
@@ -185,28 +183,20 @@ for name, block, expected in rows:
             failures.append(f'{name}: {field}={parsed.get(field)!r}, want {want!r}')
 report(failures)
 PY
-  )"
-  run_parser_check "${check_src}"
 }
 
 @test "an inline block's template key never joins the preceding field's value" {
-  local check_src
   # The inline tier's own split: delimiters → newlines, then parse_completion_body.
-  check_src="$(
-    cat <<'PY'
+  run_parser_check <<'PY'
 inline = 'result: done | token_usage: input=5, output=6 | agent_version: 1.0.0'
 parsed = parse(re.sub(ns['_INLINE_DELIM_CLASS'], '\n', inline))
 got = parsed.get('token_usage')
 report([] if got == 'input=5, output=6' else [f'token_usage={got!r}'])
 PY
-  )"
-  run_parser_check "${check_src}"
 }
 
 @test "a line whose key is outside KNOWN_FIELDS folds into the preceding field's value" {
-  local check_src
-  check_src="$(
-    cat <<'PY'
+  run_parser_check <<'PY'
 rows = [
     ('multi-line colon-less prose line',
      'result: done\nsummary: first line\nsecond prose line',
@@ -225,27 +215,19 @@ for name, block, want in rows:
         failures.append(f'{name}: parsed={parsed!r}, want summary={want!r}')
 report(failures)
 PY
-  )"
-  run_parser_check "${check_src}"
 }
 
 @test "a template key leading the block leaves every later field clean" {
-  local check_src
-  check_src="$(
-    cat <<'PY'
+  run_parser_check <<'PY'
 parsed = parse('agent_version: 1.0.0\nresult: done\ntoken_usage: input=5, output=6')
 want = {'result': 'done', 'token_usage': 'input=5, output=6'}
 report([f'{k}={parsed.get(k)!r}' for k, v in want.items() if parsed.get(k) != v])
 PY
-  )"
-  run_parser_check "${check_src}"
 }
 
 @test "every key of the [COMPLETION] template is a KNOWN_FIELDS member" {
-  local check_src
   # Never skips: a missing doc, anchor, fence or key list fails with its own message.
-  check_src="$(
-    cat <<'PY'
+  run_parser_check "${RULES_DOC}" <<'PY'
 doc = sys.argv[2]
 if not os.path.isfile(doc):
     report([f'rules doc not found: {doc}'])
@@ -262,6 +244,4 @@ if not keys:
     report([f'the template fence in {doc} carries no key lines'])
 report([f'template key missing from KNOWN_FIELDS: {k}' for k in sorted(keys - ns['KNOWN_FIELDS'])])
 PY
-  )"
-  run_parser_check "${check_src}" "${RULES_DOC}"
 }

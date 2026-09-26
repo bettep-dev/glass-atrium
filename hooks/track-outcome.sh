@@ -632,7 +632,7 @@ if parse_tier == 0:
         # itself carries a delimiter — a segment with no KNOWN_FIELD colon appends to the current value.
         inline_fields = parse_completion_body(re.sub(_INLINE_DELIM_CLASS, '\n', inline_body))
         # Guard: >=1 CORE field → prose merely mentioning [COMPLETION] with a stray delimiter never matches
-        # unknown key → dropped before the first known key, else folded into the current field's value
+        # unknown key before the first known key → dropped
         if _INLINE_CORE_FIELDS & set(inline_fields):
             parse_tier = 1
             completion = inline_fields
