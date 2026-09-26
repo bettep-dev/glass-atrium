@@ -105,3 +105,38 @@ test("a failed record body reads as a plain sentence, with the raw answer only b
   assert.equal(details.length, 1);
   assert.match(collectText(details[0]), /HTTP 500 Internal Server Error/);
 });
+
+function getFoldButton(tree: RenderedNode, title: string): RenderedNode | undefined {
+  return findNodes(tree, (n) => n.type === "button" && "aria-expanded" in n.props && collectText(n).includes(title))[0];
+}
+
+test("status folds render open while their detail breakdowns start collapsed", async () => {
+  const { tree } = await renderOutcomesScreen(0);
+  const rows = [
+    { title: "Reporting health", isOpen: true },
+    { title: "Self-report quality", isOpen: true },
+    { title: "Daily breakdown and budget-killed subagents", isOpen: false },
+    { title: "By task type", isOpen: false },
+  ];
+
+  for (const row of rows) {
+    const button = getFoldButton(tree, row.title);
+    assert.ok(button, `${row.title} renders as a fold`);
+    assert.equal(button.props["aria-expanded"], row.isOpen, `${row.title} open state`);
+  }
+});
+
+test("paired cards sit side by side in one split row", async () => {
+  const { tree } = await renderOutcomesScreen(0);
+  const rows = [
+    { name: "per-agent table beside Reporting health", ratio: "split-row--7-5", titles: ["Failed or blocked by agent", "Reporting health"] },
+    { name: "check results beside the crosstab", ratio: "split-row--1-1", titles: ["Automatic check results", "Confident but failed"] },
+  ];
+
+  for (const row of rows) {
+    const splitRows = findNodes(tree, (n) => String(n.props.className ?? "").includes(row.ratio));
+    const pair = splitRows.find((n) => row.titles.every((title) => collectText(n).includes(title)));
+    assert.ok(pair, row.name);
+    assert.equal(pair.children.filter((child) => typeof child !== "string").length, 2, `${row.name}: exactly two columns`);
+  }
+});
