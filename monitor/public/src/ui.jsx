@@ -670,6 +670,53 @@ function isFocusLost(panel) {
   return !active || active === document.body || (panel != null && panel.contains(active));
 }
 
+let popoverSeq = 0;
+
+/**
+ * Non-modal popover anchored under a card-head trigger button — the page beside it stays live (no inert, no scroll lock, no trap).
+ * @param label - trigger content; also the panel's accessible name when `title` is omitted and `label` is a string
+ */
+function Popover({ label, title, children, className = '' }) {
+  const [isOpen, setOpen] = useState(false);
+  const rootRef = useRef(null);
+  const idRef = useRef(null);
+  const panelTitle = title || (typeof label === 'string' ? label : undefined);
+
+  if (idRef.current === null) idRef.current = `popover-${++popoverSeq}`;
+
+  return <div ref={rootRef} className={`popover-root ${className}`.trim()}>
+    <button type="button" className="btn ghost sm" aria-haspopup="dialog" aria-expanded={isOpen}
+      aria-controls={isOpen ? idRef.current : undefined} onClick={() => setOpen((v) => !v)}>{label}</button>
+    {isOpen && <PopoverPanel id={idRef.current} title={panelTitle} rootRef={rootRef} onClose={() => setOpen(false)}>{children}</PopoverPanel>}
+  </div>;
+}
+
+// Mounted only while open → focus capture/return follows the open→close lifecycle.
+function PopoverPanel({ id, title, rootRef, onClose, children }) {
+  const panelRef = useRef(null);
+
+  useEffect(() => {
+    const panel = panelRef.current;
+    const target = panel ? (panel.querySelectorAll(FOCUSABLE_SELECTOR)[0] || panel) : null;
+    if (target) target.focus();
+  }, []);
+
+  useDismissFocus({ onDismiss: onClose, panelRef });
+
+  // press, not click — closes before the pressed control takes focus; the trigger (inside root) keeps its own toggle.
+  useEffect(() => {
+    const onPointerDown = (e) => {
+      const root = rootRef.current;
+      if (root && !root.contains(e.target)) onClose();
+    };
+
+    document.addEventListener('pointerdown', onPointerDown);
+    return () => document.removeEventListener('pointerdown', onPointerDown);
+  }, [onClose, rootRef]);
+
+  return <div ref={panelRef} id={id} role="dialog" aria-label={title} tabIndex={-1} className="popover-panel">{children}</div>;
+}
+
 /**
  * Focus target that keeps Tab inside a modal panel; null leaves the move to the browser.
  * @param active - focused element, or null on open (initial focus)
@@ -1711,7 +1758,7 @@ function resolveOutcomeRate(data) {
 }
 
 window.UI = {
-  Icon, Pill, Badge, EmptyState, SubCard, Sparkline, MiniBars, Bar, BulletBar, StatusDot, AgentBadge, AgentName, getAgentDisplayName, KPI, KpiValue, DetailSurface, useDismissFocus, getTrapFocusTarget, getInertTargets, setSurfaceOpen, getTopSurface, Modal, Tabs, CardHead, PageHeader,
+  Icon, Pill, Badge, EmptyState, SubCard, Sparkline, MiniBars, Bar, BulletBar, StatusDot, AgentBadge, AgentName, getAgentDisplayName, KPI, KpiValue, DetailSurface, useDismissFocus, Popover, PopoverPanel, getTrapFocusTarget, getInertTargets, setSurfaceOpen, getTopSurface, Modal, Tabs, CardHead, PageHeader,
   SectionLabel, Table, TableHead, DisclosureChevron, DisclosureButton, getSeverityTone, getWorstTone,
   Disclosure, getDisclosureOpen, SplitRow, SPLIT_ROW_RATIOS, TileSplit,
   getRovingIndex, getRovingTabIndex, ROW_CONTROL_PROPS, getRowKeyAction, getRowFocusProps, ChipGroup,

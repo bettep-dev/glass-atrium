@@ -681,6 +681,27 @@
 /* confirm 은 열린 drawer/fullscreen 위로 재차 스택 — 더 높은 z 로 위 레이어 확보. */
 .detail-overlay.detail-confirm { z-index: var(--z-confirm); }
 
+/* Popover — non-modal panel under its card-head trigger; one layer below modal surfaces so a DetailSurface still covers it */
+.popover-root {
+	position: relative;
+	display: inline-flex;
+}
+.popover-panel {
+	position: absolute;
+	top: calc(100% + 4px);
+	right: 0;
+	z-index: calc(var(--z-overlay) - 1);
+	min-width: 240px;
+	max-width: min(360px, calc(100vw - 32px));
+	max-height: 60vh;
+	overflow: auto;
+	padding: 12px;
+	background: rgb(var(--overlay-surface));
+	border: 1px solid rgb(var(--line));
+	border-radius: var(--radius-card);
+	box-shadow: var(--shadow-overlay);
+}
+
 .detail-panel {
 	background: rgb(var(--overlay-surface)); /* 불투명 오버레이 면 (텍스트 대비 보장) */
 	box-shadow: var(--shadow-overlay);
