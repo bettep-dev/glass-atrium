@@ -499,12 +499,22 @@ describe("the page verdict takes the worst actionable tone and parked proposals 
     { name: "only parked proposals keep ok", summary: healthySummary(), index: clean, backlog: proposalBacklog(["a", "b"], { a: isoDaysAgo(79), b: isoDaysAgo(67) }), tone: "ok" },
     { name: "a proposal still inside its waiting window reads warn", summary: healthySummary(), index: clean, backlog: proposalBacklog(["a"], { a: isoDaysAgo(1) }), tone: "warn" },
     { name: "an unloaded summary reads no signal", summary: loading, index: clean, backlog: noBacklog, tone: "neutral" },
+    { name: "an errored index withholds the all-clear", summary: healthySummary(), index: errored, backlog: noBacklog, tone: "neutral" },
+    { name: "an errored backlog withholds the all-clear", summary: healthySummary(), index: clean, backlog: errored, tone: "neutral" },
+    { name: "an index still loading withholds the all-clear", summary: healthySummary(), index: loading, backlog: noBacklog, tone: "neutral" },
+    { name: "a backlog still loading withholds the all-clear", summary: healthySummary(), index: clean, backlog: loading, tone: "neutral" },
+    { name: "an errored feeder never softens a missed cycle already known", summary: healthySummary({ hours_since_last_cycle: 40 }), index: errored, backlog: noBacklog, tone: "crit" },
   ];
   for (const row of rows) {
     test(row.name, () => {
       assert.equal(glanceHelpers.buildWikiVerdictW(row.summary, row.index, row.backlog, unchangedCycles(30)).tone, row.tone);
     });
   }
+});
+
+test("the verdict sentence names each feeder it could not check", () => {
+  const verdict = glanceHelpers.buildWikiVerdictW(healthySummary(), errored, errored, unchangedCycles(30));
+  assert.match(verdict.text, /couldn't check search index, merge proposals$/);
 });
 
 test("parked proposals fold into the verdict sentence with their count, oldest age and one chip to the list", () => {

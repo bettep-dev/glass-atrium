@@ -247,16 +247,31 @@ function buildWikiVerdictW(summaryState, indexState, backlogState, cyclesState) 
 			? `${formatCountW(summary.latest_compiled_count)} compiled`
 			: null,
 		describeProposalBacklogW(proposals),
+		describeLaneGapW(lane),
 	];
 
 	return {
-		tone: window.UI.getWorstTone(tones) || "ok",
+		tone: getVerdictToneW(tones, lane),
 		text: parts.filter(Boolean).join(" · "),
 		chips:
 			proposals.length > 0
 				? [{ key: "proposals", label: "Open proposals", targetId: MERGE_PROPOSALS_ID }]
 				: [],
 	};
+}
+
+// A known warn/crit stands; the all-clear waits until every lane feeder has answered.
+function getVerdictToneW(tones, lane) {
+	const worst = window.UI.getWorstTone(tones);
+	if (worst && worst !== "ok") return worst;
+
+	const complete = !lane.pending && lane.unchecked.length === 0;
+	return complete ? "ok" : "neutral";
+}
+
+function describeLaneGapW(lane) {
+	if (lane.unchecked.length > 0) return `couldn't check ${lane.unchecked.join(", ")}`;
+	return lane.pending ? "still checking" : null;
 }
 
 // Rows arrive parked-last and oldest-last, so the final row carries the oldest age.
