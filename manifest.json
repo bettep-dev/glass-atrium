@@ -1395,7 +1395,7 @@
     "monitor/src/server/timezone.ts": "f5ff66bb2d7aacbfdda87bfa7086945b20a406d9eac7086feca06002a42cbf8b",
     "monitor/src/server/types/agents.ts": "293c65df746e88827174f5c0bfcd681d61012172250fd49f898aded8429b43dd",
     "monitor/src/server/types/architecture.ts": "66f3d5db9721f1854008beea2c86853a7ea2d038926c1c7292a62f6e25e4226a",
-    "monitor/src/server/types/clauded-docs.ts": "d3bf4592823f0140aeb256d3371772712efd27e76f389e56e13793c135c23e22",
+    "monitor/src/server/types/clauded-docs.ts": "aaff521d3b71a0e0b2dfff0caec53ec355c1ae45f53c7903c13f266882fa878c",
     "monitor/src/server/types/cost.ts": "e3b1a532260755948de66523a331080e90340b5695e197f7fda5d9baa67c1357",
     "monitor/src/server/types/dashboard.ts": "e24c4e14d9676046563e876e58951863d408654c44c7a1e7dd1f36ec72f1667a",
     "monitor/src/server/types/health-detail.ts": "eb8f6ad32b8dfbfee3cfc7baa4cb8d9df79924c1123a71d3dd6d9017d3c89e1b",
