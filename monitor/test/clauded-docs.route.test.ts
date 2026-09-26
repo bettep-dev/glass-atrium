@@ -1414,12 +1414,11 @@ test("POST /api/clauded-docs — 존재하지 않는 folder_id (FK 23503) 는 50
   );
 });
 
-// ── GET /api/clauded-docs?doc_status= — stage filter over the row list ─────────
-// Fixture rows share one suite-unique author, so every query also exercises the AND with the
-// author filter. The legacy row is stored as the retired alias to prove the first-stage match.
-
-const STATUS_FIXTURE_AUTHOR = `${SUITE_MARKER}-st`;
-const STATUS_FIXTURE_STAGES = ["progress", "implementing", "impl_review", "impl_done", "done"] as const;
+// shared author → every query also ANDs the author filter · 'progress' row = retired alias
+const STATUS_FIXTURE = {
+  AUTHOR: `${SUITE_MARKER}-st`,
+  STAGES: ["progress", "implementing", "impl_review", "impl_done", "done"],
+} as const;
 
 interface StatusFixtureRow {
   id: number;
@@ -1441,9 +1440,9 @@ function isStageMatched(token: string, stage: string): boolean {
 
 async function createStatusFixture(): Promise<StatusFixtureRow[]> {
   const created: StatusFixtureRow[] = [];
-  for (const stored of STATUS_FIXTURE_STAGES) {
+  for (const stored of STATUS_FIXTURE.STAGES) {
     const title = makeTitle(`status-filter-${stored}`);
-    const res = await postCreate(app, { title, author: STATUS_FIXTURE_AUTHOR, html_body: makeHtmlBody(title) });
+    const res = await postCreate(app, { title, author: STATUS_FIXTURE.AUTHOR, html_body: makeHtmlBody(title) });
     assert.strictEqual(res.status, 201, `fixture POST: ${JSON.stringify(res.body)}`);
     const id = (res.body as { id: number }).id;
     // raw write — the API normalises the alias on write, and legacy rows predate that.
@@ -1458,7 +1457,7 @@ async function createStatusFixture(): Promise<StatusFixtureRow[]> {
 async function getStatusList(query: string): Promise<{ statusCode: number; body: StatusListBody }> {
   const res = await app.inject({
     method: "GET",
-    url: `/api/clauded-docs?author=${encodeURIComponent(STATUS_FIXTURE_AUTHOR)}&${query}`,
+    url: `/api/clauded-docs?author=${encodeURIComponent(STATUS_FIXTURE.AUTHOR)}&${query}`,
   });
   return { statusCode: res.statusCode, body: res.json() as StatusListBody };
 }
