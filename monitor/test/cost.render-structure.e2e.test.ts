@@ -178,14 +178,15 @@ async function closeRenderContext(ctx: RenderContext | undefined): Promise<void>
   await ctx?.app?.close();
 }
 
+// Plain card titles + Disclosure header titles — coupled to the Disclosure atom's markup (ui.jsx)
+const CARD_TITLE_SELECTOR = ".cost-screen .card-title, .cost-screen .cost-inst > h3 .font-medium";
+
 // Card titles in document order — the screen's rendered tier sequence.
 function getCardTitles(page: Page): Promise<string[]> {
-  return page.evaluate(() =>
-    Array.from(
-      document.querySelectorAll(".cost-screen .card-title, .cost-screen .cost-inst > h3 .font-medium"),
-    ).map((el) =>
-      (el.textContent || "").trim(),
-    ),
+  return page.evaluate(
+    (selector) =>
+      Array.from(document.querySelectorAll(selector)).map((el) => (el.textContent || "").trim()),
+    CARD_TITLE_SELECTOR,
   );
 }
 
@@ -289,10 +290,10 @@ describe("calm fixture — nothing is running hot", () => {
     const strayRoots = await ctx.page.evaluate(
       () =>
         Array.from(document.querySelectorAll(".cost-screen .recharts-wrapper")).filter(
-          (el) => el.closest(".cost-inst") === null && el.closest(".card") === null,
+          (el) => el.closest(".card") === null,
         ).length,
     );
-    assert.equal(strayRoots, 0, "every chart lives in a card or a disclosure");
+    assert.equal(strayRoots, 0, "every chart lives in a card");
   });
 
   test("one verdict line precedes the tiles, and every tile carries its window tag", async () => {
@@ -321,16 +322,14 @@ describe("calm fixture — nothing is running hot", () => {
       ["Turn statistics", "Log integrity"],
     ] as const;
     const measure = () =>
-      ctx.page.evaluate((names) => {
-        const titleEls = Array.from(
-          document.querySelectorAll(".cost-screen .card-title, .cost-screen .cost-inst > h3 .font-medium"),
-        );
+      ctx.page.evaluate(({ names, selector }) => {
+        const titleEls = Array.from(document.querySelectorAll(selector));
         // no named inner function — the tsx transform wraps one in a helper the page does not define
         const tops = new Map(
           titleEls.map((t) => [(t.textContent || "").trim(), t.closest(".card")?.getBoundingClientRect().top]),
         );
         return names.map(([left, right]) => (tops.get(right) ?? Number.NaN) - (tops.get(left) ?? Number.NaN));
-      }, pairs.map((p) => [...p]));
+      }, { names: pairs.map((p) => [...p]), selector: CARD_TITLE_SELECTOR });
     try {
       for (const [i, gap] of (await measure()).entries()) {
         assert.ok(Math.abs(gap) < 1, `${pairs[i]!.join(" | ")} share one row at 1440; top gap ${gap}px`);
