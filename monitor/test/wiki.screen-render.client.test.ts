@@ -262,6 +262,28 @@ test("the merge-proposals disclosure stays in place while loading and after a fa
   }
 });
 
+function backlogFirstSeen(daysAgo: number): unknown {
+  const since = new Date(Date.now() - daysAgo * 86_400_000).toISOString().slice(0, 10);
+  const { backlog } = READY_BACKLOG.data;
+  return { ...READY_BACKLOG, data: { backlog: { ...backlog, proposal_first_seen: { c1: since } } } };
+}
+
+test("the merge-proposals fold opens itself only while it holds a waiting (warn) proposal", async () => {
+  const mod = await loadWikiScreen();
+  const rows = [
+    { name: "a proposal inside its waiting window", state: backlogFirstSeen(1), isOpen: true },
+    { name: "an undated proposal with no run streak yet", state: READY_BACKLOG, isOpen: true },
+    { name: "only parked pairs", state: backlogFirstSeen(30), isOpen: false },
+    { name: "the backlog still loading", state: LOADING, isOpen: false },
+  ];
+  for (const row of rows) {
+    const tree = renderScreen(mod.React.createElement(mod.WikiMaintenanceSection as Component, { backlogState: row.state, onRetry: () => {} }));
+    const fold = findNodes(tree, (n) => n.type === "details" && n.props.id === "wiki-merge-proposals")[0];
+    assert.ok(fold, `${row.name}: the fold renders`);
+    assert.equal(fold.props.open === true, row.isOpen, `${row.name}: starts ${row.isOpen ? "open" : "folded"}`);
+  }
+});
+
 test("a merge proposal's reasons wrap in full", async () => {
   const mod = await loadWikiScreen();
   const proposal = { cluster_hash: "c1", target_slug: "t", source_slugs: ["s"], suggested_action: "merge because both notes describe one concept" };

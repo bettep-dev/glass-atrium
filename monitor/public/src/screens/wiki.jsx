@@ -824,6 +824,7 @@ function WikiMaintenanceSection({ backlogState, cyclesState, onRetry }) {
 				id={MERGE_PROPOSALS_ID}
 				label="Merge proposals"
 				count={describeProposalCountW(model)}
+				tone={model.proposalTone}
 			>
 				{model.state === "loading" ? (
 					<LoadingPlaceholder label="merge proposals" />
@@ -894,7 +895,7 @@ function buildMaintenanceModel(backlogState, cyclesState = UNKNOWN_REGION_W) {
 		return { state: "empty" };
 	}
 
-	const proposals = orderProposalsW(backlog, readProposalsW(backlog), cyclesState);
+	const proposalRows = readProposalRowsW(backlog, readProposalsW(backlog), cyclesState);
 	const deadLinks = Array.isArray(backlog.deadlink_dryrun)
 		? backlog.deadlink_dryrun
 		: null;
@@ -905,7 +906,9 @@ function buildMaintenanceModel(backlogState, cyclesState = UNKNOWN_REGION_W) {
 
 	return {
 		state: "ready",
-		proposals,
+		proposals: proposalRows && proposalRows.map((row) => row.proposal),
+		// A waiting pair → warn, so the fold holding it opens itself; parked pairs stay neutral.
+		proposalTone: proposalRows && window.UI.getWorstTone(proposalRows.map((row) => row.tone)),
 		deadLinks,
 		linkFixes,
 		residueLine:
@@ -915,10 +918,10 @@ function buildMaintenanceModel(backlogState, cyclesState = UNKNOWN_REGION_W) {
 	};
 }
 
-// The lane's order, so row N in the lane is row N in the list.
-function orderProposalsW(backlog, proposals, cyclesState) {
+// The lane's rows, so row N in the lane is row N in the list.
+function readProposalRowsW(backlog, proposals, cyclesState) {
 	if (!proposals) return proposals;
-	return buildProposalAlarmsW(backlog, proposals, cyclesState).map((row) => row.proposal);
+	return buildProposalAlarmsW(backlog, proposals, cyclesState);
 }
 
 // Status row — the compile trend and the library's composition, open side by side.
@@ -1052,17 +1055,28 @@ function describeRunHistoryW(cyclesState, model, summaryState) {
 /**
  * Collapsible section shell — label left, count right, body below the summary.
  * h2 inside the summary (HTML allows one heading there) → heading navigation lands on the toggle.
+ * Follows UI.Disclosure's detail rule: a warn/crit `tone` opens it; a later recovery never force-closes it.
  */
 function WikiDisclosureW({
 	id,
 	label,
 	count,
+	tone,
 	bodyClassName = "px-3 pb-3",
 	children,
 }) {
+	const isAlerting = window.UI.getDisclosureOpen("detail", tone);
+	// Latched → the `open` prop never flips back to false, so React never closes a fold the reader left open.
+	const [hasAlerted, setAlerted] = useStateW(isAlerting);
+
+	useEffectW(() => {
+		if (isAlerting) setAlerted(true);
+	}, [isAlerting]);
+
 	return (
 		<details
 			id={id}
+			open={hasAlerted || undefined}
 			onFocus={id ? openOnOwnFocusW : undefined}
 			className="w-disclosure rounded-md border border-line bg-sunken"
 		>
