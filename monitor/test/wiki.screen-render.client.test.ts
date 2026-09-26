@@ -288,13 +288,16 @@ test("the alarm lane keeps actionable rows only; waiting proposals ride the verd
   assert.equal(findNodes(tree, (n) => n.type === "button").length, 0);
 });
 
-test("the page opens on one verdict line with the proposals chip pointing at the merge-proposals fold", async () => {
+test("the page opens on one verdict line that carries no signal before anything loads", async () => {
   const mod = await loadWikiScreen();
   const tree = renderScreen(mod.React.createElement(mod.ScreenWiki as Component, {}));
   const verdict = findNodes(tree, (n) => n.props.atom === "PageVerdict");
   assert.equal(verdict.length, 1);
   assert.equal(verdict[0].props.tone, "neutral", "nothing loaded yet → no signal");
+});
 
+test("the verdict's proposals chip targets the merge-proposals fold, which opens on focus", async () => {
+  const mod = await loadWikiScreen();
   const fold = renderScreen(mod.React.createElement(mod.WikiMaintenanceSection as Component, { backlogState: READY_BACKLOG, onRetry: () => {} }));
   const details = findNodes(fold, (n) => n.type === "details")[0];
   const ready = (data: unknown) => ({ status: "ready", data, error: null });

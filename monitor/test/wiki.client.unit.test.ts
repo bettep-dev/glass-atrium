@@ -528,24 +528,28 @@ test("parked proposals fold into the verdict sentence with their count, oldest a
   assert.match(verdict.text, /0 compiled/);
   assert.equal(verdict.chips.length, 1);
   assert.equal(typeof verdict.chips[0].targetId, "string");
+});
 
+test("with no proposals the verdict sentence names no merge and offers no chip", () => {
   const none = glanceHelpers.buildWikiVerdictW(healthySummary(), ready({}), ready({ backlog: null }), unchangedCycles(30));
   assert.doesNotMatch(none.text, /merge/);
   assert.deepEqual([...none.chips], []);
 });
 
-test("the compiled tile names why it reads zero, adds the window total and tints only when originals wait", () => {
+describe("the compiled tile names why it reads zero, adds the window total and tints only when originals wait", () => {
   const cycles = ready({ cycles: [4, 0, 8].map((compiled_count, i) => ({ run_date: isoDaysAgo(i), compiled_count })) });
   const backlog = (waiting: number) => ready({ backlog: { run_date: isoDaysAgo(0), true_backlog: waiting } });
   const rows = [
-    { name: "idle", compiled: 0, waiting: 0, sub: /nothing to compile.* · 12 in 30 d$/i, tone: "neutral" },
-    { name: "stalled", compiled: 0, waiting: 5, sub: /5 originals waiting.* · 12 in 30 d$/, tone: "warn" },
-    { name: "producing", compiled: 4, waiting: 5, sub: /^12 in 30 d$/, tone: "neutral" },
+    { name: "idle — nothing waiting stays quiet", compiled: 0, waiting: 0, sub: /nothing to compile.* · 12 in 30 d$/i, tone: "neutral" },
+    { name: "stalled — originals waiting with none compiled tints", compiled: 0, waiting: 5, sub: /5 originals waiting.* · 12 in 30 d$/, tone: "warn" },
+    { name: "producing — a compiled cycle shows the window total only", compiled: 4, waiting: 5, sub: /^12 in 30 d$/, tone: "neutral" },
   ];
   for (const row of rows) {
-    const tile = glanceHelpers.buildCompiledTileW(healthySummary({ latest_compiled_count: row.compiled }), backlog(row.waiting), cycles);
-    assert.match(tile.sub ?? "", row.sub, `${row.name}: ${tile.sub}`);
-    assert.equal(tile.tone, row.tone, row.name);
+    test(row.name, () => {
+      const tile = glanceHelpers.buildCompiledTileW(healthySummary({ latest_compiled_count: row.compiled }), backlog(row.waiting), cycles);
+      assert.match(tile.sub ?? "", row.sub);
+      assert.equal(tile.tone, row.tone);
+    });
   }
 });
 
