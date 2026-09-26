@@ -1,9 +1,8 @@
-// Screen 04 — Outcome 분석 (live data via /api/outcomes/*) · window.ScreenOutcomes.
-// 상단 분석 섹션 + 하단 탐색기 섹션 (Results 카드 헤드의 Filters 팝오버 + 결과 표).
-// Hooks aliased with O suffix → 모듈 간 window-scope 충돌 회피.
+// Screen 04 — Outcome analysis (live data via /api/outcomes/*) · window.ScreenOutcomes.
+// Analysis sections on top, explorer below (Filters popover in the Results card head + results table).
+// Hooks aliased with an O suffix → no window-scope collisions across modules.
 //
-// SECURITY: MarkdownView 는 DOMPurify 게이트 통과 후에만 HTML 주입 (부재 시 raw pre fallback).
-// body_md 에 concerns/lesson 등 user-supplied 문자열 보간 가능 → sanitization 필수 (core-security.md).
+// SECURITY: body_md carries user-supplied strings (concerns/lesson) → MarkdownView injects HTML only past the DOMPurify gate, else raw pre (core-security.md).
 const {
   useState: useStateO,
   useEffect: useEffectO,
@@ -710,7 +709,7 @@ function ScreenOutcomes({ onNav }) {
         />
       </div>
 
-      {/* 기록 신뢰 신호는 status — 열린 채로 둔다. 일별 차트·budget-kill 목록 같은 내역만 detail 로 접는다. */}
+      {/* Reporting-trust signals are status → stay open; only the breakdown (daily chart, budget-kill list) folds into detail. */}
       <window.UI.SplitRow ratio="7:5" className="mt-4">
         <AgentFailureTableO state={analyticsState} onRetry={regionRetry}/>
         <window.UI.Disclosure kind="status" title="Reporting health" sub={reportingHealthSummaryO(channelLivenessState)}>
@@ -1308,7 +1307,7 @@ function AttributionHealthBody({ state, onRetry }) {
   );
 }
 
-// Reporting health 의 detail 내역 — 로딩·오류·빈 창은 상단 status 카드가 이미 말하므로 여기선 침묵.
+// Reporting-health detail breakdown — silent on loading/error/empty, which the status cards above already report.
 function AttributionBreakdownO({ state }) {
   if (state.status !== 'ready') return null;
 
@@ -1317,7 +1316,7 @@ function AttributionBreakdownO({ state }) {
     return <EmptyStateO message="No daily breakdown in this period."/>;
   }
 
-  // 활동일만 backend 전송 → 최근 ATTRIBUTION_GRID_BARS 일 그리드로 0-fill.
+  // backend sends active days only → 0-fill into the last ATTRIBUTION_GRID_BARS days.
   const series = Array.isArray(state.data?.days_series) ? state.data.days_series : [];
 
   return (
@@ -2086,7 +2085,7 @@ function LoopEventsBody({ state, onRetry }) {
 // ----- Panel 1: Filters popover ----------------------------------------------
 
 // 칩 축 driver — label, axis key (filter prop), 옵션 목록을 1행 1축으로 표현.
-// 상시 노출 축 — Agent 와 함께 팝오버 상단. 나머지는 'More filters' 뒤로 접힌다 (period 는 헤더, keyword 는 Results 헤드가 소유).
+// Always-visible axes, beside Agent at the popover top; the rest fold behind 'More filters' (period → header, keyword → Results head).
 const CHIP_FILTER_AXES = [
   { axis: 'result',      label: 'Result',      options: RESULT_OPTIONS      },
   { axis: 'review_flag', label: 'Flagged',     options: REVIEW_FLAG_OPTIONS },
@@ -2157,7 +2156,7 @@ function FilterPanelO({
             />
           </FilterAxisGroup>
 
-          {/* T7/O2 forensic 'show all' — include_all=1 로 서버 registry 게이트 해제. */}
+          {/* Forensic 'show all' — include_all=1 lifts the server registry gate. */}
           <FilterAxisGroup label="Record scope">
             <label className="flex items-center gap-2 fs-meta cursor-pointer select-none">
               <input
@@ -2309,8 +2308,7 @@ function ResultTableCard({
   );
 }
 
-// 활성 필터 → 'Axis: value' 칩 라벨 배열 (빈-상태 echo 전용). 기본값 축은 생략.
-//   축·값 이름 = Filters 팝오버 컨트롤 라벨 SoT → 칩과 ledger 셀이 같은 값을 같은 이름으로 부른다.
+// Active filters → 'Axis: value' chip labels for the empty-state echo; default axes omitted, names follow the popover labels.
 function buildActiveFilterChipsO(filter) {
   return buildActiveFilterEntriesO(filter).map((entry) => entry.label);
 }
@@ -2337,8 +2335,7 @@ function getDetailValueLabelO(axis, value) {
   return getOptionLabelO(options, String(value ?? 'null'));
 }
 
-// 활성 필터 칩 배지 렌더 — 빈-상태 echo(ResultTableZeroStateO) 전용.
-//   래퍼 div 는 호출부가 소유 → 여기는 배지 map 만.
+// Active-filter chip badges for the empty-state echo (ResultTableZeroStateO); the caller owns the wrapper div.
 function FilterChipsO({ chips }) {
   const { Badge } = window.UI;
   return <>{chips.map((c) => <Badge key={c} role="metadata">{c}</Badge>)}</>;
