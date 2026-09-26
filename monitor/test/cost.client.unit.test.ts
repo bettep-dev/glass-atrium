@@ -138,6 +138,10 @@ interface CostHelpers {
     partialCost: number | null;
   }>;
   getUsdAxisFormatter: (maxValue: number) => (value: number) => string;
+  getParseErrorChartRows: (
+    rows: readonly { event_date: string; error_count: number; total_count: number; error_ratio: number }[],
+  ) => { error_count: number; threshold_count: number; isCrit: boolean }[];
+  getCacheGapLabel: (rows: readonly { rate_pct: number | null }[]) => string | null;
   getTrendReadout: (
     row: {
       fullDate: string;
@@ -785,5 +789,39 @@ test("stop reasons read as plain words, with the raw id kept as the secondary la
     const meta = cost.turnStopReasonMeta(reason);
     assert.strictEqual(meta.raw, reason);
     if (reason !== "max_tokens") assert.doesNotMatch(meta.label, /_|^unknown$/, reason);
+  }
+});
+
+test("a log-integrity bar reads as over threshold exactly when it rises above the threshold line on the same count axis", () => {
+  const rows = [
+    { event_date: "2026-09-01", error_count: 6, total_count: 100 },
+    { event_date: "2026-09-02", error_count: 5, total_count: 100 },
+    { event_date: "2026-09-03", error_count: 0, total_count: 40 },
+    { event_date: "2026-09-04", error_count: 3, total_count: 20 },
+    { event_date: "2026-09-05", error_count: 0, total_count: 0 },
+  ].map((r) => ({ ...r, error_ratio: r.total_count > 0 ? r.error_count / r.total_count : 0 }));
+  const chartRows = cost.getParseErrorChartRows(rows);
+  assert.strictEqual(chartRows.length, rows.length);
+  chartRows.forEach((r, i) => {
+    assert.strictEqual(r.isCrit, r.error_count > r.threshold_count, rows[i].event_date);
+    assert.ok(r.threshold_count <= rows[i].total_count, rows[i].event_date);
+  });
+  assert.ok(chartRows.some((r) => r.isCrit) && chartRows.some((r) => !r.isCrit));
+});
+
+test("the hit-rate strip names its no-data days, and says nothing when every day has a rate", () => {
+  const rows = [
+    { name: "no gaps", rates: [98.1, 97.5, 99.0], gaps: 0 },
+    { name: "one gap", rates: [98.1, null, 99.0], gaps: 1 },
+    { name: "all gaps", rates: [null, null], gaps: 2 },
+  ];
+  for (const { name, rates, gaps } of rows) {
+    const label = cost.getCacheGapLabel(rates.map((rate_pct) => ({ rate_pct })));
+    if (gaps === 0) {
+      assert.strictEqual(label, null, name);
+      continue;
+    }
+    assert.ok(label, name);
+    assert.match(label, new RegExp(`^${gaps} of ${rates.length} days? no data$`), name);
   }
 });

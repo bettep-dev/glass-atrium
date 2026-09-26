@@ -1445,6 +1445,7 @@ function CacheHitBody({ state, days, onRetry }) {
 
   // 실측 범위로 Y 도메인 auto-zoom — 고정 [0,100] 은 99%대 변동을 평탄화함.
   const yDomain = computeCacheYDomain(chartRows);
+  const gapLabel = getCacheGapLabel(chartRows);
 
   return (
     <>
@@ -1453,6 +1454,7 @@ function CacheHitBody({ state, days, onRetry }) {
           {pooledRate === null ? '—' : (pooledRate * 100).toFixed(1) + '%'}
         </div>
         <div className="fs-meta text-dim">pooled hit rate</div>
+        {gapLabel && <div className="fs-meta text-faint">{gapLabel}</div>}
       </div>
       <div style={{ width: '100%', height: 220 }}>
         <CacheHitChart rows={chartRows} yDomain={yDomain}/>
@@ -1473,6 +1475,13 @@ function computeCacheYDomain(chartRows) {
   if (max - min < 0.01) return [0, 100];
   const pad = Math.max(1, (max - min) * 0.15);
   return [Math.max(0, min - pad), Math.min(100, max + pad)];
+}
+
+// Line gaps (connectNulls off) stay silent on their own → the strip names them.
+function getCacheGapLabel(rows) {
+  const gapCount = rows.filter((r) => !Number.isFinite(r.rate_pct)).length;
+  if (gapCount === 0) return null;
+  return `${gapCount} of ${rows.length} ${rows.length === 1 ? 'day' : 'days'} no data`;
 }
 
 function CacheHitChart({ rows, yDomain = [0, 100] }) {
@@ -1876,14 +1885,7 @@ function ParseErrorBody({ state, days, onRetry }) {
     }
   }
 
-  const chartRows = rows.map((r) => ({
-    date: typeof r.event_date === 'string' ? r.event_date.slice(5) : '',
-    fullDate: r.event_date,
-    error_count: Number(r.error_count) || 0,
-    total_count: Number(r.total_count) || 0,
-    error_ratio_pct: (Number(r.error_ratio) || 0) * 100,
-    isCrit: isParseErrorCritDay(r),
-  }));
+  const chartRows = getParseErrorChartRows(rows);
 
   const { crit: critDays, total: dayCount } = getParseErrorDayCounts(state);
 
@@ -1918,6 +1920,7 @@ function ParseErrorBody({ state, days, onRetry }) {
           <div style={{ width: '100%', height: 200 }}>
             <ParseErrorChart rows={chartRows}/>
           </div>
+          <ParseErrorLegendC/>
         </>
       ) : (
         <div className="fs-body text-dim text-center py-8" aria-label="no parse_error — chart omitted">
@@ -1936,6 +1939,38 @@ function getDaysAgoText(eventDate) {
   const days = Math.floor((Date.now() - new Date(eventDate).getTime()) / 86400000);
   if (!Number.isFinite(days)) return eventDate;
   return days <= 0 ? 'today' : `${days}d ago`;
+}
+
+// Threshold as an entry count per day → bars and threshold share one count axis.
+function getParseErrorChartRows(rows) {
+  return rows.map((r) => {
+    const totalCount = Number(r.total_count) || 0;
+    return {
+      date: typeof r.event_date === 'string' ? r.event_date.slice(5) : '',
+      fullDate: r.event_date,
+      error_count: Number(r.error_count) || 0,
+      total_count: totalCount,
+      threshold_count: totalCount * PARSE_ERROR_CRIT_THRESHOLD,
+      error_ratio_pct: (Number(r.error_ratio) || 0) * 100,
+      isCrit: isParseErrorCritDay(r),
+    };
+  });
+}
+
+const PARSE_ERROR_THRESHOLD_LABEL = `Threshold (${PARSE_ERROR_CRIT_THRESHOLD * 100}% of entries)`;
+
+function ParseErrorLegendC() {
+  const swatch = { display: 'inline-block', width: 10, height: 10, borderRadius: 2, marginRight: 6 };
+  return (
+    <ul className="flex flex-wrap gap-4 mt-2 fs-meta text-dim" aria-label="Log integrity legend">
+      <li><span aria-hidden="true" style={{ ...swatch, background: 'rgb(var(--accent) / 0.65)' }}/>Unreadable entries</li>
+      <li><span aria-hidden="true" style={{ ...swatch, background: 'rgb(var(--crit) / 0.85)' }}/>Day over threshold</li>
+      <li>
+        <span aria-hidden="true" style={{ display: 'inline-block', width: 14, marginRight: 6, verticalAlign: 'middle', borderTop: '2px dashed rgb(var(--warn))' }}/>
+        {PARSE_ERROR_THRESHOLD_LABEL}
+      </li>
+    </ul>
+  );
 }
 
 function ParseErrorChart({ rows }) {
@@ -1959,16 +1994,6 @@ function ParseErrorChart({ rows }) {
           tickLine={false}
           width={36}
         />
-        <YAxis
-          yAxisId="ratio"
-          orientation="right"
-          domain={[0, 100]}
-          tickFormatter={(v) => v.toFixed(0) + '%'}
-          tick={{ fontSize: 12, fill: 'rgb(var(--faint))', fontFamily: 'JetBrains Mono, monospace' }}
-          axisLine={{ stroke: 'rgb(var(--line))' }}
-          tickLine={false}
-          width={42}
-        />
         <Tooltip content={<ParseErrorTooltipC/>} cursor={{ fill: 'rgb(var(--accent) / 0.06)' }}/>
         <Bar yAxisId="count" dataKey="error_count" isAnimationActive={false}>
           {rows.map((r, i) => (
@@ -1976,9 +2001,10 @@ function ParseErrorChart({ rows }) {
           ))}
         </Bar>
         <Line
-          yAxisId="ratio"
+          yAxisId="count"
           type="linear"
-          dataKey="error_ratio_pct"
+          dataKey="threshold_count"
+          name={PARSE_ERROR_THRESHOLD_LABEL}
           stroke="rgb(var(--warn))"
           strokeWidth={1.5}
           strokeDasharray="4 3"
@@ -2002,7 +2028,7 @@ function ParseErrorTooltipC({ active, payload }) {
         Errors {formatIntC(row.error_count)} / total {formatIntC(row.total_count)}
       </div>
       <div style={{ color: 'rgb(var(--dim))' }}>
-        Rate {row.error_ratio_pct.toFixed(2)}%{row.isCrit ? ' · over threshold' : ''}
+        Rate {row.error_ratio_pct.toFixed(2)}% · threshold {formatIntC(Math.ceil(row.threshold_count))}{row.isCrit ? ' · over threshold' : ''}
       </div>
     </div>
   );
