@@ -1959,14 +1959,21 @@ function getParseErrorChartRows(rows) {
 
 const PARSE_ERROR_THRESHOLD_LABEL = `Threshold (${PARSE_ERROR_CRIT_THRESHOLD * 100}% of entries)`;
 
+// Legend ↔ chart share these → the swatches cannot drift from the bars and line
+const PARSE_ERROR_COLOR = {
+  bar: 'rgb(var(--accent) / 0.65)',
+  critBar: 'rgb(var(--crit) / 0.85)',
+  threshold: 'rgb(var(--warn))',
+};
+
 function ParseErrorLegendC() {
-  const swatch = { display: 'inline-block', width: 10, height: 10, borderRadius: 2, marginRight: 6 };
+  const swatchClass = 'inline-block w-2.5 h-2.5 rounded-sm mr-1.5';
   return (
     <ul className="flex flex-wrap gap-4 mt-2 fs-meta text-dim" aria-label="Log integrity legend">
-      <li><span aria-hidden="true" style={{ ...swatch, background: 'rgb(var(--accent) / 0.65)' }}/>Unreadable entries</li>
-      <li><span aria-hidden="true" style={{ ...swatch, background: 'rgb(var(--crit) / 0.85)' }}/>Day over threshold</li>
+      <li><span aria-hidden="true" className={swatchClass} style={{ background: PARSE_ERROR_COLOR.bar }}/>Unreadable entries</li>
+      <li><span aria-hidden="true" className={swatchClass} style={{ background: PARSE_ERROR_COLOR.critBar }}/>Day over threshold</li>
       <li>
-        <span aria-hidden="true" style={{ display: 'inline-block', width: 14, marginRight: 6, verticalAlign: 'middle', borderTop: '2px dashed rgb(var(--warn))' }}/>
+        <span aria-hidden="true" style={{ display: 'inline-block', width: 14, marginRight: 6, verticalAlign: 'middle', borderTop: `2px dashed ${PARSE_ERROR_COLOR.threshold}` }}/>
         {PARSE_ERROR_THRESHOLD_LABEL}
       </li>
     </ul>
@@ -1997,7 +2004,7 @@ function ParseErrorChart({ rows }) {
         <Tooltip content={<ParseErrorTooltipC/>} cursor={{ fill: 'rgb(var(--accent) / 0.06)' }}/>
         <Bar yAxisId="count" dataKey="error_count" isAnimationActive={false}>
           {rows.map((r, i) => (
-            <Cell key={i} fill={r.isCrit ? 'rgb(var(--crit) / 0.85)' : 'rgb(var(--accent) / 0.65)'}/>
+            <Cell key={i} fill={r.isCrit ? PARSE_ERROR_COLOR.critBar : PARSE_ERROR_COLOR.bar}/>
           ))}
         </Bar>
         <Line
@@ -2005,7 +2012,7 @@ function ParseErrorChart({ rows }) {
           type="linear"
           dataKey="threshold_count"
           name={PARSE_ERROR_THRESHOLD_LABEL}
-          stroke="rgb(var(--warn))"
+          stroke={PARSE_ERROR_COLOR.threshold}
           strokeWidth={1.5}
           strokeDasharray="4 3"
           dot={false}
