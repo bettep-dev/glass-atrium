@@ -56,6 +56,14 @@ interface SessionRollup {
   total: number;
 }
 
+interface ModelTokenRow {
+  model: string;
+  input_tokens: number;
+  output_tokens: number;
+  cache_read_tokens: number;
+  cache_creation_tokens: number;
+}
+
 interface CostHelpers {
   window: {
     getTokenRate?: (model: string) => Record<string, number> | null;
@@ -87,6 +95,12 @@ interface CostHelpers {
     sessions: ReadonlyArray<{ session_id: string; total_cost_usd: number }>,
     topN: number,
   ) => SessionRollup;
+  getModelTokenDetail: (row: ModelTokenRow) => string;
+  getSpendConcentration: (
+    sessions: ReadonlyArray<{ session_id: string; total_cost_usd: number }>,
+    topN: number,
+  ) => { count: number; share: number } | null;
+  turnStopReasonMeta: (reason: string | null) => { label: string; raw: string; desc: string };
   getTileStatus: (state: PanelState, value: unknown, isEmpty: boolean) => PanelStatus;
   getTileNote: (status: PanelStatus, unavailableNote: string) => string;
   getFreshnessInputC: (
@@ -111,6 +125,11 @@ interface CostHelpers {
     nowMs: number,
   ) => ReadonlyArray<readonly [string, string]>;
   getTileVerdictTextC: (hot: HotVerdict) => string;
+  getSpendVerdictC: (input: {
+    hot: HotVerdict;
+    latestOutsideBand: boolean;
+    kpiStatus: string;
+  }) => { tone: string; label: string; text: string };
   getStopReasonSessionShare: (sessionCount: number, population: number) => number | null;
   markPartialDay: (rows: ReadonlyArray<{ actual: number }>) => ReadonlyArray<{
     actual: number;
@@ -119,6 +138,21 @@ interface CostHelpers {
     partialCost: number | null;
   }>;
   getUsdAxisFormatter: (maxValue: number) => (value: number) => string;
+  getParseErrorChartRows: (
+    rows: readonly { event_date: string; error_count: number; total_count: number; error_ratio: number }[],
+  ) => { error_count: number; threshold_count: number; isCrit: boolean }[];
+  getCacheGapLabel: (rows: readonly { rate_pct: number | null }[]) => string | null;
+  getTokenAxisFormatter: (maxValue: number) => (value: number) => string;
+  computeTokenShares: (
+    points: readonly Record<string, number>[],
+  ) => ReadonlyArray<{ key: string; label: string; total: number; share: number }> | null;
+  getTokenStackOrder: (
+    shares: ReadonlyArray<{ key: string; total: number }>,
+  ) => ReadonlyArray<{ key: string; total: number }>;
+  getTurnHeadline: (
+    turns: { avg_turns_per_session?: number; turn_session_count?: number },
+    sessionPopulation: number,
+  ) => { value: string | null; note: string };
   getTrendReadout: (
     row: {
       fullDate: string;
@@ -616,8 +650,41 @@ test("the running-hot sentence is stated once — in the lane when it fires, on 
     const hot = { ...CALM, verdict, ...delta };
     const laneTexts = [...cost.computeAlarmRows({ hot, latestOutsideBand: outsideBand, parseError: { crit: 0, total: 9 } })]
       .map((r) => r.text);
+    const pageVerdict = cost.getSpendVerdictC({ hot, latestOutsideBand: outsideBand, kpiStatus: "ready" }).text;
+    assert.ok(!pageVerdict.includes(verdict), `${name}: the page verdict names the state, never the figures`);
     const places = [...laneTexts, cost.getTileVerdictTextC(hot)].filter((t) => t.includes(verdict)).length;
     assert.equal(places, 1, name);
+  }
+});
+
+test("the page verdict carries the lane's hot tone when it fires, and reads on pace when nothing fires", () => {
+  const cases: ReadonlyArray<readonly [string, Partial<HotVerdict>, boolean]> = [
+    ["calm", {}, false],
+    ["so-far ratio", { isHot: true }, false],
+    ["pace only", { isPaceHot: true }, false],
+    ["outlier day only", {}, true],
+    ["so-far and pace", { isHot: true, isPaceHot: true }, true],
+  ];
+  for (const [name, delta, outsideBand] of cases) {
+    const hot = { ...CALM, ...delta };
+    const hotRow = [...cost.computeAlarmRows({ hot, latestOutsideBand: outsideBand, parseError: { crit: 0, total: 9 } })]
+      .find((r) => r.key === "hot");
+    const verdict = cost.getSpendVerdictC({ hot, latestOutsideBand: outsideBand, kpiStatus: "ready" });
+    assert.equal(verdict.tone, hotRow ? hotRow.tone : "ok", name);
+    assert.equal(verdict.label, hotRow ? "Above normal" : "On pace", name);
+  }
+});
+
+test("the page verdict claims no spend state without a measured normal", () => {
+  const rows: ReadonlyArray<{ name: string; hot: HotVerdict; kpiStatus: string }> = [
+    { name: "kpi still loading", hot: CALM, kpiStatus: "loading" },
+    { name: "kpi failed", hot: { ...CALM, isHot: true }, kpiStatus: "error" },
+    { name: "no 7-day normal", hot: { ...CALM, ratio: null, normalDaily: null }, kpiStatus: "ready" },
+  ];
+  for (const row of rows) {
+    const verdict = cost.getSpendVerdictC({ hot: row.hot, latestOutsideBand: true, kpiStatus: row.kpiStatus });
+    assert.equal(verdict.tone, "neutral", row.name);
+    assert.ok(verdict.text.length > 0, `${row.name}: the line still says why there is no verdict`);
   }
 });
 
@@ -696,4 +763,148 @@ test("the focus readout marks today's point as so far, never as a finished day",
   const today = { fullDate: "Sep 25", actual: 2, isPartial: true, rollingMean: null, lowerBand: null, upperBand: null };
   assert.match(cost.getTrendReadout(today, false), /Sep 25 so far/);
   assert.doesNotMatch(cost.getTrendReadout({ ...today, isPartial: false }, false), /so far/);
+});
+
+test("an expanded model detail line names the model it belongs to", () => {
+  const tokens = { input_tokens: 1_190_000, output_tokens: 5_840_000, cache_read_tokens: 9e8, cache_creation_tokens: 2e7 };
+  const models = ["opus 5", "fable 5.1", "Unattributed"];
+  const lines = models.map((model) => cost.getModelTokenDetail({ model, ...tokens }));
+  models.forEach((model, i) => assert.ok(lines[i].startsWith(model), lines[i]));
+  assert.strictEqual(new Set(lines).size, models.length);
+});
+
+test("the spend headline names the fewest top sessions holding half of spend, capped at the shown rows", () => {
+  const toSessions = (costs: readonly number[]) =>
+    costs.map((c, i) => ({ session_id: `s${i}`, total_cost_usd: c }));
+  const rows = [
+    { name: "two sessions reach half", costs: [30, 10, 40, 10, 5, 5] },
+    { name: "one session dominates", costs: [10, 80, 10] },
+    { name: "flat spend never reaches half inside the cap", costs: Array.from({ length: 20 }, () => 1) },
+  ];
+  const topN = 5;
+  for (const { name, costs } of rows) {
+    const got = cost.getSpendConcentration(toSessions(costs), topN);
+    assert.ok(got, name);
+    const sorted = costs.slice().sort((a, b) => b - a);
+    const total = costs.reduce((s, c) => s + c, 0);
+    const sumOf = (k: number) => sorted.slice(0, k).reduce((s, c) => s + c, 0);
+    assert.ok(Math.abs(got.share - sumOf(got.count) / total) < 1e-9, name);
+    assert.ok(got.count === topN || got.share >= 0.5, name);
+    assert.ok(got.count === 1 || sumOf(got.count - 1) / total < 0.5, name);
+  }
+  assert.strictEqual(cost.getSpendConcentration(toSessions([0, 0]), topN), null);
+});
+
+test("stop reasons read as plain words, with the raw id kept as the secondary label", () => {
+  for (const reason of ["no_assistant_in_turn", "end_turn", "tool_use", "unknown", "max_tokens"]) {
+    const meta = cost.turnStopReasonMeta(reason);
+    assert.strictEqual(meta.raw, reason);
+    if (reason !== "max_tokens") assert.doesNotMatch(meta.label, /_|^unknown$/, reason);
+  }
+});
+
+test("a log-integrity bar reads as over threshold exactly when it rises above the threshold line on the same count axis", () => {
+  const rows = [
+    { event_date: "2026-09-01", error_count: 6, total_count: 100 },
+    { event_date: "2026-09-02", error_count: 5, total_count: 100 },
+    { event_date: "2026-09-03", error_count: 0, total_count: 40 },
+    { event_date: "2026-09-04", error_count: 3, total_count: 20 },
+    { event_date: "2026-09-05", error_count: 0, total_count: 0 },
+  ].map((r) => ({ ...r, error_ratio: r.total_count > 0 ? r.error_count / r.total_count : 0 }));
+  const chartRows = cost.getParseErrorChartRows(rows);
+  assert.strictEqual(chartRows.length, rows.length);
+  chartRows.forEach((r, i) => {
+    assert.strictEqual(r.isCrit, r.error_count > r.threshold_count, rows[i].event_date);
+  });
+  assert.ok(chartRows.some((r) => r.isCrit) && chartRows.some((r) => !r.isCrit));
+});
+
+test("the hit-rate strip names its no-data days, and says nothing when every day has a rate", () => {
+  const rows = [
+    { name: "no gaps", rates: [98.1, 97.5, 99.0], gaps: 0 },
+    { name: "one gap", rates: [98.1, null, 99.0], gaps: 1 },
+    { name: "all gaps", rates: [null, null], gaps: 2 },
+  ];
+  for (const { name, rates, gaps } of rows) {
+    const label = cost.getCacheGapLabel(rates.map((rate_pct) => ({ rate_pct })));
+    if (gaps === 0) {
+      assert.strictEqual(label, null, name);
+      continue;
+    }
+    assert.ok(label, name);
+    assert.match(label, new RegExp(`^${gaps} of ${rates.length} days? no data$`), name);
+  }
+});
+
+const TOKEN_UNIT: Record<string, number> = { "": 1, K: 1e3, M: 1e6, B: 1e9, T: 1e12 };
+
+test("every tick on one token axis carries one unit, fits the axis, and reads back as its own value", () => {
+  // Recharts rounds its top tick up past the data max, so each row's ticks reach beyond it.
+  const axes = [
+    { name: "hundreds of millions", max: 8.7e8, ticks: [0, 2.5e8, 5e8, 7.5e8, 1e9] },
+    { name: "tens of billions", max: 3.6e10, ticks: [0, 1e10, 2e10, 3e10, 4e10] },
+    { name: "a single-digit lead needs one decimal", max: 1.5e9, ticks: [0, 4e8, 8e8, 1.2e9, 1.6e9] },
+    { name: "thousands", max: 8000, ticks: [0, 2500, 5000, 7500, 10000] },
+    { name: "below a thousand", max: 60, ticks: [0, 15, 30, 45, 60] },
+  ];
+  for (const { name, max, ticks } of axes) {
+    const format = cost.getTokenAxisFormatter(max);
+    const labels = ticks.map((t) => format(t));
+    const suffixes = new Set(labels.filter((l) => l !== "0").map((l) => l.replace(/[\d.]/g, "")));
+    assert.strictEqual(suffixes.size, 1, `${name}: ${labels.join(" ")}`);
+    labels.forEach((label, i) => {
+      // the 48px axis at 12px mono holds five characters
+      assert.ok(label.length <= 5, `${name}: ${label}`);
+      const digits = label.replace(/[^\d.]/g, "");
+      const unit = TOKEN_UNIT[label.replace(/[\d.]/g, "")]!;
+      const step = unit * 10 ** -((digits.split(".")[1] ?? "").length);
+      assert.ok(Math.abs(Number(digits) * unit - ticks[i]!) <= step / 2, `${name}: ${label} vs ${ticks[i]}`);
+    });
+  }
+});
+
+test("token shares split the window total by category and sum to the whole", () => {
+  const points = [
+    { input_tokens: 1_000, output_tokens: 5_000, cache_read_tokens: 900_000, cache_creation_tokens: 20_000 },
+    { input_tokens: 3_000, output_tokens: 1_000, cache_read_tokens: 700_000, cache_creation_tokens: 0 },
+  ];
+  const shares = cost.computeTokenShares(points);
+  assert.ok(shares);
+  const total = points.reduce((s, p) => s + Object.values(p).reduce((a, b) => a + b, 0), 0);
+  for (const row of shares) {
+    const expected = points.reduce((s, p) => s + (p[row.key as keyof typeof p] ?? 0), 0);
+    assert.strictEqual(row.total, expected, row.key);
+    assert.ok(Math.abs(row.share - expected / total) < 1e-12, row.key);
+  }
+  assert.ok(Math.abs(shares.reduce((s, r) => s + r.share, 0) - 1) < 1e-12);
+  assert.strictEqual(cost.computeTokenShares([{ input_tokens: 0, output_tokens: 0 }]), null, "a zero window has no share");
+});
+
+test("the stack draws the largest category last, so the top edge carries that series' own stroke", () => {
+  const rows = [
+    { name: "cache read dominates", totals: { cache_creation_tokens: 2e7, cache_read_tokens: 9e8, input_tokens: 1e6, output_tokens: 6e6 } },
+    { name: "output dominates", totals: { cache_creation_tokens: 10, cache_read_tokens: 20, input_tokens: 30, output_tokens: 400 } },
+  ];
+  for (const { name, totals } of rows) {
+    const shares = Object.entries(totals).map(([key, total]) => ({ key, total }));
+    const order = [...cost.getTokenStackOrder(shares)];
+    assert.deepStrictEqual(order.map((r) => r.key).sort(), Object.keys(totals).sort(), name);
+    order.slice(1).forEach((r, i) => assert.ok(r.total >= order[i]!.total, `${name}: ${order.map((o) => o.key).join(" ")}`));
+  }
+});
+
+test("the turn headline states one per-session figure and reconciles its session count with the population", () => {
+  const rows = [
+    { name: "fewer sessions logged a turn count", counted: 257, population: 582 },
+    { name: "every session logged a turn count", counted: 582, population: 582 },
+  ];
+  for (const { name, counted, population } of rows) {
+    const { value, note } = cost.getTurnHeadline({ avg_turns_per_session: 91.25, turn_session_count: counted }, population);
+    assert.strictEqual(value, "91.3", name);
+    const numbers = note.match(/\d+/g) ?? [];
+    assert.deepStrictEqual([...new Set(numbers)].sort(), [...new Set([String(counted), String(population)])].sort(), `${name}: ${note}`);
+    assert.strictEqual(numbers.length, new Set(numbers).size, `${name}: each count stated once — ${note}`);
+  }
+  const none = cost.getTurnHeadline({ avg_turns_per_session: 0, turn_session_count: 0 }, 40);
+  assert.strictEqual(none.value, null, "no counted session has no average");
 });

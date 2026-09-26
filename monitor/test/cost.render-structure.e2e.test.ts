@@ -22,7 +22,7 @@ const HERE = dirname(fileURLToPath(import.meta.url));
 const PUBLIC_ROOT = resolve(HERE, "..", "public");
 
 // The screen's own tier order, as the target composition states it: four KPI tiles, then the
-// three decision cards, then the three instrumentation disclosures.
+// three decision cards, then the three instrumentation status cards.
 const DECISION_CARD_TITLES = ["Cost over time", "Cost by model", "Most expensive sessions"];
 const DISCLOSURE_TITLES = ["Token volume", "Turn statistics", "Log integrity"];
 const KPI_TILE_COUNT = 4;
@@ -121,9 +121,19 @@ async function openRenderContext(fixture: CostFixture): Promise<RenderContext> {
       total_count: 100,
     })),
   }));
+  // Every stop reason with its described label → the table at its widest real content.
   app.get("/api/cost/turn-stats", async () => ({
-    stop_reasons: [{ stop_reason: "end_turn", event_count: 40 }],
-    turns: { total_turns: 40, avg_turns: 4 },
+    stop_reasons: [
+      { stop_reason: "no_assistant_in_turn", event_count: 12840, session_count: 412 },
+      { stop_reason: "end_turn", event_count: 9310, session_count: 560 },
+      { stop_reason: "tool_use", event_count: 1204, session_count: 188 },
+      { stop_reason: "unknown", event_count: 96, session_count: 31 },
+    ],
+    stop_reason_session_count: 582,
+    turns: {
+      total_turns: 23450, avg_turns: 4, max_turns: 212,
+      avg_turns_per_session: 91.25, turn_session_count: 257,
+    },
   }));
   // The app shell polls endpoints this screen does not own; an empty payload keeps those
   // panels quiet instead of letting a 404 banner enter the structure under test.
@@ -178,12 +188,15 @@ async function closeRenderContext(ctx: RenderContext | undefined): Promise<void>
   await ctx?.app?.close();
 }
 
+// Plain card titles + Disclosure header titles — coupled to the Disclosure atom's markup (ui.jsx)
+const CARD_TITLE_SELECTOR = ".cost-screen .card-title, .cost-screen .cost-inst > h3 .font-medium";
+
 // Card titles in document order — the screen's rendered tier sequence.
 function getCardTitles(page: Page): Promise<string[]> {
-  return page.evaluate(() =>
-    Array.from(document.querySelectorAll(".cost-screen .card-title")).map((el) =>
-      (el.textContent || "").trim(),
-    ),
+  return page.evaluate(
+    (selector) =>
+      Array.from(document.querySelectorAll(selector)).map((el) => (el.textContent || "").trim()),
+    CARD_TITLE_SELECTOR,
   );
 }
 
@@ -193,14 +206,13 @@ function countAlarmRows(page: Page): Promise<number> {
   );
 }
 
-// Chart roots in the decision tier. A closed <details> keeps its children in the DOM and
-// chromium still reports layout boxes for them, so the tier boundary — not visibility — is
-// what separates the one decision chart from the instrumentation charts.
+// Chart roots in the decision tier. The instrumentation cards render open, so the tier
+// boundary is what separates the one decision chart from the instrumentation charts.
 function countDecisionChartRoots(page: Page): Promise<number> {
   return page.evaluate(
     () =>
       Array.from(document.querySelectorAll(".cost-screen .recharts-wrapper")).filter(
-        (el) => el.closest("details.cost-disc") === null,
+        (el) => el.closest(".cost-inst") === null,
       ).length,
   );
 }
@@ -236,11 +248,11 @@ describe("calm fixture — nothing is running hot", () => {
     );
   });
 
-  test("the instrumentation tier is three disclosures, all closed", async () => {
+  test("the instrumentation tier is three status cards, all open", async () => {
     const discs = await ctx.page.evaluate(() =>
-      Array.from(document.querySelectorAll(".cost-screen details.cost-disc")).map((el) => ({
-        open: (el as HTMLDetailsElement).open,
-        title: (el.querySelector(".card-title")?.textContent || "").trim(),
+      Array.from(document.querySelectorAll(".cost-screen .cost-inst")).map((el) => ({
+        open: el.querySelector("h3 [aria-expanded]")?.getAttribute("aria-expanded") === "true",
+        title: (el.querySelector("h3 .font-medium")?.textContent || "").trim(),
       })),
     );
     assert.deepStrictEqual(
@@ -249,8 +261,8 @@ describe("calm fixture — nothing is running hot", () => {
     );
     assert.deepStrictEqual(
       discs.map((d) => d.open),
-      discs.map(() => false),
-      "instrumentation is a rare read — every disclosure starts closed",
+      discs.map(() => true),
+      "instrumentation is a status summary — every card starts open",
     );
   });
 
@@ -258,13 +270,13 @@ describe("calm fixture — nothing is running hot", () => {
     assert.equal(await countAlarmRows(ctx.page), 0);
     const laneHeight = await ctx.page.evaluate(() => {
       const header = document.querySelector(".cost-screen .flex-shrink-0");
-      const firstTile = document.querySelector(".cost-screen .kpi");
-      if (header === null || firstTile === null) return -1;
-      return firstTile.getBoundingClientRect().top - header.getBoundingClientRect().bottom;
+      const verdict = document.querySelector(".cost-screen .page-verdict");
+      if (header === null || verdict === null) return -1;
+      return verdict.getBoundingClientRect().top - header.getBoundingClientRect().bottom;
     });
     assert.ok(
       laneHeight >= 0 && laneHeight < 24,
-      `a calm lane must cost no vertical band; measured ${laneHeight}px between header and tiles`,
+      `a calm lane must cost no vertical band; measured ${laneHeight}px between header and verdict`,
     );
   });
 
@@ -288,10 +300,79 @@ describe("calm fixture — nothing is running hot", () => {
     const strayRoots = await ctx.page.evaluate(
       () =>
         Array.from(document.querySelectorAll(".cost-screen .recharts-wrapper")).filter(
-          (el) => el.closest("details.cost-disc") === null && el.closest(".card") === null,
+          (el) => el.closest(".card") === null,
         ).length,
     );
-    assert.equal(strayRoots, 0, "every chart lives in a card or a disclosure");
+    assert.equal(strayRoots, 0, "every chart lives in a card");
+  });
+
+  test("one verdict line precedes the tiles, and every tile carries its window tag", async () => {
+    const shape = await ctx.page.evaluate(() => {
+      const verdicts = document.querySelectorAll(".cost-screen .page-verdict");
+      const firstTile = document.querySelector(".cost-screen .kpi");
+      const tags = Array.from(document.querySelectorAll(".cost-screen .kpi")).map((tile) =>
+        Array.from(tile.querySelectorAll(".kpi-window")).map((t) => (t.textContent || "").trim()),
+      );
+      const leads = verdicts.length === 1 && firstTile !== null
+        && Boolean(verdicts[0]!.compareDocumentPosition(firstTile) & Node.DOCUMENT_POSITION_FOLLOWING);
+      return { count: verdicts.length, leads, tags };
+    });
+    assert.equal(shape.count, 1, "one spend verdict per page");
+    assert.equal(shape.leads, true, "the verdict reads before the tiles");
+    assert.equal(shape.tags.length, KPI_TILE_COUNT);
+    for (const tags of shape.tags) {
+      assert.equal(tags.length, 1, "each tile names its window exactly once");
+      assert.ok(tags[0]!.length > 0, "a window tag is never blank");
+    }
+  });
+
+  test("paired cards sit side by side at xl and stack below it", async () => {
+    const pairs = [
+      ["Cost by model", "Most expensive sessions"],
+      ["Turn statistics", "Log integrity"],
+    ] as const;
+    const measure = () =>
+      ctx.page.evaluate(({ names, selector }) => {
+        const titleEls = Array.from(document.querySelectorAll(selector));
+        // no named inner function — the tsx transform wraps one in a helper the page does not define
+        const tops = new Map(
+          titleEls.map((t) => [(t.textContent || "").trim(), t.closest(".card")?.getBoundingClientRect().top]),
+        );
+        return names.map(([left, right]) => (tops.get(right) ?? Number.NaN) - (tops.get(left) ?? Number.NaN));
+      }, { names: pairs.map((p) => [...p]), selector: CARD_TITLE_SELECTOR });
+    try {
+      for (const [i, gap] of (await measure()).entries()) {
+        assert.ok(Math.abs(gap) < 1, `${pairs[i]!.join(" | ")} share one row at 1440; top gap ${gap}px`);
+      }
+      await ctx.page.setViewportSize({ width: 1024, height: 768 });
+      for (const [i, gap] of (await measure()).entries()) {
+        assert.ok(gap > 0, `${pairs[i]!.join(" | ")} stack at 1024; top gap ${gap}px`);
+      }
+    } finally {
+      await ctx.page.setViewportSize({ width: 1440, height: 900 });
+    }
+  });
+
+  test("no card content reaches past its own card's edges at xl", async () => {
+    const measureOverflow = () =>
+      ctx.page.evaluate(() =>
+        Array.from(document.querySelectorAll(".cost-screen .card")).flatMap((card) => {
+          const box = card.getBoundingClientRect();
+          return Array.from(card.querySelectorAll("*"))
+            .map((el) => ({ el, r: el.getBoundingClientRect() }))
+            .filter(({ r }) => r.width > 0 && (r.right > box.right + 1 || r.left < box.left - 1))
+            .map(({ el, r }) => `${el.tagName.toLowerCase()} [${Math.round(r.left)}, ${Math.round(r.right)}] outside card [${Math.round(box.left)}, ${Math.round(box.right)}]`);
+        }),
+      );
+    try {
+      for (const width of [1440, 1280]) {
+        await ctx.page.setViewportSize({ width, height: 900 });
+        const overflow = await measureOverflow();
+        assert.deepStrictEqual(overflow, [], `at ${width}: ${overflow.slice(0, 3).join(" · ")}`);
+      }
+    } finally {
+      await ctx.page.setViewportSize({ width: 1440, height: 900 });
+    }
   });
 });
 
