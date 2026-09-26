@@ -498,6 +498,13 @@ function ScreenOutcomes({ onNav }) {
     setIncludeAll(false);
   }, []);
 
+  // one filter-axis patch — a removed keyword chip also empties the inline search box
+  const patchFilter = useCallbackO((patch) => {
+    setFilter((prev) => ({ ...prev, ...patch }));
+    if (patch.q === '') setKeywordInput('');
+    setPage(0);
+  }, []);
+
   // 탐색기 fetch — filter / sort / page / refresh 변경 시 재실행.
   useEffectO(() => {
     const { putRegionRequest, putRegionData } = window.UI;
@@ -673,42 +680,33 @@ function ScreenOutcomes({ onNav }) {
         onRetry={regionRetry}
       />
 
-      {/* page scroll only — no inner scroller; minmax(0, 1fr) keeps the ledger inside the page at 1024 */}
-      <div
-        className="grid gap-4 mt-4"
-        style={{
-          gridTemplateColumns: 'clamp(208px, 22vw, 280px) minmax(0, 1fr)',
-          alignItems: 'start',
-        }}>
-        <FilterSidebar
-          filter={filter}
-          keywordInput={keywordInput}
-          distinctAgents={distinctAgents}
-          includeAll={includeAll}
-          sort={sort}
-          onPatchFilter={(patch) => { setFilter((p) => ({ ...p, ...patch })); setPage(0); }}
-          onKeywordChange={setKeywordInput}
-          onToggleIncludeAll={(v) => { setIncludeAll(v); setPage(0); }}
-          onSortChange={(v) => { setSort(v); setPage(0); }}
-          onReset={resetFilter}
-        />
-        <ResultTableCard
-          state={searchState}
-          rows={rows}
-          totalMatched={totalMatched}
-          page={page}
-          limit={PAGE_LIMIT_DEFAULT}
-          sort={sort}
-          filter={filter}
-          onPageChange={setPage}
-          onSortChange={(v) => { setSort(v); setPage(0); }}
-          onResetFilter={resetFilter}
-          onRowClick={setDetailRow}
-          onRetry={regionRetry}
-          needsYou={ledgerNeedsYou}
-          needsYouCap={needsYouCap}
-          onToggleNeedsYou={() => setNeedsYouExpanded((isExpanded) => !isExpanded)}
-          closure={{ pendingIds: closureState.pendingIds, closedOverrides: closureState.closedOverrides, onMarkClosed: markClosedO }}
+      {/* page scroll only — no inner scroller; the filters sit behind the Results head button, so the ledger takes the full width */}
+      <div className="mt-4">
+      <ResultTableCard
+        state={searchState}
+        rows={rows}
+        totalMatched={totalMatched}
+        page={page}
+        limit={PAGE_LIMIT_DEFAULT}
+        sort={sort}
+        filter={filter}
+        onPageChange={setPage}
+        onSortChange={(v) => { setSort(v); setPage(0); }}
+        onResetFilter={resetFilter}
+        filterControls={{
+          keywordInput,
+          distinctAgents,
+          includeAll,
+          onPatchFilter: patchFilter,
+          onKeywordChange: setKeywordInput,
+          onToggleIncludeAll: (v) => { setIncludeAll(v); setPage(0); },
+        }}
+        onRowClick={setDetailRow}
+        onRetry={regionRetry}
+        needsYou={ledgerNeedsYou}
+        needsYouCap={needsYouCap}
+        onToggleNeedsYou={() => setNeedsYouExpanded((isExpanded) => !isExpanded)}
+        closure={{ pendingIds: closureState.pendingIds, closedOverrides: closureState.closedOverrides, onMarkClosed: markClosedO }}
         />
       </div>
 
@@ -1960,10 +1958,10 @@ function LoopEventsBody({ state, onRetry }) {
   );
 }
 
-// ----- Panel 1: Filter sidebar -----------------------------------------------
+// ----- Panel 1: Filters popover ----------------------------------------------
 
 // 칩 축 driver — label, axis key (filter prop), 옵션 목록을 1행 1축으로 표현.
-// 상시 노출 축 — Agent · Keyword 와 합쳐 5 그룹. 나머지는 'More filters' 뒤로 접힌다 (period 는 헤더가 소유).
+// 상시 노출 축 — Agent 와 함께 팝오버 상단. 나머지는 'More filters' 뒤로 접힌다 (period 는 헤더, keyword 는 Results 헤드가 소유).
 const CHIP_FILTER_AXES = [
   { axis: 'result',      label: 'Result',      options: RESULT_OPTIONS      },
   { axis: 'review_flag', label: 'Flagged',     options: REVIEW_FLAG_OPTIONS },
@@ -1978,29 +1976,13 @@ const MORE_FILTER_AXES = [
 
 const FILTER_AXES_O = [...CHIP_FILTER_AXES, ...MORE_FILTER_AXES];
 
-const FILTER_COLUMN_STYLE_O = { position: 'sticky', top: 16, maxHeight: 'calc(100vh - 32px)', overflowY: 'auto' };
-
-function FilterSidebar({
-  filter, keywordInput, distinctAgents, includeAll, sort,
-  onPatchFilter, onKeywordChange, onToggleIncludeAll, onSortChange, onReset,
+// Filters popover body — every axis but period (header) and keyword (inline in the Results head).
+function FilterPanelO({
+  filter, distinctAgents, includeAll, sort,
+  onPatchFilter, onToggleIncludeAll, onSortChange, onReset,
 }) {
-  const { CardHead, Badge } = window.UI;
-
-  // 활성 facet 카운트 + 'N of M' 카운터 (T-OUT-3) — 몇 축이 좁혀졌는지 한눈에.
-  const activeCount = countActiveFacetsO(filter);
-
   return (
-    <div className="card" style={FILTER_COLUMN_STYLE_O}>
-      <CardHead
-        title="Filters"
-        sub=""
-        right={
-          activeCount > 0
-            ? <Badge role="count">{activeCount} active</Badge>
-            : null
-        }
-      />
-      <div className="card-body" style={{ padding: 12 }}>
+    <div>
         <FilterAxisGroup label="Agent">
           <select
             className="field field-select"
@@ -2024,17 +2006,6 @@ function FilterSidebar({
             />
           </FilterAxisGroup>
         ))}
-
-        <FilterAxisGroup label="Keyword">
-          <input
-            type="search"
-            className="field"
-            placeholder="summary / lesson / concerns…"
-            value={keywordInput}
-            onChange={(e) => onKeywordChange(e.target.value)}
-            aria-label="Keyword search"
-          />
-        </FilterAxisGroup>
 
         <details className="mb-3">
           <summary className="fs-meta text-faint uppercase tracking-wider cursor-pointer select-none mb-1.5">
@@ -2085,7 +2056,6 @@ function FilterSidebar({
             Reset filters
           </button>
         </div>
-      </div>
     </div>
   );
 }
@@ -2128,8 +2098,11 @@ function getFilterChipValueO(key) {
 function ResultTableCard({
   state, rows, totalMatched, page, limit, sort, filter,
   onPageChange, onSortChange, onResetFilter, onRowClick, onRetry, closure, needsYou, needsYouCap, onToggleNeedsYou,
+  filterControls = {},
 }) {
-  const { CardHead, Pill } = window.UI;
+  const { CardHead, Popover } = window.UI;
+  const { keywordInput = '', distinctAgents = [], includeAll = false, onPatchFilter, onKeywordChange, onToggleIncludeAll } = filterControls;
+  const activeCount = countActiveFacetsO(filter);
 
   const totalPages = Math.max(1, Math.ceil(totalMatched / limit));
   const currentPage = page + 1;
@@ -2143,10 +2116,31 @@ function ResultTableCard({
           : state.status === 'loading' ? 'Loading…' : 'Records unavailable'}
         right={
           <div className="flex items-center gap-2">
-            <ActiveFilterChips filter={filter}/>
+            <input
+              type="search"
+              className="field"
+              style={{ width: 'clamp(140px, 18vw, 240px)' }}
+              placeholder="Search summary / lesson / concerns…"
+              value={keywordInput}
+              onChange={(e) => onKeywordChange(e.target.value)}
+              aria-label="Keyword search"
+            />
+            <Popover label={activeCount > 0 ? `Filters · ${activeCount}` : 'Filters'} title="Filters">
+              <FilterPanelO
+                filter={filter}
+                distinctAgents={distinctAgents}
+                includeAll={includeAll}
+                sort={sort}
+                onPatchFilter={onPatchFilter}
+                onToggleIncludeAll={onToggleIncludeAll}
+                onSortChange={onSortChange}
+                onReset={onResetFilter}
+              />
+            </Popover>
           </div>
         }
       />
+      <ActiveFilterChips filter={filter} onRemove={onPatchFilter} onClearAll={onResetFilter}/>
       <div className="card-body" style={{ padding: 0 }}>
         <ResultTableBody
           state={state}
@@ -2193,14 +2187,19 @@ function ResultTableCard({
 // 활성 필터 → 'Axis: value' 칩 라벨 배열 (헤더 칩 + 빈-상태 echo 공용). 기본값 축은 생략.
 //   축·값 이름 = 사이드바 컨트롤 라벨 SoT → 칩과 ledger 셀이 같은 값을 같은 이름으로 부른다.
 function buildActiveFilterChipsO(filter) {
-  const chips = [];
-  if (filter.days && filter.days !== 30) chips.push(`Period: ${filter.days}d`);
-  if (filter.agent) chips.push(`Agent: ${window.UI.getAgentDisplayName(filter.agent)}`);
+  return buildActiveFilterEntriesO(filter).map((entry) => entry.label);
+}
+
+// patch = clears that one axis · null = not removable here (period belongs to the page header)
+function buildActiveFilterEntriesO(filter) {
+  const entries = [];
+  if (filter.days && filter.days !== 30) entries.push({ key: 'days', label: `Period: ${filter.days}d`, patch: null });
+  if (filter.agent) entries.push({ key: 'agent', label: `Agent: ${window.UI.getAgentDisplayName(filter.agent)}`, patch: { agent: '' } });
   for (const { axis, label, options } of FILTER_AXES_O) {
-    if (filter[axis]) chips.push(`${label}: ${getOptionLabelO(options, filter[axis])}`);
+    if (filter[axis]) entries.push({ key: axis, label: `${label}: ${getOptionLabelO(options, filter[axis])}`, patch: { [axis]: '' } });
   }
-  if (filter.q) chips.push(`Keyword: "${truncateO(filter.q, 18)}"`);
-  return chips;
+  if (filter.q) entries.push({ key: 'q', label: `Keyword: "${truncateO(filter.q, 18)}"`, patch: { q: '' } });
+  return entries;
 }
 
 function getOptionLabelO(options, value) {
@@ -2220,13 +2219,29 @@ function FilterChipsO({ chips }) {
   return <>{chips.map((c) => <Badge key={c} role="metadata">{c}</Badge>)}</>;
 }
 
-function ActiveFilterChips({ filter }) {
-  const chips = buildActiveFilterChipsO(filter);
-  if (chips.length === 0) return null;
+// Active filters under the Results head — one remove button per chip, plus Clear all.
+function ActiveFilterChips({ filter, onRemove, onClearAll }) {
+  const { Badge } = window.UI;
+  const entries = buildActiveFilterEntriesO(filter);
+  if (entries.length === 0) return null;
 
   return (
-    <div className="flex items-center gap-1 flex-wrap">
-      <FilterChipsO chips={chips}/>
+    <div className="flex items-center gap-1 flex-wrap px-4 py-2 border-b border-line">
+      {entries.map((entry) => (entry.patch === null
+        ? <Badge key={entry.key} role="metadata">{entry.label}</Badge>
+        : (
+          <button
+            key={entry.key}
+            type="button"
+            className="btn ghost sm"
+            aria-label={`Remove filter ${entry.label}`}
+            onClick={() => onRemove(entry.patch)}>
+            {entry.label}<span aria-hidden="true"> ×</span>
+          </button>
+        )))}
+      <button type="button" className="btn ghost sm" aria-label="Clear all filters" onClick={onClearAll}>
+        Clear all
+      </button>
     </div>
   );
 }
@@ -2530,13 +2545,14 @@ function ResultTableRow({ row, onRowClick, closure, focusProps }) {
   const resultColor = `rgb(var(${resultColorVarO(row.result, closedAt)}))`;
   const isClosing   = closure?.pendingIds.has(row.id) === true;
   const canClose    = row.result === 'done_with_concerns' && !closedAt && typeof closure?.onMarkClosed === 'function';
+  const needsYouReason = getNeedsYouReasonO(row, closedAt);
 
   return (
     <tr
       className="outcome-row cursor-pointer"
       onClick={() => onRowClick(row)}
       {...focusProps}
-      aria-label={`${row.agent} ${row.task_type} ${resultMeta.label} ${row.summary || ''}`}>
+      aria-label={[row.agent, row.task_type, resultMeta.label, needsYouReason, row.summary].filter(Boolean).join(' ')}>
       <td className="text-left text-ink font-mono px-2 py-1.5 border-b border-line whitespace-nowrap">
         {ts}
       </td>
@@ -2577,11 +2593,24 @@ function ResultTableRow({ row, onRowClick, closure, focusProps }) {
       <td className="text-left text-ink px-2 py-1.5 border-b border-line" style={{ width: '100%', maxWidth: 0 }} title={summary}>
         <div className="flex items-center">
           <SummaryFlagSlotO row={row}/>
+          {needsYouReason && (
+            <window.UI.Badge role="metadata" className="shrink-0 whitespace-nowrap mr-1.5">{needsYouReason}</window.UI.Badge>
+          )}
           <span className="truncate" style={{ minWidth: 0 }}>{summary}</span>
         </div>
       </td>
     </tr>
   );
+}
+
+// Why a needs-you row needs you, in words — null for a broken row (its Result cell says it) and for routine rows.
+function getNeedsYouReasonO(row, closedAt) {
+  if (row.review_flag === true) {
+    const [first, ...rest] = window.UI.reviewFlagReasons(row);
+    return `flagged: ${first.label.toLowerCase()}${rest.length > 0 ? ` +${rest.length}` : ''}`;
+  }
+  if (row.result === 'done_with_concerns' && !closedAt) return 'caveat open';
+  return null;
 }
 
 // 요약 셀 선두 플래그 집계 — review 사유/격리/budget-kill 을 tone 하나로 접는다.

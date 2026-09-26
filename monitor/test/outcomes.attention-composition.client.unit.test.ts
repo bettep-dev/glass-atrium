@@ -93,7 +93,10 @@ interface OutcomesHelpers {
   getChannelLivenessBadgeO: (state: PayloadState<{ alerting?: string[]; days?: number }>) => { tone: string; text: string };
   AgentFailureBodyO: (props: { state: PayloadState<unknown>; onRetry: () => void; stickyStyle?: unknown }) => RenderNode;
   buildActiveFilterChipsO: (filter: Record<string, unknown>) => string[];
-  window: { UI: { getAgentDisplayName: (name: string) => string } };
+  buildActiveFilterEntriesO: (filter: Record<string, unknown>) => { key: string; label: string; patch: Record<string, string> | null }[];
+  ActiveFilterChips: (props: { filter: Record<string, unknown>; onRemove?: (patch: Record<string, string>) => void; onClearAll?: () => void }) => RenderNode | null;
+  getNeedsYouReasonO: (row: LedgerRow & { review_flag_reasons?: string[] }, closedAt: string | null) => string | null;
+  window: { UI: { getAgentDisplayName: (name: string) => string; Popover: unknown } };
 }
 
 interface RenderNode {
@@ -829,4 +832,86 @@ test("AttributionLegend: an empty day's two meanings are labelled — no records
   const text = collectText(flattenNodes(view.AttributionLegend()));
   assert.match(text, /No records/);
   assert.match(text, /Not read/);
+});
+
+// --- Filters popover: the ledger's filters sit behind one head button; each active filter is one removable chip ---
+
+const FULL_FILTER = { days: 7, agent: LEDGER_AGENT, result: "fail", task_type: "feature", q: "phase" };
+const pressButton = (node: RenderNode) => (node.props!.onClick as () => void)();
+
+test("filter chips: removing one chip clears its own axis and leaves every other chip in place", () => {
+  const entries = helpers.buildActiveFilterEntriesO(FULL_FILTER);
+  const removable = entries.filter((entry) => entry.patch !== null);
+  assert.strictEqual(removable.length, 4, "agent, result, task type and keyword are removable");
+  for (const entry of removable) {
+    const remaining = helpers.buildActiveFilterChipsO({ ...FULL_FILTER, ...entry.patch });
+    const expected = entries.map((e) => e.label).filter((label) => label !== entry.label);
+    assert.deepEqual(sameRealm(remaining), sameRealm(expected), entry.label);
+  }
+});
+
+test("filter chips: the period chip is not removable — the page's period control owns that axis", () => {
+  const period = helpers.buildActiveFilterEntriesO(FULL_FILTER).find((entry) => entry.label.startsWith("Period"))!;
+  assert.strictEqual(period.patch, null);
+});
+
+test("ActiveFilterChips: each remove button names its filter and hands back that filter's patch", () => {
+  const removed: unknown[] = [];
+  const nodes = flattenNodes(helpers.ActiveFilterChips({
+    filter: { days: 30, agent: LEDGER_AGENT, q: "phase" }, onRemove: (patch) => removed.push(patch), onClearAll: () => {},
+  }));
+  const removeButtons = nodes.filter((n) => n.type === "button" && /^Remove filter /.test(String(n.props?.["aria-label"])));
+  assert.deepEqual(removeButtons.map((b) => String(b.props!["aria-label"])), [
+    `Remove filter Agent: ${helpers.window.UI.getAgentDisplayName(LEDGER_AGENT)}`,
+    'Remove filter Keyword: "phase"',
+  ]);
+  removeButtons.forEach(pressButton);
+  assert.deepEqual(sameRealm(removed), [{ agent: "" }, { q: "" }]);
+});
+
+test("ActiveFilterChips: Clear all resets every filter, and no active filter renders nothing", () => {
+  let clearCount = 0;
+  const nodes = flattenNodes(helpers.ActiveFilterChips({ filter: { days: 30, result: "fail" }, onRemove: () => {}, onClearAll: () => { clearCount += 1; } }));
+  pressButton(nodes.find((n) => n.type === "button" && n.props?.["aria-label"] === "Clear all filters")!);
+  assert.strictEqual(clearCount, 1);
+  assert.strictEqual(helpers.ActiveFilterChips({ filter: { days: 30 } }), null);
+});
+
+test("Results card: the head's Filters button counts the active filters, and Results carries no filter column", () => {
+  const rows = [
+    { name: "no active filter", filter: { days: 30 }, label: "Filters" },
+    { name: "two active filters", filter: { days: 30, agent: LEDGER_AGENT, result: "fail" }, label: "Filters · 2" },
+  ];
+  for (const row of rows) {
+    const card = flattenNodes(helpers.ResultTableCard({
+      state: { status: "ready" }, rows: [], totalMatched: 0, page: 0, limit: 50, sort: "record_ts:desc", filter: row.filter,
+      filterControls: { keywordInput: "", distinctAgents: [], includeAll: false },
+    }));
+    const headRight = flattenNodes(card.find((n) => n.props?.title === "Results")!.props!.right);
+    const popover = headRight.find((n) => n.type === helpers.window.UI.Popover);
+    assert.strictEqual(popover?.props?.label, row.label, row.name);
+    assert.ok(headRight.some((n) => n.type === "input" && n.props?.["aria-label"] === "Keyword search"), `${row.name}: keyword stays inline`);
+    assert.ok(card.some((n) => n.type === helpers.ActiveFilterChips), `${row.name}: active chips sit under the head`);
+  }
+});
+
+test("needs-you reason: a flagged or open-caveat row says why in words; a broken or routine row adds none", () => {
+  const rows = [
+    { name: "flagged overconfident", row: ledgerRowOf("done", { review_flag: true, review_flag_reasons: ["overconfidence"] }), reason: "flagged: overconfident" },
+    { name: "flagged twice", row: ledgerRowOf("done", { review_flag: true, review_flag_reasons: ["overconfidence", "scope-excess"] }), reason: "flagged: overconfident +1" },
+    { name: "open caveat", row: ledgerRowOf("done_with_concerns"), reason: "caveat open" },
+    { name: "closed caveat", row: ledgerRowOf("done_with_concerns", { closed_at: "2026-09-01T00:00:00Z" }), reason: null },
+    { name: "failed — the result column already says it", row: ledgerRowOf("fail"), reason: null },
+    { name: "routine done", row: ledgerRowOf("done"), reason: null },
+  ];
+  for (const row of rows) {
+    assert.strictEqual(helpers.getNeedsYouReasonO(row.row, row.row.closed_at), row.reason, row.name);
+  }
+});
+
+test("ledger row: the needs-you reason is written on the row and in its accessible name, beside the kept glyph", () => {
+  const rendered = renderLedgerRow(ledgerRowOf("done", { review_flag: true, review_flag_reasons: ["overconfidence"], summary: "shipped" }));
+  assert.match(textOf(rendered), /flagged: overconfident/);
+  assert.match(String(rendered.props!["aria-label"]), /flagged: overconfident/);
+  assert.ok(flattenNodes(rendered).some((n) => typeof n.type === "function" && (n.type as { name: string }).name === "SummaryFlagSlotO"), "the glyph slot stays");
 });
