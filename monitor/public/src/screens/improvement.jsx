@@ -952,26 +952,6 @@ function LoopOutputGroupI({
 	);
 }
 
-// 검토 필요 사유 세그먼트 (F12) — 0건 버킷은 생략 (노이즈 억제), 정의는 title 로.
-// 세그먼트 fetch 실패/로딩 → fallback 설명으로 degrade (가짜 0 금지, A7).
-// 합 ≠ KPI 값 가능 (KPI=서버 집계 · 세그먼트=행 표본 분류, 30s 캐시 스큐) → title 에 표본 고지.
-function ReviewReasonSegmentsI({ segments, fallback }) {
-	if (!segments || segments.items.length === 0) return <>{fallback}</>;
-	const title =
-		`Why results were flagged — last 7 days · quarantined excluded · ${segments.classifiedTotal} rows classified: ` +
-		segments.items.map((s) => `${s.label} ${s.count} (${s.title})`).join(" / ");
-	return (
-		<span title={title}>
-			{segments.items.map((s, i) => (
-				<span key={s.key}>
-					{i > 0 && " · "}
-					{s.label} {formatIntI(s.count)}
-				</span>
-			))}
-		</span>
-	);
-}
-
 // 사이클 3-분해 chip stat row — 생성+적용 / 생성-미적용 / 무생성 (≤3 카테고리 → 차트 대신 칩).
 // 세 카운트는 cycle_total_7d 를 정확히 분할 (서버 partition 보장) → 합계 병기.
 function CycleDecompositionRowI({ stats }) {
@@ -2575,7 +2555,7 @@ function groupLiveRowsI(rows) {
 }
 
 function CandidateRowI({ rank, pattern, maxFreq, onClick }) {
-	const { StatusDot, Bar } = window.UI;
+	const { StatusDot, Bar, AgentName } = window.UI;
 	const freq = Number(pattern.frequency ?? 0);
 	const status = candidateSeverityI(freq, maxFreq);
 	const badge = learningStatusBadgeI(pattern.status);
@@ -2596,7 +2576,7 @@ function CandidateRowI({ rank, pattern, maxFreq, onClick }) {
 			<StatusDot status={status} />
 			<span className="shrink-0 truncate" style={{ width: "18ch" }}>
 				{pattern.agent ? (
-					<window.UI.AgentName name={pattern.agent} className="fs-meta text-ink" />
+					<AgentName name={pattern.agent} className="fs-meta text-ink" />
 				) : (
 					<span className="fs-meta text-faint">no agent</span>
 				)}
@@ -2836,11 +2816,10 @@ function InstrumentationViewI(props) {
 	return <View {...props} />;
 }
 
-// 계기판 뷰가 소비하는 화면 공용 원자 — 두 번들이 한 화면을 이루므로 기호/배지 판정은 여기 하나뿐.
+// 계기판 뷰가 소비하는 화면 공용 원자 — 기호(SymI)·신뢰도 배지(confidenceBadgeMetaI) 판정은 이 파일 소유.
 window.ImprovementShared = {
 	SymI,
 	confidenceBadgeMetaI,
-	ReviewReasonSegmentsI,
 };
 
 window.ScreenImprovement = ScreenImprovement;

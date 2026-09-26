@@ -1068,6 +1068,7 @@ function getCorpusGrowthVerdictI(latest) {
 			hint: "No corpus reading yet",
 		};
 	}
+	const hint = `threshold ${formatIntI(Number(latest.seeded_threshold ?? 0))} words`;
 	const alerts = [
 		latest.trend_alert ? "trend" : null,
 		latest.absolute_alert ? "absolute" : null,
@@ -1077,14 +1078,14 @@ function getCorpusGrowthVerdictI(latest) {
 			symbol: "⚠",
 			tone: "text-warn",
 			label: `${alerts.join(" + ")} alert`,
-			hint: `threshold ${formatIntI(Number(latest.seeded_threshold ?? 0))} words`,
+			hint,
 		};
 	}
 	return {
 		symbol: "✓",
 		tone: "text-ok",
 		label: "within threshold",
-		hint: `threshold ${formatIntI(Number(latest.seeded_threshold ?? 0))} words`,
+		hint,
 	};
 }
 
