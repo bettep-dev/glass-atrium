@@ -741,7 +741,7 @@ function groupFilesByModelMC(fileRows) {
 }
 
 /**
- * Live value = measured at the consumption point.
+ * In effect = measured at the consumption point.
  * Matching the saved target → ✓ 'Matches saved' (tooltip 'In effect: …') · differing → the value + one warn badge · absent → nothing.
  */
 function LiveValueMC({ value, drift, files, driftTitle }) {
@@ -967,8 +967,10 @@ function ModelSelectMC({
 
 // Text tag, not colour alone — the family reads without parsing the id; inherit is already worded in the select.
 function ModelFamilyTagMC({ model }) {
+	if (model === "inherit") return null;
+
 	const family = getModelFamilyMC(model);
-	if (!family || model === "inherit") return null;
+	if (!family) return null;
 
 	return (
 		<div data-slot="family" className="fs-meta text-dim mt-1">
