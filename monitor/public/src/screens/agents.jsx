@@ -418,9 +418,6 @@ function ScreenAgents() {
   );
 }
 
-// AgentSummary — row click → drawer · Runs and No record ride their own columns.
-// 추세 셀 = 50×20 MiniBars (runs per day 7d) · 실패 컬럼 = failure-patterns API 흡수 (failureByAgent client-side merge).
-
 const INSTRUMENTATION_QUESTION = 'Is the measuring apparatus intact';
 
 // Status fold — open by default, the head carries the verdict so a closed fold still answers.
@@ -445,9 +442,7 @@ function getInstrumentationVerdict(lifecycleState, reviewState) {
     tone = orphans > 0 ? 'warn' : 'ok';
   }
   if (reviewState.status === 'ready') {
-    const rows = readyData(reviewState)?.rows ?? [];
-    const flagged = rows.reduce((s, r) => s + (Number(r.review_flagged_count) || 0), 0);
-    const total = rows.reduce((s, r) => s + (Number(r.total_count) || 0), 0);
+    const { flagged, total } = getReviewFlagTotalsAg(readyData(reviewState)?.rows ?? []);
     if (total > 0) parts.push(`${((flagged / total) * 100).toFixed(1)}% flagged`);
   }
   return { tone, sub: parts.length > 0 ? parts.join(' · ') : INSTRUMENTATION_QUESTION };
@@ -456,6 +451,16 @@ function getInstrumentationVerdict(lifecycleState, reviewState) {
 function getOrphanTotalAg(rows) {
   return rows.reduce((s, r) => s + Math.max(0, (Number(r.start_count) || 0) - (Number(r.completed_count) || 0)), 0);
 }
+
+function getReviewFlagTotalsAg(rows) {
+  return {
+    flagged: rows.reduce((s, r) => s + (Number(r.review_flagged_count) || 0), 0),
+    total: rows.reduce((s, r) => s + (Number(r.total_count) || 0), 0),
+  };
+}
+
+// AgentSummary — row click → drawer · Runs and No record ride their own columns.
+// 추세 셀 = 50×20 MiniBars (runs per day 7d) · 실패 컬럼 = failure-patterns API 흡수 (failureByAgent client-side merge).
 
 // Closed-by-default disclosure — second-reader material stays off the first screenful.
 function AgentDisclosure({ title, sub, children }) {
@@ -938,7 +943,7 @@ function AgentSummaryRow({ agent, days, isSelected, onSelect, focusProps, trend,
       <td
         className="num"
         title={p95Sec == null ? undefined : [`p95 latency tier: ${p95Glyph} (warn >${Math.round(p95WarnSec / 60)}m, fleet p75 · crit >${P95_AGENT_CRIT_SEC / 60}m)`, overageNote].filter(Boolean).join(' · ')}>
-        {/* tier 글리프 — 초-도메인 톤(p95GlyphTone 600s/1200s) KEY 의 ✓/⚠/✕ (shape = 색 외 인코딩).
+        {/* tier 글리프 — 초-도메인 톤(p95GlyphTone warn=fleet p75·하한 600s / crit 1200s) KEY 의 ✓/⚠/✕ (shape = 색 외 인코딩).
             종전 StatusDot 은 tone KEY 를 status enum 으로 오인받아 의미가 흐려졌고, 컷 도메인까지 어긋나
             전 에이전트가 단일 티어였다 — 글리프 + 분-도메인 컷으로 230s vs 1695s 가 가시적으로 분기.
             글리프는 옆 초 수치(스크린리더 가독)를 강화하는 장식 → aria-hidden. 측정 불가(null)면 미렌더. */}
@@ -2283,7 +2288,7 @@ function TopNFailingAgentsTable({ pairs, failureByAgent, days }) {
 
   const renderPairRow = (p) => {
     const breakage = resolveLastBreakage(p, failureByAgent);
-    const isLowSample = p.rateDenominator < window.UI.LOW_N_MIN;
+    const isLowSample = p.rateDenominator < lowN;
     return (
       <tr key={`${p.agent}|${p.task_type}`}>
         <td className="text-left text-ink px-2 py-1.5 border-b border-line truncate" style={{ maxWidth: 160 }} title={`Open ${p.agent} · ${p.task_type} in Task results`}>
@@ -2295,7 +2300,7 @@ function TopNFailingAgentsTable({ pairs, failureByAgent, days }) {
         <td
           className="text-right px-2 py-1.5 border-b border-line font-semibold whitespace-nowrap"
           style={PAIR_RATE_STYLE}
-          title={`pooled passed ${p.successCount} / (passed+failed) ${p.rateDenominator} · ${p.totalCount} total${isLowSample ? ` · small sample (n=${p.rateDenominator} < ${window.UI.LOW_N_MIN})` : ''}`}>
+          title={`pooled passed ${p.successCount} / (passed+failed) ${p.rateDenominator} · ${p.totalCount} total${isLowSample ? ` · small sample (n=${p.rateDenominator} < ${lowN})` : ''}`}>
           {window.UI.formatPctWithDenominator(p.successCount, p.rateDenominator)}
           {isLowSample && <window.UI.LowSampleMark n={p.rateDenominator}/>}
           {/* Pair success-rate bar — crit like the matrix, except n < LOW_N_MIN, which the legend keeps neutral. */}
@@ -2409,8 +2414,7 @@ function QualityHealthTimeline({ state, onRetry }) {
     return <EmptyStateAg message="No review_flag data."/>;
   }
 
-  const totalFlagged = rows.reduce((s, r) => s + (Number(r.review_flagged_count) || 0), 0);
-  const totalEvents = rows.reduce((s, r) => s + (Number(r.total_count) || 0), 0);
+  const { flagged: totalFlagged, total: totalEvents } = getReviewFlagTotalsAg(rows);
 
   const chartRows = rows.map((r) => ({
     date: typeof r.event_date === 'string' ? r.event_date.slice(5) : '',
@@ -3113,7 +3117,6 @@ function getFailShareTone(failedCount, denominator) {
   return outcomeShareTone(failedCount, denominator, OUTCOME_BREAKAGE_CRIT_SHARE, 'crit');
 }
 
-// Summary-row counts — passed ÷ (done+dwc+blocked+fail), the server success_pct population.
 // Live rates sit in 94–100%, where a 0–100 bar reads flat → a 90–100 window, the 95% target mid-bar.
 const SUCCESS_WINDOW_FLOOR_PCT = 90;
 const SUCCESS_WINDOW_TARGET = 0.5;
@@ -3122,6 +3125,7 @@ function getSuccessWindowAg(pct) {
   return Math.min(Math.max((pct - SUCCESS_WINDOW_FLOOR_PCT) / (100 - SUCCESS_WINDOW_FLOOR_PCT), 0), 1);
 }
 
+// Summary-row counts — passed ÷ (done+dwc+blocked+fail), the server success_pct population.
 function getSummaryRateAg(agent) {
   const successPct = Number(agent.success_pct) || 0;
   const needsContextCount = Number(agent.needs_context_count) || 0;
@@ -3152,7 +3156,7 @@ function FailShareGlyph({ tone }) {
 // P95 응답시간(초) → 톤 (null=faint / >20s crit / >10s warn / 무톤).
 // 서브에이전트 작업 p95 지연은 분(minute) 도메인 — 라이브 분포 58s~1695s(중앙값 ~11분).
 // 종전 10s/20s 컷은 전 에이전트를 crit 단일 티어로 뭉개 spread 가 0 이었다(웹 p95 도메인 값을 잘못 차용).
-// 작업 지연 기준으로 재조정: warn=10분(600s)·crit=20분(1200s) → 라이브에서 ok/warn/crit 3티어 실제 분포.
+// 작업 지연 기준으로 재조정: warn=fleet p75 컷(하한 10분·600s)·crit=20분(1200s) → 라이브에서 ok/warn/crit 3티어 실제 분포.
 const P95_AGENT_WARN_SEC = 600;
 const P95_AGENT_CRIT_SEC = 1200;
 const P95_WARN_MIN_AGENTS = 4;
@@ -3170,7 +3174,7 @@ function getP95WarnSecAg(agents) {
 function p95LatencyTone(p95Sec, warnSec = P95_AGENT_WARN_SEC) {
   if (p95Sec == null)            return 'text-faint';
   if (p95Sec > P95_AGENT_CRIT_SEC) return 'text-crit';
-  if (p95Sec > warnSec) return 'text-dim'; // most agents sit here → shape only, amber would bury the crit rows
+  if (p95Sec > warnSec) return 'text-dim'; // warn cut = fleet p75 floored at 600s → shape only, amber would bury the crit rows
   return '';
 }
 
