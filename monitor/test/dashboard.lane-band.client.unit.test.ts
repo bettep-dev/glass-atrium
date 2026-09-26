@@ -32,6 +32,8 @@ interface Tile {
   tone: string;
   value: string;
   hint: string;
+  detail?: string | null;
+  note?: string;
   target: string | null;
   badge?: string;
   canRetry?: boolean;
@@ -52,7 +54,6 @@ interface DashHelpers {
     costState: unknown;
     agentsState: unknown;
     outcomesState: unknown;
-    alarms?: Alarm[];
   }) => Tile[];
 }
 
@@ -177,24 +178,11 @@ test("the band is always the four tiles, in the priority spine's order", () => {
   });
   assert.equal(tiles.length, 4);
   assert.equal(tiles.map((t) => t.id).join(","), "harness,outcomes,fleet,spend");
-  for (const tile of tiles) {
-    assert.ok(tile.target, `${tile.id} must route somewhere while no alarm drills there`);
-  }
 });
 
-test("the lane and the band offer one drill per destination, and every destination keeps one", () => {
-  const cases: Array<[string, Fold, unknown]> = [
-    ["no alarms", HEALTHY, kpi(10, 10)],
-    ["harness alarm", { ...HEALTHY, partsOk: 6, downNames: ["autoagent"] }, kpi(10, 10)],
-    ["both alarms", { ...HEALTHY, partsOk: 6, downNames: ["autoagent"] }, kpi(40, 10)],
-  ];
-  for (const [name, harness, costState] of cases) {
-    const alarms = dash.buildAlarms({ harness, costState, installKind: "hidden" });
-    const tiles = dash.buildTiles({ harness, costState, agentsState: LOADING, outcomesState: LOADING, alarms });
-    const drills = [...alarms.map((a) => a.target), ...tiles.map((t) => t.target)].filter(Boolean);
-    assert.equal(new Set(drills).size, drills.length, `${name}: a destination is drilled twice: ${drills}`);
-    assert.deepEqual(new Set(drills), new Set(["architecture", "outcomes", "agents", "cost"]), name);
-  }
+test("every tile drills to its own screen in a fixed order", () => {
+  const tiles = dash.buildTiles({ harness: HEALTHY, costState: kpi(10, 10), agentsState: LOADING, outcomesState: LOADING });
+  assert.deepEqual([...tiles.map((t) => t.target)], ["architecture", "outcomes", "agents", "cost"]);
 });
 
 test("loading, error and unavailable each read differently and none reads as a value", () => {
@@ -305,6 +293,25 @@ test("the harness tile counts only the parts the shell actually polled", () => {
   assert.ok(tile.hint.includes("Hook Chain"), "the unchecked part is named, not silently dropped");
 });
 
+// A shared ' · ' separator let the unpolled list run on into the down list → an unpolled part read as down.
+test("the harness hint's down list names exactly the down parts, never an unpolled one", () => {
+  const rows = [
+    { name: "one down, one unpolled", downNames: ["autoagent"], uncheckedNames: ["Hook Chain"] },
+    { name: "two down, two unpolled", downNames: ["autoagent", "monitor"], uncheckedNames: ["Hook Chain", "PostgreSQL"] },
+  ];
+  for (const row of rows) {
+    const tile = tileOf(
+      dash.buildTiles({
+        harness: { ...HEALTHY, partsOk: 4, partsChecked: 4 + row.downNames.length, downNames: row.downNames, uncheckedNames: row.uncheckedNames },
+        costState: LOADING, agentsState: LOADING, outcomesState: LOADING,
+      }),
+      "harness",
+    );
+    const downClause = /Down: ([^.]*)/.exec(tile.hint)?.[1] ?? "";
+    assert.deepEqual(downClause.split(" · "), row.downNames, `${row.name}: hint was "${tile.hint}"`);
+  }
+});
+
 test("the outcome tile takes its verdict from the shared rule", () => {
   const crit = tileOf(
     dash.buildTiles({
@@ -342,7 +349,35 @@ test("the outcome tile leads with the failed share and moves the verdict into it
     "outcomes",
   );
   assert.match(tile.value, /^20\.0%/, "the failed share is the headline");
-  assert.equal(tile.badge, "Failures above line");
+  assert.equal(tile.badge, "Failures above alert line");
+  assert.match(String(tile.detail), /40 of 200 failed · alert at 5%/, "the failure alert line sits beside the failed count");
+  assert.match(tile.hint, /5\.0% \(10\) finished with caveats · alert at 10%/, "the caveat alert line sits beside the caveat share");
+  assert.doesNotMatch(tile.hint, /writer-emitted/, "the counting rule moves out of the visible hint");
+  assert.match(String(tile.note), /writer-emitted/, "and into the tile's tooltip");
+});
+
+test("the spend tile leads with the judged pace — the larger of so-far and the 3-hour pace — against the 7-day average", () => {
+  const rows = [
+    { name: "pace ahead of so-far", today: 3, avg: 10, pace: 20, lead: /^On pace for \$20\.00 today, 2\.0× the 7-day average \(\$10\.00\)/ },
+    { name: "so-far ahead of pace", today: 30, avg: 10, pace: 5, lead: /^On pace for \$30\.00 today, 3\.0× the 7-day average/ },
+    { name: "under the average", today: 2, avg: 10, pace: 8, lead: /^On pace for \$8\.00 today, 0\.8× the 7-day average/ },
+  ];
+  for (const row of rows) {
+    const tile = tileOf(
+      dash.buildTiles({ harness: HEALTHY, costState: kpi(row.today, row.avg, row.pace), agentsState: LOADING, outcomesState: LOADING }),
+      "spend",
+    );
+    assert.match(String(tile.detail), row.lead, `${row.name}: the judged pace leads`);
+    assert.match(tile.hint, /so far/, `${row.name}: the so-far multiple is the secondary line`);
+    assert.doesNotMatch(String(tile.detail), /so far/, `${row.name}: so-far never leads`);
+  }
+});
+
+test("the spend alarm names its pace window in plain words", () => {
+  const [alarm] = dash.buildAlarms({ harness: HEALTHY, costState: kpi(3, 1), installKind: "hidden" });
+  assert.equal(alarm.id, "spend");
+  assert.match(String(alarm.detail), /at the last 3 hours' rate/);
+  assert.doesNotMatch(String(alarm.detail), /3 h burn/);
 });
 
 test("the spend tile tones only on the pace verdict, never on the amount", () => {
@@ -372,21 +407,15 @@ test("the harness tile headlines its verdict — the down count when any part is
   }
 });
 
-test("no tile hint repeats a fact its active alarm row already states", () => {
+test("the harness tile names its down parts instead of restating the count", () => {
   const harness = { ...HEALTHY, partsOk: 5, downNames: ["autoagent", "monitor"] };
-  const costState = kpi(40, 10);
-  const alarms = dash.buildAlarms({ harness, costState, installKind: "current" });
-  const tiles = dash.buildTiles({ harness, costState, agentsState: LOADING, outcomesState: LOADING });
-  assert.equal(alarms.length, 2, "both alarms are active in this fixture");
-  for (const alarm of alarms) {
-    const tile = tileOf(tiles, alarm.id);
-    for (const fact of String(alarm.detail).split(" · ")) {
-      const figure = fact.replace(/ .*$/, "");
-      assert.ok(!tile.hint.includes(figure), `${alarm.id} hint repeats "${figure}": ${tile.hint}`);
-    }
-    assert.doesNotMatch(tile.hint, /alarm/i, `${alarm.id} hint carries its own fact, not a pointer at the lane`);
-    assert.ok(tile.hint.length > 0, `${alarm.id} hint is not blank`);
-  }
+  const tile = tileOf(
+    dash.buildTiles({ harness, costState: LOADING, agentsState: LOADING, outcomesState: LOADING }),
+    "harness",
+  );
+  assert.equal(tile.value, "2 of 7 down");
+  assert.match(tile.hint, /autoagent · monitor/, "the down parts are named on the tile");
+  assert.doesNotMatch(tile.hint, /\bof 7\b/, "the count stays in the headline alone");
 });
 
 test("tile labels carry no window text — the window is its own field so the heading case cannot swallow it", () => {

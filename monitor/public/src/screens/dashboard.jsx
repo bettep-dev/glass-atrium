@@ -104,7 +104,7 @@ function ScreenDashboard({ onNav, harness, onRetryHarness }) {
   const stampRegions = [...waveStates, harness];
   const alarms = buildAlarms({ harness, costState, installKind });
   const alarmReadiness = getAlarmReadiness({ harness, costState, updateState });
-  const tiles = buildTiles({ harness, costState, agentsState, outcomesState, alarms });
+  const tiles = buildTiles({ harness, costState, agentsState, outcomesState });
   const sharedFailure = getTileSharedFailure(tiles);
 
   return (
@@ -293,12 +293,21 @@ function StatusTile({ tile, onNav, onRetry, isRetryShared = false }) {
           onRetry={() => onRetry(tile.region)}/>
       ) : (
         <>
-          <StatusTileValue tile={tile}/>
-          <div className="fs-body text-dim dash-tile-detail">{tile.detail}</div>
-          <div className="fs-meta text-dim dash-tile-hint">{tile.status === 'error' ? SHARED_FAILURE_HINT : tile.hint}</div>
+          <window.UI.TileSplit
+            lead={<StatusTileValue tile={tile}/>}
+            detail={
+              <>
+                <div className="fs-body text-dim dash-tile-detail">{tile.detail}</div>
+                <div className="fs-meta text-dim dash-tile-hint" title={tile.note}>
+                  {tile.status === 'error' ? SHARED_FAILURE_HINT : tile.hint}
+                </div>
+              </>
+            }
+          />
           {tile.canRetry && !isRetryShared && (
             <button type="button" className="btn sm self-start" onClick={() => onRetry(tile.region)}>Retry</button>
           )}
+          {/* the drill stays a card-foot child → mt-auto keeps the four CTAs on one baseline at xl */}
           {tile.target && <DrillLink target={tile.target} label={tile.targetLabel} onNav={onNav} className="self-start mt-auto"/>}
         </>
       )}
@@ -320,6 +329,7 @@ function StatusTileValue({ tile }) {
   return (
     <div className="flex items-center gap-2">
       <KpiValue>{tile.value}</KpiValue>
+      {tile.unit && <span className="fs-body text-dim">{tile.unit}</span>}
       {tile.tone !== 'neutral' && <Badge role="status" tone={tile.tone} icon>{tile.badge ?? TONE_WORD[tile.tone]}</Badge>}
     </div>
   );
@@ -547,7 +557,7 @@ function buildAlarms({ harness, costState, installKind }) {
       id: 'spend',
       tone: 'warn',
       title: 'Spend is running ahead of the 7-day average',
-      detail: `${formatUsd(spend.today)} so far · ${formatUsd(spend.pace)}/day at the 3 h burn · ${formatUsd(spend.basis)} 7-day avg/day`,
+      detail: `${formatUsd(spend.today)} so far · ${formatUsd(spend.pace)}/day at the last 3 hours' rate · ${formatUsd(spend.basis)} 7-day avg/day`,
       target: 'cost',
       targetLabel: 'Cost & usage',
     });
@@ -582,9 +592,8 @@ function resolveSpendPace(costState) {
 }
 
 // 4타일 데이터 — 렌더와 분리된 순수 변환이라 상태 4종을 테스트가 그대로 고정할 수 있다.
-// a destination an alarm row already drills loses its tile drill → one Tab stop per destination
-function buildTiles({ harness, costState, agentsState, outcomesState, alarms = [] }) {
-  const drilled = new Set(alarms.map((alarm) => alarm.target).filter(Boolean));
+// every tile keeps its drill even when an alarm row drills the same screen → the tile is where the eye lands
+function buildTiles({ harness, costState, agentsState, outcomesState }) {
   const regionStates = { outcomes: outcomesState, agents: agentsState, cost: costState };
   const tiles = [
     buildHarnessTile(harness),
@@ -595,7 +604,6 @@ function buildTiles({ harness, costState, agentsState, outcomesState, alarms = [
   // a first load is 'loading', not a refresh → only held data dims while its region re-reads
   return tiles.map((tile) => ({
     ...tile,
-    target: drilled.has(tile.target) ? null : tile.target,
     isBusy: tile.status !== 'loading' && Boolean(regionStates[tile.region]?.busy),
   }));
 }
@@ -625,14 +633,15 @@ function buildHarnessTile(harness) {
     // not a region fetch error → never joins the page banner, so the tile keeps its own Retry
     return { ...base, status: 'unavailable', tone: 'neutral', value: '—', hint: 'Harness readings unavailable.', canRetry: true };
   }
+  // sentence break, not ' · ' → the names list after it never reads as more down parts
   const unchecked = harness.uncheckedNames.length > 0
-    ? ` · ${harness.uncheckedNames.join(' · ')} checked on the System map`
+    ? `. ${harness.uncheckedNames.join(' · ')} checked on the System map`
     : '';
   const downCount = harness.downNames.length;
   const unreadSources = harness.unreadSources ?? [];
   const isPartlyUnread = unreadSources.length > 0;
-  // down part names ride on the alarm row → the tile states the healthy share instead
-  const down = downCount > 0 ? `${harness.partsOk} of ${harness.partsChecked} healthy` : 'All polled parts healthy';
+  // the headline already carries the count → the hint names the parts instead of restating it
+  const down = downCount > 0 ? `Down: ${harness.downNames.join(' · ')}` : 'All polled parts healthy';
   // a known fault keeps crit; otherwise an unread source withholds the healthy verdict
   const unreadTone = isPartlyUnread ? 'info' : 'ok';
   return {
@@ -666,6 +675,7 @@ function buildOutcomeTile(outcomesState) {
   return {
     ...base, status: OUTCOME_TILE_STATUS[rate.status], tone: rate.tone, badge: OUTCOME_VERDICT[rate.status],
     value: describeOutcomeValue(rate), detail: describeOutcomeDetail(rate), hint: describeOutcomeHint(rate),
+    note: OUTCOME_COUNTING_NOTE,
   };
 }
 
@@ -675,7 +685,8 @@ const OUTCOME_TILE_STATUS = {
 };
 
 // numbers headline, the verdict rides in the badge (a neutral low-n tile renders no badge)
-const OUTCOME_VERDICT = { ok: 'Within lines', warn: 'Caveats above line', crit: 'Failures above line' };
+const OUTCOME_VERDICT = { ok: 'Below alert lines', warn: 'Caveats above alert line', crit: 'Failures above alert line' };
+const OUTCOME_COUNTING_NOTE = 'Counts only writer-emitted outcomes — records the agent reported itself; synthesized records are left out.';
 
 function describeOutcomeValue(rate) {
   if (rate.status === 'low-n') return formatInt(rate.writerTotal);
@@ -686,14 +697,19 @@ function describeOutcomeValue(rate) {
 function describeOutcomeDetail(rate) {
   if (rate.status === 'low-n') return 'outcomes · too few to judge';
   if (!Object.hasOwn(OUTCOME_VERDICT, rate.status)) return null;
-  return `${formatInt(rate.breakage)} of ${formatInt(rate.writerTotal)} failed`;
+  return `${formatInt(rate.breakage)} of ${formatInt(rate.writerTotal)} failed · alert at ${formatAlertLine(window.UI.OUTCOME_BREAKAGE_CRIT_SHARE)}`;
 }
 
 function describeOutcomeHint(rate) {
-  if (rate.status === 'unavailable') return 'No writer-emitted outcomes to judge.';
+  if (rate.status === 'unavailable') return 'No reported outcomes to judge.';
   if (rate.status === 'empty') return 'No outcomes recorded in the last 7 days.';
-  if (rate.status === 'low-n') return `Needs ${window.UI.LOW_N_MIN} writer-emitted outcomes to judge.`;
-  return `${getSharePct(rate.openCaveats, rate.writerTotal)} (${formatInt(rate.openCaveats)}) open with caveats · writer-emitted only.`;
+  if (rate.status === 'low-n') return `Needs ${window.UI.LOW_N_MIN} reported outcomes to judge.`;
+  const caveats = `${getSharePct(rate.openCaveats, rate.writerTotal)} (${formatInt(rate.openCaveats)}) finished with caveats`;
+  return `${caveats} · alert at ${formatAlertLine(window.UI.OUTCOME_OPEN_CAVEAT_WARN_SHARE)}`;
+}
+
+function formatAlertLine(share) {
+  return `${Math.round(share * 100)}%`;
 }
 
 // headline share without its " (n/d)" tail → a 28px value stays on one line; the counts ride the detail line
@@ -719,12 +735,12 @@ function buildFleetTile(agentsState) {
   const tone = suspended > 0 ? 'crit' : streak > 0 ? 'warn' : 'ok';
   const runs = Number.isFinite(Number(meta.total_agents)) ? ` · ${formatInt(Number(meta.total_agents))} agents with runs` : '';
   return {
-    ...base, status: 'ready', tone, badge: FLEET_VERDICT[tone], value: formatInt(suspended), detail: 'suspended',
+    ...base, status: 'ready', tone, badge: FLEET_VERDICT[tone], value: formatInt(suspended), unit: 'suspended',
     hint: `${formatInt(streak)} on a failing streak${runs}`,
   };
 }
 
-// the detail line already says "suspended" → the verdict never repeats it
+// the value's unit already says "suspended" → the verdict never repeats it
 const FLEET_VERDICT = { ok: 'All active', warn: 'Failing streak', crit: 'Needs review' };
 
 // 타일 4 — 오늘 지출. 톤은 pace 판정에서만 온다(금액 자체는 위험도가 아니다).
@@ -736,15 +752,20 @@ function buildSpendTile(costState) {
   if (pending) return pending;
 
   const pace = resolveSpendPace(costState);
-  const hint = describeSpendHint(pace);
-  return { ...base, status: 'ready', tone: pace.status === 'hot' ? 'warn' : 'neutral', value: formatUsd(pace.today), hint };
+  const tone = pace.status === 'hot' ? 'warn' : 'neutral';
+  if (pace.status === 'no-basis') {
+    return { ...base, status: 'ready', tone, value: formatUsd(pace.today), hint: 'No spend in the last 7 days — no baseline to compare against.' };
+  }
+  return {
+    ...base, status: 'ready', tone, value: formatUsd(pace.today), detail: describeSpendPace(pace),
+    hint: `${(pace.today / pace.basis).toFixed(1)}× the average so far · alarm at ${SPEND_PACE_CUT}×`,
+  };
 }
 
-// hot → the alarm row carries the amounts, so the tile states the multiple instead
-function describeSpendHint(pace) {
-  if (pace.status === 'no-basis') return 'No spend in the last 7 days — no baseline to compare against.';
-  if (pace.status === 'hot') return `${(pace.today / pace.basis).toFixed(1)}× the 7-day daily average so far.`;
-  return `${formatUsd(pace.basis)} 7-day avg/day · alarm at ${SPEND_PACE_CUT}× so-far or pace.`;
+// the verdict trips on the larger of so-far and pace → the lead line states that same figure
+function describeSpendPace(pace) {
+  const judged = Math.max(pace.today, pace.pace);
+  return `On pace for ${formatUsd(judged)} today, ${(judged / pace.basis).toFixed(1)}× the 7-day average (${formatUsd(pace.basis)})`;
 }
 
 // 헤더 우측 중립 텍스트 — 설치 버전. 조치 신호는 레인이 운반하므로 여기는 톤이 없다.

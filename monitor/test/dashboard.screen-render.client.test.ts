@@ -28,6 +28,8 @@ function uiStub(): unknown {
       get: (_target, name: string) =>
         name === "TONE_ICON"
           ? new Proxy({}, { get: () => "dot" })
+          : name === "TileSplit"
+          ? tileSplitStub
           : Object.defineProperty(
               (props: Record<string, unknown>) => ({
                 __element: true,
@@ -40,6 +42,12 @@ function uiStub(): unknown {
       has: () => true,
     },
   );
+}
+
+// the tile-internal split keeps its two slots walkable → lead and detail stay findable by the tests below
+function tileSplitStub({ lead, detail }: { lead: unknown; detail?: unknown }): unknown {
+  const slot = (className: string, child: unknown) => ({ __element: true, type: "div", props: { className, children: child } });
+  return { __element: true, type: "ui-atom", props: { atom: "TileSplit", children: [slot("tile-split-lead", lead), slot("tile-split-detail", detail)] } };
 }
 
 type Component = (props: unknown) => unknown;
@@ -125,6 +133,8 @@ const rateMod = (await loadScreenModule(DASH_SRC, {
     // ui.jsx contract "x% (n/d)" → the tile must drop the denominator tail itself
     formatPctWithDenominator: (num: number, den: number) => `${((num / den) * 100).toFixed(1)}% (${num}/${den})`,
     LOW_N_MIN: 20,
+    OUTCOME_BREAKAGE_CRIT_SHARE: 0.05,
+    OUTCOME_OPEN_CAVEAT_WARN_SHARE: 0.1,
   },
   React: createReactStub(),
 })) as Record<string, unknown>;
@@ -154,7 +164,7 @@ test("the fleet tile names suspension once across its value, verdict and detail,
   for (const [name, suspended, streak] of rows) {
     const breaker = { source: "loaded", suspended_count: suspended, streak_count: streak };
     const tile = buildFleetTile({ status: "ready", data: { meta: { total_agents: 12, circuit_breaker: breaker } } });
-    const visible = [tile.value, tile.badge, tile.detail].join(" ");
+    const visible = [tile.value, tile.unit, tile.badge, tile.detail].join(" ");
     assert.equal(visible.match(/suspend/gi)?.length, 1, `${name}: "${visible}" says suspended exactly once`);
   }
 });
@@ -172,12 +182,29 @@ test("a tile renders its number as the KPI value, its verdict as the badge, and 
   assert.ok(text.indexOf("17.5%") < text.indexOf("with caveats"), "the number precedes the detail");
 });
 
-test("a tile's drill sits at the tile foot, and a tile whose destination the lane drills has none", () => {
+test("a tile's drill sits at the tile foot, and a tile with no destination has none", () => {
   const drills = findNodes(render("StatusTile", { tile: READY_TILE, onNav: () => {}, onRetry: () => {} }), (n) => n.type === "a");
   assert.equal(drills.length, 1);
   assert.match(classOf(drills[0]), /\bmt-auto\b/, "the CTA is pinned to the foot so baselines line up");
   const undrilled = render("StatusTile", { tile: { ...READY_TILE, target: null }, onNav: () => {}, onRetry: () => {} });
   assert.equal(findNodes(undrilled, (n) => n.type === "a").length, 0);
+});
+
+test("a ready tile puts its value on the lead side and its detail and hint on the detail side", () => {
+  const tile = { ...READY_TILE, detail: "7 of 40 failed", note: "Counts writer-emitted outcomes only." };
+  const tree = render("StatusTile", { tile, onNav: () => {}, onRetry: () => {} });
+  const [lead] = findNodes(tree, (n) => classOf(n) === "tile-split-lead");
+  const [detail] = findNodes(tree, (n) => classOf(n) === "tile-split-detail");
+  assert.equal(findNodes(lead, (n) => n.props.atom === "KpiValue").length, 1, "the value leads");
+  assert.equal(findNodes(detail, (n) => classOf(n).includes("dash-tile-detail")).length, 1);
+  const [hint] = findNodes(detail, (n) => classOf(n).includes("dash-tile-hint"));
+  assert.equal(hint.props.title, tile.note, "the counting note rides on the hint as a tooltip");
+});
+
+test("a unit renders on the value's own line so the number and its word read as one phrase", () => {
+  const tree = render("StatusTile", { tile: { ...READY_TILE, value: "0", unit: "suspended" }, onNav: () => {}, onRetry: () => {} });
+  const [lead] = findNodes(tree, (n) => classOf(n) === "tile-split-lead");
+  assert.match(collectText(lead), /^0\s*suspended/);
 });
 
 test("an alarm row is a flat hairline row whose tone rides on the leading glyph, with sans detail text", () => {
