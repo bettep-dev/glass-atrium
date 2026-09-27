@@ -91,7 +91,11 @@ Each kind is legitimate when the stated purpose IS the whole reason the test exi
 | "I verified it manually" | Manual verification ≠ validation · non-reproducible = invalid |
 | "Writing code first as a reference" | Code written before tests MUST be **deleted and rewritten** |
 
-- **Qualifier on the last row (the deliberate-break exception)**: a test written after its implementation is admissible when the implementation was deliberately broken, the test OBSERVED to fail, and the break reverted. Skip that step and the test is unproven, so the rebuttal applies unchanged.
+- **Qualifier on the last row (the deliberate-break exception)**: a test written after its implementation is admissible when it was OBSERVED to fail against a deliberately broken copy of the implementation. Skip that step and the test is unproven, so the rebuttal applies unchanged.
+  - Break a temporary copy, never the real tree: a fresh `mktemp -d` directory, with the test run's cwd inside it.
+    - Why: a broken script run from the real tree can damage that tree; a broken copy is discarded, never reverted.
+  - The copy carries everything the run loads, in its original relative layout — the implementation, the test, and its helpers, fixtures and config; for a built stack, the project and its build config.
+  - Run the test in the copy once before the break and see it pass, so the failure observed afterwards comes from the break alone.
 
 ## 3-Tier Test Hierarchy
 
