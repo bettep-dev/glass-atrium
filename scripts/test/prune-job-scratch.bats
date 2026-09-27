@@ -191,3 +191,16 @@ assert_target_intact() {
   [ "${status}" -eq 2 ] || { echo "expected exit 2, got ${status}: ${output}"; return 1; }
   [ -d "${ROOT}/oldjob" ] || { echo "usage error still removed an entry"; return 1; }
 }
+
+@test "a copy without the shared path guard beside it exits 4 with a named FATAL and removes nothing" {
+  mkdir -p "${ROOT}/oldjob" "${PJ_TMP}/sandbox"
+  touch -t "${STALE_STAMP}" "${ROOT}/oldjob"
+  cp "${PRUNE_SH}" "${PJ_TMP}/sandbox/prune-job-scratch.sh"
+
+  run bash "${PJ_TMP}/sandbox/prune-job-scratch.sh"
+  # 4, never errexit's generic 1: a broken install must not read as any other failure.
+  [ "${status}" -eq 4 ] || { echo "expected exit 4, got ${status}: ${output}"; return 1; }
+  [[ "${output}" == *"prune-job-scratch: FATAL: cannot source the shared path guard"*"path-guard.sh"* ]] \
+    || { echo "no named FATAL: ${output}"; return 1; }
+  [ -d "${ROOT}/oldjob" ] || { echo "a guard-less run still removed an entry"; return 1; }
+}

@@ -27,15 +27,20 @@ readonly SECRETS_FILE="${SECRETS_DIR}/claude-auth.env"
 readonly AUTH_KEY="CLAUDE_CODE_OAUTH_TOKEN"
 
 # ga_guard_path gates the temp deletes; scripts/ runs in place, so lib/ sits beside this file.
+# Readability checked first: bash 3.2 under set -e exits on a failed source before any message.
 SELF_DIR="$(dirname -- "${BASH_SOURCE[0]}")"
-readonly SELF_DIR
+readonly PATH_GUARD="${SELF_DIR}/lib/path-guard.sh"
+if [[ ! -r "${PATH_GUARD}" ]]; then
+  echo "render-claude-auth: FATAL: cannot source the shared path guard ${PATH_GUARD}" >&2
+  exit 4
+fi
 # shellcheck source-path=SCRIPTDIR source=lib/path-guard.sh
-source "${SELF_DIR}/lib/path-guard.sh"
+source "${PATH_GUARD}" || exit 4
 
 trap 'echo "render-claude-auth: ERROR line ${LINENO}: ${BASH_COMMAND}" >&2' ERR
 
 # Exit-code semantics (loud-fail, no silent absorption):
-#   1 — shared path guard (lib/path-guard.sh) missing; nothing is written
+#   4 — shared path guard (lib/path-guard.sh) missing; nothing is written
 #   5 — secrets dir could not be created
 #   6 — value empty / not supplied
 #   7 — value failed the plausible-shape guard

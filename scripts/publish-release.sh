@@ -76,7 +76,6 @@ cleanup() {
   local rc=$?
   local f
   for f in "${TMP_FILES[@]:-}"; do
-    # A cwd-relative temp (relative --out) is refused, never deleted against the cwd.
     # shellcheck disable=SC2310  # pure predicate — nothing inside it for errexit to catch
     if ga_guard_path "${f}"; then rm -f -- "${f:?}"; fi
   done
@@ -454,6 +453,8 @@ main() {
         ;;
     esac
   done
+  # Anchored to the invoking cwd once → every staged temp is absolute, so the exit guard lets it delete.
+  [[ "${out}" == /* ]] || out="${PWD}/${out}"
 
   case "${sub}" in
     build) cmd_build "${out}" ;;
