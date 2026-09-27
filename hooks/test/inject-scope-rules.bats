@@ -560,9 +560,8 @@ run_hook_emit_meter_only() {
   }
 }
 
-# (g) The on-approach checkpoint must be followable by every maxTurns agent under the sandbox: it names
-# the Write/Edit tool and the charter's absolute tracker dir (a Bash write there is denied), and gives
-# agents without Write/Edit (qa-code-reviewer · qa-debugger) the summary route instead.
+# (g) The on-approach line names Write/Edit and the charter's absolute tracker dir.
+# Agents without Write/Edit (qa-code-reviewer · qa-debugger) get the summary route instead.
 @test "meter on-approach line → names Write/Edit, the tracker dir, and the Bash-only summary route" {
   run_hook_emit_meter_only "glass-atrium-qa-debugger"
   assert_status 0
