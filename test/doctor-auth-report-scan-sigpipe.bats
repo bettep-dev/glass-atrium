@@ -17,9 +17,10 @@
 #
 # Falsifiability: T1 runs the PRE-FIX process-sub structure verbatim over the same large fixture and
 # asserts the ERR trap DID fire (proves the fixture genuinely triggers the SIGPIPE). T2 runs the real
-# FIXED function over that identical fixture and asserts stderr is clean. The ERR line is written by
-# the unwaited process-substitution subshell, so stderr is captured to EOF (_run_strict) before any
-# assertion reads it — otherwise T1 races that late write and T2's negative check passes vacuously.
+# FIXED function over that identical fixture and asserts stderr is clean.
+# The ERR line is written by the unwaited process-substitution subshell,
+# so stderr is captured to EOF (_run_strict) before any assertion reads it —
+# otherwise T1 races that late write and T2's negative check passes vacuously.
 #
 # Hermetic: the three real functions (__ga_detect_stat_os, stat_mtime, doctor_headless_auth_advisory)
 # are eval'd into the test shell (extract_fn); log / stat_perms / headless_auth_selftest are sandbox
@@ -31,10 +32,11 @@
 
 GA="$(cd -- "${BATS_TEST_DIRNAME}/.." && pwd)"
 
-# LARGE fixture size: cut's output must exceed the ~64KB pipe buffer, else cut finishes before the
-# reader breaks and no SIGPIPE occurs at all. Linux CI /tmp (~73B/line) is ~half macOS (~128B/line):
-# 3000 files ≈ 219KB ≈ 3.3x the buffer on Linux. Flake-freedom comes from _run_strict's drained
-# stderr capture, not from this margin.
+# LARGE fixture size: cut's output must exceed the ~64KB pipe buffer,
+# else cut finishes before the reader breaks and no SIGPIPE occurs at all.
+# Linux CI /tmp (~73B/line) is ~half macOS (~128B/line):
+# 3000 files ≈ 219KB ≈ 3.3x the buffer on Linux.
+# Flake-freedom comes from _run_strict's drained stderr capture, not from this margin.
 REPORT_FANOUT=3000
 
 setup() {
@@ -85,17 +87,31 @@ _make_reports() {
 }
 
 # _run_strict <fn> [args…] — run fn under the loader's strict mode + ERR trap; stdout → OUT, stderr → ERRF.
-# cat reads stderr to EOF and the pipeline waits for cat, so every holder of that fd — an unwaited process
-# substitution and its cut included — has exited before any assertion reads ERRF.
+# A nonzero status prints OUT and ERRF, so a failing status check names its cause.
+# cat reads stderr to EOF and the pipeline waits for cat,
+# so every holder of that fd has exited before any assertion reads ERRF —
+# an unwaited process substitution and its cut included.
 # A command-substitution capture is not equivalent: under it the procsub's ERR trap never fires.
+# pipefail carries fn's status, since bats' DEBUG trap resets PIPESTATUS on bash 3.2.
+# The outer subshell keeps pipefail out of the test body.
 _run_strict() {
+  local exit_code=0
   (
-    set -Eeuo pipefail
-    IFS=$'\n\t'
-    trap 'echo "ERROR: line ${LINENO}: ${BASH_COMMAND}" >&2' ERR
-    "$@"
-  ) 2>&1 >"${OUT}" | cat >"${ERRF}"
-  return "${PIPESTATUS[0]}"
+    set -o pipefail
+    (
+      set -Eeuo pipefail
+      IFS=$'\n\t'
+      trap 'echo "ERROR: line ${LINENO}: ${BASH_COMMAND}" >&2' ERR
+      "$@"
+    ) 2>&1 >"${OUT}" | cat >"${ERRF}"
+  ) || exit_code=$?
+  if [[ "${exit_code}" -ne 0 ]]; then
+    printf '%s exited %s; stdout:\n' "$1" "${exit_code}"
+    cat -- "${OUT}"
+    printf 'stderr:\n'
+    cat -- "${ERRF}"
+  fi
+  return "${exit_code}"
 }
 
 # _scan_procsub <dir> — the PRE-FIX process-sub structure verbatim (the neutered fix).
