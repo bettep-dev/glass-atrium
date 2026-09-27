@@ -286,6 +286,17 @@ STUB
   [[ "$(git -C "${GA_ROOT}/autoagent" rev-list --count HEAD)" -eq 1 ]] || return 1
 }
 
+@test "lock: an apply-lock lib that cannot load its path guard loud-fails exit 5" {
+  dirty_autoagent
+  mkdir -p "${WORK}/noguard"
+  cp -p -- "${BATS_TEST_DIRNAME}/../lib/apply-lock.sh" "${WORK}/noguard/apply-lock.sh"
+  ATRIUM_APPLY_LOCK_LIB="${WORK}/noguard/apply-lock.sh" run bash "${SCRIPT}"
+  [[ "${status}" -eq 5 ]] || return 1
+  [[ "${output}" == *'cannot source the shared path guard'* ]] || return 1
+  [[ "${output}" == *'apply-lock lib failed to load'* ]] || return 1
+  [[ "$(git -C "${GA_ROOT}/autoagent" rev-list --count HEAD)" -eq 1 ]] || return 1
+}
+
 @test "whitelist: a dirty non-whitelisted dir is never touched and the GA root never becomes a repo" {
   dirty_autoagent
   mkdir -p "${GA_ROOT}/skills"

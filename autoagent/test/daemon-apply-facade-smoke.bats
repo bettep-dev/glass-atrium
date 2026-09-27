@@ -111,6 +111,21 @@ teardown() {
   [[ "${output}" == *"${WORK}/nonexistent-apply-lock.sh"* ]]
 }
 
+@test "facade-invoked daemon-apply maps an apply-lock lib that fails to load to exit 5" {
+  # Present but guard-less: the lib's own source-time guard fails, which must
+  # surface as the documented lock-lib code rather than the bare errexit status.
+  mkdir -p "${WORK}/noguard"
+  cp -p "${GA}/scripts/lib/apply-lock.sh" "${WORK}/noguard/apply-lock.sh"
+  run env HOME="${FAKE_HOME}" AUTOAGENT_REPORTS_DIR="${REPORTS}" \
+    ATRIUM_APPLY_LOCK_LIB="${WORK}/noguard/apply-lock.sh" \
+    bash "${FACADE}/autoagent/daemon-apply.sh" --dry-run \
+    --report "${WORK}/report.json" --agents-dir "${AGENTS}"
+
+  [[ "${status}" -eq 5 ]] || return 1
+  [[ "${output}" == *"cannot source the shared path guard"* ]] || return 1
+  [[ "${output}" == *"FATAL: apply-lock lib failed to load (${WORK}/noguard/apply-lock.sh)"* ]]
+}
+
 # ---------------------------------------------------------------------------
 # (c) daemon-cycle.sh via facade → sibling daemon_cycle.py resolves to the
 #     REAL tree even though the facade has NO daemon_cycle.py mirror

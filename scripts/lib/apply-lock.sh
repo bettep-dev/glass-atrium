@@ -46,7 +46,7 @@ if [[ ! -r "${BASH_SOURCE[0]%/*}/path-guard.sh" ]]; then
   return 1
 fi
 # shellcheck source-path=SCRIPTDIR source=path-guard.sh
-source "${BASH_SOURCE[0]%/*}/path-guard.sh"
+source "${BASH_SOURCE[0]%/*}/path-guard.sh" || return 1
 
 # TTL (seconds) beyond which a not-live lock is treated as crashed-holder residue.
 # ATRIUM_APPLY_LOCK_TTL_SECS override; a non-positive / non-integer value falls

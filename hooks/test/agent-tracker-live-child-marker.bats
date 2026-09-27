@@ -4,8 +4,9 @@
 #
 # The marker is ADVISORY OBSERVABILITY ONLY — it does not enforce worktree isolation, and these
 # tests assert its file-level contract, never an enforcement claim.
-# Three branches: created on Start · removed on Stop · a write malfunction is LOUD (named warn code
-# on stderr) rather than silently absorbed, with the hook staying non-blocking (exit 0).
+# Four branches: created on Start · removed on Stop · a write malfunction and a delete malfunction
+# or refusal are each LOUD (named warn code on stderr: DATA-074, DATA-075) rather than silently
+# absorbed, with the hook staying non-blocking (exit 0).
 #
 # PG-free by construction: the hook's dual-write helper is tolerated non-blocking (`|| true`), so no
 # ephemeral cluster is needed here — agent-tracker.bats owns the write-contract coverage.

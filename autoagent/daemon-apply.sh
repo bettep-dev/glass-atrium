@@ -988,7 +988,10 @@ fi
 # assigned (silences SC2154 the way the git-txn source below does).
 # shellcheck source-path=SCRIPTDIR
 # shellcheck source=../scripts/lib/apply-lock.sh
-. "${APPLY_LOCK_LIB}"
+if ! . "${APPLY_LOCK_LIB}"; then
+    printf '[daemon-apply] FATAL: apply-lock lib failed to load (%s)\n' "${APPLY_LOCK_LIB}" >&2
+    exit 5
+fi
 
 # -- Lock acquisition (mkdir is atomic on POSIX; stale-reclaim via the lib) -
 # Skip lock entirely in dry-run so parallel test runs don't collide.

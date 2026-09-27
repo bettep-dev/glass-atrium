@@ -419,6 +419,23 @@ STUB
   run ! grep -qF 'WARN: failed to remove quota marker' "${FLOW_LOG}"
 }
 
+@test "post-bootstrap quota marker on a refused relative path: WARN is logged and the marker survives" {
+  make_flow_sandbox
+  stub_marker_date
+  : >"${SESSION_MARKER}"
+  cp "${SANDBOX}/wiki-daemon-bootstrap.sh" "${SANDBOX}/autoagent-daemon-bootstrap.sh"
+  cp "${SANDBOX}/wiki-daemon-healthcheck.sh" "${SANDBOX}/autoagent-daemon-healthcheck.sh"
+  mkdir -p "${WORK}/quota"
+  : >"${WORK}/quota/autoagent-quota-marker-2026-06-10"
+  cd "${WORK}"
+  run_flow DAEMON_QUOTA_MARKER_DIR=quota -- autoagent
+  [[ "${status}" -eq 0 ]] || return 1
+  grep -qF 'quota wall marker detected post-bootstrap (quota/autoagent-quota-marker-2026-06-10)' "${FLOW_LOG}" || return 1
+  [[ "${output}" == *'refusing a non-absolute delete target'* ]] || return 1
+  grep -qF 'WARN: failed to remove quota marker quota/autoagent-quota-marker-2026-06-10' "${FLOW_LOG}" || return 1
+  [[ -f "${WORK}/quota/autoagent-quota-marker-2026-06-10" ]]
+}
+
 @test "a sandbox without the shared path guard aborts before the session is touched" {
   make_flow_sandbox
   : >"${SESSION_MARKER}"
