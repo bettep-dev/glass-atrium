@@ -12,7 +12,9 @@ const {
 	useMemo: useMI,
 } = React;
 
-const IMPROVEMENT_LIST_URL = "/api/improvement?limit=50";
+// terminal board lanes read this recency slice → their counts carry it as their window
+const BOARD_RECENT_LIMIT = 50;
+const IMPROVEMENT_LIST_URL = `/api/improvement?limit=${BOARD_RECENT_LIMIT}`;
 const IMPROVEMENT_STATS_URL = "/api/improvement/stats";
 // orphan 학습 endpoint surface (canonical learning-aggregator) — 집계 학습 신호만.
 //   learning-log: learning-aggregator 패턴 원천 (화면 CTM/EPM 재유도의 실제 source)
@@ -21,7 +23,8 @@ const LEARNING_LOG_URL = "/api/improvement/learning-log?limit=50";
 // loop-events 는 per-event raw 운영 로그가 outcomes 소유 (line 13 경계). 본 화면은 AGGREGATE
 // 만 소비 — 사이클 변경량 합계(self-improvement 적용 효과) + verified/reject 날짜 추세.
 // raw event 행은 렌더하지 않음 → 집계 학습 신호만 유지 (경계 위반 아님).
-const LOOP_EVENTS_URL = "/api/improvement/loop-events?limit=200";
+const LOOP_EVENTS_LIMIT = 200;
+const LOOP_EVENTS_URL = `/api/improvement/loop-events?limit=${LOOP_EVENTS_LIMIT}`;
 // correction_signals AGGREGATE — stage1-vs-stage2 검출 일치 + revision_count delta.
 // 집계 필드만 소비(list 는 미렌더) → 최소 limit.
 const CORRECTION_SIGNALS_URL = "/api/improvement/correction-signals?limit=1";
@@ -49,7 +52,7 @@ const TOAST_DURATION_MS = 3200;
 //   Awaiting approval (safety pending/snoozed) · Applied (terminal) · Rejected (terminal).
 // snoozed 는 non-terminal + actionable → safety actionable 컬럼에 라우팅
 // (terminal 컬럼 오염 방지) · 카드에 snoozed 마커.
-// variant — 레인별 카드 밀도 (T1). full = ProposalCardI 전체 카드 · compact =
+// variant — 레인별 카드 밀도 (T1). full = AppliedHistoryRowI 이력 행 · compact =
 // CompactProposalCardI 단일행. applied/safety=full, rejected=compact.
 // rejected.tone='crit' 유지 — 심볼-전용 착색용(✕·count·스파크에만, T7 색상 예약).
 const KANBAN_COLUMNS = [
@@ -143,75 +146,30 @@ function SymI({ s, size = 13, className = "" }) {
 	);
 }
 
-// 통합 endpoint 활성 라벨 (단일 source).
-const SRC_LABEL_UNIFIED = { t: "ok", s: "✓", x: "Unified endpoint" };
-const SRC_LABEL_LOADING = { t: "info", s: "ℹ", x: "Loading…" };
-
 function ScreenImprovement({ onNav }) {
-	const { Icon, PageHeader, Pill, TypeScaleStyle } = window.UI;
+	const { PageHeader, TypeScaleStyle, FreshnessStamp, RefreshButton, PageErrorBanner } = window.UI;
 
-	const [listState, setListState] = useSI({
-		status: "loading",
-		data: null,
-		error: null,
-		source: null,
-	});
-	const [statsState, setStatsState] = useSI({
-		status: "loading",
-		data: null,
-		error: null,
-	});
-	// Attribution Health 포인터 — Outcome 화면의 canonical 카드와 동일 endpoint 직접 fetch
-	// (single SoT).
-	const [attributionState, setAttributionState] = useSI({
-		status: "loading",
-		data: null,
-		error: null,
-	});
-	// orphan endpoint — 독립 fetch-state (loading/ready/error · 부분 실패 격리).
-	const [learningLogState, setLearningLogState] = useSI({
-		status: "loading",
-		data: null,
-		error: null,
-	});
-	// 검토 필요 사유 세그먼트 행 (F12) — 독립 fetch-state (실패 시 KPI 는 plain count 로 degrade).
-	const [reviewReasonState, setReviewReasonState] = useSI({
-		status: "loading",
-		data: null,
-		error: null,
-	});
-	// loop-events 집계 fetch-state — 부분 실패 격리 (실패 시 변경량/추세 카드만 생략).
-	const [loopEventsState, setLoopEventsState] = useSI({
-		status: "loading",
-		data: null,
-		error: null,
-	});
-	// correction_signals 집계 fetch-state — 부분 실패 격리 (실패 시 해당 카드만 생략).
-	const [correctionState, setCorrectionState] = useSI({
-		status: "loading",
-		data: null,
-		error: null,
-	});
-	// corpus-audit fetch-state — 부분 실패 격리 (실패 시 성장 카드만 생략).
-	const [corpusAuditState, setCorpusAuditState] = useSI({
-		status: "loading",
-		data: null,
-		error: null,
-	});
+	const [listState, setListState] = useSI(window.UI.INITIAL_REGION_STATE);
+	const [statsState, setStatsState] = useSI(window.UI.INITIAL_REGION_STATE);
+	const [learningLogState, setLearningLogState] = useSI(window.UI.INITIAL_REGION_STATE);
+	// review-reason rows — failure drops the segment row only; the KPI keeps its plain count
+	const [reviewReasonState, setReviewReasonState] = useSI(window.UI.INITIAL_REGION_STATE);
+	const [loopEventsState, setLoopEventsState] = useSI(window.UI.INITIAL_REGION_STATE);
+	const [correctionState, setCorrectionState] = useSI(window.UI.INITIAL_REGION_STATE);
+	const [corpusAuditState, setCorpusAuditState] = useSI(window.UI.INITIAL_REGION_STATE);
 	const [drawerRow, setDrawerRow] = useSI(null);
 	const [toast, setToast] = useSI(null);
 	// 허용/거절 in-flight 카드 id (scalar — 카드 액션은 직렬 1건 · Set 불필요).
 	// null = 진행 중 액션 없음 · row.id 일치 시 해당 카드 버튼 비활성 + 스피너.
 	const [pendingActionId, setPendingActionId] = useSI(null);
 	const [refreshTick, setRefreshTick] = useSI(0);
+	// 운영 뷰 ↔ 계기판 뷰 — nav 항목이 아니라 화면 안의 전환이다. 두 뷰가 같은 fetch-state 를
+	// 공유하므로 전환 자체는 재fetch 를 일으키지 않는다.
+	const [view, setView] = useSI("operator");
+	// 데이터 as-of — payload 가 착지한 순간에만 움직인다. 새로고침을 누른 순간으로 찍으면
+	// 실패한 새로고침이 최신 데이터처럼 보인다.
+	const [asOf, setAsOf] = useSI(null);
 
-	const listAbortRef = useRI(null);
-	const attributionAbortRef = useRI(null);
-	const orphanAbortRef = useRI(null);
-	const reviewReasonAbortRef = useRI(null);
-	const loopEventsAbortRef = useRI(null);
-	const correctionAbortRef = useRI(null);
-	const corpusAuditAbortRef = useRI(null);
 	const toastTimerRef = useRI(null);
 
 	const triggerRefresh = useCI(() => setRefreshTick((t) => t + 1), []);
@@ -280,149 +238,36 @@ function ScreenImprovement({ onNav }) {
 		[],
 	);
 
+	// one request per region → a failed or slow payload never blanks its neighbours, and held data stays through a refresh
 	useEI(() => {
-		const ctrl = new AbortController();
-		listAbortRef.current?.abort();
-		listAbortRef.current = ctrl;
-		setListState({ status: "loading", data: null, error: null, source: null });
-		setStatsState({ status: "loading", data: null, error: null });
-
-		fetchUnifiedI(ctrl.signal)
-			.then(({ list, stats, source }) => {
-				if (ctrl.signal.aborted) return;
-				setListState({ status: "ready", data: list, error: null, source });
-				setStatsState({ status: "ready", data: stats, error: null });
-			})
-			.catch((err) => {
-				if (ctrl.signal.aborted || err?.name === "AbortError") return;
-				const detail = err?.message || String(err);
-				setListState({
-					status: "error",
-					data: null,
-					error: detail,
-					source: null,
-				});
-				setStatsState({ status: "error", data: null, error: detail });
-				showToast("crit", `Couldn't load data: ${detail.slice(0, 80)}`);
-			});
-
-		return () => ctrl.abort();
-	}, [refreshTick, showToast]);
-
-	// Attribution Health 포인터 fetch — Outcome 화면 canonical 카드와 동일 endpoint (single SoT).
-	// 7일 window 만 필요 (포인터 headline) → days=7. AbortController 는 unified 와 분리.
-	useEI(() => {
-		const ctrl = new AbortController();
-		attributionAbortRef.current?.abort();
-		attributionAbortRef.current = ctrl;
-		setAttributionState({ status: "loading", data: null, error: null });
-
-		fetch("/api/outcomes/attribution-daily?days=7", {
-			signal: ctrl.signal,
-			headers: { Accept: "application/json" },
-		})
-			.then((res) => {
-				if (!res.ok) throw new Error(`attribution-daily HTTP ${res.status}`);
-				return res.json();
-			})
-			.then((data) => {
-				if (ctrl.signal.aborted) return;
-				setAttributionState({ status: "ready", data, error: null });
-			})
-			.catch((err) => {
-				if (ctrl.signal.aborted || err?.name === "AbortError") return;
-				setAttributionState({
-					status: "error",
-					data: null,
-					error: err?.message || String(err),
-				});
-			});
-
-		return () => ctrl.abort();
+		const requests = [
+			loadRegionI(IMPROVEMENT_LIST_URL, setListState, () => setAsOf(new Date().toISOString())),
+			loadRegionI(IMPROVEMENT_STATS_URL, setStatsState),
+			loadRegionI(REVIEW_REASON_ROWS_URL, setReviewReasonState),
+			loadRegionI(LEARNING_LOG_URL, setLearningLogState),
+			loadRegionI(LOOP_EVENTS_URL, setLoopEventsState),
+			loadRegionI(CORRECTION_SIGNALS_URL, setCorrectionState),
+			loadRegionI(CORPUS_AUDITS_URL, setCorpusAuditState),
+		];
+		return () => {
+			for (const request of requests) request.abort();
+		};
 	}, [refreshTick]);
 
-	// 검토 필요 사유 세그먼트 fetch (F12) — KPI 집계값의 행 단위 재분류용.
-	// 실패는 세그먼트만 생략 (부분 실패 격리 — KPI plain count 유지, 0 조작 금지).
-	useEI(() => {
-		const ctrl = new AbortController();
-		reviewReasonAbortRef.current?.abort();
-		reviewReasonAbortRef.current = ctrl;
-		setReviewReasonState({ status: "loading", data: null, error: null });
-
-		fetch(REVIEW_REASON_ROWS_URL, {
-			signal: ctrl.signal,
-			headers: { Accept: "application/json" },
-		})
-			.then((res) => {
-				if (!res.ok) throw new Error(`outcomes search HTTP ${res.status}`);
-				return res.json();
-			})
-			.then((data) => {
-				if (ctrl.signal.aborted) return;
-				setReviewReasonState({ status: "ready", data, error: null });
-			})
-			.catch((err) => {
-				if (ctrl.signal.aborted || err?.name === "AbortError") return;
-				setReviewReasonState({
-					status: "error",
-					data: null,
-					error: err?.message || String(err),
-				});
-			});
-
-		return () => ctrl.abort();
-	}, [refreshTick]);
-
-	// orphan endpoint — AbortController 로 묶은 fetch wave.
-	// 응답은 독립 state 로 분기 (부분 실패 격리 — 5xx 가 나머지 카드를 막지 않음).
-	// unified/attribution wave 와 별도 ref → 상호 abort 간섭 없음.
-	useEI(() => {
-		const ctrl = new AbortController();
-		orphanAbortRef.current?.abort();
-		orphanAbortRef.current = ctrl;
-		setLearningLogState({ status: "loading", data: null, error: null });
-
-		fetchOrphanI(LEARNING_LOG_URL, ctrl.signal, setLearningLogState);
-
-		return () => ctrl.abort();
-	}, [refreshTick]);
-
-	// loop-events 집계 fetch — orphan helper 재사용 (5xx → error state · 부분 실패 격리).
-	// 집계만 소비 (변경량 합계 + 날짜 추세) → raw event 행 미렌더 (outcomes 경계 유지).
-	useEI(() => {
-		const ctrl = new AbortController();
-		loopEventsAbortRef.current?.abort();
-		loopEventsAbortRef.current = ctrl;
-		setLoopEventsState({ status: "loading", data: null, error: null });
-
-		fetchOrphanI(LOOP_EVENTS_URL, ctrl.signal, setLoopEventsState);
-
-		return () => ctrl.abort();
-	}, [refreshTick]);
-
-	// correction_signals 집계 fetch — orphan helper 재사용 (5xx/미배포 → error state · 카드 숨김).
-	useEI(() => {
-		const ctrl = new AbortController();
-		correctionAbortRef.current?.abort();
-		correctionAbortRef.current = ctrl;
-		setCorrectionState({ status: "loading", data: null, error: null });
-
-		fetchOrphanI(CORRECTION_SIGNALS_URL, ctrl.signal, setCorrectionState);
-
-		return () => ctrl.abort();
-	}, [refreshTick]);
-
-	// corpus-audits fetch — orphan helper 재사용 (미배포 테이블/5xx → error state · 카드 숨김).
-	useEI(() => {
-		const ctrl = new AbortController();
-		corpusAuditAbortRef.current?.abort();
-		corpusAuditAbortRef.current = ctrl;
-		setCorpusAuditState({ status: "loading", data: null, error: null });
-
-		fetchOrphanI(CORPUS_AUDITS_URL, ctrl.signal, setCorpusAuditState);
-
-		return () => ctrl.abort();
-	}, [refreshTick]);
+	const regions = [
+		{ source: "suggestions", state: listState },
+		{ source: "loop stats", state: statsState },
+		{ source: "review reasons", state: reviewReasonState },
+		{ source: "pattern ledger", state: learningLogState },
+		{ source: "loop events", state: loopEventsState },
+		{ source: "correction signals", state: correctionState },
+		{ source: "corpus audits", state: corpusAuditState },
+	];
+	const pageFailure = getPageFailureI(regions);
+	// a shared outage owns the one Retry → cards drop theirs
+	const regionRetry = pageFailure ? undefined : triggerRefresh;
+	const regionStates = regions.map(({ state }) => state);
+	const { isBusy } = window.UI.getRegionSummary(regionStates);
 
 	const columnRows = useMI(() => {
 		if (listState.status !== "ready" || !listState.data)
@@ -526,15 +371,11 @@ function ScreenImprovement({ onNav }) {
 		return deriveLoopAggregateI(loopEventsState.data);
 	}, [loopEventsState]);
 
-	const srcMeta =
-		listState.source === "unified" ? SRC_LABEL_UNIFIED : SRC_LABEL_LOADING;
-
 	return (
 		<div className="h-full flex flex-col min-h-0">
 			{/* 타입 스케일 토큰 (ui.jsx SoT) — 멱등 마운트. .fs-* 유틸 + --fs-* CSS var 공급. */}
 			<TypeScaleStyle />
 			<style>{`
-        @keyframes skelPulseI { 0%,100%{opacity:.7} 50%{opacity:.35} }
         @keyframes toastInI   { from{opacity:0;transform:translateY(8px)} to{opacity:1;transform:translateY(0)} }
         @keyframes spinI { from{transform:rotate(0)} to{transform:rotate(360deg)} }
         @media (prefers-reduced-motion: reduce) { [class*="i-anim-"], .i-act-spin { animation-duration:0.01ms !important; } }
@@ -543,18 +384,13 @@ function ScreenImprovement({ onNav }) {
         .i-card-shadow:hover { box-shadow:0 2px 8px rgba(0,0,0,0.08), inset 0 0 0 1px rgb(var(--accent) / 0.4); }
         .i-row-card { transition:box-shadow 120ms, transform 120ms; cursor:pointer; }
         .i-row-card:hover { transform:translateY(-1px); }
-        .i-row-card:focus-visible { outline:2px solid rgb(var(--accent)); outline-offset:2px; }
-        .i-anim-skel { animation:skelPulseI 1.4s ease-in-out infinite; }
         .i-anim-toast { animation:toastInI 180ms ease-out; }
         /* 카드 메타 배지 — 전부 canonical window.UI.Badge(.pill family)로 이관 (screen-local 배지 CSS 폐지).
            tone 은 status Badge 의 내부 Icon(text-{tone})이 운반 · shell 은 항상 neutral(loud fill 금지 · dual-encode 보존). */
         /* 시그니처 셀 — 2줄 클램프 + 셀 최소폭(crush 방지) + 행 최소높이(1↔2줄 점프 차단). */
         /* line-clamp-2 = webkit box · word-break 으로 긴 단일 토큰도 줄바꿈 → 가로 overflow 방지. */
-        .i-sig-cell { min-width:200px; max-width:0; width:60%; }
-        .i-sig-clamp { display:-webkit-box; -webkit-box-orient:vertical; -webkit-line-clamp:2; overflow:hidden; word-break:break-word; line-height:1.4; min-height:2.8em; }
         /* 허용/거절 액션 버튼 — dual-encoded (색 + ✓/✕ 기호) · WCAG AA contrast. */
         .i-act-btn { flex:1; display:inline-flex; align-items:center; justify-content:center; gap:4px; font-family:'JetBrains Mono',monospace; font-size:var(--fs-meta); font-weight:600; padding:5px 8px; border-radius:6px; border:1px solid transparent; cursor:pointer; transition:background 120ms, border-color 120ms; }
-        .i-act-btn:focus-visible { outline:2px solid rgb(var(--accent)); outline-offset:1px; }
         /* RC4 in-flight — opacity 둔감화 + pointer-events:none 가 실제 중복 클릭 게이트. */
         .i-act-btn:disabled { opacity:.55; cursor:progress; pointer-events:none; }
         /* 스피너 — 텍스트 글리프(↻)에서 인라인 <svg>(Icon 'refresh')로 교체됨. svg 루트는
@@ -568,13 +404,20 @@ function ScreenImprovement({ onNav }) {
         /* T3 — 종결 그리드 비대칭(applied 2fr : rejected 1fr). 인라인 gridTemplateColumns 금지
            (미디어쿼리가 인라인 스타일을 못 이김) → 클래스 선언 + <640px 단일 컬럼 붕괴를 같은
            블록에서 직접 출하(base.css L607 은 drawer 전용 → 보드 붕괴 미담당 · 검증 완료). */
-        .board-terminal-grid { display:grid; grid-template-columns:2fr 1fr; gap:12px; }
+        /* loop output — 기준 캡션은 2줄까지 줄바꿈 · 카드는 20rem 미만이면 다음 줄로 */
+        .i-loop-output .card-sub { white-space:normal; display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; }
+        .i-loop-grid { display:grid; grid-template-columns:repeat(auto-fit, minmax(20rem, 1fr)); gap:12px; align-items:start; }
+        .board-terminal-grid { display:grid; grid-template-columns:minmax(0,2fr) minmax(0,1fr); gap:12px; }
         @media (max-width:640px) { .board-terminal-grid { grid-template-columns:1fr; } }
+        /* 알람 레인 — 보고 표면과 구조적으로 구분되는 유일한 자리. tint 는 컨테이너가
+           운반하고 텍스트 색으로 심각도를 싣지 않는다(라이트 테마 AA 미달). */
+        .i-alarm-lane { border:1px solid rgb(var(--warn) / 0.45); border-radius:10px;
+          background:rgb(var(--warn) / 0.06); padding:2px; }
         /* T2 — AWAITING 존. 0건 = 슬림 idle 스트립(amber 없음, --sunken/--line 중립).
            ≥1건 = 상단 full-width --warn 배너(populated-대기에만 amber 소비 · T7). */
         .i-await-strip { display:flex; align-items:center; gap:6px; min-height:30px; padding:0 12px;
           background:rgb(var(--sunken)); border:1px solid rgb(var(--line)); border-radius:8px;
-          color:rgb(var(--faint)); font-family:'JetBrains Mono',monospace; font-size:var(--fs-micro); }
+          color:rgb(var(--faint)); font-family:'JetBrains Mono',monospace; font-size:var(--fs-meta); }
         .i-await-banner { border:1px solid rgb(var(--warn) / 0.45); border-radius:10px;
           background:rgb(var(--warn) / 0.08); padding:10px 12px; animation:iAwaitInI 200ms ease-out; }
         .i-await-head { display:flex; align-items:center; gap:8px; font-family:'JetBrains Mono',monospace;
@@ -587,87 +430,105 @@ function ScreenImprovement({ onNav }) {
           @keyframes iAwaitInI { from { opacity:0; } to { opacity:1; } }
         }
         /* T6 — APPLIED/REJECTED 종결-컬럼 헤더 공용 밴드. 두 헤더 동일 min-height + 세로중앙 정렬 →
-           헤더 아래 리스트 시작 Y 일치(컬럼 간 top/height 동기화). 26px = fs-display 22px count 를 담는 높이. */
+           헤더 아래 리스트 시작 Y 일치(컬럼 간 top/height 동기화). 26px = fs-stat 18px count 를 담는 높이. */
         .i-col-header { min-height:26px; display:flex; align-items:center; }
-        /* T6 — APPLIED hero. 큰 22px --ok count 는 hero 축 세로중앙(.i-col-header) · ✓+APPLIED 라벨은
+        /* T6 — APPLIED hero. 18px --ok count(상태 밴드 수치보다 작게) 는 hero 축 세로중앙(.i-col-header) · ✓+APPLIED 라벨은
            별도 inline-flex 그룹으로 묶어 자기들끼리 세로중앙(✓ mid = 라벨 mid) → 붕 뜸 제거. gap 만 담당. */
         .i-applied-hero { gap:6px; }
         /* T5 — REJECTED 컴팩트 행(단일행 · rationale 숨김 · 중립 chrome). --crit 는 ✕ 심볼에만. */
         .i-compact-row { display:flex; align-items:center; gap:6px; padding:5px 8px; }
-        .i-compact-title { flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
         /* T5/T8 — '＋N more' 실제 포커스 가능 버튼(요약 토글). 중립 chrome. */
         .i-more-btn { display:flex; align-items:center; justify-content:center; gap:4px; width:100%;
           padding:6px 8px; border:1px dashed rgb(var(--line)); border-radius:8px; background:transparent;
-          color:rgb(var(--faint)); font-family:'JetBrains Mono',monospace; font-size:var(--fs-micro); cursor:pointer; }
+          color:rgb(var(--faint)); font-family:'JetBrains Mono',monospace; font-size:var(--fs-meta); cursor:pointer; }
         .i-more-btn:hover { color:rgb(var(--dim)); border-color:rgb(var(--faint) / 0.5); }
-        .i-more-btn:focus-visible { outline:2px solid rgb(var(--accent)); outline-offset:2px; }
       `}</style>
 
 			<div className="flex-shrink-0">
 				<PageHeader
 					sub="Self-improvement loop"
-					title="Learning & self-improvement"
+					title="Learning"
 					right={
-						<button
-							className="btn ghost sm"
-							onClick={triggerRefresh}
-							aria-label="Refresh learning data"
-						>
-							<Icon name="refresh" size={14} />
-							Refresh
-						</button>
+						<div className="flex items-center gap-2">
+							<FreshnessStamp at={asOf} regions={regionStates} />
+							<ViewToggleI view={view} onChange={setView} />
+							<RefreshButton
+								isBusy={isBusy}
+								hasRead={asOf !== null}
+								onRefresh={triggerRefresh}
+								label="Refresh learning data"
+							/>
+						</div>
 					}
 				/>
 			</div>
 
-			{/* 순서 — 1차 액션 surface 인 칸반을 최상단으로, KPI/통계 카드는 그 아래로.
-          제안 허용/거절 행위 빈도가 KPI 조회보다 훨씬 높음 → 칸반 우선.
+			{/* 다섯 표면의 순서 — 알람 레인 → 상태 밴드 → 제안 보드 → 패턴 원장 → 루프 산출.
+          지목된 주체가 있는 알람이 밴드보다 위 · 유일한 쓰기 표면인 보드가 읽기 전용
+          원장보다 위 · 루프 산출은 그 셋을 읽은 뒤에야 의미가 생기므로 마지막.
+          레인은 뷰 분기 밖 — 계측 뷰에서도 알람은 가려지면 안 된다.
           .space-sections(24px) — 독립 통계 섹션을 16px 카드 채널보다 한 단 넓게 분리(W1-T3 · C-REGION). */}
 			<div className="space-sections flex-1 min-h-0">
-				<ParkedLoopBannerI applyCap={applyCapState} />
-				<LoopSuppressionCardI
-					state={learningLogState}
-					suppression={loopSuppression}
-				/>
-				<div className="flex-1 min-h-0">
-					<KanbanCardI
-						state={listState}
-						columnRows={columnRows}
-						loopAggregate={loopAggregate}
-						onRowClick={setDrawerRow}
-						onAction={runAction}
-						pendingActionId={pendingActionId}
+				<AlarmLaneI applyCap={applyCapState} />
+				{pageFailure ? (
+					<PageErrorBanner
+						sources={pageFailure.sources}
+						error={pageFailure.error}
 						onRetry={triggerRefresh}
 					/>
-				</div>
-				<KpiRowI
-					state={statsState}
-					reviewReasons={reviewReasonSegments}
-					onRetry={triggerRefresh}
-				/>
-				<ChangeSummaryCardI
-					state={loopEventsState}
-					aggregate={loopAggregate}
-					onRetry={triggerRefresh}
-				/>
-				<BucketRowI state={listState} buckets={buckets} />
-				<RankedCandidateCardI
-					state={learningLogState}
-					onRowClick={setDrawerRow}
-					onRetry={triggerRefresh}
-				/>
-				<TrendCardI state={loopEventsState} aggregate={loopAggregate} />
-				<CorpusGrowthCardI state={corpusAuditState} />
-				<CorrectionSignalsCardI state={correctionState} />
-				<StyleRefCardI state={listState} styleRef={styleRef} />
-				<ProseOnlyAddCardI state={listState} summary={proseOnlyAdd} />
-				<AttributionPointerCardI state={attributionState} onNav={onNav} />
-				<TierBreakdownCardI state={listState} tierBreakdown={tierBreakdown} />
-				<ConfidenceDistCardI
-					state={listState}
-					confidenceDist={confidenceDist}
-				/>
-				<LearningLogCardI state={learningLogState} onRetry={triggerRefresh} />
+				) : null}
+				{view === "instrumentation" ? (
+					<InstrumentationViewI
+						listState={listState}
+						correctionState={correctionState}
+						statsState={statsState}
+						corpusAuditState={corpusAuditState}
+						styleRef={styleRef}
+						proseOnlyAdd={proseOnlyAdd}
+						tierBreakdown={tierBreakdown}
+						confidenceDist={confidenceDist}
+						reviewReasons={reviewReasonSegments}
+						onNav={onNav}
+						onRetry={regionRetry}
+					/>
+				) : (
+					<>
+						<StatusBandI
+							statsState={statsState}
+							listState={listState}
+							learningLogState={learningLogState}
+							suppression={loopSuppression}
+							awaiting={columnRows.safety.length}
+							onRetry={regionRetry}
+						/>
+						<div className="flex-1 min-h-0">
+							<KanbanCardI
+								state={listState}
+								columnRows={columnRows}
+								loopAggregate={loopAggregate}
+								onRowClick={setDrawerRow}
+								onAction={runAction}
+								pendingActionId={pendingActionId}
+								onRetry={regionRetry}
+							/>
+						</div>
+						<PatternLedgerCardI
+							state={learningLogState}
+							suppression={loopSuppression}
+							onRowClick={setDrawerRow}
+							onRetry={regionRetry}
+						/>
+						<LoopOutputGroupI
+							statsState={statsState}
+							loopEventsState={loopEventsState}
+							loopAggregate={loopAggregate}
+							listState={listState}
+							buckets={buckets}
+							onNav={onNav}
+							onRetry={regionRetry}
+						/>
+					</>
+				)}
 			</div>
 
 			{drawerRow && (
@@ -678,127 +539,307 @@ function ScreenImprovement({ onNav }) {
 	);
 }
 
-// ----- KPI row (Skim) — dual-encoding label (색상 + 기호). -----------
+const sumCountsI = (list) =>
+	list.reduce((sum, b) => sum + Number(b.count ?? 0), 0);
 
-function KpiRowI({ state, reviewReasons, onRetry }) {
+// ----- Status band (Skim) — 화면을 여는 이유 네 가지에 타일 하나씩. --------
+//
+// 각 타일은 자기 payload 의 상태(loading / error / unavailable / ready)를 따로 렌더한다:
+// 한 payload 가 죽었을 때 나머지가 0 으로 읽히면 밴드 전체가 거짓말이 된다. 숫자는 항상
+// 자기 모집단을 데리고 다닌다 — 이웃 타일끼리 게이트가 다르기 때문이다.
+
+function StatusBandI({
+	statsState,
+	listState,
+	learningLogState,
+	suppression,
+	awaiting,
+	onRetry,
+}) {
+	const s = statsState.data || {};
+	const cycleTotal = Number(s.cycle_total_7d ?? 0);
+	const pendingTotal = Number(suppression?.pending_total ?? 0);
+	const promptable = Math.max(
+		0,
+		pendingTotal - Number(suppression?.pending_unpromptable ?? 0),
+	);
+	const statsStatus = bandTileStatusI(statsState, statsState.data);
+	// 보류 중 사람이 오늘 풀 수 있는 원인만 센다 — 설계 결정으로 닫아 둔 원인은 wedged 가
+	// 아니다. 판정 집합은 원장 held 구역과 같은 것 하나: 갈라지면 타일과 구역이 다른 수를 말한다.
+	const heldBuckets = Array.isArray(suppression?.parked) ? suppression.parked : [];
+	const heldNeedingHuman = sumCountsI(
+		heldBuckets.filter((b) => !HELD_DESIGN_DECISION_CAUSES.has(b.cause)),
+	);
+	return (
+		<div className="grid grid-cols-4 gap-3 mb-3">
+			<StatusTileI
+				status={bandTileStatusI(listState, listState.data)}
+				tone={awaiting > 0 ? "text-warn" : "text-faint"}
+				symbol={awaiting > 0 ? "⚠" : null}
+				label="Awaiting your decision"
+				value={formatIntI(awaiting)}
+				owner="suggestion board"
+				population="Safety-tier suggestions, pending or snoozed · no recency bound"
+				onRetry={onRetry}
+			/>
+			<StatusTileI
+				status={statsStatus}
+				tone="text-ok"
+				symbol="✓"
+				label="Applied (7 days)"
+				value={formatIntI(Number(s.cycles_generated_applied_7d ?? 0))}
+				owner="loop output"
+				population={`of ${formatIntI(cycleTotal)} cycles in the last 7 days · last cycle ${formatCycleStampI(s.latest_cycle_started_at)}`}
+				onRetry={onRetry}
+			/>
+			<StatusTileI
+				status={bandTileStatusI(learningLogState, suppression)}
+				symbol={null}
+				label="Backlog that can propose"
+				value={formatIntI(promptable)}
+				owner="pattern ledger"
+				population={`of ${formatIntI(pendingTotal)} pending patterns · every agent, label-keyed`}
+				onRetry={onRetry}
+			/>
+			<StatusTileI
+				status={bandTileStatusI(learningLogState, suppression)}
+				symbol={null}
+				label="Held, needs a human"
+				value={formatIntI(heldNeedingHuman)}
+				owner="pattern ledger"
+				population={`of ${formatIntI(sumCountsI(heldBuckets))} held patterns · terminal rows, all time · no recency bound`}
+				onRetry={onRetry}
+			/>
+		</div>
+	);
+}
+
+// payload 상태 → 타일 상태. ready 인데 값 자체가 없으면 0 이 아니라 "측정되지 않음"이다.
+function tileStatusI(state, value) {
+	if (state.status === "loading") return "loading";
+	if (state.status === "error") return "error";
+	if (!value) return "unavailable";
+	return "ready";
+}
+
+// 밴드 타일은 실패를 알리지 않는다 — 배너는 payload 를 소유한 그룹에 하나만.
+function bandTileStatusI(state, value) {
+	const status = tileStatusI(state, value);
+	return status === "error" ? "announced" : status;
+}
+
+function StatusTileI({ status, tone, symbol, label, value, population, owner, onRetry }) {
 	const { KPI } = window.UI;
-
-	if (state.status === "loading") {
+	if (status !== "ready") {
 		return (
-			<div
-				className="grid grid-cols-4 gap-3 mb-3"
-				aria-busy="true"
-				aria-label="Loading KPIs"
-			>
-				{Array.from({ length: 4 }).map((_, i) => (
+			<TilePlaceholderI
+				status={status}
+				label={label}
+				owner={owner}
+				onRetry={onRetry}
+			/>
+		);
+	}
+	return (
+		<KPI
+			label={
+				<span className="inline-flex items-center gap-1.5">
+					{symbol ? <SymI s={symbol} className={tone} size={12} /> : null}
+					{label}
+				</span>
+			}
+			value={value}
+			hint={population}
+		/>
+	);
+}
+
+// 값 자리에 절대 0 을 쓰지 않는다 — 적재되지 않은 payload 가 0 으로 읽히는 것이 이 밴드가
+// 막으려는 단 하나의 오독이다. 세 상태는 문구도 형태도 서로 다르다.
+function TilePlaceholderI({ status, label, owner, onRetry }) {
+	const { LoadingPlaceholder } = window.UI;
+	return (
+		<div className="i-card-shadow bg-elev rounded-md p-2.5 min-w-0">
+			<div className="fs-meta text-faint min-h-[2.4em]">{label}</div>
+			{status === "loading" ? (
+				<LoadingPlaceholder label={label} minHeight={28} className="mt-1" />
+			) : null}
+			{status === "error" ? (
+				<button
+					className="btn ghost sm mt-1"
+					onClick={onRetry}
+					aria-label={`Retry loading ${label}`}
+				>
+					Couldn't load — retry
+				</button>
+			) : null}
+			{status === "unavailable" ? (
+				<div className="card-sub is-wrap fs-meta mt-1">
+					Not measured — this payload carried no value for it
+				</div>
+			) : null}
+			{status === "announced" ? (
+				<div className="card-sub is-wrap fs-meta mt-1">
+					Not loaded — see the {owner} below
+				</div>
+			) : null}
+		</div>
+	);
+}
+
+// 마지막 사이클 시각 — 값이 없으면 "unknown". 0 이나 오래된 스탬프로 대체하지 않는다.
+function formatCycleStampI(iso) {
+	if (!iso) return "unknown";
+	const d = new Date(iso);
+	if (Number.isNaN(d.getTime())) return "unknown";
+	return d.toLocaleString(undefined, {
+		month: "2-digit",
+		day: "2-digit",
+		hour: "2-digit",
+		minute: "2-digit",
+	});
+}
+
+// 뷰 전환 — nav 항목이 아니라 화면 안의 전환이다. 선택 상태는 aria-pressed 와 ✓ 글리프가
+// 함께 운반한다(색 단독 금지).
+function ViewToggleI({ view, onChange }) {
+	const options = [
+		["operator", "Operator"],
+		["instrumentation", "Instrumentation"],
+	];
+	return (
+		<div className="seg" role="group" aria-label="Screen view">
+			{options.map(([key, label]) => (
+				<button
+					key={key}
+					type="button"
+					className="inline-flex items-center gap-1"
+					aria-pressed={view === key}
+					onClick={() => onChange(key)}
+				>
+					{view === key ? <SymI s="✓" size={11} /> : null}
+					{label}
+				</button>
+			))}
+		</div>
+	);
+}
+
+// ----- Rolling trend card (T-IMP-4) ------------------------------------------
+//
+// loop-events 날짜별 verified vs reject — 시리즈당 TrendChart 하나(포커스 · 읽기값 · 날짜 눈금).
+
+// 루프 산출 묶음 — 세 카드가 한 질문("루프가 무엇을 내놓았나")에 답하므로 기준을 묶음
+// 헤더에 한 번만 적는다. 기준이 다른 카드는 자기 것을 스스로 말한다(CTM/EPM = 전체 기간).
+// reporting health 는 카드가 아니라 링크다 — 이 화면은 그 수치를 호스팅하지 않는다.
+function TrendCardI({ state, aggregate }) {
+	const { CardHead, TrendChart, LoadingPlaceholder } = window.UI;
+	if (state.status === "error") return null;
+	if (state.status === "loading" || !aggregate) {
+		return (
+			<div className="card">
+				<CardHead title="Verified vs rejected (trend)" />
+				<div className="p-3">
+					<LoadingPlaceholder label="the trend" minHeight={60} />
+				</div>
+			</div>
+		);
+	}
+
+	const series = aggregate.trend || [];
+	// 2-포인트 미만 → 추세선 무의미 → 안내 (Sparkline 도 <2 면 null 반환).
+	if (series.length < 2) {
+		return (
+			<div className="card">
+				<CardHead title="Verified vs rejected (trend)" />
+				<div className="px-3 pb-3">
 					<div
-						key={i}
-						className="i-anim-skel"
-						style={{
-							height: 86,
-							borderRadius: 8,
-							background: "rgb(var(--sunken))",
-							opacity: 0.7,
-						}}
-					/>
+						className="placeholder"
+					>
+						Not enough days to plot a trend
+					</div>
+				</div>
+			</div>
+		);
+	}
+
+	const charts = [
+		["Verified cycles per day", "ok", "verified", aggregate.verifiedTotal],
+		["Rejected cycles per day", "warn", "reject", aggregate.rejectTotal],
+	];
+	return (
+		<div className="card">
+			<CardHead
+				title="Verified vs rejected (trend)"
+				sub={getLoopBasisI(aggregate)}
+			/>
+			<div className="px-3 pb-3 flex flex-col gap-3">
+				{charts.map(([label, tone, key, total]) => (
+					<div key={key}>
+						<div className="fs-meta text-faint mb-1">
+							{label} · {formatIntI(total)} in range
+						</div>
+						<TrendChart
+							label={label}
+							tone={tone}
+							h={48}
+							points={series.map((d) => ({ label: d.date, value: d[key] }))}
+						/>
+					</div>
 				))}
 			</div>
-		);
-	}
-	if (state.status === "error") {
-		return (
-			<div className="mb-3">
+		</div>
+	);
+}
+
+function LoopOutputGroupI({
+	statsState,
+	loopEventsState,
+	loopAggregate,
+	listState,
+	buckets,
+	onNav,
+	onRetry,
+}) {
+	const { CardHead, Icon } = window.UI;
+	return (
+		<div className="space-y-3 i-loop-output">
+			<CardHead
+				title="Loop output"
+				sub="Last 7 days of cycles unless a card names its own basis"
+				right={
+					<button
+						className="btn ghost sm"
+						onClick={() => {
+							if (typeof onNav === "function") onNav("outcomes");
+						}}
+						aria-label="Open the reporting-health card on the Task results screen"
+					>
+						Reporting health <Icon name="arrow-right" size={14} />
+					</button>
+				}
+			/>
+			{statsState.status === "error" ? (
 				<ErrorBannerI
-					title="Couldn't load KPI data"
-					detail={state.error}
+					source="loop stats"
+					error={statsState.error}
 					onRetry={onRetry}
 				/>
+			) : null}
+			{statsState.status === "ready" && statsState.data ? (
+				<CycleDecompositionRowI stats={statsState.data} />
+			) : null}
+			{/* 세 카드는 한 질문의 세 답이므로 한 행에 나란히 — 쌓으면 묶음 헤더의 기준이
+          첫 카드에만 걸린 것으로 읽힌다(와이어프레임 Tier 4 = 3-col). */}
+			<div className="i-loop-grid">
+				<ChangeSummaryCardI
+					state={loopEventsState}
+					aggregate={loopAggregate}
+					onRetry={onRetry}
+				/>
+				<TrendCardI state={loopEventsState} aggregate={loopAggregate} />
+				<BucketRowI state={listState} buckets={buckets} />
 			</div>
-		);
-	}
-
-	const s = state.data || {};
-	const td = s.tier_distribution || {};
-	const autoCnt = Number(td.auto ?? 0),
-		safetyCnt = Number(td.safety ?? 0);
-	const applied7d = Number(s.applied_last_7d ?? 0);
-	const rejected7d = Number(s.rejected_last_7d ?? 0);
-	// 무윈도 lifetime 적용량 — 7d/30d 윈도가 구조적으로 숨기는 이력 적용 버스트를 노출.
-	// apply_rate = applied/(applied+rejected) → 분자·분모 모두 명시 (formatPctWithDenominator).
-	const appliedAllTime = Number(s.applied_all_time ?? 0);
-	const rejectedAllTime = Number(s.rejected_all_time ?? 0);
-	const applyRateLifetime = window.UI.formatPctWithDenominator(
-		appliedAllTime,
-		appliedAllTime + rejectedAllTime,
-	);
-	const reviewFlag = Number(s.review_flag_last_7d ?? 0);
-	// zero_apply_cycle_rate = 적용 0건 사이클 비율 — "제안 생성 실패" 아님 (생성은 성공했을 수 있음).
-	const zeroApplyRate = Number(
-		s.zero_apply_cycle_rate ?? s.haiku_skipped_rate ?? 0,
-	);
-	const cycleTotal = Number(s.cycle_total_7d ?? 0);
-	// 무적용 = 생성-미적용 + 무생성 (적용 0건 partition 합) → 'N.N% (x/y)' headline (A5).
-	// cycle_total_7d 미존재 (legacy payload) → 비율 단독 fallback.
-	const zeroApplyCycles =
-		Number(s.cycles_generated_not_applied_7d ?? 0) +
-		Number(s.cycles_nothing_generated_7d ?? 0);
-	const zeroApplyHeadline =
-		cycleTotal > 0
-			? window.UI.formatPctWithDenominator(zeroApplyCycles, cycleTotal)
-			: `${(zeroApplyRate * 100).toFixed(1)}%`;
-
-	return (
-		<div className="mb-3">
-			{/* tier KPI = 전체 누적 — 칸반 배지의 '최근 30일 전수'와 윈도우가 다름 → 라벨에 명시. */}
-			<div className="grid grid-cols-4 gap-3">
-				<KPI
-					label={
-						<span className="inline-flex items-center gap-1.5">
-							<SymI s="✓" className="text-ok" size={12} />
-							Suggestions by track (all time)
-						</span>
-					}
-					value={`${formatIntI(autoCnt)} · ${formatIntI(safetyCnt)}`}
-					hint={`auto ${formatIntI(autoCnt)} · needs approval ${formatIntI(safetyCnt)}`}
-				/>
-				<KPI
-					label={
-						<span className="inline-flex items-center gap-1.5">
-							<SymI s="✓" className="text-ok" size={12} />
-							Applied (7 days)
-						</span>
-					}
-					value={formatIntI(applied7d)}
-					hint={`apply rate ${applyRateLifetime}`}
-				/>
-				<KPI
-					label={
-						<span className="inline-flex items-center gap-1.5">
-							<SymI s="⚠" className="text-warn" size={12} />
-							Rejected (7 days)
-						</span>
-					}
-					value={formatIntI(rejected7d)}
-					hint="Auto-rejected by the loop"
-				/>
-				{/* 7d qualifier 를 label 에 명시 — 이 KPI=7d, BucketRow 검토필요=30d 가 한 화면 공존. */}
-				<KPI
-					label={
-						<span className="inline-flex items-center gap-1.5">
-							<SymI s="ℹ" className="text-info" size={12} />
-							Flagged results (7 days)
-						</span>
-					}
-					value={formatIntI(reviewFlag)}
-					hint={
-						<ReviewReasonSegmentsI
-							segments={reviewReasons}
-							fallback="Flagged outcomes"
-						/>
-					}
-				/>
-			</div>
-			<CycleDecompositionRowI stats={s} />
 		</div>
 	);
 }
@@ -851,13 +892,13 @@ function CycleDecompositionRowI({ stats }) {
 	// 카테고리 = symbol+tone+label 로 dual-encode(색 단독 아님), 수량 = neutral count Badge(color≠count 규칙).
 	return (
 		<div className="flex items-center gap-2.5 mt-2 flex-wrap">
-			<span className="fs-micro font-mono text-faint uppercase tracking-wider">
+			<span className="fs-meta text-faint uppercase tracking-wider">
 				Run breakdown (7 days)
 			</span>
 			{chips.map(([sym, tone, label, count]) => (
 				<span key={label} className="fs-meta inline-flex items-center gap-1.5">
 					<SymI s={sym} className={tone} size={12} />
-					<span className={tone}>{label}</span>
+					<span>{label}</span>
 					<Badge role="count">{formatIntI(count)}</Badge>
 				</span>
 			))}
@@ -876,7 +917,7 @@ function KanbanCardI({
 	pendingActionId,
 	onRetry,
 }) {
-	const { CardHead } = window.UI;
+	const { CardHead, LoadingPlaceholder } = window.UI;
 	const isLoading = state.status === "loading";
 	const isError = state.status === "error";
 	const rejectBuckets = state.data?.reject_bucket_summary || null;
@@ -889,63 +930,44 @@ function KanbanCardI({
 			style={{ maxHeight: "70vh", overflow: "hidden" }}
 		>
 			<div className="flex-shrink-0">
-				<CardHead title="Suggestion board" />
+				<CardHead
+					title="Suggestion board"
+					sub={`Applied and rejected: latest ${BOARD_RECENT_LIMIT} suggestions · awaiting: every open one`}
+				/>
 			</div>
 			{isError ? (
 				<div className="p-4">
 					<ErrorBannerI
-						title="Couldn't load the suggestion board"
-						detail={state.error}
+						source="suggestions"
+						error={state.error}
 						onRetry={onRetry}
 					/>
+				</div>
+			) : isLoading ? (
+				<div className="flex flex-col p-3 flex-1 min-h-0">
+					<LoadingPlaceholder label="suggestions" className="flex-1" />
 				</div>
 			) : (
 				<div className="flex flex-col gap-3 p-3 flex-1 min-h-0 overflow-hidden">
 					{/* ROW-1 — AWAITING 존 (승인 대기, 유일한 행동 유발 레인 → 최상단 배치). */}
-					{isLoading ? (
-						<div
-							className="i-anim-skel flex-shrink-0"
-							style={{
-								minHeight: 30,
-								borderRadius: 8,
-								background: "rgb(var(--sunken))",
-								opacity: 0.7,
-							}}
-						/>
-					) : (
-						<AwaitingZoneI
-							rows={columnRows.safety || []}
-							onRowClick={onRowClick}
-							onAction={onAction}
-							pendingActionId={pendingActionId}
-						/>
-					)}
+					<AwaitingZoneI
+						rows={columnRows.safety || []}
+						onRowClick={onRowClick}
+						onAction={onAction}
+						pendingActionId={pendingActionId}
+					/>
 					{/* ROW-2 — 종결 그리드 (applied 2fr : rejected 1fr, safety 제외). */}
 					<div className="board-terminal-grid flex-1 min-h-0 overflow-hidden">
-						{TERMINAL_COLUMNS.map((col) =>
-							isLoading ? (
-								<div
-									key={col.key}
-									className="i-anim-skel"
-									style={{
-										borderRadius: 8,
-										background: "rgb(var(--sunken))",
-										opacity: 0.7,
-									}}
-								/>
-							) : (
-								<KanbanColumnI
-									key={col.key}
-									column={col}
-									rows={columnRows[col.key] || []}
-									loopAggregate={loopAggregate}
-									rejectBuckets={rejectBuckets}
-									onRowClick={onRowClick}
-									onAction={onAction}
-									pendingActionId={pendingActionId}
-								/>
-							),
-						)}
+						{TERMINAL_COLUMNS.map((col) => (
+							<KanbanColumnI
+								key={col.key}
+								column={col}
+								rows={columnRows[col.key] || []}
+								loopAggregate={loopAggregate}
+								rejectBuckets={rejectBuckets}
+								onRowClick={onRowClick}
+							/>
+						))}
 					</div>
 				</div>
 			)}
@@ -981,7 +1003,7 @@ function AwaitingBannerI({ rows, onRowClick, onAction, pendingActionId }) {
 				<SymI s={SAFETY_COLUMN.symbol} size={13} />
 				<span>{SAFETY_COLUMN.label}</span>
 				<span className="tnum">{formatIntI(rows.length)}</span>
-				<span className="ml-auto fs-micro">Your call</span>
+				<span className="ml-auto fs-meta">Your call</span>
 			</div>
 			<div className="i-await-body">
 				{rows.map((row) => (
@@ -1009,7 +1031,7 @@ function AwaitingStripI() {
 	);
 }
 
-// 종결 레인 — variant 라우팅(T4): full → ProposalCardI · compact → CompactProposalCardI(폴백 full).
+// 종결 레인 — variant 라우팅(T4): full → AppliedHistoryRowI · compact → CompactProposalCardI(폴백 full).
 // 헤더는 레인별 분기(T6 APPLIED hero · Rejected 중립 헤더 + reject 스파크) · Bar 부피막대 폐기(DR-3).
 function KanbanColumnI({
 	column,
@@ -1017,8 +1039,6 @@ function KanbanColumnI({
 	loopAggregate,
 	rejectBuckets,
 	onRowClick,
-	onAction,
-	pendingActionId,
 }) {
 	const { EmptyState } = window.UI;
 	const isCompact = column.variant === "compact";
@@ -1031,7 +1051,7 @@ function KanbanColumnI({
 			: "Suggestions the loop or a reviewer turned down show up here.";
 	// 헤더 sticky + --elev 배경 — 카드 본문 톤과 통일 · row scroll 시 헤더 비침 차단.
 	return (
-		<div className="flex flex-col min-h-0 gap-2">
+		<div className="flex flex-col min-h-0 min-w-0 gap-2">
 			<div
 				className="flex flex-col gap-1 flex-shrink-0"
 				style={{
@@ -1066,34 +1086,74 @@ function KanbanColumnI({
 				) : isCompact ? (
 					<RejectedCompactListI rows={rows} onRowClick={onRowClick} />
 				) : (
-					rows.map((row) => (
-						<ProposalCardI
-							key={row.id}
-							row={row}
-							onClick={() => onRowClick(row)}
-							onAction={onAction}
-							pendingActionId={pendingActionId}
-						/>
-					))
+					<ul className="flex flex-col gap-1">
+						{rows.map((row) => (
+							<li key={row.id}>
+								<AppliedHistoryRowI row={row} onClick={() => onRowClick(row)} />
+							</li>
+						))}
+					</ul>
 				)}
 			</div>
 		</div>
 	);
 }
 
-// T6 — APPLIED hero 헤더. 22px --ok tnum count + ✓ + 'APPLIED'(fs-micro 라벨 ≈ 2:1). 부피막대 없음.
+// Applied history — one line (agent · date · pattern); the rationale opens in the drawer.
+function AppliedHistoryRowI({ row, onClick }) {
+	const label =
+		patternNameI(row.pattern_label, row.target_agent) || `Proposal #${row.id}`;
+	return (
+		<BoardRowI
+			onClick={onClick}
+			title={row.rationale ? String(row.rationale) : undefined}
+			ariaLabel={`View applied suggestion ${row.id} details`}
+			lead={
+				<>
+					<span className="font-mono text-dim truncate shrink-0 max-w-[10rem]">
+						{row.target_agent || "—"}
+					</span>
+					<span className="font-mono text-faint tnum shrink-0">
+						{row.cycle_date ? formatDateI(row.cycle_date) : "—"}
+					</span>
+				</>
+			}
+			text={label}
+			trail={<span className="font-mono text-faint shrink-0">{`#${row.id}`}</span>}
+		/>
+	);
+}
+
+// Board row atom shared by both lanes — sans prose cell flexes and ellipsises, mono only for ids and dates.
+function BoardRowI({ onClick, title, ariaLabel, lead, text, trail }) {
+	return (
+		<button
+			type="button"
+			onClick={onClick}
+			className="i-row-card bg-elev rounded-md w-full min-w-0 text-left px-2 py-1.5 flex items-center gap-2 fs-meta"
+			title={title}
+			aria-label={ariaLabel}
+		>
+			{lead}
+			<span className="text-ink truncate flex-1 min-w-0">{text}</span>
+			{trail}
+		</button>
+	);
+}
+
+// T6 — APPLIED hero 헤더. fs-stat --ok tnum count + ✓ + 'APPLIED'(fs-meta 라벨 ≈ 2:1). 부피막대 없음.
 function AppliedHeroHeaderI({ count, label, symbol }) {
 	return (
 		<div className="i-applied-hero i-col-header">
 			<span
-				className="fs-display tnum font-mono text-ok"
+				className="fs-stat tnum font-mono text-ok"
 				style={{ lineHeight: 1 }}
 			>
 				{formatIntI(count)}
 			</span>
 			<span className="inline-flex items-center gap-1.5">
 				<SymI s={symbol} className="text-ok" size={14} />
-				<span className="fs-micro font-mono uppercase tracking-wider text-ok">
+				<span className="fs-meta uppercase tracking-wider text-ok">
 					{label}
 				</span>
 			</span>
@@ -1140,9 +1200,14 @@ function RejectBucketSplitI({ summary }) {
 			"Superseded by a fresher same-agent proposal — terminated by the cycle, never judged",
 		],
 	];
+	const windowDays = Number(summary.window_days);
 	return (
-		<div className="flex flex-wrap items-baseline gap-x-3 gap-y-0.5 fs-micro font-mono">
-			{cells.map(([label, count, hint]) => (
+		<div className="flex flex-wrap items-baseline gap-x-3 gap-y-0.5 fs-meta">
+			{[
+				Number.isFinite(windowDays) ? (
+					<span key="basis" className="text-faint">{`Last ${formatIntI(windowDays)} days, by cause`}</span>
+				) : null,
+				...cells.map(([label, count, hint]) => (
 				<span
 					key={label}
 					className="inline-flex items-baseline gap-1"
@@ -1150,7 +1215,8 @@ function RejectBucketSplitI({ summary }) {
 					<span className="text-faint uppercase tracking-wider">{label}</span>
 					<span className="text-ink tnum">{formatIntI(Number(count ?? 0))}</span>
 				</span>
-			))}
+			)),
+			]}
 		</div>
 	);
 }
@@ -1204,11 +1270,12 @@ function RejectedCompactListI({ rows, onRowClick }) {
 
 	return (
 		<React.Fragment>
-			{shown.map((row) => (
-				<CompactProposalCardI
-					key={row.id}
-					row={row}
-					onClick={() => onRowClick(row)}
+			{groupByLabelI(shown).map((group) => (
+				<RejectedGroupI
+					key={group.label}
+					label={group.label}
+					rows={group.rows}
+					onRowClick={onRowClick}
 				/>
 			))}
 			{moreCount > 0 && (
@@ -1238,47 +1305,59 @@ function RejectedCompactListI({ rows, onRowClick }) {
 	);
 }
 
+// Shared pattern label printed once as the group head, not on every declined row.
+function RejectedGroupI({ label, rows, onRowClick }) {
+	return (
+		<div className="flex flex-col gap-1">
+			<div className="fs-meta text-faint truncate" title={label}>
+				{label}
+			</div>
+			{rows.map((row) => (
+				<CompactProposalCardI
+					key={row.id}
+					row={row}
+					onClick={() => onRowClick(row)}
+				/>
+			))}
+		</div>
+	);
+}
+
+// first-seen order kept → the newest group still leads
+function groupByLabelI(rows) {
+	const groups = new Map();
+	for (const row of rows) {
+		const label =
+			patternNameI(row.pattern_label, row.target_agent) || `Proposal #${row.id}`;
+		if (!groups.has(label)) groups.set(label, []);
+		groups.get(label).push(row);
+	}
+	return [...groups].map(([label, groupRows]) => ({ label, rows: groupRows }));
+}
+
 // T5/T7 — REJECTED 컴팩트 카드. 단일행 · rationale 숨김 · 배지 최소화. 중립 chrome(그레이).
 // --crit 는 ✕ 심볼에만 (배경/테두리는 --line/--elev 중립 — 레인 wash 금지).
 function CompactProposalCardI({ row, onClick }) {
-	const title = row.pattern_label || `Proposal #${row.id}`;
-	// USER: APPLIED 와 동일한 title-faint / content-bright 색 인버전 — rationale(content)이 primary bright(text-ink),
-	//   반복 title 은 faint(text-faint) 로 후퇴 → REJECTED 행도 content-first 로 읽힘. rationale 부재 시
-	//   title 이 primary bright 로 승격(graceful) 하고 하단 demoted 라인은 생략(중복 회피).
-	const primary = row.rationale || title;
+	// group head carries the pattern label → the row leads with its own reason
+	const primary = row.rationale || "No rationale recorded";
+	// 행별 ✕ 없음 — 열 헤더 ✕/--crit 가 rejected 상태를 이미 인코딩
 	return (
-		<div className="i-card-shadow bg-elev rounded-md">
-			<button
-				type="button"
-				onClick={onClick}
-				className="i-row-card fs-micro font-mono w-full text-left px-2 py-1.5 block"
-				aria-label={`View declined suggestion ${row.id} details`}
-			>
-				{/* 행별 ✕ 없음 — 열 헤더 ✕/--crit 가 rejected 상태를 이미 인코딩(중복 제거).
-            primary = content-first(rationale bright, text-ink) 좌측 · id·date tiny/muted(--faint) 우측. */}
-				<div className="flex items-center gap-2">
-					<span className="i-compact-title text-ink" title={String(primary)}>
-						{truncateI(primary, 80)}
-					</span>
-					<span className="text-faint shrink-0">#{row.id}</span>
+		<BoardRowI
+			onClick={onClick}
+			title={String(primary)}
+			ariaLabel={`View declined suggestion ${row.id} details`}
+			text={truncateI(primary, 80)}
+			trail={
+				<>
+					<span className="font-mono text-faint shrink-0">#{row.id}</span>
 					{row.cycle_date && (
-						<span className="text-faint shrink-0">
+						<span className="font-mono text-faint tnum shrink-0">
 							{formatDateI(row.cycle_date)}
 						</span>
 					)}
-				</div>
-				{/* 반복 title 을 faint 로 demote — 좌측 정렬 유지. rationale 이 primary 를 채운 경우에만 렌더
-            (rationale 부재 시 title 이 이미 primary → 중복 방지). */}
-				{row.rationale && (
-					<div
-						className="text-faint truncate mt-0.5 text-left"
-						title={String(title)}
-					>
-						{truncateI(title, 80)}
-					</div>
-				)}
-			</button>
-		</div>
+				</>
+			}
+		/>
 	);
 }
 
@@ -1316,7 +1395,7 @@ function ProposalCardI({ row, onClick, onAction, pendingActionId }) {
 							className="min-w-0 max-w-[10rem]"
 							title={`Target agent: ${row.target_agent}`}
 						>
-							<span className="truncate min-w-0">{row.target_agent}</span>
+							<window.UI.AgentName name={row.target_agent} className="truncate min-w-0" />
 						</Badge>
 					)}
 					<Badge
@@ -1363,7 +1442,7 @@ function ProposalCardI({ row, onClick, onAction, pendingActionId }) {
 				)}
 				{/* pattern_label = 반복성 높은 2차 카테고리 라벨 → rationale 아래 tiny/faint 태그로 후퇴(USER: de-emphasized, 경쟁 금지). */}
 				<div
-					className="fs-micro font-mono text-faint mt-1 line-clamp-1"
+					className="fs-meta text-faint mt-1 line-clamp-1"
 					title={String(title)}
 				>
 					{truncateI(title, 80)}
@@ -1395,7 +1474,7 @@ function ProposalActionsI({ row, isSafety, onAction, isPending }) {
 	return (
 		<div className="px-2.5 pb-2.5 pt-0">
 			{isSafety && (
-				<div className="fs-micro font-mono text-warn mb-1.5 flex items-center gap-1">
+				<div className="fs-meta text-warn mb-1.5 flex items-center gap-1">
 					<SymI s="⚠" size={11} /> Your call
 				</div>
 			)}
@@ -1515,25 +1594,17 @@ function preVerifyBadgeI(status, passed) {
 // ----- Bucket row (Read-bridge) — CTM/EPM + outcome_summary + join_meta 시각화. ---
 
 function BucketRowI({ state, buckets }) {
-	const { CardHead } = window.UI;
+	const { CardHead, LoadingPlaceholder } = window.UI;
 	if (state.status === "error") return null;
 	if (state.status === "loading" || !buckets) {
 		return (
 			<div className="card">
-				<CardHead title="Learning memory: wins & mistakes (CTM · EPM)" />
-				<div className="grid grid-cols-2 gap-2 p-3">
-					{Array.from({ length: 2 }).map((_, i) => (
-						<div
-							key={i}
-							className="i-anim-skel"
-							style={{
-								height: 68,
-								borderRadius: 8,
-								background: "rgb(var(--sunken))",
-								opacity: 0.7,
-							}}
-						/>
-					))}
+				<CardHead
+					title="Learning memory: wins & mistakes (CTM · EPM)"
+					sub="All time, every agent — not the group's 7-day cycle window"
+				/>
+				<div className="p-3">
+					<LoadingPlaceholder label="learning memory" minHeight={68} />
 				</div>
 			</div>
 		);
@@ -1542,8 +1613,7 @@ function BucketRowI({ state, buckets }) {
 	const { ctm, epm, outcome, joinMeta } = buckets;
 	// linked_agent_count = DISTINCT 연결 에이전트 수 (record-level 연결은 FK 부재로 측정 불가).
 	const linkedAgents = Number(joinMeta?.linked_agent_count ?? 0);
-	// accent (S5) = CTM/EPM 카드만 2px 좌측 보더 (--ok/--warn) — full-fill 금지·--cat-* 금지.
-	// 나머지 진단 카드는 accent 없음 (중립 ring 유지 → 학습 메모리 두 카드만 시각 구분).
+	// 보고 표면 — 크롬은 중립, 톤은 SymI 글리프에만.
 	const cards = [
 		// CTM 실제 유도식 = confidence high + metric_pass + done — 학습 패턴 카드(learning_log)와 산출 기준이 다름.
 		[
@@ -1552,7 +1622,6 @@ function BucketRowI({ state, buckets }) {
 			"Confirmed wins",
 			formatIntI(ctm),
 			"Confidence high · check passed · done",
-			"--ok",
 		],
 		[
 			"⚠",
@@ -1560,147 +1629,23 @@ function BucketRowI({ state, buckets }) {
 			"Mistake patterns (EPM)",
 			formatIntI(epm),
 			"Cases that failed or needed repeated rework",
-			"--warn",
 		],
 	];
 	return (
 		<div className="card">
-			<CardHead title="Learning memory: wins & mistakes (CTM · EPM)" />
+			<CardHead
+				title="Learning memory: wins & mistakes (CTM · EPM)"
+				sub="All time, every agent — not the group's 7-day cycle window"
+			/>
 			<div className="grid grid-cols-2 gap-2 p-3">
-				{cards.map(([sym, tone, label, value, hint, accent]) => (
-					<div
-						key={label}
-						className="i-card-shadow bg-elev rounded-md p-2.5 min-w-0"
-						style={
-							accent
-								? { borderLeft: `2px solid rgb(var(${accent}))` }
-								: undefined
-						}
-					>
-						<div className="flex items-start gap-1.5 fs-micro font-mono min-h-[2.4em]">
-							<SymI s={sym} className={tone} size={12} />
-							<span className={tone}>{label}</span>
-						</div>
-						<div className="fs-stat font-semibold text-ink mt-1 font-mono">
-							{value}
-						</div>
-						<div
-							className="card-sub fs-meta mt-1"
-							title={window.UI.titleOf(hint)}
-						>
-							{hint}
-						</div>
-					</div>
-				))}
-			</div>
-		</div>
-	);
-}
-
-// ----- TierBreakdown card ------------------
-//
-// 3-Tier Eval Grader rollout baseline cohort split. Fixed 30d window.
-// 4-tile KPI grid (≤5-col safe):
-//   - Code-Based PASS  (metric_pass=TRUE  AND baseline IS NULL)
-//   - Code-Based FAIL  (metric_pass=FALSE AND baseline IS NULL)
-//   - Pre-3Tier baseline (baseline_pre_3tier=TRUE)
-//   - Total cohort = sum
-//
-// 데이터 부재 분기:
-//   - 모든 카운트 0 → "데이터 부재" 회색 indicator (migration 미적용 OR 30d 빈 cohort)
-//   - error 상태 → null 반환 (parent state.status === 'error' 카드 자동 미렌더)
-
-function TierBreakdownCardI({ state, tierBreakdown }) {
-	const { CardHead } = window.UI;
-	if (state.status === "error") return null;
-	if (state.status === "loading" || !tierBreakdown) {
-		return (
-			<div className="card">
-				<CardHead title="Results by check status (30 days)" />
-				<div className="grid grid-cols-4 gap-2 p-3">
-					{Array.from({ length: 4 }).map((_, i) => (
-						<div
-							key={i}
-							className="i-anim-skel"
-							style={{
-								height: 68,
-								borderRadius: 8,
-								background: "rgb(var(--sunken))",
-								opacity: 0.7,
-							}}
-						/>
-					))}
-				</div>
-			</div>
-		);
-	}
-
-	const passCnt = Number(tierBreakdown.code_based_pass_30d ?? 0);
-	const failCnt = Number(tierBreakdown.code_based_fail_30d ?? 0);
-	const baselineCnt = Number(tierBreakdown.pre_3tier_baseline_count ?? 0);
-	const totalCnt = passCnt + failCnt + baselineCnt;
-	const windowDays = Number(tierBreakdown.window_days ?? 30);
-
-	// 데이터 부재 — migration 미적용 OR 30d 빈 cohort → 안내 indicator.
-	if (totalCnt === 0) {
-		return (
-			<div className="card">
-				<CardHead title="Results by check status (30 days)" />
-				<div className="px-3 pb-3">
-					<div
-						className="placeholder"
-					>
-						No tasks in the last {windowDays} days
-					</div>
-				</div>
-			</div>
-		);
-	}
-
-	// Pass-rate denominator는 baseline 제외 (code-based 만 의미 있는 비율).
-	const codeBasedTotal = passCnt + failCnt;
-	const passRatePct =
-		codeBasedTotal === 0 ? null : (passCnt / codeBasedTotal) * 100;
-
-	const cards = [
-		[
-			"✓",
-			"text-ok",
-			"Self-reported pass",
-			formatIntI(passCnt),
-			passRatePct === null
-				? "nothing checked"
-				: `pass rate ${passRatePct.toFixed(1)}%`,
-		],
-		[
-			"✕",
-			"text-crit",
-			"Self-reported fail",
-			formatIntI(failCnt),
-			`${formatIntI(codeBasedTotal)} checked`,
-		],
-		[
-			"ℹ",
-			"text-info",
-			"Before auto-checking (old)",
-			formatIntI(baselineCnt),
-			"",
-		],
-		["ℹ", "text-info", "Total", formatIntI(totalCnt), ""],
-	];
-
-	return (
-		<div className="card">
-			<CardHead title="Results by check status (30 days)" />
-			<div className="grid grid-cols-4 gap-2 p-3">
 				{cards.map(([sym, tone, label, value, hint]) => (
 					<div
 						key={label}
 						className="i-card-shadow bg-elev rounded-md p-2.5 min-w-0"
 					>
-						<div className="flex items-center gap-1.5 fs-micro font-mono">
+						<div className="flex items-start gap-1.5 fs-meta min-h-[2.4em]">
 							<SymI s={sym} className={tone} size={12} />
-							<span className={tone}>{label}</span>
+							<span>{label}</span>
 						</div>
 						<div className="fs-stat font-semibold text-ink mt-1 font-mono">
 							{value}
@@ -1718,268 +1663,20 @@ function TierBreakdownCardI({ state, tierBreakdown }) {
 	);
 }
 
-// ----- Attribution Pointer card ----
-//
-// outcomes 화면의 canonical AttributionHealthCard 로 이동하는 순수 포인터 카드.
-// healthy_rate / literal_omission_rate / 전체 attribution 분해는 모두 outcomes 화면이 호스팅
-// (본 화면은 중복 타일 제거) → 헤더 + 이동 링크만 유지.
-
-function AttributionPointerCardI({ onNav }) {
-	const { CardHead, Icon } = window.UI;
-
-	const navLink = (
-		<button
-			className="btn ghost sm"
-			onClick={() => {
-				if (typeof onNav === "function") onNav("outcomes");
-			}}
-			aria-label="Open the reporting-health card on the Task results screen"
-		>
-			Task results <Icon name="arrow-right" size={14} />
-		</button>
-	);
-
+// 알람 레인 — 알람이 하나도 없으면 레인 자체를 렌더하지 않는다. 비어 있는 레인은
+// "여기엔 볼 것이 없다"를 매일 학습시켜 실제 알람이 떴을 때도 건너뛰게 만든다.
+// 소속 판정은 admission test 4조건(상태 변화 · 지목된 주체 · 오늘 가능한 행동 ·
+// 멈추는 방법) 전부 — 지금 통과하는 사실은 repeat-apply cap 하나다.
+function AlarmLaneI({ applyCap }) {
+	if (Number(applyCap?.capped_patterns ?? 0) <= 0) return null;
 	return (
-		<div className="card">
-			<CardHead
-				title="Reporting health (summary)"
-				sub="How results were recorded"
-				right={navLink}
-			/>
+		<div className="i-alarm-lane" role="region" aria-label="Alarms">
+			<ParkedLoopBannerI applyCap={applyCap} />
 		</div>
 	);
 }
 
-// literal-omission 비율 → dual-encoded 심각도 배지 (낮을수록 좋음).
-// null/undefined → ℹ "—" 회색 (denominator 0 — 데이터 부재). 값 존재 시 구간별:
-//   < 3%  → ✓ ok (정상)  ·  3-8% → ⚠ warn (주의)  ·  ≥8% → ✕ crit (점검 필요)
-// 색상 + 기호 + 텍스트 3중 부호화 (color-blind safety).
-// Outcome 화면 attributionOmissionBadgeO 와 동일 밴드.
-function attributionOmissionBadgeI(ratio) {
-	if (ratio === null || ratio === undefined || Number.isNaN(Number(ratio))) {
-		return {
-			tone: "text-info",
-			symbol: "ℹ",
-			hint: "No data (no attributed runs in this period)",
-		};
-	}
-	const pct = Number(ratio) * 100;
-	if (pct < 3)
-		return {
-			tone: "text-ok",
-			symbol: "✓",
-			hint: `OK · ${pct.toFixed(2)}% (lower is better)`,
-		};
-	if (pct < 8)
-		return {
-			tone: "text-warn",
-			symbol: "⚠",
-			hint: `Watch · ${pct.toFixed(2)}% (check if rising)`,
-		};
-	return {
-		tone: "text-crit",
-		symbol: "✕",
-		hint: `Investigate · ${pct.toFixed(2)}%`,
-	};
-}
-
-// ----- ConfidenceDist card -------------------
-//
-// confidence_observed × promotion_tier 분포. 사용자 선택 window (proposal-side).
-// 3-tile headline KPI (≤5-col safe):
-//   - Overall confidence_observed (전체 가중 평균 · NULL → "미산정")
-//   - Lane 수 (promotion_tier 구분 수 · 'unassigned' 포함)
-//   - 총 proposal 수 (window 내)
-// + per-lane 분포 표 (행=lane / 열=3: lane · proposal_count · confidence_avg).
-//
-// 데이터 부재 분기:
-//   - buckets 비어있음 → "데이터 부재" 회색 indicator (daemon-wiring 미적용 OR window 0건)
-//   - error 상태 → null 반환 (parent state.status === 'error' 카드 자동 미렌더)
-
-function ConfidenceDistCardI({ state, confidenceDist }) {
-	const { CardHead, BulletBar } = window.UI;
-	if (state.status === "error") return null;
-	if (state.status === "loading" || !confidenceDist) {
-		return (
-			<div className="card">
-				<CardHead title="Suggestion confidence (measured)" sub="30 days" />
-				<div className="grid grid-cols-1 gap-2 p-3">
-					{Array.from({ length: 1 }).map((_, i) => (
-						<div
-							key={i}
-							className="i-anim-skel"
-							style={{
-								height: 68,
-								borderRadius: 8,
-								background: "rgb(var(--sunken))",
-								opacity: 0.7,
-							}}
-						/>
-					))}
-				</div>
-			</div>
-		);
-	}
-
-	const buckets = Array.isArray(confidenceDist.buckets)
-		? confidenceDist.buckets
-		: [];
-	const overallAvg = confidenceDist.overall_confidence_observed_avg;
-	const totalProposals = buckets.reduce(
-		(sum, b) => sum + Number(b.proposal_count ?? 0),
-		0,
-	);
-	// 측정분 분모 — overall avg 는 confidence_observed_avg 가 non-null 인 lane 만 가중
-	// (NULL-avg lane 제외). 측정분 = 해당 lane proposal_count 합 → 라벨에 측정분/전체 병기.
-	const measuredProposals = buckets.reduce(
-		(sum, b) =>
-			sum +
-			(b.confidence_observed_avg === null ||
-			b.confidence_observed_avg === undefined
-				? 0
-				: Number(b.proposal_count ?? 0)),
-		0,
-	);
-
-	// 데이터 부재 — window 내 proposal 0건 (실측 신뢰도 산정은 활성 상태).
-	// 카드 숨김 대신 "데이터 없음" 명시 (proposal 발생 시 자동 데이터 표시).
-	if (buckets.length === 0 || totalProposals === 0) {
-		return (
-			<div className="card">
-				<CardHead title="Suggestion confidence (measured)" sub="30 days" />
-				<div className="px-3 pb-3">
-					<div
-						className="placeholder"
-					>
-						No suggestions in the last 30 days
-					</div>
-				</div>
-			</div>
-		);
-	}
-
-	const overallBadge = confidenceBadgeMetaI(overallAvg);
-	// C5: 실측 신뢰도(0-1 empirical posterior)를 척도상 위치(BulletBar)로 표시 — 숫자는 유지.
-	// zone 밴드 = confidenceBadgeMetaI 의 0.4/0.7 cut-point 와 동일(low/medium/high).
-	const hasOverall =
-		overallAvg !== null &&
-		overallAvg !== undefined &&
-		!Number.isNaN(Number(overallAvg));
-	const overallBar = hasOverall ? (
-		<BulletBar
-			value={Number(overallAvg)}
-			showValue
-			zones={[
-				{ upTo: 0.4, tone: "crit" },
-				{ upTo: 0.7, tone: "warn" },
-				{ upTo: 1, tone: "ok" },
-			]}
-			ariaLabel={`Average measured confidence ${(Number(overallAvg) * 100).toFixed(0)}%`}
-		/>
-	) : null;
-	const cards = [
-		[
-			overallBadge.symbol,
-			overallBadge.tone,
-			"Avg confidence (measured)",
-			formatRateI(overallAvg),
-			`Measured ${formatIntI(measuredProposals)}/${formatIntI(totalProposals)}`,
-			overallBar,
-		],
-	];
-
-	return (
-		<div className="card">
-			<CardHead title="Suggestion confidence (measured)" sub="30 days" />
-			<div className="grid grid-cols-1 gap-2 p-3">
-				{cards.map(([sym, tone, label, value, hint, bar]) => (
-					<div
-						key={label}
-						className="i-card-shadow bg-elev rounded-md p-2.5 min-w-0"
-					>
-						<div className="flex items-start gap-1.5 fs-micro font-mono min-h-[2.4em]">
-							<SymI s={sym} className={tone} size={12} />
-							<span className={tone}>{label}</span>
-						</div>
-						<div className="fs-stat font-semibold text-ink mt-1 font-mono">
-							{value}
-						</div>
-						{bar && <div className="mt-1.5">{bar}</div>}
-						<div
-							className="card-sub fs-meta mt-1"
-							title={window.UI.titleOf(hint)}
-						>
-							{hint}
-						</div>
-					</div>
-				))}
-			</div>
-			<ConfidenceLaneTableI buckets={buckets} />
-		</div>
-	);
-}
-
-// raw COALESCE fallback 'unassigned'(promotion_tier NULL) → 사용자친화 라벨.
-// 원시문자열 노출 차단 · 그 외 tier 는 원형 유지.
-function laneLabelI(promotionTier) {
-	if (promotionTier === "unassigned") return "Unassigned";
-	return promotionTier;
-}
-
-// per-lane 분포 표 — 행=lane (가변) / 열=3 (lane · proposal_count · confidence_avg).
-// confidence_avg NULL → "—" (formatRateI null-safe).
-function ConfidenceLaneTableI({ buckets }) {
-	return (
-		<div className="px-3 pb-3">
-			<table className="w-full fs-meta font-mono">
-				<thead>
-					<tr className="text-faint uppercase tracking-wider">
-						<th className="text-left py-1.5 pl-1.5">Group</th>
-						<th className="text-right py-1.5">Suggestions</th>
-						<th className="text-right py-1.5 pr-1.5">Avg confidence</th>
-					</tr>
-				</thead>
-				<tbody>
-					{buckets.map((b) => {
-						const avg = b.confidence_observed_avg;
-						const badge = confidenceBadgeMetaI(avg);
-						return (
-							<tr key={b.promotion_tier} className="border-t border-line/50">
-								<td className="text-left py-1.5 pl-1.5 text-ink">
-									{laneLabelI(b.promotion_tier)}
-								</td>
-								<td className="text-right py-1.5 text-dim">
-									{formatIntI(Number(b.proposal_count ?? 0))}
-								</td>
-								<td
-									className={`py-1.5 pr-1.5 ${badge.tone} flex items-center justify-end gap-1.5`}
-								>
-									<SymI
-										s={avg === null || avg === undefined ? "ℹ" : badge.symbol}
-										size={11}
-									/>{" "}
-									{formatRateI(avg)}
-								</td>
-							</tr>
-						);
-					})}
-				</tbody>
-			</table>
-		</div>
-	);
-}
-
-// ----- StyleRef telemetry card ----------------
-//
-// Surfaces Project Convention Probe telemetry:
-//   - per-agent emission rate (sibling Read 의무 준수율, 7d rolling)
-//   - per-agent verified rate (Gaming-the-Judge cross-verify pass rate)
-//   - 전체 rollup → MANDATORY 격상 조건 충족 indicator
-//
-// 헤드라인은 "Loop parked" 가 아니라 메커니즘 이름이다. cap 은 억제 다섯 경로 중 하나이고
-// 측정상 가장 드물다(비율은 routes/improvement.ts 헤더). 그 하나를 "루프가 멈췄다"로 쓰면
-// 나머지 넷이 조용히 억제되는 동안 배너는 이미 경고 상태라 아무도 다시 보지 않는다. 전체
-// 분해는 LoopSuppressionCardI 담당.
+// 원인별 분해는 패턴 원장(PatternLedgerCardI)이 담당.
 //
 // 정지(parked) 루프 배너 — repeat-apply cap 은 자가 re-arm 이 없고, learning_log status 를
 // 되돌리는 방식으로도 풀리지 않는다(다음 사이클에 재정지 + park 이력 유실). apply evidence 를
@@ -1997,7 +1694,7 @@ function ParkedLoopBannerI({ applyCap }) {
 			<div className="flex items-start gap-2 p-3">
 				<SymI s="⚠" className="text-warn" size={14} />
 				<div className="min-w-0">
-					<div className="fs-meta font-mono text-warn">
+					<div className="fs-meta">
 						Repeat-apply cap — {formatIntI(capped)} parked{" "}
 						{capped === 1 ? "pattern" : "patterns"} across {formatIntI(agents)}{" "}
 						{agents === 1 ? "agent" : "agents"}
@@ -2014,31 +1711,146 @@ function ParkedLoopBannerI({ applyCap }) {
 	);
 }
 
-// 루프 억제 분해 카드. 존재 이유는 배너가 답하지 못하는 질문 하나다: "루프의 얼마가, 왜
-// 억제되어 있나".
-//
-// 두 population(parked / per-cycle) 은 분리해 렌더하고 절대 더하지 않는다 — 종결 row 와
-// 재발 횟수라 합계는 둘 중 어느 것도 아니다(계약은 ImprovementLoopSuppressionState).
-//
-// pending split 이 먼저 오는 이유: status_distribution 의 identified 수는 처리 대기 backlog 로
-// 읽히는데, 그중 상당수는 intake 에서 매번 버려지는 라벨이라 제안이 나올 수 없다. 억제된
-// 패턴이 건강한 pending 처럼 보이는 지점이 정확히 여기다.
-//
-// K=0(전 항목 0) 이어도 카드는 남는다 — 0 은 "억제가 없다"는 판독이고, 카드 부재는
-// "측정하지 않는다"이다(ProseOnlyAddCardI 와 같은 규칙).
-function SuppressionBucketRowsI({ buckets, unitLabel }) {
-	if (!Array.isArray(buckets) || buckets.length === 0) {
+// 억제 사실은 원장 바깥에 따로 살지 않는다 — 억제된 행과 그 행을 세는 숫자가 다른 카드에
+// 있으면 둘 중 하나만 읽힌다. 두 population(parked / per-cycle) 은 분리해 렌더하고 절대
+// 더하지 않는다: 종결 row 와 재발 횟수라 합계는 둘 중 어느 것도 아니다.
+
+// 펼쳐 두는 그룹 = 사람이 오늘 풀 수 있는 원인. 닫아 두는 그룹 = 그렇게 두기로 한 설계
+// 결정 — 매번 펼치면 행동 가능한 그룹이 그 아래로 묻힌다.
+const HELD_DESIGN_DECISION_CAUSES = new Set(["non-promptable", "other"]);
+
+// 보류(held) 구역 — 윈도우가 없다. 몇 주 전에 정지된 행이 오늘도 정지 상태이므로,
+// 발견 윈도우를 걸면 숫자는 0 이 아닌데 구역만 비는 판독 불가 상태가 된다.
+// 반려 행은 서버가 원인별로 이미 나눠 보낸다 — 7일 목록에서 따로 모으면 같은 행이 두 번 선다.
+function LedgerHeldSectionI({ suppression }) {
+	const buckets = Array.isArray(suppression?.parked) ? suppression.parked : [];
+	if (buckets.length === 0) return null;
+	const rows = Array.isArray(suppression?.parked_patterns)
+		? suppression.parked_patterns
+		: [];
+	return (
+		<div className="px-3 pb-3">
+			<LedgerSectionHeadI
+				label="Held — terminal rows"
+				basis="all time"
+				count={sumCountsI(buckets)}
+			/>
+			{buckets.map((b) => (
+				<HeldCauseGroupI
+					key={b.cause}
+					bucket={b}
+					rows={rows.filter((r) => r.cause === b.cause)}
+				/>
+			))}
+		</div>
+	);
+}
+
+// remedy 는 그룹 헤더에 한 번만 — 행마다 반복하면 원인 하나가 여러 원인으로 읽힌다.
+function HeldCauseGroupI({ bucket, rows }) {
+	const agents = Number(bucket.agents ?? 0);
+	return (
+		<details className="mt-1.5" open={!HELD_DESIGN_DECISION_CAUSES.has(bucket.cause)}>
+			<summary className="fs-meta text-ink cursor-pointer select-none">
+				{bucket.label} — {formatIntI(Number(bucket.count ?? 0))} held across{" "}
+				{formatIntI(agents)} {agents === 1 ? "agent" : "agents"}
+			</summary>
+			{/* is-wrap 필수 — .card-sub 는 1줄 클램프다. remedy 가 잘리면 숫자만 남는다. */}
+			<div className="card-sub is-wrap fs-meta mt-1">{bucket.hint}</div>
+			<LedgerPlainRowsI rows={rows} />
+		</details>
+	);
+}
+
+// 원장 안의 비활성 행 목록 — 클릭 대상이 아니다(활성 후보만 드로어를 연다).
+// 카운트가 read limit 을 넘어 행이 비면 0 이 아니라 절단이라고 말한다.
+function LedgerPlainRowsI({ rows }) {
+	if (rows.length === 0) {
 		return (
-			<div className="placeholder">No {unitLabel} in this population</div>
+			<div className="placeholder">
+				Counted, but no row came back within the read limit
+			</div>
 		);
 	}
 	return (
-		<table className="w-full fs-meta font-mono">
+		<ul className="mt-1.5 flex flex-col gap-1">
+			{rows.map((r) => (
+				<li key={r.id} className="flex items-center gap-2 fs-meta">
+					<span
+						className="text-ink truncate min-w-0"
+						title={patternNameI(r.pattern_signature, r.agent)}
+					>
+						{truncateI(patternNameI(r.pattern_signature, r.agent), 120)}
+					</span>
+					<window.UI.AgentName name={r.agent} className="text-dim shrink-0" />
+					<span className="font-mono text-faint shrink-0 tnum">
+						{formatDateFullI(r.discovered_date)}
+					</span>
+				</li>
+			))}
+		</ul>
+	);
+}
+
+// 원장 구역 헤더 — 어떤 수도 자기 모집단(기간) 없이 서지 않는다.
+function LedgerSectionHeadI({ label, basis, count }) {
+	return (
+		<div className="fs-meta text-dim mb-1">
+			{label} · {basis} <span className="tnum">({formatIntI(count)})</span>
+		</div>
+	);
+}
+
+// 비활성(inert) 구역 — status 는 pending 인데 intake 가 라벨로 매번 건너뛴다. 활성 목록에
+// 섞여 있으면 건강한 backlog 로 읽히는 지점이 정확히 여기다.
+function LedgerInertSectionI({ rows }) {
+	if (rows.length === 0) return null;
+	return (
+		<div className="px-3 pb-3">
+			<LedgerSectionHeadI
+				label="Inert — the intake skips this label every cycle"
+				basis="discovered in the last 7 days"
+				count={rows.length}
+			/>
+			<LedgerPlainRowsI rows={rows} />
+		</div>
+	);
+}
+
+// 재발률 공개 — 접어 둔다. 상태 변화가 아니라 비율이고(admission test 불통과), 이 기전들은
+// lifecycle transition 을 쓰지 않아 같은 행이 매 사이클 다시 세어진다.
+function LedgerRecurrenceDisclosureI({ suppression }) {
+	const buckets = Array.isArray(suppression?.per_cycle) ? suppression.per_cycle : [];
+	if (buckets.length === 0) return null;
+	const windowDays = Number(suppression.per_cycle_window_days ?? 0);
+	const windowCycles = Number(suppression.per_cycle_window_cycles ?? 0);
+	return (
+		<details className="px-3 pb-3">
+			<summary className="fs-meta text-dim cursor-pointer select-none">
+				Recurrence rates — last {formatIntI(windowDays)} days ·{" "}
+				{formatIntI(windowCycles)} cycle days
+			</summary>
+			<div className="mt-2">
+				<RecurrenceRowsI buckets={buckets} windowCycles={windowCycles} />
+				<div className="card-sub is-wrap fs-meta mt-1">
+					Recurrences, not distinct patterns — these mechanisms write no lifecycle
+					transition, so the same row is re-suppressed on every cycle.
+				</div>
+			</div>
+		</details>
+	);
+}
+
+// 재발 행 — 영향 에이전트 + 사이클 커버리지가 앞, 이벤트 수는 뒤(항목 볼륨은 선두 금지).
+function RecurrenceRowsI({ buckets, windowCycles }) {
+	return (
+		<table className="w-full fs-meta">
 			<thead>
 				<tr className="text-faint uppercase tracking-wider">
 					<th className="text-left py-1.5 pl-1.5">Cause</th>
-					<th className="text-right py-1.5">{unitLabel}</th>
-					<th className="text-right py-1.5 pr-1.5">Agents</th>
+					<th className="text-right py-1.5 pl-4">Agents affected</th>
+					<th className="text-right py-1.5 pl-4">Cycle days</th>
+					<th className="text-right py-1.5 pl-4 pr-1.5">Events</th>
 				</tr>
 			</thead>
 			<tbody>
@@ -2046,15 +1858,16 @@ function SuppressionBucketRowsI({ buckets, unitLabel }) {
 					<tr key={b.cause} className="border-t border-line/50 align-top">
 						<td className="text-left py-1.5 pl-1.5">
 							<div className="text-ink">{b.label}</div>
-							{/* is-wrap 필수 — .card-sub 는 1줄 클램프다. 원인별 hint 가 잘리면
-							    "무엇이 이걸 푸는가"가 사라지고 숫자만 남는다. */}
-							<div className="card-sub is-wrap fs-micro mt-0.5">{b.hint}</div>
+							<div className="card-sub is-wrap fs-meta mt-0.5">{b.hint}</div>
 						</td>
-						<td className="text-right py-1.5 text-ink">
-							{formatIntI(Number(b.count ?? 0))}
-						</td>
-						<td className="text-right py-1.5 pr-1.5 text-dim">
+						<td className="text-right py-1.5 pl-4 text-ink tnum">
 							{formatIntI(Number(b.agents ?? 0))}
+						</td>
+						<td className="text-right py-1.5 pl-4 text-ink tnum">
+							{formatIntI(Number(b.cycles ?? 0))} of {formatIntI(windowCycles)}
+						</td>
+						<td className="text-right py-1.5 pl-4 pr-1.5 text-dim tnum">
+							{formatIntI(Number(b.count ?? 0))}
 						</td>
 					</tr>
 				))}
@@ -2063,627 +1876,36 @@ function SuppressionBucketRowsI({ buckets, unitLabel }) {
 	);
 }
 
-function LoopSuppressionCardI({ state, suppression }) {
-	const { CardHead } = window.UI;
-	if (state.status === "error") return null;
-	if (state.status === "loading" || !suppression) return null;
-	const pendingTotal = Number(suppression.pending_total ?? 0);
-	const pendingUnpromptable = Number(suppression.pending_unpromptable ?? 0);
-	const windowDays = Number(suppression.per_cycle_window_days ?? 0);
-	const offRegistry = Number(suppression.off_registry_parked ?? 0);
+// 원장 푸터 — 모든 수치가 자기 게이트를 데리고 다닌다. 이웃한 숫자가 서로 다른 윈도우와
+// 모집단을 가질 때, 게이트 없는 숫자는 조용히 비교당한다. 폐지된 Learned-patterns 카드에서
+// 살아남은 사실(전체 패턴 수 · 반려 수)도 여기에 있다.
+function LedgerFooterI({ total, declined, suppression }) {
+	const pendingTotal = Number(suppression?.pending_total ?? 0);
+	const unpromptable = Number(suppression?.pending_unpromptable ?? 0);
+	const offRegistry = Number(suppression?.off_registry_parked ?? 0);
 	return (
-		<div className="card" data-testid="loop-suppression-card">
-			<CardHead title="Loop suppression" />
-			<div className="px-3 pb-3 space-y-3">
-				<div>
-					<div className="fs-meta font-mono text-ink">
-						Pending patterns that can never propose —{" "}
-						<span className={pendingUnpromptable > 0 ? "text-warn" : ""}>
-							{formatIntI(pendingUnpromptable)}
-						</span>{" "}
-						of {formatIntI(pendingTotal)}
-					</div>
-					<div className="card-sub is-wrap fs-micro mt-1">
-						These rows sit at status='identified' and are counted as pending
-						backlog, but their label is one the daemon skips at intake every
-						cycle, so no proposal can be generated from them. Counted across
-						every agent — the intake skip reads the label, not
-						agent-registry.json, so unlike the parked buckets below this pair
-						is not registry-scoped.
-					</div>
-				</div>
-				<div>
-					<div className="fs-meta font-mono text-dim mb-1">
-						Parked patterns (terminal rows)
-					</div>
-					<SuppressionBucketRowsI
-						buckets={suppression.parked}
-						unitLabel="Patterns"
-					/>
-				</div>
-				<div>
-					<div className="fs-meta font-mono text-dim mb-1">
-						Per-cycle suppressions (last {formatIntI(windowDays)} days)
-					</div>
-					<SuppressionBucketRowsI
-						buckets={suppression.per_cycle}
-						unitLabel="Events"
-					/>
-					<div className="card-sub is-wrap fs-micro mt-1">
-						Recurrences, not distinct patterns — these mechanisms write no
-						lifecycle transition, so the same row is re-suppressed on every
-						cycle.
-					</div>
-				</div>
-				{offRegistry > 0 ? (
-					<div className="card-sub is-wrap fs-micro text-warn">
-						{formatIntI(offRegistry)} parked{" "}
-						{offRegistry === 1 ? "pattern is" : "patterns are"} excluded from
-						every count on this card: the agent is not in agent-registry.json.
-						Still parked, still not proposing.
-					</div>
-				) : null}
+		<div className="px-3 pb-3 flex flex-col gap-1">
+			<div className="card-sub is-wrap fs-meta">
+				{formatIntI(total)} patterns recorded all time · {formatIntI(declined)}{" "}
+				declined all time · the live and inert rows above are the last 7 days of
+				discovery
 			</div>
-		</div>
-	);
-}
-
-// prose-only-add per-agent rolling count. 카드가 항상 존재해야 하는 이유: 0 건은
-// "추가만 하는 패치가 없었다"는 판독이고, 카드 부재는 "측정하지 않는다"이다 — 다른 뜻이다.
-function ProseOnlyAddCardI({ state, summary }) {
-	const { CardHead } = window.UI;
-	if (state.status === "error") return null;
-	if (state.status === "loading" || !summary) return null;
-	const rows = Array.isArray(summary.agents) ? summary.agents : [];
-	const total = Number(summary.total ?? 0);
-	return (
-		<div className="card">
-			<CardHead
-				title={`Add-only patches (${formatIntI(Number(summary.window_days ?? 0))} days)`}
-			/>
-			{rows.length === 0 ? (
-				<div className="px-3 pb-3">
-					<div className="placeholder">
-						No add-only patches in this window
-					</div>
+			{suppression ? (
+				<div className="card-sub is-wrap fs-meta">
+					{formatIntI(unpromptable)} of {formatIntI(pendingTotal)} pending rows can
+					never propose — counted
+					across every agent, because the intake skip reads the label. The held
+					figures above are narrower: agents in agent-registry.json only.
 				</div>
-			) : (
-				<div className="px-3 pb-3">
-					<table className="w-full fs-meta font-mono">
-						<thead>
-							<tr className="text-faint uppercase tracking-wider">
-								<th className="text-left py-1.5 pl-1.5">Agent</th>
-								<th className="text-right py-1.5 pr-1.5">Add-only</th>
-							</tr>
-						</thead>
-						<tbody>
-							{rows.map((r) => (
-								<tr key={r.agent} className="border-t border-line/50">
-									<td className="text-left py-1.5 pl-1.5 text-ink">
-										{r.agent}
-									</td>
-									<td className="text-right py-1.5 pr-1.5 text-ink">
-										{formatIntI(Number(r.count ?? 0))}
-									</td>
-								</tr>
-							))}
-							<tr className="border-t border-line">
-								<td className="text-left py-1.5 pl-1.5 text-dim">Total</td>
-								<td className="text-right py-1.5 pr-1.5 text-ink">
-									{formatIntI(total)}
-								</td>
-							</tr>
-						</tbody>
-					</table>
+			) : null}
+			{offRegistry > 0 ? (
+				<div className="card-sub is-wrap fs-meta">
+					{formatIntI(offRegistry)} parked{" "}
+					{offRegistry === 1 ? "pattern is" : "patterns are"} excluded from every
+					held figure: the agent is not in agent-registry.json. Still parked, still
+					not proposing.
 				</div>
-			)}
-			<div className="px-3 pb-3 card-sub fs-micro">
-				{summary.truncation_caveat}
-			</div>
-		</div>
-	);
-}
-
-// OPTIONAL 단계 — 모든 row NULL 가능:
-//   - 전체 NULL 시 "데이터 누적 중" 안내 → NaN%/0/0 렌더 차단
-//   - per-agent rate null 시 "—" 표시 (denominator = 0)
-//
-// graduation gate: overall_emission_rate ≥ 0.50 AND
-//   overall_uncorroborated_rate < 0.10 — the uncorroborated share of the rows the
-//   cross-check ADJUDICATED. Route-side denominator excludes the unverifiable rows,
-//   so this gate cannot be passed by widening the blind spot; the unverifiable count
-//   is rendered beside it as the coverage reading.
-// dual-encoded indicator.
-
-function StyleRefCardI({ state, styleRef }) {
-	const { CardHead, BulletBar } = window.UI;
-	if (state.status === "error") return null;
-	if (state.status === "loading" || !styleRef) {
-		return (
-			<div className="card">
-				<CardHead
-					title="Style-check rate (7 days)"
-					sub="Agents that checked existing files before coding"
-				/>
-				<div className="grid grid-cols-3 gap-2 p-3">
-					{Array.from({ length: 3 }).map((_, i) => (
-						<div
-							key={i}
-							className="i-anim-skel"
-							style={{
-								height: 68,
-								borderRadius: 8,
-								background: "rgb(var(--sunken))",
-								opacity: 0.7,
-							}}
-						/>
-					))}
-				</div>
-			</div>
-		);
-	}
-
-	const overallEmission = styleRef.overall_emission_rate;
-	const overallUncorroborated = styleRef.overall_uncorroborated_rate;
-	const agentRows = Array.isArray(styleRef.agents) ? styleRef.agents : [];
-	const hasData = agentRows.some((r) => Number(r.emission_count ?? 0) > 0);
-
-	// 격상 게이트 — null-safe (데이터 부재 → 회색 pending indicator).
-	const gradeBadge = styleRefGradeBadgeI(overallEmission, overallUncorroborated);
-
-	// C3: 격상 임계치 대비 rate 를 BulletBar(척도상 위치 + target 마커)로 — % 텍스트는 유지.
-	//   - emission: target=0.5 (격상 게이트 ≥50%) · ≥0.5 구간을 ok 밴드로.
-	//   - uncorroborated: target=0.1 (격상 게이트 < 10%) · <0.1 이 ok 밴드, 이상은 warn.
-	//     verified 로 뒤집지 않는다 — 뒤집은 값은 adjudicated 분모를 숨겨 unverifiable 을 함께 읽게 만든다.
-	const hasEmission =
-		overallEmission !== null &&
-		overallEmission !== undefined &&
-		!Number.isNaN(Number(overallEmission));
-	const hasUncorroborated =
-		overallUncorroborated !== null &&
-		overallUncorroborated !== undefined &&
-		!Number.isNaN(Number(overallUncorroborated));
-	const emissionBar = hasEmission ? (
-		<BulletBar
-			value={Number(overallEmission)}
-			target={0.5}
-			showValue
-			zones={[
-				{ upTo: 0.5, tone: "crit" },
-				{ upTo: 1, tone: "ok" },
-			]}
-			ariaLabel={`Reported rate ${(Number(overallEmission) * 100).toFixed(0)}% (graduation target 50%)`}
-		/>
-	) : null;
-	const uncorroboratedBar = hasUncorroborated ? (
-		<BulletBar
-			value={Number(overallUncorroborated)}
-			target={0.1}
-			showValue
-			zones={[
-				{ upTo: 0.1, tone: "ok" },
-				{ upTo: 1, tone: "warn" },
-			]}
-			ariaLabel={`Uncorroborated share ${(Number(overallUncorroborated) * 100).toFixed(0)}% of adjudicated rows (graduation target under 10%)`}
-		/>
-	) : null;
-
-	const headlineCards = [
-		[
-			gradeBadge.symbol,
-			gradeBadge.tone,
-			"Threshold met",
-			gradeBadge.label,
-			gradeBadge.hint,
-			null,
-		],
-		[
-			"ℹ",
-			"text-info",
-			"Reported rate (overall)",
-			formatRateI(overallEmission),
-			"",
-			emissionBar,
-		],
-		[
-			"ℹ",
-			"text-info",
-			"Uncorroborated share",
-			formatRateI(overallUncorroborated),
-			"of adjudicated rows only",
-			uncorroboratedBar,
-		],
-	];
-
-	return (
-		<div className="card">
-			<CardHead
-				title="Style-check rate (7 days)"
-				sub="Agents that checked existing files before coding"
-			/>
-			<div className="grid grid-cols-3 gap-2 p-3">
-				{headlineCards.map(([sym, tone, label, value, hint, bar]) => (
-					<div
-						key={label}
-						className="i-card-shadow bg-elev rounded-md p-2.5 min-w-0"
-					>
-						<div className="flex items-start gap-1.5 fs-micro font-mono min-h-[2.4em]">
-							<SymI s={sym} className={tone} size={12} />
-							<span className={tone}>{label}</span>
-						</div>
-						<div className="fs-stat font-semibold text-ink mt-1 font-mono">
-							{value}
-						</div>
-						{bar && <div className="mt-1.5">{bar}</div>}
-						<div
-							className="card-sub fs-meta mt-1"
-							title={window.UI.titleOf(hint)}
-						>
-							{hint}
-						</div>
-					</div>
-				))}
-			</div>
-			{/* 3-count partition + greenfield (P13) — 데이터 부재 시 미렌더(placeholder 로 위임). */}
-			{hasData && (
-				<StyleRefSplitI
-					corroborated={styleRef.overall_corroborated_count}
-					uncorroborated={styleRef.overall_uncorroborated_count}
-					unverifiable={styleRef.overall_unverifiable_count}
-					greenfield={styleRef.overall_greenfield_count}
-					uncorroboratedRate={styleRef.overall_uncorroborated_rate}
-				/>
-			)}
-			{/* per-agent breakdown — 데이터 부재 시 "누적 중" 안내. */}
-			{hasData ? (
-				<StyleRefAgentTableI rows={agentRows} />
-			) : (
-				<div className="px-3 pb-3">
-					<div
-						className="placeholder"
-					>
-						Collecting data
-					</div>
-				</div>
-			)}
-		</div>
-	);
-}
-
-function StyleRefAgentTableI({ rows }) {
-	// 행=agent (가변) / 열=6 (agent · reported · rate · corroborated · uncorroborated · unverifiable)
-	// per-agent rate 열은 없다 — 세 bucket 을 하나의 비율로 접으면 adjudicated 여부가 사라진다.
-	// 헤더는 dim text + uppercase tracking · 본문은 mono.
-	return (
-		<div className="px-3 pb-3">
-			<table className="w-full fs-meta font-mono">
-				<thead>
-					<tr className="text-faint uppercase tracking-wider">
-						<th className="text-left py-1.5 pl-1.5">Agent</th>
-						<th className="text-right py-1.5">Reported</th>
-						<th className="text-right py-1.5">Rate</th>
-						<th className="text-right py-1.5">Corrob.</th>
-						<th className="text-right py-1.5">Uncorrob.</th>
-						<th className="text-right py-1.5 pr-1.5">Unverifiable</th>
-					</tr>
-				</thead>
-				<tbody>
-					{rows.map((r) => {
-						const emCount = Number(r.emission_count ?? 0);
-						const emTotal = Number(r.emission_total ?? 0);
-						const corroborated = Number(r.corroborated_count ?? 0);
-						const uncorroborated = Number(r.uncorroborated_count ?? 0);
-						const unverifiable = Number(r.unverifiable_count ?? 0);
-						const eligible = Number(r.eligible_count ?? 0);
-						return (
-							<tr key={r.agent} className="border-t border-line/50">
-								<td className="text-left py-1.5 pl-1.5 text-ink">{r.agent}</td>
-								<td className="text-right py-1.5 text-dim">
-									{formatIntI(emCount)} / {formatIntI(emTotal)}
-								</td>
-								<td className="text-right py-1.5 text-ink">
-									{formatRateI(r.emission_rate)}
-								</td>
-								<td className="text-right py-1.5 text-ok">
-									{formatIntI(corroborated)} / {formatIntI(eligible)}
-								</td>
-								<td className="text-right py-1.5 text-warn">
-									{formatIntI(uncorroborated)}
-								</td>
-								<td className="text-right py-1.5 pr-1.5 text-faint">
-									{formatIntI(unverifiable)}
-								</td>
-							</tr>
-						);
-					})}
-				</tbody>
-			</table>
-		</div>
-	);
-}
-
-// corroborated/uncorroborated/unverifiable 3-count + greenfield 도표 (P13).
-// 비율 하나로 접지 않는다 — 판정 가능했던 row 와 아예 보지 못한 row 가 한 숫자에 섞인다.
-function StyleRefSplitI({
-	corroborated,
-	uncorroborated,
-	unverifiable,
-	greenfield,
-	uncorroboratedRate,
-}) {
-	const cells = [
-		["Corroborated", corroborated, "text-ok"],
-		["Uncorroborated", uncorroborated, "text-warn"],
-		["Unverifiable", unverifiable, "text-faint"],
-		["Greenfield", greenfield, "text-info"],
-	];
-	return (
-		<div className="px-3 pb-1">
-			<div className="flex flex-wrap items-baseline gap-x-4 gap-y-1 fs-meta font-mono">
-				{cells.map(([label, count, tone]) => (
-					<span key={label} className="inline-flex items-baseline gap-1">
-						<span className={tone}>{label}</span>
-						<span className="text-ink font-semibold">
-							{formatIntI(Number(count ?? 0))}
-						</span>
-					</span>
-				))}
-				<span className="inline-flex items-baseline gap-1 ml-auto">
-					<span
-						className="text-faint uppercase tracking-wider"
-						title="Uncorroborated / (corroborated + uncorroborated) — adjudicated rows only, unverifiable excluded (graduation gate < 10%)">
-						Uncorroborated share
-					</span>
-					<span className="text-ink font-semibold">
-						{formatRateI(uncorroboratedRate)}
-					</span>
-				</span>
-			</div>
-		</div>
-	);
-}
-
-// v1.1 격상 게이트 dual-encoded badge — null-safe.
-// PASS: emission ≥ 0.50 AND uncorroborated < 0.10 → ✓ + text-ok
-// WARN: emission ≥ 0.50 AND uncorroborated ≥ 0.10 → ⚠ + text-warn
-// BLOCK: emission < 0.50 (데이터 부족 외)              → ⛔ + text-crit
-// PEND: 전체 NULL (데이터 부재)                          → ℹ + text-info
-function styleRefGradeBadgeI(emissionRate, uncorroboratedRate) {
-	if (emissionRate === null && uncorroboratedRate === null) {
-		return {
-			symbol: "ℹ",
-			tone: "text-info",
-			label: "pending",
-			hint: "Collecting data (7 d window)",
-		};
-	}
-	if (emissionRate === null) {
-		return {
-			symbol: "ℹ",
-			tone: "text-info",
-			label: "pending",
-			hint: "No outcomes in 7 d",
-		};
-	}
-	if (emissionRate < 0.5) {
-		return {
-			symbol: "⛔",
-			tone: "text-crit",
-			label: "block",
-			hint: `emission ${formatRateI(emissionRate)} < 50%`,
-		};
-	}
-	// emission ≥ 50% — uncorroborated share 평가.
-	if (uncorroboratedRate === null) {
-		// adjudicated = 0 · 모든 emission 이 STYLE_REF_GREENFIELD (cross-layer SoT — routes/improvement.ts)
-		// 이거나 전부 unverifiable → 판정 근거 없음 · 격상 보류.
-		return {
-			symbol: "ℹ",
-			tone: "text-info",
-			label: "pending",
-			hint: "Adjudicated: 0 (greenfield or unverifiable)",
-		};
-	}
-	if (uncorroboratedRate < 0.1) {
-		return {
-			symbol: "✓",
-			tone: "text-ok",
-			label: "pass",
-			hint: `emission ${formatRateI(emissionRate)} · uncorroborated ${formatRateI(uncorroboratedRate)}`,
-		};
-	}
-	return {
-		symbol: "⚠",
-		tone: "text-warn",
-		label: "warn",
-		hint: `uncorroborated ${formatRateI(uncorroboratedRate)} ≥ 10%`,
-	};
-}
-
-// Null-safe rate render — null → "—" (NaN% / 0/0 차단).
-function formatRateI(rate) {
-	if (rate === null || rate === undefined || Number.isNaN(Number(rate)))
-		return "—";
-	return `${(Number(rate) * 100).toFixed(1)}%`;
-}
-
-// ----- LearningLog card (P2-B · learning-aggregator 원천) -------------------
-//
-// 화면이 proposals 에서 CTM/EPM 을 재유도하던 것의 실제 source — learning-aggregator
-// 패턴 테이블 직접 노출. status_distribution 요약 KPI 3-tile + 패턴 표(행=패턴 / 열=5).
-// status → dual-encoded 배지 (identified ℹ · proposed ⚠ · applied ✓ · rejected ✕).
-//
-// 데이터 부재 분기:
-//   - total_patterns === 0 → "데이터 부재" 회색 indicator
-//   - error 상태 → ErrorBanner (재시도 가능)
-
-function LearningLogCardI({ state, onRetry }) {
-	const { CardHead } = window.UI;
-	if (state.status === "error") {
-		return (
-			<div className="card">
-				<CardHead title="Learned patterns" />
-				<div className="p-4">
-					<ErrorBannerI
-						title="Couldn't load learned patterns"
-						detail={state.error}
-						onRetry={onRetry}
-					/>
-				</div>
-			</div>
-		);
-	}
-	if (state.status === "loading" || !state.data) {
-		return (
-			<div className="card">
-				<CardHead title="Learned patterns" />
-				<div className="grid grid-cols-3 gap-2 p-3">
-					{Array.from({ length: 3 }).map((_, i) => (
-						<div
-							key={i}
-							className="i-anim-skel"
-							style={{
-								height: 68,
-								borderRadius: 8,
-								background: "rgb(var(--sunken))",
-								opacity: 0.7,
-							}}
-						/>
-					))}
-				</div>
-			</div>
-		);
-	}
-
-	const total = Number(state.data.total_patterns ?? 0);
-	const patterns = Array.isArray(state.data.patterns)
-		? state.data.patterns
-		: [];
-	const dist = Array.isArray(state.data.status_distribution)
-		? state.data.status_distribution
-		: [];
-
-	if (total === 0) {
-		return (
-			<div className="card">
-				<CardHead title="Learned patterns" />
-				<div className="px-3 pb-3">
-					<div
-						className="placeholder"
-					>
-						No learned patterns yet
-					</div>
-				</div>
-			</div>
-		);
-	}
-
-	// status 별 합산 (approval_tier 분해는 묶어서 status 단위 KPI 로 — skim 우선).
-	const statusSum = {};
-	for (const d of dist) {
-		const k = d.status || "unknown";
-		statusSum[k] = (statusSum[k] || 0) + Number(d.count ?? 0);
-	}
-	const identifiedCnt = statusSum.identified || 0;
-	const proposedCnt = statusSum.proposed || 0;
-	const rejectedCnt = statusSum.rejected || 0;
-
-	const cards = [
-		["ℹ", "text-info", "Spotted patterns", formatIntI(identifiedCnt), ""],
-		["⚠", "text-warn", "Proposed patterns", formatIntI(proposedCnt), ""],
-		[
-			"ℹ",
-			"text-info",
-			"All patterns",
-			formatIntI(total),
-			`${formatIntI(rejectedCnt)} declined`,
-		],
-	];
-
-	return (
-		<div className="card">
-			<CardHead title="Learned patterns" />
-			<div className="grid grid-cols-3 gap-2 p-3">
-				{cards.map(([sym, tone, label, value, hint]) => (
-					<div
-						key={label}
-						className="i-card-shadow bg-elev rounded-md p-2.5 min-w-0"
-					>
-						<div className="flex items-start gap-1.5 fs-micro font-mono min-h-[2.4em]">
-							<SymI s={sym} className={tone} size={12} />
-							<span className={tone}>{label}</span>
-						</div>
-						<div className="fs-stat font-semibold text-ink mt-1 font-mono">
-							{value}
-						</div>
-						<div
-							className="card-sub fs-meta mt-1"
-							title={window.UI.titleOf(hint)}
-						>
-							{hint}
-						</div>
-					</div>
-				))}
-			</div>
-		</div>
-	);
-}
-
-// 패턴 표 — 행=패턴 (가변) / 열=5 (패턴 · 에이전트 · 빈도 · 상태 · 발견일).
-// D8 P2 ≤5-col 정합. status → dual-encoded 배지 (색 + 기호 + 텍스트).
-// 리스트는 최근 7일 윈도우 → 빈 경우 KPI 카드는 유지한 채 표 영역만 안내.
-function LearningLogTableI({ patterns }) {
-	if (patterns.length === 0) {
-		return (
-			<div className="px-3 pb-3">
-				<div
-					className="placeholder"
-				>
-					No new patterns in the last 7 days
-				</div>
-			</div>
-		);
-	}
-	return (
-		<div className="px-3 pb-3">
-			<table className="w-full fs-meta font-mono">
-				<thead>
-					<tr className="text-faint uppercase tracking-wider">
-						<th className="text-left py-1.5 pl-1.5">Pattern</th>
-						<th className="text-left py-1.5">Agent</th>
-						<th className="text-right py-1.5">Seen</th>
-						<th className="text-left py-1.5 pl-3">Status</th>
-						<th className="text-right py-1.5 pr-1.5">First seen</th>
-					</tr>
-				</thead>
-				<tbody>
-					{patterns.map((p) => {
-						const badge = learningStatusBadgeI(p.status);
-						return (
-							<tr key={p.id} className="border-t border-line/50">
-								<td
-									className="text-left py-1.5 pl-1.5 text-ink i-sig-cell"
-									title={String(p.pattern_signature || "")}
-								>
-									<div className="i-sig-clamp">
-										{truncateI(p.pattern_signature, 120)}
-									</div>
-								</td>
-								<td className="text-left py-1.5 text-dim">{p.agent || "—"}</td>
-								<td className="text-right py-1.5 text-dim">
-									{formatIntI(Number(p.frequency ?? 0))}
-								</td>
-								<td className={`text-left py-1.5 pl-3 ${badge.tone}`}>
-									<SymI s={badge.symbol} size={11} /> {badge.label}
-								</td>
-								<td className="text-right py-1.5 pr-1.5 text-faint">
-									{formatDateFullI(p.discovered_date)}
-								</td>
-							</tr>
-						);
-					})}
-				</tbody>
-			</table>
+			) : null}
 		</div>
 	);
 }
@@ -2725,11 +1947,11 @@ function DetailDrawerI({ row, onClose }) {
 
 // Detail body — fields grid + 0..N text sections + pre-verify keyed block (pattern / proposal 공용).
 function DetailBodyI({ fields, sections, footnote, preVerify }) {
-	const labelCls = "fs-micro font-mono text-faint uppercase tracking-wider";
+	const labelCls = "fs-meta text-faint uppercase tracking-wider";
 	return (
 		<div className="flex flex-col gap-3">
 			<dl className="grid gap-1.5" style={{ gridTemplateColumns: "120px 1fr" }}>
-				{fields.map(([k, v]) => (
+				{fields.filter(([, v]) => window.UI.hasFieldValue(v)).map(([k, v]) => (
 					<React.Fragment key={k}>
 						<dt className={labelCls}>{k}</dt>
 						<dd className="fs-body text-ink font-mono break-words">
@@ -2756,7 +1978,7 @@ function DetailBodyI({ fields, sections, footnote, preVerify }) {
 				))}
 			{preVerify && <PreVerifyDetailI {...preVerify} labelCls={labelCls} />}
 			{footnote && (
-				<div className="fs-meta font-mono text-faint mt-2">{footnote}</div>
+				<div className="fs-meta text-faint mt-2">{footnote}</div>
 			)}
 		</div>
 	);
@@ -2770,7 +1992,7 @@ function PreVerifyDetailI({ badge, rationale, axes, labelCls }) {
 		<div>
 			<div className={`${labelCls} mb-1`}>PRE-VERIFY</div>
 			<div className="bg-sunken p-2.5 rounded-md flex flex-col gap-2">
-				<div className="flex items-center gap-1.5 fs-meta font-mono">
+				<div className="flex items-center gap-1.5 fs-meta">
 					<SymI s={badge.symbol} className={badge.tone} size={13} />
 					<span className={badge.tone}>{badge.label}</span>
 					{badge.titleHint && badge.titleHint !== badge.label && (
@@ -2788,7 +2010,7 @@ function PreVerifyDetailI({ badge, rationale, axes, labelCls }) {
 						style={{ gridTemplateColumns: "1fr auto" }}>
 						{axes.map(({ key, label, value }) => (
 							<React.Fragment key={key}>
-								<dt className="fs-meta font-mono text-dim">{label}</dt>
+								<dt className="fs-meta text-dim">{label}</dt>
 								<dd className="justify-self-end">
 									{typeof value === "boolean" ? (
 										<Badge
@@ -2799,7 +2021,7 @@ function PreVerifyDetailI({ badge, rationale, axes, labelCls }) {
 											{value ? "PASS" : "FAIL"}
 										</Badge>
 									) : (
-										<span className="fs-meta font-mono text-ink">
+										<span className="fs-meta text-ink">
 											{String(value)}
 										</span>
 									)}
@@ -2817,19 +2039,19 @@ function buildDetailPropsI(row) {
 	// defensive guard — sister 모달 (architecture/outcomes DetailModal) 정합.
 	if (row?.kind === "pattern") {
 		// learning-log 패턴 (RankedCandidate) — pattern_signature/agent/status/discovered_date 노출.
-		// 일부 필드(bucket/score/summary/example)는 learning-log 스키마에 없으므로 || '—' 폴백.
+		// 일부 필드(bucket/score/summary/example)는 learning-log 스키마에 없음 → 빈 값은 DetailBodyI 가 숨김.
 		const statusBadge = learningStatusBadgeI(row?.status);
 		return {
 			fields: [
-				["ID", row?.id ?? row?.pattern_id ?? "—"],
-				["Agent", row?.agent || "—"],
+				["ID", row?.id ?? row?.pattern_id],
+				["Agent", row?.agent],
 				[
 					"Status",
-					row?.status ? `${statusBadge.symbol} ${statusBadge.label}` : "—",
+					row?.status ? `${statusBadge.symbol} ${statusBadge.label}` : null,
 				],
-				["Approval tier", row?.approval_tier || row?.bucket || "—"],
-				["Frequency", row?.frequency ?? "—"],
-				["First seen", row?.discovered_date || "—"],
+				["Approval tier", row?.approval_tier || row?.bucket],
+				["Frequency", row?.frequency],
+				["First seen", row?.discovered_date],
 				// last_updated = real-UTC ISO instant → formatKstFull (KST 상세 표기). last_seen fallback 동일.
 				[
 					"Last updated",
@@ -2837,7 +2059,7 @@ function buildDetailPropsI(row) {
 						? window.UI.formatKstFull(row.last_updated)
 						: row?.last_seen
 							? window.UI.formatKstFull(row.last_seen)
-							: "—",
+							: null,
 				],
 			],
 			sections: [
@@ -2864,19 +2086,19 @@ function buildDetailPropsI(row) {
 
 	return {
 		fields: [
-			["ID", row?.id ?? "—"],
-			["Status", row?.status || "—"],
+			["ID", row?.id],
+			["Status", row?.status],
 			["Approval tier", `${isSafety ? "⚠ safety" : "✓ auto"} (${tier})`],
-			["Classification", row?.classification || "—"],
-			["Target agent", row?.target_agent || "—"],
-			["Target file", row?.target_file || "—"],
-			["Cycle date", row?.cycle_date || "—"],
-			["Haiku status", row?.haiku_status || "—"],
-			["Cost guard", row?.cost_guard_state || "—"],
+			["Classification", row?.classification],
+			["Target agent", row?.target_agent],
+			["Target file", row?.target_file],
+			["Cycle date", row?.cycle_date],
+			["Model check", row?.haiku_status],
+			["Cost guard", row?.cost_guard_state],
 			// reviewed_at = real-UTC ISO instant → formatKstFull. cycle_date 는 date-only 문자열 → raw 유지(위).
 			[
 				"Reviewed at",
-				row?.reviewed_at ? window.UI.formatKstFull(row.reviewed_at) : "—",
+				row?.reviewed_at ? window.UI.formatKstFull(row.reviewed_at) : null,
 			],
 		],
 		sections: [
@@ -2935,15 +2157,15 @@ function composePreVerifyI(badge, rationale, axes) {
 // 전/후반 reject 비율을 formatPctWithDenominator 로 — 분모 0 → '—' (가짜 0% 차단).
 
 function ChangeSummaryCardI({ state, aggregate, onRetry }) {
-	const { CardHead } = window.UI;
+	const { CardHead, LoadingPlaceholder } = window.UI;
 	if (state.status === "error") {
 		return (
 			<div className="card">
 				<CardHead title="Self-improvement changes (applied)" />
 				<div className="p-4">
 					<ErrorBannerI
-						title="Couldn't load change summary"
-						detail={state.error}
+						source="loop events"
+						error={state.error}
 						onRetry={onRetry}
 					/>
 				</div>
@@ -2954,19 +2176,8 @@ function ChangeSummaryCardI({ state, aggregate, onRetry }) {
 		return (
 			<div className="card">
 				<CardHead title="Self-improvement changes (applied)" />
-				<div className="grid grid-cols-3 gap-2 p-3">
-					{Array.from({ length: 3 }).map((_, i) => (
-						<div
-							key={i}
-							className="i-anim-skel"
-							style={{
-								height: 68,
-								borderRadius: 8,
-								background: "rgb(var(--sunken))",
-								opacity: 0.7,
-							}}
-						/>
-					))}
+				<div className="p-3">
+					<LoadingPlaceholder label="applied changes" minHeight={68} />
 				</div>
 			</div>
 		);
@@ -3003,50 +2214,43 @@ function ChangeSummaryCardI({ state, aggregate, onRetry }) {
 
 	return (
 		<div className="card">
-			<CardHead title="Self-improvement changes (applied)" />
+			<CardHead
+				title="Self-improvement changes (applied)"
+				sub={getLoopBasisI(aggregate)}
+			/>
 			<div className="px-3 pt-3 flex items-center gap-2 flex-wrap">
-				<span className="fs-micro font-mono text-faint uppercase tracking-wider">
+				<span className="fs-meta text-faint uppercase tracking-wider">
 					Lines changed
 				</span>
-				{/* .diff-line glyph+색 어휘를 COUNT 배지에 재사용 (라인-diff 본문 없음 — Path A). */}
 				<span
-					className="diff-line diff-line--add rounded"
-					style={{ display: "inline-flex" }}
+					className="inline-flex items-center gap-1 fs-meta text-ink"
 					title={`${formatIntI(added)} rule/instruction lines added across ${formatIntI(eventCount)} cycles`}
 				>
-					<span className="diff-line__glyph" aria-hidden="true">
-						+
-					</span>
+					<SymI s="＋" className="text-ok" size={11} />
 					<span>{formatIntI(added)} added</span>
 				</span>
 				<span
-					className="diff-line diff-line--del rounded"
-					style={{ display: "inline-flex" }}
+					className="inline-flex items-center gap-1 fs-meta text-ink"
 					title={`${formatIntI(removed)} rule/instruction lines removed across ${formatIntI(eventCount)} cycles`}
 				>
-					<span className="diff-line__glyph" aria-hidden="true">
-						−
-					</span>
+					<SymI s="−" className="text-crit" size={11} />
 					<span>{formatIntI(removed)} removed</span>
-				</span>
-				<span className="fs-micro font-mono text-faint ml-auto">
-					{formatIntI(eventCount)} cycles
 				</span>
 			</div>
 			<div className="grid grid-cols-2 gap-2 p-3">
 				<div className="i-card-shadow bg-elev rounded-md p-2.5 min-w-0">
-					<div className="flex items-start gap-1.5 fs-micro font-mono min-h-[2.4em]">
+					<div className="flex items-start gap-1.5 fs-meta min-h-[2.4em]">
 						<SymI s="ℹ" className="text-info" size={12} />
-						<span className="text-info">Reject rate — earlier half</span>
+						<span>Reject rate — earlier half</span>
 					</div>
 					<div className="fs-stat font-semibold text-ink mt-1 font-mono">
 						{failBeforeText}
 					</div>
 				</div>
 				<div className="i-card-shadow bg-elev rounded-md p-2.5 min-w-0">
-					<div className="flex items-start gap-1.5 fs-micro font-mono min-h-[2.4em]">
+					<div className="flex items-start gap-1.5 fs-meta min-h-[2.4em]">
 						<SymI s={failTrend.symbol} className={failTrend.tone} size={12} />
-						<span className={failTrend.tone}>Reject rate — recent half</span>
+						<span>Reject rate — recent half</span>
 					</div>
 					<div className="fs-stat font-semibold text-ink mt-1 font-mono">
 						{failAfterText}
@@ -3100,16 +2304,19 @@ function failTrendMetaI(before, after) {
 // severity(빈도 밴드) + 클릭 → DetailSurface drawer (DetailDrawerI 의 pattern kind 재사용).
 // rejected 후보(반려 백로그)는 T-IMP-5 의 collapsible <details> 로 기본 접힘 분리.
 
-function RankedCandidateCardI({ state, onRowClick, onRetry }) {
-	const { CardHead } = window.UI;
+// 패턴 원장 — 한 표면에 한 사실. 활성 후보와 억제된 행이 다른 카드에 살면 둘 중 하나만
+// 읽히고, 억제된 행은 늘 읽히지 않는 쪽이 된다. 행 단위로 합쳐 live / inert / held 세
+// 구역으로 나누고, 각 구역은 자기 게이트를 푸터에 남긴다.
+function PatternLedgerCardI({ state, suppression, onRowClick, onRetry }) {
+	const { CardHead, LoadingPlaceholder } = window.UI;
 	if (state.status === "error") {
 		return (
 			<div className="card">
-				<CardHead title="Top candidate patterns (ranked)" />
+				<CardHead title="Pattern ledger" />
 				<div className="p-4">
 					<ErrorBannerI
-						title="Couldn't load candidate patterns"
-						detail={state.error}
+						source="pattern ledger"
+						error={state.error}
 						onRetry={onRetry}
 					/>
 				</div>
@@ -3119,44 +2326,26 @@ function RankedCandidateCardI({ state, onRowClick, onRetry }) {
 	if (state.status === "loading" || !state.data) {
 		return (
 			<div className="card">
-				<CardHead title="Top candidate patterns (ranked)" />
-				<div className="p-3 flex flex-col gap-2">
-					{Array.from({ length: 4 }).map((_, i) => (
-						<div
-							key={i}
-							className="i-anim-skel"
-							style={{
-								height: 44,
-								borderRadius: 8,
-								background: "rgb(var(--sunken))",
-								opacity: 0.7,
-							}}
-						/>
-					))}
+				<CardHead title="Pattern ledger" />
+				<div className="p-3">
+					<LoadingPlaceholder label="the pattern ledger" minHeight={44} />
 				</div>
 			</div>
 		);
 	}
 
-	const patterns = Array.isArray(state.data.patterns)
-		? state.data.patterns
+	const patterns = Array.isArray(state.data.patterns) ? state.data.patterns : [];
+	const dist = Array.isArray(state.data.status_distribution)
+		? state.data.status_distribution
 		: [];
-	if (patterns.length === 0) {
-		return (
-			<div className="card">
-				<CardHead title="Top candidate patterns (ranked)" />
-				<div className="px-3 pb-3">
-					<div
-						className="placeholder"
-					>
-						No candidate patterns in the last 7 days
-					</div>
-				</div>
-			</div>
-		);
-	}
+	// 반려 수는 status_distribution(전체 기간) 에서 온다 — 아래 백로그 목록은 7일 윈도우라
+	// 길이를 그대로 쓰면 푸터의 게이트와 목록의 게이트가 어긋난다.
+	const declinedAllTime = sumCountsI(
+		dist.filter((d) => d.status === "rejected"),
+	);
+	const total = Number(state.data.total_patterns ?? patterns.length);
 
-	// frequency 내림차순 정렬 (동률 → discovered_date 최신 우선) — 상위 N 활성, rejected 는 백로그.
+	// frequency 내림차순 (동률 → discovered_date 최신 우선).
 	const sorted = [...patterns].sort(
 		(a, b) =>
 			Number(b.frequency ?? 0) - Number(a.frequency ?? 0) ||
@@ -3164,54 +2353,64 @@ function RankedCandidateCardI({ state, onRowClick, onRetry }) {
 				String(a.discovered_date || ""),
 			),
 	);
-	const active = sorted.filter((p) => p.status !== "rejected");
-	const rejected = sorted.filter((p) => p.status === "rejected");
+	const open = sorted.filter((p) => p.status !== "rejected");
+	const live = open.filter((p) => p.intake_skipped !== true);
+	const inert = open.filter((p) => p.intake_skipped === true);
 	// severity 밴드 = 최대 빈도 대비 — StatusDot 색 + 텍스트 빈도 동반 (dual-encode).
 	const maxFreq = Math.max(1, ...sorted.map((p) => Number(p.frequency ?? 0)));
 
 	return (
-		<div className="card">
-			<CardHead title="Top candidate patterns (ranked)" />
-			<div className="px-3 pb-3 flex flex-col gap-1.5">
-				{active.length === 0 ? (
-					<div
-						className="placeholder"
-					>
-						No active candidates — all declined (see
-						backlog)
-					</div>
-				) : (
-					active.map((p, i) => (
-						<CandidateRowI
-							key={p.id}
-							rank={i + 1}
-							pattern={p}
-							maxFreq={maxFreq}
-							onClick={() => onRowClick({ ...p, kind: "pattern" })}
-						/>
-					))
-				)}
+		<div className="card" data-testid="pattern-ledger">
+			<CardHead title="Pattern ledger" />
+			<LedgerLiveSectionI
+				rows={live}
+				maxFreq={maxFreq}
+				onRowClick={onRowClick}
+			/>
+			<LedgerInertSectionI rows={inert} />
+			<LedgerHeldSectionI suppression={suppression} />
+			<LedgerRecurrenceDisclosureI suppression={suppression} />
+			<LedgerFooterI
+				total={total}
+				declined={declinedAllTime}
+				suppression={suppression}
+			/>
+		</div>
+	);
+}
+
+// 활성 구역 — 제안이 나올 수 있는 행만. 비어도 카드는 남는다: held 는 윈도우가 없어서
+// 활성이 0 이어도 읽을 것이 있다.
+function LedgerLiveSectionI({ rows, maxFreq, onRowClick }) {
+	const head = (
+		<LedgerSectionHeadI
+			label="Live — can propose"
+			basis="discovered in the last 7 days · ×N = times seen, all time"
+			count={rows.length}
+		/>
+	);
+	if (rows.length === 0) {
+		return (
+			<div className="px-3 pb-3">
+				{head}
+				<div className="placeholder">
+					No candidate patterns in the last 7 days
+				</div>
 			</div>
-			{/* T-IMP-5 — 반려 백로그 (long-term accumulation) collapsible, 기본 접힘. */}
-			{rejected.length > 0 && (
-				<details className="px-3 pb-3">
-					<summary className="fs-meta font-mono text-dim cursor-pointer select-none">
-						<SymI s="✕" size={11} /> Declined backlog (
-						{formatIntI(rejected.length)})
-					</summary>
-					<div className="flex flex-col gap-1.5 mt-2">
-						{rejected.map((p, i) => (
-							<CandidateRowI
-								key={p.id}
-								rank={i + 1}
-								pattern={p}
-								maxFreq={maxFreq}
-								onClick={() => onRowClick({ ...p, kind: "pattern" })}
-							/>
-						))}
-					</div>
-				</details>
-			)}
+		);
+	}
+	return (
+		<div className="px-3 pb-3 flex flex-col gap-1.5">
+			{head}
+			{rows.map((p, i) => (
+				<CandidateRowI
+					key={p.id}
+					rank={i + 1}
+					pattern={p}
+					maxFreq={maxFreq}
+					onClick={() => onRowClick({ ...p, kind: "pattern" })}
+				/>
+			))}
 		</div>
 	);
 }
@@ -3221,15 +2420,16 @@ function CandidateRowI({ rank, pattern, maxFreq, onClick }) {
 	const freq = Number(pattern.frequency ?? 0);
 	const status = candidateSeverityI(freq, maxFreq);
 	const badge = learningStatusBadgeI(pattern.status);
+	const label = patternNameI(pattern.pattern_signature, pattern.agent);
 	return (
 		<button
 			type="button"
 			onClick={onClick}
 			className="i-card-shadow i-row-card bg-elev rounded-md text-left p-2.5 w-full flex items-center gap-2"
-			aria-label={`Candidate ${rank}: ${String(pattern.pattern_signature || "")} — seen ${freq} times`}
+			aria-label={`Candidate ${rank}: ${label} — seen ${freq} times`}
 		>
 			<span
-				className="fs-micro font-mono text-faint"
+				className="fs-meta text-faint"
 				style={{ width: "2ch", textAlign: "right" }}
 			>
 				{rank}
@@ -3237,17 +2437,15 @@ function CandidateRowI({ rank, pattern, maxFreq, onClick }) {
 			<StatusDot status={status} />
 			<span
 				className="fs-body text-ink truncate flex-1 min-w-0"
-				title={String(pattern.pattern_signature || "")}
+				title={label}
 			>
-				{truncateI(pattern.pattern_signature, 120)}
+				{truncateI(label, 120)}
 			</span>
 			{pattern.agent && (
-				<span className="fs-micro font-mono text-dim shrink-0">
-					{pattern.agent}
-				</span>
+				<window.UI.AgentName name={pattern.agent} className="fs-meta text-dim shrink-0" />
 			)}
 			<span
-				className={`fs-micro font-mono shrink-0 ${badge.tone}`}
+				className={`fs-meta shrink-0 ${badge.tone}`}
 				title={`Status: ${badge.label}`}
 			>
 				<SymI s={badge.symbol} size={11} />
@@ -3269,356 +2467,6 @@ function candidateSeverityI(freq, maxFreq) {
 	if (ratio >= 0.66) return "crit";
 	if (ratio >= 0.33) return "warn";
 	return "info";
-}
-
-// ----- Rolling trend card (T-IMP-4) ------------------------------------------
-//
-// loop-events 날짜별 verified(성공 → CTM 인접) vs reject 계열(실패 → EPM 인접) 2-시리즈.
-// 색 단독 인코딩 금지 — CTM=solid · EPM=dashed 선스타일이 비색 1차 신호 (Sparkline 은
-// dash 미지원 → 인라인 SVG 직접 path 2개). 윈도우 합계 텍스트 동반 (a11y).
-
-// correction_signals AGGREGATE 카드 — stage1(regex) vs stage2(agent-emit) 검출 일치율
-// + revision_count delta. orphan 테이블(미배포/빈 데이터)은 정직한 빈 상태로 노출 —
-// 가짜 0 금지. error(503/테이블 부재) → 카드 숨김 (loop-events 와 동일 degrade).
-function CorrectionSignalsCardI({ state }) {
-	const { CardHead, formatKstDate } = window.UI;
-	const title = "Detection agreement (correction signals)";
-
-	if (state.status === "error") return null;
-	if (state.status === "loading" || !state.data) {
-		return (
-			<div className="card">
-				<CardHead title={title} />
-				<div className="p-3">
-					<div
-						className="i-anim-skel"
-						style={{
-							height: 60,
-							borderRadius: 8,
-							background: "rgb(var(--sunken))",
-							opacity: 0.7,
-						}}
-					/>
-				</div>
-			</div>
-		);
-	}
-
-	const d = state.data;
-	// 빈 테이블 → 정직한 빈 상태 (다음 단계 힌트 동반). 가짜 0% 미표기.
-	if (!d.total_signals) {
-		return (
-			<div className="card">
-				<CardHead title={title} />
-				<div className="px-3 pb-3">
-					<div className="placeholder">
-						No correction signals recorded yet — appears once a run logs a
-						stage1/stage2 detection.
-					</div>
-				</div>
-			</div>
-		);
-	}
-
-	const agr = d.agreement;
-	const total = agr.total || 0;
-	// stage1·stage2 가 concur 한 비율(both OR neither) — 검출기 합의도.
-	const agreePct = total > 0 ? ((agr.agreement_count / total) * 100).toFixed(1) : "0.0";
-	const latest = d.latest_event_ts ? formatKstDate(d.latest_event_ts) : null;
-
-	return (
-		<div className="card">
-			<CardHead
-				title={title}
-				sub={`${formatIntI(total)} signals${latest ? ` · latest ${latest}` : ""}`}
-			/>
-			<div className="px-3 pb-3 space-y-2">
-				<div className="fs-body">
-					<span className="font-mono text-ink">{agreePct}%</span>{" "}
-					<span className="text-faint">stage1/stage2 agreement</span>
-				</div>
-				{/* 4-way disjoint 분해 — both / stage1-only / stage2-only / neither. */}
-				<div className="flex items-center gap-4 fs-micro font-mono text-faint flex-wrap">
-					<span>
-						<span className="text-ok">both</span> {formatIntI(agr.both_matched)}
-					</span>
-					<span>
-						<span className="text-warn">stage1 only</span>{" "}
-						{formatIntI(agr.stage1_only)}
-					</span>
-					<span>
-						<span className="text-warn">stage2 only</span>{" "}
-						{formatIntI(agr.stage2_only)}
-					</span>
-					<span>
-						<span className="text-faint">neither</span>{" "}
-						{formatIntI(agr.neither_matched)}
-					</span>
-				</div>
-				<div className="fs-micro font-mono text-faint">
-					revision delta Σ {formatIntI(d.revision_delta_sum)} · peak{" "}
-					{formatIntI(d.revision_delta_max)}
-				</div>
-			</div>
-		</div>
-	);
-}
-
-function TrendCardI({ state, aggregate }) {
-	const { CardHead } = window.UI;
-	if (state.status === "error") return null;
-	if (state.status === "loading" || !aggregate) {
-		return (
-			<div className="card">
-				<CardHead title="Verified vs rejected (trend)" />
-				<div className="p-3">
-					<div
-						className="i-anim-skel"
-						style={{
-							height: 60,
-							borderRadius: 8,
-							background: "rgb(var(--sunken))",
-							opacity: 0.7,
-						}}
-					/>
-				</div>
-			</div>
-		);
-	}
-
-	const series = aggregate.trend || [];
-	// 2-포인트 미만 → 추세선 무의미 → 안내 (Sparkline 도 <2 면 null 반환).
-	if (series.length < 2) {
-		return (
-			<div className="card">
-				<CardHead title="Verified vs rejected (trend)" />
-				<div className="px-3 pb-3">
-					<div
-						className="placeholder"
-					>
-						Not enough days to plot a trend
-					</div>
-				</div>
-			</div>
-		);
-	}
-
-	const verified = series.map((d) => d.verified);
-	const reject = series.map((d) => d.reject);
-
-	return (
-		<div className="card">
-			<CardHead
-				title="Verified vs rejected (trend)"
-				sub={`Daily improvement cycles across ${formatIntI(series.length)} days`}
-			/>
-			<div className="px-3 pb-3">
-				<TrendSparkI verified={verified} reject={reject} />
-				<div className="flex items-center gap-4 mt-2 fs-micro font-mono text-faint flex-wrap">
-					<span className="inline-flex items-center gap-1.5">
-						<svg width="22" height="8" aria-hidden="true">
-							<line
-								x1="0"
-								y1="4"
-								x2="22"
-								y2="4"
-								stroke="rgb(var(--ok))"
-								strokeWidth="1.6"
-							/>
-						</svg>
-						<span className="text-ok">Verified</span>{" "}
-						{formatIntI(aggregate.verifiedTotal)}
-					</span>
-					<span className="inline-flex items-center gap-1.5">
-						<svg width="22" height="8" aria-hidden="true">
-							<line
-								x1="0"
-								y1="4"
-								x2="22"
-								y2="4"
-								stroke="rgb(var(--warn))"
-								strokeWidth="1.6"
-								strokeDasharray="3 2"
-							/>
-						</svg>
-						<span className="text-warn">Rejected</span>{" "}
-						{formatIntI(aggregate.rejectTotal)}
-					</span>
-				</div>
-			</div>
-		</div>
-	);
-}
-
-// 2-시리즈 라인 스파크 — Sparkline atom 은 단일 시리즈/dash 미지원 → 인라인 SVG.
-// 공통 y-scale (두 시리즈 max 기준) — verified solid · reject dashed (비색 구분 1차 신호).
-function TrendSparkI({ verified, reject }) {
-	const w = 100,
-		h = 40;
-	const max = Math.max(1, ...verified, ...reject);
-	const toPath = (data) =>
-		data
-			.map((v, i) => {
-				const x = (i / (data.length - 1)) * w;
-				const y = h - (v / max) * h * 0.9 - 1;
-				return `${i === 0 ? "M" : "L"}${x.toFixed(1)},${y.toFixed(1)}`;
-			})
-			.join(" ");
-	return (
-		<svg
-			width="100%"
-			height={h}
-			viewBox={`0 0 ${w} ${h}`}
-			preserveAspectRatio="none"
-			role="img"
-			aria-label={`Trend over ${verified.length} days — verified peak ${Math.max(...verified)}, rejected peak ${Math.max(...reject)} cycles per day`}
-		>
-			<path
-				d={toPath(verified)}
-				fill="none"
-				stroke="rgb(var(--ok))"
-				strokeWidth="1.4"
-				strokeLinecap="round"
-				strokeLinejoin="round"
-				vectorEffect="non-scaling-stroke"
-			/>
-			<path
-				d={toPath(reject)}
-				fill="none"
-				stroke="rgb(var(--warn))"
-				strokeWidth="1.4"
-				strokeDasharray="3 2"
-				strokeLinecap="round"
-				strokeLinejoin="round"
-				vectorEffect="non-scaling-stroke"
-			/>
-		</svg>
-	);
-}
-
-// 코퍼스 성장 카드 — core.autoagent_corpus_audits 시리즈(cycle_date 당 1행).
-// null 은 "판독 불가", 0 은 "측정된 0" 으로 서로 다른 판독 → null 을 0 으로 접지 않는다.
-function CorpusGrowthCardI({ state }) {
-	const { CardHead, Sparkline } = window.UI;
-	const title = "Corpus growth (per-cycle audit)";
-
-	if (state.status === "error") return null;
-	if (state.status === "loading" || !state.data) {
-		return (
-			<div className="card">
-				<CardHead title={title} />
-				<div className="p-3">
-					<div
-						className="i-anim-skel"
-						style={{
-							height: 60,
-							borderRadius: 8,
-							background: "rgb(var(--sunken))",
-							opacity: 0.7,
-						}}
-					/>
-				</div>
-			</div>
-		);
-	}
-
-	const rows = Array.isArray(state.data.audits) ? state.data.audits : [];
-	const latest = rows[0];
-	if (!latest) {
-		return (
-			<div className="card" data-testid="corpus-growth-card">
-				<CardHead title={title} />
-				<div className="px-3 pb-3">
-					<div className="placeholder">
-						No corpus readings yet — appears once a daemon cycle writes one.
-					</div>
-				</div>
-			</div>
-		);
-	}
-
-	// 응답은 cycle_date DESC → 스파크는 시간순으로 뒤집는다.
-	const wordSeries = rows.map((r) => Number(r.word_count ?? 0)).reverse();
-	const delta = latest.trend_delta;
-	const hasDelta = typeof delta === "number";
-	// 색 단독 인코딩 금지 — ▲/▼/= 기호가 1차 신호, tone 은 보조.
-	const deltaSymbol = !hasDelta ? "·" : delta > 0 ? "▲" : delta < 0 ? "▼" : "=";
-	const deltaTone =
-		!hasDelta || delta === 0
-			? "text-faint"
-			: delta > 0
-				? "text-warn"
-				: "text-ok";
-	const deltaLabel = hasDelta
-		? `${delta > 0 ? "+" : ""}${formatIntI(delta)} words vs previous`
-		: "no baseline yet";
-	const compliance = formatRateI(latest.compliance_rate);
-	const override = formatRateI(latest.override_rate);
-	const alerts = [
-		latest.trend_alert ? "trend" : null,
-		latest.absolute_alert ? "absolute" : null,
-	].filter(Boolean);
-
-	return (
-		<div className="card" data-testid="corpus-growth-card">
-			<CardHead
-				title={title}
-				sub={`${formatIntI(Number(state.data.total_audits ?? 0))} readings · latest ${latest.cycle_date}`}
-			/>
-			<div className="px-3 pb-3 space-y-2">
-				<div className="flex items-center gap-3 flex-wrap">
-					<span className="fs-display font-mono text-ink">
-						{formatIntI(Number(latest.word_count ?? 0))}
-					</span>
-					<span className="fs-meta text-faint">words</span>
-					<span className={`fs-meta font-mono ${deltaTone}`}>
-						{deltaSymbol} {deltaLabel}
-					</span>
-					{/* 스파크는 텍스트 수치의 중복 표현 → 스크린리더에서 제외. */}
-					{wordSeries.length > 1 && (
-						<span className="ml-auto" aria-hidden="true">
-							<Sparkline
-								data={wordSeries}
-								w={90}
-								h={26}
-								color="rgb(var(--accent))"
-							/>
-						</span>
-					)}
-				</div>
-				<div className="flex items-center gap-4 fs-micro font-mono text-faint flex-wrap">
-					<span>{formatIntI(Number(latest.file_count ?? 0))} files</span>
-					<span>~{formatIntI(Number(latest.token_estimate ?? 0))} tokens</span>
-					<span>
-						threshold {formatIntI(Number(latest.seeded_threshold ?? 0))}
-					</span>
-					{alerts.length > 0 && (
-						<span className="text-warn">⚠ {alerts.join(" + ")} alert</span>
-					)}
-				</div>
-				<div className="flex items-center gap-4 fs-micro font-mono text-faint flex-wrap">
-					<span>
-						gate{" "}
-						<span className="text-ok">
-							{formatIntI(Number(latest.gate_pass_count ?? 0))}
-						</span>{" "}
-						pass ·{" "}
-						<span className="text-warn">
-							{formatIntI(Number(latest.gate_trip_count ?? 0))}
-						</span>{" "}
-						trip / {formatIntI(Number(latest.gate_total_count ?? 0))}
-					</span>
-					<span>compliance {compliance}</span>
-					<span>override {override}</span>
-				</div>
-				{(latest.compliance_rate === null || latest.override_rate === null) && (
-					<div className="card-sub fs-micro">
-						— = insufficient data, never a measured zero.
-					</div>
-				)}
-			</div>
-		</div>
-	);
 }
 
 // ----- Shared chrome --------------------------------------------------------
@@ -3655,36 +2503,10 @@ function ToastI({ tone, message }) {
 	);
 }
 
-function ErrorBannerI({ title, detail, onRetry }) {
-	const { Icon } = window.UI;
-	return (
-		<div
-			role="alert"
-			className="rounded-md border p-3 flex items-start gap-3"
-			style={{
-				background: "rgb(var(--crit) / 0.08)",
-				borderColor: "rgb(var(--crit) / 0.4)",
-			}}
-		>
-			<Icon name="warn" size={16} className="text-crit mt-0.5" />
-			<div className="flex-1 min-w-0">
-				<div className="fs-body font-medium text-ink">{title}</div>
-				{detail && (
-					<div
-						className="fs-meta font-mono text-dim mt-1 truncate"
-						title={window.UI.titleOf(detail)}
-					>
-						{detail}
-					</div>
-				)}
-			</div>
-			{onRetry && (
-				<button className="btn sm" onClick={onRetry}>
-					Retry
-				</button>
-			)}
-		</div>
-	);
+// quiet per-region card: plain sentence + next step, raw answer behind Details
+function ErrorBannerI({ source, error, onRetry }) {
+	const { RegionUnavailable } = window.UI;
+	return <RegionUnavailable source={source} error={error} onRetry={onRetry} />;
 }
 
 // ----- Pure helpers ---------------------------------------------------------
@@ -3742,47 +2564,46 @@ function deriveLoopAggregateI(data) {
 	};
 }
 
-// `/api/improvement` + `/stats` 동시 fetch · 5xx → 명시적 throw (silent fallback 금지).
-async function fetchUnifiedI(signal) {
-	const [listRes, statsRes] = await Promise.all([
-		fetch(IMPROVEMENT_LIST_URL, {
-			signal,
-			headers: { Accept: "application/json" },
-		}),
-		fetch(IMPROVEMENT_STATS_URL, {
-			signal,
-			headers: { Accept: "application/json" },
-		}),
-	]);
-	if (!listRes.ok) throw new Error(`improvement list HTTP ${listRes.status}`);
-	if (!statsRes.ok)
-		throw new Error(`improvement stats HTTP ${statsRes.status}`);
-	const list = await listRes.json();
-	const stats = await statsRes.json();
-	return { list, stats, source: "unified" };
+// loop-events carries no day window → the basis is the newest rows up to the fetch cap
+function getLoopBasisI(aggregate) {
+	const { eventCount } = aggregate;
+	const trend = aggregate.trend || [];
+	const span =
+		trend.length > 0 ? `, ${trend[0].date} to ${trend[trend.length - 1].date}` : "";
+	if (eventCount >= LOOP_EVENTS_LIMIT)
+		return `Latest ${formatIntI(eventCount)} cycles (fetch cap)${span}`;
+	return `All ${formatIntI(eventCount)} recorded cycles${span}`;
 }
 
-// P2-B orphan endpoint 단건 fetch — 5xx → 명시적 error state (silent fallback 금지).
-// abort 는 조용히 무시 (refreshTick 재발화 OR unmount 시 정상 경로). 결과는 setter 위임
-// → 각 카드 state 독립 (부분 실패 격리 — 한 endpoint 실패가 나머지 카드 미차단).
-function fetchOrphanI(url, signal, setState) {
-	fetch(url, { signal, headers: { Accept: "application/json" } })
-		.then((res) => {
-			if (!res.ok) throw new Error(`${url} HTTP ${res.status}`);
+// newest request per region setter → a superseded answer cannot move the stamp either
+const latestRequestI = new WeakMap();
+
+// starts one region request; superseded or aborted answers never land (request identity)
+function loadRegionI(url, setState, onData) {
+	const request = new AbortController();
+	latestRequestI.set(setState, request);
+	setState((state) => window.UI.putRegionRequest(state, url, request));
+	fetch(url, { signal: request.signal, headers: { Accept: "application/json" } })
+		.then(async (res) => {
+			if (!res.ok) throw await window.UI.getFetchError(res);
 			return res.json();
 		})
 		.then((data) => {
-			if (signal.aborted) return;
-			setState({ status: "ready", data, error: null });
+			if (request.signal.aborted || latestRequestI.get(setState) !== request) return;
+			setState((state) => window.UI.putRegionData(state, request, data));
+			if (onData) onData();
 		})
-		.catch((err) => {
-			if (signal.aborted || err?.name === "AbortError") return;
-			setState({
-				status: "error",
-				data: null,
-				error: err?.message || String(err),
-			});
-		});
+		.catch((err) =>
+			setState((state) => window.UI.putRegionFailure(state, request, err)),
+		);
+	return request;
+}
+
+// null unless 2+ regions failed with one shared cause (then one page banner owns Retry)
+function getPageFailureI(regions) {
+	return window.UI.getSharedFailure(
+		regions.map(({ source, state }) => ({ source, error: state.error || null })),
+	);
 }
 
 // APPLIED / REJECTED 분리 + snoozed 명시 라우팅.
@@ -3825,9 +2646,36 @@ function formatDateFullI(iso) {
 	const m = s.match(/^(\d{4})-(\d{2})-(\d{2})/);
 	return m ? `${m[1]}/${m[2]}/${m[3]}` : s;
 }
+// signatures are "<label>|<agent>" — the agent already has its own cell
+function patternLabelI(signature, agent) {
+	const text = String(signature ?? "");
+	const suffix = agent ? `|${agent}` : "";
+	return suffix && text.endsWith(suffix) ? text.slice(0, -suffix.length) : text;
+}
+
+// On-screen pattern name — agent suffix stripped, machine key read as words
+function patternNameI(signature, agent) {
+	return window.UI.getDisplayName("pattern", patternLabelI(signature, agent)) || "";
+}
+
 function truncateI(s, n) {
 	const str = String(s || "");
 	return str.length > n ? str.slice(0, n - 1) + "…" : str;
 }
+
+// 계기판 뷰 브리지 — 뷰는 별도 번들(improvement-instrumentation.js)에 있고 window 로 만난다.
+// 번들이 없으면 화면 전체가 죽는 대신 이 묶음만 빠진다(운영 표면은 이 파일이 전부 소유).
+function InstrumentationViewI(props) {
+	const View = window.ImprovementInstrumentationView;
+	if (!View) return null;
+	return <View {...props} />;
+}
+
+// 계기판 뷰가 소비하는 화면 공용 원자 — 두 번들이 한 화면을 이루므로 기호/배지 판정은 여기 하나뿐.
+window.ImprovementShared = {
+	SymI,
+	confidenceBadgeMetaI,
+	ReviewReasonSegmentsI,
+};
 
 window.ScreenImprovement = ScreenImprovement;

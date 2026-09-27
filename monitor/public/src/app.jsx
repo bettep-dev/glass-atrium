@@ -1,5 +1,5 @@
 // 앱 셸 — sidebar + screen routing + Tweaks panel
-const { useState: useS, useEffect: useE } = React;
+const { useState: useS, useEffect: useE, useRef: useR, useCallback: useC } = React;
 
 // NAV 메뉴 — id=해시 라우팅 키 · badge=폴링 주입
 const NAV = [
@@ -35,6 +35,27 @@ const Screens = {
 };
 
 const NAV_BADGE_POLL_MS = 60_000;
+// no .nav-badge.crit rule in styles yet → local tone fill mirroring .nav-badge.warn
+const NAV_BADGE_CRIT_STYLE = {
+	background: "rgb(var(--crit) / 0.15)",
+	color: "rgb(var(--crit))",
+	borderColor: "transparent",
+};
+const MAIN_CONTENT_ID = "main-content";
+
+// page h1 → focus target (tabindex -1 = programmatic only, authored value kept); no h1 → the region
+function focusRouteHeading(region) {
+	if (!region) return;
+	const target = region.querySelector("h1") || region;
+	if (!target.hasAttribute("tabindex")) target.setAttribute("tabindex", "-1");
+	target.focus();
+}
+
+// the hash is the route key → cancel the #main-content navigation, move focus instead
+function onSkipToContent(event) {
+	event.preventDefault();
+	focusRouteHeading(document.getElementById(MAIN_CONTENT_ID));
+}
 
 // hash 형식 `#screen?per-screen-query` — '?' 앞부분만 screen id
 function parseHashScreen() {
@@ -42,24 +63,25 @@ function parseHashScreen() {
 	return NAV.some((n) => n.id === raw) ? raw : "dashboard";
 }
 
-function Sidebar({ active, onNav, dynamicBadges }) {
+function Sidebar({ active, onNav, harness }) {
 	const { Icon } = window.UI;
-	const systems = systemsRollup(dynamicBadges);
+	const systems = systemsRollup(harness);
+	const dynamicBadges = harnessToNavBadges(harness);
 	return (
-		<aside className="w-[220px] flex-shrink-0 border-r border-line h-screen sticky top-0 flex flex-col bg-elev">
-			<div className="px-4 py-4 border-b border-line">
+		<aside aria-label="Sidebar" className="shell-sidebar flex-shrink-0 border-r border-line h-screen sticky top-0 flex flex-col bg-elev">
+			<div className="shell-brand px-4 py-4 border-b border-line">
 				<div className="flex items-center gap-2.5">
 					<div className="w-7 h-7 rounded-md overflow-hidden bg-ink">
 						<img src="/assets/favicon/icon-192.png" alt="Atrium Monitor" className="w-full h-full object-cover" />
 					</div>
-					<div>
+					<div className="rail-hide">
 						<div className="text-[13px] font-semibold leading-none">
 							Atrium Monitor
 						</div>
 					</div>
 				</div>
 			</div>
-			<nav className="flex-1 p-2.5 overflow-y-auto">
+			<nav aria-label="Primary" className="flex-1 p-2.5 overflow-y-auto">
 				<div className="space-y-0.5">
 					{NAV.map((n) => {
 						// dynamicBadges 키 존재 = polled (null 이어도 정적 fallback 차단)
@@ -82,14 +104,16 @@ function Sidebar({ active, onNav, dynamicBadges }) {
 								key={n.id}
 								className={`nav-item ${active === n.id ? "active" : ""}`}
 								onClick={() => onNav(n.id)}
+								title={n.label}
 							>
 								<Icon name={n.icon} size={14} />
 								{/* min-w-0 + truncate — 영문 라벨 + 복수 배지 동시 표시 시 220px 초과분은 라벨 말줄임 (배지는 shrink-0 보존). */}
-								<span className="flex-1 min-w-0 truncate">{n.label}</span>
+								<span className="rail-hide flex-1 min-w-0 truncate">{n.label}</span>
 								{badges.map((b, i) => (
 									<span
 										key={i}
 										className={`nav-badge shrink-0 ${b.badgeTone || ""}`}
+										style={b.badgeTone === "crit" ? NAV_BADGE_CRIT_STYLE : undefined}
 									>
 										{b.badge}
 									</span>
@@ -104,7 +128,7 @@ function Sidebar({ active, onNav, dynamicBadges }) {
 					<div className="flex items-center gap-1.5 mb-1">
 						{/* 라이브 롤업 파생 — ok 상태만 pulse(live-dot), 그 외 정적 (가짜 상시-green 제거). */}
 						<span className={`w-1.5 h-1.5 rounded-full ${systems.dotClass}${systems.tone === "ok" ? " live-dot" : ""}`}></span>
-						<span className="font-mono text-dim">{systems.label}</span>
+						<span className="rail-hide font-mono text-dim">{systems.label}</span>
 					</div>
 				</div>
 			</div>
@@ -119,51 +143,88 @@ function fetchJson(url) {
 	);
 }
 
-// 실패 카운트 목적지는 architecture(System map) 슬롯 — 맵이 health 판독을 흡수했음.
-function kpiToBadges(kpi) {
-	const fails = Number(kpi.last_1h_fail_count) || 0;
-	// cost 키는 항상 반환(null 이라도) — 정적 fallback 배지 차단 계약 유지. 예산은 per-call HARD CAP
-	// (월 누적 한도 아님)이라 cost-slot 에 매핑할 소진율 신호가 없으므로 항상 null.
+// harness 스토어 초기값 — 'loading' 은 '아직 모름'이고 0 이 아니다(가짜 정상 차단).
+const HARNESS_STORE_INITIAL = { status: "loading", data: null };
+
+/**
+ * allSettled 결과 → harness 스토어 상태.
+ * 실패한 재폴링 → 직전 판독 유지 + `error` 기록 → 표면은 unknown 으로 판독, healthy 아님.
+ * 한 번도 답하지 않은 스토어만 error 상태 → fold 가 미수신 구분.
+ */
+function toStoreState(settled, prev) {
+	if (settled.status === "fulfilled") return { status: "ready", data: settled.value, error: null };
+	const error = settled.reason?.message ?? String(settled.reason);
+	return prev && prev.status === "ready" ? { ...prev, error } : { status: "error", data: null, error };
+}
+
+// store key → endpoint + operator label for the "couldn't read …" copy; one table → every source that can go unread is re-read by the same poll
+const HARNESS_SOURCES = {
+	kpiState: { url: "/api/dashboard/kpi", label: "the failure count" },
+	liveState: { url: "/api/architecture/live", label: "daemon status" },
+	healthState: { url: "/api/health", label: "the health probe" },
+	hookState: { url: "/api/health/hook-chain", label: "the hook chain" },
+	hookFailState: { url: "/api/health/hook-failures?days=30&limit=50", label: "hook failures" },
+};
+
+/**
+ * One read of every harness source — the shell poll, the harness tile's Retry and the page Refresh.
+ * @param read - fetcher, rejecting on a failed read
+ * @returns settled result per store key
+ */
+async function readHarnessSources(read = fetchJson) {
+	const keys = Object.keys(HARNESS_SOURCES);
+	const settled = await Promise.allSettled(keys.map((key) => read(HARNESS_SOURCES[key].url)));
+	return Object.fromEntries(keys.map((key, i) => [key, settled[i]]));
+}
+
+/**
+ * The one harness fact every surface reads: the fold plus the stores whose latest read failed.
+ * @returns the harness fold, widened with the failed stores' labels and the first failure as the shared-outage cause
+ */
+function getHarness(stores) {
+	const fold = window.HealthModel.foldHarness(stores);
+	const failedKeys = Object.keys(HARNESS_SOURCES).filter((key) => stores[key]?.error != null);
 	return {
-		architecture: fails > 0 ? { badge: String(fails), badgeTone: "warn" } : null,
-		cost: null,
+		...fold,
+		unreadSources: failedKeys.map((key) => HARNESS_SOURCES[key].label),
+		error: failedKeys.length > 0 ? stores[failedKeys[0]].error : null,
 	};
 }
 
-// 데몬 다운(effective_status≠ok) → architecture(System map) 슬롯 warn 카운트, KPI 배지와 소스 태그로 공존.
-// 계수 근거는 effective_status — 전환용 status 중복이 아니라 판정 필드가 기록의 근거임.
-function liveToBadge(live) {
-	const badDaemons = (live?.daemons || []).filter(
-		(d) => d.effective_status !== "ok",
-	).length;
-	const daemonDown =
-		badDaemons > 0 ? { badge: String(badDaemons), badgeTone: "warn" } : null;
+// harness fold → architecture(System map) nav 슬롯. 두 기여분(KPI 실패 카운트 · 데몬 다운)이
+// 한 fold 에서 같이 나오므로 소스별 병합이 필요 없다 — 재폴링이 서로를 덮을 수 없음.
+// 키 존재 = polled 계약 유지: fold 가 아직 아무것도 관측 못 했으면 키 자체를 내지 않는다.
+function harnessToNavBadges(harness) {
+	if (!harness || harness.status !== "ready") return {};
 
-	return { daemonDown };
+	const badges = [];
+	if (harness.failCount1h > 0) {
+		badges.push({ badge: String(harness.failCount1h), badgeTone: "warn", source: "kpi" });
+	}
+	if (harness.daemonsDown > 0) {
+		// a down daemon is crit on its Dashboard alarm → the badge follows the worst severity
+		badges.push({ badge: String(harness.daemonsDown), badgeTone: "crit", source: "daemon" });
+	}
+	return { architecture: badges.length > 0 ? { badges } : null };
 }
 
-// ALL SYSTEMS 풋터 도트 = architecture nav 슬롯 라이브 롤업 파생 (KPI 실패 카운트 + 데몬 다운/partial/quota).
-// 미폴링(architecture 키 부재) → neutral 'CHECKING…' (가짜 ok 금지) · warn 0 → ok · warn N → warn.
+// ALL SYSTEMS 풋터 도트 = 레인/타일과 같은 harness fold 파생. 폴링이 실패한 순간에도
+// 두 표면이 어긋나지 않는다 — 첫 폴 대기는 neutral 'CHECKING…', 읽기 실패는 'STATUS UNKNOWN'.
 // 도트 클래스는 StatusDot(ui.jsx) 어휘 재사용 (미등록 클래스 금지).
-function systemsRollup(dynamicBadges) {
-	const polled =
-		dynamicBadges &&
-		Object.prototype.hasOwnProperty.call(dynamicBadges, "architecture");
-	if (!polled) return { tone: "neutral", dotClass: "bg-faint", label: "CHECKING…" };
+function systemsRollup(harness) {
+	if (!harness || harness.status === "loading") {
+		return { tone: "neutral", dotClass: "bg-faint", label: "CHECKING…" };
+	}
 
-	const badges = dynamicBadges.architecture?.badges || [];
-	const warns = badges.filter((b) => b.badgeTone === "warn").length;
-	if (warns === 0) return { tone: "ok", dotClass: "bg-ok", label: "ALL SYSTEMS" };
-	return { tone: "warn", dotClass: "bg-warn", label: "ISSUES DETECTED" };
-}
-
-// nav 슬롯 배지 병합 — 독립 두 소스(KPI 실패 카운트 · 데몬 다운)가 한 슬롯에 병치.
-// 소스 태그로 자기 기여분만 교체 → 한 소스 재폴링이 다른 소스 배지를 덮지 않음.
-// badges-array-coexistence 관용(Sidebar 가 배열/단일 양쪽 호환) 재사용.
-function mergeHealthBadge(prevHealth, source, badge) {
-	const kept = (prevHealth?.badges || []).filter((b) => b.source !== source);
-	const next = badge ? [...kept, { ...badge, source }] : kept;
-	return next.length > 0 ? { badges: next } : null;
+	const isReady = harness.status === "ready";
+	const issues =
+		isReady && (harness.downNames.length > 0 || harness.daemonsDown > 0 || harness.failCount1h > 0);
+	if (issues) return { tone: "warn", dotClass: "bg-warn", label: "ISSUES DETECTED" };
+	// an unread source could hide a fault → unknown, never ALL SYSTEMS
+	if (!isReady || harness.unreadSources?.length > 0) {
+		return { tone: "neutral", dotClass: "bg-faint", label: "STATUS UNKNOWN" };
+	}
+	return { tone: "ok", dotClass: "bg-ok", label: "ALL SYSTEMS" };
 }
 
 function App() {
@@ -172,8 +233,13 @@ function App() {
 
 	const [active, setActive] = useS(parseHashScreen);
 
-	// id → badge 오버라이드. 키 존재 = polled (count=0 도 정적 fallback 차단)
-	const [navBadges, setNavBadges] = useS({});
+	// harness 원본 스토어 — 셸이 한 cadence 로 읽고 fold 가 단일 상태로 접는다.
+	// 화면은 이 fold 만 받는다: 스크린이 같은 payload 를 다시 해석하면 풋터와 어긋난다.
+	const [kpiState, setKpiState] = useS(HARNESS_STORE_INITIAL);
+	const [liveState, setLiveState] = useS(HARNESS_STORE_INITIAL);
+	const [healthState, setHealthState] = useS(HARNESS_STORE_INITIAL);
+	const [hookState, setHookState] = useS(HARNESS_STORE_INITIAL);
+	const [hookFailState, setHookFailState] = useS(HARNESS_STORE_INITIAL);
 
 	// density 는 attribute 만 노출, CSS 매핑은 차후
 	useE(() => {
@@ -203,54 +269,36 @@ function App() {
 		}
 	}, [active]);
 
-	// kpi 배지 폴링 (alerts+health) — 60s. 실패 시 직전 상태 유지
+	// harness wave — every harness source on one 60s cadence; a failed read keeps the held data.
+	// 레인/타일이 살아있는 판독을 받아야 하므로 마운트 1회로는 부족하다.
+	// 같은 폴이 Dashboard 하네스 타일의 Retry → 화면이 두 번째 요청 경로를 갖지 않는다.
+	const isHarnessMountedRef = useR(true);
+	const pollHarness = useC(async () => {
+		const settled = await readHarnessSources();
+		if (!isHarnessMountedRef.current) return;
+		setKpiState((prev) => toStoreState(settled.kpiState, prev));
+		setHealthState((prev) => toStoreState(settled.healthState, prev));
+		setLiveState((prev) => toStoreState(settled.liveState, prev));
+		setHookState((prev) => toStoreState(settled.hookState, prev));
+		setHookFailState((prev) => toStoreState(settled.hookFailState, prev));
+	}, []);
 	useE(() => {
-		let cancelled = false;
-		const fetchBadges = async () => {
-			const kpiR = await Promise.allSettled([fetchJson("/api/dashboard/kpi")]);
-			if (cancelled) return;
-			if (kpiR[0].status !== "fulfilled") return; // 실패 시 직전 동기화 시각 보존
-			setNavBadges((prev) => {
-				const kpi = kpiToBadges(kpiR[0].value);
-				// architecture 는 데몬 소스와 병치되므로 스프레드로 덮지 않고 merge.
-				return {
-					...prev,
-					cost: kpi.cost,
-					architecture: mergeHealthBadge(
-						prev.architecture,
-						"kpi",
-						kpi.architecture,
-					),
-				};
-			});
-		};
-		fetchBadges();
-		const id = setInterval(fetchBadges, NAV_BADGE_POLL_MS);
+		isHarnessMountedRef.current = true;
+		pollHarness();
+		const id = setInterval(pollHarness, NAV_BADGE_POLL_MS);
 		return () => {
-			cancelled = true;
+			isHarnessMountedRef.current = false;
 			clearInterval(id);
 		};
-	}, []);
+	}, [pollHarness]);
 
-	// architecture/live 배지 — 마운트 시 1회. 데이터가 서비스 부팅 간 준정적이라 폴링 불요
+	// route change → page heading focus (drill + sidebar + back/forward); first mount excluded
+	const focusedRoute = useR(active);
 	useE(() => {
-		let cancelled = false;
-		fetchJson("/api/architecture/live")
-			.then((live) => {
-				if (cancelled) return;
-				const { daemonDown } = liveToBadge(live);
-				setNavBadges((prev) => ({
-					...prev,
-					architecture: mergeHealthBadge(prev.architecture, "daemon", daemonDown),
-				}));
-			})
-			.catch(() => {
-				// 무시 — 직전 navBadges/동기화 시각 보존
-			});
-		return () => {
-			cancelled = true;
-		};
-	}, []);
+		if (focusedRoute.current === active) return;
+		focusedRoute.current = active;
+		focusRouteHeading(document.getElementById(MAIN_CONTENT_ID));
+	}, [active]);
 
 	// NAV 클릭 — state 변경 + screen 전환 시 stale query suffix 제거
 	const onNavClick = (id) => {
@@ -263,6 +311,15 @@ function App() {
 		}
 	};
 
+	// 풋터 · nav 숫자 · Dashboard 레인이 읽는 단일 harness 사실.
+	const harness = getHarness({
+		kpiState,
+		liveState,
+		healthState,
+		hookState,
+		hookFailState,
+	});
+
 	const Screen = Screens[active];
 	const activeNav = NAV.find((n) => n.id === active);
 
@@ -270,19 +327,18 @@ function App() {
 	// dvh — iOS Safari 주소창 가변 영역 안전 (vh 흔들림 회피)
 	return (
 		<div
+			lang="en"
 			className="flex min-h-[100dvh]"
-			style={{ minWidth: 1280 }}
 			data-screen-label={activeNav ? `${activeNav.label}` : ""}
 		>
-			<Sidebar
-				active={active}
-				onNav={onNavClick}
-				dynamicBadges={navBadges}
-			/>
+			<a href={`#${MAIN_CONTENT_ID}`} className="skip-link" onClick={onSkipToContent}>
+				Skip to content
+			</a>
+			<Sidebar active={active} onNav={onNavClick} harness={harness} />
 			<div className="flex-1 min-w-0 flex flex-col">
-				<main className="flex-1 p-6 flex flex-col min-h-0">
+				<main id={MAIN_CONTENT_ID} tabIndex={-1} className="flex-1 min-w-0 p-6 flex flex-col min-h-0">
 					{Screen ? (
-						<Screen onNav={onNavClick} />
+						<Screen onNav={onNavClick} harness={harness} onRetryHarness={pollHarness} />
 					) : (
 						<div className="placeholder">Coming soon — '{active}'</div>
 					)}

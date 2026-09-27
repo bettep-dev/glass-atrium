@@ -17,6 +17,7 @@ import {
   loadAgentRegistry,
   loadCanonicalAgentKeys,
 } from "../agents/registry.js";
+import { loadAgentCircuitBreakerSnapshot } from "../agents/circuit-breaker.js";
 import { getPrisma } from "../db.js";
 import type { AuditChangeCarrier } from "../middleware/audit-log.js";
 import { respondDbFailure } from "../db-failure.js";
@@ -1239,6 +1240,12 @@ async function handleSummary(
       loadAgentRegistry(),
     ]);
 
+    // Looked up FORWARD from registry names — the on-disk key is a lossy
+    // transform of the agent name, so a listing cannot be reversed into names.
+    const circuitBreaker = await loadAgentCircuitBreakerSnapshot(
+      Array.from(registryEntries.keys()),
+    );
+
     // Index latency by agent_type (matches outcomes.agent semantically — both
     // hold the agent NAME string).
     const p95ByAgent = new Map<string, number | null>();
@@ -1255,8 +1262,8 @@ async function handleSummary(
     const invocationsByAgent = buildInvocationsMap(invocationsRows);
 
     const now = Date.now();
-    const items: AgentSummaryItem[] = outcomeRows.map((row) =>
-      rowToSummaryItem(row, {
+    const items: AgentSummaryItem[] = outcomeRows.map((row) => ({
+      ...rowToSummaryItem(row, {
         now,
         p95ByAgent,
         invocationsByAgent,
@@ -1265,7 +1272,8 @@ async function handleSummary(
         dualPhase: registryEntries.get(row.agent)?.dual_phase ?? false,
         origin: registryEntries.get(row.agent)?.origin ?? null,
       }),
-    );
+      circuit_breaker: circuitBreaker.states.get(row.agent) ?? null,
+    }));
 
     // Canonical-membership filter — show only Atrium-system agents (registry SoT).
     // Applied BEFORE sort+slice so LIMIT operates on canonical rows. Fail-soft:
@@ -1304,6 +1312,7 @@ async function handleSummary(
         period_end: periodEnd,
         // honesty flag — cost attribution is unavailable (see handler note above).
         cost_attribution: "unavailable",
+        circuit_breaker: circuitBreaker.summary,
       },
       fetched_at: new Date().toISOString(),
     };
@@ -1358,7 +1367,7 @@ interface SummaryItemContext {
 export function rowToSummaryItem(
   row: SummaryOutcomeDbRow,
   ctx: SummaryItemContext,
-): AgentSummaryItem {
+): Omit<AgentSummaryItem, "circuit_breaker"> {
   const runs = bigintToNumber(row.runs);
   const successCount = bigintToNumber(row.success_count);
   const denomCount = bigintToNumber(row.denom_count);

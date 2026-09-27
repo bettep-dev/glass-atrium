@@ -180,13 +180,13 @@ test("P0-2 no YAML frontmatter fence survives in the drawn source", () => {
 
 // 계수기는 라벨을 재기 전에 shape 구분자를 벗겨야 함 — 원통 `[( … )]` 처럼 바깥 괄호를 떼고도
 // 구분자가 남는 형태에서, 벗기지 않으면 그 구분자 넉 자가 라벨 글자로 세어지고 따옴표마저
-// 첫 글자가 아니게 되어 함께 세어짐. 최댓값(`hook_pipeline` 40)이 그 위에 있어 오늘은
+// 첫 글자가 아니게 되어 함께 세어짐. 최댓값(`main_session` 31)이 그 위에 있어 오늘은
 // label_chars 가 가려 주지만, 상한 근처의 원통 라벨은 그 넷 때문에 없는 초과로 붉어짐.
 test("B2-1 라벨 계수는 shape 구분자를 글자로 세지 않음 — 원통 노드가 제 글자 수로 읽힘", () => {
   const byId = new Map(getMermaidCensus(drawn).nodes.map((n) => [n.id, n.label]));
 
-  assert.equal(byId.get("pg_db"), "PostgreSQL database");
-  assert.equal(byId.get("pg_db")?.length, 19, "the cylinder label counts its own 19 chars, not its delimiters");
+  assert.equal(byId.get("pg_db"), "PostgreSQL");
+  assert.equal(byId.get("pg_db")?.length, 10, "the cylinder label counts its own 10 chars, not its delimiters");
 
   // 픽스처로 형태별 확인 — drawn 이 오늘 원통 하나만 그리므로 그 하나가 사라지면 위 절이 빈 사실이 됨.
   const shapes = `flowchart LR

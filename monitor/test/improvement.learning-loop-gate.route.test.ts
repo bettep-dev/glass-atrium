@@ -52,6 +52,10 @@ const REGISTRY_FIXTURE = {
   },
 };
 
+// A terminal transition reason that is NOT the apply cap — the parked population is
+// keyed on any terminal transition, so the cheapest one exercises the gate.
+const PARK_REASON = "superseded by a later pattern";
+
 let app: FastifyInstance;
 let tmpRoot: string;
 let dbReady = false;
@@ -120,25 +124,30 @@ after(async () => {
 // LearningStatus, approval_tier ∈ ApprovalTier (enum casts).
 async function seedLearningLog(): Promise<void> {
   const prisma = getPrisma();
-  const rows: Array<{ agent: string | null; tag: string }> = [
-    { agent: CANONICAL_AGENT, tag: "canon-a" },
-    { agent: CANONICAL_AGENT, tag: "canon-b" },
-    ...ALL_NOISE.map((a, i) => ({ agent: a, tag: `noise-${i}` })),
-    { agent: null, tag: "null-agent" },
+  // Every row but canon-a carries a terminal transition, so the window-free parked
+  // population has a noise and a NULL-agent candidate to leak if its gate is missing.
+  const rows: Array<{ agent: string | null; tag: string; parked: boolean }> = [
+    { agent: CANONICAL_AGENT, tag: "canon-a", parked: false },
+    { agent: CANONICAL_AGENT, tag: "canon-b", parked: true },
+    ...ALL_NOISE.map((a, i) => ({ agent: a, tag: `noise-${i}`, parked: true })),
+    { agent: null, tag: "null-agent", parked: true },
   ];
   for (let i = 0; i < rows.length; i++) {
     const row = rows[i]!;
     await prisma.$executeRaw`
       INSERT INTO core.learning_log
-        (discovered_date, pattern_signature, frequency, agent, status, approval_tier, last_updated)
+        (discovered_date, pattern_signature, frequency, agent, status, approval_tier,
+         last_updated, last_transition_at, last_transition_reason)
       VALUES
         (CURRENT_DATE,
          ${`${SUITE_MARKER}-sig-${i}`},
          ${i + 1}::int,
          ${row.agent},
-         'identified'::core."LearningStatus",
+         ${row.parked ? "rejected" : "identified"}::core."LearningStatus",
          'auto'::core."ApprovalTier",
-         NOW())
+         NOW(),
+         ${row.parked ? new Date() : null},
+         ${row.parked ? PARK_REASON : null})
     `;
   }
 }
@@ -224,4 +233,37 @@ test("T10 loop-events: event-list + total + result-dist registry-gated (noise ex
   assert.strictEqual(body.total_events, 2, "total_events registry-scoped (agrees with list)");
   const distSum = body.result_distribution.reduce((acc, r) => acc + r.count, 0);
   assert.strictEqual(distSum, 2, "result_distribution registry-scoped (agrees with total)");
+});
+
+// The parked population is the one learning-log query that is window-FREE, so it is
+// also the one whose gate no other assertion reaches: the list, total and status
+// distribution above are all bounded by the 7-day discovery window. A parked row names
+// an agent to an operator, so a leaked non-registry or NULL agent is a visible defect,
+// not just a count.
+test("T10 learning-log: the window-free parked rows are registry-gated too", async (t) => {
+  if (!dbReady) return t.skip("DB unavailable");
+  const res = await app.inject({ method: "GET", url: "/api/improvement/learning-log?limit=200" });
+  assert.strictEqual(res.statusCode, 200, "must be 200");
+  const body = res.json() as {
+    loop_suppression_state: { parked_patterns: Array<{ pattern_signature: string; agent: string | null }> };
+  };
+
+  const mine = body.loop_suppression_state.parked_patterns.filter((row) =>
+    row.pattern_signature.startsWith(SUITE_MARKER),
+  );
+  for (const noise of ALL_NOISE) {
+    assert.ok(
+      !mine.some((row) => row.agent === noise),
+      `non-registry agent '${noise}' must be excluded from the parked rows`,
+    );
+  }
+  assert.ok(
+    !mine.some((row) => row.agent === null),
+    "NULL-agent parked row must be excluded (not a registry agent)",
+  );
+  assert.strictEqual(
+    mine.length,
+    1,
+    "exactly the one canonical parked row — the seeded noise and NULL parks are all excluded",
+  );
 });

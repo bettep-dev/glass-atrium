@@ -93,10 +93,27 @@ interface SuppressionBucket {
   hint: string;
 }
 
+interface ParkedPatternRow {
+  id: number;
+  pattern_signature: string;
+  agent: string | null;
+  status: string;
+  discovered_date: string;
+  intake_skipped: boolean;
+  cause: string;
+}
+
+interface PatternRow {
+  pattern_signature: string;
+  intake_skipped: boolean;
+}
+
 interface LoopSuppressionState {
   parked: SuppressionBucket[];
-  per_cycle: SuppressionBucket[];
+  parked_patterns: ParkedPatternRow[];
+  per_cycle: (SuppressionBucket & { cycles: number })[];
   per_cycle_window_days: number;
+  per_cycle_window_cycles: number;
   pending_unpromptable: number;
   pending_total: number;
   off_registry_parked: number;
@@ -105,6 +122,7 @@ interface LoopSuppressionState {
 interface LearningLogBody {
   apply_cap_state: { capped_patterns: number };
   loop_suppression_state: LoopSuppressionState;
+  patterns: PatternRow[];
 }
 
 let app: FastifyInstance;
@@ -251,6 +269,15 @@ async function seed(): Promise<void> {
     `;
   }
 
+  // The streak row is aged out of the pattern list's 7-day discovery window on
+  // purpose — it is the discriminator for the parked list, which must carry it
+  // anyway. The parked BUCKET counts are unaffected: they never window.
+  await prisma.$executeRaw`
+    UPDATE core.learning_log
+    SET discovered_date = CURRENT_DATE - 60
+    WHERE pattern_signature = ${`${PROMPTABLE_LABEL}|${SUITE_MARKER}-2`}
+  `;
+
   // Per-cycle population. subject is left NULL, so these are census rows and the key
   // in play is the census arm (event_ts, agent, eval_result) WHERE subject IS NULL —
   // a recurrence is therefore modelled as distinct days, which is exactly what it is.
@@ -323,6 +350,17 @@ test("per-cycle suppressions are reported apart from parked rows, with the windo
     body.loop_suppression_state.per_cycle_window_days > 0,
     "a recurrence count without its window is unreadable",
   );
+});
+
+test("each per-cycle bucket reports its cycle coverage within the window's cycle days", async (t) => {
+  if (!dbReady) return t.skip("DB unavailable");
+  const state = body.loop_suppression_state;
+  assert.ok(state.per_cycle_window_cycles >= 1, "seeded events put at least one cycle day in the window");
+  for (const b of state.per_cycle) {
+    assert.ok(b.cycles >= 1, `${b.cause} recurred on no cycle day`);
+    assert.ok(b.cycles <= state.per_cycle_window_cycles, `${b.cause} covers more days than the window holds`);
+    assert.ok(b.cycles <= b.count, `${b.cause} counts more cycle days than events`);
+  }
 });
 
 test("the per-cycle counts are not registry-gated, or roster-mismatch self-erases", async (t) => {
@@ -400,4 +438,77 @@ test("a parked pattern the registry gate hides is reported, not dropped (F5)", a
     2,
     "and it stays out of the gated bucket — the two numbers answer different questions",
   );
+});
+
+// The rows this suite seeded, out of a payload counted over a shared live table.
+function seededParked(): ParkedPatternRow[] {
+  return body.loop_suppression_state.parked_patterns.filter((row) =>
+    row.pattern_signature.includes(SUITE_MARKER),
+  );
+}
+
+function seededListed(): PatternRow[] {
+  return body.patterns.filter((row) => row.pattern_signature.includes(SUITE_MARKER));
+}
+
+test("the parked rows themselves are returned, and no recency window hides them", async (t) => {
+  if (!dbReady) return t.skip("DB unavailable");
+  const mine = seededParked();
+  assert.strictEqual(mine.length, 5, "the five registry-scoped parked rows");
+  const aged = mine.find((row) => row.cause === "reject-streak-snooze");
+  assert.ok(aged, "the row discovered 60 days ago is still parked, so it is still listed");
+  // The discriminator: the same row is absent from the windowed pattern list, so a
+  // parked list reusing that window returns four rows here and silently drops the
+  // oldest parks — the ones most likely to be waiting on a human.
+  assert.ok(
+    !seededListed().some((row) => row.pattern_signature === aged.pattern_signature),
+    "the windowed pattern list does not carry it — the parked list is the only path it has",
+  );
+  assert.ok(
+    !mine.some((row) => row.agent === AGENT_OFF),
+    "the parked list carries the registry gate its buckets carry",
+  );
+});
+
+test("every parked row carries the bucket cause that counted it", async (t) => {
+  if (!dbReady) return t.skip("DB unavailable");
+  const mine = seededParked();
+  const bucketCauses = new Set(body.loop_suppression_state.parked.map((b) => b.cause));
+  for (const row of mine) {
+    assert.ok(bucketCauses.has(row.cause), `row cause ${row.cause} matches no parked bucket`);
+  }
+  // Per-cause row counts equal the seeded shape, so an unclassified list (every row
+  // tagged 'other', or the cause dropped entirely) fails rather than passing on length.
+  const perCause = (cause: string): number => mine.filter((row) => row.cause === cause).length;
+  assert.strictEqual(perCause("repeat-apply-cap"), 2, "2 capped rows");
+  assert.strictEqual(perCause("non-auto-fixable"), 1, "1 non-auto-fixable row");
+  assert.strictEqual(perCause("other"), 1, "the unmarked terminal row keeps its own bucket");
+});
+
+test("list rows the daemon skips at intake are marked, and the promptable ones are not", async (t) => {
+  if (!dbReady) return t.skip("DB unavailable");
+  const listed = seededListed();
+  const unpromptable = listed.filter(
+    (row) =>
+      row.pattern_signature.startsWith(`${UNPROMPTABLE_LABEL}|`) ||
+      row.pattern_signature.startsWith(`${UNPROMPTABLE_LABEL_LEGACY}|`),
+  );
+  const promptable = listed.filter((row) =>
+    row.pattern_signature.startsWith(`${PROMPTABLE_LABEL}|`),
+  );
+  assert.ok(unpromptable.length > 0 && promptable.length > 0, "both classes must be listed");
+  for (const row of unpromptable) {
+    assert.strictEqual(
+      row.intake_skipped,
+      true,
+      `${row.pattern_signature} carries a label the daemon skips at intake`,
+    );
+  }
+  for (const row of promptable) {
+    assert.strictEqual(
+      row.intake_skipped,
+      false,
+      "marking every row marks nothing — a promptable row must read false",
+    );
+  }
 });
