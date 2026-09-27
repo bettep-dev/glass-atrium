@@ -91,7 +91,6 @@ _make_reports() {
 # cat reads stderr to EOF and the pipeline waits for cat,
 # so every holder of that fd has exited before any assertion reads ERRF —
 # an unwaited process substitution and its cut included.
-# A command-substitution capture is not equivalent: under it the procsub's ERR trap never fires.
 # pipefail carries fn's status, since bats' DEBUG trap resets PIPESTATUS on bash 3.2.
 # The outer subshell keeps pipefail out of the test body.
 _run_strict() {
