@@ -221,6 +221,20 @@ untrack_in_scope() {
   [[ "${status}" -eq 5 ]]
 }
 
+# Exit 1 is the --check drift verdict release.yml reads, so a spine that cannot
+# load must surface as its own code in every mode, never as manifest drift.
+@test "generate and --check: a spine that cannot load its path guard exits 7" {
+  rm -f -- "${WORK}/scripts/lib/path-guard.sh"
+  local mode
+  for mode in "" "--check"; do
+    run "${SCRIPT}" ${mode:+"${mode}"}
+    [[ "${status}" -eq 7 ]] || { echo "row ${mode:-generate}: status ${status}"; return 1; }
+    [[ "${output}" == *'cannot source the shared path guard'* ]] \
+      || { echo "row ${mode:-generate}: no guard message"; return 1; }
+    [[ "${output}" == *'failed to load'* ]] || { echo "row ${mode:-generate}: no caller message"; return 1; }
+  done
+}
+
 # T1b — the four executable-suite roots must bundle so the daemon-apply preflight
 # can run the suite from the installed tree; monitor/test must stay out. Seeds one
 # .bats per root (+ a test_*.py under autoagent) and a monitor/test .test.ts decoy —

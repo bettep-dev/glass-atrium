@@ -253,6 +253,20 @@ run_install() {
   [[ "$(jq -r '.version' "${TARGET}/manifest.json")" == "1.0.0-test" ]]
 }
 
+@test "partial bundle: a spine that cannot load its path guard fails verify (exit 15), zero writes" {
+  require_darwin
+  local members
+  members="$(list_members | grep -vxF 'scripts/lib/path-guard.sh')"
+  list_members() { printf '%s\n' "${members}"; }
+  build_release "1.0.0-test"
+
+  run_install
+  [[ "${status}" -eq 15 ]] || return 1
+  [[ "${output}" == *'cannot source the shared path guard'* ]] || return 1
+  [[ "${output}" == *'failed to load'* ]] || return 1
+  [[ ! -e "${TARGET}" ]] || return 1
+}
+
 # 5. release scope: state dirs never enter files[] or the bundle
 
 @test "release scope: agents-bak/wiki/secrets/rendered/data never enter manifest.files or the bundle" {

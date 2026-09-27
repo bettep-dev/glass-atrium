@@ -46,7 +46,8 @@
 #   12  GA_RELEASE_REPO not configured / not an <owner>/<repo> slug
 #   13  GA_DIR exists with foreign content (not a Glass Atrium install; refuse to clobber)
 #   14  release download failed / expected assets missing
-#   15  per-file SHA-256 verification failed (corrupt/tampered download)
+#   15  per-file SHA-256 verification failed, or the bundle's apply-spine.sh is
+#       missing or fails to load (corrupt/tampered/partial download)
 #   16  launcher missing or not executable after extract
 #   17  bundle extraction / tree write failed
 #   18  mirror-farm refresh failed (reinstall path: files installed, but the
@@ -398,7 +399,9 @@ verify_bundle() {
     || die "${EXIT_VERIFY_FAILED}" \
       "bundle is missing scripts/lib/apply-spine.sh — refusing to trust it."
   # shellcheck source=/dev/null
-  source "${spine_lib}"
+  source "${spine_lib}" \
+    || die "${EXIT_VERIFY_FAILED}" \
+      "bundle's scripts/lib/apply-spine.sh failed to load — refusing to trust it."
   log "Verifying per-file SHA-256 of the release against manifest.hashes ..."
   # A fresh install stages the WHOLE manifest.files set; spine_stage_and_verify
   # copies each into the staging dir and loud-fails on the first hash mismatch.

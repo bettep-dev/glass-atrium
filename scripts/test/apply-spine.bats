@@ -629,7 +629,7 @@ unsafe_row() {
   [[ ! -e "${LIVE}/scripts/created.sh" ]]
 }
 
-@test "T11 rollback: a relative install root never deletes the created file and reports the refused removal" {
+@test "rollback: a relative install root never deletes the created file and reports the refused removal" {
   seed_file "${WORK}/rel-live" "scripts/created.sh" "FRESH"
   run bash -c '
     set -Eeuo pipefail

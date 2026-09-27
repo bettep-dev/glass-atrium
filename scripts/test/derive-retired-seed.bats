@@ -123,3 +123,13 @@ seed_history() {
   [[ "${status}" -eq 3 ]] || return 1
   [[ "${output}" == *"not a git work tree"* ]] || return 1
 }
+
+@test "derive: a spine that cannot load its path guard exits 7 and prints no map" {
+  seed_history
+  rm -f -- "${WORK}/scripts/lib/path-guard.sh"
+  run --separate-stderr "${SCRIPT}"
+  [[ "${status}" -eq 7 ]] || return 1
+  [[ "${stderr}" == *'cannot source the shared path guard'* ]] || return 1
+  [[ "${stderr}" == *'failed to load'* ]] || return 1
+  [[ -z "${output}" ]] || return 1
+}

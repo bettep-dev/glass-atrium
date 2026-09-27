@@ -25,7 +25,7 @@
 #
 # Named exit codes: 2=usage · 3=git absent/not a work tree · 4=jq absent ·
 # 5=shallow clone (no history to walk) · 6=no manifest.json in history ·
-# 7=apply-spine.sh not found.
+# 7=apply-spine.sh missing or failed to load.
 set -Eeuo pipefail
 IFS=$'\n\t'
 
@@ -53,7 +53,10 @@ git -C "${GA_ROOT}" rev-parse --is-inside-work-tree >/dev/null 2>&1 || {
   exit 7
 }
 # shellcheck source=/dev/null
-source "${SPINE_LIB}"
+source "${SPINE_LIB}" || {
+  echo "derive-retired-seed: ${SPINE_LIB} failed to load (retired-map family predicate)" >&2
+  exit 7
+}
 
 # A shallow clone silently yields a SHORT map — the walk would find only the
 # commits it happens to hold — so refuse rather than print a partial seed.
