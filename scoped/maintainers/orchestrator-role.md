@@ -15,8 +15,19 @@ Maintainer-facing material for that rule file. Nothing here binds the orchestrat
 - `hooks/test/test_daemon_config_loader.py` → `CostTierRuleTextTest` reads the repo-tree copy, not the install — the module resolves its rule path relative to its own file location.
   - In an editor's favour: a repo-tree run covers a branch edit, so an edit is verifiable before deploy rather than after.
 - The maintained statement of what that span must contain, of the four ways an edit breaks it, and of the CI gap, is the rule file's own `## Machine-Read Structure` section. Read it there; a second copy of those phrases would be one more thing to keep in step.
-- Must stay byte-exact: the opening blockquote as first content line · the six attestation tokens and nine `block-*` verdicts · the closed lexicon, premise-register and `[PLAN-SUBSET]` grammars · both `[SIZE-EST]` grammars and the `[SCOPE]` grammar.
-- Must also stay byte-exact: the six-plus-`7th` delegation-element count · `Rule 2` and the three BASENAME names · `AUTOAGENT_PREFLIGHT_ACTIVE=1 scripts/run-bats-parallel.sh` · the Document-Driven Workflow step numbers.
+- Must stay byte-exact, each at the site named — the rule file unless another file is given:
+  - the opening blockquote as first content line;
+  - the attestation tokens and `block-*` verdict names, listed under `## Machine-Read Structure` → Reserved;
+  - the `block-*` verdict table: `skills/glass-atrium-ops-delegation-contracts/references/ultracode-declaration-contract.md`;
+  - the closed lexicon, premise-register and `[PLAN-SUBSET]` grammars;
+  - both `[SIZE-EST]` grammars: `skills/glass-atrium-ops-delegation-contracts/references/delegation-size-discipline.md`;
+  - the `[SIZE-EST]` key names on the `#### Delegation-size discipline` pointer;
+  - the `[SCOPE]` grammar;
+  - the six-plus-`7th` delegation-element count;
+  - `Rule 2` and the three BASENAME names;
+  - `AUTOAGENT_PREFLIGHT_ACTIVE=1 scripts/run-bats-parallel.sh`;
+  - the Document-Driven Workflow step numbers.
+- The skill-side statement of this duty, for `references/ultracode-declaration-contract.md` and `references/delegation-size-discipline.md`: `skills/glass-atrium-ops-delegation-contracts/SKILL.md` → Edit Rules → **Machine-read literals**.
 
 ## Linkage moved out of the rule file
 

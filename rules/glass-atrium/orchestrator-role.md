@@ -10,7 +10,7 @@ Reword around what these consumers read, never through it.
 |---|---|---|
 | `hooks/test/test_daemon_config_loader.py` → `CostTierRuleTextTest` (repo-tree copy) | the Cost-Tier Selection heading, then the text up to the NEXT `###` substring, for three phrases: the heuristic label on the table · the daemon config-reader module name · the unpinned session-default fallback | the heading is renamed · one of the three phrases is reworded · any `###` substring — a `###` or `####` heading, or a hash-prefixed heading name in prose — lands ahead of them, truncating the parsed span · that heading's exact literal is written a second time ANYWHERE ABOVE it, re-aiming the split at the wrong copy |
 | `hooks/enforce-verification-gate.sh` · `hooks/enforce-workflow-verify-stage.sh` · `hooks/enforce-foreground-harness.sh` · `hooks/inject-session-context.sh` · `hooks/inject-scope-rules.sh` | heading names, quoted into operator-facing block and advisory text | a cited heading is renamed, sending a blocked operator to a section that no longer exists |
-| `scoped/scope-dev.md` · `scope-qa.md` · `scope-planning.md` · `scope-report.md` · `skills/glass-atrium-ops-orchestrator.md` · `agents/glass-atrium-intel-reporter.md` · `agents/glass-atrium-dev-front.md` | the same heading names, plus the bolded leads inside `### Phase Notes` | a cited heading or bolded lead is renamed |
+| `scoped/scope-dev.md` · `scope-qa.md` · `scope-planning.md` · `scope-report.md` · `skills/glass-atrium-ops-orchestrator.md` · `skills/glass-atrium-ops-delegation-contracts/` · `agents/glass-atrium-intel-reporter.md` · `agents/glass-atrium-dev-front.md` | the same heading names, plus the bolded leads reserved below | a cited heading or bolded lead is renamed |
 
 - `CostTierRuleTextTest` runs only in the `test-python` CI job, which a markdown-only PR skips: run it locally after any edit to this file.
 
@@ -18,11 +18,16 @@ Reserved beyond that table:
 
 - **Attestation tokens** — `[SCOPE]` · `[ENTRY-CLASS]` · `[SIZE-EST]` · `[PLAN-SUBSET]` · `[AGENT-COMPOSITION]` · `[DOC-ROUTE]`: the bracketed literal and its field keys are what the spawn gates scan a delegation for.
 - **Verdict names** — `block-nodecl` · `block-grammar` · `block-norev` · `block-noverifydev` · `block-declspawn` · `block-undecl` · `block-computed` · `block-order` · `block-upstream`: each is a trace tag `hooks/enforce-workflow-verify-stage.sh` emits. This file NAMES them; the hook defines them.
+  - `skills/glass-atrium-ops-delegation-contracts/references/ultracode-declaration-contract.md` tabulates them, one row per script condition.
 - **Headings** cited by name elsewhere in the corpus:
   - `## Orchestrator Identity` · `## Delegation Criteria` · `## Delegation Workflow` · `## Document-Driven Workflow` · `## Harness Path Protection` (with its `Rule 2`).
   - `### Phase Notes`, with `#### Deliverable exposure and designer composition` · `#### Monitoring-phase notes` · `#### Scan boundary and provenance` · `#### Plan edge discovery`.
   - `### Plan Direction Verification (Stage-2 gate)` · `### Spawn Budget` (with Delegation-size discipline and Automatic Parallelization guardrail `(a)`) · `### Context Handoff Size` · the Cost-Tier Selection heading.
-- **Bolded leads** cited by name: Exposure Determination · Visual-Weight Probe · Foreground Probe · Capability Probe · Compatibility Probe · Verbatim forward-relay · glass-atrium-dev-front markup-exception Monitoring judgment.
+  - Pointer sites keyed by `skills/glass-atrium-ops-delegation-contracts/SKILL.md` → Reference Index: `#### Ultracode declaration contract` · `#### Delegation-size discipline` · `### Context Handoff Size` → `[SCOPE]`.
+  - Cited by that skill's reference files: `#### Backstop asymmetry (manual vs. ultracode)` · `#### Depth and concurrency ceilings`.
+- **Bolded leads** cited by name:
+  - under `### Phase Notes`: Exposure Determination · Visual-Weight Probe · Foreground Probe · Capability Probe · Compatibility Probe · Verbatim forward-relay · glass-atrium-dev-front markup-exception Monitoring judgment;
+  - under `### Spawn Budget` and `### Context Handoff Size`: Split triggers · Empirical tool_use calibration · Standing obligation (the one under `#### Delegation-size discipline`) · Attestation-token placement.
 - Neither list is exhaustive: grep the corpus for a heading or bolded lead before renaming it.
 
 ## Orchestrator Identity (Control Plane Only)
@@ -300,47 +305,15 @@ The orchestrator composes the pair and supplies each job's inputs; it never adju
 - **Manual**: `enforce-verification-gate.sh` (`PreToolUse(Agent)`), a best-effort runtime advisory (~17% same-batch race, see `skills/glass-atrium-ops-orchestrator.md` → `### Ultracode / Workflow-tool Mode`).
 - **Ultracode**: `enforce-workflow-verify-stage.sh` (`PreToolUse(Workflow)`) BLOCKS (exit 2) a missing, malformed or code-inconsistent `[AGENT-COMPOSITION]` declaration (`#### Ultracode declaration contract` below).
   - Mechanical surface: declaration PRESENCE + line GRAMMAR (the DEV hard-gate included, `block-noverifydev`) + declaration↔code CONSISTENCY, fail-open on any parse uncertainty.
-  - It does NOT validate DEV-verdict or gating-expression correctness, and role truthfulness is honor-system (HONESTY bullet below). The authoring obligation — a `{glass-atrium-qa-code-reviewer, DEV}` verify-stage before any DEV implementation, gated on `pass`+`feasible` — therefore REMAINS PRIMARY; never describe ultracode as "fully enforced".
+  - It does NOT validate DEV-verdict or gating-expression correctness, and role truthfulness is honor-system (HONESTY bullet in `skills/glass-atrium-ops-delegation-contracts/references/ultracode-declaration-contract.md`).
+  - The authoring obligation — a `{glass-atrium-qa-code-reviewer, DEV}` verify-stage before any DEV implementation, gated on `pass`+`feasible` — therefore REMAINS PRIMARY; never describe ultracode as "fully enforced".
 
 #### Ultracode declaration contract (the mechanically-enforced facet of this gate — `[AGENT-COMPOSITION]`)
 
-Role information does not exist in code, so `enforce-workflow-verify-stage.sh` cannot infer verify roles from script layout: the AUTHOR declares them, in parity with `[ENTRY-CLASS]` / `[SIZE-EST]` / `[DOC-ROUTE]` / plan-ref.
-
-- **Block placement**: every DEV-spawning workflow script MUST carry exactly ONE `[AGENT-COMPOSITION]`…`[/AGENT-COMPOSITION]` block. Canonical home: a `/* */` block comment — a sentinel inside a string literal is inert, so quoted worked examples never bind.
-- **Strict line grammar** — keys `{verify, impl, impl-computed}`, ONE line per key, names validated against the runtime DEV_SET roster (fed by agent_lifecycle sync-gate-roster — never a second hardcoded list):
-  - `verify:` takes one of exactly two forms.
-    - **Team form** — the comma-separated literal `verify: glass-atrium-qa-code-reviewer, glass-atrium-dev-<domain>`: reviewer + exactly ONE `dev-*` type. A space-joined pair collapses to one unknown name → `block-grammar`.
-    - **Upstream form** — `upstream clauded-docs/<N>`: this workflow executes an already-verified persisted plan.
-  - `impl:` = literal dev spawn types | `none`.
-  - `impl-computed:` = indirectly-spawned dev types (config-array / ternary / wrapper indirection).
-- **Exit-2 verdicts** — each one BLOCKS the Workflow call:
-
-  | Script condition | Verdict |
-  |---|---|
-  | no block at all on a DEV-spawning script | `block-nodecl` |
-  | block malformed — unknown/duplicate key · unknown name · unterminated · 2+ blocks · 2+ verify dev types | `block-grammar` |
-  | a team-form `verify:` clause naming no dev-* | `block-noverifydev` |
-  | a DEV-spawning script with zero reviewer spawn anywhere in it | `block-norev` |
-  | declared role never spawned | `block-declspawn` |
-  | undeclared dev type in code | `block-undecl` |
-  | declared computed type with no data-literal presence | `block-computed` |
-  | a declared impl dev preceding every reviewer | `block-order` |
-  | upstream `<N>` not cited by a plan-ref token in the script body | `block-upstream` |
-
-  - `block-grammar` is a DISTINCT verdict from absence: a well-formed sentinel pair with garbage inside is a decidable author error, not fail-open territory.
-  - `block-declspawn` is the one place the declaration is STRONGER than the sibling attestations — a phantom verify team is falsifiable against code.
-    - Each declared verify/impl type must appear as an `agent('<type>')` first-arg or `agentType:'<type>'` literal.
-    - A type present ONLY as a wrapper argument like `robustAgent('<type>',…)` has no spawn position and trips `block-declspawn`: use the opts `agentType:` literal or declare it `impl-computed:`.
-  - `block-undecl` fires on a real spawn AND on Tier-A coverage: a config-array dev literal or an exact-quoted dev-* prose mention with zero spawns — one-edit fix: declare the type, or de-quote the mention.
-  - `block-order` binds on the greedy-earliest same-type dual-role binding; computed spawns have no static position → declared-order honor-system.
-- **Upstream waiver scope**: the upstream form waives the in-script pair-mapping + ordering ONLY — the `block-norev` zero-reviewer hard guarantee is evaluated independently of declaration form and SURVIVES upstream, so a fake upstream line can never delete reviewer presence.
-- **SCOPE — the declaration is ULTRACODE-ONLY**: the manual Agent-tool path has no script artifact to host a block; its discipline stays the sequential reviewer→DEV spawn (`#### Backstop asymmetry (manual vs. ultracode)`).
-- **HONESTY (the accepted floor, stated once)**: declaration presence + grammar + declaration↔code consistency are MECHANICAL; role TRUTHFULNESS is honor-system — a LYING declaration passes, the same trust model as the sibling attestation tokens. NEVER describe this gate as semantic enforcement of the verify contract.
-- **A legitimate pre-verify Discovery/Design phase stays compliant** via the declaration + ordering check, by either route:
-  - **(a) non-DEV Discovery** — run pre-verify analysis with a NON-DEV agent (`glass-atrium-intel-researcher` / `glass-atrium-intel-planner` / Explore), so no dev-* precedes the reviewer.
-  - **(b) reviewer-first Contract phase** — front-load a genuine reviewer-first `{glass-atrium-qa-code-reviewer, DEV}` verify (a real Contract phase, NOT a lone reviewer inserted only to satisfy ordering) before any Discovery dev-*.
-  - Either way, a declared impl dev textually preceding all reviewers still blocks (`block-order`).
-- Declaration grammar detail + copy-verbatim worked declaration-bearing skeletons (canonical): `skills/glass-atrium-ops-orchestrator.md` → `#### Pipeline Acceptance Criteria [ORCHESTRATOR]` → "In-script verify-stage".
+- **Standing obligation — fires when you author an ultracode Workflow script spawning a `dev-*` agent**: exactly ONE `[AGENT-COMPOSITION]`…`[/AGENT-COMPOSITION]` block, canonical home a `/* */` block comment, declaring the verify team and implementation spawns.
+  - Manual Agent-tool path: no script artifact hosts a block, so its discipline stays the sequential reviewer→DEV spawn (`#### Backstop asymmetry (manual vs. ultracode)` above).
+- SoT for the line grammar, the `block-*` verdicts, the upstream waiver, the honesty floor and the compliant pre-verify Discovery routes: `skills/glass-atrium-ops-delegation-contracts/references/ultracode-declaration-contract.md`.
+- Sentinel placement and the copy-verbatim skeletons: `skills/glass-atrium-ops-orchestrator.md` → `##### In-script verify-stage (ultracode)`.
 
 ### Cost-Tier Selection
 
@@ -382,35 +355,20 @@ Role information does not exist in code, so `enforce-workflow-verify-stage.sh` c
 
 #### Delegation-size discipline (per-delegation, distinct from runtime concurrency)
 
-- A single DEV delegation MUST be sized to finish within ONE agent budget.
-  - Why: an over-packed delegation truncates — the sub-agent runs out of budget mid-work and emits no `[COMPLETION]`. The cause is per-delegation SIZE, not the number of workflow stages.
-- PRIMARY and HARD SECONDARY are independent triggers — either one alone forces the split.
-
-- **PRIMARY**: >2 of {implement, write-tests, run-full-suite, report-consolidation} in one delegation → SPLIT into sequential checkpointed sub-delegations.
-  - The split NEVER separates implementation from its NEW tests — the TDD unit travels together, tests-first; peel off run-full-suite / report-consolidation instead.
-  - Worked (≈ figures illustrative): 4-category request → A = implement + its new tests (≈25 tool_uses) → orchestrator cheap-verify → B = full-suite + report (≈15) — each ≤2 bundles and under the ~40 band; do NOT split B finer (COUNTER-CAVEAT below).
-- **HARD SECONDARY (anti-gaming)**: est. >~40 tool_uses (measured 46-52 truncation band) → SPLIT regardless of bundle count — closes the single-giant-implement-bundle hole.
-- **COUNTER-CAVEAT (over-fragmentation)**: do NOT split into 1-line tasks — each spawn re-tokenizes system prompt + tool schemas + handoff, so over-fragmentation inflates TOTAL session cost. Size each delegation to one budget, not finer.
-- **Subagent-side runtime complement**: this orchestrator-side split is the primary guard, and it is honor-system; the subagent's own turn meter and tool-use advisory only make its threshold visible.
-- **Empirical tool_use calibration (feeds the `[SIZE-EST]` estimate below)**: one file edit+verify+commit unit costs ~4-5 tool_uses measured.
-  - Sizing anchor — a floor, calibrated UP, never down: a pre-spawn estimate of `ceil(files × 4.5)`.
-  - SPLIT when that estimate exceeds ~30 — clear of the 46-52 truncation band, with headroom for the reserved `[COMPLETION]`/emit tail.
-- **`[SIZE-EST]` self-attestation token (sibling to `[ENTRY-CLASS]`)**: the orchestrator emits this token at EVERY DEV spawn.
-  - Format `[SIZE-EST] bundles=N tool_uses~=N — <1-line reason>`: `bundles` = how many PRIMARY categories THIS delegation packs · `tool_uses~=N` = the orchestrator's rough pre-spawn tool_use estimate.
-  - Placement: `### Context Handoff Size` → Attestation-token placement. On the manual path `enforce-verification-gate.sh` reads it from `.tool_input.prompt`.
-  - **Honesty framing**: under-estimating `bundles`/`tool_uses` is the DANGEROUS error, masking an oversized delegation past the split discipline; over-estimating is the SAFE error — on a borderline count, round UP and prefer the split.
-  - **Scope of this contract — existence/self-attestation only**: the token records the orchestrator's own estimate, and the gates check its PRESENCE, never its correctness — the same existence-only boundary as `[ENTRY-CLASS]`.
-  - Enforcement, both paths — manual: `enforce-verification-gate.sh`, guarded by `hook_is_subagent` so it fires on orchestrator-origin spawns only · ultracode: `enforce-workflow-verify-stage.sh`, DEV-gated, raw-scanning the script. Both BLOCK a DEV spawn missing the token.
-- **`[SIZE-EST]` analysis mode (schema-mode NON-DEV analysis/research/audit spawn — the INPUT-side right-sizing complement)**: emit the analysis-mode token at EVERY schema-mode NON-DEV spawn (glass-atrium-intel-researcher / glass-atrium-intel-planner / glass-atrium-intel-reporter / glass-atrium-qa-code-reviewer) whose single terminal StructuredOutput IS the deliverable.
-  - Why: such a spawn has no `files × 4.5` edit analog — it spends its budget on reads and reasoning, so a broad read + `effort:high` + a 3-4-field schema starves the emit step (the non-emit failure class).
-    - Non-emission rate, dated figures and re-derivation recipe: `skills/glass-atrium-ops-orchestrator.md` → Completion-channel non-emission (MEASUREMENT SoT).
-  - Format `[SIZE-EST] reads~=N fields=N effort=<medium|high> scope=<allowlist|bounded> — <1-line reason>`: `reads~=N` = the pre-spawn read/tool-use estimate · `fields` = the output schema's required-field count · `effort` = the chosen reasoning tier · `scope` = an explicit file/dir READ allowlist, never a repo sweep.
-  - Read-scope anchor (the read analog of `files × 4.5`): a simple fact-find ~3-10 reads · a direct comparison ~10-15 reads per source.
-  - **Reserve-then-check (gate BEFORE work begins)**: `input_budget = context_window − reserved_output`; bound the read allowlist to fit `input_budget` so the reserved emit budget is never spent on input.
-  - **Split trigger**: `reads~ > ~20 OR fields > 3 OR (broad scope AND effort:high)` → SPLIT by domain (`#### Analysis fan-out and team cardinality`); cap output fields at 2-3.
-  - **Effort matched to depth**: default `medium` for broad reads, `high` ONLY for narrow-scope deep reasoning.
-  - Honesty and backing as in DEV mode: round UP on a borderline `reads~`/`fields`; presence is checked, correctness never.
-  - Gate: `enforce-workflow-verify-stage.sh` fires an ADVISORY nudge (never exit 2, fail-open) on a schema-mode non-DEV analysis spawn missing this token — unlike the DEV-mode exit-2 block.
+- **Standing obligation — fires at every DEV spawn and at every schema-mode non-DEV analysis spawn**:
+  - Analysis spawns: glass-atrium-intel-researcher / glass-atrium-intel-planner / glass-atrium-intel-reporter / glass-atrium-qa-code-reviewer, each whose single terminal StructuredOutput IS the deliverable.
+  - Emit a `[SIZE-EST]` token at either spawn kind.
+  - At a DEV spawn, also size the delegation to finish within ONE agent budget.
+  - Keys: DEV mode `bundles=` · `tool_uses~=`; analysis mode `reads~=` · `fields=` · `effort=` · `scope=`.
+- **Split triggers** — any one alone forces a split; the split's shape follows the mode:
+  - **DEV mode** → sequential checkpointed sub-delegations, each implementation kept with its NEW tests:
+    - **PRIMARY**: >2 of {implement, write-tests, run-full-suite, report-consolidation} in one delegation.
+    - **HARD SECONDARY**: est. >~40 tool_uses (measured 46-52 truncation band), whatever the bundle count.
+    - **`files × 4.5` anchor (Empirical tool_use calibration)**: a `ceil(files × 4.5)` estimate above ~30.
+  - **Analysis mode**: `reads~ > ~20 OR fields > 3 OR (broad scope AND effort:high)` → decompose by domain from the start (`#### Analysis fan-out and team cardinality` below).
+- **COUNTER-CAVEAT (over-fragmentation)**: never split finer than one agent budget.
+- SoT for the rest: `skills/glass-atrium-ops-delegation-contracts/references/delegation-size-discipline.md`.
+  - Sizing duties held there: the honesty framing (both modes) · analysis mode's **Reserve-then-check** · **Effort matched to depth** · the READ allowlist scope · the 2-3 output-field cap.
 
 #### Analysis fan-out and team cardinality
 
@@ -491,33 +449,21 @@ Role information does not exist in code, so `enforce-workflow-verify-stage.sh` c
   - Manual path → inside the Agent tool's `prompt` parameter, never the orchestrator's user-facing narration.
   - Ultracode path → the top-of-script `log()` string or `meta.description` (`skills/glass-atrium-ops-orchestrator.md` → `### Ultracode / Workflow-tool Mode`, Workflow pre-flight item 1).
   - Each token states its own grammar, gate and honest backing at its own site; this bullet is the only statement of WHERE it goes.
-  - `[AGENT-COMPOSITION]` is deliberately NOT in this family — it lives in a script block comment, never in a prompt (`#### Ultracode declaration contract` → Block placement).
-- **`[SCOPE]` — the 7th delegation element (REQUIRED on DEV and PLANNING delegations). This bullet is the grammar SoT; every other file carries a pointer only.** One line, ` · `-separated:
+  - `[AGENT-COMPOSITION]` is deliberately NOT in this family — it lives in a script block comment, never in a prompt (`#### Ultracode declaration contract` above).
+- **`[SCOPE]` — the 7th delegation element (REQUIRED on DEV and PLANNING delegations). This bullet is the grammar SoT; every other file carries a pointer only.** One line opened by the token, `files=` first, ` · `-separated:
 
   `[SCOPE] files=<comma-separated allowed paths/dirs> · deliverable=<deliverable type> · out=<explicitly excluded items|none>`
 
   - **What it is for**: it fixes the LITERAL scope of the user's instruction in text at delegation time — a scope held only in the orchestrator's head can never be compared against what was built.
   - **Placement**: the token-family rule above.
   - **Write the ` · ` separators — the canonical form.**
-    - Parser behaviour: every reader (the drift advisory, the recorder, the verification gate) selects the line through `hooks/lib/scope-match.sh` → `scope_decl_select`, then reads its list through `scope_decl_files`.
-      - **Declaration line**: a line the token OPENS — optional indentation and one list marker, then the token, whitespace, and a `files=` value that is neither empty nor a `<placeholder>`. The token anywhere else on a line declares nothing.
-      - **Wrapped token** (`` `[SCOPE]` `` / `**[SCOPE]**`): selected only when its value list ends at end of line, or at whitespace before `·`, `|` or a grammar key, and no value ends in `.` `:` `;` `)`.
-      - **Whole-line wrap** (a backtick or `**` opened before the token): selected only when it closes at end of line or never.
-      - **First wins**: of several declarations the first line is taken, never merged. The drift advisory and the recorder read only record 0 of the subagent transcript — the parent-authored delegation prompt.
-      - **Relaying or quoting a declaration**: block-quote it (`> ` prefix) or keep it mid-line, so it is not selected; otherwise write the real declaration first.
-        - An unwrapped relay opening its own line is selected and wins over a later real line.
-        - Wrapping is no safe relay: a wrapped-token relay whose tail reads as field text — `· deliverable=fix — too narrow`, one word glued by `·` `=` `—`, a value ending in `!` `?` `…` — is still selected, as is a line wrap closing at end of line or never with prose inside.
-      - **Shapes that fail open** (no declaration → comparison skipped, never a false excess):
-        - the token mid-line or behind a label · a block-quoted line · a space after `files=` · a field order not opening with `files=`;
-        - a wrapped token whose value runs into prose past a space, or ends in `.` `:` `;` `)`;
-        - a wrap closing mid-line · a whole-line wrap whose value holds its own wrap character;
-        - recorder only: a declaration line past its 2000-char transport, dropped whole.
-      - **Field parse**: the `files=` field ends at the next `·`, `|`, or end of line; backticks and `**` are stripped; entries split on commas AND whitespace.
-        - A token keyed `files=` / `deliverable=` / `out=` (any case) marks a swallowed sibling field and is dropped; any other `=`-bearing token stays a path (`docs/a=b.md`).
-        - Any other token carrying `<` or `>` refuses the whole list — an uninstantiated `<placeholder>`.
-        - After a dropped key token, a token carrying neither `/` nor `.` is prose from that field and is dropped.
-    - Two tolerances follow, and **neither tolerance is the contract — declare the separators**: a space-separated line still yields the right file list, and a literally-copied template degrades to NO signal (comparison skipped) rather than a false excess.
-    - What no form can express: a path containing a space.
+    - **Parser behaviour** — line selection (**Declaration line**) and the transcript record read, the `files=` parse, the shapes that fail open, and the two tolerances that are not the contract: `skills/glass-atrium-ops-delegation-contracts/references/scope-parser.md`.
+  - **First wins**: of several declarations the first line is taken, never merged.
+  - **Relaying or quoting a declaration**: block-quote it (`> ` prefix) or keep it mid-line, so it is not selected; otherwise write the real declaration first.
+    - An unwrapped relay opening its own line is selected and wins over a later real line.
+    - Wrapping is no safe relay: a wrapped-token relay whose tail reads as field text — `· deliverable=fix — too narrow`, one word glued by `·` `=` `—`, a value ending in `!` `?` `…` — is still selected, as is a line wrap closing at end of line or never with prose inside.
+      - Wrapped-token and line-wrap selection: `skills/glass-atrium-ops-delegation-contracts/references/scope-parser.md` → **Wrapped token** · **Whole-line wrap**.
+  - **Space-in-path limit**: no form can express a path containing a space.
   - **`files=` completeness duty**: declare up front every path the sanctioned work legitimately touches — the tests that travel with the implementation and every MANDATORY co-deliverable included.
     - Worked case: a change to the closed `review_flag` reason vocabulary forces four files to move together — `hooks/lib/review-flag-reasons.sh` · `monitor/public/src/ui.jsx` · `monitor/test/ui.review-flag-reasons.unit.test.ts` · `hooks/test/track-outcome-flag-reasons.bats` — so all four belong in `files=`.
     - Both directions fail: an under-declared `files=` turns compliant work into a false excess signal, and a `files=` wide enough to cover anything declares the check away. Declare what the work needs, not a safety margin.

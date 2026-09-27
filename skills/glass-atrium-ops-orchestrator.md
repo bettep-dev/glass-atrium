@@ -51,7 +51,7 @@ Two clauses meet here, and they are NOT one predicate — read them separately.
 
 - **First clause — DESCRIPTIVE, and it grants nothing**: a `dual_phase` DEV assigned to phase-2 analysis sorts ahead of a phase-5 reviewer, so its `dev-*` token is spawned BEFORE any verify reviewer.
   - The permission itself comes from **Execution** above, and nothing below changes it.
-- **Second clause — PROHIBITIVE, and NARROWER than that spawn order**: under ultracode, `block-order` fires only where the `dev-*` spawn preceding every reviewer is a DECLARED IMPL one (`orchestrator-role.md` → `#### Ultracode declaration contract`).
+- **Second clause — PROHIBITIVE, and NARROWER than that spawn order**: under ultracode, `block-order` fires only where the `dev-*` spawn preceding every reviewer is a DECLARED IMPL one (`skills/glass-atrium-ops-delegation-contracts/references/ultracode-declaration-contract.md` → Exit-2 verdicts → `block-order`).
   - `declared impl` is the load-bearing qualifier — spawn order alone is not the offence.
 - **The fix is compositional, never declarative**: take either route of ``### Pre-verify Discovery `dev-*` order guard (ultracode)``, which also points at the 3-phase skeleton.
   - A directly-spawned pre-verify analysis DEV is truthfully an `impl:` spawn, and that is exactly what blocks — the gate working, not a false positive.
@@ -184,7 +184,7 @@ Every delegation prompt MUST declare these fields, so a sub-agent never exhausts
 - **DEV `tool_budget`** `[default, adjustable]`: est ≈ reads + 3×(files to edit) + 4×(suite runs) + 5 margin.
   - Reads not estimable (exploration-heavy or unfamiliar surface) → floor reads at 2×(files to edit).
   - est ≳40, or borderline with unknown reads → SPLIT (`orchestrator-role.md` → Spawn Budget → Delegation-size discipline).
-- **`reserved_output`**: apply **Reserve-then-check** from `orchestrator-role.md` → `### Spawn Budget` → `[SIZE-EST]` analysis mode — gate the read scope against `input_budget` before work, never after.
+- **`reserved_output`**: apply **Reserve-then-check** from `skills/glass-atrium-ops-delegation-contracts/references/delegation-size-discipline.md` → **`[SIZE-EST]` analysis mode** — gate the read scope against `input_budget` before work, never after.
 - **`spawn_budget`** bounds invocations only; concurrency is bounded by the engine's runtime self-cap (`orchestrator-role.md` → `### Spawn Budget`).
 - Hitting `tool_budget` before completion → the graceful exit in `GLASS_ATRIUM_GLOBAL_RULES.md` → `### Turn Budget & Graceful Exit`, carrying partial findings; never a silent exit.
 - These defaults are a **FLOOR to size against, not advisory-only prose**: `#### Analysis-Track Right-Sizing (input-side)` encodes them into the analysis skeleton by construction.
@@ -491,7 +491,10 @@ const findings = results.filter(Boolean); // dropped nulls = surfaced-incomplete
 
 The `robustAgent` layer in `#### Resilient Workflow Authoring` above hardens the OUTPUT side — a non-emit no longer crashes the run. This section removes the INPUT-side cause of that non-emit.
 
-- Rule SoT: `orchestrator-role.md` → `### Spawn Budget` → `[SIZE-EST]` analysis mode — its read allowlist (`scope`), **Effort matched to depth**, field cap and **Split trigger**, plus `#### Analysis fan-out and team cardinality` for decompose-by-domain.
+- Rule SoT, per bound:
+  - read allowlist (`scope`), **Effort matched to depth** and field cap — `skills/glass-atrium-ops-delegation-contracts/references/delegation-size-discipline.md` → **`[SIZE-EST]` analysis mode**;
+  - the analysis-mode split trigger — `orchestrator-role.md` → `#### Delegation-size discipline` → **Split triggers**;
+  - decompose-by-domain — `orchestrator-role.md` → `#### Analysis fan-out and team cardinality`.
 - Every schema-mode analysis delegation carries those bounds by construction, per track. This file adds three deltas:
   - **Bounded read-scope** — each allowlist entry is a `{ path, extent }` pair the skeleton renders into the prompt; a bare-path entry is the defect. Extent follows `#### Read-Extent Discipline` (this file).
   - **Output-field shape** — prefer a single free-text `analysis` field (`#### Resilient Workflow Authoring` → **Shape-tolerant schema authoring**).
@@ -661,7 +664,7 @@ Two families live here:
   - Detail: "Entry-class token placement" below.
 - **② `[SIZE-EST]` token** — `[SIZE-EST] bundles=N tool_uses~=N — <reason>` at EVERY `dev-*` spawn, same canonical home (sibling to `[ENTRY-CLASS]`).
   - Backstop: size-est-miss BLOCK (exit 2), PRESENCE-only.
-  - Detail: "[SIZE-EST] token placement" below; format + honesty framing = `orchestrator-role.md` → `### Spawn Budget` `[SIZE-EST]` bullet.
+  - Detail: "[SIZE-EST] token placement" below; format + honesty framing = `skills/glass-atrium-ops-delegation-contracts/references/delegation-size-discipline.md` → **`[SIZE-EST]` self-attestation token**.
 - **③ verify-stage** — a `{glass-atrium-qa-code-reviewer, DEV}` verify-stage preceding the first `dev-*` implementation spawn, gated on `pass`+`feasible`.
   - Backstop: the declaration contract's ordering + consistency checks (`block-order` et al., exit 2).
   - Detail: "In-script verify-stage" below + the Pre-submit self-check in `## Red Flags`.
@@ -673,14 +676,17 @@ Backing: authoring the tokens, the stage and the declaration is the primary obli
 
 ##### In-script verify-stage (ultracode)
 
-**Authoring obligation — honor-system primary, mechanically backstopped by the declaration contract.** This subsection is the home of the copy-verbatim skeletons; the declaration contract itself is canonical at `orchestrator-role.md` → `#### Ultracode declaration contract`.
+**Authoring obligation — honor-system primary, mechanically backstopped by the declaration contract.**
 
+- **Skeleton home**: this subsection holds the copy-verbatim skeletons and sentinel placement.
+- **Contract SoT**: the declaration contract itself is canonical at `skills/glass-atrium-ops-delegation-contracts/references/ultracode-declaration-contract.md`.
+- **Standing-obligation site**: `orchestrator-role.md` → `#### Ultracode declaration contract`.
 - **What the obligation binds — the AUTHOR**: encode an in-script verify-stage that PRECEDES the first DEV implementation stage, gate it on a combined `pass`+`feasible` verdict, and declare it honestly. The Missing-verify-stage self-check lives in `## Red Flags`.
 - **Why it falls to the author**: under ultracode the `enforce-verification-gate.sh` `PreToolUse(Agent)` hook does NOT fire for engine `agent()` spawns (`### Ultracode / Workflow-tool Mode` (this file, Orchestrator On-Demand Mechanisms)).
 - **What backstops it**: `enforce-workflow-verify-stage.sh` (`PreToolUse(Workflow)`) checks the workflow `script` against the declaration contract — presence + grammar + declaration↔code consistency.
 - **Honest scope**: the `feasible` value does not exist at static-scan time, so the gate cannot verify that a `feasible` verdict was emitted or that a gating expression consumes it; role truthfulness is honor-system (contract → HONESTY bullet).
 
-**What a DEV-spawning script MUST carry**: exactly ONE `[AGENT-COMPOSITION]`…`[/AGENT-COMPOSITION]` block, canonical home a `/* */` block comment (contract → Block placement).
+**What a DEV-spawning script MUST carry**: exactly ONE `[AGENT-COMPOSITION]`…`[/AGENT-COMPOSITION]` block, canonical home a `/* */` block comment (`orchestrator-role.md` → `#### Ultracode declaration contract`).
 
 - A bracketed sentinel in ANY comment, a `//` line included, binds the extractor; only a string-resident sentinel is inert.
   - So the worked examples below and in the gate's stderr can be quoted into delegation prompts, and the skeleton comments write the sentinel name unbracketed.
@@ -878,7 +884,7 @@ A DEV workflow spawning a `dev-*` agent records the `[ENTRY-CLASS] simple-task: 
 
 Same home and raw-scan convention as `[ENTRY-CLASS]`, but an independent presence gate: a `dev-*` spawn missing `[SIZE-EST]` BLOCKS (exit 2) even with a valid entry token.
 
-- Format, placement on both paths and honesty framing: `orchestrator-role.md` → `### Spawn Budget` → `[SIZE-EST]` self-attestation token bullet.
+- Format, placement on both paths and honesty framing: `skills/glass-atrium-ops-delegation-contracts/references/delegation-size-discipline.md` → **`[SIZE-EST]` self-attestation token**.
 
 ##### [DOC-ROUTE] token placement (ultracode — user-requested local destination)
 
@@ -1167,10 +1173,10 @@ Items 1-4 are the co-equal requirements consolidated at this file → "DEV-spawn
 1. **entry-classify** — sizable → plan-ref · simple → `log('[ENTRY-CLASS] simple-task: <reason>')` / `meta.description`; the token clears ONLY the entry gate.
    - Sizable criteria: `orchestrator-role.md` → `## Delegation Workflow` Decision row · snippet: this file → "Entry-class token placement".
 2. **`[SIZE-EST]` self-attestation** — at every DEV spawn, in the same `log()` / `meta.description` home as the entry token.
-   - Format and honesty framing: `orchestrator-role.md` → `### Spawn Budget` → `[SIZE-EST]` bullet.
+   - Format and honesty framing: `skills/glass-atrium-ops-delegation-contracts/references/delegation-size-discipline.md` → **`[SIZE-EST]` self-attestation token**.
 3. **DEV spawn** → {glass-atrium-qa-code-reviewer, dev-*} verify-stage BEFORE the first dev-* (skeleton: this file → `#### Pipeline Acceptance Criteria` · self-check: this file → `## Red Flags`).
 4. **`[AGENT-COMPOSITION]` declaration** — every DEV-spawning script carries exactly ONE declaration block in a `/* */` comment.
-   - Grammar and verdicts: `orchestrator-role.md` → `#### Ultracode declaration contract`.
+   - Grammar and verdicts: `skills/glass-atrium-ops-delegation-contracts/references/ultracode-declaration-contract.md`.
 5. **encode Decision outcomes into the script** — routed agentType per spawn, scoped target paths, the four probe verdicts.
    - The probes run before authoring; the engine executes but never substitutes for a probe.
 6. **typed agentType on every spawn**.
@@ -1479,7 +1485,7 @@ Covers the gate's DEV-relevant block branches plus the verdict-gating the gate c
 
 Each BLOCK and `block-*` verdict exits 2. Detail lives at its single site:
 
-- grammar, verdicts and the upstream waiver — `orchestrator-role.md` → `#### Ultracode declaration contract`;
+- grammar, verdicts and the upstream waiver — `skills/glass-atrium-ops-delegation-contracts/references/ultracode-declaration-contract.md`;
 - sentinel placement and the opts `agentType:` literal a spawn needs — `##### In-script verify-stage (ultracode)`;
 - the two parse-hazard forms and their remedies — `##### JS parse hazards (a workflow script is plain JavaScript)`;
 - a pre-verify Discovery `dev-*` tripping the ordering check — ``### Pre-verify Discovery `dev-*` order guard (ultracode)``.
@@ -1493,7 +1499,9 @@ Obligations the gate cannot verify:
 
 A `dev-*` used for Discovery/Design analysis ahead of the `glass-atrium-qa-code-reviewer` verify spawn precedes every reviewer, so it trips `block-order` although it is not the implement stage.
 
-- Fix, by either route of `orchestrator-role.md` → `#### Ultracode declaration contract` (pre-verify Discovery/Design bullet): a non-DEV Discovery agent (`glass-atrium-intel-researcher` / `glass-atrium-intel-planner` / `Explore`), or a reviewer-first `{qa,dev}` Contract phase before any Discovery `dev-*`.
+- Fix, by either route of `skills/glass-atrium-ops-delegation-contracts/references/ultracode-declaration-contract.md` (pre-verify Discovery/Design bullet):
+  - a non-DEV Discovery agent (`glass-atrium-intel-researcher` / `glass-atrium-intel-planner` / `Explore`);
+  - or a reviewer-first `{qa,dev}` Contract phase before any Discovery `dev-*`.
 - Skeleton: `#### Pipeline Acceptance Criteria` → "In-script verify-stage" 3-phase variant.
 
 ### Reflexive [DOC-ROUTE] stamping guard
