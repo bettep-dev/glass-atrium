@@ -796,6 +796,23 @@ extract_launcher_fn() {
   [[ "${body}" == *'return 1'* ]] || return 1
 }
 
+# A sentinel pgrep still matched → each match (pid, parent, start, command) + every live bats run, then fail.
+print_sentinel_owners() {
+  local matched_pids candidate_pids
+  matched_pids="$(printf '%s\n' "${output-}" | paste -sd, -)"
+  candidate_pids="$(pgrep -f 'bats-exec-suite|run-bats-parallel' | paste -sd, -)"
+  printf 'pgrep -f %s matched:\n' "$1"
+  ps -o pid,ppid,lstart,command -p "${matched_pids}" 2>&1
+  # macOS pgrep skips its own ancestors (this run); procps pgrep lists them → tell apart by the bats pid.
+  printf 'live bats runs (this run: bats pid %s):\n' "${BATS_ROOT_PID:-unknown}"
+  if [[ -n "${candidate_pids}" ]]; then
+    ps -o pid,ppid,lstart,command -p "${candidate_pids}" 2>&1
+  else
+    printf 'none\n'
+  fi
+  return 1
+}
+
 @test "hang-guard(live): ga_fakechat_install exits 0 on stubbed-present, killing+reaping the hung bg pid" {
   local stub="${SANDBOX}/bin"
   mkdir -p "${stub}"
@@ -808,10 +825,10 @@ extract_launcher_fn() {
   PATH="${stub}:${PATH}"
   local rc=0
   ga_fakechat_install || rc=$?
-  [[ "${rc}" -eq 0 ]]
+  [[ "${rc}" -eq 0 ]] || return 1
   # the backgrounded claude was killed+reaped — no leaked child survives.
   run pgrep -f '918273645'
-  [[ "${status}" -ne 0 ]]
+  [[ "${status}" -ne 0 ]] || print_sentinel_owners '918273645'
 }
 
 @test "hang-guard(live): ga_fakechat_install is NON-FATAL (returns 1) + reaps the pid on the WALL-CLOCK ceiling" {
@@ -830,7 +847,7 @@ extract_launcher_fn() {
   GA_PLUGIN_INSTALL_TIMEOUT_SECS=1 ga_fakechat_install || rc=$?
   [[ "${rc}" -eq 1 ]] || return 1 # non-fatal failure verdict
   run pgrep -f '918273646'
-  [[ "${status}" -ne 0 ]] || return 1 # the live bg claude was killed+reaped at the ceiling
+  [[ "${status}" -ne 0 ]] || print_sentinel_owners '918273646' # the live bg claude was killed+reaped at the ceiling
 }
 
 @test "hang-guard(body): ga_marketplace_add mirrors the wall-clock ceiling + SIGTERM→SIGKILL escalation reap" {
