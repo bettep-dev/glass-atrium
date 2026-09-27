@@ -1972,6 +1972,24 @@ PLIST
   [[ -d "${WORK}/agents-bak/fresh_cycle" ]] # kept (within retention)
 }
 
+@test "agents-bak retention prune under a relative backup root refuses the aged dir and deletes nothing" {
+  mkdir -p "${WORK}/rel/agents-bak/old_cycle" "${WORK}/rel/agents-bak/fresh_cycle"
+  printf 'x' >"${WORK}/rel/agents-bak/old_cycle/dev-a.md.bak"
+  python3 -c 'import os,sys,time; t=time.time()-20*86400; os.utime(sys.argv[1],(t,t))' \
+    "${WORK}/rel/agents-bak/old_cycle"
+  run bash -c '
+    '"$(declare -f load_skill)"'
+    INSTALL="'"${INSTALL}"'"; STATE="'"${STATE}"'"
+    load_skill
+    cd "'"${WORK}"'"
+    export AUTOAGENT_BACKUP_DIR="rel/agents-bak"
+    update_prune_agents_bak
+  '
+  [ "$status" -eq 0 ]
+  [ -f "${WORK}/rel/agents-bak/old_cycle/dev-a.md.bak" ]
+  [[ "$output" == *"refusing a non-absolute delete target"* ]]
+}
+
 # ---------------------------------------------------------------------------
 # finding #7 — the EXIT-trap workdir cleanup must NOT destroy the pre-swap
 # snapshot on a failed/interrupted apply (its sole rollback source). The

@@ -179,6 +179,23 @@ run_restore_base_entry() {
   [[ ! -e "${STORE}/dev-x.md" ]] || return 1
 }
 
+@test "a base entry under a relative store dir is refused, reported as a failed delete, and kept" {
+  printf 'RELEASE v1\n' >"${STORE}/dev-x.md" # no dev-x.md.base.bak → the delete arm
+  run env GA_ROOT="${ROOT}" AUTOAGENT_BACKUP_DIR="${BAKBASE}" \
+    ATRIUM_UPDATE_STATE_DIR="${STATE}" bash -c '
+      set -Eeuo pipefail
+      # shellcheck source=/dev/null
+      source "$1"
+      # shellcheck source=/dev/null
+      source "$2"
+      cd "$3"
+      update_restore_base_entry dev-x.md "$4" state/base-agents
+    ' _ "${REAL_UPDATE}" "${REAL_SPINE}" "${SANDBOX}" "${CYCLEDIR}"
+  [[ "${status}" -eq 1 ]] || return 1
+  [[ "$(cat "${STORE}/dev-x.md")" == "RELEASE v1" ]] || return 1
+  [[ "${output}" == *"base-content store delete FAILED for dev-x.md"* ]]
+}
+
 @test "Arm B restores every declared roster path to the target the index recorded" {
   local rel bn index="${CYCLEDIR}/restore-index.tsv"
   : >"${index}"
