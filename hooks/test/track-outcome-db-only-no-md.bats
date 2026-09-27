@@ -235,7 +235,7 @@ run_hook_teardown() {
     bash -c 'bash "$1" < "$2" 2>&1' _ "${HOOK_SH}" "${PAYLOAD_FILE}"
 }
 
-@test "exit teardown removes the parser and T9 detector temps the run created" {
+@test "exit teardown removes the parser and correction-detector temps the run created" {
   local temps temp
   write_transcript
   write_payload

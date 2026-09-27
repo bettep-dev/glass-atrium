@@ -439,8 +439,8 @@ emit_trace() {
       && mv -f "${tmp_path}" "${WORKFLOW_GATE_FIRED_LOG}" 2>/dev/null; then
       exit 0
     fi
-    # ga_guard_path rides hook-utils.sh, loaded on this failure path alone → the gate keeps no top-level
-    # dependency on it. A failed load leaves the temp in place rather than deleting it unguarded.
+    # load the guard lazily → no top-level gate dependency on hook-utils.sh
+    # failed load → temp left, never deleted unguarded
     # shellcheck source=hook-utils.sh
     source "${BASH_SOURCE%/*}/hook-utils.sh" || exit 0
     # shellcheck disable=SC2310  # pure predicate — nothing inside it for errexit to catch

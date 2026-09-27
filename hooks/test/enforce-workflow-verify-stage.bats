@@ -153,8 +153,8 @@ impl: glass-atrium-dev-nestjs
   [[ "${status}" -eq 0 ]] || return 1
 }
 
-# TRACE PRUNE — the firing log is bounded to its line cap by an atomic sibling-temp swap; observability
-# only, so neither the prune nor its failure may alter a verdict or leave a temp behind.
+# TRACE PRUNE — firing log bounded to its line cap via an atomic sibling-temp swap
+# observability only → neither the prune nor its failure alters a verdict or leaves a temp
 
 # $1 = extra PATH prefix (may be empty). Seeds the trace log 12 lines deep, then fires once at cap 5.
 run_hook_over_cap() {

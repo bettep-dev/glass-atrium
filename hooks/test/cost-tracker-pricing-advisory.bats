@@ -449,3 +449,28 @@ _run_parser() {
   [[ ! "${err}" =~ '"error_code":"DATA-184"' ]]
   [[ "${err}" =~ "resolution=fallback" ]]
 }
+
+@test "the parser stderr temp never outlives the run, on a clean exit or a parser crash" {
+  local -a rows=('clean|0' 'crash|1')
+  local row name want tx tmp_root leftovers
+  tx="${TEST_TMP}/leftover.jsonl"
+  _make_transcript "claude-opus-4-8" "${tx}"
+  for row in "${rows[@]}"; do
+    IFS='|' read -r name want <<<"${row}"
+    tmp_root="${TEST_TMP}/tmp-${name}"
+    mkdir -p "${tmp_root}"
+    if [[ "${name}" == "crash" ]]; then
+      printf '%s' '{"schema_version": 1, "corrupt' >"${FIXTURE_SOT}"
+    fi
+    TMPDIR="${tmp_root}" _run_hook "${tx}" "${FRESH_TODAY}" "${TEST_TMP}/err-${name}.txt"
+    [[ "${status}" -eq "${want}" ]] || {
+      echo "${name}: exit ${status}, want ${want}"
+      return 1
+    }
+    leftovers="$(find "${tmp_root}" -name 'cost-tracker-stderr.*' | wc -l | tr -d ' ')"
+    [[ "${leftovers}" == "0" ]] || {
+      echo "${name}: parser stderr temp left under TMPDIR: ${leftovers}"
+      return 1
+    }
+  done
+}

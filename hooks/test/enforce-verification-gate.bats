@@ -538,7 +538,7 @@ mint_bad_sink() {
   }
 }
 
-@test "D06 prune: a failed swap leaves no prune temp beside the sink" {
+@test "prune: a failed swap leaves no prune temp beside the sink" {
   local stub_dir="${BATS_TEST_TMPDIR}/stub-bin" mv_log="${BATS_TEST_TMPDIR}/mv-argv.log" payload leftovers i
   mkdir -p "${stub_dir}"
   printf '#!/usr/bin/env bash\nprintf "%%s\\n" "$*" >>"%s"\nexit 1\n' "${mv_log}" >"${stub_dir}/mv"
@@ -557,6 +557,30 @@ mint_bad_sink() {
   leftovers="$(find "${SINK%/*}" -name "${SINK##*/}.prune.*" | wc -l | tr -d ' ')"
   [[ "${leftovers}" == "0" ]] || {
     echo "prune temp left beside the sink: ${leftovers}" >&2
+    return 1
+  }
+}
+
+@test "marker prune: a failed swap leaves no prune temp beside the session marker" {
+  local stub_dir="${BATS_TEST_TMPDIR}/stub-bin" mv_log="${BATS_TEST_TMPDIR}/mv-argv.log" leftovers i
+  local marker="${DATA_DIR}/session-spawns/sess-test-001"
+  mkdir -p "${stub_dir}"
+  printf '#!/usr/bin/env bash\nprintf "%%s\\n" "$*" >>"%s"\nexit 1\n' "${mv_log}" >"${stub_dir}/mv"
+  chmod +x "${stub_dir}/mv"
+  for ((i = 0; i < 12; i++)); do
+    printf '%s\n' "glass-atrium-dev-react" >>"${marker}"
+  done
+  run bash -c 'printf "%s" "$1" | PATH="$4:${PATH}" HOOK_DATA_DIR="$2" SESSION_SPAWN_MARKER_CAP=5 bash "$3"' \
+    _ "$(mk_payload "glass-atrium-intel-reporter" "write the report" "" "PostToolUse")" \
+    "${DATA_DIR}" "${HOOK_SH}" "${stub_dir}"
+  assert_status 0
+  grep -qF "${marker}.prune." "${mv_log}" || {
+    echo "the marker prune never attempted its swap" >&2
+    return 1
+  }
+  leftovers="$(find "${marker%/*}" -name "${marker##*/}.prune.*" | wc -l | tr -d ' ')"
+  [[ "${leftovers}" == "0" ]] || {
+    echo "prune temp left beside the session marker: ${leftovers}" >&2
     return 1
   }
 }
