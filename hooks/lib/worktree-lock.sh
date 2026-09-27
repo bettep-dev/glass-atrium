@@ -12,7 +12,8 @@
 # worktree-lock.sh — per-worktree writer lock, shared by the PreToolUse acquire arm
 # (advisory-worktree-writer-lock.sh) and the SubagentStop release arm (agent-tracker.sh).
 #
-# Sourced, not executable; the sourcing hook owns strict mode + its own fail-open ERR trap.
+# Sourced, not executable; the sourcing hook owns strict mode + its own fail-open ERR trap, and
+# sources hook-utils.sh first — ga_guard_path, which gates both removals here, arrives with it.
 #
 # PRIMITIVE REUSE, IDENTITY REWRITE. The mutual-exclusion primitive is scripts/lib/apply-lock.sh's
 # atomic-mkdir lock dir, and the staleness half (apply_lock_age_secs + the single-winner mv-aside
@@ -189,7 +190,10 @@ _worktree_lock_stamp() {
     && mv -f -- "${tmp}" "${lock_dir}/holder" 2>/dev/null; then # GA-ABSORB[handled@_worktree_lock_stamp-failure-branch]: a rename failure falls to the partial-dir teardown below
     return 0
   fi
-  rm -f -- "${tmp}" 2>/dev/null || true      # GA-ABSORB[benign]: teardown of our own temp; absent is the normal case
+  # shellcheck disable=SC2310  # pure predicate — nothing inside it for errexit to catch
+  if ga_guard_path "${tmp}"; then
+    rm -f -- "${tmp:?}"
+  fi || true                                 # GA-ABSORB[benign]: teardown of our own temp; absent is the normal case
   rmdir -- "${lock_dir}" 2>/dev/null || true # GA-ABSORB[benign]: a foreign-populated dir must survive this failure path
   return 1
 }
@@ -282,7 +286,7 @@ worktree_lock_acquire() {
 # Release every lock held by one agent — the SubagentStop arm. Pure bash plus one `rm` per actual
 # match: agent-tracker.bats pins that hook to exactly 2 python3 subprocesses per fire, so nothing
 # here may reach for the interpreter (which is also why the TTL is checked at ACQUIRE, not here).
-# Args: $1=holder id · rc 1 = a removal failed (caller reports it loudly; a stale lock would
+# Args: $1=holder id · rc 1 = a removal failed or was refused (caller reports it loudly; a stale lock would
 # otherwise over-warn silently until its TTL). Deliberately reports NO released count: the only
 # caller branches on rc alone, and the previous count global was read by nothing anywhere.
 worktree_lock_release_by_holder() {
@@ -299,11 +303,16 @@ worktree_lock_release_by_holder() {
       */.apply-lock) ;;
       *) continue ;;
     esac
-    if rm -rf -- "${lock_dir}" 2>/dev/null; then    # GA-ABSORB[handled@rc-1-return-below]: a removal failure sets rc 1 for the caller's loud warn
-      rmdir -- "${lock_dir%/*}" 2>/dev/null || true # GA-ABSORB[benign]: prune the now-empty key dir; a non-empty one legitimately stays
+    # shellcheck disable=SC2310  # pure predicate — nothing inside it for errexit to catch
+    if ga_guard_path "${lock_dir}"; then
+      rm -rf -- "${lock_dir:?}"
     else
+      false # a refused dir is a failed removal
+    fi || {
       rc=1
-    fi
+      continue
+    }
+    rmdir -- "${lock_dir%/*}" 2>/dev/null || true # GA-ABSORB[benign]: prune the now-empty key dir; a non-empty one legitimately stays
   done
   return "${rc}"
 }

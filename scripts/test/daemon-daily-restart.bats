@@ -232,6 +232,7 @@ make_flow_sandbox() {
   mkdir -p "${SANDBOX}/lib" "${STUB_BIN}" "${LOCK_DIR}" "${FAKE_HOME}"
   cp "${REAL_SCRIPT}" "${SANDBOX}/daemon-daily-restart.sh"
   cp "${REAL_LOCK_LIB}" "${SANDBOX}/lib/daemon-lock.sh"
+  cp "${GA}/scripts/lib/path-guard.sh" "${SANDBOX}/lib/path-guard.sh"
   cp "${REAL_CONFIG_LIB}" "${SANDBOX}/lib/atrium-config.sh"
   cp "${REAL_SINK_LIB}" "${SANDBOX}/lib/pg-report-drop.sh"
   chmod +x "${SANDBOX}/daemon-daily-restart.sh"
@@ -361,6 +362,21 @@ PY
   [[ ! -L "${LOCK_DIR}/daemon-restart-wiki.lock" ]]
 }
 
+@test "restart-window lock left by a dead holder is reclaimed and the restart completes" {
+  local dead
+  make_flow_sandbox
+  : >"${SESSION_MARKER}"
+  (exit 0) &
+  dead=$!
+  wait "${dead}"
+  kill -0 "${dead}" 2>/dev/null && skip "flake: dead pid ${dead} was reused"
+  ln -s "${dead}" "${LOCK_DIR}/daemon-restart-wiki.lock"
+  run_flow -- wiki
+  [[ "${status}" -eq 0 ]] || return 1
+  grep -qF 'daily restart completed successfully' "${FLOW_LOG}" || return 1
+  [[ ! -L "${LOCK_DIR}/daemon-restart-wiki.lock" ]]
+}
+
 @test "restart-window lock held by live sibling: exit 7, session never killed" {
   make_flow_sandbox
   : >"${SESSION_MARKER}"
@@ -371,6 +387,47 @@ PY
   [[ -f "${SESSION_MARKER}" ]]
   run ! grep -q '^kill-session' "${TMUX_CALLS}"
   [[ ! -f "${BOOTSTRAP_CALLS}" ]]
+}
+
+# Pins only the date the marker name is keyed on, so a run crossing midnight cannot miss the marker.
+stub_marker_date() {
+  cat >"${STUB_BIN}/date" <<'STUB'
+#!/usr/bin/env bash
+if [[ "$*" == "+%Y-%m-%d" ]]; then
+  printf '2026-06-10\n'
+  exit 0
+fi
+exec /bin/date "$@"
+STUB
+  chmod +x "${STUB_BIN}/date"
+}
+
+@test "post-bootstrap quota marker: records quota_exceeded, removes the marker, skips the healthcheck" {
+  make_flow_sandbox
+  stub_marker_date
+  : >"${SESSION_MARKER}"
+  cp "${SANDBOX}/wiki-daemon-bootstrap.sh" "${SANDBOX}/autoagent-daemon-bootstrap.sh"
+  cp "${SANDBOX}/wiki-daemon-healthcheck.sh" "${SANDBOX}/autoagent-daemon-healthcheck.sh"
+  mkdir -p "${WORK}/quota"
+  local marker="${WORK}/quota/autoagent-quota-marker-2026-06-10"
+  : >"${marker}"
+  run_flow DAEMON_QUOTA_MARKER_DIR="${WORK}/quota" -- autoagent
+  [[ "${status}" -eq 0 ]] || return 1
+  grep -qF "quota wall marker detected post-bootstrap (${marker})" "${FLOW_LOG}" || return 1
+  grep -qF 'daily restart completed with quota wall' "${FLOW_LOG}" || return 1
+  [[ ! -e "${marker}" ]] || return 1
+  run ! grep -qF 'WARN: failed to remove quota marker' "${FLOW_LOG}"
+}
+
+@test "a sandbox without the shared path guard aborts before the session is touched" {
+  make_flow_sandbox
+  : >"${SESSION_MARKER}"
+  mv "${SANDBOX}/lib/path-guard.sh" "${WORK}/path-guard.aside"
+  run_flow -- wiki
+  [[ "${status}" -ne 0 ]] || return 1
+  [[ "${output}" == *"[daemon-lock] FATAL: cannot source the shared path guard"* ]] || return 1
+  [[ ! -f "${BOOTSTRAP_CALLS}" ]] || return 1
+  [[ -f "${SESSION_MARKER}" ]]
 }
 
 # Pre-restart quota gate (caller) — parse-failure fallback wording

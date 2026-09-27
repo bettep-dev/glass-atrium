@@ -49,6 +49,7 @@ setup() {
   cp -p "${GA}/autoagent/daemon_cycle.py" "${REAL}/autoagent/daemon_cycle.py"
   cp -p "${GA}/autoagent/lib/git-txn.sh" "${REAL}/autoagent/lib/git-txn.sh"
   cp -p "${GA}/scripts/lib/apply-lock.sh" "${REAL}/scripts/lib/apply-lock.sh"
+  cp -p "${GA}/scripts/lib/path-guard.sh" "${REAL}/scripts/lib/path-guard.sh"
 
   # FACADE — per-file symlinks mirroring the ~/.claude layout. The mirrors that
   # existed at incident time (daemon scripts + the manually-added git-txn.sh)

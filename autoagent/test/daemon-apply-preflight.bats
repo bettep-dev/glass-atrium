@@ -114,6 +114,7 @@ make_sandbox() {
   cp -p -- "${GA}/autoagent/lib/git-txn.sh" "${REAL}/autoagent/lib/git-txn.sh"
   cp -p -- "${GA}/autoagent/daemon_cycle.py" "${REAL}/autoagent/daemon_cycle.py"
   cp -p -- "${GA}/scripts/lib/apply-lock.sh" "${REAL}/scripts/lib/apply-lock.sh"
+  cp -p -- "${GA}/scripts/lib/path-guard.sh" "${REAL}/scripts/lib/path-guard.sh"
   SANDBOX_SCRIPT="${REAL}/autoagent/daemon-apply.sh"
   if [[ "${want_roots}" == "roots" ]]; then
     mkdir -p -- "${REAL}/test" "${REAL}/hooks/test" \

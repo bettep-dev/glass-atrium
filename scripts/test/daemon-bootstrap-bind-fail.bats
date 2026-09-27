@@ -95,6 +95,7 @@ sandbox_copy() {
   mkdir -p "${SANDBOX}/lib"
   cp "${REAL_BOOTSTRAP_LIB}" "${SANDBOX}/lib/daemon-bootstrap-common.sh"
   cp "${REAL_LOCK_LIB}" "${SANDBOX}/lib/daemon-lock.sh"
+  cp "${GA}/scripts/lib/path-guard.sh" "${SANDBOX}/lib/path-guard.sh"
   cp "${REAL_CONFIG_LIB}" "${SANDBOX}/lib/atrium-config.sh"
   cp "${REAL_FAKECHAT_LIB}" "${SANDBOX}/lib/fakechat-cleanup.sh"
   printf '%s\n' "${SANDBOX}/${base}"

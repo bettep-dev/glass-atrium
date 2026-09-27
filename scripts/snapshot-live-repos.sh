@@ -156,8 +156,10 @@ cleanup() {
   if [[ "${LOCK_HELD}" -eq 1 ]]; then
     apply_lock_release "${LOCK_DIR}"
   fi
-  if [[ -n "${TMP_DIR}" && -d "${TMP_DIR}" ]]; then
-    rm -rf -- "${TMP_DIR}"
+  # ga_guard_path arrives with lib/apply-lock.sh; an unset TMP_DIR is skipped silently.
+  # shellcheck disable=SC2310  # pure predicate — nothing inside it for errexit to catch
+  if ga_guard_path "${TMP_DIR}"; then
+    rm -rf -- "${TMP_DIR:?}"
   fi
   exit "${rc}"
 }

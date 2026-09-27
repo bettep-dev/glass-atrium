@@ -89,6 +89,30 @@ fire_stop() {
   }
 }
 
+@test "a failed holder stamp deletes its temp and leaves no lock dir behind" {
+  local stub="${BATS_TEST_TMPDIR}/bin" leftover
+  mkdir -p "${stub}"
+  cat >"${stub}/mv" <<STUB
+#!/usr/bin/env bash
+printf '%s\n' "\$*" >>"${BATS_TEST_TMPDIR}/mv-calls.log"
+case "\${*: -1}" in */holder) exit 1 ;; *) ;; esac
+exec /bin/mv "\$@"
+STUB
+  chmod +x "${stub}/mv"
+  PATH="${stub}:${PATH}" fire_write "${WT}/src/a.txt" "agent-A"
+  [[ "${status}" -eq 0 ]] || return 1
+  grep -q '/holder$' "${BATS_TEST_TMPDIR}/mv-calls.log" || return 1
+  leftover="$(find "${LOCK_ROOT}" -name '.holder.tmp.*' 2>/dev/null)"
+  [[ -z "${leftover}" ]] || {
+    echo "holder temp left behind: ${leftover}" >&2
+    return 1
+  }
+  [[ ! -d "$(lock_dir_for "${WT}")" ]] || {
+    echo "an owner-less lock dir survived the failed stamp" >&2
+    return 1
+  }
+}
+
 @test "the same agent writing again re-enters its own lock silently" {
   fire_write "${WT}/src/a.txt" "agent-A"
   fire_write "${WT}/src/b.txt" "agent-A"
@@ -253,6 +277,20 @@ fire_stop() {
     echo "another agent's lock was released" >&2
     return 1
   }
+}
+
+@test "a lock under a relative store root is never deleted at release and is LOUD (DATA-076)" {
+  cd "${BATS_TEST_TMPDIR}" || return 1
+  export WORKTREE_LOCK_DIR="rel-locks"
+  fire_write "${WT}/src/a.txt" "agent-A"
+  compgen -G "rel-locks/*/.apply-lock" >/dev/null || return 1
+  fire_stop "agent-A"
+  [[ "${status}" -eq 0 ]] || return 1
+  [[ "${output}" == *'DATA-076'* ]] || {
+    echo "a refused release stayed silent: ${output}" >&2
+    return 1
+  }
+  compgen -G "rel-locks/*/.apply-lock" >/dev/null
 }
 
 # Injectivity of the key transform, end to end. The two roots below collide under the OLD

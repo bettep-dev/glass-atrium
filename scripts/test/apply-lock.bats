@@ -161,7 +161,7 @@ backdate_secs() {
     [[ -d "'"${LOCK}"'" ]] && printf "STILL\n" || printf "GONE\n"
   '
   [ "$status" -eq 0 ]
-  [[ "$output" == *"GONE"* ]] # our own lock released
+  [[ "$output" == *"GONE"* ]] || return 1 # our own lock released
 
   # negative: a lock owned by a DIFFERENT (live) pid is NOT released by us — a
   # reclaimer may have taken over, and destroying its lock would break exclusion.
@@ -418,6 +418,38 @@ fingerprint_of() {
   [[ "$output" == *"acquired=false"* ]]                       # acquire FAILED, not silently degraded
   [[ "$output" == *"[apply-lock] ERROR: pid-write failed"* ]] # named loud error on stderr
   [[ ! -e "${LOCK}" ]]                                        # partial dir released, not left owner-less
+}
+
+@test "acquire deletes the written record files and releases the dir when the fingerprint rename fails" {
+  mkdir -p "${WORK}/bin"
+  cat >"${WORK}/bin/mv" <<STUB
+#!/usr/bin/env bash
+printf '%s\n' "\$*" >>"${WORK}/mv-calls.log"
+case "\${*: -1}" in */fingerprint) exit 1 ;; *) ;; esac
+exec /bin/mv "\$@"
+STUB
+  chmod +x "${WORK}/bin/mv"
+  run bash -c '
+    set -Eeuo pipefail
+    PATH="'"${WORK}/bin"':${PATH}"
+    source "'"${LIB}"'"
+    apply_lock_acquire "'"${LOCK}"'"
+    printf "acquired=%s\n" "${apply_lock_acquired}"
+  '
+  [ "$status" -eq 0 ]
+  grep -q '/fingerprint$' "${WORK}/mv-calls.log" # the pid landed and the fingerprint rename was attempted
+  [[ "$output" == *"acquired=false"* ]] || return 1
+  [[ "$output" == *"[apply-lock] ERROR: fingerprint-write failed"* ]] || return 1
+  [[ ! -e "${LOCK}" ]] || return 1 # pid + fingerprint temp deleted, so the rmdir released the dir
+}
+
+@test "sourcing the lib without the shared path guard beside it fails loudly" {
+  mkdir -p "${WORK}/lib"
+  cp "${LIB}" "${WORK}/lib/apply-lock.sh"
+  run bash -c 'set -Eeuo pipefail; source "'"${WORK}/lib/apply-lock.sh"'"; printf "LOADED\n"'
+  [ "$status" -ne 0 ]
+  [[ "$output" != *"LOADED"* ]] || return 1
+  [[ "$output" == *"[apply-lock] FATAL: cannot source the shared path guard"* ]] || return 1
 }
 
 # === T4b — daemon-reports seam (shared .apply-lock root moved to ~/.glass-atrium)

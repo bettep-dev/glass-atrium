@@ -261,6 +261,23 @@ dirty_autoagent() {
   [[ ! -e "${AUTOAGENT_REPORTS_DIR}/.apply-lock" ]] || return 1
 }
 
+@test "cleanup: a finished run leaves no status scratch dir behind" {
+  local scratch
+  dirty_autoagent
+  mkdir -p "${WORK}/bin"
+  cat >"${WORK}/bin/mktemp" <<STUB
+#!/usr/bin/env bash
+out="\$(/usr/bin/mktemp "\$@")" || exit
+printf '%s\n' "\${out}" >>"${WORK}/mktemp-calls.log"
+printf '%s\n' "\${out}"
+STUB
+  chmod +x "${WORK}/bin/mktemp"
+  PATH="${WORK}/bin:${PATH}" run bash "${SCRIPT}"
+  [[ "${status}" -eq 0 ]] || return 1
+  scratch="$(grep -F 'snapshot-live-repos.' "${WORK}/mktemp-calls.log")" || return 1
+  [[ -n "${scratch}" && ! -e "${scratch}" ]]
+}
+
 @test "lock: a missing apply-lock lib loud-fails exit 5" {
   dirty_autoagent
   ATRIUM_APPLY_LOCK_LIB="${WORK}/absent-apply-lock.sh" run bash "${SCRIPT}"

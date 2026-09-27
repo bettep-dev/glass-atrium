@@ -63,3 +63,34 @@ fire() {
   [[ "${status}" -eq 0 ]] || { echo "hook must stay non-blocking" >&2; return 1; }
   [[ "${output}" == *'DATA-074'* ]] || { echo "silent absorption — no DATA-074 in: ${output}" >&2; return 1; }
 }
+
+@test "a marker the Stop cannot delete survives and is LOUD (DATA-075)" {
+  local row name root lockdown marker
+  local rows=("unwritable marker dir|${GA_DATA}|yes" "relative data root|ga-rel|no")
+  cd "${BATS_TEST_TMPDIR}" || return 1
+  for row in "${rows[@]}"; do
+    IFS='|' read -r name root lockdown <<<"${row}"
+    GA_DATA="${root}"
+    marker="${root}/data/live-children/${AID}"
+    fire "SubagentStart" "${AID}"
+    [[ -f "${marker}" ]] || {
+      echo "${name}: Start wrote no marker" >&2
+      return 1
+    }
+    if [[ "${lockdown}" == yes ]]; then chmod 500 "${marker%/*}"; fi
+    fire "SubagentStop" "${AID}"
+    chmod 700 "${marker%/*}"
+    [[ "${status}" -eq 0 ]] || {
+      echo "${name}: hook must stay non-blocking" >&2
+      return 1
+    }
+    [[ "${output}" == *'DATA-075'* ]] || {
+      echo "${name}: silent — no DATA-075 in: ${output}" >&2
+      return 1
+    }
+    [[ -f "${marker}" ]] || {
+      echo "${name}: the marker was deleted" >&2
+      return 1
+    }
+  done
+}

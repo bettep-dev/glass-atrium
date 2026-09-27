@@ -79,6 +79,7 @@ expected_roster() {
   mkdir -p "${tree}/lib"
   cp "${SNAPSHOT}" "${tree}/snapshot-live-repos.sh"
   cp "${GA}/scripts/lib/apply-lock.sh" "${tree}/lib/apply-lock.sh"
+  cp "${GA}/scripts/lib/path-guard.sh" "${tree}/lib/path-guard.sh"
   make_probe_lib "${tree}/lib/recovery-repos.sh"
   chmod +x "${tree}/snapshot-live-repos.sh"
 
