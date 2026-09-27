@@ -304,7 +304,7 @@ PY
   [[ -n "${body}" ]]
   # layer-2 (SIGINT fast shutdown) + layer-3 (stale socket removal) retained.
   [[ "${body}" == *'kill -INT'* ]]
-  [[ "${body}" == *'rm -f -- "${sock}"'* ]]
+  [[ "${body}" == *'rm -f -- "${sock:?}"'* ]] || return 1
   # layer-1 (brew services stop postgresql@N) fully removed — never stop a brew-managed server.
   [[ "${body}" != *'brew services stop'* ]]
   # carries its OWN guards (no longer behind stop_detached_daemons).
@@ -339,6 +339,23 @@ PY
   [[ "${output}" == *"sandbox target"* ]]
   ! grep -qF 'kill -INT' "${REC}"
   ! grep -qF 'rm /tmp/.s.PGSQL.5432' "${REC}"
+}
+
+@test "clear(unlink fails): a stale socket that cannot be removed is reported, never claimed removed" {
+  is_sandbox_target() { printf 'no\n'; }
+  stub_lsof
+  kill() { printf 'kill %s\n' "$*" >>"${REC}"; return 0; }
+  sleep() { return 0; }
+  make_fake_pg_socket "${PG_SOCK_DIR}/.s.PGSQL.5432"
+  # record-only rm that reports failure: the unlink never happens
+  printf '#!/bin/bash\nprintf "rm %%s\\n" "$*" >>"%s"\nexit 1\n' "${REC}" >"${STUB_BIN}/rm"
+  GA_LSOF_PIDS=""
+  export GA_LSOF_PIDS
+  run clear_unmanaged_pg_orphan
+  [[ "${status}" -eq 0 ]] \
+    && [[ "${output}" == *"could not remove stale postgres socket ${PG_SOCK_DIR}/.s.PGSQL.5432"* ]] \
+    && [[ "${output}" != *"removed stale postgres socket"* ]] \
+    && grep -qF "rm -f -- ${PG_SOCK_DIR}/.s.PGSQL.5432" "${REC}"
 }
 
 # === preflight_pg_utc_guard WIRING — healthy no-op / cleared-continue / loud-fail ==========

@@ -39,6 +39,7 @@ setup() {
     "${WORK}/monitor/prisma/migrations/20260101000000_x"
   cp "${REAL_SCRIPT}" "${SCRIPT}"
   cp "${REAL_SPINE}" "${WORK}/scripts/lib/apply-spine.sh"
+  cp "${REAL_SPINE%/*}/path-guard.sh" "${WORK}/scripts/lib/path-guard.sh"
 
   git -C "${WORK}" init -q
   git -C "${WORK}" config user.email bats@test.local

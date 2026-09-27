@@ -629,6 +629,19 @@ unsafe_row() {
   [[ ! -e "${LIVE}/scripts/created.sh" ]]
 }
 
+@test "T11 rollback: a relative install root never deletes the created file and reports the refused removal" {
+  seed_file "${WORK}/rel-live" "scripts/created.sh" "FRESH"
+  run bash -c '
+    set -Eeuo pipefail
+    cd "$1"
+    source "$2"
+    spine_rollback "rel-live" "$1/no-snapshot" "scripts/created.sh"
+  ' _ "${WORK}" "${REAL_LIB}"
+  [[ "${status}" -eq 0 ]] \
+    && [[ -f "${WORK}/rel-live/scripts/created.sh" ]] \
+    && [[ "${output}" == *"rollback remove FAILED: scripts/created.sh"* ]]
+}
+
 @test "T1 link: a driven apply lands the live row as a link holding the release's target text" {
   seed_file "${NEW}" "agents/CHARTER.md" "charter-new"
   seed_link "${NEW}" "rules/glass-atrium/CHARTER.md" "../../agents/CHARTER.md"

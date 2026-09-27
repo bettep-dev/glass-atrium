@@ -62,6 +62,7 @@ make_gen_fixture() {
   # the generator sources the spine for the retired-map family bar and refuses
   # (exit 7) without it, so the fixture root carries the library too.
   cp -p -- "${GA}/scripts/lib/apply-spine.sh" "${FIX}/scripts/lib/apply-spine.sh"
+  cp -p -- "${GA}/scripts/lib/path-guard.sh" "${FIX}/scripts/lib/path-guard.sh"
   printf '#!/usr/bin/env bash\nprintf ok\n' >"${FIX}/hooks/probe.sh"
   chmod 755 "${FIX}/hooks/probe.sh"
   printf 'agent body\n' >"${FIX}/agents/a.md"
@@ -89,6 +90,7 @@ make_install_fixture() {
   printf '#!/usr/bin/env bash\nexit 0\n' >"${BUNDLE_ROOT}/glass-atrium"
   chmod 755 "${BUNDLE_ROOT}/glass-atrium"
   cp -p -- "${GA}/scripts/lib/apply-spine.sh" "${BUNDLE_ROOT}/scripts/lib/apply-spine.sh"
+  cp -p -- "${GA}/scripts/lib/path-guard.sh" "${BUNDLE_ROOT}/scripts/lib/path-guard.sh"
   h_probe="$(shasum -a 256 "${BUNDLE_ROOT}/hooks/probe.sh" | awk '{print $1}')"
   h_launcher="$(shasum -a 256 "${BUNDLE_ROOT}/glass-atrium" | awk '{print $1}')"
   h_spine="$(shasum -a 256 "${BUNDLE_ROOT}/scripts/lib/apply-spine.sh" | awk '{print $1}')"

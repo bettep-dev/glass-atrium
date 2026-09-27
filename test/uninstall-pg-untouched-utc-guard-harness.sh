@@ -277,8 +277,8 @@ echo "  [B-static] clear_unmanaged_pg_orphan retains the layer-3 stale-socket re
 # the guard-conditional runtime checks in B3/B3b (which can only OBSERVE the rm fire when a live
 # socket happens to exist). If a regression drops layer-3, this static check fails on every host.
 CL_BODY="$(declare -f clear_unmanaged_pg_orphan)"
-if [[ "${CL_BODY}" == *'rm -f -- "${sock}"'* ]]; then
-  pass "clear_unmanaged_pg_orphan body contains the layer-3 rm -f -- \"\${sock}\" removal"
+if [[ "${CL_BODY}" == *'rm -f -- "${sock:?}"'* ]]; then
+  pass "clear_unmanaged_pg_orphan body contains the layer-3 rm -f -- \"\${sock:?}\" removal"
 else
   fail "clear_unmanaged_pg_orphan body is MISSING the layer-3 socket removal"
 fi

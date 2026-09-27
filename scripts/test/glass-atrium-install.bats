@@ -71,6 +71,7 @@ monitor/package.json
 requirements.txt
 scripts/lib/apply-spine.sh
 scripts/lib/mirror-farm.sh
+scripts/lib/path-guard.sh
 MEMBERS
 }
 
@@ -96,6 +97,7 @@ LAUNCHER
   printf '{"name":"monitor-stub"}\n' >"${SRC}/monitor/package.json"
   printf 'stub-dep==0.0.0\n' >"${SRC}/requirements.txt"
   cp -p "${REAL_SPINE}" "${SRC}/scripts/lib/apply-spine.sh"
+  cp -p "${REAL_SPINE%/*}/path-guard.sh" "${SRC}/scripts/lib/path-guard.sh"
   cp -p "${REAL_FARM}" "${SRC}/scripts/lib/mirror-farm.sh"
 }
 
@@ -267,6 +269,7 @@ run_install() {
   # the generator sources the spine for the retired-map family bar and refuses
   # (exit 7) without it, so the sandbox repo carries the library too.
   cp "${GA}/scripts/lib/apply-spine.sh" "${repo}/scripts/lib/apply-spine.sh"
+  cp "${GA}/scripts/lib/path-guard.sh" "${repo}/scripts/lib/path-guard.sh"
   printf '{"files":[],"hashes":{}}\n' \
     >"${repo}/manifest.json"
   printf '# agent alpha\n' >"${repo}/agents/alpha.md"
@@ -451,4 +454,15 @@ seed_symlinked_target_dir() {
   [[ "${output}" == *'WARN: mode target escapes the install root (skipped): ext/f.txt'* ]] || return 1
   [ "$(stat -f '%Lp' "${WORK}/outside/f.txt")" = "600" ] || return 1
   [ -x "${TARGET}/glass-atrium" ] || return 1
+}
+
+@test "install: the bootstrap path guard answers every input class exactly as the shared guard" {
+  local boot="${BATS_TEST_TMPDIR}/bootstrap-guard.sh" input shared booted
+  awk '/^ga_guard_path\(\) \{/ { f = 1 } f { print } f && /^}/ { exit }' "${INSTALL_SH}" >"${boot}"
+  [[ -s "${boot}" ]] || { echo "install.sh defines no ga_guard_path"; return 1; }
+  for input in "" "/" "//" "rel/dir" "./dir" "../dir" "/abs/dir" "/abs/dir/"; do
+    shared="$(bash -c 'source "$1"; ga_guard_path "$2" 2>&1; printf "rc=%s" "$?"' _ "${GA}/scripts/lib/path-guard.sh" "${input}")"
+    booted="$(bash -c 'source "$1"; ga_guard_path "$2" 2>&1; printf "rc=%s" "$?"' _ "${boot}" "${input}")"
+    [[ "${booted}" == "${shared}" ]] || { echo "diverges on '${input}': install=${booted} shared=${shared}"; return 1; }
+  done
 }

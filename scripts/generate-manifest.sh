@@ -576,7 +576,8 @@ run_generate() {
   # manifest (the wire_hooks atomic-write contract: temp + validate + mv).
   # shellcheck disable=SC2310  # a false rc is the abort path below, which is the whole point of the guard
   validate_manifest_file "${tmp}" || {
-    rm -f -- "${tmp}"
+    # shellcheck disable=SC2310  # guard (sourced with the spine) branched on — a refusal skips the delete
+    if ga_guard_path "${tmp}"; then rm -f -- "${tmp:?}"; fi
     echo "generate-manifest: generated manifest failed validation — aborting" >&2
     exit 6
   }
