@@ -1682,7 +1682,7 @@
     "test/data-root-seam-wiki-audit.bats": "2d69b8de892e4568622d1ed2758b0cfb13decc0ad91e4645cefe4ac240302c88",
     "test/db-backup-path-consistency.bats": "c5eb1e2579cf53034746cfe6348511b8b5e8d8cec8e30efb6366ce77c8ef49e8",
     "test/deps-preflight-exec-harness.sh": "762eda3be2e2ce6309ab08f6be339a8da78cd7cdc8e893ba928b9b8ccf730e8e",
-    "test/deps-preflight-noninteractive.bats": "0dcb86037dade05945b839c0faca000cf6531af7f8ebef83594c1f8fecd6c37b",
+    "test/deps-preflight-noninteractive.bats": "be0d00a690de0c11436b6e669c8adc707544df3e7480f161c0f89329c912f195",
     "test/doctor-apply-abort-rows.bats": "19a8bb8e27e1ca1dbf569717503f2fbb60125b29bb19e39a9f04fdca14fa83a1",
     "test/doctor-apply-abort-supersession.bats": "cf9ea40c21bdf33447c4d11323b7fc238c8dfbe455ee19e237aea3519ace18d4",
     "test/doctor-arbiter-decision-surface.bats": "6cb5c5e3eade6cb3a30af556d5bf3f1576fff665563cd78ccd29d1fb261e86c4",

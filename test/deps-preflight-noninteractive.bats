@@ -798,15 +798,18 @@ extract_launcher_fn() {
 
 # A sentinel pgrep still matched → each match (pid, parent, start, command) + every live bats run, then fail.
 print_sentinel_owners() {
-  local matched_pids candidate_pids
-  matched_pids="$(printf '%s\n' "${output-}" | paste -sd, -)"
+  local matched="${output-}" matched_list pid candidate_pids
+  matched_list="$(printf '%s\n' "${matched}" | paste -sd' ' -)"
+  printf 'pgrep -f %s matched pids: %s\n' "$1" "${matched_list}"
+  # a match can exit before ps reads it (ps exits 1) → name it and go on: errexit binds after the final ||.
+  while IFS= read -r pid; do
+    ps -o pid=,ppid=,lstart=,command= -p "${pid}" 2>&1 || printf '%s (exited before ps)\n' "${pid}"
+  done <<<"${matched}"
   candidate_pids="$(pgrep -f 'bats-exec-suite|run-bats-parallel' | paste -sd, -)"
-  printf 'pgrep -f %s matched:\n' "$1"
-  ps -o pid,ppid,lstart,command -p "${matched_pids}" 2>&1
   # macOS pgrep skips its own ancestors (this run); procps pgrep lists them → tell apart by the bats pid.
   printf 'live bats runs (this run: bats pid %s):\n' "${BATS_ROOT_PID:-unknown}"
   if [[ -n "${candidate_pids}" ]]; then
-    ps -o pid,ppid,lstart,command -p "${candidate_pids}" 2>&1
+    ps -o pid,ppid,lstart,command -p "${candidate_pids}" 2>&1 || printf 'none left by ps time\n'
   else
     printf 'none\n'
   fi
