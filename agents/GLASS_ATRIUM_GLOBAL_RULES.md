@@ -130,6 +130,10 @@ The canonical rule for what language this system writes in.
 - `rm` forbidden for source code, documents, and config files → use `mv ~/.Trash/` instead (macOS).
 - Exception: build artifacts, generated files, node_modules, and other regenerable files may use `rm`.
 
+### Temporary Files [ALL]
+
+- Default: create temporary files and directories with bare `mktemp` / `mktemp -d` — no template path — so they land under the per-user `$TMPDIR`.
+
 ## Context Management [ALL]
 
 - Clearly organize key context (target, constraints, completion criteria) at task start.
