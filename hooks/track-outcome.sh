@@ -96,12 +96,11 @@ trap 'rm -f "$PY_SCRIPT_FILE"' EXIT INT TERM
 cat >"$PY_SCRIPT_FILE" <<'PYEOF'
 import sys, json, re
 
-# qa_score + concerns are included so an emitted `qa_score:`/`concerns:` line starts its own
-# field instead of folding into the preceding value: parse_completion_body treats any line whose
-# `key:` is NOT in this set as a continuation of the current field, so an unlisted qa_score line
-# silently corrupts (e.g.) the summary value. Both are consumed (concerns via its "## Concerns"
-# fallback below; qa_score direct from the [COMPLETION] field) and carried to the PG dual-write.
-KNOWN_FIELDS = {'result', 'task_type', 'metric_pass', 'confidence', 'files', 'summary', 'lesson', 'cid', 'revision_count', 'review_flag', 'style_ref', 'style_ref_verified', 'confidence_observed', 'directive_hint', 'evaluative_signal', 'qa_score', 'concerns', 'token_usage', 'duration_ms'}
+# template ⊆ KNOWN_FIELDS — drift test in track-outcome-completion-block-select.bats
+# unlisted `key:` line → folds into the current field's value
+# agent_version / grader_verdict / downgrade_origin → boundaries only, never read from `completion`
+# grader columns ← GRADER_VERDICT / DOWNGRADE_ORIGIN shell vars
+KNOWN_FIELDS = {'result', 'task_type', 'metric_pass', 'confidence', 'files', 'summary', 'lesson', 'cid', 'revision_count', 'review_flag', 'style_ref', 'style_ref_verified', 'confidence_observed', 'directive_hint', 'evaluative_signal', 'qa_score', 'concerns', 'token_usage', 'duration_ms', 'agent_version', 'grader_verdict', 'downgrade_origin'}
 
 # Inline single-line [COMPLETION] tolerance (schema/workflow mode). CORE fields gate the inline
 # match — >=1 must parse so prose merely mentioning [COMPLETION] with a stray delimiter is rejected.
@@ -632,8 +631,8 @@ if parse_tier == 0:
         # known fields (result/task_type/metric_pass/confidence) bind before a summary value that
         # itself carries a delimiter — a segment with no KNOWN_FIELD colon appends to the current value.
         inline_fields = parse_completion_body(re.sub(_INLINE_DELIM_CLASS, '\n', inline_body))
-        # Guard: require >=1 CORE field so prose merely mentioning [COMPLETION] with a stray
-        # delimiter does NOT match (parse_completion_body already drops unknown keys).
+        # Guard: >=1 CORE field → prose merely mentioning [COMPLETION] with a stray delimiter never matches
+        # unknown key before the first known key → dropped
         if _INLINE_CORE_FIELDS & set(inline_fields):
             parse_tier = 1
             completion = inline_fields
