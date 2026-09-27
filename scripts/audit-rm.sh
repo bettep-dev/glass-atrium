@@ -3,7 +3,11 @@
 # Usage: audit-rm.sh [--path <file>]... [--root <dir>] [--quiet] [--advisory|--strict]
 #
 # Behavior:
-#   1. Walk the shell files of the SCOPE_DIRS trees, minus EXCLUDED_FILE, or the --path overrides
+#   1. Walk the shell files of the SCOPE_DIRS trees plus the SCOPE_FILES root scripts, or the --path
+#      overrides. Two named exclusions, so a green run never reads as full coverage:
+#        - EXCLUDED_FILE, the violation probe, whose cwd-glob delete is what the probe proves;
+#        - monitor/scripts/prune-dist.sh, outside every scope entry as the monitor session's area,
+#          whose delete sites this audit never reads.
 #   2. Find each recursive or forced delete on a non-comment physical line (one line is one site)
 #   3. Count the one converted shape: an `if ga_guard_path "${V}"; then` whose first command deletes
 #      the single operand "${V:?}" (a literal sub-path allowed), on one line or under that if line
@@ -28,6 +32,9 @@ audit_cli_init 'audit-rm.sh' 'directories' 0 15
 
 SCOPE_DIRS=(hooks scripts autoagent lib test)
 readonly SCOPE_DIRS
+# Shell entry points at the repository root, which no scope tree reaches.
+SCOPE_FILES=(glass-atrium install.sh)
+readonly SCOPE_FILES
 # The scratch-cwd violation probe deletes its own canary through a cwd glob on purpose — that delete
 # is what it proves the suite seat confines.
 readonly EXCLUDED_FILE='test/scratch-cwd-violation-probe.bats'
@@ -215,8 +222,24 @@ set_site_kind() {
   fi
 }
 
+# Walks every scope entry; a listed root script is audited whatever its first line holds.
+audit_scope() {
+  local tree="" rel="" abs=""
+  for tree in "${SCOPE_DIRS[@]}"; do
+    audit_tree "${tree}"
+  done
+  for rel in "${SCOPE_FILES[@]}"; do
+    abs="${root_dir}/${rel}"
+    if [[ ! -f "${abs}" || ! -r "${abs}" ]]; then
+      printf 'ERROR: scope file missing or unreadable: %s\n' "${abs}" >&2
+      exit 3
+    fi
+    audit_file "${rel}" "${abs}"
+  done
+}
+
 main() {
-  local tree="" fail_msg=""
+  local fail_msg=""
 
   audit_cli_parse_args "$@"
   audit_cli_resolve_root "${SCRIPT_DIR}/.."
@@ -224,9 +247,7 @@ main() {
   if ((${#paths[@]} > 0)); then
     audit_cli_walk_paths
   else
-    for tree in "${SCOPE_DIRS[@]}"; do
-      audit_tree "${tree}"
-    done
+    audit_scope
   fi
 
   printf 'converted=%d annotated=%d unconverted=%d quality_reject=%d\n' \

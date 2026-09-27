@@ -1,6 +1,7 @@
 #!/usr/bin/env bats
 # audit-rm.bats — pins scripts/audit-rm.sh: exactly one converted delete shape, the three named unsafe
-# kinds, the closed two-label annotation vocabulary, and the five-tree scope minus the probe file.
+# kinds, the closed two-label annotation vocabulary, and the scope: five trees plus two root scripts, minus the
+# probe file.
 #
 # Every fixture line is test data the auditor reads and no shell runs.
 # This file is in the auditor's own scope, so each such line it flags is annotated not-executed in one of two ways:
@@ -36,10 +37,14 @@ assert_summary() {
   }
 }
 
+# Builds every scope entry under the root, except the one named by the optional second argument.
 make_scope_root() {
-  local root="${1}" tree=""
+  local root="${1}" omit="${2:-}" tree="" file=""
   for tree in hooks scripts autoagent lib test; do
-    mkdir -p "${root}/${tree}"
+    [[ "${tree}" == "${omit}" ]] || mkdir -p "${root}/${tree}"
+  done
+  for file in glass-atrium install.sh; do
+    [[ "${file}" == "${omit}" ]] || : >"${root}/${file}"
   done
 }
 
@@ -145,7 +150,7 @@ make_scope_root() {
   done
 }
 
-@test "a scope run covers the shell files of the five trees and skips only the violation probe" {
+@test "a scope run covers the five trees' shell files and the two root scripts, and skips the violation probe" {
   local root="${BATS_TEST_TMPDIR}/root"
   # GA-RM[not-executed]: auditor fixture text, written to a file no shell runs
   local site='rm -f -- "${A}"'
@@ -157,9 +162,12 @@ make_scope_root() {
   write_fixture "${root}/test/e.bats" "${site}"
   write_fixture "${root}/test/scratch-cwd-violation-probe.bats" "${site}"
   write_fixture "${root}/test/notes.md" "${site}"
-  write_fixture "${root}/monitor/d.sh" "${site}"
+  write_fixture "${root}/glass-atrium" '#!/usr/bin/env bash' "${site}"
+  write_fixture "${root}/install.sh" "${site}"
+  write_fixture "${root}/other.sh" "${site}"
+  write_fixture "${root}/monitor/scripts/prune-dist.sh" "${site}"
   run bash "${AUDIT_SH}" --root "${root}"
-  assert_summary "scope run" "converted=0 annotated=0 unconverted=5 quality_reject=0"
+  assert_summary "scope run" "converted=0 annotated=0 unconverted=7 quality_reject=0"
   [[ "${output}" != *scratch-cwd-violation-probe* ]] || {
     echo "the probe file was audited: ${output}"
     return 1
@@ -185,13 +193,15 @@ make_scope_root() {
   done
 }
 
-@test "a missing scope tree is an IO error (exit 3)" {
-  local root="${BATS_TEST_TMPDIR}/root"
-  make_scope_root "${root}"
-  rmdir "${root}/lib"
-  run bash "${AUDIT_SH}" --root "${root}"
-  [[ "${status}" -eq 3 && "${output}" == *"lib"* ]] || {
-    echo "exit ${status}: ${output}"
-    return 1
-  }
+@test "a missing scope tree or scope file is an IO error (exit 3)" {
+  local entry="" root=""
+  for entry in lib install.sh; do
+    root="${BATS_TEST_TMPDIR}/${entry}"
+    make_scope_root "${root}" "${entry}"
+    run bash "${AUDIT_SH}" --root "${root}"
+    [[ "${status}" -eq 3 && "${output}" == *"missing"*"/${entry}"* ]] || {
+      echo "missing ${entry}: exit ${status}: ${output}"
+      return 1
+    }
+  done
 }
