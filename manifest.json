@@ -1686,7 +1686,7 @@
     "test/doctor-apply-abort-rows.bats": "19a8bb8e27e1ca1dbf569717503f2fbb60125b29bb19e39a9f04fdca14fa83a1",
     "test/doctor-apply-abort-supersession.bats": "cf9ea40c21bdf33447c4d11323b7fc238c8dfbe455ee19e237aea3519ace18d4",
     "test/doctor-arbiter-decision-surface.bats": "6cb5c5e3eade6cb3a30af556d5bf3f1576fff665563cd78ccd29d1fb261e86c4",
-    "test/doctor-auth-report-scan-sigpipe.bats": "3a4f7432eb9b4fc3c05b1222fd337742acca4d65935b376fcaecab2b03820022",
+    "test/doctor-auth-report-scan-sigpipe.bats": "a5e251b2423885052dc57e23f29bd436f2b8748b828e2f31ed68b6ebacce25e1",
     "test/doctor-backup-dir-relocation.bats": "f4c42f6c5f275f463b088cea446fe0b8c63b3a594baa2d6b4d192b621a2bdb64",
     "test/doctor-config-key-drift.bats": "263dc3e58ac03520aa0dcc35e93f6207bf5e54e3c05f88b4bcafc8b7831ecdec",
     "test/doctor-consumer-install.bats": "e1cda3b2e92dd55f00d50f324a7a924329438086a649ecfd01888c419817370d",
