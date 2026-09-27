@@ -129,6 +129,7 @@ The canonical rule for what language this system writes in.
 
 - `rm` forbidden for source code, documents, and config files → use `mv ~/.Trash/` instead (macOS).
 - Exception: build artifacts, generated files, node_modules, and other regenerable files may use `rm`.
+- A recursive or forced delete targets only a path variable that has passed the shared path guard, in the `"${DIR:?}"` operand form — never a cwd-relative glob; a target that cannot be such a variable is allowed only as a named exception.
 
 ### Temporary Files [ALL]
 
