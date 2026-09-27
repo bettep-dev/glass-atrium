@@ -425,6 +425,14 @@ jobs:
           fi
           xargs -0 shellcheck --include=SC2115 <"${selected}"
 
+      # Delete-target audit (scripts/audit-rm.sh) → ADVISORY: findings print and exit 0.
+      # Blocking waits until every existing site is converted.
+      # A usage or IO error (exit 2/3) still reds the step → a broken auditor never reads as a clean pass.
+      # One leg, before the bats step → same ordering reason as the absorption audit.
+      - name: Audit recursive and forced delete targets (advisory)
+        if: matrix.root == 'scripts/test'
+        run: bash scripts/audit-rm.sh
+
       # DIAGNOSTIC (per-file timeout + filename tag): each *.bats file runs as
       # its OWN GNU parallel job instead of a single `bats --jobs` call. Why:
       # `bats --jobs` buffers a file's TAP and flushes only on file COMPLETION,
