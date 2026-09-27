@@ -61,8 +61,8 @@ function makeReply(): { statusCode: number; asReply: Parameters<typeof replyUpda
 function makeArgs(overrides: Partial<Record<string, unknown>>): UpdateClaudedDocArgs {
   return {
     id: 123,
-    parsed: { expected_hash: "CLIENT_EXPECTED_HASH", title: "t", doc_status: "progress" },
-    existing: { title: "t", html_path: "/root/x.html", audience: null, doc_status: "progress" },
+    parsed: { expected_hash: "CLIENT_EXPECTED_HASH", title: "t", doc_status: "doc_review" },
+    existing: { title: "t", html_path: "/root/x.html", audience: null, doc_status: "doc_review" },
     conversion: { contentHash: "SERVER_NEW_HASH", indexableText: "idx" },
     newBodyPath: null,
     newAudience: null,
@@ -291,7 +291,7 @@ function makeExisting(overrides: Record<string, unknown>): Parameters<typeof cas
   return {
     id: BigInt(1),
     folder_id: BigInt(5),
-    doc_status: "progress",
+    doc_status: "doc_review",
     ...overrides,
   } as unknown as Parameters<typeof cascadeAfterRowUpdate>[5];
 }
@@ -309,8 +309,8 @@ test("DF-13 cascadeAfterRowUpdate: status echo (parsed === existing) → NO casc
     makeReply().asReply as unknown as Parameters<typeof cascadeAfterRowUpdate>[1],
     prisma as unknown as Parameters<typeof cascadeAfterRowUpdate>[2],
     1,
-    makeParsed({ doc_status: "progress" }),
-    makeExisting({ doc_status: "progress", folder_id: BigInt(5) }),
+    makeParsed({ doc_status: "doc_review" }),
+    makeExisting({ doc_status: "doc_review", folder_id: BigInt(5) }),
   );
   assert.strictEqual(result, true);
   assert.strictEqual(callCount(), 0, "echoing the current status must NOT run the cascade UPDATE");
@@ -326,7 +326,7 @@ test("DF-13 cascadeAfterRowUpdate: actual diff on a grouped row → cascade fire
     prisma as unknown as Parameters<typeof cascadeAfterRowUpdate>[2],
     1,
     makeParsed({ doc_status: "done" }),
-    makeExisting({ doc_status: "progress", folder_id: BigInt(5) }),
+    makeExisting({ doc_status: "doc_review", folder_id: BigInt(5) }),
   );
   assert.strictEqual(result, true);
   assert.strictEqual(callCount(), 1, "a real progress→done diff on a group member runs the cascade");
@@ -340,7 +340,7 @@ test("DF-13 cascadeAfterRowUpdate: standalone row (folder_id NULL) → NO cascad
     prisma as unknown as Parameters<typeof cascadeAfterRowUpdate>[2],
     1,
     makeParsed({ doc_status: "done" }),
-    makeExisting({ doc_status: "progress", folder_id: null }),
+    makeExisting({ doc_status: "doc_review", folder_id: null }),
   );
   assert.strictEqual(result, true);
   assert.strictEqual(callCount(), 0, "standalone rows have no siblings — cascade skipped");
@@ -402,8 +402,9 @@ test("DF-26 restoreHtmlBody: in-place (not swap) still restores previous bytes",
 function flattenValues(values: unknown[]): unknown[] {
   const out: unknown[] = [];
   for (const v of values) {
-    const nested = (v as { values?: unknown }).values;
-    if (v !== null && typeof v === "object" && Array.isArray(nested)) {
+    // Null-guard BEFORE the property read — a bound null value is not a fragment.
+    const nested = v !== null && typeof v === "object" ? (v as { values?: unknown }).values : undefined;
+    if (Array.isArray(nested)) {
       out.push(...flattenValues(nested));
     } else {
       out.push(v);
@@ -416,8 +417,8 @@ function flattenValues(values: unknown[]): unknown[] {
 function fragmentTexts(values: unknown[]): string[] {
   const out: string[] = [];
   for (const v of values) {
-    const strings = (v as { strings?: unknown }).strings;
-    if (v !== null && typeof v === "object" && Array.isArray(strings)) {
+    const strings = v !== null && typeof v === "object" ? (v as { strings?: unknown }).strings : undefined;
+    if (Array.isArray(strings)) {
       out.push(strings.join(""));
     }
   }
@@ -431,7 +432,9 @@ test("DF-26 cascadeUpdateDocStatus: expectedHash → target carries a bound cont
     return [{ id: BigInt(1), doc_status: "done", folder_id: BigInt(5) }];
   });
 
-  await cascadeUpdateDocStatus(prisma, 1, "done", "EXPECTED_HASH_TOKEN");
+  await cascadeUpdateDocStatus(prisma, 1, "done", {
+    lastStatusModel: null, cascadeToGroup: true, expectedHash: "EXPECTED_HASH_TOKEN",
+  });
 
   // The guard fragment SQL text mentions content_hash …
   const guardText = fragmentTexts(capturedValues).join(" ");
@@ -448,7 +451,7 @@ test("DF-26 cascadeUpdateDocStatus: no expectedHash (body-changed path) → NO e
     return [{ id: BigInt(1), doc_status: "done", folder_id: BigInt(5) }];
   });
 
-  await cascadeUpdateDocStatus(prisma, 1, "done");
+  await cascadeUpdateDocStatus(prisma, 1, "done", { lastStatusModel: null, cascadeToGroup: true });
 
   const guardText = fragmentTexts(capturedValues).join(" ");
   assert.ok(!/content_hash/.test(guardText), "omitting expectedHash embeds Prisma.empty (no CAS guard)");

@@ -282,6 +282,8 @@ async function handleIndexMetrics(
       notes_total: notesTotal,
       latest_compiled_total: compiledRow?.compiled_total ?? null,
       dirty: dirtyRow?.dirty ?? false,
+      // Row absence and `dirty:false` are different facts — the FE reads this to tell them apart.
+      has_dirty_flag: dirtyRow !== undefined,
       // bigintToNumber guards a future epoch overflow before Number()/Date use.
       last_dirty_ms:
         dirtyRow === undefined ? null : normalizeEpochToMs(bigintToNumber(dirtyRow.last_dirty)),
@@ -316,19 +318,20 @@ async function handleBacklog(
   const start = Date.now();
   const prisma = getPrisma();
   try {
-    // DIRECT read of the latest wiki payload row — do NOT join to the latest daemon_run.
+    // DIRECT read of the latest wiki payload rows — do NOT join to the latest daemon_run.
     // Payload lags the run row by ~1 cycle → a join would miss the most-recent payload.
+    // The window past row 0 only feeds proposal first-seen dating.
     const rows = await prisma.$queryRaw<BacklogRow[]>`
       SELECT run_date, payload
       FROM core.daemon_run_payload
       WHERE daemon_name = 'wiki'
       ORDER BY run_date DESC
-      LIMIT 1
+      LIMIT ${PAYLOAD_HISTORY_ROWS}
     `;
 
     const row = rows[0];
     const backlog: WikiBacklog | null =
-      row === undefined ? null : extractBacklog(row.run_date, row.payload);
+      row === undefined ? null : extractBacklog(row.run_date, row.payload, buildProposalFirstSeen(rows));
 
     request.log.info(
       {
@@ -347,7 +350,11 @@ async function handleBacklog(
 // Pull the FE-relevant slices out of the JSONB payload · the payload shape varies by cycle.
 // Absent keys degrade to null/undefined rather than throwing · raw_processed is defensively coerced to number | null.
 // Exported as a pure helper for direct import in unit tests (mirrors the route module's export convention).
-export function extractBacklog(runDate: Date, payload: unknown): WikiBacklog {
+export function extractBacklog(
+  runDate: Date,
+  payload: unknown,
+  proposalFirstSeen: Record<string, string> = {},
+): WikiBacklog {
   const obj = payload !== null && typeof payload === "object" ? (payload as Record<string, unknown>) : {};
   const rawProcessed = obj.raw_processed;
   const trueBacklog = obj.true_backlog;
@@ -364,8 +371,56 @@ export function extractBacklog(runDate: Date, payload: unknown): WikiBacklog {
       typeof trueBacklog === "number" && Number.isFinite(trueBacklog) && trueBacklog >= 0
         ? trueBacklog
         : null,
+    proposal_first_seen: proposalFirstSeen,
     timezone: "UTC",
   };
+}
+
+// Daily cycle → the window spans roughly a quarter, past which an unresolved
+// proposal's exact first-seen date no longer changes what the operator does.
+const PAYLOAD_HISTORY_ROWS = 90;
+
+// cluster_hash → earliest run_date carrying it, restricted to the newest row's
+// proposals: a hash that dropped out of the latest cycle has nothing left to age.
+// Rows arrive newest-first; a hash with no cluster_hash string is unaddressable and skipped.
+// Exported as a pure helper for direct import in unit tests (mirrors extractBacklog).
+export function buildProposalFirstSeen(
+  rows: readonly { run_date: Date; payload: unknown }[],
+): Record<string, string> {
+  const latest = rows[0];
+  if (latest === undefined) return {};
+
+  const latestHashes = new Set(readProposalHashes(latest.payload));
+  if (latestHashes.size === 0) return {};
+
+  const firstSeen: Record<string, string> = {};
+  for (const row of rows) {
+    const date = formatDateOnly(row.run_date);
+    for (const hash of readProposalHashes(row.payload)) {
+      if (!latestHashes.has(hash)) continue;
+      const known = firstSeen[hash];
+      if (known === undefined || date < known) firstSeen[hash] = date;
+    }
+  }
+  return firstSeen;
+}
+
+// payload.dedup_proposals.proposals[].cluster_hash — every other shape yields no hashes.
+function readProposalHashes(payload: unknown): string[] {
+  if (payload === null || typeof payload !== "object") return [];
+  const dedup = (payload as Record<string, unknown>).dedup_proposals;
+  if (dedup === null || typeof dedup !== "object" || Array.isArray(dedup)) return [];
+
+  const proposals = (dedup as Record<string, unknown>).proposals;
+  if (!Array.isArray(proposals)) return [];
+
+  const hashes: string[] = [];
+  for (const proposal of proposals) {
+    if (proposal === null || typeof proposal !== "object") continue;
+    const hash = (proposal as Record<string, unknown>).cluster_hash;
+    if (typeof hash === "string" && hash.length > 0) hashes.push(hash);
+  }
+  return hashes;
 }
 
 // The wiki daemon writes dirty_flag.last_dirty in epoch SECONDS while the API

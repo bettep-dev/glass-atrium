@@ -12,6 +12,8 @@ export type ModelDomainKey =
   | "model.research"
   | "model.meta"
   | "model.wiki"
+  | "model.review"
+  | "model.docs"
   | "model.daemon_cycle_worker";
 
 export type BudgetDomainKey = "budget.worker_max_usd" | "budget.pre_verify_max_usd";
@@ -31,7 +33,7 @@ export interface DomainFileModel {
 export interface DomainStatus {
   domain: ModelDomainKey;
   desired: string | null;
-  // 'mixed' (dev, per-file detail in `files`) and the 'inherit (settings.json)'
+  // 'mixed' (multi-file domain, per-file detail in `files`) and the 'inherit (settings.json)'
   // label (absent daemon-config key) are display values, not raw surface bytes.
   actual: string | null;
   // Compared after variant-suffix normalization ('claude-fable-5[1m]' == 'claude-fable-5').
@@ -39,7 +41,7 @@ export interface DomainStatus {
   apply_mode: ApplyMode;
   editable: boolean;
   pricing_known: boolean;
-  // Dev only — per-file actuals so a 'mixed' state stays diagnosable.
+  // Multi-file domains only (dev, review, docs) — per-file actuals so 'mixed' stays diagnosable.
   files?: DomainFileModel[];
 }
 
@@ -69,13 +71,16 @@ export interface SurfaceFileResult {
   reason?: string;
 }
 
+export type FrontmatterSurface =
+  | "frontmatter-dev"
+  | "frontmatter-research"
+  | "frontmatter-meta"
+  | "frontmatter-wiki"
+  | "frontmatter-review"
+  | "frontmatter-docs";
+
 export interface SurfaceResult {
-  surface:
-    | "daemon-config.json"
-    | "frontmatter-dev"
-    | "frontmatter-research"
-    | "frontmatter-meta"
-    | "frontmatter-wiki";
+  surface: "daemon-config.json" | FrontmatterSurface;
   status: "ok" | "skipped" | "failed";
   reason?: string;
   files?: SurfaceFileResult[];

@@ -11,6 +11,8 @@
 //       quality numerator.
 //   (c) The structuredoutput-derived exception (result='done', origin='synthesized')
 //       needs no special case: one predicate covers both synthesis channels.
+//   (d) by_agent_top_10 rows carry the same `writer_open_count` under the same predicate, so
+//       the per-agent attention count never counts a synthesized or closed row.
 //
 // Expectations are derived from SEED_ROWS on both sides — no maintained literal counts.
 //
@@ -18,6 +20,9 @@
 
 import test, { after, before } from "node:test";
 import assert from "node:assert/strict";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { randomUUID } from "node:crypto";
 
 import "dotenv/config";
@@ -25,6 +30,7 @@ import "dotenv/config";
 import Fastify, { type FastifyInstance } from "fastify";
 
 import { disconnectPrisma, getPrisma } from "../src/server/db.js";
+import { resetAgentRegistryCache } from "../src/server/agents/registry.js";
 import { registerOutcomesRoutes } from "../src/server/routes/outcomes.js";
 import type { OutcomeCrossAnalysisResponse } from "../src/server/types/outcomes.js";
 
@@ -72,11 +78,43 @@ const SEED_ROWS: readonly SeedRow[] = [
   },
 ] as const;
 
+// Seed index ↔ agent name — one row per agent, so a by_agent row maps back to its seed.
+function getSeedAgent(index: number): string {
+  return `synthesized-quality-agent-${index}`;
+}
+
 function writerSeeds(): readonly SeedRow[] {
   return SEED_ROWS.filter((row) => row.downgrade_origin !== SYNTHESIZED_ORIGIN);
 }
 
+// Hermetic registry — by_agent_top_10 stays registry-scoped even under include_all,
+// so the seed agents reach that dimension only by being canonical members here.
+function buildRegistryFixture(): unknown {
+  const agents: Record<string, unknown> = {};
+  for (const agent of SEED_ROWS.map((_row, index) => getSeedAgent(index))) {
+    agents[agent] = { domains: ["test"], phase: "implementation", dual_phase: false };
+  }
+  return { $schema: "agent-registry", version: "1.1", agents };
+}
+
+let registryRoot: string;
+
+async function setRegistryFixture(): Promise<void> {
+  registryRoot = await mkdtemp(join(tmpdir(), "synthesized-quality-registry-"));
+  const registryPath = join(registryRoot, "agent-registry.json");
+  await writeFile(registryPath, JSON.stringify(buildRegistryFixture()), "utf8");
+  process.env.AGENT_REGISTRY_PATH = registryPath;
+  resetAgentRegistryCache();
+}
+
+async function clearRegistryFixture(): Promise<void> {
+  delete process.env.AGENT_REGISTRY_PATH;
+  resetAgentRegistryCache();
+  await rm(registryRoot, { recursive: true, force: true });
+}
+
 before(async () => {
+  await setRegistryFixture();
   app = Fastify({ logger: false });
   await registerOutcomesRoutes(app);
   await app.ready();
@@ -98,6 +136,7 @@ after(async () => {
     console.error("[synthesized-quality-test cleanup] DB scrub failed:", error);
   }
   await disconnectPrisma();
+  await clearRegistryFixture();
 });
 
 async function seedRows(): Promise<void> {
@@ -112,7 +151,7 @@ async function seedRows(): Promise<void> {
          attribution_source, downgrade_origin, cid)
       VALUES
         (NOW() - (${minutesAgo}::int * INTERVAL '1 minute'),
-         ${`synthesized-quality-agent-${i}`},
+         ${getSeedAgent(i)},
          'feature'::core."TaskType",
          ${row.result}::core."OutcomeResult",
          ${`synthesized-quality seed ${row.result} ${SUITE_MARKER}`},
@@ -199,4 +238,30 @@ test("/cross-analysis excludes the structuredoutput-derived done row by the same
     syntheticDoneSeeds.length,
     "the schema-mode recovery row is excluded without a result-specific special case",
   );
+});
+
+// (d) 에이전트별 분자 — 같은 판별식이 per-agent 행에도 그대로 적용된다.
+
+test("/cross-analysis by_agent_top_10 writer_open_count applies the same exclusion per agent", async () => {
+  const body = await fetchCrossAnalysisSeed();
+  const seedByAgent = new Map(SEED_ROWS.map((row, i) => [getSeedAgent(i), row]));
+
+  const matched = body.by_agent_top_10.filter((row) => seedByAgent.has(row.agent));
+  assert.strictEqual(matched.length, SEED_ROWS.length, "every seed agent appears once");
+
+  for (const row of matched) {
+    const seed = seedByAgent.get(row.agent);
+    assert.ok(seed, `${row.agent}: seed resolved`);
+    const isOpenWriterCaveat =
+      seed.downgrade_origin !== SYNTHESIZED_ORIGIN && seed.result === "done_with_concerns";
+    assert.strictEqual(
+      row.writer_open_count,
+      isOpenWriterCaveat ? 1 : 0,
+      `${row.agent}: only a writer-emitted unclosed caveat row counts`,
+    );
+    assert.ok(
+      row.writer_open_count <= row.count - row.reconstructed_count,
+      `${row.agent}: writer_open_count never exceeds the writer-emitted population`,
+    );
+  }
 });
