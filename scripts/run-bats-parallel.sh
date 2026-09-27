@@ -48,8 +48,10 @@
 # DAEMON_ENV_SCRUB is a deliberate divergence rather than a mirror gap: .github/workflows/
 # ci.yml sets none of those variables, so a fresh runner carries no leak to scrub there.
 #
-# Sequential fallback (to isolate a parallel-only flake):
-#   bats --recursive test/ hooks/test/ scripts/test/ autoagent/test/
+# Sequential fallback (to isolate a parallel-only flake), run from the checkout with
+# stage 1's start shape — an empty scratch cwd, absolute roots:
+#   repo="${PWD}"; cd -- "$(mktemp -d)"
+#   bats --recursive "${repo}"/{test,hooks/test,scripts/test,autoagent/test}
 set -Eeuo pipefail
 IFS=$'\n\t'
 

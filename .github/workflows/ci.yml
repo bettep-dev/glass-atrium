@@ -432,8 +432,10 @@ jobs:
           # /dev/shm always exists on ubuntu-latest; no test file or macOS path changes.
           TMPDIR: /dev/shm
         run: |
-          # bats starts from an empty scratch cwd → a script a test starts never
-          # inherits the checkout as its cwd, so every path bats gets is absolute.
+          # Sets only the bats PROCESS start cwd: an empty scratch dir, so every path
+          # bats gets is absolute. Each test's start cwd is the suite seat's
+          # (test/lib/bats-hermetic-env.bash); a test body or a script that cds
+          # elsewhere on its own leaves both seats behind.
           # The file list stays repo-relative: it keys the report dir (the annotate
           # and summary steps glob reports/bats/ in the checkout) and tags each line.
           # Exported: each parallel job runs in its own bash.
