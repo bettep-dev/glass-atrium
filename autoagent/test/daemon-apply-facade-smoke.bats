@@ -126,6 +126,19 @@ teardown() {
   [[ "${output}" == *"FATAL: apply-lock lib failed to load (${WORK}/noguard/apply-lock.sh)"* ]]
 }
 
+@test "facade-invoked daemon-apply maps a missing path guard to exit 5 before any lock" {
+  # git-txn.sh loads the guard at the top of the run, so its failure must still surface as the
+  # documented lib code rather than the bare errexit status.
+  mv -- "${REAL}/scripts/lib/path-guard.sh" "${WORK}/path-guard.sh.moved"
+  run env HOME="${FAKE_HOME}" AUTOAGENT_REPORTS_DIR="${REPORTS}" \
+    bash "${FACADE}/autoagent/daemon-apply.sh" --dry-run \
+    --report "${WORK}/report.json" --agents-dir "${AGENTS}"
+
+  [[ "${status}" -eq 5 ]] || return 1
+  [[ "${output}" == *"cannot source the shared path guard"* ]] || return 1
+  [[ ! -e "${REPORTS}/.apply-lock" ]] || return 1
+}
+
 # ---------------------------------------------------------------------------
 # (c) daemon-cycle.sh via facade → sibling daemon_cycle.py resolves to the
 #     REAL tree even though the facade has NO daemon_cycle.py mirror
