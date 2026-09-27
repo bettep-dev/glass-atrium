@@ -1,13 +1,14 @@
 #!/usr/bin/env bats
-# autoagents-eval.sh git-status failure suite (doc-739 T2 category-3 adjudication).
+# autoagents-eval.sh default-path suite: the git-status failure contract plus the startup
+# precondition ahead of it.
 # Pins that a GENUINE git failure on the default/manual path loud-fails (captured
 # git stderr + named exit 5) instead of collapsing into the empty filter result
 # and the affirmative-false "no changes — exit" success. Under pipefail the old
 # single pipeline reported the RIGHTMOST status, so a trailing grep no-match (1)
 # was indistinguishable from a git 128 — that indistinguishability is the defect.
-# Row 1 FAILS at HEAD (exit 0, silent); rows 2-4 are unchanged-green guards for
-# the legitimate no-match path, the changed-file data path, and the mode-2
-# (--unstaged) runner contract the conversion must not touch.
+# Row 1 pins that loud-fail; rows 2-4 guard the legitimate no-match path, the
+# changed-file data path, and the mode-2 (--unstaged) runner contract; row 5 pins
+# the startup precondition — a missing shared path guard exits 6 before any scan.
 #
 # Assertion idiom: `[[ ... ]] || return 1`. @test bodies run under errexit, but a
 # bare non-final `[[ ]]` is exempt under macOS bash 3.2.57 and DOES gate from bash

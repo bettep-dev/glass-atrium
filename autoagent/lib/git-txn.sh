@@ -79,7 +79,7 @@ fi
 # never a delete. Found through this file's real path: the updater's merge-lib seam may symlink it.
 _git_txn_source_path_guard() {
   local self="${BASH_SOURCE[0]}" guard=""
-  # readlink -f only on a symlink (macOS 12.3+, as hook-utils.sh) → a direct load forks nothing.
+  # readlink -f only on a symlink (macOS 12.3+, as hooks/hook-utils.sh) → a direct load forks nothing.
   if [[ -L "${self}" ]] && ! self="$(readlink -f -- "${self}")"; then
     printf 'git-txn: FATAL: cannot resolve the real path of %s\n' "${BASH_SOURCE[0]}" >&2
     return 1

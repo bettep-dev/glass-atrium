@@ -534,15 +534,15 @@ prune_backup_retention() {
     [[ -n "${newest}" ]] || return 0 # GA-ABSORB[benign]: no cycle subdir found means nothing to prune — housekeeping no-op, not a precondition
     # shellcheck disable=SC2310  # the helper's status IS the WARN signal — it counts its own failures
     if ! find "${BACKUP_DIR}" -mindepth 1 -maxdepth 1 -type d \
-        -mtime +"${BACKUP_TTL_DAYS}" ! -path "${newest}" -print0 | remove_expired_backups; then
+        -mtime +"${BACKUP_TTL_DAYS}" ! -path "${newest}" -print0 | delete_expired_backups; then
         printf '[daemon-apply] WARN: backup retention prune hit errors (BACKUP_DIR=%s)\n' \
             "${BACKUP_DIR}" >&2
     fi
 }
 
-# remove_expired_backups — delete each NUL-delimited cycle dir read from stdin; 1 when any
+# delete_expired_backups — delete each NUL-delimited cycle dir read from stdin; 1 when any
 # removal failed or was refused by the shared path guard, so the caller's WARN still fires.
-remove_expired_backups() {
+delete_expired_backups() {
     local victim failed=0
     while IFS= read -r -d '' victim; do
         # shellcheck disable=SC2310  # pure predicate — nothing inside it for errexit to catch

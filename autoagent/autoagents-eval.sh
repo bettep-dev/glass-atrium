@@ -5,7 +5,7 @@
 #   (2) --unstaged <file>: runner.js flow — eval one uncommitted file; never rollback/commit
 #       → emits RESULT: PASS|FAIL on stdout, exit 0/1
 #   (3) --post-commit <file>: legacy-compat alias
-# Exit codes (autoagents-eval.sh-scoped; daemon-apply.sh owns a different 4/5):
+# Exit codes (autoagents-eval.sh-scoped; daemon-apply.sh owns a different 4/5/6):
 #   0 = PASS or nothing to eval · 1 = FAIL (eval verdict, preflight, or claude run)
 #   4 = claude binary not found · 5 = git status failed on the default-mode scan
 #   6 = shared path guard (scripts/lib/path-guard.sh) missing — nothing is scanned

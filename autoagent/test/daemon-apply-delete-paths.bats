@@ -19,7 +19,7 @@ setup() {
   [[ -f "${APPLY_SH}" ]] || skip "daemon-apply.sh not found: ${APPLY_SH}"
   WORK="$(cd -- "$(mktemp -d -t daemon-apply-delete.XXXXXX)" && pwd -P)"
   local name
-  for name in prune_backup_retention remove_expired_backups delete_scratch_files; do
+  for name in prune_backup_retention delete_expired_backups delete_scratch_files; do
     sed -n "/^${name}() {\$/,/^}\$/p" "${APPLY_SH}"
   done >"${WORK}/fns.sh"
   # shellcheck source=/dev/null
