@@ -641,6 +641,31 @@ seed_baseline_hashed() {
   [ "$(find "${INSTALL}/agents" -name 'dev-new.md.create.*' | wc -l | tr -d ' ')" -eq 0 ]
 }
 
+@test "a create verify failure whose rollback delete is refused reports the body as not removed" {
+  # A relative install root makes the created target relative, which the path guard
+  # refuses to delete: the verify-failed body stays live, so the log must say so.
+  seed_file "${WORK}/rel" "agents/dev-existing.md" "x"
+  seed_file "${NEWSRC}" "agents/dev-existing.md" "x"
+  seed_file "${NEWSRC}" "agents/dev-new.md" "# dev-new
+>>>>>>> RELEASE (vendor)"
+  write_manifest "${WORK}/manifest.json" "agents/dev-existing.md" "agents/dev-new.md"
+
+  run bash -c '
+    '"$(declare -f load_skill)"'
+    INSTALL="'"${INSTALL}"'"; STATE="'"${STATE}"'"
+    load_skill
+    export ATRIUM_UPDATE_MERGE_LIB_DIR="${REAL_LIB_ROOT}/autoagent/lib"
+    cd "'"${WORK}"'"
+    update_merge_agent_editable_regions "'"${NEWSRC}"'" "'"${WORK}/manifest.json"'" rel
+  '
+  [[ "$output" == *"refusing a non-absolute delete target"* ]] || { echo "$output"; return 1; }
+  [[ "$output" != *"ModuleNotFoundError"* ]] || { echo "$output"; return 1; }
+  [[ "$output" != *"the created body was DELETED"* ]] || { echo "$output"; return 1; }
+  [[ "$output" == *"agent create verify FAILED for agents/dev-new.md — the created body was NOT removed"* ]] \
+    || { echo "$output"; return 1; }
+  [ -f "${WORK}/rel/agents/dev-new.md" ]
+}
+
 # Multi-leg targeting of the agent stage
 #
 # Each probe below isolates ONE leg: the name it turns on is named by that leg and

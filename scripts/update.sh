@@ -2013,7 +2013,7 @@ _update_agent_commit_callback() {
 # before-image cannot express. Args: $1 = release file · $2 = target path ·
 # $3 = manifest-relative logical path · $4 = agent name.
 # Returns 0 applied · 1 the write did not land · 2 verify failed and the file was
-# removed.
+# removed · 3 verify failed and the file was NOT removed (delete refused or failed).
 update_create_agent_body() {
   local release_file="$1" target="$2" logical="$3" agent="$4" tmp mode
   mkdir -p -- "${target%/*}" || return 1
@@ -2043,7 +2043,7 @@ update_create_agent_body() {
   _update_agent_verify_release="${release_file}"
   _update_agent_verify_agent="${agent}"
   if ! _update_agent_verify "${target}"; then
-    if ga_guard_path "${target}"; then rm -f -- "${target:?}"; fi
+    update_delete_files "${target}" || return 3
     return 2
   fi
   return 0
@@ -2148,6 +2148,10 @@ update_merge_agent_editable_regions() {
           ;;
         2)
           update_log "WARN: agent create verify FAILED for agents/${base} — the created body was DELETED (rollback)"
+          _update_agent_create_failures="${_update_agent_create_failures}${base%.md}"$'\n'
+          ;;
+        3)
+          update_log "WARN: agent create verify FAILED for agents/${base} — the created body was NOT removed (rollback delete refused or failed, see the line above); remove ${local_file} by hand"
           _update_agent_create_failures="${_update_agent_create_failures}${base%.md}"$'\n'
           ;;
         *)
@@ -3718,7 +3722,8 @@ update_write_restore_index() {
   index="$(update_restore_index_path "${cycle_dir}")"
   if ! printf '%s' "${rows}" >"${index}"; then
     update_log "WARN: restore index write failed for ${cycle_dir##*/} — --restore-agents falls back to the agents/ directory convention for this cycle"
-    update_delete_files "${index}" || true # GA-ABSORB[handled@the WARN above]: the index-less fallback already applies to this cycle
+    # GA-ABSORB[handled@the guard or rm stderr line]: a failed removal leaves the partial index and says so there
+    update_delete_files "${index}" || true
   fi
 }
 
