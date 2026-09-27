@@ -94,13 +94,10 @@ is_shell_file() {
 }
 
 audit_file() {
-  local rel="${1}" abs="${2}" idx=0 line="" prev="" rc=0
-  grep -q -E "${RE_PREFILTER}" -- "${abs}" || rc=$?
-  if ((rc == 1)); then
+  local rel="${1}" abs="${2}" idx=0 line="" prev=""
+  # shellcheck disable=SC2310  # predicate whose one failure path exits the script itself
+  if ! has_site_candidate "${abs}"; then
     return 0
-  elif ((rc > 1)); then
-    printf 'ERROR: cannot read %s\n' "${abs}" >&2
-    exit 3
   fi
   audit_cli_slurp "${abs}"
   for ((idx = 0; idx < AUDIT_CLI_LINE_COUNT; idx++)); do
@@ -115,6 +112,17 @@ audit_file() {
     fi
     audit_site "${rel}:$((idx + 1))" "${line#"${line%%[![:space:]]*}"}" "${prev#"${prev%%[![:space:]]*}"}"
   done
+}
+
+# 0 when some line carries a flagged delete candidate, 1 when none; exits 3 when the file cannot be read.
+has_site_candidate() {
+  local abs="${1}" rc=0
+  grep -q -E "${RE_PREFILTER}" -- "${abs}" || rc=$?
+  if ((rc > 1)); then
+    printf 'ERROR: cannot read %s\n' "${abs}" >&2
+    exit 3
+  fi
+  return "${rc}"
 }
 
 # Sets SITE_PREFIX / SITE_REST around the first recursive or forced delete on the line; 1 when none.

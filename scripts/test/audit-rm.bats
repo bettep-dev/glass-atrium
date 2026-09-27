@@ -2,9 +2,10 @@
 # audit-rm.bats — pins scripts/audit-rm.sh: exactly one converted delete shape, the three named unsafe
 # kinds, the closed two-label annotation vocabulary, and the five-tree scope minus the probe file.
 #
-# Every fixture line is test data the auditor reads and no shell runs. This file is inside the
-# auditor's own scope, so each such line it flags carries a not-executed annotation on the comment
-# line above it; array elements keep those comments out of the fixtures themselves.
+# Every fixture line is test data the auditor reads and no shell runs.
+# This file is in the auditor's own scope, so each such line it flags is annotated not-executed in one of two ways:
+#   - a comment line directly above it, which stays out of every fixture;
+#   - a GA-RM token following the site inside the fixture text itself.
 
 # shellcheck disable=SC2016  # fixtures are literal shell text written to files, never expanded here
 
@@ -153,11 +154,12 @@ make_scope_root() {
   write_fixture "${root}/scripts/test/b.bats" "${site}"
   write_fixture "${root}/lib/c.bash" "${site}"
   write_fixture "${root}/autoagent/tool" '#!/bin/sh' "${site}"
+  write_fixture "${root}/test/e.bats" "${site}"
   write_fixture "${root}/test/scratch-cwd-violation-probe.bats" "${site}"
   write_fixture "${root}/test/notes.md" "${site}"
   write_fixture "${root}/monitor/d.sh" "${site}"
   run bash "${AUDIT_SH}" --root "${root}"
-  assert_summary "scope run" "converted=0 annotated=0 unconverted=4 quality_reject=0"
+  assert_summary "scope run" "converted=0 annotated=0 unconverted=5 quality_reject=0"
   [[ "${output}" != *scratch-cwd-violation-probe* ]] || {
     echo "the probe file was audited: ${output}"
     return 1
