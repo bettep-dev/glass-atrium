@@ -25,7 +25,9 @@ run_hook() {
   run bash "${HOOK_SH}" <<<"${1}"
 }
 
+# GA-RM[not-executed]: test title text, which no shell runs
 @test "malicious: rm -rf / → SEC-010 block (exit 2)" {
+  # GA-RM[not-executed]: hook payload on stdin, only pattern-matched by the hook and never run
   run_hook '{"tool_name":"Bash","tool_input":{"command":"rm -rf /"}}'
   [[ "${status}" -eq 2 ]] || return 1
   [[ "${output}" == *"SEC-010"* ]] || return 1
@@ -43,9 +45,11 @@ run_hook() {
   [[ -z "${output}" ]] || return 1
 }
 
+# GA-RM[not-executed]: test title text, which no shell runs
 @test "benign: rm -rf on a project-relative dir → pass (scope-limited pattern)" {
   # The dangerous-pattern set targets root/home/cwd wipes — a regenerable build
   # dir remove is NOT in scope and must not false-block.
+  # GA-RM[not-executed]: hook payload on stdin, only pattern-matched by the hook and never run
   run_hook '{"tool_name":"Bash","tool_input":{"command":"rm -rf build/artifacts"}}'
   [[ "${status}" -eq 0 ]] || return 1
 }
@@ -59,13 +63,17 @@ run_hook() {
 # process substitution, sudo-shell pipe, quoted-HOME — each a live bypass of the
 # fixed-string legacy rows.
 
+# GA-RM[not-executed]: test title text, which no shell runs
 @test "malicious: rm -fr / (reordered flags) → SEC-010 block (exit 2)" {
+  # GA-RM[not-executed]: hook payload on stdin, only pattern-matched by the hook and never run
   run_hook '{"tool_name":"Bash","tool_input":{"command":"rm -fr /"}}'
   [[ "${status}" -eq 2 ]] || return 1
   [[ "${output}" == *"SEC-010"* ]] || return 1
 }
 
+# GA-RM[not-executed]: test title text, which no shell runs
 @test "malicious: rm -r -f ~ (split flags) → SEC-010 block (exit 2)" {
+  # GA-RM[not-executed]: hook payload on stdin, only pattern-matched by the hook and never run
   run_hook '{"tool_name":"Bash","tool_input":{"command":"rm -r -f ~"}}'
   [[ "${status}" -eq 2 ]] || return 1
   [[ "${output}" == *"SEC-010"* ]] || return 1
@@ -89,19 +97,25 @@ run_hook() {
   [[ "${output}" == *"SEC-010"* ]] || return 1
 }
 
+# GA-RM[not-executed]: test title text, which no shell runs
 @test "malicious: rm -rf quoted \$HOME → SEC-010 block (exit 2)" {
+  # GA-RM[not-executed]: hook payload on stdin, only pattern-matched by the hook and never run
   run_hook '{"tool_name":"Bash","tool_input":{"command":"rm -rf \"$HOME\""}}'
   [[ "${status}" -eq 2 ]] || return 1
   [[ "${output}" == *"SEC-010"* ]] || return 1
 }
 
+# GA-RM[not-executed]: test title text, which no shell runs
 @test "malicious: rm -fR -- ~/x (end-of-options marker) → SEC-010 block (exit 2)" {
+  # GA-RM[not-executed]: hook payload on stdin, only pattern-matched by the hook and never run
   run_hook '{"tool_name":"Bash","tool_input":{"command":"rm -fR -- ~/x"}}'
   [[ "${status}" -eq 2 ]] || return 1
   [[ "${output}" == *"SEC-010"* ]] || return 1
 }
 
+# GA-RM[not-executed]: test title text, which no shell runs
 @test "benign: rm -rf -- build/ → pass (-- marker, non-wipe target)" {
+  # GA-RM[not-executed]: hook payload on stdin, only pattern-matched by the hook and never run
   run_hook '{"tool_name":"Bash","tool_input":{"command":"rm -rf -- build/"}}'
   [[ "${status}" -eq 0 ]] || return 1
 }
@@ -148,6 +162,7 @@ run_hook_without_jq() {
 }
 
 @test "block output: push URL with userinfo → row name only, no URL or token, JSON parses" {
+  # GA-RM[not-executed]: hook payload on stdin, only pattern-matched by the hook and never run
   run_hook '{"tool_name":"Bash","tool_input":{"command":"git push https://user:tok123@github.com/o/r.git && rm -rf /"}}'
   [[ "${status}" -eq 2 ]] || return 1
   [[ "${output}" != *"tok123"* && "${output}" != *"github.com"* ]] || return 1
