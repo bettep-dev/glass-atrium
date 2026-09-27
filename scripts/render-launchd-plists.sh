@@ -43,6 +43,8 @@ SCRIPT_SELF_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" >/dev/null 2>&1 && 
 readonly SCRIPT_SELF_DIR
 # shellcheck source=lib/atrium-config.sh
 source "${SCRIPT_SELF_DIR}/lib/atrium-config.sh"
+# shellcheck source-path=SCRIPTDIR source=lib/path-guard.sh
+source "${SCRIPT_SELF_DIR}/lib/path-guard.sh"
 # job names match the [daemon.<name>] stanzas in config.toml 1:1
 readonly -a JOBS=(
   monitor
@@ -59,7 +61,9 @@ readonly -a JOBS=(
 CUR_TMP=""
 cleanup() {
   local exit_code=$?
-  [[ -n "${CUR_TMP}" && -f "${CUR_TMP}" ]] && rm -f -- "${CUR_TMP}"
+  # Empty between jobs (skipped silently); a relative GA_PLIST_OUT temp is refused, never deleted.
+  # shellcheck disable=SC2310  # pure predicate — nothing inside it for errexit to catch
+  if ga_guard_path "${CUR_TMP}"; then rm -f -- "${CUR_TMP:?}"; fi
   exit "${exit_code}"
 }
 trap cleanup EXIT INT TERM

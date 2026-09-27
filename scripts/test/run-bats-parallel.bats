@@ -208,11 +208,13 @@ setup() {
   RUNNER="${SANDBOX}/scripts/run-bats-parallel.sh"
   STUB_PATH="${STUB_BIN}:${PATH}"
   export STUB_LOG_DIR
-  mkdir -p "${STUB_BIN}" "${STUB_LOG_DIR}/pyprobe" "${SANDBOX}/scripts" \
+  mkdir -p "${STUB_BIN}" "${STUB_LOG_DIR}/pyprobe" "${SANDBOX}/scripts/lib" \
     "${SANDBOX}/test" "${SANDBOX}/hooks/test" "${SANDBOX}/scripts/test" \
     "${SANDBOX}/autoagent/test"
   cp -- "${REAL_RUNNER}" "${RUNNER}"
   chmod +x "${RUNNER}"
+  # The runner's exit teardown is gated on the shared path guard it sources from lib/.
+  cp -- "${REAL_RUNNER%/*}/lib/path-guard.sh" "${SANDBOX}/scripts/lib/path-guard.sh"
 
   # The module scenario 6 imports through the REAL interpreter. Its mere import is
   # what would produce __pycache__ next to it.

@@ -63,6 +63,8 @@ SCRIPT_SELF_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" >/dev/null 2>&1 && 
 readonly SCRIPT_SELF_DIR
 # shellcheck source=lib/atrium-config.sh
 source "${SCRIPT_SELF_DIR}/lib/atrium-config.sh"
+# shellcheck source-path=SCRIPTDIR source=lib/path-guard.sh
+source "${SCRIPT_SELF_DIR}/lib/path-guard.sh"
 
 TMP_FILES=()
 EXECUTE=0
@@ -74,7 +76,9 @@ cleanup() {
   local rc=$?
   local f
   for f in "${TMP_FILES[@]:-}"; do
-    [[ -n "${f}" && -e "${f}" ]] && rm -f -- "${f}"
+    # A cwd-relative temp (relative --out) is refused, never deleted against the cwd.
+    # shellcheck disable=SC2310  # pure predicate — nothing inside it for errexit to catch
+    if ga_guard_path "${f}"; then rm -f -- "${f:?}"; fi
   done
   exit "${rc}"
 }

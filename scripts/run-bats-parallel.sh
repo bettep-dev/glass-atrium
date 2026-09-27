@@ -59,6 +59,8 @@ SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 readonly SCRIPT_DIR
 REPO_ROOT="$(cd -- "${SCRIPT_DIR}/.." && pwd)"
 readonly REPO_ROOT
+# shellcheck source-path=SCRIPTDIR source=lib/path-guard.sh
+source "${SCRIPT_DIR}/lib/path-guard.sh"
 readonly TEST_ROOTS=(test hooks/test scripts/test autoagent/test)
 readonly HOOKS_TEST_ROOT=hooks/test
 readonly AUTOAGENT_TEST_ROOT=autoagent/test
@@ -117,8 +119,10 @@ WORST_RC=0
 cleanup() {
   local dir
   for dir in "${SANDBOX_ROOT}" "${GIT_PROBE_DIR}" "${BATS_CWD_DIR}"; do
-    if [[ -n "${dir}" && -d "${dir}" ]]; then
-      rm -rf -- "${dir}"
+    # A dir the run never created is still empty, which the guard skips silently.
+    # shellcheck disable=SC2310  # pure predicate — nothing inside it for errexit to catch
+    if ga_guard_path "${dir}"; then
+      rm -rf -- "${dir:?}"
     fi
   done
 }

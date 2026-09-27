@@ -31,10 +31,17 @@
 #
 # Exit codes:
 #   0 = prune completed (zero or more entries removed)
+#   1 = shared path guard (lib/path-guard.sh) missing — nothing is removed
 #   2 = usage error
 #   3 = the scratch root failed validation (nothing was removed)
 set -Eeuo pipefail
 IFS=$'\n\t'
+
+# ga_guard_path gates each removal; scripts/ runs in place, so lib/ sits beside this file.
+SELF_DIR="$(dirname -- "${BASH_SOURCE[0]}")"
+readonly SELF_DIR
+# shellcheck source-path=SCRIPTDIR source=lib/path-guard.sh
+source "${SELF_DIR}/lib/path-guard.sh"
 
 # Override exists for sandbox testing only; it passes the SAME validation as the default, so an
 # override cannot widen the scope — it can only point the prune at another directory named `jobs`.
@@ -107,10 +114,21 @@ main() {
     elif [[ -L "${entry}" ]]; then
       # Unlink, never traverse: -L is tested before -d so a link TO a directory takes this branch
       # and `rm -f` removes the link alone, leaving the target tree intact.
-      rm -f -- "${entry}"
+      # A refused entry is neither reported nor counted as pruned.
+      # shellcheck disable=SC2310  # guard verdict branched on — a refusal skips the entry
+      if ga_guard_path "${entry}"; then
+        rm -f -- "${entry:?}"
+      else
+        continue
+      fi
       printf 'pruned: %s\n' "${entry}"
     else
-      rm -rf -- "${entry}"
+      # shellcheck disable=SC2310  # guard verdict branched on — a refusal skips the entry
+      if ga_guard_path "${entry}"; then
+        rm -rf -- "${entry:?}"
+      else
+        continue
+      fi
       printf 'pruned: %s\n' "${entry}"
     fi
     removed=$((removed + 1))

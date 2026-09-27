@@ -203,3 +203,22 @@ run_render() {
   run grep -RF "${HOME}" "${OUT}"
   [[ "${status}" -eq 1 ]]
 }
+
+@test "a failed render deletes its temp plist under an absolute out dir and refuses a cwd-relative one" {
+  local broken="${SANDBOX}/broken.toml" cwd="${SANDBOX}/cwd"
+  # An out-of-range schedule fails the wiki-compile render after its temp plist exists.
+  sed -e 's|^time = "04:50"|time = "99:99"|' "${FAKE_CONFIG}" >"${broken}"
+  mkdir -p "${cwd}"
+
+  GA_CONFIG_TOML="${broken}" GA_PLIST_OUT="${OUT}" run "${REAL_RENDERER}"
+  [[ "${status}" -eq 4 ]] || { echo "absolute out: rc=${status} ${output}"; return 1; }
+  run find "${OUT}" -name '*.ga-render.*'
+  [[ -z "${output}" ]] || { echo "absolute out: the temp outlived the failed render: ${output}"; return 1; }
+
+  run bash -c 'cd -- "$1" && GA_CONFIG_TOML="$2" GA_PLIST_OUT=rel "$3"' _ "${cwd}" "${broken}" "${REAL_RENDERER}"
+  [[ "${status}" -eq 4 ]] || { echo "relative out: rc=${status} ${output}"; return 1; }
+  [[ "${output}" == *"refusing a non-absolute delete target"* ]] \
+    || { echo "relative out: no refusal reported: ${output}"; return 1; }
+  run find "${cwd}/rel" -name 'com.glass-atrium.wiki-compile.plist.ga-render.*'
+  [[ -n "${output}" ]] || { echo "relative out: the cwd-relative temp was deleted"; return 1; }
+}

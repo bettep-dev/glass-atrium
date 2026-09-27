@@ -219,3 +219,20 @@ drive_replace() {
   [[ "${status}" -eq 8 ]] || return 1
   [[ "${output}" == *"MISSING manifest.json"* ]] || return 1
 }
+
+@test "replace: the exit teardown deletes the local swap copy under an absolute out dir and refuses a cwd-relative one" {
+  local swap='glass-atrium-bundle-1.0.1.tar.gz.swap'
+  local assets='manifest.json\nglass-atrium-bundle-1.0.1.tar.gz'
+
+  drive_replace GH_ASSETS="${assets}"
+  [[ "${status}" -eq 0 ]] || { echo "absolute out: rc=${status} ${output}"; return 1; }
+  [[ ! -e "${OUT}/${swap}" ]] || { echo "absolute out: the swap copy outlived the run"; return 1; }
+
+  # The driver resolves the relative out dir against the child's cwd, the sandbox.
+  run env GA_ROOT="${SANDBOX}" GH_ASSETS="${assets}" \
+    bash -c 'cd -- "$1" && bash "$2" "$3" out' _ "${SANDBOX}" "${RDRIVER}" "${PUB}"
+  [[ "${status}" -eq 0 ]] || { echo "relative out: rc=${status} ${output}"; return 1; }
+  [[ "${output}" == *"refusing a non-absolute delete target"* ]] \
+    || { echo "relative out: no refusal reported: ${output}"; return 1; }
+  [[ -e "${SANDBOX}/out/${swap}" ]] || { echo "relative out: the cwd-relative swap copy was deleted"; return 1; }
+}
