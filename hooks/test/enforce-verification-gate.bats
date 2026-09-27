@@ -38,6 +38,8 @@
 
 HOOKS_DIR="${BATS_TEST_DIRNAME}/.."
 HOOK_SH="${HOOKS_DIR}/enforce-verification-gate.sh"
+# shellcheck source-path=SCRIPTDIR source=../../scripts/lib/path-guard.sh
+source "${BATS_TEST_DIRNAME}/../../scripts/lib/path-guard.sh"
 
 setup() {
   [[ -f "${HOOK_SH}" ]] || skip "enforce-verification-gate.sh not found: ${HOOK_SH}"
@@ -434,7 +436,7 @@ mint_bad_sink() {
   for row in "${table[@]}"; do
     IFS='|' read -r stype prompt code tag <<<"${row}"
     echo "row=${row}"
-    rm -f "${SINK}"
+    if ga_guard_path "${SINK}"; then rm -f -- "${SINK:?}"; fi
     run_hook_trace "${stype}" "${prompt}"
     assert_status 2
     assert_contains "${code}"
@@ -465,7 +467,8 @@ mint_bad_sink() {
   for row in "${table[@]}"; do
     IFS='|' read -r stype prompt seed <<<"${row}"
     echo "row=${row}"
-    rm -f "${SINK}" "${DATA_DIR}/session-spawns/sess-test-001"
+    if ga_guard_path "${SINK}"; then rm -f -- "${SINK:?}"; fi
+    if ga_guard_path "${DATA_DIR}"; then rm -f -- "${DATA_DIR:?}/session-spawns/sess-test-001"; fi
     if [[ "${seed}" == "seed-reviewer" ]]; then seed_reviewer; fi
     run_hook_trace "${stype}" "${prompt}"
     assert_status 0
