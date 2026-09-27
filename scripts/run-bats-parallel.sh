@@ -102,6 +102,8 @@ SANDBOX_ROOT=""
 # The git probe's throwaway repo, declared here so the EXIT trap below already covers
 # it when probe_git_usable creates it.
 GIT_PROBE_DIR=""
+# Stage 1's cwd, declared here for the same EXIT-trap coverage.
+BATS_CWD_DIR=""
 # The highest exit code any stage has returned so far, folded by run_stage itself. The
 # fold lives THERE rather than at each call site: a `run_stage … || rc=$?` site would
 # disable set -e for the whole call (SC2310), and the rc is data to be folded, not a
@@ -112,7 +114,7 @@ WORST_RC=0
 # shellcheck disable=SC2329
 cleanup() {
   local dir
-  for dir in "${SANDBOX_ROOT}" "${GIT_PROBE_DIR}"; do
+  for dir in "${SANDBOX_ROOT}" "${GIT_PROBE_DIR}" "${BATS_CWD_DIR}"; do
     if [[ -n "${dir}" && -d "${dir}" ]]; then
       rm -rf -- "${dir}"
     fi
@@ -191,16 +193,27 @@ main() {
   fi
   [[ -n "${job_count}" ]] || job_count=4
 
-  cd -- "${REPO_ROOT}"
-
   local total_t0="${SECONDS}"
 
   printf 'run-bats-parallel: bats --jobs %s --no-parallelize-within-files over %s\n' \
     "${job_count}" "${TEST_ROOTS[*]}" >&2
 
+  # Stage 1 starts from an empty scratch cwd on absolute roots → a script inheriting the
+  # bats cwd resolves a cwd-relative path outside the repository. A failed mktemp or cd
+  # ends the run here under set -e, never folded into WORST_RC as a red suite.
+  local bats_roots=() root
+  for root in "${TEST_ROOTS[@]}"; do
+    bats_roots+=("${REPO_ROOT}/${root}")
+  done
+  BATS_CWD_DIR="$(mktemp -d -t run-bats-parallel-cwd.XXXXXX)"
+  cd -- "${BATS_CWD_DIR}"
+
   run_stage 'stage 1/4 bats' \
     env "${DAEMON_ENV_SCRUB[@]}" \
-    bats --jobs "${job_count}" --no-parallelize-within-files --recursive "${TEST_ROOTS[@]}"
+    bats --jobs "${job_count}" --no-parallelize-within-files --recursive "${bats_roots[@]}"
+
+  # The python stages name their roots relative to the repository.
+  cd -- "${REPO_ROOT}"
 
   # The unittest suites are hermetic under a sandbox HOME (they write nothing below it)
   # ONLY once GA_DATA_ROOT is scrubbed with it: ga_paths.get_base_root PREFERS

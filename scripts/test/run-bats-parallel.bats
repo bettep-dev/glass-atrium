@@ -58,6 +58,10 @@
 # AUTOAGENT_GIT_ROOT, which daemon_cycle._resolve_apply_git_scope short-circuits on by
 # documented design. The per-root suite-hermeticity.bats probes scrub the same set on their
 # identical discover runs, so no probe can read green under conditions its stage lacks.
+#
+# The twelfth pins the runner's cwd seat: a script a test starts inherits the bats process's
+# cwd, so stage 1 must start outside the repository, while the python stages resolve their
+# relative roots against it.
 
 bats_require_minimum_version 1.5.0
 
@@ -217,6 +221,8 @@ setup() {
   write_stub bats <<'STUB'
 #!/usr/bin/env bash
 printf '%s\n' "$*" >>"${STUB_LOG_DIR}/bats-args.log"
+printf '%s\n' "$@" >>"${STUB_LOG_DIR}/bats-argv.log"
+pwd -P >>"${STUB_LOG_DIR}/bats-cwd.log"
 printf '%s\n' "${PYTHONDONTWRITEBYTECODE-__UNSET__}" >>"${STUB_LOG_DIR}/bats-env.log"
 # Stage 1 makes no python3 call, so this stub is the only recorder of its environment.
 # A separate log because scenario 1 asserts bats-env.log as a whole file.
@@ -238,11 +244,11 @@ printf '%s\n' "$*" >>"${STUB_LOG_DIR}/python3-args.log"
 # what the python stages claim to control. The sentinel distinguishes "unset" from "set to
 # empty", which is the whole distinction `env -u` makes. Field order is APPEND-ONLY —
 # DAEMON_ENV_PY_FIELDS indexes into it by position.
-printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' "$*" "${GA_DATA_ROOT-__UNSET__}" \
+printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' "$*" "${GA_DATA_ROOT-__UNSET__}" \
   "${ATRIUM_UPDATE_STATE_DIR-__UNSET__}" "${HOME-__UNSET__}" \
   "${AUTOAGENT_CLAUDE_BIN-__UNSET__}" "${AUTOAGENT_GIT_ROOT-__UNSET__}" \
   "${AUTOAGENT_GIT_PATHSPEC-__UNSET__}" "${AUTOAGENT_AGENTS_DIR-__UNSET__}" \
-  "${CLAUDE_BIN-__UNSET__}" \
+  "${CLAUDE_BIN-__UNSET__}" "$(pwd -P)" \
   >>"${STUB_LOG_DIR}/python3-env.log"
 case "$*" in
   *'import pytest'*) exit "${STUB_PYTEST_IMPORT_RC:-0}" ;;
@@ -601,4 +607,41 @@ STUB
       "$(cat "${STUB_LOG_DIR}/bats-args.log" 2>/dev/null)" >&2
     return 1
   }
+}
+
+@test "(12) stage 1 runs bats from a scratch cwd outside the repo on absolute roots, while the python stages keep the repo root" {
+  run_runner_expecting 0 || return 1
+
+  local repo_dir repo_phys bats_cwd
+  repo_dir="$(cd -- "${SANDBOX}" && pwd)"
+  repo_phys="$(cd -- "${SANDBOX}" && pwd -P)"
+  bats_cwd="$(cat "${STUB_LOG_DIR}/bats-cwd.log")"
+  [[ -n "${bats_cwd}" && "${bats_cwd}" != "${repo_phys}" && "${bats_cwd}" != "${repo_phys}/"* ]] || {
+    printf 'stage 1 ran from %s (want a scratch dir outside the repo %s)\n' \
+      "${bats_cwd}" "${repo_phys}" >&2
+    return 1
+  }
+  [[ ! -e "${bats_cwd}" ]] || {
+    printf 'the stage-1 scratch cwd outlived the runner: %s\n' "${bats_cwd}" >&2
+    return 1
+  }
+
+  # A relative root would resolve against the scratch cwd, not the repository.
+  local argv root
+  argv="$(cat "${STUB_LOG_DIR}/bats-argv.log")"
+  for root in test hooks/test scripts/test autoagent/test; do
+    grep -qxF -- "${repo_dir}/${root}" <<<"${argv}" || {
+      printf 'stage 1 was not handed %s as an absolute path; argv:\n%s\n' "${root}" "${argv}" >&2
+      return 1
+    }
+  done
+
+  local stage seen
+  for stage in 'discover -s hooks/test' 'discover -s autoagent/test' '-m pytest'; do
+    seen="$(stage_env_field "${stage}" 10)"
+    [[ "${seen}" == "${repo_phys}" ]] || {
+      printf '%s ran from %s (want the repo root %s)\n' "${stage}" "${seen}" "${repo_phys}" >&2
+      return 1
+    }
+  done
 }

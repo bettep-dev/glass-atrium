@@ -405,8 +405,8 @@ jobs:
       # junit output goes to a PER-FILE report directory. bats always names the
       # report `report.xml` and only `--output <dir>` varies, so collision-freedom
       # has to come from the DIRECTORY, not the filename. The directory is keyed
-      # on `{.}` — the input path minus its extension — NOT on `{/.}` (basename
-      # minus extension): test/ nests a comment-audit/ subdir, so a basename key
+      # on the repo-relative input path minus its extension — NOT on the basename
+      # minus extension: test/ nests a comment-audit/ subdir, so a basename key
       # maps test/x.bats and test/comment-audit/x.bats onto ONE dir where the
       # second report silently clobbers the first. Path keys are unique by
       # construction, which is what makes the aggregate count trustworthy.
@@ -432,22 +432,39 @@ jobs:
           # /dev/shm always exists on ubuntu-latest; no test file or macOS path changes.
           TMPDIR: /dev/shm
         run: |
-          mkdir -p reports/bats
+          # bats starts from an empty scratch cwd → a script a test starts never
+          # inherits the checkout as its cwd, so every path bats gets is absolute.
+          # The file list stays repo-relative: it keys the report dir (the annotate
+          # and summary steps glob reports/bats/ in the checkout) and tags each line.
+          # Exported: each parallel job runs in its own bash.
+          REPO_DIR="${PWD}"
+          REPORTS_DIR="${REPO_DIR}/reports/bats"
+          export REPO_DIR REPORTS_DIR
+          mkdir -p "${REPORTS_DIR}"
+          scratch_cwd="$(mktemp -d)"
+          # $1 = one repo-relative *.bats path; its report dir is keyed on that
+          # path minus the extension (the key rationale sits above this step).
+          run_one_file() {
+            local report_dir="${REPORTS_DIR}/${1%.bats}"
+            mkdir -p "${report_dir}" \
+              && bats --report-formatter junit --output "${report_dir}" "${REPO_DIR}/${1}"
+          }
+          export -f run_one_file
           # One GNU parallel job per *.bats file (fed NUL-delimited so any odd
           # path survives). parallel owns the file-level concurrency: --jobs
           # $(nproc) bounds it to the runner core count; --timeout 240 kills a
           # single file running >240s (the diagnostic: name the hanging file);
           # --tagstring '{}' tags every output line with the file path. Each
-          # `bats {}` runs exactly ONE file with no --jobs, so bats stays serial
+          # job's bats runs exactly ONE file with no --jobs, so bats stays serial
           # WITHIN the file by DEFAULT (setup_file-once + ordered side effects
           # preserved) — a within/across-file --no-parallelize flag is both
           # redundant here AND rejected by bats (it requires --jobs>=2). parallel's
           # non-zero exit (a failed OR timed-out file) rides the pipe out —
           # pipefail is on via the GitHub default shell — to fail the leg, so the
-          # ci-pass gate sees the real code.
+          # ci-pass gate sees the real code. A failed cd fails the leg the same way.
           run_bats() {
-            parallel -0 --timeout 240 --jobs "$(nproc)" --tagstring '{}' \
-              'mkdir -p reports/bats/{.} && bats --report-formatter junit --output reports/bats/{.} {}'
+            (cd -- "${scratch_cwd}" \
+              && parallel -0 --timeout 240 --jobs "$(nproc)" --tagstring '{}' run_one_file {})
           }
           if [[ "${SHARDS}" -gt 0 ]]; then
             # Sharded root: deterministic round-robin partition of this root's *.bats
