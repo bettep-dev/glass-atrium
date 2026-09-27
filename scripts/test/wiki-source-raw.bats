@@ -44,6 +44,9 @@ setup() {
   # NOTES_DIR is the single global _classify_raw reads; export so the sourced
   # functions resolve it.
   export NOTES_DIR
+  # The real script receives ga_guard_path from the libs it sources above the extracted window.
+  # shellcheck source=../lib/path-guard.sh
+  source "${GA}/scripts/lib/path-guard.sh"
   # shellcheck source=/dev/null
   source "${SHIM}"
 }
@@ -181,6 +184,28 @@ collisions() { _collect_collision_source_urls "${RAW_DIR}"; }
   before_sum="$(_file_md5 "${NOTES_DIR}/note.md")"
   _inject_source_raw "${NOTES_DIR}/note.md" "the-raw.md" "http://u"
   [[ "$(_file_md5 "${NOTES_DIR}/note.md")" == "${before_sum}" ]]
+}
+
+@test "_inject_source_raw: a stamp whose rename fails leaves the note untouched and no temp behind" {
+  write_raw_bytes "${NOTES_DIR}/note.md" '---\ntitle: t\n---\nbody\n'
+  local before_sum
+  before_sum="$(_file_md5 "${NOTES_DIR}/note.md")"
+  mv() { return 1; }
+  run _inject_source_raw "${NOTES_DIR}/note.md" "the-raw.md" "http://u"
+  unset -f mv
+  [ "$(_file_md5 "${NOTES_DIR}/note.md")" = "${before_sum}" ]
+  run find "${NOTES_DIR}" -name 'note.md.inject.*'
+  [ -z "${output}" ]
+}
+
+@test "_inject_source_raw: a stamp whose rewrite fails leaves no temp behind" {
+  [ "$(id -u)" -ne 0 ] || skip "root bypasses the mode bits this row depends on"
+  write_raw_bytes "${NOTES_DIR}/note.md" '---\ntitle: t\n---\nbody\n'
+  chmod 000 "${NOTES_DIR}/note.md"
+  run _inject_source_raw "${NOTES_DIR}/note.md" "the-raw.md" "http://u"
+  chmod 600 "${NOTES_DIR}/note.md"
+  run find "${NOTES_DIR}" -name 'note.md.inject.*'
+  [ -z "${output}" ]
 }
 
 @test "_inject_source_raw: an already-present source_raw is NOT overwritten with a different value" {

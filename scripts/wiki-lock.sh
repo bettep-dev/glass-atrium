@@ -22,6 +22,11 @@
 set -Eeuo pipefail
 IFS=$'\n\t'
 
+# ga_guard_path gates both lock-dir removals; scripts/ runs in place, so lib/ sits beside this file.
+SELF_DIR="$(dirname -- "${BASH_SOURCE[0]}")"
+# shellcheck source-path=SCRIPTDIR source=lib/path-guard.sh
+source "${SELF_DIR}/lib/path-guard.sh"
+
 readonly LOCK_ROOT="/tmp"
 readonly DEFAULT_TIMEOUT=30
 
@@ -56,7 +61,10 @@ reap_if_stale() {
 
   if ! kill -0 "${owner_pid}" 2>/dev/null; then
     # Owner is dead. Clean up.
-    rm -rf -- "${lock_dir}" 2>/dev/null || true
+    # shellcheck disable=SC2310  # pure predicate — nothing inside it for errexit to catch
+    if ga_guard_path "${lock_dir}"; then
+      rm -rf -- "${lock_dir:?}"
+    fi || true
     printf 'wiki-lock: reaped stale lock (dead pid=%s) at %s\n' \
       "${owner_pid}" "${lock_dir}" >&2
   fi
@@ -114,7 +122,10 @@ release_lock() {
     return 0
   fi
 
-  rm -rf -- "${lock_dir}" 2>/dev/null || true
+  # shellcheck disable=SC2310  # pure predicate — nothing inside it for errexit to catch
+  if ga_guard_path "${lock_dir}"; then
+    rm -rf -- "${lock_dir:?}"
+  fi || true
   return 0
 }
 

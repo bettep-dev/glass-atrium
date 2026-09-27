@@ -59,6 +59,7 @@ make_sandbox() {
   mkdir -p "${SANDBOX}/lib"
   cp "${WIKI_SCRIPT}" "${SANDBOX}/wiki-daily-compile.sh"
   cp "${CONFIG_LIB}" "${SANDBOX}/lib/atrium-config.sh"
+  cp "${GA}/scripts/lib/path-guard.sh" "${SANDBOX}/lib/path-guard.sh"
   cp "${SINK_LIB}" "${SANDBOX}/lib/pg-report-drop.sh"
   cp "${ENVELOPE_LIB}" "${SANDBOX}/lib/wiki-envelope.sh"
 
@@ -216,6 +217,61 @@ path_mode() {
   # cannot be bolted on as a second handler that silently replaces this one.
   run grep -c '^[[:space:]]*trap ' "${WIKI_SCRIPT}"
   [ "$output" -eq 1 ]
+}
+
+@test "the orphan sweep removes a run dir older than a day and keeps a fresh one" {
+  make_sandbox
+  seed_raw alpha.md
+  mkdir -p "${RUN_ROOT}/wiki-compile-run.stale" "${RUN_ROOT}/wiki-compile-run.fresh"
+  touch -t 202001010000 "${RUN_ROOT}/wiki-compile-run.stale"
+
+  run bash "${SANDBOX}/wiki-daily-compile.sh"
+  [ "$status" -eq 0 ]
+  [ -d "${RUN_ROOT}/wiki-compile-run.fresh" ]
+  [ ! -e "${RUN_ROOT}/wiki-compile-run.stale" ]
+}
+
+@test "the orphan sweep under a relative data root deletes nothing and the refusal is loud" {
+  make_sandbox
+  seed_raw alpha.md
+  cd -- "${BATS_TEST_TMPDIR}"
+  export GA_DATA_ROOT="rel-ga"
+  local stale="${BATS_TEST_TMPDIR}/rel-ga/data/wiki-compile-runs/wiki-compile-run.stale"
+  mkdir -p "${stale}"
+  touch -t 202001010000 "${stale}"
+
+  run bash "${SANDBOX}/wiki-daily-compile.sh"
+  [[ "$output" == *"refusing a non-absolute delete target"* ]] || return 1
+  log_body | grep -q 'orphan run-dir prune failed'
+  [ -d "${stale}" ]
+}
+
+# The script pins PATH to the system dirs first, so a PATH stub cannot reach it: an exported
+# function can, and it fails only the one call each row is about.
+@test "a note whose staging copy fails leaves no sibling temp behind" {
+  make_sandbox
+  seed_raw alpha.md
+  cat() { case "${2:-}" in */body.*) return 1 ;; *) command cat "$@" ;; esac }
+  export -f cat
+
+  run bash "${SANDBOX}/wiki-daily-compile.sh"
+  unset -f cat
+  [[ "$output" == *"staging copy failed for alpha.md"* ]] || return 1
+  run find "${NOTES_DIR}" -name '.alpha.md.*'
+  [ -z "$output" ]
+}
+
+@test "a note whose promotion fails leaves no sibling temp behind" {
+  make_sandbox
+  seed_raw alpha.md
+  mv() { case "${3:-}" in */.alpha.md.*) return 1 ;; *) command mv "$@" ;; esac }
+  export -f mv
+
+  run bash "${SANDBOX}/wiki-daily-compile.sh"
+  unset -f mv
+  [[ "$output" == *"promotion failed for alpha.md"* ]] || return 1
+  run find "${NOTES_DIR}" -name '.alpha.md.*'
+  [ -z "$output" ]
 }
 
 # ---------------------------------------------------------------------------

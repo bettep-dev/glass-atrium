@@ -188,6 +188,29 @@ body of one" ]
   [[ "${output}" == *"done_seen=0"* ]]
   [ -f "${RUN_DIR}/body.1" ]
   [ ! -f "${RUN_DIR}/body.2" ]
+  [ ! -e "${RUN_DIR}/part.2" ]
+}
+
+@test "an unterminated tail under a relative run dir is never deleted and the refusal is loud" {
+  begin_line "${NONCE}" 1
+  printf '%s' 'truncated mid-body, no trailing newline' >>"${ENVELOPE}"
+  cd -- "${BATS_TEST_TMPDIR}"
+  mkdir -p run
+  RUN_DIR="run"
+  parse 1
+  [ "${status}" -eq 0 ]
+  [[ "${output}" == *"dropped=1"* ]] || return 1
+  [[ "${output}" == *"refusing a non-absolute delete target"* ]] || return 1
+  [ -f "${BATS_TEST_TMPDIR}/run/part.1" ]
+}
+
+@test "sourcing the lib without the shared path guard beside it fails loudly" {
+  mkdir -p "${WORK}/lib"
+  cp "${LIB}" "${WORK}/lib/wiki-envelope.sh"
+  run bash -c 'set -Eeuo pipefail; . "'"${WORK}/lib/wiki-envelope.sh"'"; printf "LOADED\n"'
+  [ "${status}" -ne 0 ]
+  [[ "${output}" != *"LOADED"* ]] || return 1
+  [[ "${output}" == *"[wiki-envelope] FATAL: cannot source the shared path guard"* ]]
 }
 
 @test "missing idx reports partial naming the absent index" {

@@ -209,6 +209,28 @@ set_restart_globals() {
   grep -q 'PG_REPORT_DROP site=probe-site exit=7' "${DROP_LOG}"
 }
 
+@test "sink rotation: a drop log under a relative data root is never deleted and the refusal is loud" {
+  extract_sink_shim pg_write_run "${WORK}/shim.sh"
+  set_restart_globals
+  mkdir -p "${BATS_TEST_TMPDIR}/rel-ga/data"
+  local log="${BATS_TEST_TMPDIR}/rel-ga/data/pg-report-drops.log"
+  head -c 70000 /dev/zero | tr '\0' 'x' >"${log}"
+  run bash -c "cd '${BATS_TEST_TMPDIR}' && GA_DATA_ROOT=rel-ga source '${WORK}/shim.sh' && append_pg_drop probe-site 7; echo REACHED"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"REACHED"* ]] || return 1
+  [[ "$output" == *"refusing a non-absolute delete target"* ]] || return 1
+  [ "$(wc -c <"${log}" | tr -cd '0-9')" -gt 70000 ]
+}
+
+@test "sourcing the sink lib without the shared path guard beside it fails loudly" {
+  mkdir -p "${WORK}/lib-only"
+  cp "${SINK_LIB}" "${WORK}/lib-only/pg-report-drop.sh"
+  run bash -c 'set -Eeuo pipefail; . "'"${WORK}/lib-only/pg-report-drop.sh"'"; printf "LOADED\n"'
+  [ "$status" -ne 0 ]
+  [[ "$output" != *"LOADED"* ]] || return 1
+  [[ "$output" == *"[pg-report-drop] FATAL: cannot source the shared path guard"* ]]
+}
+
 @test "sink failure is terminal: an unwritable data root never aborts the caller or re-reports" {
   extract_sink_shim pg_write_run "${WORK}/shim.sh"
   set_restart_globals
@@ -251,6 +273,7 @@ make_wiki_sandbox() {
   mkdir -p "${SANDBOX}/lib"
   cp "${WIKI_SCRIPT}" "${SANDBOX}/wiki-daily-compile.sh"
   cp "${CONFIG_LIB}" "${SANDBOX}/lib/atrium-config.sh"
+  cp "${GA}/scripts/lib/path-guard.sh" "${SANDBOX}/lib/path-guard.sh"
   cp "${SINK_LIB}" "${SANDBOX}/lib/pg-report-drop.sh"
   # The compile script sources the envelope parser unconditionally at load time, so the sandbox
   # needs it even for fixtures that abort long before the model call (pin F2).
