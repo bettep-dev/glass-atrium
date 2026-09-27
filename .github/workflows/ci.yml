@@ -465,20 +465,18 @@ jobs:
           # /dev/shm always exists on ubuntu-latest; no test file or macOS path changes.
           TMPDIR: /dev/shm
         run: |
-          # Sets only the bats PROCESS start cwd: an empty scratch dir, so every path
-          # bats gets is absolute. Each test's start cwd is the suite seat's
-          # (test/lib/bats-hermetic-env.bash); a test body or a script that cds
-          # elsewhere on its own leaves both seats behind.
-          # The file list stays repo-relative: it keys the report dir (the annotate
-          # and summary steps glob reports/bats/ in the checkout) and tags each line.
-          # Exported: each parallel job runs in its own bash.
+          # bats process start cwd → an empty scratch dir, so every path bats gets is absolute.
+          # Each test's start cwd → the suite seat (test/lib/bats-hermetic-env.bash).
+          # A test body or script that cds on its own leaves both seats behind.
+          # File list stays repo-relative → keys each report dir + tags each output line.
+          # Report dirs stay in the checkout → the annotate and summary steps glob reports/bats/ there.
+          # Exported → each parallel job runs in its own bash.
           REPO_DIR="${PWD}"
           REPORTS_DIR="${REPO_DIR}/reports/bats"
           export REPO_DIR REPORTS_DIR
           mkdir -p "${REPORTS_DIR}"
           scratch_cwd="$(mktemp -d)"
-          # $1 = one repo-relative *.bats path; its report dir is keyed on that
-          # path minus the extension (the key rationale sits above this step).
+          # $1 → one repo-relative *.bats path; report dir key = that path minus .bats (rationale above the step).
           run_one_file() {
             local report_dir="${REPORTS_DIR}/${1%.bats}"
             mkdir -p "${report_dir}" \
@@ -496,7 +494,8 @@ jobs:
           # redundant here AND rejected by bats (it requires --jobs>=2). parallel's
           # non-zero exit (a failed OR timed-out file) rides the pipe out —
           # pipefail is on via the GitHub default shell — to fail the leg, so the
-          # ci-pass gate sees the real code. A failed cd fails the leg the same way.
+          # ci-pass gate sees the real code.
+          # A failed cd fails the leg the same way.
           run_bats() {
             (cd -- "${scratch_cwd}" \
               && parallel -0 --timeout 240 --jobs "$(nproc)" --tagstring '{}' run_one_file {})

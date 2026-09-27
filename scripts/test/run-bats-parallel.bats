@@ -59,10 +59,11 @@
 # documented design. The per-root suite-hermeticity.bats probes scrub the same set on their
 # identical discover runs, so no probe can read green under conditions its stage lacks.
 #
-# The twelfth pins the runner's cwd seat, the FALLBACK seat: the suite seat
-# (test/lib/bats-hermetic-env.bash) already starts each test in BATS_SUITE_TMPDIR, so the
-# bats process's cwd reaches a test only when that seat is not taken. Stage 1 still starts
-# outside the repository, while the python stages resolve their relative roots against it.
+# The twelfth pins the runner's cwd seat, the FALLBACK seat:
+# - suite seat (test/lib/bats-hermetic-env.bash) → each test starts in BATS_SUITE_TMPDIR;
+# - bats process cwd → reaches a test only when that seat is not taken;
+# - stage 1 → starts outside the repository;
+# - python stages → resolve their relative roots against the repository root.
 
 bats_require_minimum_version 1.5.0
 

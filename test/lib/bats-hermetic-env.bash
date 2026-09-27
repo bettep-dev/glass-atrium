@@ -44,11 +44,10 @@ ga_bats_hermetic_env() {
   ga_bats_set_scratch_cwd
 }
 
-# Scratch-cwd seat: each test STARTS in BATS_SUITE_TMPDIR, so a script it starts from there
-# resolves a cwd-relative delete inside the run's scratch tree, not the checkout.
-# Accident safety net, not a boundary: a test body that cds out of scratch, or a script
-# that cds on its own, leaves the seat behind.
-# A seat it cannot take refuses the whole run rather than warning.
+# Scratch-cwd seat: each test starts in BATS_SUITE_TMPDIR.
+# A script a test starts from there → its cwd-relative delete lands in the run's scratch tree.
+# Accident safety net, not a boundary → a test body or script that cds on its own leaves the seat.
+# Seat not taken → the whole run is refused, not warned.
 # The run root resolves BEFORE the cd — a relative --tempdir resolves against the start cwd.
 ga_bats_set_scratch_cwd() {
   local run_root
