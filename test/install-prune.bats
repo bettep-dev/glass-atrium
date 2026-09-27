@@ -188,3 +188,19 @@ plant_live_link() {
   [[ "${status}" -eq 3 ]]
   [[ "${output}" == *"manifest absent or .files not an array"* ]]
 }
+
+@test "an orphan whose unlink leaves it in place fails the prune loudly and is not counted" {
+  write_manifest "agents/kept.md"
+  plant_orphan_link "agents/orphan.md"
+  # an rm that deletes nothing: the unlink reports success while the link survives
+  local stub="${SANDBOX}/stub-bin"
+  mkdir -p "${stub}"
+  printf '#!/bin/sh\nexit 0\n' >"${stub}/rm"
+  chmod +x "${stub}/rm"
+  PATH="${stub}:${PATH}" run_prune_sandbox prune
+  [[ "${status}" -eq 1 ]] || return 1
+  [[ "${output}" == *"still present after unlink"* ]] || return 1
+  [[ "${output}" != *"removed orphan GA symlink"* ]] || return 1
+  [[ "${output}" == *"0 pruned"* ]] || return 1
+  [[ -L "${TARGET}/agents/orphan.md" ]]
+}

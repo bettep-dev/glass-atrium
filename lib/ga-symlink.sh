@@ -266,7 +266,8 @@ swap_symlink() {
 
 # single-link removal (target-verified)
 # Removes the given absolute path ONLY if it is a symlink whose readlink target resolves into
-# GA_ROOT. Real files + foreign symlinks + never-touch are skipped. Returns 0 removed, 1 (safely) skipped.
+# GA_ROOT. Real files + foreign symlinks + never-touch are skipped. Returns 0 removed, 1 (safely) skipped,
+# 2 the link survived its unlink (named on stderr).
 remove_if_ga_link() {
   local link="$1"
   # target-relative path for the never-touch guard
@@ -307,7 +308,13 @@ remove_if_ga_link() {
     return 0
   fi
 
-  rm -f -- "${link}"
+  if ga_guard_path "${link}"; then
+    rm -f -- "${link:?}"
+  fi
+  if [[ -L "${link}" ]]; then
+    printf 'ERROR: GA symlink still present after unlink: %s -> %s\n' "${link}" "${tgt}" >&2
+    return 2
+  fi
   log "removed: ${rel} -> ${tgt}"
   return 0
 }

@@ -292,8 +292,10 @@ cleanup() {
   # cnorm closes that footgun on every EXIT/INT/TERM regardless of raw-mode state.
   tp cnorm
   restore_terminal
-  [[ -n "${STAGE_TMP}" && -L "${STAGE_TMP}" ]] && rm -f -- "${STAGE_TMP}"
-  [[ -n "${RENDER_TMP}" && -f "${RENDER_TMP}" ]] && rm -f -- "${RENDER_TMP}"
+  if [[ -L "${STAGE_TMP}" ]]; then
+    if ga_guard_path "${STAGE_TMP}"; then rm -f -- "${STAGE_TMP:?}"; fi
+  fi
+  delete_temp_file "${RENDER_TMP}"
   # CHANGE 4 (clean failure, NOT a silent kill): when a step function die()s/exit()s
   # mid-run, the process exits past run_step's classify/_dump_step_log (set +e does not
   # catch an `exit`), so the captured step log (STEP_LOG_CUR, still set while the step is
@@ -311,9 +313,9 @@ cleanup() {
     printf 'FATAL: install step aborted (exit %s) — last output:\n' "${exit_code}" >&2
     tail -n 30 -- "${STEP_LOG_CUR}" >&2 2>/dev/null || true
   fi
-  [[ -n "${GATE_LOG}" && -f "${GATE_LOG}" ]] && rm -f -- "${GATE_LOG}"
-  [[ -n "${GATE_QUIET_LOG}" && -f "${GATE_QUIET_LOG}" ]] && rm -f -- "${GATE_QUIET_LOG}"
-  [[ -n "${STEP_LOG_CUR}" && -f "${STEP_LOG_CUR}" ]] && rm -f -- "${STEP_LOG_CUR}"
+  delete_temp_file "${GATE_LOG}"
+  delete_temp_file "${GATE_QUIET_LOG}"
+  delete_temp_file "${STEP_LOG_CUR}"
   # IMP2 backstop: restore a launchd monitor the install stopped, on ANY exit path
   # (die/exit/INT/TERM). Idempotent — the happy-path restore clears MONITOR_WAS_STOPPED,
   # so this is a no-op after a normal restore and the SOLE restorer when the install

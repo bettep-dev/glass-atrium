@@ -201,3 +201,19 @@ JSON
   [[ "${output}" == *"nothing to retire"* ]] || return 1
   [[ ! -f "${SETTINGS}" ]] || return 1
 }
+
+@test "a no-op retire under a relative target home never deletes its temp and the refusal is loud" {
+  write_sample
+  run env GA_TARGET_HOME="${TARGET##*/}" bash -c '
+    set -Eeuo pipefail
+    cd -- "$3"
+    # shellcheck source=/dev/null
+    source "$1/lib/ga-core.sh"
+    ga_init_env "$1"
+    retire_hook_binding "$2"
+  ' _ "${GA}" "never-bound-hook.sh" "${TARGET%/*}"
+  [[ "${status}" -eq 0 ]] || return 1
+  [[ "${output}" == *"refusing a non-absolute delete target"* ]] || return 1
+  local left=("${SETTINGS}".ga-retire.*)
+  [[ -f "${left[0]}" ]]
+}
