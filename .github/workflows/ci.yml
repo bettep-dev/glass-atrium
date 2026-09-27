@@ -392,6 +392,25 @@ jobs:
         if: matrix.root == 'scripts/test'
         run: bash scripts/audit-absorption.sh
 
+      # SC2115 alone: a delete target built as `"${var}/…"` must use the `${var:?}` form,
+      # so an empty variable cannot resolve it to the filesystem root. Blocking, green from the start.
+      # File set: every tracked *.sh / *.bash / *.bats, plus extensionless regular files whose
+      # first line is a sh/bash/dash/ksh shebang (the root `glass-atrium` launcher).
+      # One leg, before the bats step: same ordering reason and change-conditional residual as above.
+      - name: ShellCheck SC2115 over tracked shell files (blocking)
+        if: matrix.root == 'scripts/test'
+        run: |
+          shellcheck --version
+          shebang_re='^#!.*[/[:space:]](ba|da|k)?sh([[:space:]]|$)'
+          git ls-files -z | while IFS= read -r -d '' path; do
+            case "${path##*/}" in
+              *.sh | *.bash | *.bats) ;;
+              *.*) continue ;;
+              *) [[ -f "${path}" && ! -L "${path}" && "$(head -n 1 -- "${path}")" =~ ${shebang_re} ]] || continue ;;
+            esac
+            printf '%s\0' "${path}"
+          done | xargs -0 -r shellcheck --include=SC2115
+
       # DIAGNOSTIC (per-file timeout + filename tag): each *.bats file runs as
       # its OWN GNU parallel job instead of a single `bats --jobs` call. Why:
       # `bats --jobs` buffers a file's TAP and flushes only on file COMPLETION,
