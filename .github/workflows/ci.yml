@@ -269,6 +269,9 @@ jobs:
               # with agent frontmatter), so a registry-only PR must still run the
               # bash leg. Pinned by scripts/test/ci-change-filter-coverage.bats.
               - 'agent-registry.json'
+              # Root-level extensionless launcher: no glob above reaches it;
+              # test/ suites drive it and the SC2115 step lints it.
+              - 'glass-atrium'
               - '.github/workflows/ci.yml'
             python:
               - 'autoagent/**'

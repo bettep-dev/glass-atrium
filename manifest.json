@@ -1549,7 +1549,7 @@
     "scripts/test/audit-absorption.bats": "8a3248184cef4b89e350a6006b52a479bf009e3e7260973cb7bd2035e7db09e1",
     "scripts/test/audit-cli.bats": "134d263e17884015a7a38d78d4053c7d95e01da132ae94c483907d8b41679eac",
     "scripts/test/audit-test-smells.bats": "cbbf65e28c106ca0b0aa152ca1872397cff23bb35644c92d57b533d22d8be86a",
-    "scripts/test/ci-change-filter-coverage.bats": "4e2805d9536d6ebc4b7f5a752a72f2cc530892c62205f1ed57ebc313058d3bf8",
+    "scripts/test/ci-change-filter-coverage.bats": "6c8f3bdddce275dceb60f1e2d2b620d97e27630faf7aab23950629a157c657d3",
     "scripts/test/config-template-reader-census.bats": "27fc0c9370848b70387cec33d55db5453765aa925839463c77c134dc1764d656",
     "scripts/test/config-template-reader-census.psv": "8e1352798f887978c2ecdb6e93352a14597dc48ab00cad7a56e7fb171381c2c9",
     "scripts/test/conftest.py": "d67bd6c208c929fb11012e064576a98d23243681b0fa269ff659b1925592f67e",
