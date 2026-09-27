@@ -538,6 +538,29 @@ mint_bad_sink() {
   }
 }
 
+@test "D06 prune: a failed swap leaves no prune temp beside the sink" {
+  local stub_dir="${BATS_TEST_TMPDIR}/stub-bin" mv_log="${BATS_TEST_TMPDIR}/mv-argv.log" payload leftovers i
+  mkdir -p "${stub_dir}"
+  printf '#!/usr/bin/env bash\nprintf "%%s\\n" "$*" >>"%s"\nexit 1\n' "${mv_log}" >"${stub_dir}/mv"
+  chmod +x "${stub_dir}/mv"
+  for ((i = 0; i < 12; i++)); do
+    printf 'ts\ttool_name=Agent\tsubagent_type=seed\tverdict=block-entry\n' >>"${SINK}"
+  done
+  payload="$(mk_payload "glass-atrium-dev-nestjs" "implement the auth refactor [SIZE-EST] bundles=1 tool_uses~=20 — svc")"
+  run bash -c 'printf "%s" "$1" | PATH="$5:${PATH}" HOOK_DATA_DIR="$2" VGATE_FIRED_LOG="$4" VGATE_FIRED_LOG_CAP=5 bash "$3"' \
+    _ "${payload}" "${DATA_DIR}" "${HOOK_SH}" "${SINK}" "${stub_dir}"
+  assert_status 2
+  grep -qF "${SINK}.prune." "${mv_log}" || {
+    echo "the prune never attempted its swap" >&2
+    return 1
+  }
+  leftovers="$(find "${SINK%/*}" -name "${SINK##*/}.prune.*" | wc -l | tr -d ' ')"
+  [[ "${leftovers}" == "0" ]] || {
+    echo "prune temp left beside the sink: ${leftovers}" >&2
+    return 1
+  }
+}
+
 # READER — operator aggregation mode, dispatched BEFORE the stdin drain.
 
 @test "D06 reader: --block-counts over a fixture sink reports counts by verdict tag" {

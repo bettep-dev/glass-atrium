@@ -153,6 +153,51 @@ impl: glass-atrium-dev-nestjs
   [[ "${status}" -eq 0 ]] || return 1
 }
 
+# TRACE PRUNE — the firing log is bounded to its line cap by an atomic sibling-temp swap; observability
+# only, so neither the prune nor its failure may alter a verdict or leave a temp behind.
+
+# $1 = extra PATH prefix (may be empty). Seeds the trace log 12 lines deep, then fires once at cap 5.
+run_hook_over_cap() {
+  local i
+  for ((i = 0; i < 12; i++)); do
+    printf 'ts\ttool_name=Workflow\tverdict=pass\n' >>"${TRACE_LOG}"
+  done
+  run bash -c '
+    script="$1"; hook="$2"; trace="$3"; prefix="$4"
+    payload="$(jq -n --arg s "${script}" '\''{tool_name:"Workflow",tool_input:{script:$s}}'\'')"
+    printf "%s" "${payload}" | PATH="${prefix}${PATH}" WORKFLOW_GATE_FIRED_LOG="${trace}" WORKFLOW_GATE_FIRED_LOG_CAP=5 bash "${hook}"
+  ' _ "pipeline(agent('glass-atrium-intel-reporter',{goal:'write the report'}))" "${HOOK_SH}" "${TRACE_LOG}" "${1}"
+}
+
+@test "trace prune: a trace log over the line cap is bounded at or below the cap" {
+  local after
+  run_hook_over_cap ""
+  [[ "${status}" -eq 0 ]] || return 1
+  after="$(grep -c '' "${TRACE_LOG}")"
+  [[ "${after}" -le 5 ]] || {
+    echo "expected the trace log bounded at or below cap 5, got ${after}" >&2
+    return 1
+  }
+}
+
+@test "trace prune: a failed swap leaves no prune temp beside the trace log" {
+  local stub_dir="${BATS_TEST_TMPDIR}/stub-bin" mv_log="${BATS_TEST_TMPDIR}/mv-argv.log" leftovers
+  mkdir -p "${stub_dir}"
+  printf '#!/usr/bin/env bash\nprintf "%%s\\n" "$*" >>"%s"\nexit 1\n' "${mv_log}" >"${stub_dir}/mv"
+  chmod +x "${stub_dir}/mv"
+  run_hook_over_cap "${stub_dir}:"
+  [[ "${status}" -eq 0 ]] || return 1
+  grep -qF "${TRACE_LOG}.prune." "${mv_log}" || {
+    echo "the prune never attempted its swap" >&2
+    return 1
+  }
+  leftovers="$(find "${TRACE_LOG%/*}" -name "${TRACE_LOG##*/}.prune.*" | wc -l | tr -d ' ')"
+  [[ "${leftovers}" == "0" ]] || {
+    echo "prune temp left beside the trace log: ${leftovers}" >&2
+    return 1
+  }
+}
+
 # =====================================================================================================
 # SECTION B — non-DEV exempt (no dev-* literal anywhere → Stage-2 exempt → PASS, no declaration needed).
 # =====================================================================================================

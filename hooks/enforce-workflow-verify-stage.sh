@@ -435,11 +435,16 @@ emit_trace() {
     # Over cap: keep the most recent trace_line_cap lines via an atomic sibling-temp swap.
     local tmp_path
     tmp_path="$(mktemp "${WORKFLOW_GATE_FIRED_LOG}.prune.XXXXXX" 2>/dev/null)" || exit 0
-    if tail -n "${trace_line_cap}" "${WORKFLOW_GATE_FIRED_LOG}" >"${tmp_path}" 2>/dev/null; then
-      mv -f "${tmp_path}" "${WORKFLOW_GATE_FIRED_LOG}" 2>/dev/null || rm -f "${tmp_path}" 2>/dev/null || true
-    else
-      rm -f "${tmp_path}" 2>/dev/null || true
+    if tail -n "${trace_line_cap}" "${WORKFLOW_GATE_FIRED_LOG}" >"${tmp_path}" 2>/dev/null \
+      && mv -f "${tmp_path}" "${WORKFLOW_GATE_FIRED_LOG}" 2>/dev/null; then
+      exit 0
     fi
+    # ga_guard_path rides hook-utils.sh, loaded on this failure path alone → the gate keeps no top-level
+    # dependency on it. A failed load leaves the temp in place rather than deleting it unguarded.
+    # shellcheck source=hook-utils.sh
+    source "${BASH_SOURCE%/*}/hook-utils.sh" || exit 0
+    # shellcheck disable=SC2310  # pure predicate — nothing inside it for errexit to catch
+    if ga_guard_path "${tmp_path}"; then rm -f -- "${tmp_path:?}"; fi
   ) 2>/dev/null || true
 }
 
