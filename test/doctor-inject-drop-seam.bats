@@ -181,6 +181,9 @@ assert_output_lacks() {
   }
 }
 
+# sole carrier of the `<n> inject-drop` counts; a §1-12 FAIL suppresses it → every count check anchors here
+ROLLUP='== doctor: PASS (with '
+
 # ── AC1 — in-window non-lesson drop → WARN at the seam path ────────────────────────────────────
 
 @test "AC1: an in-window non-lesson drop WARNs, names the seam path, and feeds the warning count" {
@@ -196,6 +199,7 @@ assert_output_lacks() {
   assert_output_has "${DROPLOG}" || return 1
   assert_output_lacks "/.claude/.claude/logs/" || return 1
   # an actionable drop is a warning, so the aggregate must not report zero inject-drop warnings
+  assert_output_has "${ROLLUP}" || return 1
   assert_output_lacks "0 inject-drop"
 }
 
@@ -220,6 +224,7 @@ assert_output_lacks() {
   # designed shedding has no remedy, so the actionable remedy must NOT be attached to it
   assert_output_lacks "recompress the AGENT-INJECT source blocks" || return 1
   # and it must not be counted as a warning
+  assert_output_has "${ROLLUP}" || return 1
   assert_output_has "0 inject-drop"
 }
 
@@ -232,6 +237,7 @@ assert_output_lacks() {
   assert_output_has "no inject-scope-rules shed events in the last" || return 1
   assert_output_has "historical event(s) on record" || return 1
   assert_output_lacks "recompress the AGENT-INJECT source blocks" || return 1
+  assert_output_has "${ROLLUP}" || return 1
   assert_output_has "0 inject-drop"
 }
 
@@ -253,6 +259,7 @@ assert_output_lacks() {
     return 1
   }
   run_doctor_seam
+  assert_output_has "${ROLLUP}" || return 1
   assert_output_has "1 inject-drop"
   assert_output_has "inject-slot"
   # A shed of a marker block says nothing about the slot wiring, so the two totals must differ in

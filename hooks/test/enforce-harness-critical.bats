@@ -1181,9 +1181,15 @@ MD
 # read the `1` of `2>&1` as a filename.
 @test "R2-4-neg fd dup 2>&1 while armed → pass (no false relative target)" {
   run_hook "Bash" "$(bash_input 'cd ~/.glass-atrium/autoagent && grep x f 2>&1')"
-  [[ "${status}" -eq 0 ]] || return 1
+  [[ "${status}" -eq 0 ]] || {
+    echo "${output}"
+    return 1
+  }
   run_hook "Bash" "$(bash_input 'cd ~/.glass-atrium/autoagent && grep x f 2>&1 > /tmp/out')"
-  [[ "${status}" -eq 0 ]] || return 1
+  [[ "${status}" -eq 0 ]] || {
+    echo "${output}"
+    return 1
+  }
 }
 
 # ── R2-6: mutation-verb allowlist additions (CLOSED set, no wildcarding) ──────
