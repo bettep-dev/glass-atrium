@@ -9,17 +9,12 @@
 # ga-core.sh is a THIN LOADER — it sources the seven domain siblings then defines the flow functions
 # below; `source lib/ga-core.sh` transitively loads every domain (zero consumer edits). Self-locates its
 # lib/ dir from BASH_SOURCE (source-path agnostic), but GA_ROOT still arrives ONLY via ga_init_env's $1,
-# never self-derived here. Env-first order (D2): the source-time surface is empty so any permutation works
-# today; env-first future-proofs a latent top-level stmt. Each source is an explicit loud-fail guard:
+# never self-derived here. Env-first order (D2): the only source-time stmt is ga-env.sh's path-guard load,
+# which no sibling needs until run time, so any permutation works today; env-first future-proofs a latent
+# top-level stmt. Each source is an explicit loud-fail guard:
 # printf (NOT log — log lives in ga-env.sh, undefined if THAT source fails) + `return 1`, never `|| true` /
 # an implicit `set -e` (bats consumers source WITHOUT strict mode, so the explicit guard fails loudly for both).
 __ga_core_libdir="${BASH_SOURCE[0]%/*}"
-# The shared path guard every engine delete site gates on; scripts/lib holds the one copy for all trees.
-# shellcheck source=scripts/lib/path-guard.sh
-source "${__ga_core_libdir}/../scripts/lib/path-guard.sh" || {
-  printf "%s\n" "FATAL: cannot source the shared path guard: ${__ga_core_libdir}/../scripts/lib/path-guard.sh" >&2
-  return 1
-}
 # shellcheck source=lib/ga-env.sh
 source "${__ga_core_libdir}/ga-env.sh" || {
   printf "%s\n" "FATAL: cannot source ga-env.sh" >&2
@@ -56,14 +51,6 @@ source "${__ga_core_libdir}/ga-doctor.sh" || {
   return 1
 }
 unset __ga_core_libdir
-
-# delete_temp_file — removes one engine or launcher temp file; an unset path or a non-regular file is left alone.
-delete_temp_file() {
-  local path="${1}"
-  [[ -f "${path}" ]] || return 0
-  # shellcheck disable=SC2310  # guard verdict branched on — a refusal is a skip, never an abort
-  if ga_guard_path "${path}"; then rm -f -- "${path:?}"; fi
-}
 
 # remove_node_modules — uninstall teardown: rm -rf monitor/node_modules to reclaim disk. node_modules
 # is a regenerable build artifact (reinstall's oss-db-setup.sh runs `npm ci`), so `rm` is correct — the
@@ -357,8 +344,10 @@ run_agents_only() {
 # is_never_touch is a defense-in-depth preserve branch. A resolving / non-symlink / foreign-target link
 # is NEVER a candidate (criteria b / a+c exclude them structurally).
 # EXPLICIT-OPT-IN: zero call sites inside run_install / run_bootstrap / run_agents_only (deleting during a
-# routine install is unsafe). Exit codes (loud-fail): 1 = an orphan survived its unlink (each named on
-# stderr), 2 = no target dir, 3 = manifest absent/unparseable. --dry-run reports but removes nothing.
+# routine install is unsafe). Exit codes (loud-fail, distinct from die's generic 1): 2 = no target dir,
+# 3 = manifest absent/unparseable, 4 = an orphan survived its unlink (guard refusal, or an rm exiting 0
+# without deleting; each named on stderr). A failing rm still aborts the run through errexit, before the
+# summary. --dry-run reports but removes nothing.
 run_prune() {
   # STEP1 — preconditions (loud-fail, named exit codes; no silent absorption).
   if [[ ! -d "${TARGET_HOME}" ]]; then
@@ -451,7 +440,7 @@ run_prune() {
   log "== prune: ${pruned} ${verb}, ${flagged} flagged in-manifest, ${nevertouch} preserved never-touch (${candidates} candidates) =="
   if [[ "${unlink_failed}" -gt 0 ]]; then
     printf 'FATAL: prune: %s orphan GA symlink(s) survived their unlink\n' "${unlink_failed}" >&2
-    return 1
+    return "${PRUNE_EXIT_UNLINK_SURVIVED}"
   fi
 }
 
@@ -495,9 +484,10 @@ migrate_layout() {
     # shellcheck disable=SC2312
     while IFS= read -r link; do
       [[ -n "${link}" ]] || continue
-      # return 1 = safe skip (foreign/real/never-touch) — bracket the single call
-      # with set +e + ERR-trap suspend (set -E propagates the trap into the
-      # callee, so a safe-skip non-zero would print a spurious ERROR line).
+      # non-zero = skip (1 foreign/real/never-touch; 2 link survived its unlink,
+      # stderr-only signal) — bracket the single call with set +e + ERR-trap
+      # suspend (set -E propagates the trap into the callee, so a skip's non-zero
+      # would print a spurious ERROR line).
       set +e
       trap - ERR
       remove_if_ga_link "${link}"
@@ -553,7 +543,8 @@ migrate_layout() {
         continue
       fi
       # remove the flat GA link (guarded — a foreign/real file returns 1 and is
-      # left intact), then create the foldered link via swap_symlink (its
+      # left intact; a link surviving its unlink returns 2, stderr-only, and
+      # likewise skips the fold), then create the foldered link via swap_symlink (its
       # per-file mkdir -p auto-creates rules/glass-atrium/, atomic + idempotent).
       set +e
       trap - ERR
