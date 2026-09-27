@@ -1,14 +1,14 @@
 # Delegation-size discipline (per-delegation, distinct from runtime concurrency)
 
 - **Where it sits**: under `rules/glass-atrium/orchestrator-role.md` → `### Spawn Budget`, beside the runtime concurrency ceilings (`#### Depth and concurrency ceilings`) it is distinct from.
-- **Pointer site**: `#### Delegation-size discipline` in that file — the SoT for the sizing obligation, when it fires, the split triggers with the measured truncation band, and COUNTER-CAVEAT.
+- **Pointer site**: `#### Delegation-size discipline` in that file — the SoT for the sizing duties of both modes, when they fire, the split triggers with the measured truncation band, and COUNTER-CAVEAT.
 
 ## DEV-mode token
 
 - **`[SIZE-EST]` self-attestation token (sibling to `[ENTRY-CLASS]`)**: the DEV-mode form.
   - Format `[SIZE-EST] bundles=N tool_uses~=N — <1-line reason>`: `bundles` = how many PRIMARY categories THIS delegation packs · `tool_uses~=N` = the orchestrator's rough pre-spawn tool_use estimate.
   - Placement: `rules/glass-atrium/orchestrator-role.md` → `### Context Handoff Size` → Attestation-token placement. On the manual path `enforce-verification-gate.sh` reads it from `.tool_input.prompt`.
-  - **Honesty framing**: under-estimating `bundles`/`tool_uses` is the DANGEROUS error, masking an oversized delegation past the split discipline; over-estimating is the SAFE error — on a borderline count, round UP and prefer the split.
+  - **Honesty framing** — why the pointer rounds a borderline count UP: under-estimating `bundles`/`tool_uses` is the DANGEROUS error, masking an oversized delegation past the split discipline; over-estimating is the SAFE error.
   - **Scope of this contract — existence/self-attestation only**: the token records the orchestrator's own estimate, and the gates check its PRESENCE, never its correctness — the same existence-only boundary as `[ENTRY-CLASS]`.
   - Enforcement, both paths — manual: `enforce-verification-gate.sh`, guarded by `hook_is_subagent` so it fires on orchestrator-origin spawns only · ultracode: `enforce-workflow-verify-stage.sh`, DEV-gated, raw-scanning the script. Both BLOCK a DEV spawn missing the token.
 
@@ -20,10 +20,10 @@
     - Non-emission rate, dated figures and re-derivation recipe: `skills/glass-atrium-ops-orchestrator.md` → Completion-channel non-emission (MEASUREMENT SoT).
   - Format `[SIZE-EST] reads~=N fields=N effort=<medium|high> scope=<allowlist|bounded> — <1-line reason>`: `reads~=N` = the pre-spawn read/tool-use estimate · `fields` = the output schema's required-field count · `effort` = the chosen reasoning tier · `scope` = an explicit file/dir READ allowlist, never a repo sweep.
   - Read-scope anchor (the read analog of `files × 4.5`): a simple fact-find ~3-10 reads · a direct comparison ~10-15 reads per source.
-  - **Reserve-then-check (gate BEFORE work begins)**: `input_budget = context_window − reserved_output`; bound the read allowlist to fit `input_budget` so the reserved emit budget is never spent on input.
-  - **Output-field cap**: cap output fields at 2-3.
+  - **Reserve-then-check (gate BEFORE work begins)**: the input budget the read allowlist is sized to is `input_budget = context_window − reserved_output`.
+  - **Output-field cap**: 2-3 fields.
   - **Effort matched to depth**: default `medium` for broad reads, `high` ONLY for narrow-scope deep reasoning.
-  - Honesty and backing as in DEV mode: round UP on a borderline `reads~`/`fields`; presence is checked, correctness never.
+  - Honesty and backing as in DEV mode, `reads~`/`fields` included: presence is checked, correctness never.
   - Gate: `enforce-workflow-verify-stage.sh` fires an ADVISORY nudge (never exit 2, fail-open) on a schema-mode non-DEV analysis spawn missing this token — unlike the DEV-mode exit-2 block.
 
 ## Notes on the pointer-site items

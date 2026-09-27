@@ -23,7 +23,9 @@ Reserved beyond that table:
   - `## Orchestrator Identity` · `## Delegation Criteria` · `## Delegation Workflow` · `## Document-Driven Workflow` · `## Harness Path Protection` (with its `Rule 2`).
   - `### Phase Notes`, with `#### Deliverable exposure and designer composition` · `#### Monitoring-phase notes` · `#### Scan boundary and provenance` · `#### Plan edge discovery`.
   - `### Plan Direction Verification (Stage-2 gate)` · `### Spawn Budget` (with Delegation-size discipline and Automatic Parallelization guardrail `(a)`) · `### Context Handoff Size` · the Cost-Tier Selection heading.
-  - Pointer sites keyed by `skills/glass-atrium-ops-delegation-contracts/SKILL.md` → Reference Index: `#### Ultracode declaration contract` · `#### Delegation-size discipline` · `### Context Handoff Size` → `[SCOPE]`.
+  - Pointer sites keyed by `skills/glass-atrium-ops-delegation-contracts/SKILL.md` → Reference Index:
+    - `#### Ultracode declaration contract` · `#### Delegation-size discipline` · `#### Automatic Parallelization` · `#### Plan edge discovery`;
+    - `### Context Handoff Size` → `[SCOPE]` · `## Document-Driven Workflow` step 6.
   - Cited by that skill's reference files: `#### Backstop asymmetry (manual vs. ultracode)` · `#### Depth and concurrency ceilings`.
 - **Bolded leads** cited by name:
   - under `### Phase Notes`: Exposure Determination · Visual-Weight Probe · Foreground Probe · Capability Probe · Compatibility Probe · Verbatim forward-relay · glass-atrium-dev-front markup-exception Monitoring judgment;
@@ -230,31 +232,18 @@ The scan establishes **routing** facts — what exists, where it lives, who owns
 
 #### Plan edge discovery (Decision phase — fires for any delegation derived from a persisted plan, whole or subset)
 
-Ordering is already mandatory under `### Spawn Budget` → Automatic Parallelization (c), and scoping a subset drops no edge. This section finds the edges and handles a missing predecessor.
-
-Read the declared predecessors of each included work stream (or task, where the plan was asked to decompose into tasks) from **any declaration site in the plan**; an edge stated at any of them binds.
-
-- **Declaration sites (examples, not an enumeration)**: an ordering note on a work stream that names a predecessor (the form a brief plan uses) · a DAG · a critical path · wave notes · a per-task `depends:` field · an acceptance criterion or a prose premise that names one.
-- **Stream order alone declares no edge**: the order a brief plan lists its work streams in is sequencing advice; only an ordering note naming a predecessor declares an edge.
-
-Then classify each predecessor:
-
-- **LANDED** — verified against the tree or history with an instrument (`git log`, the file's current content), never from the plan's status field, a wave note, or memory.
-  - **Whether a named change is present in the tree is a ROUTING fact the orchestrator establishes directly; what that change implies about the code's behaviour is a FINDING and belongs to an agent** — the same boundary as `#### Scan boundary and provenance`.
-- **INCLUDED** — guardrail (c) applies: the predecessor lands and is verified before the dependent runs.
-  - **"Before the dependent runs" resolves per path** — manual: before the dependent's spawn call · ultracode: the script is submitted whole, so an in-script `{glass-atrium-qa-code-reviewer, DEV}` verify stage sits between them.
-  - A `pipeline()` containing an edge is therefore authored WITH that stage, not forbidden.
-- **EXCLUDED and not landed** — a scoping defect. **HALT.** Exactly two exits: pull the predecessor into the subset, or route the soundness question to a second party in the Stage-2 **team shape** (`{glass-atrium-qa-code-reviewer, DEV}`) and proceed only on `pass` + `feasible`.
-  - The team shape is invoked regardless of Stage-2's own complex-plan activation scope — a delegation carrying `[ENTRY-CLASS] simple-task` still routes here.
-  - **The composing role may not clear itself** — a self-written justification is the same asymmetric judgment this rule set routes to a second party everywhere else.
-  - Why HALT: a task shipped without its predecessor can pass its own acceptance criteria and still be wrong, because the predecessor made its premise true — and where its behavioural half is not CI-testable, nothing downstream surfaces it.
+- **Standing obligation**: read the declared predecessors of each included work stream (or task, where the plan was asked to decompose into tasks) from **any declaration site in the plan**; an edge stated at any of them binds. Then classify each predecessor:
+  - **LANDED** — verified against the tree or history with an instrument (`git log`, the file's current content), never from the plan's status field, a wave note, or memory.
+  - **INCLUDED** — guardrail (c) under `#### Automatic Parallelization` applies: the predecessor lands and is verified before the dependent runs.
+  - **EXCLUDED and not landed** — a scoping defect. **HALT.**
+    - Exactly two exits: pull the predecessor into the subset, or route the soundness question to a second party in the Stage-2 **team shape** (`{glass-atrium-qa-code-reviewer, DEV}`) and proceed only on `pass` + `feasible`.
+    - The team shape is invoked regardless of Stage-2's own complex-plan activation scope — a delegation carrying `[ENTRY-CLASS] simple-task` still routes here.
+    - **The composing role may not clear itself.**
 
 **Attestation** (evidence of the check, never the rule itself — **the obligations above are unconditional and do not depend on this token**): on a strict subset of a plan, emit `[PLAN-SUBSET] included=<ids> landed=<ids|none> excluded=<ids|none> order=T1>T5b-1;T2>T3` (`order=n/a` when no edge), placed per `### Context Handoff Size` → Attestation-token placement.
 
-- **What an `<id>` resolves to**: the plan's own task id where it carries one; on a brief plan, whose work streams carry no identifier, the stream's ordinal in the execution-order list (`included=2,3 order=2>3`).
-- **Ids and flags only — no free text**: sibling token parsers are strict enough to carry a dedicated `block-grammar` verdict, and spaces and commas inside a single-line token break them. Justifications go in the delegation body.
-- **Distinct from `## Document-Driven Workflow` step 4**, which reconciles the WHOLE plan AFTER implementation; this validates edges BEFORE delegation.
-- **HONEST BACKING**: honor-system for the check. The token's presence draws a stderr advisory on the manual path only (`hooks/enforce-verification-gate.sh`, plan-referencing spawns, never a block); nothing checks it under ultracode, and its truthfulness is checked on neither path.
+- SoT for the rest: `skills/glass-atrium-ops-delegation-contracts/references/plan-edge-discovery.md`.
+  - Duties held there: per-path "before the dependent runs" · the `<id>` and no-free-text rules for the token.
 
 ### Plan Direction Verification (Stage-2 gate)
 
@@ -357,8 +346,12 @@ The orchestrator composes the pair and supplies each job's inputs; it never adju
 
 - **Standing obligation — fires at every DEV spawn and at every schema-mode non-DEV analysis spawn**:
   - Analysis spawns: glass-atrium-intel-researcher / glass-atrium-intel-planner / glass-atrium-intel-reporter / glass-atrium-qa-code-reviewer, each whose single terminal StructuredOutput IS the deliverable.
-  - Emit a `[SIZE-EST]` token at either spawn kind.
+  - Emit a `[SIZE-EST]` token at either spawn kind; on a borderline count, round UP and prefer the split (**Honesty framing**).
   - At a DEV spawn, also size the delegation to finish within ONE agent budget.
+  - At an analysis spawn, before any read, bound the read allowlist, field count and effort so the reserved emit budget stays unspent:
+    - reads: an explicit file/dir allowlist sized to the input budget (**Reserve-then-check**);
+    - fields: cap the output schema (**Output-field cap**);
+    - effort: match it to read depth (**Effort matched to depth**).
   - Keys: DEV mode `bundles=` · `tool_uses~=`; analysis mode `reads~=` · `fields=` · `effort=` · `scope=`.
 - **Split triggers** — any one alone forces a split; the split's shape follows the mode:
   - **DEV mode** → sequential checkpointed sub-delegations, each implementation kept with its NEW tests:
@@ -367,8 +360,7 @@ The orchestrator composes the pair and supplies each job's inputs; it never adju
     - **`files × 4.5` anchor (Empirical tool_use calibration)**: a `ceil(files × 4.5)` estimate above ~30.
   - **Analysis mode**: `reads~ > ~20 OR fields > 3 OR (broad scope AND effort:high)` → decompose by domain from the start (`#### Analysis fan-out and team cardinality` below).
 - **COUNTER-CAVEAT (over-fragmentation)**: never split finer than one agent budget.
-- SoT for the rest: `skills/glass-atrium-ops-delegation-contracts/references/delegation-size-discipline.md`.
-  - Sizing duties held there: the honesty framing (both modes) · analysis mode's **Reserve-then-check** · **Effort matched to depth** · the READ allowlist scope · the 2-3 output-field cap.
+- SoT for the rest: `skills/glass-atrium-ops-delegation-contracts/references/delegation-size-discipline.md` — token formats, the input-budget formula, the field and effort values, calibration, gates, honest backing.
 
 #### Analysis fan-out and team cardinality
 
@@ -389,50 +381,20 @@ The orchestrator composes the pair and supplies each job's inputs; it never adju
 
 #### Automatic Parallelization (standing default — fan out WITHOUT waiting for a per-task user request)
 
-- Sub-tasks that are file/resource NON-overlapping AND independent (no shared-file write, no output-as-input dependency) MUST fan out in parallel via domain-ownership partitioning.
+- **Standing obligation — fires at every Decision-phase decomposition**: sub-tasks that are file/resource NON-overlapping AND independent (no shared-file write, no output-as-input dependency) MUST fan out in parallel via domain-ownership partitioning.
 - Guardrails (a), (b) and (c) all bind.
-
-- (a) **The isolation unit for concurrent writers is the WORKTREE; disjoint file ownership is the floor, not the ceiling.** Two mechanisms defeat file-set partitioning, and each needs its own rule:
-  - **Shared index** — a worktree has exactly ONE index, shared by every process in it: a plain `git commit` commits every path another track already `git add`-ed, and `git commit -a` also sweeps unstaged edits to tracked files.
-  - **Whole-tree regeneration** (manifest, lockfile, index file) reads the tree, not the index.
-    - Example: `scripts/generate-manifest.sh` takes its file list from `git ls-files` but its hashes from the working tree, so a run beside another track's uncommitted edits writes hashes that match no commit.
-  - The sub-rules below are cumulative — each binds on its own, and satisfying one never discharges another.
-  - **Index-owner rule** (answers the shared index): at most ONE index-mutating agent per worktree at a time.
-    - Index mutation is **any command that writes the index or moves HEAD** — `add`, `rm`, `mv`, `reset`, `restore`, `checkout`, `stash`, `commit`, `merge`, `rebase`, `cherry-pick`, `apply --index`. The list gives examples of the class, not the class itself; if unsure, treat a command as index mutation.
-    - A second index-mutating agent enters only through its own worktree. Where no second worktree is available the two tracks run **SEQUENTIALLY** — the parallel default yields rather than proceeding on file-disjointness alone.
-  - **Regeneration barrier** (answers whole-tree regeneration): a regeneration is a BARRIER, not an index operation.
-    - Run it only when no other agent is writing anywhere in that tree, and commit its output before releasing the tree.
-    - Neither staging discipline nor sequencing index mutators makes it safe: a regeneration reads files, not the index.
-  - **Entry precondition**: an index owner inherits whatever the last occupant left staged.
-    - Before mutating the index in a worktree, confirm `git diff --cached --quiet` passes.
-    - A non-empty index belongs to a predecessor — a track killed at its budget cap between `git add` and commit leaves exactly this state. Do not commit it or build on it; report it and have the predecessor's owner resolve it.
-    - Sequential succession is not isolation.
-  - **Delegation-side half (binds the agent, not only the composer)**: every delegation into a worktree MUST state one of these contracts in the prompt:
-    - `worktree <path> — INDEX OWNER: commit your own work`
-    - `worktree <path> — SHARED: do NOT mutate the index (see the class above); checkpoint to ~/.claude-personal/projects/<home-encoded>/memory/progress-*.md instead`
-    - The token is INDEX OWNER, not SOLE OWNER: it grants sole INDEX MUTATION, not sole presence.
-    - An agent-body obligation to commit incrementally is conditional on holding INDEX OWNER.
-    - An agent-body obligation to run a whole-tree regeneration is conditional on the regeneration barrier, which NEITHER token grants — a delegation that wants one states the exclusive-tree grant explicitly.
-  - **Who commits**: an agent commits its OWN work, in a worktree where it is the index owner.
-    - The orchestrator does not AUTHOR a commit of another agent's changes (`## Orchestrator Identity` — execution is forbidden).
-    - An integration **merge** of an already-committed branch under the Merge-authorization rule (`core-git-workflow.md` → Pull Requests) is a different act and is unaffected; `skills/glass-atrium-ops-orchestrator.md` → `**Commit strategy**` describes that merge.
-  - **Read-only** means **mutates no index AND modifies no tracked path** in the worktree; read-only tracks may share a worktree freely.
-    - Both halves are required: a reviewer fixing a typo modifies a tracked path, and a reviewer running `git stash` to peek at a clean tree destroys the owner's staged work without modifying one.
-  - **Three sanctioned isolation paths**:
-    - a PRE-CREATED worktree passed as `cwd` in the delegation prompt, unaffected by Issue #33045;
-      - The delegation MUST also root its target paths in that worktree: a `cwd` is a default, not a container, and an absolute path resolves past it.
-    - `isolation: worktree` on the manual Agent path — never with `background: true` (Issue #33045);
-    - `opts.isolation:'worktree'` on the ultracode `agent()`/`parallel()` path — background interaction unverified, so do not assume parity.
-  - **Deciding "at a time"**: whether another index mutator is still live is answered by `skills/glass-atrium-ops-orchestrator.md` → Completion signals, signal (iii) — the liveness ledger is the only signal that answers ABSENCE. Do not infer it.
-  - Attestation: the per-track `// [OWNERSHIP]` line also names the isolation unit — `worktree: <path|isolated>` per track — author-attested, engine-unverified.
-  - **HONEST BACKING**: honor-system orchestrator discipline plus an honor-system prompt contract. No hook enforces one index-mutator per worktree, the barrier or the entry precondition.
-- (b) the engine's runtime concurrency self-cap GOVERNS the actual degree, per `#### Depth and concurrency ceilings` above.
-- (c) overlapping-file OR dependency-linked work stays SEQUENTIAL — a shared-file write is exactly the race disjoint ownership exists to prevent.
-  - **Dependency-linked includes a predecessor edge declared anywhere in a persisted plan, not only an output-as-input dependency** — a predecessor that makes the dependent's premise true (removing a truncation so its text survives, landing a schema it writes against) is an edge though nothing flows between them.
-  - A predecessor and its dependent never share a parallel wave, whatever their file sets — for a whole-plan fan-out exactly as for a subset.
-
+  - (a) **The isolation unit for concurrent writers is the WORKTREE; disjoint file ownership is the floor, not the ceiling.**
+    - Its agent-binding rules, the index-mutation class included: `rules/glass-atrium/core-git-workflow.md` → Commits → **Concurrent worktree**.
+    - When isolating a concurrent track, use one of the **Three sanctioned isolation paths**; a delegation given a pre-created worktree as `cwd` MUST root its target paths in that worktree.
+    - Before admitting a second index mutator to a worktree, confirm from the liveness ledger that no other is live — never infer it (**Deciding "at a time"**).
+    - Where a workflow script carries a per-track `// [OWNERSHIP]` line, that line also names the track's isolation unit.
+  - (b) the engine's runtime concurrency self-cap GOVERNS the actual degree, per `#### Depth and concurrency ceilings` above.
+  - (c) overlapping-file OR dependency-linked work stays SEQUENTIAL.
+    - **Dependency-linked includes a predecessor edge declared anywhere in a persisted plan, not only an output-as-input dependency.**
+    - A predecessor and its dependent never share a parallel wave, whatever their file sets — for a whole-plan fan-out exactly as for a subset.
 - Partition by ownership FIRST, then size each track per `[SIZE-EST]` and the effort-scaling table above.
 - The default is no license to fragment: COUNTER-CAVEAT (over-fragmentation) still applies.
+- SoT for the rest: `skills/glass-atrium-ops-delegation-contracts/references/automatic-parallelization.md` — the isolation-path list, where the liveness ledger lives, the `[OWNERSHIP]` field format, honest backing, the (c) notes.
 
 #### Routing output: team schema, size, and correlation ID
 
@@ -517,27 +479,11 @@ The standard plan/report-then-build flow as ONE lifecycle.
        - The recorder's `scope-excess` `review_flag` is an after-the-fact ADVISORY on a strictly NARROWER surface — Write/Edit-authored paths of a SUBAGENT whose delegation carried a `[SCOPE]` line — and never substitutes for running this gate.
        - Bash-authored writes, the updater path and the orchestrator's own main-session edits leave it silent. Describe neither as "enforced".
 5. **Document completion** — transition `doc_status → done` ONLY after coverage N/N, no unauthorized excess outstanding, AND the correctness gates pass (mechanism: the Managed Document Completion detail below).
-6. **Live deploy + empirical verification (PRE-MERGE delivery gate — live-install bundle members only)** — binds any delivered change touching live-install bundle members (manifest-member files: `hooks/`, `scripts/`, `rules/`, `agents/`, `autoagent/`, `lib/`, `monitor/`, …). The DEFAULT per-cycle order puts deploy and verification BEFORE the PR, never after the merge:
-
-   `implementation → simplify → review of the modified files → LOCAL DEPLOY (combined unmerged tree) → EMPIRICAL VERIFICATION on the live install → PR → CI → merge → sha-parity + recovery-snapshot reconcile`
-
-   - **Deploy the COMBINED tree** — all of the cycle's branches composed over current `main`, deployed to the live install through the sanctioned updater's local-source seam (`ATRIUM_UPDATE_SRC_DIR` + `ATRIUM_UPDATE_SRC_MANIFEST`; copy-step idiom: `skills/glass-atrium-ops-orchestrator.md` → Deploy-Safety Idiom).
-     - Not per-branch: a cycle's branches routinely share files, and only the combined tree matches what the merge produces.
-   - **Verify empirically ON that live install** — rule/behavior probes, live test execution, doctor/monitor state. A probe run against the repo tree does not satisfy this gate.
-     - **Live-suite instrument, run from the install root**: `AUTOAGENT_PREFLIGHT_ACTIVE=1 scripts/run-bats-parallel.sh` MUST exit 0 before the PR is opened.
-     - It is the runner and re-entry sentinel the daemon's green-suite gate invokes (`autoagent/daemon-apply.sh` → `verify_test_harness`, which aborts the cycle after one retry on a non-zero status), so a red run here is a red daemon cycle there.
-     - A repo-tree run cannot substitute: the runner recurses the four on-disk test roots, so a stale on-disk `.bats` the repo no longer ships fails only on the live install.
+6. **Live deploy + empirical verification (PRE-MERGE delivery gate — live-install bundle members only)** — binds any delivered change touching live-install bundle members (manifest-member files: `hooks/`, `scripts/`, `rules/`, `agents/`, `autoagent/`, `lib/`, `monitor/`, …). The DEFAULT per-cycle order puts deploy and verification BEFORE the PR, never after the merge.
+   - **Live-suite instrument, run from the install root**: `AUTOAGENT_PREFLIGHT_ACTIVE=1 scripts/run-bats-parallel.sh` MUST exit 0 before the PR is opened.
      - Before running a suite file that executes the postgres orphan-clear guards, clear `scoped/shared-testing.md` → Destructive-Path Suite Safety (live-postgres reach) — pointer only, the procedure is single-sited there.
-   - **Only on green, open and merge the PRs.** A defect the probes surface is fixed on its branch, and deploy+verify repeats before the PR is opened. Merging still needs the explicit per-cycle approval at `core-git-workflow.md` → Pull Requests.
-   - **After merge, reconcile sha parity** — merged `main` and the deployed tree MUST be content-identical.
-     - A divergence means something landed that was never on the verified tree, or the deploy drifted; a follow-up deploy from merged `main` closes it.
-     - The recovery-repo snapshot reconcile runs here too.
-   - **Rationale**: a defect found before the merge is fixed on its branch; found after, it is already in `main` — and repo-only delivery leaves live agents running the defect until the fix merges.
-   - **Post-merge deploy — NARROW retained cases, never the default**:
-     - (a) the RELEASE flow, which re-publishes from merged `main` via the release path — this gate says nothing about when a release is cut;
-     - (b) a cycle where no pre-merge deploy was possible — deploy from merged `main` and run the SAME empirical verification, late rather than never.
-   - **Boundary**: deploy is DELEGATED, never self-executed (`## Orchestrator Identity`), and the sanctioned updater is the ONLY live write path — manual writes into the live install stay FORBIDDEN.
-   - **Honest framing — HONOR-SYSTEM, NOT mechanically enforced**: nothing blocks a PR opened ahead of the verification.
+   - SoT for the rest: `skills/glass-atrium-ops-delegation-contracts/references/live-deploy-gate.md`.
+     - Duties held there: the per-cycle order line · the combined-tree deploy · verification on the live install, never the repo tree · green before the PR · post-merge sha parity · the narrow post-merge cases · the delegated-deploy boundary (manual live-install writes FORBIDDEN).
 
 > Detail: skills/glass-atrium-ops-orchestrator.md → Pipeline Acceptance Criteria (per-stage acceptance detail for the steps above · the in-script verify-stage skeleton for ultracode)
 

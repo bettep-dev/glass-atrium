@@ -9,9 +9,37 @@ Applies to all agents.
 - `--no-verify` / `--no-gpg-sign` are **STRICTLY FORBIDDEN** in normal flow
   - Agent execution context without configured signing key → configure SSH/GPG key OR set `git config commit.gpgsign false` explicitly (silent `--no-verify` bypass remains forbidden)
 - Stage only changed files via `git add` — `git add .` / `git add -A` are FORBIDDEN
-- **Concurrent worktree**: where a delegation places you in a worktree alongside other concurrent tracks, index mutation is permitted only to the stated INDEX OWNER.
+
+### Concurrent worktree
+
+- Mechanisms that defeat file-set partitioning, which the rules below answer:
+  - **Shared index** — a worktree has exactly ONE index, shared by every process in it: a plain `git commit` commits every path another track already `git add`-ed, and `git commit -a` also sweeps unstaged edits to tracked files.
+  - **Whole-tree regeneration** (manifest, lockfile, index file) reads the tree, not the index.
+    - Example: `scripts/generate-manifest.sh` takes its file list from `git ls-files` but its hashes from the working tree, so a run beside another track's uncommitted edits writes hashes that match no commit.
+- Index mutation is **any command that writes the index or moves HEAD** — `add`, `rm`, `mv`, `reset`, `restore`, `checkout`, `stash`, `commit`, `merge`, `rebase`, `cherry-pick`, `apply --index`. The list gives examples of the class, not the class itself; if unsure, treat a command as index mutation.
+- The sub-rules below are cumulative — each binds on its own, and satisfying one never discharges another.
+- **Delegation-side half (binds the agent, not only the composer)**: every delegation into a worktree MUST state one of these contracts in the prompt:
+  - `worktree <path> — INDEX OWNER: commit your own work`
+  - `worktree <path> — SHARED: do NOT mutate the index (see the class above); checkpoint to ~/.claude-personal/projects/<home-encoded>/memory/progress-*.md instead`
+  - The token is INDEX OWNER, not SOLE OWNER: it grants sole INDEX MUTATION, not sole presence.
+  - An agent-body obligation to commit incrementally is conditional on holding INDEX OWNER.
+  - An agent-body obligation to run a whole-tree regeneration is conditional on the regeneration barrier, which NEITHER token grants — a delegation that wants one states the exclusive-tree grant explicitly.
+- Where a delegation places you in a worktree alongside other concurrent tracks, index mutation is permitted only to the stated INDEX OWNER.
   - Where such a delegation states no contract, treat that worktree as SHARED — checkpoint to `~/.claude-personal/projects/<home-encoded>/memory/progress-*.md` and ask rather than committing.
-  - `orchestrator-role.md` → Spawn Budget → Automatic Parallelization (a) defines the index-mutation class and the contract.
+- **Index-owner rule** (answers the shared index): at most ONE index-mutating agent per worktree at a time.
+  - A second index-mutating agent enters only through its own worktree. Where no second worktree is available the two tracks run **SEQUENTIALLY** — the parallel default yields rather than proceeding on file-disjointness alone.
+- **Regeneration barrier** (answers whole-tree regeneration): a regeneration is a BARRIER, not an index operation.
+  - Run it only when no other agent is writing anywhere in that tree, and commit its output before releasing the tree.
+  - Neither staging discipline nor sequencing index mutators makes it safe: a regeneration reads files, not the index.
+- **Entry precondition**: an index owner inherits whatever the last occupant left staged.
+  - Before mutating the index in a worktree, confirm `git diff --cached --quiet` passes.
+  - A non-empty index belongs to a predecessor — a track killed at its budget cap between `git add` and commit leaves exactly this state. Do not commit it or build on it; report it and have the predecessor's owner resolve it.
+  - Sequential succession is not isolation.
+- **Who commits**: an agent commits its OWN work, in a worktree where it is the index owner.
+  - The orchestrator does not AUTHOR a commit of another agent's changes (`orchestrator-role.md` → `## Orchestrator Identity` — execution is forbidden).
+  - An integration **merge** of an already-committed branch under the Merge-authorization rule (`core-git-workflow.md` → Pull Requests) is a different act and is unaffected; `skills/glass-atrium-ops-orchestrator.md` → `**Commit strategy**` describes that merge.
+- **Read-only** means **mutates no index AND modifies no tracked path** in the worktree; read-only tracks may share a worktree freely.
+  - Both halves are required: a reviewer fixing a typo modifies a tracked path, and a reviewer running `git stash` to peek at a clean tree destroys the owner's staged work without modifying one.
 
 ### Subject Line
 

@@ -135,20 +135,20 @@ Choose the delegation form:
 - Sub-agents cannot create sub-agents (nesting forbidden).
 - Initialization token cost: 5K-50K/agent — avoid unnecessary sub-agent proliferation.
 - **File ownership separation required, and it is the floor rather than the ceiling**: concurrent modification of the same file is forbidden → ownership matrix.
-  - For concurrent INDEX MUTATORS this is necessary but NOT sufficient: the worktree is the isolation unit (`orchestrator-role.md` → Spawn Budget → Automatic Parallelization (a)).
+  - For concurrent INDEX MUTATORS this is necessary but NOT sufficient: the worktree is the isolation unit (`rules/glass-atrium/core-git-workflow.md` → Commits → **Concurrent worktree** → **Index-owner rule**).
   - An ownership matrix is not an alternative to worktree isolation for index mutators; it is what you do *inside* one worktree with one of them.
 
 #### Worktree Isolation [ORCHESTRATOR]
 
 - The Agent tool already isolates context; a worktree adds **filesystem isolation**, physically preventing file conflicts between sub-agents.
-- The sanctioned isolation paths, including the `background: true` + `isolation: worktree` prohibition (Issue #33045) and the unverified ultracode parity: `orchestrator-role.md` → Spawn Budget → Automatic Parallelization (a) → **Three sanctioned isolation paths**.
+- The sanctioned isolation paths, including the `background: true` + `isolation: worktree` prohibition (Issue #33045) and the unverified ultracode parity: `skills/glass-atrium-ops-delegation-contracts/references/automatic-parallelization.md` → **Three sanctioned isolation paths**.
 
 #### Declarative Team Definition
 
 - **Same input = same team composition** — a routing decision is stated declaratively (the `agents` · `reason` · `order` schema above), never improvised per turn, so the same request reproduces the same team.
 - **Declare the shape, not a bespoke spec format** — the fan-out / pipeline shape is expressed in the execution vocabulary `### Architecture Patterns` defines (`parallel()` / `pipeline()` under ultracode, the equivalent Agent-tool sequencing on the manual path).
   - A hand-rolled team YAML has no consumer in this repo — nothing reads a `team.*` / `constraints.*` key — so authoring one records intent in a form no gate, engine or reader acts on.
-- **File ownership + isolation** travel with the composition: `#### Team Constraints` above (ownership matrix) and `orchestrator-role.md` → Spawn Budget → Automatic Parallelization (a) (worktree isolation for index mutators).
+- **File ownership + isolation** travel with the composition: `#### Team Constraints` above (ownership matrix) and `rules/glass-atrium/core-git-workflow.md` → Commits → **Concurrent worktree** → **Index-owner rule** (worktree isolation for index mutators).
 
 ### Delegation/Communication Rules [ORCHESTRATOR]
 
@@ -550,7 +550,8 @@ Binds any delegation that copies files INTO a live install: reach the destinatio
 
 ##### When in the cycle this deploy runs (pointer, not a restatement)
 
-- Order SoT — pre-merge by default, the narrow post-merge cases, the live-suite instrument and its exit-0 threshold: `orchestrator-role.md` → `## Document-Driven Workflow` step 6.
+- Order SoT — pre-merge by default, the live-suite instrument and its exit-0 threshold: `orchestrator-role.md` → `## Document-Driven Workflow` step 6.
+  - The per-cycle order line and the narrow post-merge cases: `skills/glass-atrium-ops-delegation-contracts/references/live-deploy-gate.md` → `## Per-cycle order` · `## Scope and backing`.
 - This section covers only HOW the copy reaches its destination safely.
 
 ##### Reach the destination through a sanctioned flow FIRST
@@ -594,8 +595,9 @@ done <<<"${FILE_LIST}"
 
 A Wave is one parallel fan-out batch of sub-tasks.
 
-- **Automatic Parallelization (standing default)**: when and how to fan out — guardrails, worktree isolation for concurrent DEV tracks, `[SIZE-EST]` sizing, the over-fragmentation caveat — is single-sited at `orchestrator-role.md` → `### Spawn Budget` → Automatic Parallelization.
-  - Skeleton `parallel()` blocks carry the per-track `// [OWNERSHIP]` attestation line that section defines.
+- **Automatic Parallelization (standing default)**: when and how to fan out — guardrails, worktree isolation for concurrent DEV tracks, `[SIZE-EST]` sizing, the over-fragmentation caveat — is stated as obligations at `orchestrator-role.md` → `### Spawn Budget` → Automatic Parallelization.
+  - Isolation detail: the isolation paths and the "at a time" check — `skills/glass-atrium-ops-delegation-contracts/references/automatic-parallelization.md`; the agent-binding worktree rules — `rules/glass-atrium/core-git-workflow.md` → Commits → **Concurrent worktree**.
+  - Skeleton `parallel()` blocks carry the per-track `// [OWNERSHIP]` attestation line that `skills/glass-atrium-ops-delegation-contracts/references/automatic-parallelization.md` → `## Guardrail (a) — orchestrator-side rules` defines.
   - Research/analysis fan-out is the routine case: independent domains investigate separately, then results aggregate.
 - **Commit strategy**: agents within a Wave commit their own work on their own branches from their own worktree, with hooks running → the orchestrator merges after Wave completion.
 - **Workflow-mode mapping**: under ultracode a Wave = a `parallel()` block; the engine owns the fan-out and the join.
@@ -1086,7 +1088,7 @@ Finished means a terminal record, never an inference. Three signals establish a 
   - **Read the tail, not the file**: sampled transcripts run 0.5-0.8 MB, so a full read is itself a budget event.
 - **(iii) The liveness ledger answers ABSENCE.**
   - `core.agent_events` (written by `hooks/agent-tracker.sh` on SubagentStart and SubagentStop) holds a Stop row per terminated agent; a Start with no Stop is a live agent.
-  - Only (iii) supports "no other writer is live" — the question `orchestrator-role.md` → `### Spawn Budget` → Automatic Parallelization guardrail (a) asks; (i) and (ii) enumerate only the terminations you observed.
+  - Only (iii) supports "no other writer is live" — the question `skills/glass-atrium-ops-delegation-contracts/references/automatic-parallelization.md` → **Deciding "at a time"** asks; (i) and (ii) enumerate only the terminations you observed.
   - It carries no cwd or worktree column: it answers whether a child is live, never where.
 
 **Not completion signals** — substituting any of these is FORBIDDEN:
@@ -1446,7 +1448,7 @@ Signals that an orchestration is defective: the scan list, then the named guards
 
 - Orchestrator session contains `Edit` or `Write` tool calls for non-exception files
 - Sub-agent invoked without every element of `#### Delegation required elements`
-- Two index-mutating agents in one worktree, regardless of file overlap (`orchestrator-role.md` → `### Spawn Budget` → Automatic Parallelization (a))
+- Two index-mutating agents in one worktree, regardless of file overlap (`rules/glass-atrium/core-git-workflow.md` → Commits → **Concurrent worktree** → **Index-owner rule**)
 - Pipeline stage started before the prior stage's acceptance criteria are verified
 - A very large fan-out (well beyond a normal team) composed without reasoning in `reason` about synthesis value and total-session token cost
 - `background: true` + `isolation: worktree` used together (Issue #33045)
@@ -1521,7 +1523,7 @@ A spawn without an `agentType` matching the routing decision starts a generic su
 ## Verification
 
 - [ ] **Delegation completeness**: every sub-agent invocation carries every element of `#### Delegation required elements` (spot-check 2-3 recent delegations)
-- [ ] **File ownership**: no two agents in one Wave/Team mutate the index in one worktree (`orchestrator-role.md` → `### Spawn Budget` → Automatic Parallelization (a)); within a worktree, an explicit ownership matrix
+- [ ] **File ownership**: no two agents in one Wave/Team mutate the index in one worktree (`rules/glass-atrium/core-git-workflow.md` → Commits → **Concurrent worktree** → **Index-owner rule**); within a worktree, an explicit ownership matrix
 - [ ] **Pipeline acceptance**: each stage transition has documented acceptance-criteria verification
 - [ ] **Outcome Record**: every completed task has an Outcome Record with the minimum fields (agent, task_type, result)
 - [ ] **Domain-keyword hints (recommended, not routing keys)**: delegation prompts include the target agent's recommended domain keywords as prompt content; routing stays capability-based

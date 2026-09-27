@@ -57,6 +57,11 @@ Maintainer-facing material for that rule file. Nothing here binds the orchestrat
 - Agent-body halves: `agents/glass-atrium-intel-reporter.md`, `agents/glass-atrium-intel-planner.md`, `agents/glass-atrium-dev-front.md`; `skills/glass-atrium-design-html-co-emission/SKILL.md` restates it for the consulted designer.
 - The rule-file copy also reaches every subagent through the parent's project-instruction set. That is a delivery accident and gives it no authority over the author-side canonical.
 
+### `#### Plan edge discovery`
+
+- The split between the rule-file heading and `skills/glass-atrium-ops-delegation-contracts/references/plan-edge-discovery.md`: that skill's `SKILL.md` → Reference Index.
+- The `[PLAN-SUBSET]` grammar stays in the rule file because the byte contract above names the rule file as its site. Move it only together with that line.
+
 ### `### Plan Direction Verification (Stage-2 gate)`
 
 - `### Plan Direction Verification (Stage-2 gate)` is the gate-OPERATION canonical. The participant-duty canonicals are `scoped/scope-qa.md` → `## Plan Direction Verification Gate [DEV+QA]` (reviewer) and `scoped/scope-dev.md` → the same heading (DEV).
@@ -72,6 +77,13 @@ Maintainer-facing material for that rule file. Nothing here binds the orchestrat
 - A second, weaker tuple sits beside it: `_BASE_AWARE_FRONTMATTER_KEYS`, exactly `("effort",)` — a key the release DOES ship, so a live line is kept only when it differs from base@install, and with no base anchor it falls back to live-wins. Unlike `model`, `effort` is not unconditionally local-only.
 - Code comments in `autoagent/lib/editable_merge.py`, `autoagent/test/test_editable_merge.py` and `scripts/test/glass-atrium-update.bats` cite "Cost-Tier Selection" as the sanction for live-wins; keep that heading and the sanction sentence when editing the rule.
 
+### `#### Automatic Parallelization`
+
+- Guardrail (a)'s agent-binding rules, the index-mutation class and the mechanisms they answer live in Tier-1 `rules/glass-atrium/core-git-workflow.md` → Commits → **Concurrent worktree**, which reaches every agent on the host channel.
+  - Never copy them back into the rule file: its opening line tells subagents to ignore it, so a rule placed there loses its agent audience.
+- The split between the rule-file heading and `skills/glass-atrium-ops-delegation-contracts/references/automatic-parallelization.md`: that skill's `SKILL.md` → Reference Index.
+- `skills/glass-atrium-ops-orchestrator.md` cites the Tier-1 home and the reference file's leads directly. Before renaming such a lead, grep for its citers (`SKILL.md` → Edit Rules → **Cited leads**).
+
 ### `### Failure Recovery Loop`
 
 - `**Debugger evidence gate**` came from the retired `glass-atrium-core-iron-laws` skill's Debugger Escalation section; it has no other maintained copy — `scoped/shared-investigation-discipline.md` only points at it as the orchestrator half; its backing is stated in the rule file's Backing honesty paragraph.
@@ -81,5 +93,6 @@ Maintainer-facing material for that rule file. Nothing here binds the orchestrat
 ### `## Document-Driven Workflow (end-to-end lifecycle)`
 
 - `## Document-Driven Workflow` is the orchestrator-side lifecycle SoT. `skills/glass-atrium-ops-orchestrator.md` → `#### Pipeline Acceptance Criteria` mirrors its gate sequence as per-stage acceptance detail and carries the ultracode in-script verify-stage skeleton.
-  - The skill cites the rule file as the SoT for step 4's procedure and step 6's order (`#### Pipeline Acceptance Criteria` and `#### Deploy-Safety Idiom`). Edit the two together; neither is a redundancy to delete.
+  - The skill cites the rule file as the SoT for step 4's procedure (`#### Pipeline Acceptance Criteria`) and for step 6's pre-PR default and live-suite threshold (`#### Deploy-Safety Idiom`). Edit the two together; neither is a redundancy to delete.
+  - Step 6's per-cycle order line and its narrow post-merge cases live in `skills/glass-atrium-ops-delegation-contracts/references/live-deploy-gate.md`; `#### Deploy-Safety Idiom` cites that file for them, so an edit there moves with the skill's citer too.
 - Step 6's pointer to `scoped/shared-testing.md` → Destructive-Path Suite Safety keeps the phrase "pointer only, the procedure is single-sited there": `scoped/maintainers/shared-testing.md` quotes it as the reason that section stays single-sited. Reword both together or neither.
