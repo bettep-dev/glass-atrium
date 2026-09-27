@@ -19,6 +19,8 @@
 
 HOOK_SH="${BATS_TEST_DIRNAME}/../advisory-worktree-writer-lock.sh"
 TRACKER_SH="${BATS_TEST_DIRNAME}/../agent-tracker.sh"
+# shellcheck source-path=SCRIPTDIR source=../../scripts/lib/path-guard.sh
+source "${BATS_TEST_DIRNAME}/../../scripts/lib/path-guard.sh"
 
 setup() {
   [[ -f "${HOOK_SH}" ]] || skip "advisory-worktree-writer-lock.sh not found: ${HOOK_SH}"
@@ -212,7 +214,7 @@ STUB
 @test "a memory/ segment nested under a harness dir is NOT exempt (enforce-delegation parity)" {
   local sub
   for sub in agents rules hooks skills autoagent monitor scripts; do
-    rm -rf "${LOCK_ROOT}"
+    if ga_guard_path "${LOCK_ROOT}"; then rm -rf -- "${LOCK_ROOT:?}"; fi
     mkdir -p "${WT}/${sub}/memory"
     fire_write "${WT}/${sub}/memory/note.md" "agent-A"
     [[ "${status}" -eq 0 ]] || {
