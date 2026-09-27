@@ -120,6 +120,7 @@ Every table row carries a name stating its condition — an unnamed row fails wi
 | Swift Testing | `@Test("…", arguments: …)` — each argument reports as its own case, no loop | the display string plus the argument |
 
 - **bats — every row fails on its own iteration**: assert each row as `<check> || { echo "<row name>"; return 1; }`. A bare `[[ ]]` in the loop body is exempt from errexit on bash 3.2, so an earlier failing row goes unseen.
+- **bats — a status assertion prints the output**: assert a run status as `<status check> || { echo "${output}"; return 1; }` — in a row loop, echo the row name too. Converting an existing status line to this form is never weaker, and may become stricter on bash 3.2.
 
 ## Rationalization Rejection (Testing)
 
