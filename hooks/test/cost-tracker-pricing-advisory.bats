@@ -56,8 +56,13 @@ HOOK_SH="${HOOKS_DIR}/cost-tracker.sh"
 # Same date as the fixture SoT last_verified → age 0 → staleness silent.
 FRESH_TODAY="2026-07-02"
 
+# shellcheck source-path=SCRIPTDIR source=../../scripts/lib/path-guard.sh
+source "${BATS_TEST_DIRNAME}/../../scripts/lib/path-guard.sh"
+
 setup() {
   TEST_TMP="$(mktemp -d "${TMPDIR:-/tmp}/cost-tracker-bats.XXXXXX")"
+  # Absolute even under a relative TMPDIR — the teardown guard refuses a relative target.
+  TEST_TMP="$(cd -- "${TEST_TMP}" && pwd -P)"
   FIXTURE_SOT="${TEST_TMP}/pricing.json"
   # Fixture SoT: value-aligned with the production rows the cases anchor on
   # (opus-4-8, fable-5 fallback, sonnet-5 + intro tier, haiku-4-5), with a
@@ -102,7 +107,7 @@ JSON
 }
 
 teardown() {
-  rm -rf "${TEST_TMP}"
+  if ga_guard_path "${TEST_TMP:-}"; then rm -rf -- "${TEST_TMP:?}"; fi
 }
 
 # Write a synthetic single-turn transcript: one user line + one assistant
@@ -473,4 +478,28 @@ _run_parser() {
       return 1
     }
   done
+}
+
+# A relative TMPDIR makes the mktemp template relative — teardown must still reach the sandbox.
+@test "teardown removes the sandbox that setup made under a relative TMPDIR" {
+  local suite_tmp="${TEST_TMP}" base="${BATS_TEST_TMPDIR}/relative-tmpdir"
+  mkdir -p "${base}/rel"
+  cd -- "${base}" || return 1
+  TMPDIR=rel setup
+  [[ -d "${TEST_TMP}" ]] || {
+    echo "setup made no sandbox at ${TEST_TMP}" >&2
+    return 1
+  }
+  run teardown
+  TEST_TMP="${suite_tmp}"
+  [[ "${status}" -eq 0 && -z "${output}" ]] || {
+    echo "teardown failed (status ${status}): ${output}" >&2
+    return 1
+  }
+  local left
+  left="$(ls -A -- "${base}/rel")"
+  [[ -z "${left}" ]] || {
+    echo "sandbox left behind: ${left}" >&2
+    return 1
+  }
 }
