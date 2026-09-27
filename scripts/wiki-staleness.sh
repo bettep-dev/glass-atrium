@@ -21,6 +21,7 @@
 #
 # Exit codes:
 #   0 = scan completed (staleness is a report, never a failure)
+#   1 = shared path guard (lib/path-guard.sh) missing — the scan never starts
 #   2 = usage error
 #   3 = notes directory not found
 set -Eeuo pipefail

@@ -42,12 +42,13 @@ seed_dead_holder_lock() {
   [ ! -e "${LOCK_DIR}" ]
 }
 
-@test "a copy without the shared path guard beside it refuses to run and leaves the lock alone" {
+@test "a copy without the shared path guard beside it exits 3 with a named FATAL and leaves the lock alone" {
   mkdir -p "${BATS_TEST_TMPDIR}/sandbox"
   cp "${SCRIPT}" "${BATS_TEST_TMPDIR}/sandbox/wiki-lock.sh"
   seed_dead_holder_lock
   run bash "${BATS_TEST_TMPDIR}/sandbox/wiki-lock.sh" acquire "${LOCK_NAME}" 0
-  [ "${status}" -ne 0 ]
-  [[ "${output}" == *"path-guard.sh"* ]] || return 1
+  # 3, never the timeout's 2: a caller must not read a broken install as lock contention.
+  [ "${status}" -eq 3 ]
+  [[ "${output}" == *"wiki-lock: FATAL: cannot source the shared path guard"*"path-guard.sh"* ]] || return 1
   [ "$(cat "${LOCK_DIR}/pid")" = "${DEAD_PID}" ]
 }

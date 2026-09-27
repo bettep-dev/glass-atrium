@@ -6,7 +6,7 @@
 #
 # Modes / exit codes (per-script table, never a shared numbering):
 #   0  compiled · skipped (no work, lock contention) · quota or budget-config abort
-#   1  generic claude -p failure · configured wiki root missing
+#   1  generic claude -p failure · configured wiki root missing · shared lib or path guard missing
 #   4  claude binary not found
 #   5  envelope structural violation (hostile-or-confused model output) — zero notes written
 #   6  envelope oversize — zero notes written
@@ -429,7 +429,7 @@ _inject_source_raw() {
   # shellcheck disable=SC2310  # pure predicate — nothing inside it for errexit to catch
   if ga_guard_path "${_tmp}"; then
     rm -f -- "${_tmp:?}"
-  fi || true # GA-ABSORB[benign]: teardown removal of a possibly-absent temp
+  fi || true # GA-ABSORB[handled@rm-stderr]: a real stamp-temp rm failure, already on stderr, must not abort the run
 }
 
 # Deliver one write_daemon_run envelope. Every reporting site shares this failure

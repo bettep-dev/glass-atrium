@@ -248,6 +248,25 @@ path_mode() {
 
 # The script pins PATH to the system dirs first, so a PATH stub cannot reach it: an exported
 # function can, and it fails only the one call each row is about.
+@test "a sweep whose find fails still reaches the prune warning and the run goes on" {
+  make_sandbox
+  seed_raw alpha.md
+  # -mtime is the sweep's alone; the raw-glob find passes through.
+  find() {
+    local arg
+    for arg in "$@"; do
+      if [ "${arg}" = -mtime ]; then return 1; fi
+    done
+    command find "$@"
+  }
+  export -f find
+
+  run bash "${SANDBOX}/wiki-daily-compile.sh"
+  unset -f find
+  [ "$status" -eq 0 ]
+  log_body | grep -q 'orphan run-dir prune failed'
+}
+
 @test "a note whose staging copy fails leaves no sibling temp behind" {
   make_sandbox
   seed_raw alpha.md
