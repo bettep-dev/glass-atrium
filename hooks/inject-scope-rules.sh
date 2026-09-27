@@ -581,7 +581,10 @@ append_drop_log() {
   if [[ -f "${INJECT_DROP_LOG}" ]]; then
     sz="$(wc -c <"${INJECT_DROP_LOG}" 2>/dev/null | tr -cd '0-9' || true)"
     if [[ -n "${sz}" && "${sz}" -gt "${INJECT_DROP_LOG_MAX_BYTES}" ]]; then
-      rm -f "${INJECT_DROP_LOG}" 2>/dev/null || true
+      # shellcheck disable=SC2310  # pure predicate — nothing inside it for errexit to catch
+      if ga_guard_path "${INJECT_DROP_LOG}"; then
+        rm -f -- "${INJECT_DROP_LOG:?}"
+      fi || true
     fi
   fi
   # Byte overage = how far the pre-drop assembly exceeded the ceiling (the record names it explicitly,
@@ -762,7 +765,10 @@ append_manifest_log() {
   if [[ -f "${INJECT_MANIFEST_LOG}" ]]; then
     sz="$(wc -c <"${INJECT_MANIFEST_LOG}" 2>/dev/null | tr -cd '0-9' || true)"
     if [[ -n "${sz}" && "${sz}" -gt "${INJECT_MANIFEST_LOG_MAX_BYTES}" ]]; then
-      rm -f "${INJECT_MANIFEST_LOG}" 2>/dev/null || true
+      # shellcheck disable=SC2310  # pure predicate — nothing inside it for errexit to catch
+      if ga_guard_path "${INJECT_MANIFEST_LOG}"; then
+        rm -f -- "${INJECT_MANIFEST_LOG:?}"
+      fi || true
     fi
   fi
   # Each helper is internally guarded and always exits 0 (the codebase idiom for an in-hook call — a
