@@ -39,6 +39,9 @@ bats_require_minimum_version 1.5.0
 GA="$(cd -- "${BATS_TEST_DIRNAME}/../.." && pwd)"
 export SKILL="${GA}/scripts/update.sh"
 
+# shellcheck source-path=SCRIPTDIR source=../lib/path-guard.sh
+source "${GA}/scripts/lib/path-guard.sh"
+
 setup() {
   [[ -f "${SKILL}" ]] || skip "update.sh not found: ${SKILL}"
   WORK="$(cd -- "$(mktemp -d -t ga-update-migrate-bats.XXXXXX)" && pwd -P)"
@@ -51,7 +54,7 @@ setup() {
 
 teardown() {
   drop_scratch_db
-  [[ -n "${WORK:-}" && -d "${WORK}" ]] && rm -rf -- "${WORK}" || true
+  if ga_guard_path "${WORK:-}"; then rm -rf -- "${WORK:?}"; fi
 }
 
 # ── fixtures ───────────────────────────────────────────────────────────────────────────────────
