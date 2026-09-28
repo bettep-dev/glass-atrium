@@ -1479,6 +1479,11 @@ run_doctor() {
     fi
   fi
 
+  # 27. profile-branch links. Registration kind B (report-only): note rows only, no counter, no term
+  #     in the warning total, exit code unchanged. The branches come from the owner's shell setup,
+  #     not from Atrium, so the doctor reports and never writes into one.
+  _doctor_report_profile_links
+
   if [[ "${fail}" -eq 0 ]]; then
     # Warning-summary registration contract — a new doctor row declares ONE kind.
     # A (counted warning, user-actionable): counter + this total + the PASS breakdown below, all
@@ -1588,6 +1593,104 @@ _doctor_report_rewire_marker() {
     log "  info : hook rewire pending — hook activity observed since the rewire (${detail:-changes recorded}); this does NOT prove the new binding is live, because Claude Code snapshots bindings at session start and a pre-rewire session keeps firing the OLD one. Start a NEW session; this notice clears after ${GA_REWIRE_NOTICE_WINDOW_DAYS}d."
   else
     log "  info : hook rewire pending — NO hook activity observed since the rewire (${detail:-changes recorded}). Start a NEW session to activate the bindings; this notice clears after ${GA_REWIRE_NOTICE_WINDOW_DAYS}d."
+  fi
+}
+
+# Report every profile branch (a CLAUDE_CONFIG_DIR dir beside the target home) that fails to link a
+# required Atrium item to the target home. A branch loads Atrium only through those links, and
+# Atrium never installed it, so nothing else notices a missing one. Report-only (§27, kind B).
+# CLAUDE_CONFIG_DIR is deliberately NOT read: a session launched from a branch has it set, which
+# would point every sandboxed doctor run at that real branch.
+_doctor_report_profile_links() {
+  local branches branch items item csv nl=$'\n' is_bad
+  # shellcheck disable=SC2311  # printing helper: a glob loop with no command that can fail
+  branches="$(_profile_link_branches)"
+  [[ -n "${branches}" ]] || return 0
+  if ! command -v jq >/dev/null 2>&1 || ! jq -e '.files | type == "array"' -- "${MANIFEST}" >/dev/null 2>&1; then
+    log "  note : profile branch link check skipped — needs jq and a readable manifest (${MANIFEST})"
+    return 0
+  fi
+  # shellcheck disable=SC2311  # a failed manifest read yields a short set; the jq gate above proved it parses
+  items="$(_profile_link_required_items)"
+  csv="${items//${nl}/, }"
+  while IFS= read -r branch; do
+    is_bad=0
+    while IFS= read -r item; do
+      # shellcheck disable=SC2310  # the defect verdict is the branch taken — a defect is a row, never an abort
+      _profile_link_check_item "${branch}" "${item}" || is_bad=1
+    done <<<"${items}"
+    [[ "${is_bad}" -eq 1 ]] || log "  ok   : profile branch ${branch} links ${csv} to ${TARGET_HOME}"
+  done <<<"${branches}"
+}
+
+# Branches: siblings of the target home matching the shared config-root grammar that hold a
+# .claude.json, which skips never-launched and backup dirs. The target home is excluded by
+# identity, since it matches the same grammar.
+_profile_link_branches() {
+  # shellcheck source=SCRIPTDIR/../hooks/lib/claude-config-dirs.sh
+  source "${BASH_SOURCE[0]%/*}/../hooks/lib/claude-config-dirs.sh"
+  local candidate
+  for candidate in "${TARGET_HOME%/*}"/.claude*; do
+    [[ "${candidate##*/}/" =~ ^${CLAUDE_CONFIG_ROOT_RE}$ ]] || continue
+    [[ -d "${candidate}" && -f "${candidate}/.claude.json" ]] || continue
+    [[ ! "${candidate}" -ef "${TARGET_HOME}" ]] || continue
+    printf '%s\n' "${candidate}"
+  done
+}
+
+# Required items: every top-level manifest component the farm deploys into the target home
+# (is_symlink_excluded is the farm's own query), plus settings.json, which the installer writes
+# there instead of shipping it.
+_profile_link_required_items() {
+  local rel
+  # read_manifest_files dies on its own failure; the caller already proved the manifest parses.
+  # shellcheck disable=SC2312
+  while IFS= read -r rel; do
+    [[ -n "${rel}" ]] || continue
+    printf '%s\t' "${rel%%/*}"
+    is_symlink_excluded "${rel}"
+  done < <(read_manifest_files) | awk -F'\t' '$2 == "no" { print $1 }' | sort -u
+  printf 'settings.json\n'
+}
+
+# Log one branch item's defect plus a fix line that runs as printed; return 1 on a defect.
+# The fix follows the class: a missing item takes a plain link · a dangling or misdirected link is
+# replaced in place (-n: never nests into the directory it points at) · a real file or directory
+# goes to the Trash first, never removed.
+_profile_link_check_item() {
+  local link="${1}/${2}" want="${TARGET_HOME}/${2}" class defect fix qlink qwant trashed
+  # shellcheck disable=SC2311  # printing helper: tests only, no command that can fail
+  class="$(_profile_link_defect "${link}" "${want}")"
+  [[ "${class}" != "ok" ]] || return 0
+  printf -v qlink '%q' "${link}"
+  printf -v qwant '%q' "${want}"
+  case "${class}" in
+    missing) defect="missing" fix="ln -s ${qwant} ${qlink}" ;;
+    dangling) defect="is a dangling link" fix="ln -sfn ${qwant} ${qlink}" ;;
+    elsewhere) defect="links elsewhere ($(readlink "${link}"))" fix="ln -sfn ${qwant} ${qlink}" ;;
+    *)
+      trashed="${1##*/}-${2}.ga-replaced.$(date +%Y%m%d-%H%M%S)"
+      printf -v trashed '%q' "${trashed#.}"
+      defect="is a real file or directory" fix="mv ${qlink} ~/.Trash/${trashed} && ln -s ${qwant} ${qlink}"
+      ;;
+  esac
+  log "  note : profile branch ${1}: ${2} ${defect} — expected a link to ${want} (report-only; the doctor never writes into a branch)"
+  log "         fix : ${fix}"
+  return 1
+}
+
+# Defect class of link $1 against its expected target $2: ok · dangling · elsewhere · real · missing.
+_profile_link_defect() {
+  if [[ -L "${1}" && "${1}" -ef "${2}" ]]; then
+    printf 'ok\n'
+  elif [[ -L "${1}" && ! -e "${1}" ]]; then
+    printf 'dangling\n'
+  elif [[ -L "${1}" ]]; then
+    printf 'elsewhere\n'
+  elif [[ -e "${1}" ]]; then
+    printf 'real\n'
+  else
+    printf 'missing\n'
   fi
 }
 
