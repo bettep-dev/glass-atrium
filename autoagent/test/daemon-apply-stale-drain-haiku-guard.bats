@@ -35,6 +35,8 @@ bats_require_minimum_version 1.5.0
 
 GA="$(cd -- "${BATS_TEST_DIRNAME}/../.." && pwd)"
 REAL_SCRIPT="${GA}/autoagent/daemon-apply.sh"
+# shellcheck source-path=SCRIPTDIR source=../../scripts/lib/path-guard.sh
+source "${GA}/scripts/lib/path-guard.sh"
 
 # build_full_stub — symlink every real command into $1 EXCEPT psql. The whole-PATH
 # mirror (vs a hand-maintained allowlist) keeps the fixture robust as the git-free
@@ -87,7 +89,7 @@ setup() {
 
 teardown() {
   [[ -n "${WORK:-}" && -d "${WORK}" ]] && chmod -R u+rwX -- "${WORK}" 2>/dev/null || true
-  [[ -n "${WORK:-}" && -d "${WORK}" ]] && rm -rf -- "${WORK}" || true
+  if ga_guard_path "${WORK:-}"; then rm -rf -- "${WORK:?}"; fi
 }
 
 # build_guard_passthrough PATH — Python stand-in for the AUTOAGENT_DAEMON_CYCLE_PY seam (run as
@@ -355,9 +357,11 @@ dryrun_log_path() {
 @test "P3b: a non-ok or NULL generation outcome exits 20, leads with Reject, names haiku_status and the carve-out, applies nothing" {
   make_probe
   STUB_STALE_VERDICT="incremented"
-  local haiku
+  local haiku applied_log
   for haiku in "skipped:chronic-timeout-backoff" ""; do
-    rm -f -- "$(applied_log_path)" "${PSQL_LOG}"
+    applied_log="$(applied_log_path)"
+    if ga_guard_path "${applied_log}"; then rm -f -- "${applied_log:?}"; fi
+    if ga_guard_path "${PSQL_LOG}"; then rm -f -- "${PSQL_LOG:?}"; fi
     run_single "${haiku}"
     [[ "${status}" -eq 20 ]] || {
       echo "haiku_status='${haiku}': expected exit 20, got ${status}: ${output}" >&2
@@ -498,12 +502,13 @@ dryrun_log_path() {
 
 @test "exit split: a row that does not decode, or answers for another id, exits 23 before its status is read" {
   make_probe
-  local target_b64 raw
+  local target_b64 raw applied_log
   target_b64="$(printf '%s' "${AGENTS}/probe.md" | base64 | tr -d '\n')"
   for raw in \
     "1022|2026-06-26|probe|stale|probe|${AGENTS}/probe.md|$(oor_diff_b64)|rejected|ok" \
     "1023|2026-06-26|cHJvYmU=|cHJvYmU=|${target_b64}|$(oor_diff_b64)|rejected|ok"; do
-    rm -f -- "$(applied_log_path)"
+    applied_log="$(applied_log_path)"
+    if ga_guard_path "${applied_log}"; then rm -f -- "${applied_log:?}"; fi
     STUB_RAW_ROW="${raw}" run_single "ok"
     [[ "${status}" -eq 23 && "${output}" == *"proposal id=1022 row is unreadable"* &&
       "${output}" != *"already terminal"* && "${output}" != *"lookup failed"* &&
