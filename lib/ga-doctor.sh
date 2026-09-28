@@ -1610,14 +1610,14 @@ _doctor_report_profile_links() {
     return 0
   fi
   # shellcheck disable=SC2311  # printing helper: a glob loop with no command that can fail
-  branches="$(_profile_link_branches "${grammar}")"
+  branches="$(_get_profile_link_branches "${grammar}")"
   [[ -n "${branches}" ]] || return 0
   if ! command -v jq >/dev/null 2>&1 || ! jq -e '.files | type == "array"' -- "${MANIFEST}" >/dev/null 2>&1; then
     log "  note : profile branch link check skipped — needs jq and a readable manifest (${MANIFEST})"
     return 0
   fi
   # shellcheck disable=SC2311  # a failed manifest read yields a short set; the jq gate above proved it parses
-  items="$(_profile_link_required_items)"
+  items="$(_get_profile_link_required_items)"
   csv="${items//${nl}/, }"
   while IFS= read -r branch; do
     is_bad=0
@@ -1632,7 +1632,7 @@ _doctor_report_profile_links() {
 # Branches: siblings of the target home matching the shared config-root grammar that hold a
 # .claude.json, which skips never-launched and backup dirs. The target home is excluded by
 # identity, since it matches the same grammar. $1 = the grammar file (hooks/lib/claude-config-dirs.sh).
-_profile_link_branches() {
+_get_profile_link_branches() {
   # shellcheck source=SCRIPTDIR/../hooks/lib/claude-config-dirs.sh
   source "${1}"
   local candidate
@@ -1647,7 +1647,7 @@ _profile_link_branches() {
 # Required items: every top-level manifest component the farm deploys into the target home
 # (is_symlink_excluded is the farm's own query), plus settings.json, which the installer writes
 # there instead of shipping it.
-_profile_link_required_items() {
+_get_profile_link_required_items() {
   local rel
   # read_manifest_files dies on its own failure; the caller already proved the manifest parses.
   # shellcheck disable=SC2312
@@ -1666,7 +1666,7 @@ _profile_link_required_items() {
 _profile_link_check_item() {
   local link="${1}/${2}" want="${TARGET_HOME}/${2}" class defect fix qlink qwant trashed
   # shellcheck disable=SC2311  # printing helper: tests only, no command that can fail
-  class="$(_profile_link_defect "${link}" "${want}")"
+  class="$(_get_profile_link_defect "${link}" "${want}")"
   [[ "${class}" != "ok" ]] || return 0
   printf -v qlink '%q' "${link}"
   printf -v qwant '%q' "${want}"
@@ -1686,7 +1686,7 @@ _profile_link_check_item() {
 }
 
 # Defect class of link $1 against its expected target $2: ok · dangling · elsewhere · real · missing.
-_profile_link_defect() {
+_get_profile_link_defect() {
   if [[ -L "${1}" && "${1}" -ef "${2}" ]]; then
     printf 'ok\n'
   elif [[ -L "${1}" && ! -e "${1}" ]]; then
