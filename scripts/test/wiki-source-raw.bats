@@ -23,6 +23,10 @@
 GA="$(cd -- "${BATS_TEST_DIRNAME}/../.." && pwd)"
 REAL_SCRIPT="${GA}/scripts/wiki-daily-compile.sh"
 
+# The extracted shim needs ga_guard_path too — the real script gets it from libs above the window.
+# shellcheck source-path=SCRIPTDIR source=../lib/path-guard.sh
+source "${GA}/scripts/lib/path-guard.sh"
+
 setup() {
   [[ -f "${REAL_SCRIPT}" ]] || skip "wiki-daily-compile.sh not found: ${REAL_SCRIPT}"
   WORK="$(mktemp -d -t wiki-srcraw-bats.XXXXXX)"
@@ -44,15 +48,12 @@ setup() {
   # NOTES_DIR is the single global _classify_raw reads; export so the sourced
   # functions resolve it.
   export NOTES_DIR
-  # The real script receives ga_guard_path from the libs it sources above the extracted window.
-  # shellcheck source=../lib/path-guard.sh
-  source "${GA}/scripts/lib/path-guard.sh"
   # shellcheck source=/dev/null
   source "${SHIM}"
 }
 
 teardown() {
-  [[ -n "${WORK:-}" && -d "${WORK}" ]] && rm -rf -- "${WORK}" || true
+  if ga_guard_path "${WORK:-}"; then rm -rf -- "${WORK:?}"; fi
 }
 
 # Write bytes verbatim (no trailing-newline coercion) so CRLF / lone-CR fixtures

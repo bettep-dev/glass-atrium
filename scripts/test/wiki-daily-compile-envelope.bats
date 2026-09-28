@@ -15,6 +15,9 @@ LIB="${GA}/scripts/lib/wiki-envelope.sh"
 NONCE="0123456789abcdef0123456789abcdef"
 OTHER_NONCE="fedcba9876543210fedcba9876543210"
 
+# shellcheck source-path=SCRIPTDIR source=../lib/path-guard.sh
+source "${GA}/scripts/lib/path-guard.sh"
+
 setup() {
   [[ -f "${LIB}" ]] || skip "wiki-envelope.sh not found: ${LIB}"
   WORK="$(mktemp -d -t wiki-envelope-bats.XXXXXX)"
@@ -25,7 +28,7 @@ setup() {
 }
 
 teardown() {
-  [[ -n "${WORK:-}" && -d "${WORK}" ]] && rm -rf -- "${WORK}" || true
+  if ga_guard_path "${WORK:-}"; then rm -rf -- "${WORK:?}"; fi
 }
 
 emit() { printf '%s\n' "$@" >>"${ENVELOPE}"; }
@@ -104,7 +107,8 @@ body of one" ]
   golden_two
   parse 2
   [ "${status}" -eq 0 ]
-  rm -f -- "${RUN_DIR}"/body.*
+  if ga_guard_path "${RUN_DIR}"; then rm -rf -- "${RUN_DIR:?}"; fi
+  mkdir -p -- "${RUN_DIR}"
   : >"${ENVELOPE}"
   begin_line "${NONCE}" 1
   emit 'authentic body'

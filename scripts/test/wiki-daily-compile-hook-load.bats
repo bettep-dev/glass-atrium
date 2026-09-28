@@ -32,6 +32,9 @@ CONFIG_LIB="${GA}/scripts/lib/atrium-config.sh"
 SINK_LIB="${GA}/scripts/lib/pg-report-drop.sh"
 ENVELOPE_LIB="${GA}/scripts/lib/wiki-envelope.sh"
 
+# shellcheck source-path=SCRIPTDIR source=../lib/path-guard.sh
+source "${GA}/scripts/lib/path-guard.sh"
+
 setup() {
   [[ -f "${WIKI_SCRIPT}" ]] || skip "wiki-daily-compile.sh not found: ${WIKI_SCRIPT}"
   [[ -f "${ENVELOPE_LIB}" ]] || skip "wiki-envelope.sh not found: ${ENVELOPE_LIB}"
@@ -47,8 +50,8 @@ setup() {
 teardown() {
   if [[ -n "${WORK:-}" && -d "${WORK}" ]]; then
     chmod -R u+w "${WORK}" 2>/dev/null || true
-    rm -rf -- "${WORK}"
   fi
+  if ga_guard_path "${WORK:-}"; then rm -rf -- "${WORK:?}"; fi
 }
 
 # Sandbox the compile script with every external edge stubbed. The CLI stub echoes a canned
