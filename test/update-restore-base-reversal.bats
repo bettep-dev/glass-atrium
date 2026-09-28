@@ -31,6 +31,8 @@
 # pause-flag / apply-lock infra. Nothing touches ~/.claude or the live ~/.glass-atrium.
 
 GA="$(cd -- "${BATS_TEST_DIRNAME}/.." && pwd)"
+# shellcheck source-path=SCRIPTDIR source=../scripts/lib/path-guard.sh
+source "${GA}/scripts/lib/path-guard.sh"
 REAL_UPDATE="${GA}/scripts/update.sh"
 REAL_SPINE="${GA}/scripts/lib/apply-spine.sh"
 
@@ -52,7 +54,7 @@ setup() {
 }
 
 teardown() {
-  [[ -n "${SANDBOX:-}" && -d "${SANDBOX}" ]] && rm -rf -- "${SANDBOX}" || true
+  if ga_guard_path "${SANDBOX:-}"; then rm -rf -- "${SANDBOX:?}"; fi
 }
 
 # Drive update_capture_base_content in an isolated strict-mode subshell. The per-run
@@ -288,11 +290,12 @@ run_restore_base_entry() {
 @test "Arm A reverses a ROSTER base entry against its PATH key, leaving the flat namespace alone" {
   local rel='hooks/lib/styleref-roster.sh' bn='styleref-roster.sh'
   local roster_store="${STATE}/base-roster"
+  local snapshot="${CYCLEDIR}/${bn}.base.bak"
   mkdir -p "${roster_store}/hooks/lib"
   printf 'ROSTER RELEASE\n' >"${roster_store}/${rel}"
   # The before-image sink is one flat directory, so the snapshot is keyed by basename
   # while the store entry it reverses is keyed by path.
-  printf 'ROSTER BASE v0\n' >"${CYCLEDIR}/${bn}.base.bak"
+  printf 'ROSTER BASE v0\n' >"${snapshot}"
   # A flat entry under the same basename: a roster key must not reach it.
   printf 'AGENT BASE\n' >"${STORE}/${bn}"
 
@@ -302,7 +305,7 @@ run_restore_base_entry() {
   [[ "$(cat "${STORE}/${bn}")" == "AGENT BASE" ]] || return 1
 
   # No snapshot → DELETE the entry (safe gated 2-way), still under the path key.
-  rm -f "${CYCLEDIR}/${bn}.base.bak"
+  if ga_guard_path "${snapshot}"; then rm -f -- "${snapshot:?}"; fi
   printf 'ROSTER RELEASE\n' >"${roster_store}/${rel}"
   run_restore_base_entry "${rel}"
   [[ "${status}" -eq 0 ]] || return 1

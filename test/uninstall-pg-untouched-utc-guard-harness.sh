@@ -53,6 +53,8 @@ set -uo pipefail
 HARNESS_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 GA_DIR_ROOT="$(cd -- "${HARNESS_DIR}/.." && pwd)"
 LAUNCHER="${GA_DIR_ROOT}/glass-atrium"
+# shellcheck source-path=SCRIPTDIR source=../scripts/lib/path-guard.sh
+source "${GA_DIR_ROOT}/scripts/lib/path-guard.sh"
 
 # PG_SOCKET redirect (GA_PG_SOCKET test seam) — MUST be exported BEFORE sourcing the launcher,
 # because ga_init_env makes PG_SOCKET readonly at source time. Redirecting the socket dir at a temp
@@ -161,6 +163,8 @@ kill() { # only ever `kill -INT <pid>` from clear_unmanaged_pg_orphan
   fi
   return 0
 }
+# shellcheck disable=SC2329  # invoked by the sourced clear_unmanaged_pg_orphan, never by name here
+# GA-RM[not-executed]: comment text naming the one delete this recorder intercepts
 rm() { # only ever `rm -f -- <sock>` from clear_unmanaged_pg_orphan (socket removal)
   _rec "rm_socket:$*"
   return 0 # PURE recorder — the real /tmp/.s.PGSQL.5432 (live pg) is NEVER removed
@@ -277,7 +281,8 @@ echo "  [B-static] clear_unmanaged_pg_orphan retains the layer-3 stale-socket re
 # the guard-conditional runtime checks in B3/B3b (which can only OBSERVE the rm fire when a live
 # socket happens to exist). If a regression drops layer-3, this static check fails on every host.
 CL_BODY="$(declare -f clear_unmanaged_pg_orphan)"
-if [[ "${CL_BODY}" == *'rm -f -- "${sock:?}"'* ]]; then
+if [[ "${CL_BODY}" == *'rm -f -- "${sock:?}"'* ]]; then # GA-RM[not-executed]: glob over the function body text
+  # GA-RM[not-executed]: PASS message text, which no shell runs
   pass "clear_unmanaged_pg_orphan body contains the layer-3 rm -f -- \"\${sock:?}\" removal"
 else
   fail "clear_unmanaged_pg_orphan body is MISSING the layer-3 socket removal"
@@ -370,8 +375,9 @@ echo ""
 echo "============================================================================"
 printf 'HARNESS RESULT: %s passed, %s failed\n' "${PASSES}" "${FAILS}"
 echo "============================================================================"
-# `rm` is shadowed as a pure recorder above; use the real coreutils rm for temp cleanup.
-# `command` bypasses the shell-function shadow (unlike a PATH stub), reaching the real rm.
-command rm -f "${GA_REC}" "${GA_LOG}"
-command rm -rf -- "${GA_PG_SOCK_DIR}"
+# Scenarios done → drop the recorder shadow so the temp cleanup reaches the real rm.
+unset -f rm
+if ga_guard_path "${GA_REC}"; then rm -f -- "${GA_REC:?}"; fi
+if ga_guard_path "${GA_LOG}"; then rm -f -- "${GA_LOG:?}"; fi
+if ga_guard_path "${GA_PG_SOCK_DIR}"; then rm -rf -- "${GA_PG_SOCK_DIR:?}"; fi
 [[ "${FAILS}" -eq 0 ]]
