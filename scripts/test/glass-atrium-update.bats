@@ -28,6 +28,8 @@ GA="$(cd -- "${BATS_TEST_DIRNAME}/../.." && pwd)"
 export SKILL="${GA}/scripts/update.sh"
 export REAL_LIB_ROOT="${GA}"
 export GEN_MANIFEST="${GA}/scripts/generate-manifest.sh"
+# shellcheck source-path=SCRIPTDIR source=../lib/path-guard.sh
+source "${GA}/scripts/lib/path-guard.sh"
 
 setup() {
   [[ -f "${SKILL}" ]] || skip "update.sh not found: ${SKILL}"
@@ -48,7 +50,8 @@ setup() {
 }
 
 teardown() {
-  [[ -n "${WORK:-}" && -d "${WORK}" ]] && rm -rf -- "${WORK}" || true
+  # shellcheck disable=SC2310  # pure predicate — nothing inside it for errexit to catch
+  if ga_guard_path "${WORK:-}"; then rm -rf -- "${WORK:?}"; fi
 }
 
 # Write file $2 (relative) with content $3 under root $1, creating parent dirs.
@@ -1080,7 +1083,8 @@ SH
   # replaced.
   mkdir -p "${WORK}/shimlib"
   ln -s "${GA}"/autoagent/lib/* "${WORK}/shimlib/"
-  rm -f "${WORK}/shimlib/editable_merge.py"
+  # shellcheck disable=SC2310  # pure predicate — nothing inside it for errexit to catch
+  if ga_guard_path "${WORK}"; then rm -f -- "${WORK:?}/shimlib/editable_merge.py"; fi
   cat >"${WORK}/shimlib/editable_merge.py" <<PY
 import io, runpy, sys, contextlib
 
@@ -1384,10 +1388,8 @@ region one vendor
 <!-- EDITABLE:BEGIN -->
 safe local line
 <!-- EDITABLE:END -->'
-  local danger_body='# dev-a
-<!-- EDITABLE:BEGIN -->
-rm -rf /tmp/everything
-<!-- EDITABLE:END -->'
+  # GA-RM[not-executed]: agent-body fixture text the updater only pattern-matches, never runs
+  local danger_body=$'# dev-a\n<!-- EDITABLE:BEGIN -->\nrm -rf /tmp/everything\n<!-- EDITABLE:END -->'
   seed_file "${INSTALL}" "agents/dev-a.md" "${local_body}"
   seed_file "${NEWSRC}" "agents/dev-a.md" "${danger_body}"
   write_manifest "${WORK}/manifest.json" "agents/dev-a.md"
@@ -2078,10 +2080,8 @@ PLIST
 <!-- EDITABLE:BEGIN -->
 safe local line
 <!-- EDITABLE:END -->'
-  local ref_release='# dev-ref
-<!-- EDITABLE:BEGIN -->
-rm -rf /tmp/everything
-<!-- EDITABLE:END -->'
+  # GA-RM[not-executed]: agent-body fixture text the updater only pattern-matches, never runs
+  local ref_release=$'# dev-ref\n<!-- EDITABLE:BEGIN -->\nrm -rf /tmp/everything\n<!-- EDITABLE:END -->'
   # dev-a: a clean, applied merge (region kept local, vendor structure taken).
   seed_file "${INSTALL}" "agents/dev-a.md" "${GOAL_LOCAL}"
   seed_base_store "dev-a.md" "${GOAL_BASE}"
@@ -2126,6 +2126,7 @@ rm -rf /tmp/everything
   chmod a-w "${INSTALL}/scripts" # the swap's sibling-temp write into this dir loud-fails
 
   run_update
+  # GA-RM[not-executed]: delete text in the trailing comment below, which no shell runs
   chmod u+w "${INSTALL}/scripts" 2>/dev/null || true # restore BEFORE teardown rm -rf
 
   # NOTE: every assertion is `|| return 1` — @test bodies run under errexit, but a bare
@@ -2695,10 +2696,8 @@ run_capture_with_ledger() {
 <!-- EDITABLE:BEGIN -->
 safe local line
 <!-- EDITABLE:END -->'
-  local ref_release='# dev-ref
-<!-- EDITABLE:BEGIN -->
-rm -rf /tmp/everything
-<!-- EDITABLE:END -->'
+  # GA-RM[not-executed]: agent-body fixture text the updater only pattern-matches, never runs
+  local ref_release=$'# dev-ref\n<!-- EDITABLE:BEGIN -->\nrm -rf /tmp/everything\n<!-- EDITABLE:END -->'
   seed_file "${INSTALL}" "agents/dev-ref.md" "${ref_local}"
   seed_base_store "dev-ref.md" "REF PRIOR BASE"
   seed_file "${NEWSRC}" "agents/dev-ref.md" "${ref_release}"
