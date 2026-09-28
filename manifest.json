@@ -1747,7 +1747,7 @@
     "test/install-acceptance.sh": "9bacada33058b8883f262f093a13d6af3f814ec0e585717852fba71363faae44",
     "test/install-bootstrap-subcommand.bats": "dd86e4a3502381d72ab1c5d14c308ff6af92c9e773030c863f3b557ce1f4965d",
     "test/install-orphan-ownership-exec-harness.sh": "ec322d0dcfb3e92dbbdc92900603f77a80c19f736b85becd7ad13ad5a11f7558",
-    "test/install-orphan-ownership.bats": "bb0b024b23c1eb199b2d87cfbb6c45c45caa81d8b0358bf65321e922c3fbdaf3",
+    "test/install-orphan-ownership.bats": "e30dc7926eb2dce56afc530c14d8fa830162520c0123bc6fbdcc74d20843bc68",
     "test/install-prune.bats": "1cfdb1037debd8a4e89071fd87a6875901a6d77d9824fb3ccf7c2ad60f9662f8",
     "test/install-step-counter-grand-total.bats": "9c944cdf654554702355cf6edc626e0d9f93bf11f25c59eef9c27fafe91c94c8",
     "test/install-update-state.bats": "9564c1e888afde97f8c62db7b09fb0cad25d5db5e28816fbb554dd415118d574",
