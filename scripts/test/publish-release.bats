@@ -23,6 +23,8 @@ REAL_CONFIG="${GA}/scripts/lib/atrium-config.sh"
 # generate-manifest.sh sources the spine for the retired-map family bar, so the
 # --check gate this suite exercises needs the library present in the sandbox.
 REAL_SPINE="${GA}/scripts/lib/apply-spine.sh"
+# shellcheck source-path=SCRIPTDIR source=../lib/path-guard.sh
+source "${GA}/scripts/lib/path-guard.sh"
 
 setup() {
   [[ -f "${REAL_PUBLISH}" ]] || skip "publish-release.sh not found: ${REAL_PUBLISH}"
@@ -86,7 +88,7 @@ setup() {
 }
 
 teardown() {
-  [[ -n "${WORK:-}" && -d "${WORK}" ]] && rm -rf -- "${WORK}" || true
+  if ga_guard_path "${WORK:-}"; then rm -rf -- "${WORK:?}"; fi
 }
 
 @test "publish: clean tree + matching tag -> dry-run succeeds (exit 0)" {

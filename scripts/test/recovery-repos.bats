@@ -28,6 +28,8 @@ GA="$(cd -- "${BATS_TEST_DIRNAME}/../.." && pwd)"
 ROSTER_LIB="${GA}/scripts/lib/recovery-repos.sh"
 SNAPSHOT="${GA}/scripts/snapshot-live-repos.sh"
 PROBE='ga-probe-repo'
+# shellcheck source-path=SCRIPTDIR source=../lib/path-guard.sh
+source "${GA}/scripts/lib/path-guard.sh"
 
 setup() {
   WORK="$(mktemp -d -t recovery-repos-bats.XXXXXX)"
@@ -36,7 +38,7 @@ setup() {
 }
 
 teardown() {
-  [[ -n "${WORK:-}" && -d "${WORK}" ]] && rm -rf -- "${WORK}" || true
+  if ga_guard_path "${WORK:-}"; then rm -rf -- "${WORK:?}"; fi
 }
 
 # A copy of the real lib carrying one EXTRA roster entry, written to $1. Injected by

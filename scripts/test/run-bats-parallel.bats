@@ -70,6 +70,8 @@ bats_require_minimum_version 1.5.0
 REAL_RUNNER="${BATS_TEST_DIRNAME}/../run-bats-parallel.sh"
 GA_ROOT_DIR="$(cd -- "${BATS_TEST_DIRNAME}/../.." && pwd)"
 GENERATOR="${GA_ROOT_DIR}/scripts/generate-manifest.sh"
+# shellcheck source-path=SCRIPTDIR source=../lib/path-guard.sh
+source "${BATS_TEST_DIRNAME}/../lib/path-guard.sh"
 
 # The four corpora that produce bytecode, each its OWN git repository on the live
 # install. autoagent/ is the one the runner env cannot reach.
@@ -274,7 +276,7 @@ STUB
 }
 
 teardown() {
-  [[ -n "${TMPROOT:-}" && -d "${TMPROOT}" ]] && rm -rf -- "${TMPROOT}" || true
+  if ga_guard_path "${TMPROOT:-}"; then rm -rf -- "${TMPROOT:?}"; fi
 }
 
 @test "(1) the child inherits bytecode suppression and each stage banner carries its duration" {
@@ -604,7 +606,7 @@ STUB
   # The healthy leg, in the SAME scenario: with the real git back, the probe changes
   # nothing. Asserted here rather than left to the other scenarios so that a probe which
   # ALWAYS refused would fail this test rather than pass its own half.
-  rm -f -- "${STUB_BIN}/git"
+  if ga_guard_path "${STUB_BIN}"; then rm -f -- "${STUB_BIN:?}/git"; fi
   run_runner_expecting 0 || return 1
   grep -q -- '--no-parallelize-within-files' "${STUB_LOG_DIR}/bats-args.log" || {
     printf 'stage 1 did not run on a healthy toolchain; recorded bats calls:\n%s\n' \
