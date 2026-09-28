@@ -27,6 +27,8 @@ CONFIG_LIB="${GA}/scripts/lib/atrium-config.sh"
 SINK_LIB="${GA}/scripts/lib/pg-report-drop.sh"
 ENVELOPE_LIB="${GA}/scripts/lib/wiki-envelope.sh"
 REAL_PG_HELPER="${GA}/scripts/_pg_dual_write_daemon.py"
+# shellcheck source-path=SCRIPTDIR source=../lib/path-guard.sh
+source "${GA}/scripts/lib/path-guard.sh"
 
 setup() {
   [[ -f "${RESTART_SCRIPT}" ]] || skip "daemon-daily-restart.sh not found: ${RESTART_SCRIPT}"
@@ -39,8 +41,8 @@ setup() {
 teardown() {
   if [[ -n "${WORK:-}" && -d "${WORK}" ]]; then
     chmod -R u+w "${WORK}" 2>/dev/null || true
-    rm -rf -- "${WORK}"
   fi
+  if ga_guard_path "${WORK:-}"; then rm -rf -- "${WORK:?}"; fi
 }
 
 # Extract one top-level writer function (declaration line → first column-0 brace)

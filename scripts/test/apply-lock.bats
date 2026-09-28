@@ -19,6 +19,8 @@ bats_require_minimum_version 1.5.0
 
 GA="$(cd -- "${BATS_TEST_DIRNAME}/../.." && pwd)"
 export LIB="${GA}/scripts/lib/apply-lock.sh"
+# shellcheck source-path=SCRIPTDIR source=../lib/path-guard.sh
+source "${GA}/scripts/lib/path-guard.sh"
 
 setup() {
   [[ -f "${LIB}" ]] || skip "apply-lock.sh not found: ${LIB}"
@@ -30,7 +32,7 @@ setup() {
 }
 
 teardown() {
-  [[ -n "${WORK:-}" && -d "${WORK}" ]] && rm -rf -- "${WORK}" || true
+  if ga_guard_path "${WORK:-}"; then rm -rf -- "${WORK:?}"; fi
 }
 
 # Spawn a subshell, reap it, and echo its now-dead pid. Callers additionally re-check
@@ -141,8 +143,9 @@ backdate_secs() {
   '
   [ "$status" -eq 0 ]
   [[ "$output" == *"acquired=false"* ]] # never acquired (the guard blocked the reclaim)
-  [[ -d "${notlock}" ]]                 # SECURITY: dir preserved, never rm -rf'd
-  [[ -f "${notlock}/pid" ]]             # contents intact
+  # GA-RM[not-executed]: the trailing comment below names the delete it asserts never ran; no shell runs it
+  [[ -d "${notlock}" ]]     # SECURITY: dir preserved, never rm -rf'd
+  [[ -f "${notlock}/pid" ]] # contents intact
   # release is likewise path-guarded — it must not touch a non-.apply-lock dir either
   run bash -c 'set -Eeuo pipefail; source "'"${LIB}"'"; apply_lock_release "'"${notlock}"'"'
   [ "$status" -eq 0 ]

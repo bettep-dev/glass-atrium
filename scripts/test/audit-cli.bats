@@ -15,6 +15,8 @@
 
 ABSORPTION="${BATS_TEST_DIRNAME}/../audit-absorption.sh"
 TEST_SMELLS="${BATS_TEST_DIRNAME}/../audit-test-smells.sh"
+# shellcheck source-path=SCRIPTDIR source=../lib/path-guard.sh
+source "${BATS_TEST_DIRNAME}/../lib/path-guard.sh"
 
 setup() {
   [[ -f "${ABSORPTION}" && -f "${TEST_SMELLS}" ]] || skip "auditor scripts not found"
@@ -22,7 +24,7 @@ setup() {
 }
 
 teardown() {
-  [[ -n "${AC_TMP:-}" && -d "${AC_TMP}" ]] && rm -rf -- "${AC_TMP}" || true
+  if ga_guard_path "${AC_TMP:-}"; then rm -rf -- "${AC_TMP:?}"; fi
 }
 
 # Materializes a root that satisfies BOTH scope walks: an empty stand-in for every path

@@ -17,6 +17,8 @@ bats_require_minimum_version 1.5.0
 
 GA="$(cd -- "${BATS_TEST_DIRNAME}/../.." && pwd)"
 REAL_LIB="${GA}/scripts/lib/apply-spine.sh"
+# shellcheck source-path=SCRIPTDIR source=../lib/path-guard.sh
+source "${GA}/scripts/lib/path-guard.sh"
 
 setup() {
   [[ -f "${REAL_LIB}" ]] || skip "apply-spine.sh not found: ${REAL_LIB}"
@@ -32,7 +34,8 @@ setup() {
 }
 
 teardown() {
-  [[ -n "${WORK:-}" && -d "${WORK}" ]] && rm -rf -- "${WORK}" || true
+  # shellcheck disable=SC2310  # pure predicate — nothing inside it for errexit to catch
+  if ga_guard_path "${WORK:-}"; then rm -rf -- "${WORK:?}"; fi
 }
 
 # helpers
@@ -1084,7 +1087,8 @@ t6_build_jqless_toolbin() {
 # the predicate has not returned within ~5s. Backgrounded so a spinning walk reads RED, never hangs the suite.
 write_target_verdict() {
   local verdict="${WORK}/verdict" pid tick
-  rm -f -- "${verdict}"
+  # shellcheck disable=SC2310  # pure predicate — nothing inside it for errexit to catch
+  if ga_guard_path "${verdict}"; then rm -f -- "${verdict:?}"; fi
   bash -c '
     set -Eeuo pipefail
     source "$1"
