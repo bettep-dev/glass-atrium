@@ -144,8 +144,9 @@ curl -fsSL https://github.com/bettep-dev/glass-atrium/raw/main/install.sh | bash
 
 - 아트리움은 `~/.claude` 에만 설치됩니다.
 - `CLAUDE_CONFIG_DIR` 로 쓰는 다른 설정 디렉터리(예: `~/.claude-work`)는 `agents`·`rules`·`skills`·`settings.json` 을 `~/.claude` 쪽으로 심링크해야 합니다.
-- `$HOME` 안에서 실행하면 누락이 드러나지 않을 수 있으니, 확인은 `$HOME` 밖 디렉터리에서 하세요.
-- `glass-atrium doctor` 가 링크가 빠진 브랜치와 그대로 실행할 수 있는 수정 명령을 알려 줍니다.
+- 브랜치 세션에 아트리움 규칙이 로드되는지는 `$HOME` 밖 디렉터리에서 연 Claude 세션으로 확인하세요 — `$HOME` 안에서는 누락이 가려질 수 있습니다.
+- `glass-atrium doctor` 는 실행 위치와 무관하게, 링크가 빠진 브랜치와 그대로 실행할 수 있는 수정 명령을 알려 줍니다.
+  - 검사 대상: `~/.claude` 옆의 `~/.claude-*` 디렉터리 중 한 번 이상 실행된(`.claude.json` 이 있는) 것만 — 다른 경로의 브랜치는 직접 확인하세요.
 
 ### 업데이트
 
