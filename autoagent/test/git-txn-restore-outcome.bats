@@ -76,7 +76,10 @@ teardown() {
   # Restore write perms first — a sabotage test leaves INSTALL_ROOT read-only,
   # which would otherwise block rm -rf from deleting its contents.
   [[ -n "${WORK:-}" && -d "${WORK}" ]] && chmod -R u+w "${WORK}" 2>/dev/null
-  [[ -n "${WORK:-}" && -d "${WORK}" ]] && rm -rf -- "${WORK}" || true
+  # here, not at file level: a file-level guard would mask git-txn.sh failing to load its own
+  # shellcheck source-path=SCRIPTDIR source=../../scripts/lib/path-guard.sh
+  source "${GA}/scripts/lib/path-guard.sh"
+  if ga_guard_path "${WORK:-}"; then rm -rf -- "${WORK:?}"; fi
 }
 
 # Injected callbacks — the lib calls apply_fn target diff label diff_target and
