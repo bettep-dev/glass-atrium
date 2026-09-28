@@ -21,6 +21,8 @@ REAL_LOCK_LIB="${GA}/scripts/lib/daemon-lock.sh"
 REAL_CONFIG_LIB="${GA}/scripts/lib/atrium-config.sh"
 REAL_FAKECHAT_LIB="${GA}/scripts/lib/fakechat-cleanup.sh"
 REAL_AUTH_LIB="${GA}/scripts/lib/claude-auth-env.sh"
+# shellcheck source-path=SCRIPTDIR source=../lib/path-guard.sh
+source "${GA}/scripts/lib/path-guard.sh"
 
 setup() {
   [[ -f "${REAL_BOOTSTRAP_LIB}" ]] || skip "daemon-bootstrap-common.sh not found"
@@ -41,13 +43,14 @@ setup() {
 
   cat >"${STUB_BIN}/tmux" <<STUB
 #!/usr/bin/env bash
+source "${GA}/scripts/lib/path-guard.sh"
 printf '%s\n' "\$*" >>"${TMUX_CALLS}"
 # presence flag only (1 or empty) per subcommand — the token value is never recorded
 printf '%s token_present=%s\n' "\$1" "\${CLAUDE_CODE_OAUTH_TOKEN+1}" >>"${TMUX_TOKEN_SEEN}"
 case "\$1" in
   has-session)
     if [[ -f "${SESSION_TRANSIENT}" ]]; then
-      rm -f -- "${SESSION_TRANSIENT}"
+      if ga_guard_path "${SESSION_TRANSIENT}"; then rm -f -- "${SESSION_TRANSIENT:?}"; fi
       exit 0
     fi
     [[ -f "${SESSION_MARKER}" ]]
@@ -64,7 +67,10 @@ case "\$1" in
         ;;
     esac
     ;;
-  kill-session) rm -f -- "${SESSION_MARKER}"; exit 0 ;;
+  kill-session)
+    if ga_guard_path "${SESSION_MARKER}"; then rm -f -- "${SESSION_MARKER:?}"; fi
+    exit 0
+    ;;
   *) exit 0 ;;
 esac
 STUB
@@ -94,7 +100,7 @@ teardown() {
       wait "${pid}" 2>/dev/null || true
     done <"${BOOT_PIDS}"
   fi
-  [[ -n "${TMPROOT:-}" && -d "${TMPROOT}" ]] && rm -rf -- "${TMPROOT}" || true
+  if ga_guard_path "${TMPROOT:-}"; then rm -rf -- "${TMPROOT:?}"; fi
 }
 
 # Copy the live wrapper + both shared libs into the sandbox so the wrapper's
@@ -292,7 +298,7 @@ wait_for_log() {
   run ! grep -q '^new-session' "${TMUX_CALLS}"
   run ! grep -qF "adopting for supervision" "${TMPROOT}/boot.log"
   # holder closes the restart window — only now may the bootstrap create
-  rm -f -- "${LOCK_DIR}/daemon-restart-wiki.lock"
+  if ga_guard_path "${LOCK_DIR}"; then rm -f -- "${LOCK_DIR:?}/daemon-restart-wiki.lock"; fi
   wait_for_log "${TMPROOT}/boot.log" "created successfully" 10
   wait_for_log "${TMPROOT}/boot.log" "entering self-health monitoring loop" 10
   kill -0 "${pid}"
@@ -308,7 +314,7 @@ wait_for_log() {
   launch_bootstrap "${s}" "${TMPROOT}/boot.log"
   pid="${LAUNCHED_PID}"
   wait_for_log "${TMPROOT}/boot.log" "entering self-health monitoring loop" 10
-  rm -f -- "${SESSION_MARKER}"
+  if ga_guard_path "${SESSION_MARKER}"; then rm -f -- "${SESSION_MARKER:?}"; fi
   wait "${pid}" || rc=$?
   [[ "${rc}" -eq 3 ]]
   [[ ! -L "${LOCK_DIR}/daemon-supervisor-wiki.lock" ]]
@@ -445,7 +451,7 @@ assert_token_absent_at() {
   mkdir -p "${quota_dir}"
   today="$(date +%Y-%m-%d)"
   for role in wiki autoagent; do
-    rm -f -- "${SESSION_MARKER}"
+    if ga_guard_path "${SESSION_MARKER}"; then rm -f -- "${SESSION_MARKER:?}"; fi
     if [[ "${role}" == "wiki" ]]; then
       s="$(sandbox_copy "${REAL_WIKI_BOOTSTRAP}")"
     else

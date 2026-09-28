@@ -26,6 +26,8 @@ REAL_SCRIPT="${GA}/scripts/daemon-daily-restart.sh"
 REAL_LOCK_LIB="${GA}/scripts/lib/daemon-lock.sh"
 REAL_CONFIG_LIB="${GA}/scripts/lib/atrium-config.sh"
 REAL_SINK_LIB="${GA}/scripts/lib/pg-report-drop.sh"
+# shellcheck source-path=SCRIPTDIR source=../lib/path-guard.sh
+source "${GA}/scripts/lib/path-guard.sh"
 
 setup() {
   [[ -f "${REAL_SCRIPT}" ]] || skip "daemon-daily-restart.sh not found: ${REAL_SCRIPT}"
@@ -33,7 +35,7 @@ setup() {
 }
 
 teardown() {
-  [[ -n "${WORK:-}" && -d "${WORK}" ]] && rm -rf -- "${WORK}" || true
+  if ga_guard_path "${WORK:-}"; then rm -rf -- "${WORK:?}"; fi
 }
 
 # Extract one top-level function (start pattern → first column-0 brace) into a
@@ -255,10 +257,13 @@ STUB
 
   cat >"${STUB_BIN}/tmux" <<STUB
 #!/usr/bin/env bash
+source "${GA}/scripts/lib/path-guard.sh"
 printf '%s\n' "\$*" >>"${TMUX_CALLS}"
 case "\$1" in
   has-session) [[ -f "${SESSION_MARKER}" ]] ;;
-  kill-session) rm -f -- "${SESSION_MARKER}" ;;
+  kill-session)
+    if ga_guard_path "${SESSION_MARKER}"; then rm -f -- "${SESSION_MARKER:?}"; fi
+    ;;
   capture-pane) cat -- "${WORK}/pane-fixture.txt" 2>/dev/null || true ;;
   *) exit 0 ;;
 esac
@@ -299,7 +304,7 @@ run_flow() {
 
 @test "missing claude: aborts before kill-session, session untouched" {
   make_flow_sandbox
-  rm -f "${STUB_BIN}/claude"
+  if ga_guard_path "${STUB_BIN}"; then rm -f -- "${STUB_BIN:?}/claude"; fi
   if env PATH="${STUB_BIN}:/usr/bin:/bin" bash -c 'command -v claude' >/dev/null 2>&1; then
     skip "claude unexpectedly reachable via /usr/bin:/bin"
   fi
@@ -324,7 +329,7 @@ sys.stdout.write(sys.stdin.read())
 PY
   chmod +x "${SANDBOX}/_pg_dual_write_daemon.py"
   # Drop tmux so pre-flight `command -v tmux` fails → fatal("tmux not on PATH").
-  rm -f "${STUB_BIN}/tmux"
+  if ga_guard_path "${STUB_BIN}"; then rm -f -- "${STUB_BIN:?}/tmux"; fi
   if env PATH="${STUB_BIN}:/usr/bin:/bin" bash -c 'command -v tmux' >/dev/null 2>&1; then
     skip "tmux unexpectedly reachable via /usr/bin:/bin"
   fi

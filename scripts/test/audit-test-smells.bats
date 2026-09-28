@@ -12,13 +12,15 @@
 # Every fixture is written into a per-test temp tree — no repository file is read as a fixture.
 
 AUDIT_SH="${BATS_TEST_DIRNAME}/../audit-test-smells.sh"
+# shellcheck source-path=SCRIPTDIR source=../lib/path-guard.sh
+source "${BATS_TEST_DIRNAME}/../lib/path-guard.sh"
 
 setup() {
   TS_TMP="$(mktemp -d -t audit-test-smells.XXXXXX)"
 }
 
 teardown() {
-  [[ -n "${TS_TMP:-}" && -d "${TS_TMP}" ]] && rm -rf -- "${TS_TMP}" || true
+  if ga_guard_path "${TS_TMP:-}"; then rm -rf -- "${TS_TMP:?}"; fi
 }
 
 # Writes stdin to a fixture path, creating parent directories. Bats rewrites every column-0 `@test`
