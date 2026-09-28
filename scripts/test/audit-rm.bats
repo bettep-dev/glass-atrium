@@ -81,7 +81,7 @@ is_shell_file() {
 }
 
 # Sorted list of the probe file plus every tracked shell file no scope entry reaches.
-list_unread_shell_files() {
+get_unread_shell_files() {
   local tracked="" unread="${PROBE_FILE}" path=""
   tracked="$(git -C "${REPO_ROOT}" -c core.quotePath=false ls-files)"
   while IFS= read -r path; do
@@ -259,7 +259,7 @@ list_unread_shell_files() {
     skip "Repo-only: the tracked file list needs the source work tree, which an install lacks"
   fi
   make_scope_root "${root}"
-  expected="$(list_unread_shell_files)"
+  expected="$(get_unread_shell_files)"
   run bash "${AUDIT_SH}" --root "${root}"
   named="$(sed -n 's/^NOT_READ[[:space:]]*\([^:]*\): .*/\1/p' <<<"${output}")"
   named="$(LC_ALL=C sort <<<"${named}")"

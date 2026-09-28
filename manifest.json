@@ -1561,7 +1561,7 @@
     "scripts/test/atrium-config.bats": "007c6eac6d60bc9a11b8e4ee1b19cbe0c7cf295d4e65df5f1dd53d3cd3ec862a",
     "scripts/test/audit-absorption.bats": "6fece1547f1e37fe1ea39f50f32340499c4c897b463a0f387871c75f3e3bb4f3",
     "scripts/test/audit-cli.bats": "d867ee0257048a97be46d5fe0fdec0a7a6ed773c075100efa9b818f4a64b6aed",
-    "scripts/test/audit-rm.bats": "fb77794e7f814626ffaf90e662257ca8ec7dfc4dbcbf1f8733fd0be324762cd9",
+    "scripts/test/audit-rm.bats": "5b67916f58cd428f13e9c5fc4dfe1afcd71c71b44ba9e3f495b312cda0e2dee3",
     "scripts/test/audit-test-smells.bats": "85142cb953cdab38cfde635eee9996e3b4bed5157a012592129f5e61dd59742a",
     "scripts/test/ci-change-filter-coverage.bats": "6c8f3bdddce275dceb60f1e2d2b620d97e27630faf7aab23950629a157c657d3",
     "scripts/test/config-template-reader-census.bats": "27fc0c9370848b70387cec33d55db5453765aa925839463c77c134dc1764d656",
