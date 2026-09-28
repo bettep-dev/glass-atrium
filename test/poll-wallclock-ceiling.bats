@@ -27,6 +27,8 @@ MON_SH="${GA}/lib/ga-tui-monitor.sh"
 DAEMONS_SH="${GA}/lib/ga-daemons.sh"
 LAUNCHD_SH="${GA}/lib/ga-launchd.sh"
 PREFLIGHT_SH="${GA}/lib/ga-tui-preflight.sh"
+# shellcheck source-path=SCRIPTDIR source=../scripts/lib/path-guard.sh
+source "${GA}/scripts/lib/path-guard.sh"
 
 setup() {
   [[ -f "${MON_SH}" ]] || skip "lib not found: ${MON_SH}"
@@ -47,7 +49,7 @@ teardown() {
   # best-effort reap of any stub curl/lsof/sleep a fail-before revert-check might have orphaned
   # (the green suite never reaches the kill path — the fixed code self-completes bounded).
   [[ -n "${SANDBOX:-}" ]] && pkill -f "${SANDBOX}" 2>/dev/null || true
-  [[ -n "${SANDBOX:-}" && -d "${SANDBOX}" ]] && rm -rf -- "${SANDBOX}"
+  if ga_guard_path "${SANDBOX:-}"; then rm -rf -- "${SANDBOX:?}"; fi
 }
 
 # run_bounded — run `bash -c "$1"` in the BACKGROUND (fresh shell, no stale command hash), poll for
@@ -172,4 +174,19 @@ LSOF
   grep -qF 'while [[ "$(ga_detect_xcode_clt)" != "present" ]]' "${PREFLIGHT_SH}"
   # the heartbeat dot is gated on wall-clock elapsed, not a per-iteration count.
   grep -qF 'if [[ "$((SECONDS - last_dot))" -ge 5 ]]' "${PREFLIGHT_SH}"
+}
+
+@test "teardown succeeds silently when setup skipped before creating the sandbox" {
+  local saved="${SANDBOX:-}"
+  unset SANDBOX
+  run teardown
+  SANDBOX="${saved}"
+  [[ "${status}" -eq 0 ]] || {
+    echo "teardown without a sandbox failed (status ${status}): ${output}" >&2
+    return 1
+  }
+  [[ -z "${output}" ]] || {
+    echo "teardown without a sandbox wrote: ${output}" >&2
+    return 1
+  }
 }

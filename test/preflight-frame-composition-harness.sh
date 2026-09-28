@@ -33,6 +33,8 @@ set -uo pipefail
 
 HARNESS_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 GA_DIR_ROOT="$(cd -- "${HARNESS_DIR}/.." && pwd)"
+# shellcheck source-path=SCRIPTDIR source=../scripts/lib/path-guard.sh
+source "${GA_DIR_ROOT}/scripts/lib/path-guard.sh"
 LAUNCHER="${GA_DIR_ROOT}/glass-atrium"
 
 # PG_SOCKET redirect (GA_PG_SOCKET test seam) — export BEFORE the source line, since ga_init_env
@@ -400,6 +402,7 @@ fi
 
 echo "============================================================================"
 printf 'RESULT: %d passed, %d failed\n' "${PASSES}" "${FAILS}"
-rm -f "${GA_EVT}" "${GATE_QUIET_LOG:-}" 2>/dev/null || true
-rm -rf -- "${GA_PG_SOCK_DIR:?}" 2>/dev/null || true
+if ga_guard_path "${GA_EVT}"; then rm -f -- "${GA_EVT:?}"; fi
+if ga_guard_path "${GATE_QUIET_LOG:-}"; then rm -f -- "${GATE_QUIET_LOG:?}"; fi
+if ga_guard_path "${GA_PG_SOCK_DIR}"; then rm -rf -- "${GA_PG_SOCK_DIR:?}"; fi
 [[ "${FAILS}" -eq 0 ]]
