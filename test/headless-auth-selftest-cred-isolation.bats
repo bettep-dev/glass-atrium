@@ -25,6 +25,8 @@
 # Requires: bats (brew install bats-core), perl (run_with_timeout), bash 3.2+
 
 GA="$(cd -- "${BATS_TEST_DIRNAME}/.." && pwd)"
+# shellcheck source-path=SCRIPTDIR source=../scripts/lib/path-guard.sh
+source "${GA}/scripts/lib/path-guard.sh"
 
 # a non-secret presence marker — the code only tests the OAuth var for -n (non-empty), so a plain
 # word suffices; asserted to be ABSENT from any user-facing output.
@@ -51,7 +53,7 @@ setup() {
 }
 
 teardown() {
-  [[ -n "${SANDBOX:-}" && -d "${SANDBOX}" ]] && rm -rf -- "${SANDBOX}"
+  if ga_guard_path "${SANDBOX:-}"; then rm -rf -- "${SANDBOX:?}"; fi
 }
 
 # _export_kv — name-indirect export ($1=name, $2=value), so no literal credential-name assignment
@@ -235,3 +237,17 @@ _write_daemon_config() {
   grep -qF -- '--model claude-sonnet-5' "${CLAUDE_STUB_ARGS_OUT}" || return 1
 }
 
+@test "teardown succeeds silently when setup skipped before creating the temp dir" {
+  local saved="${SANDBOX}"
+  unset SANDBOX
+  run teardown
+  SANDBOX="${saved}"
+  [[ "${status}" -eq 0 ]] || {
+    echo "teardown without a temp dir failed (status ${status}): ${output}" >&2
+    return 1
+  }
+  [[ -z "${output}" ]] || {
+    echo "teardown without a temp dir wrote: ${output}" >&2
+    return 1
+  }
+}
