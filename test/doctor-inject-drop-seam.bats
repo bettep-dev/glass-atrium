@@ -70,6 +70,7 @@ SH
   export GA_GENERATE_MANIFEST="${TARGET}/no-such-manifest-gen" # nonexistent → §8 SHA hashing skipped
   export GA_AUTH_CLAUDE_BIN="${TARGET}/bin/claude"             # echo-OK stub → no live claude -p probe
   export DOCTOR_AUTH_REPORTS_DIR="${TARGET}/empty-reports"     # empty dir → trivial daemon-report scan
+  printf '%s\n' '{"files": []}' >"${TARGET}/empty-manifest.json"
 
   # An oversized (~11 KB) BUDGET-DEV fixture whose block alone exceeds the ceiling → forces a
   # non-lesson (block=budget-dev) full drop at the production ceiling for a BUDGET_DEV_AGENTS member.
@@ -87,14 +88,15 @@ teardown() {
 }
 
 # Drive the REAL doctor with the target + data-root seams redirected at the sandbox.
-# AUTOAGENT_BACKUP_DIR is sandboxed because GA_ROOT stays the REAL install here: §15 derives the
-# merge-decline record from GA_ROOT's sibling, so an open decline on the host would FAIL the run and
-# suppress the PASS-only warn rollup the `0 inject-drop` assertions read.
+# GA_ROOT stays the checkout this suite runs from, and any doctor FAIL suppresses the PASS-only warn
+# rollup the `<n> inject-drop` assertions read → two FAIL sources outside §10 are sandboxed:
+#   GA_MANIFEST (empty files[]) — §4 FAILs on any manifest source missing from the checkout
+#   AUTOAGENT_BACKUP_DIR — §15 derives the merge-decline record from GA_ROOT's sibling
 # `run` records the exit in $status; run_doctor returns 1 on any §1-12 FAIL, so we assert
 # on the merged output lines (log() → stderr, captured by bats `run`), never $status.
 run_doctor_seam() {
   GA_TARGET_HOME="${TARGET}" GA_DATA_ROOT="${DATA_ROOT}" \
-    AUTOAGENT_BACKUP_DIR="${TARGET}/agents-bak" \
+    GA_MANIFEST="${TARGET}/empty-manifest.json" AUTOAGENT_BACKUP_DIR="${TARGET}/agents-bak" \
     ATRIUM_MONITOR_PORT="${GA_DOCTOR_DEAD_PORT}" run "${REAL_GA}" doctor
 }
 

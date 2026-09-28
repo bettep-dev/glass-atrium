@@ -1693,7 +1693,7 @@
     "test/doctor-decline-record.bats": "5bbf79819f41581c5b5b7064ffc9ca86a945230dcbcba30328aff99af3288508",
     "test/doctor-fail-err-trap.bats": "641ce865ebf613b2a9230c7239c5513fbc7502e12d4471828bc4ba726464b7b4",
     "test/doctor-hook-bindings.bats": "1a9fd2c314ad526752cdd554b1394dc859dbad4e647d1efee69882bc8be508a4",
-    "test/doctor-inject-drop-seam.bats": "d93450c90a26b448279346162d768add28da7050f6d023aa38c8c1761dad04f2",
+    "test/doctor-inject-drop-seam.bats": "ac5800f10944a2c0f4eabd0a8d53badf38cf9b583b034f4a543b7f2a4f3af5d4",
     "test/doctor-launchd-deploy-drift.bats": "6f004336b45deacffe7e9ca32ece9c20079ced6d46c846194975a9bd6930c3c8",
     "test/doctor-migrations.bats": "565bb519a10d8e758221918f8a37698173057a7475748dc0ec1b3f4c46056512",
     "test/doctor-proposal-provenance.bats": "8649cd29adc7839f50ba4a6d785a31c30df09d936385ce74dc0869b708ebf2f0",
