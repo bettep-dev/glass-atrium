@@ -28,6 +28,8 @@
 # Requires: bats, bash 3.2+, BSD/GNU stat + touch (macOS)
 
 GA="$(cd -- "${BATS_TEST_DIRNAME}/.." && pwd)"
+# shellcheck source-path=SCRIPTDIR source=../scripts/lib/path-guard.sh
+source "${GA}/scripts/lib/path-guard.sh"
 
 # LARGE fixture size: cut's output must exceed the ~64KB pipe buffer.
 # Then cut is still writing when the reader breaks → SIGPIPE → the ERR trap T1 asserts.
@@ -60,7 +62,8 @@ setup() {
 }
 
 teardown() {
-  [[ -n "${SANDBOX:-}" && -d "${SANDBOX}" ]] && rm -rf -- "${SANDBOX}"
+  # shellcheck disable=SC2310  # pure predicate — nothing inside it for errexit to catch
+  if ga_guard_path "${SANDBOX:-}"; then rm -rf -- "${SANDBOX:?}"; fi
 }
 
 # extract_fn — eval a single named function from ga-env.sh / ga-tui-preflight.sh into the test shell.
@@ -157,4 +160,19 @@ _run_buggy() {
   DOCTOR_AUTH_REPORTS_DIR="${SANDBOX}" _run_advisory || return 1
   ! grep -qE 'cut -f2-|ERROR: line' "${ERRF}" || return 1
   grep -qF 'recent daemon reports show no auth-failure' "${OUT}" || return 1
+}
+
+@test "teardown succeeds silently when setup skipped before creating the temp dir" {
+  local saved="${SANDBOX}"
+  unset SANDBOX
+  run teardown
+  SANDBOX="${saved}"
+  [[ "${status}" -eq 0 ]] || {
+    echo "teardown without a temp dir failed (status ${status}): ${output}" >&2
+    return 1
+  }
+  [[ -z "${output}" ]] || {
+    echo "teardown without a temp dir wrote: ${output}" >&2
+    return 1
+  }
 }
