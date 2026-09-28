@@ -140,6 +140,13 @@ curl -fsSL https://github.com/bettep-dev/glass-atrium/raw/main/install.sh | bash
 
 > **설치된 폴더는 그대로 두세요.** 설치 프로그램은 릴리스 번들을 내려받아 `~/.glass-atrium` 폴더에 풀어 놓고, **파일 단위 심링크 팜**(앞서 설명한 방식)으로 Claude 설정 디렉터리와 연결합니다. 실제 파일이 여기 있으므로, 폴더를 옮기거나 지우면 링크가 끊어집니다.
 
+### 프로필 브랜치(`CLAUDE_CONFIG_DIR`)
+
+- 아트리움은 `~/.claude` 에만 설치됩니다.
+- `CLAUDE_CONFIG_DIR` 로 쓰는 다른 설정 디렉터리(예: `~/.claude-work`)는 `agents`·`rules`·`skills`·`settings.json` 을 `~/.claude` 쪽으로 심링크해야 합니다.
+- `$HOME` 안에서 실행하면 누락이 드러나지 않을 수 있으니, 확인은 `$HOME` 밖 디렉터리에서 하세요.
+- `glass-atrium doctor` 가 링크가 빠진 브랜치와 그대로 실행할 수 있는 수정 명령을 알려 줍니다.
+
 ### 업데이트
 
 새 릴리스가 나오면 대시보드 툴바에 **Update available** 배지가 뜹니다 — 배지를 누르면 그 자리에서 적용되고, 터미널에서는 `glass-atrium update` 로도 같은 일을 합니다. 적용은 GitHub 릴리스 번들을 받아 두 가지 규칙으로 이뤄집니다: **번들이 매니페스트에 실린 모든 파일을 교체**하고, `agents/*.md` 는 EDITABLE 영역만 병합해 사용자가 손댄 내용을 보존합니다(문구가 맞부딪히면 모델 중재자가 판정). 번들은 **삭제에 대해서도 권한을 갖습니다** — 매니페스트의 `retired` 목록에 오른 파일은 휴지통으로 옮겨지되, 벤더가 배포한 적 없는 해시라면 사용자 편집으로 보고 그대로 둡니다.
