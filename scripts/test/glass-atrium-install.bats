@@ -31,6 +31,8 @@ INSTALL_SH="${GA}/install.sh"
 REAL_SPINE="${GA}/scripts/lib/apply-spine.sh"
 REAL_FARM="${GA}/scripts/lib/mirror-farm.sh"
 REAL_GENMAN="${GA}/scripts/generate-manifest.sh"
+# shellcheck source-path=SCRIPTDIR source=../lib/path-guard.sh
+source "${GA}/scripts/lib/path-guard.sh"
 
 setup() {
   [[ -f "${INSTALL_SH}" ]] || skip "install.sh not found: ${INSTALL_SH}"
@@ -48,7 +50,7 @@ setup() {
 }
 
 teardown() {
-  [[ -n "${WORK:-}" && -d "${WORK}" ]] && rm -rf -- "${WORK}" || true
+  if ga_guard_path "${WORK:-}"; then rm -rf -- "${WORK:?}"; fi
 }
 
 # install.sh's preflight requires Darwin (named exit 10 elsewhere) — cases 1-4

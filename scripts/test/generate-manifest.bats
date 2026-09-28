@@ -15,6 +15,8 @@ REAL_SCRIPT="${GA}/scripts/generate-manifest.sh"
 # The generator sources the spine for the retired-map family bar, so the sandbox
 # needs the real library at the path the copied script resolves.
 REAL_SPINE="${GA}/scripts/lib/apply-spine.sh"
+# shellcheck source-path=SCRIPTDIR source=../lib/path-guard.sh
+source "${GA}/scripts/lib/path-guard.sh"
 
 setup() {
   [[ -f "${REAL_SCRIPT}" ]] || skip "generate-manifest.sh not found: ${REAL_SCRIPT}"
@@ -44,7 +46,7 @@ setup() {
 }
 
 teardown() {
-  [[ -n "${WORK:-}" && -d "${WORK}" ]] && rm -rf -- "${WORK}" || true
+  if ga_guard_path "${WORK:-}"; then rm -rf -- "${WORK:?}"; fi
 }
 
 # Seed the minimal manifest the generator refuses to regenerate without
@@ -216,7 +218,7 @@ untrack_in_scope() {
 }
 
 @test "generate: refuses without a tracked manifest (exit 5)" {
-  rm -f -- "${MANIFEST}"
+  if ga_guard_path "${MANIFEST}"; then rm -f -- "${MANIFEST:?}"; fi
   run "${SCRIPT}"
   [[ "${status}" -eq 5 ]]
 }
@@ -224,7 +226,7 @@ untrack_in_scope() {
 # Exit 1 is the --check drift verdict release.yml reads, so a spine that cannot
 # load must surface as its own code in every mode, never as manifest drift.
 @test "generate and --check: a spine that cannot load its path guard exits 7" {
-  rm -f -- "${WORK}/scripts/lib/path-guard.sh"
+  if ga_guard_path "${WORK}"; then rm -f -- "${WORK:?}/scripts/lib/path-guard.sh"; fi
   local mode
   for mode in "" "--check"; do
     run "${SCRIPT}" ${mode:+"${mode}"}

@@ -39,6 +39,8 @@ bats_require_minimum_version 1.5.0
 GA="$(cd -- "${BATS_TEST_DIRNAME}/../.." && pwd)"
 export GA
 export MANIFEST="${GA}/manifest.json"
+# shellcheck source-path=SCRIPTDIR source=../lib/path-guard.sh
+source "${GA}/scripts/lib/path-guard.sh"
 
 setup() {
   [[ -f "${MANIFEST}" ]] || skip "manifest.json not found: ${MANIFEST}"
@@ -56,7 +58,7 @@ setup() {
 }
 
 teardown() {
-  [[ -n "${WORK:-}" && -d "${WORK}" ]] && rm -rf -- "${WORK}" || true
+  if ga_guard_path "${WORK:-}"; then rm -rf -- "${WORK:?}"; fi
 }
 
 # helpers
@@ -97,7 +99,7 @@ set_has() {
 merge_claimed_paths() {
   local new="${WORK}/oracle/new" live="${WORK}/oracle/live" log="${WORK}/oracle/log"
   local path base claimed="" files=""
-  rm -rf -- "${WORK}/oracle"
+  if ga_guard_path "${WORK}"; then rm -rf -- "${WORK:?}/oracle"; fi
   mkdir -p -- "${new}/agents" "${live}"
   while IFS= read -r path; do
     [[ -n "${path}" ]] || continue
@@ -134,7 +136,7 @@ merge_claimed_paths() {
 roster_dispatched_paths() {
   local new="${WORK}/roster/new" live="${WORK}/roster/live" log="${WORK}/roster/log"
   local rel
-  rm -rf -- "${WORK}/roster"
+  if ga_guard_path "${WORK}"; then rm -rf -- "${WORK:?}/roster"; fi
   mkdir -p -- "${new}" "${live}"
   while IFS= read -r rel; do
     [[ -n "${rel}" ]] || continue
@@ -160,7 +162,7 @@ merge_domain_paths() {
 selection_for() {
   local dir="${WORK}/sel"
   local path files="" hashes="" hash
-  rm -rf -- "${dir}"
+  if ga_guard_path "${dir}"; then rm -rf -- "${dir:?}"; fi
   mkdir -p -- "${dir}/new" "${dir}/live"
   for path in "$@"; do
     mkdir -p -- "$(dirname -- "${dir}/new/${path}")" "$(dirname -- "${dir}/live/${path}")"
