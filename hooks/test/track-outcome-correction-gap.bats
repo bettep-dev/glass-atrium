@@ -24,6 +24,9 @@
 HOOKS_DIR="${BATS_TEST_DIRNAME}/.."
 HOOK_SH="${HOOKS_DIR}/track-outcome.sh"
 
+# shellcheck source-path=SCRIPTDIR source=../../scripts/lib/path-guard.sh
+source "${BATS_TEST_DIRNAME}/../../scripts/lib/path-guard.sh"
+
 setup() {
   [[ -f "${HOOK_SH}" ]] || skip "track-outcome.sh not found: ${HOOK_SH}"
   command -v python3 >/dev/null 2>&1 || skip "python3 required"
@@ -38,9 +41,7 @@ setup() {
 teardown() {
   # `if` (not `[[ ]] && cmd`) so a false guard returns 0 — a setup-skip (CG_TMP unset) must not
   # turn the clean skip into a non-zero teardown exit (which bats reports as `not ok`).
-  if [[ -n "${CG_TMP:-}" && -d "${CG_TMP}" ]]; then
-    rm -rf "${CG_TMP}"
-  fi
+  if ga_guard_path "${CG_TMP:-}"; then rm -rf -- "${CG_TMP:?}"; fi
 }
 
 # A bare intermediate `[[ ]]` assertion is silently ignored under bash 3.2 (macOS) — a false one

@@ -27,6 +27,9 @@ HOOKS_DIR="${BATS_TEST_DIRNAME}/.."
 HOOK_SH="${HOOKS_DIR}/track-outcome.sh"
 PG_HELPER_SRC="${HOOKS_DIR}/_pg_outcome_dualwrite.py"
 
+# shellcheck source-path=SCRIPTDIR source=../../scripts/lib/path-guard.sh
+source "${BATS_TEST_DIRNAME}/../../scripts/lib/path-guard.sh"
+
 setup() {
   [[ -f "${HOOK_SH}" ]] || skip "track-outcome.sh not found: ${HOOK_SH}"
   [[ -x "${PG_HELPER_SRC}" ]] || skip "_pg_outcome_dualwrite.py not executable: ${PG_HELPER_SRC}"
@@ -67,9 +70,7 @@ setup() {
 }
 
 teardown() {
-  if [[ -n "${DB_TMP:-}" && -d "${DB_TMP}" ]]; then
-    rm -rf "${DB_TMP}"
-  fi
+  if ga_guard_path "${DB_TMP:-}"; then rm -rf -- "${DB_TMP:?}"; fi
 }
 
 # Synthetic subagent transcript ending in a terminal [COMPLETION] block, preceded
