@@ -5,6 +5,8 @@
 # library and drives the REAL conflict helpers against ps/lsof/launchctl/kill shell-function
 # stubs (kill is a bash builtin, so a function — not a PATH stub — is required to intercept
 # it). This wrapper asserts the harness runs green and surfaces its per-scenario verdicts.
+# Two lifecycle guards ride along: teardown_file stays silent with no cache files,
+# and the harness removes its scratch dir under a relative TMPDIR.
 #
 # Coverage (see the harness header for the AC mapping):
 #   (A) AC-S2.5b — our-stray (relative argv `node dist/server/main.js` + cwd ${GA_ROOT}/monitor)
@@ -26,9 +28,10 @@ HARNESS="${GA}/test/install-orphan-ownership-exec-harness.sh"
 # shellcheck source-path=SCRIPTDIR source=../scripts/lib/path-guard.sh
 source "${GA}/scripts/lib/path-guard.sh"
 
-# The harness is deterministic + fully stubbed (read-only), and all three tests assert different
-# substrings of the SAME ~6s run — so run it ONCE in setup_file and cache stdout+status. Per-test
-# setup() keeps the skip guards; each @test reads the cache instead of re-running the harness.
+# Deterministic, fully stubbed harness → setup_file runs it ONCE (~6s) and caches stdout+status.
+# The three scenario tests read that cache; per-test setup() keeps the skip guards.
+# The teardown_file test reads no cache.
+# The relative-TMPDIR test re-runs the harness on purpose (+~6s): a cached run cannot vary TMPDIR.
 setup_file() {
   local ga harness
   ga="$(cd -- "${BATS_TEST_DIRNAME}/.." && pwd)"
