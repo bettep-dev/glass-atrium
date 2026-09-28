@@ -34,6 +34,8 @@
 bats_require_minimum_version 1.5.0
 
 GA="$(cd -- "${BATS_TEST_DIRNAME}/.." && pwd)"
+# shellcheck source-path=SCRIPTDIR source=../scripts/lib/path-guard.sh
+source "${GA}/scripts/lib/path-guard.sh"
 
 # Deterministic digest the stub emits and the manifest records — a single SoT (passed to
 # the stub via env, referenced in the manifest writer) so the two never drift out of sync.
@@ -72,7 +74,7 @@ setup() {
 }
 
 teardown() {
-  [[ -n "${SANDBOX:-}" && -d "${SANDBOX}" ]] && rm -rf -- "${SANDBOX}" || true
+  if ga_guard_path "${SANDBOX:-}"; then rm -rf -- "${SANDBOX:?}"; fi
 }
 
 # A `shasum` stub that HARD-REQUIRES the split multi-word form `shasum -a 256 -- <file>`.
