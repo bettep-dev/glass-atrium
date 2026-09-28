@@ -51,5 +51,5 @@ Maintainer-facing material for that rule file. Nothing here binds an agent; the 
 
 - The rule file's closing paragraph says the skill's `references/` keep the lookup half.
   - **Read route**: settled — the rule file's path pointer reaches every holder.
-  - **Invocation route**: unsettled — no agent grants `Skill` and no probe spawn has run; neither the rule file nor this note asserts it either way.
+  - **Invocation route**: unsettled — `Skill` is granted only to `glass-atrium-meta-prompt-engineer`, not a holder of this rule, and a probe spawn found a `skills:` preload and a `Skill` grant both load on demand; neither the rule file nor this note asserts it either way.
 - Filename: `shared-code-structure.md` was chosen over `shared-patterns.md`. "Patterns" reads as a catch-all and collides with design patterns, and the matrix's Layer A check puts these basenames in front of a reader as bare filenames.
