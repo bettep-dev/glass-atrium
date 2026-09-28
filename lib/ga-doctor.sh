@@ -1603,7 +1603,7 @@ _doctor_report_rewire_marker() {
 # Reading it would point every sandboxed doctor run at that real branch.
 _doctor_report_profile_links() {
   local grammar="${BASH_SOURCE[0]%/*}/../hooks/lib/claude-config-dirs.sh"
-  local branches branch items item csv nl=$'\n' is_bad
+  local branches branch items
   # a partial engine tree (staged lib/ only) lacks hooks/lib → skip with a row, never abort run_doctor
   if [[ ! -r "${grammar}" ]]; then
     log "  note : profile branch link check skipped — needs the config-root grammar (${grammar})"
@@ -1618,14 +1618,8 @@ _doctor_report_profile_links() {
   fi
   # shellcheck disable=SC2311  # a failed manifest read yields a short set; the jq gate above proved it parses
   items="$(_get_profile_link_required_items)"
-  csv="${items//${nl}/, }"
   while IFS= read -r branch; do
-    is_bad=0
-    while IFS= read -r item; do
-      # shellcheck disable=SC2310  # the defect verdict is the branch taken — a defect is a row, never an abort
-      _profile_link_check_item "${branch}" "${item}" || is_bad=1
-    done <<<"${items}"
-    [[ "${is_bad}" -eq 1 ]] || log "  ok   : profile branch ${branch} links ${csv} to ${TARGET_HOME}"
+    _doctor_report_profile_branch "${branch}" "${items}"
   done <<<"${branches}"
 }
 
@@ -1660,19 +1654,57 @@ _get_profile_link_required_items() {
   printf 'settings.json\n'
 }
 
-# Log one branch item's defect + a fix line that runs as printed; return 1 on a defect.
+# One branch: a row per defective item, else one ok row naming every item. $1 = branch, $2 = required items.
+_doctor_report_profile_branch() {
+  local item is_bad=0 nl=$'\n'
+  while IFS= read -r item; do
+    # shellcheck disable=SC2310  # the defect verdict is the branch taken — a defect is a row, never an abort
+    _profile_link_check_item "${1}" "${item}" || is_bad=1
+  done <<<"${2}"
+  [[ "${is_bad}" -eq 1 ]] || log "  ok   : profile branch ${1} links ${2//${nl}/, } to ${TARGET_HOME}"
+}
+
+# Log branch $1's item $2 defect row; return 1 on a defect.
+# Target home lacks the item → a target-home repair row, no link fix: that link would dangle + recur every run.
+_profile_link_check_item() {
+  local want="${TARGET_HOME}/${2}" class
+  # shellcheck disable=SC2311  # printing helper: tests only, no command that can fail
+  class="$(_get_profile_link_defect "${1}/${2}" "${want}")"
+  case "${class}" in
+    ok) return 0 ;;
+    no-target) log "  note : profile branch ${1}: ${2} has no link target — the target home lacks ${want}; repair the target home first (its own rows above name how), then rerun the doctor" ;;
+    *) _doctor_report_profile_link_defect "${1}" "${2}" "${class}" ;;
+  esac
+  return 1
+}
+
+# Defect class of link $1 against its expected target $2: ok · no-target · dangling · elsewhere · real · missing.
+_get_profile_link_defect() {
+  if [[ ! -e "${2}" ]]; then
+    printf 'no-target\n'
+  elif [[ -L "${1}" && "${1}" -ef "${2}" ]]; then
+    printf 'ok\n'
+  elif [[ -L "${1}" && ! -e "${1}" ]]; then
+    printf 'dangling\n'
+  elif [[ -L "${1}" ]]; then
+    printf 'elsewhere\n'
+  elif [[ -e "${1}" ]]; then
+    printf 'real\n'
+  else
+    printf 'missing\n'
+  fi
+}
+
+# Log branch $1's item $2 link defect of class $3 + a fix line that runs as printed.
 # Fix per defect class:
 #   missing → a plain link
 #   dangling or misdirected link → replaced in place (-n: never nests into the dir it points at)
 #   real file or directory → moved to the Trash first, never removed
-_profile_link_check_item() {
-  local link="${1}/${2}" want="${TARGET_HOME}/${2}" class defect fix qlink qwant trashed
-  # shellcheck disable=SC2311  # printing helper: tests only, no command that can fail
-  class="$(_get_profile_link_defect "${link}" "${want}")"
-  [[ "${class}" != "ok" ]] || return 0
+_doctor_report_profile_link_defect() {
+  local link="${1}/${2}" want="${TARGET_HOME}/${2}" defect fix qlink qwant trashed
   printf -v qlink '%q' "${link}"
   printf -v qwant '%q' "${want}"
-  case "${class}" in
+  case "${3}" in
     missing) defect="missing" fix="ln -s ${qwant} ${qlink}" ;;
     dangling) defect="is a dangling link" fix="ln -sfn ${qwant} ${qlink}" ;;
     elsewhere) defect="links elsewhere ($(readlink "${link}"))" fix="ln -sfn ${qwant} ${qlink}" ;;
@@ -1684,22 +1716,6 @@ _profile_link_check_item() {
   esac
   log "  note : profile branch ${1}: ${2} ${defect} — expected a link to ${want} (report-only; the doctor never writes into a branch)"
   log "         fix : ${fix}"
-  return 1
-}
-
-# Defect class of link $1 against its expected target $2: ok · dangling · elsewhere · real · missing.
-_get_profile_link_defect() {
-  if [[ -L "${1}" && "${1}" -ef "${2}" ]]; then
-    printf 'ok\n'
-  elif [[ -L "${1}" && ! -e "${1}" ]]; then
-    printf 'dangling\n'
-  elif [[ -L "${1}" ]]; then
-    printf 'elsewhere\n'
-  elif [[ -e "${1}" ]]; then
-    printf 'real\n'
-  else
-    printf 'missing\n'
-  fi
 }
 
 # Classify the inject-scope-rules shed log against a YYYY-MM-DD cutoff. Producer line grammar

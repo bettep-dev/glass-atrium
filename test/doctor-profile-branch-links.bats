@@ -178,6 +178,34 @@ break_rules_link() {
   [[ -f "$(printf '%s\n' "${HOMEDIR}"/.Trash/claude-work-rules.ga-replaced.*)/own.md" ]]
 }
 
+# A link fix toward an absent target recreates a dangling link, so the next run repeats the row;
+# the repair belongs to the target home, whose own doctor rows name it.
+@test "an item the target home lacks gets a target-home repair row and no link fix, whatever the branch holds" {
+  local state fix
+  rm -- "${TARGET}/settings.json"
+  for state in dangling-link real-file missing; do
+    rm -rf -- "${BRANCH}"
+    seed_branch "${BRANCH}" "${REQUIRED[@]}"
+    case "${state}" in
+      dangling-link) ;; # the seeded link already points at the absent target
+      real-file) rm -- "${BRANCH}/settings.json" && printf '{}\n' >"${BRANCH}/settings.json" ;;
+      missing) rm -- "${BRANCH}/settings.json" ;;
+      *) return 1 ;;
+    esac
+    run_doctor_sandbox
+    [[ "${output}" == *"note : profile branch ${BRANCH}: settings.json has no link target — the target home lacks ${TARGET}/settings.json; repair the target home first"* ]] || {
+      echo "${state}: target-home repair row not named — output:" >&2
+      echo "${output}" >&2
+      return 1
+    }
+    fix="$(printf '%s\n' "${output}" | sed -n 's/^ *fix : //p')"
+    [[ -z "${fix}" ]] || {
+      echo "${state}: a link fix was printed toward the absent target: ${fix}" >&2
+      return 1
+    }
+  done
+}
+
 @test "a branch directory holding no .claude.json gets no row" {
   seed_branch "${BRANCH}" "${REQUIRED[@]}"
   mkdir -p "${HOMEDIR}/.claude-pre-glass-atrium-backup-20260603T043853Z"
