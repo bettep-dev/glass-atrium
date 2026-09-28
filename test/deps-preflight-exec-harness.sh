@@ -36,23 +36,27 @@ set -uo pipefail
 HARNESS_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 GA_DIR_ROOT="$(cd -- "${HARNESS_DIR}/.." && pwd)"
 LAUNCHER="${GA_DIR_ROOT}/glass-atrium"
+# Absolute even under a relative TMPDIR, so the guarded deletes below still remove the scratch.
+SCRATCH_DIR="$(cd -- "${TMPDIR:-/tmp}" && pwd -P)"
 
 # PG_SOCKET redirect (GA_PG_SOCKET test seam) — export BEFORE the source line
 # ga_init_env makes PG_SOCKET readonly at source time → a later export is inert
 # (D4) drives the REAL clear_unmanaged_pg_orphan → its socket path resolves under this scratch dir
 # Covers the socket-scoped lsof + the stale-socket rm — NOT the port-scoped `lsof -ti tcp:5432` fallback
-GA_PG_SOCK_DIR="$(mktemp -d "${TMPDIR:-/tmp}/ga-pgsafe-sock.XXXXXX")"
+GA_PG_SOCK_DIR="$(mktemp -d "${SCRATCH_DIR}/ga-pgsafe-sock.XXXXXX")"
 export GA_PG_SOCKET="${GA_PG_SOCK_DIR}"
 
 # --- source the launcher as a library (main skipped by the source-guard) --------------
 # shellcheck source=/dev/null
 source "${LAUNCHER}"
+# shellcheck source-path=SCRIPTDIR source=../scripts/lib/path-guard.sh
+source "${GA_DIR_ROOT}/scripts/lib/path-guard.sh"
 # match run_gate_quiet's runtime: the preflight executes with -e off + no ERR trap.
 set +e
 trap - ERR EXIT INT TERM
 
 # === recorder =========================================================================
-GA_REC="$(mktemp "${TMPDIR:-/tmp}/ga-exec-rec.XXXXXX")"
+GA_REC="$(mktemp "${SCRATCH_DIR}/ga-exec-rec.XXXXXX")"
 _rec() { printf '%s\n' "$1" >>"${GA_REC}"; }
 _rec_reset() { : >"${GA_REC}"; }
 _rec_dump() { cat "${GA_REC}"; }
@@ -455,13 +459,13 @@ _control_reader() {
   IFS= read -r line <"${GA_CTL_TTY}" || return 9
   printf '%s' "${line}"
 }
-GA_CTL_TTY="$(mktemp "${TMPDIR:-/tmp}/ga-ctl.XXXXXX")"
+GA_CTL_TTY="$(mktemp "${SCRATCH_DIR}/ga-ctl.XXXXXX")"
 printf 'typed-value\n' >"${GA_CTL_TTY}"
 ctl_out="$(_control_reader)"
 ctl_rc=$?
 printf '  control reader (reads a DIFFERENT fd) rc=%s out=[%s]\n' "${ctl_rc}" "${ctl_out}"
 assert_eq "control: a redirected-fd read still returns its value" "typed-value" "${ctl_out}"
-rm -f "${GA_CTL_TTY}"
+if ga_guard_path "${GA_CTL_TTY}"; then rm -f -- "${GA_CTL_TTY:?}"; fi
 
 # === (C) STEP 2 — ga_pg_wait_ready bounded (real function) ============================
 echo ""
@@ -471,7 +475,7 @@ echo "==========================================================================
 # re-extract the REAL bounded ga_pg_wait_ready from the lib (the scenario-A recorder stub
 # above replaced it; bash function defs do not stack, so unset -f cannot restore it).
 eval "$(awk '/^ga_pg_wait_ready\(\) \{/{f=1} f{print} f&&/^}/{exit}' "${GA_DIR_ROOT}/lib/ga-deps.sh")"
-STEP2_BIN="$(mktemp -d "${TMPDIR:-/tmp}/ga-step2.XXXXXX")"
+STEP2_BIN="$(mktemp -d "${SCRATCH_DIR}/ga-step2.XXXXXX")"
 # PG_SOCKET is readonly (the GA_PG_SOCKET scratch dir, frozen at source time); the PATH pg_isready stub ignores -h.
 # (i) ready after N failures then success — a pg_isready that fails 3x then succeeds.
 printf '#!/usr/bin/env bash\nf="%s/n"; c=$(cat "$f" 2>/dev/null||echo 0); c=$((c+1)); echo "$c">"$f"; [[ "$c" -ge 4 ]] && exit 0; exit 1\n' \
@@ -501,7 +505,7 @@ else
   fail "ga_pg_wait_ready did not bound (rc=${rc})"
 fi
 unset -f sleep
-rm -rf "${STEP2_BIN}"
+if ga_guard_path "${STEP2_BIN}"; then rm -rf -- "${STEP2_BIN:?}"; fi
 
 # RESTORE the scenario-flow recorder stub: the (C) block above re-extracted the REAL
 # bounded ga_pg_wait_ready, and bash function defs do NOT stack. The (D) block drives the
@@ -675,6 +679,6 @@ echo ""
 echo "============================================================================"
 printf 'HARNESS RESULT: %s passed, %s failed\n' "${PASSES}" "${FAILS}"
 echo "============================================================================"
-rm -f "${GA_REC}"
-rm -rf -- "${GA_PG_SOCK_DIR}"
+if ga_guard_path "${GA_REC}"; then rm -f -- "${GA_REC:?}"; fi
+if ga_guard_path "${GA_PG_SOCK_DIR}"; then rm -rf -- "${GA_PG_SOCK_DIR:?}"; fi
 [[ "${FAILS}" -eq 0 ]]

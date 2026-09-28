@@ -49,6 +49,8 @@ bats_require_minimum_version 1.5.0
 GA="$(cd -- "${BATS_TEST_DIRNAME}/.." && pwd)"
 REAL_GA="${GA}/glass-atrium"
 APPLY_SH="${GA}/autoagent/daemon-apply.sh"
+# shellcheck source-path=SCRIPTDIR source=../scripts/lib/path-guard.sh
+source "${GA}/scripts/lib/path-guard.sh"
 
 setup() {
   [[ -f "${REAL_GA}" ]] || skip "glass-atrium not found: ${REAL_GA}"
@@ -70,9 +72,9 @@ SH
 }
 
 teardown() {
-  [[ -n "${TARGET:-}" && -d "${TARGET}" ]] && rm -rf -- "${TARGET}" || true
-  [[ -n "${DATA_ROOT:-}" && -d "${DATA_ROOT}" ]] && rm -rf -- "${DATA_ROOT}" || true
-  [[ -n "${WORK:-}" && -d "${WORK}" ]] && rm -rf -- "${WORK}" || true
+  if ga_guard_path "${TARGET:-}"; then rm -rf -- "${TARGET:?}"; fi
+  if ga_guard_path "${DATA_ROOT:-}"; then rm -rf -- "${DATA_ROOT:?}"; fi
+  if ga_guard_path "${WORK:-}"; then rm -rf -- "${WORK:?}"; fi
 }
 
 # Drive the REAL doctor with the target, runtime-data and daemon-reports seams at the sandbox.
@@ -209,7 +211,12 @@ assert_output_lacks() {
 @test "AC6: any non-abort row supersedes the abort, not only a landed patch" {
   local status failed=""
   for status in skip reject needs_regen dryrun error; do
-    rm -f -- "${REPORTS}"/autoagent-applied-*.jsonl
+    if ga_guard_path "${REPORTS}"; then
+      rm -rf -- "${REPORTS:?}"
+    else
+      return 1
+    fi
+    mkdir -p -- "${REPORTS}"
     emit_abort_row || {
       echo "producer wrote no abort row (${status})" >&2
       return 1

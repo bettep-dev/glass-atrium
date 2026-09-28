@@ -47,6 +47,8 @@
 GA="$(cd -- "${BATS_TEST_DIRNAME}/.." && pwd)"
 DEPS_SH="${GA}/lib/ga-deps.sh"
 LAUNCHER="${GA}/glass-atrium"
+# shellcheck source-path=SCRIPTDIR source=../scripts/lib/path-guard.sh
+source "${GA}/scripts/lib/path-guard.sh"
 
 setup() {
   [[ -f "${DEPS_SH}" ]] || skip "lib not found: ${DEPS_SH}"
@@ -63,7 +65,7 @@ setup() {
 }
 
 teardown() {
-  [[ -n "${SANDBOX:-}" && -d "${SANDBOX}" ]] && rm -rf -- "${SANDBOX}"
+  if ga_guard_path "${SANDBOX:-}"; then rm -rf -- "${SANDBOX:?}"; fi
 }
 
 # === D2 — ga_cmd_homebrew_install emits the in-process function token ===============
@@ -1548,4 +1550,19 @@ t6_seed_manifests() {
       }
     done
   done
+}
+
+@test "teardown succeeds silently when setup skipped before creating the temp dir" {
+  local saved="${SANDBOX}"
+  unset SANDBOX
+  run teardown
+  SANDBOX="${saved}"
+  [[ "${status}" -eq 0 ]] || {
+    echo "teardown without a temp dir failed (status ${status}): ${output}" >&2
+    return 1
+  }
+  [[ -z "${output}" ]] || {
+    echo "teardown without a temp dir wrote: ${output}" >&2
+    return 1
+  }
 }
