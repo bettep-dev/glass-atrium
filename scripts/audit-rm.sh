@@ -1,13 +1,11 @@
 #!/usr/bin/env bash
-# audit-rm.sh — advisory audit of recursive or forced delete targets against the shared path guard
+# audit-rm.sh — audit of recursive or forced delete targets against the shared path guard
 # Usage: audit-rm.sh [--path <file>]... [--root <dir>] [--quiet] [--advisory|--strict]
 #
 # Behavior:
 #   1. Walk the shell files of the SCOPE_DIRS trees plus the SCOPE_FILES root scripts, or the --path
-#      overrides. Two named exclusions, so a green run never reads as full coverage:
-#        - EXCLUDED_FILE, the violation probe, whose cwd-glob delete is what the probe proves;
-#        - monitor/scripts/prune-dist.sh, outside every scope entry as the monitor session's area,
-#          whose delete sites this audit never reads.
+#      overrides. A scope run then prints a NOT_READ line for every tracked shell file it skips —
+#      EXCLUDED_FILE plus the UNREAD_FILES list — so a green run never reads as full coverage.
 #   2. Find each recursive or forced delete on a non-comment physical line (one line is one site)
 #   3. Count the one converted shape: an `if ga_guard_path "${V}"; then` whose first command deletes
 #      the single operand "${V:?}" (a literal sub-path allowed), on one line or under that if line
@@ -15,10 +13,17 @@
 #      on the comment line directly above it; any other label or an empty reason is a grammar reject
 #   5. Report every other site: NONEMPTY_ONLY · UNQUOTED_TARGET · GLOB_TARGET · UNCONVERTED
 #
-# Surface: ADVISORY — findings exit 0 on every surface and only `--strict` blocks; promotion to
-# blocking waits until every existing site is converted. Exit codes are the shared set of
-# scripts/lib/audit-cli.sh (0 no blocking findings · 1 findings on a strict run · 2 usage error ·
-# 3 IO/scope error). Rule: agents/GLASS_ATRIUM_GLOBAL_RULES.md → File Deletion Policy.
+# Surface split: a default scope run BLOCKS (the enforced surface = SCOPE_DIRS + SCOPE_FILES), while a
+# `--path` run stays ADVISORY — an ad-hoc probe cannot red a build by accident. `--strict` blocks on a
+# `--path` run, `--advisory` reports without failing anywhere; the findings print identically in every mode.
+#
+# Exit codes (the shared set of scripts/lib/audit-cli.sh):
+#   0 = audit completed with no blocking findings (or an advisory-surface run)
+#   1 = blocking run reporting findings (an unconverted site or a grammar reject)
+#   2 = usage error
+#   3 = IO/scope error (a scope tree, scope file or --path target is missing or unreadable)
+#
+# Rule: agents/GLASS_ATRIUM_GLOBAL_RULES.md → File Deletion Policy.
 set -Eeuo pipefail
 IFS=$'\n\t'
 
@@ -27,8 +32,8 @@ readonly SCRIPT_DIR
 
 # shellcheck source-path=SCRIPTDIR source=lib/audit-cli.sh
 source "${SCRIPT_DIR}/lib/audit-cli.sh"
-# scope_blocking=0 — advisory until every existing site is converted.
-audit_cli_init 'audit-rm.sh' 'directories' 0 15
+# scope_blocking=1 — promoted, so a bare scope run fails on findings.
+audit_cli_init 'audit-rm.sh' 'directories' 1 15
 
 SCOPE_DIRS=(hooks scripts autoagent lib test)
 readonly SCOPE_DIRS
@@ -38,6 +43,18 @@ readonly SCOPE_FILES
 # The scratch-cwd violation probe deletes its own canary through a cwd glob on purpose — that delete
 # is what it proves the suite seat confines.
 readonly EXCLUDED_FILE='test/scratch-cwd-violation-probe.bats'
+# Tracked shell files no scope entry reaches — the scope itself is the owner's decision:
+#   - monitor/scripts/*: the monitor session's area;
+#   - build-glass-atrium.sh and the two skills scripts: widening the scope to them is the owner's call.
+# scripts/test/audit-rm.bats fails when a tracked shell file sits outside scope without an entry here.
+UNREAD_FILES=(
+  build-glass-atrium.sh
+  monitor/scripts/oss-db-setup.sh
+  monitor/scripts/prune-dist.sh
+  skills/glass-atrium-design-md-lint/lint.sh
+  skills/glass-atrium-ops-token-audit/mcp-scan.sh
+)
+readonly UNREAD_FILES
 
 readonly RE_COMMENT='^[[:space:]]*#'
 readonly RE_SHEBANG='^#!.*[/[:space:]](ba|da|k)?sh([[:space:]]|$)'
@@ -222,7 +239,7 @@ set_site_kind() {
   fi
 }
 
-# Walks every scope entry; a listed root script is audited whatever its first line holds.
+# Walks every scope entry — a root script whatever its first line holds — then names each skipped shell file.
 audit_scope() {
   local tree="" rel="" abs=""
   for tree in "${SCOPE_DIRS[@]}"; do
@@ -235,6 +252,9 @@ audit_scope() {
       exit 3
     fi
     audit_file "${rel}" "${abs}"
+  done
+  for rel in "${EXCLUDED_FILE}" "${UNREAD_FILES[@]}"; do
+    audit_cli_report NOT_READ "${rel}" 'tracked shell file outside the audited surface'
   done
 }
 

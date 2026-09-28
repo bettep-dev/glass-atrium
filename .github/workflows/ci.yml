@@ -425,14 +425,13 @@ jobs:
           fi
           xargs -0 shellcheck --include=SC2115 <"${selected}"
 
-      # Delete-target audit (scripts/audit-rm.sh) → ADVISORY: findings print and exit 0.
-      # Blocking waits until every existing site is converted.
-      # Scope: the scripts/audit-rm.sh header. Two named exclusions → a green step is not full coverage:
-      #   - test/scratch-cwd-violation-probe.bats → its cwd-glob delete is what the probe proves;
-      #   - monitor/scripts/prune-dist.sh → the monitor session's area, its delete sites never read.
-      # A usage or IO error (exit 2/3) still reds the step → a broken auditor never reads as a clean pass.
+      # Delete-target audit (scripts/audit-rm.sh) → BLOCKING: an unconverted site or a grammar reject exits 1.
+      # Scope + every tracked shell file it does not read → the scripts/audit-rm.sh header.
+      # The step log names each unread file on a NOT_READ line → a green step is not full coverage.
+      # A usage or IO error (exit 2/3) reds the step too → a broken auditor never reads as a clean pass.
       # One leg, before the bats step → same ordering reason as the absorption audit.
-      - name: Audit recursive and forced delete targets (advisory)
+      # Change-conditional → skipped when detect-changes reports no bash change.
+      - name: Audit recursive and forced delete targets (blocking)
         if: matrix.root == 'scripts/test'
         run: bash scripts/audit-rm.sh
 

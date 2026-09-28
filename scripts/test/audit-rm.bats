@@ -1,7 +1,7 @@
 #!/usr/bin/env bats
 # audit-rm.bats — pins scripts/audit-rm.sh: exactly one converted delete shape, the three named unsafe
-# kinds, the closed two-label annotation vocabulary, and the scope: five trees plus two root scripts, minus the
-# probe file.
+# kinds, the closed two-label annotation vocabulary, the scope (five trees plus two root scripts, minus the
+# probe file), the blocking exit contract, and the NOT_READ disclosure of every tracked shell file it skips.
 #
 # Every fixture line is test data the auditor reads and no shell runs.
 # This file is in the auditor's own scope, so each such line it flags is annotated not-executed in one of two ways:
@@ -11,6 +11,11 @@
 # shellcheck disable=SC2016  # fixtures are literal shell text written to files, never expanded here
 
 AUDIT_SH="${BATS_TEST_DIRNAME}/../audit-rm.sh"
+# Physical path → a symlinked scripts/ dir cannot re-aim the root at the symlink's parent.
+REPO_ROOT="$(cd -P -- "${BATS_TEST_DIRNAME}/../.." && pwd)"
+SCOPE_TREES=(hooks scripts autoagent lib test)
+SCOPE_ROOT_FILES=(glass-atrium install.sh)
+PROBE_FILE='test/scratch-cwd-violation-probe.bats'
 
 # Writes the remaining arguments to the fixture path, one per line.
 write_fixture() {
@@ -40,12 +45,51 @@ assert_summary() {
 # Builds every scope entry under the root, except the one named by the optional second argument.
 make_scope_root() {
   local root="${1}" omit="${2:-}" tree="" file=""
-  for tree in hooks scripts autoagent lib test; do
+  for tree in "${SCOPE_TREES[@]}"; do
     [[ "${tree}" == "${omit}" ]] || mkdir -p "${root}/${tree}"
   done
-  for file in glass-atrium install.sh; do
+  for file in "${SCOPE_ROOT_FILES[@]}"; do
     [[ "${file}" == "${omit}" ]] || : >"${root}/${file}"
   done
+}
+
+# 0 when a scope run reaches the repository-relative path.
+is_in_scope() {
+  local path="${1}" tree=""
+  for tree in "${SCOPE_TREES[@]}"; do
+    if [[ "${path}" == "${tree}/"* ]]; then
+      return 0
+    fi
+  done
+  [[ " ${SCOPE_ROOT_FILES[*]} " == *" ${path} "* ]]
+}
+
+# The SC2115 CI step's selection: a shell extension, or an extensionless regular file with an sh-family shebang.
+is_shell_file() {
+  local path="${REPO_ROOT}/${1}" first="" shebang_re='^#!.*[/[:space:]](ba|da|k)?sh([[:space:]]|$)'
+  case "${path##*/}" in
+    *.sh | *.bash | *.bats) return 0 ;;
+    *.*) return 1 ;;
+    *) ;;
+  esac
+  if [[ ! -f "${path}" || -L "${path}" ]]; then
+    return 1
+  fi
+  # A first line with no trailing newline fails the read yet still fills first.
+  IFS= read -r first <"${path}" || [[ -n "${first}" ]] || return 1
+  [[ "${first}" =~ ${shebang_re} ]]
+}
+
+# Sorted list of the probe file plus every tracked shell file no scope entry reaches.
+list_unread_shell_files() {
+  local tracked="" unread="${PROBE_FILE}" path=""
+  tracked="$(git -C "${REPO_ROOT}" -c core.quotePath=false ls-files)"
+  while IFS= read -r path; do
+    if is_shell_file "${path}" && ! is_in_scope "${path}"; then
+      unread="${unread}"$'\n'"${path}"
+    fi
+  done <<<"${tracked}"
+  LC_ALL=C sort <<<"${unread}"
 }
 
 @test "a guard-gated delete of the colon-question operand is converted, on one line or under its if line" {
@@ -166,31 +210,63 @@ make_scope_root() {
   write_fixture "${root}/install.sh" "${site}"
   write_fixture "${root}/other.sh" "${site}"
   write_fixture "${root}/monitor/scripts/prune-dist.sh" "${site}"
-  run bash "${AUDIT_SH}" --root "${root}"
-  assert_summary "scope run" "converted=0 annotated=0 unconverted=7 quality_reject=0"
-  [[ "${output}" != *scratch-cwd-violation-probe* ]] || {
+  run bash "${AUDIT_SH}" --root "${root}" --advisory
+  # A finding location is path:line; the probe's NOT_READ line carries no line number.
+  [[ "${output}" != *"${PROBE_FILE}:"[0-9]* ]] || {
     echo "the probe file was audited: ${output}"
     return 1
   }
+  assert_summary "scope run" "converted=0 annotated=0 unconverted=7 quality_reject=0"
 }
 
-@test "findings leave a scope run exit 0 and fail it only under --strict" {
-  local root="${BATS_TEST_TMPDIR}/root" row=""
-  make_scope_root "${root}"
+@test "a scope run blocks on an unconverted site or a grammar reject, an --advisory or --path run does not" {
+  local base="${BATS_TEST_TMPDIR}" row="" name="" expected="" surface="" root_name="" flag="" summary="" target=""
+  make_scope_root "${base}/clean"
+  make_scope_root "${base}/site"
+  make_scope_root "${base}/reject"
   # GA-RM[not-executed]: auditor fixture text, written to a file no shell runs
-  write_fixture "${root}/hooks/a.sh" 'rm -f -- "${A}"'
-  local rows=('default|0' 'strict|1')
+  write_fixture "${base}/site/hooks/a.sh" 'rm -f -- "${A}"'
+  # GA-RM[not-executed]: auditor fixture text, written to a file no shell runs
+  write_fixture "${base}/reject/hooks/a.sh" '# GA-RM[benign]: a reason' 'rm -f -- "${A}"'
+  # name|exit status|surface|fixture root|mode flag|summary line
+  local rows=(
+    'clean scope run|0|root|clean||converted=0 annotated=0 unconverted=0 quality_reject=0'
+    'unconverted site on a scope run|1|root|site||converted=0 annotated=0 unconverted=1 quality_reject=0'
+    'grammar reject on a scope run|1|root|reject||converted=0 annotated=0 unconverted=0 quality_reject=1'
+    'site on an --advisory scope run|0|root|site|--advisory|converted=0 annotated=0 unconverted=1 quality_reject=0'
+    'site on a --path run|0|path|site||converted=0 annotated=0 unconverted=1 quality_reject=0'
+    'site on a --strict --path run|1|path|site|--strict|converted=0 annotated=0 unconverted=1 quality_reject=0'
+  )
   for row in "${rows[@]}"; do
-    if [[ "${row%%|*}" == strict ]]; then
-      run bash "${AUDIT_SH}" --root "${root}" --strict
-    else
-      run bash "${AUDIT_SH}" --root "${root}"
+    IFS='|' read -r name expected surface root_name flag summary <<<"${row}"
+    target="${base}/${root_name}"
+    if [[ "${surface}" == path ]]; then
+      target="${target}/hooks/a.sh"
     fi
-    [[ "${status}" -eq "${row#*|}" && "${output}" == *"UNCONVERTED"*"hooks/a.sh:1: "* ]] || {
-      echo "${row}: exit ${status}: ${output}"
+    run bash "${AUDIT_SH}" "--${surface}" "${target}" ${flag:+"${flag}"}
+    [[ "${status}" -eq "${expected}" && $'\n'"${output}"$'\n' == *$'\n'"${summary}"$'\n'* ]] || {
+      echo "${name}: exit ${status}, expected ${expected} with '${summary}' in:"
+      echo "${output}"
       return 1
     }
   done
+}
+
+@test "a scope run names as NOT_READ exactly the probe file and every tracked shell file outside scope" {
+  local toplevel="" root="${BATS_TEST_TMPDIR}/root" expected="" named=""
+  if ! toplevel="$(git -C "${REPO_ROOT}" rev-parse --show-toplevel 2>/dev/null)" \
+    || [[ "${toplevel}" != "${REPO_ROOT}" ]]; then
+    skip "Repo-only: the tracked file list needs the source work tree, which an install lacks"
+  fi
+  make_scope_root "${root}"
+  expected="$(list_unread_shell_files)"
+  run bash "${AUDIT_SH}" --root "${root}"
+  named="$(sed -n 's/^NOT_READ[[:space:]]*\([^:]*\): .*/\1/p' <<<"${output}")"
+  named="$(LC_ALL=C sort <<<"${named}")"
+  [[ "${status}" -eq 0 && "${named}" == "${expected}" ]] || {
+    printf 'exit %s\n--- expected ---\n%s\n--- named ---\n%s\n' "${status}" "${expected}" "${named}"
+    return 1
+  }
 }
 
 @test "a missing scope tree or scope file is an IO error (exit 3)" {
