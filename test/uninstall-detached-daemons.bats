@@ -35,6 +35,8 @@
 
 GA="$(cd -- "${BATS_TEST_DIRNAME}/.." && pwd)"
 LAUNCHER="${GA}/glass-atrium"
+# shellcheck source-path=SCRIPTDIR source=../scripts/lib/path-guard.sh
+source "${GA}/scripts/lib/path-guard.sh"
 
 setup() {
   [[ -f "${GA}/lib/ga-core.sh" ]] || skip "ga-core.sh not found: ${GA}/lib/ga-core.sh"
@@ -79,8 +81,8 @@ setup() {
 teardown() {
   # REAL_RM (captured pre-stub) genuinely removes the temp dirs — the PATH rm stub is a no-op recorder.
   local real_rm="${REAL_RM:-/bin/rm}"
-  [[ -n "${SANDBOX:-}" && -d "${SANDBOX}" ]] && "${real_rm}" -rf -- "${SANDBOX}" || true
-  [[ -n "${PG_SOCK_DIR:-}" && -d "${PG_SOCK_DIR}" ]] && "${real_rm}" -rf -- "${PG_SOCK_DIR}" || true
+  if ga_guard_path "${SANDBOX:-}"; then "${real_rm}" -rf -- "${SANDBOX:?}"; fi
+  if ga_guard_path "${PG_SOCK_DIR:-}"; then "${real_rm}" -rf -- "${PG_SOCK_DIR:?}"; fi
 }
 
 # extract_launcher_fn — eval a single named launcher function into the test shell so it can be
@@ -294,7 +296,7 @@ PY
   # layer-1 is GONE: NO brew-managed server is ever stopped by the clear.
   ! grep -qF 'brew services stop' "${REC}"
   # layer-3 rm fires on the TEMP socket path — proven by construction to never reach /tmp.
-  grep -qF "rm -f -- ${PG_SOCK_DIR}/.s.PGSQL.5432" "${REC}"
+  grep -qF "rm -f -- ${PG_SOCK_DIR}/.s.PGSQL.5432" "${REC}" # GA-RM[not-executed]: recorder-log grep needle
   ! grep -qF '/tmp/.s.PGSQL.5432' "${REC}"
 }
 
@@ -304,7 +306,7 @@ PY
   [[ -n "${body}" ]]
   # layer-2 (SIGINT fast shutdown) + layer-3 (stale socket removal) retained.
   [[ "${body}" == *'kill -INT'* ]]
-  [[ "${body}" == *'rm -f -- "${sock:?}"'* ]] || return 1
+  [[ "${body}" == *'rm -f -- "${sock:?}"'* ]] || return 1 # GA-RM[not-executed]: glob over the function body text
   # layer-1 (brew services stop postgresql@N) fully removed — never stop a brew-managed server.
   [[ "${body}" != *'brew services stop'* ]]
   # carries its OWN guards (no longer behind stop_detached_daemons).
@@ -355,7 +357,7 @@ PY
   [[ "${status}" -eq 0 ]] \
     && [[ "${output}" == *"could not remove stale postgres socket ${PG_SOCK_DIR}/.s.PGSQL.5432"* ]] \
     && [[ "${output}" != *"removed stale postgres socket"* ]] \
-    && grep -qF "rm -f -- ${PG_SOCK_DIR}/.s.PGSQL.5432" "${REC}"
+    && grep -qF "rm -f -- ${PG_SOCK_DIR}/.s.PGSQL.5432" "${REC}" # GA-RM[not-executed]: recorder-log grep needle
 }
 
 # === preflight_pg_utc_guard WIRING — healthy no-op / cleared-continue / loud-fail ==========
