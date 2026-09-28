@@ -29,6 +29,8 @@
 bats_require_minimum_version 1.5.0
 
 GA="$(cd -- "${BATS_TEST_DIRNAME}/../.." && pwd)"
+# shellcheck source-path=SCRIPTDIR source=../lib/path-guard.sh
+source "${GA}/scripts/lib/path-guard.sh"
 
 # Octal permission of a file — BSD stat (macOS) first, GNU coreutils fallback.
 # Output-validated: GNU `stat -f` is FILESYSTEM status (exit 0, "?p" garbage for
@@ -49,7 +51,7 @@ setup() {
 }
 
 teardown() {
-  [[ -n "${SANDBOX:-}" && -d "${SANDBOX:-}" ]] && rm -rf -- "${SANDBOX}"
+  if ga_guard_path "${SANDBOX:-}"; then rm -rf -- "${SANDBOX:?}"; fi
 }
 
 # Throwaway git fixture holding a COPY of the generator (GA_ROOT = the fixture), one
@@ -439,4 +441,19 @@ SHIM
   # function; this pins the call sites.
   [ "$(grep -c 'update_enforce_manifest_modes "${manifest}" "${root}"' \
     "${GA}/scripts/update.sh")" -eq 2 ] || return 1
+}
+
+@test "teardown succeeds silently when setup skipped before creating the temp dir" {
+  local saved="${SANDBOX}"
+  unset SANDBOX
+  run teardown
+  SANDBOX="${saved}"
+  [[ "${status}" -eq 0 ]] || {
+    echo "teardown without a temp dir failed (status ${status}): ${output}" >&2
+    return 1
+  }
+  [[ -z "${output}" ]] || {
+    echo "teardown without a temp dir wrote: ${output}" >&2
+    return 1
+  }
 }

@@ -14,6 +14,8 @@
 # Requires: bats (brew install bats-core), bash 3.2+
 
 SCANNER="${BATS_TEST_DIRNAME}/../pii-scan.sh"
+# shellcheck source-path=SCRIPTDIR source=../lib/path-guard.sh
+source "${BATS_TEST_DIRNAME}/../lib/path-guard.sh"
 
 setup() {
   [[ -f "${SCANNER}" ]] || skip "pii-scan.sh not found: ${SCANNER}"
@@ -44,7 +46,7 @@ setup() {
 }
 
 teardown() {
-  [[ -n "${WORK:-}" && -d "${WORK}" ]] && rm -rf -- "${WORK}"
+  if ga_guard_path "${WORK:-}"; then rm -rf -- "${WORK:?}"; fi
 }
 
 # ---------------------------------------------------------------------------
@@ -240,4 +242,19 @@ require_ga_repo() {
   run bash "${SCANNER}" "${WORK}"
   # Compound final assertion — a bare mid-body `[[ ]]` is inert on bash 3.2.57 (see approved USER seam)
   [[ "${status}" -eq 1 && "${output}" == *"near-miss.txt"* ]]
+}
+
+@test "teardown succeeds silently when setup skipped before creating the temp dir" {
+  local saved="${WORK}"
+  unset WORK
+  run teardown
+  WORK="${saved}"
+  [[ "${status}" -eq 0 ]] || {
+    echo "teardown without a temp dir failed (status ${status}): ${output}" >&2
+    return 1
+  }
+  [[ -z "${output}" ]] || {
+    echo "teardown without a temp dir wrote: ${output}" >&2
+    return 1
+  }
 }

@@ -24,6 +24,8 @@ bats_require_minimum_version 1.5.0
 GA="$(cd -- "${BATS_TEST_DIRNAME}/../.." && pwd)"
 SCRIPT="${GA}/scripts/migrate-claude-to-ga-data.sh"
 DOCTOR_LIB="${GA}/lib/ga-doctor.sh"
+# shellcheck source-path=SCRIPTDIR source=../lib/path-guard.sh
+source "${GA}/scripts/lib/path-guard.sh"
 
 setup() {
   SANDBOX="$(mktemp -d -t migrate-ga-data.XXXXXX)"
@@ -34,7 +36,7 @@ setup() {
 }
 
 teardown() {
-  [[ -n "${SANDBOX:-}" && -d "${SANDBOX}" ]] && rm -rf -- "${SANDBOX}" || true
+  if ga_guard_path "${SANDBOX:-}"; then rm -rf -- "${SANDBOX:?}"; fi
 }
 
 # run the migration op as a DIRECT command in fixture-root SANDBOX mode.

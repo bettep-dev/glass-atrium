@@ -13,6 +13,8 @@
 
 PRUNE_SH="${BATS_TEST_DIRNAME}/../prune-job-scratch.sh"
 STALE_STAMP='202001010000'
+# shellcheck source-path=SCRIPTDIR source=../lib/path-guard.sh
+source "${BATS_TEST_DIRNAME}/../lib/path-guard.sh"
 
 setup() {
   [[ -f "${PRUNE_SH}" ]] || skip "prune-job-scratch.sh not found"
@@ -27,7 +29,7 @@ setup() {
 }
 
 teardown() {
-  [[ -n "${PJ_TMP:-}" && -d "${PJ_TMP}" ]] && rm -rf -- "${PJ_TMP}" || true
+  if ga_guard_path "${PJ_TMP:-}"; then rm -rf -- "${PJ_TMP:?}"; fi
 }
 
 # Asserts the outside target tree is exactly as setup left it — nothing followed, nothing deleted.
