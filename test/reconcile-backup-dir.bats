@@ -43,6 +43,8 @@ bats_require_minimum_version 1.5.0
 GA="$(cd -- "${BATS_TEST_DIRNAME}/.." && pwd)"
 SCRIPT="${GA}/scripts/reconcile-backup-dir.sh"
 LIB="${GA}/scripts/lib/atrium-config.sh"
+# shellcheck source-path=SCRIPTDIR source=../scripts/lib/path-guard.sh
+source "${GA}/scripts/lib/path-guard.sh"
 
 setup() {
   # Loud, never `skip`: both are SHIPPED tree members, so their absence is a broken
@@ -65,7 +67,7 @@ setup() {
 }
 
 teardown() {
-  [[ -n "${WORK:-}" && -d "${WORK}" ]] && rm -rf -- "${WORK}" || true
+  if ga_guard_path "${WORK:-}"; then rm -rf -- "${WORK:?}"; fi
 }
 
 # seed_dumps <dir> <count> — create <count> nightly-shaped dumps with distinct contents.
