@@ -1602,9 +1602,15 @@ _doctor_report_rewire_marker() {
 # CLAUDE_CONFIG_DIR is deliberately NOT read: a session launched from a branch has it set, which
 # would point every sandboxed doctor run at that real branch.
 _doctor_report_profile_links() {
+  local grammar="${BASH_SOURCE[0]%/*}/../hooks/lib/claude-config-dirs.sh"
   local branches branch items item csv nl=$'\n' is_bad
+  # a partial engine tree (staged lib/ only) lacks hooks/lib → skip with a row, never abort run_doctor
+  if [[ ! -r "${grammar}" ]]; then
+    log "  note : profile branch link check skipped — needs the config-root grammar (${grammar})"
+    return 0
+  fi
   # shellcheck disable=SC2311  # printing helper: a glob loop with no command that can fail
-  branches="$(_profile_link_branches)"
+  branches="$(_profile_link_branches "${grammar}")"
   [[ -n "${branches}" ]] || return 0
   if ! command -v jq >/dev/null 2>&1 || ! jq -e '.files | type == "array"' -- "${MANIFEST}" >/dev/null 2>&1; then
     log "  note : profile branch link check skipped — needs jq and a readable manifest (${MANIFEST})"
@@ -1625,10 +1631,10 @@ _doctor_report_profile_links() {
 
 # Branches: siblings of the target home matching the shared config-root grammar that hold a
 # .claude.json, which skips never-launched and backup dirs. The target home is excluded by
-# identity, since it matches the same grammar.
+# identity, since it matches the same grammar. $1 = the grammar file (hooks/lib/claude-config-dirs.sh).
 _profile_link_branches() {
   # shellcheck source=SCRIPTDIR/../hooks/lib/claude-config-dirs.sh
-  source "${BASH_SOURCE[0]%/*}/../hooks/lib/claude-config-dirs.sh"
+  source "${1}"
   local candidate
   for candidate in "${TARGET_HOME%/*}"/.claude*; do
     [[ "${candidate##*/}/" =~ ^${CLAUDE_CONFIG_ROOT_RE}$ ]] || continue

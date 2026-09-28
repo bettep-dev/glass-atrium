@@ -58,8 +58,10 @@ seed_branch() {
   done
 }
 
+# ENGINE (optional) swaps the sourced engine tree; unset → the repo itself.
 run_doctor_sandbox() {
-  run env GA_LIB_DIR="${GA}/scripts/lib" GA_TARGET_HOME="${TARGET}" GA_MANIFEST="${MANIFEST}" \
+  local engine="${ENGINE:-${GA}}"
+  run env GA_LIB_DIR="${engine}/scripts/lib" GA_TARGET_HOME="${TARGET}" GA_MANIFEST="${MANIFEST}" \
     GA_GENERATE_MANIFEST="${SANDBOX}/no-such-manifest-gen" \
     GA_DATA_ROOT="${SANDBOX}/data" ATRIUM_UPDATE_STATE_DIR="${SANDBOX}/state" \
     ATRIUM_MONITOR_PORT="${GA_DOCTOR_DEAD_PORT:-9}" \
@@ -68,7 +70,7 @@ run_doctor_sandbox() {
       source "$1/lib/ga-core.sh"
       ga_init_env "$2"
       run_doctor
-    ' _ "${GA}" "${GA_SANDBOX}"
+    ' _ "${engine}" "${GA_SANDBOX}"
 }
 
 assert_output_has() {
@@ -221,6 +223,25 @@ break_rules_link() {
   run_doctor_sandbox
   assert_output_has "note : profile branch link check skipped"
   assert_output_lacks "ok   : profile branch"
+}
+
+@test "an engine without the config-root grammar helper skips the check with one note and the doctor still reaches its verdict" {
+  seed_branch "${BRANCH}" "${REQUIRED[@]}"
+  run_doctor_sandbox
+  local full_status="${status}"
+  # an engine tree carrying lib/ and scripts/lib/ but no hooks/lib/ (the staged-engine fixture shape)
+  ENGINE="${SANDBOX}/engine"
+  mkdir -p "${ENGINE}/lib" "${ENGINE}/scripts/lib"
+  cp "${GA}/lib/"ga-*.sh "${ENGINE}/lib/"
+  cp "${GA}/scripts/lib/"*.sh "${ENGINE}/scripts/lib/"
+  run_doctor_sandbox
+  assert_output_has "note : profile branch link check skipped"
+  assert_output_has "== doctor: "
+  [[ "${status}" == "${full_status}" ]] || {
+    echo "helper-less engine changed the doctor status ${full_status} -> ${status} — output:" >&2
+    echo "${output}" >&2
+    return 1
+  }
 }
 
 @test "the warning total and exit status are identical with and without a branch gap (kind B)" {
