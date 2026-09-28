@@ -1479,9 +1479,9 @@ run_doctor() {
     fi
   fi
 
-  # 27. profile-branch links. Registration kind B (report-only): note rows only, no counter, no term
-  #     in the warning total, exit code unchanged. The branches come from the owner's shell setup,
-  #     not from Atrium, so the doctor reports and never writes into one.
+  # 27. profile-branch links — registration kind B (report-only).
+  #     Note rows only: no counter, no warning-total term, exit code unchanged.
+  #     Branches come from the owner's shell setup, not from Atrium → report, never write into one.
   _doctor_report_profile_links
 
   if [[ "${fail}" -eq 0 ]]; then
@@ -1596,11 +1596,11 @@ _doctor_report_rewire_marker() {
   fi
 }
 
-# Report every profile branch (a CLAUDE_CONFIG_DIR dir beside the target home) that fails to link a
-# required Atrium item to the target home. A branch loads Atrium only through those links, and
-# Atrium never installed it, so nothing else notices a missing one. Report-only (§27, kind B).
-# CLAUDE_CONFIG_DIR is deliberately NOT read: a session launched from a branch has it set, which
-# would point every sandboxed doctor run at that real branch.
+# §27, kind B (report-only): every profile branch missing a link to a required Atrium item.
+# Profile branch = a CLAUDE_CONFIG_DIR dir beside the target home.
+# A branch loads Atrium only through those links + Atrium never installed it → nothing else sees a gap.
+# CLAUDE_CONFIG_DIR deliberately unread — a branch-launched session sets it.
+# Reading it would point every sandboxed doctor run at that real branch.
 _doctor_report_profile_links() {
   local grammar="${BASH_SOURCE[0]%/*}/../hooks/lib/claude-config-dirs.sh"
   local branches branch items item csv nl=$'\n' is_bad
@@ -1609,7 +1609,7 @@ _doctor_report_profile_links() {
     log "  note : profile branch link check skipped — needs the config-root grammar (${grammar})"
     return 0
   fi
-  # shellcheck disable=SC2311  # printing helper: a glob loop with no command that can fail
+  # shellcheck disable=SC2311  # the -r guard above keeps its grammar source from failing; the rest is a glob loop
   branches="$(_get_profile_link_branches "${grammar}")"
   [[ -n "${branches}" ]] || return 0
   if ! command -v jq >/dev/null 2>&1 || ! jq -e '.files | type == "array"' -- "${MANIFEST}" >/dev/null 2>&1; then
@@ -1629,9 +1629,10 @@ _doctor_report_profile_links() {
   done <<<"${branches}"
 }
 
-# Branches: siblings of the target home matching the shared config-root grammar that hold a
-# .claude.json, which skips never-launched and backup dirs. The target home is excluded by
-# identity, since it matches the same grammar. $1 = the grammar file (hooks/lib/claude-config-dirs.sh).
+# Branches: target-home siblings matching the shared config-root grammar.
+# Only dirs holding a .claude.json → never-launched and backup dirs skipped.
+# The target home matches the same grammar → excluded by identity.
+# $1 = the grammar file (hooks/lib/claude-config-dirs.sh).
 _get_profile_link_branches() {
   # shellcheck source=SCRIPTDIR/../hooks/lib/claude-config-dirs.sh
   source "${1}"
@@ -1644,9 +1645,9 @@ _get_profile_link_branches() {
   done
 }
 
-# Required items: every top-level manifest component the farm deploys into the target home
-# (is_symlink_excluded is the farm's own query), plus settings.json, which the installer writes
-# there instead of shipping it.
+# Required items: every top-level manifest component the farm deploys into the target home.
+# Deployed-or-not verdict = is_symlink_excluded, the farm's own query.
+# + settings.json — the installer writes it there instead of shipping it.
 _get_profile_link_required_items() {
   local rel
   # read_manifest_files dies on its own failure; the caller already proved the manifest parses.
@@ -1659,10 +1660,11 @@ _get_profile_link_required_items() {
   printf 'settings.json\n'
 }
 
-# Log one branch item's defect plus a fix line that runs as printed; return 1 on a defect.
-# The fix follows the class: a missing item takes a plain link · a dangling or misdirected link is
-# replaced in place (-n: never nests into the directory it points at) · a real file or directory
-# goes to the Trash first, never removed.
+# Log one branch item's defect + a fix line that runs as printed; return 1 on a defect.
+# Fix per defect class:
+#   missing → a plain link
+#   dangling or misdirected link → replaced in place (-n: never nests into the dir it points at)
+#   real file or directory → moved to the Trash first, never removed
 _profile_link_check_item() {
   local link="${1}/${2}" want="${TARGET_HOME}/${2}" class defect fix qlink qwant trashed
   # shellcheck disable=SC2311  # printing helper: tests only, no command that can fail

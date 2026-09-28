@@ -1266,7 +1266,7 @@
     "lib/ga-daemons.sh": "199c3457306851b5eea9a1efe1d71b819dda8fce922bfca9ee263700b8f93b52",
     "lib/ga-db.sh": "9bf3b1fd6cef50729e856f87b27bf2c9d3ad54eebd05ff22c69bed5b6ea94807",
     "lib/ga-deps.sh": "4748402e74ec8be014d3291f16462e576dd4a09cce314937686ee7ffb76a7d51",
-    "lib/ga-doctor.sh": "6c09ba331b6ddf1465bf0e03fe509e4a08f4c7537fa58d5893a55ad7798f5ce1",
+    "lib/ga-doctor.sh": "8d51ac1014ef4bf39b37f96af29b8a456189651450afcd1f77aaea767451ea9d",
     "lib/ga-env.sh": "89bbb9cbb3a6bde3cd6a1fc50fcbc2a581b4f7a287ec5a529eac750aea96e8ed",
     "lib/ga-launchd.sh": "6dea49db7deddffcb05a23621e31c7e662bbb1506ae2d10df06b9790e028cde3",
     "lib/ga-symlink.sh": "8bc66248079af9016e150de8931b0f8fab9492ed40a219794671465534ec2911",
