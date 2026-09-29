@@ -87,6 +87,13 @@ sandbox.React.createElement = (type: unknown, props: Record<string, unknown> | n
 const PageVerdictStub = () => null;
 Object.assign(sandbox.window.UI, { titleOf: (value: unknown) => value, PageVerdict: PageVerdictStub });
 
+// the shared first-read note ui.jsx shows while a page has nothing read yet
+function getUnreadCheckingNote(): string {
+  // sandbox types window.UI loosely; ui.jsx exports getFreshnessVerdict with this shape
+  const getVerdict = sandbox.window.UI.getFreshnessVerdict as (input: Record<string, unknown>) => { note: string };
+  return getVerdict({ at: null, loading: true }).note;
+}
+
 // The relationship, not four hand-picked pairs: the tile's state is the payload's
 // state, except that a landed payload carrying no value is "unavailable", never ready.
 test("a tile's state follows its own payload, and a missing value is never ready", () => {
@@ -278,7 +285,7 @@ const verdictRows = [
     name: "a band that has not landed claims no status",
     input: { status: "loading", awaiting: 0, applied: 0, heldNeedingHuman: 0 },
     tone: "neutral",
-    mentions: ["not loaded yet"],
+    mentions: [getUnreadCheckingNote()],
   },
   {
     name: "a band whose payload failed says so and makes no loading claim",
@@ -307,7 +314,7 @@ test("a failed band payload reads as a failure, never as still loading", () => {
   const verdict = collectElements(band, []).find((el) => el.type === PageVerdictStub);
 
   assert.match(String(verdict?.props.children), /could not load/);
-  assert.doesNotMatch(String(verdict?.props.children), /not loaded yet/);
+  assert.ok(!String(verdict?.props.children).includes(getUnreadCheckingNote()));
 });
 
 test("the band states its verdict before the tiles", () => {
@@ -345,7 +352,7 @@ test("instrumentation chips take each verdict from the instrumentation view's ow
   assert.deepEqual(Array.from(chips, (c) => c.label), ["warn", "within threshold"]);
 });
 
-test("a gauge whose payload has not landed reads not loaded, never a verdict", () => {
+test("a gauge whose payload has not landed reads not read, never a verdict", () => {
   const judge = () => {
     throw new Error("an unloaded gauge must not be judged");
   };
@@ -354,5 +361,5 @@ test("a gauge whose payload has not landed reads not loaded, never a verdict", (
     null,
     { status: "loading" },
   );
-  assert.deepEqual(Array.from(chips, (c) => c.label), ["not loaded", "not loaded"]);
+  assert.deepEqual(Array.from(chips, (c) => c.label), ["not read", "not read"]);
 });

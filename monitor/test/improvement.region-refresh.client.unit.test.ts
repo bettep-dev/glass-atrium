@@ -1,7 +1,8 @@
 // Refresh guards for loadRegionI in public/src/screens/improvement.jsx: a refresh keeps the
 // held payload on screen, and an answer that was superseded or aborted never lands — nor
 // feeds the as-of stamp. Driven through the real ui.jsx region transitions with a
-// hand-settled fetch.
+// hand-settled fetch. The last guards pin that a cold error keeps its Retry card mounted
+// while that Retry is in flight, so keyboard focus never drops to a loader.
 //
 // Runner: npx tsx --test test/improvement.region-refresh.client.unit.test.ts
 
@@ -24,8 +25,21 @@ interface RegionState {
 
 type StateUpdate = (state: RegionState) => RegionState;
 
+interface RecordedElement {
+  type: unknown;
+  props: Record<string, unknown>;
+}
+
+type RegionCard = (props: Record<string, unknown>) => RecordedElement;
+
 interface RefreshSandbox {
-  window: { UI: { INITIAL_REGION_STATE: RegionState } };
+  React: { createElement: unknown };
+  window: { UI: { INITIAL_REGION_STATE: RegionState; LoadingPlaceholder: unknown } };
+  ErrorBannerI: unknown;
+  ChangeSummaryCardI: RegionCard;
+  PatternLedgerCardI: RegionCard;
+  KanbanCardI: RegionCard;
+  LoopOutputGroupI: RegionCard;
   fetch: (url: string, init: { signal: AbortSignal }) => Promise<unknown>;
   AbortController: typeof AbortController;
   loadRegionI: (url: string, setState: (update: StateUpdate) => void, onData?: () => void) => AbortController;
@@ -107,3 +121,46 @@ test("an aborted request's late answer neither lands nor moves the stamp", async
   assert.equal(region.getState().data, null);
   assert.equal(region.getStampCount(), 0);
 });
+
+sandbox.React.createElement = (type: unknown, props: Record<string, unknown> | null, ...children: unknown[]) => ({
+  type,
+  props: { ...(props || {}), children: children.length <= 1 ? children[0] : children },
+});
+
+function isElement(value: unknown): value is RecordedElement {
+  return typeof value === "object" && value !== null && "props" in value && "type" in value;
+}
+
+function collectElements(node: unknown, out: RecordedElement[] = []): RecordedElement[] {
+  if (Array.isArray(node)) {
+    for (const child of node) collectElements(child, out);
+    return out;
+  }
+  if (!isElement(node)) return out;
+  out.push(node);
+  collectElements(node.props.children, out);
+  return out;
+}
+
+// the state putRegionRequest leaves behind when Retry is clicked on a region that never loaded
+const retryingColdError: RegionState = { status: "loading", data: null, error: "HTTP 500", busy: true };
+
+const coldErrorRows = [
+  { name: "applied changes", render: () => sandbox.ChangeSummaryCardI({ state: retryingColdError, aggregate: null, onRetry() {} }) },
+  { name: "pattern ledger", render: () => sandbox.PatternLedgerCardI({ state: retryingColdError, suppression: null, onRetry() {} }) },
+  { name: "suggestion board", render: () => sandbox.KanbanCardI({ state: retryingColdError, onRetry() {} }) },
+  { name: "loop stats", render: () => sandbox.LoopOutputGroupI({ statsState: retryingColdError, onRetry() {} }) },
+];
+
+for (const row of coldErrorRows) {
+  test(`${row.name}: a cold error keeps its busy Retry card while the Retry is in flight`, () => {
+    const elements = collectElements(row.render());
+    const banner = elements.find((el) => el.type === sandbox.ErrorBannerI);
+
+    assert.equal(banner?.props.isBusy, true, "the Retry card must stay mounted and say it is busy");
+    assert.ok(
+      !elements.some((el) => el.type === sandbox.window.UI.LoadingPlaceholder),
+      "a loader must not replace the card whose Retry holds focus",
+    );
+  });
+}
