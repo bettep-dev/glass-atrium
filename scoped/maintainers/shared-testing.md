@@ -61,7 +61,8 @@ The rule file states only that every row is reviewer-applied. The mapping below 
 
 ## Rationalization Rejection — reconciliations
 
-- **Test-first duty**: it binds at `core-outcome-record.md` → Field Input Guide → `metric_pass`, which is delivered to every agent and states both the observed-failure bar and the deliberate-break exception. The rule file keeps only the qualifier that reconciles that exception with the "Writing code first as a reference" rebuttal.
+- **Test-first duty**: it binds at `core-outcome-record.md` → Field Input Guide → `metric_pass`, which is delivered to every agent and states the observed-failure bar; its `feature` note names the deliberate-break exception and points to the rule file for it.
+  - The rule file's qualifier is the exception's one statement — when a test written after its implementation is admissible, and how and where the break is made — and it reconciles the exception with the "Writing code first as a reference" rebuttal.
 - **"Too simple to need tests" row**: the rebuttal is qualified against the prohibited shape *a test whose target has no branch and no logic*, so it no longer collides with the injected minimalism carve-out that exempts a trivial one-liner. The two ends are worded alike on purpose — change them together.
 
 ## Destructive-Path Suite Safety — provenance
