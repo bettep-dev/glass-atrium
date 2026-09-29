@@ -24,10 +24,10 @@ window.TOKEN_RATES = {
   // core.cost_events 의 claude-opus-4* 행이 0건이라 현재는 무해
   'claude-opus-4':      { input: 15.00, output: 75.00, cache_read: 1.50,  cache_creation: 18.75 },
 
-  // claude-sonnet-5 — SoT base row 채택 (intro tier 2.00/10.00 은 2026-08-31 만료)
-  // 이 표엔 tier·날짜 입력이 없어 intro 값을 쓰면 만료 후 감지 없이 썩음
-  // 두 값은 ×1.5 균일 스케일 → 렌더 결과 동일 · monitor/test/model-config.route.test.ts fixture 도 base row 표기
-  'claude-sonnet-5':    { input:  3.00, output: 15.00, cache_read: 0.30,  cache_creation:  3.75 },
+  // claude-sonnet-5 — SoT 행과 1:1 (tier 없는 단일 행 → 전 날짜 동일 단가) · monitor/test/model-config.route.test.ts fixture 도 동일 표기
+  // 5-5 는 sonnet-5 와 전 필드 동일 — 자체 행은 SoT 1:1 parity 유지용 (OWN_ROW_IDS 테스트가 고정)
+  'claude-sonnet-5-5':  { input:  2.00, output: 10.00, cache_read: 0.20,  cache_creation:  2.50 },
+  'claude-sonnet-5':    { input:  2.00, output: 10.00, cache_read: 0.20,  cache_creation:  2.50 },
 
   // claude-sonnet-4-x family
   'claude-sonnet-4-7':  { input:  3.00, output: 15.00, cache_read: 0.30,  cache_creation:  3.75 },
