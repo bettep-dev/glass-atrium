@@ -777,10 +777,8 @@ function SilentChannelRowO({ channels }) {
       style={{ background: 'rgb(var(--crit) / 0.08)', borderColor: 'rgb(var(--crit) / 0.4)' }}>
       <Icon name="x" size={16} className="text-crit mt-0.5"/>
       <div className="flex-1 min-w-0">
-        <div className="fs-body font-medium text-ink">Recording stopped: {channels.join(', ')}</div>
-        <div className="fs-meta text-dim mt-1">
-          A channel that was writing daily has recorded nothing — every count below is understated until it resumes.
-        </div>
+        <div className="fs-body font-medium text-ink">{channels.length === 1 ? 'Silent channel' : 'Silent channels'}: {channels.join(', ')}</div>
+        <div className="fs-meta text-dim mt-1">Was writing daily and has recorded nothing past the silence threshold.</div>
       </div>
     </div>
   );
@@ -1010,8 +1008,10 @@ function buildNeedsYouReasonsO(data) {
   ];
 }
 
-// every by_result row carries writer_open_count (result-agnostic FILTER) → only the done_with_concerns row counts, never a sum;
-// an unsent field stays null instead of getWriterOpenCount's closure-blind fallback
+/**
+ * Every by_result row carries writer_open_count (result-agnostic FILTER) → only the done_with_concerns row counts, never a sum.
+ * An unsent field stays null instead of getWriterOpenCount's closure-blind fallback.
+ */
 function getOpenCaveatCountO(overall) {
   if (!Array.isArray(overall?.by_result)) return null;
   const caveatRow = overall.by_result.find((row) => row?.result === 'done_with_concerns');
@@ -1020,8 +1020,11 @@ function getOpenCaveatCountO(overall) {
   return window.UI.getWriterOpenCount(caveatRow);
 }
 
-// page verdict = the Dashboard's resolveOutcomeRate judgment as shares; a stopped recording channel outranks it,
-// since every count it reads is understated · the all-clear waits for the liveness read
+/**
+ * Page verdict = the Dashboard's resolveOutcomeRate judgment as shares.
+ * A stopped recording channel outranks it, since every count it reads is understated; the lane row below names the channel only.
+ * The all-clear waits for the liveness read.
+ */
 function PageVerdictO({ analyticsState, channelLivenessState, windowDays }) {
   const { PageVerdict } = window.UI;
   const silent = channelLivenessState.status === 'ready' ? (channelLivenessState.data?.alerting || []) : [];

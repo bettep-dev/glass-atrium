@@ -59,6 +59,7 @@ interface OutcomesHelpers {
   AlarmLaneO: (props: { channelLivenessState: PayloadState<unknown>; searchState: PayloadState<unknown> }) => RenderNode | null;
   RegionErrorO: unknown;
   BlockedBannerO: unknown;
+  SilentChannelRowO: (props: { channels: string[] }) => RenderNode;
   ResultTableBody: (props: Record<string, unknown>) => RenderNode;
   ResultTableCard: (props: Record<string, unknown>) => RenderNode;
   buildStatusBandTilesO: (data: unknown, attentionCount: number | null) => BandTile[];
@@ -336,6 +337,17 @@ test("AlarmLaneO: payload failures stay at their groups — the lane holds only 
   assert.deepStrictEqual(bannerTitles(outage), [], "the lane never re-draws a group banner");
 });
 
+test("AlarmLaneO: a stopped channel keeps its lane row, which names the channel without repeating the verdict", () => {
+  const silent = { status: "ready" as const, data: { alerting: ["subagent-stop"] } };
+  const lane = flattenNodes(helpers.AlarmLaneO({ channelLivenessState: silent, searchState: { status: "ready" } }));
+  assert.ok(lane.some((n) => n.type === helpers.SilentChannelRowO), "the per-channel row stays in the lane");
+
+  const rowText = flattenNodes(helpers.SilentChannelRowO({ channels: ["subagent-stop"] }))
+    .flatMap((n) => n.children.filter((c) => typeof c === "string")).join("");
+  assert.match(rowText, /subagent-stop/);
+  assert.doesNotMatch(rowText, /Recording stopped|understated/, "the verdict above already states the stop and its effect");
+});
+
 test("ledger: a failed read draws one banner at the ledger and its header follows the failed state", () => {
   const body = flattenNodes(helpers.ResultTableBody({ state: { status: "error", error: "boom" }, rows: [] }));
   assert.strictEqual(bannerTitles(body).length, 1, "the ledger owns its failure banner");
@@ -396,8 +408,7 @@ test("buildAgentFailureRowsO: sampled agents lead by failure rate, low-sample ag
   }
 });
 
-// The cross-analysis body carries writer_open_count per by_result row only — its FILTER is
-// result-agnostic, so every row carries one and only the done_with_concerns row is the caveat count.
+// writer_open_count rides every by_result row (result-agnostic FILTER) → only the done_with_concerns row is the caveat count
 const withByResult = (byResult: Record<string, unknown>[] | undefined) => ({
   ...aboveFloor({ done: 180, fail: 8, blocked: 4 }),
   overall: { total: 200, reconstructed_total: 0, ...(byResult ? { by_result: byResult } : {}) },
