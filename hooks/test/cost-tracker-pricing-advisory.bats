@@ -351,7 +351,7 @@ _run_parser() {
 
 # Case 10: synthetic sonnet-5 launch window (fixture tier, intro rate through 2026-08-31)
 
-@test "claude-sonnet-5 prices intro 0.007 on 2026-08-31 and standard 0.0105 on 2026-09-01" {
+@test "a tiered fixture row prices claude-sonnet-5 at intro 0.007 on 2026-08-31 and standard 0.0105 on 2026-09-01" {
   local tx
   tx="${TEST_TMP}/sonnet5.jsonl"
   _make_transcript "claude-sonnet-5" "${tx}"

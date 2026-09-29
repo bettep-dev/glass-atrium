@@ -25,7 +25,7 @@ window.TOKEN_RATES = {
   'claude-opus-4':      { input: 15.00, output: 75.00, cache_read: 1.50,  cache_creation: 18.75 },
 
   // claude-sonnet-5 — SoT 행과 1:1 (tier 없는 단일 행 → 전 날짜 동일 단가) · monitor/test/model-config.route.test.ts fixture 도 동일 표기
-  // 5-5 는 sonnet-5 와 전 필드 동일 — 자체 행은 known-model·roster·label 식별 유지용
+  // 5-5 는 sonnet-5 와 전 필드 동일 — 자체 행은 SoT 1:1 parity 유지용 (OWN_ROW_IDS 테스트가 고정)
   'claude-sonnet-5-5':  { input:  2.00, output: 10.00, cache_read: 0.20,  cache_creation:  2.50 },
   'claude-sonnet-5':    { input:  2.00, output: 10.00, cache_read: 0.20,  cache_creation:  2.50 },
 
