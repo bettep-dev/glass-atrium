@@ -640,6 +640,10 @@ function ScreenOutcomes({ onNav }) {
     'run events': loopEventsState, 'the needs-you count': attentionState,
   }));
   const regionRetry = sharedFailure ? undefined : triggerRefresh;
+  const freshness = { at: asOfAt, regions: stampRegions };
+  const isRefreshing = getRegionSummary(stampRegions).isBusy;
+  // busy only while a failed region is being re-read — another panel's first load is not this Retry
+  const isRetrying = stampRegions.some((region) => region.error != null && region.busy);
 
   return (
     <div className="flex flex-col min-h-0">
@@ -655,7 +659,7 @@ function ScreenOutcomes({ onNav }) {
               <FreshnessStamp {...getFreshnessInputO(asOfAt, stampRegions)}/>
               <WindowSeg value={filter.days} onChange={setWindowDays}/>
               <RefreshButton
-                isBusy={getRegionSummary(stampRegions).isBusy}
+                isBusy={isRefreshing}
                 hasRead={asOfAt != null}
                 onRefresh={triggerRefresh}
                 label="Refresh task results"/>
@@ -666,11 +670,12 @@ function ScreenOutcomes({ onNav }) {
 
       {sharedFailure && (
         <div className="mb-4 flex-shrink-0">
-          <PageErrorBanner sources={sharedFailure.sources} error={sharedFailure.error} onRetry={triggerRefresh}/>
+          <PageErrorBanner sources={sharedFailure.sources} error={sharedFailure.error} onRetry={triggerRefresh}
+            isBusy={isRetrying} focusTargetId={STATUS_BAND_ID}/>
         </div>
       )}
 
-      <PageVerdictO analyticsState={analyticsState} channelLivenessState={channelLivenessState} windowDays={analyticsPeriod}/>
+      <PageVerdictO analyticsState={analyticsState} channelLivenessState={channelLivenessState} windowDays={analyticsPeriod} freshness={freshness}/>
 
       <AlarmLaneO channelLivenessState={channelLivenessState} searchState={searchState}/>
 
@@ -678,6 +683,7 @@ function ScreenOutcomes({ onNav }) {
         analyticsState={analyticsState}
         attentionState={attentionState}
         windowDays={analyticsPeriod}
+        freshness={freshness}
         onRetry={regionRetry}
       />
 
@@ -728,7 +734,8 @@ function ScreenOutcomes({ onNav }) {
           <GraderBreakdownCard state={analyticsState} onRetry={regionRetry}/>
           <CrosstabCard state={analyticsState} onRetry={regionRetry}/>
         </window.UI.SplitRow>
-        <window.UI.Disclosure kind="detail" level={3} title="By task type">
+        <window.UI.Disclosure kind="detail" level={3} title="By task type"
+          tone={getTaskTypeFoldToneO(analyticsState.data?.overall?.task_type_grader_breakdown)}>
           <TaskTypeGraderCrosstabO rows={analyticsState.data?.overall?.task_type_grader_breakdown}/>
         </window.UI.Disclosure>
       </window.UI.Disclosure>
@@ -837,6 +844,8 @@ function loopEventsSummaryO(loopEventsState) {
 
 // Needs-you tile → ledger 의 창 전체 Needs-you 헤딩 (hash 라우터라 href 앵커 대신 focus 이동).
 const LEDGER_NEEDS_YOU_ID = 'ledger-needs-you';
+// focus lands here when a focused Retry leaves on recovery
+const STATUS_BAND_ID = 'outcomes-status-band';
 
 // Status band — 4 타일. 값은 모집단·창과 용접되고, tone 은 글리프에만 탄다 (39578 §D-§E).
 
@@ -907,8 +916,10 @@ function buildStatusBandTilesO(data, attentionCount) {
   ];
 }
 
-function StatusBandO({ analyticsState, attentionState, windowDays, onRetry }) {
-  if (analyticsState.status === 'loading') {
+function StatusBandO({ analyticsState, attentionState, windowDays, freshness, onRetry }) {
+  const { getRegionView, getFreshnessVerdict } = window.UI;
+  const view = getRegionView(analyticsState);
+  if (view === 'loading') {
     return (
       <div className="grid grid-cols-4 gap-3 mb-4 flex-shrink-0" aria-busy="true" aria-label="Status band">
         {Array.from({ length: 4 }).map((_, i) => <KpiSkeletonO key={i}/>)}
@@ -923,10 +934,10 @@ function StatusBandO({ analyticsState, attentionState, windowDays, onRetry }) {
       </div>
     );
   }
-  if (analyticsState.status !== 'ready') {
+  if (view === 'error') {
     return (
-      <div className="mb-4 flex-shrink-0" aria-label="Status band">
-        <RegionErrorO source="the status band" error={analyticsState.error} onRetry={onRetry}/>
+      <div id={STATUS_BAND_ID} className="mb-4 flex-shrink-0" aria-label="Status band">
+        <RegionErrorO source="the status band" error={analyticsState.error} onRetry={onRetry} isBusy={analyticsState.busy}/>
       </div>
     );
   }
@@ -935,16 +946,18 @@ function StatusBandO({ analyticsState, attentionState, windowDays, onRetry }) {
   const attentionCount = attentionState.status === 'ready'
     ? (Number(attentionState.data?.total) || 0)
     : null;
-  const tiles = buildStatusBandTilesO(analyticsState.data, attentionCount);
+  // stale or partial read → an ok tile drops to neutral, warn/crit kept (the verdict's rule)
+  const tiles = buildStatusBandTilesO(analyticsState.data, attentionCount)
+    .map((tile) => (freshness ? { ...tile, tone: getFreshnessVerdict({ ...freshness, tone: tile.tone }).tone } : tile));
   // 창은 analyticsDaysO 로 접힌 {7,30,90} 뿐 — 북마크된 'all' 이 90d 를 읽고 'all time' 으로 표기되던 거짓말 제거.
   const windowLabel = `${windowDays}d`;
 
-  const isAttentionFailed = attentionState.status === 'error' || attentionState.status === 'unavailable';
+  const isAttentionFailed = getRegionView(attentionState) === 'error';
   const heroTile = tiles.find((tile) => tile.key === 'attention');
   const volumeTiles = tiles.filter((tile) => tile.key === 'recorded' || tile.key === 'done');
 
   return (
-    <div className="mb-4 flex-shrink-0">
+    <div id={STATUS_BAND_ID} className="mb-4 flex-shrink-0">
       <div className="grid grid-cols-4 gap-3" role="group" aria-label="Status band">
         <BandTileO
           tile={heroTile}
@@ -955,7 +968,7 @@ function StatusBandO({ analyticsState, attentionState, windowDays, onRetry }) {
         <VolumeTilesO tiles={volumeTiles} windowLabel={windowLabel}/>
       </div>
       {isAttentionFailed && (
-        <RegionErrorO source="the needs-you count" error={attentionState.error} onRetry={onRetry}/>
+        <RegionErrorO source="the needs-you count" error={attentionState.error} onRetry={onRetry} isBusy={attentionState.busy}/>
       )}
     </div>
   );
@@ -990,7 +1003,7 @@ function BandTileO({ tile, windowLabel, unloadedText = '—', reasons = null, cl
 
   return (
     <Tag
-      {...(canJump ? { type: 'button', onClick: () => focusLedgerSectionO(tile.jumpTo) } : {})}
+      {...(canJump ? { type: 'button', onClick: () => focusLedgerSectionO(tile.jumpTo) } : { role: 'group' })}
       className={`${canJump ? 'kpi' : 'kpi cursor-default'} ${className}`.trim()}
       aria-label={ariaLabel}
       title={tile.hint}>
@@ -1025,24 +1038,26 @@ function getOpenCaveatCountO(overall) {
  * A stopped recording channel outranks it, since every count it reads is understated; the lane row below names the channel only.
  * The all-clear waits for the liveness read.
  */
-function PageVerdictO({ analyticsState, channelLivenessState, windowDays }) {
-  const { PageVerdict } = window.UI;
+// freshness → the shared rule: unread reads No signal, a stale or partial read reads Last known
+function PageVerdictO({ analyticsState, channelLivenessState, windowDays, freshness }) {
+  const { PageVerdict, getRegionView } = window.UI;
+  const view = getRegionView(analyticsState);
   const silent = channelLivenessState.status === 'ready' ? (channelLivenessState.data?.alerting || []) : [];
 
   if (silent.length > 0) {
-    return <PageVerdict tone="crit" className="mb-4">{`Recording stopped on ${silent.join(', ')} — every count on this page is understated until it resumes.`}</PageVerdict>;
+    return <PageVerdict tone="crit" freshness={freshness} className="mb-4">{`Recording stopped on ${silent.join(', ')} — every count on this page is understated until it resumes.`}</PageVerdict>;
   }
-  if (analyticsState.status === 'loading') return null;
-  if (analyticsState.status !== 'ready') {
-    return <PageVerdict tone="neutral" className="mb-4">Task-result health is unknown — the window totals didn't load.</PageVerdict>;
+  if (view !== 'ready') {
+    const reason = view === 'loading' ? 'the window totals are still loading' : "the window totals didn't load";
+    return <PageVerdict tone="neutral" freshness={freshness} className="mb-4">{`Task-result health is unknown — ${reason}.`}</PageVerdict>;
   }
 
   const verdict = getRateVerdictO(window.UI.resolveOutcomeRate(analyticsState.data?.overall), `last ${windowDays}d`);
   if (verdict.tone !== 'ok' || channelLivenessState.status === 'ready') {
-    return <PageVerdict tone={verdict.tone} chips={verdict.chips} className="mb-4">{verdict.text}</PageVerdict>;
+    return <PageVerdict tone={verdict.tone} chips={verdict.chips} freshness={freshness} className="mb-4">{verdict.text}</PageVerdict>;
   }
   const gap = channelLivenessState.status === 'loading' ? 'still checking the recording channels' : "couldn't check the recording channels";
-  return <PageVerdict tone="neutral" className="mb-4">{`${verdict.text.slice(0, -1)} — ${gap}.`}</PageVerdict>;
+  return <PageVerdict tone="neutral" freshness={freshness} className="mb-4">{`${verdict.text.slice(0, -1)} — ${gap}.`}</PageVerdict>;
 }
 
 function getRateVerdictO(rate, windowLabel) {
@@ -1214,9 +1229,10 @@ function AgentFailureSkeletonO({ stickyStyle }) {
 }
 
 function AgentFailureBodyO({ state, onRetry, stickyStyle }) {
-  if (state.status === 'loading') return <AgentFailureSkeletonO stickyStyle={stickyStyle}/>;
-  if (state.status === 'error') {
-    return <RegionErrorO source="by-agent failures" error={state.error} onRetry={onRetry}/>;
+  const view = window.UI.getRegionView(state);
+  if (view === 'loading') return <AgentFailureSkeletonO stickyStyle={stickyStyle}/>;
+  if (view === 'error') {
+    return <RegionErrorO source="by-agent failures" error={state.error} onRetry={onRetry} isBusy={state.busy}/>;
   }
 
   const rows = buildAgentFailureRowsO(state.data?.agentStack, state.data?.overall?.by_agent_top_10);
@@ -1332,11 +1348,12 @@ function AttributionHealthCard({ state, period, onRetry }) {
 }
 
 function AttributionHealthBody({ state, onRetry }) {
-  if (state.status === 'loading') {
+  const view = window.UI.getRegionView(state);
+  if (view === 'loading') {
     return <ChartSkeletonO height={200} label="reporting health"/>;
   }
-  if (state.status === 'error') {
-    return <RegionErrorO source="reporting health" error={state.error} onRetry={onRetry}/>;
+  if (view === 'error') {
+    return <RegionErrorO source="reporting health" error={state.error} onRetry={onRetry} isBusy={state.busy}/>;
   }
 
   const summary = state.data?.window_summary || null;
@@ -1398,10 +1415,11 @@ function AttributionSummaryRow({ summary, totalAttributed }) {
           const rate = summary ? summary[`${key}_rate`] : null;
           const count = Math.round((Number(rate) || 0) * totalAttributed);
           return (
-            <div key={key} className="bg-elev rounded-md p-2.5 border border-line">
-              <div className="flex items-start gap-1.5 fs-meta font-mono min-h-[2.2em]">
+            <div key={key} className="bg-elev rounded-md p-2.5 border border-line min-w-0" role="group"
+              aria-label={`${meta.label}: ${formatRateO(rate)}, ${formatIntO(count)} runs`}>
+              <div className="flex items-start gap-1.5 fs-meta min-h-[2.2em]">
                 <span style={{ color: `rgb(var(${meta.colorVar}))` }} aria-hidden="true"><GlyphO name={meta.icon}/></span>
-                <span className="text-dim">{meta.label}</span>
+                <span className="text-dim min-w-0" title={meta.label}>{meta.label}</span>
               </div>
               <div className="fs-stat font-semibold text-ink mt-1 font-mono">
                 {formatRateO(rate)}
@@ -1637,11 +1655,12 @@ function getChannelLivenessBadgeO(state) {
 }
 
 function ChannelLivenessBody({ state, onRetry }) {
-  if (state.status === 'loading') {
+  const view = window.UI.getRegionView(state);
+  if (view === 'loading') {
     return <ChartSkeletonO height={120} label="recording channels"/>;
   }
-  if (state.status === 'error') {
-    return <RegionErrorO source="recording channels" error={state.error} onRetry={onRetry}/>;
+  if (view === 'error') {
+    return <RegionErrorO source="recording channels" error={state.error} onRetry={onRetry} isBusy={state.busy}/>;
   }
 
   const channels  = Array.isArray(state.data?.channels) ? state.data.channels : [];
@@ -1722,11 +1741,12 @@ function getGraderTileKeysO(breakdown) {
 }
 
 function GraderBreakdownBody({ state, onRetry }) {
-  if (state.status === 'loading') {
+  const view = window.UI.getRegionView(state);
+  if (view === 'loading') {
     return <ChartSkeletonO height={120} label="check results"/>;
   }
-  if (state.status === 'error') {
-    return <RegionErrorO source="check results" error={state.error} onRetry={onRetry}/>;
+  if (view === 'error') {
+    return <RegionErrorO source="check results" error={state.error} onRetry={onRetry} isBusy={state.busy}/>;
   }
 
   const breakdown = state.data?.overall?.grader_breakdown;
@@ -1808,6 +1828,18 @@ function DowngradeBreakdownRowO({ breakdown }) {
 // by_design_unverified(review/diagnosis/doc/cleanup) 그룹 분리 — grader 가 설계상
 // unverified 로 skip 하는 유형을 측정 대상 유형과 섞으면 품질 신호로 오독 (R07).
 // 막대 폭 ∝ 행 합/최대 (볼륨) · 내부 분할 = grader 버킷 구성비 (색 = 버킷 카드 SoT).
+// a checkable type whose failed checks reach the breakage share (low samples excluded) → crit; else untoned
+function getTaskTypeFoldToneO(rows) {
+  const { outcomeShareTone, isLowSample, OUTCOME_BREAKAGE_CRIT_SHARE } = window.UI;
+  if (!Array.isArray(rows)) return undefined;
+  const isFailing = (row) => {
+    const total = Number(row.total) || 0;
+    return row.by_design_unverified !== true && !isLowSample(total)
+      && outcomeShareTone(row.verified_fail, total, OUTCOME_BREAKAGE_CRIT_SHARE, 'crit') === 'crit';
+  };
+  return rows.some(isFailing) ? 'crit' : undefined;
+}
+
 function TaskTypeGraderCrosstabO({ rows }) {
   if (!Array.isArray(rows) || rows.length === 0) return null;
 
@@ -1907,11 +1939,12 @@ function CrosstabCard({ state, onRetry }) {
 }
 
 function CrosstabBody({ state, onRetry }) {
-  if (state.status === 'loading') {
+  const view = window.UI.getRegionView(state);
+  if (view === 'loading') {
     return <ChartSkeletonO height={160} label="cross table"/>;
   }
-  if (state.status === 'error') {
-    return <RegionErrorO source="cross table" error={state.error} onRetry={onRetry}/>;
+  if (view === 'error') {
+    return <RegionErrorO source="cross table" error={state.error} onRetry={onRetry} isBusy={state.busy}/>;
   }
 
   const crosstab = state.data?.crosstab;
@@ -1976,9 +2009,9 @@ function CrosstabRow({ rowKey, byCell, max }) {
 
 function CrosstabCell({ cell, max, rowLabel, colLabel }) {
   const count = cell.count || 0;
-  // 음영: polar 셀은 warn, 그 외 accent. 상대 빈도(0.08~0.85 opacity) — 0건은 무음영.
+  // 음영: polar 셀은 warn, 그 외 accent. 상대 빈도(0.08~0.40 opacity) — 상한 = 두 테마 모두 ink 4.5:1 유지 · 0건은 무음영.
   const ratio   = max > 0 ? count / max : 0;
-  const opacity = count > 0 ? (0.08 + ratio * 0.77).toFixed(3) : '0';
+  const opacity = count > 0 ? (0.08 + ratio * 0.32).toFixed(3) : '0';
   const tintVar = cell.isPolar ? '--warn' : '--accent';
 
   return (
@@ -2058,11 +2091,12 @@ function LoopEventsCard({ state, onRetry }) {
 function LoopEventsBody({ state, onRetry }) {
   const { Badge } = window.UI;
 
-  if (state.status === 'loading') {
+  const view = window.UI.getRegionView(state);
+  if (view === 'loading') {
     return <ChartSkeletonO height={200} label="run events"/>;
   }
-  if (state.status === 'error') {
-    return <RegionErrorO source="run events" error={state.error} onRetry={onRetry}/>;
+  if (view === 'error') {
+    return <RegionErrorO source="run events" error={state.error} onRetry={onRetry} isBusy={state.busy}/>;
   }
 
   const total    = Number(state.data?.total_events ?? 0);
@@ -2427,14 +2461,15 @@ function ActiveFilterChips({ filter, onRemove, onClearAll }) {
 function ResultTableBody({
   state, rows, totalMatched, filter, sort, onSortChange, onResetFilter, onRowClick, onRetry, closure, needsYou, needsYouCap, onToggleNeedsYou,
 }) {
-  if (state.status === 'loading') {
+  const view = window.UI.getRegionView(state);
+  if (view === 'loading') {
     return <ChartSkeletonO height={400} label="results"/>;
   }
   if (state.status === 'blocked') {
     return <PayloadUnavailableO label="Records"/>;
   }
-  if (state.status !== 'ready') {
-    return <RegionErrorO source="the record ledger" error={state.error} onRetry={onRetry}/>;
+  if (view !== 'ready') {
+    return <RegionErrorO source="the record ledger" error={state.error} onRetry={onRetry} isBusy={state.busy}/>;
   }
   if (rows.length === 0) {
     return <ResultTableZeroStateO filter={filter} onResetFilter={onResetFilter}/>;
@@ -3097,9 +3132,9 @@ function EmptyStateO({ message }) {
 }
 
 // plain sentence + next step; the raw answer stays behind Details, Retry only when no page banner owns it
-function RegionErrorO({ source, error, onRetry }) {
+function RegionErrorO({ source, error, onRetry, isBusy = false }) {
   const { RegionUnavailable } = window.UI;
-  return <RegionUnavailable source={source} error={error} onRetry={onRetry} className="m-3"/>;
+  return <RegionUnavailable source={source} error={error} onRetry={onRetry} isBusy={isBusy} className="m-3"/>;
 }
 
 // 레인이 실패 배너를 소유하므로 본문은 '적재 실패' 만 말한다 — 같은 오류를 두 번 쓰지 않는다.
