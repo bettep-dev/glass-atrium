@@ -38,6 +38,17 @@ write_envelope() {
     + (if $source == "-" then {} else {source: $source} end)' >"${RL_TMP}/envelope.json"
 }
 
+# Writes a UserPromptExpansion envelope for a typed /ga-review command.
+# Args: $1=transcript path $2=command args (printf %b escapes expanded) $3=expansion type
+write_expansion_envelope() {
+  local args
+  args="$(printf '%b' "${2}")"
+  jq -n --arg transcript "${1}" --arg args "${args}" --arg type "${3}" '
+    {session_id: "bats-session", transcript_path: $transcript, cwd: "/tmp",
+     hook_event_name: "UserPromptExpansion", expansion_type: $type, command_name: "ga-review",
+     command_args: $args, prompt: ("/ga-review " + $args)}' >"${RL_TMP}/envelope.json"
+}
+
 # Runs the hook on the written envelope; entrypoint "-" unsets CLAUDE_CODE_ENTRYPOINT.
 run_hook() {
   if [[ "${1}" == "-" ]]; then
@@ -147,6 +158,26 @@ assert_rows() {
     'workflow frame|cli|-|newest-human-korean|[Workflow harness — computed task] The task text below was computed|silent' \
     'coordinator frame|cli|-|newest-human-korean|The coordinator sent a message while you were working|silent' \
     'agent frame with a non-user source|cli|system|newest-human-korean|<teammate-message teammate_id="x">go</teammate-message>|silent'
+}
+
+@test "a typed slash command gets a line quoting its own text, or the latest earlier message when it has none" {
+  local rows=(
+    'korean arguments over english history|cli|newest-human-english|이 변경 사항 검토해줘|slash_command|이 변경 사항 검토해줘'
+    'english arguments over korean history|cli|newest-human-korean|review the staged diff|slash_command|review the staged diff'
+    'mcp prompt arguments|cli|newest-human-english|이 PR 요약해줘|mcp_prompt|이 PR 요약해줘'
+    'arguments with bidi, bell and newline|cli|newest-human-english|이 변경\0342\0200\0256 사항\a\n검토해줘|slash_command|이 변경 사항 검토해줘'
+    "no arguments|cli|newest-human-korean||slash_command|${KOREAN_QUOTE}"
+    "whitespace-only arguments|cli|newest-human-english|  \t |slash_command|${ENGLISH_QUOTE}"
+    'no arguments and no human entry|cli|sdk-cli||slash_command|silent'
+    'headless|sdk-cli|newest-human-english|이 변경 사항 검토해줘|slash_command|silent'
+  )
+  local row name entrypoint transcript args type want
+  for row in "${rows[@]}"; do
+    IFS='|' read -r name entrypoint transcript args type want <<<"${row}"
+    write_expansion_envelope "${CORPUS}/${transcript}.jsonl" "${args}" "${type}"
+    run_hook "${entrypoint}"
+    assert_quote "${name}" "${want}" UserPromptExpansion || return 1
+  done
 }
 
 @test "an ordinary human prompt spawns no python3 and never reads the transcript" {
