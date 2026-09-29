@@ -12,9 +12,7 @@ import os
 import re
 import sys
 
-# Backward read, first window doubled per pass, never past the cap: the newest human entry trails a
-# compaction or task-notification burst by up to ~2.3 MB on measured transcripts, and a transcript
-# can reach ~145 MB, so a whole read is never an option on the per-turn path.
+# Backward read, window doubled per pass up to the cap — human entry lags ~2.3 MB, transcripts reach ~145 MB
 DEFAULT_WINDOW_BYTES = 256 * 1024
 DEFAULT_MAX_BYTES = 8 * 1024 * 1024
 HUMAN_MARKER = b'"kind":"human"'

@@ -26,8 +26,7 @@ teardown() {
   esac
 }
 
-# One human entry after a run of machine-written entries, the drift shape a compaction or a burst of
-# task notifications leaves behind the newest human prompt.
+# One human entry buried under machine entries — the compaction / task-notification drift shape
 # Args: $1=path $2=bytes of assistant noise before the human entry $3=bytes of task notifications after it
 build_drift_transcript() {
   python3 - "$1" "$2" "$3" <<'PY'

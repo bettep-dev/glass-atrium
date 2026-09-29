@@ -61,8 +61,7 @@ run_hook() {
   fi
 }
 
-# Splits the one context line into fixed part and quote: prints `<fixed part>\x1f<quote>`, `silent` for
-# no output, or `malformed: <output>` for anything else — a fixed part naming a language included.
+# Context line → `<fixed part>\x1f<quote>` | `silent` (no output) | `malformed: <output>` (else, incl. a named language)
 # Args: $1=expected hook event (default UserPromptSubmit)
 split_output() {
   if [[ -z "${output}" ]]; then
