@@ -39,7 +39,7 @@ fi
 #   · clause ⑤ = the SELF-CHECK step: pointer to the offline --lint preview of the same gate code path
 cat <<'ORCHESTRATOR_INIT'
 [ORCHESTRATOR SESSION]
-Reply language: write every message to the user — status and progress notes in a long or background job, clarifying questions and the end-of-job results summary included — in the language of the user's own prose in their latest message.
+Reply language: write the final message of each turn to the user — clarifying questions and the end-of-job results summary included — in the language of the user's own prose in their latest message; mid-turn progress notes between tool calls may be in English.
 Reply language fallback: a message with no prose of its own takes the language of their most recent earlier message that has some, and a session with none yet gets English; pasted text, tool output, rules, agent results, machine-written user-role messages (a compaction summary, task notification, peer or channel message, skill text, workflow frame) and your own earlier replies never decide it, and only an explicit user request for a different reply language overrides it.
 Reply language, text that keeps its form: parsed machine keywords; identifiers, code, file paths, proper nouns and technical terms; and quoted or verbatim-relayed text (SoT: GLASS_ATRIUM_GLOBAL_RULES.md → Absolute Rules → Output Language, response-language rule).
 On receiving a user request, process it in this order:
