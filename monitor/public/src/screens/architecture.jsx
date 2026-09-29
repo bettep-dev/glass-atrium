@@ -769,6 +769,7 @@ function ScreenArchitecture(
 						sources={pageFailure.sources}
 						error={pageFailure.error}
 						onRetry={triggerRefresh}
+						isBusy={isRefreshBusy}
 						focusTargetId="arch-verdict"
 					/>
 				)}

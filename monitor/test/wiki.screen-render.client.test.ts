@@ -229,6 +229,24 @@ test("a failed section names its source in plain words and offers Retry only whe
   }
 });
 
+test("the page banner shows its Retry in flight and hands focus to the verdict, which outlives recovery", async () => {
+  const initial = realUi.INITIAL_REGION_STATE as Record<string, unknown>;
+  const retrying = { ...initial, status: "error", data: null, error: OUTAGE, busy: true };
+  const ui = new Proxy(uiStub() as Record<string, unknown>, {
+    get: (target, name: string) => (name === "INITIAL_REGION_STATE" ? retrying : target[name]),
+  });
+  const mod = (await loadScreenModule(WIKI_SRC, { UI: ui, React: createReactStub() })) as ScreenModule;
+  const tree = renderScreen(mod.React.createElement(mod.ScreenWiki as Component, {}));
+
+  const banners = findNodes(tree, (n) => n.props.atom === "PageErrorBanner");
+  assert.equal(banners.length, 1, "every section failing on one cause lifts to one page banner");
+  assert.equal(banners[0].props.isBusy, true, "a Retry in flight marks the banner busy");
+  // host nodes only — a stubbed atom also appears as its component node
+  const targets = findNodes(tree, (n) => /^[a-z]/.test(n.type) && n.props.id === banners[0].props.focusTargetId);
+  assert.equal(targets.length, 1, `focus target ${String(banners[0].props.focusTargetId)} is one rendered element`);
+  assert.notEqual(targets[0].props.atom, "PageErrorBanner", "focus lands outside the banner that unmounts on recovery");
+});
+
 test("the page banner covers an outage only when two or more sections fail for one cause", async () => {
   const mod = await loadWikiScreen();
   const readOutage = mod.readWikiOutageW as (sections: Array<[unknown, string]>) => { sources: string[] } | null;
