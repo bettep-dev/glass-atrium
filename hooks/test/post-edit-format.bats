@@ -18,6 +18,8 @@
 # needed. Each invocation appends its identity tag; spawn counts read the log.
 
 HOOK_SH="${BATS_TEST_DIRNAME}/../post-edit-format.sh"
+# shellcheck source-path=SCRIPTDIR source=../../scripts/lib/path-guard.sh
+source "${BATS_TEST_DIRNAME}/../../scripts/lib/path-guard.sh"
 
 setup() {
   [[ -f "${HOOK_SH}" ]] || skip "post-edit-format.sh not found: ${HOOK_SH}"
@@ -33,7 +35,7 @@ setup() {
 }
 
 teardown() {
-  [[ -n "${WORK:-}" && -d "${WORK}" ]] && rm -rf -- "${WORK}" || true
+  if ga_guard_path "${WORK:-}"; then rm -rf -- "${WORK:?}"; fi
 }
 
 # Create a mock binary that records one identity line per invocation and formats

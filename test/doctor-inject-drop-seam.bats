@@ -50,6 +50,8 @@ bats_require_minimum_version 1.5.0
 GA="$(cd -- "${BATS_TEST_DIRNAME}/.." && pwd)"
 REAL_GA="${GA}/glass-atrium"
 HOOK_SH="${GA}/hooks/inject-scope-rules.sh"
+# shellcheck source-path=SCRIPTDIR source=../scripts/lib/path-guard.sh
+source "${GA}/scripts/lib/path-guard.sh"
 
 setup() {
   command -v jq >/dev/null 2>&1 || skip "jq required"
@@ -70,6 +72,7 @@ SH
   export GA_GENERATE_MANIFEST="${TARGET}/no-such-manifest-gen" # nonexistent → §8 SHA hashing skipped
   export GA_AUTH_CLAUDE_BIN="${TARGET}/bin/claude"             # echo-OK stub → no live claude -p probe
   export DOCTOR_AUTH_REPORTS_DIR="${TARGET}/empty-reports"     # empty dir → trivial daemon-report scan
+  printf '%s\n' '{"files": []}' >"${TARGET}/empty-manifest.json"
 
   # An oversized (~11 KB) BUDGET-DEV fixture whose block alone exceeds the ceiling → forces a
   # non-lesson (block=budget-dev) full drop at the production ceiling for a BUDGET_DEV_AGENTS member.
@@ -82,19 +85,20 @@ SH
 }
 
 teardown() {
-  [[ -n "${TARGET:-}" && -d "${TARGET}" ]] && rm -rf -- "${TARGET}" || true
-  [[ -n "${DATA_ROOT:-}" && -d "${DATA_ROOT}" ]] && rm -rf -- "${DATA_ROOT}" || true
+  if ga_guard_path "${TARGET:-}"; then rm -rf -- "${TARGET:?}"; fi
+  if ga_guard_path "${DATA_ROOT:-}"; then rm -rf -- "${DATA_ROOT:?}"; fi
 }
 
 # Drive the REAL doctor with the target + data-root seams redirected at the sandbox.
-# AUTOAGENT_BACKUP_DIR is sandboxed because GA_ROOT stays the REAL install here: §15 derives the
-# merge-decline record from GA_ROOT's sibling, so an open decline on the host would FAIL the run and
-# suppress the PASS-only warn rollup the `0 inject-drop` assertions read.
+# GA_ROOT stays the checkout this suite runs from, and any doctor FAIL suppresses the PASS-only warn
+# rollup the `<n> inject-drop` assertions read → two FAIL sources outside §10 are sandboxed:
+#   GA_MANIFEST (empty files[]) — §4 FAILs on any manifest source missing from the checkout
+#   AUTOAGENT_BACKUP_DIR — §15 derives the merge-decline record from GA_ROOT's sibling
 # `run` records the exit in $status; run_doctor returns 1 on any §1-12 FAIL, so we assert
 # on the merged output lines (log() → stderr, captured by bats `run`), never $status.
 run_doctor_seam() {
   GA_TARGET_HOME="${TARGET}" GA_DATA_ROOT="${DATA_ROOT}" \
-    AUTOAGENT_BACKUP_DIR="${TARGET}/agents-bak" \
+    GA_MANIFEST="${TARGET}/empty-manifest.json" AUTOAGENT_BACKUP_DIR="${TARGET}/agents-bak" \
     ATRIUM_MONITOR_PORT="${GA_DOCTOR_DEAD_PORT}" run "${REAL_GA}" doctor
 }
 
@@ -181,6 +185,9 @@ assert_output_lacks() {
   }
 }
 
+# sole carrier of the `<n> inject-drop` counts; a §1-12 FAIL suppresses it → every count check anchors here
+ROLLUP='== doctor: PASS (with '
+
 # ── AC1 — in-window non-lesson drop → WARN at the seam path ────────────────────────────────────
 
 @test "AC1: an in-window non-lesson drop WARNs, names the seam path, and feeds the warning count" {
@@ -196,6 +203,7 @@ assert_output_lacks() {
   assert_output_has "${DROPLOG}" || return 1
   assert_output_lacks "/.claude/.claude/logs/" || return 1
   # an actionable drop is a warning, so the aggregate must not report zero inject-drop warnings
+  assert_output_has "${ROLLUP}" || return 1
   assert_output_lacks "0 inject-drop"
 }
 
@@ -220,6 +228,7 @@ assert_output_lacks() {
   # designed shedding has no remedy, so the actionable remedy must NOT be attached to it
   assert_output_lacks "recompress the AGENT-INJECT source blocks" || return 1
   # and it must not be counted as a warning
+  assert_output_has "${ROLLUP}" || return 1
   assert_output_has "0 inject-drop"
 }
 
@@ -232,6 +241,7 @@ assert_output_lacks() {
   assert_output_has "no inject-scope-rules shed events in the last" || return 1
   assert_output_has "historical event(s) on record" || return 1
   assert_output_lacks "recompress the AGENT-INJECT source blocks" || return 1
+  assert_output_has "${ROLLUP}" || return 1
   assert_output_has "0 inject-drop"
 }
 
@@ -253,6 +263,7 @@ assert_output_lacks() {
     return 1
   }
   run_doctor_seam
+  assert_output_has "${ROLLUP}" || return 1
   assert_output_has "1 inject-drop"
   assert_output_has "inject-slot"
   # A shed of a marker block says nothing about the slot wiring, so the two totals must differ in

@@ -13,6 +13,8 @@
 
 PRUNE_SH="${BATS_TEST_DIRNAME}/../prune-job-scratch.sh"
 STALE_STAMP='202001010000'
+# shellcheck source-path=SCRIPTDIR source=../lib/path-guard.sh
+source "${BATS_TEST_DIRNAME}/../lib/path-guard.sh"
 
 setup() {
   [[ -f "${PRUNE_SH}" ]] || skip "prune-job-scratch.sh not found"
@@ -27,7 +29,7 @@ setup() {
 }
 
 teardown() {
-  [[ -n "${PJ_TMP:-}" && -d "${PJ_TMP}" ]] && rm -rf -- "${PJ_TMP}" || true
+  if ga_guard_path "${PJ_TMP:-}"; then rm -rf -- "${PJ_TMP:?}"; fi
 }
 
 # Asserts the outside target tree is exactly as setup left it — nothing followed, nothing deleted.
@@ -190,4 +192,17 @@ assert_target_intact() {
   run bash "${PRUNE_SH}" --wipe
   [ "${status}" -eq 2 ] || { echo "expected exit 2, got ${status}: ${output}"; return 1; }
   [ -d "${ROOT}/oldjob" ] || { echo "usage error still removed an entry"; return 1; }
+}
+
+@test "a copy without the shared path guard beside it exits 4 with a named FATAL and removes nothing" {
+  mkdir -p "${ROOT}/oldjob" "${PJ_TMP}/sandbox"
+  touch -t "${STALE_STAMP}" "${ROOT}/oldjob"
+  cp "${PRUNE_SH}" "${PJ_TMP}/sandbox/prune-job-scratch.sh"
+
+  run bash "${PJ_TMP}/sandbox/prune-job-scratch.sh"
+  # 4, never errexit's generic 1: a broken install must not read as any other failure.
+  [ "${status}" -eq 4 ] || { echo "expected exit 4, got ${status}: ${output}"; return 1; }
+  [[ "${output}" == *"prune-job-scratch: FATAL: cannot source the shared path guard"*"path-guard.sh"* ]] \
+    || { echo "no named FATAL: ${output}"; return 1; }
+  [ -d "${ROOT}/oldjob" ] || { echo "a guard-less run still removed an entry"; return 1; }
 }

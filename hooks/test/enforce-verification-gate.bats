@@ -38,6 +38,8 @@
 
 HOOKS_DIR="${BATS_TEST_DIRNAME}/.."
 HOOK_SH="${HOOKS_DIR}/enforce-verification-gate.sh"
+# shellcheck source-path=SCRIPTDIR source=../../scripts/lib/path-guard.sh
+source "${BATS_TEST_DIRNAME}/../../scripts/lib/path-guard.sh"
 
 setup() {
   [[ -f "${HOOK_SH}" ]] || skip "enforce-verification-gate.sh not found: ${HOOK_SH}"
@@ -435,7 +437,7 @@ mint_bad_sink() {
   for row in "${table[@]}"; do
     IFS='|' read -r stype prompt code tag <<<"${row}"
     echo "row=${row}"
-    rm -f "${SINK}"
+    if ga_guard_path "${SINK}"; then rm -f -- "${SINK:?}"; fi
     run_hook_trace "${stype}" "${prompt}"
     assert_status 2
     assert_contains "${code}"
@@ -470,7 +472,8 @@ mint_bad_sink() {
     prompt="${prompt%|*}"
     seed="${row##*|}"
     echo "row=${row}"
-    rm -f "${SINK}" "${DATA_DIR}/session-spawns/sess-test-001"
+    if ga_guard_path "${SINK}"; then rm -f -- "${SINK:?}"; fi
+    if ga_guard_path "${DATA_DIR}"; then rm -f -- "${DATA_DIR:?}/session-spawns/sess-test-001"; fi
     if [[ "${seed}" == "seed-reviewer" ]]; then seed_reviewer; fi
     run_hook_trace "${stype}" "${prompt}"
     assert_status 0
@@ -539,6 +542,53 @@ mint_bad_sink() {
   after="$(count_sink)"
   [[ "${after}" -le 5 ]] || {
     echo "expected sink bounded at or below cap 5, got ${after}" >&2
+    return 1
+  }
+}
+
+@test "prune: a failed swap leaves no prune temp beside the sink" {
+  local stub_dir="${BATS_TEST_TMPDIR}/stub-bin" mv_log="${BATS_TEST_TMPDIR}/mv-argv.log" payload leftovers i
+  mkdir -p "${stub_dir}"
+  printf '#!/usr/bin/env bash\nprintf "%%s\\n" "$*" >>"%s"\nexit 1\n' "${mv_log}" >"${stub_dir}/mv"
+  chmod +x "${stub_dir}/mv"
+  for ((i = 0; i < 12; i++)); do
+    printf 'ts\ttool_name=Agent\tsubagent_type=seed\tverdict=block-entry\n' >>"${SINK}"
+  done
+  payload="$(mk_payload "glass-atrium-dev-nestjs" "implement the auth refactor [SIZE-EST] bundles=1 tool_uses~=20 — svc")"
+  run bash -c 'printf "%s" "$1" | PATH="$5:${PATH}" HOOK_DATA_DIR="$2" VGATE_FIRED_LOG="$4" VGATE_FIRED_LOG_CAP=5 bash "$3"' \
+    _ "${payload}" "${DATA_DIR}" "${HOOK_SH}" "${SINK}" "${stub_dir}"
+  assert_status 2
+  grep -qF "${SINK}.prune." "${mv_log}" || {
+    echo "the prune never attempted its swap" >&2
+    return 1
+  }
+  leftovers="$(find "${SINK%/*}" -name "${SINK##*/}.prune.*" | wc -l | tr -d ' ')"
+  [[ "${leftovers}" == "0" ]] || {
+    echo "prune temp left beside the sink: ${leftovers}" >&2
+    return 1
+  }
+}
+
+@test "marker prune: a failed swap leaves no prune temp beside the session marker" {
+  local stub_dir="${BATS_TEST_TMPDIR}/stub-bin" mv_log="${BATS_TEST_TMPDIR}/mv-argv.log" leftovers i
+  local marker="${DATA_DIR}/session-spawns/sess-test-001"
+  mkdir -p "${stub_dir}"
+  printf '#!/usr/bin/env bash\nprintf "%%s\\n" "$*" >>"%s"\nexit 1\n' "${mv_log}" >"${stub_dir}/mv"
+  chmod +x "${stub_dir}/mv"
+  for ((i = 0; i < 12; i++)); do
+    printf '%s\n' "glass-atrium-dev-react" >>"${marker}"
+  done
+  run bash -c 'printf "%s" "$1" | PATH="$4:${PATH}" HOOK_DATA_DIR="$2" SESSION_SPAWN_MARKER_CAP=5 bash "$3"' \
+    _ "$(mk_payload "glass-atrium-intel-reporter" "write the report" "" "PostToolUse")" \
+    "${DATA_DIR}" "${HOOK_SH}" "${stub_dir}"
+  assert_status 0
+  grep -qF "${marker}.prune." "${mv_log}" || {
+    echo "the marker prune never attempted its swap" >&2
+    return 1
+  }
+  leftovers="$(find "${marker%/*}" -name "${marker##*/}.prune.*" | wc -l | tr -d ' ')"
+  [[ "${leftovers}" == "0" ]] || {
+    echo "prune temp left beside the session marker: ${leftovers}" >&2
     return 1
   }
 }

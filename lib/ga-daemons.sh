@@ -121,9 +121,17 @@ EOF
   fi
   # (layer-3) remove a stale socket left by the killed postmaster so a fresh install binds clean.
   if [[ -S "${sock}" ]]; then
-    if rm -f -- "${sock}" 2>/dev/null; then
-      log "removed stale postgres socket ${sock}"
-    fi
+    # A guard refusal counts as a failed removal (else false), so it takes the same warn branch.
+    # shellcheck disable=SC2310  # guard verdict branched on — a refusal is a skip, never an abort
+    if ga_guard_path "${sock}"; then
+      rm -f -- "${sock:?}"
+    else
+      false
+    fi || {
+      log "could not remove stale postgres socket ${sock} (continuing)"
+      return 0
+    }
+    log "removed stale postgres socket ${sock}"
   fi
   return 0
 }

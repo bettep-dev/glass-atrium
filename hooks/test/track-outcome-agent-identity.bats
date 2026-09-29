@@ -21,6 +21,9 @@ REGISTERED="glass-atrium-dev-shell"
 TEAMMATE_REGISTERED="glass-atrium-qa-code-reviewer"
 EPHEMERAL="ashell-impl-opus-980cfc838657ba29"
 
+# shellcheck source-path=SCRIPTDIR source=../../scripts/lib/path-guard.sh
+source "${BATS_TEST_DIRNAME}/../../scripts/lib/path-guard.sh"
+
 setup() {
   [[ -f "${HOOK_SH}" ]] || skip "track-outcome.sh not found: ${HOOK_SH}"
   command -v python3 >/dev/null 2>&1 || skip "python3 required"
@@ -60,7 +63,7 @@ setup() {
 }
 
 teardown() {
-  [[ -n "${ID_TMP:-}" && -d "${ID_TMP}" ]] && rm -rf -- "${ID_TMP}" || true
+  if ga_guard_path "${ID_TMP:-}"; then rm -rf -- "${ID_TMP:?}"; fi
 }
 
 # Subagent transcript carrying one tool_use (deliverable-producing) and a writer [COMPLETION].

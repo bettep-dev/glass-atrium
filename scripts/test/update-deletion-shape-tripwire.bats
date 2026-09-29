@@ -33,6 +33,9 @@ bats_require_minimum_version 1.5.0
 GA="$(cd -- "${BATS_TEST_DIRNAME}/../.." && pwd)"
 UPDATE_SH="${GA}/scripts/update.sh"
 
+# shellcheck source-path=SCRIPTDIR source=../lib/path-guard.sh
+source "${GA}/scripts/lib/path-guard.sh"
+
 setup() {
   [[ -f "${UPDATE_SH}" ]] || skip "update.sh not found: ${UPDATE_SH}"
   WORK="$(cd -- "$(mktemp -d -t ga-tripwire.XXXXXX)" && pwd -P)"
@@ -54,9 +57,7 @@ DRV
 }
 
 teardown() {
-  if [[ -n "${WORK:-}" && -d "${WORK}" ]]; then
-    rm -rf -- "${WORK}"
-  fi
+  if ga_guard_path "${WORK:-}"; then rm -rf -- "${WORK:?}"; fi
 }
 
 oc() { [[ "${2}" == *"${1}"* ]] || { printf 'assert-contains FAILED: [%s] absent from:\n%s\n' "${1}" "${2}" >&2; return 1; }; }

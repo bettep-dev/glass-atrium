@@ -20,6 +20,9 @@ PREFLIGHT_CLAUDE="${AUTOAGENT_CLAUDE_BIN:-claude}"
 LLM_PREFLIGHT_SELF_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=lib/atrium-config.sh
 . "${LLM_PREFLIGHT_SELF_DIR}/lib/atrium-config.sh"
+# ga_guard_path gates the ping scratch removal in llm_preflight.
+# shellcheck source-path=SCRIPTDIR source=lib/path-guard.sh
+. "${LLM_PREFLIGHT_SELF_DIR}/lib/path-guard.sh"
 
 # Background-worker model id from the daemon-config.json SoT, via atrium_resolve_worker_model.
 # PREFLIGHT_DAEMON_CONFIG override hook → canonical default when empty (ping happens only in Check B).
@@ -109,13 +112,15 @@ llm_preflight() {
   wait "${wdog_pid}" 2>/dev/null || true
 
   if [[ "${ping_exit}" -ne 0 ]]; then
-    rm -f "${ping_tmp}"
+    # shellcheck disable=SC2310  # pure predicate — nothing inside it for errexit to catch
+    if ga_guard_path "${ping_tmp}"; then rm -f -- "${ping_tmp:?}"; fi
     echo "LLM ping failed (claude -p exit=${ping_exit})"
     return 1
   fi
 
   ping_result="$(cat "${ping_tmp}")"
-  rm -f "${ping_tmp}"
+  # shellcheck disable=SC2310  # pure predicate — nothing inside it for errexit to catch
+  if ga_guard_path "${ping_tmp}"; then rm -f -- "${ping_tmp:?}"; fi
 
   if [[ -z "${ping_result}" ]]; then
     echo "LLM ping returned empty response"

@@ -30,6 +30,8 @@
 # WITHOUT touching ~/.claude.
 
 GA="$(cd -- "${BATS_TEST_DIRNAME}/.." && pwd)"
+# shellcheck source-path=SCRIPTDIR source=../scripts/lib/path-guard.sh
+source "${GA}/scripts/lib/path-guard.sh"
 
 setup() {
   command -v jq >/dev/null 2>&1 || skip "jq required"
@@ -39,7 +41,7 @@ setup() {
 }
 
 teardown() {
-  [[ -n "${TARGET:-}" && -d "${TARGET}" ]] && rm -rf -- "${TARGET}" || true
+  if ga_guard_path "${TARGET:-}"; then rm -rf -- "${TARGET:?}"; fi
 }
 
 # Drive the REAL reconcile_stale_hook_matchers against the sandboxed target under strict mode.
@@ -255,7 +257,11 @@ JSON
   [[ "${status}" -eq 0 ]] || return 1
   local after_first
   after_first="$(cat "${SETTINGS}")"
-  find "${TARGET}" -name 'settings.json.ga-stale-backup.*' -exec rm -f {} +
+  local backups backup
+  backups="$(find "${TARGET}" -name 'settings.json.ga-stale-backup.*')"
+  while IFS= read -r backup; do
+    if ga_guard_path "${backup}"; then rm -f -- "${backup:?}"; fi
+  done <<<"${backups}"
   run_reconcile
   [[ "${status}" -eq 0 ]] || return 1
   [[ "$(cat "${SETTINGS}")" == "${after_first}" ]] || return 1

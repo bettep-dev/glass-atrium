@@ -15,6 +15,8 @@
 # Requires: bats (brew install bats-core), python3, bash 3.2+
 
 GA="$(cd -- "${BATS_TEST_DIRNAME}/.." && pwd)"
+# shellcheck source-path=SCRIPTDIR source=../scripts/lib/path-guard.sh
+source "${GA}/scripts/lib/path-guard.sh"
 HOOK="${GA}/hooks/advisory-preedit-facts.sh"
 
 # The hook's tail window (must match _TAIL_WINDOW_BYTES in the hook). The large fixture below
@@ -28,7 +30,7 @@ setup() {
 }
 
 teardown() {
-  [[ -n "${TRANSCRIPT:-}" && -f "${TRANSCRIPT}" ]] && rm -f -- "${TRANSCRIPT}" || true
+  if ga_guard_path "${TRANSCRIPT:-}"; then rm -f -- "${TRANSCRIPT:?}"; fi
 }
 
 # Feed a {"transcript_path": ...} payload on stdin; capture stdout+stderr (advisory goes to stderr).

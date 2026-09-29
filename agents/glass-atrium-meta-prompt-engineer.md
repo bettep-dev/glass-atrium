@@ -9,6 +9,7 @@ tools:
   - Write
   - WebSearch
   - WebFetch
+  - Skill
 maxTurns: 80
 ---
 

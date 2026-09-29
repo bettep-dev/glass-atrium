@@ -1,13 +1,14 @@
 #!/usr/bin/env bats
-# autoagents-eval.sh git-status failure suite (doc-739 T2 category-3 adjudication).
+# autoagents-eval.sh default-path suite: the git-status failure contract plus the startup
+# precondition ahead of it.
 # Pins that a GENUINE git failure on the default/manual path loud-fails (captured
 # git stderr + named exit 5) instead of collapsing into the empty filter result
 # and the affirmative-false "no changes — exit" success. Under pipefail the old
 # single pipeline reported the RIGHTMOST status, so a trailing grep no-match (1)
 # was indistinguishable from a git 128 — that indistinguishability is the defect.
-# Row 1 FAILS at HEAD (exit 0, silent); rows 2-4 are unchanged-green guards for
-# the legitimate no-match path, the changed-file data path, and the mode-2
-# (--unstaged) runner contract the conversion must not touch.
+# Row 1 pins that loud-fail; rows 2-4 guard the legitimate no-match path, the
+# changed-file data path, and the mode-2 (--unstaged) runner contract; row 5 pins
+# the startup precondition — a missing shared path guard exits 6 before any scan.
 #
 # Assertion idiom: `[[ ... ]] || return 1`. @test bodies run under errexit, but a
 # bare non-final `[[ ]]` is exempt under macOS bash 3.2.57 and DOES gate from bash
@@ -36,7 +37,8 @@ make_sandbox() {
   local kind="${1}"
   FAKE_HOME="${BATS_TEST_TMPDIR}/home-${kind}"
   AGENTS="${FAKE_HOME}/.claude/agents"
-  mkdir -p "${AGENTS}" "${FAKE_HOME}/.glass-atrium/scripts"
+  mkdir -p "${AGENTS}" "${FAKE_HOME}/.glass-atrium/scripts/lib"
+  cp -p -- "${GA}/scripts/lib/path-guard.sh" "${FAKE_HOME}/.glass-atrium/scripts/lib/path-guard.sh"
   cat >"${FAKE_HOME}/.glass-atrium/scripts/llm-preflight.sh" <<'STUB'
 llm_preflight() {
   echo "stubbed preflight refusal"
@@ -101,4 +103,17 @@ setup() {
     bash "${REAL_SCRIPT}" --unstaged "t2-probe.md"
   [[ "${output}" == *"RESULT: FAIL"* ]] || return 1
   [[ "${stderr}" != *"git status failed"* ]] || return 1
+}
+
+@test "a missing shared path guard stops the run with exit 6 before any scan" {
+  make_sandbox repo
+  mv -- "${FAKE_HOME}/.glass-atrium/scripts/lib/path-guard.sh" "${BATS_TEST_TMPDIR}/path-guard.sh.moved"
+  printf 'x\n' >"${AGENTS}/t2-probe.md"
+  run --separate-stderr -6 env \
+    HOME="${FAKE_HOME}" \
+    GIT_CEILING_DIRECTORIES="${BATS_TEST_TMPDIR}" \
+    AUTOAGENTS_EVAL_CLAUDE_BIN="${CLAUDE_STUB}" \
+    bash "${REAL_SCRIPT}"
+  [[ "${stderr}" == *"cannot source the shared path guard"* ]] || return 1
+  [[ "${output}" != *"RESULT:"* ]] || return 1
 }

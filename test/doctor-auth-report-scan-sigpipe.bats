@@ -18,6 +18,9 @@
 # Falsifiability: T1 runs the PRE-FIX process-sub structure verbatim over the same large fixture and
 # asserts the ERR trap DID fire (proves the fixture genuinely triggers the SIGPIPE). T2 runs the real
 # FIXED function over that identical fixture and asserts stderr is clean.
+# The ERR line is written by the unwaited process-substitution subshell,
+# so stderr is captured to EOF (_run_strict) before any assertion reads it —
+# otherwise T1 races that late write and T2's negative check passes vacuously.
 #
 # Hermetic: the three real functions (__ga_detect_stat_os, stat_mtime, doctor_headless_auth_advisory)
 # are eval'd into the test shell (extract_fn); log / stat_perms / headless_auth_selftest are sandbox
@@ -28,13 +31,14 @@
 # Requires: bats, bash 3.2+, BSD/GNU stat + touch (macOS)
 
 GA="$(cd -- "${BATS_TEST_DIRNAME}/.." && pwd)"
+# shellcheck source-path=SCRIPTDIR source=../scripts/lib/path-guard.sh
+source "${GA}/scripts/lib/path-guard.sh"
 
-# LARGE fixture size: cut's output must exceed the ~64KB pipe buffer.
-# Then cut is still writing when the reader breaks → SIGPIPE → the ERR trap T1 asserts.
-# Margin is sized on the SHORTEST-path platform: Linux CI /tmp (~73B/line) is ~half macOS (~128B/line).
-# 3000 files ≈ 219KB ≈ 3.3x the buffer on Linux (5.9x on macOS) — a robust >=3x race margin.
-# Do NOT size against macOS byte lengths; do NOT drop below 3000.
-# Under 3000 the Linux margin falls toward ~1.7x and the write-vs-break race flakes on CI.
+# LARGE fixture size: cut's output must exceed the ~64KB pipe buffer,
+# else cut finishes before the reader breaks and no SIGPIPE occurs at all.
+# Linux CI /tmp (~73B/line) is ~half macOS (~128B/line):
+# 3000 files ≈ 219KB ≈ 3.3x the buffer on Linux.
+# Flake-freedom comes from _run_strict's drained stderr capture, not from this margin.
 REPORT_FANOUT=3000
 
 setup() {
@@ -60,7 +64,8 @@ setup() {
 }
 
 teardown() {
-  [[ -n "${SANDBOX:-}" && -d "${SANDBOX}" ]] && rm -rf -- "${SANDBOX}"
+  # shellcheck disable=SC2310  # pure predicate — nothing inside it for errexit to catch
+  if ga_guard_path "${SANDBOX:-}"; then rm -rf -- "${SANDBOX:?}"; fi
 }
 
 # extract_fn — eval a single named function from ga-env.sh / ga-tui-preflight.sh into the test shell.
@@ -84,45 +89,56 @@ _make_reports() {
   fi
 }
 
-# _run_advisory — run the REAL fixed function under the loader's strict-mode + ERR trap; split streams.
-_run_advisory() {
+# _run_strict <fn> [args…] — run fn under the loader's strict mode + ERR trap; stdout → OUT, stderr → ERRF.
+# A nonzero status prints OUT and ERRF, so a failing status check names its cause.
+# cat reads stderr to EOF and the pipeline waits for cat,
+# so every holder of that fd has exited before any assertion reads ERRF —
+# an unwaited process substitution and its cut included.
+# pipefail carries fn's status, since bats' DEBUG trap resets PIPESTATUS on bash 3.2.
+# The outer subshell keeps pipefail out of the test body.
+_run_strict() {
+  local exit_code=0
   (
-    set -Eeuo pipefail
-    IFS=$'\n\t'
-    trap 'echo "ERROR: line ${LINENO}: ${BASH_COMMAND}" >&2' ERR
-    doctor_headless_auth_advisory
-  ) >"${OUT}" 2>"${ERRF}"
+    set -o pipefail
+    (
+      set -Eeuo pipefail
+      IFS=$'\n\t'
+      trap 'echo "ERROR: line ${LINENO}: ${BASH_COMMAND}" >&2' ERR
+      "$@"
+    ) 2>&1 >"${OUT}" | cat >"${ERRF}"
+  ) || exit_code=$?
+  if [[ "${exit_code}" -ne 0 ]]; then
+    printf '%s exited %s; stdout:\n' "$1" "${exit_code}"
+    cat -- "${OUT}"
+    printf 'stderr:\n'
+    cat -- "${ERRF}"
+  fi
+  return "${exit_code}"
 }
 
-# _run_buggy <dir> — the PRE-FIX process-sub structure verbatim (the neutered fix), same strict-mode
-# reproduction. Exists solely to prove the fixture triggers the SIGPIPE the fix removes.
-_run_buggy() {
-  local dir="$1"
-  (
-    set -Eeuo pipefail
-    IFS=$'\n\t'
-    trap 'echo "ERROR: line ${LINENO}: ${BASH_COMMAND}" >&2' ERR
-    local hit=0 latest report_count=0
-    while IFS= read -r latest; do
-      [[ -n "${latest}" ]] || continue
-      report_count=$((report_count + 1))
-      [[ "${report_count}" -gt 5 ]] && break
-      if grep -qiE 'auth-failure' "${latest}" 2>/dev/null; then
-        hit=1
-        break
-      fi
-    done < <(find "${dir}" -maxdepth 1 -type f -name '*.json' 2>/dev/null \
-      | while IFS= read -r f; do
-        printf '%s\t%s\n' "$(stat_mtime "${f}" 2>/dev/null || printf '0')" "${f}"
-      done | sort -rn | cut -f2-)
-  ) >"${OUT}" 2>"${ERRF}"
+# _scan_procsub <dir> — the PRE-FIX process-sub structure verbatim (the neutered fix).
+# Exists solely to prove the fixture triggers the SIGPIPE the fix removes.
+_scan_procsub() {
+  local dir="$1" hit=0 latest report_count=0
+  while IFS= read -r latest; do
+    [[ -n "${latest}" ]] || continue
+    report_count=$((report_count + 1))
+    [[ "${report_count}" -gt 5 ]] && break
+    if grep -qiE 'auth-failure' "${latest}" 2>/dev/null; then
+      hit=1
+      break
+    fi
+  done < <(find "${dir}" -maxdepth 1 -type f -name '*.json' 2>/dev/null \
+    | while IFS= read -r f; do
+      printf '%s\t%s\n' "$(stat_mtime "${f}" 2>/dev/null || printf '0')" "${f}"
+    done | sort -rn | cut -f2-)
 }
 
 # === T1 — FAIL-BEFORE: the pre-fix process-sub form fires the ERR trap on the break path ===========
 
 @test "scan(pre-fix): the process-sub + cut form SIGPIPEs on early break → spurious 'cut -f2-' ERR" {
   _make_reports "${SANDBOX}" "${REPORT_FANOUT}" match || return 1
-  _run_buggy "${SANDBOX}" || return 1
+  _run_strict _scan_procsub "${SANDBOX}" || return 1
   # the defect the fix removes: the ERR trap attributed a SIGPIPE to cut.
   grep -qE 'cut -f2-|ERROR: line' "${ERRF}" || return 1
 }
@@ -131,7 +147,7 @@ _run_buggy() {
 
 @test "scan(fixed): the here-string form emits NO 'cut -f2-'/ERROR on the same break fixture" {
   _make_reports "${SANDBOX}" "${REPORT_FANOUT}" match || return 1
-  DOCTOR_AUTH_REPORTS_DIR="${SANDBOX}" _run_advisory || return 1
+  DOCTOR_AUTH_REPORTS_DIR="${SANDBOX}" _run_strict doctor_headless_auth_advisory || return 1
   # zero spurious ERR-trap noise on stderr.
   ! grep -qE 'cut -f2-|ERROR: line' "${ERRF}" || return 1
   # hit=1 → the auth-failure warn line still fires.
@@ -146,7 +162,7 @@ _run_buggy() {
     printf '%s\n' '{"parse_mode": "ok"}' >"${SANDBOX}/report-clean-${i}.json"
     i=$((i + 1))
   done
-  DOCTOR_AUTH_REPORTS_DIR="${SANDBOX}" _run_advisory || return 1
+  DOCTOR_AUTH_REPORTS_DIR="${SANDBOX}" _run_strict doctor_headless_auth_advisory || return 1
   ! grep -qE 'cut -f2-|ERROR: line' "${ERRF}" || return 1
   grep -qF 'recent daemon reports show no auth-failure' "${OUT}" || return 1
 }
@@ -154,7 +170,22 @@ _run_buggy() {
 # === T4 — behavior: an empty (present but 0-json) dir → ok, no error ================================
 
 @test "scan(fixed): an empty report dir reports the ok/no-history line and no error" {
-  DOCTOR_AUTH_REPORTS_DIR="${SANDBOX}" _run_advisory || return 1
+  DOCTOR_AUTH_REPORTS_DIR="${SANDBOX}" _run_strict doctor_headless_auth_advisory || return 1
   ! grep -qE 'cut -f2-|ERROR: line' "${ERRF}" || return 1
   grep -qF 'recent daemon reports show no auth-failure' "${OUT}" || return 1
+}
+
+@test "teardown succeeds silently when setup skipped before creating the temp dir" {
+  local saved="${SANDBOX}"
+  unset SANDBOX
+  run teardown
+  SANDBOX="${saved}"
+  [[ "${status}" -eq 0 ]] || {
+    echo "teardown without a temp dir failed (status ${status}): ${output}" >&2
+    return 1
+  }
+  [[ -z "${output}" ]] || {
+    echo "teardown without a temp dir wrote: ${output}" >&2
+    return 1
+  }
 }

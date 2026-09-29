@@ -57,6 +57,8 @@ bats_require_minimum_version 1.5.0
 
 GA="$(cd -- "${BATS_TEST_DIRNAME}/../.." && pwd)"
 REAL_DRIVER="${GA}/autoagent/daemon-cycle.sh"
+# shellcheck source-path=SCRIPTDIR source=../../scripts/lib/path-guard.sh
+source "${GA}/scripts/lib/path-guard.sh"
 
 setup() {
   [[ -f "${REAL_DRIVER}" ]] || skip "daemon-cycle.sh not found: ${REAL_DRIVER}"
@@ -79,7 +81,7 @@ setup() {
 }
 
 teardown() {
-  [[ -n "${WORK:-}" && -d "${WORK}" ]] && rm -rf -- "${WORK}" || true
+  if ga_guard_path "${WORK:-}"; then rm -rf -- "${WORK:?}"; fi
 }
 
 # make_stage_stubs — the driver resolves daemon_cycle.py / daemon-apply.sh relative to its own dir.
@@ -299,7 +301,7 @@ PY
 # ── AC6 — an install without the entry point is a loud skip, not a new silence ────────────────
 
 @test "AC6: an absent or non-executable doctor entry point skips loudly and keeps the cycle clean" {
-  rm -f -- "${WORK}/real/glass-atrium"
+  if ga_guard_path "${WORK}"; then rm -f -- "${WORK:?}/real/glass-atrium"; fi
   run_driver --apply-only
   require_doctor_stage
   [[ "${output}" == *"stage=doctor SKIP"* ]] || {
@@ -329,7 +331,7 @@ PY
 # ── AC7 — an unrecordable verdict is a durability miss, never a cycle failure ─────────────────
 
 @test "AC7: an absent or empty report keeps a clean cycle clean and names the miss" {
-  rm -f -- "${OUT_JSON}"
+  if ga_guard_path "${OUT_JSON}"; then rm -f -- "${OUT_JSON:?}"; fi
   run_driver --apply-only
   require_doctor_stage
   # the doctor still ran and still reached a verdict — only its durable landing is missing.
@@ -368,7 +370,7 @@ PY
 # ── AC8 — the anti-masking polarity: a miss never softens a red doctor ────────────────────────
 
 @test "AC8: a failing doctor still degrades the cycle when the verdict cannot be recorded" {
-  rm -f -- "${OUT_JSON}"
+  if ga_guard_path "${OUT_JSON}"; then rm -f -- "${OUT_JSON:?}"; fi
   make_doctor_stub 1
   run_driver --apply-only
   require_doctor_stage

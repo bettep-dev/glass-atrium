@@ -21,7 +21,19 @@ readonly SCRIPT_DIR REPO_ROOT
 readonly AWK_PROG="${SCRIPT_DIR}/classify.awk"
 readonly DEFAULT_OUT="${SCRIPT_DIR}/canonical-baseline.tsv"
 
+# shellcheck source-path=SCRIPTDIR source=../../scripts/lib/path-guard.sh
+source "${REPO_ROOT}/scripts/lib/path-guard.sh"
+
 trap 'echo "ERROR: line ${LINENO}: ${BASH_COMMAND}" >&2' ERR
+
+# RETURN-trap cleanup: the trap bakes each path in when set, so the guard runs on those values here.
+delete_scratch_files() {
+  local scratch
+  for scratch in "$@"; do
+    # shellcheck disable=SC2310  # pure predicate — nothing inside it for errexit to catch
+    if ga_guard_path "${scratch}"; then rm -f -- "${scratch:?}"; fi
+  done
+}
 
 # Classify one file; the label string is written verbatim into the row's path column.
 classify_file() {
@@ -84,7 +96,7 @@ cmd_baseline() {
   tmp="$(mktemp -t comment-baseline.XXXXXX)"
   list="$(mktemp -t comment-surface.XXXXXX)"
   # shellcheck disable=SC2064
-  trap "rm -f -- '${tmp}' '${list}'" RETURN
+  trap "delete_scratch_files '${tmp}' '${list}'" RETURN
 
   local rel
   (cd -- "${REPO_ROOT}" && build_surface) >"${list}"

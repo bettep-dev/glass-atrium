@@ -17,6 +17,8 @@ bats_require_minimum_version 1.5.0
 
 GA="$(cd -- "${BATS_TEST_DIRNAME}/../.." && pwd)"
 REAL_LIB="${GA}/hooks/hook-utils.sh"
+# shellcheck source-path=SCRIPTDIR source=../../scripts/lib/path-guard.sh
+source "${BATS_TEST_DIRNAME}/../../scripts/lib/path-guard.sh"
 
 # Field-kind fixture — one input string exercising every str()/rstrip parity edge in one parse.
 #   special = leading+trailing spaces + escaped quote + backslash + non-ASCII (café)
@@ -31,7 +33,7 @@ setup() {
 }
 
 teardown() {
-  [[ -n "${WORK:-}" && -d "${WORK}" ]] && rm -rf -- "${WORK}" || true
+  if ga_guard_path "${WORK:-}"; then rm -rf -- "${WORK:?}"; fi
 }
 
 # Install a counting python3 shim into WORK/bin that records one byte per invocation then execs the

@@ -18,6 +18,8 @@ GA="$(cd -- "${BATS_TEST_DIRNAME}/.." && pwd)"
 REAL_GA="${GA}/glass-atrium"
 CORE="${GA}/lib/ga-env.sh"
 REPO_MANIFEST="${GA}/manifest.json"
+# shellcheck source-path=SCRIPTDIR source=../scripts/lib/path-guard.sh
+source "${GA}/scripts/lib/path-guard.sh"
 
 setup() {
   command -v jq >/dev/null 2>&1 || skip "jq required"
@@ -39,8 +41,8 @@ SH
 }
 
 teardown() {
-  [[ -n "${GA_SANDBOX:-}" && -d "${GA_SANDBOX}" ]] && rm -rf -- "${GA_SANDBOX}"
-  [[ -n "${TARGET:-}" && -d "${TARGET}" ]] && rm -rf -- "${TARGET}" || true
+  if ga_guard_path "${GA_SANDBOX:-}"; then rm -rf -- "${GA_SANDBOX:?}"; fi
+  if ga_guard_path "${TARGET:-}"; then rm -rf -- "${TARGET:?}"; fi
 }
 
 # settings.json with every EXPECTED_HOOK_BINDINGS entry wired under its event.
@@ -93,6 +95,9 @@ write_full_settings() {
       { "hooks": [ { "type": "command", "command": "~/.claude/hooks/prune-security-warnings-state.sh" } ] },
       { "hooks": [ { "type": "command", "command": "~/.claude/hooks/prune-session-spawns.sh" } ] },
       { "hooks": [ { "type": "command", "command": "~/.claude/hooks/validate-compliance-matrix.sh" } ] }
+    ],
+    "UserPromptSubmit": [
+      { "hooks": [ { "type": "command", "command": "~/.claude/hooks/inject-reply-language.sh" } ] }
     ],
     "Stop": [
       { "hooks": [ { "type": "command", "command": "~/.claude/hooks/advisory-preedit-facts.sh" } ] },
@@ -202,6 +207,13 @@ drop_group() {
   [[ "${output}" != *"dormant hook binding(s)"* ]]
 }
 
+@test "prompt event -> the reply-language pointer reports bound on UserPromptSubmit" {
+  write_full_settings
+  run_doctor_sandbox
+  [[ "${output}" == *"ok   : hook bound — UserPromptSubmit -> inject-reply-language.sh (matcher=<none>)"* ]] \
+    && [[ "${output}" != *"dormant hook binding(s)"* ]]
+}
+
 @test "two-matcher one-hook -> BOTH matchers reported bound (validate-secret-scan)" {
   # validate-secret-scan.sh binds under TWO matchers under one event; the doctor
   # must report each (matcher-scoped) tuple as bound independently — neither row
@@ -301,7 +313,7 @@ drop_group() {
   run_doctor_sandbox
   [[ "${output}" == *"settings.json absent"* ]]
   [[ "${output}" == *"ALL hook event-bindings are unwired"* ]]
-  # EXPECTED_HOOK_BINDINGS enumerates the COMPLETE binding set across all 7 events, and the total
+  # EXPECTED_HOOK_BINDINGS enumerates the COMPLETE binding set across all 8 events, and the total
   # asserted below is read from the populated array (set_binding_figures), never restated here.
   # The total is counted per FLATTENED matcher-leaf, NOT per unique hook basename:
   # validate-secret-scan.sh AND enforce-harness-critical.sh
@@ -400,7 +412,11 @@ drop_group() {
   # same defect twice under two different classes.
   make_ga_sandbox
   write_full_settings
-  rm -f "${GA_SANDBOX}/hooks/cost-tracker.sh"
+  if ga_guard_path "${GA_SANDBOX}"; then
+    rm -f -- "${GA_SANDBOX:?}/hooks/cost-tracker.sh"
+  else
+    return 1
+  fi
   run_doctor_ga_sandbox
   [[ "${output}" != *"NOT executable"* ]]
   [[ "${output}" == *"doctor: PASS"* ]]
@@ -593,7 +609,11 @@ drop_all_part_groups() {
   write_chunk_registry
   write_full_settings
   set_binding_figures
-  rm -f "${GA_SANDBOX}/hooks/inject-scope-part-07.sh"
+  if ga_guard_path "${GA_SANDBOX}"; then
+    rm -f -- "${GA_SANDBOX:?}/hooks/inject-scope-part-07.sh"
+  else
+    return 1
+  fi
   run_doctor_ga_sandbox
   [[ "${output}" == *"$((PART_COUNT - 1)) of ${PART_COUNT} scope-rule part wrapper(s) present"* ]] || {
     echo "no wrapper-presence warn: ${output}"
@@ -685,7 +705,11 @@ drop_all_part_groups() {
   write_full_settings
   # the core FILE, not the directory: that path is what the doctor opens, so removing it states
   # the unreachable condition exactly and needs no recursive delete on a real sandbox directory.
-  rm -f "${GA_SANDBOX}/hooks/lib/inject_chunk.py"
+  if ga_guard_path "${GA_SANDBOX}"; then
+    rm -f -- "${GA_SANDBOX:?}/hooks/lib/inject_chunk.py"
+  else
+    return 1
+  fi
   run_doctor_ga_sandbox
   [[ "${output}" == *"split scope-rule channel BLIND"* ]] || {
     echo "an unreadable core did not report blind: ${output}"

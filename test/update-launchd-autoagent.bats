@@ -22,6 +22,8 @@
 # or the live daemon.
 
 GA="$(cd -- "${BATS_TEST_DIRNAME}/.." && pwd)"
+# shellcheck source-path=SCRIPTDIR source=../scripts/lib/path-guard.sh
+source "${GA}/scripts/lib/path-guard.sh"
 REAL_UPDATE="${GA}/scripts/update.sh"
 
 setup() {
@@ -59,7 +61,7 @@ STUB_EOF
 }
 
 teardown() {
-  [[ -n "${SANDBOX:-}" && -d "${SANDBOX}" ]] && rm -rf -- "${SANDBOX}" || true
+  if ga_guard_path "${SANDBOX:-}"; then rm -rf -- "${SANDBOX:?}"; fi
 }
 
 # Source update.sh in an isolated subshell (contains set -e + ERR trap) and call

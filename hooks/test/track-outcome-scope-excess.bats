@@ -12,6 +12,9 @@
 
 HOOK_SH="${TRACK_OUTCOME_SH:-${BATS_TEST_DIRNAME}/../track-outcome.sh}"
 
+# shellcheck source-path=SCRIPTDIR source=../../scripts/lib/path-guard.sh
+source "${BATS_TEST_DIRNAME}/../../scripts/lib/path-guard.sh"
+
 setup() {
   [[ -f "${HOOK_SH}" ]] || skip "track-outcome.sh not found: ${HOOK_SH}"
   command -v python3 >/dev/null 2>&1 || skip "python3 required"
@@ -52,7 +55,7 @@ setup() {
 }
 
 teardown() {
-  [[ -n "${SE_TMP:-}" && -d "${SE_TMP}" ]] && rm -rf -- "${SE_TMP}" || true
+  if ga_guard_path "${SE_TMP:-}"; then rm -rf -- "${SE_TMP:?}"; fi
 }
 
 # $1 = record-0 delegation prompt, $2 = the completion block text,
@@ -233,7 +236,7 @@ spooled_field() {
   local -a expected=('silent' 'excess' 'silent')
   local block recorded reasons got
   for i in "${!names[@]}"; do
-    rm -rf -- "${SPOOL_DIR}"
+    if ga_guard_path "${SPOOL_DIR}"; then rm -rf -- "${SPOOL_DIR:?}"; fi
     block="$(completion_block 'result: done' 'task_type: bug-fix' 'metric_pass: true' 'confidence: high' \
       "files: ${authored[${i}]}" 'style_ref: hooks/a.sh' 'summary: fixed a')"
     write_transcript "${prompts[${i}]}" "${block}"

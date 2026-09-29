@@ -29,6 +29,8 @@ bats_require_minimum_version 1.5.0
 GA="$(cd -- "${BATS_TEST_DIRNAME}/../.." && pwd)"
 export SKILL="${GA}/scripts/update.sh"
 export REAL_LIB_ROOT="${GA}"
+# shellcheck source-path=SCRIPTDIR source=../lib/path-guard.sh
+source "${GA}/scripts/lib/path-guard.sh"
 
 setup() {
   [[ -f "${SKILL}" ]] || skip "update.sh not found: ${SKILL}"
@@ -47,7 +49,7 @@ teardown() {
   # test between spawn and its bounded reap (best-effort; pid is our own child).
   [[ -n "${UPDATE_PID:-}" ]] && kill -9 "${UPDATE_PID}" 2>/dev/null || true
   UPDATE_PID=""
-  [[ -n "${WORK:-}" && -d "${WORK}" ]] && rm -rf -- "${WORK}" || true
+  if ga_guard_path "${WORK:-}"; then rm -rf -- "${WORK:?}"; fi
 }
 
 # Write file $2 (relative) with content $3 under root $1, creating parent dirs.

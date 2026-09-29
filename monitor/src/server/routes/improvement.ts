@@ -43,6 +43,7 @@ import type {
   ImprovementLoopSuppressionState,
   ImprovementLearningLogResponse,
   ImprovementLearningLogRow,
+  ImprovementParkedPatternRow,
   ImprovementLearningLogStatusBucket,
   ImprovementLoopEventResultBucket,
   ImprovementLoopEventRow,
@@ -220,6 +221,12 @@ interface AgentJoinRow {
   agent: string;
 }
 
+// Latest autoagent cycle start. MAX over an unwindowed scan — null when the table
+// holds no autoagent run at all.
+interface LatestCycleRow {
+  started_at: Date | null;
+}
+
 interface CycleCountRow {
   total_cycles: bigint;
   haiku_skipped: bigint;
@@ -310,6 +317,14 @@ interface LearningLogDbRow {
   last_updated: Date;
   last_transition_at: Date | null;
   last_transition_reason: string | null;
+  intake_skipped: boolean;
+}
+
+// A parked row plus the bucket key its transition reason classifies into. Computed
+// in SQL by the same CASE the parked buckets group on, so a row and the bucket
+// counting it can never disagree.
+interface ParkedPatternDbRow extends LearningLogDbRow {
+  cause: string;
 }
 
 interface LearningLogStatusDbRow {
@@ -487,6 +502,12 @@ interface SuppressionBucketDbRow {
   cause: string;
   count: bigint;
   agents: bigint;
+}
+
+// Per-cycle buckets add cycle coverage: the daemon stamps loop events per UTC day.
+interface CycleSuppressionBucketDbRow extends SuppressionBucketDbRow {
+  cycles: bigint;
+  window_cycles: bigint;
 }
 
 interface PendingSplitDbRow {
@@ -1142,8 +1163,15 @@ async function handleImprovementStats(
         AND run_date >= CURRENT_DATE - INTERVAL '7 days'
     `;
 
-    const [tierRows, appliedRows, rejectedRows, reviewFlagRows, cycleRows, lifetimeRows] =
-      await Promise.all([
+    const [
+      tierRows,
+      appliedRows,
+      rejectedRows,
+      reviewFlagRows,
+      cycleRows,
+      lifetimeRows,
+      latestCycleRows,
+    ] = await Promise.all([
       // tier_distribution — across all proposals (not windowed) so the card stays
       // representative of the steady state; registry-scoped via tierDistWhere.
       prisma.$queryRaw<TierCountDbRow[]>`
@@ -1200,6 +1228,15 @@ async function handleImprovementStats(
             AS rejected_all_time
         FROM core.autoagent_proposals
       `,
+      // Last cycle START, unwindowed. The 7d cycle counts above answer "how did the
+      // recent cycles go"; this answers "did a cycle run at all, and when" — the one
+      // question a window structurally cannot answer, because a loop stopped 8 days
+      // ago empties the window and the counts read as a clean zero.
+      prisma.$queryRaw<LatestCycleRow[]>`
+        SELECT MAX(started_at) AS started_at
+        FROM core.daemon_runs
+        WHERE daemon_name = 'autoagent'
+      `,
     ]);
 
     const tierDistribution = foldTierCounts(tierRows);
@@ -1208,6 +1245,7 @@ async function handleImprovementStats(
     const reviewFlagRow = reviewFlagRows[0];
     const cycleRow = cycleRows[0];
     const lifetimeRow = lifetimeRows[0];
+    const latestCycleStartedAt = latestCycleRows[0]?.started_at ?? null;
 
     const totalCycles = cycleRow === undefined ? 0 : bigintToNumber(cycleRow.total_cycles);
     const haikuSkipped = cycleRow === undefined ? 0 : bigintToNumber(cycleRow.haiku_skipped);
@@ -1232,6 +1270,8 @@ async function handleImprovementStats(
         cycleRow === undefined ? 0 : bigintToNumber(cycleRow.generated_not_applied),
       cycles_nothing_generated_7d:
         cycleRow === undefined ? 0 : bigintToNumber(cycleRow.nothing_generated),
+      latest_cycle_started_at:
+        latestCycleStartedAt === null ? null : latestCycleStartedAt.toISOString(),
     };
 
     statsCache = {
@@ -1323,6 +1363,11 @@ async function handleLearningLog(
       ),
       " OR ",
     )})`;
+    // One column list for the pattern list and the parked rows — both map through rowToLearningLogSummary.
+    const learningLogColumns = Prisma.sql`id, pattern_signature, frequency, agent,
+               status::text AS status, approval_tier::text AS approval_tier,
+               discovered_date, last_updated, last_transition_at, last_transition_reason,
+               ${unpromptablePredicate} AS intake_skipped`;
 
     const [
       totalRows,
@@ -1330,6 +1375,7 @@ async function handleLearningLog(
       patternRows,
       applyCapRows,
       parkedBucketRows,
+      parkedPatternRows,
       parkedUngatedRows,
       cycleBucketRows,
       pendingSplitRows,
@@ -1345,9 +1391,7 @@ async function handleLearningLog(
         ORDER BY count DESC
       `,
       prisma.$queryRaw<LearningLogDbRow[]>`
-        SELECT id, pattern_signature, frequency, agent,
-               status::text AS status, approval_tier::text AS approval_tier,
-               discovered_date, last_updated, last_transition_at, last_transition_reason
+        SELECT ${learningLogColumns}
         FROM core.learning_log
         WHERE discovered_date >= CURRENT_DATE - 7
           ${agentAndFilter}
@@ -1379,6 +1423,23 @@ async function handleLearningLog(
         GROUP BY 1
         ORDER BY 2 DESC
       `,
+      // The rows behind the buckets above. Window-FREE, unlike the pattern list: a
+      // cap stamped weeks ago still parks the loop, so a discovery window would
+      // return an empty held section beside non-zero counts. Same gate and same
+      // CASE as the buckets, so every row lands in the bucket that counted it.
+      // Ordered by when the row was last touched — a park with no transition
+      // timestamp (pre-audit-column rows) falls back to last_updated rather than
+      // sinking to the bottom of a NULLS-LAST ordering and off the LIMIT.
+      prisma.$queryRaw<ParkedPatternDbRow[]>`
+        SELECT ${learningLogColumns},
+               ${suppressionCase} AS cause
+        FROM core.learning_log
+        WHERE status = 'rejected'::core."LearningStatus"
+          AND last_transition_reason IS NOT NULL
+          ${agentAndFilter}
+        ORDER BY COALESCE(last_transition_at, last_updated) DESC, id DESC
+        LIMIT ${limit}
+      `,
       // F5 — the same population WITHOUT the registry gate. The delta is the set
       // the gate hides: a parked pattern whose agent left the registry still parks
       // that agent's loop, and reporting zero for it is the same class of lie the
@@ -1394,10 +1455,15 @@ async function handleLearningLog(
       // are emitted precisely BECAUSE the agent is not a real roster stem, so the
       // gate would zero out the one bucket that reports them and the count would
       // silently exclude its own subject.
-      prisma.$queryRaw<SuppressionBucketDbRow[]>`
+      prisma.$queryRaw<CycleSuppressionBucketDbRow[]>`
         SELECT eval_result AS cause,
                COUNT(*)::bigint AS count,
-               COUNT(DISTINCT agent)::bigint AS agents
+               COUNT(DISTINCT agent)::bigint AS agents,
+               COUNT(DISTINCT date_trunc('day', event_ts AT TIME ZONE 'UTC'))::bigint AS cycles,
+               (SELECT COUNT(DISTINCT date_trunc('day', e.event_ts AT TIME ZONE 'UTC'))
+                FROM core.autoagent_loop_events e
+                WHERE e.event_ts >= now() - make_interval(days => ${SUPPRESSION_WINDOW_DAYS})
+               )::bigint AS window_cycles
         FROM core.autoagent_loop_events
         WHERE event_ts >= now() - make_interval(days => ${SUPPRESSION_WINDOW_DAYS})
           AND eval_result IN (${Prisma.join([...SUPPRESSION_EVAL_RESULTS])})
@@ -1435,10 +1501,14 @@ async function handleLearningLog(
     const pendingSplitRow = pendingSplitRows[0];
     const loopSuppressionState: ImprovementLoopSuppressionState = {
       parked,
-      per_cycle: cycleBucketRows.map((row) =>
-        suppressionBucket(row.cause, bigintToNumber(row.count), bigintToNumber(row.agents)),
-      ),
+      parked_patterns: parkedPatternRows.map(rowToParkedPattern),
+      per_cycle: cycleBucketRows.map((row) => ({
+        ...suppressionBucket(row.cause, bigintToNumber(row.count), bigintToNumber(row.agents)),
+        cycles: bigintToNumber(row.cycles),
+      })),
       per_cycle_window_days: SUPPRESSION_WINDOW_DAYS,
+      per_cycle_window_cycles:
+        cycleBucketRows[0] === undefined ? 0 : bigintToNumber(cycleBucketRows[0].window_cycles),
       pending_unpromptable:
         pendingSplitRow === undefined ? 0 : bigintToNumber(pendingSplitRow.unpromptable),
       pending_total:
@@ -2862,7 +2932,12 @@ function rowToLearningLogSummary(row: LearningLogDbRow): ImprovementLearningLogR
     last_updated: row.last_updated.toISOString(),
     last_transition_at: row.last_transition_at === null ? null : row.last_transition_at.toISOString(),
     last_transition_reason: row.last_transition_reason,
+    intake_skipped: row.intake_skipped,
   };
+}
+
+function rowToParkedPattern(row: ParkedPatternDbRow): ImprovementParkedPatternRow {
+  return { ...rowToLearningLogSummary(row), cause: row.cause };
 }
 
 function rowToLearningLogStatusBucket(

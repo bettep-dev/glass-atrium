@@ -44,6 +44,8 @@ export interface SessionDistributionRow {
   total_tokens: number;
   event_count: number;
   last_event_at: string;
+  // Model carrying most of the session's cost in the window; null when no event recorded a model.
+  top_model: string | null;
 }
 
 export interface SessionDistributionResponse {
@@ -105,6 +107,9 @@ export interface TurnStatsResponse {
   days: CostWindowDays;
   // stop_reason distribution, ORDER BY event_count DESC.
   stop_reasons: StopReasonBucket[];
+  // Distinct sessions behind stop_reasons — a session counts under every reason it hit,
+  // so the per-reason session_count column sums past this population.
+  stop_reason_session_count: number;
   // Single-row turn aggregate over the window.
   turns: TurnStatsRow;
   fetched_at: string;

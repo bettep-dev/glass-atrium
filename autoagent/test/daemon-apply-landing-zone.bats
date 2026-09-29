@@ -39,6 +39,8 @@ bats_require_minimum_version 1.5.0
 
 GA="$(cd -- "${BATS_TEST_DIRNAME}/../.." && pwd)"
 REAL_SCRIPT="${GA}/autoagent/daemon-apply.sh"
+# shellcheck source-path=SCRIPTDIR source=../../scripts/lib/path-guard.sh
+source "${GA}/scripts/lib/path-guard.sh"
 
 # build_psql_masked_stub — symlink every real command into $1 EXCEPT psql. The
 # whole-PATH mirror (vs a hand-maintained allowlist) is deliberate: the git-free
@@ -128,7 +130,7 @@ teardown() {
   # 000's a target's PARENT dir to force the guard's open() to fail, and `rm -rf`
   # cannot recurse into a 000 dir. u+rwX is a no-op for the other tests.
   [[ -n "${WORK:-}" && -d "${WORK}" ]] && chmod -R u+rwX -- "${WORK}" 2>/dev/null || true
-  [[ -n "${WORK:-}" && -d "${WORK}" ]] && rm -rf -- "${WORK}" || true
+  if ga_guard_path "${WORK:-}"; then rm -rf -- "${WORK:?}"; fi
 }
 
 # snapshot_pristine — capture a byte-for-byte pre-apply baseline of the target.

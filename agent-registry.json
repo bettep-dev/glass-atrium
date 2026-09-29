@@ -577,7 +577,8 @@
         "Edit",
         "Write",
         "WebSearch",
-        "WebFetch"
+        "WebFetch",
+        "Skill"
       ],
       "phase": "analysis",
       "dual_phase": false,

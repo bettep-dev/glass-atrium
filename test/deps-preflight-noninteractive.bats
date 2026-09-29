@@ -47,6 +47,8 @@
 GA="$(cd -- "${BATS_TEST_DIRNAME}/.." && pwd)"
 DEPS_SH="${GA}/lib/ga-deps.sh"
 LAUNCHER="${GA}/glass-atrium"
+# shellcheck source-path=SCRIPTDIR source=../scripts/lib/path-guard.sh
+source "${GA}/scripts/lib/path-guard.sh"
 
 setup() {
   [[ -f "${DEPS_SH}" ]] || skip "lib not found: ${DEPS_SH}"
@@ -63,7 +65,7 @@ setup() {
 }
 
 teardown() {
-  [[ -n "${SANDBOX:-}" && -d "${SANDBOX}" ]] && rm -rf -- "${SANDBOX}"
+  if ga_guard_path "${SANDBOX:-}"; then rm -rf -- "${SANDBOX:?}"; fi
 }
 
 # === D2 — ga_cmd_homebrew_install emits the in-process function token ===============
@@ -796,6 +798,26 @@ extract_launcher_fn() {
   [[ "${body}" == *'return 1'* ]] || return 1
 }
 
+# A sentinel pgrep still matched → each match (pid, parent, start, command) + every live bats run, then fail.
+print_sentinel_owners() {
+  local matched="${output-}" matched_list pid candidate_pids
+  matched_list="$(printf '%s\n' "${matched}" | paste -sd' ' -)"
+  printf 'pgrep -f %s matched pids: %s\n' "$1" "${matched_list}"
+  # a match can exit before ps reads it (ps exits 1) → name it and go on: errexit binds after the final ||.
+  while IFS= read -r pid; do
+    ps -o pid=,ppid=,lstart=,command= -p "${pid}" 2>&1 || printf '%s (exited before ps)\n' "${pid}"
+  done <<<"${matched}"
+  candidate_pids="$(pgrep -f 'bats-exec-suite|run-bats-parallel' | paste -sd, -)"
+  # macOS pgrep skips its own ancestors (this run); procps pgrep lists them → tell apart by the bats pid.
+  printf 'live bats runs (this run: bats pid %s):\n' "${BATS_ROOT_PID:-unknown}"
+  if [[ -n "${candidate_pids}" ]]; then
+    ps -o pid,ppid,lstart,command -p "${candidate_pids}" 2>&1 || printf 'none left by ps time\n'
+  else
+    printf 'none\n'
+  fi
+  return 1
+}
+
 @test "hang-guard(live): ga_fakechat_install exits 0 on stubbed-present, killing+reaping the hung bg pid" {
   local stub="${SANDBOX}/bin"
   mkdir -p "${stub}"
@@ -808,10 +830,10 @@ extract_launcher_fn() {
   PATH="${stub}:${PATH}"
   local rc=0
   ga_fakechat_install || rc=$?
-  [[ "${rc}" -eq 0 ]]
+  [[ "${rc}" -eq 0 ]] || return 1
   # the backgrounded claude was killed+reaped — no leaked child survives.
   run pgrep -f '918273645'
-  [[ "${status}" -ne 0 ]]
+  [[ "${status}" -ne 0 ]] || print_sentinel_owners '918273645'
 }
 
 @test "hang-guard(live): ga_fakechat_install is NON-FATAL (returns 1) + reaps the pid on the WALL-CLOCK ceiling" {
@@ -830,7 +852,7 @@ extract_launcher_fn() {
   GA_PLUGIN_INSTALL_TIMEOUT_SECS=1 ga_fakechat_install || rc=$?
   [[ "${rc}" -eq 1 ]] || return 1 # non-fatal failure verdict
   run pgrep -f '918273646'
-  [[ "${status}" -ne 0 ]] || return 1 # the live bg claude was killed+reaped at the ceiling
+  [[ "${status}" -ne 0 ]] || print_sentinel_owners '918273646' # the live bg claude was killed+reaped at the ceiling
 }
 
 @test "hang-guard(body): ga_marketplace_add mirrors the wall-clock ceiling + SIGTERM→SIGKILL escalation reap" {
@@ -1548,4 +1570,19 @@ t6_seed_manifests() {
       }
     done
   done
+}
+
+@test "teardown succeeds silently when setup skipped before creating the temp dir" {
+  local saved="${SANDBOX}"
+  unset SANDBOX
+  run teardown
+  SANDBOX="${saved}"
+  [[ "${status}" -eq 0 ]] || {
+    echo "teardown without a temp dir failed (status ${status}): ${output}" >&2
+    return 1
+  }
+  [[ -z "${output}" ]] || {
+    echo "teardown without a temp dir wrote: ${output}" >&2
+    return 1
+  }
 }

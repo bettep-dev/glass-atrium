@@ -23,6 +23,9 @@
 
 SCRIPT="${BATS_TEST_DIRNAME}/../sync-registry-tools.sh"
 
+# shellcheck source-path=SCRIPTDIR source=../lib/path-guard.sh
+source "${BATS_TEST_DIRNAME}/../lib/path-guard.sh"
+
 setup() {
   [[ -x "${SCRIPT}" ]] || skip "sync-registry-tools.sh not executable: ${SCRIPT}"
   WORK="$(mktemp -d -t sync-registry-tools-bats.XXXXXX)"
@@ -52,7 +55,7 @@ JSON
 }
 
 teardown() {
-  [[ -n "${WORK:-}" && -d "${WORK}" ]] && rm -rf -- "${WORK}"
+  if ga_guard_path "${WORK:-}"; then rm -rf -- "${WORK:?}"; fi
 }
 
 # Write an agent .md whose frontmatter body is `$1` (the text between fences).
@@ -322,4 +325,19 @@ tools: [Read'
   [[ "${status}" -eq 3 ]] || return 1
   [[ "${output}" == *"DRIFT"* ]] || return 1
   assert_registry_unchanged || return 1
+}
+
+@test "teardown succeeds silently when setup skipped before creating the temp dir" {
+  local saved="${WORK}"
+  unset WORK
+  run teardown
+  WORK="${saved}"
+  [[ "${status}" -eq 0 ]] || {
+    echo "teardown without a temp dir failed (status ${status}): ${output}" >&2
+    return 1
+  }
+  [[ -z "${output}" ]] || {
+    echo "teardown without a temp dir wrote: ${output}" >&2
+    return 1
+  }
 }

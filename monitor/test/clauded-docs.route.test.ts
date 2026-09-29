@@ -366,10 +366,10 @@ test("PUT /api/clauded-docs/:id: plain-format mismatch (md row ← yaml_body) �
   }
 });
 
-// POST doc_status 계약 — 실린 값은 그대로 저장되고, 'progress' 는 미지정일 때만 적용되는 기본값.
+// POST doc_status 계약 — 실린 값은 그대로 저장되고, 'doc_review' 는 미지정일 때만 적용되는 기본값.
 // html/plain 두 primary kind 가 각자 insert 를 호출하므로 양쪽 모두 확인 — 한쪽만 보면 다른 경로가
 // 지정값을 무시해도 통과한다.
-test("POST /api/clauded-docs: doc_status 는 지정값 그대로 저장 · progress 는 미지정일 때만 기본값 (html·md 양쪽)", async () => {
+test("POST /api/clauded-docs: doc_status 는 지정값 그대로 저장 · doc_review 는 미지정일 때만 기본값 (html·md 양쪽)", async () => {
   const createdIds: number[] = [];
 
   // doc_status 유무만 바꿔 POST → 응답 doc_status 반환. 응답은 INSERT ... RETURNING 행에서
@@ -394,7 +394,7 @@ test("POST /api/clauded-docs: doc_status 는 지정값 그대로 저장 · progr
     assert.strictEqual(
       await postDocStatus("post-status-html-done", "html_body", "done"),
       "done",
-      "html primary: 지정한 doc_status=done 이 저장돼야 함 — 기본값이 지정값을 덮으면 클라이언트가 done 으로 만든 문서가 progress 로 생성된다",
+      "html primary: 지정한 doc_status=done 이 저장돼야 함 — 기본값이 지정값을 덮으면 클라이언트가 done 으로 만든 문서가 doc_review 로 생성된다",
     );
     assert.strictEqual(
       await postDocStatus("post-status-md-done", "md_body", "done"),
@@ -403,13 +403,13 @@ test("POST /api/clauded-docs: doc_status 는 지정값 그대로 저장 · progr
     );
     assert.strictEqual(
       await postDocStatus("post-status-html-default", "html_body", undefined),
-      "progress",
-      "html primary: progress 는 doc_status 미지정일 때만 쓰이는 기본값",
+      "doc_review",
+      "html primary: doc_review 는 doc_status 미지정일 때만 쓰이는 기본값",
     );
     assert.strictEqual(
       await postDocStatus("post-status-md-default", "md_body", undefined),
-      "progress",
-      "plain primary: progress 는 doc_status 미지정일 때만 쓰이는 기본값",
+      "doc_review",
+      "plain primary: doc_review 는 doc_status 미지정일 때만 쓰이는 기본값",
     );
   } finally {
     for (const id of createdIds) await deleteDoc(app, id);
@@ -418,12 +418,12 @@ test("POST /api/clauded-docs: doc_status 는 지정값 그대로 저장 · progr
 
 // PUT doc_status toggle.
 // standalone 행(folder_id IS NULL)도 cascade-only path 진입 → cascadeUpdateDocStatus CTE 가 self-only 집합으로 degradation (단일 행 갱신). 4 시나리오:
-//   (1) standalone progress→done 토글 → 200 + done 영속화
-//   (2) standalone done→progress 역토글 — 양방향 정합
+//   (1) standalone doc_review→done 토글 → 200 + done 영속화
+//   (2) standalone done→doc_review 역토글 — 양방향 정합
 //   (3) grouped(folder_id 존재) cascade 보존 — 회귀 가드
 //   (4) standalone PUT 시 cascade_only 로그 emit + cascade_count=1 + folder_id=null
 
-test("PUT /api/clauded-docs/:id: standalone (folder_id=NULL) doc_status progress→done — 200 + 영속화", async () => {
+test("PUT /api/clauded-docs/:id: standalone (folder_id=NULL) doc_status doc_review→done — 200 + 영속화", async () => {
   const title = makeTitle("put-status-standalone-done");
   const html = makeHtmlBody(title);
   const created = await postCreate(app, {
@@ -439,7 +439,7 @@ test("PUT /api/clauded-docs/:id: standalone (folder_id=NULL) doc_status progress
     doc_status: string;
   };
   assert.strictEqual(detail.folder_id, null, "신규 standalone row 의 folder_id 는 null");
-  assert.strictEqual(detail.doc_status, "progress", "POST default doc_status 는 progress");
+  assert.strictEqual(detail.doc_status, "doc_review", "POST default doc_status 는 doc_review");
 
   try {
     // PUT — body 동일 (no-op short-circuit 경로) + doc_status=done →
@@ -535,14 +535,14 @@ test("PUT /api/clauded-docs/:id: grouped (folder_id 존재) cascade 회귀 — s
       "sibling C 가 cascade 로 done 전환 (grouped 의미 보존)",
     );
 
-    // anchor A — folder_id=NULL 이므로 cascade 범위 외 → progress 유지.
+    // anchor A — folder_id=NULL 이므로 cascade 범위 외 → doc_review 유지.
     const getARes = await app.inject({ method: "GET", url: `/api/clauded-docs/${aDetail.id}` });
     assert.strictEqual(getARes.statusCode, 200);
     const aBody2 = getARes.json() as { doc_status: string };
     assert.strictEqual(
       aBody2.doc_status,
-      "progress",
-      "anchor A (folder_id=NULL) 는 B/C 그룹의 cascade 범위 외 → progress 유지",
+      "doc_review",
+      "anchor A (folder_id=NULL) 는 B/C 그룹의 cascade 범위 외 → doc_review 유지",
     );
   } finally {
     await deleteDoc(app, cDetail.id);
@@ -1412,4 +1412,142 @@ test("POST /api/clauded-docs — 존재하지 않는 folder_id (FK 23503) 는 50
     typeof errorBody.reason === "string" && errorBody.reason.length > 0,
     "reason 에 pg 메시지 전달",
   );
+});
+
+// shared author → every query also ANDs the author filter · 'progress' row = retired alias
+const STATUS_FIXTURE = {
+  AUTHOR: `${SUITE_MARKER}-st`,
+  STAGES: ["progress", "implementing", "impl_review", "impl_done", "done"],
+} as const;
+
+interface StatusFixtureRow {
+  id: number;
+  stage: string;
+}
+
+interface StatusListBody {
+  total: number;
+  rows: Array<{ id: number; doc_status: string }>;
+  filter: { doc_status: string[] | null };
+}
+
+// token ↔ read stage relation the filter must honour: open = not terminal, alias = first stage.
+function isStageMatched(token: string, stage: string): boolean {
+  if (token === "open") return stage !== "done";
+  if (token === "progress") return stage === "doc_review";
+  return token === stage;
+}
+
+async function createStatusFixture(): Promise<StatusFixtureRow[]> {
+  const created: StatusFixtureRow[] = [];
+  for (const stored of STATUS_FIXTURE.STAGES) {
+    const title = makeTitle(`status-filter-${stored}`);
+    const res = await postCreate(app, { title, author: STATUS_FIXTURE.AUTHOR, html_body: makeHtmlBody(title) });
+    assert.strictEqual(res.status, 201, `fixture POST: ${JSON.stringify(res.body)}`);
+    const id = (res.body as { id: number }).id;
+    // raw write — the API normalises the alias on write, and legacy rows predate that.
+    await getPrisma().$executeRaw`
+      UPDATE monitor.documents SET doc_status = ${stored}::monitor."DocStatus" WHERE id = ${BigInt(id)}
+    `;
+    created.push({ id, stage: stored === "progress" ? "doc_review" : stored });
+  }
+  return created;
+}
+
+async function getStatusList(query: string): Promise<{ statusCode: number; body: StatusListBody }> {
+  const res = await app.inject({
+    method: "GET",
+    url: `/api/clauded-docs?author=${encodeURIComponent(STATUS_FIXTURE.AUTHOR)}&${query}`,
+  });
+  return { statusCode: res.statusCode, body: res.json() as StatusListBody };
+}
+
+test("GET /api/clauded-docs?doc_status: rows and total are exactly the union of every token's stage match", async () => {
+  const fixture = await createStatusFixture();
+  const cases: Array<{ query: string; tokens: string[] }> = [
+    { query: "doc_status=implementing", tokens: ["implementing"] },
+    { query: "doc_status=implementing&doc_status=impl_review", tokens: ["implementing", "impl_review"] },
+    { query: "doc_status=implementing,impl_review,impl_done", tokens: ["implementing", "impl_review", "impl_done"] },
+    { query: "doc_status=implementing,%20impl_review&doc_status=impl_done", tokens: ["implementing", "impl_review", "impl_done"] },
+    { query: "doc_status=doc_review", tokens: ["doc_review"] },
+    { query: "doc_status=progress", tokens: ["progress"] },
+    { query: "doc_status=open,done", tokens: ["open", "done"] },
+    { query: "doc_status=done,done&doc_status=done", tokens: ["done"] },
+  ];
+
+  try {
+    for (const { query, tokens } of cases) {
+      const { statusCode, body } = await getStatusList(query);
+      assert.strictEqual(statusCode, 200, `${query}: ${JSON.stringify(body)}`);
+
+      const expected = fixture.filter((row) => tokens.some((token) => isStageMatched(token, row.stage)));
+      assert.deepStrictEqual(
+        body.rows.map((row) => row.id).sort(), expected.map((row) => row.id).sort(),
+        `${query}: rows = union of token matches`,
+      );
+      assert.strictEqual(body.total, expected.length, `${query}: total is the filtered count`);
+      assert.deepStrictEqual(body.filter.doc_status, tokens, `${query}: echo = de-duplicated tokens as sent`);
+    }
+  } finally {
+    for (const row of fixture) await deleteDoc(app, row.id);
+  }
+});
+
+test("GET /api/clauded-docs?doc_status: absent or empty-only means no filter", async () => {
+  const fixture = await createStatusFixture();
+  try {
+    for (const query of ["", "doc_status=", "doc_status=,", "doc_status=&doc_status=%20"]) {
+      const { statusCode, body } = await getStatusList(query);
+      assert.strictEqual(statusCode, 200, `'${query}': ${JSON.stringify(body)}`);
+      assert.strictEqual(body.total, fixture.length, `'${query}': every fixture row counted`);
+      assert.strictEqual(body.filter.doc_status, null, `'${query}': echo null`);
+    }
+  } finally {
+    for (const row of fixture) await deleteDoc(app, row.id);
+  }
+});
+
+test("GET /api/clauded-docs?doc_status: pages partition the filtered set while total stays the filtered count", async () => {
+  const fixture = await createStatusFixture();
+  const inFlight = fixture.filter((row) => ["implementing", "impl_review", "impl_done"].includes(row.stage));
+  const statusQuery = "doc_status=implementing,impl_review,impl_done&limit=2";
+
+  try {
+    const first = await getStatusList(`${statusQuery}&offset=0`);
+    const second = await getStatusList(`${statusQuery}&offset=2`);
+    assert.strictEqual(first.statusCode, 200);
+    assert.strictEqual(second.statusCode, 200);
+
+    assert.strictEqual(first.body.rows.length, 2, "first page honours limit");
+    assert.strictEqual(first.body.total, inFlight.length);
+    assert.strictEqual(second.body.total, inFlight.length);
+    assert.deepStrictEqual(
+      [...first.body.rows, ...second.body.rows].map((row) => row.id).sort(),
+      inFlight.map((row) => row.id).sort(),
+      "the two pages cover the filtered set with no overlap",
+    );
+  } finally {
+    for (const row of fixture) await deleteDoc(app, row.id);
+  }
+});
+
+test("GET /api/clauded-docs?doc_status: any unknown token rejects the whole request, ahead of limit/offset", async () => {
+  const expected = {
+    error: "invalid_param",
+    param: "doc_status",
+    allowed: ["doc_review", "implementing", "impl_review", "impl_done", "done", "progress", "open"],
+  };
+  for (const query of [
+    "doc_status=bogus",
+    "doc_status=implementing,bogus",
+    "doc_status=implementing&doc_status=bogus",
+    "doc_status=bogus&limit=abc&offset=-1",
+  ]) {
+    const res = await app.inject({ method: "GET", url: `/api/clauded-docs?${query}` });
+    assert.strictEqual(res.statusCode, 400, query);
+    const body = res.json() as typeof expected;
+    assert.deepStrictEqual(
+      { ...body, allowed: [...body.allowed].sort() }, { ...expected, allowed: [...expected.allowed].sort() }, query,
+    );
+  }
 });

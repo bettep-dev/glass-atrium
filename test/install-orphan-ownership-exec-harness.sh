@@ -35,6 +35,8 @@ export ATRIUM_MONITOR_PORT=16145
 
 # shellcheck source=/dev/null
 source "${GA_DIR_ROOT}/glass-atrium" >/dev/null 2>&1
+# shellcheck source-path=SCRIPTDIR source=../scripts/lib/path-guard.sh
+source "${GA_DIR_ROOT}/scripts/lib/path-guard.sh"
 set +e
 trap - ERR EXIT INT TERM
 
@@ -49,8 +51,12 @@ fail() {
   printf '    FAIL  %s\n' "$1"
 }
 
-WORK="$(mktemp -d "${TMPDIR:-/tmp}/ga-orphan.XXXXXX")"
-cleanup_all() { rm -rf "${WORK}"; }
+# Absolute even under a relative TMPDIR, so the guarded delete below still removes the scratch.
+SCRATCH_DIR="$(cd -- "${TMPDIR:-/tmp}" && pwd -P)"
+WORK="$(mktemp -d "${SCRATCH_DIR}/ga-orphan.XXXXXX")"
+cleanup_all() {
+  if ga_guard_path "${WORK}"; then rm -rf -- "${WORK:?}"; fi
+}
 trap cleanup_all EXIT
 
 KILLLOG="${WORK}/kill.log"
@@ -70,7 +76,7 @@ reset_stubs() {
   STUB_CWD=""
   STUB_NEVER_FREE=0
   : >"${KILLLOG}"
-  rm -f "${FREED}"
+  if ga_guard_path "${FREED}"; then rm -f -- "${FREED:?}"; fi
 }
 
 # === command stubs (shell functions — override builtins + PATH) =======================
@@ -244,7 +250,7 @@ else
 fi
 # … and stop_launchd bootouts + settles + proceeds.
 : >"${KILLLOG}"
-rm -f "${FREED}"
+if ga_guard_path "${FREED}"; then rm -f -- "${FREED:?}"; fi
 STOP_LD_OUT="$({ stop_launchd_monitor_for_install; } 2>&1)"
 STOP_LD_RC=$?
 if [[ "${STOP_LD_RC}" -eq 0 ]]; then

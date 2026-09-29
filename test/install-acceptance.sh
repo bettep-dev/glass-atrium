@@ -19,6 +19,8 @@ GA_BIN="${GA}/glass-atrium"
 RENDER_ENV="${GA}/scripts/render-monitor-env.sh"
 REAL_CLAUDE="${HOME}/.claude"
 REAL_CONFIG="${GA}/config.toml"
+# shellcheck source-path=SCRIPTDIR source=../scripts/lib/path-guard.sh
+source "${GA}/scripts/lib/path-guard.sh"
 
 PASS=0
 FAIL=0
@@ -81,7 +83,11 @@ export ATRIUM_UPDATE_STATE_DIR="${SANDBOX}/update-state"
 # empty dir → trivial scan (the DOCTOR_AUTH_REPORTS_DIR seam the bats suites already use)
 mkdir -p "${SANDBOX}/empty-reports"
 export DOCTOR_AUTH_REPORTS_DIR="${SANDBOX}/empty-reports"
-trap 'rm -rf -- "${SANDBOX}"' EXIT
+# shellcheck disable=SC2329 # run by the EXIT trap; 0.11 misses a trap reached through the final exit
+delete_sandbox() {
+  if ga_guard_path "${SANDBOX}"; then rm -rf -- "${SANDBOX:?}"; fi
+}
+trap delete_sandbox EXIT
 
 printf 'SANDBOX=%s\n' "${SANDBOX}"
 
@@ -300,7 +306,7 @@ MAL_RC=$?
 grep -q 'not valid JSON' "${MSAND}/wire.log" && ok "loud-fail message emitted" || no "no loud-fail message"
 MAL_HASH_AFTER="$(shasum "${MSAND}/settings.json" | awk '{print $1}')"
 [[ "${MAL_HASH_BEFORE}" == "${MAL_HASH_AFTER}" ]] && ok "malformed settings left byte-identical (no partial merge)" || no "malformed settings was mutated"
-rm -rf -- "${MSAND}"
+if ga_guard_path "${MSAND}"; then rm -rf -- "${MSAND:?}"; fi
 
 # =============================================================================
 # STEP 6-7 — the DESTRUCTIVE full-uninstall path (AC5 + idempotency + --verify-clean
@@ -326,6 +332,7 @@ rm -rf -- "${MSAND}"
 # un-wire logic itself is unit-covered by test/unwire-hooks.bats. This harness owns
 # the install-mechanism ACs (STEP 0-5) + the real-target safety guard (STEP 8).
 hdr "STEP 6-7 — full uninstall (SKIPPED: requires a clean/hermetic machine)"
+# GA-RM[not-executed]: printf text naming the skipped uninstall step, never run
 printf '  SKIP: destructive uninstall (real db drop + %s/monitor/node_modules rm -rf +\n' "${GA}"
 printf '        detached-daemon teardown) is not isolatable in this light GA_TARGET_HOME sandbox.\n'
 printf '  SKIP: hermetic full-uninstall coverage — test/oss-e2e-bootstrap.sh (isolated HOME + throwaway db + --yes);\n'

@@ -65,7 +65,9 @@ ga_chunk_warn() {
   if [[ -f "${sink}" ]]; then
     size="$(wc -c <"${sink}" 2>/dev/null | tr -cd '0-9' || true)"
     if [[ -n "${size}" && "${size}" -gt "${GA_CHUNK_SINK_MAX_BYTES}" ]]; then
-      rm -f "${sink}" 2>/dev/null || true
+      if ga_guard_path "${sink}"; then
+        rm -f -- "${sink:?}"
+      fi || true
     fi
   fi
   stamp="$(date -u +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || true)"

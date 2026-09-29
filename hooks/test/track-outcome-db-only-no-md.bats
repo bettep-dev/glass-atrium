@@ -27,6 +27,9 @@ HOOKS_DIR="${BATS_TEST_DIRNAME}/.."
 HOOK_SH="${HOOKS_DIR}/track-outcome.sh"
 PG_HELPER_SRC="${HOOKS_DIR}/_pg_outcome_dualwrite.py"
 
+# shellcheck source-path=SCRIPTDIR source=../../scripts/lib/path-guard.sh
+source "${BATS_TEST_DIRNAME}/../../scripts/lib/path-guard.sh"
+
 setup() {
   [[ -f "${HOOK_SH}" ]] || skip "track-outcome.sh not found: ${HOOK_SH}"
   [[ -x "${PG_HELPER_SRC}" ]] || skip "_pg_outcome_dualwrite.py not executable: ${PG_HELPER_SRC}"
@@ -55,6 +58,7 @@ setup() {
   mkdir -p "${SHIM_DIR}"
   {
     printf '%s\n' '#!/usr/bin/env bash'
+    printf '%s\n' "printf '%s\\n' \"\$*\" >>\"${DB_TMP}/python3-argv.log\""
     printf '%s\n' 'for _a in "$@"; do'
     printf '%s\n' '  case "${_a}" in'
     printf '%s\n' "    *_pg_outcome_dualwrite.py) cat >\"${STUB_MARKER}\"; exit 0 ;;"
@@ -66,9 +70,7 @@ setup() {
 }
 
 teardown() {
-  if [[ -n "${DB_TMP:-}" && -d "${DB_TMP}" ]]; then
-    rm -rf "${DB_TMP}"
-  fi
+  if ga_guard_path "${DB_TMP:-}"; then rm -rf -- "${DB_TMP:?}"; fi
 }
 
 # Synthetic subagent transcript ending in a terminal [COMPLETION] block, preceded
@@ -218,6 +220,60 @@ PY
   }
   [ "${output}" = "OK" ] || {
     echo "unexpected pin output: ${output}"
+    return 1
+  }
+}
+
+# EXIT TEARDOWN — the exit trap removes the temps this run created, and nothing an inherited value names.
+
+# $@ = extra env assignments. The python3 shim's argv log names every temp the run executed.
+run_hook_teardown() {
+  run env \
+    HOME="${SANDBOX_HOME}" \
+    PATH="${SHIM_DIR}:${PATH}" \
+    CLAUDE_GATE_INFLIGHT="" \
+    "$@" \
+    bash -c 'bash "$1" < "$2" 2>&1' _ "${HOOK_SH}" "${PAYLOAD_FILE}"
+}
+
+@test "exit teardown removes the parser and correction-detector temps the run created" {
+  local temps temp
+  write_transcript
+  write_payload
+  jq --arg t "${TRANSCRIPT}" '.transcript_path = $t' "${PAYLOAD_FILE}" >"${PAYLOAD_FILE}.t"
+  mv "${PAYLOAD_FILE}.t" "${PAYLOAD_FILE}"
+
+  run_hook_teardown T9_CORRECTION_DETECTION=true
+  [[ "${status}" -eq 0 ]] || {
+    echo "hook exit ${status}: ${output}"
+    return 1
+  }
+  temps="$(grep -oE '[^ ]*outcome-(record|t9)-[^ ]*' "${DB_TMP}/python3-argv.log" | sort -u)"
+  [[ "${temps}" == *outcome-record-* && "${temps}" == *outcome-t9-* ]] || {
+    echo "the run never executed both temps: ${temps}"
+    return 1
+  }
+  while IFS= read -r temp; do
+    [[ ! -e "${temp}" ]] || {
+      echo "temp left after exit: ${temp}"
+      return 1
+    }
+  done <<<"${temps}"
+}
+
+@test "exit teardown never deletes a file an inherited T9_PY_FILE names" {
+  local inherited="${DB_TMP}/inherited.py"
+  write_transcript
+  write_payload
+  printf 'keep\n' >"${inherited}"
+
+  run_hook_teardown T9_CORRECTION_DETECTION=false T9_PY_FILE="${inherited}"
+  [[ "${status}" -eq 0 ]] || {
+    echo "hook exit ${status}: ${output}"
+    return 1
+  }
+  [[ -f "${inherited}" ]] || {
+    echo "the exit teardown deleted a file this run never created"
     return 1
   }
 }

@@ -8,15 +8,19 @@
 //         stored timestamp (idempotent, never re-stamped).
 //   (AC5) Non-done_with_concerns target → 400 invalid_result, unknown id → 404, and
 //         neither writes anything.
-//   (AC6) Closing a row moves EXACTLY ONE cross-analysis field — by_result.closed_count
-//         for the closed row's result. Every count, every reconstructed_count and every
-//         other aggregate stay closure-blind.
+//   (AC6) Closing a row moves ONLY the closure-aware counts that cover it — by_result
+//         closed_count +1 and writer_open_count -1 for the closed row's result, and
+//         by_agent_top_10 writer_open_count -1 for its agent. Every count, every
+//         reconstructed_count and every other aggregate stay closure-blind.
 //
 // DB: real Postgres — seed summary carries SUITE_MARKER → ?q 한정 조회, cleanup 은 cid LIKE.
 // 라이브 1000+ done_with_concerns 행은 절대 건드리지 않는다 (seed 행만 종결/삭제).
 
 import test, { after, before } from "node:test";
 import assert from "node:assert/strict";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { randomUUID } from "node:crypto";
 
 import "dotenv/config";
@@ -24,6 +28,7 @@ import "dotenv/config";
 import Fastify, { type FastifyInstance } from "fastify";
 
 import { disconnectPrisma, getPrisma } from "../src/server/db.js";
+import { resetAgentRegistryCache } from "../src/server/agents/registry.js";
 import { registerOutcomesRoutes } from "../src/server/routes/outcomes.js";
 import type {
   OutcomeCloseResponse,
@@ -49,7 +54,37 @@ const SEED_NON_DWC = 3;
 
 let seedIds: number[] = [];
 
+function seedAgent(index: number): string {
+  return `close-route-agent-${index}`;
+}
+
+// Hermetic registry — by_agent_top_10 ignores include_all, so seed agents reach it only as members here.
+function buildRegistryFixture(): unknown {
+  const agents: Record<string, unknown> = {};
+  SEED_RESULTS.forEach((_, index) => {
+    agents[seedAgent(index)] = { domains: ["test"], phase: "implementation", dual_phase: false };
+  });
+  return { $schema: "agent-registry", version: "1.1", agents };
+}
+
+let registryRoot: string;
+
+async function setRegistryFixture(): Promise<void> {
+  registryRoot = await mkdtemp(join(tmpdir(), "close-route-registry-"));
+  const registryPath = join(registryRoot, "agent-registry.json");
+  await writeFile(registryPath, JSON.stringify(buildRegistryFixture()), "utf8");
+  process.env.AGENT_REGISTRY_PATH = registryPath;
+  resetAgentRegistryCache();
+}
+
+async function clearRegistryFixture(): Promise<void> {
+  delete process.env.AGENT_REGISTRY_PATH;
+  resetAgentRegistryCache();
+  await rm(registryRoot, { recursive: true, force: true });
+}
+
 before(async () => {
+  await setRegistryFixture();
   app = Fastify({ logger: false });
   await registerOutcomesRoutes(app);
   await app.ready();
@@ -71,6 +106,7 @@ after(async () => {
     console.error("[close-route-test cleanup] DB scrub failed:", error);
   }
   await disconnectPrisma();
+  await clearRegistryFixture();
 });
 
 async function seedRows(): Promise<void> {
@@ -84,7 +120,7 @@ async function seedRows(): Promise<void> {
         (record_ts, agent, task_type, result, summary, cid)
       VALUES
         (NOW() - (${minutesAgo}::int * INTERVAL '1 minute'),
-         ${`close-route-agent-${i}`},
+         ${seedAgent(i)},
          'feature'::core."TaskType",
          ${result}::core."OutcomeResult",
          ${`close-route seed ${result} ${SUITE_MARKER}`},
@@ -214,9 +250,9 @@ test("close rejects an unknown id with 404 and a malformed id with 400", async (
   assert.deepStrictEqual(malformed.json(), { error: "invalid_param", param: "id" });
 });
 
-// (AC6) 집계 불변 — 종결이 움직이는 필드는 by_result.closed_count 단 하나.
+// (AC6) 집계 불변 — 종결이 움직이는 필드는 종결 행을 덮는 closure-aware 카운트뿐.
 
-test("a close moves only by_result.closed_count; every other aggregate value is identical", async () => {
+test("a close moves only the closure-aware counts covering the closed row; every other aggregate value is identical", async () => {
   const before = await fetchSeedCrossAnalysis();
   const res = await close(seedId(SEED_OPEN_CONTROL));
   assert.strictEqual(res.statusCode, 200, "control row close must succeed");
@@ -236,12 +272,16 @@ test("a close moves only by_result.closed_count; every other aggregate value is 
       beforeRow.reconstructed_count,
       `${afterRow.result} reconstructed_count unchanged`,
     );
-    const expectedClosed =
-      afterRow.result === "done_with_concerns" ? beforeRow.closed_count + 1 : beforeRow.closed_count;
+    const closedDelta = afterRow.result === "done_with_concerns" ? 1 : 0;
     assert.strictEqual(
       afterRow.closed_count,
-      expectedClosed,
+      beforeRow.closed_count + closedDelta,
       `${afterRow.result} closed_count reflects the close`,
+    );
+    assert.strictEqual(
+      afterRow.writer_open_count,
+      beforeRow.writer_open_count - closedDelta,
+      `${afterRow.result} writer_open_count reflects the close`,
     );
     assert.ok(
       afterRow.closed_count >= 0 && afterRow.closed_count <= afterRow.count,
@@ -250,10 +290,18 @@ test("a close moves only by_result.closed_count; every other aggregate value is 
   }
 
   assert.deepStrictEqual(after.cells, before.cells, "confidence × metric_pass cells unchanged");
+  const closedAgent = seedAgent(SEED_OPEN_CONTROL);
+  assert.ok(
+    before.by_agent_top_10.some((row) => row.agent === closedAgent),
+    "closed row's agent is in by_agent_top_10, so the check below cannot pass vacuously",
+  );
+  const expectedByAgent = before.by_agent_top_10.map((row) =>
+    row.agent === closedAgent ? { ...row, writer_open_count: row.writer_open_count - 1 } : row,
+  );
   assert.deepStrictEqual(
     after.by_agent_top_10,
-    before.by_agent_top_10,
-    "by_agent_top_10 stays closure-blind",
+    expectedByAgent,
+    "by_agent_top_10 moves only the closed agent's writer_open_count",
   );
   assert.deepStrictEqual(
     after.by_agent_result,

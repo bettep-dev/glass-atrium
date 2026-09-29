@@ -23,6 +23,8 @@ bats_require_minimum_version 1.5.0
 
 GA="$(cd -- "${BATS_TEST_DIRNAME}/.." && pwd)"
 REAL_LIB="${GA}/lib/ga-core.sh"
+# shellcheck source-path=SCRIPTDIR source=../scripts/lib/path-guard.sh
+source "${GA}/scripts/lib/path-guard.sh"
 
 # The engine lib tree (ga-core.sh + its 7 domain siblings + the whole scripts/lib) is READ-ONLY
 # across every test — the tests only SOURCE it — so build it ONCE here. Per-test setup() symlinks
@@ -69,7 +71,7 @@ setup() {
 }
 
 teardown() {
-  [[ -n "${SANDBOX:-}" && -d "${SANDBOX}" ]] && rm -rf -- "${SANDBOX}" || true
+  if ga_guard_path "${SANDBOX:-}"; then rm -rf -- "${SANDBOX:?}"; fi
 }
 
 # --- PATH stubs (behavior keyed on marker env vars, exported into the run) -----
@@ -280,6 +282,7 @@ t6_build_release_fixture() {
   printf '#!/usr/bin/env bash\necho fixture-launcher\n' >"${tree}/glass-atrium"
   chmod +x "${tree}/glass-atrium"
   cp "${GA}/scripts/lib/apply-spine.sh" "${tree}/scripts/lib/apply-spine.sh"
+  cp "${GA}/scripts/lib/path-guard.sh" "${tree}/scripts/lib/path-guard.sh"
   h_launcher="$(shasum -a 256 "${tree}/glass-atrium" | awk '{print $1}')"
   h_spine="$(shasum -a 256 "${tree}/scripts/lib/apply-spine.sh" | awk '{print $1}')"
   cat >"${fix}/manifest.json" <<MANIFEST
