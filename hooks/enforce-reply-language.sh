@@ -5,8 +5,6 @@
 # Costs of a block:
 # - it cannot retract the reply already shown: the user sees it, then the corrected one;
 # - the forced continuation re-runs every Stop hook: advisory-preedit-facts.sh and post-edit-typecheck.sh fire twice;
-# - NOT accepted: its "Stop hook feedback:" entry is a turn boundary to cost-tracker.sh → is_real_user, so each trip
-#   writes an extra kind='turn' row. Bind this hook only once cost-tracker.sh keeps that entry inside the turn;
 # - a language request is read from the newest human prose only; an earlier standing request is unseen, so the
 #   reason itself yields to it at the price of one extra continuation.
 set -Eeuo pipefail

@@ -76,7 +76,7 @@ run_hook() {
 
 # Prints `pass` for no output, `block:<reason>` for one block decision with a one-line reason, or
 # `malformed: <output>` for any other output.
-decision_of_output() {
+get_decision() {
   if [[ -z "${output}" ]]; then
     printf 'pass'
     return 0
@@ -94,7 +94,7 @@ assert_decision() {
     echo "${1}: exit ${status}: ${output}"
     return 1
   }
-  got="$(decision_of_output)"
+  got="$(get_decision)"
   if [[ "${2}" == pass ]]; then
     [[ "${got}" == pass ]] || {
       echo "${1}: want pass, got ${got}"
@@ -179,12 +179,16 @@ assert_rows() {
     'korean asks for japanese|cli|false|일본어로 대답해줘|テストは合格しました。|pass'
     'english request inside korean prose|cli|false|이 로그 확인하고 reply in English|The log shows a timeout.|pass'
     'korean obligation form asks for english|cli|false|이번 보고는 꼭 영어로 해야 해|The results are below.|pass'
+    'korean request-question asks for english|cli|false|영어로 답해 줄래?|Sure, here it is.|pass'
+    'japanese request-question asks for english|cli|false|英語で答えてくれる？|The test passes now.|pass'
+    'english request-question inside korean prose|cli|false|이 로그 확인해 줄래? Could you reply in English?|The log shows a timeout.|pass'
     'korean asks for korean|cli|false|영어 말고 한국어로 답해줘|Here is the answer.|block:Korean'
   )
   assert_rows "${rows[@]}"
 }
 
 @test "a language only named, never requested for the reply, leaves the backstop on" {
+  # shellcheck disable=SC2016,SC1112  # backticks and unicode quotes in rows are prompt text, never shell syntax
   local rows=(
     'english input described|cli|false|영어로 된 로그 요약해줘|The log shows a timeout.|block:Korean'
     'english named without a request|cli|false|영어 문서 링크 확인해줘|The link works.|block:Korean'
@@ -197,6 +201,21 @@ assert_rows() {
     'english clause quoted from a rule|cli|false|커밋 규칙에 write subjects in English 라고 되어 있는데 왜 한국어 제목이 들어갔는지 확인해줘|The rule applies to subjects.|block:Korean'
     'english clause embedded in a korean request|cli|false|봇이 reply in English 하도록 설정 바꿔줘|Updated the bot setting.|block:Korean'
     'owner complaint about english replies|cli|false|자꾸 영어로 답변하는 문제가 있음 원인 확인해줘|The cause is the compaction summary.|block:Korean'
+    'owner why-question about english replies|cli|false|왜 자꾸 영문으로 대답하지?|The cause is the compaction summary.|block:Korean'
+    'complaint asking why the reply is english|cli|false|왜 자꾸 영어로 대답해?|The cause is the compaction summary.|block:Korean'
+    'plain question about the reply language|cli|false|영어로 답해?|Yes, in English.|block:Korean'
+    'obligation question about the reply language|cli|false|영어로 답해야 해?|Yes, in English.|block:Korean'
+    'later complaint outranks an earlier request|cli|false|한국어로 답해야지 왜 영어로 답해|The cause is the compaction summary.|block:Korean'
+    'english clause in a korean complaint|cli|false|왜 자꾸 reply in English 해?|The cause is the compaction summary.|block:Korean'
+    'chinese prohibition|cli|false|请不要用英文回答|The answer is below.|block:Chinese'
+    'chinese why-question|cli|false|你为什么用英文回答?|The answer is below.|block:Chinese'
+    'request in straight double quotes|cli|false|사용자가 "영어로 답해줘"라고 하면 어떻게 동작해?|It is treated as a request.|block:Korean'
+    "request in straight single quotes|cli|false|'영어로 답변해줘' 같은 요청은 요청으로 잡혀야 해|It is captured now.|block:Korean"
+    'request in curly double quotes|cli|false|봇이 “영어로 답해 주세요”를 받으면 뭐라고 해|The bot switches.|block:Korean'
+    'request in curly single quotes|cli|false|‘영어로 대답해줘’ 문구가 테스트에 있는지 확인해|The phrase is covered.|block:Korean'
+    'request in backticks|cli|false|`영어로 답해줘` 입력이 요청으로 잡히는지 봐줘|It is caught.|block:Korean'
+    'request in corner brackets|cli|false|「英語で答えてください」という文をテストして|The sentence is tested.|block:Japanese'
+    'request in double corner brackets|cli|false|『英語で返事してね』という例文を追加して|The example is added.|block:Japanese'
   )
   assert_rows "${rows[@]}"
 }

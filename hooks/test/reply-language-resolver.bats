@@ -48,7 +48,7 @@ PY
 }
 
 # Prints "status|script|language|entry" for the resolver JSON in ${output}.
-decision_of_output() {
+get_decision() {
   jq -r '[.status, .script, .language, .entry] | map(tostring) | join("|")' <<<"${output}"
 }
 
@@ -74,7 +74,7 @@ decision_of_output() {
       echo "${name}: exit ${status}: ${output}"
       return 1
     }
-    got="$(decision_of_output)"
+    got="$(get_decision)"
     [[ "${got}" == "${want}" ]] || {
       echo "${name}: got ${got}, want ${want}"
       return 1
@@ -98,7 +98,7 @@ decision_of_output() {
       echo "${name}: exit ${status}: ${output}"
       return 1
     }
-    got="$(decision_of_output)"
+    got="$(get_decision)"
     [[ "${got}" == "${want}" ]] || {
       echo "${name}: got ${got}, want ${want}"
       return 1
@@ -115,7 +115,7 @@ decision_of_output() {
     return 1
   }
   local got bytes_read
-  got="$(decision_of_output)"
+  got="$(get_decision)"
   bytes_read="$(jq -r '.bytes_read' <<<"${output}")"
   [[ "${got}" == 'resolved|hangul|Korean|user' ]] || {
     echo "${output}"
@@ -154,7 +154,7 @@ decision_of_output() {
     return 1
   }
   local got bytes_read
-  got="$(decision_of_output)"
+  got="$(get_decision)"
   bytes_read="$(jq -r '.bytes_read' <<<"${output}")"
   [[ "${got}" == 'resolved|hangul|Korean|user' ]] || {
     echo "${output}"

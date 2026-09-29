@@ -37,46 +37,88 @@ LANGUAGE_BY_SCRIPT = {
 
 # An explicit reply-language request is a request clause about the reply (영어로 답해줘 · 답변은 영어로 해줘 ·
 # 英語で答えて · reply in English); a language only named — participle, permission, an artifact's language, a quoted
-# clause — is none. Precision first: a missed request costs one continuation, a false one silences the turn's check.
+# clause, a question, a complaint, a prohibition — is none. Precision first: a missed request costs one continuation,
+# a false one silences the turn's check.
 LANGUAGE_NAMES = {
     "English": ("English", "영어", "영문", "英語", "英文", "英语"),
     "Korean": ("Korean", "한국어", "한글", "韓国語", "韓語", "韩语"),
     "Japanese": ("Japanese", "일본어", "日本語", "日语"),
     "Chinese": ("Chinese", "중국어", "中国語", "中文"),
 }
-# A reply verb counts in request mood; a generic verb (write, explain, do) only after a reply-noun topic.
-_KO_TAIL = r"(?:(?:\s*(?:줘요?|줄래요?|주(?:세요|실래요|십시오|시겠어요|라)|봐요?)|요|라)(?![가-힣])|(?=\s*(?:$|[.!?~,;\n])))"
-_KO_HADA = (
-    "(?:해" + _KO_TAIL + r"|해야\s*(?:해요?|지|돼요?|합니다|한다)(?![가-힣])|하(?:자|세요|십시오|시오|라(?:니까)?)(?![가-힣])"
-    r"|합시다)"
+
+
+def _build_korean_forms():
+    """A reply verb in request mood, or a generic verb (write, explain, do) only after a reply-noun topic."""
+    tail = r"(?:(?:\s*(?:줘요?|줄래요?|주(?:세요|실래요|십시오|시겠어요|라)|봐요?)|요|라)(?![가-힣])|(?=\s*(?:$|[.!?~,;\n])))"
+    hada = (
+        "(?:해" + tail + r"|해야\s*(?:해요?|지|돼요?|합니다|한다)(?![가-힣])|하(?:자|세요|십시오|시오|라(?:니까)?)(?![가-힣])"
+        r"|합시다)"
+    )
+    language = r"(?:{names})\s*으?로\s*(?:만\s*)?"
+    reply_noun = (
+        r"(?:^|[\s,.!?])(?:답변|대답|응답|답|결과|보고|요약|설명|리포트)(?:은|는|을|를|도|만|이|가)?\s+"
+        r"(?:(?:앞으로|이제|전부|모두|다|꼭|반드시|항상|계속|좀)\s+)?"
+    )
+    return (
+        language + r"(?:답|대답|응답|답변|회신|말|얘기|이야기|대화|소통|보고)(?:" + hada + r"|\s*부탁)",
+        reply_noun + language + "(?:(?:작성|설명|정리|요약|진행)?" + hada + "|(?:써|적어)" + tail + ")",
+    )
+
+
+def _build_japanese_forms():
+    tail = r"(?:て(?:ください|下さい|くれ(?:る|ます)?か?|ほしい|欲しい|ね|よ)?|なさい|ましょう|ろ)(?=$|[\s。、！？!?.,」』)])"
+    language = r"(?:{names})\s*で\s*(?:のみ\s*|だけ\s*)?"
+    return (
+        language + "(?:答え|回答し|返答し|返信し|応答し|返事し|話し|喋っ|しゃべっ|報告し|会話し)" + tail,
+        r"(?:回答|返事|返答|答え|結果|報告|要約|説明)(?:は|を|も)\s*" + language + "(?:書い|説明し|まとめ|要約し|し)" + tail,
+    )
+
+
+def _build_english_forms():
+    """A reply verb opening its own clause; `could you` opens one so the request-question stays in the match."""
+    clause_start = (
+        r"(?:^|[.!?;:,\n]\s*|[^\x00-\x7f]\s*"
+        r"|\b(?:(?:can|could|would|will)\s+you|please|pls|plz|kindly|just|now|and|then|also|so|you)\s+)"
+    )
+    clause_end = (
+        r"(?![A-Za-z])(?=\s*(?:$|[.!?,;:)\n]|(?:please|pls|plz|thanks?|thank\s+you|from\s+now\s+on|only|instead|too"
+        r"|as\s+well)\b|(?:해|하)(?:\s*(?:줘요?|주세요)|요|자|세요)?(?![가-힣])))"
+    )
+    return (
+        clause_start
+        + r"(?:(?:reply|respond|answer|speak|talk|communicate|chat|write\s+back)\s+(?:(?:to\s+me|back|only)\s+)?"
+        r"in\s+(?:{names})|(?:write|give|keep|send|put)\s+(?:(?:the|your|this|that|all|a|an|my)\s+)?"
+        r"(?:answers?|repl(?:y|ies)|responses?|reports?|summar(?:y|ies))\s+in\s+(?:{names})"
+        r"|(?:switch|change)\s+(?:back\s+)?to\s+(?:{names}))" + clause_end,
+    )
+
+
+def _build_language_requests():
+    forms = (
+        _build_korean_forms()
+        + _build_japanese_forms()
+        + (r"用\s*(?:{names})\s*(?:来\s*)?(?:回答|回复|答复|说|讲|交流|沟通|聊|汇报)(?![的了过着])",)
+        + _build_english_forms()
+    )
+    return tuple(
+        (language, re.compile("|".join(form.replace("{names}", "|".join(names)) for form in forms), re.I))
+        for language, names in LANGUAGE_NAMES.items()
+    )
+
+
+_LANGUAGE_REQUESTS = _build_language_requests()
+# A request clause only quoted is cited, never made; get_prose already drops `code spans`.
+_QUOTATION = re.compile(
+    r"\"[^\"\n]*\"|(?<![A-Za-z0-9])'[^'\n]*'(?![A-Za-z0-9])|“[^”\n]*”|‘[^’\n]*’|「[^」\n]*」|『[^』\n]*』"
 )
-_KO_LANGUAGE = r"(?:{names})\s*으?로\s*(?:만\s*)?"
-_KO_REPLY_NOUN = (
-    r"(?:^|[\s,.!?])(?:답변|대답|응답|답|결과|보고|요약|설명|리포트)(?:은|는|을|를|도|만|이|가)?\s+"
-    r"(?:(?:앞으로|이제|전부|모두|다|꼭|반드시|항상|계속|좀)\s+)?"
-)
-_JA_TAIL = r"(?:て(?:ください|下さい|くれ(?:る|ます)?か?|ほしい|欲しい|ね|よ)?|なさい|ましょう|ろ)(?=$|[\s。、！？!?.,」』)])"
-_JA_LANGUAGE = r"(?:{names})\s*で\s*(?:のみ\s*|だけ\s*)?"
-_EN_CLAUSE_START = r"(?:^|[.!?;:,\n]\s*|[^\x00-\x7f]\s*|\b(?:please|pls|plz|kindly|just|now|and|then|also|so|you)\s+)"
-_EN_CLAUSE_END = (
-    r"(?![A-Za-z])(?=\s*(?:$|[.!?,;:)\n]|(?:please|pls|plz|thanks?|thank\s+you|from\s+now\s+on|only|instead|too"
-    r"|as\s+well)\b|(?:해|하)(?:\s*(?:줘요?|주세요)|요|자|세요)?(?![가-힣])))"
-)
-_REQUEST_FORMS = (
-    _KO_LANGUAGE + r"(?:답|대답|응답|답변|회신|말|얘기|이야기|대화|소통|보고)(?:" + _KO_HADA + r"|\s*부탁)",
-    _KO_REPLY_NOUN + _KO_LANGUAGE + "(?:(?:작성|설명|정리|요약|진행)?" + _KO_HADA + "|(?:써|적어)" + _KO_TAIL + ")",
-    _JA_LANGUAGE + "(?:答え|回答し|返答し|返信し|応答し|返事し|話し|喋っ|しゃべっ|報告し|会話し)" + _JA_TAIL,
-    r"(?:回答|返事|返答|答え|結果|報告|要約|説明)(?:は|を|も)\s*" + _JA_LANGUAGE + "(?:書い|説明し|まとめ|要約し|し)" + _JA_TAIL,
-    r"用\s*(?:{names})\s*(?:来\s*)?(?:回答|回复|答复|说|讲|交流|沟通|聊|汇报)(?![的了过着])",
-    _EN_CLAUSE_START
-    + r"(?:(?:reply|respond|answer|speak|talk|communicate|chat|write\s+back)\s+(?:(?:to\s+me|back|only)\s+)?"
-    r"in\s+(?:{names})|(?:write|give|keep|send|put)\s+(?:(?:the|your|this|that|all|a|an|my)\s+)?"
-    r"(?:answers?|repl(?:y|ies)|responses?|reports?|summar(?:y|ies))\s+in\s+(?:{names})"
-    r"|(?:switch|change)\s+(?:back\s+)?to\s+(?:{names}))" + _EN_CLAUSE_END,
-)
-_LANGUAGE_REQUESTS = tuple(
-    (language, re.compile("|".join(form.replace("{names}", "|".join(names)) for form in _REQUEST_FORMS), re.I))
-    for language, names in LANGUAGE_NAMES.items()
+_SENTENCE_END = re.compile(r"[!?\n。！？]|\.(?=\s|$)")  # a dot inside a path or version ends none
+# A why-question or a keeps-doing complaint anywhere in the request's sentence.
+_COMPLAINT = re.compile(r"왜|자꾸|어째서|为什么|为何|怎么|干[嘛吗]|なぜ|どうして|なんで|何で|\bwhy\b|\bhow\s+come\b", re.I)
+# A Chinese negator earlier in the request's own clause; Korean, Japanese and English prohibitions match no form.
+_PROHIBITION = re.compile(r"(?:不要|不用|不许|不准|不能|不必|别|勿|莫|禁止)[^,，、;；]*$")
+# The one question that still asks: a benefactive request (답해 줄래? · 答えてくれる? · could you reply ...?).
+_BENEFACTIVE = re.compile(
+    r"줘|줄래|주(?:세요|실래|시겠|십시오)|くれ|ください|下さい|ほしい|欲しい|\b(?:can|could|would|will)\s+you\b", re.I
 )
 
 # UserPromptSubmit carries no `source` field on the installed CLI, so a prompt's own opening is the
@@ -238,12 +280,24 @@ def _get_text_content(content):
 
 def get_requested_language(prose):
     """The language an explicit reply-language request names; the latest request in the prose wins."""
+    text = _QUOTATION.sub(" ", prose)
     latest, requested = -1, None
     for language, pattern in _LANGUAGE_REQUESTS:
-        for match in pattern.finditer(prose):
-            if match.start() > latest:
+        for match in pattern.finditer(text):
+            if match.start() > latest and _is_request_mood(text, match):
                 latest, requested = match.start(), language
     return requested
+
+
+def _is_request_mood(text, match):
+    """False for a request asked about, complained of or prohibited; a question counts only when benefactive."""
+    start = max((end.end() for end in _SENTENCE_END.finditer(text, 0, match.end())), default=0)
+    end = _SENTENCE_END.search(text, match.end())
+    lead = text[start : match.end()]
+    rest = text[match.end() : end.end() if end else len(text)]
+    if _COMPLAINT.search(lead + rest) or _PROHIBITION.search(lead):
+        return False
+    return not (end and end.group() in "?？") or bool(_BENEFACTIVE.search(match.group()))
 
 
 def find_last_reply(path, window, cap):
