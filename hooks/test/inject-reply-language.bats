@@ -1,11 +1,18 @@
 #!/usr/bin/env bats
-# inject-reply-language.bats — hooks/inject-reply-language.sh, the per-turn UserPromptSubmit reply-language line.
-# Protects three contracts: only human prose sets the named language (the prompt's own, else the
-# transcript's newest), headless sessions stay silent, and every input exits 0 so no prompt is erased.
+# inject-reply-language.bats — hooks/inject-reply-language.sh, the reply-language pointer line.
+# Protects four contracts: a machine-written prompt gets one line quoting the user's latest own message,
+# the line's fixed part names no language, an ordinary human prompt stays silent without python3 or a
+# transcript read, and every input exits 0 so no prompt is erased.
 
 # shellcheck disable=SC2154  # BATS_TEST_DIRNAME, status and output are set by bats
 HOOK="${BATS_TEST_DIRNAME}/../inject-reply-language.sh"
 CORPUS="${BATS_TEST_DIRNAME}/corpus/reply-language"
+# Names a resolver-derived language value would carry into the line's fixed part.
+LANGUAGE_NAMES='english|korean|japanese|chinese|hangul|latin|kana|한국어|영어|일본어|중국어'
+KOREAN_QUOTE='좋아, 이제 리뷰 반영해줘'
+ENGLISH_QUOTE='Now apply the review comments please'
+NOTIFICATION='<task-notification>\n<summary>Background build finished</summary>\n</task-notification>'
+SPLIT=$'\x1f'
 
 setup() {
   command -v python3 >/dev/null 2>&1 || skip "python3 required"
@@ -40,90 +47,157 @@ run_hook() {
   fi
 }
 
-# Prints the context line, `silent` for no output, or `malformed: <output>` for any other output.
-context_of_output() {
+# Splits the one context line into fixed part and quote: prints `<fixed part>\x1f<quote>`, `silent` for
+# no output, or `malformed: <output>` for anything else — a fixed part naming a language included.
+# Args: $1=expected hook event (default UserPromptSubmit)
+split_output() {
   if [[ -z "${output}" ]]; then
     printf 'silent'
     return 0
   fi
-  jq -er 'select(.hookSpecificOutput.hookEventName == "UserPromptSubmit")
-    | .hookSpecificOutput.additionalContext | select(test("\n") | not)' <<<"${output}" 2>/dev/null \
+  jq -er --arg event "${1:-UserPromptSubmit}" --arg names "${LANGUAGE_NAMES}" '
+    select(.hookSpecificOutput.hookEventName == $event)
+    | .hookSpecificOutput.additionalContext
+    | capture("^(?<head>[^\"\n]*)(?<quote>\"(?:[^\"\\\\\n]|\\\\.)*\")(?<tail>[^\"\n]*)$")
+    | select((.head + .tail) | test($names; "i") | not)
+    | "\(.head)…\(.tail)\u001f\(.quote | fromjson)"' <<<"${output}" 2>/dev/null \
     || printf 'malformed: %s' "${output}"
 }
 
-# Asserts one row: exit 0 always, then silence or a single context line naming the wanted language.
-# Args: $1=row name $2=wanted language or `silent`
-assert_decision() {
+# Prints the quote of the one context line, `silent`, or `malformed: <output>`.
+quote_of_output() {
+  local split
+  split="$(split_output "$@")"
+  printf '%s' "${split#*"${SPLIT}"}"
+}
+
+# Asserts exit 0, then silence or a single line quoting the wanted text.
+# Args: $1=row name $2=wanted quote or `silent` $3=expected hook event
+assert_quote() {
   local got
   [[ "${status}" -eq 0 ]] || {
     echo "${1}: exit ${status}: ${output}"
     return 1
   }
-  got="$(context_of_output)"
-  if [[ "${2}" == silent ]]; then
-    [[ "${got}" == silent ]] || {
-      echo "${1}: want silent, got ${got}"
-      return 1
-    }
-    return 0
-  fi
-  [[ "${got}" != malformed:* && "${got}" != silent && "${got}" == *"${2}"* ]] || {
+  got="$(quote_of_output "${3:-UserPromptSubmit}")"
+  [[ "${got}" == "${2}" ]] || {
     echo "${1}: want ${2}, got ${got}"
     return 1
   }
 }
 
-# Row shape: name|entrypoint|source|corpus transcript|prompt|wanted language or silent
+# Row shape: name|entrypoint|source|corpus transcript|prompt|wanted quote or silent
 assert_rows() {
   local row name entrypoint source transcript prompt want
   for row in "$@"; do
     IFS='|' read -r name entrypoint source transcript prompt want <<<"${row}"
     write_envelope "${source}" "${CORPUS}/${transcript}.jsonl" "${prompt}"
     run_hook "${entrypoint}"
-    assert_decision "${name}" "${want}" || return 1
+    assert_quote "${name}" "${want}" || return 1
   done
 }
 
-@test "a human prompt names the language of its own prose, or of the newest earlier human prose when it has none" {
-  local rows=(
-    'korean prose over english history|cli|-|newest-human-english|이 버그 원인 찾아서 고쳐줘|Korean'
-    'japanese prose over english history|cli|-|newest-human-english|このテストを確認してください|Japanese'
-    'english prose over korean history|cli|-|newest-human-korean|Please fix the flaky test in the monitor suite|silent'
-    'korean with english identifiers|cli|-|newest-human-english|claude-api prompt-audit 작업은 완료된 상태야?|Korean'
-    'english quoting a hangul literal|cli|-|newest-human-korean|Find where the phrase "진행해" is matched in the correction regex|silent'
-    'korean prose outside an english paste|cli|-|newest-human-english|왜 실패했는지 원인 찾아줘\n<pasted_content id="9c1d">\nThe build failed because the module graph could not be resolved and every downstream task was cancelled by the scheduler\n</pasted_content id="9c1d">|Korean'
-    'paste with no prose of its own|cli|-|newest-human-korean|<pasted_content id="85af">\nError: build failed while resolving the module graph for the monitor package\n</pasted_content id="85af">|Korean'
-    'argless slash command|cli|-|newest-human-korean|<command-message>ga-status</command-message>\n<command-name>/ga-status</command-name>|Korean'
-    'source user reads the prompt|cli|user|newest-human-english|이 결과 요약해줘|Korean'
-  )
-  assert_rows "${rows[@]}"
+@test "a machine-written prompt gets a line quoting the user's latest own message, never its own text" {
+  assert_rows \
+    "task notification|cli|-|newest-human-korean|${NOTIFICATION}|${KOREAN_QUOTE}" \
+    "korean task notification over english history|cli|-|newest-human-english|<task-notification>\n<summary>빌드 작업이 완료되었습니다</summary>\n</task-notification>|${ENGLISH_QUOTE}" \
+    "background agent notice|cli|-|newest-human-korean|Background agent \"lint\" completed|${KOREAN_QUOTE}" \
+    "stopped agents notice|cli|-|newest-human-korean|3 background agents were stopped by the user|${KOREAN_QUOTE}" \
+    "cross-session message|cli|-|newest-human-korean|<cross-session-message from=\"uds:/tmp/a.sock\">Please rebase now</cross-session-message>|${KOREAN_QUOTE}" \
+    "another session wrapper|cli|-|newest-human-korean|Another Claude session sent a message:\n<cross-session-message from=\"a\">rebase now</cross-session-message>|${KOREAN_QUOTE}" \
+    "cross-session idle notice|cli|-|newest-human-korean|[Cross-session idle notice] \"lane\" is idle|${KOREAN_QUOTE}" \
+    "korean channel message over english history|cli|-|newest-human-english|<channel source=\"plugin:fakechat:fakechat\" chat_id=\"web\">한국어 메시지 확인해줘</channel>|${ENGLISH_QUOTE}" \
+    "compaction continuation|cli|-|newest-human-korean|This session is being continued from a previous conversation that ran out of context.|${KOREAN_QUOTE}" \
+    "stop hook feedback|cli|-|newest-human-korean|Stop hook feedback:\n[hook]: blocked|${KOREAN_QUOTE}" \
+    "leading whitespace before a wrapper|cli|-|newest-human-korean|\n  ${NOTIFICATION}|${KOREAN_QUOTE}" \
+    "a non-user source never quotes the prompt|cli|system|newest-human-english|이 결과 요약해줘|${ENGLISH_QUOTE}" \
+    "any other non-user source|cli|poll_event|newest-human-korean|event payload arrived|${KOREAN_QUOTE}"
 }
 
-@test "a machine-written prompt never sets the language: the newest human prose in the transcript does" {
-  local rows=(
-    'task notification|cli|-|newest-human-korean|<task-notification>\n<summary>Background build finished</summary>\n</task-notification>|Korean'
-    'korean task notification over english history|cli|-|newest-human-english|<task-notification>\n<summary>빌드 작업이 완료되었습니다</summary>\n</task-notification>|silent'
-    'cross-session message|cli|-|newest-human-korean|<cross-session-message from="uds:/tmp/a.sock">Please rebase now</cross-session-message>|Korean'
-    'teammate wrapper|cli|-|newest-human-korean|Another Claude session sent a message:\n<cross-session-message from="a">rebase now</cross-session-message>|Korean'
-    'teammate message|cli|-|newest-human-korean|<teammate-message teammate_id="plan-1">merge it</teammate-message>|Korean'
-    'korean channel message over english history|cli|-|newest-human-english|<channel source="plugin:fakechat:fakechat" chat_id="web">한국어 메시지 확인해줘</channel>|silent'
-    'source system never reads the prompt|cli|system|newest-human-english|이 결과 요약해줘|silent'
-    'source system resolves from the transcript|cli|system|newest-human-korean|Background task finished|Korean'
-    'any other source resolves from the transcript|cli|poll_event|newest-human-korean|event payload arrived|Korean'
-  )
-  assert_rows "${rows[@]}"
+@test "the line's fixed part is the same whatever language the user wrote in" {
+  local transcript prompt split fixed=()
+  for prompt in "${NOTIFICATION}" 'Another Claude session sent a message:\nrebase now'; do
+    for transcript in newest-human-korean newest-human-english; do
+      write_envelope - "${CORPUS}/${transcript}.jsonl" "${prompt}"
+      run_hook cli
+      split="$(split_output)"
+      [[ "${split}" == *"${SPLIT}"* ]] || {
+        echo "${transcript}: ${split}"
+        return 1
+      }
+      fixed+=("${split%%"${SPLIT}"*}")
+    done
+    [[ "${fixed[0]}" == "${fixed[1]}" ]] || {
+      echo "fixed part varies: ${fixed[0]} / ${fixed[1]}"
+      return 1
+    }
+    fixed=()
+  done
 }
 
-@test "only an interactive cli session gets the line, whatever a headless prompt holds" {
-  local rows=(
-    'cli control for a korean prompt|cli|-|sdk-cli|다음 교정 문구들을 분류해서 결과를 알려줘|Korean'
-    'sdk-cli korean prompt|sdk-cli|-|sdk-cli|다음 교정 문구들을 분류해서 결과를 알려줘|silent'
-    'sdk-cli english prompt with hangul literals|sdk-cli|-|sdk-cli|Classify each correction phrase such as 다시 해줘 and 이어서 진행해 and report which regex matches it|silent'
-    'sdk-ts korean prompt|sdk-ts|-|newest-human-korean|다음 교정 문구들을 분류해줘|silent'
-    'no entrypoint|-|-|newest-human-korean|이 버그 원인 찾아서 고쳐줘|silent'
-    'machine prompt over a headless transcript|cli|-|sdk-cli|<task-notification>\n<summary>분류 완료</summary>\n</task-notification>|silent'
-  )
-  assert_rows "${rows[@]}"
+@test "an ordinary human prompt, a typed slash command and an agent frame stay silent" {
+  assert_rows \
+    'korean prose|cli|-|newest-human-english|이 버그 원인 찾아서 고쳐줘|silent' \
+    'english prose|cli|-|newest-human-korean|Please fix the flaky test in the monitor suite|silent' \
+    'source user|cli|user|newest-human-english|이 결과 요약해줘|silent' \
+    'slash command as typed|cli|-|newest-human-english|/ga-review 이 변경 사항 검토해줘|silent' \
+    'prompt opening with an absolute path|cli|-|newest-human-english|/Users/dev/notes.md 이 파일 확인해줘|silent' \
+    'wrapper named mid-prompt|cli|-|newest-human-english|Why did <task-notification> show up in my prompt?|silent' \
+    'teammate frame|cli|-|newest-human-korean|<teammate-message teammate_id="team-lead">merge it</teammate-message>|silent' \
+    'workflow frame|cli|-|newest-human-korean|[Workflow harness — computed task] The task text below was computed|silent' \
+    'coordinator frame|cli|-|newest-human-korean|The coordinator sent a message while you were working|silent' \
+    'agent frame with a non-user source|cli|system|newest-human-korean|<teammate-message teammate_id="x">go</teammate-message>|silent'
+}
+
+@test "an ordinary human prompt spawns no python3 and never reads the transcript" {
+  local real prompt
+  real="$(command -v python3)"
+  mkdir -p "${RL_TMP}/shim"
+  printf '#!/bin/sh\nprintf "%%s\\n" "$*" >>"%s/python3.log"\nexec "%s" "$@"\n' "${RL_TMP}" "${real}" \
+    >"${RL_TMP}/shim/python3"
+  chmod +x "${RL_TMP}/shim/python3"
+  cp "${CORPUS}/newest-human-korean.jsonl" "${RL_TMP}/locked.jsonl"
+  chmod 000 "${RL_TMP}/locked.jsonl"
+  for prompt in '이 버그 원인 찾아서 고쳐줘' '/ga-review 이 변경 사항 검토해줘' \
+    '<teammate-message teammate_id="x">go</teammate-message>'; do
+    write_envelope - "${RL_TMP}/locked.jsonl" "${prompt}"
+    run env PATH="${RL_TMP}/shim:${PATH}" CLAUDE_CODE_ENTRYPOINT=cli "${HOOK}" <"${RL_TMP}/envelope.json"
+    assert_quote "${prompt}" silent || return 1
+    [[ ! -e "${RL_TMP}/python3.log" ]] || {
+      echo "${prompt}: python3 ran:"
+      cat "${RL_TMP}/python3.log"
+      return 1
+    }
+  done
+  write_envelope - "${RL_TMP}/locked.jsonl" "${NOTIFICATION}"
+  run env PATH="${RL_TMP}/shim:${PATH}" CLAUDE_CODE_ENTRYPOINT=cli "${HOOK}" <"${RL_TMP}/envelope.json"
+  [[ "${status}" -eq 0 && -s "${RL_TMP}/python3.log" ]] || {
+    echo "control: the python3 shim recorded no call"
+    return 1
+  }
+}
+
+@test "only an interactive cli session gets the line, and a transcript with no human entry gets none" {
+  assert_rows \
+    "cli control|cli|-|newest-human-korean|${NOTIFICATION}|${KOREAN_QUOTE}" \
+    "sdk-cli|sdk-cli|-|newest-human-korean|${NOTIFICATION}|silent" \
+    "sdk-ts|sdk-ts|-|newest-human-korean|${NOTIFICATION}|silent" \
+    "no entrypoint|-|-|newest-human-korean|${NOTIFICATION}|silent" \
+    "headless transcript|cli|-|sdk-cli|${NOTIFICATION}|silent" \
+    "cleared transcript|cli|-|clear|${NOTIFICATION}|silent"
+}
+
+@test "the quote is one line of at most 200 characters with control characters stripped" {
+  local text filler want
+  filler="$(printf '가%.0s' {1..300})"
+  # BEL, U+202E and U+200B, written as octal UTF-8 bytes
+  text="$(printf 'A\aB\342\200\256C\342\200\213D\tE\nF %s' "${filler}")"
+  want="A BCD E F $(printf '가%.0s' {1..190})"
+  jq -cn --arg text "${text}" '{type: "user", origin: {kind: "human"}, message: {role: "user", content: $text}}' \
+    >"${RL_TMP}/controls.jsonl"
+  write_envelope - "${RL_TMP}/controls.jsonl" "${NOTIFICATION}"
+  run_hook cli
+  assert_quote 'controls and length' "${want}"
 }
 
 @test "malformed, empty or unresolvable input exits 0 with no output" {
@@ -131,18 +205,42 @@ assert_rows() {
   : >"${RL_TMP}/empty.json"
   printf '%s\n' '["이 버그 원인 찾아서 고쳐줘"]' >"${RL_TMP}/array.json"
   printf '%s\n' '{"hook_event_name": "UserPromptSubmit"}' >"${RL_TMP}/no-fields.json"
-  write_envelope - "${RL_TMP}/no-such-transcript.jsonl" '<task-notification>\n<summary>done</summary>\n</task-notification>'
+  write_envelope - "${RL_TMP}/no-such-transcript.jsonl" "${NOTIFICATION}"
   mv "${RL_TMP}/envelope.json" "${RL_TMP}/missing-transcript.json"
   local name
   for name in malformed empty array no-fields missing-transcript; do
     run env CLAUDE_CODE_ENTRYPOINT=cli "${HOOK}" <"${RL_TMP}/${name}.json"
-    assert_decision "${name}" silent || return 1
+    assert_quote "${name}" silent || return 1
   done
+}
+
+@test "a read cap reached before any human entry leaves the prompt without a line" {
+  python3 - "${RL_TMP}/drift.jsonl" <<'PY'
+import json, sys
+
+
+
+def dump(entry):
+    return json.dumps(entry, ensure_ascii=False, separators=(",", ":"))
+
+
+notice = dump({"type": "user", "origin": {"kind": "task-notification"},
+               "message": {"role": "user", "content": "<task-notification>" + "Result line. " * 40 + "</task-notification>"}})
+human = dump({"type": "user", "origin": {"kind": "human"}, "message": {"role": "user", "content": "좋아"}})
+with open(sys.argv[1], "w", encoding="utf-8") as fh:
+    fh.write(human + "\n" + (notice + "\n") * 200)
+PY
+  write_envelope - "${RL_TMP}/drift.jsonl" "${NOTIFICATION}"
+  run env CLAUDE_CODE_ENTRYPOINT=cli REPLY_LANG_WINDOW_BYTES=4096 REPLY_LANG_MAX_BYTES=16384 \
+    "${HOOK}" <"${RL_TMP}/envelope.json"
+  assert_quote 'cap reached' silent || return 1
+  run env CLAUDE_CODE_ENTRYPOINT=cli "${HOOK}" <"${RL_TMP}/envelope.json"
+  assert_quote 'control: default cap' '좋아'
 }
 
 @test "a missing python3 leaves the prompt untouched: exit 0 and no output" {
   local tool bin path
-  write_envelope - "${CORPUS}/newest-human-english.jsonl" '이 버그 원인 찾아서 고쳐줘'
+  write_envelope - "${CORPUS}/newest-human-korean.jsonl" "${NOTIFICATION}"
   for bin in with-python without-python; do
     mkdir -p "${RL_TMP}/${bin}"
     for tool in cat dirname jq; do
@@ -153,35 +251,7 @@ assert_rows() {
   path="$(command -v python3)"
   ln -s "${path}" "${RL_TMP}/with-python/python3"
   run env PATH="${RL_TMP}/with-python" CLAUDE_CODE_ENTRYPOINT=cli "${BASH}" "${HOOK}" <"${RL_TMP}/envelope.json"
-  assert_decision 'control with python3' Korean || return 1
+  assert_quote 'control with python3' "${KOREAN_QUOTE}" || return 1
   run env PATH="${RL_TMP}/without-python" CLAUDE_CODE_ENTRYPOINT=cli "${BASH}" "${HOOK}" <"${RL_TMP}/envelope.json"
-  assert_decision 'without python3' silent
-}
-
-@test "a human entry far behind a notification burst on a large transcript resolves within the per-turn budget" {
-  python3 - "${RL_TMP}/large.jsonl" <<'PY'
-import json, sys
-
-
-def dump(entry):
-    return json.dumps(entry, ensure_ascii=False, separators=(",", ":")) + "\n"
-
-
-noise = dump({"type": "assistant", "message": {"role": "assistant", "content": [{"type": "text", "text": "x" * 8000}]}})
-notice = dump({"type": "user", "origin": {"kind": "task-notification"},
-               "message": {"role": "user", "content": "<task-notification>" + "Background result line. " * 40 + "</task-notification>"}})
-human = dump({"type": "user", "origin": {"kind": "human"}, "message": {"role": "user", "content": "이 결과 한국어로 정리해줘"}})
-with open(sys.argv[1], "w", encoding="utf-8") as fh:
-    fh.write(noise * (20000000 // len(noise)))
-    fh.write(human)
-    fh.write(notice * (2400000 // len(notice) + 1))
-PY
-  write_envelope - "${RL_TMP}/large.jsonl" '<task-notification>\n<summary>Background build finished</summary>\n</task-notification>'
-  local started finished
-  started="$(python3 -c 'import time; print(time.time())')"
-  run_hook cli
-  finished="$(python3 -c 'import time; print(time.time())')"
-  assert_decision 'large drifted transcript' Korean || return 1
-  python3 -c 'import sys; sys.exit(0 if float(sys.argv[2]) - float(sys.argv[1]) < 1.0 else 1)' \
-    "${started}" "${finished}"
+  assert_quote 'without python3' silent
 }

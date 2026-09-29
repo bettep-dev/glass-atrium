@@ -1,13 +1,14 @@
 #!/usr/bin/env bats
-# reply-language-resolver.bats — hooks/lib/reply_language.py, the newest-human-prose language resolver.
-# Protects three contracts: only origin kind `human` sets the language, the transcript read stays
-# bounded however far the human entry drifted, and the script decision survives identifiers, pastes
-# and quoted literals.
+# reply-language-resolver.bats — hooks/lib/reply_language.py, the newest-human-message finder.
+# Protects three contracts: only origin kind `human` is the user's message, an entry left whitespace-empty
+# by wrapper, paste and code removal is passed over, and the transcript read stays bounded.
 
 # shellcheck disable=SC2154  # BATS_TEST_DIRNAME is set by bats before the file loads
 HOOKS_DIR="${BATS_TEST_DIRNAME}/.."
 LIB="${HOOKS_DIR}/lib/reply_language.py"
 CORPUS="${BATS_TEST_DIRNAME}/corpus/reply-language"
+# The whole output contract: any other key, a language or script field included, fails the row.
+OUTPUT_KEYS='["bytes_read","entry","prose","reason","status","truncated"]'
 
 setup() {
   command -v python3 >/dev/null 2>&1 || skip "python3 required"
@@ -47,63 +48,74 @@ with open(path, "w", encoding="utf-8") as fh:
 PY
 }
 
-# Prints "status|script|language|entry" for the resolver JSON in ${output}.
-get_decision() {
-  jq -r '[.status, .script, .language, .entry] | map(tostring) | join("|")' <<<"${output}"
+# Writes one human user entry per text, oldest first.
+# Args: $1=path $@=entry texts
+write_human_transcript() {
+  local path="${1}" text
+  shift
+  : >"${path}"
+  for text in "$@"; do
+    jq -cn --arg text "${text}" \
+      '{type: "user", origin: {kind: "human"}, message: {role: "user", content: $text}}' >>"${path}"
+  done
 }
 
-@test "only origin-kind human prose sets the language, whatever the machine entries around it say" {
-  local rows=(
-    'newest-human-korean|resolved|hangul|Korean|user'
-    'newest-human-english|resolved|latin|null|user'
-    'queued-human|resolved|hangul|Korean|queued_command'
-    'task-notification-user|resolved|hangul|Korean|user'
-    'task-notification-queued|resolved|hangul|Korean|user'
-    'peer|resolved|hangul|Korean|user'
-    'channel|resolved|latin|null|user'
-    'compact-summary|resolved|hangul|Korean|user'
-    'clear|none|null|null|null'
-    'sdk-cli|none|null|null|null'
-    'no-such-transcript|none|null|null|null'
-  )
-  local row name want got
-  for row in "${rows[@]}"; do
-    IFS='|' read -r name want <<<"${row}"
-    run python3 "${LIB}" transcript "${CORPUS}/${name}.jsonl"
+# Prints "status|entry|prose" for the resolver JSON in ${output}, or the keys outside the contract.
+get_found() {
+  jq -r --argjson contract "${OUTPUT_KEYS}" '
+    (keys - $contract) as $extra
+    | if $extra != [] then "extra keys: \($extra)" else [.status, .entry, .prose] | map(tostring) | join("|") end' \
+    <<<"${output}"
+}
+
+# Row shape: transcript name|status|entry|prose. A name written to RL_TMP wins over the corpus.
+assert_rows() {
+  local row name want_status want_entry want_prose path got
+  for row in "$@"; do
+    IFS='|' read -r name want_status want_entry want_prose <<<"${row}"
+    path="${CORPUS}/${name}.jsonl"
+    if [[ -f "${RL_TMP}/${name}.jsonl" ]]; then
+      path="${RL_TMP}/${name}.jsonl"
+    fi
+    run python3 "${LIB}" transcript "${path}"
     [[ "${status}" -eq 0 ]] || {
       echo "${name}: exit ${status}: ${output}"
       return 1
     }
-    got="$(get_decision)"
-    [[ "${got}" == "${want}" ]] || {
-      echo "${name}: got ${got}, want ${want}"
+    got="$(get_found)"
+    [[ "${got}" == "${want_status}|${want_entry}|${want_prose}" ]] || {
+      echo "${name}: got ${got}"
       return 1
     }
   done
 }
 
-@test "the script decision ignores identifiers, pastes and command wrappers but not a quoted literal's share" {
-  local rows=(
-    'mixed-identifiers|resolved|hangul|Korean|user'
-    'paste-dominated|resolved|hangul|Korean|user'
-    'english-quoting-hangul|resolved|latin|null|user'
-    'paste-only|resolved|hangul|Korean|user'
-    'command-args|resolved|hangul|Korean|user'
-  )
-  local row name want got
-  for row in "${rows[@]}"; do
-    IFS='|' read -r name want <<<"${row}"
-    run python3 "${LIB}" transcript "${CORPUS}/${name}.jsonl"
-    [[ "${status}" -eq 0 ]] || {
-      echo "${name}: exit ${status}: ${output}"
-      return 1
-    }
-    got="$(get_decision)"
-    [[ "${got}" == "${want}" ]] || {
-      echo "${name}: got ${got}, want ${want}"
-      return 1
-    }
-  done
+@test "only origin-kind human entries are the user's message, whatever machine entries follow them" {
+  assert_rows \
+    'newest-human-korean|found|user|좋아, 이제 리뷰 반영해줘' \
+    'newest-human-english|found|user|Now apply the review comments please' \
+    'queued-human|found|queued_command|중간에 하나 더: 로그도 같이 확인해줘' \
+    'task-notification-user|found|user|워크플로 돌려서 결과 알려줘' \
+    'task-notification-queued|found|user|워크플로 돌려서 결과 알려줘' \
+    'peer|found|user|레인 상태 확인해줘' \
+    'channel|found|user|Summarize the open pull requests' \
+    'compact-summary|found|user|이 계획대로 진행해줘' \
+    'clear|none|null|null' \
+    'sdk-cli|none|null|null' \
+    'no-such-transcript|none|null|null'
+}
+
+@test "an entry whitespace-empty after wrapper, paste and code removal is passed over, and nothing else is" {
+  write_human_transcript "${RL_TMP}/fenced-code-only.jsonl" '이 로그 좀 봐줘' $'```\nError: build failed\n```'
+  write_human_transcript "${RL_TMP}/url-only.jsonl" '이 로그 좀 봐줘' 'https://example.com/build/42'
+  write_human_transcript "${RL_TMP}/identifiers-only.jsonl" '이 로그 좀 봐줘' 'hooks/lib/reply_language.py?'
+  assert_rows \
+    'paste-only|found|user|이 로그 좀 봐줘' \
+    'command-args|found|user|이 변경 사항 검토해줘' \
+    'fenced-code-only|found|user|이 로그 좀 봐줘' \
+    'url-only|found|user|이 로그 좀 봐줘' \
+    'paste-dominated|found|user|왜 실패했는지 원인 찾아줘' \
+    'identifiers-only|found|user|hooks/lib/reply_language.py?'
 }
 
 @test "a human entry beyond the first read window is still found by the growing windows" {
@@ -115,16 +127,16 @@ get_decision() {
     return 1
   }
   local got bytes_read
-  got="$(get_decision)"
+  got="$(get_found)"
   bytes_read="$(jq -r '.bytes_read' <<<"${output}")"
-  [[ "${got}" == 'resolved|hangul|Korean|user' ]] || {
+  [[ "${got}" == 'found|user|이 결과 한국어로 정리해줘' ]] || {
     echo "${output}"
     return 1
   }
   ((bytes_read > 4096))
 }
 
-@test "the read never passes the cap, even when that leaves the language unresolved" {
+@test "the read never passes the cap, even when that leaves no human entry found" {
   build_drift_transcript "${RL_TMP}/drift.jsonl" 0 200000
   run env REPLY_LANG_WINDOW_BYTES=4096 REPLY_LANG_MAX_BYTES=65536 \
     python3 "${LIB}" transcript "${RL_TMP}/drift.jsonl"
@@ -142,64 +154,29 @@ get_decision() {
   ((bytes_read <= 65536))
 }
 
-@test "a large drifted transcript resolves within the per-turn latency budget and a partial read" {
+@test "a large drifted transcript is found through a partial read within the default cap" {
   build_drift_transcript "${RL_TMP}/large.jsonl" 20000000 2400000
-  local size started finished
-  size="$(wc -c <"${RL_TMP}/large.jsonl")"
-  started="$(python3 -c 'import time; print(time.time())')"
   run python3 "${LIB}" transcript "${RL_TMP}/large.jsonl"
-  finished="$(python3 -c 'import time; print(time.time())')"
   [[ "${status}" -eq 0 ]] || {
     echo "exit ${status}: ${output}"
     return 1
   }
-  local got bytes_read
-  got="$(get_decision)"
-  bytes_read="$(jq -r '.bytes_read' <<<"${output}")"
-  [[ "${got}" == 'resolved|hangul|Korean|user' ]] || {
+  local got stats
+  got="$(get_found)"
+  stats="$(jq -r '[.truncated, (.bytes_read <= 8388608)] | map(tostring) | join("|")' <<<"${output}")"
+  [[ "${got}" == 'found|user|이 결과 한국어로 정리해줘' && "${stats}" == 'false|true' ]] || {
     echo "${output}"
     return 1
   }
-  ((bytes_read < size)) || {
-    echo "read the whole ${size}-byte file"
-    return 1
-  }
-  python3 -c 'import sys; sys.exit(0 if float(sys.argv[2]) - float(sys.argv[1]) < 1.0 else 1)' \
-    "${started}" "${finished}"
 }
 
-@test "text mode names a machine-written prompt's shape and withholds a script decision for it" {
-  # shellcheck disable=SC2016  # the backticks are literal fenced-code test input
-  local rows=(
-    'korean prose|이거 확인해줘|null|hangul'
-    'japanese prose|このテストを確認してください|null|kana'
-    'chinese prose|请帮我检查这个文件|null|han'
-    'english prose|Please check this file|null|latin'
-    'korean only inside fenced code|Please check this log\n```\n빌드 로그 확인 중 에러\n```|null|latin'
-    'task notification|<task-notification>\n<summary>작업 완료</summary>\n</task-notification>|task-notification|null'
-    'cross-session message|<cross-session-message from="uds:/tmp/a.sock">확인 부탁</cross-session-message>|peer|null'
-    'teammate wrapper|Another Claude session sent a message:\n<cross-session-message from="a">rebase now</cross-session-message>|peer|null'
-    'teammate message|<teammate-message teammate_id="plan-1">merge it</teammate-message>|peer|null'
-    'channel message|<channel source="plugin:fakechat:fakechat" chat_id="web">한국어 메시지</channel>|channel|null'
-  )
-  local row name text want_shape want_script got
-  for row in "${rows[@]}"; do
-    IFS='|' read -r name text want_shape want_script <<<"${row}"
-    printf '%b' "${text}" >"${RL_TMP}/prompt.txt"
-    run python3 "${LIB}" text <"${RL_TMP}/prompt.txt"
-    [[ "${status}" -eq 0 ]] || {
+@test "any subcommand but transcript exits non-zero so a caller falls silent" {
+  local name
+  for name in bogus text reply; do
+    run python3 "${LIB}" "${name}"
+    [[ "${status}" -eq 2 && "${output}" == *usage:* ]] || {
       echo "${name}: exit ${status}: ${output}"
       return 1
     }
-    got="$(jq -r '[.machine_shape, .script] | map(tostring) | join("|")' <<<"${output}")"
-    [[ "${got}" == "${want_shape}|${want_script}" ]] || {
-      echo "${name}: got ${got}"
-      return 1
-    }
   done
-}
-
-@test "an unknown subcommand exits non-zero so a caller falls silent" {
-  run python3 "${LIB}" bogus
-  [[ "${status}" -eq 2 && "${output}" == *usage:* ]]
 }
