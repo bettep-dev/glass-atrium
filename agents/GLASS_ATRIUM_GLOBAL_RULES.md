@@ -129,17 +129,18 @@ The canonical rule for what language this system writes in.
 
 - `rm` forbidden for source code, documents, and config files → use `mv ~/.Trash/` instead (macOS).
 - Exception: build artifacts, generated files, node_modules, and other regenerable files may use `rm`.
-- A recursive or forced delete targets only a path variable that has passed a path guard, in the `"${DIR:?}"` operand form — never a cwd-relative glob; a target that cannot be such a variable is allowed only as a named exception.
-  - Reach: every recursive or forced shell delete an agent generates, inside a repository or outside one — a delete site it writes or changes in code, and a delete it runs as a command.
+- A recursive or forced delete targets only a path variable that has passed a path guard (in shell, in the `"${DIR:?}"` operand form) — never a cwd-relative glob; a target that cannot be such a variable is allowed only as a named exception.
+  - Reach: every recursive or forced delete an agent generates, in any language, inside a repository or outside one — a delete site it writes or changes in code, and a delete it runs as a command.
+  - In any language other than shell, the delete — a call such as Python `shutil.rmtree` or Node `fs.rm` / `fs.rmSync` with `recursive` or `force`, or that language's equivalent — takes the guarded variable itself as its path argument.
   - A path guard refuses a value that is empty, not absolute, or the filesystem root, and the delete runs only when the guard passes.
 
 | Where the delete is generated | Path guard | Named exception |
 |---|---|---|
 | shell code in the Glass Atrium repository | `scripts/lib/path-guard.sh` → `ga_guard_path` | a `GA-RM` annotation at the delete site, in the grammar `scripts/audit-rm.sh` states |
-| shell code anywhere else | a path guard defined in that code or its own repository | a comment at the delete site stating why the target cannot be a guarded variable |
+| code in any other language, and shell code anywhere else | a path guard defined in that code or its own repository | a comment at the delete site stating why the target cannot be a guarded variable |
 | a command the agent runs, anywhere | a path guard inside the command | none — a command has no site to annotate, so move the target to `~/.Trash/` instead |
 
-- Mechanical backing: `scripts/audit-rm.sh` audits this rule over the Glass Atrium repository's shell files in its scope; shell code elsewhere and commands an agent runs are honor-system — no tool audits them against it.
+- Mechanical backing: `scripts/audit-rm.sh` audits this rule over the Glass Atrium repository's shell files in its scope; shell code elsewhere, code in any other language (this repository's included), and commands an agent runs are honor-system — no tool audits them against it.
 
 ### Temporary Files [ALL]
 
