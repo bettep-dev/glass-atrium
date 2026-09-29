@@ -342,7 +342,8 @@ function ScreenAgents() {
       </div>
 
       {sharedFailure && (
-        <PageErrorBanner sources={sharedFailure.sources} error={sharedFailure.error} onRetry={triggerRefresh}/>
+        <PageErrorBanner sources={sharedFailure.sources} error={sharedFailure.error} onRetry={triggerRefresh}
+          isBusy={isAnyRegionBusy} focusTargetId="agents-summary"/>
       )}
 
       {/* held values stay on screen, dimmed, until the refresh settles */}
@@ -432,7 +433,7 @@ function AgentPageVerdict({ revisionState, reviewByAgentState, statusTiles, days
 function getHealthFeederAg(revisionState, reviewByAgentState) {
   const states = [revisionState, reviewByAgentState];
   const source = 'rework or review flags';
-  if (states.some((state) => state.status === 'loading')) return { state: 'pending', tone: null, clauses: [], source };
+  if (states.some((state) => window.UI.getRegionView(state) === 'loading')) return { state: 'pending', tone: null, clauses: [], source };
   if (states.some((state) => state.status !== 'ready')) return { state: 'unchecked', tone: null, clauses: [], source };
 
   const ranked = buildQualityHealthRanking(readyData(revisionState)?.rows ?? [], readyData(reviewByAgentState)?.rows ?? [], Number.MAX_SAFE_INTEGER);
@@ -562,18 +563,18 @@ function getTaskTypeTone(state) {
 function AgentAlarmLane({ state, onRetry }) {
   const { Badge } = window.UI;
 
-  if (state.status === 'loading') {
+  if (window.UI.getRegionView(state) === 'loading') {
     return (
       <div className="card mb-4" aria-busy="true">
         <div className="card-body text-faint fs-meta">Checking circuit-breaker state…</div>
       </div>
     );
   }
-  if (state.status === 'error') {
+  if (window.UI.getRegionView(state) === 'error') {
     return (
       <div className="card mb-4">
         <div className="card-body">
-          <window.UI.RegionUnavailable source="circuit-breaker state" error={state.error} onRetry={onRetry}/>
+          <window.UI.RegionUnavailable source="circuit-breaker state" error={state.error} isBusy={state.busy} focusTargetId="agents-status" onRetry={onRetry}/>
         </div>
       </div>
     );
@@ -627,9 +628,9 @@ function AgentAlarmRow({ alarm }) {
 // carries its own payload state so one unloaded source never reads as a zero.
 function AgentStatusBand({ tiles, onRetry }) {
   return (
-    <div className="grid grid-cols-2 xl:grid-cols-4 gap-4 mb-4 items-stretch">
+    <div id="agents-status" className="grid grid-cols-2 xl:grid-cols-4 gap-4 mb-4 items-stretch">
       {tiles.map((tile) => (
-        <AgentStatusTile key={tile.key} {...tile} onRetry={onRetry}/>
+        <AgentStatusTile key={tile.key} {...tile} cardId={`agents-tile-${tile.key}`} onRetry={onRetry}/>
       ))}
     </div>
   );
@@ -661,7 +662,8 @@ function buildAgentStatusTiles({ days, summaryState, failureState, overageState,
       isCurrent: true,
       sub: breaker && breaker.source === 'loaded' ? `now · of ${breaker.registry_agents} registered agents` : 'circuit-breaker state · now',
       unavailableSub: CIRCUIT_BREAKER_UNREADABLE_COPY,
-      status: summaryState.status !== 'ready' ? summaryState.status : unsafeCount === null ? 'unavailable' : 'ready',
+      status: window.UI.getRegionView(summaryState) !== 'ready' ? window.UI.getRegionView(summaryState) : unsafeCount === null ? 'unavailable' : 'ready',
+      busy: summaryState.busy,
       value: unsafeCount,
       tone: unsafeCount ? (breaker.suspended_count ? 'crit' : 'warn') : 'ok',
       clause: `${unsafeCount} unsafe to route now`,
@@ -674,7 +676,8 @@ function buildAgentStatusTiles({ days, summaryState, failureState, overageState,
       sub: blockedCount
         ? `agents with a failed run · ${blockedCount} blocked (a compliant halt, not a defect) · last ${days}d`
         : `agents with a failed run · last ${days}d`,
-      status: failureState.status,
+      status: window.UI.getRegionView(failureState),
+      busy: failureState.busy,
       value: failedAgents ? failedAgents.length : null,
       tone: failedAgents?.length ? 'crit' : 'ok',
       clause: failedAgents ? `${formatAgentCountAg(failedAgents.length)} with a failed run (${formatAgentListAg(failedAgents)})` : '',
@@ -685,7 +688,8 @@ function buildAgentStatusTiles({ days, summaryState, failureState, overageState,
       label: 'Over tool-use cap',
       source: 'tool-use overruns',
       sub: joinSubAg(['runs that crossed their tool-use budget', getRunRateTextAg(overCapCount, totalRuns), `last ${days}d`]),
-      status: overageState.status,
+      status: window.UI.getRegionView(overageState),
+      busy: overageState.busy,
       value: overCapCount,
       tone: getRunRateToneAg(overCapCount, totalRuns),
       clause: `${formatIntAg(overCapCount)} runs over the tool-use cap`,
@@ -696,7 +700,8 @@ function buildAgentStatusTiles({ days, summaryState, failureState, overageState,
       label: 'Needs context',
       source: 'needs-context runs',
       sub: `${joinSubAg(['needs_context outcomes', getRunRateTextAg(needsContextCount, totalRuns), `last ${days}d`])} — fix the delegation prompt`,
-      status: summaryState.status,
+      status: window.UI.getRegionView(summaryState),
+      busy: summaryState.busy,
       value: needsContextCount,
       tone: getRunRateToneAg(needsContextCount, totalRuns),
       clause: `${formatIntAg(needsContextCount)} needs_context outcomes`,
@@ -726,16 +731,16 @@ function joinSubAg(parts) {
   return parts.filter(Boolean).join(' · ');
 }
 
-function AgentStatusTile({ label, sub, unavailableSub, status, value, tone, error, onRetry }) {
+function AgentStatusTile({ label, sub, unavailableSub, status, value, tone, error, busy = false, cardId, onRetry }) {
   const { Badge, KpiValue } = window.UI;
 
   return (
-    <div className="card h-full flex flex-col min-h-0">
+    <div id={cardId} className="card h-full flex flex-col min-h-0">
       <div className="card-body flex flex-col gap-1">
         <span className="text-faint fs-meta">{label}</span>
         {status === 'loading' && <span className="text-faint" aria-busy="true">…</span>}
         {status === 'error' && (
-          <window.UI.RegionUnavailable source={label.toLowerCase()} error={error} onRetry={onRetry}/>
+          <window.UI.RegionUnavailable source={label.toLowerCase()} error={error} isBusy={busy} focusTargetId={cardId} onRetry={onRetry}/>
         )}
         {status === 'unavailable' && <Badge role="status" tone="warn">unavailable</Badge>}
         {status === 'ready' && <KpiValue tone={tone}>{value}</KpiValue>}
@@ -771,10 +776,10 @@ function AgentSummaryCard({ state, days, sortBy, onSortChange, selectedAgent, on
   const totalAgents = data?.meta?.total_agents ?? 0;
   const subText = data
     ? `${totalAgents} active`
-    : (state.status === 'loading' ? 'Loading…' : "Couldn't load");
+    : (window.UI.getRegionView(state) === 'loading' ? 'Loading…' : "Couldn't load");
 
   return (
-    <div className="card h-full flex flex-col min-h-0 min-w-0 mb-0">
+    <div id="agents-summary" className="card h-full flex flex-col min-h-0 min-w-0 mb-0">
       <CardHead
         title="Performance by agent"
         sub={subText}
@@ -799,11 +804,11 @@ function AgentSummaryCard({ state, days, sortBy, onSortChange, selectedAgent, on
 }
 
 function AgentSummaryBody({ state, days, sortBy, onSortChange, selectedAgent, onSelect, onRetry, trendByAgent, failureByAgent, overageByAgent, failureStatus, trendStatus }) {
-  if (state.status === 'loading') {
+  if (window.UI.getRegionView(state) === 'loading') {
     return <div className="card-body"><window.UI.LoadingPlaceholder label="agent performance" minHeight={240}/></div>;
   }
-  if (state.status === 'error') {
-    return <div className="card-body"><window.UI.RegionUnavailable source="agent performance" error={state.error} onRetry={onRetry}/></div>;
+  if (window.UI.getRegionView(state) === 'error') {
+    return <div className="card-body"><window.UI.RegionUnavailable source="agent performance" error={state.error} isBusy={state.busy} focusTargetId="agents-summary" onRetry={onRetry}/></div>;
   }
   const agents = readyData(state)?.agents ?? [];
   if (agents.length === 0) {
@@ -1415,10 +1420,10 @@ function AgentCircuitBreakerLine({ agent, summaryState }) {
   const { Badge } = window.UI;
   const breaker = agent ? agent.circuit_breaker : null;
 
-  if (summaryState.status === 'loading') {
+  if (window.UI.getRegionView(summaryState) === 'loading') {
     return <div className="text-faint fs-meta mb-2" aria-busy="true">Checking circuit-breaker state…</div>;
   }
-  if (summaryState.status === 'error') {
+  if (window.UI.getRegionView(summaryState) === 'error') {
     return <div className="text-faint fs-meta mb-2">Circuit-breaker state not loaded — the summary request failed.</div>;
   }
   if (!breaker) {
@@ -1530,11 +1535,11 @@ function AgentOverviewSection({ agent, drawerAgent, summaryState, revisionState,
     [revisionState, reviewByAgentState],
   );
 
-  if (summaryState.status === 'loading') {
+  if (window.UI.getRegionView(summaryState) === 'loading') {
     return <DrawerSectionSkeleton rows={3} label="overview"/>;
   }
-  if (summaryState.status === 'error') {
-    return <window.UI.RegionUnavailable source="overview" error={summaryState.error} onRetry={onRetry}/>;
+  if (window.UI.getRegionView(summaryState) === 'error') {
+    return <window.UI.RegionUnavailable source="overview" error={summaryState.error} isBusy={summaryState.busy} onRetry={onRetry}/>;
   }
   if (!agent) {
     return <DrawerSectionEmpty message={`No summary row for ${drawerAgent} in this window.`}/>;
@@ -1612,8 +1617,8 @@ function AgentQualitySignalsSection({ drawerAgent, revisionState, reviewByAgentS
     [revisionState, reviewByAgentState],
   );
 
-  const bothLoading = revisionState.status === 'loading' && reviewByAgentState.status === 'loading';
-  const bothError = revisionState.status === 'error' && reviewByAgentState.status === 'error';
+  const bothLoading = window.UI.getRegionView(revisionState) === 'loading' && window.UI.getRegionView(reviewByAgentState) === 'loading';
+  const bothError = window.UI.getRegionView(revisionState) === 'error' && window.UI.getRegionView(reviewByAgentState) === 'error';
   if (bothLoading) {
     return <DrawerSectionSkeleton rows={2} label="quality signals"/>;
   }
@@ -1668,11 +1673,11 @@ function AgentQualitySignalsSection({ drawerAgent, revisionState, reviewByAgentS
 // runs/launches/needs-info/P95 2-col + latency p50/p95/p99 (허용된 단일 3-up 예외) + 7일 추세.
 function AgentPerformanceSection({ agent, drawerAgent, summaryState, latencyState, trendByAgent, trendDates, onRetry }) {
   const { TrendChart } = window.UI;
-  if (summaryState.status === 'loading') {
+  if (window.UI.getRegionView(summaryState) === 'loading') {
     return <DrawerSectionSkeleton rows={3} label="performance"/>;
   }
-  if (summaryState.status === 'error') {
-    return <window.UI.RegionUnavailable source="performance" error={summaryState.error} onRetry={onRetry}/>;
+  if (window.UI.getRegionView(summaryState) === 'error') {
+    return <window.UI.RegionUnavailable source="performance" error={summaryState.error} isBusy={summaryState.busy} onRetry={onRetry}/>;
   }
   if (!agent) {
     return <DrawerSectionEmpty message="No performance data for this agent in the window."/>;
@@ -1721,11 +1726,11 @@ function AgentPerformanceSection({ agent, drawerAgent, summaryState, latencyStat
 
 // latency p50/p95/p99 한 줄 — 페어링 없으면 inline empty (Performance 내부 독립 degrade).
 function AgentLatencyRow({ latency, state, onRetry }) {
-  if (state.status === 'loading') {
+  if (window.UI.getRegionView(state) === 'loading') {
     return <DrawerSectionSkeleton rows={1} label="latency"/>;
   }
-  if (state.status === 'error') {
-    return <window.UI.RegionUnavailable source="latency" error={state.error} onRetry={onRetry}/>;
+  if (window.UI.getRegionView(state) === 'error') {
+    return <window.UI.RegionUnavailable source="latency" error={state.error} isBusy={state.busy} onRetry={onRetry}/>;
   }
   if (!latency || (latency.p50_ms == null && latency.p95_ms == null && latency.p99_ms == null)) {
     return <DrawerSectionEmpty message="No paired response-time data (no Start↔Stop events)."/>;
@@ -1774,11 +1779,11 @@ function AgentReliabilitySection({ agent, drawerAgent, failureByAgent, failureSt
 // (a) Breakages — failure-patterns(필터) 요약 + 기존 MergedBreakageSection(fail/blocked 키워드 분류) 재사용.
 function AgentReliabilityBreakages({ drawerAgent, failureByAgent, failureState, detailState, blockedState, days, onRetry }) {
   const { Badge } = window.UI;
-  if (failureState.status === 'loading') {
+  if (window.UI.getRegionView(failureState) === 'loading') {
     return <DrawerSectionSkeleton rows={2} label="failures"/>;
   }
-  if (failureState.status === 'error') {
-    return <window.UI.RegionUnavailable source="failure patterns" error={failureState.error} onRetry={onRetry}/>;
+  if (window.UI.getRegionView(failureState) === 'error') {
+    return <window.UI.RegionUnavailable source="failure patterns" error={failureState.error} isBusy={failureState.busy} onRetry={onRetry}/>;
   }
 
   const failure = failureByAgent ? failureByAgent.get(drawerAgent) : null;
@@ -1841,11 +1846,11 @@ function AgentReliabilityBreakages({ drawerAgent, failureByAgent, failureState, 
 
 // (b) Lifecycle — lifecycle-stats(agent_type 필터) start/completed gap + duration 분포(1 mono 라인 collapse).
 function AgentReliabilityLifecycle({ agent, drawerAgent, lifecycleState, onRetry }) {
-  if (lifecycleState.status === 'loading') {
+  if (window.UI.getRegionView(lifecycleState) === 'loading') {
     return <DrawerSectionSkeleton rows={2} label="lifecycle"/>;
   }
-  if (lifecycleState.status === 'error') {
-    return <window.UI.RegionUnavailable source="lifecycle stats" error={lifecycleState.error} onRetry={onRetry}/>;
+  if (window.UI.getRegionView(lifecycleState) === 'error') {
+    return <window.UI.RegionUnavailable source="lifecycle stats" error={lifecycleState.error} isBusy={lifecycleState.busy} onRetry={onRetry}/>;
   }
 
   // agent_type == agent_id == drawerAgent (현 cycle convention).
@@ -1905,11 +1910,11 @@ function AgentReliabilityLifecycle({ agent, drawerAgent, lifecycleState, onRetry
 
 // 5. Recent activity — 드로어 열림 시 fetch 한 per-agent 최신 outcomes (result dual-encoded).
 function AgentRecentActivitySection({ recentState, days, onRetry }) {
-  if (recentState.status === 'loading') {
+  if (window.UI.getRegionView(recentState) === 'loading') {
     return <DrawerSectionSkeleton rows={3} label="recent activity"/>;
   }
-  if (recentState.status === 'error') {
-    return <window.UI.RegionUnavailable source="recent activity" error={recentState.error} onRetry={onRetry}/>;
+  if (window.UI.getRegionView(recentState) === 'error') {
+    return <window.UI.RegionUnavailable source="recent activity" error={recentState.error} isBusy={recentState.busy} onRetry={onRetry}/>;
   }
   const rows = readyData(recentState)?.rows ?? [];
   if (rows.length === 0) {
@@ -1961,8 +1966,8 @@ function MergedBreakageSection({ detailState, blockedState, days, onRetry }) {
     [detailState, blockedState],
   );
 
-  const isLoading = [detailState, blockedState].some((s) => s.status === 'loading');
-  const firstError = [detailState, blockedState].find((s) => s.status === 'error');
+  const isLoading = [detailState, blockedState].some((s) => window.UI.getRegionView(s) === 'loading');
+  const firstError = [detailState, blockedState].find((s) => window.UI.getRegionView(s) === 'error');
 
   return (
     <div>
@@ -1975,7 +1980,7 @@ function MergedBreakageSection({ detailState, blockedState, days, onRetry }) {
       {isLoading ? (
         <DrawerSectionSkeleton rows={3} label="failure causes"/>
       ) : firstError ? (
-        <window.UI.RegionUnavailable source="failure causes" error={firstError.error} onRetry={onRetry}/>
+        <window.UI.RegionUnavailable source="failure causes" error={firstError.error} isBusy={firstError.busy} onRetry={onRetry}/>
       ) : (
         <MergedBreakageBody merged={merged} days={days}/>
       )}
@@ -2098,11 +2103,11 @@ function SuccessRateMatrixBody({ state, days, onRetry }) {
     [state],
   );
 
-  if (state.status === 'loading') {
+  if (window.UI.getRegionView(state) === 'loading') {
     return <window.UI.LoadingPlaceholder label="success matrix" minHeight={280}/>;
   }
-  if (state.status === 'error') {
-    return <window.UI.RegionUnavailable source="success rates" error={state.error} onRetry={onRetry}/>;
+  if (window.UI.getRegionView(state) === 'error') {
+    return <window.UI.RegionUnavailable source="success rates" error={state.error} isBusy={state.busy} onRetry={onRetry}/>;
   }
   if (matrix.agents.length === 0) {
     return <EmptyStateAg message={`No success-rate events in the last ${days} days.`}/>;
@@ -2330,11 +2335,11 @@ function getFailingPairsSub(status, shownCount, failingTotal, measuredCount, day
 function TopNFailingAgentsBody({ state, days, onRetry, pairs, failureByAgent }) {
   const { Badge } = window.UI;
 
-  if (state.status === 'loading') {
+  if (window.UI.getRegionView(state) === 'loading') {
     return <window.UI.LoadingPlaceholder label="most-failing pairs" minHeight={200}/>;
   }
-  if (state.status === 'error') {
-    return <window.UI.RegionUnavailable source="failure rates" error={state.error} onRetry={onRetry}/>;
+  if (window.UI.getRegionView(state) === 'error') {
+    return <window.UI.RegionUnavailable source="failure rates" error={state.error} isBusy={state.busy} onRetry={onRetry}/>;
   }
   if (pairs.length === 0) {
     return (
@@ -2501,11 +2506,11 @@ function ReviewFlagTimelineCard({ state, days, onRetry }) {
 }
 
 function QualityHealthTimeline({ state, onRetry }) {
-  if (state.status === 'loading') {
+  if (window.UI.getRegionView(state) === 'loading') {
     return <window.UI.LoadingPlaceholder label="review_flag timeline" minHeight={260}/>;
   }
-  if (state.status === 'error') {
-    return <window.UI.RegionUnavailable source="review_flag data" error={state.error} onRetry={onRetry}/>;
+  if (window.UI.getRegionView(state) === 'error') {
+    return <window.UI.RegionUnavailable source="review_flag data" error={state.error} isBusy={state.busy} onRetry={onRetry}/>;
   }
   const rows = readyData(state)?.rows ?? [];
   if (rows.length === 0) {
@@ -2683,11 +2688,11 @@ function LifecycleStatsCard({ state, days, onSelect, onRetry }) {
 }
 
 function LifecycleStatsBody({ state, days, onSelect, onRetry }) {
-  if (state.status === 'loading') {
+  if (window.UI.getRegionView(state) === 'loading') {
     return <window.UI.LoadingPlaceholder label="lifecycle stats" minHeight={260}/>;
   }
-  if (state.status === 'error') {
-    return <window.UI.RegionUnavailable source="lifecycle stats" error={state.error} onRetry={onRetry}/>;
+  if (window.UI.getRegionView(state) === 'error') {
+    return <window.UI.RegionUnavailable source="lifecycle stats" error={state.error} isBusy={state.busy} onRetry={onRetry}/>;
   }
   const rows = (readyData(state)?.rows ?? [])
     .filter((r) => r && r.agent_type && (Number(r.start_count) || 0) > 0)

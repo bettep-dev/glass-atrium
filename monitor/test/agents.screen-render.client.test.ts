@@ -36,7 +36,7 @@ const UI_SCALARS: Record<string, unknown> = {
 
 // Region-state members come from the shipped ui.jsx so the page is exercised against the real contract.
 const REAL_UI = (await loadScreenModule(resolve(__dirname, "../public/src/ui.jsx"))).UI as Record<string, unknown>;
-const REGION_MEMBERS = ["INITIAL_REGION_STATE", "getRegionSummary", "getSharedFailure", "putRegionRequest", "putRegionData", "putRegionFailure", "getRowFocusProps", "ROW_CONTROL_PROPS"];
+const REGION_MEMBERS = ["INITIAL_REGION_STATE", "getRegionView", "getRegionSummary", "getSharedFailure", "putRegionRequest", "putRegionData", "putRegionFailure", "getRowFocusProps", "ROW_CONTROL_PROPS"];
 for (const name of REGION_MEMBERS) UI_SCALARS[name] = REAL_UI[name];
 // Count text rides the shipped formatter, so a KPI sub reads as it does on the page.
 UI_SCALARS.formatInt = REAL_UI.formatInt;
@@ -101,7 +101,7 @@ test("the drawer's latency row renders its bars for every paired percentile it i
     { agent_id: "solo", agent_name: "solo", p50_ms: 10, p95_ms: 10, p99_ms: 10 },
   ]) {
     const tree = renderScreen(
-      React.createElement(AgentLatencyRow, { latency, state: { status: "ready" }, onRetry: () => undefined }),
+      React.createElement(AgentLatencyRow, { latency, state: { status: "ready", data: { rows: [] } }, onRetry: () => undefined }),
     );
     const bars = findNodes(
       tree,
@@ -280,6 +280,30 @@ test("the alarm lane renders loading, error, unavailable and a loaded zero disti
   assert.deepEqual(getBadgeTexts(failed), []);
   assert.deepEqual(getBadgeTexts(unavailable), ["unavailable"]);
   assert.equal(collectText(loadedZero), "", "a clear fleet renders no alarm lane");
+});
+
+test("a Retry on a cold failure keeps the error card busy and hands focus to a card that outlives recovery", async () => {
+  const putRegionRequest = REAL_UI.putRegionRequest as (state: unknown, key: string, request: unknown) => Record<string, unknown>;
+  const retrying = putRegionRequest(ERROR_STATE, "k", new AbortController());
+  const ready = { status: "ready", data: [], error: null };
+  const lane = await renderComponent("AgentAlarmLane", { state: retrying, onRetry: () => undefined });
+  const band = await renderStatusBand({
+    summaryState: retrying, failureState: ready, overageState: ready,
+    failureByAgent: new Map(), overageByAgent: new Map(), onRetry: () => undefined,
+  });
+
+  const [laneCard] = findAtoms(lane, "RegionUnavailable");
+  assert.equal(laneCard?.props.isBusy, true, "the lane keeps its error card, marked busy, while the Retry runs");
+  assert.equal(laneCard?.props.focusTargetId, "agents-status", "an emptied lane hands focus to the status band");
+  assert.equal(findNodes(band, (n) => n.props.id === "agents-status").length, 1, "the band carries the lane's focus target");
+
+  const tileCards = findAtoms(band, "RegionUnavailable");
+  assert.ok(tileCards.length > 0, "the summary-backed tiles keep their error cards through the Retry");
+  for (const card of tileCards) {
+    assert.equal(card.props.isBusy, true);
+    const targets = findNodes(band, (n) => n.type === "div" && n.props.id === card.props.focusTargetId);
+    assert.equal(targets.length, 1, `tile focus target ${String(card.props.focusTargetId)} is the tile's own card`);
+  }
 });
 
 test("the unsafe-to-route tile shows a count only when the breaker state actually loaded", async () => {
