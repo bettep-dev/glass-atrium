@@ -228,7 +228,7 @@ A read allowlist bounds *which* artifacts a delegation may open; it says nothing
   - **Context case — a role body can override the extent duty on CONTEXT too, stated rather than implied**: `glass-atrium-qa-debugger` "Read related code in full" reaches supporting context, the half this duty otherwise bounds, and it still governs.
     - The override reaches only the context class that body names, for the work that body describes.
     - Every other entry in the same read scope still carries an extent, and the override never widens into the clause the **No open-ended latitude clause** bullet forbids.
-  - Why both overrides are stated: skill files sit outside `core-compliance-matrix.md`, so its Precedence Resolution adjudicates no skill-versus-agent-body conflict.
+  - Why both overrides are stated: skill files sit outside `core-compliance-matrix.md`, so the tier order in `GLASS_ATRIUM_GLOBAL_RULES.md` → `### Precedence Resolution` adjudicates no skill-versus-agent-body conflict.
 
 ##### Authoring rules
 
@@ -934,7 +934,7 @@ Agent Teams apply ONLY to parallelizable independent tasks; sequential dependent
 Prohibition rules > Security > Quality gates > Cost limits > Team size
 
 - Why quality outranks cost: `### Cost Optimization` never rejects a superior architecture on cost alone, and the charter orders Correctness → Safety → Quality → Speed.
-- Scope: this ordering resolves conflicts INSIDE the Agent Teams pattern. Cross-tier conflicts follow `core-compliance-matrix.md` → Precedence Resolution, where `core-security.md` overrides every other ALL-scope rule.
+- Scope: this ordering resolves conflicts INSIDE the Agent Teams pattern. Cross-tier conflicts follow `GLASS_ATRIUM_GLOBAL_RULES.md` → `### Precedence Resolution`, where `core-security.md` overrides every other ALL-scope rule.
 
 ### Delegation Enforcement [ORCHESTRATOR]
 

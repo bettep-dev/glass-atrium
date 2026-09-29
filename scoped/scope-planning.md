@@ -6,7 +6,7 @@ Maintainer material — co-edit rosters, delivery status and the machine-read po
 
 ## Absolute Rules [PLANNING]
 
-Final authority on an ambiguous PLANNING rule is this file, whole; this section concentrates that authority rather than narrowing it to itself. Corpus-wide precedence order: `rules/glass-atrium/core-compliance-matrix.md` → `## Precedence Resolution`.
+Final authority on an ambiguous PLANNING rule is this file, whole; this section concentrates that authority rather than narrowing it to itself. Corpus-wide precedence order: `agents/GLASS_ATRIUM_GLOBAL_RULES.md` → `### Precedence Resolution`.
 
 - **No code in plans**: SQL, TS, pseudocode and new function-name proposals are FORBIDDEN — code authoring is the DEV agent's domain.
   - The prohibition covers the IMPLEMENTATION a plan prescribes. The presentation carrier of a user-requested HTML primary — Tailwind classes, Mermaid source, the claim-marking tags below — is the deliverable's own form, not plan content.

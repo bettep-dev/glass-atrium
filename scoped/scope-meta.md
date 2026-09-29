@@ -2,7 +2,7 @@
 
 ## Absolute Rules [META]
 
-Final authority on an ambiguous META rule is this file, whole; this section concentrates that authority rather than narrowing it to itself. Corpus-wide precedence order: `rules/glass-atrium/core-compliance-matrix.md` → `## Precedence Resolution`.
+Final authority on an ambiguous META rule is this file, whole; this section concentrates that authority rather than narrowing it to itself. Corpus-wide precedence order: `agents/GLASS_ATRIUM_GLOBAL_RULES.md` → `### Precedence Resolution`.
 
 - **Prompts = Code**: a prompt, agent body, rule or skill you author is version-controlled, reviewed and tested like source.
 

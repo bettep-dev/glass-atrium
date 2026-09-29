@@ -1,9 +1,17 @@
+---
+paths:
+  - "**/autoagent/**/*"
+  - "**/scripts/*.sh"
+  - "**/scripts/lib/*.sh"
+  - "**/com.glass-atrium.*.plist"
+  - "**/.glass-atrium/**/*"
+---
 # Self-Improvement Pipeline Hygiene Rules (Cross-Cutting Concern)
 
-Applies to two audiences, each with its own load trigger:
+Applies to two audiences, both loaded on a Read whose path matches the `paths:` globs above — glob base and honest backing: `rules/glass-atrium/core-compliance-matrix.md` → `### Membership vs. Delivery (per tier)` → **Path-scoped delivery**.
 
-- **ORCHESTRATOR scope** (main session / global coordinator) — loaded automatically.
-- **DEV agents that touch the autoagent self-improvement pipeline** (`~/.glass-atrium/autoagent/daemon-apply.sh`, `daemon_cycle.py`, `daemon-cycle.sh`, related launchd plists) — loaded when the change scope includes any path under `~/.glass-atrium/autoagent/` or the loop's launchd configuration.
+- **ORCHESTRATOR scope** (main session / global coordinator).
+- **DEV agents that touch the autoagent self-improvement pipeline** (`~/.glass-atrium/autoagent/daemon-apply.sh`, `daemon_cycle.py`, `daemon-cycle.sh`, related launchd plists).
 
 ## Working Tree Hygiene Contract [ORCHESTRATOR+DEV]
 

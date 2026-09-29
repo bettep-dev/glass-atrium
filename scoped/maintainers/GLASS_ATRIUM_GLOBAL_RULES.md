@@ -91,6 +91,10 @@ Prose citations INTO charter anchors, all still resolving after this pass:
 - **Absolute Rules**: `## Absolute Rules [ALL]` · `Absolute Rules → Output Language` · `Absolute Rules → the response-language rule` · `Anchor by symbol`
 - **Continuity and files**: `Cross-Session Continuity (progress.md) [ALL]` and its `[CONTINUITY]` header activation contract · `File Deletion Policy`
 - **Conduct**: `## System Prompt Protection` · `AI-Generated Anti-Pattern Prohibition` · `Philosophy (ETHOS)` · `Rationalization Rejection`
+- **Precedence**: `### Precedence Resolution`, cited by:
+  - rule prose: `scoped/scope-meta.md` · `scoped/scope-planning.md` · the `rules/glass-atrium/core-compliance-matrix.md` → `## Precedence Resolution` stub;
+  - skill: `skills/glass-atrium-ops-orchestrator.md`, two sites;
+  - maintainer notes: `scoped/maintainers/scope-meta.md` · `scoped/maintainers/scope-planning.md` · `scoped/maintainers/scope-security.md`.
 
 ## Outstanding
 

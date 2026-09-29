@@ -13,8 +13,23 @@ Common rules for **all agents** (ALL scope).
 ## Role
 
 - This file is the **system charter** for all agents — it governs behaviours unconditionally common to every role.
-- **Precedence**: this file > scope-*.md > Tier-3 cross-cutting rules.
+- **Precedence**: conflicts between rule files resolve by `### Precedence Resolution` below.
 - **Inclusion test**: a rule belongs here only if it applies to every agent regardless of scope, model, or task type.
+
+### Precedence Resolution
+
+Tier numbers are the tiers `rules/glass-atrium/core-compliance-matrix.md` → `## Loading Tiers` defines; "the Tier 2 table" is the table under its `### Tier 2` heading.
+
+- Across tiers: Tier 1 > Tier 2 > Tier 3.
+- Within Tier 1: `rules/glass-atrium/core-security.md` overrides the other ALL rules (security-first principle).
+- Within Tier 3: the more conservative (restrictive) rule wins.
+- Within Tier 2: conflicts are impossible by ASSIGNMENT — one scope file per scope (the ORCHESTRATOR pair excepted).
+  - That says nothing about what is in an agent's context.
+    - A spawned subagent holds the ORCHESTRATOR pair, which the host propagates from the main session whatever the subagent's own scope.
+    - It also holds the file assigned to its own scope, delivered by the part slots from its registry row (`rules/glass-atrium/core-compliance-matrix.md` → `### Membership vs. Delivery (per tier)`).
+  - Either way the governing rule is the one the Tier 2 table assigns to the agent's own scope.
+  - `rules/glass-atrium/orchestrator-role.md` disclaims itself for subagents in its own opening line, which is what makes the overlap harmless rather than ambiguous.
+- Ambiguous interpretation: the final authority is the scope file the Tier 2 table assigns to that scope — the whole file, never a named section inside it.
 
 ## Philosophy (ETHOS) [ALL]
 
