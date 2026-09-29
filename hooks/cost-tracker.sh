@@ -181,8 +181,8 @@ def calc_cost(it, ot, cr, cc, model_key):
     """Compute USD cost from the per-MTok rate resolved by
     pricing_loader.rate_for, keyed on the effective "today" (get_today, honors
     COST_TRACKER_TODAY so the bats suite stays clock-independent). Windowed
-    tiers (e.g. the sonnet-5 intro rate through 2026-08-31) are selected
-    inside the loader by that date.
+    tiers, where the SoT row for a model carries one, are selected inside
+    the loader by that date.
     Advisory contract (caller-owned): resolution label "sot" is silent; EVERY
     non-sot label (overlay / remote / family_latest / fallback) means the SoT
     lacks a row for this model — emit the stderr advisory so an operator adds
