@@ -24,7 +24,7 @@ type PayloadStatus = "loading" | "error" | "unavailable" | "blocked" | "ready";
 interface PayloadState<T> {
   status: PayloadStatus;
   data?: T;
-  error?: string;
+  error?: string | null;
 }
 interface BandTile {
   key: string;
