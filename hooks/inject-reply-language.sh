@@ -1,13 +1,6 @@
 #!/usr/bin/env bash
-# inject-reply-language.sh — quotes the user's latest own message so the model judges the reply language;
-# every line is a fixed template plus that quote, never a language value.
-# UserPromptSubmit: only a machine-written prompt (non-user `source`, else a wrapper prefix) gets the line,
-# and an ordinary human prompt returns before python3 or any transcript read.
-# UserPromptExpansion: a user-typed slash command quotes its own arguments, so the `/name args` prompt that
-# follows on UserPromptSubmit needs no leading-slash sniffing — a `/Users/...` prompt has the same shape.
-# SessionStart, run by inject-session-context.sh whose stdout is the context: resume, compact and fork.
-# Agent frames stay silent: the envelope carries no agent_id and points at the parent transcript, so the
-# prompt's own frame is the only signal — structural, not a guarantee.
+# inject-reply-language.sh — quotes the user's latest own message so the model judges the reply language.
+# Every emitted line is a fixed template plus that quote, never a language value.
 # Never blocks: exit 2 from either prompt event erases the prompt, so every path ends in exit 0.
 set -Eeuo pipefail
 IFS=$'\n\t'
@@ -33,18 +26,17 @@ readonly SCRIPT_DIR
 readonly RESOLVER="${SCRIPT_DIR}/lib/reply_language.py"
 
 main() {
-  local input fields event source transcript head args
+  local input fields event source transcript head
   input="$(cat)"
   [[ "${CLAUDE_CODE_ENTRYPOINT:-}" == "${INTERACTIVE_ENTRYPOINT}" ]] || return 0
   command -v jq >/dev/null 2>&1 || return 0
   fields="$(jq -r --argjson head "${HEAD_CHARS}" "${CLEAN_DEF}"'
-    [.hook_event_name, .source, .transcript_path, (.prompt // "" | clean | .[0:$head]),
-      (.command_args // "" | clean)]
+    [.hook_event_name, .source, .transcript_path, (.prompt // "" | clean | .[0:$head])]
     | map(. // "" | tostring) | join("\u001f")' <<<"${input}" 2>/dev/null)" || return 0
-  IFS=$'\x1f' read -r event source transcript head args <<<"${fields}" || return 0
+  IFS=$'\x1f' read -r event source transcript head <<<"${fields}" || return 0
   case "${event}" in
     UserPromptSubmit) point_at_machine_prompt "${source}" "${head}" "${transcript}" ;;
-    UserPromptExpansion) point_at_command "${args}" "${transcript}" ;;
+    UserPromptExpansion) point_at_command "${input}" "${transcript}" ;;
     SessionStart) point_at_resumed_session "${source}" "${transcript}" ;;
     *) ;;
   esac
@@ -54,7 +46,7 @@ main() {
 point_at_machine_prompt() {
   local kind quote context
   kind="$(get_prompt_kind "${1}" "${2}")"
-  [[ -n "${kind}" ]] || return 0
+  [[ -n "${kind}" ]] || return 0 # an ordinary human prompt ends here, before python3 or any transcript read
   quote="$(get_newest_quote "${3}")"
   [[ -n "${quote}" ]] || return 0
   # shellcheck disable=SC2059  # the format is the constant above, never input
@@ -62,22 +54,26 @@ point_at_machine_prompt() {
   emit_context UserPromptSubmit "${context}"
 }
 
-# Args: $1=cleaned command arguments $2=transcript path
+# The typed command is quoted here, so UserPromptSubmit never sniffs a leading slash: `/Users/...` shares it.
+# Args: $1=envelope $2=transcript path
 point_at_command() {
-  local quote context
-  quote="$(get_quote "${1}")"
-  if [[ -n "${quote}" ]]; then
+  local found entry prose quote context
+  found="$(jq -j '.command_args // "" | tostring' <<<"${1}" | find_newest_prose --pending "${2}")"
+  entry="$(jq -r 'select(.status == "found") | .entry' <<<"${found}")"
+  prose="$(jq -r 'select(.status == "found") | .prose' <<<"${found}")"
+  quote="$(get_quote "${prose}")"
+  [[ -n "${quote}" ]] || return 0
+  if [[ "${entry}" == pending ]]; then
     # shellcheck disable=SC2059  # the format is the constant above, never input
     printf -v context "${COMMAND_POINTER}" "${quote}"
   else
-    quote="$(get_newest_quote "${2}")"
-    [[ -n "${quote}" ]] || return 0
     # shellcheck disable=SC2059  # the format is the constant above, never input
     printf -v context "${MACHINE_POINTER}" 'a slash command' "${quote}"
   fi
   emit_context UserPromptExpansion "${context}"
 }
 
+# Run by inject-session-context.sh, whose stdout is the session context, so the line is printed bare.
 # Args: $1=SessionStart source $2=transcript path
 point_at_resumed_session() {
   local quote context
@@ -93,6 +89,7 @@ point_at_resumed_session() {
 }
 
 # stdout: the kind of a machine-written prompt; empty for the user's own prompt or an agent frame.
+# Agent frames: the envelope has no agent_id and names the parent transcript, so the frame is the only signal.
 # Scheduled-task fires and /loop wakeups replay stored text with no frame, so only `source` can name them.
 get_prompt_kind() {
   case "${2}" in
@@ -122,10 +119,16 @@ get_prompt_kind() {
 get_newest_quote() {
   local prose
   [[ -n "${1}" ]] || return 0
+  prose="$(find_newest_prose "${1}" | jq -r 'select(.status == "found") | .prose')"
+  get_quote "${prose}"
+}
+
+# stdout: the resolver's JSON for the newest human message with prose; empty without python3 or the resolver.
+# Args: resolver `transcript` options and path
+find_newest_prose() {
   command -v python3 >/dev/null 2>&1 || return 0
   [[ -f "${RESOLVER}" ]] || return 0
-  prose="$(python3 "${RESOLVER}" transcript "${1}" | jq -r 'select(.status == "found") | .prose')"
-  get_quote "${prose}"
+  python3 "${RESOLVER}" transcript "$@"
 }
 
 # stdout: $1 cleaned, capped and JSON-quoted; empty when nothing is left.

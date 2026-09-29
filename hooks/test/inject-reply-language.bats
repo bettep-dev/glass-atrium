@@ -1,8 +1,11 @@
 #!/usr/bin/env bats
 # inject-reply-language.bats — hooks/inject-reply-language.sh, the reply-language pointer line.
-# Protects four contracts: a machine-written prompt gets one line quoting the user's latest own message,
-# the line's fixed part names no language, an ordinary human prompt stays silent without python3 or a
-# transcript read, and every input exits 0 so no prompt is erased.
+# Contracts protected:
+# - a machine-written prompt gets one line quoting the user's latest own message
+# - a typed slash command's arguments pass the same prose test as a transcript entry
+# - the line's fixed part names no language
+# - an ordinary human prompt stays silent without python3 or a transcript read
+# - every input exits 0, so no prompt is erased
 
 # shellcheck disable=SC2154  # BATS_TEST_DIRNAME, status and output are set by bats
 HOOK="${BATS_TEST_DIRNAME}/../inject-reply-language.sh"
@@ -160,7 +163,8 @@ assert_rows() {
     'agent frame with a non-user source|cli|system|newest-human-korean|<teammate-message teammate_id="x">go</teammate-message>|silent'
 }
 
-@test "a typed slash command gets a line quoting its own text, or the latest earlier message when it has none" {
+@test "a typed slash command gets a line quoting its own prose, or the latest earlier message when it has none" {
+  # shellcheck disable=SC2016  # the backticks are a literal code fence, never an expansion
   local rows=(
     'korean arguments over english history|cli|newest-human-english|이 변경 사항 검토해줘|slash_command|이 변경 사항 검토해줘'
     'english arguments over korean history|cli|newest-human-korean|review the staged diff|slash_command|review the staged diff'
@@ -168,6 +172,10 @@ assert_rows() {
     'arguments with bidi, bell and newline|cli|newest-human-english|이 변경\0342\0200\0256 사항\a\n검토해줘|slash_command|이 변경 사항 검토해줘'
     "no arguments|cli|newest-human-korean||slash_command|${KOREAN_QUOTE}"
     "whitespace-only arguments|cli|newest-human-english|  \t |slash_command|${ENGLISH_QUOTE}"
+    'prose around a URL|cli|newest-human-english|이 PR 검토해줘 https://github.com/org/repo/pull/12|slash_command|이 PR 검토해줘'
+    "URL-only arguments|cli|newest-human-korean|https://github.com/org/repo/pull/12|slash_command|${KOREAN_QUOTE}"
+    'fenced-code-only arguments|cli|newest-human-korean|```\nnpm ERR! code 1\n```|slash_command|'"${KOREAN_QUOTE}"
+    "paste-only arguments|cli|newest-human-english|<pasted_content id=\"1\">Error: build failed</pasted_content>|slash_command|${ENGLISH_QUOTE}"
     'no arguments and no human entry|cli|sdk-cli||slash_command|silent'
     'headless|sdk-cli|newest-human-english|이 변경 사항 검토해줘|slash_command|silent'
   )

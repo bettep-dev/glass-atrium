@@ -1,7 +1,10 @@
 #!/usr/bin/env bats
 # reply-language-resolver.bats — hooks/lib/reply_language.py, the newest-human-message finder.
-# Protects three contracts: only origin kind `human` is the user's message, an entry left whitespace-empty
-# by wrapper, paste and code removal is passed over, and the transcript read stays bounded.
+# Contracts protected:
+# - only origin kind `human` is the user's message
+# - an entry whitespace-empty after wrapper, paste and code removal is passed over
+# - a pending message on stdin passes the same test as a transcript entry
+# - the transcript read stays bounded
 
 # shellcheck disable=SC2154  # BATS_TEST_DIRNAME is set by bats before the file loads
 HOOKS_DIR="${BATS_TEST_DIRNAME}/.."
@@ -116,6 +119,47 @@ assert_rows() {
     'url-only|found|user|이 로그 좀 봐줘' \
     'paste-dominated|found|user|왜 실패했는지 원인 찾아줘' \
     'identifiers-only|found|user|hooks/lib/reply_language.py?'
+}
+
+@test "a pending message is judged exactly as the same text appended as the transcript's newest human entry" {
+  # shellcheck disable=SC2016  # the backticks are a literal code fence, never an expansion
+  local rows=(
+    'plain prose|Now review the staged diff'
+    'prose around a URL|이 PR 검토해줘 https://github.com/org/repo/pull/12'
+    'URL only|https://github.com/org/repo/pull/12'
+    'fenced code only|```\nnpm ERR! code 1\n```'
+    'paste only|<pasted_content id="1">Error: build failed</pasted_content>'
+    'whitespace only|  \t '
+    'empty|'
+  )
+  local row name text appended pending
+  write_human_transcript "${RL_TMP}/base.jsonl" '이 로그 좀 봐줘'
+  for row in "${rows[@]}"; do
+    IFS='|' read -r name text <<<"${row}"
+    printf '%b' "${text}" >"${RL_TMP}/pending.txt"
+    cp "${RL_TMP}/base.jsonl" "${RL_TMP}/appended.jsonl"
+    jq -cRs '{type: "user", origin: {kind: "human"}, message: {role: "user", content: .}}' \
+      <"${RL_TMP}/pending.txt" >>"${RL_TMP}/appended.jsonl"
+    run python3 "${LIB}" transcript "${RL_TMP}/appended.jsonl"
+    appended="$(jq -r '[.status, .prose] | map(tostring) | join("|")' <<<"${output}")"
+    run python3 "${LIB}" transcript --pending "${RL_TMP}/base.jsonl" <"${RL_TMP}/pending.txt"
+    pending="$(jq -r '[.status, .prose] | map(tostring) | join("|")' <<<"${output}")"
+    [[ "${status}" -eq 0 && "${pending}" == "${appended}" ]] || {
+      echo "${name}: pending ${pending}, appended ${appended}"
+      return 1
+    }
+  done
+}
+
+@test "a pending message with prose is found without opening the transcript" {
+  printf '%s' 'Now review the staged diff' >"${RL_TMP}/pending.txt"
+  run python3 "${LIB}" transcript --pending "${RL_TMP}/no-such-transcript.jsonl" <"${RL_TMP}/pending.txt"
+  local got
+  got="$(jq -r '[.status, .entry, .prose, .bytes_read, .reason] | map(tostring) | join("|")' <<<"${output}")"
+  [[ "${status}" -eq 0 && "${got}" == 'found|pending|Now review the staged diff|0|null' ]] || {
+    echo "exit ${status}: ${output}"
+    return 1
+  }
 }
 
 @test "a human entry beyond the first read window is still found by the growing windows" {
