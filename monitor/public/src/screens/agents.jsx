@@ -343,12 +343,16 @@ function ScreenAgents() {
         <PageErrorBanner sources={sharedFailure.sources} error={sharedFailure.error} onRetry={triggerRefresh}/>
       )}
 
-      <AgentPageVerdict revisionState={revisionState} reviewByAgentState={reviewByAgentState} days={days}/>
-
       {/* held values stay on screen, dimmed, until the refresh settles */}
       <div
         aria-busy={isAnyRegionBusy ? 'true' : undefined}
         className={isAnyRegionBusy && summaryAsOfAt != null ? 'opacity-70 motion-safe:transition-opacity' : undefined}>
+      <AgentPageVerdict
+        revisionState={revisionState}
+        reviewByAgentState={reviewByAgentState}
+        statusTiles={buildAgentStatusTiles({ days, summaryState, failureState, overageState, failureByAgent, overageByAgent })}
+        days={days}/>
+
       <AgentAlarmLane state={summaryState} onRetry={regionRetry}/>
 
       <AgentStatusBand
@@ -422,40 +426,75 @@ function ScreenAgents() {
 
 const INSTRUMENTATION_QUESTION = 'Is the measuring apparatus intact';
 
-// Status fold — open by default, the head carries the verdict so a closed fold still answers.
-// page verdict = the Overview health rule over every agent above the low-N floor; orphans stay with InstrumentationFold
-function AgentPageVerdict({ revisionState, reviewByAgentState, days }) {
-  const { PageVerdict, LOW_N_MIN } = window.UI;
-  const states = [revisionState, reviewByAgentState];
+// Page verdict — worst tone across the health rule and every status tile; the all-clear waits for every feeder.
+function AgentPageVerdict({ revisionState, reviewByAgentState, statusTiles, days }) {
+  const feeders = [getHealthFeederAg(revisionState, reviewByAgentState), ...statusTiles.map(getTileFeederAg)];
+  const verdict = getAgentVerdict(feeders, days);
+  if (!verdict) return null;
 
-  if (states.some((state) => state.status === 'loading')) return null;
-  if (states.some((state) => state.status !== 'ready')) {
-    return <PageVerdict tone="neutral" className="mb-4">Agent health is unknown — the rework or review-flag read didn't load.</PageVerdict>;
-  }
-
-  const ranked = buildQualityHealthRanking(readyData(revisionState)?.rows ?? [], readyData(reviewByAgentState)?.rows ?? [], Number.MAX_SAFE_INTEGER);
-  if (ranked.length === 0) {
-    return <PageVerdict tone="neutral" className="mb-4">{`No agent has enough runs in the last ${days}d to judge its health — too few runs (needs ${LOW_N_MIN} each).`}</PageVerdict>;
-  }
-
-  const tones = ranked.map((entry) => qualityHealthVerdict(entry.healthIndex).tone);
-  const critCount = tones.filter((tone) => tone === 'crit').length;
-  const warnCount = tones.filter((tone) => tone === 'warn').length;
-  const judged = `${ranked.length} agent${ranked.length === 1 ? '' : 's'}`;
-  if (critCount + warnCount === 0) {
-    return <PageVerdict tone="ok" className="mb-4">{`All ${judged} with enough runs in the last ${days}d are healthy on rework and review flags.`}</PageVerdict>;
-  }
-
-  const chips = [{ key: 'summary', label: 'Performance by agent', targetId: AGENT_SUMMARY_CARD_ID }];
-  return (
-    <PageVerdict tone={critCount > 0 ? 'crit' : 'warn'} chips={chips} className="mb-4">
-      {`${critCount} of ${judged} with enough runs in the last ${days}d need attention on rework or review flags, ${warnCount} more to watch.`}
-    </PageVerdict>
-  );
+  return <window.UI.PageVerdict tone={verdict.tone} label={verdict.label} className="mb-4">{verdict.text}</window.UI.PageVerdict>;
 }
 
-const AGENT_SUMMARY_CARD_ID = 'agents-summary';
+// feeder = { state: ready|pending|unchecked|thin, tone, clauses, source } — one per question the page answers
+function getHealthFeederAg(revisionState, reviewByAgentState) {
+  const states = [revisionState, reviewByAgentState];
+  const source = 'rework or review flags';
+  if (states.some((state) => state.status === 'loading')) return { state: 'pending', tone: null, clauses: [], source };
+  if (states.some((state) => state.status !== 'ready')) return { state: 'unchecked', tone: null, clauses: [], source };
 
+  const ranked = buildQualityHealthRanking(readyData(revisionState)?.rows ?? [], readyData(reviewByAgentState)?.rows ?? [], Number.MAX_SAFE_INTEGER);
+  if (ranked.length === 0) return { state: 'thin', tone: null, clauses: [], source };
+
+  const byTone = (tone) => ranked.filter((entry) => qualityHealthVerdict(entry.healthIndex).tone === tone).map((entry) => entry.agent);
+  const crit = byTone('crit');
+  const warn = byTone('warn');
+  const clauses = [
+    crit.length > 0 && `${formatAgentCountAg(crit.length)} ${crit.length === 1 ? 'needs' : 'need'} attention on ${source} (${formatAgentListAg(crit)})`,
+    warn.length > 0 && `${formatAgentCountAg(warn.length)} to watch on ${source} (${formatAgentListAg(warn)})`,
+  ].filter(Boolean);
+  return { state: 'ready', tone: crit.length ? 'crit' : warn.length ? 'warn' : 'ok', clauses, source, judged: ranked.length };
+}
+
+function getTileFeederAg(tile) {
+  const source = tile.label.toLowerCase();
+  if (tile.status === 'loading') return { state: 'pending', tone: null, clauses: [], source };
+  if (tile.status !== 'ready') return { state: 'unchecked', tone: null, clauses: [], source };
+
+  const isFlagged = tile.tone === 'warn' || tile.tone === 'crit';
+  return { state: 'ready', tone: isFlagged ? tile.tone : 'ok', clauses: isFlagged ? [tile.clause] : [], source };
+}
+
+// A known warn/crit stands; the all-clear waits until every feeder has answered. warn reads 'Watch', the drawer's word.
+function getAgentVerdict(feeders, days) {
+  const flagged = feeders.filter((feeder) => feeder.tone === 'warn' || feeder.tone === 'crit');
+  if (flagged.length > 0) {
+    const tone = window.UI.getWorstTone(flagged.map((feeder) => feeder.tone));
+    return { tone, label: tone === 'warn' ? 'Watch' : undefined, text: `Last ${days}d: ${flagged.flatMap((feeder) => feeder.clauses).join(' · ')}.` };
+  }
+  if (feeders.some((feeder) => feeder.state === 'pending')) return null;
+
+  const unchecked = feeders.filter((feeder) => feeder.state === 'unchecked').map((feeder) => feeder.source);
+  if (unchecked.length > 0) return { tone: 'neutral', text: `Agent health is unknown — couldn't check ${unchecked.join(', ')}.` };
+
+  const health = feeders[0];
+  if (health.state === 'thin') {
+    return { tone: 'neutral', text: `No agent failed or is unsafe to route, but none has enough runs in the last ${days}d to judge rework — too few runs (needs ${window.UI.LOW_N_MIN} each).` };
+  }
+  const judged = health.judged === 1 ? 'the 1 agent with enough runs' : `all ${health.judged} agents with enough runs`;
+  return { tone: 'ok', text: `No agent failed or is unsafe to route, and ${judged} in the last ${days}d ${health.judged === 1 ? 'is' : 'are'} healthy on rework and review flags.` };
+}
+
+function formatAgentCountAg(count) {
+  return `${count} ${count === 1 ? 'agent' : 'agents'}`;
+}
+
+// names beyond the first three collapse to a count — the sentence stays one line
+function formatAgentListAg(agents) {
+  const names = agents.slice(0, 3).map((agent) => window.UI.getAgentDisplayName(agent));
+  return agents.length > 3 ? `${names.join(', ')} +${agents.length - 3} more` : names.join(', ');
+}
+
+// Status fold — open by default, the head carries the verdict so a closed fold still answers.
 function InstrumentationFold({ lifecycleState, reviewState, days, onRetry }) {
   const { tone, sub } = getInstrumentationVerdict(lifecycleState, reviewState);
 
@@ -584,74 +623,83 @@ function AgentAlarmRow({ alarm }) {
 
 // Status band — the four fleet questions the first screenful answers. Each tile
 // carries its own payload state so one unloaded source never reads as a zero.
-function AgentStatusBand({ days, summaryState, failureState, overageState, failureByAgent, overageByAgent, onRetry }) {
+function AgentStatusBand({ onRetry, ...sources }) {
+  return (
+    <div className="grid grid-cols-2 xl:grid-cols-4 gap-4 mb-4 items-stretch">
+      {buildAgentStatusTiles(sources).map((tile) => (
+        <AgentStatusTile key={tile.key} {...tile} onRetry={onRetry}/>
+      ))}
+    </div>
+  );
+}
+
+// One tile list feeds the band and the page verdict → the verdict can never clear what a tile flags.
+function buildAgentStatusTiles({ days, summaryState, failureState, overageState, failureByAgent, overageByAgent }) {
   const summary = readyData(summaryState);
   const breaker = summary?.meta?.circuit_breaker ?? null;
-
-  const unsafeStatus = summaryState.status !== 'ready'
-    ? summaryState.status
-    : breaker === null || breaker.source === 'unavailable' ? 'unavailable' : 'ready';
-  const unsafeCount = breaker && breaker.source === 'loaded'
-    ? breaker.suspended_count + breaker.streak_count
+  const unsafeCount = breaker && breaker.source === 'loaded' ? breaker.suspended_count + breaker.streak_count : null;
+  const failedAgents = failureState.status === 'ready'
+    ? Array.from(failureByAgent.entries()).filter(([, row]) => Number(row.fail_count) > 0).map(([agent]) => agent)
     : null;
-
-  const failureRows = failureState.status === 'ready' ? Array.from(failureByAgent.values()) : null;
-  const failedCount = failureRows ? failureRows.filter((row) => Number(row.fail_count) > 0).length : null;
-  const blockedCount = failureRows ? failureRows.filter((row) => Number(row.blocked_count) > 0).length : null;
+  const blockedCount = failureState.status === 'ready'
+    ? Array.from(failureByAgent.values()).filter((row) => Number(row.blocked_count) > 0).length
+    : null;
   // budget_overages keys agent_type by per-run agent id → this counts runs, not registry agents.
   const overCapCount = overageState.status === 'ready'
     ? Array.from(overageByAgent.values()).filter((row) => row.overage_count > 0).length
     : null;
-  const needsContextCount = summaryState.status === 'ready'
-    ? (summary?.agents ?? []).reduce((sum, agent) => sum + (Number(agent.needs_context_count) || 0), 0)
-    : null;
-  const totalRuns = summaryState.status === 'ready'
-    ? (summary?.agents ?? []).reduce((sum, agent) => sum + (Number(agent.runs) || 0), 0)
-    : 0;
+  const needsContextCount = summaryState.status === 'ready' ? sumAgentFieldAg(summary, 'needs_context_count') : null;
+  const totalRuns = summaryState.status === 'ready' ? sumAgentFieldAg(summary, 'runs') : 0;
 
-  return (
-    <div className="grid grid-cols-2 xl:grid-cols-4 gap-4 mb-4 items-stretch">
-      <AgentStatusTile
-        label="Unsafe to route"
-        sub={breaker && breaker.source === 'loaded' ? `now · of ${breaker.registry_agents} registered agents` : 'circuit-breaker state · now'}
-        unavailableSub={CIRCUIT_BREAKER_UNREADABLE_COPY}
-        status={unsafeStatus}
-        value={unsafeCount}
-        tone={unsafeCount ? (breaker?.suspended_count ? 'crit' : 'warn') : 'ok'}
-        error={summaryState.error}
-        onRetry={onRetry}
-      />
-      <AgentStatusTile
-        label="Failed"
-        sub={blockedCount
-          ? `agents with a failed run · ${blockedCount} blocked (a compliant halt, not a defect) · last ${days}d`
-          : `agents with a failed run · last ${days}d`}
-        status={failureState.status}
-        value={failedCount}
-        tone={failedCount ? 'crit' : 'ok'}
-        error={failureState.error}
-        onRetry={onRetry}
-      />
-      <AgentStatusTile
-        label="Over tool-use cap"
-        sub={joinSubAg(['runs that crossed their tool-use budget', getRunRateTextAg(overCapCount, totalRuns), `last ${days}d`])}
-        status={overageState.status}
-        value={overCapCount}
-        tone={getRunRateToneAg(overCapCount, totalRuns)}
-        error={overageState.error}
-        onRetry={onRetry}
-      />
-      <AgentStatusTile
-        label="Needs context"
-        sub={`${joinSubAg(['needs_context outcomes', getRunRateTextAg(needsContextCount, totalRuns), `last ${days}d`])} — fix the delegation prompt`}
-        status={summaryState.status}
-        value={needsContextCount}
-        tone={getRunRateToneAg(needsContextCount, totalRuns)}
-        error={summaryState.error}
-        onRetry={onRetry}
-      />
-    </div>
-  );
+  return [
+    {
+      key: 'unsafe',
+      label: 'Unsafe to route',
+      sub: breaker && breaker.source === 'loaded' ? `now · of ${breaker.registry_agents} registered agents` : 'circuit-breaker state · now',
+      unavailableSub: CIRCUIT_BREAKER_UNREADABLE_COPY,
+      status: summaryState.status !== 'ready' ? summaryState.status : unsafeCount === null ? 'unavailable' : 'ready',
+      value: unsafeCount,
+      tone: unsafeCount ? (breaker.suspended_count ? 'crit' : 'warn') : 'ok',
+      clause: `${unsafeCount} unsafe to route now`,
+      error: summaryState.error,
+    },
+    {
+      key: 'failed',
+      label: 'Failed',
+      sub: blockedCount
+        ? `agents with a failed run · ${blockedCount} blocked (a compliant halt, not a defect) · last ${days}d`
+        : `agents with a failed run · last ${days}d`,
+      status: failureState.status,
+      value: failedAgents ? failedAgents.length : null,
+      tone: failedAgents?.length ? 'crit' : 'ok',
+      clause: failedAgents ? `${formatAgentCountAg(failedAgents.length)} with a failed run (${formatAgentListAg(failedAgents)})` : '',
+      error: failureState.error,
+    },
+    {
+      key: 'overCap',
+      label: 'Over tool-use cap',
+      sub: joinSubAg(['runs that crossed their tool-use budget', getRunRateTextAg(overCapCount, totalRuns), `last ${days}d`]),
+      status: overageState.status,
+      value: overCapCount,
+      tone: getRunRateToneAg(overCapCount, totalRuns),
+      clause: `${formatIntAg(overCapCount)} runs over the tool-use cap`,
+      error: overageState.error,
+    },
+    {
+      key: 'needsContext',
+      label: 'Needs context',
+      sub: `${joinSubAg(['needs_context outcomes', getRunRateTextAg(needsContextCount, totalRuns), `last ${days}d`])} — fix the delegation prompt`,
+      status: summaryState.status,
+      value: needsContextCount,
+      tone: getRunRateToneAg(needsContextCount, totalRuns),
+      clause: `${formatIntAg(needsContextCount)} needs_context outcomes`,
+      error: summaryState.error,
+    },
+  ];
+}
+
+function sumAgentFieldAg(summary, field) {
+  return (summary?.agents ?? []).reduce((sum, agent) => sum + (Number(agent[field]) || 0), 0);
 }
 
 // Share of runs at or past the step → warn · a nonzero count under it stays untoned.
@@ -719,7 +767,7 @@ function AgentSummaryCard({ state, days, sortBy, onSortChange, selectedAgent, on
     : (state.status === 'loading' ? 'Loading…' : "Couldn't load");
 
   return (
-    <div id={AGENT_SUMMARY_CARD_ID} className="card h-full flex flex-col min-h-0 min-w-0 mb-0">
+    <div className="card h-full flex flex-col min-h-0 min-w-0 mb-0">
       <CardHead
         title="Performance by agent"
         sub={subText}
