@@ -1267,6 +1267,9 @@ function DocAuthorCellCD({ author }) {
 
 // 중앙 목록 카드 — Sticky Header Integrated (검색 + facet + 건수 2-row).
 // .card-body 인라인 maxHeight:'none' 으로 base.css `max-height: 70vh` override → 카드 viewport full-height + 카드 내부 스크롤.
+// the list card takes focus when a recovered read unmounts the Retry that held it
+const DOC_LIST_CARD_ID_CD = "docs-list";
+
 function DocListCardCD({
 	asOf,
 	state,
@@ -1385,6 +1388,7 @@ function DocListCardCD({
 
 	return (
 		<div
+			id={DOC_LIST_CARD_ID_CD}
 			className="card flex flex-col min-h-0"
 			style={{ height: "100%", flex: "1 1 auto", width: "100%" }}
 		>
@@ -1519,6 +1523,7 @@ function DocListCardCD({
 							error={state.error}
 							onRetry={onRetry}
 							isBusy={state.busy === true}
+							focusTargetId={DOC_LIST_CARD_ID_CD}
 							className="m-4"
 						/>
 					</div>

@@ -396,6 +396,28 @@ test("a failed read announces one plain-sentence card with one Retry as an alert
   }
 });
 
+test("a list error hands its Retry focus to the list card, so a successful Retry never drops focus to the page body", async () => {
+  const screen = await loadDocsScreen();
+  const rows = [
+    { name: "nothing held", state: { status: "error", data: null, error: "HTTP 500", busy: false }, rows: [] },
+    { name: "rows held", state: { status: "ready", data: {}, error: "HTTP 500", busy: false }, rows: undefined },
+  ];
+
+  for (const row of rows) {
+    const overrides: Record<string, unknown> = { state: row.state };
+    if (row.rows) overrides.rows = row.rows;
+    const tree = renderListCard(screen, overrides);
+
+    const [card] = findNodes(tree, (n) => n.props.atom === "RegionUnavailable");
+    const targetId = card.props.focusTargetId;
+    assert.equal(typeof targetId, "string", `${row.name}: Retry names a focus target`);
+    const targets = findNodes(tree, (n) => n.props.id === targetId);
+    assert.equal(targets.length, 1, `${row.name}: the target id is on the page`);
+    assert.match(String(targets[0].props.className), /\bcard\b/, `${row.name}: the target is the list card`);
+    assert.equal(findNodes(targets[0], (n) => n === card).length, 1, `${row.name}: the card holds the failed Retry`);
+  }
+});
+
 test("each stage group opens with a level-2 heading under the page H1, and the ledger holds no other heading", async () => {
   const screen = await loadDocsScreen();
   const props = listCardProps(() => undefined);
