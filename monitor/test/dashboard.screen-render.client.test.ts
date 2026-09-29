@@ -28,6 +28,8 @@ function uiStub(): unknown {
       get: (_target, name: string) =>
         name === "TONE_ICON"
           ? new Proxy({}, { get: () => "dot" })
+          : name === "getRegionView"
+          ? getRegionViewStub
           : name === "TileSplit"
           ? tileSplitStub
           : Object.defineProperty(
@@ -42,6 +44,12 @@ function uiStub(): unknown {
       has: () => true,
     },
   );
+}
+
+// mirrors ui.jsx getRegionView → the tile builders branch as they do in the browser
+function getRegionViewStub(region: { data?: unknown; error?: unknown } | null): string {
+  if (region?.data != null) return "ready";
+  return region?.error != null ? "error" : "loading";
 }
 
 // the tile-internal split keeps its two slots walkable → lead and detail stay findable by the tests below
@@ -135,6 +143,7 @@ const rateMod = (await loadScreenModule(DASH_SRC, {
     LOW_N_MIN: 20,
     OUTCOME_BREAKAGE_CRIT_SHARE: 0.05,
     OUTCOME_OPEN_CAVEAT_WARN_SHARE: 0.1,
+    getRegionView: getRegionViewStub,
   },
   React: createReactStub(),
 })) as Record<string, unknown>;
@@ -235,6 +244,17 @@ test("a failed tile shows the shared unavailable card, whose Retry reloads only 
   assert.equal(findNodes(tree, (n) => n.type === "button").length, 0, "the card owns the tile's only Retry");
 });
 
+test("a failed tile's Retry shows itself in flight and hands focus to its own tile card on recovery", () => {
+  for (const isBusy of [true, false]) {
+    const tree = render("StatusTile", { tile: { ...FAILED_TILE, isBusy }, onNav: () => {}, onRetry: () => {} });
+    const [card] = findNodes(tree, (n) => n.props.atom === "RegionUnavailable");
+    assert.equal(card.props.isBusy, isBusy);
+    const targets = findNodes(tree, (n) => n.props.id === card.props.focusTargetId);
+    assert.equal(targets.length, 1, "the focus target is the tile card that stays mounted");
+    assert.ok(/\bcard\b/.test(classOf(targets[0])), classOf(targets[0]));
+  }
+});
+
 test("a tile whose outage the page banner already carries stays one level: no nested card, no repeated error, no Retry", () => {
   const tree = render("StatusTile", { tile: FAILED_TILE, onNav: () => {}, onRetry: () => {}, isRetryShared: true });
   assert.equal(findNodes(tree, (n) => n.props.atom === "RegionUnavailable").length, 0, "the banner already states the error");
@@ -281,7 +301,7 @@ describe("the page-wide re-reads also re-poll the shell's harness", async () => 
   const failedUi = new Proxy(uiStub() as Record<string, unknown>, {
     get: (target, name: string) => ({
       INITIAL_REGION_STATE: FAILED,
-      getRegionSummary: () => ({ isBusy: false }),
+      getRegionSummary: () => ({ isBusy: true }),
       getSharedFailure: () => ({ sources: ["today's spend", "harness health"], error: "HTTP 500" }),
       formatUsd: String,
       formatInt: String,
@@ -292,6 +312,16 @@ describe("the page-wide re-reads also re-poll the shell's harness", async () => 
     { name: "the header Refresh", atom: "RefreshButton", handler: "onRefresh" },
     { name: "the page banner Retry", atom: "PageErrorBanner", handler: "onRetry" },
   ];
+  test("the page banner shows its Retry in flight and hands focus to the status band, which outlives recovery", () => {
+    const tree = renderScreen(screen.React.createElement(screen.ScreenDashboard as Component, {
+      onNav: () => {}, harness: FAILED, onRetryHarness: () => {},
+    })) as RenderedNode;
+    const [banner] = findNodes(tree, (n) => n.props.atom === "PageErrorBanner");
+    assert.equal(banner.props.isBusy, true, "a wave in flight marks the banner Retry busy");
+    const targets = findNodes(tree, (n) => n.props.id === banner.props.focusTargetId);
+    assert.equal(targets.length, 1, `focus target ${String(banner.props.focusTargetId)} is one rendered element`);
+    assert.ok(classOf(targets[0]).includes("grid"), "the target is the status band, not the banner itself");
+  });
   for (const row of rows) {
     test(row.name, () => {
       let polls = 0;
