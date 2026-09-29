@@ -187,7 +187,7 @@ for (const row of OWN_ROW_IDS) {
     const explicit = pricing.TOKEN_RATES[row.id];
     assert.ok(explicit, `mirror lost its explicit ${row.id} row`);
     assert.strictEqual(pricing.getTokenRate(row.id), explicit);
-    // A context-variant suffix left on the id skips the exact row and matches the family prefix.
+    // An unstripped context-variant suffix would miss the exact row and fall through to the family prefix.
     assert.strictEqual(pricing.getTokenRate(`${row.id}[1m]`), explicit);
     assert.strictEqual(explicit.input, row.input);
     assert.ok(pricing.TOKEN_RATES[row.family].input > explicit.input, `${row.family} is not the pricier prefix`);
