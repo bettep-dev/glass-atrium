@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# inject-scope-part-01.sh — the SubagentStart slot that carries part 01 of the split
+# inject-scope-part-12.sh — the SubagentStart slot that carries part 12 of the split
 # scope-rule channel. One basename per part; the channel's slot 1 is inject-scope-rules.sh,
 # which carries the kept marker blocks and no part.
 #
@@ -34,12 +34,12 @@ _ga_slot_fail() {
 
 _ga_chunk_lib="${BASH_SOURCE[0]%/*}/lib/inject-chunk.sh"
 if [[ ! -r "${_ga_chunk_lib}" ]]; then
-  _ga_slot_fail "library unreadable: ${_ga_chunk_lib}; slot skipped (part=01)"
+  _ga_slot_fail "library unreadable: ${_ga_chunk_lib}; slot skipped (part=12)"
   exit 0
 fi
 # shellcheck source-path=SCRIPTDIR source=lib/inject-chunk.sh
 source "${_ga_chunk_lib}" || {
-  _ga_slot_fail "library source failed: ${_ga_chunk_lib}; slot skipped (part=01)"
+  _ga_slot_fail "library source failed: ${_ga_chunk_lib}; slot skipped (part=12)"
   exit 0
 }
 
