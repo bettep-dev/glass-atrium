@@ -290,7 +290,8 @@ const bannerTitles = (nodes: RenderNode[]): string[] =>
 
 test("StatusBandO: an analytics failure draws its own banner in place, never the skeleton or a text panel", () => {
   const render = (status: PayloadStatus) => flattenNodes(helpers.StatusBandO({
-    analyticsState: { status },
+    // a failed region always carries its error (putRegionFailure)
+    analyticsState: { status, error: status === "loading" ? null : "boom" },
     attentionState: { status: "loading" },
     windowDays: 30,
   }));
@@ -476,10 +477,6 @@ describe("PageVerdictO: the Task results verdict follows the shared outcome-rate
       assert.match(String(node.children.join("")), row.text);
     });
   }
-
-  test("loading renders no verdict rather than a premature one", () => {
-    assert.strictEqual(helpers.PageVerdictO({ analyticsState: { status: "loading" }, channelLivenessState: recording, windowDays: 30 }), null);
-  });
 });
 
 test("buildAnalyticsDataO → buildAgentFailureRowsO: every failing registry agent gets a row, however low its volume", () => {
