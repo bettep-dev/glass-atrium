@@ -164,6 +164,7 @@ function ScreenWiki() {
 					indexState={indexState}
 					backlogState={backlogState}
 					cyclesState={cyclesState}
+					at={settledAt}
 					onRetry={sectionRetry}
 				/>
 				<WikiStatusRow
@@ -534,11 +535,11 @@ function describeSnapshotAgeW(runDate) {
 // Four-tile band — last run · compiled last cycle · search index · library totals.
 // Steady state carries no tint (the last-run sub still names the outcome); only an actionable state tints.
 
-function WikiTileBand({ summaryState, indexState, backlogState, cyclesState, onRetry }) {
+function WikiTileBand({ summaryState, indexState, backlogState, cyclesState, at, onRetry }) {
 	const { RegionUnavailable } = window.UI;
 	const tiles = useMemoW(
-		() => buildTileBandModel(summaryState, indexState, backlogState, cyclesState),
-		[summaryState, indexState, backlogState, cyclesState],
+		() => buildTileBandModel(summaryState, indexState, backlogState, cyclesState, at),
+		[summaryState, indexState, backlogState, cyclesState, at],
 	);
 	const failures = readTileBandFailuresW(summaryState, indexState);
 
@@ -607,9 +608,9 @@ function WikiTile({ tile }) {
 	);
 }
 
-function buildTileBandModel(summaryState, indexState, backlogState, cyclesState) {
+function buildTileBandModel(summaryState, indexState, backlogState, cyclesState, at) {
 	return [
-		buildLastRunTileW(summaryState),
+		buildLastRunTileW(summaryState, at),
 		buildCompiledTileW(summaryState, backlogState, cyclesState),
 		buildIndexTileW(indexState),
 		buildLibraryTileW(indexState, summaryState, backlogState),
@@ -642,7 +643,7 @@ function tileFetchStateW(state) {
 	return null;
 }
 
-function buildLastRunTileW(state) {
+function buildLastRunTileW(state, at) {
 	const label = "Last run";
 	const pending = tileFetchStateW(state);
 	if (pending) return tilePlaceholderW("last-run", label, pending);
@@ -654,8 +655,8 @@ function buildLastRunTileW(state) {
 
 	const hours = d.hours_since_last_cycle;
 	const overdue = isCycleOverdueW(hours);
-	const statusTone = wikiStatusToneW(d.last_status);
-	const tone = overdue ? "crit" : statusTone === "ok" ? "neutral" : statusTone;
+	const outcome = getLastRunOutcomeW(state, at);
+	const tone = overdue ? "crit" : outcome.tone === "ok" ? "neutral" : outcome.tone;
 
 	return {
 		key: "last-run",
@@ -664,10 +665,19 @@ function buildLastRunTileW(state) {
 		value: window.UI.formatRelativeTime(d.last_cycle_started_at),
 		sub: overdue
 			? `Overdue · cycle ${d.last_run_date}`
-			: `${wikiStatusLabelW(d.last_status)}${describeP95W(d.cycle_p95_ms)}`,
+			: `${outcome.label}${describeP95W(d.cycle_p95_ms)}`,
 		hint: `Cycle ${d.last_run_date}`,
 		tone,
 	};
+}
+
+// A held summary under a failed or aged read takes the shared verdict: Last known, ok → neutral, warn/crit kept.
+function getLastRunOutcomeW(state, at) {
+	const status = state.data?.last_status;
+	const outcome = { tone: wikiStatusToneW(status), label: wikiStatusLabelW(status) };
+	if (!at) return outcome;
+
+	return window.UI.getFreshnessVerdict({ ...outcome, at, regions: [state] });
 }
 
 function describeP95W(ms) {

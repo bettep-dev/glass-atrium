@@ -473,7 +473,7 @@ interface GlanceTile {
 const glanceHelpers = helpers as unknown as {
   buildWikiVerdictW: (summary: FetchState, index: FetchState, backlog: FetchState, cycles: FetchState) => Verdict;
   buildCompiledTileW: (summary: FetchState, backlog?: FetchState, cycles?: FetchState) => GlanceTile;
-  buildLastRunTileW: (summary: FetchState) => GlanceTile;
+  buildLastRunTileW: (summary: FetchState, at?: string | null) => GlanceTile;
   buildNoteTypeRowsW: (rows: unknown[]) => Array<{ type: string; label: string; pct: number }>;
 };
 
@@ -557,6 +557,23 @@ test("the last-run tile names the outcome instead of repeating the cycle date", 
   const tile = glanceHelpers.buildLastRunTileW(healthySummary({ cycle_p95_ms: 1000 }));
   assert.match(tile.sub ?? "", /^Healthy/);
   assert.doesNotMatch(tile.sub ?? "", /Cycle/);
+});
+
+describe("the last-run tile keeps the shared freshness rule over a failed refresh", () => {
+  const at = new Date().toISOString();
+  const warm = (summary: FetchState): FetchState => ({ ...summary, error: "HTTP 500" });
+  const rows = [
+    { name: "a settled healthy run names its outcome", summary: healthySummary({ cycle_p95_ms: 1000 }), sub: /^Healthy · p95/, tone: "neutral" },
+    { name: "a healthy run held under a failed read reads Last known, never Healthy", summary: warm(healthySummary({ cycle_p95_ms: 1000 })), sub: /^Last known · p95/, tone: "neutral" },
+    { name: "a failed run held under a failed read keeps its alarm", summary: warm(healthySummary({ last_status: "fail" })), sub: /^Last known: Failed$/, tone: "crit" },
+  ];
+  for (const row of rows) {
+    test(row.name, () => {
+      const tile = glanceHelpers.buildLastRunTileW(row.summary, at);
+      assert.match(tile.sub ?? "", row.sub);
+      assert.equal(tile.tone, row.tone);
+    });
+  }
 });
 
 test("note types read as human labels with their share of all notes", () => {
