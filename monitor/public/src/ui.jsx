@@ -1060,11 +1060,10 @@ function stripHtmlTags(input) {
 }
 
 // ISO timestamp → "5m ago" / "in 5m" 상대시각 — falsy/파싱불가 입력은 '—' (NaN 라벨 차단)
-function formatRelativeTime(iso) {
+function formatRelativeTime(iso, now = Date.now()) {
   if (!iso) return '—';
   const target = new Date(iso).getTime();
   if (!Number.isFinite(target)) return '—';
-  const now = Date.now();
   const diffSec = Math.round((target - now) / 1000);
   const abs = Math.abs(diffSec);
   const past = diffSec <= 0; // sub-second past rounds to -0 → must still read "ago"
@@ -1248,17 +1247,35 @@ function getFreshnessVerdict({ tone = 'neutral', label, at, loading = false, fai
   const isBusy = state === 'loading' || state === 'refreshing';
   const pageLabel = label || VERDICT_TONE_LABEL[tone] || VERDICT_TONE_LABEL.neutral;
 
+  const { failedCount, regionCount } = getRegionSummary(settledRegions);
+
   if (settled === 'not-read') {
-    const note = isBusy ? 'Checking the first read…' : 'Nothing has been read yet.';
+    const note = getUnreadNote({ isBusy, hasFailed: failed || failedCount > 0 });
     return { state, tone: 'neutral', label: VERDICT_TONE_LABEL.neutral, note, isBusy };
   }
   if (settled === 'fresh') return { state, tone, label: pageLabel, note: null, isBusy };
 
   const isAlarm = tone === 'warn' || tone === 'crit';
-  const { failedCount, regionCount } = getRegionSummary(settledRegions);
-  const ageNote = `Read ${formatRelativeTime(at)}`;
+  const ageNote = `Read ${formatRelativeTime(at, now)}`;
   const note = settled === 'partial' ? `${ageNote} · ${failedCount} of ${regionCount} sources failed` : ageNote;
   return { state, tone: isAlarm ? tone : 'neutral', label: isAlarm ? `Last known: ${pageLabel}` : 'Last known', note, isBusy };
+}
+
+// a tried-and-failed first read must never read as one that was never tried
+function getUnreadNote({ isBusy, hasFailed }) {
+  if (isBusy) return 'Checking the first read…';
+  return hasFailed ? 'The first read failed — nothing to show yet.' : 'Nothing has been read yet.';
+}
+
+/** Re-renders the caller every FRESHNESS_TICK_MS while enabled → age-based staleness holds on screens that never poll. */
+function useFreshnessTick(isEnabled) {
+  const [, setTick] = useState(0);
+
+  useEffect(() => {
+    if (!isEnabled) return undefined;
+    const intervalId = setInterval(() => setTick((t) => t + 1), FRESHNESS_TICK_MS);
+    return () => clearInterval(intervalId);
+  }, [isEnabled]);
 }
 
 /**
@@ -1266,7 +1283,6 @@ function getFreshnessVerdict({ tone = 'neutral', label, at, loading = false, fai
  * A read stamp re-renders on its own tick, so age-based staleness holds on screens that never poll.
  */
 function FreshnessStamp({ at, loading = false, failed = false, regions, staleAfterMs, now }) {
-  const [, setTick] = useState(0);
   const state = getFreshnessState({ at, loading, failed, regions, staleAfterMs, now });
   const meta = FRESHNESS_META[state];
   const glyph = meta.tone ? TONE_GLYPH[meta.tone] : '…';
@@ -1276,13 +1292,7 @@ function FreshnessStamp({ at, loading = false, failed = false, regions, staleAft
   const { failedCount, regionCount } = getRegionSummary(regions);
   const failedNote = state === 'partial' ? `${failedCount} of ${regionCount} failed` : '';
   const word = failedNote ? `${meta.word}, ${failedNote}` : meta.word;
-  const shouldTick = isRead && now === undefined;
-
-  useEffect(() => {
-    if (!shouldTick) return undefined;
-    const intervalId = setInterval(() => setTick((t) => t + 1), FRESHNESS_TICK_MS);
-    return () => clearInterval(intervalId);
-  }, [shouldTick]);
+  useFreshnessTick(isRead && now === undefined);
 
   const readText = isRead ? `as of ${formatKstTime(at)}` : meta.word.toLowerCase();
   const text = failedNote ? `${readText} · ${failedNote}` : readText;
@@ -1773,6 +1783,8 @@ function PageVerdict({ tone = 'neutral', label, children, chips = [], freshness,
   const toneKey = VERDICT_TONE_LABEL[verdict.tone] ? verdict.tone : 'neutral';
   const isUnread = verdict.state === 'loading' || verdict.state === 'not-read';
   const sentence = isUnread ? null : children;
+  // re-derived on the stamp's own cadence → a verdict never stays green over a read the stamp calls Stale
+  useFreshnessTick(Boolean(freshness) && !isUnread && freshness.now === undefined);
 
   return <div className={`page-verdict page-verdict--${toneKey} ${className}`.trim()} aria-busy={verdict.isBusy ? 'true' : undefined}>
     <span className="page-verdict-tone">

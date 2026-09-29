@@ -171,7 +171,26 @@ describe("freshness-driven verdict", () => {
     const stale = getFreshnessVerdict({ at: isoAgo(STALE_MS + 1), now: NOW, staleAfterMs: STALE_MS, tone: "ok" });
 
     assert.match(String(partial.note), /1 of 3 sources failed/);
-    assert.match(String(stale.note), /^Read .+ ago/);
+    assert.equal(stale.note, "Read 5m ago", "the age is measured against the injected clock, not the wall clock");
+  });
+
+  test("an unread page says whether its first read failed or was never tried", () => {
+    const rows: Array<{ name: string; input: FreshnessInput; note: RegExp }> = [
+      { name: "never tried", input: { at: null }, note: /^Nothing has been read yet\.$/ },
+      { name: "first read failed", input: { at: null, failed: true }, note: /first read failed/ },
+      { name: "every first-read region failed", input: { at: null, regions: [{ error: "down" }, { error: "down" }] }, note: /first read failed/ },
+      { name: "one first-read region failed", input: { at: null, regions: [{ error: "down" }, {}] }, note: /first read failed/ },
+      { name: "first read in flight", input: { at: null, loading: true }, note: /^Checking the first read…$/ },
+    ];
+    for (const row of rows) {
+      const verdict = getFreshnessVerdict({ ...row.input, now: NOW, staleAfterMs: STALE_MS, tone: "ok" });
+      const tree = renderVerdict({ tone: "ok", freshness: { ...row.input, now: NOW } }, "Every agent is healthy.");
+
+      assert.equal(verdict.tone, "neutral", `${row.name}: no tone without a read`);
+      assert.match(String(verdict.note), row.note, row.name);
+      assert.ok(collectText(tree).includes(String(verdict.note)), `${row.name}: rendered`);
+      assert.doesNotMatch(collectText(tree), /Every agent is healthy/, `${row.name}: no data sentence without data`);
+    }
   });
 
   test("PageVerdict with a freshness input shows the derived verdict and replaces an unread page sentence with a checking one", () => {

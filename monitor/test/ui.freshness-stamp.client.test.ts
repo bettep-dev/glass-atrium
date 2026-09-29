@@ -142,6 +142,7 @@ test("the Refresh atom is busy and inert exactly while a request is in flight, s
   ];
   for (const row of rows) {
     const button = renderRefresh(row.props);
+    assert.equal(button.type, "button", `${row.name}: one element across states — React keeps the focused node`);
     assert.equal(button.props.disabled, undefined, `${row.name}: never natively disabled — focus stays on it`);
     assert.equal(button.props["aria-disabled"] === "true", row.busy, `${row.name}: aria-disabled`);
     assert.equal(button.props["aria-busy"] === "true", row.busy, `${row.name}: aria-busy`);
@@ -239,11 +240,34 @@ test("with no injected clock, a read stamp re-checks its own age: time passing a
   assert.ok(harness.timers.every((t) => t.cleared), "unmount clears the tick");
 });
 
+test("with no injected clock, the page verdict re-checks its age with the stamp: time passing alone drops an all-clear", async () => {
+  const harness = createTickHarness(NOW);
+  const tickUi = await loadScreenModule(UI_SRC, harness.globals);
+  const freshness = { at: isoAgo(1_000), staleAfterMs: STALE_MS };
+  const render = () => renderScreen(React.createElement(tickUi.PageVerdict as Component, { tone: "ok", label: "All clear", freshness })) as RenderedNode;
+  const word = (tree: RenderedNode) => collectText(findNodes(tree, (n) => n.props.className === "page-verdict-tone")[0]).replace(/^\S+\s*/, "").trim();
+
+  assert.equal(word(render()), "All clear");
+  const cleanups = harness.effects.map((effect) => effect());
+  const live = harness.timers.filter((t) => !t.cleared);
+  assert.equal(live.length, 1, "one tick scheduled");
+  assert.ok(live[0].ms <= STALE_MS / 2, `tick ${live[0].ms}ms is fine-grained enough to catch the stale edge`);
+
+  harness.clock.now = NOW + STALE_MS + 1;
+  live[0].fn();
+  assert.ok(harness.getRerenders() >= 1, "the tick requests a re-render");
+  assert.equal(word(render()), "Last known");
+
+  for (const cleanup of cleanups) if (typeof cleanup === "function") cleanup();
+  assert.ok(harness.timers.every((t) => t.cleared), "unmount clears the tick");
+});
+
 test("no tick is scheduled when nothing time-dependent is shown or the clock is injected", async () => {
   for (const props of [{ at: null }, { at: null, loading: true }, { at: isoAgo(1_000), now: NOW }]) {
     const harness = createTickHarness(NOW);
     const tickUi = await loadScreenModule(UI_SRC, harness.globals);
     renderScreen(React.createElement(tickUi.FreshnessStamp as Component, { staleAfterMs: STALE_MS, ...props }));
+    renderScreen(React.createElement(tickUi.PageVerdict as Component, { tone: "ok", freshness: { staleAfterMs: STALE_MS, ...props } }));
     harness.effects.forEach((effect) => effect());
     assert.equal(harness.timers.length, 0, JSON.stringify(props));
   }
