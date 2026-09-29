@@ -29,6 +29,8 @@ Any identifier — variable, function, class, type, enum, constant — including
 - **Trim affixes** — `categoryFilePath` → `categoryPath`
 - **Verb-form is identifier-kind-scoped** — verbs belong on functions, nouns on data/types; this does NOT make functions nouns.
   - *Data identifiers* (variables · properties · fields · parameters · classes · types) = NOUN/noun-phrase; strip verb-form padding (`processedData` → `normalized`/`output`).
+  - A group member reads with its group, here and under **Reduction-floor guardrail**; an index-map member is named by its key (`request.pending` · `user.byId`) — the rule file's **Identifier-kind binary**.
+    - A member taken out of its group is renamed at extraction to rejoin its group's name: `{ byId } = user` → `{ byId: userById } = user`.
   - *Functions/methods* = concise direct verb, canonical set first; strip helper-verb padding + nominalization (`performDeletion` → `delete()`, `handleRequest` → `route()`).
   - Exception: noun-form methods on vendor-adapter surfaces (`## User Dictionary (Canonical)`).
 

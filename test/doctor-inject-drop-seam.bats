@@ -25,7 +25,7 @@
 #   AC4  no log at the seam is OK.
 #   AC5  the split scope-rule channel's own aggregate stays SEPARATE from inject-drop: the two
 #        surfaces answer different questions (a block shed from the marker-block slot vs. the
-#        twelve-slot channel's wiring and capacity) and share a section, so a folded counter would
+#        part-slot channel's wiring and capacity) and share a section, so a folded counter would
 #        let a live shed be reported as a wiring warn or the reverse.
 #   AC6  a BOUND part slot that cannot deliver — no runnable python3, or an unreadable agent-registry —
 #        WARNs and names the blocker; a healthy bound channel and an unbound broken one stay silent.

@@ -45,17 +45,16 @@ CHUNK_RESERVE = 64
 
 CHUNK_BUDGET = CHUNK_MAX_UNITS - CHUNK_RESERVE
 
-# Chunk-carrying slots. Twelve SubagentStart bindings are DECLARED and are REQUIRED to ship — a
-# requirement, not a description: the release manifest carries no wrapper row yet, so none of them
-# reaches a live install until it does. Slot 1 is inject-scope-rules.sh, which carries the kept
-# marker blocks and no chunk, leaving eleven parts bound to
-# hooks/inject-scope-part-01.sh .. -11.sh.
+# Chunk-carrying slots, one part each, bound to hooks/inject-scope-part-NN.sh with NN running from
+# 01 to this constant. The channel's slot 1 is inject-scope-rules.sh, which carries the kept marker
+# blocks and no chunk, so it is not counted here. A wrapper reaches a live install only through its
+# release-manifest row.
 #
 # This is the count of slots the channel is BUILT for, and two other declarations must agree with
 # it: the wrapper files on disk and the SubagentStart rows of EXPECTED_HOOK_BINDINGS (lib/ga-env.sh).
 # Nothing here can see the other two, so the comparison is the doctor's (lib/ga-doctor.sh 10b, which reads this
 # constant through --audit) and inject-scope-chunker.bats T-SLOT-1's.
-CHUNK_SLOTS = 11
+CHUNK_SLOTS = 12
 
 # Warning-token SoT. Both the chunker that writes these tokens and any scanner that looks
 # for them read this one definition (`--print-events`); a scanner with its own copy can
@@ -98,9 +97,12 @@ assert all(" DROP " not in (" %s " % e) for e in CHUNK_EVENTS)
 # limit — an agent crossing it has not overflowed anything and nothing here can tell it has. The
 # number exists so a reader can say "this agent is approaching the only envelope figure anyone
 # has measured" while there is still room to cut a source.
-# It is compared against demand, never against delivery: delivery is bounded by slots x cap
-# (110,000 at the shipped constants), so a delivered-sum threshold at this value would sit at a
-# number the channel cannot exceed. See get_demand.
+# It is compared against demand, never against delivery: the delivered sum drops whatever
+# overflowed the slots, so it cannot show demand past what the channel carries — the agent
+# furthest over reads as no further over than the channel's capacity. See get_demand.
+# Before raising CHUNK_SLOTS: test/doctor-hook-bindings.bats → its `probe-agent(12` demand check
+# tells demand from delivery only while slots x cap stays below that fixture's demand —
+# past that point raise the fixture's section count, or the check passes without discriminating.
 ENVELOPE_SOFT_UNITS = 110000
 
 SINK_MAX_BYTES = 1048576
@@ -520,7 +522,7 @@ def apply_overflow(cfg, agent, chunks, width, prelude, total):
     until it fits, so an overflow never produces an over-limit emit and never sheds silently.
 
     An observation about the header, not a defect in this function: it keeps the PRE-overflow
-    total, so an overflowing agent reads "part 01 of 14" while only 11 parts ever arrive. The
+    total, so an overflowing agent reads "part 01 of 14" while only `slots` parts ever arrive. The
     number stays honest about content that EXISTS — 14 parts of it do — and the same header tells
     the agent never to wait for another part, so it can see the gap and do nothing about it. The
     overflow marker below is the recovery path.
@@ -577,10 +579,10 @@ def get_registry_agents(cfg):
 def get_demand(cfg, agent):
     """Source units this agent's membership asks for, before any packing or overflow.
 
-    DELIVERY IS NOT DEMAND, and only demand can cross an envelope: the delivered total is
-    bounded by slots x cap by construction, so a threshold read off the delivered sum would
-    sit above a number the channel can never reach and could only ever report clean. What a
-    reader wants to know is how close the SOURCES are to filling every slot.
+    DELIVERY IS NOT DEMAND, and only demand can cross an envelope: the delivered total drops
+    whatever overflowed the slots, so a threshold read off it understates exactly the agents
+    past the channel's capacity, by whatever each one lost. What a reader wants to know is how
+    close the SOURCES are to filling every slot.
     """
     members, _, _ = get_membership(cfg, agent)
     units = 0

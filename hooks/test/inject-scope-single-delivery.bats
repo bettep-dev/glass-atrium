@@ -1,7 +1,7 @@
 #!/usr/bin/env bats
 # inject-scope-single-delivery.bats — exactly-once pin over everything one spawn assembles.
 #
-#   One spawn runs slot 1 (inject-scope-rules.sh) plus parts 01..11 (inject-scope-part-NN.sh). The
+#   One spawn runs slot 1 (inject-scope-rules.sh) plus every part slot (inject-scope-part-NN.sh). The
 #   blocks slot 1 no longer extracts reach an agent only through its registry membership, so each
 #   block's needle must occur EXACTLY ONCE for a member of its source file and ZERO times otherwise;
 #   each kept slot-1 block must occur exactly once for its roster. Expected sets come from the
@@ -111,7 +111,7 @@ get_slot_ctx() {
   jq -Rj 'fromjson? | .hookSpecificOutput.additionalContext? // empty' <<<"${out}"
 }
 
-# Join all twelve slots for agent $1 into file $4 — what one spawn hands the model.
+# Join every slot for agent $1 into file $4 — what one spawn hands the model.
 build_assembly() {
   local agent="${1}" lessons="${2}" droplog="${3}" out="${4}" slot ctx
   : >"${out}"

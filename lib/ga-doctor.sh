@@ -464,16 +464,16 @@ run_doctor() {
     fi
   fi
 
-  # 10b. The split scope-rule channel — twelve SubagentStart slots (inject-scope-rules.sh keeps the
-  #      marker blocks; inject-scope-part-01.sh .. -11.sh each carry one part). Three questions §6
+  # 10b. The split scope-rule channel — SubagentStart slots (inject-scope-rules.sh keeps the marker
+  #      blocks; each inject-scope-part-NN.sh carries one part). Three questions §6
   #      structurally cannot answer, because §6 asks settings.json about each DECLARED row one at a
   #      time and knows nothing about what the chunker itself needs:
   #        i.   are the part slots BOUND? The deploy wires bindings through update.sh ->
   #             update_wire_hooks_post_apply -> the launcher's wire-hooks subcommand, and a missing
   #             or non-executable launcher there is a WARN with exit 0 — files applied, bindings NOT
-  #             reconciled. With eleven part wrappers that lands every wrapper on disk, NONE of them
-  #             bound, and every agent receiving the marker-block slot alone. §6 reports eleven
-  #             unrelated-looking dormant lines; nothing else names that shape.
+  #             reconciled. That lands every part wrapper on disk, NONE of them bound, and every
+  #             agent receiving the marker-block slot alone. §6 reports one unrelated-looking
+  #             dormant line per part slot; nothing else names that shape.
   #        ii.  does the declared row count match the chunker's own slot constant? A part addressed
   #             above the last declared slot is computed and discarded with no slot left to run and
   #             report its own absence — the one class that MUST be checked from outside.
@@ -551,9 +551,9 @@ run_doctor() {
     # Whole-spawn capacity, two reads of the SAME audit and two different questions.
     #
     # The envelope read compares each agent's source DEMAND against the core's own soft= field —
-    # never its delivered total. Delivery is bounded by slots x cap by construction, so a
-    # threshold set at the envelope and read off the delivered sum would sit at a number the
-    # channel cannot reach and could only ever report clean, which is the detector-shaped-hole
+    # never its delivered total. The delivered sum drops whatever overflowed the slots, so it
+    # cannot show demand past what the channel carries: read off it, the agent furthest over
+    # reads as no further over than the channel's capacity, which is the detector-shaped-hole
     # class this section exists to avoid.
     #
     # The overflow read compares chunks (needed) against slots (available). It duplicates no

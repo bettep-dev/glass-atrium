@@ -24,9 +24,10 @@ Companion reference for `glass-atrium-dev-naming/SKILL.md`. Load when working on
 
 - **Acronyms**: treat as words (`loadHttpUrl` O / `loadHTTPURL` X)
 - **Short form allowed**: local variables with clear type (`const unit: OrganizationUnit` → `unit`)
-- **Parameters**: if function name + type provide enough context → no need to repeat type (`findUser(id)` O) · multiple → must disambiguate (`fromId, toId`)
+- **Parameters**: if function name + type provide enough context → no need to repeat type (`findUser(id)` O) · multiple → must disambiguate (`fromId, toId`) · a function's own parameters are never grouped (`scoped/shared-naming.md` → **Prefix-family grouping**)
 - **Collections**: prefer plural form (`users` O / `userList` X)
-- **Maps**: `valuesByKey` pattern (`userById` O / `userMap` X)
+- **Maps**: `valuesByKey` pattern (`userById` O / `userMap` X) where no other name shares its value noun.
+  - Beside another name of its value noun, a map joins that family by key: `userById`/`userByEmail` → `user: { byId, byEmail }` · `userById`/`userId` → `user: { id, byId }` (`scoped/shared-naming.md` → **Prefix-family grouping**).
 
 ### Noun-only form (data identifiers)
 
@@ -35,6 +36,9 @@ The noun rule is `scoped/shared-naming.md` → **Identifier-kind binary**. The c
 - Standalone verb form forbidden: `processedData` X → `output`/`normalized` O · `calculatedTotal` X → `total` O · gerunds (`computing`, `loading`) X as a standalone variable name
 - **Legitimate qualifier exception** (NOT verb padding): a past-participle adjective MODIFYING a noun answers "what kind" and is correct — `sortedList`·`cachedValue`·`parsedToken`·`activeUsers`.
   - The smell is the verb form STANDING ALONE as the whole name, not an adjective qualifying a noun.
+- **Group members read with their group** (**Identifier-kind binary**): `request.pending`, `paymentRequest.failed` and `user.byId` pass — a member never stands alone.
+  - A member taken out of its group is renamed at extraction to rejoin its group's name: `{ id: userId } = user` · `{ byId: userById } = user` · `{ expiredAt: chargeExpiredAt } = charge` · `{ payment: paymentRequest } = request`.
+  - The rename is `:` in a destructuring read and `as` in an import.
 - `handle`/`process` as a NOUN (file handle, OS handle) is correct; the anti-pattern is `handle*`/`process*` as a verb prefix on a method.
 
 ### Forbidden

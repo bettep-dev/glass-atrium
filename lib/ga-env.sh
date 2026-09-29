@@ -271,6 +271,7 @@ ga_init_env() {
     "SubagentStart	inject-scope-part-09.sh	"
     "SubagentStart	inject-scope-part-10.sh	"
     "SubagentStart	inject-scope-part-11.sh	"
+    "SubagentStart	inject-scope-part-12.sh	"
     "SubagentStart	telemetry-activation.sh	"
     "SubagentStop	agent-tracker.sh	"
     "SubagentStop	post-edit-typecheck.sh	"
