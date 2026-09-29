@@ -353,7 +353,8 @@ function ScreenAgents() {
         revisionState={revisionState}
         reviewByAgentState={reviewByAgentState}
         statusTiles={statusTiles}
-        days={days}/>
+        days={days}
+        freshness={{ at: summaryAsOfAt, regions: regionStates }}/>
 
       <AgentAlarmLane state={summaryState} onRetry={regionRetry}/>
 
@@ -383,9 +384,7 @@ function ScreenAgents() {
         />
       </div>
 
-      <AgentDisclosure title="By task type" sub="Success rate per agent × task type">
-        <SuccessRateMatrixCard state={successState} days={days} onRetry={regionRetry}/>
-      </AgentDisclosure>
+      <TaskTypeFold state={successState} days={days} onRetry={regionRetry}/>
 
       <InstrumentationFold lifecycleState={lifecycleState} reviewState={reviewState} days={days} onRetry={regionRetry}/>
       </div>
@@ -421,12 +420,12 @@ function ScreenAgents() {
 const INSTRUMENTATION_QUESTION = 'Is the measuring apparatus intact';
 
 // Page verdict — worst tone across the health rule and every status tile; the all-clear waits for every feeder.
-function AgentPageVerdict({ revisionState, reviewByAgentState, statusTiles, days }) {
+function AgentPageVerdict({ revisionState, reviewByAgentState, statusTiles, days, freshness }) {
   const feeders = [getHealthFeederAg(revisionState, reviewByAgentState), ...statusTiles.map(getTileFeederAg)];
   const verdict = getAgentVerdict(feeders, days);
   if (!verdict) return null;
 
-  return <window.UI.PageVerdict tone={verdict.tone} label={verdict.label} className="mb-4">{verdict.text}</window.UI.PageVerdict>;
+  return <window.UI.PageVerdict tone={verdict.tone} label={verdict.label} freshness={freshness} className="mb-4">{verdict.text}</window.UI.PageVerdict>;
 }
 
 // feeder = { state: ready|pending|unchecked|thin, tone, clauses, source } — one per question the page answers
@@ -539,23 +538,23 @@ function getReviewFlagTotalsAg(rows) {
 // AgentSummary — row click → drawer · Runs and No record ride their own columns.
 // 추세 셀 = 50×20 MiniBars (runs per day 7d) · 실패 컬럼 = failure-patterns API 흡수 (failureByAgent client-side merge).
 
-// Closed-by-default disclosure — second-reader material stays off the first screenful.
-function AgentDisclosure({ title, sub, children }) {
-  const [isOpen, setOpen] = useStateAg(false);
+// Detail fold toned by its worst pair → a crit pair opens it on load.
+function TaskTypeFold({ state, days, onRetry }) {
+  const tone = useMemoAg(() => getTaskTypeTone(state), [state]);
 
   return (
-    <div className="card mb-4">
-      <h2 className="m-0 px-4 py-1 fs-body font-normal">
-        <window.UI.DisclosureButton
-          isOpen={isOpen}
-          onToggle={() => setOpen((v) => !v)}
-          className="w-full text-left gap-2"
-          label={<><span className="font-medium text-ink">{title}</span>{sub && <span className="text-faint fs-meta ml-2">{sub}</span>}</>}
-        />
-      </h2>
-      {isOpen && <div className="px-4 pb-4">{children}</div>}
-    </div>
+    <window.UI.Disclosure kind="detail" title="By task type" sub="Success rate per agent × task type" tone={tone} className="mb-4">
+      <SuccessRateMatrixCard state={state} days={days} onRetry={onRetry}/>
+    </window.UI.Disclosure>
   );
+}
+
+// unread → no tone, so a fold never claims ok before the matrix loads
+function getTaskTypeTone(state) {
+  if (state.status !== 'ready') return undefined;
+
+  const cells = Object.values(buildSuccessRateMatrix(readyData(state)?.rows ?? []).cells);
+  return cells.some((cell) => getCellFailShareTone(cell) === 'crit') ? 'crit' : 'ok';
 }
 
 // Alarm lane — one row per suspended or streaking agent, nothing when the fleet
@@ -1219,12 +1218,13 @@ function AgentDetailDrawer({
   const headerHealthEntry = healthRanking.find((a) => a.agent === drawerAgent) || null;
   const headerHasSignal = !!headerHealthEntry && headerHealthEntry.totalRevisions >= window.UI.LOW_N_MIN;
 
-  const titleId = `agent-drawer-name-${drawerAgent}`;
+  // DetailSurface names the dialog by this whole node → sr-only commas keep name, activity and health apart
   const title = (
     <span className="flex items-center gap-2 flex-wrap">
-      <span id={titleId} className="sr-only">{agentName}</span>
-      <span aria-hidden="true"><AgentName name={agentName}/></span>
+      <AgentName name={agentName}/>
+      <span className="sr-only">, </span>
       <ActivityMark status={agent?.status} lastRunAt={agent?.last_run_at}/>
+      <span className="sr-only">, </span>
       <QualityHealthVerdictPill entry={headerHealthEntry} hasSignal={headerHasSignal}/>
     </span>
   );
@@ -1295,7 +1295,6 @@ function AgentDetailDrawer({
       onClose={onClose}
       variant="drawer"
       title={title}
-      labelledBy={titleId}
       sub={sub}
       nav={confirming ? undefined : { onPrev: () => onNav('prev'), onNext: () => onNav('next'), hasPrev, hasNext }}
       footer={footer}>
@@ -2071,7 +2070,7 @@ function SuccessRateMatrixCard({ state, days, onRetry }) {
   const subText = `Last ${days} days`;
 
   return (
-    <div className="card h-full flex flex-col min-h-0">
+    <div className="card min-w-0">
       <CardHead
         title="Success by agent and task type"
         sub={subText}
@@ -2085,7 +2084,7 @@ function SuccessRateMatrixCard({ state, days, onRetry }) {
           </>
         }
       />
-      <div className="card-body ag-card-body">
+      <div className="card-body" style={MATRIX_BODY_STYLE}>
         <SuccessRateMatrixBody state={state} days={days} onRetry={onRetry}/>
       </div>
     </div>
@@ -2112,7 +2111,8 @@ function SuccessRateMatrixBody({ state, days, onRetry }) {
   return <SuccessRateMatrixTable matrix={matrix}/>;
 }
 
-// 35-agent 매트릭스 self-scroll — sticky thead + first column 정렬 유지.
+// every row on the page — the matrix scrolls sideways only, its agent column pinned.
+const MATRIX_BODY_STYLE = { maxHeight: 'none', overflowY: 'visible' };
 const MATRIX_CORNER_TH_STYLE = {
   position: 'sticky', left: 0, top: 0, background: 'rgb(var(--elev))', minWidth: 140, zIndex: 2,
 };
@@ -2124,7 +2124,7 @@ function SuccessRateMatrixTable({ matrix }) {
   return (
     <>
       <SuccessRateLegend/>
-      <div className="overflow-auto" style={{ flex: '1 1 auto', minHeight: 0 }}>
+      <div className="overflow-x-auto">
         <table className="w-full fs-meta font-mono" style={{ borderCollapse: 'separate', borderSpacing: 0 }}>
           <thead>
             <tr>
@@ -2197,6 +2197,12 @@ function LegendSwatch({ colorVar, label }) {
   );
 }
 
+// rateDenominator = success + failure with reconstructed rows removed — never totalCount · low sample → no tone.
+function getCellFailShareTone(cell) {
+  if (!cell || cell.pooledRate === null || cell.rateDenominator < window.UI.LOW_N_MIN) return null;
+  return getFailShareTone(cell.failureCount, cell.rateDenominator);
+}
+
 // Tier-scaled highlight — green-bias 매트릭스에서 미달 셀 즉시 식별 (research R1).
 const CELL_HIGHLIGHT_BY_TONE = {
   '--faint': { bgOpacity: 0.06, borderAccent: undefined },
@@ -2227,8 +2233,7 @@ function SuccessRateCell({ agent, taskType, cell }) {
   }
 
   const isLowSample = cell.rateDenominator < window.UI.LOW_N_MIN;
-  // rateDenominator = success + failure with reconstructed rows removed — never totalCount.
-  const failShareTone = isLowSample ? null : getFailShareTone(cell.failureCount, cell.rateDenominator);
+  const failShareTone = getCellFailShareTone(cell);
   const isCrit = failShareTone === 'crit';
   const colorVar = isCrit ? '--crit' : '--faint';
   const { bgOpacity, borderAccent } = CELL_HIGHLIGHT_BY_TONE[colorVar];
@@ -2754,7 +2759,7 @@ function LifecycleStatsRow({ row, onSelect, focusProps }) {
       title={`${row.agent_type} — start ${startCount} · stop ${formatIntAg(row.stop_count)} · completed ${completedCount} · orphan ${orphanCount} (${(orphanRatio * 100).toFixed(0)}%)`}>
       <td className="text-left text-ink px-2 py-1.5 border-b border-line truncate" style={{ maxWidth: 160 }}>
         <span className="flex items-center gap-1.5">
-          <span className="truncate">{row.agent_type}</span>
+          <window.UI.AgentName name={row.agent_type} className="truncate"/>
         </span>
       </td>
       <td className="text-right text-dim px-2 py-1.5 border-b border-line">{formatIntAg(startCount)}</td>
