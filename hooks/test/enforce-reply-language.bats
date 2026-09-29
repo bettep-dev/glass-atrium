@@ -1,8 +1,8 @@
 #!/usr/bin/env bats
 # enforce-reply-language.bats — hooks/enforce-reply-language.sh, the Stop backstop for the final reply's language.
 # Protects three contracts: a final reply holding none of the user's non-Latin script is blocked exactly
-# once, a reply carrying it (or no prose at all) or honouring an explicit language request passes, and
-# headless, disabled or malformed runs stay silent with exit 0.
+# once, a reply carrying it (or no prose at all) or honouring an explicit language request, never one only
+# named, passes, and headless, disabled or malformed runs stay silent with exit 0.
 
 # shellcheck disable=SC2154  # BATS_TEST_DIRNAME, status and output are set by bats
 HOOK="${BATS_TEST_DIRNAME}/../enforce-reply-language.sh"
@@ -42,7 +42,19 @@ write_transcript() {
   } >"${1}"
 }
 
-# Writes a Stop envelope; reply "-" leaves last_assistant_message out, as older CLI builds do.
+# Appends the shape of a final message not yet recorded: English narration with a tool call, then its result.
+# Args: $1=path
+append_unrecorded_final() {
+  {
+    jq -cn '{type: "assistant", message: {id: "msg_narration", role: "assistant", content: [
+      {type: "text", text: "Let me check the parser first."},
+      {type: "tool_use", id: "toolu_parser", name: "Read", input: {file_path: "/tmp/parser.py"}}]}}'
+    jq -cn '{type: "user", message: {role: "user",
+      content: [{type: "tool_result", tool_use_id: "toolu_parser", content: "def parse(): pass"}]}}'
+  } >>"${1}"
+}
+
+# Writes a Stop envelope; reply "-" leaves last_assistant_message out, the CLI's shape for a reply that trims to empty.
 # Args: $1=stop_hook_active $2=transcript path $3=last assistant message (printf %b escapes expanded)
 write_envelope() {
   local reply
@@ -143,7 +155,6 @@ assert_rows() {
     'code block only|cli|false|스크립트 보여줘|```bash\nls -la hooks\n```|pass'
     'inline code only|cli|false|파일 경로 알려줘|`hooks/enforce-reply-language.sh`|pass'
     'bare path only|cli|false|파일 경로 알려줘|/Users/dev/glass-atrium/hooks/lib/reply_language.py|pass'
-    'empty reply|cli|false|이 버그 원인 찾아서 고쳐줘||pass'
   )
   assert_rows "${rows[@]}"
 }
@@ -167,9 +178,25 @@ assert_rows() {
     'japanese asks for english|cli|false|英語で答えてください|The test passes now.|pass'
     'korean asks for japanese|cli|false|일본어로 대답해줘|テストは合格しました。|pass'
     'english request inside korean prose|cli|false|이 로그 확인하고 reply in English|The log shows a timeout.|pass'
+    'korean obligation form asks for english|cli|false|이번 보고는 꼭 영어로 해야 해|The results are below.|pass'
     'korean asks for korean|cli|false|영어 말고 한국어로 답해줘|Here is the answer.|block:Korean'
-    'english input described, not requested|cli|false|영어로 된 로그 요약해줘|The log shows a timeout.|block:Korean'
+  )
+  assert_rows "${rows[@]}"
+}
+
+@test "a language only named, never requested for the reply, leaves the backstop on" {
+  local rows=(
+    'english input described|cli|false|영어로 된 로그 요약해줘|The log shows a timeout.|block:Korean'
     'english named without a request|cli|false|영어 문서 링크 확인해줘|The link works.|block:Korean'
+    'permission for mid-turn english|cli|false|여기에서는 영어로 진행되도 상관 없음 최종 사용자 보고에만 사용자 언어로 답하면 됨|Done.|block:Korean'
+    'participle of a writing verb|cli|false|영어로 작성된 문서 요약해줘|The document covers the API.|block:Korean'
+    'participle of a passive writing verb|cli|false|영어로 쓰인 에러 메시지 원인 찾아줘|The error is a timeout.|block:Korean'
+    'participle of an explaining verb|cli|false|영어로 설명된 부분만 번역해줘|Translated the section.|block:Korean'
+    'artifact language in a chained request|cli|false|커밋 메시지는 영어로 작성하고 결과는 알려줘|Committed the change.|block:Korean'
+    'artifact language in a request|cli|false|커밋 메시지는 영어로 작성해줘|Committed the change.|block:Korean'
+    'english clause quoted from a rule|cli|false|커밋 규칙에 write subjects in English 라고 되어 있는데 왜 한국어 제목이 들어갔는지 확인해줘|The rule applies to subjects.|block:Korean'
+    'english clause embedded in a korean request|cli|false|봇이 reply in English 하도록 설정 바꿔줘|Updated the bot setting.|block:Korean'
+    'owner complaint about english replies|cli|false|자꾸 영어로 답변하는 문제가 있음 원인 확인해줘|The cause is the compaction summary.|block:Korean'
   )
   assert_rows "${rows[@]}"
 }
@@ -189,17 +216,25 @@ assert_rows() {
   assert_decision 'kill switch' pass
 }
 
-@test "the transcript's final assistant message is read only when the envelope carries none" {
+@test "without the envelope's final reply only the transcript's tail message is judged, and an empty one passes" {
+  # Row shape: name|transcript final message, @unrecorded for none after English narration|envelope reply|want
   local rows=(
     'english final message in the transcript|Fixed the parser.|-|block:Korean'
     'korean final message in the transcript|파서를 수정했습니다.|-|pass'
+    'empty final message in the transcript||-|pass'
+    'final message not recorded after english narration|@unrecorded|-|pass'
     'envelope korean over transcript english|Fixed the parser.|파서를 수정했습니다.|pass'
     'envelope english over transcript korean|파서를 수정했습니다.|Fixed the parser.|block:Korean'
   )
   local row name transcript_reply envelope_reply want
   for row in "${rows[@]}"; do
     IFS='|' read -r name transcript_reply envelope_reply want <<<"${row}"
-    write_transcript "${RL_TMP}/transcript.jsonl" '이 버그 원인 찾아서 고쳐줘' "${transcript_reply}"
+    if [[ "${transcript_reply}" == @unrecorded ]]; then
+      write_transcript "${RL_TMP}/transcript.jsonl" '이 버그 원인 찾아서 고쳐줘' -
+      append_unrecorded_final "${RL_TMP}/transcript.jsonl"
+    else
+      write_transcript "${RL_TMP}/transcript.jsonl" '이 버그 원인 찾아서 고쳐줘' "${transcript_reply}"
+    fi
     write_envelope false "${RL_TMP}/transcript.jsonl" "${envelope_reply}"
     run_hook cli
     assert_decision "${name}" "${want}" || return 1
@@ -241,7 +276,7 @@ assert_rows() {
   assert_decision 'without python3' pass
 }
 
-@test "a human entry far behind a notification burst on a large transcript is enforced within the turn-end budget" {
+@test "a human entry far behind a notification burst on a large transcript is enforced within the turn-end CPU budget" {
   python3 - "${RL_TMP}/large.jsonl" <<'PY'
 import json, sys
 
@@ -262,17 +297,34 @@ with open(sys.argv[1], "w", encoding="utf-8") as fh:
     fh.write(notice * (2400000 // len(notice) + 1))
     fh.write(reply)
 PY
-  local reply started finished
+  local reply
   for reply in 'All background builds finished and every check passed.' -; do
     write_envelope false "${RL_TMP}/large.jsonl" "${reply}"
-    started="$(python3 -c 'import time; print(time.time())')"
+    times >"${RL_TMP}/cpu-before"
     run_hook cli
-    finished="$(python3 -c 'import time; print(time.time())')"
+    times >"${RL_TMP}/cpu-after"
     assert_decision "large drifted transcript, reply ${reply}" block:Korean || return 1
-    python3 -c 'import sys; sys.exit(0 if float(sys.argv[2]) - float(sys.argv[1]) < 1.0 else 1)' \
-      "${started}" "${finished}" || {
-      echo "reply ${reply}: took longer than 1s"
-      return 1
-    }
+    assert_cpu_under 1.0 "reply ${reply}" || return 1
   done
+}
+
+# Asserts the CPU seconds (user + sys) this shell's children spent between the two `times` snapshots stay
+# under the budget; CPU rather than wall-clock, so a loaded parallel run cannot fail it.
+# Args: $1=budget seconds $2=row name
+assert_cpu_under() {
+  awk -v budget="${1}" -v name="${2}" '
+    FNR == 2 {
+      for (i = 1; i <= 2; i++) {
+        t = $i
+        gsub(",", ".", t)
+        split(t, part, /[ms]/)
+        cpu[FILENAME] += part[1] * 60 + part[2]
+      }
+    }
+    END {
+      spent = cpu[ARGV[2]] - cpu[ARGV[1]]
+      if (spent < budget) exit 0
+      printf "%s: %.3fs CPU, budget %ss\n", name, spent, budget
+      exit 1
+    }' "${RL_TMP}/cpu-before" "${RL_TMP}/cpu-after"
 }

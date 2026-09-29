@@ -2,9 +2,11 @@
 # enforce-reply-language.sh — Stop: blocks the turn's end ONCE when the final reply holds none of the script
 # of the user's language (the transcript's newest human prose, via lib/reply_language.py), so the model adds
 # a short reply in that language. Channel b: stdout {"decision":"block"} + exit 0; every other path is silent.
-# Accepted costs:
-# - a block cannot retract the reply already shown: the user sees it, then the corrected one;
-# - the forced continuation re-runs every Stop hook, and its feedback entry opens a new cost-tracker.sh turn row;
+# Costs of a block:
+# - it cannot retract the reply already shown: the user sees it, then the corrected one;
+# - the forced continuation re-runs every Stop hook: advisory-preedit-facts.sh and post-edit-typecheck.sh fire twice;
+# - NOT accepted: its "Stop hook feedback:" entry is a turn boundary to cost-tracker.sh → is_real_user, so each trip
+#   writes an extra kind='turn' row. Bind this hook only once cost-tracker.sh keeps that entry inside the turn;
 # - a language request is read from the newest human prose only; an earlier standing request is unseen, so the
 #   reason itself yields to it at the price of one extra continuation.
 set -Eeuo pipefail
@@ -63,8 +65,9 @@ get_reply_counts() {
     '(.units // {}) | [(add // 0), (.[$script] // 0)] | map(tostring) | join("\t")'
 }
 
-# stdout: the resolver's script units for the envelope's final reply; builds without the field fall back to
-# the transcript's newest assistant message.
+# stdout: the resolver's script units for the envelope's final reply. The CLI omits last_assistant_message
+# when the reply trims to empty, so without it the transcript's tail message is judged, and none is recorded
+# when the tail is a user entry.
 get_reply_decision() {
   if [[ "${2}" == "true" ]]; then
     jq -j '.last_assistant_message // "" | tostring' <<<"${1}" | python3 "${RESOLVER}" reply

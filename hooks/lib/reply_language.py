@@ -35,23 +35,47 @@ LANGUAGE_BY_SCRIPT = {
     "hebrew": "Hebrew",
 }
 
-# An explicit request for another reply language, as the user words it: 영어로 답해줘 · 英語で答えて ·
-# 用英文回答 · reply in English. A language merely named ("영어로 된 로그") is no request.
+# An explicit reply-language request is a request clause about the reply (영어로 답해줘 · 답변은 영어로 해줘 ·
+# 英語で答えて · reply in English); a language only named — participle, permission, an artifact's language, a quoted
+# clause — is none. Precision first: a missed request costs one continuation, a false one silences the turn's check.
 LANGUAGE_NAMES = {
     "English": ("English", "영어", "영문", "英語", "英文", "英语"),
     "Korean": ("Korean", "한국어", "한글", "韓国語", "韓語", "韩语"),
     "Japanese": ("Japanese", "일본어", "日本語", "日语"),
     "Chinese": ("Chinese", "중국어", "中国語", "中文"),
 }
+# A reply verb counts in request mood; a generic verb (write, explain, do) only after a reply-noun topic.
+_KO_TAIL = r"(?:(?:\s*(?:줘요?|줄래요?|주(?:세요|실래요|십시오|시겠어요|라)|봐요?)|요|라)(?![가-힣])|(?=\s*(?:$|[.!?~,;\n])))"
+_KO_HADA = (
+    "(?:해" + _KO_TAIL + r"|해야\s*(?:해요?|지|돼요?|합니다|한다)(?![가-힣])|하(?:자|세요|십시오|시오|라(?:니까)?)(?![가-힣])"
+    r"|합시다)"
+)
+_KO_LANGUAGE = r"(?:{names})\s*으?로\s*(?:만\s*)?"
+_KO_REPLY_NOUN = (
+    r"(?:^|[\s,.!?])(?:답변|대답|응답|답|결과|보고|요약|설명|리포트)(?:은|는|을|를|도|만|이|가)?\s+"
+    r"(?:(?:앞으로|이제|전부|모두|다|꼭|반드시|항상|계속|좀)\s+)?"
+)
+_JA_TAIL = r"(?:て(?:ください|下さい|くれ(?:る|ます)?か?|ほしい|欲しい|ね|よ)?|なさい|ましょう|ろ)(?=$|[\s。、！？!?.,」』)])"
+_JA_LANGUAGE = r"(?:{names})\s*で\s*(?:のみ\s*|だけ\s*)?"
+_EN_CLAUSE_START = r"(?:^|[.!?;:,\n]\s*|[^\x00-\x7f]\s*|\b(?:please|pls|plz|kindly|just|now|and|then|also|so|you)\s+)"
+_EN_CLAUSE_END = (
+    r"(?![A-Za-z])(?=\s*(?:$|[.!?,;:)\n]|(?:please|pls|plz|thanks?|thank\s+you|from\s+now\s+on|only|instead|too"
+    r"|as\s+well)\b|(?:해|하)(?:\s*(?:줘요?|주세요)|요|자|세요)?(?![가-힣])))"
+)
 _REQUEST_FORMS = (
-    r"(?:{names})\s*으?로\s*(?:만\s*)?(?:답|대답|응답|말|얘기|이야기|설명|보고|작성|써|쓰|진행|대화|해(?:줘|주|요|라|\s|$))",
-    r"(?:{names})\s*で\s*(?:答え|回答|返答|返信|話|書|説明|報告)",
-    r"用\s*(?:{names})\s*(?:回答|回复|答复|写|说|交流)",
-    r"\b(?:reply|respond|answer|write|speak|talk|report|continue|communicate)\w*\b[^.?!\n]{{0,40}}?\bin\s+(?:{names})\b",
-    r"\b(?:switch|change)\s+to\s+(?:{names})\b",
+    _KO_LANGUAGE + r"(?:답|대답|응답|답변|회신|말|얘기|이야기|대화|소통|보고)(?:" + _KO_HADA + r"|\s*부탁)",
+    _KO_REPLY_NOUN + _KO_LANGUAGE + "(?:(?:작성|설명|정리|요약|진행)?" + _KO_HADA + "|(?:써|적어)" + _KO_TAIL + ")",
+    _JA_LANGUAGE + "(?:答え|回答し|返答し|返信し|応答し|返事し|話し|喋っ|しゃべっ|報告し|会話し)" + _JA_TAIL,
+    r"(?:回答|返事|返答|答え|結果|報告|要約|説明)(?:は|を|も)\s*" + _JA_LANGUAGE + "(?:書い|説明し|まとめ|要約し|し)" + _JA_TAIL,
+    r"用\s*(?:{names})\s*(?:来\s*)?(?:回答|回复|答复|说|讲|交流|沟通|聊|汇报)(?![的了过着])",
+    _EN_CLAUSE_START
+    + r"(?:(?:reply|respond|answer|speak|talk|communicate|chat|write\s+back)\s+(?:(?:to\s+me|back|only)\s+)?"
+    r"in\s+(?:{names})|(?:write|give|keep|send|put)\s+(?:(?:the|your|this|that|all|a|an|my)\s+)?"
+    r"(?:answers?|repl(?:y|ies)|responses?|reports?|summar(?:y|ies))\s+in\s+(?:{names})"
+    r"|(?:switch|change)\s+(?:back\s+)?to\s+(?:{names}))" + _EN_CLAUSE_END,
 )
 _LANGUAGE_REQUESTS = tuple(
-    (language, re.compile("|".join(form.format(names="|".join(names)) for form in _REQUEST_FORMS), re.I))
+    (language, re.compile("|".join(form.replace("{names}", "|".join(names)) for form in _REQUEST_FORMS), re.I))
     for language, names in LANGUAGE_NAMES.items()
 )
 
@@ -119,7 +143,7 @@ def _build_parser():
     )
     transcript.add_argument("path")
     reply = commands.add_parser(
-        "reply", help="a final reply on stdin, or with --transcript the newest assistant message; no status"
+        "reply", help="a final reply on stdin, or with --transcript the transcript's tail assistant message; no status"
     )
     reply.add_argument("--transcript")
     commands.add_parser("text", help="one prompt or reply on stdin; adds machine_shape")
@@ -223,7 +247,7 @@ def get_requested_language(prose):
 
 
 def find_last_reply(path, window, cap):
-    """Text of the newest assistant message, empty when unreadable or absent."""
+    """Text of the transcript's tail message; empty when unreadable or when the tail is no assistant message."""
     try:
         with open(path, "rb") as fh:
             size = fh.seek(0, os.SEEK_END)
@@ -234,18 +258,22 @@ def find_last_reply(path, window, cap):
 
 
 def _get_last_message_texts(lines):
-    """Newest first: the transcript splits one message's content blocks over entries sharing its id."""
+    """Newest first: the transcript splits one message's content blocks over entries sharing its id.
+
+    A user entry at the tail (a tool result, the prompt) means the final message is not recorded, so an
+    earlier message's narration is never judged in its place.
+    """
     texts, found, message_id = [], False, None
     for line in lines:
         entry = _get_json_object(line)
         message = entry.get("message") if isinstance(entry.get("message"), dict) else {}
+        if entry.get("type") == "user":
+            break
         if entry.get("type") == "assistant":
             if found and message.get("id") != message_id:
                 break
             found, message_id = True, message.get("id")
             texts.append(_get_text_content(message.get("content")))
-        elif found and entry.get("type") == "user":
-            break
     return texts
 
 
