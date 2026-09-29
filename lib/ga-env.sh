@@ -191,11 +191,13 @@ ga_init_env() {
 
   # expected hook->event bindings the user MUST register in settings.json for the deployed hooks to fire.
   # Each entry = "<event>\t<hook-basename>\t<matcher>" (events: PreToolUse / PostToolUse / SessionStart /
-  # Stop / SubagentStart / SubagentStop / PreCompact). Matched against the live settings.json
-  # .hooks[<event>][].hooks[].command by basename, SCOPED to its matcher (command-WITHIN-matcher — the
-  # doctor binding check + wire_hooks idempotency key). The 3rd column (matcher) is BOTH the UPSERT selector
-  # AND the bound/dormant scoping key; an empty 3rd column = "no matcher key" (SessionStart/Stop are
-  # unmatched). Per-matcher, so the SAME hook may appear in TWO rows under one event with different matchers
+  # UserPromptExpansion / UserPromptSubmit / Stop / SubagentStart / SubagentStop / PreCompact). Matched
+  # against the live settings.json .hooks[<event>][].hooks[].command by basename, SCOPED to its matcher
+  # (command-WITHIN-matcher — the doctor binding check + wire_hooks idempotency key). The 3rd column
+  # (matcher) is BOTH the UPSERT selector AND the bound/dormant scoping key; an empty 3rd column = "no
+  # matcher key" (SessionStart/Stop/UserPromptSubmit are unmatched; UserPromptExpansion matches
+  # command_name, left empty to see every command). Per-matcher, so the SAME hook may appear in TWO rows
+  # under one event with different matchers
   # (e.g. validate-secret-scan.sh on Write|Edit AND Bash) — each wired + tracked independently.
   # Add a row here when a new hook is deployed. SINGLE SoT — wire_hooks/run_doctor AND unwire_hooks/verify_clean
   # all read this one array (the prior per-script duplication collapsed here).
@@ -253,6 +255,8 @@ ga_init_env() {
     "SessionStart	prune-security-warnings-state.sh	"
     "SessionStart	prune-session-spawns.sh	"
     "SessionStart	validate-compliance-matrix.sh	"
+    "UserPromptExpansion	inject-reply-language.sh	"
+    "UserPromptSubmit	inject-reply-language.sh	"
     "Stop	advisory-preedit-facts.sh	"
     "Stop	cost-tracker.sh	"
     "Stop	post-edit-typecheck.sh	"

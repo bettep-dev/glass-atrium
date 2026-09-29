@@ -15,7 +15,7 @@ Rows = lifecycle event · columns = capability surface. `mutate` = can change mo
 | `Stop` / `SubagentStop` | none — observe-only | terminal turn / subagent transcript metadata | none (advisory lifecycle; `exit 2` does not rewind a finished turn) | Post-completion accounting only (`cost-tracker.sh`, `track-outcome.sh`). No payload to mutate. |
 | `SessionStart` | injects turn-0 context via stdout (additive, never a mutation) | drained stdin (payload unused by current hooks) | none for the injection itself (`exit 0`); one audit-grade `exit 2` exists, see the note | `inject-session-context.sh` injects its stdout into session context. `validate-compliance-matrix.sh` exits 2 on a CONFIRMED matrix inconsistency (its Layer B) while its Layer A drift check stays advisory — neither rewinds the session, which SessionStart cannot do. |
 | `SubagentStart` | injects child context via stdout `hookSpecificOutput.additionalContext` (additive) | `agent_type`, `agent_id` | none (cannot block a spawn — context-injection only) | `inject-scope-rules.sh` delivers the marker blocks to its rostered children. Fail-open (`exit 0`) always. |
-| `UserPromptSubmit` | not registered — see Event Registration Status | n/a | n/a | No `UserPromptSubmit` hook exists in `settings.json`. Prompt-injection screening runs at `PreToolUse(Write\|Edit)` via `validate-prompt.sh`, NOT at prompt-submit time. |
+| `UserPromptSubmit` / `UserPromptExpansion` | injects context via stdout `hookSpecificOutput.additionalContext` (additive) | `prompt`, `transcript_path`, `prompt_id`; never `agent_id`; `source` absent on CLI 2.1.283 · Expansion adds `command_name`, `command_args` | `exit 2` erases the prompt — unused: the registered hook never blocks | `inject-reply-language.sh` adds one context line and always exits 0. See Event Registration Status. |
 
 ## Block Channels (Two Non-Interchangeable Mechanisms)
 
@@ -49,8 +49,10 @@ A failed check has one of five dispositions. This is a shared vocabulary for des
 
 ## Event Registration Status (file-verified)
 
-- Events with at least one registered hook in `settings.json`: `PreToolUse`, `PostToolUse`, `Stop`, `SubagentStart`, `SubagentStop`, `PreCompact`, `SessionStart`.
-- **`UserPromptSubmit` is NOT registered**: no hook is wired to it, so any capability claim about it is hypothetical until one exists. `validate-prompt.sh` (prompt-injection + zero-width Unicode screening) runs at `PreToolUse(Write|Edit)` — it screens content being written to files, not raw user prompts.
+- Events with at least one registered hook in `settings.json`: `PreToolUse`, `PostToolUse`, `Stop`, `SubagentStart`, `SubagentStop`, `PreCompact`, `SessionStart`, `UserPromptSubmit`, `UserPromptExpansion`.
+- **`UserPromptSubmit` / `UserPromptExpansion` carry one hook, `inject-reply-language.sh`** — a context line only, never a block:
+  - it recognises a machine-written prompt by `source` first, then by the prompt's wrapper shape; a typed slash command is recognised on `UserPromptExpansion`, never by a leading slash;
+  - it screens nothing: `validate-prompt.sh` (prompt-injection + zero-width Unicode screening) runs at `PreToolUse(Write|Edit)` on content written to files, not on raw user prompts.
 
 ## Authoring Rules
 
