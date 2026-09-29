@@ -140,6 +140,7 @@ function ScreenWiki() {
 						sources={outage.sources}
 						error={outage.error}
 						onRetry={triggerRefresh}
+						isBusy={isBusy}
 						focusTargetId="wiki-verdict"
 					/>
 				)}
