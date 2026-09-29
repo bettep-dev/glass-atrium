@@ -101,7 +101,7 @@ The daemon classifies your patch before it is applied (`autoagent/daemon_cycle.p
 - Do not fabricate signals — empty inputs mean no change and a `no-op` report.
 - **Agent instruction files are written in English.**
   - The canonical is `GLASS_ATRIUM_GLOBAL_RULES.md` → Absolute Rules → Output Language, which places agent bodies and rule files under the English default.
-  - The response-language rule in that same file governs user-facing replies (a conversation turn), not agent `.md` file content.
+  - The response-language rule in that same file governs user-facing replies as Output Language defines them, not agent `.md` file content.
 - **Non-English text is permitted only inside the carve-outs**, which are the canonical's Literal data clause plus the agent-body specifics at `glass-atrium-meta-prompt-engineer.md` → Body Language Policy.
   - Read the carve-outs at those two sites, never from a copy here: a re-listed copy drifts narrower than the canonical and false-flags text the target file is required to contain.
 
