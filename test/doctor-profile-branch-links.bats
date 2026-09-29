@@ -14,6 +14,8 @@
 bats_require_minimum_version 1.5.0
 
 GA="$(cd -- "${BATS_TEST_DIRNAME}/.." && pwd)"
+# shellcheck source-path=SCRIPTDIR source=../scripts/lib/path-guard.sh
+source "${GA}/scripts/lib/path-guard.sh"
 
 # The set the sandbox manifest below yields: its non-excluded top-level components plus settings.json.
 REQUIRED=(agents rules skills settings.json)
@@ -33,7 +35,7 @@ setup() {
 }
 
 teardown() {
-  [[ -n "${SANDBOX:-}" && -d "${SANDBOX}" ]] && rm -rf -- "${SANDBOX}" || true
+  if ga_guard_path "${SANDBOX:-}"; then rm -rf -- "${SANDBOX:?}"; fi
 }
 
 # Manifest listing $@, each seeded as a source file so the §4 source check stays green.
@@ -139,7 +141,7 @@ break_rules_link() {
 @test "each defect class is named, and its class-specific fix line repairs the branch when run as printed" {
   local class defect form fix
   for class in missing dangling elsewhere real; do
-    rm -rf -- "${BRANCH}"
+    if ga_guard_path "${BRANCH}"; then rm -rf -- "${BRANCH:?}"; fi
     seed_branch "${BRANCH}" "${REQUIRED[@]}"
     break_rules_link "${class}"
     case "${class}" in
@@ -184,7 +186,7 @@ break_rules_link() {
   local state fix
   rm -- "${TARGET}/settings.json"
   for state in dangling-link real-file missing; do
-    rm -rf -- "${BRANCH}"
+    if ga_guard_path "${BRANCH}"; then rm -rf -- "${BRANCH:?}"; fi
     seed_branch "${BRANCH}" "${REQUIRED[@]}"
     case "${state}" in
       dangling-link) ;; # the seeded link already points at the absent target

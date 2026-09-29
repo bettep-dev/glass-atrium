@@ -1725,7 +1725,7 @@
     "test/doctor-inject-drop-seam.bats": "0958b3fd5b5caf1cc1ab48179a965c2037baeebd3cacefdf25aa464a9614e766",
     "test/doctor-launchd-deploy-drift.bats": "4fef1a3ca45e543eda3e00815c02267189fece2803bdf59e6eab751110b3e4c5",
     "test/doctor-migrations.bats": "448a4f0550433f06cae7c71a2d6d5641cb5c1b77a7e58480c1534cd37418f7f6",
-    "test/doctor-profile-branch-links.bats": "469a0efe6823b1b10e5a57fa495ec58f77da6c18f451d5fe71801c168ebaccee",
+    "test/doctor-profile-branch-links.bats": "b4c9262bea39b51f7d6813cb1baadc77268627b42ab2361c9ee47003955060db",
     "test/doctor-proposal-provenance.bats": "206f7ef023d9a05ad7960831ce3e8d8dfca96f76d026b8b0abd4b6b05fd7e3eb",
     "test/doctor-registry-orphan.bats": "7f80c1f44df691a9ad9c527327f475caadee812ea7c547bce13ebfee33bc84aa",
     "test/doctor-registry-tools-mirror.bats": "93c5e1fbf25b4580ee8d7e07841d98bc54d822771901d0e923c25a07c256bf96",
