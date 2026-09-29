@@ -25,7 +25,7 @@ readonly _CODE_BASED_GRADER_LOADED=1
 #   history from the subagent's OWN transcript). Both are OPTIONAL — an unwired ('')
 #   scan preserves the pure files-evidence path (backward-compatible; the direct unit test).
 #
-# Outputs (stdout, one token — 3-state per core-outcome-record.md T1):
+# Outputs (stdout, one token — 3-state per scoped/maintainers/core-outcome-record.md → Grader verdict):
 #   verified_pass — metric_pass=true claim corroborated by block-resident evidence.
 #   unverified    — no verification applicable (infra / non-success / non-code / metric_pass≠true /
 #                   off-surface / absent signal — the DEFAULT for every code type).
@@ -39,7 +39,7 @@ readonly _CODE_BASED_GRADER_LOADED=1
 #                   unverified, as does a field carrying nothing but recognized artifacts.
 #                   Off-surface-heading absence is neither case.
 #
-# Input-surface invariant (core-outcome-record.md grader_verdict guide): the grader reads
+# Input-surface invariant (scoped/maintainers/core-outcome-record.md → Grader verdict): the grader reads
 #   block-resident text + files: paths + the emitting session's OWN Write/Edit history (authorship
 #   corroboration for paths the block already declares) — NEVER the off-surface deliverable
 #   (plan/research doc, diff/test files). So plan/research/refactor default to unverified by

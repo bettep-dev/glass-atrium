@@ -1,7 +1,7 @@
 #!/usr/bin/env bats
 # code-based-grader.sh unit suite — pins the deterministic 3-state verdict
-# contract of the Code-Based eval tier (core-outcome-record.md grader_verdict
-# guide). The lib is sourced exactly as the production hook sources it
+# contract of the Code-Based eval tier (scoped/maintainers/core-outcome-record.md
+# → Grader verdict). The lib is sourced exactly as the production hook sources it
 # (track-outcome.sh), then driven via the caller-scope variables it reads:
 #   TASK_TYPE / METRIC_PASS / RESULT / ATTRIBUTION_SOURCE /
 #   GRADER_BODY_TEXT / GRADER_FILES_FIELD.

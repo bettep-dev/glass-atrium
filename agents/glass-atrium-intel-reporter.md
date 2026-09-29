@@ -179,7 +179,8 @@ Co-edit set for this test:
 - `scoped/scope-report.md` → `### HTML request test` — the rule statement, pointing here for the signal literals
 - this section — its EARS restatement is a local addition
 - `agents/glass-atrium-intel-planner.md` → `### HTML request test (explicit-request-only — heuristic auto-HTML FORBIDDEN)`
-- `rules/glass-atrium/orchestrator-role.md` → `#### Deliverable exposure and designer composition (Decision phase)` — the orchestrator's copy of the same signal set
+- `rules/glass-atrium/orchestrator-role.md` → `#### Deliverable exposure and designer composition (Decision phase)` and its reference — together the orchestrator's copy of the same signal set
+  - the pointer holds the one-bit rule; `skills/glass-atrium-ops-delegation-contracts/references/deliverable-exposure.md` → `## Exposure Determination — signals and routing` holds the signal literals
 
 ### Exposure Bit (replaces audience routing)
 
@@ -291,7 +292,8 @@ glass-atrium-design-designer stays consultative and verdict-only (no markup); yo
 - Skeleton placeholders MUST be plain prose that survives the placeholder-residue gate (`### Schema Gates (Server-Enforced)` → Placeholder residue): no `{{...}}` template tokens, no `[FILL]` markers, no scaffolding-stub residue. Otherwise run an explicit pre-POST residue scan over the glass-atrium-dev-front stubs.
 - Bespoke CSS must avoid `text-[var(...)]` for font-size (Tailwind v4 parses it as COLOR).
 - Parallel HTML stitching (R2) and a post-draft review POST (R3) remain FORBIDDEN — the atomic 1-doc-1-POST contract is preserved.
-- Co-edit set for this exception — `scoped/scope-report.md` and `scoped/scope-planning.md` → Designer Co-Emission Trigger · this section · `agents/glass-atrium-intel-planner.md` → `## Designer Handoff Contract` · `agents/glass-atrium-dev-front.md` · `rules/glass-atrium/orchestrator-role.md` → `#### Monitoring-phase notes`, which holds the orchestrator's judging half.
+- Co-edit set for this exception — `scoped/scope-report.md` and `scoped/scope-planning.md` → Designer Co-Emission Trigger · this section · `agents/glass-atrium-intel-planner.md` → `## Designer Handoff Contract` · `agents/glass-atrium-dev-front.md` · the orchestrator's judging half:
+  - `rules/glass-atrium/orchestrator-role.md` → `#### Monitoring-phase notes` plus `skills/glass-atrium-ops-delegation-contracts/references/deliverable-exposure.md` → `## glass-atrium-dev-front markup exception — detail`.
 
 ### Cross-references and completion record
 

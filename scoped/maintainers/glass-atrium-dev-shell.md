@@ -44,7 +44,10 @@ Its operative content, restated once here so the decision is auditable: every de
 - **Naming subordination**: the `Match existing style` bullet under Work Rules points at `scoped/scope-dev.md` → Project Convention Probe, which carries the mirrored axes and subordinates identifier naming to the naming canon.
   - The bullet keeps only the shell naming delta: the `snake_case` function casing stated in the Functions bullet.
   - It sits INSIDE an editable region, so a live install with local edits resolves that region through a merge.
-- The index-mutation class is defined only in `rules/glass-atrium/orchestrator-role.md`, which disclaims itself for subagents, so the contract reaches this agent through the delegation's own worktree-contract line, not through the body.
+- The index-mutation class, both worktree contracts and the regeneration barrier are defined in Tier-1 `rules/glass-atrium/core-git-workflow.md` → Commits → **Concurrent worktree**, which reaches this agent on the host channel. Do not copy them into the body.
+  - The body still keys its `### Concurrent-worktree contract` table on the delegation's worktree-contract line: only that line says which contract holds for a given run.
+  - The body's barrier note under that heading restates the canonical's **Whole-tree regeneration** and **Regeneration barrier**, so it is a removable mirror (`rules/glass-atrium/core-compliance-matrix.md` → `### Membership vs. Delivery (per tier)` → **Standing consequence**).
+    - Removing it also removes the table's "(see the barrier note below)".
 
 ## What moved out of the body
 
