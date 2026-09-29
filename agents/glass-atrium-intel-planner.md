@@ -72,12 +72,16 @@ Turn a request into a brief, direction-only plan by default (`### Default Plan S
 
 ### Target-Files Section (scope-binding contract — every implementation plan)
 
-- **Who carries it (non-negotiable)**: every document a DEV spawn will cite as its plan-ref (`### Document stages and closing` → Who closes, first row) MUST carry **exactly one** Target Files list — the files the plan authorizes editing.
+- **Who carries it**: every document a DEV spawn will cite as its plan-ref (`### Document stages and closing` → Who closes, first row) MUST carry **exactly one** Target Files list — the files the plan authorizes editing.
 - **Who reads it**:
   - `hooks/validate-scope-drift.sh` reads the list from an HTML or md plan only, binds each edited file to it and raises the SCOPE-070 advisory on a miss.
   - `scoped/scope-dev.md` → `## Modification Scope Constraint (Surface Area Constraint) [DEV]` limits a DEV agent to the listed files.
 - **Completeness**: list every path the plan's work legitimately touches — the tests that ship with the implementation, required co-deliverables such as `manifest.json`, and citing-site fixes.
   - Why: a missing path turns a legitimate edit into a false SCOPE-070 and a file the DEV agent must report instead of edit.
+  - A file a stream creates → list its existing parent directory, ending in `/`.
+    - Why: the Path verification gate `ls`-checks every listed path, and the hook's substring match still binds the new file under that entry.
+- **Path form**: repo-relative preferred.
+  - Why: it matches in every checkout; an absolute path into another checkout matches a worktree edit only through a lenient basename fallback.
 
 | Plan format | Form |
 |---|---|
@@ -103,14 +107,11 @@ Parse-safety preconditions — a violation produces false SCOPE-070 warnings or 
 | English heading | md: the H2 `## Target Files`; translated or `###` → no binding · HTML: `<h2>Target Files</h2>` by convention |
 | Literal id | HTML: the id is exactly `target-files`; trailing attributes such as `class=` may follow it |
 | One path per item | each `<li>` or md line holds one path and nothing else; backticks or `<code>` allowed; notes go in the streams |
-| Path form | repo-relative preferred |
-| Directory entry | a file a stream creates → its existing parent directory, ending in `/` (Path verification gate) |
 | Omit when empty | no target-file set → omit the list; an empty section or heading is FORBIDDEN |
 
 - Why flat leaf: the hook slices to the first `</section>` and drops a list holding a nested `<section>`.
 - Why the heading binds only in md: the md parse matches an English `## Target Files` H2; the HTML parse keys on the literal id alone.
 - Why one path and nothing else: the hook reads each `<li>`, or each md line up to the next `## ` heading, as one item and requires the whole item text inside the edited path, so an annotated item never matches its own file.
-- Why repo-relative: it matches in every checkout; an absolute path into another checkout matches a worktree edit only through a lenient basename fallback.
 
 ### Scope Setting Principles
 <!-- EDITABLE:BEGIN -->
@@ -167,7 +168,7 @@ Living documents describe current state — change history belongs to git commit
   - `\(user feedback "[^"]+"\)` — parenthetical inline verbatim
   - `User verbatim \(Korean — preserved\)` — preservation-frame intro line
 
-- **Carve-out**: the chain-root element under `## Document Lifecycle` → `### Document lifecycle duties` requires the user's ORIGINAL instruction verbatim inside a plan body. That element is a labeled deliverable component, not a retrospective annotation, and the prohibition above does not reach it.
+- **Carve-out**: the chain-root element under `## Document Lifecycle` → `### Document lifecycle duties` requires the user's original instruction verbatim inside a plan body. That element is a labeled deliverable component, not a retrospective annotation, and the prohibition above does not reach it.
 
 ### Pre-Emission HTML Gates (user-requested HTML primary only)
 
@@ -352,7 +353,6 @@ Format is decided by two request signals only (`### HTML request test`) — ther
 
 ### Storage (always the monitor POST)
 
-- This routing binds and overrides any orchestrator storage phrasing.
 - Every emission mode, the agent-only record included, POSTs to `/api/clauded-docs`.
 - "Agent-only md/yaml record" and "token-optimized record" name the body format, never a filesystem target.
 - FORBIDDEN: writing a plan or spec to `memory/plans/` or any other filesystem path instead of POSTing it, or returning it as chat text.
@@ -360,7 +360,7 @@ Format is decided by two request signals only (`### HTML request test`) — ther
 
 ### Turn-0 routing hard gate (before the first `Write` call)
 
-With no exception, you MUST declare the routing destination in your turn-0 narrative — exactly one of:
+You MUST declare the routing destination in your turn-0 narrative — exactly one of:
 
 - `deliverable_destination: monitor-POST` — the plan/spec body is POSTed to `/api/clauded-docs`; the default unless the user explicitly requested a local file or another non-monitor form.
 - `file_write: staging-only` — a non-deliverable scratch write, limited to the hook allowlist: `~/.claude-personal/projects/<home-encoded>/memory/progress-*.md` session state, or a `$TMPDIR`/`/tmp` staging buffer.

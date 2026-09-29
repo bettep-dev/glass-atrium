@@ -33,8 +33,8 @@ The baseline requirement list, the d8 validator-safe color rule and the content-
   - `rgba(0,0,0,X)` shadows on dark surfaces
   - at most 1 gradient per layer, 2 stops max
   - decoration stacking (one treatment per element)
-  - The SoT, which carries none of these: `agents/glass-atrium-design-designer.md` → `## Red Flags` → `### AI Slop Tropes (forbidden patterns — Single SoT for all DEV agents)`.
-  - Glassmorphism is not on this list: the over-text readability case is a baseline item, and the broader blur+gradient+shadow case is the SoT's **Glassmorphism overuse** entry.
+- **SoT**: `agents/glass-atrium-design-designer.md` → `## Red Flags` → `### AI Slop Tropes (forbidden patterns — Single SoT for all DEV agents)`, which carries none of these patterns.
+  - Glassmorphism is not on the residual list: the over-text readability case is a baseline item, and the broader blur+gradient+shadow case is the SoT's **Glassmorphism overuse** entry.
 
 ### Dark base default
 
@@ -68,7 +68,7 @@ The dark canvas, light text, the dual-encoded semantic badge palette and the pri
 
 ### Document Lifecycle — completion + exposure routing
 
-- **Stages**: `doc_status` is one of `doc_review` · `implementing` · `impl_review` · `impl_done` · `done` (`clauded-docs.ts` → `DOC_STAGES`); a POST without it stores `doc_review`.
+- **Stages**: `doc_status` is one of `doc_review` · `implementing` · `impl_review` · `impl_done` · `done` (`monitor/src/server/routes/clauded-docs.ts` → `DOC_STAGES`); a POST without it stores `doc_review`.
 - **Author writes**: `doc_review` · `done` on a document you close · a supersede-POST's inherited stage (below). Other stages are orchestrator writes.
 - **Who closes** — keyed on whether a DEV spawn cites the document as its plan-ref:
 
