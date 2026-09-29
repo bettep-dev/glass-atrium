@@ -1772,7 +1772,7 @@
     "test/render-launchd-plists.bats": "f9e076c631c00436f9cde4a92b3ad49ef2c31dcb61d96cc9eabc62a98d5218ab",
     "test/retire-hook-binding.bats": "a224468498c4544e1e9f3197849d1103be4b92d914098a23ec5047b2166e7bf7",
     "test/run-step-fail-return.bats": "1be031cde4ba15213424fe099d7804fa179ec397a159b191c807c758f371bfaa",
-    "test/scratch-cwd-violation-probe.bats": "0327b9c6449e651814b9550b642f34ecc797ff41d94a3f72ee144d4b2de378cf",
+    "test/scratch-cwd-violation-probe.bats": "1e9d1a402592b9388bec16c36f8a96372ccfad62f039cecf15c463290eb31fea",
     "test/setup_suite.bash": "f69f8b356efef84669e55be3be671c8f740711c4362bc498f0f2b9b2b932b620",
     "test/spinner-cursor-visibility.bats": "45b54b363be2256c4c5075a8f95e12c8c8fa3de0dbec4e97c1ab8eb796620dc6",
     "test/spinner-jobcontrol-restore.bats": "0c616791cb3b91517c3940566403167098b2eb4955622fda75f923444c83bdcf",

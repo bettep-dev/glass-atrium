@@ -26,8 +26,8 @@
   }
 
   local rc=0
-  # The started script re-checks its own inherited cwd right before the delete: BASH_ENV or
-  # anything else run at its startup could move it after the check above.
+  # started script re-checks its own inherited cwd right before the delete
+  # BASH_ENV or other startup code could move the cwd after the check above
   # GA-RM[unvalidatable]: cwd-relative canary glob by design; ga_guard_path takes one absolute path
   bash -c '[[ "$(pwd -P)" == "$2/"* ]] || exit 3; rm -rf -- ./"$1".*' \
     probe "${canary}" "${run_root}" || rc=$?
