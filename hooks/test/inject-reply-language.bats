@@ -163,6 +163,16 @@ assert_rows() {
     'agent frame with a non-user source|cli|system|newest-human-korean|<teammate-message teammate_id="x">go</teammate-message>|silent'
 }
 
+@test "a long prompt is classified by its cleaned start, however much whitespace leads it" {
+  local tail padding
+  tail="$(printf 'Error: build failed at step 7. %.0s' {1..300})"
+  padding="$(printf '%4090s' '')"
+  assert_rows \
+    "long wrapper-led prompt|cli|-|newest-human-korean|<task-notification>\n<summary>${tail}</summary>\n</task-notification>|${KOREAN_QUOTE}" \
+    "wrapper after whitespace filling most of the cleaned prefix|cli|-|newest-human-korean|${padding}${NOTIFICATION}${tail}|${KOREAN_QUOTE}" \
+    "long ordinary prompt|cli|-|newest-human-korean|이 로그 보고 원인 찾아줘 ${tail}|silent"
+}
+
 @test "a typed slash command gets a line quoting its own prose, or the latest earlier message when it has none" {
   # shellcheck disable=SC2016  # the backticks are a literal code fence, never an expansion
   local rows=(

@@ -13,6 +13,8 @@ readonly COMMAND_POINTER="The newest user-role message is a slash command whose 
 readonly SESSION_POINTER="[REPLY LANGUAGE] The user's latest own message begins %s. Reply to the user in that message's language unless the user asked for a different reply language."
 readonly EXCERPT_CHARS=200
 readonly HEAD_CHARS=80
+# jq's global regex costs grow with the square of the string, so a pasted prompt is cleaned from this prefix.
+readonly HEAD_SCAN_CHARS=4096
 # `claude -p` runs (daemon cycles, wiki dedup) report sdk-cli even when a cli parent exported this.
 readonly INTERACTIVE_ENTRYPOINT="cli"
 # C0 and C1 controls become spaces; bidi and zero-width controls are dropped.
@@ -30,8 +32,11 @@ main() {
   input="$(cat)"
   [[ "${CLAUDE_CODE_ENTRYPOINT:-}" == "${INTERACTIVE_ENTRYPOINT}" ]] || return 0
   command -v jq >/dev/null 2>&1 || return 0
-  fields="$(jq -r --argjson head "${HEAD_CHARS}" "${CLEAN_DEF}"'
-    [.hook_event_name, .source, .transcript_path, (.prompt // "" | clean | .[0:$head])]
+  # A cleaned prefix starts the cleaned whole, so the whole is cleaned only when the prefix falls short of the head.
+  fields="$(jq -r --argjson head "${HEAD_CHARS}" --argjson scan "${HEAD_SCAN_CHARS}" "${CLEAN_DEF}"'
+    (.prompt // "" | tostring) as $prompt | ($prompt[0:$scan] | clean) as $start
+    | (if ($start | length) >= $head or ($prompt | length) <= $scan then $start else $prompt | clean end) as $clean
+    | [.hook_event_name, .source, .transcript_path, $clean[0:$head]]
     | map(. // "" | tostring) | join("\u001f")' <<<"${input}" 2>/dev/null)" || return 0
   IFS=$'\x1f' read -r event source transcript head <<<"${fields}" || return 0
   case "${event}" in
