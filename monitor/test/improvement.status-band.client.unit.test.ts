@@ -12,7 +12,7 @@
 //
 // Runner: npx tsx --test test/improvement.status-band.client.unit.test.ts
 
-import test from "node:test";
+import test, { describe } from "node:test";
 import assert from "node:assert/strict";
 import { fileURLToPath } from "node:url";
 import { dirname, resolve } from "node:path";
@@ -45,6 +45,7 @@ interface BandSandbox {
     verdicts: unknown,
     styleRef: unknown,
     corpusAuditState: unknown,
+    at?: string | null,
   ) => Array<Record<string, unknown>>;
 }
 
@@ -348,6 +349,52 @@ test("a failed refresh over a held band reads Last known, never the all-clear", 
   assert.match(settled, /Healthy/, "a settled band with nothing waiting is the all-clear");
   assert.match(warmError, /Last known/);
   assert.doesNotMatch(warmError, /Healthy/, "held numbers under a failed read never read as the all-clear");
+});
+
+test("a failed refresh drops the held applied tile's ok tone under a Last known marker", () => {
+  const asOf = new Date().toISOString();
+  const statsData = { cycle_total_7d: 4, cycles_generated_applied_7d: 2 };
+  const renderApplied = (statsState: Record<string, unknown>) =>
+    collectElements(sandbox.StatusBandI({
+      asOf,
+      statsState,
+      listState: LANDED,
+      learningLogState: LANDED,
+      suppression: { pending_total: 0, parked: [] },
+      awaiting: 0,
+      onRetry: () => {},
+    }), []).find((el) => el.props.label === "Applied (7 days)");
+  const settled = renderApplied({ ...LANDED, data: statsData });
+  const warmError = renderApplied({ ...LANDED, data: statsData, error: "HTTP 500" });
+
+  assert.ok(settled && warmError, "the band must render the applied tile");
+  assert.equal(settled.props.tone, "text-ok");
+  assert.notEqual(warmError.props.tone, "text-ok", "held numbers under a failed read never keep the ok tone");
+  assert.equal(warmError.props.symbol, null);
+  assert.match(String(warmError.props.population), /^Last known · of 4 cycles/);
+});
+
+describe("the corpus growth chip keeps the shared freshness rule over a failed refresh", () => {
+  const asOf = new Date().toISOString();
+  const corpus = (verdict: Record<string, unknown>) => ({
+    styleRefGradeBadgeI: () => ({ symbol: "✓", tone: "text-ok", label: "ok", hint: "h1" }),
+    getCorpusGrowthVerdictI: () => verdict,
+  });
+  const audits = { status: "ready", data: { audits: [{ id: 1 }] } };
+  const rows = [
+    { name: "a settled reading keeps its all-clear", verdict: { symbol: "✓", tone: "text-ok", label: "within threshold" }, error: null, label: /^within threshold$/, tone: "text-ok" },
+    { name: "an all-clear held under a failed read reads Last known", verdict: { symbol: "✓", tone: "text-ok", label: "within threshold" }, error: "HTTP 500", label: /^Last known$/, tone: "text-faint" },
+    { name: "an alert held under a failed read keeps its tone", verdict: { symbol: "⚠", tone: "text-warn", label: "trend alert" }, error: "HTTP 500", label: /^Last known: trend alert$/, tone: "text-warn" },
+  ];
+  for (const row of rows) {
+    test(row.name, () => {
+      const chips = sandbox.getInstrumentationChipsI(corpus({ ...row.verdict, hint: "h2" }), null, { ...audits, error: row.error }, asOf);
+      const chip = chips.find((c) => c.key === "corpus");
+      assert.ok(chip, "the strip must carry the corpus chip");
+      assert.match(String(chip.label), row.label);
+      assert.equal(chip.tone, row.tone);
+    });
+  }
 });
 
 test("a band with nothing read yet speaks the shared first-read note, not its own sentence", () => {

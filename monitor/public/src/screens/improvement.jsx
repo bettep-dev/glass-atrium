@@ -566,7 +566,7 @@ function StatusBandI({
 	onOpenInstrumentation,
 	onRetry,
 }) {
-	const { PageVerdict } = window.UI;
+	const { PageVerdict, getFreshnessVerdict } = window.UI;
 	const s = statsState.data || {};
 	const cycleTotal = Number(s.cycle_total_7d ?? 0);
 	const applied = Number(s.cycles_generated_applied_7d ?? 0);
@@ -576,6 +576,9 @@ function StatusBandI({
 		pendingTotal - Number(suppression?.pending_unpromptable ?? 0),
 	);
 	const statsStatus = bandTileStatusI(statsState, statsState.data);
+	// held count under a failed or aged read → Last known, ok drops to neutral (shared verdict rule)
+	const appliedVerdict = asOf ? getFreshnessVerdict({ tone: "ok", at: asOf, regions: [statsState] }) : null;
+	const isAppliedHeld = appliedVerdict != null && appliedVerdict.tone !== "ok";
 	// 보류 중 사람이 오늘 풀 수 있는 원인만 센다 — 설계 결정으로 닫아 둔 원인은 wedged 가
 	// 아니다. 판정 집합은 원장 held 구역과 같은 것 하나: 갈라지면 타일과 구역이 다른 수를 말한다.
 	const heldBuckets = Array.isArray(suppression?.parked) ? suppression.parked : [];
@@ -613,12 +616,12 @@ function StatusBandI({
 				/>
 				<StatusTileI
 					status={statsStatus}
-					tone="text-ok"
-					symbol="✓"
+					tone={isAppliedHeld ? undefined : "text-ok"}
+					symbol={isAppliedHeld ? null : "✓"}
 					label="Applied (7 days)"
 					value={formatIntI(applied)}
 					owner="loop output"
-					population={`of ${formatIntI(cycleTotal)} cycles · last ${formatCycleStampI(s.latest_cycle_started_at)}`}
+					population={`${isAppliedHeld ? `${appliedVerdict.label} · ` : ""}of ${formatIntI(cycleTotal)} cycles · last ${formatCycleStampI(s.latest_cycle_started_at)}`}
 					basis="Cycles started in the last 7 days"
 					onRetry={onRetry}
 				/>
@@ -647,6 +650,7 @@ function StatusBandI({
 			<InstrumentationStripI
 				styleRef={styleRef}
 				corpusAuditState={corpusAuditState}
+				at={asOf}
 				onOpen={onOpenInstrumentation}
 			/>
 		</div>
@@ -694,7 +698,7 @@ const NOT_READ_CHIP_I = Object.freeze({
 });
 
 // Gauge verdicts read the instrumentation view's rules as-is → a copy would let the two views disagree.
-function getInstrumentationChipsI(verdicts, styleRef, corpusAuditState) {
+function getInstrumentationChipsI(verdicts, styleRef, corpusAuditState, at) {
 	const audits =
 		corpusAuditState?.status === "ready" ? corpusAuditState.data?.audits : null;
 	const style = styleRef
@@ -704,7 +708,7 @@ function getInstrumentationChipsI(verdicts, styleRef, corpusAuditState) {
 			)
 		: NOT_READ_CHIP_I;
 	const corpus = Array.isArray(audits)
-		? verdicts.getCorpusGrowthVerdictI(audits[0] ?? null)
+		? getHeldChipI(verdicts.getCorpusGrowthVerdictI(audits[0] ?? null), corpusAuditState, at)
 		: NOT_READ_CHIP_I;
 	return [
 		{ key: "style", name: "Graduation gate", ...style },
@@ -712,11 +716,22 @@ function getInstrumentationChipsI(verdicts, styleRef, corpusAuditState) {
 	];
 }
 
+// A held reading under a failed or aged read takes the shared verdict: Last known, ok → neutral, warn/crit kept.
+function getHeldChipI(chip, state, at) {
+	if (!at) return chip;
+	const verdict = window.UI.getFreshnessVerdict({ tone: toneKeyI(chip.tone), label: chip.label, at, regions: [state] });
+	if (verdict.label === chip.label) return chip;
+
+	return verdict.tone === "neutral"
+		? { ...chip, symbol: "ℹ", tone: "text-faint", label: verdict.label }
+		: { ...chip, label: verdict.label };
+}
+
 // Operations-view instrumentation health line — the instrumentation tab's alert state, visible without switching tabs.
-function InstrumentationStripI({ styleRef, corpusAuditState, onOpen }) {
+function InstrumentationStripI({ styleRef, corpusAuditState, at, onOpen }) {
 	const verdicts = window.ImprovementInstrumentationVerdicts;
 	if (!verdicts) return null;
-	const chips = getInstrumentationChipsI(verdicts, styleRef, corpusAuditState);
+	const chips = getInstrumentationChipsI(verdicts, styleRef, corpusAuditState, at);
 	return (
 		<div
 			className="flex flex-wrap items-center gap-x-3 gap-y-1 fs-meta"
