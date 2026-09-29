@@ -27,6 +27,7 @@ POLICY_PATHS='requirements.txt
 requirements-dev.txt
 config.toml.example
 agent-registry.json
+glass-atrium
 .github/workflows/ci.yml
 rules/glass-atrium/core-security.md
 skills/glass-atrium-ops-token-audit/thresholds.yaml

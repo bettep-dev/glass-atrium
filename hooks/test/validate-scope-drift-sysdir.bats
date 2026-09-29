@@ -15,6 +15,8 @@
 bats_require_minimum_version 1.5.0
 
 HOOK="${BATS_TEST_DIRNAME}/../validate-scope-drift.sh"
+# shellcheck source-path=SCRIPTDIR source=../../scripts/lib/path-guard.sh
+source "${BATS_TEST_DIRNAME}/../../scripts/lib/path-guard.sh"
 
 setup() {
   [[ -f "${HOOK}" ]] || skip "hook not found: ${HOOK}"
@@ -25,7 +27,7 @@ setup() {
 }
 
 teardown() {
-  [[ -n "${WORK:-}" && -d "${WORK}" ]] && rm -rf "${WORK}"
+  if ga_guard_path "${WORK:-}"; then rm -rf -- "${WORK:?}"; fi
 }
 
 # Args: $1 = file_path probe.
@@ -97,4 +99,19 @@ run_edit() {
   run_edit "/Users/x/claude-work/settings.json"
   [[ "${status}" -eq 0 ]]
   [[ "${output}" == *"SCOPE-070"* ]]
+}
+
+@test "teardown succeeds silently when setup skipped before creating the temp dir" {
+  local saved="${WORK}"
+  unset WORK
+  run teardown
+  WORK="${saved}"
+  [[ "${status}" -eq 0 ]] || {
+    echo "teardown without a temp dir failed (status ${status}): ${output}" >&2
+    return 1
+  }
+  [[ -z "${output}" ]] || {
+    echo "teardown without a temp dir wrote: ${output}" >&2
+    return 1
+  }
 }

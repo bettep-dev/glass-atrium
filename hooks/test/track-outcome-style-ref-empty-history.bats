@@ -18,6 +18,9 @@
 
 HOOK_SH="${TRACK_OUTCOME_SH:-${BATS_TEST_DIRNAME}/../track-outcome.sh}"
 
+# shellcheck source-path=SCRIPTDIR source=../../scripts/lib/path-guard.sh
+source "${BATS_TEST_DIRNAME}/../../scripts/lib/path-guard.sh"
+
 setup() {
   [[ -f "${HOOK_SH}" ]] || skip "track-outcome.sh not found: ${HOOK_SH}"
   command -v python3 >/dev/null 2>&1 || skip "python3 required"
@@ -58,7 +61,7 @@ setup() {
 }
 
 teardown() {
-  [[ -n "${SR_TMP:-}" && -d "${SR_TMP}" ]] && rm -rf -- "${SR_TMP}" || true
+  if ga_guard_path "${SR_TMP:-}"; then rm -rf -- "${SR_TMP:?}"; fi
 }
 
 completion_block() {

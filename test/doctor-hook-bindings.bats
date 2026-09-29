@@ -18,6 +18,8 @@ GA="$(cd -- "${BATS_TEST_DIRNAME}/.." && pwd)"
 REAL_GA="${GA}/glass-atrium"
 CORE="${GA}/lib/ga-env.sh"
 REPO_MANIFEST="${GA}/manifest.json"
+# shellcheck source-path=SCRIPTDIR source=../scripts/lib/path-guard.sh
+source "${GA}/scripts/lib/path-guard.sh"
 
 setup() {
   command -v jq >/dev/null 2>&1 || skip "jq required"
@@ -39,8 +41,8 @@ SH
 }
 
 teardown() {
-  [[ -n "${GA_SANDBOX:-}" && -d "${GA_SANDBOX}" ]] && rm -rf -- "${GA_SANDBOX}"
-  [[ -n "${TARGET:-}" && -d "${TARGET}" ]] && rm -rf -- "${TARGET}" || true
+  if ga_guard_path "${GA_SANDBOX:-}"; then rm -rf -- "${GA_SANDBOX:?}"; fi
+  if ga_guard_path "${TARGET:-}"; then rm -rf -- "${TARGET:?}"; fi
 }
 
 # settings.json with every EXPECTED_HOOK_BINDINGS entry wired under its event.
@@ -93,6 +95,9 @@ write_full_settings() {
       { "hooks": [ { "type": "command", "command": "~/.claude/hooks/prune-security-warnings-state.sh" } ] },
       { "hooks": [ { "type": "command", "command": "~/.claude/hooks/prune-session-spawns.sh" } ] },
       { "hooks": [ { "type": "command", "command": "~/.claude/hooks/validate-compliance-matrix.sh" } ] }
+    ],
+    "UserPromptSubmit": [
+      { "hooks": [ { "type": "command", "command": "~/.claude/hooks/inject-reply-language.sh" } ] }
     ],
     "Stop": [
       { "hooks": [ { "type": "command", "command": "~/.claude/hooks/advisory-preedit-facts.sh" } ] },
@@ -201,6 +206,13 @@ drop_group() {
   [[ "${output}" != *"dormant hook binding(s)"* ]]
 }
 
+@test "prompt event -> the reply-language pointer reports bound on UserPromptSubmit" {
+  write_full_settings
+  run_doctor_sandbox
+  [[ "${output}" == *"ok   : hook bound — UserPromptSubmit -> inject-reply-language.sh (matcher=<none>)"* ]] \
+    && [[ "${output}" != *"dormant hook binding(s)"* ]]
+}
+
 @test "two-matcher one-hook -> BOTH matchers reported bound (validate-secret-scan)" {
   # validate-secret-scan.sh binds under TWO matchers under one event; the doctor
   # must report each (matcher-scoped) tuple as bound independently — neither row
@@ -300,9 +312,9 @@ drop_group() {
   run_doctor_sandbox
   [[ "${output}" == *"settings.json absent"* ]]
   [[ "${output}" == *"ALL hook event-bindings are unwired"* ]]
-  # EXPECTED_HOOK_BINDINGS enumerates the COMPLETE 60-binding set across all 7 events
-  # (PreToolUse 27 / PostToolUse 8 / SessionStart 4 / Stop 3 / SubagentStart 14 /
-  # SubagentStop 3 / PreCompact 1 — PreToolUse carries the two advisory Bash leaves
+  # EXPECTED_HOOK_BINDINGS enumerates the COMPLETE 61-binding set across all 8 events
+  # (PreToolUse 27 / PostToolUse 8 / SessionStart 4 / UserPromptSubmit 1 /
+  # Stop 3 / SubagentStart 14 / SubagentStop 3 / PreCompact 1 — PreToolUse carries the two advisory Bash leaves
   # advisory-egress-secret.sh + advisory-raw-store-read.sh). The total is counted per FLATTENED matcher-leaf,
   # NOT per unique hook basename: validate-secret-scan.sh AND enforce-harness-critical.sh
   # each bind under TWO matchers (Write|Edit AND Bash), two hooks share the Workflow
@@ -312,16 +324,16 @@ drop_group() {
   # post-edit-typecheck.sh, telemetry-activation.sh) — each occurrence is a distinct
   # leaf. advisory-preedit-facts.sh binds on Stop ONLY (SubagentStop sees a parent
   # transcript that predates the subagent's edits). With settings.json absent, every
-  # leaf is unwired, so all 60 report dormant. SubagentStart carries 14 because the scope-rule
+  # leaf is unwired, so all 61 report dormant. SubagentStart carries 14 because the scope-rule
   # channel is split across twelve slots: inject-scope-rules.sh keeps the marker blocks and
   # inject-scope-part-01.sh .. -11.sh each carry one part, alongside agent-tracker.sh and
   # telemetry-activation.sh.
   #
   # THIS row's total is a COUNT, not a membership pin: it moves whenever the roster moves for
-  # unrelated reasons, and a simultaneous remove-and-add holds it at 60. The membership pin is
-  # write_full_settings in THIS file — it enumerates all 60 leaves by NAME, so a swapped roster row
+  # unrelated reasons, and a simultaneous remove-and-add holds it at 61. The membership pin is
+  # write_full_settings in THIS file — it enumerates all 61 leaves by NAME, so a swapped roster row
   # stops matching its fixture entry and every row built on that fixture reds. That fixture is the
-  # only general guard on roster membership: test/wire-hooks-merge.bats names 7 of the 53 roster
+  # only general guard on roster membership: test/wire-hooks-merge.bats names 7 of the 54 roster
   # basenames and runs no loop over the array, so it catches a drift only when the drifted basename
   # is one of those 7.
   #
@@ -333,10 +345,10 @@ drop_group() {
   # Both counts are measured on the COMPOSED group-C tree, not on one branch: wire-hooks-merge.bats
   # is rewritten in the same composition, so a count taken from any single branch goes stale on
   # merge. Re-measure both sides together before editing them. The denominator is unique BASENAMES,
-  # which is smaller than the 60 leaves because a basename can bind under several event/matcher
+  # which is smaller than the 61 leaves because a basename can bind under several event/matcher
   # tuples — and it must be read from inside the array bounds: the array closer is indented, so an
   # awk range ending at /^\)/ overruns to EOF and sweeps in .sh names from surrounding prose.
-  [[ "${output}" == *"60 dormant hook binding(s)"* ]]
+  [[ "${output}" == *"61 dormant hook binding(s)"* ]]
 }
 
 @test "doctor is mutation-free: settings.json byte-identical after run" {
@@ -397,7 +409,11 @@ drop_group() {
   # same defect twice under two different classes.
   make_ga_sandbox
   write_full_settings
-  rm -f "${GA_SANDBOX}/hooks/cost-tracker.sh"
+  if ga_guard_path "${GA_SANDBOX}"; then
+    rm -f -- "${GA_SANDBOX:?}/hooks/cost-tracker.sh"
+  else
+    return 1
+  fi
   run_doctor_ga_sandbox
   [[ "${output}" != *"NOT executable"* ]]
   [[ "${output}" == *"doctor: PASS"* ]]
@@ -561,7 +577,11 @@ drop_all_part_groups() {
   make_ga_sandbox
   write_chunk_registry
   write_full_settings
-  rm -f "${GA_SANDBOX}/hooks/inject-scope-part-07.sh"
+  if ga_guard_path "${GA_SANDBOX}"; then
+    rm -f -- "${GA_SANDBOX:?}/hooks/inject-scope-part-07.sh"
+  else
+    return 1
+  fi
   run_doctor_ga_sandbox
   [[ "${output}" == *"10 of 11 scope-rule part wrapper(s) present"* ]] || {
     echo "no wrapper-presence warn: ${output}"
@@ -642,7 +662,11 @@ drop_all_part_groups() {
   write_full_settings
   # the core FILE, not the directory: that path is what the doctor opens, so removing it states
   # the unreachable condition exactly and needs no recursive delete on a real sandbox directory.
-  rm -f "${GA_SANDBOX}/hooks/lib/inject_chunk.py"
+  if ga_guard_path "${GA_SANDBOX}"; then
+    rm -f -- "${GA_SANDBOX:?}/hooks/lib/inject_chunk.py"
+  else
+    return 1
+  fi
   run_doctor_ga_sandbox
   [[ "${output}" == *"split scope-rule channel BLIND"* ]] || {
     echo "an unreadable core did not report blind: ${output}"

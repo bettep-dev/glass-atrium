@@ -10,6 +10,8 @@
 # (the old Linux code would have died in the ERR trap before ever comparing).
 
 ROTATE_SH="${BATS_TEST_DIRNAME}/../monitor-log-rotate.sh"
+# shellcheck source-path=SCRIPTDIR source=../lib/path-guard.sh
+source "${BATS_TEST_DIRNAME}/../lib/path-guard.sh"
 
 setup() {
   [[ -f "${ROTATE_SH}" ]] || skip "monitor-log-rotate.sh not found"
@@ -21,7 +23,7 @@ setup() {
 }
 
 teardown() {
-  [[ -n "${MR_TMP:-}" && -d "${MR_TMP}" ]] && rm -rf -- "${MR_TMP}" || true
+  if ga_guard_path "${MR_TMP:-}"; then rm -rf -- "${MR_TMP:?}"; fi
 }
 
 @test "below-threshold log: size read succeeds, no rotation, log untouched (portable wc -c)" {

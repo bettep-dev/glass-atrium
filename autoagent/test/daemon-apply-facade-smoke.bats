@@ -32,6 +32,8 @@
 bats_require_minimum_version 1.5.0
 
 GA="$(cd -- "${BATS_TEST_DIRNAME}/../.." && pwd)"
+# shellcheck source-path=SCRIPTDIR source=../../scripts/lib/path-guard.sh
+source "${GA}/scripts/lib/path-guard.sh"
 
 setup() {
   [[ -f "${GA}/autoagent/daemon-apply.sh" ]] || skip "daemon-apply.sh not found: ${GA}/autoagent/daemon-apply.sh"
@@ -49,6 +51,7 @@ setup() {
   cp -p "${GA}/autoagent/daemon_cycle.py" "${REAL}/autoagent/daemon_cycle.py"
   cp -p "${GA}/autoagent/lib/git-txn.sh" "${REAL}/autoagent/lib/git-txn.sh"
   cp -p "${GA}/scripts/lib/apply-lock.sh" "${REAL}/scripts/lib/apply-lock.sh"
+  cp -p "${GA}/scripts/lib/path-guard.sh" "${REAL}/scripts/lib/path-guard.sh"
 
   # FACADE — per-file symlinks mirroring the ~/.claude layout. The mirrors that
   # existed at incident time (daemon scripts + the manually-added git-txn.sh)
@@ -73,7 +76,7 @@ setup() {
 }
 
 teardown() {
-  [[ -n "${WORK:-}" && -d "${WORK}" ]] && rm -rf -- "${WORK}" || true
+  if ga_guard_path "${WORK:-}"; then rm -rf -- "${WORK:?}"; fi
 }
 
 # ---------------------------------------------------------------------------
@@ -108,6 +111,34 @@ teardown() {
   [[ "${status}" -eq 5 ]]
   [[ "${output}" == *"FATAL: apply-lock lib missing"* ]]
   [[ "${output}" == *"${WORK}/nonexistent-apply-lock.sh"* ]]
+}
+
+@test "facade-invoked daemon-apply maps an apply-lock lib that fails to load to exit 5" {
+  # Present but guard-less: the lib's own source-time guard fails, which must
+  # surface as the documented lock-lib code rather than the bare errexit status.
+  mkdir -p "${WORK}/noguard"
+  cp -p "${GA}/scripts/lib/apply-lock.sh" "${WORK}/noguard/apply-lock.sh"
+  run env HOME="${FAKE_HOME}" AUTOAGENT_REPORTS_DIR="${REPORTS}" \
+    ATRIUM_APPLY_LOCK_LIB="${WORK}/noguard/apply-lock.sh" \
+    bash "${FACADE}/autoagent/daemon-apply.sh" --dry-run \
+    --report "${WORK}/report.json" --agents-dir "${AGENTS}"
+
+  [[ "${status}" -eq 5 ]] || return 1
+  [[ "${output}" == *"cannot source the shared path guard"* ]] || return 1
+  [[ "${output}" == *"FATAL: apply-lock lib failed to load (${WORK}/noguard/apply-lock.sh)"* ]]
+}
+
+@test "facade-invoked daemon-apply maps a missing path guard to exit 5 before any lock" {
+  # git-txn.sh loads the guard at the top of the run, so its failure must still surface as the
+  # documented lib code rather than the bare errexit status.
+  mv -- "${REAL}/scripts/lib/path-guard.sh" "${WORK}/path-guard.sh.moved"
+  run env HOME="${FAKE_HOME}" AUTOAGENT_REPORTS_DIR="${REPORTS}" \
+    bash "${FACADE}/autoagent/daemon-apply.sh" --dry-run \
+    --report "${WORK}/report.json" --agents-dir "${AGENTS}"
+
+  [[ "${status}" -eq 5 ]] || return 1
+  [[ "${output}" == *"cannot source the shared path guard"* ]] || return 1
+  [[ ! -e "${REPORTS}/.apply-lock" ]] || return 1
 }
 
 # ---------------------------------------------------------------------------

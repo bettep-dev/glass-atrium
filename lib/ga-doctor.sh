@@ -702,7 +702,8 @@ run_doctor() {
       else
         log "  warn : launchd deploy-drift check skipped — reference re-render failed (config missing/invalid? run 'glass-atrium render-plists')"
       fi
-      [[ -n "${ld_tmp}" && -d "${ld_tmp}" ]] && rm -rf -- "${ld_tmp}"
+      # shellcheck disable=SC2310  # guard verdict branched on — a refusal is a skip, never an abort
+      if ga_guard_path "${ld_tmp}"; then rm -rf -- "${ld_tmp:?}"; fi
     fi
   fi
 
@@ -1074,8 +1075,11 @@ run_doctor() {
       printf '%s' "${residue_kept}" >"${residue_record}"
       log "         record: ${residue_record}"
     else
-      rm -f -- "${residue_record}"
-      log "  ok   : recorded retired residue is gone — the record was cleared (${residue_record})"
+      # shellcheck disable=SC2310  # guard verdict branched on — a refusal keeps the record and claims nothing
+      if ga_guard_path "${residue_record}"; then
+        rm -f -- "${residue_record:?}"
+        log "  ok   : recorded retired residue is gone — the record was cleared (${residue_record})"
+      fi
     fi
   fi
 
@@ -1479,6 +1483,11 @@ run_doctor() {
     fi
   fi
 
+  # 27. profile-branch links — registration kind B (report-only).
+  #     Note rows only: no counter, no warning-total term, exit code unchanged.
+  #     Branches come from the owner's shell setup, not from Atrium → report, never write into one.
+  _doctor_report_profile_links
+
   if [[ "${fail}" -eq 0 ]]; then
     # Warning-summary registration contract — a new doctor row declares ONE kind.
     # A (counted warning, user-actionable): counter + this total + the PASS breakdown below, all
@@ -1569,7 +1578,8 @@ _doctor_report_rewire_marker() {
   now="$(date +%s)"
 
   if [[ $((now - written)) -gt $((GA_REWIRE_NOTICE_WINDOW_DAYS * 86400)) ]]; then
-    rm -f -- "${marker}"
+    # shellcheck disable=SC2310  # guard verdict branched on — a refusal is a skip, never an abort
+    if ga_guard_path "${marker}"; then rm -f -- "${marker:?}"; fi
     return 0
   fi
 
@@ -1589,6 +1599,128 @@ _doctor_report_rewire_marker() {
   else
     log "  info : hook rewire pending — NO hook activity observed since the rewire (${detail:-changes recorded}). Start a NEW session to activate the bindings; this notice clears after ${GA_REWIRE_NOTICE_WINDOW_DAYS}d."
   fi
+}
+
+# §27, kind B (report-only): every profile branch missing a link to a required Atrium item.
+# Profile branch = a CLAUDE_CONFIG_DIR dir beside the target home.
+# A branch loads Atrium only through those links + Atrium never installed it → nothing else sees a gap.
+# CLAUDE_CONFIG_DIR deliberately unread — a branch-launched session sets it.
+# Reading it would point every sandboxed doctor run at that real branch.
+_doctor_report_profile_links() {
+  local grammar="${BASH_SOURCE[0]%/*}/../hooks/lib/claude-config-dirs.sh"
+  local branches branch items
+  # a partial engine tree (staged lib/ only) lacks hooks/lib → skip with a row, never abort run_doctor
+  if [[ ! -r "${grammar}" ]]; then
+    log "  note : profile branch link check skipped — needs the config-root grammar (${grammar})"
+    return 0
+  fi
+  # shellcheck disable=SC2311  # the -r guard above keeps its grammar source from failing; the rest is a glob loop
+  branches="$(_get_profile_link_branches "${grammar}")"
+  [[ -n "${branches}" ]] || return 0
+  if ! command -v jq >/dev/null 2>&1 || ! jq -e '.files | type == "array"' -- "${MANIFEST}" >/dev/null 2>&1; then
+    log "  note : profile branch link check skipped — needs jq and a readable manifest (${MANIFEST})"
+    return 0
+  fi
+  # shellcheck disable=SC2311  # a failed manifest read yields a short set; the jq gate above proved it parses
+  items="$(_get_profile_link_required_items)"
+  while IFS= read -r branch; do
+    _doctor_report_profile_branch "${branch}" "${items}"
+  done <<<"${branches}"
+}
+
+# Branches: target-home siblings matching the shared config-root grammar.
+# Only dirs holding a .claude.json → never-launched and backup dirs skipped.
+# The target home matches the same grammar → excluded by identity.
+# $1 = the grammar file (hooks/lib/claude-config-dirs.sh).
+_get_profile_link_branches() {
+  # shellcheck source=SCRIPTDIR/../hooks/lib/claude-config-dirs.sh
+  source "${1}"
+  local candidate
+  for candidate in "${TARGET_HOME%/*}"/.claude*; do
+    [[ "${candidate##*/}/" =~ ^${CLAUDE_CONFIG_ROOT_RE}$ ]] || continue
+    [[ -d "${candidate}" && -f "${candidate}/.claude.json" ]] || continue
+    [[ ! "${candidate}" -ef "${TARGET_HOME}" ]] || continue
+    printf '%s\n' "${candidate}"
+  done
+}
+
+# Required items: every top-level manifest component the farm deploys into the target home.
+# Deployed-or-not verdict = is_symlink_excluded, the farm's own query.
+# + settings.json — the installer writes it there instead of shipping it.
+_get_profile_link_required_items() {
+  local rel
+  # read_manifest_files dies on its own failure; the caller already proved the manifest parses.
+  # shellcheck disable=SC2312
+  while IFS= read -r rel; do
+    [[ -n "${rel}" ]] || continue
+    printf '%s\t' "${rel%%/*}"
+    is_symlink_excluded "${rel}"
+  done < <(read_manifest_files) | awk -F'\t' '$2 == "no" { print $1 }' | sort -u
+  printf 'settings.json\n'
+}
+
+# One branch: a row per defective item, else one ok row naming every item. $1 = branch, $2 = required items.
+_doctor_report_profile_branch() {
+  local item is_bad=0 nl=$'\n'
+  while IFS= read -r item; do
+    # shellcheck disable=SC2310  # the defect verdict is the branch taken — a defect is a row, never an abort
+    _profile_link_check_item "${1}" "${item}" || is_bad=1
+  done <<<"${2}"
+  [[ "${is_bad}" -eq 1 ]] || log "  ok   : profile branch ${1} links ${2//${nl}/, } to ${TARGET_HOME}"
+}
+
+# Log branch $1's item $2 defect row; return 1 on a defect.
+# Target home lacks the item → a target-home repair row, no link fix: that link would dangle + recur every run.
+_profile_link_check_item() {
+  local want="${TARGET_HOME}/${2}" class
+  # shellcheck disable=SC2311  # printing helper: tests only, no command that can fail
+  class="$(_get_profile_link_defect "${1}/${2}" "${want}")"
+  case "${class}" in
+    ok) return 0 ;;
+    no-target) log "  note : profile branch ${1}: ${2} has no link target — the target home lacks ${want}; repair the target home first (its own rows above name how), then rerun the doctor" ;;
+    *) _doctor_report_profile_link_defect "${1}" "${2}" "${class}" ;;
+  esac
+  return 1
+}
+
+# Defect class of link $1 against its expected target $2: ok · no-target · dangling · elsewhere · real · missing.
+_get_profile_link_defect() {
+  if [[ ! -e "${2}" ]]; then
+    printf 'no-target\n'
+  elif [[ -L "${1}" && "${1}" -ef "${2}" ]]; then
+    printf 'ok\n'
+  elif [[ -L "${1}" && ! -e "${1}" ]]; then
+    printf 'dangling\n'
+  elif [[ -L "${1}" ]]; then
+    printf 'elsewhere\n'
+  elif [[ -e "${1}" ]]; then
+    printf 'real\n'
+  else
+    printf 'missing\n'
+  fi
+}
+
+# Log branch $1's item $2 link defect of class $3 + a fix line that runs as printed.
+# Fix per defect class:
+#   missing → a plain link
+#   dangling or misdirected link → replaced in place (-n: never nests into the dir it points at)
+#   real file or directory → moved to the Trash first, never removed
+_doctor_report_profile_link_defect() {
+  local link="${1}/${2}" want="${TARGET_HOME}/${2}" defect fix qlink qwant trashed
+  printf -v qlink '%q' "${link}"
+  printf -v qwant '%q' "${want}"
+  case "${3}" in
+    missing) defect="missing" fix="ln -s ${qwant} ${qlink}" ;;
+    dangling) defect="is a dangling link" fix="ln -sfn ${qwant} ${qlink}" ;;
+    elsewhere) defect="links elsewhere ($(readlink "${link}"))" fix="ln -sfn ${qwant} ${qlink}" ;;
+    *)
+      trashed="${1##*/}-${2}.ga-replaced.$(date +%Y%m%d-%H%M%S)"
+      printf -v trashed '%q' "${trashed#.}"
+      defect="is a real file or directory" fix="mv ${qlink} ~/.Trash/${trashed} && ln -s ${qwant} ${qlink}"
+      ;;
+  esac
+  log "  note : profile branch ${1}: ${2} ${defect} — expected a link to ${want} (report-only; the doctor never writes into a branch)"
+  log "         fix : ${fix}"
 }
 
 # Classify the inject-scope-rules shed log against a YYYY-MM-DD cutoff. Producer line grammar

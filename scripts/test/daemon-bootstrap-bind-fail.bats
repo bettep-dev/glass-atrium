@@ -19,6 +19,8 @@ REAL_BOOTSTRAP_LIB="${GA}/scripts/lib/daemon-bootstrap-common.sh"
 REAL_LOCK_LIB="${GA}/scripts/lib/daemon-lock.sh"
 REAL_CONFIG_LIB="${GA}/scripts/lib/atrium-config.sh"
 REAL_FAKECHAT_LIB="${GA}/scripts/lib/fakechat-cleanup.sh"
+# shellcheck source-path=SCRIPTDIR source=../lib/path-guard.sh
+source "${GA}/scripts/lib/path-guard.sh"
 
 setup() {
   [[ -f "${REAL_BOOTSTRAP_LIB}" ]] || skip "daemon-bootstrap-common.sh not found"
@@ -38,10 +40,14 @@ setup() {
 
   cat >"${STUB_BIN}/tmux" <<STUB
 #!/usr/bin/env bash
+source "${GA}/scripts/lib/path-guard.sh"
 case "\$1" in
   has-session) [[ -f "${SESSION_MARKER}" ]] ;;
   new-session) : >"${SESSION_MARKER}"; exit 0 ;;
-  kill-session) rm -f -- "${SESSION_MARKER}"; exit 0 ;;
+  kill-session)
+    if ga_guard_path "${SESSION_MARKER}"; then rm -f -- "${SESSION_MARKER:?}"; fi
+    exit 0
+    ;;
   capture-pane)
     [[ -f "${PANE_FIXTURE}" ]] && cat "${PANE_FIXTURE}"
     exit 0
@@ -82,7 +88,7 @@ teardown() {
       wait "${pid}" 2>/dev/null || true
     done <"${BOOT_PIDS}"
   fi
-  [[ -n "${TMPROOT:-}" && -d "${TMPROOT}" ]] && rm -rf -- "${TMPROOT}" || true
+  if ga_guard_path "${TMPROOT:-}"; then rm -rf -- "${TMPROOT:?}"; fi
 }
 
 # Copies the live wrapper + shared libs into the sandbox so SCRIPT_DIR resolves
@@ -95,6 +101,7 @@ sandbox_copy() {
   mkdir -p "${SANDBOX}/lib"
   cp "${REAL_BOOTSTRAP_LIB}" "${SANDBOX}/lib/daemon-bootstrap-common.sh"
   cp "${REAL_LOCK_LIB}" "${SANDBOX}/lib/daemon-lock.sh"
+  cp "${GA}/scripts/lib/path-guard.sh" "${SANDBOX}/lib/path-guard.sh"
   cp "${REAL_CONFIG_LIB}" "${SANDBOX}/lib/atrium-config.sh"
   cp "${REAL_FAKECHAT_LIB}" "${SANDBOX}/lib/fakechat-cleanup.sh"
   printf '%s\n' "${SANDBOX}/${base}"
@@ -216,7 +223,7 @@ wait_for_log() {
   local role s
   printf 'Limit reached · resets 3pm (Asia/Seoul)\n' >"${PANE_FIXTURE}"
   for role in wiki autoagent; do
-    rm -f -- "${SESSION_MARKER}"
+    if ga_guard_path "${SESSION_MARKER}"; then rm -f -- "${SESSION_MARKER:?}"; fi
     if [[ "${role}" == "wiki" ]]; then
       s="$(sandbox_copy "${REAL_WIKI_BOOTSTRAP}")"
     else

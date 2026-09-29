@@ -5,9 +5,10 @@
 #   (2) --unstaged <file>: runner.js flow — eval one uncommitted file; never rollback/commit
 #       → emits RESULT: PASS|FAIL on stdout, exit 0/1
 #   (3) --post-commit <file>: legacy-compat alias
-# Exit codes (autoagents-eval.sh-scoped; daemon-apply.sh owns a different 4/5):
+# Exit codes (autoagents-eval.sh-scoped; daemon-apply.sh owns a different 4/5/6):
 #   0 = PASS or nothing to eval · 1 = FAIL (eval verdict, preflight, or claude run)
 #   4 = claude binary not found · 5 = git status failed on the default-mode scan
+#   6 = shared path guard (scripts/lib/path-guard.sh) missing — nothing is scanned
 #
 # why this arg combo (the headless `claude -p` eval invocation further below) — plan pin E1:
 #   --tools "Read,Glob,Grep" → Write-less by design: a read-only eval needs no write tool
@@ -19,6 +20,22 @@
 
 set -euo pipefail
 export PATH="/opt/homebrew/bin:/usr/local/bin:$PATH"
+
+# ga_guard_path gates the scratch removal below; loaded from the same install tree as the libs below.
+PATH_GUARD="${HOME}/.glass-atrium/scripts/lib/path-guard.sh"
+if [[ ! -r "${PATH_GUARD}" ]]; then
+  printf '%s\n' "[autoagents-eval] FATAL: cannot source the shared path guard: ${PATH_GUARD}" >&2
+  exit 6
+fi
+# shellcheck source=/dev/null
+source "${PATH_GUARD}"
+
+# EXIT-trap teardown of the default-mode git-stderr scratch file (unset until that scan runs).
+# shellcheck disable=SC2329  # invoked from the EXIT trap string
+delete_git_err_file() {
+  # shellcheck disable=SC2310  # pure predicate — nothing inside it for errexit to catch
+  if ga_guard_path "${GIT_ERR_FILE:-}"; then rm -f -- "${GIT_ERR_FILE:?}"; fi
+}
 
 AGENTS_DIR="$HOME/.claude/agents"
 
@@ -103,7 +120,7 @@ else
   # status, so a trailing grep no-match (1) and a git failure (128) both collapsed into the same
   # empty string and the same affirmative-false "no changes" success below.
   GIT_ERR_FILE="$(mktemp)"
-  trap 'rm -f "${GIT_ERR_FILE}"' EXIT
+  trap 'delete_git_err_file' EXIT
   GIT_RC=0
   GIT_OUT="$(git status --porcelain -- '*.md' 2>"${GIT_ERR_FILE}")" || GIT_RC=$?
   GIT_ERR_TEXT="$(cat "${GIT_ERR_FILE}")"

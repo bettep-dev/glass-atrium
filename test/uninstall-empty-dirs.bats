@@ -37,6 +37,8 @@
 bats_require_minimum_version 1.5.0
 
 GA="$(cd -- "${BATS_TEST_DIRNAME}/.." && pwd)"
+# shellcheck source-path=SCRIPTDIR source=../scripts/lib/path-guard.sh
+source "${GA}/scripts/lib/path-guard.sh"
 
 setup() {
   command -v jq >/dev/null 2>&1 || skip "jq required"
@@ -77,7 +79,7 @@ setup() {
 }
 
 teardown() {
-  [[ -n "${SANDBOX:-}" && -d "${SANDBOX}" ]] && rm -rf -- "${SANDBOX}" || true
+  if ga_guard_path "${SANDBOX:-}"; then rm -rf -- "${SANDBOX:?}"; fi
 }
 
 # Drive ONE sourced engine function (fresh subprocess). Honors GA_TEST_DRY.
@@ -193,6 +195,7 @@ assert_excluded_absent() {
   [[ "$(cat "${TARGET}/glass-atrium")" == "user launcher" ]]
 }
 
+# GA-RM[not-executed]: test title text, which no shell runs
 @test "PART B safety: a user file in a GA dir keeps that dir (rmdir-only, never rm -rf)" {
   run_ga run_symlink_farm install
   [[ "${status}" -eq 0 ]]

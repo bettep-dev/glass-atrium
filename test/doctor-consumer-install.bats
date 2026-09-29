@@ -34,6 +34,8 @@
 bats_require_minimum_version 1.5.0
 
 GA="$(cd -- "${BATS_TEST_DIRNAME}/.." && pwd)"
+# shellcheck source-path=SCRIPTDIR source=../scripts/lib/path-guard.sh
+source "${GA}/scripts/lib/path-guard.sh"
 
 setup() {
   command -v jq >/dev/null 2>&1 || skip "jq required"
@@ -74,7 +76,7 @@ setup() {
 }
 
 teardown() {
-  [[ -n "${SANDBOX:-}" && -d "${SANDBOX}" ]] && rm -rf -- "${SANDBOX}" || true
+  if ga_guard_path "${SANDBOX:-}"; then rm -rf -- "${SANDBOX:?}"; fi
 }
 
 # Seed a GA_ROOT source file for <rel> with deterministic content.
@@ -219,7 +221,11 @@ run_doctor_sandbox() {
   deploy_farmed_links
   # remove ONE farmed symlink (skills/rules stay linked → ga_links>0 → not 'fresh'
   # target → genuine partial drift on an established install → hard FAIL)
-  rm -f -- "${TARGET}/agents/dev-a.md"
+  if ga_guard_path "${TARGET}"; then
+    rm -f -- "${TARGET:?}/agents/dev-a.md"
+  else
+    return 1
+  fi
 
   run_doctor_sandbox
 
@@ -254,7 +260,11 @@ run_doctor_sandbox() {
   deploy_farmed_links
   # delete a bundled install-internal SOURCE (present in the manifest, gone on disk):
   # §4 checks manifest entry -> SOURCE present, independent of the §7 symlink skip
-  rm -f -- "${GA_SANDBOX}/hooks/hook-a.sh"
+  if ga_guard_path "${GA_SANDBOX}"; then
+    rm -f -- "${GA_SANDBOX:?}/hooks/hook-a.sh"
+  else
+    return 1
+  fi
 
   run_doctor_sandbox
 

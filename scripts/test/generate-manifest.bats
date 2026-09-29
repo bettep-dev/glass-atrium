@@ -15,6 +15,8 @@ REAL_SCRIPT="${GA}/scripts/generate-manifest.sh"
 # The generator sources the spine for the retired-map family bar, so the sandbox
 # needs the real library at the path the copied script resolves.
 REAL_SPINE="${GA}/scripts/lib/apply-spine.sh"
+# shellcheck source-path=SCRIPTDIR source=../lib/path-guard.sh
+source "${GA}/scripts/lib/path-guard.sh"
 
 setup() {
   [[ -f "${REAL_SCRIPT}" ]] || skip "generate-manifest.sh not found: ${REAL_SCRIPT}"
@@ -27,6 +29,7 @@ setup() {
   mkdir -p "${WORK}/scripts/lib" "${WORK}/agents" "${WORK}/rules"
   cp "${REAL_SCRIPT}" "${SCRIPT}"
   cp "${REAL_SPINE}" "${WORK}/scripts/lib/apply-spine.sh"
+  cp "${REAL_SPINE%/*}/path-guard.sh" "${WORK}/scripts/lib/path-guard.sh"
   seed_manifest
   printf '# agent alpha\n' >"${WORK}/agents/alpha.md"
   printf '# rule beta\n' >"${WORK}/rules/beta.md"
@@ -43,7 +46,7 @@ setup() {
 }
 
 teardown() {
-  [[ -n "${WORK:-}" && -d "${WORK}" ]] && rm -rf -- "${WORK}" || true
+  if ga_guard_path "${WORK:-}"; then rm -rf -- "${WORK:?}"; fi
 }
 
 # Seed the minimal manifest the generator refuses to regenerate without
@@ -346,9 +349,23 @@ UNCARRIABLE_ROWS=(
 }
 
 @test "generate: refuses without a tracked manifest (exit 5)" {
-  rm -f -- "${MANIFEST}"
+  if ga_guard_path "${MANIFEST}"; then rm -f -- "${MANIFEST:?}"; fi
   run "${SCRIPT}"
   [[ "${status}" -eq 5 ]]
+}
+
+# Exit 1 is the --check drift verdict release.yml reads, so a spine that cannot
+# load must surface as its own code in every mode, never as manifest drift.
+@test "generate and --check: a spine that cannot load its path guard exits 7" {
+  if ga_guard_path "${WORK}"; then rm -f -- "${WORK:?}/scripts/lib/path-guard.sh"; fi
+  local mode
+  for mode in "" "--check"; do
+    run "${SCRIPT}" ${mode:+"${mode}"}
+    [[ "${status}" -eq 7 ]] || { echo "row ${mode:-generate}: status ${status}"; return 1; }
+    [[ "${output}" == *'cannot source the shared path guard'* ]] \
+      || { echo "row ${mode:-generate}: no guard message"; return 1; }
+    [[ "${output}" == *'failed to load'* ]] || { echo "row ${mode:-generate}: no caller message"; return 1; }
+  done
 }
 
 # T1b — the four executable-suite roots must bundle so the daemon-apply preflight
@@ -487,13 +504,14 @@ ship_lib_a() {
 
 @test "retired: a still-tracked path git would quote is NOT retired once it leaves the disk" {
   # The on-disk arm is removed so only the tracked-paths oracle can keep the row out.
+  local tracked_file="${WORK}/scripts/lib/archive/한글.sh"
   git -C "${WORK}" config core.quotePath true
   mkdir -p "${WORK}/scripts/lib/archive"
-  printf '# archived\n' >"${WORK}/scripts/lib/archive/한글.sh"
+  printf '# archived\n' >"${tracked_file}"
   git -C "${WORK}" add scripts/lib/archive/한글.sh
   git -C "${WORK}" commit -qm 'track an excluded non-ASCII path'
   "${SCRIPT}" >/dev/null
-  rm -f -- "${WORK}/scripts/lib/archive/한글.sh"
+  if ga_guard_path "${tracked_file}"; then rm -f -- "${tracked_file:?}"; fi
   jq '.files += ["scripts/lib/archive/한글.sh"]
       | .hashes["scripts/lib/archive/한글.sh"] = "aa11bb22cc33dd44ee55ff6600112233445566778899aabbccddeeff00112233"' \
     "${MANIFEST}" >"${MANIFEST}.tmp"

@@ -27,6 +27,8 @@ bats_require_minimum_version 1.5.0
 GA="$(cd -- "${BATS_TEST_DIRNAME}/../.." && pwd)"
 REAL_DOCTOR="${GA}/lib/ga-doctor.sh"
 REAL_SPINE="${GA}/scripts/lib/apply-spine.sh"
+# shellcheck source-path=SCRIPTDIR source=../lib/path-guard.sh
+source "${GA}/scripts/lib/path-guard.sh"
 
 setup() {
   command -v jq >/dev/null 2>&1 || skip "jq required"
@@ -44,8 +46,8 @@ setup() {
 }
 
 teardown() {
-  [[ -n "${WORK:-}" && -d "${WORK}" ]] && rm -rf -- "${WORK}" || true
-  [[ -n "${PRISTINE:-}" && -d "${PRISTINE}" ]] && rm -rf -- "${PRISTINE}" || true
+  if ga_guard_path "${WORK:-}"; then rm -rf -- "${WORK:?}"; fi
+  if ga_guard_path "${PRISTINE:-}"; then rm -rf -- "${PRISTINE:?}"; fi
 }
 
 # The manifest's row set: two claimed shapes (a top-level agent body, each roster path) and two
@@ -172,7 +174,7 @@ pin_model_key() {
 }
 
 @test "an excluded row that is MISSING is still reported" {
-  rm -f -- "${WORK}/agents/evolvable.md"
+  if ga_guard_path "${WORK}"; then rm -f -- "${WORK:?}/agents/evolvable.md"; fi
   [[ "$(doctor_drift_count)" -eq 1 ]] || return 1
   [[ "$(doctor_drift_detail)" == *"listed file missing on disk: agents/evolvable.md"* ]] || return 1
 }

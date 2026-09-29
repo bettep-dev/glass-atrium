@@ -18,12 +18,11 @@ const SCREEN_SRC = readFileSync(
   "utf8",
 );
 
-// 범례가 남길 수 있는 흔적 전부 — 스타일 선택자 · 상태 클래스 · 컴포넌트 · 상태 훅.
-// UI 만 지우고 배선을 남기면 화면은 조용한데 소스에는 죽은 상호작용이 남음.
+// 걷어낸 대화형 범례(접이식 · 포커스 · 히트)가 남길 수 있는 흔적 — 스타일 선택자 · 상태 클래스 · 컴포넌트 · 상태 훅.
+// 캡션의 정적 스와치 범례(.arch-legend · .arch-legend-item · .arch-legend-swatch)는 현행이라 대상 밖.
 const LEGEND_TOKENS = [
   ".arch-legend-details",
   ".arch-legend-grid",
-  ".arch-legend-item",
   ".arch-legend-swatch-box",
   ".arch-legend-swatch-line",
   ".arch-mermaid-canvas.legend-focus",
@@ -54,7 +53,7 @@ function countOccurrences(haystack: string, needle: string): number {
   return n;
 }
 
-test("AC-T19 no legend rule or wiring survives in the screen source", () => {
+test("no rule or wiring of the retired interactive legend survives in the screen source", () => {
   const residue = LEGEND_TOKENS.map(
     (token) => [token, countOccurrences(SCREEN_SRC, token)] as const,
   ).filter(([, count]) => count > 0);
@@ -62,7 +61,7 @@ test("AC-T19 no legend rule or wiring survives in the screen source", () => {
   assert.deepEqual(
     residue.map(([token]) => token),
     [],
-    `legend residue in architecture.jsx: ${residue.map(([t, c]) => `${t}×${c}`).join(", ")}`,
+    `retired legend residue in architecture.jsx: ${residue.map(([t, c]) => `${t}×${c}`).join(", ")}`,
   );
 });
 
@@ -87,5 +86,79 @@ test("AC-T2 no cadence-vs-staleness comparison survives in the screen source", (
     residue.map(([token]) => token),
     [],
     `staleness re-computation residue in architecture.jsx: ${residue.map(([t, c]) => `${t}\u00d7${c}`).join(", ")}`,
+  );
+});
+
+// 심각도 색이 meta/micro 글자에 얹히면 AA 대비(warn 3.05:1 · ok 3.61 · info 3.53)에 못 미침 —
+// 39578 §D 는 tone 을 글리프 · 바 · 경보 컨테이너에만 싣게 함. 색 리터럴을 표 하나에 모아 두고
+// 그 표를 글리프만 읽게 하면, 글자에 색을 다시 얹는 순간 둘 중 하나가 붉어짐.
+const TONE_COLOR_CLASSES = ["text-ok", "text-warn", "text-crit", "text-info"];
+
+// 표 선언 블록만 도려냄 — 값 리터럴이 사는 유일한 자리라 나머지는 전부 위반임.
+const TONE_TABLE_BLOCK = /const TONE_GLYPH_CLASS = \{[^}]*\};/;
+
+// 자기 닫힘 <Icon … /> 한 덩어리. className 식에 '>' 가 없어 [^>]* 로 끊김이 정확함.
+const ICON_ELEMENT = /<Icon\b[^>]*\/>/g;
+
+test("AC-T-tone severity colour literals live only in the glyph class table", () => {
+  const table = SCREEN_SRC.match(TONE_TABLE_BLOCK);
+  assert.ok(table, "TONE_GLYPH_CLASS must still be declared as a literal table");
+
+  const outsideTable = SCREEN_SRC.replace(table[0], "");
+  const residue = TONE_COLOR_CLASSES.map(
+    (token) => [token, countOccurrences(outsideTable, token)] as const,
+  ).filter(([, count]) => count > 0);
+
+  assert.deepEqual(
+    residue.map(([token]) => token),
+    [],
+    `tone colour on a non-glyph node in architecture.jsx: ${residue.map(([t, c]) => `${t}×${c}`).join(", ")}`,
+  );
+});
+
+test("AC-T-tone the glyph class table is read by icon elements only", () => {
+  const references = countOccurrences(SCREEN_SRC, "TONE_GLYPH_CLASS") - 1;
+  const onIcons = (SCREEN_SRC.match(ICON_ELEMENT) || []).reduce(
+    (sum, el) => sum + countOccurrences(el, "TONE_GLYPH_CLASS"),
+    0,
+  );
+
+  assert.ok(references > 0, "the glyph class table must still have a consumer");
+  assert.equal(
+    onIcons,
+    references,
+    `${references - onIcons} of ${references} TONE_GLYPH_CLASS references sit outside an <Icon> element`,
+  );
+});
+
+// ui.jsx Badge paints its label in text-{tone} when a status badge drops its glyph.
+test("AC-T-tone no status badge drops its glyph, which would put tone on the label", () => {
+  const offenders = (SCREEN_SRC.match(/<Badge\b[^>]*>/g) || []).filter(
+    (tag) => tag.includes('role="status"') && tag.includes("glyph={false}"),
+  );
+
+  assert.deepEqual(offenders, []);
+});
+
+// 경보 자리를 이름으로 셈 — 개수로 재면 한 자리를 지우고 다른 자리를 들여도 통과함.
+test("alert role is declared by the alarm row only — region and page failures use the shared atoms", () => {
+  const declarers = SCREEN_SRC.split(/^function /m)
+    .slice(1)
+    .filter((block) => block.includes('role="alert"'))
+    .map((block) => block.slice(0, block.indexOf("(")));
+
+  assert.deepEqual(declarers.sort(), ["AlarmRowAR"]);
+});
+
+// the adoption floor is 12px — fs-micro (11px) is the one type step below it, by class or by variable
+test("no text on the screen is set at the micro type step", () => {
+  const sites = SCREEN_SRC.split("\n")
+    .map((line, i) => [i + 1, line] as const)
+    .filter(([, line]) => line.includes("fs-micro"));
+
+  assert.deepEqual(
+    sites.map(([n]) => n),
+    [],
+    `fs-micro in architecture.jsx: ${sites.map(([n, l]) => `${n}: ${l.trim()}`).join(" | ")}`,
   );
 });

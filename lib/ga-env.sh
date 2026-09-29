@@ -2,6 +2,14 @@
 # shellcheck disable=SC2034  # ga_init_env assigns the shared readonly globals (GA_ROOT/TARGET_HOME/MANIFEST/EXPECTED_HOOK_BINDINGS/...) consumed by sibling ga-*.sh domains after sourcing — unused within this producer file when linted standalone
 # Glass Atrium — environment init, logging, and OS-portable stat/util primitives (foundation domain). Sourced in-process by lib/ga-core.sh; no file-scope strict mode / traps (owned by the entry point).
 
+# The shared path guard every engine delete site gates on; scripts/lib holds the one copy for all trees.
+# Loud-fail guard: printf (log is defined below) + `return 1`, so the loader's own source guard fires too.
+# shellcheck source=scripts/lib/path-guard.sh
+source "${BASH_SOURCE[0]%/*}/../scripts/lib/path-guard.sh" || {
+  printf "%s\n" "FATAL: cannot source the shared path guard: ${BASH_SOURCE[0]%/*}/../scripts/lib/path-guard.sh" >&2
+  return 1
+}
+
 # [1] idempotency sentinel + ga_init_env
 # The ONLY function that runs `readonly`. Assigns ALL shared constants + run-mode flag DEFAULTS (flags stay
 # plain/non-readonly so the caller's parse_args can set them). Idempotent: a second call (re-source /
@@ -183,11 +191,12 @@ ga_init_env() {
 
   # expected hook->event bindings the user MUST register in settings.json for the deployed hooks to fire.
   # Each entry = "<event>\t<hook-basename>\t<matcher>" (events: PreToolUse / PostToolUse / SessionStart /
-  # Stop / SubagentStart / SubagentStop / PreCompact). Matched against the live settings.json
-  # .hooks[<event>][].hooks[].command by basename, SCOPED to its matcher (command-WITHIN-matcher — the
-  # doctor binding check + wire_hooks idempotency key). The 3rd column (matcher) is BOTH the UPSERT selector
-  # AND the bound/dormant scoping key; an empty 3rd column = "no matcher key" (SessionStart/Stop are
-  # unmatched). Per-matcher, so the SAME hook may appear in TWO rows under one event with different matchers
+  # UserPromptSubmit / Stop / SubagentStart / SubagentStop / PreCompact). Matched against the live
+  # settings.json .hooks[<event>][].hooks[].command by basename, SCOPED to its matcher
+  # (command-WITHIN-matcher — the doctor binding check + wire_hooks idempotency key). The 3rd column
+  # (matcher) is BOTH the UPSERT selector AND the bound/dormant scoping key; an empty 3rd column = "no
+  # matcher key" (SessionStart/Stop/UserPromptSubmit are unmatched). Per-matcher, so the SAME hook may
+  # appear in TWO rows under one event with different matchers
   # (e.g. validate-secret-scan.sh on Write|Edit AND Bash) — each wired + tracked independently.
   # Add a row here when a new hook is deployed. SINGLE SoT — wire_hooks/run_doctor AND unwire_hooks/verify_clean
   # all read this one array (the prior per-script duplication collapsed here).
@@ -245,6 +254,7 @@ ga_init_env() {
     "SessionStart	prune-security-warnings-state.sh	"
     "SessionStart	prune-session-spawns.sh	"
     "SessionStart	validate-compliance-matrix.sh	"
+    "UserPromptSubmit	inject-reply-language.sh	"
     "Stop	advisory-preedit-facts.sh	"
     "Stop	cost-tracker.sh	"
     "Stop	post-edit-typecheck.sh	"
@@ -270,10 +280,12 @@ ga_init_env() {
   readonly EXPECTED_HOOK_BINDINGS
 
   # prune named exit codes (loud-fail, distinct from die's generic 1): 2 = no
-  # target dir, 3 = manifest absent/unparseable. Inside the sentinel-guarded block
-  # (not file-scope) so a re-source never re-runs `readonly` → fatal under set -e.
+  # target dir, 3 = manifest absent/unparseable, 4 = an orphan survived its unlink.
+  # Inside the sentinel-guarded block (not file-scope) so a re-source never re-runs
+  # `readonly` → fatal under set -e.
   readonly PRUNE_EXIT_NO_TARGET=2
   readonly PRUNE_EXIT_NO_MANIFEST=3
+  readonly PRUNE_EXIT_UNLINK_SURVIVED=4
   # manifest files[] key escapes the install root (empty · absolute · `..` segment) or is unreadable —
   # refused before any manifest loop by install / agents-only / uninstall / prune.
   readonly MANIFEST_EXIT_ESCAPING_KEY=25
@@ -388,6 +400,14 @@ die_step() {
   printf 'FATAL: %s\n' "$*" >&2
   [[ -n "${GA_TUI_STEP:-}" ]] && return "${code}"
   exit "${code}"
+}
+
+# delete_temp_file — removes one engine or launcher temp file; an unset path or a non-regular file is left alone.
+delete_temp_file() {
+  local path="${1}"
+  [[ -f "${path}" ]] || return 0
+  # shellcheck disable=SC2310  # guard verdict branched on — a refusal is a skip, never an abort
+  if ga_guard_path "${path}"; then rm -f -- "${path:?}"; fi
 }
 
 # never-touch guard

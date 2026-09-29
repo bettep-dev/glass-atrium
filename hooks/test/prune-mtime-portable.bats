@@ -12,6 +12,9 @@
 PRUNE_SPAWNS="${BATS_TEST_DIRNAME}/../prune-session-spawns.sh"
 PRUNE_SECWARN="${BATS_TEST_DIRNAME}/../prune-security-warnings-state.sh"
 
+# shellcheck source-path=SCRIPTDIR source=../../scripts/lib/path-guard.sh
+source "${BATS_TEST_DIRNAME}/../../scripts/lib/path-guard.sh"
+
 setup() {
   [[ -f "${PRUNE_SPAWNS}" ]] || skip "prune-session-spawns.sh not found"
   [[ -f "${PRUNE_SECWARN}" ]] || skip "prune-security-warnings-state.sh not found"
@@ -19,7 +22,7 @@ setup() {
 }
 
 teardown() {
-  [[ -n "${PM_TMP:-}" && -d "${PM_TMP}" ]] && rm -rf -- "${PM_TMP}" || true
+  if ga_guard_path "${PM_TMP:-}"; then rm -rf -- "${PM_TMP:?}"; fi
 }
 
 @test "prune-session-spawns: fresh marker preserved, stale marker pruned (portable mtime)" {

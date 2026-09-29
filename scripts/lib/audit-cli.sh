@@ -1,12 +1,16 @@
 #!/usr/bin/env bash
-# audit-cli.sh — shared command-line spine for the repository's presence-only auditors
-# (scripts/audit-absorption.sh, scripts/audit-test-smells.sh). Sourced, not executable.
+# audit-cli.sh — shared command-line spine for the repository's presence-only auditors:
+# scripts/audit-absorption.sh, scripts/audit-test-smells.sh and scripts/audit-rm.sh.
+# Sourced, not executable.
 #
-# The two auditors detect nothing in common — absorption idioms on non-comment shell lines versus
-# heredoc-aware `@test` body splitting — and they stay two tools on independent promotion
-# timelines. What they share is a SURFACE: the same five flags, the same four exit codes, the same
-# summary-then-exit tail. That surface lives here so the two cannot drift apart on it, which they
-# already had: `--root` was validated in one and silently accepted in the other.
+# The three auditors detect nothing in common:
+#   - absorption idioms on non-comment shell lines;
+#   - heredoc-aware `@test` body splitting;
+#   - recursive or forced delete targets.
+# They stay separate tools on independent promotion timelines.
+# What they share is a SURFACE: the same five flags, the same four exit codes, the same summary-then-exit tail.
+# That surface lives here so they cannot drift apart on it.
+# Two of them had already drifted: `--root` was validated in one and silently accepted in the other.
 #
 # ONE behavioural difference is intended, and it is carried as an explicit init argument rather
 # than as an accident of copied code: a PROMOTED auditor blocks on its scope-list run, while an
