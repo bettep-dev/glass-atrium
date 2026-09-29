@@ -32,8 +32,7 @@ def main(argv=None):
     args = _build_parser().parse_args(argv)
     window = _get_env_bytes("REPLY_LANG_WINDOW_BYTES", DEFAULT_WINDOW_BYTES)
     cap = _get_env_bytes("REPLY_LANG_MAX_BYTES", DEFAULT_MAX_BYTES)
-    pending = sys.stdin.buffer.read().decode("utf-8", "replace") if args.pending else ""
-    json.dump(find_newest_human_prose(args.path, window, cap, pending), sys.stdout)
+    json.dump(find_newest_human_prose(args.path, window, cap), sys.stdout)
     sys.stdout.write("\n")
     return 0
 
@@ -41,28 +40,20 @@ def main(argv=None):
 def _build_parser():
     parser = argparse.ArgumentParser(
         prog="reply_language.py",
-        description="Print one JSON object: status (found|none), entry (pending|user|queued_command), prose, "
+        description="Print one JSON object: status (found|none), entry (user|queued_command), prose, "
         "bytes_read and truncated, plus reason=unreadable when the transcript cannot be opened.",
     )
     commands = parser.add_subparsers(dest="command")
     commands.required = True
     transcript = commands.add_parser("transcript", help="the newest human message with prose of its own")
     transcript.add_argument("path")
-    transcript.add_argument(
-        "--pending",
-        action="store_true",
-        help="read from stdin a human message newer than the transcript, such as a typed slash command's arguments",
-    )
     return parser
 
 
-def find_newest_human_prose(path, window, cap, pending=""):
+def find_newest_human_prose(path, window, cap):
     """Status `none` with truncated=true means the cap was reached before any human prose."""
     result = {"status": "none", "entry": None, "prose": None}
     scan = {"bytes_read": 0, "truncated": False}
-    found = _get_text_prose(pending, "pending")
-    if found:
-        return {**found, **scan}
     try:
         with open(path, "rb") as fh:
             size = fh.seek(0, os.SEEK_END)

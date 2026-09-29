@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # inject-reply-language.sh — quotes the user's latest own message so the model judges the reply language.
 # Every emitted line is a fixed template plus that quote, never a language value.
-# Never blocks: exit 2 from either prompt event erases the prompt, so every path ends in exit 0.
+# Never blocks: exit 2 from UserPromptSubmit erases the prompt, so every path ends in exit 0.
 set -Eeuo pipefail
 IFS=$'\n\t'
 # Fail open: an errexit abort, a set -u miss or a resolver fault all leave through this trap.
@@ -9,7 +9,6 @@ trap 'exit 0' EXIT
 
 # Model-facing wording, audited as one unit; each quote %s is a JSON string of the user's own words.
 readonly MACHINE_POINTER="The newest user-role message, %s, holds no prose of the user's own; the user's latest own message begins %s. Reply to the user in that message's language unless the user asked for a different reply language."
-readonly COMMAND_POINTER="The newest user-role message is a slash command whose own text begins %s. Reply to the user in that text's language unless the user asked for a different reply language."
 readonly SESSION_POINTER="[REPLY LANGUAGE] The user's latest own message begins %s. Reply to the user in that message's language unless the user asked for a different reply language."
 readonly EXCERPT_CHARS=200
 readonly HEAD_CHARS=80
@@ -41,7 +40,6 @@ main() {
   IFS=$'\x1f' read -r event source transcript head <<<"${fields}" || return 0
   case "${event}" in
     UserPromptSubmit) point_at_machine_prompt "${source}" "${head}" "${transcript}" ;;
-    UserPromptExpansion) point_at_command "${input}" "${transcript}" ;;
     SessionStart) point_at_resumed_session "${source}" "${transcript}" ;;
     *) ;;
   esac
@@ -57,25 +55,6 @@ point_at_machine_prompt() {
   # shellcheck disable=SC2059  # the format is the constant above, never input
   printf -v context "${MACHINE_POINTER}" "${kind}" "${quote}"
   emit_context UserPromptSubmit "${context}"
-}
-
-# The typed command is quoted here, so UserPromptSubmit never sniffs a leading slash: `/Users/...` shares it.
-# Args: $1=envelope $2=transcript path
-point_at_command() {
-  local found entry prose quote context
-  found="$(jq -j '.command_args // "" | tostring' <<<"${1}" | find_newest_prose --pending "${2}")"
-  entry="$(jq -r 'select(.status == "found") | .entry' <<<"${found}")"
-  prose="$(jq -r 'select(.status == "found") | .prose' <<<"${found}")"
-  quote="$(get_quote "${prose}")"
-  [[ -n "${quote}" ]] || return 0
-  if [[ "${entry}" == pending ]]; then
-    # shellcheck disable=SC2059  # the format is the constant above, never input
-    printf -v context "${COMMAND_POINTER}" "${quote}"
-  else
-    # shellcheck disable=SC2059  # the format is the constant above, never input
-    printf -v context "${MACHINE_POINTER}" 'a slash command' "${quote}"
-  fi
-  emit_context UserPromptExpansion "${context}"
 }
 
 # Run by inject-session-context.sh, whose stdout is the session context, so the line is printed bare.
@@ -96,6 +75,7 @@ point_at_resumed_session() {
 # stdout: the kind of a machine-written prompt; empty for the user's own prompt or an agent frame.
 # Agent frames: the envelope has no agent_id and names the parent transcript, so the frame is the only signal.
 # Scheduled-task fires and /loop wakeups replay stored text with no frame, so only `source` can name them.
+# A typed `/name args` is the user's own prompt; no leading slash is sniffed, since `/Users/...` shares it.
 get_prompt_kind() {
   case "${2}" in
     '<teammate-message'* | '[Workflow harness'* | 'The coordinator sent a message'*) return 0 ;;
@@ -129,11 +109,11 @@ get_newest_quote() {
 }
 
 # stdout: the resolver's JSON for the newest human message with prose; empty without python3 or the resolver.
-# Args: resolver `transcript` options and path
+# Args: $1=transcript path
 find_newest_prose() {
   command -v python3 >/dev/null 2>&1 || return 0
   [[ -f "${RESOLVER}" ]] || return 0
-  python3 "${RESOLVER}" transcript "$@"
+  python3 "${RESOLVER}" transcript "${1}"
 }
 
 # stdout: $1 cleaned, capped and JSON-quoted; empty when nothing is left.

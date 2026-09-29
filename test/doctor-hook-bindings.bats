@@ -96,9 +96,6 @@ write_full_settings() {
       { "hooks": [ { "type": "command", "command": "~/.claude/hooks/prune-session-spawns.sh" } ] },
       { "hooks": [ { "type": "command", "command": "~/.claude/hooks/validate-compliance-matrix.sh" } ] }
     ],
-    "UserPromptExpansion": [
-      { "hooks": [ { "type": "command", "command": "~/.claude/hooks/inject-reply-language.sh" } ] }
-    ],
     "UserPromptSubmit": [
       { "hooks": [ { "type": "command", "command": "~/.claude/hooks/inject-reply-language.sh" } ] }
     ],
@@ -209,11 +206,10 @@ drop_group() {
   [[ "${output}" != *"dormant hook binding(s)"* ]]
 }
 
-@test "prompt events -> the reply-language pointer reports bound on UserPromptSubmit and UserPromptExpansion" {
+@test "prompt event -> the reply-language pointer reports bound on UserPromptSubmit" {
   write_full_settings
   run_doctor_sandbox
   [[ "${output}" == *"ok   : hook bound — UserPromptSubmit -> inject-reply-language.sh (matcher=<none>)"* ]] \
-    && [[ "${output}" == *"ok   : hook bound — UserPromptExpansion -> inject-reply-language.sh (matcher=<none>)"* ]] \
     && [[ "${output}" != *"dormant hook binding(s)"* ]]
 }
 
@@ -316,8 +312,8 @@ drop_group() {
   run_doctor_sandbox
   [[ "${output}" == *"settings.json absent"* ]]
   [[ "${output}" == *"ALL hook event-bindings are unwired"* ]]
-  # EXPECTED_HOOK_BINDINGS enumerates the COMPLETE 62-binding set across all 9 events
-  # (PreToolUse 27 / PostToolUse 8 / SessionStart 4 / UserPromptExpansion 1 / UserPromptSubmit 1 /
+  # EXPECTED_HOOK_BINDINGS enumerates the COMPLETE 61-binding set across all 8 events
+  # (PreToolUse 27 / PostToolUse 8 / SessionStart 4 / UserPromptSubmit 1 /
   # Stop 3 / SubagentStart 14 / SubagentStop 3 / PreCompact 1 — PreToolUse carries the two advisory Bash leaves
   # advisory-egress-secret.sh + advisory-raw-store-read.sh). The total is counted per FLATTENED matcher-leaf,
   # NOT per unique hook basename: validate-secret-scan.sh AND enforce-harness-critical.sh
@@ -325,17 +321,17 @@ drop_group() {
   # matcher (enforce-workflow-verify-stage.sh AND lint-workflow-template-literal.sh),
   # enforce-verification-gate.sh binds under BOTH PreToolUse and PostToolUse (Agent
   # matcher), and several hooks recur across events (agent-tracker.sh,
-  # inject-reply-language.sh, post-edit-typecheck.sh, telemetry-activation.sh) — each occurrence is a distinct
+  # post-edit-typecheck.sh, telemetry-activation.sh) — each occurrence is a distinct
   # leaf. advisory-preedit-facts.sh binds on Stop ONLY (SubagentStop sees a parent
   # transcript that predates the subagent's edits). With settings.json absent, every
-  # leaf is unwired, so all 62 report dormant. SubagentStart carries 14 because the scope-rule
+  # leaf is unwired, so all 61 report dormant. SubagentStart carries 14 because the scope-rule
   # channel is split across twelve slots: inject-scope-rules.sh keeps the marker blocks and
   # inject-scope-part-01.sh .. -11.sh each carry one part, alongside agent-tracker.sh and
   # telemetry-activation.sh.
   #
   # THIS row's total is a COUNT, not a membership pin: it moves whenever the roster moves for
-  # unrelated reasons, and a simultaneous remove-and-add holds it at 62. The membership pin is
-  # write_full_settings in THIS file — it enumerates all 62 leaves by NAME, so a swapped roster row
+  # unrelated reasons, and a simultaneous remove-and-add holds it at 61. The membership pin is
+  # write_full_settings in THIS file — it enumerates all 61 leaves by NAME, so a swapped roster row
   # stops matching its fixture entry and every row built on that fixture reds. That fixture is the
   # only general guard on roster membership: test/wire-hooks-merge.bats names 7 of the 54 roster
   # basenames and runs no loop over the array, so it catches a drift only when the drifted basename
@@ -349,10 +345,10 @@ drop_group() {
   # Both counts are measured on the COMPOSED group-C tree, not on one branch: wire-hooks-merge.bats
   # is rewritten in the same composition, so a count taken from any single branch goes stale on
   # merge. Re-measure both sides together before editing them. The denominator is unique BASENAMES,
-  # which is smaller than the 62 leaves because a basename can bind under several event/matcher
+  # which is smaller than the 61 leaves because a basename can bind under several event/matcher
   # tuples — and it must be read from inside the array bounds: the array closer is indented, so an
   # awk range ending at /^\)/ overruns to EOF and sweeps in .sh names from surrounding prose.
-  [[ "${output}" == *"62 dormant hook binding(s)"* ]]
+  [[ "${output}" == *"61 dormant hook binding(s)"* ]]
 }
 
 @test "doctor is mutation-free: settings.json byte-identical after run" {

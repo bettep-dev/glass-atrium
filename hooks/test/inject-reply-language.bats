@@ -2,9 +2,8 @@
 # inject-reply-language.bats — hooks/inject-reply-language.sh, the reply-language pointer line.
 # Contracts protected:
 # - a machine-written prompt gets one line quoting the user's latest own message
-# - a typed slash command's arguments pass the same prose test as a transcript entry
 # - the line's fixed part names no language
-# - an ordinary human prompt stays silent without python3 or a transcript read
+# - an ordinary human prompt, a typed slash command included, stays silent without python3 or a transcript read
 # - every input exits 0, so no prompt is erased
 
 # shellcheck disable=SC2154  # BATS_TEST_DIRNAME, status and output are set by bats
@@ -41,17 +40,6 @@ write_envelope() {
     + (if $source == "-" then {} else {source: $source} end)' >"${RL_TMP}/envelope.json"
 }
 
-# Writes a UserPromptExpansion envelope for a typed /ga-review command.
-# Args: $1=transcript path $2=command args (printf %b escapes expanded) $3=expansion type
-write_expansion_envelope() {
-  local args
-  args="$(printf '%b' "${2}")"
-  jq -n --arg transcript "${1}" --arg args "${args}" --arg type "${3}" '
-    {session_id: "bats-session", transcript_path: $transcript, cwd: "/tmp",
-     hook_event_name: "UserPromptExpansion", expansion_type: $type, command_name: "ga-review",
-     command_args: $args, prompt: ("/ga-review " + $args)}' >"${RL_TMP}/envelope.json"
-}
-
 # Runs the hook on the written envelope; entrypoint "-" unsets CLAUDE_CODE_ENTRYPOINT.
 run_hook() {
   if [[ "${1}" == "-" ]]; then
@@ -62,14 +50,13 @@ run_hook() {
 }
 
 # Context line → `<fixed part>\x1f<quote>` | `silent` (no output) | `malformed: <output>` (else, incl. a named language)
-# Args: $1=expected hook event (default UserPromptSubmit)
 split_output() {
   if [[ -z "${output}" ]]; then
     printf 'silent'
     return 0
   fi
-  jq -er --arg event "${1:-UserPromptSubmit}" --arg names "${LANGUAGE_NAMES}" '
-    select(.hookSpecificOutput.hookEventName == $event)
+  jq -er --arg names "${LANGUAGE_NAMES}" '
+    select(.hookSpecificOutput.hookEventName == "UserPromptSubmit")
     | .hookSpecificOutput.additionalContext
     | capture("^(?<head>[^\"\n]*)(?<quote>\"(?:[^\"\\\\\n]|\\\\.)*\")(?<tail>[^\"\n]*)$")
     | select((.head + .tail) | test($names; "i") | not)
@@ -80,19 +67,19 @@ split_output() {
 # Prints the quote of the one context line, `silent`, or `malformed: <output>`.
 get_output_quote() {
   local split
-  split="$(split_output "$@")"
+  split="$(split_output)"
   printf '%s' "${split#*"${SPLIT}"}"
 }
 
 # Asserts exit 0, then silence or a single line quoting the wanted text.
-# Args: $1=row name $2=wanted quote or `silent` $3=expected hook event
+# Args: $1=row name $2=wanted quote or `silent`
 assert_quote() {
   local got
   [[ "${status}" -eq 0 ]] || {
     echo "${1}: exit ${status}: ${output}"
     return 1
   }
-  got="$(get_output_quote "${3:-UserPromptSubmit}")"
+  got="$(get_output_quote)"
   [[ "${got}" == "${2}" ]] || {
     echo "${1}: want ${2}, got ${got}"
     return 1
@@ -170,31 +157,6 @@ assert_rows() {
     "long wrapper-led prompt|cli|-|newest-human-korean|<task-notification>\n<summary>${tail}</summary>\n</task-notification>|${KOREAN_QUOTE}" \
     "wrapper after whitespace filling most of the cleaned prefix|cli|-|newest-human-korean|${padding}${NOTIFICATION}${tail}|${KOREAN_QUOTE}" \
     "long ordinary prompt|cli|-|newest-human-korean|이 로그 보고 원인 찾아줘 ${tail}|silent"
-}
-
-@test "a typed slash command gets a line quoting its own prose, or the latest earlier message when it has none" {
-  # shellcheck disable=SC2016  # the backticks are a literal code fence, never an expansion
-  local rows=(
-    'korean arguments over english history|cli|newest-human-english|이 변경 사항 검토해줘|slash_command|이 변경 사항 검토해줘'
-    'english arguments over korean history|cli|newest-human-korean|review the staged diff|slash_command|review the staged diff'
-    'mcp prompt arguments|cli|newest-human-english|이 PR 요약해줘|mcp_prompt|이 PR 요약해줘'
-    'arguments with bidi, bell and newline|cli|newest-human-english|이 변경\0342\0200\0256 사항\a\n검토해줘|slash_command|이 변경 사항 검토해줘'
-    "no arguments|cli|newest-human-korean||slash_command|${KOREAN_QUOTE}"
-    "whitespace-only arguments|cli|newest-human-english|  \t |slash_command|${ENGLISH_QUOTE}"
-    'prose around a URL|cli|newest-human-english|이 PR 검토해줘 https://github.com/org/repo/pull/12|slash_command|이 PR 검토해줘'
-    "URL-only arguments|cli|newest-human-korean|https://github.com/org/repo/pull/12|slash_command|${KOREAN_QUOTE}"
-    'fenced-code-only arguments|cli|newest-human-korean|```\nnpm ERR! code 1\n```|slash_command|'"${KOREAN_QUOTE}"
-    "paste-only arguments|cli|newest-human-english|<pasted_content id=\"1\">Error: build failed</pasted_content>|slash_command|${ENGLISH_QUOTE}"
-    'no arguments and no human entry|cli|sdk-cli||slash_command|silent'
-    'headless|sdk-cli|newest-human-english|이 변경 사항 검토해줘|slash_command|silent'
-  )
-  local row name entrypoint transcript args type want
-  for row in "${rows[@]}"; do
-    IFS='|' read -r name entrypoint transcript args type want <<<"${row}"
-    write_expansion_envelope "${CORPUS}/${transcript}.jsonl" "${args}" "${type}"
-    run_hook "${entrypoint}"
-    assert_quote "${name}" "${want}" UserPromptExpansion || return 1
-  done
 }
 
 @test "an ordinary human prompt spawns no python3 and never reads the transcript" {
