@@ -1236,6 +1236,32 @@ function getFreshnessState({ at, loading = false, failed = false, regions, stale
 }
 
 /**
+ * Page verdict over the getFreshnessState inputs → { state, tone, label, note, isBusy } for PageVerdict, KPI tones and all-clear lines.
+ * Unread → neutral "No signal" · stale/partial → "Last known", ok drops to neutral, warn/crit kept · refreshing → the settled verdict, busy.
+ * @param tone - tone the page derives from its data
+ * @param label - page word for that tone; defaults to the tone's canonical word
+ */
+function getFreshnessVerdict({ tone = 'neutral', label, at, loading = false, failed = false, regions, staleAfterMs = FRESHNESS_STALE_MS, now = Date.now() }) {
+  const state = getFreshnessState({ at, loading, failed, regions, staleAfterMs, now });
+  const settledRegions = Array.isArray(regions) ? regions.filter(Boolean).map((region) => ({ ...region, busy: false })) : regions;
+  const settled = getFreshnessState({ at, failed, regions: settledRegions, staleAfterMs, now });
+  const isBusy = state === 'loading' || state === 'refreshing';
+  const pageLabel = label || VERDICT_TONE_LABEL[tone] || VERDICT_TONE_LABEL.neutral;
+
+  if (settled === 'not-read') {
+    const note = isBusy ? 'Checking the first read…' : 'Nothing has been read yet.';
+    return { state, tone: 'neutral', label: VERDICT_TONE_LABEL.neutral, note, isBusy };
+  }
+  if (settled === 'fresh') return { state, tone, label: pageLabel, note: null, isBusy };
+
+  const isAlarm = tone === 'warn' || tone === 'crit';
+  const { failedCount, regionCount } = getRegionSummary(settledRegions);
+  const ageNote = `Read ${formatRelativeTime(at)}`;
+  const note = settled === 'partial' ? `${ageNote} · ${failedCount} of ${regionCount} sources failed` : ageNote;
+  return { state, tone: isAlarm ? tone : 'neutral', label: isAlarm ? `Last known: ${pageLabel}` : 'Last known', note, isBusy };
+}
+
+/**
  * Shared "as of HH:MM" stamp — a refresh in flight keeps the last stamp and sets aria-busy.
  * A read stamp re-renders on its own tick, so age-based staleness holds on screens that never poll.
  */
@@ -1272,7 +1298,8 @@ function FreshnessStamp({ at, loading = false, failed = false, regions, staleAft
 }
 
 /**
- * Shared PageHeader Refresh control — one box width across labels, disabled + aria-busy while a request is in flight.
+ * Shared PageHeader Refresh control — one box width across labels, aria-disabled + aria-busy while a request is in flight.
+ * Never natively disabled → a busy control keeps keyboard focus; the click guard makes it inert instead.
  * @param hasRead - a prior read exists; the in-flight label reads "Refreshing…" over held data, "Loading…" on the first wave
  * @param label - accessible name, stable across states (e.g. "Refresh cost data")
  */
@@ -1280,10 +1307,11 @@ function RefreshButton({ isBusy = false, hasRead = false, onRefresh, label = 'Re
   const busyText = hasRead ? 'Refreshing…' : 'Loading…';
   // motion-safe → the icon stays static under prefers-reduced-motion; the label still carries the busy cue
   const iconClass = isBusy ? 'motion-safe:animate-spin' : '';
+  const handleClick = (event) => { if (!isBusy) onRefresh?.(event); };
 
   return (
-    <button type="button" className="btn ghost sm w-28 justify-center" onClick={onRefresh} disabled={isBusy}
-      aria-busy={isBusy ? 'true' : undefined} aria-label={label}>
+    <button type="button" className="btn ghost sm w-28 justify-center" onClick={handleClick}
+      aria-disabled={isBusy ? 'true' : undefined} aria-busy={isBusy ? 'true' : undefined} aria-label={label}>
       <Icon name="refresh" size={14} className={iconClass}/>
       {isBusy ? busyText : 'Refresh'}
     </button>
@@ -1363,12 +1391,53 @@ function ErrorDetails({ detail }) {
   );
 }
 
+/** Region branch for render: 'ready' | 'error' | 'loading' — a cold error stays 'error' while its Retry is in flight, so focus never drops to a loader. */
+function getRegionView(region) {
+  if (region?.data != null) return 'ready';
+  if (region?.error != null) return 'error';
+  return 'loading';
+}
+
+/**
+ * Ref for a control that hands focus to a card when it unmounts while focused (Retry leaving on recovery).
+ * Layout cleanup → runs before the node leaves the DOM, while it can still be the active element.
+ * @param targetId - card id for putCardFocus; omit to skip the handoff
+ */
+function useFocusHandoff(targetId) {
+  const controlRef = useRef(null);
+  const targetIdRef = useRef(targetId);
+  targetIdRef.current = targetId;
+
+  useLayoutEffect(() => {
+    const control = controlRef.current;
+    return () => {
+      if (control && targetIdRef.current && document.activeElement === control) putCardFocus(targetIdRef.current);
+    };
+  }, []);
+  return controlRef;
+}
+
+// focusable while busy (aria-disabled + click guard) → keyboard focus survives the request
+function RetryButton({ onRetry, isBusy = false, focusTargetId }) {
+  const controlRef = useFocusHandoff(focusTargetId);
+  const handleClick = (event) => { if (!isBusy) onRetry?.(event); };
+
+  return (
+    <button ref={controlRef} type="button" className="btn sm self-start" onClick={handleClick}
+      aria-disabled={isBusy ? 'true' : undefined} aria-busy={isBusy ? 'true' : undefined}>
+      {isBusy ? 'Retrying…' : 'Retry'}
+    </button>
+  );
+}
+
 /**
  * Quiet per-region failure on a neutral surface; keeps the grid slot and shows the raw answer behind Details.
  * @param onRetry - omit when a PageErrorBanner already carries the one Retry for this outage
+ * @param isBusy - a Retry is in flight; keep rendering this card (see getRegionView) so its Retry keeps focus
+ * @param focusTargetId - region card id that takes focus if this card unmounts while its Retry is focused
  * @param minHeight - reserved slot height so the grid keeps its shape
  */
-function RegionUnavailable({ source, error, onRetry, minHeight, className = '' }) {
+function RegionUnavailable({ source, error, onRetry, isBusy = false, focusTargetId, minHeight, className = '' }) {
   const copy = getErrorCopy(error, source);
   return (
     <div className={`sub-card bg-sunken flex flex-col gap-1.5 ${className}`.trim()} style={minHeight ? { minHeight } : undefined}>
@@ -1378,13 +1447,17 @@ function RegionUnavailable({ source, error, onRetry, minHeight, className = '' }
       </div>
       <div className="fs-meta text-dim">{copy.next}</div>
       <ErrorDetails detail={copy.detail}/>
-      {onRetry && <button type="button" className="btn sm self-start" onClick={onRetry}>Retry</button>}
+      {onRetry && <RetryButton onRetry={onRetry} isBusy={isBusy} focusTargetId={focusTargetId}/>}
     </div>
   );
 }
 
-/** One announced banner with one Retry for an outage shared by ≥2 regions (see getSharedFailure). */
-function PageErrorBanner({ sources, error, onRetry }) {
+/**
+ * One announced banner with one Retry for an outage shared by ≥2 regions (see getSharedFailure).
+ * @param isBusy - a Retry is in flight
+ * @param focusTargetId - card id that takes focus when the banner leaves on recovery while its Retry is focused
+ */
+function PageErrorBanner({ sources, error, onRetry, isBusy = false, focusTargetId }) {
   const sourceList = new Intl.ListFormat('en', { type: 'conjunction' }).format(sources || []);
   const copy = getErrorCopy(error, sourceList);
   return (
@@ -1395,7 +1468,7 @@ function PageErrorBanner({ sources, error, onRetry }) {
         <span className="fs-meta text-dim">{copy.next}</span>
         <ErrorDetails detail={copy.detail}/>
       </div>
-      <button type="button" className="btn sm" onClick={onRetry}>Retry</button>
+      <RetryButton onRetry={onRetry} isBusy={isBusy} focusTargetId={focusTargetId}/>
     </div>
   );
 }
@@ -1693,16 +1766,21 @@ const VERDICT_TONE_LABEL = { ok: 'Healthy', warn: 'Needs attention', crit: 'Acti
 /**
  * One-line page headline: tone glyph + word, one sentence (children), optional chips.
  * A chip with `href` drills to another view; one with `targetId` scrolls to that card and focuses it.
+ * @param freshness - optional getFreshnessState inputs; the verdict then follows getFreshnessVerdict, and an unread page swaps its sentence for the checking note
  */
-function PageVerdict({ tone = 'neutral', label, children, chips = [], className = '' }) {
-  const toneKey = VERDICT_TONE_LABEL[tone] ? tone : 'neutral';
+function PageVerdict({ tone = 'neutral', label, children, chips = [], freshness, className = '' }) {
+  const verdict = freshness ? getFreshnessVerdict({ ...freshness, tone, label }) : { tone, label, note: null, isBusy: false };
+  const toneKey = VERDICT_TONE_LABEL[verdict.tone] ? verdict.tone : 'neutral';
+  const isUnread = verdict.state === 'loading' || verdict.state === 'not-read';
+  const sentence = isUnread ? null : children;
 
-  return <div className={`page-verdict page-verdict--${toneKey} ${className}`.trim()}>
+  return <div className={`page-verdict page-verdict--${toneKey} ${className}`.trim()} aria-busy={verdict.isBusy ? 'true' : undefined}>
     <span className="page-verdict-tone">
       <span className="page-verdict-glyph" aria-hidden="true">{TONE_GLYPH[toneKey]}</span>
-      {label || VERDICT_TONE_LABEL[toneKey]}
+      {verdict.label || VERDICT_TONE_LABEL[toneKey]}
     </span>
-    {children && <span className="page-verdict-text">{children}</span>}
+    {sentence && <span className="page-verdict-text">{sentence}</span>}
+    {verdict.note && <span className="page-verdict-text fs-meta text-dim">{verdict.note}</span>}
     {chips.length > 0 && <span className="page-verdict-chips">
       {chips.map((chip) => <VerdictChip key={chip.key || chip.label} chip={chip} />)}
     </span>}
@@ -1817,7 +1895,7 @@ window.UI = {
   TrendChart, getChartTicks, getChartIndexAtRatio, getChartReadout, getChartSummary,
   TypeScaleStyle, toneVarColor,
   titleOf, stripHtmlTags, formatRelativeTime,
-  FreshnessStamp, getFreshnessState, getRegionSummary, RefreshButton,
+  FreshnessStamp, getFreshnessState, getFreshnessVerdict, getRegionSummary, getRegionView, RefreshButton,
   getFetchError, getErrorCopy, getSharedFailure, RegionUnavailable, PageErrorBanner, LoadingPlaceholder, SkeletonRows,
   INITIAL_REGION_STATE, putRegionRequest, putRegionData, putRegionFailure,
   setDisplayTimezone, getDisplayTimezone, tzShortLabel,

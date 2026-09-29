@@ -133,7 +133,7 @@ function renderRefresh(props: RefreshProps): RenderedNode {
   return findNodes(tree, (n) => n.type === "button")[0];
 }
 
-test("the Refresh atom is busy and disabled exactly while a request is in flight, and names the wave", () => {
+test("the Refresh atom is busy and inert exactly while a request is in flight, stays focusable, and names the wave", () => {
   const rows: Array<{ name: string; props: RefreshProps; busy: boolean; text: RegExp }> = [
     { name: "first wave", props: { isBusy: true, hasRead: false }, busy: true, text: /Loading…/ },
     { name: "refresh over held data", props: { isBusy: true, hasRead: true }, busy: true, text: /Refreshing…/ },
@@ -142,10 +142,20 @@ test("the Refresh atom is busy and disabled exactly while a request is in flight
   ];
   for (const row of rows) {
     const button = renderRefresh(row.props);
-    assert.equal(button.props.disabled === true, row.busy, `${row.name}: disabled`);
+    assert.equal(button.props.disabled, undefined, `${row.name}: never natively disabled — focus stays on it`);
+    assert.equal(button.props["aria-disabled"] === "true", row.busy, `${row.name}: aria-disabled`);
     assert.equal(button.props["aria-busy"] === "true", row.busy, `${row.name}: aria-busy`);
     assert.match(collectText(button), row.text, row.name);
     assert.equal(button.props["aria-label"], "Refresh cost data", `${row.name}: stable accessible name`);
+  }
+});
+
+test("a click on the Refresh atom starts a read only when idle", () => {
+  for (const isBusy of [false, true]) {
+    let calls = 0;
+    const button = renderRefresh({ isBusy, hasRead: true, onRefresh: () => { calls += 1; } });
+    (button.props.onClick as (event?: unknown) => void)({});
+    assert.equal(calls, isBusy ? 0 : 1, `busy=${isBusy}`);
   }
 });
 

@@ -18,6 +18,13 @@ const h = (ui.React as { createElement: CreateElement }).createElement;
 const exported = ui.UI as Record<string, unknown>;
 const TONE_GLYPH = exported.TONE_GLYPH as Record<string, string>;
 const LOW_N_MIN = exported.LOW_N_MIN as number;
+const VERDICT_TONE_LABEL = exported.VERDICT_TONE_LABEL as Record<string, string> | undefined;
+
+type RegionInput = { busy?: boolean; error?: string | null };
+type FreshnessInput = { at?: string | null; loading?: boolean; failed?: boolean; regions?: RegionInput[]; staleAfterMs?: number; now?: number };
+type Verdict = { state: string; tone: string; label?: string; note: string | null; isBusy: boolean };
+const getFreshnessVerdict = ui.getFreshnessVerdict as (input: FreshnessInput & { tone?: string; label?: string }) => Verdict;
+const getFreshnessState = ui.getFreshnessState as (input: FreshnessInput) => string;
 
 // the verdict's own root div — renderScreen wraps it in a node carrying the component's props.
 function renderVerdict(props: Record<string, unknown>, sentence = "Spend is on track."): RenderedNode {
@@ -109,5 +116,72 @@ describe("LowSampleMark", () => {
 
     assert.equal(collectText(low).replace(/\s+/g, ""), "(n=12)");
     assert.equal(collectText(enough), "");
+  });
+});
+
+describe("freshness-driven verdict", () => {
+  const NOW = Date.parse("2026-09-25T05:30:00.000Z");
+  const STALE_MS = 5 * 60_000;
+  const isoAgo = (ms: number) => new Date(NOW - ms).toISOString();
+  const freshAt = isoAgo(1_000);
+  const rows: Array<{ name: string; input: FreshnessInput; tone: string; label?: string; expectTone: string; expectLabel: RegExp; busy: boolean }> = [
+    { name: "never read", input: { at: null }, tone: "ok", expectTone: "neutral", expectLabel: /^No signal$/, busy: false },
+    { name: "first wave in flight", input: { at: null, loading: true }, tone: "ok", expectTone: "neutral", expectLabel: /^No signal$/, busy: true },
+    { name: "cold error", input: { at: null, regions: [{ error: "down" }] }, tone: "ok", expectTone: "neutral", expectLabel: /^No signal$/, busy: false },
+    { name: "fresh read", input: { at: freshAt }, tone: "ok", label: "All clear", expectTone: "ok", expectLabel: /^All clear$/, busy: false },
+    { name: "ok read past the stale window", input: { at: isoAgo(STALE_MS + 1) }, tone: "ok", label: "All clear", expectTone: "neutral", expectLabel: /^Last known$/, busy: false },
+    { name: "crit read then a failed read", input: { at: freshAt, failed: true }, tone: "crit", label: "3 daemons down", expectTone: "crit", expectLabel: /^Last known: 3 daemons down$/, busy: false },
+    { name: "warn read then a failed read", input: { at: freshAt, failed: true }, tone: "warn", expectTone: "warn", expectLabel: /^Last known: Needs attention$/, busy: false },
+    { name: "partial failure over an ok read", input: { at: freshAt, regions: [{ error: "down" }, {}] }, tone: "ok", expectTone: "neutral", expectLabel: /^Last known$/, busy: false },
+    { name: "refresh over a fresh read", input: { at: freshAt, loading: true }, tone: "ok", label: "All clear", expectTone: "ok", expectLabel: /^All clear$/, busy: true },
+    { name: "refresh over a warm error", input: { at: freshAt, regions: [{ busy: true, error: "down" }, { busy: true, error: "down" }] }, tone: "ok", expectTone: "neutral", expectLabel: /^Last known$/, busy: true },
+    { name: "refresh over a stale crit", input: { at: freshAt, loading: true, failed: true }, tone: "crit", expectTone: "crit", expectLabel: /^Last known: Action needed$/, busy: true },
+  ];
+
+  for (const row of rows) {
+    test(`${row.name} → ${row.expectTone} verdict${row.busy ? ", busy" : ""}`, () => {
+      const verdict = getFreshnessVerdict({ ...row.input, now: NOW, staleAfterMs: STALE_MS, tone: row.tone, label: row.label });
+
+      assert.equal(verdict.tone, row.expectTone);
+      assert.match(String(verdict.label ?? VERDICT_TONE_LABEL?.[verdict.tone]), row.expectLabel);
+      assert.equal(verdict.isBusy, row.busy);
+    });
+  }
+
+  test("stale or partial data never raises an all-clear and never hides an alarm, and the stamp agrees on state and busy", () => {
+    for (const row of rows) {
+      for (const tone of ["ok", "warn", "crit"]) {
+        const input = { ...row.input, now: NOW, staleAfterMs: STALE_MS };
+        const verdict = getFreshnessVerdict({ ...input, tone });
+        const stampState = getFreshnessState(input);
+        const stamp = renderScreen(h(ui.FreshnessStamp as Component, input)) as RenderedNode;
+        const stampRoot = findNodes(stamp, (n: RenderedNode) => n.type === "span")[0];
+        const isRead = stampState !== "loading" && stampState !== "not-read";
+
+        assert.equal(verdict.state, stampState, `${row.name}/${tone}: one state`);
+        assert.equal(stampRoot.props["aria-busy"] === "true", verdict.isBusy, `${row.name}/${tone}: busy agrees`);
+        if (verdict.tone === "ok") assert.ok(stampState === "fresh" || stampState === "refreshing", `${row.name}: ok only over a fresh read`);
+        if (tone !== "ok" && isRead) assert.equal(verdict.tone, tone, `${row.name}/${tone}: alarm kept`);
+      }
+    }
+  });
+
+  test("a partial verdict names the failed count and a stale one names the read age", () => {
+    const partial = getFreshnessVerdict({ at: freshAt, regions: [{ error: "down" }, {}, {}], now: NOW, staleAfterMs: STALE_MS, tone: "ok" });
+    const stale = getFreshnessVerdict({ at: isoAgo(STALE_MS + 1), now: NOW, staleAfterMs: STALE_MS, tone: "ok" });
+
+    assert.match(String(partial.note), /1 of 3 sources failed/);
+    assert.match(String(stale.note), /^Read .+ ago/);
+  });
+
+  test("PageVerdict with a freshness input shows the derived verdict and replaces an unread page sentence with a checking one", () => {
+    const tree = renderVerdict({ tone: "ok", label: "All clear", freshness: { at: null, loading: true } }, "Every agent is healthy.");
+    const parts = getToneParts(tree);
+
+    assert.equal(parts.glyph, TONE_GLYPH.neutral);
+    assert.equal(parts.word, "No signal");
+    assert.doesNotMatch(collectText(tree), /Every agent is healthy/);
+    assert.match(collectText(tree), /Checking/);
+    assert.equal(tree.props["aria-busy"], "true");
   });
 });
