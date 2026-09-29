@@ -15,7 +15,7 @@
 ## Analysis-mode token
 
 - **`[SIZE-EST]` analysis mode (schema-mode NON-DEV analysis/research/audit spawn — the INPUT-side right-sizing complement)**:
-  - Which spawns: the analysis spawns named at `rules/glass-atrium/orchestrator-role.md` → `#### Delegation-size discipline` → **Standing obligation**.
+  - Which spawns: glass-atrium-intel-researcher / glass-atrium-intel-planner / glass-atrium-intel-reporter / glass-atrium-qa-code-reviewer, each whose single terminal StructuredOutput IS the deliverable.
   - Why: such a spawn has no `files × 4.5` edit analog — it spends its budget on reads and reasoning, so a broad read + `effort:high` + a 3-4-field schema starves the emit step (the non-emit failure class).
     - Non-emission rate, dated figures and re-derivation recipe: `skills/glass-atrium-ops-orchestrator.md` → Completion-channel non-emission (MEASUREMENT SoT).
   - Format `[SIZE-EST] reads~=N fields=N effort=<medium|high> scope=<allowlist|bounded> — <1-line reason>`: `reads~=N` = the pre-spawn read/tool-use estimate · `fields` = the output schema's required-field count · `effort` = the chosen reasoning tier · `scope` = an explicit file/dir READ allowlist, never a repo sweep.
@@ -37,3 +37,17 @@
 - **Per-file tool_use measurement (feeds the `[SIZE-EST]` estimate in `## DEV-mode token`)**: one file edit+verify+commit unit costs ~4-5 tool_uses measured.
   - The `files × 4.5` anchor built on it is a floor, calibrated UP, never down.
   - Its split line sits clear of the truncation band, with headroom for the reserved `[COMPLETION]`/emit tail.
+
+## Effort-scaling table
+
+- **Pointer site**: `rules/glass-atrium/orchestrator-role.md` → `#### Analysis fan-out and team cardinality` → **Effort-scaling by task shape** — the SoT for the duty to pick the agent count from the task's shape, and when it fires.
+- **What it sets — detail**: it is the companion to `[SIZE-EST]`, which sizes each agent; this table holds the shape → cardinality mapping.
+
+| Task shape | Team cardinality | Example |
+|------------|------------------|---------|
+| Simple fact lookup / single-file edit | **1 agent** (no fan-out) | "find where X is defined and fix the typo" |
+| Comparison / multi-source cross-check / independent multi-section work | **2-4 agents** in parallel | "compare 3 libraries", "review these 4 independent modules" |
+| Broad open-ended research sweep | fan out toward the engine's runtime concurrency self-cap | "survey the whole landscape of Y" |
+
+- Deep-but-single-threaded work escalates reasoning DEPTH through the `effort` parameter, not more agents.
+- Add agents only when sub-tasks are genuinely independent.

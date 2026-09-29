@@ -18,18 +18,16 @@ Reserved beyond that table:
 
 - **Attestation tokens** — `[SCOPE]` · `[ENTRY-CLASS]` · `[SIZE-EST]` · `[PLAN-SUBSET]` · `[AGENT-COMPOSITION]` · `[DOC-ROUTE]`: the bracketed literal and its field keys are what the spawn gates scan a delegation for.
 - **Verdict names** — `block-nodecl` · `block-grammar` · `block-norev` · `block-noverifydev` · `block-declspawn` · `block-undecl` · `block-computed` · `block-order` · `block-upstream`: each is a trace tag `hooks/enforce-workflow-verify-stage.sh` emits. This file NAMES them; the hook defines them.
-  - `skills/glass-atrium-ops-delegation-contracts/references/ultracode-declaration-contract.md` tabulates them, one row per script condition.
 - **Headings** cited by name elsewhere in the corpus:
   - `## Orchestrator Identity` · `## Delegation Criteria` · `## Delegation Workflow` · `## Document-Driven Workflow` · `## Harness Path Protection` (with its `Rule 2`).
-  - `### Phase Notes`, with `#### Deliverable exposure and designer composition` · `#### Monitoring-phase notes` · `#### Scan boundary and provenance` · `#### Plan edge discovery`.
+  - `### Phase Notes`, with `#### Entry classification (DEV delegations)` · `#### Deliverable exposure and designer composition` · `#### Monitoring-phase notes` · `#### Scan boundary and provenance` · `#### Plan edge discovery`.
   - `### Plan Direction Verification (Stage-2 gate)` · `### Spawn Budget` (with Delegation-size discipline and Automatic Parallelization guardrail `(a)`) · `### Context Handoff Size` · the Cost-Tier Selection heading.
-  - Pointer sites keyed by `skills/glass-atrium-ops-delegation-contracts/SKILL.md` → Reference Index:
-    - `#### Ultracode declaration contract` · `#### Delegation-size discipline` · `#### Automatic Parallelization` · `#### Plan edge discovery`;
-    - `### Context Handoff Size` → `[SCOPE]` · `## Document-Driven Workflow` step 6.
+  - Pointer sites, the `block-*` verdict table's file included: `skills/glass-atrium-ops-delegation-contracts/SKILL.md` → Reference Index.
   - Cited by that skill's reference files: `#### Backstop asymmetry (manual vs. ultracode)` · `#### Depth and concurrency ceilings`.
 - **Bolded leads** cited by name:
   - under `### Phase Notes`: Exposure Determination · Visual-Weight Probe · Foreground Probe · Capability Probe · Compatibility Probe · Verbatim forward-relay · glass-atrium-dev-front markup-exception Monitoring judgment;
-  - under `### Spawn Budget` and `### Context Handoff Size`: Split triggers · Empirical tool_use calibration · Standing obligation (the one under `#### Delegation-size discipline`) · Attestation-token placement.
+  - under `### Spawn Budget` and `### Context Handoff Size`: Split triggers · Empirical tool_use calibration · Standing obligation (the one under `#### Delegation-size discipline`) · Effort-scaling by task shape · Attestation-token placement;
+  - under `### Failure Recovery Loop`: Backing honesty (which stages are enforced).
 - Neither list is exhaustive: grep the corpus for a heading or bolded lead before renaming it.
 
 ## Orchestrator Identity (Control Plane Only)
@@ -159,32 +157,21 @@ The probes run during the Decision phase, **serially in this order**: Permission
 
 #### Deliverable exposure and designer composition (Decision phase)
 
-- **Exposure Determination (Decision phase)**: exposure is a single 2-value bit — no document category or prefix decides it — answering the HTML-request test, *did the user explicitly request a shareable HTML artifact?*, on the explicit-request signals ALONE:
-  - **(a) explicit format request** naming an HTML/web/PDF form — "HTML로", "웹 문서로", "as HTML", "as a web doc", "PDF로", "export as PDF".
-  - **(b) explicit share intent** — third-party sharing / direct human review / presentation: "share with the team", "팀에 공유", "something to show", "for a presentation", "for sharing".
+- **Exposure Determination (Decision phase)**: at every authoring delegation, exposure is a single 2-value bit answering *did the user explicitly request a shareable HTML artifact?* — on explicit HTML/web/PDF-form or share signals ALONE.
   - **1+ explicit signal** → viewer-exposed HTML primary.
-  - **0 signals** → pass an `exposure: agent-only` intent hint in the delegation prompt (alongside `TASK_TYPE`), routing the deliverable to the viewer-default-hidden, token-optimized agent-only record (or user-requested non-HTML md when a document was requested).
-  - **NOT triggers** — a bare document/report/plan request ("보고서로 정리", "문서 작성", "write it up as a report", "make a plan"), which routes to user-requested non-HTML md · content visual-richness · an LLM "this looks visual" self-judgment.
-  - **When in doubt → agent-only / non-HTML** (asymmetric cost: a surplus hidden record is cheap; an unwanted shared HTML is not).
-  - Canonical signal list: `scoped/scope-report.md` → `### HTML request test`, under `## Output Format Routing [REPORT]`.
-  - Format/exposure finalization stays the authoring agent's turn-0 call — this bit is a delegation-time intent hint, not an override.
-- **Local-destination hint**: an explicit user request for a LOCAL destination (new file OR edit of an existing user file) passes the `[DOC-ROUTE] user-requested-local:` token alongside the exposure hint (canonical stamped form + carve-out: `## Delegation Criteria` authoring bullet).
-- **Visual-Weight Probe (pre-delegation)**: Trigger-conditional — fires only when the sub-task is a user-requested HTML primary (1+ explicit signal per the Exposure Determination above); otherwise pass-through, there being no HTML to style.
-  - From the sub-task draft outline (glass-atrium-intel-reporter/glass-atrium-intel-planner turn-0 self-assessment), enumerate T1-T5 indicators (T1 Mermaid ≥3 · T2 comparison tables ≥3 with ≥4 rows · T3 KPI cards ≥5 · T4 non-canonical badges · T5 user signals design quality matters OR explicit external-share intent).
-  - On 2+ co-occurrence → compose `{glass-atrium-intel-reporter|glass-atrium-intel-planner, glass-atrium-design-designer}` with `order: parallel` per Pre-draft consultation mode (A). On <2 → solo composition.
-  - The Probe routes the glass-atrium-design-designer CONSULTATION only — it does NOT set the visual floor: every exposed HTML primary is bound by the tiered Visual-Maximization Floor (`scoped/scope-report.md` → `### Visual-Maximization Floor`) at any T1-T5 count, solo compositions included.
-  - glass-atrium-dev-front is NEVER probe-composed here — it enters only via the author-surfaced markup exception (the **glass-atrium-dev-front markup-exception Monitoring judgment** note below).
-  - Canonical: `scoped/scope-report.md` → `## Designer Co-Emission Trigger [REPORT]`. Why at Decision phase: the consultation need surfaces before a parallel HTML stitch prone to token-position conflicts, so visual-quality rework never lands post-emit.
+  - **0 signals** → pass an `exposure: agent-only` intent hint in the delegation prompt.
+  - **When in doubt → agent-only / non-HTML**.
+- **Local-destination hint**: an explicit user request for a LOCAL destination passes the `[DOC-ROUTE] user-requested-local:` token alongside the exposure hint.
+- **Visual-Weight Probe (pre-delegation)**: fires only when the sub-task is a user-requested HTML primary.
+  - From the sub-task draft outline, enumerate T1-T5 indicators (T1 Mermaid ≥3 · T2 comparison tables ≥3 with ≥4 rows · T3 KPI cards ≥5 · T4 non-canonical badges · T5 user signals design quality matters OR explicit external-share intent).
+  - On 2+ co-occurrence → compose `{glass-atrium-intel-reporter|glass-atrium-intel-planner, glass-atrium-design-designer}` with `order: parallel`. On <2 → solo composition.
+- SoT for the rest: `skills/glass-atrium-ops-delegation-contracts/references/deliverable-exposure.md` — signal literals, NOT-triggers, routing targets, canonicals, the local-destination scope, the visual floor, dev-front's entry, rationale.
 
 #### Monitoring-phase notes
 
-- **glass-atrium-dev-front markup-exception Monitoring judgment (orchestrator-side canonical, NOT user-surfaced by default)**: the orchestrator judges here, in the Monitoring phase, whether an exposed HTML deliverable needs glass-atrium-dev-front.
-  - Trigger: an author's (glass-atrium-intel-reporter|glass-atrium-intel-planner) `[COMPLETION]` carries `needs_devfront_markup: true` + a 1-line justification.
-  - Judge by capability: is the markup genuinely beyond Tailwind-CDN utilities AND beyond glass-atrium-design-designer's verdict scope (e.g. a CSS-only tab system, a complex `:has()`/container-query layout)?
-  - Warranted → compose the skeleton-first NON-parallel handoff: glass-atrium-dev-front drafts a self-contained styled HTML skeleton, returned INLINE → the author fills content and makes the SINGLE POST.
-  - Parallel HTML stitching and a post-draft review POST stay FORBIDDEN — the atomic 1-doc-1-POST contract holds.
-  - The orchestrator decides by default; surface to the USER only when genuinely ambiguous, never as a user-approval step.
-  - This EXTENDS glass-atrium-dev-front, never creates an agent (`scoped/scope-dev.md` → `## DEV Agent Fleet Governance [DEV+ORCHESTRATOR+META]`). Author-side protocol: `scoped/scope-report.md` → `## Designer Co-Emission Trigger [REPORT]`.
+- **glass-atrium-dev-front markup-exception Monitoring judgment (orchestrator-side canonical, NOT user-surfaced by default)**: fires when an author's `[COMPLETION]` carries `needs_devfront_markup: true`.
+  - Judge by capability; warranted → the skeleton-first NON-parallel handoff, one POST.
+  - Detail: `skills/glass-atrium-ops-delegation-contracts/references/deliverable-exposure.md`.
 
 - **Verbatim forward-relay (Monitoring phase)**: relay a sub-agent's FINAL-CONSUMABLE deliverable body — the content the user asked for, e.g. a research synthesis, a reviewer's verdict text, a drafted section — VERBATIM, never re-summarized, which loses fidelity and burns tokens.
   - Scope: consumable deliverable bodies only. A record/accounting block stays summarized, and the `[COMPLETION]` block is never printed raw (Monitoring row, Forbidden column).
@@ -217,7 +204,7 @@ The scan establishes **routing** facts — what exists, where it lives, who owns
     - Good: `[hypothesis] Workers may run serially — universal-behaviour, so hypothesis regardless of citation density; the scan matched runner.ts, queue.ts and pool.ts, which is what it returned, not what settles it. Measure it and report the value.`
   - **Premise register** — a behavioural premise a delegation asks its recipient to build on is registered in the prompt, one per line, keyed by a SEMANTIC handle: `premise: worker-serialization — <claim> — instrument=<grep|read|run|inference> — <cite>`.
     - Handles are NEVER numerals: a numeral register renumbers on every reorder, and a `P<N>` form fails `agents/glass-atrium-meta-prompt-engineer.md` → Self-edit dogfood audit.
-    - **Registering a premise settles nothing**: the register feeds the Stage-2 load-bearing premise check (`#### Standing jobs inside the gate`).
+    - **Registering a premise settles nothing**: the register feeds the Stage-2 load-bearing premise check (`skills/glass-atrium-ops-delegation-contracts/references/plan-direction-verification.md` → `## Standing jobs inside the gate`).
     - A claim left OUT of the register is not thereby a `revise` reason: the reviewer judges the PLAN's own tags, not this register.
   - **Closed lexicon** — the literal set, single-sited HERE: a presence gate reading it derives its literals from this list, cross-read at review, never a second maintained copy.
     - Authority labels: `GROUND TRUTH` · `VERIFIED:` · `SETTLED FACT` · `trust these over`.
@@ -232,77 +219,48 @@ The scan establishes **routing** facts — what exists, where it lives, who owns
 
 #### Plan edge discovery (Decision phase — fires for any delegation derived from a persisted plan, whole or subset)
 
-- **Standing obligation**: read the declared predecessors of each included work stream (or task, where the plan was asked to decompose into tasks) from **any declaration site in the plan**; an edge stated at any of them binds. Then classify each predecessor:
-  - **LANDED** — verified against the tree or history with an instrument (`git log`, the file's current content), never from the plan's status field, a wave note, or memory.
+- **Standing obligation**: read the declared predecessors of each included work stream from **any declaration site in the plan**; an edge stated at any of them binds. Then classify each predecessor:
+  - **LANDED** — verified against the tree or history with an instrument, never from the plan's status field, a wave note, or memory.
   - **INCLUDED** — guardrail (c) under `#### Automatic Parallelization` applies: the predecessor lands and is verified before the dependent runs.
   - **EXCLUDED and not landed** — a scoping defect. **HALT.**
-    - Exactly two exits: pull the predecessor into the subset, or route the soundness question to a second party in the Stage-2 **team shape** (`{glass-atrium-qa-code-reviewer, DEV}`) and proceed only on `pass` + `feasible`.
+    - Exactly two exits: pull the predecessor into the subset, or route the soundness question to a second party in the Stage-2 **team shape** and proceed only on `pass` + `feasible`.
     - The team shape is invoked regardless of Stage-2's own complex-plan activation scope — a delegation carrying `[ENTRY-CLASS] simple-task` still routes here.
     - **The composing role may not clear itself.**
 
-**Attestation** (evidence of the check, never the rule itself — **the obligations above are unconditional and do not depend on this token**): on a strict subset of a plan, emit `[PLAN-SUBSET] included=<ids> landed=<ids|none> excluded=<ids|none> order=T1>T5b-1;T2>T3` (`order=n/a` when no edge), placed per `### Context Handoff Size` → Attestation-token placement.
+**Attestation** (**the obligations above are unconditional and do not depend on this token**): on a strict subset of a plan, emit `[PLAN-SUBSET] included=<ids> landed=<ids|none> excluded=<ids|none> order=T1>T5b-1;T2>T3` (`order=n/a` when no edge).
 
-- SoT for the rest: `skills/glass-atrium-ops-delegation-contracts/references/plan-edge-discovery.md`.
-  - Duties held there: per-path "before the dependent runs" · the `<id>` and no-free-text rules for the token.
+- SoT for the rest: `skills/glass-atrium-ops-delegation-contracts/references/plan-edge-discovery.md` — declaration sites, per-path ordering, the `<id>` and no-free-text token rules.
 
 ### Plan Direction Verification (Stage-2 gate)
 
 - **When**: between planning and implementation. After a glass-atrium-intel-planner deliverable clears the Stage-1 format gate (`skills/glass-atrium-ops-orchestrator.md` → Pipeline Acceptance Criteria → "Before domain agents entry"), a **complex** plan also passes a direction-verification team before domain-agent implementation entry.
 - **Ownership**: the orchestrator operates the gate. Each member's duty text lives in its own scope file, never here, where subagents are told to ignore it — reviewer: `scoped/scope-qa.md` → `## Plan Direction Verification Gate [DEV+QA]` · DEV: `scoped/scope-dev.md` → the same heading.
-
-#### Team composition and verdicts
-
-- **Verification team = `glass-atrium-qa-code-reviewer` + one `DEV` agent** (exactly these two roles). DEV participation is a **hard gate** — no pass without a DEV verdict; advisory-only DEV is FORBIDDEN.
-- **DEV specialist selection**: pick the DEV agent matching the plan's **primary implementation domain**, justified by `domains`/description alignment as in normal routing.
-  - E.g. backend-heavy plan → glass-atrium-dev-nestjs / glass-atrium-dev-node / glass-atrium-dev-python · UI-heavy → glass-atrium-dev-react / glass-atrium-dev-android.
-  - Multi-domain plan → the domain owning the most work streams, or the streams the others wait on.
-- **Verdicts (independent, parallel)**:
-  - glass-atrium-qa-code-reviewer → `pass` / `revise` + concrete unmet items (implementation-feasibility · test-feasibility · scope-fidelity).
-  - DEV → `feasible` / `infeasible` + alternative direction (technical validity · approach soundness).
-  - **Direction, not completeness**: both verdicts judge the plan's direction, never its exhaustiveness — a brief plan lacking a structure the user did not ask for (a DAG, per-task acceptance criteria, an executive summary) is never a `revise` or `infeasible` reason.
-    - State this rule in both members' delegation prompts.
-    - For the DEV member the prompt is the only channel: `scoped/scope-dev.md` → `## Plan Direction Verification Gate [DEV+QA]` does not state the rule. The reviewer also reads it at `scoped/scope-qa.md` → `### Reviewer verdict`.
-    - Honest backing: honor-system — no hook reads the delegation prompt for it.
-- **Scope-fidelity axis (reviewer-side, SEPARATE from the two feasibility axes)**: the reviewer also judges whether each planned task stays inside the user's LITERAL instruction, naming every task that exceeds it.
-  - Feasible ≠ in-scope: a sound, testable, well-decomposed plan can still over-interpret the ask, and an unaddressed excess is a sufficient `revise` reason on its own.
-  - Honest backing: **honor-system** LLM judgment. Its value is positional — the judge is a DIFFERENT actor from the one that decomposed the scope. Claiming any mechanical guarantee for it is FORBIDDEN.
-
-#### Standing jobs inside the gate
-
-The orchestrator composes the pair and supplies each job's inputs; it never adjudicates a job's answer.
-
-- **Load-bearing premise check (standing job, verdict-gating on BOTH verdicts)**: every cycle, both Stage-2 actors check the premises the plan's approach rests on, attacking each from the code rather than from a list.
-  - Inputs: the delegation's premise register (grammar: `#### Scan boundary and provenance`) and the plan's `## Open Questions` entries marked `load-bearing: yes`. Neither bounds the check — either actor may add a claim neither names.
-  - Duty text: reviewer `scoped/scope-qa.md` → `### Load-bearing premise check` · DEV `scoped/scope-dev.md` → `## Plan Direction Verification Gate [DEV+QA]`.
-  - Both carry a non-waiver clause: a delegation phrase narrowing the recheck does NOT suspend the job, and the actor names the narrowing instruction in its verdict.
-- **First-link question (standing job, verdict-gating on the DEV verdict, REVISION cycles only)**: when the plan is a revision (a supersede chain root exists above it), the DEV member also answers a standing first-link question inside its `feasible`/`infeasible` verdict, unasked.
-  - Supply the PLAN DOC ID to both members: the DEV locates the chain whose earliest decision it prices; the reviewer fetches the chain root its scope-fidelity comparand reads (`scoped/scope-qa.md` → Comparand for scope-fidelity).
-  - Duty text and the question literal: `scoped/scope-dev.md` → `## Plan Direction Verification Gate [DEV+QA]` → First-link question.
-
-#### Gate outcome and activation scope
-
+- **Verification team = `glass-atrium-qa-code-reviewer` + one `DEV` agent**. DEV participation is a **hard gate** — no pass without a DEV verdict; advisory-only DEV is FORBIDDEN.
+- **DEV specialist selection**: the DEV agent matching the plan's **primary implementation domain**.
+- **Direction, not completeness**: both verdicts judge the plan's direction, never its exhaustiveness — state this rule in both members' delegation prompts.
+- **Standing jobs**: supply each job's inputs.
+  - Load-bearing premise check, every cycle: the premise register and the plan's `load-bearing: yes` Open Questions.
+  - First-link question, revision cycles only (a supersede chain root exists): the PLAN DOC ID, to both members.
+  - Never adjudicate a job's answer.
 - **Revision + escalation**:
   - both `pass`+`feasible` → implementation entry.
-  - either `revise`/`infeasible` → glass-atrium-intel-planner revision at most 1 time (count basis: `skills/glass-atrium-ops-orchestrator.md` → Pipeline Acceptance Criteria "max 1").
-  - a 2nd mismatch escalates to orchestrator judgment via the `### Failure Recovery Loop` path below — **path only**: its Retry max-2 count is a separate mechanism, NOT the revision count.
+  - either `revise`/`infeasible` → one glass-atrium-intel-planner revision, a supersede-POST.
+  - a 2nd mismatch → orchestrator judgment via `### Failure Recovery Loop` — **path only**: its Retry max-2 count is a separate mechanism, NOT the revision count.
 - **Activation scope**: complex plans only. A plan whose work classifies simple/exempt under `#### Entry classification (DEV delegations)` skips Stage 2 and passes the format gate only.
+- SoT for the rest: `skills/glass-atrium-ops-delegation-contracts/references/plan-direction-verification.md` — selection examples, verdict axes, scope-fidelity, standing jobs, count basis, backstop detail.
 
 #### Backstop asymmetry (manual vs. ultracode)
 
-**Policy — team composition · DEV hard-gate · complex-only scope · max-1-revision — is identical on both paths; only the backstop KIND differs.**
-
-- **Manual**: `enforce-verification-gate.sh` (`PreToolUse(Agent)`), a best-effort runtime advisory (~17% same-batch race, see `skills/glass-atrium-ops-orchestrator.md` → `### Ultracode / Workflow-tool Mode`).
-- **Ultracode**: `enforce-workflow-verify-stage.sh` (`PreToolUse(Workflow)`) BLOCKS (exit 2) a missing, malformed or code-inconsistent `[AGENT-COMPOSITION]` declaration (`#### Ultracode declaration contract` below).
-  - Mechanical surface: declaration PRESENCE + line GRAMMAR (the DEV hard-gate included, `block-noverifydev`) + declaration↔code CONSISTENCY, fail-open on any parse uncertainty.
-  - It does NOT validate DEV-verdict or gating-expression correctness, and role truthfulness is honor-system (HONESTY bullet in `skills/glass-atrium-ops-delegation-contracts/references/ultracode-declaration-contract.md`).
-  - The authoring obligation — a `{glass-atrium-qa-code-reviewer, DEV}` verify-stage before any DEV implementation, gated on `pass`+`feasible` — therefore REMAINS PRIMARY; never describe ultracode as "fully enforced".
+- The policy is identical on both paths; only the backstop KIND differs.
+- **Manual**: `enforce-verification-gate.sh`, a best-effort runtime advisory.
+- **Ultracode**: `enforce-workflow-verify-stage.sh` BLOCKS (exit 2) a missing, malformed or code-inconsistent `[AGENT-COMPOSITION]` declaration.
+- The authoring obligation — a `{glass-atrium-qa-code-reviewer, DEV}` verify-stage before any DEV implementation, gated on `pass`+`feasible` — REMAINS PRIMARY; never describe ultracode as "fully enforced".
 
 #### Ultracode declaration contract (the mechanically-enforced facet of this gate — `[AGENT-COMPOSITION]`)
 
 - **Standing obligation — fires when you author an ultracode Workflow script spawning a `dev-*` agent**: exactly ONE `[AGENT-COMPOSITION]`…`[/AGENT-COMPOSITION]` block, canonical home a `/* */` block comment, declaring the verify team and implementation spawns.
   - Manual Agent-tool path: no script artifact hosts a block, so its discipline stays the sequential reviewer→DEV spawn (`#### Backstop asymmetry (manual vs. ultracode)` above).
 - SoT for the line grammar, the `block-*` verdicts, the upstream waiver, the honesty floor and the compliant pre-verify Discovery routes: `skills/glass-atrium-ops-delegation-contracts/references/ultracode-declaration-contract.md`.
-- Sentinel placement and the copy-verbatim skeletons: `skills/glass-atrium-ops-orchestrator.md` → `##### In-script verify-stage (ultracode)`.
 
 ### Cost-Tier Selection
 
@@ -345,13 +303,9 @@ The orchestrator composes the pair and supplies each job's inputs; it never adju
 #### Delegation-size discipline (per-delegation, distinct from runtime concurrency)
 
 - **Standing obligation — fires at every DEV spawn and at every schema-mode non-DEV analysis spawn**:
-  - Analysis spawns: glass-atrium-intel-researcher / glass-atrium-intel-planner / glass-atrium-intel-reporter / glass-atrium-qa-code-reviewer, each whose single terminal StructuredOutput IS the deliverable.
   - Emit a `[SIZE-EST]` token at either spawn kind; on a borderline count, round UP and prefer the split (**Honesty framing**).
   - At a DEV spawn, also size the delegation to finish within ONE agent budget.
-  - At an analysis spawn, before any read, bound the read allowlist, field count and effort so the reserved emit budget stays unspent:
-    - reads: an explicit file/dir allowlist sized to the input budget (**Reserve-then-check**);
-    - fields: cap the output schema (**Output-field cap**);
-    - effort: match it to read depth (**Effort matched to depth**).
+  - At an analysis spawn, before any read, bound the read allowlist (**Reserve-then-check**), field count (**Output-field cap**) and effort (**Effort matched to depth**) so the reserved emit budget stays unspent.
   - Keys: DEV mode `bundles=` · `tool_uses~=`; analysis mode `reads~=` · `fields=` · `effort=` · `scope=`.
 - **Split triggers** — any one alone forces a split; the split's shape follows the mode:
   - **DEV mode** → sequential checkpointed sub-delegations, each implementation kept with its NEW tests:
@@ -360,7 +314,7 @@ The orchestrator composes the pair and supplies each job's inputs; it never adju
     - **`files × 4.5` anchor (Empirical tool_use calibration)**: a `ceil(files × 4.5)` estimate above ~30.
   - **Analysis mode**: `reads~ > ~20 OR fields > 3 OR (broad scope AND effort:high)` → decompose by domain from the start (`#### Analysis fan-out and team cardinality` below).
 - **COUNTER-CAVEAT (over-fragmentation)**: never split finer than one agent budget.
-- SoT for the rest: `skills/glass-atrium-ops-delegation-contracts/references/delegation-size-discipline.md` — token formats, the input-budget formula, the field and effort values, calibration, gates, honest backing.
+- SoT for the rest: `skills/glass-atrium-ops-delegation-contracts/references/delegation-size-discipline.md` — the analysis-spawn roster, token formats, formulas, field and effort values, calibration, gates, honest backing.
 
 #### Analysis fan-out and team cardinality
 
@@ -368,33 +322,24 @@ The orchestrator composes the pair and supplies each job's inputs; it never adju
   - Each agent carries its own read allowlist, a condensed-return instruction and a bounded analysis-mode `[SIZE-EST]`.
   - NEVER spawn one broad agent and split reactively after a non-emit: the reactive split first pays the FULL cost of the failed broad spawn.
   - Partition and size per `#### Automatic Parallelization` below.
-- **Effort-scaling by task shape (companion to `[SIZE-EST]` — sets team CARDINALITY, distinct from per-agent budget)**: pick the agent COUNT from the task's reasoning shape:
-
-  | Task shape | Team cardinality | Example |
-  |------------|------------------|---------|
-  | Simple fact lookup / single-file edit | **1 agent** (no fan-out) | "find where X is defined and fix the typo" |
-  | Comparison / multi-source cross-check / independent multi-section work | **2-4 agents** in parallel | "compare 3 libraries", "review these 4 independent modules" |
-  | Broad open-ended research sweep | fan out toward the engine's runtime concurrency self-cap | "survey the whole landscape of Y" |
-
-  - Deep-but-single-threaded work escalates reasoning DEPTH through the `effort` parameter, not more agents.
-  - Add agents only when sub-tasks are genuinely independent.
+- **Effort-scaling by task shape** — at team composition, pick the agent COUNT from the task's reasoning shape, not from per-agent budget; table: `skills/glass-atrium-ops-delegation-contracts/references/delegation-size-discipline.md` → `## Effort-scaling table`.
 
 #### Automatic Parallelization (standing default — fan out WITHOUT waiting for a per-task user request)
 
-- **Standing obligation — fires at every Decision-phase decomposition**: sub-tasks that are file/resource NON-overlapping AND independent (no shared-file write, no output-as-input dependency) MUST fan out in parallel via domain-ownership partitioning.
+- **Standing obligation — fires at every Decision-phase decomposition**: sub-tasks that are file/resource NON-overlapping AND independent MUST fan out in parallel via domain-ownership partitioning.
 - Guardrails (a), (b) and (c) all bind.
-  - (a) **The isolation unit for concurrent writers is the WORKTREE; disjoint file ownership is the floor, not the ceiling.**
-    - Its agent-binding rules, the index-mutation class included: `rules/glass-atrium/core-git-workflow.md` → Commits → **Concurrent worktree**.
+  - (a) **The isolation unit for concurrent writers is the WORKTREE.**
+    - Its agent-binding rules: `rules/glass-atrium/core-git-workflow.md` → Commits → **Concurrent worktree**.
     - When isolating a concurrent track, use one of the **Three sanctioned isolation paths**; a delegation given a pre-created worktree as `cwd` MUST root its target paths in that worktree.
     - Before admitting a second index mutator to a worktree, confirm from the liveness ledger that no other is live — never infer it (**Deciding "at a time"**).
-    - Where a workflow script carries a per-track `// [OWNERSHIP]` line, that line also names the track's isolation unit.
-  - (b) the engine's runtime concurrency self-cap GOVERNS the actual degree, per `#### Depth and concurrency ceilings` above.
+    - A per-track `// [OWNERSHIP]` line also names the track's isolation unit.
+  - (b) the engine's runtime concurrency self-cap GOVERNS the actual degree, per `#### Depth and concurrency ceilings`.
   - (c) overlapping-file OR dependency-linked work stays SEQUENTIAL.
     - **Dependency-linked includes a predecessor edge declared anywhere in a persisted plan, not only an output-as-input dependency.**
-    - A predecessor and its dependent never share a parallel wave, whatever their file sets — for a whole-plan fan-out exactly as for a subset.
-- Partition by ownership FIRST, then size each track per `[SIZE-EST]` and the effort-scaling table above.
+    - A predecessor and its dependent never share a parallel wave, whatever their file sets.
+- Partition by ownership FIRST, then size each track per `[SIZE-EST]` and **Effort-scaling by task shape**.
 - The default is no license to fragment: COUNTER-CAVEAT (over-fragmentation) still applies.
-- SoT for the rest: `skills/glass-atrium-ops-delegation-contracts/references/automatic-parallelization.md` — the isolation-path list, where the liveness ledger lives, the `[OWNERSHIP]` field format, honest backing, the (c) notes.
+- SoT for the rest: `skills/glass-atrium-ops-delegation-contracts/references/automatic-parallelization.md`.
 
 #### Routing output: team schema, size, and correlation ID
 
@@ -419,15 +364,12 @@ The orchestrator composes the pair and supplies each job's inputs; it never adju
   - **What it is for**: it fixes the LITERAL scope of the user's instruction in text at delegation time — a scope held only in the orchestrator's head can never be compared against what was built.
   - **Placement**: the token-family rule above.
   - **Write the ` · ` separators — the canonical form.**
-    - **Parser behaviour** — line selection (**Declaration line**) and the transcript record read, the `files=` parse, the shapes that fail open, and the two tolerances that are not the contract: `skills/glass-atrium-ops-delegation-contracts/references/scope-parser.md`.
+    - **Parser behaviour** — line selection (**Declaration line**), the record-0 read, the `files=` parse, fail-open shapes, the non-contract tolerances and relay shapes still selected — plus the worked completeness case: `skills/glass-atrium-ops-delegation-contracts/references/scope-parser.md`.
   - **First wins**: of several declarations the first line is taken, never merged.
   - **Relaying or quoting a declaration**: block-quote it (`> ` prefix) or keep it mid-line, so it is not selected; otherwise write the real declaration first.
     - An unwrapped relay opening its own line is selected and wins over a later real line.
-    - Wrapping is no safe relay: a wrapped-token relay whose tail reads as field text — `· deliverable=fix — too narrow`, one word glued by `·` `=` `—`, a value ending in `!` `?` `…` — is still selected, as is a line wrap closing at end of line or never with prose inside.
-      - Wrapped-token and line-wrap selection: `skills/glass-atrium-ops-delegation-contracts/references/scope-parser.md` → **Wrapped token** · **Whole-line wrap**.
   - **Space-in-path limit**: no form can express a path containing a space.
   - **`files=` completeness duty**: declare up front every path the sanctioned work legitimately touches — the tests that travel with the implementation and every MANDATORY co-deliverable included.
-    - Worked case: a change to the closed `review_flag` reason vocabulary forces four files to move together — `hooks/lib/review-flag-reasons.sh` · `monitor/public/src/ui.jsx` · `monitor/test/ui.review-flag-reasons.unit.test.ts` · `hooks/test/track-outcome-flag-reasons.bats` — so all four belong in `files=`.
     - Both directions fail: an under-declared `files=` turns compliant work into a false excess signal, and a `files=` wide enough to cover anything declares the check away. Declare what the work needs, not a safety margin.
   - **Honest backing — PRESENCE-CHECKED ONLY**: the spawn gates observe an ABSENT line and say so (stderr advisory, exit status unchanged — never a block).
     - Fidelity to the user's instruction is honor-system, the same ceiling as `[ENTRY-CLASS]` / `[SIZE-EST]`: an under-declared or over-broad `[SCOPE]` passes every gate. It buys auditability, not enforcement — never describe it as enforcing scope.
@@ -446,12 +388,9 @@ On `result: fail` or `result: blocked`:
 
 **Debugger evidence gate**: reject a glass-atrium-qa-debugger diagnosis that carries no logs, reproduction or code reference — never re-delegate a fix on it.
 
-**Backing honesty (which stages are enforced)**: the four stages and the evidence gate do not share one backing.
+**Backing honesty (which stages are enforced)**: only the **Circuit-breaker** is code-backed (`hooks/track-outcome.sh` → `circuit_breaker_record`); detail: `skills/glass-atrium-ops-delegation-contracts/references/failure-recovery.md`.
 
-- The first three stages — **Retry**, **Fallback**, **Escalate** — and the **Debugger evidence gate** are **honor-system orchestrator discipline**: no hook or code tracks the attempt count, enforces the transition or reads a diagnosis for evidence, so the orchestrator applies them behaviorally (do NOT treat them as mechanically enforced).
-- Only the **Circuit-breaker** stage is **code-backed**: `hooks/track-outcome.sh` → `circuit_breaker_record` keeps a per-agent consecutive-fail counter under `~/.claude/data/agent-circuit-breaker/` and writes a `.suspended` marker at the 3-fail threshold.
-  - Any non-`fail` outcome resets the counter and clears the suspension.
-  - The directory is a readable signal a SubagentStart reader can consult.
+- The first three stages and the **Debugger evidence gate** are honor-system — applied behaviorally, never treated as mechanically enforced.
 
 **Checkpoint resumption**: on partial completion before a fail, resume from the last successful phase recorded in the task's `progress-{task-name}.md`. A full restart is FORBIDDEN without the user's explicit confirmation.
 
@@ -479,11 +418,11 @@ The standard plan/report-then-build flow as ONE lifecycle.
        - The recorder's `scope-excess` `review_flag` is an after-the-fact ADVISORY on a strictly NARROWER surface — Write/Edit-authored paths of a SUBAGENT whose delegation carried a `[SCOPE]` line — and never substitutes for running this gate.
        - Bash-authored writes, the updater path and the orchestrator's own main-session edits leave it silent. Describe neither as "enforced".
 5. **Document completion** — transition `doc_status → done` ONLY after coverage N/N, no unauthorized excess outstanding, AND the correctness gates pass (mechanism: the Managed Document Completion detail below).
-6. **Live deploy + empirical verification (PRE-MERGE delivery gate — live-install bundle members only)** — binds any delivered change touching live-install bundle members (manifest-member files: `hooks/`, `scripts/`, `rules/`, `agents/`, `autoagent/`, `lib/`, `monitor/`, …). The DEFAULT per-cycle order puts deploy and verification BEFORE the PR, never after the merge.
+6. **Live deploy + empirical verification (PRE-MERGE delivery gate — live-install bundle members only)** — binds any delivered change touching live-install bundle members. The DEFAULT per-cycle order puts deploy and verification BEFORE the PR, never after the merge.
    - **Live-suite instrument, run from the install root**: `AUTOAGENT_PREFLIGHT_ACTIVE=1 scripts/run-bats-parallel.sh` MUST exit 0 before the PR is opened.
      - Before running a suite file that executes the postgres orphan-clear guards, clear `scoped/shared-testing.md` → Destructive-Path Suite Safety (live-postgres reach) — pointer only, the procedure is single-sited there.
    - SoT for the rest: `skills/glass-atrium-ops-delegation-contracts/references/live-deploy-gate.md`.
-     - Duties held there: the per-cycle order line · the combined-tree deploy · verification on the live install, never the repo tree · green before the PR · post-merge sha parity · the narrow post-merge cases · the delegated-deploy boundary (manual live-install writes FORBIDDEN).
+     - Held there: the per-cycle order, combined-tree deploy, live-install (not repo-tree) verification, green-before-PR, post-merge sha parity and narrow cases, the delegated-deploy boundary (manual live-install writes FORBIDDEN).
 
 > Detail: skills/glass-atrium-ops-orchestrator.md → Pipeline Acceptance Criteria (per-stage acceptance detail for the steps above · the in-script verify-stage skeleton for ultracode)
 

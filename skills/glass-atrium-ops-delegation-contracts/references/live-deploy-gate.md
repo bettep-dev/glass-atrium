@@ -21,6 +21,7 @@
 
 ## Scope and backing
 
+- **Live-install bundle members**: manifest-member files: `hooks/`, `scripts/`, `rules/`, `agents/`, `autoagent/`, `lib/`, `monitor/`, ….
 - **Rationale**: a defect found before the merge is fixed on its branch; found after, it is already in `main` — and repo-only delivery leaves live agents running the defect until the fix merges.
 - **Post-merge deploy — NARROW retained cases, never the default**:
   - (a) the RELEASE flow, which re-publishes from merged `main` via the release path — this gate says nothing about when a release is cut;

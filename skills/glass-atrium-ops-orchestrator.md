@@ -643,7 +643,7 @@ Two families live here:
   - **Stage 2 — plan-direction verification (complex plans only)**: team composition, DEV hard gate, activation scope and the direction-not-completeness rule: `orchestrator-role.md` → `### Plan Direction Verification (Stage-2 gate)`.
     - The skeleton goal strings under `In-script verify-stage` below do not carry the direction-not-completeness rule, so the composer appends it to both verify members' goal text.
     - Under ultracode the gate is encoded into the workflow script: `In-script verify-stage` below.
-  - **Stage-2 revision/escalation**: a revise/infeasible verdict gets one glass-atrium-intel-planner revision (max 1 time); the escalation path: `orchestrator-role.md` → `#### Gate outcome and activation scope`.
+  - **Stage-2 revision/escalation**: a revise/infeasible verdict gets one glass-atrium-intel-planner revision (max 1 time); the escalation path: `orchestrator-role.md` → `### Plan Direction Verification (Stage-2 gate)`.
 - **Before glass-atrium-intel-reporter entry (domain agents output)**:
   - Assigned sections completed
   - Domain-specific accuracy verified

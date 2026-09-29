@@ -3,8 +3,13 @@
 - **Pointer site**: `rules/glass-atrium/orchestrator-role.md` → `### Spawn Budget` → `#### Automatic Parallelization` — the SoT for the fan-out obligation, when it fires, guardrails (a)-(c) as obligations with guardrail (a)'s isolation duties, and the partition-then-size order.
 - **Agent-binding half of guardrail (a)**: `rules/glass-atrium/core-git-workflow.md` → Commits → **Concurrent worktree** — the SoT for the index-mutation class, the index-owner rule, the regeneration barrier, the entry precondition, the delegation-side contract, who commits and read-only.
 
+## Fan-out obligation — notes
+
+- **Independent, defined**: no shared-file write, no output-as-input dependency.
+
 ## Guardrail (a) — mechanisms
 
+- Disjoint file ownership is the floor, not the ceiling.
 - The shared index and whole-tree regeneration sit beside the rules that answer them: `rules/glass-atrium/core-git-workflow.md` → Commits → **Concurrent worktree** → **Shared index** · **Whole-tree regeneration**.
 
 ## Guardrail (a) — orchestrator-side rules
@@ -22,3 +27,4 @@
 
 - **Why sequential**: a shared-file write is exactly the race disjoint ownership exists to prevent.
 - **Premise-true edges**: a predecessor that makes the dependent's premise true (removing a truncation so its text survives, landing a schema it writes against) is an edge though nothing flows between them.
+- **Reach of the no-shared-wave rule**: it binds a whole-plan fan-out exactly as it binds a subset.

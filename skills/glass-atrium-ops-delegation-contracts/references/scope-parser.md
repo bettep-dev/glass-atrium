@@ -21,3 +21,15 @@ How the readers select a `[SCOPE]` declaration line and parse its `files=` list.
 - Two tolerances follow, and **neither tolerance is the contract** (separators rule: **Grammar SoT** above):
   - A space-separated line still yields the right file list.
   - A literally-copied template degrades to NO signal (comparison skipped) rather than a false excess.
+
+## Relay shapes still selected
+
+- **Relay duty**: the grammar SoT's relaying rule.
+- Wrapping is no safe relay: a wrapped-token relay whose tail reads as field text — `· deliverable=fix — too narrow`, one word glued by `·` `=` `—`, a value ending in `!` `?` `…` — is still selected, as is a line wrap closing at end of line or never with prose inside.
+  - Wrapped-token and line-wrap selection: **Wrapped token** · **Whole-line wrap** above.
+
+## Worked completeness case
+
+- **Duty**: the grammar SoT's `files=` completeness duty.
+- Worked case: a change to the closed `review_flag` reason vocabulary forces four files to move together — so all four belong in `files=`:
+  - `hooks/lib/review-flag-reasons.sh` · `monitor/public/src/ui.jsx` · `monitor/test/ui.review-flag-reasons.unit.test.ts` · `hooks/test/track-outcome-flag-reasons.bats`.

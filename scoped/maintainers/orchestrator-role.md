@@ -40,9 +40,12 @@ Maintainer-facing material for that rule file. Nothing here binds the orchestrat
 
 ### `#### Deliverable exposure and designer composition (Decision phase)`
 
-- The explicit format/share signal list under **Exposure Determination** restates `scoped/scope-report.md` → `### HTML request test`.
+- The explicit format/share signal list behind **Exposure Determination** restates `scoped/scope-report.md` → `### HTML request test`. It sits in `skills/glass-atrium-ops-delegation-contracts/references/deliverable-exposure.md` → `## Exposure Determination — signals and routing`.
 - The signal literals live in the author bodies: `agents/glass-atrium-intel-reporter.md` → `### HTML Request Test (explicit-request-only — heuristic auto-HTML FORBIDDEN)` and `agents/glass-atrium-intel-planner.md` → `## Output Format Routing`.
-- The rule-file copy is the only one reaching the orchestrator, which makes the exposure call. Edit the set together; never collapse it as redundant.
+- The orchestrator's copy is the pointer plus that reference, together. The pointer's one-bit rule reaches the orchestrator without a read; the signal literals sit one read away in the reference.
+  - One read away is enough because the authoring agent re-decides the format at turn-0, so the orchestrator's bit is a hint.
+  - The relocation is not a redundancy-collapse: edit the pointer and the reference with the set, and never delete either as redundant.
+- Moved into that reference: the signal literals, the NOT-trigger list, the 0-signal routing target, the canonical and turn-0 lines, the local-destination scope and canonical, and the Visual-Weight Probe's trigger detail, indicator source, composition mode, floor and dev-front sentences and rationale.
 - The T1-T5 thresholds in the **Visual-Weight Probe** restate `scoped/scope-report.md` → `## Designer Co-Emission Trigger [REPORT]`; `scoped/scope-planning.md` carries a pointer only.
 - Other counting sites:
   - `agents/glass-atrium-intel-reporter.md` → `## Designer Handoff Contract` references the scope-report canonical and carries no threshold table.
@@ -52,10 +55,12 @@ Maintainer-facing material for that rule file. Nothing here binds the orchestrat
 
 ### `#### Monitoring-phase notes`
 
-- The dev-front markup-exception judgment under `#### Monitoring-phase notes` is the orchestrator-side canonical for the JUDGMENT only.
+- The dev-front markup-exception judgment is the orchestrator-side canonical for the JUDGMENT only. It is the pointer under `#### Monitoring-phase notes` plus `skills/glass-atrium-ops-delegation-contracts/references/deliverable-exposure.md` → `## glass-atrium-dev-front markup exception — detail`.
+  - The pointer keeps the lead, the trigger, judge-by-capability, the skeleton-first one-POST handoff and no user surfacing by default.
+  - The reference holds the trigger's author and justification, the capability criterion, the handoff steps, the stitching ban, the ambiguity exception to user surfacing and the EXTEND citation.
 - The author-side protocol canonical is `scoped/scope-report.md` → `## Designer Co-Emission Trigger [REPORT]`, pointed to from `scoped/scope-planning.md` → `## Designer Co-Emission Trigger [PLANNING]`.
 - Agent-body halves: `agents/glass-atrium-intel-reporter.md`, `agents/glass-atrium-intel-planner.md`, `agents/glass-atrium-dev-front.md`; `skills/glass-atrium-design-html-co-emission/SKILL.md` restates it for the consulted designer.
-- The rule-file copy also reaches every subagent through the parent's project-instruction set. That is a delivery accident and gives it no authority over the author-side canonical.
+- The rule-file pointer also reaches every subagent through the parent's project-instruction set; the reference does not. That is a delivery accident and gives it no authority over the author-side canonical.
 
 ### `#### Plan edge discovery`
 
@@ -64,11 +69,19 @@ Maintainer-facing material for that rule file. Nothing here binds the orchestrat
 
 ### `### Plan Direction Verification (Stage-2 gate)`
 
-- `### Plan Direction Verification (Stage-2 gate)` is the gate-OPERATION canonical. The participant-duty canonicals are `scoped/scope-qa.md` → `## Plan Direction Verification Gate [DEV+QA]` (reviewer) and `scoped/scope-dev.md` → the same heading (DEV).
+- `### Plan Direction Verification (Stage-2 gate)` is the gate-OPERATION canonical, as a pointer plus `skills/glass-atrium-ops-delegation-contracts/references/plan-direction-verification.md`. The participant-duty canonicals are `scoped/scope-qa.md` → `## Plan Direction Verification Gate [DEV+QA]` (reviewer) and `scoped/scope-dev.md` → the same heading (DEV).
+- That reference holds `## Team composition and verdicts`, `## Standing jobs inside the gate` and `## Gate outcome and activation scope` — each heading's text unchanged, its level `##` under the reference's H1 — plus the backstop detail under `## Backstop detail`.
+  - Retargeted citers, each naming the `##` level: `scoped/maintainers/scope-qa.md` (two Team-composition citations), the rule file's premise-register line and `SKILL.md` → Edit Rules → **Cited headings**.
+  - The hooks quote only the gate heading (`hooks/enforce-verification-gate.sh` reviewer-miss reason, `hooks/enforce-workflow-verify-stage.sh` DEV hard-gate block), which stays.
+  - `#### Backstop asymmetry (manual vs. ultracode)` stays as a pointer: `references/ultracode-declaration-contract.md` cites it.
+- Location-only citer that stays: `skills/glass-atrium-ops-orchestrator.md` → `#### Pipeline Acceptance Criteria` → the Stage 2 bullet names the gate heading for team composition, DEV hard gate, activation scope and direction-not-completeness. The pointer keeps all four.
+  - Its **Stage-2 revision/escalation** bullet names the same heading for the escalation path; the pointer's **Revision + escalation** carries that path and its path-only limit.
+- Open owner decision: the **Manual** backstop line calls `hooks/enforce-verification-gate.sh` "a best-effort runtime advisory", while its reviewer-miss branch blocks an orchestrator-origin spawn (exit 2).
+  - The qualifier stays unchanged at the rule-file pointer and at `skills/glass-atrium-ops-orchestrator.md` → **Manual path, for contrast** until the owner decides.
 - No dev-* or reviewer body mirrors `scoped/scope-qa.md` or `scoped/scope-dev.md`.
 - The rule file also reaches every subagent on the host channel (see `#### Monitoring-phase notes` above), and its opening line tells subagents to ignore it.
 - The three are not a redundancy to collapse: a duty moved into the rule file is read by the wrong actors and owed by none; a duty deleted from a scope file loses its only maintained statement.
-- Do not copy the first-link question literal into the rule file; the rule file points to it only.
+- Do not copy the first-link question literal into the rule file or its Stage-2 reference; both point to it only.
   - The literal is cross-read between `scoped/scope-dev.md` → `## Plan Direction Verification Gate [DEV+QA]` and the ultracode gate's presence scan (`hooks/enforce-workflow-verify-stage.sh`, pinned by `hooks/test/enforce-workflow-verify-stage-firstlink.bats`); a further copy adds a drift surface no suite polices.
 
 ### `### Cost-Tier Selection`
@@ -76,6 +89,11 @@ Maintainer-facing material for that rule file. Nothing here binds the orchestrat
 - The rule file's "every pin is LIVE-ONLY, and the updater preserves it across updates" (`### Cost-Tier Selection` → Model pins) is implemented by `autoagent/lib/editable_merge.py` → `_LOCAL_ONLY_FRONTMATTER_KEYS`, exactly `("model",)`. The identity keys `{name, tools, scope}` stay vendor-owned (`hooks/enforce-harness-critical.sh` protects them and excludes `model`).
 - A second, weaker tuple sits beside it: `_BASE_AWARE_FRONTMATTER_KEYS`, exactly `("effort",)` — a key the release DOES ship, so a live line is kept only when it differs from base@install, and with no base anchor it falls back to live-wins. Unlike `model`, `effort` is not unconditionally local-only.
 - Code comments in `autoagent/lib/editable_merge.py`, `autoagent/test/test_editable_merge.py` and `scripts/test/glass-atrium-update.bats` cite "Cost-Tier Selection" as the sanction for live-wins; keep that heading and the sanction sentence when editing the rule.
+
+### `#### Analysis fan-out and team cardinality`
+
+- **Effort-scaling by task shape** is a one-line pointer; the table, its examples and notes sit in `skills/glass-atrium-ops-delegation-contracts/references/delegation-size-discipline.md` → `## Effort-scaling table`.
+- Citers: `skills/glass-atrium-ops-orchestrator.md` cites the heading, which stays; the partition-then-size line under `#### Automatic Parallelization` names the **Effort-scaling by task shape** lead.
 
 ### `#### Automatic Parallelization`
 
@@ -87,6 +105,9 @@ Maintainer-facing material for that rule file. Nothing here binds the orchestrat
 ### `### Failure Recovery Loop`
 
 - `**Debugger evidence gate**` came from the retired `glass-atrium-core-iron-laws` skill's Debugger Escalation section; it has no other maintained copy — `scoped/shared-investigation-discipline.md` only points at it as the orchestrator half; its backing is stated in the rule file's Backing honesty paragraph.
+- **Backing honesty (which stages are enforced)** is a pointer: it keeps the honor-system line and the one code-backed stage.
+  - Moved to `skills/glass-atrium-ops-delegation-contracts/references/failure-recovery.md`: why the other checks are honor-system, the counter directory, the `.suspended` marker, the reset and the SubagentStart signal.
+  - The evidence-gate citer above resolves through that pointer: it keeps the lead and names the **Debugger evidence gate** as honor-system.
 - The rule file no longer points at `skills/glass-atrium-ops-orchestrator.md` → `### Self-Improvement User-Approval Trigger`. The orchestrator reaches it through Tier-1 `rules/glass-atrium/core-learning-log.md` → Instruction Improvement Approval Tier and `rules/glass-atrium/shared-self-improve-hygiene.md` → Cross-References.
 - A comment in `autoagent/daemon_cycle.py` still cites `orchestrator-role.md` for that name; the fix belongs at the comment (point it at the skill), not a pointer back here.
 
