@@ -301,13 +301,13 @@ function renderListCard(screen: Record<string, unknown>, overrides: Record<strin
   return renderScreen((screen.DocListCardCD as Component)(props));
 }
 
-test("a read in flight over held rows keeps them on screen, dimmed and busy, with the held count and an inline status", async () => {
+test("a read in flight over held rows keeps them on screen, dimmed and busy, with the held count; only a search names itself inline", async () => {
   const screen = await loadDocsScreen();
   const rows = [
-    { name: "a settled list is neither dimmed nor announced", busy: false, isSearchMode: false, isLoadingMore: false, status: null },
-    { name: "a search in flight dims the held rows and says so", busy: true, isSearchMode: true, isLoadingMore: false, status: "Searching…" },
-    { name: "a refresh in flight dims the held rows and says so", busy: true, isSearchMode: false, isLoadingMore: false, status: "Refreshing…" },
-    { name: "a load-more in flight leaves the held rows undimmed", busy: true, isSearchMode: false, isLoadingMore: true, status: null },
+    { name: "a settled list is neither dimmed nor announced", busy: false, isSearchMode: false, isLoadingMore: false, isDimmed: false, status: null },
+    { name: "a search in flight dims the held rows and says so", busy: true, isSearchMode: true, isLoadingMore: false, isDimmed: true, status: "Searching…" },
+    { name: "a refresh in flight dims the held rows and leaves the one Refreshing… to the header button", busy: true, isSearchMode: false, isLoadingMore: false, isDimmed: true, status: null },
+    { name: "a load-more in flight leaves the held rows undimmed", busy: true, isSearchMode: false, isLoadingMore: true, isDimmed: false, status: null },
   ];
 
   for (const row of rows) {
@@ -318,7 +318,8 @@ test("a read in flight over held rows keeps them on screen, dimmed and busy, wit
     });
     const tables = findNodes(tree, (n) => n.type === "table");
     assert.equal(tables.length, 1, `${row.name}: held rows stay`);
-    assert.equal(tables[0].props["aria-busy"], row.status ? "true" : undefined, row.name);
+    assert.equal(tables[0].props["aria-busy"], row.isDimmed ? "true" : undefined, row.name);
+    assert.doesNotMatch(collectText(tree), /Refreshing/, `${row.name}: the ledger never repeats the header's busy word`);
     assert.match(collectText(tree), row.isSearchMode ? /2 matched/ : /2 documents/, `${row.name}: held count stays`);
 
     const inline = findNodes(tree, (n) => n.props.role === "status" && String(n.props.className).includes("doc-list-busy"));
@@ -334,7 +335,7 @@ test("a first read with nothing held shows one status placeholder instead of row
   assert.equal(findNodes(tree, (n) => n.type === "table").length, 0);
 });
 
-test("a failed read shows one plain-sentence card with one Retry and never the raw HTTP answer", async () => {
+test("a failed read announces one plain-sentence card with one Retry as an alert and never the raw HTTP answer", async () => {
   const screen = await loadDocsScreen();
   const error = 'HTTP 500 Internal Server Error — {"error":"boom"}';
   const rows = [
@@ -351,10 +352,25 @@ test("a failed read shows one plain-sentence card with one Retry and never the r
     assert.equal(cards.length, 1, row.name);
     assert.equal(cards[0].props.error, error, row.name);
     assert.equal(typeof cards[0].props.onRetry, "function", row.name);
-    assert.equal(findNodes(tree, (n) => n.props.role === "alert").length, 0, `${row.name}: no red alert box`);
+    const alerts = findNodes(tree, (n) => n.props.role === "alert");
+    assert.equal(alerts.length, 1, `${row.name}: one announced failure`);
+    assert.equal(findNodes(alerts[0], (n) => n === cards[0]).length, 1, `${row.name}: the alert is the failure card`);
     assert.doesNotMatch(collectText(tree), /HTTP \d/, row.name);
     assert.equal(findNodes(tree, (n) => n.type === "table").length, row.tables, `${row.name}: held rows stay`);
   }
+});
+
+test("each stage group opens with a level-2 heading under the page H1, and the ledger holds no other heading", async () => {
+  const screen = await loadDocsScreen();
+  const props = listCardProps(() => undefined);
+  const rows = props.rows as Array<Record<string, unknown>>;
+  rows[0] = { ...rows[0], doc_status: "doc_review" };
+  rows[1] = { ...rows[1], doc_status: "implementing" };
+  const tree = renderScreen((screen.DocListCardCD as Component)(props));
+
+  const headings = findNodes(tree, (n) => n.props.role === "heading" || /^h[1-6]$/.test(String(n.type)));
+  assert.deepEqual(headings.map((n) => collectText(n)), ["Doc review", "Implementing"]);
+  for (const heading of headings) assert.equal(heading.props["aria-level"], 2, "one level below the page H1");
 });
 
 const HANGUL = /\p{Script=Hangul}/u;
