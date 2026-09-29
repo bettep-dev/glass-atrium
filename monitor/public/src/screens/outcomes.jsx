@@ -846,6 +846,16 @@ function loopEventsSummaryO(loopEventsState) {
 const LEDGER_NEEDS_YOU_ID = 'ledger-needs-you';
 // focus lands here when a focused Retry leaves on recovery
 const STATUS_BAND_ID = 'outcomes-status-band';
+// per-region card ids — same role as STATUS_BAND_ID for each card's own error Retry
+const REGION_CARD_IDS = {
+  agentFailures: 'outcomes-agent-failures',
+  attribution: 'outcomes-attribution',
+  channels: 'outcomes-channels',
+  checks: 'outcomes-checks',
+  crosstab: 'outcomes-crosstab',
+  loopEvents: 'outcomes-loop-events',
+  ledger: 'outcomes-ledger',
+};
 
 // Status band — 4 타일. 값은 모집단·창과 용접되고, tone 은 글리프에만 탄다 (39578 §D-§E).
 
@@ -937,7 +947,7 @@ function StatusBandO({ analyticsState, attentionState, windowDays, freshness, on
   if (view === 'error') {
     return (
       <div id={STATUS_BAND_ID} className="mb-4 flex-shrink-0" aria-label="Status band">
-        <RegionErrorO source="the status band" error={analyticsState.error} onRetry={onRetry} isBusy={analyticsState.busy}/>
+        <RegionErrorO source="the status band" error={analyticsState.error} onRetry={onRetry} isBusy={analyticsState.busy} focusTargetId={STATUS_BAND_ID}/>
       </div>
     );
   }
@@ -968,7 +978,7 @@ function StatusBandO({ analyticsState, attentionState, windowDays, freshness, on
         <VolumeTilesO tiles={volumeTiles} windowLabel={windowLabel}/>
       </div>
       {isAttentionFailed && (
-        <RegionErrorO source="the needs-you count" error={attentionState.error} onRetry={onRetry} isBusy={attentionState.busy}/>
+        <RegionErrorO source="the needs-you count" error={attentionState.error} onRetry={onRetry} isBusy={attentionState.busy} focusTargetId={STATUS_BAND_ID}/>
       )}
     </div>
   );
@@ -1037,8 +1047,8 @@ function getOpenCaveatCountO(overall) {
  * Page verdict = the Dashboard's resolveOutcomeRate judgment as shares.
  * A stopped recording channel outranks it, since every count it reads is understated; the lane row below names the channel only.
  * The all-clear waits for the liveness read.
+ * @param freshness - the shared rule: unread reads No signal, a stale or partial read reads Last known
  */
-// freshness → the shared rule: unread reads No signal, a stale or partial read reads Last known
 function PageVerdictO({ analyticsState, channelLivenessState, windowDays, freshness }) {
   const { PageVerdict, getRegionView } = window.UI;
   const view = getRegionView(analyticsState);
@@ -1179,7 +1189,7 @@ function AgentFailureTableO({ state, onRetry }) {
   const { CardHead, STICKY_TH_STYLE } = window.UI;
 
   return (
-    <div className="card">
+    <div id={REGION_CARD_IDS.agentFailures} className="card">
       <CardHead title="Failed or blocked by agent" sub="Registry agents only · non-zero rows · worst rate first"/>
       <div className="card-body" style={{ padding: 0 }}>
         <AgentFailureBodyO state={state} onRetry={onRetry} stickyStyle={STICKY_TH_STYLE}/>
@@ -1232,7 +1242,7 @@ function AgentFailureBodyO({ state, onRetry, stickyStyle }) {
   const view = window.UI.getRegionView(state);
   if (view === 'loading') return <AgentFailureSkeletonO stickyStyle={stickyStyle}/>;
   if (view === 'error') {
-    return <RegionErrorO source="by-agent failures" error={state.error} onRetry={onRetry} isBusy={state.busy}/>;
+    return <RegionErrorO source="by-agent failures" error={state.error} onRetry={onRetry} isBusy={state.busy} focusTargetId={REGION_CARD_IDS.agentFailures}/>;
   }
 
   const rows = buildAgentFailureRowsO(state.data?.agentStack, state.data?.overall?.by_agent_top_10);
@@ -1326,7 +1336,7 @@ function AttributionHealthCard({ state, period, onRetry }) {
   const badge = attributionOmissionBadgeO(omissionRate);
 
   return (
-    <div className="card mb-4">
+    <div id={REGION_CARD_IDS.attribution} className="card mb-4">
       <CardHead
         title="Record attribution"
         sub=""
@@ -1353,7 +1363,7 @@ function AttributionHealthBody({ state, onRetry }) {
     return <ChartSkeletonO height={200} label="reporting health"/>;
   }
   if (view === 'error') {
-    return <RegionErrorO source="reporting health" error={state.error} onRetry={onRetry} isBusy={state.busy}/>;
+    return <RegionErrorO source="reporting health" error={state.error} onRetry={onRetry} isBusy={state.busy} focusTargetId={REGION_CARD_IDS.attribution}/>;
   }
 
   const summary = state.data?.window_summary || null;
@@ -1622,7 +1632,7 @@ function ChannelLivenessCard({ state, onRetry }) {
   const badge = getChannelLivenessBadgeO(state);
 
   return (
-    <div className="card mb-4">
+    <div id={REGION_CARD_IDS.channels} className="card mb-4">
       <CardHead
         title="Recording channels"
         sub=""
@@ -1660,7 +1670,7 @@ function ChannelLivenessBody({ state, onRetry }) {
     return <ChartSkeletonO height={120} label="recording channels"/>;
   }
   if (view === 'error') {
-    return <RegionErrorO source="recording channels" error={state.error} onRetry={onRetry} isBusy={state.busy}/>;
+    return <RegionErrorO source="recording channels" error={state.error} onRetry={onRetry} isBusy={state.busy} focusTargetId={REGION_CARD_IDS.channels}/>;
   }
 
   const channels  = Array.isArray(state.data?.channels) ? state.data.channels : [];
@@ -1726,7 +1736,7 @@ function GraderBreakdownCard({ state, onRetry }) {
   const { CardHead } = window.UI;
 
   return (
-    <div className="card mb-4">
+    <div id={REGION_CARD_IDS.checks} className="card mb-4">
       <CardHead title="Automatic check results" sub=""/>
       <div className="card-body">
         <GraderBreakdownBody state={state} onRetry={onRetry}/>
@@ -1746,7 +1756,7 @@ function GraderBreakdownBody({ state, onRetry }) {
     return <ChartSkeletonO height={120} label="check results"/>;
   }
   if (view === 'error') {
-    return <RegionErrorO source="check results" error={state.error} onRetry={onRetry} isBusy={state.busy}/>;
+    return <RegionErrorO source="check results" error={state.error} onRetry={onRetry} isBusy={state.busy} focusTargetId={REGION_CARD_IDS.checks}/>;
   }
 
   const breakdown = state.data?.overall?.grader_breakdown;
@@ -1823,11 +1833,6 @@ function DowngradeBreakdownRowO({ breakdown }) {
   );
 }
 
-// ----- 9-type × grader_verdict 교차 (F16) ------------------------------------
-// cross-analysis task_type_grader_breakdown — 서버 고정 9행 (task_type enum 순).
-// by_design_unverified(review/diagnosis/doc/cleanup) 그룹 분리 — grader 가 설계상
-// unverified 로 skip 하는 유형을 측정 대상 유형과 섞으면 품질 신호로 오독 (R07).
-// 막대 폭 ∝ 행 합/최대 (볼륨) · 내부 분할 = grader 버킷 구성비 (색 = 버킷 카드 SoT).
 // a checkable type whose failed checks reach the breakage share (low samples excluded) → crit; else untoned
 function getTaskTypeFoldToneO(rows) {
   const { outcomeShareTone, isLowSample, OUTCOME_BREAKAGE_CRIT_SHARE } = window.UI;
@@ -1840,6 +1845,11 @@ function getTaskTypeFoldToneO(rows) {
   return rows.some(isFailing) ? 'crit' : undefined;
 }
 
+// ----- 9-type × grader_verdict 교차 (F16) ------------------------------------
+// cross-analysis task_type_grader_breakdown — 서버 고정 9행 (task_type enum 순).
+// by_design_unverified(review/diagnosis/doc/cleanup) 그룹 분리 — grader 가 설계상
+// unverified 로 skip 하는 유형을 측정 대상 유형과 섞으면 품질 신호로 오독 (R07).
+// 막대 폭 ∝ 행 합/최대 (볼륨) · 내부 분할 = grader 버킷 구성비 (색 = 버킷 카드 SoT).
 function TaskTypeGraderCrosstabO({ rows }) {
   if (!Array.isArray(rows) || rows.length === 0) return null;
 
@@ -1917,7 +1927,7 @@ function CrosstabCard({ state, onRetry }) {
   const confidentFailed = getConfidentFailedO(crosstab);
 
   return (
-    <div className="card mb-4">
+    <div id={REGION_CARD_IDS.crosstab} className="card mb-4">
       <CardHead
         title={confidentFailed
           ? `Confident but failed: ${formatIntO(confidentFailed.count)} (${formatRateO(confidentFailed.share)})`
@@ -1944,7 +1954,7 @@ function CrosstabBody({ state, onRetry }) {
     return <ChartSkeletonO height={160} label="cross table"/>;
   }
   if (view === 'error') {
-    return <RegionErrorO source="cross table" error={state.error} onRetry={onRetry} isBusy={state.busy}/>;
+    return <RegionErrorO source="cross table" error={state.error} onRetry={onRetry} isBusy={state.busy} focusTargetId={REGION_CARD_IDS.crosstab}/>;
   }
 
   const crosstab = state.data?.crosstab;
@@ -2077,7 +2087,7 @@ function crosstabMaxCountO(byCell) {
 function LoopEventsCard({ state, onRetry }) {
   const { CardHead } = window.UI;
   return (
-    <div className="card mt-4">
+    <div id={REGION_CARD_IDS.loopEvents} className="card mt-4">
       <CardHead
         title="Improvement run events"
         sub=""/>
@@ -2096,7 +2106,7 @@ function LoopEventsBody({ state, onRetry }) {
     return <ChartSkeletonO height={200} label="run events"/>;
   }
   if (view === 'error') {
-    return <RegionErrorO source="run events" error={state.error} onRetry={onRetry} isBusy={state.busy}/>;
+    return <RegionErrorO source="run events" error={state.error} onRetry={onRetry} isBusy={state.busy} focusTargetId={REGION_CARD_IDS.loopEvents}/>;
   }
 
   const total    = Number(state.data?.total_events ?? 0);
@@ -2322,7 +2332,7 @@ function ResultTableCard({
   const currentPage = page + 1;
 
   return (
-    <div className="card">
+    <div id={REGION_CARD_IDS.ledger} className="card">
       <CardHead
         title="Results"
         sub={state.status === 'ready'
@@ -2469,7 +2479,7 @@ function ResultTableBody({
     return <PayloadUnavailableO label="Records"/>;
   }
   if (view !== 'ready') {
-    return <RegionErrorO source="the record ledger" error={state.error} onRetry={onRetry} isBusy={state.busy}/>;
+    return <RegionErrorO source="the record ledger" error={state.error} onRetry={onRetry} isBusy={state.busy} focusTargetId={REGION_CARD_IDS.ledger}/>;
   }
   if (rows.length === 0) {
     return <ResultTableZeroStateO filter={filter} onResetFilter={onResetFilter}/>;
@@ -3131,10 +3141,13 @@ function EmptyStateO({ message }) {
   return <EmptyState message={message} />;
 }
 
-// plain sentence + next step; the raw answer stays behind Details, Retry only when no page banner owns it
-function RegionErrorO({ source, error, onRetry, isBusy = false }) {
+/**
+ * Plain sentence + next step; the raw answer stays behind Details, Retry only when no page banner owns it.
+ * @param focusTargetId - the region's own card, which takes focus when a focused Retry succeeds
+ */
+function RegionErrorO({ source, error, onRetry, isBusy = false, focusTargetId }) {
   const { RegionUnavailable } = window.UI;
-  return <RegionUnavailable source={source} error={error} onRetry={onRetry} isBusy={isBusy} className="m-3"/>;
+  return <RegionUnavailable source={source} error={error} onRetry={onRetry} isBusy={isBusy} focusTargetId={focusTargetId} className="m-3"/>;
 }
 
 // 레인이 실패 배너를 소유하므로 본문은 '적재 실패' 만 말한다 — 같은 오류를 두 번 쓰지 않는다.
