@@ -535,6 +535,8 @@ function KpiRowC({ kpiState, hot, trendState, modelState, days, onRetry }) {
   const cacheShare = computeCacheShare(modelState);
   const costPerDone = toFiniteOrNull(kpi.cost_per_done_usd);
   const doneCount = toFiniteOrNull(kpi.done_count_7d) ?? 0;
+  const trendDays = getShownDays(trendState, days);
+  const modelDays = getShownDays(modelState, days);
 
   return (
     <>
@@ -554,8 +556,8 @@ function KpiRowC({ kpiState, hot, trendState, modelState, days, onRetry }) {
         </CostTileC>
 
         <CostTileC
-          label={`Cost, last ${days} days`}
-          windowTag={`${days}d`}
+          label={`Cost, last ${trendDays} days`}
+          windowTag={`${trendDays}d`}
           status={getTileStatus(trendState, windowTotal.total, windowTotal.isEmpty)}
           value={windowTotal.total === null ? '—' : formatUsdC(windowTotal.total)}
           hint={windowTotal.total === null
@@ -577,16 +579,25 @@ function KpiRowC({ kpiState, hot, trendState, modelState, days, onRetry }) {
 
         <CostTileC
           label="Cache share of cost"
-          windowTag={`${days}d`}
+          windowTag={`${modelDays}d`}
           status={getTileStatus(modelState, cacheShare.share, cacheShare.isEmpty)}
           value={cacheShare.share === null ? '—' : `${(cacheShare.share * 100).toFixed(0)}%`}
           hint={cacheShare.cacheCost === null ? '' : `${formatUsdC(cacheShare.cacheCost)} on cache reads + writes`}
           unavailableNote="No priced model cost in this window.">
-          <div className="cost-foot mt-1.5">{`of ${formatUsdC(cacheShare.totalCost)} priced cost, last ${days} days`}</div>
+          <div className="cost-foot mt-1.5">{`of ${formatUsdC(cacheShare.totalCost)} priced cost, last ${modelDays} days`}</div>
         </CostTileC>
       </div>
     </>
   );
+}
+
+/**
+ * The range a region's figures were read for — held data keeps its own window while a new range loads.
+ * Nothing landed yet → the requested range, since no figure is on screen to mislabel.
+ */
+function getShownDays(state, requestedDays) {
+  const match = /[?&]days=(\d+)/.exec(state?.key ?? '');
+  return match ? Number(match[1]) : requestedDays;
 }
 
 /**
@@ -793,7 +804,7 @@ function CostTrendChart({ rows, bandOn }) {
               dataKey="date"
               ticks={tickDates}
               interval={0}
-              tick={anomalyAxisTickStyle}
+              tick={EdgeTickC}
               axisLine={anomalyAxisLineStyle}
               tickLine={false}
             />
@@ -1077,7 +1088,7 @@ function TokenStackedArea({ points, order }) {
         <CartesianGrid stroke="rgb(var(--line))" strokeDasharray="3 3" vertical={false}/>
         <XAxis
           dataKey="date"
-          tick={{ fontSize: 12, fill: 'rgb(var(--faint))', fontFamily: 'JetBrains Mono, monospace' }}
+          tick={EdgeTickC}
           axisLine={{ stroke: 'rgb(var(--line))' }}
           tickLine={false}
         />
@@ -1545,7 +1556,7 @@ function CacheHitChart({ rows, yDomain = [0, 100] }) {
         <CartesianGrid stroke="rgb(var(--line))" strokeDasharray="3 3" vertical={false}/>
         <XAxis
           dataKey="date"
-          tick={{ fontSize: 12, fill: 'rgb(var(--faint))', fontFamily: 'JetBrains Mono, monospace' }}
+          tick={EdgeTickC}
           axisLine={{ stroke: 'rgb(var(--line))' }}
           tickLine={false}
         />
@@ -2142,6 +2153,20 @@ function pointCostC(p) {
 // Axis style hoist — JSX inline-object 할당 회피.
 const anomalyAxisTickStyle = { fontSize: 12, fill: 'rgb(var(--faint))', fontFamily: 'JetBrains Mono, monospace' };
 const anomalyAxisLineStyle = { stroke: 'rgb(var(--line))' };
+
+// the last tick sits on the right plot edge → a centred label spills past the svg and clips
+function getEdgeTickAnchor(index, count) {
+  return index === count - 1 ? 'end' : 'middle';
+}
+
+// Recharts calls this as a plain function with the tick's props
+function EdgeTickC({ x, y, payload, index, visibleTicksCount }) {
+  return (
+    <text x={x} y={y} dy="0.71em" textAnchor={getEdgeTickAnchor(index, visibleTicksCount)} {...anomalyAxisTickStyle}>
+      {payload.value}
+    </text>
+  );
+}
 
 // Turn statistics body — /api/cost/turn-stats: stop_reason 분포 + turns 집계.
 // no_assistant_in_turn = tool-only(LLM 미응답) 턴 · end_turn = 실 LLM 턴.

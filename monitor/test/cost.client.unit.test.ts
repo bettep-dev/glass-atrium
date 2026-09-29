@@ -22,6 +22,8 @@ interface PanelState {
   data: unknown;
   error: string | null;
   busy?: boolean;
+  key?: string | null;
+  pendingKey?: string | null;
 }
 
 interface HotVerdict {
@@ -84,6 +86,8 @@ interface CostHelpers {
   }) => AlarmRow[];
   computeHotVerdict: (kpi: Record<string, unknown>) => HotVerdict;
   computeWindowTotal: (state: PanelState) => WindowTotal;
+  getShownDays: (state: PanelState, requestedDays: number) => number;
+  getEdgeTickAnchor: (index: number, count: number) => string;
   computeCacheShare: (state: PanelState) => {
     share: number | null;
     cacheCost: number | null;
@@ -355,6 +359,26 @@ test("the window total sums the series, and an unloaded window is distinguishabl
     const unloaded = cost.computeWindowTotal(state);
     assert.strictEqual(unloaded.total, null, state.status);
     assert.strictEqual(unloaded.isEmpty, false, `${state.status} must not read as an empty window`);
+  }
+});
+
+test("a window tag names the range its figures were read for, never the range still in flight", () => {
+  const rows = [
+    { name: "a 30d payload on screen while 7d loads", state: { status: "ready", data: {}, error: null, busy: true, key: "/api/cost/by-model?days=30", pendingKey: "/api/cost/by-model?days=7" }, requested: 7, shown: 30 },
+    { name: "the 7d payload landed", state: { status: "ready", data: {}, error: null, busy: false, key: "/api/cost/by-model?days=7", pendingKey: null }, requested: 7, shown: 7 },
+    { name: "the 7d request failed over the held 90d payload", state: { status: "ready", data: {}, error: "boom", busy: false, key: "/api/dashboard/cost-timeseries?days=90", pendingKey: null }, requested: 7, shown: 90 },
+    { name: "nothing landed yet", state: { status: "loading", data: null, error: null, busy: true, key: null, pendingKey: "/api/cost/by-model?days=7" }, requested: 7, shown: 7 },
+  ];
+  for (const row of rows) {
+    assert.strictEqual(cost.getShownDays(row.state, row.requested), row.shown, row.name);
+  }
+});
+
+test("only the last x tick anchors at its end, so a label on the right edge is never clipped", () => {
+  const count = 6;
+  for (let index = 0; index < count; index++) {
+    const expected = index === count - 1 ? "end" : "middle";
+    assert.strictEqual(cost.getEdgeTickAnchor(index, count), expected, `tick ${index} of ${count}`);
   }
 });
 
