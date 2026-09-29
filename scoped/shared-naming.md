@@ -23,11 +23,11 @@ The delta-core below is the compressed non-inferable subset. It carries the rule
     - A sibling collision is resolved by **Qualifier-sibling grouping** first; the qualifier stays only where its fallback applies (`userCount`/`projectCount`: `count` cannot name a group).
     - Two siblings never collapse to one name.
 9. **Read-down naming** — a name reads down domain → class → function → local, carrying only the words its own level adds: `getChatTurnPoint`→`getPoint` in `ChatTurnService` · a name imported bare keeps its module's word.
-10. **Prefix-family grouping** — 2+ variables, constants, properties or fields sharing a leading noun the scope does not supply become ONE group with short members: `chargeState`/`chargeId`/`chargeExpiredAt` → `charge: { state, id, expiredAt }`.
+10. **Prefix-family grouping** — 2+ variables, constants, properties or fields sharing a leading noun the scope does not supply become one group with short members: `chargeState`/`chargeId`/`chargeExpiredAt` → `charge: { state, id, expiredAt }`.
     - A stative name joins through the domain noun right after its prefix, as a stative-first member, and counts toward the 2+: `chargeId`/`chargeAmount`/`isChargeActive` → `charge: { id, amount, isActive }`; a bare stative name (`isLoading`) stays flat.
     - A function's own parameters stay flat and count toward no family or set — the signature is the call contract: `transfer(fromId, toId)`.
     - Names fixed outside the change or in a flat-only medium (DB columns and their ORM fields, env vars) stay flat.
-11. **Qualifier-sibling grouping** — 2+ identifiers of a **Prefix-family grouping** kind in one scope that share a head noun and differ only by a qualifier become ONE group named by that head noun, one member per qualifier: `pendingRequest`/`paymentRequest` → `request: { pending, payment }`.
+11. **Qualifier-sibling grouping** — 2+ identifiers of a **Prefix-family grouping** kind in one scope that share a head noun and differ only by a qualifier become one group named by that head noun, one member per qualifier: `pendingRequest`/`paymentRequest` → `request: { pending, payment }`.
     - The set is every such name ending in the same noun, a unit suffix counted with the word before it.
     - The head noun alone (`request`) is no member.
     - Its head noun is the longest tail all members share, as written.

@@ -24,6 +24,7 @@ Maintainer-facing material for that rule file. Nothing here binds an agent; the 
 - **Keep the delta-core's bold lead phrase** (the words before its em dash): `hooks/test/inject-scope-rules-nodrop.bats` → `RETIRED_NEEDLES` asserts it ABSENT from slot 1, and the check proves nothing once the phrase no longer exists in the source.
 - **Precondition the retirement rests on**: `python3 hooks/lib/inject_chunk.py --audit` MUST report `events=none` for every member. An OVERFLOW displaces a member band, and no slot-1 copy remains behind it.
   - Re-run the audit after any growth of this file and before any merge, and read each member's `chunks=` against the header's `slots=` from that run.
+  - A branch-side run sets `GA_CHUNK_RULES_ROOT` to the tree under test and runs that tree's `hooks/lib/inject_chunk.py`; unset, the audit reads the live install's corpus, and `slots=` comes from whichever core file runs.
   - A chunk past the last slot is an overflow, settled by the owner: split `## Agent Injection Core` at H3, a smaller text, or a new slot — never a silent slot add.
   - **Packing grain**: the chunker packs whole H2 sections greedily in file order and splits at H3 only past one part, so a large H2 that misses the current part strands the space before it.
     - The edge-case verdicts are therefore H2 sections of ~2 KB or less, and the small `## On-demand detail` stays last to fill the final part.
