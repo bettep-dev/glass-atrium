@@ -15,6 +15,8 @@ KOREAN_QUOTE='좋아, 이제 리뷰 반영해줘'
 ENGLISH_QUOTE='Now apply the review comments please'
 NOTIFICATION='<task-notification>\n<summary>Background build finished</summary>\n</task-notification>'
 SPLIT=$'\x1f'
+# shellcheck source-path=SCRIPTDIR source=../../scripts/lib/path-guard.sh
+source "${BATS_TEST_DIRNAME}/../../scripts/lib/path-guard.sh"
 
 setup() {
   command -v python3 >/dev/null 2>&1 || skip "python3 required"
@@ -23,10 +25,7 @@ setup() {
 }
 
 teardown() {
-  case "${RL_TMP:-}" in
-    */inject-reply-language.*) rm -rf -- "${RL_TMP}" ;;
-    *) ;;
-  esac
+  if ga_guard_path "${RL_TMP:-}"; then rm -rf -- "${RL_TMP:?}"; fi
 }
 
 # Writes a UserPromptSubmit envelope; source "-" leaves the field out, as the installed CLI does.

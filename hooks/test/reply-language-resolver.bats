@@ -11,6 +11,8 @@ LIB="${HOOKS_DIR}/lib/reply_language.py"
 CORPUS="${BATS_TEST_DIRNAME}/corpus/reply-language"
 # The whole output contract: any other key, a language or script field included, fails the row.
 OUTPUT_KEYS='["bytes_read","entry","prose","reason","status","truncated"]'
+# shellcheck source-path=SCRIPTDIR source=../../scripts/lib/path-guard.sh
+source "${BATS_TEST_DIRNAME}/../../scripts/lib/path-guard.sh"
 
 setup() {
   command -v python3 >/dev/null 2>&1 || skip "python3 required"
@@ -19,10 +21,7 @@ setup() {
 }
 
 teardown() {
-  case "${RL_TMP:-}" in
-    */reply-language.*) rm -rf -- "${RL_TMP}" ;;
-    *) ;;
-  esac
+  if ga_guard_path "${RL_TMP:-}"; then rm -rf -- "${RL_TMP:?}"; fi
 }
 
 # One human entry buried under machine entries — the compaction / task-notification drift shape
