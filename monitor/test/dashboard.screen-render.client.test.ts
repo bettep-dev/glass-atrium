@@ -270,16 +270,40 @@ test("an unavailable harness tile offers a Retry that re-polls the harness, unle
   };
   const retried: string[] = [];
   const tree = render("StatusTile", { tile: harnessTile, onNav: () => {}, onRetry: (region: string) => retried.push(region) });
-  const buttons = findNodes(tree, (n) => n.type === "button" && collectText(n).includes("Retry"));
-  assert.equal(buttons.length, 1);
-  (buttons[0].props.onClick as () => void)();
+  const retries = getRetryControls(tree);
+  assert.equal(retries.length, 1);
+  (retries[0].props.onRetry as () => void)();
   assert.deepEqual(retried, ["harness"]);
 
   // one Retry per outage → a tile whose source the banner already lists defers to the banner's Retry
   const shared = render("StatusTile", { tile: harnessTile, onNav: () => {}, onRetry: () => {}, isRetryShared: true });
-  assert.equal(findNodes(shared, (n) => n.type === "button" && collectText(n).includes("Retry")).length, 0);
+  assert.equal(getRetryControls(shared).length, 0);
   const readyTree = render("StatusTile", { tile: READY_TILE, onNav: () => {}, onRetry: () => {} });
-  assert.equal(findNodes(readyTree, (n) => n.type === "button").length, 0, "a read tile carries no Retry");
+  assert.equal(getRetryControls(readyTree).length, 0, "a read tile carries no Retry");
+});
+
+// the shared RetryButton atom → busy wording, aria-busy and the focus handoff come with it
+function getRetryControls(tree: RenderedNode): RenderedNode[] {
+  return findNodes(tree, (n) => n.props.atom === "RetryButton");
+}
+
+test("a held tile's Retry is the shared control: in flight while busy, handing focus to its own tile card on recovery", () => {
+  const heldTile = {
+    ...READY_TILE, region: "outcomes", isHeld: true, badge: "Last known", error: "HTTP 500 Internal Server Error", canRetry: true,
+  };
+  for (const isBusy of [true, false]) {
+    const retried: string[] = [];
+    const tree = render("StatusTile", { tile: { ...heldTile, isBusy }, onNav: () => {}, onRetry: (region: string) => retried.push(region) });
+    const retries = getRetryControls(tree);
+    assert.equal(retries.length, 1, `busy=${isBusy}: one Retry`);
+    assert.equal(findNodes(tree, (n) => n.type === "button").length, 0, `busy=${isBusy}: no bare button beside it`);
+    assert.equal(retries[0].props.isBusy, isBusy);
+    (retries[0].props.onRetry as () => void)();
+    assert.deepEqual(retried, ["outcomes"], "the Retry reloads only the tile's own region");
+    const targets = findNodes(tree, (n) => n.props.id === retries[0].props.focusTargetId);
+    assert.equal(targets.length, 1, "the focus target is the tile card that outlives the Retry");
+    assert.ok(/\bcard\b/.test(classOf(targets[0])), classOf(targets[0]));
+  }
 });
 
 test("a tile Retry routes the harness region to the shell re-poll and every other region to its own reload", () => {
