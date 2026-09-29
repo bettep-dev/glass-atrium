@@ -32,7 +32,6 @@ Every section kept in the rule file is kept because a NAMED reader outside the f
 | Mechanical Success Metrics | every agent — a pointer stub resolving an inbound Tier-1 reference back to its canonical | `core-outcome-record.md` → Automatic Verification Criteria |
 
 - **Heading stability**: `## Test Quality`, `### Meaningless-Test Prohibitions`, `## Destructive-Path Suite Safety (live-postgres reach)` and `## Mechanical Success Metrics` are named verbatim by the pointers above. Renaming one dangles its inbound pointer even though no suite reads the body.
-  - A bold lead named verbatim binds the same way: the `core-outcome-record.md` `feature` note names **Qualifier on the last row (the deliberate-break exception)**, so renaming that lead dangles a Tier-1 pointer.
   - Also stable: `## Rationalization Rejection (Testing)` and its bolded lead **Qualifier on the last row (the deliberate-break exception)** — the sandbox write-confinement lane edits one sentence under that lead, and `### What makes a test a test` → **Watch it fail** points at it.
   - A bold lead named verbatim binds the same way: the `core-outcome-record.md` `feature` note names **Qualifier on the last row (the deliberate-break exception)**, so renaming that lead dangles a Tier-1 pointer.
   - Cited by `agents/glass-atrium-qa-code-reviewer.md` → `### Testing Checks`, some also by in-file pointers — grep before renaming one:
