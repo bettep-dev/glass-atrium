@@ -36,6 +36,7 @@ test("every spelling of one model reads as one label", () => {
 test("a base id and its minor-versioned sibling never collapse onto one label", () => {
   assert.notStrictEqual(cost.getModelLabelC("claude-fable-5"), cost.getModelLabelC("claude-fable-5-1"));
   assert.notStrictEqual(cost.getModelLabelC("claude-opus-5"), cost.getModelLabelC("claude-opus-5-5"));
+  assert.notStrictEqual(cost.getModelLabelC("claude-sonnet-5"), cost.getModelLabelC("claude-sonnet-5-5"));
 });
 
 test("an unattributed placeholder never reads as a model name", () => {

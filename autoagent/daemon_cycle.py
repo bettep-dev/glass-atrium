@@ -896,7 +896,7 @@ def match_sensitive_diff(diff: str) -> str | None:
 
 # Verification budget per patch — the verifier prompt is small (≤4KB) and the
 # rule excerpts are also bounded, so a typical call is cents: at Sonnet 5 rates
-# (~$3/MTok input, ~$15/MTok output) it lands around $0.015. The figures here were
+# (~$2/MTok input, ~$10/MTok output) it lands around $0.010. The figures here were
 # previously computed at Haiku 4.5 rates (~$1/$5 per MTok, ~$0.005/call); they are
 # restated for the model the loop actually runs on now.
 # PRE_VERIFY_MAX_BUDGET_USD is imported from the daemon-config.json SoT. It and the
