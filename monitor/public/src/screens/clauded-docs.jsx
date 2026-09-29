@@ -963,7 +963,8 @@ function ScreenClaudedDocs(/* { onNav } */) {
         .doc-body-isolation .mermaid svg :is(.node, .cluster) rect { rx: 8px; ry: 8px; }
         .doc-meta-row { display: grid; grid-template-columns: 88px 1fr; gap: 6px; padding: 4px 0; font-size: var(--fs-meta); }
         .doc-meta-label { font-family: 'JetBrains Mono', monospace; font-size: var(--fs-meta); color: rgb(var(--faint)); text-transform: uppercase; letter-spacing: 0.04em; }
-        .doc-meta-value { color: rgb(var(--ink)); word-break: break-all; font-size: var(--fs-meta); }
+        /* wraps between words; a single over-long token still breaks rather than spill */
+        .doc-meta-value { color: rgb(var(--ink)); word-break: normal; overflow-wrap: break-word; font-size: var(--fs-meta); }
         .doc-search-input { width: 100%; padding: 7px 10px 7px 32px; font-size: var(--fs-title); background: rgb(var(--surface)); border: 1px solid rgb(var(--line)); border-radius: var(--radius-badge); color: rgb(var(--ink)); font-family: 'Pretendard Variable', Pretendard, ui-sans-serif, system-ui, sans-serif; }
         .doc-search-input:focus { border-color: rgb(var(--accent)); }
         /* .doc-toast → shared SoT in base.css (model-config 2nd consumer) */
@@ -1076,7 +1077,8 @@ function ScreenClaudedDocs(/* { onNav } */) {
         .doc-reorder-error { color: rgb(var(--crit)); font-family: 'JetBrains Mono', monospace; }
         /* stage pill — 톤은 meter 채움과 종료 글리프가 운반 · 라벨 텍스트는 중립 유지. */
         /* ID 셀 둘째 줄 계보. */
-        .doc-lineage { font-size: var(--fs-meta); color: rgb(var(--faint)); white-space: nowrap; }
+        /* breaks only between words — "rev of" / "#N" stack in the ID column instead of spilling or splitting a number */
+        .doc-lineage { font-size: var(--fs-meta); color: rgb(var(--faint)); white-space: normal; word-break: keep-all; overflow-wrap: normal; text-align: left; }
         /* held rows while a read is in flight — dimmed, still readable and selectable. */
         .tbl.doc-ledger-busy { opacity: 0.55; transition: opacity 120ms; }
         @media (prefers-reduced-motion: reduce) { .tbl.doc-ledger-busy { transition: none; } }
@@ -1090,7 +1092,7 @@ function ScreenClaudedDocs(/* { onNav } */) {
         .doc-stage-meter { display: inline-flex; align-items: center; gap: 3px; }
         .doc-stage-label { font-family: 'Pretendard Variable', Pretendard, ui-sans-serif, system-ui, sans-serif; }
         /* 마지막 상태 변경 행위자 — pill 아래 한 줄. 모르면 줄 자체가 없다. */
-        .doc-stage-actor { font-size: var(--fs-meta); font-family: 'JetBrains Mono', monospace; color: rgb(var(--faint)); max-width: 88px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+        .doc-stage-actor { font-size: var(--fs-meta); font-family: 'JetBrains Mono', monospace; color: rgb(var(--faint)); white-space: normal; word-break: keep-all; overflow-wrap: normal; }
         .doc-row.is-stale > td { background: rgb(var(--warn) / 0.06); }
         .doc-age-flag { font-size: var(--fs-meta); font-weight: 600; color: rgb(var(--warn)); font-family: 'Pretendard Variable', Pretendard, ui-sans-serif, system-ui, sans-serif; }
         .doc-open-summary { border-bottom: 1px solid rgb(var(--line)); }
@@ -1300,7 +1302,8 @@ function DocListCardCD({
 	const [focusRowId, setFocusRowId] = useStateCD(null);
 	// load-more keeps its own button spinner → only a first-page read dims the held rows
 	const isHeldBusy = state.busy === true && state.status === "ready" && !isLoadingMore;
-	const busyText = isSearchMode ? "Searching…" : "Refreshing…";
+	// the header Refresh already says Refreshing… → only a search, which it never names, speaks here
+	const busyText = isSearchMode ? "Searching…" : null;
 	// 건수 우측 표기 — groups mode 는 그룹/문서 이중 단위 + 서버 집계 숨김 건 (외부 headerRight 와 동일 규칙, F40) ·
 	// search mode 는 row 단위 '건' + 숨은 건 있으면 "표시/전체" 이중 표기.
 	// 그룹이 기본 단위 · 문서 수는 그룹 수와 다를 때만 (같은 수를 두 번 말하지 않는다).
@@ -1367,7 +1370,7 @@ function DocListCardCD({
 		return (
 			<tr className="doc-stage-section">
 				<th colSpan={columnCount} scope="colgroup">
-					<span>
+					<span role="heading" aria-level={2}>
 						{entry ? entry.label : "stage unavailable"}
 					</span>
 					<span className="doc-stage-section-count">
@@ -1444,14 +1447,14 @@ function DocListCardCD({
 						}))}
 						onToggle={inlineFilterProps.onAudienceChange}
 					/>
-					{isHeldBusy && (
+					{isHeldBusy && busyText && (
 						<span className="doc-list-busy ml-auto fs-meta" role="status" style={{ color: "rgb(var(--dim))" }}>
 							{busyText}
 						</span>
 					)}
 					{totalLabel && (
 						<span
-							className={`${isHeldBusy ? "" : "ml-auto "}fs-meta font-mono`}
+							className={`${isHeldBusy && busyText ? "" : "ml-auto "}fs-meta font-mono`}
 							style={{ color: "rgb(var(--dim))" }}
 							aria-live="polite">
 							{totalLabel}
@@ -1508,7 +1511,9 @@ function DocListCardCD({
 			>
 				{state.status === "loading" && <LoadingPlaceholder label="documents" minHeight={240} />}
 				{state.error != null && (
-					<RegionUnavailable source="the document list" error={state.error} onRetry={onRetry} className="m-4" />
+					<div role="alert">
+						<RegionUnavailable source="the document list" error={state.error} onRetry={onRetry} className="m-4" />
+					</div>
 				)}
 				{state.status === "ready" && rows.length === 0 && (
 					/* S6 정직한 빈 상태 — 적용 중 필터 echo + reset 제공 (blank 패널 금지). WCAG 4.1.3 announce. */
@@ -1556,7 +1561,7 @@ function DocListCardCD({
 								{/* ID — 문서 번호 노출 (그룹 루트 행은 대표 문서 번호).
                     ponytail: 72px 는 5자리 기준 — 6자리면 min-content 가 이겨 셀이 78.4px 로 벌어진다.
                     그때 제목 본문 상자가 343→340px 로 줄고 나머지는 가로 스크롤로 나간다 — Tags 를 줄여 되돌린다. */}
-								<th scope="col" style={{ width: 72, minWidth: 72 }}>ID</th>
+								<th scope="col" style={{ width: 84, minWidth: 84 }}>ID</th>
 								<th scope="col" className="doc-col-title">Title</th>
 								{/* 태그 전용 column — 서술 칩을 제목 셀에서 분리. */}
 								{hasTagsColumn && (
@@ -3120,7 +3125,7 @@ function PredecessorPanelCD({ predecessorId, currentDoc, onNavigate }) {
 						</div>
 						<div
 							className="text-[12px] mt-1"
-							style={{ color: "rgb(var(--ink))", wordBreak: "break-all" }}
+							style={{ color: "rgb(var(--ink))", overflowWrap: "break-word" }}
 						>
 							{predState.data.title}
 						</div>
