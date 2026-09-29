@@ -92,7 +92,16 @@ STOP_ACTIVE=$(printf '%s' "$INPUT" | python3 -c "import sys,json; d=json.load(sy
 
 # Field extraction + [COMPLETION] parsing + body-signal extraction (single python3 call)
 PY_SCRIPT_FILE=$(mktemp -t outcome-record-XXXXXX.py)
-trap 'rm -f "$PY_SCRIPT_FILE"' EXIT INT TERM
+# Stage 1 detection assigns the detector temp → reset here so an inherited value never reaches the teardown.
+T9_PY_FILE=""
+# shellcheck disable=SC2329  # invoked from the EXIT trap string
+delete_py_scripts() {
+  # shellcheck disable=SC2310  # pure predicate — nothing inside it for errexit to catch
+  if ga_guard_path "${PY_SCRIPT_FILE}"; then rm -f -- "${PY_SCRIPT_FILE:?}"; fi
+  # shellcheck disable=SC2310  # pure predicate — nothing inside it for errexit to catch
+  if ga_guard_path "${T9_PY_FILE}"; then rm -f -- "${T9_PY_FILE:?}"; fi
+}
+trap 'delete_py_scripts' EXIT INT TERM
 cat >"$PY_SCRIPT_FILE" <<'PYEOF'
 import sys, json, re
 
@@ -1949,7 +1958,6 @@ if [ "${T9_CORRECTION_DETECTION}" = "true" ]; then
   if [ -n "${T9_TRANSCRIPT_PATH}" ] && [ -r "${T9_TRANSCRIPT_PATH}" ]; then
     # Run transcript parse + regex + prior-outcome lookup in one python3 call; results via @@key@@value
     T9_PY_FILE=$(mktemp -t outcome-t9-XXXXXX.py)
-    trap 'rm -f "$PY_SCRIPT_FILE" "$T9_PY_FILE"' EXIT INT TERM
     cat >"$T9_PY_FILE" <<'PYEOF'
 import sys, json, re, os, glob, time, tempfile
 from datetime import datetime, timezone, timedelta
@@ -2409,7 +2417,8 @@ if [[ "${HAS_STRUCTURED}" = "true" ]]; then
     if [[ -n "${GRADER_CROSSCHECK_STATE_FILE}" ]]; then
       # GA-ABSORB[benign]: an absent spool means the cross-check arm never ran → NULL column.
       GRADER_CROSSCHECK="$(cat "${GRADER_CROSSCHECK_STATE_FILE}" 2>/dev/null || true)"
-      rm -f "${GRADER_CROSSCHECK_STATE_FILE}"
+      # shellcheck disable=SC2310  # pure predicate — nothing inside it for errexit to catch
+      if ga_guard_path "${GRADER_CROSSCHECK_STATE_FILE}"; then rm -f -- "${GRADER_CROSSCHECK_STATE_FILE:?}"; fi
     fi
     # Closed-set guard, same shape as the GRADER_WRITE_SCAN whitelist: the column is a PG enum,
     # so an off-vocabulary token would fail the whole outcome write rather than one field.
@@ -2622,10 +2631,6 @@ if [[ -z "${TIMESTAMP}" ]]; then
   TIMESTAMP=$(date -u +%Y-%m-%dT%H:%M:%S.000Z)
 fi
 
-# trap cleanup targets — PY_SCRIPT_FILE (main parser) + T9_PY_FILE (Stage 1 detector).
-# T9_PY_FILE is created by Stage 1 detection (:- fallback when unset).
-trap 'rm -f "$PY_SCRIPT_FILE" "${T9_PY_FILE:-}"' EXIT INT TERM
-
 # Build the markdown body passed to PG as the body_md column. Frontmatter is omitted — its fields are
 # stored as first-class columns in core.outcomes (record_ts, agent, task_type, ...), so embedding them
 # in body_md would be redundant; the renderer CLI re-synthesizes frontmatter from columns for output.
@@ -2743,7 +2748,14 @@ circuit_breaker_record() {
   else
     # Non-fail resets to zero. Skip when no state was ever written (happy-path common case).
     [ -d "${CIRCUIT_BREAKER_DIR}" ] || return 0
-    rm -f "${counter_file}" "${susp_file}" 2>/dev/null || true
+    # shellcheck disable=SC2310  # pure predicate — nothing inside it for errexit to catch
+    if ga_guard_path "${counter_file}"; then
+      rm -f -- "${counter_file:?}"
+    fi || true
+    # shellcheck disable=SC2310  # pure predicate — nothing inside it for errexit to catch
+    if ga_guard_path "${susp_file}"; then
+      rm -f -- "${susp_file:?}"
+    fi || true
   fi
   return 0
 }
@@ -2766,6 +2778,17 @@ _now_epoch() {
   printf '%s' "${t}"
 }
 
+# Delete one spool entry → status 0 only once it is gone; a refused target counts as kept.
+spool_delete() {
+  local entry="${1:-}"
+  # shellcheck disable=SC2310  # pure predicate — nothing inside it for errexit to catch
+  if ga_guard_path "${entry}"; then
+    rm -f -- "${entry:?}"
+    return
+  fi
+  return 1
+}
+
 # Persist one failed envelope as a spool file. The epoch-second name prefix keeps entries
 # lexically oldest-first for FIFO drain + eviction; mktemp adds the unique suffix.
 spool_write() {
@@ -2773,7 +2796,8 @@ spool_write() {
   ts="$(_now_epoch)"
   spool_file="$(mktemp "${OUTCOME_SPOOL_DIR}/${ts}-XXXXXX" 2>/dev/null)" || return 1
   printf '%s' "${1}" >"${spool_file}" 2>/dev/null || {
-    rm -f "${spool_file}" 2>/dev/null || true
+    # shellcheck disable=SC2310  # the status is the result — a failed rm returns it rather than aborting
+    spool_delete "${spool_file}" || true
     return 1
   }
   return 0
@@ -2800,7 +2824,8 @@ spool_evict() {
         continue
         ;;
     esac
-    if [ "${now}" -gt 0 ] && [ "${prefix}" -lt "${cutoff}" ] && rm -f "${f}" 2>/dev/null; then
+    # shellcheck disable=SC2310  # the status is the result — a failed rm returns it rather than aborting
+    if [ "${now}" -gt 0 ] && [ "${prefix}" -lt "${cutoff}" ] && spool_delete "${f}"; then
       aged=$((aged + 1))
     else
       entries+=("${f}")
@@ -2809,7 +2834,8 @@ spool_evict() {
   if [ "${#entries[@]}" -gt "${OUTCOME_SPOOL_MAX_ENTRIES}" ]; then
     over=$((${#entries[@]} - OUTCOME_SPOOL_MAX_ENTRIES))
     while [ "${i}" -lt "${over}" ]; do
-      rm -f "${entries[${i}]}" 2>/dev/null && evicted=$((evicted + 1))
+      # shellcheck disable=SC2310  # the status is the result — a failed rm returns it rather than aborting
+      spool_delete "${entries[${i}]}" && evicted=$((evicted + 1))
       i=$((i + 1))
     done
   fi
@@ -2862,7 +2888,8 @@ spool_drain() {
     [ -e "${f}" ] || continue
     [ "${drained}" -ge "${OUTCOME_SPOOL_DRAIN_BATCH}" ] && break
     if python3 "${PG_HELPER}" <"${f}" >/dev/null 2>&1; then
-      rm -f "${f}" 2>/dev/null && drained=$((drained + 1))
+      # shellcheck disable=SC2310  # the status is the result — a failed rm returns it rather than aborting
+      spool_delete "${f}" && drained=$((drained + 1))
     else
       break
     fi

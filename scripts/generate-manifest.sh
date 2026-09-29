@@ -88,9 +88,9 @@
 #
 # Named exit codes: 1=--check divergence · 3=git absent/not a work tree ·
 # 4=jq or sha256 tool absent · 5=manifest missing · 6=empty generation or a
-# manifest that fails structural validation · 7=apply-spine.sh not found ·
-# 8=a tracked manifest path carries a backslash, a control byte (0x01-0x1f, DEL)
-# or a non-UTF-8 byte.
+# manifest that fails structural validation · 7=apply-spine.sh missing or
+# failed to load · 8=a tracked manifest path carries a backslash, a control
+# byte (0x01-0x1f, DEL) or a non-UTF-8 byte.
 set -euo pipefail
 
 # Single Atrium system version-of-record. Stamped into manifest.version on
@@ -113,7 +113,10 @@ readonly SPINE_LIB="${GA_ROOT}/scripts/lib/apply-spine.sh"
   exit 7
 }
 # shellcheck source=/dev/null
-source "${SPINE_LIB}"
+source "${SPINE_LIB}" || {
+  echo "generate-manifest: ${SPINE_LIB} failed to load (retired-map family predicate)" >&2
+  exit 7
+}
 
 # Manifest scope — the paths hashed + bundled + integrity-verified. A new
 # top-level entry must be added here DELIBERATELY (policy change), never inferred.
@@ -611,7 +614,8 @@ run_generate() {
   # manifest (the wire_hooks atomic-write contract: temp + validate + mv).
   # shellcheck disable=SC2310  # a false rc is the abort path below, which is the whole point of the guard
   validate_manifest_file "${tmp}" || {
-    rm -f -- "${tmp}"
+    # shellcheck disable=SC2310  # guard (sourced with the spine) branched on — a refusal skips the delete
+    if ga_guard_path "${tmp}"; then rm -f -- "${tmp:?}"; fi
     echo "generate-manifest: generated manifest failed validation — aborting" >&2
     exit 6
   }

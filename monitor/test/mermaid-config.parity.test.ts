@@ -23,6 +23,13 @@ import {
   loadExportAsset,
 } from "../src/server/clauded-docs/html-export.js";
 import { MERMAID_CONFIG_SOURCE } from "./lib/mermaid-config-source.js";
+import {
+  createReactStub,
+  findNodes,
+  loadScreenModule,
+  renderScreen,
+  type RenderedNode,
+} from "./lib/render-screen.js";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const MONITOR_ROOT = resolve(HERE, "..");
@@ -127,7 +134,7 @@ test("P1-2 the export injects the config file itself, with nothing appended", as
 // The two surfaces render the same stored bodies, and the document language is an input
 // to that render: mermaid's C4 renderer measures its row-wrap limit from text metrics the
 // document language feeds, so a viewer declaring one language and the export another lay
-// the same source out at different widths. The value itself is a decision (ADR-B3 R1: ko);
+// the same source out at different widths. The value itself (ko) is a decision;
 // what goes red here is the two surfaces disagreeing about it, whichever way one is edited.
 //
 // Read out of the sources rather than off a rendered page — a width comparison would need a
@@ -165,6 +172,38 @@ test("후속-5 the viewer and the export declare the same document language", ()
     exportLang,
     `index.html declares lang="${String(viewerLang)}" while the export shell declares lang="${String(exportLang)}" — ` +
       "one stored body renders under two document languages, and the width difference that causes is reported nowhere",
+  );
+});
+
+const DOCS_SCREEN_PATH = resolve(PUBLIC_ROOT, "src/screens/clauded-docs.jsx");
+const DOC_BODY_CONTAINER_CLASS = "doc-body-isolation";
+
+/**
+ * The `lang` the viewer's rendered document body container declares.
+ * Read from the rendered tree → a pin on another element, or missing from one render branch, fails.
+ */
+async function getViewerBodyLang(): Promise<unknown> {
+  const react = createReactStub();
+  const mod = await loadScreenModule(DOCS_SCREEN_PATH, { React: react, UI: {} });
+  const createElement = react.createElement as (type: unknown, props: unknown) => unknown;
+  // txt takes the code-format branch, which needs no DOMPurify/DOMParser; every branch mounts the same container
+  const state = { status: "ready", data: { id: 1, title: "Parity probe", format: "txt", body: "probe" } };
+  const tree = renderScreen(createElement(mod.ViewerBodyCD, { state })) as RenderedNode;
+  const [container] = findNodes(tree, (n) =>
+    String(n.props.className ?? "").split(/\s+/).includes(DOC_BODY_CONTAINER_CLASS),
+  );
+  assert.ok(container, `the viewer renders no .${DOC_BODY_CONTAINER_CLASS} body container`);
+  return container.props.lang;
+}
+
+test("the viewer's document body container declares the export shell's document language", async () => {
+  const bodyLang = await getViewerBodyLang();
+  const exportLang = getExportShellHtmlLang();
+  assert.equal(
+    bodyLang,
+    exportLang,
+    `the viewer body container declares lang="${String(bodyLang)}" while the export shell declares ` +
+      `lang="${String(exportLang)}" — under the English app shell the stored body inherits en, not the export language`,
   );
 });
 

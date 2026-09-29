@@ -173,7 +173,13 @@ unload_launchd_jobs() {
     plist="${LAUNCH_AGENTS}/${label}.plist"
     launchctl bootout "gui/${UID}/${label}" >/dev/null 2>&1 && booted=$((booted + 1)) || true
     if [[ -e "${plist}" ]]; then
-      rm -f -- "${plist}" && removed=$((removed + 1))
+      # A guard refusal counts as a failed removal (else false), so the plist is not counted.
+      # shellcheck disable=SC2310  # guard verdict branched on — a refusal is a skip, never an abort
+      if ga_guard_path "${plist}"; then
+        rm -f -- "${plist:?}"
+      else
+        false
+      fi && removed=$((removed + 1))
     fi
   done
   log "uninstall: launchd teardown done (${booted} booted out, ${removed} plists removed)"

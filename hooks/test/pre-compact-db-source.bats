@@ -72,6 +72,9 @@ teardown_file() {
   eph_pg_stop "${EPH_DATADIR}"
 }
 
+# shellcheck source-path=SCRIPTDIR source=../../scripts/lib/path-guard.sh
+source "${BATS_TEST_DIRNAME}/../../scripts/lib/path-guard.sh"
+
 setup() {
   if [[ -n "${EPH_SKIP:-}" ]]; then
     skip "${EPH_SKIP}"
@@ -80,7 +83,7 @@ setup() {
 }
 
 teardown() {
-  [[ -n "${PC_TMP:-}" && -d "${PC_TMP}" ]] && rm -rf -- "${PC_TMP}" || true
+  if ga_guard_path "${PC_TMP:-}"; then rm -rf -- "${PC_TMP:?}"; fi
 }
 
 _eph_q() {

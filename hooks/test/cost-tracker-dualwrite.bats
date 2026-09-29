@@ -95,6 +95,9 @@ teardown_file() {
   echo "# production core.cost_events total: before=${EPH_PROD_BEFORE} after=${after}" >&3
 }
 
+# shellcheck source-path=SCRIPTDIR source=../../scripts/lib/path-guard.sh
+source "${BATS_TEST_DIRNAME}/../../scripts/lib/path-guard.sh"
+
 setup() {
   # Explicit if — a trailing `[[ ... ]] && skip` returns the failing test's exit
   # when EPH_SKIP is empty (bats reads setup()'s status), spuriously failing.
@@ -126,7 +129,7 @@ _eph_snapshot() {
 # capture file. Positional args into `bash -c` avoid any interpolation injection.
 _fire_stop() {
   local stderr_file="${1:-/dev/null}"
-  rm -rf "${EPH_HOME}/.glass-atrium/logs/cost-subagent-mtime" 2>/dev/null || true
+  if ga_guard_path "${EPH_HOME}"; then rm -rf -- "${EPH_HOME:?}/.glass-atrium/logs/cost-subagent-mtime"; fi
   local stdin_json
   stdin_json="$(printf '{"session_id":"%s","transcript_path":"%s","cwd":"/tmp","permission_mode":"default","hook_event_name":"Stop"}' \
     "${EPH_SID}" "${EPH_TX}")"
@@ -219,7 +222,7 @@ exec "${real_py3}" "\$@"
 EOF
   chmod +x "${shimbin}/python3"
 
-  rm -rf "${EPH_HOME}/.glass-atrium/logs/cost-subagent-mtime" 2>/dev/null || true
+  if ga_guard_path "${EPH_HOME}"; then rm -rf -- "${EPH_HOME:?}/.glass-atrium/logs/cost-subagent-mtime"; fi
   local stdin_json
   stdin_json="$(printf '{"session_id":"%s","transcript_path":"%s","cwd":"/tmp","permission_mode":"default","hook_event_name":"Stop"}' \
     "${EPH_SID}" "${EPH_TX}")"

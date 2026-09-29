@@ -15,6 +15,8 @@
 
 GA="$(cd -- "${BATS_TEST_DIRNAME}/../.." && pwd)"
 RENDER_SH="${GA}/scripts/render-monitor-env.sh"
+# shellcheck source-path=SCRIPTDIR source=../lib/path-guard.sh
+source "${GA}/scripts/lib/path-guard.sh"
 
 # Injected host zone for the auto-resolution cascade — deliberately != this
 # repo's real host (Asia/Seoul) so a passing auto/host test proves the injection
@@ -31,7 +33,7 @@ setup() {
 }
 
 teardown() {
-  [[ -n "${SANDBOX:-}" && -d "${SANDBOX}" ]] && rm -rf -- "${SANDBOX}"
+  if ga_guard_path "${SANDBOX:-}"; then rm -rf -- "${SANDBOX:?}"; fi
 }
 
 # Write a minimal config.toml into the sandbox.
@@ -256,4 +258,19 @@ example_time() {
   # (the monitor's 04:50 is its own hardcoded dev fallback, not this SoT).
   example_time "[daemon.wiki-compile]"
   [[ "${output}" == "04:50" ]]
+}
+
+@test "teardown succeeds silently when setup skipped before creating the temp dir" {
+  local saved="${SANDBOX}"
+  unset SANDBOX
+  run teardown
+  SANDBOX="${saved}"
+  [[ "${status}" -eq 0 ]] || {
+    echo "teardown without a temp dir failed (status ${status}): ${output}" >&2
+    return 1
+  }
+  [[ -z "${output}" ]] || {
+    echo "teardown without a temp dir wrote: ${output}" >&2
+    return 1
+  }
 }

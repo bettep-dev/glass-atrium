@@ -404,7 +404,7 @@ build_meter_block() {
     "**Turn-budget meter (auto-injected · GLOBAL_RULES Turn Budget & Graceful Exit)**" \
     "- Your maxTurns hard cap is ${max_turns} TURNS (a TURN cap, not a tool_use cap). The hard cap kills you mid-tool-use → no [COMPLETION] block → costly orchestrator recovery." \
     "- Working ceiling = ${ceiling} turns (80% of cap). As you APPROACH ${ceiling}: STOP, do NOT push to the hard cap." \
-    "- On approach: finish the current write to a valid state (no partial files), checkpoint done/remaining to memory/progress-{task}.md, then emit a terminal [COMPLETION] block with result: needs_context and a 1-line resume point in summary. (schema-mode/workflow agents: STILL call StructuredOutput as the terminal action even on a needs_context exit — print this [COMPLETION] block first, then emit StructuredOutput; ending on the prose block alone throws.)" \
+    "- On approach: finish the current write (no partial files), checkpoint done/remaining with Write/Edit to progress-{task}.md in ~/.claude-personal/projects/<home-encoded>/memory/ (Bash-only agent: put done/remaining in summary; the orchestrator writes the file), then emit a terminal [COMPLETION] block with result: needs_context and a 1-line resume point in summary. (schema-mode: block in completion_block, StructuredOutput still the LAST call.)" \
     "- Splitting > truncation: a clean needs_context handoff resumes cleanly; a hard-cap kill does not."
 }
 
@@ -581,7 +581,10 @@ append_drop_log() {
   if [[ -f "${INJECT_DROP_LOG}" ]]; then
     sz="$(wc -c <"${INJECT_DROP_LOG}" 2>/dev/null | tr -cd '0-9' || true)"
     if [[ -n "${sz}" && "${sz}" -gt "${INJECT_DROP_LOG_MAX_BYTES}" ]]; then
-      rm -f "${INJECT_DROP_LOG}" 2>/dev/null || true
+      # shellcheck disable=SC2310  # pure predicate — nothing inside it for errexit to catch
+      if ga_guard_path "${INJECT_DROP_LOG}"; then
+        rm -f -- "${INJECT_DROP_LOG:?}"
+      fi || true
     fi
   fi
   # Byte overage = how far the pre-drop assembly exceeded the ceiling (the record names it explicitly,
@@ -762,7 +765,10 @@ append_manifest_log() {
   if [[ -f "${INJECT_MANIFEST_LOG}" ]]; then
     sz="$(wc -c <"${INJECT_MANIFEST_LOG}" 2>/dev/null | tr -cd '0-9' || true)"
     if [[ -n "${sz}" && "${sz}" -gt "${INJECT_MANIFEST_LOG_MAX_BYTES}" ]]; then
-      rm -f "${INJECT_MANIFEST_LOG}" 2>/dev/null || true
+      # shellcheck disable=SC2310  # pure predicate — nothing inside it for errexit to catch
+      if ga_guard_path "${INJECT_MANIFEST_LOG}"; then
+        rm -f -- "${INJECT_MANIFEST_LOG:?}"
+      fi || true
     fi
   fi
   # Each helper is internally guarded and always exits 0 (the codebase idiom for an in-hook call — a

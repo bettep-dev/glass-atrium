@@ -19,6 +19,8 @@
 
 SCRIPT="${BATS_TEST_DIRNAME}/../snapshot-live-repos.sh"
 REPO_RELS='autoagent agents monitor scripts/test rules test hooks/test'
+# shellcheck source-path=SCRIPTDIR source=../lib/path-guard.sh
+source "${BATS_TEST_DIRNAME}/../lib/path-guard.sh"
 
 # Fixture commit — explicit gpgsign-off, because the fixture gitconfig turns
 # signing ON to prove the tool passes its own -c commit.gpgsign=false.
@@ -72,7 +74,7 @@ EOF
 }
 
 teardown() {
-  [[ -n "${WORK:-}" && -d "${WORK}" ]] && rm -rf -- "${WORK}"
+  if ga_guard_path "${WORK:-}"; then rm -rf -- "${WORK:?}"; fi
 }
 
 # Make autoagent dirty exactly the way a deploy leaves it: modified tracked
@@ -130,7 +132,7 @@ dirty_autoagent() {
 
 @test "version label: an unreadable manifest warns and falls back to unversioned" {
   dirty_autoagent
-  rm -f -- "${GA_ROOT}/manifest.json"
+  if ga_guard_path "${GA_ROOT}"; then rm -f -- "${GA_ROOT:?}/manifest.json"; fi
   run bash "${SCRIPT}"
   [[ "${status}" -eq 0 ]] || return 1
   [[ "${output}" == *'release version unreadable'* ]] || return 1
@@ -219,7 +221,7 @@ dirty_autoagent() {
 
 @test "git-less: a whitelisted dir with no repo is reported n/a and the others still snapshot" {
   dirty_autoagent
-  rm -rf -- "${GA_ROOT}/monitor/.git"
+  if ga_guard_path "${GA_ROOT}"; then rm -rf -- "${GA_ROOT:?}/monitor/.git"; fi
   printf 'changed\n' >"${GA_ROOT}/monitor/tracked.txt"
   run bash "${SCRIPT}"
   [[ "${status}" -eq 0 ]] || return 1
@@ -231,7 +233,7 @@ dirty_autoagent() {
 
 @test "missing dir: loud-fail exit 3 with zero commits" {
   dirty_autoagent
-  rm -rf -- "${GA_ROOT}/hooks/test"
+  if ga_guard_path "${GA_ROOT}"; then rm -rf -- "${GA_ROOT:?}/hooks/test"; fi
   count_before="$(total_commits)"
   run bash "${SCRIPT}"
   [[ "${status}" -eq 3 ]] || return 1
@@ -261,11 +263,39 @@ dirty_autoagent() {
   [[ ! -e "${AUTOAGENT_REPORTS_DIR}/.apply-lock" ]] || return 1
 }
 
+@test "cleanup: a finished run leaves no status scratch dir behind" {
+  local scratch
+  dirty_autoagent
+  mkdir -p "${WORK}/bin"
+  cat >"${WORK}/bin/mktemp" <<STUB
+#!/usr/bin/env bash
+out="\$(/usr/bin/mktemp "\$@")" || exit
+printf '%s\n' "\${out}" >>"${WORK}/mktemp-calls.log"
+printf '%s\n' "\${out}"
+STUB
+  chmod +x "${WORK}/bin/mktemp"
+  PATH="${WORK}/bin:${PATH}" run bash "${SCRIPT}"
+  [[ "${status}" -eq 0 ]] || return 1
+  scratch="$(grep -F 'snapshot-live-repos.' "${WORK}/mktemp-calls.log")" || return 1
+  [[ -n "${scratch}" && ! -e "${scratch}" ]]
+}
+
 @test "lock: a missing apply-lock lib loud-fails exit 5" {
   dirty_autoagent
   ATRIUM_APPLY_LOCK_LIB="${WORK}/absent-apply-lock.sh" run bash "${SCRIPT}"
   [[ "${status}" -eq 5 ]] || return 1
   [[ "${output}" == *'apply-lock lib missing'* ]] || return 1
+  [[ "$(git -C "${GA_ROOT}/autoagent" rev-list --count HEAD)" -eq 1 ]] || return 1
+}
+
+@test "lock: an apply-lock lib that cannot load its path guard loud-fails exit 5" {
+  dirty_autoagent
+  mkdir -p "${WORK}/noguard"
+  cp -p -- "${BATS_TEST_DIRNAME}/../lib/apply-lock.sh" "${WORK}/noguard/apply-lock.sh"
+  ATRIUM_APPLY_LOCK_LIB="${WORK}/noguard/apply-lock.sh" run bash "${SCRIPT}"
+  [[ "${status}" -eq 5 ]] || return 1
+  [[ "${output}" == *'cannot source the shared path guard'* ]] || return 1
+  [[ "${output}" == *'apply-lock lib failed to load'* ]] || return 1
   [[ "$(git -C "${GA_ROOT}/autoagent" rev-list --count HEAD)" -eq 1 ]] || return 1
 }
 
@@ -307,4 +337,19 @@ dirty_autoagent() {
   run bash "${SCRIPT}" --trigger
   [[ "${status}" -eq 2 ]] || return 1
   [[ "$(git -C "${GA_ROOT}/autoagent" rev-list --count HEAD)" -eq 1 ]] || return 1
+}
+
+@test "teardown succeeds silently when setup skipped before creating the temp dir" {
+  local saved="${WORK}"
+  unset WORK
+  run teardown
+  WORK="${saved}"
+  [[ "${status}" -eq 0 ]] || {
+    echo "teardown without a temp dir failed (status ${status}): ${output}" >&2
+    return 1
+  }
+  [[ -z "${output}" ]] || {
+    echo "teardown without a temp dir wrote: ${output}" >&2
+    return 1
+  }
 }

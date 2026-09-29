@@ -16,6 +16,8 @@ bats_require_minimum_version 1.5.0
 GA="$(cd -- "${BATS_TEST_DIRNAME}/../.." && pwd)"
 REAL_WRAP="${GA}/hooks/lib/hook-utils.sh"
 REAL_CONFIG="${GA}/scripts/lib/atrium-config.sh"
+# shellcheck source-path=SCRIPTDIR source=../../scripts/lib/path-guard.sh
+source "${BATS_TEST_DIRNAME}/../../scripts/lib/path-guard.sh"
 
 setup() {
   [[ -f "${REAL_WRAP}" ]] || skip "hook-utils.sh not found: ${REAL_WRAP}"
@@ -24,7 +26,7 @@ setup() {
 }
 
 teardown() {
-  [[ -n "${WORK:-}" && -d "${WORK}" ]] && rm -rf -- "${WORK}" || true
+  if ga_guard_path "${WORK:-}"; then rm -rf -- "${WORK:?}"; fi
 }
 
 # Build a real GA install tree under WORK/real: the wrapper + resolver copied

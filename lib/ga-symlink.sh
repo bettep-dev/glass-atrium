@@ -266,7 +266,9 @@ swap_symlink() {
 
 # single-link removal (target-verified)
 # Removes the given absolute path ONLY if it is a symlink whose readlink target resolves into
-# GA_ROOT. Real files + foreign symlinks + never-touch are skipped. Returns 0 removed, 1 (safely) skipped.
+# GA_ROOT. Real files + foreign symlinks + never-touch are skipped. Returns 0 removed, 1 (safely) skipped,
+# 2 the link survived its unlink. Every caller counts rc 0 only and skips rc 2 like rc 1, so uninstall and
+# migrate still exit 0 — the stderr ERROR line is rc 2's only signal (run_prune, by contrast, fails the run).
 remove_if_ga_link() {
   local link="$1"
   # target-relative path for the never-touch guard
@@ -307,7 +309,13 @@ remove_if_ga_link() {
     return 0
   fi
 
-  rm -f -- "${link}"
+  if ga_guard_path "${link}"; then
+    rm -f -- "${link:?}"
+  fi
+  if [[ -L "${link}" ]]; then
+    printf 'ERROR: GA symlink still present after unlink: %s -> %s\n' "${link}" "${tgt}" >&2
+    return 2
+  fi
   log "removed: ${rel} -> ${tgt}"
   return 0
 }
@@ -332,9 +340,10 @@ remove_manifest_links() {
     if [[ "$(is_symlink_excluded "${rel}")" == "yes" ]]; then
       continue
     fi
-    # remove_if_ga_link's return 1 is a SAFE SKIP, not an error → bracket the call with set +e/set
-    # -e (SC2310-clean idiom) + capture rc. Also suspend the ERR trap (set -E propagates it into the
-    # callee, so the safe-skip `return 1` would otherwise print a spurious ERROR line), then restore.
+    # remove_if_ga_link's non-zero is a skip, not an abort (1 = safe skip; 2 = link survived its unlink,
+    # signalled on stderr only) → bracket the call with set +e/set -e (SC2310-clean idiom) + capture rc.
+    # Also suspend the ERR trap (set -E propagates it into the callee, so the skip's non-zero return
+    # would otherwise print a spurious ERROR line), then restore.
     set +e
     trap - ERR
     remove_if_ga_link "${TARGET_HOME}/${rel}"
@@ -356,8 +365,9 @@ sweep_orphans() {
   # shellcheck disable=SC2312
   while IFS= read -r link; do
     [[ -n "${link}" ]] || continue
-    # return 1 = safe skip — bracket the call with set +e/set -e + suspend the ERR trap (set -E
-    # propagates it into the callee → the safe-skip `return 1` would print a spurious ERROR line), then restore.
+    # non-zero = skip (1 safe skip; 2 link survived its unlink, stderr-only signal) — bracket the call with
+    # set +e/set -e + suspend the ERR trap (set -E propagates it into the callee → the skip's non-zero
+    # return would print a spurious ERROR line), then restore.
     set +e
     trap - ERR
     remove_if_ga_link "${link}"

@@ -37,6 +37,8 @@ bats_require_minimum_version 1.5.0
 
 GA="$(cd -- "${BATS_TEST_DIRNAME}/.." && pwd)"
 REAL_GA="${GA}/glass-atrium"
+# shellcheck source-path=SCRIPTDIR source=../scripts/lib/path-guard.sh
+source "${GA}/scripts/lib/path-guard.sh"
 
 # A path that exists under GA_ROOT for every checkout, so the still-present arm needs no fixture of
 # its own — the doctor resolves the record's lines against the install root, not against a sandbox.
@@ -65,9 +67,9 @@ SH
 }
 
 teardown() {
-  [[ -n "${TARGET:-}" && -d "${TARGET}" ]] && rm -rf -- "${TARGET}" || true
-  [[ -n "${DATA_ROOT:-}" && -d "${DATA_ROOT}" ]] && rm -rf -- "${DATA_ROOT}" || true
-  [[ -n "${STATE:-}" && -d "${STATE}" ]] && rm -rf -- "${STATE}" || true
+  if ga_guard_path "${TARGET:-}"; then rm -rf -- "${TARGET:?}"; fi
+  if ga_guard_path "${DATA_ROOT:-}"; then rm -rf -- "${DATA_ROOT:?}"; fi
+  if ga_guard_path "${STATE:-}"; then rm -rf -- "${STATE:?}"; fi
 }
 
 # Drive the REAL doctor with the target, runtime-data, updater-state and backup-dir seams at the

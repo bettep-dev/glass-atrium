@@ -96,7 +96,7 @@ function getLiveFixture(overrides: LiveOverrides = {}): ArchitectureLiveResponse
 				daemon_name: BOUND_DAEMON,
 				// "critical" is not a DAEMON_STATUS_TONE key, so the tone resolves through the
 				// `info` fallback and the pill text reads "critical" — ui.jsx `daemonStatusLabel`
-				// is `{ tone: 'info', label: status || '—' }`. A later T7/T8 assertion on LiveStrip
+				// is `{ tone: 'info', label: status || '—' }`. A later T7/T8 assertion on the strip
 				// text inherits `critical`, not an em dash.
 				effective_status: "critical",
 				last_run_at: null,
@@ -530,11 +530,11 @@ test("AC-T17 the map renders no About this diagram prose section", async () => {
 	);
 });
 
-// 범례 표면 셀렉터 — 컴포넌트가 붙이던 클래스 전부. 하나라도 남으면 UI 가 살아 있음.
+// 걷어낸 대화형 범례의 표면 셀렉터 — 하나라도 남으면 그 UI 가 살아 있음.
+// 캡션의 정적 스와치 범례(.arch-legend-item)는 현행이라 대상 밖.
 const LEGEND_SELECTORS = [
 	".arch-legend-details",
 	".arch-legend-grid",
-	".arch-legend-item",
 	".arch-legend-swatch-box",
 	".arch-legend-swatch-line",
 ];
@@ -542,7 +542,7 @@ const LEGEND_SELECTORS = [
 // 분류별 흐림이 노드에 남기던 클래스 — 캔버스의 legend-focus, 대상 노드의 legend-hit.
 const NODE_DIM_SELECTOR = ".legend-focus, .legend-hit";
 
-test("AC-T19 the map renders no legend surface", async () => {
+test("the map renders no surface of the retired interactive legend", async () => {
 	await openMap(getLiveFixture());
 
 	const present = await page.evaluate(
@@ -556,7 +556,7 @@ test("AC-T19 the map renders no legend surface", async () => {
 	assert.deepEqual(
 		present.map(([sel]) => sel),
 		[],
-		`legend surface still rendered: ${present.map(([s, c]) => `${s}×${c}`).join(", ")}`,
+		`retired legend surface still rendered: ${present.map(([s, c]) => `${s}×${c}`).join(", ")}`,
 	);
 });
 
@@ -587,8 +587,8 @@ test("AC-T19 no interaction attaches the node-dim classes", async () => {
 
 // 상시 칩이 렌더하던 정확한 라벨 — 기본 픽스처(writers 빈 배열 · 최근활동 0) 기준.
 // 맨 단어(cost/agent/outcome)는 다이어그램 노드 라벨과 충돌하므로(diagrams-source 의
-// outcome_block 등) 값까지 붙여 잼. 컨테이너 클래스는 세지 않음 — 로드 실패 경보와
-// 로딩 스켈레톤이 같은 .arch-live-strip 을 쓰고 둘 다 남기 때문임.
+// outcome_block 등) 값까지 붙여 잼. 컨테이너 클래스는 세지 않음 — 칩이 살던 줄 자체가
+// 이제 화면에 없으므로 클래스로는 그 부재를 가릴 수 없음.
 const CHIP_LABELS = ["Writer 0/0", "cost 0", "agent 0", "outcome \u2014"];
 
 // 실제 로스터 이름 — composeWriters(live-overlay.ts:383-387)가 내보내는 원소 모양과 같음.
@@ -866,6 +866,42 @@ async function assertZoneRing(
 	);
 }
 
+/**
+ * ok 존 — 판정 클래스는 들되 테두리를 그리지 않음 (39731 S2 링 규칙).
+ * 클래스와 그림을 함께 재야 '클래스가 사라짐' 과 '그리지 않음' 이 갈림: 앞만 재면 판정이
+ * 통째로 끊긴 지도도 초록이고, 뒤만 재면 링 규칙이 판정 자체를 지운 회귀가 지나감.
+ */
+async function assertZoneUnringed(
+	probe: ZoneRingProbe,
+	zoneId: string,
+	expectedClass: string,
+): Promise<void> {
+	assert.ok(
+		Object.hasOwn(probe.zoneClasses, zoneId),
+		`fixture precondition: the canvas draws no zone '${zoneId}' — the assertion below would be vacuous`,
+	);
+	assert.deepEqual(
+		probe.zoneClasses[zoneId],
+		[expectedClass],
+		`zone '${zoneId}' must carry exactly ${expectedClass}`,
+	);
+
+	const display = await page.evaluate(
+		(args) => {
+			const el = document.querySelector(
+				`${args.canvas} svg .${args.cls} > rect.arch-ring-state`,
+			);
+			return el ? getComputedStyle(el).display : "<no ring rect>";
+		},
+		{ canvas: selectors.canvas, cls: expectedClass },
+	);
+	assert.equal(
+		display,
+		"none",
+		`zone '${zoneId}' must stay unringed — a painted ok verdict rings every healthy part, and then the ring marks nothing`,
+	);
+}
+
 // 존이 대표하는 노드에는 링이 남으면 안 됨 — 같은 판정이 두 겹으로 읽힘.
 function assertNodeUnringed(probe: RingProbe, partId: string, zoneId: string): void {
 	const nodes = getRenderedPart(probe.rendered, partId);
@@ -995,7 +1031,7 @@ test("AC-B2-3d healthy part verdicts light the zone that represents them", async
 	const zoneProbe = await getZoneRingProbe();
 
 	for (const [partId, zoneId] of Object.entries(ZONE_REPRESENTED_PART_ZONE)) {
-		await assertZoneRing(zoneProbe, zoneId, ZONE_RING_OK_CLASS, "--ok");
+		await assertZoneUnringed(zoneProbe, zoneId, ZONE_RING_OK_CLASS);
 		assertNodeUnringed(nodeProbe, partId, zoneId);
 	}
 });
@@ -1054,7 +1090,7 @@ test("AC-B2-3f exactly the zones with a single health node carry the verdict", a
 test("AC-B2-3e a health poll with no canvas re-render repaints the zone ring", async () => {
 	const pgZone = ZONE_REPRESENTED_PART_ZONE.pg;
 	await openMapWithHealth(getHealthFixture());
-	await assertZoneRing(await getZoneRingProbe(), pgZone, ZONE_RING_OK_CLASS, "--ok");
+	await assertZoneUnringed(await getZoneRingProbe(), pgZone, ZONE_RING_OK_CLASS);
 
 	const svgIdBefore = await getCanvasSvgId();
 	const pollsBefore = getHealthCounts()[PG_HEALTH_PATH] || 0;
@@ -1302,6 +1338,7 @@ interface ClusterVisual {
 	rxComputed: string;
 	rectBox: ProbeRect | null;
 	labelBox: ProbeRect | null;
+	isTitleShown: boolean;
 	firstNodeTop: number | null;
 	scale: number;
 }
@@ -1372,6 +1409,8 @@ async function getVisualProbe(): Promise<VisualProbe> {
 				rxComputed: rcs ? rcs.rx : "",
 				rectBox: box ? (box.toJSON() as ProbeRect) : null,
 				labelBox: label ? (label.getBoundingClientRect().toJSON() as ProbeRect) : null,
+				// a dropped title collapses to a 0×0 box at the origin, so its clearance is not measurable
+				isTitleShown: label ? getComputedStyle(label.closest(".cluster-label") || label).display !== "none" : false,
 				firstNodeTop,
 				scale: rect ? (rect.getScreenCTM()?.a ?? Number.NaN) : Number.NaN,
 			};
@@ -1519,7 +1558,12 @@ test("P0-2-fix labels render in the same font mermaid measured them with", async
 
 	// 측정 조건의 실측치 — 같은 소스를 캔버스 CSS 밖(document.body)에 렌더하면 mermaid 자신의
 	// 스타일만 걸린 라벨이 나온다. 그것이 mermaid 가 상자 크기를 잰 서체다.
-	await getRenderProbe(page, "d52-font-baseline", CANONICAL_MAP.mermaid_drawn);
+	// the canvas renders with its map-only label override → the baseline must too, or the parity is against another font
+	const directive = await page.evaluate(
+		() => (window as never as { ARCH_MAP_LABEL_DIRECTIVE?: string }).ARCH_MAP_LABEL_DIRECTIVE ?? "",
+	);
+	assert.ok(directive.startsWith("%%{init"), "the screen no longer exposes its label directive");
+	await getRenderProbe(page, "d52-font-baseline", directive + CANONICAL_MAP.mermaid_drawn);
 	const baseline = await page.evaluate(() => {
 		const label = document.querySelector("#probe-host-d52-font-baseline .nodeLabel") as HTMLElement | null;
 		if (!label) return null;
@@ -1542,12 +1586,15 @@ test("P0-2-fix labels render in the same font mermaid measured them with", async
 	);
 });
 
-test("P0-2-fix zone titles clear the zone edge and the first box below", async () => {
+test("every shown zone title clears the zone edge and the first box below", async () => {
 	await openMap(getLiveFixture());
 	const probe = await getVisualProbe();
+	const titled = probe.clusters.filter((c) => c.isTitleShown);
+
+	assert.ok(titled.length > 0, "no zone shows its title — the clearance claim is empty");
 
 	// 여백은 확대율과 무관한 주장이므로 사용자 단위로 판정하고 화면 px 은 기록만 한다.
-	const crowded = probe.clusters
+	const crowded = titled
 		.map((c) => {
 			const rect = c.rectBox;
 			const title = c.labelBox;
@@ -2445,12 +2492,12 @@ test("ADR-20 every node shows its focus position, whatever classDef or shape it 
 	// 우리 규칙이 통째로 안 걸려도 아홉 개 모두 '표식 있음' 으로 균일하게 통과함(실측 — 종전의
 	// stroke 규칙은 classDef 인라인 !important 에 막혀 네 노드에서 안 걸렸는데, 그 자리를 UA 링이
 	// 덮고 있었음). 그래서 토큰에서 기대색을 읽어 대조함 — 리터럴을 적으면 토큰이 바뀔 때 갈라짐.
-	const accent = await getTokenColour("--accent");
-	const wrongColour = focused.filter((n) => n.ringStroke !== accent);
+	const focusRing = await getTokenColour("--focus-ring");
+	const wrongColour = focused.filter((n) => n.ringStroke !== focusRing);
 	assert.deepEqual(
 		wrongColour.map((n) => `${n.id}: ${n.ringStroke}`),
 		[],
-		`every node must mark focus in the accent the screen declares (${accent}) — another colour is the browser's own ring standing in for a rule that did not apply`,
+		`every node must mark focus in the focus-ring colour the screen declares (${focusRing}) — another colour is the browser's own ring standing in for a rule that did not apply`,
 	);
 
 	// 상태 링과 같은 반경 가족이어야 함 — 한 화면에서 굴린 표식과 각진 표식이 섞이면 둘이 다른 뜻으로 읽힘.
@@ -2486,7 +2533,7 @@ test("ADR-20 every node can carry a state ring, whatever classDef or shape it ha
 	);
 	assert.notEqual(
 		crit,
-		await getTokenColour("--accent"),
+		await getTokenColour("--focus-ring"),
 		"the verdict and the focus position must not read as the same colour",
 	);
 
@@ -2829,7 +2876,7 @@ async function getDaemonRowVerdicts(): Promise<{ id: string; tone: string | null
 
 // 끊긴 health 저장소를 부르는 경보 — 이름·자리·복구 컨트롤을 함께 읽음.
 // 셋을 따로 재면 '경보는 떴는데 되돌릴 길이 없음' 이나 '노드를 눌러야 보임' 이 초록으로 지나감.
-// 경보는 표 안에 서 있었고 표가 사라지며 페이지로 올라왔음 — `onPage` 가 그 이사를 잼.
+// 경보는 이제 지도 위 경보 레인의 한 행임 — `onPage` 가 그 자리를 잼.
 async function getStoreAlerts(): Promise<
 	{ text: string; onPage: boolean; inPanel: boolean; retries: number }[]
 > {
@@ -2838,7 +2885,7 @@ async function getStoreAlerts(): Promise<
 			.filter((el) => (el.textContent || "").includes("system health"))
 			.map((el) => ({
 				text: (el.textContent || "").replace(/\s+/g, " ").trim(),
-				onPage: Boolean(el.closest(".arch-health-alert-wrap")),
+				onPage: Boolean(el.closest(".arch-alarm-lane")),
 				// 패널 안에 서면 노드를 눌러야 보임 — 헬스를 통째로 못 읽었다는 사실이
 				// 클릭 뒤에 숨는 것이 이 절이 막는 결함임.
 				inPanel: Boolean(el.closest("[data-node-health]")),
@@ -2851,7 +2898,7 @@ test("AC-B2-6b a health store that failed is named by an alert standing on the p
 	await openMapWithHealth(getHealthFixture({ failedStores: ["health"] }));
 	// 끊긴 저장소의 부품은 tone 을 못 받으므로 판정 앵커를 쓸 수 없음 — 경보 자체를 기다림.
 	// 부재는 아래 단언이 문장으로 보고함(여기서 던지면 붉은 이유가 타임아웃으로 바뀜).
-	await page.waitForSelector(".arch-health-alert-wrap .arch-queue-error", { timeout: 15_000 }).then(
+	await page.waitForSelector('.arch-alarm-lane [data-alarm="health-store"]', { timeout: 15_000 }).then(
 		() => true,
 		() => false,
 	);
@@ -2891,9 +2938,9 @@ test("AC-B2-6f a daemon part with no response carries no verdict, never a fabric
 
 	const unread = await getDaemonRowVerdicts();
 	assert.deepEqual(
-		unread.filter((row) => row.tone !== null || row.status !== "—"),
+		unread.filter((row) => row.tone !== null || row.status !== "Not loaded"),
 		[],
-		"a daemon part whose response never arrived must carry no tone and no status word — either one is an invented verdict",
+		"a daemon part whose response never arrived must carry no tone and read 'Not loaded' — a tone or a verdict word would be invented",
 	);
 
 	// 대조군 — 응답이 오면 같은 넷이 판정을 실음. 없으면 위 절은 '항목이 없어서' 초록일 수 있음.

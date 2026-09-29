@@ -18,6 +18,8 @@
 # is never read.
 
 HOOK_SH="${BATS_TEST_DIRNAME}/../inject-session-context.sh"
+# shellcheck source-path=SCRIPTDIR source=../../scripts/lib/path-guard.sh
+source "${BATS_TEST_DIRNAME}/../../scripts/lib/path-guard.sh"
 
 setup() {
   [[ -f "${HOOK_SH}" ]] || skip "hook not found: ${HOOK_SH}"
@@ -27,7 +29,7 @@ setup() {
 }
 
 teardown() {
-  [[ -n "${SANDBOX:-}" && -d "${SANDBOX}" ]] && rm -rf -- "${SANDBOX}"
+  if ga_guard_path "${SANDBOX:-}"; then rm -rf -- "${SANDBOX:?}"; fi
 }
 
 # The canary glyph is DEFINED only by the hook — derive it from the emitted
@@ -141,4 +143,20 @@ run_hook() {
   [[ -d "${root}/skills" ]] || skip "search roots absent: ${root}"
   hits="$(cd "${root}" && grep -rlF -- "${g}" hooks rules scoped agents skills 2>/dev/null | sort)"
   [[ "${hits}" == 'hooks/inject-session-context.sh' ]] || { echo "glyph found in: ${hits}" >&2; return 1; }
+}
+
+# A setup skip leaves SANDBOX unset — a failing teardown would report the skip as not ok.
+@test "teardown succeeds silently when setup skipped before creating the sandbox" {
+  local sandbox="${SANDBOX}"
+  unset SANDBOX
+  run teardown
+  SANDBOX="${sandbox}"
+  [[ "${status}" -eq 0 ]] || {
+    echo "teardown without a sandbox failed (status ${status}): ${output}" >&2
+    return 1
+  }
+  [[ -z "${output}" ]] || {
+    echo "teardown without a sandbox wrote: ${output}" >&2
+    return 1
+  }
 }

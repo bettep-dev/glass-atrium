@@ -163,7 +163,8 @@ trap 'echo "ERROR: line ${LINENO}: ${BASH_COMMAND}" >&2' ERR
 
 ### Portability (macOS BSD vs GNU)
 
-- `sed -i`: BSD requires `''` arg → prefer `sed -i.bak ... && rm "${file}.bak"` or branch via `command -v gsed`
+- `sed -i`: BSD and GNU disagree on the flag — BSD reads the next argument as a backup suffix (`sed -i '' …`), GNU takes none (`sed -i …`) → branch via `command -v gsed` or `uname -s`, and create no backup file
+  - `perl -pi -e '…' "${file}"` edits in place the same way on both hosts, with no backup file and no branch.
 - `date`: BSD `-v-1d` vs GNU `-d '1 day ago'` → branch or use `python3 -c`
 - `readlink -f` unavailable → use `cd -- "$(dirname)" && pwd`
 - **`launchctl` service lifecycle (macOS 11+)**: prefer the modern deregistration verb `bootout` against a `gui/${UID}/<label>` service target over the legacy unload-with-`-w` form

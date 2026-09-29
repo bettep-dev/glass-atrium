@@ -40,6 +40,8 @@ TUI="${GA}/glass-atrium"
 CORE="${GA}/lib/ga-core.sh"
 DB="${GA}/lib/ga-db.sh"
 ENVLIB="${GA}/lib/ga-env.sh"
+# shellcheck source-path=SCRIPTDIR source=../scripts/lib/path-guard.sh
+source "${GA}/scripts/lib/path-guard.sh"
 
 setup() {
   [[ -f "${TUI}" ]] || skip "glass-atrium launcher not found: ${TUI}"
@@ -115,7 +117,7 @@ DRV
 }
 
 teardown() {
-  [[ -n "${SANDBOX:-}" && -d "${SANDBOX}" ]] && rm -rf -- "${SANDBOX}"
+  if ga_guard_path "${SANDBOX:-}"; then rm -rf -- "${SANDBOX:?}"; fi
 }
 
 # GA_LIB_DIR points ga_init_env's lib source at the real repo (the sandbox root has none).
@@ -250,4 +252,19 @@ drive_gate() {
     && grep -q 'preflight_bracket preflight_guide_xcode_clt' "${TUI}" "${GA}"/lib/ga-tui-*.sh \
     && grep -q 'ga_detect_xcode_clt' "${TUI}" "${GA}"/lib/ga-tui-*.sh \
     && grep -q 'xcode-select --install' "${TUI}" "${GA}"/lib/ga-tui-*.sh
+}
+
+@test "teardown succeeds silently when setup skipped before creating the sandbox" {
+  local saved="${SANDBOX:-}"
+  unset SANDBOX
+  run teardown
+  SANDBOX="${saved}"
+  [[ "${status}" -eq 0 ]] || {
+    echo "teardown without a sandbox failed (status ${status}): ${output}" >&2
+    return 1
+  }
+  [[ -z "${output}" ]] || {
+    echo "teardown without a sandbox wrote: ${output}" >&2
+    return 1
+  }
 }

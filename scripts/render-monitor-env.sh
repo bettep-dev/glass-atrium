@@ -37,6 +37,8 @@ readonly SCRIPT_DIR
 # Shared table-scoped TOML extractor (single parser SoT for shell consumers).
 # shellcheck source=lib/atrium-config.sh
 source "${SCRIPT_DIR}/lib/atrium-config.sh"
+# shellcheck source-path=SCRIPTDIR source=lib/path-guard.sh
+source "${SCRIPT_DIR}/lib/path-guard.sh"
 CONFIG_TOML="$(atrium_config_file)"
 readonly CONFIG_TOML
 
@@ -65,7 +67,8 @@ upsert_env() {
       index($0, key "=") == 1 { print key "=" ENVIRON["UPSERT_VAL"]; next }
       { print }
     ' "${ENV_FILE}" >"${tmp}" && cat "${tmp}" >"${ENV_FILE}"
-    rm -f "${tmp}"
+    # shellcheck disable=SC2310  # pure predicate — nothing inside it for errexit to catch
+    if ga_guard_path "${tmp}"; then rm -f -- "${tmp:?}"; fi
   else
     # 마지막 줄이 개행 없이 끝나면 append 가 그 줄에 이어붙어 기존 키와 새 키가
     # 한 줄로 합쳐진다 (dotenv 양쪽 모두 유실) → 줄 경계 보장 후 추가.

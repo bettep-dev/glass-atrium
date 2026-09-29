@@ -132,8 +132,8 @@ after(async () => {
 // ----- POST supersedes_id → predecessor auto-transition ----------------
 
 test("POST supersedes_id → predecessor doc_status auto-transitions to 'done' (CTE atomic)", async () => {
-  // Seed predecessor — doc_status default 는 'progress' (insertClaudedDocRow 기본값).
-  // doc_status='progress' → 'done' transition 이 CTE 단일 statement 로 적용됨을 검증.
+  // Seed predecessor — POST 의 은퇴 별칭 'progress' 는 첫 stage 'doc_review' 로 정규화돼 저장된다.
+  // doc_status='doc_review' → 'done' transition 이 CTE 단일 statement 로 적용됨을 검증.
   // doc_type 필드는 silent ignore (컬럼 부재).
   const predTitle = makeTitle("ac1-pred");
   const predHtml = makeHtmlBody(`${predTitle}-progress-body`);
@@ -146,7 +146,7 @@ test("POST supersedes_id → predecessor doc_status auto-transitions to 'done' (
   });
   assert.strictEqual(predRes.status, 201, "predecessor POST 201");
   const pred = predRes.body as { id: number; doc_status: string; supersedes_id: number | null };
-  assert.strictEqual(pred.doc_status, "progress", "predecessor starts at doc_status=progress");
+  assert.strictEqual(pred.doc_status, "doc_review", "POSTed alias normalises — predecessor starts at doc_status=doc_review");
   assert.strictEqual(pred.supersedes_id, null, "predecessor is chain root (supersedes_id=null)");
 
   let succId: number | null = null;
@@ -168,7 +168,7 @@ test("POST supersedes_id → predecessor doc_status auto-transitions to 'done' (
     succId = succ.id;
     // Successor row stores the predecessor id verbatim.
     assert.strictEqual(succ.supersedes_id, pred.id, "successor.supersedes_id = pred.id");
-    assert.strictEqual(succ.doc_status, "progress", "successor's own doc_status unaffected by CTE");
+    assert.strictEqual(succ.doc_status, "doc_review", "successor's own doc_status unaffected by CTE");
 
     // Re-fetch predecessor — its doc_status MUST now be 'done'.
     const refetched = await app.inject({
@@ -188,6 +188,42 @@ test("POST supersedes_id → predecessor doc_status auto-transitions to 'done' (
     // the chain visually clean).
     if (succId !== null) await deleteDoc(app, succId);
     await deleteDoc(app, pred.id);
+  }
+});
+
+test("POST supersedes_id → the predecessor's close is credited to the superseding caller's model", async () => {
+  const predRes = await postCreate(app, {
+    title: makeTitle("actor-pred"),
+    prefix: "계획",
+    doc_status: "doc_review",
+    author: "tester",
+    html_body: makeHtmlBody(`actor-pred-${randomUUID()}`),
+    last_status_model: "model-previous",
+  });
+  assert.strictEqual(predRes.status, 201, "predecessor POST 201");
+  const predId = (predRes.body as { id: number }).id;
+
+  let succId: number | null = null;
+  try {
+    const succRes = await postCreate(app, {
+      title: makeTitle("actor-succ"),
+      prefix: "계획",
+      doc_status: "doc_review",
+      author: "tester",
+      html_body: makeHtmlBody(`actor-succ-${randomUUID()}`),
+      supersedes_id: predId,
+      last_status_model: "model-superseding",
+    });
+    assert.strictEqual(succRes.status, 201, "successor POST 201");
+    succId = (succRes.body as { id: number }).id;
+
+    const refetched = await app.inject({ method: "GET", url: `/api/clauded-docs/${predId}?format=html` });
+    const pred = refetched.json() as { doc_status: string; last_status_model: string | null };
+    assert.strictEqual(pred.doc_status, "done", "predecessor closed by the supersede");
+    assert.strictEqual(pred.last_status_model, "model-superseding", "close credited to the superseding caller");
+  } finally {
+    if (succId !== null) await deleteDoc(app, succId);
+    await deleteDoc(app, predId);
   }
 });
 
@@ -449,5 +485,57 @@ test("GET /:id superseded_by_id + groups representative_supersedes_id/doc-totals
   } finally {
     if (succId !== null) await deleteDoc(app, succId);
     await deleteDoc(app, pred.id);
+  }
+});
+
+test("every search hit names its revision chain's root, so revisions of one document can collapse into one row", async () => {
+  // letters-only token → one lexeme under the 'simple' parser, unique to this run
+  const word = randomUUID().replace(/-/g, "").replace(/\d/g, (d) => "ghijklmnop"[Number(d)]);
+  const created: number[] = [];
+  try {
+    let supersedesId: number | undefined;
+    for (const label of ["root", "rev1", "rev2"]) {
+      const title = `${makeTitle(label)} ${word}`;
+      const res = await postCreate(app, {
+        title,
+        prefix: "계획",
+        doc_status: "progress",
+        author: "tester",
+        html_body: makeHtmlBody(`${title}-body`),
+        ...(supersedesId === undefined ? {} : { supersedes_id: supersedesId }),
+      });
+      assert.strictEqual(res.status, 201, `${label} POST 201`);
+      supersedesId = (res.body as { id: number }).id;
+      created.push(supersedesId);
+    }
+    const loneTitle = `${makeTitle("lone")} ${word}`;
+    const lone = await postCreate(app, {
+      title: loneTitle,
+      prefix: "계획",
+      doc_status: "progress",
+      author: "tester",
+      html_body: makeHtmlBody(`${loneTitle}-body`),
+    });
+    assert.strictEqual(lone.status, 201, "lone POST 201");
+    const loneId = (lone.body as { id: number }).id;
+    created.push(loneId);
+
+    const res = await app.inject({ method: "GET", url: `/api/clauded-docs/search?q=${word}&limit=50` });
+    assert.strictEqual(res.statusCode, 200);
+    const hits = (res.json() as { rows: Array<{ id: number; chain_root_id: number; supersedes_id: number | null }> }).rows;
+    const byId = new Map(hits.map((h) => [h.id, h]));
+    const [rootId, rev1Id, rev2Id] = created;
+
+    assert.deepEqual(
+      [rootId, rev1Id, rev2Id, loneId].map((id) => byId.get(id)?.chain_root_id),
+      [rootId, rootId, rootId, loneId],
+      "each revision points at the chain root; a document with no predecessor is its own root",
+    );
+    assert.deepEqual(
+      [rootId, rev1Id, rev2Id].map((id) => byId.get(id)?.supersedes_id),
+      [null, rootId, rev1Id],
+    );
+  } finally {
+    for (const id of created.reverse()) await deleteDoc(app, id);
   }
 });

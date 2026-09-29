@@ -43,6 +43,8 @@ bats_require_minimum_version 1.5.0
 GA="$(cd -- "${BATS_TEST_DIRNAME}/../.." && pwd)"
 REAL_SCRIPT="${GA}/autoagent/daemon-apply.sh"
 ABORT_PIN_SUITE="${GA}/test/doctor-apply-abort-rows.bats"
+# shellcheck source-path=SCRIPTDIR source=../../scripts/lib/path-guard.sh
+source "${GA}/scripts/lib/path-guard.sh"
 
 # mirror_path — symlink every real-PATH executable into $1 except the names in $2.. (whole-PATH
 # mirror per build_psql_masked_stub: an allowlist that misses one coreutil makes the daemon exit 127
@@ -78,7 +80,12 @@ mirror_path() {
 build_git_apply_shim() {
   local stub="$1" real_git
   real_git="$(command -v git)"
-  rm -f -- "${stub}/git" # never redirect onto an inherited symlink
+  # never redirect onto an inherited symlink
+  if ga_guard_path "${stub}"; then
+    rm -f -- "${stub:?}/git"
+  else
+    return 1
+  fi
   cat >"${stub}/git" <<EOF
 #!/usr/bin/env bash
 sub="\${1:-}"
@@ -96,49 +103,73 @@ EOF
 # and a developer machine (the fixtures below pre-set haiku_status, so no live model call is needed —
 # but a PATH without claude and one with it must not diverge silently).
 make_claude_stub() {
-  rm -f -- "${1}/claude" # never redirect onto an inherited symlink
-  cat >"${1}/claude" <<'SH'
+  local stub="$1"
+  # never redirect onto an inherited symlink
+  if ga_guard_path "${stub}"; then
+    rm -f -- "${stub:?}/claude"
+  else
+    return 1
+  fi
+  cat >"${stub}/claude" <<'SH'
 #!/usr/bin/env bash
 echo OK
 exit 0
 SH
-  chmod +x "${1}/claude"
+  chmod +x "${stub}/claude"
 }
 
 # make_empty_backlog_psql — a psql that answers EVERY query with zero rows and exits 0. Present on
 # PATH, so backlog_source_available() is true and the daemon takes the BACKLOG source with an empty
 # eligible set — the exact live shape (a drained backlog) the heartbeat row exists for.
 make_empty_backlog_psql() {
-  rm -f -- "${1}/psql" # never redirect onto an inherited symlink
-  cat >"${1}/psql" <<'SH'
+  local dir="$1"
+  # never redirect onto an inherited symlink
+  if ga_guard_path "${dir}"; then
+    rm -f -- "${dir:?}/psql"
+  else
+    return 1
+  fi
+  cat >"${dir}/psql" <<'SH'
 #!/usr/bin/env bash
 exit 0
 SH
-  chmod +x "${1}/psql"
+  chmod +x "${dir}/psql"
 }
 
 # make_failing_backlog_psql — a psql that fails EVERY query the way an unreachable server does. Present
 # on PATH, so the daemon still takes the BACKLOG source; the outage must never read as an empty backlog.
 make_failing_backlog_psql() {
-  rm -f -- "${1}/psql" # never redirect onto an inherited symlink
-  cat >"${1}/psql" <<'SH'
+  local dir="$1"
+  # never redirect onto an inherited symlink
+  if ga_guard_path "${dir}"; then
+    rm -f -- "${dir:?}/psql"
+  else
+    return 1
+  fi
+  cat >"${dir}/psql" <<'SH'
 #!/usr/bin/env bash
 echo 'psql: error: connection to server on socket failed: No such file or directory' >&2
 exit 2
 SH
-  chmod +x "${1}/psql"
+  chmod +x "${dir}/psql"
 }
 
 # make_unreadable_backlog_psql — a psql whose backlog answer is one raw, unencoded row whose
 # '|'-bearing label splits it into 7 fields. The query succeeded, so this is not an outage.
 make_unreadable_backlog_psql() {
-  rm -f -- "${1}/psql" # never redirect onto an inherited symlink
-  cat >"${1}/psql" <<'SH'
+  local dir="$1"
+  # never redirect onto an inherited symlink
+  if ga_guard_path "${dir}"; then
+    rm -f -- "${dir:?}/psql"
+  else
+    return 1
+  fi
+  cat >"${dir}/psql" <<'SH'
 #!/usr/bin/env bash
 printf '%s\n' '7|2026-09-01|probe|pipe|probe|/tmp/unreadable-probe.md|'
 exit 0
 SH
-  chmod +x "${1}/psql"
+  chmod +x "${dir}/psql"
 }
 
 setup_file() {
@@ -166,7 +197,7 @@ setup() {
 
 teardown() {
   [[ -n "${WORK:-}" && -d "${WORK}" ]] && chmod -R u+rwX -- "${WORK}" 2>/dev/null || true
-  [[ -n "${WORK:-}" && -d "${WORK}" ]] && rm -rf -- "${WORK}" || true
+  if ga_guard_path "${WORK:-}"; then rm -rf -- "${WORK:?}"; fi
 }
 
 # run_apply — drive the REAL daemon over the fixture. AUTOAGENT_PREFLIGHT_ACTIVE=1: this suite
@@ -270,6 +301,7 @@ dump_log() {
   cp -p -- "${GA}/autoagent/lib/git-txn.sh" "${sandbox}/autoagent/lib/git-txn.sh"
   cp -p -- "${GA}/autoagent/daemon_cycle.py" "${sandbox}/autoagent/daemon_cycle.py"
   cp -p -- "${GA}/scripts/lib/apply-lock.sh" "${sandbox}/scripts/lib/apply-lock.sh"
+  cp -p -- "${GA}/scripts/lib/path-guard.sh" "${sandbox}/scripts/lib/path-guard.sh"
   run env -u AUTOAGENT_ALLOW_UNVERIFIED -u AUTOAGENT_PREFLIGHT_ACTIVE \
     PATH="${MIRROR}" HOME="${WORK}/home" AUTOAGENT_REPORTS_DIR="${REPORTS}" \
     bash "${sandbox}/autoagent/daemon-apply.sh" \
@@ -386,7 +418,12 @@ PY
 # the four test roots the gate requires are the repo's own — the real script runs in place.
 run_apply_gate() {
   local runner="${WORK}/bats-runner-ok"
-  rm -f -- "${runner}" # a fresh file, never a redirect onto an inherited symlink
+  # a fresh file, never a redirect onto an inherited symlink
+  if ga_guard_path "${runner}"; then
+    rm -f -- "${runner:?}"
+  else
+    return 1
+  fi
   printf '#!/bin/bash\nexit 0\n' >"${runner}"
   chmod +x "${runner}"
   run env -u AUTOAGENT_ALLOW_UNVERIFIED -u AUTOAGENT_PREFLIGHT_ACTIVE \
@@ -508,8 +545,10 @@ assert_one_abort_row() {
   # readable (a dangling link exists as a link), so none may read as absent or as zero patches.
   local shape
   for shape in directory dangling-link; do
-    rm -rf -- "${WORK}/report.json" # removes a directory, and a link without following it
-    rm -f -- "${APPLIED_LOG}"       # a fresh log per shape: assert_one_abort_row counts rows
+    # removes a directory, and a link without following it
+    if ga_guard_path "${WORK}"; then rm -rf -- "${WORK:?}/report.json"; fi
+    # a fresh log per shape: assert_one_abort_row counts rows
+    if ga_guard_path "${APPLIED_LOG}"; then rm -f -- "${APPLIED_LOG:?}"; fi
     case "${shape}" in
       directory) mkdir -- "${WORK}/report.json" ;;
       dangling-link) ln -s -- "${WORK}/no-such-report.json" "${WORK}/report.json" ;;
@@ -535,7 +574,7 @@ assert_one_abort_row() {
 }
 
 @test "AC9: an ABSENT report stays a clean exit 0 with no abort row" {
-  rm -f -- "${WORK}/report.json"
+  if ga_guard_path "${WORK}"; then rm -f -- "${WORK:?}/report.json"; fi
   run_apply "${MIRROR}"
   [[ "${status}" -eq 0 && "${output}" == *"no report at ${WORK}/report.json"* ]] || {
     dump_log
@@ -546,4 +585,41 @@ assert_one_abort_row() {
     dump_log
     return 1
   }
+}
+
+@test "a stub or runner builder refuses a relative dir and writes nothing through its inherited link" {
+  # A name still linked into the dir would take the builder's write through to the link's target;
+  # each builder's delete is what prevents it, so a refused dir has to fail the builder, not skip.
+  local row builder name dir noop="${WORK}/noop.sh"
+  cd -- "${WORK}"
+  printf 'real\n' >real-binary
+  cp -- real-binary pristine
+  printf '#!/bin/bash\nexit 0\n' >"${noop}"
+  for row in build_git_apply_shim:git make_claude_stub:claude make_empty_backlog_psql:psql \
+    make_failing_backlog_psql:psql make_unreadable_backlog_psql:psql run_apply_gate:bats-runner-ok; do
+    builder="${row%%:*}"
+    name="${row##*:}"
+    dir="rel-${builder}"
+    mkdir -- "${dir}"
+    ln -s -- "${WORK}/real-binary" "${dir}/${name}"
+    if [[ "${builder}" == run_apply_gate ]]; then
+      # the runner path derives from WORK, so the relative dir goes in as WORK; the no-op script
+      # stands in for the daemon, which this row does not exercise
+      WORK="${dir}" REAL_SCRIPT="${noop}" run run_apply_gate
+    else
+      run "${builder}" "${dir}"
+    fi
+    [[ "${status}" -ne 0 && "${output}" == *"refusing a non-absolute delete target"* ]] || {
+      echo "${builder}: a relative dir was accepted: rc=${status}: ${output}" >&2
+      return 1
+    }
+    [[ -L "${dir}/${name}" ]] || {
+      echo "${builder}: the inherited link was replaced" >&2
+      return 1
+    }
+    cmp -s -- real-binary pristine || {
+      echo "${builder}: the write went through the inherited link" >&2
+      return 1
+    }
+  done
 }
