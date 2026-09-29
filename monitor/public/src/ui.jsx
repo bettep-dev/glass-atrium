@@ -1776,9 +1776,10 @@ const VERDICT_TONE_LABEL = { ok: 'Healthy', warn: 'Needs attention', crit: 'Acti
 /**
  * One-line page headline: tone glyph + word, one sentence (children), optional chips.
  * A chip with `href` drills to another view; one with `targetId` scrolls to that card and focuses it.
+ * @param id - focus target for a page banner's Retry once the page recovers
  * @param freshness - optional getFreshnessState inputs; the verdict then follows getFreshnessVerdict, and an unread page swaps its sentence for the checking note
  */
-function PageVerdict({ tone = 'neutral', label, children, chips = [], freshness, className = '' }) {
+function PageVerdict({ tone = 'neutral', label, children, chips = [], freshness, id, className = '' }) {
   const verdict = freshness ? getFreshnessVerdict({ ...freshness, tone, label }) : { tone, label, note: null, isBusy: false };
   const toneKey = VERDICT_TONE_LABEL[verdict.tone] ? verdict.tone : 'neutral';
   const isUnread = verdict.state === 'loading' || verdict.state === 'not-read';
@@ -1786,7 +1787,7 @@ function PageVerdict({ tone = 'neutral', label, children, chips = [], freshness,
   // re-derived on the stamp's own cadence → a verdict never stays green over a read the stamp calls Stale
   useFreshnessTick(Boolean(freshness) && !isUnread && freshness.now === undefined);
 
-  return <div className={`page-verdict page-verdict--${toneKey} ${className}`.trim()} aria-busy={verdict.isBusy ? 'true' : undefined}>
+  return <div id={id} className={`page-verdict page-verdict--${toneKey} ${className}`.trim()} aria-busy={verdict.isBusy ? 'true' : undefined}>
     <span className="page-verdict-tone">
       <span className="page-verdict-glyph" aria-hidden="true">{TONE_GLYPH[toneKey]}</span>
       {verdict.label || VERDICT_TONE_LABEL[toneKey]}

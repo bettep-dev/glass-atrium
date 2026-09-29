@@ -475,6 +475,7 @@ function ScreenImprovement({ onNav }) {
 						sources={pageFailure.sources}
 						error={pageFailure.error}
 						isBusy={isBusy}
+						focusTargetId="improvement-verdict"
 						onRetry={triggerRefresh}
 					/>
 				) : null}
@@ -495,6 +496,7 @@ function ScreenImprovement({ onNav }) {
 				) : (
 					<>
 						<StatusBandI
+							asOf={asOf}
 							statsState={statsState}
 							listState={listState}
 							learningLogState={learningLogState}
@@ -553,6 +555,7 @@ const sumCountsI = (list) =>
 // 자기 모집단을 데리고 다닌다 — 이웃 타일끼리 게이트가 다르기 때문이다.
 
 function StatusBandI({
+	asOf,
 	statsState,
 	listState,
 	learningLogState,
@@ -588,7 +591,12 @@ function StatusBandI({
 
 	return (
 		<div className="mb-3 flex flex-col gap-2">
-			<PageVerdict tone={verdict.tone} chips={verdict.chips}>
+			<PageVerdict
+				id="improvement-verdict"
+				tone={verdict.tone}
+				chips={verdict.chips}
+				freshness={{ at: asOf, regions: [statsState, listState, learningLogState] }}
+			>
 				{verdict.sentence}
 			</PageVerdict>
 			<div className="grid grid-cols-4 gap-3">
@@ -657,8 +665,7 @@ function getBandVerdictI({ status, awaiting, applied, heldNeedingHuman }) {
 		return { tone: "neutral", sentence: "Loop status could not load", chips: [] };
 	}
 	if (status !== "ready") {
-		const { getFreshnessVerdict } = window.UI;
-		return { tone: "neutral", sentence: getFreshnessVerdict({ at: null, loading: true }).note, chips: [] };
+		return { tone: "neutral", sentence: "Still reading the loop status.", chips: [] };
 	}
 	const parts = [`${formatIntI(applied)} applied in the last 7 days`];
 	const chips = [];
@@ -2672,9 +2679,9 @@ function ToastI({ tone, message }) {
 }
 
 // quiet per-region card: plain sentence + next step, raw answer behind Details
-function ErrorBannerI({ source, error, onRetry, isBusy = false }) {
+function ErrorBannerI({ source, error, onRetry, isBusy = false, focusTargetId }) {
 	const { RegionUnavailable } = window.UI;
-	return <RegionUnavailable source={source} error={error} onRetry={onRetry} isBusy={isBusy} />;
+	return <RegionUnavailable source={source} error={error} onRetry={onRetry} isBusy={isBusy} focusTargetId={focusTargetId} />;
 }
 
 // ----- Pure helpers ---------------------------------------------------------

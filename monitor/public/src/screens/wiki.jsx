@@ -140,9 +140,11 @@ function ScreenWiki() {
 						sources={outage.sources}
 						error={outage.error}
 						onRetry={triggerRefresh}
+						focusTargetId="wiki-verdict"
 					/>
 				)}
 				<PageVerdict
+					id="wiki-verdict"
 					tone={verdict.tone}
 					chips={verdict.chips}
 					freshness={{ at: settledAt, regions: waveStates }}

@@ -285,7 +285,7 @@ const verdictRows = [
     name: "a band that has not landed claims no status",
     input: { status: "loading", awaiting: 0, applied: 0, heldNeedingHuman: 0 },
     tone: "neutral",
-    mentions: [getUnreadCheckingNote()],
+    mentions: ["Still reading"],
   },
   {
     name: "a band whose payload failed says so and makes no loading claim",

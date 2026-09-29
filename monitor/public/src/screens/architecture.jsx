@@ -769,6 +769,7 @@ function ScreenArchitecture(
 						sources={pageFailure.sources}
 						error={pageFailure.error}
 						onRetry={triggerRefresh}
+						focusTargetId="arch-verdict"
 					/>
 				)}
 				<AlarmLaneAR rows={alarmRows} onRetry={triggerRefresh} />
@@ -2246,7 +2247,7 @@ function MapCaptionAR({ verdict, hasMap }) {
 	const { PageVerdict } = window.UI;
 	return (
 		<div className="arch-caption">
-			<PageVerdict tone={verdict.tone} chips={verdict.chips} freshness={verdict.freshness}>
+			<PageVerdict id="arch-verdict" tone={verdict.tone} chips={verdict.chips} freshness={verdict.freshness}>
 				{verdict.sentence}
 			</PageVerdict>
 			{hasMap && (

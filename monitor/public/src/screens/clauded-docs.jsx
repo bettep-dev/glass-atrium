@@ -1130,6 +1130,7 @@ function ScreenClaudedDocs(/* { onNav } */) {
 				style={{ minHeight: 0, flex: "1 1 auto", width: "100%" }}
 			>
 				<DocListCardCD
+					asOf={asOf}
 					state={listState}
 					rows={visibleRows}
 					isSearchMode={isSearchMode}
@@ -1267,6 +1268,7 @@ function DocAuthorCellCD({ author }) {
 // 중앙 목록 카드 — Sticky Header Integrated (검색 + facet + 건수 2-row).
 // .card-body 인라인 maxHeight:'none' 으로 base.css `max-height: 70vh` override → 카드 viewport full-height + 카드 내부 스크롤.
 function DocListCardCD({
+	asOf,
 	state,
 	rows,
 	isSearchMode,
@@ -1525,6 +1527,7 @@ function DocListCardCD({
 				{state.status === "ready" && hasOpenSummary && (
 					<PageVerdict
 						tone={openSummary.buckets.stale > 0 ? "warn" : "ok"}
+						freshness={getFreshnessInputCD(asOf, state)}
 						className="mx-4 mt-3">
 						{getOpenHeadlineCD(openSummary, canLoadMore, groupCounts ? groupCounts.open : null)}
 					</PageVerdict>

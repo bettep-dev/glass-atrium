@@ -172,11 +172,12 @@ function ScreenCost({ onNav }) {
 
       {sharedFailure && (
         <div className="mb-4">
-          <PageErrorBanner sources={sharedFailure.sources} error={sharedFailure.error} onRetry={triggerRefresh}/>
+          <PageErrorBanner sources={sharedFailure.sources} error={sharedFailure.error} onRetry={triggerRefresh}
+            isBusy={isBusy} focusTargetId="cost-verdict"/>
         </div>
       )}
 
-      <PageVerdict tone={spendVerdict.tone} label={spendVerdict.label} className="mb-4">
+      <PageVerdict id="cost-verdict" tone={spendVerdict.tone} label={spendVerdict.label} freshness={freshnessInput} className="mb-4">
         {spendVerdict.text}
       </PageVerdict>
 
