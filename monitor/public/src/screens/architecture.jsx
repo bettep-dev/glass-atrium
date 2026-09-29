@@ -546,6 +546,8 @@ function ScreenArchitecture(
 	// one freshness input for the stamp and the verdict — the two never disagree on how current the page is
 	const freshnessInput = getFreshnessInputAR(healthAsOf, pageRegions, diagState.data != null);
 	const pageVerdict = getPageVerdictAR(healthPartRows, healthCaption, nodeIndex, freshnessInput);
+	// part rows answer to the health reads alone — a failed map read does not age a part's verdict
+	const partFreshness = getFreshnessInputAR(healthAsOf, Object.values(headlineHealthStates), true);
 	const mapCopyNote = getMapCopyNoteAR(diagState);
 
 	const handleSelectNode = useCallbackAR(
@@ -816,6 +818,7 @@ function ScreenArchitecture(
 				<PartHealthBlockAR
 					partRows={healthPartRows}
 					attentionEmpty={getAttentionEmptyAR(healthPartRows, healthPending, healthStoreErrors.length)}
+					freshness={partFreshness}
 					nodeIndex={nodeIndex}
 					onSelectNode={handleSelectNode}
 				/>
@@ -2409,14 +2412,27 @@ function getMapCopyNoteAR(diagState) {
 
 // the all-clear is a verdict — before any part is judged the column says why it is empty
 function getAttentionEmptyAR(partRows, busy, errored) {
-	if (partRows.some((row) => row.tone)) return "No part needs attention";
 	if (busy) return "Checking part health…";
+	if (partRows.some((row) => row.tone)) return "No part needs attention";
 	return errored > 0 ? "Couldn't read part health" : "Part health not read yet";
 }
 
 // 'Not loaded' (no verdict arrived) never shares a label with 'No data' (a verdict of absence).
 function getPartStatusTextAR(row) {
 	return row.tone ? row.statusLabel : "Not loaded";
+}
+
+// a row's shown verdict follows the health stamp — an ok read under a failed re-read is last-known, never a bare Healthy
+function getPartStatusAR(row, freshness) {
+	if (!row.tone) return { tone: null, text: "Not loaded" };
+	const verdict = window.UI.getFreshnessVerdict({ ...freshness, tone: row.tone, label: row.statusLabel });
+	return { tone: verdict.tone, text: verdict.label };
+}
+
+// neutral has no tone text class — a last-known row reads dim, an unjudged one faint
+function getPartToneClassAR(tone) {
+	if (!tone) return "text-faint";
+	return tone === "neutral" ? "text-dim" : `text-${tone}`;
 }
 
 const PART_TONE_RANK_AR = { crit: 0, warn: 1, info: 3, ok: 4 };
@@ -2500,7 +2516,7 @@ function getPageVerdictAR(partRows, caption, nodeIndex, freshness) {
 }
 
 // every part's state on the page — the drawer stays the drill, not the only place a state is read
-function PartHealthBlockAR({ partRows, attentionEmpty, nodeIndex, onSelectNode }) {
+function PartHealthBlockAR({ partRows, attentionEmpty, freshness, nodeIndex, onSelectNode }) {
 	const { SplitRow } = window.UI;
 	if (partRows.length === 0) return null;
 
@@ -2512,15 +2528,15 @@ function PartHealthBlockAR({ partRows, attentionEmpty, nodeIndex, onSelectNode }
 			</div>
 			<div className="card-body">
 				<SplitRow ratio="1:1">
-					<PartHealthListAR title="Needs attention" rows={attention} empty={attentionEmpty} nodeIndex={nodeIndex} onSelectNode={onSelectNode} />
-					<PartHealthListAR title="Healthy or not verified" rows={rest} empty="No other parts" nodeIndex={nodeIndex} onSelectNode={onSelectNode} />
+					<PartHealthListAR title="Needs attention" rows={attention} empty={attentionEmpty} freshness={freshness} nodeIndex={nodeIndex} onSelectNode={onSelectNode} />
+					<PartHealthListAR title="Healthy or not verified" rows={rest} empty="No other parts" freshness={freshness} nodeIndex={nodeIndex} onSelectNode={onSelectNode} />
 				</SplitRow>
 			</div>
 		</section>
 	);
 }
 
-function PartHealthListAR({ title, rows, empty, nodeIndex, onSelectNode }) {
+function PartHealthListAR({ title, rows, empty, freshness, nodeIndex, onSelectNode }) {
 	return (
 		<div>
 			<h3 className="arch-part-col-title">{title}</h3>
@@ -2529,7 +2545,7 @@ function PartHealthListAR({ title, rows, empty, nodeIndex, onSelectNode }) {
 			) : (
 				<ul className="arch-part-list">
 					{rows.map((row) => (
-						<PartHealthRowAR key={row.id} row={row} nodeIndex={nodeIndex} onSelectNode={onSelectNode} />
+						<PartHealthRowAR key={row.id} row={row} freshness={freshness} nodeIndex={nodeIndex} onSelectNode={onSelectNode} />
 					))}
 				</ul>
 			)}
@@ -2537,9 +2553,10 @@ function PartHealthListAR({ title, rows, empty, nodeIndex, onSelectNode }) {
 	);
 }
 
-function PartHealthRowAR({ row, nodeIndex, onSelectNode }) {
+function PartHealthRowAR({ row, freshness, nodeIndex, onSelectNode }) {
 	const { formatRelativeTime } = window.UI;
 	const box = getPartBoxAR(row, nodeIndex);
+	const status = getPartStatusAR(row, freshness);
 	const meta = [box && `in ${box.label}`, row.lastRunAt && `last run ${formatRelativeTime(row.lastRunAt)}`, row.cause]
 		.filter(Boolean)
 		.join(" · ");
@@ -2547,7 +2564,7 @@ function PartHealthRowAR({ row, nodeIndex, onSelectNode }) {
 	return (
 		<li id={getPartRowIdAR(row)} tabIndex={-1} className="arch-part-row">
 			<span>{row.name}</span>
-			<span className={row.tone ? `text-${row.tone}` : "text-faint"}>{getPartStatusTextAR(row)}</span>
+			<span className={getPartToneClassAR(status.tone)}>{status.text}</span>
 			{box ? (
 				<button type="button" className="btn ghost sm" onClick={() => onSelectNode(box.nodeId)} aria-label={`Open ${box.label} for ${row.name}`}>
 					Open box

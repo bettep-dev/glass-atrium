@@ -31,6 +31,7 @@ interface PartRow {
   id: string;
   name: string;
   tone: string | null;
+  statusLabel?: string | null;
   nodeIds: string[];
 }
 
@@ -49,6 +50,7 @@ interface StampSandbox {
   getFreshnessInputAR: (healthAsOf: string | null, regions: RegionState[], hasMap: boolean) => FreshnessInput;
   getPageVerdictAR: (partRows: PartRow[], caption: string, nodeIndex: null, freshness: FreshnessInput) => MapVerdict;
   getAttentionEmptyAR: (partRows: PartRow[], busy: boolean, errored: number) => string;
+  getPartStatusAR: (row: PartRow, freshness: FreshnessInput & { now: number }) => { tone: string | null; text: string };
   getMapCopyNoteAR: (diagState: RegionState) => string | null;
 }
 
@@ -106,18 +108,34 @@ test("the map verdict follows the stamp's freshness: a failed re-read over an al
   }
 });
 
-test("part health names the all-clear only once some part carries a verdict", () => {
+test("part health names the all-clear only once the first health read settles with some part judged", () => {
   const rows = [
     { name: "health read in flight", parts: [getPart("pg", null)], busy: true, errored: 0, isClear: false },
     { name: "health stores unreadable", parts: [getPart("pg", null)], busy: false, errored: 2, isClear: false },
     { name: "nothing read and nothing in flight", parts: [getPart("pg", null)], busy: false, errored: 0, isClear: false },
-    { name: "one verdict arrived, one still out", parts: [getPart("pg", "ok"), getPart("hooks", null)], busy: true, errored: 0, isClear: true },
+    { name: "one verdict arrived, one still out", parts: [getPart("pg", "ok"), getPart("hooks", null)], busy: true, errored: 0, isClear: false },
     { name: "every part ok", parts: [getPart("pg", "ok")], busy: false, errored: 0, isClear: true },
   ];
 
   for (const row of rows) {
     const text = sandbox.getAttentionEmptyAR(row.parts, row.busy, row.errored);
     assert.strictEqual(text === ALL_CLEAR, row.isClear, `${row.name}: ${text}`);
+  }
+});
+
+test("a part row's verdict follows the health stamp: an ok row under a failed re-read never stays an unmarked Healthy", () => {
+  const ok: PartRow = { ...getPart("pg", "ok"), statusLabel: "Healthy" };
+  const overdue: PartRow = { ...getPart("cron", "crit"), statusLabel: "Overdue" };
+  const rows = [
+    { name: "settled read keeps the ok verdict", row: ok, regions: [HELD, HELD], tone: "ok", text: "Healthy" },
+    { name: "ok row under a failed re-read", row: ok, regions: [FAILED_OVER_HELD, HELD], tone: "neutral", text: "Last known" },
+    { name: "flagged row under a failed re-read keeps its alarm", row: overdue, regions: [FAILED_OVER_HELD, HELD], tone: "crit", text: "Last known: Overdue" },
+    { name: "row with no verdict", row: getPart("hooks", null), regions: [FAILED_OVER_HELD, HELD], tone: null, text: "Not loaded" },
+  ];
+
+  for (const row of rows) {
+    const shown = sandbox.getPartStatusAR(row.row, { ...sandbox.getFreshnessInputAR(READ_AT, row.regions, true), now: NOW });
+    assert.deepStrictEqual({ tone: shown.tone, text: shown.text }, { tone: row.tone, text: row.text }, row.name);
   }
 });
 
