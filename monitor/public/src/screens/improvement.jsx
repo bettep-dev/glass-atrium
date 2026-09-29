@@ -438,7 +438,7 @@ function ScreenImprovement({ onNav }) {
         /* T5 — REJECTED 컴팩트 행(단일행 · rationale 숨김 · 중립 chrome). --crit 는 ✕ 심볼에만. */
         .i-compact-row { display:flex; align-items:center; gap:6px; padding:5px 8px; }
         /* T5/T8 — '＋N more' 실제 포커스 가능 버튼(요약 토글). 중립 chrome. */
-        .i-more-btn { display:flex; align-items:center; justify-content:center; gap:4px; width:100%;
+        .i-more-btn { display:flex; flex-shrink:0; align-items:center; justify-content:center; gap:4px; width:100%;
           padding:6px 8px; border:1px dashed rgb(var(--line)); border-radius:8px; background:transparent;
           color:rgb(var(--faint)); font-family:'JetBrains Mono',monospace; font-size:var(--fs-meta); cursor:pointer; }
         .i-more-btn:hover { color:rgb(var(--dim)); border-color:rgb(var(--faint) / 0.5); }
@@ -474,6 +474,7 @@ function ScreenImprovement({ onNav }) {
 					<PageErrorBanner
 						sources={pageFailure.sources}
 						error={pageFailure.error}
+						isBusy={isBusy}
 						onRetry={triggerRefresh}
 					/>
 				) : null}
@@ -656,7 +657,8 @@ function getBandVerdictI({ status, awaiting, applied, heldNeedingHuman }) {
 		return { tone: "neutral", sentence: "Loop status could not load", chips: [] };
 	}
 	if (status !== "ready") {
-		return { tone: "neutral", sentence: "Loop status has not loaded yet", chips: [] };
+		const { getFreshnessVerdict } = window.UI;
+		return { tone: "neutral", sentence: getFreshnessVerdict({ at: null, loading: true }).note, chips: [] };
 	}
 	const parts = [`${formatIntI(applied)} applied in the last 7 days`];
 	const chips = [];
@@ -676,11 +678,11 @@ function getBandVerdictI({ status, awaiting, applied, heldNeedingHuman }) {
 	};
 }
 
-const NOT_LOADED_CHIP_I = Object.freeze({
+const NOT_READ_CHIP_I = Object.freeze({
 	symbol: "ℹ",
 	tone: "text-faint",
-	label: "not loaded",
-	hint: "This gauge's payload has not landed",
+	label: "not read",
+	hint: "This gauge's payload has not been read yet",
 });
 
 // Gauge verdicts read the instrumentation view's rules as-is → a copy would let the two views disagree.
@@ -692,10 +694,10 @@ function getInstrumentationChipsI(verdicts, styleRef, corpusAuditState) {
 				styleRef.overall_emission_rate ?? null,
 				styleRef.overall_uncorroborated_rate ?? null,
 			)
-		: NOT_LOADED_CHIP_I;
+		: NOT_READ_CHIP_I;
 	const corpus = Array.isArray(audits)
 		? verdicts.getCorpusGrowthVerdictI(audits[0] ?? null)
-		: NOT_LOADED_CHIP_I;
+		: NOT_READ_CHIP_I;
 	return [
 		{ key: "style", name: "Graduation gate", ...style },
 		{ key: "corpus", name: "Corpus growth", ...corpus },
@@ -797,7 +799,7 @@ function TilePlaceholderI({ status, label, owner, onRetry }) {
 			) : null}
 			{status === "announced" ? (
 				<div className="card-sub is-wrap fs-meta mt-1">
-					Not loaded — see the {owner} below
+					Not read — see the {owner} below
 				</div>
 			) : null}
 		</div>
@@ -953,10 +955,11 @@ function LoopOutputGroupI({
 					</button>
 				}
 			/>
-			{statsState.status === "error" ? (
+			{window.UI.getRegionView(statsState) === "error" ? (
 				<ErrorBannerI
 					source="loop stats"
 					error={statsState.error}
+					isBusy={statsState.busy}
 					onRetry={onRetry}
 				/>
 			) : null}
@@ -1031,9 +1034,9 @@ function KanbanCardI({
 	pendingActionId,
 	onRetry,
 }) {
-	const { CardHead, LoadingPlaceholder } = window.UI;
+	const { CardHead, LoadingPlaceholder, getRegionView } = window.UI;
 	const isLoading = state.status === "loading";
-	const isError = state.status === "error";
+	const isError = getRegionView(state) === "error";
 	const rejectBuckets = state.data?.reject_bucket_summary || null;
 
 	// 카드 max-h:70vh — 본문 페이지 무한 늘어남 차단 · 컬럼 내부만 자체 스크롤.
@@ -1054,6 +1057,7 @@ function KanbanCardI({
 					<ErrorBannerI
 						source="suggestions"
 						error={state.error}
+						isBusy={state.busy}
 						onRetry={onRetry}
 					/>
 				</div>
@@ -1373,7 +1377,7 @@ function RejectSparkI({ trend }) {
 			viewBox={`0 0 ${w} ${h}`}
 			preserveAspectRatio="none"
 			role="img"
-			aria-label={`Rejection trend over ${reject.length} days — peak ${max} per day`}
+			aria-label={getRejectSparkNameI(reject)}
 		>
 			<path
 				d={path}
@@ -1386,6 +1390,14 @@ function RejectSparkI({ trend }) {
 			/>
 		</svg>
 	);
+}
+
+// accessible name → series length, latest day, peak and total (the drawn line itself carries no numbers)
+function getRejectSparkNameI(reject) {
+	const latest = reject[reject.length - 1];
+	const peak = Math.max(...reject);
+	const total = reject.reduce((sum, count) => sum + count, 0);
+	return `Rejections per day over ${reject.length} days — latest ${latest}, peak ${peak}, ${total} in total`;
 }
 
 // T5 — 최근 REJECTED_RECENT_CAP 행만 표시 + 나머지는 '＋N more' 요약(38 은 숫자로 인정).
@@ -2311,8 +2323,8 @@ function composePreVerifyI(badge, rationale, axes) {
 // 전/후반 reject 비율을 formatPctWithDenominator 로 — 분모 0 → '—' (가짜 0% 차단).
 
 function ChangeSummaryCardI({ state, aggregate, onRetry }) {
-	const { CardHead, LoadingPlaceholder } = window.UI;
-	if (state.status === "error") {
+	const { CardHead, LoadingPlaceholder, getRegionView } = window.UI;
+	if (getRegionView(state) === "error") {
 		return (
 			<div className="card">
 				<CardHead title="Self-improvement changes (applied)" />
@@ -2320,6 +2332,7 @@ function ChangeSummaryCardI({ state, aggregate, onRetry }) {
 					<ErrorBannerI
 						source="loop events"
 						error={state.error}
+						isBusy={state.busy}
 						onRetry={onRetry}
 					/>
 				</div>
@@ -2433,8 +2446,8 @@ function failTrendMetaI(before, after) {
 // 읽히고, 억제된 행은 늘 읽히지 않는 쪽이 된다. 행 단위로 합쳐 live / inert / held 세
 // 구역으로 나누고, 각 구역은 자기 게이트를 푸터에 남긴다.
 function PatternLedgerCardI({ state, suppression, onRowClick, onRetry }) {
-	const { CardHead, LoadingPlaceholder, SplitRow } = window.UI;
-	if (state.status === "error") {
+	const { CardHead, LoadingPlaceholder, SplitRow, getRegionView } = window.UI;
+	if (getRegionView(state) === "error") {
 		return (
 			<div className="card">
 				<CardHead title="Pattern ledger" />
@@ -2442,6 +2455,7 @@ function PatternLedgerCardI({ state, suppression, onRowClick, onRetry }) {
 					<ErrorBannerI
 						source="pattern ledger"
 						error={state.error}
+						isBusy={state.busy}
 						onRetry={onRetry}
 					/>
 				</div>
@@ -2658,9 +2672,9 @@ function ToastI({ tone, message }) {
 }
 
 // quiet per-region card: plain sentence + next step, raw answer behind Details
-function ErrorBannerI({ source, error, onRetry }) {
+function ErrorBannerI({ source, error, onRetry, isBusy = false }) {
 	const { RegionUnavailable } = window.UI;
-	return <RegionUnavailable source={source} error={error} onRetry={onRetry} />;
+	return <RegionUnavailable source={source} error={error} onRetry={onRetry} isBusy={isBusy} />;
 }
 
 // ----- Pure helpers ---------------------------------------------------------

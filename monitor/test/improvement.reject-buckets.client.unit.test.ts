@@ -38,6 +38,7 @@ interface RejectBucketSummary {
 
 interface SplitSandbox {
   React: { createElement: unknown };
+  RejectSparkI: (props: { trend: Array<{ reject: number }> }) => RecordedElement;
   RejectBucketSplitI: (props: {
     summary: RejectBucketSummary | null | undefined;
   }) => RecordedElement | null;
@@ -171,3 +172,22 @@ test("the rejected header captions its sparkline with a unit", () => {
 
   assert.match(texts, /per day/i);
 });
+
+const sparkRows = [
+  { name: "a series that peaks mid-window", rejects: [2, 5, 1] },
+  { name: "a series with no rejection", rejects: [0, 0] },
+];
+
+for (const row of sparkRows) {
+  test(`the rejection sparkline is a named image summarising its series: ${row.name}`, () => {
+    const spark = sandbox.RejectSparkI({ trend: row.rejects.map((reject) => ({ reject })) });
+    const name = String(spark.props["aria-label"]);
+    const total = row.rejects.reduce((sum, count) => sum + count, 0);
+
+    assert.equal(spark.props.role, "img");
+    assert.match(name, new RegExp(`${row.rejects.length} days`));
+    assert.match(name, new RegExp(`latest ${row.rejects[row.rejects.length - 1]}\\b`));
+    assert.match(name, new RegExp(`peak ${Math.max(...row.rejects)}\\b`));
+    assert.match(name, new RegExp(`${total} in total`));
+  });
+}
