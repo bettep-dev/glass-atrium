@@ -535,7 +535,7 @@ printf '  - %s\n' "${UNPROCESSED[@]}" >>"$LOG_FILE"
 #
 # KNOWN INCONSISTENCY, left deliberately. The per-call fallback floor in
 # hooks/daemon_config.py was raised to 10.00 on the argument that a cap sized at
-# Haiku 4.5 rates starves Sonnet 5 (~3x the token rates); this ceiling is a fifth
+# Haiku 4.5 rates starves Sonnet 5 (~2x the token rates); this ceiling is a fifth
 # of that and the same argument applies to it. It was NOT raised alongside the
 # floor because a spending ceiling is an operator's decision, not a side effect of
 # a model-retirement edit.

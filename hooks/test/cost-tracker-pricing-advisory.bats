@@ -20,7 +20,7 @@
 #      no DATA-183, clean $0 row still recorded
 #   9. missing model field → zero-cost allowlist: no advisory, no DATA-183,
 #      clean $0 row (the resolution chain is never walked)
-#  10. sonnet-5 launch-window boundary — COST_TRACKER_TODAY 2026-08-31 →
+#  10. synthetic sonnet-5 launch window (fixture tier) — COST_TRACKER_TODAY 2026-08-31 →
 #      intro 0.007, 2026-09-01 → standard 0.0105 (tier-by-date in the loader)
 #  11. family-matched NEW id (claude-opus-4-9) → older-family rate 0.0175 +
 #      model=unknown:<id> resolution=family_latest + DATA-183 — the
@@ -60,7 +60,7 @@ setup() {
   TEST_TMP="$(mktemp -d "${TMPDIR:-/tmp}/cost-tracker-bats.XXXXXX")"
   FIXTURE_SOT="${TEST_TMP}/pricing.json"
   # Fixture SoT: value-aligned with the production rows the cases anchor on
-  # (opus-4-8, fable-5 fallback, sonnet-5 + intro tier, haiku-4-5), with a
+  # (opus-4-8, fable-5 fallback, haiku-4-5) plus a synthetic sonnet-5 tier, with a
   # pinned last_verified so the staleness cases stay deterministic forever.
   cat >"${FIXTURE_SOT}" <<'JSON'
 {
@@ -349,9 +349,9 @@ _run_parser() {
   [[ "${output}" == *'"parse_error": false'* ]]
 }
 
-# Case 10: sonnet-5 launch-window boundary (intro rate through 2026-08-31)
+# Case 10: synthetic sonnet-5 launch window (fixture tier, intro rate through 2026-08-31)
 
-@test "claude-sonnet-5 prices intro 0.007 on 2026-08-31 and standard 0.0105 on 2026-09-01" {
+@test "a tiered fixture row prices claude-sonnet-5 at intro 0.007 on 2026-08-31 and standard 0.0105 on 2026-09-01" {
   local tx
   tx="${TEST_TMP}/sonnet5.jsonl"
   _make_transcript "claude-sonnet-5" "${tx}"

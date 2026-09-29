@@ -18,8 +18,8 @@ Protected invariants:
 (2) rate_for known rates — SoT hits resolve with label "sot" and ZERO network
     I/O (the fetch seam is trap-patched), reproducing the cost anchors:
     opus-4-8 1000in/500out = 0.0175, fable-5 = 0.035, dated haiku = 0.0035.
-(3) tier-by-date boundaries (FIXTURE SoT — the production tier's eventual
-    expiry/removal must not break loader-behavior tests) — intro 0.007 on
+(3) tier-by-date boundaries (FIXTURE SoT with a synthetic launch window — no
+    production row carries a tier) — intro 0.007 on
     2026-08-31 (inclusive), standard 0.0105 from 2026-09-01; BASE_RATE and
     malformed dates select standard.
 (4) normalize_model_key — strips the "[1m]" context-variant and "-YYYYMMDD"
@@ -107,11 +107,14 @@ _BACKFILL_IMPORT_REMOTE_DISABLE = os.environ.get("PRICING_REMOTE_DISABLE")
 _OPUS_RATE = {"input": 5.0, "output": 25.0, "cache_read": 0.5, "cache_creation": 6.25}
 # 5.5 is priced BELOW the opus-5 family on every field, so prefix re-inheritance overcharges.
 _OPUS_5_5_RATE = {"input": 4.0, "output": 20.0, "cache_read": 0.2, "cache_creation": 5.0}
+# 5.5 equals the sonnet-5 row on every field — its own row keeps the id known.
+_SONNET_5_5_RATE = {"input": 2.0, "output": 10.0, "cache_read": 0.2, "cache_creation": 2.5}
 _FABLE_RATE = {"input": 10.0, "output": 50.0, "cache_read": 1.0, "cache_creation": 12.5}
 # 5.1 differs from the family rate in cache_read only (litellm-fetched, not a vendor quote).
 _FABLE_5_1_RATE = {"input": 10.0, "output": 50.0, "cache_read": 0.25, "cache_creation": 12.5}
-_SONNET_STANDARD = {"input": 3.0, "output": 15.0, "cache_read": 0.3, "cache_creation": 3.75}
-_SONNET5_INTRO = {"input": 2.0, "output": 10.0, "cache_read": 0.2, "cache_creation": 2.5}
+# Synthetic launch-window rates for tier-mechanics fixtures — no production row carries a tier.
+_WINDOW_STANDARD = {"input": 3.0, "output": 15.0, "cache_read": 0.3, "cache_creation": 3.75}
+_WINDOW_INTRO = {"input": 2.0, "output": 10.0, "cache_read": 0.2, "cache_creation": 2.5}
 _HAIKU_RATE = {"input": 1.0, "output": 5.0, "cache_read": 0.1, "cache_creation": 1.25}
 
 # The two committed remote_sources urls, in declared order (own-repo #1 is
@@ -227,12 +230,12 @@ class _LoaderCase(unittest.TestCase):
         return doc
 
     def _tiered_sonnet_doc(self):
-        """Fixture doc + a sonnet-5-shaped launch window (production-aligned
-        values) — tier-behavior tests run on this fixture, not the production
-        tier (see the ProductionSotTest pin policy)."""
+        """Fixture doc + a synthetic sonnet-5 launch window — tier-behavior
+        tests run on this fixture (no production row carries a tier; see the
+        ProductionSotTest pin policy)."""
         doc = self._fixture_doc()
         doc["models"]["claude-sonnet-5"] = dict(
-            _SONNET_STANDARD, tiers=[dict(_SONNET5_INTRO, until="2026-08-31")]
+            _WINDOW_STANDARD, tiers=[dict(_WINDOW_INTRO, until="2026-08-31")]
         )
         return doc
 
@@ -577,17 +580,21 @@ class RateForSotTest(_LoaderCase):
             pricing_loader.is_known("claude-fable-5-1", sot_path=str(_SOT_PATH))
         )
 
-    def test_opus_5_5_resolves_from_its_own_sot_row(self):
-        # Without an explicit row the longest dash-bounded prefix resolves this id
-        # to claude-opus-5, which overcharges every field (cache_read 2.5x), and the
-        # id would stay unknown, keeping it out of the model-config roster.
-        record = self._rate_for("claude-opus-5-5")
-        self.assertEqual(record["resolution"], "sot")
-        self.assertEqual(record["matched_model"], "claude-opus-5-5")
-        self.assertEqual(record["rate"], _OPUS_5_5_RATE)
-        self.assertTrue(
-            pricing_loader.is_known("claude-opus-5-5", sot_path=str(_SOT_PATH))
-        )
+    def test_minor_versioned_id_resolves_from_its_own_sot_row(self):
+        # A missing own row resolves each id to its family prefix and leaves it unknown → out of the model-config roster.
+        rows = [
+            ("claude-opus-5-5", _OPUS_5_5_RATE),
+            ("claude-sonnet-5-5", _SONNET_5_5_RATE),
+        ]
+        for model, rate in rows:
+            with self.subTest(model=model):
+                record = self._rate_for(model)
+                self.assertEqual(record["resolution"], "sot")
+                self.assertEqual(record["matched_model"], model)
+                self.assertEqual(record["rate"], rate)
+                self.assertTrue(
+                    pricing_loader.is_known(model, sot_path=str(_SOT_PATH))
+                )
 
     def test_bracket_variant_resolves_to_base_row(self):
         record = self._rate_for("claude-fable-5[1m]")
@@ -612,8 +619,8 @@ class RateForSotTest(_LoaderCase):
 
 class TierBoundaryTest(_LoaderCase):
     """Windowed-tier selection by effective_date (loader-side). Runs on a
-    FIXTURE SoT carrying the sonnet-5-shaped launch window — the production
-    tier's eventual expiry/removal must not break loader-behavior tests."""
+    FIXTURE SoT carrying a synthetic sonnet-5 launch window — no production
+    row carries a tier."""
 
     def setUp(self):
         super().setUp()
@@ -626,23 +633,23 @@ class TierBoundaryTest(_LoaderCase):
 
     def test_intro_rate_on_last_window_day_inclusive(self):
         record = self._sonnet("2026-08-31")
-        self.assertEqual(record["rate"], _SONNET5_INTRO)
+        self.assertEqual(record["rate"], _WINDOW_INTRO)
         self.assertAlmostEqual(_cost(record["rate"]), 0.007, places=10)
 
     def test_standard_rate_on_first_post_window_day(self):
         record = self._sonnet("2026-09-01")
-        self.assertEqual(record["rate"], _SONNET_STANDARD)
+        self.assertEqual(record["rate"], _WINDOW_STANDARD)
         self.assertAlmostEqual(_cost(record["rate"]), 0.0105, places=10)
 
     def test_date_object_accepted(self):
         record = self._sonnet(datetime.date(2026, 8, 31))
-        self.assertEqual(record["rate"], _SONNET5_INTRO)
+        self.assertEqual(record["rate"], _WINDOW_INTRO)
 
     def test_base_rate_sentinel_selects_standard(self):
         # First-class base-row selection (backfill dateless rows) — never the
         # live clock, never an intro discount.
         record = self._sonnet(pricing_loader.BASE_RATE)
-        self.assertEqual(record["rate"], _SONNET_STANDARD)
+        self.assertEqual(record["rate"], _WINDOW_STANDARD)
 
     def test_malformed_date_selects_standard(self):
         # Documented DEFENSIVE rule: a malformed ISO string degrades to the
@@ -650,7 +657,7 @@ class TierBoundaryTest(_LoaderCase):
         # base-row selection is BASE_RATE (test above), not a bogus string.
         for bogus in ("not-a-date", "31/08/2026", "2026-13-99"):
             record = self._sonnet(bogus)
-            self.assertEqual(record["rate"], _SONNET_STANDARD, bogus)
+            self.assertEqual(record["rate"], _WINDOW_STANDARD, bogus)
 
 
 class FallbackChainTest(_LoaderCase):
@@ -1566,9 +1573,8 @@ class StalenessTest(_LoaderCase):
 class BackfillCalcCostTest(_LoaderCase):
     """P4 consumer contract: calc_cost keys on the row's OWN event_date, is
     batch-quiet, and still ALWAYS prices unknown models (remote disabled).
-    Runs on a fixture SoT (production-aligned values) via the PRICING_SOT_PATH
-    env seam — the same routing the backfill itself uses; the production
-    tier's expiry must not break the consumer contract."""
+    Runs on a fixture SoT with a synthetic sonnet-5 launch window via the
+    PRICING_SOT_PATH env seam — the same routing the backfill itself uses."""
 
     def setUp(self):
         super().setUp()
