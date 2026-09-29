@@ -32,7 +32,8 @@ CMD=$(hook_get_tool_input "${INPUT}" "command")
 # shellcheck disable=SC2016  # literal \$ in an ERE — matches the $HOME text, never expands
 readonly RM_TARGETS='(/($|[^a-zA-Z])|/\*|~|"?\$\{?HOME\}?|\.\s*$|\.\.)'
 
-# One pattern per row, folded into a single ERE alternation below.
+# One `name=pattern` row per heuristic, folded into a single ERE alternation below;
+# the name is the only command-derived datum the block output carries.
 # Pipe-to-shell rows carry a trailing word boundary so `curl … | shasum` no longer
 # false-positives; text match is bar-raising only — variable indirection is out of
 # scope (settings deny layer covers the residual).
@@ -41,31 +42,44 @@ DANGEROUS_PATTERNS=(
   # end-of-options marker before the target, RM_TARGETS target set. Subsumes the
   # fixed `rm -rf <target>` spellings (verified: the general row alone matches
   # every wipe target above, including the -- form).
-  'rm\s+(-[a-zA-Z]+\s+)*-[a-zA-Z]*[rR][a-zA-Z]*\s+(-[a-zA-Z]+\s+)*(--\s+)?'"${RM_TARGETS}"
+  'rm-wipe=rm\s+(-[a-zA-Z]+\s+)*-[a-zA-Z]*[rR][a-zA-Z]*\s+(-[a-zA-Z]+\s+)*(--\s+)?'"${RM_TARGETS}"
   # chmod 777, bare or through a flag-run (e.g. -R).
-  'chmod\s+(-[a-zA-Z]+\s+)*777'
+  'chmod-777=chmod\s+(-[a-zA-Z]+\s+)*777'
   # Pipe of a fetch to (sudo-)shell — sh/bash/zsh/dash, word-bounded.
-  '(curl|wget)\s.*\|\s*(sudo\s+)?(ba|z|da)?sh([^[:alnum:]_]|$)'
+  'fetch-pipe-shell=(curl|wget)\s.*\|\s*(sudo\s+)?(ba|z|da)?sh([^[:alnum:]_]|$)'
   # Shell process-substitution of a fetch: `bash <(curl …)`.
-  '(^|[^[:alnum:]_])(ba|z|da)?sh\s+<\(\s*(curl|wget)'
-  'dd\s+if='
-  'mkfs\.'
-  ':\(\)\{'
-  'fork\s*bomb'
+  'fetch-process-substitution=(^|[^[:alnum:]_])(ba|z|da)?sh\s+<\(\s*(curl|wget)'
+  'dd-if=dd\s+if='
+  'mkfs=mkfs\.'
+  'fork-bomb=:\(\)\{'
+  'fork-bomb-phrase=fork\s*bomb'
 )
 
-# In-process IFS join (no per-invocation subshell): top-level `|` is the lowest ERE
-# precedence, so each row's internal groups stay intact.
-SAVED_IFS="${IFS}"
-IFS='|'
-PATTERN="${DANGEROUS_PATTERNS[*]}"
-IFS="${SAVED_IFS}"
+# Top-level `|` is the lowest ERE precedence, so each row's internal groups stay intact.
+PATTERN=""
+for row in "${DANGEROUS_PATTERNS[@]}"; do
+  PATTERN="${PATTERN:+${PATTERN}|}${row#*=}"
+done
 
+# First matching row name. Args: $1=command text
+get_matched_row() {
+  local row
+  for row in "${DANGEROUS_PATTERNS[@]}"; do
+    if printf '%s' "${1}" | grep -qE "${row#*=}"; then
+      printf '%s' "${row%%=*}"
+      return 0
+    fi
+  done
+}
+
+# One grep on the pass path; the per-row lookup runs only once a block is certain.
 if printf '%s' "${CMD}" | grep -qE "${PATTERN}"; then
+  MATCHED_ROW="$(get_matched_row "${CMD}")"
+  # Row names are script literals → the hand-built context stays valid JSON on the jq-less fallback.
   emit_error "SEC-010" "block" \
     "Dangerous system command blocked" \
     "Request explicit user confirmation before executing" \
-    "{\"command\":\"${CMD}\"}"
+    "{\"row\":\"${MATCHED_ROW}\"}"
   exit 2
 fi
 exit 0

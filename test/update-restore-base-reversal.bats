@@ -31,6 +31,8 @@
 # pause-flag / apply-lock infra. Nothing touches ~/.claude or the live ~/.glass-atrium.
 
 GA="$(cd -- "${BATS_TEST_DIRNAME}/.." && pwd)"
+# shellcheck source-path=SCRIPTDIR source=../scripts/lib/path-guard.sh
+source "${GA}/scripts/lib/path-guard.sh"
 REAL_UPDATE="${GA}/scripts/update.sh"
 REAL_SPINE="${GA}/scripts/lib/apply-spine.sh"
 
@@ -52,7 +54,7 @@ setup() {
 }
 
 teardown() {
-  [[ -n "${SANDBOX:-}" && -d "${SANDBOX}" ]] && rm -rf -- "${SANDBOX}" || true
+  if ga_guard_path "${SANDBOX:-}"; then rm -rf -- "${SANDBOX:?}"; fi
 }
 
 # Drive update_capture_base_content in an isolated strict-mode subshell. The per-run
@@ -179,6 +181,23 @@ run_restore_base_entry() {
   [[ ! -e "${STORE}/dev-x.md" ]] || return 1
 }
 
+@test "a base entry under a relative store dir is refused, reported as a failed delete, and kept" {
+  printf 'RELEASE v1\n' >"${STORE}/dev-x.md" # no dev-x.md.base.bak → the delete arm
+  run env GA_ROOT="${ROOT}" AUTOAGENT_BACKUP_DIR="${BAKBASE}" \
+    ATRIUM_UPDATE_STATE_DIR="${STATE}" bash -c '
+      set -Eeuo pipefail
+      # shellcheck source=/dev/null
+      source "$1"
+      # shellcheck source=/dev/null
+      source "$2"
+      cd "$3"
+      update_restore_base_entry dev-x.md "$4" state/base-agents
+    ' _ "${REAL_UPDATE}" "${REAL_SPINE}" "${SANDBOX}" "${CYCLEDIR}"
+  [[ "${status}" -eq 1 ]] || return 1
+  [[ "$(cat "${STORE}/dev-x.md")" == "RELEASE v1" ]] || return 1
+  [[ "${output}" == *"base-content store delete FAILED for dev-x.md"* ]]
+}
+
 @test "Arm B restores every declared roster path to the target the index recorded" {
   local rel bn index="${CYCLEDIR}/restore-index.tsv"
   : >"${index}"
@@ -271,11 +290,12 @@ run_restore_base_entry() {
 @test "Arm A reverses a ROSTER base entry against its PATH key, leaving the flat namespace alone" {
   local rel='hooks/lib/styleref-roster.sh' bn='styleref-roster.sh'
   local roster_store="${STATE}/base-roster"
+  local snapshot="${CYCLEDIR}/${bn}.base.bak"
   mkdir -p "${roster_store}/hooks/lib"
   printf 'ROSTER RELEASE\n' >"${roster_store}/${rel}"
   # The before-image sink is one flat directory, so the snapshot is keyed by basename
   # while the store entry it reverses is keyed by path.
-  printf 'ROSTER BASE v0\n' >"${CYCLEDIR}/${bn}.base.bak"
+  printf 'ROSTER BASE v0\n' >"${snapshot}"
   # A flat entry under the same basename: a roster key must not reach it.
   printf 'AGENT BASE\n' >"${STORE}/${bn}"
 
@@ -285,7 +305,7 @@ run_restore_base_entry() {
   [[ "$(cat "${STORE}/${bn}")" == "AGENT BASE" ]] || return 1
 
   # No snapshot → DELETE the entry (safe gated 2-way), still under the path key.
-  rm -f "${CYCLEDIR}/${bn}.base.bak"
+  if ga_guard_path "${snapshot}"; then rm -f -- "${snapshot:?}"; fi
   printf 'ROSTER RELEASE\n' >"${roster_store}/${rel}"
   run_restore_base_entry "${rel}"
   [[ "${status}" -eq 0 ]] || return 1

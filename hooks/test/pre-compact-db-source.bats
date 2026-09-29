@@ -19,6 +19,8 @@
 # BATS_TEST_DIRNAME is assigned by the bats runtime (SC2154 false positive).
 # shellcheck disable=SC2154
 setup_file() {
+  # Every test here shares the one per-file database → no parallel tests within this file.
+  export BATS_NO_PARALLELIZE_WITHIN_FILE=true
   local bin
   for bin in initdb pg_ctl createdb psql python3; do
     if ! command -v "${bin}" >/dev/null 2>&1; then
@@ -70,6 +72,9 @@ teardown_file() {
   eph_pg_stop "${EPH_DATADIR}"
 }
 
+# shellcheck source-path=SCRIPTDIR source=../../scripts/lib/path-guard.sh
+source "${BATS_TEST_DIRNAME}/../../scripts/lib/path-guard.sh"
+
 setup() {
   if [[ -n "${EPH_SKIP:-}" ]]; then
     skip "${EPH_SKIP}"
@@ -78,7 +83,7 @@ setup() {
 }
 
 teardown() {
-  [[ -n "${PC_TMP:-}" && -d "${PC_TMP}" ]] && rm -rf -- "${PC_TMP}" || true
+  if ga_guard_path "${PC_TMP:-}"; then rm -rf -- "${PC_TMP:?}"; fi
 }
 
 _eph_q() {

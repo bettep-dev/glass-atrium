@@ -188,7 +188,8 @@ Emit on the terminal turn only: an every-turn emit is noise, and a skipped emit 
 | `plan` | goal + chosen direction and why + work streams in execution order, each naming its files + an Open Questions section |
 | `review` / `diagnosis` / `doc` / `cleanup` | no test bar — the verdict, diagnosis, document or hygiene change was produced |
 
-- `feature`: a test confirmed to fail by deliberately breaking the implementation also qualifies; a test file merely added is NOT the bar.
+- `feature`: a test file merely added is NOT the bar.
+  - A test written after its implementation qualifies only through the deliberate-break exception, made and run as `scoped/shared-testing.md` → **Qualifier on the last row (the deliberate-break exception)** states — including where the break is made.
 - `plan`: an empty Open Questions section is valid.
   - A dependency DAG, per-task acceptance criteria or any other exhaustive structure joins the bar ONLY when the user asked for that kind of deliverable (spec · PRD · ADR · roadmap) or for that structure by name.
 - **Blank value policy**: a blank `confidence` or `metric_pass` degrades the learning signal — when judgment is impossible, write `low` / `false` explicitly.
@@ -230,7 +231,7 @@ Emit on the terminal turn only: an every-turn emit is noise, and a skipped emit 
 
 - PARTIAL: a tool-generated sibling (manifest / migration / snapshot) is a collector blind spot, not demonstrated absence.
 - EMPTY: an empty history cannot DEMONSTRATE absence — Write/Edit is blind to Bash-authored writes.
-- **Neither matched nor unmatched**: non-path-shaped prose entries, and recognized tool-generated artifacts — a CLOSED two-shape set: basename exactly `manifest.json`, or a path under the live install root `$HOME/.glass-atrium/`.
+- **Neither matched nor unmatched**: non-path-shaped prose entries, and recognized tool-generated artifacts — a CLOSED set: basename exactly `manifest.json`, or a path under the live install root `$HOME/.glass-atrium/`.
   - Those artifacts are written through a regeneration script or the sanctioned updater seam, invisible to the Write/Edit collector — so such an entry rescues no contradiction and blocks no otherwise-verified row.
 
 #### Grader and daemon provenance
@@ -239,7 +240,7 @@ Emit on the terminal turn only: an every-turn emit is noise, and a skipped emit 
 
 | `downgrade_origin` | Means |
 |--------------------|-------|
-| `writer_true_downgraded` | writer claimed `metric_pass=true`; the grader returned `verified_fail`/`unverified` — logged, never force-flipped |
+| `writer_true_downgraded` | writer claimed `metric_pass=true`; the grader returned `verified_fail`/`unverified` |
 | `writer_false` | writer self-reported `metric_pass=false` — an honest negative |
 | `synthesized` | assembled by the SubagentStop transcript-synthesis backstop — no writer-emitted block |
 

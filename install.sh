@@ -46,7 +46,8 @@
 #   12  GA_RELEASE_REPO not configured / not an <owner>/<repo> slug
 #   13  GA_DIR exists with foreign content (not a Glass Atrium install; refuse to clobber)
 #   14  release download failed / expected assets missing
-#   15  per-file SHA-256 verification failed (corrupt/tampered download)
+#   15  per-file SHA-256 verification failed, or the bundle's apply-spine.sh is
+#       missing or fails to load (corrupt/tampered/partial download)
 #   16  launcher missing or not executable after extract
 #   17  bundle extraction / tree write failed
 #   18  mirror-farm refresh failed (reinstall path: files installed, but the
@@ -103,13 +104,33 @@ die() {
   exit "${code}"
 }
 
+# Bootstrap copy of scripts/lib/path-guard.sh → ga_guard_path: no tree exists to source it from before
+# extract. Kept identical — scripts/test/glass-atrium-install.bats pins the parity.
+ga_guard_path() {
+  local target="${1:-}"
+  if [[ -z "${target}" ]]; then
+    return 1
+  fi
+  # Trailing slashes stripped → any all-slash spelling of the root is caught.
+  if [[ -z "${target%"${target##*[!/]}"}" ]]; then
+    printf 'ga_guard_path: refusing the filesystem root as a delete target: %q\n' "${target}" >&2
+    return 1
+  fi
+  if [[ "${target}" != /* ]]; then
+    printf 'ga_guard_path: refusing a non-absolute delete target: %q\n' "${target}" >&2
+    return 1
+  fi
+  return 0
+}
+
 # Single idempotent cleanup: remove ONLY the scratch tree this run created. The
 # successful hand-off path cleans it explicitly BEFORE exec (exec never returns, so
 # the EXIT trap would not fire there); this trap covers every early-failure path.
 cleanup() {
   local rc=$?
-  if [[ -n "${_ga_workdir}" && -d "${_ga_workdir}" ]]; then
-    rm -rf -- "${_ga_workdir}"
+  if [[ -d "${_ga_workdir}" ]]; then
+    # shellcheck disable=SC2310  # guard verdict branched on — a refusal leaves the tree, never aborts
+    if ga_guard_path "${_ga_workdir}"; then rm -rf -- "${_ga_workdir:?}"; fi
     _ga_workdir=""
   fi
   exit "${rc}"
@@ -378,7 +399,9 @@ verify_bundle() {
     || die "${EXIT_VERIFY_FAILED}" \
       "bundle is missing scripts/lib/apply-spine.sh — refusing to trust it."
   # shellcheck source=/dev/null
-  source "${spine_lib}"
+  source "${spine_lib}" \
+    || die "${EXIT_VERIFY_FAILED}" \
+      "bundle's scripts/lib/apply-spine.sh failed to load — refusing to trust it."
   log "Verifying per-file SHA-256 of the release against manifest.hashes ..."
   # A fresh install stages the WHOLE manifest.files set; spine_stage_and_verify
   # copies each into the staging dir and loud-fails on the first hash mismatch.
@@ -652,7 +675,8 @@ main() {
 
   # The scratch tree is done with; remove it BEFORE handoff since exec never returns
   # to fire the EXIT trap.
-  rm -rf -- "${_ga_workdir}"
+  # shellcheck disable=SC2310  # guard verdict branched on — a refusal leaves the tree, never aborts
+  if ga_guard_path "${_ga_workdir}"; then rm -rf -- "${_ga_workdir:?}"; fi
   _ga_workdir=""
 
   # Refresh the ~/.claude facade mirrors on a prior consented deployment — new release

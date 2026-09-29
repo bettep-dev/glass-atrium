@@ -18,6 +18,8 @@ GA="$(cd -- "${BATS_TEST_DIRNAME}/.." && pwd)"
 REAL_GA="${GA}/glass-atrium"
 CORE="${GA}/lib/ga-env.sh"
 REPO_MANIFEST="${GA}/manifest.json"
+# shellcheck source-path=SCRIPTDIR source=../scripts/lib/path-guard.sh
+source "${GA}/scripts/lib/path-guard.sh"
 
 setup() {
   command -v jq >/dev/null 2>&1 || skip "jq required"
@@ -39,8 +41,8 @@ SH
 }
 
 teardown() {
-  [[ -n "${GA_SANDBOX:-}" && -d "${GA_SANDBOX}" ]] && rm -rf -- "${GA_SANDBOX}"
-  [[ -n "${TARGET:-}" && -d "${TARGET}" ]] && rm -rf -- "${TARGET}" || true
+  if ga_guard_path "${GA_SANDBOX:-}"; then rm -rf -- "${GA_SANDBOX:?}"; fi
+  if ga_guard_path "${TARGET:-}"; then rm -rf -- "${TARGET:?}"; fi
 }
 
 # settings.json with every EXPECTED_HOOK_BINDINGS entry wired under its event.
@@ -397,7 +399,11 @@ drop_group() {
   # same defect twice under two different classes.
   make_ga_sandbox
   write_full_settings
-  rm -f "${GA_SANDBOX}/hooks/cost-tracker.sh"
+  if ga_guard_path "${GA_SANDBOX}"; then
+    rm -f -- "${GA_SANDBOX:?}/hooks/cost-tracker.sh"
+  else
+    return 1
+  fi
   run_doctor_ga_sandbox
   [[ "${output}" != *"NOT executable"* ]]
   [[ "${output}" == *"doctor: PASS"* ]]
@@ -561,7 +567,11 @@ drop_all_part_groups() {
   make_ga_sandbox
   write_chunk_registry
   write_full_settings
-  rm -f "${GA_SANDBOX}/hooks/inject-scope-part-07.sh"
+  if ga_guard_path "${GA_SANDBOX}"; then
+    rm -f -- "${GA_SANDBOX:?}/hooks/inject-scope-part-07.sh"
+  else
+    return 1
+  fi
   run_doctor_ga_sandbox
   [[ "${output}" == *"10 of 11 scope-rule part wrapper(s) present"* ]] || {
     echo "no wrapper-presence warn: ${output}"
@@ -642,7 +652,11 @@ drop_all_part_groups() {
   write_full_settings
   # the core FILE, not the directory: that path is what the doctor opens, so removing it states
   # the unreachable condition exactly and needs no recursive delete on a real sandbox directory.
-  rm -f "${GA_SANDBOX}/hooks/lib/inject_chunk.py"
+  if ga_guard_path "${GA_SANDBOX}"; then
+    rm -f -- "${GA_SANDBOX:?}/hooks/lib/inject_chunk.py"
+  else
+    return 1
+  fi
   run_doctor_ga_sandbox
   [[ "${output}" == *"split scope-rule channel BLIND"* ]] || {
     echo "an unreadable core did not report blind: ${output}"

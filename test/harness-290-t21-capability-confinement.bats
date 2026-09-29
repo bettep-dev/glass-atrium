@@ -82,6 +82,7 @@ frontmatter_block() {
   # at all (contrast the redirect row below). Membership AND shape in one jq whose
   # status is the test's last command.
   run jq -e '
+    # GA-RM[not-executed]: jq string literals matched against the settings deny list, never run
     ["Bash(rm:*)", "Bash(rm -rf:*)",
      "Bash(bash -c:*)", "Bash(sh -c:*)", "Bash(zsh -c:*)", "Bash(eval:*)"] as $need
     | (($need - .permissions.deny) == [])

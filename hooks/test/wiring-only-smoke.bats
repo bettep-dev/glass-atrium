@@ -44,6 +44,8 @@
 
 MD_HOOK="${BATS_TEST_DIRNAME}/../block-md-creation.sh"
 RAW_HOOK="${BATS_TEST_DIRNAME}/../validate-pre-write-raw.sh"
+# shellcheck source-path=SCRIPTDIR source=../../scripts/lib/path-guard.sh
+source "${BATS_TEST_DIRNAME}/../../scripts/lib/path-guard.sh"
 
 setup() {
   [[ -f "${MD_HOOK}" ]] || skip "hook not found: ${MD_HOOK}"
@@ -54,7 +56,7 @@ setup() {
 }
 
 teardown() {
-  [[ -n "${SANDBOX:-}" && -d "${SANDBOX}" ]] && rm -rf -- "${SANDBOX}"
+  if ga_guard_path "${SANDBOX:-}"; then rm -rf -- "${SANDBOX:?}"; fi
 }
 
 # ── block-md-creation.sh — PreToolUse(Write) monitor SoT-bypass gate ─────────────────
@@ -109,4 +111,19 @@ run_raw_hook() {
 @test "validate-pre-write-raw: non-raw path → out of scope, pass (exit 0)" {
   run_raw_hook "/tmp/proj/notes.md" "no frontmatter at all"
   [[ "${status}" -eq 0 ]] || return 1
+}
+
+@test "teardown succeeds silently when setup skipped before creating the temp dir" {
+  local saved="${SANDBOX}"
+  unset SANDBOX
+  run teardown
+  SANDBOX="${saved}"
+  [[ "${status}" -eq 0 ]] || {
+    echo "teardown without a temp dir failed (status ${status}): ${output}" >&2
+    return 1
+  }
+  [[ -z "${output}" ]] || {
+    echo "teardown without a temp dir wrote: ${output}" >&2
+    return 1
+  }
 }

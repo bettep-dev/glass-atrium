@@ -4,8 +4,9 @@
 #
 # The marker is ADVISORY OBSERVABILITY ONLY — it does not enforce worktree isolation, and these
 # tests assert its file-level contract, never an enforcement claim.
-# Three branches: created on Start · removed on Stop · a write malfunction is LOUD (named warn code
-# on stderr) rather than silently absorbed, with the hook staying non-blocking (exit 0).
+# Four branches: created on Start · removed on Stop · a write malfunction and a delete malfunction
+# or refusal are each LOUD (named warn code on stderr: DATA-074, DATA-075) rather than silently
+# absorbed, with the hook staying non-blocking (exit 0).
 #
 # PG-free by construction: the hook's dual-write helper is tolerated non-blocking (`|| true`), so no
 # ephemeral cluster is needed here — agent-tracker.bats owns the write-contract coverage.
@@ -62,4 +63,35 @@ fire() {
   chmod 700 "${MARKER_DIR}"
   [[ "${status}" -eq 0 ]] || { echo "hook must stay non-blocking" >&2; return 1; }
   [[ "${output}" == *'DATA-074'* ]] || { echo "silent absorption — no DATA-074 in: ${output}" >&2; return 1; }
+}
+
+@test "a marker the Stop cannot delete survives and is LOUD (DATA-075)" {
+  local row name root lockdown marker
+  local rows=("unwritable marker dir|${GA_DATA}|yes" "relative data root|ga-rel|no")
+  cd "${BATS_TEST_TMPDIR}" || return 1
+  for row in "${rows[@]}"; do
+    IFS='|' read -r name root lockdown <<<"${row}"
+    GA_DATA="${root}"
+    marker="${root}/data/live-children/${AID}"
+    fire "SubagentStart" "${AID}"
+    [[ -f "${marker}" ]] || {
+      echo "${name}: Start wrote no marker" >&2
+      return 1
+    }
+    if [[ "${lockdown}" == yes ]]; then chmod 500 "${marker%/*}"; fi
+    fire "SubagentStop" "${AID}"
+    chmod 700 "${marker%/*}"
+    [[ "${status}" -eq 0 ]] || {
+      echo "${name}: hook must stay non-blocking" >&2
+      return 1
+    }
+    [[ "${output}" == *'DATA-075'* ]] || {
+      echo "${name}: silent — no DATA-075 in: ${output}" >&2
+      return 1
+    }
+    [[ -f "${marker}" ]] || {
+      echo "${name}: the marker was deleted" >&2
+      return 1
+    }
+  done
 }

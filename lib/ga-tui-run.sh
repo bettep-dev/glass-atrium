@@ -208,7 +208,7 @@ run_step() {
     else
       printf '  %s%s %s%s\n' "${counter}" "${done_glyph}" "$(c "${C_DIM}" "${label}")" "${items_suffix}" >"${TTY}"
     fi
-    rm -f "${STEP_LOG}"
+    delete_temp_file "${STEP_LOG}"
     STEP_LOG_CUR="" # resolved + swept; no longer an abort-trap concern
   elif [[ -n "${panel_mode}" ]]; then
     # panel: NO inline FAIL row, NO _dump_step_log — the clean UI shows nothing but the

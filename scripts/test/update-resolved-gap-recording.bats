@@ -58,6 +58,9 @@ GA="$(cd -- "${BATS_TEST_DIRNAME}/../.." && pwd)"
 UPDATE_SH="${GA}/scripts/update.sh"
 PG_HELPER="${GA}/scripts/_pg_dual_write_daemon.py"
 
+# shellcheck source-path=SCRIPTDIR source=../lib/path-guard.sh
+source "${GA}/scripts/lib/path-guard.sh"
+
 setup() {
   [[ -f "${UPDATE_SH}" ]] || skip "update.sh not found: ${UPDATE_SH}"
   WORK="$(cd -- "$(mktemp -d -t ga-resolved-rec.XXXXXX)" && pwd -P)"
@@ -144,7 +147,7 @@ delete_pg_row() {
 
 teardown() {
   [[ -n "${PG_ROW_TARGET:-}" ]] && delete_pg_row "${PG_ROW_TARGET}"
-  [[ -n "${WORK:-}" ]] && rm -rf -- "${WORK}"
+  if ga_guard_path "${WORK:-}"; then rm -rf -- "${WORK:?}"; fi
   return 0
 }
 

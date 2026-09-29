@@ -18,6 +18,8 @@
 # wire_hooks against a synthetic settings.json WITHOUT touching ~/.claude.
 
 GA="$(cd -- "${BATS_TEST_DIRNAME}/.." && pwd)"
+# shellcheck source-path=SCRIPTDIR source=../scripts/lib/path-guard.sh
+source "${GA}/scripts/lib/path-guard.sh"
 REAL_GA="${GA}/glass-atrium"
 
 setup() {
@@ -40,7 +42,7 @@ SH
 }
 
 teardown() {
-  [[ -n "${TARGET:-}" && -d "${TARGET}" ]] && rm -rf -- "${TARGET}" || true
+  if ga_guard_path "${TARGET:-}"; then rm -rf -- "${TARGET:?}"; fi
 }
 
 # Run the real wire-hooks subcommand against the sandboxed target.

@@ -20,6 +20,8 @@
 bats_require_minimum_version 1.5.0
 
 HOOKS_DIR="${BATS_TEST_DIRNAME}/.."
+# shellcheck source-path=SCRIPTDIR source=../../scripts/lib/path-guard.sh
+source "${BATS_TEST_DIRNAME}/../../scripts/lib/path-guard.sh"
 
 setup() {
   command -v jq >/dev/null 2>&1 || skip "jq not on PATH"
@@ -29,7 +31,7 @@ setup() {
 }
 
 teardown() {
-  [[ -n "${SANDBOX:-}" && -d "${SANDBOX}" ]] && rm -rf -- "${SANDBOX}" || true
+  if ga_guard_path "${SANDBOX:-}"; then rm -rf -- "${SANDBOX:?}"; fi
 }
 
 @test "advisory-spawn-budget.sh: no override → counts spawns from \$HOME/.glass-atrium/data/session-spawns" {

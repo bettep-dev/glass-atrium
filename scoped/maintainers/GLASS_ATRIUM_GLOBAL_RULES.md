@@ -82,6 +82,7 @@ Charter-specific instruction for the wave: restructure and diet, with **no rule 
 | `hooks/test/enforce-foreground-harness.bats` + `-branch.bats` | basename allowlist | the charter basename is a background-write exception; renaming the file breaks both |
 | `autoagent/daemon_cycle.py` | `GLOBAL_RULES_FILE`, sensitive-path regex, C2 prompt slot | path-keyed: a move breaks the Tier-2 safety trigger and the C2 excerpt |
 | `scripts/lib/apply-spine.sh` | basename literal | classifies the charter as a non-agent file |
+| `scripts/lib/path-guard.sh` → `ga_guard_path` | nothing of the charter — one-way: `File Deletion Policy` restates its refusal set | a guard-only refusal change splits the two sets, and no test compares them — change both in one edit |
 | `manifest.json` | two rows, one hash | regeneration required after any content edit |
 
 Prose citations INTO charter anchors, all still resolving after this pass:

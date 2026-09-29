@@ -26,13 +26,14 @@ Every section kept in the rule file is kept because a NAMED reader outside the f
 |---|---|---|
 | Test Quality (with Meaningless-Test Prohibitions) | whoever adjudicates a hand-run `audit-test-smells.sh` finding — it reports a shape, never a defect | `scripts/audit-test-smells.sh` header (Convention SoT) · `scripts/test/audit-test-smells.bats` header |
 | Test Quality · Mocking Rules · Test Structure · Authoring scope | glass-atrium-qa-code-reviewer — its delivered checklist cites this file and it must cite a governing rule | `agents/glass-atrium-qa-code-reviewer.md` → `### Testing Checks` |
-| Rationalization Rejection (Testing) | every agent — the charter names testing as a home file for the excuse→rebuttal pairs | `GLASS_ATRIUM_GLOBAL_RULES.md` → Rationalization Rejection |
+| Rationalization Rejection (Testing) | every agent — via the charter's excuse→rebuttal home-file list and the `feature` note's exception pointer | `GLASS_ATRIUM_GLOBAL_RULES.md` → Rationalization Rejection · `core-outcome-record.md` → the `feature` note |
 | 3-Tier Test Hierarchy | every agent — the delivered commit rule defers its which-tests-when half to here | `core-git-workflow.md` → Commits |
 | Destructive-Path Suite Safety | the operator or session about to run a suite that can reach the live database — not an agent at spawn | `orchestrator-role.md` → Document-Driven Workflow step 6 |
 | Mechanical Success Metrics | every agent — a pointer stub resolving an inbound Tier-1 reference back to its canonical | `core-outcome-record.md` → Automatic Verification Criteria |
 
 - **Heading stability**: `## Test Quality`, `### Meaningless-Test Prohibitions`, `## Destructive-Path Suite Safety (live-postgres reach)` and `## Mechanical Success Metrics` are named verbatim by the pointers above. Renaming one dangles its inbound pointer even though no suite reads the body.
   - Also stable: `## Rationalization Rejection (Testing)` and its bolded lead **Qualifier on the last row (the deliberate-break exception)** — the sandbox write-confinement lane edits one sentence under that lead, and `### What makes a test a test` → **Watch it fail** points at it.
+  - A bold lead named verbatim binds the same way: the `core-outcome-record.md` `feature` note names **Qualifier on the last row (the deliberate-break exception)**, so renaming that lead dangles a Tier-1 pointer.
   - Cited by `agents/glass-atrium-qa-code-reviewer.md` → `### Testing Checks`, some also by in-file pointers — grep before renaming one:
     - headings: `### What makes a test a test` · `#### The prohibited shapes` · `## Mocking Rules` · `## Test Structure` · `### Where a test lives` · `### Names, comments and test data` · `### Table form per stack`;
     - bolded leads: **Authoring scope** · **Grouping** · **Fold-back** · **ID ban** · **Deletion duty** · **DAMP carve-out**.
@@ -82,7 +83,8 @@ The rule file states only that every row is reviewer-applied. The mapping below 
 
 ## Rationalization Rejection — reconciliations
 
-- **Test-first duty**: it binds at `core-outcome-record.md` → Field Input Guide → `metric_pass`, which is delivered to every agent and states both the observed-failure bar and the deliberate-break exception. The rule file keeps only the qualifier that reconciles that exception with the "Writing code first as a reference" rebuttal.
+- **Test-first duty**: it binds at `core-outcome-record.md` → Field Input Guide → `metric_pass`, which is delivered to every agent and states the observed-failure bar; its `feature` note names the deliberate-break exception and points to the rule file for it.
+  - The rule file's qualifier is the exception's one statement — when a test written after its implementation is admissible, and how and where the break is made — and it reconciles the exception with the "Writing code first as a reference" rebuttal.
 - **"Too simple to need tests" row**: the rebuttal is qualified against the prohibited shape *a test whose target has no branch and no logic*, so it no longer collides with the injected minimalism carve-out that exempts a trivial one-liner. The two ends are worded alike on purpose — change them together.
 
 ## Destructive-Path Suite Safety — provenance

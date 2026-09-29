@@ -67,6 +67,9 @@ bats_require_minimum_version 1.5.0
 GA="$(cd -- "${BATS_TEST_DIRNAME}/../.." && pwd)"
 export SKILL="${GA}/scripts/update.sh"
 
+# shellcheck source-path=SCRIPTDIR source=../lib/path-guard.sh
+source "${GA}/scripts/lib/path-guard.sh"
+
 REQUEST_ID='er-20260913-probe'
 
 MARKED_LOCAL='---
@@ -131,7 +134,7 @@ setup() {
 }
 
 teardown() {
-  [[ -n "${WORK:-}" && -d "${WORK}" ]] && rm -rf -- "${WORK}"
+  if ga_guard_path "${WORK:-}"; then rm -rf -- "${WORK:?}"; fi
   return 0
 }
 
@@ -396,8 +399,9 @@ CASES
 # $1 = file holding the request JSON to put back as pending.json — the state a consume that
 # never moved the request leaves behind.
 restore_leftover_request() {
+  local consumed_request="${REQ_DIR}/consumed/${REQUEST_ID}.json"
   cp "$1" "${REQ_DIR}/pending.json"
-  rm -f "${REQ_DIR}/consumed/${REQUEST_ID}.json"
+  if ga_guard_path "${consumed_request}"; then rm -f -- "${consumed_request:?}"; fi
 }
 
 @test "L7 a request left behind after a landing resolves already-at-release and the body keeps updating" {
@@ -492,7 +496,7 @@ restore_leftover_request() {
   grep -q "outcome=consume-failed.*rc=4 reason=request-write-failed.*request=${REQUEST_ID}" "${ledger}" || return 1
 
   # An exception outside the designed OSError paths, raised at the consume move.
-  rm -f "${REQ_DIR}/consumed"
+  if ga_guard_path "${REQ_DIR}"; then rm -f -- "${REQ_DIR:?}/consumed"; fi
   mkdir -p "${WORK}/pyhook"
   printf '%s\n' 'import os' '_replace = os.replace' \
     'def _raising_replace(src, dst, *a, **k):' \
@@ -589,7 +593,7 @@ vendor line three}" >"${NEWSRC}/agents/dev-r.md"
   seed_request
   run_update
   [ "${status}" -eq 0 ] || return 1
-  local images="${INSTALL}/update-declines/editable-resets/${REQUEST_ID}" landed name
+  local images="${INSTALL}/update-declines/editable-resets/${REQUEST_ID}" landed name image_link
   landed="$(cat "${INSTALL}/agents/dev-r.md")"
   for name in dev-r.md.bak dev-r.md.base.bak; do
     mv "${images}/${name}" "${WORK}/${name}"
@@ -599,7 +603,8 @@ vendor line three}" >"${NEWSRC}/agents/dev-r.md"
     [[ "${output}" == *"agents/dev-r.md REFUSED (reason=image-symlink)"* ]] || return 1
     [[ "$(cat "${INSTALL}/agents/dev-r.md")" == "${landed}" ]] || return 1
     [ ! -L "${INSTALL}/agents/dev-r.md" ] || return 1
-    rm -f "${images}/${name}"
+    image_link="${images}/${name}"
+    if ga_guard_path "${image_link}"; then rm -f -- "${image_link:?}"; fi
     mv "${WORK}/${name}" "${images}/${name}"
   done
   [[ "$(grep -c "agents/dev-r.md.*outcome=restore-failed.*reason=image-symlink.*request=${REQUEST_ID}" \
@@ -618,7 +623,7 @@ vendor line three}" >"${NEWSRC}/agents/dev-r.md"
   [[ "$(cat "${INSTALL}/agents/dev-r.md")" == "${MARKED_LOCAL}" ]] || return 1
   [ ! -e "${images}/dev-r.md.bak" ] || return 1
 
-  rm -rf "${images}/dev-r.md.base.bak"
+  if ga_guard_path "${images}"; then rm -rf -- "${images:?}/dev-r.md.base.bak"; fi
   run_update
   [ "${status}" -eq 0 ] || return 1
   [[ "$(grep -v '^model: ' "${INSTALL}/agents/dev-r.md")" == "${MARKED_RELEASE}" ]] || return 1

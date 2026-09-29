@@ -7,6 +7,8 @@
 # Requires: bats >= 1.5.0, git, jq
 
 GA="$(cd -- "${BATS_TEST_DIRNAME}/.." && pwd)"
+# shellcheck source-path=SCRIPTDIR source=../scripts/lib/path-guard.sh
+source "${GA}/scripts/lib/path-guard.sh"
 
 setup() {
   SANDBOX="$(mktemp -d -t ga-acceptance-untracked.XXXXXX)"
@@ -21,7 +23,7 @@ setup() {
 }
 
 teardown() {
-  [[ -n "${SANDBOX:-}" && -d "${SANDBOX}" ]] && rm -rf -- "${SANDBOX}"
+  if ga_guard_path "${SANDBOX:-}"; then rm -rf -- "${SANDBOX:?}"; fi
 }
 
 # track_path — add an index-only entry, so no on-disk name is needed for any byte.
@@ -49,7 +51,7 @@ list_path() {
   for row in "${rows[@]}"; do
     IFS='|' read -r -d '' name tracked listed expected <<<"${row}" || true
     expected="${expected%$'\n'}"
-    rm -f -- "${SANDBOX}/.git/index"
+    if ga_guard_path "${SANDBOX}"; then rm -f -- "${SANDBOX:?}/.git/index"; fi
     track_path "${tracked}"
     list_path "${listed}"
     got="$(untracked_listed_count "${SANDBOX}")"

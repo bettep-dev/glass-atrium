@@ -30,6 +30,9 @@ HOOKS_DIR="${BATS_TEST_DIRNAME}/.."
 HOOK_SH="${HOOKS_DIR}/track-outcome.sh"
 PG_HELPER_SRC="${HOOKS_DIR}/_pg_outcome_dualwrite.py"
 
+# shellcheck source-path=SCRIPTDIR source=../../scripts/lib/path-guard.sh
+source "${BATS_TEST_DIRNAME}/../../scripts/lib/path-guard.sh"
+
 setup_file() {
   command -v python3 >/dev/null 2>&1 || return 0
   PSYCOPG_PP="$(python3 -c 'import psycopg,os;print(os.path.dirname(os.path.dirname(psycopg.__file__)))' 2>/dev/null || true)"
@@ -106,9 +109,7 @@ if agent:
         conn.commit()
 PY
   fi
-  if [[ -n "${CB_TMP:-}" && -d "${CB_TMP}" ]]; then
-    rm -rf "${CB_TMP}"
-  fi
+  if ga_guard_path "${CB_TMP:-}"; then rm -rf -- "${CB_TMP:?}"; fi
 }
 
 # Write the synthetic schema-mode subagent transcript. The terminal StructuredOutput carries a

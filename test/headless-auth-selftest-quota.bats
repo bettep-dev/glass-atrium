@@ -24,6 +24,8 @@
 # Requires: bats (brew install bats-core), perl (run_with_timeout), bash 3.2+
 
 GA="$(cd -- "${BATS_TEST_DIRNAME}/.." && pwd)"
+# shellcheck source-path=SCRIPTDIR source=../scripts/lib/path-guard.sh
+source "${GA}/scripts/lib/path-guard.sh"
 
 # a non-secret presence marker — the code only tests the OAuth var for -n (non-empty).
 LOADED_MARK="oauth-present-marker"
@@ -47,7 +49,7 @@ setup() {
 }
 
 teardown() {
-  [[ -n "${SANDBOX:-}" && -d "${SANDBOX}" ]] && rm -rf -- "${SANDBOX}"
+  if ga_guard_path "${SANDBOX:-}"; then rm -rf -- "${SANDBOX:?}"; fi
 }
 
 # extract_fn — eval a single named function (from ga-env.sh or ga-tui-preflight.sh) into the test shell.
@@ -248,4 +250,19 @@ _assert_no_cred_advisory() {
   local arm
   arm="$(printf '%s\n' "${body}" | awk '/^    3\)/{print; exit}')"
   [[ "${arm}" != *"advise=1"* ]] || return 1
+}
+
+@test "teardown succeeds silently when setup skipped before creating the temp dir" {
+  local saved="${SANDBOX}"
+  unset SANDBOX
+  run teardown
+  SANDBOX="${saved}"
+  [[ "${status}" -eq 0 ]] || {
+    echo "teardown without a temp dir failed (status ${status}): ${output}" >&2
+    return 1
+  }
+  [[ -z "${output}" ]] || {
+    echo "teardown without a temp dir wrote: ${output}" >&2
+    return 1
+  }
 }

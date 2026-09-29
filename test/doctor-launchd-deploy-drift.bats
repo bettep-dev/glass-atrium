@@ -32,6 +32,8 @@ bats_require_minimum_version 1.5.0
 GA="$(cd -- "${BATS_TEST_DIRNAME}/.." && pwd)"
 REAL_RENDERER="${GA}/scripts/render-launchd-plists.sh"
 TEMPLATE="${GA}/config.toml.example"
+# shellcheck source-path=SCRIPTDIR source=../scripts/lib/path-guard.sh
+source "${GA}/scripts/lib/path-guard.sh"
 
 # the 8 com.glass-atrium.* jobs (mirrors LAUNCHD_JOBS / render-launchd-plists.sh JOBS)
 JOBS=(
@@ -80,7 +82,7 @@ setup() {
 }
 
 teardown() {
-  [[ -n "${SANDBOX:-}" && -d "${SANDBOX}" ]] && rm -rf -- "${SANDBOX}" || true
+  if ga_guard_path "${SANDBOX:-}"; then rm -rf -- "${SANDBOX:?}"; fi
 }
 
 # Copy the reference plist for <job> into the deployed LaunchAgents dir (the loaded shape).
