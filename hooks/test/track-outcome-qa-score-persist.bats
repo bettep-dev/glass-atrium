@@ -71,6 +71,8 @@ SQL
 # BATS_TEST_DIRNAME is assigned by the bats runtime (SC2154 false positive).
 # shellcheck disable=SC2154
 setup_file() {
+  # Every test here shares the one per-file database → no parallel tests within this file.
+  export BATS_NO_PARALLELIZE_WITHIN_FILE=true
   local bin
   for bin in initdb pg_ctl createdb psql python3 jq; do
     if ! command -v "${bin}" >/dev/null 2>&1; then

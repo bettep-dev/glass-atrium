@@ -42,19 +42,22 @@ retired_residue'
 # section 20's names are all `perms_`). The fossil assertion pins each stem to a real name.
 # `tools_mirror` carries its qualifier for that reason: the bare word `mirror` already appears
 # inside the prose tokens `mirroring`/`mirrors`, which the token census cannot tell from a variable
-# name, so the fossil assertion would stay green with §23's row deleted.
+# name, so the fossil assertion would stay green with §23's row deleted. `profile_link` is qualified
+# the same way: the bare word `profile` is too common to pin §27's row.
 KIND_B_STEMS='perms
 rewire
 cfgkey
 tools_mirror
-bkpdir'
+bkpdir
+profile_link'
 
 # One synthetic operand per registered stem, in stem order — the promotion the guard must catch.
 KIND_B_SYNTHETIC='perms_missing
 rewire_pending
 cfgkey_missing
 tools_mirror_drift
-bkpdir_default_dumps'
+bkpdir_default_dumps
+profile_link_gaps'
 
 KIND_B_PATTERN="$(printf '%s\n' "${KIND_B_STEMS}" | tr '\n' '|' | sed 's/|$//')"
 

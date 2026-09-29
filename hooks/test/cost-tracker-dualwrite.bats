@@ -30,6 +30,8 @@
 # BATS_TEST_DIRNAME is assigned by the bats runtime (SC2154 false positive).
 # shellcheck disable=SC2154
 setup_file() {
+  # Every test here shares the one per-file database → no parallel tests within this file.
+  export BATS_NO_PARALLELIZE_WITHIN_FILE=true
   # Required tooling — absent → skip the whole file gracefully (portable), set
   # via a marker each test's setup() reads (setup_file cannot skip directly).
   local bin

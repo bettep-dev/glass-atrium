@@ -82,6 +82,16 @@ run_ga() {
     ' _ "${GA}" "${GA_SANDBOX}" "$@"
 }
 
+# Failed check → the last run's output + the actual state of <path> (a real dir recursively), then fail.
+fail_with_state() {
+  printf 'output:\n%s\n' "${output-}"
+  if [[ $# -gt 0 ]]; then
+    ls -ld -- "$1" 2>&1
+    [[ -d "$1" && ! -L "$1" ]] && ls -lAR -- "$1" 2>&1
+  fi
+  return 1
+}
+
 # === 1. FOLDERED-RULES link lands correctly (swap_symlink path-transparency) ==
 
 @test "foldered-rules: a rules/glass-atrium/<name>.md manifest entry farms to the correct target with subdir auto-create" {
@@ -100,32 +110,32 @@ run_ga() {
     "test/root-suite.bats" "LICENSE" "LICENSES-THIRD-PARTY.md" "settings.template.json"
 
   # precondition: no rules subdir yet
-  [[ ! -e "${TARGET}/rules" ]]
+  [[ ! -e "${TARGET}/rules" ]] || fail_with_state "${TARGET}/rules"
 
   run_ga run_symlink_farm install
-  [[ "${status}" -eq 0 ]]
+  [[ "${status}" -eq 0 ]] || fail_with_state
 
   # the glass-atrium/ subdir was auto-created by swap_symlink's per-file mkdir -p
-  [[ -d "${TARGET}/rules/glass-atrium" ]]
+  [[ -d "${TARGET}/rules/glass-atrium" ]] || fail_with_state "${TARGET}/rules/glass-atrium"
   # the foldered link is PATH-TRANSPARENT: dst == TARGET/rel, src == GA_ROOT/rel
-  [[ -L "${TARGET}/rules/glass-atrium/rule-a.md" ]]
-  [[ "$(readlink "${TARGET}/rules/glass-atrium/rule-a.md")" == "${GA_SANDBOX}/rules/glass-atrium/rule-a.md" ]]
+  [[ -L "${TARGET}/rules/glass-atrium/rule-a.md" ]] || fail_with_state "${TARGET}/rules/glass-atrium/rule-a.md"
+  [[ "$(readlink "${TARGET}/rules/glass-atrium/rule-a.md")" == "${GA_SANDBOX}/rules/glass-atrium/rule-a.md" ]] || fail_with_state "${TARGET}/rules/glass-atrium/rule-a.md"
   # a plain still-farmed surface still lands
-  [[ -L "${TARGET}/agents/dev-x.md" ]]
+  [[ -L "${TARGET}/agents/dev-x.md" ]] || fail_with_state "${TARGET}/agents/dev-x.md"
   # excluded surfaces are NOT farmed (create-site choke point)
-  [[ ! -e "${TARGET}/hooks" ]]
-  [[ ! -e "${TARGET}/scripts" ]]
-  [[ ! -e "${TARGET}/autoagent" ]]
-  [[ ! -e "${TARGET}/agent-registry.json" ]]
+  [[ ! -e "${TARGET}/hooks" ]] || fail_with_state "${TARGET}/hooks"
+  [[ ! -e "${TARGET}/scripts" ]] || fail_with_state "${TARGET}/scripts"
+  [[ ! -e "${TARGET}/autoagent" ]] || fail_with_state "${TARGET}/autoagent"
+  [[ ! -e "${TARGET}/agent-registry.json" ]] || fail_with_state "${TARGET}/agent-registry.json"
   # root test/ rides the SYMLINK_EXCLUDE_PREFIXES "test/" prefix — bundled but never symlinked
-  [[ ! -e "${TARGET}/test" ]]
+  [[ ! -e "${TARGET}/test" ]] || fail_with_state "${TARGET}/test"
   # Root artifacts ride SYMLINK_EXCLUDE_EXACT: a ~/.claude/settings.template.json
   # beside the real settings.json is a confusion surface, and the licence pair has
   # no ~/.claude consumer. One chained final command, so every member gates on both
   # legs — a mid-body bare `[[ ]]` is inert on bash 3.2.57 (measured, bats 1.13.0 on
   # both legs, so bash is the variable, not bats).
   [[ ! -e "${TARGET}/LICENSE" ]] && [[ ! -e "${TARGET}/LICENSES-THIRD-PARTY.md" ]] &&
-    [[ ! -e "${TARGET}/settings.template.json" ]]
+    [[ ! -e "${TARGET}/settings.template.json" ]] || fail_with_state "${TARGET}"
 }
 
 # === 2. UNINSTALL symmetry for the foldered layout ===========================
@@ -136,17 +146,17 @@ run_ga() {
   write_manifest "rules/glass-atrium/rule-a.md" "hooks/hook-a.sh"
 
   run_ga read_manifest_dirs
-  [[ "${status}" -eq 0 ]]
+  [[ "${status}" -eq 0 ]] || fail_with_state
   # both ancestor dirs are emitted, excluded prefixes are not
-  [[ "${output}" == *"rules/glass-atrium"* ]]
-  [[ "${output}" != *"hooks"* ]]
+  [[ "${output}" == *"rules/glass-atrium"* ]] || fail_with_state
+  [[ "${output}" != *"hooks"* ]] || fail_with_state
 
   local idx_child idx_parent
   idx_child="$(printf '%s\n' "${lines[@]}" | grep -nxF 'rules/glass-atrium' | cut -d: -f1)"
   idx_parent="$(printf '%s\n' "${lines[@]}" | grep -nxF 'rules' | cut -d: -f1)"
-  [[ -n "${idx_child}" && -n "${idx_parent}" ]]
+  [[ -n "${idx_child}" && -n "${idx_parent}" ]] || fail_with_state
   # deepest-first → the subdir is pruned before its parent
-  [[ "${idx_child}" -lt "${idx_parent}" ]]
+  [[ "${idx_child}" -lt "${idx_parent}" ]] || fail_with_state
 }
 
 @test "foldered-rules: uninstall unlinks the foldered link + prunes the emptied glass-atrium subdir" {
@@ -157,8 +167,8 @@ run_ga() {
   write_manifest "agents/dev-x.md" "rules/glass-atrium/rule-a.md" "hooks/hook-a.sh" "glass-atrium"
 
   run_ga run_symlink_farm install
-  [[ "${status}" -eq 0 ]]
-  [[ -L "${TARGET}/rules/glass-atrium/rule-a.md" ]]
+  [[ "${status}" -eq 0 ]] || fail_with_state
+  [[ -L "${TARGET}/rules/glass-atrium/rule-a.md" ]] || fail_with_state "${TARGET}/rules/glass-atrium/rule-a.md"
 
   run env GA_LIB_DIR="${GA_LIB_DIR}" GA_TARGET_HOME="${TARGET}" GA_MANIFEST="${MANIFEST}" \
     bash -c '
@@ -169,15 +179,15 @@ run_ga() {
       sweep_orphans
       remove_empty_dirs
     ' _ "${GA}" "${GA_SANDBOX}"
-  [[ "${status}" -eq 0 ]]
+  [[ "${status}" -eq 0 ]] || fail_with_state
 
   # the foldered link is unlinked and BOTH the emptied subdir and its parent pruned
-  [[ ! -e "${TARGET}/rules/glass-atrium/rule-a.md" ]]
-  [[ ! -e "${TARGET}/rules/glass-atrium" ]]
-  [[ ! -e "${TARGET}/rules" ]]
+  [[ ! -e "${TARGET}/rules/glass-atrium/rule-a.md" ]] || fail_with_state "${TARGET}/rules/glass-atrium/rule-a.md"
+  [[ ! -e "${TARGET}/rules/glass-atrium" ]] || fail_with_state "${TARGET}/rules/glass-atrium"
+  [[ ! -e "${TARGET}/rules" ]] || fail_with_state "${TARGET}/rules"
   # excluded surfaces were never linked → nothing dangling
-  [[ ! -e "${TARGET}/hooks" ]]
-  [[ ! -e "${TARGET}/glass-atrium" ]]
+  [[ ! -e "${TARGET}/hooks" ]] || fail_with_state "${TARGET}/hooks"
+  [[ ! -e "${TARGET}/glass-atrium" ]] || fail_with_state "${TARGET}/glass-atrium"
 }
 
 # === 3. LEGACY-FARM MIGRATION (migrate_layout) ===============================
@@ -224,75 +234,75 @@ seed_legacy_farm() {
   seed_legacy_farm
 
   run_ga migrate_layout
-  [[ "${status}" -eq 0 ]]
+  [[ "${status}" -eq 0 ]] || fail_with_state
 
   # (A) the dropped surfaces' GA symlinks are unlinked (incl. the two newly-excluded
   # prefixes scripts/ + autoagent/, both top-level AND nested — recursive sweep)
-  [[ ! -e "${TARGET}/hooks/hook-a.sh" ]]
-  [[ ! -e "${TARGET}/scoped/scope-x.md" ]]
-  [[ ! -e "${TARGET}/scripts/wiki-sync.sh" ]]
-  [[ ! -e "${TARGET}/scripts/lib/atrium-config.sh" ]]
-  [[ ! -e "${TARGET}/autoagent/daemon-cycle.sh" ]]
-  [[ ! -e "${TARGET}/autoagent/lib/git-txn.sh" ]]
-  [[ ! -e "${TARGET}/agent-registry.json" ]]
-  [[ ! -e "${TARGET}/glass-atrium" ]]
+  [[ ! -e "${TARGET}/hooks/hook-a.sh" ]] || fail_with_state "${TARGET}/hooks/hook-a.sh"
+  [[ ! -e "${TARGET}/scoped/scope-x.md" ]] || fail_with_state "${TARGET}/scoped/scope-x.md"
+  [[ ! -e "${TARGET}/scripts/wiki-sync.sh" ]] || fail_with_state "${TARGET}/scripts/wiki-sync.sh"
+  [[ ! -e "${TARGET}/scripts/lib/atrium-config.sh" ]] || fail_with_state "${TARGET}/scripts/lib/atrium-config.sh"
+  [[ ! -e "${TARGET}/autoagent/daemon-cycle.sh" ]] || fail_with_state "${TARGET}/autoagent/daemon-cycle.sh"
+  [[ ! -e "${TARGET}/autoagent/lib/git-txn.sh" ]] || fail_with_state "${TARGET}/autoagent/lib/git-txn.sh"
+  [[ ! -e "${TARGET}/agent-registry.json" ]] || fail_with_state "${TARGET}/agent-registry.json"
+  [[ ! -e "${TARGET}/glass-atrium" ]] || fail_with_state "${TARGET}/glass-atrium"
 
   # DATA-SAFETY: the FOREIGN symlink + REAL user file are byte-preserved
-  [[ -L "${TARGET}/hooks/foreign-user.sh" ]]
-  [[ "$(readlink "${TARGET}/hooks/foreign-user.sh")" == "/tmp/ga-user-owned-target.sh" ]]
-  [[ "$(cat "${TARGET}/hooks/user-real.sh")" == "USER HOOK BODY" ]]
+  [[ -L "${TARGET}/hooks/foreign-user.sh" ]] || fail_with_state "${TARGET}/hooks/foreign-user.sh"
+  [[ "$(readlink "${TARGET}/hooks/foreign-user.sh")" == "/tmp/ga-user-owned-target.sh" ]] || fail_with_state "${TARGET}/hooks/foreign-user.sh"
+  [[ "$(cat "${TARGET}/hooks/user-real.sh")" == "USER HOOK BODY" ]] || fail_with_state "${TARGET}/hooks/user-real.sh"
   # hooks/ dir SURVIVES (still holds the foreign + user files) — rmdir-only safety
-  [[ -d "${TARGET}/hooks" ]]
+  [[ -d "${TARGET}/hooks" ]] || fail_with_state "${TARGET}/hooks"
   # scoped/ held ONLY a top-level GA link → emptied → rmdir-pruned
-  [[ ! -e "${TARGET}/scoped" ]]
+  [[ ! -e "${TARGET}/scoped" ]] || fail_with_state "${TARGET}/scoped"
   # scripts/ + autoagent/ carried NESTED links, so after the recursive sweep drops
   # every link the top-level rmdir-prune (non-recursive) fails on the leftover empty
   # lib/ subdir → the dir survives as EMPTY residue (0 links = AC-T2b threshold met;
   # empty-dir residue is outside the threshold, cleaned manually post-deploy). Assert
   # the invariant that actually matters: zero GA links remain under either prefix.
-  [[ -z "$(find "${TARGET}/scripts" -type l -lname "${GA_SANDBOX}/*" 2>/dev/null)" ]]
-  [[ -z "$(find "${TARGET}/autoagent" -type l -lname "${GA_SANDBOX}/*" 2>/dev/null)" ]]
+  [[ -z "$(find "${TARGET}/scripts" -type l -lname "${GA_SANDBOX}/*" 2>/dev/null)" ]] || fail_with_state "${TARGET}/scripts"
+  [[ -z "$(find "${TARGET}/autoagent" -type l -lname "${GA_SANDBOX}/*" 2>/dev/null)" ]] || fail_with_state "${TARGET}/autoagent"
 
   # (B) the foldable flat rules link is RELOCATED to the foldered path
-  [[ ! -e "${TARGET}/rules/rule-a.md" ]]
-  [[ -L "${TARGET}/rules/glass-atrium/rule-a.md" ]]
-  [[ "$(readlink "${TARGET}/rules/glass-atrium/rule-a.md")" == "${GA_SANDBOX}/rules/glass-atrium/rule-a.md" ]]
+  [[ ! -e "${TARGET}/rules/rule-a.md" ]] || fail_with_state "${TARGET}/rules/rule-a.md"
+  [[ -L "${TARGET}/rules/glass-atrium/rule-a.md" ]] || fail_with_state "${TARGET}/rules/glass-atrium/rule-a.md"
+  [[ "$(readlink "${TARGET}/rules/glass-atrium/rule-a.md")" == "${GA_SANDBOX}/rules/glass-atrium/rule-a.md" ]] || fail_with_state "${TARGET}/rules/glass-atrium/rule-a.md"
   # the NON-foldable flat rules link (no foldered source) is LEFT INTACT (no dangling)
-  [[ -L "${TARGET}/rules/rule-b.md" ]]
-  [[ ! -e "${TARGET}/rules/glass-atrium/rule-b.md" ]]
+  [[ -L "${TARGET}/rules/rule-b.md" ]] || fail_with_state "${TARGET}/rules/rule-b.md"
+  [[ ! -e "${TARGET}/rules/glass-atrium/rule-b.md" ]] || fail_with_state "${TARGET}/rules/glass-atrium/rule-b.md"
 }
 
 @test "migrate_layout: a second run is a clean no-op, preservation holds" {
   seed_legacy_farm
   run_ga migrate_layout
-  [[ "${status}" -eq 0 ]]
+  [[ "${status}" -eq 0 ]] || fail_with_state
 
   # second run drops nothing and folds nothing
   run_ga migrate_layout
-  [[ "${status}" -eq 0 ]]
-  [[ "${output}" == *"0 legacy GA symlink(s) dropped, 0 rules link(s) foldered"* ]]
+  [[ "${status}" -eq 0 ]] || fail_with_state
+  [[ "${output}" == *"0 legacy GA symlink(s) dropped, 0 rules link(s) foldered"* ]] || fail_with_state
 
   # preservation still holds after the idempotent re-run
-  [[ -L "${TARGET}/hooks/foreign-user.sh" ]]
-  [[ "$(cat "${TARGET}/hooks/user-real.sh")" == "USER HOOK BODY" ]]
-  [[ -L "${TARGET}/rules/glass-atrium/rule-a.md" ]]
-  [[ -L "${TARGET}/rules/rule-b.md" ]]
+  [[ -L "${TARGET}/hooks/foreign-user.sh" ]] || fail_with_state "${TARGET}/hooks/foreign-user.sh"
+  [[ "$(cat "${TARGET}/hooks/user-real.sh")" == "USER HOOK BODY" ]] || fail_with_state "${TARGET}/hooks/user-real.sh"
+  [[ -L "${TARGET}/rules/glass-atrium/rule-a.md" ]] || fail_with_state "${TARGET}/rules/glass-atrium/rule-a.md"
+  [[ -L "${TARGET}/rules/rule-b.md" ]] || fail_with_state "${TARGET}/rules/rule-b.md"
 }
 
 @test "migrate_layout: dry-run performs zero mutation" {
   seed_legacy_farm
 
   GA_TEST_DRY="true" run_ga migrate_layout
-  [[ "${status}" -eq 0 ]]
+  [[ "${status}" -eq 0 ]] || fail_with_state
 
   # every legacy GA symlink is still present (report-only)
-  [[ -L "${TARGET}/hooks/hook-a.sh" ]]
-  [[ -L "${TARGET}/scoped/scope-x.md" ]]
-  [[ -L "${TARGET}/agent-registry.json" ]]
-  [[ -L "${TARGET}/glass-atrium" ]]
-  [[ -L "${TARGET}/rules/rule-a.md" ]]
+  [[ -L "${TARGET}/hooks/hook-a.sh" ]] || fail_with_state "${TARGET}/hooks/hook-a.sh"
+  [[ -L "${TARGET}/scoped/scope-x.md" ]] || fail_with_state "${TARGET}/scoped/scope-x.md"
+  [[ -L "${TARGET}/agent-registry.json" ]] || fail_with_state "${TARGET}/agent-registry.json"
+  [[ -L "${TARGET}/glass-atrium" ]] || fail_with_state "${TARGET}/glass-atrium"
+  [[ -L "${TARGET}/rules/rule-a.md" ]] || fail_with_state "${TARGET}/rules/rule-a.md"
   # no foldered link was created
-  [[ ! -e "${TARGET}/rules/glass-atrium/rule-a.md" ]]
+  [[ ! -e "${TARGET}/rules/glass-atrium/rule-a.md" ]] || fail_with_state "${TARGET}/rules/glass-atrium/rule-a.md"
 }
 
 @test "migrate_layout: never touches a foreign symlink at an excluded EXACT path" {
@@ -300,11 +310,11 @@ seed_legacy_farm() {
   ln -s "/tmp/ga-user-registry.json" "${TARGET}/agent-registry.json"
 
   run_ga migrate_layout
-  [[ "${status}" -eq 0 ]]
+  [[ "${status}" -eq 0 ]] || fail_with_state
 
   # the foreign symlink is preserved (readlink-into-GA guard rejects it)
-  [[ -L "${TARGET}/agent-registry.json" ]]
-  [[ "$(readlink "${TARGET}/agent-registry.json")" == "/tmp/ga-user-registry.json" ]]
+  [[ -L "${TARGET}/agent-registry.json" ]] || fail_with_state "${TARGET}/agent-registry.json"
+  [[ "$(readlink "${TARGET}/agent-registry.json")" == "/tmp/ga-user-registry.json" ]] || fail_with_state "${TARGET}/agent-registry.json"
 }
 
 # === 4. DISPATCH PATH (`glass-atrium migrate` passthrough subcommand) =========
@@ -322,19 +332,19 @@ seed_repo_legacy_link() {
   seed_repo_legacy_link
 
   run env GA_TARGET_HOME="${TARGET}" bash "${GA}/glass-atrium" migrate
-  [[ "${status}" -eq 0 ]]
-  [[ "${output}" == *"== migrate:"* ]]
-  [[ "${output}" == *"1 legacy GA symlink(s) dropped"* ]]
-  [[ ! -e "${TARGET}/hooks/legacy-hook.sh" ]]
+  [[ "${status}" -eq 0 ]] || fail_with_state
+  [[ "${output}" == *"== migrate:"* ]] || fail_with_state
+  [[ "${output}" == *"1 legacy GA symlink(s) dropped"* ]] || fail_with_state
+  [[ ! -e "${TARGET}/hooks/legacy-hook.sh" ]] || fail_with_state "${TARGET}/hooks/legacy-hook.sh"
 }
 
 @test "dispatch: 'glass-atrium --dry-run migrate' reports without mutating" {
   seed_repo_legacy_link
 
   run env GA_TARGET_HOME="${TARGET}" bash "${GA}/glass-atrium" --dry-run migrate
-  [[ "${status}" -eq 0 ]]
-  [[ "${output}" == *"dry-run: report only"* ]]
-  [[ -L "${TARGET}/hooks/legacy-hook.sh" ]]
+  [[ "${status}" -eq 0 ]] || fail_with_state
+  [[ "${output}" == *"dry-run: report only"* ]] || fail_with_state
+  [[ -L "${TARGET}/hooks/legacy-hook.sh" ]] || fail_with_state "${TARGET}/hooks/legacy-hook.sh"
 }
 
 @test "remove_if_ga_link: an unlink that leaves the GA link in place fails loudly and is not reported removed" {
