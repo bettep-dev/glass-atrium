@@ -25,6 +25,8 @@ bats_require_minimum_version 1.5.0
 
 GA="$(cd -- "${BATS_TEST_DIRNAME}/../.." && pwd)"
 REAL_SCRIPT="${GA}/autoagent/daemon-apply.sh"
+# shellcheck source-path=SCRIPTDIR source=../../scripts/lib/path-guard.sh
+source "${GA}/scripts/lib/path-guard.sh"
 
 setup() {
   [[ -f "${REAL_SCRIPT}" ]] || skip "daemon-apply.sh not found: ${REAL_SCRIPT}"
@@ -40,7 +42,7 @@ setup() {
 }
 
 teardown() {
-  [[ -n "${WORK:-}" && -d "${WORK}" ]] && rm -rf -- "${WORK}" || true
+  if ga_guard_path "${WORK:-}"; then rm -rf -- "${WORK:?}"; fi
 }
 
 # write_report — one-patch cycle report fixture. $1 = haiku_status value, or the
@@ -274,7 +276,8 @@ JSON
   # array exhausts the decoder — so each owes the same one named line, never a traceback.
   local shape
   for shape in directory dangling-link deeply-nested; do
-    rm -rf -- "${REPORT}" # removes a directory, and a link without following it
+    # Removes a directory, and a link without following it.
+    if ga_guard_path "${REPORT}"; then rm -rf -- "${REPORT:?}"; fi
     case "${shape}" in
       directory) mkdir -- "${REPORT}" ;;
       dangling-link) ln -s -- "${WORK}/no-such-report.json" "${REPORT}" ;;

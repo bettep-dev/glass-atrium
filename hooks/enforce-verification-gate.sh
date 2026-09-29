@@ -167,11 +167,12 @@ emit_gate_trace() {
     ((line_count <= trace_line_cap)) && exit 0
     local tmp_path
     tmp_path="$(mktemp "${VGATE_FIRED_LOG}.prune.XXXXXX" 2>/dev/null)" || exit 0
-    if tail -n "${trace_line_cap}" "${VGATE_FIRED_LOG}" >"${tmp_path}" 2>/dev/null; then
-      mv -f "${tmp_path}" "${VGATE_FIRED_LOG}" 2>/dev/null || rm -f "${tmp_path}" 2>/dev/null || true
-    else
-      rm -f "${tmp_path}" 2>/dev/null || true
+    if tail -n "${trace_line_cap}" "${VGATE_FIRED_LOG}" >"${tmp_path}" 2>/dev/null \
+      && mv -f "${tmp_path}" "${VGATE_FIRED_LOG}" 2>/dev/null; then
+      exit 0
     fi
+    # shellcheck disable=SC2310  # pure predicate — nothing inside it for errexit to catch
+    if ga_guard_path "${tmp_path}"; then rm -f -- "${tmp_path:?}"; fi
   ) 2>/dev/null || true
 }
 
@@ -430,14 +431,16 @@ prune_marker_file() {
   [[ "${reviewer_lines}" =~ ^[0-9]+$ ]] || reviewer_lines=0
   budget=$((marker_line_cap - reviewer_lines))
   ((budget < 0)) && budget=0
-  {
+  if {
     grep -x 'glass-atrium-qa-code-reviewer' "${path}" 2>/dev/null || true
     grep -vx 'glass-atrium-qa-code-reviewer' "${path}" 2>/dev/null | tail -n "${budget}" || true
-  } >"${tmp_path}" 2>/dev/null || {
-    rm -f "${tmp_path}" 2>/dev/null || true
+  } >"${tmp_path}" 2>/dev/null && mv -f "${tmp_path}" "${path}" 2>/dev/null; then
     return 0
-  }
-  mv -f "${tmp_path}" "${path}" 2>/dev/null || rm -f "${tmp_path}" 2>/dev/null || true
+  fi
+  # shellcheck disable=SC2310  # pure predicate — nothing inside it for errexit to catch
+  if ga_guard_path "${tmp_path}"; then
+    rm -f -- "${tmp_path:?}"
+  fi || true
 }
 
 # 2. Spawn-SUCCESS stamp — PostToolUse ONLY (DF-5). PreToolUse fires BEFORE the spawn runs, so

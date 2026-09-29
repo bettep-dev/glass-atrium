@@ -34,6 +34,8 @@
 bats_require_minimum_version 1.5.0
 
 GA="$(cd -- "${BATS_TEST_DIRNAME}/.." && pwd)"
+# shellcheck source-path=SCRIPTDIR source=../scripts/lib/path-guard.sh
+source "${GA}/scripts/lib/path-guard.sh"
 
 setup() {
   command -v jq >/dev/null 2>&1 || skip "jq required"
@@ -51,7 +53,7 @@ setup() {
 }
 
 teardown() {
-  [[ -n "${SANDBOX:-}" && -d "${SANDBOX}" ]] && rm -rf -- "${SANDBOX}" || true
+  if ga_guard_path "${SANDBOX:-}"; then rm -rf -- "${SANDBOX:?}"; fi
 }
 
 # Seed a GA_ROOT source file for <rel>.
@@ -333,4 +335,20 @@ seed_repo_legacy_link() {
   [[ "${status}" -eq 0 ]]
   [[ "${output}" == *"dry-run: report only"* ]]
   [[ -L "${TARGET}/hooks/legacy-hook.sh" ]]
+}
+
+@test "remove_if_ga_link: an unlink that leaves the GA link in place fails loudly and is not reported removed" {
+  seed_src "agents/dev-x.md"
+  mkdir -p "${TARGET}/agents"
+  ln -s "${GA_SANDBOX}/agents/dev-x.md" "${TARGET}/agents/dev-x.md"
+  # an rm that deletes nothing: the unlink reports success while the link survives
+  local stub="${SANDBOX}/stub-bin"
+  mkdir -p "${stub}"
+  printf '#!/bin/sh\nexit 0\n' >"${stub}/rm"
+  chmod +x "${stub}/rm"
+  PATH="${stub}:${PATH}" run_ga remove_if_ga_link "${TARGET}/agents/dev-x.md"
+  [[ "${status}" -eq 2 ]] || return 1
+  [[ "${output}" == *"still present after unlink"* ]] || return 1
+  [[ "${output}" != *"removed:"* ]] || return 1
+  [[ -L "${TARGET}/agents/dev-x.md" ]]
 }

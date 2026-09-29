@@ -42,6 +42,9 @@ HOOKS_DIR="${BATS_TEST_DIRNAME}/.."
 HOOK_SH="${HOOKS_DIR}/track-outcome.sh"
 PG_HELPER_SRC="${HOOKS_DIR}/_pg_outcome_dualwrite.py"
 
+# shellcheck source-path=SCRIPTDIR source=../../scripts/lib/path-guard.sh
+source "${BATS_TEST_DIRNAME}/../../scripts/lib/path-guard.sh"
+
 # Both probes below are session-invariant (psycopg location + DB reachability never vary between
 # tests), so resolve them ONCE here and export the results — per-test setup() reads the cached
 # flags instead of re-spawning two python3 cold-starts per DB test.
@@ -119,9 +122,7 @@ PY
   # `if` (not `[[ ]] && cmd`) so a false guard returns 0 — otherwise a setup-skip
   # (SM_TMP unset) makes this final statement teardown's non-zero exit → bats turns
   # the clean skip into `not ok`.
-  if [[ -n "${SM_TMP:-}" && -d "${SM_TMP}" ]]; then
-    rm -rf "${SM_TMP}"
-  fi
+  if ga_guard_path "${SM_TMP:-}"; then rm -rf -- "${SM_TMP:?}"; fi
 }
 
 # Write the synthetic schema-mode subagent transcript. Mode selects the fixture shape:

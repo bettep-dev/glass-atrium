@@ -20,6 +20,8 @@ bats_require_minimum_version 1.5.0
 GA="$(cd -- "${BATS_TEST_DIRNAME}/../.." && pwd)"
 REAL_SCRIPT="${GA}/scripts/daemon-inject-entry.sh"
 REAL_CONFIG_LIB="${GA}/scripts/lib/atrium-config.sh"
+# shellcheck source-path=SCRIPTDIR source=../lib/path-guard.sh
+source "${GA}/scripts/lib/path-guard.sh"
 
 readonly SESSION="inject-bats-session"
 readonly SESSION_ID="sess-inject123"
@@ -39,7 +41,7 @@ setup() {
 }
 
 teardown() {
-  [[ -n "${WORK:-}" && -d "${WORK}" ]] && rm -rf -- "${WORK}" || true
+  if ga_guard_path "${WORK:-}"; then rm -rf -- "${WORK:?}"; fi
 }
 
 # Sandboxed copy of the real inject script + lib/atrium-config.sh (so SCRIPT_DIR

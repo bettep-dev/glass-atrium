@@ -559,3 +559,29 @@ run_hook_emit_meter_only() {
     return 1
   }
 }
+
+# (g) The on-approach line names Write/Edit and the charter's absolute tracker dir.
+# Agents without Write/Edit (qa-code-reviewer · qa-debugger) get the summary route instead.
+@test "meter on-approach line → names Write/Edit, the tracker dir, and the Bash-only summary route" {
+  run_hook_emit_meter_only "glass-atrium-qa-debugger"
+  assert_status 0
+  local ctx line count needle
+  ctx="$(ctx_of)"
+  line="$(grep -- '^- On approach:' <<<"${ctx}" || true)"
+  count="$(grep -c -- '^- On approach:' <<<"${ctx}" || true)"
+  [[ "${count}" == 1 ]] || {
+    echo "expected exactly one on-approach line, got ${count}: [${line}]" >&2
+    return 1
+  }
+  # shellcheck disable=SC2088 # the tilde is the literal path text the meter must carry
+  for needle in 'Write/Edit' '~/.claude-personal/projects/<home-encoded>/memory/' 'Bash-only' 'needs_context'; do
+    [[ "${line}" == *"${needle}"* ]] || {
+      echo "expected the on-approach line to contain [${needle}], got: [${line}]" >&2
+      return 1
+    }
+  done
+  [[ "${line}" != *" memory/progress-"* ]] || {
+    echo "expected no relative memory/ checkpoint path, got: [${line}]" >&2
+    return 1
+  }
+}

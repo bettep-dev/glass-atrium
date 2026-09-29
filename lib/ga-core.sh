@@ -9,8 +9,9 @@
 # ga-core.sh is a THIN LOADER — it sources the seven domain siblings then defines the flow functions
 # below; `source lib/ga-core.sh` transitively loads every domain (zero consumer edits). Self-locates its
 # lib/ dir from BASH_SOURCE (source-path agnostic), but GA_ROOT still arrives ONLY via ga_init_env's $1,
-# never self-derived here. Env-first order (D2): the source-time surface is empty so any permutation works
-# today; env-first future-proofs a latent top-level stmt. Each source is an explicit loud-fail guard:
+# never self-derived here. Env-first order (D2): the only source-time stmt is ga-env.sh's path-guard load,
+# which no sibling needs until run time, so any permutation works today; env-first future-proofs a latent
+# top-level stmt. Each source is an explicit loud-fail guard:
 # printf (NOT log — log lives in ga-env.sh, undefined if THAT source fails) + `return 1`, never `|| true` /
 # an implicit `set -e` (bats consumers source WITHOUT strict mode, so the explicit guard fails loudly for both).
 __ga_core_libdir="${BASH_SOURCE[0]%/*}"
@@ -70,11 +71,17 @@ remove_node_modules() {
   # Best-effort, never fatal: under the inherited set -Eeuo pipefail a genuine rm failure would abort
   # before the return 0 (halting later teardown, as the call site is not if-wrapped). Explicit if (NOT a
   # silent `|| true`) so the failure is logged, then the contract's return 0 holds.
-  if ! rm -rf -- "${nm}"; then
-    log "uninstall: warn: could not fully remove ${nm} (continuing)"
+  # A guard refusal counts as a failed removal (else false), so it takes the same warn branch.
+  # shellcheck disable=SC2310  # guard verdict branched on — a refusal is a skip, never an abort
+  if ga_guard_path "${nm}"; then
+    rm -rf -- "${nm:?}"
   else
-    log "uninstall: removed ${nm} (regenerable — reinstall runs npm ci)"
-  fi
+    false
+  fi || {
+    log "uninstall: warn: could not fully remove ${nm} (continuing)"
+    return 0
+  }
+  log "uninstall: removed ${nm} (regenerable — reinstall runs npm ci)"
   return 0
 }
 
@@ -126,7 +133,8 @@ remove_rc_lines() {
     # atomic replace: never leave a half-written rc.
     if ! mv -f -- "${tmp}" "${rc}"; then
       log "uninstall: warn: could not replace ${rc} (backup at ${backup}) — skipped"
-      rm -f -- "${tmp}" 2>/dev/null || true
+      # shellcheck disable=SC2310  # best-effort temp cleanup; the replace failure is already logged
+      delete_temp_file "${tmp}" || true
       continue
     fi
     removed=$((before - after))
@@ -337,7 +345,9 @@ run_agents_only() {
 # is NEVER a candidate (criteria b / a+c exclude them structurally).
 # EXPLICIT-OPT-IN: zero call sites inside run_install / run_bootstrap / run_agents_only (deleting during a
 # routine install is unsafe). Exit codes (loud-fail, distinct from die's generic 1): 2 = no target dir,
-# 3 = manifest absent/unparseable. --dry-run reports but removes nothing.
+# 3 = manifest absent/unparseable, 4 = an orphan survived its unlink (guard refusal, or an rm exiting 0
+# without deleting; each named on stderr). A failing rm still aborts the run through errexit, before the
+# summary. --dry-run reports but removes nothing.
 run_prune() {
   # STEP1 — preconditions (loud-fail, named exit codes; no silent absorption).
   if [[ ! -d "${TARGET_HOME}" ]]; then
@@ -372,7 +382,7 @@ run_prune() {
 
   # STEP3+4+5 — enumerate candidates (doctor §5 idiom: find guarantees a+c),
   # then per-candidate apply criteria b + d + never-touch and remove/flag.
-  local pruned=0 flagged=0 nevertouch=0 candidates=0 link rel
+  local pruned=0 flagged=0 nevertouch=0 candidates=0 unlink_failed=0 link rel
   # find ends with `|| true` → masked exit is benign; process substitution keeps
   # the loop in the current shell (counter-var-safe).
   # shellcheck disable=SC2312
@@ -406,7 +416,15 @@ run_prune() {
     if "${DRY_RUN}"; then
       log "  dry-run: would prune orphan GA symlink: ${link}"
     else
-      rm -f -- "${link}"
+      # shellcheck disable=SC2310  # guard verdict branched on — a refusal is a skip, never an abort
+      if ga_guard_path "${link}"; then
+        rm -f -- "${link:?}"
+      fi
+      if [[ -L "${link}" ]]; then
+        printf 'ERROR: prune: orphan GA symlink still present after unlink: %s\n' "${link}" >&2
+        unlink_failed=$((unlink_failed + 1))
+        continue
+      fi
       log "  prune: removed orphan GA symlink: ${link}"
     fi
     pruned=$((pruned + 1))
@@ -420,6 +438,10 @@ run_prune() {
   local verb="pruned"
   "${DRY_RUN}" && verb="would be pruned"
   log "== prune: ${pruned} ${verb}, ${flagged} flagged in-manifest, ${nevertouch} preserved never-touch (${candidates} candidates) =="
+  if [[ "${unlink_failed}" -gt 0 ]]; then
+    printf 'FATAL: prune: %s orphan GA symlink(s) survived their unlink\n' "${unlink_failed}" >&2
+    return "${PRUNE_EXIT_UNLINK_SURVIVED}"
+  fi
 }
 
 # P2 essential-symlinks-only MIGRATION (legacy bare-name farm -> new layout)
@@ -462,9 +484,10 @@ migrate_layout() {
     # shellcheck disable=SC2312
     while IFS= read -r link; do
       [[ -n "${link}" ]] || continue
-      # return 1 = safe skip (foreign/real/never-touch) — bracket the single call
-      # with set +e + ERR-trap suspend (set -E propagates the trap into the
-      # callee, so a safe-skip non-zero would print a spurious ERROR line).
+      # non-zero = skip (1 foreign/real/never-touch; 2 link survived its unlink,
+      # stderr-only signal) — bracket the single call with set +e + ERR-trap
+      # suspend (set -E propagates the trap into the callee, so a skip's non-zero
+      # would print a spurious ERROR line).
       set +e
       trap - ERR
       remove_if_ga_link "${link}"
@@ -520,7 +543,8 @@ migrate_layout() {
         continue
       fi
       # remove the flat GA link (guarded — a foreign/real file returns 1 and is
-      # left intact), then create the foldered link via swap_symlink (its
+      # left intact; a link surviving its unlink returns 2, stderr-only, and
+      # likewise skips the fold), then create the foldered link via swap_symlink (its
       # per-file mkdir -p auto-creates rules/glass-atrium/, atomic + idempotent).
       set +e
       trap - ERR

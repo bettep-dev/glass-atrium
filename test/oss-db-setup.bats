@@ -14,6 +14,8 @@
 
 GA="$(cd -- "${BATS_TEST_DIRNAME}/.." && pwd)"
 SETUP_SH="${GA}/monitor/scripts/oss-db-setup.sh"
+# shellcheck source-path=SCRIPTDIR source=../scripts/lib/path-guard.sh
+source "${GA}/scripts/lib/path-guard.sh"
 
 setup() {
   [[ -f "${SETUP_SH}" ]] || skip "script not found: ${SETUP_SH}"
@@ -33,7 +35,7 @@ setup() {
 }
 
 teardown() {
-  [[ -n "${SANDBOX:-}" && -d "${SANDBOX}" ]] && rm -rf -- "${SANDBOX}"
+  if ga_guard_path "${SANDBOX:-}"; then rm -rf -- "${SANDBOX:?}"; fi
 }
 
 # run the real script from the fake monitor root with stubbed CLIs.
@@ -417,7 +419,8 @@ run_recreate() {
   ln -s "$(command -v bash)" "${STUB_BIN}/bash"
   ln -s "$(command -v id)" "${STUB_BIN}/id"
   # remove the dropdb/pg_dump stubs from the stub bin (createdb/psql remain).
-  rm -f "${STUB_BIN}/pg_dump" "${STUB_BIN}/dropdb"
+  if ga_guard_path "${STUB_BIN}"; then rm -f -- "${STUB_BIN:?}/pg_dump"; fi
+  if ga_guard_path "${STUB_BIN}"; then rm -f -- "${STUB_BIN:?}/dropdb"; fi
   run env GA_DB_RECREATE=1 GA_DB_NAME=claude_oss_e2e \
     GA_DB_BACKUP_DIR="${SANDBOX}/backups" PATH="${STUB_BIN}" \
     bash -c "cd \"${FAKE_ROOT}\" && exec bash \"${SETUP_SH}\""
@@ -437,7 +440,13 @@ run_recreate() {
     "${SANDBOX}" >"${STUB_BIN}/psql"
   printf '#!/bin/bash\nprintf "dump\\n" >>"%s/order"\n# emit a non-empty dump at the -f path arg\nout=""; while [[ $# -gt 0 ]]; do [[ "$1" == "-f" ]] && { out="$2"; shift; }; shift; done\nprintf "PGDMP" >"${out}"\nexit 0\n' \
     "${SANDBOX}" >"${STUB_BIN}/pg_dump"
-  printf '#!/bin/bash\nprintf "drop\\n" >>"%s/order"\nrm -f "%s/main-present"\nexit 0\n' "${SANDBOX}" "${SANDBOX}" >"${STUB_BIN}/dropdb"
+  cat >"${STUB_BIN}/dropdb" <<STUB
+#!/bin/bash
+source "${GA}/scripts/lib/path-guard.sh"
+printf "drop\n" >>"${SANDBOX}/order"
+if ga_guard_path "${SANDBOX}"; then rm -f -- "${SANDBOX:?}/main-present"; fi
+exit 0
+STUB
   printf '#!/bin/bash\nprintf "create\\n" >>"%s/order"\nexit 0\n' "${SANDBOX}" >"${STUB_BIN}/createdb"
   chmod +x "${STUB_BIN}/psql" "${STUB_BIN}/pg_dump" "${STUB_BIN}/dropdb" "${STUB_BIN}/createdb"
   run_recreate "claude_oss_e2e"
@@ -574,7 +583,12 @@ load 'lib/stat-mode'
     "${SANDBOX}" >"${STUB_BIN}/psql"
   printf '#!/bin/bash\nout=""; while [[ $# -gt 0 ]]; do [[ "$1" == "-f" ]] && { out="$2"; shift; }; shift; done\nprintf "PGDMP" >"${out}"\nexit 0\n' \
     >"${STUB_BIN}/pg_dump"
-  printf '#!/bin/bash\nrm -f "%s/main-present"\nexit 0\n' "${SANDBOX}" >"${STUB_BIN}/dropdb"
+  cat >"${STUB_BIN}/dropdb" <<STUB
+#!/bin/bash
+source "${GA}/scripts/lib/path-guard.sh"
+if ga_guard_path "${SANDBOX}"; then rm -f -- "${SANDBOX:?}/main-present"; fi
+exit 0
+STUB
   printf '#!/bin/bash\nexit 0\n' >"${STUB_BIN}/createdb"
   chmod +x "${STUB_BIN}/psql" "${STUB_BIN}/pg_dump" "${STUB_BIN}/dropdb" "${STUB_BIN}/createdb"
 
@@ -613,7 +627,12 @@ load 'lib/stat-mode'
     "${SANDBOX}" >"${STUB_BIN}/psql"
   printf '#!/bin/bash\nout=""; while [[ $# -gt 0 ]]; do [[ "$1" == "-f" ]] && { out="$2"; shift; }; shift; done\nprintf "PGDMP" >"${out}"\nexit 0\n' \
     >"${STUB_BIN}/pg_dump"
-  printf '#!/bin/bash\nrm -f "%s/main-present"\nexit 0\n' "${SANDBOX}" >"${STUB_BIN}/dropdb"
+  cat >"${STUB_BIN}/dropdb" <<STUB
+#!/bin/bash
+source "${GA}/scripts/lib/path-guard.sh"
+if ga_guard_path "${SANDBOX}"; then rm -f -- "${SANDBOX:?}/main-present"; fi
+exit 0
+STUB
   printf '#!/bin/bash\nexit 0\n' >"${STUB_BIN}/createdb"
   chmod +x "${STUB_BIN}/psql" "${STUB_BIN}/pg_dump" "${STUB_BIN}/dropdb" "${STUB_BIN}/createdb"
 
@@ -631,6 +650,21 @@ load 'lib/stat-mode'
   mode="$(mode_of "${FAKE_ROOT}/.env")"
   [[ "${mode}" == "644" ]] || {
     echo "post-scope creation mode = ${mode}, expected 644 (the caller's 022 mask)" >&2
+    return 1
+  }
+}
+
+@test "teardown succeeds silently when setup skipped before creating the sandbox" {
+  local saved="${SANDBOX:-}"
+  unset SANDBOX
+  run teardown
+  SANDBOX="${saved}"
+  [[ "${status}" -eq 0 ]] || {
+    echo "teardown without a sandbox failed (status ${status}): ${output}" >&2
+    return 1
+  }
+  [[ -z "${output}" ]] || {
+    echo "teardown without a sandbox wrote: ${output}" >&2
     return 1
   }
 }

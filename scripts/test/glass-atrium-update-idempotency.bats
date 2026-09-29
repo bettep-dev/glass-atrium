@@ -37,6 +37,8 @@ bats_require_minimum_version 1.5.0
 GA="$(cd -- "${BATS_TEST_DIRNAME}/../.." && pwd)"
 export SKILL="${GA}/scripts/update.sh"
 export REAL_LIB_ROOT="${GA}"
+# shellcheck source-path=SCRIPTDIR source=../lib/path-guard.sh
+source "${GA}/scripts/lib/path-guard.sh"
 
 setup() {
   [[ -f "${SKILL}" ]] || skip "update.sh not found: ${SKILL}"
@@ -60,7 +62,7 @@ setup() {
 # reach the operator's REAL billed CLI and go green or red by the weather.
 
 teardown() {
-  [[ -n "${WORK:-}" && -d "${WORK}" ]] && rm -rf -- "${WORK}" || true
+  if ga_guard_path "${WORK:-}"; then rm -rf -- "${WORK:?}"; fi
 }
 
 # Write file $2 (relative) with content $3 under root $1, creating parent dirs.

@@ -74,6 +74,27 @@
 if [[ -n "${_GIT_TXN_SH_LOADED:-}" ]]; then
   return 0
 fi
+
+# ga_guard_path gates the stray-temp removal in _git_txn_restore; a missing guard fails this source,
+# never a delete. Found through this file's real path: the updater's merge-lib seam may symlink it.
+_git_txn_source_path_guard() {
+  local self="${BASH_SOURCE[0]}" guard=""
+  # readlink -f only on a symlink (macOS 12.3+, as hooks/hook-utils.sh) → a direct load forks nothing.
+  if [[ -L "${self}" ]] && ! self="$(readlink -f -- "${self}")"; then
+    printf 'git-txn: FATAL: cannot resolve the real path of %s\n' "${BASH_SOURCE[0]}" >&2
+    return 1
+  fi
+  if [[ "${self}" == */* ]]; then guard="${self%/*}"; else guard="."; fi
+  guard="${guard}/../../scripts/lib/path-guard.sh"
+  # Existence checked first: bash 3.2 under set -e exits on a failed source before any message.
+  if [[ ! -r "${guard}" ]]; then
+    printf 'git-txn: FATAL: cannot source the shared path guard: %s\n' "${guard}" >&2
+    return 1
+  fi
+  # shellcheck source-path=SCRIPTDIR source=../../scripts/lib/path-guard.sh
+  source "${guard}"
+}
+_git_txn_source_path_guard || return 1
 readonly _GIT_TXN_SH_LOADED=1
 
 # GIT_TXN_RC outcome codes. The values 10-14 deliberately match daemon-apply.sh's
@@ -203,13 +224,19 @@ _git_txn_restore() {
   local real_target="$1" before_image="$2" install_root="$3"
   local tmp="${real_target}.rollback.$$"
   if ! cp -p -- "${before_image}" "${tmp}"; then
-    rm -f -- "${tmp}" 2>/dev/null || true # GA-ABSORB[handled@_git_txn_restore-cp-branch-stderr+return-1]: stray-temp cleanup only; the branch loud-fails to stderr and returns 1
+    # shellcheck disable=SC2310  # pure predicate — nothing inside it for errexit to catch
+    if ga_guard_path "${tmp}"; then
+      rm -f -- "${tmp:?}"
+    fi || true # GA-ABSORB[handled@_git_txn_restore-cp-branch-stderr+return-1]: stray-temp cleanup only; the branch loud-fails to stderr and returns 1
     printf 'git-txn: rollback stage FAILED (before_image=%s target=%s install_root=%s) — target NOT restored; recover from agents-bak\n' \
       "${before_image}" "${real_target}" "${install_root}" >&2
     return 1
   fi
   if ! mv -f -- "${tmp}" "${real_target}"; then
-    rm -f -- "${tmp}" 2>/dev/null || true # GA-ABSORB[handled@_git_txn_restore-mv-branch-stderr+return-1]: stray-temp cleanup only; the branch loud-fails to stderr and returns 1
+    # shellcheck disable=SC2310  # pure predicate — nothing inside it for errexit to catch
+    if ga_guard_path "${tmp}"; then
+      rm -f -- "${tmp:?}"
+    fi || true # GA-ABSORB[handled@_git_txn_restore-mv-branch-stderr+return-1]: stray-temp cleanup only; the branch loud-fails to stderr and returns 1
     printf 'git-txn: rollback rename FAILED (target=%s install_root=%s) — target may hold applied bytes; recover from agents-bak\n' \
       "${real_target}" "${install_root}" >&2
     return 1

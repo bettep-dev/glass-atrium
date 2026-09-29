@@ -70,7 +70,12 @@ MTIME_CACHE_FILE="${MTIME_CACHE_DIR}/${SAFE_SID}.json"
 # (non-sot resolution / multi-model / pricing-staleness) are RELAYED to real
 # stderr below instead of discarded. Trap cleans the temp file on any exit.
 PARSER_STDERR=$(mktemp "${TMPDIR:-/tmp}/cost-tracker-stderr.XXXXXX")
-trap 'rm -f "${PARSER_STDERR}"' EXIT INT TERM
+# shellcheck disable=SC2329  # invoked from the EXIT trap string
+delete_parser_stderr() {
+  # shellcheck disable=SC2310  # pure predicate — nothing inside it for errexit to catch
+  if ga_guard_path "${PARSER_STDERR}"; then rm -f -- "${PARSER_STDERR:?}"; fi
+}
+trap 'delete_parser_stderr' EXIT INT TERM
 
 # Aggregate usage from transcript_path. Shell vars cross via os.environ — dodges
 # SC2259 (heredoc + -c stdin conflict) AND neutralises injection from

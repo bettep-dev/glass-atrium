@@ -13,6 +13,8 @@ bats_require_minimum_version 1.5.0
 GA="$(cd -- "${BATS_TEST_DIRNAME}/../.." && pwd)"
 REAL_SCRIPT="${GA}/scripts/derive-retired-seed.sh"
 REAL_SPINE="${GA}/scripts/lib/apply-spine.sh"
+# shellcheck source-path=SCRIPTDIR source=../lib/path-guard.sh
+source "${GA}/scripts/lib/path-guard.sh"
 
 # Hashes are fixed literals, not computed: the derivation copies whatever the
 # historical manifest recorded, so a literal makes the expected output exact.
@@ -39,6 +41,7 @@ setup() {
     "${WORK}/monitor/prisma/migrations/20260101000000_x"
   cp "${REAL_SCRIPT}" "${SCRIPT}"
   cp "${REAL_SPINE}" "${WORK}/scripts/lib/apply-spine.sh"
+  cp "${REAL_SPINE%/*}/path-guard.sh" "${WORK}/scripts/lib/path-guard.sh"
 
   git -C "${WORK}" init -q
   git -C "${WORK}" config user.email bats@test.local
@@ -46,7 +49,7 @@ setup() {
 }
 
 teardown() {
-  [[ -n "${WORK:-}" && -d "${WORK}" ]] && rm -rf -- "${WORK}" || true
+  if ga_guard_path "${WORK:-}"; then rm -rf -- "${WORK:?}"; fi
 }
 
 # Write manifest.json with the given `<path>=<hash>` pairs and commit it.
@@ -122,7 +125,7 @@ TRACKED_QUOTED_ROWS=(
 )
 
 @test "derive: a still-tracked path git would quote is not seeded once it leaves the disk" {
-  local row pairs=()
+  local row tracked_file pairs=()
   git -C "${WORK}" config core.quotePath true
   seed_history
   for row in "${TRACKED_QUOTED_ROWS[@]}"; do
@@ -132,7 +135,8 @@ TRACKED_QUOTED_ROWS=(
   write_manifest_revision 'r4' "${P2}=${HP2}" "${pairs[@]}"
   # The on-disk arm is removed so only the tracked-paths oracle can keep each row out.
   for row in "${TRACKED_QUOTED_ROWS[@]}"; do
-    rm -f -- "${WORK}/${row#*|}"
+    tracked_file="${WORK}/${row#*|}"
+    if ga_guard_path "${tracked_file}"; then rm -f -- "${tracked_file:?}"; fi
   done
 
   run "${SCRIPT}"
@@ -174,8 +178,18 @@ track_index_only() {
 @test "derive: refuses outside a git work tree (exit 3)" {
   # Without a repository the walk has no history to read at all, so the refusal
   # must be the named one rather than an empty map that reads as "nothing dropped".
-  rm -rf -- "${WORK}/.git"
+  if ga_guard_path "${WORK}"; then rm -rf -- "${WORK:?}/.git"; fi
   run "${SCRIPT}"
   [[ "${status}" -eq 3 ]] || return 1
   [[ "${output}" == *"not a git work tree"* ]] || return 1
+}
+
+@test "derive: a spine that cannot load its path guard exits 7 and prints no map" {
+  seed_history
+  if ga_guard_path "${WORK}"; then rm -f -- "${WORK:?}/scripts/lib/path-guard.sh"; fi
+  run --separate-stderr "${SCRIPT}"
+  [[ "${status}" -eq 7 ]] || return 1
+  [[ "${stderr}" == *'cannot source the shared path guard'* ]] || return 1
+  [[ "${stderr}" == *'failed to load'* ]] || return 1
+  [[ -z "${output}" ]] || return 1
 }

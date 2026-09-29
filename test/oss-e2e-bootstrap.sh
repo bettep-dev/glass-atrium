@@ -38,6 +38,8 @@ set -uo pipefail
 
 GA="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
 readonly GA
+# shellcheck source-path=SCRIPTDIR source=../scripts/lib/path-guard.sh
+source "${GA}/scripts/lib/path-guard.sh"
 readonly REAL_HOME="${HOME}"
 readonly E2E_DB="claude_oss_e2e"
 # oss-db-setup.sh creates BOTH the main throwaway db AND its `_shadow` sibling
@@ -51,6 +53,10 @@ readonly STARTUP_WINDOW_SECS=30
 SANDBOX="${GA_E2E_SANDBOX:-}"
 if [[ -z "${SANDBOX}" ]]; then
   SANDBOX="$(mktemp -d -t ga-e2e.XXXXXX)"
+fi
+# relative knob → anchored at the launch cwd, which the main shell never leaves → cleanup deletes the same dir
+if [[ -n "${SANDBOX}" && "${SANDBOX}" != /* ]]; then
+  SANDBOX="${PWD}/${SANDBOX}"
 fi
 readonly SANDBOX
 readonly FAKE_HOME="${SANDBOX}/home"
@@ -95,9 +101,11 @@ cleanup() {
       fi
     done
   fi
-  if [[ "${GA_E2E_KEEP:-0}" != "1" && -n "${SANDBOX}" && "${SANDBOX}" != "/" && -d "${SANDBOX}" ]]; then
-    rm -rf -- "${SANDBOX}"
-    printf 'cleanup: sandbox removed (%s)\n' "${SANDBOX}" >&2
+  if [[ "${GA_E2E_KEEP:-0}" != "1" && -d "${SANDBOX}" ]]; then
+    if ga_guard_path "${SANDBOX}"; then
+      rm -rf -- "${SANDBOX:?}"
+      printf 'cleanup: sandbox removed (%s)\n' "${SANDBOX}" >&2
+    fi
   fi
   exit "${rc}"
 }

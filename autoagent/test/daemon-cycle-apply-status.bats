@@ -66,6 +66,8 @@ bats_require_minimum_version 1.5.0
 
 GA="$(cd -- "${BATS_TEST_DIRNAME}/../.." && pwd)"
 REAL_DRIVER="${GA}/autoagent/daemon-cycle.sh"
+# shellcheck source-path=SCRIPTDIR source=../../scripts/lib/path-guard.sh
+source "${GA}/scripts/lib/path-guard.sh"
 
 setup() {
   [[ -f "${REAL_DRIVER}" ]] || skip "daemon-cycle.sh not found: ${REAL_DRIVER}"
@@ -86,7 +88,7 @@ setup() {
 }
 
 teardown() {
-  [[ -n "${WORK:-}" && -d "${WORK}" ]] && rm -rf -- "${WORK}" || true
+  if ga_guard_path "${WORK:-}"; then rm -rf -- "${WORK:?}"; fi
 }
 
 # make_stage_stubs — the driver resolves daemon_cycle.py / daemon-apply.sh relative to its own dir,
@@ -383,13 +385,13 @@ PY
 
 @test "AC10: an absent apply script composes the same value as a non-executable one" {
   make_stage_stubs 0
-  rm -f -- "${WORK}/real/autoagent/daemon-apply.sh"
+  if ga_guard_path "${WORK}"; then rm -f -- "${WORK:?}/real/autoagent/daemon-apply.sh"; fi
   make_helper 0
   run_driver --apply-only
   local absent_composed
   absent_composed="$(compose_status)"
   # re-run the non-executable fixture in the same case so the two are COMPARED, never assumed equal
-  rm -f -- "${ENVELOPE_LOG}"
+  if ga_guard_path "${ENVELOPE_LOG}"; then rm -f -- "${ENVELOPE_LOG:?}"; fi
   make_stage_stubs 0
   chmod 644 "${WORK}/real/autoagent/daemon-apply.sh"
   run_driver --apply-only

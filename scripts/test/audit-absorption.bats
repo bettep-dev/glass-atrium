@@ -14,6 +14,8 @@
 # unpromoted auditor; the blocking contract is pinned by the T5-* cases at the end of this file.
 
 AUDIT_SH="${BATS_TEST_DIRNAME}/../audit-absorption.sh"
+# shellcheck source-path=SCRIPTDIR source=../lib/path-guard.sh
+source "${BATS_TEST_DIRNAME}/../lib/path-guard.sh"
 
 setup() {
   [[ -f "${AUDIT_SH}" ]] || skip "audit-absorption.sh not found"
@@ -21,7 +23,7 @@ setup() {
 }
 
 teardown() {
-  [[ -n "${AA_TMP:-}" && -d "${AA_TMP}" ]] && rm -rf -- "${AA_TMP}" || true
+  if ga_guard_path "${AA_TMP:-}"; then rm -rf -- "${AA_TMP:?}"; fi
 }
 
 # Writes stdin to a fixture path, creating parent directories.
@@ -80,7 +82,7 @@ EOF
   write_fixture "${AA_TMP}/f4.sh" <<'EOF'
 #!/usr/bin/env bash
 t=/tmp/x
-rm -f "$t" 2>/dev/null || true
+rm -f "$t" 2>/dev/null || true # GA-RM[not-executed]: auditor fixture text, written to a file no shell runs
 EOF
   run bash "${AUDIT_SH}" --path "${AA_TMP}/f4.sh"
   [ "${status}" -eq 0 ] || { echo "exit ${status}: ${output}"; return 1; }
@@ -257,7 +259,7 @@ EOF
 @test "advisory mode: findings never change the exit status, --quiet prints the summary only" {
   write_fixture "${AA_TMP}/adv.sh" <<'EOF'
 #!/usr/bin/env bash
-rm -f /tmp/x 2>/dev/null || true
+rm -f /tmp/x 2>/dev/null || true # GA-RM[not-executed]: auditor fixture text, written to a file no shell runs
 EOF
   run bash "${AUDIT_SH}" --quiet --path "${AA_TMP}/adv.sh"
   [ "${status}" -eq 0 ] || { echo "exit ${status}: ${output}"; return 1; }

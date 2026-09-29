@@ -40,6 +40,8 @@ bats_require_minimum_version 1.5.0
 GA="$(cd -- "${BATS_TEST_DIRNAME}/.." && pwd)"
 REAL_GA="${GA}/glass-atrium"
 APPLY_SH="${GA}/autoagent/daemon-apply.sh"
+# shellcheck source-path=SCRIPTDIR source=../scripts/lib/path-guard.sh
+source "${GA}/scripts/lib/path-guard.sh"
 
 setup() {
   [[ -f "${REAL_GA}" ]] || skip "glass-atrium not found: ${REAL_GA}"
@@ -51,7 +53,7 @@ setup() {
   mkdir -p "${TARGET}/bin" "${REPORTS}" "${WORK}/agents" "${WORK}/home"
   # A fresh file in a plain dir: a `cat >` onto an inherited symlink would follow it and truncate the
   # REAL claude binary at the far end.
-  rm -f -- "${TARGET}/bin/claude"
+  if ga_guard_path "${TARGET}"; then rm -f -- "${TARGET:?}/bin/claude"; fi
   cat >"${TARGET}/bin/claude" <<'SH'
 #!/bin/bash
 echo OK
@@ -64,9 +66,9 @@ SH
 }
 
 teardown() {
-  [[ -n "${TARGET:-}" && -d "${TARGET}" ]] && rm -rf -- "${TARGET}" || true
-  [[ -n "${DATA_ROOT:-}" && -d "${DATA_ROOT}" ]] && rm -rf -- "${DATA_ROOT}" || true
-  [[ -n "${WORK:-}" && -d "${WORK}" ]] && rm -rf -- "${WORK}" || true
+  if ga_guard_path "${TARGET:-}"; then rm -rf -- "${TARGET:?}"; fi
+  if ga_guard_path "${DATA_ROOT:-}"; then rm -rf -- "${DATA_ROOT:?}"; fi
+  if ga_guard_path "${WORK:-}"; then rm -rf -- "${WORK:?}"; fi
 }
 
 # Drive the REAL doctor with the target, runtime-data and daemon-reports seams at the sandbox.
@@ -74,6 +76,16 @@ run_doctor_seam() {
   GA_TARGET_HOME="${TARGET}" GA_DATA_ROOT="${DATA_ROOT}" \
     ATRIUM_MONITOR_PORT="${GA_DOCTOR_DEAD_PORT}" \
     DOCTOR_AUTH_REPORTS_DIR="${REPORTS}" run "${REAL_GA}" doctor
+}
+
+# Empty the daemon-reports dir between loop passes, so each emit_abort_row starts from no rows.
+reset_reports() {
+  if ga_guard_path "${REPORTS}"; then
+    rm -rf -- "${REPORTS:?}"
+  else
+    return 1
+  fi
+  mkdir -p -- "${REPORTS}"
 }
 
 # Drive the REAL daemon into its root-absence preflight abort, so the abort row under test carries
@@ -85,6 +97,7 @@ emit_abort_row() {
   cp -p -- "${GA}/autoagent/lib/git-txn.sh" "${sandbox}/autoagent/lib/git-txn.sh"
   cp -p -- "${GA}/autoagent/daemon_cycle.py" "${sandbox}/autoagent/daemon_cycle.py"
   cp -p -- "${GA}/scripts/lib/apply-lock.sh" "${sandbox}/scripts/lib/apply-lock.sh"
+  cp -p -- "${GA}/scripts/lib/path-guard.sh" "${sandbox}/scripts/lib/path-guard.sh"
   printf '%s\n' '{"patches": []}' >"${WORK}/report.json"
   # No test roots under the sandbox → the first preflight abort site fires (exit 16 + one row).
   env -u AUTOAGENT_ALLOW_UNVERIFIED -u AUTOAGENT_PREFLIGHT_ACTIVE \
@@ -222,7 +235,7 @@ assert_output_lacks() {
   # every recovered daemon as still-aborted — a wider false-red than the one this task closes.
   local st failed=""
   for st in applied reject needs_regen dryrun error; do
-    rm -f -- "${REPORTS}"/autoagent-applied-*.jsonl
+    reset_reports || return 1
     emit_abort_row || {
       echo "producer wrote no abort row (${st})" >&2
       return 1
@@ -234,7 +247,7 @@ assert_output_lacks() {
     [[ "${output}" != *"FAIL : autoagent apply aborted"* ]] || failed="${failed} ${st}(fail-line)"
   done
   # The legacy heartbeat shape: skip + zero_eligible, written before the gate field existed.
-  rm -f -- "${REPORTS}"/autoagent-applied-*.jsonl
+  reset_reports || return 1
   emit_abort_row || {
     echo "producer wrote no abort row (legacy heartbeat)" >&2
     return 1
@@ -273,7 +286,7 @@ assert_output_lacks() {
       mkdir -p -- "${shimdir}"
       printf '#!/bin/bash\nexec %s "$@"\n' "${impl}" >"${shimdir}/awk"
       chmod +x "${shimdir}/awk"
-      rm -f -- "${REPORTS}"/autoagent-applied-*.jsonl
+      reset_reports || return 1
       emit_abort_row || {
         echo "producer wrote no abort row (${fixture}/${impl})" >&2
         return 1

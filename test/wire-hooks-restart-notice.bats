@@ -36,6 +36,8 @@
 bats_require_minimum_version 1.5.0
 
 GA="$(cd -- "${BATS_TEST_DIRNAME}/.." && pwd)"
+# shellcheck source-path=SCRIPTDIR source=../scripts/lib/path-guard.sh
+source "${GA}/scripts/lib/path-guard.sh"
 
 setup() {
   command -v jq >/dev/null 2>&1 || skip "jq required"
@@ -57,7 +59,7 @@ setup() {
 }
 
 teardown() {
-  [[ -n "${SANDBOX:-}" && -d "${SANDBOX}" ]] && rm -rf -- "${SANDBOX}" || true
+  if ga_guard_path "${SANDBOX:-}"; then rm -rf -- "${SANDBOX:?}"; fi
 }
 
 NOTICE="RESTART REQUIRED"
@@ -173,7 +175,7 @@ summary_warns() {
 @test "AC2: a zero-mutation re-run announces nothing and writes no marker" {
   run_wire
   [[ "${status}" -eq 0 ]] || return 1
-  rm -f -- "${MARKER}"
+  if ga_guard_path "${MARKER}"; then rm -f -- "${MARKER:?}"; fi
 
   run_wire
   [[ "${status}" -eq 0 ]] || return 1
@@ -185,7 +187,7 @@ summary_warns() {
 @test "AC3: added=0 with a stale matcher dropped still announces and marks" {
   run_wire
   [[ "${status}" -eq 0 ]] || return 1
-  rm -f -- "${MARKER}"
+  if ga_guard_path "${MARKER}"; then rm -f -- "${MARKER:?}"; fi
   add_stale_matcher_row || return 1
 
   run_wire
@@ -200,7 +202,7 @@ summary_warns() {
 @test "AC4: retire_hook_binding announces and marks at its own summary" {
   run_wire
   [[ "${status}" -eq 0 ]] || return 1
-  rm -f -- "${MARKER}"
+  if ga_guard_path "${MARKER}"; then rm -f -- "${MARKER:?}"; fi
   local hook
   hook="$(first_wired_basename)"
   [[ -n "${hook}" ]] || return 1

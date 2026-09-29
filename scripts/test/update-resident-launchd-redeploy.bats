@@ -20,6 +20,9 @@ bats_require_minimum_version 1.5.0
 
 export SKILL="$(cd -- "${BATS_TEST_DIRNAME}/../.." && pwd)/scripts/update.sh"
 
+# shellcheck source-path=SCRIPTDIR source=../lib/path-guard.sh
+source "${BATS_TEST_DIRNAME}/../lib/path-guard.sh"
+
 setup() {
   [[ -f "${SKILL}" ]] || skip "update.sh not found: ${SKILL}"
   command -v cmp >/dev/null 2>&1 || skip "cmp required"
@@ -38,7 +41,7 @@ setup() {
 }
 
 teardown() {
-  [[ -n "${WORK:-}" && -d "${WORK}" ]] && rm -rf -- "${WORK}" || true
+  if ga_guard_path "${WORK:-}"; then rm -rf -- "${WORK:?}"; fi
 }
 
 # A STUB launchctl: logs "$*" to $LAUNCHCTL_LOG; NEVER touches real launchd.

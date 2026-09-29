@@ -54,6 +54,8 @@ bats_require_minimum_version 1.5.0
 
 GA="$(cd -- "${BATS_TEST_DIRNAME}/../.." && pwd -P)"
 CORE="${GA}/lib/ga-core.sh"
+# shellcheck source-path=SCRIPTDIR source=../lib/path-guard.sh
+source "${GA}/scripts/lib/path-guard.sh"
 
 setup() {
   [[ -f "${CORE}" ]] || skip "ga-core.sh not found: ${CORE}"
@@ -78,7 +80,7 @@ RUN
 }
 
 teardown() {
-  [[ -n "${WORK:-}" && -d "${WORK}" ]] && rm -rf -- "${WORK}" || true
+  if ga_guard_path "${WORK:-}"; then rm -rf -- "${WORK:?}"; fi
 }
 
 # Seed a GA_ROOT source file for <rel> (the swap src that must exist).

@@ -20,6 +20,9 @@
 HOOKS_DIR="${BATS_TEST_DIRNAME}/.."
 HOOK_SH="${HOOKS_DIR}/track-outcome.sh"
 
+# shellcheck source-path=SCRIPTDIR source=../../scripts/lib/path-guard.sh
+source "${BATS_TEST_DIRNAME}/../../scripts/lib/path-guard.sh"
+
 setup() {
   [[ -f "${HOOK_SH}" ]] || skip "track-outcome.sh not found: ${HOOK_SH}"
   command -v python3 >/dev/null 2>&1 || skip "python3 required"
@@ -35,7 +38,7 @@ setup() {
 }
 
 teardown() {
-  [[ -n "${TU_TMP:-}" && -d "${TU_TMP}" ]] && rm -rf "${TU_TMP}"
+  if ga_guard_path "${TU_TMP:-}"; then rm -rf -- "${TU_TMP:?}"; fi
 }
 
 # Seed the per-agent tool_use counter (empty arg ⇒ leave it absent).
@@ -149,4 +152,20 @@ spooled_body() {
   write_transcript '[SIZE-EST] reads~=14 fields=2 effort=medium scope=allowlist — bounded audit'
   run_hook
   [[ "${output}" == *"tool_use actual=31 declared=none"* ]]
+}
+
+# A setup skip leaves TU_TMP unset — a failing teardown would report the skip as not ok.
+@test "teardown succeeds silently when setup skipped before creating the temp dir" {
+  local saved="${TU_TMP}"
+  unset TU_TMP
+  run teardown
+  TU_TMP="${saved}"
+  [[ "${status}" -eq 0 ]] || {
+    echo "teardown without a temp dir failed (status ${status}): ${output}" >&2
+    return 1
+  }
+  [[ -z "${output}" ]] || {
+    echo "teardown without a temp dir wrote: ${output}" >&2
+    return 1
+  }
 }

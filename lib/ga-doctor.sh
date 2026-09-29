@@ -702,7 +702,8 @@ run_doctor() {
       else
         log "  warn : launchd deploy-drift check skipped — reference re-render failed (config missing/invalid? run 'glass-atrium render-plists')"
       fi
-      [[ -n "${ld_tmp}" && -d "${ld_tmp}" ]] && rm -rf -- "${ld_tmp}"
+      # shellcheck disable=SC2310  # guard verdict branched on — a refusal is a skip, never an abort
+      if ga_guard_path "${ld_tmp}"; then rm -rf -- "${ld_tmp:?}"; fi
     fi
   fi
 
@@ -1074,8 +1075,11 @@ run_doctor() {
       printf '%s' "${residue_kept}" >"${residue_record}"
       log "         record: ${residue_record}"
     else
-      rm -f -- "${residue_record}"
-      log "  ok   : recorded retired residue is gone — the record was cleared (${residue_record})"
+      # shellcheck disable=SC2310  # guard verdict branched on — a refusal keeps the record and claims nothing
+      if ga_guard_path "${residue_record}"; then
+        rm -f -- "${residue_record:?}"
+        log "  ok   : recorded retired residue is gone — the record was cleared (${residue_record})"
+      fi
     fi
   fi
 
@@ -1574,7 +1578,8 @@ _doctor_report_rewire_marker() {
   now="$(date +%s)"
 
   if [[ $((now - written)) -gt $((GA_REWIRE_NOTICE_WINDOW_DAYS * 86400)) ]]; then
-    rm -f -- "${marker}"
+    # shellcheck disable=SC2310  # guard verdict branched on — a refusal is a skip, never an abort
+    if ga_guard_path "${marker}"; then rm -f -- "${marker:?}"; fi
     return 0
   fi
 

@@ -24,6 +24,8 @@ bats_require_minimum_version 1.5.0
 GA="$(cd -- "${BATS_TEST_DIRNAME}/../.." && pwd)"
 CTX_HOOK="${GA}/hooks/advisory-context-budget.sh"
 COST_HOOK="${GA}/hooks/advisory-spawn-cost.sh"
+# shellcheck source=../../scripts/lib/path-guard.sh
+source "${GA}/scripts/lib/path-guard.sh"
 
 setup() {
   [[ -f "${CTX_HOOK}" ]] || skip "hook not found: ${CTX_HOOK}"
@@ -79,7 +81,7 @@ PY
 }
 
 teardown() {
-  [[ -n "${WORK:-}" && -d "${WORK}" ]] && rm -rf -- "${WORK}" || true
+  if ga_guard_path "${WORK:-}"; then rm -rf -- "${WORK:?}"; fi
 }
 
 # Total psycopg connects observed so far (one tally char per live DB read).
