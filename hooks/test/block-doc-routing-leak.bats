@@ -16,6 +16,8 @@
 # sandbox-local .meta.json sidecar (transcript-dirname co-location OR the session_id glob).
 
 HOOK_SH="${BATS_TEST_DIRNAME}/../block-doc-routing-leak.sh"
+# shellcheck source-path=SCRIPTDIR source=../../scripts/lib/path-guard.sh
+source "${BATS_TEST_DIRNAME}/../../scripts/lib/path-guard.sh"
 
 setup() {
   [[ -f "${HOOK_SH}" ]] || skip "hook not found: ${HOOK_SH}"
@@ -27,7 +29,7 @@ setup() {
 }
 
 teardown() {
-  [[ -n "${SANDBOX:-}" && -d "${SANDBOX}" ]] && rm -rf -- "${SANDBOX}"
+  if ga_guard_path "${SANDBOX:-}"; then rm -rf -- "${SANDBOX:?}"; fi
 }
 
 # Write a transcript-co-located sidecar. Args: $1=agent_key $2=agentType.
@@ -226,4 +228,20 @@ run_hook() {
   run_hook "{\"tool_name\":\"Write\",\"agent_id\":\"reporter1\",\"transcript_path\":\"${SANDBOX}/tx/transcript.jsonl\",\"tool_input\":{\"file_path\":\"/Users/nobody/reports/leak.md\"}}"
   [[ "${status}" -eq 2 ]] || return 1
   grep -q 'verdict=block' "${FIRED_LOG}" || return 1
+}
+
+# A setup skip leaves SANDBOX unset — a failing teardown would report the skip as not ok.
+@test "teardown succeeds silently when setup skipped before creating the sandbox" {
+  local sandbox="${SANDBOX}"
+  unset SANDBOX
+  run teardown
+  SANDBOX="${sandbox}"
+  [[ "${status}" -eq 0 ]] || {
+    echo "teardown without a sandbox failed (status ${status}): ${output}" >&2
+    return 1
+  }
+  [[ -z "${output}" ]] || {
+    echo "teardown without a sandbox wrote: ${output}" >&2
+    return 1
+  }
 }

@@ -50,6 +50,8 @@ bats_require_minimum_version 1.5.0
 GA="$(cd -- "${BATS_TEST_DIRNAME}/.." && pwd)"
 REAL_GA="${GA}/glass-atrium"
 HOOK_SH="${GA}/hooks/inject-scope-rules.sh"
+# shellcheck source-path=SCRIPTDIR source=../scripts/lib/path-guard.sh
+source "${GA}/scripts/lib/path-guard.sh"
 
 setup() {
   command -v jq >/dev/null 2>&1 || skip "jq required"
@@ -82,8 +84,8 @@ SH
 }
 
 teardown() {
-  [[ -n "${TARGET:-}" && -d "${TARGET}" ]] && rm -rf -- "${TARGET}" || true
-  [[ -n "${DATA_ROOT:-}" && -d "${DATA_ROOT}" ]] && rm -rf -- "${DATA_ROOT}" || true
+  if ga_guard_path "${TARGET:-}"; then rm -rf -- "${TARGET:?}"; fi
+  if ga_guard_path "${DATA_ROOT:-}"; then rm -rf -- "${DATA_ROOT:?}"; fi
 }
 
 # Drive the REAL doctor with the target + data-root seams redirected at the sandbox.

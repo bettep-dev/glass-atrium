@@ -23,6 +23,9 @@
 HOOKS_DIR="${BATS_TEST_DIRNAME}/.."
 HOOK_SH="${HOOKS_DIR}/track-outcome.sh"
 
+# shellcheck source-path=SCRIPTDIR source=../../scripts/lib/path-guard.sh
+source "${BATS_TEST_DIRNAME}/../../scripts/lib/path-guard.sh"
+
 setup() {
   [[ -f "${HOOK_SH}" ]] || skip "track-outcome.sh not found: ${HOOK_SH}"
   command -v python3 >/dev/null 2>&1 || skip "python3 required"
@@ -75,9 +78,7 @@ PY
 }
 
 teardown() {
-  if [[ -n "${PO_TMP:-}" && -d "${PO_TMP}" ]]; then
-    rm -rf "${PO_TMP}"
-  fi
+  if ga_guard_path "${PO_TMP:-}"; then rm -rf -- "${PO_TMP:?}"; fi
 }
 
 # Common-path block-then-emit transcript: a full [COMPLETION] TEXT turn before a terminal consumed

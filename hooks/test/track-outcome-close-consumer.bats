@@ -26,6 +26,9 @@ bats_require_minimum_version 1.5.0
 HOOKS_DIR="${BATS_TEST_DIRNAME}/.."
 HOOK_SH="${HOOKS_DIR}/track-outcome.sh"
 
+# shellcheck source-path=SCRIPTDIR source=../../scripts/lib/path-guard.sh
+source "${BATS_TEST_DIRNAME}/../../scripts/lib/path-guard.sh"
+
 setup() {
   [[ -f "${HOOK_SH}" ]] || skip "track-outcome.sh not found: ${HOOK_SH}"
   command -v python3 >/dev/null 2>&1 || skip "python3 required"
@@ -52,9 +55,7 @@ STUB
 }
 
 teardown() {
-  if [[ -n "${CC_TMP:-}" && -d "${CC_TMP}" ]]; then
-    rm -rf -- "${CC_TMP}"
-  fi
+  if ga_guard_path "${CC_TMP:-}"; then rm -rf -- "${CC_TMP:?}"; fi
 }
 
 # A bare intermediate `[[ ]]` assertion is silently ignored under bash 3.2 (macOS) while bash 5.3

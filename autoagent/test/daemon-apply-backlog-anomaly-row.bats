@@ -38,6 +38,8 @@ bats_require_minimum_version 1.5.0
 GA="$(cd -- "${BATS_TEST_DIRNAME}/../.." && pwd)"
 REAL_SCRIPT="${GA}/autoagent/daemon-apply.sh"
 ABORT_PIN_SUITE="${GA}/test/doctor-apply-abort-rows.bats"
+# shellcheck source-path=SCRIPTDIR source=../../scripts/lib/path-guard.sh
+source "${GA}/scripts/lib/path-guard.sh"
 
 # mirror_path — symlink every real-PATH executable into $1 except the names this suite stubs (whole-
 # PATH mirror per daemon-apply-zero-eligible-row.bats: an allowlist that misses one coreutil makes
@@ -68,7 +70,11 @@ mirror_path() {
 build_git_apply_shim() {
   local stub="$1" real_git
   real_git="$(command -v git)"
-  rm -f -- "${stub}/git"
+  if ga_guard_path "${stub}"; then
+    rm -f -- "${stub:?}/git"
+  else
+    return 1
+  fi
   cat >"${stub}/git" <<EOF
 #!/usr/bin/env bash
 sub="\${1:-}"
@@ -83,13 +89,18 @@ EOF
 }
 
 make_claude_stub() {
-  rm -f -- "${1}/claude"
-  cat >"${1}/claude" <<'SH'
+  local stub="$1"
+  if ga_guard_path "${stub}"; then
+    rm -f -- "${stub:?}/claude"
+  else
+    return 1
+  fi
+  cat >"${stub}/claude" <<'SH'
 #!/usr/bin/env bash
 echo OK
 exit 0
 SH
-  chmod +x "${1}/claude"
+  chmod +x "${stub}/claude"
 }
 
 # make_backlog_psql — a psql present on PATH (so backlog_source_available() is true) that answers
@@ -98,7 +109,11 @@ SH
 # tripwire fires on the COUNT before any patch is read, so a real diff would only add fixture noise.
 make_backlog_psql() {
   local dir="$1" rows="$2"
-  rm -f -- "${dir}/psql"
+  if ga_guard_path "${dir}"; then
+    rm -f -- "${dir:?}/psql"
+  else
+    return 1
+  fi
   cat >"${dir}/psql" <<SH
 #!/usr/bin/env bash
 b64() {
@@ -160,7 +175,7 @@ setup() {
 
 teardown() {
   [[ -n "${WORK:-}" && -d "${WORK}" ]] && chmod -R u+rwX -- "${WORK}" 2>/dev/null || true
-  [[ -n "${WORK:-}" && -d "${WORK}" ]] && rm -rf -- "${WORK}" || true
+  if ga_guard_path "${WORK:-}"; then rm -rf -- "${WORK:?}"; fi
 }
 
 # run_apply — drive the REAL daemon over a backlog of $1 eligible rows against the threshold $2.
@@ -311,4 +326,30 @@ dump_log() {
     echo "daemon output: ${output}" >&2
     return 1
   }
+}
+
+# ── Stub builders — a refused stub dir never reaches the write ─────────────────────────────────
+
+@test "a stub builder refuses a relative stub dir and writes nothing through its mirrored link" {
+  # A stub name still linked into the dir would take the heredoc write through to the real binary;
+  # each builder's delete is what prevents it, so a refused dir has to fail the builder, not skip.
+  local row builder name
+  cd -- "${WORK}"
+  mkdir -- stubdir
+  printf 'real\n' >real-binary
+  cp -- real-binary pristine
+  for row in build_git_apply_shim:git make_claude_stub:claude make_backlog_psql:psql; do
+    builder="${row%%:*}"
+    name="${row##*:}"
+    ln -s -- "${WORK}/real-binary" "stubdir/${name}"
+    run "${builder}" stubdir 1
+    [[ "${status}" -ne 0 && "${output}" == *"refusing a non-absolute delete target"* ]] || {
+      echo "${builder}: a relative stub dir was accepted: rc=${status}: ${output}" >&2
+      return 1
+    }
+    [[ -L "stubdir/${name}" ]] && cmp -s -- real-binary pristine || {
+      echo "${builder}: the mirrored link or its target changed" >&2
+      return 1
+    }
+  done
 }

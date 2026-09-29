@@ -156,3 +156,59 @@ classify_cols() {
   [ "${COD}" -eq 0 ]
   [ "${RAT}" = "comment-only" ]
 }
+
+# --- baseline scratch cleanup ----------------------------------------------
+
+# Throwaway repo with one file per build_surface root: the live install ships neither
+# install.sh nor build-glass-atrium.sh, so baseline cannot run against the real root there.
+make_baseline_repo() {
+  local repo="$1" rel
+  for rel in lib/ga-x.sh hooks/x.sh hooks/lib/x.sh scripts/x.sh scripts/lib/x.sh \
+    monitor/scripts/oss-db-setup.sh build-glass-atrium.sh install.sh \
+    hooks/test/x.bats scripts/test/x.bats monitor/src/server/x.ts; do
+    mkdir -p -- "$(dirname -- "${repo}/${rel}")"
+    printf '# c\n:\n' >"${repo}/${rel}"
+  done
+  mkdir -p -- "${repo}/test/comment-audit"
+  cp -- "${CL}" "${BATS_TEST_DIRNAME}/classify.awk" "${repo}/test/comment-audit/"
+  cp -- "${BATS_TEST_DIRNAME}/../../scripts/lib/path-guard.sh" "${repo}/scripts/lib/"
+}
+
+@test "baseline removes both scratch files it creates and leaves only the --out artifact" {
+  local root="${BATS_TEST_TMPDIR:?}" real path count
+  local repo="${root}/repo" shim="${root}/shim" out="${root}/baseline.tsv" log="${root}/mktemp.log"
+  real="$(command -v mktemp)"
+  make_baseline_repo "${repo}"
+  mkdir -p -- "${shim}"
+  # Records each path mktemp hands out: macOS `mktemp -t` ignores TMPDIR, so a scratch TMPDIR proves nothing.
+  cat >"${shim}/mktemp" <<SHIM
+#!/usr/bin/env bash
+p="\$("${real}" "\$@")" || exit
+printf '%s\n' "\${p}" >>"${log}"
+printf '%s\n' "\${p}"
+SHIM
+  chmod +x "${shim}/mktemp"
+
+  run env PATH="${shim}:${PATH}" bash "${repo}/test/comment-audit/comment-classifier.sh" baseline --out "${out}"
+
+  [[ "${status}" -eq 0 ]] || {
+    echo "baseline rc=${status}: ${output}"
+    return 1
+  }
+  [[ -s "${out}" ]] || {
+    echo "no artifact at ${out}"
+    return 1
+  }
+  count="$(wc -l <"${log}")"
+  [[ "${count// /}" -eq 2 ]] || {
+    echo "expected 2 scratch files, got ${count// /}:"
+    cat -- "${log}"
+    return 1
+  }
+  while IFS= read -r path; do
+    [[ ! -e "${path}" ]] || {
+      echo "scratch left behind: ${path}"
+      return 1
+    }
+  done <"${log}"
+}

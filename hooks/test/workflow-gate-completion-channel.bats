@@ -38,6 +38,8 @@
 HOOKS_DIR="${BATS_TEST_DIRNAME}/.."
 HOOK_SH="${HOOKS_DIR}/enforce-workflow-verify-stage.sh"
 SKILL_MD="${BATS_TEST_DIRNAME}/../../skills/glass-atrium-ops-orchestrator.md"
+# shellcheck source-path=SCRIPTDIR source=../../scripts/lib/path-guard.sh
+source "${BATS_TEST_DIRNAME}/../../scripts/lib/path-guard.sh"
 
 setup() {
   [[ -f "${HOOK_SH}" ]] || skip "enforce-workflow-verify-stage.sh not found: ${HOOK_SH}"
@@ -816,7 +818,7 @@ log('[SIZE-EST] bundles=1 tool_uses~=8 — small')"
   }
 
   # Reversible mid-session: the marker is read per invocation, so removing it re-arms the next call.
-  rm -f "${ROLLBACK_MARKER}"
+  if ga_guard_path "${ROLLBACK_MARKER}"; then rm -f -- "${ROLLBACK_MARKER:?}"; fi
   run_hook_exec "${SCHEMA_SITE}"
   [[ "${output}" == *"${NUDGE_PHRASE}"* ]] || {
     echo "removing the marker did not re-arm the message -- ${output}" >&2

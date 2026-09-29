@@ -63,7 +63,10 @@ EOF
 }
 
 teardown() {
-  [[ -n "${WORK:-}" && -d "${WORK}" ]] && rm -rf -- "${WORK}" || true
+  # here, not at file level: a file-level guard would mask git-txn.sh failing to load its own
+  # shellcheck source-path=SCRIPTDIR source=../../scripts/lib/path-guard.sh
+  source "${GA}/scripts/lib/path-guard.sh"
+  if ga_guard_path "${WORK:-}"; then rm -rf -- "${WORK:?}"; fi
 }
 
 # -- Injected callback stubs. The lib calls apply_fn target diff label diff_target
@@ -97,7 +100,7 @@ _apply_via_gitapply() {
   printf '%s\n' "${diff}" >"${tmp}"
   (cd "${dir}" && git apply --recount --whitespace=nowarn "${tmp}")
   rc=$?
-  rm -f -- "${tmp}"
+  if ga_guard_path "${tmp}"; then rm -f -- "${tmp:?}"; fi
   return "${rc}"
 }
 

@@ -29,6 +29,8 @@
 GA="$(cd -- "${BATS_TEST_DIRNAME}/.." && pwd)"
 DEPS_SH="${GA}/lib/ga-deps.sh"
 LAUNCHER="${GA}/glass-atrium"
+# shellcheck source-path=SCRIPTDIR source=../scripts/lib/path-guard.sh
+source "${GA}/scripts/lib/path-guard.sh"
 
 setup() {
   [[ -f "${DEPS_SH}" ]] || skip "lib not found: ${DEPS_SH}"
@@ -50,7 +52,7 @@ teardown() {
   # best-effort reap of any stub psql/sleep a fail-before revert-check might have orphaned
   # (the green suite never reaches the kill path — the fixed code self-completes bounded).
   [[ -n "${SANDBOX:-}" ]] && pkill -f "${SANDBOX}" 2>/dev/null || true
-  [[ -n "${SANDBOX:-}" && -d "${SANDBOX}" ]] && rm -rf -- "${SANDBOX}"
+  if ga_guard_path "${SANDBOX:-}"; then rm -rf -- "${SANDBOX:?}"; fi
 }
 
 # mk_slow_psql — write a PATH psql stub that FAITHFULLY models libpq's connect timeout: --version
@@ -299,4 +301,19 @@ DRV
     && [[ "${steps_past}" -eq 0 ]] \
     && [[ "${idle_starts}" -ge 1 ]] \
     && [[ "${idle_starts}" -eq "${idle_stops}" ]]
+}
+
+@test "teardown succeeds silently when setup skipped before creating the sandbox" {
+  local saved="${SANDBOX:-}"
+  unset SANDBOX
+  run teardown
+  SANDBOX="${saved}"
+  [[ "${status}" -eq 0 ]] || {
+    echo "teardown without a sandbox failed (status ${status}): ${output}" >&2
+    return 1
+  }
+  [[ -z "${output}" ]] || {
+    echo "teardown without a sandbox wrote: ${output}" >&2
+    return 1
+  }
 }
