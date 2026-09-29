@@ -2,10 +2,11 @@
 # inject-scope-chunker.bats — the membership selector, the UTF-16 chunker and the shared
 # slot library of the split SubagentStart scope-rule channel.
 #
-#   The channel replaces a single ceilinged injection with twelve bound slots: slot 1 keeps the
-#   marker blocks, inject-scope-part-01.sh .. -11.sh carry parts 01..11. Every part must read
-#   correctly ALONE (hook outputs arrive in completion order), must stay at or under the engine's
-#   inclusive 10,000 UTF-16-unit cap WITH its wrapper, and must never shed silently.
+#   The channel replaces a single ceilinged injection with bound slots: slot 1 keeps the marker
+#   blocks, and inject-scope-part-NN.sh carries part NN for each of the core's CHUNK_SLOTS parts.
+#   Every part must read correctly ALONE (hook outputs arrive in completion order), must stay at or
+#   under the engine's inclusive 10,000 UTF-16-unit cap WITH its wrapper, and must never shed
+#   silently.
 #
 #   WHICH CHANNELS A FAULT ACTUALLY REACHES (measured 2026-09-13, not assumed — an earlier
 #   header claimed three channels for all four core tokens, which is true only per-token and
@@ -52,9 +53,11 @@ setup() {
 }
 
 # Run the core against the fixture root. Args: the core's own flags.
+# The slot count follows the core's CHUNK_SLOTS unless a test sets SLOTS_OVERRIDE; an inherited
+# GA_CHUNK_SLOTS is unset so the caller's environment cannot stand in for the constant.
 run_core() {
-  run --separate-stderr env GA_CHUNK_RULES_ROOT="${ROOT}" GA_CHUNK_SINK="${SINK}" \
-    GA_CHUNK_SLOTS="${SLOTS_OVERRIDE:-11}" \
+  run --separate-stderr env -u GA_CHUNK_SLOTS GA_CHUNK_RULES_ROOT="${ROOT}" GA_CHUNK_SINK="${SINK}" \
+    ${SLOTS_OVERRIDE:+"GA_CHUNK_SLOTS=${SLOTS_OVERRIDE}"} \
     python3 "${CORE}" "$@"
 }
 

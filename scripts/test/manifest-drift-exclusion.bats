@@ -185,20 +185,28 @@ pin_model_key() {
 #   * inject-scope-rules.sh is one of the four merge-claimed roster paths, and
 #     autoagent/lib/roster_merge.py::_get_shell_slots raises ShapeError when a claimed shell file
 #     declares no space-padded `readonly NAME=" … "` array. The updater DECLINES that path on a
-#     ShapeError and silently keeps the LIVE file — so the deploy would ship eleven new wrappers
+#     ShapeError and silently keeps the LIVE file — so the deploy would ship the new part wrappers
 #     and leave slot 1 at the old revision, which is the failure this row exists to make loud.
-#   * the eleven wrappers and the shared library must stay UNCLAIMED: they carry no roster, so a
+#   * the part wrappers and the shared library must stay UNCLAIMED: they carry no roster, so a
 #     claim would route them through a merge that has nothing to merge, and it would move them out
 #     of the deterministic hash-verified sync that is what actually guarantees they land.
 
 @test "split-channel claim partition: slot 1 is claimed, the wrappers and library are not" {
-  local n rel
+  local slots n rel
   claim_verdict "hooks/inject-scope-rules.sh" || {
     echo "hooks/inject-scope-rules.sh is NOT merge-claimed — roster_merge no longer owns slot 1" >&2
     return 1
   }
-  for n in 01 02 03 04 05 06 07 08 09 10 11; do
-    rel="hooks/inject-scope-part-${n}.sh"
+  slots="$(python3 -c 'import sys;sys.path.insert(0,sys.argv[1]);import inject_chunk;print(inject_chunk.CHUNK_SLOTS)' "${GA}/hooks/lib")" || {
+    echo "cannot read CHUNK_SLOTS from hooks/lib/inject_chunk.py" >&2
+    return 1
+  }
+  [[ "${slots}" -gt 0 ]] || {
+    echo "the core reports no slot count — the wrapper loop below would pass vacuously" >&2
+    return 1
+  }
+  for ((n = 1; n <= slots; n++)); do
+    rel="$(printf 'hooks/inject-scope-part-%02d.sh' "${n}")"
     if claim_verdict "${rel}"; then
       echo "${rel} is merge-claimed — a wrapper carries no roster, so the merge has nothing to merge" >&2
       return 1
