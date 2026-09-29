@@ -102,9 +102,9 @@ COMMIT_BATCH = 500  # rows per DB transaction commit (apply mode)
 def calc_cost(it, ot, cr, cc, model_key, event_date=None):
     """USD cost from the per-MTok rate resolved by pricing_loader.rate_for,
     keyed on the row's OWN event_date — historically faithful repricing (the
-    live hook keys on its effective "today" instead). Windowed tiers (e.g. the
-    sonnet-5 intro rate through 2026-08-31) are selected inside the loader by
-    that date. event_date accepts an ISO str or datetime.date; absent selects
+    live hook keys on its effective "today" instead). Windowed tiers, where the
+    SoT row for a model carries one, are selected inside the loader by that
+    date. event_date accepts an ISO str or datetime.date; absent selects
     the base (standard) rate row via pricing_loader.BASE_RATE — never the live
     clock (a malformed date degrades to the same base row inside the loader).
     Zero-cost allowlist mirrors the hook's calc_cost: "<synthetic>" (harness
