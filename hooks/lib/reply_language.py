@@ -37,8 +37,8 @@ LANGUAGE_BY_SCRIPT = {
 
 # An explicit reply-language request is a request clause about the reply (영어로 답해줘 · 답변은 영어로 해줘 ·
 # 英語で答えて · reply in English); a language only named — participle, permission, an artifact's language, a quoted
-# clause, a question, a complaint, a prohibition — is none. Precision first: a missed request costs one continuation,
-# a false one silences the turn's check.
+# clause, a question, a complaint, a statement, a prohibition — is none. Precision first: a missed request costs one
+# continuation, a false one silences the turn's check, so an ending that also reads as a statement counts as none.
 LANGUAGE_NAMES = {
     "English": ("English", "영어", "영문", "英語", "英文", "英语"),
     "Korean": ("Korean", "한국어", "한글", "韓国語", "韓語", "韩语"),
@@ -48,8 +48,12 @@ LANGUAGE_NAMES = {
 
 
 def _build_korean_forms():
-    """A reply verb in request mood, or a generic verb (write, explain, do) only after a reply-noun topic."""
-    tail = r"(?:(?:\s*(?:줘요?|줄래요?|주(?:세요|실래요|십시오|시겠어요|라)|봐요?)|요|라)(?![가-힣])|(?=\s*(?:$|[.!?~,;\n])))"
+    """A reply verb in request mood, or a generic verb (write, explain, do) only after a reply-noun topic.
+
+    The bare 해체/해요체 ending (답해 · 답해요) is also a statement (또 영어로 답해 · 클로드가 영어로 답해), so it
+    counts as none; a request followed by a quotative (답해줘 라고) is cited, never made.
+    """
+    tail = r"(?:\s*(?:줘요?|줄래요?|주(?:세요|실래요|십시오|시겠어요|라)|봐요?)|라)(?![가-힣])"
     hada = (
         "(?:해" + tail + r"|해야\s*(?:해요?|지|돼요?|합니다|한다)(?![가-힣])|하(?:자|세요|십시오|시오|라(?:니까)?)(?![가-힣])"
         r"|합시다)"
@@ -59,14 +63,20 @@ def _build_korean_forms():
         r"(?:^|[\s,.!?])(?:답변|대답|응답|답|결과|보고|요약|설명|리포트)(?:은|는|을|를|도|만|이|가)?\s+"
         r"(?:(?:앞으로|이제|전부|모두|다|꼭|반드시|항상|계속|좀)\s+)?"
     )
+    quotative = r"(?!\s*(?:이?라(?:고|는|며|면|니)|이?란|하고|하는|하면|하니|같은|처럼))"
     return (
-        language + r"(?:답|대답|응답|답변|회신|말|얘기|이야기|대화|소통|보고)(?:" + hada + r"|\s*부탁)",
-        reply_noun + language + "(?:(?:작성|설명|정리|요약|진행)?" + hada + "|(?:써|적어)" + tail + ")",
+        language + r"(?:답|대답|응답|답변|회신|말|얘기|이야기|대화|소통|보고)(?:" + hada + r"|\s*부탁)" + quotative,
+        reply_noun + language + "(?:(?:작성|설명|정리|요약|진행)?" + hada + "|(?:써|적어)" + tail + ")" + quotative,
     )
 
 
 def _build_japanese_forms():
-    tail = r"(?:て(?:ください|下さい|くれ(?:る|ます)?か?|ほしい|欲しい|ね|よ)?|なさい|ましょう|ろ)(?=$|[\s。、！？!?.,」』)])"
+    """A bare て is also a connective (答えて、困る) and a bare くれる a statement, so each asks only at a sentence end."""
+    boundary = r"(?=$|[\s。、！？!?.,」』)])"
+    tail = (
+        r"(?:(?:て(?:ください|下さい|くれ(?:(?:る|ます)か)?|ほしい|欲しい|ね|よ)|なさい|ましょう|ろ)" + boundary
+        + r"|てくれ(?:る|ます)(?=\s*[?？])|て(?=\s*(?:$|[。！？!?.])))"
+    )
     language = r"(?:{names})\s*で\s*(?:のみ\s*|だけ\s*)?"
     return (
         language + "(?:答え|回答し|返答し|返信し|応答し|返事し|話し|喋っ|しゃべっ|報告し|会話し)" + tail,
@@ -76,30 +86,33 @@ def _build_japanese_forms():
 
 def _build_english_forms():
     """A reply verb opening its own clause; `could you` opens one so the request-question stays in the match."""
-    clause_start = (
+    opener = (
         r"(?:^|[.!?;:,\n]\s*|[^\x00-\x7f]\s*"
         r"|\b(?:(?:can|could|would|will)\s+you|please|pls|plz|kindly|just|now|and|then|also|so|you)\s+)"
     )
-    clause_end = (
+    closer = (
         r"(?![A-Za-z])(?=\s*(?:$|[.!?,;:)\n]|(?:please|pls|plz|thanks?|thank\s+you|from\s+now\s+on|only|instead|too"
         r"|as\s+well)\b|(?:해|하)(?:\s*(?:줘요?|주세요)|요|자|세요)?(?![가-힣])))"
     )
     return (
-        clause_start
+        opener
         + r"(?:(?:reply|respond|answer|speak|talk|communicate|chat|write\s+back)\s+(?:(?:to\s+me|back|only)\s+)?"
         r"in\s+(?:{names})|(?:write|give|keep|send|put)\s+(?:(?:the|your|this|that|all|a|an|my)\s+)?"
         r"(?:answers?|repl(?:y|ies)|responses?|reports?|summar(?:y|ies))\s+in\s+(?:{names})"
-        r"|(?:switch|change)\s+(?:back\s+)?to\s+(?:{names}))" + clause_end,
+        r"|(?:switch|change)\s+(?:back\s+)?to\s+(?:{names}))" + closer,
+    )
+
+
+def _build_chinese_forms():
+    """Chinese marks no imperative on the verb (你又用英文回答 · 你用英文回答吗), so only a polite marker makes a request."""
+    return (
+        r"(?:(?<![申邀聘])请(?!问)|麻烦(?:你们?|您)|拜托|劳驾)(?:你们?|您)?(?:以后|今后|之后|接下来|下次|从现在(?:开始|起))?"
+        r"(?:都|也|一直|总是|务必|一定|只)?用\s*(?:{names})\s*(?:来\s*)?(?:回答|回复|答复|说|讲|交流|沟通|聊|汇报)(?![的了过着])",
     )
 
 
 def _build_language_requests():
-    forms = (
-        _build_korean_forms()
-        + _build_japanese_forms()
-        + (r"用\s*(?:{names})\s*(?:来\s*)?(?:回答|回复|答复|说|讲|交流|沟通|聊|汇报)(?![的了过着])",)
-        + _build_english_forms()
-    )
+    forms = _build_korean_forms() + _build_japanese_forms() + _build_chinese_forms() + _build_english_forms()
     return tuple(
         (language, re.compile("|".join(form.replace("{names}", "|".join(names)) for form in forms), re.I))
         for language, names in LANGUAGE_NAMES.items()
@@ -110,11 +123,12 @@ _LANGUAGE_REQUESTS = _build_language_requests()
 # A request clause only quoted is cited, never made; get_prose already drops `code spans`.
 _QUOTATION = re.compile(
     r"\"[^\"\n]*\"|(?<![A-Za-z0-9])'[^'\n]*'(?![A-Za-z0-9])|“[^”\n]*”|‘[^’\n]*’|「[^」\n]*」|『[^』\n]*』"
+    r"|《[^》\n]*》|〈[^〉\n]*〉|«[^»\n]*»|＂[^＂\n]*＂|＇[^＇\n]*＇"
 )
 _SENTENCE_END = re.compile(r"[!?\n。！？]|\.(?=\s|$)")  # a dot inside a path or version ends none
 # A why-question or a keeps-doing complaint anywhere in the request's sentence.
 _COMPLAINT = re.compile(r"왜|자꾸|어째서|为什么|为何|怎么|干[嘛吗]|なぜ|どうして|なんで|何で|\bwhy\b|\bhow\s+come\b", re.I)
-# A Chinese negator earlier in the request's own clause; Korean, Japanese and English prohibitions match no form.
+# A Chinese negator before the polite marker (不必麻烦您用英文回答); any other prohibition matches no form.
 _PROHIBITION = re.compile(r"(?:不要|不用|不许|不准|不能|不必|别|勿|莫|禁止)[^,，、;；]*$")
 # The one question that still asks: a benefactive request (답해 줄래? · 答えてくれる? · could you reply ...?).
 _BENEFACTIVE = re.compile(
@@ -242,7 +256,7 @@ def _get_line_decision(line):
     decision.update(
         status="resolved",
         entry=entry_kind,
-        requested_language=get_requested_language(prose),
+        requested_language=get_requested_language(_get_prose_lines(text or "")),
         prose=prose[:PROSE_EXCERPT_CHARS],
     )
     return decision
@@ -363,9 +377,18 @@ def get_machine_shape(text):
 
 
 def get_prose(text):
+    return " ".join(_strip_non_prose(text).split())
+
+
+def _get_prose_lines(text):
+    """get_prose per line: a line break stays a sentence end for request detection."""
+    return "\n".join(" ".join(line.split()) for line in _strip_non_prose(text).splitlines())
+
+
+def _strip_non_prose(text):
     for pattern in _NON_PROSE:
         text = pattern.sub(" ", text)
-    return " ".join(text.split())
+    return text
 
 
 def get_script_decision(prose):

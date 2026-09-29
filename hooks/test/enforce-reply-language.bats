@@ -182,6 +182,10 @@ assert_rows() {
     'korean request-question asks for english|cli|false|영어로 답해 줄래?|Sure, here it is.|pass'
     'japanese request-question asks for english|cli|false|英語で答えてくれる？|The test passes now.|pass'
     'english request-question inside korean prose|cli|false|이 로그 확인해 줄래? Could you reply in English?|The log shows a timeout.|pass'
+    'korean request with an every-time marker|cli|false|앞으로 매번 영어로 대답해 줘|Understood, in English every time.|pass'
+    'korean request on its own line before a why-question|cli|false|영어로 답해줘\n왜 이렇게 느린지 확인해줘|The cause is a slow query.|pass'
+    'chinese polite request with an always marker|cli|false|请你以后一直用英文回答|Understood, in English from now on.|pass'
+    'japanese bare te-form request ending the sentence|cli|false|このログを見て、英語で答えて|The log shows a timeout.|pass'
     'korean asks for korean|cli|false|영어 말고 한국어로 답해줘|Here is the answer.|block:Korean'
   )
   assert_rows "${rows[@]}"
@@ -207,8 +211,24 @@ assert_rows() {
     'obligation question about the reply language|cli|false|영어로 답해야 해?|Yes, in English.|block:Korean'
     'later complaint outranks an earlier request|cli|false|한국어로 답해야지 왜 영어로 답해|The cause is the compaction summary.|block:Korean'
     'english clause in a korean complaint|cli|false|왜 자꾸 reply in English 해?|The cause is the compaction summary.|block:Korean'
+    'korean again-complaint in the bare ending|cli|false|또 영어로 답해;;|The cause is the compaction summary.|block:Korean'
+    'korean again-complaint in the polite bare ending|cli|false|또 영어로 답해요|The cause is the compaction summary.|block:Korean'
+    'korean still-complaint in the bare ending|cli|false|아직도 영어로 답해|The cause is the compaction summary.|block:Korean'
+    'korean every-time complaint in the bare ending|cli|false|매번 영어로 대답해|The cause is the compaction summary.|block:Korean'
+    'korean third-person statement in the bare ending|cli|false|클로드가 영어로 답해|The cause is the compaction summary.|block:Korean'
+    'korean reply-noun statement in the bare ending|cli|false|요즘 최종 보고를 영어로 해|The cause is the compaction summary.|block:Korean'
+    'korean request cited before a spaced quotative|cli|false|영어로 답해줘 라고 하면 어떻게 돼?|It is treated as a request.|block:Korean'
     'chinese prohibition|cli|false|请不要用英文回答|The answer is below.|block:Chinese'
+    'chinese negator before the polite marker|cli|false|不必麻烦您用英文回答|The answer is below.|block:Chinese'
     'chinese why-question|cli|false|你为什么用英文回答?|The answer is below.|block:Chinese'
+    'chinese colloquial why-question|cli|false|你为啥用英文回答|The answer is below.|block:Chinese'
+    'chinese keeps-doing complaint|cli|false|你老是用英文回答|The answer is below.|block:Chinese'
+    'chinese question particle without a question mark|cli|false|你用英文回答吗|The answer is below.|block:Chinese'
+    'chinese who-told-you complaint|cli|false|谁让你用英文回答|The answer is below.|block:Chinese'
+    'chinese third-person statement|cli|false|他用英文回答问题|The answer is below.|block:Chinese'
+    'japanese connective te-form in a complaint|cli|false|Claudeはいつも英語で答えて、困っています|The cause is the summary.|block:Japanese'
+    'japanese connective te-form in a narration|cli|false|昨日は英語で答えて、今日は日本語で答えた|The cause is the summary.|block:Japanese'
+    'japanese benefactive statement|cli|false|いつも英語で答えてくれる|The cause is the summary.|block:Japanese'
     'request in straight double quotes|cli|false|사용자가 "영어로 답해줘"라고 하면 어떻게 동작해?|It is treated as a request.|block:Korean'
     "request in straight single quotes|cli|false|'영어로 답변해줘' 같은 요청은 요청으로 잡혀야 해|It is captured now.|block:Korean"
     'request in curly double quotes|cli|false|봇이 “영어로 답해 주세요”를 받으면 뭐라고 해|The bot switches.|block:Korean'
@@ -216,6 +236,11 @@ assert_rows() {
     'request in backticks|cli|false|`영어로 답해줘` 입력이 요청으로 잡히는지 봐줘|It is caught.|block:Korean'
     'request in corner brackets|cli|false|「英語で答えてください」という文をテストして|The sentence is tested.|block:Japanese'
     'request in double corner brackets|cli|false|『英語で返事してね』という例文を追加して|The example is added.|block:Japanese'
+    'request in double angle brackets|cli|false|사용자가 《영어로 답해줘》라고 하면|It is treated as a request.|block:Korean'
+    'request in single angle brackets|cli|false|사용자가 〈영어로 답해줘〉라고 하면|It is treated as a request.|block:Korean'
+    'request in guillemets|cli|false|사용자가 «영어로 답해줘»라고 하면|It is treated as a request.|block:Korean'
+    'request in fullwidth double quotes|cli|false|사용자가 ＂영어로 답해줘＂라고 하면|It is treated as a request.|block:Korean'
+    'request in fullwidth single quotes|cli|false|사용자가 ＇영어로 답해줘＇라고 하면|It is treated as a request.|block:Korean'
   )
   assert_rows "${rows[@]}"
 }
