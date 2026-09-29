@@ -184,7 +184,7 @@ function ScreenCost({ onNav }) {
       <AlarmLaneC rows={alarmRows}/>
 
       {/* Decision tier — the facts a spend decision is made on, in priority order. */}
-      <RefreshingRegionC states={[kpiState, tokenState, modelState]}>
+      <RefreshingRegionC id={COST_REGION_IDS.kpis} states={[kpiState, tokenState, modelState]}>
         <KpiRowC
           kpiState={kpiState}
           hot={hotVerdict}
@@ -195,15 +195,15 @@ function ScreenCost({ onNav }) {
         />
       </RefreshingRegionC>
 
-      <RefreshingRegionC states={[tokenState]}>
+      <RefreshingRegionC id={COST_REGION_IDS.trend} states={[tokenState]}>
         <CostTrendCard state={tokenState} days={days} onRetry={regionRetry}/>
       </RefreshingRegionC>
 
       <SplitRow ratio="1:1" className="mb-4">
-        <RefreshingRegionC states={[modelState]}>
+        <RefreshingRegionC id={COST_REGION_IDS.models} states={[modelState]}>
           <ModelCostCard state={modelState} days={days} onRetry={regionRetry} onNav={onNav}/>
         </RefreshingRegionC>
-        <RefreshingRegionC states={[sessionState]}>
+        <RefreshingRegionC id={COST_REGION_IDS.sessions} states={[sessionState]}>
           <SessionDistributionCard state={sessionState} days={days} onRetry={regionRetry} onNav={onNav}/>
         </RefreshingRegionC>
       </SplitRow>
@@ -213,10 +213,10 @@ function ScreenCost({ onNav }) {
         <Disclosure kind="status" level={3} title="Token volume" sub="Category split over time, with the cache-hit line"
           className="cost-inst mb-4">
           <div className="mb-3"><TokenLegend/></div>
-          <RefreshingRegionC states={[tokenState]}>
+          <RefreshingRegionC id={COST_REGION_IDS.tokens} states={[tokenState]}>
             <TokenStackedBody state={tokenState} days={days} onRetry={regionRetry}/>
           </RefreshingRegionC>
-          <RefreshingRegionC states={[cacheState]} className="mt-5">
+          <RefreshingRegionC id={COST_REGION_IDS.cache} states={[cacheState]} className="mt-5">
             <CacheHitBody state={cacheState} days={days} onRetry={regionRetry}/>
           </RefreshingRegionC>
         </Disclosure>
@@ -224,13 +224,13 @@ function ScreenCost({ onNav }) {
         <SplitRow ratio="3:2">
           <Disclosure kind="status" level={3} title="Turn statistics" sub="Stop reasons and per-turn aggregates"
             className="cost-inst">
-            <RefreshingRegionC states={[turnState]}>
+            <RefreshingRegionC id={COST_REGION_IDS.turns} states={[turnState]}>
               <TurnStatsBody state={turnState} days={days} onRetry={regionRetry}/>
             </RefreshingRegionC>
           </Disclosure>
           <Disclosure kind="status" level={3} title="Log integrity" sub="Unreadable log entries over the window"
             className="cost-inst">
-            <RefreshingRegionC states={[errorState]}>
+            <RefreshingRegionC id={COST_REGION_IDS.log} states={[errorState]}>
               <ParseErrorBody state={errorState} days={days} onRetry={regionRetry}/>
             </RefreshingRegionC>
           </Disclosure>
@@ -249,12 +249,18 @@ function getSharedFailureC(namedStates) {
   return window.UI.getSharedFailure(namedStates.map(([source, state]) => ({ source, error: state.error })));
 }
 
+// region wrapper ids → a recovered Retry hands focus to its own region, never to BODY
+const COST_REGION_IDS = {
+  kpis: 'cost-region-kpis', trend: 'cost-region-trend', models: 'cost-region-models', sessions: 'cost-region-sessions',
+  tokens: 'cost-region-tokens', cache: 'cost-region-cache', turns: 'cost-region-turns', log: 'cost-region-log',
+};
+
 /** Held payloads stay rendered during a refresh, dimmed and marked busy until the answer settles. */
-function RefreshingRegionC({ states, className = '', children }) {
+function RefreshingRegionC({ id, states, className = '', children }) {
   const isRefreshing = states.some((state) => state.busy && state.data != null);
   const busyClass = isRefreshing ? 'opacity-60 motion-safe:transition-opacity' : '';
   return (
-    <div className={`${className} ${busyClass}`.trim() || undefined} aria-busy={isRefreshing ? 'true' : undefined}>
+    <div id={id} className={`${className} ${busyClass}`.trim() || undefined} aria-busy={isRefreshing ? 'true' : undefined}>
       {children}
     </div>
   );
@@ -530,7 +536,7 @@ function computeCacheShare(modelState) {
 }
 
 function KpiRowC({ kpiState, hot, trendState, modelState, days, onRetry }) {
-  const { RegionUnavailable } = window.UI;
+  const { getRegionView, RegionUnavailable } = window.UI;
   const kpi = kpiState.status === 'ready' ? (kpiState.data || {}) : {};
   const windowTotal = computeWindowTotal(trendState);
   const cacheShare = computeCacheShare(modelState);
@@ -542,8 +548,9 @@ function KpiRowC({ kpiState, hot, trendState, modelState, days, onRetry }) {
   return (
     <>
       {/* Payload failure is reported at the owning group — the KPI payload feeds tiles 1 and 3. */}
-      {kpiState.status === 'error' && (
-        <RegionUnavailable source="cost KPIs" error={kpiState.error} onRetry={onRetry} className="mb-4"/>
+      {getRegionView(kpiState) === 'error' && (
+        <RegionUnavailable source="cost KPIs" error={kpiState.error} isBusy={kpiState.busy}
+          focusTargetId={COST_REGION_IDS.kpis} onRetry={onRetry} className="mb-4"/>
       )}
       <div className="grid grid-cols-2 xl:grid-cols-4 gap-3 mb-4">
         <CostTileC
@@ -701,13 +708,14 @@ function CostTrendCard({ state, days, onRetry }) {
 }
 
 function CostTrendBody({ state, days, bandOn, onRetry }) {
-  const { LoadingPlaceholder, RegionUnavailable } = window.UI;
+  const { getRegionView, LoadingPlaceholder, RegionUnavailable } = window.UI;
 
-  if (state.status === 'loading') {
+  if (getRegionView(state) === 'loading') {
     return <LoadingPlaceholder label="cost trend" minHeight={260}/>;
   }
-  if (state.status === 'error') {
-    return <RegionUnavailable source="cost trend" error={state.error} onRetry={onRetry} minHeight={260}/>;
+  if (getRegionView(state) === 'error') {
+    return <RegionUnavailable source="cost trend" error={state.error} isBusy={state.busy} focusTargetId={COST_REGION_IDS.trend}
+      onRetry={onRetry} minHeight={260}/>;
   }
 
   const points = getTrendPoints(state);
@@ -966,13 +974,14 @@ function TokenLegend() {
 }
 
 function TokenStackedBody({ state, days, onRetry }) {
-  const { LoadingPlaceholder, RegionUnavailable } = window.UI;
+  const { getRegionView, LoadingPlaceholder, RegionUnavailable } = window.UI;
 
-  if (state.status === 'loading') {
+  if (getRegionView(state) === 'loading') {
     return <LoadingPlaceholder label="token trend" minHeight={300}/>;
   }
-  if (state.status === 'error') {
-    return <RegionUnavailable source="token trend" error={state.error} onRetry={onRetry} minHeight={300}/>;
+  if (getRegionView(state) === 'error') {
+    return <RegionUnavailable source="token trend" error={state.error} isBusy={state.busy} focusTargetId={COST_REGION_IDS.tokens}
+      onRetry={onRetry} minHeight={300}/>;
   }
 
   const points = getTrendPoints(state);
@@ -1311,13 +1320,14 @@ function rollupModelRows(modelRows, topN) {
 }
 
 function ModelCostBody({ state, days, onRetry }) {
-  const { LoadingPlaceholder, RegionUnavailable, SectionLabel, TableHead } = window.UI;
+  const { getRegionView, LoadingPlaceholder, RegionUnavailable, SectionLabel, TableHead } = window.UI;
 
-  if (state.status === 'loading') {
+  if (getRegionView(state) === 'loading') {
     return <LoadingPlaceholder label="cost by model" minHeight={300}/>;
   }
-  if (state.status === 'error') {
-    return <RegionUnavailable source="cost by model" error={state.error} onRetry={onRetry} minHeight={300}/>;
+  if (getRegionView(state) === 'error') {
+    return <RegionUnavailable source="cost by model" error={state.error} isBusy={state.busy} focusTargetId={COST_REGION_IDS.models}
+      onRetry={onRetry} minHeight={300}/>;
   }
 
   const rows = state.data?.rows ?? [];
@@ -1472,13 +1482,14 @@ function buildModelCostRows(rows) {
 // ModelCostBody 테이블이 담당(share 막대 스캔 가능). Recharts 는 다른 차트에서 계속 사용.
 
 function CacheHitBody({ state, days, onRetry }) {
-  const { LoadingPlaceholder, RegionUnavailable } = window.UI;
+  const { getRegionView, LoadingPlaceholder, RegionUnavailable } = window.UI;
 
-  if (state.status === 'loading') {
+  if (getRegionView(state) === 'loading') {
     return <LoadingPlaceholder label="cache hit rate" minHeight={220}/>;
   }
-  if (state.status === 'error') {
-    return <RegionUnavailable source="cache hit rate" error={state.error} onRetry={onRetry} minHeight={220}/>;
+  if (getRegionView(state) === 'error') {
+    return <RegionUnavailable source="cache hit rate" error={state.error} isBusy={state.busy} focusTargetId={COST_REGION_IDS.cache}
+      onRetry={onRetry} minHeight={220}/>;
   }
 
   const rows = state.data?.rows ?? [];
@@ -1679,7 +1690,7 @@ const SESSION_COLUMNS = [
 ];
 
 function SessionDistributionBody({ state, days, onRetry, onNav }) {
-  const { LoadingPlaceholder, RegionUnavailable, Table, getRowFocusProps } = window.UI;
+  const { getRegionView, LoadingPlaceholder, RegionUnavailable, Table, getRowFocusProps } = window.UI;
   const [histogramOpen, setHistogramOpen] = useStateC(false);
   const [openSession, setOpenSession] = useStateC(null);
   const [activeRow, setActiveRow] = useStateC(0);
@@ -1689,11 +1700,12 @@ function SessionDistributionBody({ state, days, onRetry, onNav }) {
   const bins = useMemoC(() => computeSessionBins(sessions), [sessions]);
   const rollup = useMemoC(() => rollupSessionRows(sessions, SESSION_TOPN), [sessions]);
 
-  if (state.status === 'loading') {
+  if (getRegionView(state) === 'loading') {
     return <LoadingPlaceholder label="session costs" minHeight={220}/>;
   }
-  if (state.status === 'error') {
-    return <RegionUnavailable source="session costs" error={state.error} onRetry={onRetry} minHeight={220}/>;
+  if (getRegionView(state) === 'error') {
+    return <RegionUnavailable source="session costs" error={state.error} isBusy={state.busy} focusTargetId={COST_REGION_IDS.sessions}
+      onRetry={onRetry} minHeight={220}/>;
   }
   if (sessions.length === 0) {
     return <EmptyStateC message={`No session events in the last ${days} days.`}/>;
@@ -1920,13 +1932,14 @@ function SessionBinTooltipC({ active, payload }) {
 }
 
 function ParseErrorBody({ state, days, onRetry }) {
-  const { Badge, LoadingPlaceholder, RegionUnavailable } = window.UI;
+  const { getRegionView, Badge, LoadingPlaceholder, RegionUnavailable } = window.UI;
 
-  if (state.status === 'loading') {
+  if (getRegionView(state) === 'loading') {
     return <LoadingPlaceholder label="unreadable log entries" minHeight={220}/>;
   }
-  if (state.status === 'error') {
-    return <RegionUnavailable source="unreadable log entries" error={state.error} onRetry={onRetry} minHeight={220}/>;
+  if (getRegionView(state) === 'error') {
+    return <RegionUnavailable source="unreadable log entries" error={state.error} isBusy={state.busy} focusTargetId={COST_REGION_IDS.log}
+      onRetry={onRetry} minHeight={220}/>;
   }
 
   const rows = state.data?.rows ?? [];
@@ -2187,13 +2200,14 @@ function turnStopReasonMeta(reason) {
 }
 
 function TurnStatsBody({ state, days, onRetry }) {
-  const { LoadingPlaceholder, RegionUnavailable } = window.UI;
+  const { getRegionView, LoadingPlaceholder, RegionUnavailable } = window.UI;
 
-  if (state.status === 'loading') {
+  if (getRegionView(state) === 'loading') {
     return <LoadingPlaceholder label="turn statistics" minHeight={220}/>;
   }
-  if (state.status === 'error') {
-    return <RegionUnavailable source="turn statistics" error={state.error} onRetry={onRetry} minHeight={220}/>;
+  if (getRegionView(state) === 'error') {
+    return <RegionUnavailable source="turn statistics" error={state.error} isBusy={state.busy} focusTargetId={COST_REGION_IDS.turns}
+      onRetry={onRetry} minHeight={220}/>;
   }
 
   const stopReasons = state.data?.stop_reasons ?? [];
