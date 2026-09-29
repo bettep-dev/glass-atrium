@@ -107,6 +107,9 @@ function ScreenWiki() {
         .w-type-row { display: grid; grid-template-columns: minmax(0, 9rem) minmax(0, 1fr) 3.5rem 2.5rem; align-items: center; gap: 0.75rem; }
         .w-type-track { display: block; height: 6px; border-radius: 9999px; background: rgb(var(--line)); }
         .w-type-fill { display: block; height: 100%; border-radius: inherit; background: rgb(var(--dim)); }
+        /* ponytail: bar ticks sit at slot centres and centre on them → edge dates overhang the card; !important beats the inline transform. Upgrade: anchor edge ticks in ui.jsx ChartTicks. */
+        .w-trend [data-chart-tick]:first-child { transform: none !important; }
+        .w-trend [data-chart-tick]:last-child { transform: translateX(-100%) !important; }
       `}</style>
 
 			<div className="flex-shrink-0">
@@ -139,7 +142,11 @@ function ScreenWiki() {
 						onRetry={triggerRefresh}
 					/>
 				)}
-				<PageVerdict tone={verdict.tone} chips={verdict.chips}>
+				<PageVerdict
+					tone={verdict.tone}
+					chips={verdict.chips}
+					freshness={{ at: settledAt, regions: waveStates }}
+				>
 					{verdict.text}
 				</PageVerdict>
 				{/* Above the fold — what needs a hand, then the health band. */}
@@ -221,12 +228,11 @@ const PROPOSAL_PARKED_DAYS = PROPOSAL_PARKED_RUNS;
 const MERGE_PROPOSALS_ID = "wiki-merge-proposals";
 
 // One sentence over the lane's checks; a parked proposal informs but never raises the tone.
+// An unread summary adds no sentence — PageVerdict's shared not-read note speaks for it.
 function buildWikiVerdictW(summaryState, indexState, backlogState, cyclesState) {
 	if (summaryState.status !== "ready") {
-		const text =
-			summaryState.status === "error"
-				? "The daily cycle summary could not be read."
-				: "Checking the wiki…";
+		const isFailed = window.UI.getRegionView(summaryState) === "error";
+		const text = isFailed ? "The daily cycle summary could not be read." : null;
 		return { tone: "neutral", text, chips: [] };
 	}
 
@@ -1550,13 +1556,15 @@ function SparseTrendW({ label, series, dates, stat }) {
 					Too few active days to draw a trend.
 				</div>
 			) : (
-				<TrendChart
-					label={label}
-					kind="bars"
-					tone="info"
-					points={series.map((value, i) => ({ label: dates[i] || "", value }))}
-					formatValue={formatCountW}
-				/>
+				<div className="w-trend">
+					<TrendChart
+						label={label}
+						kind="bars"
+						tone="info"
+						points={series.map((value, i) => ({ label: dates[i] || "", value }))}
+						formatValue={formatCountW}
+					/>
+				</div>
 			)}
 		</div>
 	);
