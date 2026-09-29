@@ -1909,7 +1909,7 @@ window.UI = {
   TypeScaleStyle, toneVarColor,
   titleOf, stripHtmlTags, formatRelativeTime,
   FreshnessStamp, getFreshnessState, getFreshnessVerdict, getRegionSummary, getRegionView, RefreshButton,
-  getFetchError, getErrorCopy, getSharedFailure, RegionUnavailable, PageErrorBanner, LoadingPlaceholder, SkeletonRows,
+  getFetchError, getErrorCopy, getSharedFailure, RegionUnavailable, PageErrorBanner, RetryButton, LoadingPlaceholder, SkeletonRows,
   INITIAL_REGION_STATE, putRegionRequest, putRegionData, putRegionFailure,
   setDisplayTimezone, getDisplayTimezone, tzShortLabel,
   formatKstDateTime, formatKstTime, formatKstDate, formatKstFull,

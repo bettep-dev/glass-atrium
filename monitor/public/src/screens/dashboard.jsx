@@ -284,7 +284,7 @@ const SHARED_FAILURE_HINT = 'Not loaded — see the notice above.';
 // 상태 4종이 서로 다르게 읽히는 지점 — loading(status 자리표시) · error(공용 unavailable 카드) · unavailable/empty(중립 문구) · ready(값).
 // 값 자리는 never 0-for-unknown: 미수신은 '—' 로 남는다.
 function StatusTile({ tile, onNav, onRetry, isRetryShared = false }) {
-  const { RegionUnavailable } = window.UI;
+  const { RegionUnavailable, RetryButton } = window.UI;
   return (
     <div id={getTileCardId(tile)} className={`card p-3 flex flex-col gap-1.5 ${tile.isBusy ? 'opacity-70' : ''}`.trim()}
       aria-busy={tile.isBusy ? 'true' : undefined}>
@@ -309,7 +309,7 @@ function StatusTile({ tile, onNav, onRetry, isRetryShared = false }) {
             }
           />
           {tile.canRetry && !isRetryShared && (
-            <button type="button" className="btn sm self-start" onClick={() => onRetry(tile.region)}>Retry</button>
+            <RetryButton onRetry={() => onRetry(tile.region)} isBusy={tile.isBusy} focusTargetId={getTileCardId(tile)}/>
           )}
           {/* the drill stays a card-foot child → mt-auto keeps the four CTAs on one baseline at xl */}
           {tile.target && <DrillLink target={tile.target} label={tile.targetLabel} onNav={onNav} className="self-start mt-auto"/>}

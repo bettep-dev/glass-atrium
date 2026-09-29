@@ -146,3 +146,10 @@ test("skeleton rows fill the real table body at the given row height and stay hi
     assert.equal(findNodes(row, (n) => n.type === "td").length, 4);
   }
 });
+
+test("screens reach the shared Retry control through window.UI, so their own Retry keeps the busy and focus contract", () => {
+  const exposed = (ui.window as { UI: Record<string, unknown> }).UI;
+
+  assert.equal(typeof ui.RetryButton, "function");
+  assert.equal(exposed.RetryButton, ui.RetryButton);
+});
