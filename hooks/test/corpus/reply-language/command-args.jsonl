@@ -1,0 +1,4 @@
+{"type":"user","entrypoint":"cli","origin":{"kind":"human"},"message":{"role":"user","content":"Open the plan"}}
+{"type":"assistant","entrypoint":"cli","message":{"role":"assistant","content":[{"type":"text","text":"Opened."}]}}
+{"type":"user","entrypoint":"cli","origin":{"kind":"human"},"message":{"role":"user","content":"<command-message>ga-review</command-message>\n<command-name>/ga-review</command-name>\n<command-args>이 변경 사항 검토해줘</command-args>"}}
+{"type":"user","entrypoint":"cli","origin":{"kind":"human"},"message":{"role":"user","content":"<command-message>ga-status</command-message>\n<command-name>/ga-status</command-name>"}}

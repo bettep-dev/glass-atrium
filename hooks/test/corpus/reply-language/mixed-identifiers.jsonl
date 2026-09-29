@@ -1,0 +1,3 @@
+{"type":"user","entrypoint":"cli","origin":{"kind":"human"},"message":{"role":"user","content":"Start the audit"}}
+{"type":"assistant","entrypoint":"cli","message":{"role":"assistant","content":[{"type":"text","text":"Started."}]}}
+{"type":"user","entrypoint":"cli","origin":{"kind":"human"},"message":{"role":"user","content":"claude-api prompt-audit 작업은 완료된 상태야?"}}
