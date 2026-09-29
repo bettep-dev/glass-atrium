@@ -23,17 +23,28 @@ Maintainer-facing material for that rule file. Nothing here binds an agent; the 
 - **Folding the delta-core and the three outside rules into one canonical list is open work**: it needs a per-bullet audit, since the delta-core is the file's canonical statement of the rules it lists.
 - **Keep the delta-core's bold lead phrase** (the words before its em dash): `hooks/test/inject-scope-rules-nodrop.bats` → `RETIRED_NEEDLES` asserts it ABSENT from slot 1, and the check proves nothing once the phrase no longer exists in the source.
 - **Precondition the retirement rests on**: `python3 hooks/lib/inject_chunk.py --audit` MUST report `events=none` for every member. An OVERFLOW displaces a member band, and no slot-1 copy remains behind it.
+  - Re-run the audit after any growth of this file and compare each member's `chunks=` with the header's `slots=`. A chunk past the last slot → split `## Agent Injection Core` at H3 or add a slot.
 
 ## Readers and coupled tests
 
 - `hooks/lib/inject_chunk.py` reads the file by registry membership and packs it at heading boundaries.
 - `hooks/test/inject-scope-rules.bats` → the retired naming case plants a synthetic `AGENT-INJECT:NAMING` pair at the old default path and asserts slot 1 never extracts it; it never reads this file.
-- `skills/glass-atrium-dev-naming/SKILL.md` keeps the on-demand detail; it and `skills/glass-atrium-dev-naming/references/VARIABLES-BOOLEANS.md` cite the rule file by heading and bold lead. Each literal below is load-bearing — rename one and fix its citers in the same pass:
-  - `## Agent Injection Core` — `SKILL.md`
-  - `## Core rules outside the delta-core` — `SKILL.md` · `references/VARIABLES-BOOLEANS.md`
-  - **Canonical verb set (PRIMARY)** — `SKILL.md`
-  - **Identifier-kind binary** — `SKILL.md` · `references/VARIABLES-BOOLEANS.md`
-  - **Reduction-floor guardrail** (the bold lead's opening words) — `SKILL.md`
+- `skills/glass-atrium-dev-naming/SKILL.md` keeps the on-demand detail. It, `references/VARIABLES-BOOLEANS.md`, `references/ANTI-PATTERNS.md` and the reviewer (`agents/glass-atrium-qa-code-reviewer.md` → `### Naming Checks` and both `### Naming Edge Cases` tables) cite the rule file by heading and bold lead. Each literal below is load-bearing — rename one and fix its citers in the same pass:
+  - `## Agent Injection Core` — `SKILL.md` · `references/ANTI-PATTERNS.md`
+  - `## Core rules outside the delta-core` — `SKILL.md` · `references/VARIABLES-BOOLEANS.md` · `references/ANTI-PATTERNS.md`
+  - **Canonical verb set (PRIMARY)** — `SKILL.md` · `references/ANTI-PATTERNS.md` · the reviewer
+  - **One verb per purpose per layer** — `SKILL.md` · `references/ANTI-PATTERNS.md`
+  - **Identifier-kind binary** — `SKILL.md` · `references/VARIABLES-BOOLEANS.md` · the reviewer
+  - **No-stutter** — `references/ANTI-PATTERNS.md` · the reviewer
+  - **Reduction-floor guardrail** (the bold lead's opening words) — `SKILL.md` · the reviewer
+  - **Read-down naming** · **Prefix-family grouping** — the reviewer
+- The delta-core carries each rule, one Bad → Good pair and the exclusions a DEV agent needs to write a compliant name. Every other edge-case verdict lives once in the reviewer's two `### Naming Edge Cases` tables.
+  - The rule file's `## On-demand detail` points to the **Naming edge cases** bullet in `### Naming Checks`, which names both tables. Rename that lead or any of the three headings and fix the pointers in the same pass.
+- The delta-core's flat-only clause under **Prefix-family grouping** and the reviewer's flat-only rows must give one verdict on a relational column, mapped ORM field or other flat-only name. Change either and re-read the other in the same pass; `agents/glass-atrium-dev-db.md` → **Schema** (FK `{table}_id`, OLAP denormalization) is the DEV rule they must not contradict.
+- Outbound: the reviewer's `### Naming Edge Cases — Scope and Kind` cites `skills/glass-atrium-dev-naming/SKILL.md` → **Family alignment**. Rename that skill bold lead and fix the reviewer in the same pass.
+- Outbound: the reviewer's `### Naming Edge Cases — Family Shapes` log-or-error-text row cites `skills/glass-atrium-dev-naming/references/ANTI-PATTERNS.md` → **Cross-boundary names keep their qualifier**; its in-code row applies **Reduction-floor guardrail** alone.
+  - Keep the split at the log/error boundary, and fix the reviewer in the same pass as any rename of that skill bold lead.
+- Outbound: the rule file's scope lines and the reviewer's `### Naming Edge Cases — Scope and Kind` cite `scoped/shared-testing.md` → `### Names, comments and test data`. Rename that heading and fix both in the same pass.
 
 ## Manifest-regeneration preconditions
 

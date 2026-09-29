@@ -185,7 +185,8 @@
           "scoped/shared-comment-logging.md",
           "scoped/shared-investigation-discipline.md",
           "scoped/shared-code-structure.md",
-          "scoped/shared-naming.md"
+          "scoped/shared-naming.md",
+          "scoped/shared-testing.md"
         ],
         "conditional": [
           {

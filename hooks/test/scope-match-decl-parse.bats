@@ -166,3 +166,126 @@ hooks/x.sh' \
 @test "every field name drops in either case" {
   assert_entries '[SCOPE] Files=hooks/a.sh DELIVERABLE=bug-fix Out=none' 'hooks/a.sh'
 }
+
+# --- declaration-line selection from record 0 ------------------------------------------------
+# A delegation prompt routinely quotes earlier `[SCOPE]`-bearing text (a verdict, a rule excerpt)
+# ahead of its own declaration. Selecting that quoted line either read a wrong file list (a FALSE
+# excess on the declared path) or read nothing and skipped the comparison (a silently lost signal).
+
+# $1 = record-0 prompt text → prints the entries scope_decl_from_record0 hands the field parser.
+record0_entries() {
+  # shellcheck disable=SC2154  # BATS_TEST_TMPDIR is set by bats per test.
+  local tpath="${BATS_TEST_TMPDIR}/transcript.jsonl" line
+  jq -cn --arg t "${1}" '{type:"user", message:{role:"user", content:$t}}' >"${tpath}"
+  line="$(scope_decl_from_record0 "${tpath}")"
+  scope_decl_files "${line}"
+}
+
+@test "record 0 yields the line-opening declaration whatever [SCOPE] text precedes or decorates it" {
+  local real='[SCOPE] files=hooks/real.sh · deliverable=fix · out=none'
+  local -a names=(
+    'quoted verdict first'
+    'earlier-round prose declaration first'
+    'placeholder rule excerpt first'
+    'mention without files= first'
+    'block-quoted declaration first'
+    'JSON-quoted fix prose first'
+    'a later line-opening declaration does not override the first'
+    'harness-indented declaration'
+    'list-marker bullet declaration'
+    'numbered-item declaration'
+    'backtick-wrapped declaration'
+    'bold-wrapped token'
+    'backtick-wrapped mention with an empty files= value first'
+    'bulleted backtick-wrapped mention with an empty files= value first'
+    'bold-wrapped mention with an empty files= value first'
+    'backtick-wrapped path value'
+    'bold-wrapped path value'
+    'whole-line bold declaration'
+    'backtick-wrapped verdict with prose after the wrap first'
+    'bulleted backtick-wrapped verdict with prose after the wrap first'
+    'numbered bold-wrapped verdict with prose after the wrap first'
+    'backtick-wrapped token with prose after its value first'
+    'bulleted bold-wrapped token with prose after a path list first'
+    'backtick-wrapped token closed by a pipe separator'
+    'bold-wrapped token closed by a grammar key'
+    'bold-wrapped token with a wrapped value closed by end of line'
+    'backtick-wrapped token whose value ends in a full stop first'
+    'bold-wrapped token whose value ends in a colon first'
+    'backtick-wrapped token whose value ends in a semicolon first'
+    'bold-wrapped token whose value ends in a closing parenthesis first'
+    'backtick-wrapped token with a middot glued to prose first'
+    'bold-wrapped token with a pipe glued to prose first'
+    'bold-wrapped token whose path embeds a grammar key first'
+  )
+  # shellcheck disable=SC2016  # backticks in the rows are literal prompt text, not expansions.
+  local -a prompts=(
+    "> reviewer: the [SCOPE] files= list omitted hooks/test/x.bats"$'\n'"${real}"
+    "Earlier round: [SCOPE] files=hooks/old.sh · out=none"$'\n'"${real}"
+    '  `[SCOPE] files=<comma-separated allowed paths/dirs> · deliverable=<type> · out=<excluded|none>`'$'\n'"${real}"
+    '[SCOPE] — the 7th delegation element'$'\n'"${real}"
+    '> [SCOPE] files=hooks/quoted.sh · out=none'$'\n'"${real}"
+    '"fix": "Add hooks/y.sh to [SCOPE] files=. Rewrite the rest"'$'\n'"${real}"
+    "${real}"$'\n''[SCOPE] files=hooks/later.sh · out=none'
+    "Fix E1."$'\n'"  ${real}"
+    "- ${real}"
+    "1. ${real}"
+    "\`${real}\`"
+    '**[SCOPE]** files=hooks/real.sh · deliverable=fix · out=none'
+    '`[SCOPE] files=` must list the tests'$'\n'"${real}"
+    '- `[SCOPE] files=` completeness duty: declare tests'$'\n'"${real}"
+    '**[SCOPE] files=** is required'$'\n'"${real}"
+    '[SCOPE] files=`hooks/real.sh` · deliverable=fix · out=none'
+    '[SCOPE] files=**hooks/real.sh** · deliverable=fix · out=none'
+    '**[SCOPE] files=hooks/real.sh**'
+    '`[SCOPE] files=hooks/real.sh` lists one path only'$'\n'"${real}"
+    '- `[SCOPE] files=hooks/real.sh` omitted hooks/test/real.bats'$'\n'"${real}"
+    '1. **[SCOPE] files=hooks/real.sh** is under-declared'$'\n'"${real}"
+    '`[SCOPE]` files=hooks/old.sh lists one path only'$'\n'"${real}"
+    '- **[SCOPE]** files=hooks/old.sh, hooks/test/old.bats omitted the manifest'$'\n'"${real}"
+    '`[SCOPE]` files=hooks/real.sh | deliverable=fix'
+    '**[SCOPE]** files=hooks/real.sh deliverable=fix out=none'
+    '**[SCOPE]** files=`hooks/real.sh`'
+    '`[SCOPE]` files=hooks/old.sh.'$'\n'"${real}"
+    '**[SCOPE]** files=hooks/old.sh:'$'\n'"${real}"
+    '`[SCOPE]` files=hooks/old.sh;'$'\n'"${real}"
+    '**[SCOPE]** files=hooks/old.sh)'$'\n'"${real}"
+    '`[SCOPE]` files=hooks/old.sh·this was wrong'$'\n'"${real}"
+    '**[SCOPE]** files=hooks/old.sh|this was wrong'$'\n'"${real}"
+    '**[SCOPE]** files=hooks/layout=x was narrow'$'\n'"${real}"
+  )
+  local i got
+  for i in "${!names[@]}"; do
+    got="$(record0_entries "${prompts[${i}]}")"
+    [[ "${got}" == 'hooks/real.sh' ]] || {
+      echo "${names[${i}]}: expected [hooks/real.sh], got [${got}]" >&2
+      return 1
+    }
+  done
+}
+
+@test "a wrapped token keeps every path of a comma-separated list closed by a separator or end of line" {
+  local -a names=('middot-closed list' 'end-of-line-closed list')
+  # shellcheck disable=SC2016  # backticks in the rows are literal prompt text, not expansions.
+  local -a prompts=(
+    '`[SCOPE]` files=hooks/a.sh, hooks/test/a.bats · deliverable=fix · out=none'
+    '**[SCOPE]** files=`hooks/a.sh`,`hooks/test/a.bats`'
+  )
+  local i got
+  for i in "${!names[@]}"; do
+    got="$(record0_entries "${prompts[${i}]}")"
+    [[ "${got}" == 'hooks/a.sh'$'\n''hooks/test/a.bats' ]] || {
+      echo "${names[${i}]}: expected [hooks/a.sh hooks/test/a.bats], got [${got}]" >&2
+      return 1
+    }
+  done
+}
+
+@test "record 0 with [SCOPE] only mid-line yields no declaration (the comparison is skipped)" {
+  local got
+  got="$(record0_entries 'Implement it. [SCOPE] files=hooks/a.sh · out=none')"
+  [[ -z "${got}" ]] || {
+    echo "mid-line prose parsed as a declaration: [${got}]" >&2
+    return 1
+  }
+}
