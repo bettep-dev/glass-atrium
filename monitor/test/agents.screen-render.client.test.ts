@@ -260,6 +260,13 @@ async function renderComponent(name: string, props: Record<string, unknown>): Pr
   return renderScreen(React.createElement(mod[name] as Component, props));
 }
 
+// The band renders the tile list the page builds once, so a test builds it the same way.
+async function renderStatusBand({ onRetry, ...sources }: Record<string, unknown>): Promise<RenderedNode | string | null> {
+  const mod = await loadAgentsScreen();
+  const buildTiles = mod.buildAgentStatusTiles as (s: Record<string, unknown>) => unknown[];
+  return renderComponent("AgentStatusBand", { tiles: buildTiles(sources), onRetry });
+}
+
 test("the alarm lane renders loading, error, unavailable and a loaded zero distinctly", async () => {
   const onRetry = () => undefined;
   const loading = await renderComponent("AgentAlarmLane", { state: LOADING_STATE, onRetry });
@@ -285,7 +292,7 @@ test("the unsafe-to-route tile shows a count only when the breaker state actuall
     onRetry: () => undefined,
   };
   const getUnsafeTile = async (summaryState: unknown) => {
-    const tree = await renderComponent("AgentStatusBand", { ...bandProps, summaryState });
+    const tree = await renderStatusBand({ ...bandProps, summaryState });
     // Pre-order → the first div holding only this tile's text is the tile's own card.
     return findNodes(tree, (n) => n.type === "div" && collectText(n).startsWith("Unsafe to route")
       && !collectText(n).includes("Failed"))[0] ?? null;
@@ -482,7 +489,7 @@ test("a failing pair drills to Task results filtered by its agent, task type and
 
 test("every status-band tile names the window its count covers", async () => {
   const ready = { status: "ready", data: [], error: null };
-  const tree = await renderComponent("AgentStatusBand", {
+  const tree = await renderStatusBand({
     days: 14,
     summaryState: getSummaryState(BREAKER_LOADED_ZERO),
     failureState: ready,
@@ -854,7 +861,7 @@ test("the status band counts failed agents in red and carries blocked-only agent
   ];
   for (const row of rows) {
     const failureByAgent = new Map(row.fails.map((fail, i) => [`glass-atrium-dev-${i}`, { fail_count: fail, blocked_count: 5, total_breakages: fail + 5, breakage_rate: 0.1 }]));
-    const tree = await renderComponent("AgentStatusBand", {
+    const tree = await renderStatusBand({
       days: 14, summaryState: getSummaryState(BREAKER_LOADED_ZERO), failureState: ready, overageState: ready,
       failureByAgent, overageByAgent: new Map(), onRetry: () => undefined,
     });
@@ -1055,7 +1062,7 @@ test("the over-cap and needs-context tiles state their rate over runs, and the t
   ];
   for (const row of rows) {
     const overageByAgent = new Map(Array.from({ length: row.overCap }, (_, i) => [`run-${i}`, { overage_count: 1 }]));
-    const tree = await renderComponent("AgentStatusBand", {
+    const tree = await renderStatusBand({
       days: 14, summaryState: getSummaryState(null, agents), failureState: ready, overageState: ready,
       failureByAgent: new Map(), overageByAgent, onRetry: () => undefined,
     });
@@ -1197,9 +1204,16 @@ describe("the Agents page verdict rolls up the health rule and every status tile
     { name: "a watch-band agent alone makes the page warn under the Watch label", revision: [...healthy, ...watched], sources: {}, tone: "warn", text: /^Last 30d: 1 agent to watch/ },
     { name: "a failed run makes the page crit though every agent's health is ok", revision: healthy, sources: { failureByAgent: failedRun }, tone: "crit", text: /1 agent with a failed run \(dev-shell\)/ },
     { name: "a suspended agent makes the page crit though every agent's health is ok", revision: healthy, sources: { summaryState: getSummaryState({ ...BREAKER_LOADED_ZERO, suspended_count: 1 }) }, tone: "crit", text: /1 unsafe to route now/ },
+    {
+      name: "a current breaker clause leads and never sits under the window prefix",
+      revision: healthy,
+      sources: { summaryState: getSummaryState({ ...BREAKER_LOADED_ZERO, suspended_count: 1 }), failureByAgent: failedRun },
+      tone: "crit",
+      text: /^1 unsafe to route now · last 30d: 1 agent with a failed run/,
+    },
     { name: "a clear fleet with every judged agent healthy is ok, the thin one left out", revision: [...healthy, ...thin], sources: {}, tone: "ok", text: /the 1 agent with enough runs .* is healthy/ },
     { name: "no agent above the low-N floor claims no tone", revision: thin, sources: {}, tone: "neutral", text: /too few runs/ },
-    { name: "an unread status tile holds back the all-clear", revision: healthy, sources: { failureState: ERROR_STATE }, tone: "neutral", text: /couldn't check failed/ },
+    { name: "an unread status tile holds back the all-clear", revision: healthy, sources: { failureState: ERROR_STATE }, tone: "neutral", text: /couldn't check failed runs\.$/ },
   ];
   for (const row of rows) {
     test(row.name, async () => {

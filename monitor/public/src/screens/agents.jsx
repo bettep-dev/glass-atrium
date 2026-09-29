@@ -303,6 +303,8 @@ function ScreenAgents() {
     setDrawerAgent(nextId);
   }, [sortedAgents, drawerAgent]);
 
+  const statusTiles = buildAgentStatusTiles({ days, summaryState, failureState, overageState, failureByAgent, overageByAgent });
+
   // 6 카드 grid — 4-row layout (Row 2/4 col-span-full · Row 1/3 grid-cols-3).
   return (
     <div className="flex flex-col">
@@ -350,20 +352,12 @@ function ScreenAgents() {
       <AgentPageVerdict
         revisionState={revisionState}
         reviewByAgentState={reviewByAgentState}
-        statusTiles={buildAgentStatusTiles({ days, summaryState, failureState, overageState, failureByAgent, overageByAgent })}
+        statusTiles={statusTiles}
         days={days}/>
 
       <AgentAlarmLane state={summaryState} onRetry={regionRetry}/>
 
-      <AgentStatusBand
-        days={days}
-        summaryState={summaryState}
-        failureState={failureState}
-        overageState={overageState}
-        failureByAgent={failureByAgent}
-        overageByAgent={overageByAgent}
-        onRetry={regionRetry}
-      />
+      <AgentStatusBand tiles={statusTiles} onRetry={regionRetry}/>
 
       {/* Both "which agent is broken" lists side by side at xl, stacked below it. */}
       <window.UI.SplitRow ratio="1:1" className="mb-4">
@@ -456,12 +450,12 @@ function getHealthFeederAg(revisionState, reviewByAgentState) {
 }
 
 function getTileFeederAg(tile) {
-  const source = tile.label.toLowerCase();
+  const { source, isCurrent } = tile;
   if (tile.status === 'loading') return { state: 'pending', tone: null, clauses: [], source };
   if (tile.status !== 'ready') return { state: 'unchecked', tone: null, clauses: [], source };
 
   const isFlagged = tile.tone === 'warn' || tile.tone === 'crit';
-  return { state: 'ready', tone: isFlagged ? tile.tone : 'ok', clauses: isFlagged ? [tile.clause] : [], source };
+  return { state: 'ready', tone: isFlagged ? tile.tone : 'ok', clauses: isFlagged ? [tile.clause] : [], source, isCurrent };
 }
 
 // A known warn/crit stands; the all-clear waits until every feeder has answered. warn reads 'Watch', the drawer's word.
@@ -469,7 +463,7 @@ function getAgentVerdict(feeders, days) {
   const flagged = feeders.filter((feeder) => feeder.tone === 'warn' || feeder.tone === 'crit');
   if (flagged.length > 0) {
     const tone = window.UI.getWorstTone(flagged.map((feeder) => feeder.tone));
-    return { tone, label: tone === 'warn' ? 'Watch' : undefined, text: `Last ${days}d: ${flagged.flatMap((feeder) => feeder.clauses).join(' · ')}.` };
+    return { tone, label: tone === 'warn' ? 'Watch' : undefined, text: getFlaggedTextAg(flagged, days) };
   }
   if (feeders.some((feeder) => feeder.state === 'pending')) return null;
 
@@ -482,6 +476,15 @@ function getAgentVerdict(feeders, days) {
   }
   const judged = health.judged === 1 ? 'the 1 agent with enough runs' : `all ${health.judged} agents with enough runs`;
   return { tone: 'ok', text: `No agent failed or is unsafe to route, and ${judged} in the last ${days}d ${health.judged === 1 ? 'is' : 'are'} healthy on rework and review flags.` };
+}
+
+// current-state clauses lead · windowed clauses sit under one 'last Nd' prefix
+function getFlaggedTextAg(flagged, days) {
+  const currentClauses = flagged.filter((feeder) => feeder.isCurrent).flatMap((feeder) => feeder.clauses);
+  const windowClauses = flagged.filter((feeder) => !feeder.isCurrent).flatMap((feeder) => feeder.clauses);
+  const windowText = windowClauses.length > 0 ? `last ${days}d: ${windowClauses.join(' · ')}` : '';
+  const text = [...currentClauses, windowText].filter(Boolean).join(' · ');
+  return `${text.charAt(0).toUpperCase()}${text.slice(1)}.`;
 }
 
 function formatAgentCountAg(count) {
@@ -623,10 +626,10 @@ function AgentAlarmRow({ alarm }) {
 
 // Status band — the four fleet questions the first screenful answers. Each tile
 // carries its own payload state so one unloaded source never reads as a zero.
-function AgentStatusBand({ onRetry, ...sources }) {
+function AgentStatusBand({ tiles, onRetry }) {
   return (
     <div className="grid grid-cols-2 xl:grid-cols-4 gap-4 mb-4 items-stretch">
-      {buildAgentStatusTiles(sources).map((tile) => (
+      {tiles.map((tile) => (
         <AgentStatusTile key={tile.key} {...tile} onRetry={onRetry}/>
       ))}
     </div>
@@ -655,6 +658,8 @@ function buildAgentStatusTiles({ days, summaryState, failureState, overageState,
     {
       key: 'unsafe',
       label: 'Unsafe to route',
+      source: 'routing safety',
+      isCurrent: true,
       sub: breaker && breaker.source === 'loaded' ? `now · of ${breaker.registry_agents} registered agents` : 'circuit-breaker state · now',
       unavailableSub: CIRCUIT_BREAKER_UNREADABLE_COPY,
       status: summaryState.status !== 'ready' ? summaryState.status : unsafeCount === null ? 'unavailable' : 'ready',
@@ -666,6 +671,7 @@ function buildAgentStatusTiles({ days, summaryState, failureState, overageState,
     {
       key: 'failed',
       label: 'Failed',
+      source: 'failed runs',
       sub: blockedCount
         ? `agents with a failed run · ${blockedCount} blocked (a compliant halt, not a defect) · last ${days}d`
         : `agents with a failed run · last ${days}d`,
@@ -678,6 +684,7 @@ function buildAgentStatusTiles({ days, summaryState, failureState, overageState,
     {
       key: 'overCap',
       label: 'Over tool-use cap',
+      source: 'tool-use overruns',
       sub: joinSubAg(['runs that crossed their tool-use budget', getRunRateTextAg(overCapCount, totalRuns), `last ${days}d`]),
       status: overageState.status,
       value: overCapCount,
@@ -688,6 +695,7 @@ function buildAgentStatusTiles({ days, summaryState, failureState, overageState,
     {
       key: 'needsContext',
       label: 'Needs context',
+      source: 'needs-context runs',
       sub: `${joinSubAg(['needs_context outcomes', getRunRateTextAg(needsContextCount, totalRuns), `last ${days}d`])} — fix the delegation prompt`,
       status: summaryState.status,
       value: needsContextCount,
