@@ -4,8 +4,8 @@
 #
 # Behavior:
 #   1. Walk the shell files of the SCOPE_DIRS trees plus the SCOPE_FILES root scripts, or the --path
-#      overrides. A scope run then prints a NOT_READ line for every tracked shell file it skips —
-#      EXCLUDED_FILE plus the UNREAD_FILES list — so a green run never reads as full coverage.
+#      overrides. A scope run then prints a NOT_READ line for every tracked shell file it skips — the
+#      UNREAD_FILES list — so a green run never reads as full coverage.
 #   2. Find each recursive or forced delete on a non-comment physical line (one line is one site)
 #   3. Count the one converted shape: an `if ga_guard_path "${V}"; then` whose first command deletes
 #      the single operand "${V:?}" (a literal sub-path allowed), on one line or under that if line
@@ -40,9 +40,6 @@ readonly SCOPE_DIRS
 # Shell entry points at the repository root, which no scope tree reaches.
 SCOPE_FILES=(glass-atrium install.sh)
 readonly SCOPE_FILES
-# The scratch-cwd violation probe deletes its own canary through a cwd glob on purpose — that delete
-# is what it proves the suite seat confines.
-readonly EXCLUDED_FILE='test/scratch-cwd-violation-probe.bats'
 # Tracked shell files no scope entry reaches — the scope itself is the owner's decision:
 #   - monitor/scripts/*: the monitor session's area;
 #   - build-glass-atrium.sh and the two skills scripts: widening the scope to them is the owner's call.
@@ -98,7 +95,7 @@ audit_tree() {
   while IFS= read -r file; do
     rel="${file#"${root_dir}/"}"
     # shellcheck disable=SC2310  # predicate of tests and expansions only — nothing for errexit to catch
-    if [[ "${rel}" == "${EXCLUDED_FILE}" ]] || ! is_shell_file "${file}"; then
+    if ! is_shell_file "${file}"; then
       continue
     fi
     audit_file "${rel}" "${file}"
@@ -253,7 +250,7 @@ audit_scope() {
     fi
     audit_file "${rel}" "${abs}"
   done
-  for rel in "${EXCLUDED_FILE}" "${UNREAD_FILES[@]}"; do
+  for rel in "${UNREAD_FILES[@]}"; do
     audit_cli_report NOT_READ "${rel}" 'tracked shell file outside the audited surface'
   done
 }

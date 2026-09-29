@@ -1,7 +1,7 @@
 #!/usr/bin/env bats
 # audit-rm.bats — pins scripts/audit-rm.sh: exactly one converted delete shape, the three named unsafe
-# kinds, the closed two-label annotation vocabulary, the scope (five trees plus two root scripts, minus the
-# probe file), the blocking exit contract, and the NOT_READ disclosure of every tracked shell file it skips.
+# kinds, the closed two-label annotation vocabulary, the scope (five trees plus two root scripts, no file
+# exempt), the blocking exit contract, and the NOT_READ disclosure of every tracked shell file it skips.
 #
 # Every fixture line is test data the auditor reads and no shell runs.
 # This file is in the auditor's own scope, so each such line it flags is annotated not-executed in one of two ways:
@@ -80,16 +80,16 @@ is_shell_file() {
   [[ "${first}" =~ ${shebang_re} ]]
 }
 
-# Sorted list of the probe file plus every tracked shell file no scope entry reaches.
+# Sorted list of every tracked shell file no scope entry reaches.
 get_unread_shell_files() {
-  local tracked="" unread="${PROBE_FILE}" path=""
+  local tracked="" unread="" path=""
   tracked="$(git -C "${REPO_ROOT}" -c core.quotePath=false ls-files)"
   while IFS= read -r path; do
     if is_shell_file "${path}" && ! is_in_scope "${path}"; then
-      unread="${unread}"$'\n'"${path}"
+      unread="${unread}${path}"$'\n'
     fi
   done <<<"${tracked}"
-  LC_ALL=C sort <<<"${unread}"
+  printf '%s' "${unread}" | LC_ALL=C sort
 }
 
 @test "a guard-gated delete of the colon-question operand is converted, on one line or under its if line" {
@@ -194,7 +194,7 @@ get_unread_shell_files() {
   done
 }
 
-@test "a scope run covers the five trees' shell files and the two root scripts, and skips the violation probe" {
+@test "a scope run audits every shell file of the five trees and the two root scripts, exempting no file" {
   local root="${BATS_TEST_TMPDIR}/root"
   # GA-RM[not-executed]: auditor fixture text, written to a file no shell runs
   local site='rm -f -- "${A}"'
@@ -211,12 +211,17 @@ get_unread_shell_files() {
   write_fixture "${root}/other.sh" "${site}"
   write_fixture "${root}/monitor/scripts/prune-dist.sh" "${site}"
   run bash "${AUDIT_SH}" --root "${root}" --advisory
-  # A finding location is path:line; the probe's NOT_READ line carries no line number.
-  [[ "${output}" != *"${PROBE_FILE}:"[0-9]* ]] || {
-    echo "the probe file was audited: ${output}"
+  # No file is exempt by path → the probe's site is reported like any other.
+  [[ "${output}" == *"${PROBE_FILE}:1: "* ]] || {
+    echo "the probe file was not audited: ${output}"
     return 1
   }
-  assert_summary "scope run" "converted=0 annotated=0 unconverted=7 quality_reject=0"
+  assert_summary "scope run" "converted=0 annotated=0 unconverted=8 quality_reject=0"
+}
+
+@test "the violation probe's one delete site counts as an annotated exception" {
+  run bash "${AUDIT_SH}" --path "${REPO_ROOT}/${PROBE_FILE}"
+  assert_summary "violation probe" "converted=0 annotated=1 unconverted=0 quality_reject=0"
 }
 
 @test "a scope run blocks on an unconverted site or a grammar reject, an --advisory or --path run does not" {
@@ -252,7 +257,7 @@ get_unread_shell_files() {
   done
 }
 
-@test "a scope run names as NOT_READ exactly the probe file and every tracked shell file outside scope" {
+@test "a scope run names as NOT_READ exactly the tracked shell files outside scope" {
   local toplevel="" root="${BATS_TEST_TMPDIR}/root" expected="" named=""
   if ! toplevel="$(git -C "${REPO_ROOT}" rev-parse --show-toplevel 2>/dev/null)" \
     || [[ "${toplevel}" != "${REPO_ROOT}" ]]; then
