@@ -302,7 +302,7 @@ The scan establishes **routing** facts — what exists, where it lives, who owns
 
 #### Delegation-size discipline (per-delegation, distinct from runtime concurrency)
 
-- **Standing obligation — fires at every DEV spawn and at every schema-mode non-DEV analysis spawn**:
+- **Standing obligation — fires at every DEV spawn and at every schema-mode non-DEV analysis/research/audit spawn**:
   - Emit a `[SIZE-EST]` token at either spawn kind; on a borderline count, round UP and prefer the split (**Honesty framing**).
   - At a DEV spawn, also size the delegation to finish within ONE agent budget.
   - At an analysis spawn, before any read, bound the read allowlist (**Reserve-then-check**), field count (**Output-field cap**) and effort (**Effort matched to depth**) so the reserved emit budget stays unspent.

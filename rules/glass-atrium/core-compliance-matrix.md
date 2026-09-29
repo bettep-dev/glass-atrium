@@ -169,7 +169,7 @@ Tier membership — which rules a scope *should* load — is distinct from deliv
   - It stays out of the startup instruction-size total even after it loads.
   - **Honest backing — UNMEASURED**: both claims above — when such a file loads, and its absence from the startup total — rest on a static read of the host's rules loader, not on a live session.
     - Until a live check on the deployed files settles them, state neither as measured.
-  - **Glob base**: on the user-level `rules` route these files reach, a glob matches the Read file's path relative to the session's ORIGINAL cwd, not the project root [static read].
+  - **Glob base**: on the user-level `rules` route these files reach, a glob matches the Read file's path relative to the session's original cwd, not the project root [static read].
     - From cwd `$HOME`, a file anywhere under it qualifies.
     - From a repo cwd, only files inside that repo qualify, so a Read under `~/.glass-atrium` there loads neither file.
   - A subagent's glob base is its own context cwd [hypothesis — not traced].
@@ -180,7 +180,7 @@ Tier membership — which rules a scope *should* load — is distinct from deliv
     - A cell reader reports a permanent false divergence for glass-atrium-qa-debugger on every reviewer-only QA cell (`### Tier 3 — Cross-cutting (conditional inheritance)` → **QA**).
   - **Why the registry and not this file:** the registry is merge-claimed by the updater (`autoagent/lib/roster_merge.py`) and this file is not, so a lifecycle-created agent's row survives a deploy and a hand-added Scope Legend row does not.
 - **Standing consequence**: a duty that binds an agent may live in that agent's `rules.scope` or `rules.shared` member file. It may NEVER live in a CONDITIONAL `scoped/` member, an un-membered file, or a skill the reader never loads — those deliver a pointer at most.
-  - A duty may live in a path-scoped `rules/glass-atrium/` member: its BODY, not a pointer, reaches the reader, but only on a Read its globs match (**Path-scoped delivery** above).
+  - A duty may live in a path-scoped `rules/glass-atrium/` member: its body, not a pointer, reaches the reader, but only on a Read its globs match (**Path-scoped delivery** above).
   - A body mirror whose canonical reaches the same reader is redundant; keep a mirror only where the canonical is one of those three.
 - **Chunk budget**: the part slots pack against a per-chunk budget, not slot 1's block ceiling. Nothing may be shed silently — a section that cannot fit, and an agent whose chunk count exceeds the bound slots, each MUST produce a stderr warning, a drop-sink record and an in-context marker naming a path pointer.
   - A membership entry resolving to a file absent on the live install takes the same loud-and-degrade path.
