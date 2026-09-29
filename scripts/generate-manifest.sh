@@ -89,8 +89,8 @@
 # Named exit codes: 1=--check divergence · 3=git absent/not a work tree ·
 # 4=jq or sha256 tool absent · 5=manifest missing · 6=empty generation or a
 # manifest that fails structural validation · 7=apply-spine.sh missing or
-# failed to load · 8=a tracked manifest path carries a backslash, a control byte
-# (0x01-0x1f, DEL) or a non-UTF-8 byte.
+# failed to load · 8=a tracked manifest path carries a backslash, a control
+# byte (0x01-0x1f, DEL) or a non-UTF-8 byte.
 set -euo pipefail
 
 # Single Atrium system version-of-record. Stamped into manifest.version on

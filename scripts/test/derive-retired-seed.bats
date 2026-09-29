@@ -125,7 +125,7 @@ TRACKED_QUOTED_ROWS=(
 )
 
 @test "derive: a still-tracked path git would quote is not seeded once it leaves the disk" {
-  local row pairs=()
+  local row tracked_file pairs=()
   git -C "${WORK}" config core.quotePath true
   seed_history
   for row in "${TRACKED_QUOTED_ROWS[@]}"; do
@@ -135,7 +135,8 @@ TRACKED_QUOTED_ROWS=(
   write_manifest_revision 'r4' "${P2}=${HP2}" "${pairs[@]}"
   # The on-disk arm is removed so only the tracked-paths oracle can keep each row out.
   for row in "${TRACKED_QUOTED_ROWS[@]}"; do
-    rm -f -- "${WORK}/${row#*|}"
+    tracked_file="${WORK}/${row#*|}"
+    if ga_guard_path "${tracked_file}"; then rm -f -- "${tracked_file:?}"; fi
   done
 
   run "${SCRIPT}"

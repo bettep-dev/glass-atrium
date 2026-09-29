@@ -236,7 +236,7 @@ spooled_field() {
   local -a expected=('silent' 'excess' 'silent')
   local block recorded reasons got
   for i in "${!names[@]}"; do
-    rm -rf -- "${SPOOL_DIR}"
+    if ga_guard_path "${SPOOL_DIR}"; then rm -rf -- "${SPOOL_DIR:?}"; fi
     block="$(completion_block 'result: done' 'task_type: bug-fix' 'metric_pass: true' 'confidence: high' \
       "files: ${authored[${i}]}" 'style_ref: hooks/a.sh' 'summary: fixed a')"
     write_transcript "${prompts[${i}]}" "${block}"
