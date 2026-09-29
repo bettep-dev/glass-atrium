@@ -395,18 +395,43 @@ test("buildAgentFailureRowsO: sampled agents lead by failure rate, low-sample ag
   }
 });
 
-test("buildNeedsYouReasonsO: the hero tile's reasons come from the window, and an unsent count stays unknown", () => {
-  const data = { ...aboveFloor({ done: 180, fail: 8, blocked: 4 }), overall: { total: 200, writer_open_count: 17 } };
-  const reasons = sameRealm(helpers.buildNeedsYouReasonsO(data));
-  assert.deepStrictEqual(
-    reasons.map((r) => [r.key, r.count]),
-    [["broken", 12], ["open", 17]],
-    "failed+blocked and unclosed caveats, each with its own count",
-  );
-  assert.strictEqual(reasons[0].tone, "crit", "12 of 200 breaches the 5% breakage threshold");
+// The cross-analysis body carries writer_open_count per by_result row only — its FILTER is
+// result-agnostic, so every row carries one and only the done_with_concerns row is the caveat count.
+const withByResult = (byResult: Record<string, unknown>[] | undefined) => ({
+  ...aboveFloor({ done: 180, fail: 8, blocked: 4 }),
+  overall: { total: 200, reconstructed_total: 0, ...(byResult ? { by_result: byResult } : {}) },
+});
 
-  const legacy = sameRealm(helpers.buildNeedsYouReasonsO(aboveFloor({ done: 190 })));
-  assert.strictEqual(legacy.find((r) => r.key === "open")!.count, null, "no writer_open_count → unknown, never a resolved zero");
+describe("buildNeedsYouReasonsO: the open-caveat reason reads the done_with_concerns row the endpoint sends", () => {
+  const rows = [
+    {
+      name: "a non-caveat row's writer_open_count never adds to the caveat reason",
+      byResult: [
+        { result: "done", count: 180, writer_open_count: 90 },
+        { result: "done_with_concerns", count: 20, writer_open_count: 17 },
+        { result: "fail", count: 8, writer_open_count: 8 },
+      ],
+      open: 17,
+    },
+    { name: "a loaded window with no done_with_concerns row has no open caveat", byResult: [{ result: "done", count: 200, writer_open_count: 0 }], open: 0 },
+    { name: "an unsent by_result stays unknown, never a resolved zero", byResult: undefined, open: null },
+    {
+      name: "a caveat row without writer_open_count stays unknown, not the closure-blind count",
+      byResult: [{ result: "done_with_concerns", count: 20 }],
+      open: null,
+    },
+  ];
+  for (const row of rows) {
+    test(row.name, () => {
+      const reasons = sameRealm(helpers.buildNeedsYouReasonsO(withByResult(row.byResult)));
+      assert.strictEqual(reasons.find((r) => r.key === "open")!.count, row.open);
+    });
+  }
+
+  test("the broken reason keeps the band's failed+blocked count and breakage tone", () => {
+    const [broken] = sameRealm(helpers.buildNeedsYouReasonsO(withByResult(undefined)));
+    assert.deepStrictEqual([broken.key, broken.count, broken.tone], ["broken", 12, "crit"], "12 of 200 breaches the 5% breakage threshold");
+  });
 });
 
 test("buildAnalyticsDataO → buildAgentFailureRowsO: every failing registry agent gets a row, however low its volume", () => {

@@ -1002,11 +1002,20 @@ function BandTileO({ tile, windowLabel, unloadedText = '—', reasons = null, cl
 // broken reuses the band's own breakage tone; open is null when the payload predates writer_open_count
 function buildNeedsYouReasonsO(data) {
   const brokenTile = buildStatusBandTilesO(data, null).find((tile) => tile.key === 'broken');
-  const writerOpen = Number(data?.overall?.writer_open_count);
   return [
     { key: 'broken', label: 'Failed or blocked', count: brokenTile.count, tone: brokenTile.tone },
-    { key: 'open', label: 'Caveat still open', count: Number.isFinite(writerOpen) ? Math.max(0, writerOpen) : null, tone: 'neutral' },
+    { key: 'open', label: 'Caveat still open', count: getOpenCaveatCountO(data?.overall), tone: 'neutral' },
   ];
+}
+
+// every by_result row carries writer_open_count (result-agnostic FILTER) → only the done_with_concerns row counts, never a sum;
+// an unsent field stays null instead of getWriterOpenCount's closure-blind fallback
+function getOpenCaveatCountO(overall) {
+  if (!Array.isArray(overall?.by_result)) return null;
+  const caveatRow = overall.by_result.find((row) => row?.result === 'done_with_concerns');
+  if (!caveatRow) return 0;
+  if (!Number.isFinite(caveatRow.writer_open_count)) return null;
+  return window.UI.resolveOutcomeRate(overall).openCaveats;
 }
 
 function NeedsYouReasonsO({ reasons }) {
