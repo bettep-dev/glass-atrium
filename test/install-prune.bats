@@ -73,16 +73,26 @@ plant_live_link() {
   ln -s "${src}" "${TARGET}/${target_rel}"
 }
 
+# Failed check → the last run's output + the actual state of <path> (a real dir recursively), then fail.
+fail_with_state() {
+  printf 'output:\n%s\n' "${output-}"
+  if [[ $# -gt 0 ]]; then
+    ls -ld -- "$1" 2>&1
+    [[ -d "$1" && ! -L "$1" ]] && ls -lAR -- "$1" 2>&1
+  fi
+  return 1
+}
+
 # === orphan removed ==========================================================
 @test "orphan symlink (broken, into GA, not in manifest) is unlinked" {
   write_manifest "agents/kept.md"
   plant_orphan_link "agents/orphan.md"
   run_prune_sandbox prune
-  [[ "${status}" -eq 0 ]]
-  [[ "${output}" == *"removed orphan GA symlink"* ]]
-  [[ "${output}" == *"1 pruned"* ]]
+  [[ "${status}" -eq 0 ]] || fail_with_state
+  [[ "${output}" == *"removed orphan GA symlink"* ]] || fail_with_state
+  [[ "${output}" == *"1 pruned"* ]] || fail_with_state
   # filesystem: the symlink is gone.
-  [[ ! -L "${TARGET}/agents/orphan.md" ]]
+  [[ ! -L "${TARGET}/agents/orphan.md" ]] || fail_with_state "${TARGET}/agents/orphan.md"
 }
 
 # === resolving symlink preserved =============================================
@@ -90,11 +100,11 @@ plant_live_link() {
   write_manifest "agents/kept.md"
   plant_live_link "agents/live.md"
   run_prune_sandbox prune
-  [[ "${status}" -eq 0 ]]
-  [[ "${output}" == *"0 pruned"* ]]
+  [[ "${status}" -eq 0 ]] || fail_with_state
+  [[ "${output}" == *"0 pruned"* ]] || fail_with_state
   # still present (criterion b: a resolving link is never a removal candidate).
-  [[ -L "${TARGET}/agents/live.md" ]]
-  [[ -e "${TARGET}/agents/live.md" ]]
+  [[ -L "${TARGET}/agents/live.md" ]] || fail_with_state "${TARGET}/agents/live.md"
+  [[ -e "${TARGET}/agents/live.md" ]] || fail_with_state "${TARGET}/agents/live.md"
 }
 
 # === manifest-listed broken symlink preserved + flagged ======================
@@ -102,12 +112,12 @@ plant_live_link() {
   write_manifest "agents/inmanifest.md"
   plant_orphan_link "agents/inmanifest.md"
   run_prune_sandbox prune
-  [[ "${status}" -eq 0 ]]
-  [[ "${output}" == *"broken GA symlink in manifest"* ]]
-  [[ "${output}" == *"1 flagged in-manifest"* ]]
+  [[ "${status}" -eq 0 ]] || fail_with_state
+  [[ "${output}" == *"broken GA symlink in manifest"* ]] || fail_with_state
+  [[ "${output}" == *"1 flagged in-manifest"* ]] || fail_with_state
   # NOT pruned — a transiently-missing should-exist source.
-  [[ "${output}" == *"0 pruned"* ]]
-  [[ -L "${TARGET}/agents/inmanifest.md" ]]
+  [[ "${output}" == *"0 pruned"* ]] || fail_with_state
+  [[ -L "${TARGET}/agents/inmanifest.md" ]] || fail_with_state "${TARGET}/agents/inmanifest.md"
 }
 
 # === non-symlink real file preserved =========================================
@@ -116,11 +126,11 @@ plant_live_link() {
   printf 'real\n' >"${TARGET}/agents/real.md"
   plant_orphan_link "agents/orphan.md"
   run_prune_sandbox prune
-  [[ "${status}" -eq 0 ]]
+  [[ "${status}" -eq 0 ]] || fail_with_state
   # the orphan goes, the real file stays.
-  [[ ! -L "${TARGET}/agents/orphan.md" ]]
-  [[ -f "${TARGET}/agents/real.md" ]]
-  [[ ! -L "${TARGET}/agents/real.md" ]]
+  [[ ! -L "${TARGET}/agents/orphan.md" ]] || fail_with_state "${TARGET}/agents/orphan.md"
+  [[ -f "${TARGET}/agents/real.md" ]] || fail_with_state "${TARGET}/agents/real.md"
+  [[ ! -L "${TARGET}/agents/real.md" ]] || fail_with_state "${TARGET}/agents/real.md"
 }
 
 # === --dry-run removes nothing ===============================================
@@ -128,11 +138,11 @@ plant_live_link() {
   write_manifest "agents/kept.md"
   plant_orphan_link "agents/orphan.md"
   run_prune_sandbox --dry-run prune
-  [[ "${status}" -eq 0 ]]
-  [[ "${output}" == *"would prune orphan GA symlink"* ]]
-  [[ "${output}" == *"1 would be pruned"* ]]
+  [[ "${status}" -eq 0 ]] || fail_with_state
+  [[ "${output}" == *"would prune orphan GA symlink"* ]] || fail_with_state
+  [[ "${output}" == *"1 would be pruned"* ]] || fail_with_state
   # the link is STILL present (report-only).
-  [[ -L "${TARGET}/agents/orphan.md" ]]
+  [[ -L "${TARGET}/agents/orphan.md" ]] || fail_with_state "${TARGET}/agents/orphan.md"
 }
 
 # === empty-set no-op =========================================================
@@ -140,9 +150,9 @@ plant_live_link() {
   write_manifest "agents/kept.md"
   printf 'real\n' >"${TARGET}/agents/real.md"
   run_prune_sandbox prune
-  [[ "${status}" -eq 0 ]]
-  [[ "${output}" == *"no GA symlinks under target"* ]]
-  [[ -f "${TARGET}/agents/real.md" ]]
+  [[ "${status}" -eq 0 ]] || fail_with_state
+  [[ "${output}" == *"no GA symlinks under target"* ]] || fail_with_state
+  [[ -f "${TARGET}/agents/real.md" ]] || fail_with_state "${TARGET}/agents/real.md"
 }
 
 # === never-touch path preserved ==============================================
@@ -154,11 +164,11 @@ plant_live_link() {
   mkdir -p "${TARGET}/projects"
   plant_orphan_link "projects/stray.md"
   run_prune_sandbox prune
-  [[ "${status}" -eq 0 ]]
-  [[ "${output}" == *"never-touch path preserved"* ]]
-  [[ "${output}" == *"0 pruned"* ]]
-  [[ "${output}" == *"1 preserved never-touch"* ]]
-  [[ -L "${TARGET}/projects/stray.md" ]]
+  [[ "${status}" -eq 0 ]] || fail_with_state
+  [[ "${output}" == *"never-touch path preserved"* ]] || fail_with_state
+  [[ "${output}" == *"0 pruned"* ]] || fail_with_state
+  [[ "${output}" == *"1 preserved never-touch"* ]] || fail_with_state
+  [[ -L "${TARGET}/projects/stray.md" ]] || fail_with_state "${TARGET}/projects/stray.md"
 }
 
 # === foreign dangling symlink preserved ======================================
@@ -168,10 +178,10 @@ plant_live_link() {
   # matches it, so it is neither pruned nor even counted as a candidate.
   ln -s "${SANDBOX}/foreign/nope.md" "${TARGET}/agents/foreign.md"
   run_prune_sandbox prune
-  [[ "${status}" -eq 0 ]]
+  [[ "${status}" -eq 0 ]] || fail_with_state
   # no GA symlinks were enumerated → the no-orphan no-op path.
-  [[ "${output}" == *"no GA symlinks under target"* ]]
-  [[ -L "${TARGET}/agents/foreign.md" ]]
+  [[ "${output}" == *"no GA symlinks under target"* ]] || fail_with_state
+  [[ -L "${TARGET}/agents/foreign.md" ]] || fail_with_state "${TARGET}/agents/foreign.md"
 }
 
 # === precondition loud-fail — missing target dir =============================
@@ -179,16 +189,16 @@ plant_live_link() {
   write_manifest "agents/kept.md"
   GA_TARGET_HOME="${SANDBOX}/does-not-exist" GA_MANIFEST="${MANIFEST}" \
     run "${REAL_GA}" prune
-  [[ "${status}" -eq 2 ]]
-  [[ "${output}" == *"prune target home not a directory"* ]]
+  [[ "${status}" -eq 2 ]] || fail_with_state
+  [[ "${output}" == *"prune target home not a directory"* ]] || fail_with_state
 }
 
 # === precondition loud-fail — unparseable manifest ===========================
 @test "manifest with non-array .files exits PRUNE_EXIT_NO_MANIFEST (3)" {
   printf '{"files": "not-an-array"}\n' >"${MANIFEST}"
   run_prune_sandbox prune
-  [[ "${status}" -eq 3 ]]
-  [[ "${output}" == *"manifest absent or .files not an array"* ]]
+  [[ "${status}" -eq 3 ]] || fail_with_state
+  [[ "${output}" == *"manifest absent or .files not an array"* ]] || fail_with_state
 }
 
 @test "an orphan whose unlink leaves it in place exits PRUNE_EXIT_UNLINK_SURVIVED (4) and is not counted" {
