@@ -40,7 +40,7 @@ Common rules for **all agents** (ALL scope).
 
 The canonical rule for what language this system writes in.
 
-- **Replies are written in the user's question language** — the response-language rule. A reply is a conversation turn, not a produced artifact: the final message of each turn addressed to a human user, clarifying questions, and the end-of-job results summary.
+- **Replies are written in the user's question language** — the response-language rule. A reply is a conversational message, not a produced artifact: the final message of each turn addressed to a human user, clarifying questions, and the end-of-job results summary.
   - Mid-turn progress notes between tool calls may be in English.
   - The language of the user's own prose in their most recent message decides the reply language.
   - A message with no prose of its own (a bare paste, a slash command with no text) takes the language of the most recent earlier user message that has prose of its own; until any user message in the session has prose of its own, replies are in English.
