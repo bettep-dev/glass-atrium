@@ -2,7 +2,7 @@
 
 - **Why authors declare roles**: role information does not exist in code, so `enforce-workflow-verify-stage.sh` cannot infer verify roles from script layout: the AUTHOR declares them, in parity with `[ENTRY-CLASS]` / `[SIZE-EST]` / `[DOC-ROUTE]` / plan-ref.
 - **This gate**: `rules/glass-atrium/orchestrator-role.md` → `### Plan Direction Verification (Stage-2 gate)`; its manual-vs-ultracode backstop split is `#### Backstop asymmetry (manual vs. ultracode)` in the same file.
-- **Pointer site**: `#### Ultracode declaration contract` in that file — the SoT for the one-block obligation, its `/* */` block-comment home, and when it fires (ultracode only, with the manual path's discipline).
+- **Pointer site**: `#### Ultracode declaration contract` in that file.
 - **Strict line grammar** — keys `{verify, impl, impl-computed}`, ONE line per key, names validated against the runtime DEV_SET roster (fed by agent_lifecycle sync-gate-roster — never a second hardcoded list):
   - `verify:` takes one of exactly two forms.
     - **Team form** — the comma-separated literal `verify: glass-atrium-qa-code-reviewer, glass-atrium-dev-<domain>`: reviewer + exactly ONE `dev-*` type. A space-joined pair collapses to one unknown name → `block-grammar`.

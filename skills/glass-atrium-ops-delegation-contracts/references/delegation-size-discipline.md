@@ -1,7 +1,7 @@
 # Delegation-size discipline (per-delegation, distinct from runtime concurrency)
 
 - **Where it sits**: under `rules/glass-atrium/orchestrator-role.md` → `### Spawn Budget`, beside the runtime concurrency ceilings (`#### Depth and concurrency ceilings`) it is distinct from.
-- **Pointer site**: `#### Delegation-size discipline` in that file — the SoT for the sizing duties of both modes, when they fire, the split triggers with the measured truncation band, and COUNTER-CAVEAT.
+- **Pointer site**: `#### Delegation-size discipline` in that file.
 
 ## DEV-mode token
 
@@ -40,7 +40,7 @@
 
 ## Effort-scaling table
 
-- **Pointer site**: `rules/glass-atrium/orchestrator-role.md` → `#### Analysis fan-out and team cardinality` → **Effort-scaling by task shape** — the SoT for the duty to pick the agent count from the task's shape, and when it fires.
+- **Pointer site**: `rules/glass-atrium/orchestrator-role.md` → `#### Analysis fan-out and team cardinality` → **Effort-scaling by task shape**.
 - **What it sets — detail**: it is the companion to `[SIZE-EST]`, which sizes each agent; this table holds the shape → cardinality mapping.
 
 | Task shape | Team cardinality | Example |

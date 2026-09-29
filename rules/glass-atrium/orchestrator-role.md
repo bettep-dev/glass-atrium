@@ -165,7 +165,7 @@ The probes run during the Decision phase, **serially in this order**: Permission
 - **Visual-Weight Probe (pre-delegation)**: fires only when the sub-task is a user-requested HTML primary.
   - From the sub-task draft outline, enumerate T1-T5 indicators (T1 Mermaid ≥3 · T2 comparison tables ≥3 with ≥4 rows · T3 KPI cards ≥5 · T4 non-canonical badges · T5 user signals design quality matters OR explicit external-share intent).
   - On 2+ co-occurrence → compose `{glass-atrium-intel-reporter|glass-atrium-intel-planner, glass-atrium-design-designer}` with `order: parallel`. On <2 → solo composition.
-- SoT for the rest: `skills/glass-atrium-ops-delegation-contracts/references/deliverable-exposure.md` — signal literals, NOT-triggers, routing targets, canonicals, the local-destination scope, the visual floor, dev-front's entry, rationale.
+- SoT for the rest: `skills/glass-atrium-ops-delegation-contracts/references/deliverable-exposure.md` — signal literals, NOT-triggers, routing targets, canonicals, the turn-0 call, the local-destination scope, Probe detail with the visual floor and dev-front's entry, rationale.
 
 #### Monitoring-phase notes
 
@@ -229,7 +229,7 @@ The scan establishes **routing** facts — what exists, where it lives, who owns
 
 **Attestation** (**the obligations above are unconditional and do not depend on this token**): on a strict subset of a plan, emit `[PLAN-SUBSET] included=<ids> landed=<ids|none> excluded=<ids|none> order=T1>T5b-1;T2>T3` (`order=n/a` when no edge).
 
-- SoT for the rest: `skills/glass-atrium-ops-delegation-contracts/references/plan-edge-discovery.md` — declaration sites, per-path ordering, the `<id>` and no-free-text token rules.
+- SoT for the rest: `skills/glass-atrium-ops-delegation-contracts/references/plan-edge-discovery.md` — declaration sites, the unit read, instruments, per-path ordering, why HALT, the `<id>` and no-free-text token rules, placement, honest backing.
 
 ### Plan Direction Verification (Stage-2 gate)
 
@@ -247,7 +247,7 @@ The scan establishes **routing** facts — what exists, where it lives, who owns
   - either `revise`/`infeasible` → one glass-atrium-intel-planner revision, a supersede-POST.
   - a 2nd mismatch → orchestrator judgment via `### Failure Recovery Loop` — **path only**: its Retry max-2 count is a separate mechanism, NOT the revision count.
 - **Activation scope**: complex plans only. A plan whose work classifies simple/exempt under `#### Entry classification (DEV delegations)` skips Stage 2 and passes the format gate only.
-- SoT for the rest: `skills/glass-atrium-ops-delegation-contracts/references/plan-direction-verification.md` — selection examples, verdict axes, scope-fidelity, standing jobs, count basis, backstop detail.
+- SoT for the rest: `skills/glass-atrium-ops-delegation-contracts/references/plan-direction-verification.md` — selection examples, verdict axes, the direction rule's detail, scope-fidelity, standing jobs, count basis, backstop detail.
 
 #### Backstop asymmetry (manual vs. ultracode)
 
@@ -314,7 +314,7 @@ The scan establishes **routing** facts — what exists, where it lives, who owns
     - **`files × 4.5` anchor (Empirical tool_use calibration)**: a `ceil(files × 4.5)` estimate above ~30.
   - **Analysis mode**: `reads~ > ~20 OR fields > 3 OR (broad scope AND effort:high)` → decompose by domain from the start (`#### Analysis fan-out and team cardinality` below).
 - **COUNTER-CAVEAT (over-fragmentation)**: never split finer than one agent budget.
-- SoT for the rest: `skills/glass-atrium-ops-delegation-contracts/references/delegation-size-discipline.md` — the analysis-spawn roster, token formats, formulas, field and effort values, calibration, gates, honest backing.
+- SoT for the rest: `skills/glass-atrium-ops-delegation-contracts/references/delegation-size-discipline.md` — the analysis-spawn roster, token formats, formulas, field and effort values, calibration, gates, honest backing, notes.
 
 #### Analysis fan-out and team cardinality
 
@@ -422,7 +422,7 @@ The standard plan/report-then-build flow as ONE lifecycle.
    - **Live-suite instrument, run from the install root**: `AUTOAGENT_PREFLIGHT_ACTIVE=1 scripts/run-bats-parallel.sh` MUST exit 0 before the PR is opened.
      - Before running a suite file that executes the postgres orphan-clear guards, clear `scoped/shared-testing.md` → Destructive-Path Suite Safety (live-postgres reach) — pointer only, the procedure is single-sited there.
    - SoT for the rest: `skills/glass-atrium-ops-delegation-contracts/references/live-deploy-gate.md`.
-     - Held there: the per-cycle order, combined-tree deploy, live-install (not repo-tree) verification, green-before-PR, post-merge sha parity and narrow cases, the delegated-deploy boundary (manual live-install writes FORBIDDEN).
+     - Held there: the per-cycle order, combined-tree deploy, live-install (not repo-tree) verification, green-before-PR, post-merge sha parity and narrow cases, the delegated-deploy boundary (manual live-install writes FORBIDDEN), the bundle-member list, honest framing.
 
 > Detail: skills/glass-atrium-ops-orchestrator.md → Pipeline Acceptance Criteria (per-stage acceptance detail for the steps above · the in-script verify-stage skeleton for ultracode)
 

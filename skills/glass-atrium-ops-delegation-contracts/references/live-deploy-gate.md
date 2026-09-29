@@ -1,6 +1,6 @@
 # Live deploy + empirical verification (PRE-MERGE delivery gate — live-install bundle members only)
 
-- **Pointer site**: `rules/glass-atrium/orchestrator-role.md` → `## Document-Driven Workflow` step 6 — the SoT for what the gate binds, the deploy-and-verify-before-PR default, the live-suite exit-0 threshold and the Destructive-Path clearance.
+- **Pointer site**: `rules/glass-atrium/orchestrator-role.md` → `## Document-Driven Workflow` step 6.
 
 ## Per-cycle order
 

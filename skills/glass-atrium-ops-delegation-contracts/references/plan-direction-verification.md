@@ -1,8 +1,7 @@
 # Plan Direction Verification (Stage-2 gate) — team, standing jobs and outcome
 
 - **Pointer site**: `rules/glass-atrium/orchestrator-role.md` → `### Plan Direction Verification (Stage-2 gate)`.
-  - It is the SoT for when the gate fires, its ownership, the team and the DEV hard gate, DEV selection, the direction-not-completeness duty, the inputs the orchestrator supplies, revision and escalation, and activation scope.
-- **Backstop pointer site**: `#### Backstop asymmetry (manual vs. ultracode)` in the same file — the SoT for the identical policy, both backstops and the primary authoring obligation.
+- **Backstop pointer site**: `#### Backstop asymmetry (manual vs. ultracode)` in the same file.
 
 ## Team composition and verdicts
 

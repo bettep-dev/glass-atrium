@@ -17,15 +17,14 @@ Applies to all agents.
   - **Whole-tree regeneration** (manifest, lockfile, index file) reads the tree, not the index.
     - Example: `scripts/generate-manifest.sh` takes its file list from `git ls-files` but its hashes from the working tree, so a run beside another track's uncommitted edits writes hashes that match no commit.
 - Index mutation is **any command that writes the index or moves HEAD** — `add`, `rm`, `mv`, `reset`, `restore`, `checkout`, `stash`, `commit`, `merge`, `rebase`, `cherry-pick`, `apply --index`. The list gives examples of the class, not the class itself; if unsure, treat a command as index mutation.
-- The sub-rules below are cumulative — each binds on its own, and satisfying one never discharges another.
+- The rules below are cumulative — each binds on its own, and satisfying one never discharges another.
 - **Delegation-side half (binds the agent, not only the composer)**: every delegation into a worktree MUST state one of these contracts in the prompt:
   - `worktree <path> — INDEX OWNER: commit your own work`
   - `worktree <path> — SHARED: do NOT mutate the index (see the class above); checkpoint to ~/.claude-personal/projects/<home-encoded>/memory/progress-*.md instead`
+  - Placed in a worktree alongside other concurrent tracks by a delegation that states no contract → treat it as SHARED (the contract above) and ask rather than committing.
   - The token is INDEX OWNER, not SOLE OWNER: it grants sole INDEX MUTATION, not sole presence.
   - An agent-body obligation to commit incrementally is conditional on holding INDEX OWNER.
   - An agent-body obligation to run a whole-tree regeneration is conditional on the regeneration barrier, which NEITHER token grants — a delegation that wants one states the exclusive-tree grant explicitly.
-- Where a delegation places you in a worktree alongside other concurrent tracks, index mutation is permitted only to the stated INDEX OWNER.
-  - Where such a delegation states no contract, treat that worktree as SHARED — checkpoint to `~/.claude-personal/projects/<home-encoded>/memory/progress-*.md` and ask rather than committing.
 - **Index-owner rule** (answers the shared index): at most ONE index-mutating agent per worktree at a time.
   - A second index-mutating agent enters only through its own worktree. Where no second worktree is available the two tracks run **SEQUENTIALLY** — the parallel default yields rather than proceeding on file-disjointness alone.
 - **Regeneration barrier** (answers whole-tree regeneration): a regeneration is a BARRIER, not an index operation.
@@ -37,7 +36,7 @@ Applies to all agents.
   - Sequential succession is not isolation.
 - **Who commits**: an agent commits its OWN work, in a worktree where it is the index owner.
   - The orchestrator does not AUTHOR a commit of another agent's changes (`orchestrator-role.md` → `## Orchestrator Identity` — execution is forbidden).
-  - An integration **merge** of an already-committed branch under the Merge-authorization rule (`core-git-workflow.md` → Pull Requests) is a different act and is unaffected; `skills/glass-atrium-ops-orchestrator.md` → `**Commit strategy**` describes that merge.
+  - An integration **merge** of an already-committed branch under the Merge-authorization rule (`## Pull Requests` below) is a different act and is unaffected; `skills/glass-atrium-ops-orchestrator.md` → `**Commit strategy**` describes that merge.
 - **Read-only** means **mutates no index AND modifies no tracked path** in the worktree; read-only tracks may share a worktree freely.
   - Both halves are required: a reviewer fixing a typo modifies a tracked path, and a reviewer running `git stash` to peek at a clean tree destroys the owner's staged work without modifying one.
 

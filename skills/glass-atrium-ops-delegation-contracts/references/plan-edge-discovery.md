@@ -1,6 +1,6 @@
 # Plan edge discovery (Decision phase — fires for any delegation derived from a persisted plan, whole or subset)
 
-- **Pointer site**: `rules/glass-atrium/orchestrator-role.md` → `### Phase Notes` → `#### Plan edge discovery` — the SoT for the obligation, the three predecessor classes with the HALT, its two exits and its reach past `[ENTRY-CLASS] simple-task`, and the `[PLAN-SUBSET]` attestation grammar.
+- **Pointer site**: `rules/glass-atrium/orchestrator-role.md` → `### Phase Notes` → `#### Plan edge discovery`.
 - **Relation to ordering**: ordering is already mandatory under that file's `#### Automatic Parallelization` → guardrail (c), and scoping a subset drops no edge. This check finds the edges and handles a missing predecessor.
 
 ## Declaration sites
