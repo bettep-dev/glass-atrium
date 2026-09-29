@@ -78,7 +78,7 @@ interface OutcomesHelpers {
   getGraderSentenceO: (breakdown: Record<string, unknown> | null | undefined) => string | null;
   getConfidentFailedO: (crosstab: { total: number; byCell: Record<string, { count: number }> } | null) => { count: number; share: number } | null;
   getCrosstabVisibleRowsO: (byCell: Record<string, { count: number }>) => string[];
-  PageVerdictO: (props: { analyticsState: PayloadState<unknown>; windowDays: number }) => RenderNode | null;
+  PageVerdictO: (props: { analyticsState: PayloadState<unknown>; channelLivenessState: PayloadState<{ alerting?: string[] }>; windowDays: number }) => RenderNode | null;
   buildNeedsYouReasonsO: (data: unknown) => { key: string; label: string; count: number | null; tone: string }[];
   buildAnalyticsDataO: (overall: unknown) => { overall: { by_agent_top_10?: unknown }; agentStack: unknown };
   isNeedsYouRowO: (row: LedgerRow, closedAt: string | null) => boolean;
@@ -444,17 +444,22 @@ describe("PageVerdictO: the Task results verdict follows the shared outcome-rate
     const total = Object.values(counts).reduce((a, b) => a + b, 0);
     return { status: "ready" as const, data: { overall: { total, reconstructed_total: 0, by_result: byResult(counts, open) }, byResultCount: counts } };
   };
+  const recording = { status: "ready" as const, data: { alerting: [] as string[] } };
+  const healthyWindow = ready({ done: 195, fail: 2, done_with_concerns: 3 }, 1);
   const rows = [
-    { name: "breakage at or above 5% is crit", state: ready({ done: 180, fail: 12, done_with_concerns: 8 }, 2), tone: "crit", text: /6\.0% of 200 .*failed or were blocked/ },
-    { name: "open caveats at or above 10% alone are warn", state: ready({ done: 170, done_with_concerns: 30 }, 25), tone: "warn", text: /12\.5% still carry an open caveat/ },
-    { name: "both shares under their steps are ok", state: ready({ done: 195, fail: 2, done_with_concerns: 3 }, 1), tone: "ok", text: /1\.0% of 200/ },
-    { name: "a sample under the low-N floor claims no tone", state: ready({ fail: 10 }), tone: "neutral", text: /too few to judge/ },
-    { name: "an empty window claims no tone", state: ready({}), tone: "neutral", text: /No task results/ },
-    { name: "a failed read is unknown, never all-clear", state: { status: "error" as const, error: "boom" }, tone: "neutral", text: /unknown/ },
+    { name: "breakage at or above 5% is crit", state: ready({ done: 180, fail: 12, done_with_concerns: 8 }, 2), liveness: recording, tone: "crit", text: /6\.0% of 200 .*failed or were blocked/ },
+    { name: "open caveats at or above 10% alone are warn", state: ready({ done: 170, done_with_concerns: 30 }, 25), liveness: recording, tone: "warn", text: /12\.5% still carry an open caveat/ },
+    { name: "both shares under their steps are ok", state: healthyWindow, liveness: recording, tone: "ok", text: /1\.0% of 200/ },
+    { name: "a sample under the low-N floor claims no tone", state: ready({ fail: 10 }), liveness: recording, tone: "neutral", text: /too few to judge/ },
+    { name: "an empty window claims no tone", state: ready({}), liveness: recording, tone: "neutral", text: /No task results/ },
+    { name: "a failed read is unknown, never all-clear", state: { status: "error" as const, error: "boom" }, liveness: recording, tone: "neutral", text: /unknown/ },
+    { name: "a stopped recording channel is crit over an ok rate", state: healthyWindow, liveness: { status: "ready" as const, data: { alerting: ["subagent-stop"] } }, tone: "crit", text: /Recording stopped on subagent-stop .*understated/ },
+    { name: "an unchecked recording channel holds back the all-clear", state: healthyWindow, liveness: { status: "error" as const, error: "boom" }, tone: "neutral", text: /couldn't check the recording channels/ },
+    { name: "a flagged rate stands while the recording channels are still loading", state: ready({ done: 180, fail: 12, done_with_concerns: 8 }, 2), liveness: { status: "loading" as const }, tone: "crit", text: /failed or were blocked/ },
   ];
   for (const row of rows) {
     test(row.name, () => {
-      const node = helpers.PageVerdictO({ analyticsState: row.state, windowDays: 30 }) as RenderNode;
+      const node = helpers.PageVerdictO({ analyticsState: row.state, channelLivenessState: row.liveness, windowDays: 30 }) as RenderNode;
       assert.strictEqual(node.type, helpers.window.UI.PageVerdict, "renders the shared PageVerdict atom");
       assert.strictEqual(node.props!.tone, row.tone);
       assert.match(String(node.children.join("")), row.text);
@@ -462,7 +467,7 @@ describe("PageVerdictO: the Task results verdict follows the shared outcome-rate
   }
 
   test("loading renders no verdict rather than a premature one", () => {
-    assert.strictEqual(helpers.PageVerdictO({ analyticsState: { status: "loading" }, windowDays: 30 }), null);
+    assert.strictEqual(helpers.PageVerdictO({ analyticsState: { status: "loading" }, channelLivenessState: recording, windowDays: 30 }), null);
   });
 });
 

@@ -670,7 +670,7 @@ function ScreenOutcomes({ onNav }) {
         </div>
       )}
 
-      <PageVerdictO analyticsState={analyticsState} windowDays={analyticsPeriod}/>
+      <PageVerdictO analyticsState={analyticsState} channelLivenessState={channelLivenessState} windowDays={analyticsPeriod}/>
 
       <AlarmLaneO channelLivenessState={channelLivenessState} searchState={searchState}/>
 
@@ -1017,36 +1017,48 @@ function getOpenCaveatCountO(overall) {
   const caveatRow = overall.by_result.find((row) => row?.result === 'done_with_concerns');
   if (!caveatRow) return 0;
   if (!Number.isFinite(caveatRow.writer_open_count)) return null;
-  return window.UI.resolveOutcomeRate(overall).openCaveats;
+  return window.UI.getWriterOpenCount(caveatRow);
 }
 
-// page verdict = the Dashboard's resolveOutcomeRate judgment as shares; the hero tile keeps the absolute counts
-function PageVerdictO({ analyticsState, windowDays }) {
-  const { PageVerdict, LOW_N_MIN, formatInt } = window.UI;
+// page verdict = the Dashboard's resolveOutcomeRate judgment as shares; a stopped recording channel outranks it,
+// since every count it reads is understated · the all-clear waits for the liveness read
+function PageVerdictO({ analyticsState, channelLivenessState, windowDays }) {
+  const { PageVerdict } = window.UI;
+  const silent = channelLivenessState.status === 'ready' ? (channelLivenessState.data?.alerting || []) : [];
 
+  if (silent.length > 0) {
+    return <PageVerdict tone="crit" className="mb-4">{`Recording stopped on ${silent.join(', ')} — every count on this page is understated until it resumes.`}</PageVerdict>;
+  }
   if (analyticsState.status === 'loading') return null;
   if (analyticsState.status !== 'ready') {
     return <PageVerdict tone="neutral" className="mb-4">Task-result health is unknown — the window totals didn't load.</PageVerdict>;
   }
 
-  const rate = window.UI.resolveOutcomeRate(analyticsState.data?.overall);
-  const windowLabel = `last ${windowDays}d`;
+  const verdict = getRateVerdictO(window.UI.resolveOutcomeRate(analyticsState.data?.overall), `last ${windowDays}d`);
+  if (verdict.tone !== 'ok' || channelLivenessState.status === 'ready') {
+    return <PageVerdict tone={verdict.tone} chips={verdict.chips} className="mb-4">{verdict.text}</PageVerdict>;
+  }
+  const gap = channelLivenessState.status === 'loading' ? 'still checking the recording channels' : "couldn't check the recording channels";
+  return <PageVerdict tone="neutral" className="mb-4">{`${verdict.text.slice(0, -1)} — ${gap}.`}</PageVerdict>;
+}
+
+function getRateVerdictO(rate, windowLabel) {
+  const { LOW_N_MIN, formatInt } = window.UI;
   if (rate.status === 'empty' || rate.status === 'unavailable') {
-    return <PageVerdict tone="neutral" className="mb-4">{`No task results written by agents in the ${windowLabel} to judge.`}</PageVerdict>;
+    return { tone: 'neutral', chips: [], text: `No task results written by agents in the ${windowLabel} to judge.` };
   }
   if (rate.status === 'low-n') {
-    return <PageVerdict tone="neutral" className="mb-4">{`Only ${formatInt(rate.writerTotal)} agent-written records in the ${windowLabel} — too few to judge (needs ${LOW_N_MIN}).`}</PageVerdict>;
+    return { tone: 'neutral', chips: [], text: `Only ${formatInt(rate.writerTotal)} agent-written records in the ${windowLabel} — too few to judge (needs ${LOW_N_MIN}).` };
   }
-
-  const chips = rate.tone === 'ok' ? [] : [{ key: 'needs-you', label: 'Needs you', targetId: LEDGER_NEEDS_YOU_ID }];
-  return (
-    <PageVerdict tone={rate.tone} chips={chips} className="mb-4">
-      {`${formatShareO(rate.breakage, rate.writerTotal)} of ${formatInt(rate.writerTotal)} agent-written records in the ${windowLabel} failed or were blocked, and ${formatShareO(rate.openCaveats, rate.writerTotal)} still carry an open caveat.`}
-    </PageVerdict>
-  );
+  return {
+    tone: rate.tone,
+    chips: rate.tone === 'ok' ? [] : [{ key: 'needs-you', label: 'Needs you', targetId: LEDGER_NEEDS_YOU_ID }],
+    text: `${formatShareO(rate.breakage, rate.writerTotal)} of ${formatInt(rate.writerTotal)} agent-written records in the ${windowLabel} failed or were blocked, and ${formatShareO(rate.openCaveats, rate.writerTotal)} still carry an open caveat.`,
+  };
 }
 
 function formatShareO(count, population) {
+  if (!(population > 0)) return '—';
   return `${((count / population) * 100).toFixed(1)}%`;
 }
 
