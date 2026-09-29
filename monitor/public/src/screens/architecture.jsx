@@ -286,6 +286,7 @@ function ScreenArchitecture(
 	const {
 		PageHeader,
 		TypeScaleStyle,
+		Icon,
 		FreshnessStamp,
 		RefreshButton,
 		PageErrorBanner,
@@ -542,7 +543,10 @@ function ScreenArchitecture(
 		healthStoreErrors.length,
 	);
 
-	const pageVerdict = getPageVerdictAR(healthPartRows, healthCaption, nodeIndex);
+	// one freshness input for the stamp and the verdict — the two never disagree on how current the page is
+	const freshnessInput = getFreshnessInputAR(healthAsOf, pageRegions, diagState.data != null);
+	const pageVerdict = getPageVerdictAR(healthPartRows, healthCaption, nodeIndex, freshnessInput);
+	const mapCopyNote = getMapCopyNoteAR(diagState);
 
 	const handleSelectNode = useCallbackAR(
 		(nodeId) => {
@@ -718,6 +722,7 @@ function ScreenArchitecture(
 					"background: rgb(var(--elev)); border: 1px solid rgb(var(--line)); border-radius: 6px; " +
 					"color: rgb(var(--dim)); font: inherit; font-size: var(--fs-meta); cursor: pointer; text-align: left; } " +
 					".arch-part-drill:hover { color: rgb(var(--ink)); border-color: rgb(var(--faint)); } " +
+					".arch-map-copy-note { display: flex; align-items: center; gap: 6px; padding: 8px 10px 0; } " +
 					".arch-caption { display: flex; flex-direction: column; gap: 6px; margin: -8px 0 12px; } " +
 					".arch-legend { display: flex; flex-wrap: wrap; gap: 4px 16px; margin: 0; padding: 0; list-style: none; } " +
 					".arch-legend-item { display: inline-flex; align-items: center; gap: 6px; } " +
@@ -745,9 +750,7 @@ function ScreenArchitecture(
 					title="System map"
 					right={
 						<>
-							<FreshnessStamp
-								{...getFreshnessInputAR(healthAsOf, pageRegions, diagState.data != null)}
-							/>
+							<FreshnessStamp {...freshnessInput} />
 							<RefreshButton
 								isBusy={isRefreshBusy}
 								hasRead={diagState.data != null}
@@ -782,6 +785,12 @@ function ScreenArchitecture(
 						)
 					) : (
 						<div className="card arch-col-card" aria-busy={diagState.busy ? "true" : undefined}>
+							{mapCopyNote && (
+								<p className="fs-meta text-dim m-0 arch-map-copy-note">
+									<Icon name="warn" size={14} className={TONE_GLYPH_CLASS.warn} />
+									{mapCopyNote}
+								</p>
+							)}
 							<div
 								className="card-body"
 								style={{ padding: 10, opacity: diagState.busy && diagState.data ? 0.6 : 1 }}
@@ -802,7 +811,12 @@ function ScreenArchitecture(
 					)}
 				</div>
 
-				<PartHealthBlockAR partRows={healthPartRows} nodeIndex={nodeIndex} onSelectNode={handleSelectNode} />
+				<PartHealthBlockAR
+					partRows={healthPartRows}
+					attentionEmpty={getAttentionEmptyAR(healthPartRows, healthPending, healthStoreErrors.length)}
+					nodeIndex={nodeIndex}
+					onSelectNode={handleSelectNode}
+				/>
 
 				{activeDiagram && (
 					<div id={ARCH_DESC_ID} className="arch-desc-a11y">
@@ -2232,7 +2246,9 @@ function MapCaptionAR({ verdict, hasMap }) {
 	const { PageVerdict } = window.UI;
 	return (
 		<div className="arch-caption">
-			<PageVerdict tone={verdict.tone} chips={verdict.chips}>{verdict.sentence}</PageVerdict>
+			<PageVerdict tone={verdict.tone} chips={verdict.chips} freshness={verdict.freshness}>
+				{verdict.sentence}
+			</PageVerdict>
 			{hasMap && (
 			<ul className="arch-legend fs-meta text-dim" aria-label="Map legend">
 				{getMapLegendItemsAR().map((item) => (
@@ -2383,6 +2399,19 @@ function getFreshnessInputAR(healthAsOf, regions, hasMap) {
 	return { at: hasMap ? healthAsOf : null, regions };
 }
 
+// a failed re-read keeps the held map on screen — the map says it is the last good copy, not the current one
+function getMapCopyNoteAR(diagState) {
+	if (diagState?.data == null || diagState.error == null) return null;
+	return "Last good copy — the latest map read failed";
+}
+
+// the all-clear is a verdict — before any part is judged the column says why it is empty
+function getAttentionEmptyAR(partRows, busy, errored) {
+	if (partRows.some((row) => row.tone)) return "No part needs attention";
+	if (busy) return "Checking part health…";
+	return errored > 0 ? "Couldn't read part health" : "Part health not read yet";
+}
+
 // 'Not loaded' (no verdict arrived) never shares a label with 'No data' (a verdict of absence).
 function getPartStatusTextAR(row) {
 	return row.tone ? row.statusLabel : "Not loaded";
@@ -2451,7 +2480,7 @@ function getPartRowIdAR(row) {
 }
 
 // page verdict — worst part tone, flagged parts named with their box as chips that focus their row
-function getPageVerdictAR(partRows, caption, nodeIndex) {
+function getPageVerdictAR(partRows, caption, nodeIndex, freshness) {
 	const { attention } = getPartHealthGroupsAR(partRows);
 	const judgedCount = partRows.filter((row) => row.tone && row.tone !== "info").length;
 	const isAllOk = judgedCount > 0 && judgedCount === partRows.length;
@@ -2464,11 +2493,12 @@ function getPageVerdictAR(partRows, caption, nodeIndex) {
 		tone: attention[0]?.tone ?? (isAllOk ? "ok" : "neutral"),
 		sentence: attention.length > 0 ? `${attention.length} of ${partRows.length} parts need attention` : caption,
 		chips,
+		freshness,
 	};
 }
 
 // every part's state on the page — the drawer stays the drill, not the only place a state is read
-function PartHealthBlockAR({ partRows, nodeIndex, onSelectNode }) {
+function PartHealthBlockAR({ partRows, attentionEmpty, nodeIndex, onSelectNode }) {
 	const { SplitRow } = window.UI;
 	if (partRows.length === 0) return null;
 
@@ -2480,7 +2510,7 @@ function PartHealthBlockAR({ partRows, nodeIndex, onSelectNode }) {
 			</div>
 			<div className="card-body">
 				<SplitRow ratio="1:1">
-					<PartHealthListAR title="Needs attention" rows={attention} empty="No part needs attention" nodeIndex={nodeIndex} onSelectNode={onSelectNode} />
+					<PartHealthListAR title="Needs attention" rows={attention} empty={attentionEmpty} nodeIndex={nodeIndex} onSelectNode={onSelectNode} />
 					<PartHealthListAR title="Healthy or not verified" rows={rest} empty="No other parts" nodeIndex={nodeIndex} onSelectNode={onSelectNode} />
 				</SplitRow>
 			</div>
