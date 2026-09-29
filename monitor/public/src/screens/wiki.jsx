@@ -107,7 +107,7 @@ function ScreenWiki() {
         .w-type-row { display: grid; grid-template-columns: minmax(0, 9rem) minmax(0, 1fr) 3.5rem 2.5rem; align-items: center; gap: 0.75rem; }
         .w-type-track { display: block; height: 6px; border-radius: 9999px; background: rgb(var(--line)); }
         .w-type-fill { display: block; height: 100%; border-radius: inherit; background: rgb(var(--dim)); }
-        /* ponytail: bar ticks sit at slot centres and centre on them → edge dates overhang the card; !important beats the inline transform. Upgrade: anchor edge ticks in ui.jsx ChartTicks. */
+        /* Bar ticks sit at slot centres and centre on them → edge dates would overhang the card; !important beats the inline transform. */
         .w-trend [data-chart-tick]:first-child { transform: none !important; }
         .w-trend [data-chart-tick]:last-child { transform: translateX(-100%) !important; }
       `}</style>

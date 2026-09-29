@@ -1117,13 +1117,13 @@ function budgetPlaceholderMC() {
 	return BUDGET_SEED_DEFAULT_MC;
 }
 
+// Mono digits → ch is one digit; 6ch holds the widest cap ("50.00") plus the caret, beside the affix padding.
+const BUDGET_FIELD_STYLE_MC = { width: "calc(6ch + 4px + var(--ctl-pad-x))" };
+
 /**
  * 예산 1행 — $ 입력(2-decimal 문자열) + invalid 즉시 field-adjacent role=alert (T-MDL-4)
  * + 실측 + 섹션 공통과 다른 행만 반영 시점 표시 + ghost default/reset (T-MDL-6).
  */
-// Mono digits → ch is one digit; 6ch holds the widest cap ("50.00") plus the caret, beside the affix padding.
-const BUDGET_FIELD_STYLE_MC = { width: "calc(6ch + 4px + var(--ctl-pad-x))" };
-
 function BudgetRowMC({ budget: b, value, defaultValue, error, sharedMode, onChange }) {
 	const meta = BUDGET_META_MC[b.domain] || { label: b.domain, hint: "", desc: "" };
 	// Save banner points at "the highlighted fields" → the field is marked the moment it is invalid.
