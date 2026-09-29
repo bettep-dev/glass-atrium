@@ -488,6 +488,59 @@ test("a cold harness outage is an error tile listed in the same banner as the re
   assert.ok(failure.getTileSharedFailure(tiles)?.sources.includes("harness health"), "the banner names the harness");
 });
 
+test("a harness refresh that failed over held readings reads last-known, keeping a held fault", () => {
+  const rows = [
+    { name: "held parts all up", downNames: [] as string[], tone: "info" },
+    { name: "a held part down", downNames: ["autoagent"], tone: "crit" },
+  ];
+
+  for (const row of rows) {
+    const harness = unreadFold({ partsOk: 7 - row.downNames.length, downNames: row.downNames });
+    const tile = tileOf(
+      dash.buildTiles({ harness, costState: kpi(1, 10), agentsState: ready({}), outcomesState: ready({}) }),
+      "harness",
+    );
+    assert.equal(tile.badge, "Last known", `${row.name}: badge`);
+    assert.equal(tile.tone, row.tone, `${row.name}: tone`);
+    assert.match(tile.hint, /daemon status/, `${row.name}: names the source that failed`);
+  }
+});
+
+test("parts lost to a cold read failure count against every part, never only the parts still read", () => {
+  const rows = [
+    { name: "two up, five never read", partsOk: 2, downNames: [] as string[], value: "2 of 7 up" },
+    { name: "one down, five never read", partsOk: 1, downNames: ["PostgreSQL"], value: "1 of 7 down" },
+  ];
+
+  for (const row of rows) {
+    const harness = unreadFold({ partsOk: row.partsOk, partsChecked: 2, downNames: row.downNames });
+    const tile = tileOf(
+      dash.buildTiles({ harness, costState: kpi(1, 10), agentsState: ready({}), outcomesState: ready({}) }),
+      "harness",
+    );
+    assert.equal(tile.value, row.value, `${row.name}: value`);
+    assert.equal(tile.detail, "5 not read", `${row.name}: the lost parts are counted`);
+  }
+});
+
+test("part names keep their hyphens unbreakable wherever the page lists them", () => {
+  const harness = { ...HEALTHY, partsOk: 6, downNames: ["daily-restart-autoagent"], uncheckedNames: ["glass-atrium-wiki-curator"] };
+  const tile = tileOf(
+    dash.buildTiles({ harness, costState: kpi(1, 10), agentsState: ready({}), outcomesState: ready({}) }),
+    "harness",
+  );
+  const [row] = dash.buildAlarms({ harness, costState: kpi(10, 10), installKind: "hidden" });
+  const lists = [
+    { where: "tile hint", text: tile.hint },
+    { where: "lane row detail", text: row?.detail ?? "" },
+  ];
+
+  for (const { where, text } of lists) {
+    assert.doesNotMatch(text, /-/, `${where}: no breakable hyphen`);
+    assert.match(text, /daily\u2011restart\u2011autoagent/, `${where}: still names the part`);
+  }
+});
+
 test("a partly unread harness never reads healthy, and the lane cannot claim an all-clear", () => {
   const harness = unreadFold({ partsOk: 2, partsChecked: 2, unreadSources: ["daemon status", "the hook chain"] });
   const tile = tileOf(

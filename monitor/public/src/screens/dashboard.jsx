@@ -100,8 +100,6 @@ function ScreenDashboard({ onNav, harness, onRetryHarness }) {
   }).kind;
 
   const waveStates = [costState, agentsState, outcomesState, updateState];
-  // the stamp also answers for the harness tile → a failed harness read keeps it off Fresh
-  const stampRegions = [...waveStates, harness];
   const alarms = buildAlarms({ harness, costState, installKind });
   const alarmReadiness = getAlarmReadiness({ harness, costState, updateState });
   const tiles = buildTiles({ harness, costState, agentsState, outcomesState });
@@ -130,7 +128,7 @@ function ScreenDashboard({ onNav, harness, onRetryHarness }) {
           right={
             <>
               <span className="fs-meta font-mono text-dim">{describeVersion(harness)}</span>
-              <FreshnessStamp {...getFreshnessInputD(settledAt, stampRegions)}/>
+              <FreshnessStamp {...getFreshnessInputD(settledAt, waveStates, harness)}/>
               <RefreshButton isBusy={window.UI.getRegionSummary(waveStates).isBusy} hasRead={settledAt !== null}
                 onRefresh={triggerRefresh} label="Refresh dashboard"/>
             </>
@@ -545,7 +543,7 @@ function buildAlarms({ harness, costState, installKind }) {
       id: 'harness',
       tone: 'crit',
       title: `${harness.downNames.length} harness ${harness.downNames.length === 1 ? 'part is' : 'parts are'} down`,
-      detail: harness.downNames.join(' · '),
+      detail: joinPartNames(harness.downNames),
       target: 'architecture',
       targetLabel: 'System map',
     });
@@ -617,7 +615,7 @@ function markHeldTile(tile, state) {
   };
 }
 
-// 타일 1 — 하네스 파트. 분모는 셸이 실제로 관측한 파트 수: 미관측 파트를 정상으로 세지 않는다.
+// 타일 1 — 하네스 파트. 분모는 셸이 관측한 파트 수, 콜드 실패로 잃은 파트가 있으면 전체 파트 수: 미관측 파트를 정상으로 세지 않는다.
 function buildHarnessTile(harness) {
   const base = {
     id: 'harness', label: 'Harness health', region: HARNESS_REGION, target: 'architecture', targetLabel: 'System map',
@@ -633,27 +631,50 @@ function buildHarnessTile(harness) {
     // not a region fetch error → never joins the page banner, so the tile keeps its own Retry
     return { ...base, status: 'unavailable', tone: 'neutral', value: '—', hint: 'Harness readings unavailable.', canRetry: true };
   }
-  // sentence break, not ' · ' → the names list after it never reads as more down parts
-  const unchecked = harness.uncheckedNames.length > 0
-    ? `. ${harness.uncheckedNames.join(' · ')} checked on the System map`
-    : '';
+  return { ...base, ...describeHarnessReading(harness), status: 'ready', error: harness.error ?? null };
+}
+
+// a failed refresh over held parts → last known · a cold failure drops its parts → counted against every part
+function describeHarnessReading(harness) {
   const downCount = harness.downNames.length;
-  const unreadSources = harness.unreadSources ?? [];
-  const isPartlyUnread = unreadSources.length > 0;
-  // the headline already carries the count → the hint names the parts instead of restating it
-  const down = downCount > 0 ? `Down: ${harness.downNames.join(' · ')}` : 'All polled parts healthy';
+  const isPartlyUnread = (harness.unreadSources ?? []).length > 0;
+  const lostCount = isPartlyUnread ? harness.partsTotal - harness.partsChecked : 0;
+  const partCount = lostCount > 0 ? harness.partsTotal : harness.partsChecked;
   // a known fault keeps crit; otherwise an unread source withholds the healthy verdict
   const unreadTone = isPartlyUnread ? 'info' : 'ok';
   return {
-    ...base,
-    status: 'ready',
     tone: downCount > 0 ? 'crit' : unreadTone,
-    badge: downCount === 0 && isPartlyUnread ? 'Partly unknown' : undefined,
-    value: downCount > 0 ? `${downCount} of ${harness.partsChecked} down` : `${harness.partsOk} of ${harness.partsChecked} up`,
-    hint: isPartlyUnread ? `Couldn't read ${unreadSources.join(' · ')}.` : `${down}${unchecked}`,
-    error: harness.error ?? null,
+    badge: getHarnessBadge({ isPartlyUnread, lostCount, downCount }),
+    value: downCount > 0 ? `${downCount} of ${partCount} down` : `${harness.partsOk} of ${partCount} up`,
+    detail: lostCount > 0 ? `${lostCount} not read` : undefined,
+    hint: describeHarnessHint(harness, { isPartlyUnread, lostCount }),
     canRetry: isPartlyUnread,
   };
+}
+
+function getHarnessBadge({ isPartlyUnread, lostCount, downCount }) {
+  if (!isPartlyUnread) return undefined;
+  if (lostCount === 0) return 'Last known';
+  return downCount === 0 ? 'Partly unknown' : undefined;
+}
+
+function describeHarnessHint(harness, { isPartlyUnread, lostCount }) {
+  if (isPartlyUnread) {
+    const sources = harness.unreadSources.join(' · ');
+    return lostCount > 0 ? `Couldn't read ${sources}.` : `Showing the last reading — couldn't refresh ${sources}.`;
+  }
+  // sentence break, not ' · ' → the names list after it never reads as more down parts
+  const unchecked = harness.uncheckedNames.length > 0
+    ? `. ${joinPartNames(harness.uncheckedNames)} checked on the System map`
+    : '';
+  // the headline already carries the count → the hint names the parts instead of restating it
+  const down = harness.downNames.length > 0 ? `Down: ${joinPartNames(harness.downNames)}` : 'All polled parts healthy';
+  return `${down}${unchecked}`;
+}
+
+// U+2011 non-breaking hyphen → a name like daily-restart-autoagent never wraps mid-name in a narrow tile
+function joinPartNames(names) {
+  return names.map((name) => name.replace(/-/g, '\u2011')).join(' · ');
 }
 
 // 첫 판독 전(loading) · 데이터 없는 실패(error) → 타일, 그 외 null. 실패 문구는 base.source 로 공용 카드가 만든다.
@@ -770,12 +791,20 @@ function describeSpendPace(pace) {
 
 // 헤더 우측 중립 텍스트 — 설치 버전. 조치 신호는 레인이 운반하므로 여기는 톤이 없다.
 function describeVersion(harness) {
+  if (harness?.status === 'loading') return 'checking version…';
   return harness && harness.version ? `v${harness.version}` : 'version unknown';
 }
 
 // wave regions + the shell harness — update-job polls on its own, so it stays out and never moves the stamp
-function getFreshnessInputD(settledAt, stampRegions) {
-  return { at: settledAt, regions: stampRegions };
+// the stamp also answers for the harness tile → a pending harness read keeps it busy, a failed one keeps it off Fresh
+function getFreshnessInputD(settledAt, waveStates, harness) {
+  return { at: settledAt, regions: [...waveStates, toHarnessRegion(harness)] };
+}
+
+// the shell fold carries no busy flag → its read in flight is status 'loading'
+function toHarnessRegion(harness) {
+  if (!harness) return null;
+  return { status: harness.status, busy: harness.status === 'loading', error: harness.error ?? null };
 }
 
 // update-job poll → 실제 row (none 은 무 job).
