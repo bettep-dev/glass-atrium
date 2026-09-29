@@ -100,6 +100,22 @@ test("the notes-per-day chart fills its panel with one dated bar per day and kee
   }
 });
 
+test("the notes-per-day chart anchors its first and last day labels inside the panel", async () => {
+  const mod = await loadWikiScreen();
+  const series = [1, 2, 9, 3, 4];
+  const dates = ["2026-09-01", "2026-09-02", "2026-09-03", "2026-09-04", "2026-09-05"];
+  const chartTree = renderScreen(mod.React.createElement(mod.SparseTrendW as Component, { label: "Notes per day", series, dates }));
+  const screenTree = renderScreen(mod.React.createElement(mod.ScreenWiki as Component, {}));
+
+  const frame = findNodes(chartTree, (n) => classOf(n).split(" ").includes("w-trend"));
+  assert.equal(frame.length, 1, "one frame scopes the edge-label rule to this chart");
+  assert.equal(findNodes(frame[0], (n) => n.props.atom === "TrendChart").length, 1, "the frame wraps the shared chart");
+
+  const style = collectText(findNodes(screenTree, (n) => n.type === "style")[0]);
+  assert.match(style, /\.w-trend \[data-chart-tick\]:first-child\s*\{\s*transform:\s*none\s*!important/, "the first day label starts at its bar");
+  assert.match(style, /\.w-trend \[data-chart-tick\]:last-child\s*\{\s*transform:\s*translateX\(-100%\)\s*!important/, "the last day label ends at its bar");
+});
+
 const LOADING = { status: "loading", data: null, error: null, busy: true };
 const READY_BACKLOG = {
   status: "ready",
