@@ -35,6 +35,26 @@ LANGUAGE_BY_SCRIPT = {
     "hebrew": "Hebrew",
 }
 
+# An explicit request for another reply language, as the user words it: 영어로 답해줘 · 英語で答えて ·
+# 用英文回答 · reply in English. A language merely named ("영어로 된 로그") is no request.
+LANGUAGE_NAMES = {
+    "English": ("English", "영어", "영문", "英語", "英文", "英语"),
+    "Korean": ("Korean", "한국어", "한글", "韓国語", "韓語", "韩语"),
+    "Japanese": ("Japanese", "일본어", "日本語", "日语"),
+    "Chinese": ("Chinese", "중국어", "中国語", "中文"),
+}
+_REQUEST_FORMS = (
+    r"(?:{names})\s*으?로\s*(?:만\s*)?(?:답|대답|응답|말|얘기|이야기|설명|보고|작성|써|쓰|진행|대화|해(?:줘|주|요|라|\s|$))",
+    r"(?:{names})\s*で\s*(?:答え|回答|返答|返信|話|書|説明|報告)",
+    r"用\s*(?:{names})\s*(?:回答|回复|答复|写|说|交流)",
+    r"\b(?:reply|respond|answer|write|speak|talk|report|continue|communicate)\w*\b[^.?!\n]{{0,40}}?\bin\s+(?:{names})\b",
+    r"\b(?:switch|change)\s+to\s+(?:{names})\b",
+)
+_LANGUAGE_REQUESTS = tuple(
+    (language, re.compile("|".join(form.format(names="|".join(names)) for form in _REQUEST_FORMS), re.I))
+    for language, names in LANGUAGE_NAMES.items()
+)
+
 # UserPromptSubmit carries no `source` field on the installed CLI, so a prompt's own opening is the
 # primary machine-written signal; prefixes taken from real transcripts.
 MACHINE_SHAPES = (
@@ -71,14 +91,15 @@ _NON_PROSE = (
 
 def main(argv=None):
     args = _build_parser().parse_args(argv)
+    window = _get_env_bytes("REPLY_LANG_WINDOW_BYTES", DEFAULT_WINDOW_BYTES)
+    cap = _get_env_bytes("REPLY_LANG_MAX_BYTES", DEFAULT_MAX_BYTES)
     if args.command == "transcript":
-        result = find_newest_human_prose(
-            args.path,
-            _get_env_bytes("REPLY_LANG_WINDOW_BYTES", DEFAULT_WINDOW_BYTES),
-            _get_env_bytes("REPLY_LANG_MAX_BYTES", DEFAULT_MAX_BYTES),
-        )
+        result = find_newest_human_prose(args.path, window, cap)
+    elif args.command == "reply":
+        text = find_last_reply(args.transcript, window, cap) if args.transcript else _read_stdin()
+        result = get_script_decision(get_prose(text))
     else:
-        result = get_text_result(sys.stdin.buffer.read().decode("utf-8", "replace"))
+        result = get_text_result(_read_stdin())
     json.dump(result, sys.stdout)
     sys.stdout.write("\n")
     return 0
@@ -93,9 +114,14 @@ def _build_parser():
     commands = parser.add_subparsers(dest="command")
     commands.required = True
     transcript = commands.add_parser(
-        "transcript", help="newest human prose of a transcript; adds entry, bytes_read, truncated"
+        "transcript",
+        help="newest human prose of a transcript; adds entry, requested_language, bytes_read, truncated",
     )
     transcript.add_argument("path")
+    reply = commands.add_parser(
+        "reply", help="a final reply on stdin, or with --transcript the newest assistant message; no status"
+    )
+    reply.add_argument("--transcript")
     commands.add_parser("text", help="one prompt or reply on stdin; adds machine_shape")
     return parser
 
@@ -147,7 +173,12 @@ def _get_line_decision(line):
     decision = get_script_decision(prose)
     if decision["script"] is None:  # no prose of its own (bare paste, argless command)
         return None
-    decision.update(status="resolved", entry=entry_kind, prose=prose[:PROSE_EXCERPT_CHARS])
+    decision.update(
+        status="resolved",
+        entry=entry_kind,
+        requested_language=get_requested_language(prose),
+        prose=prose[:PROSE_EXCERPT_CHARS],
+    )
     return decision
 
 
@@ -179,6 +210,51 @@ def _get_text_content(content):
             str(block.get("text", "")) for block in content if isinstance(block, dict) and block.get("type") == "text"
         )
     return ""
+
+
+def get_requested_language(prose):
+    """The language an explicit reply-language request names; the latest request in the prose wins."""
+    latest, requested = -1, None
+    for language, pattern in _LANGUAGE_REQUESTS:
+        for match in pattern.finditer(prose):
+            if match.start() > latest:
+                latest, requested = match.start(), language
+    return requested
+
+
+def find_last_reply(path, window, cap):
+    """Text of the newest assistant message, empty when unreadable or absent."""
+    try:
+        with open(path, "rb") as fh:
+            size = fh.seek(0, os.SEEK_END)
+            lines = _get_lines_backward(fh, size, window, cap, {"bytes_read": 0, "truncated": False})
+            return "\n".join(reversed(_get_last_message_texts(lines)))
+    except OSError:
+        return ""
+
+
+def _get_last_message_texts(lines):
+    """Newest first: the transcript splits one message's content blocks over entries sharing its id."""
+    texts, found, message_id = [], False, None
+    for line in lines:
+        entry = _get_json_object(line)
+        message = entry.get("message") if isinstance(entry.get("message"), dict) else {}
+        if entry.get("type") == "assistant":
+            if found and message.get("id") != message_id:
+                break
+            found, message_id = True, message.get("id")
+            texts.append(_get_text_content(message.get("content")))
+        elif found and entry.get("type") == "user":
+            break
+    return texts
+
+
+def _get_json_object(line):
+    try:
+        entry = json.loads(line)
+    except ValueError:
+        return {}
+    return entry if isinstance(entry, dict) else {}
 
 
 def get_text_result(text):
@@ -245,6 +321,10 @@ def _get_latin_units(prose):
             continue
         count += 1
     return count
+
+
+def _read_stdin():
+    return sys.stdin.buffer.read().decode("utf-8", "replace")
 
 
 def _get_env_bytes(name, default):
