@@ -176,11 +176,11 @@ function ScreenCost({ onNav }) {
         </div>
       )}
 
-      <AlarmLaneC rows={alarmRows}/>
-
       <PageVerdict tone={spendVerdict.tone} label={spendVerdict.label} className="mb-4">
         {spendVerdict.text}
       </PageVerdict>
+
+      <AlarmLaneC rows={alarmRows}/>
 
       {/* Decision tier — the facts a spend decision is made on, in priority order. */}
       <RefreshingRegionC states={[kpiState, tokenState, modelState]}>
