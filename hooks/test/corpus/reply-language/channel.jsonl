@@ -1,0 +1,3 @@
+{"type":"user","entrypoint":"cli","origin":{"kind":"human"},"message":{"role":"user","content":"Summarize the open pull requests"}}
+{"type":"assistant","entrypoint":"cli","message":{"role":"assistant","content":[{"type":"text","text":"Two are open."}]}}
+{"type":"user","entrypoint":"cli","message":{"role":"user","content":"<channel source=\"plugin:fakechat:fakechat\" chat_id=\"web\" message_id=\"m1\">채널에서 온 한국어 메시지입니다 확인 부탁해요</channel>"},"origin":{"kind":"channel"},"isMeta":true}
