@@ -88,6 +88,21 @@ const DRAWER_SKELETON_ROW_PX = 36;
 // 100% 성공률은 합성 버킷의 산물 (의미 없음) → 라벨/툴팁 분리로 오인 차단 (CF6).
 const SYNTHETIC_SENTINEL_AGENT_ID = 'subagent_stop_missing';
 const SYNTHETIC_SENTINEL_LABEL = 'Placeholder bucket (unpaired SubagentStop)';
+
+// a focused Retry that succeeds unmounts its error card → focus lands on the enclosing region instead of BODY
+const REGION_CARD_IDS = {
+  successRates: 'agents-success-rates',
+  failingPairs: 'agents-failing-pairs',
+  reviewFlags: 'agents-review-flags',
+  lifecycle: 'agents-lifecycle',
+};
+const DRAWER_SECTION_IDS = {
+  overview: 'agent-drawer-overview',
+  reliability: 'agent-drawer-reliability',
+  performance: 'agent-drawer-performance',
+  quality: 'agent-drawer-quality',
+  recent: 'agent-drawer-recent',
+};
 const SYNTHETIC_SENTINEL_TITLE =
   'subagent_stop_missing — synthetic fallback bucket for outcomes with no paired SubagentStop (not a real agent · success rate is meaningless)';
 
@@ -1313,7 +1328,7 @@ function AgentDetailDrawer({
         />
       ) : (
         <div className="space-cards">
-          <AgentDrawerSection title="Overview">
+          <AgentDrawerSection id={DRAWER_SECTION_IDS.overview} title="Overview">
             <AgentCircuitBreakerLine agent={agent} summaryState={summaryState}/>
             <AgentOverviewSection
               agent={agent}
@@ -1324,7 +1339,7 @@ function AgentDetailDrawer({
               onRetry={onRetry}
             />
           </AgentDrawerSection>
-          <AgentDrawerSection title="Reliability">
+          <AgentDrawerSection id={DRAWER_SECTION_IDS.reliability} title="Reliability">
             <AgentReliabilitySection
               agent={agent}
               drawerAgent={drawerAgent}
@@ -1337,7 +1352,7 @@ function AgentDetailDrawer({
               onRetry={onRetry}
             />
           </AgentDrawerSection>
-          <AgentDrawerSection title="Performance">
+          <AgentDrawerSection id={DRAWER_SECTION_IDS.performance} title="Performance">
             <AgentPerformanceSection
               agent={agent}
               drawerAgent={drawerAgent}
@@ -1348,7 +1363,7 @@ function AgentDetailDrawer({
               onRetry={onRetry}
             />
           </AgentDrawerSection>
-          <AgentDrawerSection title="Quality">
+          <AgentDrawerSection id={DRAWER_SECTION_IDS.quality} title="Quality">
             <AgentQualitySignalsSection
               drawerAgent={drawerAgent}
               revisionState={revisionState}
@@ -1358,7 +1373,7 @@ function AgentDetailDrawer({
             {/* The composite ranking lives on Learning, which owns the improvement answer. */}
             <a className="btn ghost sm" href="#improvement">Open in Learning</a>
           </AgentDrawerSection>
-          <AgentDrawerSection title="Recent">
+          <AgentDrawerSection id={DRAWER_SECTION_IDS.recent} title="Recent">
             <AgentRecentActivitySection recentState={recentState} days={days} onRetry={onRetry}/>
           </AgentDrawerSection>
         </div>
@@ -1462,10 +1477,10 @@ function formatConsecutiveFails(count) {
 
 // 드로어 섹션 래퍼 — 공용 SubCard(ring + 16px padding + uppercase --dim 라벨) 로 5 섹션을 각각
 // 독립 면으로 분리 (1px-hairline 합쳐보임 해소 #region). SubCard 가 라벨/패딩/면 idiom 단일 소유.
-function AgentDrawerSection({ title, children }) {
+function AgentDrawerSection({ id, title, children }) {
   const { SubCard } = window.UI;
   return (
-    <section>
+    <section id={id}>
       <SubCard label={title} labelLevel={2}>{children}</SubCard>
     </section>
   );
@@ -1539,7 +1554,7 @@ function AgentOverviewSection({ agent, drawerAgent, summaryState, revisionState,
     return <DrawerSectionSkeleton rows={3} label="overview"/>;
   }
   if (window.UI.getRegionView(summaryState) === 'error') {
-    return <window.UI.RegionUnavailable source="overview" error={summaryState.error} isBusy={summaryState.busy} onRetry={onRetry}/>;
+    return <window.UI.RegionUnavailable source="overview" error={summaryState.error} isBusy={summaryState.busy} focusTargetId={DRAWER_SECTION_IDS.overview} onRetry={onRetry}/>;
   }
   if (!agent) {
     return <DrawerSectionEmpty message={`No summary row for ${drawerAgent} in this window.`}/>;
@@ -1627,6 +1642,8 @@ function AgentQualitySignalsSection({ drawerAgent, revisionState, reviewByAgentS
       <window.UI.RegionUnavailable
         source="quality signals"
         error={revisionState.error || reviewByAgentState.error}
+        isBusy={Boolean(revisionState.busy || reviewByAgentState.busy)}
+        focusTargetId={DRAWER_SECTION_IDS.quality}
         onRetry={onRetry}
       />
     );
@@ -1677,7 +1694,7 @@ function AgentPerformanceSection({ agent, drawerAgent, summaryState, latencyStat
     return <DrawerSectionSkeleton rows={3} label="performance"/>;
   }
   if (window.UI.getRegionView(summaryState) === 'error') {
-    return <window.UI.RegionUnavailable source="performance" error={summaryState.error} isBusy={summaryState.busy} onRetry={onRetry}/>;
+    return <window.UI.RegionUnavailable source="performance" error={summaryState.error} isBusy={summaryState.busy} focusTargetId={DRAWER_SECTION_IDS.performance} onRetry={onRetry}/>;
   }
   if (!agent) {
     return <DrawerSectionEmpty message="No performance data for this agent in the window."/>;
@@ -1730,7 +1747,7 @@ function AgentLatencyRow({ latency, state, onRetry }) {
     return <DrawerSectionSkeleton rows={1} label="latency"/>;
   }
   if (window.UI.getRegionView(state) === 'error') {
-    return <window.UI.RegionUnavailable source="latency" error={state.error} isBusy={state.busy} onRetry={onRetry}/>;
+    return <window.UI.RegionUnavailable source="latency" error={state.error} isBusy={state.busy} focusTargetId={DRAWER_SECTION_IDS.performance} onRetry={onRetry}/>;
   }
   if (!latency || (latency.p50_ms == null && latency.p95_ms == null && latency.p99_ms == null)) {
     return <DrawerSectionEmpty message="No paired response-time data (no Start↔Stop events)."/>;
@@ -1783,7 +1800,7 @@ function AgentReliabilityBreakages({ drawerAgent, failureByAgent, failureState, 
     return <DrawerSectionSkeleton rows={2} label="failures"/>;
   }
   if (window.UI.getRegionView(failureState) === 'error') {
-    return <window.UI.RegionUnavailable source="failure patterns" error={failureState.error} isBusy={failureState.busy} onRetry={onRetry}/>;
+    return <window.UI.RegionUnavailable source="failure patterns" error={failureState.error} isBusy={failureState.busy} focusTargetId={DRAWER_SECTION_IDS.reliability} onRetry={onRetry}/>;
   }
 
   const failure = failureByAgent ? failureByAgent.get(drawerAgent) : null;
@@ -1850,7 +1867,7 @@ function AgentReliabilityLifecycle({ agent, drawerAgent, lifecycleState, onRetry
     return <DrawerSectionSkeleton rows={2} label="lifecycle"/>;
   }
   if (window.UI.getRegionView(lifecycleState) === 'error') {
-    return <window.UI.RegionUnavailable source="lifecycle stats" error={lifecycleState.error} isBusy={lifecycleState.busy} onRetry={onRetry}/>;
+    return <window.UI.RegionUnavailable source="lifecycle stats" error={lifecycleState.error} isBusy={lifecycleState.busy} focusTargetId={DRAWER_SECTION_IDS.reliability} onRetry={onRetry}/>;
   }
 
   // agent_type == agent_id == drawerAgent (현 cycle convention).
@@ -1914,7 +1931,7 @@ function AgentRecentActivitySection({ recentState, days, onRetry }) {
     return <DrawerSectionSkeleton rows={3} label="recent activity"/>;
   }
   if (window.UI.getRegionView(recentState) === 'error') {
-    return <window.UI.RegionUnavailable source="recent activity" error={recentState.error} isBusy={recentState.busy} onRetry={onRetry}/>;
+    return <window.UI.RegionUnavailable source="recent activity" error={recentState.error} isBusy={recentState.busy} focusTargetId={DRAWER_SECTION_IDS.recent} onRetry={onRetry}/>;
   }
   const rows = readyData(recentState)?.rows ?? [];
   if (rows.length === 0) {
@@ -1980,7 +1997,7 @@ function MergedBreakageSection({ detailState, blockedState, days, onRetry }) {
       {isLoading ? (
         <DrawerSectionSkeleton rows={3} label="failure causes"/>
       ) : firstError ? (
-        <window.UI.RegionUnavailable source="failure causes" error={firstError.error} isBusy={firstError.busy} onRetry={onRetry}/>
+        <window.UI.RegionUnavailable source="failure causes" error={firstError.error} isBusy={firstError.busy} focusTargetId={DRAWER_SECTION_IDS.reliability} onRetry={onRetry}/>
       ) : (
         <MergedBreakageBody merged={merged} days={days}/>
       )}
@@ -2075,7 +2092,7 @@ function SuccessRateMatrixCard({ state, days, onRetry }) {
   const subText = `Last ${days} days`;
 
   return (
-    <div className="card min-w-0">
+    <div id={REGION_CARD_IDS.successRates} className="card min-w-0">
       <CardHead
         title="Success by agent and task type"
         sub={subText}
@@ -2107,7 +2124,7 @@ function SuccessRateMatrixBody({ state, days, onRetry }) {
     return <window.UI.LoadingPlaceholder label="success matrix" minHeight={280}/>;
   }
   if (window.UI.getRegionView(state) === 'error') {
-    return <window.UI.RegionUnavailable source="success rates" error={state.error} isBusy={state.busy} onRetry={onRetry}/>;
+    return <window.UI.RegionUnavailable source="success rates" error={state.error} isBusy={state.busy} focusTargetId={REGION_CARD_IDS.successRates} onRetry={onRetry}/>;
   }
   if (matrix.agents.length === 0) {
     return <EmptyStateAg message={`No success-rate events in the last ${days} days.`}/>;
@@ -2312,7 +2329,7 @@ function TopNFailingAgentsCard({ state, days, onRetry, failureByAgent }) {
   // Denominator = the agent × task-type pairs actually measured in the window.
 
   return (
-    <div className="card h-full flex flex-col min-h-0">
+    <div id={REGION_CARD_IDS.failingPairs} className="card h-full flex flex-col min-h-0">
       <CardHead
         title="Most-failing pairs"
         sub={getFailingPairsSub(state.status, failingPairs.length, failingTotal, measuredPairs, days)}
@@ -2339,7 +2356,7 @@ function TopNFailingAgentsBody({ state, days, onRetry, pairs, failureByAgent }) 
     return <window.UI.LoadingPlaceholder label="most-failing pairs" minHeight={200}/>;
   }
   if (window.UI.getRegionView(state) === 'error') {
-    return <window.UI.RegionUnavailable source="failure rates" error={state.error} isBusy={state.busy} onRetry={onRetry}/>;
+    return <window.UI.RegionUnavailable source="failure rates" error={state.error} isBusy={state.busy} focusTargetId={REGION_CARD_IDS.failingPairs} onRetry={onRetry}/>;
   }
   if (pairs.length === 0) {
     return (
@@ -2496,7 +2513,7 @@ function ReviewFlagTimelineCard({ state, days, onRetry }) {
   const { CardHead } = window.UI;
 
   return (
-    <div className="card flex flex-col min-h-0">
+    <div id={REGION_CARD_IDS.reviewFlags} className="card flex flex-col min-h-0">
       <CardHead title="Review flags" sub={`Last ${days} days · flag reasons per day and flagged rate`}/>
       <div className="card-body ag-card-body">
         <QualityHealthTimeline state={state} onRetry={onRetry}/>
@@ -2510,7 +2527,7 @@ function QualityHealthTimeline({ state, onRetry }) {
     return <window.UI.LoadingPlaceholder label="review_flag timeline" minHeight={260}/>;
   }
   if (window.UI.getRegionView(state) === 'error') {
-    return <window.UI.RegionUnavailable source="review_flag data" error={state.error} isBusy={state.busy} onRetry={onRetry}/>;
+    return <window.UI.RegionUnavailable source="review_flag data" error={state.error} isBusy={state.busy} focusTargetId={REGION_CARD_IDS.reviewFlags} onRetry={onRetry}/>;
   }
   const rows = readyData(state)?.rows ?? [];
   if (rows.length === 0) {
@@ -2672,7 +2689,7 @@ function LifecycleStatsCard({ state, days, onSelect, onRetry }) {
     : 0;
 
   return (
-    <div className="card h-full flex flex-col min-h-0">
+    <div id={REGION_CARD_IDS.lifecycle} className="card h-full flex flex-col min-h-0">
       <CardHead
         title="No completion record"
         sub={`Last ${days} days · top ${LIFECYCLE_DISPLAY_LIMIT}`}
@@ -2692,7 +2709,7 @@ function LifecycleStatsBody({ state, days, onSelect, onRetry }) {
     return <window.UI.LoadingPlaceholder label="lifecycle stats" minHeight={260}/>;
   }
   if (window.UI.getRegionView(state) === 'error') {
-    return <window.UI.RegionUnavailable source="lifecycle stats" error={state.error} isBusy={state.busy} onRetry={onRetry}/>;
+    return <window.UI.RegionUnavailable source="lifecycle stats" error={state.error} isBusy={state.busy} focusTargetId={REGION_CARD_IDS.lifecycle} onRetry={onRetry}/>;
   }
   const rows = (readyData(state)?.rows ?? [])
     .filter((r) => r && r.agent_type && (Number(r.start_count) || 0) > 0)
