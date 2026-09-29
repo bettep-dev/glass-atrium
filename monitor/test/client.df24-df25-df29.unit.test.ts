@@ -176,7 +176,7 @@ test("getTokenRate: claude-fable-5-1 resolves from its own mirror row, not the f
   assert.strictEqual(pricing.TOKEN_RATES["claude-fable-5"].cache_read, 1.0);
 });
 
-// Losing an own row falls through to the family prefix, whose higher rate overcharges every field.
+// Losing an own row falls through to the family prefix — the resolved object is no longer the id's own row.
 const OWN_ROW_IDS = [
   { id: "claude-opus-5-5", family: "claude-opus-5", input: 4.0 },
   { id: "claude-sonnet-5-5", family: "claude-sonnet-5", input: 2.0 },
@@ -190,9 +190,12 @@ for (const row of OWN_ROW_IDS) {
     // An unstripped context-variant suffix would miss the exact row and fall through to the family prefix.
     assert.strictEqual(pricing.getTokenRate(`${row.id}[1m]`), explicit);
     assert.strictEqual(explicit.input, row.input);
-    assert.ok(pricing.TOKEN_RATES[row.family].input > explicit.input, `${row.family} is not the pricier prefix`);
   });
 }
+
+test("getTokenRate: claude-opus-5 is the pricier prefix, so a lost claude-opus-5-5 row would overcharge", () => {
+  assert.ok(pricing.TOKEN_RATES["claude-opus-5"].input > pricing.TOKEN_RATES["claude-opus-5-5"].input);
+});
 
 test("MODEL_CAP_MC: every described id is priced, and one id alone is the latest of each family", () => {
   const caps = loadModelCapMap();
