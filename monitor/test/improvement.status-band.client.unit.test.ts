@@ -38,6 +38,8 @@ interface BandSandbox {
   }) => RecordedElement;
   StatusTileI: (props: Record<string, unknown>) => RecordedElement;
   StatusBandI: (props: Record<string, unknown>) => RecordedElement;
+  InstrumentationViewI: (props: Record<string, unknown>) => RecordedElement | null;
+  getBannerFocusTargetI: (view: string) => string;
   getBandVerdictI: (input: Record<string, unknown>) => { tone: string; sentence: string };
   getInstrumentationChipsI: (
     verdicts: unknown,
@@ -84,6 +86,7 @@ sandbox.React.createElement = (type: unknown, props: Record<string, unknown> | n
   props: { ...(props ?? {}), children: rest.length > 1 ? rest : rest[0] },
 });
 // Installed once → every test sees the same UI, whatever order they run in.
+const ShippedPageVerdict = sandbox.window.UI.PageVerdict as (props: Record<string, unknown>) => unknown;
 const PageVerdictStub = () => null;
 Object.assign(sandbox.window.UI, { titleOf: (value: unknown) => value, PageVerdict: PageVerdictStub });
 
@@ -285,7 +288,7 @@ const verdictRows = [
     name: "a band that has not landed claims no status",
     input: { status: "loading", awaiting: 0, applied: 0, heldNeedingHuman: 0 },
     tone: "neutral",
-    mentions: ["Still reading"],
+    mentions: [],
   },
   {
     name: "a band whose payload failed says so and makes no loading claim",
@@ -315,6 +318,53 @@ test("a failed band payload reads as a failure, never as still loading", () => {
 
   assert.match(String(verdict?.props.children), /could not load/);
   assert.ok(!String(verdict?.props.children).includes(getUnreadCheckingNote()));
+});
+
+const LANDED = { status: "ready", busy: false, error: null, data: {} };
+
+// the band's verdict as the shipped PageVerdict renders it from the props the band hands it
+function renderBandVerdictText(asOf: string | null, states: Record<string, unknown>): string {
+  const band = sandbox.StatusBandI({
+    asOf,
+    statsState: LANDED,
+    listState: LANDED,
+    learningLogState: LANDED,
+    suppression: { pending_total: 0, parked: [] },
+    awaiting: 0,
+    onRetry: () => {},
+    ...states,
+  });
+  const verdict = collectElements(band, []).find((el) => el.type === PageVerdictStub);
+  assert.ok(verdict, "the band must render a verdict line");
+  return textOf(ShippedPageVerdict(verdict.props));
+}
+
+test("a failed refresh over a held band reads Last known, never the all-clear", () => {
+  const asOf = new Date().toISOString();
+  const statsData = { cycle_total_7d: 4, cycles_generated_applied_7d: 2 };
+  const settled = renderBandVerdictText(asOf, { statsState: { ...LANDED, data: statsData } });
+  const warmError = renderBandVerdictText(asOf, { statsState: { ...LANDED, data: statsData, error: "HTTP 500" } });
+
+  assert.match(settled, /Healthy/, "a settled band with nothing waiting is the all-clear");
+  assert.match(warmError, /Last known/);
+  assert.doesNotMatch(warmError, /Healthy/, "held numbers under a failed read never read as the all-clear");
+});
+
+test("a band with nothing read yet speaks the shared first-read note, not its own sentence", () => {
+  const reading = { status: "loading", busy: true, error: null, data: null };
+  const text = renderBandVerdictText(null, { statsState: reading, listState: reading, learningLogState: reading });
+  const ownSentence = sandbox.getBandVerdictI({ status: "loading", awaiting: 0, applied: 0, heldNeedingHuman: 0 }).sentence;
+
+  assert.ok(text.includes(getUnreadCheckingNote()), text);
+  assert.ok(!text.includes(ownSentence), text);
+});
+
+test("the page banner hands focus to a card the open view renders", () => {
+  const operatorIds = collectElements(renderBand({ pending_total: 0, parked: [] }), []).map((el) => el.props.id);
+  const instrumentationIds = collectElements(sandbox.InstrumentationViewI({}), []).map((el) => el.props.id);
+
+  assert.ok(operatorIds.includes(sandbox.getBannerFocusTargetI("operator")));
+  assert.ok(instrumentationIds.includes(sandbox.getBannerFocusTargetI("instrumentation")));
 });
 
 test("the band states its verdict before the tiles", () => {

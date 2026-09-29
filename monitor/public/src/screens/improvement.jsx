@@ -475,7 +475,7 @@ function ScreenImprovement({ onNav }) {
 						sources={pageFailure.sources}
 						error={pageFailure.error}
 						isBusy={isBusy}
-						focusTargetId="improvement-verdict"
+						focusTargetId={getBannerFocusTargetI(view)}
 						onRetry={triggerRefresh}
 					/>
 				) : null}
@@ -665,6 +665,7 @@ function getBandVerdictI({ status, awaiting, applied, heldNeedingHuman }) {
 		return { tone: "neutral", sentence: "Loop status could not load", chips: [] };
 	}
 	if (status !== "ready") {
+		// shown over a warm read only (cold → PageVerdict's shared first-read note) → the shared notes all claim a first read, false here
 		return { tone: "neutral", sentence: "Still reading the loop status.", chips: [] };
 	}
 	const parts = [`${formatIntI(applied)} applied in the last 7 days`];
@@ -2842,8 +2843,14 @@ function truncateI(s, n) {
 // 번들이 없으면 화면 전체가 죽는 대신 이 묶음만 빠진다(운영 표면은 이 파일이 전부 소유).
 function InstrumentationViewI(props) {
 	const View = window.ImprovementInstrumentationView;
-	if (!View) return null;
-	return <View {...props} />;
+	return <div id={INSTRUMENTATION_ANCHOR_ID_I}>{View ? <View {...props} /> : null}</div>;
+}
+
+const INSTRUMENTATION_ANCHOR_ID_I = "improvement-instrumentation";
+
+// banner Retry hands focus to the open view's own anchor → the id must exist in whichever view is showing
+function getBannerFocusTargetI(view) {
+	return view === "instrumentation" ? INSTRUMENTATION_ANCHOR_ID_I : "improvement-verdict";
 }
 
 // Screen-shared atoms for the instrumentation view — this file owns the SymI glyph and confidenceBadgeMetaI verdicts.
