@@ -504,13 +504,14 @@ ship_lib_a() {
 
 @test "retired: a still-tracked path git would quote is NOT retired once it leaves the disk" {
   # The on-disk arm is removed so only the tracked-paths oracle can keep the row out.
+  local tracked_file="${WORK}/scripts/lib/archive/한글.sh"
   git -C "${WORK}" config core.quotePath true
   mkdir -p "${WORK}/scripts/lib/archive"
-  printf '# archived\n' >"${WORK}/scripts/lib/archive/한글.sh"
+  printf '# archived\n' >"${tracked_file}"
   git -C "${WORK}" add scripts/lib/archive/한글.sh
   git -C "${WORK}" commit -qm 'track an excluded non-ASCII path'
   "${SCRIPT}" >/dev/null
-  rm -f -- "${WORK}/scripts/lib/archive/한글.sh"
+  if ga_guard_path "${tracked_file}"; then rm -f -- "${tracked_file:?}"; fi
   jq '.files += ["scripts/lib/archive/한글.sh"]
       | .hashes["scripts/lib/archive/한글.sh"] = "aa11bb22cc33dd44ee55ff6600112233445566778899aabbccddeeff00112233"' \
     "${MANIFEST}" >"${MANIFEST}.tmp"
