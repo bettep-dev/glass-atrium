@@ -1325,3 +1325,79 @@ test("a lifecycle row names its agent through the shared agent name, never a raw
   );
   assert.deepEqual(findAtoms(tree, "AgentName").map((n) => n.props.name), ["glass-atrium-dev-shell"]);
 });
+
+// component nodes keep their name as type; the region's card is the first host element beneath them
+function getRootHost(node: RenderedNode): RenderedNode {
+  const [child] = node.children;
+  const isComponent = /^[A-Z]/.test(String(node.type));
+  return isComponent && child && typeof child !== "string" ? getRootHost(child) : node;
+}
+
+describe("a focused Retry that succeeds leaves focus on its region's card", () => {
+  const putRegionRequest = REAL_UI.putRegionRequest as (state: unknown, key: string, request: unknown) => Record<string, unknown>;
+  const retrying = putRegionRequest(ERROR_STATE, "k", new AbortController());
+  const onRetry = () => undefined;
+
+  test("each page card hands its error card's Retry to the card itself", async () => {
+    const rows = [
+      { name: "success rates", component: "SuccessRateMatrixCard", props: { state: retrying, days: 30, onRetry } },
+      { name: "failure rates", component: "TopNFailingAgentsCard", props: { state: retrying, days: 30, onRetry, failureByAgent: new Map() } },
+      { name: "review flags", component: "ReviewFlagTimelineCard", props: { state: retrying, days: 30, onRetry } },
+      { name: "lifecycle stats", component: "LifecycleStatsCard", props: { state: retrying, days: 30, onSelect: () => undefined, onRetry } },
+    ];
+
+    for (const row of rows) {
+      const tree = await renderComponent(row.component, row.props) as RenderedNode;
+      const [errorCard] = findAtoms(tree, "RegionUnavailable");
+      assert.equal(errorCard?.props.isBusy, true, `${row.name}: the card stays up, busy, through the Retry`);
+      assert.ok(errorCard.props.focusTargetId, `${row.name}: the Retry names a focus target`);
+      assert.equal(getRootHost(tree).props.id, errorCard.props.focusTargetId, `${row.name}: the target is the region's own card`);
+    }
+  });
+
+  test("each drawer section hands its error card's Retry to the section that encloses it", async () => {
+    const agent = { agent_id: "glass-atrium-dev-shell", agent_name: "glass-atrium-dev-shell", status: "active", origin: "system" };
+    const idle = { status: "idle", data: null, error: null };
+    const base = {
+      drawerAgent: agent.agent_id, sortedAgents: [agent], trendByAgent: null, trendDates: [], days: 30,
+      onClose: onRetry, onNav: onRetry, onRetry, onDeleted: onRetry,
+    };
+    const rows = [
+      {
+        name: "summary-backed sections failing",
+        sources: ["overview", "performance", "failure patterns", "lifecycle stats", "quality signals", "recent activity"],
+        props: {
+          ...base, summaryState: retrying, revisionState: retrying, reviewByAgentState: retrying, latencyState: retrying,
+          failureState: retrying, lifecycleState: retrying, detailState: idle, blockedState: idle, recentState: retrying, failureByAgent: new Map(),
+        },
+      },
+      {
+        name: "nested rows failing under a loaded summary",
+        sources: ["latency", "failure causes"],
+        props: {
+          ...base, summaryState: { status: "ready", data: { agents: [agent] }, error: null }, revisionState: idle, reviewByAgentState: idle,
+          latencyState: retrying, failureState: { status: "ready", data: { rows: [] }, error: null }, lifecycleState: idle,
+          detailState: retrying, blockedState: retrying, recentState: idle,
+          failureByAgent: new Map([[agent.agent_id, { total_breakages: 2, reconstructed: 0, breakage_rate: 0.1 }]]),
+        },
+      },
+    ];
+
+    for (const row of rows) {
+      const tree = await renderComponent("AgentDetailDrawer", row.props) as RenderedNode;
+      const errorCards = findAtoms(tree, "RegionUnavailable");
+      const sources = errorCards.map((card) => String(card.props.source));
+      for (const source of row.sources) assert.ok(sources.includes(source), `${row.name}: ${source} renders its error card`);
+
+      for (const card of errorCards) {
+        const label = `${row.name}: ${String(card.props.source)}`;
+        const targetId = card.props.focusTargetId;
+        assert.equal(card.props.isBusy, true, `${label} stays up, busy, through the Retry`);
+        assert.ok(targetId, `${label} names a focus target`);
+        const [section] = findNodes(tree, (n) => n.type === "section" && n.props.id === targetId);
+        assert.ok(section, `${label}: the target is a drawer section`);
+        assert.equal(findNodes(section, (n) => n === card).length, 1, `${label}: the target section encloses the card`);
+      }
+    }
+  });
+});
