@@ -78,6 +78,7 @@ interface OutcomesHelpers {
   getGraderSentenceO: (breakdown: Record<string, unknown> | null | undefined) => string | null;
   getConfidentFailedO: (crosstab: { total: number; byCell: Record<string, { count: number }> } | null) => { count: number; share: number } | null;
   getCrosstabVisibleRowsO: (byCell: Record<string, { count: number }>) => string[];
+  PageVerdictO: (props: { analyticsState: PayloadState<unknown>; windowDays: number }) => RenderNode | null;
   buildNeedsYouReasonsO: (data: unknown) => { key: string; label: string; count: number | null; tone: string }[];
   buildAnalyticsDataO: (overall: unknown) => { overall: { by_agent_top_10?: unknown }; agentStack: unknown };
   isNeedsYouRowO: (row: LedgerRow, closedAt: string | null) => boolean;
@@ -100,7 +101,7 @@ interface OutcomesHelpers {
   buildActiveFilterEntriesO: (filter: Record<string, unknown>) => { key: string; label: string; patch: Record<string, string> | null }[];
   ActiveFilterChips: (props: { filter: Record<string, unknown>; onRemove?: (patch: Record<string, string>) => void; onClearAll?: () => void }) => RenderNode | null;
   getNeedsYouReasonO: (row: LedgerRow & { review_flag_reasons?: string[] }, closedAt: string | null) => string | null;
-  window: { UI: { getAgentDisplayName: (name: string) => string; Popover: unknown } };
+  window: { UI: { getAgentDisplayName: (name: string) => string; Popover: unknown; PageVerdict: unknown } };
 }
 
 interface RenderNode {
@@ -431,6 +432,37 @@ describe("buildNeedsYouReasonsO: the open-caveat reason reads the done_with_conc
   test("the broken reason keeps the band's failed+blocked count and breakage tone", () => {
     const [broken] = sameRealm(helpers.buildNeedsYouReasonsO(withByResult(undefined)));
     assert.deepStrictEqual([broken.key, broken.count, broken.tone], ["broken", 12, "crit"], "12 of 200 breaches the 5% breakage threshold");
+  });
+});
+
+// --- page verdict: one sentence answering "is this fine?", on the Dashboard's shared rate rule ---
+
+describe("PageVerdictO: the Task results verdict follows the shared outcome-rate rule", () => {
+  const byResult = (counts: Record<string, number>, open = 0) =>
+    Object.entries(counts).map(([result, count]) => ({ result, count, writer_open_count: result === "done_with_concerns" ? open : 0 }));
+  const ready = (counts: Record<string, number>, open = 0) => {
+    const total = Object.values(counts).reduce((a, b) => a + b, 0);
+    return { status: "ready" as const, data: { overall: { total, reconstructed_total: 0, by_result: byResult(counts, open) }, byResultCount: counts } };
+  };
+  const rows = [
+    { name: "breakage at or above 5% is crit", state: ready({ done: 180, fail: 12, done_with_concerns: 8 }, 2), tone: "crit", text: /6\.0% of 200 .*failed or were blocked/ },
+    { name: "open caveats at or above 10% alone are warn", state: ready({ done: 170, done_with_concerns: 30 }, 25), tone: "warn", text: /12\.5% still carry an open caveat/ },
+    { name: "both shares under their steps are ok", state: ready({ done: 195, fail: 2, done_with_concerns: 3 }, 1), tone: "ok", text: /1\.0% of 200/ },
+    { name: "a sample under the low-N floor claims no tone", state: ready({ fail: 10 }), tone: "neutral", text: /too few to judge/ },
+    { name: "an empty window claims no tone", state: ready({}), tone: "neutral", text: /No task results/ },
+    { name: "a failed read is unknown, never all-clear", state: { status: "error" as const, error: "boom" }, tone: "neutral", text: /unknown/ },
+  ];
+  for (const row of rows) {
+    test(row.name, () => {
+      const node = helpers.PageVerdictO({ analyticsState: row.state, windowDays: 30 }) as RenderNode;
+      assert.strictEqual(node.type, helpers.window.UI.PageVerdict, "renders the shared PageVerdict atom");
+      assert.strictEqual(node.props!.tone, row.tone);
+      assert.match(String(node.children.join("")), row.text);
+    });
+  }
+
+  test("loading renders no verdict rather than a premature one", () => {
+    assert.strictEqual(helpers.PageVerdictO({ analyticsState: { status: "loading" }, windowDays: 30 }), null);
   });
 });
 

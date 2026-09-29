@@ -670,6 +670,8 @@ function ScreenOutcomes({ onNav }) {
         </div>
       )}
 
+      <PageVerdictO analyticsState={analyticsState} windowDays={analyticsPeriod}/>
+
       <AlarmLaneO channelLivenessState={channelLivenessState} searchState={searchState}/>
 
       <StatusBandO
@@ -1016,6 +1018,36 @@ function getOpenCaveatCountO(overall) {
   if (!caveatRow) return 0;
   if (!Number.isFinite(caveatRow.writer_open_count)) return null;
   return window.UI.resolveOutcomeRate(overall).openCaveats;
+}
+
+// page verdict = the Dashboard's resolveOutcomeRate judgment as shares; the hero tile keeps the absolute counts
+function PageVerdictO({ analyticsState, windowDays }) {
+  const { PageVerdict, LOW_N_MIN, formatInt } = window.UI;
+
+  if (analyticsState.status === 'loading') return null;
+  if (analyticsState.status !== 'ready') {
+    return <PageVerdict tone="neutral" className="mb-4">Task-result health is unknown — the window totals didn't load.</PageVerdict>;
+  }
+
+  const rate = window.UI.resolveOutcomeRate(analyticsState.data?.overall);
+  const windowLabel = `last ${windowDays}d`;
+  if (rate.status === 'empty' || rate.status === 'unavailable') {
+    return <PageVerdict tone="neutral" className="mb-4">{`No task results written by agents in the ${windowLabel} to judge.`}</PageVerdict>;
+  }
+  if (rate.status === 'low-n') {
+    return <PageVerdict tone="neutral" className="mb-4">{`Only ${formatInt(rate.writerTotal)} agent-written records in the ${windowLabel} — too few to judge (needs ${LOW_N_MIN}).`}</PageVerdict>;
+  }
+
+  const chips = rate.tone === 'ok' ? [] : [{ key: 'needs-you', label: 'Needs you', targetId: LEDGER_NEEDS_YOU_ID }];
+  return (
+    <PageVerdict tone={rate.tone} chips={chips} className="mb-4">
+      {`${formatShareO(rate.breakage, rate.writerTotal)} of ${formatInt(rate.writerTotal)} agent-written records in the ${windowLabel} failed or were blocked, and ${formatShareO(rate.openCaveats, rate.writerTotal)} still carry an open caveat.`}
+    </PageVerdict>
+  );
+}
+
+function formatShareO(count, population) {
+  return `${((count / population) * 100).toFixed(1)}%`;
 }
 
 function NeedsYouReasonsO({ reasons }) {

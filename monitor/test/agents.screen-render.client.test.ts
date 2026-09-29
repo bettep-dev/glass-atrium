@@ -1162,3 +1162,35 @@ test("a drawer concern shows as a whole item clamped to two lines, with the full
   assert.equal(item?.props.title, concern, "the tooltip carries the whole item");
   assert.equal((item?.props.style as Record<string, unknown> | undefined)?.WebkitLineClamp, 2, "clamped to two lines");
 });
+
+// Stub LOW_N_MIN = 5. revision bucket '0' → health 1 (ok) · avg 0.3 → health 0.64 (warn) · bucket '4+' → health 0.4 (crit).
+test("the page verdict counts agents by the Overview health rule, and a thin or unread sample never reads as healthy", async () => {
+  const ready = (rows: unknown[]) => ({ status: "ready", data: { rows }, error: null });
+  const revision = (agent: string, buckets: Record<string, number>) =>
+    Object.entries(buckets).map(([revision_bucket, occurrence_count]) => ({ agent, revision_bucket, occurrence_count }));
+  const healthy = revision("a-healthy", { "0": 10 });
+  const watched = revision("a-watch", { "0": 7, "1": 3 });
+  const critical = revision("a-crit", { "4+": 10 });
+  const thin = revision("a-thin", { "4+": 2 });
+  const rows = [
+    { name: "a crit agent makes the page crit", revision: [...healthy, ...watched, ...critical], tone: "crit", text: /1 of 3 agents .*need attention.*1 more to watch/ },
+    { name: "a watch-band agent alone makes the page warn", revision: [...healthy, ...watched], tone: "warn", text: /0 of 2 agents .*need attention.*1 more to watch/ },
+    { name: "every judged agent healthy is ok, the thin one left out of the count", revision: [...healthy, ...thin], tone: "ok", text: /All 1 agent/ },
+    { name: "no agent above the low-N floor claims no tone", revision: thin, tone: "neutral", text: /too few runs/ },
+  ];
+  for (const row of rows) {
+    const tree = await renderComponent("AgentPageVerdict", { revisionState: ready(row.revision), reviewByAgentState: ready([]), days: 30 });
+    const verdict = findNodes(tree, (n) => n.props?.atom === "PageVerdict")[0];
+    assert.ok(verdict, `${row.name}: renders the shared PageVerdict atom`);
+    assert.equal(verdict.props.tone, row.tone, row.name);
+    assert.match(collectText(verdict), row.text, row.name);
+  }
+
+  const failed = await renderComponent("AgentPageVerdict", { revisionState: ready(critical), reviewByAgentState: { status: "error", data: null, error: "boom" }, days: 30 });
+  const unknown = findNodes(failed, (n) => n.props?.atom === "PageVerdict")[0];
+  assert.equal(unknown.props.tone, "neutral", "an unread flag rate cannot be judged");
+  assert.match(collectText(unknown), /unknown/);
+
+  const loading = await renderComponent("AgentPageVerdict", { revisionState: LOADING_STATE, reviewByAgentState: LOADING_STATE, days: 30 });
+  assert.equal(findNodes(loading, (n) => n.props?.atom === "PageVerdict").length, 0, "loading renders no premature verdict");
+});

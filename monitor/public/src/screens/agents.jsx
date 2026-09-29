@@ -343,6 +343,8 @@ function ScreenAgents() {
         <PageErrorBanner sources={sharedFailure.sources} error={sharedFailure.error} onRetry={triggerRefresh}/>
       )}
 
+      <AgentPageVerdict revisionState={revisionState} reviewByAgentState={reviewByAgentState} days={days}/>
+
       {/* held values stay on screen, dimmed, until the refresh settles */}
       <div
         aria-busy={isAnyRegionBusy ? 'true' : undefined}
@@ -421,6 +423,39 @@ function ScreenAgents() {
 const INSTRUMENTATION_QUESTION = 'Is the measuring apparatus intact';
 
 // Status fold — open by default, the head carries the verdict so a closed fold still answers.
+// page verdict = the Overview health rule over every agent above the low-N floor; orphans stay with InstrumentationFold
+function AgentPageVerdict({ revisionState, reviewByAgentState, days }) {
+  const { PageVerdict, LOW_N_MIN } = window.UI;
+  const states = [revisionState, reviewByAgentState];
+
+  if (states.some((state) => state.status === 'loading')) return null;
+  if (states.some((state) => state.status !== 'ready')) {
+    return <PageVerdict tone="neutral" className="mb-4">Agent health is unknown — the rework or review-flag read didn't load.</PageVerdict>;
+  }
+
+  const ranked = buildQualityHealthRanking(readyData(revisionState)?.rows ?? [], readyData(reviewByAgentState)?.rows ?? [], Number.MAX_SAFE_INTEGER);
+  if (ranked.length === 0) {
+    return <PageVerdict tone="neutral" className="mb-4">{`No agent has enough runs in the last ${days}d to judge its health — too few runs (needs ${LOW_N_MIN} each).`}</PageVerdict>;
+  }
+
+  const tones = ranked.map((entry) => qualityHealthVerdict(entry.healthIndex).tone);
+  const critCount = tones.filter((tone) => tone === 'crit').length;
+  const warnCount = tones.filter((tone) => tone === 'warn').length;
+  const judged = `${ranked.length} agent${ranked.length === 1 ? '' : 's'}`;
+  if (critCount + warnCount === 0) {
+    return <PageVerdict tone="ok" className="mb-4">{`All ${judged} with enough runs in the last ${days}d are healthy on rework and review flags.`}</PageVerdict>;
+  }
+
+  const chips = [{ key: 'summary', label: 'Performance by agent', targetId: AGENT_SUMMARY_CARD_ID }];
+  return (
+    <PageVerdict tone={critCount > 0 ? 'crit' : 'warn'} chips={chips} className="mb-4">
+      {`${critCount} of ${judged} with enough runs in the last ${days}d need attention on rework or review flags, ${warnCount} more to watch.`}
+    </PageVerdict>
+  );
+}
+
+const AGENT_SUMMARY_CARD_ID = 'agents-summary';
+
 function InstrumentationFold({ lifecycleState, reviewState, days, onRetry }) {
   const { tone, sub } = getInstrumentationVerdict(lifecycleState, reviewState);
 
@@ -684,7 +719,7 @@ function AgentSummaryCard({ state, days, sortBy, onSortChange, selectedAgent, on
     : (state.status === 'loading' ? 'Loading…' : "Couldn't load");
 
   return (
-    <div className="card h-full flex flex-col min-h-0 min-w-0 mb-0">
+    <div id={AGENT_SUMMARY_CARD_ID} className="card h-full flex flex-col min-h-0 min-w-0 mb-0">
       <CardHead
         title="Performance by agent"
         sub={subText}
