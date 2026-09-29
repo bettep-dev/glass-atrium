@@ -810,13 +810,46 @@ test("the Agents page never renders text below the 12px meta step", async () => 
   }
 });
 
-test("a disclosure is a page h2 whose control is the shared chevron button, never a text glyph", async () => {
-  const tree = await renderComponent("AgentDisclosure", { title: "Instrumentation", sub: "Is the measuring apparatus intact" });
-  const heading = findNodes(tree, (n) => n.type === "h2")[0];
-  assert.ok(heading, "the disclosure title is an h2");
-  const button = findAtoms(heading, "DisclosureButton")[0];
-  assert.equal(button?.props.isOpen, false, "closed by default");
-  assert.doesNotMatch(collectText(tree), /[▸▾]/);
+function getMatrixRow(agent: string, success: number, failure: number): Record<string, unknown> {
+  const total = success + failure;
+  return { agent, task_type: "feature", event_date: "2026-01-01", total_count: total, success_count: success, failure_count: failure, success_rate: success / total };
+}
+
+const TASK_TYPE_FOLD_ROWS = [
+  { name: "a crit pair opens the fold", rows: [getMatrixRow("a", 19, 1), getMatrixRow("b", 40, 0)], tone: "crit", isOpen: true },
+  { name: "every pair under the step keeps it closed", rows: [getMatrixRow("a", 39, 1), getMatrixRow("b", 40, 0)], tone: "ok", isOpen: false },
+  { name: "a failing small sample stays under the low-N floor and keeps it closed", rows: [getMatrixRow("a", 2, 1)], tone: "ok", isOpen: false },
+];
+
+describe("the By task type fold takes its tone from its worst pair", () => {
+  for (const row of TASK_TYPE_FOLD_ROWS) {
+    test(row.name, async () => {
+      const tree = await renderComponent("TaskTypeFold", { state: { status: "ready", data: { rows: row.rows }, error: null }, days: 30, onRetry: () => undefined });
+      const [fold] = findAtoms(tree, "Disclosure");
+      assert.ok(fold, "the fold is the shared Disclosure");
+      assert.equal(fold.props.title, "By task type");
+      assert.equal(fold.props.tone, row.tone);
+      const getDisclosureOpen = REAL_UI.getDisclosureOpen as (kind: string, tone: unknown) => boolean;
+      assert.equal(getDisclosureOpen(String(fold.props.kind ?? "detail"), fold.props.tone), row.isOpen);
+    });
+  }
+
+  test("an unread matrix gives the fold no tone", async () => {
+    const tree = await renderComponent("TaskTypeFold", { state: LOADING_STATE, days: 30, onRetry: () => undefined });
+    const [fold] = findAtoms(tree, "Disclosure");
+    assert.ok(fold, "the fold renders while the matrix loads");
+    assert.equal(fold.props.tone, undefined);
+  });
+});
+
+test("the matrix grows with the page instead of a nested vertical scroller that clips a row", async () => {
+  const tree = await renderComponent("SuccessRateMatrixCard", { state: { status: "ready", data: { rows: [getMatrixRow("a", 9, 1)] }, error: null }, days: 30, onRetry: () => undefined });
+  const classOf = (n: RenderedNode) => String(n.props.className ?? "");
+  const [body] = findNodes(tree, (n) => /\bcard-body\b/.test(classOf(n)));
+  assert.equal((body.props.style as Record<string, unknown>)?.maxHeight, "none", "no card-body height cap on the matrix");
+  const verticalScrollers = findNodes(tree, (n) => /\boverflow-(auto|y-auto|hidden)\b/.test(classOf(n)) || /\bag-card-body\b/.test(classOf(n)));
+  assert.deepEqual(verticalScrollers.map(classOf), [], "nothing inside the matrix scrolls or clips vertically");
+  assert.ok(findNodes(tree, (n) => /\boverflow-x-auto\b/.test(classOf(n))).length === 1, "wide columns scroll sideways inside the card");
 });
 
 test("the ledger carries Runs and No record as columns instead of a per-row expander", async () => {
@@ -948,9 +981,9 @@ test("drawer section titles are h2 headings under the dialog's own name", async 
   assert.equal(findAtoms(tree, "SubCard")[0]?.props.labelLevel, 2);
 });
 
-test("the drawer is named by the agent alone, never by the glyphs and pills beside its title", async () => {
+test("the drawer's name reads its parts apart and never repeats the surface's own title id", async () => {
   const idle = { status: "idle", data: null, error: null };
-  const agent = { agent_id: "glass-atrium-dev-shell", agent_name: "dev-shell", status: "active", origin: "system" };
+  const agent = { agent_id: "glass-atrium-dev-shell", agent_name: "glass-atrium-dev-shell", status: "active", origin: "system" };
   const tree = await renderComponent("AgentDetailDrawer", {
     drawerAgent: agent.agent_id, sortedAgents: [agent], summaryState: { status: "ready", data: { agents: [agent] }, error: null },
     revisionState: idle, reviewByAgentState: idle, latencyState: idle, successState: idle, failureState: idle, lifecycleState: idle,
@@ -958,11 +991,14 @@ test("the drawer is named by the agent alone, never by the glyphs and pills besi
     onClose: () => undefined, onNav: () => undefined, onRetry: () => undefined, onDeleted: () => undefined,
   });
   const surface = findAtoms(tree, "DetailSurface")[0];
-  const labelledBy = surface?.props.labelledBy;
-  assert.ok(labelledBy, "the surface points at a name node");
-  // The surface atom is a stub, so its title element is rendered on its own.
-  const nameNode = findNodes(renderScreen(surface.props.title), (n) => n.props?.id === labelledBy)[0];
-  assert.equal(collectText(nameNode), "dev-shell");
+  // DetailSurface names the dialog by the node wrapping the whole title, so every part of it is read out.
+  const title = renderScreen(surface.props.title);
+  const labelledBy = surface.props.labelledBy;
+  assert.deepEqual(labelledBy === undefined ? [] : findNodes(title, (n) => n.props?.id === labelledBy), [], "no second node carries the dialog's name id");
+  const [name] = findAtoms(title, "AgentName");
+  assert.equal(name?.props.name, "glass-atrium-dev-shell", "the name part is the shared agent name");
+  const separators = findNodes(title, (n) => n.props?.className === "sr-only" && collectText(n).trim() === ",");
+  assert.equal(separators.length, 2, "name, activity and health are read as three parts");
 });
 
 test("the review-flag total sits under a card title in every state, never as a heading-less tile", async () => {
@@ -1240,4 +1276,28 @@ describe("the Agents page verdict rolls up the health rule and every status tile
     const tree = await renderComponent("AgentPageVerdict", { revisionState: LOADING_STATE, reviewByAgentState: LOADING_STATE, statusTiles: [], days: 30 });
     assert.equal(findNodes(tree, (n) => n.props?.atom === "PageVerdict").length, 0);
   });
+});
+
+test("a warm error hands the verdict its failed region, so the page never reads Healthy over it", async () => {
+  const warmError = { status: "ready", busy: false, key: null, data: { rows: [], agents: [], fetched_at: "2026-01-10T11:59:00.000Z" }, error: "HTTP 500 Internal Server Error" };
+  const tree = await renderScreenAgents(warmError);
+  const [verdict] = findAtoms(tree, "PageVerdict");
+  const freshness = verdict?.props.freshness as Record<string, unknown> | undefined;
+  assert.ok(freshness, "the verdict is freshness-driven");
+  const getFreshnessVerdict = REAL_UI.getFreshnessVerdict as (input: Record<string, unknown>) => { tone: string; label: string };
+  const settled = getFreshnessVerdict({ ...freshness, tone: "ok", now: Date.parse("2026-01-10T12:00:00.000Z") });
+  assert.notEqual(settled.tone, "ok", "an all-clear over a failed read drops its tone");
+  assert.doesNotMatch(settled.label, /Healthy/);
+});
+
+test("a lifecycle row names its agent through the shared agent name, never a raw id the cell truncates", async () => {
+  const mod = await loadAgentsScreen();
+  const React = mod.React as { createElement: (t: unknown, p: unknown) => unknown };
+  const tree = renderScreen(
+    React.createElement(mod.LifecycleStatsTable as Component, {
+      rows: [{ agent_type: "glass-atrium-dev-shell", start_count: 4, stop_count: 4, completed_count: 3, p95_duration_sec: 60 }],
+      onSelect: () => undefined,
+    }),
+  );
+  assert.deepEqual(findAtoms(tree, "AgentName").map((n) => n.props.name), ["glass-atrium-dev-shell"]);
 });
