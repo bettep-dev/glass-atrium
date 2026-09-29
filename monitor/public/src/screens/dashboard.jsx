@@ -137,7 +137,10 @@ function ScreenDashboard({ onNav, harness, onRetryHarness }) {
       </div>
 
       <div className="space-sections">
-        {sharedFailure && <PageErrorBanner sources={sharedFailure.sources} error={sharedFailure.error} onRetry={triggerRefresh}/>}
+        {sharedFailure && (
+          <PageErrorBanner sources={sharedFailure.sources} error={sharedFailure.error} onRetry={triggerRefresh}
+            isBusy={window.UI.getRegionSummary(waveStates).isBusy} focusTargetId={DASH_STATUS_BAND_ID}/>
+        )}
         <AlarmLane
           alarms={alarms}
           readiness={alarmReadiness}
@@ -263,7 +266,7 @@ function AlarmRow({ alarm, onNav, children }) {
 // 상태 밴드 — 4타일 고정, 좁은 폭에선 2×2. 값 · 힌트 한 줄 · 소유 화면 링크.
 function StatusBand({ tiles, onNav, onRetry, sharedSources = NO_SHARED_SOURCES }) {
   return (
-    <div className="grid grid-cols-2 xl:grid-cols-4 gap-card">
+    <div id={DASH_STATUS_BAND_ID} className="grid grid-cols-2 xl:grid-cols-4 gap-card">
       {tiles.map((tile) => (
         <StatusTile key={tile.id} tile={tile} onNav={onNav} onRetry={onRetry}
           isRetryShared={sharedSources.includes(tile.source)}/>
@@ -271,6 +274,9 @@ function StatusBand({ tiles, onNav, onRetry, sharedSources = NO_SHARED_SOURCES }
     </div>
   );
 }
+
+// the band outlives every recovery → a banner Retry that leaves on success hands focus here
+const DASH_STATUS_BAND_ID = 'dash-status';
 
 // a banner-carried outage is stated once, above → the tile stays flat with its unknown dash
 const SHARED_FAILURE_HINT = 'Not loaded — see the notice above.';
@@ -280,15 +286,15 @@ const SHARED_FAILURE_HINT = 'Not loaded — see the notice above.';
 function StatusTile({ tile, onNav, onRetry, isRetryShared = false }) {
   const { RegionUnavailable } = window.UI;
   return (
-    <div className={`card p-3 flex flex-col gap-1.5 ${tile.isBusy ? 'opacity-70' : ''}`.trim()}
+    <div id={getTileCardId(tile)} className={`card p-3 flex flex-col gap-1.5 ${tile.isBusy ? 'opacity-70' : ''}`.trim()}
       aria-busy={tile.isBusy ? 'true' : undefined}>
       <h2 className="fs-meta text-dim uppercase tracking-wide">
         {tile.label}
         {tile.window && <span className="normal-case"> ({tile.window})</span>}
       </h2>
       {tile.status === 'error' && !isRetryShared ? (
-        <RegionUnavailable source={tile.source} error={tile.error}
-          onRetry={() => onRetry(tile.region)}/>
+        <RegionUnavailable source={tile.source} error={tile.error} isBusy={tile.isBusy}
+          focusTargetId={getTileCardId(tile)} onRetry={() => onRetry(tile.region)}/>
       ) : (
         <>
           <window.UI.TileSplit
@@ -313,6 +319,10 @@ function StatusTile({ tile, onNav, onRetry, isRetryShared = false }) {
   );
 }
 
+function getTileCardId(tile) {
+  return `dash-tile-${tile.id}`;
+}
+
 function StatusTileValue({ tile }) {
   const { Badge, KpiValue, LoadingPlaceholder } = window.UI;
   if (tile.status === 'loading') {
@@ -328,7 +338,7 @@ function StatusTileValue({ tile }) {
     <div className="flex items-center gap-2">
       <KpiValue>{tile.value}</KpiValue>
       {tile.unit && <span className="fs-body text-dim">{tile.unit}</span>}
-      {tile.tone !== 'neutral' && <Badge role="status" tone={tile.tone} icon>{tile.badge ?? TONE_WORD[tile.tone]}</Badge>}
+      {(tile.tone !== 'neutral' || tile.isHeld) && <Badge role="status" tone={tile.tone} icon>{tile.badge ?? TONE_WORD[tile.tone]}</Badge>}
     </div>
   );
 }
@@ -607,10 +617,12 @@ function buildTiles({ harness, costState, agentsState, outcomesState }) {
 }
 
 // held data whose latest read failed → last-known badge + own Retry; its error joins the shared-outage check
+// shared freshness rule → a held warn/crit keeps its alarm, a held all-clear drops to neutral
 function markHeldTile(tile, state) {
   if (tile.status === 'loading' || tile.status === 'error' || state?.error == null) return tile;
+  const isAlarm = tile.tone === 'warn' || tile.tone === 'crit';
   return {
-    ...tile, tone: 'info', badge: 'Last known', error: state.error, canRetry: true,
+    ...tile, tone: isAlarm ? tile.tone : 'neutral', isHeld: true, badge: 'Last known', error: state.error, canRetry: true,
     hint: `Showing the last reading — couldn't refresh ${tile.source}.`,
   };
 }
@@ -678,9 +690,11 @@ function joinPartNames(names) {
 }
 
 // 첫 판독 전(loading) · 데이터 없는 실패(error) → 타일, 그 외 null. 실패 문구는 base.source 로 공용 카드가 만든다.
+// a cold error stays 'error' through its Retry (getRegionView) → the focused Retry card never becomes a loader
 function buildPendingTile(base, state) {
-  if (!state || state.status === 'loading') return { ...base, status: 'loading', tone: 'neutral', value: '—', hint: null };
-  if (state.status === 'error') return { ...base, status: 'error', tone: 'neutral', value: '—', hint: null, error: state.error };
+  const view = state ? window.UI.getRegionView(state) : 'loading';
+  if (view === 'loading') return { ...base, status: 'loading', tone: 'neutral', value: '—', hint: null };
+  if (view === 'error') return { ...base, status: 'error', tone: 'neutral', value: '—', hint: null, error: state.error };
   return null;
 }
 

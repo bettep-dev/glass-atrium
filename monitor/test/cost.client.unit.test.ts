@@ -11,6 +11,7 @@ import { fileURLToPath } from "node:url";
 import { dirname, resolve } from "node:path";
 
 import { buildScreenSandbox } from "./client-sandbox.js";
+import { createReactStub, findNodes, loadScreenModule, renderScreen, type RenderedNode } from "./lib/render-screen.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const COST_SRC = resolve(__dirname, "../public/src/screens/cost.jsx");
@@ -77,6 +78,7 @@ interface CostHelpers {
         regions: ReadonlyArray<PanelState>;
         now: number;
       }) => string;
+      getFreshnessVerdict: (input: Record<string, unknown>) => { tone: string; label: string };
     };
   };
   computeAlarmRows: (input: {
@@ -931,4 +933,67 @@ test("the turn headline states one per-session figure and reconciles its session
   }
   const none = cost.getTurnHeadline({ avg_turns_per_session: 0, turn_session_count: 0 }, 40);
   assert.strictEqual(none.value, null, "no counted session has no average");
+});
+
+// --- Error cards survive their Retry, and a held read under a failure never reads current ---
+
+type ElementFactory = (props: unknown) => unknown;
+interface RenderModule {
+  React: { createElement: (type: unknown, props: unknown) => unknown };
+  [name: string]: unknown;
+}
+
+// real ui.jsx helpers, with every rendered atom a host element carrying its props
+function getAtomUi(overrides: Record<string, unknown> = {}): unknown {
+  const real = cost.window.UI as Record<string, unknown>;
+  return new Proxy({}, {
+    get: (_target, name: string) => {
+      if (name in overrides) return overrides[name];
+      const value = real[name];
+      if (typeof value !== "function" || /^[a-z]/.test(name)) return value;
+      return (props: Record<string, unknown>) => ({ __element: true, type: "ui-atom", props: { ...props, atom: name } });
+    },
+    has: () => true,
+  });
+}
+
+function renderIn(mod: RenderModule, name: string, props: Record<string, unknown>): RenderedNode {
+  return renderScreen(mod.React.createElement(mod[name] as ElementFactory, props)) as RenderedNode;
+}
+
+test("a cold-failed region keeps its error card mounted and busy while its Retry is in flight", async () => {
+  const mod = (await loadScreenModule(COST_SRC, { UI: getAtomUi(), React: createReactStub() })) as RenderModule;
+  const retrying: PanelState = { status: "loading", data: null, error: "HTTP 500 Internal Server Error", busy: true };
+  const bodies = [
+    "CostTrendBody", "TokenStackedBody", "ModelCostBody", "CacheHitBody", "SessionDistributionBody", "ParseErrorBody", "TurnStatsBody",
+  ];
+  // the ids the page renders on its region wrappers, which stay mounted through any recovery
+  const page = renderIn(mod, "ScreenCost", { onNav: () => {} });
+  const regionIds = new Set(findNodes(page, (n) => n.type === "div" && typeof n.props.id === "string").map((n) => n.props.id));
+  for (const name of bodies) {
+    const tree = renderIn(mod, name, { state: retrying, days: 30, onRetry: () => {}, onNav: () => {} });
+    const cards = findNodes(tree, (n) => n.props.atom === "RegionUnavailable");
+    assert.equal(cards.length, 1, `${name} keeps its error card`);
+    assert.equal(findNodes(tree, (n) => n.props.atom === "LoadingPlaceholder").length, 0, `${name} never swaps in a loader`);
+    assert.equal(cards[0].props.isBusy, true, `${name} shows the Retry in flight`);
+    assert.ok(regionIds.has(String(cards[0].props.focusTargetId)), `${name} hands focus to a region wrapper`);
+  }
+});
+
+test("the page verdict over a warm error reads Last known, never the all-clear", async () => {
+  const ui = cost.window.UI;
+  const now = Date.parse(NOON_UTC);
+  const readAt = new Date(now - 60_000).toISOString();
+  const warmError: PanelState = { ...ready({ ...getKpiAtRatio(1, 1), points: [], rows: [] }), error: "HTTP 500 Internal Server Error" };
+  // ScreenCost's only null-initial state is the read instant → a settled earlier read
+  const react = { ...createReactStub(), useState: (initial: unknown) => [initial === null ? readAt : initial, () => undefined] };
+  const mod = (await loadScreenModule(COST_SRC, {
+    UI: getAtomUi({ INITIAL_REGION_STATE: warmError }), React: react,
+  })) as RenderModule;
+  const tree = renderIn(mod, "ScreenCost", { onNav: () => {} });
+  const [verdict] = findNodes(tree, (n) => n.props.id === "cost-verdict");
+  const props = verdict.props as { tone: string; label?: string; freshness?: Record<string, unknown> };
+  const shown = ui.getFreshnessVerdict({ ...props.freshness, tone: props.tone, label: props.label, now });
+  assert.match(String(shown.label), /^Last known/, `the verdict reads ${String(shown.label)}`);
+  assert.notEqual(shown.tone, "ok", "a held read under a failure never reads healthy");
 });

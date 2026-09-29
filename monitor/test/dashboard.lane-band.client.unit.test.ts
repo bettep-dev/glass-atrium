@@ -463,9 +463,36 @@ test("a region whose refresh failed over held data reads last-known and carries 
       assert.equal(tile.canRetry === true, row.lastKnown, `${row.name}: ${id} Retry`);
     }
   }
-  // held data → the info tone, never the healthy one
+  // a held all-clear never reads healthy: the ok tone drops to neutral, the same rule the page verdicts follow
   const heldTiles = tilesFor(rows[1]);
-  for (const id of ids) assert.equal(tileOf(heldTiles, id).tone, "info", `${id} held after a failed refresh`);
+  for (const id of ids) assert.notEqual(tileOf(heldTiles, id).tone, "ok", `${id} held after a failed refresh`);
+});
+
+test("a held tile keeps a warn or crit alarm through a failed refresh, and only an all-clear drops to neutral", () => {
+  const breaker = (suspended: number) => ({ source: "loaded", suspended_count: suspended, streak_count: 0 });
+  const fleetOf = (suspended: number) => ready({ meta: { total_agents: 3, circuit_breaker: breaker(suspended) } });
+  for (const suspended of [0, 1]) {
+    const fresh = tileOf(dash.buildTiles({ harness: HEALTHY, costState: LOADING, outcomesState: LOADING, agentsState: fleetOf(suspended) }), "fleet");
+    const stale = tileOf(
+      dash.buildTiles({ harness: HEALTHY, costState: LOADING, outcomesState: LOADING, agentsState: held(fleetOf(suspended), "HTTP 500") }),
+      "fleet",
+    );
+    const isAlarm = fresh.tone === "warn" || fresh.tone === "crit";
+    assert.equal(isAlarm, suspended > 0, `${suspended} suspended: a suspension is the alarm under test`);
+    assert.equal(stale.tone, isAlarm ? fresh.tone : "neutral", `${suspended} suspended: fresh ${fresh.tone}`);
+    assert.equal(stale.badge, "Last known", `${suspended} suspended: the held reading is still flagged`);
+  }
+});
+
+test("a cold-failed tile stays the error card while its Retry is in flight, never a loader", () => {
+  const retrying = { status: "loading", data: null, error: "HTTP 500", busy: true };
+  const tiles = dash.buildTiles({ harness: HEALTHY, costState: retrying, agentsState: retrying, outcomesState: retrying });
+  for (const id of ["outcomes", "fleet", "spend"]) {
+    const tile = tileOf(tiles, id) as Tile & { error: string; isBusy: boolean };
+    assert.equal(tile.status, "error", `${id} keeps its error card`);
+    assert.equal(tile.error, "HTTP 500", id);
+    assert.equal(tile.isBusy, true, `${id} marks the Retry in flight`);
+  }
 });
 
 test("held failures sharing one cause collapse into the page banner's single Retry", () => {
