@@ -161,8 +161,8 @@ Tier membership — which rules a scope *should* load — is distinct from deliv
 | `rules/glass-atrium/` members with `paths:` frontmatter — this file and `shared-self-improve-hygiene.md` | HOST project-instructions, on a Read of a file their globs match, never at session start | UNMEASURED — **Path-scoped delivery** below |
 
 - **A Tier-2 scope body is not delivered by the HOST channel.** What a spawned subagent receives there at session start is the set the main session holds — the Tier-1 files and the ORCHESTRATOR Tier-2 pair — whatever the subagent's own scope.
+  - The Tier-1 files and the ORCHESTRATOR pair arriving: measured by reading a spawned subagent's received project-instructions directly.
   - Not in that set [UNMEASURED]: the path-scoped members (**Path-scoped delivery** below).
-  - Measured by reading a spawned subagent's received project-instructions directly.
 - **The host mechanism is unread — do not state it as fact anywhere.** The likeliest explanation is that the host propagates the parent session's project-instructions verbatim to each spawned subagent, but no configuration for that channel was located: treat what arrives as established and why as open.
 - **Path-scoped delivery** — this file and `rules/glass-atrium/shared-self-improve-hygiene.md` carry `paths:` frontmatter of `**/`-led globs.
   - The host loads such a file on a Read of a file its globs match, never at session start.
@@ -173,19 +173,19 @@ Tier membership — which rules a scope *should* load — is distinct from deliv
     - From cwd `$HOME`, a file anywhere under it qualifies.
     - From a repo cwd, only files inside that repo qualify, so a Read under `~/.glass-atrium` there loads neither file.
   - A subagent's glob base is its own context cwd [hypothesis — not traced].
-  - **No part-slot pointer**: `hooks/lib/inject_chunk.py` → `get_membership` admits `scoped/` conditionals only, so an agent holds either file only through a matching Read.
+  - **No part-slot pointer**: `hooks/lib/inject_chunk.py` → `get_membership` admits `scoped/` conditionals only.
 - **Membership source**: membership MUST be read from the registry row, not from this file; this matrix stays the governance SoT the rows are authored from.
   - The reconcile binding the two is `agent_lifecycle orphan-scan --mode rules-membership-mismatch`, run off the delivery path, where a fail-open matrix parser is the right instrument.
   - That reconcile reads the **Tier-2 and Tier-3 declaration rows, never the Compliance Matrix table cell**, which is a coarser summary of them.
     - A cell reader reports a permanent false divergence for glass-atrium-qa-debugger on every reviewer-only QA cell (`### Tier 3 — Cross-cutting (conditional inheritance)` → **QA**).
   - **Why the registry and not this file:** the registry is merge-claimed by the updater (`autoagent/lib/roster_merge.py`) and this file is not, so a lifecycle-created agent's row survives a deploy and a hand-added Scope Legend row does not.
 - **Standing consequence**: a duty that binds an agent may live in that agent's `rules.scope` or `rules.shared` member file. It may NEVER live in a CONDITIONAL `scoped/` member, an un-membered file, or a skill the reader never loads — those deliver a pointer at most.
-  - A duty may live in a path-scoped `rules/glass-atrium/` member: its body, not a pointer, reaches the reader, but only on a Read its globs match (**Path-scoped delivery** above).
   - A body mirror whose canonical reaches the same reader is redundant; keep a mirror only where the canonical is one of those three.
+  - A duty may live in a path-scoped `rules/glass-atrium/` member: its body, not a pointer, reaches the reader, but only on a Read its globs match (**Path-scoped delivery** above).
 - **Chunk budget**: the part slots pack against a per-chunk budget, not slot 1's block ceiling. Nothing may be shed silently — a section that cannot fit, and an agent whose chunk count exceeds the bound slots, each MUST produce a stderr warning, a drop-sink record and an in-context marker naming a path pointer.
   - A membership entry resolving to a file absent on the live install takes the same loud-and-degrade path.
 
-Net: an agent holds its Tier-1 bodies and the ORCHESTRATOR pair through the unceilinged HOST channel, and its own Tier-2 and unconditional Tier-3 bodies through the part slots. It holds this file and `rules/glass-atrium/shared-self-improve-hygiene.md` only after a Read their globs match.
+Net: an agent holds its Tier-1 bodies and the ORCHESTRATOR pair through the unceilinged HOST channel, and its own Tier-2 and unconditional Tier-3 bodies through the part slots.
 
 ## Precedence Resolution
 

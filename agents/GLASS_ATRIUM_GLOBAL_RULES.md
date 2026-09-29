@@ -18,7 +18,8 @@ Common rules for **all agents** (ALL scope).
 
 ### Precedence Resolution
 
-Tier numbers are the tiers `rules/glass-atrium/core-compliance-matrix.md` → `## Loading Tiers` defines; "the Tier 2 table" is the table under its `### Tier 2` heading.
+Tier numbers are the tiers `rules/glass-atrium/core-compliance-matrix.md` → `## Loading Tiers` defines.
+"The Tier 2 table" is the table under its `### Tier 2` heading.
 
 - Across tiers: Tier 1 > Tier 2 > Tier 3.
 - Within Tier 1: `rules/glass-atrium/core-security.md` overrides the other ALL rules (security-first principle).

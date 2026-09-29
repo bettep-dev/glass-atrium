@@ -96,9 +96,9 @@ token_usage: input=N, output=N                           # OPTIONAL, OTel gen_ai
 agent_version: 1.0.0                                     # OPTIONAL, instruction-version tracking
 qa_score: cov=N,ins=N,instr=N,clar=N                     # OPTIONAL, QA review only — coverage/insight/instruction-following/clarity (each 1-5)
 style_ref: relative/path/to/sibling.ts                   # OPTIONAL, populated by Project Convention Probe — see Field Input Guide
-confidence_observed: 0.0-1.0                             # OPTIONAL, daemon-populated empirical posterior — writer does NOT fill; see Field Input Guide
+confidence_observed: 0.0-1.0                             # OPTIONAL, daemon-populated empirical posterior — writer does NOT fill
 grader_verdict: verified_pass|unverified|verified_fail   # OPTIONAL, grader-populated — writer does NOT fill; advisory, never overwrites metric_pass
-downgrade_origin: writer_true_downgraded|writer_false|synthesized  # OPTIONAL, grader-populated — writer does NOT fill; see Field Input Guide
+downgrade_origin: writer_true_downgraded|writer_false|synthesized  # OPTIONAL, grader-populated — writer does NOT fill
 cid: correlation_id from orchestrator                    # OPTIONAL, omit if not delegated
 [/COMPLETION]
 ```

@@ -26,7 +26,7 @@ Reserved beyond that table:
   - Cited by that skill's reference files: `#### Backstop asymmetry (manual vs. ultracode)` · `#### Depth and concurrency ceilings`.
 - **Bolded leads** cited by name:
   - under `### Phase Notes`: Exposure Determination · Visual-Weight Probe · Foreground Probe · Capability Probe · Compatibility Probe · Verbatim forward-relay · glass-atrium-dev-front markup-exception Monitoring judgment;
-  - under `### Spawn Budget` and `### Context Handoff Size`: Split triggers · Empirical tool_use calibration · Standing obligation (the one under `#### Delegation-size discipline`) · Effort-scaling by task shape · Attestation-token placement;
+  - under `### Spawn Budget` and `### Context Handoff Size`: Split triggers · HARD SECONDARY · Empirical tool_use calibration · Standing obligation (the one under `#### Delegation-size discipline`) · Effort-scaling by task shape · Attestation-token placement;
   - under `### Failure Recovery Loop`: Backing honesty (which stages are enforced).
 - Neither list is exhaustive: grep the corpus for a heading or bolded lead before renaming it.
 
@@ -305,7 +305,7 @@ The scan establishes **routing** facts — what exists, where it lives, who owns
 - **Standing obligation — fires at every DEV spawn and at every schema-mode non-DEV analysis/research/audit spawn**:
   - Emit a `[SIZE-EST]` token at either spawn kind; on a borderline count, round UP and prefer the split (**Honesty framing**).
   - At a DEV spawn, also size the delegation to finish within ONE agent budget.
-  - At an analysis spawn, before any read, bound the read allowlist (**Reserve-then-check**), field count (**Output-field cap**) and effort (**Effort matched to depth**) so the reserved emit budget stays unspent.
+  - At an analysis-mode spawn, before any read, bound the read allowlist (**Reserve-then-check**), field count (**Output-field cap**) and effort (**Effort matched to depth**) so the reserved emit budget stays unspent.
   - Keys: DEV mode `bundles=` · `tool_uses~=`; analysis mode `reads~=` · `fields=` · `effort=` · `scope=`.
 - **Split triggers** — any one alone forces a split; the split's shape follows the mode:
   - **DEV mode** → sequential checkpointed sub-delegations, each implementation kept with its NEW tests:

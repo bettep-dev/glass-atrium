@@ -11,7 +11,7 @@ description: 'Orchestrator-only delegation contracts behind pointers in rules/gl
 ## When to Use
 
 - Authoring a Workflow script that spawns a `dev-*` agent → the Ultracode declaration contract.
-- Sizing a DEV delegation or a schema-mode non-DEV analysis spawn, and writing its `[SIZE-EST]` line → the Delegation-size discipline.
+- Sizing a DEV delegation or a schema-mode non-DEV analysis/research/audit spawn, and writing its `[SIZE-EST]` line → the Delegation-size discipline.
 - Checking how a `[SCOPE] files=` line is parsed, or why a declaration produced no signal → the `[SCOPE]` parser behaviour.
 - Fanning out concurrent tracks — choosing an isolation path, checking that no other index mutator is live, writing the `// [OWNERSHIP]` line → Automatic Parallelization.
 - Composing a delegation derived from a persisted plan, or writing its `[PLAN-SUBSET]` line → Plan edge discovery.

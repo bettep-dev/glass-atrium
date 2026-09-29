@@ -113,3 +113,7 @@ The columns the rule file's template marks writer-does-NOT-fill: `grader_verdict
 - Monitor comments not retargeted — each still resolves to a `### Field Input Guide` row in the rule file, while the semantics it cites live here:
   - `monitor/prisma/schema.prisma` → the doc comments above `enum GraderVerdict` and `enum DowngradeOrigin`;
   - `monitor/src/server/routes/outcomes.ts` → the comment above `BY_DESIGN_UNVERIFIED_TASK_TYPES`.
+- Delivered-scope citer not retargeted: `scoped/scope-qa.md` → `### Evaluator-independence posture` → **Partial mitigation** still says the `grader_verdict` column semantics "live in Tier-1 `core-outcome-record.md` → Field Input Guide".
+  - The 3-state semantics and both emitters live here, under `### Grader verdict`.
+  - Owner: the next lane whose `[SCOPE]` holds `scoped/scope-qa.md`.
+  - A retarget into this note is rule-file prose citing a companion, which `## Companion-citation convention` → "Every other citation goes" excludes: settle the open call on the two rule-file prose pointers first.
