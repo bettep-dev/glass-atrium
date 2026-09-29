@@ -411,6 +411,8 @@ function toFiniteOrNull(value) {
  * unavailable (payload arrived, this measure is not derivable) · ready.
  */
 function getTileStatus(state, value, isEmpty) {
+  // same branch as the payload's error card → a cold error stays 'error' while its Retry is in flight
+  if (window.UI.getRegionView(state) === 'error') return 'error';
   if (state.status === 'loading') return 'loading';
   if (state.status === 'error') return 'error';
   if (isEmpty) return 'empty';

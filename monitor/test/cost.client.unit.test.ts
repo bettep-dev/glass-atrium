@@ -557,6 +557,8 @@ test("every tile state is distinct, and only ready renders a measured value", ()
   const cases: ReadonlyArray<readonly [PanelState, unknown, boolean, PanelStatus]> = [
     [loading, 1, false, "loading"],
     [failed, 1, false, "error"],
+    [{ ...failed, status: "loading", busy: true }, 1, false, "error"],
+    [{ ...ready({}), error: "HTTP 500 Internal Server Error" }, 0, false, "ready"],
     [ready({}), 1, true, "empty"],
     [ready({}), null, false, "unavailable"],
     [ready({}), undefined, false, "unavailable"],
@@ -978,6 +980,22 @@ test("a cold-failed region keeps its error card mounted and busy while its Retry
     assert.equal(cards[0].props.isBusy, true, `${name} shows the Retry in flight`);
     assert.ok(regionIds.has(String(cards[0].props.focusTargetId)), `${name} hands focus to a region wrapper`);
   }
+});
+
+test("a cold-failed KPI payload retrying reads as failed on its tiles, never a skeleton beside its busy error card", async () => {
+  const mod = (await loadScreenModule(COST_SRC, { UI: getAtomUi(), React: createReactStub() })) as RenderModule;
+  const kpiState: PanelState = { status: "loading", data: null, error: "HTTP 500 Internal Server Error", busy: true };
+  const settled = ready({ points: [{ day: "2026-01-09", cost_usd: 2 }], rows: [] });
+  const tree = renderIn(mod, "KpiRowC", {
+    kpiState, hot: cost.computeHotVerdict({}), trendState: settled, modelState: settled, days: 30, onRetry: () => {},
+  });
+
+  const cards = findNodes(tree, (n) => n.props.atom === "RegionUnavailable");
+  assert.equal(cards.length, 1, "the KPI error card stays mounted");
+  assert.equal(cards[0].props.isBusy, true);
+  const tiles = findNodes(tree, (n) => n.type === "div" && n.props.className === "kpi");
+  assert.equal(tiles.length, 4);
+  assert.equal(tiles.filter((t) => t.props["aria-busy"] === "true").length, 0, "no tile reads as loading beside the card");
 });
 
 test("the page verdict over a warm error reads Last known, never the all-clear", async () => {
