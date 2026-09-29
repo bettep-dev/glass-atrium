@@ -18,6 +18,9 @@
 # is never read.
 
 HOOK_SH="${BATS_TEST_DIRNAME}/../inject-session-context.sh"
+CORPUS="${BATS_TEST_DIRNAME}/corpus/reply-language"
+# Names a resolver-derived language value would carry into the pointer line's fixed part.
+LANGUAGE_NAMES='english|korean|japanese|chinese|hangul|latin|kana|한국어|영어|일본어|중국어'
 # shellcheck source-path=SCRIPTDIR source=../../scripts/lib/path-guard.sh
 source "${BATS_TEST_DIRNAME}/../../scripts/lib/path-guard.sh"
 
@@ -67,6 +70,97 @@ seed_tracker() {
 # Run the hook with a session-start envelope on stdin under the sandbox HOME.
 run_hook() {
   run env HOME="${FAKE_HOME}" bash "${HOOK_SH}" <<<'{"hook_event_name":"SessionStart","session_id":"sess-smoke"}'
+}
+
+# Runs the hook on a SessionStart envelope naming a corpus transcript.
+# Args: $1=source $2=corpus transcript $3=entrypoint
+run_session_source() {
+  local envelope
+  envelope="$(jq -cn --arg source "${1}" --arg transcript "${CORPUS}/${2}.jsonl" \
+    '{hook_event_name: "SessionStart", session_id: "sess-smoke", source: $source, transcript_path: $transcript}')"
+  run env HOME="${FAKE_HOME}" CLAUDE_CODE_ENTRYPOINT="${3}" bash "${HOOK_SH}" <<<"${envelope}"
+}
+
+# Prints the quote of the one [REPLY LANGUAGE] line in ${output}, `none` without one, or `malformed: <lines>`
+# for several lines or one whose fixed part (everything outside the quote) names a language.
+pointer_quote() {
+  local lines quote
+  lines="$(printf '%s\n' "${output}" | awk '/^\[REPLY LANGUAGE\] /')"
+  if [[ -z "${lines}" ]]; then
+    printf 'none'
+    return 0
+  fi
+  if [[ "${lines}" == *$'\n'* ]]; then
+    printf 'malformed: %s' "${lines}"
+    return 0
+  fi
+  quote="$(jq -eRr --arg names "${LANGUAGE_NAMES}" '
+    capture("^(?<head>[^\"]*)(?<quote>\"(?:[^\"\\\\]|\\\\.)*\")(?<tail>[^\"]*)$")
+    | select((.head + .tail) | test($names; "i") | not)
+    | .quote | fromjson' <<<"${lines}" 2>/dev/null)" || quote="malformed: ${lines}"
+  printf '%s' "${quote}"
+}
+
+@test "resume, compact and fork add one line quoting the user's latest own message; startup and clear add none" {
+  command -v python3 >/dev/null 2>&1 || skip "python3 required"
+  command -v jq >/dev/null 2>&1 || skip "jq required"
+  local rows=(
+    'resume|newest-human-korean|좋아, 이제 리뷰 반영해줘'
+    'compact|compact-summary|이 계획대로 진행해줘'
+    'fork|newest-human-english|Now apply the review comments please'
+    'startup|newest-human-korean|none'
+    'clear|newest-human-korean|none'
+    'compact|sdk-cli|none'
+  )
+  local row source transcript want got
+  for row in "${rows[@]}"; do
+    IFS='|' read -r source transcript want <<<"${row}"
+    run_session_source "${source}" "${transcript}" cli
+    got="$(pointer_quote)"
+    [[ "${status}" -eq 0 && "${output}" == *"[ORCHESTRATOR SESSION]"* && "${got}" == "${want}" ]] || {
+      echo "${source}/${transcript}: exit ${status}, want ${want}, got ${got}"
+      return 1
+    }
+  done
+}
+
+@test "a headless session start adds no pointer line" {
+  command -v python3 >/dev/null 2>&1 || skip "python3 required"
+  command -v jq >/dev/null 2>&1 || skip "jq required"
+  local entrypoint got
+  for entrypoint in cli sdk-cli; do
+    run_session_source resume newest-human-korean "${entrypoint}"
+    got="$(pointer_quote)"
+    [[ "${status}" -eq 0 && "${output}" == *"[ORCHESTRATOR SESSION]"* ]] || return 1
+    if [[ "${entrypoint}" == cli ]]; then
+      [[ "${got}" == '좋아, 이제 리뷰 반영해줘' ]] || {
+        echo "control: got ${got}"
+        return 1
+      }
+    else
+      [[ "${got}" == none ]] || {
+        echo "${entrypoint}: got ${got}"
+        return 1
+      }
+    fi
+  done
+}
+
+@test "an empty or closed stdin still yields the session context, with no pointer line" {
+  local got
+  run env HOME="${FAKE_HOME}" CLAUDE_CODE_ENTRYPOINT=cli bash "${HOOK_SH}" </dev/null
+  got="$(pointer_quote)"
+  [[ "${status}" -eq 0 && "${output}" == *"[ORCHESTRATOR SESSION]"* && "${got}" == none ]] || {
+    echo "empty stdin: exit ${status}: ${output}"
+    return 1
+  }
+  # Closed inside the child: a `run ... <&-` lets bats reuse fd 0 for its own capture pipe.
+  run env HOME="${FAKE_HOME}" CLAUDE_CODE_ENTRYPOINT=cli bash -c 'exec 0<&-; exec bash "$1"' _ "${HOOK_SH}"
+  got="$(pointer_quote)"
+  [[ "${status}" -eq 0 && "${output}" == *"[ORCHESTRATOR SESSION]"* && "${got}" == none ]] || {
+    echo "closed stdin: exit ${status}: ${output}"
+    return 1
+  }
 }
 
 @test "emission: session-start envelope → orchestrator + wiki context on stdout, exit 0" {

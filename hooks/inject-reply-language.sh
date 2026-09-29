@@ -5,6 +5,7 @@
 # and an ordinary human prompt returns before python3 or any transcript read.
 # UserPromptExpansion: a user-typed slash command quotes its own arguments, so the `/name args` prompt that
 # follows on UserPromptSubmit needs no leading-slash sniffing — a `/Users/...` prompt has the same shape.
+# SessionStart, run by inject-session-context.sh whose stdout is the context: resume, compact and fork.
 # Agent frames stay silent: the envelope carries no agent_id and points at the parent transcript, so the
 # prompt's own frame is the only signal — structural, not a guarantee.
 # Never blocks: exit 2 from either prompt event erases the prompt, so every path ends in exit 0.
@@ -16,6 +17,7 @@ trap 'exit 0' EXIT
 # Model-facing wording, audited as one unit; each quote %s is a JSON string of the user's own words.
 readonly MACHINE_POINTER="The newest user-role message, %s, holds no prose of the user's own; the user's latest own message begins %s. Reply to the user in that message's language unless the user asked for a different reply language."
 readonly COMMAND_POINTER="The newest user-role message is a slash command whose own text begins %s. Reply to the user in that text's language unless the user asked for a different reply language."
+readonly SESSION_POINTER="[REPLY LANGUAGE] The user's latest own message begins %s. Reply to the user in that message's language unless the user asked for a different reply language."
 readonly EXCERPT_CHARS=200
 readonly HEAD_CHARS=80
 # `claude -p` runs (daemon cycles, wiki dedup) report sdk-cli even when a cli parent exported this.
@@ -43,6 +45,7 @@ main() {
   case "${event}" in
     UserPromptSubmit) point_at_machine_prompt "${source}" "${head}" "${transcript}" ;;
     UserPromptExpansion) point_at_command "${args}" "${transcript}" ;;
+    SessionStart) point_at_resumed_session "${source}" "${transcript}" ;;
     *) ;;
   esac
 }
@@ -73,6 +76,20 @@ point_at_command() {
     printf -v context "${MACHINE_POINTER}" 'a slash command' "${quote}"
   fi
   emit_context UserPromptExpansion "${context}"
+}
+
+# Args: $1=SessionStart source $2=transcript path
+point_at_resumed_session() {
+  local quote context
+  case "${1}" in
+    resume | compact | fork) ;;
+    *) return 0 ;;
+  esac
+  quote="$(get_newest_quote "${2}")"
+  [[ -n "${quote}" ]] || return 0
+  # shellcheck disable=SC2059  # the format is the constant above, never input
+  printf -v context "${SESSION_POINTER}" "${quote}"
+  printf '%s\n' "${context}"
 }
 
 # stdout: the kind of a machine-written prompt; empty for the user's own prompt or an agent frame.
