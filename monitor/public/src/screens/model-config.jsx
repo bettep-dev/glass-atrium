@@ -207,6 +207,7 @@ function ScreenModelConfig() {
 		putRegionFailure,
 		PageVerdict,
 		SplitRow,
+		formatKstTime,
 	} = window.UI;
 
 	const [configState, setConfigState] = useStateMC(INITIAL_REGION_STATE);
@@ -397,7 +398,11 @@ function ScreenModelConfig() {
 			</div>
 
 			{verdict && (
-				<PageVerdict tone={verdict.tone} chips={verdict.chips} className="mb-4">
+				<PageVerdict
+					tone={verdict.tone}
+					chips={verdict.chips}
+					freshness={getFreshnessInputMC(asOfAt, configState)}
+					className="mb-4">
 					{verdict.text}
 				</PageVerdict>
 			)}
@@ -413,7 +418,15 @@ function ScreenModelConfig() {
 								source="model config"
 								error={configState.error}
 								onRetry={triggerRefresh}
+								isBusy={configState.busy}
+								focusTargetId={MODELS_SECTION_ID_MC}
 							/>
+							{data != null && asOfAt !== null && (
+								<p className="fs-meta text-dim mt-1">
+									The figures below are the last good read, from{" "}
+									{formatKstTime(asOfAt)}.
+								</p>
+							)}
 						</div>
 					)}
 					{saveError && (
@@ -575,7 +588,7 @@ function SectionHeadMC({ label, sub, right }) {
 				{right ?? null}
 			</div>
 			{sub && (
-				<div className="card-sub mt-1" title={window.UI.titleOf(sub)}>
+				<div className="card-sub is-wrap mt-1">
 					{sub}
 				</div>
 			)}
@@ -741,12 +754,18 @@ function groupFilesByModelMC(fileRows) {
 	return [...groups];
 }
 
+// Agent file ("agents/glass-atrium-dev-react.md") → its agent name, for the shared name atom.
+function getFileAgentNameMC(file) {
+	const base = String(file ?? "").split("/").pop();
+	return base.replace(/\.md$/, "");
+}
+
 /**
  * In effect = measured at the consumption point.
  * Matching the saved target → ✓ 'Matches saved' (tooltip 'In effect: …') · differing → the value + one warn badge · absent → nothing.
  */
 function LiveValueMC({ value, drift, files, driftTitle }) {
-	const { Badge, Disclosure, Icon } = window.UI;
+	const { AgentName, Badge, Disclosure, Icon } = window.UI;
 	const fileRows = Array.isArray(files) ? files : [];
 	const isSteady = !drift && value != null;
 	const label = liveLabelMC(value);
@@ -784,8 +803,8 @@ function LiveValueMC({ value, drift, files, driftTitle }) {
 							<div key={model}>
 								<div className="font-mono text-dim is-wrap">{model}</div>
 								{files.map((file) => (
-									<div key={file} className="font-mono truncate pl-3" title={file}>
-										{file}
+									<div key={file} className="font-mono truncate pl-3">
+										<AgentName name={getFileAgentNameMC(file)} />
 									</div>
 								))}
 							</div>
@@ -1102,6 +1121,9 @@ function budgetPlaceholderMC() {
  * 예산 1행 — $ 입력(2-decimal 문자열) + invalid 즉시 field-adjacent role=alert (T-MDL-4)
  * + 실측 + 섹션 공통과 다른 행만 반영 시점 표시 + ghost default/reset (T-MDL-6).
  */
+// Mono digits → ch is one digit; 6ch holds the widest cap ("50.00") plus the caret, beside the affix padding.
+const BUDGET_FIELD_STYLE_MC = { width: "calc(6ch + 4px + var(--ctl-pad-x))" };
+
 function BudgetRowMC({ budget: b, value, defaultValue, error, sharedMode, onChange }) {
 	const meta = BUDGET_META_MC[b.domain] || { label: b.domain, hint: "", desc: "" };
 	// Save banner points at "the highlighted fields" → the field is marked the moment it is invalid.
@@ -1115,16 +1137,14 @@ function BudgetRowMC({ budget: b, value, defaultValue, error, sharedMode, onChan
 				<RowHintMC hint={meta.hint} />
 			</td>
 			<td>
-				<div className="flex items-center gap-2">
-					<span
-						className={`field-affix${showError ? " is-error" : ""}`}
-						style={{ width: "6rem" }}
-					>
+				<div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+					<span className={`field-affix flex-shrink-0${showError ? " is-error" : ""}`}>
 						<span className="field-affix__sym">$</span>
 						<input
 							type="text"
 							inputMode="decimal"
 							className="field field--mono text-right"
+							style={BUDGET_FIELD_STYLE_MC}
 							value={value}
 							placeholder={budgetPlaceholderMC()}
 							onChange={(e) => onChange(e.target.value)}
