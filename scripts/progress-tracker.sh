@@ -35,6 +35,8 @@ _PROGRESS_SCRIPT_DIR="$(cd -- "$(dirname -- "${_progress_self}")" && pwd)"
 # hook-utils.sh lives in the store hooks/ dir — a sibling of our scripts/ dir.
 # shellcheck source=/dev/null
 source "${_PROGRESS_SCRIPT_DIR}/../hooks/hook-utils.sh"
+# shellcheck source-path=SCRIPTDIR source=lib/path-guard.sh
+source "${_PROGRESS_SCRIPT_DIR}/lib/path-guard.sh"
 
 # Progress files live alongside MEMORY.md; path fixed by GLOBAL_RULES Cross-Session
 # Continuity. Claude-Code project-dir cwd encoding: $HOME '/' -> '-' (leading '-').
@@ -84,7 +86,10 @@ _progress_atomic_write() {
   # Clean up tmp on the mv-failure path; a successful rename leaves dest in place.
   printf '%s' "${content}" >"${tmp}"
   if ! mv -f -- "${tmp}" "${dest}"; then
-    rm -f -- "${tmp}" 2>/dev/null || true
+    # shellcheck disable=SC2310  # pure predicate — nothing inside it for errexit to catch
+    if ga_guard_path "${tmp}"; then
+      rm -f -- "${tmp:?}"
+    fi || true
     return 1
   fi
   return 0

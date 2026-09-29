@@ -25,6 +25,8 @@ GA_DIR_ROOT="$(cd -- "${HARNESS_DIR}/.." && pwd)"
 
 # shellcheck source=/dev/null
 source "${GA_DIR_ROOT}/glass-atrium"
+# shellcheck source-path=SCRIPTDIR source=../scripts/lib/path-guard.sh
+source "${GA_DIR_ROOT}/scripts/lib/path-guard.sh"
 set +e
 trap - ERR EXIT INT TERM
 
@@ -47,10 +49,12 @@ skip() {
   printf '    SKIP  %s\n' "$1"
 }
 
-WORK="$(mktemp -d "${TMPDIR:-/tmp}/ga-gate.XXXXXX")"
+# Absolute even under a relative TMPDIR, so the guarded delete below still removes the scratch.
+SCRATCH_DIR="$(cd -- "${TMPDIR:-/tmp}" && pwd -P)"
+WORK="$(mktemp -d "${SCRATCH_DIR}/ga-gate.XXXXXX")"
 cleanup_all() {
   [[ -n "${NEVER_PID:-}" ]] && kill "${NEVER_PID}" 2>/dev/null
-  rm -rf "${WORK}"
+  if ga_guard_path "${WORK}"; then rm -rf -- "${WORK:?}"; fi
 }
 trap cleanup_all EXIT
 

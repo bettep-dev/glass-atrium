@@ -233,6 +233,20 @@ update_die_code() {
   exit "${code}"
 }
 
+# Delete each file operand through the shared path guard, attempting every one. rc 1 when
+# any operand is refused or its removal fails, so a refusal reads as not deleted.
+update_delete_files() {
+  local path rc=0
+  for path in "$@"; do
+    if ga_guard_path "${path}"; then
+      rm -f -- "${path:?}"
+    else
+      false
+    fi || rc=1
+  done
+  return "${rc}"
+}
+
 # ---------------------------------------------------------------------------
 # Preconditions
 # ---------------------------------------------------------------------------
@@ -1057,7 +1071,7 @@ update_reset_capture_images() {
       || update_reset_copy_image "${base_entry}" "${dir}/${name}.base.bak"; }; then
     return 0
   fi
-  rm -f -- "${image}" "${dir}/${name}.base.bak" \
+  update_delete_files "${image}" "${dir}/${name}.base.bak" \
     || update_log "WARN: editable reset: could not remove the partial restore images of ${rel} from ${dir}"
   update_log "WARN: editable reset: could not write the restore images of ${rel} to ${dir}"
   return 1
@@ -1411,7 +1425,9 @@ update_cleanup() {
     if [[ ! -f "${_update_workdir}/.commit-ok" ]]; then
       update_preserve_snapshot
     fi
-    rm -rf -- "${_update_workdir}"
+    if ga_guard_path "${_update_workdir}"; then
+      rm -rf -- "${_update_workdir:?}"
+    fi
     _update_workdir=""
   fi
 }
@@ -1997,7 +2013,7 @@ _update_agent_commit_callback() {
 # before-image cannot express. Args: $1 = release file · $2 = target path ·
 # $3 = manifest-relative logical path · $4 = agent name.
 # Returns 0 applied · 1 the write did not land · 2 verify failed and the file was
-# removed.
+# removed · 3 verify failed and the file was NOT removed (delete refused or failed).
 update_create_agent_body() {
   local release_file="$1" target="$2" logical="$3" agent="$4" tmp mode
   mkdir -p -- "${target%/*}" || return 1
@@ -2006,17 +2022,17 @@ update_create_agent_body() {
   # mode then overrides it — both before the rename, so the target never exists at a
   # mode the run did not choose.
   if ! cp -p -- "${release_file}" "${tmp}"; then
-    rm -f -- "${tmp}"
+    if ga_guard_path "${tmp}"; then rm -f -- "${tmp:?}"; fi
     return 1
   fi
   mode="$(jq -r --arg p "${logical}" '(.modes // {})[$p] // empty' \
     -- "${_update_modes_manifest:-/dev/null}" 2>/dev/null || true)" # GA-ABSORB[handled@the regex guard below]: a map-less release yields empty, which the guard treats as "no mapped mode"
   if [[ "${mode}" =~ ^[0-7]{3,4}$ ]] && ! chmod "${mode}" "${tmp}"; then
-    rm -f -- "${tmp}"
+    if ga_guard_path "${tmp}"; then rm -f -- "${tmp:?}"; fi
     return 1
   fi
   if ! mv -f -- "${tmp}" "${target}"; then
-    rm -f -- "${tmp}"
+    if ga_guard_path "${tmp}"; then rm -f -- "${tmp:?}"; fi
     return 1
   fi
   # No before-image exists, so the verify's local anchor is the release itself: the
@@ -2027,7 +2043,7 @@ update_create_agent_body() {
   _update_agent_verify_release="${release_file}"
   _update_agent_verify_agent="${agent}"
   if ! _update_agent_verify "${target}"; then
-    rm -f -- "${target}"
+    update_delete_files "${target}" || return 3
     return 2
   fi
   return 0
@@ -2132,6 +2148,10 @@ update_merge_agent_editable_regions() {
           ;;
         2)
           update_log "WARN: agent create verify FAILED for agents/${base} — the created body was DELETED (rollback)"
+          _update_agent_create_failures="${_update_agent_create_failures}${base%.md}"$'\n'
+          ;;
+        3)
+          update_log "WARN: agent create verify FAILED for agents/${base} — the created body was NOT removed (rollback delete refused or failed, see the line above); remove ${local_file} by hand"
           _update_agent_create_failures="${_update_agent_create_failures}${base%.md}"$'\n'
           ;;
         *)
@@ -2308,7 +2328,7 @@ update_merge_agent_editable_regions() {
 
   if [[ "${n_candidates}" -eq 0 ]]; then
     update_log "agent EDITABLE-region merge: no agent files to merge"
-    rm -rf -- "${merge_dir}"
+    if ga_guard_path "${merge_dir}"; then rm -rf -- "${merge_dir:?}"; fi
     return 0
   fi
 
@@ -2328,7 +2348,7 @@ update_merge_agent_editable_regions() {
   esac
   # Before merge_dir (and the captured diffs inside it) is torn down.
   update_emit_resolved_records "${root}" "${resolved_file}" "${_update_agent_outcomes_file}"
-  rm -rf -- "${merge_dir}"
+  if ga_guard_path "${merge_dir}"; then rm -rf -- "${merge_dir:?}"; fi
   return 0
 }
 
@@ -2540,7 +2560,10 @@ update_dispatch_roster_merge() {
     esac
   done <"${records}"
 
-  [[ -n "${ATRIUM_UPDATE_ROSTER_CANDIDATE_DIR:-}" ]] || rm -rf -- "${merge_dir}"
+  # A caller-supplied candidate dir is the caller's to keep; only the mktemp dir is removed.
+  if [[ -z "${ATRIUM_UPDATE_ROSTER_CANDIDATE_DIR:-}" ]]; then
+    if ga_guard_path "${merge_dir}"; then rm -rf -- "${merge_dir:?}"; fi
+  fi
   # The cycle's ONE index write, holding both iteration sites' rows.
   update_write_restore_index "${_update_agent_backup_dir}" "${_update_restore_index_rows}"
 }
@@ -2754,7 +2777,7 @@ update_persist_root_manifest() {
   if cp -p -- "${src}" "${tmp}" && mv -f -- "${tmp}" "${dst}"; then
     update_log "root manifest persisted (install-parity): ${dst}"
   else
-    rm -f -- "${tmp}" 2>/dev/null || true
+    update_delete_files "${tmp}" || true # GA-ABSORB[handled@the WARN below]: the removal failure is reported with the persist failure
     update_log "WARN: could not persist the release manifest to ${dst} — root scope stays stale until the next update"
   fi
   return 0
@@ -3663,9 +3686,13 @@ except OSError:
 PY
     )"
     [[ "${age_days}" =~ ^[0-9]+$ ]] || continue
-    if [[ "${age_days}" -gt "${retention}" ]] && rm -rf -- "${dir}" 2>/dev/null; then
-      update_log "agents-bak: pruned aged snapshot (${age_days}d > ${retention}d): ${dir##*/}"
-    fi
+    [[ "${age_days}" -gt "${retention}" ]] || continue
+    if ga_guard_path "${dir}"; then
+      rm -rf -- "${dir:?}"
+    else
+      false
+    fi || continue
+    update_log "agents-bak: pruned aged snapshot (${age_days}d > ${retention}d): ${dir##*/}"
   done
 }
 
@@ -3695,7 +3722,8 @@ update_write_restore_index() {
   index="$(update_restore_index_path "${cycle_dir}")"
   if ! printf '%s' "${rows}" >"${index}"; then
     update_log "WARN: restore index write failed for ${cycle_dir##*/} — --restore-agents falls back to the agents/ directory convention for this cycle"
-    rm -f -- "${index}" || true
+    # GA-ABSORB[handled@the guard or rm stderr line]: a failed removal leaves the partial index and says so there
+    update_delete_files "${index}" || true
   fi
 }
 
@@ -3796,7 +3824,7 @@ update_restore_base_entry() {
       return 1
     fi
   elif [[ -e "${base_target}" ]]; then
-    if rm -f -- "${base_target}"; then
+    if update_delete_files "${base_target}"; then
       update_log "deleted base-content store entry for ${name} (no prior base snapshot → safe gated 2-way next merge)"
     else
       update_log "WARN: base-content store delete FAILED for ${name}"
@@ -3873,7 +3901,7 @@ update_restore_agents() {
       # (a base revert without its live revert would desync the next merge anchor).
       update_restore_base_entry "${rel}" "${restore_dir}" "${store}" || fail=1
     else
-      rm -f -- "${real}.restore.$$" 2>/dev/null || true
+      update_delete_files "${real}.restore.$$" || true # GA-ABSORB[handled@the WARN below]: the restore is already marked failed
       update_log "WARN: restore FAILED for ${rel}"
       fail=1
     fi
@@ -4035,7 +4063,7 @@ update_retire_mirror_link() {
   esac
   link="$(farm_target_home)/${path}"
   [[ -L "${link}" ]] || return 0
-  if rm -f -- "${link}"; then
+  if update_delete_files "${link}"; then
     update_log "retired mirror link removed: ${link}"
   else
     update_log "WARN: retired mirror link NOT removed — ${link}"
@@ -4103,7 +4131,8 @@ update_sweep_removed_files() {
   # here so the summary row is derived from the rows rather than recomputed.
   if ! removed="$(spine_find_removed_files "${manifest}" "${root}" "${refusals_file}" 2>"${rows_file}")"; then
     update_log "WARN: retired selection failed — the retirement pass is skipped and any residue stays in place"
-    rm -f -- "${rows_file}" "${refusals_file}"
+    if ga_guard_path "${rows_file}"; then rm -f -- "${rows_file:?}"; fi
+    if ga_guard_path "${refusals_file}"; then rm -f -- "${refusals_file:?}"; fi
     return 0
   fi
   while IFS= read -r row; do
@@ -4115,7 +4144,7 @@ update_sweep_removed_files() {
       *) ;;
     esac
   done <"${rows_file}"
-  rm -f -- "${rows_file}"
+  if ga_guard_path "${rows_file}"; then rm -f -- "${rows_file:?}"; fi
 
   # A logged UNSAFE / MALFORMED row alone is never surfaced — a headless run's log is read
   # by nobody — so each refused key is counted and recorded for doctor from the spine's
@@ -4127,9 +4156,9 @@ update_sweep_removed_files() {
     cat -- "${refusals_file}" >"${refused_record}"
     update_log "WARN: ${refused_n} retired manifest key(s) refused by the sweep (UNSAFE/MALFORMED, never moved) — recorded for doctor at ${refused_record}"
   else
-    rm -f -- "${refused_record}"
+    if ga_guard_path "${refused_record}"; then rm -f -- "${refused_record:?}"; fi
   fi
-  rm -f -- "${refusals_file}"
+  if ga_guard_path "${refusals_file}"; then rm -f -- "${refusals_file:?}"; fi
 
   if [[ -n "${removed}" ]]; then
     # Per-run sink: a timestamped subdir so one run's removals form a single recovery
@@ -4162,7 +4191,7 @@ update_sweep_removed_files() {
   else
     # Rewritten each run, so a stale record from a previous run's failure must go the
     # moment the retry succeeds — otherwise doctor reports a residue that is gone.
-    rm -f -- "${record}"
+    if ga_guard_path "${record}"; then rm -f -- "${record:?}"; fi
   fi
   update_log "retired sweep: removed=${removed_n} preserved=${preserved_n} family-skipped=${family_n} unmoved=${unmoved_n} refused=${refused_n}"
 }
@@ -4644,6 +4673,7 @@ update_main() {
   # shellcheck source-path=SCRIPTDIR
   # shellcheck source=../autoagent/lib/git-txn.sh
   source "${merge_lib_dir}/git-txn.sh"
+  # ga_guard_path, the gate on every delete in this file, arrives with the three libs above.
 
   # Register cleanup BEFORE any state is created so an early failure still unwinds.
   # A signal takes the re-raising handler rather than the bare cleanup: sharing one

@@ -50,6 +50,8 @@ bats_require_minimum_version 1.5.0
 
 GA="$(cd -- "${BATS_TEST_DIRNAME}/.." && pwd)"
 REAL_LIB="${GA}/lib/ga-core.sh"
+# shellcheck source-path=SCRIPTDIR source=../scripts/lib/path-guard.sh
+source "${GA}/scripts/lib/path-guard.sh"
 
 # The engine lib tree is read-only across the suite (tests only source it), so stage it once.
 # ga-core.sh is a thin loader for its domain siblings, and ga_init_env hard-requires the whole
@@ -90,7 +92,7 @@ setup() {
 }
 
 teardown() {
-  [[ -n "${WORK:-}" && -d "${WORK}" ]] && rm -rf -- "${WORK}" || true
+  if ga_guard_path "${WORK:-}"; then rm -rf -- "${WORK:?}"; fi
 }
 
 # --- fixtures ------------------------------------------------------------------

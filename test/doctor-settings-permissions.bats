@@ -34,6 +34,8 @@
 bats_require_minimum_version 1.5.0
 
 GA="$(cd -- "${BATS_TEST_DIRNAME}/.." && pwd)"
+# shellcheck source-path=SCRIPTDIR source=../scripts/lib/path-guard.sh
+source "${GA}/scripts/lib/path-guard.sh"
 
 setup() {
   command -v jq >/dev/null 2>&1 || skip "jq required"
@@ -51,7 +53,7 @@ setup() {
 
 teardown() {
   unset GA_DOCTOR_SKIP_PERMISSIONS
-  [[ -n "${SANDBOX:-}" && -d "${SANDBOX}" ]] && rm -rf -- "${SANDBOX}" || true
+  if ga_guard_path "${SANDBOX:-}"; then rm -rf -- "${SANDBOX:?}"; fi
 }
 
 # The six deny rules and the one ask rule the sandbox template recommends. Synthetic strings: the
@@ -180,7 +182,11 @@ warn_total_of_output() {
   run_doctor_sandbox
   local present_status="${status}"
 
-  rm -f -- "${TARGET}/settings.json"
+  if ga_guard_path "${TARGET}"; then
+    rm -f -- "${TARGET:?}/settings.json"
+  else
+    return 1
+  fi
   run_doctor_sandbox
   assert_output_has "no live settings.json" || return 1
   assert_output_lacks "template rule(s) present" || return 1

@@ -84,7 +84,14 @@ command -v python3 >/dev/null 2>&1 || {
 # Sandbox for the reconstructed source + any py_compile bytecode artifact; trap-cleaned.
 # Cleanup preserves the pending exit status (no exit in the trap) so the block path's exit 2 survives.
 work_dir="$(mktemp -d 2>/dev/null)" || exit 0
-trap 'rm -rf -- "${work_dir}" 2>/dev/null || true' EXIT
+# shellcheck disable=SC2329  # invoked from the EXIT trap string
+delete_work_dir() {
+  # shellcheck disable=SC2310  # pure predicate — nothing inside it for errexit to catch
+  if ga_guard_path "${work_dir}"; then
+    rm -rf -- "${work_dir:?}"
+  fi
+}
+trap 'delete_work_dir || true' EXIT
 # Preserve the real extension — node --check picks CJS vs ESM module mode by it, so an
 # extensionless temp file false-fails a valid .mjs / type:module import/export as CJS.
 src_file="${work_dir}/src.${ext}"

@@ -40,6 +40,8 @@ bats_require_minimum_version 1.5.0
 
 GA="$(cd -- "${BATS_TEST_DIRNAME}/../.." && pwd)"
 LIB="${GA}/scripts/lib/mirror-farm.sh"
+# shellcheck source-path=SCRIPTDIR source=../lib/path-guard.sh
+source "${GA}/scripts/lib/path-guard.sh"
 
 setup() {
   [[ -f "${LIB}" ]] || skip "mirror-farm.sh not found: ${LIB}"
@@ -67,7 +69,7 @@ setup() {
 }
 
 teardown() {
-  [[ -n "${WORK:-}" && -d "${WORK}" ]] && rm -rf -- "${WORK}" || true
+  if ga_guard_path "${WORK:-}"; then rm -rf -- "${WORK:?}"; fi
 }
 
 # Write ${GAROOT}/manifest.json listing the relative paths $@ (farm scope —
@@ -129,7 +131,7 @@ run_refresh() {
 
 @test "launcher-absent is a loud skip (rc 3 + WARN), never a silent absorb" {
   mkdir -p "${FACADE}"
-  rm -f "${GAROOT}/glass-atrium"
+  if ga_guard_path "${GAROOT}"; then rm -f -- "${GAROOT:?}/glass-atrium"; fi
   run_refresh
   [ "$status" -eq 3 ]
   [[ "$output" == *"WARN: launcher missing"* ]]
@@ -281,7 +283,7 @@ run_refresh() {
   [[ "${seen}" -gt 0 ]] || return 1
 
   write_manifest "scoped/scope-dev.md" "skills/testkit/newlib.sh"
-  rm -f "${GAROOT}/scoped/scope-dev.md"
+  if ga_guard_path "${GAROOT}"; then rm -f -- "${GAROOT:?}/scoped/scope-dev.md"; fi
   mkdir -p "${FACADE}"
   run env GA_TARGET_HOME="${FACADE}" bash -c '
     set -Eeuo pipefail

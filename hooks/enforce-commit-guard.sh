@@ -74,7 +74,13 @@ live_child_dir="${HOOK_DATA_DIR}/live-children"
 # removed. Sweep anything older than the TTL before counting — best-effort, and a
 # sweep failure only makes the note noisier, never wrong in the blocking direction.
 sweep_stale_markers() {
-  find "${live_child_dir}" -type f -mmin "+${LIVE_CHILD_TTL_MIN}" -exec rm -f {} + 2>/dev/null || true
+  local marker
+  while IFS= read -r -d '' marker; do
+    # shellcheck disable=SC2310  # pure predicate — nothing inside it for errexit to catch
+    if ga_guard_path "${marker}"; then
+      rm -f -- "${marker:?}"
+    fi || true
+  done < <(find "${live_child_dir}" -type f -mmin "+${LIVE_CHILD_TTL_MIN}" -print0 2>/dev/null || true)
 }
 
 count_live_children() {

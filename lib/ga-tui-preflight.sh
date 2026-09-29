@@ -293,7 +293,7 @@ preflight_panel_step() {
   # The boxed path surfaces NO per-step log (clean UI), so sweep the panel FAIL temp in STEP_LAST_FAIL_LOG
   # rather than leaking it (the passthrough path retains full inline logs for diagnosis). rc stays the sole signal.
   if [[ "${rc}" -ne 0 && -n "${STEP_LAST_FAIL_LOG}" && -f "${STEP_LAST_FAIL_LOG}" ]]; then
-    rm -f "${STEP_LAST_FAIL_LOG}"
+    delete_temp_file "${STEP_LAST_FAIL_LOG}"
     STEP_LAST_FAIL_LOG=""
   fi
   return "${rc}"

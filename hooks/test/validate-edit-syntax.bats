@@ -9,6 +9,8 @@
 # Requires: bats, bash 3.2+, python3, jq (input assembly); node checks skip when node is absent.
 
 HOOK_SH="${BATS_TEST_DIRNAME}/../validate-edit-syntax.sh"
+# shellcheck source-path=SCRIPTDIR source=../../scripts/lib/path-guard.sh
+source "${BATS_TEST_DIRNAME}/../../scripts/lib/path-guard.sh"
 
 setup() {
   [[ -f "${HOOK_SH}" ]] || skip "hook not found: ${HOOK_SH}"
@@ -18,7 +20,7 @@ setup() {
 }
 
 teardown() {
-  [[ -n "${SANDBOX:-}" && -d "${SANDBOX}" ]] && rm -rf -- "${SANDBOX}"
+  if ga_guard_path "${SANDBOX:-}"; then rm -rf -- "${SANDBOX:?}"; fi
 }
 
 # Build a Write envelope. Args: $1=file_path $2=content.
@@ -149,4 +151,49 @@ export const name = basename("/a/b");')" SYNTAX_GATE_BLOCK=1
 @test "a missing file_path passes" {
   run_hook '{"tool_name":"Write","tool_input":{}}' SYNTAX_GATE_BLOCK=1
   [[ "${status}" -eq 0 ]]
+}
+
+# macOS mktemp -d ignores TMPDIR → a recording mktemp stub observes the work dir instead.
+@test "the work dir never outlives the run, on the pass or the block verdict" {
+  local -a rows=('pass|echo hello|0' 'block|if true|2')
+  local stub_dir="${SANDBOX}/stub-bin" made_log="${SANDBOX}/mktemp-made.log" row name content want made
+  mkdir -p "${stub_dir}"
+  printf '#!/usr/bin/env bash\nmade="$(%q "$@")" || exit\nprintf "%%s\\n" "${made}" >>%q\nprintf "%%s\\n" "${made}"\n' \
+    "$(command -v mktemp)" "${made_log}" >"${stub_dir}/mktemp"
+  chmod +x "${stub_dir}/mktemp"
+  for row in "${rows[@]}"; do
+    IFS='|' read -r name content want <<<"${row}"
+    : >"${made_log}"
+    run_hook "$(write_input "${SANDBOX}/x.sh" "${content}")" SYNTAX_GATE_BLOCK=1 PATH="${stub_dir}:${PATH}"
+    [[ "${status}" -eq "${want}" ]] || {
+      echo "${name}: exit ${status}, want ${want}"
+      return 1
+    }
+    [[ -s "${made_log}" ]] || {
+      echo "${name}: the run never made its work dir"
+      return 1
+    }
+    while IFS= read -r made; do
+      [[ ! -e "${made}" ]] || {
+        echo "${name}: work dir left after exit: ${made}"
+        return 1
+      }
+    done <"${made_log}"
+  done
+}
+
+# A setup skip leaves SANDBOX unset — a failing teardown would report the skip as not ok.
+@test "teardown succeeds silently when setup skipped before creating the temp dir" {
+  local saved="${SANDBOX}"
+  unset SANDBOX
+  run teardown
+  SANDBOX="${saved}"
+  [[ "${status}" -eq 0 ]] || {
+    echo "teardown without a temp dir failed (status ${status}): ${output}" >&2
+    return 1
+  }
+  [[ -z "${output}" ]] || {
+    echo "teardown without a temp dir wrote: ${output}" >&2
+    return 1
+  }
 }

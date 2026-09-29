@@ -28,6 +28,8 @@
 GA="$(cd -- "${BATS_TEST_DIRNAME}/.." && pwd)"
 REAL_SCRIPT="${GA}/scripts/pg-backup.sh"
 RETAIN_COUNT=14
+# shellcheck source-path=SCRIPTDIR source=../scripts/lib/path-guard.sh
+source "${GA}/scripts/lib/path-guard.sh"
 
 setup() {
   [[ -f "${REAL_SCRIPT}" ]] || skip "script not found: ${REAL_SCRIPT}"
@@ -67,7 +69,7 @@ STUB
 }
 
 teardown() {
-  [[ -n "${SANDBOX:-}" && -d "${SANDBOX}" ]] && rm -rf -- "${SANDBOX}" || true
+  if ga_guard_path "${SANDBOX:-}"; then rm -rf -- "${SANDBOX:?}"; fi
 }
 
 # seed_nightly_in <dir> <count> — create <count> dated nightly dumps (ascending dates).
@@ -263,19 +265,25 @@ load 'lib/stat-mode'
 }
 
 @test "AC-C7 the creation mask is RESTORED before rotation" {
-  local trash_file mode
+  local trash_file mode kept
   # Nothing downstream of the 077 scope creates a file on its own — rotation only MOVES,
   # and a real `mv` PRESERVES the source mode, so the mask in effect there is invisible
   # and deleting the restore line keeps every suite green. A stub that RE-CREATES the
   # destination by redirection is what makes it observable, and observable is the whole
   # point: the mask is process-global, so a leaked 077 governs every later step this
   # script grows.
-  cat >"${FAKE_BIN}/mv" <<'STUB'
-#!/usr/bin/env bash
-set -u
-cat -- "$1" >"$2" || exit 1
-rm -f -- "$1"
+  {
+    printf '#!/usr/bin/env bash\nset -u\nsource %q\n' "${GA}/scripts/lib/path-guard.sh"
+    cat <<'STUB'
+src="$1"
+cat -- "${src}" >"$2" || exit 1
+if ga_guard_path "${src}"; then
+  rm -f -- "${src:?}"
+else
+  exit 1
+fi
 STUB
+  } >"${FAKE_BIN}/mv"
   chmod +x "${FAKE_BIN}/mv"
   # No backup_dir key: the default location under this sandbox HOME, silently.
   printf '[paths]\n' >"${SANDBOX}/config.toml"
@@ -299,6 +307,11 @@ STUB
   mode="$(mode_of "${trash_file}")"
   [[ "${mode}" == "644" ]] || {
     echo "post-rotation creation mode = ${mode}, expected 644 (the caller's 022 mask)" >&2
+    return 1
+  }
+  kept="$(count_nightly)"
+  [[ "${kept}" -eq "${RETAIN_COUNT}" ]] || {
+    echo "${kept} nightly dumps left in the backup dir, expected ${RETAIN_COUNT}: the mv stub kept its source" >&2
     return 1
   }
 }

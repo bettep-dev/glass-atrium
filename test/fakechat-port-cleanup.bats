@@ -28,6 +28,8 @@
 
 GA="$(cd -- "${BATS_TEST_DIRNAME}/.." && pwd)"
 LIB="${GA}/scripts/lib/fakechat-cleanup.sh"
+# shellcheck source-path=SCRIPTDIR source=../scripts/lib/path-guard.sh
+source "${GA}/scripts/lib/path-guard.sh"
 
 setup() {
   [[ -f "${LIB}" ]] || skip "fakechat-cleanup.sh not found: ${LIB}"
@@ -58,7 +60,7 @@ setup() {
 }
 
 teardown() {
-  [[ -n "${SANDBOX:-}" && -d "${SANDBOX}" ]] && rm -rf -- "${SANDBOX}" || true
+  if ga_guard_path "${SANDBOX:-}"; then rm -rf -- "${SANDBOX:?}"; fi
 }
 
 # refute_rec NEEDLE — FAIL the test if NEEDLE (fixed string) is present in the

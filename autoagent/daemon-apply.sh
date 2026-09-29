@@ -126,7 +126,8 @@
 #     3 — required tool missing
 #     4 — lock contention (another apply already running)
 #     5 — apply-lock lib missing / source failed (FATAL: the shared
-#         stale-reclaim helper is absent — writers cannot be serialized)
+#         stale-reclaim helper is absent — writers cannot be serialized), or
+#         lib/git-txn.sh failed to load (its shared path guard is absent)
 #     6 — DB status transition failed on a backlog/single-sourced patch
 #         (loud-fail: prevents silent re-application next cycle)
 #     7 — backlog anomaly: eligible-pending count exceeds ANOMALY_THRESHOLD
@@ -284,7 +285,10 @@ SCRIPT_DIR="$(dirname -- "$(ga_realpath "${BASH_SOURCE[0]}")")"
 # GIT_TXN_RC outcome back to its own counter buckets + emit_log.
 # shellcheck source-path=SCRIPTDIR
 # shellcheck source=lib/git-txn.sh
-source "${SCRIPT_DIR}/lib/git-txn.sh"
+source "${SCRIPT_DIR}/lib/git-txn.sh" || {
+    printf '[daemon-apply] FATAL: git-txn lib failed to load (%s)\n' "${SCRIPT_DIR}/lib/git-txn.sh" >&2
+    exit 5
+}
 
 # -- Constants -------------------------------------------------------------
 
@@ -528,11 +532,37 @@ prune_backup_retention() {
         fi
     done < <(find "${BACKUP_DIR}" -mindepth 1 -maxdepth 1 -type d -print0)
     [[ -n "${newest}" ]] || return 0 # GA-ABSORB[benign]: no cycle subdir found means nothing to prune — housekeeping no-op, not a precondition
+    # shellcheck disable=SC2310  # the helper's status IS the WARN signal — it counts its own failures
     if ! find "${BACKUP_DIR}" -mindepth 1 -maxdepth 1 -type d \
-        -mtime +"${BACKUP_TTL_DAYS}" ! -path "${newest}" -exec rm -rf {} +; then
+        -mtime +"${BACKUP_TTL_DAYS}" ! -path "${newest}" -print0 | delete_expired_backups; then
         printf '[daemon-apply] WARN: backup retention prune hit errors (BACKUP_DIR=%s)\n' \
             "${BACKUP_DIR}" >&2
     fi
+}
+
+# delete_expired_backups — delete each NUL-delimited cycle dir read from stdin; 1 when any
+# removal failed or was refused by the shared path guard, so the caller's WARN still fires.
+delete_expired_backups() {
+    local victim failed=0
+    while IFS= read -r -d '' victim; do
+        # shellcheck disable=SC2310  # pure predicate — nothing inside it for errexit to catch
+        if ga_guard_path "${victim}"; then
+            rm -rf -- "${victim:?}"
+        else
+            false
+        fi || failed=1
+    done
+    [[ "${failed}" -eq 0 ]]
+}
+
+# delete_scratch_files — RETURN-trap teardown of a function's mktemp scratch files, each path
+# baked into the trap string at set time and passed through the shared path guard.
+delete_scratch_files() {
+    local scratch
+    for scratch in "$@"; do
+        # shellcheck disable=SC2310  # pure predicate — nothing inside it for errexit to catch
+        if ga_guard_path "${scratch}"; then rm -f -- "${scratch:?}"; fi
+    done
 }
 
 # NOTE: ga_realpath + the required-tooling check formerly lived here; both are
@@ -988,7 +1018,10 @@ fi
 # assigned (silences SC2154 the way the git-txn source below does).
 # shellcheck source-path=SCRIPTDIR
 # shellcheck source=../scripts/lib/apply-lock.sh
-. "${APPLY_LOCK_LIB}"
+if ! . "${APPLY_LOCK_LIB}"; then
+    printf '[daemon-apply] FATAL: apply-lock lib failed to load (%s)\n' "${APPLY_LOCK_LIB}" >&2
+    exit 5
+fi
 
 # -- Lock acquisition (mkdir is atomic on POSIX; stale-reclaim via the lib) -
 # Skip lock entirely in dry-run so parallel test runs don't collide.
@@ -1264,7 +1297,7 @@ extract_backlog_patches() {
     local psql_out psql_err psql_rc
     psql_err="$(mktemp -t autoagent-backlog.XXXXXX)"
     # shellcheck disable=SC2064
-    trap "rm -f '${psql_err}'" RETURN
+    trap "delete_scratch_files '${psql_err}'" RETURN
 
     if psql_out="$(
         psql -d glass_atrium -v ON_ERROR_STOP=1 -tAq -F'|' \
@@ -1344,7 +1377,7 @@ extract_single_proposal() {
     local psql_out psql_err psql_rc
     psql_err="$(mktemp -t autoagent-single.XXXXXX)"
     # shellcheck disable=SC2064
-    trap "rm -f '${psql_err}'" RETURN
+    trap "delete_scratch_files '${psql_err}'" RETURN
 
     if psql_out="$(
         psql -d glass_atrium -v ON_ERROR_STOP=1 -tAq -F'|' \
@@ -1643,7 +1676,7 @@ apply_diff() {
     # Single RETURN trap cleans BOTH tmps — a second `trap ... RETURN` would
     # REPLACE this one and leak the patch tmp.
     # shellcheck disable=SC2064
-    trap "rm -f '${tmp}' '${apply_err}'" RETURN
+    trap "delete_scratch_files '${tmp}' '${apply_err}'" RETURN
 
     # Single-trailing-newline normalization (byte-level). PG's
     # proposed_diff already ends in '\n'; a blind `printf '%s\n'` would append a
@@ -1952,7 +1985,7 @@ update_db_status() {
     # Capture stderr separately so warnings can surface in the daemon log.
     psql_err="$(mktemp -t autoagent-dbsync.XXXXXX)"
     # shellcheck disable=SC2064
-    trap "rm -f '${psql_err}'" RETURN
+    trap "delete_scratch_files '${psql_err}'" RETURN
 
     # psql `-c` does NOT expand `:'var'` substitutions (per psql docs) — those
     # only work via `-f` / interactive / stdin heredoc. We pass SQL via stdin so
@@ -2104,7 +2137,7 @@ mark_stale_attempt() {
     local psql_out psql_err psql_rc
     psql_err="$(mktemp -t autoagent-staledrain.XXXXXX)"
     # shellcheck disable=SC2064
-    trap "rm -f '${psql_err}'" RETURN
+    trap "delete_scratch_files '${psql_err}'" RETURN
 
     # Single round-trip. A guarded CTE:
     #   col   — does stale_attempt_count exist? (information_schema, never errors)
@@ -2761,10 +2794,11 @@ PY
     # The verify callback has run inside the transaction, so the declared-removal
     # set has served its purpose — drop it here, on the ONE path every outcome
     # branch below flows from, so no `continue` can leak it.
-    if [[ -n "${REMOVAL_DECLARED_FILE}" ]]; then
-        rm -f "${REMOVAL_DECLARED_FILE}"
-        REMOVAL_DECLARED_FILE=""
+    # shellcheck disable=SC2310  # pure predicate — nothing inside it for errexit to catch
+    if ga_guard_path "${REMOVAL_DECLARED_FILE}"; then
+        rm -f -- "${REMOVAL_DECLARED_FILE:?}"
     fi
+    REMOVAL_DECLARED_FILE=""
 
     if [[ "${GIT_TXN_RC}" -eq "${GIT_TXN_BACKUP_CAPTURE_FAIL}" ]]; then
         # Before-image capture failed — nothing was applied, nothing to restore.

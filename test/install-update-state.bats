@@ -31,6 +31,8 @@ bats_require_minimum_version 1.5.0
 
 REAL_GA_DIR="$(cd -- "${BATS_TEST_DIRNAME}/.." && pwd)"
 REAL_GA="${REAL_GA_DIR}/glass-atrium"
+# shellcheck source-path=SCRIPTDIR source=../scripts/lib/path-guard.sh
+source "${REAL_GA_DIR}/scripts/lib/path-guard.sh"
 
 setup() {
   command -v jq >/dev/null 2>&1 || skip "jq required"
@@ -89,7 +91,7 @@ RUNNER
 }
 
 teardown() {
-  [[ -n "${SANDBOX:-}" && -d "${SANDBOX}" ]] && rm -rf -- "${SANDBOX}" || true
+  if ga_guard_path "${SANDBOX:-}"; then rm -rf -- "${SANDBOX:?}"; fi
 }
 
 # write a v1.0.0 manifest whose .files is the given relative-path list, with a

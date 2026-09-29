@@ -56,7 +56,14 @@ fi
 # a concurrent SessionStart reader during a fast compact-then-resume).
 SURVIVAL_PATH="${BACKUP_DIR}/${TIMESTAMP}_${SESSION_ID}_survival.md"
 SURVIVAL_TMP="$(mktemp -t "compact-survival-XXXXXX")"
-trap 'rm -f -- "${SURVIVAL_TMP}" 2>/dev/null || true' EXIT
+# shellcheck disable=SC2329  # invoked from the EXIT trap string
+delete_survival_tmp() {
+  # shellcheck disable=SC2310  # pure predicate — nothing inside it for errexit to catch
+  if ga_guard_path "${SURVIVAL_TMP}"; then
+    rm -f -- "${SURVIVAL_TMP:?}"
+  fi
+}
+trap 'delete_survival_tmp || true' EXIT
 
 # 3a. Recent-outcome tuple stream — DB-primary (PG core.outcomes), legacy .md scan as fallback.
 # Outcome records migrated to PG core.outcomes (DB-only sink written by _pg_outcome_dualwrite.py;
@@ -295,7 +302,10 @@ prune_old_backups() {
     | tail -n +6 \
     | awk '{ $1=""; sub(/^ /, ""); print }' \
     | while IFS= read -r victim; do
-      [[ -n "${victim}" && -f "${victim}" ]] && rm -f -- "${victim}" 2>/dev/null || true
+      # shellcheck disable=SC2310  # pure predicate — nothing inside it for errexit to catch
+      if ga_guard_path "${victim}"; then
+        rm -f -- "${victim:?}"
+      fi || true
     done
 }
 prune_old_backups '*.jsonl'

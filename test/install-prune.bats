@@ -24,6 +24,8 @@ bats_require_minimum_version 1.5.0
 
 GA_ROOT_DIR="$(cd -- "${BATS_TEST_DIRNAME}/.." && pwd)"
 REAL_GA="${GA_ROOT_DIR}/glass-atrium"
+# shellcheck source-path=SCRIPTDIR source=../scripts/lib/path-guard.sh
+source "${GA_ROOT_DIR}/scripts/lib/path-guard.sh"
 
 setup() {
   command -v jq >/dev/null 2>&1 || skip "jq required"
@@ -40,8 +42,8 @@ setup() {
 }
 
 teardown() {
-  [[ -n "${SANDBOX:-}" && -d "${SANDBOX}" ]] && rm -rf -- "${SANDBOX}" || true
-  [[ -n "${GA_SCRATCH:-}" && -d "${GA_SCRATCH}" ]] && rm -rf -- "${GA_SCRATCH}" || true
+  if ga_guard_path "${SANDBOX:-}"; then rm -rf -- "${SANDBOX:?}"; fi
+  if ga_guard_path "${GA_SCRATCH:-}"; then rm -rf -- "${GA_SCRATCH:?}"; fi
 }
 
 # write a manifest.json whose .files is the given relative-path list.
@@ -187,4 +189,33 @@ plant_live_link() {
   run_prune_sandbox prune
   [[ "${status}" -eq 3 ]]
   [[ "${output}" == *"manifest absent or .files not an array"* ]]
+}
+
+@test "an orphan whose unlink leaves it in place exits PRUNE_EXIT_UNLINK_SURVIVED (4) and is not counted" {
+  write_manifest "agents/kept.md"
+  plant_orphan_link "agents/orphan.md"
+  # an rm that deletes nothing: the unlink reports success while the link survives
+  local stub="${SANDBOX}/stub-bin"
+  mkdir -p "${stub}"
+  printf '#!/bin/sh\nexit 0\n' >"${stub}/rm"
+  chmod +x "${stub}/rm"
+  PATH="${stub}:${PATH}" run_prune_sandbox prune
+  [[ "${status}" -eq 4 ]] || return 1
+  [[ "${output}" == *"still present after unlink"* ]] || return 1
+  [[ "${output}" != *"removed orphan GA symlink"* ]] || return 1
+  [[ "${output}" == *"0 pruned"* ]] || return 1
+  [[ -L "${TARGET}/agents/orphan.md" ]]
+}
+
+@test "a failing unlink aborts the prune before its summary with a status distinct from PRUNE_EXIT_UNLINK_SURVIVED" {
+  write_manifest "agents/kept.md"
+  plant_orphan_link "agents/orphan.md"
+  local stub="${SANDBOX}/stub-bin"
+  mkdir -p "${stub}"
+  printf '#!/bin/sh\nexit 1\n' >"${stub}/rm"
+  chmod +x "${stub}/rm"
+  PATH="${stub}:${PATH}" run_prune_sandbox prune
+  [[ "${status}" -ne 0 && "${status}" -ne 4 ]] || return 1
+  [[ "${output}" != *"candidates)"* ]] || return 1
+  [[ -L "${TARGET}/agents/orphan.md" ]]
 }
