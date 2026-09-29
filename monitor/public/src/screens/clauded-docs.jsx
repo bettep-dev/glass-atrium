@@ -1300,7 +1300,7 @@ function DocListCardCD({
 	onSelect,
 	onRetry,
 }) {
-	const { Icon, Badge, RegionUnavailable, LoadingPlaceholder, ROW_CONTROL_PROPS, PageVerdict } = window.UI;
+	const { Icon, Badge, RegionUnavailable, LoadingPlaceholder, ROW_CONTROL_PROPS, PageVerdict, getRegionView } = window.UI;
 	const [focusRowId, setFocusRowId] = useStateCD(null);
 	// load-more keeps its own button spinner → only a first-page read dims the held rows
 	const isHeldBusy = state.busy === true && state.status === "ready" && !isLoadingMore;
@@ -1511,10 +1511,16 @@ function DocListCardCD({
 					overflowX: "auto",
 				}}
 			>
-				{state.status === "loading" && <LoadingPlaceholder label="documents" minHeight={240} />}
+				{getRegionView(state) === "loading" && <LoadingPlaceholder label="documents" minHeight={240} />}
 				{state.error != null && (
 					<div role="alert">
-						<RegionUnavailable source="the document list" error={state.error} onRetry={onRetry} className="m-4" />
+						<RegionUnavailable
+							source="the document list"
+							error={state.error}
+							onRetry={onRetry}
+							isBusy={state.busy === true}
+							className="m-4"
+						/>
 					</div>
 				)}
 				{state.status === "ready" && rows.length === 0 && (
@@ -1562,8 +1568,7 @@ function DocListCardCD({
 								{/* width 는 표가 넘칠 때 min-content 까지 눌린다 → 컬럼마다 min-width 바닥을 같이 준다. */}
 								<th scope="col" style={{ width: statusColumnWidth, minWidth: statusColumnWidth }}>Status</th>
 								{/* ID — 문서 번호 노출 (그룹 루트 행은 대표 문서 번호).
-                    ponytail: 72px 는 5자리 기준 — 6자리면 min-content 가 이겨 셀이 78.4px 로 벌어진다.
-                    그때 제목 본문 상자가 343→340px 로 줄고 나머지는 가로 스크롤로 나간다 — Tags 를 줄여 되돌린다. */}
+                    ponytail: 84px 는 6자리(min-content 78.4px) 기준 — 7자리면 min-content 가 이겨 셀이 벌어진다, 그때 폭을 다시 잰다. */}
 								<th scope="col" style={{ width: 84, minWidth: 84 }}>ID</th>
 								<th scope="col" className="doc-col-title">Title</th>
 								{/* 태그 전용 column — 서술 칩을 제목 셀에서 분리. */}

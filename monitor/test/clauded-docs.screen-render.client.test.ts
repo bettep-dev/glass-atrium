@@ -52,14 +52,15 @@ type Component = (props: unknown) => unknown;
 
 const ui = await loadScreenModule(resolve(__dirname, "../public/src/ui.jsx"));
 const shippedUi = ui.UI as Record<string, unknown>;
-const ROW_FOCUS_ATOMS = {
+const SHIPPED_ATOMS = {
   ROW_CONTROL_PROPS: shippedUi.ROW_CONTROL_PROPS,
   getRowKeyAction: shippedUi.getRowKeyAction,
   getDisplayName: shippedUi.getDisplayName,
+  getRegionView: shippedUi.getRegionView,
 };
 
 async function loadDocsScreen(react: Record<string, unknown> = createReactStub()): Promise<Record<string, unknown>> {
-  return loadScreenModule(DOCS_SRC, { UI: uiStub(ROW_FOCUS_ATOMS), React: react });
+  return loadScreenModule(DOCS_SRC, { UI: uiStub(SHIPPED_ATOMS), React: react });
 }
 
 function cssRuleBody(source: string, selector: string): string {
@@ -208,6 +209,41 @@ test("every control inside a ledger row leaves the Tab order as a row control, s
     assert.equal(control.props.tabIndex, -1, `${String(control.props["aria-label"] ?? control.props.className)} leaves the Tab order`);
     assert.equal(control.props["data-row-control"], "", "it is reachable by arrows from its row");
   }
+});
+
+// the shipped verdict, not the atom stub → the rendered words are what a reader sees
+async function renderVerdictText(state: Record<string, unknown>): Promise<string> {
+  const screen = await loadScreenModule(DOCS_SRC, {
+    UI: uiStub({ ...SHIPPED_ATOMS, PageVerdict: shippedUi.PageVerdict }),
+    React: createReactStub(),
+  });
+  const props = listCardProps(() => undefined);
+  const createdAt = new Date().toISOString();
+  props.rows = (props.rows as Array<Record<string, unknown>>).map((row) => ({ ...row, doc_status: "doc_review", created_at: createdAt }));
+  const tree = renderScreen((screen.DocListCardCD as Component)({ ...props, asOf: createdAt, state }));
+  const verdicts = findNodes(tree, (n) => String(n.props.className).includes("page-verdict "));
+  assert.equal(verdicts.length, 1, "the open list states one verdict");
+  return collectText(verdicts[0]);
+}
+
+test("a failed refresh over held rows turns the open verdict to Last known, and only the failure does", async () => {
+  const settled = await renderVerdictText({ status: "ready", data: {}, busy: false, error: null });
+  const warmError = await renderVerdictText({ status: "ready", data: {}, busy: false, error: "HTTP 500" });
+
+  assert.doesNotMatch(settled, /Last known/, "a settled read keeps its own verdict");
+  assert.match(warmError, /Last known/, "held rows under a failed read never read as the all-clear");
+  assert.doesNotMatch(warmError, /Healthy/);
+});
+
+test("a cold list error keeps its alert and shows no loader while its Retry is in flight", async () => {
+  const screen = await loadDocsScreen();
+  const state = { status: "loading", data: null, busy: true, error: "HTTP 500" };
+  const tree = renderScreen((screen.DocListCardCD as Component)({ ...listCardProps(() => undefined), state }));
+
+  assert.equal(findNodes(tree, (n) => n.props.atom === "LoadingPlaceholder").length, 0);
+  const alerts = findNodes(tree, (n) => n.props.atom === "RegionUnavailable");
+  assert.equal(alerts.length, 1, "the focused Retry stays mounted");
+  assert.equal(alerts[0].props.isBusy, true, "the Retry reads busy while the read is in flight");
 });
 
 type FakeNode = { name: string; closest: (s: string) => FakeNode | null; querySelectorAll: (s: string) => FakeNode[]; focus: () => void };
