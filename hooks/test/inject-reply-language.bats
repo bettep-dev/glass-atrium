@@ -76,7 +76,7 @@ split_output() {
 }
 
 # Prints the quote of the one context line, `silent`, or `malformed: <output>`.
-quote_of_output() {
+get_output_quote() {
   local split
   split="$(split_output "$@")"
   printf '%s' "${split#*"${SPLIT}"}"
@@ -90,7 +90,7 @@ assert_quote() {
     echo "${1}: exit ${status}: ${output}"
     return 1
   }
-  got="$(quote_of_output "${3:-UserPromptSubmit}")"
+  got="$(get_output_quote "${3:-UserPromptSubmit}")"
   [[ "${got}" == "${2}" ]] || {
     echo "${1}: want ${2}, got ${got}"
     return 1

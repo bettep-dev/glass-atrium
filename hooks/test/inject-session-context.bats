@@ -83,7 +83,7 @@ run_session_source() {
 
 # Prints the quote of the one [REPLY LANGUAGE] line in ${output}, `none` without one, or `malformed: <lines>`
 # for several lines or one whose fixed part (everything outside the quote) names a language.
-pointer_quote() {
+get_pointer_quote() {
   local lines quote
   lines="$(printf '%s\n' "${output}" | awk '/^\[REPLY LANGUAGE\] /')"
   if [[ -z "${lines}" ]]; then
@@ -116,7 +116,7 @@ pointer_quote() {
   for row in "${rows[@]}"; do
     IFS='|' read -r source transcript want <<<"${row}"
     run_session_source "${source}" "${transcript}" cli
-    got="$(pointer_quote)"
+    got="$(get_pointer_quote)"
     [[ "${status}" -eq 0 && "${output}" == *"[ORCHESTRATOR SESSION]"* && "${got}" == "${want}" ]] || {
       echo "${source}/${transcript}: exit ${status}, want ${want}, got ${got}"
       return 1
@@ -130,7 +130,7 @@ pointer_quote() {
   local entrypoint got
   for entrypoint in cli sdk-cli; do
     run_session_source resume newest-human-korean "${entrypoint}"
-    got="$(pointer_quote)"
+    got="$(get_pointer_quote)"
     [[ "${status}" -eq 0 && "${output}" == *"[ORCHESTRATOR SESSION]"* ]] || return 1
     if [[ "${entrypoint}" == cli ]]; then
       [[ "${got}" == '좋아, 이제 리뷰 반영해줘' ]] || {
@@ -149,14 +149,15 @@ pointer_quote() {
 @test "an empty or closed stdin still yields the session context, with no pointer line" {
   local got
   run env HOME="${FAKE_HOME}" CLAUDE_CODE_ENTRYPOINT=cli bash "${HOOK_SH}" </dev/null
-  got="$(pointer_quote)"
+  got="$(get_pointer_quote)"
   [[ "${status}" -eq 0 && "${output}" == *"[ORCHESTRATOR SESSION]"* && "${got}" == none ]] || {
     echo "empty stdin: exit ${status}: ${output}"
     return 1
   }
   # Closed inside the child: a `run ... <&-` lets bats reuse fd 0 for its own capture pipe.
+  # shellcheck disable=SC2016  # $1 expands in the child shell, not here
   run env HOME="${FAKE_HOME}" CLAUDE_CODE_ENTRYPOINT=cli bash -c 'exec 0<&-; exec bash "$1"' _ "${HOOK_SH}"
-  got="$(pointer_quote)"
+  got="$(get_pointer_quote)"
   [[ "${status}" -eq 0 && "${output}" == *"[ORCHESTRATOR SESSION]"* && "${got}" == none ]] || {
     echo "closed stdin: exit ${status}: ${output}"
     return 1
