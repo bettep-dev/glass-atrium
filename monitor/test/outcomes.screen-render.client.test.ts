@@ -91,6 +91,27 @@ test("a shared outage shows one Retry, and pressing it re-reads the page", async
   assert.equal((refreshes[0].next as (t: number) => number)(0), 1);
 });
 
+test("a cold error shows one banner, and every region it covers is a quiet placeholder with no Retry", async () => {
+  const { tree } = await renderOutcomesScreen(8);
+  const covered = findNodes(tree, (n) => n.type === "RegionCovered").map((n) => String(n.props.source));
+
+  assert.equal(findNodes(tree, (n) => n.type === "PageErrorBanner").length, 1);
+  assert.equal(findNodes(tree, (n) => n.type === "RegionUnavailable").length, 0, "no covered region repeats the error");
+  assert.equal(getRetryButtons(tree).length, 1, "the banner holds the only Retry");
+  for (const source of ["the status band", "the record ledger", "by-agent failures", "reporting health", "recording channels", "check results", "cross table"]) {
+    assert.ok(covered.includes(source), `${source} is covered by the banner`);
+  }
+});
+
+test("a region failing alone keeps its own error card and Retry, with no page banner", async () => {
+  const { tree } = await renderOutcomesScreen(1);
+  const cards = findNodes(tree, (n) => n.type === "RegionUnavailable");
+
+  assert.equal(findNodes(tree, (n) => n.type === "PageErrorBanner").length, 0);
+  assert.deepEqual(cards.map((n) => n.props.source), ["the record ledger"]);
+  assert.equal(typeof cards[0].props.onRetry, "function", "the lone card keeps its Retry");
+});
+
 test("a failed record body reads as a plain sentence, with the raw answer only behind Details", async () => {
   const mod = await loadScreenModule(OUTCOMES_SRC, { UI: ui.UI, location: { hash: "" }, URLSearchParams });
   const create = (mod.React as { createElement: (t: unknown, p: unknown) => unknown }).createElement;
