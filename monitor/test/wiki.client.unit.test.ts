@@ -54,7 +54,7 @@ interface WikiHelpers {
   ) => LaneModel;
   buildThroughputModel: (cyclesState: FetchState) => { isMixUniform: boolean; rows: unknown[] };
   buildTileBandModel: (summaryState: FetchState, indexState: FetchState, backlogState: FetchState) => Tile[];
-  readTileBandFailuresW: (summaryState: FetchState, indexState: FetchState) => string[];
+  readTileBandFailuresW: (summaryState: FetchState, indexState: FetchState) => Array<{ feeder: string; label: string }>;
   describeNotesByTypeW: (state: FetchState) => string;
   describeRunHistoryW: (cyclesState: FetchState, model: unknown, summaryState: FetchState) => string;
   window: { UI: Record<string, unknown> };
@@ -160,9 +160,9 @@ test("a failed band feeder is named once for the group, never per tile", () => {
     assert.equal(tile.state, "error");
     assert.doesNotMatch(tile.sub || "", /Couldn't load/, `tile ${tile.key} repeats the banner`);
   }
-  assert.deepEqual([...helpers.readTileBandFailuresW(errored, errored)], ["daily cycle summary", "search index"]);
-  assert.deepEqual([...helpers.readTileBandFailuresW(errored, ready({}))], ["daily cycle summary"]);
-  assert.deepEqual([...helpers.readTileBandFailuresW(loading, ready({}))], []);
+  assert.deepEqual(Array.from(helpers.readTileBandFailuresW(errored, errored), (f) => f.label), ["daily cycle summary", "search index"]);
+  assert.deepEqual(Array.from(helpers.readTileBandFailuresW(errored, ready({})), (f) => f.label), ["daily cycle summary"]);
+  assert.deepEqual(Array.from(helpers.readTileBandFailuresW(loading, ready({})), (f) => f.label), []);
 });
 
 // The alarm lane: a check that could not run is never silence.

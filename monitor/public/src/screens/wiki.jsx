@@ -56,8 +56,6 @@ function ScreenWiki() {
 	const isBusy = getRegionSummary(waveStates).isBusy;
 	const hasRead = settledAt != null || waveStates.some((st) => st.data != null);
 	const outage = readWikiOutageW(waveSections);
-	// a shared outage owns the page's single Retry → sections stay quiet
-	const sectionRetry = outage ? undefined : triggerRefresh;
 	const verdict = useMemoW(
 		() => buildWikiVerdictW(summaryState, indexState, backlogState, cyclesState),
 		[summaryState, indexState, backlogState, cyclesState],
@@ -162,13 +160,15 @@ function ScreenWiki() {
 					backlogState={backlogState}
 					cyclesState={cyclesState}
 					at={settledAt}
-					onRetry={sectionRetry}
+					shared={outage}
+					onRetry={triggerRefresh}
 				/>
 				<WikiStatusRow
 					cyclesState={cyclesState}
 					summaryState={summaryState}
 					indexState={indexState}
-					onRetry={sectionRetry}
+					shared={outage}
+					onRetry={triggerRefresh}
 				/>
 
 				{/* Behind the click — the per-run record and the working lists. */}
@@ -176,12 +176,14 @@ function ScreenWiki() {
 					reportState={reportState}
 					days={reportDays}
 					onChangeDays={setReportDays}
-					onRetry={sectionRetry}
+					shared={outage}
+					onRetry={triggerRefresh}
 				/>
 				<WikiMaintenanceSection
 					backlogState={backlogState}
 					cyclesState={cyclesState}
-					onRetry={sectionRetry}
+					shared={outage}
+					onRetry={triggerRefresh}
 				/>
 			</div>
 		</div>
@@ -212,6 +214,23 @@ function readWikiOutageW(sections) {
 	);
 }
 
+// RegionFailure matches its own label → feeders the banner covers are restated under this region's label.
+function WikiRegionFailureW({ feeders, source, error, isBusy, shared, focusTargetId, onRetry }) {
+	const isCovered = feeders.length > 0 && feeders.every((feeder) => shared?.sources?.includes(feeder));
+	const regionShared = isCovered ? { ...shared, sources: [source] } : null;
+
+	return (
+		<window.UI.RegionFailure
+			source={source}
+			error={error}
+			isBusy={isBusy}
+			shared={regionShared}
+			focusTargetId={focusTargetId}
+			onRetry={onRetry}
+		/>
+	);
+}
+
 // Daily cycle plus a grace window — past this the cycle counts as missed.
 const CYCLE_OVERDUE_HOURS = 36;
 
@@ -227,6 +246,14 @@ const PROPOSAL_PARKED_DAYS = PROPOSAL_PARKED_RUNS;
 
 // Element id of the merge-proposals fold — the verdict chip's target.
 const MERGE_PROPOSALS_ID = "wiki-merge-proposals";
+
+// Region card ids — a covered region's slot names its card, so the banner's Retry lands there on recovery.
+const WIKI_REGION_IDS = Object.freeze({
+	tiles: "wiki-tiles",
+	runHistory: "wiki-run-history",
+	notesByType: "wiki-notes-by-type",
+	runTable: "wiki-run-table",
+});
 
 // One sentence over the lane's checks; a parked proposal informs but never raises the tone.
 // An unread summary adds no sentence — PageVerdict's shared not-read note speaks for it.
@@ -532,20 +559,26 @@ function describeSnapshotAgeW(runDate) {
 // Four-tile band — last run · compiled last cycle · search index · library totals.
 // Steady state carries no tint (the last-run sub still names the outcome); only an actionable state tints.
 
-function WikiTileBand({ summaryState, indexState, backlogState, cyclesState, at, onRetry }) {
-	const { RegionUnavailable } = window.UI;
+function WikiTileBand({ summaryState, indexState, backlogState, cyclesState, at, shared, onRetry }) {
 	const tiles = useMemoW(
 		() => buildTileBandModel(summaryState, indexState, backlogState, cyclesState, at),
 		[summaryState, indexState, backlogState, cyclesState, at],
 	);
 	const failures = readTileBandFailuresW(summaryState, indexState);
+	// a feeder the banner does not cover keeps its own sentence and Retry
+	const uncovered = failures.filter((f) => !shared?.sources?.includes(f.feeder));
+	const shown = uncovered.length > 0 ? uncovered : failures;
 
 	return (
-		<div className="flex flex-col gap-2">
-			{failures.length > 0 && (
-				<RegionUnavailable
-					source={`the ${failures.join(" and ")}`}
-					error={summaryState.error ?? indexState.error}
+		<div id={WIKI_REGION_IDS.tiles} className="flex flex-col gap-2">
+			{shown.length > 0 && (
+				<WikiRegionFailureW
+					feeders={shown.map((f) => f.feeder)}
+					source={`the ${shown.map((f) => f.label).join(" and ")}`}
+					error={shown[0].state.error}
+					isBusy={shown.some((f) => f.state.busy)}
+					shared={shared}
+					focusTargetId={WIKI_REGION_IDS.tiles}
 					onRetry={onRetry}
 				/>
 			)}
@@ -561,11 +594,9 @@ function WikiTileBand({ summaryState, indexState, backlogState, cyclesState, at,
 // The band's own feeders; the backlog's failure is announced by the maintenance group it feeds.
 function readTileBandFailuresW(summaryState, indexState) {
 	return [
-		[summaryState, "daily cycle summary"],
-		[indexState, "search index"],
-	]
-		.filter(([state]) => state.status === "error")
-		.map(([, label]) => label);
+		{ state: summaryState, feeder: "summary", label: "daily cycle summary" },
+		{ state: indexState, feeder: "notes by type", label: "search index" },
+	].filter((f) => f.state.status === "error");
 }
 
 // Report surface → neutral chrome; a warn/crit tile carries its tone on a glyph beside the
@@ -822,8 +853,8 @@ function describeBrokenLinksW(deadLinks) {
 // The proposals list reports the cost-guard residue, since unverified candidate pairs
 // make the proposal count a floor rather than a total.
 
-function WikiMaintenanceSection({ backlogState, cyclesState, onRetry }) {
-	const { RegionUnavailable, LoadingPlaceholder } = window.UI;
+function WikiMaintenanceSection({ backlogState, cyclesState, shared, onRetry }) {
+	const { LoadingPlaceholder } = window.UI;
 	const model = useMemoW(
 		() => buildMaintenanceModel(backlogState, cyclesState),
 		[backlogState, cyclesState],
@@ -832,9 +863,13 @@ function WikiMaintenanceSection({ backlogState, cyclesState, onRetry }) {
 	return (
 		<div className="flex flex-col gap-2">
 			{model.state === "error" ? (
-				<RegionUnavailable
+				<WikiRegionFailureW
+					feeders={["maintenance backlog"]}
 					source="the maintenance backlog"
 					error={backlogState.error}
+					isBusy={backlogState.busy}
+					shared={shared}
+					focusTargetId={MERGE_PROPOSALS_ID}
 					onRetry={onRetry}
 				/>
 			) : null}
@@ -953,7 +988,7 @@ function readProposalRowsW(backlog, proposals, cyclesState) {
 }
 
 // Status row — the compile trend and the library's composition, open side by side.
-function WikiStatusRow({ cyclesState, summaryState, indexState, onRetry }) {
+function WikiStatusRow({ cyclesState, summaryState, indexState, shared, onRetry }) {
 	const { SplitRow } = window.UI;
 
 	return (
@@ -961,16 +996,17 @@ function WikiStatusRow({ cyclesState, summaryState, indexState, onRetry }) {
 			<WikiRunHistorySection
 				cyclesState={cyclesState}
 				summaryState={summaryState}
+				shared={shared}
 				onRetry={onRetry}
 			/>
-			<WikiNotesByTypeSection state={indexState} onRetry={onRetry} />
+			<WikiNotesByTypeSection state={indexState} shared={shared} onRetry={onRetry} />
 		</SplitRow>
 	);
 }
 
 // Run history — the notes-per-day trend as an open status strip on the fixed cycles window.
-function WikiRunHistorySection({ cyclesState, summaryState, onRetry }) {
-	const { RegionUnavailable, LoadingPlaceholder } = window.UI;
+function WikiRunHistorySection({ cyclesState, summaryState, shared, onRetry }) {
+	const { LoadingPlaceholder } = window.UI;
 	const model = useMemoW(
 		() => buildThroughputModel(cyclesState),
 		[cyclesState],
@@ -978,15 +1014,20 @@ function WikiRunHistorySection({ cyclesState, summaryState, onRetry }) {
 
 	return (
 		<WikiCardW
+			id={WIKI_REGION_IDS.runHistory}
 			label="Run history"
 			count={describeRunHistoryW(cyclesState, model, summaryState)}
 		>
 			{cyclesState.status === "loading" ? (
 				<LoadingPlaceholder label="run history" minHeight={120} />
 			) : cyclesState.status === "error" ? (
-				<RegionUnavailable
+				<WikiRegionFailureW
+					feeders={["run history"]}
 					source="run history"
 					error={cyclesState.error}
+					isBusy={cyclesState.busy}
+					shared={shared}
+					focusTargetId={WIKI_REGION_IDS.runHistory}
 					onRetry={onRetry}
 				/>
 			) : model.rows.length === 0 ? (
@@ -1011,9 +1052,10 @@ function WikiRunHistorySection({ cyclesState, summaryState, onRetry }) {
 }
 
 // Per-run record — a detail fold whose summary line states the run streak without a click.
-function WikiRunTableSection({ reportState, days, onChangeDays, onRetry }) {
+function WikiRunTableSection({ reportState, days, onChangeDays, shared, onRetry }) {
 	return (
 		<WikiDisclosureW
+			id={WIKI_REGION_IDS.runTable}
 			label="Per-run table"
 			count={describeRunTableW(reportState, days)}
 			bodyClassName="px-3 pb-3 flex flex-col gap-2"
@@ -1040,7 +1082,7 @@ function WikiRunTableSection({ reportState, days, onChangeDays, onRetry }) {
 					))}
 				</div>
 			</div>
-			<WikiReportsBody state={reportState} days={days} onRetry={onRetry} />
+			<WikiReportsBody state={reportState} days={days} shared={shared} onRetry={onRetry} />
 		</WikiDisclosureW>
 	);
 }
@@ -1127,9 +1169,10 @@ function openOnOwnFocusW(event) {
 }
 
 // Open section shell — the status-card counterpart of WikiDisclosureW.
-function WikiCardW({ label, count, children }) {
+// Content-sized → a short card beside a taller one leaves no stretched empty box.
+function WikiCardW({ id, label, count, children }) {
 	return (
-		<section className="rounded-md border border-line bg-sunken p-3 flex flex-col gap-2 min-w-0 h-full">
+		<section id={id} className="rounded-md border border-line bg-sunken p-3 flex flex-col gap-2 min-w-0">
 			<div className="flex items-center gap-2 flex-wrap">
 				<h2 className="m-0 fs-body text-ink font-medium">{label}</h2>
 				<span className="ml-auto fs-meta text-dim">{count}</span>
@@ -1140,8 +1183,8 @@ function WikiCardW({ label, count, children }) {
 }
 
 // Notes by type — the library's composition, open as a compact list.
-function WikiNotesByTypeSection({ state, onRetry }) {
-	const { RegionUnavailable, LoadingPlaceholder } = window.UI;
+function WikiNotesByTypeSection({ state, shared, onRetry }) {
+	const { LoadingPlaceholder } = window.UI;
 	const rows =
 		state.status === "ready" && Array.isArray(state.data?.by_type)
 			? buildNoteTypeRowsW(state.data.by_type)
@@ -1149,13 +1192,17 @@ function WikiNotesByTypeSection({ state, onRetry }) {
 	const coverage = describeNoteCoverageW(rows);
 
 	return (
-		<WikiCardW label="Notes by type" count={describeNotesByTypeW(state)}>
+		<WikiCardW id={WIKI_REGION_IDS.notesByType} label="Notes by type" count={describeNotesByTypeW(state)}>
 			{state.status === "loading" ? (
 				<LoadingPlaceholder label="note types" />
 			) : state.status === "error" ? (
-				<RegionUnavailable
+				<WikiRegionFailureW
+					feeders={["notes by type"]}
 					source="notes by type"
 					error={state.error}
+					isBusy={state.busy}
+					shared={shared}
+					focusTargetId={WIKI_REGION_IDS.notesByType}
 					onRetry={onRetry}
 				/>
 			) : rows.length === 0 ? (
@@ -1422,16 +1469,19 @@ function isDryRunProposalW(proposal) {
 	return DRY_RUN_TAIL_W.test(proposal.suggested_action || "");
 }
 
-function WikiReportsBody({ state, days, onRetry }) {
-	const { RegionUnavailable } = window.UI;
+function WikiReportsBody({ state, days, shared, onRetry }) {
 	if (state.status === "loading") {
 		return <WikiReportsTable reports={[]} isLoading />;
 	}
 	if (state.status === "error") {
 		return (
-			<RegionUnavailable
+			<WikiRegionFailureW
+				feeders={["per-run table"]}
 				source="the run table"
 				error={state.error}
+				isBusy={state.busy}
+				shared={shared}
+				focusTargetId={WIKI_REGION_IDS.runTable}
 				onRetry={onRetry}
 			/>
 		);

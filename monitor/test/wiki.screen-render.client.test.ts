@@ -180,6 +180,11 @@ test("the run-history trend and notes by type share one split row, the trend on 
   assert.equal(split[0].props.ratio, "2:1");
   const headings = findNodes(split[0], (n) => n.type === "h2").map((h) => collectText(h));
   assert.deepEqual(headings, ["Run history", "Notes by type"]);
+  const cards = findNodes(split[0], (n) => n.type === "section");
+  assert.equal(cards.length, 2);
+  for (const card of cards) {
+    assert.doesNotMatch(classOf(card), /\bh-full\b/, "a short card takes its content height, not the taller neighbour's");
+  }
 });
 
 test("one polite live region announces a wave in flight as loading", async () => {
@@ -229,18 +234,54 @@ test("the page header carries the shared Refresh control, busy on the mount wave
 
 const OUTAGE = "HTTP 500 Internal Server Error — <html><body>relation wiki.notes does not exist</body></html>";
 
-test("a failed section names its source in plain words and offers Retry only when the page has no shared banner", async () => {
+test("a failed section with no shared banner names its source in plain words and keeps its own Retry", async () => {
   const mod = await loadWikiScreen();
   const { createElement } = mod.React;
   const failed = { status: "error", data: null, error: OUTAGE, busy: false };
-  for (const onRetry of [() => {}, undefined]) {
-    const tree = renderScreen(createElement(mod.WikiNotesByTypeSection, { state: failed, onRetry }));
-    const cards = findNodes(tree, (n) => n.props.atom === "RegionUnavailable");
-    assert.equal(cards.length, 1, "the section renders one quiet unavailable card");
-    assert.equal(cards[0].props.source, "notes by type");
-    assert.equal(cards[0].props.onRetry, onRetry, "Retry follows the page's choice");
-    assert.doesNotMatch(collectText(tree), /HTTP|relation/, "the raw answer stays behind the card's Details");
+  const onRetry = () => {};
+  const tree = renderScreen(createElement(mod.WikiNotesByTypeSection, { state: failed, shared: null, onRetry }));
+  const cards = findNodes(tree, (n) => n.props.atom === "RegionFailure");
+  assert.equal(cards.length, 1, "the section renders one failed-region card");
+  assert.equal(cards[0].props.source, "notes by type");
+  assert.equal(cards[0].props.shared, null, "no banner covers it, so the card speaks for itself");
+  assert.equal(cards[0].props.onRetry, onRetry, "the section keeps its own Retry");
+  assert.doesNotMatch(collectText(tree), /HTTP|relation/, "the raw answer stays behind the card's Details");
+});
+
+// Every failed region under one cause → each card is handed a banner that names its own label, so it renders covered.
+test("under a shared outage every failed region defers to the banner under its own label", async () => {
+  const mod = await loadWikiScreen();
+  const { createElement } = mod.React;
+  const failed = { status: "error", data: null, error: OUTAGE, busy: false };
+  const shared = { sources: ["summary", "run history", "notes by type", "maintenance backlog", "per-run table"], error: OUTAGE };
+  const onRetry = () => {};
+  const rows = [
+    { name: "tile band", element: createElement(mod.WikiTileBand, { summaryState: failed, indexState: failed, backlogState: failed, cyclesState: failed, at: null, shared, onRetry }) },
+    { name: "run history", element: createElement(mod.WikiRunHistorySection, { cyclesState: failed, summaryState: failed, shared, onRetry }) },
+    { name: "notes by type", element: createElement(mod.WikiNotesByTypeSection, { state: failed, shared, onRetry }) },
+    { name: "per-run table", element: createElement(mod.WikiReportsBody, { state: failed, days: 30, shared, onRetry }) },
+    { name: "maintenance backlog", element: createElement(mod.WikiMaintenanceSection, { backlogState: failed, cyclesState: failed, shared, onRetry }) },
+  ];
+  for (const row of rows) {
+    const cards = findNodes(renderScreen(row.element), (n) => n.props.atom === "RegionFailure");
+    assert.equal(cards.length, 1, `${row.name}: one failed-region card`);
+    const covered = cards[0].props.shared as { sources: string[] } | null;
+    assert.deepEqual(covered ? [...covered.sources] : null, [cards[0].props.source], `${row.name}: the banner covers the card's own label`);
+    assert.ok(cards[0].props.focusTargetId, `${row.name}: the covered slot names a card for the banner's Retry to land on`);
   }
+});
+
+test("a tile-band feeder the banner does not cover keeps its own sentence beside a covered one", async () => {
+  const mod = await loadWikiScreen();
+  const failed = { status: "error", data: null, error: OUTAGE, busy: false };
+  const shared = { sources: ["summary", "run history"], error: OUTAGE };
+  const tree = renderScreen(mod.React.createElement(mod.WikiTileBand, {
+    summaryState: failed, indexState: failed, backlogState: LOADING, cyclesState: failed, at: null, shared, onRetry: () => {},
+  }));
+  const cards = findNodes(tree, (n) => n.props.atom === "RegionFailure");
+  assert.equal(cards.length, 1);
+  assert.equal(cards[0].props.source, "the search index", "only the uncovered feeder is named");
+  assert.equal(cards[0].props.shared, null, "the uncovered feeder is not quieted by the banner");
 });
 
 test("the page banner shows its Retry in flight and hands focus to the verdict, which outlives recovery", async () => {

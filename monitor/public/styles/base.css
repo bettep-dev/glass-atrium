@@ -721,6 +721,13 @@
 	flex-wrap: wrap;
 	gap: 8px;
 }
+/* A chip is an action beside the sentence → resting button chrome, never bare text */
+.page-verdict-chips .btn.ghost {
+	border-color: rgb(var(--line));
+	background: rgb(var(--elev));
+	color: rgb(var(--ink));
+}
+.page-verdict-chips .btn.ghost:hover { background: rgb(var(--sunken)); }
 
 /* Low-sample marker (LowSampleMark) — muted italic n beside a small-sample rate */
 .low-sample {
