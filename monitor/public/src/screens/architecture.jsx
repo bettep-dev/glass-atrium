@@ -62,6 +62,8 @@ const ARCH_DESC_ID = "arch-svg-desc";
 // mermaid 가 `#<renderId> .security>*{…!important}` 꼴로 찍으므로(특이도 1,1,0) 클래스만으로는
 // 무엇을 적어도 못 이김 — 여기 id 하나가 그 한 칸을 벌어 줌. 하네스 셀렉터는 클래스 그대로임.
 const ARCH_CANVAS_ID = "arch-map-canvas";
+// marks a pane clamped to its drawing's height — a data attribute, since React rewrites className on re-render
+const CANVAS_FIT_HEIGHT_ATTR = "data-arch-fit-height";
 const ARCH_SELECTORS = {
 	canvas: ".arch-mermaid-canvas",
 	tabControl: '[role="tab"], .arch-tab-btn',
@@ -604,6 +606,8 @@ function ScreenArchitecture(
 					// part health takes the band the map leaves empty — a map floor keeps its fit scale, short viewports scroll
 					".arch-page:has(.arch-part-health) { overflow-y: auto; } " +
 					".arch-page:has(.arch-part-health) .arch-main { min-height: 62vh; } " +
+					// a pane clamped to its drawing gives the unused height back — the fit scale the floor protects is already set
+					`.arch-page .arch-main:has(.arch-mermaid-canvas[${CANVAS_FIT_HEIGHT_ATTR}]) { flex: none; min-height: 0; } ` +
 					".arch-part-health { flex-shrink: 0; } " +
 					".arch-part-health-title { font-size: 13px; font-weight: 600; margin: 0; } " +
 					".arch-part-col-title { font-size: inherit; font-weight: 600; margin: 0 0 6px; } " +
@@ -2146,17 +2150,16 @@ function applyLegibleFitAR(instance, root) {
 
 	instance.zoom(relative);
 
-	// 캔버스는 flex:1 로 pane 전체 높이 유지 (축소 안 함) → 짧은 그래프는 pan 으로 세로 가운데 정렬.
 	const fittedGraphH = realH * targetAbs;
 	const fittedGraphW = realW * targetAbs;
 
 	// pan({x,y}) 는 viewport CTM 의 e/f(화면픽셀 평행이동) 직접 설정 · 콘텐츠 viewBox.x/y 시작 → 좌상단(0,0) 정렬에 -origin*scale 필요 (fit/center:false 라 라이브러리 미보정).
 	const baseX = -(s.viewBox.x || 0) * targetAbs;
 	const baseY = -(s.viewBox.y || 0) * targetAbs;
-	// 가로·세로 동일 slack 패턴 — 그래프가 pane 보다 좁으면 가운데, 넓으면 0(좌상단 시작). clamp 로 큰(=높은/넓은) 그래프는 slack=0 → 좌상단 정렬 (회귀 없음).
+	// 좁은 그래프는 가로 가운데 · 낮은 그래프는 pane 을 그림 높이로 줄임 → 위아래 빈 띠 없음 (넓은/높은 그래프는 좌상단 시작).
 	const slackX = Math.max(0, (s.width - fittedGraphW) / 2);
-	const slackY = Math.max(0, (s.height - fittedGraphH) / 2);
-	instance.pan({ x: baseX + slackX, y: baseY + slackY });
+	instance.pan({ x: baseX + slackX, y: baseY });
+	if (fittedGraphH < s.height) setCanvasHeightAR(root, fittedGraphH, instance);
 
 	// fit-applied mark — until the library's next-frame CTM flush, the viewport still holds its viewBox meet scale
 	root
@@ -2176,13 +2179,30 @@ function readViewportScaleAR(root) {
 // 캔버스 인라인 sizing (short-graph clamp) 제거 → CSS 기본 flex-fill 복원 (이전 그래프 height/flex 잔존이 다음 측정 오염 차단).
 // root 는 컨테이너 또는 캔버스 자신 어디든 허용.
 function clearCanvasSizingAR(root) {
-	if (!root) return;
-	const canvas = root.classList?.contains("arch-mermaid-canvas")
-		? root
-		: root.closest?.(".arch-mermaid-canvas");
+	const canvas = getCanvasAR(root);
 	if (!canvas) return;
 	canvas.style.height = "";
 	canvas.style.flex = "";
+	canvas.removeAttribute(CANVAS_FIT_HEIGHT_ATTR);
+}
+
+// the zoom buttons scale about the pane centre → the cached pane size follows the clamp
+function setCanvasHeightAR(root, heightPx, instance) {
+	const canvas = getCanvasAR(root);
+	if (!canvas) return;
+	canvas.style.height = `${Math.ceil(heightPx)}px`;
+	canvas.style.flex = "none";
+	canvas.setAttribute(CANVAS_FIT_HEIGHT_ATTR, "");
+	try {
+		instance.resize();
+	} catch (_e) {
+		/* stale pane size only shifts the zoom centre */
+	}
+}
+
+function getCanvasAR(root) {
+	if (!root) return null;
+	return root.classList?.contains("arch-mermaid-canvas") ? root : (root.closest?.(".arch-mermaid-canvas") ?? null);
 }
 
 // 서버 daemon 목록 → unscoped mermaid node id 별 daemon 배열 (F39).

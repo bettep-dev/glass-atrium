@@ -59,6 +59,9 @@ const MIN_RENDERED_LABEL_PX = 12;
 // a fitted map reaches at least this share of the pane on its binding axis (the rest is diagramPadding)
 const MIN_BINDING_AXIS_FILL = 0.9;
 
+// empty pane above or below the drawing — the viewBox padding plus the zone title band, at scale <= 1, stays under this
+const MAX_FRAME_GAP_PX = 24;
+
 // CTM-derived reads (labelPx, scale) carry float noise → the label floor and the scale-1 cap compare within it
 const CTM_FLOAT_TOLERANCE = 1e-6;
 
@@ -84,6 +87,7 @@ interface FitReading {
 	boxCount: number;
 	drawnWidthPx: number;
 	drawnHeightPx: number;
+	gapPx: { above: number; below: number };
 	worstOverflowPx: number;
 	worstId: string;
 }
@@ -234,6 +238,7 @@ async function readFit(width: number, height: number): Promise<FitReading> {
 				boxCount: boxes.length,
 				drawnWidthPx: drawn.right - drawn.left,
 				drawnHeightPx: drawn.bottom - drawn.top,
+				gapPx: { above: drawn.top - pane.top, below: pane.bottom - drawn.bottom },
 				worstOverflowPx,
 				worstId,
 			};
@@ -487,6 +492,16 @@ for (const { width, height } of VIEWPORTS) {
 			r.drawnWidthPx > r.drawnHeightPx,
 			`drawn ${r.drawnWidthPx.toFixed(0)}x${r.drawnHeightPx.toFixed(0)} — the flow no longer reads left to right`,
 		);
+	});
+}
+
+for (const { width, height } of VIEWPORTS) {
+	test(`the drawing fills its frame with no empty band above or below it at ${width}x${height}`, async () => {
+		const r = await readFit(width, height);
+		const gaps = `pane ${r.paneWidth.toFixed(0)}x${r.paneHeight.toFixed(0)} · drawn ${r.drawnWidthPx.toFixed(0)}x${r.drawnHeightPx.toFixed(0)} · ` +
+			`${r.gapPx.above.toFixed(0)}px empty above, ${r.gapPx.below.toFixed(0)}px below`;
+		assert.ok(r.gapPx.above <= MAX_FRAME_GAP_PX, `a band above the drawing: ${gaps}`);
+		assert.ok(r.gapPx.below <= MAX_FRAME_GAP_PX, `a band below the drawing: ${gaps}`);
 	});
 }
 
