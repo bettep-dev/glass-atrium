@@ -95,8 +95,12 @@ function fakeElement(tag: string, heading: FakeElement | null, focusLog: FakeEle
   return element;
 }
 
-async function mountShell() {
+async function mountShell({ fetch = () => new Promise(() => undefined), createRoot = () => ({ render: () => undefined }) }: {
+  fetch?: (url: string) => Promise<unknown>;
+  createRoot?: () => { render: (node: unknown) => void };
+} = {}) {
   const { react, flushEffects, resetCursor } = createStatefulReact();
+  let displayTimezone = "Asia/Seoul";
   const focusLog: FakeElement[] = [];
   const heading = fakeElement("h1", null, focusLog);
   const main = fakeElement("main", heading, focusLog);
@@ -106,9 +110,8 @@ async function mountShell() {
 
   const mod = await loadScreenModule(APP_SRC, {
     React: react,
-    ReactDOM: { createRoot: () => ({ render: () => undefined }) },
-    // Bootstrap fetch at the module tail stays pending — the harness never auto-mounts.
-    fetch: () => new Promise(() => undefined),
+    ReactDOM: { createRoot },
+    fetch,
     setInterval: () => 0,
     clearInterval: () => undefined,
     location,
@@ -123,8 +126,12 @@ async function mountShell() {
     },
     useTweaks: () => [{ theme: "dark", density: "comfortable", accent: "#3b82f6" }, () => undefined],
     HealthModel: { foldHarness: () => ({ status: "loading" }) },
-    UI: { Icon: () => null },
-    ScreenDashboard: screen("Dashboard"),
+    UI: {
+      Icon: () => null,
+      setDisplayTimezone: (tz: string) => { if (tz) displayTimezone = tz; },
+      getDisplayTimezone: () => displayTimezone,
+    },
+    ScreenDashboard: function ScreenDashboard() { return react.createElement("time", null, displayTimezone); },
     ScreenCost: screen("Cost & usage"),
   });
 
@@ -224,4 +231,28 @@ test("route focus falls back to the main region and keeps an authored tabindex",
       assert.equal(focusLog[0]?.attrs.tabindex, row.expectTabindex);
     });
   }
+});
+
+test("the shell mounts at once, without waiting for the health read", async () => {
+  const mounted: unknown[] = [];
+
+  await mountShell({ createRoot: () => ({ render: (node) => mounted.push(node) }) });
+
+  assert.equal(mounted.length, 1, "one root render while /api/health is still pending");
+});
+
+test("a timezone arriving on the health read re-keys the page, so every time string re-renders in it", async () => {
+  const health = { ok: true, json: async () => ({ timezone: "America/New_York" }) };
+  const { render } = await mountShell({
+    fetch: (url) => (url === "/api/health" ? Promise.resolve(health) : Promise.reject(new Error("HTTP 503"))),
+  });
+  const getPage = (tree: RenderedNode) => findNodes(tree, (n) => n.type === "ScreenDashboard")[0];
+
+  assert.equal(getPage(render()).props.key, "Asia/Seoul", "the default zone renders before the read settles");
+  await new Promise((settle) => setImmediate(settle));
+  render();
+  const page = getPage(render());
+
+  assert.equal(page.props.key, "America/New_York");
+  assert.deepEqual(findNodes(page, (n) => n.type === "time").map((n) => n.children[0]), ["America/New_York"]);
 });
