@@ -81,7 +81,11 @@ impl: glass-atrium-dev-nestjs
     "plan-ref by plan file path, no close token|log('plan-ref: docs/rollout-plan.html');|advise"
     "close form|log('plan-ref: clauded-docs/100'); log('[PLAN-CLOSE] in-script');|silent"
     "deferral form naming the closing step|log('plan-ref: clauded-docs/100'); log('[PLAN-CLOSE] deferred: the deploy script closes it');|silent"
+    "deferral form naming a step led by a path|log('plan-ref: clauded-docs/100'); log('[PLAN-CLOSE] deferred: ./close-plan.js');|silent"
+    "deferral form naming a step led by a backtick|log('plan-ref: clauded-docs/100'); log('[PLAN-CLOSE] deferred: \`wave-b.js\` closes it');|silent"
+    "deferral form naming a step led by a quote|log('plan-ref: clauded-docs/100'); log(\"[PLAN-CLOSE] deferred: 'step 8 deploy'\");|silent"
     "deferral form naming no closing step|log('plan-ref: clauded-docs/100'); log('[PLAN-CLOSE] deferred:');|advise"
+    "deferral form naming no closing step, code following on its line|log('plan-ref: clauded-docs/100'); log('[PLAN-CLOSE] deferred:');log('next');|advise"
     "unknown form value|log('plan-ref: clauded-docs/100'); log('[PLAN-CLOSE] later');|advise"
     "simple-task entry, no plan-ref|log('[ENTRY-CLASS] simple-task: multi-file=no cross-module=no turns<3 contract=no — one line');|silent"
   )

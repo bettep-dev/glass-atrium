@@ -411,21 +411,22 @@ On `result: fail` or `result: blocked`:
 
 The standard plan/report-then-build flow as ONE lifecycle.
 
-- Steps 1-5 gate in order: a step starts only after its predecessor's gate passes.
-- Step 6 governs the delivery tail and does not wait on step 5's `doc_status` transition.
+- Steps 1-4 gate in order: a step starts only after its predecessor's gate passes.
+- Step 5 is exempt from that gate: it runs on step 4's returned reconciliation verdict whichever way it falls, a verdict with gaps included.
+- The close runs after step 6 despite its number: step 4's reconciliation pass and step 5's stage write run at the delivery point, the last phase that delivers the plan's work (merge or deploy) — the Managed Document Completion detail below, Step 3.
 
 1. **Document authoring** — glass-atrium-intel-planner / glass-atrium-intel-reporter author an agent-only document by DEFAULT; an HTML primary only on an explicit HTML/web/PDF-form or share signal (`### Phase Notes` → Exposure Determination · `scoped/scope-report.md` → `### HTML request test`).
 2. **Document verification** — the Stage-1 format/completeness gate, plus the Stage-2 plan-direction gate for complex plans (`### Plan Direction Verification (Stage-2 gate)`). Implementation entry is gated on `pass`+`feasible`.
 3. **Implementation** — opens with the `implementing` write, then the DEV team the verified document calls for: domain-matched DEV selection, each delegation sized per `### Spawn Budget` → Delegation-size discipline.
    - **`implementing` write**: the orchestrator records the plan at `implementing` before its first DEV spawn, and skips the write when the plan is already past `doc_review` (manual and ultracode timing, and the recipe: the Managed Document Completion detail below, Step 1).
      - Why: the session-start open-plan list keys on stage, so a missed write drops a started plan from it.
-4. **Implementation verification** — two families, BOTH passing before completion: correctness judges the work that WAS built; reconciliation runs in BOTH directions — nothing planned dropped, nothing unplanned added.
+4. **Implementation verification** — two families, BOTH passing before any `done` write: correctness judges the work that WAS built; reconciliation runs in BOTH directions — nothing planned dropped, nothing unplanned added.
    - **Correctness gates**: tests pass + glass-atrium-qa-code-reviewer / glass-atrium-sec-guard verdicts on the built work (`skills/glass-atrium-ops-orchestrator.md` → Quality Gates).
    - **Reconciliation actor**: glass-atrium-qa-code-reviewer runs both reconciliations below in one pass and returns coverage N/N, the excess and the gap list; the orchestrator routes that verdict and never reconciles itself.
      - Why: reconciling built work against a plan is produced content (`## Orchestrator Identity`).
      - Where the pass runs and what it is handed: the Managed Document Completion detail below (Step 3).
    - **Plan↔implementation coverage reconciliation (MANDATORY — distinct gate)**: the plan's work-stream set N (or task-ID set, where the plan was asked to decompose into tasks) against the implemented set → N/N reported.
-     - On any miss, the orchestrator re-delegates the dropped work BEFORE completion; never close with a gap.
+     - On any miss, step 5 records `impl_review` and the orchestrator re-delegates the dropped work before any `done` write; never close with a gap.
      - A stream or task counts as implemented when the files it names were actually changed.
      - Why: an independent-entry work stream with no dependency slips past the correctness gates, which see only what was built.
      - **Honest framing — HONOR-SYSTEM, NOT mechanically enforced**: no runtime backstop verifies the reconciliation ran; the orchestrator's Monitoring-phase check for the reviewer's verdict is the sole surface, so never describe this gate as "enforced".

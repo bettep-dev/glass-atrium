@@ -1922,7 +1922,10 @@ COMPLETION_SCHEMA_ABSENT = "COMPLETION_ADVISE:schema-absent"
 CLOSE_TOKEN_FLAG = "CLOSE_TOKEN_SILENT"
 # The two [PLAN-CLOSE] forms (grammar SoT: orchestrator-role.md -> Context Handoff Size). A deferral must
 # name its closing step → an empty value or an unfilled placeholder is neither form.
-CLOSE_TOKEN_RE = re.compile(r"\[PLAN-CLOSE\][ \t]+(?:in-script(?![A-Za-z0-9_-])|deferred:[ \t]*[A-Za-z0-9])")
+# Deferral value → optional lead punctuation — quote, backtick, path — then a word character. `<` and the
+# host string closers \x29 , ; \x7d end the lead → an empty value closed by its quote, or a quoted
+# placeholder, still fires. Hex escapes keep this heredoc balanced for the bash-3.2 dollar-paren scan.
+CLOSE_TOKEN_RE = re.compile(r"\[PLAN-CLOSE\][ \t]+(?:in-script(?![A-Za-z0-9_-])|deferred:[ \t]*[^\s<\w\x29,;\x7d]*\w)")
 
 
 def impl_slot_count(dev_spawns, verify_types, impl_types, computed_types):

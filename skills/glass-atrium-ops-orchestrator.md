@@ -811,6 +811,7 @@ Backing: authoring the tokens, the stage and the declaration is the primary obli
   ```
 
 - **Reconcile & Close phase (terminal, both skeletons)**: glass-atrium-qa-code-reviewer reconciles the plan against the built work (goal: `RECONCILE_GOAL`); the script ends there.
+  - `RECONCILE_GOAL` carries no inputs, so the composer appends them to its goal text: `## Managed Document Completion (Direct Handling)` → Step 3 → **Delegation inputs**.
   - The orchestrator's stage write follows the run: `## Managed Document Completion (Direct Handling)` → Step 3.
   - A script ending before its plan's delivery carries the deferral form of the close token instead: `#### Workflow pre-flight (run before EVERY Workflow call)` → **close token**.
   - Text-mode, like the verify stage; the "2-phase" / "3-phase" skeleton labels leave this terminal phase uncounted.
@@ -1204,7 +1205,6 @@ Items 1-4 are the co-equal requirements consolidated at this file → "DEV-spawn
    - Never stamped without an actual explicit user request; snippet: this file → "[DOC-ROUTE] token placement" · self-check: `### Reflexive [DOC-ROUTE] stamping guard`.
 10. **`implementing` write** — before submitting the first DEV-spawning script that carries a plan-ref, record the plan at `implementing`; skip it when the plan is already past `doc_review`.
     - Recipe: this file → `## Managed Document Completion (Direct Handling)` → Step 1.
-    - Why: a missed write drops the started plan from the session-start open-plan list.
 11. **close token** — a plan-referencing DEV-spawning script carries one form: the close form when it ends in the Reconcile & Close phase, or the deferral form naming the later script or step that closes the plan.
     - A work item gated on an event (a merge, a deploy) lives in the script that performs that event, never only in a document.
     - Grammar: `orchestrator-role.md` → `### Context Handoff Size` · phase: this file → `##### In-script verify-stage (ultracode)`.
@@ -1473,7 +1473,7 @@ Row notes, and the rule binding every row:
 
 #### Step 3 — delivery-point close (orchestrator)
 
-At the delivery point — the last phase that delivers the plan's work (merge or deploy) — glass-atrium-qa-code-reviewer reconciles, and its verdict decides the stage write.
+At the delivery point — the last phase that delivers the plan's work (merge or deploy) — glass-atrium-qa-code-reviewer reconciles, and its verdict, with the correctness gates, decides the stage write.
 
 - **Where it runs**:
   - Ultracode: the script's terminal Reconcile & Close phase (`##### In-script verify-stage (ultracode)`), or the later script or step its deferral close token names.
@@ -1486,10 +1486,11 @@ At the delivery point — the last phase that delivers the plan's work (merge or
 | Verdict | Stage write |
 |---|---|
 | gaps (coverage below N/N) | `impl_review`, the gap list appended to the body verbatim |
-| N/N, no excess outstanding, no folder | `done` |
-| N/N, no excess outstanding, every other folder member at `impl_done` or `done` | `done` — the PUT closes the whole folder |
-| N/N, no excess outstanding, another folder member at any other stage | `impl_done` — the last member to pass closes the folder |
+| N/N, no excess outstanding, correctness gates passed, no folder | `done` |
+| N/N, no excess outstanding, correctness gates passed, every other folder member at `impl_done` or `done` | `done` — the PUT closes the whole folder |
+| N/N, no excess outstanding, correctness gates passed, another folder member at any other stage | `impl_done` — the last member to pass closes the folder |
 
+- **Correctness gates** — judged outside the reviewer's verdict (`rules/glass-atrium/orchestrator-role.md` → `## Document-Driven Workflow` step 5); until they pass, write neither `done` nor `impl_done`.
 - **Folder check** — on an N/N verdict, before choosing `done` or `impl_done`: the GET returns `folder_id`; a non-null id → `GET /api/clauded-docs?folder_id=<id>&limit=200` (no slash before `?`) and read each member's `doc_status`.
 - **Gap-list write**: the one stage write that changes the body — the stored body plus the reviewer's gap list, appended verbatim in the document's own format; it is a stage write, not new content under Step 2.
 
@@ -1531,7 +1532,7 @@ A DEV-spawning workflow without a `{glass-atrium-qa-code-reviewer, DEV}` verify-
 
 #### Pre-submit self-check — run before submitting ANY DEV-spawning Workflow script
 
-Covers the gate's DEV-relevant block branches, the two plan-stage rows its advisories back, and the verdict-gating the gate cannot see; the doc-routing leak is a separate gate branch with its own stderr.
+Covers the gate's DEV-relevant block branches, the plan-stage rows its advisories back, and the verdict-gating the gate cannot see; the doc-routing leak is a separate gate branch with its own stderr.
 
 - **Run the offline lint first** (`#### Workflow pre-flight (run before EVERY Workflow call)` → **PREVIEW before submit**): it mechanically covers every table row marked `lint`, and none of the obligations the gate cannot verify (listed after the table).
 - Then confirm each check:
@@ -1548,7 +1549,7 @@ Covers the gate's DEV-relevant block branches, the two plan-stage rows its advis
 | `implementing` write | the plan the plan-ref cites is at `implementing` or a later stage before submit | `implementing` advisory — stderr only |
 | close token | the close form with a terminal Reconcile & Close phase, or the deferral form naming the closing step | close-token advisory — stderr only |
 
-Each BLOCK and `block-*` verdict exits 2; the two advisory rows never block. Detail lives at its single site:
+Each BLOCK and `block-*` verdict exits 2. Detail lives at its single site:
 
 - grammar, verdicts and the upstream waiver — `skills/glass-atrium-ops-delegation-contracts/references/ultracode-declaration-contract.md`;
 - sentinel placement and the opts `agentType:` literal a spawn needs — `##### In-script verify-stage (ultracode)`;
