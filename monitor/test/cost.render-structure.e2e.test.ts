@@ -35,8 +35,8 @@ const COST_PAYLOAD_PREFIXES = ["/api/cost/", "/api/dashboard/cost-timeseries"];
 // Two columns "end near the same height": less than one table row of dead space under the shorter.
 const DECISION_SPLIT_MAX_SLACK_PX = 48;
 
-// A calm window: ten days of ordinary spend whose newest day sits inside its own band.
-const CALM_TREND_COSTS = [10, 11, 9, 10, 11, 9, 10, 11, 9, 10];
+// A calm month of ordinary spend whose newest day sits inside its own band; 30 days crowd a 1024 axis.
+const CALM_TREND_COSTS = Array.from({ length: 30 }, (_, i) => [11, 9, 10][i % 3]!);
 
 interface CostFixture {
   kpi: Record<string, number>;
@@ -396,18 +396,27 @@ describe("calm fixture — nothing is running hot", () => {
       `empty space under the shorter column is ${Math.round(slack)}px (bottoms ${columnBottoms.map(Math.round).join(" | ")})`);
   });
 
-  test("no two visible x-axis labels collide on any chart at 1024", async () => {
+  test("x-axis labels on every chart keep the minimum gap and stay over the plot at 1024", async () => {
     try {
       await ctx.page.setViewportSize({ width: 1024, height: 768 });
-      const collisions = await ctx.page.evaluate(() =>
-        Array.from(document.querySelectorAll(".cost-screen .recharts-xAxis")).flatMap((axis) => {
+      const faults = await ctx.page.evaluate(() => {
+        const minGap = (window as never as { UI: { CHART_TICK_MIN_GAP_PX: number } }).UI.CHART_TICK_MIN_GAP_PX;
+        return Array.from(document.querySelectorAll(".cost-screen .recharts-xAxis")).flatMap((axis) => {
+          const plot = axis.querySelector(".recharts-cartesian-axis-line")!.getBoundingClientRect();
           const boxes = Array.from(axis.querySelectorAll(".recharts-cartesian-axis-tick text"))
-            .map((t) => t.getBoundingClientRect()).filter((r) => r.width > 0)
-            .sort((l, r) => l.left - r.left);
-          return boxes.slice(1).flatMap((r, i) => (r.left < boxes[i]!.right ? [`${boxes[i]!.right} > ${r.left}`] : []));
-        }),
-      );
-      assert.deepStrictEqual(collisions, [], `overlapping tick labels: ${collisions.slice(0, 3).join(" · ")}`);
+            .map((t) => ({ label: (t.textContent || "").trim(), box: t.getBoundingClientRect() }))
+            .filter((t) => t.box.width > 0)
+            .sort((l, r) => l.box.left - r.box.left);
+          const crowded = boxes.slice(1).flatMap((t, i) => {
+            const gap = t.box.left - boxes[i]!.box.right;
+            return gap < minGap ? [`${boxes[i]!.label}→${t.label} ${gap.toFixed(1)}px`] : [];
+          });
+          // 0.5px: subpixel text metrics at the plot edge
+          const spilled = boxes.flatMap((t) => (t.box.left < plot.left - 0.5 || t.box.right > plot.right + 0.5 ? [`${t.label} past the plot`] : []));
+          return [...crowded, ...spilled];
+        });
+      });
+      assert.deepStrictEqual(faults, [], `x-axis label faults: ${faults.slice(0, 4).join(" · ")}`);
     } finally {
       await ctx.page.setViewportSize({ width: 1440, height: 900 });
     }

@@ -817,9 +817,7 @@ function CostTrendChart({ rows, bandOn }) {
             <CartesianGrid stroke="rgb(var(--line) / 0.6)" strokeDasharray="2 4" vertical={false}/>
             <XAxis
               dataKey="date"
-              tick={window.UI.ChartAxisTick}
-              interval="preserveStartEnd"
-              minTickGap={window.UI.CHART_TICK_MIN_GAP_PX}
+              {...window.UI.getChartXAxisProps(rows.map((row) => row.date))}
               axisLine={anomalyAxisLineStyle}
               tickLine={false}
             />
@@ -1106,9 +1104,7 @@ function TokenStackedArea({ points, order }) {
         <CartesianGrid stroke="rgb(var(--line))" strokeDasharray="3 3" vertical={false}/>
         <XAxis
           dataKey="date"
-          tick={window.UI.ChartAxisTick}
-          interval="preserveStartEnd"
-          minTickGap={window.UI.CHART_TICK_MIN_GAP_PX}
+          {...window.UI.getChartXAxisProps(rows.map((row) => row.date))}
           axisLine={{ stroke: 'rgb(var(--line))' }}
           tickLine={false}
         />
@@ -1149,9 +1145,7 @@ function TokenStackedColumn({ points, order }) {
         <CartesianGrid stroke="rgb(var(--line))" strokeDasharray="3 3" vertical={false}/>
         <XAxis
           dataKey="date"
-          tick={window.UI.ChartAxisTick}
-          interval="preserveStartEnd"
-          minTickGap={window.UI.CHART_TICK_MIN_GAP_PX}
+          {...window.UI.getChartXAxisProps(rows.map((row) => row.date))}
           axisLine={{ stroke: 'rgb(var(--line))' }}
           tickLine={false}
         />
@@ -1611,9 +1605,7 @@ function CacheHitChart({ rows, yDomain = [0, 100] }) {
         <CartesianGrid stroke="rgb(var(--line))" strokeDasharray="3 3" vertical={false}/>
         <XAxis
           dataKey="date"
-          tick={window.UI.ChartAxisTick}
-          interval="preserveStartEnd"
-          minTickGap={window.UI.CHART_TICK_MIN_GAP_PX}
+          {...window.UI.getChartXAxisProps(rows.map((row) => row.date))}
           axisLine={{ stroke: 'rgb(var(--line))' }}
           tickLine={false}
         />
@@ -2109,9 +2101,7 @@ function ParseErrorChart({ rows }) {
         <CartesianGrid stroke="rgb(var(--line))" strokeDasharray="3 3" vertical={false}/>
         <XAxis
           dataKey="date"
-          tick={window.UI.ChartAxisTick}
-          interval="preserveStartEnd"
-          minTickGap={window.UI.CHART_TICK_MIN_GAP_PX}
+          {...window.UI.getChartXAxisProps(rows.map((row) => row.date))}
           axisLine={{ stroke: 'rgb(var(--line))' }}
           tickLine={false}
         />

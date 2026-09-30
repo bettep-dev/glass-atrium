@@ -220,7 +220,7 @@ function MiniBars({ data, w=60, h=22, color='currentColor', label }) {
 const CHART_VIEW_W = 100;
 const CHART_MAX_TICKS = 7;
 const CHART_PLOT_FILL = 0.85;
-/** Minimum px between tick labels; Recharts axes pass it as `minTickGap` with `interval="preserveStartEnd"`. */
+/** Minimum px between tick labels; Recharts axes get it through getChartXAxisProps. */
 const CHART_TICK_MIN_GAP_PX = 8;
 // ponytail: fixed per-char estimate of a --fs-meta day label (≤7px) → measure with canvas if labels grow wide
 const CHART_TICK_CHAR_PX = 7;
@@ -297,9 +297,22 @@ function getChartImageProps(name, points, formatValue = String) {
 
 const CHART_AXIS_TICK_STYLE = { fontSize: 'var(--fs-meta)', fill: 'rgb(var(--faint))', fontFamily: "'JetBrains Mono', monospace" };
 
-/** Recharts XAxis `tick` renderer — ends anchored by visible order like the HTML tick row. */
+/**
+ * Recharts XAxis props for a day axis: shared tick, both ends kept, and a gap that holds with edge anchoring.
+ * Recharts spaces labels as boxes centred on x, measured in the body font (never narrower than the tick font);
+ * an end label anchored on its own point overhangs that box by at most half its width → the gap carries that half.
+ */
+function getChartXAxisProps(labels) {
+  const widest = Math.max(0, ...labels.map((label) => String(label).length));
+  return { tick: ChartAxisTick, interval: 'preserveStartEnd', minTickGap: CHART_TICK_MIN_GAP_PX + Math.ceil((widest * CHART_TICK_CHAR_PX) / 2) };
+}
+
+/** Recharts XAxis `tick` renderer — ends anchored on their own point by visible order, like the HTML tick row. */
 function ChartAxisTick({ x, y, payload, index, visibleTicksCount }) {
-  return <text x={x} y={y} dy="0.71em" textAnchor={getChartTickAnchor(index, visibleTicksCount)} style={CHART_AXIS_TICK_STYLE}>
+  const anchor = getChartTickAnchor(index, visibleTicksCount);
+  // Recharts clamps end labels to the whole chart box, not the plot → an edge label pins to its own point instead
+  const labelX = anchor === 'middle' ? x : payload.coordinate;
+  return <text x={labelX} y={y} dy="0.71em" textAnchor={anchor} style={CHART_AXIS_TICK_STYLE}>
     {payload.value}
   </text>;
 }
@@ -2052,7 +2065,7 @@ window.UI = {
   getRovingIndex, getRovingTabIndex, ROW_CONTROL_PROPS, getRowKeyAction, getRowFocusProps, ChipGroup,
   getDisplayName, hasFieldValue, DetailField,
   TrendChart, getChartTicks, getChartIndexAtRatio, getChartReadout, getChartSummary,
-  getChartTickAnchor, getChartTickLayout, getChartYScale, getChartImageProps, ChartAxisTick, CHART_TICK_MIN_GAP_PX, CHART_TICK_CHAR_PX,
+  getChartTickAnchor, getChartTickLayout, getChartYScale, getChartImageProps, getChartXAxisProps, ChartAxisTick, CHART_TICK_MIN_GAP_PX, CHART_TICK_CHAR_PX,
   TypeScaleStyle, toneVarColor,
   titleOf, stripHtmlTags, formatRelativeTime,
   FreshnessStamp, getFreshnessState, getFreshnessVerdict, getRegionSummary, getRegionView, RefreshButton,

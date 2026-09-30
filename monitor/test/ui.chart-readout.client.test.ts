@@ -171,17 +171,30 @@ describe("edge ticks anchor by visible order, so neither end label spills past t
     });
   }
 
-  test("the shared Recharts tick anchors by the same order rule", () => {
+  test("the shared Recharts tick anchors by the same order rule, ends on their own point", () => {
+    // Recharts clamps an end label's x inward (the reserved slot) while coordinate stays on the day's point
     const rows = [
-      { name: "first visible tick", index: 0, anchor: "start" },
-      { name: "interior tick", index: 2, anchor: "middle" },
-      { name: "last visible tick", index: 4, anchor: "end" },
+      { name: "first visible tick", index: 0, anchor: "start", x: 12 },
+      { name: "interior tick", index: 2, anchor: "middle", x: 40 },
+      { name: "last visible tick", index: 4, anchor: "end", x: 12 },
     ];
     for (const row of rows) {
-      const text = render("ChartAxisTick", { x: 40, y: 8, payload: { value: "09-20" }, index: row.index, visibleTicksCount: 5 });
+      const text = render("ChartAxisTick", { x: 40, y: 8, payload: { value: "09-20", coordinate: 12 }, index: row.index, visibleTicksCount: 5 });
       assert.equal(text.type, "text", row.name);
       assert.equal(text.props.textAnchor, row.anchor, row.name);
+      assert.equal(text.props.x, row.x, row.name);
       assert.equal(collectText(text), "09-20", row.name);
+    }
+  });
+
+  test("the shared x-axis gap adds half the widest label to the minimum gap", () => {
+    const getChartXAxisProps = ui.getChartXAxisProps as (labels: string[]) => { tick: unknown; interval: string; minTickGap: number };
+    for (const labels of [["09-01", "09-30"], ["2026-09-01", "09-30"], []]) {
+      const props = getChartXAxisProps(labels);
+      const widest = Math.max(0, ...labels.map((label) => label.length));
+      assert.equal(props.tick, ui.ChartAxisTick, "the shared tick");
+      assert.equal(props.interval, "preserveStartEnd", "both ends kept");
+      assert.ok(props.minTickGap >= CHART_TICK_MIN_GAP_PX + (widest * CHART_TICK_CHAR_PX) / 2, `gap ${props.minTickGap} covers the overhang of ${labels.join(",")}`);
     }
   });
 });
