@@ -189,23 +189,23 @@ function getTileSharedFailure(tiles) {
 
 // 경보 레인 — 비어도 한 행 높이를 지킨다(도착·새로고침 때 밴드가 밀리지 않게).
 // polite live region 은 항상 마운트 — 먼저 있어야 나중에 붙는 경보 행이 안내된다.
-// the loading line is its own status region → it sits beside the polite one, never inside, so it is announced once
 // 행 순서는 worst-first: 가장 위험한 사실이 첫 줄에 온다.
 function AlarmLane({ alarms, readiness = ALARM_READINESS_LOADING, onNav, updateState, updateJobState, onRefetchJob }) {
   const hasAlarms = alarms.length > 0;
   const [reserved, setReserved] = useStateD(0);
   const slots = getLaneSlots(alarms.length, readiness, reserved);
   if (slots.reserved !== reserved) setReserved(slots.reserved);
+  const trailer = slots.trailer && <LaneTrailer trailer={slots.trailer} hasAlarms={hasAlarms} unread={readiness.unread}/>;
+  const isLoading = slots.trailer === 'loading';
   return (
     <section className="dash-lane" aria-label="Alarms">
       <div aria-live="polite">
         {hasAlarms && <AlarmList alarms={alarms} onNav={onNav} updateState={updateState}
           updateJobState={updateJobState} onRefetchJob={onRefetchJob}/>}
-        {slots.trailer && slots.trailer !== 'loading' && (
-          <LaneTrailer trailer={slots.trailer} hasAlarms={hasAlarms} unread={readiness.unread}/>
-        )}
+        {!isLoading && trailer}
       </div>
-      {slots.trailer === 'loading' && <LaneTrailer trailer="loading" hasAlarms={hasAlarms} unread={readiness.unread}/>}
+      {/* the loading line is its own status region → beside the polite one, never inside, so it is announced once */}
+      {isLoading && trailer}
     </section>
   );
 }
