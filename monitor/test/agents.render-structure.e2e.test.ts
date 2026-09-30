@@ -67,10 +67,10 @@ async function openRenderContext(width = 1024): Promise<RenderContext> {
   app.get("/api/agents/summary", async (_request, reply) => {
     if (summaryOutage.isOn) return reply.code(500).send({ error: "summary read failed" });
     return {
-    agents: AGENT_NAMES.map((name) => ({
-      agent_id: `glass-atrium-${name}`, agent_name: name, status: "active", success_pct: 92, runs: 40, needs_context_count: 2,
-    })),
-    meta: { total_agents: AGENT_NAMES.length },
+      agents: AGENT_NAMES.map((name) => ({
+        agent_id: `glass-atrium-${name}`, agent_name: name, status: "active", success_pct: 92, runs: 40, needs_context_count: 2,
+      })),
+      meta: { total_agents: AGENT_NAMES.length },
     };
   });
   app.get("/api/agents/success-rate", async () => ({ rows: getSuccessRateRows() }));
@@ -90,6 +90,11 @@ async function openRenderContext(width = 1024): Promise<RenderContext> {
     await page.waitForSelector(table.selector, { timeout: 30_000 });
   }
   return { app, browser, page };
+}
+
+async function closeRenderContext(ctx: RenderContext | undefined): Promise<void> {
+  await ctx?.browser?.close();
+  await ctx?.app?.close();
 }
 
 // Keyboard modality first, so the row matches :focus-visible exactly as a Tab user sees it.
@@ -113,9 +118,8 @@ async function getRingEdges(page: Page, selector: string): Promise<RingEdges> {
     return { x: Math.ceil(left), y: Math.round(rowRect.top + rowRect.height / 2), width: Math.floor(right - Math.ceil(left)) };
   });
   const hits = await getRingHits(page, box);
-  const width = hits.length;
 
-  return { left: hits.slice(0, 3).some(Boolean), right: hits.slice(width - 3).some(Boolean) };
+  return { left: hits.slice(0, 3).some(Boolean), right: hits.slice(-3).some(Boolean) };
 }
 
 // One screen row of pixels → which of them carry the resolved focus-ring token colour.
@@ -173,10 +177,7 @@ describe("agents screen at 1024px", () => {
     ctx = await openRenderContext();
   });
 
-  after(async () => {
-    await ctx?.browser?.close();
-    await ctx?.app?.close();
-  });
+  after(() => closeRenderContext(ctx));
 
   for (const table of ROW_TABLES) {
     test(`a keyboard-focused ${table.name} row paints its focus ring on both sides inside its scroller`, async () => {
@@ -196,8 +197,7 @@ describe("agents screen at 1024px, charts and Retry", () => {
 
   after(async () => {
     summaryOutage.isOn = false;
-    await ctx?.browser?.close();
-    await ctx?.app?.close();
+    await closeRenderContext(ctx);
   });
 
   test("the review-flag chart draws at a readable height inside its open fold", async () => {
@@ -231,10 +231,7 @@ describe("agents screen at 1440px", () => {
     ctx = await openRenderContext(1440);
   });
 
-  after(async () => {
-    await ctx?.browser?.close();
-    await ctx?.app?.close();
-  });
+  after(() => closeRenderContext(ctx));
 
   test("the task-type matrix shows every column without a sideways scroll", async () => {
     await openTaskTypeFold(ctx.page);

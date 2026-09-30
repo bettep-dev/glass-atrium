@@ -720,7 +720,7 @@ test("a crosstab cell stacks its rate over its sample, each an unbroken line, so
     const tree = await renderComponent("SuccessRateCell", { agent: "dev-react", taskType: "feature", cell: row.cell });
     const lines = findNodes(tree, (n) => /\bwhitespace-nowrap\b/.test(String(n.props?.className ?? "")));
     const rateLine = lines.find((n) => /50\s*%/.test(collectText(n)));
-    const sampleLine = lines.find((n) => new RegExp(`n=${row.cell.rateDenominator}`).test(collectText(n))
+    const sampleLine = lines.find((n) => collectText(n).includes(`n=${row.cell.rateDenominator}`)
       || findAtoms(n, "LowSampleMark").some((mark) => mark.props.n === row.cell.rateDenominator));
     assert.ok(rateLine && sampleLine, `${row.name}: rate and sample each sit on a nowrap line`);
     assert.notEqual(rateLine, sampleLine, `${row.name}: the sample is its own line, not appended to the rate`);
