@@ -169,6 +169,17 @@ for (const row of coldErrorRows) {
   });
 }
 
+// the card node persists across error → ready, so a Retry unmounting on recovery lands focus there, never on <body>
+for (const row of coldErrorRows) {
+  test(`${row.name}: a Retry card hands focus on recovery to the region card that renders it`, () => {
+    const card = row.render();
+    const banner = collectElements(card).find((el) => el.type === sandbox.ErrorBannerI);
+
+    assert.ok(card.props.id, "the region card needs an id to take focus");
+    assert.equal(banner?.props.focusTargetId, card.props.id);
+  });
+}
+
 const coldError: RegionState = { status: "error", data: null, error: "HTTP 503 Service Unavailable", busy: false };
 const sharedOutage = {
   sources: ["suggestions", "pattern ledger", "loop stats", "loop events", "learning memory"],

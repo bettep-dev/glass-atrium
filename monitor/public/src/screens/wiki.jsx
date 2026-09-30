@@ -434,9 +434,9 @@ function buildAlarmLaneModel(
 	}
 
 	const pending =
-		summaryState.status === "loading" ||
-		indexState.status === "loading" ||
-		backlogState.status === "loading";
+		window.UI.getRegionView(summaryState) === "loading" ||
+		window.UI.getRegionView(indexState) === "loading" ||
+		window.UI.getRegionView(backlogState) === "loading";
 
 	// An errored feeder answers none of its checks, so the lane says so rather than reading clear.
 	const unchecked = [
@@ -444,7 +444,7 @@ function buildAlarmLaneModel(
 		[summaryState, "daily cycle"],
 		[backlogState, "merge proposals"],
 	]
-		.filter(([state]) => state.status === "error")
+		.filter(([state]) => window.UI.getRegionView(state) === "error")
 		.map(([, label]) => label);
 
 	return { alarms, pending, unchecked };
@@ -456,7 +456,7 @@ function buildProposalAlarmsW(backlog, proposals, cyclesState) {
 	// Undated rows share the run streak, read once for the whole lane.
 	const runs = countUnchangedDedupRunsW(cyclesState);
 	// Cycles still in flight → the streak is unknown, not absent.
-	const checking = cyclesState.status === "loading";
+	const checking = window.UI.getRegionView(cyclesState) === "loading";
 
 	const rows = proposals.map((proposal, i) => {
 		// No acknowledge path exists, so a parked pair is de-emphasised rather than hidden.
@@ -605,7 +605,7 @@ function readTileBandFailuresW(summaryState, indexState) {
 	return [
 		{ state: summaryState, feeder: WIKI_FEEDERS.summary, label: "daily cycle summary" },
 		{ state: indexState, feeder: WIKI_FEEDERS.notesByType, label: "search index" },
-	].filter((f) => f.state.status === "error");
+	].filter((f) => window.UI.getRegionView(f.state) === "error");
 }
 
 // Report surface → neutral chrome; a warn/crit tile carries its tone on a glyph beside the
@@ -675,8 +675,8 @@ function tilePlaceholderW(key, label, state) {
 }
 
 function tileFetchStateW(state) {
-	if (state.status === "loading") return "loading";
-	if (state.status === "error") return "error";
+	if (window.UI.getRegionView(state) === "loading") return "loading";
+	if (window.UI.getRegionView(state) === "error") return "error";
 	return null;
 }
 
@@ -954,10 +954,10 @@ function describeProposalCountW(model) {
 const UNKNOWN_REGION_W = { status: "idle", data: null, error: null };
 
 function buildMaintenanceModel(backlogState, cyclesState = UNKNOWN_REGION_W) {
-	if (backlogState.status === "loading") {
+	if (window.UI.getRegionView(backlogState) === "loading") {
 		return { state: "loading" };
 	}
-	if (backlogState.status === "error") return { state: "error" };
+	if (window.UI.getRegionView(backlogState) === "error") return { state: "error" };
 
 	const backlog = backlogState.data?.backlog;
 	if (!backlog) {
@@ -1027,9 +1027,9 @@ function WikiRunHistorySection({ cyclesState, summaryState, shared, onRetry }) {
 			label="Run history"
 			count={describeRunHistoryW(cyclesState, model, summaryState)}
 		>
-			{cyclesState.status === "loading" ? (
+			{window.UI.getRegionView(cyclesState) === "loading" ? (
 				<LoadingPlaceholder label="run history" minHeight={120} />
-			) : cyclesState.status === "error" ? (
+			) : window.UI.getRegionView(cyclesState) === "error" ? (
 				<WikiRegionFailureW
 					feeders={[WIKI_FEEDERS.runHistory]}
 					source="run history"
@@ -1098,8 +1098,8 @@ function WikiRunTableSection({ reportState, days, onChangeDays, shared, onRetry 
 
 // One streak → "27 healthy runs in a row since …"; several → how many streaks the window holds.
 function describeRunTableW(state, days) {
-	if (state.status === "loading") return "Loading…";
-	if (state.status === "error") return "Unavailable";
+	if (window.UI.getRegionView(state) === "loading") return "Loading…";
+	if (window.UI.getRegionView(state) === "error") return "Unavailable";
 
 	const reports = state.data?.reports || [];
 	if (reports.length === 0) return `No runs in ${days} d`;
@@ -1123,8 +1123,8 @@ function sortRunsNewestFirstW(reports) {
 
 // The server's p95 shares the cycles window, so it rides the same summary line.
 function describeRunHistoryW(cyclesState, model, summaryState) {
-	if (cyclesState.status === "loading") return "Loading…";
-	if (cyclesState.status === "error") return "Unavailable";
+	if (window.UI.getRegionView(cyclesState) === "loading") return "Loading…";
+	if (window.UI.getRegionView(cyclesState) === "error") return "Unavailable";
 	if (model.rows.length === 0) return "No runs in range";
 
 	const p95 =
@@ -1202,9 +1202,9 @@ function WikiNotesByTypeSection({ state, shared, onRetry }) {
 
 	return (
 		<WikiCardW id={WIKI_REGION_IDS.notesByType} label="Notes by type" count={describeNotesByTypeW(state)}>
-			{state.status === "loading" ? (
+			{window.UI.getRegionView(state) === "loading" ? (
 				<LoadingPlaceholder label="note types" />
-			) : state.status === "error" ? (
+			) : window.UI.getRegionView(state) === "error" ? (
 				<WikiRegionFailureW
 					feeders={[WIKI_FEEDERS.notesByType]}
 					source="notes by type"
@@ -1266,8 +1266,8 @@ function describeNoteCoverageW(rows) {
 }
 
 function describeNotesByTypeW(state) {
-	if (state.status === "loading") return "Loading…";
-	if (state.status === "error") return "Unavailable";
+	if (window.UI.getRegionView(state) === "loading") return "Loading…";
+	if (window.UI.getRegionView(state) === "error") return "Unavailable";
 	const rows = Array.isArray(state.data?.by_type) ? state.data.by_type : [];
 	return `${rows.length} types`;
 }
@@ -1479,10 +1479,10 @@ function isDryRunProposalW(proposal) {
 }
 
 function WikiReportsBody({ state, days, shared, onRetry }) {
-	if (state.status === "loading") {
+	if (window.UI.getRegionView(state) === "loading") {
 		return <WikiReportsTable reports={[]} isLoading />;
 	}
-	if (state.status === "error") {
+	if (window.UI.getRegionView(state) === "error") {
 		return (
 			<WikiRegionFailureW
 				feeders={[WIKI_FEEDERS.runTable]}

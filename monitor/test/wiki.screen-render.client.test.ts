@@ -286,7 +286,8 @@ test("a tile-band feeder the banner does not cover keeps its own sentence beside
 
 test("the page banner shows its Retry in flight and hands focus to the verdict, which outlives recovery", async () => {
   const initial = realUi.INITIAL_REGION_STATE as Record<string, unknown>;
-  const retrying = { ...initial, status: "error", data: null, error: OUTAGE, busy: true };
+  // the state putRegionRequest leaves behind when Retry is clicked on a region that never loaded
+  const retrying = { ...initial, status: "loading", data: null, error: OUTAGE, busy: true };
   const ui = new Proxy(uiStub() as Record<string, unknown>, {
     get: (target, name: string) => (name === "INITIAL_REGION_STATE" ? retrying : target[name]),
   });

@@ -15,9 +15,17 @@ function SymI(props) {
 const confidenceBadgeMetaI = (value) =>
 	window.ImprovementShared.confidenceBadgeMetaI(value);
 
+// Slot wrappers outlive the error ↔ card swap → a Retry unmounting on recovery hands focus to its own slot
+const PAYLOAD_SLOT_ID_I = Object.freeze({
+	flaggedResults: "improvement-flagged-results",
+	corpusGrowth: "improvement-corpus-growth",
+	correctionSignals: "improvement-correction-signals",
+	proposalMeasurements: "improvement-proposal-measurements",
+});
+
 // One banner per failed payload, in place of the group that payload owns.
 // `source` = the page's region name, so a shared outage banner naming it quiets this card
-function PayloadErrorCardI({ title, source, state, onRetry, shared }) {
+function PayloadErrorCardI({ title, source, state, onRetry, shared, focusTargetId }) {
 	const { CardHead, RegionFailure } = window.UI;
 	return (
 		<div className="card">
@@ -26,7 +34,9 @@ function PayloadErrorCardI({ title, source, state, onRetry, shared }) {
 				<RegionFailure
 					source={source}
 					error={state.error}
+					isBusy={state.busy}
 					shared={shared}
+					focusTargetId={focusTargetId}
 					onRetry={onRetry}
 				/>
 			</div>
@@ -139,70 +149,82 @@ function ImprovementInstrumentationViewI({
 	onRetry,
 	shared,
 }) {
-	const { SplitRow } = window.UI;
+	const { SplitRow, getRegionView } = window.UI;
 
 	return (
 		<div className="space-sections">
-			{statsState.status === "error" ? (
-				<PayloadErrorCardI
-					title="Flagged results"
-					source="loop stats"
-					shared={shared}
-					state={statsState}
-					onRetry={onRetry}
-				/>
-			) : (
-				<FlaggedResultsCardI
-					state={statsState}
-					reviewReasons={reviewReasons}
-					onNav={onNav}
-				/>
-			)}
+			<div id={PAYLOAD_SLOT_ID_I.flaggedResults}>
+				{getRegionView(statsState) === "error" ? (
+					<PayloadErrorCardI
+						focusTargetId={PAYLOAD_SLOT_ID_I.flaggedResults}
+						title="Flagged results"
+						source="loop stats"
+						shared={shared}
+						state={statsState}
+						onRetry={onRetry}
+					/>
+				) : (
+					<FlaggedResultsCardI
+						state={statsState}
+						reviewReasons={reviewReasons}
+						onNav={onNav}
+					/>
+				)}
+			</div>
 			<SplitRow ratio="1:1">
-				{corpusAuditState.status === "error" ? (
-					<PayloadErrorCardI
-						title="Corpus growth"
-						source="corpus audits"
-						shared={shared}
-						state={corpusAuditState}
-						onRetry={onRetry}
-					/>
-				) : (
-					<CorpusGrowthCardI state={corpusAuditState} />
-				)}
-				{correctionState.status === "error" ? (
-					<PayloadErrorCardI
-						title="Correction signals"
-						source="correction signals"
-						shared={shared}
-						state={correctionState}
-						onRetry={onRetry}
-					/>
-				) : (
-					<CorrectionSignalsCardI state={correctionState} />
-				)}
-			</SplitRow>
-			{listState.status === "error" ? (
-				<PayloadErrorCardI
-					title="Proposal measurements"
-					source="suggestions"
-					shared={shared}
-					state={listState}
-					onRetry={onRetry}
-				/>
-			) : (
-				<>
-					<StyleRefCardI state={listState} styleRef={styleRef} />
-					<SplitRow ratio="1:1">
-						<ProseOnlyAddCardI state={listState} summary={proseOnlyAdd} />
-						<ConfidenceDistCardI
-							state={listState}
-							confidenceDist={confidenceDist}
+				<div id={PAYLOAD_SLOT_ID_I.corpusGrowth}>
+					{getRegionView(corpusAuditState) === "error" ? (
+						<PayloadErrorCardI
+							focusTargetId={PAYLOAD_SLOT_ID_I.corpusGrowth}
+							title="Corpus growth"
+							source="corpus audits"
+							shared={shared}
+							state={corpusAuditState}
+							onRetry={onRetry}
 						/>
-					</SplitRow>
-					<TierBreakdownCardI state={listState} tierBreakdown={tierBreakdown} />
-				</>
-			)}
+					) : (
+						<CorpusGrowthCardI state={corpusAuditState} />
+					)}
+				</div>
+				<div id={PAYLOAD_SLOT_ID_I.correctionSignals}>
+					{getRegionView(correctionState) === "error" ? (
+						<PayloadErrorCardI
+							focusTargetId={PAYLOAD_SLOT_ID_I.correctionSignals}
+							title="Correction signals"
+							source="correction signals"
+							shared={shared}
+							state={correctionState}
+							onRetry={onRetry}
+						/>
+					) : (
+						<CorrectionSignalsCardI state={correctionState} />
+					)}
+				</div>
+			</SplitRow>
+			<div id={PAYLOAD_SLOT_ID_I.proposalMeasurements} className="space-sections">
+				{getRegionView(listState) === "error" ? (
+					<PayloadErrorCardI
+						focusTargetId={PAYLOAD_SLOT_ID_I.proposalMeasurements}
+						title="Proposal measurements"
+						source="suggestions"
+						shared={shared}
+						state={listState}
+						onRetry={onRetry}
+					/>
+				) : (
+					<>
+						<StyleRefCardI state={listState} styleRef={styleRef} />
+						<SplitRow ratio="1:1">
+							<ProseOnlyAddCardI state={listState} summary={proseOnlyAdd} />
+							<ConfidenceDistCardI
+								state={listState}
+								confidenceDist={confidenceDist}
+							/>
+						</SplitRow>
+						<TierBreakdownCardI state={listState} tierBreakdown={tierBreakdown} />
+					</>
+				)}
+			</div>
 		</div>
 	);
 }

@@ -1460,7 +1460,7 @@ test("the file list toggle is a control-radius pill, not a heading or a card", (
   });
   const [summary] = tagsMc(tree, "summary");
   assert.ok(summary, "the toggle is a native summary");
-  assert.ok(textMc(summary.children).includes("1 files"), "the toggle names the file count");
+  assert.ok(textMc(summary.children).includes("1 file"), "the toggle names the file count");
   assert.strictEqual((summary.props.style as Record<string, string>)?.borderRadius, "var(--radius-control)");
   assert.strictEqual(findAllMc(tree, (n) => /^h[1-6]$/.test(n.tag) || "data-kind" in n.props).length, 0, "no heading, no card fold");
 });

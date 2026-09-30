@@ -687,7 +687,7 @@ function getBandVerdictI({ status, awaiting, applied, heldNeedingHuman }) {
 	}
 	if (heldNeedingHuman > 0) {
 		parts.push(`${formatIntI(heldNeedingHuman)} held for a human`);
-		chips.push({ label: "Held patterns", targetId: "improvement-pattern-ledger" });
+		chips.push({ label: "Held patterns", targetId: ANCHOR_ID_I.patternLedger });
 	}
 	if (chips.length === 0) parts.push("nothing needs a human");
 	return {
@@ -885,10 +885,11 @@ function TrendCardI({ state, aggregate, shared, onRetry }) {
 	const { CardHead, TrendChart, LoadingPlaceholder, getRegionView } = window.UI;
 	if (getRegionView(state) === "error") {
 		return (
-			<div className="card">
+			<div className="card" id={ANCHOR_ID_I.trend}>
 				<CardHead title="Verified vs rejected (trend)" />
 				<div className="px-5 pb-4">
 					<ErrorBannerI
+						focusTargetId={ANCHOR_ID_I.trend}
 						source="loop events"
 						error={state.error}
 						isBusy={state.busy}
@@ -901,7 +902,7 @@ function TrendCardI({ state, aggregate, shared, onRetry }) {
 	}
 	if (state.status === "loading" || !aggregate) {
 		return (
-			<div className="card">
+			<div className="card" id={ANCHOR_ID_I.trend}>
 				<CardHead title="Verified vs rejected (trend)" />
 				<div className="px-5 pb-4">
 					<LoadingPlaceholder label="the trend" minHeight={60} />
@@ -914,7 +915,7 @@ function TrendCardI({ state, aggregate, shared, onRetry }) {
 	// 2-포인트 미만 → 추세선 무의미 → 안내 (Sparkline 도 <2 면 null 반환).
 	if (series.length < 2) {
 		return (
-			<div className="card">
+			<div className="card" id={ANCHOR_ID_I.trend}>
 				<CardHead title="Verified vs rejected (trend)" />
 				<div className="px-5 pb-4">
 					<div className="placeholder">Not enough days to plot a trend</div>
@@ -929,7 +930,7 @@ function TrendCardI({ state, aggregate, shared, onRetry }) {
 		return { label: formatDateI(d.date), value: scored > 0 ? d.reject / scored : null };
 	});
 	return (
-		<div className="card">
+		<div className="card" id={ANCHOR_ID_I.trend}>
 			<CardHead
 				title="Verified vs rejected (trend)"
 				sub={getLoopBasisI(aggregate)}
@@ -986,7 +987,7 @@ function LoopOutputGroupI({
 }) {
 	const { CardHead, Icon, getRegionView } = window.UI;
 	return (
-		<section className="space-y-3 i-loop-output" aria-label="Loop output">
+		<section className="space-y-3 i-loop-output" aria-label="Loop output" id={ANCHOR_ID_I.loopOutput}>
 			<CardHead
 				title="Loop output"
 				sub="Last 7 days of cycles unless a card names its own basis"
@@ -1004,6 +1005,7 @@ function LoopOutputGroupI({
 			/>
 			{getRegionView(statsState) === "error" ? (
 				<ErrorBannerI
+					focusTargetId={ANCHOR_ID_I.loopOutput}
 					source="loop stats"
 					error={statsState.error}
 					isBusy={statsState.busy}
@@ -1095,6 +1097,7 @@ function KanbanCardI({
 		<section
 			className="card flex flex-col"
 			aria-label="Suggestion board"
+			id={ANCHOR_ID_I.suggestionBoard}
 			style={{ maxHeight: "70vh", overflow: "hidden" }}
 		>
 			<div className="flex-shrink-0">
@@ -1106,6 +1109,7 @@ function KanbanCardI({
 			{isError ? (
 				<div className="p-4">
 					<ErrorBannerI
+						focusTargetId={ANCHOR_ID_I.suggestionBoard}
 						source="suggestions"
 						error={state.error}
 						isBusy={state.busy}
@@ -1788,10 +1792,11 @@ function BucketRowI({ state, buckets, shared, onRetry }) {
 	const { CardHead, LoadingPlaceholder, getRegionView } = window.UI;
 	if (getRegionView(state) === "error") {
 		return (
-			<div className="card">
+			<div className="card" id={ANCHOR_ID_I.learningMemory}>
 				<CardHead title="Learning memory: wins & mistakes (CTM · EPM)" />
 				<div className="p-3">
 					<ErrorBannerI
+						focusTargetId={ANCHOR_ID_I.learningMemory}
 						source="suggestions"
 						error={state.error}
 						isBusy={state.busy}
@@ -1804,7 +1809,7 @@ function BucketRowI({ state, buckets, shared, onRetry }) {
 	}
 	if (state.status === "loading" || !buckets) {
 		return (
-			<div className="card">
+			<div className="card" id={ANCHOR_ID_I.learningMemory}>
 				<CardHead
 					title="Learning memory: wins & mistakes (CTM · EPM)"
 					sub="All time, every agent — not the group's 7-day cycle window"
@@ -1838,7 +1843,7 @@ function BucketRowI({ state, buckets, shared, onRetry }) {
 		],
 	];
 	return (
-		<div className="card">
+		<div className="card" id={ANCHOR_ID_I.learningMemory}>
 			<CardHead
 				title="Learning memory: wins & mistakes (CTM · EPM)"
 				sub="All time, every agent — not the group's 7-day cycle window"
@@ -2393,10 +2398,11 @@ function ChangeSummaryCardI({ state, aggregate, onRetry, shared }) {
 	const { CardHead, LoadingPlaceholder, getRegionView } = window.UI;
 	if (getRegionView(state) === "error") {
 		return (
-			<div className="card">
+			<div className="card" id={ANCHOR_ID_I.changeSummary}>
 				<CardHead title="Self-improvement changes (applied)" />
 				<div className="px-5 pb-4">
 					<ErrorBannerI
+						focusTargetId={ANCHOR_ID_I.changeSummary}
 						source="loop events"
 						error={state.error}
 						isBusy={state.busy}
@@ -2409,7 +2415,7 @@ function ChangeSummaryCardI({ state, aggregate, onRetry, shared }) {
 	}
 	if (state.status === "loading" || !aggregate) {
 		return (
-			<div className="card">
+			<div className="card" id={ANCHOR_ID_I.changeSummary}>
 				<CardHead title="Self-improvement changes (applied)" />
 				<div className="px-5 pb-4">
 					<LoadingPlaceholder label="applied changes" minHeight={68} />
@@ -2423,7 +2429,7 @@ function ChangeSummaryCardI({ state, aggregate, onRetry, shared }) {
 	// 데이터 부재 — 윈도우 내 사이클 이벤트 0건 → 안내 indicator (가짜 0 채움 금지).
 	if (eventCount === 0) {
 		return (
-			<div className="card">
+			<div className="card" id={ANCHOR_ID_I.changeSummary}>
 				<CardHead title="Self-improvement changes (applied)" />
 				<div className="px-5 pb-4">
 					<div
@@ -2437,7 +2443,7 @@ function ChangeSummaryCardI({ state, aggregate, onRetry, shared }) {
 	}
 
 	return (
-		<div className="card">
+		<div className="card" id={ANCHOR_ID_I.changeSummary}>
 			<CardHead
 				title="Self-improvement changes (applied)"
 				sub={getLoopBasisI(aggregate)}
@@ -2517,10 +2523,11 @@ function PatternLedgerCardI({ state, suppression, onRowClick, onRetry, shared })
 	const { CardHead, LoadingPlaceholder, SplitRow, SplitColumn, getRegionView } = window.UI;
 	if (getRegionView(state) === "error") {
 		return (
-			<section className="card" aria-label="Pattern ledger">
+			<section className="card" aria-label="Pattern ledger" id={ANCHOR_ID_I.patternLedger}>
 				<CardHead title="Pattern ledger" />
 				<div className="p-4">
 					<ErrorBannerI
+						focusTargetId={ANCHOR_ID_I.patternLedger}
 						source="pattern ledger"
 						error={state.error}
 						isBusy={state.busy}
@@ -2533,7 +2540,7 @@ function PatternLedgerCardI({ state, suppression, onRowClick, onRetry, shared })
 	}
 	if (state.status === "loading" || !state.data) {
 		return (
-			<section className="card" aria-label="Pattern ledger">
+			<section className="card" aria-label="Pattern ledger" id={ANCHOR_ID_I.patternLedger}>
 				<CardHead title="Pattern ledger" />
 				<div className="p-3">
 					<LoadingPlaceholder label="the pattern ledger" minHeight={44} />
@@ -2579,7 +2586,7 @@ function PatternLedgerCardI({ state, suppression, onRowClick, onRetry, shared })
 	);
 
 	return (
-		<section className="card" aria-label="Pattern ledger" id="improvement-pattern-ledger" data-testid="pattern-ledger">
+		<section className="card" aria-label="Pattern ledger" id={ANCHOR_ID_I.patternLedger} data-testid="pattern-ledger">
 			<CardHead title="Pattern ledger" />
 			{/* inert is short → held + recurrence stack under it instead of leaving that column empty */}
 			{inert.length > 0 ? (
@@ -2753,7 +2760,7 @@ function ToastI({ tone, message }) {
 }
 
 // per-region failure: quiet covered note when the page banner names this source, else its own card + Retry
-function ErrorBannerI({ source, error, onRetry, isBusy, shared }) {
+function ErrorBannerI({ source, error, onRetry, isBusy, shared, focusTargetId }) {
 	const { RegionFailure } = window.UI;
 	return (
 		<RegionFailure
@@ -2761,6 +2768,7 @@ function ErrorBannerI({ source, error, onRetry, isBusy, shared }) {
 			error={error}
 			isBusy={isBusy}
 			shared={shared}
+			focusTargetId={focusTargetId}
 			onRetry={onRetry}
 		/>
 	);
@@ -2936,9 +2944,16 @@ function InstrumentationViewI(props) {
 }
 
 // banner Retry hands focus to the open view's own anchor → the id must exist in whichever view is showing
+// region keys sit on every branch root of their card → the node outlives recovery and takes the Retry's focus
 const ANCHOR_ID_I = Object.freeze({
 	verdict: "improvement-verdict",
 	instrumentation: "improvement-instrumentation",
+	loopOutput: "improvement-loop-output",
+	trend: "improvement-trend",
+	changeSummary: "improvement-change-summary",
+	learningMemory: "improvement-learning-memory",
+	suggestionBoard: "improvement-suggestion-board",
+	patternLedger: "improvement-pattern-ledger",
 });
 
 function getBannerFocusTargetI(view) {

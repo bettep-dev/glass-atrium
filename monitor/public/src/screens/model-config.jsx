@@ -770,9 +770,11 @@ function groupFilesByModelMC(fileRows) {
 }
 
 // Files toggle at the control radius every other pill uses, not the 12px card fold.
-const FILES_PILL_STYLE_MC = { borderRadius: "var(--radius-control)" };
 // Names wrap side by side and the list scrolls past ~5 lines → an opened list keeps its ledger row short.
-const FILES_LIST_STYLE_MC = { maxHeight: 112 };
+const FILES_MC = Object.freeze({
+	PILL_STYLE: { borderRadius: "var(--radius-control)" },
+	LIST_STYLE: { maxHeight: 112 },
+});
 
 // Agent file ("agents/glass-atrium-dev-react.md") → its agent name, for the shared name atom.
 function getFileAgentNameMC(file) {
@@ -820,13 +822,13 @@ function LiveValueMC({ value, drift, files, driftTitle }) {
 				<details className="fs-meta" open={isFoldAlerting || undefined}>
 					<summary
 						className="inline-flex items-center gap-1 px-2 border border-line text-dim hover:text-ink cursor-pointer"
-						style={FILES_PILL_STYLE_MC}>
+						style={FILES_MC.PILL_STYLE}>
 						{isFoldAlerting && <Icon name="warn" size={12} className="text-warn" />}
-						{`${fileRows.length} files`}
+						{`${fileRows.length} ${fileRows.length === 1 ? "file" : "files"}`}
 					</summary>
 					<div
 						className="text-faint flex flex-col gap-1 mt-1 overflow-y-auto"
-						style={FILES_LIST_STYLE_MC}
+						style={FILES_MC.LIST_STYLE}
 						tabIndex={0}
 						role="region"
 						aria-label={`${fileRows.length} agent files`}>

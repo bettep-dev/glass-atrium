@@ -184,7 +184,9 @@ test("the measurement gauges render as side-by-side pairs, one card per column",
     if (Array.isArray(node)) return node.forEach(walk);
     if (!isElement(node)) return;
     if (node.type === sandbox.window.UI.SplitRow) {
-      pairs.push(([] as unknown[]).concat(node.props.children).filter(isElement).map((c) => c.type));
+      // a column is a slot wrapper (the recovery focus target) around its one card
+      const cards = ([] as unknown[]).concat(node.props.children).filter(isElement).map((c) => (c.type === "div" ? c.props.children : c));
+      pairs.push(cards.filter(isElement).map((c) => c.type));
       return;
     }
     walk(node.props.children);
