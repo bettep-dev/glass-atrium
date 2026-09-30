@@ -625,7 +625,7 @@ function AgentAlarmLane({ failures, state, onRetry }) {
     return (
       <div className="card mb-4">
         <div className="card-body">
-          <AgentRegionFailure feeder={REGION_FEEDERS.summary} region="circuit-breaker state" error={state.error} isBusy={state.busy} failures={failures} focusTargetId={IDS.REGION_CARD.status} onRetry={onRetry}/>
+          <window.UI.RegionFailure source={REGION_FEEDERS.summary} region="circuit-breaker state" error={state.error} isBusy={state.busy} failures={failures} focusTargetId={IDS.REGION_CARD.status} onRetry={onRetry}/>
         </div>
       </div>
     );
@@ -685,10 +685,6 @@ function getAgentSourceFailures(regionEntries) {
   // drawer-only reads (latency, revision counts…) have no page slot, so they speak only through the banner
   const readRows = regionEntries.map(([source, state]) => ({ source, error: state.error }));
   return window.UI.getSourceFailures([...slotRows, ...readRows]);
-}
-
-function AgentRegionFailure({ feeder, region, error, isBusy, failures, focusTargetId, onRetry }) {
-  return <window.UI.RegionFailure source={feeder} region={region} error={error} isBusy={isBusy} failures={failures} focusTargetId={focusTargetId} onRetry={onRetry}/>;
 }
 
 // Status band — the four fleet questions the first screenful answers. Each tile
@@ -816,7 +812,7 @@ function AgentStatusTile({ failures, feeder, label, sub, unavailableSub, status,
         <span className="text-faint fs-meta">{label}</span>
         {status === 'loading' && <span className="text-faint" aria-busy="true">…</span>}
         {status === 'error' && (
-          <AgentRegionFailure feeder={feeder} region={label.toLowerCase()} error={error} isBusy={busy} failures={failures} focusTargetId={cardId} onRetry={onRetry}/>
+          <window.UI.RegionFailure source={feeder} region={label.toLowerCase()} error={error} isBusy={busy} failures={failures} focusTargetId={cardId} onRetry={onRetry}/>
         )}
         {status === 'unavailable' && <Badge role="status" tone="warn">unavailable</Badge>}
         {status === 'ready' && <KpiValue tone={tone}>{value}</KpiValue>}
@@ -892,7 +888,7 @@ function AgentSummaryBody({ failures, state, days, sortBy, onSortChange, selecte
     return <div className="card-body"><window.UI.LoadingPlaceholder label="agent performance" minHeight={240}/></div>;
   }
   if (view === 'error') {
-    return <div className="card-body"><AgentRegionFailure feeder={REGION_FEEDERS.summary} region="agent performance" error={state.error} isBusy={state.busy} failures={failures} focusTargetId={IDS.REGION_CARD.summary} onRetry={onRetry}/></div>;
+    return <div className="card-body"><window.UI.RegionFailure source={REGION_FEEDERS.summary} region="agent performance" error={state.error} isBusy={state.busy} failures={failures} focusTargetId={IDS.REGION_CARD.summary} onRetry={onRetry}/></div>;
   }
   const agents = readyData(state)?.agents ?? [];
   if (agents.length === 0) {
@@ -2261,7 +2257,7 @@ function SuccessRateMatrixBody({ failures, state, days, onRetry }) {
     return <window.UI.LoadingPlaceholder label="success matrix" minHeight={280}/>;
   }
   if (view === 'error') {
-    return <AgentRegionFailure feeder={REGION_FEEDERS.success} region="success rates" error={state.error} isBusy={state.busy} failures={failures} focusTargetId={IDS.REGION_CARD.successRates} onRetry={onRetry}/>;
+    return <window.UI.RegionFailure source={REGION_FEEDERS.success} region="success rates" error={state.error} isBusy={state.busy} failures={failures} focusTargetId={IDS.REGION_CARD.successRates} onRetry={onRetry}/>;
   }
   if (matrix.agents.length === 0) {
     return <EmptyStateAg message={`No success-rate events in the last ${days} days.`}/>;
@@ -2496,7 +2492,7 @@ function TopNFailingAgentsBody({ failures, state, days, onRetry, pairs, failureB
     return <window.UI.LoadingPlaceholder label="most-failing pairs" minHeight={200}/>;
   }
   if (view === 'error') {
-    return <AgentRegionFailure feeder={REGION_FEEDERS.success} region="failure rates" error={state.error} isBusy={state.busy} failures={failures} focusTargetId={IDS.REGION_CARD.failingPairs} onRetry={onRetry}/>;
+    return <window.UI.RegionFailure source={REGION_FEEDERS.success} region="failure rates" error={state.error} isBusy={state.busy} failures={failures} focusTargetId={IDS.REGION_CARD.failingPairs} onRetry={onRetry}/>;
   }
   if (pairs.length === 0) {
     return (
@@ -2668,7 +2664,7 @@ function QualityHealthTimeline({ failures, state, onRetry }) {
     return <window.UI.LoadingPlaceholder label="review_flag timeline" minHeight={260}/>;
   }
   if (view === 'error') {
-    return <AgentRegionFailure feeder={REGION_FEEDERS.review} region="review_flag data" error={state.error} isBusy={state.busy} failures={failures} focusTargetId={IDS.REGION_CARD.reviewFlags} onRetry={onRetry}/>;
+    return <window.UI.RegionFailure source={REGION_FEEDERS.review} region="review_flag data" error={state.error} isBusy={state.busy} failures={failures} focusTargetId={IDS.REGION_CARD.reviewFlags} onRetry={onRetry}/>;
   }
   const rows = readyData(state)?.rows ?? [];
   if (rows.length === 0) {
@@ -2864,7 +2860,7 @@ function LifecycleStatsBody({ failures, state, days, onSelect, onRetry }) {
     return <window.UI.LoadingPlaceholder label="lifecycle stats" minHeight={260}/>;
   }
   if (view === 'error') {
-    return <AgentRegionFailure feeder={REGION_FEEDERS.lifecycle} region="lifecycle stats" error={state.error} isBusy={state.busy} failures={failures} focusTargetId={IDS.REGION_CARD.lifecycle} onRetry={onRetry}/>;
+    return <window.UI.RegionFailure source={REGION_FEEDERS.lifecycle} region="lifecycle stats" error={state.error} isBusy={state.busy} failures={failures} focusTargetId={IDS.REGION_CARD.lifecycle} onRetry={onRetry}/>;
   }
   const rows = (readyData(state)?.rows ?? [])
     .filter((r) => r && r.agent_type && (Number(r.start_count) || 0) > 0)
