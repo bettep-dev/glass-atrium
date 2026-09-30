@@ -63,7 +63,8 @@ function lowInvocationThresholdForWindow(days) {
 // Top-N failing — 매트릭스 green-bias 보완 (action-triggering compact view).
 const TOPN_FAILING_THRESHOLD = 0.95;
 const CIRCUIT_BREAKER_UNREADABLE_COPY = 'circuit-breaker state unreadable — check permissions on the hook data dir';
-const TOPN_FAILING_LIMIT = 8;
+// Same row budget as the lifecycle card it pairs with → the two cards fill one row height at xl.
+const TOPN_FAILING_LIMIT = 12;
 
 // 랭킹 최소 표본 floor (A5) — 합산 분모(성공+실패) < 3 쌍은 비율 신뢰 불가 → 랭킹 제외.
 const TOPN_MIN_SAMPLE = 3;
@@ -1891,6 +1892,21 @@ function AgentReliabilitySection({ agent, drawerAgent, failureByAgent, failureSt
 }
 
 // (a) Breakages — failure-patterns(필터) 요약 + 기존 MergedBreakageSection(fail/blocked 키워드 분류) 재사용.
+/**
+ * Writer-emitted breakage headline with its blocked part bounded inside it.
+ * The payload does not say which result the reconstructed rows carry → the blocked part is a range:
+ * each reconstructed row hides at most one blocked row, and the part never exceeds the headline.
+ */
+function getWriterBreakageSplit(failure) {
+  const breakages = Math.max(0, failure.total_breakages - (failure.reconstructed || 0));
+  const blocked = failure.blocked_count || 0;
+
+  return {
+    breakages,
+    blocked: { min: Math.max(0, blocked - (failure.reconstructed || 0)), max: Math.min(blocked, breakages) },
+  };
+}
+
 function AgentReliabilityBreakages({ drawerAgent, failureByAgent, failureState, detailState, blockedState, days, onRetry }) {
   const { Badge } = window.UI;
   const view = window.UI.getRegionView(failureState);
@@ -1905,6 +1921,7 @@ function AgentReliabilityBreakages({ drawerAgent, failureByAgent, failureState, 
   // failure-patterns row 의 top_concerns — failureByAgent map 은 미보유 → 원본 rows 에서 직접 조회.
   const raw = (readyData(failureState)?.rows ?? []).find((r) => r.agent === drawerAgent) || null;
   const topConcerns = Array.isArray(raw?.top_concerns) ? raw.top_concerns : [];
+  const split = failure ? getWriterBreakageSplit(failure) : null;
 
   return (
     <div className="space-y-3">
@@ -1913,10 +1930,12 @@ function AgentReliabilityBreakages({ drawerAgent, failureByAgent, failureState, 
         <>
           <div className="flex items-center gap-2 flex-wrap">
             <Badge role="status" tone={failureTone(failure.total_breakages, failure.breakage_rate) === 'text-crit' ? 'crit' : 'neutral'}>
-              {formatIntAg(failure.total_breakages - (failure.reconstructed || 0))} failed or blocked · {(failure.breakage_rate * 100).toFixed(1)}%
+              {formatIntAg(split.breakages)} failed or blocked · {(failure.breakage_rate * 100).toFixed(1)}%
             </Badge>
-            {failure.blocked_count > 0 && (
-              <span className="fs-meta text-dim">of which {formatIntAg(failure.blocked_count)} blocked — a compliant halt, not a defect</span>
+            {split.blocked.max > 0 && (
+              <span className="fs-meta text-dim">
+                of which {split.blocked.min === split.blocked.max ? '' : 'up to '}{formatIntAg(split.blocked.max)} blocked — a compliant halt, not a defect
+              </span>
             )}
             {failure.reconstructed > 0 && (
               <span
