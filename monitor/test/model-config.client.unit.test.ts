@@ -39,6 +39,7 @@ import {
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const MC_SRC = resolve(__dirname, "../public/src/screens/model-config.jsx");
+const BASE_CSS_MC = resolve(__dirname, "../public/styles/base.css");
 
 interface McForm {
   models: Record<string, string>;
@@ -507,7 +508,7 @@ async function loadMcScreens(
   // ui.jsx atoms — rendered as tagged wrappers so their children stay readable in the tree.
   const uiStub = {
     PageHeader: (p: Record<string, unknown>) => hMc("header", { className: "page-header" }, p.sub, p.right),
-    Icon: (p: Record<string, unknown>) => hMc("i", { "data-icon": p.name }),
+    Icon: (p: Record<string, unknown>) => hMc("i", { "data-icon": p.name, className: p.className }),
     TypeScaleStyle: () => null,
     Badge: (p: Record<string, unknown>) =>
       hMc("span", { className: `badge ${p.className ?? ""}`.trim(), "data-tone": p.tone ?? "neutral" }, p.children),
@@ -1708,7 +1709,12 @@ test("the file list toggle shows a chevron and its opened list is never clipped 
   const [summary] = tagsMc(tree, "summary");
   const [list] = findAllMc(tree, (n) => n.props.role === "region");
 
-  assert.ok(tagsMc([summary], "i").some((n) => String(n.props["data-icon"]).startsWith("chevron")), "the pill carries a chevron");
+  const chevron = tagsMc([summary], "i").find((n) => String(n.props["data-icon"]).startsWith("chevron"));
+  const openRuleClass = /details\[open\] > summary \.([\w-]+)/.exec(readFileSync(BASE_CSS_MC, "utf8"))?.[1];
+
+  assert.ok(chevron, "the pill carries a chevron");
+  assert.ok(openRuleClass, "base.css keeps a shared open-state chevron rule");
+  assert.ok(String(chevron.props.className ?? "").split(/\s+/).includes(openRuleClass), "the shared open-state rule selects the chevron");
   assert.strictEqual((list.props.style as Record<string, unknown> | undefined)?.maxHeight, undefined, "no height cap");
   assert.ok(!String(list.props.className).includes("overflow-y-auto"), "no inner scroller");
   assert.strictEqual(tagsMc(list.children, "span").length, files.length, "every file is listed");

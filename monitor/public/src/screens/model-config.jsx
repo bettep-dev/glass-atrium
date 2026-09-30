@@ -866,7 +866,7 @@ function LiveValueMC({ value, drift, files, source, isStale, driftTitle }) {
 						style={FILES_MC.PILL_STYLE}>
 						{isFoldAlerting && <Icon name="warn" size={12} className="text-warn" />}
 						{`${fileRows.length} ${fileRows.length === 1 ? "file" : "files"}`}
-						<Icon name="chevron-down" size={12} />
+						<Icon name="chevron-down" size={12} className="chevron" />
 					</summary>
 					<div
 						className="text-faint flex flex-col gap-1 mt-1"
