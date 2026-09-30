@@ -18,7 +18,9 @@
 
 - **PLAN_FILE Setup Obligation**: when starting plan-based work, set the `PLAN_FILE` environment variable to the plan path.
   - Reader: `hooks/validate-scope-drift.sh` compares each Edit/Write target against the plan's target-file list and warns on a miss (`SCOPE-070`, advisory, never a block).
-  - Unset → the hook falls back to the newest in-progress clauded-doc's target-file section via the monitor API; an explicit `PLAN_FILE` takes priority.
+  - Unset → the hook binds the Target Files list of the one `implementing` plan, read in that plan's own format (the HTML target-files section or the md `## Target Files` heading).
+    - It passes silently when no plan, or more than one, is `implementing`, and on any monitor or parse failure.
+  - An explicit `PLAN_FILE` takes priority over that monitor leg.
 
 ## Detail Reference [ORCHESTRATOR]
 
