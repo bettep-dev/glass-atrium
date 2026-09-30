@@ -121,6 +121,7 @@ function ScreenDashboard({ onNav, harness, onRetryHarness }) {
   const alarmReadiness = getAlarmReadiness({ harness, costState, updateState });
   const tiles = buildTiles({ harness, costState, agentsState, outcomesState, isHarnessBusy });
   const sharedFailure = getTileSharedFailure(tiles);
+  const version = describeVersion(harness);
 
   return (
     <div className="flex flex-col">
@@ -146,7 +147,7 @@ function ScreenDashboard({ onNav, harness, onRetryHarness }) {
           sub={<span className="fs-meta">Triage</span>} // the shared eyebrow is 11px → fs-meta holds the 12px floor
           right={
             <>
-              <span className="fs-meta font-mono text-dim">{describeVersion(harness)}</span>
+              {version && <span className="fs-meta font-mono text-dim">{version}</span>}
               <FreshnessStamp {...getFreshnessInputD(settledAt, waveStates, harness)}/>
               <RefreshButton isBusy={isWaveBusy} hasRead={settledAt !== null}
                 onRefresh={triggerRefresh} label="Refresh dashboard"/>
@@ -188,6 +189,7 @@ function getTileSharedFailure(tiles) {
 
 // 경보 레인 — 비어도 한 행 높이를 지킨다(도착·새로고침 때 밴드가 밀리지 않게).
 // polite live region 은 항상 마운트 — 먼저 있어야 나중에 붙는 경보 행이 안내된다.
+// the loading line is its own status region → it sits beside the polite one, never inside, so it is announced once
 // 행 순서는 worst-first: 가장 위험한 사실이 첫 줄에 온다.
 function AlarmLane({ alarms, readiness = ALARM_READINESS_LOADING, onNav, updateState, updateJobState, onRefetchJob }) {
   const hasAlarms = alarms.length > 0;
@@ -195,10 +197,15 @@ function AlarmLane({ alarms, readiness = ALARM_READINESS_LOADING, onNav, updateS
   const slots = getLaneSlots(alarms.length, readiness, reserved);
   if (slots.reserved !== reserved) setReserved(slots.reserved);
   return (
-    <section className="dash-lane" aria-live="polite" aria-label="Alarms">
-      {hasAlarms && <AlarmList alarms={alarms} onNav={onNav} updateState={updateState}
-        updateJobState={updateJobState} onRefetchJob={onRefetchJob}/>}
-      {slots.trailer && <LaneTrailer trailer={slots.trailer} hasAlarms={hasAlarms} unread={readiness.unread}/>}
+    <section className="dash-lane" aria-label="Alarms">
+      <div aria-live="polite">
+        {hasAlarms && <AlarmList alarms={alarms} onNav={onNav} updateState={updateState}
+          updateJobState={updateJobState} onRefetchJob={onRefetchJob}/>}
+        {slots.trailer && slots.trailer !== 'loading' && (
+          <LaneTrailer trailer={slots.trailer} hasAlarms={hasAlarms} unread={readiness.unread}/>
+        )}
+      </div>
+      {slots.trailer === 'loading' && <LaneTrailer trailer="loading" hasAlarms={hasAlarms} unread={readiness.unread}/>}
     </section>
   );
 }
@@ -266,12 +273,15 @@ function AlarmList({ alarms, onNav, updateState, updateJobState, onRefetchJob })
 // 한 줄 = 한 사실. 소유 화면 링크를 갖거나(target) 자기 조치를 품거나(children) 둘 중 하나.
 // flat hairline row (.alarm-row) — tone rides on the leading glyph only
 function AlarmRow({ alarm, onNav, children }) {
-  const { Icon, TONE_ICON } = window.UI;
+  const { Badge, Icon, TONE_ICON } = window.UI;
   return (
     <div role="listitem" className="alarm-row" data-tone={alarm.tone}>
       <span className="alarm-row-glyph"><Icon name={TONE_ICON[alarm.tone]} size={16}/></span>
       <div className="min-w-0">
-        <div className="fs-body font-medium text-ink">{alarm.title}</div>
+        <div className="fs-body font-medium text-ink flex flex-wrap items-center gap-x-2 gap-y-1">
+          <span>{alarm.title}</span>
+          {alarm.isHeld && <Badge tone="neutral">Last known</Badge>}
+        </div>
         {alarm.detail && <div className="fs-meta text-dim">{alarm.detail}</div>}
       </div>
       <div className="flex items-center gap-2">
@@ -331,10 +341,10 @@ function StatusTile({ tile, onNav, onRetry, isRetryShared = false }) {
           {tile.canRetry && !isRetryShared && (
             <RetryButton onRetry={() => onRetry(tile.region)} isBusy={tile.isBusy} focusTargetId={cardId}/>
           )}
-          {/* the drill stays a card-foot child → mt-auto keeps the four CTAs on one baseline at xl */}
-          {tile.target && <DrillLink target={tile.target} label={tile.targetLabel} onNav={onNav} className="self-start mt-auto"/>}
         </>
       )}
+      {/* the drill stays a card-foot child, a failed tile's too → mt-auto keeps the four CTAs on one baseline at xl */}
+      {tile.target && <DrillLink target={tile.target} label={tile.targetLabel} onNav={onNav} className="self-start mt-auto"/>}
     </div>
   );
 }
@@ -580,6 +590,7 @@ function buildAlarms({ harness, costState, installKind }) {
       tone: 'crit',
       title: `${harness.downNames.length} harness ${harness.downNames.length === 1 ? 'part is' : 'parts are'} down`,
       detail: joinPartNames(harness.downNames),
+      isHeld: harness.error != null,
       target: 'architecture',
       targetLabel: 'System map',
     });
@@ -592,6 +603,7 @@ function buildAlarms({ harness, costState, installKind }) {
       tone: 'warn',
       title: 'Spend is running ahead of the 7-day average',
       detail: `${formatUsd(spend.today)} so far · ${formatUsd(spend.pace)}/day at the last 3 hours' rate · ${formatUsd(spend.basis)} 7-day avg/day`,
+      isHeld: costState?.error != null,
       target: 'cost',
       targetLabel: 'Cost & usage',
     });
@@ -851,8 +863,9 @@ function describeSpendPace(pace) {
 }
 
 // 헤더 우측 중립 텍스트 — 설치 버전. 조치 신호는 레인이 운반하므로 여기는 톤이 없다.
+// a pending read names no version → the freshness stamp beside it already says loading
 function describeVersion(harness) {
-  if (harness?.status === 'loading') return 'checking version…';
+  if (harness?.status === 'loading') return null;
   return harness && harness.version ? `v${harness.version}` : 'version unknown';
 }
 

@@ -85,9 +85,10 @@ const READY_TILE = {
 test("the alarm lane is a polite live region that exists before any alarm arrives", () => {
   for (const alarms of [[], [HARNESS_ALARM]]) {
     const lane = render("AlarmLane", { alarms, onNav: () => {} });
-    const regions = findNodes(lane, (n) => n.props["aria-live"] === "polite");
+    const sections = findNodes(lane, (n) => n.props["aria-label"] === "Alarms");
+    assert.equal(sections.length, 1, "the lane is one labelled section");
+    const regions = findNodes(sections[0], (n) => n.props["aria-live"] === "polite");
     assert.equal(regions.length, 1, `one polite region with ${alarms.length} alarms`);
-    assert.equal(regions[0].props["aria-label"], "Alarms");
     const rows = findNodes(regions[0], (n) => n.props.role === "listitem");
     assert.equal(rows.length, alarms.length, "every alarm row sits inside the region");
   }
@@ -224,6 +225,28 @@ test("an alarm row is a flat hairline row whose tone rides on the leading glyph,
   assert.equal(rows[0].props.style, undefined, "no tinted fill or stripe");
   assert.equal(findNodes(tree, (n) => classOf(n).includes("alarm-row-glyph")).length, 1);
   assert.equal(findNodes(tree, (n) => classOf(n).includes("font-mono")).length, 0, "part names are words, not mono");
+});
+
+test("an alarm row whose source's latest read failed says Last known beside its title; a fresh row says nothing", () => {
+  for (const isHeld of [true, false]) {
+    const tree = render("AlarmRow", { alarm: { ...HARNESS_ALARM, isHeld }, onNav: () => {} });
+    const badges = findNodes(tree, (n) => n.props.atom === "Badge").map((n) => collectText(n));
+    assert.deepEqual(badges, isHeld ? ["Last known"] : [], `isHeld=${isHeld}`);
+  }
+});
+
+test("the header names no version while the harness read is pending, so the stamp alone says loading", () => {
+  const describeVersion = mod.describeVersion as (harness: unknown) => string | null;
+  assert.equal(describeVersion({ status: "loading" }), null);
+  assert.equal(describeVersion({ status: "ready", version: "1.0.0" }), "v1.0.0");
+});
+
+test("a failed tile keeps its drill to the owning screen, whether it shows its own error card or defers to the banner", () => {
+  for (const isRetryShared of [false, true]) {
+    const tree = render("StatusTile", { tile: FAILED_TILE, onNav: () => {}, onRetry: () => {}, isRetryShared });
+    const drills = findNodes(tree, (n) => n.type === "a" && String(n.props.href).endsWith("agents"));
+    assert.equal(drills.length, 1, `isRetryShared=${isRetryShared}`);
+  }
 });
 
 const FAILED_TILE = {
@@ -399,7 +422,9 @@ test("the status band reflows to two columns until it has room for four", () => 
 test("the alarm lane reserves its slot with a status line while alarm sources are still loading", () => {
   const pending = render("AlarmLane", { alarms: [], readiness: { status: "loading", unread: [] }, onNav: () => {} });
   const region = findNodes(pending, (n) => n.props["aria-live"] === "polite")[0];
-  assert.equal(findNodes(region, (n) => n.props.atom === "LoadingPlaceholder").length, 1);
+  assert.equal(findNodes(pending, (n) => n.props.atom === "LoadingPlaceholder").length, 1);
+  // the placeholder is its own status region → nested in the polite one, its line is announced twice
+  assert.equal(findNodes(region, (n) => n.props.atom === "LoadingPlaceholder").length, 0, "the loading line sits in one live region only");
 
   const settled = render("AlarmLane", { alarms: [], readiness: { status: "read", unread: [] }, onNav: () => {} });
   assert.equal(findNodes(settled, (n) => n.props.atom === "LoadingPlaceholder").length, 0);
