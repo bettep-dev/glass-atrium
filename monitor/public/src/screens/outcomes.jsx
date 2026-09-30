@@ -1602,12 +1602,14 @@ function StackedYAxisO({ barAreaH, chartHeight }) {
   return (
     <div aria-hidden="true" className="fs-meta font-mono text-faint"
       style={{ position: 'relative', width: STACKED_Y_AXIS_WIDTH, height: chartHeight, flexShrink: 0 }}>
-      {getStackedYTicksO(barAreaH).map((tick) => (
-        <span key={tick.label}
-          style={{ position: 'absolute', right: 0, lineHeight: `${STACKED_Y_LABEL_H}px`, top: Math.min(Math.max(tick.y - STACKED_Y_LABEL_H / 2, 0), barAreaH - STACKED_Y_LABEL_H) }}>
-          {tick.label}
-        </span>
-      ))}
+      {getStackedYTicksO(barAreaH).map((tick) => {
+        const top = Math.min(Math.max(tick.y - STACKED_Y_LABEL_H / 2, 0), barAreaH - STACKED_Y_LABEL_H);
+        return (
+          <span key={tick.label} style={{ position: 'absolute', right: 0, lineHeight: `${STACKED_Y_LABEL_H}px`, top }}>
+            {tick.label}
+          </span>
+        );
+      })}
     </div>
   );
 }
@@ -1787,7 +1789,8 @@ function ChannelPeakBarsO({ channels, threshold }) {
   const { BulletBar } = window.UI;
   const floor = Number(threshold?.eligibility_daily_floor) || null;
   const recencyDays = threshold?.eligibility_recency_days;
-  const scale = Math.max(floor || 0, 1, ...channels.map((channel) => Number(channel.recent_peak_daily_count) || 0));
+  const peaks = channels.map((channel) => Number(channel.recent_peak_daily_count) || 0);
+  const scale = Math.max(floor || 0, 1, ...peaks);
 
   return (
     <div className="mt-3" role="group" aria-label="Busiest recent day per channel">
@@ -1795,8 +1798,8 @@ function ChannelPeakBarsO({ channels, threshold }) {
         Busiest day{recencyDays ? `, last ${recencyDays}d` : ''}{floor ? ` · watched from ${formatIntO(floor)}/day` : ''}
       </div>
       <div className="flex flex-col gap-1">
-        {channels.map((channel) => {
-          const peak = Number(channel.recent_peak_daily_count) || 0;
+        {channels.map((channel, index) => {
+          const peak = peaks[index];
           const label = `${channel.attribution_source}: ${formatIntO(peak)}/day${floor ? `, floor ${formatIntO(floor)}/day` : ''}`;
           return (
             <div key={channel.attribution_source} className="grid items-center gap-2 fs-meta font-mono"
