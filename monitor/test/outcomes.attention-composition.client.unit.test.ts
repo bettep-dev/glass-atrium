@@ -55,7 +55,7 @@ interface AgentStackEntry {
   byResult: Record<string, number>;
 }
 interface OutcomesHelpers {
-  buildAttentionParamsO: (days: number | string) => URLSearchParams;
+  buildAttentionParamsO: (days: number | string, part?: Record<string, string>) => URLSearchParams;
   AlarmLaneO: (props: { channelLivenessState: PayloadState<unknown>; searchState: PayloadState<unknown> }) => RenderNode | null;
   RegionErrorO: unknown;
   BlockedBannerO: unknown;
@@ -80,7 +80,7 @@ interface OutcomesHelpers {
   getConfidentFailedO: (crosstab: { total: number; byCell: Record<string, { count: number }> } | null) => { count: number; share: number } | null;
   getCrosstabVisibleRowsO: (byCell: Record<string, { count: number }>) => string[];
   PageVerdictO: (props: { analyticsState: PayloadState<unknown>; channelLivenessState: PayloadState<{ alerting?: string[] }>; windowDays: number }) => RenderNode | null;
-  buildNeedsYouReasonsO: (data: unknown) => { key: string; label: string; count: number | null; tone: string }[];
+  buildNeedsYouReasonsO: (data: unknown, attention: unknown) => { key: string; label: string; count: number | null; tone: string }[];
   buildAnalyticsDataO: (overall: unknown) => { overall: { by_agent_top_10?: unknown }; agentStack: unknown };
   isNeedsYouRowO: (row: LedgerRow, closedAt: string | null) => boolean;
   buildLedgerSectionsO: (
@@ -409,42 +409,44 @@ test("buildAgentFailureRowsO: sampled agents lead by failure rate, low-sample ag
   }
 });
 
-// writer_open_count rides every by_result row (result-agnostic FILTER) → only the done_with_concerns row is the caveat count
-const withByResult = (byResult: Record<string, unknown>[] | undefined) => ({
-  ...aboveFloor({ done: 180, fail: 8, blocked: 4 }),
-  overall: { total: 200, reconstructed_total: 0, ...(byResult ? { by_result: byResult } : {}) },
-});
+// the needs-you headline and its parts come from one /search wave, split so no record is counted twice
+const attentionRead = (total: number, parts: Record<string, number>) => ({ total, parts });
 
-describe("buildNeedsYouReasonsO: the open-caveat reason reads the done_with_concerns row the endpoint sends", () => {
+describe("buildNeedsYouReasonsO: the reasons are disjoint parts that add up to the needs-you headline", () => {
+  const analytics = aboveFloor({ done: 180, fail: 8, blocked: 4 });
   const rows = [
-    {
-      name: "a non-caveat row's writer_open_count never adds to the caveat reason",
-      byResult: [
-        { result: "done", count: 180, writer_open_count: 90 },
-        { result: "done_with_concerns", count: 20, writer_open_count: 17 },
-        { result: "fail", count: 8, writer_open_count: 8 },
-      ],
-      open: 17,
-    },
-    { name: "a loaded window with no done_with_concerns row has no open caveat", byResult: [{ result: "done", count: 200, writer_open_count: 0 }], open: 0 },
-    { name: "an unsent by_result stays unknown, never a resolved zero", byResult: undefined, open: null },
-    {
-      name: "a caveat row without writer_open_count stays unknown, not the closure-blind count",
-      byResult: [{ result: "done_with_concerns", count: 20 }],
-      open: null,
-    },
+    { name: "a flag-dominated window adds up with no remainder", read: attentionRead(1836, { flagged: 1430, fail: 3, blocked: 91, open: 312 }), remainder: 0 },
+    { name: "a window with no flags adds up from failures and caveats alone", read: attentionRead(40, { flagged: 0, fail: 10, blocked: 5, open: 25 }), remainder: 0 },
+    { name: "records that moved between reads are a named remainder, so the sum still holds", read: attentionRead(50, { flagged: 30, fail: 2, blocked: 1, open: 10 }), remainder: 7 },
   ];
   for (const row of rows) {
     test(row.name, () => {
-      const reasons = sameRealm(helpers.buildNeedsYouReasonsO(withByResult(row.byResult)));
-      assert.strictEqual(reasons.find((r) => r.key === "open")!.count, row.open);
+      const reasons = sameRealm(helpers.buildNeedsYouReasonsO(analytics, row.read));
+      const sum = reasons.reduce((acc, reason) => acc + (reason.count ?? 0), 0);
+      assert.strictEqual(sum, row.read.total, "the parts add up to the headline");
+      assert.strictEqual(reasons[0].key, "flagged", "flagged for review leads, as the part that claims a record first");
+      assert.strictEqual(reasons.find((r) => r.key === "other")?.count ?? 0, row.remainder);
     });
   }
 
-  test("the broken reason keeps the band's failed+blocked count and breakage tone", () => {
-    const [broken] = sameRealm(helpers.buildNeedsYouReasonsO(withByResult(undefined)));
-    assert.deepStrictEqual([broken.key, broken.count, broken.tone], ["broken", 12, "crit"], "12 of 200 breaches the 5% breakage threshold");
+  test("an unread needs-you wave leaves every part unknown, never a resolved zero", () => {
+    const reasons = sameRealm(helpers.buildNeedsYouReasonsO(analytics, null));
+    assert.ok(reasons.length > 0 && reasons.every((r) => r.count === null));
   });
+
+  test("the failed-or-blocked part keeps the band's breakage tone", () => {
+    const reasons = sameRealm(helpers.buildNeedsYouReasonsO(analytics, attentionRead(40, { flagged: 20, fail: 6, blocked: 4, open: 10 })));
+    const broken = reasons.find((r) => r.key === "broken")!;
+    assert.deepStrictEqual([broken.count, broken.tone], [10, "crit"], "12 of 200 breaches the 5% breakage threshold");
+  });
+});
+
+test("buildAttentionParamsO: each part narrows the needs-you query without dropping it", () => {
+  const params = helpers.buildAttentionParamsO(30, { review_flag: "false", result: "blocked" });
+  assert.deepStrictEqual(
+    [params.get("needs_attention"), params.get("review_flag"), params.get("result"), params.get("limit"), params.get("days")],
+    ["true", "false", "blocked", "1", "30"],
+  );
 });
 
 // --- page verdict: one sentence answering "is this fine?", on the Dashboard's shared rate rule ---

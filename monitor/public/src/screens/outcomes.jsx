@@ -314,8 +314,27 @@ function analyticsDaysO(days) {
 // Needs-you 질의 — 서버 parseFilters 는 needs_attention 에 'true'|'false' 만 받는다(그 밖 → 400).
 // 창은 analyticsDaysO 로 접힌 분석 창: 타일 1 의 분자·분모가 다른 창을 읽으면 비율이 성립하지 않는다.
 // limit=1 → total 만 소비.
-function buildAttentionParamsO(days) {
-  return new URLSearchParams({ days: String(days), needs_attention: 'true', limit: '1' });
+function buildAttentionParamsO(days, part = {}) {
+  return new URLSearchParams({ days: String(days), needs_attention: 'true', ...part, limit: '1' });
+}
+
+// disjoint split of the needs-you predicate — a flag claims a record first, so no record sits in two parts
+const ATTENTION_PARTS_O = [
+  { key: 'flagged', filter: { review_flag: 'true' } },
+  { key: 'fail', filter: { review_flag: 'false', result: 'fail' } },
+  { key: 'blocked', filter: { review_flag: 'false', result: 'blocked' } },
+  { key: 'open', filter: { review_flag: 'false', result: 'done_with_concerns' } },
+];
+
+// headline + parts in one wave → the parts are read beside the total they add up to
+async function fetchAttentionO(days, signal) {
+  const urls = [{}, ...ATTENTION_PARTS_O.map((part) => part.filter)]
+    .map((filter) => `/api/outcomes/search?${buildAttentionParamsO(days, filter).toString()}`);
+  const [head, ...parts] = await Promise.all(urls.map((url) => fetchJsonO(url, signal)));
+  return {
+    total: Number(head?.total) || 0,
+    parts: Object.fromEntries(ATTENTION_PARTS_O.map((part, i) => [part.key, Number(parts[i]?.total) || 0])),
+  };
 }
 
 // 자가개선 데몬 사이클 raw 이벤트 로그 — Learning 화면에서 이관(operational data, 집계 신호 아님).
@@ -571,7 +590,10 @@ function ScreenOutcomes({ onNav }) {
   useEffectO(() => {
     // include_all 미전송 — 분모(cross-analysis)가 registry 스코프이므로 분자도 같은 스코프를 읽는다.
     const params = buildAttentionParamsO(analyticsPeriod);
-    return runRegionFetchO(setAttentionState, `/api/outcomes/search?${params.toString()}`, { onData: markFreshO });
+    return runRegionFetchO(setAttentionState, `/api/outcomes/search?${params.toString()}`, {
+      onData: markFreshO,
+      load: (_url, signal) => fetchAttentionO(analyticsPeriod, signal),
+    });
   }, [analyticsPeriod, refreshTick]);
 
   // Detail fetch — modal open / nav 시 active row 변경에 반응.
@@ -973,7 +995,7 @@ function StatusBandO({ analyticsState, attentionState, windowDays, freshness, on
           tile={heroTile}
           windowLabel={windowLabel}
           unloadedText={getUnloadedSummaryO(attentionState.status)}
-          reasons={buildNeedsYouReasonsO(analyticsState.data)}
+          reasons={buildNeedsYouReasonsO(analyticsState.data, attentionState.status === 'ready' ? attentionState.data : null)}
           className="col-span-3"/>
         <VolumeTilesO tiles={volumeTiles} windowLabel={windowLabel}/>
       </div>
@@ -1022,25 +1044,22 @@ function BandTileO({ tile, windowLabel, unloadedText = '—', reasons = null, cl
   );
 }
 
-// broken reuses the band's own breakage tone; open is null when the payload predates writer_open_count
-function buildNeedsYouReasonsO(data) {
-  const brokenTile = buildStatusBandTilesO(data, null).find((tile) => tile.key === 'broken');
-  return [
-    { key: 'broken', label: 'Failed or blocked', count: brokenTile.count, tone: brokenTile.tone },
-    { key: 'open', label: 'Caveat still open', count: getOpenCaveatCountO(data?.overall), tone: 'neutral' },
-  ];
-}
-
 /**
- * Every by_result row carries writer_open_count (result-agnostic FILTER) → only the done_with_concerns row counts, never a sum.
- * An unsent field stays null instead of getWriterOpenCount's closure-blind fallback.
+ * Disjoint needs-you parts that add up to the headline — flags first, then unflagged failures and open caveats.
+ * A gap between the headline and its parts (records that changed between reads) is a named remainder, never dropped.
+ * @param attention - the needs-you wave ({ total, parts }); unread → every part unknown
  */
-function getOpenCaveatCountO(overall) {
-  if (!Array.isArray(overall?.by_result)) return null;
-  const caveatRow = overall.by_result.find((row) => row?.result === 'done_with_concerns');
-  if (!caveatRow) return 0;
-  if (!Number.isFinite(caveatRow.writer_open_count)) return null;
-  return window.UI.getWriterOpenCount(caveatRow);
+function buildNeedsYouReasonsO(data, attention) {
+  const brokenTone = buildStatusBandTilesO(data, null).find((tile) => tile.key === 'broken').tone;
+  const parts = attention?.parts ?? null;
+  const reasons = [
+    { key: 'flagged', label: 'Flagged for review', count: parts ? parts.flagged : null, tone: 'neutral' },
+    { key: 'broken', label: 'Failed or blocked', count: parts ? parts.fail + parts.blocked : null, tone: brokenTone },
+    { key: 'open', label: 'Caveat still open', count: parts ? parts.open : null, tone: 'neutral' },
+  ];
+  if (!parts) return reasons;
+  const remainder = attention.total - reasons.reduce((sum, reason) => sum + reason.count, 0);
+  return remainder === 0 ? reasons : [...reasons, { key: 'other', label: 'Changed between reads', count: remainder, tone: 'neutral' }];
 }
 
 /**
@@ -1093,7 +1112,7 @@ function formatShareO(count, population) {
 function NeedsYouReasonsO({ reasons }) {
   return (
     <span className="block fs-meta">
-      <span className="block text-faint">Reasons · one record can carry several</span>
+      <span className="block text-faint">Reasons · each record counted once, flags first</span>
       {reasons.map((reason) => {
         const glyph = getBandTileGlyphO(reason.tone);
         return (
@@ -3355,14 +3374,15 @@ async function fetchJsonO(url, signal) {
  * One region fetch wave keyed by its URL — held data stays on screen until the answer settles.
  * @param options.mapData - payload → region data
  * @param options.onData - runs only when this wave's answer lands (e.g. advancing the stamp time)
+ * @param options.load - reads the wave's payload; defaults to one JSON fetch of url
  * @returns cleanup that aborts the wave; a superseded or aborted wave never lands
  */
-function runRegionFetchO(setter, url, { mapData, onData } = {}) {
+function runRegionFetchO(setter, url, { mapData, onData, load = fetchJsonO } = {}) {
   const { putRegionRequest, putRegionData, putRegionFailure } = window.UI;
   const ctrl = new AbortController();
   setter((s) => putRegionRequest(s, url, ctrl));
 
-  fetchJsonO(url, ctrl.signal)
+  load(url, ctrl.signal)
     .then((data) => {
       // effects abort before re-running → an unaborted wave is the newest one
       if (!ctrl.signal.aborted) onData?.();
