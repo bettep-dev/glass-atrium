@@ -466,3 +466,37 @@ test("the drawer names the approval tier in words, never echoing the raw tier ke
 
   assert.ok(!text.includes("auto (auto)"), text);
 });
+
+describe("the drawer prints each field in words, never the stored machine key", () => {
+  const row = {
+    id: 42,
+    status: "rejected",
+    approval_tier: "auto",
+    classification: "apply",
+    target_file: "/Users/x/.claude/agents/glass-atrium-dev-shell.md",
+    cycle_date: "2026-09-10",
+    haiku_status: "skipped:quota-limit",
+    cost_guard_state: "warn",
+  };
+  const tree = sandbox.DetailBodyI(sandbox.buildDetailPropsI(row));
+  const terms = findAll(tree, (el) => el.type === "dt");
+  const values = findAll(tree, (el) => el.type === "dd");
+  const valueOf = (label: string) => values[terms.findIndex((el) => visibleText(el) === label)];
+  const rows = [
+    { name: "status", label: "Status", printed: "Rejected", mono: false },
+    { name: "classification", label: "Classification", printed: "Recommended to apply", mono: false },
+    { name: "model check", label: "Model check", printed: "Skipped — quota limit", mono: false },
+    { name: "cost guard", label: "Cost guard", printed: "Quota or budget cap hit", mono: false },
+    { name: "cycle date", label: "Cycle date", printed: "2026/09/10", mono: true },
+    { name: "target file path", label: "Target file", printed: row.target_file, mono: true },
+  ];
+  for (const item of rows) {
+    test(item.name, () => {
+      const value = valueOf(item.label);
+
+      assert.ok(value, `${item.label} is printed`);
+      assert.equal(visibleText(value), item.printed);
+      assert.equal(/\bfont-mono\b/.test(classOf(value)), item.mono, `${item.label} mono`);
+    });
+  }
+});

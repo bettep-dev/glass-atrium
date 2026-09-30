@@ -2206,10 +2206,10 @@ function DetailBodyI({ fields, sections, footnote, preVerify }) {
 	return (
 		<div className="flex flex-col gap-3">
 			<dl className="grid gap-1.5" style={{ gridTemplateColumns: "120px 1fr" }}>
-				{fields.filter(([, v]) => window.UI.hasFieldValue(v)).map(([k, v]) => (
+				{fields.filter(([, v]) => window.UI.hasFieldValue(v)).map(([k, v, mono]) => (
 					<React.Fragment key={k}>
 						<dt className={labelCls}>{k}</dt>
-						<dd className="fs-body text-ink font-mono break-words">
+						<dd className={`fs-body text-ink break-words${mono ? " font-mono" : ""}`}>
 							{String(v)}
 						</dd>
 					</React.Fragment>
@@ -2298,15 +2298,22 @@ function buildDetailPropsI(row) {
 		const statusBadge = learningStatusBadgeI(row?.status);
 		return {
 			fields: [
-				["ID", row?.id ?? row?.pattern_id],
+				["ID", row?.id ?? row?.pattern_id, true],
 				["Agent", row?.agent],
 				[
 					"Status",
 					row?.status ? `${statusBadge.symbol} ${statusBadge.label}` : null,
 				],
-				["Approval tier", row?.approval_tier || row?.bucket],
+				[
+					"Approval tier",
+					row?.approval_tier ? getTierWordsI(row.approval_tier) : row?.bucket,
+				],
 				["Frequency", row?.frequency],
-				["First seen", row?.discovered_date],
+				[
+					"First seen",
+					row?.discovered_date ? formatDateFullI(row.discovered_date) : null,
+					true,
+				],
 				// last_updated = real-UTC ISO instant → formatKstFull (KST 상세 표기). last_seen fallback 동일.
 				[
 					"Last updated",
@@ -2315,6 +2322,7 @@ function buildDetailPropsI(row) {
 						: row?.last_seen
 							? window.UI.formatKstFull(row.last_seen)
 							: null,
+					true,
 				],
 			],
 			sections: [
@@ -2326,8 +2334,6 @@ function buildDetailPropsI(row) {
 	}
 	// Proposal schema — server emits 16 fields (routes/improvement.ts rowToProposalSummary).
 	// provenance 5 cols (rationale + pre_verify_*) 포함.
-	const tier = row?.approval_tier || "auto";
-	const isSafety = tier !== "auto";
 	const preVerify = preVerifyBadgeI(
 		row?.pre_verify_status,
 		row?.pre_verify_passed,
@@ -2341,19 +2347,20 @@ function buildDetailPropsI(row) {
 
 	return {
 		fields: [
-			["ID", row?.id],
-			["Status", row?.status],
-			["Approval tier", isSafety ? `⚠ Needs your approval (${tier})` : "✓ Applies automatically"],
-			["Classification", row?.classification],
+			["ID", row?.id, true],
+			["Status", getDetailWordsI("status", row?.status)],
+			["Approval tier", getTierWordsI(row?.approval_tier || "auto")],
+			["Classification", getDetailWordsI("classification", row?.classification)],
 			["Target agent", row?.target_agent],
-			["Target file", row?.target_file],
-			["Cycle date", row?.cycle_date],
-			["Model check", row?.haiku_status],
-			["Cost guard", row?.cost_guard_state],
-			// reviewed_at = real-UTC ISO instant → formatKstFull. cycle_date 는 date-only 문자열 → raw 유지(위).
+			["Target file", row?.target_file, true],
+			// cycle_date = date-only string → tz-safe formatDateFullI · reviewed_at = UTC instant → formatKstFull
+			["Cycle date", row?.cycle_date ? formatDateFullI(row.cycle_date) : null, true],
+			["Model check", getModelCheckWordsI(row?.haiku_status)],
+			["Cost guard", getDetailWordsI("costGuard", row?.cost_guard_state)],
 			[
 				"Reviewed at",
 				row?.reviewed_at ? window.UI.formatKstFull(row.reviewed_at) : null,
+				true,
 			],
 		],
 		sections: [
@@ -2362,6 +2369,39 @@ function buildDetailPropsI(row) {
 		],
 		preVerify: preVerifyDetail,
 	};
+}
+
+function getTierWordsI(tier) {
+	return tier === "auto" ? "✓ Applies automatically" : `⚠ Needs your approval (${tier})`;
+}
+
+// stored machine keys → drawer words (cost guard: daemon_cycle.derive_cost_guard_state)
+const DETAIL_WORDS_I = {
+	status: {
+		pending: "Awaiting approval",
+		snoozed: "Snoozed",
+		applied: "Applied",
+		rejected: "Rejected",
+	},
+	classification: { apply: "Recommended to apply", reject: "Recommended to reject" },
+	costGuard: { ok: "Clear", warn: "Quota or budget cap hit", infra_fault: "Auth fault" },
+	modelCheck: { ok: "Passed", skipped: "Skipped", verified: "Verified", error: "Error" },
+};
+
+// an unmapped key still prints as words, never as the raw snake/kebab key
+function getDetailWordsI(kind, value) {
+	if (!window.UI.hasFieldValue(value)) return null;
+	const key = String(value).trim();
+	return DETAIL_WORDS_I[kind][key] ?? window.UI.getDisplayName("pattern", key);
+}
+
+// "<verdict>:<detail>" (skipped:quota-limit) → "Skipped — quota limit"
+function getModelCheckWordsI(status) {
+	if (!window.UI.hasFieldValue(status)) return null;
+	const [verdict, ...rest] = String(status).trim().split(":");
+	const detail = rest.join(":").replace(/[-_]+/g, " ").trim();
+	const head = getDetailWordsI("modelCheck", verdict);
+	return detail ? `${head} — ${detail}` : head;
 }
 
 // pre_verify_axes 4-axis compliance dict {C1..C4} → 사람이 읽는 라벨 (daemon_cycle 4-axis 게이트 원천).
