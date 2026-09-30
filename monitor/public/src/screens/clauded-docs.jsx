@@ -1080,16 +1080,31 @@ function ScreenClaudedDocs(/* { onNav } */) {
         .doc-stage-label { font-family: 'Pretendard Variable', Pretendard, ui-sans-serif, system-ui, sans-serif; }
         /* 마지막 상태 변경 행위자 — pill 아래 한 줄. 모르면 줄 자체가 없다. */
         .doc-stage-actor { font-size: var(--fs-meta); font-family: 'JetBrains Mono', monospace; color: rgb(var(--faint)); white-space: normal; word-break: keep-all; overflow-wrap: normal; }
-        .doc-row.is-stale > td { background: rgb(var(--warn) / 0.06); }
+        .doc-row.is-stale > td { background: rgb(var(--warn) / 0.03); }
+        /* the wash sits under the pill → a --line border fades into it */
+        .doc-row.is-stale .doc-stage-pill { border-color: rgb(var(--dim) / 0.6); }
         .doc-age-flag { font-size: var(--fs-meta); font-weight: 600; color: rgb(var(--warn)); font-family: 'Pretendard Variable', Pretendard, ui-sans-serif, system-ui, sans-serif; }
         /* .card overflow:hidden = a scroll container → traps the rail's sticky in the card · clip trims the corners only, sticky stays viewport-relative */
         .card.doc-list-card:not(:has(.popover-panel)) { overflow: clip; }
+        /* Retry hands focus here via scrollIntoView(start) → the margin keeps the page header in view instead of a jump */
+        .card.doc-list-card { scroll-margin-top: 96px; }
+        /* programmatic focus after a mouse Retry misses :focus-visible → the shared ring, drawn inside the clipped card */
+        .card.doc-list-card:focus { outline: var(--focus-ring-width) solid rgb(var(--focus-ring)); outline-offset: calc(-1 * var(--focus-ring-width)); }
         .doc-open-summary { border-bottom: 1px solid rgb(var(--line)); }
         @media (min-width: 1280px) { .doc-open-summary { border-bottom: 0; border-left: 1px solid rgb(var(--line)); } }
-        .doc-open-summary-group { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 12px; margin: 0; font-size: var(--fs-meta); }
-        .doc-open-summary-group dt { color: rgb(var(--dim)); font-weight: 600; }
-        .doc-open-summary-group dd { margin: 0; color: rgb(var(--ink)); }
-        .doc-open-summary-group dd.is-stale { color: rgb(var(--warn)); font-weight: 600; }
+        .doc-open-summary-block { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 8px; }
+        .doc-open-summary-heading { margin: 0; font-size: var(--fs-meta); font-weight: 600; color: rgb(var(--dim)); }
+        .doc-open-summary-group { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px; margin: 0; font-size: var(--fs-meta); }
+        .doc-open-summary-group dt { color: rgb(var(--ink)); }
+        .doc-open-summary-group dd { margin: 0 8px 0 0; color: rgb(var(--ink)); font-family: 'JetBrains Mono', monospace; font-variant-numeric: tabular-nums; }
+        .doc-open-summary-group .is-stale { color: rgb(var(--warn)); font-weight: 600; }
+        @media (min-width: 1280px) {
+          .doc-open-summary .doc-open-summary-block { display: block; }
+          .doc-open-summary .doc-open-summary-heading { margin-bottom: 4px; }
+          .doc-open-summary .doc-open-summary-group { display: grid; grid-template-columns: minmax(0, 1fr) auto; column-gap: 12px; row-gap: 2px; }
+          .doc-open-summary .doc-open-summary-group dd { margin: 0; text-align: right; }
+          .doc-open-summary .doc-open-oldest { padding-inline: 0; justify-content: flex-start; text-align: left; white-space: normal; }
+        }
         .doc-open-summary-note { font-size: var(--fs-meta); color: rgb(var(--faint)); }
         .doc-stage-note { font-size: var(--fs-meta); color: rgb(var(--dim)); }
         .doc-stage-menu { position: absolute; top: calc(100% + 4px); left: 0; z-index: 5; display: flex; flex-direction: column; min-width: 148px; padding: 4px; background: rgb(var(--elev)); border: 1px solid rgb(var(--line)); border-radius: var(--radius-badge); box-shadow: 0 8px 20px rgb(0 0 0 / 0.35); }
@@ -1227,10 +1242,11 @@ function ScreenClaudedDocs(/* { onNav } */) {
 function DocHeaderActionsCD({ asOf, listState, onRefresh }) {
 	const { FreshnessStamp, RefreshButton } = window.UI;
 	const hasRead = asOf != null;
+	const freshness = getFreshnessInputCD(asOf, listState);
 
 	return (
 		<>
-			{hasRead && <FreshnessStamp {...getFreshnessInputCD(asOf, listState)} />}
+			{hasRead ? <FreshnessStamp {...freshness} /> : <ShellPageStateCD input={freshness} />}
 			<RefreshButton
 				isBusy={hasRead && listState.busy === true}
 				hasRead={hasRead}
@@ -1239,6 +1255,12 @@ function DocHeaderActionsCD({ asOf, listState, onRefresh }) {
 			/>
 		</>
 	);
+}
+
+// no stamp before a first read → the page hands the shell its loading or failed-first-read state itself
+function ShellPageStateCD({ input }) {
+	window.UI.useShellPageState(input);
+	return null;
 }
 
 // 서술 태그 전용 셀 — audience/format 칩을 제목 컬럼 밖에서 렌더.
@@ -1540,7 +1562,12 @@ function DocListCardCD({
 				{state.status === "ready" && rows.length > 0 && (
 					<div className="flex flex-col xl:flex-row-reverse xl:items-start">
 					{hasOpenSummary && (
-						<DocOpenSummaryCD summary={openSummary} isPartial={canLoadMore} onSelect={onSelect} />
+						<DocOpenSummaryCD
+							summary={openSummary}
+							isPartial={canLoadMore}
+							isLastKnown={state.error != null}
+							onSelect={onSelect}
+						/>
 					)}
 					{/* own x-scroll → a table wider than its column scrolls here instead of running under the sticky rail */}
 					<div className="min-w-0 flex-1 overflow-x-auto">
@@ -1809,28 +1836,39 @@ function DocListCardCD({
 }
 
 // Pipeline shape at a glance — a right rail from xl, a one-line strip above the table below it.
-function DocOpenSummaryCD({ summary, isPartial, onSelect }) {
+// A failed refresh keeps the held counts → they read as Last known, like the verdict above them.
+function DocOpenSummaryCD({ summary, isPartial, isLastKnown = false, onSelect }) {
 	const { oldest } = summary;
 	return (
 		<aside
 			className="doc-open-summary flex flex-wrap items-center gap-x-6 gap-y-2 px-4 py-2 xl:flex-col xl:items-stretch xl:w-[200px] xl:shrink-0 xl:sticky xl:top-6 xl:py-3"
-			aria-label="Open documents summary">
-			<dl className="doc-open-summary-group">
-				<dt>Open by stage</dt>
-				{summary.stages.map((stage) => (
-					<dd key={stage.value}>
-						{stage.label} <span className="font-mono">{formatIntCD(stage.count)}</span>
-					</dd>
-				))}
-			</dl>
-			<dl className="doc-open-summary-group">
-				<dt>Age</dt>
-				{AGE_BUCKETS_CD.map((bucket) => (
-					<dd key={bucket.key} className={bucket.key === "stale" && summary.buckets.stale > 0 ? "is-stale" : undefined}>
-						{bucket.label} <span className="font-mono">{formatIntCD(summary.buckets[bucket.key])}</span>
-					</dd>
-				))}
-			</dl>
+			aria-label={isLastKnown ? "Open documents summary, last known" : "Open documents summary"}>
+			{isLastKnown && <span className="doc-open-summary-note">Last known</span>}
+			<div className="doc-open-summary-block">
+				<h2 className="doc-open-summary-heading">Open by stage</h2>
+				<dl className="doc-open-summary-group">
+					{summary.stages.map((stage) => (
+						<React.Fragment key={stage.value}>
+							<dt>{stage.label}</dt>
+							<dd>{formatIntCD(stage.count)}</dd>
+						</React.Fragment>
+					))}
+				</dl>
+			</div>
+			<div className="doc-open-summary-block">
+				<h2 className="doc-open-summary-heading">Age</h2>
+				<dl className="doc-open-summary-group">
+					{AGE_BUCKETS_CD.map((bucket) => {
+						const staleClass = bucket.key === "stale" && summary.buckets.stale > 0 ? "is-stale" : undefined;
+						return (
+							<React.Fragment key={bucket.key}>
+								<dt className={staleClass}>{bucket.label}</dt>
+								<dd className={staleClass}>{formatIntCD(summary.buckets[bucket.key])}</dd>
+							</React.Fragment>
+						);
+					})}
+				</dl>
+			</div>
 			{oldest && (
 				<button type="button" className="btn ghost sm doc-open-oldest" onClick={() => onSelect(oldest.id)}>
 					{`Oldest open #${oldest.id} · ${getAgeLabelCD(oldest.days)}`}
