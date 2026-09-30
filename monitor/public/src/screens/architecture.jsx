@@ -835,7 +835,7 @@ function ScreenArchitecture(
 
 				<PartHealthBlockAR
 					partRows={healthPartRows}
-					attentionEmpty={getAttentionEmptyAR(healthPartRows, healthPending, healthStoreErrors.length)}
+					attentionEmpty={getAttentionEmptyAR(healthPartRows, healthPending, partFreshness)}
 					freshness={partFreshness}
 					nodeIndex={nodeIndex}
 					onSelectNode={handleSelectNode}
@@ -2468,11 +2468,14 @@ function getMapCopyNoteAR(diagState) {
 	return "Last good copy — the latest map read failed";
 }
 
-// the all-clear is a verdict — before any part is judged the column says why it is empty
-function getAttentionEmptyAR(partRows, isBusy, errorCount) {
+// the all-clear is a verdict on the rows' own freshness — a warm-error re-read keeps status ready, so only the verdict sees it
+function getAttentionEmptyAR(partRows, isBusy, freshness) {
 	if (isBusy) return "Checking part health…";
-	if (partRows.some((row) => row.tone)) return errorCount > 0 ? "Last known: no part needed attention" : "No part needs attention";
-	return errorCount > 0 ? "Couldn't read part health" : "Part health not read yet";
+	if (partRows.some((row) => row.tone)) {
+		const verdict = window.UI.getFreshnessVerdict({ ...freshness, tone: "ok" });
+		return verdict.tone === "ok" ? "No part needs attention" : "Last known: no part needed attention";
+	}
+	return window.UI.getRegionSummary(freshness.regions).failedCount > 0 ? "Couldn't read part health" : "Part health not read yet";
 }
 
 // 'Not loaded' (no verdict arrived) never shares a label with 'No data' (a verdict of absence).

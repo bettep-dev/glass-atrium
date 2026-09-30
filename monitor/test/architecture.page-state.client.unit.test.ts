@@ -21,6 +21,12 @@ interface RegionState {
   busy: boolean;
 }
 
+interface HealthFreshness {
+  at: string | null;
+  regions: RegionState[];
+  now: number;
+}
+
 interface PageFailure {
   sources: string[];
   error: string;
@@ -57,7 +63,8 @@ interface PageStateSandbox {
   ) => { at: string | null; regions: RegionState[] };
   getFlowPeerLabelAR: (flow: Flow, direction: "in" | "out", nodeIndex: Map<string, { label: string }>) => string;
   getPartHealthGroupsAR: (partRows: HealthRow[]) => { attention: HealthRow[]; rest: HealthRow[]; unloaded: HealthRow[] };
-  getAttentionEmptyAR: (partRows: HealthRow[], busy: boolean, errored: number) => string;
+  getAttentionEmptyAR: (partRows: HealthRow[], busy: boolean, freshness: HealthFreshness) => string;
+  getPartStatusAR: (row: HealthRow & { statusLabel: string }, freshness: HealthFreshness) => { tone: string | null; text: string };
   getPartBoxAR: (row: HealthRow, nodeIndex: Map<string, { label: string }>) => { nodeId: string; label: string } | null;
   getPartCauseAR: (facts: Record<string, unknown>) => string | null;
   getDrillDaemonAR: (partRows: DaemonPartRow[], unscopedId: string) => string | null;
@@ -225,20 +232,38 @@ test("the part health block holds every part once — flagged, answered and not-
       assert.ok(rank(group[i - 1].tone) <= rank(group[i].tone), `${group[i - 1].id} before ${group[i].id} breaks worst-first`);
 });
 
-describe("the empty Needs attention column says why it is empty, and an all-clear over a failed read is last known", () => {
+describe("the empty Needs attention column says why it is empty, and its all-clear reads Last known exactly when the part rows do", () => {
+  const now = Date.parse("2026-01-10T12:00:00.000Z");
+  const readAt = new Date(now - 60_000).toISOString();
+  const held: RegionState = { status: "ready", data: { ok: true }, error: null, busy: false };
+  // a warm error keeps its held data and status 'ready' — only the error field records the failed re-read
+  const warmError: RegionState = { ...held, error: "HTTP 500" };
+  const down: RegionState = { status: "error", data: null, error: "HTTP 500", busy: false };
   const judged = [healthRow("a", "ok"), healthRow("b", null)];
   const unjudged = [healthRow("a", null)];
   const rows = [
-    { name: "a read in flight is still checking", partRows: judged, busy: true, errored: 1, expected: /^Checking/ },
-    { name: "an all-clear under a failed health read is last known", partRows: judged, busy: false, errored: 1, expected: /^Last known/ },
-    { name: "an all-clear with every store read is a plain all-clear", partRows: judged, busy: false, errored: 0, expected: /^No part needs attention$/ },
-    { name: "no verdict and a failed read says the read failed", partRows: unjudged, busy: false, errored: 2, expected: /^Couldn't read part health$/ },
-    { name: "no verdict and no failure says it is not read yet", partRows: unjudged, busy: false, errored: 0, expected: /^Part health not read yet$/ },
+    { name: "a read in flight is still checking", partRows: judged, busy: true, at: readAt, regions: [down], expected: /^Checking/ },
+    { name: "an all-clear under a warm-error re-read is last known", partRows: judged, busy: false, at: readAt, regions: [warmError, held], expected: /^Last known/ },
+    { name: "an all-clear under a cold store failure is last known", partRows: judged, busy: false, at: readAt, regions: [down, held], expected: /^Last known/ },
+    { name: "an all-clear older than the stale threshold is last known", partRows: judged, busy: false, at: new Date(now - 10 * 60_000).toISOString(), regions: [held], expected: /^Last known/ },
+    { name: "an all-clear with every store freshly read is a plain all-clear", partRows: judged, busy: false, at: readAt, regions: [held, held], expected: /^No part needs attention$/ },
+    { name: "no verdict and a failed read says the read failed", partRows: unjudged, busy: false, at: null, regions: [down, down], expected: /^Couldn't read part health$/ },
+    { name: "no verdict and no failure says it is not read yet", partRows: unjudged, busy: false, at: null, regions: [held], expected: /^Part health not read yet$/ },
   ];
   for (const row of rows)
     test(row.name, () => {
-      assert.match(sandbox.getAttentionEmptyAR(row.partRows, row.busy, row.errored), row.expected);
+      assert.match(sandbox.getAttentionEmptyAR(row.partRows, row.busy, { at: row.at, regions: row.regions, now }), row.expected);
     });
+
+  test("the all-clear and an ok part row agree on Last known for every settled read", () => {
+    const okRow = { ...healthRow("a", "ok"), statusLabel: "Healthy" };
+    for (const row of rows.filter((candidate) => !candidate.busy && candidate.partRows === judged)) {
+      const freshness = { at: row.at, regions: row.regions, now };
+      const text = sandbox.getAttentionEmptyAR(judged, false, freshness);
+      const rowText = sandbox.getPartStatusAR(okRow, freshness).text;
+      assert.strictEqual(text.startsWith("Last known"), rowText.startsWith("Last known"), `${row.name}: "${text}" vs "${rowText}"`);
+    }
+  });
 });
 
 test("a part names the map box it is bound to, and an unbound part names none", () => {
