@@ -150,7 +150,7 @@ test("status folds render open while their detail breakdowns start collapsed", a
 test("paired cards sit side by side in one split row", async () => {
   const { tree } = await renderOutcomesScreen(0);
   const rows = [
-    { name: "per-agent table beside Reporting health", ratio: "split-row--7-5", titles: ["Failed or blocked by agent", "Reporting health"] },
+    { name: "per-agent table beside Reporting health", ratio: "split-row--1-1", titles: ["Failed or blocked by agent", "Reporting health"] },
     { name: "check results beside the crosstab", ratio: "split-row--1-1", titles: ["Automatic check results", "Confident but failed"] },
   ];
 
@@ -160,6 +160,12 @@ test("paired cards sit side by side in one split row", async () => {
     assert.ok(pair, row.name);
     assert.equal(pair.children.filter((child) => typeof child !== "string").length, 2, `${row.name}: exactly two columns`);
   }
+
+  // the short per-agent table rides as a sticky rail beside the taller Reporting health stack
+  const rails = findNodes(tree, (n) => n.type === "SplitColumn" && n.props.isRail === true);
+  assert.equal(rails.length, 1, "one rail column");
+  assert.ok(collectText(rails[0]).includes("Failed or blocked by agent"), "the rail holds the per-agent table");
+  assert.ok(!collectText(rails[0]).includes("Reporting health"), "Reporting health stays in the other column");
 });
 
 // component nodes keep their name as type; the region's card is the first host element beneath them

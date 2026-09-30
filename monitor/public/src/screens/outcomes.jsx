@@ -741,8 +741,11 @@ function ScreenOutcomes({ onNav }) {
       </div>
 
       {/* Reporting-trust signals are status → stay open; only the breakdown (daily chart, budget-kill list) folds into detail. */}
-      <window.UI.SplitRow ratio="7:5" className="mt-4">
-        <AgentFailureTableO state={analyticsState} onRetry={triggerRefresh} shared={sharedFailure}/>
+      {/* 1:1 + rail: the short per-agent table stays in view beside the taller Reporting health stack instead of leaving a ~500px hole under a wide card */}
+      <window.UI.SplitRow ratio="1:1" className="mt-4">
+        <window.UI.SplitColumn isRail>
+          <AgentFailureTableO state={analyticsState} onRetry={triggerRefresh} shared={sharedFailure}/>
+        </window.UI.SplitColumn>
         <window.UI.Disclosure kind="status" title="Reporting health" sub={reportingHealthSummaryO(channelLivenessState)}>
           <AttributionHealthCard state={attributionState} period={analyticsPeriod} onRetry={triggerRefresh} shared={sharedFailure}/>
           <ChannelLivenessCard state={channelLivenessState} onRetry={triggerRefresh} shared={sharedFailure}/>
