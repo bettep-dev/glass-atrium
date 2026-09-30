@@ -1515,6 +1515,9 @@ function buildModelCostRows(rows) {
 // C2 결정(차트→테이블 전환 KEEP)으로 ModelCostChart / ModelCostTooltipC 제거 — 모델별 비용은
 // ModelCostBody 테이블이 담당(share 막대 스캔 가능). Recharts 는 다른 차트에서 계속 사용.
 
+// the hit rate measures cache reads → drawn in the Cache read category tone, no extra hue in the card
+const CACHE_HIT_LINE_COLOR = `rgb(var(${TOKEN_CATEGORIES.find((c) => c.key === 'cache_read_tokens').colorVar}))`;
+
 function CacheHitBody({ state, days, failures, onRetry }) {
   const { getRegionView, LoadingPlaceholder, RegionFailure } = window.UI;
 
@@ -1652,9 +1655,9 @@ function CacheHitChart({ rows, yDomain = [0, 100] }) {
         <Line
           type="linear"
           dataKey="rate_pct"
-          stroke="rgb(var(--info))"
+          stroke={CACHE_HIT_LINE_COLOR}
           strokeWidth={2}
-          dot={{ r: 2.5, fill: 'rgb(var(--info))', stroke: 'none' }}
+          dot={{ r: 2.5, fill: CACHE_HIT_LINE_COLOR, stroke: 'none' }}
           activeDot={{ r: 4 }}
           connectNulls={false}
           isAnimationActive={false}
@@ -2102,10 +2105,11 @@ function getParseErrorChartRows(rows) {
 const PARSE_ERROR_THRESHOLD_LABEL = `Threshold (${PARSE_ERROR_CRIT_THRESHOLD * 100}% of entries)`;
 
 // Legend ↔ chart share these → the swatches cannot drift from the bars and line
+// threshold shares the crit tone → the line and the days that cross it read as one alarm
 const PARSE_ERROR_COLOR = {
   bar: 'rgb(var(--accent) / 0.65)',
   critBar: 'rgb(var(--crit) / 0.85)',
-  threshold: 'rgb(var(--warn))',
+  threshold: 'rgb(var(--crit))',
 };
 
 function ParseErrorLegendC({ hasCritDay }) {
