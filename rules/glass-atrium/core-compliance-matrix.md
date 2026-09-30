@@ -89,7 +89,7 @@ Each file below is inherited on its own condition. DEV is the common carrier, bu
 | `scoped/shared-testing.md` | DEV · META † · glass-atrium-qa-code-reviewer |
 | `scoped/shared-type-safety.md` | DEV · META † |
 | `scoped/shared-design-token-consumption.md` | UI-emitting DEV subset ‡ |
-| `rules/glass-atrium/shared-self-improve-hygiene.md` | ORCHESTRATOR on a path-glob match § · autoagent-touching DEV subset § |
+| `rules/glass-atrium/shared-self-improve-hygiene.md` | ORCHESTRATOR on a path-glob match § · change-scope DEV subset § |
 | `scoped/shared-hook-capability-contract.md` | hook-authoring DEV · hook-reviewing QA ¶ |
 | `scoped/shared-naming.md` | DEV · glass-atrium-qa-code-reviewer |
 | `scoped/shared-code-structure.md` | DEV · glass-atrium-qa-code-reviewer |
@@ -253,7 +253,7 @@ Rows are grouped by tier: Tier 1 first, then Tier 2, then Tier 3.
 
 > ‡ DEV column = the UI-emitting subset: glass-atrium-dev-front · glass-atrium-dev-react · glass-atrium-dev-angular · glass-atrium-dev-android · glass-atrium-dev-gsap · glass-atrium-dev-animator. The other DEV agents emit no web token markup (glass-atrium-dev-swift emits native SwiftUI). The file's header binds on a turn emitting UI markup, styling or animation, not on this roster.
 
-> § DEV column = the autoagent-touching subset: a DEV agent whose change scope includes `~/.glass-atrium/autoagent/` paths or the self-improvement launchd configuration (typically glass-atrium-dev-shell · glass-atrium-dev-python · glass-atrium-dev-node). ORCHESTRATOR column = loaded only on a matching Read — `### Membership vs. Delivery (per tier)` → **Path-scoped delivery**. Scope declaration: `rules/glass-atrium/shared-self-improve-hygiene.md` header.
+> § DEV column = the change-scope subset: the DEV agents (typically glass-atrium-dev-shell · glass-atrium-dev-python · glass-atrium-dev-node) whose change scope includes `autoagent/` paths, the self-improvement launchd configuration, the agent-lifecycle Python package (`scripts/agent_lifecycle/`), the compliance-matrix validator hook (`hooks/validate-compliance-matrix.sh`) or the launchd library (`lib/ga-launchd.sh`). ORCHESTRATOR column = loaded only on a matching Read — `### Membership vs. Delivery (per tier)` → **Path-scoped delivery**. Scope declaration: `rules/glass-atrium/shared-self-improve-hygiene.md` header.
 
 > ¶ DEV + QA columns = hook authoring and hook review only: DEV agents that write or modify hooks under `~/.glass-atrium/hooks/`, plus glass-atrium-qa-code-reviewer reviewing hook changes and glass-atrium-qa-debugger analysing hook failures. ALL and ORCHESTRATOR do not load it; the orchestrator delegates hook work. Scope declaration: `scoped/shared-hook-capability-contract.md` header.
 

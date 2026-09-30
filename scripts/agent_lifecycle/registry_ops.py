@@ -117,8 +117,11 @@ SCOPE_SHARED_RULE_FILES: dict[str, tuple[str, ...]] = {
 _HYGIENE_CONDITION = {
     "file": f"{_GA_RULES}shared-self-improve-hygiene.md",
     "when": (
-        "the change scope includes ~/.glass-atrium/autoagent/ paths or the "
-        "self-improvement launchd configuration"
+        "the change scope includes autoagent/ paths, the self-improvement "
+        "launchd configuration, the agent-lifecycle Python package "
+        "(scripts/agent_lifecycle/), the compliance-matrix validator hook "
+        "(hooks/validate-compliance-matrix.sh) or the launchd library "
+        "(lib/ga-launchd.sh)"
     ),
 }
 _HOOK_AUTHORING_CONDITION = {
