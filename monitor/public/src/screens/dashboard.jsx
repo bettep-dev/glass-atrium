@@ -21,13 +21,14 @@ const UPDATE_STATUS_ENDPOINT = '/api/dashboard/update-status';
 //   decoupled job 이 나중에 덮어쓴다. 버전 라벨로 렌더하면 'pending' 이라는 버전이 있는 것처럼 읽힌다.
 const UPDATE_PENDING_VERSION = 'pending';
 
-// one endpoint per region → a Retry reloads its own region; the wave reads all five once, and UpdateBadge also polls updateJob
+// one endpoint per region → a Retry reloads its own region; the wave reads each once, and UpdateBadge also polls updateJob
 const DASH_REGION_URLS = {
   cost: '/api/cost/kpi',
   agents: '/api/agents/summary?days=7&order=runs&limit=1',
   outcomes: '/api/outcomes/cross-analysis?days=7&prior_window=1',
   update: UPDATE_STATUS_ENDPOINT,
   updateJob: UPDATE_JOB_ENDPOINT,
+  spendDays: '/api/dashboard/cost-timeseries?days=7',
 };
 const DASH_WAVE_REGIONS = Object.keys(DASH_REGION_URLS);
 // shell-polled, not a DASH_REGION_URLS entry — its re-read is the shell's harness poll
@@ -51,6 +52,7 @@ function ScreenDashboard({ onNav, harness, onRetryHarness }) {
   const [outcomesState,  setOutcomesState]  = useStateD(INITIAL_REGION_STATE);
   const [updateState,    setUpdateState]    = useStateD(INITIAL_REGION_STATE);
   const [updateJobState, setUpdateJobState] = useStateD(INITIAL_REGION_STATE);
+  const [spendDaysState, setSpendDaysState] = useStateD(INITIAL_REGION_STATE);
 
   const [refreshTick, setRefreshTick] = useStateD(0);
   // last wave that settled with ≥1 successful read → kept across waves, never advanced by an all-failed wave
@@ -62,6 +64,7 @@ function ScreenDashboard({ onNav, harness, onRetryHarness }) {
   const loadRegion = useCallbackD((region) => {
     const setters = {
       cost: setCostState, agents: setAgentsState, outcomes: setOutcomesState, update: setUpdateState, updateJob: setUpdateJobState,
+      spendDays: setSpendDaysState,
     };
     const requests = requestsRef.current;
     requests[region]?.abort();
@@ -115,7 +118,7 @@ function ScreenDashboard({ onNav, harness, onRetryHarness }) {
     staleMs: UPDATE_STALE_MS,
   }).kind;
 
-  const waveStates = [costState, agentsState, outcomesState, updateState];
+  const waveStates = [costState, agentsState, outcomesState, updateState, spendDaysState];
   const isWaveBusy = getRegionSummary(waveStates).isBusy;
   const alarms = buildAlarms({ harness, costState, installKind });
   const alarmReadiness = getAlarmReadiness({ harness, costState, updateState });
@@ -138,6 +141,12 @@ function ScreenDashboard({ onNav, harness, onRetryHarness }) {
         .dash-tile-hint { min-height: calc(var(--fs-meta) * 1.4 * 2); line-height: 1.4; }
         .dash-tile-detail { min-height: calc(var(--fs-body) * 1.5); }
         /* two columns (xl) → an even count puts two rows on the bottom line; both drop the hairline, not only the last */
+        .dash-strip-track { height: 4rem; }
+        .dash-strip-bar { background: currentColor; border-radius: 2px; }
+        /* today is still accruing → an outlined bar, never a filled one that reads as a closed day */
+        .dash-strip-partial { background: transparent; border: 1px dashed currentColor; }
+        .dash-result-row { display: grid; grid-template-columns: 9rem 1fr 4.5rem; align-items: center; gap: 0.5rem; }
+        .dash-result-fill { height: 0.5rem; background: currentColor; border-radius: 2px; }
         @media (min-width: 1280px) { .dash-alarm-grid > .alarm-row:nth-child(odd):nth-last-child(2) { border-bottom: none; } }
       `}</style>
 
@@ -170,6 +179,7 @@ function ScreenDashboard({ onNav, harness, onRetryHarness }) {
           onRefetchJob={refetchUpdateJob}
         />
         <StatusBand tiles={tiles} onNav={onNav} onRetry={retryTile} sharedSources={sharedFailure?.sources ?? NO_SHARED_SOURCES}/>
+        <WeekRow spendState={spendDaysState} outcomesState={outcomesState} onRetrySpend={() => loadRegion('spendDays')}/>
       </div>
     </div>
   );
@@ -376,6 +386,94 @@ function StatusTileValue({ tile }) {
       </div>
       {tile.trend && <div className="fs-meta text-dim">{tile.trend}</div>}
     </div>
+  );
+}
+
+// the week behind the triage band → each half states its own span (the strip 7 days, the results 7 days + today)
+function WeekRow({ spendState, outcomesState, onRetrySpend }) {
+  return (
+    <div className="grid grid-cols-1 xl:grid-cols-2 gap-card">
+      <WeekPanel id="dash-week-spend" title="Spend per day" state={spendState} source="daily spend" onRetry={onRetrySpend}
+        render={(data) => <SpendStrip strip={buildSpendStrip(data.points, getTodayIn(data.timezone))}/>}/>
+      <WeekPanel id="dash-week-results" title="This week's task results" state={outcomesState} source="task results"
+        render={(data) => <ResultPanel panel={buildResultPanel(data)}/>}/>
+    </div>
+  );
+}
+
+// a panel without onRetry shares its source with a tile → the tile speaks for the failure, the panel only points to it
+function WeekPanel({ id, title, state, source, onRetry, render }) {
+  const { LoadingPlaceholder, RetryButton, getErrorCopy, getRegionView } = window.UI;
+  const view = getRegionView(state);
+  return (
+    <section id={id} className="card p-3 flex flex-col gap-2" aria-labelledby={`${id}-title`}
+      aria-busy={state.busy ? 'true' : undefined}>
+      <h2 id={`${id}-title`} className="fs-meta text-dim uppercase tracking-wide">{title}</h2>
+      {view === 'loading' && <LoadingPlaceholder label={title.toLowerCase()}/>}
+      {view === 'error' && !onRetry && <p className="fs-meta text-dim">Not loaded — see the Task results tile.</p>}
+      {view === 'error' && onRetry && (
+        <>
+          <p className="fs-body">{getErrorCopy(state.error, source).sentence}</p>
+          <RetryButton onRetry={onRetry} isBusy={state.busy} focusTargetId={id}/>
+        </>
+      )}
+      {view === 'ready' && render(state.data)}
+    </section>
+  );
+}
+
+function SpendStrip({ strip }) {
+  if (strip.bars.length === 0) return <p className="fs-meta text-dim">No spend recorded in the last 7 days.</p>;
+  const max = Math.max(...strip.bars.map((bar) => bar.cost)) || 1;
+  const hasPartial = strip.bars.some((bar) => bar.isPartial);
+  return (
+    <>
+      <p className="fs-meta text-dim">{strip.span}{hasPartial ? ' · today is still accruing' : ''}</p>
+      <ol className="grid grid-cols-7 gap-1" aria-label={`Spend per day, ${strip.span}`}>
+        {strip.bars.map((bar) => (
+          <li key={bar.date} className="flex flex-col items-center gap-1 min-w-0">
+            <span className="fs-meta font-mono whitespace-nowrap">{window.UI.formatUsdCompact(bar.cost)}</span>
+            <div className="dash-strip-track w-full flex items-end text-info" aria-hidden="true">
+              <div className={`w-full ${bar.isPartial ? 'dash-strip-partial' : 'dash-strip-bar'}`}
+                style={{ height: `${Math.max(2, (bar.cost / max) * 100)}%` }}/>
+            </div>
+            <span className="fs-meta text-dim whitespace-nowrap">{bar.isPartial ? 'Today, so far' : formatDay(bar.date)}</span>
+          </li>
+        ))}
+      </ol>
+    </>
+  );
+}
+
+const RESULT_ROW_META = {
+  done: { label: 'Done', tone: 'ok' },
+  done_with_concerns: { label: 'Done with caveats', tone: 'warn' },
+  fail: { label: 'Failed', tone: 'crit' },
+  blocked: { label: 'Blocked', tone: 'crit' },
+};
+
+function ResultPanel({ panel }) {
+  if (panel.writerTotal <= 0) return <p className="fs-meta text-dim">No reported outcomes, {panel.span}.</p>;
+  return (
+    <>
+      <p className="fs-meta text-dim" title={OUTCOME_COUNTING_NOTE}>
+        {panel.span} · {formatInt(panel.writerTotal)} reported outcomes, the tile's count
+      </p>
+      <ul className="flex flex-col gap-1.5">
+        {panel.rows.map((row) => {
+          const meta = RESULT_ROW_META[row.result] ?? { label: row.result, tone: 'info' };
+          return (
+            <li key={row.result} className="dash-result-row fs-body">
+              <span>{meta.label}</span>
+              <div aria-hidden="true">
+                <div className={`dash-result-fill text-${meta.tone}`} style={{ width: `${(row.count / panel.writerTotal) * 100}%` }}/>
+              </div>
+              <span className="font-mono text-right">{formatInt(row.count)}</span>
+            </li>
+          );
+        })}
+      </ul>
+    </>
   );
 }
 
@@ -913,6 +1011,35 @@ function getFreshnessInputD(settledAt, waveStates, harness) {
 function toHarnessRegion(harness) {
   if (!harness) return null;
   return { status: harness.status, busy: harness.status === 'loading', error: harness.error ?? null };
+}
+
+const RESULT_ORDER = Object.keys(RESULT_ROW_META);
+
+// same payload and same writer rule as the Task results tile → the panel's failed + blocked is the tile's breakage
+function buildResultPanel(data) {
+  const byResult = new Map((data?.by_result ?? []).map((row) => [row.result, row]));
+  const results = [...RESULT_ORDER, ...[...byResult.keys()].filter((result) => !RESULT_ORDER.includes(result))];
+  const rows = results.filter((result) => byResult.has(result))
+    .map((result) => ({ result, count: window.UI.getWriterCount(byResult.get(result)) }));
+  const start = data?.prior_window?.period_end;
+  return { rows, writerTotal: window.UI.getWriterTotal(data), span: start ? `${formatDay(start)} – today` : 'Last 7 days and today' };
+}
+
+/** @param today - YYYY-MM-DD in the series' own timezone; the point on that day is still accruing */
+function buildSpendStrip(points, today) {
+  const bars = (points ?? []).map((point) => ({ date: point.date, cost: Number(point.cost_usd) || 0, isPartial: point.date === today }));
+  if (bars.length === 0) return { bars, span: null };
+  const last = bars[bars.length - 1];
+  return { bars, span: `${formatDay(bars[0].date)} – ${last.isPartial ? 'today' : formatDay(last.date)}` };
+}
+
+// the series' day boundary, not the browser's → en-CA formats as YYYY-MM-DD
+function getTodayIn(timeZone) {
+  try {
+    return new Intl.DateTimeFormat('en-CA', { timeZone }).format(new Date());
+  } catch {
+    return null;
+  }
 }
 
 // update-job poll → 실제 row (none 은 무 job).

@@ -194,3 +194,40 @@ test("mutationErrorMessage has no branch for the retired preview_failed code", (
   assert.strictEqual(dash.mutationErrorMessage(500, { error: "preview_failed", reason: "boom" }), "boom");
   assert.strictEqual(dash.mutationErrorMessage(500, { error: "preview_failed" }), "Request failed (HTTP 500).");
 });
+
+// --- The week row: 7-day Spend strip + this week's task results ---
+
+interface WeekRowHelpers {
+  buildResultPanel: (data: unknown) => { rows: Array<{ result: string; count: number }>; writerTotal: number; span: string };
+  buildSpendStrip: (points: unknown, today: string) => { bars: Array<{ date: string; cost: number; isPartial: boolean }>; span: string | null };
+  window: { UI: { resolveOutcomeRate: (data: unknown) => { breakage: number }; getWriterTotal: (data: unknown) => number } };
+}
+const week = dash as unknown as WeekRowHelpers;
+
+test("the results panel counts follow the tile's writer-emitted rule and name their window", () => {
+  const data = {
+    total: 120, reconstructed_total: 20,
+    by_result: [
+      { result: "done", count: 80, reconstructed_count: 15 },
+      { result: "fail", count: 25, reconstructed_count: 5 },
+      { result: "blocked", count: 10, reconstructed_count: 0 },
+      { result: "done_with_concerns", count: 5, reconstructed_count: 0 },
+    ],
+    prior_window: { period_start: "2026-09-16", period_end: "2026-09-23", total: 0, reconstructed_total: 0, by_result: [] },
+  };
+  const panel = week.buildResultPanel(data);
+  const countOf = (result: string) => panel.rows.find((row) => row.result === result)?.count ?? 0;
+  assert.equal(countOf("fail") + countOf("blocked"), week.window.UI.resolveOutcomeRate(data).breakage, "the panel's breakage is the tile's");
+  assert.equal(panel.rows.reduce((sum, row) => sum + row.count, 0), week.window.UI.getWriterTotal(data), "rows add up to the tile's denominator");
+  assert.match(panel.span, /09-23 – today/);
+});
+
+test("today's Spend point is marked partial and the strip names its span", () => {
+  const points = ["24", "25", "26", "27", "28", "29", "30"].map((day) => ({ date: `2026-09-${day}`, cost_usd: 10, session_count: 1 }));
+  const withToday = week.buildSpendStrip(points, "2026-09-30");
+  assert.deepEqual(withToday.bars.map((bar) => bar.isPartial), [false, false, false, false, false, false, true]);
+  assert.equal(withToday.span, "09-24 – today");
+  const endedYesterday = week.buildSpendStrip(points, "2026-10-01");
+  assert.equal(endedYesterday.bars.some((bar) => bar.isPartial), false, "a closed day is never partial");
+  assert.equal(endedYesterday.span, "09-24 – 09-30");
+});
