@@ -13,7 +13,6 @@ Extracts clean, readable markdown from web pages using the Defuddle CLI. Removes
 
 - Reading or analyzing any standard web page URL provided by the user
 - Fetching online documentation, articles, blog posts, or tutorials
-- Collecting source material for wiki raw/ ingestion
 - **Exclusions**: API endpoints returning JSON/XML, authenticated pages requiring login, POST requests, non-HTML resources (PDFs, images), pages requiring JavaScript rendering
 
 ## Core Process
@@ -53,7 +52,7 @@ defuddle parse <url> -p domain
 
 | Excuse | Rebuttal |
 |--------|----------|
-| "WebFetch works fine for this URL" | WebFetch returns a small model's answer to your prompt about the page, not the page itself — use Defuddle when you need the article text (quoting, close reading, wiki raw/ ingestion). |
+| "WebFetch works fine for this URL" | WebFetch returns a small model's answer to your prompt about the page, not the page itself — use Defuddle when you need the article text (quoting, close reading). |
 | "I'll just read the raw HTML and extract what I need" | Manual extraction wastes tool calls and tokens. Defuddle handles boilerplate removal in a single CLI invocation. |
 | "The page might need JavaScript rendering" | Most documentation and article pages serve content in initial HTML. Try Defuddle first; fall back to WebFetch only on empty results. |
 

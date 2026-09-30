@@ -178,7 +178,7 @@ Every delegation prompt MUST declare these fields, so a sub-agent never exhausts
 | `output_cap` | Final-output shape | the decision-relevant result inline; bulk to a file returned by path (`#### Resilient Workflow Authoring` → File-handoff) |
 | `reserved_output` | Emit tail reserved before work starts | Reserve-then-check (below) |
 | `scope_cap` | Explicit item/file count — no expansion without re-delegation | explicit item count |
-| `tool_preference` | Default extraction tool selection | defuddle-first for HTML ≥ 10KB · WebFetch for structured/API pages < 8KB |
+| `tool_preference` | Default extraction tool selection | HTML ≥ 10KB: WebFetch with a narrow prompt (Bash-holding agents: defuddle-first) · structured/API < 8KB: WebFetch |
 | `spawn_budget` | Max sub-agent invocations per Wave; hitting the ceiling → stop + escalate to user | glass-atrium-intel-researcher ~3 · glass-atrium-intel-planner ~2 · glass-atrium-qa-code-reviewer ~1 (per-wave soft budgets) |
 
 - **DEV `tool_budget`**: the `[SIZE-EST]` `tool_uses~=` estimate for the same delegation — sizing anchor and split thresholds are single-sited at `skills/glass-atrium-ops-delegation-contracts/references/delegation-size-discipline.md` (Empirical tool_use calibration · HARD SECONDARY).

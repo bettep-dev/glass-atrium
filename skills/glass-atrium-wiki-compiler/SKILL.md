@@ -1,6 +1,6 @@
 ---
 name: glass-atrium-wiki-compiler
-description: Convert raw/ source materials into wiki/notes/ markdown and sync via SQLite. Use when wiki compilation, raw document to notes conversion, incremental wiki build is needed. Do NOT use for web material collection (->glass-atrium-intel-researcher+defuddle), report writing (->glass-atrium-intel-reporter), Q&A queries (->glass-atrium-intel-researcher), index/master-index direct editing (-> T6 wiki-sync.sh), health check (-> separate skill).
+description: Convert raw/ source materials into wiki/notes/ markdown and sync via SQLite. Use when wiki compilation, raw document to notes conversion, incremental wiki build is needed. Do NOT use for web material collection (->glass-atrium-intel-researcher), report writing (->glass-atrium-intel-reporter), Q&A queries (->glass-atrium-intel-researcher), index/master-index direct editing (-> T6 wiki-sync.sh), health check (-> separate skill).
 ---
 
 > **Output language**: Preserve source language (D5). Frontmatter keys stay English; body stays in the source page's original language.
@@ -16,7 +16,7 @@ Converts raw/ source materials into `wiki/notes/` markdown through a narrow LLM 
 - New or modified raw/ files need conversion to wiki notes
 - Incremental wiki build after glass-atrium-intel-researcher collects new materials
 - Batch compilation of multiple raw files in a single pass
-- **Exclusions**: Web material collection (glass-atrium-intel-researcher+defuddle), report writing (glass-atrium-intel-reporter), Q&A queries (glass-atrium-intel-researcher), index/master-index editing (wiki-sync.sh), health check (separate skill)
+- **Exclusions**: Web material collection (glass-atrium-intel-researcher), report writing (glass-atrium-intel-reporter), Q&A queries (glass-atrium-intel-researcher), index/master-index editing (wiki-sync.sh), health check (separate skill)
 
 ## Quick Reference
 
@@ -163,7 +163,7 @@ One Read, one Write. No cross-reference. No wikilinks.
 
 | Role | Owner | Flow |
 |------|-------|------|
-| Source collection | glass-atrium-intel-researcher + WebFetch/defuddle | → `raw/` (flat, immutable, verbatim) |
+| Source collection | glass-atrium-intel-researcher + WebFetch | → `raw/` (flat, immutable, verbatim) |
 | Conversion | **glass-atrium-wiki-compiler** (Step 1) | `raw/` → `notes/` |
 | Indexing | `wiki-sync.sh` (T6) | `notes/` → `wiki.sqlite` + `master-index.md` + `topic-map.md` |
 | Query | `wiki-query.sh` (T5, FTS5+BM25) | `wiki.sqlite` → results |
