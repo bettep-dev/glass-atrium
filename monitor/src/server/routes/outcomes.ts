@@ -1122,7 +1122,6 @@ async function handleCrossAnalysis(
       }
     }
 
-    // Defensive enum filter — drop rows with unrecognized result/agent values.
     const byResult = toByResult(byResultRows);
     const byAgentTop10: OutcomeCrossAnalysisByAgent[] = byAgentRows.map((row) => ({
       agent: row.agent,
@@ -1222,7 +1221,6 @@ function toByResult(rows: readonly ByResultDbRow[]): OutcomeCrossAnalysisByResul
  * Per-result counts for the `days` window just before the current one, under the
  * current window's filters, poisoned exclusion and agent scope.
  * Totals derive from by_result — result is a DB enum, so the enum filter drops nothing.
- * @param filters - parsed filters with a bounded `days` (callers reject 'all')
  */
 async function getPriorWindow(
   filters: ParsedFilters & { days: number },
@@ -2197,17 +2195,17 @@ function buildWhereClause(
     fragments.push(Prisma.sql`poisoned_window = FALSE`);
   }
 
-  // Day window — Prisma.empty when 'all' (no time filter). The prior window's
-  // exclusive upper bound is the current window's inclusive lower bound → no gap, no overlap.
-  if (filters.days !== "all" && options?.isPriorWindow === true) {
-    const lowerBound = buildIntervalLiteral(filters.days * 2);
-    const upperBound = buildIntervalLiteral(filters.days);
-    fragments.push(
-      Prisma.sql`record_ts >= CURRENT_DATE - ${lowerBound} AND record_ts < CURRENT_DATE - ${upperBound}`,
-    );
-  } else if (filters.days !== "all") {
-    const intervalLiteral = buildIntervalLiteral(filters.days);
-    fragments.push(Prisma.sql`record_ts >= CURRENT_DATE - ${intervalLiteral}`);
+  // Day window — none when 'all'; the prior window ends (exclusive) where the current one starts → no gap, no overlap
+  if (filters.days !== "all") {
+    const currentStart = buildIntervalLiteral(filters.days);
+    if (options?.isPriorWindow === true) {
+      const priorStart = buildIntervalLiteral(filters.days * 2);
+      fragments.push(
+        Prisma.sql`record_ts >= CURRENT_DATE - ${priorStart} AND record_ts < CURRENT_DATE - ${currentStart}`,
+      );
+    } else {
+      fragments.push(Prisma.sql`record_ts >= CURRENT_DATE - ${currentStart}`);
+    }
   }
 
   if (filters.agent !== null) {
