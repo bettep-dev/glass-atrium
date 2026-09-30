@@ -244,29 +244,29 @@ test("a failed tile keeps its drill to the owning screen, whether it shows its o
 });
 
 const FAILED_TILE = {
-  id: "fleet", label: "Fleet", window: "7 d", status: "error", tone: "neutral", value: "—", hint: "",
+  id: "fleet", label: "Fleet", window: "7 d", status: "error", tone: "neutral", value: "—",
   region: "agents", source: "the fleet summary", error: "HTTP 500 Internal Server Error",
+  detail: "Couldn't load the fleet summary.", hint: "The server answered with an error.", canRetry: true,
   target: "agents", targetLabel: "Agents",
 };
 
-test("a failed tile shows the shared unavailable card, whose Retry reloads only that tile's region", () => {
+test("a failed tile states its error flat inside the tile, with one Retry that reloads only that tile's region", () => {
   const retried: string[] = [];
   const tree = render("StatusTile", { tile: FAILED_TILE, onNav: () => {}, onRetry: (region: string) => retried.push(region) });
-  const cards = findNodes(tree, (n) => n.props.atom === "RegionUnavailable");
-  assert.equal(cards.length, 1);
-  assert.equal(cards[0].props.source, "the fleet summary");
-  assert.equal(cards[0].props.error, "HTTP 500 Internal Server Error");
-  (cards[0].props.onRetry as () => void)();
+  assert.equal(findNodes(tree, (n) => /\b(sub-)?card\b/.test(classOf(n))).length, 1, "no card nests inside the tile");
+  assert.match(collectText(tree), /Couldn't load the fleet summary/, "the error sentence sits in the tile itself");
+  const retries = findNodes(tree, (n) => n.props.atom === "RetryButton");
+  assert.equal(retries.length, 1, "one Retry per failed tile");
+  (retries[0].props.onRetry as () => void)();
   assert.deepEqual(retried, ["agents"]);
-  assert.equal(findNodes(tree, (n) => n.type === "button").length, 0, "the card owns the tile's only Retry");
 });
 
 test("a failed tile's Retry shows itself in flight and hands focus to its own tile card on recovery", () => {
   for (const isBusy of [true, false]) {
     const tree = render("StatusTile", { tile: { ...FAILED_TILE, isBusy }, onNav: () => {}, onRetry: () => {} });
-    const [card] = findNodes(tree, (n) => n.props.atom === "RegionUnavailable");
-    assert.equal(card.props.isBusy, isBusy);
-    const targets = findNodes(tree, (n) => n.props.id === card.props.focusTargetId);
+    const [retry] = findNodes(tree, (n) => n.props.atom === "RetryButton");
+    assert.equal(retry.props.isBusy, isBusy);
+    const targets = findNodes(tree, (n) => n.props.id === retry.props.focusTargetId);
     assert.equal(targets.length, 1, "the focus target is the tile card that stays mounted");
     assert.ok(/\bcard\b/.test(classOf(targets[0])), classOf(targets[0]));
   }
@@ -275,6 +275,8 @@ test("a failed tile's Retry shows itself in flight and hands focus to its own ti
 test("a tile whose outage the page banner already carries stays one level: no nested card, no repeated error, no Retry", () => {
   const tree = render("StatusTile", { tile: FAILED_TILE, onNav: () => {}, onRetry: () => {}, isRetryShared: true });
   assert.equal(findNodes(tree, (n) => n.props.atom === "RegionUnavailable").length, 0, "the banner already states the error");
+  assert.doesNotMatch(collectText(tree), /Couldn't load/, "the tile does not repeat the banner's sentence");
+  assert.equal(findNodes(tree, (n) => n.props.atom === "RetryButton").length, 0, "the banner owns the only Retry");
   assert.equal(findNodes(tree, (n) => /\b(sub-)?card\b/.test(classOf(n))).length, 1, "only the tile itself is a card");
   assert.equal(findNodes(tree, (n) => n.type === "button").length, 0, "the banner owns the only Retry");
   assert.equal(collectText(findNodes(tree, (n) => n.props.atom === "KpiValue")[0]), "—", "the value slot keeps its unknown dash");

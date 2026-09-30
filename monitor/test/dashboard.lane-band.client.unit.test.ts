@@ -377,7 +377,7 @@ test("the outcome tile leads with the failed share and moves the verdict into it
   );
   assert.match(tile.value, /^20\.0%/, "the failed share is the headline");
   assert.equal(tile.badge, "Failures above alert line");
-  assert.match(String(tile.detail), /40 of 200 failed · alert at 5%/, "the failure alert line sits beside the failed count");
+  assert.match(String(tile.detail), /40 of 200 failed or blocked · alert at 5%/, "the detail names both results the share counts");
   assert.match(tile.hint, /5\.0% \(10\) finished with caveats · alert at 10%/, "the caveat alert line sits beside the caveat share");
   assert.doesNotMatch(tile.hint, /writer-emitted/, "the counting rule moves out of the visible hint");
   assert.match(String(tile.note), /writer-emitted/, "and into the tile's tooltip");
@@ -395,7 +395,6 @@ test("the spend tile leads with the judged pace — the larger of so-far and the
       "spend",
     );
     assert.match(String(tile.detail), row.lead, `${row.name}: the judged pace leads`);
-    assert.match(tile.hint, /so far/, `${row.name}: the so-far multiple is the secondary line`);
     assert.doesNotMatch(String(tile.detail), /so far/, `${row.name}: so-far never leads`);
   }
 });
@@ -412,7 +411,8 @@ test("the spend tile tones only on the pace verdict, never on the amount", () =>
     dash.buildTiles({ harness: HEALTHY, costState: kpi(9999, 20000), agentsState: LOADING, outcomesState: LOADING }),
     "spend",
   );
-  assert.equal(big.tone, "neutral", "a large but on-pace spend is not an alarm");
+  assert.equal(big.tone, "ok", "a large but on-pace spend reads normal, never an alarm");
+  assert.ok(big.badge, "the spend tile carries a status chip like the other tiles");
   const hot = tileOf(
     dash.buildTiles({ harness: HEALTHY, costState: kpi(3, 1), agentsState: LOADING, outcomesState: LOADING }),
     "spend",
@@ -664,8 +664,6 @@ test("the spend tile states its move against yesterday by this time from the she
     { name: "up on yesterday", today: 12, yesterday: 10, trend: /^Up 20% on \$10\.00 yesterday by this time$/ },
     { name: "down on yesterday", today: 5, yesterday: 20, trend: /^Down 75% on \$20\.00 yesterday by this time$/ },
     { name: "level with yesterday", today: 10, yesterday: 10, trend: /^Level with \$10\.00 yesterday by this time$/ },
-    { name: "no spend yesterday → no base", today: 4, yesterday: 0, trend: null },
-    { name: "no prior value", today: 4, yesterday: null, trend: null },
   ];
   for (const row of rows) {
     const harness = { ...HEALTHY, kpi: { today_cost_usd: row.today, yesterday_same_time_cost_usd: row.yesterday } };
@@ -673,11 +671,8 @@ test("the spend tile states its move against yesterday by this time from the she
       dash.buildTiles({ harness, costState: kpi(row.today, 10), agentsState: LOADING, outcomesState: LOADING }),
       "spend",
     );
-    if (row.trend) assert.match(String(tile.trend), row.trend, row.name);
-    else assert.equal(tile.trend ?? null, null, row.name);
+    assert.match(String(tile.trend), row.trend, row.name);
   }
-  const noKpi = tileOf(dash.buildTiles({ harness: HEALTHY, costState: kpi(4, 10), agentsState: LOADING, outcomesState: LOADING }), "spend");
-  assert.equal(noKpi.trend ?? null, null, "an unread kpi reading shows no trend");
 });
 
 test("the fleet tile fills its detail line with the failing streak, so a narrow tile is not left mostly empty", () => {
@@ -685,5 +680,64 @@ test("the fleet tile fills its detail line with the failing streak, so a narrow 
     const tile = fleetTile({ source: "loaded", suspended_count: 0, streak_count: streak });
     assert.match(String(tile.detail), new RegExp(`^${streak} on a failing streak`), `streak ${streak}`);
     assert.match(tile.hint, /12 agents/, `streak ${streak}: the hint keeps the fleet size`);
+  }
+});
+
+// --- Task results tile: the prior-window delta ---
+
+// current window starts where the prior one ends (server anchor) → 09-23..today against 09-16..09-22
+function outcomesWithPrior(current: unknown, prior: unknown): unknown {
+  const priorWindow = prior === null ? {} : { prior_window: { period_start: "2026-09-16", period_end: "2026-09-23", ...(prior as object) } };
+  return ready({ ...(current as object), ...priorWindow });
+}
+const CURRENT_20PCT = {
+  total: 200, reconstructed_total: 0,
+  by_result: [{ result: "fail", count: 30 }, { result: "blocked", count: 10 }, { result: "done", count: 160 }],
+};
+
+test("the outcome tile's delta compares failed-or-blocked shares and names both windows", () => {
+  const rows = [
+    { name: "share up", prior: { total: 100, reconstructed_total: 0, by_result: [{ result: "fail", count: 5 }, { result: "done", count: 95 }] }, trend: /^Up 15\.0 pts/ },
+    { name: "share down", prior: { total: 100, reconstructed_total: 0, by_result: [{ result: "blocked", count: 30 }, { result: "done", count: 70 }] }, trend: /^Down 10\.0 pts/ },
+    { name: "same share on half the count", prior: { total: 100, reconstructed_total: 0, by_result: [{ result: "fail", count: 20 }, { result: "done", count: 80 }] }, trend: /^Level/ },
+    { name: "prior reconstructed rows left out", prior: { total: 150, reconstructed_total: 50, by_result: [{ result: "fail", count: 30, reconstructed_count: 10 }, { result: "done", count: 120, reconstructed_count: 40 }] }, trend: /^Level/ },
+  ];
+  for (const row of rows) {
+    const tile = tileOf(dash.buildTiles({ harness: HEALTHY, costState: LOADING, agentsState: LOADING, outcomesState: outcomesWithPrior(CURRENT_20PCT, row.prior) }), "outcomes");
+    assert.match(String(tile.trend), row.trend, row.name);
+    assert.match(String(tile.trend), /since 09-23/, `${row.name}: names the current window`);
+    assert.match(String(tile.trend), /09-16 – 09-22/, `${row.name}: names the prior window, end inclusive`);
+  }
+});
+
+test("the outcome tile states why a prior-window comparison is missing", () => {
+  const none = tileOf(dash.buildTiles({ harness: HEALTHY, costState: LOADING, agentsState: LOADING, outcomesState: outcomesWithPrior(CURRENT_20PCT, null) }), "outcomes");
+  assert.equal(none.trend ?? null, null, "no prior window served → no trend line");
+  const thin = tileOf(dash.buildTiles({
+    harness: HEALTHY, costState: LOADING, agentsState: LOADING,
+    outcomesState: outcomesWithPrior(CURRENT_20PCT, { total: 1, reconstructed_total: 0, by_result: [{ result: "done", count: 1 }] }),
+  }), "outcomes");
+  assert.match(String(thin.trend), /too few.*09-16 – 09-22/, "a thin prior window names itself instead of a delta");
+});
+
+// --- Spend tile: one ratio, a named alarm basis, a stated day-over-day gap ---
+
+test("the spend tile states one ratio and names the basis of its alarm", () => {
+  const tile = tileOf(dash.buildTiles({ harness: HEALTHY, costState: kpi(3, 10, 8), agentsState: LOADING, outcomesState: LOADING }), "spend");
+  const text = `${tile.detail} ${tile.hint}`;
+  assert.equal((text.match(/\b\d+\.\d×/g) ?? []).length, 1, text);
+  assert.match(tile.hint, /alarm at 1\.25× the 7-day average/i);
+});
+
+test("the spend tile says why its day-over-day change is missing", () => {
+  const rows = [
+    { name: "harness KPI not read", kpi: null, trend: /unavailable/i },
+    { name: "yesterday's figure not read", kpi: { today_cost_usd: 5, yesterday_same_time_cost_usd: null }, trend: /unavailable/i },
+    { name: "nothing spent yesterday by now", kpi: { today_cost_usd: 5, yesterday_same_time_cost_usd: 0 }, trend: /no spend yesterday/i },
+    { name: "a comparand exists", kpi: { today_cost_usd: 5, yesterday_same_time_cost_usd: 4 }, trend: /^Up 25%/ },
+  ];
+  for (const row of rows) {
+    const tile = tileOf(dash.buildTiles({ harness: { ...HEALTHY, kpi: row.kpi }, costState: kpi(5, 10), agentsState: LOADING, outcomesState: LOADING }), "spend");
+    assert.match(String(tile.trend), row.trend, row.name);
   }
 });

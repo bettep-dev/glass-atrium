@@ -1,0 +1,1612 @@
+{
+ "/api/dashboard/kpi": {
+  "today_cost_usd": 1039.841812,
+  "yesterday_cost_usd": 1486.45237,
+  "yesterday_same_time_cost_usd": 992.132602,
+  "last_1h_fail_count": 0,
+  "fail_count_24h": 0,
+  "blocked_count_24h": 18,
+  "last_etl_at": "2026-09-30T09:57:37.000Z",
+  "today_session_count": 27,
+  "yesterday_session_count": 24,
+  "yesterday_same_time_session_count": 17,
+  "timezone": "UTC",
+  "day_bucket_timezone": "Asia/Seoul"
+ },
+ "/api/architecture/live": {
+  "computed_at": "2026-09-30T09:57:49.015Z",
+  "daemons": [
+   {
+    "daemon_name": "autoagent",
+    "effective_status": "ok",
+    "last_run_at": "2026-09-29T19:30:04.000Z",
+    "staleness_minutes": 867,
+    "node_ids": [
+     "autoagent_d",
+     "autoagent_loop_self",
+     "autoagent_ka",
+     "autoagent_fc"
+    ],
+    "expected_cadence_minutes": 1440
+   },
+   {
+    "daemon_name": "wiki",
+    "effective_status": "ok",
+    "last_run_at": "2026-09-29T19:50:29.000Z",
+    "staleness_minutes": 847,
+    "node_ids": [
+     "wiki_d",
+     "wiki_loop_self",
+     "wiki_ka",
+     "wiki_fc"
+    ],
+    "expected_cadence_minutes": 1440
+   },
+   {
+    "daemon_name": "daily-restart-autoagent",
+    "effective_status": "ok",
+    "last_run_at": "2026-09-29T20:30:05.000Z",
+    "staleness_minutes": 807,
+    "node_ids": [
+     "cron"
+    ],
+    "expected_cadence_minutes": 1440
+   },
+   {
+    "daemon_name": "daily-restart-wiki",
+    "effective_status": "ok",
+    "last_run_at": "2026-09-29T20:35:55.000Z",
+    "staleness_minutes": 801,
+    "node_ids": [
+     "cron"
+    ],
+    "expected_cadence_minutes": 1440
+   }
+  ],
+  "writers": [
+   {
+    "writer_name": "cost-tracker",
+    "dual_write_active": true,
+    "recent_failures_24h": 0
+   },
+   {
+    "writer_name": "agent-tracker",
+    "dual_write_active": true,
+    "recent_failures_24h": 0
+   },
+   {
+    "writer_name": "outcome-record",
+    "dual_write_active": true,
+    "recent_failures_24h": 0
+   },
+   {
+    "writer_name": "learning-aggregator",
+    "dual_write_active": true,
+    "recent_failures_24h": 0
+   },
+   {
+    "writer_name": "wiki-sync",
+    "dual_write_active": true,
+    "recent_failures_24h": 0
+   },
+   {
+    "writer_name": "autoagent",
+    "dual_write_active": true,
+    "recent_failures_24h": 0
+   }
+  ],
+  "recent_activity": {
+   "cost_events_last_hour": 532,
+   "agent_events_last_hour": 35,
+   "last_outcome_at": "2026-09-30T09:50:28.086Z"
+  },
+  "part_bindings": {
+   "pg": [
+    "pg_db"
+   ],
+   "browser": [
+    "doc_export"
+   ],
+   "daemon-cycle": [
+    "autoagent_d"
+   ],
+   "glass-atrium-wiki-curator": [
+    "wiki_d"
+   ],
+   "daily-restart-autoagent": [
+    "cron"
+   ],
+   "daily-restart-wiki": [
+    "cron"
+   ],
+   "hook-chain": [
+    "hook_pipeline"
+   ]
+  },
+  "governance": {
+   "absent": [],
+   "sourceMissing": false
+  }
+ },
+ "/api/health": {
+  "status": "ok",
+  "db": "open",
+  "browser": "ok",
+  "browser_checked_at": "2026-09-30T06:14:24.295Z",
+  "version": "1.0.1",
+  "timezone": "Asia/Seoul"
+ },
+ "/api/health/hook-chain": {
+  "events": [
+   {
+    "event": "SubagentStop",
+    "groups": [
+     {
+      "matcher": "",
+      "hooks": [
+       {
+        "command": "~/.glass-atrium/hooks/agent-tracker.sh",
+        "type": "command",
+        "timeout": null
+       }
+      ]
+     },
+     {
+      "matcher": "",
+      "hooks": [
+       {
+        "command": "~/.glass-atrium/hooks/post-edit-typecheck.sh",
+        "type": "command",
+        "timeout": null
+       }
+      ]
+     },
+     {
+      "matcher": "",
+      "hooks": [
+       {
+        "command": "~/.glass-atrium/hooks/track-outcome.sh",
+        "type": "command",
+        "timeout": null
+       }
+      ]
+     }
+    ]
+   },
+   {
+    "event": "SessionStart",
+    "groups": [
+     {
+      "matcher": "",
+      "hooks": [
+       {
+        "command": "~/.glass-atrium/hooks/inject-session-context.sh",
+        "type": "command",
+        "timeout": null
+       }
+      ]
+     },
+     {
+      "matcher": "",
+      "hooks": [
+       {
+        "command": "~/.glass-atrium/hooks/prune-security-warnings-state.sh",
+        "type": "command",
+        "timeout": null
+       }
+      ]
+     },
+     {
+      "matcher": "",
+      "hooks": [
+       {
+        "command": "~/.glass-atrium/hooks/prune-session-spawns.sh",
+        "type": "command",
+        "timeout": null
+       }
+      ]
+     },
+     {
+      "matcher": "",
+      "hooks": [
+       {
+        "command": "~/.glass-atrium/hooks/validate-compliance-matrix.sh",
+        "type": "command",
+        "timeout": null
+       }
+      ]
+     }
+    ]
+   },
+   {
+    "event": "Stop",
+    "groups": [
+     {
+      "matcher": "",
+      "hooks": [
+       {
+        "command": "~/.glass-atrium/hooks/advisory-preedit-facts.sh",
+        "type": "command",
+        "timeout": null
+       }
+      ]
+     },
+     {
+      "matcher": "",
+      "hooks": [
+       {
+        "command": "~/.glass-atrium/hooks/cost-tracker.sh",
+        "type": "command",
+        "timeout": null
+       }
+      ]
+     },
+     {
+      "matcher": "",
+      "hooks": [
+       {
+        "command": "~/.glass-atrium/hooks/post-edit-typecheck.sh",
+        "type": "command",
+        "timeout": null
+       }
+      ]
+     }
+    ]
+   },
+   {
+    "event": "SubagentStart",
+    "groups": [
+     {
+      "matcher": "",
+      "hooks": [
+       {
+        "command": "~/.glass-atrium/hooks/agent-tracker.sh",
+        "type": "command",
+        "timeout": null
+       }
+      ]
+     },
+     {
+      "matcher": "",
+      "hooks": [
+       {
+        "command": "~/.glass-atrium/hooks/inject-scope-rules.sh",
+        "type": "command",
+        "timeout": null
+       }
+      ]
+     },
+     {
+      "matcher": "",
+      "hooks": [
+       {
+        "command": "~/.glass-atrium/hooks/telemetry-activation.sh",
+        "type": "command",
+        "timeout": null
+       }
+      ]
+     },
+     {
+      "matcher": "",
+      "hooks": [
+       {
+        "command": "~/.glass-atrium/hooks/inject-scope-part-01.sh",
+        "type": "command",
+        "timeout": null
+       }
+      ]
+     },
+     {
+      "matcher": "",
+      "hooks": [
+       {
+        "command": "~/.glass-atrium/hooks/inject-scope-part-02.sh",
+        "type": "command",
+        "timeout": null
+       }
+      ]
+     },
+     {
+      "matcher": "",
+      "hooks": [
+       {
+        "command": "~/.glass-atrium/hooks/inject-scope-part-03.sh",
+        "type": "command",
+        "timeout": null
+       }
+      ]
+     },
+     {
+      "matcher": "",
+      "hooks": [
+       {
+        "command": "~/.glass-atrium/hooks/inject-scope-part-04.sh",
+        "type": "command",
+        "timeout": null
+       }
+      ]
+     },
+     {
+      "matcher": "",
+      "hooks": [
+       {
+        "command": "~/.glass-atrium/hooks/inject-scope-part-05.sh",
+        "type": "command",
+        "timeout": null
+       }
+      ]
+     },
+     {
+      "matcher": "",
+      "hooks": [
+       {
+        "command": "~/.glass-atrium/hooks/inject-scope-part-06.sh",
+        "type": "command",
+        "timeout": null
+       }
+      ]
+     },
+     {
+      "matcher": "",
+      "hooks": [
+       {
+        "command": "~/.glass-atrium/hooks/inject-scope-part-07.sh",
+        "type": "command",
+        "timeout": null
+       }
+      ]
+     },
+     {
+      "matcher": "",
+      "hooks": [
+       {
+        "command": "~/.glass-atrium/hooks/inject-scope-part-08.sh",
+        "type": "command",
+        "timeout": null
+       }
+      ]
+     },
+     {
+      "matcher": "",
+      "hooks": [
+       {
+        "command": "~/.glass-atrium/hooks/inject-scope-part-09.sh",
+        "type": "command",
+        "timeout": null
+       }
+      ]
+     },
+     {
+      "matcher": "",
+      "hooks": [
+       {
+        "command": "~/.glass-atrium/hooks/inject-scope-part-10.sh",
+        "type": "command",
+        "timeout": null
+       }
+      ]
+     },
+     {
+      "matcher": "",
+      "hooks": [
+       {
+        "command": "~/.glass-atrium/hooks/inject-scope-part-11.sh",
+        "type": "command",
+        "timeout": null
+       }
+      ]
+     },
+     {
+      "matcher": "",
+      "hooks": [
+       {
+        "command": "~/.glass-atrium/hooks/inject-scope-part-12.sh",
+        "type": "command",
+        "timeout": null
+       }
+      ]
+     }
+    ]
+   },
+   {
+    "event": "PreToolUse",
+    "groups": [
+     {
+      "matcher": "Agent",
+      "hooks": [
+       {
+        "command": "~/.glass-atrium/hooks/advisory-context-budget.sh",
+        "type": "command",
+        "timeout": null
+       }
+      ]
+     },
+     {
+      "matcher": "Agent",
+      "hooks": [
+       {
+        "command": "~/.glass-atrium/hooks/advisory-spawn-budget.sh",
+        "type": "command",
+        "timeout": null
+       }
+      ]
+     },
+     {
+      "matcher": "Agent",
+      "hooks": [
+       {
+        "command": "~/.glass-atrium/hooks/advisory-spawn-cost.sh",
+        "type": "command",
+        "timeout": null
+       }
+      ]
+     },
+     {
+      "matcher": "",
+      "hooks": [
+       {
+        "command": "~/.glass-atrium/hooks/advisory-subagent-budget.sh",
+        "type": "command",
+        "timeout": null
+       }
+      ]
+     },
+     {
+      "matcher": "Bash",
+      "hooks": [
+       {
+        "command": "~/.glass-atrium/hooks/block-dangerous-commands.sh",
+        "type": "command",
+        "timeout": null
+       }
+      ]
+     },
+     {
+      "matcher": "Write",
+      "hooks": [
+       {
+        "command": "~/.glass-atrium/hooks/block-doc-routing-leak.sh",
+        "type": "command",
+        "timeout": null
+       }
+      ]
+     },
+     {
+      "matcher": "Write",
+      "hooks": [
+       {
+        "command": "~/.glass-atrium/hooks/block-md-creation.sh",
+        "type": "command",
+        "timeout": null
+       }
+      ]
+     },
+     {
+      "matcher": "Bash",
+      "hooks": [
+       {
+        "command": "~/.glass-atrium/hooks/block-no-verify.sh",
+        "type": "command",
+        "timeout": null
+       }
+      ]
+     },
+     {
+      "matcher": "Bash",
+      "hooks": [
+       {
+        "command": "~/.glass-atrium/hooks/enforce-commit-guard.sh",
+        "type": "command",
+        "timeout": null
+       }
+      ]
+     },
+     {
+      "matcher": "Write|Edit",
+      "hooks": [
+       {
+        "command": "~/.glass-atrium/hooks/enforce-config-protection.sh",
+        "type": "command",
+        "timeout": null
+       }
+      ]
+     },
+     {
+      "matcher": "Write|Edit",
+      "hooks": [
+       {
+        "command": "~/.glass-atrium/hooks/enforce-delegation.sh",
+        "type": "command",
+        "timeout": null
+       }
+      ]
+     },
+     {
+      "matcher": "Agent",
+      "hooks": [
+       {
+        "command": "~/.glass-atrium/hooks/enforce-foreground-harness.sh",
+        "type": "command",
+        "timeout": null
+       }
+      ]
+     },
+     {
+      "matcher": "Agent",
+      "hooks": [
+       {
+        "command": "~/.glass-atrium/hooks/enforce-verification-gate.sh",
+        "type": "command",
+        "timeout": null
+       }
+      ]
+     },
+     {
+      "matcher": "Workflow",
+      "hooks": [
+       {
+        "command": "~/.glass-atrium/hooks/enforce-workflow-verify-stage.sh",
+        "type": "command",
+        "timeout": null
+       }
+      ]
+     },
+     {
+      "matcher": "Workflow",
+      "hooks": [
+       {
+        "command": "~/.glass-atrium/hooks/lint-workflow-template-literal.sh",
+        "type": "command",
+        "timeout": null
+       }
+      ]
+     },
+     {
+      "matcher": "Agent",
+      "hooks": [
+       {
+        "command": "~/.glass-atrium/hooks/telemetry-activation.sh",
+        "type": "command",
+        "timeout": null
+       }
+      ]
+     },
+     {
+      "matcher": "Write|Edit",
+      "hooks": [
+       {
+        "command": "~/.glass-atrium/hooks/validate-prompt.sh",
+        "type": "command",
+        "timeout": null
+       }
+      ]
+     },
+     {
+      "matcher": "Write|Edit",
+      "hooks": [
+       {
+        "command": "~/.glass-atrium/hooks/validate-scope-drift.sh",
+        "type": "command",
+        "timeout": null
+       }
+      ]
+     },
+     {
+      "matcher": "Bash",
+      "hooks": [
+       {
+        "command": "~/.glass-atrium/hooks/validate-secret-scan.sh",
+        "type": "command",
+        "timeout": null
+       }
+      ]
+     },
+     {
+      "matcher": "Write|Edit",
+      "hooks": [
+       {
+        "command": "~/.glass-atrium/hooks/validate-secret-scan.sh",
+        "type": "command",
+        "timeout": null
+       }
+      ]
+     },
+     {
+      "matcher": "Write|Edit",
+      "hooks": [
+       {
+        "command": "~/.glass-atrium/hooks/validate-edit-syntax.sh",
+        "type": "command",
+        "timeout": null
+       }
+      ]
+     },
+     {
+      "matcher": "Bash",
+      "hooks": [
+       {
+        "command": "~/.glass-atrium/hooks/enforce-harness-critical.sh",
+        "type": "command",
+        "timeout": null
+       }
+      ]
+     },
+     {
+      "matcher": "Bash",
+      "hooks": [
+       {
+        "command": "~/.glass-atrium/hooks/advisory-egress-secret.sh",
+        "type": "command",
+        "timeout": null
+       }
+      ]
+     },
+     {
+      "matcher": "Bash",
+      "hooks": [
+       {
+        "command": "~/.glass-atrium/hooks/advisory-raw-store-read.sh",
+        "type": "command",
+        "timeout": null
+       }
+      ]
+     },
+     {
+      "matcher": "Write|Edit",
+      "hooks": [
+       {
+        "command": "~/.glass-atrium/hooks/validate-pre-write-raw.sh",
+        "type": "command",
+        "timeout": null
+       }
+      ]
+     },
+     {
+      "matcher": "Write|Edit|MultiEdit",
+      "hooks": [
+       {
+        "command": "~/.glass-atrium/hooks/enforce-harness-critical.sh",
+        "type": "command",
+        "timeout": null
+       }
+      ]
+     },
+     {
+      "matcher": "Write|Edit",
+      "hooks": [
+       {
+        "command": "~/.glass-atrium/hooks/advisory-worktree-writer-lock.sh",
+        "type": "command",
+        "timeout": null
+       }
+      ]
+     }
+    ]
+   },
+   {
+    "event": "PreCompact",
+    "groups": [
+     {
+      "matcher": "",
+      "hooks": [
+       {
+        "command": "~/.glass-atrium/hooks/pre-compact.sh",
+        "type": "command",
+        "timeout": null
+       }
+      ]
+     }
+    ]
+   },
+   {
+    "event": "PostToolUse",
+    "groups": [
+     {
+      "matcher": "Bash",
+      "hooks": [
+       {
+        "command": "~/.glass-atrium/hooks/detect-secret-file-write.sh",
+        "type": "command",
+        "timeout": null
+       }
+      ]
+     },
+     {
+      "matcher": "Edit|Write",
+      "hooks": [
+       {
+        "command": "~/.glass-atrium/hooks/post-edit-format.sh",
+        "type": "command",
+        "timeout": null
+       }
+      ]
+     },
+     {
+      "matcher": "Write",
+      "hooks": [
+       {
+        "command": "~/.glass-atrium/hooks/post-edit-outcome-sync.sh",
+        "type": "command",
+        "timeout": null
+       }
+      ]
+     },
+     {
+      "matcher": "Edit|Write",
+      "hooks": [
+       {
+        "command": "~/.glass-atrium/hooks/post-edit-typecheck.sh",
+        "type": "command",
+        "timeout": null
+       }
+      ]
+     },
+     {
+      "matcher": "Edit|Write",
+      "hooks": [
+       {
+        "command": "~/.glass-atrium/hooks/validate-large-diff.sh",
+        "type": "command",
+        "timeout": null
+       }
+      ]
+     },
+     {
+      "matcher": "",
+      "hooks": [
+       {
+        "command": "~/.glass-atrium/hooks/validate-output.sh",
+        "type": "command",
+        "timeout": null
+       }
+      ]
+     },
+     {
+      "matcher": "WebFetch|WebSearch|mcp__.*(fetch|get|read|search).*",
+      "hooks": [
+       {
+        "command": "~/.glass-atrium/hooks/validate-tool-response.sh",
+        "type": "command",
+        "timeout": null
+       }
+      ]
+     },
+     {
+      "matcher": "Agent",
+      "hooks": [
+       {
+        "command": "~/.glass-atrium/hooks/enforce-verification-gate.sh",
+        "type": "command",
+        "timeout": null
+       }
+      ]
+     }
+    ]
+   },
+   {
+    "event": "UserPromptSubmit",
+    "groups": [
+     {
+      "matcher": "",
+      "hooks": [
+       {
+        "command": "~/.glass-atrium/hooks/inject-reply-language.sh",
+        "type": "command",
+        "timeout": null
+       }
+      ]
+     }
+    ]
+   }
+  ],
+  "source_path": "~/.claude/settings.json",
+  "source_mtime": "2026-09-29T20:44:00.087Z",
+  "timezone": "UTC"
+ },
+ "/api/health/hook-failures": {
+  "days": 30,
+  "failures": [
+   {
+    "id": 1433,
+    "failure_ts": "2026-09-23T08:05:44.564Z",
+    "hook_name": "cost-tracker",
+    "target_table": "core.cost_events",
+    "error_kind": "unknown",
+    "payload_ref": "unknown_model:claude-opus-5-5",
+    "retry_attempted": false
+   },
+   {
+    "id": 1432,
+    "failure_ts": "2026-09-23T07:59:54.591Z",
+    "hook_name": "cost-tracker",
+    "target_table": "core.cost_events",
+    "error_kind": "unknown",
+    "payload_ref": "unknown_model:claude-opus-5-5",
+    "retry_attempted": false
+   },
+   {
+    "id": 1431,
+    "failure_ts": "2026-09-23T07:57:59.820Z",
+    "hook_name": "cost-tracker",
+    "target_table": "core.cost_events",
+    "error_kind": "unknown",
+    "payload_ref": "unknown_model:claude-opus-5-5",
+    "retry_attempted": false
+   },
+   {
+    "id": 1430,
+    "failure_ts": "2026-09-23T07:46:43.369Z",
+    "hook_name": "cost-tracker",
+    "target_table": "core.cost_events",
+    "error_kind": "unknown",
+    "payload_ref": "unknown_model:claude-opus-5-5",
+    "retry_attempted": false
+   },
+   {
+    "id": 1429,
+    "failure_ts": "2026-09-23T06:43:55.570Z",
+    "hook_name": "cost-tracker",
+    "target_table": "core.cost_events",
+    "error_kind": "unknown",
+    "payload_ref": "unknown_model:claude-opus-5-5",
+    "retry_attempted": false
+   },
+   {
+    "id": 1428,
+    "failure_ts": "2026-09-23T06:38:57.610Z",
+    "hook_name": "cost-tracker",
+    "target_table": "core.cost_events",
+    "error_kind": "unknown",
+    "payload_ref": "unknown_model:claude-opus-5-5",
+    "retry_attempted": false
+   },
+   {
+    "id": 1427,
+    "failure_ts": "2026-09-23T06:36:47.689Z",
+    "hook_name": "cost-tracker",
+    "target_table": "core.cost_events",
+    "error_kind": "unknown",
+    "payload_ref": "unknown_model:claude-opus-5-5",
+    "retry_attempted": false
+   },
+   {
+    "id": 1426,
+    "failure_ts": "2026-09-23T06:27:47.278Z",
+    "hook_name": "cost-tracker",
+    "target_table": "core.cost_events",
+    "error_kind": "unknown",
+    "payload_ref": "unknown_model:claude-opus-5-5",
+    "retry_attempted": false
+   },
+   {
+    "id": 1425,
+    "failure_ts": "2026-09-23T06:22:39.257Z",
+    "hook_name": "cost-tracker",
+    "target_table": "core.cost_events",
+    "error_kind": "unknown",
+    "payload_ref": "unknown_model:claude-opus-5-5",
+    "retry_attempted": false
+   },
+   {
+    "id": 1424,
+    "failure_ts": "2026-09-23T06:21:49.787Z",
+    "hook_name": "cost-tracker",
+    "target_table": "core.cost_events",
+    "error_kind": "unknown",
+    "payload_ref": "unknown_model:claude-opus-5-5",
+    "retry_attempted": false
+   }
+  ],
+  "error_kind_breakdown": [
+   {
+    "error_kind": "unknown",
+    "hook_name": "cost-tracker",
+    "target_table": "core.cost_events",
+    "count": 239
+   }
+  ],
+  "count_24h": 0,
+  "unretried_count_24h": 0,
+  "last_failure_ts": "2026-09-23T08:05:44.564Z",
+  "timezone": "UTC"
+ },
+ "/api/agents/summary": {
+  "agents": [
+   {
+    "agent_id": "glass-atrium-qa-code-reviewer",
+    "agent_name": "glass-atrium-qa-code-reviewer",
+    "runs": 1458,
+    "success_pct": 100,
+    "needs_context_count": 4,
+    "cost": null,
+    "p95_ms": 661000,
+    "status": "active",
+    "last_run_at": "2026-09-30T09:14:59.097Z",
+    "compatibility": null,
+    "description": "Code quality, convention, and design review \u2014 project-rule-based code review agent.",
+    "dual_phase": false,
+    "origin": "shipped",
+    "invocations": 1516,
+    "invocations_30d": 1516,
+    "circuit_breaker": {
+     "suspended": false,
+     "consecutive_fails": 0,
+     "suspended_at": null
+    }
+   }
+  ],
+  "meta": {
+   "days": 7,
+   "total_agents": 16,
+   "period_start": "2026-09-23",
+   "period_end": "2026-09-30",
+   "cost_attribution": "unavailable",
+   "circuit_breaker": {
+    "source": "loaded",
+    "registry_agents": 23,
+    "suspended_count": 0,
+    "streak_count": 0,
+    "alarms": []
+   }
+  },
+  "fetched_at": "2026-09-30T09:58:04.522Z"
+ },
+ "/api/dashboard/update-status": {
+  "status": "current",
+  "local_version": "1.0.1",
+  "latest_version": "1.0.1",
+  "reason": null,
+  "checked_at": "2026-09-30T09:57:49.089Z"
+ },
+ "/api/dashboard/update-job": {
+  "status": "completed",
+  "id": 1765,
+  "target_version": "1.0.1",
+  "started_at": "2026-09-30T06:13:59.897Z",
+  "heartbeat_at": "2026-09-30T06:14:23.306Z",
+  "failure_reason": null
+ },
+ "/api/cost/kpi": {
+  "today_cost_usd": 1039.841812,
+  "window_7d_cost_usd": 7919.665158,
+  "burn_rate_3h_usd_per_hour": 42.198162333333336,
+  "cost_per_done_usd": 1.9014802300120048,
+  "done_count_7d": 4165,
+  "day_bucket_timezone": "Asia/Seoul",
+  "fetched_at": "2026-09-30T09:58:04.576Z"
+ },
+ "/api/dashboard/cost-timeseries": {
+  "days": 7,
+  "points": [
+   {
+    "date": "2026-09-24",
+    "input_tokens": 20790,
+    "output_tokens": 1907674,
+    "cache_read_tokens": 1807389797,
+    "cache_creation_tokens": 102383065,
+    "cost_usd": 909.267896,
+    "session_count": 14
+   },
+   {
+    "date": "2026-09-25",
+    "input_tokens": 40042,
+    "output_tokens": 2732634,
+    "cache_read_tokens": 3320763330,
+    "cache_creation_tokens": 189567655,
+    "cost_usd": 1663.728278,
+    "session_count": 32
+   },
+   {
+    "date": "2026-09-26",
+    "input_tokens": 14684,
+    "output_tokens": 1529767,
+    "cache_read_tokens": 1307535412,
+    "cache_creation_tokens": 72152607,
+    "cost_usd": 646.677038,
+    "session_count": 31
+   },
+   {
+    "date": "2026-09-27",
+    "input_tokens": 27690,
+    "output_tokens": 2058185,
+    "cache_read_tokens": 2437687716,
+    "cache_creation_tokens": 123623921,
+    "cost_usd": 1140.746511,
+    "session_count": 23
+   },
+   {
+    "date": "2026-09-28",
+    "input_tokens": 26640,
+    "output_tokens": 1874295,
+    "cache_read_tokens": 2421755057,
+    "cache_creation_tokens": 103510578,
+    "cost_usd": 1032.951253,
+    "session_count": 47
+   },
+   {
+    "date": "2026-09-29",
+    "input_tokens": 36916,
+    "output_tokens": 3331975,
+    "cache_read_tokens": 3201758072,
+    "cache_creation_tokens": 156154995,
+    "cost_usd": 1486.45237,
+    "session_count": 24
+   },
+   {
+    "date": "2026-09-30",
+    "input_tokens": 26108,
+    "output_tokens": 1907943,
+    "cache_read_tokens": 2169313681,
+    "cache_creation_tokens": 112333411,
+    "cost_usd": 1039.841812,
+    "session_count": 27
+   }
+  ],
+  "timezone": "UTC"
+ },
+ "/api/outcomes/cross-analysis": {
+  "filter": {
+   "days": 7,
+   "agent": null,
+   "task_type": null,
+   "result": null,
+   "confidence": null,
+   "metric_pass": "unset",
+   "review_flag": null,
+   "q": null
+  },
+  "total": 4622,
+  "reconstructed_total": 14,
+  "excluded_poisoned_count": 0,
+  "cells": [
+   {
+    "confidence": "high",
+    "metric_pass": true,
+    "count": 3702,
+    "is_polar_mismatch": false
+   },
+   {
+    "confidence": "high",
+    "metric_pass": false,
+    "count": 116,
+    "is_polar_mismatch": true
+   },
+   {
+    "confidence": "high",
+    "metric_pass": null,
+    "count": 0,
+    "is_polar_mismatch": false
+   },
+   {
+    "confidence": "medium",
+    "metric_pass": true,
+    "count": 687,
+    "is_polar_mismatch": false
+   },
+   {
+    "confidence": "medium",
+    "metric_pass": false,
+    "count": 97,
+    "is_polar_mismatch": false
+   },
+   {
+    "confidence": "medium",
+    "metric_pass": null,
+    "count": 0,
+    "is_polar_mismatch": false
+   },
+   {
+    "confidence": "low",
+    "metric_pass": true,
+    "count": 0,
+    "is_polar_mismatch": true
+   },
+   {
+    "confidence": "low",
+    "metric_pass": false,
+    "count": 20,
+    "is_polar_mismatch": false
+   },
+   {
+    "confidence": "low",
+    "metric_pass": null,
+    "count": 0,
+    "is_polar_mismatch": false
+   },
+   {
+    "confidence": null,
+    "metric_pass": true,
+    "count": 0,
+    "is_polar_mismatch": false
+   },
+   {
+    "confidence": null,
+    "metric_pass": false,
+    "count": 0,
+    "is_polar_mismatch": false
+   },
+   {
+    "confidence": null,
+    "metric_pass": null,
+    "count": 0,
+    "is_polar_mismatch": false
+   }
+  ],
+  "by_result": [
+   {
+    "result": "done",
+    "count": 4233,
+    "reconstructed_count": 0,
+    "closed_count": 0,
+    "writer_open_count": 4233
+   },
+   {
+    "result": "done_with_concerns",
+    "count": 257,
+    "reconstructed_count": 14,
+    "closed_count": 160,
+    "writer_open_count": 83
+   },
+   {
+    "result": "needs_context",
+    "count": 80,
+    "reconstructed_count": 0,
+    "closed_count": 0,
+    "writer_open_count": 80
+   },
+   {
+    "result": "blocked",
+    "count": 52,
+    "reconstructed_count": 0,
+    "closed_count": 0,
+    "writer_open_count": 52
+   }
+  ],
+  "by_agent_top_10": [
+   {
+    "agent": "glass-atrium-qa-code-reviewer",
+    "count": 1519,
+    "reconstructed_count": 0,
+    "writer_open_count": 2
+   },
+   {
+    "agent": "glass-atrium-dev-shell",
+    "count": 931,
+    "reconstructed_count": 1,
+    "writer_open_count": 6
+   },
+   {
+    "agent": "glass-atrium-dev-react",
+    "count": 657,
+    "reconstructed_count": 0,
+    "writer_open_count": 50
+   },
+   {
+    "agent": "glass-atrium-dev-nestjs",
+    "count": 646,
+    "reconstructed_count": 0,
+    "writer_open_count": 3
+   },
+   {
+    "agent": "glass-atrium-intel-planner",
+    "count": 228,
+    "reconstructed_count": 0,
+    "writer_open_count": 8
+   },
+   {
+    "agent": "glass-atrium-meta-prompt-engineer",
+    "count": 193,
+    "reconstructed_count": 11,
+    "writer_open_count": 1
+   },
+   {
+    "agent": "glass-atrium-design-designer",
+    "count": 174,
+    "reconstructed_count": 0,
+    "writer_open_count": 2
+   },
+   {
+    "agent": "glass-atrium-intel-reporter",
+    "count": 147,
+    "reconstructed_count": 0,
+    "writer_open_count": 5
+   },
+   {
+    "agent": "glass-atrium-intel-researcher",
+    "count": 55,
+    "reconstructed_count": 2,
+    "writer_open_count": 5
+   },
+   {
+    "agent": "glass-atrium-qa-debugger",
+    "count": 27,
+    "reconstructed_count": 0,
+    "writer_open_count": 1
+   }
+  ],
+  "by_agent_result": [
+   {
+    "agent": "glass-atrium-intel-planner",
+    "result": "blocked",
+    "count": 1,
+    "reconstructed_count": 0
+   },
+   {
+    "agent": "glass-atrium-dev-react",
+    "result": "done",
+    "count": 536,
+    "reconstructed_count": 0
+   },
+   {
+    "agent": "glass-atrium-intel-researcher",
+    "result": "done_with_concerns",
+    "count": 19,
+    "reconstructed_count": 2
+   },
+   {
+    "agent": "glass-atrium-intel-reporter",
+    "result": "done",
+    "count": 138,
+    "reconstructed_count": 0
+   },
+   {
+    "agent": "glass-atrium-dev-nestjs",
+    "result": "needs_context",
+    "count": 11,
+    "reconstructed_count": 0
+   },
+   {
+    "agent": "glass-atrium-meta-prompt-engineer",
+    "result": "blocked",
+    "count": 6,
+    "reconstructed_count": 0
+   },
+   {
+    "agent": "glass-atrium-design-designer",
+    "result": "done",
+    "count": 165,
+    "reconstructed_count": 0
+   },
+   {
+    "agent": "glass-atrium-dev-shell",
+    "result": "blocked",
+    "count": 30,
+    "reconstructed_count": 0
+   },
+   {
+    "agent": "glass-atrium-meta-prompt-engineer",
+    "result": "done",
+    "count": 128,
+    "reconstructed_count": 0
+   },
+   {
+    "agent": "glass-atrium-dev-front",
+    "result": "needs_context",
+    "count": 1,
+    "reconstructed_count": 0
+   },
+   {
+    "agent": "glass-atrium-dev-db",
+    "result": "blocked",
+    "count": 2,
+    "reconstructed_count": 0
+   },
+   {
+    "agent": "glass-atrium-dev-shell",
+    "result": "needs_context",
+    "count": 10,
+    "reconstructed_count": 0
+   },
+   {
+    "agent": "glass-atrium-qa-code-reviewer",
+    "result": "needs_context",
+    "count": 6,
+    "reconstructed_count": 0
+   },
+   {
+    "agent": "glass-atrium-intel-reporter",
+    "result": "done_with_concerns",
+    "count": 8,
+    "reconstructed_count": 0
+   },
+   {
+    "agent": "glass-atrium-dev-nestjs",
+    "result": "blocked",
+    "count": 5,
+    "reconstructed_count": 0
+   },
+   {
+    "agent": "glass-atrium-intel-planner",
+    "result": "done_with_concerns",
+    "count": 13,
+    "reconstructed_count": 0
+   },
+   {
+    "agent": "glass-atrium-qa-code-reviewer",
+    "result": "done",
+    "count": 1499,
+    "reconstructed_count": 0
+   },
+   {
+    "agent": "glass-atrium-dev-nestjs",
+    "result": "done",
+    "count": 592,
+    "reconstructed_count": 0
+   },
+   {
+    "agent": "glass-atrium-dev-node",
+    "result": "needs_context",
+    "count": 1,
+    "reconstructed_count": 0
+   },
+   {
+    "agent": "glass-atrium-intel-planner",
+    "result": "done",
+    "count": 212,
+    "reconstructed_count": 0
+   },
+   {
+    "agent": "glass-atrium-intel-researcher",
+    "result": "done",
+    "count": 36,
+    "reconstructed_count": 0
+   },
+   {
+    "agent": "glass-atrium-qa-debugger",
+    "result": "done",
+    "count": 24,
+    "reconstructed_count": 0
+   },
+   {
+    "agent": "glass-atrium-dev-db",
+    "result": "done",
+    "count": 14,
+    "reconstructed_count": 0
+   },
+   {
+    "agent": "glass-atrium-design-designer",
+    "result": "done_with_concerns",
+    "count": 2,
+    "reconstructed_count": 0
+   },
+   {
+    "agent": "glass-atrium-dev-react",
+    "result": "done_with_concerns",
+    "count": 73,
+    "reconstructed_count": 0
+   },
+   {
+    "agent": "glass-atrium-dev-python",
+    "result": "done",
+    "count": 3,
+    "reconstructed_count": 0
+   },
+   {
+    "agent": "glass-atrium-qa-debugger",
+    "result": "done_with_concerns",
+    "count": 3,
+    "reconstructed_count": 0
+   },
+   {
+    "agent": "glass-atrium-intel-planner",
+    "result": "needs_context",
+    "count": 2,
+    "reconstructed_count": 0
+   },
+   {
+    "agent": "glass-atrium-design-designer",
+    "result": "blocked",
+    "count": 7,
+    "reconstructed_count": 0
+   },
+   {
+    "agent": "glass-atrium-dev-shell",
+    "result": "done",
+    "count": 862,
+    "reconstructed_count": 0
+   },
+   {
+    "agent": "glass-atrium-intel-reporter",
+    "result": "needs_context",
+    "count": 1,
+    "reconstructed_count": 0
+   },
+   {
+    "agent": "glass-atrium-dev-node",
+    "result": "done",
+    "count": 4,
+    "reconstructed_count": 0
+   },
+   {
+    "agent": "glass-atrium-qa-code-reviewer",
+    "result": "done_with_concerns",
+    "count": 13,
+    "reconstructed_count": 0
+   },
+   {
+    "agent": "glass-atrium-qa-code-reviewer",
+    "result": "blocked",
+    "count": 1,
+    "reconstructed_count": 0
+   },
+   {
+    "agent": "glass-atrium-dev-front",
+    "result": "done",
+    "count": 15,
+    "reconstructed_count": 0
+   },
+   {
+    "agent": "glass-atrium-dev-react",
+    "result": "needs_context",
+    "count": 48,
+    "reconstructed_count": 0
+   },
+   {
+    "agent": "glass-atrium-sec-guard",
+    "result": "done",
+    "count": 4,
+    "reconstructed_count": 0
+   },
+   {
+    "agent": "glass-atrium-dev-nestjs",
+    "result": "done_with_concerns",
+    "count": 38,
+    "reconstructed_count": 0
+   },
+   {
+    "agent": "glass-atrium-meta-prompt-engineer",
+    "result": "done_with_concerns",
+    "count": 59,
+    "reconstructed_count": 11
+   },
+   {
+    "agent": "glass-atrium-dev-shell",
+    "result": "done_with_concerns",
+    "count": 29,
+    "reconstructed_count": 1
+   },
+   {
+    "agent": "glass-atrium-dev-animator",
+    "result": "done",
+    "count": 1,
+    "reconstructed_count": 0
+   }
+  ],
+  "grader_breakdown": {
+   "verified_pass": 22,
+   "unverified": 4567,
+   "verified_fail": 33,
+   "not_measured": 0,
+   "graded_total": 4622,
+   "verified_pass_rate": 0.00476,
+   "unverified_rate": 0.9881,
+   "verified_fail_rate": 0.00714
+  },
+  "downgrade_breakdown": {
+   "writer_true_downgraded": 33,
+   "writer_false": 219,
+   "synthesized": 14,
+   "not_recorded": 4356
+  },
+  "task_type_grader_breakdown": [
+   {
+    "task_type": "bug-fix",
+    "verified_pass": 10,
+    "unverified": 278,
+    "verified_fail": 4,
+    "not_measured": 0,
+    "total": 292,
+    "by_design_unverified": false
+   },
+   {
+    "task_type": "feature",
+    "verified_pass": 12,
+    "unverified": 447,
+    "verified_fail": 29,
+    "not_measured": 0,
+    "total": 488,
+    "by_design_unverified": false
+   },
+   {
+    "task_type": "refactor",
+    "verified_pass": 0,
+    "unverified": 567,
+    "verified_fail": 0,
+    "not_measured": 0,
+    "total": 567,
+    "by_design_unverified": false
+   },
+   {
+    "task_type": "research",
+    "verified_pass": 0,
+    "unverified": 308,
+    "verified_fail": 0,
+    "not_measured": 0,
+    "total": 308,
+    "by_design_unverified": false
+   },
+   {
+    "task_type": "plan",
+    "verified_pass": 0,
+    "unverified": 205,
+    "verified_fail": 0,
+    "not_measured": 0,
+    "total": 205,
+    "by_design_unverified": false
+   },
+   {
+    "task_type": "review",
+    "verified_pass": 0,
+    "unverified": 1856,
+    "verified_fail": 0,
+    "not_measured": 0,
+    "total": 1856,
+    "by_design_unverified": true
+   },
+   {
+    "task_type": "diagnosis",
+    "verified_pass": 0,
+    "unverified": 27,
+    "verified_fail": 0,
+    "not_measured": 0,
+    "total": 27,
+    "by_design_unverified": true
+   },
+   {
+    "task_type": "doc",
+    "verified_pass": 0,
+    "unverified": 425,
+    "verified_fail": 0,
+    "not_measured": 0,
+    "total": 425,
+    "by_design_unverified": true
+   },
+   {
+    "task_type": "cleanup",
+    "verified_pass": 0,
+    "unverified": 454,
+    "verified_fail": 0,
+    "not_measured": 0,
+    "total": 454,
+    "by_design_unverified": true
+   }
+  ],
+  "fetched_at": "2026-09-30T09:58:16.408Z",
+  "prior_window": {
+   "period_start": "2026-09-16",
+   "period_end": "2026-09-23",
+   "total": 3900,
+   "reconstructed_total": 10,
+   "by_result": [
+    {
+     "result": "done",
+     "count": 3809,
+     "reconstructed_count": 0,
+     "closed_count": 0,
+     "writer_open_count": 4233
+    },
+    {
+     "result": "done_with_concerns",
+     "count": 231,
+     "reconstructed_count": 14,
+     "closed_count": 160,
+     "writer_open_count": 83
+    },
+    {
+     "result": "needs_context",
+     "count": 72,
+     "reconstructed_count": 0,
+     "closed_count": 0,
+     "writer_open_count": 80
+    },
+    {
+     "result": "blocked",
+     "count": 46,
+     "reconstructed_count": 0,
+     "closed_count": 0,
+     "writer_open_count": 52
+    }
+   ]
+  }
+ }
+}
