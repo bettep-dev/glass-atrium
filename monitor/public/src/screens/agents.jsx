@@ -132,7 +132,9 @@ function isNonActionableAgentAg(agentId, visualSet = NON_ACTIONABLE_AGENT_IDS) {
 const AGENTS_INLINE_CSS = '.ag-card-body { display: flex; flex-direction: column; flex: 1 1 auto; min-height: 0; overflow: hidden; } '
   + '.ag-card-body-scroll { flex: 1 1 auto; min-height: 0; overflow: auto; } '
   + '.ag-chart-fill { flex: 1 1 auto; min-height: 0; width: 100%; } '
-  + '.tbl td { vertical-align: top; }';
+  + '.tbl td { vertical-align: top; } '
+  // row fills its scroller edge to edge → the global outset ring is clipped; inset keeps the focus-ring token visible
+  + 'tr[data-roving-row]:focus-visible { outline-offset: calc(var(--focus-ring-width) * -1); }';
 
 function ScreenAgents() {
   const {
