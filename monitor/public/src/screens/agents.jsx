@@ -106,7 +106,6 @@ const DRAWER_SECTION_IDS = {
 const SYNTHETIC_SENTINEL_TITLE =
   'subagent_stop_missing — synthetic fallback bucket for outcomes with no paired SubagentStop (not a real agent · success rate is meaningless)';
 
-// 'unknown' / 'subagent_stop_missing' — non-actionable agent ID 묶음 (radar / row 시각 분리).
 // Banner source names = feeder keys · one feeder backs several regions.
 const REGION_FEEDERS = {
   summary: 'agent summary', success: 'success rates', review: 'review flags',
@@ -118,6 +117,7 @@ const NO_RECORD_NOTE = 'Launches minus runs, from the agent summary — spawned 
 const UNFINISHED_NOTE = 'SubagentStart events minus completed outcomes, from lifecycle events. '
   + 'No record (agent ledger) counts launches minus runs from the agent summary, so the two can differ.';
 
+// 'unknown' / 'subagent_stop_missing' — non-actionable agent ID 묶음 (radar / row 시각 분리).
 const NON_ACTIONABLE_AGENT_IDS = new Set([UNKNOWN_AGENT_ID, SYNTHETIC_SENTINEL_AGENT_ID]);
 
 // T14 double-filter guard (outcomes.jsx isNonActionableAgentO 미러) — /api/agents/* 는
