@@ -42,7 +42,9 @@ const SPEND_BASELINE_DAYS = 7;
 const SEVERITY_RANK = { crit: 3, warn: 2, info: 1, neutral: 0 };
 
 function ScreenDashboard({ onNav, harness, onRetryHarness }) {
-  const { PageHeader, TypeScaleStyle, FreshnessStamp, RefreshButton, PageErrorBanner, INITIAL_REGION_STATE } = window.UI;
+  const {
+    PageHeader, TypeScaleStyle, FreshnessStamp, RefreshButton, PageErrorBanner, INITIAL_REGION_STATE, getRegionSummary,
+  } = window.UI;
 
   const [costState,      setCostState]      = useStateD(INITIAL_REGION_STATE);
   const [agentsState,    setAgentsState]    = useStateD(INITIAL_REGION_STATE);
@@ -114,6 +116,7 @@ function ScreenDashboard({ onNav, harness, onRetryHarness }) {
   }).kind;
 
   const waveStates = [costState, agentsState, outcomesState, updateState];
+  const isWaveBusy = getRegionSummary(waveStates).isBusy;
   const alarms = buildAlarms({ harness, costState, installKind });
   const alarmReadiness = getAlarmReadiness({ harness, costState, updateState });
   const tiles = buildTiles({ harness, costState, agentsState, outcomesState, isHarnessBusy });
@@ -143,7 +146,7 @@ function ScreenDashboard({ onNav, harness, onRetryHarness }) {
             <>
               <span className="fs-meta font-mono text-dim">{describeVersion(harness)}</span>
               <FreshnessStamp {...getFreshnessInputD(settledAt, waveStates, harness)}/>
-              <RefreshButton isBusy={window.UI.getRegionSummary(waveStates).isBusy} hasRead={settledAt !== null}
+              <RefreshButton isBusy={isWaveBusy} hasRead={settledAt !== null}
                 onRefresh={triggerRefresh} label="Refresh dashboard"/>
             </>
           }
@@ -153,7 +156,7 @@ function ScreenDashboard({ onNav, harness, onRetryHarness }) {
       <div className="space-sections">
         {sharedFailure && (
           <PageErrorBanner sources={sharedFailure.sources} error={sharedFailure.error} onRetry={triggerRefresh}
-            isBusy={window.UI.getRegionSummary(waveStates).isBusy} focusTargetId={DASH_STATUS_BAND_ID}/>
+            isBusy={isWaveBusy} focusTargetId={DASH_STATUS_BAND_ID}/>
         )}
         <AlarmLane
           alarms={alarms}
@@ -170,8 +173,8 @@ function ScreenDashboard({ onNav, harness, onRetryHarness }) {
 }
 
 // harness 판독은 셸 소유 → 그 타일의 Retry 는 셸 재폴링, 나머지는 자기 region 재요청
-function getTileRetry(loadRegion, onRetryHarness) {
-  return (region) => (region === HARNESS_REGION ? onRetryHarness?.() : loadRegion(region));
+function getTileRetry(loadRegion, rereadHarness) {
+  return (region) => (region === HARNESS_REGION ? rereadHarness() : loadRegion(region));
 }
 
 const NO_SHARED_SOURCES = Object.freeze([]);
@@ -299,8 +302,9 @@ const SHARED_FAILURE_HINT = 'Not loaded — see the notice above.';
 // 값 자리는 never 0-for-unknown: 미수신은 '—' 로 남는다.
 function StatusTile({ tile, onNav, onRetry, isRetryShared = false }) {
   const { RegionUnavailable, RetryButton } = window.UI;
+  const cardId = getTileCardId(tile);
   return (
-    <div id={getTileCardId(tile)} className={`card p-3 flex flex-col gap-1.5 ${tile.isBusy ? 'opacity-70' : ''}`.trim()}
+    <div id={cardId} className={`card p-3 flex flex-col gap-1.5 ${tile.isBusy ? 'opacity-70' : ''}`.trim()}
       aria-busy={tile.isBusy ? 'true' : undefined}>
       <h2 className="fs-meta text-dim uppercase tracking-wide">
         {tile.label}
@@ -308,7 +312,7 @@ function StatusTile({ tile, onNav, onRetry, isRetryShared = false }) {
       </h2>
       {tile.status === 'error' && !isRetryShared ? (
         <RegionUnavailable source={tile.source} error={tile.error} isBusy={tile.isBusy}
-          focusTargetId={getTileCardId(tile)} onRetry={() => onRetry(tile.region)}/>
+          focusTargetId={cardId} onRetry={() => onRetry(tile.region)}/>
       ) : (
         <>
           <window.UI.TileSplit
@@ -323,7 +327,7 @@ function StatusTile({ tile, onNav, onRetry, isRetryShared = false }) {
             }
           />
           {tile.canRetry && !isRetryShared && (
-            <RetryButton onRetry={() => onRetry(tile.region)} isBusy={tile.isBusy} focusTargetId={getTileCardId(tile)}/>
+            <RetryButton onRetry={() => onRetry(tile.region)} isBusy={tile.isBusy} focusTargetId={cardId}/>
           )}
           {/* the drill stays a card-foot child → mt-auto keeps the four CTAs on one baseline at xl */}
           {tile.target && <DrillLink target={tile.target} label={tile.targetLabel} onNav={onNav} className="self-start mt-auto"/>}
@@ -681,7 +685,7 @@ function describeHarnessReading(harness) {
     badge: getHarnessBadge({ isPartlyUnread, lostCount, downCount }),
     value: downCount > 0 ? `${downCount} of ${partCount} down` : `${harness.partsOk} of ${partCount} up`,
     detail: lostCount > 0 ? `${lostCount} not read` : undefined,
-    hint: describeHarnessHint(harness, { isPartlyUnread, lostCount }),
+    hint: describeHarnessHint(harness, { isPartlyUnread, lostCount, downCount }),
     canRetry: isPartlyUnread,
   };
 }
@@ -695,7 +699,7 @@ function getHarnessBadge({ isPartlyUnread, lostCount, downCount }) {
 // the value already says "down" → the verdict and the names line each use another word
 const HARNESS_DOWN_BADGE = 'Action needed';
 
-function describeHarnessHint(harness, { isPartlyUnread, lostCount }) {
+function describeHarnessHint(harness, { isPartlyUnread, lostCount, downCount }) {
   if (isPartlyUnread) {
     const sources = harness.unreadSources.join(' · ');
     return lostCount > 0 ? `Couldn't read ${sources}.` : `Showing the last reading — couldn't refresh ${sources}.`;
@@ -705,7 +709,7 @@ function describeHarnessHint(harness, { isPartlyUnread, lostCount }) {
     ? `. ${joinPartNames(harness.uncheckedNames)} checked on the System map`
     : '';
   // the headline already carries the count → the hint names the parts instead of restating it
-  const down = harness.downNames.length > 0 ? `Not answering: ${joinPartNames(harness.downNames)}` : 'All polled parts healthy';
+  const down = downCount > 0 ? `Not answering: ${joinPartNames(harness.downNames)}` : 'All polled parts healthy';
   return `${down}${unchecked}`;
 }
 
