@@ -141,6 +141,8 @@ function ScreenDashboard({ onNav, harness, onRetryHarness }) {
         .dash-tile-hint { min-height: calc(var(--fs-meta) * 1.4 * 2); line-height: 1.4; }
         .dash-tile-detail { min-height: calc(var(--fs-body) * 1.5); }
         /* two columns (xl) → an even count puts two rows on the bottom line; both drop the hairline, not only the last */
+        /* the shared .btn hover shifts ~4 RGB levels → an underline makes the drill's hover visible */
+        .dash-drill:hover, .dash-drill:focus-visible { text-decoration: underline; text-underline-offset: 3px; }
         .dash-strip-track { height: 4rem; }
         .dash-strip-bar { background: currentColor; border-radius: 2px; }
         /* today is still accruing → an outlined bar, never a filled one that reads as a closed day */
@@ -323,8 +325,9 @@ const SHARED_FAILURE_HINT = 'Not loaded — see the notice above.';
 // 상태 4종이 서로 다르게 읽히는 지점 — loading(status 자리표시) · error(공용 unavailable 카드) · unavailable/empty(중립 문구) · ready(값).
 // 값 자리는 never 0-for-unknown: 미수신은 '—' 로 남는다.
 function StatusTile({ tile, onNav, onRetry, isRetryShared = false }) {
-  const { RegionUnavailable, RetryButton } = window.UI;
+  const { RetryButton } = window.UI;
   const cardId = getTileCardId(tile);
+  const isCovered = tile.status === 'error' && isRetryShared;
   return (
     <div id={cardId} className={`card p-3 flex flex-col gap-1.5 ${tile.isBusy ? 'opacity-70' : ''}`.trim()}
       aria-busy={tile.isBusy ? 'true' : undefined}>
@@ -332,26 +335,20 @@ function StatusTile({ tile, onNav, onRetry, isRetryShared = false }) {
         {tile.label}
         {tile.window && <span className="normal-case"> ({tile.window})</span>}
       </h2>
-      {tile.status === 'error' && !isRetryShared ? (
-        <RegionUnavailable source={tile.source} error={tile.error} isBusy={tile.isBusy}
-          focusTargetId={cardId} onRetry={() => onRetry(tile.region)}/>
-      ) : (
-        <>
-          <window.UI.TileSplit
-            lead={<StatusTileValue tile={tile}/>}
-            detail={
-              <>
-                <div className="fs-body text-dim dash-tile-detail">{tile.detail}</div>
-                <div className="fs-meta text-dim dash-tile-hint" title={tile.note}>
-                  {tile.status === 'error' ? SHARED_FAILURE_HINT : tile.hint}
-                </div>
-              </>
-            }
-          />
-          {tile.canRetry && !isRetryShared && (
-            <RetryButton onRetry={() => onRetry(tile.region)} isBusy={tile.isBusy} focusTargetId={cardId}/>
-          )}
-        </>
+      {/* a failure stays flat in the tile → one card, one Retry; a banner-carried one points up instead of repeating */}
+      <window.UI.TileSplit
+        lead={<StatusTileValue tile={tile}/>}
+        detail={
+          <>
+            <div className="fs-body text-dim dash-tile-detail">{isCovered ? null : tile.detail}</div>
+            <div className="fs-meta text-dim dash-tile-hint" title={tile.note}>
+              {isCovered ? SHARED_FAILURE_HINT : tile.hint}
+            </div>
+          </>
+        }
+      />
+      {tile.canRetry && !isRetryShared && (
+        <RetryButton onRetry={() => onRetry(tile.region)} isBusy={tile.isBusy} focusTargetId={cardId}/>
       )}
       {/* the drill stays a card-foot child, a failed tile's too → mt-auto keeps the four CTAs on one baseline at xl */}
       {tile.target && <DrillLink target={tile.target} label={tile.targetLabel} onNav={onNav} className="self-start mt-auto"/>}
@@ -486,7 +483,7 @@ function DrillLink({ target, label, onNav, className = '' }) {
     onNav(target);
   };
   return (
-    <a href={`#${target}`} className={`btn sm ${className}`} onClick={onClick}>
+    <a href={`#${target}`} className={`btn sm dash-drill ${className}`.trim()} onClick={onClick}>
       {label}
       <window.UI.Icon name="arrow-right" size={14}/>
     </a>
@@ -782,7 +779,7 @@ function buildHarnessTile(harness) {
     return { ...base, status: 'loading', tone: 'neutral', value: '—', hint: null };
   }
   if (harness && harness.status !== 'ready' && harness.error != null) {
-    return { ...base, status: 'error', tone: 'neutral', value: '—', hint: null, error: harness.error };
+    return buildFailedTile(base, harness.error);
   }
   if (!harness || harness.status !== 'ready') {
     // not a region fetch error → never joins the page banner, so the tile keeps its own Retry
@@ -847,8 +844,17 @@ function joinPartNames(names) {
 function buildPendingTile(base, state) {
   const view = state ? window.UI.getRegionView(state) : 'loading';
   if (view === 'loading') return { ...base, status: 'loading', tone: 'neutral', value: '—', hint: null };
-  if (view === 'error') return { ...base, status: 'error', tone: 'neutral', value: '—', hint: null, error: state.error };
+  if (view === 'error') return buildFailedTile(base, state.error);
   return null;
+}
+
+// the shared error copy, laid flat in the tile's own lines → no card nests inside the tile card
+function buildFailedTile(base, error) {
+  const copy = window.UI.getErrorCopy(error, base.source);
+  return {
+    ...base, status: 'error', tone: 'neutral', value: '—', detail: copy.sentence, hint: copy.next, note: copy.detail ?? undefined,
+    error, canRetry: true,
+  };
 }
 
 // 타일 2 — 7일 작업 결과. 판정과 임계는 ui.jsx 공용 규칙 소비 (Task results 와 동일 분모).
