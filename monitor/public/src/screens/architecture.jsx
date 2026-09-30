@@ -62,11 +62,15 @@ const ARCH_DESC_ID = "arch-svg-desc";
 // mermaid 가 `#<renderId> .security>*{…!important}` 꼴로 찍으므로(특이도 1,1,0) 클래스만으로는
 // 무엇을 적어도 못 이김 — 여기 id 하나가 그 한 칸을 벌어 줌. 하네스 셀렉터는 클래스 그대로임.
 const ARCH_CANVAS_ID = "arch-map-canvas";
-// marks a pane clamped to its drawing's height — a data attribute, since React rewrites className on re-render
-const CANVAS_FIT_HEIGHT_ATTR = "data-arch-fit-height";
-
-// set while the drawing is floor-bound and too wide for the room beside the zoom controls → they fold into a row under it
-const CANVAS_CONTROLS_LANE_ATTR = "data-arch-controls-lane";
+// canvas state markers — data attributes, since React rewrites className on re-render
+const CANVAS = {
+	// pane clamped to its drawing's height
+	FIT_HEIGHT_ATTR: "data-arch-fit-height",
+	// drawing floor-bound and too wide for the room beside the zoom controls → they fold into a row under it
+	CONTROLS_LANE_ATTR: "data-arch-controls-lane",
+};
+// map slot wrapper — outlives the error-to-map swap, so a map Retry hands focus here on recovery
+const MAP_REGION_ID_AR = "arch-map-region";
 const ARCH_SELECTORS = {
 	canvas: ".arch-mermaid-canvas",
 	tabControl: '[role="tab"], .arch-tab-btn',
@@ -301,6 +305,7 @@ function ScreenArchitecture(
 		putRegionData,
 		putRegionFailure,
 		getRegionSummary,
+		getRegionView,
 	} = window.UI;
 
 	const [diagState, setDiagState] = useStateAR(INITIAL_REGION_STATE);
@@ -610,7 +615,7 @@ function ScreenArchitecture(
 					".arch-page:has(.arch-part-health) { overflow-y: auto; } " +
 					".arch-page:has(.arch-part-health) .arch-main { min-height: 62vh; } " +
 					// a pane clamped to its drawing gives the unused height back — the fit scale the floor protects is already set
-					`.arch-page .arch-main:has(.arch-mermaid-canvas[${CANVAS_FIT_HEIGHT_ATTR}]) { flex: none; min-height: 0; } ` +
+					`.arch-page .arch-main:has(.arch-mermaid-canvas[${CANVAS.FIT_HEIGHT_ATTR}]) { flex: none; min-height: 0; } ` +
 					".arch-part-health { flex-shrink: 0; } " +
 					".arch-part-health-title { font-size: 13px; font-weight: 600; margin: 0; } " +
 					".arch-part-col-title { font-size: inherit; font-weight: 600; margin: 0 0 6px; } " +
@@ -704,8 +709,8 @@ function ScreenArchitecture(
 					// 줌/팬/맞춤 컨트롤 클러스터 — 캔버스 우하단, hint 위. 불투명 면(상시 chrome) → blur 금지.
 					".arch-zoom-controls { position: absolute; right: 8px; bottom: 28px; display: flex; flex-direction: column; gap: 4px; z-index: 2; } " +
 					// lane mode — one row of controls with the hint on its left, a toolbar under the drawing rather than over it
-					`.arch-mermaid-canvas[${CANVAS_CONTROLS_LANE_ATTR}] .arch-zoom-controls { flex-direction: row; bottom: 6px; } ` +
-					`.arch-mermaid-canvas[${CANVAS_CONTROLS_LANE_ATTR}] .arch-canvas-hint { right: auto; left: 8px; } ` +
+					`.arch-mermaid-canvas[${CANVAS.CONTROLS_LANE_ATTR}] .arch-zoom-controls { flex-direction: row; bottom: 6px; } ` +
+					`.arch-mermaid-canvas[${CANVAS.CONTROLS_LANE_ATTR}] .arch-canvas-hint { right: auto; left: 8px; } ` +
 					".arch-zoom-btn { min-width: 32px; height: 32px; display: inline-flex; gap: 4px; align-items: center; justify-content: center; " +
 					"background: rgb(var(--elev)); border: 1px solid rgb(var(--line)); border-radius: 6px; color: rgb(var(--dim)); " +
 					'cursor: pointer; font-family: "JetBrains Mono", monospace; font-size: 16px; line-height: 1; padding: 0; ' +
@@ -788,14 +793,16 @@ function ScreenArchitecture(
 				<AlarmLaneAR rows={alarmRows} onRetry={triggerRefresh} />
 
 				{/* 본체: 단일 canonical Mermaid 캔버스 (가용 폭 100%) — 못 읽으면 빈 캔버스 대신 조용한 카드 하나 */}
-				<div className="arch-main">
-					{diagState.status === "error" ? (
+				<div className="arch-main" id={MAP_REGION_ID_AR}>
+					{/* view, not raw status — a cold Retry flips status to 'loading' but must stay this card, busy */}
+					{getRegionView(diagState) === "error" ? (
 						<RegionFailure
 							source={DIAGRAM_SOURCE_AR}
 							error={diagState.error}
 							shared={pageFailure}
 							onRetry={triggerRefresh}
 							isBusy={isRefreshBusy}
+							focusTargetId={MAP_REGION_ID_AR}
 							className="arch-col-card"
 						/>
 					) : (
@@ -2162,7 +2169,7 @@ function applyLegibleFitAR(instance, root) {
 	const fittedGraphW = realW * targetAbs;
 	// floor-bound: no legible scale fits beside the controls → they move into a lane under the drawing instead
 	const shouldUseLane = fittedGraphW > drawableW + 0.5;
-	if (shouldUseLane) getCanvasAR(root)?.setAttribute(CANVAS_CONTROLS_LANE_ATTR, "");
+	if (shouldUseLane) getCanvasAR(root)?.setAttribute(CANVAS.CONTROLS_LANE_ATTR, "");
 	const laneH = shouldUseLane ? getControlsLaneHeightAR(root) : 0;
 
 	// pan({x,y}) 는 viewport CTM 의 e/f(화면픽셀 평행이동) 직접 설정 · 콘텐츠 viewBox.x/y 시작 → 좌상단(0,0) 정렬에 -origin*scale 필요 (fit/center:false 라 라이브러리 미보정).
@@ -2212,8 +2219,8 @@ function clearCanvasSizingAR(root) {
 	if (!canvas) return;
 	canvas.style.height = "";
 	canvas.style.flex = "";
-	canvas.removeAttribute(CANVAS_FIT_HEIGHT_ATTR);
-	canvas.removeAttribute(CANVAS_CONTROLS_LANE_ATTR);
+	canvas.removeAttribute(CANVAS.FIT_HEIGHT_ATTR);
+	canvas.removeAttribute(CANVAS.CONTROLS_LANE_ATTR);
 }
 
 // the zoom buttons scale about the pane centre → the cached pane size follows the clamp
@@ -2222,7 +2229,7 @@ function setCanvasHeightAR(root, heightPx, instance) {
 	if (!canvas) return;
 	canvas.style.height = `${Math.ceil(heightPx)}px`;
 	canvas.style.flex = "none";
-	canvas.setAttribute(CANVAS_FIT_HEIGHT_ATTR, "");
+	canvas.setAttribute(CANVAS.FIT_HEIGHT_ATTR, "");
 	try {
 		instance.resize();
 	} catch (_e) {
@@ -2583,7 +2590,10 @@ function PartHealthBlockAR({ partRows, attentionEmpty, freshness, nodeIndex, onS
 				<SplitRow ratio="1:1">
 					<PartHealthListAR title="Needs attention" rows={attention} empty={attentionEmpty} {...listProps} />
 					<SplitColumn>
-						<PartHealthListAR title="Healthy or not verified" rows={rest} empty="No other parts" {...listProps} />
+						{/* a cold read leaves only unloaded parts → the Not loaded list speaks, not a false 'No other parts' */}
+						{(rest.length > 0 || unloaded.length === 0) && (
+							<PartHealthListAR title="Healthy or not verified" rows={rest} empty="No other parts" {...listProps} />
+						)}
 						{unloaded.length > 0 && <PartHealthListAR title="Not loaded" rows={unloaded} {...listProps} />}
 					</SplitColumn>
 				</SplitRow>
