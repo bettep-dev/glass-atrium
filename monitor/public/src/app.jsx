@@ -63,9 +63,9 @@ function parseHashScreen() {
 	return NAV.some((n) => n.id === raw) ? raw : "dashboard";
 }
 
-function Sidebar({ active, onNav, harness }) {
+function Sidebar({ active, onNav, harness, pageState }) {
 	const { Icon } = window.UI;
-	const systems = systemsRollup(harness);
+	const systems = systemsRollup(harness, pageState);
 	const dynamicBadges = harnessToNavBadges(harness);
 	return (
 		<aside aria-label="Sidebar" className="shell-sidebar flex-shrink-0 border-r border-line h-screen sticky top-0 flex flex-col bg-elev">
@@ -222,10 +222,9 @@ function harnessToNavBadges(harness) {
 // ALL SYSTEMS 풋터 도트 = 레인/타일과 같은 harness fold 파생. 폴링이 실패한 순간에도
 // 두 표면이 어긋나지 않는다 — 첫 폴 대기는 neutral 'CHECKING…', 읽기 실패는 'STATUS UNKNOWN'.
 // 도트 클래스는 StatusDot(ui.jsx) 어휘 재사용 (미등록 클래스 금지).
-function systemsRollup(harness) {
-	if (!harness || harness.status === "loading") {
-		return { tone: "neutral", dotClass: "bg-faint", label: "CHECKING…" };
-	}
+// pageState = the page header stamp's read state (ui.jsx → getShellPageState): outranks only ALL SYSTEMS.
+function systemsRollup(harness, pageState = null) {
+	if (!harness || harness.status === "loading") return ROLLUP_CHECKING;
 
 	const isReady = harness.status === "ready";
 	const downCount = isReady ? harness.downNames.length : 0;
@@ -240,7 +239,19 @@ function systemsRollup(harness) {
 	if (!isReady || harness.unreadSources?.length > 0) {
 		return { tone: "neutral", dotClass: "bg-faint", label: "STATUS UNKNOWN" };
 	}
-	return { tone: "ok", dotClass: "bg-ok", label: "ALL SYSTEMS" };
+	return getPageRollup(pageState) ?? { tone: "ok", dotClass: "bg-ok", label: "ALL SYSTEMS" };
+}
+
+const ROLLUP_CHECKING = { tone: "neutral", dotClass: "bg-faint", label: "CHECKING…" };
+
+// page read state in the stamp's own words, neutral tone — a read fact, not a harness verdict; fresh → null
+function getPageRollup(pageState) {
+	if (pageState?.state === "loading") return ROLLUP_CHECKING;
+	if (pageState?.state === "not-read") return { tone: "neutral", dotClass: "bg-faint", label: "NOT READ" };
+	if (pageState?.state === "stale" || pageState?.state === "partial") {
+		return { tone: "neutral", dotClass: "bg-faint", label: `LAST KNOWN ${window.UI.formatKstTime(pageState.at)}` };
+	}
+	return null;
 }
 
 function App() {
@@ -288,15 +299,23 @@ function App() {
 	// harness wave — every harness source on one 60s cadence; a failed read keeps the held data.
 	// 레인/타일이 살아있는 판독을 받아야 하므로 마운트 1회로는 부족하다.
 	// 같은 폴이 Dashboard 하네스 타일의 Retry → 화면이 두 번째 요청 경로를 갖지 않는다.
+	// one read in flight at a time: the poll, the Dashboard's re-read and the shared Refresh/Retry all join it
 	const isHarnessMountedRef = useR(true);
-	const pollHarness = useC(async () => {
-		const settled = await readHarnessSources();
-		if (!isHarnessMountedRef.current) return;
-		setKpiState((prev) => toStoreState(settled.kpiState, prev));
-		setHealthState((prev) => toStoreState(settled.healthState, prev));
-		setLiveState((prev) => toStoreState(settled.liveState, prev));
-		setHookState((prev) => toStoreState(settled.hookState, prev));
-		setHookFailState((prev) => toStoreState(settled.hookFailState, prev));
+	const harnessReadRef = useR(null);
+	const pollHarness = useC(() => {
+		if (harnessReadRef.current) return harnessReadRef.current;
+		const read = readHarnessSources().then((settled) => {
+			if (!isHarnessMountedRef.current) return;
+			setKpiState((prev) => toStoreState(settled.kpiState, prev));
+			setHealthState((prev) => toStoreState(settled.healthState, prev));
+			setLiveState((prev) => toStoreState(settled.liveState, prev));
+			setHookState((prev) => toStoreState(settled.hookState, prev));
+			setHookFailState((prev) => toStoreState(settled.hookFailState, prev));
+		});
+		harnessReadRef.current = read.finally(() => {
+			harnessReadRef.current = null;
+		});
+		return harnessReadRef.current;
 	}, []);
 	useE(() => {
 		isHarnessMountedRef.current = true;
@@ -306,6 +325,13 @@ function App() {
 			isHarnessMountedRef.current = false;
 			clearInterval(id);
 		};
+	}, [pollHarness]);
+
+	// page read state from the header stamp (ui.jsx → useShellPageState); the stamp clears it on unmount
+	const [pageState, setPageState] = useS(null);
+	useE(() => {
+		window.UI.setShellBridge({ putPageState: setPageState, readHarness: pollHarness });
+		return () => window.UI.setShellBridge();
 	}, [pollHarness]);
 
 	const displayTimezone = useDisplayTimezone(healthState.data?.timezone);
@@ -352,7 +378,7 @@ function App() {
 			<a href={`#${MAIN_CONTENT_ID}`} className="skip-link" onClick={onSkipToContent}>
 				Skip to content
 			</a>
-			<Sidebar active={active} onNav={onNavClick} harness={harness} />
+			<Sidebar active={active} onNav={onNavClick} harness={harness} pageState={pageState} />
 			<div className="flex-1 min-w-0 flex flex-col">
 				<main id={MAIN_CONTENT_ID} tabIndex={-1} className="flex-1 min-w-0 p-6 flex flex-col min-h-0">
 					{Screen ? (

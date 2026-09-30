@@ -11,6 +11,7 @@ import { fileURLToPath } from "node:url";
 import { dirname, resolve } from "node:path";
 import {
   createReactStub,
+  collectText,
   findNodes,
   loadScreenModule,
   renderScreen,
@@ -19,6 +20,7 @@ import {
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const APP_SRC = resolve(__dirname, "../public/src/app.jsx");
+const UI_SRC = resolve(__dirname, "../public/src/ui.jsx");
 
 interface FakeElement {
   tag: string;
@@ -58,6 +60,14 @@ function createStatefulReact() {
       return [slots[index], setter];
     },
     useRef: (initial: unknown) => slots[claim(() => ({ current: initial }))],
+    // memoized by deps like React → a stable callback keeps its effect from re-running every render
+    useCallback: (fn: unknown, deps: Deps) => {
+      const index = claim(() => ({ fn, deps }));
+      const memo = slots[index] as { fn: unknown; deps: Deps };
+      const changed = !deps || !memo.deps || deps.some((dep, i) => dep !== memo.deps?.[i]);
+      if (changed) slots[index] = { fn, deps };
+      return (slots[index] as { fn: unknown }).fn;
+    },
     useEffect: (effect: Effect, deps: Deps) => {
       const index = claim(() => undefined);
       const prev = slots[index] as Deps;
@@ -95,9 +105,19 @@ function fakeElement(tag: string, heading: FakeElement | null, focusLog: FakeEle
   return element;
 }
 
-async function mountShell({ fetch = () => new Promise(() => undefined), createRoot = () => ({ render: () => undefined }) }: {
+type StatefulReact = ReturnType<typeof createStatefulReact>["react"];
+type ScreenFactory = (react: StatefulReact, ui: Record<string, unknown>) => Record<string, unknown>;
+
+// Harness fold stand-in: loading until every store answered, then ready with no fault.
+const readyOnceAnswered = (stores: Record<string, { status: string }>) =>
+  Object.values(stores).some((store) => store.status === "loading")
+    ? { status: "loading" }
+    : { status: "ready", downNames: [], daemonsDown: 0, failCount1h: 0 };
+
+async function mountShell({ fetch = () => new Promise(() => undefined), createRoot = () => ({ render: () => undefined }), screens }: {
   fetch?: (url: string) => Promise<unknown>;
   createRoot?: () => { render: (node: unknown) => void };
+  screens?: ScreenFactory;
 } = {}) {
   const { react, flushEffects, resetCursor } = createStatefulReact();
   let displayTimezone = "Asia/Seoul";
@@ -107,6 +127,8 @@ async function mountShell({ fetch = () => new Promise(() => undefined), createRo
   const listeners: Record<string, () => void> = {};
   const location = { hash: "#dashboard" };
   const screen = (label: string) => () => react.createElement("h1", null, label);
+  // the shipped ui.jsx atoms, sharing the shell's hook slots; the stubs below override the few the shell test pins
+  const ui = (await loadScreenModule(UI_SRC, { React: react, setInterval: () => 0, clearInterval: () => undefined })).UI as Record<string, unknown>;
 
   const mod = await loadScreenModule(APP_SRC, {
     React: react,
@@ -125,14 +147,16 @@ async function mountShell({ fetch = () => new Promise(() => undefined), createRo
       documentElement: { setAttribute: () => undefined, style: { setProperty: () => undefined } },
     },
     useTweaks: () => [{ theme: "dark", density: "comfortable", accent: "#3b82f6" }, () => undefined],
-    HealthModel: { foldHarness: () => ({ status: "loading" }) },
+    HealthModel: { foldHarness: screens ? readyOnceAnswered : () => ({ status: "loading" }) },
     UI: {
+      ...ui,
       Icon: () => null,
       setDisplayTimezone: (tz: string) => { if (tz) displayTimezone = tz; },
       getDisplayTimezone: () => displayTimezone,
     },
     ScreenDashboard: function ScreenDashboard() { return react.createElement("time", null, displayTimezone); },
     ScreenCost: screen("Cost & usage"),
+    ...screens?.(react, ui),
   });
 
   const render = (): RenderedNode => {
@@ -255,4 +279,82 @@ test("a timezone arriving on the health read re-keys the page, so every time str
 
   assert.equal(page.props.key, "America/New_York");
   assert.deepEqual(findNodes(page, (n) => n.type === "time").map((n) => n.children[0]), ["America/New_York"]);
+});
+
+// Harness endpoints answer on demand; one /api/dashboard/kpi request marks one harness read.
+function createHarnessFetch({ isHealthy }: { isHealthy: boolean }) {
+  const state = { isHealthy, kpiReads: 0 };
+  let pending: (() => void)[] = [];
+  const fetch = (url: string) =>
+    new Promise((resolve, reject) => {
+      if (url === "/api/dashboard/kpi") state.kpiReads += 1;
+      pending.push(() => (state.isHealthy ? resolve({ ok: true, json: async () => ({}) }) : reject(new Error("HTTP 503"))));
+    });
+  const settle = async () => {
+    const run = pending;
+    pending = [];
+    for (const answer of run) answer();
+    for (let tick = 0; tick < 5; tick += 1) await new Promise((done) => setImmediate(done));
+  };
+  return { fetch, settle, state };
+}
+
+const sidebarText = (tree: RenderedNode) => collectText(findNodes(tree, (n) => n.type === "aside")[0]);
+const clickNode = (node: RenderedNode) => (node.props.onClick as (e: unknown) => void)({});
+
+test("a Refresh off the Dashboard starts one harness read, and concurrent requests join it", async () => {
+  const harnessFetch = createHarnessFetch({ isHealthy: true });
+  const captured: { onRetryHarness?: () => Promise<unknown> } = {};
+  const { render, navigateByHash } = await mountShell({
+    fetch: harnessFetch.fetch,
+    screens: (react, ui) => ({
+      ScreenCost: function ScreenCost(props: { onRetryHarness: () => Promise<unknown> }) {
+        captured.onRetryHarness = props.onRetryHarness;
+        return react.createElement(ui.RefreshButton, { label: "Refresh cost data", onRefresh: () => undefined });
+      },
+    }),
+  });
+  render();
+  await harnessFetch.settle();
+  navigateByHash("#cost");
+  const [refresh] = findNodes(mainRegion(render()), (n) => n.type === "button");
+  const readsBefore = harnessFetch.state.kpiReads;
+
+  clickNode(refresh);
+  clickNode(refresh);
+  assert.equal(harnessFetch.state.kpiReads - readsBefore, 1, "two Refreshes start one harness read");
+  const dashboardRead = captured.onRetryHarness?.();
+
+  assert.equal(harnessFetch.state.kpiReads - readsBefore, 1, "the Dashboard re-read joins the read in flight");
+  await harnessFetch.settle();
+  await dashboardRead;
+});
+
+test("a Retry that recovers the page and the harness clears Status unknown on that action", async () => {
+  const harnessFetch = createHarnessFetch({ isHealthy: false });
+  const page: { at: string | null; failed: boolean } = { at: null, failed: true };
+  const { render, navigateByHash } = await mountShell({
+    fetch: harnessFetch.fetch,
+    screens: (react, ui) => ({
+      ScreenCost: function ScreenCost() {
+        const onRetry = () => Object.assign(page, { at: new Date().toISOString(), failed: false });
+        return react.createElement("div", null,
+          react.createElement(ui.FreshnessStamp, { at: page.at, failed: page.failed }),
+          react.createElement(ui.RetryButton, { onRetry }));
+      },
+    }),
+  });
+  render();
+  await harnessFetch.settle();
+  navigateByHash("#cost");
+  render();
+  const failedTree = render();
+  assert.match(sidebarText(failedTree), /STATUS UNKNOWN/, "an unread harness outranks the page's failed read");
+
+  harnessFetch.state.isHealthy = true;
+  clickNode(findNodes(mainRegion(failedTree), (n) => n.type === "button")[0]);
+  await harnessFetch.settle();
+  render();
+
+  assert.match(sidebarText(render()), /ALL SYSTEMS/);
 });

@@ -53,15 +53,31 @@ interface HarnessFold {
 }
 interface AppHelpers {
   harnessToNavBadges: (harness: HarnessFold | null) => { architecture?: { badges: Badge[] } | null };
-  systemsRollup: (harness: HarnessFold | null) => Rollup;
+  systemsRollup: (harness: HarnessFold | null, pageState?: ShellPageState | null) => Rollup;
   getHarness: (stores: Record<string, unknown>) => HarnessFold & { unreadSources: string[]; error: string | null };
   parseHashScreen: () => string;
   toStoreState: (settled: PromiseSettledResult<unknown>, prev?: unknown) => { status: string; data: unknown };
   readHarnessSources: (read: (url: string) => Promise<unknown>) => Promise<Record<string, PromiseSettledResult<unknown>>>;
 }
+interface ShellPageState {
+  state: string;
+  at: string | null;
+}
+interface StampInput {
+  at?: string;
+  loading?: boolean;
+  failed?: boolean;
+  regions?: { busy: boolean; error: string | null }[];
+  now: number;
+}
+interface UiSurface {
+  getShellPageState: (input: StampInput) => ShellPageState;
+  formatKstTime: (at: string) => string;
+}
 interface AppSurface extends AppHelpers {
   setHash: (hash: string) => void;
   foldHarness: (states: unknown) => HarnessFold;
+  ui: UiSurface;
 }
 
 async function transform(srcPath: string): Promise<string> {
@@ -128,16 +144,16 @@ async function loadApp(): Promise<AppSurface> {
     "function",
     "systemsRollup must be reachable",
   );
-  const healthModel = (
-    ctx.window as {
-      HealthModel: { foldHarness: AppSurface["foldHarness"] };
-    }
-  ).HealthModel;
+  const { HealthModel: healthModel, UI: ui } = ctx.window as {
+    HealthModel: { foldHarness: AppSurface["foldHarness"] };
+    UI: UiSurface;
+  };
   return Object.assign(h as AppSurface, {
     setHash: (hash: string) => {
       location.hash = hash;
     },
     foldHarness: healthModel.foldHarness,
+    ui,
   });
 }
 
@@ -401,4 +417,32 @@ test("harnessToNavBadges: polled-and-clean emits the key with a null badge; unpo
     !("architecture" in app.harnessToNavBadges(app.foldHarness({}))),
     "an unobserved fold claims nothing about the slot",
   );
+});
+
+// The sidebar never reads greener than the page in view: the header stamp's read state takes only the ALL SYSTEMS slot.
+test("the sidebar slot follows the page's read state, below every harness word", async (t) => {
+  const at = "2026-09-30T05:05:00Z";
+  const now = Date.parse("2026-09-30T05:06:00Z");
+  const healthy = app.getHarness(allHealthy());
+  const faulted = app.getHarness(allHealthy({ liveState: ready(daemonPayload(1)) }));
+  const unread = app.getHarness(allHealthy({ liveState: { status: "error", data: null, error: "HTTP 500" } }));
+  const lastKnown = `LAST KNOWN ${app.ui.formatKstTime(at)}`;
+  const rows = [
+    { name: "one page source failed, harness healthy → Last known at the page's read time", harness: healthy, stamp: { at, now, regions: [{ busy: false, error: null }, { busy: false, error: "HTTP 500" }] }, label: lastKnown, tone: "neutral" },
+    { name: "the page's refresh failed over held data → Last known", harness: healthy, stamp: { at, now, failed: true }, label: lastKnown, tone: "neutral" },
+    { name: "a failed first page read → Not read", harness: healthy, stamp: { now, failed: true }, label: "NOT READ", tone: "neutral" },
+    { name: "a harness fault outranks a page Last known", harness: faulted, stamp: { at, now, failed: true }, label: "1 PART DOWN", tone: "crit" },
+    { name: "an unread harness source outranks a page Last known", harness: unread, stamp: { at, now, failed: true }, label: "STATUS UNKNOWN", tone: "neutral" },
+    { name: "a first page read in flight still reads Checking", harness: healthy, stamp: { now, loading: true }, label: "CHECKING…", tone: "neutral" },
+    { name: "a refresh over a fresh read keeps All systems", harness: healthy, stamp: { at, now, loading: true }, label: "ALL SYSTEMS", tone: "ok" },
+    { name: "a fresh page read keeps All systems", harness: healthy, stamp: { at, now }, label: "ALL SYSTEMS", tone: "ok" },
+  ];
+  for (const row of rows) {
+    await t.test(row.name, () => {
+      const rollup = app.systemsRollup(row.harness, app.ui.getShellPageState(row.stamp));
+
+      assert.strictEqual(rollup.label, row.label);
+      assert.strictEqual(rollup.tone, row.tone);
+    });
+  }
 });
