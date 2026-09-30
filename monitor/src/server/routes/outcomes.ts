@@ -37,6 +37,7 @@ import type {
   OutcomeCrossAnalysisByResult,
   OutcomeCrossAnalysisCell,
   OutcomeCrossAnalysisFilterEcho,
+  OutcomeCrossAnalysisPriorWindow,
   OutcomeCloseByCidResponse,
   OutcomeCloseResponse,
   OutcomeCrossAnalysisResponse,
@@ -367,6 +368,11 @@ interface CrossCellDbRow {
   count: bigint;
 }
 
+interface PeriodBoundDbRow {
+  period_start: string;
+  period_end: string;
+}
+
 interface ByResultDbRow {
   result: string;
   count: bigint;
@@ -490,6 +496,8 @@ interface CrossAnalysisQuerystring {
   // (siblings of by_agent_top_10, which stays independently gated regardless of
   // this toggle) can be inspected un-scoped.
   include_all?: string;
+  // '1'/'true' adds prior_window — the preceding `days` window; 400 with days=all.
+  prior_window?: string;
 }
 
 // Parsed filter set shared by /search and /cross-analysis. metric_pass is a
@@ -918,6 +926,10 @@ async function handleCrossAnalysis(
     return reply.code(400).send(filtersResult.error);
   }
   const filters = filtersResult.filters;
+  const hasPriorWindow = request.query.prior_window === "1" || request.query.prior_window === "true";
+  if (hasPriorWindow && filters.days === "all") {
+    return reply.code(400).send({ error: "invalid_param", param: "prior_window", allowed: [7, 30, 90] });
+  }
   // Registry-scoped by default (closes the by_result/cross-tab/grader gap — the
   // original 65/605 `done_with_concerns` cross-analysis miscount included
   // non-fleet agents like general-purpose/Explore); `include_all=1` lifts the
@@ -963,6 +975,7 @@ async function handleCrossAnalysis(
       taskTypeGraderRows,
       countRows,
       baseCountRows,
+      priorWindow,
     ] =
       await Promise.all([
         prisma.$queryRaw<CrossCellDbRow[]>`
@@ -974,27 +987,7 @@ async function handleCrossAnalysis(
           ${analyticsWhere}
           GROUP BY confidence, metric_pass
         `,
-        prisma.$queryRaw<ByResultDbRow[]>`
-          SELECT
-            result::text     AS result,
-            COUNT(*)::bigint AS count,
-            (COUNT(*) FILTER (
-              WHERE ${buildReconstructedRowFilter()}
-            ))::bigint       AS reconstructed_count,
-            (COUNT(*) FILTER (
-              WHERE closed_at IS NOT NULL
-            ))::bigint       AS closed_count,
-            -- COALESCE: the discriminator is NULL (not FALSE) when both provenance
-            -- columns are NULL, and NOT NULL would silently drop a legacy writer row.
-            (COUNT(*) FILTER (
-              WHERE NOT COALESCE(${buildReconstructedRowFilter()}, FALSE)
-                AND closed_at IS NULL
-            ))::bigint       AS writer_open_count
-          FROM core.outcomes
-          ${analyticsWhere}
-          GROUP BY result
-          ORDER BY count DESC, result ASC
-        `,
+        findByResultRows(analyticsWhere),
         prisma.$queryRaw<ByAgentDbRow[]>`
           SELECT
             agent,
@@ -1081,6 +1074,9 @@ async function handleCrossAnalysis(
           FROM core.outcomes
           ${whereClause}
         `,
+        hasPriorWindow && filters.days !== "all"
+          ? getPriorWindow({ ...filters, days: filters.days }, scopeAgentKeys)
+          : Promise.resolve(undefined),
       ]);
 
     const totalRow = countRows[0];
@@ -1126,18 +1122,7 @@ async function handleCrossAnalysis(
     }
 
     // Defensive enum filter — drop rows with unrecognized result/agent values.
-    const byResult: OutcomeCrossAnalysisByResult[] = byResultRows.flatMap((row) => {
-      if (!ALLOWED_RESULTS.has(row.result as OutcomeResultLiteral)) return [];
-      return [
-        {
-          result: row.result as OutcomeResultLiteral,
-          count: bigintToNumber(row.count),
-          reconstructed_count: bigintToNumber(row.reconstructed_count),
-          closed_count: bigintToNumber(row.closed_count),
-          writer_open_count: bigintToNumber(row.writer_open_count),
-        },
-      ];
-    });
+    const byResult = toByResult(byResultRows);
     const byAgentTop10: OutcomeCrossAnalysisByAgent[] = byAgentRows.map((row) => ({
       agent: row.agent,
       count: bigintToNumber(row.count),
@@ -1184,11 +1169,83 @@ async function handleCrossAnalysis(
       grader_breakdown: graderBreakdown,
       downgrade_breakdown: downgradeBreakdown,
       task_type_grader_breakdown: taskTypeGraderBreakdown,
+      ...(priorWindow === undefined ? {} : { prior_window: priorWindow }),
       fetched_at: new Date().toISOString(),
     };
   } catch (error) {
     return failWithDb(request, reply, "/api/outcomes/cross-analysis", error);
   }
+}
+
+function findByResultRows(where: Prisma.Sql): Promise<ByResultDbRow[]> {
+  return getPrisma().$queryRaw<ByResultDbRow[]>`
+    SELECT
+      result::text     AS result,
+      COUNT(*)::bigint AS count,
+      (COUNT(*) FILTER (
+        WHERE ${buildReconstructedRowFilter()}
+      ))::bigint       AS reconstructed_count,
+      (COUNT(*) FILTER (
+        WHERE closed_at IS NOT NULL
+      ))::bigint       AS closed_count,
+      -- COALESCE: the discriminator is NULL (not FALSE) when both provenance
+      -- columns are NULL, and NOT NULL would silently drop a legacy writer row.
+      (COUNT(*) FILTER (
+        WHERE NOT COALESCE(${buildReconstructedRowFilter()}, FALSE)
+          AND closed_at IS NULL
+      ))::bigint       AS writer_open_count
+    FROM core.outcomes
+    ${where}
+    GROUP BY result
+    ORDER BY count DESC, result ASC
+  `;
+}
+
+// Defensive enum filter — drop rows with unrecognized result values.
+function toByResult(rows: readonly ByResultDbRow[]): OutcomeCrossAnalysisByResult[] {
+  return rows.flatMap((row) => {
+    if (!ALLOWED_RESULTS.has(row.result as OutcomeResultLiteral)) return [];
+    return [
+      {
+        result: row.result as OutcomeResultLiteral,
+        count: bigintToNumber(row.count),
+        reconstructed_count: bigintToNumber(row.reconstructed_count),
+        closed_count: bigintToNumber(row.closed_count),
+        writer_open_count: bigintToNumber(row.writer_open_count),
+      },
+    ];
+  });
+}
+
+/**
+ * Per-result counts for the `days` window just before the current one, under the
+ * current window's filters, poisoned exclusion and agent scope.
+ * Totals derive from by_result — result is a DB enum, so the enum filter drops nothing.
+ * @param filters - parsed filters with a bounded `days` (callers reject 'all')
+ */
+async function getPriorWindow(
+  filters: ParsedFilters & { days: number },
+  scopeAgentKeys: string[] | undefined,
+): Promise<OutcomeCrossAnalysisPriorWindow> {
+  const priorWhere = buildWhereClause(filters, { excludePoisoned: true, scopeAgentKeys, isPriorWindow: true });
+  const [byResultRows, [period]] = await Promise.all([
+    findByResultRows(priorWhere),
+    getPrisma().$queryRaw<PeriodBoundDbRow[]>`
+      SELECT to_char(CURRENT_DATE - ${filters.days * 2}::int, 'YYYY-MM-DD') AS period_start,
+             to_char(CURRENT_DATE - ${filters.days}::int, 'YYYY-MM-DD') AS period_end
+    `,
+  ]);
+  if (period === undefined) {
+    throw new Error("prior-window period query returned no row");
+  }
+  const byResult = toByResult(byResultRows);
+  return {
+    period_start: period.period_start,
+    period_end: period.period_end,
+    total: byResult.reduce((sum, row) => sum + row.count, 0),
+    reconstructed_total: byResult.reduce((sum, row) => sum + row.reconstructed_count, 0),
+    by_result: byResult,
+  };
 }
 
 // GET /api/outcomes/heatmap?days={1-90}&result={all|empty|failed|done} — DOW × Hour 7×24 grid.
@@ -2108,7 +2165,7 @@ function parseFilters(query: SearchQuerystring | CrossAnalysisQuerystring): Filt
 
 function buildWhereClause(
   filters: ParsedFilters,
-  options?: { excludePoisoned?: boolean; scopeAgentKeys?: string[] },
+  options?: { excludePoisoned?: boolean; scopeAgentKeys?: string[]; isPriorWindow?: boolean },
 ): Prisma.Sql {
   const fragments: Prisma.Sql[] = [];
 
@@ -2119,8 +2176,15 @@ function buildWhereClause(
     fragments.push(Prisma.sql`poisoned_window = FALSE`);
   }
 
-  // Day window — Prisma.empty when 'all' (no time filter).
-  if (filters.days !== "all") {
+  // Day window — Prisma.empty when 'all' (no time filter). The prior window's
+  // exclusive upper bound is the current window's inclusive lower bound → no gap, no overlap.
+  if (filters.days !== "all" && options?.isPriorWindow === true) {
+    const lowerBound = buildIntervalLiteral(filters.days * 2);
+    const upperBound = buildIntervalLiteral(filters.days);
+    fragments.push(
+      Prisma.sql`record_ts >= CURRENT_DATE - ${lowerBound} AND record_ts < CURRENT_DATE - ${upperBound}`,
+    );
+  } else if (filters.days !== "all") {
     const intervalLiteral = buildIntervalLiteral(filters.days);
     fragments.push(Prisma.sql`record_ts >= CURRENT_DATE - ${intervalLiteral}`);
   }
