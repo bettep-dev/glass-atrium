@@ -11,7 +11,7 @@ const UI_SRC = resolve(__dirname, "../public/src/ui.jsx");
 
 type Component = (props: Record<string, unknown>) => unknown;
 type ErrorCopy = { sentence: string; next: string; detail: string; kind: string };
-type FailureEntry = { source: string; error: unknown; focusId?: string };
+type FailureEntry = { source: string; error: unknown };
 type FakeResponse = { status: number; statusText: string; text: () => Promise<string> };
 
 const ui = await loadScreenModule(UI_SRC);
@@ -158,19 +158,6 @@ test("a covered region names itself, reserves its slot height and carries no ale
   assert.equal(getVisibleText(tree).replace(/\s+/g, " ").trim(), `Spend by model ${COVERED_NOTE}`);
   assert.equal(((tree.children[0] as RenderedNode).props.style as { minHeight: number }).minHeight, 218);
   assert.equal(findNodes(tree, (n) => n.type === "button" || n.type === "details" || n.props.role === "alert").length, 0);
-});
-
-test("a shared outage hands banner focus to the first covered region that declared a card id", () => {
-  const rows = [
-    { name: "first failed region's id", entries: [{ source: "a", error: SERVER_ERROR, focusId: "card-a" }, { source: "b", error: SERVER_ERROR, focusId: "card-b" }], focusTargetId: "card-a" },
-    { name: "a healthy region's id is skipped", entries: [{ source: "a", error: null, focusId: "card-a" }, { source: "b", error: SERVER_ERROR, focusId: "card-b" }, { source: "c", error: SERVER_ERROR }], focusTargetId: "card-b" },
-    { name: "no failed region declared an id", entries: [{ source: "a", error: SERVER_ERROR }, { source: "b", error: SERVER_ERROR }], focusTargetId: undefined },
-  ];
-  for (const row of rows) {
-    const shared = getSharedFailure(row.entries) as { focusTargetId?: string };
-
-    assert.equal(shared.focusTargetId, row.focusTargetId, row.name);
-  }
 });
 
 test("the loading placeholder is visible text under a status role and reserves its slot height", () => {

@@ -119,6 +119,8 @@ export interface FakeDocument {
   dispatch: (type: string, event: Record<string, unknown>) => void;
   getElementById: (id: string) => unknown;
   elements: Map<string, unknown>;
+  querySelector: (selector: string) => unknown;
+  attached: Array<{ props: Record<string, unknown> }>;
   reset: () => void;
 }
 
@@ -138,9 +140,17 @@ export function createFakeDocument(): FakeDocument {
     },
     getElementById: (id) => doc.elements.get(id) ?? null,
     elements: new Map(),
+    // attribute-presence selectors (`[name]`) only, over `attached` in attach order
+    querySelector: (selector) => {
+      const name = /^\[([\w-]+)\]$/.exec(selector)?.[1];
+      const node = name ? doc.attached.find((candidate) => candidate.props[name] != null) : undefined;
+      return node ? { getAttribute: (attr: string) => (node.props[attr] == null ? null : String(node.props[attr])) } : null;
+    },
+    attached: [],
     reset: () => {
       listeners.clear();
       doc.elements.clear();
+      doc.attached.length = 0;
       doc.activeElement = doc.body;
       doc.body.style.overflow = "auto";
     },

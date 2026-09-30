@@ -149,6 +149,42 @@ test("a Retry that unmounts while focused hands focus to its region card; an unf
   }
 });
 
+function getFakeCard(name: string): Record<string, unknown> {
+  const card = { name, hasAttribute: () => true, setAttribute: () => undefined, scrollIntoView: () => undefined, focus: () => { fxDoc.activeElement = card; } };
+  return card;
+}
+
+test("a shared-outage banner leaving with its Retry focused hands focus to the first covered region's card, else to its fallback", () => {
+  const shared = { sources: ["cost trend", "token trend"], error: "HTTP 500" };
+  const rows = [
+    { name: "covered regions declared their cards", regionCardIds: ["cost-trend", "cost-tokens"], expected: "cost-trend" },
+    { name: "no covered region declared a card", regionCardIds: [undefined, undefined], expected: "cost-verdict" },
+  ];
+  for (const row of rows) {
+    fxDoc.reset();
+    for (const id of ["cost-trend", "cost-tokens", "cost-verdict"]) fxDoc.elements.set(id, getFakeCard(id));
+    shared.sources.forEach((source, index) => {
+      const covered = renderScreen(fxH(fxUi.RegionFailure, { source, error: shared.error, shared, focusTargetId: row.regionCardIds[index] })) as RenderedNode;
+      fxDoc.attached.push(...findNodes(covered, (n) => n.type === "div"));
+    });
+    const retry = { name: "retry" };
+    let banner = null as RenderedNode | null;
+    const render = () => {
+      banner = renderScreen(fxH(fxUi.PageErrorBanner, { ...shared, onRetry: () => undefined, focusTargetId: "cost-verdict" })) as RenderedNode;
+      (getRetry(banner).props.ref as { current: unknown }).current = retry;
+      return banner;
+    };
+    const { unmount } = effects.mount(render, () => ({}));
+    const alert = findNodes(banner as unknown as RenderedNode, (n) => n.props.role === "alert")[0];
+    fxDoc.activeElement = retry;
+    (alert.props.onFocus as () => void)();
+
+    unmount();
+
+    assert.equal((fxDoc.activeElement as { name: string }).name, row.expected, row.name);
+  }
+});
+
 test("a region reads as its error card while a Retry is in flight over a cold error, never as a loader", () => {
   const getRegionView = fxUi.getRegionView as (region: Record<string, unknown>) => string;
   const rows = [

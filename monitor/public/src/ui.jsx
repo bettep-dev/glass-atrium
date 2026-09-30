@@ -1479,9 +1479,8 @@ function getErrorCopy(error, source) {
 }
 
 /**
- * The outage ≥2 failed regions share, or null — non-null → one PageErrorBanner (pass its `focusTargetId`) + a RegionFailure per region.
- * @param entries - `{ source, error, focusId? }` per region; a null error is a healthy region, `focusId` its card id
- * @returns `{ sources, error, focusTargetId }` — focusTargetId = first failed region's card id, so recovery lands focus there
+ * The outage ≥2 failed regions share, or null — non-null → one PageErrorBanner + a RegionFailure per region.
+ * @param entries - `{ source, error }` per region; a null error is a healthy region
  */
 function getSharedFailure(entries) {
   const failed = (entries || []).filter((entry) => entry && entry.error != null);
@@ -1492,11 +1491,7 @@ function getSharedFailure(entries) {
     return `${kind}:${status}`;
   }));
   if (causeKeys.size !== 1) return null;
-  return {
-    sources: failed.map((entry) => entry.source),
-    error: failed[0].error,
-    focusTargetId: failed.find((entry) => entry.focusId)?.focusId,
-  };
+  return { sources: failed.map((entry) => entry.source), error: failed[0].error };
 }
 
 function ErrorDetails({ detail }) {
@@ -1519,7 +1514,7 @@ function getRegionView(region) {
 /**
  * Ref for a control that hands focus to a card when it unmounts while focused (Retry leaving on recovery).
  * Layout cleanup → runs before the node leaves the DOM, while it can still be the active element.
- * @param targetId - card id for putCardFocus; omit to skip the handoff
+ * @param targetId - card id for putCardFocus, or a resolver read at handoff time; omit to skip the handoff
  */
 function useFocusHandoff(targetId) {
   const controlRef = useRef(null);
@@ -1529,7 +1524,9 @@ function useFocusHandoff(targetId) {
   useLayoutEffect(() => {
     const control = controlRef.current;
     return () => {
-      if (control && targetIdRef.current && document.activeElement === control) putCardFocus(targetIdRef.current);
+      if (!control || document.activeElement !== control) return;
+      const target = targetIdRef.current;
+      putCardFocus(typeof target === 'function' ? target() : target);
     };
   }, []);
   return controlRef;
@@ -1574,12 +1571,14 @@ const REGION_COVERED_NOTE = 'Not loaded — see the notice above';
 
 /**
  * Quiet slot for a region the page banner already speaks for: its name + a pointer to the notice, no sentence, no Retry.
+ * @param focusTargetId - the region's card id; the banner's Retry hands focus to the first covered card on recovery
  * @param minHeight - reserved slot height so the grid keeps its shape
  */
-function RegionCovered({ source, minHeight, className = '' }) {
+function RegionCovered({ source, focusTargetId, minHeight, className = '' }) {
   const name = source ? source.charAt(0).toUpperCase() + source.slice(1) : '';
   return (
-    <div className={`sub-card bg-sunken flex flex-col gap-1 ${className}`.trim()} style={minHeight ? { minHeight } : undefined}>
+    <div className={`sub-card bg-sunken flex flex-col gap-1 ${className}`.trim()} style={minHeight ? { minHeight } : undefined}
+      data-covered-card-id={focusTargetId}>
       <span className="fs-body text-dim">{name}</span>
       <span className="fs-meta text-faint">{REGION_COVERED_NOTE}</span>
     </div>
@@ -1591,28 +1590,41 @@ function RegionCovered({ source, minHeight, className = '' }) {
  * @param shared - the page's getSharedFailure result, or null
  */
 function RegionFailure({ source, error, shared, onRetry, isBusy = false, focusTargetId, minHeight, className = '' }) {
-  if (shared?.sources?.includes(source)) return <RegionCovered source={source} minHeight={minHeight} className={className}/>;
+  if (shared?.sources?.includes(source)) {
+    return <RegionCovered source={source} focusTargetId={focusTargetId} minHeight={minHeight} className={className}/>;
+  }
   return <RegionUnavailable source={source} error={error} onRetry={onRetry} isBusy={isBusy}
     focusTargetId={focusTargetId} minHeight={minHeight} className={className}/>;
 }
 
+// first covered slot in document order → the first region the shared Retry brings back
+function getFirstCoveredCardId() {
+  return document.querySelector('[data-covered-card-id]')?.getAttribute('data-covered-card-id') || null;
+}
+
 /**
  * One announced banner with one Retry for an outage shared by ≥2 regions (see getSharedFailure).
+ * Leaving on recovery with its Retry focused → focus lands on the first covered region's card.
  * @param isBusy - a Retry is in flight
- * @param focusTargetId - card id that takes focus when the banner leaves on recovery while its Retry is focused
+ * @param focusTargetId - fallback card id when no covered region declared one
  */
 function PageErrorBanner({ sources, error, onRetry, isBusy = false, focusTargetId }) {
+  const coveredCardIdRef = useRef(null);
   const sourceList = new Intl.ListFormat('en', { type: 'conjunction' }).format(sources || []);
   const copy = getErrorCopy(error, sourceList);
+  // resolved on focus-in: recovery removes the covered slots in the same commit that removes this banner
+  const handleFocus = () => { coveredCardIdRef.current = getFirstCoveredCardId(); };
+  const getRecoveryTargetId = () => coveredCardIdRef.current || focusTargetId;
+
   return (
-    <div role="alert" className="card p-3 flex items-start gap-2">
+    <div role="alert" className="card p-3 flex items-start gap-2" onFocus={handleFocus}>
       <Icon name={TONE_ICON.crit} size={16} className="text-crit mt-0.5"/>
       <div className="flex flex-col gap-1 min-w-0 flex-1">
         <span className="fs-body font-medium">{copy.sentence}</span>
         <span className="fs-meta text-dim">{copy.next}</span>
         <ErrorDetails detail={copy.detail}/>
       </div>
-      <RetryButton onRetry={onRetry} isBusy={isBusy} focusTargetId={focusTargetId}/>
+      <RetryButton onRetry={onRetry} isBusy={isBusy} focusTargetId={getRecoveryTargetId}/>
     </div>
   );
 }
