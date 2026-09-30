@@ -2454,7 +2454,8 @@ function ResultTableCard({
         }
       />
       <ActiveFilterChips filter={filter} onRemove={onPatchFilter} onClearAll={onResetFilter}/>
-      <div className="card-body" style={{ padding: 0 }}>
+      {/* lifts the shared 70vh card-body cap → the Routine rows scroll with the page, not in a nested box */}
+      <div className="card-body" style={{ padding: 0, maxHeight: 'none', overflowY: 'visible' }}>
         <ResultTableBody
           state={state}
           rows={rows}

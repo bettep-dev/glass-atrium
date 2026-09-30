@@ -266,3 +266,18 @@ test("a channel row keeps to two single lines, the detail line carrying its full
   assert.match(String(detail.props.className), /truncate/);
   assert.equal(detail.props.title, collectText(detail).trim());
 });
+
+test("the task ledger scrolls with the page, never inside a box of its own", async () => {
+  const { tree } = await renderOutcomesScreen(0);
+  const [ledger] = findNodes(tree, (n) => n.type === "ResultTableCard");
+  assert.ok(ledger, "the ledger card renders");
+
+  const bodies = findNodes(ledger, (n) => String(n.props.className ?? "").split(" ").includes("card-body"));
+  assert.ok(bodies.length > 0, "the ledger has a card body");
+  for (const body of bodies) {
+    // the shared .card-body caps at 70vh with overflow-y auto → the Routine rows would sit in a nested scroller
+    const style = (body.props.style ?? {}) as Record<string, unknown>;
+    assert.equal(style.maxHeight, "none", "no height cap");
+    assert.equal(style.overflowY, "visible", "no inner vertical scroll");
+  }
+});
