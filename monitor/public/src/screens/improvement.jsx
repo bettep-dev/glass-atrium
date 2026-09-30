@@ -2891,10 +2891,10 @@ function patternLabelI(signature, agent) {
 	return suffix && text.endsWith(suffix) ? text.slice(0, -suffix.length) : text;
 }
 
-// updater-written labels read as what happened to the operator's file, not as the updater's internal step
+// updater-written labels name the decision on daemon-written lines only — whether it landed is the row's status
 const PLAIN_PATTERN_NAMES_I = Object.freeze({
-	"editable-region-arbiter-resolved": "Release update merged your local edits",
-	"editable-region-resolved-release": "Release update merged your local edits",
+	"editable-region-arbiter-resolved": "Release update: a model settled clashes with daemon-written lines",
+	"editable-region-resolved-release": "Release update: release text chosen over daemon-written lines",
 });
 
 // On-screen pattern name — agent suffix stripped, machine key read as words

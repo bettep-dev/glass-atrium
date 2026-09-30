@@ -29,6 +29,7 @@ interface Sandbox {
   React: { createElement: unknown };
   window: { UI: Record<string, unknown> };
   patternLabelI: (signature: unknown, agent: unknown) => string;
+  patternNameI: (signature: unknown, agent: unknown) => string;
   groupByLabelI: (rows: unknown[]) => Array<{ label: string; rows: unknown[] }>;
   AppliedHistoryRowI: Component;
   RejectedGroupI: Component;
@@ -292,7 +293,23 @@ test("a ledger row sets its pattern label in sans and keeps mono for the date", 
 });
 
 const RAW_PATTERN = "editable-region-arbiter-resolved";
-const PATTERN_NAME = "Release update merged your local edits";
+const PATTERN_NAME = "Release update: a model settled clashes with daemon-written lines";
+
+// update.sh writes these rows over lines the DAEMON wrote, and a row may record a decision that never landed
+describe("an updater pattern name claims only what its verdict guarantees", () => {
+  const rows = [
+    { name: "arbiter-resolved names a model decision", label: "editable-region-arbiter-resolved", claim: /\bmodel settled\b/ },
+    { name: "historical resolved-release names the release side", label: "editable-region-resolved-release", claim: /\brelease text chosen\b/ },
+  ];
+  for (const row of rows) {
+    test(row.name, () => {
+      const text = sandbox.patternNameI(`${row.label}|${AGENT}`, AGENT);
+      assert.match(text, row.claim);
+      assert.match(text, /daemon-written lines/);
+      assert.doesNotMatch(text, /\bmerged\b|your local edits/i);
+    });
+  }
+});
 
 describe("every pattern label on the board and ledger reads as words, never as its machine key", () => {
   const signature = `${RAW_PATTERN}|${AGENT}`;
