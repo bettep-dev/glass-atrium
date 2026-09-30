@@ -2578,35 +2578,29 @@ function PatternLedgerCardI({ state, suppression, onRowClick, onRetry, shared })
 		<LedgerLiveSectionI rows={live} maxFreq={maxFreq} onRowClick={onRowClick} />
 	);
 	const sideSections = getLedgerSectionsI(inert, suppression);
+	const columns =
+		inert.length > 0
+			? getLedgerColumnsI(1 + live.length + getLiveRowGroupsI(live).length, sideSections)
+			: null;
 
-	if (inert.length === 0) {
-		return (
-			<section className="card" aria-label="Pattern ledger" id={ANCHOR_ID_I.patternLedger} data-testid="pattern-ledger">
-				<CardHead title="Pattern ledger" />
-				{liveSection}
-				{sideSections.map((section) => section.node)}
-				<LedgerFooterI total={total} declined={declinedAllTime} suppression={suppression} />
-			</section>
-		);
-	}
-
-	const liveWeight = 1 + live.length + getLiveRowGroupsI(live).length;
-	const columns = getLedgerColumnsI(liveWeight, sideSections);
 	return (
 		<section className="card" aria-label="Pattern ledger" id={ANCHOR_ID_I.patternLedger} data-testid="pattern-ledger">
 			<CardHead title="Pattern ledger" />
-			<SplitRow ratio="1:1">
-				<SplitColumn>
+			{columns ? (
+				<SplitRow ratio="1:1">
+					<SplitColumn>
+						{liveSection}
+						{columns.live.map((section) => section.node)}
+					</SplitColumn>
+					<SplitColumn>{columns.side.map((section) => section.node)}</SplitColumn>
+				</SplitRow>
+			) : (
+				<>
 					{liveSection}
-					{columns.live.map((section) => section.node)}
-				</SplitColumn>
-				<SplitColumn>{columns.side.map((section) => section.node)}</SplitColumn>
-			</SplitRow>
-			<LedgerFooterI
-				total={total}
-				declined={declinedAllTime}
-				suppression={suppression}
-			/>
+					{sideSections.map((section) => section.node)}
+				</>
+			)}
+			<LedgerFooterI total={total} declined={declinedAllTime} suppression={suppression} />
 		</section>
 	);
 }
