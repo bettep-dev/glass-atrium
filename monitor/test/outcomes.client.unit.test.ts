@@ -728,6 +728,39 @@ describe("buildLedgerSectionsO: every ledger heading counts its rows with the pa
   }
 });
 
+interface ShownCountSandboxO {
+  ResultTableCard: (props: Record<string, unknown>) => RecordedElementO;
+  getLedgerDisplayRowsO: (sections: Array<{ rows: Array<Record<string, unknown>> }>) => Array<Record<string, unknown>>;
+  getDetailPositionLabelO: (displayRows: Array<Record<string, unknown>>, row: Record<string, unknown>) => string;
+}
+const shownCount = rendered as unknown as ShownCountSandboxO;
+
+describe("ResultTableCard: the head's 'shown' count is the drawn set the drawer counter walks", () => {
+  const page = Array.from({ length: 50 }, (_, i) => ({ id: i + 1, result: i < 15 ? "fail" : "done" }));
+  const closure = { pendingIds: new Set(), closedOverrides: new Map() };
+  const cases = [
+    { name: "a page split capped below its needs-you rows", needsYou: null, cap: 10 },
+    { name: "an uncapped page split", needsYou: null, cap: null },
+    {
+      name: "a capped window query larger than the page's needs-you rows",
+      needsYou: { rows: Array.from({ length: 30 }, (_, i) => ({ id: 100 + i, result: "fail" })), total: 30, windowLabel: "7d" },
+      cap: 10,
+    },
+  ];
+  for (const row of cases) {
+    test(row.name, () => {
+      const card = shownCount.ResultTableCard({
+        state: { status: "ready" }, rows: page, totalMatched: 120, page: 0, limit: 50, sort: "recent", filter: {},
+        closure, needsYou: row.needsYou, needsYouCap: row.cap,
+      });
+      const drawn = shownCount.getLedgerDisplayRowsO(wording.buildLedgerSectionsO(page, closure, row.needsYou, row.cap) as never);
+      const drawerTotal = shownCount.getDetailPositionLabelO(drawn, drawn[0]).match(/of (\d+) shown/)?.[1];
+      const head = flattenO(card).find((el) => typeof el.props.sub === "string");
+      assert.equal(head?.props.sub, `120 matched · ${drawerTotal} shown`);
+    });
+  }
+});
+
 describe("getRateVerdictO: the verdict chip names the jump, never a status tile's label again", () => {
   test("a failing window's chip label differs from every status tile label", () => {
     const verdict = wording.getRateVerdictO({ status: "ok", tone: "crit", breakage: 20, openCaveats: 5, writerTotal: 100 }, "last 7d");

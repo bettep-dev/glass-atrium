@@ -2443,13 +2443,15 @@ function ResultTableCard({
 
   const totalPages = Math.max(1, Math.ceil(totalMatched / limit));
   const currentPage = page + 1;
+  // the drawn set (capped Needs-you + Routine), not the page's rows → same count as the section headings and the drawer's 'k of X shown'
+  const shownCount = getLedgerDisplayRowsO(buildLedgerSectionsO(rows, closure, needsYou, needsYouCap)).length;
 
   return (
     <div id={REGION_CARD_IDS.ledger} className="card">
       <CardHead
         title="Results"
         sub={state.status === 'ready'
-          ? `${formatIntO(totalMatched)} matched · ${formatIntO(rows.length)} shown`
+          ? `${formatIntO(totalMatched)} matched · ${formatIntO(shownCount)} shown`
           : state.status === 'loading' ? 'Loading…' : 'Records unavailable'}
         right={
           <div className="flex items-center gap-2">
