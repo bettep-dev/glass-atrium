@@ -1211,7 +1211,8 @@ test("Live repeats nothing in the steady state and shows the value only when it 
     ["BudgetsSectionMC", budgetsPropsMc(), budgetsPropsMc([{ ...BUDGET_ROW_FIXTURE_MC[0], actual: "12.00", drift: true }])],
   ] as const) {
     const steady = liveCellMc(renderComponentMc(screens[name], props));
-    assert.strictEqual(textMc([steady]), "Matches saved", `${name}: a matching live value says so in words`);
+    assert.ok(textMc([steady]).startsWith("Matches saved"), `${name}: a matching live value says so in words`);
+    assert.ok(!textMc([steady]).includes("claude-opus-4-8"), `${name}: the matching value is not repeated`);
     assert.strictEqual(tagsMc([steady], "i")[0]?.props["data-icon"], "check", `${name}: the match carries an ok glyph`);
 
     const differs = textMc([liveCellMc(renderComponentMc(screens[name], drifted))]);
@@ -1270,7 +1271,7 @@ test("tier notes show one unfolded entry per described tier", () => {
   const tree = renderComponentMc(screens.TierNotesMC, { title: "Who each tier covers", rows });
   assert.strictEqual(tagsMc(tree, "details").length, 0, "the notes are not folded away");
   assert.strictEqual(tagsMc(tree, "dt").length, rows.length, "one entry per tier");
-  assert.ok(textMc(tree).includes("glass-atrium-meta-agent"), "every description stays reachable");
+  assert.ok(textMc(tree).includes("self-improvement loop"), "every description stays reachable");
 });
 
 test("no ledger text drops below the 12px type floor", () => {
@@ -1611,4 +1612,141 @@ test("a section lead line wraps instead of clipping", () => {
 
   assert.ok(leads.length > 0, "the caps section carries a lead line");
   assert.ok(leads.every((n) => String(n.props.className).includes("is-wrap")), "every lead line wraps");
+});
+
+// ---------------------------------------------------------------------------
+// Round-6 page pass: announcements, stale rows, file lists, rail headings, In-effect sources.
+// ---------------------------------------------------------------------------
+
+const ALL_TIERS_MC = [
+  "model.dev",
+  "model.research",
+  "model.meta",
+  "model.wiki",
+  "model.review",
+  "model.docs",
+  "model.daemon_cycle_worker",
+].map((domain) => ({ ...DOMAIN_ROW_FIXTURE_MC[0], domain }));
+
+const SCREEN_DATA_MC = {
+  domains: DOMAIN_ROW_FIXTURE_MC,
+  budgets: BUDGET_ROW_FIXTURE_MC,
+  known_models: [],
+  daemon_config_sync: "ok",
+};
+const SCREEN_FORM_MC = { models: { "model.dev": "claude-opus-4-8" }, budgets: { "budget.worker_max_usd": "10.00" } };
+
+function seededConfigMc(region: Record<string, unknown>): Record<string, unknown> {
+  return { ...(realUiMc.INITIAL_REGION_STATE as object), ...region };
+}
+
+// The one visually hidden polite region — the toast's own status node is transient and visible.
+function announcerMc(tree: McNode[]): McTag[] {
+  return findAllMc(
+    tree,
+    (n) => n.props["aria-live"] === "polite" && String(n.props.className ?? "").includes("sr-only"),
+  );
+}
+
+describe("a Refresh or Retry result is announced in one polite live region, mounted before the read settles", () => {
+  const readAt = Date.now() - 60_000;
+  const time = String((realUiMc.formatKstTime as (at: number) => string)(readAt));
+  const rows = [
+    { name: "first load is not announced", tick: 0, region: { status: "ready", data: SCREEN_DATA_MC, key: "config", busy: false }, says: null },
+    { name: "a read in flight says nothing yet", tick: 1, region: { status: "ready", data: SCREEN_DATA_MC, key: "config", busy: true }, says: null },
+    { name: "a reload that landed names its read time", tick: 1, region: { status: "ready", data: SCREEN_DATA_MC, key: "config", busy: false }, says: ["reloaded", time] },
+    { name: "a failed reload over held data names the last good read", tick: 1, region: { status: "ready", data: SCREEN_DATA_MC, key: "config", error: "HTTP 500", busy: false }, says: ["Couldn't reload", "last good read", time] },
+    { name: "a failed first read says nothing was read", tick: 1, region: { status: "error", data: null, error: "HTTP 500", busy: false }, says: ["Couldn't read"] },
+    { name: "a save leaves the announcement to its own toast", tick: 1, region: { status: "ready", data: SCREEN_DATA_MC, key: "save", busy: false }, says: null },
+  ];
+
+  for (const row of rows) {
+    test(row.name, async () => {
+      const tree = await renderSeededScreenMc({
+        config: seededConfigMc(row.region),
+        form: row.region.data ? SCREEN_FORM_MC : null,
+        refreshTick: row.tick,
+        asOfAt: row.region.data ? readAt : null,
+      });
+      const regions = announcerMc(tree);
+      assert.strictEqual(regions.length, 1, "exactly one announcer, present in every state");
+      assert.strictEqual(regions[0].props.role, "status");
+      const said = textMc(regions[0].children);
+      if (row.says === null) {
+        assert.strictEqual(said, "", `silent: ${said}`);
+        return;
+      }
+      for (const phrase of row.says) assert.ok(said.includes(phrase), `"${said}" names ${phrase}`);
+    });
+  }
+});
+
+test("under a failed reload no row keeps a green 'Matches saved'; the match is dated to the last good read", async () => {
+  for (const [name, error, isStale] of [
+    ["fresh read", null, false],
+    ["warm error", "HTTP 500", true],
+  ] as const) {
+    const tree = await renderSeededScreenMc({
+      config: seededConfigMc({ status: "ready", data: SCREEN_DATA_MC, key: "config", error, busy: false }),
+      form: SCREEN_FORM_MC,
+      asOfAt: Date.now() - 60_000,
+    });
+    const bodies = tagsMc(tree, "tbody");
+    const rowCount = bodies.flatMap((b) => tagsMc(b.children, "tr")).length;
+    const text = textMc(bodies);
+    const checks = findAllMc(bodies, (n) => n.props["data-icon"] === "check").length;
+
+    assert.strictEqual(countMc(text, "Matches saved"), isStale ? 0 : rowCount, `${name}: matching rows`);
+    assert.strictEqual(checks, isStale ? 0 : rowCount, `${name}: ok glyphs`);
+    assert.strictEqual(countMc(text, "Matched at last read"), isStale ? rowCount : 0, `${name}: stale rows dated`);
+  }
+});
+
+test("the file list toggle shows a chevron and its opened list is never clipped by an inner scroller", () => {
+  const files = Array.from({ length: 13 }, (_, i) => ({ file: `agents/glass-atrium-dev-${i}.md`, model: "claude-opus-4-8" }));
+  const tree = renderComponentMc(screens.LiveValueMC, { value: "claude-opus-4-8", drift: false, files });
+  const [summary] = tagsMc(tree, "summary");
+  const [list] = findAllMc(tree, (n) => n.props.role === "region");
+
+  assert.ok(tagsMc([summary], "i").some((n) => String(n.props["data-icon"]).startsWith("chevron")), "the pill carries a chevron");
+  assert.strictEqual((list.props.style as Record<string, unknown> | undefined)?.maxHeight, undefined, "no height cap");
+  assert.ok(!String(list.props.className).includes("overflow-y-auto"), "no inner scroller");
+  assert.strictEqual(tagsMc(list.children, "span").length, files.length, "every file is listed");
+});
+
+test("the rail labels are headings, and their notes never repeat the agent a row already names", async () => {
+  const tree = await renderSeededScreenMc({
+    config: seededConfigMc({ status: "ready", data: { ...SCREEN_DATA_MC, domains: ALL_TIERS_MC }, key: "config", busy: false }),
+    form: SCREEN_FORM_MC,
+    asOfAt: Date.now(),
+  });
+  const headings = textsMc(tagsMc(tree, "h3"));
+  assert.ok(headings.includes("Who each tier covers"), `headings: ${headings}`);
+  assert.ok(headings.includes("When a cap trips"), `headings: ${headings}`);
+
+  const notes = textsMc(tagsMc(tree, "dd")).join(" ");
+  assert.ok(notes.length > 0, "the notes are rendered");
+  assert.ok(!notes.includes("glass-atrium-"), `a note repeats an agent id the row shows: ${notes}`);
+});
+
+test("every In-effect cell is filled: a tier without a file list names where its value was read from", () => {
+  const tree = renderComponentMc(screens.DomainsSectionMC, domainsPropsMc(ALL_TIERS_MC));
+  const bodyRows = tagsMc(tagsMc(tree, "tbody")[0].children, "tr");
+  const sources: Record<string, string> = {
+    "model.research": "intel-researcher",
+    "model.meta": "meta-agent",
+    "model.wiki": "wiki-curator",
+    "model.daemon_cycle_worker": "daemon-config.json",
+  };
+  assert.strictEqual(bodyRows.length, ALL_TIERS_MC.length);
+  ALL_TIERS_MC.forEach((tier, i) => {
+    const live = textMc([tagsMc(bodyRows[i].children, "td")[2]]);
+    const source = sources[tier.domain];
+    if (source === undefined) return;
+    assert.ok(live.includes("Read from"), `${tier.domain}: names its source (${live})`);
+    assert.ok(live.includes(source), `${tier.domain}: reads from ${source} (${live})`);
+  });
+
+  const cap = textMc([liveCellMc(renderComponentMc(screens.BudgetsSectionMC, budgetsPropsMc()))]);
+  assert.ok(cap.includes("Read from daemon-config.json"), `a cap names its source (${cap})`);
 });
