@@ -209,8 +209,6 @@ function ScreenClaudedDocs(/* { onNav } */) {
 		Badge,
 		TypeScaleStyle,
 		DetailSurface,
-		FreshnessStamp,
-		RefreshButton,
 		INITIAL_REGION_STATE,
 		putRegionRequest,
 		putRegionData,
@@ -890,17 +888,7 @@ function ScreenClaudedDocs(/* { onNav } */) {
 
 	// 카운트 표기 — groups mode 는 그룹/문서 이중 단위 명시 (총건 pill 이 그룹 수를 문서 수처럼 읽히던 오해 차단, F40) ·
 	// search mode 는 row 단위 '건' 유지 + 숨은 건 있으면 "표시/전체" 이중 표기 (데이터 정직성).
-	const headerRight = (
-		<>
-			<FreshnessStamp {...getFreshnessInputCD(asOf, listState)} />
-			<RefreshButton
-				isBusy={listState.busy}
-				hasRead={asOf != null}
-				onRefresh={triggerRefresh}
-				label="Refresh documents"
-			/>
-		</>
-	);
+	const headerRight = <DocHeaderActionsCD asOf={asOf} listState={listState} onRefresh={triggerRefresh} />;
 
 	return (
 		<div className="flex flex-col min-h-0 flex-1">
@@ -1077,8 +1065,10 @@ function ScreenClaudedDocs(/* { onNav } */) {
         .doc-reorder-error { color: rgb(var(--crit)); font-family: 'JetBrains Mono', monospace; }
         /* stage pill — 톤은 meter 채움과 종료 글리프가 운반 · 라벨 텍스트는 중립 유지. */
         /* ID 셀 둘째 줄 계보. */
-        /* breaks only between words — "rev of" / "#N" stack in the ID column instead of spilling or splitting a number */
-        .doc-lineage { font-size: var(--fs-meta); color: rgb(var(--faint)); white-space: normal; word-break: keep-all; overflow-wrap: normal; text-align: left; }
+        /* one line — the ID column is sized for "rev of #N" */
+        .doc-lineage { font-size: var(--fs-meta); color: rgb(var(--faint)); white-space: nowrap; text-align: left; }
+        /* header text at the title text's x — lead slot 20px + title row gap 6px */
+        .doc-col-title-text { margin-left: 26px; }
         /* held rows while a read is in flight — dimmed, still readable and selectable. */
         .tbl.doc-ledger-busy { opacity: 0.55; transition: opacity 120ms; }
         @media (prefers-reduced-motion: reduce) { .tbl.doc-ledger-busy { transition: none; } }
@@ -1234,6 +1224,24 @@ function ScreenClaudedDocs(/* { onNav } */) {
 	);
 }
 
+// before the first read the list placeholder is the one loading label → no stamp, and Refresh is not busy yet
+function DocHeaderActionsCD({ asOf, listState, onRefresh }) {
+	const { FreshnessStamp, RefreshButton } = window.UI;
+	const hasRead = asOf != null;
+
+	return (
+		<>
+			{hasRead && <FreshnessStamp {...getFreshnessInputCD(asOf, listState)} />}
+			<RefreshButton
+				isBusy={hasRead && listState.busy === true}
+				hasRead={hasRead}
+				onRefresh={onRefresh}
+				label="Refresh documents"
+			/>
+		</>
+	);
+}
+
 // 서술 태그 전용 셀 — audience/format 칩을 제목 컬럼 밖에서 렌더.
 function DocTagsCellCD({ audience, format, commonFormat, commonAudience = null }) {
 	const { Badge } = window.UI;
@@ -1265,11 +1273,11 @@ function DocAuthorCellCD({ author }) {
 	);
 }
 
-// 중앙 목록 카드 — Sticky Header Integrated (검색 + facet + 건수 2-row).
-// .card-body 인라인 maxHeight:'none' 으로 base.css `max-height: 70vh` override → 카드 viewport full-height + 카드 내부 스크롤.
 // the list card takes focus when a recovered read unmounts the Retry that held it
 const DOC_LIST_CARD_ID_CD = "docs-list";
 
+// 중앙 목록 카드 — Sticky Header Integrated (검색 + facet + 건수 2-row).
+// .card-body 인라인 maxHeight:'none' 으로 base.css `max-height: 70vh` override → 카드 viewport full-height + 카드 내부 스크롤.
 function DocListCardCD({
 	asOf,
 	state,
@@ -1345,8 +1353,7 @@ function DocListCardCD({
 	const nowMs = Date.now();
 	const openSummary = isSectioned ? getOpenSummaryCD(orderedRows, nowMs) : null;
 	const hasOpenSummary = openSummary != null && openSummary.openCount > 0;
-	// sections already name the stage → the column holds the meter only
-	const statusColumnWidth = isSectioned ? 96 : 135;
+	const statusColumnWidth = 135;
 	const rovingId = getRovingIdCD(orderedRows.map((r) => r.id), focusRowId, selectedId);
 	const commonFormat = getCommonFormatCD(orderedRows);
 	const commonAudience = getCommonAudienceCD(orderedRows);
@@ -1573,9 +1580,11 @@ function DocListCardCD({
 								{/* width 는 표가 넘칠 때 min-content 까지 눌린다 → 컬럼마다 min-width 바닥을 같이 준다. */}
 								<th scope="col" style={{ width: statusColumnWidth, minWidth: statusColumnWidth }}>Status</th>
 								{/* ID — 문서 번호 노출 (그룹 루트 행은 대표 문서 번호).
-                    ponytail: 84px 는 6자리(min-content 78.4px) 기준 — 7자리면 min-content 가 이겨 셀이 벌어진다, 그때 폭을 다시 잰다. */}
-								<th scope="col" style={{ width: 84, minWidth: 84 }}>ID</th>
-								<th scope="col" className="doc-col-title">Title</th>
+                    ponytail: 130px = "rev of #123456" (14 mono chars × 7.2px + 28px padding) — a 7-digit id needs a remeasure. */}
+								<th scope="col" style={{ width: 130, minWidth: 130 }}>ID</th>
+								<th scope="col" className="doc-col-title">
+									<span className="doc-col-title-text">Title</span>
+								</th>
 								{/* 태그 전용 column — 서술 칩을 제목 셀에서 분리. */}
 								{hasTagsColumn && (
 									<th scope="col" className="doc-col-tags" style={{ width: 152, minWidth: 152 }}>
@@ -1659,7 +1668,6 @@ function DocListCardCD({
 													<DocStagePillCD
 														isRowControl
 														docStatus={shownStage}
-														isLabelVisible={!isSectioned || shownStage !== storedStage}
 														onPickStage={(stage) => onPickStage(row.id, stage, null)}
 														isChanging={togglingIds.has(row.id)}
 														note={row.group_stage_uniform === false ? "members differ" : null}
@@ -1818,7 +1826,7 @@ function DocOpenSummaryCD({ summary, isPartial, onSelect }) {
 	const { oldest } = summary;
 	return (
 		<aside
-			className="doc-open-summary flex flex-wrap items-center gap-x-6 gap-y-2 px-4 py-2 xl:flex-col xl:items-stretch xl:w-[272px] xl:shrink-0 xl:sticky xl:top-0 xl:py-3"
+			className="doc-open-summary flex flex-wrap items-center gap-x-6 gap-y-2 px-4 py-2 xl:flex-col xl:items-stretch xl:w-[232px] xl:shrink-0 xl:sticky xl:top-0 xl:py-3"
 			aria-label="Open documents summary">
 			<dl className="doc-open-summary-group">
 				<dt>Open by stage</dt>
@@ -2868,7 +2876,6 @@ function DocStagePillCD({
 	isChanging,
 	note,
 	isRowControl = false,
-	isLabelVisible = true,
 }) {
 	const { Icon, ROW_CONTROL_PROPS } = window.UI;
 	const [menuOpen, setMenuOpen] = useStateCD(false);
@@ -2903,9 +2910,7 @@ function DocStagePillCD({
 					<Icon name="check" size={11} />
 				</span>
 			)}
-			{(isLabelVisible || isChanging) && (
-				<span className="doc-stage-label">{isChanging ? "Changing…" : entry.label}</span>
-			)}
+			<span className="doc-stage-label">{isChanging ? "Changing…" : entry.label}</span>
 		</>
 	);
 
@@ -2977,8 +2982,11 @@ function DocStagePillCD({
 // last-status-model → the line under the pill. The operator's own action is a reserved literal
 // and reads as such; a model id renders through its display name. An unknown actor renders nowhere.
 function formatActorCD(model) {
-	return model === OPERATOR_ACTOR_CD ? "operator" : window.UI.getDisplayName("model", model);
+	return model === OPERATOR_ACTOR_CD ? "operator" : window.UI.getDisplayName("model", String(model).replace(MODEL_CONTEXT_TAG_CD, ""));
 }
+
+// trailing context-window tag ("[1m]") → not part of the model name, so both spellings read alike
+const MODEL_CONTEXT_TAG_CD = /\[[^\]]*\]$/;
 
 // DocCheckboxCD — 5-state spec — 16px square · 2px border · 4px radius · WCAG 2.2 AA focus-visible
 //   · default     — bg-zinc-900 border-zinc-600
