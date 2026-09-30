@@ -625,7 +625,7 @@ function AgentAlarmLane({ failures, state, onRetry }) {
     return (
       <div className="card mb-4">
         <div className="card-body">
-          <AgentRegionFailure feeder={REGION_FEEDERS.summary} region="circuit-breaker state" error={state.error} isBusy={state.busy} failures={failures} focusTargetId={IDS.REGION_CARD.status} onRetry={onRetry}/>
+          <window.UI.RegionFailure source={REGION_FEEDERS.summary} region="circuit-breaker state" error={state.error} isBusy={state.busy} failures={failures} focusTargetId={IDS.REGION_CARD.status} onRetry={onRetry}/>
         </div>
       </div>
     );
@@ -685,10 +685,6 @@ function getAgentSourceFailures(regionEntries) {
   // drawer-only reads (latency, revision counts…) have no page slot, so they speak only through the banner
   const readRows = regionEntries.map(([source, state]) => ({ source, error: state.error }));
   return window.UI.getSourceFailures([...slotRows, ...readRows]);
-}
-
-function AgentRegionFailure({ feeder, region, error, isBusy, failures, focusTargetId, onRetry }) {
-  return <window.UI.RegionFailure source={feeder} region={region} error={error} isBusy={isBusy} failures={failures} focusTargetId={focusTargetId} onRetry={onRetry}/>;
 }
 
 // Status band — the four fleet questions the first screenful answers. Each tile
@@ -816,7 +812,7 @@ function AgentStatusTile({ failures, feeder, label, sub, unavailableSub, status,
         <span className="text-faint fs-meta">{label}</span>
         {status === 'loading' && <span className="text-faint" aria-busy="true">…</span>}
         {status === 'error' && (
-          <AgentRegionFailure feeder={feeder} region={label.toLowerCase()} error={error} isBusy={busy} failures={failures} focusTargetId={cardId} onRetry={onRetry}/>
+          <window.UI.RegionFailure source={feeder} region={label.toLowerCase()} error={error} isBusy={busy} failures={failures} focusTargetId={cardId} onRetry={onRetry}/>
         )}
         {status === 'unavailable' && <Badge role="status" tone="warn">unavailable</Badge>}
         {status === 'ready' && <KpiValue tone={tone}>{value}</KpiValue>}
@@ -892,7 +888,7 @@ function AgentSummaryBody({ failures, state, days, sortBy, onSortChange, selecte
     return <div className="card-body"><window.UI.LoadingPlaceholder label="agent performance" minHeight={240}/></div>;
   }
   if (view === 'error') {
-    return <div className="card-body"><AgentRegionFailure feeder={REGION_FEEDERS.summary} region="agent performance" error={state.error} isBusy={state.busy} failures={failures} focusTargetId={IDS.REGION_CARD.summary} onRetry={onRetry}/></div>;
+    return <div className="card-body"><window.UI.RegionFailure source={REGION_FEEDERS.summary} region="agent performance" error={state.error} isBusy={state.busy} failures={failures} focusTargetId={IDS.REGION_CARD.summary} onRetry={onRetry}/></div>;
   }
   const agents = readyData(state)?.agents ?? [];
   if (agents.length === 0) {
@@ -1452,8 +1448,6 @@ function AgentDetailDrawer({
   );
 }
 
-// typed-name 삭제 확인 패널 — drawer 본문 서브상태.
-// full name 정확 일치 시에만 푸터 커밋 버튼 활성 (비가역 작업 게이트는 푸터가 소유 · 여기선 입력+공시).
 // the dialog takes its name from the title → hyphens read out one by one, so the spoken form splits them into words
 function AgentDrawerNameAg({ name }) {
   const words = window.UI.getAgentDisplayName(name).split('-').filter(Boolean).join(' ');
@@ -1465,6 +1459,8 @@ function AgentDrawerNameAg({ name }) {
   );
 }
 
+// typed-name 삭제 확인 패널 — drawer 본문 서브상태.
+// full name 정확 일치 시에만 푸터 커밋 버튼 활성 (비가역 작업 게이트는 푸터가 소유 · 여기선 입력+공시).
 function AgentDeleteConfirmPanel({ agentName, value, committing, error, onChange }) {
   const { Icon } = window.UI;
   const matches = value === agentName;
@@ -1892,21 +1888,6 @@ function AgentReliabilitySection({ agent, drawerAgent, failureByAgent, failureSt
 }
 
 // (a) Breakages — failure-patterns(필터) 요약 + 기존 MergedBreakageSection(fail/blocked 키워드 분류) 재사용.
-/**
- * Writer-emitted breakage headline with its blocked part bounded inside it.
- * The payload does not say which result the reconstructed rows carry → the blocked part is a range:
- * each reconstructed row hides at most one blocked row, and the part never exceeds the headline.
- */
-function getWriterBreakageSplit(failure) {
-  const breakages = Math.max(0, failure.total_breakages - (failure.reconstructed || 0));
-  const blocked = failure.blocked_count || 0;
-
-  return {
-    breakages,
-    blocked: { min: Math.max(0, blocked - (failure.reconstructed || 0)), max: Math.min(blocked, breakages) },
-  };
-}
-
 function AgentReliabilityBreakages({ drawerAgent, failureByAgent, failureState, detailState, blockedState, days, onRetry }) {
   const { Badge } = window.UI;
   const view = window.UI.getRegionView(failureState);
@@ -1990,12 +1971,28 @@ function AgentReliabilityBreakages({ drawerAgent, failureByAgent, failureState, 
   );
 }
 
-// (b) Lifecycle — lifecycle-stats(agent_type 필터) start/completed gap + duration 분포(1 mono 라인 collapse).
+/**
+ * Writer-emitted breakage headline with its blocked part bounded inside it.
+ * The payload does not say which result the reconstructed rows carry → the blocked part is a range:
+ * each reconstructed row hides at most one blocked row, and the part never exceeds the headline.
+ */
+function getWriterBreakageSplit(failure) {
+  const reconstructed = failure.reconstructed || 0;
+  const breakages = Math.max(0, failure.total_breakages - reconstructed);
+  const blocked = failure.blocked_count || 0;
+
+  return {
+    breakages,
+    blocked: { min: Math.max(0, blocked - reconstructed), max: Math.min(blocked, breakages) },
+  };
+}
+
 // concerns arrive cut mid-sentence → drop the stray closers a cut leaves in front, fold whitespace
 function getConcernTextAg(raw) {
   return String(raw).replace(/\s+/g, ' ').trim().replace(/^[^\p{L}\p{N}]+/u, '');
 }
 
+// (b) Lifecycle — lifecycle-stats(agent_type 필터) start/completed gap + duration 분포(1 mono 라인 collapse).
 function AgentReliabilityLifecycle({ agent, drawerAgent, lifecycleState, onRetry }) {
   const view = window.UI.getRegionView(lifecycleState);
   if (view === 'loading') {
@@ -2261,7 +2258,7 @@ function SuccessRateMatrixBody({ failures, state, days, onRetry }) {
     return <window.UI.LoadingPlaceholder label="success matrix" minHeight={280}/>;
   }
   if (view === 'error') {
-    return <AgentRegionFailure feeder={REGION_FEEDERS.success} region="success rates" error={state.error} isBusy={state.busy} failures={failures} focusTargetId={IDS.REGION_CARD.successRates} onRetry={onRetry}/>;
+    return <window.UI.RegionFailure source={REGION_FEEDERS.success} region="success rates" error={state.error} isBusy={state.busy} failures={failures} focusTargetId={IDS.REGION_CARD.successRates} onRetry={onRetry}/>;
   }
   if (matrix.agents.length === 0) {
     return <EmptyStateAg message={`No success-rate events in the last ${days} days.`}/>;
@@ -2496,7 +2493,7 @@ function TopNFailingAgentsBody({ failures, state, days, onRetry, pairs, failureB
     return <window.UI.LoadingPlaceholder label="most-failing pairs" minHeight={200}/>;
   }
   if (view === 'error') {
-    return <AgentRegionFailure feeder={REGION_FEEDERS.success} region="failure rates" error={state.error} isBusy={state.busy} failures={failures} focusTargetId={IDS.REGION_CARD.failingPairs} onRetry={onRetry}/>;
+    return <window.UI.RegionFailure source={REGION_FEEDERS.success} region="failure rates" error={state.error} isBusy={state.busy} failures={failures} focusTargetId={IDS.REGION_CARD.failingPairs} onRetry={onRetry}/>;
   }
   if (pairs.length === 0) {
     return (
@@ -2668,7 +2665,7 @@ function QualityHealthTimeline({ failures, state, onRetry }) {
     return <window.UI.LoadingPlaceholder label="review_flag timeline" minHeight={260}/>;
   }
   if (view === 'error') {
-    return <AgentRegionFailure feeder={REGION_FEEDERS.review} region="review_flag data" error={state.error} isBusy={state.busy} failures={failures} focusTargetId={IDS.REGION_CARD.reviewFlags} onRetry={onRetry}/>;
+    return <window.UI.RegionFailure source={REGION_FEEDERS.review} region="review_flag data" error={state.error} isBusy={state.busy} failures={failures} focusTargetId={IDS.REGION_CARD.reviewFlags} onRetry={onRetry}/>;
   }
   const rows = readyData(state)?.rows ?? [];
   if (rows.length === 0) {
@@ -2864,7 +2861,7 @@ function LifecycleStatsBody({ failures, state, days, onSelect, onRetry }) {
     return <window.UI.LoadingPlaceholder label="lifecycle stats" minHeight={260}/>;
   }
   if (view === 'error') {
-    return <AgentRegionFailure feeder={REGION_FEEDERS.lifecycle} region="lifecycle stats" error={state.error} isBusy={state.busy} failures={failures} focusTargetId={IDS.REGION_CARD.lifecycle} onRetry={onRetry}/>;
+    return <window.UI.RegionFailure source={REGION_FEEDERS.lifecycle} region="lifecycle stats" error={state.error} isBusy={state.busy} failures={failures} focusTargetId={IDS.REGION_CARD.lifecycle} onRetry={onRetry}/>;
   }
   const rows = (readyData(state)?.rows ?? [])
     .filter((r) => r && r.agent_type && (Number(r.start_count) || 0) > 0)
