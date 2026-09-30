@@ -45,6 +45,8 @@ setup() {
   [[ -f "${HOOK_SH}" ]] || skip "enforce-workflow-verify-stage.sh not found: ${HOOK_SH}"
   command -v python3 >/dev/null 2>&1 || skip "python3 not on PATH"
   TRACE_LOG="${BATS_TEST_TMPDIR}/workflow-gate-fired.log"
+  # Refused loopback port → the PASS arm's monitor reads fail open; no fixture reaches the live monitor.
+  export WORKFLOW_GATE_MONITOR_URL="http://127.0.0.1:9/api/clauded-docs"
   # The rollback marker's own override, pointed at a per-test temp path that does NOT exist: every row
   # therefore runs with the lever disarmed and none of them reads live-install state (the marker rows
   # below create the file themselves).

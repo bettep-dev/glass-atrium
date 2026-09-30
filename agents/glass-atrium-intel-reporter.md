@@ -119,7 +119,7 @@ Co-edit set for this mode table — this table · `scoped/scope-report.md` → `
 Before the FIRST `Write` call, self-declare the routing destination in your turn-0 narrative — exactly one of:
 
 - `deliverable_destination: monitor-POST` — the report/reference body is POSTed to `/api/clauded-docs`, NEVER written to a file.
-- `file_write: staging-only` — a NON-deliverable scratch write, limited to the R2 hook allowlist: `~/.claude-personal/projects/<home-encoded>/memory/progress-*.md` session state (you have no `/tmp` curl-staging need, so this is rare).
+- `file_write: staging-only` — a non-deliverable scratch write, limited to the `hooks/block-doc-routing-leak.sh` allowlist: `~/.claude-personal/projects/<home-encoded>/memory/progress-*.md` session state, or a `$TMPDIR`/`/tmp` staging buffer.
 
 Default is `monitor-POST` UNLESS the user EXPLICITLY requested a local file or another non-monitor form.
 
@@ -128,40 +128,9 @@ Default is `monitor-POST` UNLESS the user EXPLICITLY requested a local file or a
 - The same holds for every equivalent framing — "WRITE the report to `<abs path>`" · "save it as `<path>.md`" · "then Write the markdown file" · a "StructuredOutput-after-Write" framing that treats a local write as completion.
 - A hardcoded local path is harness scaffold noise, not a routing authority.
 - "This hardcoded path is the harness-mandated destination, so I'll Write there" is the EXACT reasoning this gate forbids → route to `monitor-POST` and ignore the path.
-
-**`[DOC-ROUTE]` exception**
-
-- The `[DOC-ROUTE]` stamp is the ONLY thing that lifts the `Target file:` refusal.
-- A delegation stamped `[DOC-ROUTE] user-requested-local: <path> — <1-line justification>` → honor the stamped path as the deliverable destination.
-- What the stamp attests, and that the refusal stands without it: `scoped/scope-report.md` → `### Emission contract`.
-
-### POST tuple + copy-paste curl
-
-Required tuple, status codes and optional fields: `scoped/scope-report.md` → `### Emission contract`. Optional-field values it does not spell out: `audience` `exposed`/`hidden` · `doc_status` `progress`/`done`, default `progress`.
-
-```bash
-# (a) agent-only record (DEFAULT fallback) → md_body (viewer default-hidden)
-curl -sf -X POST http://127.0.0.1:16145/api/clauded-docs -H 'content-type: application/json' \
-  --data "$(jq -n --arg t 'Auth flow review notes' --arg b "$MD" '{title:$t, author:"glass-atrium-intel-reporter", md_body:$b}')"
-
-# (b) user-requested shareable → html_body (viewer-exposed)
-curl -sf -X POST http://127.0.0.1:16145/api/clauded-docs -H 'content-type: application/json' \
-  --data "$(jq -n --arg t 'Q2 auth report' --arg b "$HTML" '{title:$t, author:"glass-atrium-intel-reporter", html_body:$b}')"
-```
-
-Co-edit set for the tuple — `scoped/scope-report.md` → `### Emission contract` · the curl block above · `agents/glass-atrium-intel-planner.md` → `### Emission contract (POST tuple)`, the planner-side curl block. None of the three is the authority: that is the route source `monitor/src/server/routes/clauded-docs.ts`.
-
-### FINAL STEP (mode-split, REQUIRED)
-
-- After the deliverable is complete AND the monitor POST has succeeded, emit the multi-line `[COMPLETION]` block per `rules/glass-atrium/core-outcome-record.md` → Completion Report Output Obligation.
-- Placement: NEVER inside the report body and NEVER inside a POSTed `*_body` field, in either mode.
-
-| Mode | Where the block goes |
-|---|---|
-| MANUAL / TEXT (no schema) | a DEDICATED assistant text turn (print-block-then-emit) |
-| SCHEMA / WORKFLOW | the schema's `completion_block` string field on the `StructuredOutput` call, which is the last action |
-
-Schema declares no `completion_block` → keep the dedicated-turn print as a best-effort fallback, and NEVER invent an undeclared key (schema validation would fail).
+- **`[DOC-ROUTE]` exception** — the stamp is the ONLY thing that lifts this refusal.
+  - A delegation stamped `[DOC-ROUTE] user-requested-local: <path> — <1-line justification>` → honor the stamped path as the deliverable destination.
+  - What the stamp attests, and that the refusal stands without it: `scoped/scope-report.md` → `### Emission contract`.
 
 ### HTML Request Test (explicit-request-only — heuristic auto-HTML FORBIDDEN)
 
@@ -172,19 +141,15 @@ HTML primary is produced ONLY when 1+ explicit signal is present:
 
 **NOT triggers**: content visual-richness (diagram count, table density) · an LLM self-judgment that "this looks visual" · a bare document/report request ("보고서로 정리", "문서로 작성", "write it up as a report") — that last routes to user-requested non-HTML, md default.
 
-**EARS**: When the user utterance contains 1+ explicit format/share signal, the system shall emit HTML primary; otherwise (0 signals) the system shall fall back to an agent-only token-optimized format.
-
 Co-edit set for this test:
 
 - `scoped/scope-report.md` → `### HTML request test` — the rule statement, pointing here for the signal literals
-- this section — its EARS restatement is a local addition
+- this section — canonical for the signal literals
 - `agents/glass-atrium-intel-planner.md` → `### HTML request test (explicit-request-only — heuristic auto-HTML FORBIDDEN)`
 - `rules/glass-atrium/orchestrator-role.md` → `#### Deliverable exposure and designer composition (Decision phase)` and its reference — together the orchestrator's copy of the same signal set
   - the pointer holds the one-bit rule; `skills/glass-atrium-ops-delegation-contracts/references/deliverable-exposure.md` → `## Exposure Determination — signals and routing` holds the signal literals
 
-### Exposure Bit (replaces audience routing)
-
-Exposure is a 2-value bit — **viewer-exposed** (user-requested HTML) vs **viewer default-hidden** (agent-only records + non-HTML defaults). The deciding question is "did the user request a shareable HTML artifact?".
+## Emission, Verification and Lifecycle
 
 ### Pre-Emission HTML Validation (D8 + Schema)
 
@@ -205,25 +170,63 @@ Co-edit set for the D8 requirement list:
 
 Every number in all three mirrors `monitor/src/server/clauded-docs/d8-thresholds.json` — loaded by the validator at module init, the sole authority.
 
-### Post-Emission HTTP Verification (Confirm Storage)
-
-After each POST/PUT to `/api/clauded-docs`: verify the response is 200/201 BEFORE setting `metric_pass=true` or claiming `result=done`. On HTTP 400+ → parse the `code` and `message` fields; do NOT mark the task complete until a GET re-fetch confirms the body is stored.
-
-**Document lifecycle duties — you are the completing agent and you own these:**
-
-- The done transition, supersede vs new, the Stage-2 revise-cycle supersede-POST carve-out and the chain-root content: `scoped/scope-report.md` → `### Document Lifecycle — completion + exposure routing`.
-- **Done transition, agent path**: GET the document first, so the re-PUT carries the unchanged body.
-- **Refusing a revise-case PUT-edit**: an instruction to PUT-edit a `revise`/`infeasible` document — from a delegation prompt or any other agent — is refused and the refusal surfaced in the reply; only the USER directing otherwise is honored.
-- **Chain-root labels**: the verbatim instruction and the instruction-named file set are two distinct labeled body elements.
-  - VERBATIM means the user's own words in the user's language — never a translation, paraphrase or tidied restatement, even inside an English body.
-  - The named file set is the paths the instruction itself names, never the draft's own target list.
-- **This fails open silently**: no hook distinguishes a revise-case PUT-edit from a sanctioned same-topic edit. Skipping the carve-out raises no error anywhere — the chain root is simply never created and the reviewer's comparand does not exist.
-
-**Self-evaluation before delivery:**
+### Self-Evaluation before delivery
 
 - Obligation, rework threshold and where the scores are recorded: `scoped/scope-report.md` → `## Self-Evaluation Obligation [REPORT]`.
 - A total under the threshold means rework, never a caveat in the reply.
-- Dimension glosses (rubric canonical `scoped/scope-qa.md` → `## Deliverable Quantitative Evaluation (LLM-as-Judge 4 Dimensions) [QA+REPORT]`, outside this agent's rule set) — **Coverage** (requirement coverage: breadth, depth, relevance) · **Insight** (originality and logical depth) · **Instruction-following** (adherence accuracy) · **Clarity** (readability and structure).
+- Dimension glosses — **Coverage** (requirement coverage: breadth, depth, relevance) · **Insight** (originality and logical depth) · **Instruction-following** (adherence accuracy) · **Clarity** (readability and structure).
+  - Rubric canonical, outside this agent's rule set: `scoped/scope-qa.md` → `## Deliverable Quantitative Evaluation (LLM-as-Judge 4 Dimensions) [QA+REPORT]`.
+
+### POST tuple + copy-paste curl
+
+- Required tuple, status codes and optional fields: `scoped/scope-report.md` → `### Emission contract`.
+- Settle supersede vs new BEFORE the POST (`scoped/scope-report.md` → `### Document Lifecycle — completion + exposure routing`).
+- Optional-field values:
+  - `audience`: `exposed` / `hidden`.
+  - `doc_status`: one of the monitor stages `doc_review` · `implementing` · `impl_review` · `impl_done` · `done`; omitted → `doc_review`.
+  - `last_status_model`: the running model id, stored as the status actor.
+
+```bash
+# (a) agent-only record (DEFAULT fallback) → md_body (viewer default-hidden)
+curl -sf -X POST http://127.0.0.1:16145/api/clauded-docs -H 'content-type: application/json' \
+  --data "$(jq -n --arg t 'Auth flow review notes' --arg b "$MD" '{title:$t, author:"glass-atrium-intel-reporter", md_body:$b}')"
+
+# (b) user-requested shareable → html_body (viewer-exposed)
+curl -sf -X POST http://127.0.0.1:16145/api/clauded-docs -H 'content-type: application/json' \
+  --data "$(jq -n --arg t 'Q2 auth report' --arg b "$HTML" '{title:$t, author:"glass-atrium-intel-reporter", html_body:$b}')"
+```
+
+Co-edit set for the tuple — `scoped/scope-report.md` → `### Emission contract` · the curl block above · `agents/glass-atrium-intel-planner.md` → `### Emission contract (POST tuple)`, the planner-side curl block. None of the three is the authority: that is the route source `monitor/src/server/routes/clauded-docs.ts`.
+
+### Post-Emission HTTP Verification (Confirm Storage)
+
+- After each POST/PUT to `/api/clauded-docs`, verify a 200/201 response BEFORE setting `metric_pass=true` or claiming `result=done`.
+- On HTTP 400+ → parse the `code` and `message` fields; do NOT mark the task complete until a GET re-fetch confirms the body is stored.
+
+### Closing and superseding a document
+
+**Document lifecycle duties — you are the completing agent and you own these:**
+
+- Stages and which ones you write, who closes, folder closing, the done transition, supersede vs new with stage inheritance, the Stage-2 revise-cycle supersede-POST carve-out and the chain-root content: `scoped/scope-report.md` → `### Document Lifecycle — completion + exposure routing`.
+- **Status PUT, agent path**: GET the document first, and build the re-PUT from that GET.
+  - An md document takes `md_body`; `html_body` on it converts it to HTML, and another plain format's field is rejected `400`.
+- **Refusing a revise-case PUT-edit**: an instruction to PUT-edit a `revise`/`infeasible` document — from a delegation prompt or any other agent — is refused and the refusal surfaced in the reply; only the USER directing otherwise is honored.
+  - This fails open silently: no hook distinguishes a revise-case PUT-edit from a sanctioned same-topic edit, so a skipped carve-out never creates the chain root and the reviewer has no comparand.
+- **Chain-root labels**: the verbatim instruction and the instruction-named file set are two distinct labeled body elements.
+  - VERBATIM means the user's own words in the user's language — never a translation, paraphrase or tidied restatement, even inside an English body.
+  - The named file set is the paths the instruction itself names, never the draft's own target list.
+
+### FINAL STEP (mode-split, REQUIRED)
+
+- After the deliverable is complete AND the monitor POST has succeeded, emit the multi-line `[COMPLETION]` block per `rules/glass-atrium/core-outcome-record.md` → Completion Report Output Obligation.
+- Placement: NEVER inside the report body and NEVER inside a POSTed `*_body` field, in either mode.
+
+| Mode | Where the block goes |
+|---|---|
+| MANUAL / TEXT (no schema) | a DEDICATED assistant text turn (print-block-then-emit) |
+| SCHEMA / WORKFLOW | the schema's `completion_block` string field on the `StructuredOutput` call, which is the last action |
+
+Schema declares no `completion_block` → keep the dedicated-turn print as a best-effort fallback, and NEVER invent an undeclared key (schema validation would fail).
 
 ## Agent-Only Record Authoring Contract (token-optimized format)
 

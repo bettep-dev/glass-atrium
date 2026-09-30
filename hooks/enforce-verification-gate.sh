@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # enforce-verification-gate.sh — PreToolUse(Agent) verification-gate hook.
 #
-# Three distinct surfaces on a DEV subagent spawn:
+# Six distinct surfaces on a DEV subagent spawn:
 #   1) reviewer-miss BLOCK (channel-a: emit_error stderr JSON + exit 2, code VGATE-REVIEWER-001) — a
 #      plan-referencing DEV spawn with no qa-code-reviewer recorded this session, surfacing the missing
 #      Stage-2 gate. Promoted from a stderr-advisory to a block so it matches its sibling attestation
@@ -29,6 +29,12 @@
 #      nudges the orchestrator to compose a Deep (4-pass) review whatever confidence the writer
 #      reports. Counts through the shared scope_decl_files parser; an unparseable declaration is
 #      silence, never a guess. The routing decision itself stays orchestrator prose (honor-system).
+#   6) implementing ADVISORY (stderr, exit 0 — never a block) — an orchestrator-origin, plan-referencing
+#      DEV spawn past the reviewer check whose cited plan (authored by glass-atrium-intel-planner) is
+#      still at doc_review is nudged to record the `implementing` stage, so the session-start open-plan
+#      list carries the plan until it closes. Another author's document is never named — a stage write
+#      would pin a reporter's standing tracker to that list for good. The hook's only monitor read;
+#      PreToolUse-only (the PostToolUse branch exits first); fails open to silence, verdict unchanged.
 #
 # Nested-spawn scope (T6): the former spawn-depth predicate is dropped, not deferred — the inner
 #   envelope exposes only an opaque agent id with no parent linkage, so such a check would land as a
@@ -72,8 +78,9 @@
 #   A spawn blocked at PreToolUse (this gate's exit 2, or a sibling hook) reaches no PostToolUse, so
 #   it leaves NO stamp — no false reviewer-present, no inflated spawn-budget counter. Sequential
 #   reviewer→DEV still passes: the reviewer's PostToolUse commits its qa-code-reviewer line before the
-#   later DEV spawn's PreToolUse read. Same-batch parallel reviewer+DEV raises the advisory (reviewer
-#   not yet completed at the DEV read) — correct, parallel is the wrong pattern.
+#   later DEV spawn's PreToolUse read. Same-batch parallel reviewer+DEV finds no reviewer line at the
+#   DEV read → an orchestrator-origin spawn blocks with VGATE-REVIEWER-001, a nested sub-worker origin
+#   gets the stderr advisory only — correct, parallel is the wrong pattern.
 # fail-open: internal error / marker absent / corrupted payload → exit 0, never interferes.
 
 set -Eeuo pipefail
@@ -137,6 +144,11 @@ readonly DEV_SET="glass-atrium-dev-front glass-atrium-dev-react glass-atrium-dev
 # of the same values, never a second policy.
 readonly DEEP_REVIEW_FILE_THRESHOLD=10
 readonly DEEP_REVIEW_SENSITIVE_PREFIXES='hooks/ settings*.json rules/ agents/ autoagent/'
+
+# Surface 6: the only author whose doc_review document the nudge may name, and the per-GET ceiling —
+# inside the ~1 s hook budget, same value as enforce-workflow-verify-stage.sh's chain walk.
+readonly PLANNER_AUTHOR="glass-atrium-intel-planner"
+readonly MONITOR_CURL_TIMEOUT_SEC=1
 
 # emit_gate_trace VERDICT SUBAGENT_TYPE — append one block firing-trace line, FAIL-SAFE.
 # The block verdict is ALWAYS decided and emitted before this runs. Every failure mode (unwritable
@@ -395,10 +407,67 @@ warn_scope_advisories() {
   warn_deep_review
 }
 
+# get_monitor_docs_url — the clauded-docs collection URL, or rc 1 when none resolves. A full
+# VGATE_MONITOR_URL override wins outright so a suite never reaches the live monitor; otherwise the
+# port comes from the shared wrapper, sourced lazily — this gate's own hook-utils.sh lacks it.
+get_monitor_docs_url() {
+  if [[ -n "${VGATE_MONITOR_URL:-}" ]]; then
+    printf '%s' "${VGATE_MONITOR_URL}"
+    return 0
+  fi
+  local lib port
+  lib="${BASH_SOURCE%/*}/lib/hook-utils.sh"
+  [[ -r "${lib}" ]] || return 1
+  # shellcheck source=lib/hook-utils.sh
+  source "${lib}" || return 1
+  # shellcheck disable=SC2310  # a resolver miss leaves port empty, which the integer test rejects
+  port="$(hook_monitor_port 2>/dev/null || true)"
+  [[ "${port}" =~ ^[0-9]+$ ]] || return 1
+  printf 'http://127.0.0.1:%s/api/clauded-docs' "${port}"
+}
+
+# get_unstarted_plan_id — prints the first cited plan still at doc_review, nothing otherwise. Walks the
+# prompt's clauded-docs ids in citation order; the first planner-authored document ends the walk,
+# nudged or not, and so does the first failed GET — a hung monitor costs one timeout. Always rc 0.
+get_unstarted_plan_id() {
+  local ids base id doc_tsv author stage
+  ids="$(printf '%s\n' "${prompt_full}" | grep -oE 'clauded-docs/[0-9]+' | sed 's|.*/||' | awk '!seen[$0]++' || true)"
+  [[ -n "${ids}" ]] || return 0
+  command -v curl >/dev/null 2>&1 || return 0
+  # shellcheck disable=SC2310  # an unresolvable URL is this leg's silent answer, not an error
+  base="$(get_monitor_docs_url)" || return 0
+  while IFS= read -r id; do
+    doc_tsv="$(curl -sf --max-time "${MONITOR_CURL_TIMEOUT_SEC}" "${base}/${id}" \
+      | jq -r '[(.author // ""), (.doc_status // "")] | join("\u001f")')" || return 0
+    [[ -n "${doc_tsv}" ]] || return 0
+    IFS=$'\x1f' read -r author stage <<<"${doc_tsv}"
+    [[ "${author}" == "${PLANNER_AUTHOR}" ]] || continue
+    [[ "${stage}" == "doc_review" ]] && printf '%s' "${id}"
+    return 0
+  done <<<"${ids}"
+  return 0
+}
+
+# Surface 6 emitter — isolated the way emit_gate_trace is: the subshell's own stderr is discarded and
+# the enclosing statement always succeeds, so no failure here can alter the exit code; only the
+# advisory line reaches stderr, through fd 3.
+warn_unstarted_plan() {
+  [[ "${orchestrator_origin}" == true ]] || return 0
+  (
+    local plan_id
+    # shellcheck disable=SC2310  # errexit is off in this ||-guarded subshell by design; every step fails explicitly
+    plan_id="$(get_unstarted_plan_id)"
+    [[ -n "${plan_id}" ]] || exit 0
+    printf '[enforce-verification-gate] Plan clauded-docs/%s is still at doc_review while DEV agent %s starts on it — record the implementing stage before this first DEV spawn, so the session-start open-plan list carries the plan until it closes (stage write recipe: skills/glass-atrium-ops-orchestrator.md → Managed Document Completion (Direct Handling)). Advisory only — the stage is read live, and a monitor that is down or unreachable yields silence, so no nudge never means checked-and-clean.\n' \
+      "${plan_id}" "${subagent_type}" >&3
+  ) 3>&2 2>/dev/null || true
+}
+
 # 1. READ reviewer-present snapshot from PRIOR EXECUTED spawns (PostToolUse stamps only — DF-5).
 # Sequential reviewer→DEV: the reviewer's PostToolUse durably commits the qa-code-reviewer line when
 # it completes → this DEV spawn's PreToolUse read observes it → pass. Same-batch parallel reviewer+DEV:
-# the reviewer has not completed at the DEV read → snapshot absent → raise. This PreToolUse read is
+# the reviewer has not completed at the DEV read → snapshot absent → VGATE-REVIEWER-001 block on
+# orchestrator origin, stderr advisory on a nested sub-worker origin (surface 1). This PreToolUse read is
 # used only by the verdict logic below; the marker is never written on PreToolUse. (Append is
 # O_APPEND atomic per line.)
 marker_path="${spawn_dir}/${session_key}"
@@ -532,6 +601,7 @@ if references_plan "${prompt_full}"; then
   # Reviewer durably recorded BEFORE this spawn (sequential reviewer→DEV) → gate satisfied.
   if [[ "${reviewer_present}" == true ]]; then
     warn_scope_advisories
+    warn_unstarted_plan
     exit 0
   fi
   # 4. Reviewer-miss (T6): a plan-referencing DEV spawn with no qa-code-reviewer recorded is PROMOTED

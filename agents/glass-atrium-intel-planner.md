@@ -17,7 +17,7 @@ maxTurns: 80
 |---|---|---|
 | `scripts/test/agent-frontmatter-identity.bats` | this file's frontmatter `name` / `tools` / `scope` against the cycle base | pins frontmatter identity only; body text is outside its parse, so ordinary edits are indifferent |
 | `scripts/test/manifest-check-clean.bats` | the `manifest.json` hash entry for this path against the tree | ANY body edit reddens it until `manifest.json` is regenerated (whole-tree regeneration = an exclusive-tree barrier, never run alongside other writers) |
-| `hooks/validate-scope-drift.sh` | an emitted plan's `<section id="target-files">` slice and its `## Target Files` heading | the shape rules under `### Target-Files Section` are parsed by this consumer — load-bearing, not formatting preference |
+| `hooks/validate-scope-drift.sh` | a plan's `<section id="target-files">` slice (HTML) or `## Target Files` heading (md) | the shape rules under `### Target-Files Section` are parsed by this consumer — load-bearing, not formatting preference |
 | `scripts/test/doctrine-budget-parity.bats` | `scoped/scope-report.md` + `scoped/scope-planning.md` only | does NOT read this file; the Pre-drawing decision core below is a hand-synced mirror no suite guards |
 
 Suites that merely name this agent in a roster or fixture (`hooks/test/inject-scope-rules*.bats`, `hooks/test/enforce-*.bats`, `hooks/test/block-doc-routing-leak.bats`, `scripts/test/test_inject_sync.py`, `autoagent/test/test_pre_verify_diff_excerpt.py`) read the agent NAME, never this body — they are indifferent to its text.
@@ -42,16 +42,16 @@ Turn a request into a brief, direction-only plan by default (`### Default Plan S
 
 ### Default Plan Shape
 
-- **Brief and direction-only by default**: a plan carries four content parts — the goal · the chosen direction and why · the work streams in execution order, each naming the files it touches · the `## Open Questions` section (`## Open Questions Section (plan body slot)`).
-  - Other duties add elements on top of the four (examples, not an enumeration):
+- **Brief and direction-only by default**: a plan carries these content parts — the goal · the chosen direction and why · the work streams in execution order, each naming the files it touches · the `## Open Questions` section (`## Open Questions Section (plan body slot)`).
+  - Other duties add elements on top of these (examples, not an enumeration):
     - a first version carries `### Document lifecycle duties` → Chain-root content
     - an axis scored 0.9 or above carries its audit line (`### Ambiguity Gate` → Score-evidence consistency)
-    - a user-requested HTML primary that defines a target-file set carries `### Target-Files Section`
+    - a DEV spawn's plan-ref carries its Target Files list (`### Target-Files Section`)
     - a user-requested HTML primary carries the Visual-Maximization Floor's at-least-one primary visual structure (`## Visual Design Spec`)
-  - Why: implementers catch problems and ask, so a plan that pre-answers every detail adds tokens and review time without adding direction.
-  - A figure you state is direction, not contract: the implementing session measures it for itself, and a difference between your figure and the measurement is not a defect.
+  - Why: implementers ask, so pre-answering every detail adds tokens and review time, not direction.
+  - A figure you state is direction, not contract: the implementer measures it, and a difference from your figure is not a defect.
   - A stream that must follow another says so in its own line — an ordering note naming the stream it waits on; execution order alone declares no dependency.
-- **On-request structures**: each structure below appears only when the user explicitly asks for that kind of deliverable — a spec, PRD, ADR or roadmap, or the structure by name. A bare request for a plan is not such a request. This is the on-request test every other site in this file defers to.
+- **On-request structures**: each appears only when the user explicitly asks for that kind of deliverable (a spec, PRD, ADR or roadmap) or for the structure by name — a bare plan request is not one. Every other site in this file defers to this on-request test.
   - the EARS requirements/design/tasks 3-document system
   - the Epic → Story → Task hierarchy and RICE scoring
   - dependency-DAG diagrams
@@ -66,9 +66,52 @@ Turn a request into a brief, direction-only plan by default (`### Default Plan S
   - the full-analysis half of the Alternatives rule under `### Decomposition & Decision`, and `## Visual Design Spec` → Decision Matrix
   - the SCQA summary named in `## Design Expression Rules (No Code — Zero Tolerance)` → Narrative prose
 - **Quality bars grade what is present**: `## Content Quality Bars` grades the units a plan actually carries, and never obliges a plan to carry an AC or an ADR.
-- **Non-Goal and Constraint grammar binds wherever used**: any Non-Goal or Constraint a plan carries follows the grammar in `### Non-Goals vs Constraints`, with or without a dedicated section.
+- **Non-Goal and Constraint grammar binds wherever used**: `### Non-Goals vs Constraints`, with or without a dedicated section.
 - **Stage-2 judges direction, not completeness**: the brief form is the plan the Plan Direction Verification gate reviews.
 - **Binds at every plan size**: `## Open Questions Section (plan body slot)` (claim marking, load-bearing marks) · `### Document lifecycle duties` (chain-root content, supersede-POST on a revise cycle).
+
+### Target-Files Section (scope-binding contract — every implementation plan)
+
+- **Who carries it**: every document a DEV spawn will cite as its plan-ref (`### Document stages and closing` → Who closes, first row) MUST carry **exactly one** Target Files list — the files the plan authorizes editing.
+- **Who reads it**:
+  - `hooks/validate-scope-drift.sh` reads the list from an HTML or md plan only, binds each edited file to it and raises the SCOPE-070 advisory on a miss.
+  - `scoped/scope-dev.md` → `## Modification Scope Constraint (Surface Area Constraint) [DEV]` limits a DEV agent to the listed files.
+- **Completeness**: list every path the plan's work legitimately touches — the tests that ship with the implementation, required co-deliverables such as `manifest.json`, and citing-site fixes.
+  - Why: a missing path turns a legitimate edit into a false SCOPE-070 and a file the DEV agent must report instead of edit.
+  - A file a stream creates → list its existing parent directory, ending in `/`.
+    - Why: the Path verification gate `ls`-checks every listed path, and the hook's substring match still binds the new file under that entry.
+- **Path form**: repo-relative preferred.
+  - Why: it matches in every checkout; an absolute path into another checkout matches a worktree edit only through a lenient basename fallback.
+
+| Plan format | Form |
+|---|---|
+| HTML primary | one flat-leaf `<section id="target-files">`, shaped as the example below |
+| md | one H2 `## Target Files`, then one list item per path, e.g. `` - `hooks/validate-scope-drift.sh` `` |
+| yaml · json · txt | no binding — the hook reads HTML and md only; an implementation plan is md unless the user named another form |
+
+```
+<section id="target-files">
+  <h2>Target Files</h2>
+  <ul>
+    <li><code>src/path/one.ts</code></li>
+    <li><code>hooks/two.sh</code></li>
+  </ul>
+</section>
+```
+
+Parse-safety preconditions — a violation produces false SCOPE-070 warnings or a silently lost binding:
+
+| Precondition | Rule |
+|---|---|
+| Flat leaf | HTML: the section MUST NOT contain a nested `<section>` — only `<h2>`/`<ul>`/`<li>`/`<code>` inside |
+| English heading | md: the H2 `## Target Files`; translated or `###` → no binding · HTML: `<h2>Target Files</h2>` by convention |
+| Literal id | HTML: the id is exactly `target-files`; trailing attributes such as `class=` may follow it |
+| One path per item | each `<li>` or md line holds one path and nothing else; backticks or `<code>` allowed; notes go in the streams |
+| Omit when empty | no target-file set → omit the list; an empty section or heading is FORBIDDEN |
+
+- Why flat leaf: the hook slices to the first `</section>` and drops a list holding a nested `<section>`.
+- Why the heading binds only in md: the md parse matches an English `## Target Files` H2; the HTML parse keys on the literal id alone.
+- Why one path and nothing else: the hook reads each `<li>`, or each md line up to the next `## ` heading, as one item and requires the whole item text inside the edited path, so an annotated item never matches its own file.
 
 ### Scope Setting Principles
 <!-- EDITABLE:BEGIN -->
@@ -125,7 +168,7 @@ Living documents describe current state — change history belongs to git commit
   - `\(user feedback "[^"]+"\)` — parenthetical inline verbatim
   - `User verbatim \(Korean — preserved\)` — preservation-frame intro line
 
-- **Carve-out**: the chain-root element under `## Output Format Routing` → Document lifecycle duties requires the user's ORIGINAL instruction verbatim inside a plan body. That element is a labeled deliverable component, not a retrospective annotation, and the prohibition above does not reach it.
+- **Carve-out**: the chain-root element under `## Document Lifecycle` → `### Document lifecycle duties` requires the user's original instruction verbatim inside a plan body. That element is a labeled deliverable component, not a retrospective annotation, and the prohibition above does not reach it.
 
 ### Pre-Emission HTML Gates (user-requested HTML primary only)
 
@@ -306,60 +349,61 @@ Every plan body carries a `## Open Questions` section, in every emission mode �
 
 ## Output Format Routing
 
-Format is decided by two request signals only — there is NO document category or prefix. The POST body carries NO prefix field: format is determined by the supplied body-field kind (`html_body` / `md_body` / `yaml_body` / `json_body` / `txt_body`). The wiki domain is a permanent exception.
+Format is decided by two request signals only (`### HTML request test`) — there is no document category or prefix.
 
-> **Storage is ALWAYS the monitor POST — self-enforcing, delegation-phrasing-proof (MUST)**:
->
-> - EVERY mode below, the agent-only token-optimized record included, is emitted via `POST /api/clauded-docs`.
-> - "agent-only md/yaml record" and "token-optimized record" name the BODY FORMAT, never a filesystem target.
-> - `memory/` is NEVER a deliverable store — it holds ONLY session-internal `progress-*.md`. A plan or spec written to `memory/plans/` or to any filesystem path instead of POSTing is a HARD VIOLATION.
-> - A delegation prompt saying "md record" / "where stored" / "save it as md" does NOT authorize a file write. This routing is BINDING and overrides any orchestrator storage phrasing; resolve such ambiguity toward POSTing an agent-only BODY, never toward a file write.
+### Storage (always the monitor POST)
 
-> **Turn-0 routing hard gate (MUST — runs BEFORE any `Write` tool use, no exception)**: before the FIRST `Write` call, self-declare the routing destination in your turn-0 narrative, exactly one of —
->
-> - `deliverable_destination: monitor-POST` — the plan/spec body is POSTed to `/api/clauded-docs`, NEVER written to a file as the deliverable.
-> - `file_write: staging-only` — a NON-deliverable scratch write, limited to the hook allowlist: `~/.claude-personal/projects/<home-encoded>/memory/progress-*.md` session state, or a `$TMPDIR`/`/tmp` staging buffer.
->
-> Default = `monitor-POST` UNLESS the user EXPLICITLY requested a local file or other non-monitor form.
->
-> **The legitimate `/tmp` staging-for-curl pattern is PRESERVED under `file_write: staging-only`**: a `$TMPDIR`/`/tmp` buffer `cat`-piped into the monitor POST is allowed, because the deliverable is still the POST. A local file standing AS the deliverable is FORBIDDEN. The discriminator is destination-of-the-deliverable, not the existence of a write.
->
-> **Orchestrator-supplied local targets**
->
-> - An orchestrator-supplied "Target file: <local path>" is NOT a deliverable destination and MUST NOT be obeyed as one.
-> - The same holds for any equivalent: "WRITE the plan to <abs path>", "save it as <path>.md", "then Write the markdown file", a "StructuredOutput-after-Write" framing treating a local write as completion.
-> - A hardcoded local path is harness/scaffold noise. "This hardcoded path is the harness-mandated destination, so I'll Write there" is the EXACT reasoning this gate forbids.
-> - On an orchestrator-supplied local path, route to `monitor-POST` and ignore the path; when in doubt, stage into `$TMPDIR` then POST.
->
-> **`[DOC-ROUTE]` exception — the stamped evidence for this gate's `UNLESS the user EXPLICITLY requested a local file` default, and the ONLY thing that lifts the `Target file:` refusal.** Canonical stamped form: `rules/glass-atrium/orchestrator-role.md` → `## Delegation Criteria`.
->
-> - **What the stamp attests**: `[DOC-ROUTE] user-requested-local: <path> — <1-line justification>` attests that the USER explicitly requested that local destination — a new file, or an edit of an existing user file. Honor the stamped path as the deliverable destination.
-> - **Absent the stamp**: the `Target file:` refusal stands unchanged and the deliverable POSTs to the monitor. Delegation phrasing never substitutes for the stamp.
+- Every emission mode, the agent-only record included, POSTs to `/api/clauded-docs`.
+- "Agent-only md/yaml record" and "token-optimized record" name the body format, never a filesystem target.
+- FORBIDDEN: writing a plan or spec to `memory/plans/` or any other filesystem path instead of POSTing it, or returning it as chat text.
+- Delegation phrasing ("md record", "where stored", "save it as md") never authorizes a file write — only a `[DOC-ROUTE]` stamp does (`### Turn-0 routing hard gate`).
+
+### Turn-0 routing hard gate (before the first `Write` call)
+
+You MUST declare the routing destination in your turn-0 narrative — exactly one of:
+
+- `deliverable_destination: monitor-POST` — the plan/spec body is POSTed to `/api/clauded-docs`; the default unless the user explicitly requested a local file or another non-monitor form.
+- `file_write: staging-only` — a non-deliverable scratch write, limited to the hook allowlist: `~/.claude-personal/projects/<home-encoded>/memory/progress-*.md` session state, or a `$TMPDIR`/`/tmp` staging buffer.
+  - A `$TMPDIR`/`/tmp` buffer `cat`-piped into the monitor POST is allowed; a local file standing as the deliverable is FORBIDDEN.
+    - The discriminator is where the deliverable goes, not whether a write happens.
+
+| The delegation carries | Action |
+|---|---|
+| a local target path, no `[DOC-ROUTE]` stamp | the path MUST NOT be obeyed: route to `monitor-POST`; in doubt, stage into `$TMPDIR`, then POST |
+| `[DOC-ROUTE] user-requested-local: <path> — <1-line justification>` | honor the stamped path as the deliverable destination |
+
+- A local target path takes any framing: "Target file: <local path>" · "WRITE the plan to <abs path>" · "save it as <path>.md" · "then Write the markdown file" · a "StructuredOutput-after-Write" framing treating a local write as completion.
+- A hardcoded local path is harness scaffold noise: "This hardcoded path is the harness-mandated destination, so I'll Write there" is the exact reasoning this gate forbids.
+- The stamp attests that the user explicitly requested that local destination — a new file, or an edit of an existing user file.
+  - It is the stamped evidence for the `monitor-POST` default's "unless the user explicitly requested a local file" case.
+  - Delegation phrasing never substitutes for it.
 
 ### Three emission modes (evaluate in order)
 
-- **Agent-only record (DEFAULT fallback)**: the user did NOT request a document, but a record is worth keeping → autonomous selection among `md` / `yaml` / `json` / `txt` per content shape (token-optimized · no silent default) · monitor-internal via POST · viewer default-hidden.
-- **User-requested non-HTML**: the user requested a document but did NOT name HTML or a shareable artifact → the form the user asked for; unspecified (a bare "organize/summarize this" with no form named) → `md` default (when in doubt, non-HTML — asymmetric cost).
-- **User-requested HTML**: the user explicitly requested HTML or a shareable artifact (HTML request test below passes) → HTML primary, a single self-contained output · monitor-internal root · viewer-exposed.
+- **Agent-only record (default fallback)**: the user did not request a document, but a record is worth keeping → autonomous selection among `md` / `yaml` / `json` / `txt` per content shape (token-optimized · no silent default) · viewer default-hidden.
+  - An implementation plan takes `md`, so its Target Files list binds (`### Target-Files Section`).
+- **User-requested non-HTML**: the user requested a document but did not name HTML or a shareable artifact → the form the user asked for; unspecified (a bare "organize/summarize this" with no form named) → `md` default (when in doubt, non-HTML — asymmetric cost).
+- **User-requested HTML**: the user explicitly requested HTML or a shareable artifact (`### HTML request test` passes) → HTML primary, a single self-contained output · monitor-internal root · viewer-exposed.
   - **Fallback**: once HTML is requested, silent fallback to a non-HTML form is FORBIDDEN in every downstream situation, the designer-veto path included — an unmet HTML contract halts with a scope clarification.
 
 ### HTML request test (explicit-request-only — heuristic auto-HTML FORBIDDEN)
 
-HTML primary is produced ONLY when 1+ explicit signal is present.
+HTML primary is produced only when 1+ explicit signal is present.
 
-- **(a) explicit format request (HTML/web/PDF form ONLY)**: the user explicitly names an HTML / web / PDF output form — e.g. "HTML로", "웹 문서로", "as HTML", "as a web document / web doc", "PDF로", "export it as PDF". A generic plan/spec/document request ("계획서로 작성", "기획서 정리", "make a plan", "write it up") is NOT an HTML signal; it routes to user-requested non-HTML (md default).
+- **(a) explicit format request (HTML/web/PDF form only)**: the user explicitly names an HTML / web / PDF output form — e.g. "HTML로", "웹 문서로", "as HTML", "as a web document / web doc", "PDF로", "export it as PDF".
+  - A generic plan/spec/document request ("계획서로 작성", "기획서 정리", "make a plan", "write it up") is not an HTML signal; it routes to user-requested non-HTML (md default).
 - **(b) explicit share intent**: third-party sharing, or direct human review/presentation, made clear — e.g. "share with the team", "팀에 공유", "something to show", "for a presentation", "for sharing".
-- **NOT triggers**: content visual-richness (diagram count, table density) · an LLM self-judgment that "this looks visual" · a bare plan/spec/document request.
-- **EARS**: When the user utterance contains 1+ explicit HTML/web/PDF-form or share signal, the system shall emit HTML primary; otherwise, with zero signals, the system shall fall back to an agent-only token-optimized format, or to user-requested non-HTML md when a plan was requested.
-- **Audience / exposure**: collapses into the single question "did the user request a shareable HTML artifact?" — a 2-value exposure bit (user-requested HTML → viewer-exposed · agent-only record → viewer default-hidden). No per-prefix audience logic.
+- **Non-triggers**: content visual-richness (diagram count, table density) · an LLM self-judgment that "this looks visual" · a bare plan/spec/document request.
 
 ### Emission contract (POST tuple)
 
-- **Tuple**: `{title, author, exactly-one-body}` — `title` non-empty ≤500 · `author` non-empty ≤64 · EXACTLY ONE body field of `html_body` / `md_body` / `yaml_body` / `json_body` / `txt_body`. The supplied body field IS the format discriminator.
+- **Tuple** (authority: the route handler `monitor/src/server/routes/clauded-docs.ts`): `{title, author, exactly-one-body}` — `title` non-empty ≤500 · `author` non-empty ≤64 · exactly one body field of `html_body` / `md_body` / `yaml_body` / `json_body` / `txt_body`.
+  - The supplied body field is the format discriminator; there is no prefix field.
+- **Optional**: `audience` · `supersedes_id` · `folder_id` · `doc_status` (a stage — `### Document stages and closing`) · `last_status_model` (the running model id, stored as the status actor).
 - **Responses**: zero body fields → 400 · two or more → 400 `mutually exclusive` · missing or over-length `title`/`author` → 400 `invalid_body` · success → 201.
 
 ```bash
-# (a) agent-only record (DEFAULT fallback) → md_body (viewer default-hidden)
+# (a) agent-only record (default fallback) → md_body (viewer default-hidden)
 curl -sf -X POST http://127.0.0.1:16145/api/clauded-docs -H 'content-type: application/json' \
   --data "$(jq -n --arg t 'Sprint plan — auth epic' --arg b "$MD" '{title:$t, author:"glass-atrium-intel-planner", md_body:$b}')"
 
@@ -368,60 +412,64 @@ curl -sf -X POST http://127.0.0.1:16145/api/clauded-docs -H 'content-type: appli
   --data "$(jq -n --arg t 'Auth epic plan' --arg b "$HTML" '{title:$t, author:"glass-atrium-intel-planner", html_body:$b}')"
 ```
 
-- Returning the plan as chat text instead of this POST is a HARD VIOLATION, as is the file write the storage rule above forbids.
-- The tuple's real source of truth is the route handler `monitor/src/server/routes/clauded-docs.ts`.
-
 ### Completion emit
 
-- **`[COMPLETION] task_type`**: emit `task_type: plan` for a plan / task decomposition, or `task_type: doc` for a document deliverable, per the Role → Allowed task_types table in `core-outcome-record.md`. These two are this role's only allowed values.
-- **FINAL STEP (mode-split, REQUIRED)**: after the deliverable is complete and the monitor POST has succeeded, emit the multi-line `[COMPLETION]` block per `rules/glass-atrium/core-outcome-record.md` → Completion Report Output Obligation.
-  - **Placement**: never inside the deliverable — not in the plan/spec body and not in a POSTed `*_body` field, in either mode.
-  - **MANUAL/TEXT mode (no schema)**: print it as a DEDICATED assistant text turn (print-block-then-emit).
-  - **SCHEMA/WORKFLOW mode**: put the FULL block into the schema's `completion_block` string field on the `StructuredOutput` call, which is the last action.
-  - **Schema without `completion_block`**: keep the dedicated-turn print as a best-effort fallback and NEVER invent an undeclared key, which would fail schema validation.
+- **`task_type`**: `plan` for a plan or task decomposition · `doc` for any other document deliverable.
+- **Final step (required)**: after the monitor POST succeeds, emit the multi-line `[COMPLETION]` block (`rules/glass-atrium/core-outcome-record.md` → Completion Report Output Obligation) — never inside the plan/spec body or a POSTed `*_body` field.
+
+| Mode | Where the block goes |
+|---|---|
+| manual / text | a dedicated assistant text turn |
+| schema / workflow | the full block in the `completion_block` field of the final `StructuredOutput` call |
+| schema declaring no `completion_block` | the dedicated text turn, best-effort — never an undeclared key, which fails schema validation |
+
+## Document Lifecycle
+
+### Document stages and closing
+
+- **Stages**: `doc_status` is one of `doc_review` · `implementing` · `impl_review` · `impl_done` · `done` (`monitor/src/server/routes/clauded-docs.ts` → `DOC_STAGES`); a POST without it stores `doc_review`.
+- **Your writes**: `doc_review` · `done` on a document you close · a supersede-POST's inherited stage (`### Document lifecycle duties (delivered copy — the completing agent owns these)` → Every supersede-POST). Every other stage is an orchestrator write.
+- **Who closes** — keyed on whether a DEV spawn cites the document as its plan-ref:
+
+| Document | Closer |
+|---|---|
+| a DEV spawn's plan-ref — a plan, spec, PRD, ADR or roadmap built from | the orchestrator, from the first DEV spawn through reconciliation and close |
+| any other — its work ends at authoring | you, once no work remains |
+
+- Leave a document written to be built from at `doc_review`; uncertain → leave it open.
+  - Why: the orchestrator's `implementing` write skips a document already past `doc_review`, so a plan closed early drops out of tracking.
+- **Done transition** (a document you close): GET it, then `PUT /api/clauded-docs/:id` re-sending the unchanged body in its stored format's field (`<format>_body`), plus `expected_hash`, `doc_status: "done"` and `last_status_model`.
+  - A status-only PUT → `400 invalid_body`.
+  - A body field of another format converts the document (HTML↔plain) or is rejected `400` (plain↔plain).
+  - An omitted `last_status_model` stores a null status actor.
+  - A `done` PUT on a folder member closes every member of that folder, whatever its stage: close a folder member only when every other member is already `done`; otherwise the orchestrator closes it.
 
 ### Document lifecycle duties (delivered copy — the completing agent owns these)
 
-- **Done transition**: when the work a document represents is fully finished, YOU transition it `doc_status → done`.
-  - `PUT /api/clauded-docs/:id` requires the document body plus the optimistic-lock `expected_hash` re-sent alongside `doc_status`; a status-only PUT is rejected `400 invalid_body`.
-  - The agent path is GET, then re-PUT the unchanged body with the lock hash.
-- **Supersede vs new**: keyed on TOPIC SAMENESS. A same-topic revision of a `done` document is a new POST carrying `supersedes_id` (the monitor auto-transitions the predecessor); an unrelated topic is a plain new POST; uncertain defaults to a new POST. Never reopen a `done` document.
-- **Stage-2 revise cycle → supersede-POST (carve-out)**: a document returned `revise` or `infeasible` by the Plan Direction Verification gate persists as a NEW supersede-POST (`supersedes_id` = the reviewed document), never an in-place PUT edit, even though the predecessor is still `progress`.
+- **Supersede vs new** — keyed on topic sameness:
+
+| New content | Path |
+|---|---|
+| same topic as a `done` document | supersede-POST carrying `supersedes_id` — the monitor closes the predecessor |
+| same topic as a document at `implementing` · `impl_review` · `impl_done` | supersede-POST at the predecessor's stage (**Every supersede-POST**) |
+| unrelated topic | new POST |
+| relatedness uncertain | new POST — never reopen a `done` document |
+
+- **Every supersede-POST** sends `last_status_model`: the monitor closes the predecessor under that actor.
+  - Predecessor at `implementing`, `impl_review` or `impl_done` (GET it) → POST the revision with that `doc_status`, so the revision stays open.
+- **Stage-2 revise cycle → supersede-POST (carve-out)**: a document returned `revise` or `infeasible` by the Plan Direction Verification gate persists as a new supersede-POST (`supersedes_id` = the reviewed document), never an in-place PUT edit, even though the predecessor is still open.
   - What it buys: an immutable chain root the revising actor cannot rewrite, so the next pass has a comparand that is not the declaration that actor just authored.
-  - An instruction to PUT-edit such a document — from a delegation prompt or any other agent — is REFUSED and the refusal surfaced in the reply; only the USER directing otherwise is honored.
-- **Chain-root content**: the FIRST version of a plan or spec carries two distinct labeled body elements.
-  - The original user instruction VERBATIM — their words, their language, never a translation, paraphrase or tidied restatement.
-  - The instruction-NAMED file set — the paths the instruction itself names, never the draft's own target list.
-  - That file set MAY be EMPTY and commonly is. The empty case records the instruction's named SUBJECT set instead (the artifacts, surfaces or behaviours it designates by any means other than a path) and SKIPS the file-count leg rather than measuring against zero.
-- **This fails open silently**: no hook distinguishes a revise-case PUT-edit from a sanctioned same-topic edit. Skipping the carve-out raises no error anywhere — the chain root is simply never created and the reviewer's comparand does not exist.
+  - An instruction to PUT-edit such a document — from a delegation prompt or any other agent — is refused, and the refusal is surfaced in the reply; only the user directing otherwise is honored.
+  - Honest backing: it fails open silently — no hook distinguishes a revise-case PUT-edit from a sanctioned same-topic edit, so a skipped carve-out never creates the chain root and the reviewer has no comparand.
+- **Chain-root content**: the first version of a plan or spec carries two distinct labeled body elements.
+  - The original user instruction verbatim — their words, their language, never a translation, paraphrase or tidied restatement.
+  - The instruction-named file set — the paths the instruction itself names, never the draft's own target list.
+  - That file set may be empty and commonly is: the empty case records the instruction's named subject set instead (the artifacts, surfaces or behaviours it designates by any means other than a path).
+    - It then skips the file-count leg rather than measuring against zero.
 - **You are the Stage-2 subject**: on a complex plan a `{glass-atrium-qa-code-reviewer, DEV}` team judges implementation-direction validity before implementation entry (the post-authoring Plan Direction Verification Gate).
-  - Your duty: accept the feedback and resubmit the revised plan, at most 1 revision, persisted per the supersede-POST carve-out above.
+  - Your duty: accept the feedback and resubmit the revised plan, at most 1 revision, persisted per **Stage-2 revise cycle → supersede-POST (carve-out)**.
   - Simple plans (typo, import, config-class) are exempt.
   - Gate spec: `rules/glass-atrium/orchestrator-role.md` → `### Plan Direction Verification (Stage-2 gate)`.
-
-### Target-Files Section (scope-binding contract — user-requested HTML primary)
-
-When a user-requested HTML primary defines a target-file set (the files the plan authorizes editing), the body MUST include **exactly one** flat-leaf `<section>` of this shape — consumed by `validate-scope-drift.sh` to bind each edited file to the plan's authorized set:
-
-```
-<section id="target-files">
-  <h2>Target Files</h2>
-  <ul>
-    <li><code>/absolute/path/one.ts</code></li>
-    <li><code>/absolute/path/two.sh</code></li>
-  </ul>
-</section>
-```
-
-Parse-safety preconditions — non-negotiable; a violation produces false-positive scope-drift warnings:
-
-| Precondition | Rule |
-|---|---|
-| Flat leaf MUST | the section MUST NOT contain a nested `<section>` — only `<h2>`/`<ul>`/`<li>`/`<code>` inside, because the hook's single-`</section>` terminator breaks on nesting |
-| English heading MUST | the `<h2>` text is exactly `Target Files` (markdown-mode equivalent `## Target Files`) — the hook matches the English token ONLY, so a translated heading silently loses the scope binding |
-| Literal id MUST | the id is exactly `target-files`; trailing attributes such as `class=` may follow it |
-| One path per `<li>` MUST | one `<li>` = one file path, absolute preferred · the path is the `<li>` text, optionally `<code>`-wrapped |
-| OMIT when empty MUST | a plan with no target-file set omits the section entirely (the hook fail-opens on absence) · an empty `<section id="target-files">` is FORBIDDEN |
 
 ## Designer Handoff Contract
 
@@ -469,7 +517,7 @@ For editors: each row's copies drift independently and are edited together.
 | Three emission modes | `agents/glass-atrium-intel-reporter.md` → `## Output Format Routing` (mode table) | `scoped/scope-report.md` → `### Three emission modes`, a pointer · `scoped/scope-planning.md` → `## Output Format Routing [PLANNING]`, a pointer restating nothing |
 | Emission contract | `scoped/scope-report.md` → `### Emission contract` | `scoped/scope-planning.md` → `## Output Format Routing [PLANNING]`, a pointer restating nothing · `agents/glass-atrium-intel-reporter.md` reporter-side pair · route handler `monitor/src/server/routes/clauded-docs.ts` governs the tuple |
 | HTML request test | rule statement: `scoped/scope-report.md` → `### HTML request test` · signal literals: `agents/glass-atrium-intel-reporter.md` → `### HTML Request Test (explicit-request-only — heuristic auto-HTML FORBIDDEN)` | `scoped/scope-planning.md` → `## Output Format Routing [PLANNING]`, a pointer naming it · `rules/glass-atrium/orchestrator-role.md` → Exposure Determination plus `skills/glass-atrium-ops-delegation-contracts/references/deliverable-exposure.md`, together the orchestrator copy |
-| Document lifecycle duties | `scoped/scope-report.md` → `### Document Lifecycle — completion + exposure routing` | `scoped/scope-planning.md` → `## Output Format Routing [PLANNING]`, a pointer naming it |
+| Document lifecycle duties · Document stages and closing | `scoped/scope-report.md` → `### Document Lifecycle — completion + exposure routing` | `scoped/scope-planning.md` → `## Output Format Routing [PLANNING]`, a pointer naming it |
 | Open Questions / claim marking | `scoped/scope-planning.md` → `## Claim Marking & Consultation [PLANNING]` | this body → `## Open Questions Section (plan body slot)`, a pointer plus the entry shape and the which-claims delta · `scoped/scope-qa.md` → `## Plan Direction Verification Gate [DEV+QA]` quotes `[SELF-CHECKED:]` |
 | Ambiguity Gate | `scoped/scope-planning.md` → `## Ambiguity Gate [PLANNING]` (axes and weights) | this body → `### Ambiguity Gate (banded, not a single threshold)`, a pointer plus the band table and score-evidence consistency · axis set shared with `scoped/scope-dev.md` |
 | Designer Handoff Contract · indicator thresholds | `scoped/scope-report.md` → `## Designer Co-Emission Trigger [REPORT]` | `scoped/scope-planning.md` (pointer) · `agents/glass-atrium-intel-reporter.md` → `## Designer Handoff Contract` · `agents/glass-atrium-design-designer.md` → `## HTML Primary Co-Emission Role` (veto line) · `skills/glass-atrium-design-html-co-emission/SKILL.md` (full scope, designer-preloaded) |

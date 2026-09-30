@@ -31,6 +31,8 @@ setup() {
   command -v jq >/dev/null 2>&1 || skip "jq not on PATH"
   command -v python3 >/dev/null 2>&1 || skip "python3 not on PATH"
   TRACE_LOG="${BATS_TEST_TMPDIR}/workflow-gate-fired.log"
+  # Refused loopback port → the replayed skeletons' monitor reads fail open instead of reaching the live monitor.
+  export WORKFLOW_GATE_MONITOR_URL="http://127.0.0.1:9/api/clauded-docs"
 }
 
 # Drive the hook DIRECTLY as a command (never `bash <path>`) with a Workflow envelope wrapping $1.

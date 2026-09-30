@@ -16,7 +16,7 @@ Reword around what these consumers read, never through it.
 
 Reserved beyond that table:
 
-- **Attestation tokens** — `[SCOPE]` · `[ENTRY-CLASS]` · `[SIZE-EST]` · `[PLAN-SUBSET]` · `[AGENT-COMPOSITION]` · `[DOC-ROUTE]`: the bracketed literal and its field keys are what the spawn gates scan a delegation for.
+- **Attestation tokens** — `[SCOPE]` · `[ENTRY-CLASS]` · `[SIZE-EST]` · `[PLAN-SUBSET]` · `[PLAN-CLOSE]` · `[AGENT-COMPOSITION]` · `[DOC-ROUTE]`: the bracketed literal and its field keys or form values are what the spawn gates scan a delegation or script for.
 - **Verdict names** — `block-nodecl` · `block-grammar` · `block-norev` · `block-noverifydev` · `block-declspawn` · `block-undecl` · `block-computed` · `block-order` · `block-upstream`: each is a trace tag `hooks/enforce-workflow-verify-stage.sh` emits. This file NAMES them; the hook defines them.
 - **Headings** cited by name elsewhere in the corpus:
   - `## Orchestrator Identity` · `## Delegation Criteria` · `## Delegation Workflow` · `## Document-Driven Workflow` · `## Harness Path Protection` (with its `Rule 2`).
@@ -111,7 +111,7 @@ Delegate to a subagent when the user request matches any row below.
 | **Investigation** | Gather context before delegating | Summarize user intent (1 sentence)<br>· Glob/Grep scan (min 1 pass — routing facts only; boundary: `#### Scan boundary and provenance`)<br>· Check progress files + prior Outcome Records | Delegating without investigation | Internal context summary |
 | **Decision** | Compose team + define scope | Decompose into sub-tasks, sized per `### Spawn Budget` → Delegation-size discipline<br>· Compose team + phase order from capability hints (`domains` + descriptions), justified by that alignment<br>· Define scope (files, change type, constraints) and fix it in TEXT with a `[SCOPE]` line on DEV/PLANNING delegations (grammar SoT: `### Context Handoff Size`)<br>· Probe each target path (Read/Glob) before prompt assembly, then run `#### Decision-phase probes` in order<br>· Classify DEV entry — SIZABLE if ANY of ~3+ coordinated files · ≥2 modules · ≥3 expected turns · public-contract change (borderline → SIZABLE) → plan first; simple → `[ENTRY-CLASS] simple-task: <reason>` (`#### Entry classification (DEV delegations)`) | Habitual delegation without rationale<br>· Keyword/alias-based routing<br>· Collapsing compound requests into single agent<br>· Spawning subagent on unprobed paths<br>· Spawning subagent whose compatibility preconditions are unmet<br>· Oversized single delegation (>2 bundles / est ≳40 tool_uses)<br>· Delegating DEV/PLANNING work with no `[SCOPE]` line | Team (`agents` + `reason` + `order`) + scope + constraints |
 | **Delegation** | Deliver self-contained context | Follow Handoff Context rules<br>· Generate + attach CID<br>· English delegation prompt | Passing full conversation history<br>· Context-free "just do it" | Subagent invocation with CID |
-| **Monitoring** | Verify results + quality | Check `[COMPLETION]` block<br>· Escalate `blocked`/`fail` to user or glass-atrium-qa-debugger<br>· Relay `done_with_concerns`<br>· Verify intent-result alignment<br>· Reconcile the delivered path set against the delegation's `[SCOPE]` — excess → `skills/glass-atrium-ops-orchestrator.md` → `### Scope-Expansion Approval Protocol`, never absorbed silently | Forwarding results without verification<br>· Silently accepting work that fell outside the declared `[SCOPE]`<br>· Printing the raw `[COMPLETION]` block to the user (machine-facing record artifact — summarize in prose; `core-outcome-record.md` → Emit Boundary Channel asymmetry)<br>· Treating a proxy as a completion signal — mtime quiet, an `idle` listing entry, newest-file-by-mtime, an appearing commit (`skills/glass-atrium-ops-orchestrator.md` → Completion signals) | Final response or follow-up |
+| **Monitoring** | Verify results + quality | Check `[COMPLETION]` block<br>· Escalate `blocked`/`fail` to user or glass-atrium-qa-debugger<br>· Relay `done_with_concerns`<br>· Verify intent-result alignment<br>· Reconcile the delivered path set against the delegation's `[SCOPE]` — excess → `skills/glass-atrium-ops-orchestrator.md` → `### Scope-Expansion Approval Protocol`, never absorbed silently<br>· Write the plan's stage from the returned reconciliation verdict (`## Document-Driven Workflow` step 5) | Forwarding results without verification<br>· Silently accepting work that fell outside the declared `[SCOPE]`<br>· Printing the raw `[COMPLETION]` block to the user (machine-facing record artifact — summarize in prose; `core-outcome-record.md` → Emit Boundary Channel asymmetry)<br>· Treating a proxy as a completion signal — mtime quiet, an `idle` listing entry, newest-file-by-mtime, an appearing commit (`skills/glass-atrium-ops-orchestrator.md` → Completion signals) | Final response or follow-up |
 
 > **Automatic Parallelization (Decision-phase default)**: NON-overlapping AND independent sub-tasks compose as a parallel fan-out BY DEFAULT — no per-task user request needed. Guardrails + `[SIZE-EST]`/effort-scaling sizing: SoT `### Spawn Budget` → Automatic Parallelization.
 
@@ -352,8 +352,9 @@ The scan establishes **routing** facts — what exists, where it lives, who owns
 
 - Summary only (1K-2K tokens max). Raw conversation history pass-through is FORBIDDEN.
 - Content: the 6 delegation elements (SoT: `skills/glass-atrium-ops-orchestrator.md` → `#### Delegation required elements`). The count and the `7th` label below are mirrored in `hooks/inject-session-context.sh`, so they move together.
-- **Attestation-token placement — the whole family (`[SCOPE]` · `[ENTRY-CLASS]` · `[SIZE-EST]` · `[PLAN-SUBSET]` · `[DOC-ROUTE]`), stated ONCE here**:
+- **Attestation-token placement — the whole family (`[SCOPE]` · `[ENTRY-CLASS]` · `[SIZE-EST]` · `[PLAN-SUBSET]` · `[PLAN-CLOSE]` · `[DOC-ROUTE]`), stated ONCE here**:
   - Manual path → inside the Agent tool's `prompt` parameter, never the orchestrator's user-facing narration.
+    - `[PLAN-CLOSE]` has no manual-path form: the manual close is a reviewer spawn after the delivering step (`skills/glass-atrium-ops-orchestrator.md` → `## Managed Document Completion (Direct Handling)` → Step 3).
   - Ultracode path → the top-of-script `log()` string or `meta.description` (`skills/glass-atrium-ops-orchestrator.md` → `### Ultracode / Workflow-tool Mode`, Workflow pre-flight item 1).
   - Each token states its own grammar, gate and honest backing at its own site; this bullet is the only statement of WHERE it goes.
   - `[AGENT-COMPOSITION]` is deliberately NOT in this family — it lives in a script block comment, never in a prompt (`#### Ultracode declaration contract` above).
@@ -374,6 +375,18 @@ The scan establishes **routing** facts — what exists, where it lives, who owns
   - **Honest backing — PRESENCE-CHECKED ONLY**: the spawn gates observe an ABSENT line and say so (stderr advisory, exit status unchanged — never a block).
     - Fidelity to the user's instruction is honor-system, the same ceiling as `[ENTRY-CLASS]` / `[SIZE-EST]`: an under-declared or over-broad `[SCOPE]` passes every gate. It buys auditability, not enforcement — never describe it as enforcing scope.
   - **Absent `[SCOPE]` → every downstream check FAILS OPEN** (comparison skipped, never blocked).
+- **`[PLAN-CLOSE]` — the close token (required on every plan-referencing DEV-spawning Workflow script). This bullet is the grammar SoT; every other file carries a pointer only.** One line, in one of two forms:
+
+  `[PLAN-CLOSE] in-script`
+
+  `[PLAN-CLOSE] deferred: <the later script or step that closes the plan>`
+
+  - **Close form** (`in-script`): the script ends in the terminal Reconcile & Close phase (`skills/glass-atrium-ops-orchestrator.md` → `##### In-script verify-stage (ultracode)`).
+  - **Deferral form** (`deferred:`): the script does not end in that phase; the value names the later script or step that runs the close.
+  - `in-script` and `deferred:` are the only form values; the plan closed is the one the script's plan-ref cites.
+  - **Placement**: the token-family rule above.
+  - **Honest backing — advisory only**: `hooks/enforce-workflow-verify-stage.sh` prints a stderr advisory on a plan-referencing DEV-spawning script carrying neither form, never a block; whether the form is truthful is honor-system.
+    - Why advisory: a multi-script track legitimately closes in a later script, which a block would false-positive on.
 - `parent_cid` (optional): include it in the delegation prompt for chain traceability when sub-orchestrators exist.
 - **Delegation Prompt Body = English** (Goal/Target/Constraints/Completion all). Literal strings injected into target files (regex patterns, Bad/Good examples, rule-quote blocks) keep their own language, wrapped in backticks or a blockquote so they stand apart from the English prose.
 - When prompt quality matters, route the prompt through `glass-atrium-meta-prompt-engineer` first.
@@ -398,26 +411,37 @@ On `result: fail` or `result: blocked`:
 
 The standard plan/report-then-build flow as ONE lifecycle.
 
-- Steps 1-5 gate in order: a step starts only after its predecessor's gate passes.
-- Step 6 governs the delivery tail and does not wait on step 5's `doc_status` transition.
+- Steps 1-4 gate in order: a step starts only after its predecessor's gate passes.
+- Step 5 is exempt from that gate: it runs on step 4's returned reconciliation verdict whichever way it falls, a verdict with gaps included.
+- The close runs after step 6 despite its number: step 4's reconciliation pass and step 5's stage write run at the delivery point, the last phase that delivers the plan's work (merge or deploy) — the Managed Document Completion detail below, Step 3.
 
 1. **Document authoring** — glass-atrium-intel-planner / glass-atrium-intel-reporter author an agent-only document by DEFAULT; an HTML primary only on an explicit HTML/web/PDF-form or share signal (`### Phase Notes` → Exposure Determination · `scoped/scope-report.md` → `### HTML request test`).
 2. **Document verification** — the Stage-1 format/completeness gate, plus the Stage-2 plan-direction gate for complex plans (`### Plan Direction Verification (Stage-2 gate)`). Implementation entry is gated on `pass`+`feasible`.
-3. **Implementation** — the DEV team the verified document calls for: domain-matched DEV selection, each delegation sized per `### Spawn Budget` → Delegation-size discipline.
-4. **Implementation verification** — two families, BOTH passing before completion: correctness judges the work that WAS built; reconciliation runs in BOTH directions — nothing planned dropped, nothing unplanned added.
+3. **Implementation** — opens with the `implementing` write, then the DEV team the verified document calls for: domain-matched DEV selection, each delegation sized per `### Spawn Budget` → Delegation-size discipline.
+   - **`implementing` write**: the orchestrator records the plan at `implementing` before its first DEV spawn, and skips the write when the plan is already past `doc_review` (manual and ultracode timing, and the recipe: the Managed Document Completion detail below, Step 1).
+     - Why: the session-start open-plan list keys on stage, so a missed write drops a started plan from it.
+4. **Implementation verification** — two families, BOTH passing before any `done` write: correctness judges the work that WAS built; reconciliation runs in BOTH directions — nothing planned dropped, nothing unplanned added.
    - **Correctness gates**: tests pass + glass-atrium-qa-code-reviewer / glass-atrium-sec-guard verdicts on the built work (`skills/glass-atrium-ops-orchestrator.md` → Quality Gates).
-   - **Plan↔implementation coverage reconciliation (MANDATORY — distinct gate)**: reconcile the plan's work-stream set N (or task-ID set, where the plan was asked to decompose into tasks) against the implemented set → report N/N → on any miss, re-delegate the dropped work BEFORE completion; never close with a gap.
+   - **Reconciliation actor**: glass-atrium-qa-code-reviewer runs both reconciliations below in one pass and returns coverage N/N, the excess and the gap list; the orchestrator routes that verdict and never reconciles itself.
+     - Why: reconciling built work against a plan is produced content (`## Orchestrator Identity`).
+     - Where the pass runs and what it is handed: the Managed Document Completion detail below (Step 3).
+   - **Plan↔implementation coverage reconciliation (MANDATORY — distinct gate)**: the plan's work-stream set N (or task-ID set, where the plan was asked to decompose into tasks) against the implemented set → N/N reported.
+     - On any miss, step 5 records `impl_review` and the orchestrator re-delegates the dropped work before any `done` write; never close with a gap.
      - A stream or task counts as implemented when the files it names were actually changed.
      - Why: an independent-entry work stream with no dependency slips past the correctness gates, which see only what was built.
-     - **Honest framing — HONOR-SYSTEM, NOT mechanically enforced**: no runtime backstop verifies the reconciliation ran; the orchestrator's own Monitoring-phase check is the sole surface, so never describe this gate as "enforced".
-   - **Declaration↔implementation EXCESS reconciliation (MANDATORY — the symmetric half, same rank as the coverage gate above, not a sub-check of it)**: reconcile the authored path set against the files the plan's work streams (or tasks) declare ∪ the delegation's `[SCOPE] files=` — was anything BUILT that neither authorized?
-     - On any excess, SILENT ACCEPTANCE IS FORBIDDEN: route it through `skills/glass-atrium-ops-orchestrator.md` → `### Scope-Expansion Approval Protocol` — approved → stamp and continue · not approved → report the built excess and WAIT for disposition.
+     - **Honest framing — HONOR-SYSTEM, NOT mechanically enforced**: no runtime backstop verifies the reconciliation ran; the orchestrator's Monitoring-phase check for the reviewer's verdict is the sole surface, so never describe this gate as "enforced".
+   - **Declaration↔implementation EXCESS reconciliation (MANDATORY — the symmetric half, same rank as the coverage gate above, not a sub-check of it)**: the authored path set against the files the plan's work streams (or tasks) declare ∪ the delegation's `[SCOPE] files=` — was anything BUILT that neither authorized?
+     - On any excess, SILENT ACCEPTANCE IS FORBIDDEN: the orchestrator routes it through `skills/glass-atrium-ops-orchestrator.md` → `### Scope-Expansion Approval Protocol` — approved → stamp and continue · not approved → report the built excess and WAIT for disposition.
      - Automatic revert is FORBIDDEN, per the File Deletion Policy.
      - Why: a task set complete in the coverage direction can still have grown in this one, and nothing else in the pipeline looks for that growth.
      - **Honest framing — HONOR-SYSTEM, NOT mechanically enforced**: backing identical to the coverage gate.
        - The recorder's `scope-excess` `review_flag` is an after-the-fact ADVISORY on a strictly NARROWER surface — Write/Edit-authored paths of a SUBAGENT whose delegation carried a `[SCOPE]` line — and never substitutes for running this gate.
        - Bash-authored writes, the updater path and the orchestrator's own main-session edits leave it silent. Describe neither as "enforced".
-5. **Document completion** — transition `doc_status → done` ONLY after coverage N/N, no unauthorized excess outstanding, AND the correctness gates pass (mechanism: the Managed Document Completion detail below).
+5. **Document completion** — the orchestrator writes the plan's stage from step 4's verdict (verdict→stage table, folder check and recipe: the Managed Document Completion detail below, Step 3).
+   - `done` ONLY after coverage N/N, no unauthorized excess outstanding, AND the correctness gates pass.
+   - `impl_done` in place of `done` while another member of the plan's folder is still open: a `done` closes the whole folder, so the last member to pass writes it.
+   - `impl_review` while gaps remain, with the reviewer's gap list written into the document verbatim.
+   - Scope: a plan a DEV spawn cites; a document whose work ends at authoring is closed by its author (same detail → **Who closes**).
 6. **Live deploy + empirical verification (PRE-MERGE delivery gate — live-install bundle members only)** — binds any delivered change touching live-install bundle members. The DEFAULT per-cycle order puts deploy and verification BEFORE the PR, never after the merge.
    - **Live-suite instrument, run from the install root**: `AUTOAGENT_PREFLIGHT_ACTIVE=1 scripts/run-bats-parallel.sh` MUST exit 0 before the PR is opened.
      - Before running a suite file that executes the postgres orphan-clear guards, clear `scoped/shared-testing.md` → Destructive-Path Suite Safety (live-postgres reach) — pointer only, the procedure is single-sited there.
@@ -428,7 +452,7 @@ The standard plan/report-then-build flow as ONE lifecycle.
 
 > Detail: skills/glass-atrium-ops-orchestrator.md → Managed Document Deletion (Direct Handling) (`DELETE /api/clauded-docs/:id` procedure — DB row first, best-effort FS cleanup; direct `mv` forbidden)
 
-> Detail: skills/glass-atrium-ops-orchestrator.md → Managed Document Completion (Direct Handling) (`doc_status → done` transition curl · supersede-vs-new decision tree incl. the Stage-2 revise-case supersede-POST carve-out · Monitoring-phase omission fallback)
+> Detail: skills/glass-atrium-ops-orchestrator.md → Managed Document Completion (Direct Handling) (the stages and who closes · Step 1 stage write recipe · Step 2 supersede-vs-new decision tree incl. the Stage-2 revise-case supersede-POST carve-out · Step 3 delivery-point close with its folder check)
 
 ## Harness Path Protection (`~/.claude/` and every `~/.claude-*` profile branch)
 

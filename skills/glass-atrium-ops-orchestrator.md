@@ -306,15 +306,14 @@ The delegation-size discipline (`orchestrator-role.md` → `### Spawn Budget`) a
 - **Orchestrator-forced Deep-review override**: compose a glass-atrium-qa-code-reviewer **Deep (4-pass)** review, deterministically and regardless of the writer's self-reported confidence, when either trigger holds:
   - a delegation's `[SCOPE] files=` lists ≥ 10 paths;
   - any listed path starts with a sensitive-path prefix — `hooks/` · `settings*.json` · `rules/` · `agents/` (frontmatter) · `autoagent/`.
-  - The threshold and the prefix list are single-sited here (SoT).
+  - The threshold and the prefix list are single-sited here: other prose files carry a pointer, never a copy; `hooks/enforce-verification-gate.sh` holds the same values as named constants and reports counts + matched prefix only.
   - Applies to EVERY such delegation, not only the first in a cycle.
   - No doc-only skip tier exists: a rule-file change is reviewed, never exempted.
-  - Other prose files carry a pointer to this clause, never a copy of the threshold; `hooks/enforce-verification-gate.sh` holds the same values as named constants and reports counts + matched prefix only.
   - Honest backing: the routing decision is orchestrator honor-system, and the hook leg is advisory + presence-only (stderr, exit 0, silent without a `[SCOPE]` line).
   - Describing this override as "enforced" is FORBIDDEN.
   - Machine-checked repetition: `hooks/test/enforce-verification-gate-scope.bats` extracts the path-count number from this bullet and compares it with the hook's constant, so the two move together or that suite fails.
 - **Error recovery**: `orchestrator-role.md` → `### Failure Recovery Loop` (retry limits, escalation, circuit-breaker, checkpoint resumption); infinite retry forbidden.
-- **Team termination**: complete → aggregate results → **Outcome Record** → retrospective (actual vs plan) → **instruction upgrade review**.
+- **Team termination**: complete → aggregate results → **reconcile and close** each plan the team built from (`## Managed Document Completion (Direct Handling)` → Step 3) → **Outcome Record** → retrospective (actual vs plan) → **instruction upgrade review**.
   - The retrospective's durable half is the Outcome Record's `lesson` field plus internal CTM/EPM accumulation.
   - A user-facing memory write (`MEMORY.md` / `feedback_*.md`) is NOT a step here — it fires only on an explicit user instruction to remember (`core-learning-log.md` → Long-Term Memory Write-Gate).
 
@@ -650,6 +649,7 @@ Two families live here:
   - No placeholder/TODO in content
   - If unmet, request domain agent revision (max 1 time)
 - **After implementation, before document completion — reconciliation in BOTH directions (MANDATORY)**: coverage (every planned work stream built, N/N) and excess (nothing built that the plan and `[SCOPE] files=` never authorized) both clear before `doc_status → done`.
+  - Actor and stage write: glass-atrium-qa-code-reviewer reconciles; the orchestrator's stage write follows — `## Managed Document Completion (Direct Handling)` → Step 3.
   - Procedure, the distinction from the correctness gates, and the honest backing (honor-system): `orchestrator-role.md` → `## Document-Driven Workflow` step 4.
   - An excess routes through `### Scope-Expansion Approval Protocol` (this file).
 - **Revision request protocol**:
@@ -747,6 +747,7 @@ Backing: authoring the tokens, the stage and the declaration is the primary obli
   [/AGENT-COMPOSITION] */
   log('plan-ref: clauded-docs/42');   // entry signal — reference the REAL minted id; 42 is illustrative
   log('[SIZE-EST] bundles=2 tool_uses~=25 — implement + its new tests');
+  log('[PLAN-CLOSE] in-script');      // close form — this script ends in Reconcile & Close (grammar: orchestrator-role.md → Context Handoff Size)
 
   // robustAgent: retry-once-on-null, isolated failure, never crashes the workflow. MANDATORY wrapper
   // for every schema-mode agent() (rationale: #### Resilient Workflow Authoring). Copied inline here so
@@ -788,6 +789,8 @@ Backing: authoring the tokens, the stage and the declaration is the primary obli
   // by nothing and a paraphrase drifts it from two canonicals at once.
   const PREMISE_AUDIT_Q = 'Attack each load-bearing premise FROM THE CODE, never from the list';
   const FIRST_LINK_Q = 'name the earliest decision in the chain, state how many current tasks survive its replacement, give the cheaper replacement if one exists';
+  // Reconcile & Close goal: the verdict the orchestrator's stage write keys on (Managed Document Completion → Step 3).
+  const RECONCILE_GOAL = 'reconcile the plan against the built work → coverage N/N over its work streams, the excess (built work neither the plan nor the delegation scope authorized) and the gap list verbatim; pass only on N/N with no excess';
 
   // complex-plan workflow — verify stage gates DEV implementation. Every stage goes through
   // robustAgent (never bare agent()) so a truncated schema-mode spawn self-recovers instead of
@@ -802,8 +805,16 @@ Backing: authoring the tokens, the stage and the declaration is the primary obli
     // implementation stage runs ONLY when reviewer=pass AND DEV=feasible;
     // any revise/infeasible → glass-atrium-intel-planner revision (max 1) then re-verify, else escalate
     robustAgent('glass-atrium-dev-nestjs', { agentType: 'glass-atrium-dev-nestjs', goal: 'implement per verified plan' /* gated on verify verdict */ }),
+    // Reconcile & Close (terminal): runs after the last delivering phase; the orchestrator's stage write follows the run
+    robustAgent('glass-atrium-qa-code-reviewer', { agentType: 'glass-atrium-qa-code-reviewer', goal: RECONCILE_GOAL }),
   )
   ```
+
+- **Reconcile & Close phase (terminal, both skeletons)**: glass-atrium-qa-code-reviewer reconciles the plan against the built work (goal: `RECONCILE_GOAL`); the script ends there.
+  - `RECONCILE_GOAL` carries no inputs, so the composer appends them to its goal text: `## Managed Document Completion (Direct Handling)` → Step 3 → **Delegation inputs**.
+  - The orchestrator's stage write follows the run: `## Managed Document Completion (Direct Handling)` → Step 3.
+  - A script ending before its plan's delivery carries the deferral form of the close token instead: `#### Workflow pre-flight (run before EVERY Workflow call)` → **close token**.
+  - Text-mode, like the verify stage; the "2-phase" / "3-phase" skeleton labels leave this terminal phase uncounted.
 
 - **Standing-question literals in the verify-stage goal text**: the two consts carry the Stage-2 standing jobs into the delegation text, quoted verbatim from the actors' own canonicals (sources named in the fence comment above).
   - `PREMISE_AUDIT_Q` goes to BOTH verify members; `FIRST_LINK_Q` goes to the DEV member only and only on a revision cycle, because it is answered in the `feasible`/`infeasible` verdict the DEV emits.
@@ -816,13 +827,13 @@ Backing: authoring the tokens, the stage and the declaration is the primary obli
 
 - **3-phase Discovery+Design variant (no `dev-*` before the reviewer — keeps a pre-verify Discovery phase lawful under the ordering check)**: the 2-phase skeleton above starts AT the verify stage; this one runs Discovery/Design analysis first.
   - Why a Discovery `dev-*` trips `block-order`, and both lawful routes: ``### Pre-verify Discovery `dev-*` order guard (ultracode)``. This skeleton shows route (a), non-DEV Discovery; route (b) is the fallback when Discovery genuinely needs a `dev-*`'s domain judgment.
-  - The skeleton reuses the `robustAgent` helper and both standing-question literals from the 2-phase skeleton, and carries the declaration plus the entry (`plan-ref`) and `[SIZE-EST]` tokens, so its pass is earned by an honest declaration and correct ordering — not a masked `BLOCK_NODECL` / `BLOCK_ENTRY` / `BLOCK_SIZEEST`:
+  - The skeleton reuses the `robustAgent` helper, both standing-question literals and `RECONCILE_GOAL` from the 2-phase skeleton, and carries the declaration plus the entry (`plan-ref`) and `[SIZE-EST]` tokens, so its pass is earned by an honest declaration and correct ordering — not a masked `BLOCK_NODECL` / `BLOCK_ENTRY` / `BLOCK_SIZEEST`:
 
   ```js
-  // 3-PHASE variant: Discovery/Design -> verify(parallel(qa, dev)) -> implement.
+  // 3-PHASE variant: Discovery/Design -> verify(parallel(qa, dev)) -> implement, then the terminal Reconcile & Close.
   // NO dev-* token precedes the reviewer (Discovery/Design uses NON-DEV agents), so BLOCK_ORDER
   // cannot fire. Reuses the robustAgent helper from the 2-phase skeleton above (#### Resilient
-  // Workflow Authoring) plus its two standing-question literals: every schema-mode agent() stays
+  // Workflow Authoring) plus its two standing-question literals and RECONCILE_GOAL: every schema-mode agent() stays
   // retry-once-on-null / isolated-failure, and any stage you convert to schema mode reserves a
   // completion_block field + instructs the agent to fill it.
   // TEXT-MODE BY DESIGN: the stages below declare NO schema, so that reservation does not apply to
@@ -836,6 +847,7 @@ Backing: authoring the tokens, the stage and the declaration is the primary obli
   [/AGENT-COMPOSITION] */
   log('plan-ref: clauded-docs/42');   // entry signal (raw-scanned) — reference the REAL minted id; 42 is illustrative
   log('[SIZE-EST] bundles=2 tool_uses~=28 — implement + its new tests; Discovery/Design is NON-DEV');
+  log('[PLAN-CLOSE] in-script');      // close form — this script ends in Reconcile & Close (grammar: orchestrator-role.md → Context Handoff Size)
   pipeline(
     // Phase 1 — Discovery + Design: NON-DEV analysis. No dev-* here, so nothing precedes the reviewer.
     robustAgent('glass-atrium-intel-researcher', { goal: 'discover constraints + prior art' }),
@@ -847,6 +859,8 @@ Backing: authoring the tokens, the stage and the declaration is the primary obli
     ),
     // Phase 3 — implement: runs ONLY on pass+feasible. This first impl dev-* is preceded by the reviewer.
     robustAgent('glass-atrium-dev-nestjs', { agentType: 'glass-atrium-dev-nestjs', goal: 'implement per verified plan' /* gated on pass+feasible */ }),
+    // Phase 4 — Reconcile & Close (terminal): the orchestrator's stage write follows the run.
+    robustAgent('glass-atrium-qa-code-reviewer', { agentType: 'glass-atrium-qa-code-reviewer', goal: RECONCILE_GOAL }),
   )
   ```
 
@@ -1172,6 +1186,8 @@ The deterministic Workflow-tool execution path: the orchestrator authors a JS wo
 
 Items 1-4 are the co-equal requirements consolidated at this file → "DEV-spawn 4-requirement pre-flight checklist"; none is a sub-clause of another.
 
+- The **`implementing` write** and **close token** items stand outside that checklist: no gate blocks on either, and each is backed by an advisory only.
+
 1. **entry-classify** — sizable → plan-ref · simple → `log('[ENTRY-CLASS] simple-task: <reason>')` / `meta.description`; the token clears ONLY the entry gate.
    - Sizable criteria: `orchestrator-role.md` → `## Delegation Workflow` Decision row · snippet: this file → "Entry-class token placement".
 2. **`[SIZE-EST]` self-attestation** — at every DEV spawn, in the same `log()` / `meta.description` home as the entry token.
@@ -1187,7 +1203,12 @@ Items 1-4 are the co-equal requirements consolidated at this file → "DEV-spawn
    - Contract: `GLASS_ATRIUM_GLOBAL_RULES.md` → `#### Emit-before-cap` · authoring detail: this file → `#### Resilient Workflow Authoring` · measured justification: `#### Completion-channel non-emission` below.
 9. **`[DOC-ROUTE]` stamp** — the user explicitly requested a local destination → stamp the `[DOC-ROUTE] user-requested-local:` token in the script.
    - Never stamped without an actual explicit user request; snippet: this file → "[DOC-ROUTE] token placement" · self-check: `### Reflexive [DOC-ROUTE] stamping guard`.
-10. **PREVIEW before submit** — run `enforce-workflow-verify-stage.sh --lint <file>` as the final self-check.
+10. **`implementing` write** — before submitting the first DEV-spawning script that carries a plan-ref, record the plan at `implementing`; skip it when the plan is already past `doc_review`.
+    - Recipe: this file → `## Managed Document Completion (Direct Handling)` → Step 1.
+11. **close token** — a plan-referencing DEV-spawning script carries one form: the close form when it ends in the Reconcile & Close phase, or the deferral form naming the later script or step that closes the plan.
+    - A work item gated on an event (a merge, a deploy) lives in the script that performs that event, never only in a document.
+    - Grammar: `orchestrator-role.md` → `### Context Handoff Size` · phase: this file → `##### In-script verify-stage (ultracode)`.
+12. **PREVIEW before submit** — run `enforce-workflow-verify-stage.sh --lint <file>` as the final self-check.
     - It reads the raw script offline through the identical verdict dispatch: `exit 0` = passes the gate · `exit 2` prints the block reason.
     - `--lint --template` prints the canonical `[AGENT-COMPOSITION]`/entry/`[SIZE-EST]` scaffold.
     - Side-effect-free (no firing-trace line) and a convenience, not a gate — items 1-4 stay primary.
@@ -1379,61 +1400,99 @@ Constraints on the whole procedure:
 
 ## Managed Document Completion (Direct Handling)
 
-The orchestrator oversees the `doc_status` completion transition for monitor-managed clauded-docs: when an agent invokes the shipped API, and the orchestrator's fallback role.
+The orchestrator records the stages of a document a DEV spawn builds from, from the first DEV spawn through its close at the delivery point.
 
-- **Shipped mechanism**: `doc_status` enum `progress` (DB default) / `done` · `PUT /api/clauded-docs/:id` for the transition · same-`folder_id` cascade · a `supersedes_id` revision chain (same-topic only; predecessor auto-transitioned to `done`).
 - **Target store and scope**: every `monitor.ClaudedDoc` managed doc (monitor-internal root); supersede and completion key on topic + `id`.
-- **Authoring-side lifecycle canonical**: `scope-report.md` → `### Document Lifecycle — completion + exposure routing` (`scope-planning.md` → `## Output Format Routing [PLANNING]` points at it).
+- **Stages** — `doc_status` takes one of these values (`monitor/src/server/routes/clauded-docs.ts` → `DOC_STAGES`); a POST without it stores `doc_review`:
+
+| Stage | Holds | Written by |
+|---|---|---|
+| `doc_review` | a document not yet built from — a plan awaiting approval, a reference, a standing tracker | its author |
+| `implementing` | a plan whose DEV work has started | the orchestrator (Step 1) |
+| `impl_review` | a plan whose reconciliation found gaps, the gap list written into it | the orchestrator (Step 3) |
+| `impl_done` | a folder member that reconciled N/N while another member is still open | the orchestrator (Step 3) |
+| `done` | a closed document | its closer (**Who closes**) |
+
+- **Only `done` cascades**: a `done` PUT on a folder member closes every member of that folder, whatever each member's stage; every other stage moves one document.
+- **Who closes** — keyed on whether a DEV spawn cites the document as its plan-ref; authoring-side canonical: `scoped/scope-report.md` → `### Document Lifecycle — completion + exposure routing`.
+
+| Document | Closer |
+|---|---|
+| a DEV spawn's plan-ref — a plan, spec, PRD, ADR or roadmap built from | the orchestrator, from the first DEV spawn through the close |
+| any other — its work ends at authoring (report, reference, research) | its author, once no work remains |
+
+- **Split of a close**: glass-atrium-qa-code-reviewer reconciles; the orchestrator performs only the stage writes and copies the reviewer's gap list into the document verbatim.
+  - Why: reconciling built work against a plan is produced content (`orchestrator-role.md` → `## Orchestrator Identity`); a stage write is coordination.
 
 ### Procedure
 
-Step 1 is the completing agent's transition, step 2 is the write-path decision that precedes any write, and step 3 is the orchestrator's fallback for a skipped step 1.
+Step 1 is the recipe every stage write uses, Step 2 the write-path decision before any new content, and Step 3 the close at the delivery point.
 
-#### Step 1 — done transition (completing agent)
+#### Step 1 — stage write recipe (orchestrator)
 
-The authoring agent that finished (glass-atrium-intel-planner / glass-atrium-intel-reporter) transitions `doc_status→done` once no work remains — it knows the completion point most precisely.
+- **`implementing`**: written before the plan's first DEV spawn, and skipped when the plan is already past `doc_review`.
+  - Manual path: before the first DEV Agent call carrying the plan-ref.
+  - Ultracode: before submitting the first DEV-spawning script.
+- **Recipe**: GET the document, then re-PUT its unchanged body with `expected_hash`, `doc_status` and `last_status_model` (the running model id); on `409 hash_conflict`, re-GET and retry once.
+  - The body goes in the field of the stored `format` (`<format>_body`): another format's field converts the document (HTML↔plain) or is rejected `400` (plain↔plain).
+  - An omitted `last_status_model` stores a null status actor.
+  - A status-only PUT (bare `{"doc_status":…}`) → `400 invalid_body`.
 
-- `PUT /api/clauded-docs/:id` requires a body field (`html_body` for HTML-primary rows) plus an optimistic-lock `expected_hash`; a bare `{"doc_status":"done"}` returns `400 invalid_body`.
-- **Two paths** satisfy that requirement:
-  - **Human path (primary UX)**: the viewer's done-toggle (`doc-status-toggle`) re-sends the stored body and hash.
-  - **Agent/CLI path**: GET, then re-PUT the unchanged body with the lock hash and the new status; the server sees body-unchanged + status-diff and fires a status-only cascade (HTTP 200):
-    ```
-    HASH=$(curl -sf http://127.0.0.1:16145/api/clauded-docs/123 | jq -r '.content_hash')
-    BODY=$(curl -sf http://127.0.0.1:16145/api/clauded-docs/123 | jq -r '.body')
-    curl -sf -X PUT http://127.0.0.1:16145/api/clauded-docs/123 -H 'content-type: application/json' \
-      --data "$(jq -n --arg b "$BODY" --arg h "$HASH" '{html_body:$b, expected_hash:$h, doc_status:"done"}')"
-    ```
+  ```sh
+  DOC=$(curl -sf http://127.0.0.1:16145/api/clauded-docs/123)
+  curl -sf -X PUT http://127.0.0.1:16145/api/clauded-docs/123 -H 'content-type: application/json' \
+    --data "$(jq -n --argjson d "$DOC" --arg s implementing --arg m '<running model id>' \
+      '{($d.format + "_body"): $d.body, expected_hash: $d.content_hash, doc_status: $s, last_status_model: $m}')"
+  ```
 
 #### Step 2 — supersede vs new document (decision tree)
 
-When new content arises, decide the path before any write. Two axes decide it: topic-sameness, and — for a same-topic `progress` predecessor — whether this is a Stage-2 revise cycle.
+When new content arises, decide the path before any write. Two axes decide it: topic sameness, and the predecessor's stage — at `doc_review`, also whether this is a Stage-2 revise cycle.
 
 | Topic | Predecessor | Path |
 |-------|-------------|------|
 | same topic | `done` | **supersede** — new POST with `supersedes_id` set |
-| same topic | `progress`, and NOT a Stage-2 revise cycle | **PUT-edit** the existing document (continue working the same doc) |
-| same topic | `progress`, and returned `revise`/`infeasible` by the Stage-2 gate | **supersede-POST** — new POST with `supersedes_id` set, NEVER a PUT-edit |
+| same topic | `doc_review`, and NOT a Stage-2 revise cycle | **PUT-edit** the existing document (continue working the same doc) |
+| same topic | `doc_review`, and returned `revise`/`infeasible` by the Stage-2 gate | **supersede-POST** — new POST with `supersedes_id` set, NEVER a PUT-edit |
+| same topic | `implementing` · `impl_review` · `impl_done` | **supersede-POST at the predecessor's stage** — the new POST carries its `doc_status` |
 | unrelated topic | any | **new-document POST** (`supersedes_id` omitted) |
 | topic-relatedness uncertain | any | default to a **new POST**, never reopen a done document |
 
 Row notes, and the rule binding every row:
 
 - **A `done` document MUST NOT be reopened or edited** — revisions reach it only via supersede.
-- **supersede** (predecessor `done`): the monitor auto-transitions the predecessor to `done`.
-- **supersede-POST** (the Stage-2 revise carve-out; gate: `orchestrator-role.md` → `### Plan Direction Verification (Stage-2 gate)`): the only branch where a `progress` predecessor is superseded.
+- **Every supersede-POST** sends `last_status_model`: the monitor sets the predecessor to `done` under that actor.
+- **supersede-POST at the predecessor's stage**: GET the predecessor for its stage; the revision stays open, so a mid-implementation revision stays on the session-start open-plan list.
+- **supersede-POST** (the Stage-2 revise carve-out; gate: `orchestrator-role.md` → `### Plan Direction Verification (Stage-2 gate)`): the only branch where a `doc_review` predecessor is superseded.
   - Why: it makes the reviewed revision an immutable, fetchable chain root the revising actor cannot rewrite, so the next pass compares against the origin rather than the declaration that actor just authored.
   - The completing agent's own duty, including what the chain root must contain: `scope-report.md` → `### Document Lifecycle — completion + exposure routing`.
-- **new POST on uncertain relatedness** breaks ties because the cost is asymmetric: a surplus new document is cheap and recoverable, whereas reopening a done document regresses progress.
-- **Residual — the per-cycle persist-path choice is honor-system and fails open silently**: no hook tells a revise-case PUT-edit from a sanctioned same-topic `progress` edit.
+- **new POST on uncertain relatedness** breaks ties because the cost is asymmetric: a surplus new document is cheap and recoverable, whereas reopening a done document undoes a close.
+- **Residual — the per-cycle persist-path choice is honor-system and fails open silently**: no hook tells a revise-case PUT-edit from a sanctioned same-topic `doc_review` edit.
   - Skipping the carve-out raises no error: no chain root is created, the next Stage-2 pass has no immutable comparand, and the scope-fidelity check degrades to the declaration it exists to replace.
   - That is why the duty sits in the completing agent's own loaded rules rather than in the delegation asking for the edit: a control the acting agent can suspend by phrasing is not a control.
 
-#### Step 3 — Monitoring-phase omission fallback (orchestrator)
+#### Step 3 — delivery-point close (orchestrator)
 
-During the Monitoring phase, verify the completed deliverable's `doc_status`.
+At the delivery point — the last phase that delivers the plan's work (merge or deploy) — glass-atrium-qa-code-reviewer reconciles, and its verdict, with the correctness gates, decides the stage write.
 
-- Still `progress` while the work is finished → apply the `done` transition as a fallback (the completing agent omitted it).
-- The completing agent remains the primary trigger; this is the orchestrator's correction role.
+- **Where it runs**:
+  - Ultracode: the script's terminal Reconcile & Close phase (`##### In-script verify-stage (ultracode)`), or the later script or step its deferral close token names.
+  - Manual path: a reviewer spawn after the delivering step.
+- **Delegation inputs**: the plan's document id and the `[SCOPE] files=` line of each DEV delegation built from it.
+- **Verdict**: coverage N/N over the plan's work streams, the excess, and the gap list.
+- **Excess**: route it through `### Scope-Expansion Approval Protocol` before any `done` or `impl_done` write; silent acceptance is forbidden.
+- **Stage write**, by the Step 1 recipe:
+
+| Verdict | Stage write |
+|---|---|
+| gaps (coverage below N/N) | `impl_review`, the gap list appended to the body verbatim |
+| N/N, no excess outstanding, correctness gates passed, no folder | `done` |
+| N/N, no excess outstanding, correctness gates passed, every other folder member at `impl_done` or `done` | `done` — the PUT closes the whole folder |
+| N/N, no excess outstanding, correctness gates passed, another folder member at any other stage | `impl_done` — the last member to pass closes the folder |
+
+- **Correctness gates** — judged outside the reviewer's verdict (`rules/glass-atrium/orchestrator-role.md` → `## Document-Driven Workflow` step 5); until they pass, write neither `done` nor `impl_done`.
+- **Folder check** — on an N/N verdict, before choosing `done` or `impl_done`: the GET returns `folder_id`; a non-null id → `GET /api/clauded-docs?folder_id=<id>&limit=200` (no slash before `?`) and read each member's `doc_status`.
+- **Gap-list write**: the one stage write that changes the body — the stored body plus the reviewer's gap list, appended verbatim in the document's own format; it is a stage write, not new content under Step 2.
 
 ## Common Rationalizations
 
@@ -1473,9 +1532,9 @@ A DEV-spawning workflow without a `{glass-atrium-qa-code-reviewer, DEV}` verify-
 
 #### Pre-submit self-check — run before submitting ANY DEV-spawning Workflow script
 
-Covers the gate's DEV-relevant block branches plus the verdict-gating the gate cannot see; the doc-routing leak is a separate gate branch with its own stderr.
+Covers the gate's DEV-relevant block branches, the plan-stage rows its advisories back, and the verdict-gating the gate cannot see; the doc-routing leak is a separate gate branch with its own stderr.
 
-- **Run the offline lint first** (`### Ultracode / Workflow-tool Mode` → pre-flight item 10): it mechanically covers every table row marked `lint`, and none of the obligations the gate cannot verify (listed after the table).
+- **Run the offline lint first** (`#### Workflow pre-flight (run before EVERY Workflow call)` → **PREVIEW before submit**): it mechanically covers every table row marked `lint`, and none of the obligations the gate cannot verify (listed after the table).
 - Then confirm each check:
 
 | Check | Pass when | Fails as |
@@ -1487,18 +1546,22 @@ Covers the gate's DEV-relevant block branches plus the verdict-gating the gate c
 | declaration matches the code | declared roles all spawn · code dev types all declared · `impl-computed:` types have data literals | `block-declspawn` · `block-undecl` · `block-computed` · `lint` |
 | reviewer present and first | a reviewer spawn exists, and no declared impl `dev-*` spawn precedes every reviewer | `block-norev` · `block-order` · `lint` |
 | JS parse hazards | no bash `${…}` form and no nested backtick inside `${…}` in a template literal | Workflow parse error |
+| `implementing` write | the plan the plan-ref cites is at `implementing` or a later stage before submit | `implementing` advisory — stderr only |
+| close token | the close form with a terminal Reconcile & Close phase, or the deferral form naming the closing step | close-token advisory — stderr only |
 
 Each BLOCK and `block-*` verdict exits 2. Detail lives at its single site:
 
 - grammar, verdicts and the upstream waiver — `skills/glass-atrium-ops-delegation-contracts/references/ultracode-declaration-contract.md`;
 - sentinel placement and the opts `agentType:` literal a spawn needs — `##### In-script verify-stage (ultracode)`;
 - the two parse-hazard forms and their remedies — `##### JS parse hazards (a workflow script is plain JavaScript)`;
-- a pre-verify Discovery `dev-*` tripping the ordering check — ``### Pre-verify Discovery `dev-*` order guard (ultracode)``.
+- a pre-verify Discovery `dev-*` tripping the ordering check — ``### Pre-verify Discovery `dev-*` order guard (ultracode)``;
+- the stage write and the close — `## Managed Document Completion (Direct Handling)`; the close-token grammar — `orchestrator-role.md` → `### Context Handoff Size`.
 
 Obligations the gate cannot verify:
 
 - implementation is gated on the combined `pass`+`feasible` verdict, and the DEV verdict is a genuine hard gate (no pass without `feasible`);
-- the declaration is truthful — a lying declaration passes the gate and still violates this discipline.
+- the declaration is truthful — a lying declaration passes the gate and still violates this discipline;
+- the close token is truthful — a close form needs the terminal Reconcile & Close phase in the same script.
 
 ### Pre-verify Discovery `dev-*` order guard (ultracode)
 
