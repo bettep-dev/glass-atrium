@@ -24,6 +24,7 @@ interface Alarm {
   title: string;
   detail: string | null;
   target: string | null;
+  isHeld?: boolean;
 }
 interface Tile {
   id: string;
@@ -48,6 +49,7 @@ interface Fold {
   uncheckedNames: string[];
   version?: string | null;
   kpi?: Record<string, number | null> | null;
+  error?: string | null;
 }
 interface DashHelpers {
   buildAlarms: (args: { harness: Fold | null; costState: unknown; installKind: string }) => Alarm[];
@@ -116,6 +118,25 @@ test("an unavailable harness fold raises no alarm — absence is not a fault", (
   assert.equal(rows.length, 0, "nothing polled must never read as something broken");
   assert.equal(dash.buildAlarms({ harness: null, costState: LOADING, installKind: "hidden" }).length, 0);
 });
+
+// a held reading whose refresh failed → its row keeps its tone but reads last known, as its tile does
+const HELD_ALARM_ROWS = [
+  { name: "a down part held over a failed harness read", id: "harness", isHeld: true,
+    harness: { ...HEALTHY, partsOk: 6, downNames: ["autoagent"], error: "HTTP 500" }, costState: kpi(10, 10) },
+  { name: "a down part from a fresh harness read", id: "harness", isHeld: false,
+    harness: { ...HEALTHY, partsOk: 6, downNames: ["autoagent"] }, costState: kpi(10, 10) },
+  { name: "hot spend held over a failed cost read", id: "spend", isHeld: true,
+    harness: HEALTHY, costState: { ...(kpi(500, 10) as object), error: "HTTP 500" } },
+  { name: "hot spend from a fresh cost read", id: "spend", isHeld: false, harness: HEALTHY, costState: kpi(500, 10) },
+];
+for (const row of HELD_ALARM_ROWS) {
+  test(`an alarm row is last known only when its source's latest read failed: ${row.name}`, () => {
+    const rows = dash.buildAlarms({ harness: row.harness, costState: row.costState, installKind: "hidden" });
+    const alarm = rows.find((r) => r.id === row.id);
+    assert.ok(alarm, `row ${row.id} must exist`);
+    assert.equal(Boolean(alarm.isHeld), row.isHeld);
+  });
+}
 
 test("spend alarms only once today is past the 7-day-average cut, at any scale", () => {
   for (const [today, avgDaily, alarms] of [
