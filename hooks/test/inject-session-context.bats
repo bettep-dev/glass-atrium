@@ -23,6 +23,9 @@ CORPUS="${BATS_TEST_DIRNAME}/corpus/reply-language"
 LANGUAGE_NAMES='english|korean|japanese|chinese|hangul|latin|kana|한국어|영어|일본어|중국어'
 # Fixed phrase the pointer line carries after the quote.
 REPLY_TARGET='the final message of each turn, your report to the user'
+# Closed loopback port → the open-plan GET is refused, so no run reaches the live monitor.
+DEAD_MONITOR_URL='http://127.0.0.1:9/api/clauded-docs'
+OPEN_STAGES_FILTER='"filter":{"doc_status":["implementing","impl_review","impl_done"],"limit":200,"offset":0}'
 # shellcheck source-path=SCRIPTDIR source=../../scripts/lib/path-guard.sh
 source "${BATS_TEST_DIRNAME}/../../scripts/lib/path-guard.sh"
 
@@ -31,6 +34,7 @@ setup() {
   SANDBOX="$(mktemp -d -t ga-sessctx-bats.XXXXXX)"
   FAKE_HOME="${SANDBOX}/home"
   mkdir -p "${FAKE_HOME}"
+  export SESSION_CONTEXT_MONITOR_URL="${DEAD_MONITOR_URL}"
 }
 
 teardown() {
@@ -67,6 +71,18 @@ seed_tracker() {
     done
     printf '  return 0\n}\n'
   } >"${dir}/progress-tracker.sh"
+}
+
+# Serves the open-plan list from a file:// fixture — curl ignores the query string on file://.
+# Args: $1=list response body.
+seed_open_plans() {
+  printf '%s\n' "${1}" >"${SANDBOX}/open-plans.json"
+  SESSION_CONTEXT_MONITOR_URL="file://${SANDBOX}/open-plans.json"
+}
+
+# Step number of the one turn-0 flow line containing $1, empty without one.
+get_step_number() {
+  printf '%s\n' "${output}" | awk -v needle="${1}" '/^[0-9]+\. / && index($0, needle) { print $1 + 0; exit }'
 }
 
 # Run the hook with a session-start envelope on stdin under the sandbox HOME.
@@ -194,6 +210,137 @@ get_pointer_quote() {
   [[ "${output}" != *"[CONTINUITY]"* ]] || return 1
 }
 
+@test "the turn-0 flow writes implementing before delegating and reconciles and closes before reporting" {
+  run_hook
+  [[ "${status}" -eq 0 ]] || {
+    echo "${output}"
+    return 1
+  }
+  local implementing delegate reconcile report
+  # shellcheck disable=SC2016  # literal backticks of the step name
+  implementing="$(get_step_number '`implementing` write')"
+  delegate="$(get_step_number 'Delegate via the Agent tool')"
+  reconcile="$(get_step_number 'Reconcile & Close')"
+  report="$(get_step_number 'Synthesize results')"
+  [[ -n "${implementing}" && -n "${delegate}" && -n "${reconcile}" && -n "${report}" ]] \
+    && ((implementing < delegate && delegate < reconcile && reconcile < report)) || {
+    echo "steps: implementing=${implementing} delegate=${delegate} reconcile=${reconcile} report=${report}"
+    return 1
+  }
+}
+
+@test "the workflow pre-flight carries both close-token forms of the grammar SoT" {
+  local rules="${BATS_TEST_DIRNAME}/../../rules/glass-atrium/orchestrator-role.md"
+  [[ -f "${rules}" ]] || skip "grammar SoT absent: ${rules}"
+  run_hook
+  local preflight form
+  preflight="$(printf '%s\n' "${output}" | grep -F '[WORKFLOW PRE-FLIGHT]')"
+  for form in '[PLAN-CLOSE] in-script' '[PLAN-CLOSE] deferred:'; do
+    [[ "${preflight}" == *"${form}"* ]] && grep -qF -- "${form}" "${rules}" || {
+      echo "close-token form missing from the pre-flight line or the grammar SoT: ${form}"
+      return 1
+    }
+  done
+}
+
+@test "open plans are listed one per row with id, stage, status actor and a single-line title" {
+  seed_open_plans '{"total":4,"rows":[
+    {"id":40619,"title":"Plan — reconcile and close","doc_status":"implementing","last_status_model":"claude-opus-5-5"},
+    {"id":40299,"title":"Plan — reply-language pointer","doc_status":"impl_review","last_status_model":null},
+    {"id":39913,"title":"Plan — effort\ntiers","doc_status":"impl_done","last_status_model":"claude-opus-5-5"},
+    {"id":39700,"title":"Tracker — standing decisions","doc_status":"doc_review","last_status_model":null}],
+    '"${OPEN_STAGES_FILTER}"'}'
+  run_hook
+  [[ "${status}" -eq 0 ]] || {
+    echo "${output}"
+    return 1
+  }
+  local rows=(
+    'implementing with an actor|- clauded-docs/40619 · implementing · claude-opus-5-5 · Plan — reconcile and close'
+    'null actor reads unknown|- clauded-docs/40299 · impl_review · unknown · Plan — reply-language pointer'
+    'embedded newline flattened|- clauded-docs/39913 · impl_done · claude-opus-5-5 · Plan — effort tiers'
+  )
+  local row name line
+  for row in "${rows[@]}"; do
+    IFS='|' read -r name line <<<"${row}"
+    printf '%s\n' "${output}" | grep -qxF -- "${line}" || {
+      echo "${name}: no line '${line}' in: ${output}"
+      return 1
+    }
+  done
+  printf '%s\n' "${output}" | grep -q '^\[OPEN PLANS\] 3 ' && [[ "${output}" != *"clauded-docs/39700"* ]] || {
+    echo "header count or doc_review exclusion wrong: ${output}"
+    return 1
+  }
+}
+
+@test "a readable list with no open plan prints the none line, never the unavailable line" {
+  seed_open_plans '{"total":0,"rows":[],'"${OPEN_STAGES_FILTER}"'}'
+  run_hook
+  [[ "${status}" -eq 0 ]] || {
+    echo "${output}"
+    return 1
+  }
+  printf '%s\n' "${output}" | grep -q '^\[OPEN PLANS\] none' && [[ "${output}" != *"[OPEN PLANS] unavailable"* ]] || {
+    echo "${output}"
+    return 1
+  }
+}
+
+@test "an unreadable open-plan list yields the unavailable line and the rest of the session context" {
+  seed_tracker "memory/progress-alpha.md"
+  local rows=(
+    "refused port|url|${DEAD_MONITOR_URL}"
+    "missing fixture|url|file://${SANDBOX}/absent.json"
+    'malformed body|body|not json'
+    'no rows array|body|{"total":0,'"${OPEN_STAGES_FILTER}"'}'
+    'stage filter not applied|body|{"total":1,"rows":[{"id":1,"title":"t","doc_status":"implementing","last_status_model":null}],"filter":{"doc_status":null}}'
+  )
+  local row name kind value
+  for row in "${rows[@]}"; do
+    IFS='|' read -r name kind value <<<"${row}"
+    if [[ "${kind}" == body ]]; then
+      seed_open_plans "${value}"
+    else
+      SESSION_CONTEXT_MONITOR_URL="${value}"
+    fi
+    run_hook
+    [[ "${status}" -eq 0 && "${output}" == *"[ORCHESTRATOR SESSION]"* && "${output}" == *"[WIKI] wiki search available"* ]] \
+      && [[ "${output}" == *"[CONTINUITY] open progress files: memory/progress-alpha.md"* ]] \
+      && printf '%s\n' "${output}" | grep -q '^\[OPEN PLANS\] unavailable' \
+      && [[ "${output}" != *"clauded-docs/1 "* ]] || {
+      echo "${name}: exit ${status}: ${output}"
+      return 1
+    }
+  done
+}
+
+@test "the open-plan list is one GET for the three open stages, bounded under a second" {
+  local stub="${SANDBOX}/bin" log="${SANDBOX}/curl.log"
+  local url="${DEAD_MONITOR_URL}?doc_status=implementing,impl_review,impl_done&limit=200"
+  mkdir -p "${stub}"
+  # shellcheck disable=SC2016  # $* and CURL_LOG expand inside the stub, not here
+  printf '%s\n' '#!/usr/bin/env bash' \
+    'printf "%s\n" "$*" >>"${CURL_LOG}"' \
+    "printf '%s\\n' '{\"total\":0,\"rows\":[],${OPEN_STAGES_FILTER}}'" >"${stub}/curl"
+  chmod +x "${stub}/curl"
+  run env HOME="${FAKE_HOME}" CURL_LOG="${log}" PATH="${stub}:${PATH}" bash "${HOOK_SH}" \
+    <<<'{"hook_event_name":"SessionStart","session_id":"sess-smoke"}'
+  [[ "${status}" -eq 0 && -f "${log}" ]] || {
+    echo "exit ${status}, no curl call: ${output}"
+    return 1
+  }
+  local calls max_time
+  calls="$(awk 'END { print NR }' "${log}")"
+  max_time="$(awk '{ for (i = 1; i < NF; i++) if ($i == "--max-time") print $(i + 1) }' "${log}")"
+  [[ "${calls}" -eq 1 ]] \
+    && awk -v url="${url}" '{ for (i = 1; i <= NF; i++) if ($i == url) found = 1 } END { exit !found }' "${log}" \
+    && awk -v t="${max_time:-0}" 'BEGIN { exit !(t > 0 && t < 1) }' || {
+    echo "calls=${calls} max_time=${max_time}:"
+    cat -- "${log}"
+    return 1
+  }
+}
 
 @test "canary: session-start envelope → canary glyph on stdout exactly once" {
   run_hook
@@ -240,7 +387,10 @@ get_pointer_quote() {
   root="${BATS_TEST_DIRNAME}/../.."
   [[ -d "${root}/skills" ]] || skip "search roots absent: ${root}"
   hits="$(cd "${root}" && grep -rlF -- "${g}" hooks rules scoped agents skills 2>/dev/null | sort)"
-  [[ "${hits}" == 'hooks/inject-session-context.sh' ]] || { echo "glyph found in: ${hits}" >&2; return 1; }
+  [[ "${hits}" == 'hooks/inject-session-context.sh' ]] || {
+    echo "glyph found in: ${hits}" >&2
+    return 1
+  }
 }
 
 # A setup skip leaves SANDBOX unset — a failing teardown would report the skip as not ok.
