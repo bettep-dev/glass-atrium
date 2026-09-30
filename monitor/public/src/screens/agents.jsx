@@ -2598,17 +2598,19 @@ function QualityHealthTimeline({ shared, state, onRetry }) {
   );
 }
 
+// The flagged-rate line names the image — the stacked bars are its breakdown.
 function QualityHealthTimelineChart({ rows }) {
   const { ResponsiveContainer, ComposedChart, Bar, Line, XAxis, YAxis, Tooltip, CartesianGrid } = window.Recharts;
+  const ratePoints = rows.map((r) => ({ label: r.fullDate, value: r.review_flag_ratio_pct }));
 
   return (
-    <div className="ag-chart-fill">
+    <div className="ag-chart-fill" {...window.UI.getChartImageProps('Daily flagged rate', ratePoints, formatRatePctAg)}>
       <ResponsiveContainer width="100%" height="100%">
         <ComposedChart data={rows} margin={{ top: 6, right: 8, left: 0, bottom: 0 }}>
           <CartesianGrid stroke="rgb(var(--line))" strokeDasharray="3 3" vertical={false}/>
           <XAxis
             dataKey="date"
-            tick={{ fontSize: 12, fill: 'rgb(var(--faint))', fontFamily: 'JetBrains Mono, monospace' }}
+            tick={window.UI.ChartAxisTick}
             axisLine={{ stroke: 'rgb(var(--line))' }}
             tickLine={false}
           />
@@ -2650,6 +2652,8 @@ function QualityHealthTimelineChart({ rows }) {
     </div>
   );
 }
+
+const formatRatePctAg = (pct) => pct.toFixed(1) + '%';
 
 function QualityHealthTimelineTooltip({ active, payload }) {
   if (!active || !payload || payload.length === 0) {
