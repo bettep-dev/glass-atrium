@@ -85,9 +85,10 @@ const READY_TILE = {
 test("the alarm lane is a polite live region that exists before any alarm arrives", () => {
   for (const alarms of [[], [HARNESS_ALARM]]) {
     const lane = render("AlarmLane", { alarms, onNav: () => {} });
-    const regions = findNodes(lane, (n) => n.props["aria-live"] === "polite");
+    const sections = findNodes(lane, (n) => n.props["aria-label"] === "Alarms");
+    assert.equal(sections.length, 1, "the lane is one labelled section");
+    const regions = findNodes(sections[0], (n) => n.props["aria-live"] === "polite");
     assert.equal(regions.length, 1, `one polite region with ${alarms.length} alarms`);
-    assert.equal(regions[0].props["aria-label"], "Alarms");
     const rows = findNodes(regions[0], (n) => n.props.role === "listitem");
     assert.equal(rows.length, alarms.length, "every alarm row sits inside the region");
   }
@@ -224,6 +225,22 @@ test("an alarm row is a flat hairline row whose tone rides on the leading glyph,
   assert.equal(rows[0].props.style, undefined, "no tinted fill or stripe");
   assert.equal(findNodes(tree, (n) => classOf(n).includes("alarm-row-glyph")).length, 1);
   assert.equal(findNodes(tree, (n) => classOf(n).includes("font-mono")).length, 0, "part names are words, not mono");
+});
+
+test("an alarm row whose source's latest read failed says Last known beside its title; a fresh row says nothing", () => {
+  for (const isHeld of [true, false]) {
+    const tree = render("AlarmRow", { alarm: { ...HARNESS_ALARM, isHeld }, onNav: () => {} });
+    const badges = findNodes(tree, (n) => n.props.atom === "Badge").map((n) => collectText(n));
+    assert.deepEqual(badges, isHeld ? ["Last known"] : [], `isHeld=${isHeld}`);
+  }
+});
+
+test("a failed tile keeps its drill to the owning screen, whether it shows its own error card or defers to the banner", () => {
+  for (const isRetryShared of [false, true]) {
+    const tree = render("StatusTile", { tile: FAILED_TILE, onNav: () => {}, onRetry: () => {}, isRetryShared });
+    const drills = findNodes(tree, (n) => n.type === "a" && String(n.props.href).endsWith("agents"));
+    assert.equal(drills.length, 1, `isRetryShared=${isRetryShared}`);
+  }
 });
 
 const FAILED_TILE = {
@@ -399,7 +416,9 @@ test("the status band reflows to two columns until it has room for four", () => 
 test("the alarm lane reserves its slot with a status line while alarm sources are still loading", () => {
   const pending = render("AlarmLane", { alarms: [], readiness: { status: "loading", unread: [] }, onNav: () => {} });
   const region = findNodes(pending, (n) => n.props["aria-live"] === "polite")[0];
-  assert.equal(findNodes(region, (n) => n.props.atom === "LoadingPlaceholder").length, 1);
+  assert.equal(findNodes(pending, (n) => n.props.atom === "LoadingPlaceholder").length, 1);
+  // the placeholder is its own status region → nested in the polite one, its line is announced twice
+  assert.equal(findNodes(region, (n) => n.props.atom === "LoadingPlaceholder").length, 0, "the loading line sits in one live region only");
 
   const settled = render("AlarmLane", { alarms: [], readiness: { status: "read", unread: [] }, onNav: () => {} });
   assert.equal(findNodes(settled, (n) => n.props.atom === "LoadingPlaceholder").length, 0);
@@ -472,4 +491,36 @@ describe("the empty alarm lane shows the all-clear only when every alarm source 
       }
     });
   }
+});
+
+test("alarm rows sit in two columns once the page has room, and one column below it", () => {
+  const tree = render("AlarmList", { alarms: [HARNESS_ALARM, { ...HARNESS_ALARM, id: "spend" }], onNav: () => {} });
+  const [list] = findNodes(tree, (n) => n.props.role === "list");
+  const classes = classOf(list).split(/\s+/);
+  assert.ok(classes.includes("grid"), classOf(list));
+  assert.ok(classes.includes("xl:grid-cols-2"), classOf(list));
+  assert.ok(!classes.includes("grid-cols-2"), "two columns never apply at the narrowest widths");
+  assert.ok(classes.some((c) => /^gap-x-\d+$/.test(c)), `the columns are kept apart by a default-scale column gap: ${classOf(list)}`);
+});
+
+test("a tile's headline value never wraps, so its badge moves to the next line instead", () => {
+  const tile = { ...READY_TILE, id: "harness", tone: "crit", value: "2 of 7 down", badge: "Action needed" };
+  const tree = render("StatusTile", { tile, onNav: () => {}, onRetry: () => {} });
+  const [value] = findNodes(tree, (n) => n.props.atom === "KpiValue");
+  const unbroken = findNodes(value, (n) => classOf(n).includes("whitespace-nowrap"));
+  assert.equal(unbroken.length, 1);
+  assert.equal(collectText(unbroken[0]), "2 of 7 down");
+  const [row] = findNodes(tree, (n) => findNodes(n, (m) => m.props.atom === "Badge").length === 1 && classOf(n).includes("flex-wrap"));
+  assert.ok(row, "the value row lets the badge wrap below the value");
+});
+
+test("a tile's trend renders on the lead side under its value, and a tile without one renders none", () => {
+  const trend = "Up 20% on $10.00 yesterday by this time";
+  const withTrend = render("StatusTile", { tile: { ...READY_TILE, trend }, onNav: () => {}, onRetry: () => {} });
+  const [lead] = findNodes(withTrend, (n) => classOf(n) === "tile-split-lead");
+  assert.match(collectText(lead), /yesterday by this time/);
+  const text = collectText(lead);
+  assert.ok(text.indexOf("40") < text.indexOf("Up 20%"), "the value precedes its trend");
+  const without = render("StatusTile", { tile: READY_TILE, onNav: () => {}, onRetry: () => {} });
+  assert.doesNotMatch(collectText(without), /yesterday/);
 });

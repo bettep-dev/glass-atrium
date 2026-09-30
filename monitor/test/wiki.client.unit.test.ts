@@ -54,7 +54,7 @@ interface WikiHelpers {
   ) => LaneModel;
   buildThroughputModel: (cyclesState: FetchState) => { isMixUniform: boolean; rows: unknown[] };
   buildTileBandModel: (summaryState: FetchState, indexState: FetchState, backlogState: FetchState) => Tile[];
-  readTileBandFailuresW: (summaryState: FetchState, indexState: FetchState) => string[];
+  readTileBandFailuresW: (summaryState: FetchState, indexState: FetchState) => Array<{ feeder: string; label: string }>;
   describeNotesByTypeW: (state: FetchState) => string;
   describeRunHistoryW: (cyclesState: FetchState, model: unknown, summaryState: FetchState) => string;
   window: { UI: Record<string, unknown> };
@@ -160,9 +160,9 @@ test("a failed band feeder is named once for the group, never per tile", () => {
     assert.equal(tile.state, "error");
     assert.doesNotMatch(tile.sub || "", /Couldn't load/, `tile ${tile.key} repeats the banner`);
   }
-  assert.deepEqual([...helpers.readTileBandFailuresW(errored, errored)], ["daily cycle summary", "search index"]);
-  assert.deepEqual([...helpers.readTileBandFailuresW(errored, ready({}))], ["daily cycle summary"]);
-  assert.deepEqual([...helpers.readTileBandFailuresW(loading, ready({}))], []);
+  assert.deepEqual(Array.from(helpers.readTileBandFailuresW(errored, errored), (f) => f.label), ["daily cycle summary", "search index"]);
+  assert.deepEqual(Array.from(helpers.readTileBandFailuresW(errored, ready({})), (f) => f.label), ["daily cycle summary"]);
+  assert.deepEqual(Array.from(helpers.readTileBandFailuresW(loading, ready({})), (f) => f.label), []);
 });
 
 // The alarm lane: a check that could not run is never silence.
@@ -566,6 +566,8 @@ describe("the last-run tile keeps the shared freshness rule over a failed refres
     { name: "a settled healthy run names its outcome", summary: healthySummary({ cycle_p95_ms: 1000 }), sub: /^Healthy · p95/, tone: "neutral" },
     { name: "a healthy run held under a failed read reads Last known, never Healthy", summary: warm(healthySummary({ cycle_p95_ms: 1000 })), sub: /^Last known · p95/, tone: "neutral" },
     { name: "a failed run held under a failed read keeps its alarm", summary: warm(healthySummary({ last_status: "fail" })), sub: /^Last known: Failed$/, tone: "crit" },
+    { name: "a settled missed cycle reads Overdue", summary: healthySummary({ hours_since_last_cycle: 40 }), sub: /^Overdue · cycle /, tone: "crit" },
+    { name: "a missed cycle held under a failed read reads Last known: Overdue and keeps crit", summary: warm(healthySummary({ hours_since_last_cycle: 40 })), sub: /^Last known: Overdue · cycle /, tone: "crit" },
   ];
   for (const row of rows) {
     test(row.name, () => {

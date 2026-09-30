@@ -26,14 +26,24 @@ const PUBLIC_ROOT = resolve(HERE, "..", "public");
 const DECISION_CARD_TITLES = ["Cost over time", "Cost by model", "Most expensive sessions"];
 const DISCLOSURE_TITLES = ["Token volume", "Turn statistics", "Log integrity"];
 const KPI_TILE_COUNT = 4;
+const LEDGER_MODELS = [
+  "claude-opus-5", "claude-opus-5-5", "claude-fable-5-1", "claude-sonnet-5", "claude-fable-5",
+  "claude-opus-4-8", "claude-haiku-4-5-20251001", "claude-sonnet-5-5", "unknown",
+];
+// The seven payloads the screen reads — the trend series lives under the dashboard namespace.
+const COST_PAYLOAD_PREFIXES = ["/api/cost/", "/api/dashboard/cost-timeseries"];
+// Two columns "end near the same height": less than one table row of dead space under the shorter.
+const DECISION_SPLIT_MAX_SLACK_PX = 48;
 
-// A calm window: ten days of ordinary spend whose newest day sits inside its own band.
-const CALM_TREND_COSTS = [10, 11, 9, 10, 11, 9, 10, 11, 9, 10];
+// A calm month of ordinary spend whose newest day sits inside its own band; 30 days crowd a 1024 axis.
+const CALM_TREND_COSTS = Array.from({ length: 30 }, (_, i) => [11, 9, 10][i % 3]!);
 
 interface CostFixture {
   kpi: Record<string, number>;
   trendCosts: readonly number[];
   parseErrorRatio: number;
+  // every cost payload route answers 503 → a cold shared outage, nothing ever loaded
+  isOutage?: boolean;
 }
 
 // today = ratio x the 7-day daily normal; the burn rate extrapolates to the same ratio.
@@ -70,6 +80,11 @@ async function openRenderContext(fixture: CostFixture): Promise<RenderContext> {
     prefix: "/",
     index: ["index.html"],
   });
+  if (fixture.isOutage) {
+    app.addHook("onRequest", async (request, reply) => {
+      if (COST_PAYLOAD_PREFIXES.some((prefix) => request.url.startsWith(prefix))) await reply.code(503).send({ error: "unavailable" });
+    });
+  }
 
   const trendRows = fixture.trendCosts.map((cost, i) => ({
     date: getDayKey(i),
@@ -87,30 +102,36 @@ async function openRenderContext(fixture: CostFixture): Promise<RenderContext> {
     points: trendRows,
     timezone: "UTC",
   }));
+  // A month's real model spread: more models than the ledger's top five, so it rolls up an Other row.
   app.get("/api/cost/by-model", async () => ({
-    rows: [
-      {
-        model: "claude-opus-5",
-        cost_usd: 80,
-        session_count: 12,
-        input_tokens: 10_000,
-        output_tokens: 5000,
-        cache_read_tokens: 40_000,
-        cache_creation_tokens: 8000,
-      },
-    ],
+    rows: LEDGER_MODELS.map((model, i) => ({
+      model,
+      cost_usd: 80 - i * 8,
+      session_count: 12,
+      input_tokens: 10_000,
+      output_tokens: 5000,
+      cache_read_tokens: 40_000,
+      cache_creation_tokens: 8000,
+    })),
   }));
   app.get("/api/cost/cache-hit", async () => ({
-    rows: trendRows.map((r) => ({ day: r.date, cache_hit_ratio: 0.8 })),
+    // Alternating days reach a whole 100% → the y-axis carries its widest label.
+    rows: trendRows.map((r, i) => ({
+      event_date: r.date,
+      cache_hit_rate: i % 2 === 0 ? 1 : 0.9,
+      total_cache_read: r.cache_read_tokens,
+      total_input: r.input_tokens,
+    })),
   }));
   app.get("/api/cost/session-distribution", async () => ({
-    rows: Array.from({ length: 8 }, (_, i) => ({
+    // A month holds hundreds of sessions → the table always shows its full top rows plus Other.
+    rows: Array.from({ length: 40 }, (_, i) => ({
       session_id: `session-${i}`,
-      total_cost_usd: 8 - i,
+      total_cost_usd: 40 - i,
       agent: "glass-atrium-dev-react",
-      started_at: getDayKey(i),
+      started_at: getDayKey(i % 10),
     })),
-    total_session_count: 8,
+    total_session_count: 40,
     truncated: false,
   }));
   app.get("/api/cost/parse-errors", async () => ({
@@ -164,6 +185,11 @@ async function openRenderContext(fixture: CostFixture): Promise<RenderContext> {
     true,
     "page-level network prerequisite unmet — React/Recharts CDN runtime did not load",
   );
+
+  if (fixture.isOutage) {
+    await page.waitForSelector('.cost-screen [role="alert"]', { timeout: 30_000 });
+    return { app, browser, page };
+  }
 
   // Render complete = the wave resolved: every tile has left its loading skeleton, so the
   // lane has had its inputs and an absent lane is a verdict rather than a pending state.
@@ -353,6 +379,58 @@ describe("calm fixture — nothing is running hot", () => {
     }
   });
 
+  test("the decision split's two columns end near the same height at 1440", async () => {
+    const columnBottoms = await ctx.page.evaluate((selector) => {
+      const title = Array.from(document.querySelectorAll(selector))
+        .find((t) => (t.textContent || "").trim() === "Cost by model");
+      const row = title?.closest(".split-row");
+      if (!row) return [];
+      return Array.from(row.children).map((col) => {
+        const cards = Array.from(col.querySelectorAll(".card"));
+        return Math.max(...cards.map((c) => c.getBoundingClientRect().bottom));
+      });
+    }, CARD_TITLE_SELECTOR);
+    assert.equal(columnBottoms.length, 2, "the decision split holds two columns");
+    const slack = Math.abs(columnBottoms[0]! - columnBottoms[1]!);
+    assert.ok(slack <= DECISION_SPLIT_MAX_SLACK_PX,
+      `empty space under the shorter column is ${Math.round(slack)}px (bottoms ${columnBottoms.map(Math.round).join(" | ")})`);
+  });
+
+  test("x-axis labels on every chart keep the minimum gap and stay over the plot at 1024", async () => {
+    try {
+      await ctx.page.setViewportSize({ width: 1024, height: 768 });
+      const faults = await ctx.page.evaluate(() => {
+        const minGap = (window as never as { UI: { CHART_TICK_MIN_GAP_PX: number } }).UI.CHART_TICK_MIN_GAP_PX;
+        return Array.from(document.querySelectorAll(".cost-screen .recharts-xAxis")).flatMap((axis) => {
+          const plot = axis.querySelector(".recharts-cartesian-axis-line")!.getBoundingClientRect();
+          const boxes = Array.from(axis.querySelectorAll(".recharts-cartesian-axis-tick text"))
+            .map((t) => ({ label: (t.textContent || "").trim(), box: t.getBoundingClientRect() }))
+            .filter((t) => t.box.width > 0)
+            .sort((l, r) => l.box.left - r.box.left);
+          const crowded = boxes.slice(1).flatMap((t, i) => {
+            const gap = t.box.left - boxes[i]!.box.right;
+            return gap < minGap ? [`${boxes[i]!.label}→${t.label} ${gap.toFixed(1)}px`] : [];
+          });
+          // 0.5px: subpixel text metrics at the plot edge
+          const spilled = boxes.flatMap((t) => (t.box.left < plot.left - 0.5 || t.box.right > plot.right + 0.5 ? [`${t.label} past the plot`] : []));
+          return [...crowded, ...spilled];
+        });
+      });
+      assert.deepStrictEqual(faults, [], `x-axis label faults: ${faults.slice(0, 4).join(" · ")}`);
+    } finally {
+      await ctx.page.setViewportSize({ width: 1440, height: 900 });
+    }
+  });
+
+  test("the hit-rate axis labels the 100% its clamped domain reaches", async () => {
+    const labels = await ctx.page.evaluate(() =>
+      Array.from(document.querySelectorAll("#cost-region-cache .recharts-yAxis .recharts-cartesian-axis-tick text"))
+        .map((t) => (t.textContent || "").trim()),
+    );
+    // alternating 100% / 90% days → domain [88.5, 100], wide enough for whole-percent labels
+    assert.strictEqual(labels.at(-1), "100%", `y-axis labels: ${labels.join(" ")}`);
+  });
+
   test("no card content reaches past its own card's edges at xl", async () => {
     const measureOverflow = () =>
       ctx.page.evaluate(() =>
@@ -415,5 +493,38 @@ describe("hot fixture — today is running over the normal", () => {
       ...DISCLOSURE_TITLES,
     ]);
     assert.equal(await countDecisionChartRoots(ctx.page), 1);
+  });
+});
+
+describe("cold outage — every cost payload fails before any has loaded", () => {
+  let ctx: RenderContext;
+
+  before(async () => {
+    ctx = await openRenderContext({ ...getFixture(1, 0), isOutage: true });
+  });
+
+  after(async () => {
+    await closeRenderContext(ctx);
+  });
+
+  test("one banner speaks for every region, each left as a quiet covered slot with no Retry of its own", async () => {
+    const regionCount = 8; // kpis · trend · models · sessions · tokens · cache · turns · log
+    const settled = await ctx.page
+      .waitForFunction(
+        (expected: number) => document.querySelectorAll(".cost-screen [data-covered-card-id]").length === expected,
+        regionCount,
+        { timeout: 30_000 },
+      )
+      .then(() => true, () => false);
+    const counts = await ctx.page.evaluate(() => ({
+      banners: document.querySelectorAll('.cost-screen [role="alert"]').length,
+      covered: Array.from(document.querySelectorAll(".cost-screen [data-covered-card-id]"))
+        .map((el) => el.getAttribute("data-covered-card-id")),
+      retries: Array.from(document.querySelectorAll(".cost-screen button"))
+        .filter((b) => /retry/i.test(b.textContent || "")).length,
+    }));
+    assert.ok(settled, `covered slots: ${counts.covered.join(", ")}`);
+    assert.equal(counts.banners, 1);
+    assert.equal(counts.retries, 1, "the banner's Retry is the only one");
   });
 });

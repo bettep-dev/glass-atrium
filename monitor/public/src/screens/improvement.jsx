@@ -404,9 +404,11 @@ function ScreenImprovement({ onNav }) {
         /* T3 — 종결 그리드 비대칭(applied 2fr : rejected 1fr). 인라인 gridTemplateColumns 금지
            (미디어쿼리가 인라인 스타일을 못 이김) → 클래스 선언 + <640px 단일 컬럼 붕괴를 같은
            블록에서 직접 출하(base.css L607 은 drawer 전용 → 보드 붕괴 미담당 · 검증 완료). */
-        /* loop output — 기준 캡션은 2줄까지 줄바꿈 · 카드는 20rem 미만이면 다음 줄로 */
+        /* loop output — captions wrap to 2 lines · peer cards share one height · the third card spans the row until three fit (no lone half-width card at 1024) */
         .i-loop-output .card-sub { white-space:normal; display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; }
-        .i-loop-grid { display:grid; grid-template-columns:repeat(auto-fit, minmax(20rem, 1fr)); gap:12px; align-items:start; }
+        .i-loop-grid { display:grid; grid-template-columns:minmax(0,1fr); gap:12px; align-items:stretch; }
+        @media (min-width:768px) { .i-loop-grid { grid-template-columns:repeat(2, minmax(0,1fr)); } .i-loop-grid > :nth-child(3) { grid-column:1 / -1; } }
+        @media (min-width:1280px) { .i-loop-grid { grid-template-columns:repeat(3, minmax(0,1fr)); } .i-loop-grid > :nth-child(3) { grid-column:auto; } }
         .board-terminal-grid { display:grid; grid-template-columns:minmax(0,2fr) minmax(0,1fr); gap:12px; }
         @media (max-width:640px) { .board-terminal-grid { grid-template-columns:1fr; } }
         /* 알람 레인 — 보고 표면과 구조적으로 구분되는 유일한 자리. tint 는 컨테이너가
@@ -440,7 +442,8 @@ function ScreenImprovement({ onNav }) {
         /* T5/T8 — '＋N more' 실제 포커스 가능 버튼(요약 토글). 중립 chrome. */
         .i-more-btn { display:flex; flex-shrink:0; align-items:center; justify-content:center; gap:4px; width:100%;
           padding:6px 8px; border:1px dashed rgb(var(--line)); border-radius:8px; background:transparent;
-          color:rgb(var(--faint)); font-family:'JetBrains Mono',monospace; font-size:var(--fs-meta); cursor:pointer; }
+          color:rgb(var(--faint)); font-family:'JetBrains Mono',monospace; font-size:var(--fs-meta); cursor:pointer;
+          white-space:normal; text-align:center; min-height:32px; overflow:visible; }
         .i-more-btn:hover { color:rgb(var(--dim)); border-color:rgb(var(--faint) / 0.5); }
       `}</style>
 
@@ -492,6 +495,7 @@ function ScreenImprovement({ onNav }) {
 						reviewReasons={reviewReasonSegments}
 						onNav={onNav}
 						onRetry={regionRetry}
+						shared={pageFailure}
 					/>
 				) : (
 					<>
@@ -516,6 +520,7 @@ function ScreenImprovement({ onNav }) {
 								onAction={runAction}
 								pendingActionId={pendingActionId}
 								onRetry={regionRetry}
+								shared={pageFailure}
 							/>
 						</div>
 						<PatternLedgerCardI
@@ -523,6 +528,7 @@ function ScreenImprovement({ onNav }) {
 							suppression={loopSuppression}
 							onRowClick={setDrawerRow}
 							onRetry={regionRetry}
+							shared={pageFailure}
 						/>
 						<LoopOutputGroupI
 							statsState={statsState}
@@ -532,6 +538,7 @@ function ScreenImprovement({ onNav }) {
 							buckets={buckets}
 							onNav={onNav}
 							onRetry={regionRetry}
+							shared={pageFailure}
 						/>
 					</>
 				)}
@@ -581,7 +588,7 @@ function StatusBandI({
 	const isAppliedHeld = appliedVerdict != null && appliedVerdict.tone !== "ok";
 	// 보류 중 사람이 오늘 풀 수 있는 원인만 센다 — 설계 결정으로 닫아 둔 원인은 wedged 가
 	// 아니다. 판정 집합은 원장 held 구역과 같은 것 하나: 갈라지면 타일과 구역이 다른 수를 말한다.
-	const heldBuckets = Array.isArray(suppression?.parked) ? suppression.parked : [];
+	const heldBuckets = getSuppressionListI(suppression, "parked");
 	const heldNeedingHuman = sumCountsI(
 		heldBuckets.filter((b) => !HELD_DESIGN_DECISION_CAUSES.has(b.cause)),
 	);
@@ -593,9 +600,9 @@ function StatusBandI({
 	});
 
 	return (
-		<div className="mb-3 flex flex-col gap-2">
+		<section className="mb-3 flex flex-col gap-2" aria-label="Loop status">
 			<PageVerdict
-				id="improvement-verdict"
+				id={ANCHOR_ID_I.verdict}
 				tone={verdict.tone}
 				chips={verdict.chips}
 				freshness={{ at: asOf, regions: [statsState, listState, learningLogState] }}
@@ -610,7 +617,7 @@ function StatusBandI({
 					label="Awaiting your decision"
 					value={formatIntI(awaiting)}
 					owner="suggestion board"
-					population="Safety-tier suggestions waiting on you"
+					population="Suggestions that need your approval"
 					basis="Pending or snoozed, any age"
 					onRetry={onRetry}
 				/>
@@ -653,7 +660,7 @@ function StatusBandI({
 				at={asOf}
 				onOpen={onOpenInstrumentation}
 			/>
-		</div>
+		</section>
 	);
 }
 
@@ -680,7 +687,7 @@ function getBandVerdictI({ status, awaiting, applied, heldNeedingHuman }) {
 	}
 	if (heldNeedingHuman > 0) {
 		parts.push(`${formatIntI(heldNeedingHuman)} held for a human`);
-		chips.push({ label: "Held patterns", targetId: "improvement-pattern-ledger" });
+		chips.push({ label: "Held patterns", targetId: ANCHOR_ID_I.patternLedger });
 	}
 	if (chips.length === 0) parts.push("nothing needs a human");
 	return {
@@ -874,12 +881,28 @@ function ViewToggleI({ view, onChange }) {
 // 루프 산출 묶음 — 세 카드가 한 질문("루프가 무엇을 내놓았나")에 답하므로 기준을 묶음
 // 헤더에 한 번만 적는다. 기준이 다른 카드는 자기 것을 스스로 말한다(CTM/EPM = 전체 기간).
 // reporting health 는 카드가 아니라 링크다 — 이 화면은 그 수치를 호스팅하지 않는다.
-function TrendCardI({ state, aggregate }) {
-	const { CardHead, TrendChart, LoadingPlaceholder } = window.UI;
-	if (state.status === "error") return null;
+function TrendCardI({ state, aggregate, shared, onRetry }) {
+	const { CardHead, TrendChart, LoadingPlaceholder, getRegionView } = window.UI;
+	if (getRegionView(state) === "error") {
+		return (
+			<div className="card" id={ANCHOR_ID_I.trend}>
+				<CardHead title="Verified vs rejected (trend)" />
+				<div className="px-5 pb-4">
+					<ErrorBannerI
+						focusTargetId={ANCHOR_ID_I.trend}
+						source="loop events"
+						error={state.error}
+						isBusy={state.busy}
+						shared={shared}
+						onRetry={onRetry}
+					/>
+				</div>
+			</div>
+		);
+	}
 	if (state.status === "loading" || !aggregate) {
 		return (
-			<div className="card">
+			<div className="card" id={ANCHOR_ID_I.trend}>
 				<CardHead title="Verified vs rejected (trend)" />
 				<div className="px-5 pb-4">
 					<LoadingPlaceholder label="the trend" minHeight={60} />
@@ -892,7 +915,7 @@ function TrendCardI({ state, aggregate }) {
 	// 2-포인트 미만 → 추세선 무의미 → 안내 (Sparkline 도 <2 면 null 반환).
 	if (series.length < 2) {
 		return (
-			<div className="card">
+			<div className="card" id={ANCHOR_ID_I.trend}>
 				<CardHead title="Verified vs rejected (trend)" />
 				<div className="px-5 pb-4">
 					<div className="placeholder">Not enough days to plot a trend</div>
@@ -907,7 +930,7 @@ function TrendCardI({ state, aggregate }) {
 		return { label: formatDateI(d.date), value: scored > 0 ? d.reject / scored : null };
 	});
 	return (
-		<div className="card">
+		<div className="card" id={ANCHOR_ID_I.trend}>
 			<CardHead
 				title="Verified vs rejected (trend)"
 				sub={getLoopBasisI(aggregate)}
@@ -921,6 +944,7 @@ function TrendCardI({ state, aggregate }) {
 					label="Share of scored cycles rejected, per day"
 					tone="warn"
 					h={64}
+					yScale
 					maxTicks={5}
 					formatValue={(v) => `${Math.round(v * 100)}% rejected`}
 					points={points}
@@ -959,10 +983,11 @@ function LoopOutputGroupI({
 	buckets,
 	onNav,
 	onRetry,
+	shared,
 }) {
-	const { CardHead, Icon } = window.UI;
+	const { CardHead, Icon, getRegionView } = window.UI;
 	return (
-		<div className="space-y-3 i-loop-output">
+		<section className="space-y-3 i-loop-output" aria-label="Loop output" id={ANCHOR_ID_I.loopOutput}>
 			<CardHead
 				title="Loop output"
 				sub="Last 7 days of cycles unless a card names its own basis"
@@ -978,11 +1003,13 @@ function LoopOutputGroupI({
 					</button>
 				}
 			/>
-			{window.UI.getRegionView(statsState) === "error" ? (
+			{getRegionView(statsState) === "error" ? (
 				<ErrorBannerI
+					focusTargetId={ANCHOR_ID_I.loopOutput}
 					source="loop stats"
 					error={statsState.error}
 					isBusy={statsState.busy}
+					shared={shared}
 					onRetry={onRetry}
 				/>
 			) : null}
@@ -995,12 +1022,13 @@ function LoopOutputGroupI({
 				<ChangeSummaryCardI
 					state={loopEventsState}
 					aggregate={loopAggregate}
+					shared={shared}
 					onRetry={onRetry}
 				/>
-				<TrendCardI state={loopEventsState} aggregate={loopAggregate} />
-				<BucketRowI state={listState} buckets={buckets} />
+				<TrendCardI state={loopEventsState} aggregate={loopAggregate} shared={shared} onRetry={onRetry} />
+				<BucketRowI state={listState} buckets={buckets} shared={shared} onRetry={onRetry} />
 			</div>
-		</div>
+		</section>
 	);
 }
 
@@ -1056,6 +1084,7 @@ function KanbanCardI({
 	onAction,
 	pendingActionId,
 	onRetry,
+	shared,
 }) {
 	const { CardHead, LoadingPlaceholder, getRegionView } = window.UI;
 	const isLoading = state.status === "loading";
@@ -1065,8 +1094,10 @@ function KanbanCardI({
 	// 카드 max-h:70vh — 본문 페이지 무한 늘어남 차단 · 컬럼 내부만 자체 스크롤.
 	// 레이아웃: ROW-1 = AWAITING 존(그리드 밖 배너/스트립, T2) · ROW-2 = 종결 그리드(2fr/1fr, T3).
 	return (
-		<div
+		<section
 			className="card flex flex-col"
+			aria-label="Suggestion board"
+			id={ANCHOR_ID_I.suggestionBoard}
 			style={{ maxHeight: "70vh", overflow: "hidden" }}
 		>
 			<div className="flex-shrink-0">
@@ -1078,9 +1109,11 @@ function KanbanCardI({
 			{isError ? (
 				<div className="p-4">
 					<ErrorBannerI
+						focusTargetId={ANCHOR_ID_I.suggestionBoard}
 						source="suggestions"
 						error={state.error}
 						isBusy={state.busy}
+						shared={shared}
 						onRetry={onRetry}
 					/>
 				</div>
@@ -1112,7 +1145,7 @@ function KanbanCardI({
 					</div>
 				</div>
 			)}
-		</div>
+		</section>
 	);
 }
 
@@ -1278,7 +1311,7 @@ function BoardRowI({ onClick, title, ariaLabel, lead, text, trail }) {
 			aria-label={ariaLabel}
 		>
 			{lead}
-			<span className="text-ink truncate flex-1 min-w-0">{text}</span>
+			<span className="text-ink fs-body truncate flex-1 min-w-0">{text}</span>
 			{trail}
 		</button>
 	);
@@ -1317,11 +1350,11 @@ function RejectedHeaderI({ rowCount, summary, label, symbol, trend }) {
 		? `last ${formatIntI(windowDays)} days`
 		: `of the latest ${formatIntI(BOARD_RECENT_LIMIT)}`;
 	return (
-		<div className="i-col-header gap-1.5 fs-meta font-mono uppercase tracking-wider">
+		<div className="i-col-header gap-1.5 fs-meta font-mono uppercase tracking-wider whitespace-nowrap min-w-0">
 			<SymI s={symbol} className="text-crit" size={13} />
 			<span className="text-dim">{label}</span>
 			<span className="text-crit tnum">{formatIntI(count)}</span>
-			<span className="text-faint normal-case tracking-normal">{basis}</span>
+			<span className="text-faint normal-case tracking-normal truncate min-w-0">{basis}</span>
 			{hasSpark ? (
 				<span className="ml-auto flex items-center gap-1">
 					<RejectSparkI trend={trend} />
@@ -1755,12 +1788,28 @@ function preVerifyBadgeI(status, passed) {
 
 // ----- Bucket row (Read-bridge) — CTM/EPM + outcome_summary + join_meta 시각화. ---
 
-function BucketRowI({ state, buckets }) {
-	const { CardHead, LoadingPlaceholder } = window.UI;
-	if (state.status === "error") return null;
+function BucketRowI({ state, buckets, shared, onRetry }) {
+	const { CardHead, LoadingPlaceholder, getRegionView } = window.UI;
+	if (getRegionView(state) === "error") {
+		return (
+			<div className="card" id={ANCHOR_ID_I.learningMemory}>
+				<CardHead title="Learning memory: wins & mistakes (CTM · EPM)" />
+				<div className="p-3">
+					<ErrorBannerI
+						focusTargetId={ANCHOR_ID_I.learningMemory}
+						source="suggestions"
+						error={state.error}
+						isBusy={state.busy}
+						shared={shared}
+						onRetry={onRetry}
+					/>
+				</div>
+			</div>
+		);
+	}
 	if (state.status === "loading" || !buckets) {
 		return (
-			<div className="card">
+			<div className="card" id={ANCHOR_ID_I.learningMemory}>
 				<CardHead
 					title="Learning memory: wins & mistakes (CTM · EPM)"
 					sub="All time, every agent — not the group's 7-day cycle window"
@@ -1794,7 +1843,7 @@ function BucketRowI({ state, buckets }) {
 		],
 	];
 	return (
-		<div className="card">
+		<div className="card" id={ANCHOR_ID_I.learningMemory}>
 			<CardHead
 				title="Learning memory: wins & mistakes (CTM · EPM)"
 				sub="All time, every agent — not the group's 7-day cycle window"
@@ -1881,15 +1930,18 @@ function ParkedLoopBannerI({ applyCap }) {
 // 결정 — 매번 펼치면 행동 가능한 그룹이 그 아래로 묻힌다.
 const HELD_DESIGN_DECISION_CAUSES = new Set(["non-promptable", "other"]);
 
+// suppression list field → [] when the read is absent or malformed
+function getSuppressionListI(suppression, key) {
+	return Array.isArray(suppression?.[key]) ? suppression[key] : [];
+}
+
 // 보류(held) 구역 — 윈도우가 없다. 몇 주 전에 정지된 행이 오늘도 정지 상태이므로,
 // 발견 윈도우를 걸면 숫자는 0 이 아닌데 구역만 비는 판독 불가 상태가 된다.
 // 반려 행은 서버가 원인별로 이미 나눠 보낸다 — 7일 목록에서 따로 모으면 같은 행이 두 번 선다.
 function LedgerHeldSectionI({ suppression }) {
-	const buckets = Array.isArray(suppression?.parked) ? suppression.parked : [];
+	const buckets = getSuppressionListI(suppression, "parked");
 	if (buckets.length === 0) return null;
-	const rows = Array.isArray(suppression?.parked_patterns)
-		? suppression.parked_patterns
-		: [];
+	const rows = getSuppressionListI(suppression, "parked_patterns");
 	return (
 		<div className="px-3 pb-3">
 			<LedgerSectionHeadI
@@ -1936,7 +1988,7 @@ function HeldCauseStripI({ buckets }) {
 							{`${formatIntI(agents)} ${agents === 1 ? "agent" : "agents"}`}
 						</span>
 						{/* is-wrap required — .card-sub clamps to one line, and a clipped remedy leaves only the numbers. */}
-						<span className="card-sub is-wrap fs-meta">{b.hint}</span>
+						<span className="card-sub is-wrap fs-body">{b.hint}</span>
 					</li>
 				);
 			})}
@@ -1969,7 +2021,7 @@ function LedgerPlainRowsI({ rows }) {
 	return (
 		<ul className="mt-1.5 flex flex-col gap-1">
 			{rows.map((r) => (
-				<li key={r.id} className="flex items-center gap-2 fs-meta">
+				<li key={r.id} className="flex items-center gap-2 fs-body">
 					<span
 						className="text-ink truncate min-w-0"
 						title={patternNameI(r.pattern_signature, r.agent)}
@@ -1977,7 +2029,7 @@ function LedgerPlainRowsI({ rows }) {
 						{truncateI(patternNameI(r.pattern_signature, r.agent), 120)}
 					</span>
 					<window.UI.AgentName name={r.agent} className="text-dim shrink-0" />
-					<span className="font-mono text-faint shrink-0 tnum">
+					<span className="font-mono fs-meta text-faint shrink-0 tnum">
 						{formatDateFullI(r.discovered_date)}
 					</span>
 				</li>
@@ -2013,7 +2065,7 @@ function LedgerInertSectionI({ rows }) {
 
 // Recurrence rate, kept open under held — stalling on the same cause every cycle is a loop-health signal.
 function LedgerRecurrenceSectionI({ suppression }) {
-	const buckets = Array.isArray(suppression?.per_cycle) ? suppression.per_cycle : [];
+	const buckets = getSuppressionListI(suppression, "per_cycle");
 	if (buckets.length === 0) return null;
 	const windowDays = Number(suppression.per_cycle_window_days ?? 0);
 	const windowCycles = Number(suppression.per_cycle_window_cycles ?? 0);
@@ -2277,7 +2329,7 @@ function buildDetailPropsI(row) {
 		fields: [
 			["ID", row?.id],
 			["Status", row?.status],
-			["Approval tier", `${isSafety ? "⚠ safety" : "✓ auto"} (${tier})`],
+			["Approval tier", isSafety ? `⚠ Needs your approval (${tier})` : "✓ Applies automatically"],
 			["Classification", row?.classification],
 			["Target agent", row?.target_agent],
 			["Target file", row?.target_file],
@@ -2345,17 +2397,19 @@ function composePreVerifyI(badge, rationale, axes) {
 // 배지에만 재사용 (두-컬럼 라인-diff 아님). before/after fail_rate(T-IMP-6)는 윈도우
 // 전/후반 reject 비율을 formatPctWithDenominator 로 — 분모 0 → '—' (가짜 0% 차단).
 
-function ChangeSummaryCardI({ state, aggregate, onRetry }) {
+function ChangeSummaryCardI({ state, aggregate, onRetry, shared }) {
 	const { CardHead, LoadingPlaceholder, getRegionView } = window.UI;
 	if (getRegionView(state) === "error") {
 		return (
-			<div className="card">
+			<div className="card" id={ANCHOR_ID_I.changeSummary}>
 				<CardHead title="Self-improvement changes (applied)" />
 				<div className="px-5 pb-4">
 					<ErrorBannerI
+						focusTargetId={ANCHOR_ID_I.changeSummary}
 						source="loop events"
 						error={state.error}
 						isBusy={state.busy}
+						shared={shared}
 						onRetry={onRetry}
 					/>
 				</div>
@@ -2364,7 +2418,7 @@ function ChangeSummaryCardI({ state, aggregate, onRetry }) {
 	}
 	if (state.status === "loading" || !aggregate) {
 		return (
-			<div className="card">
+			<div className="card" id={ANCHOR_ID_I.changeSummary}>
 				<CardHead title="Self-improvement changes (applied)" />
 				<div className="px-5 pb-4">
 					<LoadingPlaceholder label="applied changes" minHeight={68} />
@@ -2378,7 +2432,7 @@ function ChangeSummaryCardI({ state, aggregate, onRetry }) {
 	// 데이터 부재 — 윈도우 내 사이클 이벤트 0건 → 안내 indicator (가짜 0 채움 금지).
 	if (eventCount === 0) {
 		return (
-			<div className="card">
+			<div className="card" id={ANCHOR_ID_I.changeSummary}>
 				<CardHead title="Self-improvement changes (applied)" />
 				<div className="px-5 pb-4">
 					<div
@@ -2392,7 +2446,7 @@ function ChangeSummaryCardI({ state, aggregate, onRetry }) {
 	}
 
 	return (
-		<div className="card">
+		<div className="card" id={ANCHOR_ID_I.changeSummary}>
 			<CardHead
 				title="Self-improvement changes (applied)"
 				sub={getLoopBasisI(aggregate)}
@@ -2468,31 +2522,33 @@ function failTrendMetaI(before, after) {
 // 패턴 원장 — 한 표면에 한 사실. 활성 후보와 억제된 행이 다른 카드에 살면 둘 중 하나만
 // 읽히고, 억제된 행은 늘 읽히지 않는 쪽이 된다. 행 단위로 합쳐 live / inert / held 세
 // 구역으로 나누고, 각 구역은 자기 게이트를 푸터에 남긴다.
-function PatternLedgerCardI({ state, suppression, onRowClick, onRetry }) {
-	const { CardHead, LoadingPlaceholder, SplitRow, getRegionView } = window.UI;
+function PatternLedgerCardI({ state, suppression, onRowClick, onRetry, shared }) {
+	const { CardHead, LoadingPlaceholder, SplitRow, SplitColumn, getRegionView } = window.UI;
 	if (getRegionView(state) === "error") {
 		return (
-			<div className="card">
+			<section className="card" aria-label="Pattern ledger" id={ANCHOR_ID_I.patternLedger}>
 				<CardHead title="Pattern ledger" />
 				<div className="p-4">
 					<ErrorBannerI
+						focusTargetId={ANCHOR_ID_I.patternLedger}
 						source="pattern ledger"
 						error={state.error}
 						isBusy={state.busy}
+						shared={shared}
 						onRetry={onRetry}
 					/>
 				</div>
-			</div>
+			</section>
 		);
 	}
 	if (state.status === "loading" || !state.data) {
 		return (
-			<div className="card">
+			<section className="card" aria-label="Pattern ledger" id={ANCHOR_ID_I.patternLedger}>
 				<CardHead title="Pattern ledger" />
 				<div className="p-3">
 					<LoadingPlaceholder label="the pattern ledger" minHeight={44} />
 				</div>
-			</div>
+			</section>
 		);
 	}
 
@@ -2524,27 +2580,55 @@ function PatternLedgerCardI({ state, suppression, onRowClick, onRetry }) {
 	const liveSection = (
 		<LedgerLiveSectionI rows={live} maxFreq={maxFreq} onRowClick={onRowClick} />
 	);
+	const sideSections = getLedgerSectionsI(inert, suppression);
+	const columns =
+		inert.length > 0
+			? getLedgerColumnsI(1 + live.length + getLiveRowGroupsI(live).length, sideSections)
+			: null;
 
 	return (
-		<div className="card" id="improvement-pattern-ledger" data-testid="pattern-ledger">
+		<section className="card" aria-label="Pattern ledger" id={ANCHOR_ID_I.patternLedger} data-testid="pattern-ledger">
 			<CardHead title="Pattern ledger" />
-			{inert.length > 0 ? (
+			{columns ? (
 				<SplitRow ratio="1:1">
-					{liveSection}
-					<LedgerInertSectionI rows={inert} />
+					<SplitColumn>
+						{liveSection}
+						{columns.live.map((section) => section.node)}
+					</SplitColumn>
+					<SplitColumn>{columns.side.map((section) => section.node)}</SplitColumn>
 				</SplitRow>
 			) : (
-				liveSection
+				<>
+					{liveSection}
+					{sideSections.map((section) => section.node)}
+				</>
 			)}
-			<LedgerHeldSectionI suppression={suppression} />
-			<LedgerRecurrenceSectionI suppression={suppression} />
-			<LedgerFooterI
-				total={total}
-				declined={declinedAllTime}
-				suppression={suppression}
-			/>
-		</div>
+			<LedgerFooterI total={total} declined={declinedAllTime} suppression={suppression} />
+		</section>
 	);
+}
+
+// Ledger sections beside the live list, each weighted by its rendered lines (head + rows · held = strip line + folded summary per cause).
+function getLedgerSectionsI(inert, suppression) {
+	const heldBuckets = getSuppressionListI(suppression, "parked");
+	const recurrenceBuckets = getSuppressionListI(suppression, "per_cycle");
+	return [
+		{ key: "inert", weight: inert.length > 0 ? 1 + inert.length : 0, node: <LedgerInertSectionI key="inert" rows={inert} /> },
+		{ key: "held", weight: heldBuckets.length > 0 ? 1 + 2 * heldBuckets.length : 0, node: <LedgerHeldSectionI key="held" suppression={suppression} /> },
+		{ key: "recurrence", weight: recurrenceBuckets.length > 0 ? 2 + recurrenceBuckets.length : 0, node: <LedgerRecurrenceSectionI key="recurrence" suppression={suppression} /> },
+	];
+}
+
+// Each section, in order, joins the lighter column so far → neither column ends in a tall empty run.
+function getLedgerColumnsI(liveWeight, sections) {
+	const columns = { live: [], side: [] };
+	const total = { live: liveWeight, side: 0 };
+	for (const section of sections) {
+		const target = total.side <= total.live ? "side" : "live";
+		columns[target].push(section);
+		total[target] += section.weight;
+	}
+	return columns;
 }
 
 // Live zone — proposal-eligible rows only, card kept when empty (held still reads) · same-title rows grouped, each led by its agent.
@@ -2571,7 +2655,7 @@ function LedgerLiveSectionI({ rows, maxFreq, onRowClick }) {
 			{head}
 			{getLiveRowGroupsI(rows).map((group) => (
 				<div key={group.title} className="flex flex-col gap-1">
-					<div className="fs-meta text-ink truncate" title={group.title}>
+					<div className="fs-body text-ink truncate" title={group.title}>
 						{truncateI(group.title, 120)}
 					</div>
 					{group.entries.map(({ pattern, rank }) => (
@@ -2622,7 +2706,7 @@ function CandidateRowI({ rank, pattern, maxFreq, onClick }) {
 			<StatusDot status={status} />
 			<span className="shrink-0 truncate" style={{ width: "18ch" }}>
 				{pattern.agent ? (
-					<AgentName name={pattern.agent} className="fs-meta text-ink" />
+					<AgentName name={pattern.agent} className="fs-body text-ink" />
 				) : (
 					<span className="fs-meta text-faint">no agent</span>
 				)}
@@ -2694,10 +2778,19 @@ function ToastI({ tone, message }) {
 	);
 }
 
-// quiet per-region card: plain sentence + next step, raw answer behind Details
-function ErrorBannerI({ source, error, onRetry, isBusy = false, focusTargetId }) {
-	const { RegionUnavailable } = window.UI;
-	return <RegionUnavailable source={source} error={error} onRetry={onRetry} isBusy={isBusy} focusTargetId={focusTargetId} />;
+// per-region failure: quiet covered note when the page banner names this source, else its own card + Retry
+function ErrorBannerI({ source, error, onRetry, isBusy, shared, focusTargetId }) {
+	const { RegionFailure } = window.UI;
+	return (
+		<RegionFailure
+			source={source}
+			error={error}
+			isBusy={isBusy}
+			shared={shared}
+			focusTargetId={focusTargetId}
+			onRetry={onRetry}
+		/>
+	);
 }
 
 // ----- Pure helpers ---------------------------------------------------------
@@ -2844,9 +2937,17 @@ function patternLabelI(signature, agent) {
 	return suffix && text.endsWith(suffix) ? text.slice(0, -suffix.length) : text;
 }
 
+// updater-written labels name the decision on daemon-written lines only — whether it landed is the row's status
+const PLAIN_PATTERN_NAMES_I = Object.freeze({
+	"editable-region-arbiter-resolved": "Release update: a model settled clashes with daemon-written lines",
+	"editable-region-resolved-release": "Release update: release text chosen over daemon-written lines",
+});
+
 // On-screen pattern name — agent suffix stripped, machine key read as words
 function patternNameI(signature, agent) {
-	return window.UI.getDisplayName("pattern", patternLabelI(signature, agent)) || "";
+	const label = patternLabelI(signature, agent);
+	if (Object.hasOwn(PLAIN_PATTERN_NAMES_I, label)) return PLAIN_PATTERN_NAMES_I[label];
+	return window.UI.getDisplayName("pattern", label) || "";
 }
 
 function truncateI(s, n) {
@@ -2858,14 +2959,24 @@ function truncateI(s, n) {
 // 번들이 없으면 화면 전체가 죽는 대신 이 묶음만 빠진다(운영 표면은 이 파일이 전부 소유).
 function InstrumentationViewI(props) {
 	const View = window.ImprovementInstrumentationView;
-	return <div id={INSTRUMENTATION_ANCHOR_ID_I}>{View ? <View {...props} /> : null}</div>;
+	return <div id={ANCHOR_ID_I.instrumentation}>{View ? <View {...props} /> : null}</div>;
 }
 
-const INSTRUMENTATION_ANCHOR_ID_I = "improvement-instrumentation";
-
 // banner Retry hands focus to the open view's own anchor → the id must exist in whichever view is showing
+// region keys sit on every branch root of their card → the node outlives recovery and takes the Retry's focus
+const ANCHOR_ID_I = Object.freeze({
+	verdict: "improvement-verdict",
+	instrumentation: "improvement-instrumentation",
+	loopOutput: "improvement-loop-output",
+	trend: "improvement-trend",
+	changeSummary: "improvement-change-summary",
+	learningMemory: "improvement-learning-memory",
+	suggestionBoard: "improvement-suggestion-board",
+	patternLedger: "improvement-pattern-ledger",
+});
+
 function getBannerFocusTargetI(view) {
-	return view === "instrumentation" ? INSTRUMENTATION_ANCHOR_ID_I : "improvement-verdict";
+	return view === "instrumentation" ? ANCHOR_ID_I.instrumentation : ANCHOR_ID_I.verdict;
 }
 
 // Screen-shared atoms for the instrumentation view — this file owns the SymI glyph and confidenceBadgeMetaI verdicts.

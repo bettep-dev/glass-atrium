@@ -314,8 +314,27 @@ function analyticsDaysO(days) {
 // Needs-you 질의 — 서버 parseFilters 는 needs_attention 에 'true'|'false' 만 받는다(그 밖 → 400).
 // 창은 analyticsDaysO 로 접힌 분석 창: 타일 1 의 분자·분모가 다른 창을 읽으면 비율이 성립하지 않는다.
 // limit=1 → total 만 소비.
-function buildAttentionParamsO(days) {
-  return new URLSearchParams({ days: String(days), needs_attention: 'true', limit: '1' });
+function buildAttentionParamsO(days, part = {}) {
+  return new URLSearchParams({ days: String(days), needs_attention: 'true', ...part, limit: '1' });
+}
+
+// disjoint split of the needs-you predicate — a flag claims a record first, so no record sits in two parts
+const ATTENTION_PARTS_O = [
+  { key: 'flagged', filter: { review_flag: 'true' } },
+  { key: 'fail', filter: { review_flag: 'false', result: 'fail' } },
+  { key: 'blocked', filter: { review_flag: 'false', result: 'blocked' } },
+  { key: 'open', filter: { review_flag: 'false', result: 'done_with_concerns' } },
+];
+
+// headline + parts in one wave → the parts are read beside the total they add up to
+async function fetchAttentionO(days, signal) {
+  const urls = [{}, ...ATTENTION_PARTS_O.map((part) => part.filter)]
+    .map((filter) => `/api/outcomes/search?${buildAttentionParamsO(days, filter).toString()}`);
+  const [head, ...parts] = await Promise.all(urls.map((url) => fetchJsonO(url, signal)));
+  return {
+    total: Number(head?.total) || 0,
+    parts: Object.fromEntries(ATTENTION_PARTS_O.map((part, i) => [part.key, Number(parts[i]?.total) || 0])),
+  };
 }
 
 // 자가개선 데몬 사이클 raw 이벤트 로그 — Learning 화면에서 이관(operational data, 집계 신호 아님).
@@ -571,7 +590,10 @@ function ScreenOutcomes({ onNav }) {
   useEffectO(() => {
     // include_all 미전송 — 분모(cross-analysis)가 registry 스코프이므로 분자도 같은 스코프를 읽는다.
     const params = buildAttentionParamsO(analyticsPeriod);
-    return runRegionFetchO(setAttentionState, `/api/outcomes/search?${params.toString()}`, { onData: markFreshO });
+    return runRegionFetchO(setAttentionState, `/api/outcomes/search?${params.toString()}`, {
+      onData: markFreshO,
+      load: (_url, signal) => fetchAttentionO(analyticsPeriod, signal),
+    });
   }, [analyticsPeriod, refreshTick]);
 
   // Detail fetch — modal open / nav 시 active row 변경에 반응.
@@ -633,17 +655,19 @@ function ScreenOutcomes({ onNav }) {
   }, [detailRow, displayRows]);
 
   const stampRegions = [searchState, needsYouState, analyticsState, attributionState, channelLivenessState, loopEventsState, attentionState];
-  // one outage → one banner + one Retry; the regions then drop their own Retry
+  // keyed by region card, not payload → one payload feeding four cards is one outage, and each covered card goes quiet
   const sharedFailure = getSharedFailure(buildRegionFailuresO({
-    records: searchState, 'needs-you records': needsYouState, 'result totals': analyticsState,
-    'reporting health': attributionState, 'recording channels': channelLivenessState,
-    'run events': loopEventsState, 'the needs-you count': attentionState,
+    'the status band': analyticsState, 'the needs-you count': attentionState, 'the record ledger': searchState,
+    'needs-you records': needsYouState, 'by-agent failures': analyticsState, 'reporting health': attributionState,
+    'recording channels': channelLivenessState, 'check results': analyticsState, 'cross table': analyticsState,
+    'run events': loopEventsState,
   }));
-  const regionRetry = sharedFailure ? undefined : triggerRefresh;
   const freshness = { at: asOfAt, regions: stampRegions };
   const isRefreshing = getRegionSummary(stampRegions).isBusy;
   // busy only while a failed region is being re-read — another panel's first load is not this Retry
   const isRetrying = stampRegions.some((region) => region.error != null && region.busy);
+  // every region card retries through the page refresh and goes quiet under a shared outage
+  const regionRetry = { onRetry: triggerRefresh, shared: sharedFailure };
 
   return (
     <div className="flex flex-col min-h-0">
@@ -671,11 +695,12 @@ function ScreenOutcomes({ onNav }) {
       {sharedFailure && (
         <div className="mb-4 flex-shrink-0">
           <PageErrorBanner sources={sharedFailure.sources} error={sharedFailure.error} onRetry={triggerRefresh}
-            isBusy={isRetrying} focusTargetId={STATUS_BAND_ID}/>
+            isBusy={isRetrying} focusTargetId={REGION_CARD_IDS.statusBand}/>
         </div>
       )}
 
-      <PageVerdictO analyticsState={analyticsState} channelLivenessState={channelLivenessState} windowDays={analyticsPeriod} freshness={freshness}/>
+      <PageVerdictO analyticsState={analyticsState} channelLivenessState={channelLivenessState} attentionState={attentionState}
+        windowDays={analyticsPeriod} freshness={freshness}/>
 
       <AlarmLaneO channelLivenessState={channelLivenessState} searchState={searchState}/>
 
@@ -684,7 +709,7 @@ function ScreenOutcomes({ onNav }) {
         attentionState={attentionState}
         windowDays={analyticsPeriod}
         freshness={freshness}
-        onRetry={regionRetry}
+        {...regionRetry}
       />
 
       {/* page scroll only — no inner scroller; the filters sit behind the Results head button, so the ledger takes the full width */}
@@ -709,7 +734,7 @@ function ScreenOutcomes({ onNav }) {
             onToggleIncludeAll: (v) => { setIncludeAll(v); setPage(0); },
           }}
           onRowClick={setDetailRow}
-          onRetry={regionRetry}
+          {...regionRetry}
           needsYou={ledgerNeedsYou}
           needsYouCap={needsYouCap}
           onToggleNeedsYou={() => setNeedsYouExpanded((isExpanded) => !isExpanded)}
@@ -718,21 +743,24 @@ function ScreenOutcomes({ onNav }) {
       </div>
 
       {/* Reporting-trust signals are status → stay open; only the breakdown (daily chart, budget-kill list) folds into detail. */}
-      <window.UI.SplitRow ratio="7:5" className="mt-4">
-        <AgentFailureTableO state={analyticsState} onRetry={regionRetry}/>
-        <window.UI.Disclosure kind="status" title="Reporting health" sub={reportingHealthSummaryO(channelLivenessState)}>
-          <AttributionHealthCard state={attributionState} period={analyticsPeriod} onRetry={regionRetry}/>
-          <ChannelLivenessCard state={channelLivenessState} onRetry={regionRetry}/>
-          <window.UI.Disclosure kind="detail" level={3} title="Daily breakdown and budget-killed subagents">
-            <AttributionBreakdownO state={attributionState}/>
-          </window.UI.Disclosure>
+      {/* per-agent table full width — a half-width column beside the taller Reporting health stack leaves a hole; peer reporting cards pair at equal height */}
+      <div className="mt-4">
+        <AgentFailureTableO state={analyticsState} {...regionRetry}/>
+      </div>
+      <window.UI.Disclosure kind="status" title="Reporting health" sub={reportingHealthSummaryO(channelLivenessState)} className="mt-4">
+        <window.UI.SplitRow ratio="1:1" layout="equal">
+          <AttributionHealthCard state={attributionState} period={analyticsPeriod} {...regionRetry}/>
+          <ChannelLivenessCard state={channelLivenessState} {...regionRetry}/>
+        </window.UI.SplitRow>
+        <window.UI.Disclosure kind="detail" level={3} title="Daily breakdown and budget-killed subagents">
+          <AttributionBreakdownO state={attributionState}/>
         </window.UI.Disclosure>
-      </window.UI.SplitRow>
+      </window.UI.Disclosure>
 
       <window.UI.Disclosure kind="status" title="Self-report quality" sub={selfReportSummaryO(analyticsState)} className="mt-4">
         <window.UI.SplitRow ratio="1:1">
-          <GraderBreakdownCard state={analyticsState} onRetry={regionRetry}/>
-          <CrosstabCard state={analyticsState} onRetry={regionRetry}/>
+          <GraderBreakdownCard state={analyticsState} {...regionRetry}/>
+          <CrosstabCard state={analyticsState} {...regionRetry}/>
         </window.UI.SplitRow>
         <window.UI.Disclosure kind="detail" level={3} title="By task type"
           tone={getTaskTypeFoldToneO(analyticsState.data?.overall?.task_type_grader_breakdown)}>
@@ -742,7 +770,7 @@ function ScreenOutcomes({ onNav }) {
 
       {/* Learning 에서 이관된 raw 데몬 사이클 이벤트 로그 — operational data (집계 신호 아님 · W3-T3/T7). */}
       <window.UI.Disclosure kind="detail" title="Learning-run events" sub={loopEventsSummaryO(loopEventsState)} className="mt-4">
-        <LoopEventsCard state={loopEventsState} onRetry={regionRetry}/>
+        <LoopEventsCard state={loopEventsState} {...regionRetry}/>
       </window.UI.Disclosure>
 
       {detailRow && (
@@ -844,10 +872,9 @@ function loopEventsSummaryO(loopEventsState) {
 
 // Needs-you tile → ledger 의 창 전체 Needs-you 헤딩 (hash 라우터라 href 앵커 대신 focus 이동).
 const LEDGER_NEEDS_YOU_ID = 'ledger-needs-you';
-// focus lands here when a focused Retry leaves on recovery
-const STATUS_BAND_ID = 'outcomes-status-band';
-// per-region card ids — same role as STATUS_BAND_ID for each card's own error Retry
+// focus lands on a region's card when a focused Retry leaves on recovery
 const REGION_CARD_IDS = {
+  statusBand: 'outcomes-status-band',
   agentFailures: 'outcomes-agent-failures',
   attribution: 'outcomes-attribution',
   channels: 'outcomes-channels',
@@ -926,13 +953,15 @@ function buildStatusBandTilesO(data, attentionCount) {
   ];
 }
 
-function StatusBandO({ analyticsState, attentionState, windowDays, freshness, onRetry }) {
+function StatusBandO({ analyticsState, attentionState, windowDays, freshness, onRetry, shared }) {
   const { getRegionView, getFreshnessVerdict } = window.UI;
   const view = getRegionView(analyticsState);
   if (view === 'loading') {
     return (
       <div className="grid grid-cols-4 gap-3 mb-4 flex-shrink-0" aria-busy="true" aria-label="Status band">
-        {Array.from({ length: 4 }).map((_, i) => <KpiSkeletonO key={i}/>)}
+        {/* hero + volume column, as loaded → nothing shifts on arrival */}
+        <KpiSkeletonO className="col-span-3"/>
+        <KpiSkeletonO/>
       </div>
     );
   }
@@ -946,8 +975,8 @@ function StatusBandO({ analyticsState, attentionState, windowDays, freshness, on
   }
   if (view === 'error') {
     return (
-      <div id={STATUS_BAND_ID} className="mb-4 flex-shrink-0" aria-label="Status band">
-        <RegionErrorO source="the status band" error={analyticsState.error} onRetry={onRetry} isBusy={analyticsState.busy} focusTargetId={STATUS_BAND_ID}/>
+      <div id={REGION_CARD_IDS.statusBand} className="mb-4 flex-shrink-0" aria-label="Status band">
+        <RegionErrorO source="the status band" state={analyticsState} onRetry={onRetry} shared={shared} focusTargetId={REGION_CARD_IDS.statusBand}/>
       </div>
     );
   }
@@ -967,18 +996,18 @@ function StatusBandO({ analyticsState, attentionState, windowDays, freshness, on
   const volumeTiles = tiles.filter((tile) => tile.key === 'recorded' || tile.key === 'done');
 
   return (
-    <div id={STATUS_BAND_ID} className="mb-4 flex-shrink-0">
+    <div id={REGION_CARD_IDS.statusBand} className="mb-4 flex-shrink-0">
       <div className="grid grid-cols-4 gap-3" role="group" aria-label="Status band">
         <BandTileO
           tile={heroTile}
           windowLabel={windowLabel}
           unloadedText={getUnloadedSummaryO(attentionState.status)}
-          reasons={buildNeedsYouReasonsO(analyticsState.data)}
+          reasons={buildNeedsYouReasonsO(analyticsState.data, attentionState.status === 'ready' ? attentionState.data : null)}
           className="col-span-3"/>
         <VolumeTilesO tiles={volumeTiles} windowLabel={windowLabel}/>
       </div>
       {isAttentionFailed && (
-        <RegionErrorO source="the needs-you count" error={attentionState.error} onRetry={onRetry} isBusy={attentionState.busy} focusTargetId={STATUS_BAND_ID}/>
+        <RegionErrorO source="the needs-you count" state={attentionState} onRetry={onRetry} shared={shared} focusTargetId={REGION_CARD_IDS.statusBand}/>
       )}
     </div>
   );
@@ -1022,25 +1051,23 @@ function BandTileO({ tile, windowLabel, unloadedText = '—', reasons = null, cl
   );
 }
 
-// broken reuses the band's own breakage tone; open is null when the payload predates writer_open_count
-function buildNeedsYouReasonsO(data) {
-  const brokenTile = buildStatusBandTilesO(data, null).find((tile) => tile.key === 'broken');
-  return [
-    { key: 'broken', label: 'Failed or blocked', count: brokenTile.count, tone: brokenTile.tone },
-    { key: 'open', label: 'Caveat still open', count: getOpenCaveatCountO(data?.overall), tone: 'neutral' },
-  ];
-}
-
 /**
- * Every by_result row carries writer_open_count (result-agnostic FILTER) → only the done_with_concerns row counts, never a sum.
- * An unsent field stays null instead of getWriterOpenCount's closure-blind fallback.
+ * Disjoint needs-you parts that add up to the headline — flags first, then unflagged failures and open caveats.
+ * A gap between the headline and its parts (records that changed between reads) is a named remainder, never dropped.
+ * @param attention - the needs-you wave ({ total, parts }); unread → every part unknown
  */
-function getOpenCaveatCountO(overall) {
-  if (!Array.isArray(overall?.by_result)) return null;
-  const caveatRow = overall.by_result.find((row) => row?.result === 'done_with_concerns');
-  if (!caveatRow) return 0;
-  if (!Number.isFinite(caveatRow.writer_open_count)) return null;
-  return window.UI.getWriterOpenCount(caveatRow);
+function buildNeedsYouReasonsO(data, attention) {
+  const brokenTone = buildStatusBandTilesO(data, null).find((tile) => tile.key === 'broken').tone;
+  const parts = attention?.parts ?? null;
+  const reasons = [
+    { key: 'flagged', label: 'Flagged for review', count: parts ? parts.flagged : null, tone: 'neutral' },
+    { key: 'broken', label: 'Failed or blocked', count: parts ? parts.fail + parts.blocked : null, tone: brokenTone },
+    { key: 'open', label: 'Caveat still open', count: parts ? parts.open : null, tone: 'neutral' },
+  ];
+  if (!parts) return reasons;
+  // parts read after the headline can outgrow it → no meaningful remainder, never a negative count
+  const remainder = attention.total - reasons.reduce((sum, reason) => sum + reason.count, 0);
+  return remainder <= 0 ? reasons : [...reasons, { key: 'other', label: 'Changed between reads', count: remainder, tone: 'neutral' }];
 }
 
 /**
@@ -1049,7 +1076,7 @@ function getOpenCaveatCountO(overall) {
  * The all-clear waits for the liveness read.
  * @param freshness - the shared rule: unread reads No signal, a stale or partial read reads Last known
  */
-function PageVerdictO({ analyticsState, channelLivenessState, windowDays, freshness }) {
+function PageVerdictO({ analyticsState, channelLivenessState, attentionState, windowDays, freshness }) {
   const { PageVerdict, getRegionView } = window.UI;
   const view = getRegionView(analyticsState);
   const silent = channelLivenessState.status === 'ready' ? (channelLivenessState.data?.alerting || []) : [];
@@ -1062,12 +1089,28 @@ function PageVerdictO({ analyticsState, channelLivenessState, windowDays, freshn
     return <PageVerdict tone="neutral" freshness={freshness} className="mb-4">{`Task-result health is unknown — ${reason}.`}</PageVerdict>;
   }
 
-  const verdict = getRateVerdictO(window.UI.resolveOutcomeRate(analyticsState.data?.overall), `last ${windowDays}d`);
+  const rateVerdict = getRateVerdictO(window.UI.resolveOutcomeRate(analyticsState.data?.overall), `last ${windowDays}d`);
+  const verdict = getHeroFloorVerdictO(rateVerdict, analyticsState.data, attentionState);
   if (verdict.tone !== 'ok' || channelLivenessState.status === 'ready') {
     return <PageVerdict tone={verdict.tone} chips={verdict.chips} freshness={freshness} className="mb-4">{verdict.text}</PageVerdict>;
   }
   const gap = channelLivenessState.status === 'loading' ? 'still checking the recording channels' : "couldn't check the recording channels";
   return <PageVerdict tone="neutral" freshness={freshness} className="mb-4">{`${verdict.text.slice(0, -1)} — ${gap}.`}</PageVerdict>;
+}
+
+const TONE_RANK_O = { neutral: 0, ok: 1, warn: 2, crit: 3 };
+
+// verdict and hero judge one window → the sentence never reads greener than the Needs-you tile
+function getHeroFloorVerdictO(verdict, data, attentionState) {
+  if (verdict.tone === 'neutral' || attentionState?.status !== 'ready') return verdict;
+  const count = Number(attentionState.data?.total) || 0;
+  const hero = buildStatusBandTilesO(data, count).find((tile) => tile.key === 'attention');
+  if (TONE_RANK_O[hero.tone] <= TONE_RANK_O[verdict.tone]) return verdict;
+  return {
+    tone: hero.tone,
+    chips: [{ key: 'needs-you', label: 'Needs you', targetId: LEDGER_NEEDS_YOU_ID }],
+    text: `${verdict.text.slice(0, -1)}, but ${formatIntO(count)} records (${formatShareO(count, hero.population)}) still need you.`,
+  };
 }
 
 function getRateVerdictO(rate, windowLabel) {
@@ -1093,7 +1136,7 @@ function formatShareO(count, population) {
 function NeedsYouReasonsO({ reasons }) {
   return (
     <span className="block fs-meta">
-      <span className="block text-faint">Reasons · one record can carry several</span>
+      <span className="block text-faint">Reasons · each record counted once, flags first</span>
       {reasons.map((reason) => {
         const glyph = getBandTileGlyphO(reason.tone);
         return (
@@ -1185,14 +1228,14 @@ function compareAgentFailureRowsO(a, b) {
   return (b.failed + b.blocked) - (a.failed + a.blocked);
 }
 
-function AgentFailureTableO({ state, onRetry }) {
+function AgentFailureTableO({ state, onRetry, shared }) {
   const { CardHead, STICKY_TH_STYLE } = window.UI;
 
   return (
     <div id={REGION_CARD_IDS.agentFailures} className="card">
       <CardHead title="Failed or blocked by agent" sub="Registry agents only · non-zero rows · worst rate first"/>
       <div className="card-body" style={{ padding: 0 }}>
-        <AgentFailureBodyO state={state} onRetry={onRetry} stickyStyle={STICKY_TH_STYLE}/>
+        <AgentFailureBodyO state={state} onRetry={onRetry} shared={shared} stickyStyle={STICKY_TH_STYLE}/>
       </div>
     </div>
   );
@@ -1238,11 +1281,11 @@ function AgentFailureSkeletonO({ stickyStyle }) {
   );
 }
 
-function AgentFailureBodyO({ state, onRetry, stickyStyle }) {
+function AgentFailureBodyO({ state, onRetry, shared, stickyStyle }) {
   const view = window.UI.getRegionView(state);
   if (view === 'loading') return <AgentFailureSkeletonO stickyStyle={stickyStyle}/>;
   if (view === 'error') {
-    return <RegionErrorO source="by-agent failures" error={state.error} onRetry={onRetry} isBusy={state.busy} focusTargetId={REGION_CARD_IDS.agentFailures}/>;
+    return <RegionErrorO source="by-agent failures" state={state} onRetry={onRetry} shared={shared} focusTargetId={REGION_CARD_IDS.agentFailures}/>;
   }
 
   const rows = buildAgentFailureRowsO(state.data?.agentStack, state.data?.overall?.by_agent_top_10);
@@ -1308,9 +1351,9 @@ function OpenCaveatCellO({ count }) {
   );
 }
 
-function KpiSkeletonO() {
+function KpiSkeletonO({ className = '' }) {
   return (
-    <div className="kpi" aria-busy="true">
+    <div className={`kpi ${className}`.trim()} aria-busy="true">
       <div
         style={{
           height: 70,
@@ -1328,7 +1371,7 @@ function KpiSkeletonO() {
 // 일별 stacked-bar (inline SVG, Recharts 미사용) + window 요약 4-tile + literal-omission 심각도 배지.
 // NULL attribution_source 행은 backend 가 제외 (귀속 추적 이전 행) → 모든 비율 분모 = total_attributed.
 
-function AttributionHealthCard({ state, period, onRetry }) {
+function AttributionHealthCard({ state, period, onRetry, shared }) {
   const { CardHead, Badge } = window.UI;
 
   const summary = state.status === 'ready' ? state.data?.window_summary : null;
@@ -1351,19 +1394,19 @@ function AttributionHealthCard({ state, period, onRetry }) {
         }
       />
       <div className="card-body">
-        <AttributionHealthBody state={state} onRetry={onRetry}/>
+        <AttributionHealthBody state={state} onRetry={onRetry} shared={shared}/>
       </div>
     </div>
   );
 }
 
-function AttributionHealthBody({ state, onRetry }) {
+function AttributionHealthBody({ state, onRetry, shared }) {
   const view = window.UI.getRegionView(state);
   if (view === 'loading') {
     return <ChartSkeletonO height={200} label="reporting health"/>;
   }
   if (view === 'error') {
-    return <RegionErrorO source="reporting health" error={state.error} onRetry={onRetry} isBusy={state.busy} focusTargetId={REGION_CARD_IDS.attribution}/>;
+    return <RegionErrorO source="reporting health" state={state} onRetry={onRetry} shared={shared} focusTargetId={REGION_CARD_IDS.attribution}/>;
   }
 
   const summary = state.data?.window_summary || null;
@@ -1626,7 +1669,7 @@ function AttributionLegend() {
 // 대시보드에서는 품질 저하처럼 읽혔다. 판정(eligible/alerting)과 임계값은 전부 서버 응답에서
 // 오며 카드는 어떤 수치도 재계산하지 않는다 — doctor §16 과 같은 정의 하나를 공유하기 위함.
 
-function ChannelLivenessCard({ state, onRetry }) {
+function ChannelLivenessCard({ state, onRetry, shared }) {
   const { CardHead, Badge } = window.UI;
 
   const badge = getChannelLivenessBadgeO(state);
@@ -1647,7 +1690,7 @@ function ChannelLivenessCard({ state, onRetry }) {
         }
       />
       <div className="card-body">
-        <ChannelLivenessBody state={state} onRetry={onRetry}/>
+        <ChannelLivenessBody state={state} onRetry={onRetry} shared={shared}/>
       </div>
     </div>
   );
@@ -1664,13 +1707,13 @@ function getChannelLivenessBadgeO(state) {
   return { tone: toneFromColorVarO(meta.colorVar), text: days ? `${text} · ${days}d` : text };
 }
 
-function ChannelLivenessBody({ state, onRetry }) {
+function ChannelLivenessBody({ state, onRetry, shared }) {
   const view = window.UI.getRegionView(state);
   if (view === 'loading') {
     return <ChartSkeletonO height={120} label="recording channels"/>;
   }
   if (view === 'error') {
-    return <RegionErrorO source="recording channels" error={state.error} onRetry={onRetry} isBusy={state.busy} focusTargetId={REGION_CARD_IDS.channels}/>;
+    return <RegionErrorO source="recording channels" state={state} onRetry={onRetry} shared={shared} focusTargetId={REGION_CARD_IDS.channels}/>;
   }
 
   const channels  = Array.isArray(state.data?.channels) ? state.data.channels : [];
@@ -1713,16 +1756,19 @@ function ChannelLivenessRow({ channel, days, recencyDays }) {
   // 'Below floor' 로 뜨는 이유를 읽을 수 없으므로, 판정에 쓰인 수치를 앞에 둔다.
   const recentPeak = formatIntO(channel.recent_peak_daily_count);
   const windowPeak = formatIntO(channel.peak_daily_count);
+  const detail = `${recentPeak}/day${recencyDays ? ` last ${recencyDays}d` : ''}`
+    + ` · ${windowPeak}/day peak${days ? ` over ${days}d` : ''}`
+    + ` · quiet ${formatIntO(silentHours)}h`;
+
+  // two fixed single lines (status + source, then detail) → a narrow column truncates instead of wrapping to 4–6 lines
   return (
-    <div className="flex items-center gap-2 fs-meta font-mono">
-      <span style={{ color: `rgb(var(${meta.colorVar}))` }} aria-hidden="true"><GlyphO name={meta.icon}/></span>
-      <span className="text-ink w-[6.5rem] flex-shrink-0">{meta.label}</span>
-      <span className="text-ink flex-shrink-0">{channel.attribution_source}</span>
-      <span className="text-dim tabular-nums">
-        {recentPeak}/day{recencyDays ? ` last ${recencyDays}d` : ''}
-        {' · '}{windowPeak}/day peak{days ? ` over ${days}d` : ''}
-        {' · '}quiet {formatIntO(silentHours)}h
-      </span>
+    <div className="fs-meta font-mono min-w-0">
+      <div className="flex items-center gap-2 whitespace-nowrap min-w-0">
+        <span style={{ color: `rgb(var(${meta.colorVar}))` }} aria-hidden="true"><GlyphO name={meta.icon}/></span>
+        <span className="text-ink w-[6.5rem] flex-shrink-0">{meta.label}</span>
+        <span className="text-ink truncate min-w-0" title={channel.attribution_source}>{channel.attribution_source}</span>
+      </div>
+      <div className="text-dim tabular-nums truncate pl-6" title={detail}>{detail}</div>
     </div>
   );
 }
@@ -1732,14 +1778,14 @@ function ChannelLivenessRow({ channel, days, recencyDays }) {
 //   verified_pass/unverified/verified_fail = graded_total 분모 · not_measured(레거시 NULL) 은 비율 분모 제외.
 //   목적: 측정 산물(unverified/legacy)을 품질 실패로 오독하지 않게 측정 신호를 명시 노출.
 
-function GraderBreakdownCard({ state, onRetry }) {
+function GraderBreakdownCard({ state, onRetry, shared }) {
   const { CardHead } = window.UI;
 
   return (
     <div id={REGION_CARD_IDS.checks} className="card mb-4">
       <CardHead title="Automatic check results" sub=""/>
       <div className="card-body">
-        <GraderBreakdownBody state={state} onRetry={onRetry}/>
+        <GraderBreakdownBody state={state} onRetry={onRetry} shared={shared}/>
       </div>
     </div>
   );
@@ -1750,13 +1796,13 @@ function getGraderTileKeysO(breakdown) {
   return GRADER_BREAKDOWN_ORDER.filter((key) => key !== 'not_measured' || (Number(breakdown?.[key]) || 0) > 0);
 }
 
-function GraderBreakdownBody({ state, onRetry }) {
+function GraderBreakdownBody({ state, onRetry, shared }) {
   const view = window.UI.getRegionView(state);
   if (view === 'loading') {
     return <ChartSkeletonO height={120} label="check results"/>;
   }
   if (view === 'error') {
-    return <RegionErrorO source="check results" error={state.error} onRetry={onRetry} isBusy={state.busy} focusTargetId={REGION_CARD_IDS.checks}/>;
+    return <RegionErrorO source="check results" state={state} onRetry={onRetry} shared={shared} focusTargetId={REGION_CARD_IDS.checks}/>;
   }
 
   const breakdown = state.data?.overall?.grader_breakdown;
@@ -1918,7 +1964,7 @@ function TaskTypeGraderBarO({ row, maxTotal, isMuted }) {
 // 행 4 (confidence) × 열 3 (metric_pass) = 12 셀 + 합계 행/열 → 5열 이내(라벨+pass+fail+null+합계).
 // polar mismatch(overconfidence high+fail · underconfidence low+pass) → ⚠ 기호 + warn 색조 (dual-encoding).
 
-function CrosstabCard({ state, onRetry }) {
+function CrosstabCard({ state, onRetry, shared }) {
   const { CardHead, Badge } = window.UI;
 
   const crosstab   = state.status === 'ready' ? state.data?.crosstab : null;
@@ -1932,7 +1978,7 @@ function CrosstabCard({ state, onRetry }) {
         title={confidentFailed
           ? `Confident but failed: ${formatIntO(confidentFailed.count)} (${formatRateO(confidentFailed.share)})`
           : 'Confident but failed'}
-        sub="High stated confidence, own check failed · empty rows hidden"
+        sub="High confidence, own check failed"
         right={
           state.status === 'ready' && (
             <Badge role="status" tone="warn" icon>
@@ -1942,19 +1988,19 @@ function CrosstabCard({ state, onRetry }) {
         }
       />
       <div className="card-body">
-        <CrosstabBody state={state} onRetry={onRetry}/>
+        <CrosstabBody state={state} onRetry={onRetry} shared={shared}/>
       </div>
     </div>
   );
 }
 
-function CrosstabBody({ state, onRetry }) {
+function CrosstabBody({ state, onRetry, shared }) {
   const view = window.UI.getRegionView(state);
   if (view === 'loading') {
     return <ChartSkeletonO height={160} label="cross table"/>;
   }
   if (view === 'error') {
-    return <RegionErrorO source="cross table" error={state.error} onRetry={onRetry} isBusy={state.busy} focusTargetId={REGION_CARD_IDS.crosstab}/>;
+    return <RegionErrorO source="cross table" state={state} onRetry={onRetry} shared={shared} focusTargetId={REGION_CARD_IDS.crosstab}/>;
   }
 
   const crosstab = state.data?.crosstab;
@@ -1994,6 +2040,7 @@ function CrosstabBody({ state, onRetry }) {
           <span aria-hidden="true" style={{ color: 'rgb(var(--warn))' }}><GlyphO name="warn"/></span>
           polar mismatch (overconfidence high+fail · underconfidence low+pass)
         </span>
+        <span>Empty rows hidden</span>
       </div>
     </div>
   );
@@ -2084,7 +2131,7 @@ function crosstabMaxCountO(byCell) {
 //   density: 행 라벨 --dim · mono 는 timestamp/id 만 · agent truncate+tooltip.
 //   eval_result → loopResultMetaO dual-encoded 배지(색+기호+라벨).
 
-function LoopEventsCard({ state, onRetry }) {
+function LoopEventsCard({ state, onRetry, shared }) {
   const { CardHead } = window.UI;
   return (
     <div id={REGION_CARD_IDS.loopEvents} className="card mt-4">
@@ -2092,13 +2139,13 @@ function LoopEventsCard({ state, onRetry }) {
         title="Improvement run events"
         sub=""/>
       <div className="card-body" style={{ padding: 0 }}>
-        <LoopEventsBody state={state} onRetry={onRetry}/>
+        <LoopEventsBody state={state} onRetry={onRetry} shared={shared}/>
       </div>
     </div>
   );
 }
 
-function LoopEventsBody({ state, onRetry }) {
+function LoopEventsBody({ state, onRetry, shared }) {
   const { Badge } = window.UI;
 
   const view = window.UI.getRegionView(state);
@@ -2106,7 +2153,7 @@ function LoopEventsBody({ state, onRetry }) {
     return <ChartSkeletonO height={200} label="run events"/>;
   }
   if (view === 'error') {
-    return <RegionErrorO source="run events" error={state.error} onRetry={onRetry} isBusy={state.busy} focusTargetId={REGION_CARD_IDS.loopEvents}/>;
+    return <RegionErrorO source="run events" state={state} onRetry={onRetry} shared={shared} focusTargetId={REGION_CARD_IDS.loopEvents}/>;
   }
 
   const total    = Number(state.data?.total_events ?? 0);
@@ -2321,7 +2368,7 @@ function getFilterChipValueO(key) {
 
 function ResultTableCard({
   state, rows, totalMatched, page, limit, sort, filter,
-  onPageChange, onSortChange, onResetFilter, onRowClick, onRetry, closure, needsYou, needsYouCap, onToggleNeedsYou,
+  onPageChange, onSortChange, onResetFilter, onRowClick, onRetry, shared, closure, needsYou, needsYouCap, onToggleNeedsYou,
   filterControls = {},
 }) {
   const { CardHead, Popover } = window.UI;
@@ -2375,7 +2422,7 @@ function ResultTableCard({
           onSortChange={onSortChange}
           onResetFilter={onResetFilter}
           onRowClick={onRowClick}
-          onRetry={onRetry}
+          onRetry={onRetry} shared={shared}
           closure={closure}
           needsYou={needsYou}
           needsYouCap={needsYouCap}
@@ -2469,7 +2516,7 @@ function ActiveFilterChips({ filter, onRemove, onClearAll }) {
 }
 
 function ResultTableBody({
-  state, rows, totalMatched, filter, sort, onSortChange, onResetFilter, onRowClick, onRetry, closure, needsYou, needsYouCap, onToggleNeedsYou,
+  state, rows, totalMatched, filter, sort, onSortChange, onResetFilter, onRowClick, onRetry, shared, closure, needsYou, needsYouCap, onToggleNeedsYou,
 }) {
   const view = window.UI.getRegionView(state);
   if (view === 'loading') {
@@ -2479,7 +2526,7 @@ function ResultTableBody({
     return <PayloadUnavailableO label="Records"/>;
   }
   if (view !== 'ready') {
-    return <RegionErrorO source="the record ledger" error={state.error} onRetry={onRetry} isBusy={state.busy} focusTargetId={REGION_CARD_IDS.ledger}/>;
+    return <RegionErrorO source="the record ledger" state={state} onRetry={onRetry} shared={shared} focusTargetId={REGION_CARD_IDS.ledger}/>;
   }
   if (rows.length === 0) {
     return <ResultTableZeroStateO filter={filter} onResetFilter={onResetFilter}/>;
@@ -2785,13 +2832,15 @@ function ResultTableRow({ row, onRowClick, closure, focusProps }) {
       <td className="text-left text-dim px-2 py-1.5 border-b border-line whitespace-nowrap">{row.task_type}</td>
       <td className="text-left px-2 py-1.5 border-b border-line" title={resultMeta.label}>
         {/* 배지+종결 어포던스를 한 nowrap 컨테이너로 — 셀 안에서 줄바꿈되면 행 높이가 형제 행의 2배로 부푼다. */}
-        <span className="inline-flex items-center gap-0.5 whitespace-nowrap">
-          <span className="inline-flex items-center gap-0.5 text-ink" style={{ fontWeight: 500 }}>
+        <span className="inline-flex items-center gap-1.5 whitespace-nowrap">
+          <span data-group="result" className="inline-flex items-center gap-0.5 text-ink" style={{ fontWeight: 500 }}>
             <span style={{ color: resultColor }} aria-hidden="true"><GlyphO name={resultMeta.icon}/></span>
             {resultLabel}
-            {/* 텍스트 라벨 = 듀얼인코딩의 두 번째 채널 — 회색 tone 단독으로 종결을 encode 하지 않는다. */}
-            {resultMeta.closed && <span className="fs-meta text-dim">{resultMeta.label}</span>}
           </span>
+          {/* closure = its own chip, so 'Done with caveats' and 'Closed' never read as one run of text */}
+          {resultMeta.closed && (
+            <span data-group="closure" className="shrink-0"><window.UI.Badge role="metadata">{resultMeta.label}</window.UI.Badge></span>
+          )}
           {canClose && (
             // -my-1 = 24px 타깃을 유지한 채 행 높이 기여만 상쇄 (셀 패딩 안으로 겹침) → 형제 행과 높이 동일.
             // pending 은 색 회전 없이 투명도만 (DocStatusBadgeCD 선례 — 새 의미 카테고리 시사 차단 + reduced-motion 무관).
@@ -3143,11 +3192,12 @@ function EmptyStateO({ message }) {
 
 /**
  * Plain sentence + next step; the raw answer stays behind Details, Retry only when no page banner owns it.
+ * @param state - the failed region: its error is the answer, busy while a Retry re-reads it
  * @param focusTargetId - the region's own card, which takes focus when a focused Retry succeeds
  */
-function RegionErrorO({ source, error, onRetry, isBusy = false, focusTargetId }) {
-  const { RegionUnavailable } = window.UI;
-  return <RegionUnavailable source={source} error={error} onRetry={onRetry} isBusy={isBusy} focusTargetId={focusTargetId} className="m-3"/>;
+function RegionErrorO({ source, state, onRetry, shared, focusTargetId }) {
+  const { RegionFailure } = window.UI;
+  return <RegionFailure source={source} error={state.error} shared={shared} onRetry={onRetry} isBusy={state.busy} focusTargetId={focusTargetId} className="m-3"/>;
 }
 
 // 레인이 실패 배너를 소유하므로 본문은 '적재 실패' 만 말한다 — 같은 오류를 두 번 쓰지 않는다.
@@ -3355,14 +3405,15 @@ async function fetchJsonO(url, signal) {
  * One region fetch wave keyed by its URL — held data stays on screen until the answer settles.
  * @param options.mapData - payload → region data
  * @param options.onData - runs only when this wave's answer lands (e.g. advancing the stamp time)
+ * @param options.load - reads the wave's payload; defaults to one JSON fetch of url
  * @returns cleanup that aborts the wave; a superseded or aborted wave never lands
  */
-function runRegionFetchO(setter, url, { mapData, onData } = {}) {
+function runRegionFetchO(setter, url, { mapData, onData, load = fetchJsonO } = {}) {
   const { putRegionRequest, putRegionData, putRegionFailure } = window.UI;
   const ctrl = new AbortController();
   setter((s) => putRegionRequest(s, url, ctrl));
 
-  fetchJsonO(url, ctrl.signal)
+  load(url, ctrl.signal)
     .then((data) => {
       // effects abort before re-running → an unaborted wave is the newest one
       if (!ctrl.signal.aborted) onData?.();

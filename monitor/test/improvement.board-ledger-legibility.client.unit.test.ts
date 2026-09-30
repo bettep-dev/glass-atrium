@@ -29,6 +29,7 @@ interface Sandbox {
   React: { createElement: unknown };
   window: { UI: Record<string, unknown> };
   patternLabelI: (signature: unknown, agent: unknown) => string;
+  patternNameI: (signature: unknown, agent: unknown) => string;
   groupByLabelI: (rows: unknown[]) => Array<{ label: string; rows: unknown[] }>;
   AppliedHistoryRowI: Component;
   RejectedGroupI: Component;
@@ -47,6 +48,12 @@ interface Sandbox {
   LedgerLiveSectionI: Component;
   ParkedLoopBannerI: Component;
   DetailBodyI: Component;
+  PatternLedgerCardI: Component;
+  StatusBandI: Component;
+  RejectedHeaderI: Component;
+  BoardRowI: Component;
+  HeldCauseStripI: Component;
+  buildDetailPropsI: (row: Record<string, unknown>) => Record<string, unknown>;
 }
 
 function isElement(value: unknown): value is RecordedElement {
@@ -288,7 +295,23 @@ test("a ledger row sets its pattern label in sans and keeps mono for the date", 
 });
 
 const RAW_PATTERN = "editable-region-arbiter-resolved";
-const PATTERN_NAME = "Editable region arbiter resolved";
+const PATTERN_NAME = "Release update: a model settled clashes with daemon-written lines";
+
+// update.sh writes these rows over lines the DAEMON wrote, and a row may record a decision that never landed
+describe("an updater pattern name claims only what its verdict guarantees", () => {
+  const rows = [
+    { name: "arbiter-resolved names a model decision", label: "editable-region-arbiter-resolved", claim: /\bmodel settled\b/ },
+    { name: "historical resolved-release names the release side", label: "editable-region-resolved-release", claim: /\brelease text chosen\b/ },
+  ];
+  for (const row of rows) {
+    test(row.name, () => {
+      const text = sandbox.patternNameI(`${row.label}|${AGENT}`, AGENT);
+      assert.match(text, row.claim);
+      assert.match(text, /daemon-written lines/);
+      assert.doesNotMatch(text, /\bmerged\b|your local edits/i);
+    });
+  }
+});
 
 describe("every pattern label on the board and ledger reads as words, never as its machine key", () => {
   const signature = `${RAW_PATTERN}|${AGENT}`;
@@ -376,4 +399,70 @@ describe("prose on the ledger, banner and drawer is set in sans; mono stays for 
       assert.equal(monoProse.length, 0, `${row.name}: mono element carries prose`);
     });
   }
+});
+
+describe("each Learning surface is a landmark named for what it holds", () => {
+  const idle = { status: "loading", data: null, error: null };
+  const rows = [
+    { name: "Loop status", tree: () => sandbox.StatusBandI({ asOf: null, statsState: idle, listState: idle, learningLogState: idle, suppression: null, awaiting: 0 }) },
+    { name: "Suggestion board", tree: () => sandbox.KanbanCardI({ state: idle, columnRows: { safety: [], applied: [], rejected: [] } }) },
+    { name: "Pattern ledger", tree: () => sandbox.PatternLedgerCardI({ state: idle, suppression: null }) },
+    { name: "Loop output", tree: () => sandbox.LoopOutputGroupI({ statsState: idle, loopEventsState: idle, listState: idle }) },
+  ];
+  for (const row of rows) {
+    test(row.name, () => {
+      const tree = row.tree();
+      assert.equal(tree?.type, "section");
+      assert.equal(tree?.props["aria-label"], row.name);
+    });
+  }
+});
+
+test("ledger rows set their label at the body size, leaving the meta size to the date stamp", () => {
+  const rows = [{ id: 1, pattern_signature: SIGNATURE, agent: AGENT, discovered_date: "2026-09-10" }];
+  const [item] = findAll(sandbox.LedgerPlainRowsI({ rows }), (el) => el.type === "li");
+
+  assert.match(classOf(item), /\bfs-body\b/);
+  assert.doesNotMatch(classOf(item), /\bfs-meta\b/);
+  const [stamp] = findAll(item, (el) => /\bfont-mono\b/.test(classOf(el)));
+  assert.match(classOf(stamp), /\bfs-meta\b/);
+});
+
+test("a live candidate group heads its rows at the body size", () => {
+  const tree = sandbox.LedgerLiveSectionI({ rows: [{ id: 1, pattern_signature: SIGNATURE, agent: AGENT, frequency: 2 }], maxFreq: 2, onRowClick: () => {} });
+  const [head] = findAll(tree, (el) => typeof el.props.title === "string" && el.props.title.length > 0 && el.type === "div");
+
+  assert.match(classOf(head), /\bfs-body\b/);
+});
+
+test("a suggestion board row sets its title at the body size, leaving ids and dates at the meta size", () => {
+  const tree = sandbox.BoardRowI({ onClick: () => {}, lead: null, text: "Keep retries bounded", trail: null });
+  const [title] = findAll(tree, (el) => visibleText(el) === "Keep retries bounded" && el.type === "span");
+
+  assert.ok(title, "the board row prints its title");
+  assert.match(classOf(title), /\bfs-body\b/);
+  assert.doesNotMatch(classOf(title), /\bfs-meta\b/);
+});
+
+test("a held cause states its remedy prose at the body size", () => {
+  const hint = "Raise the cap after a human reads the rows";
+  const tree = sandbox.HeldCauseStripI({ buckets: [{ cause: "repeat-apply-cap", label: "Repeat-apply cap", count: 2, agents: 1, hint }] });
+  const [prose] = findAll(tree, (el) => el.type === "span" && visibleText(el) === hint);
+
+  assert.ok(prose, "the held strip prints the remedy");
+  assert.match(classOf(prose), /\bfs-body\b/);
+  assert.doesNotMatch(classOf(prose), /\bfs-meta\b/);
+});
+
+test("the rejected column header never wraps its label, count or basis", () => {
+  const tree = sandbox.RejectedHeaderI({ rowCount: 4, summary: null, label: "Rejected", symbol: "✕", trend: [] });
+
+  assert.ok(tree, "the rejected header renders nothing");
+  assert.match(classOf(tree), /\bwhitespace-nowrap\b/);
+});
+
+test("the drawer names the approval tier in words, never echoing the raw tier key", () => {
+  const text = visibleText(sandbox.DetailBodyI(sandbox.buildDetailPropsI({ id: 1, approval_tier: "auto" })));
+
+  assert.ok(!text.includes("auto (auto)"), text);
 });

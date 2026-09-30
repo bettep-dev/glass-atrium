@@ -43,6 +43,20 @@ UI_SCALARS.formatInt = REAL_UI.formatInt;
 // The page verdict rolls tones up and names agents with the shipped helpers.
 UI_SCALARS.getWorstTone = REAL_UI.getWorstTone;
 UI_SCALARS.getAgentDisplayName = REAL_UI.getAgentDisplayName;
+// Recharts charts take their image name and edge tick from the shipped chart helpers.
+UI_SCALARS.getChartImageProps = REAL_UI.getChartImageProps;
+UI_SCALARS.ChartAxisTick = REAL_UI.ChartAxisTick;
+UI_SCALARS.getChartXAxisProps = REAL_UI.getChartXAxisProps;
+// RegionFailure's contract (ui.jsx): covered when `shared.sources` names its `source`, else the error card with its own Retry.
+UI_SCALARS.RegionFailure = Object.defineProperty(
+  (props: Record<string, unknown>) => {
+    const shared = props.shared as { sources?: unknown[] } | null | undefined;
+    const atom = shared?.sources?.includes(props.source) ? "RegionCovered" : "RegionUnavailable";
+    return { __element: true, type: "ui-atom", props: { ...props, atom } };
+  },
+  "name",
+  { value: "RegionFailure" },
+);
 
 function uiStub(overrides: Record<string, unknown> = {}): unknown {
   const scalars = { ...UI_SCALARS, ...overrides };
@@ -624,23 +638,107 @@ test("the header's Refresh and freshness stamp read every region, so a first loa
   assert.equal((stamp?.props.regions as unknown[]).length, 9, "the stamp sees all nine page regions");
 });
 
-test("an outage every region shares shows one page banner with the only Retry", async () => {
+test("an outage every region shares shows one page banner with the only Retry, and every region it covers stays quiet", async () => {
   const initial = REAL_UI.INITIAL_REGION_STATE as Record<string, unknown>;
   const failed = { ...initial, status: "error", busy: false, error: "HTTP 503 Service Unavailable — down" };
   const tree = await renderScreenAgents(failed);
   const banners = findAtoms(tree, "PageErrorBanner");
   assert.equal(banners.length, 1);
   assert.equal(typeof banners[0].props.onRetry, "function");
-  const regions = findAtoms(tree, "RegionUnavailable");
-  assert.ok(regions.length > 1, "each region still keeps its quiet placeholder");
-  assert.deepEqual(regions.filter((n) => n.props.onRetry !== undefined), [], "no region repeats the Retry");
+  assert.deepEqual(findAtoms(tree, "RegionUnavailable").map((n) => n.props.source), [], "no region repeats the error card");
+  assert.ok(findAtoms(tree, "RegionCovered").length > 1, "each covered region holds its place with the quiet placeholder");
 });
 
 test("a region that fails alone keeps its own Retry and no page banner appears", async () => {
   const tree = await renderComponent("AgentAlarmLane", { state: ERROR_STATE, onRetry: () => undefined });
+  assert.deepEqual(findAtoms(tree, "RegionCovered"), []);
   const [region] = findAtoms(tree, "RegionUnavailable");
   assert.equal(typeof region?.props.onRetry, "function");
   assert.deepEqual(findAtoms(tree, "PageErrorBanner"), []);
+});
+
+describe("the agents banner reads Retrying only while a failed region is re-read", () => {
+  const firstLoad = { status: "loading", data: null, error: null, busy: true };
+  const outage = { status: "error", data: null, error: "HTTP 503 Service Unavailable — down", busy: false };
+  const rows = [
+    { name: "two failed regions beside other regions' first loads are not retrying", regions: [outage, outage], isBusy: false },
+    { name: "a failed region being re-read is retrying", regions: [outage, { ...outage, busy: true }], isBusy: true },
+  ];
+  for (const row of rows) {
+    test(row.name, async () => {
+      // each region state reads its initial value from this queue, in declaration order; the rest are first loads
+      const regionInitial = {};
+      const queue = [...row.regions];
+      const react = {
+        ...createReactStub(),
+        useState: (initial: unknown) => [initial === regionInitial ? (queue.shift() ?? firstLoad) : initial, () => undefined],
+      };
+      const mod = await loadScreenModule(AGENTS_SRC, { UI: uiStub({ INITIAL_REGION_STATE: regionInitial }), Recharts: uiStub(), React: react });
+      const React = mod.React as { createElement: (t: unknown, p: unknown) => unknown };
+      const tree = renderScreen(React.createElement(mod.ScreenAgents as Component, {}));
+      const [banner] = findAtoms(tree, "PageErrorBanner");
+      assert.equal(banner?.props.isBusy, row.isBusy);
+    });
+  }
+});
+
+test("the drawer's health word takes the page verdict's tone for the same agent: a failed run is never Healthy, a blocked run changes nothing", async () => {
+  const mod = await loadAgentsScreen();
+  const buildTiles = mod.buildAgentStatusTiles as (args: Record<string, unknown>) => Array<{ key: string; tone: string }>;
+  const getVerdict = mod.getDrawerHealthVerdictAg as (entry: unknown, hasSignal: boolean, failure: unknown) => { tone: string; label: string };
+  const healthyEntry = { agent: "dev-react", healthIndex: 0.95, totalRevisions: 20, dominantDriver: null };
+  const rows = [
+    { name: "a failed run on a healthy rework index", failure: { fail_count: 2, blocked_count: 0 }, hasSignal: true },
+    { name: "a failed run with too few runs to judge rework", failure: { fail_count: 1, blocked_count: 0 }, hasSignal: false },
+    { name: "a blocked run only", failure: { fail_count: 0, blocked_count: 3 }, hasSignal: true },
+  ];
+  for (const row of rows) {
+    const tiles = buildTiles({
+      days: 30, summaryState: LOADING_STATE, overageState: LOADING_STATE, overageByAgent: new Map(),
+      failureState: { status: "ready", data: { rows: [] }, error: null }, failureByAgent: new Map([["dev-react", row.failure]]),
+    });
+    const isListed = tiles.find((tile) => tile.key === "failed")?.tone === "crit";
+    const verdict = getVerdict(healthyEntry, row.hasSignal, row.failure);
+    assert.equal(verdict.tone === "crit", isListed, `${row.name}: drawer tone follows the Failed tile`);
+    assert.equal(verdict.label === "Healthy", !isListed && row.hasSignal, `${row.name}: health word`);
+  }
+});
+
+test("the task-type matrix scroller is a named tab stop, so a keyboard reaches the columns it clips", async () => {
+  const tree = await renderComponent("SuccessRateMatrixTable", { matrix: { agents: [], cells: {} } });
+  const [scroller] = findNodes(tree, (n) => /overflow-x-auto/.test(String(n.props?.className ?? "")));
+  assert.equal(scroller?.props.tabIndex, 0);
+  assert.equal(scroller?.props.role, "region");
+  assert.match(String(scroller?.props["aria-label"]), /success rate/i);
+});
+
+test("a crosstab cell stacks its rate over its sample, each an unbroken line, so a column is as wide as its longest line", async () => {
+  const rows = [
+    { name: "settled sample", cell: { totalCount: 40, pooledRate: 0.5, rateDenominator: 40, successCount: 20, reconstructed: 0, points: [] } },
+    { name: "low sample", cell: { totalCount: 3, pooledRate: 0.5, rateDenominator: 2, successCount: 1, reconstructed: 0, points: [] } },
+  ];
+  for (const row of rows) {
+    const tree = await renderComponent("SuccessRateCell", { agent: "dev-react", taskType: "feature", cell: row.cell });
+    const lines = findNodes(tree, (n) => /\bwhitespace-nowrap\b/.test(String(n.props?.className ?? "")));
+    const rateLine = lines.find((n) => /50\s*%/.test(collectText(n)));
+    const sampleLine = lines.find((n) => collectText(n).includes(`n=${row.cell.rateDenominator}`)
+      || findAtoms(n, "LowSampleMark").some((mark) => mark.props.n === row.cell.rateDenominator));
+    assert.ok(rateLine && sampleLine, `${row.name}: rate and sample each sit on a nowrap line`);
+    assert.notEqual(rateLine, sampleLine, `${row.name}: the sample is its own line, not appended to the rate`);
+  }
+});
+
+test("No record and Unfinished each name the other count and say why the two can differ", async () => {
+  const mod = await loadAgentsScreen();
+  const ledger = renderLedger(mod);
+  const lifecycle = await renderComponent("LifecycleStatsTable", { rows: [{ agent_type: "dev-react", start_count: 5, stop_count: 4, completed_count: 3 }], onSelect: () => undefined });
+  const getTitle = (tree: RenderedNode | string | null, label: string) =>
+    String(findNodes(tree, (n) => n.props?.title != null && collectText(n).trim() === label)[0]?.props.title ?? "");
+  const noRecord = getTitle(ledger, "No record");
+  const unfinished = getTitle(lifecycle, "Unfinished");
+  assert.match(noRecord, /Unfinished/, "the ledger column names the lifecycle count");
+  assert.match(unfinished, /No record/, "the lifecycle column names the ledger count");
+  for (const title of [noRecord, unfinished]) assert.match(title, /can differ/, title);
 });
 
 test("a loading region shows a labelled status placeholder with its height reserved, never an empty box", async () => {
@@ -1087,16 +1185,35 @@ test("caption words render in the sans face, leaving mono to ids and numbers", a
   }
 });
 
-test("review-flag chart axis text stays at or above the 12px floor", async () => {
-  const tree = await renderComponent("QualityHealthTimelineChart", { rows: [{ date: "09-24", empty_metric_count: 1, polar_mismatch_count: 0, review_flag_ratio_pct: 5 }] });
-  const axes = [...findAtoms(tree, "XAxis"), ...findAtoms(tree, "YAxis")];
-  assert.equal(axes.length, 3);
-  for (const axis of axes) {
+const REVIEW_FLAG_ROWS = [
+  { date: "09-23", fullDate: "2026-09-23", empty_metric_count: 1, polar_mismatch_count: 0, review_flag_ratio_pct: 5 },
+  { date: "09-24", fullDate: "2026-09-24", empty_metric_count: 2, polar_mismatch_count: 1, review_flag_ratio_pct: 12.5 },
+];
+
+test("review-flag chart dates take the shared day-axis tick, end-keeping interval and label gap, and its value axes stay at or above the 12px floor", async () => {
+  const tree = await renderComponent("QualityHealthTimelineChart", { rows: REVIEW_FLAG_ROWS });
+  const [dateAxis] = findAtoms(tree, "XAxis");
+  const getDayAxisProps = REAL_UI.getChartXAxisProps as (labels: string[]) => Record<string, unknown>;
+  const expected = getDayAxisProps(REVIEW_FLAG_ROWS.map((row) => row.date));
+  for (const key of ["tick", "interval", "minTickGap"]) {
+    assert.equal(dateAxis?.props[key], expected[key], `date axis ${key}`);
+  }
+  const valueAxes = findAtoms(tree, "YAxis");
+  assert.equal(valueAxes.length, 2);
+  for (const axis of valueAxes) {
     const tick = axis.props.tick as { fontSize: number };
     const label = axis.props.label as { fontSize: number } | undefined;
     assert.ok(tick.fontSize >= 12, `tick ${tick.fontSize}px`);
     if (label) assert.ok(label.fontSize >= 12, `label ${label.fontSize}px`);
   }
+});
+
+test("review-flag chart is a focusable image named by the flagged-rate range, latest, low and high", async () => {
+  const tree = await renderComponent("QualityHealthTimelineChart", { rows: REVIEW_FLAG_ROWS });
+  const [image] = findNodes(tree, (n) => n.props.role === "img");
+  assert.equal(image?.props.tabIndex, 0);
+  assert.equal(image?.props["aria-label"],
+    "Daily flagged rate, 2 days from 2026-09-23 to 2026-09-24: latest 12.5%, low 5.0%, high 12.5%");
 });
 
 test("a drawer metric sits flat on its section rather than as a card inside a card", async () => {

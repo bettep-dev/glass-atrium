@@ -59,6 +59,9 @@ const MIN_RENDERED_LABEL_PX = 12;
 // a fitted map reaches at least this share of the pane on its binding axis (the rest is diagramPadding)
 const MIN_BINDING_AXIS_FILL = 0.9;
 
+// empty pane above or below the drawing — the viewBox padding plus the zone title band, at scale <= 1, stays under this
+const MAX_FRAME_GAP_PX = 24;
+
 // CTM-derived reads (labelPx, scale) carry float noise → the label floor and the scale-1 cap compare within it
 const CTM_FLOAT_TOLERANCE = 1e-6;
 
@@ -84,8 +87,11 @@ interface FitReading {
 	boxCount: number;
 	drawnWidthPx: number;
 	drawnHeightPx: number;
+	gapPx: { above: number; below: number };
 	worstOverflowPx: number;
 	worstId: string;
+	// the drawn box reaching deepest under the zoom controls — a positive 2D overlap depth means a box sits under a button
+	controls: { intrusionPx: number; intruderId: string };
 }
 
 function getLiveFixture(): ArchitectureLiveResponse {
@@ -141,10 +147,11 @@ after(async () => {
 // 뷰포트 하나를 열어 실측 한 벌을 돌려줌.
 // 화면에 resize 리스너가 없어 fit 은 최초 렌더에서 한 번만 적용됨 — 그래서 뷰포트마다 새 페이지를 염
 // (이미 뜬 페이지의 크기를 바꾸면 fit 이 다시 걸리지 않아 이전 폭의 배율을 재게 됨).
-async function readFit(width: number, height: number): Promise<FitReading> {
+async function readFit(width: number, height: number, extraSource?: string): Promise<FitReading> {
 	assert.ok(browser, "browser must be up");
 	const page = await browser.newPage({ viewport: { width, height } });
 	try {
+		if (extraSource) await addDiagramSource(page, extraSource);
 		await page.goto(`${serverUrl}/#architecture`, { waitUntil: "load" });
 		const runtimeReady = await page
 			.waitForFunction(
@@ -204,6 +211,9 @@ async function readFit(width: number, height: number): Promise<FitReading> {
 			const boxes = Array.from(canvas.querySelectorAll("svg g.node, svg g.cluster"));
 			let worstOverflowPx = Number.NEGATIVE_INFINITY;
 			let worstId = "";
+			const controls = canvas.querySelector(".arch-zoom-controls")?.getBoundingClientRect();
+			let controlsIntrusionPx = Number.NEGATIVE_INFINITY;
+			let controlsIntruderId = "";
 			const drawn = { left: Infinity, right: -Infinity, top: Infinity, bottom: -Infinity };
 			for (const box of boxes) {
 				const r = box.getBoundingClientRect();
@@ -220,11 +230,23 @@ async function readFit(width: number, height: number): Promise<FitReading> {
 					pane.bottom - r.bottom,
 				);
 				const overflow = -inset;
+				const intrusion = controls
+					? Math.min(r.right - controls.left, controls.right - r.left, r.bottom - controls.top, controls.bottom - r.top)
+					: Number.NEGATIVE_INFINITY;
+				if (intrusion > controlsIntrusionPx) {
+					controlsIntrusionPx = intrusion;
+					controlsIntruderId = box.getAttribute("data-arch-node-id") || box.id || "(unnamed)";
+				}
 				if (overflow > worstOverflowPx) {
 					worstOverflowPx = overflow;
 					worstId = box.getAttribute("data-arch-node-id") || box.id || "(unnamed)";
 				}
 			}
+
+			// lane mode only: its controls row under the drawing is chrome, not an empty band → the band below ends at its top
+			const isLaneMode = canvas.hasAttribute("data-arch-controls-lane");
+			const frameBottom =
+				isLaneMode && controls && controls.top >= drawn.bottom ? Math.min(pane.bottom, controls.top) : pane.bottom;
 
 			return {
 				paneWidth: pane.width,
@@ -234,8 +256,10 @@ async function readFit(width: number, height: number): Promise<FitReading> {
 				boxCount: boxes.length,
 				drawnWidthPx: drawn.right - drawn.left,
 				drawnHeightPx: drawn.bottom - drawn.top,
+				gapPx: { above: drawn.top - pane.top, below: frameBottom - drawn.bottom },
 				worstOverflowPx,
 				worstId,
+				controls: { intrusionPx: controlsIntrusionPx, intruderId: controlsIntruderId },
 			};
 		}, canvasSelector);
 	} finally {
@@ -256,6 +280,12 @@ const REDUNDANT_TITLE_ZONE = [
 	'    subgraph fitprobe["Probe store"]',
 	'        fitprobe_store[("Probe store (fixture)")]',
 	"    end",
+].join("\n");
+
+// a short chain ending in a fan — a wider and taller part set than the served map, floor-bound at the narrow widths
+const WIDE_TALL_PROBE = [
+	'    fitwide0["Wide probe step"] --> fitwide1["Wide probe step 1"]',
+	...Array.from({ length: 4 }, (_, i) => `    fitwide1 --> fittall${i}["Tall probe leaf ${i}"]`),
 ].join("\n");
 
 // serves the drawn diagrams with extra source lines appended to the map the screen opens on
@@ -467,6 +497,21 @@ for (const { width, height } of VIEWPORTS) {
 		);
 	});
 
+	for (const partSet of [
+		{ name: "the served map", extraSource: undefined },
+		{ name: "a wider and taller map", extraSource: WIDE_TALL_PROBE },
+	]) {
+		test(`no drawn box sits under the zoom controls with ${partSet.name} at ${width}x${height}`, async () => {
+			const r = await readFit(width, height, partSet.extraSource);
+			assert.ok(r.boxCount > 0, "no node or zone boxes were measured — the map did not render");
+			assert.ok(
+				r.controls.intrusionPx <= EPS_PX,
+				`\`${r.controls.intruderId}\` reaches ${r.controls.intrusionPx.toFixed(1)}px under the zoom controls, so a click there presses a button ` +
+					`(pane ${r.paneWidth.toFixed(0)}x${r.paneHeight.toFixed(0)} at scale ${r.scale.toFixed(4)})`,
+			);
+		});
+	}
+
 	test(`every label stays legible at ${width}x${height}`, async () => {
 		const r = await readFit(width, height);
 		assert.ok(r.labelPx > 0, "no drawn label was measured");
@@ -487,6 +532,16 @@ for (const { width, height } of VIEWPORTS) {
 			r.drawnWidthPx > r.drawnHeightPx,
 			`drawn ${r.drawnWidthPx.toFixed(0)}x${r.drawnHeightPx.toFixed(0)} — the flow no longer reads left to right`,
 		);
+	});
+}
+
+for (const { width, height } of VIEWPORTS) {
+	test(`the drawing fills its frame with no empty band above or below it at ${width}x${height}`, async () => {
+		const r = await readFit(width, height);
+		const gaps = `pane ${r.paneWidth.toFixed(0)}x${r.paneHeight.toFixed(0)} · drawn ${r.drawnWidthPx.toFixed(0)}x${r.drawnHeightPx.toFixed(0)} · ` +
+			`${r.gapPx.above.toFixed(0)}px empty above, ${r.gapPx.below.toFixed(0)}px below`;
+		assert.ok(r.gapPx.above <= MAX_FRAME_GAP_PX, `a band above the drawing: ${gaps}`);
+		assert.ok(r.gapPx.below <= MAX_FRAME_GAP_PX, `a band below the drawing: ${gaps}`);
 	});
 }
 

@@ -5,13 +5,13 @@
 // Runner: npx tsx --test test/cost.client.unit.test.ts
 // Sandbox harness (esbuild + node:vm over the real shipped cost.jsx): client-sandbox.ts.
 
-import test from "node:test";
+import test, { describe } from "node:test";
 import assert from "node:assert/strict";
 import { fileURLToPath } from "node:url";
 import { dirname, resolve } from "node:path";
 
 import { buildScreenSandbox } from "./client-sandbox.js";
-import { createReactStub, findNodes, loadScreenModule, renderScreen, type RenderedNode } from "./lib/render-screen.js";
+import { collectText, createReactStub, findNodes, loadScreenModule, renderScreen, type RenderedNode } from "./lib/render-screen.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const COST_SRC = resolve(__dirname, "../public/src/screens/cost.jsx");
@@ -89,7 +89,6 @@ interface CostHelpers {
   computeHotVerdict: (kpi: Record<string, unknown>) => HotVerdict;
   computeWindowTotal: (state: PanelState) => WindowTotal;
   getShownDays: (state: PanelState, requestedDays: number) => number;
-  getEdgeTickAnchor: (index: number, count: number) => string;
   computeCacheShare: (state: PanelState) => {
     share: number | null;
     cacheCost: number | null;
@@ -147,7 +146,8 @@ interface CostHelpers {
   getParseErrorChartRows: (
     rows: readonly { event_date: string; error_count: number; total_count: number; error_ratio: number }[],
   ) => { error_count: number; threshold_count: number; isCrit: boolean }[];
-  getCacheGapLabel: (rows: readonly { rate_pct: number | null }[]) => string | null;
+  getNoDataLabelC: (values: readonly (number | null)[]) => string | null;
+  getCacheTicks: (domain: readonly [number, number]) => number[];
   getTokenAxisFormatter: (maxValue: number) => (value: number) => string;
   computeTokenShares: (
     points: readonly Record<string, number>[],
@@ -373,14 +373,6 @@ test("a window tag names the range its figures were read for, never the range st
   ];
   for (const row of rows) {
     assert.strictEqual(cost.getShownDays(row.state, row.requested), row.shown, row.name);
-  }
-});
-
-test("only the last x tick anchors at its end, so a label on the right edge is never clipped", () => {
-  const count = 6;
-  for (let index = 0; index < count; index++) {
-    const expected = index === count - 1 ? "end" : "middle";
-    assert.strictEqual(cost.getEdgeTickAnchor(index, count), expected, `tick ${index} of ${count}`);
   }
 });
 
@@ -766,6 +758,24 @@ test("every tick on one cost axis carries the same decimals and reads back as it
   }
 });
 
+test("a hit-rate axis ticks on one even step inside its domain, whole percents on a wide one, and a top clamped at 100 is always a tick", () => {
+  const rows = [
+    { name: "the [0,100] fallback", domain: [0, 100] as const },
+    { name: "a wide window clamped at 100", domain: [88.5, 100] as const },
+    { name: "a narrow window clamped at 100", domain: [96, 100] as const },
+    { name: "a window below 100", domain: [40.3, 62.7] as const },
+  ];
+  for (const { name, domain } of rows) {
+    const ticks = cost.getCacheTicks(domain);
+    const steps = new Set(ticks.slice(1).map((t, i) => (t - ticks[i]!).toFixed(6)));
+    assert.ok(ticks.length >= 2 && ticks.length <= 6, `${name}: ${ticks.join(" ")}`);
+    assert.ok(ticks.every((t) => t >= domain[0] && t <= domain[1]), `${name}: ${ticks.join(" ")}`);
+    assert.strictEqual(steps.size, 1, `${name}: ${ticks.join(" ")}`);
+    if (domain[1] - domain[0] >= 5) assert.ok(ticks.every(Number.isInteger), `${name}: ${ticks.join(" ")}`);
+    if (domain[1] === 100) assert.strictEqual(ticks.at(-1), 100, `${name}: ${ticks.join(" ")}`);
+  }
+});
+
 test("the focus readout names the normal range exactly when the band is on and the day has one", () => {
   const banded = { fullDate: "Sep 20", actual: 12, isPartial: false, rollingMean: 10, lowerBand: 4, upperBand: 16 };
   const unbanded = { fullDate: "Sep 14", actual: 3, isPartial: false, rollingMean: null, lowerBand: null, upperBand: null };
@@ -801,24 +811,23 @@ test("an expanded model detail line names the model it belongs to", () => {
   assert.strictEqual(new Set(lines).size, models.length);
 });
 
-test("the spend headline names the fewest top sessions holding half of spend, capped at the shown rows", () => {
+test("the spend headline's share is held by exactly the rows the table shows", () => {
   const toSessions = (costs: readonly number[]) =>
     costs.map((c, i) => ({ session_id: `s${i}`, total_cost_usd: c }));
   const rows = [
-    { name: "two sessions reach half", costs: [30, 10, 40, 10, 5, 5] },
-    { name: "one session dominates", costs: [10, 80, 10] },
-    { name: "flat spend never reaches half inside the cap", costs: Array.from({ length: 20 }, () => 1) },
+    { name: "more sessions than the table shows", costs: [30, 10, 40, 10, 5, 5, 1] },
+    { name: "fewer sessions than the table holds", costs: [10, 80, 10] },
+    { name: "flat spend", costs: Array.from({ length: 20 }, () => 1) },
   ];
   const topN = 5;
   for (const { name, costs } of rows) {
     const got = cost.getSpendConcentration(toSessions(costs), topN);
     assert.ok(got, name);
-    const sorted = costs.slice().sort((a, b) => b - a);
+    const shown = cost.rollupSessionRows(toSessions(costs), topN).top;
     const total = costs.reduce((s, c) => s + c, 0);
-    const sumOf = (k: number) => sorted.slice(0, k).reduce((s, c) => s + c, 0);
-    assert.ok(Math.abs(got.share - sumOf(got.count) / total) < 1e-9, name);
-    assert.ok(got.count === topN || got.share >= 0.5, name);
-    assert.ok(got.count === 1 || sumOf(got.count - 1) / total < 0.5, name);
+    assert.equal(got.count, shown.length, `${name}: the lead counts the shown rows`);
+    const shownSum = [...shown].reduce((s, r) => s + r.total_cost_usd, 0);
+    assert.ok(Math.abs(got.share - shownSum / total) < 1e-9, name);
   }
   assert.strictEqual(cost.getSpendConcentration(toSessions([0, 0]), topN), null);
 });
@@ -854,7 +863,7 @@ test("the hit-rate strip names its no-data days, and says nothing when every day
     { name: "all gaps", rates: [null, null], gaps: 2 },
   ];
   for (const { name, rates, gaps } of rows) {
-    const label = cost.getCacheGapLabel(rates.map((rate_pct) => ({ rate_pct })));
+    const label = cost.getNoDataLabelC(rates);
     if (gaps === 0) {
       assert.strictEqual(label, null, name);
       continue;
@@ -974,7 +983,7 @@ test("a cold-failed region keeps its error card mounted and busy while its Retry
   const regionIds = new Set(findNodes(page, (n) => n.type === "div" && typeof n.props.id === "string").map((n) => n.props.id));
   for (const name of bodies) {
     const tree = renderIn(mod, name, { state: retrying, days: 30, onRetry: () => {}, onNav: () => {} });
-    const cards = findNodes(tree, (n) => n.props.atom === "RegionUnavailable");
+    const cards = findNodes(tree, (n) => n.props.atom === "RegionFailure");
     assert.equal(cards.length, 1, `${name} keeps its error card`);
     assert.equal(findNodes(tree, (n) => n.props.atom === "LoadingPlaceholder").length, 0, `${name} never swaps in a loader`);
     assert.equal(cards[0].props.isBusy, true, `${name} shows the Retry in flight`);
@@ -990,12 +999,51 @@ test("a cold-failed KPI payload retrying reads as failed on its tiles, never a s
     kpiState, hot: cost.computeHotVerdict({}), trendState: settled, modelState: settled, days: 30, onRetry: () => {},
   });
 
-  const cards = findNodes(tree, (n) => n.props.atom === "RegionUnavailable");
+  const cards = findNodes(tree, (n) => n.props.atom === "RegionFailure");
   assert.equal(cards.length, 1, "the KPI error card stays mounted");
   assert.equal(cards[0].props.isBusy, true);
   const tiles = findNodes(tree, (n) => n.type === "div" && n.props.className === "kpi");
   assert.equal(tiles.length, 4);
   assert.equal(tiles.filter((t) => t.props["aria-busy"] === "true").length, 0, "no tile reads as loading beside the card");
+});
+
+test("every cost region error card carries the page Retry, so a region the banner does not cover still offers one", async () => {
+  const mod = (await loadScreenModule(COST_SRC, {
+    UI: getAtomUi({ INITIAL_REGION_STATE: failed }), React: createReactStub(),
+  })) as RenderModule;
+  const tree = renderIn(mod, "ScreenCost", { onNav: () => {} });
+
+  assert.equal(findNodes(tree, (n) => n.props.atom === "PageErrorBanner").length, 1, "the shared outage shows its banner");
+  const cards = findNodes(tree, (n) => n.props.atom === "RegionFailure");
+  assert.ok(cards.length >= 7, "every payload's region renders its error card");
+  for (const card of cards) {
+    assert.equal(typeof card.props.onRetry, "function", `${String(card.props.source)} keeps its Retry for RegionFailure to hide or show`);
+  }
+});
+
+// each ScreenCost region state reads its initial value from this queue, in declaration order; the rest are first loads
+function renderCostWithRegions(regions: PanelState[]): Promise<RenderedNode> {
+  const regionInitial = {};
+  const queue = [...regions];
+  const react = {
+    ...createReactStub(),
+    useState: (initial: unknown) => [initial === regionInitial ? (queue.shift() ?? loading) : initial, () => undefined],
+  };
+  return loadScreenModule(COST_SRC, { UI: getAtomUi({ INITIAL_REGION_STATE: regionInitial }), React: react })
+    .then((mod) => renderIn(mod as RenderModule, "ScreenCost", { onNav: () => {} }));
+}
+
+describe("the cost banner reads Retrying only while a failed region is re-read", () => {
+  const rows = [
+    { name: "two failed regions beside other panels' first loads are not retrying", regions: [failed, failed], isBusy: false },
+    { name: "a failed region being re-read is retrying", regions: [failed, { ...failed, busy: true }], isBusy: true },
+  ];
+  for (const row of rows) {
+    test(row.name, async () => {
+      const [banner] = findNodes(await renderCostWithRegions(row.regions), (n) => n.props.atom === "PageErrorBanner");
+      assert.equal(banner?.props.isBusy, row.isBusy);
+    });
+  }
 });
 
 test("the page verdict over a warm error reads Last known, never the all-clear", async () => {
@@ -1014,4 +1062,121 @@ test("the page verdict over a warm error reads Last known, never the all-clear",
   const shown = ui.getFreshnessVerdict({ ...props.freshness, tone: props.tone, label: props.label, now });
   assert.match(String(shown.label), /^Last known/, `the verdict reads ${String(shown.label)}`);
   assert.notEqual(shown.tone, "ok", "a held read under a failure never reads healthy");
+});
+
+// every Recharts part renders as a host node named after it, so a chart's wrapper and data are inspectable
+const RECHARTS_STUB = new Proxy({}, {
+  get: (_target, name: string) => (props: Record<string, unknown>) => ({ __element: true, type: `recharts-${name}`, props }),
+  has: () => true,
+});
+
+async function loadCostRender(overrides: Record<string, unknown> = {}): Promise<RenderModule> {
+  return (await loadScreenModule(COST_SRC, {
+    UI: getAtomUi(overrides), React: createReactStub(), Recharts: RECHARTS_STUB,
+  })) as RenderModule;
+}
+
+const isChart = (n: RenderedNode): boolean => typeof n.type === "string" && /^recharts-\w+Chart$/.test(n.type);
+
+function getTokenDay(date: string, costUsd: number, sessions: number): Record<string, unknown> {
+  return {
+    date, cost_usd: costUsd, session_count: sessions,
+    input_tokens: costUsd * 10, output_tokens: costUsd * 5, cache_read_tokens: costUsd * 100, cache_creation_tokens: costUsd * 20,
+  };
+}
+
+// the server zero-fills a day nothing was recorded on → 01-06 is that day
+const TREND_WITH_GAP = ready({
+  points: [
+    getTokenDay("2026-01-05", 3, 2), getTokenDay("2026-01-06", 0, 0), getTokenDay("2026-01-07", 4, 3),
+    getTokenDay("2026-01-08", 2, 2), getTokenDay("2026-01-09", 5, 4), getTokenDay("2026-01-10", 1, 1),
+  ],
+});
+
+const CACHE_ROWS = ["2026-01-08", "2026-01-09", "2026-01-10"].map((event_date, i) => ({
+  event_date, cache_hit_rate: [0.97, 0.99, 0.985][i], total_cache_read: 900, total_input: 20,
+}));
+
+test("every chart is a focusable image carrying its own name", async () => {
+  const mod = await loadCostRender();
+  const rows = [
+    { name: "cost over time", component: "CostTrendBody", props: { state: TREND_WITH_GAP, days: 30, bandOn: false } },
+    { name: "token volume, area", component: "TokenStackedBody", props: { state: TREND_WITH_GAP, days: 30 } },
+    { name: "token volume, columns", component: "TokenStackedBody", props: { state: TREND_WITH_GAP, days: 7 } },
+    { name: "cache hit rate", component: "CacheHitBody", props: { state: ready({ rows: CACHE_ROWS }), days: 30 } },
+    {
+      name: "log integrity", component: "ParseErrorBody",
+      props: { state: ready({ rows: [{ event_date: "2026-01-09", error_count: 3, total_count: 40, error_ratio: 0.075 }] }), days: 30 },
+    },
+    {
+      name: "session cost distribution", component: "SessionHistogramDrawerC",
+      props: { bins: [{ label: "$0–0.01", count: 3, isOutlier: false }, { label: "$1–5", count: 2, isOutlier: false }], total: 5 },
+    },
+  ];
+  for (const row of rows) {
+    const tree = renderIn(mod, row.component, { onRetry: () => {}, onClose: () => {}, ...row.props });
+    const charts = findNodes(tree, isChart);
+    const images = findNodes(tree, (n) => n.props.role === "img" && findNodes(n, isChart).length > 0);
+    assert.ok(charts.length > 0, `${row.name} draws a chart`);
+    assert.equal(images.reduce((sum, n) => sum + findNodes(n, isChart).length, 0), charts.length, `${row.name}: every chart sits in an image`);
+    for (const image of images) {
+      assert.equal(image.props.tabIndex, 0, `${row.name} is reachable by keyboard`);
+      assert.match(String(image.props["aria-label"] ?? ""), /\S/, `${row.name} is named`);
+    }
+  }
+});
+
+test("a no-data day is a gap in both trend charts and in their names, never $0", async () => {
+  const mod = await loadCostRender();
+  const rows = [
+    { name: "cost over time", component: "CostTrendBody", field: "completeCost" },
+    { name: "token volume", component: "TokenStackedBody", field: "cache_read_tokens" },
+  ];
+  for (const row of rows) {
+    const tree = renderIn(mod, row.component, { state: TREND_WITH_GAP, days: 30, bandOn: false, onRetry: () => {} });
+    const [chart] = findNodes(tree, isChart);
+    const gapDay = (chart.props.data as ReadonlyArray<Record<string, unknown>>)[1];
+    assert.strictEqual(gapDay[row.field], null, `${row.name} draws the gap day as a gap`);
+    const [image] = findNodes(tree, (n) => n.props.role === "img" && findNodes(n, isChart).length > 0);
+    const label = String(image.props["aria-label"]);
+    assert.match(label, /1 of 6 days no data/, `${row.name} names its gap`);
+    assert.doesNotMatch(label, /\$0(\.0+)?(?![.\d])/, `${row.name} never names a $0 day`);
+  }
+});
+
+test("the pace figure is stated once on the page", async () => {
+  const state = ready({ ...getKpiAtRatio(1, 1.5), points: (TREND_WITH_GAP.data as { points: unknown[] }).points, rows: [] });
+  const mod = await loadCostRender({ INITIAL_REGION_STATE: state });
+  const text = collectText(renderIn(mod, "ScreenCost", { onNav: () => {} }));
+  assert.equal(text.match(/\bpace\b|heading past/gi)?.length ?? 0, 1, text);
+});
+
+test("the token legend is printed once", async () => {
+  const state = ready({ ...getKpiAtRatio(1, 1), points: (TREND_WITH_GAP.data as { points: unknown[] }).points, rows: [] });
+  const mod = await loadCostRender({ INITIAL_REGION_STATE: state });
+  const tree = renderIn(mod, "ScreenCost", { onNav: () => {} });
+  const [volume] = findNodes(tree, (n) => n.props.atom === "Disclosure" && n.props.title === "Token volume");
+  const swatches = findNodes(volume, (n) => String(n.props.className ?? "").includes("rounded-sm") && n.props.style !== undefined);
+  const colors = swatches.map((n) => String((n.props.style as { background?: string }).background));
+  assert.ok(colors.length > 0);
+  assert.equal(new Set(colors).size, colors.length, `each category colour once: ${colors.join(", ")}`);
+});
+
+test("the trend card names its band in plain words and keeps its live echo off screen", async () => {
+  const mod = await loadCostRender();
+  const tree = renderIn(mod, "CostTrendCard", { state: TREND_WITH_GAP, days: 30, onRetry: () => {} });
+  const [head] = findNodes(tree, (n) => n.props.atom === "CardHead");
+  const toggle = renderScreen(head.props.right) as RenderedNode;
+  assert.doesNotMatch(collectText(toggle) + String(toggle.props.title ?? ""), /σ/);
+  const echoes = findNodes(tree, (n) => n.props["aria-live"] === "polite");
+  assert.ok(echoes.length > 0);
+  for (const echo of echoes) assert.match(String(echo.props.className), /\bsr-only\b/);
+});
+
+test("a flat hit-rate strip collapses to one line instead of an empty chart", async () => {
+  const mod = await loadCostRender();
+  const flat = CACHE_ROWS.map((r) => ({ ...r, cache_hit_rate: 1 }));
+  const tree = renderIn(mod, "CacheHitBody", { state: ready({ rows: flat }), days: 30, onRetry: () => {} });
+  assert.equal(findNodes(tree, isChart).length, 0);
+  assert.match(collectText(tree), /100\.0%.*every day/);
 });

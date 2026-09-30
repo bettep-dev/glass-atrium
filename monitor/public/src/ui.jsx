@@ -219,6 +219,12 @@ function MiniBars({ data, w=60, h=22, color='currentColor', label }) {
 // Panel-width day chart: viewBox x runs 0..CHART_VIEW_W and stretches to the panel (preserveAspectRatio none).
 const CHART_VIEW_W = 100;
 const CHART_MAX_TICKS = 7;
+const CHART_PLOT_FILL = 0.85;
+/** Minimum px between tick labels; Recharts axes get it through getChartXAxisProps. */
+const CHART_TICK_MIN_GAP_PX = 8;
+// ponytail: fixed per-char estimate of a --fs-meta day label (≤7px) → measure with canvas if labels grow wide
+const CHART_TICK_CHAR_PX = 7;
+const CHART_TICK_SHIFT = { start: '0', middle: '-50%', end: '-100%' };
 
 // Evenly spaced day-tick indices, always the first and last day, at most maxTicks.
 function getChartTicks(count, maxTicks = CHART_MAX_TICKS) {
@@ -235,6 +241,80 @@ function getChartIndexAtRatio(ratio, count, kind = 'line') {
   const clamped = Math.min(1, Math.max(0, ratio));
   const index = kind === 'bars' ? Math.floor(clamped * count) : Math.round(clamped * (count - 1));
   return Math.min(count - 1, index);
+}
+
+/** Anchor of the order-th of total visible ticks (SVG textAnchor words): first starts at its point, last ends at it. */
+function getChartTickAnchor(order, total) {
+  if (total <= 1) return 'middle';
+  if (order === 0) return 'start';
+  return order === total - 1 ? 'end' : 'middle';
+}
+
+/**
+ * Day-tick slots for an HTML tick row: evenly spaced, latest day always kept, cap lowered until no two labels collide.
+ * @param widthPx - measured row width; 0 (not yet measured) keeps the count-based ticks
+ * @returns `{ index, left, anchor }` per label — left in % of the plot width
+ */
+function getChartTickLayout(labels, kind, widthPx, maxTicks = CHART_MAX_TICKS) {
+  const count = labels.length;
+  const ticks = widthPx > 0 ? getFittingTicks(labels, kind, widthPx, maxTicks) : getChartTicks(count, maxTicks);
+  // a lone survivor of a crowded row is the latest day, which sits on the right edge
+  const getAnchor = (order) => (ticks.length === 1 && count > 1 ? 'end' : getChartTickAnchor(order, ticks.length));
+  return ticks.map((index, order) => ({ index, left: getChartX(index, count, kind), anchor: getAnchor(order) }));
+}
+
+function getFittingTicks(labels, kind, widthPx, maxTicks) {
+  for (let cap = Math.max(2, maxTicks); cap >= 2; cap--) {
+    const ticks = getChartTicks(labels.length, cap);
+    if (isTickRowClear(ticks, labels, kind, widthPx)) return ticks;
+  }
+  return [labels.length - 1];
+}
+
+function isTickRowClear(ticks, labels, kind, widthPx) {
+  const boxes = ticks.map((index, order) => {
+    const width = labels[index].length * CHART_TICK_CHAR_PX;
+    const x = (getChartX(index, labels.length, kind) / CHART_VIEW_W) * widthPx;
+    const anchor = getChartTickAnchor(order, ticks.length);
+    const start = anchor === 'start' ? x : anchor === 'end' ? x - width : x - width / 2;
+    return { start, end: start + width };
+  });
+  return boxes.every((box, i) => i === 0 || box.start - boxes[i - 1].end >= CHART_TICK_MIN_GAP_PX);
+}
+
+/** Top/bottom y-axis labels matching ChartPlot's scale (bars from zero, lines from the low); null with no finite value. */
+function getChartYScale(points, kind, formatValue = String) {
+  const values = points.map((point) => point.value).filter(Number.isFinite);
+  if (values.length === 0) return null;
+  const bottom = kind === 'bars' ? 0 : Math.min(...values);
+  return { top: formatValue(Math.max(...values)), bottom: formatValue(bottom) };
+}
+
+/** Spread onto the element wrapping a Recharts chart: a focusable image named by getChartSummary. */
+function getChartImageProps(name, points, formatValue = String) {
+  return { role: 'img', tabIndex: 0, 'aria-label': getChartSummary(name, points, formatValue) };
+}
+
+const CHART_AXIS_TICK_STYLE = { fontSize: 'var(--fs-meta)', fill: 'rgb(var(--faint))', fontFamily: "'JetBrains Mono', monospace" };
+
+/**
+ * Recharts XAxis props for a day axis: shared tick, both ends kept, and a gap that holds with edge anchoring.
+ * Recharts spaces labels as boxes centred on x, measured in the body font (never narrower than the tick font);
+ * an end label anchored on its own point overhangs that box by at most half its width → the gap carries that half.
+ */
+function getChartXAxisProps(labels) {
+  const widest = Math.max(0, ...labels.map((label) => String(label).length));
+  return { tick: ChartAxisTick, interval: 'preserveStartEnd', minTickGap: CHART_TICK_MIN_GAP_PX + Math.ceil((widest * CHART_TICK_CHAR_PX) / 2) };
+}
+
+/** Recharts XAxis `tick` renderer — ends anchored by visible order, like the HTML tick row. */
+function ChartAxisTick({ x, y, payload, index, visibleTicksCount }) {
+  const anchor = getChartTickAnchor(index, visibleTicksCount);
+  // Recharts clamps end labels to the whole chart box, not the plot → an edge label pins to its own point instead
+  const labelX = anchor === 'middle' ? x : payload.coordinate;
+  return <text x={labelX} y={y} dy="0.71em" textAnchor={anchor} style={CHART_AXIS_TICK_STYLE}>
+    {payload.value}
+  </text>;
 }
 
 function getChartReadout(point, formatValue = String) {
@@ -272,7 +352,7 @@ function ChartPlot({ points, kind, h, color, activeIndex }) {
   const finite = values.filter((value) => value !== null);
   const min = kind === 'bars' || finite.length === 0 ? 0 : Math.min(...finite);
   const range = (finite.length ? Math.max(...finite) : 1) - min || 1;
-  const getY = (value) => h - ((value - min) / range) * h * 0.85 - 1;
+  const getY = (value) => h - ((value - min) / range) * h * CHART_PLOT_FILL - 1;
   const crossX = activeIndex === null ? null : getChartX(activeIndex, points.length, kind);
   return <svg width="100%" height={h} viewBox={`0 0 ${CHART_VIEW_W} ${h}`} preserveAspectRatio="none" aria-hidden="true" style={{ display: 'block' }}>
     {kind === 'bars'
@@ -293,13 +373,34 @@ function ChartBars({ values, h, getY, color, activeIndex }) {
 }
 
 function ChartTicks({ points, kind, maxTicks }) {
-  const count = points.length;
-  return <div aria-hidden="true" className="text-faint" style={{ position: 'relative', height: 18, fontSize: 'var(--fs-meta)' }}>
-    {getChartTicks(count, maxTicks).map((i) => {
-      const left = getChartX(i, count, kind);
-      const shift = left <= 0 ? '0' : left >= CHART_VIEW_W ? '-100%' : '-50%';
-      return <span key={i} data-chart-tick="" style={{ position: 'absolute', left: `${left}%`, transform: `translateX(${shift})`, whiteSpace: 'nowrap' }}>{points[i].label}</span>;
-    })}
+  const [rowRef, widthPx] = useElementWidth();
+  const labels = points.map((point) => point.label);
+  return <div ref={rowRef} aria-hidden="true" className="text-faint" style={{ position: 'relative', height: 18, fontSize: 'var(--fs-meta)' }}>
+    {getChartTickLayout(labels, kind, widthPx, maxTicks).map(({ index, left, anchor }) =>
+      <span key={index} data-chart-tick="" style={{ position: 'absolute', left: `${left}%`, transform: `translateX(${CHART_TICK_SHIFT[anchor]})`, whiteSpace: 'nowrap' }}>{labels[index]}</span>)}
+  </div>;
+}
+
+// Live width of the ref'd element; 0 until the first layout measure.
+function useElementWidth() {
+  const ref = useRef(null);
+  const [width, setWidth] = useState(0);
+  useLayoutEffect(() => {
+    const element = ref.current;
+    if (!element || typeof ResizeObserver === 'undefined') return undefined;
+    const observer = new ResizeObserver(([entry]) => setWidth(entry.contentRect.width));
+    observer.observe(element);
+    return () => observer.disconnect();
+  }, []);
+  return [ref, width];
+}
+
+// Max label level with ChartPlot's highest value, min label on the baseline.
+// Both labels share one in-flow grid cell → the TrendChart's auto column takes the wider label's width, never 0.
+function ChartYScale({ scale, h }) {
+  return <div aria-hidden="true" data-chart-y-scale="" className="text-faint tnum" style={{ display: 'grid', gridTemplateRows: `${h}px`, justifyItems: 'end', fontSize: 'var(--fs-meta)' }}>
+    <span style={{ gridArea: '1 / 1', alignSelf: 'start', marginTop: h * (1 - CHART_PLOT_FILL) - 1, transform: 'translateY(-50%)', whiteSpace: 'nowrap' }}>{scale.top}</span>
+    <span style={{ gridArea: '1 / 1', alignSelf: 'end', whiteSpace: 'nowrap' }}>{scale.bottom}</span>
   </div>;
 }
 
@@ -325,18 +426,25 @@ function useChartReadout(count, kind) {
 /**
  * Day-series chart that fills its panel: named image, day ticks, crosshair + polite live readout on hover and focus.
  * @param points - `{ label, value }` per day, oldest first; a null value renders as a gap
- * @param formatValue - formats values in the readout and the accessible summary
+ * @param formatValue - formats values in the readout, the accessible summary and the y-scale
+ * @param yScale - true adds a max/min label column beside the plot
  */
-function TrendChart({ label, points, kind = 'line', h = 64, tone = 'info', formatValue = String, maxTicks = CHART_MAX_TICKS }) {
+function TrendChart({ label, points, kind = 'line', h = 64, tone = 'info', formatValue = String, maxTicks = CHART_MAX_TICKS, yScale = false }) {
   const count = points ? points.length : 0;
   const { activeIndex, handlers } = useChartReadout(count, kind);
   if (count === 0) return <p className="text-faint" style={{ fontSize: 'var(--fs-meta)', margin: 0 }}>No data in range</p>;
   const readout = activeIndex === null ? '' : getChartReadout(points[activeIndex], formatValue);
+  const scale = yScale ? getChartYScale(points, kind, formatValue) : null;
+  const plot = <div {...getChartImageProps(label, points, formatValue)} style={{ cursor: 'crosshair', minWidth: 0 }} {...handlers}>
+    <ChartPlot points={points} kind={kind} h={h} color={toneVarColor(tone)} activeIndex={activeIndex}/>
+  </div>;
+  const ticks = <ChartTicks points={points} kind={kind} maxTicks={maxTicks}/>;
   return <figure className="trend-chart" style={{ margin: 0, minWidth: 0 }}>
-    <div role="img" aria-label={getChartSummary(label, points, formatValue)} tabIndex={0} style={{ cursor: 'crosshair' }} {...handlers}>
-      <ChartPlot points={points} kind={kind} h={h} color={toneVarColor(tone)} activeIndex={activeIndex}/>
-    </div>
-    <ChartTicks points={points} kind={kind} maxTicks={maxTicks}/>
+    {scale
+      ? <div style={{ display: 'grid', gridTemplateColumns: 'auto minmax(0, 1fr)', columnGap: 6 }}>
+          <ChartYScale scale={scale} h={h}/>{plot}<span/>{ticks}
+        </div>
+      : <>{plot}{ticks}</>}
     <div aria-live="polite" style={{ minHeight: 18, fontSize: 'var(--fs-meta)', fontVariantNumeric: 'tabular-nums' }}>{readout}</div>
   </figure>;
 }
@@ -866,11 +974,20 @@ function Disclosure({ kind = 'detail', title, sub, tone, level = 2, children, cl
 // ratio preset → base.css modifier; stacked below xl, side by side at xl.
 const SPLIT_ROW_RATIOS = Object.freeze({ '1:1': '1-1', '7:5': '7-5', '3:2': '3-2', '2:1': '2-1' });
 
-// Two cards (or two in-card columns) side by side at xl in a ratio preset.
-function SplitRow({ ratio = '1:1', children, className = '' }) {
-  const modifier = SPLIT_ROW_RATIOS[ratio] || SPLIT_ROW_RATIOS['1:1'];
+// layout → base.css modifier: content = each column its own height (no stretched empty box) · equal = peer cards match heights.
+const SPLIT_ROW_LAYOUTS = Object.freeze({ content: 'content', equal: 'equal' });
 
-  return <div className={`split-row split-row--${modifier} ${className}`.trim()}>{children}</div>;
+// Two cards (or two in-card columns) side by side at xl in a ratio preset · layout: 'content' (default) | 'equal'.
+function SplitRow({ ratio = '1:1', layout = 'content', children, className = '' }) {
+  const modifier = SPLIT_ROW_RATIOS[ratio] || SPLIT_ROW_RATIOS['1:1'];
+  const layoutModifier = SPLIT_ROW_LAYOUTS[layout] || SPLIT_ROW_LAYOUTS.content;
+
+  return <div className={`split-row split-row--${modifier} split-row--${layoutModifier} ${className}`.trim()}>{children}</div>;
+}
+
+// One SplitRow column holding a card stack (16px apart) · isRail → sticky 24px from the top at xl.
+function SplitColumn({ isRail = false, children, className = '' }) {
+  return <div className={`split-col ${isRail ? 'split-col--rail' : ''} ${className}`.replace(/\s+/g, ' ').trim()}>{children}</div>;
 }
 
 // Tile-internal columns below xl: value + badge (lead) left, detail + hint + drill link right.
@@ -1376,7 +1493,7 @@ function getErrorCopy(error, source) {
 }
 
 /**
- * The outage ≥2 failed regions share, or null — a non-null answer means one page banner and one Retry.
+ * The outage ≥2 failed regions share, or null — non-null → one PageErrorBanner + a RegionFailure per region.
  * @param entries - `{ source, error }` per region; a null error is a healthy region
  */
 function getSharedFailure(entries) {
@@ -1411,7 +1528,7 @@ function getRegionView(region) {
 /**
  * Ref for a control that hands focus to a card when it unmounts while focused (Retry leaving on recovery).
  * Layout cleanup → runs before the node leaves the DOM, while it can still be the active element.
- * @param targetId - card id for putCardFocus; omit to skip the handoff
+ * @param targetId - card id for putCardFocus, or a resolver read at handoff time; omit to skip the handoff
  */
 function useFocusHandoff(targetId) {
   const controlRef = useRef(null);
@@ -1421,7 +1538,9 @@ function useFocusHandoff(targetId) {
   useLayoutEffect(() => {
     const control = controlRef.current;
     return () => {
-      if (control && targetIdRef.current && document.activeElement === control) putCardFocus(targetIdRef.current);
+      if (!control || document.activeElement !== control) return;
+      const target = targetIdRef.current;
+      putCardFocus(typeof target === 'function' ? target() : target);
     };
   }, []);
   return controlRef;
@@ -1462,23 +1581,64 @@ function RegionUnavailable({ source, error, onRetry, isBusy = false, focusTarget
   );
 }
 
+const REGION_COVERED_NOTE = 'Not loaded — see the notice above';
+
+/**
+ * Quiet slot for a region the page banner already speaks for: its name + a pointer to the notice, no sentence, no Retry.
+ * @param focusTargetId - the region's card id; the banner's Retry hands focus to the first covered card on recovery
+ * @param minHeight - reserved slot height so the grid keeps its shape
+ */
+function RegionCovered({ source, focusTargetId, minHeight, className = '' }) {
+  const name = source ? source.charAt(0).toUpperCase() + source.slice(1) : '';
+  return (
+    <div className={`sub-card bg-sunken flex flex-col gap-1 ${className}`.trim()} style={minHeight ? { minHeight } : undefined}
+      data-covered-card-id={focusTargetId}>
+      <span className="fs-body text-dim">{name}</span>
+      <span className="fs-meta text-faint">{REGION_COVERED_NOTE}</span>
+    </div>
+  );
+}
+
+/**
+ * The one failed-region atom every page renders: RegionCovered when `shared` names this source, else RegionUnavailable with its own Retry.
+ * @param shared - the page's getSharedFailure result, or null
+ */
+function RegionFailure({ source, error, shared, onRetry, isBusy = false, focusTargetId, minHeight, className = '' }) {
+  if (shared?.sources?.includes(source)) {
+    return <RegionCovered source={source} focusTargetId={focusTargetId} minHeight={minHeight} className={className}/>;
+  }
+  return <RegionUnavailable source={source} error={error} onRetry={onRetry} isBusy={isBusy}
+    focusTargetId={focusTargetId} minHeight={minHeight} className={className}/>;
+}
+
+// first covered slot in document order → the first region the shared Retry brings back
+function getFirstCoveredCardId() {
+  return document.querySelector('[data-covered-card-id]')?.getAttribute('data-covered-card-id') || null;
+}
+
 /**
  * One announced banner with one Retry for an outage shared by ≥2 regions (see getSharedFailure).
+ * Leaving on recovery with its Retry focused → focus lands on the first covered region's card.
  * @param isBusy - a Retry is in flight
- * @param focusTargetId - card id that takes focus when the banner leaves on recovery while its Retry is focused
+ * @param focusTargetId - fallback card id when no covered region declared one
  */
 function PageErrorBanner({ sources, error, onRetry, isBusy = false, focusTargetId }) {
+  const coveredCardIdRef = useRef(null);
   const sourceList = new Intl.ListFormat('en', { type: 'conjunction' }).format(sources || []);
   const copy = getErrorCopy(error, sourceList);
+  // resolved on focus-in: recovery removes the covered slots in the same commit that removes this banner
+  const handleFocus = () => { coveredCardIdRef.current = getFirstCoveredCardId(); };
+  const getRecoveryTargetId = () => coveredCardIdRef.current || focusTargetId;
+
   return (
-    <div role="alert" className="card p-3 flex items-start gap-2">
+    <div role="alert" className="card p-3 flex items-start gap-2" onFocus={handleFocus}>
       <Icon name={TONE_ICON.crit} size={16} className="text-crit mt-0.5"/>
       <div className="flex flex-col gap-1 min-w-0 flex-1">
         <span className="fs-body font-medium">{copy.sentence}</span>
         <span className="fs-meta text-dim">{copy.next}</span>
         <ErrorDetails detail={copy.detail}/>
       </div>
-      <RetryButton onRetry={onRetry} isBusy={isBusy} focusTargetId={focusTargetId}/>
+      <RetryButton onRetry={onRetry} isBusy={isBusy} focusTargetId={getRecoveryTargetId}/>
     </div>
   );
 }
@@ -1902,14 +2062,15 @@ function resolveOutcomeRate(data) {
 window.UI = {
   Icon, Pill, Badge, EmptyState, SubCard, Sparkline, MiniBars, Bar, BulletBar, StatusDot, AgentBadge, AgentName, getAgentDisplayName, KPI, KpiValue, DetailSurface, useDismissFocus, Popover, PopoverPanel, getTrapFocusTarget, getInertTargets, setSurfaceOpen, getTopSurface, Modal, Tabs, CardHead, PageHeader,
   SectionLabel, Table, TableHead, DisclosureChevron, DisclosureButton, getSeverityTone, getWorstTone,
-  Disclosure, getDisclosureOpen, SplitRow, SPLIT_ROW_RATIOS, TileSplit,
+  Disclosure, getDisclosureOpen, SplitRow, SPLIT_ROW_RATIOS, SPLIT_ROW_LAYOUTS, SplitColumn, TileSplit,
   getRovingIndex, getRovingTabIndex, ROW_CONTROL_PROPS, getRowKeyAction, getRowFocusProps, ChipGroup,
   getDisplayName, hasFieldValue, DetailField,
   TrendChart, getChartTicks, getChartIndexAtRatio, getChartReadout, getChartSummary,
+  getChartTickAnchor, getChartTickLayout, getChartYScale, getChartImageProps, getChartXAxisProps, ChartAxisTick, CHART_TICK_MIN_GAP_PX, CHART_TICK_CHAR_PX,
   TypeScaleStyle, toneVarColor,
   titleOf, stripHtmlTags, formatRelativeTime,
   FreshnessStamp, getFreshnessState, getFreshnessVerdict, getRegionSummary, getRegionView, RefreshButton,
-  getFetchError, getErrorCopy, getSharedFailure, RegionUnavailable, PageErrorBanner, RetryButton, LoadingPlaceholder, SkeletonRows,
+  getFetchError, getErrorCopy, getSharedFailure, RegionUnavailable, RegionCovered, RegionFailure, PageErrorBanner, RetryButton, LoadingPlaceholder, SkeletonRows,
   INITIAL_REGION_STATE, putRegionRequest, putRegionData, putRegionFailure,
   setDisplayTimezone, getDisplayTimezone, tzShortLabel,
   formatKstDateTime, formatKstTime, formatKstDate, formatKstFull,

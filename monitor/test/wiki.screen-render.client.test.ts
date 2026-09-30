@@ -100,20 +100,34 @@ test("the notes-per-day chart fills its panel with one dated bar per day and kee
   }
 });
 
-test("the notes-per-day chart anchors its first and last day labels inside the panel", async () => {
+test("the notes-per-day chart takes its edge labels and y-scale from the shared chart atom", async () => {
   const mod = await loadWikiScreen();
   const series = [1, 2, 9, 3, 4];
   const dates = ["2026-09-01", "2026-09-02", "2026-09-03", "2026-09-04", "2026-09-05"];
   const chartTree = renderScreen(mod.React.createElement(mod.SparseTrendW as Component, { label: "Notes per day", series, dates }));
   const screenTree = renderScreen(mod.React.createElement(mod.ScreenWiki as Component, {}));
+  const getAnchor = realUi.getChartTickAnchor as (order: number, total: number) => string;
 
-  const frame = findNodes(chartTree, (n) => classOf(n).split(" ").includes("w-trend"));
-  assert.equal(frame.length, 1, "one frame scopes the edge-label rule to this chart");
-  assert.equal(findNodes(frame[0], (n) => n.props.atom === "TrendChart").length, 1, "the frame wraps the shared chart");
-
+  const chart = findNodes(chartTree, (n) => n.props.atom === "TrendChart");
+  assert.equal(chart[0].props.yScale, true, "the chart draws its max/min scale");
+  assert.deepEqual([getAnchor(0, series.length), getAnchor(series.length - 1, series.length)], ["start", "end"], "the shared rule keeps the edge dates inside the panel");
   const style = collectText(findNodes(screenTree, (n) => n.type === "style")[0]);
-  assert.match(style, /\.w-trend \[data-chart-tick\]:first-child\s*\{\s*transform:\s*none\s*!important/, "the first day label starts at its bar");
-  assert.match(style, /\.w-trend \[data-chart-tick\]:last-child\s*\{\s*transform:\s*translateX\(-100%\)\s*!important/, "the last day label ends at its bar");
+  assert.doesNotMatch(style, /data-chart-tick/, "the screen no longer overrides the shared edge rule");
+});
+
+test("the run-history chart title states the number of days its bars show", async () => {
+  const mod = await loadWikiScreen();
+  const ready = (data: unknown) => ({ status: "ready", data, error: null });
+  for (const length of [5, 12]) {
+    const cycles = Array.from({ length }, (_, i) => ({ run_date: `2026-09-${String(i + 1).padStart(2, "0")}`, compiled_count: i + 1, status: "ok" }));
+    const tree = renderScreen(
+      mod.React.createElement(mod.WikiRunHistorySection as Component, { cyclesState: ready({ cycles }), summaryState: ready({}), onRetry: () => {} }),
+    );
+    const chart = findNodes(tree, (n) => n.props.atom === "TrendChart")[0];
+    const shown = (chart.props.points as unknown[]).length;
+    assert.match(String(chart.props.label), new RegExp(`\\b${shown} days\\b`), "the title's day count is the bar count");
+    assert.ok(collectText(tree).includes(`in ${shown} d`), "the headline total covers the same days");
+  }
 });
 
 const LOADING = { status: "loading", data: null, error: null, busy: true };
@@ -166,6 +180,11 @@ test("the run-history trend and notes by type share one split row, the trend on 
   assert.equal(split[0].props.ratio, "2:1");
   const headings = findNodes(split[0], (n) => n.type === "h2").map((h) => collectText(h));
   assert.deepEqual(headings, ["Run history", "Notes by type"]);
+  const cards = findNodes(split[0], (n) => n.type === "section");
+  assert.equal(cards.length, 2);
+  for (const card of cards) {
+    assert.doesNotMatch(classOf(card), /\bh-full\b/, "a short card takes its content height, not the taller neighbour's");
+  }
 });
 
 test("one polite live region announces a wave in flight as loading", async () => {
@@ -215,23 +234,60 @@ test("the page header carries the shared Refresh control, busy on the mount wave
 
 const OUTAGE = "HTTP 500 Internal Server Error — <html><body>relation wiki.notes does not exist</body></html>";
 
-test("a failed section names its source in plain words and offers Retry only when the page has no shared banner", async () => {
+test("a failed section with no shared banner names its source in plain words and keeps its own Retry", async () => {
   const mod = await loadWikiScreen();
   const { createElement } = mod.React;
   const failed = { status: "error", data: null, error: OUTAGE, busy: false };
-  for (const onRetry of [() => {}, undefined]) {
-    const tree = renderScreen(createElement(mod.WikiNotesByTypeSection, { state: failed, onRetry }));
-    const cards = findNodes(tree, (n) => n.props.atom === "RegionUnavailable");
-    assert.equal(cards.length, 1, "the section renders one quiet unavailable card");
-    assert.equal(cards[0].props.source, "notes by type");
-    assert.equal(cards[0].props.onRetry, onRetry, "Retry follows the page's choice");
-    assert.doesNotMatch(collectText(tree), /HTTP|relation/, "the raw answer stays behind the card's Details");
+  const onRetry = () => {};
+  const tree = renderScreen(createElement(mod.WikiNotesByTypeSection, { state: failed, shared: null, onRetry }));
+  const cards = findNodes(tree, (n) => n.props.atom === "RegionFailure");
+  assert.equal(cards.length, 1, "the section renders one failed-region card");
+  assert.equal(cards[0].props.source, "notes by type");
+  assert.equal(cards[0].props.shared, null, "no banner covers it, so the card speaks for itself");
+  assert.equal(cards[0].props.onRetry, onRetry, "the section keeps its own Retry");
+  assert.doesNotMatch(collectText(tree), /HTTP|relation/, "the raw answer stays behind the card's Details");
+});
+
+// Every failed region under one cause → each card is handed a banner that names its own label, so it renders covered.
+test("under a shared outage every failed region defers to the banner under its own label", async () => {
+  const mod = await loadWikiScreen();
+  const { createElement } = mod.React;
+  const failed = { status: "error", data: null, error: OUTAGE, busy: false };
+  const shared = { sources: ["summary", "run history", "notes by type", "maintenance backlog", "per-run table"], error: OUTAGE };
+  const onRetry = () => {};
+  const rows = [
+    { name: "tile band", element: createElement(mod.WikiTileBand, { summaryState: failed, indexState: failed, backlogState: failed, cyclesState: failed, at: null, shared, onRetry }) },
+    { name: "run history", element: createElement(mod.WikiRunHistorySection, { cyclesState: failed, summaryState: failed, shared, onRetry }) },
+    { name: "notes by type", element: createElement(mod.WikiNotesByTypeSection, { state: failed, shared, onRetry }) },
+    { name: "per-run table", element: createElement(mod.WikiReportsBody, { state: failed, days: 30, shared, onRetry }) },
+    { name: "maintenance backlog", element: createElement(mod.WikiMaintenanceSection, { backlogState: failed, cyclesState: failed, shared, onRetry }) },
+  ];
+  for (const row of rows) {
+    const cards = findNodes(renderScreen(row.element), (n) => n.props.atom === "RegionFailure");
+    assert.equal(cards.length, 1, `${row.name}: one failed-region card`);
+    const covered = cards[0].props.shared as { sources: string[] } | null;
+    assert.deepEqual(covered ? [...covered.sources] : null, [cards[0].props.source], `${row.name}: the banner covers the card's own label`);
+    assert.ok(cards[0].props.focusTargetId, `${row.name}: the covered slot names a card for the banner's Retry to land on`);
   }
+});
+
+test("a tile-band feeder the banner does not cover keeps its own sentence beside a covered one", async () => {
+  const mod = await loadWikiScreen();
+  const failed = { status: "error", data: null, error: OUTAGE, busy: false };
+  const shared = { sources: ["summary", "run history"], error: OUTAGE };
+  const tree = renderScreen(mod.React.createElement(mod.WikiTileBand, {
+    summaryState: failed, indexState: failed, backlogState: LOADING, cyclesState: failed, at: null, shared, onRetry: () => {},
+  }));
+  const cards = findNodes(tree, (n) => n.props.atom === "RegionFailure");
+  assert.equal(cards.length, 1);
+  assert.equal(cards[0].props.source, "the search index", "only the uncovered feeder is named");
+  assert.equal(cards[0].props.shared, null, "the uncovered feeder is not quieted by the banner");
 });
 
 test("the page banner shows its Retry in flight and hands focus to the verdict, which outlives recovery", async () => {
   const initial = realUi.INITIAL_REGION_STATE as Record<string, unknown>;
-  const retrying = { ...initial, status: "error", data: null, error: OUTAGE, busy: true };
+  // the state putRegionRequest leaves behind when Retry is clicked on a region that never loaded
+  const retrying = { ...initial, status: "loading", data: null, error: OUTAGE, busy: true };
   const ui = new Proxy(uiStub() as Record<string, unknown>, {
     get: (target, name: string) => (name === "INITIAL_REGION_STATE" ? retrying : target[name]),
   });
@@ -441,8 +497,8 @@ test("cyan tints no wiki text: the similarity reads as a figure and the lane sta
       summaryState: ready({}), indexState: ready({}), backlogState: READY_BACKLOG, cyclesState: ready({ cycles: [] }),
     }),
   );
-  const sim = findNodes(item, (n) => n.children.includes("sim ")).pop();
-  assert.ok(sim, "the similarity renders");
+  const sim = findNodes(item, (n) => n.children.join("") === "100% similar").pop();
+  assert.ok(sim, "the similarity reads in words");
   for (const tree of [item, lane]) {
     for (const node of findNodes(tree, () => true)) assert.doesNotMatch(classOf(node), /\btext-info\b/);
   }
@@ -453,4 +509,49 @@ test("the window control rides the per-run table fold and never the open trend",
   const control = (tree: RenderedNode | string | null) => findNodes(tree, (n) => n.props["aria-label"] === "Run table time range");
   assert.equal(control(renderScreen(mod.React.createElement(mod.WikiRunTableSection as Component, RUN_TABLE_LOADING))).length, 1);
   assert.equal(control(renderScreen(mod.React.createElement(mod.WikiRunHistorySection as Component, RUN_HISTORY_LOADING))).length, 0);
+});
+
+test("the dry-run notice is stated once above the proposals instead of on every proposal", async () => {
+  const mod = await loadWikiScreen();
+  const action = (slug: string) => `Merge notes/${slug}.md into notes/t.md. DRY-RUN \u2014 requires user approval.`;
+  const backlog = {
+    status: "ready",
+    error: null,
+    data: { backlog: { run_date: "2026-09-24", dedup_proposals: { proposals: [
+      { cluster_hash: "c1", target_slug: "t", source_slugs: ["s1"], suggested_action: action("s1") },
+      { cluster_hash: "c2", target_slug: "t", source_slugs: ["s2"], suggested_action: action("s2") },
+    ] } } },
+  };
+  const text = collectText(renderScreen(mod.React.createElement(mod.WikiMaintenanceSection as Component, { backlogState: backlog, onRetry: () => {} })));
+
+  assert.equal(text.match(/dry[ -]run/gi)?.length, 1, "one notice for the whole list");
+  assert.ok(text.search(/dry[ -]run/i) < text.indexOf("notes/s1.md"), "the notice sits above the first proposal");
+  assert.ok(text.includes("Merge notes/s2.md into notes/t.md."), "each proposal keeps its own action");
+});
+
+test("the missed-cycle alarm states its age in the short relative form", async () => {
+  const mod = await loadWikiScreen();
+  const ready = (data: unknown) => ({ status: "ready", data, error: null });
+  const lane = renderScreen(
+    mod.React.createElement(mod.WikiAlarmLane as Component, {
+      summaryState: ready({ hours_since_last_cycle: 40, last_run_date: "2026-09-20" }),
+      indexState: ready({}), backlogState: READY_BACKLOG, cyclesState: ready({ cycles: [] }),
+    }),
+  );
+  assert.match(collectText(lane), /· 40h ago —/);
+});
+
+test("the last-run age reads as words, so its space never widens into a mono gap", async () => {
+  const mod = await loadWikiScreen();
+  const ready = (data: unknown) => ({ status: "ready", data, error: null });
+  const startedAt = new Date(Date.now() - 21 * 3_600_000).toISOString();
+  const band = renderScreen(
+    mod.React.createElement(mod.WikiTileBand as Component, {
+      summaryState: ready({ last_cycle_started_at: startedAt, hours_since_last_cycle: 21, last_status: "ok", last_run_date: "2026-09-29" }),
+      indexState: ready({}), backlogState: READY_BACKLOG, onRetry: () => {},
+    }),
+  );
+  const age = findNodes(band, (n) => n.children.some((c) => typeof c === "string" && /^\d+h ago$/.test(c)));
+  assert.equal(age.length, 1, "the tile shows the run's age");
+  assert.doesNotMatch(classOf(age[0]), /\bfont-mono\b/);
 });

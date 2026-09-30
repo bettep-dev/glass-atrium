@@ -24,6 +24,7 @@ interface Alarm {
   title: string;
   detail: string | null;
   target: string | null;
+  isHeld?: boolean;
 }
 interface Tile {
   id: string;
@@ -33,6 +34,7 @@ interface Tile {
   value: string;
   hint: string;
   detail?: string | null;
+  trend?: string | null;
   note?: string;
   target: string | null;
   badge?: string;
@@ -46,6 +48,8 @@ interface Fold {
   downNames: string[];
   uncheckedNames: string[];
   version?: string | null;
+  kpi?: Record<string, number | null> | null;
+  error?: string | null;
 }
 interface DashHelpers {
   buildAlarms: (args: { harness: Fold | null; costState: unknown; installKind: string }) => Alarm[];
@@ -54,6 +58,7 @@ interface DashHelpers {
     costState: unknown;
     agentsState: unknown;
     outcomesState: unknown;
+    isHarnessBusy?: boolean;
   }) => Tile[];
 }
 
@@ -113,6 +118,29 @@ test("an unavailable harness fold raises no alarm — absence is not a fault", (
   assert.equal(rows.length, 0, "nothing polled must never read as something broken");
   assert.equal(dash.buildAlarms({ harness: null, costState: LOADING, installKind: "hidden" }).length, 0);
 });
+
+// a held reading whose refresh failed → its row keeps its tone but reads last known, as its tile does
+const HELD_ALARM_ROWS = [
+  { name: "a down part held over a failed harness read", id: "harness", isHeld: true,
+    harness: { ...HEALTHY, partsOk: 6, downNames: ["autoagent"], unreadSources: ["daemon status"], error: "HTTP 500" },
+    costState: kpi(10, 10) },
+  { name: "a down part fresh beside a failed failure-count read", id: "harness", isHeld: false,
+    harness: { ...HEALTHY, partsOk: 6, downNames: ["autoagent"], unreadSources: ["the failure count"], error: "HTTP 500" },
+    costState: kpi(10, 10) },
+  { name: "a down part from a fresh harness read", id: "harness", isHeld: false,
+    harness: { ...HEALTHY, partsOk: 6, downNames: ["autoagent"] }, costState: kpi(10, 10) },
+  { name: "hot spend held over a failed cost read", id: "spend", isHeld: true,
+    harness: HEALTHY, costState: { ...(kpi(500, 10) as object), error: "HTTP 500" } },
+  { name: "hot spend from a fresh cost read", id: "spend", isHeld: false, harness: HEALTHY, costState: kpi(500, 10) },
+];
+for (const row of HELD_ALARM_ROWS) {
+  test(`an alarm row is last known only when its source's latest read failed: ${row.name}`, () => {
+    const rows = dash.buildAlarms({ harness: row.harness, costState: row.costState, installKind: "hidden" });
+    const alarm = rows.find((r) => r.id === row.id);
+    assert.ok(alarm, `row ${row.id} must exist`);
+    assert.equal(Boolean(alarm.isHeld), row.isHeld);
+  });
+}
 
 test("spend alarms only once today is past the 7-day-average cut, at any scale", () => {
   for (const [today, avgDaily, alarms] of [
@@ -245,7 +273,6 @@ test("the fleet tile headlines the suspended count and tones by the worst breake
     assert.equal(tile.status, "ready", name);
     assert.equal(tile.value, String(suspended), `${name}: the suspended count is the headline`);
     assert.equal(tile.tone, tone, name);
-    assert.ok(tile.hint.includes(String(streak)), `${name}: the streak count stays visible`);
   }
 });
 
@@ -307,7 +334,7 @@ test("the harness hint's down list names exactly the down parts, never an unpoll
       }),
       "harness",
     );
-    const downClause = /Down: ([^.]*)/.exec(tile.hint)?.[1] ?? "";
+    const downClause = /Not answering: ([^.]*)/.exec(tile.hint)?.[1] ?? "";
     assert.deepEqual(downClause.split(" · "), row.downNames, `${row.name}: hint was "${tile.hint}"`);
   }
 });
@@ -582,4 +609,81 @@ test("a partly unread harness never reads healthy, and the lane cannot claim an 
   const readiness = failure.getAlarmReadiness({ harness, costState: kpi(1, 10), updateState: ready({}) });
   assert.equal(readiness.status, "unknown");
   assert.ok(readiness.unread.includes("harness health"));
+});
+
+test("the harness tile dims and reads busy while the shell re-reads it, like a region tile refreshing over held data", () => {
+  const rows = [
+    { name: "held reading, re-read in flight", harness: HEALTHY, isHarnessBusy: true, busy: true },
+    { name: "held reading, no re-read", harness: HEALTHY, isHarnessBusy: false, busy: false },
+    { name: "first load is not a refresh", harness: { ...HEALTHY, status: "loading" }, isHarnessBusy: true, busy: false },
+  ];
+  for (const row of rows) {
+    const tiles = dash.buildTiles({ harness: row.harness, isHarnessBusy: row.isHarnessBusy, costState: LOADING, agentsState: LOADING, outcomesState: LOADING });
+    assert.equal((tileOf(tiles, "harness") as Tile & { isBusy: boolean }).isBusy, row.busy, row.name);
+  }
+});
+
+test("a harness tile with down parts says 'down' once across its value, verdict, detail and hint", () => {
+  const rows = [
+    { name: "one down", downNames: ["autoagent"], uncheckedNames: [] },
+    { name: "two down beside unpolled parts", downNames: ["autoagent", "monitor"], uncheckedNames: ["Hook Chain"] },
+  ];
+  for (const row of rows) {
+    const tile = tileOf(
+      dash.buildTiles({
+        harness: { ...HEALTHY, partsOk: 5, downNames: row.downNames, uncheckedNames: row.uncheckedNames },
+        costState: LOADING, agentsState: LOADING, outcomesState: LOADING,
+      }),
+      "harness",
+    );
+    const visible = [tile.value, tile.badge, tile.detail, tile.hint].join(" ");
+    assert.equal(visible.match(/down/gi)?.length, 1, `${row.name}: "${visible}"`);
+    assert.equal(tile.tone, "crit");
+  }
+});
+
+test("a hot spend tile's badge names the pace multiple its detail line leads with, not the so-far multiple", () => {
+  const rows = [
+    { name: "pace ahead of so-far", today: 2, avg: 10, pace: 23 },
+    { name: "so-far ahead of pace", today: 30, avg: 10, pace: 5 },
+  ];
+  for (const row of rows) {
+    const tile = tileOf(
+      dash.buildTiles({ harness: HEALTHY, costState: kpi(row.today, row.avg, row.pace), agentsState: LOADING, outcomesState: LOADING }),
+      "spend",
+    );
+    assert.equal(tile.tone, "warn", row.name);
+    assert.match(String(tile.badge), /pace/i, `${row.name}: badge "${tile.badge}" names its basis`);
+    assert.match(String(tile.detail), /^On pace/, `${row.name}: the detail line carries that same basis`);
+    assert.doesNotMatch(String(tile.badge), /so far/i, `${row.name}: the badge never judges the so-far line`);
+  }
+});
+
+test("the spend tile states its move against yesterday by this time from the shell's kpi reading, and none without one", () => {
+  const rows = [
+    { name: "up on yesterday", today: 12, yesterday: 10, trend: /^Up 20% on \$10\.00 yesterday by this time$/ },
+    { name: "down on yesterday", today: 5, yesterday: 20, trend: /^Down 75% on \$20\.00 yesterday by this time$/ },
+    { name: "level with yesterday", today: 10, yesterday: 10, trend: /^Level with \$10\.00 yesterday by this time$/ },
+    { name: "no spend yesterday → no base", today: 4, yesterday: 0, trend: null },
+    { name: "no prior value", today: 4, yesterday: null, trend: null },
+  ];
+  for (const row of rows) {
+    const harness = { ...HEALTHY, kpi: { today_cost_usd: row.today, yesterday_same_time_cost_usd: row.yesterday } };
+    const tile = tileOf(
+      dash.buildTiles({ harness, costState: kpi(row.today, 10), agentsState: LOADING, outcomesState: LOADING }),
+      "spend",
+    );
+    if (row.trend) assert.match(String(tile.trend), row.trend, row.name);
+    else assert.equal(tile.trend ?? null, null, row.name);
+  }
+  const noKpi = tileOf(dash.buildTiles({ harness: HEALTHY, costState: kpi(4, 10), agentsState: LOADING, outcomesState: LOADING }), "spend");
+  assert.equal(noKpi.trend ?? null, null, "an unread kpi reading shows no trend");
+});
+
+test("the fleet tile fills its detail line with the failing streak, so a narrow tile is not left mostly empty", () => {
+  for (const streak of [0, 3]) {
+    const tile = fleetTile({ source: "loaded", suspended_count: 0, streak_count: streak });
+    assert.match(String(tile.detail), new RegExp(`^${streak} on a failing streak`), `streak ${streak}`);
+    assert.match(tile.hint, /12 agents/, `streak ${streak}: the hint keeps the fleet size`);
+  }
 });

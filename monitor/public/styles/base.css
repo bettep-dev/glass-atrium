@@ -252,6 +252,16 @@
 	grid-template-columns: minmax(0, 1fr);
 	gap: 16px;
 }
+.split-row--content { align-items: start; }
+.split-row--equal { align-items: stretch; }
+
+/* Split column (SplitColumn) — a card stack in one SplitRow column; the rail variant pins it while the taller column scrolls (xl only) */
+.split-col {
+	display: flex;
+	flex-direction: column;
+	gap: 16px;
+	min-width: 0;
+}
 
 /* Tile split (TileSplit) — value + badge over detail by default; lead | detail columns from 641px to below xl */
 .tile-split {
@@ -272,6 +282,11 @@
 	.split-row--7-5 { grid-template-columns: minmax(0, 7fr) minmax(0, 5fr); }
 	.split-row--3-2 { grid-template-columns: minmax(0, 3fr) minmax(0, 2fr); }
 	.split-row--2-1 { grid-template-columns: minmax(0, 2fr) minmax(0, 1fr); }
+	.split-col--rail {
+		position: sticky;
+		top: 24px;
+		align-self: start;
+	}
 }
 
 .tbl {
@@ -706,6 +721,13 @@
 	flex-wrap: wrap;
 	gap: 8px;
 }
+/* A chip is an action beside the sentence → resting button chrome, never bare text */
+.page-verdict-chips .btn.ghost {
+	border-color: rgb(var(--line));
+	background: rgb(var(--elev));
+	color: rgb(var(--ink));
+}
+.page-verdict-chips .btn.ghost:hover { background: rgb(var(--sunken)); }
 
 /* Low-sample marker (LowSampleMark) — muted italic n beside a small-sample rate */
 .low-sample {

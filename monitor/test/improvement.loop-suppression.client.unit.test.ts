@@ -20,7 +20,7 @@
 //
 // Runner: npx tsx --test test/improvement.loop-suppression.client.unit.test.ts
 
-import test from "node:test";
+import test, { describe } from "node:test";
 import assert from "node:assert/strict";
 import { fileURLToPath } from "node:url";
 import { dirname, resolve } from "node:path";
@@ -48,6 +48,12 @@ interface Sandbox {
   }) => RecordedElement | null;
   LedgerLiveSectionI: unknown;
   LedgerInertSectionI: unknown;
+  LedgerHeldSectionI: unknown;
+  LedgerRecurrenceSectionI: unknown;
+  getLedgerColumnsI: (
+    liveWeight: number,
+    sections: Array<{ key: string; weight: number }>,
+  ) => { live: Array<{ key: string }>; side: Array<{ key: string }> };
 }
 
 function isElement(value: unknown): value is RecordedElement {
@@ -337,14 +343,58 @@ test("the recurrence rates render open under the held section", () => {
   assert.match(textOf(tree), /Roster mismatch/);
 });
 
-test("live and inert rows share one split row, with held and recurrence full width below", () => {
+// every component type in a subtree, fragments and columns walked through
+function typesIn(node: unknown, out: unknown[] = []): unknown[] {
+  if (Array.isArray(node)) {
+    for (const child of node) typesIn(child, out);
+    return out;
+  }
+  if (typeof node !== "object" || node === null || !("type" in node)) return out;
+  const el = node as RecordedElement;
+  out.push(el.type);
+  return typesIn(el.props.children, out);
+}
+
+describe("a ledger section joins whichever column is lighter at that point, in order", () => {
+  const sections = [
+    { key: "inert", weight: 2 },
+    { key: "held", weight: 5 },
+    { key: "recurrence", weight: 4 },
+  ];
+  const rows = [
+    { name: "a short live list takes a section once the side column outweighs it", liveWeight: 3, live: ["recurrence"], side: ["inert", "held"] },
+    { name: "a long live list leaves every section on the side", liveWeight: 20, live: [], side: ["inert", "held", "recurrence"] },
+    { name: "an empty live list still seeds the side column first", liveWeight: 0, live: ["held"], side: ["inert", "recurrence"] },
+  ];
+  for (const row of rows) {
+    test(row.name, () => {
+      const columns = sandbox.getLedgerColumnsI(row.liveWeight, sections);
+      // Array.from → a test-realm array; the sandbox realm's Array prototype fails strict deepEqual
+      assert.deepEqual(Array.from(columns.live, (section) => section.key), row.live);
+      assert.deepEqual(Array.from(columns.side, (section) => section.key), row.side);
+    });
+  }
+});
+
+test("a short live list pairs with the side column and takes the overflow sections under it", () => {
   const split = findByType(
     sandbox.PatternLedgerCardI({ state: LEDGER_STATE, suppression: SUPPRESSION }),
     SplitRowStub,
   );
-  assert.ok(split, "the ledger must pair its live and inert lists");
-  const kinds = (split.props.children as RecordedElement[]).map((el) => el.type);
-  assert.deepEqual(kinds, [sandbox.LedgerLiveSectionI, sandbox.LedgerInertSectionI]);
+  assert.ok(split, "the ledger must pair its live list with the side column");
+  const [live, side] = split.props.children as RecordedElement[];
+  const liveTypes = typesIn(live);
+  const sideTypes = typesIn(side);
+
+  assert.equal(liveTypes[1], sandbox.LedgerLiveSectionI, "the live list leads its column");
+  assert.ok(liveTypes.includes(sandbox.LedgerRecurrenceSectionI), "the lighter live column takes the last section");
+  for (const section of [sandbox.LedgerInertSectionI, sandbox.LedgerHeldSectionI]) {
+    assert.ok(sideTypes.includes(section), "the side column keeps inert and held");
+  }
+  for (const section of [sandbox.LedgerInertSectionI, sandbox.LedgerHeldSectionI, sandbox.LedgerRecurrenceSectionI]) {
+    const placements = [...liveTypes, ...sideTypes].filter((type) => type === section).length;
+    assert.equal(placements, 1, "each section renders in exactly one column");
+  }
 });
 
 test("the ledger's footer states each figure with its gate", () => {

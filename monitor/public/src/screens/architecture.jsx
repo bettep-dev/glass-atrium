@@ -62,6 +62,15 @@ const ARCH_DESC_ID = "arch-svg-desc";
 // mermaid 가 `#<renderId> .security>*{…!important}` 꼴로 찍으므로(특이도 1,1,0) 클래스만으로는
 // 무엇을 적어도 못 이김 — 여기 id 하나가 그 한 칸을 벌어 줌. 하네스 셀렉터는 클래스 그대로임.
 const ARCH_CANVAS_ID = "arch-map-canvas";
+// canvas state markers — data attributes, since React rewrites className on re-render
+const CANVAS = {
+	// pane clamped to its drawing's height
+	FIT_HEIGHT_ATTR: "data-arch-fit-height",
+	// drawing floor-bound and too wide for the room beside the zoom controls → they fold into a row under it
+	CONTROLS_LANE_ATTR: "data-arch-controls-lane",
+};
+// map slot wrapper — outlives the error-to-map swap, so a map Retry hands focus here on recovery
+const MAP_REGION_ID_AR = "arch-map-region";
 const ARCH_SELECTORS = {
 	canvas: ".arch-mermaid-canvas",
 	tabControl: '[role="tab"], .arch-tab-btn',
@@ -290,12 +299,13 @@ function ScreenArchitecture(
 		FreshnessStamp,
 		RefreshButton,
 		PageErrorBanner,
-		RegionUnavailable,
+		RegionFailure,
 		INITIAL_REGION_STATE,
 		putRegionRequest,
 		putRegionData,
 		putRegionFailure,
 		getRegionSummary,
+		getRegionView,
 	} = window.UI;
 
 	const [diagState, setDiagState] = useStateAR(INITIAL_REGION_STATE);
@@ -583,8 +593,6 @@ function ScreenArchitecture(
 
 	// 경보 레인의 행 — 네 사실을 심각도 순으로 한 줄씩. 비면 레인이 DOM 에 없음.
 	const pageFailure = getPageFailureAR(pageReadEntries);
-	// the map's own card would repeat the page alert — the alert already names it and carries the Retry
-	const isMapInPageAlert = Boolean(pageFailure?.sources.includes(DIAGRAM_SOURCE_AR));
 
 	const alarmRows = getAlarmRows({
 		offWriters,
@@ -606,9 +614,13 @@ function ScreenArchitecture(
 					// part health takes the band the map leaves empty — a map floor keeps its fit scale, short viewports scroll
 					".arch-page:has(.arch-part-health) { overflow-y: auto; } " +
 					".arch-page:has(.arch-part-health) .arch-main { min-height: 62vh; } " +
+					// a pane clamped to its drawing gives the unused height back — the fit scale the floor protects is already set
+					`.arch-page .arch-main:has(.arch-mermaid-canvas[${CANVAS.FIT_HEIGHT_ATTR}]) { flex: none; min-height: 0; } ` +
 					".arch-part-health { flex-shrink: 0; } " +
 					".arch-part-health-title { font-size: 13px; font-weight: 600; margin: 0; } " +
-					".arch-part-col-title { font-size: 12px; font-weight: 600; margin: 0 0 6px; } " +
+					".arch-part-col-title { font-size: inherit; font-weight: 600; margin: 0 0 6px; } " +
+					".arch-drawer-heading { margin: 0 0 4px; font-weight: 400; } " +
+					".arch-drawer-subheading { margin: 0 0 2px; font-size: inherit; font-weight: 400; } " +
 					".arch-part-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; } " +
 					".arch-part-row { display: grid; grid-template-columns: minmax(0, 1fr) auto auto; column-gap: 8px; align-items: center; } " +
 					".arch-part-meta { grid-column: 1 / -1; font-size: 12px; } " +
@@ -696,6 +708,9 @@ function ScreenArchitecture(
 					`#${ARCH_CANVAS_ID} .arch-node-live-crit > rect.arch-ring-state, #${ARCH_CANVAS_ID} .arch-zone-live-crit > rect.arch-ring-state { display: inline; stroke: rgb(var(--crit)) !important; } ` +
 					// 줌/팬/맞춤 컨트롤 클러스터 — 캔버스 우하단, hint 위. 불투명 면(상시 chrome) → blur 금지.
 					".arch-zoom-controls { position: absolute; right: 8px; bottom: 28px; display: flex; flex-direction: column; gap: 4px; z-index: 2; } " +
+					// lane mode — one row of controls with the hint on its left, a toolbar under the drawing rather than over it
+					`.arch-mermaid-canvas[${CANVAS.CONTROLS_LANE_ATTR}] .arch-zoom-controls { flex-direction: row; bottom: 6px; } ` +
+					`.arch-mermaid-canvas[${CANVAS.CONTROLS_LANE_ATTR}] .arch-canvas-hint { right: auto; left: 8px; } ` +
 					".arch-zoom-btn { min-width: 32px; height: 32px; display: inline-flex; gap: 4px; align-items: center; justify-content: center; " +
 					"background: rgb(var(--elev)); border: 1px solid rgb(var(--line)); border-radius: 6px; color: rgb(var(--dim)); " +
 					'cursor: pointer; font-family: "JetBrains Mono", monospace; font-size: 16px; line-height: 1; padding: 0; ' +
@@ -778,15 +793,18 @@ function ScreenArchitecture(
 				<AlarmLaneAR rows={alarmRows} onRetry={triggerRefresh} />
 
 				{/* 본체: 단일 canonical Mermaid 캔버스 (가용 폭 100%) — 못 읽으면 빈 캔버스 대신 조용한 카드 하나 */}
-				<div className="arch-main">
-					{diagState.status === "error" ? (
-						!isMapInPageAlert && (
-							<RegionUnavailable
-								source={DIAGRAM_SOURCE_AR}
-								error={diagState.error}
-								onRetry={triggerRefresh}
-							/>
-						)
+				<div className="arch-main" id={MAP_REGION_ID_AR}>
+					{/* view, not raw status — a cold Retry flips status to 'loading' but must stay this card, busy */}
+					{getRegionView(diagState) === "error" ? (
+						<RegionFailure
+							source={DIAGRAM_SOURCE_AR}
+							error={diagState.error}
+							shared={pageFailure}
+							onRetry={triggerRefresh}
+							isBusy={isRefreshBusy}
+							focusTargetId={MAP_REGION_ID_AR}
+							className="arch-col-card"
+						/>
 					) : (
 						<div className="card arch-col-card" aria-busy={diagState.busy ? "true" : undefined}>
 							{mapCopyNote && (
@@ -817,7 +835,7 @@ function ScreenArchitecture(
 
 				<PartHealthBlockAR
 					partRows={healthPartRows}
-					attentionEmpty={getAttentionEmptyAR(healthPartRows, healthPending, healthStoreErrors.length)}
+					attentionEmpty={getAttentionEmptyAR(healthPartRows, healthPending, partFreshness)}
 					freshness={partFreshness}
 					nodeIndex={nodeIndex}
 					onSelectNode={handleSelectNode}
@@ -1630,9 +1648,9 @@ function NodePartHealth({
 
 	return (
 		<div data-node-health={unscoped}>
-			<div className="fs-meta font-mono text-faint uppercase tracking-wider mb-1">
+			<h3 className="arch-drawer-heading fs-meta font-mono text-faint uppercase tracking-wider">
 				Health ({rows.length + looseDaemons.length})
-			</div>
+			</h3>
 			<div className="arch-part-list">
 				{rows.map((row) => {
 					const renderDetail = HEALTH_ROW_DETAILS[row.kind];
@@ -1919,9 +1937,9 @@ function OwningScreenLinkAR({ nodeId }) {
 	if (!owner) return null;
 	return (
 		<div>
-			<div className="fs-meta font-mono text-faint uppercase tracking-wider mb-1">
+			<h3 className="arch-drawer-heading fs-meta font-mono text-faint uppercase tracking-wider">
 				Records
-			</div>
+			</h3>
 			<a className="fs-body" href={`#${owner.id}`}>
 				Open {owner.label}
 			</a>
@@ -1935,9 +1953,9 @@ function FlowSummary({ inbound, outbound, nodeIndex }) {
 		return <div className="fs-meta text-faint">No connections</div>;
 	return (
 		<div>
-			<div className="fs-meta font-mono text-faint uppercase tracking-wider mb-1">
+			<h3 className="arch-drawer-heading fs-meta font-mono text-faint uppercase tracking-wider">
 				Connections ({total})
-			</div>
+			</h3>
 			<div className="space-y-2">
 				{inbound.length > 0 && (
 					<FlowList
@@ -1965,7 +1983,7 @@ function FlowList({ title, items, nodeIndex, direction }) {
 	const peerWord = direction === "in" ? "from" : "to";
 	return (
 		<div>
-			<div className="fs-meta text-dim mb-0.5">{title}</div>
+			<h4 className="arch-drawer-subheading fs-meta text-dim">{title}</h4>
 			<ul
 				className="fs-meta text-dim space-y-0.5"
 				style={{ margin: 0, padding: 0, listStyle: "none", maxHeight: 160, overflowY: "auto" }}
@@ -2137,7 +2155,9 @@ function applyLegibleFitAR(instance, root) {
 	const realH = s.viewBox?.height || 0;
 	if (realW <= 0 || realH <= 0 || s.width <= 0 || s.height <= 0) return;
 
-	const targetAbs = getLegibleFitScaleAR(s.width, s.height, realW, realH);
+	// the zoom controls stand over the pane's right edge → the drawing fits beside them, so no box sits under a button
+	const drawableW = s.width - getControlsGutterAR(root);
+	const targetAbs = getLegibleFitScaleAR(drawableW, s.height, realW, realH);
 
 	// 공개 zoom 은 상대(=절대/originalState) · init 직후 현재 절대행렬 = viewport CTM .a → relative = targetAbs / 현재절대.
 	const curAbs = readViewportScaleAR(root) || s.realZoom || 1;
@@ -2145,22 +2165,42 @@ function applyLegibleFitAR(instance, root) {
 
 	instance.zoom(relative);
 
-	// 캔버스는 flex:1 로 pane 전체 높이 유지 (축소 안 함) → 짧은 그래프는 pan 으로 세로 가운데 정렬.
 	const fittedGraphH = realH * targetAbs;
 	const fittedGraphW = realW * targetAbs;
+	// floor-bound: no legible scale fits beside the controls → they move into a lane under the drawing instead
+	const shouldUseLane = fittedGraphW > drawableW + 0.5;
+	if (shouldUseLane) getCanvasAR(root)?.setAttribute(CANVAS.CONTROLS_LANE_ATTR, "");
+	const laneH = shouldUseLane ? getControlsLaneHeightAR(root) : 0;
 
 	// pan({x,y}) 는 viewport CTM 의 e/f(화면픽셀 평행이동) 직접 설정 · 콘텐츠 viewBox.x/y 시작 → 좌상단(0,0) 정렬에 -origin*scale 필요 (fit/center:false 라 라이브러리 미보정).
 	const baseX = -(s.viewBox.x || 0) * targetAbs;
 	const baseY = -(s.viewBox.y || 0) * targetAbs;
-	// 가로·세로 동일 slack 패턴 — 그래프가 pane 보다 좁으면 가운데, 넓으면 0(좌상단 시작). clamp 로 큰(=높은/넓은) 그래프는 slack=0 → 좌상단 정렬 (회귀 없음).
-	const slackX = Math.max(0, (s.width - fittedGraphW) / 2);
-	const slackY = Math.max(0, (s.height - fittedGraphH) / 2);
-	instance.pan({ x: baseX + slackX, y: baseY + slackY });
+	// 좁은 그래프는 가로 가운데 · 낮은 그래프는 pane 을 그림 높이로 줄임 → 위아래 빈 띠 없음 (넓은/높은 그래프는 좌상단 시작).
+	const slackX = Math.max(0, (drawableW - fittedGraphW) / 2);
+	instance.pan({ x: baseX + slackX, y: baseY });
+	// with a lane the pane grows to the drawing plus the lane, so the drawing never runs down under the controls row
+	if (laneH > 0 || fittedGraphH < s.height) setCanvasHeightAR(root, fittedGraphH + laneH, instance);
 
 	// fit-applied mark — until the library's next-frame CTM flush, the viewport still holds its viewBox meet scale
 	root
 		?.querySelector(".svg-pan-zoom_viewport")
 		?.setAttribute("data-arch-fit-scale", String(targetAbs));
+}
+
+// width the zoom controls take from the pane's right edge, measured so any control size or offset is covered
+function getControlsGutterAR(root) {
+	const canvas = getCanvasAR(root);
+	const controls = canvas?.querySelector(".arch-zoom-controls");
+	if (!controls) return 0;
+	return Math.max(0, canvas.getBoundingClientRect().right - controls.getBoundingClientRect().left);
+}
+
+// height the controls row takes from the pane's bottom edge — meaningful only once the lane attribute is set
+function getControlsLaneHeightAR(root) {
+	const canvas = getCanvasAR(root);
+	const controls = canvas?.querySelector(".arch-zoom-controls");
+	if (!controls) return 0;
+	return Math.max(0, canvas.getBoundingClientRect().bottom - controls.getBoundingClientRect().top);
 }
 
 // .svg-pan-zoom_viewport 의 실제 변환행렬 스케일(.a) = 사용자가 측정하는 절대 스케일.
@@ -2175,13 +2215,31 @@ function readViewportScaleAR(root) {
 // 캔버스 인라인 sizing (short-graph clamp) 제거 → CSS 기본 flex-fill 복원 (이전 그래프 height/flex 잔존이 다음 측정 오염 차단).
 // root 는 컨테이너 또는 캔버스 자신 어디든 허용.
 function clearCanvasSizingAR(root) {
-	if (!root) return;
-	const canvas = root.classList?.contains("arch-mermaid-canvas")
-		? root
-		: root.closest?.(".arch-mermaid-canvas");
+	const canvas = getCanvasAR(root);
 	if (!canvas) return;
 	canvas.style.height = "";
 	canvas.style.flex = "";
+	canvas.removeAttribute(CANVAS.FIT_HEIGHT_ATTR);
+	canvas.removeAttribute(CANVAS.CONTROLS_LANE_ATTR);
+}
+
+// the zoom buttons scale about the pane centre → the cached pane size follows the clamp
+function setCanvasHeightAR(root, heightPx, instance) {
+	const canvas = getCanvasAR(root);
+	if (!canvas) return;
+	canvas.style.height = `${Math.ceil(heightPx)}px`;
+	canvas.style.flex = "none";
+	canvas.setAttribute(CANVAS.FIT_HEIGHT_ATTR, "");
+	try {
+		instance.resize();
+	} catch (_e) {
+		/* stale pane size only shifts the zoom centre */
+	}
+}
+
+function getCanvasAR(root) {
+	if (!root) return null;
+	return root.classList?.contains("arch-mermaid-canvas") ? root : (root.closest?.(".arch-mermaid-canvas") ?? null);
 }
 
 // 서버 daemon 목록 → unscoped mermaid node id 별 daemon 배열 (F39).
@@ -2410,11 +2468,14 @@ function getMapCopyNoteAR(diagState) {
 	return "Last good copy — the latest map read failed";
 }
 
-// the all-clear is a verdict — before any part is judged the column says why it is empty
-function getAttentionEmptyAR(partRows, busy, errored) {
-	if (busy) return "Checking part health…";
-	if (partRows.some((row) => row.tone)) return "No part needs attention";
-	return errored > 0 ? "Couldn't read part health" : "Part health not read yet";
+// the all-clear is a verdict on the rows' own freshness — a warm-error re-read keeps status ready, so only the verdict sees it
+function getAttentionEmptyAR(partRows, isBusy, freshness) {
+	if (isBusy) return "Checking part health…";
+	if (partRows.some((row) => row.tone)) {
+		const verdict = window.UI.getFreshnessVerdict({ ...freshness, tone: "ok" });
+		return verdict.tone === "ok" ? "No part needs attention" : "Last known: no part needed attention";
+	}
+	return window.UI.getRegionSummary(freshness.regions).failedCount > 0 ? "Couldn't read part health" : "Part health not read yet";
 }
 
 // 'Not loaded' (no verdict arrived) never shares a label with 'No data' (a verdict of absence).
@@ -2424,7 +2485,7 @@ function getPartStatusTextAR(row) {
 
 // a row's shown verdict follows the health stamp — an ok read under a failed re-read is last-known, never a bare Healthy
 function getPartStatusAR(row, freshness) {
-	if (!row.tone) return { tone: null, text: "Not loaded" };
+	if (!row.tone) return { tone: null, text: getPartStatusTextAR(row) };
 	const verdict = window.UI.getFreshnessVerdict({ ...freshness, tone: row.tone, label: row.statusLabel });
 	return { tone: verdict.tone, text: verdict.label };
 }
@@ -2448,12 +2509,13 @@ function getPartToneRankAR(tone) {
 	return PART_TONE_RANK_AR[tone] ?? PART_UNJUDGED_RANK_AR;
 }
 
-// flagged parts vs the rest, each worst first — the same rows the caption counts
+// flagged, answered and not-loaded parts, each worst first — the same rows the caption counts
 function getPartHealthGroupsAR(partRows) {
 	const sorted = [...partRows].sort((a, b) => getPartToneRankAR(a.tone) - getPartToneRankAR(b.tone));
 	return {
 		attention: sorted.filter(isPartFlaggedAR),
-		rest: sorted.filter((row) => !isPartFlaggedAR(row)),
+		rest: sorted.filter((row) => row.tone && !isPartFlaggedAR(row)),
+		unloaded: sorted.filter((row) => !row.tone),
 	};
 }
 
@@ -2517,10 +2579,11 @@ function getPageVerdictAR(partRows, caption, nodeIndex, freshness) {
 
 // every part's state on the page — the drawer stays the drill, not the only place a state is read
 function PartHealthBlockAR({ partRows, attentionEmpty, freshness, nodeIndex, onSelectNode }) {
-	const { SplitRow } = window.UI;
+	const { SplitRow, SplitColumn } = window.UI;
 	if (partRows.length === 0) return null;
 
-	const { attention, rest } = getPartHealthGroupsAR(partRows);
+	const { attention, rest, unloaded } = getPartHealthGroupsAR(partRows);
+	const listProps = { freshness, nodeIndex, onSelectNode };
 	return (
 		<section className="card arch-part-health" id={PART_HEALTH_ID_AR} aria-labelledby={`${PART_HEALTH_ID_AR}-title`}>
 			<div className="card-head">
@@ -2528,8 +2591,14 @@ function PartHealthBlockAR({ partRows, attentionEmpty, freshness, nodeIndex, onS
 			</div>
 			<div className="card-body">
 				<SplitRow ratio="1:1">
-					<PartHealthListAR title="Needs attention" rows={attention} empty={attentionEmpty} freshness={freshness} nodeIndex={nodeIndex} onSelectNode={onSelectNode} />
-					<PartHealthListAR title="Healthy or not verified" rows={rest} empty="No other parts" freshness={freshness} nodeIndex={nodeIndex} onSelectNode={onSelectNode} />
+					<PartHealthListAR title="Needs attention" rows={attention} empty={attentionEmpty} {...listProps} />
+					<SplitColumn>
+						{/* a cold read leaves only unloaded parts → the Not loaded list speaks, not a false 'No other parts' */}
+						{(rest.length > 0 || unloaded.length === 0) && (
+							<PartHealthListAR title="Healthy or not verified" rows={rest} empty="No other parts" {...listProps} />
+						)}
+						{unloaded.length > 0 && <PartHealthListAR title="Not loaded" rows={unloaded} {...listProps} />}
+					</SplitColumn>
 				</SplitRow>
 			</div>
 		</section>
@@ -2557,7 +2626,9 @@ function PartHealthRowAR({ row, freshness, nodeIndex, onSelectNode }) {
 	const { formatRelativeTime } = window.UI;
 	const box = getPartBoxAR(row, nodeIndex);
 	const status = getPartStatusAR(row, freshness);
-	const meta = [box && `in ${box.label}`, row.lastRunAt && `last run ${formatRelativeTime(row.lastRunAt)}`, row.cause]
+	// a down part says when it is due next, so the reader knows whether waiting fixes it
+	const nextRun = isPartFlaggedAR(row) && row.nextRunAt && `next run ${formatRelativeTime(row.nextRunAt)}`;
+	const meta = [box && `in ${box.label}`, row.lastRunAt && `last run ${formatRelativeTime(row.lastRunAt)}`, nextRun, row.cause]
 		.filter(Boolean)
 		.join(" · ");
 
@@ -2660,6 +2731,7 @@ function getHealthPartRows(cardStates, partBindings) {
 			statusLabel: isReady ? getPartStatusLabel(def, facts) : null,
 			// 마지막 실행은 데몬 행만 갖는 사실임 — 나머지 칸은 비어 있음이 정답임.
 			lastRunAt: isReady && facts.daemon ? facts.daemon.last_run_at || null : null,
+			nextRunAt: isReady && facts.daemon ? facts.daemon.expected_next_at || null : null,
 			cause: isReady ? getPartCauseAR(facts) : null,
 			nodeIds: partBindings?.[def.id] || [],
 		};
@@ -3061,7 +3133,14 @@ function getShapeBoxAR(groupEl) {
 		return null;
 	}
 	if (!box || !(box.width > 0) || !(box.height > 0)) return null;
-	return box;
+	return getGroupSpaceBoxAR(shape, box);
+}
+
+// getBBox is in the shape's own space — a cylinder path carries its own translate, which the ring rect beside it does not
+function getGroupSpaceBoxAR(shape, box) {
+	const matrix = shape.transform?.baseVal?.consolidate?.()?.matrix;
+	if (!matrix) return box;
+	return { x: box.x * matrix.a + matrix.e, y: box.y * matrix.d + matrix.f, width: box.width * matrix.a, height: box.height * matrix.d };
 }
 
 /**

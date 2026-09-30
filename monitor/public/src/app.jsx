@@ -192,6 +192,7 @@ function getHarness(stores) {
 	const failedKeys = Object.keys(HARNESS_SOURCES).filter((key) => stores[key]?.error != null);
 	return {
 		...fold,
+		kpi: stores.kpiState?.data ?? null, // raw /api/dashboard/kpi — yesterday_* fields for day-over-day tile trends
 		unreadSources: failedKeys.map((key) => HARNESS_SOURCES[key].label),
 		error: failedKeys.length > 0 ? stores[failedKeys[0]].error : null,
 	};
@@ -307,6 +308,8 @@ function App() {
 		};
 	}, [pollHarness]);
 
+	const displayTimezone = useDisplayTimezone(healthState.data?.timezone);
+
 	// route change → page heading focus (drill + sidebar + back/forward); first mount excluded
 	const focusedRoute = useR(active);
 	useE(() => {
@@ -353,7 +356,7 @@ function App() {
 			<div className="flex-1 min-w-0 flex flex-col">
 				<main id={MAIN_CONTENT_ID} tabIndex={-1} className="flex-1 min-w-0 p-6 flex flex-col min-h-0">
 					{Screen ? (
-						<Screen onNav={onNavClick} harness={harness} onRetryHarness={pollHarness} />
+						<Screen key={displayTimezone} onNav={onNavClick} harness={harness} onRetryHarness={pollHarness} />
 					) : (
 						<div className="placeholder">Coming soon — '{active}'</div>
 					)}
@@ -362,6 +365,20 @@ function App() {
 			<TweaksUI tweaks={tweaks} setTweak={setTweak} />
 		</div>
 	);
+}
+
+/**
+ * Effective display tz, seeded from the shell's own /api/health read; the page keys on it.
+ * Key change → remount → memoized time strings re-render in the arrived zone; unchanged zone → no remount.
+ * @param healthTimezone - `timezone` of the latest health read; absent or invalid keeps the default
+ */
+function useDisplayTimezone(healthTimezone) {
+	const [timezone, setTimezone] = useS(() => window.UI.getDisplayTimezone());
+	useE(() => {
+		window.UI.setDisplayTimezone(healthTimezone);
+		setTimezone(window.UI.getDisplayTimezone());
+	}, [healthTimezone]);
+	return timezone;
 }
 
 // 테마(모드+강조색) + 레이아웃(밀도) 두 섹션. TweaksPanel 미로드 시 null
@@ -417,14 +434,5 @@ function hexToRgbTriplet(hex) {
 	return `${r} ${g} ${b}`;
 }
 
-// 표시 tz 시드 — /api/health 의 timezone(config [meta].timezone 렌더)을 1회 fetch 후
-// 렌더 시작. localhost 단발 호출이라 부트 지연 무시 가능 · 실패 시 기본(KST) 유지.
-// 렌더 후 시드 시 이미 그려진 시각 문자열이 stale 해지는 race 차단이 목적.
-fetchJson("/api/health")
-	.then((health) => window.UI.setDisplayTimezone(health && health.timezone))
-	.catch(() => {
-		// 무시 — setDisplayTimezone 미호출 = 기본 tz 폴백이 의도된 동작
-	})
-	.finally(() => {
-		ReactDOM.createRoot(document.getElementById("root")).render(<App />);
-	});
+// 첫 페인트는 API 를 기다리지 않는다 — 표시 tz 는 App 이 셸 health 폴에서 시드 (useDisplayTimezone)
+ReactDOM.createRoot(document.getElementById("root")).render(<App />);

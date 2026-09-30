@@ -351,7 +351,7 @@ test("a failed stats payload raises one banner at the loop output group", () => 
     statsState: { status: "error", data: null, error: "boom" },
     loopEventsState: { status: "loading", data: null, error: null },
     loopAggregate: null,
-    listState: { status: "error", data: null, error: "boom" },
+    listState: { status: "loading", data: null, error: null },
     buckets: null,
     onNav: () => {},
     onRetry: () => {},

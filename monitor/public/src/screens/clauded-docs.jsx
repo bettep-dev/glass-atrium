@@ -209,8 +209,6 @@ function ScreenClaudedDocs(/* { onNav } */) {
 		Badge,
 		TypeScaleStyle,
 		DetailSurface,
-		FreshnessStamp,
-		RefreshButton,
 		INITIAL_REGION_STATE,
 		putRegionRequest,
 		putRegionData,
@@ -888,19 +886,7 @@ function ScreenClaudedDocs(/* { onNav } */) {
 	const loadMoreRemaining = canLoadMore ? Math.max(0, total - rows.length) : 0;
 	const isLoadingMore = listState.busy && currentOffset > 0 && !isSearchMode;
 
-	// 카운트 표기 — groups mode 는 그룹/문서 이중 단위 명시 (총건 pill 이 그룹 수를 문서 수처럼 읽히던 오해 차단, F40) ·
-	// search mode 는 row 단위 '건' 유지 + 숨은 건 있으면 "표시/전체" 이중 표기 (데이터 정직성).
-	const headerRight = (
-		<>
-			<FreshnessStamp {...getFreshnessInputCD(asOf, listState)} />
-			<RefreshButton
-				isBusy={listState.busy}
-				hasRead={asOf != null}
-				onRefresh={triggerRefresh}
-				label="Refresh documents"
-			/>
-		</>
-	);
+	const headerRight = <DocHeaderActionsCD asOf={asOf} listState={listState} onRefresh={triggerRefresh} />;
 
 	return (
 		<div className="flex flex-col min-h-0 flex-1">
@@ -1076,9 +1062,10 @@ function ScreenClaudedDocs(/* { onNav } */) {
         /* 재정렬 rollback inline 에러 — crit hue (toast 와 별개 · 영향 그룹 인접 표시). */
         .doc-reorder-error { color: rgb(var(--crit)); font-family: 'JetBrains Mono', monospace; }
         /* stage pill — 톤은 meter 채움과 종료 글리프가 운반 · 라벨 텍스트는 중립 유지. */
-        /* ID 셀 둘째 줄 계보. */
-        /* breaks only between words — "rev of" / "#N" stack in the ID column instead of spilling or splitting a number */
-        .doc-lineage { font-size: var(--fs-meta); color: rgb(var(--faint)); white-space: normal; word-break: keep-all; overflow-wrap: normal; text-align: left; }
+        /* ID 셀 둘째 줄 계보 — 한 줄 유지 (ID 컬럼 폭은 "rev of #N" 기준). */
+        .doc-lineage { font-size: var(--fs-meta); color: rgb(var(--faint)); white-space: nowrap; text-align: left; }
+        /* header text at the title text's x — lead slot 20px + title row gap 6px */
+        .doc-col-title-text { margin-left: 26px; }
         /* held rows while a read is in flight — dimmed, still readable and selectable. */
         .tbl.doc-ledger-busy { opacity: 0.55; transition: opacity 120ms; }
         @media (prefers-reduced-motion: reduce) { .tbl.doc-ledger-busy { transition: none; } }
@@ -1095,6 +1082,8 @@ function ScreenClaudedDocs(/* { onNav } */) {
         .doc-stage-actor { font-size: var(--fs-meta); font-family: 'JetBrains Mono', monospace; color: rgb(var(--faint)); white-space: normal; word-break: keep-all; overflow-wrap: normal; }
         .doc-row.is-stale > td { background: rgb(var(--warn) / 0.06); }
         .doc-age-flag { font-size: var(--fs-meta); font-weight: 600; color: rgb(var(--warn)); font-family: 'Pretendard Variable', Pretendard, ui-sans-serif, system-ui, sans-serif; }
+        /* .card overflow:hidden = a scroll container → traps the rail's sticky in the card · clip trims the corners only, sticky stays viewport-relative */
+        .card.doc-list-card:not(:has(.popover-panel)) { overflow: clip; }
         .doc-open-summary { border-bottom: 1px solid rgb(var(--line)); }
         @media (min-width: 1280px) { .doc-open-summary { border-bottom: 0; border-left: 1px solid rgb(var(--line)); } }
         .doc-open-summary-group { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 12px; margin: 0; font-size: var(--fs-meta); }
@@ -1124,7 +1113,7 @@ function ScreenClaudedDocs(/* { onNav } */) {
 				/>
 			</div>
 
-			{/* 단일 컬럼 — 검색 + facet + meta 가 DocListCardCD sticky 헤더에 통합. full-height = flex-1 + card-body maxHeight:'none' override. */}
+			{/* single column — search + facets + meta live in the DocListCardCD toolbar header · full height = flex-1 + card-body maxHeight:'none' override */}
 			<div
 				className="flex"
 				style={{ minHeight: 0, flex: "1 1 auto", width: "100%" }}
@@ -1234,6 +1223,24 @@ function ScreenClaudedDocs(/* { onNav } */) {
 	);
 }
 
+// before the first read the list placeholder is the one loading label → no stamp, and Refresh is not busy yet
+function DocHeaderActionsCD({ asOf, listState, onRefresh }) {
+	const { FreshnessStamp, RefreshButton } = window.UI;
+	const hasRead = asOf != null;
+
+	return (
+		<>
+			{hasRead && <FreshnessStamp {...getFreshnessInputCD(asOf, listState)} />}
+			<RefreshButton
+				isBusy={hasRead && listState.busy === true}
+				hasRead={hasRead}
+				onRefresh={onRefresh}
+				label="Refresh documents"
+			/>
+		</>
+	);
+}
+
 // 서술 태그 전용 셀 — audience/format 칩을 제목 컬럼 밖에서 렌더.
 function DocTagsCellCD({ audience, format, commonFormat, commonAudience = null }) {
 	const { Badge } = window.UI;
@@ -1265,11 +1272,10 @@ function DocAuthorCellCD({ author }) {
 	);
 }
 
-// 중앙 목록 카드 — Sticky Header Integrated (검색 + facet + 건수 2-row).
-// .card-body 인라인 maxHeight:'none' 으로 base.css `max-height: 70vh` override → 카드 viewport full-height + 카드 내부 스크롤.
 // the list card takes focus when a recovered read unmounts the Retry that held it
 const DOC_LIST_CARD_ID_CD = "docs-list";
 
+// Center list card — toolbar (search + facets + count) + ledger · ledger scroll = page scroll
 function DocListCardCD({
 	asOf,
 	state,
@@ -1308,7 +1314,7 @@ function DocListCardCD({
 	// load-more keeps its own button spinner → only a first-page read dims the held rows
 	const isHeldBusy = state.busy === true && state.status === "ready" && !isLoadingMore;
 	// the header Refresh already says Refreshing… → only a search, which it never names, speaks here
-	const busyText = isSearchMode ? "Searching…" : null;
+	const busyText = isHeldBusy && isSearchMode ? "Searching…" : null;
 	// 건수 우측 표기 — groups mode 는 그룹/문서 이중 단위 + 서버 집계 숨김 건 (외부 headerRight 와 동일 규칙, F40) ·
 	// search mode 는 row 단위 '건' + 숨은 건 있으면 "표시/전체" 이중 표기.
 	// 그룹이 기본 단위 · 문서 수는 그룹 수와 다를 때만 (같은 수를 두 번 말하지 않는다).
@@ -1345,8 +1351,6 @@ function DocListCardCD({
 	const nowMs = Date.now();
 	const openSummary = isSectioned ? getOpenSummaryCD(orderedRows, nowMs) : null;
 	const hasOpenSummary = openSummary != null && openSummary.openCount > 0;
-	// sections already name the stage → the column holds the meter only
-	const statusColumnWidth = isSectioned ? 96 : 135;
 	const rovingId = getRovingIdCD(orderedRows.map((r) => r.id), focusRowId, selectedId);
 	const commonFormat = getCommonFormatCD(orderedRows);
 	const commonAudience = getCommonAudienceCD(orderedRows);
@@ -1389,18 +1393,10 @@ function DocListCardCD({
 	return (
 		<div
 			id={DOC_LIST_CARD_ID_CD}
-			className="card flex flex-col min-h-0"
+			className="card doc-list-card flex flex-col min-h-0"
 			style={{ height: "100%", flex: "1 1 auto", width: "100%" }}
 		>
-			<div
-				style={{
-					position: "sticky",
-					top: 0,
-					zIndex: 2,
-					background: "rgb(var(--elev))",
-					borderBottom: "1px solid rgb(var(--line))",
-				}}
-			>
+			<div style={{ borderBottom: "1px solid rgb(var(--line))" }}>
 				{/* 단일 툴바 행 — 검색 · 열림/종료/전체 chip(그룹 단위 건수) · 대상 chip · 건수. */}
 				<div className="px-4 py-2.5 flex items-center gap-2 flex-wrap">
 					<div className="relative" style={{ flex: "1 1 200px", minWidth: 180 }}>
@@ -1453,14 +1449,14 @@ function DocListCardCD({
 						}))}
 						onToggle={inlineFilterProps.onAudienceChange}
 					/>
-					{isHeldBusy && busyText && (
+					{busyText && (
 						<span className="doc-list-busy ml-auto fs-meta" role="status" style={{ color: "rgb(var(--dim))" }}>
 							{busyText}
 						</span>
 					)}
 					{totalLabel && (
 						<span
-							className={`${isHeldBusy && busyText ? "" : "ml-auto "}fs-meta font-mono`}
+							className={`${busyText ? "" : "ml-auto "}fs-meta font-mono`}
 							style={{ color: "rgb(var(--dim))" }}
 							aria-live="polite">
 							{totalLabel}
@@ -1509,10 +1505,8 @@ function DocListCardCD({
 					maxHeight: "none",
 					flex: "1 1 auto",
 					minHeight: 0,
-					overflowY: "auto",
-					// 카드 폭은 셸 min-width 에 막혀 1010px 아래로 내려가지 않는다.
-					// 컬럼 min-width 합이 그 폭을 넘을 때 발동 — 검색 모드의 Order 컬럼이 그 경우(1073px).
-					overflowX: "auto",
+					// no scroller here — a scrolling box would pin the sticky rail to it · x-overflow belongs to the table wrapper
+					overflow: "visible",
 				}}
 			>
 				{getRegionView(state) === "loading" && <LoadingPlaceholder label="documents" minHeight={240} />}
@@ -1571,11 +1565,13 @@ function DocListCardCD({
 								</th>
 								{/* doc_status badge 별도 column 분리 (title inline 제거 · 사용자 directive). */}
 								{/* width 는 표가 넘칠 때 min-content 까지 눌린다 → 컬럼마다 min-width 바닥을 같이 준다. */}
-								<th scope="col" style={{ width: statusColumnWidth, minWidth: statusColumnWidth }}>Status</th>
+								<th scope="col" style={{ width: 135, minWidth: 135 }}>Status</th>
 								{/* ID — 문서 번호 노출 (그룹 루트 행은 대표 문서 번호).
-                    ponytail: 84px 는 6자리(min-content 78.4px) 기준 — 7자리면 min-content 가 이겨 셀이 벌어진다, 그때 폭을 다시 잰다. */}
-								<th scope="col" style={{ width: 84, minWidth: 84 }}>ID</th>
-								<th scope="col" className="doc-col-title">Title</th>
+                    ponytail: 130px = "rev of #123456" (mono 14자 × 7.2px + padding 28px) — 7자리 id 부터는 재측정 필요. */}
+								<th scope="col" style={{ width: 130, minWidth: 130 }}>ID</th>
+								<th scope="col" className="doc-col-title">
+									<span className="doc-col-title-text">Title</span>
+								</th>
 								{/* 태그 전용 column — 서술 칩을 제목 셀에서 분리. */}
 								{hasTagsColumn && (
 									<th scope="col" className="doc-col-tags" style={{ width: 152, minWidth: 152 }}>
@@ -1659,7 +1655,6 @@ function DocListCardCD({
 													<DocStagePillCD
 														isRowControl
 														docStatus={shownStage}
-														isLabelVisible={!isSectioned || shownStage !== storedStage}
 														onPickStage={(stage) => onPickStage(row.id, stage, null)}
 														isChanging={togglingIds.has(row.id)}
 														note={row.group_stage_uniform === false ? "members differ" : null}
@@ -1818,7 +1813,7 @@ function DocOpenSummaryCD({ summary, isPartial, onSelect }) {
 	const { oldest } = summary;
 	return (
 		<aside
-			className="doc-open-summary flex flex-wrap items-center gap-x-6 gap-y-2 px-4 py-2 xl:flex-col xl:items-stretch xl:w-[272px] xl:shrink-0 xl:sticky xl:top-0 xl:py-3"
+			className="doc-open-summary flex flex-wrap items-center gap-x-6 gap-y-2 px-4 py-2 xl:flex-col xl:items-stretch xl:w-[200px] xl:shrink-0 xl:sticky xl:top-6 xl:py-3"
 			aria-label="Open documents summary">
 			<dl className="doc-open-summary-group">
 				<dt>Open by stage</dt>
@@ -2868,7 +2863,6 @@ function DocStagePillCD({
 	isChanging,
 	note,
 	isRowControl = false,
-	isLabelVisible = true,
 }) {
 	const { Icon, ROW_CONTROL_PROPS } = window.UI;
 	const [menuOpen, setMenuOpen] = useStateCD(false);
@@ -2903,9 +2897,7 @@ function DocStagePillCD({
 					<Icon name="check" size={11} />
 				</span>
 			)}
-			{(isLabelVisible || isChanging) && (
-				<span className="doc-stage-label">{isChanging ? "Changing…" : entry.label}</span>
-			)}
+			<span className="doc-stage-label">{isChanging ? "Changing…" : entry.label}</span>
 		</>
 	);
 
@@ -2974,10 +2966,13 @@ function DocStagePillCD({
 	);
 }
 
+// trailing context-window tag ("[1m]") → not part of the model name, so both spellings read alike
+const MODEL_CONTEXT_TAG_CD = /\[[^\]]*\]$/;
+
 // last-status-model → the line under the pill. The operator's own action is a reserved literal
 // and reads as such; a model id renders through its display name. An unknown actor renders nowhere.
 function formatActorCD(model) {
-	return model === OPERATOR_ACTOR_CD ? "operator" : window.UI.getDisplayName("model", model);
+	return model === OPERATOR_ACTOR_CD ? "operator" : window.UI.getDisplayName("model", String(model).replace(MODEL_CONTEXT_TAG_CD, ""));
 }
 
 // DocCheckboxCD — 5-state spec — 16px square · 2px border · 4px radius · WCAG 2.2 AA focus-visible

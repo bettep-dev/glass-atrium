@@ -47,7 +47,7 @@ interface StampSandbox {
     harness?: HarnessFold | null,
   ) => FreshnessInput;
   runFetch: (url: string, setter: (update: Updater) => void, request: AbortController) => Promise<boolean>;
-  describeVersion: (harness: { status?: string; version?: string } | null) => string;
+  describeVersion: (harness: { status?: string; version?: string } | null) => string | null;
 }
 
 const sandbox = await buildScreenSandbox<StampSandbox>(DASH_SRC);
@@ -121,5 +121,5 @@ test("the version label stays beside the stamp and never claims a version it doe
   assert.strictEqual(sandbox.describeVersion({ version: "1.0.1" }), "v1.0.1");
   assert.strictEqual(sandbox.describeVersion({}), "version unknown");
   assert.strictEqual(sandbox.describeVersion(null), "version unknown");
-  assert.notStrictEqual(sandbox.describeVersion({ status: "loading" }), "version unknown", "a pending read is not an unknown version");
+  assert.strictEqual(sandbox.describeVersion({ status: "loading" }), null, "a pending read names no version, so the stamp alone says loading");
 });
