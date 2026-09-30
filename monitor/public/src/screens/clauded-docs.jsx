@@ -1086,10 +1086,10 @@ function ScreenClaudedDocs(/* { onNav } */) {
         .doc-age-flag { font-size: var(--fs-meta); font-weight: 600; color: rgb(var(--warn)); font-family: 'Pretendard Variable', Pretendard, ui-sans-serif, system-ui, sans-serif; }
         /* .card overflow:hidden = a scroll container → traps the rail's sticky in the card · clip trims the corners only, sticky stays viewport-relative */
         .card.doc-list-card:not(:has(.popover-panel)) { overflow: clip; }
-        /* Retry hands focus here via scrollIntoView(start) → the margin keeps the page header in view instead of a jump */
+        /* Retry's focus handoff scrolls the card up to reveal it → the margin keeps the page header in view */
         .card.doc-list-card { scroll-margin-top: 96px; }
-        /* programmatic focus after a mouse Retry misses :focus-visible → the shared ring, drawn inside the clipped card */
-        .card.doc-list-card:focus { outline: var(--focus-ring-width) solid rgb(var(--focus-ring)); outline-offset: calc(-1 * var(--focus-ring-width)); }
+        /* clip trims an outside ring → the shared handoff ring drawn inset */
+        .card.doc-list-card[data-focus-handoff]:focus { outline-offset: calc(-1 * var(--focus-ring-width)); }
         .doc-open-summary { border-bottom: 1px solid rgb(var(--line)); }
         @media (min-width: 1280px) { .doc-open-summary { border-bottom: 0; border-left: 1px solid rgb(var(--line)); } }
         .doc-open-summary-block { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 8px; }

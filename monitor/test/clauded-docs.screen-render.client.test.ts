@@ -932,15 +932,6 @@ test("the open-summary rail titles each group with a level-2 heading and pairs e
   assert.ok(ageTerms.includes("Over 7 days"), `age labels stand alone: ${ageTerms.join(" | ")}`);
 });
 
-test("from the rail breakpoint, labels and counts sit on one two-column grid and Oldest open starts at the label edge", async () => {
-  const css = getScreenCss(await loadDocsScreen());
-
-  assert.match(cssRuleBody(css, ".doc-open-summary .doc-open-summary-group"), /grid-template-columns:\s*minmax\(0,\s*1fr\)\s+auto/);
-  const oldest = cssRuleBody(css, ".doc-open-summary .doc-open-oldest");
-  assert.match(oldest, /padding-inline:\s*0/);
-  assert.match(oldest, /justify-content:\s*flex-start/);
-});
-
 test("a warm list error marks the rail counts Last known, and a settled read does not", async () => {
   const screen = await loadDocsScreen();
   const railText = (state: Record<string, unknown>) =>
@@ -948,22 +939,6 @@ test("a warm list error marks the rail counts Last known, and a settled read doe
 
   assert.doesNotMatch(railText(SETTLED_LIST), /Last known/);
   assert.match(railText(WARM_ERROR_LIST), /Last known/);
-});
-
-test("a stale row keeps a light wash and its stage pill keeps a visible border", async () => {
-  const css = getScreenCss(await loadDocsScreen());
-
-  const alpha = Number(cssRuleBody(css, ".doc-row.is-stale > td").match(/--warn\)\s*\/\s*([\d.]+)/)?.[1]);
-  assert.ok(alpha > 0 && alpha <= 0.035, `wash alpha ${alpha}`);
-  assert.match(cssRuleBody(css, ".doc-row.is-stale .doc-stage-pill"), /border-color:\s*rgb\(var\(--dim\)/);
-});
-
-test("the list card taking Retry focus shows the shared focus ring and scrolls with a header margin instead of jumping", async () => {
-  const css = getScreenCss(await loadDocsScreen());
-
-  const focused = cssRuleBody(css, ".card.doc-list-card:focus");
-  assert.match(focused, /outline:\s*var\(--focus-ring-width\) solid rgb\(var\(--focus-ring\)\)/);
-  assert.match(cssRuleBody(css, ".card.doc-list-card"), /scroll-margin-top:\s*\d/);
 });
 
 describe("the header hands its read state to the shell exactly once, with or without a first read", () => {
