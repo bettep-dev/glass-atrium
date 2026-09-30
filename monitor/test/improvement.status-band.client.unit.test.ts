@@ -184,7 +184,7 @@ test("a ready tile renders its value and its population", () => {
   assert.match(textOf(tile), /Applied \(7 days\)/);
 });
 
-// Plan LN: no body text under 12px — the population line is body text, not a micro caption.
+// no body text under 12px — the population line is body text, not a micro caption
 test("a ready tile renders its population at the body type scale", () => {
   const tile = sandbox.StatusTileI({
     status: "ready",

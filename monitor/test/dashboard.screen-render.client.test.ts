@@ -134,7 +134,7 @@ test("a tile heads with an h2 whose window keeps its own case, and leads with th
   assert.equal(collectText(value[0]), "40");
 });
 
-// Real-enough UI for the outcome tile builder: the rate passes through untouched so each judged status can be driven directly.
+// Real-enough UI for the outcome tile and results panel: the rate passes through untouched, writer counts follow ui.jsx (count minus reconstructed).
 const rateMod = (await loadScreenModule(DASH_SRC, {
   UI: {
     resolveOutcomeRate: (data: unknown) => data,
@@ -145,9 +145,11 @@ const rateMod = (await loadScreenModule(DASH_SRC, {
     OUTCOME_BREAKAGE_CRIT_SHARE: 0.05,
     OUTCOME_OPEN_CAVEAT_WARN_SHARE: 0.1,
     getRegionView: getRegionViewStub,
+    getWriterCount: (row?: { count: number; reconstructed_count?: number }) => (row ? row.count - (row.reconstructed_count ?? 0) : 0),
+    getWriterTotal: (data: { total: number; reconstructed_total?: number }) => data.total - (data.reconstructed_total ?? 0),
   },
   React: createReactStub(),
-})) as Record<string, unknown>;
+})) as ScreenModule;
 const buildOutcomeTile = rateMod.buildOutcomeTile as (state: unknown) => Record<string, string>;
 
 test("the Task results tile headlines a bare failed share on one line, with its counts and caveat share on the lines below", () => {
@@ -167,20 +169,10 @@ test("the Task results tile headlines a bare failed share on one line, with its 
   assert.match(String(lowN.detail), /too few to judge/i);
 });
 
-// Real-enough UI for the week results panel: writer counts follow ui.jsx (count minus reconstructed).
-const panelMod = (await loadScreenModule(DASH_SRC, {
-  UI: {
-    formatInt: (n: number) => String(n),
-    getWriterCount: (row?: { count: number; reconstructed_count?: number }) => (row ? row.count - (row.reconstructed_count ?? 0) : 0),
-    getWriterTotal: (data: { total: number; reconstructed_total?: number }) => data.total - (data.reconstructed_total ?? 0),
-  },
-  React: createReactStub(),
-})) as ScreenModule;
-
 function renderResultPanel(byResult: Array<{ result: string; count: number }>): RenderedNode {
   const total = byResult.reduce((sum, row) => sum + row.count, 0);
-  const panel = (panelMod.buildResultPanel as (data: unknown) => unknown)({ total, reconstructed_total: 0, by_result: byResult, by_agent_result: [] });
-  return renderScreen(panelMod.React.createElement(panelMod.ResultPanel as Component, { panel })) as RenderedNode;
+  const panel = (rateMod.buildResultPanel as (data: unknown) => unknown)({ total, reconstructed_total: 0, by_result: byResult, by_agent_result: [] });
+  return renderScreen(rateMod.React.createElement(rateMod.ResultPanel as Component, { panel })) as RenderedNode;
 }
 
 describe("the week results panel", () => {
