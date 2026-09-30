@@ -29,6 +29,7 @@ const DASH_REGION_URLS = {
   update: UPDATE_STATUS_ENDPOINT,
   updateJob: UPDATE_JOB_ENDPOINT,
   spendDays: '/api/dashboard/cost-timeseries?days=7',
+  heatmap: '/api/outcomes/heatmap?days=7',
 };
 const DASH_WAVE_REGIONS = Object.keys(DASH_REGION_URLS);
 // shell-polled, not a DASH_REGION_URLS entry — its re-read is the shell's harness poll
@@ -53,6 +54,7 @@ function ScreenDashboard({ onNav, harness, onRetryHarness }) {
   const [updateState,    setUpdateState]    = useStateD(INITIAL_REGION_STATE);
   const [updateJobState, setUpdateJobState] = useStateD(INITIAL_REGION_STATE);
   const [spendDaysState, setSpendDaysState] = useStateD(INITIAL_REGION_STATE);
+  const [heatmapState,   setHeatmapState]   = useStateD(INITIAL_REGION_STATE);
 
   const [refreshTick, setRefreshTick] = useStateD(0);
   // last wave that settled with ≥1 successful read → kept across waves, never advanced by an all-failed wave
@@ -64,7 +66,7 @@ function ScreenDashboard({ onNav, harness, onRetryHarness }) {
   const loadRegion = useCallbackD((region) => {
     const setters = {
       cost: setCostState, agents: setAgentsState, outcomes: setOutcomesState, update: setUpdateState, updateJob: setUpdateJobState,
-      spendDays: setSpendDaysState,
+      spendDays: setSpendDaysState, heatmap: setHeatmapState,
     };
     const requests = requestsRef.current;
     requests[region]?.abort();
@@ -118,7 +120,7 @@ function ScreenDashboard({ onNav, harness, onRetryHarness }) {
     staleMs: UPDATE_STALE_MS,
   }).kind;
 
-  const waveStates = [costState, agentsState, outcomesState, updateState, spendDaysState];
+  const waveStates = [costState, agentsState, outcomesState, updateState, spendDaysState, heatmapState];
   const isWaveBusy = getRegionSummary(waveStates).isBusy;
   const alarms = buildAlarms({ harness, costState, installKind });
   const alarmReadiness = getAlarmReadiness({ harness, costState, updateState });
@@ -149,6 +151,8 @@ function ScreenDashboard({ onNav, harness, onRetryHarness }) {
         .dash-strip-partial { background: transparent; border: 1px dashed currentColor; }
         .dash-result-row { display: grid; grid-template-columns: 9rem 1fr 4.5rem; align-items: center; gap: 0.5rem; }
         .dash-result-fill { height: 0.5rem; background: currentColor; border-radius: 2px; }
+        .dash-hour-grid { display: grid; grid-template-columns: 2.5rem repeat(24, minmax(0, 1fr)); gap: 2px; align-items: center; line-height: 1; }
+        .dash-hour-cell { height: 0.75rem; background: currentColor; border-radius: 2px; }
         @media (min-width: 1280px) { .dash-alarm-grid > .alarm-row:nth-child(odd):nth-last-child(2) { border-bottom: none; } }
       `}</style>
 
@@ -182,6 +186,9 @@ function ScreenDashboard({ onNav, harness, onRetryHarness }) {
         />
         <StatusBand tiles={tiles} onNav={onNav} onRetry={retryTile} sharedSources={sharedFailure?.sources ?? NO_SHARED_SOURCES}/>
         <WeekRow spendState={spendDaysState} outcomesState={outcomesState} onRetrySpend={() => loadRegion('spendDays')}/>
+        <WeekPanel id="dash-week-hours" title="Runs by hour" state={heatmapState} source="runs by hour"
+          onRetry={() => loadRegion('heatmap')}
+          render={(data) => <HourGrid grid={buildHourGrid(data, getTodayIn(data.meta?.timezone))}/>}/>
       </div>
     </div>
   );
@@ -400,22 +407,43 @@ function WeekRow({ spendState, outcomesState, onRetrySpend }) {
 
 // a panel without onRetry shares its source with a tile → the tile speaks for the failure, the panel only points to it
 function WeekPanel({ id, title, state, source, onRetry, render }) {
-  const { LoadingPlaceholder, RetryButton, getErrorCopy, getRegionView } = window.UI;
-  const view = getRegionView(state);
+  const { Badge, LoadingPlaceholder } = window.UI;
+  const view = getPanelView(state);
   return (
     <section id={id} className="card p-3 flex flex-col gap-2" aria-labelledby={`${id}-title`}
       aria-busy={state.busy ? 'true' : undefined}>
-      <h2 id={`${id}-title`} className="fs-meta text-dim uppercase tracking-wide">{title}</h2>
+      <div className="flex items-center gap-2">
+        <h2 id={`${id}-title`} className="fs-meta text-dim uppercase tracking-wide">{title}</h2>
+        {view === 'held' && <Badge role="status" tone="neutral">Last known</Badge>}
+      </div>
       {view === 'loading' && <LoadingPlaceholder label={title.toLowerCase()}/>}
-      {view === 'error' && !onRetry && <p className="fs-meta text-dim">Not loaded — see the Task results tile.</p>}
-      {view === 'error' && onRetry && (
-        <>
-          <p className="fs-body">{getErrorCopy(state.error, source).sentence}</p>
-          <RetryButton onRetry={onRetry} isBusy={state.busy} focusTargetId={id}/>
-        </>
-      )}
-      {view === 'ready' && render(state.data)}
+      <PanelFailure id={id} view={view} state={state} source={source} onRetry={onRetry}/>
+      {(view === 'ready' || view === 'held') && render(state.data)}
     </section>
+  );
+}
+
+// held data whose latest read failed → 'held', the same last-known rule markHeldTile applies to the tiles
+function getPanelView(state) {
+  const view = window.UI.getRegionView(state);
+  return view === 'ready' && state.error != null ? 'held' : view;
+}
+
+const RESULTS_TILE_POINTER = 'see the Task results tile';
+
+function PanelFailure({ id, view, state, source, onRetry }) {
+  const { RetryButton, getErrorCopy } = window.UI;
+  if (view !== 'error' && view !== 'held') return null;
+  if (!onRetry) {
+    const lead = view === 'held' ? 'Showing the last reading' : 'Not loaded';
+    return <p className="fs-meta text-dim">{lead} — {RESULTS_TILE_POINTER}.</p>;
+  }
+  const sentence = view === 'held' ? `Showing the last reading — couldn't refresh ${source}.` : getErrorCopy(state.error, source).sentence;
+  return (
+    <>
+      <p className={view === 'held' ? 'fs-meta text-dim' : 'fs-body'}>{sentence}</p>
+      <RetryButton onRetry={onRetry} isBusy={state.busy} focusTargetId={id}/>
+    </>
   );
 }
 
@@ -470,8 +498,71 @@ function ResultPanel({ panel }) {
           );
         })}
       </ul>
+      <BreakageAgents agents={panel.agents}/>
     </>
   );
+}
+
+function BreakageAgents({ agents }) {
+  if (agents.length === 0) return <p className="fs-meta text-dim">No agent had a failed or blocked run.</p>;
+  return (
+    <>
+      <h3 className="fs-meta text-dim">Most failed or blocked</h3>
+      <ul className="flex flex-col gap-1">
+        {agents.map((row) => (
+          <li key={row.agent} className="flex items-center justify-between gap-2 fs-body">
+            {/* a real href, not onNav → the query reaches the Task results filter through hashchange */}
+            <a href={getAgentOutcomesHref(row.agent)} className="dash-drill truncate min-w-0"
+              aria-label={`${row.agent}: ${formatInt(row.count)} failed or blocked — open its task results`}>{row.agent}</a>
+            <span className="font-mono">{formatInt(row.count)}</span>
+          </li>
+        ))}
+      </ul>
+    </>
+  );
+}
+
+function getAgentOutcomesHref(agent) {
+  return `#outcomes?agent=${encodeURIComponent(agent)}&days=7`;
+}
+
+const HOUR_TICKS = new Set([0, 6, 12, 18]);
+// the heatmap counts differently from the results panel beside it → it states its own basis
+const HOUR_GRID_BASIS = 'All recorded runs — reconstructed included, poisoned excluded.';
+
+function HourGrid({ grid }) {
+  if (grid.total <= 0) return <p className="fs-meta text-dim">No runs recorded in the last 7 days.</p>;
+  return (
+    <>
+      <p className="fs-meta text-dim">{grid.span} · {formatInt(grid.total)} runs · {HOUR_GRID_BASIS}</p>
+      <div role="img" aria-label={describeHourGrid(grid)} className="dash-hour-grid fs-meta text-dim">
+        {grid.rows.map((row) => (
+          <React.Fragment key={row.day}>
+            <span>{row.day}</span>
+            {row.counts.map((count, hour) => (
+              <span key={hour} className="dash-hour-cell text-info" title={`${row.day} ${formatHour(hour)} — ${formatInt(count)} runs`}
+                style={{ opacity: count === 0 ? 0.06 : 0.2 + (0.8 * count) / grid.max }}/>
+            ))}
+          </React.Fragment>
+        ))}
+        <span/>
+        {row24().map((hour) => <span key={hour}>{HOUR_TICKS.has(hour) ? formatHour(hour) : ''}</span>)}
+      </div>
+    </>
+  );
+}
+
+function row24() {
+  return Array.from({ length: 24 }, (_, hour) => hour);
+}
+
+function formatHour(hour) {
+  return `${String(hour).padStart(2, '0')}:00`;
+}
+
+function describeHourGrid(grid) {
+  const peak = grid.peak;
+  return `Runs by hour, ${grid.span}: busiest ${peak.day} ${formatHour(peak.hour)} with ${formatInt(peak.count)} runs`;
 }
 
 // 소유 화면 링크 — 실제 href(#screen) 앵커. 수식 클릭·가운데 클릭은 브라우저에 맡겨 새 탭으로 연다.
@@ -801,6 +892,7 @@ function describeHarnessReading(harness) {
     badge: getHarnessBadge({ isPartlyUnread, lostCount, downCount }),
     value: downCount > 0 ? `${downCount} of ${partCount} down` : `${harness.partsOk} of ${partCount} up`,
     detail: lostCount > 0 ? `${lostCount} not read` : undefined,
+    trend: describeHarnessCoverage(harness),
     hint: describeHarnessHint(harness, { isPartlyUnread, lostCount, downCount }),
     canRetry: isPartlyUnread,
   };
@@ -825,13 +917,15 @@ function describeHarnessHint(harness, { isPartlyUnread, lostCount, downCount }) 
     const sources = harness.unreadSources.join(' · ');
     return lostCount > 0 ? `Couldn't read ${sources}.` : `Showing the last reading — couldn't refresh ${sources}.`;
   }
-  // sentence break, not ' · ' → the names list after it never reads as more down parts
-  const unchecked = harness.uncheckedNames.length > 0
-    ? `. ${joinPartNames(harness.uncheckedNames)} checked on the System map`
-    : '';
   // the headline already carries the count → the hint names the parts instead of restating it
-  const down = downCount > 0 ? `Not answering: ${joinPartNames(harness.downNames)}` : 'All polled parts healthy';
-  return `${down}${unchecked}`;
+  return downCount > 0 ? `Not answering: ${joinPartNames(harness.downNames)}` : 'All polled parts healthy';
+}
+
+// its own line under the count → an unpolled part never reads as one more down part
+function describeHarnessCoverage(harness) {
+  if (harness.uncheckedNames.length === 0) return `All ${formatInt(harness.partsChecked)} parts polled on every harness read`;
+  const polled = `${formatInt(harness.partsChecked)} of ${formatInt(harness.partsTotal)} parts polled here`;
+  return `${polled}; ${joinPartNames(harness.uncheckedNames)} checked on the System map`;
 }
 
 // U+2011 non-breaking hyphen → a name like daily-restart-autoagent never wraps mid-name in a narrow tile
@@ -955,8 +1049,22 @@ function buildFleetTile(agentsState) {
   return {
     ...base, status: 'ready', tone, badge: FLEET_VERDICT[tone], value: formatInt(suspended), unit: 'suspended',
     detail: `${formatInt(streak)} on a failing streak`,
-    hint: Number.isFinite(agentCount) ? `${formatInt(agentCount)} agents with runs in the last 7 days` : null,
+    trend: describeFleetReach(agentCount, Number(breaker.registry_agents)),
+    hint: describeBusiestAgent(agentsState.data?.agents?.[0]),
   };
+}
+
+function describeFleetReach(agentCount, registryCount) {
+  if (!Number.isFinite(agentCount)) return null;
+  const of = Number.isFinite(registryCount) && registryCount > 0 ? ` of ${formatInt(registryCount)} registered` : '';
+  return `${formatInt(agentCount)}${of} agents had a run in the last 7 days`;
+}
+
+// the region reads order=runs&limit=1 → its one row is the busiest agent of the window
+function describeBusiestAgent(row) {
+  const runs = Number(row?.runs);
+  if (!row || !Number.isFinite(runs)) return null;
+  return `Most runs: ${row.agent_name ?? row.agent_id}, ${formatInt(runs)}`;
 }
 
 // the value's unit already says "suspended" → the verdict never repeats it
@@ -1028,7 +1136,47 @@ function buildResultPanel(data) {
   const rows = results.filter((result) => byResult.has(result))
     .map((result) => ({ result, count: window.UI.getWriterCount(byResult.get(result)) }));
   const start = data?.prior_window?.period_end;
-  return { rows, writerTotal: window.UI.getWriterTotal(data), span: start ? `${formatDay(start)} – today` : 'Last 7 days and today' };
+  return {
+    rows, writerTotal: window.UI.getWriterTotal(data), agents: getBreakageAgents(data?.by_agent_result),
+    span: start ? `${formatDay(start)} – today` : 'Last 7 days and today',
+  };
+}
+
+const BREAKAGE_RESULTS = ['fail', 'blocked'];
+const BREAKAGE_AGENT_LIMIT = 3;
+
+// per (agent, result) row under the tile's writer rule → each agent's failed + blocked, worst first
+function getBreakageAgents(rows) {
+  const counts = new Map();
+  for (const row of rows ?? []) {
+    if (!BREAKAGE_RESULTS.includes(row.result)) continue;
+    counts.set(row.agent, (counts.get(row.agent) ?? 0) + window.UI.getWriterCount(row));
+  }
+  return [...counts].filter(([, count]) => count > 0)
+    .sort(([agentA, countA], [agentB, countB]) => countB - countA || agentA.localeCompare(agentB))
+    .slice(0, BREAKAGE_AGENT_LIMIT)
+    .map(([agent, count]) => ({ agent, count }));
+}
+
+const WEEKDAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+
+/**
+ * The server's Sun-first 7×24 grid, rotated so today's weekday is the last row.
+ * The window is the last 168 hours → it touches 8 calendar dates, and each cell is one hour of one date.
+ * @param today - YYYY-MM-DD in the grid's bucket timezone; null keeps the server's Sun-first order
+ */
+function buildHourGrid(data, today) {
+  const grid = Array.isArray(data?.data) ? data.data : [];
+  const todayIndex = today ? new Date(`${today}T00:00:00Z`).getUTCDay() : WEEKDAYS.length - 1;
+  const rows = WEEKDAYS.map((_, offset) => (todayIndex + 1 + offset) % WEEKDAYS.length)
+    .map((dow) => ({ day: WEEKDAYS[dow], counts: row24().map((hour) => Number(grid[dow]?.[hour]) || 0) }));
+  const cells = rows.flatMap((row) => row.counts.map((count, hour) => ({ day: row.day, hour, count })));
+  const peak = cells.reduce((best, cell) => (cell.count > best.count ? cell : best), cells[0]);
+  const start = data?.meta?.period_start;
+  return {
+    rows, peak, max: peak.count, total: cells.reduce((sum, cell) => sum + cell.count, 0),
+    span: start ? `${formatDay(start)} – today, 8 calendar dates` : 'Last 7 days',
+  };
 }
 
 /** @param today - YYYY-MM-DD in the series' own timezone; the point on that day is still accruing */

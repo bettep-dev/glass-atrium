@@ -317,7 +317,23 @@ test("the harness tile counts only the parts the shell actually polled", () => {
   );
   assert.equal(tile.value, "1 of 6 down", "the verdict leads, over what answered, not what exists");
   assert.equal(tile.tone, "crit");
-  assert.ok(tile.hint.includes("Hook Chain"), "the unchecked part is named, not silently dropped");
+  assert.ok(tile.trend?.includes("Hook Chain"), "the unchecked part is named, not silently dropped");
+  assert.ok(!tile.hint.includes("Hook Chain"), "the verdict line never lists an unpolled part beside the down ones");
+});
+
+test("the harness and fleet tiles fill the line under their count with a secondary fact", () => {
+  const harness = tileOf(
+    dash.buildTiles({ harness: HEALTHY, costState: LOADING, agentsState: LOADING, outcomesState: LOADING }), "harness");
+  assert.equal(harness.trend, "All 7 parts polled on every harness read", "a fully polled harness says its coverage");
+  const agentsState = ready({
+    agents: [{ agent_id: "glass-atrium-dev-react", agent_name: "glass-atrium-dev-react", runs: 1458 }],
+    meta: { total_agents: 12, circuit_breaker: { source: "loaded", registry_agents: 20, suspended_count: 0, streak_count: 0, alarms: [] } },
+  });
+  const fleet = tileOf(dash.buildTiles({ harness: HEALTHY, costState: LOADING, agentsState, outcomesState: LOADING }), "fleet");
+  assert.equal(fleet.trend, "12 of 20 registered agents had a run in the last 7 days");
+  assert.equal(fleet.hint, "Most runs: glass-atrium-dev-react, 1,458", "the busiest agent is the region's one ordered row");
+  const noRows = fleetTile({ source: "loaded", registry_agents: 20, suspended_count: 0, streak_count: 0, alarms: [] });
+  assert.equal(noRows.hint, null, "no row → no busiest agent, never a made-up one");
 });
 
 // A shared ' · ' separator let the unpolled list run on into the down list → an unpolled part read as down.
@@ -679,7 +695,7 @@ test("the fleet tile fills its detail line with the failing streak, so a narrow 
   for (const streak of [0, 3]) {
     const tile = fleetTile({ source: "loaded", suspended_count: 0, streak_count: streak });
     assert.match(String(tile.detail), new RegExp(`^${streak} on a failing streak`), `streak ${streak}`);
-    assert.match(tile.hint, /12 agents/, `streak ${streak}: the hint keeps the fleet size`);
+    assert.match(String(tile.trend), /12 agents/, `streak ${streak}: the line under the count keeps the fleet size`);
   }
 });
 

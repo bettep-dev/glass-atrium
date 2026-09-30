@@ -66,7 +66,8 @@ async function openDashboard(viewport: Viewport): Promise<Page> {
       const harness = document.querySelector("#dash-tile-harness")?.textContent ?? "";
       const hasStrip = document.querySelector("#dash-week-spend ol") !== null;
       const hasResults = (document.querySelector("#dash-week-results")?.textContent ?? "").includes("reported outcomes");
-      return / (up|down)/.test(harness) && hasStrip && hasResults;
+      const hasHours = document.querySelector("#dash-week-hours [role=img]") !== null;
+      return / (up|down)/.test(harness) && hasStrip && hasResults && hasHours;
     },
     undefined,
     { timeout: 30_000 },
@@ -103,13 +104,13 @@ describe("Dashboard density at 1440×900", () => {
     await page.close();
   });
 
-  // todo → a known-unmet target: runs and reports, never fails the suite until its region lands
-  test("the content ends within one status-band row of the viewport bottom", { todo: "the 7-day heatmap reserve is not built" }, () => {
+  test("the content ends within one status-band row of the viewport bottom", () => {
     assert.ok(900 - probe.contentBottom <= probe.statusBandHeight,
       `content ends at ${probe.contentBottom}, leaving more than one ${probe.statusBandHeight}px row blank`);
   });
 
-  test("no status tile holds a blank band above its drill link", { todo: "the Harness and Fleet facts are not moved yet" }, () => {
+  // todo → a known-unmet target: runs and reports, never fails the suite until the tiles close their bands
+  test("no status tile holds a blank band above its drill link", { todo: "Harness and Fleet still keep a band after their facts moved" }, () => {
     for (const [id, band] of Object.entries(probe.tileBands)) {
       assert.ok(band <= TILE_BAND_MAX_PX, `${id} tile keeps a ${band}px blank band`);
     }

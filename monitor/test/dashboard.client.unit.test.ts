@@ -198,7 +198,13 @@ test("mutationErrorMessage has no branch for the retired preview_failed code", (
 // --- The week row: 7-day Spend strip + this week's task results ---
 
 interface WeekRowHelpers {
-  buildResultPanel: (data: unknown) => { rows: Array<{ result: string; count: number }>; writerTotal: number; span: string };
+  buildResultPanel: (data: unknown) => {
+    rows: Array<{ result: string; count: number }>; writerTotal: number; span: string; agents: Array<{ agent: string; count: number }>;
+  };
+  buildHourGrid: (data: unknown, today: string | null) => {
+    rows: Array<{ day: string; counts: number[] }>; total: number; span: string; peak: { day: string; hour: number; count: number };
+  };
+  getPanelView: (state: unknown) => string;
   buildSpendStrip: (points: unknown, today: string) => { bars: Array<{ date: string; cost: number; isPartial: boolean }>; span: string | null };
   window: { UI: { resolveOutcomeRate: (data: unknown) => { breakage: number }; getWriterTotal: (data: unknown) => number } };
 }
@@ -220,6 +226,44 @@ test("the results panel counts follow the tile's writer-emitted rule and name th
   assert.equal(countOf("fail") + countOf("blocked"), week.window.UI.resolveOutcomeRate(data).breakage, "the panel's breakage is the tile's");
   assert.equal(panel.rows.reduce((sum, row) => sum + row.count, 0), week.window.UI.getWriterTotal(data), "rows add up to the tile's denominator");
   assert.match(panel.span, /09-23 – today/);
+});
+
+test("the results panel ranks agents by the tile's failed-or-blocked writer count", () => {
+  const byAgentResult = [
+    { agent: "a", result: "fail", count: 6, reconstructed_count: 2 },
+    { agent: "a", result: "blocked", count: 1, reconstructed_count: 0 },
+    { agent: "b", result: "fail", count: 9, reconstructed_count: 0 },
+    { agent: "b", result: "done", count: 50, reconstructed_count: 0 },
+    { agent: "c", result: "done_with_concerns", count: 30, reconstructed_count: 0 },
+    { agent: "d", result: "blocked", count: 3, reconstructed_count: 3 },
+    { agent: "e", result: "blocked", count: 1, reconstructed_count: 0 },
+    { agent: "f", result: "fail", count: 1, reconstructed_count: 0 },
+  ];
+  const panel = week.buildResultPanel({ total: 0, reconstructed_total: 0, by_result: [], by_agent_result: byAgentResult });
+  assert.deepEqual(JSON.parse(JSON.stringify(panel.agents)), [{ agent: "b", count: 9 }, { agent: "a", count: 5 }, { agent: "e", count: 1 }],
+    "writer-only fail + blocked, worst first, ties by name, done and reconstructed-only rows out, top 3");
+});
+
+test("the hour grid keeps every cell, ends on today's weekday and names its 8-date span", () => {
+  const data = Array.from({ length: 7 }, (_, dow) => Array.from({ length: 24 }, (_, hour) => dow * 100 + hour));
+  const sum = data.flat().reduce((a, b) => a + b, 0);
+  const grid = week.buildHourGrid({ data, meta: { period_start: "2026-09-23", total_count: sum } }, "2026-09-30");
+  assert.equal(grid.rows[grid.rows.length - 1].day, "Wed", "2026-09-30 is a Wednesday");
+  assert.equal(grid.rows[0].day, "Thu");
+  assert.equal(grid.total, sum, "rotation neither drops nor duplicates a cell");
+  assert.deepEqual([...(grid.rows.find((row) => row.day === "Mon")?.counts ?? [])], data[1], "a row keeps its own weekday's hours");
+  assert.deepEqual({ ...grid.peak }, { day: "Sat", hour: 23, count: 623 });
+  assert.equal(grid.span, "09-23 – today, 8 calendar dates");
+});
+
+test("a week panel whose refresh failed over held data reads last known, not fresh", () => {
+  const rows: Array<[string, unknown, string]> = [
+    ["first load", { data: null, error: null }, "loading"],
+    ["cold failure", { data: null, error: "HTTP 500" }, "error"],
+    ["fresh data", { data: {}, error: null }, "ready"],
+    ["held data, failed refresh", { data: {}, error: "HTTP 500" }, "held"],
+  ];
+  for (const [name, state, view] of rows) assert.equal(week.getPanelView(state), view, name);
 });
 
 test("today's Spend point is marked partial and the strip names its span", () => {
