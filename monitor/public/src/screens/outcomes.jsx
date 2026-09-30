@@ -1110,7 +1110,7 @@ function getHeroFloorVerdictO(verdict, data, attentionState) {
   return {
     tone: hero.tone,
     chips: [{ key: 'needs-you', label: 'Needs you', targetId: LEDGER_NEEDS_YOU_ID }],
-    text: `${verdict.text.slice(0, -1)}, but ${window.UI.formatInt(count)} records (${formatShareO(count, hero.population)}) still need you.`,
+    text: `${verdict.text.slice(0, -1)}, but ${formatIntO(count)} records (${formatShareO(count, hero.population)}) still need you.`,
   };
 }
 
