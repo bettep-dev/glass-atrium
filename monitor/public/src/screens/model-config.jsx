@@ -804,9 +804,7 @@ function groupFilesByModelMC(fileRows) {
 }
 
 // Files toggle at the control radius every other pill uses, not the 12px card fold.
-const FILES_MC = Object.freeze({
-	PILL_STYLE: { borderRadius: "var(--radius-control)" },
-});
+const FILES_PILL_STYLE_MC = { borderRadius: "var(--radius-control)" };
 
 // source = an agent name or a config file name — kept a flat string so the meta tables stay one level deep.
 function isConfigFileMC(source) {
@@ -822,6 +820,7 @@ function getFileAgentNameMC(file) {
 /**
  * In effect = measured at the consumption point.
  * Matching the saved target → ✓ 'Matches saved' (tooltip 'In effect: …') · differing → the value + one warn badge · absent → nothing.
+ * A failed reload dates the match to the last good read · no file list → names the source it was read from.
  */
 function LiveValueMC({ value, drift, files, source, isStale, driftTitle }) {
 	const { AgentName, Badge, Icon } = window.UI;
@@ -863,7 +862,7 @@ function LiveValueMC({ value, drift, files, source, isStale, driftTitle }) {
 				<details className="fs-meta" open={isFoldAlerting || undefined}>
 					<summary
 						className="inline-flex items-center gap-1 px-2 border border-line text-dim hover:text-ink cursor-pointer"
-						style={FILES_MC.PILL_STYLE}>
+						style={FILES_PILL_STYLE_MC}>
 						{isFoldAlerting && <Icon name="warn" size={12} className="text-warn" />}
 						{`${fileRows.length} ${fileRows.length === 1 ? "file" : "files"}`}
 						<Icon name="chevron-down" size={12} className="chevron" />
