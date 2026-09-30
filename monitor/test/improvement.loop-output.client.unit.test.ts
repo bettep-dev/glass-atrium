@@ -163,21 +163,21 @@ test("the trend plots one chart of the daily reject share, ticked by MM/DD and t
 
 const PHRASE_ROWS = [
   {
-    name: "both halves scored → recent count leads, earlier count follows",
-    before: { count: 4, total: 5 },
-    after: { count: 3, total: 5 },
-    expected: "3 of 5 rejected (was 4 of 5)",
+    name: "both halves scored → recent count leads over its days, earlier count names its own",
+    before: { count: 4, total: 5, days: 2 },
+    after: { count: 3, total: 5, days: 3 },
+    expected: "3 of 5 rejected in the latest 3 cycle days (4 of 5 in the 2 before)",
   },
   {
-    name: "no earlier scored cycle → recent count alone",
-    before: { count: 0, total: 0 },
-    after: { count: 2, total: 7 },
-    expected: "2 of 7 rejected",
+    name: "no earlier scored cycle → recent count alone, still over its days",
+    before: { count: 0, total: 0, days: 1 },
+    after: { count: 2, total: 7, days: 2 },
+    expected: "2 of 7 rejected in the latest 2 cycle days",
   },
   {
     name: "no recent scored cycle → no count to state",
-    before: { count: 1, total: 4 },
-    after: { count: 0, total: 0 },
+    before: { count: 1, total: 4, days: 2 },
+    after: { count: 0, total: 0, days: 2 },
     expected: "No scored cycles yet",
   },
 ];
@@ -190,20 +190,42 @@ describe("the reject rate reads as counts, never a percentage", () => {
   }
 });
 
-// the phrase itself is pinned by the table above; this guards that the head is fed both halves
-test("the trend card head carries the reject-rate headline over the aggregate's halves", () => {
+// the phrase itself is pinned by the table above; this guards that the card is fed both halves
+test("the trend card carries the reject-rate headline over the aggregate's halves, clear of its title", () => {
   const events = getEvents(["2026-09-22", "2026-09-23", "2026-09-24", "2026-09-25"], 3);
   const aggregate = sandbox.deriveLoopAggregateI({ events }) as LoopAggregate & {
-    failBefore: unknown;
-    failAfter: unknown;
+    failBefore: { days: number };
+    failAfter: { days: number };
   };
+  const tree = collectElements(sandbox.TrendCardI({ state: READY, aggregate }), []);
 
-  const head = collectElements(sandbox.TrendCardI({ state: READY, aggregate }), []).find(
-    (el) => el.type === CardHead,
-  );
-
-  const headline = head?.props.right as RecordedElement | undefined;
-  assert.equal(headline?.type, sandbox.RejectRateHeadlineI);
+  const head = tree.find((el) => el.type === CardHead);
+  const headline = tree.find((el) => el.type === sandbox.RejectRateHeadlineI);
+  assert.equal(head?.props.right, undefined, "the head row holds only the title and its basis, so neither is cut");
   assert.equal(headline?.props.before, aggregate.failBefore);
   assert.equal(headline?.props.after, aggregate.failAfter);
+  assert.equal(aggregate.failBefore.days + aggregate.failAfter.days, 4, "the halves split the plotted days");
+});
+
+test("the all-days totals name their window, so they never read as the recent half's count", () => {
+  const events = getEvents(["2026-09-22", "2026-09-23", "2026-09-24", "2026-09-25"], 3);
+  const aggregate = sandbox.deriveLoopAggregateI({ events });
+  const totals = collectElements(sandbox.TrendCardI({ state: READY, aggregate }), []).find(
+    (el) => typeof el.props.children === "string" && (el.props.children as string).includes("verified"),
+  );
+
+  assert.match(String(totals?.props.children), /all 4 cycle days: \d+ verified · \d+ rejected/);
+});
+
+test("the trend plots from a zero baseline with room to read, and short y labels", () => {
+  const events = getEvents(["2026-09-22", "2026-09-23", "2026-09-24"], 3);
+  const aggregate = sandbox.deriveLoopAggregateI({ events });
+  const chart = collectElements(sandbox.TrendCardI({ state: READY, aggregate }), []).find(
+    (el) => el.type === TrendChart,
+  );
+  const formatValue = chart?.props.formatValue as (v: number) => string;
+
+  assert.equal(chart?.props.kind, "bars", "a share per day starts at zero, never at the lowest day");
+  assert.ok(Number(chart?.props.h) >= 96, "a 64px plot flattens a daily share");
+  assert.equal(formatValue(0.8), "80%", "the axis names the share once; labels stay short enough to fit");
 });

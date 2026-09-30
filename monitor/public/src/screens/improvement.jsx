@@ -263,7 +263,8 @@ function ScreenImprovement({ onNav }) {
 		{ source: "correction signals", state: correctionState },
 		{ source: "corpus audits", state: corpusAuditState },
 	];
-	const pageFailure = getPageFailureI(regions);
+	const failures = getPageFailuresI(regions, view);
+	const pageFailure = failures.banner;
 	// a shared outage owns the one Retry → cards drop theirs
 	const regionRetry = pageFailure ? undefined : triggerRefresh;
 	const regionStates = regions.map(({ state }) => state);
@@ -495,7 +496,7 @@ function ScreenImprovement({ onNav }) {
 						reviewReasons={reviewReasonSegments}
 						onNav={onNav}
 						onRetry={regionRetry}
-						shared={pageFailure}
+						shared={failures}
 					/>
 				) : (
 					<>
@@ -520,7 +521,7 @@ function ScreenImprovement({ onNav }) {
 								onAction={runAction}
 								pendingActionId={pendingActionId}
 								onRetry={regionRetry}
-								shared={pageFailure}
+								shared={failures}
 							/>
 						</div>
 						<PatternLedgerCardI
@@ -528,7 +529,7 @@ function ScreenImprovement({ onNav }) {
 							suppression={loopSuppression}
 							onRowClick={setDrawerRow}
 							onRetry={regionRetry}
-							shared={pageFailure}
+							shared={failures}
 						/>
 						<LoopOutputGroupI
 							statsState={statsState}
@@ -538,7 +539,7 @@ function ScreenImprovement({ onNav }) {
 							buckets={buckets}
 							onNav={onNav}
 							onRetry={regionRetry}
-							shared={pageFailure}
+							shared={failures}
 						/>
 					</>
 				)}
@@ -573,7 +574,7 @@ function StatusBandI({
 	onOpenInstrumentation,
 	onRetry,
 }) {
-	const { PageVerdict, getFreshnessVerdict } = window.UI;
+	const { PageVerdict } = window.UI;
 	const s = statsState.data || {};
 	const cycleTotal = Number(s.cycle_total_7d ?? 0);
 	const applied = Number(s.cycles_generated_applied_7d ?? 0);
@@ -583,9 +584,9 @@ function StatusBandI({
 		pendingTotal - Number(suppression?.pending_unpromptable ?? 0),
 	);
 	const statsStatus = bandTileStatusI(statsState, statsState.data);
-	// held count under a failed or aged read → Last known, ok drops to neutral (shared verdict rule)
-	const appliedVerdict = asOf ? getFreshnessVerdict({ tone: "ok", at: asOf, regions: [statsState] }) : null;
-	const isAppliedHeld = appliedVerdict != null && appliedVerdict.tone !== "ok";
+	const appliedHeld = getHeldLabelI(asOf, statsState);
+	// a waiting suggestion warns whatever the read's age; only the all-clear needs a fresh read
+	const awaitingHeld = awaiting > 0 ? null : getHeldLabelI(asOf, listState);
 	// 보류 중 사람이 오늘 풀 수 있는 원인만 센다 — 설계 결정으로 닫아 둔 원인은 wedged 가
 	// 아니다. 판정 집합은 원장 held 구역과 같은 것 하나: 갈라지면 타일과 구역이 다른 수를 말한다.
 	const heldBuckets = getSuppressionListI(suppression, "parked");
@@ -612,23 +613,23 @@ function StatusBandI({
 			<div className="grid grid-cols-4 gap-3">
 				<StatusTileI
 					status={bandTileStatusI(listState, listState.data)}
-					tone={awaiting > 0 ? "text-warn" : "text-ok"}
-					symbol={awaiting > 0 ? "⚠" : "✓"}
+					tone={awaiting > 0 ? "text-warn" : awaitingHeld ? undefined : "text-ok"}
+					symbol={awaiting > 0 ? "⚠" : awaitingHeld ? null : "✓"}
 					label="Awaiting your decision"
 					value={formatIntI(awaiting)}
 					owner="suggestion board"
-					population="Suggestions that need your approval"
+					population={`${awaitingHeld ? `${awaitingHeld} · ` : ""}Suggestions that need your approval`}
 					basis="Pending or snoozed, any age"
 					onRetry={onRetry}
 				/>
 				<StatusTileI
 					status={statsStatus}
-					tone={isAppliedHeld ? undefined : "text-ok"}
-					symbol={isAppliedHeld ? null : "✓"}
+					tone={appliedHeld ? undefined : "text-ok"}
+					symbol={appliedHeld ? null : "✓"}
 					label="Applied (7 days)"
 					value={formatIntI(applied)}
 					owner="loop output"
-					population={`${isAppliedHeld ? `${appliedVerdict.label} · ` : ""}of ${formatIntI(cycleTotal)} cycles · last ${formatCycleStampI(s.latest_cycle_started_at)}`}
+					population={`${appliedHeld ? `${appliedHeld} · ` : ""}of ${formatIntI(cycleTotal)} cycles · last ${formatCycleStampI(s.latest_cycle_started_at)}`}
 					basis="Cycles started in the last 7 days"
 					onRetry={onRetry}
 				/>
@@ -662,6 +663,13 @@ function StatusBandI({
 			/>
 		</section>
 	);
+}
+
+// held count under a failed or aged read → its Last known label, null while fresh (shared verdict rule)
+function getHeldLabelI(at, state) {
+	if (!at) return null;
+	const verdict = window.UI.getFreshnessVerdict({ tone: "ok", at, regions: [state] });
+	return verdict.tone === "ok" ? null : verdict.label;
 }
 
 // Any failed payload → error, never "still loading" · ready only once every payload and value has landed.
@@ -891,6 +899,7 @@ function TrendCardI({ state, aggregate, shared, onRetry }) {
 					<ErrorBannerI
 						focusTargetId={ANCHOR_ID_I.trend}
 						source="loop events"
+						region="trend"
 						error={state.error}
 						isBusy={state.busy}
 						shared={shared}
@@ -931,22 +940,22 @@ function TrendCardI({ state, aggregate, shared, onRetry }) {
 	});
 	return (
 		<div className="card" id={ANCHOR_ID_I.trend}>
-			<CardHead
-				title="Verified vs rejected (trend)"
-				sub={getLoopBasisI(aggregate)}
-				right={<RejectRateHeadlineI before={aggregate.failBefore} after={aggregate.failAfter} />}
-			/>
+			<CardHead title="Verified vs rejected (trend)" sub={getLoopBasisI(aggregate)} />
 			<div className="px-5 pb-4">
-				<div className="fs-meta text-faint mb-1">
-					{`Share of scored cycles rejected, per day · ${formatIntI(aggregate.verifiedTotal)} verified · ${formatIntI(aggregate.rejectTotal)} rejected`}
+				<div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-1 mb-1">
+					<RejectRateHeadlineI before={aggregate.failBefore} after={aggregate.failAfter} />
+					<span className="fs-meta text-faint">
+						{`Share rejected per day · all ${formatIntI(series.length)} cycle days: ${formatIntI(aggregate.verifiedTotal)} verified · ${formatIntI(aggregate.rejectTotal)} rejected`}
+					</span>
 				</div>
 				<TrendChart
 					label="Share of scored cycles rejected, per day"
 					tone="warn"
-					h={64}
+					kind="bars"
+					h={112}
 					yScale
 					maxTicks={5}
-					formatValue={(v) => `${Math.round(v * 100)}% rejected`}
+					formatValue={(v) => `${Math.round(v * 100)}%`}
 					points={points}
 				/>
 			</div>
@@ -954,12 +963,12 @@ function TrendCardI({ state, aggregate, shared, onRetry }) {
 	);
 }
 
-// recent-half count leads; the earlier half rides as "(was …)" so no percentage implies precision
+// counts, never a percentage · each half names its cycle days so neither reads as the all-days total
 function getRejectRatePhraseI(before, after) {
 	if (!after || !after.total) return "No scored cycles yet";
-	const recent = `${formatIntI(after.count)} of ${formatIntI(after.total)} rejected`;
+	const recent = `${formatIntI(after.count)} of ${formatIntI(after.total)} rejected in the latest ${formatIntI(after.days)} cycle days`;
 	if (!before || !before.total) return recent;
-	return `${recent} (was ${formatIntI(before.count)} of ${formatIntI(before.total)})`;
+	return `${recent} (${formatIntI(before.count)} of ${formatIntI(before.total)} in the ${formatIntI(before.days)} before)`;
 }
 
 function RejectRateHeadlineI({ before, after }) {
@@ -1111,6 +1120,7 @@ function KanbanCardI({
 					<ErrorBannerI
 						focusTargetId={ANCHOR_ID_I.suggestionBoard}
 						source="suggestions"
+						region="suggestion board"
 						error={state.error}
 						isBusy={state.busy}
 						shared={shared}
@@ -1798,6 +1808,7 @@ function BucketRowI({ state, buckets, shared, onRetry }) {
 					<ErrorBannerI
 						focusTargetId={ANCHOR_ID_I.learningMemory}
 						source="suggestions"
+						region="learning memory"
 						error={state.error}
 						isBusy={state.busy}
 						shared={shared}
@@ -2407,6 +2418,7 @@ function ChangeSummaryCardI({ state, aggregate, onRetry, shared }) {
 					<ErrorBannerI
 						focusTargetId={ANCHOR_ID_I.changeSummary}
 						source="loop events"
+						region="applied changes"
 						error={state.error}
 						isBusy={state.busy}
 						shared={shared}
@@ -2779,14 +2791,15 @@ function ToastI({ tone, message }) {
 }
 
 // per-region failure: quiet covered note when the page banner names this source, else its own card + Retry
-function ErrorBannerI({ source, error, onRetry, isBusy, shared, focusTargetId }) {
+function ErrorBannerI({ source, region, error, onRetry, isBusy, shared, focusTargetId }) {
 	const { RegionFailure } = window.UI;
 	return (
 		<RegionFailure
 			source={source}
+			region={region}
 			error={error}
 			isBusy={isBusy}
-			shared={shared}
+			failures={shared}
 			focusTargetId={focusTargetId}
 			onRetry={onRetry}
 		/>
@@ -2843,8 +2856,8 @@ function deriveLoopAggregateI(data) {
 		verifiedTotal,
 		rejectTotal,
 		trend,
-		failBefore: { count: before.reject, total: before.total },
-		failAfter: { count: after.reject, total: after.total },
+		failBefore: { count: before.reject, total: before.total, days: mid },
+		failAfter: { count: after.reject, total: after.total, days: trend.length - mid },
 	};
 }
 
@@ -2884,10 +2897,27 @@ function loadRegionI(url, setState, onData) {
 }
 
 // null unless 2+ regions failed with one shared cause (then one page banner owns Retry)
-function getPageFailureI(regions) {
-	return window.UI.getSharedFailure(
-		regions.map(({ source, state }) => ({ source, error: state.error || null })),
-	);
+// board view's failure slots in render order → the first slot a source feeds speaks for it
+const BOARD_FAILURE_SLOTS_I = [
+	["suggestions", "suggestion board"],
+	["pattern ledger", "pattern ledger"],
+	["loop stats", "loop stats"],
+	["loop events", "applied changes"],
+	["loop events", "trend"],
+	["suggestions", "learning memory"],
+];
+
+// one card per failed read over the open view's slots; sources the view renders no slot for follow
+function getPageFailuresI(regions, view) {
+	const errors = new Map(regions.map(({ source, state }) => [source, state.error || null]));
+	const slots = view === "instrumentation" ? [] : BOARD_FAILURE_SLOTS_I;
+	const slotted = new Set(slots.map(([source]) => source));
+	return window.UI.getSourceFailures([
+		...slots.map(([source, region]) => ({ source, region, error: errors.get(source) ?? null })),
+		...regions
+			.filter(({ source }) => !slotted.has(source))
+			.map(({ source, state }) => ({ source, error: state.error || null })),
+	]);
 }
 
 // APPLIED / REJECTED 분리 + snoozed 명시 라우팅.

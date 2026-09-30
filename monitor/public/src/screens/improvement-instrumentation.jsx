@@ -35,7 +35,7 @@ function PayloadErrorCardI({ title, source, state, onRetry, shared, focusTargetI
 					source={source}
 					error={state.error}
 					isBusy={state.busy}
-					shared={shared}
+					failures={shared}
 					focusTargetId={focusTargetId}
 					onRetry={onRetry}
 				/>
