@@ -214,7 +214,8 @@ function ScreenCost({ onNav }) {
           </RefreshingRegionC>
         </Disclosure>
 
-        <SplitRow ratio="3:2">
+        {/* both charts fit the 920px lg content column → split from lg; the decision pair's session table does not, so it keeps xl */}
+        <SplitRow ratio="3:2" className="lg:grid-cols-[minmax(0,3fr)_minmax(0,2fr)]">
           <Disclosure kind="status" level={3} title="Turn statistics" sub="Stop reasons and per-turn aggregates"
             className="cost-inst">
             <RefreshingRegionC id={COST_REGION_IDS.turns} states={[turnState]}>
@@ -2394,7 +2395,8 @@ function TurnStopReasonTable({ rows, maxEvents, totalEvents, sessionPopulation }
             <tr key={r.stop_reason}>
               {/* 라벨+desc 단일행 고정 — 좁은 뷰포트서 desc 래핑→행높이 1↔2줄 점프 차단:
                   flex 1행 + desc truncate(min-w-0) + 전문 title= 툴팁 보존. */}
-              <td>
+              {/* w-full + max-w-0 → the column takes the leftover width instead of the desc's nowrap width, so truncate engages */}
+              <td className="w-full max-w-0">
                 <div className="flex items-center min-w-0" title={[meta.label, meta.desc, meta.raw].filter(Boolean).join(' — ')}>
                   <span
                     className="inline-block w-[3px] h-3 rounded-sm mr-3 shrink-0"

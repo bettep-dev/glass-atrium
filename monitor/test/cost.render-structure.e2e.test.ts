@@ -358,11 +358,17 @@ describe("calm fixture — nothing is running hot", () => {
     }
   });
 
-  test("paired cards sit side by side at xl and stack below it", async () => {
+  test("each card pair splits from the narrowest width its content fits and stacks below it", async () => {
     const pairs = [
       ["Cost by model", "Most expensive sessions"],
       ["Turn statistics", "Log integrity"],
     ] as const;
+    // the session table's fixed-width cells outgrow a half of the lg column → that pair waits for xl
+    const rows = [
+      { width: 1440, isShared: [true, true] },
+      { width: 1024, isShared: [false, true] },
+      { width: 960, isShared: [false, false] },
+    ];
     const measure = () =>
       ctx.page.evaluate(({ names, selector }) => {
         const titleEls = Array.from(document.querySelectorAll(selector));
@@ -373,12 +379,13 @@ describe("calm fixture — nothing is running hot", () => {
         return names.map(([left, right]) => (tops.get(right) ?? Number.NaN) - (tops.get(left) ?? Number.NaN));
       }, { names: pairs.map((p) => [...p]), selector: CARD_TITLE_SELECTOR });
     try {
-      for (const [i, gap] of (await measure()).entries()) {
-        assert.ok(Math.abs(gap) < 1, `${pairs[i]!.join(" | ")} share one row at 1440; top gap ${gap}px`);
-      }
-      await ctx.page.setViewportSize({ width: 1024, height: 768 });
-      for (const [i, gap] of (await measure()).entries()) {
-        assert.ok(gap > 0, `${pairs[i]!.join(" | ")} stack at 1024; top gap ${gap}px`);
+      for (const row of rows) {
+        await ctx.page.setViewportSize({ width: row.width, height: 768 });
+        for (const [i, gap] of (await measure()).entries()) {
+          const layout = row.isShared[i] ? "share one row" : "stack";
+          const isMatch = row.isShared[i] ? Math.abs(gap) < 1 : gap > 0;
+          assert.ok(isMatch, `${pairs[i]!.join(" | ")} ${layout} at ${row.width}; top gap ${gap}px`);
+        }
       }
     } finally {
       await ctx.page.setViewportSize({ width: 1440, height: 900 });
@@ -455,7 +462,7 @@ describe("calm fixture — nothing is running hot", () => {
     assert.strictEqual(labels.at(-1), "100%", `y-axis labels: ${labels.join(" ")}`);
   });
 
-  test("no card content reaches past its own card's edges at xl", async () => {
+  test("no card content reaches past its own card's edges at lg and xl", async () => {
     const measureOverflow = () =>
       ctx.page.evaluate(() =>
         Array.from(document.querySelectorAll(".cost-screen .card")).flatMap((card) => {
@@ -467,7 +474,7 @@ describe("calm fixture — nothing is running hot", () => {
         }),
       );
     try {
-      for (const width of [1440, 1280]) {
+      for (const width of [1440, 1280, 1024]) {
         await ctx.page.setViewportSize({ width, height: 900 });
         const overflow = await measureOverflow();
         assert.deepStrictEqual(overflow, [], `at ${width}: ${overflow.slice(0, 3).join(" · ")}`);
