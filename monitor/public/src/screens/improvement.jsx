@@ -499,7 +499,7 @@ function ScreenImprovement({ onNav }) {
 						reviewReasons={reviewReasonSegments}
 						onNav={onNav}
 						onRetry={regionRetry}
-						shared={failures}
+						failures={failures}
 					/>
 				) : (
 					<>
@@ -524,7 +524,7 @@ function ScreenImprovement({ onNav }) {
 								onAction={runAction}
 								pendingActionId={pendingActionId}
 								onRetry={regionRetry}
-								shared={failures}
+								failures={failures}
 							/>
 						</div>
 						<PatternLedgerCardI
@@ -532,7 +532,7 @@ function ScreenImprovement({ onNav }) {
 							suppression={loopSuppression}
 							onRowClick={setDrawerRow}
 							onRetry={regionRetry}
-							shared={failures}
+							failures={failures}
 						/>
 						<LoopOutputGroupI
 							statsState={statsState}
@@ -542,7 +542,7 @@ function ScreenImprovement({ onNav }) {
 							buckets={buckets}
 							onNav={onNav}
 							onRetry={regionRetry}
-							shared={failures}
+							failures={failures}
 						/>
 					</>
 				)}
@@ -892,7 +892,7 @@ function ViewToggleI({ view, onChange }) {
 // 루프 산출 묶음 — 세 카드가 한 질문("루프가 무엇을 내놓았나")에 답하므로 기준을 묶음
 // 헤더에 한 번만 적는다. 기준이 다른 카드는 자기 것을 스스로 말한다(CTM/EPM = 전체 기간).
 // reporting health 는 카드가 아니라 링크다 — 이 화면은 그 수치를 호스팅하지 않는다.
-function TrendCardI({ state, aggregate, shared, onRetry }) {
+function TrendCardI({ state, aggregate, failures, onRetry }) {
 	const { CardHead, TrendChart, LoadingPlaceholder, getRegionView } = window.UI;
 	if (getRegionView(state) === "error") {
 		return (
@@ -905,7 +905,7 @@ function TrendCardI({ state, aggregate, shared, onRetry }) {
 						region="trend"
 						error={state.error}
 						isBusy={state.busy}
-						shared={shared}
+						failures={failures}
 						onRetry={onRetry}
 					/>
 				</div>
@@ -995,7 +995,7 @@ function LoopOutputGroupI({
 	buckets,
 	onNav,
 	onRetry,
-	shared,
+	failures,
 }) {
 	const { CardHead, Icon, getRegionView } = window.UI;
 	return (
@@ -1021,7 +1021,7 @@ function LoopOutputGroupI({
 					source="loop stats"
 					error={statsState.error}
 					isBusy={statsState.busy}
-					shared={shared}
+					failures={failures}
 					onRetry={onRetry}
 				/>
 			) : null}
@@ -1034,11 +1034,11 @@ function LoopOutputGroupI({
 				<ChangeSummaryCardI
 					state={loopEventsState}
 					aggregate={loopAggregate}
-					shared={shared}
+					failures={failures}
 					onRetry={onRetry}
 				/>
-				<TrendCardI state={loopEventsState} aggregate={loopAggregate} shared={shared} onRetry={onRetry} />
-				<BucketRowI state={listState} buckets={buckets} shared={shared} onRetry={onRetry} />
+				<TrendCardI state={loopEventsState} aggregate={loopAggregate} failures={failures} onRetry={onRetry} />
+				<BucketRowI state={listState} buckets={buckets} failures={failures} onRetry={onRetry} />
 			</div>
 		</section>
 	);
@@ -1096,7 +1096,7 @@ function KanbanCardI({
 	onAction,
 	pendingActionId,
 	onRetry,
-	shared,
+	failures,
 }) {
 	const { CardHead, LoadingPlaceholder, getRegionView } = window.UI;
 	const isLoading = state.status === "loading";
@@ -1126,7 +1126,7 @@ function KanbanCardI({
 						region="suggestion board"
 						error={state.error}
 						isBusy={state.busy}
-						shared={shared}
+						failures={failures}
 						onRetry={onRetry}
 					/>
 				</div>
@@ -1801,7 +1801,7 @@ function preVerifyBadgeI(status, passed) {
 
 // ----- Bucket row (Read-bridge) — CTM/EPM + outcome_summary + join_meta 시각화. ---
 
-function BucketRowI({ state, buckets, shared, onRetry }) {
+function BucketRowI({ state, buckets, failures, onRetry }) {
 	const { CardHead, LoadingPlaceholder, getRegionView } = window.UI;
 	if (getRegionView(state) === "error") {
 		return (
@@ -1814,7 +1814,7 @@ function BucketRowI({ state, buckets, shared, onRetry }) {
 						region="learning memory"
 						error={state.error}
 						isBusy={state.busy}
-						shared={shared}
+						failures={failures}
 						onRetry={onRetry}
 					/>
 				</div>
@@ -2451,7 +2451,7 @@ function composePreVerifyI(badge, rationale, axes) {
 // 배지에만 재사용 (두-컬럼 라인-diff 아님). before/after fail_rate(T-IMP-6)는 윈도우
 // 전/후반 reject 비율을 formatPctWithDenominator 로 — 분모 0 → '—' (가짜 0% 차단).
 
-function ChangeSummaryCardI({ state, aggregate, onRetry, shared }) {
+function ChangeSummaryCardI({ state, aggregate, onRetry, failures }) {
 	const { CardHead, LoadingPlaceholder, getRegionView } = window.UI;
 	if (getRegionView(state) === "error") {
 		return (
@@ -2464,7 +2464,7 @@ function ChangeSummaryCardI({ state, aggregate, onRetry, shared }) {
 						region="applied changes"
 						error={state.error}
 						isBusy={state.busy}
-						shared={shared}
+						failures={failures}
 						onRetry={onRetry}
 					/>
 				</div>
@@ -2595,7 +2595,7 @@ function failTrendMetaI(before, after) {
 // 패턴 원장 — 한 표면에 한 사실. 활성 후보와 억제된 행이 다른 카드에 살면 둘 중 하나만
 // 읽히고, 억제된 행은 늘 읽히지 않는 쪽이 된다. 행 단위로 합쳐 live / inert / held 세
 // 구역으로 나누고, 각 구역은 자기 게이트를 푸터에 남긴다.
-function PatternLedgerCardI({ state, suppression, onRowClick, onRetry, shared }) {
+function PatternLedgerCardI({ state, suppression, onRowClick, onRetry, failures }) {
 	const { CardHead, LoadingPlaceholder, SplitRow, SplitColumn, getRegionView } = window.UI;
 	if (getRegionView(state) === "error") {
 		return (
@@ -2607,7 +2607,7 @@ function PatternLedgerCardI({ state, suppression, onRowClick, onRetry, shared })
 						source="pattern ledger"
 						error={state.error}
 						isBusy={state.busy}
-						shared={shared}
+						failures={failures}
 						onRetry={onRetry}
 					/>
 				</div>
@@ -2851,8 +2851,8 @@ function ToastI({ tone, message }) {
 	);
 }
 
-// per-region failure: quiet covered note when the page banner names this source, else its own card + Retry
-function ErrorBannerI({ source, region, error, onRetry, isBusy, shared, focusTargetId }) {
+// per-region failure: covered note when the page banner or an earlier slot speaks for this source, else its own card + Retry
+function ErrorBannerI({ source, region, error, onRetry, isBusy, failures, focusTargetId }) {
 	const { RegionFailure } = window.UI;
 	return (
 		<RegionFailure
@@ -2860,7 +2860,7 @@ function ErrorBannerI({ source, region, error, onRetry, isBusy, shared, focusTar
 			region={region}
 			error={error}
 			isBusy={isBusy}
-			failures={shared}
+			failures={failures}
 			focusTargetId={focusTargetId}
 			onRetry={onRetry}
 		/>
@@ -2964,7 +2964,6 @@ function loadRegionI(url, setState, onData) {
 	return request;
 }
 
-// null unless 2+ regions failed with one shared cause (then one page banner owns Retry)
 // board view's failure slots in render order → the first slot a source feeds speaks for it
 const BOARD_FAILURE_SLOTS_I = [
 	["suggestions", "suggestion board"],

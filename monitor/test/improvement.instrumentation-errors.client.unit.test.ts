@@ -92,15 +92,18 @@ for (const failed of subsets) {
 }
 
 test("a page-level outage hands every failed card the shared failure, so the banner alone owns Retry", () => {
-  const shared = { sources: ["flagged results"], error: "HTTP 503 Service Unavailable" };
-  const props: Record<string, unknown> = { onRetry: undefined, shared };
+  const failures = {
+    banner: { sources: ["flagged results"], error: "HTTP 503 Service Unavailable" },
+    speakers: new Map(),
+  };
+  const props: Record<string, unknown> = { onRetry: undefined, failures };
   for (const name of PAYLOADS) props[name] = { status: "error", data: null, error: "HTTP 503 Service Unavailable" };
 
   const banners = collectBanners(sandbox.ImprovementInstrumentationViewI(props), []);
 
   assert.equal(banners.length, PAYLOADS.length);
   for (const banner of banners) {
-    assert.equal(banner.props.failures, shared);
+    assert.equal(banner.props.failures, failures);
     assert.equal(banner.props.onRetry, undefined);
   }
 });
@@ -120,13 +123,13 @@ page.React.createElement = sandbox.React.createElement;
 
 test("a failed region renders the shared unavailable card with its own source, never the raw answer as copy", () => {
   const onRetry = () => {};
-  const shared = { sources: ["suggestions"], error: "HTTP 503" };
-  const banner = page.ErrorBannerI({ source: "loop stats", error: "HTTP 500 Internal Server Error — {}", onRetry, shared });
+  const failures = { banner: { sources: ["suggestions"], error: "HTTP 503" }, speakers: new Map() };
+  const banner = page.ErrorBannerI({ source: "loop stats", error: "HTTP 500 Internal Server Error — {}", onRetry, failures });
 
   assert.equal(banner.type, page.window.UI.RegionFailure);
   assert.deepEqual(
-    { source: banner.props.source, error: banner.props.error, onRetry: banner.props.onRetry, shared: banner.props.failures },
-    { source: "loop stats", error: "HTTP 500 Internal Server Error — {}", onRetry, shared },
+    { source: banner.props.source, error: banner.props.error, onRetry: banner.props.onRetry, failures: banner.props.failures },
+    { source: "loop stats", error: "HTTP 500 Internal Server Error — {}", onRetry, failures },
   );
 });
 

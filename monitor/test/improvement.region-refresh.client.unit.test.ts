@@ -182,17 +182,17 @@ for (const row of coldErrorRows) {
 
 const coldError: RegionState = { status: "error", data: null, error: "HTTP 503 Service Unavailable", busy: false };
 const sharedOutage = {
-  sources: ["suggestions", "pattern ledger", "loop stats", "loop events", "learning memory"],
-  error: "HTTP 503 Service Unavailable",
+  banner: { sources: ["suggestions", "pattern ledger", "loop stats", "loop events", "learning memory"], error: "HTTP 503 Service Unavailable" },
+  speakers: new Map(),
 };
 
 const sharedOutageRows = [
-  { name: "applied changes", render: () => sandbox.ChangeSummaryCardI({ state: coldError, aggregate: null, shared: sharedOutage }) },
-  { name: "pattern ledger", render: () => sandbox.PatternLedgerCardI({ state: coldError, suppression: null, shared: sharedOutage }) },
-  { name: "suggestion board", render: () => sandbox.KanbanCardI({ state: coldError, shared: sharedOutage }) },
-  { name: "loop stats", render: () => sandbox.LoopOutputGroupI({ statsState: coldError, loopEventsState: coldError, listState: coldError, shared: sharedOutage }) },
-  { name: "trend", render: () => sandbox.TrendCardI({ state: coldError, aggregate: null, shared: sharedOutage }) },
-  { name: "learning memory", render: () => sandbox.BucketRowI({ state: coldError, buckets: null, shared: sharedOutage }) },
+  { name: "applied changes", render: () => sandbox.ChangeSummaryCardI({ state: coldError, aggregate: null, failures: sharedOutage }) },
+  { name: "pattern ledger", render: () => sandbox.PatternLedgerCardI({ state: coldError, suppression: null, failures: sharedOutage }) },
+  { name: "suggestion board", render: () => sandbox.KanbanCardI({ state: coldError, failures: sharedOutage }) },
+  { name: "loop stats", render: () => sandbox.LoopOutputGroupI({ statsState: coldError, loopEventsState: coldError, listState: coldError, failures: sharedOutage }) },
+  { name: "trend", render: () => sandbox.TrendCardI({ state: coldError, aggregate: null, failures: sharedOutage }) },
+  { name: "learning memory", render: () => sandbox.BucketRowI({ state: coldError, buckets: null, failures: sharedOutage }) },
 ];
 
 for (const row of sharedOutageRows) {
@@ -200,16 +200,16 @@ for (const row of sharedOutageRows) {
     const banners = collectElements(row.render()).filter((el) => el.type === sandbox.ErrorBannerI);
 
     assert.ok(banners.length > 0, "the region must stay present, not vanish");
-    for (const banner of banners) assert.equal(banner.props.shared, sharedOutage);
+    for (const banner of banners) assert.equal(banner.props.failures, sharedOutage);
   });
 }
 
 test("loop output hands the shared failure to each of its three cards", () => {
-  const tree = sandbox.LoopOutputGroupI({ statsState: coldError, loopEventsState: coldError, listState: coldError, shared: sharedOutage });
+  const tree = sandbox.LoopOutputGroupI({ statsState: coldError, loopEventsState: coldError, listState: coldError, failures: sharedOutage });
   const cards = collectElements(tree).filter((el) =>
     [sandbox.ChangeSummaryCardI, sandbox.TrendCardI, sandbox.BucketRowI].includes(el.type as RegionCard),
   );
 
   assert.equal(cards.length, 3);
-  for (const card of cards) assert.equal(card.props.shared, sharedOutage);
+  for (const card of cards) assert.equal(card.props.failures, sharedOutage);
 });
