@@ -8,8 +8,8 @@ IFS=$'\n\t'
 trap 'exit 0' EXIT
 
 # Model-facing wording, audited as one unit; each quote %s is a JSON string of the user's own words.
-readonly MACHINE_POINTER="The newest user-role message, %s, holds no prose of the user's own; the user's latest own message begins %s. Reply to the user in that message's language unless the user asked for a different reply language."
-readonly SESSION_POINTER="[REPLY LANGUAGE] The user's latest own message begins %s. Reply to the user in that message's language unless the user asked for a different reply language."
+readonly MACHINE_POINTER="The newest user-role message, %s, holds no prose of the user's own; the user's latest own message begins %s. Write the final message of each turn, your report to the user, in that message's language unless the user asked for a different reply language."
+readonly SESSION_POINTER="[REPLY LANGUAGE] The user's latest own message begins %s. Write the final message of each turn, your report to the user, in that message's language unless the user asked for a different reply language."
 readonly EXCERPT_CHARS=200
 readonly HEAD_CHARS=80
 # jq's global regex costs grow with the square of the string, so a pasted prompt is cleaned from this prefix.

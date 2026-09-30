@@ -5,13 +5,16 @@ paths:
   - "**/scripts/lib/*.sh"
   - "**/com.glass-atrium.*.plist"
   - "**/.glass-atrium/**/*"
+  - "**/scripts/agent_lifecycle/**/*.py"
+  - "**/hooks/validate-compliance-matrix.sh"
+  - "**/lib/ga-launchd.sh"
 ---
 # Self-Improvement Pipeline Hygiene Rules (Cross-Cutting Concern)
 
 Applies to two audiences, both loaded on a Read whose path matches the `paths:` globs above — glob base and honest backing: `rules/glass-atrium/core-compliance-matrix.md` → `### Membership vs. Delivery (per tier)` → **Path-scoped delivery**.
 
 - **ORCHESTRATOR scope** (main session / global coordinator).
-- **DEV agents that touch the autoagent self-improvement pipeline** (`~/.glass-atrium/autoagent/daemon-apply.sh`, `daemon_cycle.py`, `daemon-cycle.sh`, related launchd plists).
+- **DEV agents whose change scope includes** `autoagent/` paths, the self-improvement launchd configuration, the agent-lifecycle Python package (`scripts/agent_lifecycle/`), the compliance-matrix validator hook (`hooks/validate-compliance-matrix.sh`) or the launchd library (`lib/ga-launchd.sh`).
 
 ## Working Tree Hygiene Contract [ORCHESTRATOR+DEV]
 

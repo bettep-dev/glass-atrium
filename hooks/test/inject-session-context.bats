@@ -21,6 +21,8 @@ HOOK_SH="${BATS_TEST_DIRNAME}/../inject-session-context.sh"
 CORPUS="${BATS_TEST_DIRNAME}/corpus/reply-language"
 # Names a resolver-derived language value would carry into the pointer line's fixed part.
 LANGUAGE_NAMES='english|korean|japanese|chinese|hangul|latin|kana|한국어|영어|일본어|중국어'
+# Fixed phrase the pointer line carries after the quote.
+REPLY_TARGET='the final message of each turn, your report to the user'
 # shellcheck source-path=SCRIPTDIR source=../../scripts/lib/path-guard.sh
 source "${BATS_TEST_DIRNAME}/../../scripts/lib/path-guard.sh"
 
@@ -82,7 +84,7 @@ run_session_source() {
 }
 
 # Prints the quote of the one [REPLY LANGUAGE] line in ${output}, `none` without one, or `malformed: <lines>`
-# for several lines or one whose fixed part (everything outside the quote) names a language.
+# for several lines, one whose fixed part (everything outside the quote) names a language, or one with no REPLY_TARGET after the quote.
 get_pointer_quote() {
   local lines quote
   lines="$(printf '%s\n' "${output}" | awk '/^\[REPLY LANGUAGE\] /')"
@@ -94,9 +96,10 @@ get_pointer_quote() {
     printf 'malformed: %s' "${lines}"
     return 0
   fi
-  quote="$(jq -eRr --arg names "${LANGUAGE_NAMES}" '
+  quote="$(jq -eRr --arg names "${LANGUAGE_NAMES}" --arg target "${REPLY_TARGET}" '
     capture("^(?<head>[^\"]*)(?<quote>\"(?:[^\"\\\\]|\\\\.)*\")(?<tail>[^\"]*)$")
     | select((.head + .tail) | test($names; "i") | not)
+    | select(.tail | contains($target))
     | .quote | fromjson' <<<"${lines}" 2>/dev/null)" || quote="malformed: ${lines}"
   printf '%s' "${quote}"
 }
