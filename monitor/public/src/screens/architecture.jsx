@@ -2467,10 +2467,10 @@ function getMapCopyNoteAR(diagState) {
 }
 
 // the all-clear is a verdict — before any part is judged the column says why it is empty
-function getAttentionEmptyAR(partRows, busy, errored) {
-	if (busy) return "Checking part health…";
-	if (partRows.some((row) => row.tone)) return errored > 0 ? "Last known: no part needed attention" : "No part needs attention";
-	return errored > 0 ? "Couldn't read part health" : "Part health not read yet";
+function getAttentionEmptyAR(partRows, isBusy, errorCount) {
+	if (isBusy) return "Checking part health…";
+	if (partRows.some((row) => row.tone)) return errorCount > 0 ? "Last known: no part needed attention" : "No part needs attention";
+	return errorCount > 0 ? "Couldn't read part health" : "Part health not read yet";
 }
 
 // 'Not loaded' (no verdict arrived) never shares a label with 'No data' (a verdict of absence).
@@ -2480,7 +2480,7 @@ function getPartStatusTextAR(row) {
 
 // a row's shown verdict follows the health stamp — an ok read under a failed re-read is last-known, never a bare Healthy
 function getPartStatusAR(row, freshness) {
-	if (!row.tone) return { tone: null, text: "Not loaded" };
+	if (!row.tone) return { tone: null, text: getPartStatusTextAR(row) };
 	const verdict = window.UI.getFreshnessVerdict({ ...freshness, tone: row.tone, label: row.statusLabel });
 	return { tone: verdict.tone, text: verdict.label };
 }
@@ -2578,6 +2578,7 @@ function PartHealthBlockAR({ partRows, attentionEmpty, freshness, nodeIndex, onS
 	if (partRows.length === 0) return null;
 
 	const { attention, rest, unloaded } = getPartHealthGroupsAR(partRows);
+	const listProps = { freshness, nodeIndex, onSelectNode };
 	return (
 		<section className="card arch-part-health" id={PART_HEALTH_ID_AR} aria-labelledby={`${PART_HEALTH_ID_AR}-title`}>
 			<div className="card-head">
@@ -2585,12 +2586,10 @@ function PartHealthBlockAR({ partRows, attentionEmpty, freshness, nodeIndex, onS
 			</div>
 			<div className="card-body">
 				<SplitRow ratio="1:1">
-					<PartHealthListAR title="Needs attention" rows={attention} empty={attentionEmpty} freshness={freshness} nodeIndex={nodeIndex} onSelectNode={onSelectNode} />
+					<PartHealthListAR title="Needs attention" rows={attention} empty={attentionEmpty} {...listProps} />
 					<SplitColumn>
-						<PartHealthListAR title="Healthy or not verified" rows={rest} empty="No other parts" freshness={freshness} nodeIndex={nodeIndex} onSelectNode={onSelectNode} />
-						{unloaded.length > 0 && (
-							<PartHealthListAR title="Not loaded" rows={unloaded} freshness={freshness} nodeIndex={nodeIndex} onSelectNode={onSelectNode} />
-						)}
+						<PartHealthListAR title="Healthy or not verified" rows={rest} empty="No other parts" {...listProps} />
+						{unloaded.length > 0 && <PartHealthListAR title="Not loaded" rows={unloaded} {...listProps} />}
 					</SplitColumn>
 				</SplitRow>
 			</div>
