@@ -5,6 +5,9 @@ paths:
   - "**/scripts/lib/*.sh"
   - "**/com.glass-atrium.*.plist"
   - "**/.glass-atrium/**/*"
+  - "**/scripts/agent_lifecycle/**/*.py"
+  - "**/hooks/validate-compliance-matrix.sh"
+  - "**/lib/ga-launchd.sh"
 ---
 # Self-Improvement Pipeline Hygiene Rules (Cross-Cutting Concern)
 

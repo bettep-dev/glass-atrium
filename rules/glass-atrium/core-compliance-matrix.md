@@ -8,6 +8,9 @@ paths:
   - "**/hooks/lib/inject_chunk.py"
   - "**/hooks/lib/styleref-roster.sh"
   - "**/lib/ga-doctor.sh"
+  - "**/scripts/agent_lifecycle/**/*.py"
+  - "**/hooks/validate-compliance-matrix.sh"
+  - "**/lib/ga-launchd.sh"
 ---
 # Rule-to-Agent Compliance Matrix
 
