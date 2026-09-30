@@ -886,8 +886,6 @@ function ScreenClaudedDocs(/* { onNav } */) {
 	const loadMoreRemaining = canLoadMore ? Math.max(0, total - rows.length) : 0;
 	const isLoadingMore = listState.busy && currentOffset > 0 && !isSearchMode;
 
-	// 카운트 표기 — groups mode 는 그룹/문서 이중 단위 명시 (총건 pill 이 그룹 수를 문서 수처럼 읽히던 오해 차단, F40) ·
-	// search mode 는 row 단위 '건' 유지 + 숨은 건 있으면 "표시/전체" 이중 표기 (데이터 정직성).
 	const headerRight = <DocHeaderActionsCD asOf={asOf} listState={listState} onRefresh={triggerRefresh} />;
 
 	return (
@@ -1064,8 +1062,7 @@ function ScreenClaudedDocs(/* { onNav } */) {
         /* 재정렬 rollback inline 에러 — crit hue (toast 와 별개 · 영향 그룹 인접 표시). */
         .doc-reorder-error { color: rgb(var(--crit)); font-family: 'JetBrains Mono', monospace; }
         /* stage pill — 톤은 meter 채움과 종료 글리프가 운반 · 라벨 텍스트는 중립 유지. */
-        /* ID 셀 둘째 줄 계보. */
-        /* one line — the ID column is sized for "rev of #N" */
+        /* ID 셀 둘째 줄 계보 — 한 줄 유지 (ID 컬럼 폭은 "rev of #N" 기준). */
         .doc-lineage { font-size: var(--fs-meta); color: rgb(var(--faint)); white-space: nowrap; text-align: left; }
         /* header text at the title text's x — lead slot 20px + title row gap 6px */
         .doc-col-title-text { margin-left: 26px; }
@@ -2978,14 +2975,14 @@ function DocStagePillCD({
 	);
 }
 
+// trailing context-window tag ("[1m]") → not part of the model name, so both spellings read alike
+const MODEL_CONTEXT_TAG_CD = /\[[^\]]*\]$/;
+
 // last-status-model → the line under the pill. The operator's own action is a reserved literal
 // and reads as such; a model id renders through its display name. An unknown actor renders nowhere.
 function formatActorCD(model) {
 	return model === OPERATOR_ACTOR_CD ? "operator" : window.UI.getDisplayName("model", String(model).replace(MODEL_CONTEXT_TAG_CD, ""));
 }
-
-// trailing context-window tag ("[1m]") → not part of the model name, so both spellings read alike
-const MODEL_CONTEXT_TAG_CD = /\[[^\]]*\]$/;
 
 // DocCheckboxCD — 5-state spec — 16px square · 2px border · 4px radius · WCAG 2.2 AA focus-visible
 //   · default     — bg-zinc-900 border-zinc-600
