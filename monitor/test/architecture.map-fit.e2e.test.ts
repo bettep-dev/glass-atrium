@@ -243,8 +243,10 @@ async function readFit(width: number, height: number, extraSource?: string): Pro
 				}
 			}
 
-			// a controls row under the drawing is chrome, not an empty band → the band below ends at its top
-			const frameBottom = controls && controls.top >= drawn.bottom ? Math.min(pane.bottom, controls.top) : pane.bottom;
+			// lane mode only: its controls row under the drawing is chrome, not an empty band → the band below ends at its top
+			const isLaneMode = canvas.hasAttribute("data-arch-controls-lane");
+			const frameBottom =
+				isLaneMode && controls && controls.top >= drawn.bottom ? Math.min(pane.bottom, controls.top) : pane.bottom;
 
 			return {
 				paneWidth: pane.width,
