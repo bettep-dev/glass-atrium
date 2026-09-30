@@ -46,8 +46,9 @@ test("the focus colour clears 3:1 against every surface it can sit on, in both t
   }
 });
 
-test("one global focus-visible rule draws the focus colour as an offset outline, never a box-shadow", () => {
-  const rule = BASE_CSS.match(/(?:^|\n)\s*:focus-visible\s*\{([^}]*)\}/)?.[1] ?? "";
+test("one global focus-visible rule draws the focus colour as an offset outline, never a box-shadow — card focus handoffs included", () => {
+  const [, selectors = "", rule = ""] = BASE_CSS.match(/(?:^|\n)\s*(:focus-visible[^{]*)\{([^}]*)\}/) ?? [];
+  assert.match(selectors, /\[data-focus-handoff\]:focus/, "a programmatic handoff misses :focus-visible, so it shares the ring rule");
   assert.match(rule, /outline:\s*var\(--focus-ring-width\)\s+solid\s+rgb\(var\(--focus-ring\)\)/);
   assert.match(rule, /outline-offset:\s*var\(--focus-ring-offset\)/);
   assert.doesNotMatch(rule, /box-shadow/, "box-shadow would overwrite rings drawn with box-shadow");
@@ -129,7 +130,7 @@ test("a Retry that unmounts while focused hands focus to its region card; an unf
   for (const atom of RETRY_ATOMS) {
     for (const row of rows) {
       fxDoc.reset();
-      const card = { name: "card", hasAttribute: () => true, setAttribute: () => undefined, scrollIntoView: () => undefined, focus: () => { fxDoc.activeElement = card; } };
+      const card = { name: "card", hasAttribute: () => true, setAttribute: () => undefined, addEventListener: () => undefined, scrollIntoView: () => undefined, focus: () => { fxDoc.activeElement = card; } };
       const retry = { name: "retry" };
       const elsewhere = { name: "elsewhere" };
       fxDoc.elements.set("agents-alarms", card);
@@ -150,7 +151,7 @@ test("a Retry that unmounts while focused hands focus to its region card; an unf
 });
 
 function getFakeCard(name: string): Record<string, unknown> {
-  const card = { name, hasAttribute: () => true, setAttribute: () => undefined, scrollIntoView: () => undefined, focus: () => { fxDoc.activeElement = card; } };
+  const card = { name, hasAttribute: () => true, setAttribute: () => undefined, addEventListener: () => undefined, scrollIntoView: () => undefined, focus: () => { fxDoc.activeElement = card; } };
   return card;
 }
 

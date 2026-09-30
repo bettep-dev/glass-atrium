@@ -49,27 +49,30 @@ test("state follows the read history: never read → loading or not read, read �
   }
 });
 
-test("every state carries a distinct decorative glyph and a distinct screen-reader word", () => {
-  const inputs: FreshnessInput[] = [
-    { at: null, loading: true },
-    { at: null },
-    { at: isoAgo(STALE_MS + 60_000) },
-    { at: isoAgo(1_000) },
+test("every state carries a distinct decorative glyph and names its state word exactly once", () => {
+  const inputs: Array<{ input: FreshnessInput; word: string }> = [
+    { input: { at: null, loading: true }, word: "Loading" },
+    { input: { at: null }, word: "Not read" },
+    { input: { at: isoAgo(STALE_MS + 60_000) }, word: "Stale" },
+    { input: { at: isoAgo(1_000) }, word: "Fresh" },
   ];
   const glyphs = new Set<string>();
-  const words = new Set<string>();
-  for (const input of inputs) {
+  for (const { input, word } of inputs) {
     const tree = renderStamp(input);
     const glyph = findNodes(tree, (n) => n.props["aria-hidden"] === "true");
-    const word = findNodes(tree, (n) => String(n.props.className ?? "").includes("sr-only"));
+    const mentions = collectText(tree).toLowerCase().split(word.toLowerCase()).length - 1;
     assert.equal(glyph.length, 1, `${JSON.stringify(input)}: one glyph`);
-    assert.equal(word.length, 1, `${JSON.stringify(input)}: one word`);
+    assert.equal(mentions, 1, `${JSON.stringify(input)}: "${collectText(tree)}" names ${word} once`);
     glyphs.add(collectText(glyph[0]).trim());
-    words.add(collectText(word[0]).trim());
   }
   assert.equal(glyphs.size, inputs.length, [...glyphs].join(" "));
-  assert.equal(words.size, inputs.length, [...words].join(" "));
-  assert.ok(![...glyphs, ...words].includes(""));
+  assert.ok(![...glyphs].includes(""));
+});
+
+test("a first read in flight leaves the visible loading label to the paired Refresh control", () => {
+  const tree = renderStamp({ at: null, loading: true });
+  assert.equal(findNodes(tree, (n) => n.props["data-stamp-text"] === "true").length, 0);
+  assert.equal(collectText(findNodes(tree, (n) => String(n.props.className ?? "").includes("sr-only"))[0]).trim(), "Loading");
 });
 
 test("tone colours the glyph only — the stamp text stays in the neutral ink", () => {

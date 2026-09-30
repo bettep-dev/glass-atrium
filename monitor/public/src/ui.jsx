@@ -264,7 +264,13 @@ function getChartTickLayout(labels, kind, widthPx, maxTicks = CHART_MAX_TICKS) {
 }
 
 function getFittingTicks(labels, kind, widthPx, maxTicks) {
-  for (let cap = Math.max(2, maxTicks); cap >= 2; cap--) {
+  const count = labels.length;
+  const top = Math.max(2, maxTicks);
+  const hasEvenSteps = (cap) => (count - 1) % (Math.min(cap, count) - 1) === 0;
+  // even steps at the caller's cap stay even → only caps dividing count-1 are tried
+  const isEvenOnly = count >= 2 && hasEvenSteps(top);
+  for (let cap = top; cap >= 2; cap--) {
+    if (isEvenOnly && !hasEvenSteps(cap)) continue;
     const ticks = getChartTicks(labels.length, cap);
     if (isTickRowClear(ticks, labels, kind, widthPx)) return ticks;
   }
@@ -1155,7 +1161,7 @@ function PageHeader({ title, sub, right }) {
   return <div className="flex flex-wrap items-center gap-x-3 gap-y-2 mb-4">
     <div className="min-w-0">
       <h1 className="fs-display font-semibold leading-tight">{title}</h1>
-      {hasSub && <div className="text-[11px] font-mono text-faint tracking-wider uppercase">{sub}</div>}
+      {hasSub && <div className="fs-meta font-mono text-faint tracking-wider uppercase">{sub}</div>}
     </div>
     {right && <div className="ml-auto flex flex-wrap items-center justify-end gap-2 min-w-0">{right}</div>}
   </div>;
@@ -1463,15 +1469,17 @@ function FreshnessStamp({ at, loading = false, failed = false, regions, shellReg
   const word = failedNote ? `${meta.word}, ${failedNote}` : meta.word;
   useFreshnessTick(isRead && now === undefined);
 
-  const readText = isRead ? `as of ${formatKstTime(at)}` : meta.word.toLowerCase();
-  const text = failedNote ? `${readText} · ${failedNote}` : readText;
+  const readText = `as of ${formatKstTime(at)}`;
+  const text = !isRead ? word : failedNote ? `${readText} · ${failedNote}` : readText;
+  // unread → the visible text is the word itself; first read → no text, the paired Refresh label already reads "Loading…"
+  const hasSrWord = isRead || state === 'loading';
   const title = isRead ? `${word} — read ${formatKstFull(at)} (${formatRelativeTime(at)})` : word;
 
   return (
     <span className="fs-meta font-mono text-faint whitespace-nowrap" title={title} aria-busy={isBusy ? 'true' : undefined}>
       <span aria-hidden="true" className={`mr-1 ${toneClass}`}>{glyph}</span>
-      <span className="sr-only">{word}</span>
-      <span data-stamp-text="true">{text}</span>
+      {hasSrWord && <span className="sr-only">{word}</span>}
+      {state !== 'loading' && <span data-stamp-text="true">{text}</span>}
     </span>
   );
 }
@@ -2053,13 +2061,16 @@ function VerdictChip({ chip }) {
   return <button type="button" className="btn ghost sm" onClick={() => putCardFocus(chip.targetId)}>{chip.label}</button>;
 }
 
-// instant scroll (no smooth) → nothing to reduce under prefers-reduced-motion; tabindex -1 lets a plain card take focus.
+// instant nearest scroll → no jump when the card is already in view, nothing to reduce under prefers-reduced-motion; tabindex -1 lets a plain card take focus.
 function putCardFocus(id) {
   const card = id ? document.getElementById(id) : null;
   if (!card) return;
 
   if (!card.hasAttribute('tabindex')) card.setAttribute('tabindex', '-1');
-  card.scrollIntoView({ block: 'start' });
+  // programmatic focus after a mouse Retry misses :focus-visible → the marker draws the ring until the card blurs
+  card.setAttribute('data-focus-handoff', 'true');
+  card.addEventListener('blur', () => card.removeAttribute('data-focus-handoff'), { once: true });
+  card.scrollIntoView({ block: 'nearest' });
   card.focus({ preventScroll: true });
 }
 
