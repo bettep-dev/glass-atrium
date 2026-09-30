@@ -160,18 +160,16 @@ test("paired cards sit side by side in one split row", async () => {
     assert.ok(pair, row.name);
     assert.equal(pair.children.filter((child) => typeof child !== "string").length, 2, `${row.name}: exactly two columns`);
   }
-
 });
 
 test("the per-agent table spans the full width and the reporting pair ends level", async () => {
   const { tree } = await renderOutcomesScreen(0);
   const splitRows = findNodes(tree, (n) => String(n.props.className ?? "").includes("split-row"));
+  const equalRows = splitRows.filter((n) => String(n.props.className).includes("split-row--equal"));
 
   // no half-width column → no empty stretch under the per-agent table beside the taller Reporting health stack
   assert.ok(!splitRows.some((n) => collectText(n).includes("Failed or blocked by agent")), "per-agent table sits in no split row");
-  const reportingPair = splitRows.find((n) => collectText(n).includes("Record attribution") && collectText(n).includes("Recording channels"));
-  assert.ok(reportingPair, "reporting pair renders as one split row");
-  assert.ok(String(reportingPair.props.className).includes("split-row--equal"), "peer reporting cards match heights");
+  assert.ok(equalRows.some((n) => ["Record attribution", "Recording channels"].every((title) => collectText(n).includes(title))), "peer reporting cards match heights");
 });
 
 // component nodes keep their name as type; the region's card is the first host element beneath them
