@@ -104,6 +104,7 @@ PARSED=$(DATE="${DATE}" TIME="${TIME}" SESSION_ID="${SESSION_ID}" \
 import datetime
 import json
 import os
+import re
 import sys
 import glob
 
@@ -250,14 +251,24 @@ def is_real_user(record):
     return False
 
 
+# Harness effort tier: a short lowercase token, else treated as absent (the writer column is
+# VARCHAR(16)). Same token rule as the outcome recorder.
+EFFORT_TOKEN_RE = re.compile(r"[a-z]{1,16}")
+
+
 def accumulate_usage(record, seen_ids, acc):
-    """Fold one assistant record with usage into acc=[in,out,cr,cc,count,model,
-    stop_reason] using msg.id dedup against seen_ids. Returns True if counted.
-    The transcript replays the same assistant message across tool_use round-trips
-    (one line per round-trip, IDENTICAL usage) — dedup by msg.id prevents 2-5x
-    over-counting."""
+    """Fold one assistant record with usage into acc (slot layout: the `acc =`
+    comment at the turn scan) using msg.id dedup against seen_ids. Returns True
+    if counted. The transcript replays the same assistant message across
+    tool_use round-trips (one line per round-trip, IDENTICAL usage) — dedup by
+    msg.id prevents 2-5x over-counting.
+    The effort tier of every assistant record appends to acc[8] in scan order,
+    ahead of the message / usage / dedup gates; the caller reads the newest end."""
     if record.get("type") != "assistant":
         return False
+    tier = record.get("effort")
+    if isinstance(tier, str) and EFFORT_TOKEN_RE.fullmatch(tier):
+        acc[8].append(tier)
     msg = record.get("message")
     if not isinstance(msg, dict):
         return False
@@ -315,9 +326,10 @@ if not lines:
 # tool_result block) is NOT a boundary — keep walking past it so a multi-tool
 # turn is summed in full, not truncated at its last assistant block.
 # acc = [input, output, cache_read, cache_creation, count, last_model,
-#        last_stop_reason, distinct_models(set)]; turn_seen = persistent msg.id
-# dedup set spanning the whole turn (the replay-dedup must not reset per line).
-acc = [0, 0, 0, 0, 0, None, None, set()]
+#        last_stop_reason, distinct_models(set), efforts(list, scan order)];
+# turn_seen = persistent msg.id dedup set spanning the whole turn (the
+# replay-dedup must not reset per line).
+acc = [0, 0, 0, 0, 0, None, None, set(), []]
 turn_uuid = None
 turn_seen = set()
 for record_line in reversed(lines):
@@ -339,6 +351,9 @@ main_count = acc[4]
 last_model = acc[5]
 last_stop_reason = acc[6]
 distinct_models = acc[7]
+efforts = acc[8]
+last_effort = efforts[0] if efforts else None  # backward scan → newest first
+has_mixed_effort = len(set(efforts)) > 1 if efforts else None
 
 # A turn with no real-user boundary before EOF (e.g. a session-resume preamble)
 # still needs a stable key — synthesise one from session+date+time so the row is
@@ -368,6 +383,8 @@ if main_count == 0:
         # stop_reason is genuinely absent (Stop multi-fire on a no-LLM turn).
         "stop_reason": last_stop_reason or "no_assistant_in_turn",
         "model": None,
+        "effort": last_effort,
+        "has_mixed_effort": has_mixed_effort,
         "parse_error": False,
     })
 else:
@@ -400,6 +417,8 @@ else:
         "num_turns": main_count,
         "stop_reason": last_stop_reason or "no_assistant_in_turn",
         "model": last_model,
+        "effort": last_effort,
+        "has_mixed_effort": has_mixed_effort,
         "parse_error": False,
     })
 
@@ -454,7 +473,7 @@ if os.path.isdir(sub_root):
         # over-eager skip would at worst keep a correct prior row in place.
         if cached_mtime is not None and cur_mtime <= cached_mtime + 1e-6:
             continue
-        a = [0, 0, 0, 0, 0, None, None, set()]
+        a = [0, 0, 0, 0, 0, None, None, set(), []]
         seen = set()
         try:
             with open(fpath, "r", encoding="utf-8", errors="replace") as afh:
@@ -496,6 +515,8 @@ if os.path.isdir(sub_root):
             "num_turns": 0,
             "stop_reason": None,
             "model": a[5],
+            "effort": a[8][-1] if a[8] else None,  # forward scan → newest last
+            "has_mixed_effort": len(set(a[8])) > 1 if a[8] else None,
             "parse_error": False,
         })
 
@@ -683,6 +704,10 @@ def build_row(parsed):
             else (stop_reason[:64] if stop_reason else None)
         ),
         "model": parsed.get("model") or None,
+        "effort": parsed.get("effort") or None,
+        "has_mixed_effort": (
+            parsed.get("has_mixed_effort") if parsed.get("effort") else None
+        ),
         "parse_error": False,
         "raw_input": None,
     }
