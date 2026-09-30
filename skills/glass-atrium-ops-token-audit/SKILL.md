@@ -42,7 +42,12 @@ Exit codes (both scripts): `0` = all under warn · `1` = any alert breached · `
 
 ## Thresholds
 
-Mean+1σ → `warn`, mean+2σ → `alert`, computed from a baseline snapshot; the baseline, its date and each threshold's derivation (`mcp_server_total_tokens` included, per-server worst-single semantic) live in the `thresholds.yaml` header — edit thresholds there. Re-anchor on a fresh baseline when the ecosystem count drifts materially.
+- Mean+1σ → `warn`, mean+2σ → `alert`, both computed from a baseline snapshot.
+- The `thresholds.yaml` header records the baseline, its date and that derivation.
+- A key on another basis records it in its own comment block, not in the header.
+  - `mcp_server_total_tokens` records its re-anchored baseline and its per-server worst-single semantic there.
+- Edit the thresholds in `thresholds.yaml` — each key's `warn:` and `alert:` values.
+- Re-anchor on a fresh baseline when the ecosystem count drifts materially.
 
 ECC C4 hardcoded numbers (30w / 300l) NOT applied — nearly all agents already >30w; verbatim = alert flood. See `thresholds.yaml` header for derivation.
 

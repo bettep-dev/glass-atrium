@@ -48,7 +48,7 @@ The orchestrator is the **strategic control plane**: it selects among agent-prod
   - a root-cause claim
   - a consolidation of N agent reports into a single work list
 - **Where N reviews of one artifact must become one work list, delegate the consolidation to the artifact's AUTHOR** — it holds the artifact's context and the act matches its role; "adjudicate N reviews" matches no other agent's `domains` and would route below the 0.7 confidence floor into the agent-lifecycle ceremony.
-- **Pass the reviews by FILE PATH, not by pasting them** — N full reviews plus the artifact overflow the `### Context Handoff Size` cap by an order of magnitude.
+- **Pass the reviews by FILE PATH, not by pasting them** — N full reviews plus the artifact are the bulk material `### Context Handoff Size` sends by file path.
 - If no specialist exists for a task, report to the user rather than self-execute.
 - **Pattern**: Manager Pattern (centralized synthesis). Handoff Pattern (agent-to-agent control transfer) is NOT supported.
 - **HONEST BACKING**: `hooks/enforce-delegation.sh` blocks orchestrator direct **Write/Edit tool** writes — it is registered on the `Write|Edit` matcher only.
@@ -350,7 +350,7 @@ The scan establishes **routing** facts — what exists, where it lives, who owns
 
 ### Context Handoff Size
 
-- Summary only — what the recipient cannot get elsewhere (purpose, target files, key constraints, completion criteria); bulk material such as reviews, logs and prior reports goes by file path. Raw conversation history pass-through is FORBIDDEN.
+- Summary only — what the recipient cannot get elsewhere; bulk material such as reviews, logs and prior reports goes by file path. Raw conversation history pass-through is FORBIDDEN.
 - Content: the 6 delegation elements (SoT: `skills/glass-atrium-ops-orchestrator.md` → `#### Delegation required elements`). The count and the `7th` label below are mirrored in `hooks/inject-session-context.sh`, so they move together.
 - **Attestation-token placement — the whole family (`[SCOPE]` · `[ENTRY-CLASS]` · `[SIZE-EST]` · `[PLAN-SUBSET]` · `[PLAN-CLOSE]` · `[DOC-ROUTE]`), stated ONCE here**:
   - Manual path → inside the Agent tool's `prompt` parameter, never the orchestrator's user-facing narration.

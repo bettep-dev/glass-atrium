@@ -174,14 +174,16 @@ Every delegation prompt MUST declare these fields, so a sub-agent never exhausts
 
 | Field | Meaning | Default |
 |-------|---------|---------|
-| `tool_budget` | Max total tool uses; hitting the ceiling → stop + emit status | glass-atrium-intel-researcher ~15 · glass-atrium-intel-planner ~12 · glass-atrium-qa-code-reviewer ~14 · DEV: formula below |
+| `tool_budget` | Max total tool uses; hitting the ceiling → stop + emit status | glass-atrium-intel-researcher ~15 · glass-atrium-intel-planner ~12 · glass-atrium-qa-code-reviewer ~14 · DEV: `[SIZE-EST]` estimate (below) |
 | `output_cap` | Final-output shape | the decision-relevant result inline; bulk to a file returned by path (`#### Resilient Workflow Authoring` → File-handoff) |
 | `reserved_output` | Emit tail reserved before work starts | Reserve-then-check (below) |
 | `scope_cap` | Explicit item/file count — no expansion without re-delegation | explicit item count |
 | `tool_preference` | Default extraction tool selection | HTML ≥ 10KB: WebFetch with a narrow prompt (Bash-holding agents: defuddle-first) · structured/API < 8KB: WebFetch |
 | `spawn_budget` | Max sub-agent invocations per Wave; hitting the ceiling → stop + escalate to user | glass-atrium-intel-researcher ~3 · glass-atrium-intel-planner ~2 · glass-atrium-qa-code-reviewer ~1 (per-wave soft budgets) |
 
-- **DEV `tool_budget`**: the `[SIZE-EST]` `tool_uses~=` estimate for the same delegation — sizing anchor and split thresholds are single-sited at `skills/glass-atrium-ops-delegation-contracts/references/delegation-size-discipline.md` (Empirical tool_use calibration · HARD SECONDARY).
+- **DEV `tool_budget`**: the `[SIZE-EST]` `tool_uses~=` estimate for the same delegation.
+  - Split thresholds: `orchestrator-role.md` → `#### Delegation-size discipline` → **Split triggers** (HARD SECONDARY · Empirical tool_use calibration).
+  - Token format and per-file calibration: `skills/glass-atrium-ops-delegation-contracts/references/delegation-size-discipline.md`.
 - **`reserved_output`**: apply **Reserve-then-check** from `skills/glass-atrium-ops-delegation-contracts/references/delegation-size-discipline.md` → **`[SIZE-EST]` analysis mode** — gate the read scope against `input_budget` before work, never after.
 - **`spawn_budget`** bounds invocations only; concurrency is bounded by the engine's runtime self-cap (`orchestrator-role.md` → `### Spawn Budget`).
 - Hitting `tool_budget` before completion → the graceful exit in `GLASS_ATRIUM_GLOBAL_RULES.md` → `### Turn Budget & Graceful Exit`, carrying partial findings; never a silent exit.
@@ -200,7 +202,7 @@ Both aids help the sub-agent self-anchor; neither is hook-enforced.
   - `TASK_TYPE: <planning|document|implementation|analysis|research|review|debug>`
   - Optional because the planner, reporter and DEV descriptions already carry prompt-level rules for it.
   - Vocabulary matches the Capability-Based Agent Selection phase labels (analysis · planning · implementation · document · research · review).
-- **Domain keywords (optional)**: pair the task description with the target agent's matching `domains` terms from `agent-registry.json` (e.g., "Modify user auth logic — nestjs, jwt, guard").
+- **Domain keywords (optional)**: pair the task description with the target agent's matching `domains` terms from `agent-registry.json` (e.g., "Modify user auth logic — nestjs, jwt, passport").
   - They anchor the sub-agent's reading of the task and are never routing keys — the spawn's typed `agentType` already fixes the agent.
 
 #### Read-Extent Discipline [ORCHESTRATOR]
@@ -341,7 +343,7 @@ MANDATORY when authoring any workflow: the cap rules, the authoring idioms, and 
 MANDATORY when authoring any workflow — these bind EVERY workflow output schema you author. The failure they prevent (`StructuredOutput schema retry cap (5) exceeded`) burns all five internal retries and loses the entire delegation.
 
 - **No caps** — no `maxLength` anywhere on a workflow output schema, and no per-element `maxItems`.
-  - Why: the failure follows the schema author, not the engine — uncapped schemas do not produce cap-violation retries, capped ones do.
+  - Why: the failure follows the author's caps, not the engine or the models.
   - The single admitted exception is ONE top-level `maxItems` on an inherently multi-item array (Shape-tolerant schema, below) — a single constraint that does not multiply across elements.
 - **Never cap `completion_block`** — the standing rule mandates the FULL multi-line block, and real blocks have overrun every cap they were given.
   - Schema compliance and rule compliance are mutually exclusive under ANY such cap, so this one needs no threshold argument.
@@ -1001,7 +1003,7 @@ Candidate practices, each carrying its own adoption trigger where one exists. Re
 
 #### Bilevel Meta-Optimization Loop
 
-- Outcome-Record aggregation → pattern analysis → instruction-improvement candidates runs in the self-improvement daemon (`autoagent/daemon_cycle.py`); no orchestrator-side task counter drives it
+- Outcome-Record aggregation → pattern analysis → instruction-improvement candidates runs in the self-improvement daemon (`autoagent/daemon-cycle.sh`: `hooks/learning-aggregator.py` aggregates, `autoagent/daemon_cycle.py` builds the candidates); no orchestrator-side task counter drives it
 - **Self-goal-setting is forbidden** — an improvement candidate never becomes its own objective
 - **Which candidates need user approval is not decided here**: `core-learning-log.md` → Instruction Improvement Approval Tier is the canonical, and the orchestrator's operational delta is `### Self-Improvement User-Approval Trigger` below
 
@@ -1204,7 +1206,7 @@ Boundary rule: **pre-enumerable condition → engine; semantic interpretation �
       - Why: in schema mode the engine frames StructuredOutput as the sole deliverable, so the agent does not reliably raw-save without the grant.
       - It departs from side-effect-free stages on purpose: building the wiki is glass-atrium-intel-researcher's core function.
       - Agent side: `glass-atrium-intel-researcher.md` → `### Raw Source Storage Pipeline` (Schema/Workflow-mode persistence clause).
-  - **Quality gates as explicit verify-stages** — the four serial Decision-phase probes, Plan Direction Verification (Stage-2 gate), Sprint Contract Gate, Pipeline Acceptance Criteria. The engine infers none of them; the orchestrator encodes each as a gate stage.
+  - **Quality gates as explicit verify-stages** — the four Decision-phase probes, Plan Direction Verification (Stage-2 gate), Sprint Contract Gate, Pipeline Acceptance Criteria. The engine infers none of them; the orchestrator encodes each as a gate stage.
 - **Non-brittleness**: Dynamic Workflows is a research preview — describe the layering principle, and do not hardcode preview-specific field names likely to churn.
 
 #### Hook layer split under the engine
