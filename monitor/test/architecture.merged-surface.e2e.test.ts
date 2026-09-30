@@ -1812,7 +1812,7 @@ async function openHookHealth(needle: string): Promise<string> {
 	while (Date.now() < deadline) {
 		// each hook event starts collapsed — open them so the whole served configuration is on screen
 		await page.evaluate(() => {
-			for (const details of document.querySelectorAll(".arch-hook-chain details")) details.open = true;
+			for (const details of document.querySelectorAll<HTMLDetailsElement>(".arch-hook-chain details")) details.open = true;
 		});
 		text = await getHookRowText();
 		if (text.includes(needle)) return text;
