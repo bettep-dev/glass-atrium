@@ -1273,11 +1273,11 @@ function DocAuthorCellCD({ author }) {
 	);
 }
 
-// 중앙 목록 카드 — Sticky Header Integrated (검색 + facet + 건수 2-row).
-// .card-body 인라인 maxHeight:'none' 으로 base.css `max-height: 70vh` override → 카드 viewport full-height + 카드 내부 스크롤.
 // the list card takes focus when a recovered read unmounts the Retry that held it
 const DOC_LIST_CARD_ID_CD = "docs-list";
 
+// 중앙 목록 카드 — Sticky Header Integrated (검색 + facet + 건수 2-row).
+// .card-body 인라인 maxHeight:'none' 으로 base.css `max-height: 70vh` override → 카드 viewport full-height + 카드 내부 스크롤.
 function DocListCardCD({
 	asOf,
 	state,
