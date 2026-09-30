@@ -886,8 +886,6 @@ function ScreenClaudedDocs(/* { onNav } */) {
 	const loadMoreRemaining = canLoadMore ? Math.max(0, total - rows.length) : 0;
 	const isLoadingMore = listState.busy && currentOffset > 0 && !isSearchMode;
 
-	// 카운트 표기 — groups mode 는 그룹/문서 이중 단위 명시 (총건 pill 이 그룹 수를 문서 수처럼 읽히던 오해 차단, F40) ·
-	// search mode 는 row 단위 '건' 유지 + 숨은 건 있으면 "표시/전체" 이중 표기 (데이터 정직성).
 	const headerRight = <DocHeaderActionsCD asOf={asOf} listState={listState} onRefresh={triggerRefresh} />;
 
 	return (
@@ -1064,8 +1062,7 @@ function ScreenClaudedDocs(/* { onNav } */) {
         /* 재정렬 rollback inline 에러 — crit hue (toast 와 별개 · 영향 그룹 인접 표시). */
         .doc-reorder-error { color: rgb(var(--crit)); font-family: 'JetBrains Mono', monospace; }
         /* stage pill — 톤은 meter 채움과 종료 글리프가 운반 · 라벨 텍스트는 중립 유지. */
-        /* ID 셀 둘째 줄 계보. */
-        /* one line — the ID column is sized for "rev of #N" */
+        /* ID 셀 둘째 줄 계보 — 한 줄 유지 (ID 컬럼 폭은 "rev of #N" 기준). */
         .doc-lineage { font-size: var(--fs-meta); color: rgb(var(--faint)); white-space: nowrap; text-align: left; }
         /* header text at the title text's x — lead slot 20px + title row gap 6px */
         .doc-col-title-text { margin-left: 26px; }
@@ -1316,7 +1313,7 @@ function DocListCardCD({
 	// load-more keeps its own button spinner → only a first-page read dims the held rows
 	const isHeldBusy = state.busy === true && state.status === "ready" && !isLoadingMore;
 	// the header Refresh already says Refreshing… → only a search, which it never names, speaks here
-	const busyText = isSearchMode ? "Searching…" : null;
+	const busyText = isHeldBusy && isSearchMode ? "Searching…" : null;
 	// 건수 우측 표기 — groups mode 는 그룹/문서 이중 단위 + 서버 집계 숨김 건 (외부 headerRight 와 동일 규칙, F40) ·
 	// search mode 는 row 단위 '건' + 숨은 건 있으면 "표시/전체" 이중 표기.
 	// 그룹이 기본 단위 · 문서 수는 그룹 수와 다를 때만 (같은 수를 두 번 말하지 않는다).
@@ -1353,7 +1350,6 @@ function DocListCardCD({
 	const nowMs = Date.now();
 	const openSummary = isSectioned ? getOpenSummaryCD(orderedRows, nowMs) : null;
 	const hasOpenSummary = openSummary != null && openSummary.openCount > 0;
-	const statusColumnWidth = 135;
 	const rovingId = getRovingIdCD(orderedRows.map((r) => r.id), focusRowId, selectedId);
 	const commonFormat = getCommonFormatCD(orderedRows);
 	const commonAudience = getCommonAudienceCD(orderedRows);
@@ -1460,14 +1456,14 @@ function DocListCardCD({
 						}))}
 						onToggle={inlineFilterProps.onAudienceChange}
 					/>
-					{isHeldBusy && busyText && (
+					{busyText && (
 						<span className="doc-list-busy ml-auto fs-meta" role="status" style={{ color: "rgb(var(--dim))" }}>
 							{busyText}
 						</span>
 					)}
 					{totalLabel && (
 						<span
-							className={`${isHeldBusy && busyText ? "" : "ml-auto "}fs-meta font-mono`}
+							className={`${busyText ? "" : "ml-auto "}fs-meta font-mono`}
 							style={{ color: "rgb(var(--dim))" }}
 							aria-live="polite">
 							{totalLabel}
@@ -1578,7 +1574,7 @@ function DocListCardCD({
 								</th>
 								{/* doc_status badge 별도 column 분리 (title inline 제거 · 사용자 directive). */}
 								{/* width 는 표가 넘칠 때 min-content 까지 눌린다 → 컬럼마다 min-width 바닥을 같이 준다. */}
-								<th scope="col" style={{ width: statusColumnWidth, minWidth: statusColumnWidth }}>Status</th>
+								<th scope="col" style={{ width: 135, minWidth: 135 }}>Status</th>
 								{/* ID — 문서 번호 노출 (그룹 루트 행은 대표 문서 번호).
                     ponytail: 130px = "rev of #123456" (14 mono chars × 7.2px + 28px padding) — a 7-digit id needs a remeasure. */}
 								<th scope="col" style={{ width: 130, minWidth: 130 }}>ID</th>
@@ -2979,14 +2975,14 @@ function DocStagePillCD({
 	);
 }
 
+// trailing context-window tag ("[1m]") → not part of the model name, so both spellings read alike
+const MODEL_CONTEXT_TAG_CD = /\[[^\]]*\]$/;
+
 // last-status-model → the line under the pill. The operator's own action is a reserved literal
 // and reads as such; a model id renders through its display name. An unknown actor renders nowhere.
 function formatActorCD(model) {
 	return model === OPERATOR_ACTOR_CD ? "operator" : window.UI.getDisplayName("model", String(model).replace(MODEL_CONTEXT_TAG_CD, ""));
 }
-
-// trailing context-window tag ("[1m]") → not part of the model name, so both spellings read alike
-const MODEL_CONTEXT_TAG_CD = /\[[^\]]*\]$/;
 
 // DocCheckboxCD — 5-state spec — 16px square · 2px border · 4px radius · WCAG 2.2 AA focus-visible
 //   · default     — bg-zinc-900 border-zinc-600
