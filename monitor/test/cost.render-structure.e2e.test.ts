@@ -26,6 +26,12 @@ const PUBLIC_ROOT = resolve(HERE, "..", "public");
 const DECISION_CARD_TITLES = ["Cost over time", "Cost by model", "Most expensive sessions"];
 const DISCLOSURE_TITLES = ["Token volume", "Turn statistics", "Log integrity"];
 const KPI_TILE_COUNT = 4;
+const LEDGER_MODELS = [
+  "claude-opus-5", "claude-opus-5-5", "claude-fable-5-1", "claude-sonnet-5", "claude-fable-5",
+  "claude-opus-4-8", "claude-haiku-4-5-20251001", "claude-sonnet-5-5", "unknown",
+];
+// Two columns "end near the same height": less than one table row of dead space under the shorter.
+const DECISION_SPLIT_MAX_SLACK_PX = 48;
 
 // A calm window: ten days of ordinary spend whose newest day sits inside its own band.
 const CALM_TREND_COSTS = [10, 11, 9, 10, 11, 9, 10, 11, 9, 10];
@@ -87,30 +93,30 @@ async function openRenderContext(fixture: CostFixture): Promise<RenderContext> {
     points: trendRows,
     timezone: "UTC",
   }));
+  // A month's real model spread: more models than the ledger's top five, so it rolls up an Other row.
   app.get("/api/cost/by-model", async () => ({
-    rows: [
-      {
-        model: "claude-opus-5",
-        cost_usd: 80,
-        session_count: 12,
-        input_tokens: 10_000,
-        output_tokens: 5000,
-        cache_read_tokens: 40_000,
-        cache_creation_tokens: 8000,
-      },
-    ],
+    rows: LEDGER_MODELS.map((model, i) => ({
+      model,
+      cost_usd: 80 - i * 8,
+      session_count: 12,
+      input_tokens: 10_000,
+      output_tokens: 5000,
+      cache_read_tokens: 40_000,
+      cache_creation_tokens: 8000,
+    })),
   }));
   app.get("/api/cost/cache-hit", async () => ({
     rows: trendRows.map((r) => ({ day: r.date, cache_hit_ratio: 0.8 })),
   }));
   app.get("/api/cost/session-distribution", async () => ({
-    rows: Array.from({ length: 8 }, (_, i) => ({
+    // A month holds hundreds of sessions → the table always shows its full top rows plus Other.
+    rows: Array.from({ length: 40 }, (_, i) => ({
       session_id: `session-${i}`,
-      total_cost_usd: 8 - i,
+      total_cost_usd: 40 - i,
       agent: "glass-atrium-dev-react",
-      started_at: getDayKey(i),
+      started_at: getDayKey(i % 10),
     })),
-    total_session_count: 8,
+    total_session_count: 40,
     truncated: false,
   }));
   app.get("/api/cost/parse-errors", async () => ({
@@ -351,6 +357,23 @@ describe("calm fixture — nothing is running hot", () => {
     } finally {
       await ctx.page.setViewportSize({ width: 1440, height: 900 });
     }
+  });
+
+  test("the decision split's two columns end near the same height at 1440", async () => {
+    const columnBottoms = await ctx.page.evaluate((selector) => {
+      const title = Array.from(document.querySelectorAll(selector))
+        .find((t) => (t.textContent || "").trim() === "Cost by model");
+      const row = title?.closest(".split-row");
+      if (!row) return [];
+      return Array.from(row.children).map((col) => {
+        const cards = Array.from(col.querySelectorAll(".card"));
+        return Math.max(...cards.map((c) => c.getBoundingClientRect().bottom));
+      });
+    }, CARD_TITLE_SELECTOR);
+    assert.equal(columnBottoms.length, 2, "the decision split holds two columns");
+    const slack = Math.abs(columnBottoms[0]! - columnBottoms[1]!);
+    assert.ok(slack <= DECISION_SPLIT_MAX_SLACK_PX,
+      `empty space under the shorter column is ${Math.round(slack)}px (bottoms ${columnBottoms.map(Math.round).join(" | ")})`);
   });
 
   test("no card content reaches past its own card's edges at xl", async () => {

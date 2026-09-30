@@ -1653,8 +1653,9 @@ function CacheHitTooltipC({ active, payload }) {
   );
 }
 
-// 5c. Most expensive sessions — top five + a rolled-up Other row, histogram behind it in the drawer.
-const SESSION_TOPN = 5;
+// 5c. Most expensive sessions — top ten + a rolled-up Other row, histogram behind it in the drawer.
+// Ten rows → the table ends level with the model ledger beside it (top five + Other + Total) at xl.
+const SESSION_TOPN = 10;
 
 // Top N by cost + one Other bucket. The population travels with every count — never a bare "5".
 function rollupSessionRows(sessions, topN) {
