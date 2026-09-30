@@ -1,0 +1,3 @@
+{"type":"user","entrypoint":"cli","origin":{"kind":"human"},"message":{"role":"user","content":"Please check the build status"}}
+{"type":"assistant","entrypoint":"cli","message":{"role":"assistant","content":[{"type":"text","text":"The build is green."}]}}
+{"type":"user","entrypoint":"cli","origin":{"kind":"human"},"message":{"role":"user","content":"좋아, 이제 리뷰 반영해줘"}}

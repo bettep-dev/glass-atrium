@@ -10,6 +10,8 @@ bats_require_minimum_version 1.5.0
 GA="$(cd -- "${BATS_TEST_DIRNAME}/../.." && pwd)"
 REAL_SCRIPT="${GA}/scripts/generate-manifest.sh"
 REAL_SPINE="${GA}/scripts/lib/apply-spine.sh"
+# shellcheck source-path=SCRIPTDIR source=../lib/path-guard.sh
+source "${GA}/scripts/lib/path-guard.sh"
 
 # 전제 미충족을 skip 으로 흡수하지 않고 붉게 실패시킴 — 두 파일 모두 manifest 추적
 # 대상이므로 부재는 깨진 트리이며, skip 은 AC-17 단언을 조용히 무력화함.
@@ -25,7 +27,7 @@ setup() {
 }
 
 teardown() {
-  [[ -n "${WORK:-}" && -d "${WORK}" ]] && rm -rf -- "${WORK}" || true
+  if ga_guard_path "${WORK:-}"; then rm -rf -- "${WORK:?}"; fi
 }
 
 # Sandbox repo with a COPY of the generator, so its BASH_SOURCE-derived GA_ROOT
@@ -35,6 +37,7 @@ make_sandbox() {
   mkdir -p "${WORK}/scripts/lib" "${WORK}/agents"
   cp "${REAL_SCRIPT}" "${WORK}/scripts/generate-manifest.sh"
   cp "${REAL_SPINE}" "${WORK}/scripts/lib/apply-spine.sh"
+  cp "${REAL_SPINE%/*}/path-guard.sh" "${WORK}/scripts/lib/path-guard.sh"
   printf '# agent alpha\n' >"${WORK}/agents/alpha.md"
   printf '{"files":[],"hashes":{}}\n' >"${WORK}/manifest.json"
   git -C "${WORK}" init -q

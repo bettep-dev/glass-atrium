@@ -18,6 +18,8 @@ GA="$(cd -- "${BATS_TEST_DIRNAME}/.." && pwd)"
 REAL_GA="${GA}/glass-atrium"
 CORE="${GA}/lib/ga-env.sh"
 REPO_MANIFEST="${GA}/manifest.json"
+# shellcheck source-path=SCRIPTDIR source=../scripts/lib/path-guard.sh
+source "${GA}/scripts/lib/path-guard.sh"
 
 setup() {
   command -v jq >/dev/null 2>&1 || skip "jq required"
@@ -39,8 +41,8 @@ SH
 }
 
 teardown() {
-  [[ -n "${GA_SANDBOX:-}" && -d "${GA_SANDBOX}" ]] && rm -rf -- "${GA_SANDBOX}"
-  [[ -n "${TARGET:-}" && -d "${TARGET}" ]] && rm -rf -- "${TARGET}" || true
+  if ga_guard_path "${GA_SANDBOX:-}"; then rm -rf -- "${GA_SANDBOX:?}"; fi
+  if ga_guard_path "${TARGET:-}"; then rm -rf -- "${TARGET:?}"; fi
 }
 
 # settings.json with every EXPECTED_HOOK_BINDINGS entry wired under its event.
@@ -94,6 +96,9 @@ write_full_settings() {
       { "hooks": [ { "type": "command", "command": "~/.claude/hooks/prune-session-spawns.sh" } ] },
       { "hooks": [ { "type": "command", "command": "~/.claude/hooks/validate-compliance-matrix.sh" } ] }
     ],
+    "UserPromptSubmit": [
+      { "hooks": [ { "type": "command", "command": "~/.claude/hooks/inject-reply-language.sh" } ] }
+    ],
     "Stop": [
       { "hooks": [ { "type": "command", "command": "~/.claude/hooks/advisory-preedit-facts.sh" } ] },
       { "hooks": [ { "type": "command", "command": "~/.claude/hooks/cost-tracker.sh" } ] },
@@ -113,6 +118,7 @@ write_full_settings() {
       { "hooks": [ { "type": "command", "command": "~/.claude/hooks/inject-scope-part-09.sh" } ] },
       { "hooks": [ { "type": "command", "command": "~/.claude/hooks/inject-scope-part-10.sh" } ] },
       { "hooks": [ { "type": "command", "command": "~/.claude/hooks/inject-scope-part-11.sh" } ] },
+      { "hooks": [ { "type": "command", "command": "~/.claude/hooks/inject-scope-part-12.sh" } ] },
       { "hooks": [ { "type": "command", "command": "~/.claude/hooks/telemetry-activation.sh" } ] }
     ],
     "SubagentStop": [
@@ -199,6 +205,13 @@ drop_group() {
   [[ "${output}" == *"ok   : hook bound — PostToolUse -> validate-tool-response.sh"* ]]
   # no dormant-binding summary line when everything is wired
   [[ "${output}" != *"dormant hook binding(s)"* ]]
+}
+
+@test "prompt event -> the reply-language pointer reports bound on UserPromptSubmit" {
+  write_full_settings
+  run_doctor_sandbox
+  [[ "${output}" == *"ok   : hook bound — UserPromptSubmit -> inject-reply-language.sh (matcher=<none>)"* ]] \
+    && [[ "${output}" != *"dormant hook binding(s)"* ]]
 }
 
 @test "two-matcher one-hook -> BOTH matchers reported bound (validate-secret-scan)" {
@@ -300,11 +313,10 @@ drop_group() {
   run_doctor_sandbox
   [[ "${output}" == *"settings.json absent"* ]]
   [[ "${output}" == *"ALL hook event-bindings are unwired"* ]]
-  # EXPECTED_HOOK_BINDINGS enumerates the COMPLETE 60-binding set across all 7 events
-  # (PreToolUse 27 / PostToolUse 8 / SessionStart 4 / Stop 3 / SubagentStart 14 /
-  # SubagentStop 3 / PreCompact 1 — PreToolUse carries the two advisory Bash leaves
-  # advisory-egress-secret.sh + advisory-raw-store-read.sh). The total is counted per FLATTENED matcher-leaf,
-  # NOT per unique hook basename: validate-secret-scan.sh AND enforce-harness-critical.sh
+  # EXPECTED_HOOK_BINDINGS enumerates the COMPLETE binding set across all 8 events, and the total
+  # asserted below is read from the populated array (set_binding_figures), never restated here.
+  # The total is counted per FLATTENED matcher-leaf, NOT per unique hook basename:
+  # validate-secret-scan.sh AND enforce-harness-critical.sh
   # each bind under TWO matchers (Write|Edit AND Bash), two hooks share the Workflow
   # matcher (enforce-workflow-verify-stage.sh AND lint-workflow-template-literal.sh),
   # enforce-verification-gate.sh binds under BOTH PreToolUse and PostToolUse (Agent
@@ -312,16 +324,15 @@ drop_group() {
   # post-edit-typecheck.sh, telemetry-activation.sh) — each occurrence is a distinct
   # leaf. advisory-preedit-facts.sh binds on Stop ONLY (SubagentStop sees a parent
   # transcript that predates the subagent's edits). With settings.json absent, every
-  # leaf is unwired, so all 60 report dormant. SubagentStart carries 14 because the scope-rule
-  # channel is split across twelve slots: inject-scope-rules.sh keeps the marker blocks and
-  # inject-scope-part-01.sh .. -11.sh each carry one part, alongside agent-tracker.sh and
-  # telemetry-activation.sh.
+  # leaf is unwired, so every one reports dormant. SubagentStart carries the split scope-rule
+  # channel: inject-scope-rules.sh keeps the marker blocks and each inject-scope-part-NN.sh
+  # carries one part, alongside agent-tracker.sh and telemetry-activation.sh.
   #
   # THIS row's total is a COUNT, not a membership pin: it moves whenever the roster moves for
-  # unrelated reasons, and a simultaneous remove-and-add holds it at 60. The membership pin is
-  # write_full_settings in THIS file — it enumerates all 60 leaves by NAME, so a swapped roster row
+  # unrelated reasons, and a simultaneous remove-and-add holds it steady. The membership pin is
+  # write_full_settings in THIS file — it enumerates every leaf by NAME, so a swapped roster row
   # stops matching its fixture entry and every row built on that fixture reds. That fixture is the
-  # only general guard on roster membership: test/wire-hooks-merge.bats names 7 of the 53 roster
+  # only general guard on roster membership: test/wire-hooks-merge.bats names only 7 of the roster's
   # basenames and runs no loop over the array, so it catches a drift only when the drifted basename
   # is one of those 7.
   #
@@ -330,13 +341,17 @@ drop_group() {
   # held at the then-current 49 — leaves wire-hooks-merge.bats and hook-bindings-complete.bats entirely green while
   # reddening 6 rows in this file.
   #
-  # Both counts are measured on the COMPOSED group-C tree, not on one branch: wire-hooks-merge.bats
+  # The 7 is measured on the COMPOSED group-C tree, not on one branch: wire-hooks-merge.bats
   # is rewritten in the same composition, so a count taken from any single branch goes stale on
-  # merge. Re-measure both sides together before editing them. The denominator is unique BASENAMES,
-  # which is smaller than the 60 leaves because a basename can bind under several event/matcher
+  # merge. Re-measure it against the roster before editing it. The roster side is unique BASENAMES,
+  # which is fewer than the leaves because a basename can bind under several event/matcher
   # tuples — and it must be read from inside the array bounds: the array closer is indented, so an
   # awk range ending at /^\)/ overruns to EOF and sweeps in .sh names from surrounding prose.
-  [[ "${output}" == *"60 dormant hook binding(s)"* ]]
+  set_binding_figures
+  [[ "${output}" == *" ${BINDING_COUNT} dormant hook binding(s)"* ]] || {
+    echo "no dormant total naming all ${BINDING_COUNT} declared leaves: ${output}"
+    return 1
+  }
 }
 
 @test "doctor is mutation-free: settings.json byte-identical after run" {
@@ -397,7 +412,11 @@ drop_group() {
   # same defect twice under two different classes.
   make_ga_sandbox
   write_full_settings
-  rm -f "${GA_SANDBOX}/hooks/cost-tracker.sh"
+  if ga_guard_path "${GA_SANDBOX}"; then
+    rm -f -- "${GA_SANDBOX:?}/hooks/cost-tracker.sh"
+  else
+    return 1
+  fi
   run_doctor_ga_sandbox
   [[ "${output}" != *"NOT executable"* ]]
   [[ "${output}" == *"doctor: PASS"* ]]
@@ -456,10 +475,34 @@ wired_basenames() {
   array_rows | awk -F'\t' 'NF >= 2 && $2 != "" { print $2 }' | LC_ALL=C sort -u
 }
 
+# EXPECTED_HOOK_BINDINGS as ga_init_env populates it — the array itself, never its source text —
+# read into BINDING_COUNT (every leaf) and PART_HOOKS / PART_COUNT (the part-slot rows, classified
+# as §10b classifies them). A zero part count fails, so no figure derived here passes vacuously.
+set_binding_figures() {
+  local binding_rows
+  binding_rows="$(GA_TARGET_HOME="${TARGET}" bash -c '
+    set -Eeuo pipefail
+    source "$1/lib/ga-core.sh"
+    ga_init_env "$1"
+    printf "%s\n" "${EXPECTED_HOOK_BINDINGS[@]}"
+  ' _ "${GA}")" || {
+    echo "ga_init_env could not populate EXPECTED_HOOK_BINDINGS from ${GA}"
+    return 1
+  }
+  BINDING_COUNT="$(grep -c . <<<"${binding_rows}" || true)"
+  PART_HOOKS="$(awk -F'\t' '$1 == "SubagentStart" && $2 ~ /^inject-scope-part-[0-9][0-9]\.sh$/ { print $2 }' \
+    <<<"${binding_rows}")"
+  PART_COUNT="$(grep -c . <<<"${PART_HOOKS}" || true)"
+  [[ "${PART_COUNT}" -gt 0 ]] || {
+    echo "EXPECTED_HOOK_BINDINGS declares no part-slot row — a figure derived from it would pass vacuously"
+    return 1
+  }
+}
+
 # --- §10b, the split scope-rule channel ---------------------------------------
 #
-# Twelve SubagentStart slots carry what one injector used to: inject-scope-rules.sh keeps the
-# marker blocks and inject-scope-part-01.sh .. -11.sh carry one part each. §6 asks settings.json
+# The SubagentStart part slots carry what one injector used to: inject-scope-rules.sh keeps the
+# marker blocks and each inject-scope-part-NN.sh carries one part. §6 asks settings.json
 # about each declared row on its own and knows nothing about the chunker, so three conditions are
 # invisible to it and are pinned here instead.
 #
@@ -467,7 +510,7 @@ wired_basenames() {
 # update_wire_hooks_post_apply -> the launcher's wire-hooks subcommand, and a missing or
 # non-executable launcher there is a WARN with exit 0. Files applied, bindings NOT reconciled —
 # every wrapper on disk, none bound, every agent receiving the marker-block slot alone. §6 reports
-# that as eleven dormant lines indistinguishable from any other unwired hook.
+# that as one dormant line per part slot, indistinguishable from any other unwired hook.
 #
 # The slot constant and the envelope threshold are read FROM the chunker core (--audit), never
 # restated here: a fixture carrying its own copy of a producer's constant can only ever agree with
@@ -482,12 +525,14 @@ write_chunk_registry() {
 JSON
 }
 
-# Every part-slot group, dropped from the wired settings — the launcher-skipped shape.
+# Every part-slot group, dropped from the wired settings — the launcher-skipped shape. Reads the
+# part rows itself, so PART_COUNT is set on return.
 drop_all_part_groups() {
-  local n
-  for n in 01 02 03 04 05 06 07 08 09 10 11; do
-    drop_group "" "inject-scope-part-${n}.sh" SubagentStart
-  done
+  set_binding_figures
+  local hook
+  while IFS= read -r hook; do
+    drop_group "" "${hook}" SubagentStart
+  done <<<"${PART_HOOKS}"
 }
 
 @test "split channel: every part slot bound -> slot count agrees and all slots report bound" {
@@ -519,9 +564,10 @@ drop_all_part_groups() {
   write_full_settings
   drop_all_part_groups
   run_doctor_ga_sandbox
-  # The shape, not the count: what distinguishes this from eleven ordinary dormant hooks is that
-  # the surviving marker-block slot makes every agent look injected while carrying no rule body.
-  [[ "${output}" == *"NONE of the 11 scope-rule part slots is bound"* ]] || {
+  # The shape, not the count: what distinguishes this from the same number of ordinary dormant
+  # hooks is that the surviving marker-block slot makes every agent look injected while carrying
+  # no rule body.
+  [[ "${output}" == *"NONE of the ${PART_COUNT} scope-rule part slots is bound"* ]] || {
     echo "no named unbound-channel warn: ${output}"
     return 1
   }
@@ -544,10 +590,11 @@ drop_all_part_groups() {
   make_ga_sandbox
   write_chunk_registry
   write_full_settings
+  set_binding_figures
   drop_group "" "inject-scope-part-09.sh" SubagentStart
   drop_group "" "inject-scope-part-10.sh" SubagentStart
   run_doctor_ga_sandbox
-  [[ "${output}" == *"9 of 11 scope-rule part slots bound"* ]] || {
+  [[ "${output}" == *"$((PART_COUNT - 2)) of ${PART_COUNT} scope-rule part slots bound"* ]] || {
     echo "no partial-binding warn naming the ratio: ${output}"
     return 1
   }
@@ -561,9 +608,14 @@ drop_all_part_groups() {
   make_ga_sandbox
   write_chunk_registry
   write_full_settings
-  rm -f "${GA_SANDBOX}/hooks/inject-scope-part-07.sh"
+  set_binding_figures
+  if ga_guard_path "${GA_SANDBOX}"; then
+    rm -f -- "${GA_SANDBOX:?}/hooks/inject-scope-part-07.sh"
+  else
+    return 1
+  fi
   run_doctor_ga_sandbox
-  [[ "${output}" == *"10 of 11 scope-rule part wrapper(s) present"* ]] || {
+  [[ "${output}" == *"$((PART_COUNT - 1)) of ${PART_COUNT} scope-rule part wrapper(s) present"* ]] || {
     echo "no wrapper-presence warn: ${output}"
     return 1
   }
@@ -578,10 +630,19 @@ drop_all_part_groups() {
   make_ga_sandbox
   write_chunk_registry
   write_full_settings
-  # ~120,000 units of heading-bounded source, i.e. past the soft envelope and past what eleven
-  # 10,000-unit slots can carry. The figure is derived from the core's OWN header (soft= and
-  # slots= x cap=) rather than pinned: a fixture that hardcodes a producer's threshold agrees
-  # only with itself. Sections stay well inside one part so nothing trips the cannot-fit path.
+  # ~122,000 units of heading-bounded source, i.e. past the soft envelope and past the delivered
+  # bound, the core's slots x cap. The slot figure asserted below is the core's own CHUNK_SLOTS,
+  # which the doctor prints: a fixture that hardcodes a producer's constant agrees only with
+  # itself. Sections stay well inside one part so nothing trips the cannot-fit path.
+  local slots
+  slots="$(python3 -c 'import sys;sys.path.insert(0,sys.argv[1]);import inject_chunk;print(inject_chunk.CHUNK_SLOTS)' "${GA_SANDBOX}/hooks/lib")" || {
+    echo "cannot read CHUNK_SLOTS from ${GA_SANDBOX}/hooks/lib/inject_chunk.py"
+    return 1
+  }
+  [[ "${slots}" -gt 0 ]] || {
+    echo "the core reports no slot count — the overflow figure below would be meaningless"
+    return 1
+  }
   mkdir -p "${GA_SANDBOX}/scoped"
   local section i
   section="$(head -c 600 /dev/zero | tr '\0' 'x')"
@@ -594,13 +655,15 @@ drop_all_part_groups() {
     echo "no envelope warn for an over-envelope member set: ${output}"
     return 1
   }
-  # DELIVERY IS NOT DEMAND: the delivered sum is bounded by slots x cap, so a reader keyed on it
-  # could never cross this threshold. This row fails if the doctor ever goes back to reading it.
+  # DELIVERY IS NOT DEMAND: the delivered sum drops whatever overflowed the slots, so it cannot
+  # show demand past what the channel carries. `(12` tells this fixture's demand from its delivery
+  # only while the delivered bound, slots x cap, stays below that demand; a further slot needs
+  # the section count above raised. This row fails if the doctor ever goes back to delivery.
   [[ "${output}" == *"probe-agent(12"* ]] || {
     echo "the envelope warn does not name the agent's source demand: ${output}"
     return 1
   }
-  [[ "${output}" == *"exceed the 11 available slot(s)"* ]] || {
+  [[ "${output}" == *"exceed the ${slots} available slot(s)"* ]] || {
     echo "no slot-overflow warn: ${output}"
     return 1
   }
@@ -642,7 +705,11 @@ drop_all_part_groups() {
   write_full_settings
   # the core FILE, not the directory: that path is what the doctor opens, so removing it states
   # the unreachable condition exactly and needs no recursive delete on a real sandbox directory.
-  rm -f "${GA_SANDBOX}/hooks/lib/inject_chunk.py"
+  if ga_guard_path "${GA_SANDBOX}"; then
+    rm -f -- "${GA_SANDBOX:?}/hooks/lib/inject_chunk.py"
+  else
+    return 1
+  fi
   run_doctor_ga_sandbox
   [[ "${output}" == *"split scope-rule channel BLIND"* ]] || {
     echo "an unreadable core did not report blind: ${output}"

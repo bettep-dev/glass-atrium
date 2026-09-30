@@ -298,7 +298,7 @@ function getDocDetail(doc: DocFixture): Record<string, unknown> {
 		format: "html",
 		supersedes_id: null,
 		superseded_by_id: null,
-		doc_status: "progress",
+		doc_status: "doc_review",
 		folder_id: null,
 		display_order: null,
 		body: getDocBody(doc),
@@ -315,7 +315,7 @@ function getDocGroups(): Record<string, unknown> {
 			representative_id: doc.id,
 			representative_title: doc.title,
 			representative_author: "p1-3-harness",
-			representative_doc_status: "progress",
+			representative_doc_status: "doc_review",
 			representative_audience: "exposed",
 			representative_format: "html",
 			representative_created_at: "2026-08-27T00:00:00.000Z",
@@ -419,7 +419,7 @@ async function measureDoc(doc: DocFixture): Promise<DocMeasurement> {
 	// 전제 먼저 — logLevel 이 3 을 넘으면 아래 "경고 0건" 이 공허해진다.
 	await assertFallbackWarningVisible(page);
 
-	await page.click(`tr.doc-row[aria-label="Open ${doc.title}"]`, { timeout: 30_000 });
+	await page.click(`tr.doc-row[aria-label="${doc.title}"]`, { timeout: 30_000 });
 	for (const diagram of doc.diagrams) {
 		await page.waitForSelector(`.doc-body-isolation [data-probe="${diagram.probe}"] svg`, {
 			timeout: 30_000,

@@ -45,7 +45,8 @@ setup() {
   # Canonical ` · ` [SCOPE] grammar — carried by the regression guards that assert EMPTY output, so
   # the pass-path scope advisory (owned by enforce-verification-gate-scope.bats) has nothing to say.
   # One path, non-sensitive prefix: that also keeps the Deep-review advisory silent on those guards.
-  SCOPE_DECL="[SCOPE] files=monitor/src/a.ts · deliverable=fix · out=none"
+  # The leading newline makes it open its own line, the only place the gate reads a declaration.
+  SCOPE_DECL=$'\n'"[SCOPE] files=monitor/src/a.ts · deliverable=fix · out=none"
 }
 
 # The ONE Agent-envelope builder ($1=subagent_type $2=prompt). jq -n --arg escapes both fields, so

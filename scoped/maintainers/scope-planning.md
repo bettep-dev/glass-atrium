@@ -48,7 +48,7 @@ The rule file reaches glass-atrium-intel-planner whole at spawn through the part
 
 - **Kept as sole copies**: the self-settle-before-consult ordering, the `needs_domain_consult` route and the pre-commitment against the Open Questions mechanism's own growth. Each returns 0 hits in `agents/glass-atrium-intel-planner.md`.
 - **Kept because a named reader resolves into it**: the six weighted axes (asserted by `scoped/maintainers/scope-dev.md`), the two tag literals (the body's co-edit map), and the `## Pre-drawing Doctrine [PLANNING]` pointer (the parity suite).
-- **Kept because the heading names the content beneath it**: `## Absolute Rules [PLANNING]`. No citer forces that name; the rule file points at `core-compliance-matrix.md` → `## Precedence Resolution` for the precedence order, not the reverse.
+- **Kept because the heading names the content beneath it**: `## Absolute Rules [PLANNING]`. No citer forces that name; the rule file points at `GLASS_ATRIUM_GLOBAL_RULES.md` → `### Precedence Resolution` for the precedence order, not the reverse.
 - **Dropped as duplicated in the planner body** — each verbatim-equivalent or stronger in `agents/glass-atrium-intel-planner.md`:
   - the score–evidence consistency rule · the EARS acceptance-criteria format with its worked Good/Bad pair · the confidence-tiered bands with the `[DRAFT: clarify before DEV]` literal
   - the Open-Questions entry shape · the empty-section rule · the self-settle tool list · the honest-backing bullet

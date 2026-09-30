@@ -58,12 +58,20 @@
 # AUTOAGENT_GIT_ROOT, which daemon_cycle._resolve_apply_git_scope short-circuits on by
 # documented design. The per-root suite-hermeticity.bats probes scrub the same set on their
 # identical discover runs, so no probe can read green under conditions its stage lacks.
+#
+# The twelfth pins the runner's cwd seat, the FALLBACK seat:
+# - suite seat (test/lib/bats-hermetic-env.bash) → each test starts in BATS_SUITE_TMPDIR;
+# - bats process cwd → reaches a test only when that seat is not taken;
+# - stage 1 → starts outside the repository;
+# - python stages → resolve their relative roots against the repository root.
 
 bats_require_minimum_version 1.5.0
 
 REAL_RUNNER="${BATS_TEST_DIRNAME}/../run-bats-parallel.sh"
 GA_ROOT_DIR="$(cd -- "${BATS_TEST_DIRNAME}/../.." && pwd)"
 GENERATOR="${GA_ROOT_DIR}/scripts/generate-manifest.sh"
+# shellcheck source-path=SCRIPTDIR source=../lib/path-guard.sh
+source "${BATS_TEST_DIRNAME}/../lib/path-guard.sh"
 
 # The four corpora that produce bytecode, each its OWN git repository on the live
 # install. autoagent/ is the one the runner env cannot reach.
@@ -202,11 +210,13 @@ setup() {
   RUNNER="${SANDBOX}/scripts/run-bats-parallel.sh"
   STUB_PATH="${STUB_BIN}:${PATH}"
   export STUB_LOG_DIR
-  mkdir -p "${STUB_BIN}" "${STUB_LOG_DIR}/pyprobe" "${SANDBOX}/scripts" \
+  mkdir -p "${STUB_BIN}" "${STUB_LOG_DIR}/pyprobe" "${SANDBOX}/scripts/lib" \
     "${SANDBOX}/test" "${SANDBOX}/hooks/test" "${SANDBOX}/scripts/test" \
     "${SANDBOX}/autoagent/test"
   cp -- "${REAL_RUNNER}" "${RUNNER}"
   chmod +x "${RUNNER}"
+  # The runner's exit teardown is gated on the shared path guard it sources from lib/.
+  cp -- "${REAL_RUNNER%/*}/lib/path-guard.sh" "${SANDBOX}/scripts/lib/path-guard.sh"
 
   # The module scenario 6 imports through the REAL interpreter. Its mere import is
   # what would produce __pycache__ next to it.
@@ -217,6 +227,8 @@ setup() {
   write_stub bats <<'STUB'
 #!/usr/bin/env bash
 printf '%s\n' "$*" >>"${STUB_LOG_DIR}/bats-args.log"
+printf '%s\n' "$@" >>"${STUB_LOG_DIR}/bats-argv.log"
+pwd -P >>"${STUB_LOG_DIR}/bats-cwd.log"
 printf '%s\n' "${PYTHONDONTWRITEBYTECODE-__UNSET__}" >>"${STUB_LOG_DIR}/bats-env.log"
 # Stage 1 makes no python3 call, so this stub is the only recorder of its environment.
 # A separate log because scenario 1 asserts bats-env.log as a whole file.
@@ -238,11 +250,11 @@ printf '%s\n' "$*" >>"${STUB_LOG_DIR}/python3-args.log"
 # what the python stages claim to control. The sentinel distinguishes "unset" from "set to
 # empty", which is the whole distinction `env -u` makes. Field order is APPEND-ONLY —
 # DAEMON_ENV_PY_FIELDS indexes into it by position.
-printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' "$*" "${GA_DATA_ROOT-__UNSET__}" \
+printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' "$*" "${GA_DATA_ROOT-__UNSET__}" \
   "${ATRIUM_UPDATE_STATE_DIR-__UNSET__}" "${HOME-__UNSET__}" \
   "${AUTOAGENT_CLAUDE_BIN-__UNSET__}" "${AUTOAGENT_GIT_ROOT-__UNSET__}" \
   "${AUTOAGENT_GIT_PATHSPEC-__UNSET__}" "${AUTOAGENT_AGENTS_DIR-__UNSET__}" \
-  "${CLAUDE_BIN-__UNSET__}" \
+  "${CLAUDE_BIN-__UNSET__}" "$(pwd -P)" \
   >>"${STUB_LOG_DIR}/python3-env.log"
 case "$*" in
   *'import pytest'*) exit "${STUB_PYTEST_IMPORT_RC:-0}" ;;
@@ -264,7 +276,7 @@ STUB
 }
 
 teardown() {
-  [[ -n "${TMPROOT:-}" && -d "${TMPROOT}" ]] && rm -rf -- "${TMPROOT}" || true
+  if ga_guard_path "${TMPROOT:-}"; then rm -rf -- "${TMPROOT:?}"; fi
 }
 
 @test "(1) the child inherits bytecode suppression and each stage banner carries its duration" {
@@ -594,11 +606,48 @@ STUB
   # The healthy leg, in the SAME scenario: with the real git back, the probe changes
   # nothing. Asserted here rather than left to the other scenarios so that a probe which
   # ALWAYS refused would fail this test rather than pass its own half.
-  rm -f -- "${STUB_BIN}/git"
+  if ga_guard_path "${STUB_BIN}"; then rm -f -- "${STUB_BIN:?}/git"; fi
   run_runner_expecting 0 || return 1
   grep -q -- '--no-parallelize-within-files' "${STUB_LOG_DIR}/bats-args.log" || {
     printf 'stage 1 did not run on a healthy toolchain; recorded bats calls:\n%s\n' \
       "$(cat "${STUB_LOG_DIR}/bats-args.log" 2>/dev/null)" >&2
     return 1
   }
+}
+
+@test "(12) stage 1 runs bats from a scratch cwd outside the repo on absolute roots, while the python stages keep the repo root" {
+  run_runner_expecting 0 || return 1
+
+  local repo_dir repo_phys bats_cwd
+  repo_dir="$(cd -- "${SANDBOX}" && pwd)"
+  repo_phys="$(cd -- "${SANDBOX}" && pwd -P)"
+  bats_cwd="$(cat "${STUB_LOG_DIR}/bats-cwd.log")"
+  [[ -n "${bats_cwd}" && "${bats_cwd}" != "${repo_phys}" && "${bats_cwd}" != "${repo_phys}/"* ]] || {
+    printf 'stage 1 ran from %s (want a scratch dir outside the repo %s)\n' \
+      "${bats_cwd}" "${repo_phys}" >&2
+    return 1
+  }
+  [[ ! -e "${bats_cwd}" ]] || {
+    printf 'the stage-1 scratch cwd outlived the runner: %s\n' "${bats_cwd}" >&2
+    return 1
+  }
+
+  # A relative root would resolve against the scratch cwd, not the repository.
+  local argv root
+  argv="$(cat "${STUB_LOG_DIR}/bats-argv.log")"
+  for root in test hooks/test scripts/test autoagent/test; do
+    grep -qxF -- "${repo_dir}/${root}" <<<"${argv}" || {
+      printf 'stage 1 was not handed %s as an absolute path; argv:\n%s\n' "${root}" "${argv}" >&2
+      return 1
+    }
+  done
+
+  local stage seen
+  for stage in 'discover -s hooks/test' 'discover -s autoagent/test' '-m pytest'; do
+    seen="$(stage_env_field "${stage}" 10)"
+    [[ "${seen}" == "${repo_phys}" ]] || {
+      printf '%s ran from %s (want the repo root %s)\n' "${stage}" "${seen}" "${repo_phys}" >&2
+      return 1
+    }
+  done
 }

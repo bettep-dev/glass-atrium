@@ -35,6 +35,8 @@ LIB="${GA_DIR_ROOT}/lib"
 source "${LIB}/ga-tui-primitives.sh"
 # shellcheck source=/dev/null
 source "${LIB}/ga-tui-frame.sh"
+# shellcheck source-path=SCRIPTDIR source=../scripts/lib/path-guard.sh
+source "${GA_DIR_ROOT}/scripts/lib/path-guard.sh"
 set +e
 trap - ERR EXIT INT TERM
 
@@ -65,7 +67,9 @@ PLATE_LEFT="${PLATE_MARGIN}"
 MENU_INNER_OVERRIDE=""
 
 # === cup_to instrumentation: record every addressed row into CUP_ROWS, emit the real ESC to TTY ===
-CUP_ROWS="$(mktemp "${TMPDIR:-/tmp}/ga-artnav-cup.XXXXXX")"
+# Absolute even under a relative TMPDIR, so the guarded delete below still removes the scratch.
+SCRATCH_DIR="$(cd -- "${TMPDIR:-/tmp}" && pwd -P)"
+CUP_ROWS="$(mktemp "${SCRATCH_DIR}/ga-artnav-cup.XXXXXX")"
 _cup_reset() { : >"${CUP_ROWS}"; }
 cup_to() {
   printf '%s\n' "$1" >>"${CUP_ROWS}"
@@ -181,7 +185,7 @@ else
   fail "(I3) redraw_frame_inplace output differs between passes (non-idempotent)"
 fi
 
-rm -f "${CUP_ROWS}"
+if ga_guard_path "${CUP_ROWS}"; then rm -f -- "${CUP_ROWS:?}"; fi
 
 printf '\n'
 printf '============================================================================\n'

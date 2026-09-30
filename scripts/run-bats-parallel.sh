@@ -48,8 +48,10 @@
 # DAEMON_ENV_SCRUB is a deliberate divergence rather than a mirror gap: .github/workflows/
 # ci.yml sets none of those variables, so a fresh runner carries no leak to scrub there.
 #
-# Sequential fallback (to isolate a parallel-only flake):
-#   bats --recursive test/ hooks/test/ scripts/test/ autoagent/test/
+# Sequential fallback (to isolate a parallel-only flake), run from the checkout with
+# stage 1's start shape — an empty scratch cwd, absolute roots:
+#   repo="${PWD}"; cd -- "$(mktemp -d)"
+#   bats --recursive "${repo}"/{test,hooks/test,scripts/test,autoagent/test}
 set -Eeuo pipefail
 IFS=$'\n\t'
 
@@ -57,6 +59,8 @@ SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 readonly SCRIPT_DIR
 REPO_ROOT="$(cd -- "${SCRIPT_DIR}/.." && pwd)"
 readonly REPO_ROOT
+# shellcheck source-path=SCRIPTDIR source=lib/path-guard.sh
+source "${SCRIPT_DIR}/lib/path-guard.sh"
 readonly TEST_ROOTS=(test hooks/test scripts/test autoagent/test)
 readonly HOOKS_TEST_ROOT=hooks/test
 readonly AUTOAGENT_TEST_ROOT=autoagent/test
@@ -102,6 +106,8 @@ SANDBOX_ROOT=""
 # The git probe's throwaway repo, declared here so the EXIT trap below already covers
 # it when probe_git_usable creates it.
 GIT_PROBE_DIR=""
+# Stage 1's cwd, declared here for the same EXIT-trap coverage.
+BATS_CWD_DIR=""
 # The highest exit code any stage has returned so far, folded by run_stage itself. The
 # fold lives THERE rather than at each call site: a `run_stage … || rc=$?` site would
 # disable set -e for the whole call (SC2310), and the rc is data to be folded, not a
@@ -112,9 +118,11 @@ WORST_RC=0
 # shellcheck disable=SC2329
 cleanup() {
   local dir
-  for dir in "${SANDBOX_ROOT}" "${GIT_PROBE_DIR}"; do
-    if [[ -n "${dir}" && -d "${dir}" ]]; then
-      rm -rf -- "${dir}"
+  for dir in "${SANDBOX_ROOT}" "${GIT_PROBE_DIR}" "${BATS_CWD_DIR}"; do
+    # A dir the run never created is still empty, which the guard skips silently.
+    # shellcheck disable=SC2310  # pure predicate — nothing inside it for errexit to catch
+    if ga_guard_path "${dir}"; then
+      rm -rf -- "${dir:?}"
     fi
   done
 }
@@ -191,16 +199,27 @@ main() {
   fi
   [[ -n "${job_count}" ]] || job_count=4
 
-  cd -- "${REPO_ROOT}"
-
   local total_t0="${SECONDS}"
 
   printf 'run-bats-parallel: bats --jobs %s --no-parallelize-within-files over %s\n' \
     "${job_count}" "${TEST_ROOTS[*]}" >&2
 
+  # Stage 1 starts from an empty scratch cwd on absolute roots → a script inheriting the
+  # bats cwd resolves a cwd-relative path outside the repository. A failed mktemp or cd
+  # ends the run here under set -e, never folded into WORST_RC as a red suite.
+  local bats_roots=() root
+  for root in "${TEST_ROOTS[@]}"; do
+    bats_roots+=("${REPO_ROOT}/${root}")
+  done
+  BATS_CWD_DIR="$(mktemp -d -t run-bats-parallel-cwd.XXXXXX)"
+  cd -- "${BATS_CWD_DIR}"
+
   run_stage 'stage 1/4 bats' \
     env "${DAEMON_ENV_SCRUB[@]}" \
-    bats --jobs "${job_count}" --no-parallelize-within-files --recursive "${TEST_ROOTS[@]}"
+    bats --jobs "${job_count}" --no-parallelize-within-files --recursive "${bats_roots[@]}"
+
+  # The python stages name their roots relative to the repository.
+  cd -- "${REPO_ROOT}"
 
   # The unittest suites are hermetic under a sandbox HOME (they write nothing below it)
   # ONLY once GA_DATA_ROOT is scrubbed with it: ga_paths.get_base_root PREFERS

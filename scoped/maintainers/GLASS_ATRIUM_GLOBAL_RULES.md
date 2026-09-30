@@ -82,6 +82,7 @@ Charter-specific instruction for the wave: restructure and diet, with **no rule 
 | `hooks/test/enforce-foreground-harness.bats` + `-branch.bats` | basename allowlist | the charter basename is a background-write exception; renaming the file breaks both |
 | `autoagent/daemon_cycle.py` | `GLOBAL_RULES_FILE`, sensitive-path regex, C2 prompt slot | path-keyed: a move breaks the Tier-2 safety trigger and the C2 excerpt |
 | `scripts/lib/apply-spine.sh` | basename literal | classifies the charter as a non-agent file |
+| `scripts/lib/path-guard.sh` → `ga_guard_path` | nothing of the charter — one-way: `File Deletion Policy` restates its refusal set | a guard-only refusal change splits the two sets, and no test compares them — change both in one edit |
 | `manifest.json` | two rows, one hash | regeneration required after any content edit |
 
 Prose citations INTO charter anchors, all still resolving after this pass:
@@ -90,9 +91,19 @@ Prose citations INTO charter anchors, all still resolving after this pass:
 - **Absolute Rules**: `## Absolute Rules [ALL]` · `Absolute Rules → Output Language` · `Absolute Rules → the response-language rule` · `Anchor by symbol`
 - **Continuity and files**: `Cross-Session Continuity (progress.md) [ALL]` and its `[CONTINUITY]` header activation contract · `File Deletion Policy`
 - **Conduct**: `## System Prompt Protection` · `AI-Generated Anti-Pattern Prohibition` · `Philosophy (ETHOS)` · `Rationalization Rejection`
+- **Precedence**: `### Precedence Resolution`, cited by:
+  - rule prose: `scoped/scope-meta.md` · `scoped/scope-planning.md` · the `rules/glass-atrium/core-compliance-matrix.md` → `## Precedence Resolution` stub;
+  - skill: `skills/glass-atrium-ops-orchestrator.md`, two sites;
+  - maintainer notes: `scoped/maintainers/scope-meta.md` · `scoped/maintainers/scope-planning.md` · `scoped/maintainers/scope-security.md`.
 
 ## Outstanding
 
 - **Open, owner elsewhere — the live-install read named under Machine-read shapes has no branch-side counterpart**: parametrizing the corpus path of `autoagent/test/test_pre_verify_section_excerpt.py` → `test_when_real_global_rules_read_then_turn_budget_section_is_whole` would make a repo-tree run meaningful for a branch.
   - Not taken here: that is a change to the test file, which this note does not own. Until someone takes it, the deployed-copy re-measure is a charter edit's only position coverage, and a branch copy has to be measured by hand.
+- **Open, owner elsewhere — two code comments still say every `rules/glass-atrium/` member already arrives on the host project-instructions channel**: untrue for the two path-scoped members.
+  - Their delivery: `rules/glass-atrium/core-compliance-matrix.md` → `### Membership vs. Delivery (per tier)` → **Path-scoped delivery**.
+  - `hooks/lib/inject_chunk.py` → `get_membership` → the comment reading "already arrive on the host".
+  - `scripts/agent_lifecycle/scaffold.py` → module docstring → "it arrives on the host".
+  - Owner: the next lane whose `[SCOPE]` holds `hooks/lib/inject_chunk.py` / `scripts/agent_lifecycle/scaffold.py` — reword both so they exclude the path-scoped members.
+  - Not taken here: both are code files, which this note does not own.
 - Do NOT add this note to `GA_ROSTER_PATHS` (`lib/ga-symlink.sh`) or `spine_get_roster_paths` (`scripts/lib/apply-spine.sh`) — companions fall to the plain byte-swap deploy consumer, as the already-tracked ones do. `lib/ga-env.sh` needs no edit either: `SYMLINK_EXCLUDE_PREFIXES` already carries the parent `scoped/` prefix.

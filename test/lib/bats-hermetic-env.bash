@@ -40,6 +40,29 @@ ga_bats_hermetic_env() {
   for switch in "${GA_BATS_KILLSWITCHES[@]}"; do
     unset "${switch}"
   done
+
+  ga_bats_set_scratch_cwd
+}
+
+# Scratch-cwd seat: each test starts in BATS_SUITE_TMPDIR.
+# A script a test starts from there → its cwd-relative delete lands in the run's scratch tree.
+# Accident safety net, not a boundary → a test body or script that cds on its own leaves the seat.
+# Seat not taken → the whole run is refused, not warned.
+# The run root resolves BEFORE the cd — a relative --tempdir resolves against the start cwd.
+ga_bats_set_scratch_cwd() {
+  local run_root
+  if ! run_root="$(ga_bats_get_run_root)" || [[ -z "${BATS_SUITE_TMPDIR:-}" ]] \
+    || ! cd -- "${BATS_SUITE_TMPDIR}"; then
+    printf 'refusing the run: cannot enter BATS_SUITE_TMPDIR (%s) under BATS_RUN_TMPDIR (%s)\n' \
+      "${BATS_SUITE_TMPDIR:-unset}" "${BATS_RUN_TMPDIR:-unset}" >&2
+    return 1
+  fi
+  local cwd
+  cwd="$(pwd -P)"
+  if [[ "${cwd}" != "${run_root}/"* ]]; then
+    printf 'refusing the run: cwd %s is not under BATS_RUN_TMPDIR (%s)\n' "${cwd}" "${run_root}" >&2
+    return 1
+  fi
 }
 
 ga_bats_assert_hermetic() {
@@ -50,4 +73,18 @@ ga_bats_assert_hermetic() {
       return 1
     fi
   done
+
+  local run_root cwd
+  cwd="$(pwd -P)"
+  if ! run_root="$(ga_bats_get_run_root)" || [[ "${cwd}" != "${run_root}/"* ]]; then
+    printf 'test cwd %s is not under BATS_RUN_TMPDIR (%s)\n' "${cwd}" "${BATS_RUN_TMPDIR:-unset}" >&2
+    return 1
+  fi
+}
+
+# Physical path of the bats run's scratch root — `pwd -P` is physical too, and TMPDIR on
+# macOS sits behind the /var -> /private/var symlink, so a logical compare never matches.
+ga_bats_get_run_root() {
+  [[ -n "${BATS_RUN_TMPDIR:-}" ]] || return 1
+  (cd -P -- "${BATS_RUN_TMPDIR}" && pwd)
 }

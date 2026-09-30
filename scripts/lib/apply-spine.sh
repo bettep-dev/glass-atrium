@@ -43,6 +43,15 @@
 # (spine_get_manifest_hash / spine_stage_and_verify) — that path runs from the
 # fresh bundle BEFORE ga-deps can install jq, so it must verify jq-less.
 
+# ga_guard_path gates every removal below; a missing guard fails this source, never a delete.
+# Existence checked first: bash 3.2 under set -e exits on a failed source before any message.
+if [[ ! -r "${BASH_SOURCE[0]%/*}/path-guard.sh" ]]; then
+  printf 'apply-spine: FATAL: cannot source the shared path guard beside %s\n' "${BASH_SOURCE[0]}" >&2
+  return 1
+fi
+# shellcheck source-path=SCRIPTDIR source=path-guard.sh
+source "${BASH_SOURCE[0]%/*}/path-guard.sh" || return 1
+
 # Internal helpers
 
 # Loud-fail when a required external tool is absent. Args: tool names.
@@ -548,7 +557,8 @@ spine_atomic_swap() {
   tmp="${dst}.tmp.$$"
   # shellcheck disable=SC2310  # copy in a condition by design — verdict branched on
   if ! { spine_copy_entry "${src}" "${tmp}" && mv -f -- "${tmp}" "${dst}"; }; then
-    rm -f -- "${tmp}"
+    # shellcheck disable=SC2310  # guard verdict branched on — a refusal leaves the temp, never aborts
+    if ga_guard_path "${tmp}"; then rm -f -- "${tmp:?}"; fi
     return 1
   fi
 }
@@ -577,8 +587,13 @@ spine_rollback() {
       spine_atomic_swap "${snap}" "${dst}" \
         || printf 'apply-spine: rollback restore FAILED: %s\n' "${path}" >&2
     else
-      rm -f -- "${dst}" \
-        || printf 'apply-spine: rollback remove FAILED: %s\n' "${path}" >&2
+      # A guard refusal counts as a failed removal (else false), so it takes the same report.
+      # shellcheck disable=SC2310  # guard verdict branched on — a refusal is reported, never an abort
+      if ga_guard_path "${dst}"; then
+        rm -f -- "${dst:?}"
+      else
+        false
+      fi || printf 'apply-spine: rollback remove FAILED: %s\n' "${path}" >&2
     fi
   done
 }

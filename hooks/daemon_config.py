@@ -63,8 +63,8 @@ CONFIG_PATH = Path(
 # a distinct, much tighter regime. These are per-call RUNAWAY GUARDS, not spend
 # targets: a single generation call costs cents, and the cap exists to bound a
 # pathological one. Sizing them for the current model's rates is what matters —
-# the previous '0.50' was validated against Haiku 4.5, and at Sonnet 5's 3x rates
-# ($3/$15 per MTok vs $1/$5) it bought a third as many tokens, so a fresh install
+# the previous '0.50' was validated against Haiku 4.5, and at Sonnet 5's 2x rates
+# ($2/$10 per MTok vs $1/$5) it bought half as many tokens, so a fresh install
 # could hit budget-exhaustion exits before its first Save. Raised on that basis.
 #   Lower bound that still applies: below ~0.05 the CLI exits 1 immediately, so a
 #   floor must clear that regardless of model.

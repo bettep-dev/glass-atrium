@@ -617,7 +617,13 @@ if [[ "${ROLE}" == "autoagent" ]]; then
   if [[ -f "${QUOTA_MARKER}" ]]; then
     log "quota wall marker detected post-bootstrap (${QUOTA_MARKER}) — recording status='quota_exceeded' for daemon_name=autoagent, skipping healthcheck"
     pg_write_autoagent_run "quota_exceeded" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "auto-marked by daily-restart: inject quota wall (bootstrap exit 2 propagated)"
-    rm -f "${QUOTA_MARKER}" || log "WARN: failed to remove quota marker ${QUOTA_MARKER} (non-fatal)"
+    # ga_guard_path arrives with lib/daemon-lock.sh; a refused marker path is a failed removal.
+    # shellcheck disable=SC2310  # pure predicate — nothing inside it for errexit to catch
+    if ga_guard_path "${QUOTA_MARKER}"; then
+      rm -f -- "${QUOTA_MARKER:?}"
+    else
+      false
+    fi || log "WARN: failed to remove quota marker ${QUOTA_MARKER} (non-fatal)"
     # daily-restart's own status row stays 'ok' — the restart sequence itself
     # succeeded; only the autoagent /loop injection hit a quota wall. Use the
     # existing pg_write_run for the daily-restart row to preserve audit trail.

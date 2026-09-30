@@ -31,6 +31,8 @@ INSTALL_SH="${GA}/install.sh"
 REAL_SPINE="${GA}/scripts/lib/apply-spine.sh"
 REAL_FARM="${GA}/scripts/lib/mirror-farm.sh"
 REAL_GENMAN="${GA}/scripts/generate-manifest.sh"
+# shellcheck source-path=SCRIPTDIR source=../lib/path-guard.sh
+source "${GA}/scripts/lib/path-guard.sh"
 
 setup() {
   [[ -f "${INSTALL_SH}" ]] || skip "install.sh not found: ${INSTALL_SH}"
@@ -48,7 +50,7 @@ setup() {
 }
 
 teardown() {
-  [[ -n "${WORK:-}" && -d "${WORK}" ]] && rm -rf -- "${WORK}" || true
+  if ga_guard_path "${WORK:-}"; then rm -rf -- "${WORK:?}"; fi
 }
 
 # install.sh's preflight requires Darwin (named exit 10 elsewhere) — cases 1-4
@@ -71,6 +73,7 @@ monitor/package.json
 requirements.txt
 scripts/lib/apply-spine.sh
 scripts/lib/mirror-farm.sh
+scripts/lib/path-guard.sh
 MEMBERS
 }
 
@@ -96,6 +99,7 @@ LAUNCHER
   printf '{"name":"monitor-stub"}\n' >"${SRC}/monitor/package.json"
   printf 'stub-dep==0.0.0\n' >"${SRC}/requirements.txt"
   cp -p "${REAL_SPINE}" "${SRC}/scripts/lib/apply-spine.sh"
+  cp -p "${REAL_SPINE%/*}/path-guard.sh" "${SRC}/scripts/lib/path-guard.sh"
   cp -p "${REAL_FARM}" "${SRC}/scripts/lib/mirror-farm.sh"
 }
 
@@ -251,6 +255,20 @@ run_install() {
   [[ "$(jq -r '.version' "${TARGET}/manifest.json")" == "1.0.0-test" ]]
 }
 
+@test "partial bundle: a spine that cannot load its path guard fails verify (exit 15), zero writes" {
+  require_darwin
+  local members
+  members="$(list_members | grep -vxF 'scripts/lib/path-guard.sh')"
+  list_members() { printf '%s\n' "${members}"; }
+  build_release "1.0.0-test"
+
+  run_install
+  [[ "${status}" -eq 15 ]] || return 1
+  [[ "${output}" == *'cannot source the shared path guard'* ]] || return 1
+  [[ "${output}" == *'failed to load'* ]] || return 1
+  [[ ! -e "${TARGET}" ]] || return 1
+}
+
 # 5. release scope: state dirs never enter files[] or the bundle
 
 @test "release scope: agents-bak/wiki/secrets/rendered/data never enter manifest.files or the bundle" {
@@ -267,6 +285,7 @@ run_install() {
   # the generator sources the spine for the retired-map family bar and refuses
   # (exit 7) without it, so the sandbox repo carries the library too.
   cp "${GA}/scripts/lib/apply-spine.sh" "${repo}/scripts/lib/apply-spine.sh"
+  cp "${GA}/scripts/lib/path-guard.sh" "${repo}/scripts/lib/path-guard.sh"
   printf '{"files":[],"hashes":{}}\n' \
     >"${repo}/manifest.json"
   printf '# agent alpha\n' >"${repo}/agents/alpha.md"
@@ -451,4 +470,15 @@ seed_symlinked_target_dir() {
   [[ "${output}" == *'WARN: mode target escapes the install root (skipped): ext/f.txt'* ]] || return 1
   [ "$(stat -f '%Lp' "${WORK}/outside/f.txt")" = "600" ] || return 1
   [ -x "${TARGET}/glass-atrium" ] || return 1
+}
+
+@test "install: the bootstrap path guard answers every input class exactly as the shared guard" {
+  local boot="${BATS_TEST_TMPDIR}/bootstrap-guard.sh" input shared booted
+  awk '/^ga_guard_path\(\) \{/ { f = 1 } f { print } f && /^}/ { exit }' "${INSTALL_SH}" >"${boot}"
+  [[ -s "${boot}" ]] || { echo "install.sh defines no ga_guard_path"; return 1; }
+  for input in "" "/" "//" "rel/dir" "./dir" "../dir" "/abs/dir" "/abs/dir/"; do
+    shared="$(bash -c 'source "$1"; ga_guard_path "$2" 2>&1; printf "rc=%s" "$?"' _ "${GA}/scripts/lib/path-guard.sh" "${input}")"
+    booted="$(bash -c 'source "$1"; ga_guard_path "$2" 2>&1; printf "rc=%s" "$?"' _ "${boot}" "${input}")"
+    [[ "${booted}" == "${shared}" ]] || { echo "diverges on '${input}': install=${booted} shared=${shared}"; return 1; }
+  done
 }

@@ -15,15 +15,9 @@ const {
 // budget-truncation attribution_source 리터럴 — track-outcome.sh + 서버 3파일과 byte-identical (rename 금지).
 const ATTRIBUTION_SOURCE_BUDGET_TRUNCATION = 'budget-truncation';
 
-// 기간 선택 — 전체 칩은 wire sentinel 'all' 전송 (route parseDaysParam 가 {7,30,90,'all'} 만 허용).
+// 북마크된 'all' 창은 wire sentinel 로 보존 (route parseDaysParam 가 {7,30,90,'all'} 만 허용).
 // filter.days 는 number {7,30,90} | 'all' 의 tri-state → buildSearchUrlO 의 String(filter.days) 가 그대로 직렬화.
 const OUTCOME_ALL_PERIOD = 'all';
-const OUTCOME_PERIODS = [
-  { value: 7,                 label: '7d'  },
-  { value: 30,                label: '30d' },
-  { value: 90,                label: '90d' },
-  { value: OUTCOME_ALL_PERIOD, label: 'All' },
-];
 
 // task_type — core-outcome-record.md enum (9 values). 백엔드 축당 단일값 → FE single-select.
 const TASK_TYPE_OPTIONS = [
@@ -128,6 +122,8 @@ function GlyphO({ name, size = 12, className = '' }) {
 
 // Pagination — 테이블 응답성 보존.
 const PAGE_LIMIT_DEFAULT = 50;
+// Needs-you rows shown before 'Show all' — a full page of them buries Routine below the fold.
+const NEEDS_YOU_PAGE_CAP = 10;
 
 // Sort options — 백엔드 allowlist 와 동일 wire format (chip → hash → URL 변환 미경유).
 const SORT_OPTIONS = [
@@ -187,13 +183,6 @@ function toneFromColorVarO(colorVar) {
 
 // KPI 4 버킷 — 라벨/색/기호는 RESULT_META SoT 에서 파생 (로컬 중복 맵 제거, T-OUT-1).
 const ANALYTICS_KPI_ORDER = ['done', 'done_with_concerns', 'blocked', 'fail'];
-
-// KPI 버킷 표시 메타 — RESULT_META(label/tone/glyph) SoT 에서 colorVar/sparkRgb 파생. 로컬 색 맵 미보유.
-function kpiMetaO(result) {
-  const meta     = window.UI.RESULT_META[result] || { tone: 'neutral', glyph: 'ℹ', label: result };
-  const colorVar = resultColorVarO(result);
-  return { label: meta.label, glyph: meta.glyph, colorVar, sparkRgb: `rgb(var(${colorVar}))` };
-}
 
 // Attribution Health 상수 — /api/outcomes/attribution-daily 4-category 분해 (sum-complete, 색맹 안전 듀얼인코딩).
 // 의미: literal_omission = actionable 위생 신호 · attribution_loss = 잔존 버그 신호(감소 모니터) · synthesized = 복구 산물(실패 아님).
@@ -264,23 +253,23 @@ function AttributionDevScopeO({ devScope }) {
   const truncCount = Number(devScope.budget_truncation_count) || 0;
   return (
     <div className="mt-3 pt-3 border-t border-line">
-      <div className="fs-micro font-mono text-faint uppercase tracking-wider mb-1.5">
+      <div className="fs-meta text-faint uppercase tracking-wider mb-1.5">
         DEV agents · truncation baseline
       </div>
       <div className="grid grid-cols-2 gap-2">
         <div
           className="bg-elev rounded-md p-2.5 border border-line"
           title="Rate at which DEV agents ran out of budget before reporting a result over the selected window — the rolling baseline to watch for recurrence">
-          <div className="fs-micro font-mono text-dim">Budget-kill rate</div>
+          <div className="fs-meta text-dim">Budget-kill rate</div>
           <div className="fs-stat font-semibold text-ink mt-1 font-mono">{formatRateO(devScope.budget_truncation_rate)}</div>
-          <div className="fs-micro font-mono text-dim mt-0.5">{formatIntO(truncCount)} of {formatIntO(total)}</div>
+          <div className="fs-meta font-mono text-dim mt-0.5">{formatIntO(truncCount)} of {formatIntO(total)}</div>
         </div>
         <div
           className="bg-elev rounded-md p-2.5 border border-line"
           title="Synthesized-outcome rate for DEV agents — harness recovery when the agent reported no result (not a failure, a recovery artifact)">
-          <div className="fs-micro font-mono text-dim">Synthesized rate</div>
+          <div className="fs-meta text-dim">Synthesized rate</div>
           <div className="fs-stat font-semibold text-ink mt-1 font-mono">{formatRateO(devScope.synthesized_rate)}</div>
-          <div className="fs-micro font-mono text-dim mt-0.5">recovered from missing report</div>
+          <div className="fs-meta font-mono text-dim mt-0.5">recovered from missing report</div>
         </div>
       </div>
     </div>
@@ -293,13 +282,13 @@ function AttributionBudgetKillListO({ rows }) {
   if (!Array.isArray(rows) || rows.length === 0) return null;
   return (
     <div className="mt-3 pt-3 border-t border-line">
-      <div className="fs-micro font-mono text-faint uppercase tracking-wider mb-1.5">
+      <div className="fs-meta text-faint uppercase tracking-wider mb-1.5">
         Budget-killed subagents (7d)
       </div>
       <div className="flex flex-col gap-0.5">
         {rows.map((r) => (
-          <div key={r.agent} className="flex items-center justify-between fs-micro font-mono">
-            <span className="text-dim truncate" style={{ maxWidth: 220 }} title={r.agent}>{r.agent}</span>
+          <div key={r.agent} className="flex items-center justify-between fs-meta font-mono">
+            <span className="text-dim truncate" style={{ maxWidth: 220 }} title={r.agent}><window.UI.AgentName name={r.agent}/></span>
             <span className="text-ink font-semibold tabular-nums">{formatIntO(r.count)}</span>
           </div>
         ))}
@@ -311,25 +300,24 @@ function AttributionBudgetKillListO({ rows }) {
 // 일별 그리드 막대 수 — 비활성일은 series 누락 → FE 가 0-fill (활동일만 backend 전송).
 const ATTRIBUTION_GRID_BARS = 30;
 
-// Heatmap 필터 칩 — 톤 (info/warn/crit/ok) 은 셀 색조 변수로 매핑.
-// 백엔드 result enum: all|empty|failed|done — 4종 전부 노출 (done 미노출 = dead filter).
-// 'failed' = fail+blocked 집계 (fail 단독 아님) → 라벨 'Fail+blocked'. needs_context 는 설계상 제외.
-const HEATMAP_FILTER_OPTIONS = [
-  { value: 'all',    label: 'All',          tone: 'info' },
-  { value: 'empty',  label: 'No self-check', tone: 'warn' },
-  { value: 'failed', label: 'Fail+blocked', tone: 'crit' },
-  { value: 'done',   label: 'Done only',    tone: 'ok'   },
-];
-
-// 분석 섹션 기간 (KPI/Heatmap/AgentStack 만 영향, 탐색기 days 와 독립).
+// 헤더의 단일 window 컨트롤 — band · ledger · 분석이 같은 창을 읽는다 (사이드바 period 병합).
 const ANALYTICS_PERIOD_OPTIONS = [
   { value: 7,  label: '7d'  },
   { value: 30, label: '30d' },
   { value: 90, label: '90d' },
 ];
 
-// Postgres EXTRACT(DOW) 0=Sun → 6=Sat (outcomes.ts handleHeatmap).
-const DOW_LABELS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+// 분석 라우트는 {7,30,90} 만 받는다 → 그 밖의 ledger 창(북마크된 'all')은 드롭 대신 최대 창으로 해소.
+function analyticsDaysO(days) {
+  return ANALYTICS_PERIOD_OPTIONS.some((o) => o.value === days) ? days : 90;
+}
+
+// Needs-you 질의 — 서버 parseFilters 는 needs_attention 에 'true'|'false' 만 받는다(그 밖 → 400).
+// 창은 analyticsDaysO 로 접힌 분석 창: 타일 1 의 분자·분모가 다른 창을 읽으면 비율이 성립하지 않는다.
+// limit=1 → total 만 소비.
+function buildAttentionParamsO(days) {
+  return new URLSearchParams({ days: String(days), needs_attention: 'true', limit: '1' });
+}
 
 // 자가개선 데몬 사이클 raw 이벤트 로그 — Learning 화면에서 이관(operational data, 집계 신호 아님).
 //   소유 endpoint: /api/improvement/loop-events (core.autoagent_loop_events per-cycle stage stream).
@@ -343,9 +331,6 @@ function loopResultMetaO(result) {
   if (typeof result === 'string' && result.endsWith('_dryrun')) return { tone: 'warn', symbol: '⚠', icon: 'warn', label: 'Dry run' };
   return { tone: 'info', symbol: 'ℹ', icon: 'info', label: result || '—' };
 }
-
-// AgentStackedBar 카드 상한 — 컨테이너 가독성 / cross-analysis 의 by_agent_top_10 캡과 일관.
-const AGENT_STACK_TOP_N = 8;
 
 // 비-actionable pseudo-agent ID — attribution-fallback 버킷 (실 agent 아님).
 // agents.jsx NON_ACTIONABLE_AGENT_IDS 와 동일 집합 (named-token 정합, T14).
@@ -404,15 +389,13 @@ const SCREEN_OUTCOMES_CSS = `
 .outcome-md th { background: rgb(var(--sunken)); font-weight: 500; }
 .outcome-row { transition: background 100ms; }
 .outcome-row:hover { background: rgb(var(--accent) / 0.06); }
-.outcome-row.is-fail   { box-shadow: inset 3px 0 0 rgb(var(--crit)); }
-.outcome-row.is-review { box-shadow: inset 3px 0 0 rgb(var(--warn)); }
-.filter-chip { padding: 3px 8px; border-radius: 6px; font-family: 'JetBrains Mono', monospace; font-size: var(--fs-micro); cursor: pointer; border: 1px solid rgb(var(--line)); background: rgb(var(--elev)); color: rgb(var(--dim)); transition: background 100ms, color 100ms; }
-.filter-chip:hover { background: rgb(var(--sunken)); color: rgb(var(--ink)); }
-.filter-chip.is-active { background: rgb(var(--accent) / 0.14); border-color: rgb(var(--accent) / 0.5); color: rgb(var(--accent)); font-weight: 500; }
 `;
 
 function ScreenOutcomes({ onNav }) {
-  const { PageHeader, Icon, Pill, TypeScaleStyle } = window.UI;
+  const {
+    PageHeader, TypeScaleStyle, FreshnessStamp, RefreshButton, PageErrorBanner,
+    INITIAL_REGION_STATE, getRegionSummary, getSharedFailure,
+  } = window.UI;
 
   // Filter state — URL hash 초기화 → 북마크 / 직접링크 복원.
   const [filter, setFilter] = useStateO(() => readFilterFromHashO());
@@ -422,32 +405,40 @@ function ScreenOutcomes({ onNav }) {
   // 키워드 입력은 filter 와 분리 → debounce 가능 (request thrashing 회피).
   const [keywordInput, setKeywordInput] = useStateO(filter.q || '');
 
-  const [searchState, setSearchState] = useStateO({ status: 'loading', data: null, error: null });
+  const [searchState, setSearchState] = useStateO(INITIAL_REGION_STATE);
+  // ledger 의 Needs-you 섹션 — 페이지가 아닌 창 전체를 읽는다(stream 1 attention 술어).
+  const [needsYouState, setNeedsYouState] = useStateO(INITIAL_REGION_STATE);
 
-  // 분석 섹션 상태 (탐색기 필터와 독립) — period 는 KPI/Heatmap/AgentStack 공통 기간.
-  const [analyticsPeriod, setAnalyticsPeriod] = useStateO(30);
-  const [heatmapFilter,   setHeatmapFilter]   = useStateO('all');
-  const [analyticsState,  setAnalyticsState]  = useStateO({ status: 'loading', data: null, error: null });
-  const [heatmapState,    setHeatmapState]    = useStateO({ status: 'loading', data: null, error: null });
+  // 창은 filter.days 하나 — 헤더 컨트롤이 ledger 와 분석을 함께 움직인다 (두 period 컨트롤 병합).
+  const analyticsPeriod = analyticsDaysO(filter.days);
+  const [analyticsState,  setAnalyticsState]  = useStateO(INITIAL_REGION_STATE);
 
   // Attribution Health — /api/outcomes/attribution-daily (analyticsPeriod 와 동일 window).
-  const [attributionState, setAttributionState] = useStateO({ status: 'loading', data: null, error: null });
+  const [attributionState, setAttributionState] = useStateO(INITIAL_REGION_STATE);
 
   // Channel liveness — /api/outcomes/channel-liveness. analyticsPeriod 에 연동하지 않는다:
   // eligibility 는 peak-daily 를 읽으므로 창을 넓히면 수 주 전 버스트로 계속 자격이 유지된다.
-  const [channelLivenessState, setChannelLivenessState] = useStateO({ status: 'loading', data: null, error: null });
+  const [channelLivenessState, setChannelLivenessState] = useStateO(INITIAL_REGION_STATE);
+
+  // Needs-you 모집단 — 서버 attention 술어(needs_attention) 를 그대로 읽는다. limit=1 → total 만 소비.
+  const [attentionState, setAttentionState] = useStateO(INITIAL_REGION_STATE);
 
   // Loop-events raw 로그 — Learning 에서 이관(operational data). period 무관 all-time → refreshTick 만 의존.
-  const [loopEventsState, setLoopEventsState] = useStateO({ status: 'loading', data: null, error: null });
+  const [loopEventsState, setLoopEventsState] = useStateO(INITIAL_REGION_STATE);
 
   // Detail modal — active row + body_md (optional).
   const [detailRow,   setDetailRow]   = useStateO(null);
+  const [isNeedsYouExpanded, setNeedsYouExpanded] = useStateO(false);
   const [detailState, setDetailState] = useStateO({ status: 'idle', data: null, error: null });
 
   const [refreshTick, setRefreshTick] = useStateO(0);
 
+  // as-of = 마지막으로 성공한 fetch 의 수신 시각 (요청 시각 아님) — 화면 전체에 하나만 둔다.
+  const [asOfAt, setAsOfAt] = useStateO(null);
+  const markFreshO = useCallbackO(() => setAsOfAt(new Date().toISOString()), []);
+
   // T13 (O2) — canonical agent facet 소스 (registry 게이트된 /api/agents/summary).
-  const [canonicalAgentsState, setCanonicalAgentsState] = useStateO({ status: 'loading', data: null, error: null });
+  const [canonicalAgentsState, setCanonicalAgentsState] = useStateO(INITIAL_REGION_STATE);
 
   // T7 (O2) — forensic 'show all' 토글: include_all 파라미터로 서버 registry 게이트 해제.
   const [includeAll, setIncludeAll] = useStateO(false);
@@ -494,6 +485,11 @@ function ScreenOutcomes({ onNav }) {
 
   const triggerRefresh = useCallbackO(() => setRefreshTick((t) => t + 1), []);
 
+  const setWindowDays = useCallbackO((days) => {
+    setFilter((prev) => ({ ...prev, days }));
+    setPage(0);
+  }, []);
+
   const resetFilter = useCallbackO(() => {
     setFilter(defaultFilterO());
     setKeywordInput('');
@@ -504,99 +500,57 @@ function ScreenOutcomes({ onNav }) {
 
   // 탐색기 fetch — filter / sort / page / refresh 변경 시 재실행.
   useEffectO(() => {
+    const { putRegionRequest, putRegionData } = window.UI;
+    const searchUrl = buildSearchUrlO(filter, sort, page, PAGE_LIMIT_DEFAULT, includeAll);
     const ctrl = new AbortController();
     filterAbortRef.current?.abort();
     filterAbortRef.current = ctrl;
 
-    setSearchState({ status: 'loading', data: null, error: null });
-
-    const searchUrl = buildSearchUrlO(filter, sort, page, PAGE_LIMIT_DEFAULT, includeAll);
+    setSearchState((s) => putRegionRequest(s, searchUrl, ctrl));
 
     fetchJsonO(searchUrl, ctrl.signal)
       .then((data) => {
         firstFailAtRef.current = null;
-        setSearchState({ status: 'ready', data, error: null });
+        markFreshO();
+        setSearchState((s) => putRegionData(s, ctrl, data));
       })
-      .catch((err) => handleSearchErrorO(err, setSearchState, firstFailAtRef));
+      .catch((err) => {
+        if (err?.name !== 'AbortError' && firstFailAtRef.current == null) firstFailAtRef.current = Date.now();
+        const elapsedMs = firstFailAtRef.current == null ? 0 : Date.now() - firstFailAtRef.current;
+        setSearchState((s) => putSearchFailureO(s, ctrl, err, elapsedMs));
+      });
 
     return () => ctrl.abort();
   }, [filter, sort, page, refreshTick, includeAll]);
 
-  // 분석 fetch — period 또는 heatmap 필터 변경 시 재실행.
-  // 병렬 2 fetch: cross-analysis(overall) x1 + heatmap x1.
-  // AbortController 분리 → 탐색기 wave 와 독립.
+  // page 무관 — Needs-you 는 매 페이지 같은 창 전체 집합이라 page hop 에 재요청하지 않는다.
   useEffectO(() => {
-    const ctrl = new AbortController();
-    setAnalyticsState({ status: 'loading', data: null, error: null });
-    setHeatmapState({ status: 'loading', data: null, error: null });
+    return runRegionFetchO(setNeedsYouState, buildNeedsYouUrlO(filter, sort, PAGE_LIMIT_DEFAULT, includeAll));
+  }, [filter, sort, refreshTick, includeAll]);
 
-    const crossUrl   = `/api/outcomes/cross-analysis?days=${analyticsPeriod}`;
-    const heatmapUrl = `/api/outcomes/heatmap?days=${analyticsPeriod}&result=${heatmapFilter}`;
+  // 분석 fetch — 창 변경 시 재실행. AbortController 분리 → 탐색기 wave 와 독립.
+  useEffectO(() => {
+    return runRegionFetchO(setAnalyticsState, `/api/outcomes/cross-analysis?days=${analyticsPeriod}`, {
+      mapData: buildAnalyticsDataO,
+      onData: markFreshO,
+    });
+  }, [analyticsPeriod, refreshTick]);
 
-    // per-result rank-distribution sparkline 제거(DF-29) → per-result cross-analysis fetch 도 폐지
-    // (해당 4 요청은 오직 sparkline 산출용이었음). overall + heatmap 만 유지.
-    const heatmapTask = fetchJsonO(heatmapUrl, ctrl.signal);
-
-    fetchJsonO(crossUrl, ctrl.signal)
-      .then((overall) => {
-        const byResultCount    = buildByResultCountMapO(overall.by_result);
-        // 합성 복구행(reconstructed) 서브카운트 — KPI headline 을 writer-emitted 로 분리.
-        const byResultReconstructed = buildByResultReconstructedMapO(overall.by_result);
-        const agentStack       = buildAgentStackO(overall.by_agent_result, ANALYTICS_KPI_ORDER, AGENT_STACK_TOP_N);
-        // needs_context (4-KPI 밖 유효 result) + polar-mismatch cross-tab — overall 응답에서 직접 추출.
-        const needsContextCount = extractResultCountO(overall.by_result, 'needs_context');
-        const crosstab          = buildCrosstabO(overall.cells);
-        setAnalyticsState({
-          status: 'ready',
-          data: { overall, byResultCount, byResultReconstructed, agentStack, needsContextCount, crosstab },
-          error: null,
-        });
-      })
-      .catch((err) => handleErrorO(err, setAnalyticsState));
-
-    heatmapTask
-      .then((data) => setHeatmapState({ status: 'ready', data, error: null }))
-      .catch((err) => handleErrorO(err, setHeatmapState));
-
-    return () => ctrl.abort();
-  }, [analyticsPeriod, heatmapFilter, refreshTick]);
-
-  // Attribution Health fetch — heatmap 과 동일 window, AbortController 공유 회피 위해 별도 effect.
+  // Attribution Health fetch — 같은 window, AbortController 공유 회피 위해 별도 effect.
   // analyticsPeriod {7,30,90} 가 backend 의 ALLOWED_DAYS_NUMERIC 와 동일 → param 검증 추가 불필요.
   useEffectO(() => {
-    const ctrl = new AbortController();
-    setAttributionState({ status: 'loading', data: null, error: null });
-
-    fetchJsonO(`/api/outcomes/attribution-daily?days=${analyticsPeriod}`, ctrl.signal)
-      .then((data) => setAttributionState({ status: 'ready', data, error: null }))
-      .catch((err) => handleErrorO(err, setAttributionState));
-
-    return () => ctrl.abort();
+    return runRegionFetchO(setAttributionState, `/api/outcomes/attribution-daily?days=${analyticsPeriod}`, { onData: markFreshO });
   }, [analyticsPeriod, refreshTick]);
 
   // Channel liveness fetch — days 파라미터 미전달 → 라우트 기본 창을 그대로 사용(카드가 창 폭을
   // 재선언하지 않도록). 표시 라벨은 응답의 days 에서 파생.
   useEffectO(() => {
-    const ctrl = new AbortController();
-    setChannelLivenessState({ status: 'loading', data: null, error: null });
-
-    fetchJsonO('/api/outcomes/channel-liveness', ctrl.signal)
-      .then((data) => setChannelLivenessState({ status: 'ready', data, error: null }))
-      .catch((err) => handleErrorO(err, setChannelLivenessState));
-
-    return () => ctrl.abort();
+    return runRegionFetchO(setChannelLivenessState, '/api/outcomes/channel-liveness', { onData: markFreshO });
   }, [refreshTick]);
 
   // Loop-events raw 로그 fetch — period 무관(all-time stream). AbortController 분리 → 부분 실패 격리.
   useEffectO(() => {
-    const ctrl = new AbortController();
-    setLoopEventsState({ status: 'loading', data: null, error: null });
-
-    fetchJsonO(LOOP_EVENTS_URL, ctrl.signal)
-      .then((data) => setLoopEventsState({ status: 'ready', data, error: null }))
-      .catch((err) => handleErrorO(err, setLoopEventsState));
-
-    return () => ctrl.abort();
+    return runRegionFetchO(setLoopEventsState, LOOP_EVENTS_URL, { onData: markFreshO });
   }, [refreshTick]);
 
   // T13 (O2) — canonical agent facet 소스 fetch. 레코드 로그는 서버가 registry 로
@@ -605,13 +559,14 @@ function ScreenOutcomes({ onNav }) {
   // 활성 registry 를 커버. 실패 → 빈 facet (graceful · 'All' 옵션은 항상 유지).
   // explorer 필터와 독립 → 페이지네이션·기간 변경에도 안정.
   useEffectO(() => {
-    const ctrl = new AbortController();
-    fetchJsonO('/api/agents/summary?days=90&order=runs&limit=50', ctrl.signal)
-      .then((data) => setCanonicalAgentsState({ status: 'ready', data, error: null }))
-      .catch((err) => handleErrorO(err, setCanonicalAgentsState));
-
-    return () => ctrl.abort();
+    return runRegionFetchO(setCanonicalAgentsState, '/api/agents/summary?days=90&order=runs&limit=50');
   }, [refreshTick]);
+
+  useEffectO(() => {
+    // include_all 미전송 — 분모(cross-analysis)가 registry 스코프이므로 분자도 같은 스코프를 읽는다.
+    const params = buildAttentionParamsO(analyticsPeriod);
+    return runRegionFetchO(setAttentionState, `/api/outcomes/search?${params.toString()}`, { onData: markFreshO });
+  }, [analyticsPeriod, refreshTick]);
 
   // Detail fetch — modal open / nav 시 active row 변경에 반응.
   useEffectO(() => {
@@ -640,6 +595,17 @@ function ScreenOutcomes({ onNav }) {
 
   const rows         = searchState.status === 'ready' ? (searchState.data?.rows ?? [])           : [];
   const totalMatched = searchState.status === 'ready' ? (Number(searchState.data?.total) || 0)   : 0;
+  // 미적재·실패 → null: 섹션은 페이지 분할로 되돌아가고 헤더가 'on this page' 로 범위를 밝힌다.
+  const ledgerNeedsYou = needsYouState.status === 'ready'
+    ? {
+      rows: needsYouState.data?.rows ?? [],
+      total: Number(needsYouState.data?.total) || 0,
+      windowLabel: /^\d+$/.test(String(filter.days)) ? `${filter.days}d` : 'all time',
+    }
+    : null;
+  const needsYouCap = isNeedsYouExpanded ? null : NEEDS_YOU_PAGE_CAP;
+  // drawer Prev/Next + counter walk the grouped order the ledger draws, not the search order
+  const displayRows = getLedgerDisplayRowsO(buildLedgerSectionsO(rows, closureState, ledgerNeedsYou, needsYouCap));
 
   // T13 (O2) — facet 옵션을 현재 페이지 rows 대신 canonical registry 집합에서 생성
   // (페이지네이션 안정). registry 소스는 /api/agents/summary 응답의 agent_id 들.
@@ -652,13 +618,22 @@ function ScreenOutcomes({ onNav }) {
   // Modal navigation — 현재 페이지 내 prev/next 만 지원. cross-page (TODO MON-OUTCOMES-NAV-PERSIST):
   // 가장자리 진입 시 page hop + index 복원이 필요해 v1 에서는 페이지네이션으로 더 로드 후 재선택.
   const handleNavDetail = useCallbackO((direction) => {
-    if (!detailRow || rows.length === 0) return;
-    const idx = rows.findIndex((r) => r.id === detailRow.id);
+    if (!detailRow || displayRows.length === 0) return;
+    const idx = displayRows.findIndex((r) => r.id === detailRow.id);
     if (idx < 0) return;
     const nextIdx = direction === 'next' ? idx + 1 : idx - 1;
-    if (nextIdx < 0 || nextIdx >= rows.length) return;
-    setDetailRow(rows[nextIdx]);
-  }, [detailRow, rows]);
+    if (nextIdx < 0 || nextIdx >= displayRows.length) return;
+    setDetailRow(displayRows[nextIdx]);
+  }, [detailRow, displayRows]);
+
+  const stampRegions = [searchState, needsYouState, analyticsState, attributionState, channelLivenessState, loopEventsState, attentionState];
+  // one outage → one banner + one Retry; the regions then drop their own Retry
+  const sharedFailure = getSharedFailure(buildRegionFailuresO({
+    records: searchState, 'needs-you records': needsYouState, 'result totals': analyticsState,
+    'reporting health': attributionState, 'recording channels': channelLivenessState,
+    'run events': loopEventsState, 'the needs-you count': attentionState,
+  }));
+  const regionRetry = sharedFailure ? undefined : triggerRefresh;
 
   return (
     <div className="flex flex-col min-h-0">
@@ -671,34 +646,39 @@ function ScreenOutcomes({ onNav }) {
           sub="Agent task outcomes"
           right={
             <>
-              <AnalyticsPeriodSeg value={analyticsPeriod} onChange={setAnalyticsPeriod}/>
-              <button className="btn ghost sm" onClick={triggerRefresh} aria-label="Refresh task results">
-                <Icon name="refresh" size={14}/>
-                Refresh
-              </button>
+              <FreshnessStamp {...getFreshnessInputO(asOfAt, stampRegions)}/>
+              <WindowSeg value={filter.days} onChange={setWindowDays}/>
+              <RefreshButton
+                isBusy={getRegionSummary(stampRegions).isBusy}
+                hasRead={asOfAt != null}
+                onRefresh={triggerRefresh}
+                label="Refresh task results"/>
             </>
           }
         />
       </div>
 
-      <AnalyticsSection
+      {sharedFailure && (
+        <div className="mb-4 flex-shrink-0">
+          <PageErrorBanner sources={sharedFailure.sources} error={sharedFailure.error} onRetry={triggerRefresh}/>
+        </div>
+      )}
+
+      <AlarmLaneO channelLivenessState={channelLivenessState} searchState={searchState}/>
+
+      <StatusBandO
         analyticsState={analyticsState}
-        heatmapState={heatmapState}
-        attributionState={attributionState}
-        channelLivenessState={channelLivenessState}
-        heatmapFilter={heatmapFilter}
-        period={analyticsPeriod}
-        onChangeHeatmapFilter={setHeatmapFilter}
-        onRetry={triggerRefresh}
+        attentionState={attentionState}
+        windowDays={analyticsPeriod}
+        onRetry={regionRetry}
       />
 
-      {/* 탐색기 — 필터 사이드바 280px + 결과 표 1fr. max-h 78vh 로 페이지 길이 제한. */}
+      {/* page scroll only — no inner scroller; minmax(0, 1fr) keeps the ledger inside the page at 1024 */}
       <div
         className="grid gap-4 mt-4"
         style={{
-          gridTemplateColumns: '280px 1fr',
-          maxHeight: '78vh',
-          minHeight: 0,
+          gridTemplateColumns: 'clamp(208px, 22vw, 280px) minmax(0, 1fr)',
+          alignItems: 'start',
         }}>
         <FilterSidebar
           filter={filter}
@@ -724,19 +704,37 @@ function ScreenOutcomes({ onNav }) {
           onSortChange={(v) => { setSort(v); setPage(0); }}
           onResetFilter={resetFilter}
           onRowClick={setDetailRow}
-          onRetry={triggerRefresh}
+          onRetry={regionRetry}
+          needsYou={ledgerNeedsYou}
+          needsYouCap={needsYouCap}
+          onToggleNeedsYou={() => setNeedsYouExpanded((isExpanded) => !isExpanded)}
           closure={{ pendingIds: closureState.pendingIds, closedOverrides: closureState.closedOverrides, onMarkClosed: markClosedO }}
         />
       </div>
 
+      <AgentFailureTableO state={analyticsState} onRetry={regionRetry}/>
+
+      {/* 주간·월간 사실 3종 — 닫힌 채로 바닥에 둔다. 매일 읽는 band/ledger 를 밀어내지 않게. */}
+      <DisclosureO title="Reporting health" summary={reportingHealthSummaryO(channelLivenessState)}>
+        <AttributionHealthCard state={attributionState} period={analyticsPeriod} onRetry={regionRetry}/>
+        <ChannelLivenessCard state={channelLivenessState} onRetry={regionRetry}/>
+      </DisclosureO>
+
+      <DisclosureO title="Self-report quality" summary={selfReportSummaryO(analyticsState)}>
+        <GraderBreakdownCard state={analyticsState} onRetry={regionRetry}/>
+        <CrosstabCard state={analyticsState} onRetry={regionRetry}/>
+      </DisclosureO>
+
       {/* Learning 에서 이관된 raw 데몬 사이클 이벤트 로그 — operational data (집계 신호 아님 · W3-T3/T7). */}
-      <LoopEventsCard state={loopEventsState} onRetry={triggerRefresh}/>
+      <DisclosureO title="Learning-run events" summary={loopEventsSummaryO(loopEventsState)}>
+        <LoopEventsCard state={loopEventsState} onRetry={regionRetry}/>
+      </DisclosureO>
 
       {detailRow && (
         <DetailModal
           detailRow={detailRow}
           detailState={detailState}
-          rows={rows}
+          rows={displayRows}
           onClose={() => setDetailRow(null)}
           onNav={handleNavDetail}
         />
@@ -745,11 +743,54 @@ function ScreenOutcomes({ onNav }) {
   );
 }
 
-// 분석 섹션 — 차트는 inline SVG / .heat-cell / Tailwind flex 비례 바 (Recharts 미사용).
+// 예약 레인 — 침묵한 기록 채널과 지속 장애(blocked)만 싣는다. payload 실패 배너는 소유 그룹 자리에 둔다
+// (stream 3) — 레인에 쌓으면 어느 그룹이 비었는지 떨어져 읽힌다.
+function AlarmLaneO({ channelLivenessState, searchState }) {
+  const silent = channelLivenessState.status === 'ready' ? (channelLivenessState.data?.alerting || []) : [];
+  const isBlocked = searchState.status === 'blocked';
 
-function AnalyticsPeriodSeg({ value, onChange }) {
+  if (silent.length === 0 && !isBlocked) return null;
+
   return (
-    <div className="seg" role="radiogroup" aria-label="Analytics time range">
+    <div className="flex flex-col gap-2 mb-4 flex-shrink-0" role="region" aria-label="Alarms">
+      {isBlocked && <BlockedBannerO detail={searchState.error}/>}
+      {silent.length > 0 && <SilentChannelRowO channels={silent}/>}
+    </div>
+  );
+}
+
+// 고volume 채널의 침묵은 다른 모든 카드에서 '품질 변화' 로 위장한다 → 레인 행 자격.
+function SilentChannelRowO({ channels }) {
+  const { Icon } = window.UI;
+  return (
+    <div
+      role="alert"
+      className="rounded-md border p-3 flex items-start gap-3 mx-3"
+      style={{ background: 'rgb(var(--crit) / 0.08)', borderColor: 'rgb(var(--crit) / 0.4)' }}>
+      <Icon name="x" size={16} className="text-crit mt-0.5"/>
+      <div className="flex-1 min-w-0">
+        <div className="fs-body font-medium text-ink">Recording stopped: {channels.join(', ')}</div>
+        <div className="fs-meta text-dim mt-1">
+          A channel that was writing daily has recorded nothing — every count below is understated until it resumes.
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// busy or failed regions → the stamp never claims fresh while a panel is refreshing or failed
+function getFreshnessInputO(asOfAt, regions) {
+  return { at: asOfAt, regions };
+}
+
+// { source → region } → getSharedFailure entries; source names read inside "Couldn't load …"
+function buildRegionFailuresO(regionsBySource) {
+  return Object.entries(regionsBySource).map(([source, region]) => ({ source, error: region.error }));
+}
+
+function WindowSeg({ value, onChange }) {
+  return (
+    <div className="seg" role="radiogroup" aria-label="Time range">
       {ANALYTICS_PERIOD_OPTIONS.map((opt) => (
         <button
           key={opt.value}
@@ -765,362 +806,329 @@ function AnalyticsPeriodSeg({ value, onChange }) {
   );
 }
 
-function AnalyticsSection({ analyticsState, heatmapState, attributionState, channelLivenessState, heatmapFilter, period, onChangeHeatmapFilter, onRetry }) {
-  // Heatmap + AgentStackedBar 좌우 2열 — heat-cell aspect-ratio:1 로 폭 축소 시 높이 자동 정렬.
-  // 데스크탑 viewport 만 운영 (127.0.0.1:16145) → md breakpoint 분기 불필요.
-  // AttributionHealthCard — 2열 grid 아래 full-width (일별 30-bar 그리드 가독성).
+// 닫힘이 기본인 개시 영역 — 여는 수고가 곧 빈도 순위다. 요약 줄은 열지 않고도 답을 주는 한 줄.
+function DisclosureO({ title, summary, children }) {
   return (
-    <div className="flex-shrink-0">
-      <KpiBucketRow state={analyticsState} onRetry={onRetry}/>
-      <div className="grid grid-cols-2 gap-4 mb-4">
-        <HeatmapCard
-          state={heatmapState}
-          filter={heatmapFilter}
-          period={period}
-          onChangeFilter={onChangeHeatmapFilter}
-          onRetry={onRetry}
-        />
-        <AgentStackedBarCard state={analyticsState} onRetry={onRetry}/>
-      </div>
-      <AttributionHealthCard state={attributionState} period={period} onRetry={onRetry}/>
-      <ChannelLivenessCard state={channelLivenessState} onRetry={onRetry}/>
-      <GraderBreakdownCard state={analyticsState} period={period} onRetry={onRetry}/>
-      <CrosstabCard state={analyticsState} period={period} onRetry={onRetry}/>
-    </div>
+    <details className="card mt-4">
+      <summary className="px-4 py-3 cursor-pointer select-none flex items-center gap-3">
+        <span className="fs-title font-medium text-ink">{title}</span>
+        <span className="fs-meta font-mono text-faint ml-auto">{summary}</span>
+      </summary>
+      <div className="pb-1">{children}</div>
+    </details>
   );
 }
 
-// KPI 버킷 (4 result headline + reconstructed sub-line).
+// 미적재 payload 의 요약 토큰 — loading 과 실패를 구분하고, 어느 쪽도 '이상 없음' 으로 읽히지 않게.
+function getUnloadedSummaryO(status) {
+  return status === 'loading' ? 'Loading…' : 'Unavailable';
+}
 
-function KpiBucketRow({ state, onRetry }) {
-  if (state.status === 'loading') {
+function reportingHealthSummaryO(channelLivenessState) {
+  if (channelLivenessState.status !== 'ready') return getUnloadedSummaryO(channelLivenessState.status);
+  const alerting = channelLivenessState.data?.alerting || [];
+  return alerting.length > 0 ? `Silent: ${alerting.join(', ')}` : 'All channels recording';
+}
+
+function selfReportSummaryO(analyticsState) {
+  if (analyticsState.status !== 'ready') return getUnloadedSummaryO(analyticsState.status);
+  const overall = analyticsState.data?.overall;
+  return `${formatIntO(window.UI.getWriterTotal(overall))} writer-emitted of ${formatIntO(Number(overall?.total) || 0)} records`;
+}
+
+function loopEventsSummaryO(loopEventsState) {
+  if (loopEventsState.status !== 'ready') return getUnloadedSummaryO(loopEventsState.status);
+  const events = loopEventsState.data?.events;
+  return `${formatIntO(Array.isArray(events) ? events.length : 0)} recent cycle events`;
+}
+
+// Needs-you tile → ledger 의 창 전체 Needs-you 헤딩 (hash 라우터라 href 앵커 대신 focus 이동).
+const LEDGER_NEEDS_YOU_ID = 'ledger-needs-you';
+
+// Status band — 4 타일. 값은 모집단·창과 용접되고, tone 은 글리프에만 탄다 (39578 §D-§E).
+
+// 타일 tone/값 산출 — 임계 판정은 공유 SoT(window.UI.outcomeShareTone) 뿐이고 여기서 두 번째 규칙을 만들지 않는다.
+// 모집단이 low-N 이면 tone 주장을 포기한다(neutral) — 소표본의 한 건이 crit 으로 보이면 안 된다.
+function buildStatusBandTilesO(data, attentionCount) {
+  const {
+    getWriterTotal, outcomeShareTone, LOW_N_MIN,
+    OUTCOME_BREAKAGE_CRIT_SHARE, OUTCOME_OPEN_CAVEAT_WARN_SHARE, OUTCOME_MISSING_REPORT_WARN_SHARE,
+  } = window.UI;
+
+  const byResult    = data?.byResultCount || {};
+  const total       = Number(data?.overall?.total) || 0;
+  const writerTotal = getWriterTotal(data?.overall);
+  const broken      = (byResult.fail || 0) + (byResult.blocked || 0);
+  const omitted     = Math.max(0, total - writerTotal);
+  // /search attention 술어는 오염 창 행을 빼지 않는다 → 분모에 excluded_poisoned_count 를 되돌린다.
+  const attentionTotal = total + (Number(data?.overall?.excluded_poisoned_count) || 0);
+  // 두 모집단은 서로 다른 사실을 센다 — writer-emitted 사실은 writerTotal, 창 전체 사실은 total.
+  const hasWriterFloor    = writerTotal >= LOW_N_MIN;
+  const hasRecordFloor    = total >= LOW_N_MIN;
+  const hasAttentionFloor = attentionTotal >= LOW_N_MIN;
+
+  return [
+    {
+      key: 'attention',
+      label: 'Needs you',
+      count: attentionCount,
+      // 서버 attention 술어는 복구행을 빼지 않는다 → 분모도 창 전체 기록. writerTotal 이면 100% 초과 가능.
+      population: attentionTotal,
+      tone: !hasAttentionFloor || attentionCount === null
+        ? 'neutral'
+        : (outcomeShareTone(attentionCount, attentionTotal, OUTCOME_OPEN_CAVEAT_WARN_SHARE, 'warn') || 'ok'),
+      hint: 'Records in the window, quarantined included, flagged for review, failed, blocked, or carrying an unclosed caveat',
+      jumpTo: LEDGER_NEEDS_YOU_ID,
+    },
+    {
+      key: 'broken',
+      label: 'Failed or blocked',
+      count: broken,
+      population: writerTotal,
+      tone: !hasWriterFloor
+        ? 'neutral'
+        : (outcomeShareTone(broken, writerTotal, OUTCOME_BREAKAGE_CRIT_SHARE, 'crit') || 'ok'),
+      hint: 'Writer-emitted records whose result is fail or blocked',
+    },
+    {
+      key: 'recorded',
+      // 'Recorded properly' = attribution healthy 모집단 전용 라벨 — writer 발신 전체(untraceable 포함)는 다른 이름.
+      label: 'Self-reported',
+      count: writerTotal,
+      population: total,
+      // 누락 보고는 여기 글리프가 유일한 등급 채널 — 레인 행으로 올리지 않는다.
+      tone: !hasRecordFloor
+        ? 'neutral'
+        : (outcomeShareTone(omitted, total, OUTCOME_MISSING_REPORT_WARN_SHARE, 'warn') || 'ok'),
+      hint: 'Records the agent emitted itself; the rest were reconstructed by the harness',
+    },
+    {
+      key: 'done',
+      label: 'Done',
+      count: byResult.done || 0,
+      population: writerTotal,
+      // 볼륨 사실 — 위험 주장이 아니므로 tone 을 태우지 않는다.
+      tone: 'neutral',
+      hint: 'Writer-emitted records completed without a concern recorded',
+    },
+  ];
+}
+
+function StatusBandO({ analyticsState, attentionState, windowDays, onRetry }) {
+  if (analyticsState.status === 'loading') {
     return (
-      <div className="grid grid-cols-4 gap-3 mb-4" aria-busy="true" aria-label="Loading result KPIs">
+      <div className="grid grid-cols-4 gap-3 mb-4 flex-shrink-0" aria-busy="true" aria-label="Status band">
         {Array.from({ length: 4 }).map((_, i) => <KpiSkeletonO key={i}/>)}
       </div>
     );
   }
-  if (state.status === 'error') {
+  // blocked 는 레인의 장애 배너가 원인을 소유 → 여기선 '적재 실패' 만. 그 밖의 실패는 band 자리의 배너 하나.
+  if (analyticsState.status === 'blocked') {
     return (
-      <div className="mb-4">
-        <ErrorBannerO title="Couldn't load result KPIs" detail={state.error} onRetry={onRetry}/>
+      <div className="card mb-4 flex-shrink-0" aria-label="Status band">
+        <PayloadUnavailableO label="Status band"/>
+      </div>
+    );
+  }
+  if (analyticsState.status !== 'ready') {
+    return (
+      <div className="mb-4 flex-shrink-0" aria-label="Status band">
+        <RegionErrorO source="the status band" error={analyticsState.error} onRetry={onRetry}/>
       </div>
     );
   }
 
-  const byResultCount = state.data.byResultCount;
-  // headline = writer-emitted (count - reconstructed) — 합성 복구행은 카드 내 sub-line 으로 분리
-  // (Attribution Health 'Reconstructed ⚠' 어휘 재사용, 복구 산물 ≠ 실패).
-  const byResultReconstructed = state.data.byResultReconstructed || {};
+  // attention payload 가 아직/영영 없을 때 0 을 그리면 '해결됨' 으로 읽힌다 → null → em-dash.
+  const attentionCount = attentionState.status === 'ready'
+    ? (Number(attentionState.data?.total) || 0)
+    : null;
+  const tiles = buildStatusBandTilesO(analyticsState.data, attentionCount);
+  // 창은 analyticsDaysO 로 접힌 {7,30,90} 뿐 — 북마크된 'all' 이 90d 를 읽고 'all time' 으로 표기되던 거짓말 제거.
+  const windowLabel = `${windowDays}d`;
 
-  // 분모 = API total (5개 result enum 전수) — 4-card 합(needs_context 제외)으로 재유도 금지.
-  // total 부재 시에만 4-card 합 fallback (헤더 일치 total 우선).
-  const apiTotal      = Number(state.data.overall?.total) || 0;
-  const kpiTotal      = apiTotal > 0 ? apiTotal : sumByResultO(byResultCount);
-  const kpiSum        = sumByResultO(byResultCount);
-  const otherCount    = Math.max(0, kpiTotal - kpiSum);
-
-  // needs_context 는 유효 result enum 이나 4-KPI 밖 → 별도 세그먼트로 노출 (드롭 회피).
-  const needsContextCount = Number(state.data.needsContextCount) || 0;
+  const isAttentionFailed = attentionState.status === 'error' || attentionState.status === 'unavailable';
 
   return (
-    <div className="mb-4">
-      <div className="grid grid-cols-4 gap-3">
-        {ANALYTICS_KPI_ORDER.map((key) => {
-          const meta = kpiMetaO(key);
-          const totalCount = byResultCount[key] || 0;
-          // clamp — 서버 불변식(reconstructed <= count) 방어 (음수 headline 차단).
-          const reconstructedCount = Math.min(Number(byResultReconstructed[key]) || 0, totalCount);
-          return (
-            <KpiBucket
-              key={key}
-              meta={meta}
-              count={totalCount - reconstructedCount}
-              reconstructedCount={reconstructedCount}
-              total={kpiTotal}
-            />
-          );
-        })}
+    <div className="mb-4 flex-shrink-0">
+      <div className="grid grid-cols-4 gap-3" role="group" aria-label="Status band">
+        {tiles.map((tile) => (
+          <BandTileO
+            key={tile.key}
+            tile={tile}
+            windowLabel={windowLabel}
+            unloadedText={tile.key === 'attention' ? getUnloadedSummaryO(attentionState.status) : undefined}/>
+        ))}
       </div>
-      <NeedsContextSegment
-        count={needsContextCount}
-        total={kpiTotal}
-        otherCount={otherCount}
-      />
-    </div>
-  );
-}
-
-// 분모 안내 행 — 4-KPI 카드 아래 단일 행. otherCount 존재 시 'Percentages out of N total' 노트만 표기.
-function NeedsContextSegment({ count, total, otherCount }) {
-  // residual = 4-card + needs_context 외 잔여 (fail 90d 등 — 선택 기간에 없을 수 있음).
-  const residual = Math.max(0, otherCount - count);
-
-  return (
-    <div className="mt-2 flex items-center gap-3 flex-wrap">
-      {otherCount > 0 && (
-        <span className="fs-micro text-faint font-mono">
-          Percentages out of {formatIntO(total)} total{residual > 0 ? ` · ${formatIntO(residual)} more not shown in cards/segments` : ''}
-        </span>
+      {isAttentionFailed && (
+        <RegionErrorO source="the needs-you count" error={attentionState.error} onRetry={onRetry}/>
       )}
     </div>
   );
 }
 
-function KpiBucket({ meta, count, total, reconstructedCount = 0 }) {
-  const pct = total > 0 ? (count / total * 100) : 0;
-
-  const synthMeta = ATTRIBUTION_CATEGORY_META.synthesized;
-  const ariaLabel = reconstructedCount > 0
-    ? `${meta.label}: ${count} writer-emitted, ${reconstructedCount} reconstructed`
-    : `${meta.label}: ${count}`;
+// unloadedText → a pending or failed count says so instead of a dash that reads as data
+function BandTileO({ tile, windowLabel, unloadedText = '—' }) {
+  const { KpiValue, formatPctWithDenominator } = window.UI;
+  const glyph = getBandTileGlyphO(tile.tone);
+  const loaded = tile.count !== null && tile.count !== undefined;
+  const share  = loaded ? formatPctWithDenominator(tile.count, tile.population) : '—';
+  const canJump = Boolean(tile.jumpTo) && loaded && tile.count > 0;
+  const ariaLabel = `${tile.label}: ${loaded ? tile.count : 'not loaded'} — ${tile.hint}${canJump ? ' — show them in the ledger' : ''}`;
+  const Tag = canJump ? 'button' : 'div';
 
   return (
-    <div className="kpi cursor-default" aria-label={ariaLabel}>
+    <Tag
+      {...(canJump ? { type: 'button', onClick: () => focusLedgerSectionO(tile.jumpTo) } : {})}
+      className={canJump ? 'kpi' : 'kpi cursor-default'}
+      aria-label={ariaLabel}
+      title={tile.hint}>
       <div className="kpi-label">
-        <span
-          className="inline-block w-2 h-2 rounded-sm"
-          style={{ background: `rgb(var(${meta.colorVar}))` }}
-          aria-hidden="true"/>
-        {meta.label}
-      </div>
-      <div className="kpi-value">
-        {formatIntO(count)}
-        <span className="unit">/ {pct.toFixed(1)}%</span>
-      </div>
-      {reconstructedCount > 0 && (
-        <div
-          className="fs-micro font-mono"
-          style={{ color: `rgb(var(${synthMeta.colorVar}))` }}
-          title="Harness-reconstructed records (recovery artifacts, not writer-emitted)">
-          {synthMeta.symbol} {formatIntO(reconstructedCount)} {synthMeta.label.toLowerCase()}
-        </div>
-      )}
-    </div>
-  );
-}
-
-// DOW × Hour Heatmap.
-
-// 서버 grid 는 record_ts AT TIME ZONE meta.timezone 버킷(config [meta].timezone) →
-// 응답 필드의 tz 약칭 명시. meta 부재 시 표시 tz 폴백 (tzShortLabel 인자 생략 동작).
-function buildHeatmapSubText(state, period, filter) {
-  if (state.status !== 'ready') {
-    return state.status === 'loading' ? 'Loading…' : "Couldn't load";
-  }
-  const total = Number(state.data?.meta?.total_count ?? 0);
-  const tzLabel = window.UI.tzShortLabel(state.data?.meta?.timezone);
-  return `${tzLabel} · ${formatIntO(total)} records`;
-}
-
-function HeatmapCard({ state, filter, period, onChangeFilter, onRetry }) {
-  const { CardHead, Tabs } = window.UI;
-  const subText = buildHeatmapSubText(state, period, filter);
-
-  return (
-    <div className="card">
-      <CardHead
-        title="Activity by day and hour"
-        sub={subText}
-        right={
-          <Tabs
-            value={filter}
-            onChange={onChangeFilter}
-            items={HEATMAP_FILTER_OPTIONS}
-          />
-        }
-      />
-      <div className="card-body">
-        <HeatmapBody state={state} filter={filter} onRetry={onRetry}/>
-      </div>
-    </div>
-  );
-}
-
-function HeatmapBody({ state, filter, onRetry }) {
-  if (state.status === 'loading') {
-    return <ChartSkeletonO height={220} aria-label="Loading heatmap"/>;
-  }
-  if (state.status === 'error') {
-    return <ErrorBannerO title="Couldn't load heatmap" detail={state.error} onRetry={onRetry}/>;
-  }
-  const grid = state.data?.data;
-  if (!Array.isArray(grid) || grid.length === 0) {
-    return <EmptyStateO message="No results in this period."/>;
-  }
-
-  // 단일 색조 톤 — 필터별 info/warn/crit 매핑.
-  const tone = (HEATMAP_FILTER_OPTIONS.find((opt) => opt.value === filter) || HEATMAP_FILTER_OPTIONS[0]).tone;
-  const toneVar = `--${tone}`;
-  const max = grid.flat().reduce((m, v) => Math.max(m, Number(v) || 0), 0);
-
-  return (
-    <div>
-      {/* 7x24 grid: 첫 컬럼 32px 요일 라벨, 첫 행 시간 라벨 (3h 간격). */}
-      <div className="grid gap-[3px]" style={{ gridTemplateColumns: '32px repeat(24, minmax(0, 1fr))' }}>
-        <div/>
-        {Array.from({ length: 24 }, (_, h) => (
-          <div key={`hcol-${h}`} className="fs-micro font-mono text-faint text-center">
-            {h % 3 === 0 ? h : ''}
-          </div>
-        ))}
-        {grid.map((row, di) => (
-          <React.Fragment key={`hrow-${di}`}>
-            <div className="fs-micro font-mono text-faint flex items-center">
-              {DOW_LABELS[di]}
-            </div>
-            {row.map((v, hi) => {
-              const opacity = max === 0 ? 0 : 0.1 + (Number(v) / max) * 0.9;
-              return (
-                <div
-                  key={`hc-${di}-${hi}`}
-                  className="heat-cell"
-                  style={{ background: `rgb(var(${toneVar}) / ${opacity.toFixed(3)})` }}
-                  title={`${DOW_LABELS[di]} ${hi}:00 — ${formatIntO(v)}`}
-                  aria-label={`${DOW_LABELS[di]} ${hi}:00 — ${formatIntO(v)} records`}/>
-              );
-            })}
-          </React.Fragment>
-        ))}
-      </div>
-      <div className="flex items-center gap-2 mt-3 fs-micro text-faint">
-        <span>Fewer</span>
-        <div className="flex gap-[2px]" aria-hidden="true">
-          {[0.15, 0.3, 0.45, 0.6, 0.75, 0.9].map((o) => (
-            <div
-              key={`leg-${o}`}
-              className="w-4 h-3 rounded-sm"
-              style={{ background: `rgb(var(${toneVar}) / ${o})` }}/>
-          ))}
-        </div>
-        <span>More</span>
-        <span className="ml-auto font-mono">peak {formatIntO(max)}/h</span>
-      </div>
-    </div>
-  );
-}
-
-// ----- 에이전트별 outcome 분포 (4 result stack) -------------------------------
-// 데이터: per-result cross-analysis x4 (ANALYTICS_KPI_ORDER 순) → 에이전트별 카운트 stitch.
-// 가로 바 h-5 ok/warn/info/crit 비례 stack — 실제 카운트 기반.
-// 한계: 4개 독립 top-10 합성 → 각 result 11위 이하 기여 누락 가능 (비권위 근사치).
-//   pseudo-agent(subagent_stop_missing 등)는 NON_ACTIONABLE_AGENT_IDS_O 로 시각 분리.
-
-function AgentStackedBarCard({ state, onRetry }) {
-  const { CardHead } = window.UI;
-  return (
-    <div className="card">
-      <CardHead title="Results by agent" sub="Exact — reconciles with KPI totals"/>
-      <div className="card-body">
-        <AgentStackedBarBody state={state} onRetry={onRetry}/>
-      </div>
-    </div>
-  );
-}
-
-function AgentStackedBarBody({ state, onRetry }) {
-  if (state.status === 'loading') {
-    return <ChartSkeletonO height={220} aria-label="Loading results by agent"/>;
-  }
-  if (state.status === 'error') {
-    return <ErrorBannerO title="Couldn't load results by agent" detail={state.error} onRetry={onRetry}/>;
-  }
-  const agentStack = state.data?.agentStack ?? [];
-  if (agentStack.length === 0) {
-    return <EmptyStateO message="No agent results in this period."/>;
-  }
-
-  return (
-    <div>
-      <div className="space-y-3">
-        {agentStack.map((row) => <AgentStackedBarRow key={row.agent} row={row}/>)}
-      </div>
-      <AgentStackedBarLegend/>
-      {/* by_agent_result 단일 쿼리 → per-agent total 이 KPI 합계와 정확히 정합 (구 4-list stitch cutoff 제거). */}
-      <div className="fs-micro text-faint font-mono mt-2 leading-relaxed">
-        <span className="inline-flex items-center gap-1">
-          <GlyphO name="diamond" className="text-dim"/> = placeholder bucket (not a real agent)
-        </span>
-      </div>
-    </div>
-  );
-}
-
-function AgentStackedBarRow({ row }) {
-  const { AgentBadge } = window.UI;
-  const total = row.total;
-  // headline = writer-emitted (total - reconstructed) — 합성 복구행은 headline 에서 분리하고
-  // 옆의 artifact sub-note 로 노출 (KpiBucket 패턴). 분포 bar 는 전체 rows 기준 유지.
-  const reconstructed = Math.min(Number(row.reconstructed) || 0, total);
-  const writerEmitted = total - reconstructed;
-  const synthMeta = ATTRIBUTION_CATEGORY_META.synthesized;
-
-  // pseudo-agent (subagent_stop_missing 등) → ◇ 표식 + dim 처리로 실 agent 와 구분.
-  const isPseudoAgent = isNonActionableAgentO(row.agent);
-
-  // 0% 셀은 width 0 → 자동 제외.
-  return (
-    <div>
-      <div className="flex items-center gap-2 fs-body mb-1.5">
-        <AgentBadge a={{ id: row.agent, name: row.agent }} size={18}/>
-        <span
-          className={`flex-1 font-medium truncate ${isPseudoAgent ? 'text-dim italic' : ''}`}
-          title={isPseudoAgent ? `${row.agent} (placeholder bucket — not a real agent)` : row.agent}>
-          {isPseudoAgent && <GlyphO name="diamond" className="mr-1"/>}
-          {row.agent}
-        </span>
-        {reconstructed > 0 && (
-          <span
-            className="font-mono fs-micro"
-            style={{ color: `rgb(var(${synthMeta.colorVar}))` }}
-            title="Harness-reconstructed records (recovery artifacts, not writer-emitted)">
-            {synthMeta.symbol} {formatIntO(reconstructed)}
+        {glyph && (
+          <span className={`text-${tile.tone}`} role="img" aria-hidden="true">
+            <GlyphO name={glyph} size={12}/>
           </span>
         )}
-        <span
-          className="font-mono text-dim fs-meta"
-          title={reconstructed > 0 ? `${writerEmitted} writer-emitted (of ${total} total, ${reconstructed} reconstructed)` : undefined}>
-          {formatIntO(writerEmitted)}
-        </span>
+        {tile.label}
       </div>
-      <div className="flex h-5 rounded overflow-hidden border border-line fs-micro font-mono text-white">
-        {ANALYTICS_KPI_ORDER.map((key) => {
-          const count = row.byResult[key] || 0;
-          const pct = total > 0 ? (count / total * 100) : 0;
-          if (pct <= 0) return null;
-          const meta = kpiMetaO(key);
-          return (
-            <div
-              key={key}
-              className="flex items-center justify-center"
-              style={{ width: `${pct.toFixed(2)}%`, background: `rgb(var(${meta.colorVar}))` }}
-              title={`${meta.label}: ${formatIntO(count)} (${pct.toFixed(1)}%)`}
-              aria-label={`${meta.label} ${pct.toFixed(1)}%`}>
-              {pct >= 12 ? pct.toFixed(0) : ''}
-            </div>
-          );
-        })}
+      <KpiValue>{loaded ? formatIntO(tile.count) : <span className="fs-body text-dim">{unloadedText}</span>}</KpiValue>
+      <div className="fs-meta font-mono text-faint">{share} · {windowLabel}</div>
+    </Tag>
+  );
+}
+
+// ok/neutral → no glyph: a check on a "Failed or blocked" tile reads as the opposite of its label
+function getBandTileGlyphO(tone) {
+  if (tone === 'crit') return 'x';
+  if (tone === 'warn') return 'warn';
+  return null;
+}
+
+// 헤딩으로 즉시 스크롤(모션 없음 → reduced-motion 무관) 후 focus — 스크린리더가 도착 지점을 읽는다.
+function focusLedgerSectionO(id, doc = document) {
+  const el = doc.getElementById(id);
+  if (!el) return false;
+  el.scrollIntoView({ block: 'start' });
+  el.focus({ preventScroll: true });
+  return true;
+}
+
+// registry 스코프 by-agent 실패 표 — 누적 막대가 답하지 못한 단 하나의 질문('누가 깨졌나')만 남긴다.
+// 행 자체가 조치 대상이므로 tone 은 글리프가 아니라 숫자의 존재로 운반된다(0 행은 아예 렌더하지 않음).
+// by_agent_top_10 → per-agent open-caveat lookup. The stack rows (by_agent_result) carry no
+// such field, so it joins on the agent key — an agent outside the top-10 rollup has no loaded count.
+function buildAgentOpenCaveatMapO(byAgentTop) {
+  const { getWriterOpenCount } = window.UI;
+  const rows = Array.isArray(byAgentTop) ? byAgentTop : [];
+  return new Map(rows.map((row) => [row?.agent, getWriterOpenCount(row)]));
+}
+
+function buildAgentFailureRowsO(agentStack, byAgentTop) {
+  const rows = Array.isArray(agentStack) ? agentStack : [];
+  const openByAgent = buildAgentOpenCaveatMapO(byAgentTop);
+  return rows
+    .map((entry) => ({
+      agent: entry.agent,
+      failed: entry.byResult?.fail || 0,
+      blocked: entry.byResult?.blocked || 0,
+      openCaveats: openByAgent.has(entry.agent) ? openByAgent.get(entry.agent) : null,
+      total: entry.total || 0,
+    }))
+    .filter((row) => row.failed + row.blocked > 0)
+    .sort((a, b) => (b.failed + b.blocked) - (a.failed + a.blocked));
+}
+
+function AgentFailureTableO({ state, onRetry }) {
+  const { CardHead, STICKY_TH_STYLE } = window.UI;
+
+  return (
+    <div className="card mt-4">
+      <CardHead title="Failed or blocked by agent" sub="Registry agents only · non-zero rows"/>
+      <div className="card-body" style={{ padding: 0 }}>
+        <AgentFailureBodyO state={state} onRetry={onRetry} stickyStyle={STICKY_TH_STYLE}/>
       </div>
     </div>
   );
 }
 
-function AgentStackedBarLegend() {
+const AGENT_FAILURE_COLUMNS_O = [
+  { label: 'Agent', align: 'left' },
+  { label: 'Failed', align: 'right' },
+  { label: 'Blocked', align: 'right' },
+  { label: 'Open caveats', align: 'right' },
+  { label: 'Total records', align: 'right' },
+];
+
+function AgentFailureHeadO({ stickyStyle }) {
   return (
-    <div className="flex gap-3 fs-micro text-faint pt-3 border-t border-line mt-3">
-      {ANALYTICS_KPI_ORDER.map((key) => {
-        const meta = kpiMetaO(key);
-        return (
-          <span key={key} className="flex items-center gap-1">
-            <span
-              className="w-2 h-2 rounded-sm"
-              style={{ background: `rgb(var(${meta.colorVar}))` }}
-              aria-hidden="true"/>
-            {meta.label}
-          </span>
-        );
-      })}
+    <thead>
+      <tr>
+        {AGENT_FAILURE_COLUMNS_O.map(({ label, align }) => (
+          <th key={label} scope="col" className={`text-${align} text-dim font-medium px-3 py-2 border-b border-line`} style={stickyStyle}>{label}</th>
+        ))}
+      </tr>
+    </thead>
+  );
+}
+
+// 적재 중에도 표의 모양을 유지 — 빈 본문은 '실패한 agent 없음' 으로 읽힌다.
+function AgentFailureSkeletonO({ stickyStyle }) {
+  return (
+    <table className="w-full fs-meta" style={{ borderCollapse: 'separate', borderSpacing: 0 }} aria-busy={true} aria-label="Loading by-agent failures">
+      {/* called, not mounted → <thead> stays a direct child in the element tree */}
+      {AgentFailureHeadO({ stickyStyle })}
+      <tbody>
+        {[0, 1, 2].map((i) => (
+          <tr key={i}>
+            <td colSpan={AGENT_FAILURE_COLUMNS_O.length} className="px-3 py-2 border-b border-line">
+              <div style={{ height: 12, borderRadius: 4, background: 'rgb(var(--sunken))', animation: 'skelPulseO 1.4s ease-in-out infinite' }}/>
+            </td>
+          </tr>
+        ))}
+      </tbody>
+    </table>
+  );
+}
+
+function AgentFailureBodyO({ state, onRetry, stickyStyle }) {
+  if (state.status === 'loading') return <AgentFailureSkeletonO stickyStyle={stickyStyle}/>;
+  if (state.status === 'error') {
+    return <RegionErrorO source="by-agent failures" error={state.error} onRetry={onRetry}/>;
+  }
+
+  const rows = buildAgentFailureRowsO(state.data?.agentStack, state.data?.overall?.by_agent_top_10);
+  if (rows.length === 0) {
+    return <EmptyStateO message="No registry agent failed or blocked in this window."/>;
+  }
+
+  return (
+    <div className="overflow-x-auto" style={{ position: 'relative' }}>
+      <table className="w-full fs-meta" style={{ borderCollapse: 'separate', borderSpacing: 0 }}>
+        {AgentFailureHeadO({ stickyStyle })}
+        <tbody>
+          {rows.map((row) => (
+            <tr key={row.agent} className="outcome-row">
+              <td className="text-left text-ink px-3 py-1.5 border-b border-line truncate" title={row.agent}><window.UI.AgentName name={row.agent}/></td>
+              <td className="text-right text-ink font-mono px-3 py-1.5 border-b border-line">{formatIntO(row.failed)}</td>
+              <td className="text-right text-ink font-mono px-3 py-1.5 border-b border-line">{formatIntO(row.blocked)}</td>
+              <OpenCaveatCellO count={row.openCaveats}/>
+              <td className="text-right text-faint font-mono px-3 py-1.5 border-b border-line">{formatIntO(row.total)}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
     </div>
+  );
+}
+
+// null = the agent sits outside the top-10 rollup → em-dash, never a zero that was not loaded.
+function OpenCaveatCellO({ count }) {
+  const isLoaded = count !== null;
+  return (
+    <td
+      className="text-right text-ink font-mono px-3 py-1.5 border-b border-line"
+      title={isLoaded ? undefined : 'Not loaded — only the top 10 agents by volume carry an open-caveat count'}>
+      {isLoaded ? formatIntO(count) : '—'}
+    </td>
   );
 }
 
@@ -1154,7 +1162,7 @@ function AttributionHealthCard({ state, period, onRetry }) {
   return (
     <div className="card mb-4">
       <CardHead
-        title="Reporting health"
+        title="Record attribution"
         sub=""
         right={
           <Badge
@@ -1175,10 +1183,10 @@ function AttributionHealthCard({ state, period, onRetry }) {
 
 function AttributionHealthBody({ state, onRetry }) {
   if (state.status === 'loading') {
-    return <ChartSkeletonO height={200} aria-label="Loading reporting health"/>;
+    return <ChartSkeletonO height={200} label="reporting health"/>;
   }
   if (state.status === 'error') {
-    return <ErrorBannerO title="Couldn't load reporting health" detail={state.error} onRetry={onRetry}/>;
+    return <RegionErrorO source="reporting health" error={state.error} onRetry={onRetry}/>;
   }
 
   const series  = Array.isArray(state.data?.days_series) ? state.data.days_series : [];
@@ -1198,7 +1206,7 @@ function AttributionHealthBody({ state, onRetry }) {
       <AttributionSummaryRow summary={summary} totalAttributed={totalAttributed}/>
       <AttributionDailyChart grid={grid}/>
       <AttributionLegend/>
-      <div className="fs-micro text-faint font-mono mt-2 leading-relaxed">
+      <div className="fs-meta text-faint mt-2 leading-relaxed">
         <span className="inline-flex items-center gap-1">
           <span style={{ color: `rgb(var(${ATTRIBUTION_CATEGORY_META.attribution_loss.colorVar}))` }} aria-hidden="true">
             <GlyphO name={ATTRIBUTION_CATEGORY_META.attribution_loss.icon}/>
@@ -1227,23 +1235,27 @@ function AttributionSummaryRow({ summary, totalAttributed }) {
           const count = Math.round((Number(rate) || 0) * totalAttributed);
           return (
             <div key={key} className="bg-elev rounded-md p-2.5 border border-line">
-              <div className="flex items-start gap-1.5 fs-micro font-mono min-h-[2.2em]">
+              <div className="flex items-start gap-1.5 fs-meta font-mono min-h-[2.2em]">
                 <span style={{ color: `rgb(var(${meta.colorVar}))` }} aria-hidden="true"><GlyphO name={meta.icon}/></span>
-                <span style={{ color: `rgb(var(${meta.colorVar}))` }}>{meta.label}</span>
+                <span className="text-dim">{meta.label}</span>
               </div>
               <div className="fs-stat font-semibold text-ink mt-1 font-mono">
                 {formatRateO(rate)}
               </div>
-              <div className="fs-micro font-mono text-dim mt-0.5">{formatIntO(count)}</div>
+              <div className="fs-meta font-mono text-dim mt-0.5">{formatIntO(count)}</div>
             </div>
           );
         })}
       </div>
       {omissionBreakdown && (
         <div
-          className="fs-micro font-mono text-dim mt-1.5 leading-relaxed"
+          className="fs-meta text-dim mt-1.5 leading-relaxed"
           title={`Missing report breakdown — budget kill ${formatIntO(omissionBreakdown.budget)}, truncated completion ${formatIntO(omissionBreakdown.truncated)}, completion missing ${formatIntO(omissionBreakdown.missing)} (sums to the Missing report count; the rate is unchanged)`}>
-          <span style={{ color: `rgb(var(${omissionMeta.colorVar}))` }} className="mr-1">{omissionMeta.label}:</span>
+          {/* glyph + label as one unbreakable unit → the × never wraps onto a line of its own */}
+          <span className="inline-flex items-center gap-0.5 whitespace-nowrap mr-1">
+            <span style={{ color: `rgb(var(${omissionMeta.colorVar}))` }} aria-hidden="true"><GlyphO name={omissionMeta.icon}/></span>
+            {omissionMeta.label}:
+          </span>
           budget-kill {formatIntO(omissionBreakdown.budget)} · truncated {formatIntO(omissionBreakdown.truncated)} · missing {formatIntO(omissionBreakdown.missing)}
         </div>
       )}
@@ -1254,6 +1266,7 @@ function AttributionSummaryRow({ summary, totalAttributed }) {
 // 일별 stacked-bar — 각 일자 1막대, 4-category 비례 stack (inline SVG, 외부 라이브러리 없음).
 // bar 폭/간격은 grid 길이 기준 자동 분배. 0건 일자는 빈 트랙 표시.
 function AttributionDailyChart({ grid }) {
+  const { activeIndex, handlers } = useStackedChartReadoutO(grid.length);
   const chartHeight = 132;
   const labelBand   = 16;
   const barAreaH    = chartHeight - labelBand;
@@ -1262,15 +1275,18 @@ function AttributionDailyChart({ grid }) {
   const barGap = (slot - barW) / 2;
 
   return (
-    <div>
+    <figure style={{ margin: 0, minWidth: 0 }}>
+      <div role="img" aria-label={getStackedChartLabelO(grid)} tabIndex={0} style={{ cursor: 'crosshair' }} {...handlers}>
       <svg
         width="100%"
         height={chartHeight}
         viewBox={`0 0 100 ${chartHeight}`}
         preserveAspectRatio="none"
-        role="img"
-        aria-label="Daily reporting-health stacked bar chart"
+        aria-hidden="true"
         style={{ display: 'block' }}>
+        {activeIndex !== null && (
+          <rect x={activeIndex * slot} y={0} width={slot} height={barAreaH} fill="rgb(var(--ink) / 0.07)"/>
+        )}
         {grid.map((point, di) => {
           const x = di * slot + barGap;
           if (point.total <= 0) {
@@ -1286,7 +1302,7 @@ function AttributionDailyChart({ grid }) {
                 fill="rgb(var(--line))"
                 opacity={isOut ? '0.22' : '0.6'}
                 strokeDasharray={isOut ? '1.5 1.5' : undefined}>
-                <title>{isOut ? `${point.day} · before data window (out-of-range)` : `${point.day} · no activity`}</title>
+                <title>{isOut ? `${point.day} · ${EMPTY_DAY_LABEL_NOT_READ}` : `${point.day} · ${EMPTY_DAY_LABEL_NO_RECORDS}`}</title>
               </rect>
             );
           }
@@ -1316,23 +1332,80 @@ function AttributionDailyChart({ grid }) {
           );
         })}
       </svg>
-      <div className="flex items-center justify-between fs-micro font-mono text-faint mt-1">
-        <span>{attributionDayLabelO(grid[0]?.day)}</span>
-        <span>today</span>
       </div>
+      <StackedChartTicksO grid={grid}/>
+      <div aria-live="polite" className="fs-meta text-dim" style={{ minHeight: 18, fontVariantNumeric: 'tabular-nums' }}>
+        {activeIndex === null ? '' : getStackedDayReadoutO(grid[activeIndex])}
+      </div>
+    </figure>
+  );
+}
+
+// pointer + arrow/Home/End → one active day; the first arrow press lands on the latest day
+function useStackedChartReadoutO(count) {
+  const [activeIndex, setActiveIndex] = useStateO(null);
+  const { getRovingIndex, getChartIndexAtRatio } = window.UI;
+  const handlers = {
+    onPointerMove: (e) => {
+      const box = e.currentTarget.getBoundingClientRect();
+      if (box.width > 0) setActiveIndex(getChartIndexAtRatio((e.clientX - box.left) / box.width, count, 'bars'));
+    },
+    onPointerLeave: () => setActiveIndex(null),
+    onBlur: () => setActiveIndex(null),
+    onKeyDown: (e) => {
+      const next = getRovingIndex(e.key, activeIndex, count, 'horizontal', 'last');
+      if (next === undefined) return;
+      e.preventDefault();
+      setActiveIndex(next);
+    },
+  };
+  return { activeIndex, handlers };
+}
+
+function StackedChartTicksO({ grid }) {
+  const ticks = window.UI.getChartTicks(grid.length);
+  const last = grid.length - 1;
+  return (
+    <div className="relative fs-meta font-mono text-faint mt-1" style={{ height: 18 }} aria-hidden="true">
+      {ticks.map((i) => (
+        <span
+          key={i}
+          className="absolute whitespace-nowrap"
+          style={{ left: `${((i + 0.5) / grid.length) * 100}%`, transform: i === 0 ? 'none' : i === last ? 'translateX(-100%)' : 'translateX(-50%)' }}>
+          {attributionDayLabelO(grid[i].day)}
+        </span>
+      ))}
     </div>
   );
 }
 
+function getStackedDayReadoutO(point) {
+  if (!(point.total > 0)) {
+    return `${point.day} · ${point.outOfRange === true ? EMPTY_DAY_LABEL_NOT_READ : EMPTY_DAY_LABEL_NO_RECORDS}`;
+  }
+  const parts = ATTRIBUTION_CATEGORY_ORDER
+    .filter((key) => (point[key] || 0) > 0)
+    .map((key) => `${ATTRIBUTION_CATEGORY_META[key].label} ${point[key]}`);
+  return `${point.day} · ${point.total} records: ${parts.join(', ')}`;
+}
+
+function getStackedChartLabelO(grid) {
+  const total = grid.reduce((sum, point) => sum + (Number(point.total) || 0), 0);
+  return `Daily reporting health, ${grid.length} days, ${total} records. Use the arrow keys to read each day.`;
+}
+
+const EMPTY_DAY_LABEL_NO_RECORDS = 'No records';
+const EMPTY_DAY_LABEL_NOT_READ = 'Not read (before the data window)';
+
 // dual-encoded 범례 — 색상 + 기호 + 라벨 3중 부호화 (color-blind safety).
 function AttributionLegend() {
   return (
-    <div className="flex flex-wrap gap-3 fs-micro text-faint pt-3 border-t border-line mt-3">
+    <div className="flex flex-wrap gap-3 fs-meta text-faint pt-3 border-t border-line mt-3">
       {ATTRIBUTION_CATEGORY_ORDER.map((key) => {
         const meta = ATTRIBUTION_CATEGORY_META[key];
         return (
           <span key={key} className="flex items-center gap-1.5">
-            {/* 범례 점 크기 통일 — w-2 h-2 (AgentStackedBarLegend·KpiBucket 과 동일, W3-T7). */}
+            {/* 범례 점 크기 통일 — w-2 h-2 (화면 공통, W3-T7). */}
             <span
               className="w-2 h-2 rounded-sm inline-flex items-center justify-center"
               style={{ background: `rgb(var(${meta.colorVar}))` }}
@@ -1342,6 +1415,15 @@ function AttributionLegend() {
           </span>
         );
       })}
+      {/* the chart's two empty-day hairlines: solid = a read day with no records, dashed = a day before the data window */}
+      <span className="flex items-center gap-1.5">
+        <span className="w-3 inline-block" style={{ borderTop: '1px solid rgb(var(--line))' }} aria-hidden="true"/>
+        {EMPTY_DAY_LABEL_NO_RECORDS}
+      </span>
+      <span className="flex items-center gap-1.5">
+        <span className="w-3 inline-block" style={{ borderTop: '1px dashed rgb(var(--line))' }} aria-hidden="true"/>
+        {EMPTY_DAY_LABEL_NOT_READ}
+      </span>
     </div>
   );
 }
@@ -1355,9 +1437,7 @@ function AttributionLegend() {
 function ChannelLivenessCard({ state, onRetry }) {
   const { CardHead, Badge } = window.UI;
 
-  const alerting = state.status === 'ready' ? (state.data?.alerting || []) : [];
-  const meta = alerting.length > 0 ? CHANNEL_LIVENESS_META.alerting : CHANNEL_LIVENESS_META.live;
-  const days = state.status === 'ready' ? state.data?.days : null;
+  const badge = getChannelLivenessBadgeO(state);
 
   return (
     <div className="card mb-4">
@@ -1367,11 +1447,10 @@ function ChannelLivenessCard({ state, onRetry }) {
         right={
           <Badge
             role="status"
-            tone={toneFromColorVarO(meta.colorVar)}
+            tone={badge.tone}
             icon
             title="A high-volume recording channel that stops writing looks like a quality change on every other card here">
-            {alerting.length > 0 ? `Silent: ${alerting.join(', ')}` : 'All recording'}
-            {days ? ` · ${days}d` : ''}
+            {badge.text}
           </Badge>
         }
       />
@@ -1382,12 +1461,23 @@ function ChannelLivenessCard({ state, onRetry }) {
   );
 }
 
+// 적재 전·실패한 payload 의 'All recording' 은 확인한 적 없는 all-clear → 주장 없는 neutral 배지.
+function getChannelLivenessBadgeO(state) {
+  if (state.status !== 'ready') return { tone: 'neutral', text: getUnloadedSummaryO(state.status) };
+
+  const alerting = state.data?.alerting || [];
+  const days = state.data?.days;
+  const meta = alerting.length > 0 ? CHANNEL_LIVENESS_META.alerting : CHANNEL_LIVENESS_META.live;
+  const text = alerting.length > 0 ? `Silent: ${alerting.join(', ')}` : 'All recording';
+  return { tone: toneFromColorVarO(meta.colorVar), text: days ? `${text} · ${days}d` : text };
+}
+
 function ChannelLivenessBody({ state, onRetry }) {
   if (state.status === 'loading') {
-    return <ChartSkeletonO height={120} aria-label="Loading recording channels"/>;
+    return <ChartSkeletonO height={120} label="recording channels"/>;
   }
   if (state.status === 'error') {
-    return <ErrorBannerO title="Couldn't load recording channels" detail={state.error} onRetry={onRetry}/>;
+    return <RegionErrorO source="recording channels" error={state.error} onRetry={onRetry}/>;
   }
 
   const channels  = Array.isArray(state.data?.channels) ? state.data.channels : [];
@@ -1413,7 +1503,7 @@ function ChannelLivenessBody({ state, onRetry }) {
         ))}
       </div>
       {threshold ? (
-        <div className="fs-micro text-faint font-mono mt-3 leading-relaxed">
+        <div className="fs-meta text-faint mt-3 leading-relaxed">
           Alerts once a channel that exceeded {formatIntO(threshold.eligibility_daily_floor)} rows/day
           within the last {threshold.eligibility_recency_days}d has recorded nothing
           for {threshold.silence_hours}h.
@@ -1431,9 +1521,9 @@ function ChannelLivenessRow({ channel, days, recencyDays }) {
   const recentPeak = formatIntO(channel.recent_peak_daily_count);
   const windowPeak = formatIntO(channel.peak_daily_count);
   return (
-    <div className="flex items-center gap-2 fs-micro font-mono">
+    <div className="flex items-center gap-2 fs-meta font-mono">
       <span style={{ color: `rgb(var(${meta.colorVar}))` }} aria-hidden="true"><GlyphO name={meta.icon}/></span>
-      <span style={{ color: `rgb(var(${meta.colorVar}))` }} className="w-[6.5rem] flex-shrink-0">{meta.label}</span>
+      <span className="text-ink w-[6.5rem] flex-shrink-0">{meta.label}</span>
       <span className="text-ink flex-shrink-0">{channel.attribution_source}</span>
       <span className="text-dim tabular-nums">
         {recentPeak}/day{recencyDays ? ` last ${recencyDays}d` : ''}
@@ -1449,7 +1539,7 @@ function ChannelLivenessRow({ channel, days, recencyDays }) {
 //   verified_pass/unverified/verified_fail = graded_total 분모 · not_measured(레거시 NULL) 은 비율 분모 제외.
 //   목적: 측정 산물(unverified/legacy)을 품질 실패로 오독하지 않게 측정 신호를 명시 노출.
 
-function GraderBreakdownCard({ state, period, onRetry }) {
+function GraderBreakdownCard({ state, onRetry }) {
   const { CardHead, Badge } = window.UI;
 
   const breakdown   = state.status === 'ready' ? state.data?.overall?.grader_breakdown : null;
@@ -1458,7 +1548,7 @@ function GraderBreakdownCard({ state, period, onRetry }) {
   return (
     <div className="card mb-4">
       <CardHead
-        title="Automatic check results (grader_verdict)"
+        title="Automatic check results"
         sub=""
         right={
           state.status === 'ready' && breakdown && (
@@ -1473,12 +1563,17 @@ function GraderBreakdownCard({ state, period, onRetry }) {
   );
 }
 
+// not_measured (legacy NULL) tile only when it counts something → no dead "0" tile
+function getGraderTileKeysO(breakdown) {
+  return GRADER_BREAKDOWN_ORDER.filter((key) => key !== 'not_measured' || (Number(breakdown?.[key]) || 0) > 0);
+}
+
 function GraderBreakdownBody({ state, onRetry }) {
   if (state.status === 'loading') {
-    return <ChartSkeletonO height={120} aria-label="Loading check results"/>;
+    return <ChartSkeletonO height={120} label="check results"/>;
   }
   if (state.status === 'error') {
-    return <ErrorBannerO title="Couldn't load check results" detail={state.error} onRetry={onRetry}/>;
+    return <RegionErrorO source="check results" error={state.error} onRetry={onRetry}/>;
   }
 
   const breakdown = state.data?.overall?.grader_breakdown;
@@ -1487,11 +1582,12 @@ function GraderBreakdownBody({ state, onRetry }) {
   }
 
   const gradedTotal = Number(breakdown.graded_total) || 0;
+  const tileKeys = getGraderTileKeysO(breakdown);
 
   return (
     <>
-      <div className="grid grid-cols-4 gap-3">
-        {GRADER_BREAKDOWN_ORDER.map((key) => {
+      <div className="grid gap-3" style={{ gridTemplateColumns: `repeat(${tileKeys.length}, minmax(0, 1fr))` }}>
+        {tileKeys.map((key) => {
           const meta  = GRADER_BREAKDOWN_META[key];
           const count = Number(breakdown[key]) || 0;
           // not_measured(레거시 NULL)는 graded_total 분모 밖 → 비율 표기 생략 (오해 차단).
@@ -1499,18 +1595,15 @@ function GraderBreakdownBody({ state, onRetry }) {
           return (
             <div
               key={key}
-              className="rounded-lg p-3 border"
-              style={{
-                borderColor: `rgb(var(${meta.colorVar}) / 0.3)`,
-                background: `rgb(var(${meta.colorVar}) / 0.06)`,
-              }}
+              className="p-3 border border-line"
+              style={{ borderRadius: 'var(--radius-tile)' }}
               title={`${meta.label}: ${formatIntO(count)}${pct != null ? ` (${pct.toFixed(1)}%)` : ' (legacy — not in share denominator)'}`}>
-              <div className="inline-flex items-start gap-1 fs-micro uppercase tracking-wider min-h-[2.2em]" style={{ color: `rgb(var(${meta.colorVar}))` }}>
-                <GlyphO name={meta.icon}/>
+              <div className="inline-flex items-start gap-1 fs-meta min-h-[2.2em] text-dim">
+                <span style={{ color: `rgb(var(${meta.colorVar}))` }} aria-hidden="true"><GlyphO name={meta.icon}/></span>
                 {meta.label}
               </div>
               <div className="mt-1 font-mono fs-title text-ink">{formatIntO(count)}</div>
-              <div className="fs-micro text-faint">{pct != null ? `${pct.toFixed(1)}%` : 'not in share denominator'}</div>
+              <div className="fs-meta text-faint">{pct != null ? `${pct.toFixed(1)}%` : 'not in share denominator'}</div>
             </div>
           );
         })}
@@ -1531,13 +1624,13 @@ function DowngradeBreakdownRowO({ breakdown }) {
   if (segments.length === 0) return null;
 
   return (
-    <div className="flex flex-wrap items-center gap-x-4 gap-y-1 mt-3 pt-3 border-t border-line fs-micro font-mono">
+    <div className="flex flex-wrap items-center gap-x-4 gap-y-1 mt-3 pt-3 border-t border-line fs-meta font-mono">
       <span className="text-faint uppercase tracking-wider">downgrade origin</span>
       {segments.map(({ key, count }) => {
         const meta = DOWNGRADE_BREAKDOWN_META[key];
         return (
-          <span key={key} className="inline-flex items-center gap-1" style={{ color: `rgb(var(${meta.colorVar}))` }} title={key}>
-            <GlyphO name={meta.icon}/>
+          <span key={key} className="inline-flex items-center gap-1 text-dim" title={key}>
+            <span style={{ color: `rgb(var(${meta.colorVar}))` }} aria-hidden="true"><GlyphO name={meta.icon}/></span>
             {meta.label}: {formatIntO(count)}
           </span>
         );
@@ -1571,7 +1664,7 @@ function TaskTypeGraderCrosstabO({ rows }) {
 function TaskTypeGraderGroupO({ label, rows, maxTotal, isMuted }) {
   return (
     <div>
-      <div className="fs-micro font-mono text-faint uppercase tracking-wider mb-1">{label}</div>
+      <div className="fs-meta text-faint uppercase tracking-wider mb-1">{label}</div>
       <div className="flex flex-col gap-1">
         {rows.map((row) => <TaskTypeGraderBarO key={row.task_type} row={row} maxTotal={maxTotal} isMuted={isMuted}/>)}
       </div>
@@ -1589,7 +1682,7 @@ function TaskTypeGraderBarO({ row, maxTotal, isMuted }) {
 
   return (
     <div className="flex items-center gap-2" role="img" aria-label={title} title={title}>
-      <span className={`fs-micro font-mono ${isMuted ? 'text-faint' : 'text-dim'}`} style={{ width: 76, flexShrink: 0 }}>
+      <span className={`fs-meta ${isMuted ? 'text-faint' : 'text-dim'}`} style={{ width: 76, flexShrink: 0 }}>
         {row.task_type}
       </span>
       <div className="flex-1 h-3 rounded-sm overflow-hidden" style={{ background: 'rgb(var(--sunken))' }} aria-hidden="true">
@@ -1607,7 +1700,7 @@ function TaskTypeGraderBarO({ row, maxTotal, isMuted }) {
           </div>
         )}
       </div>
-      <span className="fs-micro font-mono text-dim" style={{ width: 56, flexShrink: 0, textAlign: 'right' }}>
+      <span className="fs-meta font-mono text-dim" style={{ width: 56, flexShrink: 0, textAlign: 'right' }}>
         {total > 0 ? formatIntO(total) : '—'}
       </span>
     </div>
@@ -1619,7 +1712,7 @@ function TaskTypeGraderBarO({ row, maxTotal, isMuted }) {
 // 행 4 (confidence) × 열 3 (metric_pass) = 12 셀 + 합계 행/열 → 5열 이내(라벨+pass+fail+null+합계).
 // polar mismatch(overconfidence high+fail · underconfidence low+pass) → ⚠ 기호 + warn 색조 (dual-encoding).
 
-function CrosstabCard({ state, period, onRetry }) {
+function CrosstabCard({ state, onRetry }) {
   const { CardHead, Badge } = window.UI;
 
   const crosstab   = state.status === 'ready' ? state.data?.crosstab : null;
@@ -1648,10 +1741,10 @@ function CrosstabCard({ state, period, onRetry }) {
 
 function CrosstabBody({ state, onRetry }) {
   if (state.status === 'loading') {
-    return <ChartSkeletonO height={160} aria-label="Loading cross table"/>;
+    return <ChartSkeletonO height={160} label="cross table"/>;
   }
   if (state.status === 'error') {
-    return <ErrorBannerO title="Couldn't load cross table" detail={state.error} onRetry={onRetry}/>;
+    return <RegionErrorO source="cross table" error={state.error} onRetry={onRetry}/>;
   }
 
   const crosstab = state.data?.crosstab;
@@ -1686,7 +1779,7 @@ function CrosstabBody({ state, onRetry }) {
           </tfoot>
         </table>
       </div>
-      <div className="flex flex-wrap items-center gap-3 fs-micro text-faint pt-3 border-t border-line mt-3">
+      <div className="flex flex-wrap items-center gap-3 fs-meta text-faint pt-3 border-t border-line mt-3">
         <span className="inline-flex items-center gap-1">
           <span aria-hidden="true" style={{ color: 'rgb(var(--warn))' }}><GlyphO name="warn"/></span>
           polar mismatch (overconfidence high+fail · underconfidence low+pass)
@@ -1788,10 +1881,10 @@ function LoopEventsBody({ state, onRetry }) {
   const { Badge } = window.UI;
 
   if (state.status === 'loading') {
-    return <ChartSkeletonO height={200} aria-label="Loading run events"/>;
+    return <ChartSkeletonO height={200} label="run events"/>;
   }
   if (state.status === 'error') {
-    return <ErrorBannerO title="Couldn't load run events" detail={state.error} onRetry={onRetry}/>;
+    return <RegionErrorO source="run events" error={state.error} onRetry={onRetry}/>;
   }
 
   const total    = Number(state.data?.total_events ?? 0);
@@ -1828,7 +1921,8 @@ function LoopEventsBody({ state, onRetry }) {
         ))}
       </div>
       {/* 고정 높이 스크롤 — raw 로그가 페이지를 무한 늘이지 않도록 (max-height 42vh + 내부 스크롤). */}
-      <div className="overflow-y-auto" style={{ maxHeight: '42vh' }}>
+      {/* position: relative → AgentName's sr-only spans resolve inside this scroller instead of stretching the page. */}
+      <div className="overflow-y-auto" style={{ maxHeight: '42vh', position: 'relative' }}>
         <table className="w-full fs-meta">
           <thead>
             <tr className="text-dim uppercase tracking-wider" style={{ position: 'sticky', top: 0, background: 'rgb(var(--elev))' }}>
@@ -1849,7 +1943,7 @@ function LoopEventsBody({ state, onRetry }) {
                     {window.UI.formatKstDateTime(e.event_ts)}
                   </td>
                   <td className="text-left text-dim px-2 py-1.5 border-b border-line truncate" style={{ maxWidth: 160 }} title={e.agent || ''}>
-                    {e.agent || '—'}
+                    <window.UI.AgentName name={e.agent}/>
                   </td>
                   <td className="text-left px-2 py-1.5 border-b border-line" title={String(e.eval_result || '')}>
                     <Badge role="status" tone={meta.tone} icon>{meta.label}</Badge>
@@ -1869,14 +1963,22 @@ function LoopEventsBody({ state, onRetry }) {
 // ----- Panel 1: Filter sidebar -----------------------------------------------
 
 // 칩 축 driver — label, axis key (filter prop), 옵션 목록을 1행 1축으로 표현.
+// 상시 노출 축 — Agent · Keyword 와 합쳐 5 그룹. 나머지는 'More filters' 뒤로 접힌다 (period 는 헤더가 소유).
 const CHIP_FILTER_AXES = [
-  { axis: 'task_type',   label: 'Task type',   options: TASK_TYPE_OPTIONS   },
   { axis: 'result',      label: 'Result',      options: RESULT_OPTIONS      },
+  { axis: 'review_flag', label: 'Flagged',     options: REVIEW_FLAG_OPTIONS },
+  { axis: 'task_type',   label: 'Task type',   options: TASK_TYPE_OPTIONS   },
+];
+
+const MORE_FILTER_AXES = [
   { axis: 'confidence',  label: 'Confidence',  options: CONFIDENCE_OPTIONS  },
   { axis: 'metric_pass', label: 'Self-check',  options: METRIC_PASS_OPTIONS },
-  { axis: 'review_flag', label: 'Flagged',     options: REVIEW_FLAG_OPTIONS },
   { axis: 'attribution_source', label: 'Attribution', options: ATTRIBUTION_SOURCE_OPTIONS },
 ];
+
+const FILTER_AXES_O = [...CHIP_FILTER_AXES, ...MORE_FILTER_AXES];
+
+const FILTER_COLUMN_STYLE_O = { position: 'sticky', top: 16, maxHeight: 'calc(100vh - 32px)', overflowY: 'auto' };
 
 function FilterSidebar({
   filter, keywordInput, distinctAgents, includeAll, sort,
@@ -1887,9 +1989,8 @@ function FilterSidebar({
   // 활성 facet 카운트 + 'N of M' 카운터 (T-OUT-3) — 몇 축이 좁혀졌는지 한눈에.
   const activeCount = countActiveFacetsO(filter);
 
-  // 부모 grid 가 column 을 viewport 높이로 stretch → sticky 불필요. 칩 overflow 시 card-body self-scroll.
   return (
-    <div className="card h-full flex flex-col min-h-0">
+    <div className="card" style={FILTER_COLUMN_STYLE_O}>
       <CardHead
         title="Filters"
         sub=""
@@ -1899,16 +2000,7 @@ function FilterSidebar({
             : null
         }
       />
-      <div className="card-body" style={{ padding: 14, flex: '1 1 auto', minHeight: 0, overflowY: 'auto' }}>
-        <FilterAxisGroup label="Period">
-          <ChipGroup
-            options={OUTCOME_PERIODS.map((p) => ({ value: String(p.value), label: p.label }))}
-            value={String(filter.days)}
-            onChange={(v) => onPatchFilter({ days: normalizeDaysO(v) })}
-            ariaLabel="Time range"
-          />
-        </FilterAxisGroup>
-
+      <div className="card-body" style={{ padding: 12 }}>
         <FilterAxisGroup label="Agent">
           <select
             className="field field-select"
@@ -1922,23 +2014,9 @@ function FilterSidebar({
           </select>
         </FilterAxisGroup>
 
-        {/* T7/O2 forensic 'show all' — include_all=1 로 서버 registry 게이트 해제 (비-registry / de-registered 노출). */}
-        <FilterAxisGroup label="Record scope">
-          <label className="flex items-center gap-2 fs-meta cursor-pointer select-none">
-            <input
-              type="checkbox"
-              checked={includeAll}
-              onChange={(e) => onToggleIncludeAll(e.target.checked)}
-              aria-label="Show all records including non-registry and de-registered agents"/>
-            <span className={includeAll ? 'text-ink' : 'text-dim'}>
-              Show all (incl. non-registry)
-            </span>
-          </label>
-        </FilterAxisGroup>
-
         {CHIP_FILTER_AXES.map(({ axis, label, options }) => (
           <FilterAxisGroup key={axis} label={label}>
-            <ChipGroup
+            <FilterChipGroupO
               options={options}
               value={filter[axis] || ''}
               onChange={(v) => onPatchFilter({ [axis]: v })}
@@ -1958,14 +2036,46 @@ function FilterSidebar({
           />
         </FilterAxisGroup>
 
-        <FilterAxisGroup label="Sort">
-          <ChipGroup
-            options={SORT_OPTIONS}
-            value={sort}
-            onChange={onSortChange}
-            ariaLabel="Sort order"
-          />
-        </FilterAxisGroup>
+        <details className="mb-3">
+          <summary className="fs-meta text-faint uppercase tracking-wider cursor-pointer select-none mb-1.5">
+            More filters
+          </summary>
+          <div className="pt-2">
+            {MORE_FILTER_AXES.map(({ axis, label, options }) => (
+              <FilterAxisGroup key={axis} label={label}>
+                <FilterChipGroupO
+                  options={options}
+                  value={filter[axis] || ''}
+                  onChange={(v) => onPatchFilter({ [axis]: v })}
+                  ariaLabel={`${label} filter`}
+                />
+              </FilterAxisGroup>
+            ))}
+
+            <FilterAxisGroup label="Sort">
+              <FilterChipGroupO
+                options={SORT_OPTIONS}
+                value={sort}
+                onChange={onSortChange}
+                ariaLabel="Sort order"
+              />
+            </FilterAxisGroup>
+
+            {/* T7/O2 forensic 'show all' — include_all=1 로 서버 registry 게이트 해제. */}
+            <FilterAxisGroup label="Record scope">
+              <label className="flex items-center gap-2 fs-meta cursor-pointer select-none">
+                <input
+                  type="checkbox"
+                  checked={includeAll}
+                  onChange={(e) => onToggleIncludeAll(e.target.checked)}
+                  aria-label="Show all records including non-registry and de-registered agents"/>
+                <span className={includeAll ? 'text-ink' : 'text-dim'}>
+                  Show all (incl. non-registry)
+                </span>
+              </label>
+            </FilterAxisGroup>
+          </div>
+        </details>
 
         <div className="mt-3 pt-3 border-t border-line">
           <button
@@ -1982,8 +2092,8 @@ function FilterSidebar({
 
 function FilterAxisGroup({ label, children }) {
   return (
-    <div className="mb-3">
-      <div className="fs-micro font-mono text-faint uppercase tracking-wider mb-1.5">
+    <div className="mb-2.5">
+      <div className="fs-meta text-faint mb-1">
         {label}
       </div>
       {children}
@@ -1991,33 +2101,33 @@ function FilterAxisGroup({ label, children }) {
   );
 }
 
-function ChipGroup({ options, value, onChange, ariaLabel }) {
+// '' (All) option value → a non-empty chip key
+const ALL_CHIP_KEY_O = '_all';
+
+// One facet as the shared chip toolbar: one Tab stop per group, arrows between chips.
+function FilterChipGroupO({ options, value, onChange, ariaLabel }) {
   return (
-    <div className="flex flex-wrap gap-1" role="radiogroup" aria-label={ariaLabel}>
-      {options.map((opt) => {
-        const isActive = value === opt.value;
-        return (
-          <button
-            key={opt.value || '_all'}
-            type="button"
-            className={`filter-chip ${isActive ? 'is-active' : ''}`}
-            onClick={() => onChange(opt.value)}
-            role="radio"
-            aria-checked={isActive}
-            aria-label={`${ariaLabel}: ${opt.label}`}>
-            {opt.label}
-          </button>
-        );
-      })}
-    </div>
+    <window.UI.ChipGroup
+      label={ariaLabel}
+      chips={buildFilterChipsO(options, value)}
+      onToggle={(key) => onChange(getFilterChipValueO(key))}
+    />
   );
+}
+
+function buildFilterChipsO(options, value) {
+  return options.map((opt) => ({ key: opt.value || ALL_CHIP_KEY_O, label: opt.label, isPressed: opt.value === value }));
+}
+
+function getFilterChipValueO(key) {
+  return key === ALL_CHIP_KEY_O ? '' : key;
 }
 
 // ----- Panel 2: Result table -------------------------------------------------
 
 function ResultTableCard({
   state, rows, totalMatched, page, limit, sort, filter,
-  onPageChange, onSortChange, onResetFilter, onRowClick, onRetry, closure,
+  onPageChange, onSortChange, onResetFilter, onRowClick, onRetry, closure, needsYou, needsYouCap, onToggleNeedsYou,
 }) {
   const { CardHead, Pill } = window.UI;
 
@@ -2025,20 +2135,19 @@ function ResultTableCard({
   const currentPage = page + 1;
 
   return (
-    <div className="card h-full flex flex-col min-h-0">
+    <div className="card">
       <CardHead
         title="Results"
         sub={state.status === 'ready'
           ? `${formatIntO(totalMatched)} matched · ${formatIntO(rows.length)} shown`
-          : 'Loading…'}
+          : state.status === 'loading' ? 'Loading…' : 'Records unavailable'}
         right={
           <div className="flex items-center gap-2">
             <ActiveFilterChips filter={filter}/>
           </div>
         }
       />
-      {/* card-body 가 잔여 높이 흡수 → ResultTable 내부 vertical scroll. */}
-      <div className="card-body" style={{ padding: 0, flex: '1 1 auto', minHeight: 0, overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
+      <div className="card-body" style={{ padding: 0 }}>
         <ResultTableBody
           state={state}
           rows={rows}
@@ -2050,6 +2159,9 @@ function ResultTableCard({
           onRowClick={onRowClick}
           onRetry={onRetry}
           closure={closure}
+          needsYou={needsYou}
+          needsYouCap={needsYouCap}
+          onToggleNeedsYou={onToggleNeedsYou}
         />
       </div>
       {state.status === 'ready' && totalMatched > 0 && (
@@ -2078,19 +2190,27 @@ function ResultTableCard({
   );
 }
 
-// 활성 필터 → 'key=value' 칩 라벨 배열 (헤더 칩 + 빈-상태 echo 공용). 기본값 축은 생략.
+// 활성 필터 → 'Axis: value' 칩 라벨 배열 (헤더 칩 + 빈-상태 echo 공용). 기본값 축은 생략.
+//   축·값 이름 = 사이드바 컨트롤 라벨 SoT → 칩과 ledger 셀이 같은 값을 같은 이름으로 부른다.
 function buildActiveFilterChipsO(filter) {
   const chips = [];
-  if (filter.days && filter.days !== 30) chips.push(`days=${filter.days}`);
-  if (filter.agent)        chips.push(`agent=${filter.agent}`);
-  if (filter.task_type)    chips.push(`task=${filter.task_type}`);
-  if (filter.result)       chips.push(`result=${filter.result}`);
-  if (filter.confidence)   chips.push(`conf=${filter.confidence}`);
-  if (filter.metric_pass)  chips.push(`metric=${filter.metric_pass}`);
-  if (filter.review_flag)  chips.push(`review=${filter.review_flag}`);
-  if (filter.attribution_source) chips.push(`attr=${filter.attribution_source}`);
-  if (filter.q)            chips.push(`q="${truncateO(filter.q, 18)}"`);
+  if (filter.days && filter.days !== 30) chips.push(`Period: ${filter.days}d`);
+  if (filter.agent) chips.push(`Agent: ${window.UI.getAgentDisplayName(filter.agent)}`);
+  for (const { axis, label, options } of FILTER_AXES_O) {
+    if (filter[axis]) chips.push(`${label}: ${getOptionLabelO(options, filter[axis])}`);
+  }
+  if (filter.q) chips.push(`Keyword: "${truncateO(filter.q, 18)}"`);
   return chips;
+}
+
+function getOptionLabelO(options, value) {
+  return options.find((option) => option.value === value)?.label ?? value;
+}
+
+// Drawer value → the filter chip's name for it, so chip, ledger cell and drawer agree.
+function getDetailValueLabelO(axis, value) {
+  const { options } = FILTER_AXES_O.find((group) => group.axis === axis);
+  return getOptionLabelO(options, String(value ?? 'null'));
 }
 
 // 활성 필터 칩 배지 렌더 — 헤더 칩(ActiveFilterChips) + 빈-상태 echo(ResultTableZeroStateO) 공용.
@@ -2111,21 +2231,27 @@ function ActiveFilterChips({ filter }) {
   );
 }
 
-function ResultTableBody({ state, rows, totalMatched, filter, sort, onSortChange, onResetFilter, onRowClick, onRetry, closure }) {
+function ResultTableBody({
+  state, rows, totalMatched, filter, sort, onSortChange, onResetFilter, onRowClick, onRetry, closure, needsYou, needsYouCap, onToggleNeedsYou,
+}) {
   if (state.status === 'loading') {
-    return <ChartSkeletonO height={400} aria-label="Loading results"/>;
-  }
-  if (state.status === 'error') {
-    return <ErrorBannerO title="Couldn't load search results" detail={state.error} onRetry={onRetry}/>;
+    return <ChartSkeletonO height={400} label="results"/>;
   }
   if (state.status === 'blocked') {
-    return <BlockedBannerO detail={state.error}/>;
+    return <PayloadUnavailableO label="Records"/>;
+  }
+  if (state.status !== 'ready') {
+    return <RegionErrorO source="the record ledger" error={state.error} onRetry={onRetry}/>;
   }
   if (rows.length === 0) {
     return <ResultTableZeroStateO filter={filter} onResetFilter={onResetFilter}/>;
   }
 
-  return <ResultTable rows={rows} sort={sort} onSortChange={onSortChange} onRowClick={onRowClick} closure={closure}/>;
+  return (
+    <ResultTable
+      rows={rows} sort={sort} onSortChange={onSortChange} onRowClick={onRowClick} closure={closure}
+      needsYou={needsYou} needsYouCap={needsYouCap} onToggleNeedsYou={onToggleNeedsYou}/>
+  );
 }
 
 // 정직한 빈-상태 (S6 / T-OUT-3) — 활성 필터를 echo 해 '왜 비었는지' 맥락 제공 (never blank).
@@ -2140,7 +2266,7 @@ function ResultTableZeroStateO({ filter, onResetFilter }) {
         : 'No results match the active filters'}
       {chips.length > 0 && (
         <div className="flex items-center gap-1 flex-wrap justify-center mt-2">
-          <span className="fs-micro text-faint font-mono">active:</span>
+          <span className="fs-meta text-faint font-mono">active:</span>
           <FilterChipsO chips={chips}/>
         </div>
       )}
@@ -2162,45 +2288,160 @@ function PlainHeader({ label, align = 'left', minWidth, width }) {
   return (
     <th
       scope="col"
-      className={`text-${align} text-dim font-medium px-2 py-1.5 border-b border-line`}
+      className={`text-${align} text-dim font-medium px-2 py-1.5 border-b border-line whitespace-nowrap`}
       style={style}>
       {label}
     </th>
   );
 }
 
-function ResultTable({ rows, sort, onSortChange, onRowClick, closure }) {
-  // flex: 1 + min-h: 0 → table 이 card-body 높이 fill, sticky header 유지하며 body scroll.
+// 서버 attention 술어의 클라이언트 미러 — 한 곳에서만 판정해 같은 행이 두 섹션에 겹치지 않게 한다.
+function isNeedsYouRowO(row, closedAt) {
+  if (row.review_flag === true) return true;
+  if (row.result === 'fail' || row.result === 'blocked') return true;
+  return row.result === 'done_with_concerns' && !closedAt;
+}
+
+// [Needs you, Routine] 섹션. 빈 섹션은 헤딩째 렌더하지 않는다(빈 자리가 0 으로 읽히지 않게).
+// windowNeedsYou 가 있으면 Needs-you 는 창 전체 질의 결과, 없으면 이 페이지 분할로 되돌아간다.
+// needsYouCap → Needs-you shows its first N rows and counts the rest in hiddenCount; null shows all.
+function buildLedgerSectionsO(rows, closure, windowNeedsYou, needsYouCap = null) {
+  const pageNeedsYou = [];
+  const routine  = [];
+  for (const row of rows) {
+    const closedAt = closure?.closedOverrides.get(row.id) ?? row.closed_at ?? null;
+    (isNeedsYouRowO(row, closedAt) ? pageNeedsYou : routine).push(row);
+  }
+  windowNeedsYou = windowNeedsYou && applyClosureToWindowO(windowNeedsYou, rows, closure);
+  const allNeedsYouRows = windowNeedsYou ? windowNeedsYou.rows : pageNeedsYou;
+  const needsYouRows = needsYouCap == null ? allNeedsYouRows : allNeedsYouRows.slice(0, needsYouCap);
+  const hiddenCount = allNeedsYouRows.length - needsYouRows.length;
+  const needsYouTotal = windowNeedsYou ? windowNeedsYou.total : allNeedsYouRows.length;
+  const needsYouHeading = (windowNeedsYou
+    ? `Needs you · ${formatIntO(needsYouTotal)} in ${windowNeedsYou.windowLabel}`
+    : `Needs you · ${formatIntO(needsYouTotal)} on this page`)
+    + (needsYouTotal > needsYouRows.length ? ` · first ${formatIntO(needsYouRows.length)} shown` : '');
+  return [
+    { key: 'needs-you', label: 'Needs you', heading: needsYouHeading, rows: needsYouRows, hiddenCount, anchorId: LEDGER_NEEDS_YOU_ID },
+    { key: 'routine',   label: 'Routine',   heading: `Routine · ${formatIntO(routine.length)} on this page`, rows: routine, hiddenCount: 0 },
+  ];
+}
+
+function getLedgerDisplayRowsO(sections) {
+  return sections.flatMap((section) => section.rows);
+}
+
+function getDetailPositionLabelO(displayRows, row) {
+  const idx = displayRows.findIndex((r) => r.id === row?.id);
+  return idx >= 0 ? `${idx + 1} of ${displayRows.length} shown` : 'not in the list shown';
+}
+
+// Session closures the window query has not re-read yet → drop them from its rows and total, or a row shows in both sections.
+function applyClosureToWindowO(windowNeedsYou, pageRows, closure) {
+  const overrides = closure?.closedOverrides;
+  if (!overrides || overrides.size === 0) return windowNeedsYou;
+  const rowsById = new Map([...pageRows, ...windowNeedsYou.rows].map((row) => [row.id, row]));
+  const settledIds = new Set();
+  for (const [id, closedAt] of overrides) {
+    const row = rowsById.get(id);
+    if (row && isNeedsYouRowO(row, row.closed_at ?? null) && !isNeedsYouRowO(row, closedAt)) settledIds.add(id);
+  }
+  return {
+    ...windowNeedsYou,
+    rows: windowNeedsYou.rows.filter((row) => !settledIds.has(row.id)),
+    total: Math.max(0, windowNeedsYou.total - settledIds.size),
+  };
+}
+
+function ResultTable({ rows, sort, onSortChange, onRowClick, closure, needsYou, needsYouCap = null, onToggleNeedsYou }) {
   // mono 는 timestamp/id/숫자 컬럼만 — 산문(agent/task_type/result/summary)은 sans (W3-T7 density).
+  // 5 columns — confidence · self-check · automatic check · reworks · cid live in the drawer; nearly every row's check is 'not checked'.
+  const sections = buildLedgerSectionsO(rows, closure, needsYou, needsYouCap);
+  const [activeRow, setActiveRow] = useStateO(0);
+  const rowStarts = getLedgerRowStartsO(sections);
+  const rowCount = getLedgerDisplayRowsO(sections).length;
+
   return (
-    <div className="overflow-auto" style={{ flex: '1 1 auto', minHeight: 0 }}>
+    // position: relative → AgentName's sr-only spans resolve inside this scroller instead of stretching the page.
+    <div className="overflow-x-auto" style={{ position: 'relative' }}>
       <table className="w-full fs-meta" style={{ borderCollapse: 'separate', borderSpacing: 0 }}>
         <thead>
           <tr>
             <SortableHeader label="Time" sortKey="record_ts" currentSort={sort} onSortChange={onSortChange} align="left" width={120}/>
             <PlainHeader label="Agent" minWidth={110}/>
-            <PlainHeader label="task_type"/>
-            <PlainHeader label="result"/>
-            {/* 고정 폭 3열 — 셀 내부 슬롯 폭과 짝을 이뤄야 열이 행마다 흔들리지 않는다 (남는 폭은 summary 가 흡수). */}
-            <PlainHeader label="conf" align="center" width={88}/>
-            <PlainHeader label="metric*" align="center" width={64}/>
-            <PlainHeader label="Check" align="center" width={52}/>
-            <SortableHeader label="rev" sortKey="revision_count" currentSort={sort} onSortChange={onSortChange} align="right" width={50} descOnly/>
-            <PlainHeader label="summary"/>
-            <PlainHeader label="cid" width={110}/>
+            <PlainHeader label="Task type"/>
+            <PlainHeader label="Result"/>
+            <PlainHeader label="Summary"/>
           </tr>
         </thead>
         <tbody>
-          {rows.map((row) => (
-            <ResultTableRow key={row.id} row={row} onRowClick={onRowClick} closure={closure}/>
+          {sections.map((section, sectionIndex) => (
+            section.rows.length === 0 ? null : (
+              <React.Fragment key={section.key}>
+                <tr>
+                  <th
+                    id={section.anchorId}
+                    tabIndex={section.anchorId ? -1 : undefined}
+                    colSpan={LEDGER_COLUMN_COUNT}
+                    scope="colgroup"
+                    className="text-left fs-meta font-mono uppercase tracking-wider text-faint px-2 pt-3 pb-1 border-b border-line">
+                    {section.heading}
+                  </th>
+                </tr>
+                {section.rows.map((row, i) => (
+                  <ResultTableRow
+                    key={row.id}
+                    row={row}
+                    onRowClick={onRowClick}
+                    closure={closure}
+                    focusProps={window.UI.getRowFocusProps({
+                      index: rowStarts[sectionIndex] + i,
+                      activeIndex: activeRow,
+                      count: rowCount,
+                      onActivate: () => onRowClick(row),
+                      onActiveChange: setActiveRow,
+                    })}
+                  />
+                ))}
+                {section.key === 'needs-you' && (
+                  <NeedsYouToggleRowO section={section} isCapped={needsYouCap != null} onToggle={onToggleNeedsYou}/>
+                )}
+              </React.Fragment>
+            )
           ))}
         </tbody>
       </table>
-      <div className="flex flex-wrap items-center gap-x-4 gap-y-1 fs-micro text-faint px-2 py-2">
-        <span><span className="text-dim">metric*</span> = self-reported, not verified</span>
-      </div>
     </div>
   );
+}
+
+const LEDGER_COLUMN_COUNT = 5;
+
+// Capped → 'Show all N'; expanded past the cap → 'Show first N'; nothing to toggle → no row.
+function NeedsYouToggleRowO({ section, isCapped, onToggle }) {
+  const needsYouTotal = section.rows.length + section.hiddenCount;
+  const hasToggle = typeof onToggle === 'function'
+    && (isCapped ? section.hiddenCount > 0 : needsYouTotal > NEEDS_YOU_PAGE_CAP);
+  if (!hasToggle) return null;
+  return (
+    <tr>
+      <td colSpan={LEDGER_COLUMN_COUNT} className="px-2 py-1.5 border-b border-line">
+        <button type="button" className="btn ghost sm" aria-expanded={!isCapped} onClick={onToggle}>
+          {isCapped ? `Show all ${formatIntO(needsYouTotal)} needs-you rows` : `Show first ${NEEDS_YOU_PAGE_CAP} only`}
+        </button>
+      </td>
+    </tr>
+  );
+}
+
+// section → its first row's index in the one roving sequence the ledger rows share
+function getLedgerRowStartsO(sections) {
+  let next = 0;
+  return sections.map((section) => {
+    const start = next;
+    next += section.rows.length;
+    return start;
+  });
 }
 
 function getSortArrowIcon(isActive, dir) {
@@ -2241,72 +2482,9 @@ function SortableHeader({ label, sortKey, currentSort, onSortChange, align, widt
   );
 }
 
-// confidence 3-seg NEUTRAL slate chip (T-OUT-2) — high/medium/low 를 채워진 슬레이트 세그먼트 수로 표현.
-//   green/red 회피: confidence 는 품질 판정이 아니라 작성자의 자기확신도 → 중립(slate) 단계만 인코딩.
-//   null(작성자 누락) = 빈 칩 + '—' (수치 fabrication 회피). 색≠의미 단독: 세그먼트 수가 위계를 전달.
-const CONFIDENCE_LEVEL = { high: 3, medium: 2, low: 1 };
-
-// 셀 안의 고정 슬롯 폭 — 셀마다 내용 폭이 달라지면 열이 세로로 정렬되지 않는다 (행마다 들쭉날쭉).
-//   슬롯 폭이 고정이면 막대/라벨/글리프가 행을 가로질러 각자의 수직선을 이룬다.
-const CONF_BAR_SLOT   = 19;   // 5px 세그먼트 3 + 2px 간격 2
-const CONF_LABEL_SLOT = 44;   // 최장 라벨 'medium' (fs-micro mono)
-const METRIC_MARK_SLOT  = 14;
-const METRIC_SCORE_SLOT = 22;
+// 요약 셀의 고정 flag 슬롯 폭 — 폭이 행마다 달라지면 요약 텍스트가 세로로 정렬되지 않는다.
 const SUMMARY_FLAG_SLOT = 18;
 
-function ConfidenceChipO({ confidence }) {
-  const level = CONFIDENCE_LEVEL[confidence] || 0;
-  const label = confidence == null ? '—' : confidence;
-  const title = level === 0 ? 'confidence not reported' : `confidence: ${label}`;
-
-  return (
-    <span
-      className="inline-flex items-center gap-1 align-middle whitespace-nowrap"
-      role="img"
-      aria-label={`confidence ${label} (${level} of 3)`}
-      title={title}>
-      {/* level 0 은 세그먼트를 아예 비운다 — 빈 막대 3개는 '측정된 0'으로 읽혀 fabrication 이 된다. */}
-      <span className="inline-flex gap-0.5 shrink-0" style={{ width: CONF_BAR_SLOT }} aria-hidden="true">
-        {level > 0 && [0, 1, 2].map((i) => (
-          <span
-            key={i}
-            className="inline-block rounded-sm"
-            style={{
-              width: 5,
-              height: 10,
-              background: i < level ? 'rgb(var(--dim))' : 'rgb(var(--line))',
-            }}/>
-        ))}
-      </span>
-      <span
-        className={`fs-micro font-mono text-left shrink-0 ${level === 0 ? 'text-faint' : 'text-dim'}`}
-        style={{ width: CONF_LABEL_SLOT }}>
-        {label}
-      </span>
-    </span>
-  );
-}
-
-// metric_pass = writer self-report (측정 진실 아님) → 측정 컬럼(grader_verdict)과 분리.
-//   품질 실패 오독 차단: minimal check(✓)/x/dash(–) muted 기호만 — crit(빨강) 절대 금지 (실 측정 신호는 Check 컬럼).
-//   true=✓ · false=✕ (기호로만 구분, 톤은 동일 muted — self-report false 도 응급 신호 아님) · null=– faint.
-function MetricPassMarkO({ metricPass }) {
-  const isReported = metricPass === true || metricPass === false;
-  const iconName = metricPass === true ? 'check' : metricPass === false ? 'x' : 'minus';
-  const label  = metricPass === true ? 'pass (self-reported)' : metricPass === false ? 'fail (self-reported)' : 'not reported';
-  return (
-    <span
-      className="fs-meta font-mono inline-flex items-center justify-center align-middle shrink-0"
-      style={{ width: METRIC_MARK_SLOT, color: isReported ? 'rgb(var(--dim))' : 'rgb(var(--faint))' }}
-      role="img"
-      aria-label={`self-check ${label}`}>
-      <GlyphO name={iconName}/>
-    </span>
-  );
-}
-
-// qa_score (cov/ins/instr/clar 각 1-5) → 합계(4-20) + 평균. QA 행 전용 OPTIONAL.
-//   데이터 미존재(현 search/detail SELECT 에 qa_score 컬럼 없음) → null (슬롭 회피, no fabricated score).
 function parseQaScoreO(qaScore) {
   if (typeof qaScore !== 'string' || qaScore.trim() === '') return null;
   const nums = qaScore.match(/\d+(\.\d+)?/g);
@@ -2317,19 +2495,6 @@ function parseQaScoreO(qaScore) {
 
 // 테이블 metric 컬럼의 점수 슬롯 — 합계를 숫자로 노출 (dot 은 4개 항목 분해를 못 실어 detail 패널에만 남긴다).
 //   미보고 행도 '—' 로 같은 폭을 차지해야 열이 세로로 정렬된다.
-function QaScoreValueO({ qaScore }) {
-  const score = parseQaScoreO(qaScore);
-  return (
-    <span
-      className={`fs-micro font-mono text-right shrink-0 ${score ? 'text-dim' : 'text-faint'}`}
-      style={{ width: METRIC_SCORE_SLOT }}
-      title={score ? `QA score ${score.sum}/20 — ${qaScore}` : 'QA score not reported'}>
-      {score ? score.sum : '—'}
-    </span>
-  );
-}
-
-// detail 패널 전용 — 5 중립 dot (채워진 dot 수 = 평균 점수). 테이블은 폭 정렬 때문에 숫자 슬롯을 쓴다.
 function QaScoreDotsO({ qaScore }) {
   const score = parseQaScoreO(qaScore);
   if (score == null) return null;
@@ -2354,84 +2519,45 @@ function QaScoreDotsO({ qaScore }) {
 
 // revision_count 미니 flag — ≥2 (process improvement 대상, core-learning-log.md) 일 때 UI.Bar 막대 표식.
 //   숫자 + warn-tone Bar (max 5 정규화) dual-encode. <2 = 숫자만 (또는 0=dash).
-function RevisionCountCellO({ revisionCount }) {
-  const { Bar } = window.UI;
-  const n = Number(revisionCount) || 0;
-
-  if (n === 0) {
-    return <span className="text-dim font-mono">—</span>;
-  }
-  if (n < 2) {
-    return <span className="text-dim font-mono">{formatIntO(n)}</span>;
-  }
-  return (
-    <span className="inline-flex items-center gap-1.5 justify-end" title={`reworked ${n} times — high revision frequency (≥2)`}>
-      <span className="text-ink font-mono font-semibold">{formatIntO(n)}</span>
-      <span style={{ width: 28 }}>
-        <Bar value={Math.min(n, 5)} max={5} tone="warn" ariaLabel={`revision count ${n}, high (≥2)`}/>
-      </span>
-    </span>
-  );
-}
-
-function ResultTableRow({ row, onRowClick, closure }) {
-  const isFail   = row.result === 'fail';
-  const isReview = !isFail && row.review_flag === true;
-  const rowClass = `outcome-row cursor-pointer ${isFail ? 'is-fail' : ''} ${isReview ? 'is-review' : ''}`;
-
-  const ts       = formatTimestampO(row.record_ts);
-  const summary  = truncateO(row.summary || '', 60);
-  const cidShort = truncateO(row.cid || '', 12);
-  const grader   = graderVerdictMetaO(row.grader_verdict);
-  // Check 셀은 아이콘 단독이라 이 문장이 유일한 텍스트 채널 — title 과 셀 aria-label 이 함께 소비한다.
-  const graderTitle = `Automatic check (grader_verdict): ${grader.label}${
-    row.grader_verdict === 'unverified'
-      ? ' — no test artifact to grade for this task type.'
-      : row.grader_verdict == null
-      ? ' — recorded before the grader existed, not a failure.'
-      : ''
-  }`;
+function ResultTableRow({ row, onRowClick, closure, focusProps }) {
+  const ts      = formatTimestampO(row.record_ts);
+  const summary  = row.summary || '';
   // result tone/icon/label = RESULT_META SoT (T-OUT-1 — 로컬 result→color map 제거, 색맹 안전 듀얼인코딩).
   // closedAt = optimistic override 우선 → 서버 응답 도착 전에도 즉시 종결 표시.
   const closedAt    = closure?.closedOverrides.get(row.id) ?? row.closed_at ?? null;
   const resultMeta  = window.UI.resolveResultMeta(row.result, closedAt);
+  const resultLabel = window.UI.resolveResultMeta(row.result, null).label;
   const resultColor = `rgb(var(${resultColorVarO(row.result, closedAt)}))`;
   const isClosing   = closure?.pendingIds.has(row.id) === true;
   const canClose    = row.result === 'done_with_concerns' && !closedAt && typeof closure?.onMarkClosed === 'function';
 
   return (
     <tr
-      className={rowClass}
+      className="outcome-row cursor-pointer"
       onClick={() => onRowClick(row)}
-      tabIndex={0}
-      role="button"
-      onKeyDown={(e) => {
-        if (e.key === 'Enter' || e.key === ' ') {
-          e.preventDefault();
-          onRowClick(row);
-        }
-      }}
-      aria-label={`${row.agent} ${row.task_type} ${row.result} check ${grader.label} ${row.summary || ''}`}>
+      {...focusProps}
+      aria-label={`${row.agent} ${row.task_type} ${resultMeta.label} ${row.summary || ''}`}>
       <td className="text-left text-ink font-mono px-2 py-1.5 border-b border-line whitespace-nowrap">
         {ts}
       </td>
       <td className="text-left text-ink px-2 py-1.5 border-b border-line truncate" style={{ maxWidth: 140 }} title={row.agent}>
-        {row.agent}
+        <window.UI.AgentName name={row.agent}/>
       </td>
-      <td className="text-left text-dim px-2 py-1.5 border-b border-line">{row.task_type}</td>
+      <td className="text-left text-dim px-2 py-1.5 border-b border-line whitespace-nowrap">{row.task_type}</td>
       <td className="text-left px-2 py-1.5 border-b border-line" title={resultMeta.label}>
         {/* 배지+종결 어포던스를 한 nowrap 컨테이너로 — 셀 안에서 줄바꿈되면 행 높이가 형제 행의 2배로 부푼다. */}
         <span className="inline-flex items-center gap-0.5 whitespace-nowrap">
-          <span className="inline-flex items-center gap-0.5" style={{ color: resultColor, fontWeight: 500 }}>
-            <GlyphO name={resultMeta.icon}/>
-            {row.result}
+          <span className="inline-flex items-center gap-0.5 text-ink" style={{ fontWeight: 500 }}>
+            <span style={{ color: resultColor }} aria-hidden="true"><GlyphO name={resultMeta.icon}/></span>
+            {resultLabel}
             {/* 텍스트 라벨 = 듀얼인코딩의 두 번째 채널 — 회색 tone 단독으로 종결을 encode 하지 않는다. */}
-            {resultMeta.closed && <span className="fs-micro text-dim">{resultMeta.label}</span>}
+            {resultMeta.closed && <span className="fs-meta text-dim">{resultMeta.label}</span>}
           </span>
           {canClose && (
             // -my-1 = 24px 타깃을 유지한 채 행 높이 기여만 상쇄 (셀 패딩 안으로 겹침) → 형제 행과 높이 동일.
             // pending 은 색 회전 없이 투명도만 (DocStatusBadgeCD 선례 — 새 의미 카테고리 시사 차단 + reduced-motion 무관).
             <button
+              {...window.UI.ROW_CONTROL_PROPS}
               className="btn ghost sm icon shrink-0 -my-1"
               aria-busy={isClosing}
               aria-label={`Mark outcome ${row.id} closed`}
@@ -2447,37 +2573,12 @@ function ResultTableRow({ row, onRowClick, closure }) {
           )}
         </span>
       </td>
-      <td className="text-center px-2 py-1.5 border-b border-line">
-        <ConfidenceChipO confidence={row.confidence}/>
-      </td>
-      <td
-        className="text-center font-mono px-2 py-1.5 border-b border-line">
-        <span className="inline-flex items-center gap-1.5 justify-center whitespace-nowrap">
-          <MetricPassMarkO metricPass={row.metric_pass}/>
-          <QaScoreValueO qaScore={row.qa_score}/>
-        </span>
-      </td>
-      <td
-        className="text-center px-2 py-1.5 border-b border-line"
-        title={graderTitle}>
-        {/* 아이콘 단독 — 상태별 모양(✓/○/✕/–)이 다르므로 색+모양 듀얼인코딩은 유지되고, 전문은 title + 행 aria-label 이 운반. */}
-        <span
-          className="inline-flex items-center justify-center"
-          style={{ color: `rgb(var(${grader.colorVar}))` }}
-          role="img"
-          aria-label={graderTitle}>
-          <GlyphO name={grader.icon} size={14}/>
-        </span>
-      </td>
-      <td className="text-right px-2 py-1.5 border-b border-line">
-        <RevisionCountCellO revisionCount={row.revision_count}/>
-      </td>
-      <td className="text-left text-ink px-2 py-1.5 border-b border-line truncate" style={{ maxWidth: 380 }} title={row.summary || ''}>
-        <SummaryFlagSlotO row={row}/>
-        {summary}
-      </td>
-      <td className="text-left text-faint font-mono px-2 py-1.5 border-b border-line truncate" style={{ maxWidth: 110 }} title={row.cid || ''}>
-        {cidShort || '—'}
+      {/* width 100% + max-width 0 → the column takes only the width left in the scroller, so the ellipsis stays inside the card. */}
+      <td className="text-left text-ink px-2 py-1.5 border-b border-line" style={{ width: '100%', maxWidth: 0 }} title={summary}>
+        <div className="flex items-center">
+          <SummaryFlagSlotO row={row}/>
+          <span className="truncate" style={{ minWidth: 0 }}>{summary}</span>
+        </div>
       </td>
     </tr>
   );
@@ -2529,15 +2630,16 @@ function DetailModal({ detailRow, detailState, rows, onClose, onNav }) {
 
   if (!detailRow) return null;
 
-  // list-index → prev/next 어댑터 — 현재 페이지 결과 행에서 detailRow 위치 도출.
+  // rows = the ledger's displayed order → counter and Prev/Next match what the operator sees.
   const idx     = rows.findIndex((r) => r.id === detailRow?.id);
+  const { fields, body } = splitRecordFieldsO(detailState?.status === 'ready' ? detailState.data?.body_md || '' : '');
   const hasPrev = idx > 0;
   const hasNext = idx >= 0 && idx < rows.length - 1;
 
   const titleParts = [
     detailRow?.agent,
     detailRow?.task_type,
-    detailRow?.result,
+    detailRow?.result && window.UI.resolveResultMeta(detailRow.result, null).label,
     formatTimestampO(detailRow?.record_ts),
   ].filter(Boolean);
 
@@ -2545,7 +2647,7 @@ function DetailModal({ detailRow, detailState, rows, onClose, onNav }) {
   const extraFoot = (
     <>
       <div className="fs-meta text-dim font-mono mr-auto">
-        {idx >= 0 ? `${idx + 1} of ${rows.length} on this page` : 'not on this page'}
+        {getDetailPositionLabelO(rows, detailRow)}
       </div>
       <button className="btn sm primary" onClick={onClose} aria-label="Close">
         Close
@@ -2562,11 +2664,17 @@ function DetailModal({ detailRow, detailState, rows, onClose, onNav }) {
       nav={{ onPrev: () => onNav('prev'), onNext: () => onNav('next'), hasPrev, hasNext }}
       footer={extraFoot}>
       {/* T-OUT-5 / S2 body order: identity(title) → numeric grid → narrative → references. */}
-      <DetailMetadata row={detailRow} detail={detailState?.status === 'ready' ? detailState.data : null}/>
-      <DetailNarrative row={detailRow} detailState={detailState}/>
+      <DetailMetadata row={detailRow} detail={detailState?.status === 'ready' ? detailState.data : null} recordFields={fields}/>
+      <DetailNarrative row={detailRow} detailState={detailState} markdown={body}/>
       <DetailReferences row={detailRow}/>
     </DetailSurface>
   );
+}
+
+function getGraderNoteO(verdict) {
+  if (verdict === 'unverified') return 'No test artifact to grade for this task type.';
+  if (verdict == null) return 'Recorded before the grader existed, not a failure.';
+  return '';
 }
 
 function reviewFlagLabel(flag) {
@@ -2575,7 +2683,7 @@ function reviewFlagLabel(flag) {
   return '—';
 }
 
-function DetailMetadata({ row, detail }) {
+function DetailMetadata({ row, detail, recordFields = [] }) {
   // defensive guard — row undefined 에서 React batching edge case 회피 (내부 optional chaining 도 이중 안전망).
   if (!row) return null;
   const { Badge } = window.UI;
@@ -2589,21 +2697,23 @@ function DetailMetadata({ row, detail }) {
   const metricType = detail ? detail.metric_type : null;
 
   const grader = graderVerdictMetaO(row?.grader_verdict);
+  const graderNote = getGraderNoteO(row?.grader_verdict);
 
   return (
     <div className="grid grid-cols-2 gap-3 mb-4 fs-meta font-mono">
-      <MetaField label="Confidence"         value={row?.confidence ?? '—'}/>
-      <MetaField label="Self-reported pass" value={row?.metric_pass == null ? '—' : String(row.metric_pass)}/>
+      <MetaField label="Confidence" value={getDetailValueLabelO('confidence', row?.confidence)}/>
+      <MetaField label="Self-check" value={getDetailValueLabelO('metric_pass', row?.metric_pass)}/>
       <div>
-        <div className="fs-micro text-faint uppercase tracking-wider">Automatic check</div>
+        <div className="fs-meta text-faint uppercase tracking-wider">Automatic check</div>
         <div className="inline-flex items-center gap-1" style={{ color: `rgb(var(${grader.colorVar}))`, fontWeight: 500 }}>
           <GlyphO name={grader.icon}/>
           {grader.label}
         </div>
+        {graderNote && <div className="text-dim">{graderNote}</div>}
       </div>
       <MetaField label="Reworks" value={formatIntO(row?.revision_count || 0)}/>
       <div>
-        <div className="fs-micro text-faint uppercase tracking-wider">Flagged for review</div>
+        <div className="fs-meta text-faint uppercase tracking-wider">Flagged for review</div>
         <div className="text-ink inline-flex items-center gap-1.5 flex-wrap">
           {reviewFlagLabel(row?.review_flag)}
           {/* 미상 사유는 여러 토큰이 같은 버킷 키로 접히므로 index 를 섞어 React key 충돌을 막는다. */}
@@ -2613,7 +2723,7 @@ function DetailMetadata({ row, detail }) {
         </div>
       </div>
       {row?.poisoned_window === true && (
-        <MetaField label="Quarantined window" value="true — excluded from analysis"/>
+        <MetaField label="Quarantined window" value="Yes — excluded from analysis"/>
       )}
       {evalSignal != null && (
         <MetaField label="User signal" value={formatEvaluativeSignalO(evalSignal)}/>
@@ -2621,9 +2731,10 @@ function DetailMetadata({ row, detail }) {
       {metricType != null && metricType !== '' && (
         <MetaField label="Check type" value={String(metricType)}/>
       )}
+      {recordFields.map((field) => <MetaField key={field.label} label={field.label} value={field.value}/>)}
       {parseQaScoreO(row?.qa_score) != null && (
         <div>
-          <div className="fs-micro text-faint uppercase tracking-wider">QA score</div>
+          <div className="fs-meta text-faint uppercase tracking-wider">QA score</div>
           <div className="text-ink inline-flex items-center gap-2">
             <QaScoreDotsO qaScore={row.qa_score}/>
             <span className="font-mono text-dim">{row.qa_score}</span>
@@ -2635,18 +2746,50 @@ function DetailMetadata({ row, detail }) {
 }
 
 // 서사 영역 (S2 narrative) — lesson(작성자 distilled 패턴) + body_md(전문). 식별/수치 다음, references 앞.
-function DetailNarrative({ row, detailState }) {
+function DetailNarrative({ row, detailState, markdown }) {
+  const { lesson, body } = splitLessonO(markdown);
+  const lessonText = lesson || row?.lesson;
+
   return (
     <div className="mb-4">
-      {row?.lesson && (
+      {lessonText && (
         <div className="mb-3">
-          <div className="fs-micro text-faint uppercase tracking-wider mb-0.5">lesson</div>
-          <div className="fs-body text-ink">{row.lesson}</div>
+          <div className="fs-meta text-faint uppercase tracking-wider mb-0.5">Lesson</div>
+          <div className="fs-body text-ink">{lessonText}</div>
         </div>
       )}
-      <DetailBody detailState={detailState}/>
+      <DetailBody detailState={detailState} markdown={body}/>
     </div>
   );
+}
+
+// body_md '## Lesson' section → lifted out so the narrative block prints the lesson once, in full.
+function splitLessonO(markdown) {
+  const match = /^##\s+Lesson[ \t]*\n([\s\S]*?)(?=^#{1,2}\s|(?![\s\S]))/m.exec(markdown);
+  if (!match) return { lesson: '', body: markdown };
+  return { lesson: match[1].trim(), body: markdown.slice(0, match.index) + markdown.slice(match.index + match[0].length) };
+}
+
+// Fields the drawer already shows — title (agent/type/result) and references (cid).
+const RECORD_FIELDS_SHOWN_ELSEWHERE = new Set(['Agent', 'Task type', 'Result', 'Correlation ID']);
+
+// body_md '# Outcome Record' bullet list → KV pairs for the metadata grid, so the drawer holds one KV grid.
+function splitRecordFieldsO(markdown) {
+  const match = /^#\s+Outcome Record[ \t]*\n((?:[ \t]*\n|- \*\*[^*\n]+\*\*:[^\n]*\n?)*)/m.exec(markdown);
+  if (!match) return { fields: [], body: markdown };
+  const fields = [];
+  for (const [, label, value] of match[1].matchAll(/^- \*\*([^*\n]+)\*\*:[ \t]*(.*?)[ \t]*$/gm)) {
+    if (!RECORD_FIELDS_SHOWN_ELSEWHERE.has(label)) fields.push({ label, value: label === 'Tool use' ? formatToolUseO(value) : value });
+  }
+  return { fields, body: (markdown.slice(0, match.index) + markdown.slice(match.index + match[0].length)).trim() };
+}
+
+// Recorder's 'actual=N declared=M' → words; any other shape passes through.
+function formatToolUseO(value) {
+  const match = /^actual=(\d+)(?: declared=(\d+))?$/.exec(value);
+  if (!match) return value;
+  const [, actual, declared] = match;
+  return `${actual} tool call${actual === '1' ? '' : 's'}${declared ? ` · ${declared} estimated` : ''}`;
 }
 
 // 참조 영역 (S2 references) — cid(delegation tracking ID). 본문 가장 뒤 = 식별→수치→서사→참조 순서 종결.
@@ -2654,7 +2797,7 @@ function DetailReferences({ row }) {
   if (!row?.cid) return null;
   return (
     <div className="pt-3 border-t border-line">
-      <div className="fs-micro text-faint uppercase tracking-wider mb-0.5">references</div>
+      <div className="fs-meta text-faint uppercase tracking-wider mb-0.5">references</div>
       <div className="fs-meta font-mono text-dim">cid: {row.cid}</div>
     </div>
   );
@@ -2671,29 +2814,25 @@ function formatEvaluativeSignalO(signal) {
 function MetaField({ label, value, className = '' }) {
   return (
     <div className={className}>
-      <div className="fs-micro text-faint uppercase tracking-wider">{label}</div>
+      <div className="fs-meta text-faint uppercase tracking-wider">{label}</div>
       <div className="text-ink">{value}</div>
     </div>
   );
 }
 
-function DetailBody({ detailState }) {
+function DetailBody({ detailState, markdown }) {
   // defensive guard + optional chaining 보존.
-  if (!detailState) return <ChartSkeletonO height={200} aria-label="Loading body"/>;
+  if (!detailState) return <ChartSkeletonO height={200} label="body"/>;
 
   if (detailState?.status === 'idle' || detailState?.status === 'loading') {
-    return <ChartSkeletonO height={200} aria-label="Loading body"/>;
+    return <ChartSkeletonO height={200} label="body"/>;
   }
   if (detailState?.status === 'error') {
-    return (
-      <div className="fs-body text-crit font-mono">
-        Couldn't load the body: {detailState?.error || 'unknown error'}
-      </div>
-    );
+    const { RegionUnavailable } = window.UI;
+    return <RegionUnavailable source="the record body" error={detailState.error}/>;
   }
 
-  const bodyMd = detailState?.data?.body_md;
-  if (!bodyMd) {
+  if (!markdown) {
     return (
       <div className="fs-body text-faint font-mono italic">
         No body text — showing metadata only.
@@ -2701,7 +2840,7 @@ function DetailBody({ detailState }) {
     );
   }
 
-  return <MarkdownView markdown={bodyMd}/>;
+  return <MarkdownView markdown={markdown}/>;
 }
 
 // SECURITY: marked.parse → DOMPurify.sanitize → HTML. DOMPurify 부재 / parse 실패 시 null 반환 →
@@ -2750,22 +2889,17 @@ function EmptyStateO({ message }) {
   return <EmptyState message={message} />;
 }
 
-function ErrorBannerO({ title, detail, onRetry }) {
-  const { Icon } = window.UI;
+// plain sentence + next step; the raw answer stays behind Details, Retry only when no page banner owns it
+function RegionErrorO({ source, error, onRetry }) {
+  const { RegionUnavailable } = window.UI;
+  return <RegionUnavailable source={source} error={error} onRetry={onRetry} className="m-3"/>;
+}
+
+// 레인이 실패 배너를 소유하므로 본문은 '적재 실패' 만 말한다 — 같은 오류를 두 번 쓰지 않는다.
+function PayloadUnavailableO({ label }) {
   return (
-    <div
-      role="alert"
-      className="rounded-md border p-3 flex items-start gap-3 m-3"
-      style={{
-        background: 'rgb(var(--crit) / 0.08)',
-        borderColor: 'rgb(var(--crit) / 0.4)',
-      }}>
-      <Icon name="warn" size={16} className="text-crit mt-0.5"/>
-      <div className="flex-1 min-w-0">
-        <div className="fs-body font-medium text-ink">{title}</div>
-        {detail && <div className="fs-meta font-mono text-dim mt-1 break-all">{detail}</div>}
-      </div>
-      <button className="btn sm" onClick={onRetry} aria-label="Retry">Retry</button>
+    <div className="p-4 fs-meta text-dim" role="status">
+      {label} unavailable — see the alarm above.
     </div>
   );
 }
@@ -2790,9 +2924,10 @@ function BlockedBannerO({ detail }) {
             Not responding. Check the service or try again shortly.
           </div>
           {detail && (
-            <div className="fs-meta font-mono text-faint mt-2 break-all">
-              Last error: {detail}
-            </div>
+            <details className="fs-meta text-faint mt-2">
+              <summary className="cursor-pointer">Details</summary>
+              <code className="block mt-1 font-mono break-all">{detail}</code>
+            </details>
           )}
         </div>
       </div>
@@ -2800,31 +2935,12 @@ function BlockedBannerO({ detail }) {
   );
 }
 
-function ChartSkeletonO({ height = 220 }) {
-  return (
-    <div
-      aria-busy="true"
-      style={{
-        width: '100%',
-        height,
-        borderRadius: 8,
-        background: 'rgb(var(--sunken))',
-        opacity: 0.7,
-        animation: 'skelPulseO 1.4s ease-in-out infinite',
-      }}
-    />
-  );
+function ChartSkeletonO({ label, height = 220 }) {
+  const { LoadingPlaceholder } = window.UI;
+  return <LoadingPlaceholder label={label} minHeight={height}/>;
 }
 
 // ----- Pure helpers ---------------------------------------------------------
-
-// 기간 칩 값 정규화 — 'all' sentinel 보존 + 숫자 칩은 Number 로 환원 (route wire format 일치).
-// Number('all') = NaN 좌절 회피: 'all' 직접 통과, 그 외 유효 숫자만 number, 미해석 → 30 fallback.
-function normalizeDaysO(value) {
-  if (value === OUTCOME_ALL_PERIOD) return OUTCOME_ALL_PERIOD;
-  const n = Number(value);
-  return Number.isFinite(n) && n > 0 ? n : 30;
-}
 
 // URL hash days 복원 — 'all' 문자열 보존 (북마크/새로고침 시 전체 기간 뷰 유지).
 function normalizeDaysFromHashO(raw, fallback) {
@@ -2945,6 +3061,11 @@ function buildSearchUrlO(filter, sort, page, limit, includeAll) {
   return `/api/outcomes/search?${params.toString()}`;
 }
 
+// Needs-you 창 전체 질의 — ledger 필터 그대로 + attention 술어, 항상 첫 행부터 (page 무관).
+function buildNeedsYouUrlO(filter, sort, limit, includeAll) {
+  return `${buildSearchUrlO(filter, sort, 0, limit, includeAll)}&needs_attention=true`;
+}
+
 // T13 (O2) — agent facet 옵션을 canonical registry 집합에서 생성 (현재 페이지 rows
 // 파생 아님 · 구 collectDistinctAgentsO 는 페이지 스코프라 페이지네이션마다 드롭다운이
 // 흔들렸다). Pure: canonical keys in → 정렬·중복제거된 non-empty 옵션값 out.
@@ -2971,12 +3092,37 @@ function extractCanonicalAgentIdsO(summaryData) {
 
 async function fetchJsonO(url, signal) {
   const res = await fetch(url, { signal, headers: { Accept: 'application/json' } });
-  if (!res.ok) {
-    let body = '';
-    try { body = await res.text(); } catch (_e) { /* ignore body parse failure */ }
-    throw new Error(`HTTP ${res.status} ${res.statusText}${body ? ' — ' + body.slice(0, 120) : ''}`);
-  }
+  if (!res.ok) throw await window.UI.getFetchError(res);
   return res.json();
+}
+
+/**
+ * One region fetch wave keyed by its URL — held data stays on screen until the answer settles.
+ * @param options.mapData - payload → region data
+ * @param options.onData - runs only when this wave's answer lands (e.g. advancing the stamp time)
+ * @returns cleanup that aborts the wave; a superseded or aborted wave never lands
+ */
+function runRegionFetchO(setter, url, { mapData, onData } = {}) {
+  const { putRegionRequest, putRegionData, putRegionFailure } = window.UI;
+  const ctrl = new AbortController();
+  setter((s) => putRegionRequest(s, url, ctrl));
+
+  fetchJsonO(url, ctrl.signal)
+    .then((data) => {
+      // effects abort before re-running → an unaborted wave is the newest one
+      if (!ctrl.signal.aborted) onData?.();
+      setter((s) => putRegionData(s, ctrl, mapData ? mapData(data) : data));
+    })
+    .catch((err) => setter((s) => putRegionFailure(s, ctrl, err)));
+
+  return () => ctrl.abort();
+}
+
+// no rows held + failing past the threshold → outage ('blocked'); held rows stay on screen instead
+function putSearchFailureO(state, request, err, elapsedMs) {
+  const next = window.UI.putRegionFailure(state, request, err);
+  const isOutage = next !== state && next.status === 'error' && elapsedMs >= BACKEND_FAIL_THRESHOLD_MS;
+  return isOutage ? { ...next, status: 'blocked' } : next;
 }
 
 function errorMessage(err) {
@@ -2989,16 +3135,6 @@ function handleErrorO(err, setter) {
   setter({ status: 'error', data: null, error: errorMessage(err) });
 }
 
-// 연속 5xx/network 실패 BACKEND_FAIL_THRESHOLD_MS 경과 → 'blocked' 상태 + 별도 배너.
-function handleSearchErrorO(err, setter, firstFailRef) {
-  if (err && err.name === 'AbortError') return;
-  const now = Date.now();
-  if (firstFailRef.current == null) firstFailRef.current = now;
-  const elapsed = now - firstFailRef.current;
-  const detail = errorMessage(err);
-  const status = elapsed >= BACKEND_FAIL_THRESHOLD_MS ? 'blocked' : 'error';
-  setter({ status, data: null, error: detail });
-}
 
 function truncateO(str, len) {
   if (typeof str !== 'string') return '';
@@ -3084,31 +3220,28 @@ function attributionDayLabelO(day) {
 
 // ----- 분석 섹션 helpers -----------------------------------------------------
 
-// cross-analysis by_result → { result: count }. ANALYTICS_KPI_ORDER 4 키 기본값 0 보장.
+// cross-analysis by_result → { result: writer-emitted count } — 모집단 writerTotal 과 같은 사실 (getWriterCount SoT).
+// ANALYTICS_KPI_ORDER 4 키 기본값 0 보장.
 function buildByResultCountMapO(byResult) {
   const out = {};
   for (const key of ANALYTICS_KPI_ORDER) out[key] = 0;
   if (!Array.isArray(byResult)) return out;
   for (const row of byResult) {
     if (row && typeof row.result === 'string') {
-      out[row.result] = Number(row.count) || 0;
+      out[row.result] = window.UI.getWriterCount(row);
     }
   }
   return out;
 }
 
-// cross-analysis by_result → { result: reconstructed_count } (합성 복구행 서브카운트).
-//   writer-emitted headline = count - reconstructed_count. 필드 부재(구 응답) → 0 (분리 없음과 동일).
-function buildByResultReconstructedMapO(byResult) {
-  const out = {};
-  for (const key of ANALYTICS_KPI_ORDER) out[key] = 0;
-  if (!Array.isArray(byResult)) return out;
-  for (const row of byResult) {
-    if (row && typeof row.result === 'string') {
-      out[row.result] = Number(row.reconstructed_count) || 0;
-    }
-  }
-  return out;
+// cross-analysis payload → analytics card data. The agent stack stays uncapped: the failure table must list every failing registry agent.
+function buildAnalyticsDataO(overall) {
+  return {
+    overall,
+    byResultCount: buildByResultCountMapO(overall.by_result),
+    agentStack: buildAgentStackO(overall.by_agent_result, ANALYTICS_KPI_ORDER),
+    crosstab: buildCrosstabO(overall.cells),
+  };
 }
 
 // cross-analysis by_agent_result (단일 GROUP BY (agent, result)) → 에이전트별 스택 행.
@@ -3116,7 +3249,7 @@ function buildByResultReconstructedMapO(byResult) {
 // 서버가 canonical agent 전체의 모든 result 를 한 쿼리로 반환하므로 per-agent total 이 정확히 정합.
 // resultOrder(4-KPI) 밖 result(needs_context 등)는 스택 미표시 → total/byResult 에서 제외(막대 합 100%).
 // reconstructed = reconstructed_count 누적(합성 복구행) — headline 을 writer-emitted(total-reconstructed)로 분리.
-// 반환: total desc top-N.
+// 반환: total desc top-N (topN 생략 시 전체).
 function buildAgentStackO(byAgentResult, resultOrder, topN) {
   const resultSet = new Set(resultOrder);
   const byAgent = new Map();
@@ -3134,22 +3267,6 @@ function buildAgentStackO(byAgentResult, resultOrder, topN) {
   return Array.from(byAgent.values())
     .sort((a, b) => b.total - a.total)
     .slice(0, topN);
-}
-
-function sumByResultO(byResultCount) {
-  let total = 0;
-  for (const key of ANALYTICS_KPI_ORDER) total += byResultCount[key] || 0;
-  return total;
-}
-
-// cross-analysis by_result[] 에서 단일 result 카운트 추출 (needs_context 등 비-KPI result, P2).
-// 응답 미포함 result → 0 (해당 기간 0건과 동일 처리).
-function extractResultCountO(byResult, result) {
-  if (!Array.isArray(byResult)) return 0;
-  for (const row of byResult) {
-    if (row && row.result === result) return Number(row.count) || 0;
-  }
-  return 0;
 }
 
 // cross-analysis cells[] (12-cell) → confidence×metric_pass 조회 맵 + 합계 (P2 polar-mismatch cross-tab).

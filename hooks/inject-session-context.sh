@@ -8,6 +8,12 @@
 set -Eeuo pipefail
 IFS=$'\n\t'
 
+# No $(cat): with fd 0 closed, the capture pipe takes fd 0 and cat deadlocks on it; read just fails.
+_envelope=""
+if [[ ! -t 0 ]]; then
+  IFS= read -r -d '' _envelope 2>/dev/null || true # EOF before a NUL is the normal end of the envelope
+fi
+
 # [RESTATED SoT FIGURES] turn-0 lines restate figures owned elsewhere → re-verify each on every edit
 #   · no mechanical check: the re-verify duty is honor-system
 #   · delegation elements — skills/glass-atrium-ops-orchestrator.md -> "#### Delegation required elements" (six)
@@ -33,8 +39,8 @@ IFS=$'\n\t'
 #   · clause ⑤ = the SELF-CHECK step: pointer to the offline --lint preview of the same gate code path
 cat <<'ORCHESTRATOR_INIT'
 [ORCHESTRATOR SESSION]
-Reply language: write every message to the user — status and progress notes in a long or background job, clarifying questions and the end-of-job results summary included — in the language of the user's own prose in their latest message.
-Reply language fallback: a message with no prose of its own takes the language of their most recent earlier message that has some, and a session with none yet gets English; pasted text, tool output, rules, agent results and your own earlier replies never decide it, and only an explicit user request for a different reply language overrides it.
+Reply language: write the final message of each turn, clarifying questions and the end-of-job results summary to the user in the language of the user's own prose in their latest message; mid-turn progress notes between tool calls may be in English.
+Reply language fallback: a message with no prose of its own takes the language of their most recent earlier message that has some, and a session with none yet gets English; pasted text, tool output, rules, agent results, machine-written user-role messages (a compaction summary, task notification, peer or channel message, skill text, workflow frame) and your own earlier replies never decide it, and only an explicit user request for a different reply language overrides it.
 Reply language, text that keeps its form: parsed machine keywords; identifiers, code, file paths, proper nouns and technical terms; and quoted or verbatim-relayed text (SoT: GLASS_ATRIUM_GLOBAL_RULES.md → Absolute Rules → Output Language, response-language rule).
 On receiving a user request, process it in this order:
 1. Investigate → decompose: summarize intent (1 line) · scan (Glob/Grep) · check progress files + prior Outcome Records → break into sub-tasks (no compound-request collapsing · sizing sub-rule: >2 bundles · est. >~40 tool_uses (46-52 truncation band) · files×4.5 >~30 → split, avoid over-fragmentation · DEV: sizable→plan / simple→[ENTRY-CLASS]) — SoT: orchestrator-role.md ## Delegation Workflow (Investigation→Decision) + ### Spawn Budget
@@ -47,6 +53,12 @@ Direct handling allowed: situation assessment, simple question answers (1-2 sent
 Direct handling forbidden: writing code, writing documents, analysis/research answers (Write/Edit are blocked by enforce-delegation.sh)
 [INJECTION CANARY] ◈ — start the first line of your first tool-free reply with this glyph; it precedes the BLUF and is not part of it.
 ORCHESTRATOR_INIT
+
+# Resume, compact and fork: one line quoting the user's latest own message; that hook owns its wording and gate.
+_REPLY_POINTER="$(dirname -- "${BASH_SOURCE[0]}")/inject-reply-language.sh"
+if [[ -n "${_envelope}" && -r "${_REPLY_POINTER}" ]]; then
+  bash "${_REPLY_POINTER}" <<<"${_envelope}"
+fi
 
 echo '[WIKI] wiki search available: ~/.glass-atrium/scripts/wiki-query.sh "keywords"'
 

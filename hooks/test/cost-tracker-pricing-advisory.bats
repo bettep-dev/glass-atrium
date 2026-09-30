@@ -20,7 +20,7 @@
 #      no DATA-183, clean $0 row still recorded
 #   9. missing model field → zero-cost allowlist: no advisory, no DATA-183,
 #      clean $0 row (the resolution chain is never walked)
-#  10. sonnet-5 launch-window boundary — COST_TRACKER_TODAY 2026-08-31 →
+#  10. synthetic sonnet-5 launch window (fixture tier) — COST_TRACKER_TODAY 2026-08-31 →
 #      intro 0.007, 2026-09-01 → standard 0.0105 (tier-by-date in the loader)
 #  11. family-matched NEW id (claude-opus-4-9) → older-family rate 0.0175 +
 #      model=unknown:<id> resolution=family_latest + DATA-183 — the
@@ -56,11 +56,16 @@ HOOK_SH="${HOOKS_DIR}/cost-tracker.sh"
 # Same date as the fixture SoT last_verified → age 0 → staleness silent.
 FRESH_TODAY="2026-07-02"
 
+# shellcheck source-path=SCRIPTDIR source=../../scripts/lib/path-guard.sh
+source "${BATS_TEST_DIRNAME}/../../scripts/lib/path-guard.sh"
+
 setup() {
   TEST_TMP="$(mktemp -d "${TMPDIR:-/tmp}/cost-tracker-bats.XXXXXX")"
+  # Absolute even under a relative TMPDIR — the teardown guard refuses a relative target.
+  TEST_TMP="$(cd -- "${TEST_TMP}" && pwd -P)"
   FIXTURE_SOT="${TEST_TMP}/pricing.json"
   # Fixture SoT: value-aligned with the production rows the cases anchor on
-  # (opus-4-8, fable-5 fallback, sonnet-5 + intro tier, haiku-4-5), with a
+  # (opus-4-8, fable-5 fallback, haiku-4-5) plus a synthetic sonnet-5 tier, with a
   # pinned last_verified so the staleness cases stay deterministic forever.
   cat >"${FIXTURE_SOT}" <<'JSON'
 {
@@ -102,7 +107,7 @@ JSON
 }
 
 teardown() {
-  rm -rf "${TEST_TMP}"
+  if ga_guard_path "${TEST_TMP:-}"; then rm -rf -- "${TEST_TMP:?}"; fi
 }
 
 # Write a synthetic single-turn transcript: one user line + one assistant
@@ -349,9 +354,9 @@ _run_parser() {
   [[ "${output}" == *'"parse_error": false'* ]]
 }
 
-# Case 10: sonnet-5 launch-window boundary (intro rate through 2026-08-31)
+# Case 10: synthetic sonnet-5 launch window (fixture tier, intro rate through 2026-08-31)
 
-@test "claude-sonnet-5 prices intro 0.007 on 2026-08-31 and standard 0.0105 on 2026-09-01" {
+@test "a tiered fixture row prices claude-sonnet-5 at intro 0.007 on 2026-08-31 and standard 0.0105 on 2026-09-01" {
   local tx
   tx="${TEST_TMP}/sonnet5.jsonl"
   _make_transcript "claude-sonnet-5" "${tx}"
@@ -448,4 +453,53 @@ _run_parser() {
   [[ ! "${err}" =~ "ModuleNotFoundError" ]]
   [[ ! "${err}" =~ '"error_code":"DATA-184"' ]]
   [[ "${err}" =~ "resolution=fallback" ]]
+}
+
+@test "the parser stderr temp never outlives the run, on a clean exit or a parser crash" {
+  local -a rows=('clean|0' 'crash|1')
+  local row name want tx tmp_root leftovers
+  tx="${TEST_TMP}/leftover.jsonl"
+  _make_transcript "claude-opus-4-8" "${tx}"
+  for row in "${rows[@]}"; do
+    IFS='|' read -r name want <<<"${row}"
+    tmp_root="${TEST_TMP}/tmp-${name}"
+    mkdir -p "${tmp_root}"
+    if [[ "${name}" == "crash" ]]; then
+      printf '%s' '{"schema_version": 1, "corrupt' >"${FIXTURE_SOT}"
+    fi
+    TMPDIR="${tmp_root}" _run_hook "${tx}" "${FRESH_TODAY}" "${TEST_TMP}/err-${name}.txt"
+    [[ "${status}" -eq "${want}" ]] || {
+      echo "${name}: exit ${status}, want ${want}"
+      return 1
+    }
+    leftovers="$(find "${tmp_root}" -name 'cost-tracker-stderr.*' | wc -l | tr -d ' ')"
+    [[ "${leftovers}" == "0" ]] || {
+      echo "${name}: parser stderr temp left under TMPDIR: ${leftovers}"
+      return 1
+    }
+  done
+}
+
+# A relative TMPDIR makes the mktemp template relative — teardown must still reach the sandbox.
+@test "teardown removes the sandbox that setup made under a relative TMPDIR" {
+  local suite_tmp="${TEST_TMP}" base="${BATS_TEST_TMPDIR}/relative-tmpdir"
+  mkdir -p "${base}/rel"
+  cd -- "${base}" || return 1
+  TMPDIR=rel setup
+  [[ -d "${TEST_TMP}" ]] || {
+    echo "setup made no sandbox at ${TEST_TMP}" >&2
+    return 1
+  }
+  run teardown
+  TEST_TMP="${suite_tmp}"
+  [[ "${status}" -eq 0 && -z "${output}" ]] || {
+    echo "teardown failed (status ${status}): ${output}" >&2
+    return 1
+  }
+  local left
+  left="$(ls -A -- "${base}/rel")"
+  [[ -z "${left}" ]] || {
+    echo "sandbox left behind: ${left}" >&2
+    return 1
+  }
 }

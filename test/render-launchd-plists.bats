@@ -17,6 +17,8 @@ REAL_RENDERER="${GA}/scripts/render-launchd-plists.sh"
 REAL_GA="${GA}/glass-atrium"
 TEMPLATE="${GA}/config.toml.example"
 FAKE_HOME="/Users/ga-fake-user"
+# shellcheck source-path=SCRIPTDIR source=../scripts/lib/path-guard.sh
+source "${GA}/scripts/lib/path-guard.sh"
 
 setup() {
   [[ -f "${REAL_RENDERER}" ]] || skip "renderer not found: ${REAL_RENDERER}"
@@ -36,7 +38,7 @@ setup() {
 }
 
 teardown() {
-  [[ -n "${SANDBOX:-}" && -d "${SANDBOX}" ]] && rm -rf -- "${SANDBOX}" || true
+  if ga_guard_path "${SANDBOX:-}"; then rm -rf -- "${SANDBOX:?}"; fi
 }
 
 run_render() {
@@ -202,4 +204,26 @@ run_render() {
   # the wired path inherits the leak gate: zero authoring-user paths
   run grep -RF "${HOME}" "${OUT}"
   [[ "${status}" -eq 1 ]]
+}
+
+@test "a failed render deletes its temp plist under an absolute out dir" {
+  local broken="${SANDBOX}/broken.toml"
+  # An out-of-range schedule fails the wiki-compile render after its temp plist exists.
+  sed -e 's|^time = "04:50"|time = "99:99"|' "${FAKE_CONFIG}" >"${broken}"
+
+  GA_CONFIG_TOML="${broken}" GA_PLIST_OUT="${OUT}" run "${REAL_RENDERER}"
+  [[ "${status}" -eq 4 ]] || { echo "absolute out: rc=${status} ${output}"; return 1; }
+  run find "${OUT}" -name '*.ga-render.*'
+  [[ -z "${output}" ]] || { echo "absolute out: the temp outlived the failed render: ${output}"; return 1; }
+}
+
+@test "a failed render deletes its temp plist under a cwd-relative out dir" {
+  local broken="${SANDBOX}/broken.toml" cwd="${SANDBOX}/cwd"
+  sed -e 's|^time = "04:50"|time = "99:99"|' "${FAKE_CONFIG}" >"${broken}"
+  mkdir -p "${cwd}"
+
+  run bash -c 'cd -- "$1" && GA_CONFIG_TOML="$2" GA_PLIST_OUT=rel "$3"' _ "${cwd}" "${broken}" "${REAL_RENDERER}"
+  [[ "${status}" -eq 4 ]] || { echo "relative out: rc=${status} ${output}"; return 1; }
+  run find "${cwd}/rel" -name '*.ga-render.*'
+  [[ -z "${output}" ]] || { echo "relative out: the temp outlived the failed render: ${output}"; return 1; }
 }

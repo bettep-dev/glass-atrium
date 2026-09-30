@@ -12,6 +12,9 @@
 
 HOOK_SH="${TRACK_OUTCOME_SH:-${BATS_TEST_DIRNAME}/../track-outcome.sh}"
 
+# shellcheck source-path=SCRIPTDIR source=../../scripts/lib/path-guard.sh
+source "${BATS_TEST_DIRNAME}/../../scripts/lib/path-guard.sh"
+
 setup() {
   [[ -f "${HOOK_SH}" ]] || skip "track-outcome.sh not found: ${HOOK_SH}"
   command -v python3 >/dev/null 2>&1 || skip "python3 required"
@@ -52,7 +55,7 @@ setup() {
 }
 
 teardown() {
-  [[ -n "${SE_TMP:-}" && -d "${SE_TMP}" ]] && rm -rf -- "${SE_TMP}" || true
+  if ga_guard_path "${SE_TMP:-}"; then rm -rf -- "${SE_TMP:?}"; fi
 }
 
 # $1 = record-0 delegation prompt, $2 = the completion block text,
@@ -212,4 +215,43 @@ spooled_field() {
     || { echo "general 'detects scope excess' claim present" >&2; return 1; }
   grep -qiF 'DISCLOSURE-GATED, NOT verification-gated' "${BATS_TEST_DIRNAME}/../lib/scope-match.sh" \
     || { echo "standing-rule exemption not labelled disclosure-gated" >&2; return 1; }
+}
+
+@test "the comparison reads the line-opening declaration, whatever [SCOPE] text the prompt quotes" {
+  local real='[SCOPE] files=hooks/a.sh · deliverable=fix · out=none' long_list="" i
+  for ((i = 1; i <= 150; i++)); do
+    long_list="${long_list}monitor/src/f${i}.ts, "
+  done
+  local -a names=(
+    'quoted verdict ahead of the declaration, declared path authored → silent'
+    'mention without files= ahead of the declaration, undeclared path authored → scope-excess'
+    'declaration longer than the transport cap → skipped, never compared against a cut list'
+  )
+  local -a prompts=(
+    "> reviewer: the [SCOPE] files= list omitted hooks/test/x.bats"$'\n'"${real}"
+    '[SCOPE] — the 7th delegation element'$'\n'"${real}"
+    "[SCOPE] files=${long_list}hooks/a.sh · deliverable=fix · out=none"
+  )
+  local -a authored=('hooks/a.sh' 'hooks/a.sh, hooks/undeclared.sh' 'hooks/a.sh')
+  local -a expected=('silent' 'excess' 'silent')
+  local block recorded reasons got
+  for i in "${!names[@]}"; do
+    if ga_guard_path "${SPOOL_DIR}"; then rm -rf -- "${SPOOL_DIR:?}"; fi
+    block="$(completion_block 'result: done' 'task_type: bug-fix' 'metric_pass: true' 'confidence: high' \
+      "files: ${authored[${i}]}" 'style_ref: hooks/a.sh' 'summary: fixed a')"
+    write_transcript "${prompts[${i}]}" "${block}"
+    run_hook
+    recorded="$(spooled_field result)"
+    [[ "${recorded}" == "done" ]] || {
+      echo "${names[${i}]}: row not recorded" >&2
+      return 1
+    }
+    reasons="$(spooled_field review_flag_reasons)"
+    got='silent'
+    [[ "${reasons}" != *"scope-excess"* ]] || got='excess'
+    [[ "${got}" == "${expected[${i}]}" ]] || {
+      echo "${names[${i}]}: expected ${expected[${i}]}, got ${got}" >&2
+      return 1
+    }
+  done
 }

@@ -24,6 +24,9 @@ HOOKS_DIR="${BATS_TEST_DIRNAME}/.."
 HOOK_SH="${HOOKS_DIR}/track-outcome.sh"
 PG_HELPER_SRC="${HOOKS_DIR}/_pg_outcome_dualwrite.py"
 
+# shellcheck source-path=SCRIPTDIR source=../../scripts/lib/path-guard.sh
+source "${BATS_TEST_DIRNAME}/../../scripts/lib/path-guard.sh"
+
 setup() {
   [[ -f "${HOOK_SH}" ]] || skip "track-outcome.sh not found: ${HOOK_SH}"
   [[ -f "${PG_HELPER_SRC}" ]] || skip "_pg_outcome_dualwrite.py not found: ${PG_HELPER_SRC}"
@@ -75,9 +78,7 @@ PY
   # `if` (not `[[ ]] && cmd`) so a false guard returns 0 — otherwise a setup-skip
   # (TS_TMP unset) makes this final statement teardown's non-zero exit → bats turns
   # the clean skip into `not ok`.
-  if [[ -n "${TS_TMP:-}" && -d "${TS_TMP}" ]]; then
-    rm -rf "${TS_TMP}"
-  fi
+  if ga_guard_path "${TS_TMP:-}"; then rm -rf -- "${TS_TMP:?}"; fi
 }
 
 # Write the synthetic subagent transcript: delegation(user) → assistant text → assistant

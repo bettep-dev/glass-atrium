@@ -70,7 +70,12 @@ MTIME_CACHE_FILE="${MTIME_CACHE_DIR}/${SAFE_SID}.json"
 # (non-sot resolution / multi-model / pricing-staleness) are RELAYED to real
 # stderr below instead of discarded. Trap cleans the temp file on any exit.
 PARSER_STDERR=$(mktemp "${TMPDIR:-/tmp}/cost-tracker-stderr.XXXXXX")
-trap 'rm -f "${PARSER_STDERR}"' EXIT INT TERM
+# shellcheck disable=SC2329  # invoked from the EXIT trap string
+delete_parser_stderr() {
+  # shellcheck disable=SC2310  # pure predicate — nothing inside it for errexit to catch
+  if ga_guard_path "${PARSER_STDERR}"; then rm -f -- "${PARSER_STDERR:?}"; fi
+}
+trap 'delete_parser_stderr' EXIT INT TERM
 
 # Aggregate usage from transcript_path. Shell vars cross via os.environ — dodges
 # SC2259 (heredoc + -c stdin conflict) AND neutralises injection from
@@ -176,8 +181,8 @@ def calc_cost(it, ot, cr, cc, model_key):
     """Compute USD cost from the per-MTok rate resolved by
     pricing_loader.rate_for, keyed on the effective "today" (get_today, honors
     COST_TRACKER_TODAY so the bats suite stays clock-independent). Windowed
-    tiers (e.g. the sonnet-5 intro rate through 2026-08-31) are selected
-    inside the loader by that date.
+    tiers, where the SoT row for a model carries one, are selected inside
+    the loader by that date.
     Advisory contract (caller-owned): resolution label "sot" is silent; EVERY
     non-sot label (overlay / remote / family_latest / fallback) means the SoT
     lacks a row for this model — emit the stderr advisory so an operator adds

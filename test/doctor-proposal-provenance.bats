@@ -37,6 +37,8 @@
 bats_require_minimum_version 1.5.0
 
 GA="$(cd -- "${BATS_TEST_DIRNAME}/.." && pwd)"
+# shellcheck source-path=SCRIPTDIR source=../scripts/lib/path-guard.sh
+source "${GA}/scripts/lib/path-guard.sh"
 
 setup() {
   command -v jq >/dev/null 2>&1 || skip "jq required"
@@ -57,7 +59,7 @@ setup() {
 
 teardown() {
   unset GA_SKIP_DB_SETUP
-  [[ -n "${SANDBOX:-}" && -d "${SANDBOX}" ]] && rm -rf -- "${SANDBOX}" || true
+  if ga_guard_path "${SANDBOX:-}"; then rm -rf -- "${SANDBOX:?}"; fi
 }
 
 # Recording psql stub: the query kind is read off the SQL on stdin, the answer and exit code come
@@ -120,7 +122,11 @@ path_without_psql() {
       # a name already linked from an earlier entry loses, mirroring PATH precedence
       ln -s -- "${part}"/* "${farm}/" 2>/dev/null || true
     done
-    rm -f -- "${farm}/psql"
+    if ga_guard_path "${farm}"; then
+      rm -f -- "${farm:?}/psql"
+    else
+      return 1
+    fi
   fi
   printf '%s' "${farm}"
 }

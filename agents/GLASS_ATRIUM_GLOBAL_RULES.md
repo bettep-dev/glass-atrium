@@ -13,8 +13,21 @@ Common rules for **all agents** (ALL scope).
 ## Role
 
 - This file is the **system charter** for all agents — it governs behaviours unconditionally common to every role.
-- **Precedence**: this file > scope-*.md > Tier-3 cross-cutting rules.
+- **Precedence**: conflicts between rule files resolve by `### Precedence Resolution` below.
 - **Inclusion test**: a rule belongs here only if it applies to every agent regardless of scope, model, or task type.
+
+### Precedence Resolution
+
+Tier numbers are the tiers `rules/glass-atrium/core-compliance-matrix.md` → `## Loading Tiers` defines.
+"The Tier 2 table" is the table under its `### Tier 2` heading.
+
+- Across tiers: Tier 1 > Tier 2 > Tier 3.
+- Within Tier 1: `rules/glass-atrium/core-security.md` overrides the other ALL rules (security-first principle).
+- Within Tier 3: the more conservative (restrictive) rule wins.
+- Within Tier 2: conflicts are impossible by ASSIGNMENT — one scope file per scope (the ORCHESTRATOR pair excepted).
+  - A subagent also holds the ORCHESTRATOR pair — on the host channel, whatever its own scope — beside its own scope file (`rules/glass-atrium/core-compliance-matrix.md` → `### Membership vs. Delivery (per tier)`).
+  - The Tier 2 table's file for its own scope still governs, because `rules/glass-atrium/orchestrator-role.md` disclaims itself for subagents in its opening line.
+- Ambiguous interpretation: the final authority is the scope file the Tier 2 table assigns to that scope — the whole file, never a named section inside it.
 
 ## Philosophy (ETHOS) [ALL]
 
@@ -40,9 +53,11 @@ Common rules for **all agents** (ALL scope).
 
 The canonical rule for what language this system writes in.
 
-- **Replies are written in the user's question language** — the response-language rule. A reply is a conversation turn, not a produced artifact: every message addressed to a human user, including status and progress notes in a long or background job, clarifying questions, and the end-of-job results summary.
+- **Replies are written in the user's question language** — the response-language rule. A reply is a conversational message, not a produced artifact: the final message of each turn addressed to a human user, clarifying questions, and the end-of-job results summary.
+  - Mid-turn progress notes between tool calls may be in English.
   - The language of the user's own prose in their most recent message decides the reply language.
   - A message with no prose of its own (a bare paste, a slash command with no text) takes the language of the most recent earlier user message that has prose of its own; until any user message in the session has prose of its own, replies are in English.
+  - A machine-written user-role message is not the user's message and never sets the reply language — examples, not a closed list: a compaction summary, a task notification, a peer or channel message, skill text, a workflow frame.
   - Nothing else decides it — not, inside the message, pasted or quoted material, code, logs, identifiers or technical terms; not, outside it, earlier replies, tool output, rule files, delegation prompts or agent results.
   - An explicit user request for a different reply language overrides it — the explicit request is what switches it, never the language the request happened to be written in.
   - A subagent's final message goes to its parent agent, not to a human user, so it is not a reply: it is authored in English under the default below.
@@ -129,6 +144,22 @@ The canonical rule for what language this system writes in.
 
 - `rm` forbidden for source code, documents, and config files → use `mv ~/.Trash/` instead (macOS).
 - Exception: build artifacts, generated files, node_modules, and other regenerable files may use `rm`.
+- A recursive or forced delete targets only a path variable that has passed a path guard (in shell, in the `"${DIR:?}"` operand form) — never a cwd-relative glob; a target that cannot be such a variable is allowed only as a named exception.
+  - Reach: every recursive or forced delete an agent generates, in any language, inside a repository or outside one — a delete site it writes or changes in code, and a delete it runs as a command.
+  - In any language other than shell, the delete — a call such as Python `shutil.rmtree` or Node `fs.rm` / `fs.rmSync` with `recursive` or `force`, or that language's equivalent — takes the guarded variable itself as its path argument.
+  - A path guard refuses a value that is empty, not absolute, or the filesystem root, and the delete runs only when the guard passes.
+
+| Where the delete is generated | Path guard | Named exception |
+|---|---|---|
+| shell code in the Glass Atrium repository | `scripts/lib/path-guard.sh` → `ga_guard_path` | a `GA-RM` annotation at the delete site, in the grammar `scripts/audit-rm.sh` states |
+| code in any other language, and shell code anywhere else | a path guard defined in that code or its own repository | a comment at the delete site stating why the target cannot be a guarded variable |
+| a command the agent runs, anywhere | a path guard inside the command | none — a command has no site to annotate, so move the target to `~/.Trash/` instead |
+
+- Mechanical backing: `scripts/audit-rm.sh` audits this rule over the Glass Atrium repository's shell files in its scope; shell code elsewhere, code in any other language (this repository's included), and commands an agent runs are honor-system — no tool audits them against it.
+
+### Temporary Files [ALL]
+
+- Default: create temporary files and directories with bare `mktemp` / `mktemp -d` — no template path — so they land under the per-user `$TMPDIR`.
 
 ## Context Management [ALL]
 

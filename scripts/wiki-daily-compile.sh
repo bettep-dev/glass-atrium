@@ -6,7 +6,7 @@
 #
 # Modes / exit codes (per-script table, never a shared numbering):
 #   0  compiled · skipped (no work, lock contention) · quota or budget-config abort
-#   1  generic claude -p failure · configured wiki root missing
+#   1  generic claude -p failure · configured wiki root missing · shared lib or path guard missing
 #   4  claude binary not found
 #   5  envelope structural violation (hostile-or-confused model output) — zero notes written
 #   6  envelope oversize — zero notes written
@@ -116,6 +116,7 @@ PG_DROP_TAG="wiki-daily-compile"
 # would execute with WIKI_COMPILE_SELF_DIR unset (pin F1).
 # shellcheck source=lib/wiki-envelope.sh
 . "$WIKI_COMPILE_SELF_DIR/lib/wiki-envelope.sh"
+# ga_guard_path, the gate on every removal below, arrives with pg-report-drop.sh and wiki-envelope.sh.
 
 # claude CLI resolution: WIKI_COMPILE_CLAUDE_BIN (Bats stub override) →
 # [paths].claude_bin (config.toml) → daemon-cycle.sh fallback chain (PATH →
@@ -211,8 +212,9 @@ _compile_cleanup() {
   # recursively removed, so a mangled RUN_DIR can never widen into someone else's tree.
   case "$RUN_DIR" in
     */wiki-compile-run.*)
-      if [ -d "$RUN_DIR" ]; then
-        rm -rf -- "$RUN_DIR"
+      # shellcheck disable=SC2310  # pure predicate — nothing inside it for errexit to catch
+      if ga_guard_path "${RUN_DIR}"; then
+        rm -rf -- "${RUN_DIR:?}"
       fi
       ;;
     *) ;;
@@ -417,11 +419,17 @@ _inject_source_raw() {
       next
     }
     { print line }
-  ' "${_note}" >"${_tmp}" 2>/dev/null; then                                       # GA-ABSORB[handled@else-branch-temp-cleanup]: awk status is the if condition; the else removes the temp
-    mv -f "${_tmp}" "${_note}" 2>/dev/null || rm -f "${_tmp}" 2>/dev/null || true # GA-ABSORB[handled@rm-fallback-same-line]: a failed atomic rename falls back to removing the temp, note untouched
-  else
-    rm -f "${_tmp}" 2>/dev/null || true # GA-ABSORB[benign]: teardown removal of a possibly-absent temp
+  ' "${_note}" >"${_tmp}" 2>/dev/null; then # GA-ABSORB[handled@temp-cleanup-below]: awk status is the if condition; a failure removes the temp
+    # GA-ABSORB[handled@temp-cleanup-below]: a failed atomic rename falls back to removing the temp, note untouched
+    if mv -f "${_tmp}" "${_note}" 2>/dev/null; then
+      return 0
+    fi
   fi
+  # A failed rewrite or rename leaves the note untouched; only the temp goes.
+  # shellcheck disable=SC2310  # pure predicate — nothing inside it for errexit to catch
+  if ga_guard_path "${_tmp}"; then
+    rm -f -- "${_tmp:?}"
+  fi || true # GA-ABSORB[handled@rm-stderr]: a real stamp-temp rm failure, already on stderr, must not abort the run
 }
 
 # Deliver one write_daemon_run envelope. Every reporting site shares this failure
@@ -535,7 +543,7 @@ printf '  - %s\n' "${UNPROCESSED[@]}" >>"$LOG_FILE"
 #
 # KNOWN INCONSISTENCY, left deliberately. The per-call fallback floor in
 # hooks/daemon_config.py was raised to 10.00 on the argument that a cap sized at
-# Haiku 4.5 rates starves Sonnet 5 (~3x the token rates); this ceiling is a fifth
+# Haiku 4.5 rates starves Sonnet 5 (~2x the token rates); this ceiling is a fifth
 # of that and the same argument applies to it. It was NOT raised alongside the
 # floor because a spending ceiling is an operator's decision, not a side effect of
 # a model-retirement edit.
@@ -697,8 +705,18 @@ fi
 # can belong to a live one. Opportunistic: this is the ONLY reaper of that surface and it sits
 # past the unprocessed-count early exit, so a run of quiet nights sweeps nothing. A persistently
 # failing sweep is therefore silent growth — hence the warning rather than a bare `|| true`.
-# GA-ABSORB[handled@prune-warning-line-immediately-below]: the sweep's stderr is per-entry noise; its status is warned to the log
-if ! find "$WIKI_RUN_ROOT" -maxdepth 1 -type d -name 'wiki-compile-run.*' -mtime +1 -exec rm -rf -- {} + 2>/dev/null; then
+# A failed find emits one empty record: the guard skips it silently and it counts as a failure.
+prune_failed=0
+while IFS= read -r -d '' prune_dir; do
+  # shellcheck disable=SC2310  # pure predicate — nothing inside it for errexit to catch
+  if ga_guard_path "${prune_dir}"; then
+    rm -rf -- "${prune_dir:?}"
+  else
+    false
+  fi || prune_failed=1
+  # GA-ABSORB[handled@prune_failed-warning-after-loop]: find's stderr is per-entry noise; its failure is counted and warned
+done < <(find "$WIKI_RUN_ROOT" -maxdepth 1 -type d -name 'wiki-compile-run.*' -mtime +1 -print0 2>/dev/null || printf '\0')
+if [ "$prune_failed" -ne 0 ]; then
   echo "[$(date -u +%Y-%m-%dT%H:%M:%SZ)] orphan run-dir prune failed under ${WIKI_RUN_ROOT} (non-fatal)" >>"$LOG_FILE"
 fi
 if ! RUN_DIR="$(mktemp -d "${WIKI_RUN_ROOT}/wiki-compile-run.XXXXXX")"; then
@@ -905,7 +923,10 @@ for file in "${UNPROCESSED[@]}"; do
   if ! cat -- "$w_body" >"$w_tmp"; then
     echo "[$(date -u +%Y-%m-%dT%H:%M:%SZ)] WARN: staging copy failed for ${w_base} — note not written" >>"$LOG_FILE"
     echo "[wiki-daily-compile] WARN: staging copy failed for ${w_base} — note not written" >&2
-    rm -f -- "$w_tmp"
+    # shellcheck disable=SC2310  # pure predicate — nothing inside it for errexit to catch
+    if ga_guard_path "${w_tmp}"; then
+      rm -f -- "${w_tmp:?}"
+    fi
     continue
   fi
   # Same reachability class as the staging copy above: an unguarded promotion would let errexit
@@ -913,7 +934,10 @@ for file in "${UNPROCESSED[@]}"; do
   if ! mv -f -- "$w_tmp" "${NOTES_DIR}/${w_base}"; then
     echo "[$(date -u +%Y-%m-%dT%H:%M:%SZ)] WARN: promotion failed for ${w_base} — note not written" >>"$LOG_FILE"
     echo "[wiki-daily-compile] WARN: promotion failed for ${w_base} — note not written" >&2
-    rm -f -- "$w_tmp"
+    # shellcheck disable=SC2310  # pure predicate — nothing inside it for errexit to catch
+    if ga_guard_path "${w_tmp}"; then
+      rm -f -- "${w_tmp:?}"
+    fi
     continue
   fi
 done

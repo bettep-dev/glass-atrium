@@ -20,6 +20,9 @@
 HOOK_VGATE="${VGATE_SH:-${BATS_TEST_DIRNAME}/../enforce-verification-gate.sh}"
 HOOK_WFG="${WFG_SH:-${BATS_TEST_DIRNAME}/../enforce-workflow-verify-stage.sh}"
 
+# shellcheck source-path=SCRIPTDIR source=../../scripts/lib/path-guard.sh
+source "${BATS_TEST_DIRNAME}/../../scripts/lib/path-guard.sh"
+
 setup() {
   command -v jq >/dev/null 2>&1 || skip "jq required"
   command -v python3 >/dev/null 2>&1 || skip "python3 required"
@@ -32,7 +35,7 @@ setup() {
 teardown() {
   # session-spawns marker may be pre-seeded as a dir with restricted perms — restore before rm.
   [[ -n "${T12_TMP:-}" && -d "${T12_TMP}" ]] && chmod -R u+rwx "${T12_TMP}" 2>/dev/null
-  [[ -n "${T12_TMP:-}" && -d "${T12_TMP}" ]] && rm -rf -- "${T12_TMP}" || true
+  if ga_guard_path "${T12_TMP:-}"; then rm -rf -- "${T12_TMP:?}"; fi
 }
 
 # ---------------------------------------------------------------------------

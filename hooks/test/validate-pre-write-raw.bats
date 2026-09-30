@@ -5,6 +5,8 @@
 # Every check `return 1`s on mismatch: bash 3.2 does not abort on a failing mid-body `[[ ]]`, bash 5.3 does.
 
 RAW_HOOK="${BATS_TEST_DIRNAME}/../validate-pre-write-raw.sh"
+# shellcheck source-path=SCRIPTDIR source=../../scripts/lib/path-guard.sh
+source "${BATS_TEST_DIRNAME}/../../scripts/lib/path-guard.sh"
 
 setup() {
   command -v jq >/dev/null 2>&1 || skip "jq not on PATH"
@@ -319,7 +321,7 @@ conforming_doc() {
   ln -s "${root}/wiki/raw" "${root}/link-in"
   WIKI_ROOT="${root}/wiki" run bash "${RAW_HOOK}" \
     <<<"$(write_payload_at "${root}/link-in/c.md" "$(raw_doc 'no envelope')")"
-  rm -rf "${root}"
+  if ga_guard_path "${root}"; then rm -rf -- "${root:?}"; fi
   [[ "${status}" -eq 2 ]] || {
     echo "expected exit 2, got ${status}: ${output}" >&2
     return 1
