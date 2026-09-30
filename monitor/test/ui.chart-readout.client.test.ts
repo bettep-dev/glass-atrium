@@ -16,6 +16,14 @@ const getRovingIndex = ui.getRovingIndex as (key: string, index: number | null, 
 const getChartReadout = ui.getChartReadout as (point: Point | undefined, formatValue?: (v: number) => string) => string;
 const getChartSummary = ui.getChartSummary as (name: string, points: Point[], formatValue?: (v: number) => string) => string;
 const React = ui.React as { createElement: (t: unknown, p: unknown) => unknown };
+type TickAnchor = "start" | "middle" | "end";
+type TickSlot = { index: number; left: number; anchor: TickAnchor };
+const getChartTickAnchor = ui.getChartTickAnchor as (order: number, total: number) => TickAnchor;
+const getChartTickLayout = ui.getChartTickLayout as (labels: string[], kind: string, widthPx: number, maxTicks?: number) => TickSlot[];
+const getChartYScale = ui.getChartYScale as (points: Point[], kind: string, formatValue?: (v: number) => string) => { top: string; bottom: string } | null;
+const getChartImageProps = ui.getChartImageProps as (name: string, points: Point[], formatValue?: (v: number) => string) => Record<string, unknown>;
+// module consts are not context globals → read the window.UI export
+const { CHART_TICK_MIN_GAP_PX, CHART_TICK_CHAR_PX } = ui.UI as { CHART_TICK_MIN_GAP_PX: number; CHART_TICK_CHAR_PX: number };
 
 const pct = (v: number): string => `${v}%`;
 const WEEK: Point[] = ["09-18", "09-19", "09-20", "09-21", "09-22", "09-23", "09-24"].map((label, i) => ({
@@ -138,4 +146,113 @@ describe("the small trend atoms are named when labelled and hidden when decorati
       assert.equal(svg.props.role, undefined);
     });
   }
+});
+
+describe("edge ticks anchor by visible order, so neither end label spills past the plot", () => {
+  for (const total of [2, 6, 7]) {
+    test(`${total} visible ticks: the first starts at its point, the last ends at its point, the rest centre`, () => {
+      for (let order = 0; order < total; order++) {
+        const expected = order === 0 ? "start" : order === total - 1 ? "end" : "middle";
+        assert.equal(getChartTickAnchor(order, total), expected, `tick ${order} of ${total}`);
+      }
+    });
+  }
+
+  test("a lone tick centres on its point", () => assert.equal(getChartTickAnchor(0, 1), "middle"));
+
+  for (const kind of ["line", "bars"]) {
+    test(`${kind}: the rendered tick row shifts the first label right of its point and the last left of it`, () => {
+      const tree = render("TrendChart", { label: "Spend", points: WEEK, kind });
+      const shifts = findNodes(tree, (n) => n.props["data-chart-tick"] !== undefined)
+        .map((n) => (n.props.style as { transform: string }).transform);
+      assert.equal(shifts[0], "translateX(0)");
+      assert.equal(shifts[shifts.length - 1], "translateX(-100%)");
+      assert.ok(shifts.slice(1, -1).every((shift) => shift === "translateX(-50%)"), `interior labels centre: ${shifts}`);
+    });
+  }
+
+  test("the shared Recharts tick anchors by the same order rule", () => {
+    const rows = [
+      { name: "first visible tick", index: 0, anchor: "start" },
+      { name: "interior tick", index: 2, anchor: "middle" },
+      { name: "last visible tick", index: 4, anchor: "end" },
+    ];
+    for (const row of rows) {
+      const text = render("ChartAxisTick", { x: 40, y: 8, payload: { value: "09-20" }, index: row.index, visibleTicksCount: 5 });
+      assert.equal(text.type, "text", row.name);
+      assert.equal(text.props.textAnchor, row.anchor, row.name);
+      assert.equal(collectText(text), "09-20", row.name);
+    }
+  });
+});
+
+describe("tick labels thin out before they collide", () => {
+  const dayLabels = (count: number): string[] => Array.from({ length: count }, (_, i) => `09-${String(i + 1).padStart(2, "0")}`);
+  const getBoxes = (labels: string[], slots: TickSlot[], widthPx: number) => slots.map((slot) => {
+    const width = labels[slot.index].length * CHART_TICK_CHAR_PX;
+    const x = (slot.left / 100) * widthPx;
+    const start = slot.anchor === "start" ? x : slot.anchor === "end" ? x - width : x - width / 2;
+    return { start, end: start + width };
+  });
+
+  for (const kind of ["line", "bars"]) {
+    for (const widthPx of [160, 320, 480, 1024]) {
+      for (const count of [7, 27, 30, 90]) {
+        test(`${kind}, ${count} days in ${widthPx}px: no two labels sit closer than the minimum gap and the latest day is labelled`, () => {
+          const labels = dayLabels(count);
+          const slots = getChartTickLayout(labels, kind, widthPx);
+          const boxes = getBoxes(labels, slots, widthPx);
+          assert.ok(slots.length >= 2, `at least the two ends fit: ${slots.length}`);
+          assert.equal(slots[slots.length - 1].index, count - 1);
+          boxes.forEach((box, i) => {
+            if (i > 0) assert.ok(box.start - boxes[i - 1].end >= CHART_TICK_MIN_GAP_PX, `labels ${i - 1} and ${i} clear by the gap`);
+          });
+        });
+      }
+    }
+  }
+
+  test("a panel wide enough for every candidate keeps the full tick cap", () => {
+    assert.equal(getChartTickLayout(dayLabels(30), "bars", 2000, 7).length, 7);
+  });
+
+  test("an unmeasured row (width 0) keeps the count-based ticks", () => {
+    assert.deepEqual(getChartTickLayout(dayLabels(30), "line", 0, 7).map((slot) => slot.index), getChartTicks(30, 7));
+  });
+});
+
+describe("the optional y-scale states the plotted extent", () => {
+  const rows: Array<{ name: string; values: Array<number | null>; kind: string; top: number; bottom: number }> = [
+    { name: "a line runs from its low to its high", values: [80, 90, 85, 95], kind: "line", top: 95, bottom: 80 },
+    { name: "bars rise from zero to their high", values: [3, 7, 5], kind: "bars", top: 7, bottom: 0 },
+    { name: "a missing day never counts toward the extent", values: [40, null, 60], kind: "line", top: 60, bottom: 40 },
+  ];
+  for (const row of rows) {
+    test(row.name, () => {
+      const points = row.values.map((value, i) => ({ label: `d${i}`, value }));
+      assert.deepEqual({ ...getChartYScale(points, row.kind, pct) }, { top: pct(row.top), bottom: pct(row.bottom) });
+    });
+  }
+
+  test("a series with no value has no scale", () => {
+    assert.equal(getChartYScale([{ label: "d0", value: null }], "line", pct), null);
+  });
+
+  test("TrendChart shows the scale only when asked", () => {
+    const withScale = render("TrendChart", { label: "Rate", points: WEEK, formatValue: pct, yScale: true });
+    const [scale] = findNodes(withScale, (n) => n.props["data-chart-y-scale"] !== undefined);
+    assert.ok(scale, "the scale column renders");
+    assert.equal(scale.props["aria-hidden"], "true", "the summary already names low and high");
+    assert.match(collectText(scale), /95%[\s\S]*80%/);
+    const without = render("TrendChart", { label: "Rate", points: WEEK, formatValue: pct });
+    assert.equal(findNodes(without, (n) => n.props["data-chart-y-scale"] !== undefined).length, 0);
+  });
+});
+
+test("a Recharts chart wrapper gets a focusable image role named by the chart summary", () => {
+  assert.deepEqual({ ...getChartImageProps("Daily cost", WEEK, pct) }, {
+    role: "img",
+    tabIndex: 0,
+    "aria-label": getChartSummary("Daily cost", WEEK, pct),
+  });
 });

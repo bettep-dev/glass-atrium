@@ -219,6 +219,12 @@ function MiniBars({ data, w=60, h=22, color='currentColor', label }) {
 // Panel-width day chart: viewBox x runs 0..CHART_VIEW_W and stretches to the panel (preserveAspectRatio none).
 const CHART_VIEW_W = 100;
 const CHART_MAX_TICKS = 7;
+const CHART_PLOT_FILL = 0.85;
+/** Minimum px between tick labels; Recharts axes pass it as `minTickGap` with `interval="preserveStartEnd"`. */
+const CHART_TICK_MIN_GAP_PX = 8;
+// ponytail: fixed per-char estimate of a --fs-meta day label (≤7px) → measure with canvas if labels grow wide
+const CHART_TICK_CHAR_PX = 7;
+const CHART_TICK_SHIFT = { start: '0', middle: '-50%', end: '-100%' };
 
 // Evenly spaced day-tick indices, always the first and last day, at most maxTicks.
 function getChartTicks(count, maxTicks = CHART_MAX_TICKS) {
@@ -235,6 +241,67 @@ function getChartIndexAtRatio(ratio, count, kind = 'line') {
   const clamped = Math.min(1, Math.max(0, ratio));
   const index = kind === 'bars' ? Math.floor(clamped * count) : Math.round(clamped * (count - 1));
   return Math.min(count - 1, index);
+}
+
+/** Anchor of the order-th of total visible ticks (SVG textAnchor words): first starts at its point, last ends at it. */
+function getChartTickAnchor(order, total) {
+  if (total <= 1) return 'middle';
+  if (order === 0) return 'start';
+  return order === total - 1 ? 'end' : 'middle';
+}
+
+/**
+ * Day-tick slots for an HTML tick row: evenly spaced, latest day always kept, cap lowered until no two labels collide.
+ * @param widthPx - measured row width; 0 (not yet measured) keeps the count-based ticks
+ * @returns `{ index, left, anchor }` per label — left in % of the plot width
+ */
+function getChartTickLayout(labels, kind, widthPx, maxTicks = CHART_MAX_TICKS) {
+  const count = labels.length;
+  const ticks = widthPx > 0 ? getFittingTicks(labels, kind, widthPx, maxTicks) : getChartTicks(count, maxTicks);
+  // a lone survivor of a crowded row is the latest day, which sits on the right edge
+  const getAnchor = (order) => (ticks.length === 1 && count > 1 ? 'end' : getChartTickAnchor(order, ticks.length));
+  return ticks.map((index, order) => ({ index, left: getChartX(index, count, kind), anchor: getAnchor(order) }));
+}
+
+function getFittingTicks(labels, kind, widthPx, maxTicks) {
+  for (let cap = Math.max(2, maxTicks); cap >= 2; cap--) {
+    const ticks = getChartTicks(labels.length, cap);
+    if (isTickRowClear(ticks, labels, kind, widthPx)) return ticks;
+  }
+  return [labels.length - 1];
+}
+
+function isTickRowClear(ticks, labels, kind, widthPx) {
+  const boxes = ticks.map((index, order) => {
+    const width = labels[index].length * CHART_TICK_CHAR_PX;
+    const x = (getChartX(index, labels.length, kind) / CHART_VIEW_W) * widthPx;
+    const anchor = getChartTickAnchor(order, ticks.length);
+    const start = anchor === 'start' ? x : anchor === 'end' ? x - width : x - width / 2;
+    return { start, end: start + width };
+  });
+  return boxes.every((box, i) => i === 0 || box.start - boxes[i - 1].end >= CHART_TICK_MIN_GAP_PX);
+}
+
+/** Top/bottom y-axis labels matching ChartPlot's scale (bars from zero, lines from the low); null with no finite value. */
+function getChartYScale(points, kind, formatValue = String) {
+  const values = points.map((point) => point.value).filter(Number.isFinite);
+  if (values.length === 0) return null;
+  const bottom = kind === 'bars' ? 0 : Math.min(...values);
+  return { top: formatValue(Math.max(...values)), bottom: formatValue(bottom) };
+}
+
+/** Spread onto the element wrapping a Recharts chart: a focusable image named by getChartSummary. */
+function getChartImageProps(name, points, formatValue = String) {
+  return { role: 'img', tabIndex: 0, 'aria-label': getChartSummary(name, points, formatValue) };
+}
+
+const CHART_AXIS_TICK_STYLE = { fontSize: 'var(--fs-meta)', fill: 'rgb(var(--faint))', fontFamily: "'JetBrains Mono', monospace" };
+
+/** Recharts XAxis `tick` renderer — ends anchored by visible order like the HTML tick row. */
+function ChartAxisTick({ x, y, payload, index, visibleTicksCount }) {
+  return <text x={x} y={y} dy="0.71em" textAnchor={getChartTickAnchor(index, visibleTicksCount)} style={CHART_AXIS_TICK_STYLE}>
+    {payload.value}
+  </text>;
 }
 
 function getChartReadout(point, formatValue = String) {
@@ -272,7 +339,7 @@ function ChartPlot({ points, kind, h, color, activeIndex }) {
   const finite = values.filter((value) => value !== null);
   const min = kind === 'bars' || finite.length === 0 ? 0 : Math.min(...finite);
   const range = (finite.length ? Math.max(...finite) : 1) - min || 1;
-  const getY = (value) => h - ((value - min) / range) * h * 0.85 - 1;
+  const getY = (value) => h - ((value - min) / range) * h * CHART_PLOT_FILL - 1;
   const crossX = activeIndex === null ? null : getChartX(activeIndex, points.length, kind);
   return <svg width="100%" height={h} viewBox={`0 0 ${CHART_VIEW_W} ${h}`} preserveAspectRatio="none" aria-hidden="true" style={{ display: 'block' }}>
     {kind === 'bars'
@@ -293,13 +360,33 @@ function ChartBars({ values, h, getY, color, activeIndex }) {
 }
 
 function ChartTicks({ points, kind, maxTicks }) {
-  const count = points.length;
-  return <div aria-hidden="true" className="text-faint" style={{ position: 'relative', height: 18, fontSize: 'var(--fs-meta)' }}>
-    {getChartTicks(count, maxTicks).map((i) => {
-      const left = getChartX(i, count, kind);
-      const shift = left <= 0 ? '0' : left >= CHART_VIEW_W ? '-100%' : '-50%';
-      return <span key={i} data-chart-tick="" style={{ position: 'absolute', left: `${left}%`, transform: `translateX(${shift})`, whiteSpace: 'nowrap' }}>{points[i].label}</span>;
-    })}
+  const [rowRef, widthPx] = useElementWidth();
+  const labels = points.map((point) => point.label);
+  return <div ref={rowRef} aria-hidden="true" className="text-faint" style={{ position: 'relative', height: 18, fontSize: 'var(--fs-meta)' }}>
+    {getChartTickLayout(labels, kind, widthPx, maxTicks).map(({ index, left, anchor }) =>
+      <span key={index} data-chart-tick="" style={{ position: 'absolute', left: `${left}%`, transform: `translateX(${CHART_TICK_SHIFT[anchor]})`, whiteSpace: 'nowrap' }}>{labels[index]}</span>)}
+  </div>;
+}
+
+// Live width of the ref'd element; 0 until the first layout measure.
+function useElementWidth() {
+  const ref = useRef(null);
+  const [width, setWidth] = useState(0);
+  useLayoutEffect(() => {
+    const element = ref.current;
+    if (!element || typeof ResizeObserver === 'undefined') return undefined;
+    const observer = new ResizeObserver(([entry]) => setWidth(entry.contentRect.width));
+    observer.observe(element);
+    return () => observer.disconnect();
+  }, []);
+  return [ref, width];
+}
+
+// Max label level with ChartPlot's highest value, min label on the baseline.
+function ChartYScale({ scale, h }) {
+  return <div aria-hidden="true" data-chart-y-scale="" className="text-faint tnum" style={{ position: 'relative', height: h, fontSize: 'var(--fs-meta)', textAlign: 'right' }}>
+    <span style={{ position: 'absolute', right: 0, top: h * (1 - CHART_PLOT_FILL) - 1, transform: 'translateY(-50%)', whiteSpace: 'nowrap' }}>{scale.top}</span>
+    <span style={{ position: 'absolute', right: 0, bottom: 0, whiteSpace: 'nowrap' }}>{scale.bottom}</span>
   </div>;
 }
 
@@ -325,18 +412,25 @@ function useChartReadout(count, kind) {
 /**
  * Day-series chart that fills its panel: named image, day ticks, crosshair + polite live readout on hover and focus.
  * @param points - `{ label, value }` per day, oldest first; a null value renders as a gap
- * @param formatValue - formats values in the readout and the accessible summary
+ * @param formatValue - formats values in the readout, the accessible summary and the y-scale
+ * @param yScale - true adds a max/min label column beside the plot
  */
-function TrendChart({ label, points, kind = 'line', h = 64, tone = 'info', formatValue = String, maxTicks = CHART_MAX_TICKS }) {
+function TrendChart({ label, points, kind = 'line', h = 64, tone = 'info', formatValue = String, maxTicks = CHART_MAX_TICKS, yScale = false }) {
   const count = points ? points.length : 0;
   const { activeIndex, handlers } = useChartReadout(count, kind);
   if (count === 0) return <p className="text-faint" style={{ fontSize: 'var(--fs-meta)', margin: 0 }}>No data in range</p>;
   const readout = activeIndex === null ? '' : getChartReadout(points[activeIndex], formatValue);
+  const scale = yScale ? getChartYScale(points, kind, formatValue) : null;
+  const plot = <div {...getChartImageProps(label, points, formatValue)} style={{ cursor: 'crosshair', minWidth: 0 }} {...handlers}>
+    <ChartPlot points={points} kind={kind} h={h} color={toneVarColor(tone)} activeIndex={activeIndex}/>
+  </div>;
+  const ticks = <ChartTicks points={points} kind={kind} maxTicks={maxTicks}/>;
   return <figure className="trend-chart" style={{ margin: 0, minWidth: 0 }}>
-    <div role="img" aria-label={getChartSummary(label, points, formatValue)} tabIndex={0} style={{ cursor: 'crosshair' }} {...handlers}>
-      <ChartPlot points={points} kind={kind} h={h} color={toneVarColor(tone)} activeIndex={activeIndex}/>
-    </div>
-    <ChartTicks points={points} kind={kind} maxTicks={maxTicks}/>
+    {scale
+      ? <div style={{ display: 'grid', gridTemplateColumns: 'auto minmax(0, 1fr)', columnGap: 6 }}>
+          <ChartYScale scale={scale} h={h}/>{plot}<span/>{ticks}
+        </div>
+      : <>{plot}{ticks}</>}
     <div aria-live="polite" style={{ minHeight: 18, fontSize: 'var(--fs-meta)', fontVariantNumeric: 'tabular-nums' }}>{readout}</div>
   </figure>;
 }
@@ -1937,6 +2031,7 @@ window.UI = {
   getRovingIndex, getRovingTabIndex, ROW_CONTROL_PROPS, getRowKeyAction, getRowFocusProps, ChipGroup,
   getDisplayName, hasFieldValue, DetailField,
   TrendChart, getChartTicks, getChartIndexAtRatio, getChartReadout, getChartSummary,
+  getChartTickAnchor, getChartTickLayout, getChartYScale, getChartImageProps, ChartAxisTick, CHART_TICK_MIN_GAP_PX, CHART_TICK_CHAR_PX,
   TypeScaleStyle, toneVarColor,
   titleOf, stripHtmlTags, formatRelativeTime,
   FreshnessStamp, getFreshnessState, getFreshnessVerdict, getRegionSummary, getRegionView, RefreshButton,
