@@ -960,8 +960,7 @@ test("column-width: 1010px 카드 바닥에서 제목 본문 상자가 목록·�
   }
 });
 
-// open-summary rail beside the ledger at a common desktop width — the rail pins while the page scrolls,
-// and the ledger fits its remaining column instead of clipping the last header behind its own x-scroll.
+// open-summary rail at a desktop width: pinned on page scroll, ledger fits its remaining column
 test("open-summary rail: at 1440px the rail stays in view on page scroll and the ledger fits beside it", async () => {
   const ids = await seedManyDocs(30, "rail");
   try {
@@ -972,7 +971,7 @@ test("open-summary rail: at 1440px the rail stays in view on page scroll and the
       await page.locator("aside.doc-open-summary").waitFor({ state: "visible" });
 
       const ledger = await page.evaluate(() => {
-        const scroller = document.querySelector("table.tbl")?.parentElement as HTMLElement | null;
+        const scroller = document.querySelector("table.tbl")?.parentElement;
         if (!scroller) throw new Error("ledger scroller missing");
         return { scrollWidth: scroller.scrollWidth, clientWidth: scroller.clientWidth };
       });
@@ -984,9 +983,9 @@ test("open-summary rail: at 1440px the rail stays in view on page scroll and the
       const scrollBy = 362;
       await page.evaluate((y) => window.scrollTo(0, y), scrollBy);
       await page.waitForFunction((y) => window.scrollY >= y, scrollBy);
-      const railTop = await page.evaluate(
-        () => (document.querySelector("aside.doc-open-summary") as HTMLElement).getBoundingClientRect().top,
-      );
+      const railTop = await page
+        .locator("aside.doc-open-summary")
+        .evaluate((rail) => rail.getBoundingClientRect().top);
       assert.ok(railTop >= 0, `rail scrolled out of view (top ${railTop}) — it must stay pinned while the ledger scrolls`);
     } finally {
       await context.close();
