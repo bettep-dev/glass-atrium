@@ -7,10 +7,11 @@ Corpus-maintenance companion to the Tier-1 system charter. Nothing here is deliv
 - Companions ship as manifest members, so a pointer to one resolves on a live install.
 - A rule file carries at most ONE pointer per externally-cited stub heading — that stub is what keeps the external citation resolving in one hop, and a file with two such headings carries two and no more.
 - NOT a pointer under this rule: an HTML comment addressed to the editor of a machine-read file — maintainer-facing, never a duty.
-  - **Sibling wording**: the other companions attach "never injected" to that clause; the observation under the next bullet extends it to this file.
+  - **Sibling wording**: the other companions attach "never injected" to that clause; the observation under "Applied here" below extends it to this file.
 - Every other citation goes — other rule-file prose, and every agent body. The linkage is recorded in this note instead.
 - Applied here: the charter carries a single HTML editor comment at its head naming this note.
-  - **The host project-instructions channel did not deliver it**: a spawned subagent's received copy of the live charter opened at `# Agent Global Rules`, while the live file carries the five-line comment above that heading (one glass-atrium-meta-prompt-engineer spawn, 2026-09-24).
+  - **The host project-instructions channel did not deliver it**: a spawned subagent's received copy of the live charter opened at `# Agent Global Rules`, while the live file carries the five-line comment above that heading.
+    - Observed on glass-atrium-meta-prompt-engineer and glass-atrium-qa-code-reviewer spawns, last on 2026-09-30.
   - Re-check after a host update: read a spawned subagent's received project instructions and look for the comment.
 
 ## Status in the corpus
@@ -41,7 +42,7 @@ The charter's head comment names the class of shape; what binds is below.
 - **What spends that slack**: only deletion above the heading moves it earlier, toward the floor. Added text moves it later, away from the floor, so growth above the heading is never the risk.
 - `RULE_EXCERPT_CHAR_CAP` is 120,000 and a file at or under the cap is returned verbatim, so this file cannot reach the TRUNCATED / OVERSIZED path.
 
-## Restructure + diet pass (this wave)
+## Restructure + diet pass — dispositions
 
 A record of the charter's restructure, kept so a placement or a cut below is not re-derived as an omission. No rule was removed; nothing below removes a duty.
 

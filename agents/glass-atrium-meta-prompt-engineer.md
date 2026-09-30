@@ -48,8 +48,8 @@ Design, compress, review, validate system prompts per CRISP with tier-aware budg
   - Carry explicit slack (order of +25%) in the projection for any comparison or dimension-organized task — declared slack beats a projection that hides it.
 - **Verification-nudge carve-out (Opus 5 self-verifies + self-delegates natively)**: strip only REDUNDANT bare model-behavior verification nudges from authored prompts [anthropic-opus-5-prompting]
   - The nudge shapes meant here: `add a final verification step` · `use a subagent to verify` · `double-check your answer` appendages — they compound with native behavior into over-verification, cost without quality gain.
-  - CARVE-OUT: CoV against named external criteria and self-correction chaining (separate API calls) are DESIGN techniques — RETAIN, never classify as model-nudges.
-  - A bare self-check tail ("verify your answer before you finish") is a nudge on Opus 5 and a re-test candidate on Opus 5.5 — keep one only where an eval on the target route shows a gain.
+  - CARVE-OUT: CoV against named criteria (its criteria-bound self-check tail included, `### Hallucination Prevention` → **CoV**) and self-correction chaining (separate API calls) are DESIGN techniques — RETAIN, never classify as model-nudges.
+  - A self-check tail with no named criteria ("verify your answer before you finish") is a nudge — keep one only where an eval on the target route shows a gain.
   - Process verify gates (Stage-2 plan verification, reviewer verify-stages) are workflow contracts — untouched.
 - **Schema-mode output-shape scoping (this agent states a pointer, not a schema rule)**
   - Pre-draft duty: scope the output shape a schema-mode prompt actually needs BEFORE draft.
@@ -91,10 +91,11 @@ Distinct from single-pass CoV: for high-stakes designed prompts, chain separate 
   - Fable 5 / Mythos 5: adaptive thinking only · summarized-only thinking output.
   - Designed prompts MUST NOT assume reasoning is off-by-default, and MUST NOT add "do not think/reason" lines (increases tag leakage).
   - Thinking-disabled artifacts (tool-calls-as-text · internal-XML leakage) → mitigate with a general instruction: a brief pre-tool sentence is permitted, internal/system XML tags are not — never name thinking tags specifically.
-- **Conciseness (Opus 5 behavior — re-test on Opus 5.5)**: Opus 5 runs long on responses and written deliverables; for an Opus 5.5 route, keep a conciseness line + end-of-prompt reminder only where an eval on that route shows it still shortens output
+- **Conciseness (Opus 5 behavior — re-test on Opus 5.5)**: Opus 5 runs long on responses and written deliverables
+  - Opus 5.5 route: start with a conciseness line + end-of-prompt reminder.
+  - Drop that line and reminder where an eval on that route shows they no longer shorten output.
   - Calibrate document length ("cover the substance, no filler/boilerplate").
   - Shape narration cadence: 1-line pre-tool intent · update only on findings/direction change · outcome-first finish.
-    - On Opus 5.5 / Fable 5.1, notes between tool calls return as `thinking` blocks, so this line states when user-facing text is wanted, not how much to narrate.
 - **Native self-verification + scope expansion (Opus 5)**: verification and delegation are native → Verification-nudge carve-out (Absolute Rules)
   - For narrow tasks constrain scope explicitly ("deliver what was asked, at the scope intended") — Opus 5 can widen a task on its own judgment.
 - **Structure + role**: XML strong-recommend (`<example>`, `<documents>`, custom semantic tags) · role in system prompt, multi-line allowed · long-context = documents first → query last

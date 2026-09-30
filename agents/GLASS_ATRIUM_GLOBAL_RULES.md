@@ -112,13 +112,15 @@ The canonical rule for what language this system writes in.
   - Control thinking through `effort` alone: on the main-session model, a `thinking: {type: "disabled"}` or `budget_tokens` request is a 400 at every effort level.
   - Never write a "do not think" rule or tell an agent that reasoning is off; raise `effort` when reasoning is shallow.
 - **Request-surface facts** — for code that builds API requests. They move with each model release, so confirm each one against the current model's migration notes before relying on it:
-  - Max output is 128k; start `max_tokens` at 64k and size it for thinking plus the reply, since thinking counts toward it.
+  - Max output is 128k.
+  - Start `max_tokens` at 64k and size it for thinking plus the reply — thinking counts toward it.
   - 1M context is the main-session model's default and maximum.
-  - Mid-conversation `role:"system"` messages are accepted — append a late instruction instead of editing the system prompt, which keeps the prompt cache and earlier thinking blocks valid. Mid-conversation tool changes are a beta.
+  - Mid-conversation `role:"system"` messages are accepted — append a late instruction instead of editing the system prompt, which keeps the prompt cache and earlier thinking blocks valid.
+  - Mid-conversation tool changes are a beta.
   - Prefill is unsupported — use Structured Outputs for JSON, and a direct system instruction to remove preamble.
   - Safety classifiers may end a turn with `stop_reason: "refusal"` — the harness special-cases it, not a hard error.
   - Long autonomous requests may run for many minutes — client timeout + async posture required.
-  - Never instruct a model to reproduce its reasoning in the response — it can be declined as `reasoning_extraction`, and that decline is not retried on a fallback.
+  - Never instruct a model to reproduce its reasoning in the response — it can be declined as `reasoning_extraction`; on the main-session model that decline is not retried on a fallback.
 
 ## Scope Literalism [ALL]
 
@@ -257,8 +259,11 @@ Prevent context bloat during long sessions (10+ turns).
 
 ## AI-Generated Anti-Pattern Prohibition [ALL]
 
-- Write at the length the reader needs: state each point once, and add a summary, apology or disclaimer only where the content calls for one.
-- Stay inside the requested scope; report uncertainty instead of projecting confidence, and fix or flag a problem you see rather than accepting it silently.
+- Write at the length the reader needs: state each point once.
+- Add a summary, apology or disclaimer only where the content calls for one.
+- Stay inside the requested scope.
+- Report uncertainty instead of projecting confidence.
+- Fix or flag a problem you see rather than accepting it silently.
 - Main-session user-facing reply FORM (BLUF · Delta · Next/blocked · Divergence detail) is single-sited at `skills/glass-atrium-ops-orchestrator.md` → `### Reply Form Contract` — honor-system (no hook reads reply text), and the response-language rule above is unaffected by it.
 - ※ Mandatory comments per shared-comment-logging.md are exempt.
 
