@@ -64,6 +64,9 @@ const ARCH_DESC_ID = "arch-svg-desc";
 const ARCH_CANVAS_ID = "arch-map-canvas";
 // marks a pane clamped to its drawing's height — a data attribute, since React rewrites className on re-render
 const CANVAS_FIT_HEIGHT_ATTR = "data-arch-fit-height";
+
+// set while the drawing is floor-bound and too wide for the room beside the zoom controls → they fold into a row under it
+const CANVAS_CONTROLS_LANE_ATTR = "data-arch-controls-lane";
 const ARCH_SELECTORS = {
 	canvas: ".arch-mermaid-canvas",
 	tabControl: '[role="tab"], .arch-tab-btn',
@@ -700,6 +703,9 @@ function ScreenArchitecture(
 					`#${ARCH_CANVAS_ID} .arch-node-live-crit > rect.arch-ring-state, #${ARCH_CANVAS_ID} .arch-zone-live-crit > rect.arch-ring-state { display: inline; stroke: rgb(var(--crit)) !important; } ` +
 					// 줌/팬/맞춤 컨트롤 클러스터 — 캔버스 우하단, hint 위. 불투명 면(상시 chrome) → blur 금지.
 					".arch-zoom-controls { position: absolute; right: 8px; bottom: 28px; display: flex; flex-direction: column; gap: 4px; z-index: 2; } " +
+					// lane mode — one row of controls with the hint on its left, a toolbar under the drawing rather than over it
+					`.arch-mermaid-canvas[${CANVAS_CONTROLS_LANE_ATTR}] .arch-zoom-controls { flex-direction: row; bottom: 6px; } ` +
+					`.arch-mermaid-canvas[${CANVAS_CONTROLS_LANE_ATTR}] .arch-canvas-hint { right: auto; left: 8px; } ` +
 					".arch-zoom-btn { min-width: 32px; height: 32px; display: inline-flex; gap: 4px; align-items: center; justify-content: center; " +
 					"background: rgb(var(--elev)); border: 1px solid rgb(var(--line)); border-radius: 6px; color: rgb(var(--dim)); " +
 					'cursor: pointer; font-family: "JetBrains Mono", monospace; font-size: 16px; line-height: 1; padding: 0; ' +
@@ -2154,6 +2160,8 @@ function applyLegibleFitAR(instance, root) {
 
 	const fittedGraphH = realH * targetAbs;
 	const fittedGraphW = realW * targetAbs;
+	// floor-bound: no legible scale fits beside the controls → they move into a lane under the drawing instead
+	const laneH = fittedGraphW > drawableW + 0.5 ? getControlsLaneHeightAR(root) : 0;
 
 	// pan({x,y}) 는 viewport CTM 의 e/f(화면픽셀 평행이동) 직접 설정 · 콘텐츠 viewBox.x/y 시작 → 좌상단(0,0) 정렬에 -origin*scale 필요 (fit/center:false 라 라이브러리 미보정).
 	const baseX = -(s.viewBox.x || 0) * targetAbs;
@@ -2161,7 +2169,8 @@ function applyLegibleFitAR(instance, root) {
 	// 좁은 그래프는 가로 가운데 · 낮은 그래프는 pane 을 그림 높이로 줄임 → 위아래 빈 띠 없음 (넓은/높은 그래프는 좌상단 시작).
 	const slackX = Math.max(0, (drawableW - fittedGraphW) / 2);
 	instance.pan({ x: baseX + slackX, y: baseY });
-	if (fittedGraphH < s.height) setCanvasHeightAR(root, fittedGraphH, instance);
+	// with a lane the pane grows to the drawing plus the lane, so the drawing never runs down under the controls row
+	if (laneH > 0 || fittedGraphH < s.height) setCanvasHeightAR(root, fittedGraphH + laneH, instance);
 
 	// fit-applied mark — until the library's next-frame CTM flush, the viewport still holds its viewBox meet scale
 	root
@@ -2175,6 +2184,15 @@ function getControlsGutterAR(root) {
 	const controls = canvas?.querySelector(".arch-zoom-controls");
 	if (!controls) return 0;
 	return Math.max(0, canvas.getBoundingClientRect().right - controls.getBoundingClientRect().left);
+}
+
+// height the controls row takes from the pane's bottom edge once lane mode lays it out
+function getControlsLaneHeightAR(root) {
+	const canvas = getCanvasAR(root);
+	const controls = canvas?.querySelector(".arch-zoom-controls");
+	if (!controls) return 0;
+	canvas.setAttribute(CANVAS_CONTROLS_LANE_ATTR, "");
+	return Math.max(0, canvas.getBoundingClientRect().bottom - controls.getBoundingClientRect().top);
 }
 
 // .svg-pan-zoom_viewport 의 실제 변환행렬 스케일(.a) = 사용자가 측정하는 절대 스케일.
@@ -2194,6 +2212,7 @@ function clearCanvasSizingAR(root) {
 	canvas.style.height = "";
 	canvas.style.flex = "";
 	canvas.removeAttribute(CANVAS_FIT_HEIGHT_ATTR);
+	canvas.removeAttribute(CANVAS_CONTROLS_LANE_ATTR);
 }
 
 // the zoom buttons scale about the pane centre → the cached pane size follows the clamp

@@ -90,9 +90,8 @@ interface FitReading {
 	gapPx: { above: number; below: number };
 	worstOverflowPx: number;
 	worstId: string;
-	// how far the drawn boxes reach into the zoom controls' column — positive means a box sits under a button
-	controlsIntrusionPx: number;
-	controlsIntruderId: string;
+	// the drawn box reaching deepest under the zoom controls — a positive 2D overlap depth means a box sits under a button
+	controls: { intrusionPx: number; intruderId: string };
 }
 
 function getLiveFixture(): ArchitectureLiveResponse {
@@ -231,7 +230,9 @@ async function readFit(width: number, height: number, extraSource?: string): Pro
 					pane.bottom - r.bottom,
 				);
 				const overflow = -inset;
-				const intrusion = controls ? r.right - controls.left : Number.NEGATIVE_INFINITY;
+				const intrusion = controls
+					? Math.min(r.right - controls.left, controls.right - r.left, r.bottom - controls.top, controls.bottom - r.top)
+					: Number.NEGATIVE_INFINITY;
 				if (intrusion > controlsIntrusionPx) {
 					controlsIntrusionPx = intrusion;
 					controlsIntruderId = box.getAttribute("data-arch-node-id") || box.id || "(unnamed)";
@@ -242,6 +243,9 @@ async function readFit(width: number, height: number, extraSource?: string): Pro
 				}
 			}
 
+			// a controls row under the drawing is chrome, not an empty band → the band below ends at its top
+			const frameBottom = controls && controls.top >= drawn.bottom ? Math.min(pane.bottom, controls.top) : pane.bottom;
+
 			return {
 				paneWidth: pane.width,
 				paneHeight: pane.height,
@@ -250,11 +254,10 @@ async function readFit(width: number, height: number, extraSource?: string): Pro
 				boxCount: boxes.length,
 				drawnWidthPx: drawn.right - drawn.left,
 				drawnHeightPx: drawn.bottom - drawn.top,
-				gapPx: { above: drawn.top - pane.top, below: pane.bottom - drawn.bottom },
+				gapPx: { above: drawn.top - pane.top, below: frameBottom - drawn.bottom },
 				worstOverflowPx,
 				worstId,
-				controlsIntrusionPx,
-				controlsIntruderId,
+				controls: { intrusionPx: controlsIntrusionPx, intruderId: controlsIntruderId },
 			};
 		}, canvasSelector);
 	} finally {
@@ -277,7 +280,7 @@ const REDUNDANT_TITLE_ZONE = [
 	"    end",
 ].join("\n");
 
-// a short chain ending in a fan — a wider and taller part set than the served map, still above the legibility floor
+// a short chain ending in a fan — a wider and taller part set than the served map, floor-bound at the narrow widths
 const WIDE_TALL_PROBE = [
 	'    fitwide0["Wide probe step"] --> fitwide1["Wide probe step 1"]',
 	...Array.from({ length: 4 }, (_, i) => `    fitwide1 --> fittall${i}["Tall probe leaf ${i}"]`),
@@ -492,17 +495,20 @@ for (const { width, height } of VIEWPORTS) {
 		);
 	});
 
-	test(`no drawn box sits under the zoom controls, even on a wider and taller map, at ${width}x${height}`, async () => {
-		const r = await readFit(width, height, WIDE_TALL_PROBE);
-		assert.ok(r.boxCount > 0, "no node or zone boxes were measured — the map did not render");
-		// at the legibility floor the map is wider than the pane and pans by design — the fit reserves nothing there
-		const isAtFloor = r.labelPx <= MIN_RENDERED_LABEL_PX + CTM_FLOAT_TOLERANCE;
-		assert.ok(
-			r.controlsIntrusionPx <= EPS_PX || isAtFloor,
-			`\`${r.controlsIntruderId}\` reaches ${r.controlsIntrusionPx.toFixed(1)}px under the zoom controls, so a click there presses a button ` +
-				`(pane ${r.paneWidth.toFixed(0)}x${r.paneHeight.toFixed(0)} at scale ${r.scale.toFixed(4)})`,
-		);
-	});
+	for (const partSet of [
+		{ name: "the served map", extraSource: undefined },
+		{ name: "a wider and taller map", extraSource: WIDE_TALL_PROBE },
+	]) {
+		test(`no drawn box sits under the zoom controls with ${partSet.name} at ${width}x${height}`, async () => {
+			const r = await readFit(width, height, partSet.extraSource);
+			assert.ok(r.boxCount > 0, "no node or zone boxes were measured — the map did not render");
+			assert.ok(
+				r.controls.intrusionPx <= EPS_PX,
+				`\`${r.controls.intruderId}\` reaches ${r.controls.intrusionPx.toFixed(1)}px under the zoom controls, so a click there presses a button ` +
+					`(pane ${r.paneWidth.toFixed(0)}x${r.paneHeight.toFixed(0)} at scale ${r.scale.toFixed(4)})`,
+			);
+		});
+	}
 
 	test(`every label stays legible at ${width}x${height}`, async () => {
 		const r = await readFit(width, height);
