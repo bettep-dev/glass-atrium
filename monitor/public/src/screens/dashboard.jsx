@@ -126,7 +126,7 @@ function ScreenDashboard({ onNav, harness, onRetryHarness }) {
   const alarmReadiness = getAlarmReadiness({ harness, costState, updateState });
   const tiles = buildTiles({ harness, costState, agentsState, outcomesState, isHarnessBusy });
   const weekPanels = [{ source: 'daily spend', error: spendDaysState.error }, { source: 'runs by hour', error: heatmapState.error }];
-  const sharedFailure = getTileSharedFailure(tiles, weekPanels);
+  const sharedFailure = getPageSharedFailure(tiles, weekPanels);
   const sharedSources = sharedFailure?.sources ?? NO_SHARED_SOURCES;
   const version = describeVersion(harness);
 
@@ -206,7 +206,7 @@ const NO_SHARED_SOURCES = Object.freeze([]);
 
 // ≥2 sources failing on one cause (tiles + week panels, unloaded or held) → one page banner carries the only Retry
 // panels on another cause keep their own Retry → the tiles' banner still stands without them
-function getTileSharedFailure(tiles, panels = []) {
+function getPageSharedFailure(tiles, panels = []) {
   const { getSharedFailure } = window.UI;
   const tileEntries = tiles.map((tile) => ({ source: tile.source, error: tile.error }));
   return getSharedFailure([...tileEntries, ...panels]) ?? getSharedFailure(tileEntries);

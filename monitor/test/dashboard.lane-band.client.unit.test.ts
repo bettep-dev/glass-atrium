@@ -471,7 +471,7 @@ test("tile labels carry no window text — the window is its own field so the he
 // --- A failed read never reads as a current verdict, and one outage offers one Retry ---
 
 interface FailureHelpers {
-  getTileSharedFailure: (tiles: Tile[], panels?: Array<{ source: string; error: string | null }>) => { sources: string[]; error: string } | null;
+  getPageSharedFailure: (tiles: Tile[], panels?: Array<{ source: string; error: string | null }>) => { sources: string[]; error: string } | null;
   getAlarmReadiness: (sources: Record<string, unknown>) => { status: string; unread: string[] };
 }
 const failure = dash as unknown as FailureHelpers;
@@ -547,7 +547,7 @@ test("held failures sharing one cause collapse into the page banner's single Ret
     agentsState: held(ready({}), "HTTP 500"),
     outcomesState: held(ready({}), "HTTP 500"),
   });
-  const shared = failure.getTileSharedFailure(tiles);
+  const shared = failure.getPageSharedFailure(tiles);
   assert.ok(shared, "held failures join the banner");
   assert.deepEqual([...shared.sources].sort(), ["task results", "the fleet summary", "today's spend"]);
 });
@@ -561,7 +561,7 @@ test("the week panels join the tiles' outage when the cause is the same, so one 
 
   for (const row of rows) {
     const panels = [{ source: "daily spend", error: row.error }, { source: "runs by hour", error: row.error }];
-    const shared = failure.getTileSharedFailure(tiles, panels);
+    const shared = failure.getPageSharedFailure(tiles, panels);
     assert.ok(shared, `${row.name}: the tiles still share one banner`);
     assert.equal(shared.sources.includes("daily spend") && shared.sources.includes("runs by hour"), row.isJoined, row.name);
   }
@@ -572,7 +572,7 @@ test("a cold harness outage is an error tile listed in the same banner as the re
   const tiles = dash.buildTiles({ harness, costState: ERRORED, agentsState: ERRORED, outcomesState: ERRORED });
   const tile = tileOf(tiles, "harness");
   assert.equal(tile.status, "error");
-  assert.ok(failure.getTileSharedFailure(tiles)?.sources.includes("harness health"), "the banner names the harness");
+  assert.ok(failure.getPageSharedFailure(tiles)?.sources.includes("harness health"), "the banner names the harness");
 });
 
 test("a harness refresh that failed over held readings reads last-known, keeping a held fault", () => {
