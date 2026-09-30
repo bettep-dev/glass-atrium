@@ -42,7 +42,9 @@ const SPEND_BASELINE_DAYS = 7;
 const SEVERITY_RANK = { crit: 3, warn: 2, info: 1, neutral: 0 };
 
 function ScreenDashboard({ onNav, harness, onRetryHarness }) {
-  const { PageHeader, TypeScaleStyle, FreshnessStamp, RefreshButton, PageErrorBanner, INITIAL_REGION_STATE } = window.UI;
+  const {
+    PageHeader, TypeScaleStyle, FreshnessStamp, RefreshButton, PageErrorBanner, INITIAL_REGION_STATE, getRegionSummary,
+  } = window.UI;
 
   const [costState,      setCostState]      = useStateD(INITIAL_REGION_STATE);
   const [agentsState,    setAgentsState]    = useStateD(INITIAL_REGION_STATE);
@@ -114,6 +116,7 @@ function ScreenDashboard({ onNav, harness, onRetryHarness }) {
   }).kind;
 
   const waveStates = [costState, agentsState, outcomesState, updateState];
+  const isWaveBusy = getRegionSummary(waveStates).isBusy;
   const alarms = buildAlarms({ harness, costState, installKind });
   const alarmReadiness = getAlarmReadiness({ harness, costState, updateState });
   const tiles = buildTiles({ harness, costState, agentsState, outcomesState, isHarnessBusy });
@@ -143,7 +146,7 @@ function ScreenDashboard({ onNav, harness, onRetryHarness }) {
             <>
               <span className="fs-meta font-mono text-dim">{describeVersion(harness)}</span>
               <FreshnessStamp {...getFreshnessInputD(settledAt, waveStates, harness)}/>
-              <RefreshButton isBusy={window.UI.getRegionSummary(waveStates).isBusy} hasRead={settledAt !== null}
+              <RefreshButton isBusy={isWaveBusy} hasRead={settledAt !== null}
                 onRefresh={triggerRefresh} label="Refresh dashboard"/>
             </>
           }
@@ -153,7 +156,7 @@ function ScreenDashboard({ onNav, harness, onRetryHarness }) {
       <div className="space-sections">
         {sharedFailure && (
           <PageErrorBanner sources={sharedFailure.sources} error={sharedFailure.error} onRetry={triggerRefresh}
-            isBusy={window.UI.getRegionSummary(waveStates).isBusy} focusTargetId={DASH_STATUS_BAND_ID}/>
+            isBusy={isWaveBusy} focusTargetId={DASH_STATUS_BAND_ID}/>
         )}
         <AlarmLane
           alarms={alarms}
@@ -170,8 +173,8 @@ function ScreenDashboard({ onNav, harness, onRetryHarness }) {
 }
 
 // harness 판독은 셸 소유 → 그 타일의 Retry 는 셸 재폴링, 나머지는 자기 region 재요청
-function getTileRetry(loadRegion, onRetryHarness) {
-  return (region) => (region === HARNESS_REGION ? onRetryHarness?.() : loadRegion(region));
+function getTileRetry(loadRegion, rereadHarness) {
+  return (region) => (region === HARNESS_REGION ? rereadHarness() : loadRegion(region));
 }
 
 const NO_SHARED_SOURCES = Object.freeze([]);
