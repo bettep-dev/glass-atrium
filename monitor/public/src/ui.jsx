@@ -396,10 +396,11 @@ function useElementWidth() {
 }
 
 // Max label level with ChartPlot's highest value, min label on the baseline.
+// Both labels share one in-flow grid cell → the TrendChart's auto column takes the wider label's width, never 0.
 function ChartYScale({ scale, h }) {
-  return <div aria-hidden="true" data-chart-y-scale="" className="text-faint tnum" style={{ position: 'relative', height: h, fontSize: 'var(--fs-meta)', textAlign: 'right' }}>
-    <span style={{ position: 'absolute', right: 0, top: h * (1 - CHART_PLOT_FILL) - 1, transform: 'translateY(-50%)', whiteSpace: 'nowrap' }}>{scale.top}</span>
-    <span style={{ position: 'absolute', right: 0, bottom: 0, whiteSpace: 'nowrap' }}>{scale.bottom}</span>
+  return <div aria-hidden="true" data-chart-y-scale="" className="text-faint tnum" style={{ display: 'grid', gridTemplateRows: `${h}px`, justifyItems: 'end', fontSize: 'var(--fs-meta)' }}>
+    <span style={{ gridArea: '1 / 1', alignSelf: 'start', marginTop: h * (1 - CHART_PLOT_FILL) - 1, transform: 'translateY(-50%)', whiteSpace: 'nowrap' }}>{scale.top}</span>
+    <span style={{ gridArea: '1 / 1', alignSelf: 'end', whiteSpace: 'nowrap' }}>{scale.bottom}</span>
   </div>;
 }
 
