@@ -124,10 +124,11 @@ class RegistryGuardTest(unittest.TestCase):
     # The carrier reaches the write path on every schema variant, and the pre-migration
     # variants stay well-formed — a named column on an unmigrated DB is a total write outage.
     def test_insert_variants_cover_the_carrier(self) -> None:
-        # Keys are (qa_score, review_flag_reasons, grader_crosscheck) presence.
-        for (_qa, reasons, crosscheck), sql in dw._INSERT_SQL_BY_SCHEMA.items():
+        # Keys are (qa_score, review_flag_reasons, grader_crosscheck, effort pair) presence.
+        for (_qa, reasons, crosscheck, effort), sql in dw._INSERT_SQL_BY_SCHEMA.items():
             self.assertEqual(reasons, "review_flag_reasons" in sql)
             self.assertEqual(crosscheck, "grader_crosscheck" in sql)
+            self.assertEqual(effort, "has_mixed_effort" in sql)
             # A strip that shears its own separator leaves a dangling comma — malformed SQL
             # on exactly the unmigrated DB the variant exists to serve.
             self.assertNotIn(",\n)", sql)
