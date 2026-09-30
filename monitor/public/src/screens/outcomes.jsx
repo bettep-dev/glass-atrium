@@ -743,19 +743,19 @@ function ScreenOutcomes({ onNav }) {
       </div>
 
       {/* Reporting-trust signals are status → stay open; only the breakdown (daily chart, budget-kill list) folds into detail. */}
-      {/* 1:1 + rail: the short per-agent table stays in view beside the taller Reporting health stack instead of leaving a ~500px hole under a wide card */}
-      <window.UI.SplitRow ratio="1:1" className="mt-4">
-        <window.UI.SplitColumn isRail>
-          <AgentFailureTableO state={analyticsState} {...regionRetry}/>
-        </window.UI.SplitColumn>
-        <window.UI.Disclosure kind="status" title="Reporting health" sub={reportingHealthSummaryO(channelLivenessState)}>
+      {/* full width: beside the two-card Reporting health stack the per-agent table left a ~385px hole; the peer reporting cards pair up instead */}
+      <div className="mt-4">
+        <AgentFailureTableO state={analyticsState} {...regionRetry}/>
+      </div>
+      <window.UI.Disclosure kind="status" title="Reporting health" sub={reportingHealthSummaryO(channelLivenessState)} className="mt-4">
+        <window.UI.SplitRow ratio="1:1" layout="equal">
           <AttributionHealthCard state={attributionState} period={analyticsPeriod} {...regionRetry}/>
           <ChannelLivenessCard state={channelLivenessState} {...regionRetry}/>
-          <window.UI.Disclosure kind="detail" level={3} title="Daily breakdown and budget-killed subagents">
-            <AttributionBreakdownO state={attributionState}/>
-          </window.UI.Disclosure>
+        </window.UI.SplitRow>
+        <window.UI.Disclosure kind="detail" level={3} title="Daily breakdown and budget-killed subagents">
+          <AttributionBreakdownO state={attributionState}/>
         </window.UI.Disclosure>
-      </window.UI.SplitRow>
+      </window.UI.Disclosure>
 
       <window.UI.Disclosure kind="status" title="Self-report quality" sub={selfReportSummaryO(analyticsState)} className="mt-4">
         <window.UI.SplitRow ratio="1:1">
