@@ -960,8 +960,7 @@ test("column-width: 1010px 카드 바닥에서 제목 본문 상자가 목록·�
   }
 });
 
-// open-summary rail beside the ledger at a common desktop width — the rail pins while the page scrolls,
-// and the ledger fits its remaining column instead of clipping the last header behind its own x-scroll.
+// open-summary rail at a desktop width: pinned on page scroll, ledger fits its remaining column
 test("open-summary rail: at 1440px the rail stays in view on page scroll and the ledger fits beside it", async () => {
   const ids = await seedManyDocs(30, "rail");
   try {

@@ -1082,7 +1082,7 @@ function ScreenClaudedDocs(/* { onNav } */) {
         .doc-stage-actor { font-size: var(--fs-meta); font-family: 'JetBrains Mono', monospace; color: rgb(var(--faint)); white-space: normal; word-break: keep-all; overflow-wrap: normal; }
         .doc-row.is-stale > td { background: rgb(var(--warn) / 0.06); }
         .doc-age-flag { font-size: var(--fs-meta); font-weight: 600; color: rgb(var(--warn)); font-family: 'Pretendard Variable', Pretendard, ui-sans-serif, system-ui, sans-serif; }
-        /* .card 의 overflow:hidden 은 스크롤 컨테이너 → rail sticky 가 카드에 갇힌다. clip 은 모서리만 자르고 sticky 를 뷰포트로 넘긴다. */
+        /* .card overflow:hidden = 스크롤 컨테이너 → rail sticky 가 카드에 갇힘 · clip = 모서리만 자르고 sticky 는 뷰포트 기준 */
         .card.doc-list-card:not(:has(.popover-panel)) { overflow: clip; }
         .doc-open-summary { border-bottom: 1px solid rgb(var(--line)); }
         @media (min-width: 1280px) { .doc-open-summary { border-bottom: 0; border-left: 1px solid rgb(var(--line)); } }
@@ -1113,7 +1113,7 @@ function ScreenClaudedDocs(/* { onNav } */) {
 				/>
 			</div>
 
-			{/* 단일 컬럼 — 검색 + facet + meta 가 DocListCardCD sticky 헤더에 통합. full-height = flex-1 + card-body maxHeight:'none' override. */}
+			{/* 단일 컬럼 — 검색 + facet + meta 는 DocListCardCD 툴바 헤더 · full-height = flex-1 + card-body maxHeight:'none' override */}
 			<div
 				className="flex"
 				style={{ minHeight: 0, flex: "1 1 auto", width: "100%" }}
@@ -1275,8 +1275,7 @@ function DocAuthorCellCD({ author }) {
 // the list card takes focus when a recovered read unmounts the Retry that held it
 const DOC_LIST_CARD_ID_CD = "docs-list";
 
-// 중앙 목록 카드 — 툴바 (검색 + facet + 건수) + 원장.
-// 원장 스크롤 = 페이지 스크롤 → .card-body 는 스크롤러가 아니다 (xl 요약 rail 의 sticky 가 뷰포트에 붙도록).
+// 중앙 목록 카드 — 툴바 (검색 + facet + 건수) + 원장 · 원장 스크롤 = 페이지 스크롤
 function DocListCardCD({
 	asOf,
 	state,
@@ -1397,12 +1396,7 @@ function DocListCardCD({
 			className="card doc-list-card flex flex-col min-h-0"
 			style={{ height: "100%", flex: "1 1 auto", width: "100%" }}
 		>
-			<div
-				style={{
-					background: "rgb(var(--elev))",
-					borderBottom: "1px solid rgb(var(--line))",
-				}}
-			>
+			<div style={{ borderBottom: "1px solid rgb(var(--line))" }}>
 				{/* 단일 툴바 행 — 검색 · 열림/종료/전체 chip(그룹 단위 건수) · 대상 chip · 건수. */}
 				<div className="px-4 py-2.5 flex items-center gap-2 flex-wrap">
 					<div className="relative" style={{ flex: "1 1 200px", minWidth: 180 }}>
