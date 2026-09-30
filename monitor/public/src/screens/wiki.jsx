@@ -1643,7 +1643,7 @@ function groupConstantRunsW(reports) {
 			current.oldest = report;
 			current.count += 1;
 		} else {
-			groups.push({ key: report.run_date, newest: report, oldest: report, count: 1 });
+			groups.push({ newest: report, oldest: report, count: 1 });
 		}
 	}
 	return groups;
