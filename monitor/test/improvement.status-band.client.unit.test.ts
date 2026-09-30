@@ -500,8 +500,8 @@ test("a failed suggestions read speaks once, from the first board region it feed
   ];
   const failures = sandbox.getPageFailuresI(regions, "board");
   const cards = [
-    sandbox.KanbanCardI({ state: failed, columnRows: { safety: [], applied: [], rejected: [] }, shared: failures, onRetry: () => {} }),
-    sandbox.BucketRowI({ state: failed, buckets: null, shared: failures, onRetry: () => {} }),
+    sandbox.KanbanCardI({ state: failed, columnRows: { safety: [], applied: [], rejected: [] }, failures, onRetry: () => {} }),
+    sandbox.BucketRowI({ state: failed, buckets: null, failures, onRetry: () => {} }),
   ];
   const resolved = cards.map((card) => {
     const wrapper = collectElements(card, []).find((el) => el.type === sandbox.ErrorBannerI);
