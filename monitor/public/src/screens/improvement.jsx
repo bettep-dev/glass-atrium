@@ -510,7 +510,6 @@ function ScreenImprovement({ onNav }) {
 							corpusAuditState={corpusAuditState}
 							onOpenInstrumentation={() => setView("instrumentation")}
 							onRetry={regionRetry}
-							shared={pageFailure}
 						/>
 						<div className="flex-1 min-h-0" id="improvement-board">
 							<KanbanCardI
@@ -603,7 +602,7 @@ function StatusBandI({
 	return (
 		<section className="mb-3 flex flex-col gap-2" aria-label="Loop status">
 			<PageVerdict
-				id="improvement-verdict"
+				id={ANCHOR_ID_I.verdict}
 				tone={verdict.tone}
 				chips={verdict.chips}
 				freshness={{ at: asOf, regions: [statsState, listState, learningLogState] }}
@@ -889,7 +888,13 @@ function TrendCardI({ state, aggregate, shared, onRetry }) {
 			<div className="card">
 				<CardHead title="Verified vs rejected (trend)" />
 				<div className="px-5 pb-4">
-					<ErrorBannerI source="loop events" error={state.error} isBusy={state.busy} shared={shared} onRetry={onRetry} />
+					<ErrorBannerI
+						source="loop events"
+						error={state.error}
+						isBusy={state.busy}
+						shared={shared}
+						onRetry={onRetry}
+					/>
 				</div>
 			</div>
 		);
@@ -979,7 +984,7 @@ function LoopOutputGroupI({
 	onRetry,
 	shared,
 }) {
-	const { CardHead, Icon } = window.UI;
+	const { CardHead, Icon, getRegionView } = window.UI;
 	return (
 		<section className="space-y-3 i-loop-output" aria-label="Loop output">
 			<CardHead
@@ -997,7 +1002,7 @@ function LoopOutputGroupI({
 					</button>
 				}
 			/>
-			{window.UI.getRegionView(statsState) === "error" ? (
+			{getRegionView(statsState) === "error" ? (
 				<ErrorBannerI
 					source="loop stats"
 					error={statsState.error}
@@ -1786,7 +1791,13 @@ function BucketRowI({ state, buckets, shared, onRetry }) {
 			<div className="card">
 				<CardHead title="Learning memory: wins & mistakes (CTM · EPM)" />
 				<div className="p-3">
-					<ErrorBannerI source="suggestions" error={state.error} isBusy={state.busy} shared={shared} onRetry={onRetry} />
+					<ErrorBannerI
+						source="suggestions"
+						error={state.error}
+						isBusy={state.busy}
+						shared={shared}
+						onRetry={onRetry}
+					/>
 				</div>
 			</div>
 		);
@@ -2742,9 +2753,17 @@ function ToastI({ tone, message }) {
 }
 
 // per-region failure: quiet covered note when the page banner names this source, else its own card + Retry
-function ErrorBannerI({ source, error, onRetry, isBusy = false, focusTargetId, shared }) {
+function ErrorBannerI({ source, error, onRetry, isBusy, shared }) {
 	const { RegionFailure } = window.UI;
-	return <RegionFailure source={source} error={error} shared={shared} onRetry={onRetry} isBusy={isBusy} focusTargetId={focusTargetId} />;
+	return (
+		<RegionFailure
+			source={source}
+			error={error}
+			isBusy={isBusy}
+			shared={shared}
+			onRetry={onRetry}
+		/>
+	);
 }
 
 // ----- Pure helpers ---------------------------------------------------------
@@ -2913,14 +2932,17 @@ function truncateI(s, n) {
 // 번들이 없으면 화면 전체가 죽는 대신 이 묶음만 빠진다(운영 표면은 이 파일이 전부 소유).
 function InstrumentationViewI(props) {
 	const View = window.ImprovementInstrumentationView;
-	return <div id={INSTRUMENTATION_ANCHOR_ID_I}>{View ? <View {...props} /> : null}</div>;
+	return <div id={ANCHOR_ID_I.instrumentation}>{View ? <View {...props} /> : null}</div>;
 }
 
-const INSTRUMENTATION_ANCHOR_ID_I = "improvement-instrumentation";
-
 // banner Retry hands focus to the open view's own anchor → the id must exist in whichever view is showing
+const ANCHOR_ID_I = Object.freeze({
+	verdict: "improvement-verdict",
+	instrumentation: "improvement-instrumentation",
+});
+
 function getBannerFocusTargetI(view) {
-	return view === "instrumentation" ? INSTRUMENTATION_ANCHOR_ID_I : "improvement-verdict";
+	return view === "instrumentation" ? ANCHOR_ID_I.instrumentation : ANCHOR_ID_I.verdict;
 }
 
 // Screen-shared atoms for the instrumentation view — this file owns the SymI glyph and confidenceBadgeMetaI verdicts.
