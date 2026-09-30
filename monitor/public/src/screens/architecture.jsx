@@ -71,6 +71,8 @@ const CANVAS = {
 };
 // map slot wrapper — outlives the error-to-map swap, so a map Retry hands focus here on recovery
 const MAP_REGION_ID_AR = "arch-map-region";
+// undrawn-map slot — the drawn map measures ~340–349px at 1440, so loader and failure card hold that height
+const MAP_SLOT_MIN_PX = 340;
 const ARCH_SELECTORS = {
 	canvas: ".arch-mermaid-canvas",
 	tabControl: '[role="tab"], .arch-tab-btn',
@@ -513,6 +515,7 @@ function ScreenArchitecture(
 			getHealthPartRows(
 				headlineHealthStates,
 				liveState.data?.part_bindings,
+				liveState.data?.daemons,
 			),
 		[daemonHealthState, pgState, hookState, hookFailState, liveState.data],
 	);
@@ -616,11 +619,14 @@ function ScreenArchitecture(
 					".arch-page:has(.arch-part-health) .arch-main { min-height: 62vh; } " +
 					// a pane clamped to its drawing gives the unused height back — the fit scale the floor protects is already set
 					`.arch-page .arch-main:has(.arch-mermaid-canvas[${CANVAS.FIT_HEIGHT_ATTR}]) { flex: none; min-height: 0; } ` +
+					// an undrawn map sizes to its slot — the page-tall floor would open a void under the loader or failure card
+					".arch-page .arch-main.arch-main-pending { flex: none; min-height: 0; } " +
 					".arch-part-health { flex-shrink: 0; } " +
-					".arch-part-health-title { font-size: 13px; font-weight: 600; margin: 0; } " +
-					".arch-part-col-title { font-size: inherit; font-weight: 600; margin: 0 0 6px; } " +
-					".arch-drawer-heading { margin: 0 0 4px; font-weight: 400; } " +
-					".arch-drawer-subheading { margin: 0 0 2px; font-size: inherit; font-weight: 400; } " +
+					".arch-part-health-title { font-size: var(--fs-control); font-weight: 600; margin: 0; } " +
+					".arch-part-col-title { font-size: var(--fs-meta); font-weight: 600; margin: 0 0 6px; } " +
+					".arch-drawer-title { margin: 0; font-size: inherit; font-weight: inherit; } " +
+					".arch-drawer-heading { margin: 0 0 4px; font-size: var(--fs-meta); font-weight: 400; } " +
+					".arch-drawer-subheading { margin: 0 0 2px; font-size: var(--fs-meta); font-weight: 400; } " +
 					".arch-part-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; } " +
 					".arch-part-row { display: grid; grid-template-columns: minmax(0, 1fr) auto auto; column-gap: 8px; align-items: center; } " +
 					".arch-part-meta { grid-column: 1 / -1; font-size: 12px; } " +
@@ -793,7 +799,7 @@ function ScreenArchitecture(
 				<AlarmLaneAR rows={alarmRows} onRetry={triggerRefresh} />
 
 				{/* 본체: 단일 canonical Mermaid 캔버스 (가용 폭 100%) — 못 읽으면 빈 캔버스 대신 조용한 카드 하나 */}
-				<div className="arch-main" id={MAP_REGION_ID_AR}>
+				<div className={diagState.data == null ? "arch-main arch-main-pending" : "arch-main"} id={MAP_REGION_ID_AR}>
 					{/* view, not raw status — a cold Retry flips status to 'loading' but must stay this card, busy */}
 					{getRegionView(diagState) === "error" ? (
 						<RegionFailure
@@ -803,6 +809,7 @@ function ScreenArchitecture(
 							onRetry={triggerRefresh}
 							isBusy={isRefreshBusy}
 							focusTargetId={MAP_REGION_ID_AR}
+							minHeight={MAP_SLOT_MIN_PX}
 							className="arch-col-card"
 						/>
 					) : (
@@ -931,7 +938,7 @@ function DiagramBody({
 
 function MapLoadingAR() {
 	const { LoadingPlaceholder } = window.UI;
-	return <LoadingPlaceholder label={DIAGRAM_SOURCE_AR} minHeight={240} className="h-full" />;
+	return <LoadingPlaceholder label={DIAGRAM_SOURCE_AR} minHeight={MAP_SLOT_MIN_PX} />;
 }
 
 // MermaidCanvas — window.mermaid.render 로 SVG 생성 → 컨테이너 주입 → svg-pan-zoom 활성화.
@@ -1486,12 +1493,19 @@ function HookChainDetail({ state }) {
 			<ul className="arch-hook-events">
 				{rows.map((row) => (
 					<li key={row.event} className="arch-hook-event">
-						<div className="arch-hook-head">
-							<span className="fs-meta font-mono text-ink">{row.event}</span>
-							{/* 0 도 사실로 냄 — 이벤트는 있는데 훅이 없다는 것이 조사할 상태임 */}
-							<span className="fs-meta text-faint">{row.hookCount} hooks</span>
-						</div>
-						{row.groups.length > 0 && (
+						{row.groups.length === 0 ? (
+							<div className="arch-hook-head">
+								<span className="fs-meta font-mono text-ink">{row.event}</span>
+								{/* 0 도 사실로 냄 — 이벤트는 있는데 훅이 없다는 것이 조사할 상태임 */}
+								<span className="fs-meta text-faint">0 hooks</span>
+							</div>
+						) : (
+							// hook paths run to ~30 lines — each event folds so the drawer reads as an event list first
+							<details>
+								<summary className="cursor-pointer">
+									<span className="fs-meta font-mono text-ink">{row.event}</span>{" "}
+									<span className="fs-meta text-faint">{row.hookCount} hooks</span>
+								</summary>
 							<ul className="arch-hook-groups">
 								{row.groups.map((group) => (
 									<li key={group.matcher} className="arch-hook-group">
@@ -1512,6 +1526,7 @@ function HookChainDetail({ state }) {
 									</li>
 								))}
 							</ul>
+							</details>
 						)}
 					</li>
 				))}
@@ -1860,7 +1875,7 @@ function DetailModal({
 			open
 			onClose={onClose}
 			variant="drawer"
-			title={info ? info.label || info.id : "Node"}
+			title={<h2 className="arch-drawer-title">{info ? info.label || info.id : "Node"}</h2>}
 			sub={info?.layer_label}
 			labelledBy="ar-node-detail-title"
 			bodyClassName="space-y-3"
@@ -2505,6 +2520,23 @@ function isPartFlaggedAR(row) {
 	return row.tone === "crit" || row.tone === "warn";
 }
 
+// a down part says how often it runs and when it is due next, so the reader knows whether waiting fixes it
+function getPartScheduleAR(row, formatRelative) {
+	if (!isPartFlaggedAR(row)) return null;
+
+	const cadence = row.cadenceMinutes > 0 && `runs ${formatCadenceAR(row.cadenceMinutes)}`;
+	const nextRun = row.nextRunAt && `next run ${formatRelative(row.nextRunAt)}`;
+	return [cadence, nextRun].filter(Boolean).join(" · ") || null;
+}
+
+function formatCadenceAR(minutes) {
+	if (minutes === 60) return "hourly";
+	if (minutes === 1440) return "daily";
+	if (minutes % 1440 === 0) return `every ${minutes / 1440} d`;
+	if (minutes % 60 === 0) return `every ${minutes / 60} h`;
+	return `every ${minutes} min`;
+}
+
 function getPartToneRankAR(tone) {
 	return PART_TONE_RANK_AR[tone] ?? PART_UNJUDGED_RANK_AR;
 }
@@ -2626,9 +2658,8 @@ function PartHealthRowAR({ row, freshness, nodeIndex, onSelectNode }) {
 	const { formatRelativeTime } = window.UI;
 	const box = getPartBoxAR(row, nodeIndex);
 	const status = getPartStatusAR(row, freshness);
-	// a down part says when it is due next, so the reader knows whether waiting fixes it
-	const nextRun = isPartFlaggedAR(row) && row.nextRunAt && `next run ${formatRelativeTime(row.nextRunAt)}`;
-	const meta = [box && `in ${box.label}`, row.lastRunAt && `last run ${formatRelativeTime(row.lastRunAt)}`, nextRun, row.cause]
+	const schedule = getPartScheduleAR(row, formatRelativeTime);
+	const meta = [box && `in ${box.label}`, row.lastRunAt && `last run ${formatRelativeTime(row.lastRunAt)}`, schedule, row.cause]
 		.filter(Boolean)
 		.join(" · ");
 
@@ -2637,7 +2668,7 @@ function PartHealthRowAR({ row, freshness, nodeIndex, onSelectNode }) {
 			<span>{row.name}</span>
 			<span className={getPartToneClassAR(status.tone)}>{status.text}</span>
 			{box ? (
-				<button type="button" className="btn ghost sm" onClick={() => onSelectNode(box.nodeId)} aria-label={`Open ${box.label} for ${row.name}`}>
+				<button type="button" className="btn sm" onClick={() => onSelectNode(box.nodeId)} aria-label={`Open ${box.label} for ${row.name}`}>
 					Open box
 				</button>
 			) : (
@@ -2713,7 +2744,7 @@ function getAlarmRows({ offWriters, healthStoreErrors, liveState, governance }) 
 // 데몬도 제 행으로 남고, 명부가 줄면 행도 같은 수만큼 줆.
 //   판정(tone·문장)은 health 카드 모델이, 노드 목록은 /live 의 part_bindings 가 냄 — 어느 쪽도 여기서
 //   다시 재지 않음. 판정을 못 받은 행은 tone 을 아예 싣지 않음: 미수신과 정상은 다른 사실임.
-function getHealthPartRows(cardStates, partBindings) {
+function getHealthPartRows(cardStates, partBindings, liveDaemons) {
 	const model = window.HealthModel;
 	if (!model || typeof model.resolveCardFacts !== "function") return [];
 
@@ -2732,10 +2763,18 @@ function getHealthPartRows(cardStates, partBindings) {
 			// 마지막 실행은 데몬 행만 갖는 사실임 — 나머지 칸은 비어 있음이 정답임.
 			lastRunAt: isReady && facts.daemon ? facts.daemon.last_run_at || null : null,
 			nextRunAt: isReady && facts.daemon ? facts.daemon.expected_next_at || null : null,
+			// cadence is a schedule fact from /live, not a verdict — it holds even before the health read lands
+			cadenceMinutes: getDaemonCadenceAR(liveDaemons, def),
 			cause: isReady ? getPartCauseAR(facts) : null,
 			nodeIds: partBindings?.[def.id] || [],
 		};
 	});
+}
+
+function getDaemonCadenceAR(liveDaemons, def) {
+	if (def.kind !== "daemon") return null;
+	const daemon = (liveDaemons || []).find((entry) => entry.daemon_name === def.daemonName);
+	return daemon?.expected_cadence_minutes ?? null;
 }
 
 // 행의 상태 문장 — 데몬 행은 데몬 배지 표를 씀(stale 은 'Overdue' 라서 crit 의 기본 문장과 다름).
