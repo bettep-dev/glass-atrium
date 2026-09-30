@@ -16,15 +16,17 @@ const confidenceBadgeMetaI = (value) =>
 	window.ImprovementShared.confidenceBadgeMetaI(value);
 
 // One banner per failed payload, in place of the group that payload owns.
-function PayloadErrorCardI({ title, state, onRetry }) {
-	const { CardHead, RegionUnavailable } = window.UI;
+// `source` = the page's region name, so a shared outage banner naming it quiets this card
+function PayloadErrorCardI({ title, source, state, onRetry, shared }) {
+	const { CardHead, RegionFailure } = window.UI;
 	return (
 		<div className="card">
 			<CardHead title={title} />
 			<div className="px-5 py-4">
-				<RegionUnavailable
-					source={title.toLowerCase()}
+				<RegionFailure
+					source={source}
 					error={state.error}
+					shared={shared}
 					onRetry={onRetry}
 				/>
 			</div>
@@ -135,6 +137,7 @@ function ImprovementInstrumentationViewI({
 	reviewReasons,
 	onNav,
 	onRetry,
+	shared,
 }) {
 	const { SplitRow } = window.UI;
 
@@ -143,6 +146,8 @@ function ImprovementInstrumentationViewI({
 			{statsState.status === "error" ? (
 				<PayloadErrorCardI
 					title="Flagged results"
+					source="loop stats"
+					shared={shared}
 					state={statsState}
 					onRetry={onRetry}
 				/>
@@ -157,6 +162,8 @@ function ImprovementInstrumentationViewI({
 				{corpusAuditState.status === "error" ? (
 					<PayloadErrorCardI
 						title="Corpus growth"
+						source="corpus audits"
+						shared={shared}
 						state={corpusAuditState}
 						onRetry={onRetry}
 					/>
@@ -166,6 +173,8 @@ function ImprovementInstrumentationViewI({
 				{correctionState.status === "error" ? (
 					<PayloadErrorCardI
 						title="Correction signals"
+						source="correction signals"
+						shared={shared}
 						state={correctionState}
 						onRetry={onRetry}
 					/>
@@ -176,6 +185,8 @@ function ImprovementInstrumentationViewI({
 			{listState.status === "error" ? (
 				<PayloadErrorCardI
 					title="Proposal measurements"
+					source="suggestions"
+					shared={shared}
 					state={listState}
 					onRetry={onRetry}
 				/>

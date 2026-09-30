@@ -47,6 +47,10 @@ interface Sandbox {
   LedgerLiveSectionI: Component;
   ParkedLoopBannerI: Component;
   DetailBodyI: Component;
+  PatternLedgerCardI: Component;
+  StatusBandI: Component;
+  RejectedHeaderI: Component;
+  buildDetailPropsI: (row: Record<string, unknown>) => Record<string, unknown>;
 }
 
 function isElement(value: unknown): value is RecordedElement {
@@ -288,7 +292,7 @@ test("a ledger row sets its pattern label in sans and keeps mono for the date", 
 });
 
 const RAW_PATTERN = "editable-region-arbiter-resolved";
-const PATTERN_NAME = "Editable region arbiter resolved";
+const PATTERN_NAME = "Release update merged your local edits";
 
 describe("every pattern label on the board and ledger reads as words, never as its machine key", () => {
   const signature = `${RAW_PATTERN}|${AGENT}`;
@@ -376,4 +380,50 @@ describe("prose on the ledger, banner and drawer is set in sans; mono stays for 
       assert.equal(monoProse.length, 0, `${row.name}: mono element carries prose`);
     });
   }
+});
+
+describe("each Learning surface is a landmark named for what it holds", () => {
+  const idle = { status: "loading", data: null, error: null };
+  const rows = [
+    { name: "Loop status", tree: () => sandbox.StatusBandI({ asOf: null, statsState: idle, listState: idle, learningLogState: idle, suppression: null, awaiting: 0 }) },
+    { name: "Suggestion board", tree: () => sandbox.KanbanCardI({ state: idle, columnRows: { safety: [], applied: [], rejected: [] } }) },
+    { name: "Pattern ledger", tree: () => sandbox.PatternLedgerCardI({ state: idle, suppression: null }) },
+    { name: "Loop output", tree: () => sandbox.LoopOutputGroupI({ statsState: idle, loopEventsState: idle, listState: idle }) },
+  ];
+  for (const row of rows) {
+    test(row.name, () => {
+      const tree = row.tree();
+      assert.equal(tree?.type, "section");
+      assert.equal(tree?.props["aria-label"], row.name);
+    });
+  }
+});
+
+test("ledger rows set their label at the body size, leaving the meta size to the date stamp", () => {
+  const rows = [{ id: 1, pattern_signature: SIGNATURE, agent: AGENT, discovered_date: "2026-09-10" }];
+  const [item] = findAll(sandbox.LedgerPlainRowsI({ rows }), (el) => el.type === "li");
+
+  assert.match(classOf(item), /\bfs-body\b/);
+  assert.doesNotMatch(classOf(item), /\bfs-meta\b/);
+  const [stamp] = findAll(item, (el) => /\bfont-mono\b/.test(classOf(el)));
+  assert.match(classOf(stamp), /\bfs-meta\b/);
+});
+
+test("a live candidate group heads its rows at the body size", () => {
+  const tree = sandbox.LedgerLiveSectionI({ rows: [{ id: 1, pattern_signature: SIGNATURE, agent: AGENT, frequency: 2 }], maxFreq: 2, onRowClick: () => {} });
+  const [head] = findAll(tree, (el) => typeof el.props.title === "string" && el.props.title.length > 0 && el.type === "div");
+
+  assert.match(classOf(head), /\bfs-body\b/);
+});
+
+test("the rejected column header never wraps its label, count or basis", () => {
+  const tree = sandbox.RejectedHeaderI({ rowCount: 4, summary: null, label: "Rejected", symbol: "✕", trend: [] });
+
+  assert.match(classOf(tree), /\bwhitespace-nowrap\b/);
+});
+
+test("the drawer names the approval tier in words, never echoing the raw tier key", () => {
+  const text = visibleText(sandbox.DetailBodyI(sandbox.buildDetailPropsI({ id: 1, approval_tier: "auto" })));
+
+  assert.ok(!text.includes("auto (auto)"), text);
 });
