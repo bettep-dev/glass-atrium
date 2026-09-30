@@ -180,19 +180,19 @@ curl -fsSL https://github.com/bettep-dev/glass-atrium/raw/main/install.sh | bash
 ## 모니터 화면
 
 <p align="center"><img src="https://github.com/bettep-dev/glass-atrium/raw/main/docs/assets/screen-dashboard.webp" alt="대시보드" width="100%"></p>
-<p align="center"><em>대시보드 개요 — 오늘 비용, 최근 30일 지출, 토큰 사용 추이, 세션·실패 카운터를 한눈에 표시합니다.</em></p>
+<p align="center"><em>대시보드 — 멈춘 하네스 부품을 맨 위에 알리고, 하네스 상태·7일 작업 결과·에이전트 현황·오늘 지출 타일과 일별 지출, 이번 주 작업 결과, 시간대별 실행 분포를 이어서 보여 줍니다.</em></p>
 
 <p align="center"><img src="https://github.com/bettep-dev/glass-atrium/raw/main/docs/assets/screen-cost.webp" alt="비용·토큰" width="100%"></p>
-<p align="center"><em>비용·토큰 — 비용 KPI와 30일 일별 비용 추이(스파이크 마커), 번레이트 예측을 함께 제공합니다.</em></p>
+<p align="center"><em>비용·토큰 — 오늘 지출이 7일 평균 대비 정상 범위인지 먼저 알리고, 30일 비용·완료 작업당 비용·캐시 비중 KPI와 일별 비용 추이, 토큰 유형·모델별 비용, 비용이 큰 세션을 보여 줍니다.</em></p>
 
 <p align="center"><img src="https://github.com/bettep-dev/glass-atrium/raw/main/docs/assets/screen-agents.webp" alt="에이전트" width="100%"></p>
-<p align="center"><em>에이전트 — 에이전트별 실행 수, 성공률, P95, 추세 스파크라인을 표시합니다.</em></p>
+<p align="center"><em>에이전트 — 라우팅하면 안 되는 에이전트와 실패·도구 사용 한도 초과·컨텍스트 부족 건수를 먼저 보여 주고, 성공률이 낮은 에이전트·작업 조합과 완료 기록이 없는 실행을 표로 정리합니다.</em></p>
 
 <p align="center"><img src="https://github.com/bettep-dev/glass-atrium/raw/main/docs/assets/screen-learning.webp" alt="학습" width="100%"></p>
-<p align="center"><em>학습 — 자가개선 제안 보드(대기/적용/거부)와 신뢰도, 사전검사 결과를 표시합니다.</em></p>
+<p align="center"><em>학습 — 자가개선 루프의 승인 대기·최근 적용·제안 가능 백로그·사람 판단이 필요한 보류 패턴 수를 보여 주고, 제안 보드에서 적용 이력과 원인별 거부 이력을 나눠 표시합니다.</em></p>
 
 <p align="center"><img src="https://github.com/bettep-dev/glass-atrium/raw/main/docs/assets/screen-system-map.webp" alt="System map" width="100%"></p>
-<p align="center"><em>System map — 유지되는 Mermaid 아키텍처 다이어그램에 라이브 상태 오버레이를 더했습니다.</em></p>
+<p align="center"><em>System map — 하네스 구성 다이어그램에 부품별 상태 링을 겹쳐 주의가 필요한 곳을 표시하고, 아래 부품 상태 목록에서 각 부품의 상태와 마지막 실행 시각을 보여 줍니다.</em></p>
 
 ## 라이선스
 
