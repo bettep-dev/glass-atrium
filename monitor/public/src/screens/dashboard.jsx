@@ -144,7 +144,6 @@ function ScreenDashboard({ onNav, harness, onRetryHarness }) {
         /* 타일 힌트 — 2줄분 min-height 예약(clamp 없음) → 폭이 줄어도 밴드 높이 불변. */
         .dash-tile-hint { min-height: calc(var(--fs-meta) * 1.4 * 2); line-height: 1.4; }
         .dash-tile-detail { min-height: calc(var(--fs-body) * 1.5); }
-        /* two columns (xl) → an even count puts two rows on the bottom line; both drop the hairline, not only the last */
         /* the shared .btn hover shifts ~4 RGB levels → an underline makes the drill's hover visible */
         .dash-drill:hover, .dash-drill:focus-visible { text-decoration: underline; text-underline-offset: 3px; }
         .dash-strip-track { height: 4rem; }
@@ -155,6 +154,7 @@ function ScreenDashboard({ onNav, harness, onRetryHarness }) {
         .dash-result-fill { height: 0.5rem; background: currentColor; border-radius: 2px; }
         .dash-hour-grid { display: grid; grid-template-columns: 2.5rem repeat(24, minmax(0, 1fr)); gap: 2px; align-items: center; line-height: 1; }
         .dash-hour-cell { height: 0.75rem; background: currentColor; border-radius: 2px; }
+        /* two columns (xl) → an even count puts two rows on the bottom line; both drop the hairline, not only the last */
         @media (min-width: 1280px) { .dash-alarm-grid > .alarm-row:nth-child(odd):nth-last-child(2) { border-bottom: none; } }
       `}</style>
 
@@ -579,7 +579,7 @@ function formatHour(hour) {
 }
 
 function describeHourGrid(grid) {
-  const peak = grid.peak;
+  const { peak } = grid;
   return `Runs by hour, ${grid.span}: busiest ${getRowLabel(peak)} ${formatHour(peak.hour)} with ${formatInt(peak.count)} runs`;
 }
 
