@@ -2668,7 +2668,9 @@ function QualityHealthTimelineChart({ rows }) {
   );
 }
 
-const formatRatePctAg = (pct) => pct.toFixed(1) + '%';
+function formatRatePctAg(pct) {
+  return `${pct.toFixed(1)}%`;
+}
 
 function QualityHealthTimelineTooltip({ active, payload }) {
   if (!active || !payload || payload.length === 0) {
