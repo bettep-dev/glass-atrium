@@ -2161,7 +2161,9 @@ function applyLegibleFitAR(instance, root) {
 	const fittedGraphH = realH * targetAbs;
 	const fittedGraphW = realW * targetAbs;
 	// floor-bound: no legible scale fits beside the controls → they move into a lane under the drawing instead
-	const laneH = fittedGraphW > drawableW + 0.5 ? getControlsLaneHeightAR(root) : 0;
+	const shouldUseLane = fittedGraphW > drawableW + 0.5;
+	if (shouldUseLane) setControlsLaneAR(root);
+	const laneH = shouldUseLane ? getControlsLaneHeightAR(root) : 0;
 
 	// pan({x,y}) 는 viewport CTM 의 e/f(화면픽셀 평행이동) 직접 설정 · 콘텐츠 viewBox.x/y 시작 → 좌상단(0,0) 정렬에 -origin*scale 필요 (fit/center:false 라 라이브러리 미보정).
 	const baseX = -(s.viewBox.x || 0) * targetAbs;
@@ -2186,12 +2188,16 @@ function getControlsGutterAR(root) {
 	return Math.max(0, canvas.getBoundingClientRect().right - controls.getBoundingClientRect().left);
 }
 
-// height the controls row takes from the pane's bottom edge once lane mode lays it out
+// switches the controls into a row under the drawing (lane mode)
+function setControlsLaneAR(root) {
+	getCanvasAR(root)?.setAttribute(CANVAS_CONTROLS_LANE_ATTR, "");
+}
+
+// height the controls row takes from the pane's bottom edge — meaningful only after setControlsLaneAR
 function getControlsLaneHeightAR(root) {
 	const canvas = getCanvasAR(root);
 	const controls = canvas?.querySelector(".arch-zoom-controls");
 	if (!controls) return 0;
-	canvas.setAttribute(CANVAS_CONTROLS_LANE_ATTR, "");
 	return Math.max(0, canvas.getBoundingClientRect().bottom - controls.getBoundingClientRect().top);
 }
 
