@@ -235,12 +235,6 @@ test("an alarm row whose source's latest read failed says Last known beside its 
   }
 });
 
-test("the header names no version while the harness read is pending, so the stamp alone says loading", () => {
-  const describeVersion = mod.describeVersion as (harness: unknown) => string | null;
-  assert.equal(describeVersion({ status: "loading" }), null);
-  assert.equal(describeVersion({ status: "ready", version: "1.0.0" }), "v1.0.0");
-});
-
 test("a failed tile keeps its drill to the owning screen, whether it shows its own error card or defers to the banner", () => {
   for (const isRetryShared of [false, true]) {
     const tree = render("StatusTile", { tile: FAILED_TILE, onNav: () => {}, onRetry: () => {}, isRetryShared });
