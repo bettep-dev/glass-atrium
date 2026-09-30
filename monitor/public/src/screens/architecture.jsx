@@ -1506,26 +1506,26 @@ function HookChainDetail({ state }) {
 									<span className="fs-meta font-mono text-ink">{row.event}</span>{" "}
 									<span className="fs-meta text-faint">{row.hookCount} hooks</span>
 								</summary>
-							<ul className="arch-hook-groups">
-								{row.groups.map((group) => (
-									<li key={group.matcher} className="arch-hook-group">
-										<span className="fs-meta font-mono text-dim">{group.matcher}</span>
-										<ul className="arch-hook-list">
-											{group.hooks.map((hook, index) => (
-												<li
-													key={`${group.matcher}-${index}`}
-													className="arch-hook-head fs-meta text-dim">
-													<span className="font-mono text-ink">{hook.command}</span>
-													{hook.type && <span className="fs-meta text-faint">{hook.type}</span>}
-													{hook.timeout !== null && hook.timeout !== undefined && (
-														<span className="fs-meta text-faint">timeout {hook.timeout}s</span>
-													)}
-												</li>
-											))}
-										</ul>
-									</li>
-								))}
-							</ul>
+								<ul className="arch-hook-groups">
+									{row.groups.map((group) => (
+										<li key={group.matcher} className="arch-hook-group">
+											<span className="fs-meta font-mono text-dim">{group.matcher}</span>
+											<ul className="arch-hook-list">
+												{group.hooks.map((hook, index) => (
+													<li
+														key={`${group.matcher}-${index}`}
+														className="arch-hook-head fs-meta text-dim">
+														<span className="font-mono text-ink">{hook.command}</span>
+														{hook.type && <span className="fs-meta text-faint">{hook.type}</span>}
+														{hook.timeout !== null && hook.timeout !== undefined && (
+															<span className="fs-meta text-faint">timeout {hook.timeout}s</span>
+														)}
+													</li>
+												))}
+											</ul>
+										</li>
+									))}
+								</ul>
 							</details>
 						)}
 					</li>
