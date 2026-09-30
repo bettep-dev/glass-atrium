@@ -1448,8 +1448,6 @@ function AgentDetailDrawer({
   );
 }
 
-// typed-name 삭제 확인 패널 — drawer 본문 서브상태.
-// full name 정확 일치 시에만 푸터 커밋 버튼 활성 (비가역 작업 게이트는 푸터가 소유 · 여기선 입력+공시).
 // the dialog takes its name from the title → hyphens read out one by one, so the spoken form splits them into words
 function AgentDrawerNameAg({ name }) {
   const words = window.UI.getAgentDisplayName(name).split('-').filter(Boolean).join(' ');
@@ -1461,6 +1459,8 @@ function AgentDrawerNameAg({ name }) {
   );
 }
 
+// typed-name 삭제 확인 패널 — drawer 본문 서브상태.
+// full name 정확 일치 시에만 푸터 커밋 버튼 활성 (비가역 작업 게이트는 푸터가 소유 · 여기선 입력+공시).
 function AgentDeleteConfirmPanel({ agentName, value, committing, error, onChange }) {
   const { Icon } = window.UI;
   const matches = value === agentName;
@@ -1888,21 +1888,6 @@ function AgentReliabilitySection({ agent, drawerAgent, failureByAgent, failureSt
 }
 
 // (a) Breakages — failure-patterns(필터) 요약 + 기존 MergedBreakageSection(fail/blocked 키워드 분류) 재사용.
-/**
- * Writer-emitted breakage headline with its blocked part bounded inside it.
- * The payload does not say which result the reconstructed rows carry → the blocked part is a range:
- * each reconstructed row hides at most one blocked row, and the part never exceeds the headline.
- */
-function getWriterBreakageSplit(failure) {
-  const breakages = Math.max(0, failure.total_breakages - (failure.reconstructed || 0));
-  const blocked = failure.blocked_count || 0;
-
-  return {
-    breakages,
-    blocked: { min: Math.max(0, blocked - (failure.reconstructed || 0)), max: Math.min(blocked, breakages) },
-  };
-}
-
 function AgentReliabilityBreakages({ drawerAgent, failureByAgent, failureState, detailState, blockedState, days, onRetry }) {
   const { Badge } = window.UI;
   const view = window.UI.getRegionView(failureState);
@@ -1986,12 +1971,28 @@ function AgentReliabilityBreakages({ drawerAgent, failureByAgent, failureState, 
   );
 }
 
-// (b) Lifecycle — lifecycle-stats(agent_type 필터) start/completed gap + duration 분포(1 mono 라인 collapse).
+/**
+ * Writer-emitted breakage headline with its blocked part bounded inside it.
+ * The payload does not say which result the reconstructed rows carry → the blocked part is a range:
+ * each reconstructed row hides at most one blocked row, and the part never exceeds the headline.
+ */
+function getWriterBreakageSplit(failure) {
+  const reconstructed = failure.reconstructed || 0;
+  const breakages = Math.max(0, failure.total_breakages - reconstructed);
+  const blocked = failure.blocked_count || 0;
+
+  return {
+    breakages,
+    blocked: { min: Math.max(0, blocked - reconstructed), max: Math.min(blocked, breakages) },
+  };
+}
+
 // concerns arrive cut mid-sentence → drop the stray closers a cut leaves in front, fold whitespace
 function getConcernTextAg(raw) {
   return String(raw).replace(/\s+/g, ' ').trim().replace(/^[^\p{L}\p{N}]+/u, '');
 }
 
+// (b) Lifecycle — lifecycle-stats(agent_type 필터) start/completed gap + duration 분포(1 mono 라인 collapse).
 function AgentReliabilityLifecycle({ agent, drawerAgent, lifecycleState, onRetry }) {
   const view = window.UI.getRegionView(lifecycleState);
   if (view === 'loading') {
