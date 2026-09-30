@@ -45,7 +45,9 @@ npx accessible-color-contrast <fg_hex> <bg_hex>
 ```
 
 - Alternatives: `colour-contrast-cli`, `color-contrast-checker`, `wcag-contrast`, `@mdhnpm/wcag-contrast-checker` — pick per the project's lock file.
-- No Node runtime → run the formula above as a `python3` one-off via Bash, or query the WebAIM contrast checker's API via WebFetch; a ratio worked out by hand is not a verification — with neither available, report the pair as unverified.
+- No Node runtime → run the formula above as a `python3` one-off via Bash, or query the WebAIM contrast checker's API via WebFetch.
+  - A ratio worked out by hand is not a verification.
+  - Neither available → report the pair as unverified.
 
 ## Output Format
 

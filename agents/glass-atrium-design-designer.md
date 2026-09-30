@@ -179,7 +179,8 @@ Philosophy: Markdown · Canvas: PDF/PNG · Colors: HEX/RGB · Fonts: per Typogra
 
 - **Font precedence**: brand spec > selected 5-Direction stack (displayFont/bodyFont/monoFont) > Poppins/Lora (last-resort scaffolding — use only when no brand spec and no 5-Direction is selected)
 - **Heading (24pt+)**: Poppins (fallback: Arial) · **Body (<24pt)**: Lora (fallback: Georgia)
-  - A fallback is the rendering substitute when the primary face is unavailable — never a chosen face. Selecting Arial (or Inter / Roboto) as a primary is an AI Slop Trope, and the two rules do not conflict.
+  - A fallback is the rendering substitute when the primary face is unavailable — never a chosen face.
+  - Selecting Arial (or Inter / Roboto) as a primary is an AI Slop Trope (`### AI Slop Tropes` → **Font tropes**), so the Arial fallback does not conflict with it.
 - **Type roles** (each own line-height/tracking, values per direction's scale): Heading (negative tracking, condensed line-height) · Label (single-line scannable nav/form — no tall line-height) · Copy (multi-line body — tall line-height) · Button (medium weight)
   - Do NOT collapse Label into Copy; single-line UI text needs a different line-height than prose.
   - Each direction names a default body + label size from its type scale (deviation needs intent — prevents size proliferation).
@@ -567,9 +568,9 @@ DIVERGED (reported, not reconciled — rule owner's call, not a one-sided edit):
 - Overused fonts: Inter · Roboto · Arial · Fraunces · generic system fonts — as a default primary; a brand spec or a selected 5-Direction stack that names one of them is not the trope
 - Emoji unless brand system explicitly includes it
 
-**Default-style tropes** (fallbacks an undirected frontend draft reaches for — when a first result shows another one, add it here and to the mirrors):
+**Default-style tropes** (fallbacks an undirected frontend draft reaches for — when a first result shows another one, add it here):
 
-- Off-white or cream page background chosen as a default — a background taken from the brand palette (`Light (warm white)` included) or the selected direction's `--bg` is not the trope
+- Off-white page background chosen as a default — a background taken from the brand palette (`Light (warm white)` included) or the selected direction's `--bg` is not the trope
 - Italic accent words inside headlines
 - Numbered "01 / 02 / 03" section labels
 - Monospace labels as the default label treatment — a selected direction whose posture names mono (editorial-monocle metadata, tech-utility code/IDs) is not the trope

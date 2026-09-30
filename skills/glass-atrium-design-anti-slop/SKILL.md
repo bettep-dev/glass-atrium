@@ -34,7 +34,7 @@ triggers:
 - Aggressive gradient backgrounds
 
 ### Font
-- Inter / Roboto / Arial / Fraunces / generic system fonts as primary
+- Inter / Roboto / Arial / Fraunces / generic system fonts as a default primary — a brand spec or a selected 5-Direction stack naming one is not the trope
 - shadcn `zinc-*` / `slate-*` palette default exposure
 
 ### Layout
@@ -59,6 +59,13 @@ triggers:
 
 ### Emoji
 - Gratuitous emoji unless brand system explicitly includes
+
+### Default-style
+- Off-white page background chosen as a default — a background taken from the brand palette (`Light (warm white)` included) or the selected direction's `--bg` is not the trope
+- Italic accent words inside headlines
+- Numbered "01 / 02 / 03" section labels
+- Monospace labels as the default label treatment — a selected direction whose posture names mono (editorial-monocle metadata, tech-utility code/IDs) is not the trope
+- Pill-shaped buttons — status pills and full-pill avatars/tags are not buttons
 
 ## Detection Guidance
 

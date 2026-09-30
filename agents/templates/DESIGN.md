@@ -304,7 +304,7 @@
 **Non-negotiable**:
 - All colors MUST resolve to `--color-*` CSS variables defined in §2. Inventing hex values FORBIDDEN.
 - All spacing MUST resolve to `--spacing-*` defined in §4. Arbitrary px values FORBIDDEN.
-- All typography MUST resolve to `typography.*` tokens defined in §3. Generic system fonts (Inter / Roboto / Arial as primary) FORBIDDEN.
+- All typography MUST resolve to `typography.*` tokens defined in §3. Generic system fonts (Inter / Roboto / Arial as primary) FORBIDDEN unless §3 names one from the brand spec or the selected 5-Direction stack.
 - All motion MUST resolve to `transition.*` tokens defined in §7. Ad-hoc `transition: 0.2s ease` declarations FORBIDDEN.
 
 **Flexible** (glass-atrium-design-designer override permitted):
@@ -328,6 +328,7 @@
 - **Canvas/color tropes** (warm beige defaults · aggressive gradients · pure-black text)
 - **Layout/container tropes** (rounded boxes with left-border accents · SVG-as-illustration · ≥3 identical section types in a row)
 - **Font tropes** (Inter/Roboto/Arial/generic system fonts · gratuitous emoji)
+- **Default-style tropes** (off-white default background · italic headline accents · numbered "01 / 02 / 03" section labels · default monospace labels · pill-shaped buttons)
 - **Content tropes** (stat-slop · filler copy · invented metrics)
 - **2026 community patterns** (shadcn-ification · Lucide uniform stroke · AI-3D floating mesh · Vibe-Coding centerism · glassmorphism overuse)
 - **Workflow tropes** (Figma Make merged without glass-atrium-design-designer sign-off)

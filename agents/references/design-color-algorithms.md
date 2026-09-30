@@ -97,7 +97,8 @@ target lighter Y = 4.5 * (bg_Y + 0.05) - 0.05          # sRGB-normalized luminan
 
 - **Dark background → use the lighter foreground** (solve for the lighter `Y` above).
 - **Light background → use the darker foreground** (`darker_Y = (bg_Y + 0.05) / ratio - 0.05`).
-- Then find the OKLch `L` whose relative luminance matches the solved `Y` by running the conversion in code (a `python3` or `node` one-off via Bash) — OKLch → linear sRGB → `Y` is a matrix-and-cube chain that hand arithmetic gets wrong — and verify the emitted pair with the `glass-atrium-design-contrast-check` skill.
+- Then find the OKLch `L` whose relative luminance matches the solved `Y` with a `python3` or `node` one-off, and verify the emitted pair with the `glass-atrium-design-contrast-check` skill.
+  - Why: OKLch → linear sRGB → `Y` is a matrix-and-cube chain hand arithmetic gets wrong.
 - **Fallback**: text from step 11 (AA) or step 12 (AAA) on a step-1/2 background needs no derivation (see `## 12-Step UI-Role Contract`).
 
 ---
