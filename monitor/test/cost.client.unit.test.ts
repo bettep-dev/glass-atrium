@@ -148,6 +148,9 @@ interface CostHelpers {
   ) => { error_count: number; threshold_count: number; isCrit: boolean }[];
   getNoDataLabelC: (values: readonly (number | null)[]) => string | null;
   getCacheTicks: (domain: readonly [number, number]) => number[];
+  getUsdTicksC: (maxValue: number) => number[];
+  getFlatCacheRate: (rows: readonly { rate_pct: number | null }[]) => number | null;
+  getCacheTotalNoteC: (input: { listTotal: number | null; recordedTotal: number | null; days: number }) => string;
   getTokenAxisFormatter: (maxValue: number) => (value: number) => string;
   computeTokenShares: (
     points: readonly Record<string, number>[],
@@ -1179,4 +1182,56 @@ test("a flat hit-rate strip collapses to one line instead of an empty chart", as
   const tree = renderIn(mod, "CacheHitBody", { state: ready({ rows: flat }), days: 30, onRetry: () => {} });
   assert.equal(findNodes(tree, isChart).length, 0);
   assert.match(collectText(tree), /100\.0%.*every day/);
+});
+
+// --- Cost & usage: every figure pair agrees or names its difference; the legend lists only drawn series ---
+
+describe("the cost trend y-axis steps in round amounts", () => {
+  const rows = [
+    { name: "a $2,750 peak (the old $550-step case)", max: 2750 },
+    { name: "a sub-dollar window", max: 0.37 },
+    { name: "a two-digit peak", max: 87 },
+    { name: "a five-digit peak", max: 12_345 },
+  ];
+  for (const row of rows) {
+    test(row.name, () => {
+      const ticks = cost.getUsdTicksC(row.max);
+      const step = ticks[1] - ticks[0];
+      const mantissa = Number((step / 10 ** Math.floor(Math.log10(step))).toFixed(6));
+      assert.strictEqual(ticks[0], 0, "the axis starts at zero");
+      assert.ok([1, 2, 5].includes(mantissa), `step ${step} is 1, 2 or 5 times a power of ten`);
+      assert.ok(ticks.at(-1)! >= row.max, "the top tick covers the peak");
+      assert.ok(ticks.length <= 7, `${ticks.length} ticks stay readable`);
+      ticks.forEach((t, i) => assert.ok(Math.abs(t - i * step) < 1e-9, "every tick is a multiple of one step"));
+    });
+  }
+});
+
+test("a hit-rate series that reads as one figure at the shown precision is flat, one that reads as two is not", () => {
+  const toRows = (values: (number | null)[]) => values.map((rate_pct) => ({ rate_pct }));
+  assert.strictEqual(cost.getFlatCacheRate(toRows([99.97, 100, null, 99.99])), 100, "every day reads 100.0%");
+  assert.strictEqual(cost.getFlatCacheRate(toRows([99.5, 100])), null, "99.5% and 100.0% are two figures");
+});
+
+test("the cache tile says the list-price total matches the recorded total when both read the same, and names the gap when not", () => {
+  const match = cost.getCacheTotalNoteC({ listTotal: 29_267.2, recordedTotal: 29_267.4, days: 30 });
+  assert.doesNotMatch(match, /not the recorded total/);
+  assert.match(match, /matches the recorded total/);
+  const differ = cost.getCacheTotalNoteC({ listTotal: 120, recordedTotal: 100, days: 30 });
+  assert.match(differ, /\$120/);
+  assert.match(differ, /\$100 recorded/);
+});
+
+test("the cost trend legend names the no-data days on screen, not only in the chart label", async () => {
+  const mod = (await loadScreenModule(COST_SRC, { UI: getAtomUi(), React: createReactStub() })) as RenderModule;
+  const gapped = collectText(renderIn(mod, "CostTrendLegendC", { bandOn: false, rows: [{ actual: 3 }, { actual: null }, { actual: 4 }] }));
+  assert.match(gapped, /1 of 3 days no data/);
+  const whole = collectText(renderIn(mod, "CostTrendLegendC", { bandOn: false, rows: [{ actual: 3 }, { actual: 4 }] }));
+  assert.doesNotMatch(whole, /no data/);
+});
+
+test("the log integrity legend lists the over-threshold swatch only when such a day is drawn", async () => {
+  const mod = (await loadScreenModule(COST_SRC, { UI: getAtomUi(), React: createReactStub() })) as RenderModule;
+  assert.doesNotMatch(collectText(renderIn(mod, "ParseErrorLegendC", { hasCritDay: false })), /Day over threshold/);
+  assert.match(collectText(renderIn(mod, "ParseErrorLegendC", { hasCritDay: true })), /Day over threshold/);
 });

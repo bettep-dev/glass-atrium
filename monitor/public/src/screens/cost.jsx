@@ -601,11 +601,26 @@ function KpiRowC({ kpiState, hot, trendState, modelState, days, shared, onRetry 
           value={cacheShare.share === null ? '—' : `${(cacheShare.share * 100).toFixed(0)}%`}
           hint={cacheShare.cacheCost === null ? '' : `${formatUsdC(cacheShare.cacheCost)} on cache reads + writes`}
           unavailableNote="No priced model cost in this window.">
-          <div className="cost-foot mt-1.5">{`of ${formatUsdC(cacheShare.totalCost)} at list token prices, last ${modelDays} days — not the recorded total`}</div>
+          <div className="cost-foot mt-1.5">
+            {getCacheTotalNoteC({
+              listTotal: cacheShare.totalCost,
+              recordedTotal: trendDays === modelDays ? windowTotal.total : null,
+              days: modelDays,
+            })}
+          </div>
         </CostTileC>
       </div>
     </>
   );
+}
+
+// List-price total set beside the recorded total only when both read one window → equal figures never read as a contradiction.
+function getCacheTotalNoteC({ listTotal, recordedTotal, days }) {
+  const base = `of ${formatUsdC(listTotal)} at list token prices, last ${days} days`;
+  if (recordedTotal === null) return base;
+  return formatUsdC(listTotal) === formatUsdC(recordedTotal)
+    ? `${base} — matches the recorded total`
+    : `${base} — against ${formatUsdC(recordedTotal)} recorded`;
 }
 
 /**
@@ -760,6 +775,14 @@ function getUsdAxisFormatter(maxValue) {
   });
 }
 
+// Zero-based 1/2/5 steps, top tick at or above the peak → no $550-style steps.
+function getUsdTicksC(maxValue) {
+  const top = maxValue > 0 ? maxValue : 1;
+  const step = getRoundStepC(top / 5);
+  const count = Math.ceil(top / step - 1e-9);
+  return Array.from({ length: count + 1 }, (_, i) => Number((i * step).toFixed(6)));
+}
+
 function getTrendMax(rows) {
   return rows.reduce((max, row) => Math.max(max, row.actual || 0, row.upperBand || 0), 0);
 }
@@ -786,6 +809,7 @@ function CostTrendChart({ rows, bandOn }) {
   const [activeIndex, setActiveIndex] = useStateC(null);
 
   const points = rows.map(toTrendReadoutPoint);
+  const yTicks = getUsdTicksC(getTrendMax(rows));
   const activeRow = activeIndex === null ? null : rows[activeIndex];
 
   // no active day → the first arrow press lands on the latest day, as the shared chart atom does
@@ -822,6 +846,8 @@ function CostTrendChart({ rows, bandOn }) {
               tickLine={false}
             />
             <YAxis
+              domain={[0, yTicks[yTicks.length - 1]]}
+              ticks={yTicks}
               tickFormatter={getUsdAxisFormatter(getTrendMax(rows))}
               tick={anomalyAxisTickStyle}
               axisLine={anomalyAxisLineStyle}
@@ -888,7 +914,7 @@ function CostTrendChart({ rows, bandOn }) {
           </ComposedChart>
         </ResponsiveContainer>
       </div>
-      <CostTrendLegendC bandOn={bandOn}/>
+      <CostTrendLegendC bandOn={bandOn} rows={rows}/>
       <div aria-live="polite" className="sr-only">
         {activeRow ? getTrendReadout(activeRow, bandOn) : ''}
       </div>
@@ -911,7 +937,8 @@ function renderPartialDot({ cx, cy, index, payload }) {
   );
 }
 
-function CostTrendLegendC({ bandOn }) {
+function CostTrendLegendC({ bandOn, rows }) {
+  const gapLabel = getNoDataLabelC(rows.map((row) => row.actual));
   return (
     <div className="flex items-center gap-3 flex-wrap mt-2 fs-meta text-dim">
       <span className="flex items-center gap-1.5">
@@ -934,6 +961,7 @@ function CostTrendLegendC({ bandOn }) {
           Normal range (7-day)
         </span>
       )}
+      {gapLabel && <span className="text-faint">{gapLabel}</span>}
     </div>
   );
 }
@@ -1570,11 +1598,12 @@ function formatRatePctC(value) {
   return `${value.toFixed(1)}%`;
 }
 
-// One rate on every day with data → a flat line says nothing a sentence cannot; null otherwise.
+// Every day with data reads as one figure at the shown precision → a sentence, not a 220px flat line; null otherwise.
 function getFlatCacheRate(chartRows) {
   const vals = chartRows.map((r) => r.rate_pct).filter(Number.isFinite);
   if (vals.length === 0) return null;
-  return Math.max(...vals) - Math.min(...vals) < 0.01 ? vals[0] : null;
+  const labels = new Set(vals.map(formatRatePctC));
+  return labels.size === 1 ? Math.round(vals[0] * 10) / 10 : null;
 }
 
 // Widest tick label ("100.0%") sets the axis width → the top label is never clipped.
@@ -1585,12 +1614,16 @@ function getCacheAxisWidth(yDomain, decimals) {
 
 // Multiples of one 1/2/5 step inside the domain → a top clamped at 100 is always a tick; a ≥5-point domain steps in whole percents.
 function getCacheTicks([lo, hi]) {
-  const raw = (hi - lo) / 5;
-  const magnitude = 10 ** Math.floor(Math.log10(raw));
-  const step = [1, 2, 5, 10].map((m) => m * magnitude).find((s) => s >= raw - 1e-9);
+  const step = getRoundStepC((hi - lo) / 5);
   const first = Math.ceil(lo / step - 1e-9);
   const last = Math.floor(hi / step + 1e-9);
   return Array.from({ length: last - first + 1 }, (_, i) => Number(((first + i) * step).toFixed(6)));
+}
+
+// Smallest 1/2/5 × 10^k step at or above the raw step
+function getRoundStepC(raw) {
+  const magnitude = 10 ** Math.floor(Math.log10(raw));
+  return [1, 2, 5, 10].map((m) => m * magnitude).find((s) => s >= raw - 1e-9);
 }
 
 function CacheHitChart({ rows, yDomain = [0, 100] }) {
@@ -2032,7 +2065,7 @@ function ParseErrorBody({ state, days, shared, onRetry }) {
               rows.map((r) => ({ label: r.event_date, value: Number(r.error_count) || 0 })), formatIntC)}>
             <ParseErrorChart rows={chartRows}/>
           </div>
-          <ParseErrorLegendC/>
+          <ParseErrorLegendC hasCritDay={critDays > 0}/>
         </>
       ) : (
         <div className="fs-body text-dim text-center py-8" aria-label="no parse_error — chart omitted">
@@ -2078,12 +2111,14 @@ const PARSE_ERROR_COLOR = {
   threshold: 'rgb(var(--warn))',
 };
 
-function ParseErrorLegendC() {
+function ParseErrorLegendC({ hasCritDay }) {
   const swatchClass = 'inline-block w-2.5 h-2.5 rounded-sm mr-1.5';
   return (
     <ul className="flex flex-wrap gap-4 mt-2 fs-meta text-dim" aria-label="Log integrity legend">
       <li><span aria-hidden="true" className={swatchClass} style={{ background: PARSE_ERROR_COLOR.bar }}/>Unreadable entries</li>
-      <li><span aria-hidden="true" className={swatchClass} style={{ background: PARSE_ERROR_COLOR.critBar }}/>Day over threshold</li>
+      {hasCritDay && (
+        <li><span aria-hidden="true" className={swatchClass} style={{ background: PARSE_ERROR_COLOR.critBar }}/>Day over threshold</li>
+      )}
       <li>
         <span aria-hidden="true" style={{ display: 'inline-block', width: 14, marginRight: 6, verticalAlign: 'middle', borderTop: `2px dashed ${PARSE_ERROR_COLOR.threshold}` }}/>
         {PARSE_ERROR_THRESHOLD_LABEL}
