@@ -2751,29 +2751,30 @@ function getHealthPartRows(cardStates, partBindings, liveDaemons) {
 	return (model.HEALTH_CARD_DEFS || []).map((def) => {
 		const facts = model.resolveCardFacts(def, cardStates);
 		const isReady = facts.status === "ready";
+		// 데몬 행만 드릴다운 이름을 듦 — 나머지 행에는 부를 데몬이 없음.
+		const daemonName = def.kind === "daemon" ? def.daemonName : null;
 
 		return {
 			id: def.id,
 			name: def.name,
 			kind: def.kind,
-			// 데몬 행만 드릴다운 이름을 듦 — 나머지 행에는 부를 데몬이 없음.
-			daemonName: def.kind === "daemon" ? def.daemonName : null,
+			daemonName,
 			tone: isReady ? facts.tone : null,
 			statusLabel: isReady ? getPartStatusLabel(def, facts) : null,
 			// 마지막 실행은 데몬 행만 갖는 사실임 — 나머지 칸은 비어 있음이 정답임.
 			lastRunAt: isReady && facts.daemon ? facts.daemon.last_run_at || null : null,
 			nextRunAt: isReady && facts.daemon ? facts.daemon.expected_next_at || null : null,
 			// cadence is a schedule fact from /live, not a verdict — it holds even before the health read lands
-			cadenceMinutes: getDaemonCadenceAR(liveDaemons, def),
+			cadenceMinutes: getDaemonCadenceAR(liveDaemons, daemonName),
 			cause: isReady ? getPartCauseAR(facts) : null,
 			nodeIds: partBindings?.[def.id] || [],
 		};
 	});
 }
 
-function getDaemonCadenceAR(liveDaemons, def) {
-	if (def.kind !== "daemon") return null;
-	const daemon = (liveDaemons || []).find((entry) => entry.daemon_name === def.daemonName);
+function getDaemonCadenceAR(liveDaemons, daemonName) {
+	if (!daemonName) return null;
+	const daemon = liveDaemons?.find((entry) => entry.daemon_name === daemonName);
 	return daemon?.expected_cadence_minutes ?? null;
 }
 
