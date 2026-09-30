@@ -1376,8 +1376,9 @@ function getErrorCopy(error, source) {
 }
 
 /**
- * The outage ≥2 failed regions share, or null — a non-null answer means one page banner and one Retry.
- * @param entries - `{ source, error }` per region; a null error is a healthy region
+ * The outage ≥2 failed regions share, or null — non-null → one PageErrorBanner (pass its `focusTargetId`) + a RegionFailure per region.
+ * @param entries - `{ source, error, focusId? }` per region; a null error is a healthy region, `focusId` its card id
+ * @returns `{ sources, error, focusTargetId }` — focusTargetId = first failed region's card id, so recovery lands focus there
  */
 function getSharedFailure(entries) {
   const failed = (entries || []).filter((entry) => entry && entry.error != null);
@@ -1388,7 +1389,11 @@ function getSharedFailure(entries) {
     return `${kind}:${status}`;
   }));
   if (causeKeys.size !== 1) return null;
-  return { sources: failed.map((entry) => entry.source), error: failed[0].error };
+  return {
+    sources: failed.map((entry) => entry.source),
+    error: failed[0].error,
+    focusTargetId: failed.find((entry) => entry.focusId)?.focusId,
+  };
 }
 
 function ErrorDetails({ detail }) {
@@ -1460,6 +1465,32 @@ function RegionUnavailable({ source, error, onRetry, isBusy = false, focusTarget
       {onRetry && <RetryButton onRetry={onRetry} isBusy={isBusy} focusTargetId={focusTargetId}/>}
     </div>
   );
+}
+
+const REGION_COVERED_NOTE = 'Not loaded — see the notice above';
+
+/**
+ * Quiet slot for a region the page banner already speaks for: its name + a pointer to the notice, no sentence, no Retry.
+ * @param minHeight - reserved slot height so the grid keeps its shape
+ */
+function RegionCovered({ source, minHeight, className = '' }) {
+  const name = source ? source.charAt(0).toUpperCase() + source.slice(1) : '';
+  return (
+    <div className={`sub-card bg-sunken flex flex-col gap-1 ${className}`.trim()} style={minHeight ? { minHeight } : undefined}>
+      <span className="fs-body text-dim">{name}</span>
+      <span className="fs-meta text-faint">{REGION_COVERED_NOTE}</span>
+    </div>
+  );
+}
+
+/**
+ * The one failed-region atom every page renders: RegionCovered when `shared` names this source, else RegionUnavailable with its own Retry.
+ * @param shared - the page's getSharedFailure result, or null
+ */
+function RegionFailure({ source, error, shared, onRetry, isBusy = false, focusTargetId, minHeight, className = '' }) {
+  if (shared?.sources?.includes(source)) return <RegionCovered source={source} minHeight={minHeight} className={className}/>;
+  return <RegionUnavailable source={source} error={error} onRetry={onRetry} isBusy={isBusy}
+    focusTargetId={focusTargetId} minHeight={minHeight} className={className}/>;
 }
 
 /**
@@ -1909,7 +1940,7 @@ window.UI = {
   TypeScaleStyle, toneVarColor,
   titleOf, stripHtmlTags, formatRelativeTime,
   FreshnessStamp, getFreshnessState, getFreshnessVerdict, getRegionSummary, getRegionView, RefreshButton,
-  getFetchError, getErrorCopy, getSharedFailure, RegionUnavailable, PageErrorBanner, RetryButton, LoadingPlaceholder, SkeletonRows,
+  getFetchError, getErrorCopy, getSharedFailure, RegionUnavailable, RegionCovered, RegionFailure, PageErrorBanner, RetryButton, LoadingPlaceholder, SkeletonRows,
   INITIAL_REGION_STATE, putRegionRequest, putRegionData, putRegionFailure,
   setDisplayTimezone, getDisplayTimezone, tzShortLabel,
   formatKstDateTime, formatKstTime, formatKstDate, formatKstFull,

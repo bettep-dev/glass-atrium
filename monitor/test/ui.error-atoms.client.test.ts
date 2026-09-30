@@ -11,7 +11,7 @@ const UI_SRC = resolve(__dirname, "../public/src/ui.jsx");
 
 type Component = (props: Record<string, unknown>) => unknown;
 type ErrorCopy = { sentence: string; next: string; detail: string; kind: string };
-type FailureEntry = { source: string; error: unknown };
+type FailureEntry = { source: string; error: unknown; focusId?: string };
 type FakeResponse = { status: number; statusText: string; text: () => Promise<string> };
 
 const ui = await loadScreenModule(UI_SRC);
@@ -124,6 +124,53 @@ test("the page banner announces one outage with every source named and exactly o
   assert.match(getVisibleText(tree), /Couldn't load spend, sessions, and models\./);
   assert.doesNotMatch(getVisibleText(tree), /HTTP 500/);
   assert.equal(getButtons(tree).length, 1);
+});
+
+const FAILURE_SENTENCE = /Couldn't load/g;
+const COVERED_NOTE = "Not loaded — see the notice above";
+
+function renderPage(entries: FailureEntry[]): RenderedNode {
+  const shared = getSharedFailure(entries);
+  const banner = shared && React.createElement(ui.PageErrorBanner as Component, { sources: shared.sources, error: shared.error, onRetry: () => {} });
+  const regions = entries.map((entry) => React.createElement(ui.RegionFailure as Component, { ...entry, shared, onRetry: () => {} }));
+  return renderScreen(React.createElement("div", { children: [banner, ...regions] })) as RenderedNode;
+}
+
+test("each failed region speaks once: a shared outage leaves one sentence and one Retry, anything else keeps every card", () => {
+  const rows = [
+    { name: "two same-cause failures → banner speaks, regions stay quiet", entries: [{ source: "spend", error: SERVER_ERROR }, { source: "sessions", error: SERVER_ERROR }], sentences: 1, retries: 1, quiet: 2 },
+    { name: "a lone failure keeps its own card", entries: [{ source: "spend", error: SERVER_ERROR }], sentences: 1, retries: 1, quiet: 0 },
+    { name: "a mixed-cause pair keeps both cards", entries: [{ source: "spend", error: SERVER_ERROR }, { source: "sessions", error: "HTTP 404 Not Found" }], sentences: 2, retries: 2, quiet: 0 },
+  ];
+  for (const row of rows) {
+    const tree = renderPage(row.entries);
+    const text = getVisibleText(tree);
+
+    assert.equal((text.match(FAILURE_SENTENCE) || []).length, row.sentences, row.name);
+    assert.equal(getButtons(tree).length, row.retries, row.name);
+    assert.equal(text.split(COVERED_NOTE).length - 1, row.quiet, row.name);
+  }
+});
+
+test("a covered region names itself, reserves its slot height and carries no alert, Retry or Details", () => {
+  const tree = render("RegionCovered", { source: "spend by model", minHeight: 218 });
+
+  assert.equal(getVisibleText(tree).replace(/\s+/g, " ").trim(), `Spend by model ${COVERED_NOTE}`);
+  assert.equal(((tree.children[0] as RenderedNode).props.style as { minHeight: number }).minHeight, 218);
+  assert.equal(findNodes(tree, (n) => n.type === "button" || n.type === "details" || n.props.role === "alert").length, 0);
+});
+
+test("a shared outage hands banner focus to the first covered region that declared a card id", () => {
+  const rows = [
+    { name: "first failed region's id", entries: [{ source: "a", error: SERVER_ERROR, focusId: "card-a" }, { source: "b", error: SERVER_ERROR, focusId: "card-b" }], focusTargetId: "card-a" },
+    { name: "a healthy region's id is skipped", entries: [{ source: "a", error: null, focusId: "card-a" }, { source: "b", error: SERVER_ERROR, focusId: "card-b" }, { source: "c", error: SERVER_ERROR }], focusTargetId: "card-b" },
+    { name: "no failed region declared an id", entries: [{ source: "a", error: SERVER_ERROR }, { source: "b", error: SERVER_ERROR }], focusTargetId: undefined },
+  ];
+  for (const row of rows) {
+    const shared = getSharedFailure(row.entries) as { focusTargetId?: string };
+
+    assert.equal(shared.focusTargetId, row.focusTargetId, row.name);
+  }
 });
 
 test("the loading placeholder is visible text under a status role and reserves its slot height", () => {
