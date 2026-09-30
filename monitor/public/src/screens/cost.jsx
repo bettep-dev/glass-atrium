@@ -1150,7 +1150,9 @@ function TokenStackedColumn({ points, order }) {
         <CartesianGrid stroke="rgb(var(--line))" strokeDasharray="3 3" vertical={false}/>
         <XAxis
           dataKey="date"
-          tick={{ fontSize: 12, fill: 'rgb(var(--faint))', fontFamily: 'JetBrains Mono, monospace' }}
+          tick={window.UI.ChartAxisTick}
+          interval="preserveStartEnd"
+          minTickGap={window.UI.CHART_TICK_MIN_GAP_PX}
           axisLine={{ stroke: 'rgb(var(--line))' }}
           tickLine={false}
         />
@@ -2101,7 +2103,9 @@ function ParseErrorChart({ rows }) {
         <CartesianGrid stroke="rgb(var(--line))" strokeDasharray="3 3" vertical={false}/>
         <XAxis
           dataKey="date"
-          tick={{ fontSize: 12, fill: 'rgb(var(--faint))', fontFamily: 'JetBrains Mono, monospace' }}
+          tick={window.UI.ChartAxisTick}
+          interval="preserveStartEnd"
+          minTickGap={window.UI.CHART_TICK_MIN_GAP_PX}
           axisLine={{ stroke: 'rgb(var(--line))' }}
           tickLine={false}
         />
