@@ -237,3 +237,22 @@ test("the crosstab subtitle fits one line of a half-width card beside its badge"
   assert.ok(sub.length > 0, "the card keeps a subtitle");
   assert.ok(sub.length * CARD_SUB_CHAR_PX <= HALF_CARD_SUB_BUDGET_PX, `"${sub}" is ${sub.length * CARD_SUB_CHAR_PX}px`);
 });
+
+test("a channel row keeps to two single lines, the detail line carrying its full text as a tooltip", async () => {
+  const mod = await loadScreenModule(OUTCOMES_SRC, { UI: ui.UI, location: { hash: "" }, URLSearchParams });
+  const create = (mod.React as { createElement: (t: unknown, p: unknown) => unknown }).createElement;
+  const channel = {
+    attribution_source: "structuredoutput-completion", alerting: false, eligible: true,
+    silent_hours: 3.4, recent_peak_daily_count: 171, peak_daily_count: 1204,
+  };
+  const tree = renderScreen(create(mod.ChannelLivenessRow as Component, { channel, days: 30, recencyDays: 7 })) as RenderedNode;
+
+  const lines = getRootHost(tree).children.filter((child): child is RenderedNode => typeof child !== "string");
+  assert.equal(lines.length, 2, "status line + detail line");
+  for (const line of lines) {
+    assert.match(String(line.props.className ?? ""), /whitespace-nowrap|truncate/, `"${collectText(line)}" cannot wrap`);
+  }
+  const detail = lines[1];
+  assert.match(String(detail.props.className), /truncate/);
+  assert.equal(detail.props.title, collectText(detail).trim());
+});

@@ -1751,16 +1751,19 @@ function ChannelLivenessRow({ channel, days, recencyDays }) {
   // 'Below floor' 로 뜨는 이유를 읽을 수 없으므로, 판정에 쓰인 수치를 앞에 둔다.
   const recentPeak = formatIntO(channel.recent_peak_daily_count);
   const windowPeak = formatIntO(channel.peak_daily_count);
+  const detail = `${recentPeak}/day${recencyDays ? ` last ${recencyDays}d` : ''}`
+    + ` · ${windowPeak}/day peak${days ? ` over ${days}d` : ''}`
+    + ` · quiet ${formatIntO(silentHours)}h`;
+
+  // two fixed single lines (status + source, then detail) → a narrow column truncates instead of wrapping to 4–6 lines
   return (
-    <div className="flex items-center gap-2 fs-meta font-mono">
-      <span style={{ color: `rgb(var(${meta.colorVar}))` }} aria-hidden="true"><GlyphO name={meta.icon}/></span>
-      <span className="text-ink w-[6.5rem] flex-shrink-0">{meta.label}</span>
-      <span className="text-ink flex-shrink-0">{channel.attribution_source}</span>
-      <span className="text-dim tabular-nums">
-        {recentPeak}/day{recencyDays ? ` last ${recencyDays}d` : ''}
-        {' · '}{windowPeak}/day peak{days ? ` over ${days}d` : ''}
-        {' · '}quiet {formatIntO(silentHours)}h
-      </span>
+    <div className="fs-meta font-mono min-w-0">
+      <div className="flex items-center gap-2 whitespace-nowrap min-w-0">
+        <span style={{ color: `rgb(var(${meta.colorVar}))` }} aria-hidden="true"><GlyphO name={meta.icon}/></span>
+        <span className="text-ink w-[6.5rem] flex-shrink-0">{meta.label}</span>
+        <span className="text-ink truncate min-w-0" title={channel.attribution_source}>{channel.attribution_source}</span>
+      </div>
+      <div className="text-dim tabular-nums truncate pl-6" title={detail}>{detail}</div>
     </div>
   );
 }
