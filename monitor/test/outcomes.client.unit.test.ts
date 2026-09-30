@@ -692,3 +692,47 @@ describe("AttributionBreakdownO: only a landed window may say it has no breakdow
     assert.match(String(empty?.props.message), /No daily breakdown/);
   });
 });
+
+interface WordingSandboxO {
+  buildLedgerSectionsO: (
+    rows: Array<Record<string, unknown>>,
+    closure: { pendingIds: Set<unknown>; closedOverrides: Map<unknown, unknown> },
+    windowNeedsYou: { rows: Array<Record<string, unknown>>; total: number; windowLabel: string } | null,
+    needsYouCap: number | null,
+  ) => Array<{ key: string; heading: string; rows: unknown[] }>;
+  getRateVerdictO: (rate: Record<string, unknown>, windowLabel: string) => { chips: Array<{ label: string }> };
+  buildStatusBandTilesO: (data: Record<string, unknown>, attentionCount: number | null) => Array<{ key: string; label: string }>;
+}
+const wording = rendered as unknown as WordingSandboxO;
+
+describe("buildLedgerSectionsO: every ledger heading counts its rows with the page's one word, 'shown'", () => {
+  const rows = [{ id: 1, result: "fail" }, { id: 2, result: "blocked" }, { id: 3, result: "done" }];
+  const closure = { pendingIds: new Set(), closedOverrides: new Map() };
+  const cases = [
+    { name: "a page split with no cap", windowNeedsYou: null, cap: null },
+    { name: "a page split capped below its needs-you rows", windowNeedsYou: null, cap: 1 },
+    {
+      name: "a window query larger than the rows it shows",
+      windowNeedsYou: { rows: [{ id: 1, result: "fail" }, { id: 9, result: "fail" }], total: 12, windowLabel: "7d" },
+      cap: 1,
+    },
+  ];
+  for (const row of cases) {
+    test(row.name, () => {
+      const sections = wording.buildLedgerSectionsO(rows, closure, row.windowNeedsYou, row.cap);
+      for (const section of sections) {
+        assert.match(section.heading, new RegExp(` · ${section.rows.length} shown$`), section.key);
+        assert.doesNotMatch(section.heading, /on this page|first \d/, section.key);
+      }
+    });
+  }
+});
+
+describe("getRateVerdictO: the verdict chip names the jump, never a status tile's label again", () => {
+  test("a failing window's chip label differs from every status tile label", () => {
+    const verdict = wording.getRateVerdictO({ status: "ok", tone: "crit", breakage: 20, openCaveats: 5, writerTotal: 100 }, "last 7d");
+    const tileLabels = new Set(wording.buildStatusBandTilesO({ overall: { total: 100 } }, 3).map((tile) => tile.label));
+    assert.ok(verdict.chips.length > 0);
+    for (const chip of verdict.chips) assert.ok(!tileLabels.has(chip.label), chip.label);
+  });
+});

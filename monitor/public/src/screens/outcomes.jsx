@@ -872,6 +872,8 @@ function loopEventsSummaryO(loopEventsState) {
 
 // Needs-you tile → ledger 의 창 전체 Needs-you 헤딩 (hash 라우터라 href 앵커 대신 focus 이동).
 const LEDGER_NEEDS_YOU_ID = 'ledger-needs-you';
+// the hero tile already names the set → the verdict chip names the jump, so 'Needs you' reads once above the ledger
+const LEDGER_JUMP_CHIP_O = { key: 'needs-you', label: 'Show in ledger', targetId: LEDGER_NEEDS_YOU_ID };
 // focus lands on a region's card when a focused Retry leaves on recovery
 const REGION_CARD_IDS = {
   statusBand: 'outcomes-status-band',
@@ -1108,7 +1110,7 @@ function getHeroFloorVerdictO(verdict, data, attentionState) {
   if (TONE_RANK_O[hero.tone] <= TONE_RANK_O[verdict.tone]) return verdict;
   return {
     tone: hero.tone,
-    chips: [{ key: 'needs-you', label: 'Needs you', targetId: LEDGER_NEEDS_YOU_ID }],
+    chips: [LEDGER_JUMP_CHIP_O],
     text: `${verdict.text.slice(0, -1)}, but ${formatIntO(count)} records (${formatShareO(count, hero.population)}) still need you.`,
   };
 }
@@ -1123,7 +1125,7 @@ function getRateVerdictO(rate, windowLabel) {
   }
   return {
     tone: rate.tone,
-    chips: rate.tone === 'ok' ? [] : [{ key: 'needs-you', label: 'Needs you', targetId: LEDGER_NEEDS_YOU_ID }],
+    chips: rate.tone === 'ok' ? [] : [LEDGER_JUMP_CHIP_O],
     text: `${formatShareO(rate.breakage, rate.writerTotal)} of ${formatInt(rate.writerTotal)} agent-written records in the ${windowLabel} failed or were blocked, and ${formatShareO(rate.openCaveats, rate.writerTotal)} still carry an open caveat.`,
   };
 }
@@ -2602,13 +2604,11 @@ function buildLedgerSectionsO(rows, closure, windowNeedsYou, needsYouCap = null)
   const needsYouRows = needsYouCap == null ? allNeedsYouRows : allNeedsYouRows.slice(0, needsYouCap);
   const hiddenCount = allNeedsYouRows.length - needsYouRows.length;
   const needsYouTotal = windowNeedsYou ? windowNeedsYou.total : allNeedsYouRows.length;
-  const needsYouHeading = (windowNeedsYou
-    ? `Needs you · ${formatIntO(needsYouTotal)} in ${windowNeedsYou.windowLabel}`
-    : `Needs you · ${formatIntO(needsYouTotal)} on this page`)
-    + (needsYouTotal > needsYouRows.length ? ` · first ${formatIntO(needsYouRows.length)} shown` : '');
+  // one row-count word across the page → each heading ends in the rows it shows, as the Results head and the drawer do
+  const needsYouScope = `Needs you · ${formatIntO(needsYouTotal)}${windowNeedsYou ? ` in ${windowNeedsYou.windowLabel}` : ''}`;
   return [
-    { key: 'needs-you', label: 'Needs you', heading: needsYouHeading, rows: needsYouRows, hiddenCount, anchorId: LEDGER_NEEDS_YOU_ID },
-    { key: 'routine',   label: 'Routine',   heading: `Routine · ${formatIntO(routine.length)} on this page`, rows: routine, hiddenCount: 0 },
+    { key: 'needs-you', label: 'Needs you', heading: `${needsYouScope} · ${formatIntO(needsYouRows.length)} shown`, rows: needsYouRows, hiddenCount, anchorId: LEDGER_NEEDS_YOU_ID },
+    { key: 'routine',   label: 'Routine',   heading: `Routine · ${formatIntO(routine.length)} shown`, rows: routine, hiddenCount: 0 },
   ];
 }
 
