@@ -139,11 +139,12 @@ run_lint() {
   [[ "$(curl_count)" == "1" ]] || { echo "expected one GET, got $(curl_count)" >&2; return 1; }
 }
 
-@test "the verbatim question silences the nudge on a schema-free verify stage, before any GET" {
+@test "the verbatim question silences the nudge on a schema-free verify stage, before any predecessor GET" {
   run_hook "$(dev_script 103 "${LITERAL}")"
   [[ "${status}" -eq 0 ]] || { echo "status ${status} -- ${output}" >&2; return 1; }
   [[ "${output}" != *"${NUDGE_PHRASE}"* ]] || { echo "nudged despite the question -- ${output}" >&2; return 1; }
-  [[ "$(curl_count)" == "0" ]] || { echo "walked despite the short-circuit: $(curl_count) GETs" >&2; return 1; }
+  # At most the cited id's own read, which the `implementing` walk makes; a chain walk from 103 reads 102.
+  (("$(curl_count)" <= 1)) || { echo "walked despite the short-circuit: $(curl_count) GETs" >&2; return 1; }
 }
 
 @test "a failed GET → silent, exit 0 (fail-open on infrastructure)" {

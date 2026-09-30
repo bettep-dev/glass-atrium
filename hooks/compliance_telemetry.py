@@ -148,9 +148,11 @@ def compute_compliance_rate(
     Insufficient-data contract (honest, never fabricated):
       * ``total == 0`` (log absent / empty / unreadable) → ``compliance_rate``
         is ``None``, NOT 1.0. There is genuinely nothing to measure yet.
-      * the OVERRIDE dimension (the ~17% verification-gate race) has NO durable
-        event store — enforce-verification-gate.sh writes only ephemeral
-        per-session markers — so ``override_rate`` is ALWAYS ``None``
+      * the OVERRIDE dimension has NO event source: no override event exists.
+        The verification-gate same-batch reviewer+DEV race now ends in a
+        VGATE-REVIEWER-001 block on orchestrator origin, and the durable
+        verification-gate-fired.log that enforce-verification-gate.sh writes
+        records blocks only — so ``override_rate`` is ALWAYS ``None``
         (insufficient data), never 0.
 
     Returns a dict carrying the rate, the raw counts, and the override-None note.
