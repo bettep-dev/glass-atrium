@@ -136,6 +136,8 @@ function ScreenDashboard({ onNav, harness, onRetryHarness }) {
         /* 타일 힌트 — 2줄분 min-height 예약(clamp 없음) → 폭이 줄어도 밴드 높이 불변. */
         .dash-tile-hint { min-height: calc(var(--fs-meta) * 1.4 * 2); line-height: 1.4; }
         .dash-tile-detail { min-height: calc(var(--fs-body) * 1.5); }
+        /* two columns (xl) → an even count puts two rows on the bottom line; both drop the hairline, not only the last */
+        @media (min-width: 1280px) { .dash-alarm-grid > .alarm-row:nth-child(odd):nth-last-child(2) { border-bottom: none; } }
       `}</style>
 
       <div className="flex-shrink-0">
@@ -245,7 +247,7 @@ function getAlarmReadiness(sources) {
 
 function AlarmList({ alarms, onNav, updateState, updateJobState, onRefetchJob }) {
   return (
-    <div role="list" className="grid grid-cols-1 xl:grid-cols-2 gap-x-card">
+    <div role="list" className="dash-alarm-grid grid grid-cols-1 xl:grid-cols-2 gap-x-4">
       {alarms.map((alarm) => (
         <AlarmRow key={alarm.id} alarm={alarm} onNav={onNav}>
           {alarm.id === 'install' && (
@@ -692,12 +694,16 @@ function describeHarnessReading(harness) {
 
 function getHarnessBadge({ isPartlyUnread, lostCount, downCount }) {
   if (isPartlyUnread && lostCount === 0) return 'Last known';
-  if (downCount > 0) return HARNESS_DOWN_BADGE;
+  if (downCount > 0) return BADGE.HARNESS_DOWN;
   return isPartlyUnread ? 'Partly unknown' : undefined;
 }
 
-// the value already says "down" → the verdict and the names line each use another word
-const HARNESS_DOWN_BADGE = 'Action needed';
+const BADGE = {
+  // the value already says "down" → the verdict and the names line each use another word
+  HARNESS_DOWN: 'Action needed',
+  // the detail line leads with the judged pace → the badge names that multiple, never the so-far one
+  SPEND_HOT: `Pace above ${SPEND_PACE_CUT}×`,
+};
 
 function describeHarnessHint(harness, { isPartlyUnread, lostCount, downCount }) {
   if (isPartlyUnread) {
@@ -823,13 +829,10 @@ function buildSpendTile(costState, kpi) {
     return { ...reading, hint: 'No spend in the last 7 days — no baseline to compare against.' };
   }
   return {
-    ...reading, badge: tone === 'warn' ? SPEND_HOT_BADGE : undefined, detail: describeSpendPace(pace),
+    ...reading, badge: tone === 'warn' ? BADGE.SPEND_HOT : undefined, detail: describeSpendPace(pace),
     hint: `${(pace.today / pace.basis).toFixed(1)}× the average so far · alarm at ${SPEND_PACE_CUT}×`,
   };
 }
-
-// the detail line leads with the judged pace → the badge names that multiple, never the so-far one
-const SPEND_HOT_BADGE = `Pace above ${SPEND_PACE_CUT}×`;
 
 // day-over-day from one payload (the shell's /api/dashboard/kpi) → today and its comparand never mix sources
 function describeSpendTrend(kpi) {

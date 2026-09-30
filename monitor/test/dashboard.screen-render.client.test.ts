@@ -481,6 +481,7 @@ test("alarm rows sit in two columns once the page has room, and one column below
   assert.ok(classes.includes("grid"), classOf(list));
   assert.ok(classes.includes("xl:grid-cols-2"), classOf(list));
   assert.ok(!classes.includes("grid-cols-2"), "two columns never apply at the narrowest widths");
+  assert.ok(classes.some((c) => /^gap-x-\d+$/.test(c)), `the columns are kept apart by a default-scale column gap: ${classOf(list)}`);
 });
 
 test("a tile's headline value never wraps, so its badge moves to the next line instead", () => {

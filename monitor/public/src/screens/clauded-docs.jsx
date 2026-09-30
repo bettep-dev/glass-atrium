@@ -1576,7 +1576,7 @@ function DocListCardCD({
 								{/* width 는 표가 넘칠 때 min-content 까지 눌린다 → 컬럼마다 min-width 바닥을 같이 준다. */}
 								<th scope="col" style={{ width: 135, minWidth: 135 }}>Status</th>
 								{/* ID — 문서 번호 노출 (그룹 루트 행은 대표 문서 번호).
-                    ponytail: 130px = "rev of #123456" (14 mono chars × 7.2px + 28px padding) — a 7-digit id needs a remeasure. */}
+                    ponytail: 130px = "rev of #123456" (mono 14자 × 7.2px + padding 28px) — 7자리 id 부터는 재측정 필요. */}
 								<th scope="col" style={{ width: 130, minWidth: 130 }}>ID</th>
 								<th scope="col" className="doc-col-title">
 									<span className="doc-col-title-text">Title</span>
