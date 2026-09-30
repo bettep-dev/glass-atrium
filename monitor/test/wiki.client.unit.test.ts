@@ -389,10 +389,9 @@ test("an index with no dirty flag on record says so in plain words and keeps the
   assert.match(tile.hint ?? "", /dirty flag/i);
 });
 
-// Run table grouping, note-type bars and the merge-proposal list's order.
+// Run streak grouping, note-type bars and the merge-proposal list's order.
 
 interface RunGroup {
-  key: string;
   count: number;
   newest: { run_date: string };
   oldest: { run_date: string };
@@ -412,10 +411,10 @@ function runs(statuses: Array<[string, number, number]>): unknown[] {
   }));
 }
 
-describe("consecutive runs sharing status and backlog collapse into one dated range", () => {
+describe("consecutive runs sharing status and backlog form one streak", () => {
   const same = Array.from({ length: 27 }, () => ["ok", 0, 3] as [string, number, number]);
   const rows = [
-    { name: "27 identical runs read as one row of 27", reports: runs(same), counts: [27] },
+    { name: "27 identical runs form one streak of 27", reports: runs(same), counts: [27] },
     { name: "a status change splits the streak around it", reports: runs([["ok", 0, 3], ["ok", 0, 3], ["error", 0, 3], ["ok", 0, 3]]), counts: [2, 1, 1] },
     { name: "a backlog change splits the streak", reports: runs([["ok", 0, 3], ["ok", 1, 3], ["ok", 1, 3]]), counts: [1, 2] },
   ];
@@ -425,7 +424,7 @@ describe("consecutive runs sharing status and backlog collapse into one dated ra
       assert.deepEqual([...groups].map((g) => g.count), row.counts);
       assert.equal(groups[0].newest.run_date, isoDaysAgo(0), "newest first");
       const last = groups[groups.length - 1];
-      assert.equal(last.oldest.run_date, isoDaysAgo(row.reports.length - 1), "the oldest run closes the last range");
+      assert.equal(last.oldest.run_date, isoDaysAgo(row.reports.length - 1), "the oldest run closes the last streak");
     });
   }
 });

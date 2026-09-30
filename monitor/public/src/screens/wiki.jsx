@@ -656,7 +656,7 @@ function buildTileBandModel(summaryState, indexState, backlogState, cyclesState,
 
 // Shared non-ready tile shapes — loading, error and unavailable stay distinguishable and
 // none of them renders as a number (a zero nobody loaded is the failure mode).
-// An errored tile carries no text of its own: the band's single banner names the failure.
+// Loading and errored tiles carry no sub text: the "…" value and the band's single banner speak for them.
 function tilePlaceholderW(key, label, state) {
 	const SUB = {
 		loading: null,
@@ -1369,8 +1369,7 @@ function buildThroughputModel(state) {
 	const ascending = [...rows].sort((a, b) =>
 		(a.run_date || "").localeCompare(b.run_date || ""),
 	);
-	const days = fillRunDaysW(ascending);
-	const compiledSeries = days.series;
+	const { dates: compiledDates, series: compiledSeries } = fillRunDaysW(ascending);
 	// 비0 포인트 수 — 캡션의 active days 수치 · 희소 판정은 SparseTrendW 가 자체 계산.
 	const nonZeroCount = compiledSeries.filter((v) => v > 0).length;
 
@@ -1379,7 +1378,7 @@ function buildThroughputModel(state) {
 	return {
 		rows,
 		compiledSeries,
-		compiledDates: days.dates,
+		compiledDates,
 		mix,
 		isMixUniform: isNearUniformMixW(mix),
 		newestDate: ascending[ascending.length - 1]?.run_date || "",
@@ -1643,7 +1642,7 @@ function groupConstantRunsW(reports) {
 			current.oldest = report;
 			current.count += 1;
 		} else {
-			groups.push({ key: report.run_date, newest: report, oldest: report, count: 1 });
+			groups.push({ newest: report, oldest: report, count: 1 });
 		}
 	}
 	return groups;
