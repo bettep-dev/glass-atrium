@@ -1579,3 +1579,18 @@ test("each review-flag reason in the day tooltip names the runs it counts over, 
   assert.match(text, /No self-check 5 of 20 runs/, "the self-check count states its own denominator");
   assert.match(text, /Confidence mismatch 4 of 20 runs/, "the mismatch count states its own denominator");
 });
+
+test("a lifecycle row with no completion takes no focus and opens nothing, and the roving order skips it", async () => {
+  const tree = await renderComponent("LifecycleStatsTable", {
+    rows: [
+      { agent_type: "glass-atrium-dev-shell", start_count: 4, stop_count: 0, completed_count: 0 },
+      { agent_type: "glass-atrium-dev-react", start_count: 3, stop_count: 2, completed_count: 2 },
+    ],
+    onSelect: () => undefined,
+  });
+  const [unfinished, finished] = findNodes(tree, (n) => n.type === "tr" && String(n.props?.title ?? "").startsWith("glass-atrium-dev-"));
+  assert.equal(unfinished?.props.tabIndex, undefined, "a row with nothing to open is not a Tab stop");
+  assert.equal(unfinished?.props.onClick, undefined, "a row with nothing to open is not clickable");
+  assert.equal(finished?.props["data-roving-row"], 0, "the roving order counts only rows that open the drawer");
+  assert.equal(finished?.props.tabIndex, 0, "the first openable row holds the Tab stop");
+});

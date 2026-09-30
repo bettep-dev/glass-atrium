@@ -2840,6 +2840,8 @@ const LIFECYCLE_COLUMNS = [
 function LifecycleStatsTable({ rows, onSelect }) {
   const { TableHead } = window.UI;
   const [activeIndex, setActiveIndex] = useStateAg(0);
+  // a row with no completion has nothing for the drawer to show → out of the roving order
+  const openable = rows.filter((r) => (Number(r.completed_count) || 0) > 0);
 
   return (
     <div className="overflow-auto" style={{ flex: '1 1 auto', minHeight: 0 }}>
@@ -2854,16 +2856,19 @@ function LifecycleStatsTable({ rows, onSelect }) {
           </tr>
         </thead>
         <tbody>
-          {rows.map((r, index) => (
-            <LifecycleStatsRow
-              key={r.agent_type}
-              row={r}
-              onSelect={onSelect}
-              focusProps={window.UI.getRowFocusProps({
-                index, activeIndex, count: rows.length, onActivate: () => onSelect(r.agent_type), onActiveChange: setActiveIndex,
-              })}
-            />
-          ))}
+          {rows.map((r) => {
+            const index = openable.indexOf(r);
+            return (
+              <LifecycleStatsRow
+                key={r.agent_type}
+                row={r}
+                onSelect={index < 0 ? null : onSelect}
+                focusProps={index < 0 ? null : window.UI.getRowFocusProps({
+                  index, activeIndex, count: openable.length, onActivate: () => onSelect(r.agent_type), onActiveChange: setActiveIndex,
+                })}
+              />
+            );
+          })}
         </tbody>
       </table>
     </div>
@@ -2878,13 +2883,13 @@ function LifecycleStatsRow({ row, onSelect, focusProps }) {
   const orphanTone = orphanRatioTone(orphanRatio);
   const p95Sec = row.p95_duration_sec == null ? null : Number(row.p95_duration_sec);
 
-  const handleClick = () => onSelect(row.agent_type);
+  const handleClick = onSelect ? () => onSelect(row.agent_type) : undefined;
 
   return (
     <tr
       {...focusProps}
       onClick={handleClick}
-      className="cursor-pointer hover:bg-sunken transition-colors"
+      className={onSelect ? 'cursor-pointer hover:bg-sunken transition-colors' : undefined}
       title={`${row.agent_type} — start ${startCount} · stop ${formatIntAg(row.stop_count)} · completed ${completedCount} · orphan ${orphanCount} (${(orphanRatio * 100).toFixed(0)}%)`}>
       <td className="text-left text-ink px-2 py-1.5 border-b border-line truncate" style={{ maxWidth: 160 }}>
         <span className="flex items-center gap-1.5">
