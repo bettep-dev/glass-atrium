@@ -147,6 +147,7 @@ interface CostHelpers {
     rows: readonly { event_date: string; error_count: number; total_count: number; error_ratio: number }[],
   ) => { error_count: number; threshold_count: number; isCrit: boolean }[];
   getCacheGapLabel: (rows: readonly { rate_pct: number | null }[]) => string | null;
+  getCacheTicks: (domain: readonly [number, number]) => number[];
   getTokenAxisFormatter: (maxValue: number) => (value: number) => string;
   computeTokenShares: (
     points: readonly Record<string, number>[],
@@ -754,6 +755,24 @@ test("every tick on one cost axis carries the same decimals and reads back as it
     labels.forEach((label, i) => {
       assert.strictEqual(Number(label.replace(/[$,]/g, "")), ticks[i], `max ${max}: ${label}`);
     });
+  }
+});
+
+test("a hit-rate axis ticks on one even step inside its domain, whole percents on a wide one, and a top clamped at 100 is always a tick", () => {
+  const rows = [
+    { name: "the [0,100] fallback", domain: [0, 100] as const },
+    { name: "a wide window clamped at 100", domain: [88.5, 100] as const },
+    { name: "a narrow window clamped at 100", domain: [96, 100] as const },
+    { name: "a window below 100", domain: [40.3, 62.7] as const },
+  ];
+  for (const { name, domain } of rows) {
+    const ticks = cost.getCacheTicks(domain);
+    const steps = new Set(ticks.slice(1).map((t, i) => (t - ticks[i]!).toFixed(6)));
+    assert.ok(ticks.length >= 2 && ticks.length <= 6, `${name}: ${ticks.join(" ")}`);
+    assert.ok(ticks.every((t) => t >= domain[0] && t <= domain[1]), `${name}: ${ticks.join(" ")}`);
+    assert.strictEqual(steps.size, 1, `${name}: ${ticks.join(" ")}`);
+    if (domain[1] - domain[0] >= 5) assert.ok(ticks.every(Number.isInteger), `${name}: ${ticks.join(" ")}`);
+    if (domain[1] === 100) assert.strictEqual(ticks.at(-1), 100, `${name}: ${ticks.join(" ")}`);
   }
 });
 

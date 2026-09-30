@@ -30,6 +30,8 @@ const LEDGER_MODELS = [
   "claude-opus-5", "claude-opus-5-5", "claude-fable-5-1", "claude-sonnet-5", "claude-fable-5",
   "claude-opus-4-8", "claude-haiku-4-5-20251001", "claude-sonnet-5-5", "unknown",
 ];
+// The seven payloads the screen reads — the trend series lives under the dashboard namespace.
+const COST_PAYLOAD_PREFIXES = ["/api/cost/", "/api/dashboard/cost-timeseries"];
 // Two columns "end near the same height": less than one table row of dead space under the shorter.
 const DECISION_SPLIT_MAX_SLACK_PX = 48;
 
@@ -40,6 +42,8 @@ interface CostFixture {
   kpi: Record<string, number>;
   trendCosts: readonly number[];
   parseErrorRatio: number;
+  // every cost payload route answers 503 → a cold shared outage, nothing ever loaded
+  isOutage?: boolean;
 }
 
 // today = ratio x the 7-day daily normal; the burn rate extrapolates to the same ratio.
@@ -76,6 +80,11 @@ async function openRenderContext(fixture: CostFixture): Promise<RenderContext> {
     prefix: "/",
     index: ["index.html"],
   });
+  if (fixture.isOutage) {
+    app.addHook("onRequest", async (request, reply) => {
+      if (COST_PAYLOAD_PREFIXES.some((prefix) => request.url.startsWith(prefix))) await reply.code(503).send({ error: "unavailable" });
+    });
+  }
 
   const trendRows = fixture.trendCosts.map((cost, i) => ({
     date: getDayKey(i),
@@ -176,6 +185,11 @@ async function openRenderContext(fixture: CostFixture): Promise<RenderContext> {
     true,
     "page-level network prerequisite unmet — React/Recharts CDN runtime did not load",
   );
+
+  if (fixture.isOutage) {
+    await page.waitForSelector('.cost-screen [role="alert"]', { timeout: 30_000 });
+    return { app, browser, page };
+  }
 
   // Render complete = the wave resolved: every tile has left its loading skeleton, so the
   // lane has had its inputs and an absent lane is a verdict rather than a pending state.
@@ -399,6 +413,15 @@ describe("calm fixture — nothing is running hot", () => {
     }
   });
 
+  test("the hit-rate axis labels the 100% its clamped domain reaches", async () => {
+    const labels = await ctx.page.evaluate(() =>
+      Array.from(document.querySelectorAll("#cost-region-cache .recharts-yAxis .recharts-cartesian-axis-tick text"))
+        .map((t) => (t.textContent || "").trim()),
+    );
+    // alternating 100% / 90% days → domain [88.5, 100], wide enough for whole-percent labels
+    assert.strictEqual(labels.at(-1), "100%", `y-axis labels: ${labels.join(" ")}`);
+  });
+
   test("no card content reaches past its own card's edges at xl", async () => {
     const measureOverflow = () =>
       ctx.page.evaluate(() =>
@@ -461,5 +484,38 @@ describe("hot fixture — today is running over the normal", () => {
       ...DISCLOSURE_TITLES,
     ]);
     assert.equal(await countDecisionChartRoots(ctx.page), 1);
+  });
+});
+
+describe("cold outage — every cost payload fails before any has loaded", () => {
+  let ctx: RenderContext;
+
+  before(async () => {
+    ctx = await openRenderContext({ ...getFixture(1, 0), isOutage: true });
+  });
+
+  after(async () => {
+    await closeRenderContext(ctx);
+  });
+
+  test("one banner speaks for every region, each left as a quiet covered slot with no Retry of its own", async () => {
+    const regionCount = 8; // kpis · trend · models · sessions · tokens · cache · turns · log
+    const settled = await ctx.page
+      .waitForFunction(
+        (expected: number) => document.querySelectorAll(".cost-screen [data-covered-card-id]").length === expected,
+        regionCount,
+        { timeout: 30_000 },
+      )
+      .then(() => true, () => false);
+    const counts = await ctx.page.evaluate(() => ({
+      banners: document.querySelectorAll('.cost-screen [role="alert"]').length,
+      covered: Array.from(document.querySelectorAll(".cost-screen [data-covered-card-id]"))
+        .map((el) => el.getAttribute("data-covered-card-id")),
+      retries: Array.from(document.querySelectorAll(".cost-screen button"))
+        .filter((b) => /retry/i.test(b.textContent || "")).length,
+    }));
+    assert.ok(settled, `covered slots: ${counts.covered.join(", ")}`);
+    assert.equal(counts.banners, 1);
+    assert.equal(counts.retries, 1, "the banner's Retry is the only one");
   });
 });

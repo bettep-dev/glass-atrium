@@ -1589,6 +1589,16 @@ function getCacheAxisWidth(yDomain, decimals) {
   return widest * window.UI.CHART_TICK_CHAR_PX + 12;
 }
 
+// Multiples of one 1/2/5 step inside the domain → a top clamped at 100 is always a tick; a ≥5-point domain steps in whole percents.
+function getCacheTicks([lo, hi]) {
+  const raw = (hi - lo) / 5;
+  const magnitude = 10 ** Math.floor(Math.log10(raw));
+  const step = [1, 2, 5, 10].map((m) => m * magnitude).find((s) => s >= raw - 1e-9);
+  const first = Math.ceil(lo / step - 1e-9);
+  const last = Math.floor(hi / step + 1e-9);
+  return Array.from({ length: last - first + 1 }, (_, i) => Number(((first + i) * step).toFixed(6)));
+}
+
 // Line gaps (connectNulls off) stay silent on their own → the strip names them.
 function getCacheGapLabel(rows) {
   return getNoDataLabelC(rows.map((r) => r.rate_pct));
@@ -1614,6 +1624,7 @@ function CacheHitChart({ rows, yDomain = [0, 100] }) {
         />
         <YAxis
           domain={yDomain}
+          ticks={getCacheTicks(yDomain)}
           tickFormatter={(v) => v.toFixed(narrow ? 1 : 0) + '%'}
           tick={{ fontSize: 12, fill: 'rgb(var(--faint))', fontFamily: 'JetBrains Mono, monospace' }}
           axisLine={{ stroke: 'rgb(var(--line))' }}
