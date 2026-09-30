@@ -348,6 +348,17 @@ export interface OutcomeHeatmapMeta {
   // [meta].timezone → ATRIUM_TIMEZONE), so the grid is tz-bucketed server-side — callers
   // render Sun~Sat / hours 0-23 directly, no client-side shift.
   timezone: string;
+  // Calendar dates in `timezone` the window touches — differs from period_start/period_end
+  // (UTC dates) whenever the bucket tz and UTC disagree on the date.
+  bucket_dates: OutcomeHeatmapBucketDates;
+}
+
+// YYYY-MM-DD in the bucket timezone; first/last inclusive, count = dates from first to last.
+// first = the UTC-midnight window anchor seen in that tz; last = that tz's today.
+export interface OutcomeHeatmapBucketDates {
+  first: string;
+  last: string;
+  count: number;
 }
 
 export interface OutcomeHeatmapResponse {

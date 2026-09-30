@@ -46,6 +46,7 @@ import type {
   OutcomeDowngradeOrigin,
   OutcomeGraderBreakdown,
   OutcomeGraderVerdict,
+  OutcomeHeatmapBucketDates,
   OutcomeHeatmapResponse,
   OutcomeHeatmapResultFilter,
   OutcomeResultLiteral,
@@ -1337,6 +1338,7 @@ async function handleHeatmap(
     const periodEnd = formatDateOnly(now);
     const periodStartMs = now.getTime() - days * 86_400_000;
     const periodStart = formatDateOnly(new Date(periodStartMs));
+    const bucketDates = getHeatmapBucketDates(now, days, DAY_BUCKET_TIMEZONE);
 
     request.log.info(
       {
@@ -1357,12 +1359,31 @@ async function handleHeatmap(
         period_start: periodStart,
         period_end: periodEnd,
         timezone: DAY_BUCKET_TIMEZONE,
+        bucket_dates: bucketDates,
       },
       fetched_at: new Date().toISOString(),
     };
   } catch (error) {
     return failWithDb(request, reply, "/api/outcomes/heatmap", error);
   }
+}
+
+/**
+ * Bucket-tz calendar dates the heatmap window touches.
+ * The window opens at UTC midnight of (UTC today - days) — the SQL CURRENT_DATE anchor, session tz pinned UTC —
+ * so a tz ahead of UTC sees days + 2 dates before its anchor hour and days + 1 after it.
+ */
+export function getHeatmapBucketDates(now: Date, days: number, timeZone: string): OutcomeHeatmapBucketDates {
+  const anchorMs = Date.parse(`${formatDateOnly(new Date(now.getTime() - days * 86_400_000))}T00:00:00Z`);
+  const first = formatDateIn(new Date(anchorMs), timeZone);
+  const last = formatDateIn(now, timeZone);
+  const count = (Date.parse(`${last}T00:00:00Z`) - Date.parse(`${first}T00:00:00Z`)) / 86_400_000 + 1;
+  return { first, last, count };
+}
+
+// en-CA → YYYY-MM-DD wall-clock date in `timeZone`
+function formatDateIn(date: Date, timeZone: string): string {
+  return new Intl.DateTimeFormat("en-CA", { timeZone, year: "numeric", month: "2-digit", day: "2-digit" }).format(date);
 }
 
 function parseHeatmapDaysParam(raw: string | undefined): number | null {
