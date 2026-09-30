@@ -743,7 +743,7 @@ function ScreenOutcomes({ onNav }) {
       </div>
 
       {/* Reporting-trust signals are status → stay open; only the breakdown (daily chart, budget-kill list) folds into detail. */}
-      {/* full width: beside the two-card Reporting health stack the per-agent table left a ~385px hole; the peer reporting cards pair up instead */}
+      {/* per-agent table full width — a half-width column beside the taller Reporting health stack leaves a hole; peer reporting cards pair at equal height */}
       <div className="mt-4">
         <AgentFailureTableO state={analyticsState} {...regionRetry}/>
       </div>
