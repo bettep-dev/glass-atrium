@@ -118,9 +118,10 @@ interface CostHelpers {
     setter: (update: (prev: PanelState) => PanelState) => void,
     onReceived?: () => void,
   ) => Promise<void>;
-  getSharedFailureC: (
-    namedStates: ReadonlyArray<readonly [string, PanelState]>,
-  ) => { sources: string[]; error: string } | null;
+  getCostSourceFailuresC: (states: Record<string, PanelState>) => {
+    banner: { sources: string[]; error: string } | null;
+    speakers: Map<string, string>;
+  };
   fetch: (url: string, init?: unknown) => Promise<unknown>;
   getModelLabelC: (model: string | null | undefined) => string;
   getClampedInstantC: (iso: string | null | undefined, nowMs: number) => string | null;
@@ -463,13 +464,28 @@ test("a refresh keeps the last payload on screen while in flight and after the r
   assert.doesNotMatch(String(state.error), /</, "response markup never reaches the operator");
 });
 
-test("an outage shared by two payloads is one banner naming both, and a lone failure stays on its region", () => {
-  const named = (kpi: PanelState, trend: PanelState) =>
-    [["cost KPIs", kpi], ["cost trend", trend], ["cost by model", ready({})]] as const;
+function getCostStates(overrides: Record<string, PanelState>): Record<string, PanelState> {
+  const names = ["kpiState", "tokenState", "modelState", "cacheState", "sessionState", "errorState", "turnState"];
+  return { ...Object.fromEntries(names.map((name) => [name, ready({})])), ...overrides };
+}
 
-  const shared = cost.getSharedFailureC(named(failed, { ...ready({}), error: failed.error }));
-  assert.deepEqual(shared && [...shared.sources], ["cost KPIs", "cost trend"], "a failure over held data still joins the outage");
-  assert.strictEqual(cost.getSharedFailureC(named(failed, ready({}))), null, "one failed payload is no page-level outage");
+test("an outage shared by two payloads is one banner naming both, and a lone failure stays on its region", () => {
+  const withTrend = cost.getCostSourceFailuresC(getCostStates({ kpiState: failed, tokenState: { ...ready({}), error: failed.error } }));
+  assert.deepEqual(withTrend.banner && [...withTrend.banner.sources], ["cost KPIs", "cost trend"], "a failure over held data still joins the outage");
+  assert.strictEqual(cost.getCostSourceFailuresC(getCostStates({ kpiState: failed })).banner, null, "one failed payload is no page-level outage");
+});
+
+test("the payload drawn in two regions counts once toward the outage and speaks from its first region", async () => {
+  const lone = cost.getCostSourceFailuresC(getCostStates({ tokenState: failed }));
+  assert.strictEqual(lone.banner, null, "one payload in two regions is still one failed source");
+  assert.strictEqual(lone.speakers.get("cost trend"), "cost trend", "the trend chart speaks, the token chart defers to it");
+  const all = cost.getCostSourceFailuresC(getCostStates(Object.fromEntries(Object.keys(getCostStates({})).map((k) => [k, failed]))));
+  assert.strictEqual(all.banner?.sources.length, 7, "seven payloads, seven named sources");
+
+  const mod = (await loadScreenModule(COST_SRC, { UI: getAtomUi(), React: createReactStub() })) as RenderModule;
+  const token = renderIn(mod, "TokenStackedBody", { state: failed, days: 30, onRetry: () => {}, failures: lone });
+  const card = findNodes(token, (n) => n.props.atom === "RegionFailure")[0];
+  assert.deepEqual([card.props.source, card.props.region, card.props.failures], ["cost trend", "token trend", lone]);
 });
 
 test("cache share is a share of priced cost, and a zero-cost window yields no share", () => {

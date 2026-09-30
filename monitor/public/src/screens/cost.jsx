@@ -116,15 +116,7 @@ function ScreenCost({ onNav }) {
   const freshnessInput = getFreshnessInputC(asOfAt, panelStates);
   const isBusy = getRegionSummary(panelStates).isBusy;
 
-  const sharedFailure = getSharedFailureC([
-    ['cost KPIs', kpiState],
-    ['cost trend', tokenState],
-    ['cost by model', modelState],
-    ['cache hit rate', cacheState],
-    ['session costs', sessionState],
-    ['unreadable log entries', errorState],
-    ['turn statistics', turnState],
-  ]);
+  const sourceFailures = getCostSourceFailuresC({ kpiState, tokenState, modelState, cacheState, sessionState, errorState, turnState });
   // busy only while a failed region is being re-read — another panel's first load is not this Retry
   const isRetrying = panelStates.some((state) => state.error != null && state.busy);
 
@@ -170,9 +162,9 @@ function ScreenCost({ onNav }) {
         />
       </div>
 
-      {sharedFailure && (
+      {sourceFailures.banner && (
         <div className="mb-4">
-          <PageErrorBanner sources={sharedFailure.sources} error={sharedFailure.error} onRetry={triggerRefresh}
+          <PageErrorBanner sources={sourceFailures.banner.sources} error={sourceFailures.banner.error} onRetry={triggerRefresh}
             isBusy={isRetrying} focusTargetId="cost-verdict"/>
         </div>
       )}
@@ -192,20 +184,20 @@ function ScreenCost({ onNav }) {
           modelState={modelState}
           days={days}
           onRetry={triggerRefresh}
-          shared={sharedFailure}
+          failures={sourceFailures}
         />
       </RefreshingRegionC>
 
       <RefreshingRegionC id={COST_REGION_IDS.trend} states={[tokenState]}>
-        <CostTrendCard state={tokenState} days={days} onRetry={triggerRefresh} shared={sharedFailure}/>
+        <CostTrendCard state={tokenState} days={days} onRetry={triggerRefresh} failures={sourceFailures}/>
       </RefreshingRegionC>
 
       <SplitRow ratio="1:1" className="mb-4">
         <RefreshingRegionC id={COST_REGION_IDS.models} states={[modelState]}>
-          <ModelCostCard state={modelState} days={days} onRetry={triggerRefresh} shared={sharedFailure} onNav={onNav}/>
+          <ModelCostCard state={modelState} days={days} onRetry={triggerRefresh} failures={sourceFailures} onNav={onNav}/>
         </RefreshingRegionC>
         <RefreshingRegionC id={COST_REGION_IDS.sessions} states={[sessionState]}>
-          <SessionDistributionCard state={sessionState} days={days} onRetry={triggerRefresh} shared={sharedFailure} onNav={onNav}/>
+          <SessionDistributionCard state={sessionState} days={days} onRetry={triggerRefresh} failures={sourceFailures} onNav={onNav}/>
         </RefreshingRegionC>
       </SplitRow>
 
@@ -215,10 +207,10 @@ function ScreenCost({ onNav }) {
           className="cost-inst mb-4">
           <RefreshingRegionC id={COST_REGION_IDS.tokens} states={[tokenState]}>
             <TokenStackedBody state={tokenState} days={days} onRetry={triggerRefresh}
-              shared={getAliasedSharedC(sharedFailure, 'cost trend', 'token trend')}/>
+              failures={sourceFailures}/>
           </RefreshingRegionC>
           <RefreshingRegionC id={COST_REGION_IDS.cache} states={[cacheState]} className="mt-5">
-            <CacheHitBody state={cacheState} days={days} onRetry={triggerRefresh} shared={sharedFailure}/>
+            <CacheHitBody state={cacheState} days={days} onRetry={triggerRefresh} failures={sourceFailures}/>
           </RefreshingRegionC>
         </Disclosure>
 
@@ -226,13 +218,13 @@ function ScreenCost({ onNav }) {
           <Disclosure kind="status" level={3} title="Turn statistics" sub="Stop reasons and per-turn aggregates"
             className="cost-inst">
             <RefreshingRegionC id={COST_REGION_IDS.turns} states={[turnState]}>
-              <TurnStatsBody state={turnState} days={days} onRetry={triggerRefresh} shared={sharedFailure}/>
+              <TurnStatsBody state={turnState} days={days} onRetry={triggerRefresh} failures={sourceFailures}/>
             </RefreshingRegionC>
           </Disclosure>
           <Disclosure kind="status" level={3} title="Log integrity" sub="Unreadable log entries over the window"
             className="cost-inst">
             <RefreshingRegionC id={COST_REGION_IDS.log} states={[errorState]}>
-              <ParseErrorBody state={errorState} days={days} onRetry={triggerRefresh} shared={sharedFailure}/>
+              <ParseErrorBody state={errorState} days={days} onRetry={triggerRefresh} failures={sourceFailures}/>
             </RefreshingRegionC>
           </Disclosure>
         </SplitRow>
@@ -246,13 +238,18 @@ function getFreshnessInputC(asOfAt, panelStates) {
   return { at: asOfAt, regions: panelStates };
 }
 
-// One payload feeds two regions → the second answers to the banner under its own name too.
-function getAliasedSharedC(shared, source, alias) {
-  return shared?.sources.includes(source) ? { ...shared, sources: [...shared.sources, alias] } : shared;
-}
-
-function getSharedFailureC(namedStates) {
-  return window.UI.getSharedFailure(namedStates.map(([source, state]) => ({ source, error: state.error })));
+// Render order, one entry per region → the trend payload drawn twice counts once and speaks from its first region.
+function getCostSourceFailuresC({ kpiState, tokenState, modelState, cacheState, sessionState, errorState, turnState }) {
+  return window.UI.getSourceFailures([
+    { source: 'cost KPIs', error: kpiState.error },
+    { source: 'cost trend', error: tokenState.error },
+    { source: 'cost by model', error: modelState.error },
+    { source: 'session costs', error: sessionState.error },
+    { source: 'cost trend', region: 'token trend', error: tokenState.error },
+    { source: 'cache hit rate', error: cacheState.error },
+    { source: 'turn statistics', error: turnState.error },
+    { source: 'unreadable log entries', error: errorState.error },
+  ]);
 }
 
 // region wrapper ids → a recovered Retry hands focus to its own region, never to BODY
@@ -544,7 +541,7 @@ function computeCacheShare(modelState) {
   };
 }
 
-function KpiRowC({ kpiState, hot, trendState, modelState, days, shared, onRetry }) {
+function KpiRowC({ kpiState, hot, trendState, modelState, days, failures, onRetry }) {
   const { getRegionView, RegionFailure } = window.UI;
   const kpi = kpiState.status === 'ready' ? (kpiState.data || {}) : {};
   const windowTotal = computeWindowTotal(trendState);
@@ -559,7 +556,7 @@ function KpiRowC({ kpiState, hot, trendState, modelState, days, shared, onRetry 
       {/* Payload failure is reported at the owning group — the KPI payload feeds tiles 1 and 3. */}
       {getRegionView(kpiState) === 'error' && (
         <RegionFailure source="cost KPIs" error={kpiState.error} isBusy={kpiState.busy}
-          focusTargetId={COST_REGION_IDS.kpis} onRetry={onRetry} shared={shared} className="mb-4"/>
+          focusTargetId={COST_REGION_IDS.kpis} onRetry={onRetry} failures={failures} className="mb-4"/>
       )}
       <div className="grid grid-cols-2 xl:grid-cols-4 gap-3 mb-4">
         <CostTileC
@@ -699,7 +696,7 @@ function TrendDeltaC({ delta, span }) {
  * The ±2σ band is a toggle here rather than a second card: it asks "is this day unusual" about
  * the very series already drawn.
  */
-function CostTrendCard({ state, days, shared, onRetry }) {
+function CostTrendCard({ state, days, failures, onRetry }) {
   const { CardHead } = window.UI;
   const [bandOn, setBandOn] = useStateC(false);
 
@@ -725,13 +722,13 @@ function CostTrendCard({ state, days, shared, onRetry }) {
         }
       />
       <div className="card-body">
-        <CostTrendBody state={state} days={days} bandOn={bandOn && bandAvailable} onRetry={onRetry} shared={shared}/>
+        <CostTrendBody state={state} days={days} bandOn={bandOn && bandAvailable} onRetry={onRetry} failures={failures}/>
       </div>
     </div>
   );
 }
 
-function CostTrendBody({ state, days, bandOn, shared, onRetry }) {
+function CostTrendBody({ state, days, bandOn, failures, onRetry }) {
   const { getRegionView, LoadingPlaceholder, RegionFailure } = window.UI;
 
   if (getRegionView(state) === 'loading') {
@@ -739,7 +736,7 @@ function CostTrendBody({ state, days, bandOn, shared, onRetry }) {
   }
   if (getRegionView(state) === 'error') {
     return <RegionFailure source="cost trend" error={state.error} isBusy={state.busy} focusTargetId={COST_REGION_IDS.trend}
-      onRetry={onRetry} shared={shared} minHeight={260}/>;
+      onRetry={onRetry} failures={failures} minHeight={260}/>;
   }
 
   const points = getTrendPoints(state);
@@ -992,15 +989,15 @@ function CostTrendTooltipC({ active, payload, bandOn }) {
   );
 }
 
-function TokenStackedBody({ state, days, shared, onRetry }) {
+function TokenStackedBody({ state, days, failures, onRetry }) {
   const { getRegionView, LoadingPlaceholder, RegionFailure } = window.UI;
 
   if (getRegionView(state) === 'loading') {
     return <LoadingPlaceholder label="token trend" minHeight={300}/>;
   }
   if (getRegionView(state) === 'error') {
-    return <RegionFailure source="token trend" error={state.error} isBusy={state.busy} focusTargetId={COST_REGION_IDS.tokens}
-      onRetry={onRetry} shared={shared} minHeight={300}/>;
+    return <RegionFailure source="cost trend" region="token trend" error={state.error} isBusy={state.busy} focusTargetId={COST_REGION_IDS.tokens}
+      onRetry={onRetry} failures={failures} minHeight={300}/>;
   }
 
   const points = getTrendPoints(state);
@@ -1298,7 +1295,7 @@ function isUnattributedModel(model) {
   return UNATTRIBUTED_MODEL_KEYS.has(model);
 }
 
-function ModelCostCard({ state, days, shared, onRetry, onNav }) {
+function ModelCostCard({ state, days, failures, onRetry, onNav }) {
   const { CardHead, Pill } = window.UI;
 
   const rows = state.status === 'ready' ? (state.data?.rows ?? []) : [];
@@ -1328,7 +1325,7 @@ function ModelCostCard({ state, days, shared, onRetry, onNav }) {
         }
       />
       <div className="card-body">
-        <ModelCostBody state={state} days={days} onRetry={onRetry} shared={shared}/>
+        <ModelCostBody state={state} days={days} onRetry={onRetry} failures={failures}/>
       </div>
     </div>
   );
@@ -1356,7 +1353,7 @@ function rollupModelRows(modelRows, topN) {
   return { top, other };
 }
 
-function ModelCostBody({ state, days, shared, onRetry }) {
+function ModelCostBody({ state, days, failures, onRetry }) {
   const { getRegionView, LoadingPlaceholder, RegionFailure, SectionLabel, TableHead } = window.UI;
 
   if (getRegionView(state) === 'loading') {
@@ -1364,7 +1361,7 @@ function ModelCostBody({ state, days, shared, onRetry }) {
   }
   if (getRegionView(state) === 'error') {
     return <RegionFailure source="cost by model" error={state.error} isBusy={state.busy} focusTargetId={COST_REGION_IDS.models}
-      onRetry={onRetry} shared={shared} minHeight={300}/>;
+      onRetry={onRetry} failures={failures} minHeight={300}/>;
   }
 
   const rows = state.data?.rows ?? [];
@@ -1518,7 +1515,7 @@ function buildModelCostRows(rows) {
 // C2 결정(차트→테이블 전환 KEEP)으로 ModelCostChart / ModelCostTooltipC 제거 — 모델별 비용은
 // ModelCostBody 테이블이 담당(share 막대 스캔 가능). Recharts 는 다른 차트에서 계속 사용.
 
-function CacheHitBody({ state, days, shared, onRetry }) {
+function CacheHitBody({ state, days, failures, onRetry }) {
   const { getRegionView, LoadingPlaceholder, RegionFailure } = window.UI;
 
   if (getRegionView(state) === 'loading') {
@@ -1526,7 +1523,7 @@ function CacheHitBody({ state, days, shared, onRetry }) {
   }
   if (getRegionView(state) === 'error') {
     return <RegionFailure source="cache hit rate" error={state.error} isBusy={state.busy} focusTargetId={COST_REGION_IDS.cache}
-      onRetry={onRetry} shared={shared} minHeight={220}/>;
+      onRetry={onRetry} failures={failures} minHeight={220}/>;
   }
 
   const rows = state.data?.rows ?? [];
@@ -1722,7 +1719,7 @@ function getSpendConcentrationText(concentration, sessionCount) {
   return `${who} of ${formatIntC(sessionCount)} = ${pct}% of spend`;
 }
 
-function SessionDistributionCard({ state, days, shared, onRetry, onNav }) {
+function SessionDistributionCard({ state, days, failures, onRetry, onNav }) {
   const { CardHead, Pill } = window.UI;
   const truncated = state.status === 'ready' && state.data?.truncated === true;
   const totalCount = state.status === 'ready' ? Number(state.data?.total_session_count) || 0 : 0;
@@ -1743,7 +1740,7 @@ function SessionDistributionCard({ state, days, shared, onRetry, onNav }) {
           : null}
       />
       <div className="card-body">
-        <SessionDistributionBody state={state} days={days} onRetry={onRetry} shared={shared} onNav={onNav}/>
+        <SessionDistributionBody state={state} days={days} onRetry={onRetry} failures={failures} onNav={onNav}/>
       </div>
     </div>
   );
@@ -1757,7 +1754,7 @@ const SESSION_COLUMNS = [
   { key: 'seen', label: 'Last seen', isNumeric: true },
 ];
 
-function SessionDistributionBody({ state, days, shared, onRetry, onNav }) {
+function SessionDistributionBody({ state, days, failures, onRetry, onNav }) {
   const { getRegionView, LoadingPlaceholder, RegionFailure, Table, getRowFocusProps } = window.UI;
   const [histogramOpen, setHistogramOpen] = useStateC(false);
   const [openSession, setOpenSession] = useStateC(null);
@@ -1773,7 +1770,7 @@ function SessionDistributionBody({ state, days, shared, onRetry, onNav }) {
   }
   if (getRegionView(state) === 'error') {
     return <RegionFailure source="session costs" error={state.error} isBusy={state.busy} focusTargetId={COST_REGION_IDS.sessions}
-      onRetry={onRetry} shared={shared} minHeight={220}/>;
+      onRetry={onRetry} failures={failures} minHeight={220}/>;
   }
   if (sessions.length === 0) {
     return <EmptyStateC message={`No session events in the last ${days} days.`}/>;
@@ -2000,7 +1997,7 @@ function SessionBinTooltipC({ active, payload }) {
   );
 }
 
-function ParseErrorBody({ state, days, shared, onRetry }) {
+function ParseErrorBody({ state, days, failures, onRetry }) {
   const { getRegionView, Badge, LoadingPlaceholder, RegionFailure } = window.UI;
 
   if (getRegionView(state) === 'loading') {
@@ -2008,7 +2005,7 @@ function ParseErrorBody({ state, days, shared, onRetry }) {
   }
   if (getRegionView(state) === 'error') {
     return <RegionFailure source="unreadable log entries" error={state.error} isBusy={state.busy} focusTargetId={COST_REGION_IDS.log}
-      onRetry={onRetry} shared={shared} minHeight={220}/>;
+      onRetry={onRetry} failures={failures} minHeight={220}/>;
   }
 
   const rows = state.data?.rows ?? [];
@@ -2280,7 +2277,7 @@ function turnStopReasonMeta(reason) {
   return { ...meta, raw: reason || '' };
 }
 
-function TurnStatsBody({ state, days, shared, onRetry }) {
+function TurnStatsBody({ state, days, failures, onRetry }) {
   const { getRegionView, LoadingPlaceholder, RegionFailure } = window.UI;
 
   if (getRegionView(state) === 'loading') {
@@ -2288,7 +2285,7 @@ function TurnStatsBody({ state, days, shared, onRetry }) {
   }
   if (getRegionView(state) === 'error') {
     return <RegionFailure source="turn statistics" error={state.error} isBusy={state.busy} focusTargetId={COST_REGION_IDS.turns}
-      onRetry={onRetry} shared={shared} minHeight={220}/>;
+      onRetry={onRetry} failures={failures} minHeight={220}/>;
   }
 
   const stopReasons = state.data?.stop_reasons ?? [];
