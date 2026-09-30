@@ -109,7 +109,7 @@ const DOMAIN_ORDER_MC = [
 	"model.daemon_cycle_worker",
 ];
 
-// Take-effect labels — GET apply_mode rendered, so every row answers when its edit applies.
+// Take-effect labels — GET apply_mode, rendered as each section's one take-effect line.
 const APPLY_MODE_META_MC = {
 	"next-spawn": {
 		label: "Next spawn",
@@ -729,7 +729,7 @@ function RowHintMC({ hint }) {
 	return <div className="fs-meta text-faint is-wrap">{hint}</div>;
 }
 
-// Full descriptions behind one section disclosure — a disclosure per row repeats one affordance N times.
+// Full descriptions in one labelled list per section — a note per row repeats one affordance N times.
 function TierNotesMC({ title, rows }) {
 	const notes = rows.filter((meta) => meta?.desc && meta.desc !== meta.hint);
 	if (notes.length === 0) return null;
@@ -1146,7 +1146,7 @@ const BUDGET_FIELD_STYLE_MC = { width: "calc(6ch + 4px + var(--ctl-pad-x))" };
 
 /**
  * 예산 1행 — $ 입력(2-decimal 문자열) + invalid 즉시 field-adjacent role=alert (T-MDL-4)
- * + 실측 + 섹션 공통과 다른 행만 반영 시점 표시 + ghost default/reset (T-MDL-6).
+ * + 실측 + ghost default/reset (T-MDL-6).
  */
 function BudgetRowMC({ budget: b, value, defaultValue, error, onChange }) {
 	const meta = BUDGET_META_MC[b.domain] || { label: b.domain, hint: "", desc: "" };
