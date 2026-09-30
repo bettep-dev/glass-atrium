@@ -271,10 +271,10 @@ function getFittingTicks(labels, kind, widthPx, maxTicks) {
   const isEvenOnly = count >= 2 && hasEvenSteps(top);
   for (let cap = top; cap >= 2; cap--) {
     if (isEvenOnly && !hasEvenSteps(cap)) continue;
-    const ticks = getChartTicks(labels.length, cap);
+    const ticks = getChartTicks(count, cap);
     if (isTickRowClear(ticks, labels, kind, widthPx)) return ticks;
   }
-  return [labels.length - 1];
+  return [count - 1];
 }
 
 function isTickRowClear(ticks, labels, kind, widthPx) {
@@ -1703,8 +1703,7 @@ function RegionFailure({ source, region, error, failures, shared, onRetry, isBus
 
   if (banner?.sources?.includes(source)) return <RegionCovered {...slot}/>;
   if (speaker != null && speaker !== (region ?? source)) return <RegionCovered {...slot} speaker={source}/>;
-  return <RegionUnavailable source={source} error={error} onRetry={onRetry} isBusy={isBusy}
-    focusTargetId={focusTargetId} minHeight={minHeight} className={className}/>;
+  return <RegionUnavailable {...slot} error={error} onRetry={onRetry} isBusy={isBusy}/>;
 }
 
 // first covered slot in document order → the first region the shared Retry brings back

@@ -224,7 +224,7 @@ function harnessToNavBadges(harness) {
 // 도트 클래스는 StatusDot(ui.jsx) 어휘 재사용 (미등록 클래스 금지).
 // pageState = the page header stamp's read state (ui.jsx → getShellPageState): outranks only ALL SYSTEMS.
 function systemsRollup(harness, pageState = null) {
-	if (!harness || harness.status === "loading") return ROLLUP_CHECKING;
+	if (!harness || harness.status === "loading") return getNeutralRollup("CHECKING…");
 
 	const isReady = harness.status === "ready";
 	const downCount = isReady ? harness.downNames.length : 0;
@@ -236,22 +236,21 @@ function systemsRollup(harness, pageState = null) {
 	const issues = isReady && (harness.daemonsDown > 0 || harness.failCount1h > 0);
 	if (issues) return { tone: "warn", dotClass: "bg-warn", label: "ISSUES DETECTED" };
 	// an unread source could hide a fault → unknown, never ALL SYSTEMS
-	if (!isReady || harness.unreadSources?.length > 0) {
-		return { tone: "neutral", dotClass: "bg-faint", label: "STATUS UNKNOWN" };
-	}
+	if (!isReady || harness.unreadSources?.length > 0) return getNeutralRollup("STATUS UNKNOWN");
 	return getPageRollup(pageState) ?? { tone: "ok", dotClass: "bg-ok", label: "ALL SYSTEMS" };
 }
 
-const ROLLUP_CHECKING = { tone: "neutral", dotClass: "bg-faint", label: "CHECKING…" };
-
 // page read state in the stamp's own words, neutral tone — a read fact, not a harness verdict; fresh → null
 function getPageRollup(pageState) {
-	if (pageState?.state === "loading") return ROLLUP_CHECKING;
-	if (pageState?.state === "not-read") return { tone: "neutral", dotClass: "bg-faint", label: "NOT READ" };
-	if (pageState?.state === "stale" || pageState?.state === "partial") {
-		return { tone: "neutral", dotClass: "bg-faint", label: `LAST KNOWN ${window.UI.formatKstTime(pageState.at)}` };
-	}
+	const { state, at } = pageState ?? {};
+	if (state === "loading") return getNeutralRollup("CHECKING…");
+	if (state === "not-read") return getNeutralRollup("NOT READ");
+	if (state === "stale" || state === "partial") return getNeutralRollup(`LAST KNOWN ${window.UI.formatKstTime(at)}`);
 	return null;
+}
+
+function getNeutralRollup(label) {
+	return { tone: "neutral", dotClass: "bg-faint", label };
 }
 
 function App() {
@@ -304,17 +303,18 @@ function App() {
 	const harnessReadRef = useR(null);
 	const pollHarness = useC(() => {
 		if (harnessReadRef.current) return harnessReadRef.current;
-		const read = readHarnessSources().then((settled) => {
-			if (!isHarnessMountedRef.current) return;
-			setKpiState((prev) => toStoreState(settled.kpiState, prev));
-			setHealthState((prev) => toStoreState(settled.healthState, prev));
-			setLiveState((prev) => toStoreState(settled.liveState, prev));
-			setHookState((prev) => toStoreState(settled.hookState, prev));
-			setHookFailState((prev) => toStoreState(settled.hookFailState, prev));
-		});
-		harnessReadRef.current = read.finally(() => {
-			harnessReadRef.current = null;
-		});
+		harnessReadRef.current = readHarnessSources()
+			.then((settled) => {
+				if (!isHarnessMountedRef.current) return;
+				setKpiState((prev) => toStoreState(settled.kpiState, prev));
+				setHealthState((prev) => toStoreState(settled.healthState, prev));
+				setLiveState((prev) => toStoreState(settled.liveState, prev));
+				setHookState((prev) => toStoreState(settled.hookState, prev));
+				setHookFailState((prev) => toStoreState(settled.hookFailState, prev));
+			})
+			.finally(() => {
+				harnessReadRef.current = null;
+			});
 		return harnessReadRef.current;
 	}, []);
 	useE(() => {
