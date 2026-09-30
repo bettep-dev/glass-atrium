@@ -2534,7 +2534,7 @@ function ChangeSummaryCardI({ state, aggregate, onRetry, failures }) {
 				</div>
 				<div className="mt-auto">
 					<div className="fs-meta text-faint uppercase tracking-wider">
-						Reject rate, recent half of cycles
+						Reject rate, recent half of cycle days
 					</div>
 					<div className="mt-1">
 						<RejectRateHeadlineI before={failBefore} after={failAfter} />
