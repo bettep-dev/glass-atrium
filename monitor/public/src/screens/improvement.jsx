@@ -1311,7 +1311,7 @@ function BoardRowI({ onClick, title, ariaLabel, lead, text, trail }) {
 			aria-label={ariaLabel}
 		>
 			{lead}
-			<span className="text-ink truncate flex-1 min-w-0">{text}</span>
+			<span className="text-ink fs-body truncate flex-1 min-w-0">{text}</span>
 			{trail}
 		</button>
 	);
@@ -1985,7 +1985,7 @@ function HeldCauseStripI({ buckets }) {
 							{`${formatIntI(agents)} ${agents === 1 ? "agent" : "agents"}`}
 						</span>
 						{/* is-wrap required — .card-sub clamps to one line, and a clipped remedy leaves only the numbers. */}
-						<span className="card-sub is-wrap fs-meta">{b.hint}</span>
+						<span className="card-sub is-wrap fs-body">{b.hint}</span>
 					</li>
 				);
 			})}
@@ -2577,32 +2577,31 @@ function PatternLedgerCardI({ state, suppression, onRowClick, onRetry, shared })
 	const liveSection = (
 		<LedgerLiveSectionI rows={live} maxFreq={maxFreq} onRowClick={onRowClick} />
 	);
+	const sideSections = getLedgerSectionsI(inert, suppression);
 
-	const holdSections = (
-		<>
-			<LedgerHeldSectionI suppression={suppression} />
-			<LedgerRecurrenceSectionI suppression={suppression} />
-		</>
-	);
+	if (inert.length === 0) {
+		return (
+			<section className="card" aria-label="Pattern ledger" id={ANCHOR_ID_I.patternLedger} data-testid="pattern-ledger">
+				<CardHead title="Pattern ledger" />
+				{liveSection}
+				{sideSections.map((section) => section.node)}
+				<LedgerFooterI total={total} declined={declinedAllTime} suppression={suppression} />
+			</section>
+		);
+	}
 
+	const liveWeight = 1 + live.length + getLiveRowGroupsI(live).length;
+	const columns = getLedgerColumnsI(liveWeight, sideSections);
 	return (
 		<section className="card" aria-label="Pattern ledger" id={ANCHOR_ID_I.patternLedger} data-testid="pattern-ledger">
 			<CardHead title="Pattern ledger" />
-			{/* inert is short → held + recurrence stack under it instead of leaving that column empty */}
-			{inert.length > 0 ? (
-				<SplitRow ratio="1:1">
+			<SplitRow ratio="1:1">
+				<SplitColumn>
 					{liveSection}
-					<SplitColumn>
-						<LedgerInertSectionI rows={inert} />
-						{holdSections}
-					</SplitColumn>
-				</SplitRow>
-			) : (
-				<>
-					{liveSection}
-					{holdSections}
-				</>
-			)}
+					{columns.live.map((section) => section.node)}
+				</SplitColumn>
+				<SplitColumn>{columns.side.map((section) => section.node)}</SplitColumn>
+			</SplitRow>
 			<LedgerFooterI
 				total={total}
 				declined={declinedAllTime}
@@ -2610,6 +2609,29 @@ function PatternLedgerCardI({ state, suppression, onRowClick, onRetry, shared })
 			/>
 		</section>
 	);
+}
+
+// Ledger sections beside the live list, each weighted by its rendered lines (head + rows · held = strip line + folded summary per cause).
+function getLedgerSectionsI(inert, suppression) {
+	const heldBuckets = Array.isArray(suppression?.parked) ? suppression.parked : [];
+	const recurrenceBuckets = Array.isArray(suppression?.per_cycle) ? suppression.per_cycle : [];
+	return [
+		{ key: "inert", weight: inert.length > 0 ? 1 + inert.length : 0, node: <LedgerInertSectionI key="inert" rows={inert} /> },
+		{ key: "held", weight: heldBuckets.length > 0 ? 1 + 2 * heldBuckets.length : 0, node: <LedgerHeldSectionI key="held" suppression={suppression} /> },
+		{ key: "recurrence", weight: recurrenceBuckets.length > 0 ? 2 + recurrenceBuckets.length : 0, node: <LedgerRecurrenceSectionI key="recurrence" suppression={suppression} /> },
+	];
+}
+
+// Each section, in order, joins the lighter column so far → neither column ends in a tall empty run.
+function getLedgerColumnsI(liveWeight, sections) {
+	const columns = { live: [], side: [] };
+	const total = { live: liveWeight, side: 0 };
+	for (const section of sections) {
+		const target = total.side <= total.live ? "side" : "live";
+		columns[target].push(section);
+		total[target] += section.weight;
+	}
+	return columns;
 }
 
 // Live zone — proposal-eligible rows only, card kept when empty (held still reads) · same-title rows grouped, each led by its agent.
