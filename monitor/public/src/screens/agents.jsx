@@ -1987,9 +1987,9 @@ function getWriterBreakageSplit(failure) {
   };
 }
 
-// concerns arrive cut mid-sentence → drop the stray closers a cut leaves in front, fold whitespace
+// concerns arrive cut mid-sentence → drop the closers, separators and emptied pairs a cut leaves in front; a real opener stays
 function getConcernTextAg(raw) {
-  return String(raw).replace(/\s+/g, ' ').trim().replace(/^[^\p{L}\p{N}]+/u, '');
+  return String(raw).replace(/\s+/g, ' ').trim().replace(/^(?:[\])}>,.;:!?]|\[\]|\(\)|\{\})+\s*/u, '');
 }
 
 // (b) Lifecycle — lifecycle-stats(agent_type 필터) start/completed gap + duration 분포(1 mono 라인 collapse).

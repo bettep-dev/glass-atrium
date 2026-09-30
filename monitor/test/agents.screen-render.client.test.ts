@@ -1578,6 +1578,9 @@ test("a top concern reads as plain text, without the stray punctuation a cut fra
   const getConcernText = mod.getConcernTextAg as (raw: string) => string;
   const rows = [
     { name: "a fragment cut after a bracket drops the stray closers", raw: "[]) on empty history with", text: "on empty history with" },
+    { name: "a real opening bracket is kept", raw: "[Not Executed: live run]", text: "[Not Executed: live run]" },
+    { name: "an opening backtick is kept", raw: "`path` missing", text: "`path` missing" },
+    { name: "a leading separator a cut leaves is dropped", raw: ", then retried", text: "then retried" },
     { name: "a path keeps its own characters", raw: "agents/glass-atrium-dev-shell.md return EPERM", text: "agents/glass-atrium-dev-shell.md return EPERM" },
     { name: "runs of whitespace fold to one space", raw: "  gate   not\nrun ", text: "gate not run" },
   ];
