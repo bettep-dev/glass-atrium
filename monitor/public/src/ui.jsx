@@ -960,11 +960,20 @@ function Disclosure({ kind = 'detail', title, sub, tone, level = 2, children, cl
 // ratio preset → base.css modifier; stacked below xl, side by side at xl.
 const SPLIT_ROW_RATIOS = Object.freeze({ '1:1': '1-1', '7:5': '7-5', '3:2': '3-2', '2:1': '2-1' });
 
-// Two cards (or two in-card columns) side by side at xl in a ratio preset.
-function SplitRow({ ratio = '1:1', children, className = '' }) {
-  const modifier = SPLIT_ROW_RATIOS[ratio] || SPLIT_ROW_RATIOS['1:1'];
+// layout → base.css modifier: content = each column its own height (no stretched empty box) · equal = peer cards match heights.
+const SPLIT_ROW_LAYOUTS = Object.freeze({ content: 'content', equal: 'equal' });
 
-  return <div className={`split-row split-row--${modifier} ${className}`.trim()}>{children}</div>;
+// Two cards (or two in-card columns) side by side at xl in a ratio preset · layout: 'content' (default) | 'equal'.
+function SplitRow({ ratio = '1:1', layout = 'content', children, className = '' }) {
+  const modifier = SPLIT_ROW_RATIOS[ratio] || SPLIT_ROW_RATIOS['1:1'];
+  const layoutModifier = SPLIT_ROW_LAYOUTS[layout] || SPLIT_ROW_LAYOUTS.content;
+
+  return <div className={`split-row split-row--${modifier} split-row--${layoutModifier} ${className}`.trim()}>{children}</div>;
+}
+
+// One SplitRow column holding a card stack (16px apart) · isRail → sticky 24px from the top at xl.
+function SplitColumn({ isRail = false, children, className = '' }) {
+  return <div className={`split-col ${isRail ? 'split-col--rail' : ''} ${className}`.replace(/\s+/g, ' ').trim()}>{children}</div>;
 }
 
 // Tile-internal columns below xl: value + badge (lead) left, detail + hint + drill link right.
@@ -2027,7 +2036,7 @@ function resolveOutcomeRate(data) {
 window.UI = {
   Icon, Pill, Badge, EmptyState, SubCard, Sparkline, MiniBars, Bar, BulletBar, StatusDot, AgentBadge, AgentName, getAgentDisplayName, KPI, KpiValue, DetailSurface, useDismissFocus, Popover, PopoverPanel, getTrapFocusTarget, getInertTargets, setSurfaceOpen, getTopSurface, Modal, Tabs, CardHead, PageHeader,
   SectionLabel, Table, TableHead, DisclosureChevron, DisclosureButton, getSeverityTone, getWorstTone,
-  Disclosure, getDisclosureOpen, SplitRow, SPLIT_ROW_RATIOS, TileSplit,
+  Disclosure, getDisclosureOpen, SplitRow, SPLIT_ROW_RATIOS, SPLIT_ROW_LAYOUTS, SplitColumn, TileSplit,
   getRovingIndex, getRovingTabIndex, ROW_CONTROL_PROPS, getRowKeyAction, getRowFocusProps, ChipGroup,
   getDisplayName, hasFieldValue, DetailField,
   TrendChart, getChartTicks, getChartIndexAtRatio, getChartReadout, getChartSummary,
