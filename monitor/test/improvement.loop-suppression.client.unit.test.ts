@@ -20,7 +20,7 @@
 //
 // Runner: npx tsx --test test/improvement.loop-suppression.client.unit.test.ts
 
-import test from "node:test";
+import test, { describe } from "node:test";
 import assert from "node:assert/strict";
 import { fileURLToPath } from "node:url";
 import { dirname, resolve } from "node:path";
@@ -46,6 +46,14 @@ interface Sandbox {
     onRowClick?: unknown;
     onRetry?: unknown;
   }) => RecordedElement | null;
+  LedgerLiveSectionI: unknown;
+  LedgerInertSectionI: unknown;
+  LedgerHeldSectionI: unknown;
+  LedgerRecurrenceSectionI: unknown;
+  getLedgerColumnsI: (
+    liveWeight: number,
+    sections: Array<{ key: string; weight: number }>,
+  ) => { live: Array<{ key: string }>; side: Array<{ key: string }> };
 }
 
 function isElement(value: unknown): value is RecordedElement {
@@ -107,6 +115,30 @@ Object.assign(sandbox.window.UI, {
   TONE_GLYPH: { ok: "\u2713", warn: "\u26a0", crit: "\u2715", info: "\u2139" },
   titleOf: (value: unknown) => value,
 });
+
+// Pass-through, so text walks still reach the columns; identity lets the split be found.
+function SplitRowStub(props: Record<string, unknown>) {
+  return props.children;
+}
+sandbox.window.UI.SplitRow = SplitRowStub;
+
+// First element of the given type, without rendering any function component.
+function findByType(node: unknown, type: unknown): RecordedElement | null {
+  if (Array.isArray(node)) {
+    for (const child of node) {
+      const hit = findByType(child, type);
+      if (hit) return hit;
+    }
+    return null;
+  }
+  if (!isElement(node)) return null;
+  if (node.type === type) return node;
+  for (const value of Object.values(node.props)) {
+    const hit = findByType(value, type);
+    if (hit) return hit;
+  }
+  return null;
+}
 
 const SUPPRESSION = {
   parked: [
@@ -288,29 +320,81 @@ test("held rows appear under their own cause, window-free", () => {
   );
 });
 
-test("the actionable held group opens and the design-decision group stays closed", () => {
-  const groups = detailsOf(sandbox.PatternLedgerCardI({ state: LEDGER_STATE, suppression: SUPPRESSION }), []);
-  const capGroup = groups.find((g) => textOf(g).includes("cap remedy text"));
-  const designGroup = groups.find((g) => textOf(g).includes("design decision remedy text"));
-  assert.ok(capGroup, "the repeat-apply cap group must be rendered");
-  assert.ok(designGroup, "the design-decision group must be rendered");
-  assert.equal(capGroup?.props.open, true, "a group a human can clear today is not worth a click");
-  assert.notEqual(
-    designGroup?.props.open,
-    true,
-    "opening the group nobody can act on buries the group they can",
+test("every held row list starts folded while each cause's count and remedy stay in view", () => {
+  const tree = sandbox.PatternLedgerCardI({ state: LEDGER_STATE, suppression: SUPPRESSION });
+  const groups = detailsOf(tree, []).filter((g) => /signature/i.test(textOf(g)));
+  assert.equal(groups.length, 2, "each held cause keeps its own row list");
+  assert.ok(
+    groups.every((g) => g.props.open !== true),
+    "row lists fold uniformly, so the largest group is never the one hidden",
   );
+  const folded = groups.map(textOf).join(" ");
+  assert.doesNotMatch(folded, /remedy text/, "a remedy inside a fold is a remedy nobody reads");
+  const text = textOf(tree);
+  assert.match(text, /cap remedy text/);
+  assert.match(text, /design decision remedy text/);
+  assert.match(text, /7 held/, "the largest cause's count reads without opening anything");
 });
 
-test("the recurrence rates sit behind a closed disclosure", () => {
-  const groups = detailsOf(sandbox.PatternLedgerCardI({ state: LEDGER_STATE, suppression: SUPPRESSION }), []);
-  const disclosure = groups.find((g) => textOf(g).includes("roster remedy text"));
-  assert.ok(disclosure, "the per-cycle buckets must be rendered somewhere");
-  assert.notEqual(
-    disclosure?.props.open,
-    true,
-    "a recurrence rate is a rate, not a state change — it does not earn open space",
+test("the recurrence rates render open under the held section", () => {
+  const tree = sandbox.PatternLedgerCardI({ state: LEDGER_STATE, suppression: SUPPRESSION });
+  const folded = detailsOf(tree, []).map(textOf).join(" ");
+  assert.doesNotMatch(folded, /Roster mismatch/, "a loop stalling on one cause is loop health, not a drill-down");
+  assert.match(textOf(tree), /Roster mismatch/);
+});
+
+// every component type in a subtree, fragments and columns walked through
+function typesIn(node: unknown, out: unknown[] = []): unknown[] {
+  if (Array.isArray(node)) {
+    for (const child of node) typesIn(child, out);
+    return out;
+  }
+  if (typeof node !== "object" || node === null || !("type" in node)) return out;
+  const el = node as RecordedElement;
+  out.push(el.type);
+  return typesIn(el.props.children, out);
+}
+
+describe("a ledger section joins whichever column is lighter at that point, in order", () => {
+  const sections = [
+    { key: "inert", weight: 2 },
+    { key: "held", weight: 5 },
+    { key: "recurrence", weight: 4 },
+  ];
+  const rows = [
+    { name: "a short live list takes a section once the side column outweighs it", liveWeight: 3, live: ["recurrence"], side: ["inert", "held"] },
+    { name: "a long live list leaves every section on the side", liveWeight: 20, live: [], side: ["inert", "held", "recurrence"] },
+    { name: "an empty live list still seeds the side column first", liveWeight: 0, live: ["held"], side: ["inert", "recurrence"] },
+  ];
+  for (const row of rows) {
+    test(row.name, () => {
+      const columns = sandbox.getLedgerColumnsI(row.liveWeight, sections);
+      // Array.from → a test-realm array; the sandbox realm's Array prototype fails strict deepEqual
+      assert.deepEqual(Array.from(columns.live, (section) => section.key), row.live);
+      assert.deepEqual(Array.from(columns.side, (section) => section.key), row.side);
+    });
+  }
+});
+
+test("a short live list pairs with the side column and takes the overflow sections under it", () => {
+  const split = findByType(
+    sandbox.PatternLedgerCardI({ state: LEDGER_STATE, suppression: SUPPRESSION }),
+    SplitRowStub,
   );
+  assert.ok(split, "the ledger must pair its live list with the side column");
+  const [live, side] = split.props.children as RecordedElement[];
+  const liveTypes = typesIn(live);
+  const sideTypes = typesIn(side);
+
+  assert.equal(liveTypes[1], sandbox.LedgerLiveSectionI, "the live list leads its column");
+  assert.ok(liveTypes.includes(sandbox.LedgerRecurrenceSectionI), "the lighter live column takes the last section");
+  for (const section of [sandbox.LedgerInertSectionI, sandbox.LedgerHeldSectionI]) {
+    assert.ok(sideTypes.includes(section), "the side column keeps inert and held");
+  }
+  for (const section of [sandbox.LedgerInertSectionI, sandbox.LedgerHeldSectionI, sandbox.LedgerRecurrenceSectionI]) {
+    const placements = [...liveTypes, ...sideTypes].filter((type) => type === section).length;
+    assert.equal(placements, 1, "each section renders in exactly one column");
+  }
 });
 
 test("the ledger's footer states each figure with its gate", () => {

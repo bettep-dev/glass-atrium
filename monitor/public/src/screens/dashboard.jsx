@@ -42,7 +42,9 @@ const SPEND_BASELINE_DAYS = 7;
 const SEVERITY_RANK = { crit: 3, warn: 2, info: 1, neutral: 0 };
 
 function ScreenDashboard({ onNav, harness, onRetryHarness }) {
-  const { PageHeader, TypeScaleStyle, FreshnessStamp, RefreshButton, PageErrorBanner, INITIAL_REGION_STATE } = window.UI;
+  const {
+    PageHeader, TypeScaleStyle, FreshnessStamp, RefreshButton, PageErrorBanner, INITIAL_REGION_STATE, getRegionSummary,
+  } = window.UI;
 
   const [costState,      setCostState]      = useStateD(INITIAL_REGION_STATE);
   const [agentsState,    setAgentsState]    = useStateD(INITIAL_REGION_STATE);
@@ -68,12 +70,26 @@ function ScreenDashboard({ onNav, harness, onRetryHarness }) {
     return runFetch(DASH_REGION_URLS[region], setters[region], request);
   }, []);
 
+  // the shell fold carries no busy flag → the page counts its own harness re-reads in flight
+  const [isHarnessBusy, setHarnessBusy] = useStateD(false);
+  const harnessReadsRef = useRefD(0);
+  const rereadHarness = useCallbackD(() => {
+    if (!onRetryHarness) return;
+    const settle = () => {
+      harnessReadsRef.current -= 1;
+      if (harnessReadsRef.current === 0) setHarnessBusy(false);
+    };
+    harnessReadsRef.current += 1;
+    setHarnessBusy(true);
+    Promise.resolve(onRetryHarness()).then(settle, settle);
+  }, [onRetryHarness]);
+
   // the page reads the shell's harness too → Refresh and the banner Retry re-read it with the wave
   const triggerRefresh = useCallbackD(() => {
     setRefreshTick((t) => t + 1);
-    onRetryHarness?.();
-  }, [onRetryHarness]);
-  const retryTile = useCallbackD((region) => getTileRetry(loadRegion, onRetryHarness)(region), [loadRegion, onRetryHarness]);
+    rereadHarness();
+  }, [rereadHarness]);
+  const retryTile = useCallbackD((region) => getTileRetry(loadRegion, rereadHarness)(region), [loadRegion, rereadHarness]);
   const refetchUpdateJob = useCallbackD(() => loadRegion('updateJob'), [loadRegion]);
 
   // harness 판독은 셸 fold 가 공급 — 여기서 재요청하지 않는다(풋터와 어긋나는 원인).
@@ -100,12 +116,12 @@ function ScreenDashboard({ onNav, harness, onRetryHarness }) {
   }).kind;
 
   const waveStates = [costState, agentsState, outcomesState, updateState];
-  // the stamp also answers for the harness tile → a failed harness read keeps it off Fresh
-  const stampRegions = [...waveStates, harness];
+  const isWaveBusy = getRegionSummary(waveStates).isBusy;
   const alarms = buildAlarms({ harness, costState, installKind });
   const alarmReadiness = getAlarmReadiness({ harness, costState, updateState });
-  const tiles = buildTiles({ harness, costState, agentsState, outcomesState, alarms });
+  const tiles = buildTiles({ harness, costState, agentsState, outcomesState, isHarnessBusy });
   const sharedFailure = getTileSharedFailure(tiles);
+  const version = describeVersion(harness);
 
   return (
     <div className="flex flex-col">
@@ -121,6 +137,8 @@ function ScreenDashboard({ onNav, harness, onRetryHarness }) {
         /* 타일 힌트 — 2줄분 min-height 예약(clamp 없음) → 폭이 줄어도 밴드 높이 불변. */
         .dash-tile-hint { min-height: calc(var(--fs-meta) * 1.4 * 2); line-height: 1.4; }
         .dash-tile-detail { min-height: calc(var(--fs-body) * 1.5); }
+        /* two columns (xl) → an even count puts two rows on the bottom line; both drop the hairline, not only the last */
+        @media (min-width: 1280px) { .dash-alarm-grid > .alarm-row:nth-child(odd):nth-last-child(2) { border-bottom: none; } }
       `}</style>
 
       <div className="flex-shrink-0">
@@ -129,9 +147,9 @@ function ScreenDashboard({ onNav, harness, onRetryHarness }) {
           sub={<span className="fs-meta">Triage</span>} // the shared eyebrow is 11px → fs-meta holds the 12px floor
           right={
             <>
-              <span className="fs-meta font-mono text-dim">{describeVersion(harness)}</span>
-              <FreshnessStamp {...getFreshnessInputD(settledAt, stampRegions)}/>
-              <RefreshButton isBusy={window.UI.getRegionSummary(waveStates).isBusy} hasRead={settledAt !== null}
+              {version && <span className="fs-meta font-mono text-dim">{version}</span>}
+              <FreshnessStamp {...getFreshnessInputD(settledAt, waveStates, harness)}/>
+              <RefreshButton isBusy={isWaveBusy} hasRead={settledAt !== null}
                 onRefresh={triggerRefresh} label="Refresh dashboard"/>
             </>
           }
@@ -139,7 +157,10 @@ function ScreenDashboard({ onNav, harness, onRetryHarness }) {
       </div>
 
       <div className="space-sections">
-        {sharedFailure && <PageErrorBanner sources={sharedFailure.sources} error={sharedFailure.error} onRetry={triggerRefresh}/>}
+        {sharedFailure && (
+          <PageErrorBanner sources={sharedFailure.sources} error={sharedFailure.error} onRetry={triggerRefresh}
+            isBusy={isWaveBusy} focusTargetId={DASH_STATUS_BAND_ID}/>
+        )}
         <AlarmLane
           alarms={alarms}
           readiness={alarmReadiness}
@@ -155,8 +176,8 @@ function ScreenDashboard({ onNav, harness, onRetryHarness }) {
 }
 
 // harness 판독은 셸 소유 → 그 타일의 Retry 는 셸 재폴링, 나머지는 자기 region 재요청
-function getTileRetry(loadRegion, onRetryHarness) {
-  return (region) => (region === HARNESS_REGION ? onRetryHarness?.() : loadRegion(region));
+function getTileRetry(loadRegion, rereadHarness) {
+  return (region) => (region === HARNESS_REGION ? rereadHarness() : loadRegion(region));
 }
 
 const NO_SHARED_SOURCES = Object.freeze([]);
@@ -174,11 +195,17 @@ function AlarmLane({ alarms, readiness = ALARM_READINESS_LOADING, onNav, updateS
   const [reserved, setReserved] = useStateD(0);
   const slots = getLaneSlots(alarms.length, readiness, reserved);
   if (slots.reserved !== reserved) setReserved(slots.reserved);
+  const trailer = slots.trailer && <LaneTrailer trailer={slots.trailer} hasAlarms={hasAlarms} unread={readiness.unread}/>;
+  const isLoading = slots.trailer === 'loading';
   return (
-    <section className="dash-lane" aria-live="polite" aria-label="Alarms">
-      {hasAlarms && <AlarmList alarms={alarms} onNav={onNav} updateState={updateState}
-        updateJobState={updateJobState} onRefetchJob={onRefetchJob}/>}
-      {slots.trailer && <LaneTrailer trailer={slots.trailer} hasAlarms={hasAlarms} unread={readiness.unread}/>}
+    <section className="dash-lane" aria-label="Alarms">
+      <div aria-live="polite">
+        {hasAlarms && <AlarmList alarms={alarms} onNav={onNav} updateState={updateState}
+          updateJobState={updateJobState} onRefetchJob={onRefetchJob}/>}
+        {!isLoading && trailer}
+      </div>
+      {/* the loading line is its own status region → beside the polite one, never inside, so it is announced once */}
+      {isLoading && trailer}
     </section>
   );
 }
@@ -227,7 +254,7 @@ function getAlarmReadiness(sources) {
 
 function AlarmList({ alarms, onNav, updateState, updateJobState, onRefetchJob }) {
   return (
-    <div role="list" className="flex flex-col">
+    <div role="list" className="dash-alarm-grid grid grid-cols-1 xl:grid-cols-2 gap-x-4">
       {alarms.map((alarm) => (
         <AlarmRow key={alarm.id} alarm={alarm} onNav={onNav}>
           {alarm.id === 'install' && (
@@ -246,12 +273,15 @@ function AlarmList({ alarms, onNav, updateState, updateJobState, onRefetchJob })
 // 한 줄 = 한 사실. 소유 화면 링크를 갖거나(target) 자기 조치를 품거나(children) 둘 중 하나.
 // flat hairline row (.alarm-row) — tone rides on the leading glyph only
 function AlarmRow({ alarm, onNav, children }) {
-  const { Icon, TONE_ICON } = window.UI;
+  const { Badge, Icon, TONE_ICON } = window.UI;
   return (
     <div role="listitem" className="alarm-row" data-tone={alarm.tone}>
       <span className="alarm-row-glyph"><Icon name={TONE_ICON[alarm.tone]} size={16}/></span>
       <div className="min-w-0">
-        <div className="fs-body font-medium text-ink">{alarm.title}</div>
+        <div className="fs-body font-medium text-ink flex flex-wrap items-center gap-x-2 gap-y-1">
+          <span>{alarm.title}</span>
+          {alarm.isHeld && <Badge tone="neutral">Last known</Badge>}
+        </div>
         {alarm.detail && <div className="fs-meta text-dim">{alarm.detail}</div>}
       </div>
       <div className="flex items-center gap-2">
@@ -265,7 +295,7 @@ function AlarmRow({ alarm, onNav, children }) {
 // 상태 밴드 — 4타일 고정, 좁은 폭에선 2×2. 값 · 힌트 한 줄 · 소유 화면 링크.
 function StatusBand({ tiles, onNav, onRetry, sharedSources = NO_SHARED_SOURCES }) {
   return (
-    <div className="grid grid-cols-2 xl:grid-cols-4 gap-card">
+    <div id={DASH_STATUS_BAND_ID} className="grid grid-cols-2 xl:grid-cols-4 gap-card">
       {tiles.map((tile) => (
         <StatusTile key={tile.id} tile={tile} onNav={onNav} onRetry={onRetry}
           isRetryShared={sharedSources.includes(tile.source)}/>
@@ -274,36 +304,53 @@ function StatusBand({ tiles, onNav, onRetry, sharedSources = NO_SHARED_SOURCES }
   );
 }
 
+// the band outlives every recovery → a banner Retry that leaves on success hands focus here
+const DASH_STATUS_BAND_ID = 'dash-status';
+
 // a banner-carried outage is stated once, above → the tile stays flat with its unknown dash
 const SHARED_FAILURE_HINT = 'Not loaded — see the notice above.';
 
 // 상태 4종이 서로 다르게 읽히는 지점 — loading(status 자리표시) · error(공용 unavailable 카드) · unavailable/empty(중립 문구) · ready(값).
 // 값 자리는 never 0-for-unknown: 미수신은 '—' 로 남는다.
 function StatusTile({ tile, onNav, onRetry, isRetryShared = false }) {
-  const { RegionUnavailable } = window.UI;
+  const { RegionUnavailable, RetryButton } = window.UI;
+  const cardId = getTileCardId(tile);
   return (
-    <div className={`card p-3 flex flex-col gap-1.5 ${tile.isBusy ? 'opacity-70' : ''}`.trim()}
+    <div id={cardId} className={`card p-3 flex flex-col gap-1.5 ${tile.isBusy ? 'opacity-70' : ''}`.trim()}
       aria-busy={tile.isBusy ? 'true' : undefined}>
       <h2 className="fs-meta text-dim uppercase tracking-wide">
         {tile.label}
         {tile.window && <span className="normal-case"> ({tile.window})</span>}
       </h2>
       {tile.status === 'error' && !isRetryShared ? (
-        <RegionUnavailable source={tile.source} error={tile.error}
-          onRetry={() => onRetry(tile.region)}/>
+        <RegionUnavailable source={tile.source} error={tile.error} isBusy={tile.isBusy}
+          focusTargetId={cardId} onRetry={() => onRetry(tile.region)}/>
       ) : (
         <>
-          <StatusTileValue tile={tile}/>
-          <div className="fs-body text-dim dash-tile-detail">{tile.detail}</div>
-          <div className="fs-meta text-dim dash-tile-hint">{tile.status === 'error' ? SHARED_FAILURE_HINT : tile.hint}</div>
+          <window.UI.TileSplit
+            lead={<StatusTileValue tile={tile}/>}
+            detail={
+              <>
+                <div className="fs-body text-dim dash-tile-detail">{tile.detail}</div>
+                <div className="fs-meta text-dim dash-tile-hint" title={tile.note}>
+                  {tile.status === 'error' ? SHARED_FAILURE_HINT : tile.hint}
+                </div>
+              </>
+            }
+          />
           {tile.canRetry && !isRetryShared && (
-            <button type="button" className="btn sm self-start" onClick={() => onRetry(tile.region)}>Retry</button>
+            <RetryButton onRetry={() => onRetry(tile.region)} isBusy={tile.isBusy} focusTargetId={cardId}/>
           )}
-          {tile.target && <DrillLink target={tile.target} label={tile.targetLabel} onNav={onNav} className="self-start mt-auto"/>}
         </>
       )}
+      {/* the drill stays a card-foot child, a failed tile's too → mt-auto keeps the four CTAs on one baseline at xl */}
+      {tile.target && <DrillLink target={tile.target} label={tile.targetLabel} onNav={onNav} className="self-start mt-auto"/>}
     </div>
   );
+}
+
+function getTileCardId(tile) {
+  return `dash-tile-${tile.id}`;
 }
 
 function StatusTileValue({ tile }) {
@@ -317,10 +364,17 @@ function StatusTileValue({ tile }) {
       </div>
     );
   }
+  // value + unit never break apart or wrap → a narrow tile drops the badge to its own line instead
   return (
-    <div className="flex items-center gap-2">
-      <KpiValue>{tile.value}</KpiValue>
-      {tile.tone !== 'neutral' && <Badge role="status" tone={tile.tone} icon>{tile.badge ?? TONE_WORD[tile.tone]}</Badge>}
+    <div className="flex flex-col gap-0.5">
+      <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+        <div className="flex items-center gap-2">
+          <KpiValue><span className="whitespace-nowrap">{tile.value}</span></KpiValue>
+          {tile.unit && <span className="fs-body text-dim">{tile.unit}</span>}
+        </div>
+        {(tile.tone !== 'neutral' || tile.isHeld) && <Badge role="status" tone={tile.tone} icon>{tile.badge ?? TONE_WORD[tile.tone]}</Badge>}
+      </div>
+      {tile.trend && <div className="fs-meta text-dim">{tile.trend}</div>}
     </div>
   );
 }
@@ -535,7 +589,8 @@ function buildAlarms({ harness, costState, installKind }) {
       id: 'harness',
       tone: 'crit',
       title: `${harness.downNames.length} harness ${harness.downNames.length === 1 ? 'part is' : 'parts are'} down`,
-      detail: harness.downNames.join(' · '),
+      detail: joinPartNames(harness.downNames),
+      isHeld: hasHeldPartRead(harness),
       target: 'architecture',
       targetLabel: 'System map',
     });
@@ -547,7 +602,8 @@ function buildAlarms({ harness, costState, installKind }) {
       id: 'spend',
       tone: 'warn',
       title: 'Spend is running ahead of the 7-day average',
-      detail: `${formatUsd(spend.today)} so far · ${formatUsd(spend.pace)}/day at the 3 h burn · ${formatUsd(spend.basis)} 7-day avg/day`,
+      detail: `${formatUsd(spend.today)} so far · ${formatUsd(spend.pace)}/day at the last 3 hours' rate · ${formatUsd(spend.basis)} 7-day avg/day`,
+      isHeld: costState?.error != null,
       target: 'cost',
       targetLabel: 'Cost & usage',
     });
@@ -567,6 +623,13 @@ function buildAlarms({ harness, costState, installKind }) {
   return rows.sort((a, b) => (SEVERITY_RANK[b.tone] || 0) - (SEVERITY_RANK[a.tone] || 0));
 }
 
+// the failure count feeds failCount1h only, never downNames → its failed read leaves the down-part reading fresh
+const FAILURE_COUNT_SOURCE = 'the failure count'; // app.jsx → HARNESS_SOURCES.kpiState.label
+
+function hasHeldPartRead(harness) {
+  return (harness.unreadSources ?? []).some((source) => source !== FAILURE_COUNT_SOURCE);
+}
+
 // 오늘 누계(so-far) 또는 일간 pace 가 7일 일평균의 컷을 넘는지 — Cost 화면과 같은 payload·같은 컷.
 // 기준 0 → 'no-basis'(가짜 +100% 금지) · 미수신 → 'unavailable'.
 function resolveSpendPace(costState) {
@@ -582,34 +645,36 @@ function resolveSpendPace(costState) {
 }
 
 // 4타일 데이터 — 렌더와 분리된 순수 변환이라 상태 4종을 테스트가 그대로 고정할 수 있다.
-// a destination an alarm row already drills loses its tile drill → one Tab stop per destination
-function buildTiles({ harness, costState, agentsState, outcomesState, alarms = [] }) {
-  const drilled = new Set(alarms.map((alarm) => alarm.target).filter(Boolean));
-  const regionStates = { outcomes: outcomesState, agents: agentsState, cost: costState };
+// every tile keeps its drill even when an alarm row drills the same screen → the tile is where the eye lands
+function buildTiles({ harness, costState, agentsState, outcomesState, isHarnessBusy = false }) {
+  const busyByRegion = {
+    outcomes: outcomesState?.busy, agents: agentsState?.busy, cost: costState?.busy, [HARNESS_REGION]: isHarnessBusy,
+  };
   const tiles = [
     buildHarnessTile(harness),
     markHeldTile(buildOutcomeTile(outcomesState), outcomesState),
     markHeldTile(buildFleetTile(agentsState), agentsState),
-    markHeldTile(buildSpendTile(costState), costState),
+    markHeldTile(buildSpendTile(costState, harness?.kpi), costState),
   ];
   // a first load is 'loading', not a refresh → only held data dims while its region re-reads
   return tiles.map((tile) => ({
     ...tile,
-    target: drilled.has(tile.target) ? null : tile.target,
-    isBusy: tile.status !== 'loading' && Boolean(regionStates[tile.region]?.busy),
+    isBusy: tile.status !== 'loading' && Boolean(busyByRegion[tile.region]),
   }));
 }
 
 // held data whose latest read failed → last-known badge + own Retry; its error joins the shared-outage check
+// shared freshness rule → a held warn/crit keeps its alarm, a held all-clear drops to neutral
 function markHeldTile(tile, state) {
   if (tile.status === 'loading' || tile.status === 'error' || state?.error == null) return tile;
+  const isAlarm = tile.tone === 'warn' || tile.tone === 'crit';
   return {
-    ...tile, tone: 'info', badge: 'Last known', error: state.error, canRetry: true,
+    ...tile, tone: isAlarm ? tile.tone : 'neutral', isHeld: true, badge: 'Last known', error: state.error, canRetry: true,
     hint: `Showing the last reading — couldn't refresh ${tile.source}.`,
   };
 }
 
-// 타일 1 — 하네스 파트. 분모는 셸이 실제로 관측한 파트 수: 미관측 파트를 정상으로 세지 않는다.
+// 타일 1 — 하네스 파트. 분모는 셸이 관측한 파트 수, 콜드 실패로 잃은 파트가 있으면 전체 파트 수: 미관측 파트를 정상으로 세지 않는다.
 function buildHarnessTile(harness) {
   const base = {
     id: 'harness', label: 'Harness health', region: HARNESS_REGION, target: 'architecture', targetLabel: 'System map',
@@ -625,32 +690,65 @@ function buildHarnessTile(harness) {
     // not a region fetch error → never joins the page banner, so the tile keeps its own Retry
     return { ...base, status: 'unavailable', tone: 'neutral', value: '—', hint: 'Harness readings unavailable.', canRetry: true };
   }
-  const unchecked = harness.uncheckedNames.length > 0
-    ? ` · ${harness.uncheckedNames.join(' · ')} checked on the System map`
-    : '';
+  return { ...base, ...describeHarnessReading(harness), status: 'ready', error: harness.error ?? null };
+}
+
+// a failed refresh over held parts → last known · a cold failure drops its parts → counted against every part
+function describeHarnessReading(harness) {
   const downCount = harness.downNames.length;
-  const unreadSources = harness.unreadSources ?? [];
-  const isPartlyUnread = unreadSources.length > 0;
-  // down part names ride on the alarm row → the tile states the healthy share instead
-  const down = downCount > 0 ? `${harness.partsOk} of ${harness.partsChecked} healthy` : 'All polled parts healthy';
+  const isPartlyUnread = (harness.unreadSources ?? []).length > 0;
+  const lostCount = isPartlyUnread ? harness.partsTotal - harness.partsChecked : 0;
+  const partCount = lostCount > 0 ? harness.partsTotal : harness.partsChecked;
   // a known fault keeps crit; otherwise an unread source withholds the healthy verdict
   const unreadTone = isPartlyUnread ? 'info' : 'ok';
   return {
-    ...base,
-    status: 'ready',
     tone: downCount > 0 ? 'crit' : unreadTone,
-    badge: downCount === 0 && isPartlyUnread ? 'Partly unknown' : undefined,
-    value: downCount > 0 ? `${downCount} of ${harness.partsChecked} down` : `${harness.partsOk} of ${harness.partsChecked} up`,
-    hint: isPartlyUnread ? `Couldn't read ${unreadSources.join(' · ')}.` : `${down}${unchecked}`,
-    error: harness.error ?? null,
+    badge: getHarnessBadge({ isPartlyUnread, lostCount, downCount }),
+    value: downCount > 0 ? `${downCount} of ${partCount} down` : `${harness.partsOk} of ${partCount} up`,
+    detail: lostCount > 0 ? `${lostCount} not read` : undefined,
+    hint: describeHarnessHint(harness, { isPartlyUnread, lostCount, downCount }),
     canRetry: isPartlyUnread,
   };
 }
 
+function getHarnessBadge({ isPartlyUnread, lostCount, downCount }) {
+  if (isPartlyUnread && lostCount === 0) return 'Last known';
+  if (downCount > 0) return BADGE.HARNESS_DOWN;
+  return isPartlyUnread ? 'Partly unknown' : undefined;
+}
+
+const BADGE = {
+  // the value already says "down" → the verdict and the names line each use another word
+  HARNESS_DOWN: 'Action needed',
+  // the detail line leads with the judged pace → the badge names that multiple, never the so-far one
+  SPEND_HOT: `Pace above ${SPEND_PACE_CUT}×`,
+};
+
+function describeHarnessHint(harness, { isPartlyUnread, lostCount, downCount }) {
+  if (isPartlyUnread) {
+    const sources = harness.unreadSources.join(' · ');
+    return lostCount > 0 ? `Couldn't read ${sources}.` : `Showing the last reading — couldn't refresh ${sources}.`;
+  }
+  // sentence break, not ' · ' → the names list after it never reads as more down parts
+  const unchecked = harness.uncheckedNames.length > 0
+    ? `. ${joinPartNames(harness.uncheckedNames)} checked on the System map`
+    : '';
+  // the headline already carries the count → the hint names the parts instead of restating it
+  const down = downCount > 0 ? `Not answering: ${joinPartNames(harness.downNames)}` : 'All polled parts healthy';
+  return `${down}${unchecked}`;
+}
+
+// U+2011 non-breaking hyphen → a name like daily-restart-autoagent never wraps mid-name in a narrow tile
+function joinPartNames(names) {
+  return names.map((name) => name.replace(/-/g, '\u2011')).join(' · ');
+}
+
 // 첫 판독 전(loading) · 데이터 없는 실패(error) → 타일, 그 외 null. 실패 문구는 base.source 로 공용 카드가 만든다.
+// a cold error stays 'error' through its Retry (getRegionView) → the focused Retry card never becomes a loader
 function buildPendingTile(base, state) {
-  if (!state || state.status === 'loading') return { ...base, status: 'loading', tone: 'neutral', value: '—', hint: null };
-  if (state.status === 'error') return { ...base, status: 'error', tone: 'neutral', value: '—', hint: null, error: state.error };
+  const view = state ? window.UI.getRegionView(state) : 'loading';
+  if (view === 'loading') return { ...base, status: 'loading', tone: 'neutral', value: '—', hint: null };
+  if (view === 'error') return { ...base, status: 'error', tone: 'neutral', value: '—', hint: null, error: state.error };
   return null;
 }
 
@@ -666,6 +764,7 @@ function buildOutcomeTile(outcomesState) {
   return {
     ...base, status: OUTCOME_TILE_STATUS[rate.status], tone: rate.tone, badge: OUTCOME_VERDICT[rate.status],
     value: describeOutcomeValue(rate), detail: describeOutcomeDetail(rate), hint: describeOutcomeHint(rate),
+    note: OUTCOME_COUNTING_NOTE,
   };
 }
 
@@ -675,7 +774,8 @@ const OUTCOME_TILE_STATUS = {
 };
 
 // numbers headline, the verdict rides in the badge (a neutral low-n tile renders no badge)
-const OUTCOME_VERDICT = { ok: 'Within lines', warn: 'Caveats above line', crit: 'Failures above line' };
+const OUTCOME_VERDICT = { ok: 'Below alert lines', warn: 'Caveats above alert line', crit: 'Failures above alert line' };
+const OUTCOME_COUNTING_NOTE = 'Counts only writer-emitted outcomes — records the agent reported itself; synthesized records are left out.';
 
 function describeOutcomeValue(rate) {
   if (rate.status === 'low-n') return formatInt(rate.writerTotal);
@@ -686,14 +786,19 @@ function describeOutcomeValue(rate) {
 function describeOutcomeDetail(rate) {
   if (rate.status === 'low-n') return 'outcomes · too few to judge';
   if (!Object.hasOwn(OUTCOME_VERDICT, rate.status)) return null;
-  return `${formatInt(rate.breakage)} of ${formatInt(rate.writerTotal)} failed`;
+  return `${formatInt(rate.breakage)} of ${formatInt(rate.writerTotal)} failed · alert at ${formatAlertLine(window.UI.OUTCOME_BREAKAGE_CRIT_SHARE)}`;
 }
 
 function describeOutcomeHint(rate) {
-  if (rate.status === 'unavailable') return 'No writer-emitted outcomes to judge.';
+  if (rate.status === 'unavailable') return 'No reported outcomes to judge.';
   if (rate.status === 'empty') return 'No outcomes recorded in the last 7 days.';
-  if (rate.status === 'low-n') return `Needs ${window.UI.LOW_N_MIN} writer-emitted outcomes to judge.`;
-  return `${getSharePct(rate.openCaveats, rate.writerTotal)} (${formatInt(rate.openCaveats)}) open with caveats · writer-emitted only.`;
+  if (rate.status === 'low-n') return `Needs ${window.UI.LOW_N_MIN} reported outcomes to judge.`;
+  const caveats = `${getSharePct(rate.openCaveats, rate.writerTotal)} (${formatInt(rate.openCaveats)}) finished with caveats`;
+  return `${caveats} · alert at ${formatAlertLine(window.UI.OUTCOME_OPEN_CAVEAT_WARN_SHARE)}`;
+}
+
+function formatAlertLine(share) {
+  return `${Math.round(share * 100)}%`;
 }
 
 // headline share without its " (n/d)" tail → a 28px value stays on one line; the counts ride the detail line
@@ -717,18 +822,19 @@ function buildFleetTile(agentsState) {
     return { ...base, status: 'unavailable', tone: 'neutral', value: '—', hint: 'Suspension state unavailable.' };
   }
   const tone = suspended > 0 ? 'crit' : streak > 0 ? 'warn' : 'ok';
-  const runs = Number.isFinite(Number(meta.total_agents)) ? ` · ${formatInt(Number(meta.total_agents))} agents with runs` : '';
+  const agentCount = Number(meta.total_agents);
   return {
-    ...base, status: 'ready', tone, badge: FLEET_VERDICT[tone], value: formatInt(suspended), detail: 'suspended',
-    hint: `${formatInt(streak)} on a failing streak${runs}`,
+    ...base, status: 'ready', tone, badge: FLEET_VERDICT[tone], value: formatInt(suspended), unit: 'suspended',
+    detail: `${formatInt(streak)} on a failing streak`,
+    hint: Number.isFinite(agentCount) ? `${formatInt(agentCount)} agents with runs in the last 7 days` : null,
   };
 }
 
-// the detail line already says "suspended" → the verdict never repeats it
+// the value's unit already says "suspended" → the verdict never repeats it
 const FLEET_VERDICT = { ok: 'All active', warn: 'Failing streak', crit: 'Needs review' };
 
 // 타일 4 — 오늘 지출. 톤은 pace 판정에서만 온다(금액 자체는 위험도가 아니다).
-function buildSpendTile(costState) {
+function buildSpendTile(costState, kpi) {
   const base = {
     id: 'spend', label: 'Spend today', target: 'cost', targetLabel: 'Cost & usage', region: 'cost', source: "today's spend",
   };
@@ -736,25 +842,50 @@ function buildSpendTile(costState) {
   if (pending) return pending;
 
   const pace = resolveSpendPace(costState);
-  const hint = describeSpendHint(pace);
-  return { ...base, status: 'ready', tone: pace.status === 'hot' ? 'warn' : 'neutral', value: formatUsd(pace.today), hint };
+  const tone = pace.status === 'hot' ? 'warn' : 'neutral';
+  const reading = { ...base, status: 'ready', tone, value: formatUsd(pace.today), trend: describeSpendTrend(kpi) };
+  if (pace.status === 'no-basis') {
+    return { ...reading, hint: 'No spend in the last 7 days — no baseline to compare against.' };
+  }
+  return {
+    ...reading, badge: tone === 'warn' ? BADGE.SPEND_HOT : undefined, detail: describeSpendPace(pace),
+    hint: `${(pace.today / pace.basis).toFixed(1)}× the average so far · alarm at ${SPEND_PACE_CUT}×`,
+  };
 }
 
-// hot → the alarm row carries the amounts, so the tile states the multiple instead
-function describeSpendHint(pace) {
-  if (pace.status === 'no-basis') return 'No spend in the last 7 days — no baseline to compare against.';
-  if (pace.status === 'hot') return `${(pace.today / pace.basis).toFixed(1)}× the 7-day daily average so far.`;
-  return `${formatUsd(pace.basis)} 7-day avg/day · alarm at ${SPEND_PACE_CUT}× so-far or pace.`;
+// day-over-day from one payload (the shell's /api/dashboard/kpi) → today and its comparand never mix sources
+function describeSpendTrend(kpi) {
+  const prior = Number(kpi?.yesterday_same_time_cost_usd);
+  if (kpi?.today_cost_usd == null || !(prior > 0)) return null;
+  const change = Math.round(((Number(kpi.today_cost_usd) - prior) / prior) * 100);
+  const comparand = `${formatUsd(prior)} yesterday by this time`;
+  if (change === 0) return `Level with ${comparand}`;
+  return `${change > 0 ? 'Up' : 'Down'} ${Math.abs(change)}% on ${comparand}`;
+}
+
+// the verdict trips on the larger of so-far and pace → the lead line states that same figure
+function describeSpendPace(pace) {
+  const judged = Math.max(pace.today, pace.pace);
+  return `On pace for ${formatUsd(judged)} today, ${(judged / pace.basis).toFixed(1)}× the 7-day average (${formatUsd(pace.basis)})`;
 }
 
 // 헤더 우측 중립 텍스트 — 설치 버전. 조치 신호는 레인이 운반하므로 여기는 톤이 없다.
+// a pending read names no version → the freshness stamp beside it already says loading
 function describeVersion(harness) {
+  if (harness?.status === 'loading') return null;
   return harness && harness.version ? `v${harness.version}` : 'version unknown';
 }
 
 // wave regions + the shell harness — update-job polls on its own, so it stays out and never moves the stamp
-function getFreshnessInputD(settledAt, stampRegions) {
-  return { at: settledAt, regions: stampRegions };
+// the stamp also answers for the harness tile → a pending harness read keeps it busy, a failed one keeps it off Fresh
+function getFreshnessInputD(settledAt, waveStates, harness) {
+  return { at: settledAt, regions: [...waveStates, toHarnessRegion(harness)] };
+}
+
+// the shell fold carries no busy flag → its read in flight is status 'loading'
+function toHarnessRegion(harness) {
+  if (!harness) return null;
+  return { status: harness.status, busy: harness.status === 'loading', error: harness.error ?? null };
 }
 
 // update-job poll → 실제 row (none 은 무 job).

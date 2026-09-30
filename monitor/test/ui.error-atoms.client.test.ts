@@ -126,6 +126,40 @@ test("the page banner announces one outage with every source named and exactly o
   assert.equal(getButtons(tree).length, 1);
 });
 
+const FAILURE_SENTENCE = /Couldn't load/g;
+const COVERED_NOTE = "Not loaded — see the notice above";
+
+function renderPage(entries: FailureEntry[]): RenderedNode {
+  const shared = getSharedFailure(entries);
+  const banner = shared && React.createElement(ui.PageErrorBanner as Component, { sources: shared.sources, error: shared.error, onRetry: () => {} });
+  const regions = entries.map((entry) => React.createElement(ui.RegionFailure as Component, { ...entry, shared, onRetry: () => {} }));
+  return renderScreen(React.createElement("div", { children: [banner, ...regions] })) as RenderedNode;
+}
+
+test("each failed region speaks once: a shared outage leaves one sentence and one Retry, anything else keeps every card", () => {
+  const rows = [
+    { name: "two same-cause failures → banner speaks, regions stay quiet", entries: [{ source: "spend", error: SERVER_ERROR }, { source: "sessions", error: SERVER_ERROR }], sentences: 1, retries: 1, quiet: 2 },
+    { name: "a lone failure keeps its own card", entries: [{ source: "spend", error: SERVER_ERROR }], sentences: 1, retries: 1, quiet: 0 },
+    { name: "a mixed-cause pair keeps both cards", entries: [{ source: "spend", error: SERVER_ERROR }, { source: "sessions", error: "HTTP 404 Not Found" }], sentences: 2, retries: 2, quiet: 0 },
+  ];
+  for (const row of rows) {
+    const tree = renderPage(row.entries);
+    const text = getVisibleText(tree);
+
+    assert.equal((text.match(FAILURE_SENTENCE) || []).length, row.sentences, row.name);
+    assert.equal(getButtons(tree).length, row.retries, row.name);
+    assert.equal(text.split(COVERED_NOTE).length - 1, row.quiet, row.name);
+  }
+});
+
+test("a covered region names itself, reserves its slot height and carries no alert, Retry or Details", () => {
+  const tree = render("RegionCovered", { source: "spend by model", minHeight: 218 });
+
+  assert.equal(getVisibleText(tree).replace(/\s+/g, " ").trim(), `Spend by model ${COVERED_NOTE}`);
+  assert.equal(((tree.children[0] as RenderedNode).props.style as { minHeight: number }).minHeight, 218);
+  assert.equal(findNodes(tree, (n) => n.type === "button" || n.type === "details" || n.props.role === "alert").length, 0);
+});
+
 test("the loading placeholder is visible text under a status role and reserves its slot height", () => {
   const tree = render("LoadingPlaceholder", { label: "sessions", minHeight: 200 });
   const status = findNodes(tree, (n) => n.props.role === "status");
@@ -145,4 +179,11 @@ test("skeleton rows fill the real table body at the given row height and stay hi
     assert.equal((row.props.style as { height: number }).height, 40);
     assert.equal(findNodes(row, (n) => n.type === "td").length, 4);
   }
+});
+
+test("screens reach the shared Retry control through window.UI, so their own Retry keeps the busy and focus contract", () => {
+  const exposed = (ui.window as { UI: Record<string, unknown> }).UI;
+
+  assert.equal(typeof ui.RetryButton, "function");
+  assert.equal(exposed.RetryButton, ui.RetryButton);
 });

@@ -959,3 +959,39 @@ test("column-width: 1010px 카드 바닥에서 제목 본문 상자가 목록·�
     await deleteDoc(wide.id);
   }
 });
+
+// open-summary rail at a desktop width: pinned on page scroll, ledger fits its remaining column
+test("open-summary rail: at 1440px the rail stays in view on page scroll and the ledger fits beside it", async () => {
+  const ids = await seedManyDocs(30, "rail");
+  try {
+    const context: BrowserContext = await browser.newContext({ viewport: { width: 1440, height: 900 } });
+    const page: Page = await context.newPage();
+    try {
+      await page.goto(`${serverUrl}/#clauded-docs`, { waitUntil: "networkidle" });
+      await page.locator("aside.doc-open-summary").waitFor({ state: "visible" });
+
+      const ledger = await page.evaluate(() => {
+        const scroller = document.querySelector("table.tbl")?.parentElement;
+        if (!scroller) throw new Error("ledger scroller missing");
+        return { scrollWidth: scroller.scrollWidth, clientWidth: scroller.clientWidth };
+      });
+      assert.ok(
+        ledger.scrollWidth <= ledger.clientWidth,
+        `ledger overflows its column beside the rail (${ledger.scrollWidth} > ${ledger.clientWidth}) → last header clipped`,
+      );
+
+      const rail = page.locator("aside.doc-open-summary");
+      const restingTop = await rail.evaluate((el) => el.getBoundingClientRect().top + window.scrollY);
+      // past the rail's resting offset → an unpinned rail would end above the viewport
+      const scrollBy = Math.ceil(restingTop) + 200;
+      await page.evaluate((y) => window.scrollTo(0, y), scrollBy);
+      await page.waitForFunction((y) => window.scrollY >= y, scrollBy);
+      const railTop = await rail.evaluate((el) => el.getBoundingClientRect().top);
+      assert.ok(railTop >= 0, `rail scrolled out of view (top ${railTop}) — it must stay pinned while the ledger scrolls`);
+    } finally {
+      await context.close();
+    }
+  } finally {
+    for (const id of ids) await deleteDoc(id);
+  }
+});

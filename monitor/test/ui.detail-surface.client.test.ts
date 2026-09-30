@@ -3,7 +3,7 @@ import test, { describe } from "node:test";
 import assert from "node:assert/strict";
 import { fileURLToPath } from "node:url";
 import { dirname, resolve } from "node:path";
-import { collectText, findNodes, loadScreenModule, renderScreen, type RenderedNode } from "./lib/render-screen.js";
+import { collectText, createEffectReact, createFakeDocument, findNodes, loadScreenModule, renderScreen, type RenderedNode } from "./lib/render-screen.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const UI_SRC = resolve(__dirname, "../public/src/ui.jsx");
@@ -184,5 +184,56 @@ describe("DetailSurface inert background", () => {
 
     assert.ok(!targets.includes(page.toast));
     assert.ok(!targets.includes(page.head), "the walk stops at body");
+  });
+});
+
+describe("DetailSurface dismissal", async () => {
+  const effects = createEffectReact();
+  const doc = createFakeDocument();
+  const live = await loadScreenModule(UI_SRC, { React: effects.react, document: doc });
+
+  function mountSurface(onClose: () => void) {
+    const trigger = { name: "trigger", focus: () => undefined as void };
+    const list = createNode("list");
+    const overlay = createNode("overlay");
+    const sidebar = createNode("sidebar");
+    createNode("body", [sidebar, createNode("main", [list, overlay])]);
+    const panel = {
+      name: "panel",
+      querySelectorAll: () => [],
+      contains: (node: unknown) => node === panel,
+      focus: () => { doc.activeElement = panel; },
+    };
+    doc.reset();
+    doc.activeElement = trigger;
+    const mounted = effects.mount(
+      () => (live.DetailSurface as Component)({ open: true, onClose, title: "Session cost", children: "body" }),
+      (element) => (element.props.role === "dialog" ? panel : overlay),
+    );
+    return { ...mounted, trigger, background: [list, sidebar] };
+  }
+
+  test("Esc on the topmost surface closes it", () => {
+    let closes = 0;
+    const surface = mountSurface(() => { closes += 1; });
+
+    doc.dispatch("keydown", { key: "Escape", shiftKey: false });
+    surface.unmount();
+
+    assert.equal(closes, 1);
+  });
+
+  test("closing returns focus to the trigger only once the background is live and scroll is restored", () => {
+    const surface = mountSurface(() => undefined);
+    const refocus: Array<{ isBackgroundLive: boolean; overflow: string }> = [];
+    surface.trigger.focus = () => {
+      refocus.push({ isBackgroundLive: surface.background.every((node) => !node.inert), overflow: doc.body.style.overflow });
+    };
+
+    assert.equal(doc.body.style.overflow, "hidden", "scroll locked while open");
+    doc.activeElement = doc.body;
+    surface.unmount();
+
+    assert.deepEqual(refocus, [{ isBackgroundLive: true, overflow: "auto" }]);
   });
 });

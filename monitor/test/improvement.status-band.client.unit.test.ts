@@ -12,7 +12,7 @@
 //
 // Runner: npx tsx --test test/improvement.status-band.client.unit.test.ts
 
-import test from "node:test";
+import test, { describe } from "node:test";
 import assert from "node:assert/strict";
 import { fileURLToPath } from "node:url";
 import { dirname, resolve } from "node:path";
@@ -38,6 +38,15 @@ interface BandSandbox {
   }) => RecordedElement;
   StatusTileI: (props: Record<string, unknown>) => RecordedElement;
   StatusBandI: (props: Record<string, unknown>) => RecordedElement;
+  InstrumentationViewI: (props: Record<string, unknown>) => RecordedElement | null;
+  getBannerFocusTargetI: (view: string) => string;
+  getBandVerdictI: (input: Record<string, unknown>) => { tone: string; sentence: string };
+  getInstrumentationChipsI: (
+    verdicts: unknown,
+    styleRef: unknown,
+    corpusAuditState: unknown,
+    at?: string | null,
+  ) => Array<Record<string, unknown>>;
 }
 
 function isElement(value: unknown): value is RecordedElement {
@@ -77,7 +86,17 @@ sandbox.React.createElement = (type: unknown, props: Record<string, unknown> | n
   type,
   props: { ...(props ?? {}), children: rest.length > 1 ? rest : rest[0] },
 });
-Object.assign(sandbox.window.UI, { titleOf: (value: unknown) => value });
+// Installed once → every test sees the same UI, whatever order they run in.
+const ShippedPageVerdict = sandbox.window.UI.PageVerdict as (props: Record<string, unknown>) => unknown;
+const PageVerdictStub = () => null;
+Object.assign(sandbox.window.UI, { titleOf: (value: unknown) => value, PageVerdict: PageVerdictStub });
+
+// the shared first-read note ui.jsx shows while a page has nothing read yet
+function getUnreadCheckingNote(): string {
+  // sandbox types window.UI loosely; ui.jsx exports getFreshnessVerdict with this shape
+  const getVerdict = sandbox.window.UI.getFreshnessVerdict as (input: Record<string, unknown>) => { note: string };
+  return getVerdict({ at: null, loading: true }).note;
+}
 
 // The relationship, not four hand-picked pairs: the tile's state is the payload's
 // state, except that a landed payload carrying no value is "unavailable", never ready.
@@ -186,10 +205,11 @@ test("the applied tile is counted over the same population it names", () => {
     "3",
     "the value must be the cycle count its population denominates, not the proposal count",
   );
-  assert.match(String(applied.props.population), /cycles in the last 7 days/);
+  assert.match(String(applied.props.population), /of 12 cycles/);
+  assert.match(String(applied.props.basis), /last 7 days/);
 });
 
-test("the decision tile carries the warning glyph only while something awaits a decision", () => {
+test("the decision tile reads ok at zero and warns while something awaits a decision", () => {
   const renderAwaiting = (awaiting: number) =>
     collectElements(
       sandbox.StatusBandI({
@@ -207,24 +227,236 @@ test("the decision tile carries the warning glyph only while something awaits a 
   const pending = renderAwaiting(2);
 
   assert.ok(idle && pending, "the band must render the decision tile");
-  assert.equal(idle.props.symbol, null, "a zero count is not a warning");
+  assert.equal(idle.props.symbol, "✓", "an empty decision queue is good news, not a blank");
+  assert.equal(idle.props.tone, "text-ok");
   assert.equal(pending.props.symbol, "⚠");
   assert.equal(pending.props.tone, "text-warn");
 });
 
-test("backlog tiles are counts, not statuses, so they carry no status glyph", () => {
-  const band = sandbox.StatusBandI({
-    statsState: { status: "ready", data: { cycle_total_7d: 1 } },
+const renderBand = (suppression: unknown, awaiting = 0) =>
+  sandbox.StatusBandI({
+    statsState: { status: "ready", data: { cycle_total_7d: 1, cycles_generated_applied_7d: 1 } },
     listState: { status: "ready", data: {} },
     learningLogState: { status: "ready" },
-    suppression: { pending_total: 5, pending_unpromptable: 1, parked: [] },
+    suppression,
+    awaiting,
+    onRetry: () => {},
+  });
+
+test("the backlog tile is a count, not a status, so it carries no status glyph", () => {
+  const backlog = collectElements(
+    renderBand({ pending_total: 5, pending_unpromptable: 1, parked: [] }),
+    [],
+  ).filter((el) => el.props.label === "Backlog that can propose");
+
+  assert.equal(backlog.length, 1);
+  assert.equal(backlog[0].props.symbol, null);
+});
+
+test("the held tile warns only while a held pattern needs a human", () => {
+  const heldTile = (parked: unknown[]) =>
+    collectElements(renderBand({ pending_total: 0, parked }), []).find(
+      (el) => el.props.label === "Held, needs a human",
+    );
+  const byDesign = heldTile([{ cause: "non-promptable", count: 4, agents: 2 }]);
+  const needsHuman = heldTile([{ cause: "repeat-apply-cap", count: 2, agents: 1 }]);
+
+  assert.equal(byDesign?.props.symbol, null, "rows closed by a design decision wait on no one");
+  assert.equal(needsHuman?.props.symbol, "⚠");
+  assert.equal(needsHuman?.props.tone, "text-warn");
+});
+
+const verdictRows = [
+  {
+    name: "nothing waiting on a human reads ok",
+    input: { status: "ready", awaiting: 0, applied: 2, heldNeedingHuman: 0 },
+    tone: "ok",
+    mentions: ["2 applied"],
+  },
+  {
+    name: "an awaiting decision warns and is counted",
+    input: { status: "ready", awaiting: 3, applied: 0, heldNeedingHuman: 0 },
+    tone: "warn",
+    mentions: ["3 awaiting"],
+  },
+  {
+    name: "a held pattern needing a human warns and is counted",
+    input: { status: "ready", awaiting: 0, applied: 1, heldNeedingHuman: 10 },
+    tone: "warn",
+    mentions: ["10 held"],
+  },
+  {
+    name: "a band that has not landed claims no status",
+    input: { status: "loading", awaiting: 0, applied: 0, heldNeedingHuman: 0 },
+    tone: "neutral",
+    mentions: [],
+  },
+  {
+    name: "a band whose payload failed says so and makes no loading claim",
+    input: { status: "error", awaiting: 0, applied: 0, heldNeedingHuman: 0 },
+    tone: "neutral",
+    mentions: ["could not load"],
+  },
+];
+for (const row of verdictRows) {
+  test(`band verdict: ${row.name}`, () => {
+    const verdict = sandbox.getBandVerdictI(row.input);
+    assert.equal(verdict.tone, row.tone);
+    for (const mention of row.mentions) assert.ok(verdict.sentence.includes(mention), verdict.sentence);
+  });
+}
+
+test("a failed band payload reads as a failure, never as still loading", () => {
+  const band = sandbox.StatusBandI({
+    statsState: { status: "error", data: null, error: "HTTP 500" },
+    listState: { status: "ready", data: {} },
+    learningLogState: { status: "loading" },
+    suppression: null,
     awaiting: 0,
     onRetry: () => {},
   });
-  const backlog = collectElements(band, []).filter((el) =>
-    ["Backlog that can propose", "Held, needs a human"].includes(String(el.props.label)),
+  const verdict = collectElements(band, []).find((el) => el.type === PageVerdictStub);
+
+  assert.match(String(verdict?.props.children), /could not load/);
+  assert.ok(!String(verdict?.props.children).includes(getUnreadCheckingNote()));
+});
+
+const LANDED = { status: "ready", busy: false, error: null, data: {} };
+
+// the band's verdict as the shipped PageVerdict renders it from the props the band hands it
+function renderBandVerdictText(asOf: string | null, states: Record<string, unknown>): string {
+  const band = sandbox.StatusBandI({
+    asOf,
+    statsState: LANDED,
+    listState: LANDED,
+    learningLogState: LANDED,
+    suppression: { pending_total: 0, parked: [] },
+    awaiting: 0,
+    onRetry: () => {},
+    ...states,
+  });
+  const verdict = collectElements(band, []).find((el) => el.type === PageVerdictStub);
+  assert.ok(verdict, "the band must render a verdict line");
+  return textOf(ShippedPageVerdict(verdict.props));
+}
+
+test("a failed refresh over a held band reads Last known, never the all-clear", () => {
+  const asOf = new Date().toISOString();
+  const statsData = { cycle_total_7d: 4, cycles_generated_applied_7d: 2 };
+  const settled = renderBandVerdictText(asOf, { statsState: { ...LANDED, data: statsData } });
+  const warmError = renderBandVerdictText(asOf, { statsState: { ...LANDED, data: statsData, error: "HTTP 500" } });
+
+  assert.match(settled, /Healthy/, "a settled band with nothing waiting is the all-clear");
+  assert.match(warmError, /Last known/);
+  assert.doesNotMatch(warmError, /Healthy/, "held numbers under a failed read never read as the all-clear");
+});
+
+test("a failed refresh drops the held applied tile's ok tone under a Last known marker", () => {
+  const asOf = new Date().toISOString();
+  const statsData = { cycle_total_7d: 4, cycles_generated_applied_7d: 2 };
+  const renderApplied = (statsState: Record<string, unknown>) =>
+    collectElements(sandbox.StatusBandI({
+      asOf,
+      statsState,
+      listState: LANDED,
+      learningLogState: LANDED,
+      suppression: { pending_total: 0, parked: [] },
+      awaiting: 0,
+      onRetry: () => {},
+    }), []).find((el) => el.props.label === "Applied (7 days)");
+  const settled = renderApplied({ ...LANDED, data: statsData });
+  const warmError = renderApplied({ ...LANDED, data: statsData, error: "HTTP 500" });
+
+  assert.ok(settled && warmError, "the band must render the applied tile");
+  assert.equal(settled.props.tone, "text-ok");
+  assert.notEqual(warmError.props.tone, "text-ok", "held numbers under a failed read never keep the ok tone");
+  assert.equal(warmError.props.symbol, null);
+  assert.match(String(warmError.props.population), /^Last known · of 4 cycles/);
+});
+
+describe("the corpus growth chip keeps the shared freshness rule over a failed refresh", () => {
+  const asOf = new Date().toISOString();
+  const corpus = (verdict: Record<string, unknown>) => ({
+    styleRefGradeBadgeI: () => ({ symbol: "✓", tone: "text-ok", label: "ok", hint: "h1" }),
+    getCorpusGrowthVerdictI: () => verdict,
+  });
+  const audits = { status: "ready", data: { audits: [{ id: 1 }] } };
+  const rows = [
+    { name: "a settled reading keeps its all-clear", verdict: { symbol: "✓", tone: "text-ok", label: "within threshold" }, error: null, label: /^within threshold$/, tone: "text-ok" },
+    { name: "an all-clear held under a failed read reads Last known", verdict: { symbol: "✓", tone: "text-ok", label: "within threshold" }, error: "HTTP 500", label: /^Last known$/, tone: "text-faint" },
+    { name: "an alert held under a failed read keeps its tone", verdict: { symbol: "⚠", tone: "text-warn", label: "trend alert" }, error: "HTTP 500", label: /^Last known: trend alert$/, tone: "text-warn" },
+  ];
+  for (const row of rows) {
+    test(row.name, () => {
+      const chips = sandbox.getInstrumentationChipsI(corpus({ ...row.verdict, hint: "h2" }), null, { ...audits, error: row.error }, asOf);
+      const chip = chips.find((c) => c.key === "corpus");
+      assert.ok(chip, "the strip must carry the corpus chip");
+      assert.match(String(chip.label), row.label);
+      assert.equal(chip.tone, row.tone);
+    });
+  }
+});
+
+test("a band with nothing read yet speaks the shared first-read note, not its own sentence", () => {
+  const reading = { status: "loading", busy: true, error: null, data: null };
+  const text = renderBandVerdictText(null, { statsState: reading, listState: reading, learningLogState: reading });
+  const ownSentence = sandbox.getBandVerdictI({ status: "loading", awaiting: 0, applied: 0, heldNeedingHuman: 0 }).sentence;
+
+  assert.ok(text.includes(getUnreadCheckingNote()), text);
+  assert.ok(!text.includes(ownSentence), text);
+});
+
+test("the page banner hands focus to a card the open view renders", () => {
+  const operatorIds = collectElements(renderBand({ pending_total: 0, parked: [] }), []).map((el) => el.props.id);
+  const instrumentationIds = collectElements(sandbox.InstrumentationViewI({}), []).map((el) => el.props.id);
+
+  assert.ok(operatorIds.includes(sandbox.getBannerFocusTargetI("operator")));
+  assert.ok(instrumentationIds.includes(sandbox.getBannerFocusTargetI("instrumentation")));
+});
+
+test("the band states its verdict before the tiles", () => {
+  const elements = collectElements(renderBand({ pending_total: 0, parked: [] }, 2), []);
+  const verdictAt = elements.findIndex((el) => el.type === PageVerdictStub);
+  const firstTileAt = elements.findIndex((el) => el.props.label === "Awaiting your decision");
+
+  assert.ok(verdictAt >= 0, "the band must render a verdict line");
+  assert.equal(elements[verdictAt].props.tone, "warn");
+  assert.match(String(elements[verdictAt].props.children), /2 awaiting/);
+  assert.ok(verdictAt < firstTileAt, "the verdict is read before the numbers it summarises");
+});
+
+test("instrumentation chips take each verdict from the instrumentation view's own rules", () => {
+  const calls: unknown[][] = [];
+  const latest = { id: 7 };
+  const verdicts = {
+    styleRefGradeBadgeI: (emission: unknown, uncorroborated: unknown) => {
+      calls.push(["style", emission, uncorroborated]);
+      return { symbol: "⚠", tone: "text-warn", label: "warn", hint: "h1" };
+    },
+    getCorpusGrowthVerdictI: (reading: unknown) => {
+      calls.push(["corpus", reading]);
+      return { symbol: "✓", tone: "text-ok", label: "within threshold", hint: "h2" };
+    },
+  };
+  const chips = sandbox.getInstrumentationChipsI(
+    verdicts,
+    { overall_emission_rate: 0.6, overall_uncorroborated_rate: 0.374 },
+    { status: "ready", data: { audits: [latest] } },
   );
 
-  assert.equal(backlog.length, 2);
-  assert.ok(backlog.every((el) => el.props.symbol === null));
+  assert.deepEqual(calls, [["style", 0.6, 0.374], ["corpus", latest]]);
+  // Array.from — the sandbox realm's arrays fail strict deepEqual on prototype alone.
+  assert.deepEqual(Array.from(chips, (c) => c.label), ["warn", "within threshold"]);
+});
+
+test("a gauge whose payload has not landed reads not read, never a verdict", () => {
+  const judge = () => {
+    throw new Error("an unloaded gauge must not be judged");
+  };
+  const chips = sandbox.getInstrumentationChipsI(
+    { styleRefGradeBadgeI: judge, getCorpusGrowthVerdictI: judge },
+    null,
+    { status: "loading" },
+  );
+  assert.deepEqual(Array.from(chips, (c) => c.label), ["not read", "not read"]);
 });

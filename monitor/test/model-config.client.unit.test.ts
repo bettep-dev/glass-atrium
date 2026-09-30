@@ -476,6 +476,18 @@ const textsMc = (nodes: McTag[]): string[] => nodes.map((n) => textMc(n.children
 // Pure region/error helpers come from the real ui.jsx; its components stay stubbed so their props are readable.
 const realUiMc = await buildUiSandbox<Record<string, unknown>>();
 
+// The fold's open rule comes from the real ui.jsx, so the stub opens exactly when the atom would.
+function getDisclosureOpenMc(kind: unknown, tone: unknown): boolean {
+  const rule = realUiMc.getDisclosureOpen;
+  assert.strictEqual(typeof rule, "function", "getDisclosureOpen reachable in the ui sandbox");
+  // typeof guard above → callable
+  return Boolean((rule as (k: unknown, t: unknown) => unknown)(kind, tone));
+}
+
+// Real shared helpers the stubs above delegate to — typed once here.
+const getFreshnessVerdictMc = realUiMc.getFreshnessVerdict as (input: Record<string, unknown>) => { tone: unknown; label: unknown };
+const getAgentDisplayNameMc = realUiMc.getAgentDisplayName as (name: unknown) => string;
+
 async function loadMcScreens(
   overrides: { react?: Record<string, unknown>; fetch?: unknown } = {},
 ): Promise<Record<string, unknown>> {
@@ -512,6 +524,29 @@ async function loadMcScreens(
     SkeletonRows: (p: Record<string, unknown>) =>
       Array.from({ length: Number(p.rows) }, () => hMc("tr", { "aria-hidden": "true" })),
     TableHead: (p: Record<string, unknown>) => hMc("th", { "data-atom": "TableHead" }, p.children),
+    // freshness resolves through the real shared rule, as in the atom
+    PageVerdict: (p: Record<string, unknown>) => {
+      const verdict = p.freshness
+        ? getFreshnessVerdictMc({ ...(p.freshness as object), tone: p.tone, label: p.label })
+        : { tone: p.tone, label: p.label };
+      return hMc(
+        "div",
+        { "data-atom": "PageVerdict", "data-verdict-tone": verdict.tone, "data-verdict-label": verdict.label, chips: p.chips },
+        p.children,
+      );
+    },
+    AgentName: (p: Record<string, unknown>) =>
+      hMc("span", { "data-atom": "AgentName", title: p.name }, getAgentDisplayNameMc(p.name)),
+    formatKstTime: realUiMc.formatKstTime,
+    SplitRow: (p: Record<string, unknown>) =>
+      hMc("div", { "data-atom": "SplitRow", "data-ratio": p.ratio }, p.children),
+    SplitColumn: (p: Record<string, unknown>) => hMc("div", { "data-atom": "SplitColumn" }, p.children),
+    getFreshnessVerdict: getFreshnessVerdictMc,
+    // body mounts only while open, as in the atom
+    Disclosure: (p: Record<string, unknown>) => {
+      const open = getDisclosureOpenMc(p.kind, p.tone);
+      return hMc("details", { "data-kind": p.kind, open }, p.title, open ? p.children : null);
+    },
     INITIAL_REGION_STATE: realUiMc.INITIAL_REGION_STATE,
     putRegionRequest: realUiMc.putRegionRequest,
     putRegionData: realUiMc.putRegionData,
@@ -634,8 +669,8 @@ test("both ledgers carry the same three columns — timing is stated once per se
   ] as const) {
     const headers = textsMc(tagsMc(renderComponentMc(screens[name], props), "th"));
     assert.strictEqual(headers.length, 3, `${name}: three columns`);
-    assert.deepStrictEqual(headers.slice(2), ["Live"], `${name}: live last`);
-    for (const gone of ["Sync", "Enforcement", "Actual", "Takes effect"]) {
+    assert.deepStrictEqual(headers.slice(2), ["In effect"], `${name}: in-effect last`);
+    for (const gone of ["Sync", "Enforcement", "Actual", "Takes effect", "Live"]) {
       assert.ok(!headers.includes(gone), `${name}: '${gone}' column removed`);
     }
   }
@@ -691,7 +726,7 @@ test("a mixed dev value discloses its per-file actuals instead of hiding them", 
   const details = tagsMc(tree, "details");
   assert.ok(details.length >= 1, "a disclosure is emitted for the file list");
   const text = textMc(tree);
-  assert.ok(text.includes("glass-atrium-dev-react.md"), "each file is listed");
+  assert.ok(text.includes("dev-react") && text.includes("dev-node"), "each file is listed by its agent name");
   assert.ok(text.includes("inherit"), "a file with no model line reads as inherit, not blank");
 });
 
@@ -721,7 +756,8 @@ test("a mixed review or docs pair reads as a labelled row with both files and a 
     const text = textMc(tree);
     assert.ok(text.includes(label), `${domain}: row label from DOMAIN_META_MC, not the raw key`);
     assert.ok(!text.includes(domain), `${domain}: raw key never shown as the label`);
-    assert.ok(text.includes(pinned) && text.includes(keyless), `${domain}: both files listed`);
+    const shown = [pinned, keyless].map((file) => getAgentDisplayNameMc(file.replace(/\.md$/, "")));
+    assert.ok(shown.every((name) => text.includes(name)), `${domain}: both files listed`);
     assert.ok(text.includes("2 files"), `${domain}: per-file disclosure counts the pair`);
     const options = tagsMc(tree, "option");
     assert.strictEqual(options[0]?.props.value, "inherit", `${domain}: inherit is the first option`);
@@ -781,14 +817,40 @@ test("the header sync token answers once per state and leaves the as-of stamp to
   assert.strictEqual(tagsMc(drifted, "i").length, 1, "tone rides the glyph, not the text");
 
   // Loading and error are distinct readings — neither may look like a settled 'in sync'.
-  for (const [state, expected] of [
-    ["loading", "Checking sync"],
-    ["error", "unavailable"],
-  ] as const) {
-    const token = textMc(renderComponentMc(screens.SyncTokenMC, { state, sync: undefined }));
-    assert.ok(token.includes(expected), `${state} → '${expected}'`);
-    assert.ok(!token.includes("In sync"), `${state} never reads as in sync`);
-  }
+  const unavailable = textMc(renderComponentMc(screens.SyncTokenMC, { state: "error", sync: undefined }));
+  assert.ok(unavailable.includes("unavailable") && !unavailable.includes("In sync"), "error never reads as in sync");
+  // the stamp beside it already reads '… loading' → the token adds no second ellipsis
+  assert.strictEqual(textMc(renderComponentMc(screens.SyncTokenMC, { state: "loading", sync: undefined })), "");
+});
+
+test("a warm read error turns the sync token to the shared 'Last known' wording, never a settled 'In sync'", () => {
+  const readAt = Date.parse("2026-01-10T12:00:00.000Z");
+  const region = { status: "ready", data: {}, error: null, busy: false };
+  const tokenFor = (sync: string, error: string | null) =>
+    textMc(
+      renderComponentMc(screens.SyncTokenMC, {
+        state: "ready",
+        sync,
+        freshness: { at: readAt, now: readAt + 1_000, regions: [{ ...region, error }] },
+      }),
+    );
+
+  assert.strictEqual(tokenFor("ok", null), "In sync", "a fresh read keeps its state word");
+  assert.strictEqual(tokenFor("ok", "HTTP 500"), "Last known", "a stale in-sync read drops to the neutral shared word");
+  assert.strictEqual(tokenFor("drift", "HTTP 500"), "Last known: Drift", "a stale alarm keeps its word behind the shared prefix");
+});
+
+test("a warm read error hands the verdict no age note — the alert under it already dates the last good read", () => {
+  const verdictFor = sandboxFnMc<(tone: string, at: number | null, state: object) => Record<string, unknown>>(
+    "getVerdictFreshnessMC",
+  );
+  const settled = { status: "ready", data: {}, error: null, busy: false };
+
+  assert.ok("freshness" in verdictFor("ok", 1, settled), "a clean read keeps the ticking freshness input");
+  const warm = verdictFor("ok", 1, { ...settled, error: "HTTP 500" });
+  assert.ok(!("freshness" in warm), "a warm error carries no freshness, so no 'Read Ns ago' note");
+  assert.strictEqual(warm.label, "Last known");
+  assert.strictEqual(warm.tone, "neutral", "an ok verdict never stays green over the error");
 });
 
 test("the drift banner carries exactly one remedy, matched to its cause", () => {
@@ -1150,6 +1212,7 @@ test("Live repeats nothing in the steady state and shows the value only when it 
   ] as const) {
     const steady = liveCellMc(renderComponentMc(screens[name], props));
     assert.strictEqual(textMc([steady]), "Matches saved", `${name}: a matching live value says so in words`);
+    assert.strictEqual(tagsMc([steady], "i")[0]?.props["data-icon"], "check", `${name}: the match carries an ok glyph`);
 
     const differs = textMc([liveCellMc(renderComponentMc(screens[name], drifted))]);
     assert.ok(!differs.includes("Matches saved"), `${name}: a differing value never reads as matching`);
@@ -1201,9 +1264,12 @@ test("each ledger is an h2 section with a captioned table, so the outline never 
   }
 });
 
-test("tier descriptions sit behind one section disclosure, not one per row", () => {
-  const tree = renderComponentMc(screens.DomainsSectionMC, domainsPropsMc(THREE_TIERS_MC));
-  assert.strictEqual(tagsMc(tree, "details").length, 1, "one disclosure for three described tiers");
+test("tier notes show one unfolded entry per described tier", () => {
+  const [domainMeta] = vm.runInContext("[DOMAIN_META_MC]", screens) as Array<Record<string, unknown>>;
+  const rows = THREE_TIERS_MC.map((d) => domainMeta[(d as { domain: string }).domain]);
+  const tree = renderComponentMc(screens.TierNotesMC, { title: "Who each tier covers", rows });
+  assert.strictEqual(tagsMc(tree, "details").length, 0, "the notes are not folded away");
+  assert.strictEqual(tagsMc(tree, "dt").length, rows.length, "one entry per tier");
   assert.ok(textMc(tree).includes("glass-atrium-meta-agent"), "every description stays reachable");
 });
 
@@ -1273,7 +1339,7 @@ test("the per-file list groups files under each model, so every model value is s
       },
     ]),
   );
-  const [details] = tagsMc(tree, "details").filter((d) => textMc(d.children).includes("agents/a.md"));
+  const [details] = tagsMc(tree, "details").filter((d) => textMc(d.children).includes("claude-sonnet-5"));
   const listed = textMc(details.children);
   assert.strictEqual(countMc(listed, "claude-opus-4-8"), 1, "a model shared by two files is named once");
   assert.strictEqual(countMc(listed, "claude-sonnet-5"), 1, "each model gets its group");
@@ -1301,4 +1367,248 @@ test("a live value the payload does not carry is left out, never shown as a plac
     domainsPropsMc([{ ...DOMAIN_ROW_FIXTURE_MC[0], actual: null, drift: false }]),
   );
   assert.strictEqual(textMc([liveCellMc(tree)]), "", "an absent live value renders nothing");
+});
+
+type VerdictMc = { tone: string; text: string; chips: { label: string; targetId: string }[] };
+
+describe("the page verdict is ok exactly when every row matches and the file is in sync", () => {
+  const getPageVerdictMc = sandboxFnMc<(data: unknown) => VerdictMc>("getPageVerdictMC");
+  const clean = { daemon_config_sync: "ok", domains: THREE_TIERS_MC, budgets: BUDGET_ROW_FIXTURE_MC };
+  const rows = [
+    { name: "every row matching reads as one ok line with both totals", data: clean, tone: "ok", names: ["3/3 tiers", "1/1 caps", "config file in sync"], section: null },
+    {
+      name: "a drifted tier is named and its chip jumps to the model ledger",
+      data: { ...clean, domains: THREE_TIERS_MC.map((d, i) => (i === 0 ? { ...d, drift: true } : d)) },
+      tone: "warn",
+      names: ["1 tier drifting", "Dev agents"],
+      section: "DomainsSectionMC",
+    },
+    {
+      name: "a drifted cap is named and its chip jumps to the cap ledger",
+      data: { ...clean, budgets: [{ ...BUDGET_ROW_FIXTURE_MC[0], drift: true }] },
+      tone: "warn",
+      names: ["1 cap drifting", "Self-improve + wiki call cap"],
+      section: "BudgetsSectionMC",
+    },
+    {
+      name: "a tier whose live value was not read is named, never counted as matching",
+      data: { ...clean, domains: THREE_TIERS_MC.map((d, i) => (i === 0 ? { ...d, actual: null, drift: false } : d)) },
+      tone: "warn",
+      names: ["1 tier not read", "Dev agents"],
+      section: "DomainsSectionMC",
+    },
+    {
+      name: "a cap whose live value was not read is named, never counted as matching",
+      data: { ...clean, budgets: [{ ...BUDGET_ROW_FIXTURE_MC[0], actual: null, drift: false }] },
+      tone: "warn",
+      names: ["1 cap not read", "Self-improve + wiki call cap"],
+      section: "BudgetsSectionMC",
+    },
+    { name: "a missing config file warns even when every row matches", data: { ...clean, daemon_config_sync: "file-missing" }, tone: "warn", names: ["File missing"], section: null },
+    { name: "an empty roster claims nothing", data: { daemon_config_sync: "ok", domains: [], budgets: [] }, tone: "neutral", names: [], section: null },
+  ];
+  for (const row of rows) {
+    test(row.name, () => {
+      const verdict = getPageVerdictMc(row.data);
+      assert.strictEqual(verdict.tone, row.tone);
+      assert.strictEqual(verdict.text.includes("match saved"), row.tone === "ok", "only an ok verdict claims a match");
+      for (const name of row.names) assert.ok(verdict.text.includes(name), `names '${name}'`);
+      if (row.section === null) {
+        assert.strictEqual(verdict.chips.length, 0, "no chip without a drifted ledger");
+        return;
+      }
+      assert.strictEqual(verdict.chips.length, 1, "one chip per drifted ledger");
+      const props = row.section === "DomainsSectionMC" ? domainsPropsMc() : budgetsPropsMc();
+      const tree = renderComponentMc(screens[row.section], props);
+      const targets = findAllMc(tree, (n) => n.props.id === verdict.chips[0].targetId);
+      assert.strictEqual(targets.length, 1, "the chip targets the ledger holding the drifted row");
+    });
+  }
+});
+
+test("a model id reads as its family and version; an id outside the naming pattern gets none", () => {
+  const getModelFamilyMc = sandboxFnMc<(model: string) => string | null>("getModelFamilyMC");
+  for (const [id, family] of [
+    ["claude-opus-5-5", "Opus 5.5"],
+    ["claude-sonnet-5", "Sonnet 5"],
+    ["claude-haiku-4-5", "Haiku 4.5"],
+    ["inherit", "Session model"],
+    ["my-local-model", null],
+  ] as const) {
+    assert.strictEqual(getModelFamilyMc(id), family, id);
+  }
+});
+
+test("the model mix counts every tier once under its family, and each select names its family in text", () => {
+  const models = { "model.dev": "claude-opus-4-8", "model.research": "claude-sonnet-5", "model.meta": "claude-opus-4-8" };
+  const tree = renderComponentMc(screens.DomainsSectionMC, {
+    ...domainsPropsMc(THREE_TIERS_MC),
+    form: { models, budgets: {} },
+    baseline: { models: { ...models }, budgets: {} },
+  });
+  assert.ok(textMc(tree).includes("Opus 4.8 ×2 · Sonnet 5 ×1"), "the mix totals the tiers per family");
+  const tags = textsMc(findAllMc(tree, (n) => n.props["data-slot"] === "family"));
+  assert.strictEqual(tags.length, tagsMc(tree, "select").length, "one family tag per select");
+  assert.ok(tags.every((t) => t === "Opus 4.8" || t === "Sonnet 5"), "each tag names its select's family");
+});
+
+test("the file list toggle is a control-radius pill, not a heading or a card", () => {
+  const tree = renderComponentMc(screens.LiveValueMC, {
+    value: "claude-opus-4-8",
+    drift: false,
+    files: [{ file: "agents/glass-atrium-dev-react.md", model: "claude-opus-4-8" }],
+  });
+  const [summary] = tagsMc(tree, "summary");
+  assert.ok(summary, "the toggle is a native summary");
+  assert.ok(textMc(summary.children).includes("1 file"), "the toggle names the file count");
+  assert.strictEqual((summary.props.style as Record<string, string>)?.borderRadius, "var(--radius-control)");
+  assert.strictEqual(findAllMc(tree, (n) => /^h[1-6]$/.test(n.tag) || "data-kind" in n.props).length, 0, "no heading, no card fold");
+});
+
+test("a file list stays folded while every file carries the saved model, and opens on drift or mixed models", () => {
+  const filesOf = (models: string[]) => models.map((model, i) => ({ file: `glass-atrium-dev-${i}.md`, model }));
+  const rows = [
+    { name: "uniform files, no drift", drift: false, files: filesOf(["claude-opus-4-8", "claude-opus-4-8"]), open: false },
+    { name: "uniform files, drifted row", drift: true, files: filesOf(["claude-opus-4-8", "claude-opus-4-8"]), open: true },
+    { name: "mixed files, no drift", drift: false, files: filesOf(["claude-opus-4-8", "claude-sonnet-5"]), open: true },
+  ];
+  for (const row of rows) {
+    const tree = renderComponentMc(
+      screens.DomainsSectionMC,
+      domainsPropsMc([{ ...DOMAIN_ROW_FIXTURE_MC[0], drift: row.drift, files: row.files }]),
+    );
+    const [fold] = tagsMc(tree, "details");
+    assert.ok(fold, `${row.name}: the file list sits in a fold`);
+    assert.strictEqual(Boolean(fold.props.open), row.open, `${row.name}: open state`);
+  }
+});
+
+test("each section states 'Takes effect' once, naming a departing row inside that one line", () => {
+  const tree = renderComponentMc(
+    screens.DomainsSectionMC,
+    domainsPropsMc([
+      DOMAIN_ROW_FIXTURE_MC[0],
+      { ...DOMAIN_ROW_FIXTURE_MC[0], domain: "model.research" },
+      { ...DOMAIN_ROW_FIXTURE_MC[0], domain: "model.daemon_cycle_worker", apply_mode: "next-cycle" },
+    ]),
+  );
+  const lines = textsMc(findAllMc(tree, (n) => n.children.some((c) => typeof c === "string" && c.includes("Takes effect"))));
+  assert.strictEqual(lines.length, 1, "one take-effect line per section");
+  assert.ok(lines[0].includes("Next spawn") && lines[0].includes("Daemon cycle helper: Next cycle"), lines[0]);
+});
+
+test("tier notes sit outside the ledger and never restate a row's own hint", () => {
+  const section = renderComponentMc(screens.DomainsSectionMC, domainsPropsMc());
+  assert.strictEqual(tagsMc(section, "dl").length, 0, "nothing folds open above the model table");
+
+  const screen = renderComponentMc(screens.ScreenModelConfig);
+  const [rail] = findAllMc(screen, (n) => n.props["data-atom"] === "SplitColumn");
+  assert.ok(rail, "the caps column is a split column that can hold the notes");
+
+  // script-scope consts stay off the context global, so read them through the context itself
+  const tables = vm.runInContext("[DOMAIN_META_MC, BUDGET_META_MC]", screens) as object[];
+  const metas = tables.flatMap((table) => Object.values(table));
+  for (const meta of metas as Array<{ label: string; hint: string; desc: string }>) {
+    assert.ok(!meta.desc.toLowerCase().includes(meta.hint.toLowerCase()), `${meta.label}: note restates its hint`);
+  }
+});
+
+test("the two ledgers share one split row, model assignment leading", () => {
+  const tree = renderComponentMc(screens.ScreenModelConfig);
+  const [split] = findAllMc(tree, (n) => n.props["data-atom"] === "SplitRow");
+  assert.ok(split, "a split row holds the ledgers");
+  assert.strictEqual(split.props["data-ratio"], "3:2");
+  assert.deepStrictEqual(textsMc(tagsMc(split.children, "h2")), ["Model assignment", "Per-call budget caps"]);
+});
+
+test("every cap carries its own reference link to Cost & usage", () => {
+  const budgets = [BUDGET_ROW_FIXTURE_MC[0], { ...BUDGET_ROW_FIXTURE_MC[0], domain: "budget.pre_verify_max_usd" }];
+  const tree = renderComponentMc(screens.BudgetsSectionMC, budgetsPropsMc(budgets));
+  const rows = tagsMc(tagsMc(tree, "tbody")[0].children, "tr");
+  assert.strictEqual(rows.length, 2, "one row per cap");
+  for (const row of rows) {
+    const links = tagsMc(row.children, "a").filter((a) => a.props.href === "#cost");
+    assert.strictEqual(links.length, 1, "one reference link per cap row");
+  }
+});
+
+test("a listed agent file reads as the shared agent name, never the raw file name", () => {
+  const files = [{ file: "glass-atrium-qa-code-reviewer.md", model: "claude-opus-4-8" }];
+  const tree = renderComponentMc(
+    screens.DomainsSectionMC,
+    domainsPropsMc([{ ...DOMAIN_ROW_FIXTURE_MC[0], drift: true, files }]),
+  );
+  const names = findAllMc(tree, (n) => n.props["data-atom"] === "AgentName");
+
+  assert.deepStrictEqual(names.map((n) => n.props.title), ["glass-atrium-qa-code-reviewer"], "the atom gets the agent name");
+  assert.ok(!textMc(tree).includes(".md"), "no file extension on screen");
+});
+
+// ScreenModelConfig's useState calls in declaration order → a named seed lands in its slot.
+const MC_STATE_SLOTS = ["config", "form", "saving", "saveError", "surfaceResults", "refreshTick", "asOfAt", "toast", "discardConfirm"];
+
+async function renderSeededScreenMc(seed: Record<string, unknown>): Promise<McNode[]> {
+  let slot = 0;
+  const seeded = await loadMcScreens({
+    react: {
+      useState: (init: unknown) => {
+        const name = MC_STATE_SLOTS[slot++];
+        const initial = typeof init === "function" ? (init as () => unknown)() : init;
+        return [name !== undefined && name in seed ? seed[name] : initial, () => {}];
+      },
+    },
+  });
+  return renderComponentMc(seeded.ScreenModelConfig, {});
+}
+
+describe("a config read that failed after an earlier read shows the last good read, never an all-clear", () => {
+  const data = {
+    domains: DOMAIN_ROW_FIXTURE_MC,
+    budgets: BUDGET_ROW_FIXTURE_MC,
+    known_models: [],
+    daemon_config_sync: "ok",
+  };
+  const form = { models: { "model.dev": "claude-opus-4-8" }, budgets: { "budget.worker_max_usd": "10.00" } };
+  const error = "HTTP 500 Internal Server Error";
+  const rows = [
+    { name: "fresh read", region: { status: "ready", data, error: null, busy: false }, isLastKnown: false },
+    { name: "warm error, settled", region: { status: "ready", data, error, busy: false }, isLastKnown: true },
+    { name: "warm error, Retry in flight", region: { status: "ready", data, error, busy: true }, isLastKnown: true },
+  ];
+
+  for (const row of rows) {
+    test(row.name, async () => {
+      const config = { ...(realUiMc.INITIAL_REGION_STATE as object), ...row.region };
+      const tree = await renderSeededScreenMc({ config, form, asOfAt: Date.now() - 60_000 });
+      const [verdict] = findAllMc(tree, (n) => n.props["data-atom"] === "PageVerdict");
+      const alerts = findAllMc(tree, (n) => n.props.role === "alert");
+      const [card] = findAllMc(alerts, (n) => n.props["data-atom"] === "RegionUnavailable");
+      const label = String(verdict?.props["data-verdict-label"]);
+
+      assert.strictEqual(label.startsWith("Last known"), row.isLastKnown, `verdict label: ${label}`);
+      assert.strictEqual(verdict?.props["data-verdict-tone"] === "ok", !row.isLastKnown, "only a fresh read is toned ok");
+      assert.strictEqual(textMc(alerts).includes("last good read"), row.isLastKnown, "the banner names the held data");
+      if (!row.isLastKnown) return;
+      assert.strictEqual(card?.props.isBusy, row.region.busy, "the Retry reports its own request");
+      assert.strictEqual(card?.props.focusTargetId, "mc-models", "focus lands on the ledger if the card leaves");
+    });
+  }
+});
+
+test("a cap field fits the longest valid cap and is never squeezed by its link", () => {
+  const tree = renderComponentMc(screens.BudgetsSectionMC, budgetsPropsMc());
+  const [input] = tagsMc(tree, "input");
+  const [affix] = findAllMc(tree, (n) => String(n.props.className ?? "").includes("field-affix"));
+  const widthCh = Number(/(\d+)ch/.exec(String((input?.props.style as { width?: string })?.width))?.[1]);
+
+  assert.ok(widthCh >= BUDGET_MAX_USD.toFixed(2).length, `field width ${widthCh}ch holds ${BUDGET_MAX_USD.toFixed(2)}`);
+  assert.ok(String(affix?.props.className).includes("flex-shrink-0"), "the field keeps its width beside the link");
+});
+
+test("a section lead line wraps instead of clipping", () => {
+  const tree = renderComponentMc(screens.BudgetsSectionMC, budgetsPropsMc());
+  const leads = findAllMc(tree, (n) => String(n.props.className ?? "").includes("card-sub"));
+
+  assert.ok(leads.length > 0, "the caps section carries a lead line");
+  assert.ok(leads.every((n) => String(n.props.className).includes("is-wrap")), "every lead line wraps");
 });

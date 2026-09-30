@@ -5,7 +5,7 @@ import { readFileSync, readdirSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, resolve } from "node:path";
 import { contrastRatio, type Rgba } from "./lib/wcag-contrast.js";
-import { collectText, findNodes, loadScreenModule, renderScreen, type RenderedNode } from "./lib/render-screen.js";
+import { collectText, createEffectReact, createFakeDocument, findNodes, loadScreenModule, renderScreen, type RenderedNode } from "./lib/render-screen.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const PUBLIC = resolve(__dirname, "../public");
@@ -85,4 +85,114 @@ test("every status dot tone carries a distinct glyph and a word, so state surviv
   assert.equal(glyphs.size, tones.length, `glyphs distinct per tone: ${[...glyphs].join(" ")}`);
   assert.equal(words.size, tones.length, `words distinct per tone: ${[...words].join(" ")}`);
   assert.ok(![...glyphs, ...words].includes(""), "no empty glyph or word");
+});
+
+test("the document root declares the UI copy language, English", () => {
+  const html = readFileSync(resolve(PUBLIC, "index.html"), "utf8");
+  assert.match(html, /<html[^>]*\blang="en"/);
+});
+
+const effects = createEffectReact();
+const fxDoc = createFakeDocument();
+const fxUi = await loadScreenModule(resolve(SRC, "ui.jsx"), { React: effects.react, document: fxDoc });
+const fxH = (fxUi.React as { createElement: (t: unknown, p: unknown) => unknown }).createElement;
+const RETRY_ATOMS = [
+  { name: "RegionUnavailable", props: { source: "Agents", error: "HTTP 500" } },
+  { name: "PageErrorBanner", props: { sources: ["Agents", "Outcomes"], error: "HTTP 500" } },
+];
+
+function getRetry(tree: RenderedNode): RenderedNode {
+  return findNodes(tree, (n) => n.type === "button" && /Retry/.test(collectText(n)))[0];
+}
+
+test("a busy Retry stays focusable, says it is busy, and ignores clicks until the request settles", () => {
+  for (const atom of RETRY_ATOMS) {
+    for (const isBusy of [false, true]) {
+      let calls = 0;
+      const tree = renderScreen(fxH(fxUi[atom.name], { ...atom.props, isBusy, onRetry: () => { calls += 1; } })) as RenderedNode;
+      const retry = getRetry(tree);
+      (retry.props.onClick as (event?: unknown) => void)({});
+
+      assert.equal(retry.props.disabled, undefined, `${atom.name} busy=${isBusy}: never natively disabled`);
+      assert.equal(retry.props["aria-disabled"] === "true", isBusy, `${atom.name} busy=${isBusy}: aria-disabled`);
+      assert.equal(retry.props["aria-busy"] === "true", isBusy, `${atom.name} busy=${isBusy}: aria-busy`);
+      assert.equal(calls, isBusy ? 0 : 1, `${atom.name} busy=${isBusy}: click`);
+    }
+  }
+});
+
+test("a Retry that unmounts while focused hands focus to its region card; an unfocused one leaves focus alone", () => {
+  const rows = [
+    { name: "focused Retry", isRetryFocused: true, expected: "card" },
+    { name: "focus elsewhere", isRetryFocused: false, expected: "elsewhere" },
+  ];
+  for (const atom of RETRY_ATOMS) {
+    for (const row of rows) {
+      fxDoc.reset();
+      const card = { name: "card", hasAttribute: () => true, setAttribute: () => undefined, scrollIntoView: () => undefined, focus: () => { fxDoc.activeElement = card; } };
+      const retry = { name: "retry" };
+      const elsewhere = { name: "elsewhere" };
+      fxDoc.elements.set("agents-alarms", card);
+      // renderScreen output is not attachable by mount → commit the Retry host ref the way React would, before layout effects run
+      const render = () => {
+        const tree = renderScreen(fxH(fxUi[atom.name], { ...atom.props, onRetry: () => undefined, focusTargetId: "agents-alarms" })) as RenderedNode;
+        (getRetry(tree).props.ref as { current: unknown }).current = retry;
+        return tree;
+      };
+      const { unmount } = effects.mount(render, () => ({}));
+      fxDoc.activeElement = row.isRetryFocused ? retry : elsewhere;
+
+      unmount();
+
+      assert.equal((fxDoc.activeElement as { name: string }).name, row.expected, `${atom.name}: ${row.name}`);
+    }
+  }
+});
+
+function getFakeCard(name: string): Record<string, unknown> {
+  const card = { name, hasAttribute: () => true, setAttribute: () => undefined, scrollIntoView: () => undefined, focus: () => { fxDoc.activeElement = card; } };
+  return card;
+}
+
+test("a shared-outage banner leaving with its Retry focused hands focus to the first covered region's card, else to its fallback", () => {
+  const shared = { sources: ["cost trend", "token trend"], error: "HTTP 500" };
+  const rows = [
+    { name: "covered regions declared their cards", regionCardIds: ["cost-trend", "cost-tokens"], expected: "cost-trend" },
+    { name: "no covered region declared a card", regionCardIds: [undefined, undefined], expected: "cost-verdict" },
+  ];
+  for (const row of rows) {
+    fxDoc.reset();
+    for (const id of ["cost-trend", "cost-tokens", "cost-verdict"]) fxDoc.elements.set(id, getFakeCard(id));
+    shared.sources.forEach((source, index) => {
+      const covered = renderScreen(fxH(fxUi.RegionFailure, { source, error: shared.error, shared, focusTargetId: row.regionCardIds[index] })) as RenderedNode;
+      fxDoc.attached.push(...findNodes(covered, (n) => n.type === "div"));
+    });
+    const retry = { name: "retry" };
+    let banner = null as RenderedNode | null;
+    const render = () => {
+      banner = renderScreen(fxH(fxUi.PageErrorBanner, { ...shared, onRetry: () => undefined, focusTargetId: "cost-verdict" })) as RenderedNode;
+      (getRetry(banner).props.ref as { current: unknown }).current = retry;
+      return banner;
+    };
+    const { unmount } = effects.mount(render, () => ({}));
+    const alert = findNodes(banner as unknown as RenderedNode, (n) => n.props.role === "alert")[0];
+    fxDoc.activeElement = retry;
+    (alert.props.onFocus as () => void)();
+
+    unmount();
+
+    assert.equal((fxDoc.activeElement as { name: string }).name, row.expected, row.name);
+  }
+});
+
+test("a region reads as its error card while a Retry is in flight over a cold error, never as a loader", () => {
+  const getRegionView = fxUi.getRegionView as (region: Record<string, unknown>) => string;
+  const rows = [
+    { name: "first load", region: { data: null, error: null, busy: true }, expected: "loading" },
+    { name: "cold error, idle", region: { data: null, error: "HTTP 500", busy: false }, expected: "error" },
+    { name: "cold error, Retry in flight", region: { data: null, error: "HTTP 500", busy: true }, expected: "error" },
+    { name: "held data over a warm error", region: { data: { n: 1 }, error: "HTTP 500", busy: true }, expected: "ready" },
+    { name: "held data", region: { data: { n: 1 }, error: null, busy: false }, expected: "ready" },
+  ];
+  for (const row of rows) assert.equal(getRegionView(row.region), row.expected, row.name);
 });

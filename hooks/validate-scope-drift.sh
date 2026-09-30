@@ -25,6 +25,8 @@ source "${BASH_SOURCE%/*}/lib/hook-utils.sh"
 # monitor/.env → config → 16145); NO literal fallback here (the single default lives
 # in the resolver). A full SCOPE_DRIFT_MONITOR_URL override wins over the derived
 # default; a resolver failure degrades to '' (non-bindable URL, fire-and-forget).
+# shellcheck disable=SC2310
+#   Best-effort resolver — its failure is absorbed into the '' degrade described above.
 monitor_port="$(hook_monitor_port || true)"
 MONITOR_URL="${SCOPE_DRIFT_MONITOR_URL:-http://127.0.0.1:${monitor_port}/api/clauded-docs}"
 CURL_TIMEOUT="${SCOPE_DRIFT_CURL_TIMEOUT:-2}"
@@ -63,6 +65,14 @@ extract_target_files_section() {
     | sed 's/<li[^>]*>/\n/g; s/<\/li>/\n/g; s/<br[^>]*>/\n/g' \
     | sed 's/<[^>]*>//g' \
     | sed 's/&amp;/\&/g; s/&lt;/</g; s/&gt;/>/g'
+}
+
+# Extract the md `## Target Files` list, up to the next `## ` heading (case-insensitive initials,
+# English-only). One definition for the PLAN_FILE leg and the monitor leg's md plans.
+# Args: $1=md body. Prints the list to stdout (empty when the heading is absent).
+extract_target_files_heading() {
+  local heading_re='^##[[:space:]]+[Tt]arget [Ff]iles'
+  printf '%s\n' "${1}" | sed -E -n "/${heading_re}/,/^## /{ /${heading_re}/d; /^## /d; p; }"
 }
 
 # Shared drift decision — match file_path against the resolved target list; on no-match emit the
@@ -213,10 +223,12 @@ if [[ -n "${FILE_PATH}" ]]; then
   fi
 fi
 
-# PLAN_FILE unset → auto-restore per-file scope binding via the monitor API: pick the in-progress
-# doc → GET its HTML body → parse `<section id="target-files">` → feed the same match loop.
+# PLAN_FILE unset → auto-restore per-file scope binding via the monitor API: the one `implementing`
+# plan → GET its body → parse its Target Files list in the plan's own format → same match loop.
 # fail-open (a false-positive SCOPE-070 is forbidden): curl absent / monitor down / 0 or ambiguous
-# docs / GET failure / section absent / 0 path-like tokens → pass silently, never promote to SCOPE-070.
+# docs / GET failure / list absent / 0 path-like tokens → pass silently, never promote to SCOPE-070.
+# Accepted residual (advisory noise): a lone `implementing` plan also binds a concurrent edit outside
+# it that has no usable `[SCOPE]`, and a cached binding outlives a 2nd plan's arrival by the TTL.
 if [[ -z "${PLAN_FILE:-}" ]]; then
   if ! command -v curl >/dev/null 2>&1; then
     exit 0
@@ -226,7 +238,7 @@ if [[ -z "${PLAN_FILE:-}" ]]; then
   [[ -z "${FILE_PATH}" ]] && exit 0
 
   # Per-session resolution cache (plan id + target-file list) — optimization only. A hit skips
-  # BOTH loopback curls + the HTML re-parse below; a miss / stale / corrupt / unreadable cache
+  # BOTH loopback curls + the Target Files re-parse below; a miss / stale / corrupt / unreadable cache
   # falls back to the live lookup (fail-open — a real drift detection is never suppressed).
   # Keyed on session_id: a changed PLAN_FILE takes the branch above (cache untouched), and
   # SCOPE_DRIFT_CACHE_BYPASS forces a fresh resolve (explicit refresh signal). Empty session id →
@@ -247,23 +259,25 @@ if [[ -z "${PLAN_FILE:-}" ]]; then
     exit 0
   fi
 
-  # 1. List API → pick the in-progress doc ID. Response {"total":N,"rows":[...]}.
-  #    Selection: newest created_at, tie → max id (deterministic). --max-time enforced.
+  # 1. List API → the implementing plan ID. Response {"total":N,"rows":[...]}. limit=200 is the
+  #    route's page maximum. Each row's stage is re-checked: a server ignoring the filter returns
+  #    every stage. Exactly one binds — several are other lanes' plans. --max-time enforced.
   PLAN_LIST_JSON=""
-  PLAN_LIST_JSON="$(curl -sf --max-time "${CURL_TIMEOUT}" "${MONITOR_URL}" 2>/dev/null || true)"
+  PLAN_LIST_JSON="$(curl -sf --max-time "${CURL_TIMEOUT}" \
+    "${MONITOR_URL}?doc_status=implementing&limit=200" 2>/dev/null || true)"
   [[ -z "${PLAN_LIST_JSON}" ]] && exit 0
 
   PLAN_ID=""
   PLAN_ID="$(printf '%s' "${PLAN_LIST_JSON}" \
-    | jq -r '[.rows[]? | select(.doc_status == "progress")]
-             | sort_by(.created_at // "", .id) | last | .id // empty' 2>/dev/null || true)"
+    | jq -r '[.rows[]? | select(.doc_status == "implementing")]
+             | if length == 1 then .[0].id else empty end' 2>/dev/null || true)"
 
-  # No in-progress doc / parse failure → "absent" is NOT "drift" → fail-open.
+  # None or several implementing / parse failure → "absent" is NOT "drift" → fail-open.
   if [[ -z "${PLAN_ID}" ]] || [[ ! "${PLAN_ID}" =~ ^[0-9]+$ ]]; then
     exit 0
   fi
 
-  # 2. GET-by-id → HTML body. Separate --max-time (double-call worst-case <5s).
+  # 2. GET-by-id → format + body. Separate --max-time (double-call worst-case <5s).
   PLAN_DOC_JSON=""
   PLAN_DOC_JSON="$(curl -sf --max-time "${CURL_TIMEOUT}" "${MONITOR_URL}/${PLAN_ID}" 2>/dev/null || true)"
   [[ -z "${PLAN_DOC_JSON}" ]] && exit 0
@@ -272,11 +286,19 @@ if [[ -z "${PLAN_FILE:-}" ]]; then
   PLAN_BODY="$(printf '%s' "${PLAN_DOC_JSON}" | jq -r '.body // empty' 2>/dev/null || true)"
   [[ -z "${PLAN_BODY}" ]] && exit 0
 
-  # 3. Parse target-files section. Separate assignment (function always returns 0) avoids SC2310.
-  ALLOWED_FILES=""
-  ALLOWED_FILES="$(extract_target_files_section "${PLAN_BODY}" 2>/dev/null)"
+  PLAN_FORMAT=""
+  PLAN_FORMAT="$(printf '%s' "${PLAN_DOC_JSON}" | jq -r '.format // empty' 2>/dev/null || true)"
 
-  # Section absent / extraction failure → fail-open. A suspect list is absorbed by the match loop.
+  # 3. Parser chosen by format, never by trying both: an md plan quoting the HTML contract example
+  #    would bind its placeholder paths. Separate assignment (parsers always return 0) avoids SC2310.
+  ALLOWED_FILES=""
+  case "${PLAN_FORMAT}" in
+    html) ALLOWED_FILES="$(extract_target_files_section "${PLAN_BODY}" 2>/dev/null)" ;;
+    md) ALLOWED_FILES="$(extract_target_files_heading "${PLAN_BODY}")" ;;
+    *) exit 0 ;;
+  esac
+
+  # List absent / extraction failure → fail-open. A suspect list is absorbed by the match loop.
   [[ -z "${ALLOWED_FILES}" ]] && exit 0
   # Pass if 0 path-like tokens (/ or .) — guards a whitespace/tag-residue slice.
   if ! printf '%s' "${ALLOWED_FILES}" | grep -q '[./]'; then
@@ -305,9 +327,7 @@ if ! PLAN_CONTENT=$(cat "${PLAN_FILE}" 2>/dev/null) || [[ -z "${PLAN_CONTENT}" ]
   exit 0
 fi
 
-# Extract from the `## Target Files` heading to the next ## (case-insensitive, English-only).
-HEADING_RE='^##[[:space:]]+[Tt]arget [Ff]iles'
-ALLOWED_FILES=$(echo "${PLAN_CONTENT}" | sed -E -n "/${HEADING_RE}/,/^## /{ /${HEADING_RE}/d; /^## /d; p; }")
+ALLOWED_FILES="$(extract_target_files_heading "${PLAN_CONTENT}")"
 
 # No target-files section → pass.
 [[ -z "${ALLOWED_FILES}" ]] && exit 0

@@ -46,6 +46,8 @@ setup() {
   command -v jq >/dev/null 2>&1 || skip "jq not on PATH"
   DATA_DIR="${BATS_TEST_TMPDIR}/data"
   mkdir -p "${DATA_DIR}/session-spawns"
+  # Refused loopback port — the gate's monitor read (surface 6) fails open here, never reaching the live monitor.
+  export VGATE_MONITOR_URL='http://127.0.0.1:9/api/clauded-docs'
   # Block firing-trace sink, isolated per test via the hook's own VGATE_FIRED_LOG override.
   SINK="${BATS_TEST_TMPDIR}/verification-gate-fired.log"
   # Silence-carrying declaration for every EMPTY-output case — surfaces 4+5 in the header. The

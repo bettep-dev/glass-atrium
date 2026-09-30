@@ -20,6 +20,8 @@ setup() {
   command -v jq >/dev/null 2>&1 || skip "jq not on PATH"
   DATA_DIR="${BATS_TEST_TMPDIR}/data"
   mkdir -p "${DATA_DIR}/session-spawns"
+  # Refused loopback port — the gate's monitor read (surface 6) fails open here, never reaching the live monitor.
+  export VGATE_MONITOR_URL='http://127.0.0.1:9/api/clauded-docs'
   printf '%s\n' "glass-atrium-qa-code-reviewer" >"${DATA_DIR}/session-spawns/sess-test-001"
   PLAN_REF="Implement clauded-docs/3854. [SIZE-EST] bundles=1 tool_uses~=10 — small."
 }

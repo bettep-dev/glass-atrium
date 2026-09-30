@@ -17,7 +17,10 @@ Final authority on an ambiguous PLANNING rule is this file, whole; this section 
 
 The request-driven emission model — three emission modes · HTML request test · POST tuple · document lifecycle · visual floor · D8 thresholds — enters at `scoped/scope-report.md` → `## Output Format Routing [REPORT]`. Its rules are canonical at more than one site; `agents/glass-atrium-intel-planner.md` → `## Canonical & Mirror Register` names the canonical of each.
 
-The copy the planner applies, the `[DOC-ROUTE]` exception to the turn-0 routing gate included, is `agents/glass-atrium-intel-planner.md` → `## Output Format Routing`.
+The copy the planner applies sits in `agents/glass-atrium-intel-planner.md`:
+
+- `## Output Format Routing` — routing, including the `[DOC-ROUTE]` stamp in the turn-0 routing gate.
+- `## Document Lifecycle` — document stages and closing.
 
 ## Pre-drawing Doctrine [PLANNING]
 
