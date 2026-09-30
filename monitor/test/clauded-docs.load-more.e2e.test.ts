@@ -971,7 +971,7 @@ test("open-summary rail: at 1440px the rail stays in view on page scroll and the
       await page.locator("aside.doc-open-summary").waitFor({ state: "visible" });
 
       const ledger = await page.evaluate(() => {
-        const scroller = document.querySelector("table.tbl")?.parentElement as HTMLElement | null;
+        const scroller = document.querySelector("table.tbl")?.parentElement;
         if (!scroller) throw new Error("ledger scroller missing");
         return { scrollWidth: scroller.scrollWidth, clientWidth: scroller.clientWidth };
       });
@@ -983,9 +983,9 @@ test("open-summary rail: at 1440px the rail stays in view on page scroll and the
       const scrollBy = 362;
       await page.evaluate((y) => window.scrollTo(0, y), scrollBy);
       await page.waitForFunction((y) => window.scrollY >= y, scrollBy);
-      const railTop = await page.evaluate(
-        () => (document.querySelector("aside.doc-open-summary") as HTMLElement).getBoundingClientRect().top,
-      );
+      const railTop = await page
+        .locator("aside.doc-open-summary")
+        .evaluate((rail) => rail.getBoundingClientRect().top);
       assert.ok(railTop >= 0, `rail scrolled out of view (top ${railTop}) — it must stay pinned while the ledger scrolls`);
     } finally {
       await context.close();
