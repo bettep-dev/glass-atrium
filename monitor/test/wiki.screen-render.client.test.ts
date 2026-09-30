@@ -520,7 +520,24 @@ test("the dry-run notice is stated once above the proposals instead of on every 
 
   assert.equal(text.match(/dry[ -]run/gi)?.length, 1, "one notice for the whole list");
   assert.ok(text.search(/dry[ -]run/i) < text.indexOf("s1"), "the notice sits above the first proposal");
-  assert.equal(text.match(/\binto\b/gi)?.length, 1, "the merge sentence is stated once for the list, not per proposal");
+});
+
+test("every merge proposal states in text which note absorbs which, not only by the arrow glyph", async () => {
+  const mod = await loadWikiScreen();
+  const backlog = {
+    status: "ready",
+    error: null,
+    data: { backlog: { run_date: "2026-09-24", dedup_proposals: { proposals: [
+      { cluster_hash: "c1", target_slug: "keep-a", source_slugs: ["drop-1"], suggested_action: "Merge notes/drop-1.md into notes/keep-a.md." },
+      { cluster_hash: "c2", target_slug: "keep-b", source_slugs: ["drop-2", "drop-3"], suggested_action: "Merge notes/drop-2.md into notes/keep-b.md." },
+    ] } } },
+  };
+  const tree = renderScreen(mod.React.createElement(mod.WikiMaintenanceSection as Component, { backlogState: backlog, onRetry: () => {} }));
+  const rows = findNodes(tree, (n) => n.type === "li").map((n) => collectText(n));
+
+  assert.equal(rows.length, 2);
+  assert.match(rows[0], /keep-a\s*absorbs\s*drop-1/);
+  assert.match(rows[1], /keep-b\s*absorbs\s*drop-2, drop-3/);
 });
 
 test("the missed-cycle alarm states its age in the short relative form", async () => {

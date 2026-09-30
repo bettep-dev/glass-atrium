@@ -587,11 +587,12 @@ test("note types read as human labels with their share of all notes", () => {
   assert.deepEqual(rows.map((r) => r.pct), [50, 49, 0]);
 });
 
-test("the per-run fold's summary states the run streak, so a one-row table needs no click", () => {
+test("the per-run fold's summary states the unchanged stretch or how often it changed, so a one-row table needs no click", () => {
   const h = helpers as unknown as { describeRunTableW: (state: FetchState, days: number) => string };
   const same = Array.from({ length: 27 }, () => ["ok", 0, 3] as [string, number, number]);
   assert.equal(h.describeRunTableW(ready({ reports: runs(same) }), 30), `27 healthy runs in a row since ${isoDaysAgo(26)}`);
-  assert.equal(h.describeRunTableW(ready({ reports: runs([["ok", 0, 3], ["error", 0, 3], ["ok", 0, 3]]) }), 30), "3 runs in 3 streaks");
+  assert.equal(h.describeRunTableW(ready({ reports: runs([["ok", 0, 3], ["error", 0, 3], ["ok", 0, 3]]) }), 30), "3 runs · status or backlog changed 2 times");
+  assert.equal(h.describeRunTableW(ready({ reports: runs([["ok", 0, 3], ["error", 0, 3], ["error", 0, 3]]) }), 30), "3 runs · status or backlog changed 1 time");
 });
 
 describe("the run trend fills every calendar day between its first and last run", () => {

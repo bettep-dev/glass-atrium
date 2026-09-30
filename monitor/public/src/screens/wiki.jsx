@@ -1100,7 +1100,7 @@ function WikiRunTableSection({ reportState, days, onChangeDays, shared, onRetry 
 	);
 }
 
-// One streak → "27 healthy runs in a row since …"; several → how many streaks the window holds.
+// One unchanged stretch → "27 healthy runs in a row since …"; several → how often status or backlog changed.
 function describeRunTableW(state, days) {
 	if (window.UI.getRegionView(state) === "loading") return "Loading…";
 	if (window.UI.getRegionView(state) === "error") return "Unavailable";
@@ -1109,7 +1109,10 @@ function describeRunTableW(state, days) {
 	if (reports.length === 0) return `No runs in ${days} d`;
 
 	const groups = groupConstantRunsW(sortRunsNewestFirstW(reports));
-	if (groups.length > 1) return `${reports.length} runs in ${groups.length} streaks`;
+	if (groups.length > 1) {
+		const changes = groups.length - 1;
+		return `${reports.length} runs · status or backlog changed ${changes} ${changes === 1 ? "time" : "times"}`;
+	}
 
 	const [only] = groups;
 	const status = wikiStatusLabelW(only.newest.status).toLowerCase();
@@ -1489,6 +1492,8 @@ function MergeSuggestionItem({ proposal }) {
 				<span className="text-ink font-medium break-words min-w-0">{target}</span>
 				<span className="inline-flex items-center text-faint">
 					<Icon name="arrow-left" size={12} />
+					{/* the arrow glyph is aria-hidden → direction needs a text equivalent per row */}
+					<span className="sr-only">{" absorbs "}</span>
 				</span>
 				<span className="text-dim break-words min-w-0">{sources}</span>
 				{similarity && <span className="ml-auto text-dim">{similarity}</span>}
