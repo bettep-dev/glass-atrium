@@ -89,6 +89,9 @@ const DRAWER_SKELETON_ROW_PX = 36;
 const SYNTHETIC_SENTINEL_AGENT_ID = 'subagent_stop_missing';
 const SYNTHETIC_SENTINEL_LABEL = 'Placeholder bucket (unpaired SubagentStop)';
 
+const SYNTHETIC_SENTINEL_TITLE =
+  'subagent_stop_missing — synthetic fallback bucket for outcomes with no paired SubagentStop (not a real agent · success rate is meaningless)';
+
 // a focused Retry that succeeds unmounts its error card → focus lands on the enclosing region instead of BODY
 const REGION_CARD_IDS = {
   successRates: 'agents-success-rates',
@@ -103,8 +106,6 @@ const DRAWER_SECTION_IDS = {
   quality: 'agent-drawer-quality',
   recent: 'agent-drawer-recent',
 };
-const SYNTHETIC_SENTINEL_TITLE =
-  'subagent_stop_missing — synthetic fallback bucket for outcomes with no paired SubagentStop (not a real agent · success rate is meaningless)';
 
 // Banner source names = feeder keys · one feeder backs several regions.
 const REGION_FEEDERS = {
@@ -651,14 +652,14 @@ function AgentAlarmRow({ alarm }) {
   );
 }
 
-// Status band — the four fleet questions the first screenful answers. Each tile
-// carries its own payload state so one unloaded source never reads as a zero.
 // RegionFailure matches its own label → a feeder the banner covers is restated under that label.
 function AgentRegionFailure({ feeder, source, error, isBusy, shared, focusTargetId, onRetry }) {
   const regionShared = shared?.sources?.includes(feeder) ? { ...shared, sources: [source] } : null;
   return <window.UI.RegionFailure source={source} error={error} isBusy={isBusy} shared={regionShared} focusTargetId={focusTargetId} onRetry={onRetry}/>;
 }
 
+// Status band — the four fleet questions the first screenful answers. Each tile
+// carries its own payload state so one unloaded source never reads as a zero.
 function AgentStatusBand({ shared, tiles, onRetry }) {
   return (
     <div id="agents-status" className="grid grid-cols-2 xl:grid-cols-4 gap-4 mb-4 items-stretch">
@@ -768,7 +769,7 @@ function joinSubAg(parts) {
   return parts.filter(Boolean).join(' · ');
 }
 
-function AgentStatusTile({ shared, feeder, label, sub, unavailableSub, status, value, tone, error, busy = false, cardId, onRetry }) {
+function AgentStatusTile({ shared, feeder, label, sub, unavailableSub, status, value, tone, error, busy, cardId, onRetry }) {
   const { Badge, KpiValue } = window.UI;
 
   return (
