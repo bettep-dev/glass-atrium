@@ -206,3 +206,18 @@ test("a region's error card hands a focused, successful Retry to that region's o
     assert.equal(getRootHost(tree).props.id, targetId, `${row.name}: the target is the region's own card, mounted in every state`);
   }
 });
+
+test("a closed caveat row shows its result and its closure as two separate groups", async () => {
+  const mod = await loadScreenModule(OUTCOMES_SRC, { UI: ui.UI, location: { hash: "" }, URLSearchParams });
+  const create = (mod.React as { createElement: (t: unknown, p: unknown) => unknown }).createElement;
+  const row = { id: 41, agent: "glass-atrium-dev-react", task_type: "feature", result: "done_with_concerns", closed_at: "2026-09-01T10:00:00.000Z", summary: "Split the ledger" };
+  const closure = { pendingIds: new Set(), closedOverrides: new Map() };
+  const tree = renderScreen(create(mod.ResultTableRow as Component, { row, onRowClick: () => undefined, closure })) as RenderedNode;
+
+  const resultGroup = findNodes(tree, (n) => n.props["data-group"] === "result")[0];
+  const closureGroup = findNodes(tree, (n) => n.props["data-group"] === "closure")[0];
+  assert.ok(resultGroup && closureGroup, "both groups render");
+  assert.equal(collectText(resultGroup).trim(), "Done with caveats");
+  assert.equal(collectText(closureGroup).trim(), "Closed");
+  assert.equal(findNodes(resultGroup, (n) => n === closureGroup).length, 0, "the closure group is not nested inside the result group");
+});

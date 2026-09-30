@@ -2823,13 +2823,15 @@ function ResultTableRow({ row, onRowClick, closure, focusProps }) {
       <td className="text-left text-dim px-2 py-1.5 border-b border-line whitespace-nowrap">{row.task_type}</td>
       <td className="text-left px-2 py-1.5 border-b border-line" title={resultMeta.label}>
         {/* 배지+종결 어포던스를 한 nowrap 컨테이너로 — 셀 안에서 줄바꿈되면 행 높이가 형제 행의 2배로 부푼다. */}
-        <span className="inline-flex items-center gap-0.5 whitespace-nowrap">
-          <span className="inline-flex items-center gap-0.5 text-ink" style={{ fontWeight: 500 }}>
+        <span className="inline-flex items-center gap-1.5 whitespace-nowrap">
+          <span data-group="result" className="inline-flex items-center gap-0.5 text-ink" style={{ fontWeight: 500 }}>
             <span style={{ color: resultColor }} aria-hidden="true"><GlyphO name={resultMeta.icon}/></span>
             {resultLabel}
-            {/* 텍스트 라벨 = 듀얼인코딩의 두 번째 채널 — 회색 tone 단독으로 종결을 encode 하지 않는다. */}
-            {resultMeta.closed && <span className="fs-meta text-dim">{resultMeta.label}</span>}
           </span>
+          {/* closure = its own chip, so 'Done with caveats' and 'Closed' never read as one run of text */}
+          {resultMeta.closed && (
+            <span data-group="closure" className="shrink-0"><window.UI.Badge role="metadata">{resultMeta.label}</window.UI.Badge></span>
+          )}
           {canClose && (
             // -my-1 = 24px 타깃을 유지한 채 행 높이 기여만 상쇄 (셀 패딩 안으로 겹침) → 형제 행과 높이 동일.
             // pending 은 색 회전 없이 투명도만 (DocStatusBadgeCD 선례 — 새 의미 카테고리 시사 차단 + reduced-motion 무관).
