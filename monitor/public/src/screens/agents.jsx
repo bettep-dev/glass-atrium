@@ -63,8 +63,8 @@ function lowInvocationThresholdForWindow(days) {
 // Top-N failing — 매트릭스 green-bias 보완 (action-triggering compact view).
 const TOPN_FAILING_THRESHOLD = 0.95;
 const CIRCUIT_BREAKER_UNREADABLE_COPY = 'circuit-breaker state unreadable — check permissions on the hook data dir';
-// Same row budget as the lifecycle card it pairs with → the two cards fill one row height at xl.
-const TOPN_FAILING_LIMIT = 12;
+// One row budget for the top-N failing card and the lifecycle card it pairs with → the two fill one row height at xl.
+const PAIRED_CARD_ROW_LIMIT = 12;
 
 // 랭킹 최소 표본 floor (A5) — 합산 분모(성공+실패) < 3 쌍은 비율 신뢰 불가 → 랭킹 제외.
 const TOPN_MIN_SAMPLE = 3;
@@ -1922,6 +1922,7 @@ function AgentReliabilityBreakages({ drawerAgent, failureByAgent, failureState, 
   const raw = (readyData(failureState)?.rows ?? []).find((r) => r.agent === drawerAgent) || null;
   const topConcerns = Array.isArray(raw?.top_concerns) ? raw.top_concerns : [];
   const split = failure ? getWriterBreakageSplit(failure) : null;
+  const rateText = failure ? `${(failure.breakage_rate * 100).toFixed(1)}%` : '';
 
   return (
     <div className="space-y-3">
@@ -1930,7 +1931,7 @@ function AgentReliabilityBreakages({ drawerAgent, failureByAgent, failureState, 
         <>
           <div className="flex items-center gap-2 flex-wrap">
             <Badge role="status" tone={failureTone(failure.total_breakages, failure.breakage_rate) === 'text-crit' ? 'crit' : 'neutral'}>
-              {formatIntAg(split.breakages)} failed or blocked · {(failure.breakage_rate * 100).toFixed(1)}%
+              {formatIntAg(split.breakages)} failed or blocked{failure.reconstructed > 0 ? '' : ` · ${rateText}`}
             </Badge>
             {split.blocked.max > 0 && (
               <span className="fs-meta text-dim">
@@ -1942,13 +1943,21 @@ function AgentReliabilityBreakages({ drawerAgent, failureByAgent, failureState, 
                 className="fs-meta font-mono"
                 style={{ color: 'rgb(var(--faint))' }}
                 title="Harness-reconstructed records (recovery artifacts) excluded from the writer-emitted breakage headline">
-                ↺ {formatIntAg(failure.reconstructed)} reconstructed
+                ↺ {formatIntAg(failure.reconstructed)} reconstructed, left out of this count
               </span>
             )}
           </div>
-          <div className="grid grid-cols-2 gap-3">
-            <DetailMetric label="Failed" value={formatIntAg(failure.fail_count)}/>
-            <DetailMetric label="Blocked" value={formatIntAg(failure.blocked_count)}/>
+          {/* rate + Failed/Blocked are all-records figures → captioned apart from the writer-basis headline */}
+          <div>
+            {failure.reconstructed > 0 && (
+              <div className="fs-meta text-faint">
+                All records, {formatIntAg(failure.reconstructed)} reconstructed included · {rateText} of outcomes
+              </div>
+            )}
+            <div className="grid grid-cols-2 gap-3">
+              <DetailMetric label="Failed" value={formatIntAg(failure.fail_count)}/>
+              <DetailMetric label="Blocked" value={formatIntAg(failure.blocked_count)}/>
+            </div>
           </div>
           <DrawerInfoRow
             label="last breakage"
@@ -2452,7 +2461,7 @@ function TopNFailingAgentsCard({ failures, state, days, onRetry, failureByAgent 
 
   // 매트릭스와 동일 row 입력 — duplicate fetch 회피.
   const { failingPairs, failingTotal, measuredPairs } = useMemoAg(
-    () => buildTopNFailing(readyData(state)?.rows ?? [], TOPN_FAILING_THRESHOLD, TOPN_FAILING_LIMIT),
+    () => buildTopNFailing(readyData(state)?.rows ?? [], TOPN_FAILING_THRESHOLD, PAIRED_CARD_ROW_LIMIT),
     [state],
   );
 
@@ -2820,8 +2829,6 @@ function RevisionInlineMiniBar({ buckets, total }) {
 // LifecycleStats (col-span-2) — orphan spawn gap + duration 분포 (/api/agents/lifecycle-stats).
 // start − completed = 미완 spawn(orphan) 누수 신호 · 행 클릭 → DetailPanel 갱신 (agent_type == agent_id convention).
 
-const LIFECYCLE_DISPLAY_LIMIT = 12;
-
 // orphan gap 임계 — start 대비 미완(completed 미도달) 비율. crit/warn 톤 분기.
 const ORPHAN_RATIO_CRIT_THRESHOLD = 0.35;
 const ORPHAN_RATIO_WARN_THRESHOLD = 0.2;
@@ -2838,7 +2845,7 @@ function LifecycleStatsCard({ failures, state, days, onSelect, onRetry }) {
     <div id={IDS.REGION_CARD.lifecycle} className="card h-full flex flex-col min-h-0">
       <CardHead
         title="No completion record"
-        sub={`Last ${days} days · top ${LIFECYCLE_DISPLAY_LIMIT}`}
+        sub={`Last ${days} days · top ${PAIRED_CARD_ROW_LIMIT}`}
         right={state.status === 'ready' && totalOrphans > 0
           ? <Pill tone="warn">{formatIntAg(totalOrphans)} unfinished</Pill>
           : null}
@@ -2862,7 +2869,7 @@ function LifecycleStatsBody({ failures, state, days, onSelect, onRetry }) {
   const rows = (readyData(state)?.rows ?? [])
     .filter((r) => r && r.agent_type && (Number(r.start_count) || 0) > 0)
     .sort((a, b) => (Number(b.start_count) || 0) - (Number(a.start_count) || 0))
-    .slice(0, LIFECYCLE_DISPLAY_LIMIT);
+    .slice(0, PAIRED_CARD_ROW_LIMIT);
   if (rows.length === 0) {
     return <EmptyStateAg message={`No lifecycle events in the last ${days} days.`}/>;
   }

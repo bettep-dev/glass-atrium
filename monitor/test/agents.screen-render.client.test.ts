@@ -1558,6 +1558,21 @@ test("the drawer's breakage headline names what it counts and sets the blocked p
   assert.match(collectText(tree), /of which\s+5\s+blocked — a compliant halt, not a defect/);
 });
 
+test("with reconstructed rows present, the drawer's writer headline and its all-records figures each state their basis", async () => {
+  const agent = "glass-atrium-dev-shell";
+  const row = { fail_count: 3, blocked_count: 5, total_breakages: 8, breakage_rate: 0.2, reconstructed: 3 };
+  const idle = { status: "idle", data: null, error: null };
+  const tree = await renderComponent("AgentReliabilityBreakages", {
+    drawerAgent: agent, failureByAgent: new Map([[agent, row]]), failureState: { status: "ready", data: { rows: [] }, error: null },
+    detailState: idle, blockedState: idle, days: 30, onRetry: () => undefined,
+  });
+  const text = collectText(tree);
+
+  assert.doesNotMatch(collectText(findAtoms(tree, "Badge")[0]), /%/, "the writer-basis badge carries no all-records rate");
+  assert.match(text, /3\s+reconstructed, left out of this count/, "the headline names what it leaves out");
+  assert.match(text, /All records,\s+3\s+reconstructed included ·\s+20\.0\s*%\s+of outcomes\s*Failed\s*3\s*Blocked\s*5/, "the rate and the Failed/Blocked figures sit under their basis caption");
+});
+
 test("a top concern reads as plain text, without the stray punctuation a cut fragment starts with", async () => {
   const mod = await loadAgentsScreen();
   const getConcernText = mod.getConcernTextAg as (raw: string) => string;
