@@ -1767,13 +1767,10 @@ function ChannelLivenessBody({ state, onRetry, shared }) {
     <div>
       <div className="flex flex-col gap-1.5">
         {ordered.map((channel) => (
-          <ChannelLivenessRow
-            key={channel.attribution_source}
-            channel={channel}
-            days={days}
-            recencyDays={threshold?.eligibility_recency_days}/>
+          <ChannelLivenessRow key={channel.attribution_source} channel={channel} days={days}/>
         ))}
       </div>
+      <ChannelPeakBarsO channels={ordered} threshold={threshold}/>
       {threshold ? (
         <div className="fs-meta text-faint mt-3 leading-relaxed">
           Alerts once a channel that exceeded {formatIntO(threshold.eligibility_daily_floor)} rows/day
@@ -1785,16 +1782,43 @@ function ChannelLivenessBody({ state, onRetry, shared }) {
   );
 }
 
-function ChannelLivenessRow({ channel, days, recencyDays }) {
+// busiest recent day per channel against the watch floor → which channels the silence alert covers, at a glance
+function ChannelPeakBarsO({ channels, threshold }) {
+  const { BulletBar } = window.UI;
+  const floor = Number(threshold?.eligibility_daily_floor) || null;
+  const recencyDays = threshold?.eligibility_recency_days;
+  const scale = Math.max(floor || 0, 1, ...channels.map((channel) => Number(channel.recent_peak_daily_count) || 0));
+
+  return (
+    <div className="mt-3" role="group" aria-label="Busiest recent day per channel">
+      <div className="fs-meta text-dim mb-1.5">
+        Busiest day{recencyDays ? `, last ${recencyDays}d` : ''}{floor ? ` · watched from ${formatIntO(floor)}/day` : ''}
+      </div>
+      <div className="flex flex-col gap-1">
+        {channels.map((channel) => {
+          const peak = Number(channel.recent_peak_daily_count) || 0;
+          const label = `${channel.attribution_source}: ${formatIntO(peak)}/day${floor ? `, floor ${formatIntO(floor)}/day` : ''}`;
+          return (
+            <div key={channel.attribution_source} className="grid items-center gap-2 fs-meta font-mono"
+              style={{ gridTemplateColumns: 'minmax(0, 11rem) minmax(0, 1fr) 4.5rem' }}>
+              <span className="text-dim truncate" title={channel.attribution_source}>{channel.attribution_source}</span>
+              <BulletBar value={peak / scale} target={floor ? floor / scale : null} showValue={false} ariaLabel={label}
+                tone={toneFromColorVarO(channelLivenessMetaO(channel).colorVar)}/>
+              <span className="text-ink tabular-nums text-right">{formatIntO(peak)}/day</span>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+// the recent peak that decides eligibility is drawn in ChannelPeakBarsO, so the row keeps only the window peak + quiet time
+function ChannelLivenessRow({ channel, days }) {
   const meta = channelLivenessMetaO(channel);
   const silentHours = Math.floor(Number(channel.silent_hours) || 0);
-  // 자격을 결정하는 값은 최근 창의 peak 이다. 창 전체 peak 만 보이면 "버스트 171/day" 채널이
-  // 'Below floor' 로 뜨는 이유를 읽을 수 없으므로, 판정에 쓰인 수치를 앞에 둔다.
-  const recentPeak = formatIntO(channel.recent_peak_daily_count);
   const windowPeak = formatIntO(channel.peak_daily_count);
-  const detail = `${recentPeak}/day${recencyDays ? ` last ${recencyDays}d` : ''}`
-    + ` · ${windowPeak}/day peak${days ? ` over ${days}d` : ''}`
-    + ` · quiet ${formatIntO(silentHours)}h`;
+  const detail = `${windowPeak}/day peak${days ? ` over ${days}d` : ''} · quiet ${formatIntO(silentHours)}h`;
 
   // two fixed single lines (status + source, then detail) → a narrow column truncates instead of wrapping to 4–6 lines
   return (

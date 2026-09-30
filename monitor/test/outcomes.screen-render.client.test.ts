@@ -281,3 +281,35 @@ test("the task ledger scrolls with the page, never inside a box of its own", asy
     assert.equal(style.overflowY, "visible", "no inner vertical scroll");
   }
 });
+
+test("each recording channel's busiest recent day is drawn against the watch floor", async () => {
+  const mod = await loadScreenModule(OUTCOMES_SRC, { UI: ui.UI, location: { hash: "" }, URLSearchParams });
+  const create = (mod.React as { createElement: (t: unknown, p: unknown) => unknown }).createElement;
+  const floor = 100;
+  const rows = [
+    { name: "a channel above the floor", source: "structuredoutput-completion", peak: 678 },
+    { name: "a channel just under the floor", source: "hook-input", peak: 99 },
+    { name: "a channel exactly at the floor", source: "completion-synthesized", peak: 100 },
+    { name: "a channel that wrote nothing recently", source: "budget-truncation", peak: 0 },
+  ];
+  const channels = rows.map((row) => ({
+    attribution_source: row.source, recent_peak_daily_count: row.peak, peak_daily_count: row.peak + 40,
+    silent_hours: 2, eligible: row.peak >= floor, alerting: false,
+  }));
+  const data = { days: 30, channels, alerting: [], thresholds: { eligibility_daily_floor: floor, eligibility_recency_days: 2, silence_hours: 24 } };
+  const state = { status: "ready", busy: false, data, error: null };
+  const tree = renderScreen(create(mod.ChannelLivenessBody as Component, { state, onRetry: () => undefined })) as RenderedNode;
+
+  const text = collectText(tree);
+  assert.match(text, /last 2d/, "the block names its window");
+  assert.match(text, /100\/day/, "the block names the floor");
+  const bars = findNodes(tree, (n) => n.type === "BulletBar");
+  assert.equal(bars.length, rows.length, "one bar per channel");
+  for (const row of rows) {
+    const bar = bars.find((b) => String(b.props.ariaLabel ?? "").includes(row.source));
+    assert.ok(bar, `${row.name}: has a bar`);
+    const { value, target } = bar.props as { value: number; target: number };
+    assert.ok(value >= 0 && value <= 1 && target > 0 && target <= 1, `${row.name}: bar stays on its track`);
+    assert.equal(value >= target, row.peak >= floor, `${row.name}: fill reaches the floor marker only at or above the floor`);
+  }
+});
