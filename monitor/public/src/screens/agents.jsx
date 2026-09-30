@@ -138,7 +138,6 @@ function isNonActionableAgentAg(agentId, visualSet = NON_ACTIONABLE_AGENT_IDS) {
 // 카드 본문 flex 컨테이너 + 스크롤 — inline style 으로 빼두면 JSX 노이즈가 큼.
 const AGENTS_INLINE_CSS = '.ag-card-body { display: flex; flex-direction: column; flex: 1 1 auto; min-height: 0; overflow: hidden; } '
   + '.ag-card-body-scroll { flex: 1 1 auto; min-height: 0; overflow: auto; } '
-  + '.ag-chart-fill { flex: 1 1 auto; min-height: 0; width: 100%; } '
   + '.tbl td { vertical-align: top; } '
   // row fills its scroller edge to edge → the global outset ring is clipped; inset keeps the focus-ring token visible
   + 'tr[data-roving-row]:focus-visible { outline-offset: calc(var(--focus-ring-width) * -1); }';
@@ -2331,11 +2330,13 @@ function SuccessRateCell({ agent, taskType, cell }) {
       aria-label={ariaLabel}>
       <div className="flex flex-col items-center gap-0.5">
         <SuccessRateSparkline points={cell.points} colorVar={colorVar} name={`${agent} ${taskType}`}/>
+        {/* rate over sample, each unbroken → the column is as wide as its longest line, so all nine fit at 1440 */}
         <div className="flex items-center gap-1 fs-meta whitespace-nowrap">
           <FailShareGlyph tone={failShareTone}/>
           <span className="font-semibold">{(cell.pooledRate * 100).toFixed(0)}%</span>
-          <span className="text-faint">·</span>
-          <span className="text-dim">n={cell.rateDenominator}{isLowSample ? ' · low sample' : ''}</span>
+        </div>
+        <div className="fs-meta text-dim whitespace-nowrap">
+          {isLowSample ? <window.UI.LowSampleMark n={cell.rateDenominator}/> : `n=${cell.rateDenominator}`}
         </div>
       </div>
     </td>
@@ -2621,13 +2622,16 @@ function QualityHealthTimeline({ shared, state, onRetry }) {
   );
 }
 
+// definite height → the open Instrumentation fold is content-sized, so a flex-fill chart collapses to 0
+const REVIEW_FLAG_CHART_STYLE = { width: '100%', height: 220 };
+
 // The flagged-rate line names the image — the stacked bars are its breakdown.
 function QualityHealthTimelineChart({ rows }) {
   const { ResponsiveContainer, ComposedChart, Bar, Line, XAxis, YAxis, Tooltip, CartesianGrid } = window.Recharts;
   const ratePoints = rows.map((r) => ({ label: r.fullDate, value: r.review_flag_ratio_pct }));
 
   return (
-    <div className="ag-chart-fill" {...window.UI.getChartImageProps('Daily flagged rate', ratePoints, formatRatePctAg)}>
+    <div style={REVIEW_FLAG_CHART_STYLE} {...window.UI.getChartImageProps('Daily flagged rate', ratePoints, formatRatePctAg)}>
       <ResponsiveContainer width="100%" height="100%">
         <ComposedChart data={rows} margin={{ top: 6, right: 8, left: 0, bottom: 0 }}>
           <CartesianGrid stroke="rgb(var(--line))" strokeDasharray="3 3" vertical={false}/>
