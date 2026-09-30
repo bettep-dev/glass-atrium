@@ -1,10 +1,10 @@
 // E2E chromium harness for the agents screen (screens/agents.jsx): painted facts a node render
-// cannot hold — a keyboard-focused table row shows its focus ring inside the scroller that
-// clips it, at the 1024px width where the ledger fills its card edge to edge.
+// cannot hold — focus rings inside clipping scrollers, the review-flag chart's height, the
+// task-type matrix fitting its card at 1440, and the ring after a keyboard Retry.
 //
 // Runner: npx tsx --test test/agents.render-structure.e2e.test.ts
 // Prereqs (unmet → RED, no skip guard): `npm run build:jsx`, installed chromium, CDN network.
-// App: stripped Fastify serving the two row payloads; every other /api read answers empty.
+// App: stripped Fastify serving the row payloads below; every other /api read answers empty.
 
 import test, { after, before, describe } from "node:test";
 import assert from "node:assert/strict";
@@ -19,6 +19,8 @@ import { chromium } from "playwright";
 const HERE = dirname(fileURLToPath(import.meta.url));
 const PUBLIC_ROOT = resolve(HERE, "..", "public");
 const AGENT_NAMES = ["dev-react", "dev-shell", "dev-db"];
+const TASK_TYPES = ["bug-fix", "feature", "refactor", "research", "plan", "review", "diagnosis", "doc", "cleanup"];
+const MATRIX_SELECTOR = '[aria-label^="Success rate per agent"]';
 
 const ROW_TABLES = [
   { name: "ledger", selector: ".agent-table-minibars tr[data-roving-row]" },
@@ -36,16 +38,43 @@ interface RingEdges {
   right: boolean;
 }
 
-async function openRenderContext(): Promise<RenderContext> {
+// summary answers 500 while set — the cold-error page a Retry recovers from
+const summaryOutage = { isOn: false };
+
+// every pair filled, one agent at a low sample → the widest cell text in every column
+function getSuccessRateRows() {
+  return AGENT_NAMES.flatMap((name, index) => TASK_TYPES.map((task_type) => {
+    const total = index === 0 ? 3 : 140;
+    const failure = index === 2 ? 70 : 1;
+    return {
+      agent: `glass-atrium-${name}`, task_type, event_date: "2026-09-24", total_count: total,
+      success_count: total - failure, failure_count: failure, reconstructed_count: 0, success_rate: (total - failure) / total,
+    };
+  }));
+}
+
+function getReviewFlagRows() {
+  return ["2026-09-22", "2026-09-23", "2026-09-24"].map((event_date, index) => ({
+    event_date, total_count: 20, review_flagged_count: index + 1, empty_metric_count: index, polar_mismatch_count: 1,
+    review_flag_ratio: (index + 1) / 20, empty_metric_ratio: index / 20,
+  }));
+}
+
+async function openRenderContext(width = 1024): Promise<RenderContext> {
   const app = Fastify({ logger: false });
   await app.register(fastifyStatic, { root: PUBLIC_ROOT, prefix: "/", index: ["index.html"] });
 
-  app.get("/api/agents/summary", async () => ({
+  app.get("/api/agents/summary", async (_request, reply) => {
+    if (summaryOutage.isOn) return reply.code(500).send({ error: "summary read failed" });
+    return {
     agents: AGENT_NAMES.map((name) => ({
       agent_id: `glass-atrium-${name}`, agent_name: name, status: "active", success_pct: 92, runs: 40, needs_context_count: 2,
     })),
     meta: { total_agents: AGENT_NAMES.length },
-  }));
+    };
+  });
+  app.get("/api/agents/success-rate", async () => ({ rows: getSuccessRateRows() }));
+  app.get("/api/agents/review-flag-timeseries", async () => ({ rows: getReviewFlagRows() }));
   app.get("/api/agents/lifecycle-stats", async () => ({
     rows: AGENT_NAMES.map((agent_type) => ({ agent_type, start_count: 4, stop_count: 4, completed_count: 3, p95_duration_sec: 60 })),
   }));
@@ -54,7 +83,7 @@ async function openRenderContext(): Promise<RenderContext> {
   await app.ready();
   const serverUrl = await app.listen({ host: "127.0.0.1", port: 0 });
   const browser = await chromium.launch({ headless: true });
-  const page = await browser.newPage({ viewport: { width: 1024, height: 900 } });
+  const page = await browser.newPage({ viewport: { width, height: 900 } });
   await page.goto(`${serverUrl}/#agents`, { waitUntil: "load" });
 
   for (const table of ROW_TABLES) {
@@ -83,6 +112,14 @@ async function getRingEdges(page: Page, selector: string): Promise<RingEdges> {
     const right = Math.min(rowRect.right, clipRect.right);
     return { x: Math.ceil(left), y: Math.round(rowRect.top + rowRect.height / 2), width: Math.floor(right - Math.ceil(left)) };
   });
+  const hits = await getRingHits(page, box);
+  const width = hits.length;
+
+  return { left: hits.slice(0, 3).some(Boolean), right: hits.slice(width - 3).some(Boolean) };
+}
+
+// One screen row of pixels → which of them carry the resolved focus-ring token colour.
+async function getRingHits(page: Page, box: { x: number; y: number; width: number }): Promise<boolean[]> {
   const png = await page.screenshot({ clip: { x: box.x, y: box.y, width: box.width, height: 1 } });
 
   return page.evaluate(async (b64) => {
@@ -101,12 +138,32 @@ async function getRingEdges(page: Page, selector: string): Promise<RingEdges> {
     const ctx = canvas.getContext("2d")!;
     ctx.drawImage(img, 0, 0);
     // anonymous callbacks only: tsx wraps a named const in a __name() helper the page lacks
-    const hits = [0, 1, 2, img.width - 3, img.width - 2, img.width - 1].map((x) => {
+    return Array.from({ length: img.width }, (_, x) => {
       const [r, g, b] = ctx.getImageData(x, 0, 1, 1).data;
       return Math.abs(r - ring[0]) + Math.abs(g - ring[1]) + Math.abs(b - ring[2]) < 24;
     });
-    return { left: hits.slice(0, 3).some(Boolean), right: hits.slice(3).some(Boolean) };
   }, png.toString("base64"));
+}
+
+// The row through the focused element's middle, spanning its left outline band → ring painted there or not.
+async function getFocusedRingBox(page: Page) {
+  return page.evaluate(() => {
+    const el = document.activeElement as HTMLElement;
+    const style = getComputedStyle(el);
+    const rect = el.getBoundingClientRect();
+    const reach = parseFloat(style.outlineOffset) + parseFloat(style.outlineWidth);
+    const y = Math.round(Math.min(Math.max(rect.top + rect.height / 2, 1), window.innerHeight - 2));
+    return {
+      name: `${el.tagName.toLowerCase()}#${el.id}`,
+      box: { x: Math.max(0, Math.floor(rect.left - reach - 1)), y, width: Math.ceil(reach) + 3 },
+    };
+  });
+}
+
+async function openTaskTypeFold(page: Page): Promise<void> {
+  const toggle = page.getByRole("button", { name: /By task type/ });
+  if ((await toggle.getAttribute("aria-expanded")) !== "true") await toggle.click();
+  await page.waitForSelector(MATRIX_SELECTOR, { timeout: 30_000 });
 }
 
 describe("agents screen at 1024px", () => {
@@ -128,4 +185,61 @@ describe("agents screen at 1024px", () => {
       assert.deepEqual(await getRingEdges(ctx.page, table.selector), { left: true, right: true });
     });
   }
+});
+
+describe("agents screen at 1024px, charts and Retry", () => {
+  let ctx: RenderContext;
+
+  before(async () => {
+    ctx = await openRenderContext();
+  });
+
+  after(async () => {
+    summaryOutage.isOn = false;
+    await ctx?.browser?.close();
+    await ctx?.app?.close();
+  });
+
+  test("the review-flag chart draws at a readable height inside its open fold", async () => {
+    const chart = ctx.page.locator("#agents-review-flags [role=img]").first();
+    await chart.scrollIntoViewIfNeeded();
+
+    assert.ok(((await chart.boundingBox())?.height ?? 0) >= 160);
+  });
+
+  test("a keyboard Retry that recovers the page leaves a painted focus ring on the element it focuses", async () => {
+    summaryOutage.isOn = true;
+    await ctx.page.reload({ waitUntil: "load" });
+    const retry = ctx.page.getByRole("button", { name: "Retry" }).first();
+    await retry.waitFor({ timeout: 30_000 });
+    summaryOutage.isOn = false;
+
+    await ctx.page.keyboard.press("Shift");
+    await retry.focus();
+    await ctx.page.keyboard.press("Enter");
+    await ctx.page.waitForSelector(ROW_TABLES[0].selector, { timeout: 30_000 });
+    const { name, box } = await getFocusedRingBox(ctx.page);
+
+    assert.ok((await getRingHits(ctx.page, box)).some(Boolean), `no ring painted beside ${name}`);
+  });
+});
+
+describe("agents screen at 1440px", () => {
+  let ctx: RenderContext;
+
+  before(async () => {
+    ctx = await openRenderContext(1440);
+  });
+
+  after(async () => {
+    await ctx?.browser?.close();
+    await ctx?.app?.close();
+  });
+
+  test("the task-type matrix shows every column without a sideways scroll", async () => {
+    await openTaskTypeFold(ctx.page);
+    const overflow = await ctx.page.locator(MATRIX_SELECTOR).evaluate((el) => el.scrollWidth - el.clientWidth);
+
+    assert.ok(overflow <= 1, `matrix overflows its card by ${overflow}px`);
+  });
 });

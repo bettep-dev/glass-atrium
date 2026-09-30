@@ -711,11 +711,20 @@ test("the task-type matrix scroller is a named tab stop, so a keyboard reaches t
   assert.match(String(scroller?.props["aria-label"]), /success rate/i);
 });
 
-test("a crosstab cell keeps its rate and sample on one line instead of wrapping at 1024", async () => {
-  const cell = { totalCount: 12, pooledRate: 0.5, rateDenominator: 4, successCount: 2, reconstructed: 0, points: [] };
-  const tree = await renderComponent("SuccessRateCell", { agent: "dev-react", taskType: "feature", cell });
-  const line = findNodes(tree, (n) => /%$/.test(collectText(n).split("·")[0].trim()) && /\bflex\b/.test(String(n.props?.className ?? "")) && /n=/.test(collectText(n))).at(-1);
-  assert.match(String(line?.props.className), /\bwhitespace-nowrap\b/);
+test("a crosstab cell stacks its rate over its sample, each an unbroken line, so a column is as wide as its longest line", async () => {
+  const rows = [
+    { name: "settled sample", cell: { totalCount: 40, pooledRate: 0.5, rateDenominator: 40, successCount: 20, reconstructed: 0, points: [] } },
+    { name: "low sample", cell: { totalCount: 3, pooledRate: 0.5, rateDenominator: 2, successCount: 1, reconstructed: 0, points: [] } },
+  ];
+  for (const row of rows) {
+    const tree = await renderComponent("SuccessRateCell", { agent: "dev-react", taskType: "feature", cell: row.cell });
+    const lines = findNodes(tree, (n) => /\bwhitespace-nowrap\b/.test(String(n.props?.className ?? "")));
+    const rateLine = lines.find((n) => /50\s*%/.test(collectText(n)));
+    const sampleLine = lines.find((n) => new RegExp(`n=${row.cell.rateDenominator}`).test(collectText(n))
+      || findAtoms(n, "LowSampleMark").some((mark) => mark.props.n === row.cell.rateDenominator));
+    assert.ok(rateLine && sampleLine, `${row.name}: rate and sample each sit on a nowrap line`);
+    assert.notEqual(rateLine, sampleLine, `${row.name}: the sample is its own line, not appended to the rate`);
+  }
 });
 
 test("No record and Unfinished each name the other count and say why the two can differ", async () => {
@@ -1200,6 +1209,13 @@ test("review-flag chart is a focusable image named by the flagged-rate range, la
   assert.equal(image?.props.tabIndex, 0);
   assert.equal(image?.props["aria-label"],
     "Daily flagged rate, 2 days from 2026-09-23 to 2026-09-24: latest 12.5%, low 5.0%, high 12.5%");
+});
+
+test("review-flag chart holds a definite pixel height, so a content-sized fold cannot collapse it to 0", async () => {
+  const tree = await renderComponent("QualityHealthTimelineChart", { rows: REVIEW_FLAG_ROWS });
+  const [image] = findNodes(tree, (n) => n.props.role === "img");
+  const height = (image?.props.style as { height?: unknown } | undefined)?.height;
+  assert.ok(typeof height === "number" && height >= 160, `chart height ${String(height)}`);
 });
 
 test("a drawer metric sits flat on its section rather than as a card inside a card", async () => {
