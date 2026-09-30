@@ -1064,8 +1064,9 @@ function buildNeedsYouReasonsO(data, attention) {
     { key: 'open', label: 'Caveat still open', count: parts ? parts.open : null, tone: 'neutral' },
   ];
   if (!parts) return reasons;
+  // parts read after the headline can outgrow it → no meaningful remainder, never a negative count
   const remainder = attention.total - reasons.reduce((sum, reason) => sum + reason.count, 0);
-  return remainder === 0 ? reasons : [...reasons, { key: 'other', label: 'Changed between reads', count: remainder, tone: 'neutral' }];
+  return remainder <= 0 ? reasons : [...reasons, { key: 'other', label: 'Changed between reads', count: remainder, tone: 'neutral' }];
 }
 
 /**

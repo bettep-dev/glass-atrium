@@ -446,6 +446,12 @@ describe("buildNeedsYouReasonsO: the reasons are disjoint parts that add up to t
     });
   }
 
+  test("parts that outgrew the headline between reads never surface as a negative remainder", () => {
+    const reasons = sameRealm(helpers.buildNeedsYouReasonsO(analytics, attentionRead(40, { flagged: 30, fail: 6, blocked: 4, open: 10 })));
+    assert.ok(reasons.every((r) => (r.count ?? 0) >= 0), "no part is a negative count");
+    assert.strictEqual(reasons.find((r) => r.key === "other"), undefined, "no remainder row when the parts already cover the headline");
+  });
+
   test("an unread needs-you wave leaves every part unknown, never a resolved zero", () => {
     const reasons = sameRealm(helpers.buildNeedsYouReasonsO(analytics, null));
     assert.ok(reasons.length > 0 && reasons.every((r) => r.count === null));
