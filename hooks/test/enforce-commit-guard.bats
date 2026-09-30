@@ -75,9 +75,12 @@ run_guard() {
 
 @test "block error carries the human message + suggestion intact (no field truncation)" {
   run_guard 'git push --force'
-  [[ "${status}" -eq 2 ]] || return 1
-  # Before the fix, 'message' held the code and 'suggestion' held two pipe-joined
-  # fragments. Now each lands in its own field.
+  [[ "${status}" -eq 2 ]] || {
+    echo "${output}"
+    echo "${GUARD_ERR}"
+    return 1
+  }
+  # US-delimited rule fields → message and suggestion each land whole in their own key
   [[ "${GUARD_ERR}" == *'"message":"Force push blocked"'* ]] || return 1
   [[ "${GUARD_ERR}" == *'"suggestion":"This hook blocks force push whatever the approval; if the user confirms it, ask them to run it themselves"'* ]] || return 1
 }

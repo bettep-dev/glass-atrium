@@ -77,7 +77,6 @@ Applies to all agents.
 
 - **Naming**: features `feature/<feature-name>` · bugs `fix/<issue-name>`
 - **Merging**: direct push to main is FORBIDDEN · merging MUST go through a PR
-- **Force push**: permitted ONLY when the user explicitly requests it
 
 ## Pull Requests
 
@@ -99,9 +98,14 @@ Applies to all agents.
 
 | Command | Rule |
 |---------|------|
-| `reset --hard` / `checkout .` / `clean -f` | Permitted **ONLY after user confirmation** |
+| `reset --hard` / `checkout .` / `restore .` / `clean -f` / `push --force` | Hook-blocked for agents (`hooks/enforce-commit-guard.sh`) — on user confirmation, the user runs it |
 | `rebase -i` / `add -i` | **Interactive mode is FORBIDDEN** (not supported) |
-| `git push --force` by an AI agent, without explicit user approval | **FORBIDDEN** — the force-push rule applies even more strictly to autonomous agents |
+
+- Honest backing: the guard matches fixed spellings; a spelling outside them passes it, and the rule still binds that spelling. Examples that pass:
+  - a git global option before the subcommand — `git -C <path> …`, `git -c <k=v> …`
+  - a bare `clean -f` or `clean -df`
+  - `checkout -- .` and `restore -- .`
+  - a `+<refspec>` push
 
 ## Rationalization Rejection (Git)
 
