@@ -40,7 +40,7 @@ function isElement(value: unknown): value is RecordedElement {
 
 const sandbox = await buildScreenSandbox<ViewSandbox>(INSTRUMENTATION_SRC);
 const BannerMarker = () => null;
-sandbox.window.UI.RegionUnavailable = BannerMarker;
+sandbox.window.UI.RegionFailure = BannerMarker;
 sandbox.window.ImprovementShared = {};
 sandbox.React.createElement = (type: unknown, props: Record<string, unknown> | null, ...rest: unknown[]) => ({
   type,
@@ -91,19 +91,23 @@ for (const failed of subsets) {
   });
 }
 
-test("a page-level outage banner leaves no per-card Retry", () => {
-  const props: Record<string, unknown> = { onRetry: undefined };
+test("a page-level outage hands every failed card the shared failure, so the banner alone owns Retry", () => {
+  const shared = { sources: ["flagged results"], error: "HTTP 503 Service Unavailable" };
+  const props: Record<string, unknown> = { onRetry: undefined, shared };
   for (const name of PAYLOADS) props[name] = { status: "error", data: null, error: "HTTP 503 Service Unavailable" };
 
   const banners = collectBanners(sandbox.ImprovementInstrumentationViewI(props), []);
 
   assert.equal(banners.length, PAYLOADS.length);
-  for (const banner of banners) assert.equal(banner.props.onRetry, undefined);
+  for (const banner of banners) {
+    assert.equal(banner.props.shared, shared);
+    assert.equal(banner.props.onRetry, undefined);
+  }
 });
 
 interface PageSandbox {
   React: { createElement: unknown };
-  window: { UI: { RegionUnavailable: unknown } };
+  window: { UI: { RegionFailure: unknown } };
   ErrorBannerI: (props: Record<string, unknown>) => RecordedElement;
   getPageFailureI: (
     regions: Array<{ source: string; state: { error: string | null } }>,
@@ -115,12 +119,13 @@ page.React.createElement = sandbox.React.createElement;
 
 test("a failed region renders the shared unavailable card with its own source, never the raw answer as copy", () => {
   const onRetry = () => {};
-  const banner = page.ErrorBannerI({ source: "loop stats", error: "HTTP 500 Internal Server Error — {}", onRetry });
+  const shared = { sources: ["suggestions"], error: "HTTP 503" };
+  const banner = page.ErrorBannerI({ source: "loop stats", error: "HTTP 500 Internal Server Error — {}", onRetry, shared });
 
-  assert.equal(banner.type, page.window.UI.RegionUnavailable);
+  assert.equal(banner.type, page.window.UI.RegionFailure);
   assert.deepEqual(
-    { source: banner.props.source, error: banner.props.error, onRetry: banner.props.onRetry },
-    { source: "loop stats", error: "HTTP 500 Internal Server Error — {}", onRetry },
+    { source: banner.props.source, error: banner.props.error, onRetry: banner.props.onRetry, shared: banner.props.shared },
+    { source: "loop stats", error: "HTTP 500 Internal Server Error — {}", onRetry, shared },
   );
 });
 

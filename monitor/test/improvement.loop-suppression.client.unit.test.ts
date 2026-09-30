@@ -48,6 +48,8 @@ interface Sandbox {
   }) => RecordedElement | null;
   LedgerLiveSectionI: unknown;
   LedgerInertSectionI: unknown;
+  LedgerHeldSectionI: unknown;
+  LedgerRecurrenceSectionI: unknown;
 }
 
 function isElement(value: unknown): value is RecordedElement {
@@ -337,14 +339,30 @@ test("the recurrence rates render open under the held section", () => {
   assert.match(textOf(tree), /Roster mismatch/);
 });
 
-test("live and inert rows share one split row, with held and recurrence full width below", () => {
+// every component type in a subtree, fragments and columns walked through
+function typesIn(node: unknown, out: unknown[] = []): unknown[] {
+  if (Array.isArray(node)) {
+    for (const child of node) typesIn(child, out);
+    return out;
+  }
+  if (typeof node !== "object" || node === null || !("type" in node)) return out;
+  const el = node as RecordedElement;
+  out.push(el.type);
+  return typesIn(el.props.children, out);
+}
+
+test("live rows pair with one column stacking inert, held and recurrence, so neither side is left empty", () => {
   const split = findByType(
     sandbox.PatternLedgerCardI({ state: LEDGER_STATE, suppression: SUPPRESSION }),
     SplitRowStub,
   );
-  assert.ok(split, "the ledger must pair its live and inert lists");
-  const kinds = (split.props.children as RecordedElement[]).map((el) => el.type);
-  assert.deepEqual(kinds, [sandbox.LedgerLiveSectionI, sandbox.LedgerInertSectionI]);
+  assert.ok(split, "the ledger must pair its live list with the side column");
+  const [live, side] = split.props.children as RecordedElement[];
+  assert.equal(live.type, sandbox.LedgerLiveSectionI);
+  const sideTypes = typesIn(side);
+  for (const section of [sandbox.LedgerInertSectionI, sandbox.LedgerHeldSectionI, sandbox.LedgerRecurrenceSectionI]) {
+    assert.ok(sideTypes.includes(section), "the side column must carry inert, held and recurrence");
+  }
 });
 
 test("the ledger's footer states each figure with its gate", () => {
