@@ -1594,3 +1594,13 @@ test("a lifecycle row with no completion takes no focus and opens nothing, and t
   assert.equal(finished?.props["data-roving-row"], 0, "the roving order counts only rows that open the drawer");
   assert.equal(finished?.props.tabIndex, 0, "the first openable row holds the Tab stop");
 });
+
+test("the day tooltip heads its reasons with how many runs have one, the two reasons never sharing a run", async () => {
+  const row = {
+    fullDate: "2026-09-24", total_count: 20, review_flagged_count: 3, empty_metric_count: 5, polar_mismatch_count: 4,
+    review_flag_ratio_pct: 15, empty_metric_ratio_pct: 25,
+  };
+  const tree = await renderComponent("QualityHealthTimelineTooltip", { active: true, payload: [{ payload: row }] });
+  const text = collectText(tree).replace(/\s+/g, " ");
+  assert.match(text, /9 of 20 have a recorded reason/, "a run with no self-check cannot also mismatch its confidence, so the reasons add up");
+});

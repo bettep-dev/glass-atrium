@@ -2732,6 +2732,10 @@ function QualityHealthTimelineTooltip({ active, payload }) {
         flagged {formatIntAg(row.review_flagged_count)} / {formatIntAg(row.total_count)}
       </div>
       {/* reasons count over every run of the day, flagged or not → not a split of the flagged figure */}
+      {/* no self-check = metric_pass empty, mismatch needs one set → disjoint, so the two add up */}
+      <div style={{ color: 'rgb(var(--dim))', marginTop: 4 }}>
+        {formatIntAg(row.empty_metric_count + row.polar_mismatch_count)} of {formatIntAg(row.total_count)} have a recorded reason
+      </div>
       <div style={tooltipRowStyle}>
         <span style={{ width: 8, height: 8, borderRadius: 2, background: 'rgb(var(--warn))' }}/>
         No self-check {formatIntAg(row.empty_metric_count)} of {formatIntAg(row.total_count)} runs
