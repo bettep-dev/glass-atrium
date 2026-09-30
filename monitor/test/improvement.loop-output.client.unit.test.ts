@@ -22,6 +22,8 @@ interface RecordedElement {
 interface LoopEvent {
   event_ts: string;
   eval_result: string;
+  changes_added?: number;
+  changes_removed?: number;
 }
 
 interface LoopAggregate {
@@ -228,4 +230,43 @@ test("the trend plots from a zero baseline with room to read, and short y labels
   assert.equal(chart?.props.kind, "bars", "a share per day starts at zero, never at the lowest day");
   assert.ok(Number(chart?.props.h) >= 96, "a 64px plot flattens a daily share");
   assert.equal(formatValue(0.8), "80%", "the axis names the share once; labels stay short enough to fit");
+});
+
+function getPrintedText(node: RecordedElement): string {
+  return collectElements(node, [])
+    .flatMap((el) => (Array.isArray(el.props.children) ? el.props.children : [el.props.children]))
+    .filter((child) => typeof child === "string" || typeof child === "number")
+    .join(" ");
+}
+
+test("the applied card counts the cycles that changed rule lines out of every cycle in its basis", () => {
+  const edits = [
+    { added: 4, removed: 0 },
+    { added: 0, removed: 2 },
+    { added: 0, removed: 0 },
+    { added: 0, removed: 0 },
+    { added: 1, removed: 1 },
+  ];
+  const events = edits.map((edit, i) => ({
+    event_ts: `2026-09-2${i}T01:00:00Z`,
+    eval_result: "verified",
+    changes_added: edit.added,
+    changes_removed: edit.removed,
+  }));
+  const aggregate = sandbox.deriveLoopAggregateI({ events });
+  const text = getPrintedText(sandbox.ChangeSummaryCardI({ state: READY, aggregate }));
+
+  assert.ok(text.includes("3 of 5 cycles changed rule lines"), text);
+});
+
+test("the applied card stretches to its row, so the reject rate sits at its foot instead of a blank band", () => {
+  const aggregate = sandbox.deriveLoopAggregateI({ events: getEvents(["2026-09-24", "2026-09-25"], 3) });
+  const card = sandbox.ChangeSummaryCardI({ state: READY, aggregate });
+  const classOf = (el: RecordedElement) => String(el.props.className ?? "");
+  const body = collectElements(card, []).find((el) => /\bflex-1\b/.test(classOf(el)));
+  const foot = collectElements(body ?? card, []).find((el) => /\bmt-auto\b/.test(classOf(el)));
+
+  assert.match(classOf(card), /\bflex-col\b/);
+  assert.ok(body, "a body grows into the row height");
+  assert.ok(foot && collectElements(foot, []).some((el) => el.type === sandbox.RejectRateHeadlineI), "the reject rate anchors the foot");
 });

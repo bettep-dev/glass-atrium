@@ -2482,7 +2482,7 @@ function ChangeSummaryCardI({ state, aggregate, onRetry, shared }) {
 		);
 	}
 
-	const { added, removed, eventCount, failBefore, failAfter } = aggregate;
+	const { added, removed, changedCount, eventCount, failBefore, failAfter } = aggregate;
 
 	// 데이터 부재 — 윈도우 내 사이클 이벤트 0건 → 안내 indicator (가짜 0 채움 금지).
 	if (eventCount === 0) {
@@ -2500,40 +2500,58 @@ function ChangeSummaryCardI({ state, aggregate, onRetry, shared }) {
 		);
 	}
 
+	// stretches to the row's tallest card (the trend) → the reject rate anchors the foot, no blank band
 	return (
-		<div className="card" id={ANCHOR_ID_I.changeSummary}>
+		<div className="card flex flex-col" id={ANCHOR_ID_I.changeSummary}>
 			<CardHead
 				title="Self-improvement changes (applied)"
 				sub={getLoopBasisI(aggregate)}
 			/>
-			<div className="px-5 pt-3 flex items-center gap-2 flex-wrap">
-				<span className="fs-meta text-faint uppercase tracking-wider">
-					Lines changed
-				</span>
-				<span
-					className="inline-flex items-center gap-1 fs-meta text-ink"
-					title={`${formatIntI(added)} rule/instruction lines added across ${formatIntI(eventCount)} cycles`}
-				>
-					<SymI s="＋" className="text-ok" size={11} />
-					<span>{formatIntI(added)} added</span>
-				</span>
-				<span
-					className="inline-flex items-center gap-1 fs-meta text-ink"
-					title={`${formatIntI(removed)} rule/instruction lines removed across ${formatIntI(eventCount)} cycles`}
-				>
-					<SymI s="−" className="text-crit" size={11} />
-					<span>{formatIntI(removed)} removed</span>
-				</span>
-			</div>
-			<div className="px-5 pt-2 pb-4">
-				<div className="fs-meta text-faint uppercase tracking-wider">
-					Reject rate, recent half of cycles
+			<div className="px-5 pt-3 pb-4 flex-1 flex flex-col gap-3">
+				<div>
+					<div className="fs-meta text-faint uppercase tracking-wider">
+						Lines changed
+					</div>
+					<div className="mt-1 flex items-baseline gap-x-5 gap-y-1 flex-wrap">
+						<LineCountI
+							symbol="＋"
+							tone="text-ok"
+							count={added}
+							word="added"
+							title={`${formatIntI(added)} rule/instruction lines added across ${formatIntI(eventCount)} cycles`}
+						/>
+						<LineCountI
+							symbol="−"
+							tone="text-crit"
+							count={removed}
+							word="removed"
+							title={`${formatIntI(removed)} rule/instruction lines removed across ${formatIntI(eventCount)} cycles`}
+						/>
+					</div>
+					<div className="fs-meta text-dim mt-1">
+						{`${formatIntI(changedCount)} of ${formatIntI(eventCount)} cycles changed rule lines`}
+					</div>
 				</div>
-				<div className="mt-1">
-					<RejectRateHeadlineI before={failBefore} after={failAfter} />
+				<div className="mt-auto">
+					<div className="fs-meta text-faint uppercase tracking-wider">
+						Reject rate, recent half of cycles
+					</div>
+					<div className="mt-1">
+						<RejectRateHeadlineI before={failBefore} after={failAfter} />
+					</div>
 				</div>
 			</div>
 		</div>
+	);
+}
+
+function LineCountI({ symbol, tone, count, word, title }) {
+	return (
+		<span className="inline-flex items-baseline gap-1" title={title}>
+			<SymI s={symbol} className={tone} size={13} />
+			<span className="fs-display font-semibold text-ink">{formatIntI(count)}</span>
+			<span className="fs-meta text-dim">{word}</span>
+		</span>
 	);
 }
 
@@ -2859,12 +2877,18 @@ function ErrorBannerI({ source, region, error, onRetry, isBusy, shared, focusTar
 function deriveLoopAggregateI(data) {
 	const events = Array.isArray(data.events) ? data.events : [];
 	let added = 0,
-		removed = 0;
+		removed = 0,
+		changedCount = 0;
 	// 날짜별 verified/reject 버킷.
 	const byDate = new Map();
 	for (const e of events) {
-		added += Number(e.changes_added ?? 0);
-		removed += Number(e.changes_removed ?? 0);
+		const lines = {
+			added: Number(e.changes_added ?? 0),
+			removed: Number(e.changes_removed ?? 0),
+		};
+		added += lines.added;
+		removed += lines.removed;
+		if (lines.added + lines.removed > 0) changedCount += 1;
 		const day = String(e.event_ts ?? "").slice(0, 10);
 		if (!day) continue;
 		const bucket = byDate.get(day) || { date: day, verified: 0, reject: 0 };
@@ -2895,6 +2919,7 @@ function deriveLoopAggregateI(data) {
 	return {
 		added,
 		removed,
+		changedCount,
 		eventCount: events.length,
 		verifiedTotal,
 		rejectTotal,
