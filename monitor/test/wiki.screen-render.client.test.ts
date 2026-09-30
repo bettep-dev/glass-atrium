@@ -100,20 +100,34 @@ test("the notes-per-day chart fills its panel with one dated bar per day and kee
   }
 });
 
-test("the notes-per-day chart anchors its first and last day labels inside the panel", async () => {
+test("the notes-per-day chart takes its edge labels and y-scale from the shared chart atom", async () => {
   const mod = await loadWikiScreen();
   const series = [1, 2, 9, 3, 4];
   const dates = ["2026-09-01", "2026-09-02", "2026-09-03", "2026-09-04", "2026-09-05"];
   const chartTree = renderScreen(mod.React.createElement(mod.SparseTrendW as Component, { label: "Notes per day", series, dates }));
   const screenTree = renderScreen(mod.React.createElement(mod.ScreenWiki as Component, {}));
+  const getAnchor = realUi.getChartTickAnchor as (order: number, total: number) => string;
 
-  const frame = findNodes(chartTree, (n) => classOf(n).split(" ").includes("w-trend"));
-  assert.equal(frame.length, 1, "one frame scopes the edge-label rule to this chart");
-  assert.equal(findNodes(frame[0], (n) => n.props.atom === "TrendChart").length, 1, "the frame wraps the shared chart");
-
+  const chart = findNodes(chartTree, (n) => n.props.atom === "TrendChart");
+  assert.equal(chart[0].props.yScale, true, "the chart draws its max/min scale");
+  assert.deepEqual([getAnchor(0, series.length), getAnchor(series.length - 1, series.length)], ["start", "end"], "the shared rule keeps the edge dates inside the panel");
   const style = collectText(findNodes(screenTree, (n) => n.type === "style")[0]);
-  assert.match(style, /\.w-trend \[data-chart-tick\]:first-child\s*\{\s*transform:\s*none\s*!important/, "the first day label starts at its bar");
-  assert.match(style, /\.w-trend \[data-chart-tick\]:last-child\s*\{\s*transform:\s*translateX\(-100%\)\s*!important/, "the last day label ends at its bar");
+  assert.doesNotMatch(style, /data-chart-tick/, "the screen no longer overrides the shared edge rule");
+});
+
+test("the run-history chart title states the number of days its bars show", async () => {
+  const mod = await loadWikiScreen();
+  const ready = (data: unknown) => ({ status: "ready", data, error: null });
+  for (const length of [5, 12]) {
+    const cycles = Array.from({ length }, (_, i) => ({ run_date: `2026-09-${String(i + 1).padStart(2, "0")}`, compiled_count: i + 1, status: "ok" }));
+    const tree = renderScreen(
+      mod.React.createElement(mod.WikiRunHistorySection as Component, { cyclesState: ready({ cycles }), summaryState: ready({}), onRetry: () => {} }),
+    );
+    const chart = findNodes(tree, (n) => n.props.atom === "TrendChart")[0];
+    const shown = (chart.props.points as unknown[]).length;
+    assert.match(String(chart.props.label), new RegExp(`\\b${shown} days\\b`), "the title's day count is the bar count");
+    assert.ok(collectText(tree).includes(`in ${shown} d`), "the headline total covers the same days");
+  }
 });
 
 const LOADING = { status: "loading", data: null, error: null, busy: true };
@@ -441,8 +455,8 @@ test("cyan tints no wiki text: the similarity reads as a figure and the lane sta
       summaryState: ready({}), indexState: ready({}), backlogState: READY_BACKLOG, cyclesState: ready({ cycles: [] }),
     }),
   );
-  const sim = findNodes(item, (n) => n.children.includes("sim ")).pop();
-  assert.ok(sim, "the similarity renders");
+  const sim = findNodes(item, (n) => n.children.join("") === "100% similar").pop();
+  assert.ok(sim, "the similarity reads in words");
   for (const tree of [item, lane]) {
     for (const node of findNodes(tree, () => true)) assert.doesNotMatch(classOf(node), /\btext-info\b/);
   }
@@ -453,4 +467,49 @@ test("the window control rides the per-run table fold and never the open trend",
   const control = (tree: RenderedNode | string | null) => findNodes(tree, (n) => n.props["aria-label"] === "Run table time range");
   assert.equal(control(renderScreen(mod.React.createElement(mod.WikiRunTableSection as Component, RUN_TABLE_LOADING))).length, 1);
   assert.equal(control(renderScreen(mod.React.createElement(mod.WikiRunHistorySection as Component, RUN_HISTORY_LOADING))).length, 0);
+});
+
+test("the dry-run notice is stated once above the proposals instead of on every proposal", async () => {
+  const mod = await loadWikiScreen();
+  const action = (slug: string) => `Merge notes/${slug}.md into notes/t.md. DRY-RUN \u2014 requires user approval.`;
+  const backlog = {
+    status: "ready",
+    error: null,
+    data: { backlog: { run_date: "2026-09-24", dedup_proposals: { proposals: [
+      { cluster_hash: "c1", target_slug: "t", source_slugs: ["s1"], suggested_action: action("s1") },
+      { cluster_hash: "c2", target_slug: "t", source_slugs: ["s2"], suggested_action: action("s2") },
+    ] } } },
+  };
+  const text = collectText(renderScreen(mod.React.createElement(mod.WikiMaintenanceSection as Component, { backlogState: backlog, onRetry: () => {} })));
+
+  assert.equal(text.match(/dry[ -]run/gi)?.length, 1, "one notice for the whole list");
+  assert.ok(text.search(/dry[ -]run/i) < text.indexOf("notes/s1.md"), "the notice sits above the first proposal");
+  assert.ok(text.includes("Merge notes/s2.md into notes/t.md."), "each proposal keeps its own action");
+});
+
+test("the missed-cycle alarm states its age in the short relative form", async () => {
+  const mod = await loadWikiScreen();
+  const ready = (data: unknown) => ({ status: "ready", data, error: null });
+  const lane = renderScreen(
+    mod.React.createElement(mod.WikiAlarmLane as Component, {
+      summaryState: ready({ hours_since_last_cycle: 40, last_run_date: "2026-09-20" }),
+      indexState: ready({}), backlogState: READY_BACKLOG, cyclesState: ready({ cycles: [] }),
+    }),
+  );
+  assert.match(collectText(lane), /· 40h ago —/);
+});
+
+test("the last-run age reads as words, so its space never widens into a mono gap", async () => {
+  const mod = await loadWikiScreen();
+  const ready = (data: unknown) => ({ status: "ready", data, error: null });
+  const startedAt = new Date(Date.now() - 21 * 3_600_000).toISOString();
+  const band = renderScreen(
+    mod.React.createElement(mod.WikiTileBand as Component, {
+      summaryState: ready({ last_cycle_started_at: startedAt, hours_since_last_cycle: 21, last_status: "ok", last_run_date: "2026-09-29" }),
+      indexState: ready({}), backlogState: READY_BACKLOG, onRetry: () => {},
+    }),
+  );
+  const age = findNodes(band, (n) => n.children.some((c) => typeof c === "string" && /^\d+h ago$/.test(c)));
+  assert.equal(age.length, 1, "the tile shows the run's age");
+  assert.doesNotMatch(classOf(age[0]), /\bfont-mono\b/);
 });

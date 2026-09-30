@@ -107,9 +107,6 @@ function ScreenWiki() {
         .w-type-row { display: grid; grid-template-columns: minmax(0, 9rem) minmax(0, 1fr) 3.5rem 2.5rem; align-items: center; gap: 0.75rem; }
         .w-type-track { display: block; height: 6px; border-radius: 9999px; background: rgb(var(--line)); }
         .w-type-fill { display: block; height: 100%; border-radius: inherit; background: rgb(var(--dim)); }
-        /* Bar ticks sit at slot centres and centre on them → edge dates would overhang the card; !important beats the inline transform. */
-        .w-trend [data-chart-tick]:first-child { transform: none !important; }
-        .w-trend [data-chart-tick]:last-child { transform: translateX(-100%) !important; }
       `}</style>
 
 			<div className="flex-shrink-0">
@@ -382,7 +379,7 @@ function buildAlarmLaneModel(
 			key: "cycle-overdue",
 			tone: "crit",
 			label: "The daily cycle has not run",
-			detail: `Last run ${summary.last_run_date || "unknown"} · ${hours} h ago — inspect launchd.`,
+			detail: `Last run ${summary.last_run_date || "unknown"} · ${hours}h ago — inspect launchd.`,
 		});
 	}
 
@@ -663,6 +660,8 @@ function buildLastRunTileW(state, at) {
 		label,
 		state: "ready",
 		value: window.UI.formatRelativeTime(d.last_cycle_started_at),
+		// "21h ago" in the mono stat face → its space reads as a double gap
+		isWord: true,
 		sub: overdue
 			? `${outcome.label} · cycle ${d.last_run_date}`
 			: `${outcome.label}${describeP95W(d.cycle_p95_ms)}`,
@@ -861,6 +860,11 @@ function WikiMaintenanceSection({ backlogState, cyclesState, onRetry }) {
 					/>
 				) : (
 					<div className="flex flex-col gap-2">
+						{model.isDryRun && (
+							<div className="fs-meta text-dim leading-tight">
+								Dry run — nothing merges until you approve it.
+							</div>
+						)}
 						<ul className="flex flex-col gap-2 m-0 p-0 list-none">
 							{model.proposals.map((proposal, i) => (
 								<MergeSuggestionItem
@@ -925,9 +929,12 @@ function buildMaintenanceModel(backlogState, cyclesState = UNKNOWN_REGION_W) {
 		: null;
 	const notVerified = readDedupW(backlog)?.not_verified;
 
+	const proposals = proposalRows && proposalRows.map((row) => row.proposal);
+
 	return {
 		state: "ready",
-		proposals: proposalRows && proposalRows.map((row) => row.proposal),
+		proposals,
+		isDryRun: Boolean(proposals?.some(isDryRunProposalW)),
 		// A waiting pair → warn, so the fold holding it opens itself; parked pairs stay neutral.
 		proposalTone: proposalRows && window.UI.getWorstTone(proposalRows.map((row) => row.tone)),
 		deadLinks,
@@ -988,11 +995,12 @@ function WikiRunHistorySection({ cyclesState, summaryState, onRetry }) {
 				/>
 			) : (
 				<>
+					{/* The window is a fetch bound, not what is drawn → name the days the bars cover. */}
 					<SparseTrendW
-						label={`Notes per day · last ${WIKI_CYCLE_DAYS} days`}
+						label={`Notes per day · ${model.spanDays} ${model.spanDays === 1 ? "day" : "days"}`}
 						series={model.compiledSeries}
 						dates={model.compiledDates}
-						stat={`${formatCountW(model.total)} notes in ${WIKI_CYCLE_DAYS} d · ${model.activeDays} active days`}
+						stat={`${formatCountW(model.total)} notes in ${model.spanDays} d · ${model.activeDays} active days`}
 					/>
 					{/* A near-uniform mix carries no information — only a mixed run set earns the bar. */}
 					{!model.isMixUniform && <WikiStatusMixW mix={model.mix} />}
@@ -1378,11 +1386,11 @@ function MergeSuggestionItem({ proposal }) {
 	const sources = Array.isArray(proposal.source_slugs)
 		? proposal.source_slugs.join(", ")
 		: "—";
-	const sim =
+	const similarity =
 		typeof proposal.similarity_score === "number"
-			? `${Math.round(proposal.similarity_score * 100)}%`
-			: "—";
-	const action = proposal.suggested_action || proposal.llm_verdict || "";
+			? `${Math.round(proposal.similarity_score * 100)}% similar`
+			: null;
+	const action = readProposalActionW(proposal);
 
 	return (
 		<li className="rounded border border-line bg-card px-2.5 py-1.5">
@@ -1392,7 +1400,7 @@ function MergeSuggestionItem({ proposal }) {
 					<Icon name="arrow-left" size={12} />
 				</span>
 				<span className="text-dim break-words min-w-0">{sources}</span>
-				<span className="ml-auto text-dim">sim {sim}</span>
+				{similarity && <span className="ml-auto text-dim">{similarity}</span>}
 			</div>
 			{action && (
 				<div className="fs-meta text-faint mt-1 leading-tight break-words whitespace-pre-wrap">
@@ -1401,6 +1409,17 @@ function MergeSuggestionItem({ proposal }) {
 			)}
 		</li>
 	);
+}
+
+// The cleaner tags every action DRY-RUN → the list states it once, each row keeps its own action.
+const DRY_RUN_TAIL_W = /\s*DRY-RUN\b[\s\S]*$/;
+
+function readProposalActionW(proposal) {
+	return (proposal.suggested_action || proposal.llm_verdict || "").replace(DRY_RUN_TAIL_W, "");
+}
+
+function isDryRunProposalW(proposal) {
+	return DRY_RUN_TAIL_W.test(proposal.suggested_action || "");
 }
 
 function WikiReportsBody({ state, days, onRetry }) {
@@ -1571,15 +1590,14 @@ function SparseTrendW({ label, series, dates, stat }) {
 					Too few active days to draw a trend.
 				</div>
 			) : (
-				<div className="w-trend">
-					<TrendChart
-						label={label}
-						kind="bars"
-						tone="info"
-						points={series.map((value, i) => ({ label: dates[i] || "", value }))}
-						formatValue={formatCountW}
-					/>
-				</div>
+				<TrendChart
+					label={label}
+					kind="bars"
+					tone="info"
+					points={series.map((value, i) => ({ label: dates[i] || "", value }))}
+					formatValue={formatCountW}
+					yScale
+				/>
 			)}
 		</div>
 	);
