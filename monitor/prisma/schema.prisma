@@ -277,6 +277,11 @@ model CostEvent {
   numTurns            Int      @map("num_turns")
   stopReason          String?  @map("stop_reason") @db.VarChar(64)
   model               String?  @db.VarChar(128)
+  // Last non-null `effort` on the row's assistant records (transcript order); NULL = none carried it.
+  // VARCHAR, not an enum: an unseen harness tier must not reject the whole row.
+  effort              String?  @db.VarChar(16)
+  // TRUE = those records held more than one distinct tier; NULL whenever effort is NULL.
+  hasMixedEffort      Boolean? @map("has_mixed_effort")
   parseError          Boolean  @map("parse_error")
   rawInput            String?  @map("raw_input") @db.VarChar(500)
   insertedAt          DateTime @default(now()) @map("inserted_at") @db.Timestamptz(6)
@@ -395,6 +400,12 @@ model Outcome {
   // unverified), so the withheld-versus-inapplicable split has no other carrier — review_flag_reasons
   // encodes the contradiction verdict only. NULL = cross-check never attempted, distinct from `na`.
   graderCrosscheck  GraderCrosscheck? @map("grader_crosscheck")
+  // Subagent's own tier — last non-null `effort` on its transcript's assistant records, at SubagentStop.
+  // NULL = no assistant record carried it, or a row predating the carrier.
+  // VARCHAR, not an enum: an unseen harness tier must not reject the whole outcome row.
+  effort            String?       @db.VarChar(16)
+  // TRUE = the transcript held more than one distinct tier; NULL whenever effort is NULL.
+  hasMixedEffort    Boolean?      @map("has_mixed_effort")
   // TRUE = 오염 윈도우 격리 행 (2026-05-24 .. 2026-06-06 18:04 KST · metric_pass=false ·
   // grader_verdict NULL) — 학습 파이프라인 소비자가 제외해야 할 quarantine 플래그.
   // raw-SQL 런북(maintenance/poisoned-window-quarantine)만 set — writer/grader 미기입.
