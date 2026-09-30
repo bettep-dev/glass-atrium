@@ -2637,7 +2637,7 @@ function QualityHealthTimelineChart({ rows }) {
           <CartesianGrid stroke="rgb(var(--line))" strokeDasharray="3 3" vertical={false}/>
           <XAxis
             dataKey="date"
-            tick={window.UI.ChartAxisTick}
+            {...window.UI.getChartXAxisProps(rows.map((row) => row.date))}
             axisLine={{ stroke: 'rgb(var(--line))' }}
             tickLine={false}
           />

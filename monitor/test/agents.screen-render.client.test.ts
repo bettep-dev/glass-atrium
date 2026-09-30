@@ -46,6 +46,7 @@ UI_SCALARS.getAgentDisplayName = REAL_UI.getAgentDisplayName;
 // Recharts charts take their image name and edge tick from the shipped chart helpers.
 UI_SCALARS.getChartImageProps = REAL_UI.getChartImageProps;
 UI_SCALARS.ChartAxisTick = REAL_UI.ChartAxisTick;
+UI_SCALARS.getChartXAxisProps = REAL_UI.getChartXAxisProps;
 // RegionFailure's contract (ui.jsx): covered when `shared.sources` names its `source`, else the error card with its own Retry.
 UI_SCALARS.RegionFailure = Object.defineProperty(
   (props: Record<string, unknown>) => {
@@ -1189,10 +1190,14 @@ const REVIEW_FLAG_ROWS = [
   { date: "09-24", fullDate: "2026-09-24", empty_metric_count: 2, polar_mismatch_count: 1, review_flag_ratio_pct: 12.5 },
 ];
 
-test("review-flag chart dates take the shared edge tick and its value axes stay at or above the 12px floor", async () => {
+test("review-flag chart dates take the shared day-axis tick, end-keeping interval and label gap, and its value axes stay at or above the 12px floor", async () => {
   const tree = await renderComponent("QualityHealthTimelineChart", { rows: REVIEW_FLAG_ROWS });
   const [dateAxis] = findAtoms(tree, "XAxis");
-  assert.equal(dateAxis?.props.tick, REAL_UI.ChartAxisTick);
+  const getDayAxisProps = REAL_UI.getChartXAxisProps as (labels: string[]) => Record<string, unknown>;
+  const expected = getDayAxisProps(REVIEW_FLAG_ROWS.map((row) => row.date));
+  for (const key of ["tick", "interval", "minTickGap"]) {
+    assert.equal(dateAxis?.props[key], expected[key], `date axis ${key}`);
+  }
   const valueAxes = findAtoms(tree, "YAxis");
   assert.equal(valueAxes.length, 2);
   for (const axis of valueAxes) {
@@ -1209,13 +1214,6 @@ test("review-flag chart is a focusable image named by the flagged-rate range, la
   assert.equal(image?.props.tabIndex, 0);
   assert.equal(image?.props["aria-label"],
     "Daily flagged rate, 2 days from 2026-09-23 to 2026-09-24: latest 12.5%, low 5.0%, high 12.5%");
-});
-
-test("review-flag chart holds a definite pixel height, so a content-sized fold cannot collapse it to 0", async () => {
-  const tree = await renderComponent("QualityHealthTimelineChart", { rows: REVIEW_FLAG_ROWS });
-  const [image] = findNodes(tree, (n) => n.props.role === "img");
-  const height = (image?.props.style as { height?: unknown } | undefined)?.height;
-  assert.ok(typeof height === "number" && height >= 160, `chart height ${String(height)}`);
 });
 
 test("a drawer metric sits flat on its section rather than as a card inside a card", async () => {

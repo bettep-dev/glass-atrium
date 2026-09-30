@@ -53,11 +53,17 @@ function getSuccessRateRows() {
   }));
 }
 
+// 30 days → enough labels to crowd the x-axis at 1024
 function getReviewFlagRows() {
-  return ["2026-09-22", "2026-09-23", "2026-09-24"].map((event_date, index) => ({
-    event_date, total_count: 20, review_flagged_count: index + 1, empty_metric_count: index, polar_mismatch_count: 1,
-    review_flag_ratio: (index + 1) / 20, empty_metric_ratio: index / 20,
-  }));
+  const lastDay = Date.UTC(2026, 8, 24);
+  return Array.from({ length: 30 }, (_, index) => {
+    const event_date = new Date(lastDay - (29 - index) * 86_400_000).toISOString().slice(0, 10);
+    const flagged = (index % 5) + 1;
+    return {
+      event_date, total_count: 20, review_flagged_count: flagged, empty_metric_count: flagged - 1, polar_mismatch_count: 1,
+      review_flag_ratio: flagged / 20, empty_metric_ratio: (flagged - 1) / 20,
+    };
+  });
 }
 
 async function openRenderContext(width = 1024): Promise<RenderContext> {
@@ -205,6 +211,29 @@ describe("agents screen at 1024px, charts and Retry", () => {
     await chart.scrollIntoViewIfNeeded();
 
     assert.ok(((await chart.boundingBox())?.height ?? 0) >= 160);
+  });
+
+  test("the review-flag x-axis keeps the first and last day, the minimum label gap, and every label over the plot", async () => {
+    await ctx.page.locator("#agents-review-flags .recharts-xAxis").first().scrollIntoViewIfNeeded();
+    const axis = await ctx.page.evaluate(() => {
+      const minGap = (window as never as { UI: { CHART_TICK_MIN_GAP_PX: number } }).UI.CHART_TICK_MIN_GAP_PX;
+      const root = document.querySelector("#agents-review-flags .recharts-xAxis")!;
+      const plot = root.querySelector(".recharts-cartesian-axis-line")!.getBoundingClientRect();
+      const boxes = Array.from(root.querySelectorAll(".recharts-cartesian-axis-tick text"))
+        .map((t) => ({ label: (t.textContent || "").trim(), box: t.getBoundingClientRect() }))
+        .filter((t) => t.box.width > 0)
+        .sort((l, r) => l.box.left - r.box.left);
+      const crowded = boxes.slice(1).flatMap((t, i) => {
+        const gap = t.box.left - boxes[i]!.box.right;
+        return gap < minGap ? [`${boxes[i]!.label}→${t.label} ${gap.toFixed(1)}px`] : [];
+      });
+      // 0.5px: subpixel text metrics at the plot edge
+      const spilled = boxes.flatMap((t) => (t.box.left < plot.left - 0.5 || t.box.right > plot.right + 0.5 ? [`${t.label} past the plot`] : []));
+      return { ends: [boxes[0]?.label, boxes.at(-1)?.label], faults: [...crowded, ...spilled] };
+    });
+
+    assert.deepStrictEqual(axis.ends, ["08-26", "09-24"], "first and last day stay labelled");
+    assert.deepStrictEqual(axis.faults, [], `x-axis label faults: ${axis.faults.slice(0, 4).join(" · ")}`);
   });
 
   test("a keyboard Retry that recovers the page leaves a painted focus ring on the element it focuses", async () => {
