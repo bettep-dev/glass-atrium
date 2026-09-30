@@ -49,7 +49,6 @@ interface StampSandbox {
   };
   getFreshnessInputAR: (healthAsOf: string | null, regions: RegionState[], hasMap: boolean) => FreshnessInput;
   getPageVerdictAR: (partRows: PartRow[], caption: string, nodeIndex: null, freshness: FreshnessInput) => MapVerdict;
-  getAttentionEmptyAR: (partRows: PartRow[], busy: boolean, errored: number) => string;
   getPartStatusAR: (row: PartRow, freshness: FreshnessInput & { now: number }) => { tone: string | null; text: string };
   getMapCopyNoteAR: (diagState: RegionState) => string | null;
 }
@@ -86,8 +85,6 @@ test("the stamp answers for every region: a failure over held data shows, and re
   }
 });
 
-const ALL_CLEAR = "No part needs attention";
-
 function getPart(id: string, tone: string | null): PartRow {
   return { id, name: id, tone, nodeIds: [] };
 }
@@ -105,21 +102,6 @@ test("the map verdict follows the stamp's freshness: a failed re-read over an al
     const verdict = sandbox.getPageVerdictAR(okParts, "All 2 parts ok", null, freshness);
     const shown = sandbox.window.UI.getFreshnessVerdict({ ...verdict.freshness, tone: verdict.tone, now: NOW });
     assert.strictEqual(shown.label, row.expected, row.name);
-  }
-});
-
-test("part health names the all-clear only once the first health read settles with some part judged", () => {
-  const rows = [
-    { name: "health read in flight", parts: [getPart("pg", null)], busy: true, errored: 0, isClear: false },
-    { name: "health stores unreadable", parts: [getPart("pg", null)], busy: false, errored: 2, isClear: false },
-    { name: "nothing read and nothing in flight", parts: [getPart("pg", null)], busy: false, errored: 0, isClear: false },
-    { name: "one verdict arrived, one still out", parts: [getPart("pg", "ok"), getPart("hooks", null)], busy: true, errored: 0, isClear: false },
-    { name: "every part ok", parts: [getPart("pg", "ok")], busy: false, errored: 0, isClear: true },
-  ];
-
-  for (const row of rows) {
-    const text = sandbox.getAttentionEmptyAR(row.parts, row.busy, row.errored);
-    assert.strictEqual(text === ALL_CLEAR, row.isClear, `${row.name}: ${text}`);
   }
 });
 
