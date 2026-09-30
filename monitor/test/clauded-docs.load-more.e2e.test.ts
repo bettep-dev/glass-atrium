@@ -980,12 +980,13 @@ test("open-summary rail: at 1440px the rail stays in view on page scroll and the
         `ledger overflows its column beside the rail (${ledger.scrollWidth} > ${ledger.clientWidth}) → last header clipped`,
       );
 
-      const scrollBy = 362;
+      const rail = page.locator("aside.doc-open-summary");
+      const restingTop = await rail.evaluate((el) => el.getBoundingClientRect().top + window.scrollY);
+      // past the rail's resting offset → an unpinned rail would end above the viewport
+      const scrollBy = Math.ceil(restingTop) + 200;
       await page.evaluate((y) => window.scrollTo(0, y), scrollBy);
       await page.waitForFunction((y) => window.scrollY >= y, scrollBy);
-      const railTop = await page
-        .locator("aside.doc-open-summary")
-        .evaluate((rail) => rail.getBoundingClientRect().top);
+      const railTop = await rail.evaluate((el) => el.getBoundingClientRect().top);
       assert.ok(railTop >= 0, `rail scrolled out of view (top ${railTop}) — it must stay pinned while the ledger scrolls`);
     } finally {
       await context.close();
