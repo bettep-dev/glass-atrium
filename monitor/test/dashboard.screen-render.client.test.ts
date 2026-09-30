@@ -473,3 +473,34 @@ describe("the empty alarm lane shows the all-clear only when every alarm source 
     });
   }
 });
+
+test("alarm rows sit in two columns once the page has room, and one column below it", () => {
+  const tree = render("AlarmList", { alarms: [HARNESS_ALARM, { ...HARNESS_ALARM, id: "spend" }], onNav: () => {} });
+  const [list] = findNodes(tree, (n) => n.props.role === "list");
+  const classes = classOf(list).split(/\s+/);
+  assert.ok(classes.includes("grid"), classOf(list));
+  assert.ok(classes.includes("xl:grid-cols-2"), classOf(list));
+  assert.ok(!classes.includes("grid-cols-2"), "two columns never apply at the narrowest widths");
+});
+
+test("a tile's headline value never wraps, so its badge moves to the next line instead", () => {
+  const tile = { ...READY_TILE, id: "harness", tone: "crit", value: "2 of 7 down", badge: "Action needed" };
+  const tree = render("StatusTile", { tile, onNav: () => {}, onRetry: () => {} });
+  const [value] = findNodes(tree, (n) => n.props.atom === "KpiValue");
+  const unbroken = findNodes(value, (n) => classOf(n).includes("whitespace-nowrap"));
+  assert.equal(unbroken.length, 1);
+  assert.equal(collectText(unbroken[0]), "2 of 7 down");
+  const [row] = findNodes(tree, (n) => findNodes(n, (m) => m.props.atom === "Badge").length === 1 && classOf(n).includes("flex-wrap"));
+  assert.ok(row, "the value row lets the badge wrap below the value");
+});
+
+test("a tile's trend renders on the lead side under its value, and a tile without one renders none", () => {
+  const trend = "Up 20% on $10.00 yesterday by this time";
+  const withTrend = render("StatusTile", { tile: { ...READY_TILE, trend }, onNav: () => {}, onRetry: () => {} });
+  const [lead] = findNodes(withTrend, (n) => classOf(n) === "tile-split-lead");
+  assert.match(collectText(lead), /yesterday by this time/);
+  const text = collectText(lead);
+  assert.ok(text.indexOf("40") < text.indexOf("Up 20%"), "the value precedes its trend");
+  const without = render("StatusTile", { tile: READY_TILE, onNav: () => {}, onRetry: () => {} });
+  assert.doesNotMatch(collectText(without), /yesterday/);
+});

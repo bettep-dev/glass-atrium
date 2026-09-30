@@ -68,12 +68,26 @@ function ScreenDashboard({ onNav, harness, onRetryHarness }) {
     return runFetch(DASH_REGION_URLS[region], setters[region], request);
   }, []);
 
+  // the shell fold carries no busy flag → the page counts its own harness re-reads in flight
+  const [isHarnessBusy, setHarnessBusy] = useStateD(false);
+  const harnessReadsRef = useRefD(0);
+  const rereadHarness = useCallbackD(() => {
+    if (!onRetryHarness) return;
+    const settle = () => {
+      harnessReadsRef.current -= 1;
+      if (harnessReadsRef.current === 0) setHarnessBusy(false);
+    };
+    harnessReadsRef.current += 1;
+    setHarnessBusy(true);
+    Promise.resolve(onRetryHarness()).then(settle, settle);
+  }, [onRetryHarness]);
+
   // the page reads the shell's harness too → Refresh and the banner Retry re-read it with the wave
   const triggerRefresh = useCallbackD(() => {
     setRefreshTick((t) => t + 1);
-    onRetryHarness?.();
-  }, [onRetryHarness]);
-  const retryTile = useCallbackD((region) => getTileRetry(loadRegion, onRetryHarness)(region), [loadRegion, onRetryHarness]);
+    rereadHarness();
+  }, [rereadHarness]);
+  const retryTile = useCallbackD((region) => getTileRetry(loadRegion, rereadHarness)(region), [loadRegion, rereadHarness]);
   const refetchUpdateJob = useCallbackD(() => loadRegion('updateJob'), [loadRegion]);
 
   // harness 판독은 셸 fold 가 공급 — 여기서 재요청하지 않는다(풋터와 어긋나는 원인).
@@ -102,7 +116,7 @@ function ScreenDashboard({ onNav, harness, onRetryHarness }) {
   const waveStates = [costState, agentsState, outcomesState, updateState];
   const alarms = buildAlarms({ harness, costState, installKind });
   const alarmReadiness = getAlarmReadiness({ harness, costState, updateState });
-  const tiles = buildTiles({ harness, costState, agentsState, outcomesState });
+  const tiles = buildTiles({ harness, costState, agentsState, outcomesState, isHarnessBusy });
   const sharedFailure = getTileSharedFailure(tiles);
 
   return (
@@ -228,7 +242,7 @@ function getAlarmReadiness(sources) {
 
 function AlarmList({ alarms, onNav, updateState, updateJobState, onRefetchJob }) {
   return (
-    <div role="list" className="flex flex-col">
+    <div role="list" className="grid grid-cols-1 xl:grid-cols-2 gap-x-card">
       {alarms.map((alarm) => (
         <AlarmRow key={alarm.id} alarm={alarm} onNav={onNav}>
           {alarm.id === 'install' && (
@@ -334,11 +348,17 @@ function StatusTileValue({ tile }) {
       </div>
     );
   }
+  // value + unit never break apart or wrap → a narrow tile drops the badge to its own line instead
   return (
-    <div className="flex items-center gap-2">
-      <KpiValue>{tile.value}</KpiValue>
-      {tile.unit && <span className="fs-body text-dim">{tile.unit}</span>}
-      {(tile.tone !== 'neutral' || tile.isHeld) && <Badge role="status" tone={tile.tone} icon>{tile.badge ?? TONE_WORD[tile.tone]}</Badge>}
+    <div className="flex flex-col gap-0.5">
+      <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+        <div className="flex items-center gap-2">
+          <KpiValue><span className="whitespace-nowrap">{tile.value}</span></KpiValue>
+          {tile.unit && <span className="fs-body text-dim">{tile.unit}</span>}
+        </div>
+        {(tile.tone !== 'neutral' || tile.isHeld) && <Badge role="status" tone={tile.tone} icon>{tile.badge ?? TONE_WORD[tile.tone]}</Badge>}
+      </div>
+      {tile.trend && <div className="fs-meta text-dim">{tile.trend}</div>}
     </div>
   );
 }
@@ -601,18 +621,20 @@ function resolveSpendPace(costState) {
 
 // 4타일 데이터 — 렌더와 분리된 순수 변환이라 상태 4종을 테스트가 그대로 고정할 수 있다.
 // every tile keeps its drill even when an alarm row drills the same screen → the tile is where the eye lands
-function buildTiles({ harness, costState, agentsState, outcomesState }) {
-  const regionStates = { outcomes: outcomesState, agents: agentsState, cost: costState };
+function buildTiles({ harness, costState, agentsState, outcomesState, isHarnessBusy = false }) {
+  const busyByRegion = {
+    outcomes: outcomesState?.busy, agents: agentsState?.busy, cost: costState?.busy, [HARNESS_REGION]: isHarnessBusy,
+  };
   const tiles = [
     buildHarnessTile(harness),
     markHeldTile(buildOutcomeTile(outcomesState), outcomesState),
     markHeldTile(buildFleetTile(agentsState), agentsState),
-    markHeldTile(buildSpendTile(costState), costState),
+    markHeldTile(buildSpendTile(costState, harness?.kpi), costState),
   ];
   // a first load is 'loading', not a refresh → only held data dims while its region re-reads
   return tiles.map((tile) => ({
     ...tile,
-    isBusy: tile.status !== 'loading' && Boolean(regionStates[tile.region]?.busy),
+    isBusy: tile.status !== 'loading' && Boolean(busyByRegion[tile.region]),
   }));
 }
 
@@ -665,10 +687,13 @@ function describeHarnessReading(harness) {
 }
 
 function getHarnessBadge({ isPartlyUnread, lostCount, downCount }) {
-  if (!isPartlyUnread) return undefined;
-  if (lostCount === 0) return 'Last known';
-  return downCount === 0 ? 'Partly unknown' : undefined;
+  if (isPartlyUnread && lostCount === 0) return 'Last known';
+  if (downCount > 0) return HARNESS_DOWN_BADGE;
+  return isPartlyUnread ? 'Partly unknown' : undefined;
 }
+
+// the value already says "down" → the verdict and the names line each use another word
+const HARNESS_DOWN_BADGE = 'Action needed';
 
 function describeHarnessHint(harness, { isPartlyUnread, lostCount }) {
   if (isPartlyUnread) {
@@ -680,7 +705,7 @@ function describeHarnessHint(harness, { isPartlyUnread, lostCount }) {
     ? `. ${joinPartNames(harness.uncheckedNames)} checked on the System map`
     : '';
   // the headline already carries the count → the hint names the parts instead of restating it
-  const down = harness.downNames.length > 0 ? `Down: ${joinPartNames(harness.downNames)}` : 'All polled parts healthy';
+  const down = harness.downNames.length > 0 ? `Not answering: ${joinPartNames(harness.downNames)}` : 'All polled parts healthy';
   return `${down}${unchecked}`;
 }
 
@@ -768,10 +793,11 @@ function buildFleetTile(agentsState) {
     return { ...base, status: 'unavailable', tone: 'neutral', value: '—', hint: 'Suspension state unavailable.' };
   }
   const tone = suspended > 0 ? 'crit' : streak > 0 ? 'warn' : 'ok';
-  const runs = Number.isFinite(Number(meta.total_agents)) ? ` · ${formatInt(Number(meta.total_agents))} agents with runs` : '';
+  const agentCount = Number(meta.total_agents);
   return {
     ...base, status: 'ready', tone, badge: FLEET_VERDICT[tone], value: formatInt(suspended), unit: 'suspended',
-    hint: `${formatInt(streak)} on a failing streak${runs}`,
+    detail: `${formatInt(streak)} on a failing streak`,
+    hint: Number.isFinite(agentCount) ? `${formatInt(agentCount)} agents with runs in the last 7 days` : null,
   };
 }
 
@@ -779,7 +805,7 @@ function buildFleetTile(agentsState) {
 const FLEET_VERDICT = { ok: 'All active', warn: 'Failing streak', crit: 'Needs review' };
 
 // 타일 4 — 오늘 지출. 톤은 pace 판정에서만 온다(금액 자체는 위험도가 아니다).
-function buildSpendTile(costState) {
+function buildSpendTile(costState, kpi) {
   const base = {
     id: 'spend', label: 'Spend today', target: 'cost', targetLabel: 'Cost & usage', region: 'cost', source: "today's spend",
   };
@@ -788,13 +814,27 @@ function buildSpendTile(costState) {
 
   const pace = resolveSpendPace(costState);
   const tone = pace.status === 'hot' ? 'warn' : 'neutral';
+  const reading = { ...base, status: 'ready', tone, value: formatUsd(pace.today), trend: describeSpendTrend(kpi) };
   if (pace.status === 'no-basis') {
-    return { ...base, status: 'ready', tone, value: formatUsd(pace.today), hint: 'No spend in the last 7 days — no baseline to compare against.' };
+    return { ...reading, hint: 'No spend in the last 7 days — no baseline to compare against.' };
   }
   return {
-    ...base, status: 'ready', tone, value: formatUsd(pace.today), detail: describeSpendPace(pace),
+    ...reading, badge: tone === 'warn' ? SPEND_HOT_BADGE : undefined, detail: describeSpendPace(pace),
     hint: `${(pace.today / pace.basis).toFixed(1)}× the average so far · alarm at ${SPEND_PACE_CUT}×`,
   };
+}
+
+// the detail line leads with the judged pace → the badge names that multiple, never the so-far one
+const SPEND_HOT_BADGE = `Pace above ${SPEND_PACE_CUT}×`;
+
+// day-over-day from one payload (the shell's /api/dashboard/kpi) → today and its comparand never mix sources
+function describeSpendTrend(kpi) {
+  const prior = Number(kpi?.yesterday_same_time_cost_usd);
+  if (kpi?.today_cost_usd == null || !(prior > 0)) return null;
+  const change = Math.round(((Number(kpi.today_cost_usd) - prior) / prior) * 100);
+  const comparand = `${formatUsd(prior)} yesterday by this time`;
+  if (change === 0) return `Level with ${comparand}`;
+  return `${change > 0 ? 'Up' : 'Down'} ${Math.abs(change)}% on ${comparand}`;
 }
 
 // the verdict trips on the larger of so-far and pace → the lead line states that same figure
