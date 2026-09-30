@@ -1549,11 +1549,11 @@ function getErrorCopy(error, source) {
 }
 
 /**
- * The outage ≥2 failed regions share, or null — non-null → one PageErrorBanner + a RegionFailure per region.
- * @param entries - `{ source, error }` per region; a null error is a healthy region
+ * The outage ≥2 failed sources share, or null — non-null → one PageErrorBanner + a RegionFailure per region.
+ * @param entries - `{ source, error }` per region; a null error is a healthy region, and regions of one source count once
  */
 function getSharedFailure(entries) {
-  const failed = (entries || []).filter((entry) => entry && entry.error != null);
+  const failed = getFirstPerSource(entries);
   if (failed.length < 2) return null;
 
   const causeKeys = new Set(failed.map((entry) => {
@@ -1562,6 +1562,27 @@ function getSharedFailure(entries) {
   }));
   if (causeKeys.size !== 1) return null;
   return { sources: failed.map((entry) => entry.source), error: failed[0].error };
+}
+
+// failed entries, first region per source in render order
+function getFirstPerSource(entries) {
+  const seen = new Set();
+  return (entries || []).filter((entry) => {
+    if (!entry || entry.error == null || seen.has(entry.source)) return false;
+    seen.add(entry.source);
+    return true;
+  });
+}
+
+/**
+ * Who speaks for each failed source — pass the result to every RegionFailure as `failures`, render PageErrorBanner from `banner`.
+ * ≥2 same-cause sources → `banner` speaks for all; otherwise the first region a source feeds carries its card + Retry, the rest stay covered.
+ * @param entries - `{ source, region, error }` per region in render order; `source` names the failed read, `region` the slot (defaults to source)
+ */
+function getSourceFailures(entries) {
+  const speaking = getFirstPerSource(entries);
+  const speakers = new Map(speaking.map((entry) => [entry.source, entry.region ?? entry.source]));
+  return { banner: getSharedFailure(speaking), speakers };
 }
 
 function ErrorDetails({ detail }) {
@@ -1644,29 +1665,36 @@ function RegionUnavailable({ source, error, onRetry, isBusy = false, focusTarget
 const REGION_COVERED_NOTE = 'Not loaded — see the notice above';
 
 /**
- * Quiet slot for a region the page banner already speaks for: its name + a pointer to the notice, no sentence, no Retry.
- * @param focusTargetId - the region's card id; the banner's Retry hands focus to the first covered card on recovery
+ * Quiet slot for a region another surface speaks for: its name + a pointer to that surface, no sentence, no Retry.
+ * @param region - slot name shown; defaults to source
+ * @param speaker - failed source whose card (not the page banner) speaks for this slot
+ * @param focusTargetId - the region's card id; the banner's Retry hands focus to the first banner-covered card on recovery
  * @param minHeight - reserved slot height so the grid keeps its shape
  */
-function RegionCovered({ source, focusTargetId, minHeight, className = '' }) {
-  const name = source ? source.charAt(0).toUpperCase() + source.slice(1) : '';
+function RegionCovered({ source, region, speaker, focusTargetId, minHeight, className = '' }) {
+  const label = region ?? source;
+  const name = label ? label.charAt(0).toUpperCase() + label.slice(1) : '';
   return (
     <div className={`sub-card bg-sunken flex flex-col gap-1 ${className}`.trim()} style={minHeight ? { minHeight } : undefined}
-      data-covered-card-id={focusTargetId}>
+      data-covered-card-id={speaker ? undefined : focusTargetId}>
       <span className="fs-body text-dim">{name}</span>
-      <span className="fs-meta text-faint">{REGION_COVERED_NOTE}</span>
+      <span className="fs-meta text-faint">{speaker ? `Not loaded — see the ${speaker} notice` : REGION_COVERED_NOTE}</span>
     </div>
   );
 }
 
 /**
- * The one failed-region atom every page renders: RegionCovered when `shared` names this source, else RegionUnavailable with its own Retry.
- * @param shared - the page's getSharedFailure result, or null
+ * The one failed-region atom every page renders: covered when the banner or a sibling region speaks for its source, else RegionUnavailable with its own Retry.
+ * @param failures - the page's getSourceFailures result; pass it with `region` so one source speaks once
+ * @param shared - legacy per-region getSharedFailure result, read only when `failures` is absent
  */
-function RegionFailure({ source, error, shared, onRetry, isBusy = false, focusTargetId, minHeight, className = '' }) {
-  if (shared?.sources?.includes(source)) {
-    return <RegionCovered source={source} focusTargetId={focusTargetId} minHeight={minHeight} className={className}/>;
-  }
+function RegionFailure({ source, region, error, failures, shared, onRetry, isBusy = false, focusTargetId, minHeight, className = '' }) {
+  const banner = failures ? failures.banner : shared;
+  const speaker = failures?.speakers.get(source);
+  const slot = { source, region, focusTargetId, minHeight, className };
+
+  if (banner?.sources?.includes(source)) return <RegionCovered {...slot}/>;
+  if (speaker != null && speaker !== (region ?? source)) return <RegionCovered {...slot} speaker={source}/>;
   return <RegionUnavailable source={source} error={error} onRetry={onRetry} isBusy={isBusy}
     focusTargetId={focusTargetId} minHeight={minHeight} className={className}/>;
 }
@@ -2131,7 +2159,7 @@ window.UI = {
   titleOf, stripHtmlTags, formatRelativeTime,
   FreshnessStamp, getFreshnessState, getFreshnessVerdict, getRegionSummary, getRegionView, RefreshButton,
   setShellBridge, getHarnessRead, getShellPageState, useShellPageState,
-  getFetchError, getErrorCopy, getSharedFailure, RegionUnavailable, RegionCovered, RegionFailure, PageErrorBanner, RetryButton, LoadingPlaceholder, SkeletonRows,
+  getFetchError, getErrorCopy, getSharedFailure, getSourceFailures, RegionUnavailable, RegionCovered, RegionFailure, PageErrorBanner, RetryButton, LoadingPlaceholder, SkeletonRows,
   INITIAL_REGION_STATE, putRegionRequest, putRegionData, putRegionFailure,
   setDisplayTimezone, getDisplayTimezone, tzShortLabel,
   formatKstDateTime, formatKstTime, formatKstDate, formatKstFull,

@@ -108,6 +108,7 @@ test("an outage shared by two or more failed regions collapses to one cause; mix
     { name: "one failure", entries: [down("spend"), { source: "sessions", error: null }], sources: null },
     { name: "different causes", entries: [down("spend"), down("sessions", "HTTP 404 Not Found")], sources: null },
     { name: "nothing failed", entries: [{ source: "spend", error: null }], sources: null },
+    { name: "two regions fed by one source", entries: [down("agent summary"), down("agent summary")], sources: null },
   ];
   for (const row of rows) {
     const shared = getSharedFailure(row.entries);
@@ -150,6 +151,50 @@ test("each failed region speaks once: a shared outage leaves one sentence and on
     assert.equal(getButtons(tree).length, row.retries, row.name);
     assert.equal(text.split(COVERED_NOTE).length - 1, row.quiet, row.name);
   }
+});
+
+type SourceEntry = { source: string; region?: string; error: unknown };
+type SourceFailures = { banner: { sources: string[]; error: unknown } | null; speakers: Map<string, string> };
+const getSourceFailures = ui.getSourceFailures as (entries: SourceEntry[]) => SourceFailures;
+const QUIET_NOTE = /Not loaded —/g;
+
+function renderSourcePage(entries: SourceEntry[]): RenderedNode {
+  const failures = getSourceFailures(entries);
+  const banner = failures.banner && React.createElement(ui.PageErrorBanner as Component, { sources: failures.banner.sources, error: failures.banner.error, onRetry: () => {} });
+  const failed = entries.filter((entry) => entry.error != null);
+  const regions = failed.map((entry) => React.createElement(ui.RegionFailure as Component, { ...entry, failures, onRetry: () => {} }));
+  return renderScreen(React.createElement("div", { children: [banner, ...regions] })) as RenderedNode;
+}
+
+test("each failed source speaks once however many regions it feeds; one surface and one Retry per failed source", () => {
+  const summary = (region: string, error: unknown = SERVER_ERROR) => ({ source: "agent summary", region, error });
+  const runs = (region: string, error: unknown = SERVER_ERROR) => ({ source: "recent runs", region, error });
+  const rows = [
+    { name: "one source feeding three regions", entries: [summary("fleet KPIs"), summary("agent table"), summary("suspended agents")], sentences: 1, retries: 1, quiet: 2 },
+    { name: "two sources with different causes", entries: [summary("fleet KPIs"), summary("agent table"), runs("run list", "HTTP 404 Not Found"), runs("run chart", "HTTP 404 Not Found")], sentences: 2, retries: 2, quiet: 2 },
+    { name: "two sources with the same cause share one banner", entries: [summary("fleet KPIs"), summary("agent table"), runs("run list"), runs("run chart")], sentences: 1, retries: 1, quiet: 4 },
+    { name: "a healthy source beside a failed one adds nothing", entries: [summary("fleet KPIs"), runs("run list", null)], sentences: 1, retries: 1, quiet: 0 },
+  ];
+  for (const row of rows) {
+    const tree = renderSourcePage(row.entries);
+    const text = getVisibleText(tree);
+
+    assert.equal((text.match(FAILURE_SENTENCE) || []).length, row.sentences, row.name);
+    assert.equal(getButtons(tree).length, row.retries, row.name);
+    assert.equal((text.match(QUIET_NOTE) || []).length, row.quiet, row.name);
+  }
+});
+
+test("the first region a failed source feeds carries its card; the others name themselves and point at that source", () => {
+  const tree = renderSourcePage([
+    { source: "agent summary", region: "fleet KPIs", error: SERVER_ERROR },
+    { source: "agent summary", region: "suspended agents", error: SERVER_ERROR },
+  ]);
+  const [speaker, covered] = tree.children as RenderedNode[];
+
+  assert.match(getVisibleText(speaker), /Couldn't load agent summary\./);
+  assert.equal(getVisibleText(covered).replace(/\s+/g, " ").trim(), "Suspended agents Not loaded — see the agent summary notice");
+  assert.equal(findNodes(covered, (n) => n.props["data-covered-card-id"] != null).length, 0);
 });
 
 test("a covered region names itself, reserves its slot height and carries no alert, Retry or Details", () => {
