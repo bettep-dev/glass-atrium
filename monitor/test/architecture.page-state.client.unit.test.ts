@@ -214,7 +214,7 @@ const MIXED_ROWS: HealthRow[] = [
 
 test("the part health block holds every part once — flagged, answered and not-loaded parts each in their own group, worst first", () => {
   const { attention, rest, unloaded } = sandbox.getPartHealthGroupsAR(MIXED_ROWS);
-  const rank = (tone: string | null) => ["crit", "warn", "info", "ok"].indexOf(tone);
+  const rank = (tone: string | null) => ["crit", "warn", "info", "ok"].indexOf(tone ?? "");
 
   assert.deepStrictEqual([...attention, ...rest, ...unloaded].map((row) => row.id).sort(), MIXED_ROWS.map((row) => row.id).sort());
   assert.ok(attention.every((row) => row.tone === "crit" || row.tone === "warn"), "a non-flagged part sits in attention");

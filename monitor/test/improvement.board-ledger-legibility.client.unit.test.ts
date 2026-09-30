@@ -419,6 +419,7 @@ test("a live candidate group heads its rows at the body size", () => {
 test("the rejected column header never wraps its label, count or basis", () => {
   const tree = sandbox.RejectedHeaderI({ rowCount: 4, summary: null, label: "Rejected", symbol: "✕", trend: [] });
 
+  assert.ok(tree, "the rejected header renders nothing");
   assert.match(classOf(tree), /\bwhitespace-nowrap\b/);
 });
 
