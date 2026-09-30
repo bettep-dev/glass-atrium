@@ -180,11 +180,6 @@ test("the run-history trend and notes by type share one split row, the trend on 
   assert.equal(split[0].props.ratio, "2:1");
   const headings = findNodes(split[0], (n) => n.type === "h2").map((h) => collectText(h));
   assert.deepEqual(headings, ["Run history", "Notes by type"]);
-  const cards = findNodes(split[0], (n) => n.type === "section");
-  assert.equal(cards.length, 2);
-  for (const card of cards) {
-    assert.doesNotMatch(classOf(card), /\bh-full\b/, "a short card takes its content height, not the taller neighbour's");
-  }
 });
 
 test("one polite live region announces a wave in flight as loading", async () => {
@@ -421,14 +416,13 @@ test("the verdict's proposals chip targets the merge-proposals fold, which opens
   assert.equal(typeof details.props.onFocus, "function", "focus from the chip opens the fold");
 });
 
-test("constant runs render as one row naming the range and the run count", async () => {
+test("the per-run table gives every run its own row, unchanged runs included", async () => {
   const mod = await loadWikiScreen();
-  const reports = ["2026-09-24", "2026-09-23", "2026-09-22"].map((run_date) => ({ run_date, status: "ok", deadlinks_count: 0, dedup_count: 3 }));
+  const dates = ["2026-09-24", "2026-09-23", "2026-09-22"];
+  const reports = dates.map((run_date) => ({ run_date, status: "ok", deadlinks_count: 0, dedup_count: 3 }));
   const tree = renderScreen(mod.React.createElement(mod.WikiReportsTable as Component, { reports }));
   const rows = findNodes(tree, (n) => n.type === "tr");
-  assert.equal(rows.length, 1);
-  const text = collectText(rows[0]);
-  assert.ok(text.includes("2026-09-22") && text.includes("2026-09-24") && text.includes("3 runs"), text);
+  assert.deepEqual(rows.map((row) => dates.find((d) => collectText(row).includes(d))), dates);
 });
 
 test("the maintenance section adds no broken-link line of its own", async () => {
@@ -525,8 +519,8 @@ test("the dry-run notice is stated once above the proposals instead of on every 
   const text = collectText(renderScreen(mod.React.createElement(mod.WikiMaintenanceSection as Component, { backlogState: backlog, onRetry: () => {} })));
 
   assert.equal(text.match(/dry[ -]run/gi)?.length, 1, "one notice for the whole list");
-  assert.ok(text.search(/dry[ -]run/i) < text.indexOf("notes/s1.md"), "the notice sits above the first proposal");
-  assert.ok(text.includes("Merge notes/s2.md into notes/t.md."), "each proposal keeps its own action");
+  assert.ok(text.search(/dry[ -]run/i) < text.indexOf("s1"), "the notice sits above the first proposal");
+  assert.equal(text.match(/\binto\b/gi)?.length, 1, "the merge sentence is stated once for the list, not per proposal");
 });
 
 test("the missed-cycle alarm states its age in the short relative form", async () => {
@@ -554,4 +548,58 @@ test("the last-run age reads as words, so its space never widens into a mono gap
   const age = findNodes(band, (n) => n.children.some((c) => typeof c === "string" && /^\d+h ago$/.test(c)));
   assert.equal(age.length, 1, "the tile shows the run's age");
   assert.doesNotMatch(classOf(age[0]), /\bfont-mono\b/);
+});
+
+test("tile labels and captions wrap instead of cutting the figure's words", async () => {
+  const mod = await loadWikiScreen();
+  const ready = (data: unknown) => ({ status: "ready", data, error: null });
+  const band = renderScreen(
+    mod.React.createElement(mod.WikiTileBand as Component, {
+      summaryState: ready({ last_cycle_started_at: new Date().toISOString(), latest_compiled_count: 0, last_status: "ok" }),
+      indexState: ready({}), backlogState: READY_BACKLOG,
+      cyclesState: ready({ cycles: [{ run_date: "2026-09-01", compiled_count: 22 }, { run_date: "2026-09-29", compiled_count: 0 }] }),
+      onRetry: () => {},
+    }),
+  );
+  assert.ok(collectText(band).includes("22 in 29 d"), "the window total is on the page");
+  for (const node of findNodes(band, () => true)) assert.doesNotMatch(classOf(node), /\btruncate\b/);
+});
+
+test("a feeder the alarm list could not read is named in plain words", async () => {
+  const mod = await loadWikiScreen();
+  const ready = (data: unknown) => ({ status: "ready", data, error: null });
+  const lane = renderScreen(
+    mod.React.createElement(mod.WikiAlarmLane as Component, {
+      summaryState: ready({ hours_since_last_cycle: 2 }), indexState: ERRORED, backlogState: READY_BACKLOG, cyclesState: ready({ cycles: [] }),
+    }),
+  );
+  const text = collectText(lane);
+  assert.doesNotMatch(text, /\blane\b|incomplete/i);
+  assert.match(text, /alarms? from .+ (are|is) not shown/i);
+});
+
+test("a loading open card or tile states loading once, through its placeholder, not its count or caption", async () => {
+  const mod = await loadWikiScreen();
+  const trees = [
+    renderScreen(mod.React.createElement(mod.WikiRunHistorySection as Component, RUN_HISTORY_LOADING)),
+    renderScreen(mod.React.createElement(mod.WikiNotesByTypeSection as Component, { state: LOADING, onRetry: () => {} })),
+    renderScreen(mod.React.createElement(mod.WikiTileBand as Component, { summaryState: LOADING, indexState: LOADING, backlogState: LOADING, cyclesState: LOADING, onRetry: () => {} })),
+  ];
+  for (const tree of trees) assert.doesNotMatch(collectText(tree), /loading/i);
+  assert.equal(findNodes(trees[0], (n) => n.props.atom === "LoadingPlaceholder").length, 1);
+  assert.equal(findNodes(trees[1], (n) => n.props.atom === "LoadingPlaceholder").length, 1);
+  assert.equal(findNodes(trees[2], (n) => n.props["aria-busy"] === "true").length, 4, "each tile still reports busy");
+});
+
+test("the two status cards fill their shared row, so Notes by type ends level with Run history", async () => {
+  const mod = await loadWikiScreen();
+  const ready = (data: unknown) => ({ status: "ready", data, error: null });
+  const row = renderScreen(
+    mod.React.createElement(mod.WikiStatusRow as Component, {
+      cyclesState: ready({ cycles: [] }), summaryState: ready({}), indexState: ready({ by_type: [{ note_type: "raw", count: 3 }] }), onRetry: () => {},
+    }),
+  );
+  const cards = findNodes(row, (n) => n.type === "section");
+  assert.equal(cards.length, 2);
+  for (const card of cards) assert.match(classOf(card), /\bh-full\b/);
 });

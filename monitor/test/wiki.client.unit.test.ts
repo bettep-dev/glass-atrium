@@ -134,7 +134,7 @@ test("loading, error and unreported each read as themselves, never as a value", 
     helpers.buildIndexTileW(errored),
     helpers.buildIndexTileW(ready({ has_dirty_flag: false, dirty: false, last_dirty_ms: null })),
   ];
-  const subs = states.map((t) => t.sub);
+  const subs = states.map((t) => `${t.value} ${t.sub ?? ""}`);
   assert.equal(new Set(subs).size, subs.length, `states must read distinctly: ${subs.join(" / ")}`);
   for (const tile of states) {
     assert.equal(/\d/.test(tile.value), false, `placeholder must carry no figure: ${tile.value}`);
@@ -540,9 +540,9 @@ describe("the compiled tile names why it reads zero, adds the window total and t
   const cycles = ready({ cycles: [4, 0, 8].map((compiled_count, i) => ({ run_date: isoDaysAgo(i), compiled_count })) });
   const backlog = (waiting: number) => ready({ backlog: { run_date: isoDaysAgo(0), true_backlog: waiting } });
   const rows = [
-    { name: "idle — nothing waiting stays quiet", compiled: 0, waiting: 0, sub: /nothing to compile.* · 12 in 30 d$/i, tone: "neutral" },
-    { name: "stalled — originals waiting with none compiled tints", compiled: 0, waiting: 5, sub: /5 originals waiting.* · 12 in 30 d$/, tone: "warn" },
-    { name: "producing — a compiled cycle shows the window total only", compiled: 4, waiting: 5, sub: /^12 in 30 d$/, tone: "neutral" },
+    { name: "idle — nothing waiting stays quiet", compiled: 0, waiting: 0, sub: /nothing to compile.* · 12 in 3 d$/i, tone: "neutral" },
+    { name: "stalled — originals waiting with none compiled tints", compiled: 0, waiting: 5, sub: /5 originals waiting.* · 12 in 3 d$/, tone: "warn" },
+    { name: "producing — a compiled cycle shows the window total only", compiled: 4, waiting: 5, sub: /^12 in 3 d$/, tone: "neutral" },
   ];
   for (const row of rows) {
     test(row.name, () => {
@@ -593,4 +593,49 @@ test("the per-run fold's summary states the run streak, so a one-row table needs
   const same = Array.from({ length: 27 }, () => ["ok", 0, 3] as [string, number, number]);
   assert.equal(h.describeRunTableW(ready({ reports: runs(same) }), 30), `27 healthy runs in a row since ${isoDaysAgo(26)}`);
   assert.equal(h.describeRunTableW(ready({ reports: runs([["ok", 0, 3], ["error", 0, 3], ["ok", 0, 3]]) }), 30), "3 runs in 3 streaks");
+});
+
+describe("the run trend fills every calendar day between its first and last run", () => {
+  const h = helpers as unknown as {
+    buildThroughputModel: (state: FetchState) => { compiledDates: string[]; compiledSeries: number[]; spanDays: number; total: number; rows: unknown[] };
+  };
+  const rows = [
+    { name: "a skipped day becomes a zero bar", cycles: [["2026-09-01", 2], ["2026-09-04", 3], ["2026-09-02", 1]], dates: ["2026-09-01", "2026-09-02", "2026-09-03", "2026-09-04"], series: [2, 1, 0, 3] },
+    { name: "a month boundary keeps counting days", cycles: [["2026-09-29", 1], ["2026-10-01", 1]], dates: ["2026-09-29", "2026-09-30", "2026-10-01"], series: [1, 0, 1] },
+    { name: "a single run is one day", cycles: [["2026-09-10", 5]], dates: ["2026-09-10"], series: [5] },
+  ];
+  for (const row of rows) {
+    test(row.name, () => {
+      const cycles = row.cycles.map(([run_date, compiled_count]) => ({ run_date, compiled_count, status: "ok" }));
+      const model = h.buildThroughputModel(ready({ cycles }));
+      assert.deepEqual([...model.compiledDates], row.dates);
+      assert.deepEqual([...model.compiledSeries], row.series);
+      assert.equal(model.spanDays, row.dates.length);
+      assert.equal(model.rows.length, row.cycles.length, "runs stay counted as runs");
+    });
+  }
+});
+
+test("the trend's tick cap is the largest one up to seven that splits its days into equal steps", () => {
+  const h = helpers as unknown as { getEvenTickCapW: (count: number) => number };
+  for (let count = 1; count <= 60; count++) {
+    const cap = h.getEvenTickCapW(count);
+    assert.ok(cap >= 2 && cap <= 7, `count ${count}`);
+    if (count > 1) assert.equal((count - 1) % (cap - 1), 0, `count ${count}: cap ${cap} leaves an uneven step`);
+    for (let bigger = cap + 1; bigger <= Math.min(7, count); bigger++) {
+      assert.notEqual((count - 1) % (bigger - 1), 0, `count ${count}: cap ${bigger} was also even`);
+    }
+  }
+});
+
+test("the compiled tile and Run history name the same span for the same total", () => {
+  const h = helpers as unknown as {
+    buildThroughputModel: (state: FetchState) => unknown;
+    describeRunHistoryW: (cycles: FetchState, model: unknown, summary: FetchState) => string;
+  };
+  const cycles = ready({ cycles: [["2026-09-01", 20], ["2026-09-18", 0], ["2026-09-29", 2]].map(([run_date, compiled_count]) => ({ run_date, compiled_count, status: "ok" })) });
+  const tile = glanceHelpers.buildCompiledTileW(healthySummary({ latest_compiled_count: 2 }), ready({ backlog: null }), cycles);
+  const history = h.describeRunHistoryW(cycles, h.buildThroughputModel(cycles), ready({}));
+  assert.match(tile.sub ?? "", /\b22 in 29 d\b/);
+  assert.match(history, /^3 runs in 29 d\b/, "runs are counted as runs over the same span");
 });
