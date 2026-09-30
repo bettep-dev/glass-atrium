@@ -122,7 +122,11 @@ test("an unavailable harness fold raises no alarm — absence is not a fault", (
 // a held reading whose refresh failed → its row keeps its tone but reads last known, as its tile does
 const HELD_ALARM_ROWS = [
   { name: "a down part held over a failed harness read", id: "harness", isHeld: true,
-    harness: { ...HEALTHY, partsOk: 6, downNames: ["autoagent"], error: "HTTP 500" }, costState: kpi(10, 10) },
+    harness: { ...HEALTHY, partsOk: 6, downNames: ["autoagent"], unreadSources: ["daemon status"], error: "HTTP 500" },
+    costState: kpi(10, 10) },
+  { name: "a down part fresh beside a failed failure-count read", id: "harness", isHeld: false,
+    harness: { ...HEALTHY, partsOk: 6, downNames: ["autoagent"], unreadSources: ["the failure count"], error: "HTTP 500" },
+    costState: kpi(10, 10) },
   { name: "a down part from a fresh harness read", id: "harness", isHeld: false,
     harness: { ...HEALTHY, partsOk: 6, downNames: ["autoagent"] }, costState: kpi(10, 10) },
   { name: "hot spend held over a failed cost read", id: "spend", isHeld: true,

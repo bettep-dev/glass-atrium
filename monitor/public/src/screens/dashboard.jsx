@@ -590,7 +590,7 @@ function buildAlarms({ harness, costState, installKind }) {
       tone: 'crit',
       title: `${harness.downNames.length} harness ${harness.downNames.length === 1 ? 'part is' : 'parts are'} down`,
       detail: joinPartNames(harness.downNames),
-      isHeld: harness.error != null,
+      isHeld: hasHeldPartRead(harness),
       target: 'architecture',
       targetLabel: 'System map',
     });
@@ -621,6 +621,13 @@ function buildAlarms({ harness, costState, installKind }) {
   }
 
   return rows.sort((a, b) => (SEVERITY_RANK[b.tone] || 0) - (SEVERITY_RANK[a.tone] || 0));
+}
+
+// the failure count feeds failCount1h only, never downNames → its failed read leaves the down-part reading fresh
+const FAILURE_COUNT_SOURCE = 'the failure count'; // app.jsx → HARNESS_SOURCES.kpiState.label
+
+function hasHeldPartRead(harness) {
+  return (harness.unreadSources ?? []).some((source) => source !== FAILURE_COUNT_SOURCE);
 }
 
 // 오늘 누계(so-far) 또는 일간 pace 가 7일 일평균의 컷을 넘는지 — Cost 화면과 같은 payload·같은 컷.
