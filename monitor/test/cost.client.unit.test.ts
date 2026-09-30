@@ -146,7 +146,7 @@ interface CostHelpers {
   getParseErrorChartRows: (
     rows: readonly { event_date: string; error_count: number; total_count: number; error_ratio: number }[],
   ) => { error_count: number; threshold_count: number; isCrit: boolean }[];
-  getCacheGapLabel: (rows: readonly { rate_pct: number | null }[]) => string | null;
+  getNoDataLabelC: (values: readonly (number | null)[]) => string | null;
   getCacheTicks: (domain: readonly [number, number]) => number[];
   getTokenAxisFormatter: (maxValue: number) => (value: number) => string;
   computeTokenShares: (
@@ -863,7 +863,7 @@ test("the hit-rate strip names its no-data days, and says nothing when every day
     { name: "all gaps", rates: [null, null], gaps: 2 },
   ];
   for (const { name, rates, gaps } of rows) {
-    const label = cost.getCacheGapLabel(rates.map((rate_pct) => ({ rate_pct })));
+    const label = cost.getNoDataLabelC(rates);
     if (gaps === 0) {
       assert.strictEqual(label, null, name);
       continue;

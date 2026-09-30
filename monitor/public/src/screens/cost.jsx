@@ -966,7 +966,6 @@ function CostTrendTooltipC({ active, payload, bandOn }) {
   );
 }
 
-
 function TokenStackedBody({ state, days, shared, onRetry }) {
   const { getRegionView, LoadingPlaceholder, RegionFailure } = window.UI;
 
@@ -1017,7 +1016,7 @@ function toTokenChartRows(points) {
       date: typeof p.date === 'string' ? p.date.slice(5) : '',
       fullDate: p.date,
       isNoData,
-      cost_usd: isNoData ? null : Number(p.cost_usd) || 0,
+      cost_usd: getCount(p.cost_usd),
       session_count: Number(p.session_count) || 0,
       cache_creation_tokens: getCount(p.cache_creation_tokens),
       cache_read_tokens:     getCount(p.cache_read_tokens),
@@ -1533,7 +1532,8 @@ function CacheHitBody({ state, days, shared, onRetry }) {
 
   // 실측 범위로 Y 도메인 auto-zoom — 고정 [0,100] 은 99%대 변동을 평탄화함.
   const yDomain = computeCacheYDomain(chartRows);
-  const gapLabel = getCacheGapLabel(chartRows);
+  // line gaps (connectNulls off) stay silent on their own → the strip names them
+  const gapLabel = getNoDataLabelC(chartRows.map((r) => r.rate_pct));
   const flatRate = getFlatCacheRate(chartRows);
   const ratePoints = chartRows.map((r) => ({ label: r.fullDate, value: r.rate_pct }));
 
@@ -1597,11 +1597,6 @@ function getCacheTicks([lo, hi]) {
   const first = Math.ceil(lo / step - 1e-9);
   const last = Math.floor(hi / step + 1e-9);
   return Array.from({ length: last - first + 1 }, (_, i) => Number(((first + i) * step).toFixed(6)));
-}
-
-// Line gaps (connectNulls off) stay silent on their own → the strip names them.
-function getCacheGapLabel(rows) {
-  return getNoDataLabelC(rows.map((r) => r.rate_pct));
 }
 
 function CacheHitChart({ rows, yDomain = [0, 100] }) {
@@ -2238,7 +2233,6 @@ function pointCostC(p) {
 // Axis style hoist — JSX inline-object 할당 회피.
 const anomalyAxisTickStyle = { fontSize: 12, fill: 'rgb(var(--faint))', fontFamily: 'JetBrains Mono, monospace' };
 const anomalyAxisLineStyle = { stroke: 'rgb(var(--line))' };
-
 
 // Turn statistics body — /api/cost/turn-stats: stop_reason 분포 + turns 집계.
 // no_assistant_in_turn = tool-only(LLM 미응답) 턴 · end_turn = 실 LLM 턴.
