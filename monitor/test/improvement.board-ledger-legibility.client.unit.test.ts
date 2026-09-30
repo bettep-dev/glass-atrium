@@ -51,6 +51,8 @@ interface Sandbox {
   PatternLedgerCardI: Component;
   StatusBandI: Component;
   RejectedHeaderI: Component;
+  BoardRowI: Component;
+  HeldCauseStripI: Component;
   buildDetailPropsI: (row: Record<string, unknown>) => Record<string, unknown>;
 }
 
@@ -431,6 +433,25 @@ test("a live candidate group heads its rows at the body size", () => {
   const [head] = findAll(tree, (el) => typeof el.props.title === "string" && el.props.title.length > 0 && el.type === "div");
 
   assert.match(classOf(head), /\bfs-body\b/);
+});
+
+test("a suggestion board row sets its title at the body size, leaving ids and dates at the meta size", () => {
+  const tree = sandbox.BoardRowI({ onClick: () => {}, lead: null, text: "Keep retries bounded", trail: null });
+  const [title] = findAll(tree, (el) => visibleText(el) === "Keep retries bounded" && el.type === "span");
+
+  assert.ok(title, "the board row prints its title");
+  assert.match(classOf(title), /\bfs-body\b/);
+  assert.doesNotMatch(classOf(title), /\bfs-meta\b/);
+});
+
+test("a held cause states its remedy prose at the body size", () => {
+  const hint = "Raise the cap after a human reads the rows";
+  const tree = sandbox.HeldCauseStripI({ buckets: [{ cause: "repeat-apply-cap", label: "Repeat-apply cap", count: 2, agents: 1, hint }] });
+  const [prose] = findAll(tree, (el) => el.type === "span" && visibleText(el) === hint);
+
+  assert.ok(prose, "the held strip prints the remedy");
+  assert.match(classOf(prose), /\bfs-body\b/);
+  assert.doesNotMatch(classOf(prose), /\bfs-meta\b/);
 });
 
 test("the rejected column header never wraps its label, count or basis", () => {
