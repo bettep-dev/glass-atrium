@@ -23,6 +23,7 @@ const DOCS_SRC = resolve(__dirname, "../public/src/screens/clauded-docs.jsx");
 const UI_SCALARS: Record<string, unknown> = {
   formatInt: (n: number) => String(n),
   formatKstDateTime: (iso: string) => `datetime(${iso})`,
+  formatKstDate: (iso: string) => `date(${iso})`,
 };
 
 function uiStub(extra: Record<string, unknown> = {}): unknown {
@@ -51,14 +52,15 @@ type Component = (props: unknown) => unknown;
 
 const ui = await loadScreenModule(resolve(__dirname, "../public/src/ui.jsx"));
 const shippedUi = ui.UI as Record<string, unknown>;
-const ROW_FOCUS_ATOMS = {
+const SHIPPED_ATOMS = {
   ROW_CONTROL_PROPS: shippedUi.ROW_CONTROL_PROPS,
   getRowKeyAction: shippedUi.getRowKeyAction,
   getDisplayName: shippedUi.getDisplayName,
+  getRegionView: shippedUi.getRegionView,
 };
 
 async function loadDocsScreen(react: Record<string, unknown> = createReactStub()): Promise<Record<string, unknown>> {
-  return loadScreenModule(DOCS_SRC, { UI: uiStub(ROW_FOCUS_ATOMS), React: react });
+  return loadScreenModule(DOCS_SRC, { UI: uiStub(SHIPPED_ATOMS), React: react });
 }
 
 function cssRuleBody(source: string, selector: string): string {
@@ -209,6 +211,41 @@ test("every control inside a ledger row leaves the Tab order as a row control, s
   }
 });
 
+// the shipped verdict, not the atom stub → the rendered words are what a reader sees
+async function renderVerdictText(state: Record<string, unknown>): Promise<string> {
+  const screen = await loadScreenModule(DOCS_SRC, {
+    UI: uiStub({ ...SHIPPED_ATOMS, PageVerdict: shippedUi.PageVerdict }),
+    React: createReactStub(),
+  });
+  const props = listCardProps(() => undefined);
+  const createdAt = new Date().toISOString();
+  props.rows = (props.rows as Array<Record<string, unknown>>).map((row) => ({ ...row, doc_status: "doc_review", created_at: createdAt }));
+  const tree = renderScreen((screen.DocListCardCD as Component)({ ...props, asOf: createdAt, state }));
+  const verdicts = findNodes(tree, (n) => String(n.props.className).includes("page-verdict "));
+  assert.equal(verdicts.length, 1, "the open list states one verdict");
+  return collectText(verdicts[0]);
+}
+
+test("a failed refresh over held rows turns the open verdict to Last known, and only the failure does", async () => {
+  const settled = await renderVerdictText({ status: "ready", data: {}, busy: false, error: null });
+  const warmError = await renderVerdictText({ status: "ready", data: {}, busy: false, error: "HTTP 500" });
+
+  assert.doesNotMatch(settled, /Last known/, "a settled read keeps its own verdict");
+  assert.match(warmError, /Last known/, "held rows under a failed read never read as the all-clear");
+  assert.doesNotMatch(warmError, /Healthy/);
+});
+
+test("a cold list error keeps its alert and shows no loader while its Retry is in flight", async () => {
+  const screen = await loadDocsScreen();
+  const state = { status: "loading", data: null, busy: true, error: "HTTP 500" };
+  const tree = renderScreen((screen.DocListCardCD as Component)({ ...listCardProps(() => undefined), state }));
+
+  assert.equal(findNodes(tree, (n) => n.props.atom === "LoadingPlaceholder").length, 0);
+  const alerts = findNodes(tree, (n) => n.props.atom === "RegionUnavailable");
+  assert.equal(alerts.length, 1, "the focused Retry stays mounted");
+  assert.equal(alerts[0].props.isBusy, true, "the Retry reads busy while the read is in flight");
+});
+
 type FakeNode = { name: string; closest: (s: string) => FakeNode | null; querySelectorAll: (s: string) => FakeNode[]; focus: () => void };
 
 function fakeLedger(focused: string[]) {
@@ -300,13 +337,13 @@ function renderListCard(screen: Record<string, unknown>, overrides: Record<strin
   return renderScreen((screen.DocListCardCD as Component)(props));
 }
 
-test("a read in flight over held rows keeps them on screen, dimmed and busy, with the held count and an inline status", async () => {
+test("a read in flight over held rows keeps them on screen, dimmed and busy, with the held count; only a search names itself inline", async () => {
   const screen = await loadDocsScreen();
   const rows = [
-    { name: "a settled list is neither dimmed nor announced", busy: false, isSearchMode: false, isLoadingMore: false, status: null },
-    { name: "a search in flight dims the held rows and says so", busy: true, isSearchMode: true, isLoadingMore: false, status: "Searching…" },
-    { name: "a refresh in flight dims the held rows and says so", busy: true, isSearchMode: false, isLoadingMore: false, status: "Refreshing…" },
-    { name: "a load-more in flight leaves the held rows undimmed", busy: true, isSearchMode: false, isLoadingMore: true, status: null },
+    { name: "a settled list is neither dimmed nor announced", busy: false, isSearchMode: false, isLoadingMore: false, isDimmed: false, status: null },
+    { name: "a search in flight dims the held rows and says so", busy: true, isSearchMode: true, isLoadingMore: false, isDimmed: true, status: "Searching…" },
+    { name: "a refresh in flight dims the held rows and leaves the one Refreshing… to the header button", busy: true, isSearchMode: false, isLoadingMore: false, isDimmed: true, status: null },
+    { name: "a load-more in flight leaves the held rows undimmed", busy: true, isSearchMode: false, isLoadingMore: true, isDimmed: false, status: null },
   ];
 
   for (const row of rows) {
@@ -317,8 +354,9 @@ test("a read in flight over held rows keeps them on screen, dimmed and busy, wit
     });
     const tables = findNodes(tree, (n) => n.type === "table");
     assert.equal(tables.length, 1, `${row.name}: held rows stay`);
-    assert.equal(tables[0].props["aria-busy"], row.status ? "true" : undefined, row.name);
-    assert.match(collectText(tree), row.isSearchMode ? /2 matched/ : /2 groups/, `${row.name}: held count stays`);
+    assert.equal(tables[0].props["aria-busy"], row.isDimmed ? "true" : undefined, row.name);
+    assert.doesNotMatch(collectText(tree), /Refreshing/, `${row.name}: the ledger never repeats the header's busy word`);
+    assert.match(collectText(tree), row.isSearchMode ? /2 matched/ : /2 documents/, `${row.name}: held count stays`);
 
     const inline = findNodes(tree, (n) => n.props.role === "status" && String(n.props.className).includes("doc-list-busy"));
     assert.deepEqual(inline.map((n) => collectText(n)), row.status ? [row.status] : [], row.name);
@@ -333,7 +371,7 @@ test("a first read with nothing held shows one status placeholder instead of row
   assert.equal(findNodes(tree, (n) => n.type === "table").length, 0);
 });
 
-test("a failed read shows one plain-sentence card with one Retry and never the raw HTTP answer", async () => {
+test("a failed read announces one plain-sentence card with one Retry as an alert and never the raw HTTP answer", async () => {
   const screen = await loadDocsScreen();
   const error = 'HTTP 500 Internal Server Error — {"error":"boom"}';
   const rows = [
@@ -350,10 +388,47 @@ test("a failed read shows one plain-sentence card with one Retry and never the r
     assert.equal(cards.length, 1, row.name);
     assert.equal(cards[0].props.error, error, row.name);
     assert.equal(typeof cards[0].props.onRetry, "function", row.name);
-    assert.equal(findNodes(tree, (n) => n.props.role === "alert").length, 0, `${row.name}: no red alert box`);
+    const alerts = findNodes(tree, (n) => n.props.role === "alert");
+    assert.equal(alerts.length, 1, `${row.name}: one announced failure`);
+    assert.equal(findNodes(alerts[0], (n) => n === cards[0]).length, 1, `${row.name}: the alert is the failure card`);
     assert.doesNotMatch(collectText(tree), /HTTP \d/, row.name);
     assert.equal(findNodes(tree, (n) => n.type === "table").length, row.tables, `${row.name}: held rows stay`);
   }
+});
+
+test("a list error hands its Retry focus to the list card, so a successful Retry never drops focus to the page body", async () => {
+  const screen = await loadDocsScreen();
+  const rows = [
+    { name: "nothing held", state: { status: "error", data: null, error: "HTTP 500", busy: false }, rows: [] },
+    { name: "rows held", state: { status: "ready", data: {}, error: "HTTP 500", busy: false }, rows: undefined },
+  ];
+
+  for (const row of rows) {
+    const overrides: Record<string, unknown> = { state: row.state };
+    if (row.rows) overrides.rows = row.rows;
+    const tree = renderListCard(screen, overrides);
+
+    const [card] = findNodes(tree, (n) => n.props.atom === "RegionUnavailable");
+    const targetId = card.props.focusTargetId;
+    assert.equal(typeof targetId, "string", `${row.name}: Retry names a focus target`);
+    const targets = findNodes(tree, (n) => n.props.id === targetId);
+    assert.equal(targets.length, 1, `${row.name}: the target id is on the page`);
+    assert.match(String(targets[0].props.className), /\bcard\b/, `${row.name}: the target is the list card`);
+    assert.equal(findNodes(targets[0], (n) => n === card).length, 1, `${row.name}: the card holds the failed Retry`);
+  }
+});
+
+test("each stage group opens with a level-2 heading under the page H1, and the ledger holds no other heading", async () => {
+  const screen = await loadDocsScreen();
+  const props = listCardProps(() => undefined);
+  const rows = props.rows as Array<Record<string, unknown>>;
+  rows[0] = { ...rows[0], doc_status: "doc_review" };
+  rows[1] = { ...rows[1], doc_status: "implementing" };
+  const tree = renderScreen((screen.DocListCardCD as Component)(props));
+
+  const headings = findNodes(tree, (n) => n.props.role === "heading" || /^h[1-6]$/.test(String(n.type)));
+  assert.deepEqual(headings.map((n) => collectText(n)), ["Doc review", "Implementing"]);
+  for (const heading of headings) assert.equal(heading.props["aria-level"], 2, "one level below the page H1");
 });
 
 const HANGUL = /\p{Script=Hangul}/u;
@@ -362,7 +437,7 @@ describe("the ledger names the Tags column only when a row differs, and states a
   const tagCellsOf = (tree: ReturnType<typeof renderScreen>) =>
     findNodes(tree, (n) => (n.type === "th" || n.type === "td") && String(n.props.className).includes("doc-col-tags"));
   const rows = [
-    { name: "every row agent-only md → no column, 'agent-only' said once", patch: [{ audience: "hidden" }, { audience: "hidden" }], cells: 0, onceText: "agent-only" },
+    { name: "every row agent-only md → no column, the audience said once in words", patch: [{ audience: "hidden" }, { audience: "hidden" }], cells: 0, onceText: "agent records" },
     { name: "one row in another format → the column stays", patch: [{ format: "html" }, {}], cells: 3, onceText: null },
     { name: "one agent-only row among public rows → the column stays", patch: [{ audience: "hidden" }, {}], cells: 3, onceText: null },
   ];
@@ -466,17 +541,17 @@ test("stage and audience filters are two separately labelled pressed-chip groups
   assert.deepEqual(picked, ["done"]);
 });
 
-test("the stage chips name their count unit, and it is the unit the caption leads with", async () => {
+test("the filter label reads Show, and the caption counts documents, naming revisions as their own unit", async () => {
   const screen = await loadDocsScreen();
-  const stageLabel = (tree: ReturnType<typeof renderScreen>) =>
+  const filterLabel = (tree: ReturnType<typeof renderScreen>) =>
     collectText(findNodes(tree, (n) => n.props.className === "doc-filter-label")[0]);
 
   const counted = renderListCard(screen, { total: 3, docTotal: 5, groupCounts: { total: 3, open: 2, done: 1 } });
-  const unit = stageLabel(counted).match(/\b(groups|documents)\b/i);
-  assert.ok(unit, "the stage label names what its counts count");
-  assert.match(collectText(counted), new RegExp(`\\b3 ${unit[1].toLowerCase()} · 5 documents`));
+  assert.equal(filterLabel(counted), "Show");
+  assert.match(collectText(counted), /\b3 documents · 5 with revisions\b/);
+  assert.doesNotMatch(collectText(counted), /\bgroups\b/, "no internal grouping unit in the caption");
 
-  assert.doesNotMatch(stageLabel(renderListCard(screen, {})), /groups|documents/i, "no unit claimed while no count is shown");
+  assert.equal(filterLabel(renderListCard(screen, {})), "Show");
 });
 
 describe("a stage pill draws the shared stage pip, filled up to its stage", () => {
@@ -615,4 +690,165 @@ test("while searching, the stage filter visibly steps aside for all stages, and 
   const empty = renderScreen((screen.DocEmptyStateCD as Component)({ isSearchMode: true, inlineFilterProps: filters }));
   assert.doesNotMatch(collectText(empty), /status:/);
   assert.match(collectText(empty), /“plan”/);
+});
+
+const DAY_MS = 86_400_000;
+const daysAgo = (days: number) => new Date(Date.now() - days * DAY_MS).toISOString();
+// the screen runs in its own vm realm → compare its objects by value
+const plain = <T,>(value: T): T => JSON.parse(JSON.stringify(value));
+type DocAge = { days: number; label: string; bucket: string; isStale: boolean };
+type OpenSummary = {
+  stages: Array<{ value: string; label: string; count: number }>;
+  buckets: Record<string, number>;
+  oldest: { id: number; days: number } | null;
+  openCount: number;
+};
+
+describe("a document's age reads relative to now, buckets it, and past seven days marks it stale", () => {
+  const rows = [
+    { name: "created today → under 3 days, not stale", days: 0, label: "today", bucket: "fresh", isStale: false },
+    { name: "2 days → under 3 days", days: 2, label: "2d", bucket: "fresh", isStale: false },
+    { name: "3 days → 3-7 days", days: 3, label: "3d", bucket: "aging", isStale: false },
+    { name: "7 days → still 3-7 days, not stale", days: 7, label: "7d", bucket: "aging", isStale: false },
+    { name: "8 days → over 7 days and stale", days: 8, label: "8d", bucket: "stale", isStale: true },
+  ];
+  for (const row of rows) {
+    test(row.name, async () => {
+      const screen = await loadDocsScreen();
+      const age = (screen.getDocAgeCD as (iso: string, nowMs: number) => DocAge)(daysAgo(row.days), Date.now());
+      assert.deepEqual(plain(age), { days: row.days, label: row.label, bucket: row.bucket, isStale: row.isStale });
+    });
+  }
+});
+
+function pipelineRows() {
+  const base = { format: "md", audience: "exposed", author: "a", member_count: 1, folder_id: null };
+  return [
+    { ...base, id: 11, title: "Doc 11", doc_status: "doc_review", created_at: daysAgo(15) },
+    { ...base, id: 12, title: "Doc 12", doc_status: "doc_review", created_at: daysAgo(1) },
+    { ...base, id: 13, title: "Doc 13", doc_status: "implementing", created_at: daysAgo(4) },
+    { ...base, id: 14, title: "Doc 14", doc_status: "done", created_at: daysAgo(40) },
+  ];
+}
+
+test("the open summary counts only open documents: stage counts and age buckets each add up to the open total", async () => {
+  const screen = await loadDocsScreen();
+  const summary = (screen.getOpenSummaryCD as (rows: unknown[], nowMs: number) => OpenSummary)(pipelineRows(), Date.now());
+
+  assert.equal(summary.openCount, 3, "the done document is not open");
+  assert.deepEqual(plain(summary.stages.map((s) => [s.label, s.count])), [["Doc review", 2], ["Implementing", 1]]);
+  assert.equal(summary.stages.reduce((sum, s) => sum + s.count, 0), summary.openCount);
+  assert.deepEqual(plain(summary.buckets), { fresh: 1, aging: 1, stale: 1 });
+  assert.deepEqual(plain(summary.oldest), { id: 11, days: 15 }, "the oldest open document, never the older done one");
+  assert.equal((screen.getOpenHeadlineCD as (s: OpenSummary) => string)(summary),
+    "2 awaiting doc review · 1 implementing · oldest open 15 days (#11)");
+});
+
+describe("the sectioned list leads with a headline verdict and an open summary; search and a single-stage filter do not", () => {
+  const rows = [
+    { name: "open filter → headline and summary", filter: "open", isSearchMode: false, shown: true },
+    { name: "all filter, every row loaded → headline and summary over the open rows", filter: "", isSearchMode: false, shown: true },
+    { name: "done filter → neither, nothing there is open", filter: "done", isSearchMode: false, shown: false },
+    { name: "search → neither, hits are not the pipeline", filter: "open", isSearchMode: true, shown: false },
+  ];
+  for (const row of rows) {
+    test(row.name, async () => {
+      const screen = await loadDocsScreen();
+      const props = listCardProps(() => undefined);
+      props.rows = pipelineRows();
+      props.isSearchMode = row.isSearchMode;
+      (props.inlineFilterProps as Record<string, unknown>).docStatusFilter = row.filter;
+      const tree = renderScreen((screen.DocListCardCD as Component)(props));
+
+      const verdicts = findNodes(tree, (n) => n.props.atom === "PageVerdict");
+      assert.equal(verdicts.length, row.shown ? 1 : 0);
+      assert.equal(findNodes(tree, (n) => String(n.props.className ?? "").split(" ").includes("doc-open-summary")).length, row.shown ? 1 : 0);
+      if (row.shown) {
+        assert.equal(verdicts[0].props.tone, "warn", "an open document past seven days needs attention");
+        assert.match(collectText(verdicts[0]), /2 awaiting doc review · 1 implementing · oldest open 15 days \(#11\)/);
+      }
+    });
+  }
+});
+
+describe("with more pages to load, the headline says it covers the loaded rows and names the open total the chip shows", () => {
+  const rows = [
+    { name: "all filter, open total known → loaded share of the open total", filter: "", groupCounts: { open: 20, done: 576, total: 596 }, lead: /^Loaded rows only — 3 of 20 open: / },
+    { name: "open filter, open total known → loaded share of the open total", filter: "open", groupCounts: { open: 20, done: 576, total: 596 }, lead: /^Loaded rows only — 3 of 20 open: / },
+    { name: "open total unknown → loaded-rows note without a total", filter: "", groupCounts: null, lead: /^Loaded rows only: / },
+  ];
+  for (const row of rows) {
+    test(row.name, async () => {
+      const screen = await loadDocsScreen();
+      const props = listCardProps(() => undefined);
+      props.rows = pipelineRows();
+      props.canLoadMore = true;
+      props.groupCounts = row.groupCounts;
+      (props.inlineFilterProps as Record<string, unknown>).docStatusFilter = row.filter;
+      const tree = renderScreen((screen.DocListCardCD as Component)(props));
+
+      const text = collectText(findNodes(tree, (n) => n.props.atom === "PageVerdict")[0]);
+      assert.match(text, row.lead);
+      assert.match(text, /2 awaiting doc review · 1 implementing · oldest open 15 days \(#11\)$/);
+    });
+  }
+});
+
+test("the ledger table scrolls inside its own column, so the open-summary rail beside it never covers a column", async () => {
+  const screen = await loadDocsScreen();
+  const props = listCardProps(() => undefined);
+  props.rows = pipelineRows();
+  const tree = renderScreen((screen.DocListCardCD as Component)(props));
+
+  const tableColumn = findNodes(tree, (n) => n.type === "div" && findNodes(n, (c) => c.type === "table").length > 0
+    && String(n.props.className ?? "").split(" ").includes("flex-1"));
+  assert.equal(tableColumn.length, 1);
+  const classes = String(tableColumn[0].props.className).split(" ");
+  assert.ok(classes.includes("min-w-0") && classes.includes("overflow-x-auto"), `table column classes: ${classes.join(" ")}`);
+});
+
+test("the summary's oldest-open link opens that document", async () => {
+  const screen = await loadDocsScreen();
+  const opened: number[] = [];
+  const props = listCardProps((id) => opened.push(id));
+  props.rows = pipelineRows();
+  const tree = renderScreen((screen.DocListCardCD as Component)(props));
+
+  const links = findNodes(tree, (n) => n.type === "button" && String(n.props.className ?? "").includes("doc-open-oldest"));
+  assert.equal(links.length, 1);
+  assert.match(collectText(links[0]), /#11/);
+  (links[0].props.onClick as () => void)();
+  assert.deepEqual(opened, [11]);
+});
+
+test("Created shows relative age with the date in a tooltip, and only an open row past seven days is tinted with a text label", async () => {
+  const screen = await loadDocsScreen();
+  const props = listCardProps(() => undefined);
+  props.rows = pipelineRows();
+  (props.inlineFilterProps as Record<string, unknown>).docStatusFilter = "";
+  const tree = renderScreen((screen.DocListCardCD as Component)(props));
+
+  const docRows = findNodes(tree, (n) => n.type === "tr" && String(n.props.className).includes("doc-row"));
+  const stale = docRows.filter((tr) => String(tr.props.className).includes("is-stale")).map((tr) => tr.props["aria-label"]);
+  assert.deepEqual(stale, ["Doc 11"], "the 40-day done row is not stale");
+
+  const ageCells = findNodes(tree, (n) => n.type === "td" && String(n.props.className ?? "").includes("doc-age-cell"));
+  assert.equal(ageCells.length, 4);
+  const staleCell = ageCells.find((td) => /15d/.test(collectText(td)));
+  assert.ok(staleCell, "age is the primary value");
+  assert.match(String(staleCell.props.title), /^Created date\(/);
+  assert.match(collectText(staleCell), /stale/i, "stale is said in words, not colour alone");
+  assert.equal(ageCells.filter((td) => /stale/i.test(collectText(td))).length, 1);
+});
+
+test("the Status column narrows to the meter inside stage sections and keeps room for the stage name in a flat list", async () => {
+  const screen = await loadDocsScreen();
+  const statusWidth = (overrides: Record<string, unknown>) => {
+    const tree = renderListCard(screen, overrides);
+    const th = findNodes(tree, (n) => n.type === "th" && collectText(n) === "Status")[0];
+    return (th.props.style as { width: number }).width;
+  };
+  const sectioned = statusWidth({});
+  const flat = statusWidth({ isSearchMode: true });
+  assert.ok(sectioned < flat, `sectioned ${sectioned} < flat ${flat}`);
 });

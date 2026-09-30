@@ -4,7 +4,7 @@
 //
 // Runner: npx tsx --test test/agents.screen-render.client.test.ts
 
-import test from "node:test";
+import test, { describe } from "node:test";
 import assert from "node:assert/strict";
 import { fileURLToPath } from "node:url";
 import { dirname, resolve } from "node:path";
@@ -36,8 +36,13 @@ const UI_SCALARS: Record<string, unknown> = {
 
 // Region-state members come from the shipped ui.jsx so the page is exercised against the real contract.
 const REAL_UI = (await loadScreenModule(resolve(__dirname, "../public/src/ui.jsx"))).UI as Record<string, unknown>;
-const REGION_MEMBERS = ["INITIAL_REGION_STATE", "getRegionSummary", "getSharedFailure", "putRegionRequest", "putRegionData", "putRegionFailure", "getRowFocusProps", "ROW_CONTROL_PROPS"];
+const REGION_MEMBERS = ["INITIAL_REGION_STATE", "getRegionView", "getRegionSummary", "getSharedFailure", "putRegionRequest", "putRegionData", "putRegionFailure", "getRowFocusProps", "ROW_CONTROL_PROPS"];
 for (const name of REGION_MEMBERS) UI_SCALARS[name] = REAL_UI[name];
+// Count text rides the shipped formatter, so a KPI sub reads as it does on the page.
+UI_SCALARS.formatInt = REAL_UI.formatInt;
+// The page verdict rolls tones up and names agents with the shipped helpers.
+UI_SCALARS.getWorstTone = REAL_UI.getWorstTone;
+UI_SCALARS.getAgentDisplayName = REAL_UI.getAgentDisplayName;
 
 function uiStub(overrides: Record<string, unknown> = {}): unknown {
   const scalars = { ...UI_SCALARS, ...overrides };
@@ -96,7 +101,7 @@ test("the drawer's latency row renders its bars for every paired percentile it i
     { agent_id: "solo", agent_name: "solo", p50_ms: 10, p95_ms: 10, p99_ms: 10 },
   ]) {
     const tree = renderScreen(
-      React.createElement(AgentLatencyRow, { latency, state: { status: "ready" }, onRetry: () => undefined }),
+      React.createElement(AgentLatencyRow, { latency, state: { status: "ready", data: { rows: [] } }, onRetry: () => undefined }),
     );
     const bars = findNodes(
       tree,
@@ -140,23 +145,18 @@ function pressRowKey(row: RenderedNode, key: string, from: "row" | "control"): b
   return prevented;
 }
 
-test("the ledger is one Tab stop, with each row's Expand control off the Tab order", async () => {
+test("the ledger is one Tab stop", async () => {
   const tree = renderLedger(await loadAgentsScreen());
   const rows = getRovingRows(tree);
 
   assert.deepEqual(rows.map((r) => r.props.tabIndex), [0, -1, -1]);
   assert.ok(rows.every((r) => r.props.role === undefined), "rows keep table-row semantics");
-  const expands = findNodes(tree, (n) => n.type === "button" && String(n.props["aria-label"] ?? "").includes("counts for"));
-  assert.equal(expands.length, LEDGER_AGENTS.length);
-  assert.ok(expands.every((b) => b.props.tabIndex === -1 && "data-row-control" in b.props), "Expand is an in-row control");
 });
 
-test("Enter on a ledger row opens its drawer, while Enter on its Expand control stays with the control", async () => {
+test("Enter on a ledger row opens its drawer", async () => {
   const selected: string[] = [];
   const [row] = getRovingRows(renderLedger(await loadAgentsScreen(), (id) => selected.push(id)));
 
-  assert.equal(pressRowKey(row, "Enter", "control"), false, "the control's native Enter is not cancelled");
-  assert.deepEqual(selected, [], "Enter on the control does not open the drawer");
   assert.equal(pressRowKey(row, "Enter", "row"), true);
   assert.deepEqual(selected, ["glass-atrium-dev-react"]);
 });
@@ -260,6 +260,13 @@ async function renderComponent(name: string, props: Record<string, unknown>): Pr
   return renderScreen(React.createElement(mod[name] as Component, props));
 }
 
+// The band renders the tile list the page builds once, so a test builds it the same way.
+async function renderStatusBand({ onRetry, ...sources }: Record<string, unknown>): Promise<RenderedNode | string | null> {
+  const mod = await loadAgentsScreen();
+  const buildTiles = mod.buildAgentStatusTiles as (s: Record<string, unknown>) => unknown[];
+  return renderComponent("AgentStatusBand", { tiles: buildTiles(sources), onRetry });
+}
+
 test("the alarm lane renders loading, error, unavailable and a loaded zero distinctly", async () => {
   const onRetry = () => undefined;
   const loading = await renderComponent("AgentAlarmLane", { state: LOADING_STATE, onRetry });
@@ -275,6 +282,30 @@ test("the alarm lane renders loading, error, unavailable and a loaded zero disti
   assert.equal(collectText(loadedZero), "", "a clear fleet renders no alarm lane");
 });
 
+test("a Retry on a cold failure keeps the error card busy and hands focus to a card that outlives recovery", async () => {
+  const putRegionRequest = REAL_UI.putRegionRequest as (state: unknown, key: string, request: unknown) => Record<string, unknown>;
+  const retrying = putRegionRequest(ERROR_STATE, "k", new AbortController());
+  const ready = { status: "ready", data: [], error: null };
+  const lane = await renderComponent("AgentAlarmLane", { state: retrying, onRetry: () => undefined });
+  const band = await renderStatusBand({
+    summaryState: retrying, failureState: ready, overageState: ready,
+    failureByAgent: new Map(), overageByAgent: new Map(), onRetry: () => undefined,
+  });
+
+  const [laneCard] = findAtoms(lane, "RegionUnavailable");
+  assert.equal(laneCard?.props.isBusy, true, "the lane keeps its error card, marked busy, while the Retry runs");
+  assert.equal(laneCard?.props.focusTargetId, "agents-status", "an emptied lane hands focus to the status band");
+  assert.equal(findNodes(band, (n) => n.props.id === "agents-status").length, 1, "the band carries the lane's focus target");
+
+  const tileCards = findAtoms(band, "RegionUnavailable");
+  assert.ok(tileCards.length > 0, "the summary-backed tiles keep their error cards through the Retry");
+  for (const card of tileCards) {
+    assert.equal(card.props.isBusy, true);
+    const targets = findNodes(band, (n) => n.type === "div" && n.props.id === card.props.focusTargetId);
+    assert.equal(targets.length, 1, `tile focus target ${String(card.props.focusTargetId)} is the tile's own card`);
+  }
+});
+
 test("the unsafe-to-route tile shows a count only when the breaker state actually loaded", async () => {
   const ready = { status: "ready", data: [], error: null };
   const bandProps = {
@@ -285,10 +316,10 @@ test("the unsafe-to-route tile shows a count only when the breaker state actuall
     onRetry: () => undefined,
   };
   const getUnsafeTile = async (summaryState: unknown) => {
-    const tree = await renderComponent("AgentStatusBand", { ...bandProps, summaryState });
+    const tree = await renderStatusBand({ ...bandProps, summaryState });
     // Pre-order → the first div holding only this tile's text is the tile's own card.
     return findNodes(tree, (n) => n.type === "div" && collectText(n).startsWith("Unsafe to route")
-      && !collectText(n).includes("Failed or blocked"))[0] ?? null;
+      && !collectText(n).includes("Failed"))[0] ?? null;
   };
 
   const loadedZero = await getUnsafeTile(getSummaryState(BREAKER_LOADED_ZERO));
@@ -482,7 +513,7 @@ test("a failing pair drills to Task results filtered by its agent, task type and
 
 test("every status-band tile names the window its count covers", async () => {
   const ready = { status: "ready", data: [], error: null };
-  const tree = await renderComponent("AgentStatusBand", {
+  const tree = await renderStatusBand({
     days: 14,
     summaryState: getSummaryState(BREAKER_LOADED_ZERO),
     failureState: ready,
@@ -491,7 +522,7 @@ test("every status-band tile names the window its count covers", async () => {
     overageByAgent: new Map(),
     onRetry: () => undefined,
   });
-  const labels = ["Unsafe to route", "Failed or blocked", "Over tool-use cap", "Needs context"];
+  const labels = ["Unsafe to route", "Failed", "Over tool-use cap", "Needs context"];
   const tiles = labels.map((label) => findNodes(tree, (n) => n.type === "div" && collectText(n).startsWith(label))
     .filter((n) => labels.every((other) => other === label || !collectText(n).includes(other)))[0]);
   assert.match(collectText(tiles[0]), /\bnow\b/, "breaker state is current, not windowed");
@@ -544,7 +575,7 @@ function renderSortedBody(mod: Record<string, unknown>, failureStatus: string): 
     { agent_id: "glass-atrium-dev-busy", agent_name: "busy", status: "active", runs: 90 },
     { agent_id: "glass-atrium-dev-risky", agent_name: "risky", status: "active", runs: 10 },
   ];
-  const failureByAgent = new Map([["glass-atrium-dev-risky", { total_breakages: 7, breakage_rate: 0.7 }]]);
+  const failureByAgent = new Map([["glass-atrium-dev-risky", { total_breakages: 7, fail_count: 7, blocked_count: 0, breakage_rate: 0.7 }]]);
   const tree = renderScreen(
     React.createElement(mod.AgentSummaryBody as Component, {
       state: { status: "ready", data: { agents }, error: null },
@@ -690,7 +721,7 @@ test("a P95 numeral is coloured only past the crit cut, and the glyph keeps ever
   }
 });
 
-test("a failing pair keeps its failure tint at any sample, and a small sample says so in words instead of grey italics", async () => {
+test("a failing pair keeps its failure tint at any sample, and a small sample carries the shared low-sample mark instead of grey italics", async () => {
   const mod = await loadAgentsScreen();
   const React = mod.React as { createElement: (t: unknown, p: unknown) => unknown };
   const rows = [
@@ -706,7 +737,8 @@ test("a failing pair keeps its failure tint at any sample, and a small sample sa
     const style = (rateCell?.props.style as Record<string, unknown> | undefined) ?? {};
     assert.ok(String(style.color ?? "").includes("--crit"), `${row.name}: rate text keeps the failure tint`);
     assert.notEqual(style.fontStyle, "italic", `${row.name}: no unexplained italics`);
-    assert.equal(/low sample/.test(collectText(rateCell)), row.isLowSample, `${row.name}: low-sample tag`);
+    const mark = findNodes(rateCell, (n) => n.props?.atom === "LowSampleMark")[0];
+    assert.equal(mark?.props.n, row.isLowSample ? row.rateDenominator : undefined, `${row.name}: shared low-sample mark`);
     const bar = findNodes(rateCell, (n) => n.props?.atom === "Bar")[0];
     assert.equal(bar?.props.tone, row.isLowSample ? "neutral" : "crit", `${row.name}: bar tint`);
   }
@@ -802,20 +834,138 @@ test("the Agents page never renders text below the 12px meta step", async () => 
   }
 });
 
-test("a disclosure is a page h2 whose control is the shared chevron button, never a text glyph", async () => {
-  const tree = await renderComponent("AgentDisclosure", { title: "Instrumentation", sub: "Is the measuring apparatus intact" });
-  const heading = findNodes(tree, (n) => n.type === "h2")[0];
-  assert.ok(heading, "the disclosure title is an h2");
-  const button = findAtoms(heading, "DisclosureButton")[0];
-  assert.equal(button?.props.isOpen, false, "closed by default");
-  assert.doesNotMatch(collectText(tree), /[▸▾]/);
+function getMatrixRow(agent: string, success: number, failure: number): Record<string, unknown> {
+  const total = success + failure;
+  return { agent, task_type: "feature", event_date: "2026-01-01", total_count: total, success_count: success, failure_count: failure, success_rate: success / total };
+}
+
+const TASK_TYPE_FOLD_ROWS = [
+  { name: "a crit pair opens the fold", rows: [getMatrixRow("a", 19, 1), getMatrixRow("b", 40, 0)], tone: "crit", isOpen: true },
+  { name: "every pair under the step keeps it closed", rows: [getMatrixRow("a", 39, 1), getMatrixRow("b", 40, 0)], tone: "ok", isOpen: false },
+  { name: "a failing small sample stays under the low-N floor and keeps it closed", rows: [getMatrixRow("a", 2, 1)], tone: "ok", isOpen: false },
+];
+
+describe("the By task type fold takes its tone from its worst pair", () => {
+  for (const row of TASK_TYPE_FOLD_ROWS) {
+    test(row.name, async () => {
+      const tree = await renderComponent("TaskTypeFold", { state: { status: "ready", data: { rows: row.rows }, error: null }, days: 30, onRetry: () => undefined });
+      const [fold] = findAtoms(tree, "Disclosure");
+      assert.ok(fold, "the fold is the shared Disclosure");
+      assert.equal(fold.props.title, "By task type");
+      assert.equal(fold.props.tone, row.tone);
+      const getDisclosureOpen = REAL_UI.getDisclosureOpen as (kind: string, tone: unknown) => boolean;
+      assert.equal(getDisclosureOpen(String(fold.props.kind ?? "detail"), fold.props.tone), row.isOpen);
+    });
+  }
+
+  test("an unread matrix gives the fold no tone", async () => {
+    const tree = await renderComponent("TaskTypeFold", { state: LOADING_STATE, days: 30, onRetry: () => undefined });
+    const [fold] = findAtoms(tree, "Disclosure");
+    assert.ok(fold, "the fold renders while the matrix loads");
+    assert.equal(fold.props.tone, undefined);
+  });
 });
 
-test("the ledger's row expand uses the shared chevron, never a text glyph", async () => {
+test("the matrix grows with the page instead of a nested vertical scroller that clips a row", async () => {
+  const tree = await renderComponent("SuccessRateMatrixCard", { state: { status: "ready", data: { rows: [getMatrixRow("a", 9, 1)] }, error: null }, days: 30, onRetry: () => undefined });
+  const classOf = (n: RenderedNode) => String(n.props.className ?? "");
+  const [body] = findNodes(tree, (n) => /\bcard-body\b/.test(classOf(n)));
+  assert.equal((body.props.style as Record<string, unknown>)?.maxHeight, "none", "no card-body height cap on the matrix");
+  const verticalScrollers = findNodes(tree, (n) => /\boverflow-(auto|y-auto|hidden)\b/.test(classOf(n)) || /\bag-card-body\b/.test(classOf(n)));
+  assert.deepEqual(verticalScrollers.map(classOf), [], "nothing inside the matrix scrolls or clips vertically");
+  assert.ok(findNodes(tree, (n) => /\boverflow-x-auto\b/.test(classOf(n))).length === 1, "wide columns scroll sideways inside the card");
+});
+
+test("the ledger carries Runs and No record as columns instead of a per-row expander", async () => {
+  const mod = await loadAgentsScreen({ formatInt: REAL_UI.formatInt });
+  const React = mod.React as { createElement: (t: unknown, p: unknown) => unknown };
+  const rows = [
+    { name: "launches past runs leave that many without a record", invocations: 50, noRecord: "10" },
+    { name: "unmeasured launches read as a dash", invocations: null, noRecord: "—" },
+    { name: "fewer launches than runs never go negative", invocations: 30, noRecord: "0" },
+  ];
+  const agents = rows.map((row, i) => ({ ...LEDGER_AGENTS[0], agent_id: `glass-atrium-dev-${i}`, runs: 40, invocations: row.invocations }));
+  const tree = renderScreen(
+    React.createElement(mod.AgentSummaryTable as Component, {
+      agents, pseudoAgents: [], days: 30, selectedAgent: null, onSelect: () => {},
+      trendByAgent: null, failureByAgent: null, overageByAgent: null, failureStatus: "ready", trendStatus: "ready",
+    }),
+  );
+  const headers = findAtoms(tree, "TableHead").map((n) => collectText(n));
+  assert.ok(headers.includes("Runs") && headers.includes("No record"), `ledger headers: ${headers.join(" | ")}`);
+  assert.equal(findAtoms(tree, "DisclosureChevron").length, 0, "no per-row expander");
+  const cells = findNodes(tree, (n) => n.type === "td" && /^no completion record/.test(String(n.props?.title ?? "")));
+  rows.forEach((row, i) => assert.equal(collectText(cells[i]), row.noRecord, row.name));
+});
+
+test("a ledger row leads with its failed count and keeps blocked as an untoned secondary", async () => {
+  const mod = await loadAgentsScreen({ formatInt: REAL_UI.formatInt });
+  // 1 fail + 29 blocked of 100 outcomes: a 30% breakage rate, but a 1% failed share.
+  const failure = { total_breakages: 30, fail_count: 1, blocked_count: 29, breakage_rate: 0.3 };
+  const cell = findCellByTitle(renderToneRow(mod, {}, failure), /^breakages/);
+  const text = collectText(cell);
+  assert.match(text, /^1/, "the failed count leads");
+  assert.match(text, /29\s+blocked/, "blocked rides as the secondary");
+  const tonedClasses = findNodes(cell, (n) => TONED_CLASS.test(String(n.props?.className ?? "")));
+  assert.equal(tonedClasses.length, 0, "compliant halts do not raise the failure tone");
+});
+
+test("the status band counts failed agents in red and carries blocked-only agents as a neutral note", async () => {
+  const ready = { status: "ready", data: [], error: null };
+  const rows = [
+    { name: "a failing agent turns the tile red", fails: [1, 0], value: 1, tone: "crit" },
+    { name: "blocked-only agents keep the tile calm", fails: [0, 0], value: 0, tone: "ok" },
+  ];
+  for (const row of rows) {
+    const failureByAgent = new Map(row.fails.map((fail, i) => [`glass-atrium-dev-${i}`, { fail_count: fail, blocked_count: 5, total_breakages: fail + 5, breakage_rate: 0.1 }]));
+    const tree = await renderStatusBand({
+      days: 14, summaryState: getSummaryState(BREAKER_LOADED_ZERO), failureState: ready, overageState: ready,
+      failureByAgent, overageByAgent: new Map(), onRetry: () => undefined,
+    });
+    const tile = findNodes(tree, (n) => n.type === "div" && collectText(n).startsWith("Failed") && !collectText(n).includes("Unsafe"))[0];
+    const value = findAtoms(tile, "KpiValue")[0];
+    assert.equal(value?.props.tone, row.tone, `${row.name}: tone`);
+    assert.equal(collectText(value), String(row.value), `${row.name}: value`);
+    assert.match(collectText(tile), /2 blocked/, `${row.name}: blocked agents named`);
+  }
+});
+
+test("the failures sort puts agents with failures before compliant halts, then the higher failure rate", async () => {
   const mod = await loadAgentsScreen();
-  const tree = renderLedger(mod);
-  assert.equal(findAtoms(tree, "DisclosureChevron").length, LEDGER_AGENTS.length);
-  assert.doesNotMatch(collectText(tree), /[▸▾]/);
+  const sort = mod.sortAgentSummary as (a: unknown[], by: string, m: Map<string, unknown>) => Array<{ agent_id: string }>;
+  const failureByAgent = new Map([
+    ["shell", { fail_count: 1, blocked_count: 29, total_breakages: 30, breakage_rate: 0.3 }],
+    ["designer", { fail_count: 3, blocked_count: 0, total_breakages: 3, breakage_rate: 0.053 }],
+    ["rare", { fail_count: 1, blocked_count: 0, total_breakages: 1, breakage_rate: 0.5 }],
+  ]);
+  const agents = ["shell", "designer", "rare", "clean"].map((agent_id) => ({ agent_id, agent_name: agent_id, runs: 10 }));
+  assert.deepEqual(sort(agents, "failures", failureByAgent).map((a) => a.agent_id), ["designer", "rare", "shell", "clean"]);
+});
+
+test("Instrumentation is an open status fold whose head states the verdict, and the failing pairs sit beside the no-record list", async () => {
+  const tree = await renderScreenAgents();
+  const fold = findAtoms(tree, "Disclosure").find((n) => n.props.title === "Instrumentation");
+  assert.equal(fold?.props.kind, "status");
+  const split = findAtoms(tree, "SplitRow")[0];
+  assert.equal(split?.props.ratio, "1:1");
+  for (const card of ["TopNFailingAgentsCard", "LifecycleStatsCard"]) {
+    assert.equal(findNodes(split, (n) => n.type === card).length, 1, `${card} inside the split`);
+  }
+});
+
+test("the instrumentation verdict names only what has loaded, and warns on unfinished runs", async () => {
+  const mod = await loadAgentsScreen({ formatInt: REAL_UI.formatInt });
+  const verdict = mod.getInstrumentationVerdict as (l: unknown, r: unknown) => { tone: string; sub: string };
+  const lifecycle = (start: number, done: number) => ({ status: "ready", data: { rows: [{ agent_type: "a", start_count: start, completed_count: done }] } });
+  const review = { status: "ready", data: { rows: [{ review_flagged_count: 14, total_count: 100 }] } };
+  const loading = { status: "loading" };
+  const rows = [
+    { name: "unfinished runs warn", l: lifecycle(20, 8), r: review, tone: "warn", sub: "12 runs with no completion record · 14.0% flagged" },
+    { name: "every run finished", l: lifecycle(8, 8), r: review, tone: "ok", sub: "0 runs with no completion record · 14.0% flagged" },
+    { name: "only review flags read", l: loading, r: review, tone: "neutral", sub: "14.0% flagged" },
+    { name: "nothing read yet", l: loading, r: loading, tone: "neutral", sub: "Is the measuring apparatus intact" },
+  ];
+  for (const row of rows) assert.deepEqual({ ...verdict(row.l, row.r) }, { tone: row.tone, sub: row.sub }, row.name);
 });
 
 test("every ledger and pairs column header comes from the shared header atom", async () => {
@@ -855,9 +1005,9 @@ test("drawer section titles are h2 headings under the dialog's own name", async 
   assert.equal(findAtoms(tree, "SubCard")[0]?.props.labelLevel, 2);
 });
 
-test("the drawer is named by the agent alone, never by the glyphs and pills beside its title", async () => {
+test("the drawer's name reads its parts apart and never repeats the surface's own title id", async () => {
   const idle = { status: "idle", data: null, error: null };
-  const agent = { agent_id: "glass-atrium-dev-shell", agent_name: "dev-shell", status: "active", origin: "system" };
+  const agent = { agent_id: "glass-atrium-dev-shell", agent_name: "glass-atrium-dev-shell", status: "active", origin: "system" };
   const tree = await renderComponent("AgentDetailDrawer", {
     drawerAgent: agent.agent_id, sortedAgents: [agent], summaryState: { status: "ready", data: { agents: [agent] }, error: null },
     revisionState: idle, reviewByAgentState: idle, latencyState: idle, successState: idle, failureState: idle, lifecycleState: idle,
@@ -865,11 +1015,14 @@ test("the drawer is named by the agent alone, never by the glyphs and pills besi
     onClose: () => undefined, onNav: () => undefined, onRetry: () => undefined, onDeleted: () => undefined,
   });
   const surface = findAtoms(tree, "DetailSurface")[0];
-  const labelledBy = surface?.props.labelledBy;
-  assert.ok(labelledBy, "the surface points at a name node");
-  // The surface atom is a stub, so its title element is rendered on its own.
-  const nameNode = findNodes(renderScreen(surface.props.title), (n) => n.props?.id === labelledBy)[0];
-  assert.equal(collectText(nameNode), "dev-shell");
+  // DetailSurface names the dialog by the node wrapping the whole title, so every part of it is read out.
+  const title = renderScreen(surface.props.title);
+  const labelledBy = surface.props.labelledBy;
+  assert.deepEqual(labelledBy === undefined ? [] : findNodes(title, (n) => n.props?.id === labelledBy), [], "no second node carries the dialog's name id");
+  const [name] = findAtoms(title, "AgentName");
+  assert.equal(name?.props.name, "glass-atrium-dev-shell", "the name part is the shared agent name");
+  const separators = findNodes(title, (n) => n.props?.className === "sr-only" && collectText(n).trim() === ",");
+  assert.equal(separators.length, 2, "name, activity and health are read as three parts");
 });
 
 test("the review-flag total sits under a card title in every state, never as a heading-less tile", async () => {
@@ -951,4 +1104,300 @@ test("a drawer metric sits flat on its section rather than as a card inside a ca
   const root = tree as RenderedNode;
   assert.doesNotMatch(String(root.props.className), /ring-|bg-sunken|rounded/);
   assert.equal(collectText(root), "Runs 12");
+});
+
+function getBandTile(tree: RenderedNode | string | null, label: string): RenderedNode | null {
+  const labels = ["Unsafe to route", "Failed", "Over tool-use cap", "Needs context"];
+  return findNodes(tree, (n) => n.type === "div" && collectText(n).startsWith(label))
+    .filter((n) => labels.every((other) => other === label || !collectText(n).includes(other)))[0] ?? null;
+}
+
+test("the over-cap and needs-context tiles state their rate over runs, and the tone follows the rate rather than presence", async () => {
+  const ready = { status: "ready", data: [], error: null };
+  const agents = [{ agent_id: "a", runs: 600, needs_context_count: 2 }, { agent_id: "b", runs: 400, needs_context_count: 1 }];
+  const rows = [
+    { name: "none crossed", overCap: 0, tone: "ok", ratePct: "0.0" },
+    { name: "3 of 1,000 stays under the 5% step", overCap: 3, tone: null, ratePct: "0.3" },
+    { name: "60 of 1,000 crosses the 5% step", overCap: 60, tone: "warn", ratePct: "6.0" },
+  ];
+  for (const row of rows) {
+    const overageByAgent = new Map(Array.from({ length: row.overCap }, (_, i) => [`run-${i}`, { overage_count: 1 }]));
+    const tree = await renderStatusBand({
+      days: 14, summaryState: getSummaryState(null, agents), failureState: ready, overageState: ready,
+      failureByAgent: new Map(), overageByAgent, onRetry: () => undefined,
+    });
+    const overCap = getBandTile(tree, "Over tool-use cap");
+    assert.equal(findAtoms(overCap, "KpiValue")[0]?.props.tone ?? null, row.tone, `${row.name}: tone`);
+    assert.equal(collectText(overCap).match(/([\d.]+)% of 1,?000 runs/)?.[1] ?? null, row.ratePct, `${row.name}: rate`);
+    const needsContext = getBandTile(tree, "Needs context");
+    assert.match(collectText(needsContext), /0\.3% of 1,?000 runs/, "needs context states its rate over the same runs");
+    assert.equal(findAtoms(needsContext, "KpiValue")[0]?.props.tone ?? null, null, "3 of 1,000 needs-context outcomes stay untoned");
+  }
+});
+
+test("the P95 warn cut follows the fleet's upper quartile, so warn stays rare while the 10-minute floor holds", async () => {
+  const mod = await loadAgentsScreen();
+  const getP95WarnSec = mod.getP95WarnSecAg as (agents: unknown[]) => number;
+  const toAgents = (secs: number[]) => secs.map((s, i) => ({ agent_id: `a${i}`, agent_name: `a${i}`, status: "active", runs: 40, success_pct: 100, p95_ms: s * 1000 }));
+  const rows = [
+    { name: "a slow fleet raises the cut to its p75", secs: [300, 700, 800, 900, 1000, 1100, 1150, 1190], cut: 1100 },
+    { name: "a fast fleet keeps the 10-minute floor", secs: [60, 120, 180, 240, 300], cut: 600 },
+    { name: "fewer than four measured agents keep the floor", secs: [900, 1000, 1100], cut: 600 },
+  ];
+  for (const row of rows) {
+    const cut = getP95WarnSec([...toAgents(row.secs), { agent_id: "unmeasured", p95_ms: null }]);
+    assert.equal(cut, row.cut, row.name);
+  }
+});
+
+test("every ledger row reads the fleet P95 cut, and only a p95 above it takes the warn glyph", async () => {
+  const mod = await loadAgentsScreen();
+  const slowFleetSecs = [300, 700, 800, 900, 1000, 1100, 1150, 1190];
+  const agents = slowFleetSecs.map((s, i) => ({ agent_id: `a${i}`, agent_name: `a${i}`, status: "active", runs: 40, success_pct: 100, p95_ms: s * 1000 }));
+  const React = mod.React as { createElement: (t: unknown, p: unknown) => unknown };
+  const table = renderScreen(React.createElement(mod.AgentSummaryTable as Component, {
+    agents, pseudoAgents: [], days: 30, selectedAgent: null, onSelect: () => {},
+  }));
+  const cuts = findNodes(table, (n) => n.type === "AgentSummaryRow").map((n) => n.props.p95WarnSec);
+  assert.deepEqual(Array.from(new Set(cuts)), [1100], "every ledger row reads the fleet cut");
+  const glyphOf = (sec: number) => {
+    const row = findNodes(table, (n) => n.type === "AgentSummaryRow" && (n.props.agent as { p95_ms: number }).p95_ms === sec * 1000)[0];
+    const cell = findCellByTitle(row, /^p95 latency tier/);
+    return findNodes(cell, (n) => n.type === "span" && n.props?.["aria-hidden"] === "true")[0]?.props.className;
+  };
+  assert.equal(glyphOf(1000), "text-ok", "under the fleet cut reads fast");
+  assert.equal(glyphOf(1150), "text-dim", "above the fleet cut takes the warn glyph");
+});
+
+test("the success bar reads a 90-100% window with the 95% target at its midpoint", async () => {
+  const mod = await loadAgentsScreen();
+  const rows = [
+    { name: "a perfect rate fills the bar", pct: 100, value: 1 },
+    { name: "97% sits past the target", pct: 97, value: 0.7 },
+    { name: "95% sits on the target", pct: 95, value: 0.5 },
+    { name: "a rate under the window floor empties the bar", pct: 80, value: 0 },
+  ];
+  for (const row of rows) {
+    const cell = findCellByTitle(renderToneRow(mod, { success_pct: row.pct, runs: 100, needs_context_count: 0 }, null), /^passed/);
+    const bar = findAtoms(cell, "BulletBar")[0];
+    assert.ok(Math.abs(Number(bar?.props.value) - row.value) < 1e-9, `${row.name}: ${bar?.props.value}`);
+    assert.equal(bar?.props.target, 0.5, `${row.name}: target tick`);
+    assert.match(String(bar?.props.ariaLabel), new RegExp(`success rate ${row.pct}\\.0%`), `${row.name}: label keeps the true rate`);
+  }
+});
+
+test("the failing-pairs limit keeps a solid signal over a worse small sample while the total still counts both", async () => {
+  const mod = await loadAgentsScreen();
+  const buildTopNFailing = mod.buildTopNFailing as (rows: unknown[], t: number, l: number) => { failingPairs: Array<{ task_type: string }>; failingTotal: number; measuredPairs: number };
+  const day = (task_type: string, success: number, failure: number) => ({ agent: "glass-atrium-dev-node", task_type, event_date: "2026-09-01", success_count: success, failure_count: failure, total_count: success + failure });
+  const rows = [day("tiny", 0, 3), day("solid", 5, 5), day("healthy", 20, 0)];
+  const out = buildTopNFailing(rows, 0.95, 1);
+  assert.deepEqual(Array.from(out.failingPairs, (p) => p.task_type), ["solid"], "the limit keeps the solid signal over a worse small sample");
+  assert.equal(out.failingTotal, 2);
+});
+
+test("the failing-pairs subtitle counts the rows shown and claims a cap only when some are hidden", async () => {
+  const mod = await loadAgentsScreen();
+  const getSub = mod.getFailingPairsSub as (...a: unknown[]) => string;
+  const sub = getSub("ready", 7, 7, 40, 30);
+  assert.match(sub, /^7 of 40 pairs below 95%/);
+  assert.doesNotMatch(sub, /top \d/, "no cap is claimed when every failing pair is shown");
+  assert.match(getSub("ready", 8, 11, 40, 30), /showing 8 of 11/);
+});
+
+test("the failing-pairs table ranks solid pairs above a divider that names the low-sample group", async () => {
+  const mod = await loadAgentsScreen();
+  const React = mod.React as { createElement: (t: unknown, p: unknown) => unknown };
+  const pair = (task_type: string, successCount: number, rateDenominator: number) =>
+    ({ agent: "glass-atrium-dev-node", task_type, successCount, rateDenominator, pooledRate: successCount / rateDenominator, totalCount: rateDenominator });
+  const table = renderScreen(React.createElement(mod.TopNFailingAgentsTable as Component, {
+    pairs: [pair("low", 1, 3), pair("solid", 5, 10)], failureByAgent: new Map(), days: 14,
+  }));
+  const bodyRows = findNodes(table, (n) => n.type === "tr").slice(1).map((n) => collectText(n));
+  assert.equal(bodyRows.length, 3);
+  assert.match(bodyRows[0], /solid/);
+  assert.match(bodyRows[1], /low sample/i, "a divider names the low-sample group");
+  assert.match(bodyRows[2], /low/);
+});
+
+test("a drawer concern shows as a whole item clamped to two lines, with the full text on hover", async () => {
+  const idle = { status: "idle", data: null, error: null };
+  const concern = "hook exits 0 on empty history with no stderr, so the daemon cycle reads the gap as a pass";
+  const failureByAgent = new Map([["glass-atrium-dev-react", { total_breakages: 2, fail_count: 2, blocked_count: 0, reconstructed: 0, breakage_rate: 0.05 }]]);
+  const tree = await renderComponent("AgentReliabilityBreakages", {
+    drawerAgent: "glass-atrium-dev-react", failureByAgent, days: 30, onRetry: () => undefined, detailState: idle, blockedState: idle,
+    failureState: { status: "ready", data: { rows: [{ agent: "glass-atrium-dev-react", top_concerns: [concern] }] }, error: null },
+  });
+  const item = findNodes(tree, (n) => n.type === "div" && collectText(n) === concern && n.props?.title !== undefined)[0];
+  assert.equal(item?.props.title, concern, "the tooltip carries the whole item");
+  assert.equal((item?.props.style as Record<string, unknown> | undefined)?.WebkitLineClamp, 2, "clamped to two lines");
+});
+
+// Stub LOW_N_MIN = 5. revision bucket '0' → health 1 (ok) · avg 0.3 → health 0.64 (warn) · bucket '4+' → health 0.4 (crit).
+describe("the Agents page verdict rolls up the health rule and every status tile", () => {
+  const ready = (data: unknown) => ({ status: "ready", data, error: null });
+  const revision = (agent: string, buckets: Record<string, number>) =>
+    Object.entries(buckets).map(([revision_bucket, occurrence_count]) => ({ agent, revision_bucket, occurrence_count }));
+  const healthy = revision("a-healthy", { "0": 10 });
+  const watched = revision("a-watch", { "0": 7, "1": 3 });
+  const critical = revision("a-crit", { "4+": 10 });
+  const thin = revision("a-thin", { "4+": 2 });
+  const clearSources = {
+    days: 30,
+    summaryState: getSummaryState(BREAKER_LOADED_ZERO, [{ runs: 100, needs_context_count: 0 }]),
+    failureState: ready([]),
+    overageState: ready([]),
+    failureByAgent: new Map(),
+    overageByAgent: new Map(),
+  };
+  const renderVerdict = async (revisionRows: unknown[], sources: Record<string, unknown> = {}, reviewByAgentState: unknown = ready({ rows: [] })) => {
+    const mod = await loadAgentsScreen();
+    const buildTiles = mod.buildAgentStatusTiles as (s: Record<string, unknown>) => unknown[];
+    const tree = await renderComponent("AgentPageVerdict", {
+      revisionState: ready({ rows: revisionRows }), reviewByAgentState, statusTiles: buildTiles({ ...clearSources, ...sources }), days: 30,
+    });
+    return findNodes(tree, (n) => n.props?.atom === "PageVerdict")[0] ?? null;
+  };
+  const failedRun = new Map([["glass-atrium-dev-shell", { fail_count: 1, blocked_count: 0 }]]);
+  const rows = [
+    { name: "a crit agent makes the page crit and names it", revision: [...healthy, ...watched, ...critical], sources: {}, tone: "crit", text: /1 agent needs attention .*\(a-crit\).*1 agent to watch .*\(a-watch\)/ },
+    { name: "a watch-band agent alone makes the page warn under the Watch label", revision: [...healthy, ...watched], sources: {}, tone: "warn", text: /^Last 30d: 1 agent to watch/ },
+    { name: "a failed run makes the page crit though every agent's health is ok", revision: healthy, sources: { failureByAgent: failedRun }, tone: "crit", text: /1 agent with a failed run \(dev-shell\)/ },
+    { name: "a suspended agent makes the page crit though every agent's health is ok", revision: healthy, sources: { summaryState: getSummaryState({ ...BREAKER_LOADED_ZERO, suspended_count: 1 }) }, tone: "crit", text: /1 unsafe to route now/ },
+    {
+      name: "a current breaker clause leads and never sits under the window prefix",
+      revision: healthy,
+      sources: { summaryState: getSummaryState({ ...BREAKER_LOADED_ZERO, suspended_count: 1 }), failureByAgent: failedRun },
+      tone: "crit",
+      text: /^1 unsafe to route now · last 30d: 1 agent with a failed run/,
+    },
+    { name: "a clear fleet with every judged agent healthy is ok, the thin one left out", revision: [...healthy, ...thin], sources: {}, tone: "ok", text: /the 1 agent with enough runs .* is healthy/ },
+    { name: "no agent above the low-N floor claims no tone", revision: thin, sources: {}, tone: "neutral", text: /too few runs/ },
+    { name: "an unread status tile holds back the all-clear", revision: healthy, sources: { failureState: ERROR_STATE }, tone: "neutral", text: /couldn't check failed runs\.$/ },
+  ];
+  for (const row of rows) {
+    test(row.name, async () => {
+      const verdict = await renderVerdict(row.revision, row.sources);
+      assert.ok(verdict, "renders the shared PageVerdict atom");
+      assert.equal(verdict.props.tone, row.tone);
+      assert.match(collectText(verdict), row.text);
+    });
+  }
+
+  test("the warn verdict reads Watch, and a verdict tone never says zero agents need attention", async () => {
+    const verdict = await renderVerdict([...healthy, ...watched]);
+    assert.equal(verdict?.props.label, "Watch");
+    assert.doesNotMatch(collectText(verdict), /\b0 /);
+  });
+
+  test("an unread flag rate is unknown, never all-clear", async () => {
+    const verdict = await renderVerdict(healthy, {}, ERROR_STATE);
+    assert.equal(verdict?.props.tone, "neutral");
+    assert.match(collectText(verdict), /unknown/);
+  });
+
+  test("a pending read with nothing flagged renders no premature verdict", async () => {
+    const tree = await renderComponent("AgentPageVerdict", { revisionState: LOADING_STATE, reviewByAgentState: LOADING_STATE, statusTiles: [], days: 30 });
+    assert.equal(findNodes(tree, (n) => n.props?.atom === "PageVerdict").length, 0);
+  });
+});
+
+test("a warm error hands the verdict its failed region, so the page never reads Healthy over it", async () => {
+  const warmError = { status: "ready", busy: false, key: null, data: { rows: [], agents: [], fetched_at: "2026-01-10T11:59:00.000Z" }, error: "HTTP 500 Internal Server Error" };
+  const tree = await renderScreenAgents(warmError);
+  const [verdict] = findAtoms(tree, "PageVerdict");
+  const freshness = verdict?.props.freshness as Record<string, unknown> | undefined;
+  assert.ok(freshness, "the verdict is freshness-driven");
+  const getFreshnessVerdict = REAL_UI.getFreshnessVerdict as (input: Record<string, unknown>) => { tone: string; label: string };
+  const settled = getFreshnessVerdict({ ...freshness, tone: "ok", now: Date.parse("2026-01-10T12:00:00.000Z") });
+  assert.notEqual(settled.tone, "ok", "an all-clear over a failed read drops its tone");
+  assert.doesNotMatch(settled.label, /Healthy/);
+});
+
+test("a lifecycle row names its agent through the shared agent name, never a raw id the cell truncates", async () => {
+  const mod = await loadAgentsScreen();
+  const React = mod.React as { createElement: (t: unknown, p: unknown) => unknown };
+  const tree = renderScreen(
+    React.createElement(mod.LifecycleStatsTable as Component, {
+      rows: [{ agent_type: "glass-atrium-dev-shell", start_count: 4, stop_count: 4, completed_count: 3, p95_duration_sec: 60 }],
+      onSelect: () => undefined,
+    }),
+  );
+  assert.deepEqual(findAtoms(tree, "AgentName").map((n) => n.props.name), ["glass-atrium-dev-shell"]);
+});
+
+// component nodes keep their name as type; the region's card is the first host element beneath them
+function getRootHost(node: RenderedNode): RenderedNode {
+  const [child] = node.children;
+  const isComponent = /^[A-Z]/.test(String(node.type));
+  return isComponent && child && typeof child !== "string" ? getRootHost(child) : node;
+}
+
+describe("a focused Retry that succeeds leaves focus on its region's card", () => {
+  const putRegionRequest = REAL_UI.putRegionRequest as (state: unknown, key: string, request: unknown) => Record<string, unknown>;
+  const retrying = putRegionRequest(ERROR_STATE, "k", new AbortController());
+  const onRetry = () => undefined;
+
+  test("each page card hands its error card's Retry to the card itself", async () => {
+    const rows = [
+      { name: "success rates", component: "SuccessRateMatrixCard", props: { state: retrying, days: 30, onRetry } },
+      { name: "failure rates", component: "TopNFailingAgentsCard", props: { state: retrying, days: 30, onRetry, failureByAgent: new Map() } },
+      { name: "review flags", component: "ReviewFlagTimelineCard", props: { state: retrying, days: 30, onRetry } },
+      { name: "lifecycle stats", component: "LifecycleStatsCard", props: { state: retrying, days: 30, onSelect: () => undefined, onRetry } },
+    ];
+
+    for (const row of rows) {
+      const tree = await renderComponent(row.component, row.props) as RenderedNode;
+      const [errorCard] = findAtoms(tree, "RegionUnavailable");
+      assert.equal(errorCard?.props.isBusy, true, `${row.name}: the card stays up, busy, through the Retry`);
+      assert.ok(errorCard.props.focusTargetId, `${row.name}: the Retry names a focus target`);
+      assert.equal(getRootHost(tree).props.id, errorCard.props.focusTargetId, `${row.name}: the target is the region's own card`);
+    }
+  });
+
+  test("each drawer section hands its error card's Retry to the section that encloses it", async () => {
+    const agent = { agent_id: "glass-atrium-dev-shell", agent_name: "glass-atrium-dev-shell", status: "active", origin: "system" };
+    const idle = { status: "idle", data: null, error: null };
+    const base = {
+      drawerAgent: agent.agent_id, sortedAgents: [agent], trendByAgent: null, trendDates: [], days: 30,
+      onClose: onRetry, onNav: onRetry, onRetry, onDeleted: onRetry,
+    };
+    const rows = [
+      {
+        name: "summary-backed sections failing",
+        sources: ["overview", "performance", "failure patterns", "lifecycle stats", "quality signals", "recent activity"],
+        props: {
+          ...base, summaryState: retrying, revisionState: retrying, reviewByAgentState: retrying, latencyState: retrying,
+          failureState: retrying, lifecycleState: retrying, detailState: idle, blockedState: idle, recentState: retrying, failureByAgent: new Map(),
+        },
+      },
+      {
+        name: "nested rows failing under a loaded summary",
+        sources: ["latency", "failure causes"],
+        props: {
+          ...base, summaryState: { status: "ready", data: { agents: [agent] }, error: null }, revisionState: idle, reviewByAgentState: idle,
+          latencyState: retrying, failureState: { status: "ready", data: { rows: [] }, error: null }, lifecycleState: idle,
+          detailState: retrying, blockedState: retrying, recentState: idle,
+          failureByAgent: new Map([[agent.agent_id, { total_breakages: 2, reconstructed: 0, breakage_rate: 0.1 }]]),
+        },
+      },
+    ];
+
+    for (const row of rows) {
+      const tree = await renderComponent("AgentDetailDrawer", row.props) as RenderedNode;
+      const errorCards = findAtoms(tree, "RegionUnavailable");
+      const sources = errorCards.map((card) => String(card.props.source));
+      for (const source of row.sources) assert.ok(sources.includes(source), `${row.name}: ${source} renders its error card`);
+
+      for (const card of errorCards) {
+        const label = `${row.name}: ${String(card.props.source)}`;
+        const targetId = card.props.focusTargetId;
+        assert.equal(card.props.isBusy, true, `${label} stays up, busy, through the Retry`);
+        assert.ok(targetId, `${label} names a focus target`);
+        const [section] = findNodes(tree, (n) => n.type === "section" && n.props.id === targetId);
+        assert.ok(section, `${label}: the target is a drawer section`);
+        assert.equal(findNodes(section, (n) => n === card).length, 1, `${label}: the target section encloses the card`);
+      }
+    }
+  });
 });

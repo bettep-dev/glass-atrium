@@ -32,11 +32,13 @@ interface Badge {
   badge: string;
   badgeTone: string;
   source?: string;
+  title?: string;
 }
 interface Rollup {
   tone: string;
   dotClass: string;
   label: string;
+  glyph?: string | null;
 }
 interface HarnessFold {
   status: string;
@@ -177,18 +179,34 @@ test("routing: '#health' gets no alias — the unknown-hash fallback takes it to
 // --- The fold: the ONE reading the nav numeral, the footer and the Dashboard lane share ---
 // The relationship asserted is agreement across an input class, not one hand-picked payload.
 
-test("fold daemonsDown equals the nav slot's daemon badge for every down count", () => {
-  for (const down of [0, 1, 2, 3, 4]) {
-    const fold = app.foldHarness(allHealthy({ liveState: ready(daemonPayload(down)) }));
+// The lane headline counts fold.downNames — every down part, not only daemons — so the numeral must too.
+test("the nav down numeral equals the lane's down-part count for every mix of down parts", () => {
+  const rows = [
+    { name: "nothing down", over: {} },
+    { name: "one daemon down", over: { liveState: ready(daemonPayload(1)) } },
+    { name: "every daemon down", over: { liveState: ready(daemonPayload(4)) } },
+    {
+      name: "two daemons plus the hook chain",
+      over: { liveState: ready(daemonPayload(2)), hookFailState: ready({ count_24h: 1, unretried_count_24h: 1 }) },
+    },
+    { name: "postgres down, daemons fine", over: { healthState: ready({ status: "ok", db: "closed", browser: "ok" }) } },
+  ];
+  for (const row of rows) {
+    const fold = app.foldHarness(allHealthy(row.over));
     const badges = app.harnessToNavBadges(fold).architecture?.badges || [];
-    const daemonBadge = badges.find((b) => b.source === "daemon");
-    assert.equal(fold.daemonsDown, down, `fold must count ${down} down`);
-    assert.equal(
-      daemonBadge === undefined ? 0 : Number(daemonBadge.badge),
-      fold.daemonsDown,
-      "nav numeral and fold must report the same count",
-    );
+    const downBadge = badges.find((b) => b.source === "down");
+    assert.equal(downBadge === undefined ? 0 : Number(downBadge.badge), fold.downNames.length, row.name);
   }
+});
+
+test("the nav down badge's tooltip names every down part it counts", () => {
+  const fold = app.foldHarness(
+    allHealthy({ liveState: ready(daemonPayload(2)), hookFailState: ready({ count_24h: 1, unretried_count_24h: 1 }) }),
+  );
+  const downBadge = (app.harnessToNavBadges(fold).architecture?.badges || []).find((b) => b.source === "down");
+  assert.ok(downBadge?.title, "the badge explains what it counts");
+  assert.match(downBadge.title, /3 harness parts down/);
+  for (const name of fold.downNames) assert.ok(downBadge.title.includes(name), `${name} is named`);
 });
 
 test("an unpolled harness store leaves its parts unchecked rather than counted healthy", () => {
@@ -305,15 +323,24 @@ test("systemsRollup: every part healthy and no failures → ALL SYSTEMS", () => 
   assert.strictEqual(r.label, "ALL SYSTEMS");
 });
 
-test("systemsRollup: a down part or a fail count → ISSUES DETECTED", () => {
-  const down = app.systemsRollup(app.foldHarness(allHealthy({ liveState: ready(daemonPayload(1)) })));
-  assert.strictEqual(down.label, "ISSUES DETECTED");
-  assert.strictEqual(down.dotClass, "bg-warn");
+// The footer tone follows the worst alarm: a down part is crit on the lane, so the footer is crit too.
+test("systemsRollup: a down part is crit with the ✕ glyph and the lane's down count", () => {
+  for (const down of [1, 3]) {
+    const fold = app.foldHarness(allHealthy({ liveState: ready(daemonPayload(down)), kpiState: ready({ last_1h_fail_count: 4 }) }));
+    const r = app.systemsRollup(fold);
+    assert.strictEqual(r.tone, "crit", `${down} down outranks the fail count`);
+    assert.strictEqual(r.dotClass, "bg-crit");
+    assert.strictEqual(r.glyph, "✕");
+    assert.strictEqual(r.label, `${fold.downNames.length} ${down === 1 ? "PART" : "PARTS"} DOWN`);
+  }
+});
 
-  const fails = app.systemsRollup(
-    app.foldHarness(allHealthy({ kpiState: ready({ last_1h_fail_count: 4 }) })),
-  );
-  assert.strictEqual(fails.label, "ISSUES DETECTED");
+test("systemsRollup: failures with no down part stay warn, without the crit glyph", () => {
+  const r = app.systemsRollup(app.foldHarness(allHealthy({ kpiState: ready({ last_1h_fail_count: 4 }) })));
+  assert.strictEqual(r.tone, "warn");
+  assert.strictEqual(r.dotClass, "bg-warn");
+  assert.strictEqual(r.label, "ISSUES DETECTED");
+  assert.ok(!r.glyph);
 });
 
 // An unread source is unknown, never healthy: the footer must not keep "ALL SYSTEMS" over a lost store.
@@ -332,7 +359,7 @@ test("a failed harness read turns the footer to STATUS UNKNOWN, fresh or held", 
   }
 
   const known = app.getHarness(allHealthy({ liveState: ready(daemonPayload(1)), hookState: { status: "error", data: null, error: "x" } }));
-  assert.strictEqual(app.systemsRollup(known).label, "ISSUES DETECTED", "a known fault still outranks an unread source");
+  assert.strictEqual(app.systemsRollup(known).label, "1 PART DOWN", "a known fault still outranks an unread source");
 });
 
 // The harness tile's Retry and the page Refresh run this one read → a source it skipped would stay unread after the Retry.
@@ -358,10 +385,11 @@ test("harnessToNavBadges: the two contributors share the slot and cannot clobber
   const badges = app.harnessToNavBadges(fold).architecture?.badges || [];
   const bySource = new Map(badges.map((b) => [b.source, b.badge]));
   assert.strictEqual(bySource.get("kpi"), "4");
-  assert.strictEqual(bySource.get("daemon"), "2");
+  assert.strictEqual(bySource.get("down"), "2");
   const toneBySource = new Map(badges.map((b) => [b.source, b.badgeTone]));
-  assert.strictEqual(toneBySource.get("daemon"), "crit", "a down part reads crit, as its Dashboard alarm does");
+  assert.strictEqual(toneBySource.get("down"), "crit", "a down part reads crit, as its Dashboard alarm does");
   assert.strictEqual(toneBySource.get("kpi"), "warn");
+  assert.match(badges.find((b) => b.source === "kpi")?.title || "", /4 failed tasks in the last hour/);
 });
 
 test("harnessToNavBadges: polled-and-clean emits the key with a null badge; unpolled emits no key", () => {

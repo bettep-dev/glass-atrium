@@ -1,5 +1,5 @@
 // Screen 12 — Models & budgets (/api/model-config GET 단일 fetch + 명시 Save PUT).
-// Layout: header sync token → model domain ledger → per-call budget cap ledger.
+// Layout: header sync token → page verdict → model ledger | per-call budget cap ledger (side by side at xl).
 // DB(saved target) = UI SoT · actual = 소비 지점 실측 — 차이는 drift 배지로 공시 (spec doc 36166 D2).
 // 예산 = per-call HARD CAP (claude -p --max-budget-usd) — OAuth 구독이라 월 청구 상한이 아님 (단일 폭주 호출 차단).
 // Hooks MC-suffix aliased — window-scope 충돌 방지.
@@ -182,6 +182,18 @@ const SAVE_ERROR_BODY_MAX_MC = 300;
 // 테이블 행 순서 — 미지의 도메인은 뒤에 그대로 덧붙임.
 const BUDGET_ORDER_MC = ["budget.worker_max_usd", "budget.pre_verify_max_usd"];
 
+// Verdict chips scroll to these ledger ids.
+const MODELS_SECTION_ID_MC = "mc-models";
+const BUDGETS_SECTION_ID_MC = "mc-budgets";
+
+const MODEL_FAMILY_RE_MC = /^claude-(opus|sonnet|haiku|fable)-(\d+)(?:-(\d+))?$/;
+
+// What the "In effect" column reads back — the targets a saved value is written to.
+const IN_EFFECT_TITLE_MC = {
+	models: "Read back from the agent files and daemon-config.json",
+	budgets: "Read back from daemon-config.json",
+};
+
 function ScreenModelConfig() {
 	const {
 		PageHeader,
@@ -193,6 +205,9 @@ function ScreenModelConfig() {
 		putRegionRequest,
 		putRegionData,
 		putRegionFailure,
+		PageVerdict,
+		SplitRow,
+		formatKstTime,
 	} = window.UI;
 
 	const [configState, setConfigState] = useStateMC(INITIAL_REGION_STATE);
@@ -356,6 +371,7 @@ function ScreenModelConfig() {
 		: configState.status === "loading"
 			? "loading"
 			: "unavailable";
+	const verdict = ready ? getPageVerdictMC(data) : null;
 
 	return (
 		<div className="flex flex-col min-w-0">
@@ -381,6 +397,16 @@ function ScreenModelConfig() {
 				/>
 			</div>
 
+			{verdict && (
+				<PageVerdict
+					tone={verdict.tone}
+					chips={verdict.chips}
+					freshness={getFreshnessInputMC(asOfAt, configState)}
+					className="mb-4">
+					{verdict.text}
+				</PageVerdict>
+			)}
+
 			{hasAlarm && (
 				<div
 					className="mb-4 flex flex-col gap-3"
@@ -392,7 +418,15 @@ function ScreenModelConfig() {
 								source="model config"
 								error={configState.error}
 								onRetry={triggerRefresh}
+								isBusy={configState.busy}
+								focusTargetId={MODELS_SECTION_ID_MC}
 							/>
+							{data != null && asOfAt !== null && (
+								<p className="fs-meta text-dim mt-1">
+									The figures below are the last good read, from{" "}
+									{formatKstTime(asOfAt)}.
+								</p>
+							)}
 						</div>
 					)}
 					{saveError && (
@@ -422,23 +456,25 @@ function ScreenModelConfig() {
 				</div>
 			)}
 
-			<DomainsSectionMC
-				state={sectionState}
-				domains={data?.domains}
-				knownModels={knownModels}
-				form={form}
-				baseline={baseline}
-				errors={errors}
-				onModelChange={setModel}
-			/>
-			<BudgetsSectionMC
-				state={sectionState}
-				budgets={data?.budgets}
-				form={form}
-				baseline={baseline}
-				errors={errors}
-				onBudgetChange={setBudget}
-			/>
+			<SplitRow ratio="3:2">
+				<DomainsSectionMC
+					state={sectionState}
+					domains={data?.domains}
+					knownModels={knownModels}
+					form={form}
+					baseline={baseline}
+					errors={errors}
+					onModelChange={setModel}
+				/>
+				<BudgetsSectionMC
+					state={sectionState}
+					budgets={data?.budgets}
+					form={form}
+					baseline={baseline}
+					errors={errors}
+					onBudgetChange={setBudget}
+				/>
+			</SplitRow>
 
 			{ready && isDirty && (
 				<div className="save-banner" role="region" aria-label="Unsaved changes">
@@ -552,7 +588,7 @@ function SectionHeadMC({ label, sub, right }) {
 				{right ?? null}
 			</div>
 			{sub && (
-				<div className="card-sub mt-1" title={window.UI.titleOf(sub)}>
+				<div className="card-sub is-wrap mt-1">
 					{sub}
 				</div>
 			)}
@@ -593,16 +629,20 @@ function DomainsSectionMC({
 	const { SkeletonRows, TableHead } = window.UI;
 	const rows = sortDomainsMC(domains || []);
 	const sharedMode = getSharedApplyModeMC(rows);
+	const mix = form ? getModelMixMC(rows.map((d) => form.models[d.domain] || d.desired)) : "";
 
 	return (
-		<div className="mb-4">
+		<div className="mb-4" id={MODELS_SECTION_ID_MC}>
 			<SectionHeadMC
 				label="Model assignment"
 				sub={getApplyModeSubMC(sharedMode)}
 				right={
-					<a href="#cost" className={`fs-meta ${LINK_CLASS_MC}`}>
-						Cost & usage
-					</a>
+					<span className="fs-meta flex items-center gap-2">
+						{mix && <span className="text-dim">{mix}</span>}
+						<a href="#cost" className={LINK_CLASS_MC}>
+							Cost & usage
+						</a>
+					</span>
 				}
 			/>
 			<TierNotesMC
@@ -619,7 +659,9 @@ function DomainsSectionMC({
 						<tr>
 							<TableHead>Agent tier</TableHead>
 							<TableHead>Model</TableHead>
-							<TableHead>Live</TableHead>
+							<TableHead>
+								<span title={IN_EFFECT_TITLE_MC.models}>In effect</span>
+							</TableHead>
 						</tr>
 					</thead>
 					<tbody aria-busy={state === "loading" ? "true" : undefined}>
@@ -712,22 +754,31 @@ function groupFilesByModelMC(fileRows) {
 	return [...groups];
 }
 
+// Agent file ("agents/glass-atrium-dev-react.md") → its agent name, for the shared name atom.
+function getFileAgentNameMC(file) {
+	const base = String(file ?? "").split("/").pop();
+	return base.replace(/\.md$/, "");
+}
+
 /**
- * Live value = measured at the consumption point.
- * Matching the saved target → 'Matches saved' (tooltip 'Live value: …') · differing → the value + one warn badge · absent → nothing.
+ * In effect = measured at the consumption point.
+ * Matching the saved target → ✓ 'Matches saved' (tooltip 'In effect: …') · differing → the value + one warn badge · absent → nothing.
  */
 function LiveValueMC({ value, drift, files, driftTitle }) {
-	const { Badge } = window.UI;
+	const { AgentName, Badge, Disclosure, Icon } = window.UI;
 	const fileRows = Array.isArray(files) ? files : [];
 	const isSteady = !drift && value != null;
 	const label = liveLabelMC(value);
 	const fileGroups = groupFilesByModelMC(fileRows);
+	// files lagging the saved model or disagreeing among themselves → the fold opens itself
+	const foldTone = drift || fileGroups.length > 1 ? "warn" : "ok";
 
 	return (
 		<div className="flex flex-col gap-1 min-w-0">
 			<div className="flex items-center gap-2 min-w-0">
 				{isSteady ? (
-					<span className="fs-meta text-faint" title={`Live value: ${label}`}>
+					<span className="fs-meta text-faint flex items-center gap-1" title={`In effect: ${label}`}>
+						<Icon name="check" size={12} className="text-ok" />
 						Matches saved
 					</span>
 				) : (
@@ -746,21 +797,20 @@ function LiveValueMC({ value, drift, files, driftTitle }) {
 				)}
 			</div>
 			{fileRows.length > 0 && (
-				<details className="fs-meta text-faint">
-					<summary>{fileRows.length} files</summary>
-					<div className="mt-1 flex flex-col gap-1">
+				<Disclosure kind="detail" level={3} title={`${fileRows.length} files`} tone={foldTone} className="mt-1">
+					<div className="fs-meta text-faint flex flex-col gap-1">
 						{fileGroups.map(([model, files]) => (
 							<div key={model}>
 								<div className="font-mono text-dim is-wrap">{model}</div>
 								{files.map((file) => (
-									<div key={file} className="font-mono truncate pl-3" title={file}>
-										{file}
+									<div key={file} className="font-mono truncate pl-3">
+										<AgentName name={getFileAgentNameMC(file)} />
 									</div>
 								))}
 							</div>
 						))}
 					</div>
-				</details>
+				</Disclosure>
 			)}
 		</div>
 	);
@@ -919,6 +969,7 @@ function ModelSelectMC({
 					aria-label={`${label} custom model id`}
 				/>
 			)}
+			<ModelFamilyTagMC model={value} />
 			{error && (
 				<div className="fs-meta text-crit mt-1" role="alert">
 					<span aria-hidden="true">✕ </span>
@@ -930,6 +981,20 @@ function ModelSelectMC({
 				defaultValue={defaultValue}
 				onReset={() => onChange(defaultValue)}
 			/>
+		</div>
+	);
+}
+
+// Text tag, not colour alone — the family reads without parsing the id; inherit is already worded in the select.
+function ModelFamilyTagMC({ model }) {
+	if (model === "inherit") return null;
+
+	const family = getModelFamilyMC(model);
+	if (!family) return null;
+
+	return (
+		<div data-slot="family" className="fs-meta text-dim mt-1">
+			{family}
 		</div>
 	);
 }
@@ -989,7 +1054,7 @@ function BudgetsSectionMC({
 	const sharedMode = getSharedApplyModeMC(rows);
 
 	return (
-		<div className="mb-4">
+		<div className="mb-4" id={BUDGETS_SECTION_ID_MC}>
 			<SectionHeadMC
 				label="Per-call budget caps"
 				sub={getApplyModeSubMC(sharedMode)}
@@ -1008,7 +1073,9 @@ function BudgetsSectionMC({
 						<tr>
 							<TableHead>Background call</TableHead>
 							<TableHead>Per-call cap</TableHead>
-							<TableHead>Live</TableHead>
+							<TableHead>
+								<span title={IN_EFFECT_TITLE_MC.budgets}>In effect</span>
+							</TableHead>
 						</tr>
 					</thead>
 					<tbody aria-busy={state === "loading" ? "true" : undefined}>
@@ -1050,6 +1117,9 @@ function budgetPlaceholderMC() {
 	return BUDGET_SEED_DEFAULT_MC;
 }
 
+// Mono digits → ch is one digit; 6ch holds the widest cap ("50.00") plus the caret, beside the affix padding.
+const BUDGET_FIELD_STYLE_MC = { width: "calc(6ch + 4px + var(--ctl-pad-x))" };
+
 /**
  * 예산 1행 — $ 입력(2-decimal 문자열) + invalid 즉시 field-adjacent role=alert (T-MDL-4)
  * + 실측 + 섹션 공통과 다른 행만 반영 시점 표시 + ghost default/reset (T-MDL-6).
@@ -1067,16 +1137,14 @@ function BudgetRowMC({ budget: b, value, defaultValue, error, sharedMode, onChan
 				<RowHintMC hint={meta.hint} />
 			</td>
 			<td>
-				<div className="flex items-center gap-2">
-					<span
-						className={`field-affix${showError ? " is-error" : ""}`}
-						style={{ width: "6rem" }}
-					>
+				<div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+					<span className={`field-affix flex-shrink-0${showError ? " is-error" : ""}`}>
 						<span className="field-affix__sym">$</span>
 						<input
 							type="text"
 							inputMode="decimal"
 							className="field field--mono text-right"
+							style={BUDGET_FIELD_STYLE_MC}
 							value={value}
 							placeholder={budgetPlaceholderMC()}
 							onChange={(e) => onChange(e.target.value)}
@@ -1084,6 +1152,13 @@ function BudgetRowMC({ budget: b, value, defaultValue, error, sharedMode, onChan
 							aria-invalid={showError ? "true" : undefined}
 						/>
 					</span>
+					{/* cost/outcome payload carries no per-call maximum → Cost & usage is the reference point */}
+					<a
+						href="#cost"
+						className={`fs-meta ${LINK_CLASS_MC}`}
+						aria-label={`Recent ${meta.label} costs on Cost & usage`}>
+						Recent costs
+					</a>
 				</div>
 				{showError && (
 					<div className="fs-meta text-crit mt-1" role="alert">
@@ -1436,6 +1511,77 @@ function resyncPayloadMC(data, edits) {
 	if (Object.keys(models).length > 0) payload.models = models;
 	if (Object.keys(budgets).length > 0) payload.budgets = budgets;
 	return Object.keys(payload).length > 0 ? payload : null;
+}
+
+// Page verdict — answers "does what I saved run?" once, before any row is read.
+function getPageVerdictMC(data) {
+	const domains = data?.domains || [];
+	const budgets = data?.budgets || [];
+	if (domains.length + budgets.length === 0) {
+		return { tone: "neutral", text: "No model tiers or budget caps were reported.", chips: [] };
+	}
+
+	const issues = getVerdictIssuesMC(domains, budgets, data.daemon_config_sync);
+	if (issues.length > 0) {
+		return {
+			tone: "warn",
+			text: issues.map((issue) => issue.text).join(" · "),
+			chips: issues.flatMap((issue) => (issue.chip ? [issue.chip] : [])),
+		};
+	}
+	return {
+		tone: "ok",
+		text: `${domains.length}/${domains.length} tiers and ${budgets.length}/${budgets.length} caps match saved · config file in sync`,
+		chips: [],
+	};
+}
+
+// Each drifted or unread ledger names its rows + jumps to its section; a file state other than in-sync is named last.
+function getVerdictIssuesMC(domains, budgets, sync) {
+	const tierLedger = { meta: DOMAIN_META_MC, noun: "tier", chip: { label: "Model assignment", targetId: MODELS_SECTION_ID_MC } };
+	const capLedger = { meta: BUDGET_META_MC, noun: "cap", chip: { label: "Budget caps", targetId: BUDGETS_SECTION_ID_MC } };
+	const issues = [...getLedgerIssuesMC(domains, tierLedger), ...getLedgerIssuesMC(budgets, capLedger)];
+
+	if (sync !== "ok") {
+		issues.push({ text: sync ? `config file: ${SYNC_META_MC[sync]?.label ?? sync}` : "config file state not reported" });
+	}
+	return issues;
+}
+
+// A null actual (unreadable file, missing key) carries drift=false server-side, so it is named apart, never counted as a match.
+function getLedgerIssuesMC(rows, ledger) {
+	const labelOf = (row) => ledger.meta[row.domain]?.label ?? row.domain;
+	const drifted = rows.filter((row) => row.drift).map(labelOf);
+	const unread = rows.filter((row) => !row.drift && row.actual == null).map(labelOf);
+	const texts = [];
+
+	if (drifted.length > 0) texts.push(`${countNounMC(drifted.length, ledger.noun)} drifting: ${drifted.join(", ")}`);
+	if (unread.length > 0) texts.push(`${countNounMC(unread.length, ledger.noun)} not read: ${unread.join(", ")}`);
+	return texts.length > 0 ? [{ text: texts.join(" · "), chip: ledger.chip }] : [];
+}
+
+function countNounMC(n, noun) {
+	return `${n} ${noun}${n === 1 ? "" : "s"}`;
+}
+
+// Family + version from the id ("claude-opus-5-5" → "Opus 5.5"); an id outside the pattern has none.
+function getModelFamilyMC(model) {
+	if (model === "inherit") return "Session model";
+	const match = MODEL_FAMILY_RE_MC.exec(model ?? "");
+	if (!match) return null;
+
+	const [, family, major, minor] = match;
+	return `${family[0].toUpperCase()}${family.slice(1)} ${minor ? `${major}.${minor}` : major}`;
+}
+
+// "Opus 5.5 ×3 · Sonnet 5 ×4" in first-seen order — the mix without counting selects by eye.
+function getModelMixMC(models) {
+	const counts = new Map();
+	for (const model of models) {
+		const family = getModelFamilyMC(model) ?? "Custom";
+		counts.set(family, (counts.get(family) ?? 0) + 1);
+	}
+	return [...counts].map(([family, n]) => `${family} ×${n}`).join(" · ");
 }
 
 // Header token = file sync ∪ any row drift — the same trigger as the banner, so the two never disagree.

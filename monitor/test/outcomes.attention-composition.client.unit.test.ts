@@ -8,7 +8,7 @@
 //
 // Runner: npx tsx --test test/outcomes.attention-composition.client.unit.test.ts
 
-import test from "node:test";
+import test, { describe } from "node:test";
 import assert from "node:assert/strict";
 import vm from "node:vm";
 import { readFileSync } from "node:fs";
@@ -24,7 +24,7 @@ type PayloadStatus = "loading" | "error" | "unavailable" | "blocked" | "ready";
 interface PayloadState<T> {
   status: PayloadStatus;
   data?: T;
-  error?: string;
+  error?: string | null;
 }
 interface BandTile {
   key: string;
@@ -59,6 +59,7 @@ interface OutcomesHelpers {
   AlarmLaneO: (props: { channelLivenessState: PayloadState<unknown>; searchState: PayloadState<unknown> }) => RenderNode | null;
   RegionErrorO: unknown;
   BlockedBannerO: unknown;
+  SilentChannelRowO: (props: { channels: string[] }) => RenderNode;
   ResultTableBody: (props: Record<string, unknown>) => RenderNode;
   ResultTableCard: (props: Record<string, unknown>) => RenderNode;
   buildStatusBandTilesO: (data: unknown, attentionCount: number | null) => BandTile[];
@@ -74,7 +75,12 @@ interface OutcomesHelpers {
   buildAgentFailureRowsO: (
     agentStack: unknown,
     byAgentTop?: unknown,
-  ) => { agent: string; failed: number; blocked: number; openCaveats: number | null; total: number }[];
+  ) => { agent: string; failed: number; blocked: number; openCaveats: number | null; total: number; rate: number; isLowSample: boolean }[];
+  getGraderSentenceO: (breakdown: Record<string, unknown> | null | undefined) => string | null;
+  getConfidentFailedO: (crosstab: { total: number; byCell: Record<string, { count: number }> } | null) => { count: number; share: number } | null;
+  getCrosstabVisibleRowsO: (byCell: Record<string, { count: number }>) => string[];
+  PageVerdictO: (props: { analyticsState: PayloadState<unknown>; channelLivenessState: PayloadState<{ alerting?: string[] }>; windowDays: number }) => RenderNode | null;
+  buildNeedsYouReasonsO: (data: unknown) => { key: string; label: string; count: number | null; tone: string }[];
   buildAnalyticsDataO: (overall: unknown) => { overall: { by_agent_top_10?: unknown }; agentStack: unknown };
   isNeedsYouRowO: (row: LedgerRow, closedAt: string | null) => boolean;
   buildLedgerSectionsO: (
@@ -93,7 +99,10 @@ interface OutcomesHelpers {
   getChannelLivenessBadgeO: (state: PayloadState<{ alerting?: string[]; days?: number }>) => { tone: string; text: string };
   AgentFailureBodyO: (props: { state: PayloadState<unknown>; onRetry: () => void; stickyStyle?: unknown }) => RenderNode;
   buildActiveFilterChipsO: (filter: Record<string, unknown>) => string[];
-  window: { UI: { getAgentDisplayName: (name: string) => string } };
+  buildActiveFilterEntriesO: (filter: Record<string, unknown>) => { key: string; label: string; patch: Record<string, string> | null }[];
+  ActiveFilterChips: (props: { filter: Record<string, unknown>; onRemove?: (patch: Record<string, string>) => void; onClearAll?: () => void }) => RenderNode | null;
+  getNeedsYouReasonO: (row: LedgerRow & { review_flag_reasons?: string[] }, closedAt: string | null) => string | null;
+  window: { UI: { getAgentDisplayName: (name: string) => string; Popover: unknown; PageVerdict: unknown } };
 }
 
 interface RenderNode {
@@ -281,7 +290,8 @@ const bannerTitles = (nodes: RenderNode[]): string[] =>
 
 test("StatusBandO: an analytics failure draws its own banner in place, never the skeleton or a text panel", () => {
   const render = (status: PayloadStatus) => flattenNodes(helpers.StatusBandO({
-    analyticsState: { status },
+    // a failed region always carries its error (putRegionFailure)
+    analyticsState: { status, error: status === "loading" ? null : "boom" },
     attentionState: { status: "loading" },
     windowDays: 30,
   }));
@@ -328,6 +338,17 @@ test("AlarmLaneO: payload failures stay at their groups — the lane holds only 
   assert.deepStrictEqual(bannerTitles(outage), [], "the lane never re-draws a group banner");
 });
 
+test("AlarmLaneO: a stopped channel keeps its lane row, which names the channel without repeating the verdict", () => {
+  const silent = { status: "ready" as const, data: { alerting: ["subagent-stop"] } };
+  const lane = flattenNodes(helpers.AlarmLaneO({ channelLivenessState: silent, searchState: { status: "ready" } }));
+  assert.ok(lane.some((n) => n.type === helpers.SilentChannelRowO), "the per-channel row stays in the lane");
+
+  const rowText = flattenNodes(helpers.SilentChannelRowO({ channels: ["subagent-stop"] }))
+    .flatMap((n) => n.children.filter((c) => typeof c === "string")).join("");
+  assert.match(rowText, /subagent-stop/);
+  assert.doesNotMatch(rowText, /Recording stopped|understated/, "the verdict above already states the stop and its effect");
+});
+
 test("ledger: a failed read draws one banner at the ledger and its header follows the failed state", () => {
   const body = flattenNodes(helpers.ResultTableBody({ state: { status: "error", error: "boom" }, rows: [] }));
   assert.strictEqual(bannerTitles(body).length, 1, "the ledger owns its failure banner");
@@ -366,10 +387,12 @@ test("buildAttentionParamsO: emits a needs_attention literal the route's parser 
 
 // --- by-agent failures: the table exists to name who broke, so silent rows never render ---
 
-test("buildAgentFailureRowsO: keeps only rows with a failure and orders them worst-first", () => {
+test("buildAgentFailureRowsO: sampled agents lead by failure rate, low-sample agents sink below them", () => {
   const stack: AgentStackEntry[] = [
     { agent: "dev-react", total: 40, byResult: { done: 40 } },
     { agent: "dev-node", total: 30, byResult: { done: 27, fail: 3 } },
+    { agent: "dev-shell", total: 100, byResult: { done: 80, fail: 20 } },
+    { agent: "dev-python", total: 60, byResult: { done: 54, fail: 3, blocked: 3 } },
     { agent: "qa-code-reviewer", total: 20, byResult: { done: 12, fail: 5, blocked: 3 } },
     { agent: "intel-planner", total: 10, byResult: { done: 9, blocked: 1 } },
   ];
@@ -377,10 +400,83 @@ test("buildAgentFailureRowsO: keeps only rows with a failure and orders them wor
 
   assert.deepStrictEqual(
     rows.map((r) => r.agent),
-    ["qa-code-reviewer", "dev-node", "intel-planner"],
-    "clean agents drop out; the rest sort by failed+blocked descending",
+    ["dev-shell", "dev-python", "dev-node", "qa-code-reviewer", "intel-planner"],
+    "clean agents drop out; rate descending, an equal rate breaks on the larger count, a 40% rate over 20 runs never outranks a sampled agent",
   );
-  for (const row of rows) assert.ok(row.failed + row.blocked > 0, `${row.agent} earns its row`);
+  for (const row of rows) {
+    assert.strictEqual(row.rate, (row.failed + row.blocked) / row.total, `${row.agent}: rate is failed+blocked over its own runs`);
+    assert.strictEqual(row.isLowSample, row.total < 30, `${row.agent}: low-sample follows the shared LOW_N_MIN floor`);
+  }
+});
+
+// writer_open_count rides every by_result row (result-agnostic FILTER) → only the done_with_concerns row is the caveat count
+const withByResult = (byResult: Record<string, unknown>[] | undefined) => ({
+  ...aboveFloor({ done: 180, fail: 8, blocked: 4 }),
+  overall: { total: 200, reconstructed_total: 0, ...(byResult ? { by_result: byResult } : {}) },
+});
+
+describe("buildNeedsYouReasonsO: the open-caveat reason reads the done_with_concerns row the endpoint sends", () => {
+  const rows = [
+    {
+      name: "a non-caveat row's writer_open_count never adds to the caveat reason",
+      byResult: [
+        { result: "done", count: 180, writer_open_count: 90 },
+        { result: "done_with_concerns", count: 20, writer_open_count: 17 },
+        { result: "fail", count: 8, writer_open_count: 8 },
+      ],
+      open: 17,
+    },
+    { name: "a loaded window with no done_with_concerns row has no open caveat", byResult: [{ result: "done", count: 200, writer_open_count: 0 }], open: 0 },
+    { name: "an unsent by_result stays unknown, never a resolved zero", byResult: undefined, open: null },
+    {
+      name: "a caveat row without writer_open_count stays unknown, not the closure-blind count",
+      byResult: [{ result: "done_with_concerns", count: 20 }],
+      open: null,
+    },
+  ];
+  for (const row of rows) {
+    test(row.name, () => {
+      const reasons = sameRealm(helpers.buildNeedsYouReasonsO(withByResult(row.byResult)));
+      assert.strictEqual(reasons.find((r) => r.key === "open")!.count, row.open);
+    });
+  }
+
+  test("the broken reason keeps the band's failed+blocked count and breakage tone", () => {
+    const [broken] = sameRealm(helpers.buildNeedsYouReasonsO(withByResult(undefined)));
+    assert.deepStrictEqual([broken.key, broken.count, broken.tone], ["broken", 12, "crit"], "12 of 200 breaches the 5% breakage threshold");
+  });
+});
+
+// --- page verdict: one sentence answering "is this fine?", on the Dashboard's shared rate rule ---
+
+describe("PageVerdictO: the Task results verdict follows the shared outcome-rate rule", () => {
+  const byResult = (counts: Record<string, number>, open = 0) =>
+    Object.entries(counts).map(([result, count]) => ({ result, count, writer_open_count: result === "done_with_concerns" ? open : 0 }));
+  const ready = (counts: Record<string, number>, open = 0) => {
+    const total = Object.values(counts).reduce((a, b) => a + b, 0);
+    return { status: "ready" as const, data: { overall: { total, reconstructed_total: 0, by_result: byResult(counts, open) }, byResultCount: counts } };
+  };
+  const recording = { status: "ready" as const, data: { alerting: [] as string[] } };
+  const healthyWindow = ready({ done: 195, fail: 2, done_with_concerns: 3 }, 1);
+  const rows = [
+    { name: "breakage at or above 5% is crit", state: ready({ done: 180, fail: 12, done_with_concerns: 8 }, 2), liveness: recording, tone: "crit", text: /6\.0% of 200 .*failed or were blocked/ },
+    { name: "open caveats at or above 10% alone are warn", state: ready({ done: 170, done_with_concerns: 30 }, 25), liveness: recording, tone: "warn", text: /12\.5% still carry an open caveat/ },
+    { name: "both shares under their steps are ok", state: healthyWindow, liveness: recording, tone: "ok", text: /1\.0% of 200/ },
+    { name: "a sample under the low-N floor claims no tone", state: ready({ fail: 10 }), liveness: recording, tone: "neutral", text: /too few to judge/ },
+    { name: "an empty window claims no tone", state: ready({}), liveness: recording, tone: "neutral", text: /No task results/ },
+    { name: "a failed read is unknown, never all-clear", state: { status: "error" as const, error: "boom" }, liveness: recording, tone: "neutral", text: /unknown/ },
+    { name: "a stopped recording channel is crit over an ok rate", state: healthyWindow, liveness: { status: "ready" as const, data: { alerting: ["subagent-stop"] } }, tone: "crit", text: /Recording stopped on subagent-stop .*understated/ },
+    { name: "an unchecked recording channel holds back the all-clear", state: healthyWindow, liveness: { status: "error" as const, error: "boom" }, tone: "neutral", text: /couldn't check the recording channels/ },
+    { name: "a flagged rate stands while the recording channels are still loading", state: ready({ done: 180, fail: 12, done_with_concerns: 8 }, 2), liveness: { status: "loading" as const }, tone: "crit", text: /failed or were blocked/ },
+  ];
+  for (const row of rows) {
+    test(row.name, () => {
+      const node = helpers.PageVerdictO({ analyticsState: row.state, channelLivenessState: row.liveness, windowDays: 30 }) as RenderNode;
+      assert.strictEqual(node.type, helpers.window.UI.PageVerdict, "renders the shared PageVerdict atom");
+      assert.strictEqual(node.props!.tone, row.tone);
+      assert.match(String(node.children.join("")), row.text);
+    });
+  }
 });
 
 test("buildAnalyticsDataO → buildAgentFailureRowsO: every failing registry agent gets a row, however low its volume", () => {
@@ -829,4 +925,115 @@ test("AttributionLegend: an empty day's two meanings are labelled — no records
   const text = collectText(flattenNodes(view.AttributionLegend()));
   assert.match(text, /No records/);
   assert.match(text, /Not read/);
+});
+
+// --- Filters popover: the ledger's filters sit behind one head button; each active filter is one removable chip ---
+
+const FULL_FILTER = { days: 7, agent: LEDGER_AGENT, result: "fail", task_type: "feature", q: "phase" };
+const pressButton = (node: RenderNode) => (node.props!.onClick as () => void)();
+
+test("filter chips: removing one chip clears its own axis and leaves every other chip in place", () => {
+  const entries = helpers.buildActiveFilterEntriesO(FULL_FILTER);
+  const removable = entries.filter((entry) => entry.patch !== null);
+  assert.strictEqual(removable.length, 4, "agent, result, task type and keyword are removable");
+  for (const entry of removable) {
+    const remaining = helpers.buildActiveFilterChipsO({ ...FULL_FILTER, ...entry.patch });
+    const expected = entries.map((e) => e.label).filter((label) => label !== entry.label);
+    assert.deepEqual(sameRealm(remaining), sameRealm(expected), entry.label);
+  }
+});
+
+test("filter chips: the period chip is not removable — the page's period control owns that axis", () => {
+  const period = helpers.buildActiveFilterEntriesO(FULL_FILTER).find((entry) => entry.label.startsWith("Period"))!;
+  assert.strictEqual(period.patch, null);
+});
+
+test("ActiveFilterChips: each remove button names its filter and hands back that filter's patch", () => {
+  const removed: unknown[] = [];
+  const nodes = flattenNodes(helpers.ActiveFilterChips({
+    filter: { days: 30, agent: LEDGER_AGENT, q: "phase" }, onRemove: (patch) => removed.push(patch), onClearAll: () => {},
+  }));
+  const removeButtons = nodes.filter((n) => n.type === "button" && /^Remove filter /.test(String(n.props?.["aria-label"])));
+  assert.deepEqual(removeButtons.map((b) => String(b.props!["aria-label"])), [
+    `Remove filter Agent: ${helpers.window.UI.getAgentDisplayName(LEDGER_AGENT)}`,
+    'Remove filter Keyword: "phase"',
+  ]);
+  removeButtons.forEach(pressButton);
+  assert.deepEqual(sameRealm(removed), [{ agent: "" }, { q: "" }]);
+});
+
+test("ActiveFilterChips: Clear all resets every filter, and no active filter renders nothing", () => {
+  let clearCount = 0;
+  const nodes = flattenNodes(helpers.ActiveFilterChips({ filter: { days: 30, result: "fail" }, onRemove: () => {}, onClearAll: () => { clearCount += 1; } }));
+  pressButton(nodes.find((n) => n.type === "button" && n.props?.["aria-label"] === "Clear all filters")!);
+  assert.strictEqual(clearCount, 1);
+  assert.strictEqual(helpers.ActiveFilterChips({ filter: { days: 30 } }), null);
+});
+
+test("Results card: the head's Filters button counts the active filters, and Results carries no filter column", () => {
+  const rows = [
+    { name: "no active filter", filter: { days: 30 }, label: "Filters" },
+    { name: "two active filters", filter: { days: 30, agent: LEDGER_AGENT, result: "fail" }, label: "Filters · 2" },
+  ];
+  for (const row of rows) {
+    const card = flattenNodes(helpers.ResultTableCard({
+      state: { status: "ready" }, rows: [], totalMatched: 0, page: 0, limit: 50, sort: "record_ts:desc", filter: row.filter,
+      filterControls: { keywordInput: "", distinctAgents: [], includeAll: false },
+    }));
+    const headRight = flattenNodes(card.find((n) => n.props?.title === "Results")!.props!.right);
+    const popover = headRight.find((n) => n.type === helpers.window.UI.Popover);
+    assert.strictEqual(popover?.props?.label, row.label, row.name);
+    assert.ok(headRight.some((n) => n.type === "input" && n.props?.["aria-label"] === "Keyword search"), `${row.name}: keyword stays inline`);
+    assert.ok(card.some((n) => n.type === helpers.ActiveFilterChips), `${row.name}: active chips sit under the head`);
+  }
+});
+
+test("needs-you reason: a flagged or open-caveat row says why in words; a broken or routine row adds none", () => {
+  const rows = [
+    { name: "flagged overconfident", row: ledgerRowOf("done", { review_flag: true, review_flag_reasons: ["overconfidence"] }), reason: "flagged: overconfident" },
+    { name: "flagged twice", row: ledgerRowOf("done", { review_flag: true, review_flag_reasons: ["overconfidence", "scope-excess"] }), reason: "flagged: overconfident +1" },
+    { name: "open caveat", row: ledgerRowOf("done_with_concerns"), reason: "caveat open" },
+    { name: "closed caveat", row: ledgerRowOf("done_with_concerns", { closed_at: "2026-09-01T00:00:00Z" }), reason: null },
+    { name: "failed — the result column already says it", row: ledgerRowOf("fail"), reason: null },
+    { name: "routine done", row: ledgerRowOf("done"), reason: null },
+  ];
+  for (const row of rows) {
+    assert.strictEqual(helpers.getNeedsYouReasonO(row.row, row.row.closed_at), row.reason, row.name);
+  }
+});
+
+test("ledger row: the needs-you reason is written on the row and in its accessible name, beside the kept glyph", () => {
+  const rendered = renderLedgerRow(ledgerRowOf("done", { review_flag: true, review_flag_reasons: ["overconfidence"], summary: "shipped" }));
+  assert.match(textOf(rendered), /flagged: overconfident/);
+  assert.match(String(rendered.props!["aria-label"]), /flagged: overconfident/);
+  assert.ok(flattenNodes(rendered).some((n) => typeof n.type === "function" && (n.type as { name: string }).name === "SummaryFlagSlotO"), "the glyph slot stays");
+});
+
+describe("getGraderSentenceO: automatic checks read as one sentence over the checkable records", () => {
+  test("checked = passed + failed, out of every graded record", () => {
+    assert.strictEqual(
+      helpers.getGraderSentenceO({ verified_pass: 58, unverified: 9106, verified_fail: 10, not_measured: 3, graded_total: 9174 }),
+      "Checked 68 of 9,174 records: 58 passed, 10 failed",
+    );
+  });
+  test("no breakdown → no sentence, never a sentence of zeros", () => {
+    assert.strictEqual(helpers.getGraderSentenceO(null), null);
+  });
+});
+
+describe("Confidence vs. reality: the headline counts confident failures and empty rows are hidden", () => {
+  const byCell = {
+    "high|true": { count: 80 }, "high|false": { count: 12 }, "medium|true": { count: 100 },
+    "low|true": { count: 8 }, "null|true": { count: 0 }, "null|false": { count: 0 },
+  };
+  test("confident but failed = the high-confidence fail cell over all records", () => {
+    assert.deepStrictEqual(
+      sameRealm(helpers.getConfidentFailedO({ total: 200, byCell })),
+      { count: 12, share: 0.06 },
+    );
+    assert.strictEqual(helpers.getConfidentFailedO(null), null, "no crosstab → no headline");
+  });
+  test("a confidence row with no record in any column is dropped", () => {
+    assert.deepStrictEqual(sameRealm(helpers.getCrosstabVisibleRowsO(byCell)), ["high", "medium", "low"]);
+  });
 });

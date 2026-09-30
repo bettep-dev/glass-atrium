@@ -151,7 +151,8 @@
 	height: var(--ctl-min-h);
 	justify-content: center;
 }
-.btn:disabled {
+.btn:disabled,
+.btn[aria-disabled="true"] {
 	opacity: 0.5;
 	cursor: not-allowed;
 }
@@ -244,6 +245,34 @@
 .gap-section { gap: 24px; }
 .space-cards > * + * { margin-top: 16px; }
 .space-sections > * + * { margin-top: 24px; }
+
+/* Split row (SplitRow) — one stacked column below xl; ratio-preset columns from xl (1280px, Tailwind xl) */
+.split-row {
+	display: grid;
+	grid-template-columns: minmax(0, 1fr);
+	gap: 16px;
+}
+
+/* Tile split (TileSplit) — value + badge over detail by default; lead | detail columns from 641px to below xl */
+.tile-split {
+	display: grid;
+	grid-template-columns: minmax(0, 1fr);
+	gap: 4px 16px;
+	align-items: start;
+}
+.tile-split-lead,
+.tile-split-detail { min-width: 0; }
+
+@media (min-width: 641px) and (max-width: 1279px) {
+	.tile-split { grid-template-columns: auto minmax(0, 1fr); }
+}
+
+@media (min-width: 1280px) {
+	.split-row--1-1 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+	.split-row--7-5 { grid-template-columns: minmax(0, 7fr) minmax(0, 5fr); }
+	.split-row--3-2 { grid-template-columns: minmax(0, 3fr) minmax(0, 2fr); }
+	.split-row--2-1 { grid-template-columns: minmax(0, 2fr) minmax(0, 1fr); }
+}
 
 .tbl {
 	width: 100%;
@@ -652,6 +681,62 @@
 .detail-confirm { align-items: center; justify-content: center; }
 /* confirm 은 열린 drawer/fullscreen 위로 재차 스택 — 더 높은 z 로 위 레이어 확보. */
 .detail-overlay.detail-confirm { z-index: var(--z-confirm); }
+
+/* Page verdict (PageVerdict) — glyph carries the tone colour, the word and sentence stay ink for contrast */
+.page-verdict {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: baseline;
+	gap: 4px 12px;
+}
+.page-verdict-tone {
+	display: inline-flex;
+	align-items: baseline;
+	gap: 6px;
+	font-weight: 600;
+	white-space: nowrap;
+}
+.page-verdict--ok .page-verdict-glyph { color: rgb(var(--ok)); }
+.page-verdict--warn .page-verdict-glyph { color: rgb(var(--warn)); }
+.page-verdict--crit .page-verdict-glyph { color: rgb(var(--crit)); }
+.page-verdict--info .page-verdict-glyph { color: rgb(var(--info)); }
+.page-verdict--neutral .page-verdict-glyph { color: rgb(var(--faint)); }
+.page-verdict-chips {
+	display: inline-flex;
+	flex-wrap: wrap;
+	gap: 8px;
+}
+
+/* Low-sample marker (LowSampleMark) — muted italic n beside a small-sample rate */
+.low-sample {
+	font-style: italic;
+	color: rgb(var(--faint));
+}
+
+/* Popover — non-modal panel under its card-head trigger; one layer below modal surfaces so a DetailSurface still covers it */
+.popover-root {
+	position: relative;
+	display: inline-flex;
+}
+/* .card clips (overflow: hidden) → lifted only while a panel is open, so a short card never cuts it off */
+.card:has(.popover-panel) {
+	overflow: visible;
+}
+.popover-panel {
+	position: absolute;
+	top: calc(100% + 4px);
+	right: 0;
+	z-index: calc(var(--z-overlay) - 1);
+	min-width: 240px;
+	max-width: min(360px, calc(100vw - 32px));
+	max-height: 60vh;
+	overflow: auto;
+	padding: 12px;
+	background: rgb(var(--overlay-surface));
+	border: 1px solid rgb(var(--line));
+	border-radius: var(--radius-card);
+	box-shadow: var(--shadow-overlay);
+}
 
 .detail-panel {
 	background: rgb(var(--overlay-surface)); /* 불투명 오버레이 면 (텍스트 대비 보장) */

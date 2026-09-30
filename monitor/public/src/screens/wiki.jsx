@@ -1,4 +1,4 @@
-// 위키 화면 — wiki.* + core.daemon_runs PG 소스 (파일시스템 비결합). 알람 레인 + 타일 밴드 + 디스클로저 3종.
+// 위키 화면 — wiki.* + core.daemon_runs PG 소스 (파일시스템 비결합). 판정 줄 + 알람 레인 + 타일 밴드 + 열린 상태 행 + 상세 디스클로저.
 const {
 	useState: useStateW,
 	useEffect: useEffectW,
@@ -23,6 +23,7 @@ const SPARSE_MIN_NONZERO = 4;
 function ScreenWiki() {
 	const {
 		PageHeader,
+		PageVerdict,
 		TypeScaleStyle,
 		FreshnessStamp,
 		RefreshButton,
@@ -57,6 +58,10 @@ function ScreenWiki() {
 	const outage = readWikiOutageW(waveSections);
 	// a shared outage owns the page's single Retry → sections stay quiet
 	const sectionRetry = outage ? undefined : triggerRefresh;
+	const verdict = useMemoW(
+		() => buildWikiVerdictW(summaryState, indexState, backlogState, cyclesState),
+		[summaryState, indexState, backlogState, cyclesState],
+	);
 
 	// Parallel reads — each region keeps its last payload until its own answer lands.
 	useEffectW(() => {
@@ -95,14 +100,16 @@ function ScreenWiki() {
         .w-disclosure > summary { list-style: none; }
         .w-disclosure > summary::-webkit-details-marker { display: none; }
         .w-disclosure[open] > summary .w-chevron { transform: rotate(90deg); }
-        .w-alarm-open { min-height: var(--ctl-min-h); cursor: pointer; }
         /* base.css tints only status tones → a parked (neutral) glyph recedes locally. */
         .alarm-row[data-tone="neutral"] .alarm-row-glyph { color: rgb(var(--dim)); }
         /* Name, bar and count stay within reading distance on a wide panel. */
         .w-type-list { max-width: 40rem; }
-        .w-type-row { display: grid; grid-template-columns: minmax(0, 12rem) minmax(0, 1fr) 4rem; align-items: center; gap: 0.75rem; }
+        .w-type-row { display: grid; grid-template-columns: minmax(0, 9rem) minmax(0, 1fr) 3.5rem 2.5rem; align-items: center; gap: 0.75rem; }
         .w-type-track { display: block; height: 6px; border-radius: 9999px; background: rgb(var(--line)); }
         .w-type-fill { display: block; height: 100%; border-radius: inherit; background: rgb(var(--dim)); }
+        /* Bar ticks sit at slot centres and centre on them → edge dates would overhang the card; !important beats the inline transform. */
+        .w-trend [data-chart-tick]:first-child { transform: none !important; }
+        .w-trend [data-chart-tick]:last-child { transform: translateX(-100%) !important; }
       `}</style>
 
 			<div className="flex-shrink-0">
@@ -133,8 +140,18 @@ function ScreenWiki() {
 						sources={outage.sources}
 						error={outage.error}
 						onRetry={triggerRefresh}
+						isBusy={isBusy}
+						focusTargetId="wiki-verdict"
 					/>
 				)}
+				<PageVerdict
+					id="wiki-verdict"
+					tone={verdict.tone}
+					chips={verdict.chips}
+					freshness={{ at: settledAt, regions: waveStates }}
+				>
+					{verdict.text}
+				</PageVerdict>
 				{/* Above the fold — what needs a hand, then the health band. */}
 				<WikiAlarmLane
 					summaryState={summaryState}
@@ -146,24 +163,29 @@ function ScreenWiki() {
 					summaryState={summaryState}
 					indexState={indexState}
 					backlogState={backlogState}
+					cyclesState={cyclesState}
+					at={settledAt}
+					onRetry={sectionRetry}
+				/>
+				<WikiStatusRow
+					cyclesState={cyclesState}
+					summaryState={summaryState}
+					indexState={indexState}
 					onRetry={sectionRetry}
 				/>
 
-				{/* Behind the click — working lists, run history, note composition. */}
-				<WikiMaintenanceSection
-					backlogState={backlogState}
-					cyclesState={cyclesState}
-					onRetry={sectionRetry}
-				/>
-				<WikiRunHistorySection
-					cyclesState={cyclesState}
-					summaryState={summaryState}
+				{/* Behind the click — the per-run record and the working lists. */}
+				<WikiRunTableSection
 					reportState={reportState}
 					days={reportDays}
 					onChangeDays={setReportDays}
 					onRetry={sectionRetry}
 				/>
-				<WikiNotesByTypeSection state={indexState} onRetry={sectionRetry} />
+				<WikiMaintenanceSection
+					backlogState={backlogState}
+					cyclesState={cyclesState}
+					onRetry={sectionRetry}
+				/>
 			</div>
 		</div>
 	);
@@ -206,6 +228,75 @@ const PROPOSAL_PARKED_RUNS = 7;
 // Same threshold on the dated source — the cycle is daily, so a run and a day match.
 const PROPOSAL_PARKED_DAYS = PROPOSAL_PARKED_RUNS;
 
+// Element id of the merge-proposals fold — the verdict chip's target.
+const MERGE_PROPOSALS_ID = "wiki-merge-proposals";
+
+// One sentence over the lane's checks; a parked proposal informs but never raises the tone.
+// An unread summary adds no sentence — PageVerdict's shared not-read note speaks for it.
+function buildWikiVerdictW(summaryState, indexState, backlogState, cyclesState) {
+	if (summaryState.status !== "ready") {
+		const isFailed = window.UI.getRegionView(summaryState) === "error";
+		const text = isFailed ? "The daily cycle summary could not be read." : null;
+		return { tone: "neutral", text, chips: [] };
+	}
+
+	const summary = summaryState.data || {};
+	const lane = buildAlarmLaneModel(summaryState, indexState, backlogState, cyclesState);
+	const proposals = lane.alarms.filter((alarm) => alarm.proposal);
+	const compiled = buildCompiledTileW(summaryState, backlogState, cyclesState);
+	const tones = [
+		wikiStatusToneW(summary.last_status),
+		compiled.tone,
+		...lane.alarms.map((alarm) => alarm.tone),
+	];
+	const parts = [
+		summary.last_cycle_started_at
+			? `last run ${window.UI.formatRelativeTime(summary.last_cycle_started_at)}`
+			: "no run recorded",
+		typeof summary.latest_compiled_count === "number"
+			? `${formatCountW(summary.latest_compiled_count)} compiled`
+			: null,
+		describeProposalBacklogW(proposals),
+		describeLaneGapW(lane),
+	];
+
+	return {
+		tone: getVerdictToneW(tones, lane),
+		text: parts.filter(Boolean).join(" · "),
+		chips:
+			proposals.length > 0
+				? [{ key: "proposals", label: "Open proposals", targetId: MERGE_PROPOSALS_ID }]
+				: [],
+	};
+}
+
+// A known warn/crit stands; the all-clear waits until every lane feeder has answered.
+function getVerdictToneW(tones, lane) {
+	const worst = window.UI.getWorstTone(tones);
+	if (worst && worst !== "ok") return worst;
+
+	const complete = !lane.pending && lane.unchecked.length === 0;
+	return complete ? "ok" : "neutral";
+}
+
+function describeLaneGapW(lane) {
+	if (lane.unchecked.length > 0) return `couldn't check ${lane.unchecked.join(", ")}`;
+	return lane.pending ? "still checking" : null;
+}
+
+// Rows arrive parked-last and oldest-last, so the final row carries the oldest age.
+function describeProposalBacklogW(proposals) {
+	if (proposals.length === 0) return null;
+
+	const count = proposals.length;
+	const parked = proposals.filter((p) => p.parked).length;
+	const noun = count === 1 ? "merge" : "merges";
+	const state =
+		parked === count ? "parked" : parked === 0 ? "waiting" : `waiting (${parked} parked)`;
+	const oldest = proposals[count - 1].ageLabel;
+	return `${count} ${noun} ${state}${oldest ? `, oldest ${oldest}` : ""}`;
+}
+
 // Alarm lane — domain facts awaiting a decision, in decision order: dirty index →
 // missed daily cycle → proposals awaiting approval (parked ones last). A failed payload
 // renders its banner at the group it feeds, never a lane row.
@@ -224,8 +315,11 @@ function WikiAlarmLane({ summaryState, indexState, backlogState, cyclesState }) 
 		[summaryState, indexState, backlogState, cyclesState],
 	);
 
+	// Proposals ride the page verdict; the lane keeps what needs a hand now.
+	const rows = model.alarms.filter((alarm) => !alarm.proposal);
+
 	// Empty lane and unloaded lane must not look alike — silence only once every feeder answered.
-	if (model.alarms.length === 0 && model.unchecked.length === 0) {
+	if (rows.length === 0 && model.unchecked.length === 0) {
 		return model.pending ? (
 			<div className="fs-meta text-faint" aria-busy="true">
 				Checking what needs attention…
@@ -238,7 +332,7 @@ function WikiAlarmLane({ summaryState, indexState, backlogState, cyclesState }) 
 			className="rounded-md border border-line m-0 p-0 list-none"
 			aria-label="Wiki alarms"
 		>
-			{model.alarms.map((alarm) => (
+			{rows.map((alarm) => (
 				<li key={alarm.key} className="alarm-row" data-tone={alarm.tone}>
 					<span className="alarm-row-glyph" aria-hidden="true">
 						<Icon name={TONE_ICON[alarm.tone]} size={14} />
@@ -251,16 +345,6 @@ function WikiAlarmLane({ summaryState, indexState, backlogState, cyclesState }) 
 							{alarm.detail}
 						</span>
 					</span>
-					{alarm.anchorId && (
-						<button
-							type="button"
-							className="w-alarm-open fs-meta text-accent px-2 self-center"
-							aria-label={`Open proposal: ${alarm.label}`}
-							onClick={() => openProposalW(alarm.anchorId)}
-						>
-							Open proposal
-						</button>
-					)}
 				</li>
 			))}
 			{model.unchecked.length > 0 && (
@@ -270,23 +354,6 @@ function WikiAlarmLane({ summaryState, indexState, backlogState, cyclesState }) 
 			)}
 		</ul>
 	);
-}
-
-// Element id of a proposal's list item; a pair without a hash has no stable anchor.
-function getProposalAnchorIdW(hash) {
-	if (typeof hash !== "string" || hash === "") return null;
-	return `wiki-proposal-${hash.replace(/[^A-Za-z0-9_-]/g, "-")}`;
-}
-
-// Opens the disclosure holding the item, then moves focus onto it.
-function openProposalW(anchorId) {
-	const item = document.getElementById(anchorId);
-	if (!item) return;
-
-	const disclosure = item.closest("details");
-	if (disclosure) disclosure.open = true;
-	item.scrollIntoView({ block: "nearest" });
-	item.focus();
 }
 
 // pending = a feeder is still loading, so "no alarms" cannot yet be told apart from
@@ -375,7 +442,11 @@ function buildProposalAlarmsW(backlog, proposals, cyclesState) {
 				: describeProposalAgeW(runs, parked, checking),
 			parked,
 			age: typeof age === "number" ? age : 0,
-			anchorId: getProposalAnchorIdW(proposal?.cluster_hash),
+			ageLabel: wait
+				? `${wait.days} d`
+				: typeof runs === "number"
+					? `${runs} ${runs === 1 ? "run" : "runs"}`
+					: null,
 			proposal,
 		};
 	});
@@ -462,13 +533,13 @@ function describeSnapshotAgeW(runDate) {
 }
 
 // Four-tile band — last run · compiled last cycle · search index · library totals.
-// Steady state carries no status word and no tint; only an actionable state tints.
+// Steady state carries no tint (the last-run sub still names the outcome); only an actionable state tints.
 
-function WikiTileBand({ summaryState, indexState, backlogState, onRetry }) {
+function WikiTileBand({ summaryState, indexState, backlogState, cyclesState, at, onRetry }) {
 	const { RegionUnavailable } = window.UI;
 	const tiles = useMemoW(
-		() => buildTileBandModel(summaryState, indexState, backlogState),
-		[summaryState, indexState, backlogState],
+		() => buildTileBandModel(summaryState, indexState, backlogState, cyclesState, at),
+		[summaryState, indexState, backlogState, cyclesState, at],
 	);
 	const failures = readTileBandFailuresW(summaryState, indexState);
 
@@ -528,7 +599,7 @@ function WikiTile({ tile }) {
 			{tile.sub && (
 				<div
 					className="fs-meta text-faint mt-1 leading-tight truncate"
-					title={tile.sub}
+					title={tile.hint || tile.sub}
 				>
 					{tile.sub}
 				</div>
@@ -537,10 +608,10 @@ function WikiTile({ tile }) {
 	);
 }
 
-function buildTileBandModel(summaryState, indexState, backlogState) {
+function buildTileBandModel(summaryState, indexState, backlogState, cyclesState, at) {
 	return [
-		buildLastRunTileW(summaryState),
-		buildCompiledTileW(summaryState),
+		buildLastRunTileW(summaryState, at),
+		buildCompiledTileW(summaryState, backlogState, cyclesState),
 		buildIndexTileW(indexState),
 		buildLibraryTileW(indexState, summaryState, backlogState),
 	];
@@ -572,7 +643,7 @@ function tileFetchStateW(state) {
 	return null;
 }
 
-function buildLastRunTileW(state) {
+function buildLastRunTileW(state, at) {
 	const label = "Last run";
 	const pending = tileFetchStateW(state);
 	if (pending) return tilePlaceholderW("last-run", label, pending);
@@ -584,42 +655,79 @@ function buildLastRunTileW(state) {
 
 	const hours = d.hours_since_last_cycle;
 	const overdue = isCycleOverdueW(hours);
-	const statusTone = wikiStatusToneW(d.last_status);
-	const tone = overdue ? "crit" : statusTone === "ok" ? "neutral" : statusTone;
+	const outcome = getLastRunOutcomeW(state, at);
+	const tone = overdue ? "crit" : outcome.tone === "ok" ? "neutral" : outcome.tone;
 
 	return {
 		key: "last-run",
 		label,
 		state: "ready",
 		value: window.UI.formatRelativeTime(d.last_cycle_started_at),
-		// Steady state names the cycle date only; a non-healthy run names what went wrong.
 		sub: overdue
 			? `Overdue · cycle ${d.last_run_date}`
-			: tone === "neutral"
-				? `Cycle ${d.last_run_date}`
-				: `${wikiStatusLabelW(d.last_status)} · cycle ${d.last_run_date}`,
+			: `${outcome.label}${describeP95W(d.cycle_p95_ms)}`,
+		hint: `Cycle ${d.last_run_date}`,
 		tone,
 	};
 }
 
-function buildCompiledTileW(state) {
+// A held summary under a failed or aged read takes the shared verdict: Last known, ok → neutral, warn/crit kept.
+function getLastRunOutcomeW(state, at) {
+	const status = state.data?.last_status;
+	const outcome = { tone: wikiStatusToneW(status), label: wikiStatusLabelW(status) };
+	if (!at) return outcome;
+
+	return window.UI.getFreshnessVerdict({ ...outcome, at, regions: [state] });
+}
+
+function describeP95W(ms) {
+	return typeof ms === "number" ? ` · p95 ${window.UI.formatDuration(ms, "ms")}` : "";
+}
+
+// A zero names its cause: idle (nothing waiting) stays quiet, stalled (originals waiting) tints.
+function buildCompiledTileW(
+	state,
+	backlogState = UNKNOWN_REGION_W,
+	cyclesState = UNKNOWN_REGION_W,
+) {
 	const label = "Compiled last cycle";
 	const pending = tileFetchStateW(state);
 	if (pending) return tilePlaceholderW("compiled", label, pending);
 
-	const d = state.data || {};
-	if (typeof d.latest_compiled_count !== "number") {
+	const count = state.data?.latest_compiled_count;
+	if (typeof count !== "number") {
 		return tilePlaceholderW("compiled", label, "unavailable");
 	}
+
+	const waiting =
+		backlogState.status === "ready" ? backlogState.data?.backlog?.true_backlog : undefined;
+	const isStalled = count === 0 && typeof waiting === "number" && waiting > 0;
+	const cause =
+		count !== 0 || typeof waiting !== "number"
+			? null
+			: isStalled
+				? `${formatCountW(waiting)} originals waiting, none compiled`
+				: "Nothing to compile — no originals waiting";
+	const total = sumCompiledW(cyclesState);
+	const windowTotal =
+		typeof total === "number" ? `${formatCountW(total)} in ${WIKI_CYCLE_DAYS} d` : null;
 
 	return {
 		key: "compiled",
 		label,
 		state: "ready",
-		value: formatCountW(d.latest_compiled_count),
-		sub: d.last_run_date ? `Cycle ${d.last_run_date}` : null,
-		tone: "neutral",
+		value: formatCountW(count),
+		sub: [cause, windowTotal].filter(Boolean).join(" · ") || null,
+		tone: isStalled ? "warn" : "neutral",
 	};
+}
+
+function sumCompiledW(cyclesState) {
+	if (cyclesState.status !== "ready") return null;
+	return (cyclesState.data?.cycles || []).reduce(
+		(sum, c) => sum + (Number(c.compiled_count) || 0),
+		0,
+	);
 }
 
 function buildIndexTileW(state) {
@@ -636,8 +744,9 @@ function buildIndexTileW(state) {
 	if (flagMissing) {
 		return {
 			...tilePlaceholderW("index", label, "unavailable"),
-			value: "Untracked",
-			sub: "No dirty flag on record — cleanliness unknown",
+			value: "Not reported",
+			sub: "Freshness not reported",
+			hint: "No dirty flag on record — the compiler has not written one, so cleanliness is unknown",
 			isWord: true,
 		};
 	}
@@ -729,10 +838,12 @@ function WikiMaintenanceSection({ backlogState, cyclesState, onRetry }) {
 				/>
 			) : null}
 
-			{/* Always present, so the lane's "Open proposal" and the page layout never lose it. */}
+			{/* Always present, so the verdict's proposals chip and the page layout never lose it. */}
 			<WikiDisclosureW
+				id={MERGE_PROPOSALS_ID}
 				label="Merge proposals"
 				count={describeProposalCountW(model)}
+				tone={model.proposalTone}
 			>
 				{model.state === "loading" ? (
 					<LoadingPlaceholder label="merge proposals" />
@@ -790,9 +901,9 @@ function describeProposalCountW(model) {
 	return model.proposals ? formatCountW(model.proposals.length) : "Not reported";
 }
 
-const UNKNOWN_CYCLES_W = { status: "idle", data: null, error: null };
+const UNKNOWN_REGION_W = { status: "idle", data: null, error: null };
 
-function buildMaintenanceModel(backlogState, cyclesState = UNKNOWN_CYCLES_W) {
+function buildMaintenanceModel(backlogState, cyclesState = UNKNOWN_REGION_W) {
 	if (backlogState.status === "loading") {
 		return { state: "loading" };
 	}
@@ -803,7 +914,7 @@ function buildMaintenanceModel(backlogState, cyclesState = UNKNOWN_CYCLES_W) {
 		return { state: "empty" };
 	}
 
-	const proposals = orderProposalsW(backlog, readProposalsW(backlog), cyclesState);
+	const proposalRows = readProposalRowsW(backlog, readProposalsW(backlog), cyclesState);
 	const deadLinks = Array.isArray(backlog.deadlink_dryrun)
 		? backlog.deadlink_dryrun
 		: null;
@@ -814,7 +925,9 @@ function buildMaintenanceModel(backlogState, cyclesState = UNKNOWN_CYCLES_W) {
 
 	return {
 		state: "ready",
-		proposals,
+		proposals: proposalRows && proposalRows.map((row) => row.proposal),
+		// A waiting pair → warn, so the fold holding it opens itself; parked pairs stay neutral.
+		proposalTone: proposalRows && window.UI.getWorstTone(proposalRows.map((row) => row.tone)),
 		deadLinks,
 		linkFixes,
 		residueLine:
@@ -824,35 +937,40 @@ function buildMaintenanceModel(backlogState, cyclesState = UNKNOWN_CYCLES_W) {
 	};
 }
 
-// The lane's order, so row N in the lane is row N in the list.
-function orderProposalsW(backlog, proposals, cyclesState) {
+// The lane's rows, so row N in the lane is row N in the list.
+function readProposalRowsW(backlog, proposals, cyclesState) {
 	if (!proposals) return proposals;
-	return buildProposalAlarmsW(backlog, proposals, cyclesState).map((row) => row.proposal);
+	return buildProposalAlarmsW(backlog, proposals, cyclesState);
 }
 
-// Run history — volume and the per-run table, both behind one closed disclosure.
-// The window control drives the table only; the chart and the status mix keep the
-// fixed cycles window and say so.
+// Status row — the compile trend and the library's composition, open side by side.
+function WikiStatusRow({ cyclesState, summaryState, indexState, onRetry }) {
+	const { SplitRow } = window.UI;
 
-function WikiRunHistorySection({
-	cyclesState,
-	summaryState,
-	reportState,
-	days,
-	onChangeDays,
-	onRetry,
-}) {
-	const { RegionUnavailable, LoadingPlaceholder, SectionLabel } = window.UI;
+	return (
+		<SplitRow ratio="2:1">
+			<WikiRunHistorySection
+				cyclesState={cyclesState}
+				summaryState={summaryState}
+				onRetry={onRetry}
+			/>
+			<WikiNotesByTypeSection state={indexState} onRetry={onRetry} />
+		</SplitRow>
+	);
+}
+
+// Run history — the notes-per-day trend as an open status strip on the fixed cycles window.
+function WikiRunHistorySection({ cyclesState, summaryState, onRetry }) {
+	const { RegionUnavailable, LoadingPlaceholder } = window.UI;
 	const model = useMemoW(
 		() => buildThroughputModel(cyclesState),
 		[cyclesState],
 	);
 
 	return (
-		<WikiDisclosureW
+		<WikiCardW
 			label="Run history"
 			count={describeRunHistoryW(cyclesState, model, summaryState)}
-			bodyClassName="px-3 pb-3 flex flex-col gap-3"
 		>
 			{cyclesState.status === "loading" ? (
 				<LoadingPlaceholder label="run history" minHeight={120} />
@@ -872,41 +990,73 @@ function WikiRunHistorySection({
 						label={`Notes per day · last ${WIKI_CYCLE_DAYS} days`}
 						series={model.compiledSeries}
 						dates={model.compiledDates}
-						stat={`${model.activeDays} active days of ${model.spanDays}`}
+						stat={`${formatCountW(model.total)} notes in ${WIKI_CYCLE_DAYS} d · ${model.activeDays} active days`}
 					/>
 					{/* A near-uniform mix carries no information — only a mixed run set earns the bar. */}
 					{!model.isMixUniform && <WikiStatusMixW mix={model.mix} />}
 				</>
 			)}
+		</WikiCardW>
+	);
+}
 
-			<div className="pt-3 border-t border-line flex flex-col gap-2">
-				<div className="flex items-center gap-2 flex-wrap">
-					<SectionLabel level={3} className="m-0">
-						Per-run table
-					</SectionLabel>
-					<div
-						className="seg ml-auto"
-						role="group"
-						aria-label="Run table time range"
-					>
-						{WIKI_REPORT_DAYS_OPTIONS.map((p) => (
-							<button
-								key={p.value}
-								className={days === p.value ? "active" : ""}
-								aria-pressed={days === p.value}
-								onClick={() => onChangeDays(p.value)}
-							>
-								{p.label}
-							</button>
-						))}
-					</div>
+// Per-run record — a detail fold whose summary line states the run streak without a click.
+function WikiRunTableSection({ reportState, days, onChangeDays, onRetry }) {
+	return (
+		<WikiDisclosureW
+			label="Per-run table"
+			count={describeRunTableW(reportState, days)}
+			bodyClassName="px-3 pb-3 flex flex-col gap-2"
+		>
+			<div className="flex items-center gap-2 flex-wrap">
+				<span className="fs-meta text-faint leading-tight">
+					{`The window drives the table only — the trend keeps a fixed ${WIKI_CYCLE_DAYS}-day window.`}
+				</span>
+				<div
+					className="seg ml-auto"
+					role="group"
+					aria-label="Run table time range"
+				>
+					{WIKI_REPORT_DAYS_OPTIONS.map((p) => (
+						<button
+							key={p.value}
+							type="button"
+							className={days === p.value ? "active" : ""}
+							aria-pressed={days === p.value}
+							onClick={() => onChangeDays(p.value)}
+						>
+							{p.label}
+						</button>
+					))}
 				</div>
-				<div className="fs-meta text-faint leading-tight">
-					{`The window drives the table only — the figures above keep a fixed ${WIKI_CYCLE_DAYS}-day window.`}
-				</div>
-				<WikiReportsBody state={reportState} days={days} onRetry={onRetry} />
 			</div>
+			<WikiReportsBody state={reportState} days={days} onRetry={onRetry} />
 		</WikiDisclosureW>
+	);
+}
+
+// One streak → "27 healthy runs in a row since …"; several → how many streaks the window holds.
+function describeRunTableW(state, days) {
+	if (state.status === "loading") return "Loading…";
+	if (state.status === "error") return "Unavailable";
+
+	const reports = state.data?.reports || [];
+	if (reports.length === 0) return `No runs in ${days} d`;
+
+	const groups = groupConstantRunsW(sortRunsNewestFirstW(reports));
+	if (groups.length > 1) return `${reports.length} runs in ${groups.length} streaks`;
+
+	const [only] = groups;
+	const status = wikiStatusLabelW(only.newest.status).toLowerCase();
+	return only.count === 1
+		? `1 ${status} run on ${only.newest.run_date}`
+		: `${only.count} ${status} runs in a row since ${only.oldest.run_date}`;
+}
+
+// The server returns runs ascending by run_date.
+function sortRunsNewestFirstW(reports) {
+	return [...reports].sort((a, b) =>
+		(b.run_date || "").localeCompare(a.run_date || ""),
 	);
 }
 
@@ -918,25 +1068,37 @@ function describeRunHistoryW(cyclesState, model, summaryState) {
 
 	const p95 =
 		summaryState.status === "ready" ? summaryState.data?.cycle_p95_ms : null;
-	const p95Label =
-		typeof p95 === "number"
-			? ` · p95 ${window.UI.formatDuration(p95, "ms")}`
-			: "";
-	return `${model.spanDays} runs · last ${model.newestDate}${p95Label}`;
+	return `${model.spanDays} runs · last ${model.newestDate}${describeP95W(p95)}`;
 }
 
 /**
  * Collapsible section shell — label left, count right, body below the summary.
  * h2 inside the summary (HTML allows one heading there) → heading navigation lands on the toggle.
+ * Follows UI.Disclosure's detail rule: a warn/crit `tone` opens it; a later recovery never force-closes it.
  */
 function WikiDisclosureW({
+	id,
 	label,
 	count,
+	tone,
 	bodyClassName = "px-3 pb-3",
 	children,
 }) {
+	const isAlerting = window.UI.getDisclosureOpen("detail", tone);
+	// Latched → the `open` prop never flips back to false, so React never closes a fold the reader left open.
+	const [hasAlerted, setAlerted] = useStateW(isAlerting);
+
+	useEffectW(() => {
+		if (isAlerting) setAlerted(true);
+	}, [isAlerting]);
+
 	return (
-		<details className="w-disclosure rounded-md border border-line bg-sunken">
+		<details
+			id={id}
+			open={hasAlerted || undefined}
+			onFocus={id ? openOnOwnFocusW : undefined}
+			className="w-disclosure rounded-md border border-line bg-sunken"
+		>
 			<summary className="cursor-pointer select-none px-3 py-2 flex items-center gap-2 flex-wrap">
 				<span className="w-chevron inline-block fs-meta text-faint" aria-hidden="true">
 					▶
@@ -949,20 +1111,35 @@ function WikiDisclosureW({
 	);
 }
 
-// Notes by type — text rows; counts read as a list, not as a card grid.
+// A chip focusing the fold itself opens it; Tab landing on the summary does not.
+function openOnOwnFocusW(event) {
+	if (event.target === event.currentTarget) event.currentTarget.open = true;
+}
 
+// Open section shell — the status-card counterpart of WikiDisclosureW.
+function WikiCardW({ label, count, children }) {
+	return (
+		<section className="rounded-md border border-line bg-sunken p-3 flex flex-col gap-2 min-w-0 h-full">
+			<div className="flex items-center gap-2 flex-wrap">
+				<h2 className="m-0 fs-body text-ink font-medium">{label}</h2>
+				<span className="ml-auto fs-meta text-dim">{count}</span>
+			</div>
+			{children}
+		</section>
+	);
+}
+
+// Notes by type — the library's composition, open as a compact list.
 function WikiNotesByTypeSection({ state, onRetry }) {
 	const { RegionUnavailable, LoadingPlaceholder } = window.UI;
 	const rows =
 		state.status === "ready" && Array.isArray(state.data?.by_type)
-			? state.data.by_type
+			? buildNoteTypeRowsW(state.data.by_type)
 			: [];
+	const coverage = describeNoteCoverageW(rows);
 
 	return (
-		<WikiDisclosureW
-			label="Notes by type"
-			count={describeNotesByTypeW(state)}
-		>
+		<WikiCardW label="Notes by type" count={describeNotesByTypeW(state)}>
 			{state.status === "loading" ? (
 				<LoadingPlaceholder label="note types" />
 			) : state.status === "error" ? (
@@ -974,33 +1151,52 @@ function WikiNotesByTypeSection({ state, onRetry }) {
 			) : rows.length === 0 ? (
 				<EmptyStateW message="No notes indexed yet." />
 			) : (
-				<ul className="w-type-list flex flex-col gap-1.5 m-0 p-0 list-none">
-					{buildNoteTypeRowsW(rows).map((t) => (
-						<li key={t.type} className="w-type-row fs-meta font-mono">
-							<span className="text-dim break-words">{t.type}</span>
-							<span className="w-type-track" aria-hidden="true">
-								<span className="w-type-fill" style={{ width: `${t.share}%` }} />
-							</span>
-							<span className="text-ink text-right">{formatCountW(t.count)}</span>
-						</li>
-					))}
-				</ul>
+				<>
+					<ul className="w-type-list flex flex-col gap-1.5 m-0 p-0 list-none">
+						{rows.map((t) => (
+							<li key={t.type} className="w-type-row fs-meta" title={t.type}>
+								<span className="text-dim break-words">{t.label}</span>
+								<span className="w-type-track" aria-hidden="true">
+									<span className="w-type-fill" style={{ width: `${t.share}%` }} />
+								</span>
+								<span className="font-mono text-ink text-right">{formatCountW(t.count)}</span>
+								<span className="font-mono text-faint text-right">{`${t.pct}%`}</span>
+							</li>
+						))}
+					</ul>
+					{coverage && (
+						<div className="fs-meta text-faint leading-tight">{coverage}</div>
+					)}
+				</>
 			)}
-		</WikiDisclosureW>
+		</WikiCardW>
 	);
 }
 
-// Bar length = the count's share of the largest type.
+// Internal note_type → reader label; an unlisted type keeps its name after "Other".
+const NOTE_TYPE_LABELS = { raw: "Saved originals", "source-summary": "Summary notes" };
+
+// Bar length = share of the largest type; pct = share of all notes.
 function buildNoteTypeRowsW(rows) {
-	const max = Math.max(0, ...rows.map((t) => Number(t.count) || 0));
-	return rows.map((t) => {
-		const count = Number(t.count) || 0;
-		return {
-			type: t.note_type,
-			count,
-			share: max > 0 ? Math.round((count / max) * 100) : 0,
-		};
-	});
+	const counts = rows.map((t) => Number(t.count) || 0);
+	const max = Math.max(0, ...counts);
+	const total = counts.reduce((sum, n) => sum + n, 0);
+	return rows.map((t, i) => ({
+		type: t.note_type,
+		label: NOTE_TYPE_LABELS[t.note_type] || `Other · ${t.note_type}`,
+		count: counts[i],
+		share: max > 0 ? Math.round((counts[i] / max) * 100) : 0,
+		pct: total > 0 ? Math.round((counts[i] / total) * 100) : 0,
+	}));
+}
+
+// Summaries against the originals they cover; either type missing → no line.
+function describeNoteCoverageW(rows) {
+	const countOf = (type) => rows.find((t) => t.type === type)?.count;
+	const summaries = countOf("source-summary");
+	const originals = countOf("raw");
+	if (typeof summaries !== "number" || typeof originals !== "number") return null;
+	return `${formatCountW(summaries)} summary notes for ${formatCountW(originals)} saved originals`;
 }
 
 function describeNotesByTypeW(state) {
@@ -1116,6 +1312,7 @@ function buildThroughputModel(state) {
 		isMixUniform: isNearUniformMixW(mix),
 		newestDate: ascending[ascending.length - 1]?.run_date || "",
 		activeDays: nonZeroCount,
+		total: sumCompiledW(state),
 		spanDays: compiledSeries.length,
 	};
 }
@@ -1186,11 +1383,7 @@ function MergeSuggestionItem({ proposal }) {
 	const action = proposal.suggested_action || proposal.llm_verdict || "";
 
 	return (
-		<li
-			id={getProposalAnchorIdW(proposal.cluster_hash) || undefined}
-			tabIndex={-1}
-			className="rounded border border-line bg-card px-2.5 py-1.5"
-		>
+		<li className="rounded border border-line bg-card px-2.5 py-1.5">
 			<div className="flex items-baseline gap-2 flex-wrap fs-meta font-mono">
 				<span className="text-ink font-medium break-words min-w-0">{target}</span>
 				<span className="inline-flex items-center text-faint">
@@ -1229,10 +1422,7 @@ function WikiReportsBody({ state, days, onRetry }) {
 		);
 	}
 
-	// Newest first for the card list (server returns ascending by run_date).
-	const sortedDesc = [...reports].sort((a, b) =>
-		(b.run_date || "").localeCompare(a.run_date || ""),
-	);
+	const sortedDesc = sortRunsNewestFirstW(reports);
 
 	// deadlinks/dedup = 미해결 백로그 스냅샷 (매 실행 동일값 재스탬프, per-cycle delta 아님) → 기간 합산 중복 과산정 방지 위해 최신 1건만 표시.
 	const latestReport = sortedDesc[0];
@@ -1363,25 +1553,23 @@ function EmptyStateW({ message }) {
 }
 
 // 희소 추세(비0 포인트 < SPARSE_MIN_NONZERO) 공용 렌더 — 넓은 트랙 외톨이 막대가 "차트 깨짐"으로 읽히는 문제 회피.
-//   sparse → TrendChart 대신 compact stat(최신/대표값) + "no activity in range" 빈상태로 대체.
+//   sparse → TrendChart 대신 한 줄 안내 · 헤드라인 수치(합계·활성일·피크)는 항상 차트 위.
 //   충분히 채워진 시리즈(비0 ≥ SPARSE_MIN_NONZERO) → 패널 폭 TrendChart(막대별 날짜·값 readout).
 function SparseTrendW({ label, series, dates, stat }) {
 	const { TrendChart } = window.UI;
 	const sparse = series.filter((v) => v > 0).length < SPARSE_MIN_NONZERO;
-	const caption = [describePeakW(series, dates), stat].filter(Boolean).join(" · ");
+	const headline = [stat, describePeakW(series, dates)].filter(Boolean).join(" · ");
 
 	return (
 		<div>
+			<div className="fs-body text-ink mb-1">{headline}</div>
 			<div className="card-sub mb-1.5">{label}</div>
 			{sparse ? (
-				<div className="rounded-md border border-line bg-sunken px-3 py-2.5 flex items-baseline justify-between gap-3">
-					<span className="fs-body text-dim">{caption}</span>
-					<span className="fs-meta text-faint">
-						no activity in range
-					</span>
+				<div className="rounded-md border border-line bg-sunken px-3 py-2.5 fs-meta text-faint">
+					Too few active days to draw a trend.
 				</div>
 			) : (
-				<>
+				<div className="w-trend">
 					<TrendChart
 						label={label}
 						kind="bars"
@@ -1389,8 +1577,7 @@ function SparseTrendW({ label, series, dates, stat }) {
 						points={series.map((value, i) => ({ label: dates[i] || "", value }))}
 						formatValue={formatCountW}
 					/>
-					<div className="fs-meta text-dim mt-1">{caption}</div>
-				</>
+				</div>
 			)}
 		</div>
 	);

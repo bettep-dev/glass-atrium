@@ -105,3 +105,83 @@ test("a failed record body reads as a plain sentence, with the raw answer only b
   assert.equal(details.length, 1);
   assert.match(collectText(details[0]), /HTTP 500 Internal Server Error/);
 });
+
+function getFoldButton(tree: RenderedNode, title: string): RenderedNode | undefined {
+  return findNodes(tree, (n) => n.type === "button" && "aria-expanded" in n.props && collectText(n).includes(title))[0];
+}
+
+test("status folds render open while their detail breakdowns start collapsed", async () => {
+  const { tree } = await renderOutcomesScreen(0);
+  const rows = [
+    { title: "Reporting health", isOpen: true },
+    { title: "Self-report quality", isOpen: true },
+    { title: "Daily breakdown and budget-killed subagents", isOpen: false },
+    { title: "By task type", isOpen: false },
+  ];
+
+  for (const row of rows) {
+    const button = getFoldButton(tree, row.title);
+    assert.ok(button, `${row.title} renders as a fold`);
+    assert.equal(button.props["aria-expanded"], row.isOpen, `${row.title} open state`);
+  }
+});
+
+test("paired cards sit side by side in one split row", async () => {
+  const { tree } = await renderOutcomesScreen(0);
+  const rows = [
+    { name: "per-agent table beside Reporting health", ratio: "split-row--7-5", titles: ["Failed or blocked by agent", "Reporting health"] },
+    { name: "check results beside the crosstab", ratio: "split-row--1-1", titles: ["Automatic check results", "Confident but failed"] },
+  ];
+
+  for (const row of rows) {
+    const splitRows = findNodes(tree, (n) => String(n.props.className ?? "").includes(row.ratio));
+    const pair = splitRows.find((n) => row.titles.every((title) => collectText(n).includes(title)));
+    assert.ok(pair, row.name);
+    assert.equal(pair.children.filter((child) => typeof child !== "string").length, 2, `${row.name}: exactly two columns`);
+  }
+});
+
+// component nodes keep their name as type; the region's card is the first host element beneath them
+function getRootHost(node: RenderedNode): RenderedNode {
+  const [child] = node.children;
+  const isComponent = /^[A-Z]/.test(String(node.type));
+  return isComponent && child && typeof child !== "string" ? getRootHost(child) : node;
+}
+
+test("a region's error card hands a focused, successful Retry to that region's own card, which stays mounted", async () => {
+  const mod = await loadScreenModule(OUTCOMES_SRC, { UI: ui.UI, location: { hash: "" }, URLSearchParams });
+  const create = (mod.React as { createElement: (t: unknown, p: unknown) => unknown }).createElement;
+  const retrying = { status: "error", busy: true, data: null, error: SERVER_ERROR };
+  const ready = { status: "ready", busy: false, data: { overall: {} }, error: null };
+  const onRetry = () => undefined;
+  const rows = [
+    { name: "status band", component: "StatusBandO", props: { analyticsState: retrying, attentionState: ready, windowDays: 30, freshness: null, onRetry } },
+    { name: "needs-you count", component: "StatusBandO", props: { analyticsState: ready, attentionState: retrying, windowDays: 30, freshness: null, onRetry } },
+    { name: "by-agent failures", component: "AgentFailureTableO", props: { state: retrying, onRetry } },
+    { name: "record attribution", component: "AttributionHealthCard", props: { state: retrying, period: 30, onRetry } },
+    { name: "recording channels", component: "ChannelLivenessCard", props: { state: retrying, onRetry } },
+    { name: "check results", component: "GraderBreakdownCard", props: { state: retrying, onRetry } },
+    { name: "cross table", component: "CrosstabCard", props: { state: retrying, onRetry } },
+    { name: "run events", component: "LoopEventsCard", props: { state: retrying, onRetry } },
+    {
+      name: "record ledger",
+      component: "ResultTableCard",
+      props: {
+        state: retrying, rows: [], totalMatched: 0, page: 0, limit: 50, sort: "newest", filter: {}, onRetry,
+        closure: { pendingIds: new Set(), closedOverrides: new Map() }, needsYou: { rows: [], hiddenCount: 0 }, needsYouCap: 5,
+      },
+    },
+  ];
+
+  for (const row of rows) {
+    const tree = renderScreen(create(mod[row.component] as Component, row.props)) as RenderedNode;
+    const errorCards = findNodes(tree, (n) => n.type === "RegionUnavailable");
+    assert.equal(errorCards.length, 1, `${row.name}: one error card`);
+
+    const [errorCard] = errorCards;
+    const targetId = errorCard.props.focusTargetId;
+    assert.equal(errorCard.props.isBusy, true, `${row.name}: the card stays up, busy, through the Retry`);
+    assert.ok(typeof targetId === "string" && targetId.length > 0, `${row.name}: the Retry names a focus target`);
+    assert.equal(getRootHost(tree).props.id, targetId, `${row.name}: the target is the region's own card, mounted in every state`);
+  }
+});

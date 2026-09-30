@@ -28,6 +28,10 @@ function uiStub(): unknown {
       get: (_target, name: string) =>
         name === "TONE_ICON"
           ? new Proxy({}, { get: () => "dot" })
+          : name === "getRegionView"
+          ? getRegionViewStub
+          : name === "TileSplit"
+          ? tileSplitStub
           : Object.defineProperty(
               (props: Record<string, unknown>) => ({
                 __element: true,
@@ -40,6 +44,18 @@ function uiStub(): unknown {
       has: () => true,
     },
   );
+}
+
+// mirrors ui.jsx getRegionView → the tile builders branch as they do in the browser
+function getRegionViewStub(region: { data?: unknown; error?: unknown } | null): string {
+  if (region?.data != null) return "ready";
+  return region?.error != null ? "error" : "loading";
+}
+
+// the tile-internal split keeps its two slots walkable → lead and detail stay findable by the tests below
+function tileSplitStub({ lead, detail }: { lead: unknown; detail?: unknown }): unknown {
+  const slot = (className: string, child: unknown) => ({ __element: true, type: "div", props: { className, children: child } });
+  return { __element: true, type: "ui-atom", props: { atom: "TileSplit", children: [slot("tile-split-lead", lead), slot("tile-split-detail", detail)] } };
 }
 
 type Component = (props: unknown) => unknown;
@@ -125,6 +141,9 @@ const rateMod = (await loadScreenModule(DASH_SRC, {
     // ui.jsx contract "x% (n/d)" → the tile must drop the denominator tail itself
     formatPctWithDenominator: (num: number, den: number) => `${((num / den) * 100).toFixed(1)}% (${num}/${den})`,
     LOW_N_MIN: 20,
+    OUTCOME_BREAKAGE_CRIT_SHARE: 0.05,
+    OUTCOME_OPEN_CAVEAT_WARN_SHARE: 0.1,
+    getRegionView: getRegionViewStub,
   },
   React: createReactStub(),
 })) as Record<string, unknown>;
@@ -154,7 +173,7 @@ test("the fleet tile names suspension once across its value, verdict and detail,
   for (const [name, suspended, streak] of rows) {
     const breaker = { source: "loaded", suspended_count: suspended, streak_count: streak };
     const tile = buildFleetTile({ status: "ready", data: { meta: { total_agents: 12, circuit_breaker: breaker } } });
-    const visible = [tile.value, tile.badge, tile.detail].join(" ");
+    const visible = [tile.value, tile.unit, tile.badge, tile.detail].join(" ");
     assert.equal(visible.match(/suspend/gi)?.length, 1, `${name}: "${visible}" says suspended exactly once`);
   }
 });
@@ -172,12 +191,29 @@ test("a tile renders its number as the KPI value, its verdict as the badge, and 
   assert.ok(text.indexOf("17.5%") < text.indexOf("with caveats"), "the number precedes the detail");
 });
 
-test("a tile's drill sits at the tile foot, and a tile whose destination the lane drills has none", () => {
+test("a tile's drill sits at the tile foot, and a tile with no destination has none", () => {
   const drills = findNodes(render("StatusTile", { tile: READY_TILE, onNav: () => {}, onRetry: () => {} }), (n) => n.type === "a");
   assert.equal(drills.length, 1);
   assert.match(classOf(drills[0]), /\bmt-auto\b/, "the CTA is pinned to the foot so baselines line up");
   const undrilled = render("StatusTile", { tile: { ...READY_TILE, target: null }, onNav: () => {}, onRetry: () => {} });
   assert.equal(findNodes(undrilled, (n) => n.type === "a").length, 0);
+});
+
+test("a ready tile puts its value on the lead side and its detail and hint on the detail side", () => {
+  const tile = { ...READY_TILE, detail: "7 of 40 failed", note: "Counts writer-emitted outcomes only." };
+  const tree = render("StatusTile", { tile, onNav: () => {}, onRetry: () => {} });
+  const [lead] = findNodes(tree, (n) => classOf(n) === "tile-split-lead");
+  const [detail] = findNodes(tree, (n) => classOf(n) === "tile-split-detail");
+  assert.equal(findNodes(lead, (n) => n.props.atom === "KpiValue").length, 1, "the value leads");
+  assert.equal(findNodes(detail, (n) => classOf(n).includes("dash-tile-detail")).length, 1);
+  const [hint] = findNodes(detail, (n) => classOf(n).includes("dash-tile-hint"));
+  assert.equal(hint.props.title, tile.note, "the counting note rides on the hint as a tooltip");
+});
+
+test("a unit renders on the value's own line so the number and its word read as one phrase", () => {
+  const tree = render("StatusTile", { tile: { ...READY_TILE, value: "0", unit: "suspended" }, onNav: () => {}, onRetry: () => {} });
+  const [lead] = findNodes(tree, (n) => classOf(n) === "tile-split-lead");
+  assert.match(collectText(lead), /^0\s*suspended/);
 });
 
 test("an alarm row is a flat hairline row whose tone rides on the leading glyph, with sans detail text", () => {
@@ -208,6 +244,17 @@ test("a failed tile shows the shared unavailable card, whose Retry reloads only 
   assert.equal(findNodes(tree, (n) => n.type === "button").length, 0, "the card owns the tile's only Retry");
 });
 
+test("a failed tile's Retry shows itself in flight and hands focus to its own tile card on recovery", () => {
+  for (const isBusy of [true, false]) {
+    const tree = render("StatusTile", { tile: { ...FAILED_TILE, isBusy }, onNav: () => {}, onRetry: () => {} });
+    const [card] = findNodes(tree, (n) => n.props.atom === "RegionUnavailable");
+    assert.equal(card.props.isBusy, isBusy);
+    const targets = findNodes(tree, (n) => n.props.id === card.props.focusTargetId);
+    assert.equal(targets.length, 1, "the focus target is the tile card that stays mounted");
+    assert.ok(/\bcard\b/.test(classOf(targets[0])), classOf(targets[0]));
+  }
+});
+
 test("a tile whose outage the page banner already carries stays one level: no nested card, no repeated error, no Retry", () => {
   const tree = render("StatusTile", { tile: FAILED_TILE, onNav: () => {}, onRetry: () => {}, isRetryShared: true });
   assert.equal(findNodes(tree, (n) => n.props.atom === "RegionUnavailable").length, 0, "the banner already states the error");
@@ -223,16 +270,40 @@ test("an unavailable harness tile offers a Retry that re-polls the harness, unle
   };
   const retried: string[] = [];
   const tree = render("StatusTile", { tile: harnessTile, onNav: () => {}, onRetry: (region: string) => retried.push(region) });
-  const buttons = findNodes(tree, (n) => n.type === "button" && collectText(n).includes("Retry"));
-  assert.equal(buttons.length, 1);
-  (buttons[0].props.onClick as () => void)();
+  const retries = getRetryControls(tree);
+  assert.equal(retries.length, 1);
+  (retries[0].props.onRetry as () => void)();
   assert.deepEqual(retried, ["harness"]);
 
   // one Retry per outage → a tile whose source the banner already lists defers to the banner's Retry
   const shared = render("StatusTile", { tile: harnessTile, onNav: () => {}, onRetry: () => {}, isRetryShared: true });
-  assert.equal(findNodes(shared, (n) => n.type === "button" && collectText(n).includes("Retry")).length, 0);
+  assert.equal(getRetryControls(shared).length, 0);
   const readyTree = render("StatusTile", { tile: READY_TILE, onNav: () => {}, onRetry: () => {} });
-  assert.equal(findNodes(readyTree, (n) => n.type === "button").length, 0, "a read tile carries no Retry");
+  assert.equal(getRetryControls(readyTree).length, 0, "a read tile carries no Retry");
+});
+
+// the shared RetryButton atom → busy wording, aria-busy and the focus handoff come with it
+function getRetryControls(tree: RenderedNode): RenderedNode[] {
+  return findNodes(tree, (n) => n.props.atom === "RetryButton");
+}
+
+test("a held tile's Retry is the shared control: in flight while busy, handing focus to its own tile card on recovery", () => {
+  const heldTile = {
+    ...READY_TILE, region: "outcomes", isHeld: true, badge: "Last known", error: "HTTP 500 Internal Server Error", canRetry: true,
+  };
+  for (const isBusy of [true, false]) {
+    const retried: string[] = [];
+    const tree = render("StatusTile", { tile: { ...heldTile, isBusy }, onNav: () => {}, onRetry: (region: string) => retried.push(region) });
+    const retries = getRetryControls(tree);
+    assert.equal(retries.length, 1, `busy=${isBusy}: one Retry`);
+    assert.equal(findNodes(tree, (n) => n.type === "button").length, 0, `busy=${isBusy}: no bare button beside it`);
+    assert.equal(retries[0].props.isBusy, isBusy);
+    (retries[0].props.onRetry as () => void)();
+    assert.deepEqual(retried, ["outcomes"], "the Retry reloads only the tile's own region");
+    const targets = findNodes(tree, (n) => n.props.id === retries[0].props.focusTargetId);
+    assert.equal(targets.length, 1, "the focus target is the tile card that outlives the Retry");
+    assert.ok(/\bcard\b/.test(classOf(targets[0])), classOf(targets[0]));
+  }
 });
 
 test("a tile Retry routes the harness region to the shell re-poll and every other region to its own reload", () => {
@@ -254,7 +325,7 @@ describe("the page-wide re-reads also re-poll the shell's harness", async () => 
   const failedUi = new Proxy(uiStub() as Record<string, unknown>, {
     get: (target, name: string) => ({
       INITIAL_REGION_STATE: FAILED,
-      getRegionSummary: () => ({ isBusy: false }),
+      getRegionSummary: () => ({ isBusy: true }),
       getSharedFailure: () => ({ sources: ["today's spend", "harness health"], error: "HTTP 500" }),
       formatUsd: String,
       formatInt: String,
@@ -265,6 +336,16 @@ describe("the page-wide re-reads also re-poll the shell's harness", async () => 
     { name: "the header Refresh", atom: "RefreshButton", handler: "onRefresh" },
     { name: "the page banner Retry", atom: "PageErrorBanner", handler: "onRetry" },
   ];
+  test("the page banner shows its Retry in flight and hands focus to the status band, which outlives recovery", () => {
+    const tree = renderScreen(screen.React.createElement(screen.ScreenDashboard as Component, {
+      onNav: () => {}, harness: FAILED, onRetryHarness: () => {},
+    })) as RenderedNode;
+    const [banner] = findNodes(tree, (n) => n.props.atom === "PageErrorBanner");
+    assert.equal(banner.props.isBusy, true, "a wave in flight marks the banner Retry busy");
+    const targets = findNodes(tree, (n) => n.props.id === banner.props.focusTargetId);
+    assert.equal(targets.length, 1, `focus target ${String(banner.props.focusTargetId)} is one rendered element`);
+    assert.ok(classOf(targets[0]).includes("grid"), "the target is the status band, not the banner itself");
+  });
   for (const row of rows) {
     test(row.name, () => {
       let polls = 0;

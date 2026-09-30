@@ -1,9 +1,8 @@
-// Screen 04 — Outcome 분석 (live data via /api/outcomes/*) · window.ScreenOutcomes.
-// 상단 분석 섹션 + 하단 탐색기 섹션 (필터 사이드바 280px + 결과 표).
-// Hooks aliased with O suffix → 모듈 간 window-scope 충돌 회피.
+// Screen 04 — Outcome analysis (live data via /api/outcomes/*) · window.ScreenOutcomes.
+// Analysis sections on top, explorer below (Filters popover in the Results card head + results table).
+// Hooks aliased with an O suffix → no window-scope collisions across modules.
 //
-// SECURITY: MarkdownView 는 DOMPurify 게이트 통과 후에만 HTML 주입 (부재 시 raw pre fallback).
-// body_md 에 concerns/lesson 등 user-supplied 문자열 보간 가능 → sanitization 필수 (core-security.md).
+// SECURITY: body_md carries user-supplied strings (concerns/lesson) → MarkdownView injects HTML only past the DOMPurify gate, else raw pre (core-security.md).
 const {
   useState: useStateO,
   useEffect: useEffectO,
@@ -100,10 +99,10 @@ const GRADER_BREAKDOWN_META = {
 // (작성자 pass 주장 ↔ grader 불일치)가 가장 actionable. not_recorded(레거시 NULL)는 disagreement 아님 → muted.
 const DOWNGRADE_BREAKDOWN_ORDER = ['writer_true_downgraded', 'writer_false', 'synthesized', 'not_recorded'];
 const DOWNGRADE_BREAKDOWN_META = {
-  writer_true_downgraded: { label: 'Writer/grader disagreement', icon: 'warn',   colorVar: '--warn'  },
-  writer_false:           { label: 'Writer self-reported fail',  icon: 'minus',  colorVar: '--dim'   },
-  synthesized:            { label: 'Harness-reconstructed',      icon: 'circle', colorVar: '--faint' },
-  not_recorded:           { label: 'Pre-provenance (legacy)',    icon: 'minus',  colorVar: '--faint' },
+  writer_true_downgraded: { label: 'Agent claimed pass, check disagreed', icon: 'warn',   colorVar: '--warn'  },
+  writer_false:           { label: 'Agent reported its own failure',      icon: 'minus',  colorVar: '--dim'   },
+  synthesized:            { label: 'Rebuilt by the harness, no report',   icon: 'circle', colorVar: '--faint' },
+  not_recorded:           { label: 'Older record, source not tracked',    icon: 'minus',  colorVar: '--faint' },
 };
 
 // grader_verdict 문자열 → 표시 메타 조회. NULL/미인식 drift → 레거시 muted 폴백 (crit 회귀 차단).
@@ -498,6 +497,13 @@ function ScreenOutcomes({ onNav }) {
     setIncludeAll(false);
   }, []);
 
+  // one filter-axis patch — a removed keyword chip also empties the inline search box
+  const patchFilter = useCallbackO((patch) => {
+    setFilter((prev) => ({ ...prev, ...patch }));
+    if (patch.q === '') setKeywordInput('');
+    setPage(0);
+  }, []);
+
   // 탐색기 fetch — filter / sort / page / refresh 변경 시 재실행.
   useEffectO(() => {
     const { putRegionRequest, putRegionData } = window.UI;
@@ -634,6 +640,10 @@ function ScreenOutcomes({ onNav }) {
     'run events': loopEventsState, 'the needs-you count': attentionState,
   }));
   const regionRetry = sharedFailure ? undefined : triggerRefresh;
+  const freshness = { at: asOfAt, regions: stampRegions };
+  const isRefreshing = getRegionSummary(stampRegions).isBusy;
+  // busy only while a failed region is being re-read — another panel's first load is not this Retry
+  const isRetrying = stampRegions.some((region) => region.error != null && region.busy);
 
   return (
     <div className="flex flex-col min-h-0">
@@ -649,7 +659,7 @@ function ScreenOutcomes({ onNav }) {
               <FreshnessStamp {...getFreshnessInputO(asOfAt, stampRegions)}/>
               <WindowSeg value={filter.days} onChange={setWindowDays}/>
               <RefreshButton
-                isBusy={getRegionSummary(stampRegions).isBusy}
+                isBusy={isRefreshing}
                 hasRead={asOfAt != null}
                 onRefresh={triggerRefresh}
                 label="Refresh task results"/>
@@ -660,9 +670,12 @@ function ScreenOutcomes({ onNav }) {
 
       {sharedFailure && (
         <div className="mb-4 flex-shrink-0">
-          <PageErrorBanner sources={sharedFailure.sources} error={sharedFailure.error} onRetry={triggerRefresh}/>
+          <PageErrorBanner sources={sharedFailure.sources} error={sharedFailure.error} onRetry={triggerRefresh}
+            isBusy={isRetrying} focusTargetId={STATUS_BAND_ID}/>
         </div>
       )}
+
+      <PageVerdictO analyticsState={analyticsState} channelLivenessState={channelLivenessState} windowDays={analyticsPeriod} freshness={freshness}/>
 
       <AlarmLaneO channelLivenessState={channelLivenessState} searchState={searchState}/>
 
@@ -670,28 +683,12 @@ function ScreenOutcomes({ onNav }) {
         analyticsState={analyticsState}
         attentionState={attentionState}
         windowDays={analyticsPeriod}
+        freshness={freshness}
         onRetry={regionRetry}
       />
 
-      {/* page scroll only — no inner scroller; minmax(0, 1fr) keeps the ledger inside the page at 1024 */}
-      <div
-        className="grid gap-4 mt-4"
-        style={{
-          gridTemplateColumns: 'clamp(208px, 22vw, 280px) minmax(0, 1fr)',
-          alignItems: 'start',
-        }}>
-        <FilterSidebar
-          filter={filter}
-          keywordInput={keywordInput}
-          distinctAgents={distinctAgents}
-          includeAll={includeAll}
-          sort={sort}
-          onPatchFilter={(patch) => { setFilter((p) => ({ ...p, ...patch })); setPage(0); }}
-          onKeywordChange={setKeywordInput}
-          onToggleIncludeAll={(v) => { setIncludeAll(v); setPage(0); }}
-          onSortChange={(v) => { setSort(v); setPage(0); }}
-          onReset={resetFilter}
-        />
+      {/* page scroll only — no inner scroller; the filters sit behind the Results head button, so the ledger takes the full width */}
+      <div className="mt-4">
         <ResultTableCard
           state={searchState}
           rows={rows}
@@ -703,6 +700,14 @@ function ScreenOutcomes({ onNav }) {
           onPageChange={setPage}
           onSortChange={(v) => { setSort(v); setPage(0); }}
           onResetFilter={resetFilter}
+          filterControls={{
+            keywordInput,
+            distinctAgents,
+            includeAll,
+            onPatchFilter: patchFilter,
+            onKeywordChange: setKeywordInput,
+            onToggleIncludeAll: (v) => { setIncludeAll(v); setPage(0); },
+          }}
           onRowClick={setDetailRow}
           onRetry={regionRetry}
           needsYou={ledgerNeedsYou}
@@ -712,23 +717,33 @@ function ScreenOutcomes({ onNav }) {
         />
       </div>
 
-      <AgentFailureTableO state={analyticsState} onRetry={regionRetry}/>
+      {/* Reporting-trust signals are status → stay open; only the breakdown (daily chart, budget-kill list) folds into detail. */}
+      <window.UI.SplitRow ratio="7:5" className="mt-4">
+        <AgentFailureTableO state={analyticsState} onRetry={regionRetry}/>
+        <window.UI.Disclosure kind="status" title="Reporting health" sub={reportingHealthSummaryO(channelLivenessState)}>
+          <AttributionHealthCard state={attributionState} period={analyticsPeriod} onRetry={regionRetry}/>
+          <ChannelLivenessCard state={channelLivenessState} onRetry={regionRetry}/>
+          <window.UI.Disclosure kind="detail" level={3} title="Daily breakdown and budget-killed subagents">
+            <AttributionBreakdownO state={attributionState}/>
+          </window.UI.Disclosure>
+        </window.UI.Disclosure>
+      </window.UI.SplitRow>
 
-      {/* 주간·월간 사실 3종 — 닫힌 채로 바닥에 둔다. 매일 읽는 band/ledger 를 밀어내지 않게. */}
-      <DisclosureO title="Reporting health" summary={reportingHealthSummaryO(channelLivenessState)}>
-        <AttributionHealthCard state={attributionState} period={analyticsPeriod} onRetry={regionRetry}/>
-        <ChannelLivenessCard state={channelLivenessState} onRetry={regionRetry}/>
-      </DisclosureO>
-
-      <DisclosureO title="Self-report quality" summary={selfReportSummaryO(analyticsState)}>
-        <GraderBreakdownCard state={analyticsState} onRetry={regionRetry}/>
-        <CrosstabCard state={analyticsState} onRetry={regionRetry}/>
-      </DisclosureO>
+      <window.UI.Disclosure kind="status" title="Self-report quality" sub={selfReportSummaryO(analyticsState)} className="mt-4">
+        <window.UI.SplitRow ratio="1:1">
+          <GraderBreakdownCard state={analyticsState} onRetry={regionRetry}/>
+          <CrosstabCard state={analyticsState} onRetry={regionRetry}/>
+        </window.UI.SplitRow>
+        <window.UI.Disclosure kind="detail" level={3} title="By task type"
+          tone={getTaskTypeFoldToneO(analyticsState.data?.overall?.task_type_grader_breakdown)}>
+          <TaskTypeGraderCrosstabO rows={analyticsState.data?.overall?.task_type_grader_breakdown}/>
+        </window.UI.Disclosure>
+      </window.UI.Disclosure>
 
       {/* Learning 에서 이관된 raw 데몬 사이클 이벤트 로그 — operational data (집계 신호 아님 · W3-T3/T7). */}
-      <DisclosureO title="Learning-run events" summary={loopEventsSummaryO(loopEventsState)}>
+      <window.UI.Disclosure kind="detail" title="Learning-run events" sub={loopEventsSummaryO(loopEventsState)} className="mt-4">
         <LoopEventsCard state={loopEventsState} onRetry={regionRetry}/>
-      </DisclosureO>
+      </window.UI.Disclosure>
 
       {detailRow && (
         <DetailModal
@@ -769,10 +784,8 @@ function SilentChannelRowO({ channels }) {
       style={{ background: 'rgb(var(--crit) / 0.08)', borderColor: 'rgb(var(--crit) / 0.4)' }}>
       <Icon name="x" size={16} className="text-crit mt-0.5"/>
       <div className="flex-1 min-w-0">
-        <div className="fs-body font-medium text-ink">Recording stopped: {channels.join(', ')}</div>
-        <div className="fs-meta text-dim mt-1">
-          A channel that was writing daily has recorded nothing — every count below is understated until it resumes.
-        </div>
+        <div className="fs-body font-medium text-ink">{channels.length === 1 ? 'Silent channel' : 'Silent channels'}: {channels.join(', ')}</div>
+        <div className="fs-meta text-dim mt-1">Was writing daily and has recorded nothing past the silence threshold.</div>
       </div>
     </div>
   );
@@ -806,19 +819,6 @@ function WindowSeg({ value, onChange }) {
   );
 }
 
-// 닫힘이 기본인 개시 영역 — 여는 수고가 곧 빈도 순위다. 요약 줄은 열지 않고도 답을 주는 한 줄.
-function DisclosureO({ title, summary, children }) {
-  return (
-    <details className="card mt-4">
-      <summary className="px-4 py-3 cursor-pointer select-none flex items-center gap-3">
-        <span className="fs-title font-medium text-ink">{title}</span>
-        <span className="fs-meta font-mono text-faint ml-auto">{summary}</span>
-      </summary>
-      <div className="pb-1">{children}</div>
-    </details>
-  );
-}
-
 // 미적재 payload 의 요약 토큰 — loading 과 실패를 구분하고, 어느 쪽도 '이상 없음' 으로 읽히지 않게.
 function getUnloadedSummaryO(status) {
   return status === 'loading' ? 'Loading…' : 'Unavailable';
@@ -844,6 +844,18 @@ function loopEventsSummaryO(loopEventsState) {
 
 // Needs-you tile → ledger 의 창 전체 Needs-you 헤딩 (hash 라우터라 href 앵커 대신 focus 이동).
 const LEDGER_NEEDS_YOU_ID = 'ledger-needs-you';
+// focus lands here when a focused Retry leaves on recovery
+const STATUS_BAND_ID = 'outcomes-status-band';
+// per-region card ids — same role as STATUS_BAND_ID for each card's own error Retry
+const REGION_CARD_IDS = {
+  agentFailures: 'outcomes-agent-failures',
+  attribution: 'outcomes-attribution',
+  channels: 'outcomes-channels',
+  checks: 'outcomes-checks',
+  crosstab: 'outcomes-crosstab',
+  loopEvents: 'outcomes-loop-events',
+  ledger: 'outcomes-ledger',
+};
 
 // Status band — 4 타일. 값은 모집단·창과 용접되고, tone 은 글리프에만 탄다 (39578 §D-§E).
 
@@ -914,8 +926,10 @@ function buildStatusBandTilesO(data, attentionCount) {
   ];
 }
 
-function StatusBandO({ analyticsState, attentionState, windowDays, onRetry }) {
-  if (analyticsState.status === 'loading') {
+function StatusBandO({ analyticsState, attentionState, windowDays, freshness, onRetry }) {
+  const { getRegionView, getFreshnessVerdict } = window.UI;
+  const view = getRegionView(analyticsState);
+  if (view === 'loading') {
     return (
       <div className="grid grid-cols-4 gap-3 mb-4 flex-shrink-0" aria-busy="true" aria-label="Status band">
         {Array.from({ length: 4 }).map((_, i) => <KpiSkeletonO key={i}/>)}
@@ -930,10 +944,10 @@ function StatusBandO({ analyticsState, attentionState, windowDays, onRetry }) {
       </div>
     );
   }
-  if (analyticsState.status !== 'ready') {
+  if (view === 'error') {
     return (
-      <div className="mb-4 flex-shrink-0" aria-label="Status band">
-        <RegionErrorO source="the status band" error={analyticsState.error} onRetry={onRetry}/>
+      <div id={STATUS_BAND_ID} className="mb-4 flex-shrink-0" aria-label="Status band">
+        <RegionErrorO source="the status band" error={analyticsState.error} onRetry={onRetry} isBusy={analyticsState.busy} focusTargetId={STATUS_BAND_ID}/>
       </div>
     );
   }
@@ -942,46 +956,48 @@ function StatusBandO({ analyticsState, attentionState, windowDays, onRetry }) {
   const attentionCount = attentionState.status === 'ready'
     ? (Number(attentionState.data?.total) || 0)
     : null;
-  const tiles = buildStatusBandTilesO(analyticsState.data, attentionCount);
+  // stale or partial read → an ok tile drops to neutral, warn/crit kept (the verdict's rule)
+  const tiles = buildStatusBandTilesO(analyticsState.data, attentionCount)
+    .map((tile) => (freshness ? { ...tile, tone: getFreshnessVerdict({ ...freshness, tone: tile.tone }).tone } : tile));
   // 창은 analyticsDaysO 로 접힌 {7,30,90} 뿐 — 북마크된 'all' 이 90d 를 읽고 'all time' 으로 표기되던 거짓말 제거.
   const windowLabel = `${windowDays}d`;
 
-  const isAttentionFailed = attentionState.status === 'error' || attentionState.status === 'unavailable';
+  const isAttentionFailed = getRegionView(attentionState) === 'error';
+  const heroTile = tiles.find((tile) => tile.key === 'attention');
+  const volumeTiles = tiles.filter((tile) => tile.key === 'recorded' || tile.key === 'done');
 
   return (
-    <div className="mb-4 flex-shrink-0">
+    <div id={STATUS_BAND_ID} className="mb-4 flex-shrink-0">
       <div className="grid grid-cols-4 gap-3" role="group" aria-label="Status band">
-        {tiles.map((tile) => (
-          <BandTileO
-            key={tile.key}
-            tile={tile}
-            windowLabel={windowLabel}
-            unloadedText={tile.key === 'attention' ? getUnloadedSummaryO(attentionState.status) : undefined}/>
-        ))}
+        <BandTileO
+          tile={heroTile}
+          windowLabel={windowLabel}
+          unloadedText={getUnloadedSummaryO(attentionState.status)}
+          reasons={buildNeedsYouReasonsO(analyticsState.data)}
+          className="col-span-3"/>
+        <VolumeTilesO tiles={volumeTiles} windowLabel={windowLabel}/>
       </div>
       {isAttentionFailed && (
-        <RegionErrorO source="the needs-you count" error={attentionState.error} onRetry={onRetry}/>
+        <RegionErrorO source="the needs-you count" error={attentionState.error} onRetry={onRetry} isBusy={attentionState.busy} focusTargetId={STATUS_BAND_ID}/>
       )}
     </div>
   );
 }
 
 // unloadedText → a pending or failed count says so instead of a dash that reads as data
-function BandTileO({ tile, windowLabel, unloadedText = '—' }) {
-  const { KpiValue, formatPctWithDenominator } = window.UI;
+function BandTileO({ tile, windowLabel, unloadedText = '—', reasons = null, className = '' }) {
+  const { KpiValue, TileSplit, formatPctWithDenominator } = window.UI;
   const glyph = getBandTileGlyphO(tile.tone);
   const loaded = tile.count !== null && tile.count !== undefined;
   const share  = loaded ? formatPctWithDenominator(tile.count, tile.population) : '—';
   const canJump = Boolean(tile.jumpTo) && loaded && tile.count > 0;
-  const ariaLabel = `${tile.label}: ${loaded ? tile.count : 'not loaded'} — ${tile.hint}${canJump ? ' — show them in the ledger' : ''}`;
+  const reasonText = reasons
+    ? ` — reasons: ${reasons.map((r) => `${r.label} ${r.count === null ? 'not loaded' : r.count}`).join(', ')}`
+    : '';
+  const ariaLabel = `${tile.label}: ${loaded ? tile.count : 'not loaded'}${reasonText} — ${tile.hint}${canJump ? ' — show them in the ledger' : ''}`;
   const Tag = canJump ? 'button' : 'div';
-
-  return (
-    <Tag
-      {...(canJump ? { type: 'button', onClick: () => focusLedgerSectionO(tile.jumpTo) } : {})}
-      className={canJump ? 'kpi' : 'kpi cursor-default'}
-      aria-label={ariaLabel}
-      title={tile.hint}>
+  const lead = (
+    <>
       <div className="kpi-label">
         {glyph && (
           <span className={`text-${tile.tone}`} role="img" aria-hidden="true">
@@ -992,7 +1008,123 @@ function BandTileO({ tile, windowLabel, unloadedText = '—' }) {
       </div>
       <KpiValue>{loaded ? formatIntO(tile.count) : <span className="fs-body text-dim">{unloadedText}</span>}</KpiValue>
       <div className="fs-meta font-mono text-faint">{share} · {windowLabel}</div>
+    </>
+  );
+
+  return (
+    <Tag
+      {...(canJump ? { type: 'button', onClick: () => focusLedgerSectionO(tile.jumpTo) } : { role: 'group' })}
+      className={`${canJump ? 'kpi' : 'kpi cursor-default'} ${className}`.trim()}
+      aria-label={ariaLabel}
+      title={tile.hint}>
+      {reasons ? <TileSplit lead={lead} detail={<NeedsYouReasonsO reasons={reasons}/>}/> : lead}
     </Tag>
+  );
+}
+
+// broken reuses the band's own breakage tone; open is null when the payload predates writer_open_count
+function buildNeedsYouReasonsO(data) {
+  const brokenTile = buildStatusBandTilesO(data, null).find((tile) => tile.key === 'broken');
+  return [
+    { key: 'broken', label: 'Failed or blocked', count: brokenTile.count, tone: brokenTile.tone },
+    { key: 'open', label: 'Caveat still open', count: getOpenCaveatCountO(data?.overall), tone: 'neutral' },
+  ];
+}
+
+/**
+ * Every by_result row carries writer_open_count (result-agnostic FILTER) → only the done_with_concerns row counts, never a sum.
+ * An unsent field stays null instead of getWriterOpenCount's closure-blind fallback.
+ */
+function getOpenCaveatCountO(overall) {
+  if (!Array.isArray(overall?.by_result)) return null;
+  const caveatRow = overall.by_result.find((row) => row?.result === 'done_with_concerns');
+  if (!caveatRow) return 0;
+  if (!Number.isFinite(caveatRow.writer_open_count)) return null;
+  return window.UI.getWriterOpenCount(caveatRow);
+}
+
+/**
+ * Page verdict = the Dashboard's resolveOutcomeRate judgment as shares.
+ * A stopped recording channel outranks it, since every count it reads is understated; the lane row below names the channel only.
+ * The all-clear waits for the liveness read.
+ * @param freshness - the shared rule: unread reads No signal, a stale or partial read reads Last known
+ */
+function PageVerdictO({ analyticsState, channelLivenessState, windowDays, freshness }) {
+  const { PageVerdict, getRegionView } = window.UI;
+  const view = getRegionView(analyticsState);
+  const silent = channelLivenessState.status === 'ready' ? (channelLivenessState.data?.alerting || []) : [];
+
+  if (silent.length > 0) {
+    return <PageVerdict tone="crit" freshness={freshness} className="mb-4">{`Recording stopped on ${silent.join(', ')} — every count on this page is understated until it resumes.`}</PageVerdict>;
+  }
+  if (view !== 'ready') {
+    const reason = view === 'loading' ? 'the window totals are still loading' : "the window totals didn't load";
+    return <PageVerdict tone="neutral" freshness={freshness} className="mb-4">{`Task-result health is unknown — ${reason}.`}</PageVerdict>;
+  }
+
+  const verdict = getRateVerdictO(window.UI.resolveOutcomeRate(analyticsState.data?.overall), `last ${windowDays}d`);
+  if (verdict.tone !== 'ok' || channelLivenessState.status === 'ready') {
+    return <PageVerdict tone={verdict.tone} chips={verdict.chips} freshness={freshness} className="mb-4">{verdict.text}</PageVerdict>;
+  }
+  const gap = channelLivenessState.status === 'loading' ? 'still checking the recording channels' : "couldn't check the recording channels";
+  return <PageVerdict tone="neutral" freshness={freshness} className="mb-4">{`${verdict.text.slice(0, -1)} — ${gap}.`}</PageVerdict>;
+}
+
+function getRateVerdictO(rate, windowLabel) {
+  const { LOW_N_MIN, formatInt } = window.UI;
+  if (rate.status === 'empty' || rate.status === 'unavailable') {
+    return { tone: 'neutral', chips: [], text: `No task results written by agents in the ${windowLabel} to judge.` };
+  }
+  if (rate.status === 'low-n') {
+    return { tone: 'neutral', chips: [], text: `Only ${formatInt(rate.writerTotal)} agent-written records in the ${windowLabel} — too few to judge (needs ${LOW_N_MIN}).` };
+  }
+  return {
+    tone: rate.tone,
+    chips: rate.tone === 'ok' ? [] : [{ key: 'needs-you', label: 'Needs you', targetId: LEDGER_NEEDS_YOU_ID }],
+    text: `${formatShareO(rate.breakage, rate.writerTotal)} of ${formatInt(rate.writerTotal)} agent-written records in the ${windowLabel} failed or were blocked, and ${formatShareO(rate.openCaveats, rate.writerTotal)} still carry an open caveat.`,
+  };
+}
+
+function formatShareO(count, population) {
+  if (!(population > 0)) return '—';
+  return `${((count / population) * 100).toFixed(1)}%`;
+}
+
+function NeedsYouReasonsO({ reasons }) {
+  return (
+    <span className="block fs-meta">
+      <span className="block text-faint">Reasons · one record can carry several</span>
+      {reasons.map((reason) => {
+        const glyph = getBandTileGlyphO(reason.tone);
+        return (
+          <span key={reason.key} className="flex items-center gap-1 text-dim">
+            {glyph && <span className={`text-${reason.tone}`} aria-hidden="true"><GlyphO name={glyph} size={12}/></span>}
+            {reason.label}
+            <span className="ml-auto font-mono text-ink">{reason.count === null ? '—' : formatIntO(reason.count)}</span>
+          </span>
+        );
+      })}
+    </span>
+  );
+}
+
+// volume facts demoted beside the hero; the Self-reported glyph stays the missing-report grade channel
+function VolumeTilesO({ tiles, windowLabel }) {
+  const { formatPctWithDenominator } = window.UI;
+  return (
+    <div className="kpi cursor-default fs-meta" role="group" aria-label={`Volume · ${windowLabel}`}>
+      {tiles.map((tile) => {
+        const glyph = getBandTileGlyphO(tile.tone);
+        return (
+          <div key={tile.key} className="flex flex-wrap items-center gap-x-1 text-dim" title={tile.hint}>
+            {glyph && <span className={`text-${tile.tone}`} role="img" aria-label={tile.tone === 'crit' ? 'critical' : 'warning'}><GlyphO name={glyph} size={12}/></span>}
+            {tile.label}
+            <span className="ml-auto font-mono text-ink">{formatIntO(tile.count)}</span>
+            <span className="w-full text-right font-mono text-faint">{formatPctWithDenominator(tile.count, tile.population)}</span>
+          </div>
+        );
+      })}
+    </div>
   );
 }
 
@@ -1026,23 +1158,39 @@ function buildAgentFailureRowsO(agentStack, byAgentTop) {
   const rows = Array.isArray(agentStack) ? agentStack : [];
   const openByAgent = buildAgentOpenCaveatMapO(byAgentTop);
   return rows
-    .map((entry) => ({
-      agent: entry.agent,
-      failed: entry.byResult?.fail || 0,
-      blocked: entry.byResult?.blocked || 0,
-      openCaveats: openByAgent.has(entry.agent) ? openByAgent.get(entry.agent) : null,
-      total: entry.total || 0,
-    }))
+    .map((entry) => buildAgentFailureRowO(entry, openByAgent))
     .filter((row) => row.failed + row.blocked > 0)
-    .sort((a, b) => (b.failed + b.blocked) - (a.failed + a.blocked));
+    .sort(compareAgentFailureRowsO);
+}
+
+function buildAgentFailureRowO(entry, openByAgent) {
+  const failed = entry.byResult?.fail || 0;
+  const blocked = entry.byResult?.blocked || 0;
+  const total = entry.total || 0;
+  return {
+    agent: entry.agent,
+    failed,
+    blocked,
+    openCaveats: openByAgent.has(entry.agent) ? openByAgent.get(entry.agent) : null,
+    total,
+    rate: total > 0 ? (failed + blocked) / total : 0,
+    isLowSample: window.UI.isLowSample(total),
+  };
+}
+
+// low-sample rows sink below sampled ones → 3 of 5 runs failing never outranks a measured rate
+function compareAgentFailureRowsO(a, b) {
+  if (a.isLowSample !== b.isLowSample) return a.isLowSample ? 1 : -1;
+  if (b.rate !== a.rate) return b.rate - a.rate;
+  return (b.failed + b.blocked) - (a.failed + a.blocked);
 }
 
 function AgentFailureTableO({ state, onRetry }) {
   const { CardHead, STICKY_TH_STYLE } = window.UI;
 
   return (
-    <div className="card mt-4">
-      <CardHead title="Failed or blocked by agent" sub="Registry agents only · non-zero rows"/>
+    <div id={REGION_CARD_IDS.agentFailures} className="card">
+      <CardHead title="Failed or blocked by agent" sub="Registry agents only · non-zero rows · worst rate first"/>
       <div className="card-body" style={{ padding: 0 }}>
         <AgentFailureBodyO state={state} onRetry={onRetry} stickyStyle={STICKY_TH_STYLE}/>
       </div>
@@ -1052,6 +1200,7 @@ function AgentFailureTableO({ state, onRetry }) {
 
 const AGENT_FAILURE_COLUMNS_O = [
   { label: 'Agent', align: 'left' },
+  { label: 'Failure rate', align: 'left' },
   { label: 'Failed', align: 'right' },
   { label: 'Blocked', align: 'right' },
   { label: 'Open caveats', align: 'right' },
@@ -1090,9 +1239,10 @@ function AgentFailureSkeletonO({ stickyStyle }) {
 }
 
 function AgentFailureBodyO({ state, onRetry, stickyStyle }) {
-  if (state.status === 'loading') return <AgentFailureSkeletonO stickyStyle={stickyStyle}/>;
-  if (state.status === 'error') {
-    return <RegionErrorO source="by-agent failures" error={state.error} onRetry={onRetry}/>;
+  const view = window.UI.getRegionView(state);
+  if (view === 'loading') return <AgentFailureSkeletonO stickyStyle={stickyStyle}/>;
+  if (view === 'error') {
+    return <RegionErrorO source="by-agent failures" error={state.error} onRetry={onRetry} isBusy={state.busy} focusTargetId={REGION_CARD_IDS.agentFailures}/>;
   }
 
   const rows = buildAgentFailureRowsO(state.data?.agentStack, state.data?.overall?.by_agent_top_10);
@@ -1108,6 +1258,7 @@ function AgentFailureBodyO({ state, onRetry, stickyStyle }) {
           {rows.map((row) => (
             <tr key={row.agent} className="outcome-row">
               <td className="text-left text-ink px-3 py-1.5 border-b border-line truncate" title={row.agent}><window.UI.AgentName name={row.agent}/></td>
+              <AgentFailureRateCellO row={row}/>
               <td className="text-right text-ink font-mono px-3 py-1.5 border-b border-line">{formatIntO(row.failed)}</td>
               <td className="text-right text-ink font-mono px-3 py-1.5 border-b border-line">{formatIntO(row.blocked)}</td>
               <OpenCaveatCellO count={row.openCaveats}/>
@@ -1117,6 +1268,31 @@ function AgentFailureBodyO({ state, onRetry, stickyStyle }) {
         </tbody>
       </table>
     </div>
+  );
+}
+
+// Bar fill = the shared breakage rule over this row's own count · low-sample rows claim no tone.
+function getFailureRateFillO(row) {
+  if (row.isLowSample) return '--faint';
+  const { outcomeShareTone, OUTCOME_BREAKAGE_CRIT_SHARE } = window.UI;
+  return outcomeShareTone(row.failed + row.blocked, row.total, OUTCOME_BREAKAGE_CRIT_SHARE, 'crit') ? '--crit' : '--ok';
+}
+
+function AgentFailureRateCellO({ row }) {
+  const { LowSampleMark } = window.UI;
+  const pct = row.rate * 100;
+  return (
+    <td
+      className="px-3 py-1.5 border-b border-line"
+      title={`${formatIntO(row.failed + row.blocked)} of ${formatIntO(row.total)} runs failed or blocked`}>
+      <span className="flex items-center gap-2">
+        <span className={`font-mono ${row.isLowSample ? 'text-faint italic' : 'text-ink'}`}>{formatRateO(row.rate)}</span>
+        <span aria-hidden="true" className="flex-1" style={{ minWidth: 40, height: 6, borderRadius: 3, background: 'rgb(var(--sunken))' }}>
+          <span style={{ display: 'block', height: '100%', width: `${Math.min(100, pct)}%`, borderRadius: 3, background: `rgb(var(${getFailureRateFillO(row)}))` }}/>
+        </span>
+        <LowSampleMark n={row.total}/>
+      </span>
+    </td>
   );
 }
 
@@ -1160,7 +1336,7 @@ function AttributionHealthCard({ state, period, onRetry }) {
   const badge = attributionOmissionBadgeO(omissionRate);
 
   return (
-    <div className="card mb-4">
+    <div id={REGION_CARD_IDS.attribution} className="card mb-4">
       <CardHead
         title="Record attribution"
         sub=""
@@ -1182,14 +1358,14 @@ function AttributionHealthCard({ state, period, onRetry }) {
 }
 
 function AttributionHealthBody({ state, onRetry }) {
-  if (state.status === 'loading') {
+  const view = window.UI.getRegionView(state);
+  if (view === 'loading') {
     return <ChartSkeletonO height={200} label="reporting health"/>;
   }
-  if (state.status === 'error') {
-    return <RegionErrorO source="reporting health" error={state.error} onRetry={onRetry}/>;
+  if (view === 'error') {
+    return <RegionErrorO source="reporting health" error={state.error} onRetry={onRetry} isBusy={state.busy} focusTargetId={REGION_CARD_IDS.attribution}/>;
   }
 
-  const series  = Array.isArray(state.data?.days_series) ? state.data.days_series : [];
   const summary = state.data?.window_summary || null;
   const totalAttributed = Number(summary?.total_attributed) || 0;
 
@@ -1198,14 +1374,9 @@ function AttributionHealthBody({ state, onRetry }) {
     return <EmptyStateO message="No attributed runs in this period."/>;
   }
 
-  // 활동일만 backend 전송 → 최근 ATTRIBUTION_GRID_BARS 일 그리드로 0-fill.
-  const grid = buildAttributionGridO(series, ATTRIBUTION_GRID_BARS);
-
   return (
     <div>
       <AttributionSummaryRow summary={summary} totalAttributed={totalAttributed}/>
-      <AttributionDailyChart grid={grid}/>
-      <AttributionLegend/>
       <div className="fs-meta text-faint mt-2 leading-relaxed">
         <span className="inline-flex items-center gap-1">
           <span style={{ color: `rgb(var(${ATTRIBUTION_CATEGORY_META.attribution_loss.colorVar}))` }} aria-hidden="true">
@@ -1214,8 +1385,28 @@ function AttributionHealthBody({ state, onRetry }) {
           Untraceable: {buildAttributionLossNoteO(summary?.attribution_loss_rate, totalAttributed)}
         </span>
       </div>
-      <AttributionBudgetKillListO rows={summary?.budget_truncation_by_agent}/>
       <AttributionDevScopeO devScope={summary?.dev_scope}/>
+    </div>
+  );
+}
+
+// Reporting-health detail breakdown — silent on loading/error/empty, which the status cards above already report.
+function AttributionBreakdownO({ state }) {
+  if (state.status !== 'ready') return null;
+
+  const summary = state.data?.window_summary;
+  if (!summary || !(Number(summary.total_attributed) > 0)) {
+    return <EmptyStateO message="No daily breakdown in this period."/>;
+  }
+
+  // backend sends active days only → 0-fill into the last ATTRIBUTION_GRID_BARS days.
+  const series = Array.isArray(state.data?.days_series) ? state.data.days_series : [];
+
+  return (
+    <div>
+      <AttributionDailyChart grid={buildAttributionGridO(series, ATTRIBUTION_GRID_BARS)}/>
+      <AttributionLegend/>
+      <AttributionBudgetKillListO rows={summary.budget_truncation_by_agent}/>
     </div>
   );
 }
@@ -1234,10 +1425,11 @@ function AttributionSummaryRow({ summary, totalAttributed }) {
           const rate = summary ? summary[`${key}_rate`] : null;
           const count = Math.round((Number(rate) || 0) * totalAttributed);
           return (
-            <div key={key} className="bg-elev rounded-md p-2.5 border border-line">
-              <div className="flex items-start gap-1.5 fs-meta font-mono min-h-[2.2em]">
+            <div key={key} className="bg-elev rounded-md p-2.5 border border-line min-w-0" role="group"
+              aria-label={`${meta.label}: ${formatRateO(rate)}, ${formatIntO(count)} runs`}>
+              <div className="flex items-start gap-1.5 fs-meta min-h-[2.2em]">
                 <span style={{ color: `rgb(var(${meta.colorVar}))` }} aria-hidden="true"><GlyphO name={meta.icon}/></span>
-                <span className="text-dim">{meta.label}</span>
+                <span className="text-dim min-w-0" title={meta.label}>{meta.label}</span>
               </div>
               <div className="fs-stat font-semibold text-ink mt-1 font-mono">
                 {formatRateO(rate)}
@@ -1440,7 +1632,7 @@ function ChannelLivenessCard({ state, onRetry }) {
   const badge = getChannelLivenessBadgeO(state);
 
   return (
-    <div className="card mb-4">
+    <div id={REGION_CARD_IDS.channels} className="card mb-4">
       <CardHead
         title="Recording channels"
         sub=""
@@ -1473,11 +1665,12 @@ function getChannelLivenessBadgeO(state) {
 }
 
 function ChannelLivenessBody({ state, onRetry }) {
-  if (state.status === 'loading') {
+  const view = window.UI.getRegionView(state);
+  if (view === 'loading') {
     return <ChartSkeletonO height={120} label="recording channels"/>;
   }
-  if (state.status === 'error') {
-    return <RegionErrorO source="recording channels" error={state.error} onRetry={onRetry}/>;
+  if (view === 'error') {
+    return <RegionErrorO source="recording channels" error={state.error} onRetry={onRetry} isBusy={state.busy} focusTargetId={REGION_CARD_IDS.channels}/>;
   }
 
   const channels  = Array.isArray(state.data?.channels) ? state.data.channels : [];
@@ -1540,22 +1733,11 @@ function ChannelLivenessRow({ channel, days, recencyDays }) {
 //   목적: 측정 산물(unverified/legacy)을 품질 실패로 오독하지 않게 측정 신호를 명시 노출.
 
 function GraderBreakdownCard({ state, onRetry }) {
-  const { CardHead, Badge } = window.UI;
-
-  const breakdown   = state.status === 'ready' ? state.data?.overall?.grader_breakdown : null;
-  const gradedTotal = breakdown ? (Number(breakdown.graded_total) || 0) : 0;
+  const { CardHead } = window.UI;
 
   return (
-    <div className="card mb-4">
-      <CardHead
-        title="Automatic check results"
-        sub=""
-        right={
-          state.status === 'ready' && breakdown && (
-            <Badge role="metadata">Checked records: {formatIntO(gradedTotal)}</Badge>
-          )
-        }
-      />
+    <div id={REGION_CARD_IDS.checks} className="card mb-4">
+      <CardHead title="Automatic check results" sub=""/>
       <div className="card-body">
         <GraderBreakdownBody state={state} onRetry={onRetry}/>
       </div>
@@ -1569,11 +1751,12 @@ function getGraderTileKeysO(breakdown) {
 }
 
 function GraderBreakdownBody({ state, onRetry }) {
-  if (state.status === 'loading') {
+  const view = window.UI.getRegionView(state);
+  if (view === 'loading') {
     return <ChartSkeletonO height={120} label="check results"/>;
   }
-  if (state.status === 'error') {
-    return <RegionErrorO source="check results" error={state.error} onRetry={onRetry}/>;
+  if (view === 'error') {
+    return <RegionErrorO source="check results" error={state.error} onRetry={onRetry} isBusy={state.busy} focusTargetId={REGION_CARD_IDS.checks}/>;
   }
 
   const breakdown = state.data?.overall?.grader_breakdown;
@@ -1586,6 +1769,8 @@ function GraderBreakdownBody({ state, onRetry }) {
 
   return (
     <>
+      <p className="fs-body text-ink mb-2">{getGraderSentenceO(breakdown)}</p>
+      <window.UI.Disclosure kind="detail" title="Check breakdown" sub="Each verdict, and where it came from" level={3}>
       <div className="grid gap-3" style={{ gridTemplateColumns: `repeat(${tileKeys.length}, minmax(0, 1fr))` }}>
         {tileKeys.map((key) => {
           const meta  = GRADER_BREAKDOWN_META[key];
@@ -1609,9 +1794,18 @@ function GraderBreakdownBody({ state, onRetry }) {
         })}
       </div>
       <DowngradeBreakdownRowO breakdown={state.data?.overall?.downgrade_breakdown}/>
-      <TaskTypeGraderCrosstabO rows={state.data?.overall?.task_type_grader_breakdown}/>
+      </window.UI.Disclosure>
     </>
   );
+}
+
+// checked = a definite verdict (pass or fail) — Auto-check N/A records were graded but not checkable
+function getGraderSentenceO(breakdown) {
+  if (!breakdown) return null;
+  const passed = Number(breakdown.verified_pass) || 0;
+  const failed = Number(breakdown.verified_fail) || 0;
+  const graded = Number(breakdown.graded_total) || 0;
+  return `Checked ${formatIntO(passed + failed)} of ${formatIntO(graded)} records: ${formatIntO(passed)} passed, ${formatIntO(failed)} failed`;
 }
 
 // downgrade_origin 분포 서브라인 — grader_verdict 카드에 종속. writer_true_downgraded(작성자 pass
@@ -1625,7 +1819,7 @@ function DowngradeBreakdownRowO({ breakdown }) {
 
   return (
     <div className="flex flex-wrap items-center gap-x-4 gap-y-1 mt-3 pt-3 border-t border-line fs-meta font-mono">
-      <span className="text-faint uppercase tracking-wider">downgrade origin</span>
+      <span className="text-faint">Where each verdict came from</span>
       {segments.map(({ key, count }) => {
         const meta = DOWNGRADE_BREAKDOWN_META[key];
         return (
@@ -1637,6 +1831,18 @@ function DowngradeBreakdownRowO({ breakdown }) {
       })}
     </div>
   );
+}
+
+// a checkable type whose failed checks reach the breakage share (low samples excluded) → crit; else untoned
+function getTaskTypeFoldToneO(rows) {
+  const { outcomeShareTone, isLowSample, OUTCOME_BREAKAGE_CRIT_SHARE } = window.UI;
+  if (!Array.isArray(rows)) return undefined;
+  const isFailing = (row) => {
+    const total = Number(row.total) || 0;
+    return row.by_design_unverified !== true && !isLowSample(total)
+      && outcomeShareTone(row.verified_fail, total, OUTCOME_BREAKAGE_CRIT_SHARE, 'crit') === 'crit';
+  };
+  return rows.some(isFailing) ? 'crit' : undefined;
 }
 
 // ----- 9-type × grader_verdict 교차 (F16) ------------------------------------
@@ -1718,12 +1924,15 @@ function CrosstabCard({ state, onRetry }) {
   const crosstab   = state.status === 'ready' ? state.data?.crosstab : null;
   const polarTotal = crosstab ? crosstab.polarTotal : 0;
   const polarPct   = crosstab && crosstab.total > 0 ? (polarTotal / crosstab.total * 100) : 0;
+  const confidentFailed = getConfidentFailedO(crosstab);
 
   return (
-    <div className="card mb-4">
+    <div id={REGION_CARD_IDS.crosstab} className="card mb-4">
       <CardHead
-        title="Confidence vs. reality (polar mismatch)"
-        sub=""
+        title={confidentFailed
+          ? `Confident but failed: ${formatIntO(confidentFailed.count)} (${formatRateO(confidentFailed.share)})`
+          : 'Confident but failed'}
+        sub="High stated confidence, own check failed · empty rows hidden"
         right={
           state.status === 'ready' && (
             <Badge role="status" tone="warn" icon>
@@ -1740,11 +1949,12 @@ function CrosstabCard({ state, onRetry }) {
 }
 
 function CrosstabBody({ state, onRetry }) {
-  if (state.status === 'loading') {
+  const view = window.UI.getRegionView(state);
+  if (view === 'loading') {
     return <ChartSkeletonO height={160} label="cross table"/>;
   }
-  if (state.status === 'error') {
-    return <RegionErrorO source="cross table" error={state.error} onRetry={onRetry}/>;
+  if (view === 'error') {
+    return <RegionErrorO source="cross table" error={state.error} onRetry={onRetry} isBusy={state.busy} focusTargetId={REGION_CARD_IDS.crosstab}/>;
   }
 
   const crosstab = state.data?.crosstab;
@@ -1770,7 +1980,7 @@ function CrosstabBody({ state, onRetry }) {
             </tr>
           </thead>
           <tbody>
-            {CROSSTAB_CONFIDENCE_ROWS.map((rowKey) => (
+            {getCrosstabVisibleRowsO(crosstab.byCell).map((rowKey) => (
               <CrosstabRow key={rowKey} rowKey={rowKey} byCell={crosstab.byCell} max={max}/>
             ))}
           </tbody>
@@ -1809,9 +2019,9 @@ function CrosstabRow({ rowKey, byCell, max }) {
 
 function CrosstabCell({ cell, max, rowLabel, colLabel }) {
   const count = cell.count || 0;
-  // 음영: polar 셀은 warn, 그 외 accent. 상대 빈도(0.08~0.85 opacity) — 0건은 무음영.
+  // 음영: polar 셀은 warn, 그 외 accent. 상대 빈도(0.08~0.40 opacity) — 상한 = 두 테마 모두 ink 4.5:1 유지 · 0건은 무음영.
   const ratio   = max > 0 ? count / max : 0;
-  const opacity = count > 0 ? (0.08 + ratio * 0.77).toFixed(3) : '0';
+  const opacity = count > 0 ? (0.08 + ratio * 0.32).toFixed(3) : '0';
   const tintVar = cell.isPolar ? '--warn' : '--accent';
 
   return (
@@ -1846,6 +2056,17 @@ function CrosstabTotalRow({ byCell, total }) {
   );
 }
 
+function getConfidentFailedO(crosstab) {
+  if (!crosstab || !(crosstab.total > 0)) return null;
+  const count = crosstab.byCell?.['high|false']?.count || 0;
+  return { count, share: count / crosstab.total };
+}
+
+function getCrosstabVisibleRowsO(byCell) {
+  return CROSSTAB_CONFIDENCE_ROWS.filter((rowKey) =>
+    CROSSTAB_METRIC_COLS.some((col) => (byCell[`${rowKey}|${col.key}`]?.count || 0) > 0));
+}
+
 // byCell 맵의 최대 셀 카운트 — 음영 정규화 분모.
 function crosstabMaxCountO(byCell) {
   let max = 0;
@@ -1866,7 +2087,7 @@ function crosstabMaxCountO(byCell) {
 function LoopEventsCard({ state, onRetry }) {
   const { CardHead } = window.UI;
   return (
-    <div className="card mt-4">
+    <div id={REGION_CARD_IDS.loopEvents} className="card mt-4">
       <CardHead
         title="Improvement run events"
         sub=""/>
@@ -1880,11 +2101,12 @@ function LoopEventsCard({ state, onRetry }) {
 function LoopEventsBody({ state, onRetry }) {
   const { Badge } = window.UI;
 
-  if (state.status === 'loading') {
+  const view = window.UI.getRegionView(state);
+  if (view === 'loading') {
     return <ChartSkeletonO height={200} label="run events"/>;
   }
-  if (state.status === 'error') {
-    return <RegionErrorO source="run events" error={state.error} onRetry={onRetry}/>;
+  if (view === 'error') {
+    return <RegionErrorO source="run events" error={state.error} onRetry={onRetry} isBusy={state.busy} focusTargetId={REGION_CARD_IDS.loopEvents}/>;
   }
 
   const total    = Number(state.data?.total_events ?? 0);
@@ -1960,10 +2182,10 @@ function LoopEventsBody({ state, onRetry }) {
   );
 }
 
-// ----- Panel 1: Filter sidebar -----------------------------------------------
+// ----- Panel 1: Filters popover ----------------------------------------------
 
 // 칩 축 driver — label, axis key (filter prop), 옵션 목록을 1행 1축으로 표현.
-// 상시 노출 축 — Agent · Keyword 와 합쳐 5 그룹. 나머지는 'More filters' 뒤로 접힌다 (period 는 헤더가 소유).
+// Always-visible axes, beside Agent at the popover top; the rest fold behind 'More filters' (period → header, keyword → Results head).
 const CHIP_FILTER_AXES = [
   { axis: 'result',      label: 'Result',      options: RESULT_OPTIONS      },
   { axis: 'review_flag', label: 'Flagged',     options: REVIEW_FLAG_OPTIONS },
@@ -1978,113 +2200,85 @@ const MORE_FILTER_AXES = [
 
 const FILTER_AXES_O = [...CHIP_FILTER_AXES, ...MORE_FILTER_AXES];
 
-const FILTER_COLUMN_STYLE_O = { position: 'sticky', top: 16, maxHeight: 'calc(100vh - 32px)', overflowY: 'auto' };
-
-function FilterSidebar({
-  filter, keywordInput, distinctAgents, includeAll, sort,
-  onPatchFilter, onKeywordChange, onToggleIncludeAll, onSortChange, onReset,
+// Filters popover body — every axis but period (header) and keyword (inline in the Results head).
+function FilterPanelO({
+  filter, distinctAgents, includeAll, sort,
+  onPatchFilter, onToggleIncludeAll, onSortChange, onReset,
 }) {
-  const { CardHead, Badge } = window.UI;
-
-  // 활성 facet 카운트 + 'N of M' 카운터 (T-OUT-3) — 몇 축이 좁혀졌는지 한눈에.
-  const activeCount = countActiveFacetsO(filter);
-
   return (
-    <div className="card" style={FILTER_COLUMN_STYLE_O}>
-      <CardHead
-        title="Filters"
-        sub=""
-        right={
-          activeCount > 0
-            ? <Badge role="count">{activeCount} active</Badge>
-            : null
-        }
-      />
-      <div className="card-body" style={{ padding: 12 }}>
-        <FilterAxisGroup label="Agent">
-          <select
-            className="field field-select"
-            value={filter.agent || ''}
-            onChange={(e) => onPatchFilter({ agent: e.target.value })}
-            aria-label="Agent filter">
-            <option value="">All</option>
-            {distinctAgents.map((a) => (
-              <option key={a} value={a}>{a}</option>
-            ))}
-          </select>
-        </FilterAxisGroup>
+    <div>
+      <FilterAxisGroup label="Agent">
+        <select
+          className="field field-select"
+          value={filter.agent || ''}
+          onChange={(e) => onPatchFilter({ agent: e.target.value })}
+          aria-label="Agent filter">
+          <option value="">All</option>
+          {distinctAgents.map((a) => (
+            <option key={a} value={a}>{a}</option>
+          ))}
+        </select>
+      </FilterAxisGroup>
 
-        {CHIP_FILTER_AXES.map(({ axis, label, options }) => (
-          <FilterAxisGroup key={axis} label={label}>
-            <FilterChipGroupO
-              options={options}
-              value={filter[axis] || ''}
-              onChange={(v) => onPatchFilter({ [axis]: v })}
-              ariaLabel={`${label} filter`}
-            />
-          </FilterAxisGroup>
-        ))}
-
-        <FilterAxisGroup label="Keyword">
-          <input
-            type="search"
-            className="field"
-            placeholder="summary / lesson / concerns…"
-            value={keywordInput}
-            onChange={(e) => onKeywordChange(e.target.value)}
-            aria-label="Keyword search"
+      {CHIP_FILTER_AXES.map(({ axis, label, options }) => (
+        <FilterAxisGroup key={axis} label={label}>
+          <FilterChipGroupO
+            options={options}
+            value={filter[axis] || ''}
+            onChange={(v) => onPatchFilter({ [axis]: v })}
+            ariaLabel={`${label} filter`}
           />
         </FilterAxisGroup>
+      ))}
 
-        <details className="mb-3">
-          <summary className="fs-meta text-faint uppercase tracking-wider cursor-pointer select-none mb-1.5">
-            More filters
-          </summary>
-          <div className="pt-2">
-            {MORE_FILTER_AXES.map(({ axis, label, options }) => (
-              <FilterAxisGroup key={axis} label={label}>
-                <FilterChipGroupO
-                  options={options}
-                  value={filter[axis] || ''}
-                  onChange={(v) => onPatchFilter({ [axis]: v })}
-                  ariaLabel={`${label} filter`}
-                />
-              </FilterAxisGroup>
-            ))}
-
-            <FilterAxisGroup label="Sort">
+      <details className="mb-3">
+        <summary className="fs-meta text-faint uppercase tracking-wider cursor-pointer select-none mb-1.5">
+          More filters
+        </summary>
+        <div className="pt-2">
+          {MORE_FILTER_AXES.map(({ axis, label, options }) => (
+            <FilterAxisGroup key={axis} label={label}>
               <FilterChipGroupO
-                options={SORT_OPTIONS}
-                value={sort}
-                onChange={onSortChange}
-                ariaLabel="Sort order"
+                options={options}
+                value={filter[axis] || ''}
+                onChange={(v) => onPatchFilter({ [axis]: v })}
+                ariaLabel={`${label} filter`}
               />
             </FilterAxisGroup>
+          ))}
 
-            {/* T7/O2 forensic 'show all' — include_all=1 로 서버 registry 게이트 해제. */}
-            <FilterAxisGroup label="Record scope">
-              <label className="flex items-center gap-2 fs-meta cursor-pointer select-none">
-                <input
-                  type="checkbox"
-                  checked={includeAll}
-                  onChange={(e) => onToggleIncludeAll(e.target.checked)}
-                  aria-label="Show all records including non-registry and de-registered agents"/>
-                <span className={includeAll ? 'text-ink' : 'text-dim'}>
-                  Show all (incl. non-registry)
-                </span>
-              </label>
-            </FilterAxisGroup>
-          </div>
-        </details>
+          <FilterAxisGroup label="Sort">
+            <FilterChipGroupO
+              options={SORT_OPTIONS}
+              value={sort}
+              onChange={onSortChange}
+              ariaLabel="Sort order"
+            />
+          </FilterAxisGroup>
 
-        <div className="mt-3 pt-3 border-t border-line">
-          <button
-            className="btn sm w-full justify-center"
-            onClick={onReset}
-            aria-label="Reset filters">
-            Reset filters
-          </button>
+          {/* Forensic 'show all' — include_all=1 lifts the server registry gate. */}
+          <FilterAxisGroup label="Record scope">
+            <label className="flex items-center gap-2 fs-meta cursor-pointer select-none">
+              <input
+                type="checkbox"
+                checked={includeAll}
+                onChange={(e) => onToggleIncludeAll(e.target.checked)}
+                aria-label="Show all records including non-registry and de-registered agents"/>
+              <span className={includeAll ? 'text-ink' : 'text-dim'}>
+                Show all (incl. non-registry)
+              </span>
+            </label>
+          </FilterAxisGroup>
         </div>
+      </details>
+
+      <div className="mt-3 pt-3 border-t border-line">
+        <button
+          className="btn sm w-full justify-center"
+          onClick={onReset}
+          aria-label="Reset filters">
+          Reset filters
+        </button>
       </div>
     </div>
   );
@@ -2128,14 +2322,17 @@ function getFilterChipValueO(key) {
 function ResultTableCard({
   state, rows, totalMatched, page, limit, sort, filter,
   onPageChange, onSortChange, onResetFilter, onRowClick, onRetry, closure, needsYou, needsYouCap, onToggleNeedsYou,
+  filterControls = {},
 }) {
-  const { CardHead, Pill } = window.UI;
+  const { CardHead, Popover } = window.UI;
+  const { keywordInput = '', distinctAgents = [], includeAll = false, onPatchFilter, onKeywordChange, onToggleIncludeAll } = filterControls;
+  const activeCount = countActiveFacetsO(filter);
 
   const totalPages = Math.max(1, Math.ceil(totalMatched / limit));
   const currentPage = page + 1;
 
   return (
-    <div className="card">
+    <div id={REGION_CARD_IDS.ledger} className="card">
       <CardHead
         title="Results"
         sub={state.status === 'ready'
@@ -2143,10 +2340,31 @@ function ResultTableCard({
           : state.status === 'loading' ? 'Loading…' : 'Records unavailable'}
         right={
           <div className="flex items-center gap-2">
-            <ActiveFilterChips filter={filter}/>
+            <input
+              type="search"
+              className="field"
+              style={{ width: 'clamp(140px, 18vw, 240px)' }}
+              placeholder="Search summary / lesson / concerns…"
+              value={keywordInput}
+              onChange={(e) => onKeywordChange(e.target.value)}
+              aria-label="Keyword search"
+            />
+            <Popover label={activeCount > 0 ? `Filters · ${activeCount}` : 'Filters'} title="Filters">
+              <FilterPanelO
+                filter={filter}
+                distinctAgents={distinctAgents}
+                includeAll={includeAll}
+                sort={sort}
+                onPatchFilter={onPatchFilter}
+                onToggleIncludeAll={onToggleIncludeAll}
+                onSortChange={onSortChange}
+                onReset={onResetFilter}
+              />
+            </Popover>
           </div>
         }
       />
+      <ActiveFilterChips filter={filter} onRemove={onPatchFilter} onClearAll={onResetFilter}/>
       <div className="card-body" style={{ padding: 0 }}>
         <ResultTableBody
           state={state}
@@ -2190,17 +2408,21 @@ function ResultTableCard({
   );
 }
 
-// 활성 필터 → 'Axis: value' 칩 라벨 배열 (헤더 칩 + 빈-상태 echo 공용). 기본값 축은 생략.
-//   축·값 이름 = 사이드바 컨트롤 라벨 SoT → 칩과 ledger 셀이 같은 값을 같은 이름으로 부른다.
+// Active filters → 'Axis: value' chip labels for the empty-state echo; default axes omitted, names follow the popover labels.
 function buildActiveFilterChipsO(filter) {
-  const chips = [];
-  if (filter.days && filter.days !== 30) chips.push(`Period: ${filter.days}d`);
-  if (filter.agent) chips.push(`Agent: ${window.UI.getAgentDisplayName(filter.agent)}`);
+  return buildActiveFilterEntriesO(filter).map((entry) => entry.label);
+}
+
+// patch = clears that one axis · null = not removable here (period belongs to the page header)
+function buildActiveFilterEntriesO(filter) {
+  const entries = [];
+  if (filter.days && filter.days !== 30) entries.push({ key: 'days', label: `Period: ${filter.days}d`, patch: null });
+  if (filter.agent) entries.push({ key: 'agent', label: `Agent: ${window.UI.getAgentDisplayName(filter.agent)}`, patch: { agent: '' } });
   for (const { axis, label, options } of FILTER_AXES_O) {
-    if (filter[axis]) chips.push(`${label}: ${getOptionLabelO(options, filter[axis])}`);
+    if (filter[axis]) entries.push({ key: axis, label: `${label}: ${getOptionLabelO(options, filter[axis])}`, patch: { [axis]: '' } });
   }
-  if (filter.q) chips.push(`Keyword: "${truncateO(filter.q, 18)}"`);
-  return chips;
+  if (filter.q) entries.push({ key: 'q', label: `Keyword: "${truncateO(filter.q, 18)}"`, patch: { q: '' } });
+  return entries;
 }
 
 function getOptionLabelO(options, value) {
@@ -2213,20 +2435,35 @@ function getDetailValueLabelO(axis, value) {
   return getOptionLabelO(options, String(value ?? 'null'));
 }
 
-// 활성 필터 칩 배지 렌더 — 헤더 칩(ActiveFilterChips) + 빈-상태 echo(ResultTableZeroStateO) 공용.
-//   래퍼 div 는 정렬 관례가 호출부마다 달라 각 호출부가 소유 → 공용은 배지 map 만.
+// Active-filter chip badges for the empty-state echo (ResultTableZeroStateO); the caller owns the wrapper div.
 function FilterChipsO({ chips }) {
   const { Badge } = window.UI;
   return <>{chips.map((c) => <Badge key={c} role="metadata">{c}</Badge>)}</>;
 }
 
-function ActiveFilterChips({ filter }) {
-  const chips = buildActiveFilterChipsO(filter);
-  if (chips.length === 0) return null;
+// Active filters under the Results head — one remove button per chip, plus Clear all.
+function ActiveFilterChips({ filter, onRemove, onClearAll }) {
+  const { Badge } = window.UI;
+  const entries = buildActiveFilterEntriesO(filter);
+  if (entries.length === 0) return null;
 
   return (
-    <div className="flex items-center gap-1 flex-wrap">
-      <FilterChipsO chips={chips}/>
+    <div className="flex items-center gap-1 flex-wrap px-4 py-2 border-b border-line">
+      {entries.map((entry) => (entry.patch === null
+        ? <Badge key={entry.key} role="metadata">{entry.label}</Badge>
+        : (
+          <button
+            key={entry.key}
+            type="button"
+            className="btn ghost sm"
+            aria-label={`Remove filter ${entry.label}`}
+            onClick={() => onRemove(entry.patch)}>
+            {entry.label}<span aria-hidden="true"> ×</span>
+          </button>
+        )))}
+      <button type="button" className="btn ghost sm" aria-label="Clear all filters" onClick={onClearAll}>
+        Clear all
+      </button>
     </div>
   );
 }
@@ -2234,14 +2471,15 @@ function ActiveFilterChips({ filter }) {
 function ResultTableBody({
   state, rows, totalMatched, filter, sort, onSortChange, onResetFilter, onRowClick, onRetry, closure, needsYou, needsYouCap, onToggleNeedsYou,
 }) {
-  if (state.status === 'loading') {
+  const view = window.UI.getRegionView(state);
+  if (view === 'loading') {
     return <ChartSkeletonO height={400} label="results"/>;
   }
   if (state.status === 'blocked') {
     return <PayloadUnavailableO label="Records"/>;
   }
-  if (state.status !== 'ready') {
-    return <RegionErrorO source="the record ledger" error={state.error} onRetry={onRetry}/>;
+  if (view !== 'ready') {
+    return <RegionErrorO source="the record ledger" error={state.error} onRetry={onRetry} isBusy={state.busy} focusTargetId={REGION_CARD_IDS.ledger}/>;
   }
   if (rows.length === 0) {
     return <ResultTableZeroStateO filter={filter} onResetFilter={onResetFilter}/>;
@@ -2530,13 +2768,14 @@ function ResultTableRow({ row, onRowClick, closure, focusProps }) {
   const resultColor = `rgb(var(${resultColorVarO(row.result, closedAt)}))`;
   const isClosing   = closure?.pendingIds.has(row.id) === true;
   const canClose    = row.result === 'done_with_concerns' && !closedAt && typeof closure?.onMarkClosed === 'function';
+  const needsYouReason = getNeedsYouReasonO(row, closedAt);
 
   return (
     <tr
       className="outcome-row cursor-pointer"
       onClick={() => onRowClick(row)}
       {...focusProps}
-      aria-label={`${row.agent} ${row.task_type} ${resultMeta.label} ${row.summary || ''}`}>
+      aria-label={[row.agent, row.task_type, resultMeta.label, needsYouReason, row.summary].filter(Boolean).join(' ')}>
       <td className="text-left text-ink font-mono px-2 py-1.5 border-b border-line whitespace-nowrap">
         {ts}
       </td>
@@ -2577,11 +2816,24 @@ function ResultTableRow({ row, onRowClick, closure, focusProps }) {
       <td className="text-left text-ink px-2 py-1.5 border-b border-line" style={{ width: '100%', maxWidth: 0 }} title={summary}>
         <div className="flex items-center">
           <SummaryFlagSlotO row={row}/>
+          {needsYouReason && (
+            <window.UI.Badge role="metadata" className="shrink-0 whitespace-nowrap mr-1.5">{needsYouReason}</window.UI.Badge>
+          )}
           <span className="truncate" style={{ minWidth: 0 }}>{summary}</span>
         </div>
       </td>
     </tr>
   );
+}
+
+// Why a needs-you row needs you, in words — null for a broken row (its Result cell says it) and for routine rows.
+function getNeedsYouReasonO(row, closedAt) {
+  if (row.review_flag === true) {
+    const [first, ...rest] = window.UI.reviewFlagReasons(row);
+    return `flagged: ${first.label.toLowerCase()}${rest.length > 0 ? ` +${rest.length}` : ''}`;
+  }
+  if (row.result === 'done_with_concerns' && !closedAt) return 'caveat open';
+  return null;
 }
 
 // 요약 셀 선두 플래그 집계 — review 사유/격리/budget-kill 을 tone 하나로 접는다.
@@ -2889,10 +3141,13 @@ function EmptyStateO({ message }) {
   return <EmptyState message={message} />;
 }
 
-// plain sentence + next step; the raw answer stays behind Details, Retry only when no page banner owns it
-function RegionErrorO({ source, error, onRetry }) {
+/**
+ * Plain sentence + next step; the raw answer stays behind Details, Retry only when no page banner owns it.
+ * @param focusTargetId - the region's own card, which takes focus when a focused Retry succeeds
+ */
+function RegionErrorO({ source, error, onRetry, isBusy = false, focusTargetId }) {
   const { RegionUnavailable } = window.UI;
-  return <RegionUnavailable source={source} error={error} onRetry={onRetry} className="m-3"/>;
+  return <RegionUnavailable source={source} error={error} onRetry={onRetry} isBusy={isBusy} focusTargetId={focusTargetId} className="m-3"/>;
 }
 
 // 레인이 실패 배너를 소유하므로 본문은 '적재 실패' 만 말한다 — 같은 오류를 두 번 쓰지 않는다.

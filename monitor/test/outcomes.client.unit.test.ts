@@ -628,3 +628,67 @@ describe("getStackedChartLabelO: the chart's accessible name summarises the rang
     assert.match(label, /10 records/);
   });
 });
+
+interface RecordedElementO {
+  type: unknown;
+  props: Record<string, unknown>;
+}
+
+interface RenderSandboxO {
+  React: { createElement: unknown };
+  AgentFailureRateCellO: (props: { row: Record<string, unknown> }) => RecordedElementO;
+  AttributionBreakdownO: (props: { state: Record<string, unknown> }) => RecordedElementO | null;
+  EmptyStateO: unknown;
+}
+
+const rendered = await buildScreenSandbox<RenderSandboxO>(OUTCOMES_SRC);
+rendered.React.createElement = (type: unknown, props: Record<string, unknown> | null, ...rest: unknown[]) => ({
+  type,
+  props: { ...(props ?? {}), children: rest.length > 1 ? rest : rest[0] },
+});
+
+function flattenO(node: unknown, out: RecordedElementO[] = []): RecordedElementO[] {
+  if (Array.isArray(node)) {
+    for (const child of node) flattenO(child, out);
+    return out;
+  }
+  if (typeof node !== "object" || node === null || !("props" in node)) return out;
+  const element = node as RecordedElementO;
+  out.push(element);
+  flattenO(element.props.children, out);
+  return out;
+}
+
+describe("AgentFailureRateCellO: the bar fill follows the shared breakage rule, not a fixed crit", () => {
+  const rows = [
+    { name: "a sampled row under the crit share fills ok", failed: 1, blocked: 0, total: 50, isLowSample: false, fill: "--ok" },
+    { name: "a sampled row at the crit share fills crit", failed: 2, blocked: 3, total: 100, isLowSample: false, fill: "--crit" },
+    { name: "a sampled row well over the crit share fills crit", failed: 10, blocked: 10, total: 50, isLowSample: false, fill: "--crit" },
+    { name: "a low-sample row claims no tone whatever its rate", failed: 5, blocked: 0, total: 10, isLowSample: true, fill: "--faint" },
+  ];
+  for (const row of rows) {
+    test(row.name, () => {
+      const cell = rendered.AgentFailureRateCellO({ row: { ...row, rate: (row.failed + row.blocked) / row.total } });
+      const bar = flattenO(cell).find((el) => (el.props.style as { display?: string } | undefined)?.display === "block");
+      assert.equal((bar?.props.style as { background: string }).background, `rgb(var(${row.fill}))`);
+    });
+  }
+});
+
+describe("AttributionBreakdownO: only a landed window may say it has no breakdown", () => {
+  const silentRows = [
+    { name: "loading renders nothing", state: { status: "loading", data: null } },
+    { name: "an error renders nothing", state: { status: "error", data: null, error: "HTTP 500" } },
+  ];
+  for (const row of silentRows) {
+    test(row.name, () => {
+      assert.equal(rendered.AttributionBreakdownO({ state: row.state }), null);
+    });
+  }
+
+  test("a landed but empty window says so", () => {
+    const empty = rendered.AttributionBreakdownO({ state: { status: "ready", data: { window_summary: { total_attributed: 0 } } } });
+    assert.equal(empty?.type, rendered.EmptyStateO);
+    assert.match(String(empty?.props.message), /No daily breakdown/);
+  });
+});

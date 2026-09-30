@@ -52,6 +52,102 @@ export function createReactStub(): Record<string, unknown> {
   };
 }
 
+type EffectCallback = () => void | (() => void);
+type RefAttach = (element: ElementNode) => unknown;
+
+export interface EffectReact {
+  react: Record<string, unknown>;
+  mount: (render: () => unknown, attach: RefAttach) => { tree: unknown; unmount: () => void };
+}
+
+/**
+ * React stub that commits one render the way React does: host refs attach, then layout effects,
+ * then passive effects, each in declaration order. Unmount runs layout cleanups, detaches refs,
+ * then passive cleanups — also in declaration order.
+ */
+export function createEffectReact(): EffectReact {
+  let layout: EffectCallback[] = [];
+  let passive: EffectCallback[] = [];
+  const react = {
+    ...createReactStub(),
+    useEffect: (effect: EffectCallback) => { passive.push(effect); },
+    useLayoutEffect: (effect: EffectCallback) => { layout.push(effect); },
+  };
+
+  function mount(render: () => unknown, attach: RefAttach) {
+    layout = [];
+    passive = [];
+    const tree = render();
+    const refs = putRefs(tree, attach, []);
+    const layoutCleanups = layout.map((effect) => effect());
+    const passiveCleanups = passive.map((effect) => effect());
+    const unmount = () => {
+      runCleanups(layoutCleanups);
+      for (const ref of refs) ref.current = null;
+      runCleanups(passiveCleanups);
+    };
+    return { tree, unmount };
+  }
+
+  return { react, mount };
+}
+
+function putRefs(node: unknown, attach: RefAttach, refs: Array<{ current: unknown }>): Array<{ current: unknown }> {
+  if (Array.isArray(node)) {
+    for (const child of node) putRefs(child, attach, refs);
+    return refs;
+  }
+  if (!isElement(node)) return refs;
+
+  const ref = node.props.ref as { current: unknown } | undefined;
+  if (ref && typeof ref === "object") {
+    ref.current = attach(node);
+    refs.push(ref);
+  }
+  return putRefs(node.props.children, attach, refs);
+}
+
+function runCleanups(cleanups: Array<void | (() => void)>): void {
+  for (const cleanup of cleanups) if (typeof cleanup === "function") cleanup();
+}
+
+export interface FakeDocument {
+  activeElement: unknown;
+  body: { style: { overflow: string } };
+  addEventListener: (type: string, listener: (event: unknown) => void) => void;
+  removeEventListener: (type: string, listener: (event: unknown) => void) => void;
+  dispatch: (type: string, event: Record<string, unknown>) => void;
+  getElementById: (id: string) => unknown;
+  elements: Map<string, unknown>;
+  reset: () => void;
+}
+
+// Just enough `document` for focus, listener and scroll-lock effects; reset() between tests.
+export function createFakeDocument(): FakeDocument {
+  const listeners = new Map<string, Set<(event: unknown) => void>>();
+  const doc: FakeDocument = {
+    activeElement: null,
+    body: { style: { overflow: "auto" } },
+    addEventListener: (type, listener) => {
+      if (!listeners.has(type)) listeners.set(type, new Set());
+      listeners.get(type)?.add(listener);
+    },
+    removeEventListener: (type, listener) => { listeners.get(type)?.delete(listener); },
+    dispatch: (type, event) => {
+      for (const listener of Array.from(listeners.get(type) ?? [])) listener({ preventDefault: () => undefined, ...event });
+    },
+    getElementById: (id) => doc.elements.get(id) ?? null,
+    elements: new Map(),
+    reset: () => {
+      listeners.clear();
+      doc.elements.clear();
+      doc.activeElement = doc.body;
+      doc.body.style.overflow = "auto";
+    },
+  };
+  return doc;
+}
+
 // Evaluates the shipped screen module in a sandbox and returns its top-level
 // bindings (functions and consts), the same shape the existing client tests read.
 export async function loadScreenModule(
