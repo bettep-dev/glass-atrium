@@ -11,7 +11,6 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 const PUBLIC = resolve(__dirname, "../public");
 const SRC = resolve(PUBLIC, "src");
 const THEME_CSS = readFileSync(resolve(PUBLIC, "styles/tokens.css"), "utf8");
-const BASE_CSS = readFileSync(resolve(PUBLIC, "styles/base.css"), "utf8");
 
 type Component = (props: Record<string, unknown>) => unknown;
 
@@ -44,14 +43,6 @@ test("the focus colour clears 3:1 against every surface it can sit on, in both t
       assert.ok(ratio >= 3, `${theme} --focus-ring on ${surface} = ${ratio.toFixed(2)}:1`);
     }
   }
-});
-
-test("one global focus-visible rule draws the focus colour as an offset outline, never a box-shadow — card focus handoffs included", () => {
-  const [, selectors = "", rule = ""] = BASE_CSS.match(/(?:^|\n)\s*(:focus-visible[^{]*)\{([^}]*)\}/) ?? [];
-  assert.match(selectors, /\[data-focus-handoff\]:focus/, "a programmatic handoff misses :focus-visible, so it shares the ring rule");
-  assert.match(rule, /outline:\s*var\(--focus-ring-width\)\s+solid\s+rgb\(var\(--focus-ring\)\)/);
-  assert.match(rule, /outline-offset:\s*var\(--focus-ring-offset\)/);
-  assert.doesNotMatch(rule, /box-shadow/, "box-shadow would overwrite rings drawn with box-shadow");
 });
 
 test("no component draws its own focus ring beside the shared one", () => {

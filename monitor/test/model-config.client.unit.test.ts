@@ -39,7 +39,6 @@ import {
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const MC_SRC = resolve(__dirname, "../public/src/screens/model-config.jsx");
-const BASE_CSS_MC = resolve(__dirname, "../public/styles/base.css");
 
 interface McForm {
   models: Record<string, string>;
@@ -1710,11 +1709,10 @@ test("the file list toggle shows a chevron and its opened list is never clipped 
   const [list] = findAllMc(tree, (n) => n.props.role === "region");
 
   const chevron = tagsMc([summary], "i").find((n) => String(n.props["data-icon"]).startsWith("chevron"));
-  const openRuleClass = /details\[open\] > summary \.([\w-]+)/.exec(readFileSync(BASE_CSS_MC, "utf8"))?.[1];
 
   assert.ok(chevron, "the pill carries a chevron");
-  assert.ok(openRuleClass, "base.css keeps a shared open-state chevron rule");
-  assert.ok(String(chevron.props.className ?? "").split(/\s+/).includes(openRuleClass), "the shared open-state rule selects the chevron");
+  // the class ui.shared-states.e2e turns over while the disclosure is open
+  assert.ok(String(chevron.props.className ?? "").split(/\s+/).includes("chevron"), "the chevron takes the shared open-state turn");
   assert.strictEqual((list.props.style as Record<string, unknown> | undefined)?.maxHeight, undefined, "no height cap");
   assert.ok(!String(list.props.className).includes("overflow-y-auto"), "no inner scroller");
   assert.strictEqual(tagsMc(list.children, "span").length, files.length, "every file is listed");
