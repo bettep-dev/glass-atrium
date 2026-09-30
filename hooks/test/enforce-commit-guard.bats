@@ -79,7 +79,7 @@ run_guard() {
   # Before the fix, 'message' held the code and 'suggestion' held two pipe-joined
   # fragments. Now each lands in its own field.
   [[ "${GUARD_ERR}" == *'"message":"Force push blocked"'* ]] || return 1
-  [[ "${GUARD_ERR}" == *'"suggestion":"Request explicit user confirmation for force push"'* ]] || return 1
+  [[ "${GUARD_ERR}" == *'"suggestion":"This hook blocks force push whatever the approval; if the user confirms it, ask them to run it themselves"'* ]] || return 1
 }
 
 # --- Non-matching control: no block AND no invalid-regex grep leak on stderr ---

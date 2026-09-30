@@ -65,7 +65,7 @@ Its operative content, restated once here so the decision is auditable: every de
 
 Neither daemon-evolved line below is integrated: both repeat `### Budget sizing`, which stays the single copy the carrier note above protects.
 
-| Quote | Proposal | Class | Reason |
-|---|---|---|---|
-| "**MANDATORY AT INTAKE**: Size task via `tool_uses ~= files × 4.5 + 5 per Bats run`" | 1957 | duplicates | `### Budget sizing` already sizes at intake and declines above ~30; its added ">50% maxTurns" gate is covered by the 80% turn meter |
-| "**Task size gate**: Verify pre-acceptance size-est (`files × 4.5 + Bats runs`)" | 1957 | duplicates | a second copy of the row above and of `### Budget sizing` |
+| Quote | Class | Reason |
+|---|---|---|
+| "**MANDATORY AT INTAKE**: Size task via `tool_uses ~= files × 4.5 + 5 per Bats run`" | duplicates | `### Budget sizing` already sizes at intake and declines above ~30; its added ">50% maxTurns" gate is covered by the 80% turn meter |
+| "**Task size gate**: Verify pre-acceptance size-est (`files × 4.5 + Bats runs`)" | duplicates | a second copy of the row above and of `### Budget sizing` |

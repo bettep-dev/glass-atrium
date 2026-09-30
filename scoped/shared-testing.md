@@ -159,10 +159,10 @@ Every table row carries a name stating its condition — an unnamed row fails wi
 
 **Condition — this section binds only when you are about to RUN a suite file that executes one of two install-side shell functions**: `clear_unmanaged_pg_orphan` (`lib/ga-daemons.sh`) and its only caller `preflight_pg_utc_guard` (`lib/ga-tui-preflight.sh`) are exactly the functions that can reach a live postgres. No such run → skip to the next section. Otherwise clear the procedure below first: the steps build on each other, and a step you cannot complete is a FAIL rather than a judgement call.
 
-### Before you start: do not re-derive the retired condition
+### Before you start: shadowing is not a safety condition
 
-- **The retired condition — do not re-derive it**: "safe once `kill`, `rm` and `lsof` are shadowed" is WRONG, not merely strict.
-  - A shell-function shadow binds only in the shell that defines it, so a suite driving the function through a child shell satisfies that wording while the real command runs.
+- **Shadowing `kill`, `rm` and `lsof` does not make a suite safe** — the Step 4 questions decide safety.
+  - A shell-function shadow binds only in the shell that defines it, so a suite driving the function through a child shell can shadow all three while the real command runs.
 
 ### Step 1 — Enumerate the occurrences
 
@@ -216,7 +216,7 @@ Answer every question below at every executing site, all of them resolving.
 ### Step 5 — Decide, and verify the decision after the run
 
 - **Pass** requires pid control AND path control, each by a mechanism that binds under Mechanism binding. Shadowing the signal or the removal command is neither necessary nor sufficient.
-- **Ambiguous means fail** — do not reason harder.
+- **Ambiguous means fail** — an ambiguous site is never argued into a pass.
   - The one escape: prepend a scratch dir of record-only stubs to the PATH of the WHOLE invocation (a PATH stub binds in every child) and run that one file under it; unavailable → stop and report.
 - **Post-condition, independent of all the reading**: record the live server's pid and its socket inode before the run and compare both after. A change in either means something reached it, whatever the file said.
 

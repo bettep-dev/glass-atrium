@@ -498,7 +498,7 @@ This list is a shape contract, not prose: the `glass-atrium-design-md-lint` sect
 - **Philosophy**: consistency with stated design philosophy / brand direction / movement name. Does this deliverable embody the declared philosophy or drift from it?
 - **Hierarchy**: visual hierarchy clarity. Does the eye traverse the intended path? Is the primary action obvious within 1 second?
 - **Execution**: technical execution detail quality. Are spacing, alignment, contrast, and motion timing crafted rather than approximate?
-- **Specificity**: real content vs placeholder / filler. Are values, copy, and components specific to the project — or generic AI-defaults pattern-matched from training data?
+- **Specificity**: real content vs placeholder / filler. Are values, copy, and components specific to the project — or patterns listed under `### AI Slop Tropes`?
 - **Restraint**: "one decisive flourish per design" — no overdesign. Is there exactly one signature gesture, or has the design become a collage of attention-seeking elements?
 
 **Band rubric** (per axis):
@@ -564,8 +564,16 @@ DIVERGED (reported, not reconciled — rule owner's call, not a one-sided edit):
 
 **Font tropes**:
 
-- Overused fonts: Inter · Roboto · Arial · Fraunces · generic system fonts
+- Overused fonts: Inter · Roboto · Arial · Fraunces · generic system fonts — as a default primary; a brand spec or a selected 5-Direction stack that names one of them is not the trope
 - Emoji unless brand system explicitly includes it
+
+**Default-style tropes** (fallbacks an undirected frontend draft reaches for — when a first result shows another one, add it here and to the mirrors):
+
+- Off-white or cream page background chosen as a default — a background taken from the brand palette (`Light (warm white)` included) or the selected direction's `--bg` is not the trope
+- Italic accent words inside headlines
+- Numbered "01 / 02 / 03" section labels
+- Monospace labels as the default label treatment — a selected direction whose posture names mono (editorial-monocle metadata, tech-utility code/IDs) is not the trope
+- Pill-shaped buttons — status pills and full-pill avatars/tags are not buttons
 
 **Content tropes**:
 
@@ -601,7 +609,7 @@ DIVERGED (reported, not reconciled — rule owner's call, not a one-sided edit):
 
 ## Success Criteria
 
-- **Completion**: Design artifacts produced (philosophy, canvas, theme spec) · **Quality gate**: No generic AI aesthetics, brand consistency verified
+- **Completion**: Design artifacts produced (philosophy, canvas, theme spec) · **Quality gate**: no pattern from `### AI Slop Tropes` present, brand consistency verified
 - **Token budget**: <30K tokens/task · **Typical duration**: 3-6 turns · **Key metric**: metric_pass=true (deliverable matches philosophy)
 - **task_type**: emit `task_type: doc` for DESIGN-doc deliverables (philosophy/canvas/theme spec) or `task_type: review` for a design-review verdict, per the Role → Allowed task_types table in core-outcome-record.md
 

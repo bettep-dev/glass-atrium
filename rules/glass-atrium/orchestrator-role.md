@@ -32,7 +32,7 @@ Reserved beyond that table:
 
 ## Orchestrator Identity (Control Plane Only)
 
-The orchestrator is the **strategic control plane**: it SELECTS among agent-produced findings, SEQUENCES them, and ROUTES them.
+The orchestrator is the **strategic control plane**: it selects among agent-produced findings, sequences them, and routes them.
 
 | Sole function | Means |
 |---|---|
@@ -109,7 +109,7 @@ Delegate to a subagent when the user request matches any row below.
 | Phase | Purpose | Actions | Forbidden | Output |
 |-------|---------|---------|-----------|--------|
 | **Investigation** | Gather context before delegating | Summarize user intent (1 sentence)<br>· Glob/Grep scan (min 1 pass — routing facts only; boundary: `#### Scan boundary and provenance`)<br>· Check progress files + prior Outcome Records | Delegating without investigation | Internal context summary |
-| **Decision** | Compose team + define scope | Decompose into sub-tasks, sized per `### Spawn Budget` → Delegation-size discipline<br>· Compose team + phase order from capability hints (`domains` + descriptions), justified by that alignment<br>· Define scope (files, change type, constraints) and fix it in TEXT with a `[SCOPE]` line on DEV/PLANNING delegations (grammar SoT: `### Context Handoff Size`)<br>· Probe each target path (Read/Glob) before prompt assembly, then run `#### Decision-phase probes` in order<br>· Classify DEV entry — SIZABLE if ANY of ~3+ coordinated files · ≥2 modules · ≥3 expected turns · public-contract change (borderline → SIZABLE) → plan first; simple → `[ENTRY-CLASS] simple-task: <reason>` (`#### Entry classification (DEV delegations)`) | Habitual delegation without rationale<br>· Keyword/alias-based routing<br>· Collapsing compound requests into single agent<br>· Spawning subagent on unprobed paths<br>· Spawning subagent whose compatibility preconditions are unmet<br>· Oversized single delegation (>2 bundles / est ≳40 tool_uses)<br>· Delegating DEV/PLANNING work with no `[SCOPE]` line | Team (`agents` + `reason` + `order`) + scope + constraints |
+| **Decision** | Compose team + define scope | Decompose into sub-tasks, sized per `### Spawn Budget` → Delegation-size discipline<br>· Compose team + phase order from capability hints (`domains` + descriptions), justified by that alignment<br>· Define scope (files, change type, constraints) and fix it in TEXT with a `[SCOPE]` line on DEV/PLANNING delegations (grammar SoT: `### Context Handoff Size`)<br>· Probe each target path (Read/Glob) before prompt assembly, then run `#### Decision-phase probes`<br>· Classify DEV entry — SIZABLE if ANY of ~3+ coordinated files · ≥2 modules · ≥3 expected turns · public-contract change (borderline → SIZABLE) → plan first; simple → `[ENTRY-CLASS] simple-task: <reason>` (`#### Entry classification (DEV delegations)`) | Habitual delegation without rationale<br>· Keyword/alias-based routing<br>· Collapsing compound requests into single agent<br>· Spawning subagent on unprobed paths<br>· Spawning subagent whose compatibility preconditions are unmet<br>· Oversized single delegation (>2 bundles / est ≳40 tool_uses)<br>· Delegating DEV/PLANNING work with no `[SCOPE]` line | Team (`agents` + `reason` + `order`) + scope + constraints |
 | **Delegation** | Deliver self-contained context | Follow Handoff Context rules<br>· Generate + attach CID<br>· English delegation prompt | Passing full conversation history<br>· Context-free "just do it" | Subagent invocation with CID |
 | **Monitoring** | Verify results + quality | Check `[COMPLETION]` block<br>· Escalate `blocked`/`fail` to user or glass-atrium-qa-debugger<br>· Relay `done_with_concerns`<br>· Verify intent-result alignment<br>· Reconcile the delivered path set against the delegation's `[SCOPE]` — excess → `skills/glass-atrium-ops-orchestrator.md` → `### Scope-Expansion Approval Protocol`, never absorbed silently<br>· Write the plan's stage from the returned reconciliation verdict (`## Document-Driven Workflow` step 5) | Forwarding results without verification<br>· Silently accepting work that fell outside the declared `[SCOPE]`<br>· Printing the raw `[COMPLETION]` block to the user (machine-facing record artifact — summarize in prose; `core-outcome-record.md` → Emit Boundary Channel asymmetry)<br>· Treating a proxy as a completion signal — mtime quiet, an `idle` listing entry, newest-file-by-mtime, an appearing commit (`skills/glass-atrium-ops-orchestrator.md` → Completion signals) | Final response or follow-up |
 
@@ -131,7 +131,7 @@ Classify every DEV task against the sizable criteria in the Decision row above �
 
 #### Decision-phase probes
 
-The probes run during the Decision phase, **serially in this order**: Permission → Foreground → Capability → Compatibility.
+The probes run during the Decision phase, before the spawn: Permission · Foreground · Capability · Compatibility.
 
 - Each probe gates independently — any single failure halts delegation.
 - A probe whose trigger is absent is a no-op (no target path → Permission Probe skipped; no `compatibility` field → Compatibility Probe passes through).
@@ -350,7 +350,7 @@ The scan establishes **routing** facts — what exists, where it lives, who owns
 
 ### Context Handoff Size
 
-- Summary only (1K-2K tokens max). Raw conversation history pass-through is FORBIDDEN.
+- Summary only — what the recipient cannot get elsewhere (purpose, target files, key constraints, completion criteria); bulk material such as reviews, logs and prior reports goes by file path. Raw conversation history pass-through is FORBIDDEN.
 - Content: the 6 delegation elements (SoT: `skills/glass-atrium-ops-orchestrator.md` → `#### Delegation required elements`). The count and the `7th` label below are mirrored in `hooks/inject-session-context.sh`, so they move together.
 - **Attestation-token placement — the whole family (`[SCOPE]` · `[ENTRY-CLASS]` · `[SIZE-EST]` · `[PLAN-SUBSET]` · `[PLAN-CLOSE]` · `[DOC-ROUTE]`), stated ONCE here**:
   - Manual path → inside the Agent tool's `prompt` parameter, never the orchestrator's user-facing narration.

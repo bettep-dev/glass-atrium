@@ -62,15 +62,18 @@ triggers:
 
 ## Detection Guidance
 
-| Category | Grep / Inspect |
-|----------|----------------|
-| Color | `grep -iE "(beige\|cream\|peach\|#fff[^a-f0-9]\|gradient)" *.css *.html` |
-| Font | `grep -iE "Inter\|Roboto\|Arial\|Fraunces" *.css *.html` |
-| Layout | `grep -iE "rounded-lg\|grid-cols-3\|text-center" *.html` + visual scan |
-| Content | Read body — flag round-number metrics without citation, lorem-ipsum markers |
-| Iconography | Grep icon library imports + check stroke-width consistency |
-| Effects | `grep -iE "backdrop-blur\|backdrop-filter\|drop-shadow" *.css` |
-| Emoji | `grep -P "[\x{1F300}-\x{1FAFF}]" *.md *.html` |
+Run each pattern with the Grep tool (ripgrep syntax — a bare `|` is alternation; case-insensitive where marked), then read every hit in context before banding it.
+
+~~~text
+Color    (case-insensitive)  (beige|cream|peach|#fff[^a-f0-9]|gradient)   glob: *.{css,html}
+Font     (case-insensitive)  Inter|Roboto|Arial|Fraunces                   glob: *.{css,html}
+Layout   (case-insensitive)  rounded-lg|grid-cols-3|text-center            glob: *.html   (+ visual scan)
+Effects  (case-insensitive)  backdrop-blur|backdrop-filter|drop-shadow     glob: *.css
+Emoji                        [\x{1F300}-\x{1FAFF}]                         glob: *.{md,html}
+~~~
+
+- Content: read the body — flag round-number metrics without citation and lorem-ipsum markers.
+- Iconography: grep icon-library imports, then check stroke-width consistency.
 
 ## Severity Bands
 

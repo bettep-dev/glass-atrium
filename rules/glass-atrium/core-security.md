@@ -74,7 +74,7 @@ What the harness mechanically enforces around agent tool authorization, and wher
 
 ## Execution Security
 
-- Dynamic execution functions such as `exec`, `execSync`, `eval`, and `Function()` are **FORBIDDEN**
+- Dynamic execution functions such as `exec`, `execSync`, `eval`, and `Function()` are **FORBIDDEN** — each runs a string as code or through a shell, so any input that reaches one is an injection path (OWASP A05)
 - WebView JS interfaces → enforce least privilege · input validation is REQUIRED
 - Process spawning (`Runtime.exec`) → FORBIDDEN in mobile apps
 

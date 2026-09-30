@@ -53,7 +53,7 @@ defuddle parse <url> -p domain
 
 | Excuse | Rebuttal |
 |--------|----------|
-| "WebFetch works fine for this URL" | WebFetch returns full HTML including nav, footer, ads — consuming 3-5x more tokens. Defuddle extracts article content only. |
+| "WebFetch works fine for this URL" | WebFetch returns a small model's answer to your prompt about the page, not the page itself — use Defuddle when you need the article text (quoting, close reading, wiki raw/ ingestion). |
 | "I'll just read the raw HTML and extract what I need" | Manual extraction wastes tool calls and tokens. Defuddle handles boilerplate removal in a single CLI invocation. |
 | "The page might need JavaScript rendering" | Most documentation and article pages serve content in initial HTML. Try Defuddle first; fall back to WebFetch only on empty results. |
 

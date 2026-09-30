@@ -43,4 +43,4 @@ Every prompt, agent body, rule or skill deliverable authored by glass-atrium-met
 
 ## Skills Array Order [META]
 
-- When authoring an agent's frontmatter `skills:` array, sort it for readability and logical grouping (core → supplementary). Order has no significant effect on model behaviour, so spend the effort on content quality instead.
+- When authoring an agent's frontmatter `skills:` array, sort it for readability and logical grouping (core → supplementary).

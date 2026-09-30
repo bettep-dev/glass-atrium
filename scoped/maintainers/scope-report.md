@@ -77,7 +77,7 @@ Source: `monitor/src/server/clauded-docs/html-validator.ts`.
   - Copies and pointers spread across the UI-emitting DEV fleet, the design references and the DESIGN template; some omit that prohibition. The reporter body carries an HTML-doc variant that points there.
   - No roster is kept, because the set grows with the fleet.
 
-## Restructure + diet pass (this wave)
+## Restructure + diet pass — dispositions
 
 The rule file keeps the two rules no body carries, the sections a live suite or a Tier-1 pointer reads, and one pointer per externally-cited heading. No before/after character count is recorded here: a measured size drifts on the very next edit, and this note is read long after that edit.
 

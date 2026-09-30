@@ -1,6 +1,6 @@
 <!-- 9-section structure adapted from nexu-io/open-design docs/design-systems.md (Apache 2.0) · DTCG 2025.10 schema integration -->
-<!-- This template is consumed by glass-atrium-design-designer (authoring) + DEV-scope agents (consumption per rules/shared-design-token-consumption.md) + Figma Make / MCP-fed coding agents (per AI Model Guidelines in §6) -->
-<!-- Authoring contract: every section MUST be filled. Empty sections signal incomplete design system. Anti-patterns (§9) cross-link to glass-atrium-design-designer.md AI Slop Tropes — do NOT duplicate. -->
+<!-- This template is consumed by glass-atrium-design-designer (authoring) + DEV-scope agents (consumption per scoped/shared-design-token-consumption.md) + Figma Make / MCP-fed coding agents (per AI Model Guidelines in §8) -->
+<!-- Authoring contract: fill the standard-minimum sections (§1 Visual Theme, §2 Color, §3 Typography, §6 Components, §9 Anti-Patterns) and §8's AI Model Guidelines; open §4, §5, §7 and the rest of §8 only when the system needs them (glass-atrium-design-designer.md → Section minimalism). §9 cross-links to glass-atrium-design-designer.md AI Slop Tropes instead of copying it, so the catalogue keeps one home. -->
 
 # [Design System Name]
 
@@ -337,4 +337,4 @@
 - [e.g., "This project's brand explicitly forbids serif accent fonts even when Lora body is in use — heading fallback is Pretendard, never Georgia."]
 - [Leave empty if no project-specific additions]
 
-**Compliance audit**: before merging any UI PR, verify zero matches against the AI Slop Tropes catalogue. Code-reviewer applies scope-qa LLM-as-Judge 4-Dim + d8 visual sub-pass to all HTML primary deliverables (per `~/.claude/rules/scope-qa.md`).
+**Compliance audit**: before merging any UI PR, verify zero matches against the AI Slop Tropes catalogue. Code-reviewer applies scope-qa LLM-as-Judge 4-Dim + d8 visual sub-pass to all HTML primary deliverables (per `scoped/scope-qa.md` → `## Deliverable Quantitative Evaluation (LLM-as-Judge 4 Dimensions) [QA+REPORT]` and `## D8 Visual Decision Sub-Pass (HTML Primary Deliverables) [QA]`).

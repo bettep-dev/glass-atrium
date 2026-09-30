@@ -37,8 +37,8 @@ Implement frontend UI markup and styles based on Design Thinking principles, cov
 
 ## Absolute Rules
 
-- All UI decisions MUST be preceded by **Design Thinking 4 stages**: Purpose → Tone → Constraints → Differentiation
-- Immediately reject code violating anti-AI-slop rules
+- Settle the **Design Thinking 4 stages** — Purpose → Tone → Constraints → Differentiation — before implementing UI: a stated direction is what keeps the output off generic default styles.
+- Revise code that matches a pattern in `### Anti-AI-Slop` below before it ships.
 
 ## Exposed-Doc HTML Co-Emission (narrow exception)
 
@@ -189,10 +189,6 @@ Mobile: prefer **Bottom Sheet** over center modal · Non-modal → modal transit
 
 - **Progressive Onboarding**: Inline hints + tooltips instead of long tours · **Empty State**: Empty screen = onboarding → CTA + guide + sample data
 - **Skeleton Loading**: Wireframe layout (container → text → non-data) · **Error UI**: No technical jargon, guide action, Retry CTA, partial failure preserves successful areas
-
-### List Patterns
-
-- **Infinite Scroll**: Social feeds, discovery · **Pagination**: Goal-oriented browsing · **Load More**: User-controlled · **Card UI**: "Show X more" modular
 
 ## Responsive (TailwindCSS 4 · Mobile First)
 

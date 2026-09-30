@@ -26,8 +26,6 @@ Converts raw/ source materials into `wiki/notes/` markdown through a narrow LLM 
 | 2 | Sync | No (script) | `wiki-sync.sh` (T6) | `wiki/index/wiki.sqlite` + `master-index.md` |
 | 3 (optional) | Health | Yes (weekly) | separate skill | `index/healthcheck-*.md` |
 
-Targets (per plan §2 KPI): <60s/file, <$0.05/file, <20 tool calls/file.
-
 ## Wiki Store Structure (D7 flattened)
 
 Atrium-internal, git-ignored, LLM-only store (no Obsidian vault; BM25 `wiki-query.sh` is the sole consumer):
@@ -56,7 +54,7 @@ Karpathy wiki pattern: LLM does only `raw → notes` markdown conversion. Cross-
 
 - **Input**: delta set of `raw/{slug}.md` files (new or modified since last run).
 - **Output**: `wiki/notes/{slug}.md`, flat.
-- **Batch**: N raw files → **1 claude call**. Per-file calls are forbidden (root cause of the old $0.3–0.5 cost).
+- **Batch**: N raw files → **1 claude call**. Per-file calls are forbidden: each call re-pays the fixed system-prompt and tool-schema cost.
 - **Work performed**:
   - Transform frontmatter: raw `source_url`/`collected`/`collector` → notes `title`, `tags`, `source_refs: [raw/{slug}.md]`, `type: source-summary`, `updated`.
   - Clean body: preserve original language (D5), deduplicate, normalize headings. No translation. No summary rewriting beyond removing boilerplate.

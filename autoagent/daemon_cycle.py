@@ -2998,7 +2998,7 @@ DIFF:
 +<your new line(s) — '+' prefix on each>
  <one or two context lines copied EXACTLY from the file above>
 
-Critical rules for the DIFF block:
+Rules for the DIFF block (it is applied with `git apply`, which reads these lines verbatim):
 - NO markdown fences (no ```, no ```diff). Raw lines only.
 - Context lines MUST start with a single space and match the file byte-for-byte.
 - New lines MUST start with '+' and NOT be wrapped in quotes.
@@ -3060,7 +3060,7 @@ DIFF:
  <context line for the SECOND location, copied EXACTLY>
 +<your new line(s) for the second hunk>
 
-Critical rules for the DIFF block:
+Rules for the DIFF block (it is applied with `git apply`, which reads these lines verbatim):
 - NO markdown fences (no ```, no ```diff). Raw lines only.
 - Context lines MUST start with a single space and match the file byte-for-byte.
 - New lines MUST start with '+' and NOT be wrapped in quotes.

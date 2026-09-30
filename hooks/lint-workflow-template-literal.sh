@@ -221,7 +221,7 @@ literal is read by the JavaScript parser as a ${ } interpolation and fails to pa
 HOW TO FIX (choose one):
   1. Escape the dollar so it is a literal, not an interpolation: write \${...} instead of ${...}.
   2. Use a single- or double-quoted JS string instead of a backtick template (no interpolation).
-  3. Concatenate the string pieces, or wrap the literal with String.raw so ${...} is not expanded.
+  3. Concatenate the string pieces instead of writing one template literal.
 
 ESCAPE HATCH (rare, intentional bash-in-template case): add the literal token [[JS-TEMPLATE-LINT-OK]]
 anywhere in the script (for example in a comment) to skip this lint.

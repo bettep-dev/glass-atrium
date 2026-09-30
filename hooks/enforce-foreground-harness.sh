@@ -178,5 +178,5 @@ if [[ "${all_exempt}" == "true" ]]; then
 fi
 
 # Non-exempt harness path with run_in_background=true → BLOCK (JSON decision on stdout, exit 2).
-printf '%s\n' '{"decision":"block","reason":"Harness Path Protection Rule 2 violation: foreground MANDATORY for ~/.claude/ and every ~/.claude-* profile branch config dir. Set run_in_background=false (or omit). Source: rules/orchestrator-role.md."}'
+printf '%s\n' '{"decision":"block","reason":"Harness Path Protection Rule 2: foreground MANDATORY for an Agent call that writes under ~/.claude/ or any ~/.claude-* profile branch config dir, so the user can watch the harness change as it happens. Set run_in_background=false (or omit it). Source: rules/glass-atrium/orchestrator-role.md -> Harness Path Protection."}'
 exit 2

@@ -117,20 +117,17 @@ Parse-safety preconditions — a violation produces false SCOPE-070 warnings or 
 <!-- EDITABLE:BEGIN -->
 
 - **Product context focus**: plan around user value and business goals, not implementation details
-- **Ambitious scope**: AI coding environments have low completeness cost — choose 100% solutions over 90%
+- **Scope fidelity**: plan the direction the user asked for, at the scope they intended; when a wider option exists, name it in one line rather than planning it
 - **Sprint decomposition**: break large goals into verifiable sprints (1-3 turns)
 - **Plan size ceiling**: one plan carries at most ~50 tasks — the top of the hierarchy stated under `## Absolute Rules` → Decomposition & Decision. Count tasks before finalization; beyond the ceiling, split into sequential plans and state the sequencing.
 <!-- EDITABLE:END -->
 
 ## Absolute Rules
 
-> [!important]
-> Planner authors **design intent** (What + Why) only. Implementation (How / code) belongs to DEV agents.
-
 ### Role Boundary
 
-- **Design = What+Why (prose/diagrams/tables) · Implementation = How (code)** — planner handles design only
-- **NO CODE IN PLANS MUST** — zero tolerance; the operative list is `## Design Expression Rules (No Code — Zero Tolerance)`
+- **Design = What+Why (prose/diagrams/tables) · Implementation = How (code)** — planner handles design only; implementation belongs to DEV agents
+- **No code in plans (MUST)**: the operative list is `## Design Expression Rules (No Code — Zero Tolerance)`
 - **Specs first MUST**: write specs before code — code is a deliverable of specs
 
 ### Decomposition & Decision
@@ -206,7 +203,7 @@ Before a user-requested HTML primary is emitted, all of these MUST pass:
 | Monitor API | test POST response structure (`content_hash` present) | halt |
 | Mermaid | validate diagram syntax before emission | halt |
 
-- **Pre-Finalization Implementation-Detail Check MUST**: before finalizing any spec, scan the body for terms signalling "How" instead of "What+Why" — `(DB schema|cache|optimize|audit|in-memory|mechanism)`. A match means the spec is a Design+Implementation hybrid → reject and rewrite design-only (What+Why intent, How-level detail removed).
+- **Pre-Finalization Implementation-Detail Check MUST**: before finalizing any spec, scan the body for terms signalling "How" instead of "What+Why" — `(DB schema|cache|optimize|audit|in-memory|mechanism)`. A match marks a passage for the Implementation Manual Test under `## Design Expression Rules`: rewrite it design-only (What+Why intent, How-level detail removed) when it describes procedure, and keep it when the term names the plan's subject (a plan about a cache or an audit).
 
 **History-heading exceptions** — the only carve-outs to Current-State Only, each permitted because the chronology IS the deliverable content:
 
@@ -261,7 +258,7 @@ Verify `127.0.0.1:16145` before any monitor POST (user-requested HTML primary OR
 
 Plans describe **intent, rationale, structure** — never implementation procedure. DEV agents write code.
 
-- **Write this**: prose explaining WHY · trade-off tables · Mermaid diagrams (C4 L1-L3) · API contracts as tables (field | type-in-words | required | notes) · Component CRC (Responsibility + Collaborators) · file trees · step-by-step task lists · method **name** + 1-line responsibility · file references as `<path> → <anchor>` (symbol · heading · bolded lead)
+- **Write this**: prose explaining WHY · trade-off tables · Mermaid diagrams (C4 L1-L3) · API contracts as tables (field | type-in-words | required | notes) · Component CRC (Responsibility + Collaborators) · file trees · step-by-step task lists · an existing method's **name** + 1-line responsibility (proposing new function names is DEV work — `scoped/scope-planning.md` → `## Absolute Rules [PLANNING]`) · file references as `<path> → <anchor>` (symbol · heading · bolded lead)
 - **Not this (FORBIDDEN)**:
   - fenced code blocks · function bodies · step-by-step implementation procedures · import statements
   - type signatures (`Promise<T>`, `Record<>`, `Omit<>`, `| null`, `: Buffer`) · inline backtick type syntax · interface/class/type declarations
@@ -301,7 +298,7 @@ C4 Level 1 (System Context) through Level 3 (Component) only · Level 4 (Code) =
 
 **Diagram = Mermaid (single standard)** — all diagrams in a user-requested HTML primary MUST be authored as `<pre class="mermaid">...</pre>` blocks, under the runtime + block contract in `## Absolute Rules` → Pre-Emission HTML Gates.
 
-- FORBIDDEN: ad-hoc HTML graph TD/LR notation outside Mermaid blocks · hand-drawn inline SVG · Chart.js/D3/Plotly · ASCII art diagrams.
+- FORBIDDEN in a user-requested HTML primary: ad-hoc HTML graph TD/LR notation outside Mermaid blocks · hand-drawn inline SVG · Chart.js/D3/Plotly · ASCII art diagrams. An agent-only record prefers a bullet, table or ASCII tree (`scoped/scope-report.md` → `## Diagram Standard [REPORT]`).
 - A non-HTML primary (agent-only, or user-requested markdown) is the only context where ` ```mermaid ` fence blocks are allowed.
 
 The trigger table selects WHICH Mermaid type to use; the adopted-type set itself is closed under `## Visual Design Spec` → Pre-drawing decision core.
@@ -606,7 +603,7 @@ Each step builds on the previous: Type → Direction → Budget → Preset → s
 - **Placeholder residue (MUST)**: before POSTing a user-requested HTML primary, scan `html_body` for residual `{{...}}` template placeholders, `[FILL]` markers and author scaffolding stubs, and remove them. The server hard-rejects residue via the `placeholder_residue` gate, so this local check prevents a 400 round-trip.
 - **Sensitivity self-check (MUST — prose rule, not a server gate)**: run it before the POST on every exposed HTML primary and hold the POST on any finding until the user confirms.
   - **A finding is one of exactly three categories** — HR/personnel content · undisclosed deal terms · personally identifying content. Nothing else counts, and the category name is what the scan line and the confirmation ask carry.
-  - Record ONE line in the turn-0 narrative BEFORE the POST: `sensitivity_scan: clear`, or `sensitivity_scan: N items (category §locator, …)`.
+  - Decide `sensitivity_scan: clear` or `sensitivity_scan: N items (category §locator, …)` BEFORE the POST, and carry that line in your final message — narration between tool calls does not reach the orchestrator, which relays the confirmation ask to the user.
   - Report COUNT + category + locator and nothing else. Never quote or paraphrase flagged content into the narrative, the `[COMPLETION]` block, `concerns`, or any log — the scanner must not become the leak path.
   - Zero findings is a silent pass; a generic "may contain sensitive data" caveat is FORBIDDEN.
 
@@ -623,7 +620,7 @@ Rows = criteria · columns = options (within the column cap) · cells = R-coded 
 
 ## Content Quality Bars (per deliverable type)
 
-Each PLANNING deliverable has a per-bullet/per-section semantic content bar — separate from the scope-qa 4-Dim Clarity check and the d8 sub-pass. A FAIL costs a 4-Dim Clarity auto-deduction of 1 point.
+Each PLANNING deliverable kind carries a per-unit content bar: every unit of that kind a plan contains holds the required elements below.
 
 | Deliverable kind | Atomic unit | Required elements |
 |------------------|-------------|-------------------|
@@ -632,5 +629,4 @@ Each PLANNING deliverable has a per-bullet/per-section semantic content bar — 
 | Architecture component spec | each component | Responsibility + Dependency + Interface contract |
 | Backlog stub | each entry | 1-line scope + owner candidate + estimated effort |
 
-- **Audit trigger**: a glass-atrium-qa-code-reviewer review finding a violation of the table above deducts 1 point from 4-Dim Clarity.
 <!-- EDITABLE:END -->

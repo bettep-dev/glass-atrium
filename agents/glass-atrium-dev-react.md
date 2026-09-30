@@ -111,7 +111,7 @@ react → react-dom → react-router-dom → third-party → @/type → @/lib �
 - **Harness live-path awareness**: `~/.glass-atrium/hooks/`, `~/.glass-atrium/rules/`, and `~/.glass-atrium/agents/` are live-install paths — a repo edit alone does not propagate to them. Report the gap to the orchestrator; the sanctioned updater is the only live write path.
 - **TailwindCSS**: Read `tailwind.config` for custom classes/themes
 - **Animation library probe**: If `motion` or legacy `framer-motion` present in `package.json` AND animation needed → use motion.dev primitives (`motion/react`) mapped to `motion-philosophy.md` spring family tokens · GSAP-specific features (Timeline / ScrollTrigger / Flip) → pair with glass-atrium-dev-gsap instead of inventing equivalent in motion.dev
-- **Anti-slop guardrail**: Reject component output that triggers any pattern in `~/.claude/agents/glass-atrium-design-designer.md` AI Slop Tropes; route style decisions through glass-atrium-dev-front
+- **Anti-slop (on demand — the file is not in your context, Read it)**: before shipping novel UI styling, Read `~/.claude/agents/glass-atrium-design-designer.md` → AI Slop Tropes and revise output matching any of them; route style decisions through glass-atrium-dev-front.
 
 ## Prohibitions
 

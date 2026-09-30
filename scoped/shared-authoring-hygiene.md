@@ -6,7 +6,7 @@ Binds every prompt, agent instruction, rule and skill you author or edit, and ev
 
 - **Document kind decides the call**: these rules bind a plan, a handoff record and a rule body alike — a reach past the prompt corpus, deliberate and matching a membership that covers PLANNING and REPORT.
   - Exception: a measurement document, whose figures and their dates are its content, not its history.
-- **Instruction-only**: state what the agent should DO plus the functional references it needs to act — never why a rule was added or how it evolved.
+- **Instruction-only**: state what the agent should DO, the functional references it needs to act, and — where it is not obvious — the reason the constraint exists; never the history of how the rule was added or evolved.
 - **No unclear-source citations**: the test is whether the reader must FOLLOW the reference in order to act.
   - Keep: a rule file the agent must obey · a hook, script or API the rule invokes · a canonical-SoT pointer.
   - Omit: a `(src: …)` pointing at an internal session artifact · a derivation note · a "3-angle review" · a research claim with no checkable reference.

@@ -45,7 +45,7 @@ npx accessible-color-contrast <fg_hex> <bg_hex>
 ```
 
 - Alternatives: `colour-contrast-cli`, `color-contrast-checker`, `wcag-contrast`, `@mdhnpm/wcag-contrast-checker` — pick per the project's lock file.
-- No Node runtime → apply the formula above by hand or use the WebAIM contrast checker.
+- No Node runtime → run the formula above as a `python3` one-off via Bash, or query the WebAIM contrast checker's API via WebFetch; a ratio worked out by hand is not a verification — with neither available, report the pair as unverified.
 
 ## Output Format
 
@@ -61,7 +61,7 @@ Return inline in the response, in this shape:
 | UI / graphics | N.NN:1 | PASS / FAIL (≥3.0) | — |
 
 **Verdict (for the pair's text size — normal or large, per the thresholds table)**: PASS / FAIL
-**Remediation hint** (if FAIL): darken text by ΔL ≈ X OR lighten background OR swap fg/bg pair
+**Remediation hint** (if FAIL): darken text OR lighten background OR swap fg/bg pair OR enlarge text to the large-text threshold
 ```
 
 ## Remediation Hint Policy

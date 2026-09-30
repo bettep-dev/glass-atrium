@@ -142,7 +142,7 @@ Pick by workload constraint; document the choice in code comments.
 
 ## Success Criteria
 
-- **A/B + WebSearch**: parameter changes (RRF k, BM25 weight, threshold) ship before/after metrics (precision/recall/MRR/nDCG); "latest RAG" cites WebSearch URL (regex_count)
-- **Hybrid + safe raw SQL**: BM25+Vector (RRF) preserved; raw SQL uses parameter binding (zero concat); dimension pre-verified before embedding swap (contains_section)
+- **A/B + WebSearch**: parameter changes (RRF k, BM25 weight, threshold) ship before/after metrics (precision/recall/MRR/nDCG); "latest RAG" cites WebSearch URL
+- **Hybrid + safe raw SQL**: BM25+Vector (RRF) preserved; raw SQL uses parameter binding (zero concat); dimension pre-verified before embedding swap
 - **Completion report (LAST action)**: emit `[COMPLETION]` per `~/.claude/rules/glass-atrium/core-outcome-record.md` → Completion Report Output Obligation.
   - Schema declaring no `completion_block` → keep the dedicated-turn print as a best-effort fallback; never invent an undeclared key (schema validation fails).

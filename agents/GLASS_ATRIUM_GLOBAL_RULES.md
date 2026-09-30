@@ -108,16 +108,17 @@ The canonical rule for what language this system writes in.
 
 - Reasoning spend is controlled by the `effort` parameter (max / xhigh / high / medium / low).
 - Default `effort=high`; lower for cost-sensitive pipelines; `xhigh` for highest-capability tasks (long-horizon agents, deep reasoning); `max` may overthink — reserve for genuinely hardest tasks.
-- **Thinking is ON by default** (Opus 5): `effort` governs thinking VOLUME, not visible response length — prompt conciseness explicitly when short output is wanted.
-  - Disabling thinking is permitted ONLY at effort ≤ high; `xhigh`/`max` with thinking disabled → 400 error (per-request enforced).
-  - Do NOT instruct agents that reasoning is off-by-default; raise `effort` when reasoning is shallow.
-- **5-family capability facts**: models version independently — Opus 5 is the newest release, Fable 5 the capability flagship (distinct axes).
-  - 128k max output (set budget starting at 64k).
-  - 1M context is default AND maximum on Opus 5 / Fable 5.
-  - Mid-conversation `role:"system"` messages are accepted (append late instructions without restating the full prompt, preserving cache); Opus 5 adds mid-conversation TOOL changes (beta).
-  - Prefill is unsupported across the 5-family — use Structured Outputs for JSON, and a direct system instruction to remove preamble.
-  - Opus 5 / Fable 5 safety classifiers may return a refusal stop reason (Mythos 5 does not) — the harness special-cases it, not a hard error.
-  - Fable 5 requests may run many minutes to autonomous hours — client timeout + async posture required; never instruct it to echo its reasoning (refusal-classifier fallback trigger).
+- **Thinking is on**: `effort` governs thinking volume, not visible response length — prompt conciseness explicitly when short output is wanted.
+  - Control thinking through `effort` alone: on the main-session model, a `thinking: {type: "disabled"}` or `budget_tokens` request is a 400 at every effort level.
+  - Never write a "do not think" rule or tell an agent that reasoning is off; raise `effort` when reasoning is shallow.
+- **Request-surface facts** — for code that builds API requests. They move with each model release, so confirm each one against the current model's migration notes before relying on it:
+  - Max output is 128k; start `max_tokens` at 64k and size it for thinking plus the reply, since thinking counts toward it.
+  - 1M context is the main-session model's default and maximum.
+  - Mid-conversation `role:"system"` messages are accepted — append a late instruction instead of editing the system prompt, which keeps the prompt cache and earlier thinking blocks valid. Mid-conversation tool changes are a beta.
+  - Prefill is unsupported — use Structured Outputs for JSON, and a direct system instruction to remove preamble.
+  - Safety classifiers may end a turn with `stop_reason: "refusal"` — the harness special-cases it, not a hard error.
+  - Long autonomous requests may run for many minutes — client timeout + async posture required.
+  - Never instruct a model to reproduce its reasoning in the response — it can be declined as `reasoning_extraction`, and that decline is not retried on a fallback.
 
 ## Scope Literalism [ALL]
 
@@ -138,7 +139,7 @@ The canonical rule for what language this system writes in.
 |------|---------|
 | **Always** | Read, search, format, analyze |
 | **Confirm** | File modification, external calls, installation |
-| **Forbidden** | Deletion, security violations, sensitive files |
+| **Forbidden** | Deleting source, documents or config (move to `~/.Trash/` — File Deletion Policy), security violations, sensitive files |
 
 ### File Deletion Policy [ALL]
 
@@ -235,13 +236,13 @@ Prevent context bloat during long sessions (10+ turns).
 
 #### Emit-before-cap
 
-- Schema/workflow agents: the StructuredOutput / `[COMPLETION]` emit IS the deliverable — a turn spent on analysis with none left to emit loses ALL the work.
-  - Under ultracode a schema-mode workflow `agent({schema})` that finishes without emitting THROWS (uncaught → crashes the run) with NO engine-layer salvage, unlike the manual Agent path, where the SubagentStop transcript-synthesis net recovers a missing block.
-  - Therefore RESERVE budget to emit BEFORE the working ceiling: on approach, STOP analysis and emit the structured result with whatever is complete (partial > nothing).
+- Schema/workflow agents: the StructuredOutput / `[COMPLETION]` emit is the deliverable — a turn spent on analysis with none left to emit loses all the work.
+  - Under ultracode a schema-mode workflow `agent({schema})` that finishes without emitting throws (uncaught → crashes the run) with no engine-layer salvage, unlike the manual Agent path, where the SubagentStop transcript-synthesis net recovers a missing block.
+  - Therefore reserve budget to emit before the working ceiling: on approach, stop analysis and emit the structured result with whatever is complete (partial > nothing).
   - Never end a schema-mode turn on prose.
-- **Second failure mode** — invalid-emission / retry-cap-exceeded: the agent DID call StructuredOutput but every payload FAILED schema validation across the engine's internal retries.
-  - This rejects the `agent()` promise IDENTICALLY to the non-emit throw — the SAME `.catch(() => null)` handles both, no separate branch.
-  - Signature: the model SHRINKS its prose on each retry instead of ADDING the missing validator-named keys (summary-collapse), reproducing the identical error.
+- **Second failure mode** — invalid-emission / retry-cap-exceeded: the agent did call StructuredOutput, but every payload failed schema validation across the engine's internal retries.
+  - This rejects the `agent()` promise exactly as the non-emit throw does — one `.catch(() => null)` handles both, no separate branch.
+  - Signature: the model shrinks its prose on each retry instead of adding the missing validator-named keys (summary-collapse), reproducing the identical error.
   - Prevent by construction — a schema authored per the canonical schema-cap rules, bulk detail handed off via a FILE, and a prompt enumerating ALL required keys; retry with a TIGHTENED re-prompt, never verbatim.
 - **Schema-cap authority is single-sited** (this charter states a pointer, not a rule): the binding cap rules live ONCE in `skills/glass-atrium-ops-orchestrator.md` → `#### Resilient Workflow Authoring [ORCHESTRATOR]` (Absolute schema-cap rules).
   - Pointer duty: read them there before authoring any workflow output schema.
@@ -256,8 +257,8 @@ Prevent context bloat during long sessions (10+ turns).
 
 ## AI-Generated Anti-Pattern Prohibition [ALL]
 
-- Excessive politeness / parrot repetition · over-summarization / verbose explanation.
-- Out-of-scope modifications · empty apologies / excessive disclaimers · false confidence / silent acceptance (fix it or flag it).
+- Write at the length the reader needs: state each point once, and add a summary, apology or disclaimer only where the content calls for one.
+- Stay inside the requested scope; report uncertainty instead of projecting confidence, and fix or flag a problem you see rather than accepting it silently.
 - Main-session user-facing reply FORM (BLUF · Delta · Next/blocked · Divergence detail) is single-sited at `skills/glass-atrium-ops-orchestrator.md` → `### Reply Form Contract` — honor-system (no hook reads reply text), and the response-language rule above is unaffected by it.
 - ※ Mandatory comments per shared-comment-logging.md are exempt.
 

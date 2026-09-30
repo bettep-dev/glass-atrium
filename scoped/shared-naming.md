@@ -46,7 +46,7 @@ Full skill: 17-category verb taxonomy, scope-proportional length table, abbrevia
 
 These pass the admission test the delta-core applies to itself: they are core rules, not on-demand detail, and bind exactly as the delta-core does.
 
-- **Booleans — stative-first** with `is`/`has`/`can`/`should`. The delta-core's closing line lists this among the full skill's contents; it is a core rule nonetheless, stated here.
+- **Booleans — stative-first** with `is`/`has`/`can`/`should`.
 - **Class / type suffixes — a closed allowlist**: `*Repository` · `*Service` · `*Controller` · `*Builder` · `*Factory` · `*Provider` · `*Validator`. **`I`-prefixed interface names are FORBIDDEN** — the C#/Java default is the opposite, so the violation reads as idiomatic and passes review unremarked.
 - **Greppability and scope non-redundancy** — a public identifier stays greppable, and a name never repeats the scope already enclosing it. This is the counterweight that makes the delta-core's no-stutter rule safe to apply aggressively.
 
@@ -128,4 +128,4 @@ One verdict per input shape for **Read-down naming**, **Prefix-family grouping**
 
 - `skills/glass-atrium-dev-naming/SKILL.md` keeps the User Dictionary's worked rows the delta-core does not carry and the five conciseness principles as prose.
 - Its `references/` keep the lookup tables the delta-core's closing `Full skill:` line names; the verb taxonomy is a fallback beneath the canonical verb set.
-- Whether a subagent can still invoke that skill once its frontmatter no longer lists it is an open question this file does not settle.
+- No agent frontmatter preloads that skill: when a lookup above applies, open the file by path with Read.

@@ -70,13 +70,12 @@ Maintainer-facing material for that rule file. Nothing here binds an agent; the 
 
 ## Manifest-regeneration preconditions
 
-Requirements for the wave that regenerates `manifest.json`. None is satisfied at this commit, and each is stated as a requirement rather than a state.
+Requirements for any regeneration of `manifest.json`. Each is a requirement, not a state: check it against the tree before relying on it.
 
 - **The manifest must ship this rule file and the part-slot wrappers (`hooks/inject-scope-part-*.sh`, `hooks/lib/inject-chunk.sh`, `hooks/lib/inject_chunk.py`) in the SAME deploy that carries the retired `hooks/inject-scope-rules.sh`, or earlier.** Slot 1 no longer carries the delta-core, so a deploy that lands the injector while the wrapper binding rows are declined leaves every member with no naming rule at all.
-- **The regeneration must run AFTER the agent-body mode fix, and its output is committed with the rest of the change set.** `scripts/generate-manifest.sh` takes its file list from `git ls-files`, so the eight new files must be tracked before it runs. It records the raw `stat` mode with no normalisation and both install paths chmod landed files to the recorded mode, so a file left at a demoted mode is regenerated at that mode and then applied at it.
-- **The regeneration is a PR-time gate, not only a deploy concern.** `test-install-macos` carries no path filter and no `if:`, and its `publish-release.sh build` step runs `verify_manifest` → `generate-manifest.sh --check`; no other check catches a stale manifest, which makes that job the first enforcement point for manifest freshness. `scripts/generate-manifest.sh --check` exits 1 DIVERGED at this worktree today. The branch also carries stale hashes from earlier waves, so the regeneration closes pre-existing drift as well as the eight additions.
+- **The regeneration must run AFTER the agent-body mode fix, and its output is committed with the rest of the change set.** `scripts/generate-manifest.sh` takes its file list from `git ls-files`, so every new file must be tracked before it runs. It records the raw `stat` mode with no normalisation and both install paths chmod landed files to the recorded mode, so a file left at a demoted mode is regenerated at that mode and then applied at it.
+- **The regeneration is a PR-time gate, not only a deploy concern.** `test-install-macos` carries no path filter and no `if:`, and its `publish-release.sh build` step runs `verify_manifest` → `generate-manifest.sh --check`; no other check catches a stale manifest, which makes that job the first enforcement point for manifest freshness. Run `scripts/generate-manifest.sh --check` to learn whether the tree has diverged; a regeneration closes every stale hash, not only those of the files it adds.
 
 ## Open
 
 - Whether a subagent can invoke the `glass-atrium-dev-naming` skill once its frontmatter no longer lists it is unsettled. Nothing read so far answers it, and neither the rule file nor this note asserts it either way.
-- CLOSED by the wave's citation-repair pass: `scoped/shared-search-first.md` cited the naming canon as `glass-atrium-dev-naming` while the canonical verb set and the boolean form now live in this rule file. Its Step 3 — Mirror sub-bullet now cites `scoped/shared-naming.md`.

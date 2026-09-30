@@ -140,7 +140,7 @@ run_raw() {
   run run_hook Workflow 'const s = `${arr[@]}`;'
   [ "$status" -eq 2 ]
   [[ "$output" == *"HOW TO FIX"* ]]
-  [[ "$output" == *"String.raw"* ]]
+  [[ "$output" == *"Concatenate the string pieces"* ]]
   [[ "$output" == *"[[JS-TEMPLATE-LINT-OK]]"* ]]
 }
 

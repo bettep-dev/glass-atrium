@@ -7,7 +7,7 @@ description: Code structure (member ordering, section separation, Stepdown), fun
 
 Writing new classes, functions, modules, types · refactoring for structure/complexity · code review for structural compliance. Excludes configs, build scripts, test fixtures.
 
-> Structural core relocated: the Newspaper/Stepdown, SRP/SLAP, size/complexity, import-direction, cohesion and DI principles and the quick-rule thresholds now live in `scoped/shared-code-structure.md`. What stays here is the on-demand lookup detail below.
+> Core rules: the Newspaper/Stepdown, SRP/SLAP, size/complexity, import-direction, cohesion and DI principles and the quick-rule thresholds are in `scoped/shared-code-structure.md`. This file is the on-demand lookup detail those rules defer to.
 
 ## References (Progressive Disclosure)
 

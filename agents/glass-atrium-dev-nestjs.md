@@ -60,7 +60,7 @@ Implement secure, scalable backend APIs in NestJS/TypeScript via DDD layer separ
 - **CQRS**: simple CRUD → Service directly · complex business logic → CQRS.
   - Command: DTO + CommandHandler → state mutation.
   - Query: DTO + QueryHandler → data retrieval.
-- **Pseudocode-first**: signatures + design comments → approval → implementation, in the order resolver/controller → service → command/query → handler → event → test.
+- **Pseudocode-first**: signatures + design comments → approval → implementation; each unit's spec precedes the code it covers (`scoped/shared-testing.md` → Rationalization Rejection (Testing)).
 - **Module Structure**: DTOs define the I/O boundaries.
   - Feature module = module / controller / service / repository / dto / enum; enums live in the feature's `enum/`.
   - Path alias `@/` · API entry points admin / app / web · shared code in `core/`, infrastructure in `system/`.

@@ -1,6 +1,6 @@
 # Maintainer note — `scoped/scope-dev.md`
 
-Companion to `scoped/scope-dev.md`, which now carries DEV-agent-facing duties only. Everything here addresses a maintainer, the orchestrator, glass-atrium-meta-prompt-engineer, or the `agent_lifecycle` CLI operator — no running DEV agent is obliged by any of it.
+Companion to `scoped/scope-dev.md`, which carries DEV-agent-facing duties only. Everything here addresses a maintainer, the orchestrator, glass-atrium-meta-prompt-engineer, or the `agent_lifecycle` CLI operator — no running DEV agent is obliged by any of it.
 
 Deliberately absent from this file: the compressed cores' lead-line needles and the first-link sentence literal. Each is counted or machine-extracted out of the rule file itself, and `scoped/` is a recursive grep root — a copy here is a second hit, never a convenience.
 
@@ -137,7 +137,7 @@ Pair note — the QA-side and orchestrator-side sites of this gate:
 
 A DEV task is **SIZABLE** (MUST enter the Document-Driven Workflow — plan authoring + Stage-2 entry) when **ANY ONE** of the criteria below holds.
 
-- **Read this FIRST (governing)**: this is an **orchestrator-judgment criterion, not a hook-computed value** — size is not statically computable at delegation time (target-file count is free prose, turn count is post-spawn), and no hook reads or parses it. Apply the criteria as conservative judgment cues, not mechanical bright-lines.
+- **Governing qualifier**: this is an **orchestrator-judgment criterion, not a hook-computed value** — size is not statically computable at delegation time (target-file count is free prose, turn count is post-spawn), and no hook reads or parses it. Apply the criteria as conservative judgment cues, not mechanical bright-lines.
 - (a) **multi-file blast radius — ~3+ COORDINATED target files**. 3+ files is a STRONG sizable signal (blast radius, a proxy for ripple); borderline → SIZABLE — only genuinely independent trivial multi-file edits (no shared contract/behavior) are not auto-sizable.
 - (b) **cross-module change** — the change spans ≥ 2 distinct modules / packages / bounded contexts (server route + DB schema; mobile UI + native bridge), even at low file count.
 - (c) **≥ 3 expected agent turns** — the orchestrator's pre-delegation estimate is 3+.
@@ -165,7 +165,7 @@ A DEV implementation spawn carrying NEITHER a plan reference NOR an `[ENTRY-CLAS
   - Standing obligation and split triggers: `orchestrator-role.md` → `### Spawn Budget` → Delegation-size discipline.
   - BOTH tokens' PRESENCE (never the estimate's correctness) is gate-enforced on both paths: manual via `enforce-verification-gate.sh` (`has_size_est_token`, guarded by `hook_is_subagent` → orchestrator-origin spawns only), ultracode via `enforce-workflow-verify-stage.sh` (`BLOCK_SIZEEST` under `ENTRY_OK`).
 
-Cross-ref: the `core-outcome-record.md` Field Input Guide `metric_pass` row's per-task-type check matrix operates as the Code-Based grader tier (author-side outcomes only); the Sprint Contract Gate pass/fail record applies that tier's acceptance-criteria branch.
+Cross-ref: a DEV agent reports this gate's criteria through `metric_pass` (the overall bar) plus one `concerns:` item per failed or unverified criterion (rule file → `## Sprint Contract Gate [DEV+QA]`). The Code-Based grader reads no criterion: it keys on task_type and the block's `files:` (`rules/glass-atrium/core-outcome-record.md` → `#### Grader verdict`).
 
 ## Ambiguity Gate — pair note
 
@@ -203,16 +203,15 @@ Headings other files resolve to — renaming or deleting one dangles a live refe
 
 ## Open item
 
-Owned by a later pass, outside this wave's file set:
+Open, and owned outside this note (the fix edits other files):
 
 - `rules/glass-atrium/orchestrator-role.md` and `scoped/scope-qa.md` still reach the moved gate bodies (fleet governance · the orchestrator-side Sprint Contract Gate) through the rule-file stubs, one hop more than needed. Repointing them at this note removes the hop; `core-compliance-matrix.md` and `skills/glass-atrium-ops-orchestrator.md` already point here.
 
 ## Follow-up fix pass — what changed in the rule file
 
-- The maintainer preamble pointing here was removed, and so was the companion pointer in the first-link LITERAL bullet: neither sat under an externally-cited stub heading, so neither is sanctioned by the companion-citation convention in this note's header. The literal bullet keeps its caution — the sentence and the two lines bracketing it are machine-read — stated without the pointer.
+- The rule file carries no maintainer preamble pointing here and no companion pointer in the first-link literal bullet: neither sits under an externally-cited stub heading, so the companion-citation convention in this note's header sanctions neither. The literal bullet keeps its caution — the sentence and the two lines bracketing it are machine-read — without a pointer.
 - The two sanctioned pointers remain, one each under `## DEV Agent Fleet Governance` and `## Sprint Contract Gate [DEV+QA]`, which are the two headings external files cite into.
-- The three `<!-- … Detail: scoped/maintainers/scope-dev.md -->` comments that sat beside the marker blocks went with the markers when the slot-1 blocks retired (`### Retired slot-1 blocks — what remains in the rule file`); no machine-extracted block remains for them to address.
-- The loading stanza regained its `> **Inherits**:` and `> **See**:` lines for parity with the other scope files. Neither line contains a brace, so the single-brace-list invariant both stanza parsers depend on is untouched.
+- The loading stanza's `> **Inherits**:` and `> **See**:` lines carry no brace — keep them brace-free, so the single-brace-list invariant both stanza parsers depend on holds.
 
 ## Sections dropped in this pass
 
@@ -228,7 +227,7 @@ Removed from the rule file, recorded so they are not re-derived as omissions:
 
 - **Citers**: `hooks/advisory-preedit-facts.sh`, a Stop-bound advisory, names the rule twice in its header and once in the operator-visible `missing`-verdict message, and `test/advisory-preedit-facts.bats` pins the declaration shape.
   - Binding SoT: `lib/ga-env.sh` → `EXPECTED_HOOK_BINDINGS`, upserted by `wire_hooks`; `settings.template.json` does NOT carry that row.
-- **Disposition taken**: the section is restored to the rule file verbatim from `32a0685^`, placed after the style_ref core and before `## Context Engineering [DEV]`, so it opens a clean sibling section under `## Pre-Execution Verification [DEV]`.
+- **Placement**: the section sits after the style_ref core and before `## Context Engineering [DEV]`, a clean sibling section under `## Pre-Execution Verification [DEV]`.
 - **Why restore rather than retire the hook**: the restore costs no extra file and makes the operator-visible citation resolve.
 - **Delivery rides the part slots, never a marker block**: the rule file reaches every DEV agent whole through `rules.scope` membership, and slot 1 carries no scope-file text. A new marker block is NOT a sanctioned route for this duty.
 

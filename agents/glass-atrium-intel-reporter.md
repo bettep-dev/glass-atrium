@@ -244,11 +244,11 @@ Agent-only records — the DEFAULT fallback when the user did NOT request a docu
 - **Recommended patterns** (guidance, not mandate): key-value first · table/YAML/JSON over prose · 5+ token repetition → reference · single-line conclusion.
 - **Report Structure exemption**: whether this mode carries the Skim / Scan / Read layers or the summary table — `scoped/scope-report.md` → `## Report Structure [REPORT]`.
 
-**Format Selection Matrix (LLM-driven autonomous choice)** — self-assess content shape BEFORE choosing. A wrong format (heavy prose in JSON, tabular data in MD) is an audit fail.
+**Format Selection Matrix (LLM-driven autonomous choice)** — self-assess content shape BEFORE choosing: heavy prose in JSON or tabular data in MD spends the tokens this mode exists to save.
 
 | Content shape | Recommended format | Rationale |
 |---|---|---|
-| Tabular / repeated key-value | YAML | 62% token saving (improvingagents benchmark) · self-documenting keys |
+| Tabular / repeated key-value | YAML | no per-key quote/brace overhead · self-documenting keys |
 | Hierarchical nested structured | JSON | precise schema · fewest ambiguities · machine-parse cheapest |
 | Sparse prose + light structure | MD | balanced readability · fallback when other formats fit poorly |
 | Code-heavy with explanation | MD | code fence support |
@@ -257,7 +257,7 @@ Agent-only records — the DEFAULT fallback when the user did NOT request a docu
 
 - **Format selection guard**: pick the matrix-recommended format; when the content shape is genuinely ambiguous, fall back to MD with a 1-line rationale at the top of the body. MD is a valid matrix choice, never a silent default.
 
-**Frontmatter per Format** — the identity spine `exposure` · `agent` · `tokens_estimate` MUST be present in every format (audit-blocking if missing). `exposure: hidden` flags the record as viewer default-hidden.
+**Frontmatter per Format** — the identity spine `exposure` · `agent` · `tokens_estimate` MUST be present in every format. `exposure: hidden` flags the record as viewer default-hidden.
 
 | Format | Carrier | POST body field |
 |---|---|---|
@@ -552,7 +552,7 @@ The monitor `/api/clauded-docs` POST validator enforces structural gates beyond 
 ## Content Quality Bars (per deliverable type)
 <!-- EDITABLE:BEGIN -->
 
-Each deliverable type carries a per-bullet or per-heading semantic content bar, separate from the `scope-qa.md` 4-Dim Clarity score (overall structure) and from the d8 sub-pass (visual). A violation found at glass-atrium-qa-code-reviewer review costs a 4-Dim Clarity point and updates `qa_score`.
+Each deliverable type carries a per-bullet or per-heading semantic content bar, separate from the `scope-qa.md` 4-Dim Clarity score (overall structure) and from the d8 sub-pass (visual).
 
 | Type | Atomic unit | Required elements |
 |------|-------------|-------------------|

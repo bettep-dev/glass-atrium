@@ -44,7 +44,7 @@ The rule file reaches glass-atrium-intel-planner whole at spawn through the part
 | Pre-drawing doctrine, designer trigger | canonical `scoped/scope-report.md` → `## Pre-drawing Doctrine [REPORT]` and `## Designer Co-Emission Trigger [REPORT]`; the planner's own copies are `## Visual Design Spec (applies to user-requested HTML primary)` and `## Designer Handoff Contract` |
 | Emission routing | canonical per row of `agents/glass-atrium-intel-planner.md` → `## Canonical & Mirror Register` (split across scope-report and the reporter body); the planner's own copy is `## Output Format Routing` |
 
-## Restructure + diet pass (this wave)
+## Restructure + diet pass — dispositions
 
 - **Kept as sole copies**: the self-settle-before-consult ordering, the `needs_domain_consult` route and the pre-commitment against the Open Questions mechanism's own growth. Each returns 0 hits in `agents/glass-atrium-intel-planner.md`.
 - **Kept because a named reader resolves into it**: the six weighted axes (asserted by `scoped/maintainers/scope-dev.md`), the two tag literals (the body's co-edit map), and the `## Pre-drawing Doctrine [PLANNING]` pointer (the parity suite).

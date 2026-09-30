@@ -19,7 +19,6 @@ Maintainer-facing material for that rule file. Nothing here binds a hook author;
 
 - **Taxonomy provenance**: the five action names are borrowed from guardrails-ai's `OnFailAction` enum so a hook's behaviour is describable in one word. Guardrails ships eight members (`REASK`, `FIX`, `FILTER`, `REFRAIN`, `NOOP`, `EXCEPTION`, `FIX_REASK`, `CUSTOM` — `guardrails/types/on_fail.py`); Atrium names the five its hooks exercise. Docs-only, no import and no dependency.
 - **Unmapped members (gap register)**: `REFRAIN` — suppress the WHOLE output, where `FILTER` strips one element; guardrails implements them as separate `apply_refrain` / `apply_filters` functions, and Atrium conflates both under `filter` because no hook needs the split. `FIX_REASK` — auto-fix, reverify, reask if still failing; no Atrium hook chains all three, so it is a candidate hardening. `CUSTOM` — arbitrary user callback, out of scope for a fixed vocabulary.
-- **Naming history**: the read-side `track-outcome.sh` parse tiers previously had both exit-0 dispositions called `filter`. The rule file now states the current mapping (synthesis = `filter`, warn-only = `noop`) without the history.
 - **Corpus-maintenance duty (`UserPromptSubmit`)**: the wrapper-shape list in `hooks/inject-reply-language.sh` → `get_prompt_kind` and its fixtures in `hooks/test/inject-reply-language.bats` move together — one prefix, one fixture per shape. This is an instruction to an editor, which is why it lives here.
 - **Known gap (agent-context prompts)**: `get_prompt_kind` silences only frame-shaped agent prompts; a frameless machine prompt (a task notification, a "Background agent" notice) in an agent context still gets the pointer, and the UserPromptSubmit envelope carries no `agent_id`, so no static signal exists — the stream-6 live probe checks a background-task notification inside a teammate or background-agent context.
   - Shapes that get the line: task notification · cross-session message or idle notice (peer) · channel message · compaction summary · hook feedback.
@@ -32,9 +31,8 @@ Maintainer-facing material for that rule file. Nothing here binds a hook author;
 
 ## Follow-up fix pass — on_fail taxonomy shape
 
-The five dispositions were five long prose bullets repeating the same three facets. They are now one table (Disposition | Mechanism | Used by | Reserved for), heading and disposition names unchanged, with the two non-uniform carve-out sentences kept as bullets below it (the `fix` no-silent-loop fall-through, and `noop` never being labelled `filter`).
+The on_fail taxonomy is one table (Disposition | Mechanism | Used by | Reserved for), with the two non-uniform carve-outs kept as bullets below it (the `fix` no-silent-loop fall-through, and `noop` never being labelled `filter`). Keep that shape: the carve-outs are not uniform rows.
 
-- No hook name, worked case or reservation clause was dropped — the facets were transposed, not cut.
 - **Accepted shape-cap overage**: the `exception` and `noop` "Used by" cells run past the 120-char cell guide. The alternative was abbreviating live hook filenames, which are the cells' whole value; the overage is the cheaper trade.
 
 ## Readers and coupled tests
