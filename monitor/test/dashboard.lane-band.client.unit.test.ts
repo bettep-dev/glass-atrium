@@ -779,15 +779,17 @@ test("the spend tile states one ratio and names the basis of its alarm", () => {
   assert.match(tile.hint, /alarm at 1\.25× the 7-day average/i);
 });
 
-test("the spend tile says why its day-over-day change is missing", () => {
+test("the spend tile says why its day-over-day change is missing, telling a pending, a failed and an empty read apart", () => {
   const rows = [
-    { name: "harness KPI not read", kpi: null, trend: /unavailable/i },
-    { name: "yesterday's figure not read", kpi: { today_cost_usd: 5, yesterday_same_time_cost_usd: null }, trend: /unavailable/i },
+    { name: "harness KPI not read yet", kpi: null, trend: /^Change on yesterday not read yet$/ },
+    { name: "harness KPI read failed", kpi: null, error: "HTTP 500", trend: /unavailable — couldn't read/ },
+    { name: "yesterday's figure absent from the read", kpi: { today_cost_usd: 5, yesterday_same_time_cost_usd: null }, trend: /unavailable — the reading carries no spend/ },
     { name: "nothing spent yesterday by now", kpi: { today_cost_usd: 5, yesterday_same_time_cost_usd: 0 }, trend: /no spend yesterday/i },
     { name: "a comparand exists", kpi: { today_cost_usd: 5, yesterday_same_time_cost_usd: 4 }, trend: /^Up 25%/ },
   ];
   for (const row of rows) {
-    const tile = tileOf(dash.buildTiles({ harness: { ...HEALTHY, kpi: row.kpi }, costState: kpi(5, 10), agentsState: LOADING, outcomesState: LOADING }), "spend");
+    const harness = { ...HEALTHY, kpi: row.kpi, error: row.error ?? null };
+    const tile = tileOf(dash.buildTiles({ harness, costState: kpi(5, 10), agentsState: LOADING, outcomesState: LOADING }), "spend");
     assert.match(String(tile.trend), row.trend, row.name);
   }
 });

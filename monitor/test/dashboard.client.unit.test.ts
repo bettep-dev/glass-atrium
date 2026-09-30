@@ -207,7 +207,7 @@ interface WeekRowHelpers {
   };
   describeHourGrid: (grid: unknown) => string;
   getPanelView: (state: unknown) => string;
-  buildSpendStrip: (points: unknown, today: string) => { bars: Array<{ date: string; cost: number; isPartial: boolean }>; span: string | null };
+  buildSpendStrip: (points: unknown) => { bars: Array<{ date: string; cost: number; isPartial: boolean }>; span: string | null };
   window: { UI: { resolveOutcomeRate: (data: unknown) => { breakage: number }; getWriterTotal: (data: unknown) => number } };
 }
 const week = dash as unknown as WeekRowHelpers;
@@ -294,12 +294,18 @@ test("a week panel whose refresh failed over held data reads last known, not fre
   for (const [name, state, view] of rows) assert.equal(week.getPanelView(state), view, name);
 });
 
-test("today's Spend point is marked partial and the strip names its span", () => {
-  const points = ["24", "25", "26", "27", "28", "29", "30"].map((day) => ({ date: `2026-09-${day}`, cost_usd: 10, session_count: 1 }));
-  const withToday = week.buildSpendStrip(points, "2026-09-30");
-  assert.deepEqual(withToday.bars.map((bar) => bar.isPartial), [false, false, false, false, false, false, true]);
-  assert.equal(withToday.span, "09-24 – today");
-  const endedYesterday = week.buildSpendStrip(points, "2026-10-01");
-  assert.equal(endedYesterday.bars.some((bar) => bar.isPartial), false, "a closed day is never partial");
-  assert.equal(endedYesterday.span, "09-24 – 09-30");
+test("the Spend strip marks only the series' last point partial, since the route always ends it on its bucket-timezone today", () => {
+  const rows = [
+    { name: "a full week", days: ["24", "25", "26", "27", "28", "29", "30"], span: "09-24 – today" },
+    { name: "a one-day series", days: ["30"], span: "09-30 – today" },
+  ];
+  for (const row of rows) {
+    const strip = week.buildSpendStrip(row.days.map((day) => ({ date: `2026-09-${day}`, cost_usd: 10, session_count: 1 })));
+    assert.deepEqual(strip.bars.map((bar) => bar.isPartial), row.days.map((_, i) => i === row.days.length - 1), row.name);
+    assert.equal(strip.span, row.span, row.name);
+  }
+  const empty = week.buildSpendStrip([]);
+  assert.equal(empty.bars.length, 0, "an empty series has no bars");
+  assert.equal(empty.span, null, "an empty series has no today");
 });
+

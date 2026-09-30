@@ -333,8 +333,8 @@ function StatusBand({ tiles, onNav, onRetry, sharedSources = NO_SHARED_SOURCES }
 const DASH_STATUS_BAND_ID = 'dash-status';
 
 // a banner-carried outage is stated once, above → the tile stays flat with its unknown dash
-const BANNER_POINTER = 'see the notice above';
-const SHARED_FAILURE_HINT = `Not loaded — ${BANNER_POINTER}.`;
+const POINTER = { BANNER: 'see the notice above', RESULTS_TILE: 'see the Task results tile' };
+const SHARED_FAILURE_HINT = `Not loaded — ${POINTER.BANNER}.`;
 
 // 상태 4종이 서로 다르게 읽히는 지점 — loading(status 자리표시) · error(공용 unavailable 카드) · unavailable/empty(중립 문구) · ready(값).
 // 값 자리는 never 0-for-unknown: 미수신은 '—' 로 남는다.
@@ -358,6 +358,13 @@ function StatusTile({ tile, onNav, onRetry, isRetryShared = false }) {
             <div className="fs-meta text-dim dash-tile-hint" title={tile.note}>
               {isCovered ? SHARED_FAILURE_HINT : tile.hint}
             </div>
+            {/* the raw cause in a <details> → keyboard and screen readers reach it, as RegionUnavailable's ErrorDetails does */}
+            {!isCovered && tile.failureDetail && (
+              <details className="fs-meta text-faint">
+                <summary className="cursor-pointer">Details</summary>
+                <code className="block mt-1 font-mono break-all">{tile.failureDetail}</code>
+              </details>
+            )}
           </>
         }
       />
@@ -406,7 +413,7 @@ function WeekRow({ spendState, outcomesState, onRetrySpend, sharedSources = NO_S
     <div className="grid grid-cols-1 xl:grid-cols-2 gap-card">
       <WeekPanel id="dash-week-spend" title="Spend per day" state={spendState} source="daily spend" onRetry={onRetrySpend}
         isRetryShared={sharedSources.includes('daily spend')}
-        render={(data) => <SpendStrip strip={buildSpendStrip(data.points, getTodayIn(data.timezone))}/>}/>
+        render={(data) => <SpendStrip strip={buildSpendStrip(data.points)}/>}/>
       <WeekPanel id="dash-week-results" title="This week's task results" state={outcomesState} source="task results"
         isRetryShared={sharedSources.includes('task results')}
         render={(data) => <ResultPanel panel={buildResultPanel(data)}/>}/>
@@ -438,15 +445,13 @@ function getPanelView(state) {
   return view === 'ready' && state.error != null ? 'held' : view;
 }
 
-const RESULTS_TILE_POINTER = 'see the Task results tile';
-
 // a failure the page banner carries points up to it → one cause, one Retry
 function PanelFailure({ id, view, state, source, onRetry, isRetryShared }) {
   const { RetryButton, getErrorCopy } = window.UI;
   if (view !== 'error' && view !== 'held') return null;
   if (!onRetry || isRetryShared) {
     const lead = view === 'held' ? 'Showing the last reading' : 'Not loaded';
-    return <p className="fs-meta text-dim">{lead} — {isRetryShared ? BANNER_POINTER : RESULTS_TILE_POINTER}.</p>;
+    return <p className="fs-meta text-dim">{lead} — {isRetryShared ? POINTER.BANNER : POINTER.RESULTS_TILE}.</p>;
   }
   const sentence = view === 'held' ? `Showing the last reading — couldn't refresh ${source}.` : getErrorCopy(state.error, source).sentence;
   return (
@@ -858,7 +863,7 @@ function buildTiles({ harness, costState, agentsState, outcomesState, isHarnessB
     buildHarnessTile(harness),
     markHeldTile(buildOutcomeTile(outcomesState), outcomesState),
     markHeldTile(buildFleetTile(agentsState), agentsState),
-    markHeldTile(buildSpendTile(costState, harness?.kpi), costState),
+    markHeldTile(buildSpendTile(costState, harness), costState),
   ];
   // a first load is 'loading', not a refresh → only held data dims while its region re-reads
   return tiles.map((tile) => ({
@@ -966,7 +971,7 @@ function buildPendingTile(base, state) {
 function buildFailedTile(base, error) {
   const copy = window.UI.getErrorCopy(error, base.source);
   return {
-    ...base, status: 'error', tone: 'neutral', value: '—', detail: copy.sentence, hint: copy.next, note: copy.detail ?? undefined,
+    ...base, status: 'error', tone: 'neutral', value: '—', detail: copy.sentence, hint: copy.next, failureDetail: copy.detail ?? undefined,
     error, canRetry: true,
   };
 }
@@ -1091,7 +1096,7 @@ function describeBusiestAgent(row) {
 const FLEET_VERDICT = { ok: 'All active', warn: 'Failing streak', crit: 'Needs review' };
 
 // 타일 4 — 오늘 지출. 톤은 pace 판정에서만 온다(금액 자체는 위험도가 아니다).
-function buildSpendTile(costState, kpi) {
+function buildSpendTile(costState, harness) {
   const base = {
     id: 'spend', label: 'Spend today', target: 'cost', targetLabel: 'Cost & usage', region: 'cost', source: "today's spend",
   };
@@ -1100,7 +1105,7 @@ function buildSpendTile(costState, kpi) {
 
   const pace = resolveSpendPace(costState);
   const tone = { hot: 'warn', normal: 'ok' }[pace.status] ?? 'neutral';
-  const reading = { ...base, status: 'ready', tone, value: formatUsd(pace.today), trend: describeSpendTrend(kpi) };
+  const reading = { ...base, status: 'ready', tone, value: formatUsd(pace.today), trend: describeSpendTrend(harness) };
   if (pace.status === 'no-basis') {
     return { ...reading, hint: 'No spend in the last 7 days — no baseline to compare against.' };
   }
@@ -1111,9 +1116,14 @@ function buildSpendTile(costState, kpi) {
 }
 
 // day-over-day from one payload (the shell's /api/dashboard/kpi) → today and its comparand never mix sources
-function describeSpendTrend(kpi) {
-  const prior = Number(kpi?.yesterday_same_time_cost_usd);
-  if (kpi?.today_cost_usd == null || kpi.yesterday_same_time_cost_usd == null) return 'Change on yesterday unavailable — the harness read carries no spend';
+// the shell settles every harness source in one read → a null kpi beside a failed read is the kpi read's own failure
+function describeSpendTrend(harness) {
+  const kpi = harness?.kpi;
+  if (kpi == null) {
+    return harness?.error != null ? "Change on yesterday unavailable — couldn't read yesterday's spend" : 'Change on yesterday not read yet';
+  }
+  const prior = Number(kpi.yesterday_same_time_cost_usd);
+  if (kpi.today_cost_usd == null || kpi.yesterday_same_time_cost_usd == null) return 'Change on yesterday unavailable — the reading carries no spend';
   if (!(prior > 0)) return 'No spend yesterday by this time to compare against';
   const change = Math.round(((Number(kpi.today_cost_usd) - prior) / prior) * 100);
   const comparand = `${formatUsd(prior)} yesterday by this time`;
@@ -1147,12 +1157,11 @@ function toHarnessRegion(harness) {
   return { status: harness.status, busy: harness.status === 'loading', error: harness.error ?? null };
 }
 
-const RESULT_ORDER = Object.keys(RESULT_ROW_META);
-
 // same payload and same writer rule as the Task results tile → the panel's failed + blocked is the tile's breakage
 function buildResultPanel(data) {
   const byResult = new Map((data?.by_result ?? []).map((row) => [row.result, row]));
-  const results = [...RESULT_ORDER, ...[...byResult.keys()].filter((result) => !RESULT_ORDER.includes(result))];
+  const order = Object.keys(RESULT_ROW_META);
+  const results = [...order, ...[...byResult.keys()].filter((result) => !order.includes(result))];
   const rows = results.filter((result) => byResult.has(result))
     .map((result) => ({ result, count: window.UI.getWriterCount(byResult.get(result)) }));
   const start = data?.prior_window?.period_end;
@@ -1216,21 +1225,13 @@ function getFoldsByWeekday({ first, last, count }) {
   return new Map([...labelsByWeekday].filter(([, labels]) => labels.length > 1).map(([dow, labels]) => [dow, labels.join(' + ')]));
 }
 
-/** @param today - YYYY-MM-DD in the series' own timezone; the point on that day is still accruing */
-function buildSpendStrip(points, today) {
-  const bars = (points ?? []).map((point) => ({ date: point.date, cost: Number(point.cost_usd) || 0, isPartial: point.date === today }));
+// the route ends the series on its bucket-timezone today → the last point is still accruing, as cost.jsx computeWindowTotal reads it
+function buildSpendStrip(points) {
+  const series = points ?? [];
+  const bars = series.map((point, i) => ({ date: point.date, cost: Number(point.cost_usd) || 0, isPartial: i === series.length - 1 }));
   if (bars.length === 0) return { bars, span: null };
   const last = bars[bars.length - 1];
   return { bars, span: `${formatDay(bars[0].date)} – ${last.isPartial ? 'today' : formatDay(last.date)}` };
-}
-
-// the series' day boundary, not the browser's → en-CA formats as YYYY-MM-DD
-function getTodayIn(timeZone) {
-  try {
-    return new Intl.DateTimeFormat('en-CA', { timeZone }).format(new Date());
-  } catch {
-    return null;
-  }
 }
 
 // update-job poll → 실제 row (none 은 무 job).

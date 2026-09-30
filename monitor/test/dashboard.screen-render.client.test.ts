@@ -277,6 +277,16 @@ test("a failed tile states its error flat inside the tile, with one Retry that r
   assert.deepEqual(retried, ["agents"]);
 });
 
+test("a failed tile's raw error detail sits in a keyboard-reachable disclosure, never only in a hover title", () => {
+  const failureDetail = "PrismaClientKnownRequestError: P1001";
+  const tree = render("StatusTile", { tile: { ...FAILED_TILE, failureDetail }, onNav: () => {}, onRetry: () => {} });
+  const disclosures = findNodes(tree, (n) => n.type === "details");
+  assert.equal(disclosures.length, 1, "one disclosure");
+  assert.equal(findNodes(disclosures[0], (n) => n.type === "summary").length, 1, "a focusable summary opens it");
+  assert.match(collectText(disclosures[0]), /P1001/);
+  assert.equal(findNodes(tree, (n) => n.props.title === failureDetail).length, 0, "no hover-only copy");
+});
+
 test("a failed tile's Retry shows itself in flight and hands focus to its own tile card on recovery", () => {
   for (const isBusy of [true, false]) {
     const tree = render("StatusTile", { tile: { ...FAILED_TILE, isBusy }, onNav: () => {}, onRetry: () => {} });
