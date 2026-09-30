@@ -1082,6 +1082,8 @@ function ScreenClaudedDocs(/* { onNav } */) {
         .doc-stage-actor { font-size: var(--fs-meta); font-family: 'JetBrains Mono', monospace; color: rgb(var(--faint)); white-space: normal; word-break: keep-all; overflow-wrap: normal; }
         .doc-row.is-stale > td { background: rgb(var(--warn) / 0.06); }
         .doc-age-flag { font-size: var(--fs-meta); font-weight: 600; color: rgb(var(--warn)); font-family: 'Pretendard Variable', Pretendard, ui-sans-serif, system-ui, sans-serif; }
+        /* .card 의 overflow:hidden 은 스크롤 컨테이너 → rail sticky 가 카드에 갇힌다. clip 은 모서리만 자르고 sticky 를 뷰포트로 넘긴다. */
+        .card.doc-list-card:not(:has(.popover-panel)) { overflow: clip; }
         .doc-open-summary { border-bottom: 1px solid rgb(var(--line)); }
         @media (min-width: 1280px) { .doc-open-summary { border-bottom: 0; border-left: 1px solid rgb(var(--line)); } }
         .doc-open-summary-group { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 12px; margin: 0; font-size: var(--fs-meta); }
@@ -1273,8 +1275,8 @@ function DocAuthorCellCD({ author }) {
 // the list card takes focus when a recovered read unmounts the Retry that held it
 const DOC_LIST_CARD_ID_CD = "docs-list";
 
-// 중앙 목록 카드 — Sticky Header Integrated (검색 + facet + 건수 2-row).
-// .card-body 인라인 maxHeight:'none' 으로 base.css `max-height: 70vh` override → 카드 viewport full-height + 카드 내부 스크롤.
+// 중앙 목록 카드 — 툴바 (검색 + facet + 건수) + 원장.
+// 원장 스크롤 = 페이지 스크롤 → .card-body 는 스크롤러가 아니다 (xl 요약 rail 의 sticky 가 뷰포트에 붙도록).
 function DocListCardCD({
 	asOf,
 	state,
@@ -1392,14 +1394,11 @@ function DocListCardCD({
 	return (
 		<div
 			id={DOC_LIST_CARD_ID_CD}
-			className="card flex flex-col min-h-0"
+			className="card doc-list-card flex flex-col min-h-0"
 			style={{ height: "100%", flex: "1 1 auto", width: "100%" }}
 		>
 			<div
 				style={{
-					position: "sticky",
-					top: 0,
-					zIndex: 2,
 					background: "rgb(var(--elev))",
 					borderBottom: "1px solid rgb(var(--line))",
 				}}
@@ -1512,10 +1511,8 @@ function DocListCardCD({
 					maxHeight: "none",
 					flex: "1 1 auto",
 					minHeight: 0,
-					overflowY: "auto",
-					// 카드 폭은 셸 min-width 에 막혀 1010px 아래로 내려가지 않는다.
-					// 컬럼 min-width 합이 그 폭을 넘을 때 발동 — 검색 모드의 Order 컬럼이 그 경우(1073px).
-					overflowX: "auto",
+					// 스크롤러 금지 — sticky rail 이 이 상자에 묶여 함께 스크롤돼 버린다. x 넘침은 표 래퍼가 맡는다.
+					overflow: "visible",
 				}}
 			>
 				{getRegionView(state) === "loading" && <LoadingPlaceholder label="documents" minHeight={240} />}
@@ -1822,7 +1819,7 @@ function DocOpenSummaryCD({ summary, isPartial, onSelect }) {
 	const { oldest } = summary;
 	return (
 		<aside
-			className="doc-open-summary flex flex-wrap items-center gap-x-6 gap-y-2 px-4 py-2 xl:flex-col xl:items-stretch xl:w-[232px] xl:shrink-0 xl:sticky xl:top-0 xl:py-3"
+			className="doc-open-summary flex flex-wrap items-center gap-x-6 gap-y-2 px-4 py-2 xl:flex-col xl:items-stretch xl:w-[200px] xl:shrink-0 xl:sticky xl:top-6 xl:py-3"
 			aria-label="Open documents summary">
 			<dl className="doc-open-summary-group">
 				<dt>Open by stage</dt>
