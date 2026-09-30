@@ -209,8 +209,6 @@ function ScreenClaudedDocs(/* { onNav } */) {
 		Badge,
 		TypeScaleStyle,
 		DetailSurface,
-		FreshnessStamp,
-		RefreshButton,
 		INITIAL_REGION_STATE,
 		putRegionRequest,
 		putRegionData,
@@ -890,17 +888,7 @@ function ScreenClaudedDocs(/* { onNav } */) {
 
 	// 카운트 표기 — groups mode 는 그룹/문서 이중 단위 명시 (총건 pill 이 그룹 수를 문서 수처럼 읽히던 오해 차단, F40) ·
 	// search mode 는 row 단위 '건' 유지 + 숨은 건 있으면 "표시/전체" 이중 표기 (데이터 정직성).
-	const headerRight = (
-		<>
-			<FreshnessStamp {...getFreshnessInputCD(asOf, listState)} />
-			<RefreshButton
-				isBusy={listState.busy}
-				hasRead={asOf != null}
-				onRefresh={triggerRefresh}
-				label="Refresh documents"
-			/>
-		</>
-	);
+	const headerRight = <DocHeaderActionsCD asOf={asOf} listState={listState} onRefresh={triggerRefresh} />;
 
 	return (
 		<div className="flex flex-col min-h-0 flex-1">
@@ -1231,6 +1219,24 @@ function ScreenClaudedDocs(/* { onNav } */) {
 				</div>
 			)}
 		</div>
+	);
+}
+
+// before the first read the list placeholder is the one loading label → no stamp, and Refresh is not busy yet
+function DocHeaderActionsCD({ asOf, listState, onRefresh }) {
+	const { FreshnessStamp, RefreshButton } = window.UI;
+	const hasRead = asOf != null;
+
+	return (
+		<>
+			{hasRead && <FreshnessStamp {...getFreshnessInputCD(asOf, listState)} />}
+			<RefreshButton
+				isBusy={hasRead && listState.busy === true}
+				hasRead={hasRead}
+				onRefresh={onRefresh}
+				label="Refresh documents"
+			/>
+		</>
 	);
 }
 

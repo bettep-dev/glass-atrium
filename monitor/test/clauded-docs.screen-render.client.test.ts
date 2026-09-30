@@ -857,3 +857,24 @@ test("the Status column keeps room for the stage name inside stage sections as i
   const flat = statusWidth({ isSearchMode: true });
   assert.equal(sectioned, flat);
 });
+
+describe("the header speaks about loading only after a first read; before it the list placeholder is the one loading label", () => {
+  const rows = [
+    { name: "a first read in flight shows no stamp and no busy Refresh", asOf: null, busy: true, hasStamp: false, isBusy: false },
+    { name: "a refresh over a held read shows the stamp and a busy Refresh", asOf: "2026-09-30T00:00:00Z", busy: true, hasStamp: true, isBusy: true },
+    { name: "a settled read shows the stamp and an idle Refresh", asOf: "2026-09-30T00:00:00Z", busy: false, hasStamp: true, isBusy: false },
+  ];
+
+  for (const row of rows) {
+    test(row.name, async () => {
+      const screen = await loadDocsScreen();
+      const listState = { status: row.asOf ? "ready" : "loading", data: null, error: null, busy: row.busy };
+      const tree = renderScreen((screen.DocHeaderActionsCD as Component)({ asOf: row.asOf, listState, onRefresh: () => undefined }));
+
+      assert.equal(findNodes(tree, (n) => n.props.atom === "FreshnessStamp").length, row.hasStamp ? 1 : 0);
+      const buttons = findNodes(tree, (n) => n.props.atom === "RefreshButton");
+      assert.equal(buttons.length, 1, "Refresh stays reachable");
+      assert.equal(buttons[0].props.isBusy, row.isBusy);
+    });
+  }
+});
