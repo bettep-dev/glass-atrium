@@ -526,34 +526,40 @@ function getAgentOutcomesHref(agent) {
   return `#outcomes?agent=${encodeURIComponent(agent)}&days=7`;
 }
 
-const HOUR_TICKS = new Set([0, 6, 12, 18]);
-// the heatmap counts differently from the results panel beside it → it states its own basis
-const HOUR_GRID_BASIS = 'All recorded runs — reconstructed included, poisoned excluded.';
+const HOUR = {
+  OF_DAY: Array.from({ length: 24 }, (_, hour) => hour),
+  TICKS: new Set([0, 6, 12, 18]),
+  // the heatmap counts differently from the results panel beside it → it states its own basis
+  GRID_BASIS: 'All recorded runs — reconstructed included, poisoned excluded.',
+};
 
 function HourGrid({ grid }) {
   if (grid.total <= 0) return <p className="fs-meta text-dim">No runs recorded in the last 7 days.</p>;
   return (
     <>
-      <p className="fs-meta text-dim">{grid.span} · {formatInt(grid.total)} runs · {HOUR_GRID_BASIS}</p>
+      <p className="fs-meta text-dim">{grid.span} · {formatInt(grid.total)} runs · {HOUR.GRID_BASIS}</p>
+      {grid.folded && (
+        <p className="fs-meta text-dim">{grid.folded.day} ×2 sums {grid.folded.fold} — runs are counted by weekday, not by date.</p>
+      )}
       <div role="img" aria-label={describeHourGrid(grid)} className="dash-hour-grid fs-meta text-dim">
         {grid.rows.map((row) => (
           <React.Fragment key={row.day}>
-            <span>{row.day}</span>
+            <span title={row.fold ?? undefined}>{row.fold ? `${row.day} ×2` : row.day}</span>
             {row.counts.map((count, hour) => (
-              <span key={hour} className="dash-hour-cell text-info" title={`${row.day} ${formatHour(hour)} — ${formatInt(count)} runs`}
+              <span key={hour} className="dash-hour-cell text-info" title={`${getRowLabel(row)} ${formatHour(hour)} — ${formatInt(count)} runs`}
                 style={{ opacity: count === 0 ? 0.06 : 0.2 + (0.8 * count) / grid.max }}/>
             ))}
           </React.Fragment>
         ))}
         <span/>
-        {row24().map((hour) => <span key={hour}>{HOUR_TICKS.has(hour) ? formatHour(hour) : ''}</span>)}
+        {HOUR.OF_DAY.map((hour) => <span key={hour}>{HOUR.TICKS.has(hour) ? formatHour(hour) : ''}</span>)}
       </div>
     </>
   );
 }
 
-function row24() {
-  return Array.from({ length: 24 }, (_, hour) => hour);
+function getRowLabel(row) {
+  return row.fold ? `${row.day} (${row.fold})` : row.day;
 }
 
 function formatHour(hour) {
@@ -562,7 +568,7 @@ function formatHour(hour) {
 
 function describeHourGrid(grid) {
   const peak = grid.peak;
-  return `Runs by hour, ${grid.span}: busiest ${peak.day} ${formatHour(peak.hour)} with ${formatInt(peak.count)} runs`;
+  return `Runs by hour, ${grid.span}: busiest ${getRowLabel(peak)} ${formatHour(peak.hour)} with ${formatInt(peak.count)} runs`;
 }
 
 // 소유 화면 링크 — 실제 href(#screen) 앵커. 수식 클릭·가운데 클릭은 브라우저에 맡겨 새 탭으로 연다.
@@ -1142,19 +1148,18 @@ function buildResultPanel(data) {
   };
 }
 
-const BREAKAGE_RESULTS = ['fail', 'blocked'];
-const BREAKAGE_AGENT_LIMIT = 3;
+const BREAKAGE = { RESULTS: ['fail', 'blocked'], AGENT_LIMIT: 3 };
 
 // per (agent, result) row under the tile's writer rule → each agent's failed + blocked, worst first
 function getBreakageAgents(rows) {
   const counts = new Map();
   for (const row of rows ?? []) {
-    if (!BREAKAGE_RESULTS.includes(row.result)) continue;
+    if (!BREAKAGE.RESULTS.includes(row.result)) continue;
     counts.set(row.agent, (counts.get(row.agent) ?? 0) + window.UI.getWriterCount(row));
   }
   return [...counts].filter(([, count]) => count > 0)
     .sort(([agentA, countA], [agentB, countB]) => countB - countA || agentA.localeCompare(agentB))
-    .slice(0, BREAKAGE_AGENT_LIMIT)
+    .slice(0, BREAKAGE.AGENT_LIMIT)
     .map(([agent, count]) => ({ agent, count }));
 }
 
@@ -1162,21 +1167,36 @@ const WEEKDAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 
 /**
  * The server's Sun-first 7×24 grid, rotated so today's weekday is the last row.
- * The window is the last 168 hours → it touches 8 calendar dates, and each cell is one hour of one date.
+ * The window runs from period_start to today → 8 calendar dates on 7 weekday rows.
+ * The server buckets by weekday only → the row of period_start's weekday sums two dates; that row carries `fold`.
  * @param today - YYYY-MM-DD in the grid's bucket timezone; null keeps the server's Sun-first order
  */
 function buildHourGrid(data, today) {
   const grid = Array.isArray(data?.data) ? data.data : [];
-  const todayIndex = today ? new Date(`${today}T00:00:00Z`).getUTCDay() : WEEKDAYS.length - 1;
-  const rows = WEEKDAYS.map((_, offset) => (todayIndex + 1 + offset) % WEEKDAYS.length)
-    .map((dow) => ({ day: WEEKDAYS[dow], counts: row24().map((hour) => Number(grid[dow]?.[hour]) || 0) }));
-  const cells = rows.flatMap((row) => row.counts.map((count, hour) => ({ day: row.day, hour, count })));
-  const peak = cells.reduce((best, cell) => (cell.count > best.count ? cell : best), cells[0]);
   const start = data?.meta?.period_start;
+  const todayIndex = today ? getWeekday(today) : WEEKDAYS.length - 1;
+  const foldIndex = start ? getWeekday(start) : -1;
+  const rows = WEEKDAYS.map((_, offset) => (todayIndex + 1 + offset) % WEEKDAYS.length).map((dow) => ({
+    day: WEEKDAYS[dow], counts: HOUR.OF_DAY.map((hour) => Number(grid[dow]?.[hour]) || 0),
+    fold: dow === foldIndex ? getFoldLabel(start, today) : null,
+  }));
+  const cells = rows.flatMap((row) => row.counts.map((count, hour) => ({ day: row.day, fold: row.fold, hour, count })));
+  const peak = cells.reduce((best, cell) => (cell.count > best.count ? cell : best), cells[0]);
   return {
     rows, peak, max: peak.count, total: cells.reduce((sum, cell) => sum + cell.count, 0),
+    folded: rows.find((row) => row.fold) ?? null,
     span: start ? `${formatDay(start)} – today, 8 calendar dates` : 'Last 7 days',
   };
+}
+
+function getWeekday(date) {
+  return new Date(`${date}T00:00:00Z`).getUTCDay();
+}
+
+// the window's first date + the same weekday a week later — today whenever the window ends today
+function getFoldLabel(start, today) {
+  const later = new Date(Date.parse(`${start}T00:00:00Z`) + 7 * DAY_MS).toISOString().slice(0, 10);
+  return `${formatDay(start)} + ${later === today ? 'today' : formatDay(later)}`;
 }
 
 /** @param today - YYYY-MM-DD in the series' own timezone; the point on that day is still accruing */
