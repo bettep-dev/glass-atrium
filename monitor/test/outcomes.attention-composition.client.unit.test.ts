@@ -481,6 +481,47 @@ describe("PageVerdictO: the Task results verdict follows the shared outcome-rate
   }
 });
 
+describe("PageVerdictO: the verdict is never greener than the needs-you hero", () => {
+  const TONE_RANK: Record<string, number> = { neutral: 0, ok: 1, warn: 2, crit: 3 };
+  const counts = (c: Record<string, number>, open: number) => ({
+    status: "ready" as const,
+    data: {
+      overall: {
+        total: 200,
+        reconstructed_total: 0,
+        by_result: Object.entries(c).map(([result, count]) => ({ result, count, writer_open_count: result === "done_with_concerns" ? open : 0 })),
+      },
+      byResultCount: c,
+    },
+  });
+  const healthy = counts({ done: 195, fail: 2, done_with_concerns: 3 }, 1);
+  const broken = counts({ done: 180, fail: 12, done_with_concerns: 8 }, 2);
+  const recording = { status: "ready" as const, data: { alerting: [] as string[] } };
+  const attention = (total: number) => ({ status: "ready" as const, data: { total, parts: { flagged: total, fail: 0, blocked: 0, open: 0 } } });
+  const rows = [
+    { name: "an ok rate under a warn hero rises to warn", analytics: healthy, attention: attention(60), tone: "warn" },
+    { name: "an ok rate under an ok hero stays ok", analytics: healthy, attention: attention(5), tone: "ok" },
+    { name: "a crit rate keeps crit over a warn hero", analytics: broken, attention: attention(60), tone: "crit" },
+    { name: "an unread hero claims nothing, so the rate stands", analytics: healthy, attention: { status: "loading" as const }, tone: "ok" },
+  ];
+  for (const row of rows) {
+    test(row.name, () => {
+      const node = helpers.PageVerdictO({ analyticsState: row.analytics, channelLivenessState: recording, attentionState: row.attention, windowDays: 30 } as never) as RenderNode;
+      const heroTone = row.attention.status === "ready"
+        ? tileOf(helpers.buildStatusBandTilesO(row.analytics.data, row.attention.data!.total), "attention").tone
+        : "neutral";
+      assert.strictEqual(node.props!.tone, row.tone);
+      assert.ok(TONE_RANK[String(node.props!.tone)] >= TONE_RANK[heroTone], `verdict ${String(node.props!.tone)} under a ${heroTone} hero`);
+    });
+  }
+
+  test("a verdict raised by the hero names the needs-you count and links to it", () => {
+    const node = helpers.PageVerdictO({ analyticsState: healthy, channelLivenessState: recording, attentionState: attention(60), windowDays: 30 } as never) as RenderNode;
+    assert.match(String(node.children.join("")), /60 records .*need you/);
+    assert.ok((node.props!.chips as { key: string }[]).some((chip) => chip.key === "needs-you"));
+  });
+});
+
 test("buildAnalyticsDataO → buildAgentFailureRowsO: every failing registry agent gets a row, however low its volume", () => {
   const busy = Array.from({ length: 12 }, (_, i) => ({ agent: `busy-${i}`, result: "done", count: 100 + i }));
   const quiet = [

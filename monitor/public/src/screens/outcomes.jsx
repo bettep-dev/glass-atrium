@@ -697,7 +697,8 @@ function ScreenOutcomes({ onNav }) {
         </div>
       )}
 
-      <PageVerdictO analyticsState={analyticsState} channelLivenessState={channelLivenessState} windowDays={analyticsPeriod} freshness={freshness}/>
+      <PageVerdictO analyticsState={analyticsState} channelLivenessState={channelLivenessState} attentionState={attentionState}
+        windowDays={analyticsPeriod} freshness={freshness}/>
 
       <AlarmLaneO channelLivenessState={channelLivenessState} searchState={searchState}/>
 
@@ -1068,7 +1069,7 @@ function buildNeedsYouReasonsO(data, attention) {
  * The all-clear waits for the liveness read.
  * @param freshness - the shared rule: unread reads No signal, a stale or partial read reads Last known
  */
-function PageVerdictO({ analyticsState, channelLivenessState, windowDays, freshness }) {
+function PageVerdictO({ analyticsState, channelLivenessState, attentionState, windowDays, freshness }) {
   const { PageVerdict, getRegionView } = window.UI;
   const view = getRegionView(analyticsState);
   const silent = channelLivenessState.status === 'ready' ? (channelLivenessState.data?.alerting || []) : [];
@@ -1081,12 +1082,28 @@ function PageVerdictO({ analyticsState, channelLivenessState, windowDays, freshn
     return <PageVerdict tone="neutral" freshness={freshness} className="mb-4">{`Task-result health is unknown — ${reason}.`}</PageVerdict>;
   }
 
-  const verdict = getRateVerdictO(window.UI.resolveOutcomeRate(analyticsState.data?.overall), `last ${windowDays}d`);
+  const rateVerdict = getRateVerdictO(window.UI.resolveOutcomeRate(analyticsState.data?.overall), `last ${windowDays}d`);
+  const verdict = getHeroFloorVerdictO(rateVerdict, analyticsState.data, attentionState);
   if (verdict.tone !== 'ok' || channelLivenessState.status === 'ready') {
     return <PageVerdict tone={verdict.tone} chips={verdict.chips} freshness={freshness} className="mb-4">{verdict.text}</PageVerdict>;
   }
   const gap = channelLivenessState.status === 'loading' ? 'still checking the recording channels' : "couldn't check the recording channels";
   return <PageVerdict tone="neutral" freshness={freshness} className="mb-4">{`${verdict.text.slice(0, -1)} — ${gap}.`}</PageVerdict>;
+}
+
+const TONE_RANK_O = { neutral: 0, ok: 1, warn: 2, crit: 3 };
+
+// verdict and hero judge one window → the sentence never reads greener than the Needs-you tile
+function getHeroFloorVerdictO(verdict, data, attentionState) {
+  if (verdict.tone === 'neutral' || attentionState?.status !== 'ready') return verdict;
+  const count = Number(attentionState.data?.total) || 0;
+  const hero = buildStatusBandTilesO(data, count).find((tile) => tile.key === 'attention');
+  if (TONE_RANK_O[hero.tone] <= TONE_RANK_O[verdict.tone]) return verdict;
+  return {
+    tone: hero.tone,
+    chips: [{ key: 'needs-you', label: 'Needs you', targetId: LEDGER_NEEDS_YOU_ID }],
+    text: `${verdict.text.slice(0, -1)}, but ${window.UI.formatInt(count)} records (${formatShareO(count, hero.population)}) still need you.`,
+  };
 }
 
 function getRateVerdictO(rate, windowLabel) {
