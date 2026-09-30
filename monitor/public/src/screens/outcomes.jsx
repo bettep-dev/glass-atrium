@@ -995,7 +995,7 @@ function StatusBandO({ analyticsState, attentionState, windowDays, freshness, on
 
   const isAttentionFailed = getRegionView(attentionState) === 'error';
   const heroTile = tiles.find((tile) => tile.key === 'attention');
-  const volumeTiles = tiles.filter((tile) => tile.key === 'recorded' || tile.key === 'done');
+  const volumeTiles = getVolumeTilesO(tiles);
 
   return (
     <div id={REGION_CARD_IDS.statusBand} className="mb-4 flex-shrink-0">
@@ -1153,11 +1153,16 @@ function NeedsYouReasonsO({ reasons }) {
   );
 }
 
+// every fact but the hero → the column beside the taller hero carries the breakage count the verdict states as a share
+function getVolumeTilesO(tiles) {
+  return tiles.filter((tile) => tile.key !== 'attention');
+}
+
 // volume facts demoted beside the hero; the Self-reported glyph stays the missing-report grade channel
 function VolumeTilesO({ tiles, windowLabel }) {
   const { formatPctWithDenominator } = window.UI;
   return (
-    <div className="kpi cursor-default fs-meta" role="group" aria-label={`Volume · ${windowLabel}`}>
+    <div className="kpi cursor-default fs-meta flex flex-col justify-between gap-2" role="group" aria-label={`Volume · ${windowLabel}`}>
       {tiles.map((tile) => {
         const glyph = getBandTileGlyphO(tile.tone);
         return (
@@ -1817,8 +1822,8 @@ function GraderBreakdownBody({ state, onRetry, shared }) {
 
   return (
     <>
+      {/* open, not folded → the column matches the cross table beside it instead of leaving one sentence over a blank card */}
       <p className="fs-body text-ink mb-2">{getGraderSentenceO(breakdown)}</p>
-      <window.UI.Disclosure kind="detail" title="Check breakdown" sub="Each verdict, and where it came from" level={3}>
       <div className="grid gap-3" style={{ gridTemplateColumns: `repeat(${tileKeys.length}, minmax(0, 1fr))` }}>
         {tileKeys.map((key) => {
           const meta  = GRADER_BREAKDOWN_META[key];
@@ -1842,7 +1847,6 @@ function GraderBreakdownBody({ state, onRetry, shared }) {
         })}
       </div>
       <DowngradeBreakdownRowO breakdown={state.data?.overall?.downgrade_breakdown}/>
-      </window.UI.Disclosure>
     </>
   );
 }

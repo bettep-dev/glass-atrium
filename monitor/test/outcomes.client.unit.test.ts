@@ -736,3 +736,27 @@ describe("getRateVerdictO: the verdict chip names the jump, never a status tile'
     for (const chip of verdict.chips) assert.ok(!tileLabels.has(chip.label), chip.label);
   });
 });
+
+interface DensitySandboxO {
+  GraderBreakdownBody: (props: { state: Record<string, unknown> }) => RecordedElementO;
+  buildStatusBandTilesO: (data: Record<string, unknown>, attentionCount: number | null) => Array<{ key: string }>;
+  getVolumeTilesO: (tiles: Array<{ key: string }>) => Array<{ key: string }>;
+}
+const density = rendered as unknown as DensitySandboxO;
+
+describe("Task results density: the columns beside a taller card carry their own facts", () => {
+  test("a landed check breakdown renders every verdict tile without a fold", () => {
+    const breakdown = { verified_pass: 5, unverified: 3, verified_fail: 2, graded_total: 10 };
+    const elements = flattenO(density.GraderBreakdownBody({ state: { status: "ready", data: { overall: { grader_breakdown: breakdown } } } }));
+    assert.equal(elements.some((el) => el.props.kind === "detail"), false, "no detail fold");
+    const tileKeys = elements.map((el) => el.props.key).filter((key) => ["verified_pass", "unverified", "verified_fail"].includes(String(key)));
+    assert.equal(tileKeys.length, 3);
+  });
+
+  test("the volume column beside the hero carries the failed-or-blocked count, never the hero again", () => {
+    const tiles = density.buildStatusBandTilesO({ overall: { total: 100 }, byResultCount: { fail: 2, done: 90 } }, 3);
+    const keys = density.getVolumeTilesO(tiles).map((tile) => tile.key);
+    assert.ok(keys.includes("broken"), keys.join(","));
+    assert.ok(!keys.includes("attention"), keys.join(","));
+  });
+});
