@@ -817,7 +817,7 @@ function CostTrendChart({ rows, bandOn }) {
             <CartesianGrid stroke="rgb(var(--line) / 0.6)" strokeDasharray="2 4" vertical={false}/>
             <XAxis
               dataKey="date"
-              {...window.UI.getChartXAxisProps(rows.map((row) => row.date))}
+              {...getDayAxisPropsC(rows)}
               axisLine={anomalyAxisLineStyle}
               tickLine={false}
             />
@@ -1104,7 +1104,7 @@ function TokenStackedArea({ points, order }) {
         <CartesianGrid stroke="rgb(var(--line))" strokeDasharray="3 3" vertical={false}/>
         <XAxis
           dataKey="date"
-          {...window.UI.getChartXAxisProps(rows.map((row) => row.date))}
+          {...getDayAxisPropsC(rows)}
           axisLine={{ stroke: 'rgb(var(--line))' }}
           tickLine={false}
         />
@@ -1145,7 +1145,7 @@ function TokenStackedColumn({ points, order }) {
         <CartesianGrid stroke="rgb(var(--line))" strokeDasharray="3 3" vertical={false}/>
         <XAxis
           dataKey="date"
-          {...window.UI.getChartXAxisProps(rows.map((row) => row.date))}
+          {...getDayAxisPropsC(rows)}
           axisLine={{ stroke: 'rgb(var(--line))' }}
           tickLine={false}
         />
@@ -1605,7 +1605,7 @@ function CacheHitChart({ rows, yDomain = [0, 100] }) {
         <CartesianGrid stroke="rgb(var(--line))" strokeDasharray="3 3" vertical={false}/>
         <XAxis
           dataKey="date"
-          {...window.UI.getChartXAxisProps(rows.map((row) => row.date))}
+          {...getDayAxisPropsC(rows)}
           axisLine={{ stroke: 'rgb(var(--line))' }}
           tickLine={false}
         />
@@ -2101,7 +2101,7 @@ function ParseErrorChart({ rows }) {
         <CartesianGrid stroke="rgb(var(--line))" strokeDasharray="3 3" vertical={false}/>
         <XAxis
           dataKey="date"
-          {...window.UI.getChartXAxisProps(rows.map((row) => row.date))}
+          {...getDayAxisPropsC(rows)}
           axisLine={{ stroke: 'rgb(var(--line))' }}
           tickLine={false}
         />
@@ -2209,6 +2209,10 @@ function getNoDataLabelC(values) {
 function getGapNameC(name, points) {
   const gapLabel = getNoDataLabelC(points.map((point) => point.value));
   return gapLabel ? `${name} (${gapLabel})` : name;
+}
+
+function getDayAxisPropsC(rows) {
+  return window.UI.getChartXAxisProps(rows.map((row) => row.date));
 }
 
 // cost-timeseries point → daily cost (USD). cost_usd 우선 · split 합산 폴백 보존.
