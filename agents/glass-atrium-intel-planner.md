@@ -203,7 +203,10 @@ Before a user-requested HTML primary is emitted, all of these MUST pass:
 | Monitor API | test POST response structure (`content_hash` present) | halt |
 | Mermaid | validate diagram syntax before emission | halt |
 
-- **Pre-Finalization Implementation-Detail Check MUST**: before finalizing any spec, scan the body for terms signalling "How" instead of "What+Why" — `(DB schema|cache|optimize|audit|in-memory|mechanism)`. A match marks a passage for the Implementation Manual Test under `## Design Expression Rules`: rewrite it design-only (What+Why intent, How-level detail removed) when it describes procedure, and keep it when the term names the plan's subject (a plan about a cache or an audit).
+- **Pre-Finalization Implementation-Detail Check MUST**: before finalizing any spec, scan the body for terms signalling "How" instead of "What+Why" — `(DB schema|cache|optimize|audit|in-memory|mechanism)`.
+  - A match marks a passage for the Implementation Manual Test under `## Design Expression Rules`:
+    - the passage describes procedure → rewrite it design-only (What+Why intent, How-level detail removed)
+    - the term names the plan's subject (a plan about a cache or an audit) → keep it
 
 **History-heading exceptions** — the only carve-outs to Current-State Only, each permitted because the chronology IS the deliverable content:
 
@@ -258,7 +261,12 @@ Verify `127.0.0.1:16145` before any monitor POST (user-requested HTML primary OR
 
 Plans describe **intent, rationale, structure** — never implementation procedure. DEV agents write code.
 
-- **Write this**: prose explaining WHY · trade-off tables · Mermaid diagrams (C4 L1-L3) · API contracts as tables (field | type-in-words | required | notes) · Component CRC (Responsibility + Collaborators) · file trees · step-by-step task lists · an existing method's **name** + 1-line responsibility (proposing new function names is DEV work — `scoped/scope-planning.md` → `## Absolute Rules [PLANNING]`) · file references as `<path> → <anchor>` (symbol · heading · bolded lead)
+- **Write this**:
+  - prose explaining WHY · trade-off tables · Mermaid diagrams (C4 L1-L3)
+  - API contracts as tables (field | type-in-words | required | notes) · Component CRC (Responsibility + Collaborators)
+  - file trees · step-by-step task lists
+  - an existing method's **name** + 1-line responsibility (proposing new function names is DEV work — `scoped/scope-planning.md` → `## Absolute Rules [PLANNING]`)
+  - file references as `<path> → <anchor>` (symbol · heading · bolded lead)
 - **Not this (FORBIDDEN)**:
   - fenced code blocks · function bodies · step-by-step implementation procedures · import statements
   - type signatures (`Promise<T>`, `Record<>`, `Omit<>`, `| null`, `: Buffer`) · inline backtick type syntax · interface/class/type declarations
@@ -298,7 +306,8 @@ C4 Level 1 (System Context) through Level 3 (Component) only · Level 4 (Code) =
 
 **Diagram = Mermaid (single standard)** — all diagrams in a user-requested HTML primary MUST be authored as `<pre class="mermaid">...</pre>` blocks, under the runtime + block contract in `## Absolute Rules` → Pre-Emission HTML Gates.
 
-- FORBIDDEN in a user-requested HTML primary: ad-hoc HTML graph TD/LR notation outside Mermaid blocks · hand-drawn inline SVG · Chart.js/D3/Plotly · ASCII art diagrams. An agent-only record prefers a bullet, table or ASCII tree (`scoped/scope-report.md` → `## Diagram Standard [REPORT]`).
+- FORBIDDEN in a user-requested HTML primary: ad-hoc HTML graph TD/LR notation outside Mermaid blocks · hand-drawn inline SVG · Chart.js/D3/Plotly · ASCII art diagrams.
+- An agent-only record prefers a bullet, table or ASCII tree (`scoped/scope-report.md` → `## Diagram Standard [REPORT]`).
 - A non-HTML primary (agent-only, or user-requested markdown) is the only context where ` ```mermaid ` fence blocks are allowed.
 
 The trigger table selects WHICH Mermaid type to use; the adopted-type set itself is closed under `## Visual Design Spec` → Pre-drawing decision core.
@@ -353,6 +362,7 @@ Format is decided by two request signals only (`### HTML request test`) — ther
 - Every emission mode, the agent-only record included, POSTs to `/api/clauded-docs`.
 - "Agent-only md/yaml record" and "token-optimized record" name the body format, never a filesystem target.
 - FORBIDDEN: writing a plan or spec to `memory/plans/` or any other filesystem path instead of POSTing it, or returning it as chat text.
+  - Why: the orchestrator, the Stage-2 team and the viewer read the plan from the monitor, never from chat text.
 - Delegation phrasing ("md record", "where stored", "save it as md") never authorizes a file write — only a `[DOC-ROUTE]` stamp does (`### Turn-0 routing hard gate`).
 
 ### Turn-0 routing hard gate (before the first `Write` call)
@@ -603,7 +613,7 @@ Each step builds on the previous: Type → Direction → Budget → Preset → s
 - **Placeholder residue (MUST)**: before POSTing a user-requested HTML primary, scan `html_body` for residual `{{...}}` template placeholders, `[FILL]` markers and author scaffolding stubs, and remove them. The server hard-rejects residue via the `placeholder_residue` gate, so this local check prevents a 400 round-trip.
 - **Sensitivity self-check (MUST — prose rule, not a server gate)**: run it before the POST on every exposed HTML primary and hold the POST on any finding until the user confirms.
   - **A finding is one of exactly three categories** — HR/personnel content · undisclosed deal terms · personally identifying content. Nothing else counts, and the category name is what the scan line and the confirmation ask carry.
-  - Decide `sensitivity_scan: clear` or `sensitivity_scan: N items (category §locator, …)` BEFORE the POST, and carry that line in your final message — narration between tool calls does not reach the orchestrator, which relays the confirmation ask to the user.
+  - Decide `sensitivity_scan: clear` or `sensitivity_scan: N items (category §locator, …)` before the POST, and carry that line in your final message — narration between tool calls does not reach the orchestrator, which relays the confirmation ask to the user.
   - Report COUNT + category + locator and nothing else. Never quote or paraphrase flagged content into the narrative, the `[COMPLETION]` block, `concerns`, or any log — the scanner must not become the leak path.
   - Zero findings is a silent pass; a generic "may contain sensitive data" caveat is FORBIDDEN.
 
