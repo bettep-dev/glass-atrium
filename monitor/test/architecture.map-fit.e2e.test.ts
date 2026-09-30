@@ -90,6 +90,9 @@ interface FitReading {
 	gapPx: { above: number; below: number };
 	worstOverflowPx: number;
 	worstId: string;
+	// how far the drawn boxes reach into the zoom controls' column — positive means a box sits under a button
+	controlsIntrusionPx: number;
+	controlsIntruderId: string;
 }
 
 function getLiveFixture(): ArchitectureLiveResponse {
@@ -145,10 +148,11 @@ after(async () => {
 // 뷰포트 하나를 열어 실측 한 벌을 돌려줌.
 // 화면에 resize 리스너가 없어 fit 은 최초 렌더에서 한 번만 적용됨 — 그래서 뷰포트마다 새 페이지를 염
 // (이미 뜬 페이지의 크기를 바꾸면 fit 이 다시 걸리지 않아 이전 폭의 배율을 재게 됨).
-async function readFit(width: number, height: number): Promise<FitReading> {
+async function readFit(width: number, height: number, extraSource?: string): Promise<FitReading> {
 	assert.ok(browser, "browser must be up");
 	const page = await browser.newPage({ viewport: { width, height } });
 	try {
+		if (extraSource) await addDiagramSource(page, extraSource);
 		await page.goto(`${serverUrl}/#architecture`, { waitUntil: "load" });
 		const runtimeReady = await page
 			.waitForFunction(
@@ -208,6 +212,9 @@ async function readFit(width: number, height: number): Promise<FitReading> {
 			const boxes = Array.from(canvas.querySelectorAll("svg g.node, svg g.cluster"));
 			let worstOverflowPx = Number.NEGATIVE_INFINITY;
 			let worstId = "";
+			const controls = canvas.querySelector(".arch-zoom-controls")?.getBoundingClientRect();
+			let controlsIntrusionPx = Number.NEGATIVE_INFINITY;
+			let controlsIntruderId = "";
 			const drawn = { left: Infinity, right: -Infinity, top: Infinity, bottom: -Infinity };
 			for (const box of boxes) {
 				const r = box.getBoundingClientRect();
@@ -224,6 +231,11 @@ async function readFit(width: number, height: number): Promise<FitReading> {
 					pane.bottom - r.bottom,
 				);
 				const overflow = -inset;
+				const intrusion = controls ? r.right - controls.left : Number.NEGATIVE_INFINITY;
+				if (intrusion > controlsIntrusionPx) {
+					controlsIntrusionPx = intrusion;
+					controlsIntruderId = box.getAttribute("data-arch-node-id") || box.id || "(unnamed)";
+				}
 				if (overflow > worstOverflowPx) {
 					worstOverflowPx = overflow;
 					worstId = box.getAttribute("data-arch-node-id") || box.id || "(unnamed)";
@@ -241,6 +253,8 @@ async function readFit(width: number, height: number): Promise<FitReading> {
 				gapPx: { above: drawn.top - pane.top, below: pane.bottom - drawn.bottom },
 				worstOverflowPx,
 				worstId,
+				controlsIntrusionPx,
+				controlsIntruderId,
 			};
 		}, canvasSelector);
 	} finally {
@@ -261,6 +275,12 @@ const REDUNDANT_TITLE_ZONE = [
 	'    subgraph fitprobe["Probe store"]',
 	'        fitprobe_store[("Probe store (fixture)")]',
 	"    end",
+].join("\n");
+
+// a short chain ending in a fan — a wider and taller part set than the served map, still above the legibility floor
+const WIDE_TALL_PROBE = [
+	'    fitwide0["Wide probe step"] --> fitwide1["Wide probe step 1"]',
+	...Array.from({ length: 4 }, (_, i) => `    fitwide1 --> fittall${i}["Tall probe leaf ${i}"]`),
 ].join("\n");
 
 // serves the drawn diagrams with extra source lines appended to the map the screen opens on
@@ -469,6 +489,18 @@ for (const { width, height } of VIEWPORTS) {
 			`\`${r.worstId}\` hangs ${r.worstOverflowPx.toFixed(1)}px outside the pane ` +
 				`(${r.paneWidth.toFixed(0)}x${r.paneHeight.toFixed(0)} at scale ${r.scale.toFixed(4)}, ` +
 				`${r.boxCount} boxes measured)`,
+		);
+	});
+
+	test(`no drawn box sits under the zoom controls, even on a wider and taller map, at ${width}x${height}`, async () => {
+		const r = await readFit(width, height, WIDE_TALL_PROBE);
+		assert.ok(r.boxCount > 0, "no node or zone boxes were measured — the map did not render");
+		// at the legibility floor the map is wider than the pane and pans by design — the fit reserves nothing there
+		const isAtFloor = r.labelPx <= MIN_RENDERED_LABEL_PX + CTM_FLOAT_TOLERANCE;
+		assert.ok(
+			r.controlsIntrusionPx <= EPS_PX || isAtFloor,
+			`\`${r.controlsIntruderId}\` reaches ${r.controlsIntrusionPx.toFixed(1)}px under the zoom controls, so a click there presses a button ` +
+				`(pane ${r.paneWidth.toFixed(0)}x${r.paneHeight.toFixed(0)} at scale ${r.scale.toFixed(4)})`,
 		);
 	});
 

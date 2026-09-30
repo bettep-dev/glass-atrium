@@ -2142,7 +2142,9 @@ function applyLegibleFitAR(instance, root) {
 	const realH = s.viewBox?.height || 0;
 	if (realW <= 0 || realH <= 0 || s.width <= 0 || s.height <= 0) return;
 
-	const targetAbs = getLegibleFitScaleAR(s.width, s.height, realW, realH);
+	// the zoom controls stand over the pane's right edge → the drawing fits beside them, so no box sits under a button
+	const drawableW = s.width - getControlsGutterAR(root);
+	const targetAbs = getLegibleFitScaleAR(drawableW, s.height, realW, realH);
 
 	// 공개 zoom 은 상대(=절대/originalState) · init 직후 현재 절대행렬 = viewport CTM .a → relative = targetAbs / 현재절대.
 	const curAbs = readViewportScaleAR(root) || s.realZoom || 1;
@@ -2157,7 +2159,7 @@ function applyLegibleFitAR(instance, root) {
 	const baseX = -(s.viewBox.x || 0) * targetAbs;
 	const baseY = -(s.viewBox.y || 0) * targetAbs;
 	// 좁은 그래프는 가로 가운데 · 낮은 그래프는 pane 을 그림 높이로 줄임 → 위아래 빈 띠 없음 (넓은/높은 그래프는 좌상단 시작).
-	const slackX = Math.max(0, (s.width - fittedGraphW) / 2);
+	const slackX = Math.max(0, (drawableW - fittedGraphW) / 2);
 	instance.pan({ x: baseX + slackX, y: baseY });
 	if (fittedGraphH < s.height) setCanvasHeightAR(root, fittedGraphH, instance);
 
@@ -2165,6 +2167,14 @@ function applyLegibleFitAR(instance, root) {
 	root
 		?.querySelector(".svg-pan-zoom_viewport")
 		?.setAttribute("data-arch-fit-scale", String(targetAbs));
+}
+
+// width the zoom controls take from the pane's right edge, measured so any control size or offset is covered
+function getControlsGutterAR(root) {
+	const canvas = getCanvasAR(root);
+	const controls = canvas?.querySelector(".arch-zoom-controls");
+	if (!controls) return 0;
+	return Math.max(0, canvas.getBoundingClientRect().right - controls.getBoundingClientRect().left);
 }
 
 // .svg-pan-zoom_viewport 의 실제 변환행렬 스케일(.a) = 사용자가 측정하는 절대 스케일.
