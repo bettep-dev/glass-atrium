@@ -1970,7 +1970,7 @@ function CrosstabCard({ state, onRetry, shared }) {
         title={confidentFailed
           ? `Confident but failed: ${formatIntO(confidentFailed.count)} (${formatRateO(confidentFailed.share)})`
           : 'Confident but failed'}
-        sub="High stated confidence, own check failed · empty rows hidden"
+        sub="High confidence, own check failed"
         right={
           state.status === 'ready' && (
             <Badge role="status" tone="warn" icon>
@@ -2032,6 +2032,7 @@ function CrosstabBody({ state, onRetry, shared }) {
           <span aria-hidden="true" style={{ color: 'rgb(var(--warn))' }}><GlyphO name="warn"/></span>
           polar mismatch (overconfidence high+fail · underconfidence low+pass)
         </span>
+        <span>Empty rows hidden</span>
       </div>
     </div>
   );

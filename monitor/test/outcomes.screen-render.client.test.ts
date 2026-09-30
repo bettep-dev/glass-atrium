@@ -221,3 +221,19 @@ test("a closed caveat row shows its result and its closure as two separate group
   assert.equal(collectText(closureGroup).trim(), "Closed");
   assert.equal(findNodes(resultGroup, (n) => n === closureGroup).length, 0, "the closure group is not nested inside the result group");
 });
+
+// half-card head at xl (1280px): ~490px card − 40px padding − ~180px Mismatches badge − 12px gap
+const HALF_CARD_SUB_BUDGET_PX = 258;
+const CARD_SUB_CHAR_PX = 7;
+
+test("the crosstab subtitle fits one line of a half-width card beside its badge", async () => {
+  const mod = await loadScreenModule(OUTCOMES_SRC, { UI: ui.UI, location: { hash: "" }, URLSearchParams });
+  const create = (mod.React as { createElement: (t: unknown, p: unknown) => unknown }).createElement;
+  const state = { status: "loading", busy: true, data: null, error: null };
+  const tree = renderScreen(create(mod.CrosstabCard as Component, { state, onRetry: () => undefined })) as RenderedNode;
+
+  const [head] = findNodes(tree, (n) => n.type === "CardHead");
+  const sub = String(head.props.sub ?? "");
+  assert.ok(sub.length > 0, "the card keeps a subtitle");
+  assert.ok(sub.length * CARD_SUB_CHAR_PX <= HALF_CARD_SUB_BUDGET_PX, `"${sub}" is ${sub.length * CARD_SUB_CHAR_PX}px`);
+});
