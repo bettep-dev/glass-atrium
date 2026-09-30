@@ -46,11 +46,11 @@ function ScreenWiki() {
 	const triggerRefresh = useCallbackW(() => setRefreshTick((t) => t + 1), []);
 
 	const waveSections = [
-		[summaryState, "summary"],
-		[cyclesState, "run history"],
-		[indexState, "notes by type"],
-		[backlogState, "maintenance backlog"],
-		[reportState, "per-run table"],
+		[summaryState, WIKI_FEEDERS.summary],
+		[cyclesState, WIKI_FEEDERS.runHistory],
+		[indexState, WIKI_FEEDERS.notesByType],
+		[backlogState, WIKI_FEEDERS.backlog],
+		[reportState, WIKI_FEEDERS.runTable],
 	];
 	const waveStates = waveSections.map(([state]) => state);
 	const isBusy = getRegionSummary(waveStates).isBusy;
@@ -246,6 +246,15 @@ const PROPOSAL_PARKED_DAYS = PROPOSAL_PARKED_RUNS;
 
 // Element id of the merge-proposals fold — the verdict chip's target.
 const MERGE_PROPOSALS_ID = "wiki-merge-proposals";
+
+// Wave section names — the banner lists them, and a region is covered when its feeder is among them.
+const WIKI_FEEDERS = Object.freeze({
+	summary: "summary",
+	runHistory: "run history",
+	notesByType: "notes by type",
+	backlog: "maintenance backlog",
+	runTable: "per-run table",
+});
 
 // Region card ids — a covered region's slot names its card, so the banner's Retry lands there on recovery.
 const WIKI_REGION_IDS = Object.freeze({
@@ -594,8 +603,8 @@ function WikiTileBand({ summaryState, indexState, backlogState, cyclesState, at,
 // The band's own feeders; the backlog's failure is announced by the maintenance group it feeds.
 function readTileBandFailuresW(summaryState, indexState) {
 	return [
-		{ state: summaryState, feeder: "summary", label: "daily cycle summary" },
-		{ state: indexState, feeder: "notes by type", label: "search index" },
+		{ state: summaryState, feeder: WIKI_FEEDERS.summary, label: "daily cycle summary" },
+		{ state: indexState, feeder: WIKI_FEEDERS.notesByType, label: "search index" },
 	].filter((f) => f.state.status === "error");
 }
 
@@ -864,7 +873,7 @@ function WikiMaintenanceSection({ backlogState, cyclesState, shared, onRetry }) 
 		<div className="flex flex-col gap-2">
 			{model.state === "error" ? (
 				<WikiRegionFailureW
-					feeders={["maintenance backlog"]}
+					feeders={[WIKI_FEEDERS.backlog]}
 					source="the maintenance backlog"
 					error={backlogState.error}
 					isBusy={backlogState.busy}
@@ -1022,7 +1031,7 @@ function WikiRunHistorySection({ cyclesState, summaryState, shared, onRetry }) {
 				<LoadingPlaceholder label="run history" minHeight={120} />
 			) : cyclesState.status === "error" ? (
 				<WikiRegionFailureW
-					feeders={["run history"]}
+					feeders={[WIKI_FEEDERS.runHistory]}
 					source="run history"
 					error={cyclesState.error}
 					isBusy={cyclesState.busy}
@@ -1197,7 +1206,7 @@ function WikiNotesByTypeSection({ state, shared, onRetry }) {
 				<LoadingPlaceholder label="note types" />
 			) : state.status === "error" ? (
 				<WikiRegionFailureW
-					feeders={["notes by type"]}
+					feeders={[WIKI_FEEDERS.notesByType]}
 					source="notes by type"
 					error={state.error}
 					isBusy={state.busy}
@@ -1476,7 +1485,7 @@ function WikiReportsBody({ state, days, shared, onRetry }) {
 	if (state.status === "error") {
 		return (
 			<WikiRegionFailureW
-				feeders={["per-run table"]}
+				feeders={[WIKI_FEEDERS.runTable]}
 				source="the run table"
 				error={state.error}
 				isBusy={state.busy}
