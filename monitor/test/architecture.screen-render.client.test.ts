@@ -51,3 +51,42 @@ test("the page alert shows its Retry in flight and hands focus to the verdict, w
   assert.equal(targets.length, 1, `focus target ${String(banners[0].props.focusTargetId)} is one rendered element`);
   assert.notEqual(targets[0].props.atom, "PageErrorBanner", "focus lands outside the alert that unmounts on recovery");
 });
+
+test("a cold map read the page alert speaks for keeps a quiet placeholder in the map's own space", async () => {
+  const initial = realUi.INITIAL_REGION_STATE as Record<string, unknown>;
+  const down = { ...initial, status: "error", data: null, error: "HTTP 503 Service Unavailable — down", busy: false };
+  const mod = (await loadScreenModule(ARCH_SRC, {
+    UI: uiStub({ INITIAL_REGION_STATE: down }),
+    React: createReactStub(),
+  })) as { React: { createElement: (t: unknown, p: unknown) => unknown }; ScreenArchitecture: Component };
+
+  const tree = renderScreen(mod.React.createElement(mod.ScreenArchitecture, {}));
+  const [banner] = findNodes(tree, (n) => n.props.atom === "PageErrorBanner");
+  const placeholders = findNodes(tree, (n) => n.props.atom === "RegionFailure" && /\barch-col-card\b/.test(String(n.props.className)));
+  assert.ok(banner, "precondition: the shared outage lifts to the page alert");
+  assert.equal(placeholders.length, 1, "the map region renders one map-sized failure placeholder");
+  const shared = placeholders[0].props.shared as { sources: string[] };
+  assert.ok(shared.sources.includes(String(placeholders[0].props.source)), "the placeholder is told the alert already names its source");
+});
+
+test("the node drawer names each of its sections with a heading element", async () => {
+  const mod = (await loadScreenModule(ARCH_SRC, { UI: uiStub({}), React: createReactStub() })) as {
+    React: { createElement: (t: unknown, p: unknown) => unknown };
+    NodeDetailBody: Component;
+  };
+  const nodeId = "canonical.hook_pipeline";
+  const props = {
+    info: { id: nodeId, label: "Hook pipeline", path: "hooks/", description: "Hooks" },
+    flows: [{ id: "f1", from: "canonical.agent_layer", to: nodeId }],
+    nodeIndex: new Map([["canonical.agent_layer", { label: "Agents" }]]),
+    liveDaemonsByNodeId: new Map(),
+    healthPartRows: [{ id: "hooks", name: "Hook failures", kind: "unknown-kind", daemonName: null, tone: "ok", statusLabel: "Healthy", nodeIds: ["hook_pipeline"] }],
+    zoneIdByMemberId: new Map(),
+  };
+
+  const tree = renderScreen(mod.React.createElement(mod.NodeDetailBody, props));
+  const headingText = (n: { children?: unknown }): string => JSON.stringify(n.children ?? "");
+  const headings = findNodes(tree, (n) => /^h[2-6]$/.test(n.type)).map(headingText).join(" ");
+  for (const section of ["Health", "Connections", "Records"])
+    assert.match(headings, new RegExp(section), `the ${section} section has no heading element`);
+});

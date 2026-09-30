@@ -290,7 +290,7 @@ function ScreenArchitecture(
 		FreshnessStamp,
 		RefreshButton,
 		PageErrorBanner,
-		RegionUnavailable,
+		RegionFailure,
 		INITIAL_REGION_STATE,
 		putRegionRequest,
 		putRegionData,
@@ -583,8 +583,6 @@ function ScreenArchitecture(
 
 	// 경보 레인의 행 — 네 사실을 심각도 순으로 한 줄씩. 비면 레인이 DOM 에 없음.
 	const pageFailure = getPageFailureAR(pageReadEntries);
-	// the map's own card would repeat the page alert — the alert already names it and carries the Retry
-	const isMapInPageAlert = Boolean(pageFailure?.sources.includes(DIAGRAM_SOURCE_AR));
 
 	const alarmRows = getAlarmRows({
 		offWriters,
@@ -608,7 +606,9 @@ function ScreenArchitecture(
 					".arch-page:has(.arch-part-health) .arch-main { min-height: 62vh; } " +
 					".arch-part-health { flex-shrink: 0; } " +
 					".arch-part-health-title { font-size: 13px; font-weight: 600; margin: 0; } " +
-					".arch-part-col-title { font-size: 12px; font-weight: 600; margin: 0 0 6px; } " +
+					".arch-part-col-title { font-size: inherit; font-weight: 600; margin: 0 0 6px; } " +
+					".arch-drawer-heading { margin: 0 0 4px; font-weight: 400; } " +
+					".arch-drawer-subheading { margin: 0 0 2px; font-size: inherit; font-weight: 400; } " +
 					".arch-part-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; } " +
 					".arch-part-row { display: grid; grid-template-columns: minmax(0, 1fr) auto auto; column-gap: 8px; align-items: center; } " +
 					".arch-part-meta { grid-column: 1 / -1; font-size: 12px; } " +
@@ -780,13 +780,14 @@ function ScreenArchitecture(
 				{/* 본체: 단일 canonical Mermaid 캔버스 (가용 폭 100%) — 못 읽으면 빈 캔버스 대신 조용한 카드 하나 */}
 				<div className="arch-main">
 					{diagState.status === "error" ? (
-						!isMapInPageAlert && (
-							<RegionUnavailable
-								source={DIAGRAM_SOURCE_AR}
-								error={diagState.error}
-								onRetry={triggerRefresh}
-							/>
-						)
+						<RegionFailure
+							source={DIAGRAM_SOURCE_AR}
+							error={diagState.error}
+							shared={pageFailure}
+							onRetry={triggerRefresh}
+							isBusy={isRefreshBusy}
+							className="arch-col-card"
+						/>
 					) : (
 						<div className="card arch-col-card" aria-busy={diagState.busy ? "true" : undefined}>
 							{mapCopyNote && (
@@ -1630,9 +1631,9 @@ function NodePartHealth({
 
 	return (
 		<div data-node-health={unscoped}>
-			<div className="fs-meta font-mono text-faint uppercase tracking-wider mb-1">
+			<h3 className="arch-drawer-heading fs-meta font-mono text-faint uppercase tracking-wider">
 				Health ({rows.length + looseDaemons.length})
-			</div>
+			</h3>
 			<div className="arch-part-list">
 				{rows.map((row) => {
 					const renderDetail = HEALTH_ROW_DETAILS[row.kind];
@@ -1919,9 +1920,9 @@ function OwningScreenLinkAR({ nodeId }) {
 	if (!owner) return null;
 	return (
 		<div>
-			<div className="fs-meta font-mono text-faint uppercase tracking-wider mb-1">
+			<h3 className="arch-drawer-heading fs-meta font-mono text-faint uppercase tracking-wider">
 				Records
-			</div>
+			</h3>
 			<a className="fs-body" href={`#${owner.id}`}>
 				Open {owner.label}
 			</a>
@@ -1935,9 +1936,9 @@ function FlowSummary({ inbound, outbound, nodeIndex }) {
 		return <div className="fs-meta text-faint">No connections</div>;
 	return (
 		<div>
-			<div className="fs-meta font-mono text-faint uppercase tracking-wider mb-1">
+			<h3 className="arch-drawer-heading fs-meta font-mono text-faint uppercase tracking-wider">
 				Connections ({total})
-			</div>
+			</h3>
 			<div className="space-y-2">
 				{inbound.length > 0 && (
 					<FlowList
@@ -1965,7 +1966,7 @@ function FlowList({ title, items, nodeIndex, direction }) {
 	const peerWord = direction === "in" ? "from" : "to";
 	return (
 		<div>
-			<div className="fs-meta text-dim mb-0.5">{title}</div>
+			<h4 className="arch-drawer-subheading fs-meta text-dim">{title}</h4>
 			<ul
 				className="fs-meta text-dim space-y-0.5"
 				style={{ margin: 0, padding: 0, listStyle: "none", maxHeight: 160, overflowY: "auto" }}
@@ -2413,7 +2414,7 @@ function getMapCopyNoteAR(diagState) {
 // the all-clear is a verdict — before any part is judged the column says why it is empty
 function getAttentionEmptyAR(partRows, busy, errored) {
 	if (busy) return "Checking part health…";
-	if (partRows.some((row) => row.tone)) return "No part needs attention";
+	if (partRows.some((row) => row.tone)) return errored > 0 ? "Last known: no part needed attention" : "No part needs attention";
 	return errored > 0 ? "Couldn't read part health" : "Part health not read yet";
 }
 
@@ -2448,12 +2449,13 @@ function getPartToneRankAR(tone) {
 	return PART_TONE_RANK_AR[tone] ?? PART_UNJUDGED_RANK_AR;
 }
 
-// flagged parts vs the rest, each worst first — the same rows the caption counts
+// flagged, answered and not-loaded parts, each worst first — the same rows the caption counts
 function getPartHealthGroupsAR(partRows) {
 	const sorted = [...partRows].sort((a, b) => getPartToneRankAR(a.tone) - getPartToneRankAR(b.tone));
 	return {
 		attention: sorted.filter(isPartFlaggedAR),
-		rest: sorted.filter((row) => !isPartFlaggedAR(row)),
+		rest: sorted.filter((row) => row.tone && !isPartFlaggedAR(row)),
+		unloaded: sorted.filter((row) => !row.tone),
 	};
 }
 
@@ -2517,10 +2519,10 @@ function getPageVerdictAR(partRows, caption, nodeIndex, freshness) {
 
 // every part's state on the page — the drawer stays the drill, not the only place a state is read
 function PartHealthBlockAR({ partRows, attentionEmpty, freshness, nodeIndex, onSelectNode }) {
-	const { SplitRow } = window.UI;
+	const { SplitRow, SplitColumn } = window.UI;
 	if (partRows.length === 0) return null;
 
-	const { attention, rest } = getPartHealthGroupsAR(partRows);
+	const { attention, rest, unloaded } = getPartHealthGroupsAR(partRows);
 	return (
 		<section className="card arch-part-health" id={PART_HEALTH_ID_AR} aria-labelledby={`${PART_HEALTH_ID_AR}-title`}>
 			<div className="card-head">
@@ -2529,7 +2531,12 @@ function PartHealthBlockAR({ partRows, attentionEmpty, freshness, nodeIndex, onS
 			<div className="card-body">
 				<SplitRow ratio="1:1">
 					<PartHealthListAR title="Needs attention" rows={attention} empty={attentionEmpty} freshness={freshness} nodeIndex={nodeIndex} onSelectNode={onSelectNode} />
-					<PartHealthListAR title="Healthy or not verified" rows={rest} empty="No other parts" freshness={freshness} nodeIndex={nodeIndex} onSelectNode={onSelectNode} />
+					<SplitColumn>
+						<PartHealthListAR title="Healthy or not verified" rows={rest} empty="No other parts" freshness={freshness} nodeIndex={nodeIndex} onSelectNode={onSelectNode} />
+						{unloaded.length > 0 && (
+							<PartHealthListAR title="Not loaded" rows={unloaded} freshness={freshness} nodeIndex={nodeIndex} onSelectNode={onSelectNode} />
+						)}
+					</SplitColumn>
 				</SplitRow>
 			</div>
 		</section>
@@ -2557,7 +2564,9 @@ function PartHealthRowAR({ row, freshness, nodeIndex, onSelectNode }) {
 	const { formatRelativeTime } = window.UI;
 	const box = getPartBoxAR(row, nodeIndex);
 	const status = getPartStatusAR(row, freshness);
-	const meta = [box && `in ${box.label}`, row.lastRunAt && `last run ${formatRelativeTime(row.lastRunAt)}`, row.cause]
+	// a down part says when it is due next, so the reader knows whether waiting fixes it
+	const nextRun = isPartFlaggedAR(row) && row.nextRunAt && `next run ${formatRelativeTime(row.nextRunAt)}`;
+	const meta = [box && `in ${box.label}`, row.lastRunAt && `last run ${formatRelativeTime(row.lastRunAt)}`, nextRun, row.cause]
 		.filter(Boolean)
 		.join(" · ");
 
@@ -2660,6 +2669,7 @@ function getHealthPartRows(cardStates, partBindings) {
 			statusLabel: isReady ? getPartStatusLabel(def, facts) : null,
 			// 마지막 실행은 데몬 행만 갖는 사실임 — 나머지 칸은 비어 있음이 정답임.
 			lastRunAt: isReady && facts.daemon ? facts.daemon.last_run_at || null : null,
+			nextRunAt: isReady && facts.daemon ? facts.daemon.expected_next_at || null : null,
 			cause: isReady ? getPartCauseAR(facts) : null,
 			nodeIds: partBindings?.[def.id] || [],
 		};
@@ -3061,7 +3071,14 @@ function getShapeBoxAR(groupEl) {
 		return null;
 	}
 	if (!box || !(box.width > 0) || !(box.height > 0)) return null;
-	return box;
+	return getGroupSpaceBoxAR(shape, box);
+}
+
+// getBBox is in the shape's own space — a cylinder path carries its own translate, which the ring rect beside it does not
+function getGroupSpaceBoxAR(shape, box) {
+	const matrix = shape.transform?.baseVal?.consolidate?.()?.matrix;
+	if (!matrix) return box;
+	return { x: box.x * matrix.a + matrix.e, y: box.y * matrix.d + matrix.f, width: box.width * matrix.a, height: box.height * matrix.d };
 }
 
 /**

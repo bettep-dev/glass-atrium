@@ -4,7 +4,7 @@
 //
 // Runner: npx tsx --test test/architecture.page-state.client.unit.test.ts
 
-import test from "node:test";
+import test, { describe } from "node:test";
 import assert from "node:assert/strict";
 import { fileURLToPath } from "node:url";
 import { dirname, resolve } from "node:path";
@@ -56,7 +56,8 @@ interface PageStateSandbox {
     hasMap: boolean,
   ) => { at: string | null; regions: RegionState[] };
   getFlowPeerLabelAR: (flow: Flow, direction: "in" | "out", nodeIndex: Map<string, { label: string }>) => string;
-  getPartHealthGroupsAR: (partRows: HealthRow[]) => { attention: HealthRow[]; rest: HealthRow[] };
+  getPartHealthGroupsAR: (partRows: HealthRow[]) => { attention: HealthRow[]; rest: HealthRow[]; unloaded: HealthRow[] };
+  getAttentionEmptyAR: (partRows: HealthRow[], busy: boolean, errored: number) => string;
   getPartBoxAR: (row: HealthRow, nodeIndex: Map<string, { label: string }>) => { nodeId: string; label: string } | null;
   getPartCauseAR: (facts: Record<string, unknown>) => string | null;
   getDrillDaemonAR: (partRows: DaemonPartRow[], unscopedId: string) => string | null;
@@ -211,16 +212,33 @@ const MIXED_ROWS: HealthRow[] = [
   healthRow("f", "crit"),
 ];
 
-test("the part health block holds every part once, flagged parts on the attention side, worst first", () => {
-  const { attention, rest } = sandbox.getPartHealthGroupsAR(MIXED_ROWS);
-  const rank = (tone: string | null) => ["crit", "warn", null, "info", "ok"].indexOf(tone);
+test("the part health block holds every part once — flagged, answered and not-loaded parts each in their own group, worst first", () => {
+  const { attention, rest, unloaded } = sandbox.getPartHealthGroupsAR(MIXED_ROWS);
+  const rank = (tone: string | null) => ["crit", "warn", "info", "ok"].indexOf(tone);
 
-  assert.deepStrictEqual([...attention, ...rest].map((row) => row.id).sort(), MIXED_ROWS.map((row) => row.id).sort());
+  assert.deepStrictEqual([...attention, ...rest, ...unloaded].map((row) => row.id).sort(), MIXED_ROWS.map((row) => row.id).sort());
   assert.ok(attention.every((row) => row.tone === "crit" || row.tone === "warn"), "a non-flagged part sits in attention");
-  assert.ok(rest.every((row) => row.tone !== "crit" && row.tone !== "warn"), "a flagged part sits in the other column");
+  assert.ok(rest.every((row) => row.tone === "info" || row.tone === "ok"), "a flagged or not-loaded part sits with the answered ones");
+  assert.ok(unloaded.every((row) => row.tone === null), "an answered part sits in the not-loaded group");
   for (const group of [attention, rest])
     for (let i = 1; i < group.length; i++)
       assert.ok(rank(group[i - 1].tone) <= rank(group[i].tone), `${group[i - 1].id} before ${group[i].id} breaks worst-first`);
+});
+
+describe("the empty Needs attention column says why it is empty, and an all-clear over a failed read is last known", () => {
+  const judged = [healthRow("a", "ok"), healthRow("b", null)];
+  const unjudged = [healthRow("a", null)];
+  const rows = [
+    { name: "a read in flight is still checking", partRows: judged, busy: true, errored: 1, expected: /^Checking/ },
+    { name: "an all-clear under a failed health read is last known", partRows: judged, busy: false, errored: 1, expected: /^Last known/ },
+    { name: "an all-clear with every store read is a plain all-clear", partRows: judged, busy: false, errored: 0, expected: /^No part needs attention$/ },
+    { name: "no verdict and a failed read says the read failed", partRows: unjudged, busy: false, errored: 2, expected: /^Couldn't read part health$/ },
+    { name: "no verdict and no failure says it is not read yet", partRows: unjudged, busy: false, errored: 0, expected: /^Part health not read yet$/ },
+  ];
+  for (const row of rows)
+    test(row.name, () => {
+      assert.match(sandbox.getAttentionEmptyAR(row.partRows, row.busy, row.errored), row.expected);
+    });
 });
 
 test("a part names the map box it is bound to, and an unbound part names none", () => {
