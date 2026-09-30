@@ -373,6 +373,7 @@ function ScreenModelConfig() {
 			? "loading"
 			: "unavailable";
 	const verdict = ready ? getPageVerdictMC(data) : null;
+	const freshness = getFreshnessInputMC(asOfAt, configState);
 
 	return (
 		<div className="flex flex-col min-w-0">
@@ -385,9 +386,9 @@ function ScreenModelConfig() {
 							<SyncTokenMC
 								state={configState.status}
 								sync={headerSyncMC(data)}
-								freshness={getFreshnessInputMC(asOfAt, configState)}
+								freshness={freshness}
 							/>
-							<FreshnessStamp {...getFreshnessInputMC(asOfAt, configState)} />
+							<FreshnessStamp {...freshness} />
 							<RefreshButton
 								isBusy={configState.busy}
 								hasRead={asOfAt !== null}
