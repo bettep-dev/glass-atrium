@@ -29,10 +29,11 @@ Maintainer-facing material for that rule file. Nothing here binds a hook author;
 - **Cross-references**: `hooks/hook-utils.sh` (`hook_emit_error` = channel a, `hook_read_input`, `hook_get_field`, `hook_get_tool_input`, `hook_is_subagent`) · `settings.json` (the authority for which events are wired) · `rules/glass-atrium/core-security.md` (LLM01 tool-input trust boundary, LLM06 tool authorization, LLM07 prompt leakage) · `rules/glass-atrium/orchestrator-role.md` Harness Path Protection (the `enforce-foreground-harness.sh` channel-b rationale) · `rules/glass-atrium/shared-self-improve-hygiene.md` Precondition Loud-Fail (the autoagent exception to fail-open, still named inline in the rule file's Authoring Rules).
 - **Why This Exists** section: dropped. Its three facts — events differ, PostToolUse cannot mutate, the channels are non-substitutable — are each stated where they bind, in the capability table and the channel rules.
 
-## Follow-up fix pass — on_fail taxonomy shape
+## on_fail taxonomy shape
 
-The on_fail taxonomy is one table (Disposition | Mechanism | Used by | Reserved for), with the two non-uniform carve-outs kept as bullets below it (the `fix` no-silent-loop fall-through, and `noop` never being labelled `filter`). Keep that shape: the carve-outs are not uniform rows.
-
+- The on_fail taxonomy is one table (Disposition | Mechanism | Used by | Reserved for).
+- Its two non-uniform carve-outs are bullets below the table: the `fix` no-silent-loop fall-through, and `noop` never being labelled `filter`.
+- Keep that shape — the carve-outs are not uniform rows.
 - **Accepted shape-cap overage**: the `exception` and `noop` "Used by" cells run past the 120-char cell guide. The alternative was abbreviating live hook filenames, which are the cells' whole value; the overage is the cheaper trade.
 
 ## Readers and coupled tests

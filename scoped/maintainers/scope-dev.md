@@ -164,8 +164,9 @@ A DEV implementation spawn carrying NEITHER a plan reference NOR an `[ENTRY-CLAS
   - Contract SoT: `skills/glass-atrium-ops-delegation-contracts/references/delegation-size-discipline.md` → **`[SIZE-EST]` self-attestation token** (do not restate the format here).
   - Standing obligation and split triggers: `orchestrator-role.md` → `### Spawn Budget` → Delegation-size discipline.
   - BOTH tokens' PRESENCE (never the estimate's correctness) is gate-enforced on both paths: manual via `enforce-verification-gate.sh` (`has_size_est_token`, guarded by `hook_is_subagent` → orchestrator-origin spawns only), ultracode via `enforce-workflow-verify-stage.sh` (`BLOCK_SIZEEST` under `ENTRY_OK`).
-
-Cross-ref: a DEV agent reports this gate's criteria through `metric_pass` (the overall bar) plus one `concerns:` item per failed or unverified criterion (rule file → `## Sprint Contract Gate [DEV+QA]`). The Code-Based grader reads no criterion: it keys on task_type and the block's `files:` (`rules/glass-atrium/core-outcome-record.md` → `#### Grader verdict`).
+- Cross-ref — the Sprint Contract Gate's verification criteria at completion:
+  - A DEV agent reports them through `metric_pass` (the overall bar) plus one `concerns:` item per failed or unverified criterion (rule file → `## Sprint Contract Gate [DEV+QA]`).
+  - The Code-Based grader reads none of them: it keys on task_type and the block's `files:` (`scoped/maintainers/core-outcome-record.md` → `### Grader verdict`).
 
 ## Ambiguity Gate — pair note
 
@@ -198,7 +199,8 @@ Headings other files resolve to — renaming or deleting one dangles a live refe
 | `## DEV Agent Fleet Governance` | `scoped/scope-dev.md` (stub) · `skills/glass-atrium-ops-orchestrator.md` |
 | `### New-Agent Creation Gate` | `skills/glass-atrium-ops-orchestrator.md` |
 | `### Doc-sync note (CLI auto-writes vs. manual matrix update)` | `rules/glass-atrium/core-compliance-matrix.md` → Scope Legend doc-sync note |
-| `## Sprint Contract Gate (orchestrator side)` · `### Sizable-task definition (single SoT — the positive entry floor)` | `scoped/scope-dev.md` (stub) |
+| `## Sprint Contract Gate (orchestrator side)` | `scoped/scope-dev.md` (stub) |
+| `### Sizable-task definition (single SoT — the positive entry floor)` | `scoped/scope-dev.md` (stub) · `hooks/enforce-verification-gate.sh` (`entry_fix=` block text, VGATE-ENTRY-001) |
 | `### glass-atrium-dev-front exposed-doc HTML participation = EXTEND, not creation` | `scoped/maintainers/shared-design-token-consumption.md` → `## Readers, coupled tests, and one stale citation` |
 
 ## Open item
@@ -207,7 +209,7 @@ Open, and owned outside this note (the fix edits other files):
 
 - `rules/glass-atrium/orchestrator-role.md` and `scoped/scope-qa.md` still reach the moved gate bodies (fleet governance · the orchestrator-side Sprint Contract Gate) through the rule-file stubs, one hop more than needed. Repointing them at this note removes the hop; `core-compliance-matrix.md` and `skills/glass-atrium-ops-orchestrator.md` already point here.
 
-## Follow-up fix pass — what changed in the rule file
+## Rule-file pointers and loading stanza
 
 - The rule file carries no maintainer preamble pointing here and no companion pointer in the first-link literal bullet: neither sits under an externally-cited stub heading, so the companion-citation convention in this note's header sanctions neither. The literal bullet keeps its caution — the sentence and the two lines bracketing it are machine-read — without a pointer.
 - The two sanctioned pointers remain, one each under `## DEV Agent Fleet Governance` and `## Sprint Contract Gate [DEV+QA]`, which are the two headings external files cite into.

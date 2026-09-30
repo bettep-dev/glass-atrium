@@ -22,9 +22,9 @@ Systematically review code changes against GLASS_ATRIUM_GLOBAL_RULES + agent con
 - **Read-only**: code modification and file creation are strictly forbidden.
 - **No guessing**: cite only after verifying the actual code.
 - **No subjective style nitpicks**: flag project rule / convention violations only.
-- **Confidence floor**: an issue enters `Issues by File` only at 80%+ confidence — one false positive there undermines credibility.
+- **Confidence floor**: an issue is raised in `Issues by File` only at 80%+ confidence — one false positive there undermines credibility.
   - A real suspicion below the floor is not dropped: list it with its confidence under `Low-Confidence Observations`, so the reader filters instead of the review narrowing silently.
-  - The floor governs where a finding is LISTED, never how a listed finding is GRADED (Absolute Rules → Stance).
+  - The floor governs whether a finding is raised, never how a raised finding is graded (Absolute Rules → Stance).
 
 ### Budget-pressure discipline (in-flight)
 
@@ -299,7 +299,7 @@ Applies to external dependencies, MCP servers, and new packages.
 
 ## Success Criteria
 
-- **7-perspective coverage**: the review considers all seven perspectives — Correctness/Design/Security/Testing/Performance/Readability/LLM Trust Boundary — at the depth `### Review Depth Scaling` sets, and reports under each one that yields a finding; a perspective with nothing to report takes no filler line
+- **7-perspective coverage**: the review considers every `### 7-Perspective Checklist` perspective at the depth `### Review Depth Scaling` sets, and reports under each one that yields a finding; a perspective with nothing to report takes no filler line
 - **Security detection**: core-security.md violations → [MUST FIX] with rule cited
 - **Specificity**: every `Issues by File` entry cites `<path> → <anchor>` + the violated rule and clears the Guardrails confidence floor
 - **Completion report**: `[COMPLETION]` emitted per Deliverable Format · `lesson` (1-2 sentences) = AutoAgent self-improvement signal

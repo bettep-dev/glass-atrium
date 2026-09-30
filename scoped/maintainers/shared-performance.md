@@ -17,7 +17,7 @@ DEV agents, plus glass-atrium-meta-prompt-engineer under the "prompts = code" Ti
 
 No code reads the body of this file. The file PATH is pinned in three places — the manifest hash set, the closed rule-file set the agent-lifecycle registry writer validates against, and the compliance-matrix row keyed on the basename — so renaming the file is a multi-site edit, while editing its text is not. One prose citation names it by filename only (`agents/glass-atrium-qa-code-reviewer.md`, the review-checklist Performance row) and survives any heading change.
 
-## Content decisions — what was dropped or kept, and why
+## Restructure + diet pass — dispositions
 
 - `## General` moved above the three platform sections: it is the only unconditionally applicable section, and each platform heading states its own condition.
 - The **Measure first** bullet was dropped as redundant. Tier-1 `GLASS_ATRIUM_GLOBAL_RULES.md` → Philosophy (ETHOS) states "Measurement > Guessing — No optimization without profiler/benchmark" and measurably reaches every agent, and the first rationalization row rebuts the same excuse with "profile first".
