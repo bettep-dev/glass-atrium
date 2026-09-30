@@ -1082,7 +1082,7 @@ function ScreenClaudedDocs(/* { onNav } */) {
         .doc-stage-actor { font-size: var(--fs-meta); font-family: 'JetBrains Mono', monospace; color: rgb(var(--faint)); white-space: normal; word-break: keep-all; overflow-wrap: normal; }
         .doc-row.is-stale > td { background: rgb(var(--warn) / 0.06); }
         .doc-age-flag { font-size: var(--fs-meta); font-weight: 600; color: rgb(var(--warn)); font-family: 'Pretendard Variable', Pretendard, ui-sans-serif, system-ui, sans-serif; }
-        /* .card overflow:hidden = 스크롤 컨테이너 → rail sticky 가 카드에 갇힘 · clip = 모서리만 자르고 sticky 는 뷰포트 기준 */
+        /* .card overflow:hidden = a scroll container → traps the rail's sticky in the card · clip trims the corners only, sticky stays viewport-relative */
         .card.doc-list-card:not(:has(.popover-panel)) { overflow: clip; }
         .doc-open-summary { border-bottom: 1px solid rgb(var(--line)); }
         @media (min-width: 1280px) { .doc-open-summary { border-bottom: 0; border-left: 1px solid rgb(var(--line)); } }
@@ -1113,7 +1113,7 @@ function ScreenClaudedDocs(/* { onNav } */) {
 				/>
 			</div>
 
-			{/* 단일 컬럼 — 검색 + facet + meta 는 DocListCardCD 툴바 헤더 · full-height = flex-1 + card-body maxHeight:'none' override */}
+			{/* single column — search + facets + meta live in the DocListCardCD toolbar header · full height = flex-1 + card-body maxHeight:'none' override */}
 			<div
 				className="flex"
 				style={{ minHeight: 0, flex: "1 1 auto", width: "100%" }}
@@ -1275,7 +1275,7 @@ function DocAuthorCellCD({ author }) {
 // the list card takes focus when a recovered read unmounts the Retry that held it
 const DOC_LIST_CARD_ID_CD = "docs-list";
 
-// 중앙 목록 카드 — 툴바 (검색 + facet + 건수) + 원장 · 원장 스크롤 = 페이지 스크롤
+// Center list card — toolbar (search + facets + count) + ledger · ledger scroll = page scroll
 function DocListCardCD({
 	asOf,
 	state,
@@ -1505,7 +1505,7 @@ function DocListCardCD({
 					maxHeight: "none",
 					flex: "1 1 auto",
 					minHeight: 0,
-					// 스크롤러 금지 — sticky rail 이 이 상자에 묶여 함께 스크롤돼 버린다. x 넘침은 표 래퍼가 맡는다.
+					// no scroller here — a scrolling box would pin the sticky rail to it · x-overflow belongs to the table wrapper
 					overflow: "visible",
 				}}
 			>
