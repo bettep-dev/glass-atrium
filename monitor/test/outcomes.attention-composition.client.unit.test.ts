@@ -370,6 +370,23 @@ test("buildStatusBandTilesO: the missing-report level honours the same low-N flo
   );
 });
 
+test("StatusBandO: the loading skeleton takes the same column spans as the loaded band", () => {
+  const spansOf = (node: RenderNode): string[] => {
+    const grid = flattenNodes(node).find((n) => String(n.props?.className ?? "").includes("grid-cols-4"))!;
+    return grid.children.flat()
+      .filter((child): child is RenderNode => child !== null && typeof child === "object")
+      .map((child) => /col-span-(\d)/.exec(String(child.props?.className ?? ""))?.[1] ?? "1");
+  };
+  const loading = spansOf(helpers.StatusBandO({ analyticsState: { status: "loading" }, attentionState: { status: "loading" }, windowDays: 30 }));
+  const loaded = spansOf(helpers.StatusBandO({
+    analyticsState: { status: "ready", data: aboveFloor({ done: 150, fail: 4 }) },
+    attentionState: { status: "ready", data: { total: 5 } },
+    windowDays: 30,
+  }));
+
+  assert.deepStrictEqual(sameRealm(loading), sameRealm(loaded), "nothing shifts when the band arrives");
+});
+
 // --- wiring: the request literal the route parses, and the lane row that covers its failure ---
 
 test("buildAttentionParamsO: emits a needs_attention literal the route's parser accepts", () => {

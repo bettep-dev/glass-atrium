@@ -955,7 +955,9 @@ function StatusBandO({ analyticsState, attentionState, windowDays, freshness, on
   if (view === 'loading') {
     return (
       <div className="grid grid-cols-4 gap-3 mb-4 flex-shrink-0" aria-busy="true" aria-label="Status band">
-        {Array.from({ length: 4 }).map((_, i) => <KpiSkeletonO key={i}/>)}
+        {/* hero + volume column, as loaded → nothing shifts on arrival */}
+        <KpiSkeletonO className="col-span-3"/>
+        <KpiSkeletonO/>
       </div>
     );
   }
@@ -1344,9 +1346,9 @@ function OpenCaveatCellO({ count }) {
   );
 }
 
-function KpiSkeletonO() {
+function KpiSkeletonO({ className = '' }) {
   return (
-    <div className="kpi" aria-busy="true">
+    <div className={`kpi ${className}`.trim()} aria-busy="true">
       <div
         style={{
           height: 70,
