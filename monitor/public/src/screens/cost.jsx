@@ -614,9 +614,10 @@ function KpiRowC({ kpiState, hot, trendState, modelState, days, failures, onRetr
 
 // List-price total set beside the recorded total only when both read one window → equal figures never read as a contradiction.
 function getCacheTotalNoteC({ listTotal, recordedTotal, days }) {
-  const base = `of ${formatUsdC(listTotal)} at list token prices, last ${days} days`;
+  const listLabel = formatUsdC(listTotal);
+  const base = `of ${listLabel} at list token prices, last ${days} days`;
   if (recordedTotal === null) return base;
-  return formatUsdC(listTotal) === formatUsdC(recordedTotal)
+  return listLabel === formatUsdC(recordedTotal)
     ? `${base} — matches the recorded total`
     : `${base} — against ${formatUsdC(recordedTotal)} recorded`;
 }
@@ -807,7 +808,8 @@ function CostTrendChart({ rows, bandOn }) {
   const [activeIndex, setActiveIndex] = useStateC(null);
 
   const points = rows.map(toTrendReadoutPoint);
-  const yTicks = getUsdTicksC(getTrendMax(rows));
+  const trendMax = getTrendMax(rows);
+  const yTicks = getUsdTicksC(trendMax);
   const activeRow = activeIndex === null ? null : rows[activeIndex];
 
   // no active day → the first arrow press lands on the latest day, as the shared chart atom does
@@ -846,7 +848,7 @@ function CostTrendChart({ rows, bandOn }) {
             <YAxis
               domain={[0, yTicks[yTicks.length - 1]]}
               ticks={yTicks}
-              tickFormatter={getUsdAxisFormatter(getTrendMax(rows))}
+              tickFormatter={getUsdAxisFormatter(trendMax)}
               tick={anomalyAxisTickStyle}
               axisLine={anomalyAxisLineStyle}
               tickLine={false}
@@ -2106,11 +2108,10 @@ function getParseErrorChartRows(rows) {
 const PARSE_ERROR_THRESHOLD_LABEL = `Threshold (${PARSE_ERROR_CRIT_THRESHOLD * 100}% of entries)`;
 
 // Legend ↔ chart share these → the swatches cannot drift from the bars and line
-// threshold shares the crit tone → the line and the days that cross it read as one alarm
 const PARSE_ERROR_COLOR = {
   bar: 'rgb(var(--accent) / 0.65)',
   critBar: 'rgb(var(--crit) / 0.85)',
-  threshold: 'rgb(var(--crit))',
+  threshold: 'rgb(var(--crit))', // crit tone → the line and the days that cross it read as one alarm
 };
 
 function ParseErrorLegendC({ hasCritDay }) {
