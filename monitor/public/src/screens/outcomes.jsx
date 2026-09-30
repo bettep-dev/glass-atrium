@@ -872,6 +872,8 @@ function loopEventsSummaryO(loopEventsState) {
 
 // Needs-you tile → ledger 의 창 전체 Needs-you 헤딩 (hash 라우터라 href 앵커 대신 focus 이동).
 const LEDGER_NEEDS_YOU_ID = 'ledger-needs-you';
+// the hero tile already names the set → the verdict chip names the jump, so 'Needs you' reads once above the ledger
+const LEDGER_JUMP_CHIP_O = { key: 'needs-you', label: 'Show in ledger', targetId: LEDGER_NEEDS_YOU_ID };
 // focus lands on a region's card when a focused Retry leaves on recovery
 const REGION_CARD_IDS = {
   statusBand: 'outcomes-status-band',
@@ -993,7 +995,7 @@ function StatusBandO({ analyticsState, attentionState, windowDays, freshness, on
 
   const isAttentionFailed = getRegionView(attentionState) === 'error';
   const heroTile = tiles.find((tile) => tile.key === 'attention');
-  const volumeTiles = tiles.filter((tile) => tile.key === 'recorded' || tile.key === 'done');
+  const volumeTiles = getVolumeTilesO(tiles);
 
   return (
     <div id={REGION_CARD_IDS.statusBand} className="mb-4 flex-shrink-0">
@@ -1108,7 +1110,7 @@ function getHeroFloorVerdictO(verdict, data, attentionState) {
   if (TONE_RANK_O[hero.tone] <= TONE_RANK_O[verdict.tone]) return verdict;
   return {
     tone: hero.tone,
-    chips: [{ key: 'needs-you', label: 'Needs you', targetId: LEDGER_NEEDS_YOU_ID }],
+    chips: [LEDGER_JUMP_CHIP_O],
     text: `${verdict.text.slice(0, -1)}, but ${formatIntO(count)} records (${formatShareO(count, hero.population)}) still need you.`,
   };
 }
@@ -1123,7 +1125,7 @@ function getRateVerdictO(rate, windowLabel) {
   }
   return {
     tone: rate.tone,
-    chips: rate.tone === 'ok' ? [] : [{ key: 'needs-you', label: 'Needs you', targetId: LEDGER_NEEDS_YOU_ID }],
+    chips: rate.tone === 'ok' ? [] : [LEDGER_JUMP_CHIP_O],
     text: `${formatShareO(rate.breakage, rate.writerTotal)} of ${formatInt(rate.writerTotal)} agent-written records in the ${windowLabel} failed or were blocked, and ${formatShareO(rate.openCaveats, rate.writerTotal)} still carry an open caveat.`,
   };
 }
@@ -1151,11 +1153,16 @@ function NeedsYouReasonsO({ reasons }) {
   );
 }
 
+// every fact but the hero → the column beside the taller hero carries the breakage count the verdict states as a share
+function getVolumeTilesO(tiles) {
+  return tiles.filter((tile) => tile.key !== 'attention');
+}
+
 // volume facts demoted beside the hero; the Self-reported glyph stays the missing-report grade channel
 function VolumeTilesO({ tiles, windowLabel }) {
   const { formatPctWithDenominator } = window.UI;
   return (
-    <div className="kpi cursor-default fs-meta" role="group" aria-label={`Volume · ${windowLabel}`}>
+    <div className="kpi cursor-default fs-meta flex flex-col justify-between gap-2" role="group" aria-label={`Volume · ${windowLabel}`}>
       {tiles.map((tile) => {
         const glyph = getBandTileGlyphO(tile.tone);
         return (
@@ -1511,7 +1518,9 @@ function AttributionDailyChart({ grid }) {
 
   return (
     <figure style={{ margin: 0, minWidth: 0 }}>
-      <div role="img" aria-label={getStackedChartLabelO(grid)} tabIndex={0} style={{ cursor: 'crosshair' }} {...handlers}>
+      <div className="flex" style={{ gap: STACKED_Y_AXIS_GAP }}>
+      <StackedYAxisO barAreaH={barAreaH} chartHeight={chartHeight}/>
+      <div role="img" aria-label={getStackedChartLabelO(grid)} tabIndex={0} style={{ cursor: 'crosshair', flex: 1, minWidth: 0 }} {...handlers}>
       <svg
         width="100%"
         height={chartHeight}
@@ -1568,11 +1577,38 @@ function AttributionDailyChart({ grid }) {
         })}
       </svg>
       </div>
-      <StackedChartTicksO grid={grid}/>
-      <div aria-live="polite" className="fs-meta text-dim" style={{ minHeight: 18, fontVariantNumeric: 'tabular-nums' }}>
-        {activeIndex === null ? '' : getStackedDayReadoutO(grid[activeIndex])}
+      </div>
+      <div style={{ paddingLeft: STACKED_Y_AXIS_WIDTH + STACKED_Y_AXIS_GAP }}>
+        <StackedChartTicksO grid={grid}/>
+        <div aria-live="polite" className="fs-meta text-dim" style={{ minHeight: 18, fontVariantNumeric: 'tabular-nums' }}>
+          {activeIndex === null ? 'Point at a day, or focus the chart and use the arrow keys, to read its counts.' : getStackedDayReadoutO(grid[activeIndex])}
+        </div>
       </div>
     </figure>
+  );
+}
+
+const STACKED_Y_AXIS_WIDTH = 32;
+const STACKED_Y_AXIS_GAP = 4;
+// label box height in px → the end ticks clamp inside the plot instead of clipping at its edges
+const STACKED_Y_LABEL_H = 12;
+
+// 100%-stacked bars → the scale is a share of each day's records, so a tick at p% sits p% up the bar area
+function getStackedYTicksO(barAreaH) {
+  return [100, 50, 0].map((pct) => ({ label: `${pct}%`, y: barAreaH * (1 - pct / 100) }));
+}
+
+function StackedYAxisO({ barAreaH, chartHeight }) {
+  return (
+    <div aria-hidden="true" className="fs-meta font-mono text-faint"
+      style={{ position: 'relative', width: STACKED_Y_AXIS_WIDTH, height: chartHeight, flexShrink: 0 }}>
+      {getStackedYTicksO(barAreaH).map((tick) => (
+        <span key={tick.label}
+          style={{ position: 'absolute', right: 0, lineHeight: `${STACKED_Y_LABEL_H}px`, top: Math.min(Math.max(tick.y - STACKED_Y_LABEL_H / 2, 0), barAreaH - STACKED_Y_LABEL_H) }}>
+          {tick.label}
+        </span>
+      ))}
+    </div>
   );
 }
 
@@ -1731,13 +1767,10 @@ function ChannelLivenessBody({ state, onRetry, shared }) {
     <div>
       <div className="flex flex-col gap-1.5">
         {ordered.map((channel) => (
-          <ChannelLivenessRow
-            key={channel.attribution_source}
-            channel={channel}
-            days={days}
-            recencyDays={threshold?.eligibility_recency_days}/>
+          <ChannelLivenessRow key={channel.attribution_source} channel={channel} days={days}/>
         ))}
       </div>
+      <ChannelPeakBarsO channels={ordered} threshold={threshold}/>
       {threshold ? (
         <div className="fs-meta text-faint mt-3 leading-relaxed">
           Alerts once a channel that exceeded {formatIntO(threshold.eligibility_daily_floor)} rows/day
@@ -1749,16 +1782,43 @@ function ChannelLivenessBody({ state, onRetry, shared }) {
   );
 }
 
-function ChannelLivenessRow({ channel, days, recencyDays }) {
+// busiest recent day per channel against the watch floor → which channels the silence alert covers, at a glance
+function ChannelPeakBarsO({ channels, threshold }) {
+  const { BulletBar } = window.UI;
+  const floor = Number(threshold?.eligibility_daily_floor) || null;
+  const recencyDays = threshold?.eligibility_recency_days;
+  const scale = Math.max(floor || 0, 1, ...channels.map((channel) => Number(channel.recent_peak_daily_count) || 0));
+
+  return (
+    <div className="mt-3" role="group" aria-label="Busiest recent day per channel">
+      <div className="fs-meta text-dim mb-1.5">
+        Busiest day{recencyDays ? `, last ${recencyDays}d` : ''}{floor ? ` · watched from ${formatIntO(floor)}/day` : ''}
+      </div>
+      <div className="flex flex-col gap-1">
+        {channels.map((channel) => {
+          const peak = Number(channel.recent_peak_daily_count) || 0;
+          const label = `${channel.attribution_source}: ${formatIntO(peak)}/day${floor ? `, floor ${formatIntO(floor)}/day` : ''}`;
+          return (
+            <div key={channel.attribution_source} className="grid items-center gap-2 fs-meta font-mono"
+              style={{ gridTemplateColumns: 'minmax(0, 11rem) minmax(0, 1fr) 4.5rem' }}>
+              <span className="text-dim truncate" title={channel.attribution_source}>{channel.attribution_source}</span>
+              <BulletBar value={peak / scale} target={floor ? floor / scale : null} showValue={false} ariaLabel={label}
+                tone={toneFromColorVarO(channelLivenessMetaO(channel).colorVar)}/>
+              <span className="text-ink tabular-nums text-right">{formatIntO(peak)}/day</span>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+// the recent peak that decides eligibility is drawn in ChannelPeakBarsO, so the row keeps only the window peak + quiet time
+function ChannelLivenessRow({ channel, days }) {
   const meta = channelLivenessMetaO(channel);
   const silentHours = Math.floor(Number(channel.silent_hours) || 0);
-  // 자격을 결정하는 값은 최근 창의 peak 이다. 창 전체 peak 만 보이면 "버스트 171/day" 채널이
-  // 'Below floor' 로 뜨는 이유를 읽을 수 없으므로, 판정에 쓰인 수치를 앞에 둔다.
-  const recentPeak = formatIntO(channel.recent_peak_daily_count);
   const windowPeak = formatIntO(channel.peak_daily_count);
-  const detail = `${recentPeak}/day${recencyDays ? ` last ${recencyDays}d` : ''}`
-    + ` · ${windowPeak}/day peak${days ? ` over ${days}d` : ''}`
-    + ` · quiet ${formatIntO(silentHours)}h`;
+  const detail = `${windowPeak}/day peak${days ? ` over ${days}d` : ''} · quiet ${formatIntO(silentHours)}h`;
 
   // two fixed single lines (status + source, then detail) → a narrow column truncates instead of wrapping to 4–6 lines
   return (
@@ -1815,8 +1875,8 @@ function GraderBreakdownBody({ state, onRetry, shared }) {
 
   return (
     <>
+      {/* open, not folded → the column matches the cross table beside it instead of leaving one sentence over a blank card */}
       <p className="fs-body text-ink mb-2">{getGraderSentenceO(breakdown)}</p>
-      <window.UI.Disclosure kind="detail" title="Check breakdown" sub="Each verdict, and where it came from" level={3}>
       <div className="grid gap-3" style={{ gridTemplateColumns: `repeat(${tileKeys.length}, minmax(0, 1fr))` }}>
         {tileKeys.map((key) => {
           const meta  = GRADER_BREAKDOWN_META[key];
@@ -1840,7 +1900,6 @@ function GraderBreakdownBody({ state, onRetry, shared }) {
         })}
       </div>
       <DowngradeBreakdownRowO breakdown={state.data?.overall?.downgrade_breakdown}/>
-      </window.UI.Disclosure>
     </>
   );
 }
@@ -2066,23 +2125,30 @@ function CrosstabRow({ rowKey, byCell, max }) {
 
 function CrosstabCell({ cell, max, rowLabel, colLabel }) {
   const count = cell.count || 0;
-  // 음영: polar 셀은 warn, 그 외 accent. 상대 빈도(0.08~0.40 opacity) — 상한 = 두 테마 모두 ink 4.5:1 유지 · 0건은 무음영.
-  const ratio   = max > 0 ? count / max : 0;
-  const opacity = count > 0 ? (0.08 + ratio * 0.32).toFixed(3) : '0';
-  const tintVar = cell.isPolar ? '--warn' : '--accent';
+  const bar = getCrosstabBarO(cell, max);
 
   return (
     <td
-      className="text-center px-2 py-1.5 border-b border-line"
-      style={{ background: `rgb(var(${tintVar}) / ${opacity})` }}
+      className="text-center px-2 pt-1.5 pb-1 border-b border-line"
       title={`${rowLabel} × ${colLabel}: ${formatIntO(count)}${cell.isPolar ? ' · polar mismatch' : ''}`}
       aria-label={`confidence ${rowLabel} metric ${colLabel} ${count}${cell.isPolar ? ' polar mismatch' : ''}`}>
       <span className="inline-flex items-center gap-1 justify-center">
         {cell.isPolar && count > 0 && <span aria-hidden="true" style={{ color: 'rgb(var(--warn))' }}><GlyphO name="warn"/></span>}
         <span className="text-ink">{count > 0 ? formatIntO(count) : '·'}</span>
       </span>
+      <span className="block mt-1" aria-hidden="true" style={{ height: 3 }}>
+        {bar && <span className="block" style={{ height: '100%', width: `${bar.widthPct}%`, background: `rgb(var(${bar.colorVar}))`, borderRadius: 1 }}/>}
+      </span>
     </td>
   );
+}
+
+// solid bar, never a translucent tint → the fill holds 3:1 on the card in both themes while the count stays on the plain card
+function getCrosstabBarO(cell, max) {
+  const count = cell.count || 0;
+  if (!(count > 0) || !(max > 0)) return null;
+  // floor 4% → a lone record stays visible beside a busy cell
+  return { colorVar: cell.isPolar ? '--warn' : '--accent', widthPct: Math.max(4, (count / max) * 100) };
 }
 
 function CrosstabTotalRow({ byCell, total }) {
@@ -2412,7 +2478,8 @@ function ResultTableCard({
         }
       />
       <ActiveFilterChips filter={filter} onRemove={onPatchFilter} onClearAll={onResetFilter}/>
-      <div className="card-body" style={{ padding: 0 }}>
+      {/* lifts the shared 70vh card-body cap → the Routine rows scroll with the page, not in a nested box */}
+      <div className="card-body" style={{ padding: 0, maxHeight: 'none', overflowY: 'visible' }}>
         <ResultTableBody
           state={state}
           rows={rows}
@@ -2602,13 +2669,11 @@ function buildLedgerSectionsO(rows, closure, windowNeedsYou, needsYouCap = null)
   const needsYouRows = needsYouCap == null ? allNeedsYouRows : allNeedsYouRows.slice(0, needsYouCap);
   const hiddenCount = allNeedsYouRows.length - needsYouRows.length;
   const needsYouTotal = windowNeedsYou ? windowNeedsYou.total : allNeedsYouRows.length;
-  const needsYouHeading = (windowNeedsYou
-    ? `Needs you · ${formatIntO(needsYouTotal)} in ${windowNeedsYou.windowLabel}`
-    : `Needs you · ${formatIntO(needsYouTotal)} on this page`)
-    + (needsYouTotal > needsYouRows.length ? ` · first ${formatIntO(needsYouRows.length)} shown` : '');
+  // one row-count word across the page → each heading ends in the rows it shows, as the Results head and the drawer do
+  const needsYouScope = `Needs you · ${formatIntO(needsYouTotal)}${windowNeedsYou ? ` in ${windowNeedsYou.windowLabel}` : ''}`;
   return [
-    { key: 'needs-you', label: 'Needs you', heading: needsYouHeading, rows: needsYouRows, hiddenCount, anchorId: LEDGER_NEEDS_YOU_ID },
-    { key: 'routine',   label: 'Routine',   heading: `Routine · ${formatIntO(routine.length)} on this page`, rows: routine, hiddenCount: 0 },
+    { key: 'needs-you', label: 'Needs you', heading: `${needsYouScope} · ${formatIntO(needsYouRows.length)} shown`, rows: needsYouRows, hiddenCount, anchorId: LEDGER_NEEDS_YOU_ID },
+    { key: 'routine',   label: 'Routine',   heading: `Routine · ${formatIntO(routine.length)} shown`, rows: routine, hiddenCount: 0 },
   ];
 }
 

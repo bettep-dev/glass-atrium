@@ -692,3 +692,112 @@ describe("AttributionBreakdownO: only a landed window may say it has no breakdow
     assert.match(String(empty?.props.message), /No daily breakdown/);
   });
 });
+
+interface WordingSandboxO {
+  buildLedgerSectionsO: (
+    rows: Array<Record<string, unknown>>,
+    closure: { pendingIds: Set<unknown>; closedOverrides: Map<unknown, unknown> },
+    windowNeedsYou: { rows: Array<Record<string, unknown>>; total: number; windowLabel: string } | null,
+    needsYouCap: number | null,
+  ) => Array<{ key: string; heading: string; rows: unknown[] }>;
+  getRateVerdictO: (rate: Record<string, unknown>, windowLabel: string) => { chips: Array<{ label: string }> };
+  buildStatusBandTilesO: (data: Record<string, unknown>, attentionCount: number | null) => Array<{ key: string; label: string }>;
+}
+const wording = rendered as unknown as WordingSandboxO;
+
+describe("buildLedgerSectionsO: every ledger heading counts its rows with the page's one word, 'shown'", () => {
+  const rows = [{ id: 1, result: "fail" }, { id: 2, result: "blocked" }, { id: 3, result: "done" }];
+  const closure = { pendingIds: new Set(), closedOverrides: new Map() };
+  const cases = [
+    { name: "a page split with no cap", windowNeedsYou: null, cap: null },
+    { name: "a page split capped below its needs-you rows", windowNeedsYou: null, cap: 1 },
+    {
+      name: "a window query larger than the rows it shows",
+      windowNeedsYou: { rows: [{ id: 1, result: "fail" }, { id: 9, result: "fail" }], total: 12, windowLabel: "7d" },
+      cap: 1,
+    },
+  ];
+  for (const row of cases) {
+    test(row.name, () => {
+      const sections = wording.buildLedgerSectionsO(rows, closure, row.windowNeedsYou, row.cap);
+      for (const section of sections) {
+        assert.match(section.heading, new RegExp(` · ${section.rows.length} shown$`), section.key);
+        assert.doesNotMatch(section.heading, /on this page|first \d/, section.key);
+      }
+    });
+  }
+});
+
+describe("getRateVerdictO: the verdict chip names the jump, never a status tile's label again", () => {
+  test("a failing window's chip label differs from every status tile label", () => {
+    const verdict = wording.getRateVerdictO({ status: "ok", tone: "crit", breakage: 20, openCaveats: 5, writerTotal: 100 }, "last 7d");
+    const tileLabels = new Set(wording.buildStatusBandTilesO({ overall: { total: 100 } }, 3).map((tile) => tile.label));
+    assert.ok(verdict.chips.length > 0);
+    for (const chip of verdict.chips) assert.ok(!tileLabels.has(chip.label), chip.label);
+  });
+});
+
+interface DensitySandboxO {
+  GraderBreakdownBody: (props: { state: Record<string, unknown> }) => RecordedElementO;
+  buildStatusBandTilesO: (data: Record<string, unknown>, attentionCount: number | null) => Array<{ key: string }>;
+  getVolumeTilesO: (tiles: Array<{ key: string }>) => Array<{ key: string }>;
+}
+const density = rendered as unknown as DensitySandboxO;
+
+describe("Task results density: the columns beside a taller card carry their own facts", () => {
+  test("a landed check breakdown renders every verdict tile without a fold", () => {
+    const breakdown = { verified_pass: 5, unverified: 3, verified_fail: 2, graded_total: 10 };
+    const elements = flattenO(density.GraderBreakdownBody({ state: { status: "ready", data: { overall: { grader_breakdown: breakdown } } } }));
+    assert.equal(elements.some((el) => el.props.kind === "detail"), false, "no detail fold");
+    const tileKeys = elements.map((el) => el.props.key).filter((key) => ["verified_pass", "unverified", "verified_fail"].includes(String(key)));
+    assert.equal(tileKeys.length, 3);
+  });
+
+  test("the volume column beside the hero carries the failed-or-blocked count, never the hero again", () => {
+    const tiles = density.buildStatusBandTilesO({ overall: { total: 100 }, byResultCount: { fail: 2, done: 90 } }, 3);
+    const keys = density.getVolumeTilesO(tiles).map((tile) => tile.key);
+    assert.ok(keys.includes("broken"), keys.join(","));
+    assert.ok(!keys.includes("attention"), keys.join(","));
+  });
+});
+
+interface ChartSandboxO {
+  getCrosstabBarO: (cell: { count: number; isPolar: boolean }, max: number) => { colorVar: string; widthPct: number } | null;
+  CrosstabCell: (props: { cell: { count: number; isPolar: boolean }; max: number; rowLabel: string; colLabel: string }) => RecordedElementO;
+  getStackedYTicksO: (barAreaH: number) => Array<{ label: string; y: number }>;
+}
+const chart = rendered as unknown as ChartSandboxO;
+
+describe("getCrosstabBarO: a cell's fill is a solid bar sized by its share of the busiest cell", () => {
+  const rows = [
+    { name: "the busiest cell fills the whole width", cell: { count: 40, isPolar: false }, max: 40, bar: { colorVar: "--accent", widthPct: 100 } },
+    { name: "a polar cell at half the busiest keeps the warn hue at half width", cell: { count: 20, isPolar: true }, max: 40, bar: { colorVar: "--warn", widthPct: 50 } },
+    { name: "an empty cell draws no bar", cell: { count: 0, isPolar: true }, max: 40, bar: null },
+  ];
+  for (const row of rows) {
+    test(row.name, () => {
+      // vm-realm object → compare by value, not prototype
+      assert.deepEqual(JSON.parse(JSON.stringify(chart.getCrosstabBarO(row.cell, row.max))), row.bar);
+    });
+  }
+
+  test("the cell paints no translucent tint under its count", () => {
+    const cell = chart.CrosstabCell({ cell: { count: 10, isPolar: true }, max: 40, rowLabel: "high", colLabel: "fail" });
+    const backgrounds = flattenO(cell).map((el) => (el.props.style as { background?: string } | undefined)?.background).filter(Boolean);
+    assert.ok(backgrounds.length > 0, "the bar is painted");
+    for (const background of backgrounds) assert.doesNotMatch(String(background), /\//, "an alpha fill drops below 3:1");
+  });
+});
+
+describe("getStackedYTicksO: each share tick sits its share up the bar area", () => {
+  const barAreaH = 116;
+  const ticks = chart.getStackedYTicksO(barAreaH);
+  test("the scale spans 0% to 100%", () => {
+    assert.deepEqual(JSON.parse(JSON.stringify(ticks.map((tick) => tick.label).sort())), ["0%", "100%", "50%"]);
+  });
+  for (const tick of ticks) {
+    test(`the ${tick.label} tick sits at its share of the bar height`, () => {
+      assert.equal(tick.y, barAreaH * (1 - Number.parseFloat(tick.label) / 100));
+    });
+  }
+});
