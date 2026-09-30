@@ -615,17 +615,16 @@ function getVerdictFreshnessMC(tone, asOfAt, state) {
 
 /**
  * What the live region says once a Refresh or Retry settles — silent on the first load, while busy,
- * and after a save (its toast speaks). A config-region error only ever comes from a read.
+ * and after a save (its toast speaks).
+ * A warm failure mounts the role=alert card, which owns that announcement; a cold Retry failure lands
+ * in an alert already mounted by the first failure, so only this region can say it.
  */
 function getReadAnnouncementMC(state, asOfAt, refreshTick) {
 	if (refreshTick === 0 || state.busy) return "";
 
+	if (state.error != null) return state.data != null ? "" : "Couldn't read model config.";
+
 	const time = asOfAt !== null ? window.UI.formatKstTime(asOfAt) : null;
-	if (state.error != null) {
-		return state.data != null && time
-			? `Couldn't reload model config — showing the last good read from ${time}.`
-			: "Couldn't read model config.";
-	}
 	return state.key === "config" && time ? `Model config reloaded — as of ${time}.` : "";
 }
 
@@ -820,7 +819,7 @@ function getFileAgentNameMC(file) {
 /**
  * In effect = measured at the consumption point.
  * Matching the saved target → ✓ 'Matches saved' (tooltip 'In effect: …') · differing → the value + one warn badge · absent → nothing.
- * A failed reload dates the match to the last good read · no file list → names the source it was read from.
+ * A failed reload dates the match to the last good read · no file list → names the source, or that it yielded no value.
  */
 function LiveValueMC({ value, drift, files, source, isStale, driftTitle }) {
 	const { AgentName, Badge, Icon } = window.UI;
@@ -886,7 +885,8 @@ function LiveValueMC({ value, drift, files, source, isStale, driftTitle }) {
 			)}
 			{fileRows.length === 0 && source && (
 				<div className="fs-meta text-faint">
-					Read from{" "}
+					{/* null live value = source unreadable or key missing → never claim a read */}
+					{value != null ? "Read from" : "No value read from"}{" "}
 					{isConfigFileMC(source) ? <span className="font-mono">{source}</span> : <AgentName name={source} />}
 				</div>
 			)}

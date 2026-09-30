@@ -1653,7 +1653,7 @@ describe("a Refresh or Retry result is announced in one polite live region, moun
     { name: "first load is not announced", tick: 0, region: { status: "ready", data: SCREEN_DATA_MC, key: "config", busy: false }, says: null },
     { name: "a read in flight says nothing yet", tick: 1, region: { status: "ready", data: SCREEN_DATA_MC, key: "config", busy: true }, says: null },
     { name: "a reload that landed names its read time", tick: 1, region: { status: "ready", data: SCREEN_DATA_MC, key: "config", busy: false }, says: ["reloaded", time] },
-    { name: "a failed reload over held data names the last good read", tick: 1, region: { status: "ready", data: SCREEN_DATA_MC, key: "config", error: "HTTP 500", busy: false }, says: ["Couldn't reload", "last good read", time] },
+    { name: "a failed reload over held data leaves the announcement to the alert card it mounts", tick: 1, region: { status: "ready", data: SCREEN_DATA_MC, key: "config", error: "HTTP 500", busy: false }, says: null },
     { name: "a failed first read says nothing was read", tick: 1, region: { status: "error", data: null, error: "HTTP 500", busy: false }, says: ["Couldn't read"] },
     { name: "a save leaves the announcement to its own toast", tick: 1, region: { status: "ready", data: SCREEN_DATA_MC, key: "save", busy: false }, says: null },
   ];
@@ -1750,4 +1750,22 @@ test("every In-effect cell is filled: a tier without a file list names where its
 
   const cap = textMc([liveCellMc(renderComponentMc(screens.BudgetsSectionMC, budgetsPropsMc()))]);
   assert.ok(cap.includes("Read from daemon-config.json"), `a cap names its source (${cap})`);
+});
+
+test("a sourced In-effect cell with no live value names the source without claiming it was read", () => {
+  const unread = ALL_TIERS_MC.map((tier) => ({ ...tier, actual: null, drift: false }));
+  const tree = renderComponentMc(screens.DomainsSectionMC, domainsPropsMc(unread));
+  const bodyRows = tagsMc(tagsMc(tree, "tbody")[0].children, "tr");
+  const cells = [
+    ...["model.research", "model.meta", "model.wiki", "model.daemon_cycle_worker"].map((domain) =>
+      [domain, textMc([tagsMc(bodyRows[unread.findIndex((tier) => tier.domain === domain)].children, "td")[2]])] as const),
+    ["budget.worker_max_usd", textMc([liveCellMc(renderComponentMc(
+      screens.BudgetsSectionMC,
+      budgetsPropsMc([{ ...BUDGET_ROW_FIXTURE_MC[0], actual: null, drift: false }]),
+    ))])] as const,
+  ];
+  for (const [domain, live] of cells) {
+    assert.ok(live.startsWith("No value read from"), `${domain}: says nothing was read (${live})`);
+    assert.ok(!live.includes("Matches saved"), `${domain}: an unread value never reads as matching (${live})`);
+  }
 });
