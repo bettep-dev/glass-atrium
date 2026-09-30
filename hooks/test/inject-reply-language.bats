@@ -3,6 +3,7 @@
 # Contracts protected:
 # - a machine-written prompt gets one line quoting the user's latest own message
 # - the line's fixed part names no language
+# - the fixed part after the quote names the turn's final message, the report to the user, as what takes that language
 # - an ordinary human prompt, a typed slash command included, stays silent without python3 or a transcript read
 # - every input exits 0, so no prompt is erased
 
@@ -11,6 +12,8 @@ HOOK="${BATS_TEST_DIRNAME}/../inject-reply-language.sh"
 CORPUS="${BATS_TEST_DIRNAME}/corpus/reply-language"
 # Names a resolver-derived language value would carry into the line's fixed part.
 LANGUAGE_NAMES='english|korean|japanese|chinese|hangul|latin|kana|한국어|영어|일본어|중국어'
+# Fixed phrase the context line carries after the quote.
+REPLY_TARGET='the final message of each turn, your report to the user'
 KOREAN_QUOTE='좋아, 이제 리뷰 반영해줘'
 ENGLISH_QUOTE='Now apply the review comments please'
 NOTIFICATION='<task-notification>\n<summary>Background build finished</summary>\n</task-notification>'
@@ -48,17 +51,18 @@ run_hook() {
   fi
 }
 
-# Context line → `<fixed part>\x1f<quote>` | `silent` (no output) | `malformed: <output>` (else, incl. a named language)
+# Context line → `<fixed part>\x1f<quote>` | `silent` (no output) | `malformed: <output>` (else, incl. a named language or no REPLY_TARGET after the quote)
 split_output() {
   if [[ -z "${output}" ]]; then
     printf 'silent'
     return 0
   fi
-  jq -er --arg names "${LANGUAGE_NAMES}" '
+  jq -er --arg names "${LANGUAGE_NAMES}" --arg target "${REPLY_TARGET}" '
     select(.hookSpecificOutput.hookEventName == "UserPromptSubmit")
     | .hookSpecificOutput.additionalContext
     | capture("^(?<head>[^\"\n]*)(?<quote>\"(?:[^\"\\\\\n]|\\\\.)*\")(?<tail>[^\"\n]*)$")
     | select((.head + .tail) | test($names; "i") | not)
+    | select(.tail | contains($target))
     | "\(.head)…\(.tail)\u001f\(.quote | fromjson)"' <<<"${output}" 2>/dev/null \
     || printf 'malformed: %s' "${output}"
 }
