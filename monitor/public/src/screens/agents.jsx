@@ -1273,7 +1273,7 @@ function AgentDetailDrawer({
   detailState, blockedState, recentState, trendByAgent, trendDates, failureByAgent,
   days, onClose, onNav, onRetry, onDeleted,
 }) {
-  const { DetailSurface, AgentName } = window.UI;
+  const { DetailSurface } = window.UI;
 
   // summary 행에서 선택 agent 도출 — 모든 섹션의 1차 소스. 미발견 시 id 만으로 헤더 표시.
   const agent = (readyData(summaryState)?.agents ?? []).find((a) => a.agent_id === drawerAgent) || null;
@@ -1309,7 +1309,7 @@ function AgentDetailDrawer({
   // DetailSurface names the dialog by this whole node → sr-only commas keep name, activity and health apart
   const title = (
     <span className="flex items-center gap-2 flex-wrap">
-      <AgentName name={agentName}/>
+      <AgentDrawerNameAg name={agentName}/>
       <span className="sr-only">, </span>
       <ActivityMark status={agent?.status} lastRunAt={agent?.last_run_at}/>
       <span className="sr-only">, </span>
@@ -1453,6 +1453,17 @@ function AgentDetailDrawer({
 
 // typed-name 삭제 확인 패널 — drawer 본문 서브상태.
 // full name 정확 일치 시에만 푸터 커밋 버튼 활성 (비가역 작업 게이트는 푸터가 소유 · 여기선 입력+공시).
+// the dialog takes its name from the title → hyphens read out one by one, so the spoken form splits them into words
+function AgentDrawerNameAg({ name }) {
+  const words = window.UI.getAgentDisplayName(name).split('-').filter(Boolean).join(' ');
+  return (
+    <span>
+      <span aria-hidden="true"><window.UI.AgentName name={name}/></span>
+      <span className="sr-only">{words}</span>
+    </span>
+  );
+}
+
 function AgentDeleteConfirmPanel({ agentName, value, committing, error, onChange }) {
   const { Icon } = window.UI;
   const matches = value === agentName;

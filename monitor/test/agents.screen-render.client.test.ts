@@ -1628,3 +1628,11 @@ test("the No record and Unfinished counts state their definitions on the page, w
     assert.match(collectText(tree).replace(/\s+/g, " "), row.definition, row.name);
   }
 });
+
+test("the drawer names its agent in words for a screen reader, the hyphenated id staying visual only", async () => {
+  const tree = await renderComponent("AgentDrawerNameAg", { name: "glass-atrium-dev-shell" }) as RenderedNode;
+  const [spoken] = findNodes(tree, (n) => n.props?.className === "sr-only");
+  const [hidden] = findNodes(tree, (n) => n.props?.["aria-hidden"] === "true");
+  assert.equal(collectText(spoken).trim(), "dev shell", "the spoken name splits the id at its hyphens");
+  assert.deepEqual(findAtoms(hidden, "AgentName").map((n) => n.props.name), ["glass-atrium-dev-shell"], "the shared atom still draws the id");
+});
