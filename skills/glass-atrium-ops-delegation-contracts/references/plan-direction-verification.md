@@ -40,7 +40,7 @@
 ## Backstop detail
 
 - **Identical policy — what it covers**: team composition · DEV hard-gate · complex-only scope · max-1-revision.
-- **Manual backstop**: `enforce-verification-gate.sh` runs on `PreToolUse(Agent)`, with a ~17% same-batch race (see `skills/glass-atrium-ops-orchestrator.md` → `### Ultracode / Workflow-tool Mode`).
+- **Manual backstop**: `enforce-verification-gate.sh` runs on `PreToolUse(Agent)`; mechanical surface: reviewer-spawn presence only, fail-open (see `skills/glass-atrium-ops-orchestrator.md` → `### Ultracode / Workflow-tool Mode`).
 - **Ultracode backstop**: `enforce-workflow-verify-stage.sh` runs on `PreToolUse(Workflow)`; the declaration it checks: `rules/glass-atrium/orchestrator-role.md` → `#### Ultracode declaration contract`.
   - Mechanical surface: declaration PRESENCE + line GRAMMAR (the DEV hard-gate included, `block-noverifydev`) + declaration↔code CONSISTENCY, fail-open on any parse uncertainty.
   - It does NOT validate DEV-verdict or gating-expression correctness, and role truthfulness is honor-system (HONESTY bullet in `skills/glass-atrium-ops-delegation-contracts/references/ultracode-declaration-contract.md`).

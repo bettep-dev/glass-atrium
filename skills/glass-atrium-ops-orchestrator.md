@@ -1211,8 +1211,11 @@ Boundary rule: **pre-enumerable condition → engine; semantic interpretation �
 
 - Engine `agent()` spawns fire no `PreToolUse(Agent)` event (no `~/.claude/data/session-spawns/` trace), so `enforce-verification-gate.sh` is silently absent under ultracode.
 - The Stage-2 verify-stage is therefore authored in-script and declared in `[AGENT-COMPOSITION]`, which the `PreToolUse(Workflow)` gate backstops: this file → `#### Pipeline Acceptance Criteria` → "In-script verify-stage" · self-check: `### Missing-verify-stage guard (ultracode)`.
-- **Manual path, for contrast**: `enforce-verification-gate.sh` is a best-effort advisory, not a reliable backstop — reviewer + DEV spawned in one message race (write-after-read), giving a ~17% spurious advisory. The correct manual discipline spawns reviewer → DEV sequentially, DEV gated on the verdict.
-- Both disciplines are honor-system primary; only the ultracode side adds the fail-open `PreToolUse(Workflow)` backstop.
+- **Manual path, for contrast**: `enforce-verification-gate.sh` blocks (exit 2, `VGATE-REVIEWER-001`) an orchestrator-origin, plan-referencing DEV spawn with no glass-atrium-qa-code-reviewer spawn recorded in the session.
+  - Presence-only and fail-open: any earlier reviewer spawn in the session satisfies it, whatever plan or verdict it carried; a nested sub-worker origin gets a stderr advisory only.
+  - Reviewer + DEV spawned in one message race (write-after-read): the DEV read precedes the reviewer's completion stamp, so the DEV spawn is blocked.
+  - The correct manual discipline spawns reviewer → DEV sequentially, DEV gated on the verdict.
+- Both disciplines are honor-system primary; only the backstop KIND differs — a fail-open `PreToolUse(Agent)` reviewer-presence block on the manual path, a fail-open `PreToolUse(Workflow)` declaration check under ultracode.
 
 #### JS-authoring pitfalls (digest)
 

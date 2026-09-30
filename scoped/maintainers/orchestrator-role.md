@@ -76,8 +76,6 @@ Maintainer-facing material for that rule file. Nothing here binds the orchestrat
   - Retargeted citers, each naming the `##` level: `scoped/maintainers/scope-qa.md` (two Team-composition citations), the rule file's premise-register line and `SKILL.md` → Edit Rules → **Cited headings**.
 - Location-only citer that stays: `skills/glass-atrium-ops-orchestrator.md` → `#### Pipeline Acceptance Criteria` → the Stage 2 bullet names the gate heading for team composition, DEV hard gate, activation scope and direction-not-completeness. The pointer keeps all four.
   - Its **Stage-2 revision/escalation** bullet names the same heading for the escalation path; the pointer's **Revision + escalation** carries that path and its path-only limit.
-- Open owner decision: the **Manual** backstop line calls `hooks/enforce-verification-gate.sh` "a best-effort runtime advisory", while its reviewer-miss branch blocks an orchestrator-origin spawn (exit 2).
-  - The qualifier stays unchanged at the rule-file pointer and at `skills/glass-atrium-ops-orchestrator.md` → **Manual path, for contrast** until the owner decides.
 - No dev-* or reviewer body mirrors `scoped/scope-qa.md` or `scoped/scope-dev.md`.
 - The rule file also reaches every subagent on the host channel (see `#### Monitoring-phase notes` above), and its opening line tells subagents to ignore it.
 - The three are not a redundancy to collapse: a duty moved into the rule file is read by the wrong actors and owed by none; a duty deleted from a scope file loses its only maintained statement.

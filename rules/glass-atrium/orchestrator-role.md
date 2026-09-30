@@ -252,7 +252,7 @@ The scan establishes **routing** facts — what exists, where it lives, who owns
 #### Backstop asymmetry (manual vs. ultracode)
 
 - The policy is identical on both paths; only the backstop KIND differs.
-- **Manual**: `enforce-verification-gate.sh`, a best-effort runtime advisory.
+- **Manual**: `enforce-verification-gate.sh` blocks (exit 2) an orchestrator-origin, plan-referencing DEV spawn with no glass-atrium-qa-code-reviewer spawn recorded in the session — presence-only and fail-open.
 - **Ultracode**: `enforce-workflow-verify-stage.sh` BLOCKS (exit 2) a missing, malformed or code-inconsistent `[AGENT-COMPOSITION]` declaration.
 - The authoring obligation — a `{glass-atrium-qa-code-reviewer, DEV}` verify-stage before any DEV implementation, gated on `pass`+`feasible` — REMAINS PRIMARY; never describe ultracode as "fully enforced".
 
