@@ -2731,14 +2731,15 @@ function QualityHealthTimelineTooltip({ active, payload }) {
       <div style={{ color: 'rgb(var(--dim))' }}>
         flagged {formatIntAg(row.review_flagged_count)} / {formatIntAg(row.total_count)}
       </div>
+      {/* reasons count over every run of the day, flagged or not → not a split of the flagged figure */}
       <div style={tooltipRowStyle}>
         <span style={{ width: 8, height: 8, borderRadius: 2, background: 'rgb(var(--warn))' }}/>
-        No self-check {formatIntAg(row.empty_metric_count)}
+        No self-check {formatIntAg(row.empty_metric_count)} of {formatIntAg(row.total_count)} runs
         <span style={{ color: 'rgb(var(--faint))' }}>· {row.empty_metric_ratio_pct.toFixed(1)}%</span>
       </div>
       <div style={tooltipRowStyle}>
         <span style={{ width: 8, height: 8, borderRadius: 2, background: 'rgb(var(--accent))' }}/>
-        Confidence mismatch {formatIntAg(row.polar_mismatch_count)}
+        Confidence mismatch {formatIntAg(row.polar_mismatch_count)} of {formatIntAg(row.total_count)} runs
       </div>
       <div style={{ color: 'rgb(var(--crit))', marginTop: 4 }}>
         Flagged rate {row.review_flag_ratio_pct.toFixed(1)}%

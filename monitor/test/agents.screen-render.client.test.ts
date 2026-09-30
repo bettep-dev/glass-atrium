@@ -1568,3 +1568,14 @@ test("a top concern reads as plain text, without the stray punctuation a cut fra
   ];
   for (const row of rows) assert.equal(getConcernText(row.raw), row.text, row.name);
 });
+
+test("each review-flag reason in the day tooltip names the runs it counts over, since reasons are not a split of the flagged runs", async () => {
+  const row = {
+    fullDate: "2026-09-24", total_count: 20, review_flagged_count: 3, empty_metric_count: 5, polar_mismatch_count: 4,
+    review_flag_ratio_pct: 15, empty_metric_ratio_pct: 25,
+  };
+  const tree = await renderComponent("QualityHealthTimelineTooltip", { active: true, payload: [{ payload: row }] });
+  const text = collectText(tree).replace(/\s+/g, " ");
+  assert.match(text, /No self-check 5 of 20 runs/, "the self-check count states its own denominator");
+  assert.match(text, /Confidence mismatch 4 of 20 runs/, "the mismatch count states its own denominator");
+});
