@@ -150,8 +150,9 @@ test("status folds render open while their detail breakdowns start collapsed", a
 test("paired cards sit side by side in one split row", async () => {
   const { tree } = await renderOutcomesScreen(0);
   const rows = [
-    { name: "record attribution beside recording channels", ratio: "split-row--1-1", titles: ["Record attribution", "Recording channels"] },
-    { name: "check results beside the crosstab", ratio: "split-row--1-1", titles: ["Automatic check results", "Confident but failed"] },
+    // equal: peer reporting cards end level · content: each card keeps its own height
+    { name: "record attribution beside recording channels, ending level", ratio: "split-row--1-1", layout: "split-row--equal", titles: ["Record attribution", "Recording channels"] },
+    { name: "check results beside the crosstab", ratio: "split-row--1-1", layout: "split-row--content", titles: ["Automatic check results", "Confident but failed"] },
   ];
 
   for (const row of rows) {
@@ -159,17 +160,16 @@ test("paired cards sit side by side in one split row", async () => {
     const pair = splitRows.find((n) => row.titles.every((title) => collectText(n).includes(title)));
     assert.ok(pair, row.name);
     assert.equal(pair.children.filter((child) => typeof child !== "string").length, 2, `${row.name}: exactly two columns`);
+    assert.ok(String(pair.props.className).includes(row.layout), `${row.name}: ${row.layout}`);
   }
 });
 
-test("the per-agent table spans the full width and the reporting pair ends level", async () => {
+test("the per-agent table spans the full width", async () => {
   const { tree } = await renderOutcomesScreen(0);
   const splitRows = findNodes(tree, (n) => String(n.props.className ?? "").includes("split-row"));
-  const equalRows = splitRows.filter((n) => String(n.props.className).includes("split-row--equal"));
 
   // no half-width column → no empty stretch under the per-agent table beside the taller Reporting health stack
   assert.ok(!splitRows.some((n) => collectText(n).includes("Failed or blocked by agent")), "per-agent table sits in no split row");
-  assert.ok(equalRows.some((n) => ["Record attribution", "Recording channels"].every((title) => collectText(n).includes(title))), "peer reporting cards match heights");
 });
 
 // component nodes keep their name as type; the region's card is the first host element beneath them
