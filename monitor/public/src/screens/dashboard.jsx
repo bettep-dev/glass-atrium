@@ -125,7 +125,9 @@ function ScreenDashboard({ onNav, harness, onRetryHarness }) {
   const alarms = buildAlarms({ harness, costState, installKind });
   const alarmReadiness = getAlarmReadiness({ harness, costState, updateState });
   const tiles = buildTiles({ harness, costState, agentsState, outcomesState, isHarnessBusy });
-  const sharedFailure = getTileSharedFailure(tiles);
+  const weekPanels = [{ source: 'daily spend', error: spendDaysState.error }, { source: 'runs by hour', error: heatmapState.error }];
+  const sharedFailure = getTileSharedFailure(tiles, weekPanels);
+  const sharedSources = sharedFailure?.sources ?? NO_SHARED_SOURCES;
   const version = describeVersion(harness);
 
   return (
@@ -184,11 +186,12 @@ function ScreenDashboard({ onNav, harness, onRetryHarness }) {
           updateJobState={updateJobState}
           onRefetchJob={refetchUpdateJob}
         />
-        <StatusBand tiles={tiles} onNav={onNav} onRetry={retryTile} sharedSources={sharedFailure?.sources ?? NO_SHARED_SOURCES}/>
-        <WeekRow spendState={spendDaysState} outcomesState={outcomesState} onRetrySpend={() => loadRegion('spendDays')}/>
+        <StatusBand tiles={tiles} onNav={onNav} onRetry={retryTile} sharedSources={sharedSources}/>
+        <WeekRow spendState={spendDaysState} outcomesState={outcomesState} onRetrySpend={() => loadRegion('spendDays')}
+          sharedSources={sharedSources}/>
         <WeekPanel id="dash-week-hours" title="Runs by hour" state={heatmapState} source="runs by hour"
-          onRetry={() => loadRegion('heatmap')}
-          render={(data) => <HourGrid grid={buildHourGrid(data, getTodayIn(data.meta?.timezone))}/>}/>
+          onRetry={() => loadRegion('heatmap')} isRetryShared={sharedSources.includes('runs by hour')}
+          render={(data) => <HourGrid grid={buildHourGrid(data)}/>}/>
       </div>
     </div>
   );
@@ -201,9 +204,12 @@ function getTileRetry(loadRegion, rereadHarness) {
 
 const NO_SHARED_SOURCES = Object.freeze([]);
 
-// ≥2 tiles failing on one cause (unloaded or held) → one page banner carries the only Retry
-function getTileSharedFailure(tiles) {
-  return window.UI.getSharedFailure(tiles.map((tile) => ({ source: tile.source, error: tile.error })));
+// ≥2 sources failing on one cause (tiles + week panels, unloaded or held) → one page banner carries the only Retry
+// panels on another cause keep their own Retry → the tiles' banner still stands without them
+function getTileSharedFailure(tiles, panels = []) {
+  const { getSharedFailure } = window.UI;
+  const tileEntries = tiles.map((tile) => ({ source: tile.source, error: tile.error }));
+  return getSharedFailure([...tileEntries, ...panels]) ?? getSharedFailure(tileEntries);
 }
 
 // 경보 레인 — 비어도 한 행 높이를 지킨다(도착·새로고침 때 밴드가 밀리지 않게).
@@ -327,7 +333,8 @@ function StatusBand({ tiles, onNav, onRetry, sharedSources = NO_SHARED_SOURCES }
 const DASH_STATUS_BAND_ID = 'dash-status';
 
 // a banner-carried outage is stated once, above → the tile stays flat with its unknown dash
-const SHARED_FAILURE_HINT = 'Not loaded — see the notice above.';
+const BANNER_POINTER = 'see the notice above';
+const SHARED_FAILURE_HINT = `Not loaded — ${BANNER_POINTER}.`;
 
 // 상태 4종이 서로 다르게 읽히는 지점 — loading(status 자리표시) · error(공용 unavailable 카드) · unavailable/empty(중립 문구) · ready(값).
 // 값 자리는 never 0-for-unknown: 미수신은 '—' 로 남는다.
@@ -394,19 +401,21 @@ function StatusTileValue({ tile }) {
 }
 
 // the week behind the triage band → each half states its own span (the strip 7 days, the results 7 days + today)
-function WeekRow({ spendState, outcomesState, onRetrySpend }) {
+function WeekRow({ spendState, outcomesState, onRetrySpend, sharedSources = NO_SHARED_SOURCES }) {
   return (
     <div className="grid grid-cols-1 xl:grid-cols-2 gap-card">
       <WeekPanel id="dash-week-spend" title="Spend per day" state={spendState} source="daily spend" onRetry={onRetrySpend}
+        isRetryShared={sharedSources.includes('daily spend')}
         render={(data) => <SpendStrip strip={buildSpendStrip(data.points, getTodayIn(data.timezone))}/>}/>
       <WeekPanel id="dash-week-results" title="This week's task results" state={outcomesState} source="task results"
+        isRetryShared={sharedSources.includes('task results')}
         render={(data) => <ResultPanel panel={buildResultPanel(data)}/>}/>
     </div>
   );
 }
 
 // a panel without onRetry shares its source with a tile → the tile speaks for the failure, the panel only points to it
-function WeekPanel({ id, title, state, source, onRetry, render }) {
+function WeekPanel({ id, title, state, source, onRetry, render, isRetryShared = false }) {
   const { Badge, LoadingPlaceholder } = window.UI;
   const view = getPanelView(state);
   return (
@@ -417,7 +426,7 @@ function WeekPanel({ id, title, state, source, onRetry, render }) {
         {view === 'held' && <Badge role="status" tone="neutral">Last known</Badge>}
       </div>
       {view === 'loading' && <LoadingPlaceholder label={title.toLowerCase()}/>}
-      <PanelFailure id={id} view={view} state={state} source={source} onRetry={onRetry}/>
+      <PanelFailure id={id} view={view} state={state} source={source} onRetry={onRetry} isRetryShared={isRetryShared}/>
       {(view === 'ready' || view === 'held') && render(state.data)}
     </section>
   );
@@ -431,12 +440,13 @@ function getPanelView(state) {
 
 const RESULTS_TILE_POINTER = 'see the Task results tile';
 
-function PanelFailure({ id, view, state, source, onRetry }) {
+// a failure the page banner carries points up to it → one cause, one Retry
+function PanelFailure({ id, view, state, source, onRetry, isRetryShared }) {
   const { RetryButton, getErrorCopy } = window.UI;
   if (view !== 'error' && view !== 'held') return null;
-  if (!onRetry) {
+  if (!onRetry || isRetryShared) {
     const lead = view === 'held' ? 'Showing the last reading' : 'Not loaded';
-    return <p className="fs-meta text-dim">{lead} — {RESULTS_TILE_POINTER}.</p>;
+    return <p className="fs-meta text-dim">{lead} — {isRetryShared ? BANNER_POINTER : RESULTS_TILE_POINTER}.</p>;
   }
   const sentence = view === 'held' ? `Showing the last reading — couldn't refresh ${source}.` : getErrorCopy(state.error, source).sentence;
   return (
@@ -538,8 +548,10 @@ function HourGrid({ grid }) {
   return (
     <>
       <p className="fs-meta text-dim">{grid.span} · {formatInt(grid.total)} runs · {HOUR.GRID_BASIS}</p>
-      {grid.folded && (
-        <p className="fs-meta text-dim">{grid.folded.day} ×2 sums {grid.folded.fold} — runs are counted by weekday, not by date.</p>
+      {grid.folds.length > 0 && (
+        <p className="fs-meta text-dim">
+          {grid.folds.map((row) => `${row.day} ×2 sums ${row.fold}`).join(' · ')} — runs are counted by weekday, not by date.
+        </p>
       )}
       <div role="img" aria-label={describeHourGrid(grid)} className="dash-hour-grid fs-meta text-dim">
         {grid.rows.map((row) => (
@@ -898,7 +910,7 @@ function describeHarnessReading(harness) {
     badge: getHarnessBadge({ isPartlyUnread, lostCount, downCount }),
     value: downCount > 0 ? `${downCount} of ${partCount} down` : `${harness.partsOk} of ${partCount} up`,
     detail: lostCount > 0 ? `${lostCount} not read` : undefined,
-    trend: describeHarnessCoverage(harness),
+    trend: describeHarnessCoverage(harness, isPartlyUnread),
     hint: describeHarnessHint(harness, { isPartlyUnread, lostCount, downCount }),
     canRetry: isPartlyUnread,
   };
@@ -928,10 +940,12 @@ function describeHarnessHint(harness, { isPartlyUnread, lostCount, downCount }) 
 }
 
 // its own line under the count → an unpolled part never reads as one more down part
-function describeHarnessCoverage(harness) {
+// a failed read leaves parts unjudged too, indistinguishable in the fold → then no part is credited to the System map
+function describeHarnessCoverage(harness, isPartlyUnread) {
   if (harness.uncheckedNames.length === 0) return `All ${formatInt(harness.partsChecked)} parts polled on every harness read`;
-  const polled = `${formatInt(harness.partsChecked)} of ${formatInt(harness.partsTotal)} parts polled here`;
-  return `${polled}; ${joinPartNames(harness.uncheckedNames)} checked on the System map`;
+  const counted = `${formatInt(harness.partsChecked)} of ${formatInt(harness.partsTotal)} parts`;
+  if (isPartlyUnread) return `${counted} read this time`;
+  return `${counted} polled here; ${joinPartNames(harness.uncheckedNames)} checked on the System map`;
 }
 
 // U+2011 non-breaking hyphen → a name like daily-restart-autoagent never wraps mid-name in a narrow tile
@@ -1166,26 +1180,24 @@ function getBreakageAgents(rows) {
 const WEEKDAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 
 /**
- * The server's Sun-first 7×24 grid, rotated so today's weekday is the last row.
- * The window runs from period_start to today → 8 calendar dates on 7 weekday rows.
- * The server buckets by weekday only → the row of period_start's weekday sums two dates; that row carries `fold`.
- * @param today - YYYY-MM-DD in the grid's bucket timezone; null keeps the server's Sun-first order
+ * The server's Sun-first 7×24 grid, rotated so the bucket timezone's today is the last row.
+ * meta.bucket_dates names the window's dates in that timezone (9 while it runs ahead of the UTC anchor) — never the browser clock.
+ * The server buckets by weekday only → every weekday holding two of those dates sums both; its row carries `fold`.
  */
-function buildHourGrid(data, today) {
+function buildHourGrid(data) {
   const grid = Array.isArray(data?.data) ? data.data : [];
-  const start = data?.meta?.period_start;
-  const todayIndex = today ? getWeekday(today) : WEEKDAYS.length - 1;
-  const foldIndex = start ? getWeekday(start) : -1;
+  const dates = data?.meta?.bucket_dates ?? null;
+  const todayIndex = dates ? getWeekday(dates.last) : WEEKDAYS.length - 1;
+  const folds = dates ? getFoldsByWeekday(dates) : new Map();
   const rows = WEEKDAYS.map((_, offset) => (todayIndex + 1 + offset) % WEEKDAYS.length).map((dow) => ({
-    day: WEEKDAYS[dow], counts: HOUR.OF_DAY.map((hour) => Number(grid[dow]?.[hour]) || 0),
-    fold: dow === foldIndex ? getFoldLabel(start, today) : null,
+    day: WEEKDAYS[dow], counts: HOUR.OF_DAY.map((hour) => Number(grid[dow]?.[hour]) || 0), fold: folds.get(dow) ?? null,
   }));
   const cells = rows.flatMap((row) => row.counts.map((count, hour) => ({ day: row.day, fold: row.fold, hour, count })));
   const peak = cells.reduce((best, cell) => (cell.count > best.count ? cell : best), cells[0]);
   return {
     rows, peak, max: peak.count, total: cells.reduce((sum, cell) => sum + cell.count, 0),
-    folded: rows.find((row) => row.fold) ?? null,
-    span: start ? `${formatDay(start)} – today, 8 calendar dates` : 'Last 7 days',
+    folds: rows.filter((row) => row.fold),
+    span: dates ? `${formatDay(dates.first)} – today, ${dates.count} calendar dates` : 'Last 7 days',
   };
 }
 
@@ -1193,10 +1205,15 @@ function getWeekday(date) {
   return new Date(`${date}T00:00:00Z`).getUTCDay();
 }
 
-// the window's first date + the same weekday a week later — today whenever the window ends today
-function getFoldLabel(start, today) {
-  const later = new Date(Date.parse(`${start}T00:00:00Z`) + 7 * DAY_MS).toISOString().slice(0, 10);
-  return `${formatDay(start)} + ${later === today ? 'today' : formatDay(later)}`;
+// weekday → 'MM-DD + MM-DD' for each weekday the window covers twice; the last date reads 'today'
+function getFoldsByWeekday({ first, last, count }) {
+  const labelsByWeekday = new Map();
+  for (let offset = 0; offset < count; offset += 1) {
+    const date = new Date(Date.parse(`${first}T00:00:00Z`) + offset * DAY_MS).toISOString().slice(0, 10);
+    const dow = getWeekday(date);
+    labelsByWeekday.set(dow, [...(labelsByWeekday.get(dow) ?? []), date === last ? 'today' : formatDay(date)]);
+  }
+  return new Map([...labelsByWeekday].filter(([, labels]) => labels.length > 1).map(([dow, labels]) => [dow, labels.join(' + ')]));
 }
 
 /** @param today - YYYY-MM-DD in the series' own timezone; the point on that day is still accruing */

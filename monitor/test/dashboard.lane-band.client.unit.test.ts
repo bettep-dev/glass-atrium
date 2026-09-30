@@ -471,7 +471,7 @@ test("tile labels carry no window text — the window is its own field so the he
 // --- A failed read never reads as a current verdict, and one outage offers one Retry ---
 
 interface FailureHelpers {
-  getTileSharedFailure: (tiles: Tile[]) => { sources: string[]; error: string } | null;
+  getTileSharedFailure: (tiles: Tile[], panels?: Array<{ source: string; error: string | null }>) => { sources: string[]; error: string } | null;
   getAlarmReadiness: (sources: Record<string, unknown>) => { status: string; unread: string[] };
 }
 const failure = dash as unknown as FailureHelpers;
@@ -483,6 +483,8 @@ function held(state: unknown, error: string): unknown {
 function unreadFold(over: Record<string, unknown>): Fold {
   return { ...HEALTHY, unreadSources: ["daemon status"], error: "HTTP 500", ...over } as Fold;
 }
+// the five parts a two-part read leaves out — foldHarness lists every part it could not judge
+const LOST_PARTS = ["Chromium Export", "autoagent", "glass-atrium-wiki-curator", "daily-restart-wiki", "Hook Chain"];
 
 test("a region whose refresh failed over held data reads last-known and carries the failure", () => {
   const fleet = ready({ meta: { total_agents: 3, circuit_breaker: { source: "loaded", suspended_count: 0, streak_count: 0 } } });
@@ -550,6 +552,21 @@ test("held failures sharing one cause collapse into the page banner's single Ret
   assert.deepEqual([...shared.sources].sort(), ["task results", "the fleet summary", "today's spend"]);
 });
 
+test("the week panels join the tiles' outage when the cause is the same, so one cause keeps one Retry", () => {
+  const tiles = dash.buildTiles({ harness: HEALTHY, costState: ERRORED, agentsState: ERRORED, outcomesState: ERRORED });
+  const rows = [
+    { name: "panels fail on the tiles' cause", error: "HTTP 500", isJoined: true },
+    { name: "panels fail on another cause", error: "HTTP 404", isJoined: false },
+  ];
+
+  for (const row of rows) {
+    const panels = [{ source: "daily spend", error: row.error }, { source: "runs by hour", error: row.error }];
+    const shared = failure.getTileSharedFailure(tiles, panels);
+    assert.ok(shared, `${row.name}: the tiles still share one banner`);
+    assert.equal(shared.sources.includes("daily spend") && shared.sources.includes("runs by hour"), row.isJoined, row.name);
+  }
+});
+
 test("a cold harness outage is an error tile listed in the same banner as the regions", () => {
   const harness = unreadFold({ status: "unavailable", partsOk: 0, partsChecked: 0 });
   const tiles = dash.buildTiles({ harness, costState: ERRORED, agentsState: ERRORED, outcomesState: ERRORED });
@@ -583,13 +600,30 @@ test("parts lost to a cold read failure count against every part, never only the
   ];
 
   for (const row of rows) {
-    const harness = unreadFold({ partsOk: row.partsOk, partsChecked: 2, downNames: row.downNames });
+    const harness = unreadFold({ partsOk: row.partsOk, partsChecked: 2, downNames: row.downNames, uncheckedNames: LOST_PARTS });
     const tile = tileOf(
       dash.buildTiles({ harness, costState: kpi(1, 10), agentsState: ready({}), outcomesState: ready({}) }),
       "harness",
     );
     assert.equal(tile.value, row.value, `${row.name}: value`);
     assert.equal(tile.detail, "5 not read", `${row.name}: the lost parts are counted`);
+  }
+});
+
+test("the coverage line credits the System map only when every read answered, so a lost part never reads as unpolled by design", () => {
+  const rows = [
+    { name: "every read answered", fold: { ...HEALTHY, partsOk: 6, partsChecked: 6, uncheckedNames: ["Hook Chain"] } as Fold, isOnMap: true },
+    { name: "a failed read lost five parts", fold: unreadFold({ partsOk: 2, partsChecked: 2, uncheckedNames: LOST_PARTS }), isOnMap: false },
+  ];
+
+  for (const row of rows) {
+    const tile = tileOf(
+      dash.buildTiles({ harness: row.fold, costState: kpi(1, 10), agentsState: ready({}), outcomesState: ready({}) }),
+      "harness",
+    );
+    const trend = tile.trend ?? "";
+    assert.equal(/System map/.test(trend), row.isOnMap, `${row.name}: System map credit in "${trend}"`);
+    assert.match(trend, new RegExp(`^${row.fold.partsChecked} of 7 parts`), `${row.name}: states how many parts it covers`);
   }
 });
 
@@ -612,7 +646,7 @@ test("part names keep their hyphens unbreakable wherever the page lists them", (
 });
 
 test("a partly unread harness never reads healthy, and the lane cannot claim an all-clear", () => {
-  const harness = unreadFold({ partsOk: 2, partsChecked: 2, unreadSources: ["daemon status", "the hook chain"] });
+  const harness = unreadFold({ partsOk: 2, partsChecked: 2, uncheckedNames: LOST_PARTS, unreadSources: ["daemon status", "the hook chain"] });
   const tile = tileOf(
     dash.buildTiles({ harness, costState: kpi(1, 10), agentsState: ready({}), outcomesState: ready({}) }),
     "harness",

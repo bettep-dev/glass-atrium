@@ -201,7 +201,7 @@ interface WeekRowHelpers {
   buildResultPanel: (data: unknown) => {
     rows: Array<{ result: string; count: number }>; writerTotal: number; span: string; agents: Array<{ agent: string; count: number }>;
   };
-  buildHourGrid: (data: unknown, today: string | null) => {
+  buildHourGrid: (data: unknown) => {
     rows: Array<{ day: string; counts: number[]; fold: string | null }>; total: number; span: string;
     peak: { day: string; hour: number; count: number; fold: string | null };
   };
@@ -246,10 +246,11 @@ test("the results panel ranks agents by the tile's failed-or-blocked writer coun
     "writer-only fail + blocked, worst first, ties by name, done and reconstructed-only rows out, top 3");
 });
 
-test("the hour grid keeps every cell, ends on today's weekday and names its 8-date span", () => {
+test("the hour grid keeps every cell, ends on the server's today and names the server's date count", () => {
   const data = Array.from({ length: 7 }, (_, dow) => Array.from({ length: 24 }, (_, hour) => dow * 100 + hour));
   const sum = data.flat().reduce((a, b) => a + b, 0);
-  const grid = week.buildHourGrid({ data, meta: { period_start: "2026-09-23", total_count: sum } }, "2026-09-30");
+  const meta = { period_start: "2026-09-22", bucket_dates: { first: "2026-09-23", last: "2026-09-30", count: 8 }, total_count: sum };
+  const grid = week.buildHourGrid({ data, meta });
   assert.equal(grid.rows[grid.rows.length - 1].day, "Wed", "2026-09-30 is a Wednesday");
   assert.equal(grid.rows[0].day, "Thu");
   assert.equal(grid.total, sum, "rotation neither drops nor duplicates a cell");
@@ -258,21 +259,29 @@ test("the hour grid keeps every cell, ends on today's weekday and names its 8-da
   assert.equal(grid.span, "09-23 – today, 8 calendar dates");
 });
 
-test("the hour grid marks the one weekday row that sums two dates, and a peak there names both", () => {
+test("every weekday row that sums two of the server's bucket dates names both, and no other row is marked", () => {
   const data = Array.from({ length: 7 }, (_, dow) => Array.from({ length: 24 }, (_, hour) => (dow === 3 && hour === 14 ? 90 : 1)));
-  const rows: Array<[string, string, string, string]> = [
-    ["window starts on today's weekday", "2026-09-23", "2026-09-30", "09-23 + today"],
-    ["a later week, across a month end", "2026-09-24", "2026-10-01", "09-24 + today"],
+  const rows = [
+    { name: "8 dates, the window opens on today's weekday", first: "2026-09-23", last: "2026-09-30", count: 8,
+      folds: { Wed: "09-23 + today" } },
+    { name: "9 dates, early morning while the UTC anchor is a day behind", first: "2026-09-22", last: "2026-09-30", count: 9,
+      folds: { Tue: "09-22 + 09-29", Wed: "09-23 + today" } },
+    { name: "8 dates across a month end", first: "2026-09-24", last: "2026-10-01", count: 8,
+      folds: { Thu: "09-24 + today" } },
   ];
-  for (const [name, start, today, fold] of rows) {
-    const grid = week.buildHourGrid({ data, meta: { period_start: start } }, today);
-    const folded = grid.rows.filter((row) => row.fold !== null);
-    assert.equal(folded.length, 1, `${name}: exactly one row sums two dates`);
-    assert.equal(folded[0].fold, fold, name);
-    assert.equal(folded[0], grid.rows[grid.rows.length - 1], `${name}: the summed row is the one shown last as today`);
+
+  for (const row of rows) {
+    const meta = { period_start: row.first, bucket_dates: { first: row.first, last: row.last, count: row.count } };
+    const grid = week.buildHourGrid({ data, meta });
+    const marked = Object.fromEntries(grid.rows.filter((r) => r.fold !== null).map((r) => [r.day, r.fold]));
+    assert.deepEqual(marked, row.folds, `${row.name}: marked rows`);
+    assert.equal(grid.rows[grid.rows.length - 1].fold, row.folds[grid.rows[grid.rows.length - 1].day as keyof typeof row.folds],
+      `${row.name}: today's row is shown last`);
+    assert.equal(grid.span, `${row.first.slice(5)} – today, ${row.count} calendar dates`, `${row.name}: span`);
   }
-  const grid = week.buildHourGrid({ data, meta: { period_start: "2026-09-23" } }, "2026-09-30");
-  assert.match(week.describeHourGrid(grid), /Wed \(09-23 \+ today\) 14:00 with 90 runs/, "the peak on the summed row names both dates");
+  const meta = { bucket_dates: { first: "2026-09-23", last: "2026-09-30", count: 8 } };
+  assert.match(week.describeHourGrid(week.buildHourGrid({ data, meta })), /Wed \(09-23 \+ today\) 14:00 with 90 runs/,
+    "the peak on the summed row names both dates");
 });
 
 test("a week panel whose refresh failed over held data reads last known, not fresh", () => {

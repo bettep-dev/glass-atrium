@@ -250,6 +250,22 @@ const FAILED_TILE = {
   target: "agents", targetLabel: "Agents",
 };
 
+test("a failed week panel whose cause the page banner carries points up to it instead of offering a second Retry", () => {
+  const rows = [
+    { name: "its own failure", isRetryShared: false, retries: 1, isPointingUp: false },
+    { name: "a failure the banner carries", isRetryShared: true, retries: 0, isPointingUp: true },
+  ];
+
+  for (const row of rows) {
+    const tree = render("WeekPanel", {
+      id: "dash-week-hours", title: "Runs by hour", source: "runs by hour", state: { data: null, error: "HTTP 500", busy: false },
+      onRetry: () => {}, render: () => null, isRetryShared: row.isRetryShared,
+    });
+    assert.equal(findNodes(tree, (n) => n.props.atom === "RetryButton").length, row.retries, `${row.name}: Retry count`);
+    assert.equal(/notice above/.test(collectText(tree)), row.isPointingUp, `${row.name}: points to the banner`);
+  }
+});
+
 test("a failed tile states its error flat inside the tile, with one Retry that reloads only that tile's region", () => {
   const retried: string[] = [];
   const tree = render("StatusTile", { tile: FAILED_TILE, onNav: () => {}, onRetry: (region: string) => retried.push(region) });
