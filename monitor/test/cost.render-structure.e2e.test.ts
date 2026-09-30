@@ -106,7 +106,13 @@ async function openRenderContext(fixture: CostFixture): Promise<RenderContext> {
     })),
   }));
   app.get("/api/cost/cache-hit", async () => ({
-    rows: trendRows.map((r) => ({ day: r.date, cache_hit_ratio: 0.8 })),
+    // Alternating days reach a whole 100% → the y-axis carries its widest label.
+    rows: trendRows.map((r, i) => ({
+      event_date: r.date,
+      cache_hit_rate: i % 2 === 0 ? 1 : 0.9,
+      total_cache_read: r.cache_read_tokens,
+      total_input: r.input_tokens,
+    })),
   }));
   app.get("/api/cost/session-distribution", async () => ({
     // A month holds hundreds of sessions → the table always shows its full top rows plus Other.
@@ -374,6 +380,23 @@ describe("calm fixture — nothing is running hot", () => {
     const slack = Math.abs(columnBottoms[0]! - columnBottoms[1]!);
     assert.ok(slack <= DECISION_SPLIT_MAX_SLACK_PX,
       `empty space under the shorter column is ${Math.round(slack)}px (bottoms ${columnBottoms.map(Math.round).join(" | ")})`);
+  });
+
+  test("no two visible x-axis labels collide on any chart at 1024", async () => {
+    try {
+      await ctx.page.setViewportSize({ width: 1024, height: 768 });
+      const collisions = await ctx.page.evaluate(() =>
+        Array.from(document.querySelectorAll(".cost-screen .recharts-xAxis")).flatMap((axis) => {
+          const boxes = Array.from(axis.querySelectorAll(".recharts-cartesian-axis-tick text"))
+            .map((t) => t.getBoundingClientRect()).filter((r) => r.width > 0)
+            .sort((l, r) => l.left - r.left);
+          return boxes.slice(1).flatMap((r, i) => (r.left < boxes[i]!.right ? [`${boxes[i]!.right} > ${r.left}`] : []));
+        }),
+      );
+      assert.deepStrictEqual(collisions, [], `overlapping tick labels: ${collisions.slice(0, 3).join(" · ")}`);
+    } finally {
+      await ctx.page.setViewportSize({ width: 1440, height: 900 });
+    }
   });
 
   test("no card content reaches past its own card's edges at xl", async () => {
