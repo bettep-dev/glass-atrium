@@ -666,6 +666,8 @@ function ScreenOutcomes({ onNav }) {
   const isRefreshing = getRegionSummary(stampRegions).isBusy;
   // busy only while a failed region is being re-read — another panel's first load is not this Retry
   const isRetrying = stampRegions.some((region) => region.error != null && region.busy);
+  // every region card retries through the page refresh and goes quiet under a shared outage
+  const regionRetry = { onRetry: triggerRefresh, shared: sharedFailure };
 
   return (
     <div className="flex flex-col min-h-0">
@@ -707,7 +709,7 @@ function ScreenOutcomes({ onNav }) {
         attentionState={attentionState}
         windowDays={analyticsPeriod}
         freshness={freshness}
-        onRetry={triggerRefresh} shared={sharedFailure}
+        {...regionRetry}
       />
 
       {/* page scroll only — no inner scroller; the filters sit behind the Results head button, so the ledger takes the full width */}
@@ -732,7 +734,7 @@ function ScreenOutcomes({ onNav }) {
             onToggleIncludeAll: (v) => { setIncludeAll(v); setPage(0); },
           }}
           onRowClick={setDetailRow}
-          onRetry={triggerRefresh} shared={sharedFailure}
+          {...regionRetry}
           needsYou={ledgerNeedsYou}
           needsYouCap={needsYouCap}
           onToggleNeedsYou={() => setNeedsYouExpanded((isExpanded) => !isExpanded)}
@@ -744,11 +746,11 @@ function ScreenOutcomes({ onNav }) {
       {/* 1:1 + rail: the short per-agent table stays in view beside the taller Reporting health stack instead of leaving a ~500px hole under a wide card */}
       <window.UI.SplitRow ratio="1:1" className="mt-4">
         <window.UI.SplitColumn isRail>
-          <AgentFailureTableO state={analyticsState} onRetry={triggerRefresh} shared={sharedFailure}/>
+          <AgentFailureTableO state={analyticsState} {...regionRetry}/>
         </window.UI.SplitColumn>
         <window.UI.Disclosure kind="status" title="Reporting health" sub={reportingHealthSummaryO(channelLivenessState)}>
-          <AttributionHealthCard state={attributionState} period={analyticsPeriod} onRetry={triggerRefresh} shared={sharedFailure}/>
-          <ChannelLivenessCard state={channelLivenessState} onRetry={triggerRefresh} shared={sharedFailure}/>
+          <AttributionHealthCard state={attributionState} period={analyticsPeriod} {...regionRetry}/>
+          <ChannelLivenessCard state={channelLivenessState} {...regionRetry}/>
           <window.UI.Disclosure kind="detail" level={3} title="Daily breakdown and budget-killed subagents">
             <AttributionBreakdownO state={attributionState}/>
           </window.UI.Disclosure>
@@ -757,8 +759,8 @@ function ScreenOutcomes({ onNav }) {
 
       <window.UI.Disclosure kind="status" title="Self-report quality" sub={selfReportSummaryO(analyticsState)} className="mt-4">
         <window.UI.SplitRow ratio="1:1">
-          <GraderBreakdownCard state={analyticsState} onRetry={triggerRefresh} shared={sharedFailure}/>
-          <CrosstabCard state={analyticsState} onRetry={triggerRefresh} shared={sharedFailure}/>
+          <GraderBreakdownCard state={analyticsState} {...regionRetry}/>
+          <CrosstabCard state={analyticsState} {...regionRetry}/>
         </window.UI.SplitRow>
         <window.UI.Disclosure kind="detail" level={3} title="By task type"
           tone={getTaskTypeFoldToneO(analyticsState.data?.overall?.task_type_grader_breakdown)}>
@@ -768,7 +770,7 @@ function ScreenOutcomes({ onNav }) {
 
       {/* Learning 에서 이관된 raw 데몬 사이클 이벤트 로그 — operational data (집계 신호 아님 · W3-T3/T7). */}
       <window.UI.Disclosure kind="detail" title="Learning-run events" sub={loopEventsSummaryO(loopEventsState)} className="mt-4">
-        <LoopEventsCard state={loopEventsState} onRetry={triggerRefresh} shared={sharedFailure}/>
+        <LoopEventsCard state={loopEventsState} {...regionRetry}/>
       </window.UI.Disclosure>
 
       {detailRow && (
