@@ -308,7 +308,22 @@ export interface OutcomeCrossAnalysisResponse {
   downgrade_breakdown: OutcomeDowngradeBreakdown;
   // 9-type × grader_verdict crosstab (always 9 rows, TASK_TYPES order).
   task_type_grader_breakdown: OutcomeTaskTypeGraderRow[];
+  // Present only on a `prior_window=1` request with a bounded `days`.
+  prior_window?: OutcomeCrossAnalysisPriorWindow;
   fetched_at: string;
+}
+
+// The `days` window immediately before the current one, under the same filters,
+// poisoned exclusion and agent scope. Bounds are the DB's own CURRENT_DATE anchor,
+// so a client labels the span without date arithmetic of its own.
+export interface OutcomeCrossAnalysisPriorWindow {
+  // YYYY-MM-DD, inclusive — CURRENT_DATE - 2 × days.
+  period_start: string;
+  // YYYY-MM-DD, exclusive — CURRENT_DATE - days, the current window's inclusive start.
+  period_end: string;
+  total: number;
+  reconstructed_total: number;
+  by_result: OutcomeCrossAnalysisByResult[];
 }
 
 // /api/outcomes/heatmap
