@@ -656,6 +656,31 @@ test("a region that fails alone keeps its own Retry and no page banner appears",
   assert.deepEqual(findAtoms(tree, "PageErrorBanner"), []);
 });
 
+describe("the agents banner reads Retrying only while a failed region is re-read", () => {
+  const firstLoad = { status: "loading", data: null, error: null, busy: true };
+  const outage = { status: "error", data: null, error: "HTTP 503 Service Unavailable — down", busy: false };
+  const rows = [
+    { name: "two failed regions beside other regions' first loads are not retrying", regions: [outage, outage], isBusy: false },
+    { name: "a failed region being re-read is retrying", regions: [outage, { ...outage, busy: true }], isBusy: true },
+  ];
+  for (const row of rows) {
+    test(row.name, async () => {
+      // each region state reads its initial value from this queue, in declaration order; the rest are first loads
+      const regionInitial = {};
+      const queue = [...row.regions];
+      const react = {
+        ...createReactStub(),
+        useState: (initial: unknown) => [initial === regionInitial ? (queue.shift() ?? firstLoad) : initial, () => undefined],
+      };
+      const mod = await loadScreenModule(AGENTS_SRC, { UI: uiStub({ INITIAL_REGION_STATE: regionInitial }), Recharts: uiStub(), React: react });
+      const React = mod.React as { createElement: (t: unknown, p: unknown) => unknown };
+      const tree = renderScreen(React.createElement(mod.ScreenAgents as Component, {}));
+      const [banner] = findAtoms(tree, "PageErrorBanner");
+      assert.equal(banner?.props.isBusy, row.isBusy);
+    });
+  }
+});
+
 test("the drawer's health word takes the page verdict's tone for the same agent: a failed run is never Healthy, a blocked run changes nothing", async () => {
   const mod = await loadAgentsScreen();
   const buildTiles = mod.buildAgentStatusTiles as (args: Record<string, unknown>) => Array<{ key: string; tone: string }>;

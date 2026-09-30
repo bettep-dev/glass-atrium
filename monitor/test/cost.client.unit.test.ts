@@ -5,7 +5,7 @@
 // Runner: npx tsx --test test/cost.client.unit.test.ts
 // Sandbox harness (esbuild + node:vm over the real shipped cost.jsx): client-sandbox.ts.
 
-import test from "node:test";
+import test, { describe } from "node:test";
 import assert from "node:assert/strict";
 import { fileURLToPath } from "node:url";
 import { dirname, resolve } from "node:path";
@@ -1005,6 +1005,45 @@ test("a cold-failed KPI payload retrying reads as failed on its tiles, never a s
   const tiles = findNodes(tree, (n) => n.type === "div" && n.props.className === "kpi");
   assert.equal(tiles.length, 4);
   assert.equal(tiles.filter((t) => t.props["aria-busy"] === "true").length, 0, "no tile reads as loading beside the card");
+});
+
+test("every cost region error card carries the page Retry, so a region the banner does not cover still offers one", async () => {
+  const mod = (await loadScreenModule(COST_SRC, {
+    UI: getAtomUi({ INITIAL_REGION_STATE: failed }), React: createReactStub(),
+  })) as RenderModule;
+  const tree = renderIn(mod, "ScreenCost", { onNav: () => {} });
+
+  assert.equal(findNodes(tree, (n) => n.props.atom === "PageErrorBanner").length, 1, "the shared outage shows its banner");
+  const cards = findNodes(tree, (n) => n.props.atom === "RegionFailure");
+  assert.ok(cards.length >= 7, "every payload's region renders its error card");
+  for (const card of cards) {
+    assert.equal(typeof card.props.onRetry, "function", `${String(card.props.source)} keeps its Retry for RegionFailure to hide or show`);
+  }
+});
+
+// each ScreenCost region state reads its initial value from this queue, in declaration order; the rest are first loads
+function renderCostWithRegions(regions: PanelState[]): Promise<RenderedNode> {
+  const regionInitial = {};
+  const queue = [...regions];
+  const react = {
+    ...createReactStub(),
+    useState: (initial: unknown) => [initial === regionInitial ? (queue.shift() ?? loading) : initial, () => undefined],
+  };
+  return loadScreenModule(COST_SRC, { UI: getAtomUi({ INITIAL_REGION_STATE: regionInitial }), React: react })
+    .then((mod) => renderIn(mod as RenderModule, "ScreenCost", { onNav: () => {} }));
+}
+
+describe("the cost banner reads Retrying only while a failed region is re-read", () => {
+  const rows = [
+    { name: "two failed regions beside other panels' first loads are not retrying", regions: [failed, failed], isBusy: false },
+    { name: "a failed region being re-read is retrying", regions: [failed, { ...failed, busy: true }], isBusy: true },
+  ];
+  for (const row of rows) {
+    test(row.name, async () => {
+      const [banner] = findNodes(await renderCostWithRegions(row.regions), (n) => n.props.atom === "PageErrorBanner");
+      assert.equal(banner?.props.isBusy, row.isBusy);
+    });
+  }
 });
 
 test("the page verdict over a warm error reads Last known, never the all-clear", async () => {

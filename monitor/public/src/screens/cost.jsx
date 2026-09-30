@@ -125,8 +125,8 @@ function ScreenCost({ onNav }) {
     ['unreadable log entries', errorState],
     ['turn statistics', turnState],
   ]);
-  // shared outage → the banner owns the one Retry, so regions drop theirs
-  const regionRetry = sharedFailure ? undefined : triggerRefresh;
+  // busy only while a failed region is being re-read — another panel's first load is not this Retry
+  const isRetrying = panelStates.some((state) => state.error != null && state.busy);
 
   return (
     <div className="cost-screen flex flex-col">
@@ -173,7 +173,7 @@ function ScreenCost({ onNav }) {
       {sharedFailure && (
         <div className="mb-4">
           <PageErrorBanner sources={sharedFailure.sources} error={sharedFailure.error} onRetry={triggerRefresh}
-            isBusy={isBusy} focusTargetId={sharedFailure.focusTargetId ?? 'cost-verdict'}/>
+            isBusy={isRetrying} focusTargetId="cost-verdict"/>
         </div>
       )}
 
@@ -191,21 +191,21 @@ function ScreenCost({ onNav }) {
           trendState={tokenState}
           modelState={modelState}
           days={days}
-          onRetry={regionRetry}
+          onRetry={triggerRefresh}
           shared={sharedFailure}
         />
       </RefreshingRegionC>
 
       <RefreshingRegionC id={COST_REGION_IDS.trend} states={[tokenState]}>
-        <CostTrendCard state={tokenState} days={days} onRetry={regionRetry} shared={sharedFailure}/>
+        <CostTrendCard state={tokenState} days={days} onRetry={triggerRefresh} shared={sharedFailure}/>
       </RefreshingRegionC>
 
       <SplitRow ratio="1:1" className="mb-4">
         <RefreshingRegionC id={COST_REGION_IDS.models} states={[modelState]}>
-          <ModelCostCard state={modelState} days={days} onRetry={regionRetry} shared={sharedFailure} onNav={onNav}/>
+          <ModelCostCard state={modelState} days={days} onRetry={triggerRefresh} shared={sharedFailure} onNav={onNav}/>
         </RefreshingRegionC>
         <RefreshingRegionC id={COST_REGION_IDS.sessions} states={[sessionState]}>
-          <SessionDistributionCard state={sessionState} days={days} onRetry={regionRetry} shared={sharedFailure} onNav={onNav}/>
+          <SessionDistributionCard state={sessionState} days={days} onRetry={triggerRefresh} shared={sharedFailure} onNav={onNav}/>
         </RefreshingRegionC>
       </SplitRow>
 
@@ -214,11 +214,11 @@ function ScreenCost({ onNav }) {
         <Disclosure kind="status" level={3} title="Token volume" sub="Category split over time, with the cache-hit line"
           className="cost-inst mb-4">
           <RefreshingRegionC id={COST_REGION_IDS.tokens} states={[tokenState]}>
-            <TokenStackedBody state={tokenState} days={days} onRetry={regionRetry}
+            <TokenStackedBody state={tokenState} days={days} onRetry={triggerRefresh}
               shared={getAliasedSharedC(sharedFailure, 'cost trend', 'token trend')}/>
           </RefreshingRegionC>
           <RefreshingRegionC id={COST_REGION_IDS.cache} states={[cacheState]} className="mt-5">
-            <CacheHitBody state={cacheState} days={days} onRetry={regionRetry} shared={sharedFailure}/>
+            <CacheHitBody state={cacheState} days={days} onRetry={triggerRefresh} shared={sharedFailure}/>
           </RefreshingRegionC>
         </Disclosure>
 
@@ -226,13 +226,13 @@ function ScreenCost({ onNav }) {
           <Disclosure kind="status" level={3} title="Turn statistics" sub="Stop reasons and per-turn aggregates"
             className="cost-inst">
             <RefreshingRegionC id={COST_REGION_IDS.turns} states={[turnState]}>
-              <TurnStatsBody state={turnState} days={days} onRetry={regionRetry} shared={sharedFailure}/>
+              <TurnStatsBody state={turnState} days={days} onRetry={triggerRefresh} shared={sharedFailure}/>
             </RefreshingRegionC>
           </Disclosure>
           <Disclosure kind="status" level={3} title="Log integrity" sub="Unreadable log entries over the window"
             className="cost-inst">
             <RefreshingRegionC id={COST_REGION_IDS.log} states={[errorState]}>
-              <ParseErrorBody state={errorState} days={days} onRetry={regionRetry} shared={sharedFailure}/>
+              <ParseErrorBody state={errorState} days={days} onRetry={triggerRefresh} shared={sharedFailure}/>
             </RefreshingRegionC>
           </Disclosure>
         </SplitRow>

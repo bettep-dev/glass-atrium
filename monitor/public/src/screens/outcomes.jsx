@@ -695,7 +695,7 @@ function ScreenOutcomes({ onNav }) {
       {sharedFailure && (
         <div className="mb-4 flex-shrink-0">
           <PageErrorBanner sources={sharedFailure.sources} error={sharedFailure.error} onRetry={triggerRefresh}
-            isBusy={isRetrying} focusTargetId={sharedFailure.focusTargetId ?? STATUS_BAND_ID}/>
+            isBusy={isRetrying} focusTargetId={REGION_CARD_IDS.statusBand}/>
         </div>
       )}
 
@@ -872,10 +872,9 @@ function loopEventsSummaryO(loopEventsState) {
 
 // Needs-you tile → ledger 의 창 전체 Needs-you 헤딩 (hash 라우터라 href 앵커 대신 focus 이동).
 const LEDGER_NEEDS_YOU_ID = 'ledger-needs-you';
-// focus lands here when a focused Retry leaves on recovery
-const STATUS_BAND_ID = 'outcomes-status-band';
-// per-region card ids — same role as STATUS_BAND_ID for each card's own error Retry
+// focus lands on a region's card when a focused Retry leaves on recovery
 const REGION_CARD_IDS = {
+  statusBand: 'outcomes-status-band',
   agentFailures: 'outcomes-agent-failures',
   attribution: 'outcomes-attribution',
   channels: 'outcomes-channels',
@@ -976,8 +975,8 @@ function StatusBandO({ analyticsState, attentionState, windowDays, freshness, on
   }
   if (view === 'error') {
     return (
-      <div id={STATUS_BAND_ID} className="mb-4 flex-shrink-0" aria-label="Status band">
-        <RegionErrorO source="the status band" state={analyticsState} onRetry={onRetry} shared={shared} focusTargetId={STATUS_BAND_ID}/>
+      <div id={REGION_CARD_IDS.statusBand} className="mb-4 flex-shrink-0" aria-label="Status band">
+        <RegionErrorO source="the status band" state={analyticsState} onRetry={onRetry} shared={shared} focusTargetId={REGION_CARD_IDS.statusBand}/>
       </div>
     );
   }
@@ -997,7 +996,7 @@ function StatusBandO({ analyticsState, attentionState, windowDays, freshness, on
   const volumeTiles = tiles.filter((tile) => tile.key === 'recorded' || tile.key === 'done');
 
   return (
-    <div id={STATUS_BAND_ID} className="mb-4 flex-shrink-0">
+    <div id={REGION_CARD_IDS.statusBand} className="mb-4 flex-shrink-0">
       <div className="grid grid-cols-4 gap-3" role="group" aria-label="Status band">
         <BandTileO
           tile={heroTile}
@@ -1008,7 +1007,7 @@ function StatusBandO({ analyticsState, attentionState, windowDays, freshness, on
         <VolumeTilesO tiles={volumeTiles} windowLabel={windowLabel}/>
       </div>
       {isAttentionFailed && (
-        <RegionErrorO source="the needs-you count" state={attentionState} onRetry={onRetry} shared={shared} focusTargetId={STATUS_BAND_ID}/>
+        <RegionErrorO source="the needs-you count" state={attentionState} onRetry={onRetry} shared={shared} focusTargetId={REGION_CARD_IDS.statusBand}/>
       )}
     </div>
   );
