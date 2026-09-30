@@ -760,3 +760,44 @@ describe("Task results density: the columns beside a taller card carry their own
     assert.ok(!keys.includes("attention"), keys.join(","));
   });
 });
+
+interface ChartSandboxO {
+  getCrosstabBarO: (cell: { count: number; isPolar: boolean }, max: number) => { colorVar: string; widthPct: number } | null;
+  CrosstabCell: (props: { cell: { count: number; isPolar: boolean }; max: number; rowLabel: string; colLabel: string }) => RecordedElementO;
+  getStackedYTicksO: (barAreaH: number) => Array<{ label: string; y: number }>;
+}
+const chart = rendered as unknown as ChartSandboxO;
+
+describe("getCrosstabBarO: a cell's fill is a solid bar sized by its share of the busiest cell", () => {
+  const rows = [
+    { name: "the busiest cell fills the whole width", cell: { count: 40, isPolar: false }, max: 40, bar: { colorVar: "--accent", widthPct: 100 } },
+    { name: "a polar cell at half the busiest keeps the warn hue at half width", cell: { count: 20, isPolar: true }, max: 40, bar: { colorVar: "--warn", widthPct: 50 } },
+    { name: "an empty cell draws no bar", cell: { count: 0, isPolar: true }, max: 40, bar: null },
+  ];
+  for (const row of rows) {
+    test(row.name, () => {
+      // vm-realm object → compare by value, not prototype
+      assert.deepEqual(JSON.parse(JSON.stringify(chart.getCrosstabBarO(row.cell, row.max))), row.bar);
+    });
+  }
+
+  test("the cell paints no translucent tint under its count", () => {
+    const cell = chart.CrosstabCell({ cell: { count: 10, isPolar: true }, max: 40, rowLabel: "high", colLabel: "fail" });
+    const backgrounds = flattenO(cell).map((el) => (el.props.style as { background?: string } | undefined)?.background).filter(Boolean);
+    assert.ok(backgrounds.length > 0, "the bar is painted");
+    for (const background of backgrounds) assert.doesNotMatch(String(background), /\//, "an alpha fill drops below 3:1");
+  });
+});
+
+describe("getStackedYTicksO: each share tick sits its share up the bar area", () => {
+  const barAreaH = 116;
+  const ticks = chart.getStackedYTicksO(barAreaH);
+  test("the scale spans 0% to 100%", () => {
+    assert.deepEqual(JSON.parse(JSON.stringify(ticks.map((tick) => tick.label).sort())), ["0%", "100%", "50%"]);
+  });
+  for (const tick of ticks) {
+    test(`the ${tick.label} tick sits at its share of the bar height`, () => {
+      assert.equal(tick.y, barAreaH * (1 - Number.parseFloat(tick.label) / 100));
+    });
+  }
+});

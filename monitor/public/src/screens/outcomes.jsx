@@ -1518,7 +1518,9 @@ function AttributionDailyChart({ grid }) {
 
   return (
     <figure style={{ margin: 0, minWidth: 0 }}>
-      <div role="img" aria-label={getStackedChartLabelO(grid)} tabIndex={0} style={{ cursor: 'crosshair' }} {...handlers}>
+      <div className="flex" style={{ gap: STACKED_Y_AXIS_GAP }}>
+      <StackedYAxisO barAreaH={barAreaH} chartHeight={chartHeight}/>
+      <div role="img" aria-label={getStackedChartLabelO(grid)} tabIndex={0} style={{ cursor: 'crosshair', flex: 1, minWidth: 0 }} {...handlers}>
       <svg
         width="100%"
         height={chartHeight}
@@ -1575,11 +1577,38 @@ function AttributionDailyChart({ grid }) {
         })}
       </svg>
       </div>
-      <StackedChartTicksO grid={grid}/>
-      <div aria-live="polite" className="fs-meta text-dim" style={{ minHeight: 18, fontVariantNumeric: 'tabular-nums' }}>
-        {activeIndex === null ? '' : getStackedDayReadoutO(grid[activeIndex])}
+      </div>
+      <div style={{ paddingLeft: STACKED_Y_AXIS_WIDTH + STACKED_Y_AXIS_GAP }}>
+        <StackedChartTicksO grid={grid}/>
+        <div aria-live="polite" className="fs-meta text-dim" style={{ minHeight: 18, fontVariantNumeric: 'tabular-nums' }}>
+          {activeIndex === null ? 'Point at a day, or focus the chart and use the arrow keys, to read its counts.' : getStackedDayReadoutO(grid[activeIndex])}
+        </div>
       </div>
     </figure>
+  );
+}
+
+const STACKED_Y_AXIS_WIDTH = 32;
+const STACKED_Y_AXIS_GAP = 4;
+// label box height in px → the end ticks clamp inside the plot instead of clipping at its edges
+const STACKED_Y_LABEL_H = 12;
+
+// 100%-stacked bars → the scale is a share of each day's records, so a tick at p% sits p% up the bar area
+function getStackedYTicksO(barAreaH) {
+  return [100, 50, 0].map((pct) => ({ label: `${pct}%`, y: barAreaH * (1 - pct / 100) }));
+}
+
+function StackedYAxisO({ barAreaH, chartHeight }) {
+  return (
+    <div aria-hidden="true" className="fs-meta font-mono text-faint"
+      style={{ position: 'relative', width: STACKED_Y_AXIS_WIDTH, height: chartHeight, flexShrink: 0 }}>
+      {getStackedYTicksO(barAreaH).map((tick) => (
+        <span key={tick.label}
+          style={{ position: 'absolute', right: 0, lineHeight: `${STACKED_Y_LABEL_H}px`, top: Math.min(Math.max(tick.y - STACKED_Y_LABEL_H / 2, 0), barAreaH - STACKED_Y_LABEL_H) }}>
+          {tick.label}
+        </span>
+      ))}
+    </div>
   );
 }
 
@@ -2072,23 +2101,30 @@ function CrosstabRow({ rowKey, byCell, max }) {
 
 function CrosstabCell({ cell, max, rowLabel, colLabel }) {
   const count = cell.count || 0;
-  // 음영: polar 셀은 warn, 그 외 accent. 상대 빈도(0.08~0.40 opacity) — 상한 = 두 테마 모두 ink 4.5:1 유지 · 0건은 무음영.
-  const ratio   = max > 0 ? count / max : 0;
-  const opacity = count > 0 ? (0.08 + ratio * 0.32).toFixed(3) : '0';
-  const tintVar = cell.isPolar ? '--warn' : '--accent';
+  const bar = getCrosstabBarO(cell, max);
 
   return (
     <td
-      className="text-center px-2 py-1.5 border-b border-line"
-      style={{ background: `rgb(var(${tintVar}) / ${opacity})` }}
+      className="text-center px-2 pt-1.5 pb-1 border-b border-line"
       title={`${rowLabel} × ${colLabel}: ${formatIntO(count)}${cell.isPolar ? ' · polar mismatch' : ''}`}
       aria-label={`confidence ${rowLabel} metric ${colLabel} ${count}${cell.isPolar ? ' polar mismatch' : ''}`}>
       <span className="inline-flex items-center gap-1 justify-center">
         {cell.isPolar && count > 0 && <span aria-hidden="true" style={{ color: 'rgb(var(--warn))' }}><GlyphO name="warn"/></span>}
         <span className="text-ink">{count > 0 ? formatIntO(count) : '·'}</span>
       </span>
+      <span className="block mt-1" aria-hidden="true" style={{ height: 3 }}>
+        {bar && <span className="block" style={{ height: '100%', width: `${bar.widthPct}%`, background: `rgb(var(${bar.colorVar}))`, borderRadius: 1 }}/>}
+      </span>
     </td>
   );
+}
+
+// solid bar, never a translucent tint → the fill holds 3:1 on the card in both themes while the count stays on the plain card
+function getCrosstabBarO(cell, max) {
+  const count = cell.count || 0;
+  if (!(count > 0) || !(max > 0)) return null;
+  // floor 4% → a lone record stays visible beside a busy cell
+  return { colorVar: cell.isPolar ? '--warn' : '--accent', widthPct: Math.max(4, (count / max) * 100) };
 }
 
 function CrosstabTotalRow({ byCell, total }) {
