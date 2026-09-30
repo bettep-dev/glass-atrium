@@ -201,7 +201,9 @@ Format `R{domain}-{seq}` (e.g. R1-01) · in-text `[R1-01]` · cross-verified `[R
 
 ## Pre-Execution Verification
 
-- `### Single Source Verification Checklist` — run every item on each source before citing it; a failed item is labelled as the checklist says, never a reason to drop the claim.
+- `### Single Source Verification Checklist` — run every item on each source before citing it.
+  - Handle a failed item as its checklist line states: a label, a reliability deduction or a replacement source.
+  - A labelled claim stays in the deliverable, never as a conclusion (`## Success Criteria` → **quality gate**).
 
 ## Red Flags
 
