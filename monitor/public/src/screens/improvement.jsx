@@ -810,6 +810,7 @@ function StatusTileI({ status, tone, symbol, label, value, population, basis, ow
 			}
 			value={value}
 			hint={basis ? <span title={basis}>{population}</span> : population}
+			hintClassName="fs-meta"
 		/>
 	);
 }

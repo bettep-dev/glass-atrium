@@ -184,6 +184,30 @@ test("a ready tile renders its value and its population", () => {
   assert.match(textOf(tile), /Applied \(7 days\)/);
 });
 
+// Plan LN: no body text under 12px — the population line is body text, not a micro caption.
+test("a ready tile renders its population at the body type scale", () => {
+  const tile = sandbox.StatusTileI({
+    status: "ready",
+    tone: "text-ok",
+    symbol: "✓",
+    label: "Applied (7 days)",
+    value: "3",
+    population: "of 12 cycles in the last 7 days",
+  });
+  const card = (tile.type as (props: Record<string, unknown>) => unknown)(tile.props);
+  const holders = collectElements(card, []).filter(
+    (el) => typeof el.props.className === "string" && textOf(el).includes("of 12 cycles in the last 7 days"),
+  );
+  assert.ok(holders.length > 0, "the population reaches the rendered card");
+  for (const el of holders) {
+    assert.doesNotMatch(String(el.props.className), /\bfs-micro\b/, "population rendered at the 11px micro scale");
+  }
+  assert.ok(
+    holders.some((el) => /\bfs-meta\b/.test(String(el.props.className))),
+    "population carries the 12px body scale",
+  );
+});
+
 // The unit guard: `applied_last_7d` counts proposals and `cycle_total_7d` counts
 // cycles, so pairing them reads "3 of 12 cycles were applied" over two tables.
 test("the applied tile is counted over the same population it names", () => {

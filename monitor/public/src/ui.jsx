@@ -618,10 +618,10 @@ function KpiValue({ children, unit, tone }) {
 }
 
 // label + 26px mono value + delta + 68×26 inline sparkline
-function KPI({ label, value, unit, delta, deltaInverse=false, sparkData, sparkColor='currentColor', onClick, hint }) {
+function KPI({ label, value, unit, delta, deltaInverse=false, sparkData, sparkColor='currentColor', onClick, hint, hintClassName='fs-micro' }) {
   return <button onClick={onClick} className="kpi text-left">
     <div className="kpi-label">{label}</div>
-    {hint && <div className="fs-micro text-faint font-mono kpi-hint">{hint}</div>}
+    {hint && <div className={`${hintClassName} text-faint font-mono kpi-hint`}>{hint}</div>}
     <KpiValue unit={unit}>{value}</KpiValue>
     {typeof delta === 'number' && <Delta value={delta} inverse={deltaInverse} />}
     {sparkData && <div className="kpi-spark"><Sparkline data={sparkData} w={68} h={26} color={sparkColor}/></div>}
