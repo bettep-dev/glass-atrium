@@ -1614,9 +1614,7 @@ test("a section lead line wraps instead of clipping", () => {
   assert.ok(leads.every((n) => String(n.props.className).includes("is-wrap")), "every lead line wraps");
 });
 
-// ---------------------------------------------------------------------------
-// Round-6 page pass: announcements, stale rows, file lists, rail headings, In-effect sources.
-// ---------------------------------------------------------------------------
+// Screen-level reads: announcements, stale rows, file lists, rail headings, In-effect sources.
 
 const ALL_TIERS_MC = [
   "model.dev",
@@ -1743,13 +1741,12 @@ test("every In-effect cell is filled: a tier without a file list names where its
     "model.daemon_cycle_worker": "daemon-config.json",
   };
   assert.strictEqual(bodyRows.length, ALL_TIERS_MC.length);
-  ALL_TIERS_MC.forEach((tier, i) => {
-    const live = textMc([tagsMc(bodyRows[i].children, "td")[2]]);
-    const source = sources[tier.domain];
-    if (source === undefined) return;
-    assert.ok(live.includes("Read from"), `${tier.domain}: names its source (${live})`);
-    assert.ok(live.includes(source), `${tier.domain}: reads from ${source} (${live})`);
-  });
+  for (const [domain, source] of Object.entries(sources)) {
+    const row = bodyRows[ALL_TIERS_MC.findIndex((tier) => tier.domain === domain)];
+    const live = textMc([tagsMc(row.children, "td")[2]]);
+    assert.ok(live.includes("Read from"), `${domain}: names its source (${live})`);
+    assert.ok(live.includes(source), `${domain}: reads from ${source} (${live})`);
+  }
 
   const cap = textMc([liveCellMc(renderComponentMc(screens.BudgetsSectionMC, budgetsPropsMc()))]);
   assert.ok(cap.includes("Read from daemon-config.json"), `a cap names its source (${cap})`);
