@@ -189,10 +189,10 @@ test("buildAgentStackO: results outside resultOrder are excluded from total (bar
 // --- drawer breakage headline: the blocked part never falls outside its headline ---
 
 const breakageRows = [
-  { name: "no reconstructed rows → the blocked part is exact", blocked: 3, total: 10, reconstructed: 0 },
-  { name: "reconstructed rows beside a small blocked part → the part may keep its full size", blocked: 2, total: 10, reconstructed: 3 },
-  { name: "blocked larger than the writer headline → capped at the headline", blocked: 9, total: 10, reconstructed: 4 },
-  { name: "every breakage reconstructed → nothing blocked is left to state", blocked: 5, total: 5, reconstructed: 5 },
+  { name: "no reconstructed rows → the blocked part is exact", blocked: 3, total: 10, reconstructed: 0, min: 3, max: 3 },
+  { name: "reconstructed rows beside a small blocked part → the part may keep its full size", blocked: 2, total: 10, reconstructed: 3, min: 0, max: 2 },
+  { name: "blocked larger than the writer headline → capped at the headline", blocked: 9, total: 10, reconstructed: 4, min: 5, max: 6 },
+  { name: "every breakage reconstructed → nothing blocked is left to state", blocked: 5, total: 5, reconstructed: 5, min: 0, max: 0 },
 ];
 
 for (const row of breakageRows) {
@@ -203,7 +203,7 @@ for (const row of breakageRows) {
 
     assert.strictEqual(split.breakages, row.total - row.reconstructed, "headline = writer-emitted breakages");
     assert.ok(split.blocked.max <= split.breakages, "the blocked part never exceeds its headline");
-    assert.strictEqual(split.blocked.max, Math.min(row.blocked, row.total - row.reconstructed));
-    assert.strictEqual(split.blocked.min, Math.max(0, row.blocked - row.reconstructed), "reconstructed rows can hide at most their own count of blocked rows");
+    assert.ok(split.blocked.min <= split.blocked.max, "the blocked range never inverts");
+    assert.deepEqual({ min: split.blocked.min, max: split.blocked.max }, { min: row.min, max: row.max }, "reconstructed rows can hide at most their own count of blocked rows");
   });
 }
