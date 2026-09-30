@@ -44,6 +44,9 @@ interface BandSandbox {
   KanbanCardI: (props: Record<string, unknown>) => RecordedElement;
   BucketRowI: (props: Record<string, unknown>) => RecordedElement;
   ErrorBannerI: (props: Record<string, unknown>) => RecordedElement;
+  BoardRowI: (props: Record<string, unknown>) => RecordedElement;
+  CompactProposalCardI: (props: Record<string, unknown>) => RecordedElement;
+  ProposalCardI: (props: Record<string, unknown>) => RecordedElement;
   getBandVerdictI: (input: Record<string, unknown>) => { tone: string; sentence: string };
   getInstrumentationChipsI: (
     verdicts: unknown,
@@ -510,4 +513,29 @@ test("a failed suggestions read speaks once, from the first board region it feed
 
   assert.equal(failures.banner, null, "one failed source is not a shared outage");
   assert.deepEqual(resolved, ["RegionUnavailable", "RegionCovered"]);
+});
+
+describe("a suggestion board row keeps its full text, clipped only until hover or focus", () => {
+  const long =
+    "Move the verification gate ahead of the regex removal so reviewers see the API change before the three matching suite edits";
+  const rows = [
+    {
+      name: "a declined row's reason",
+      render: () => {
+        const row = sandbox.CompactProposalCardI({ row: { id: 7, rationale: long }, onClick: () => {} });
+        return sandbox.BoardRowI(row.props);
+      },
+    },
+    {
+      name: "a proposal card's pattern label",
+      render: () => sandbox.ProposalCardI({ row: { id: 7, pattern_label: long, rationale: "Short reason" }, onClick: () => {} }),
+    },
+  ];
+  for (const row of rows) {
+    test(row.name, () => {
+      const text = collectElements(row.render(), []).find((el) => el.props.children === long);
+      assert.ok(text, "the row must render the whole text, never a character-cut copy");
+      assert.match(String(text.props.className), /\bi-clip\b/, "the clipped text must unclip on hover and focus");
+    });
+  }
 });

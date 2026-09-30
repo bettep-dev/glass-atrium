@@ -385,6 +385,9 @@ function ScreenImprovement({ onNav }) {
         .i-card-shadow:hover { box-shadow:0 2px 8px rgba(0,0,0,0.08), inset 0 0 0 1px rgb(var(--accent) / 0.4); }
         .i-row-card { transition:box-shadow 120ms, transform 120ms; cursor:pointer; }
         .i-row-card:hover { transform:translateY(-1px); }
+        /* clipped board text → whole text on hover or keyboard focus (a title tooltip never shows on focus) */
+        .i-row-card:is(:hover, :focus-visible) .i-clip { white-space:normal; overflow:visible; display:block;
+          -webkit-line-clamp:unset; overflow-wrap:anywhere; }
         .i-anim-toast { animation:toastInI 180ms ease-out; }
         /* 카드 메타 배지 — 전부 canonical window.UI.Badge(.pill family)로 이관 (screen-local 배지 CSS 폐지).
            tone 은 status Badge 의 내부 Icon(text-{tone})이 운반 · shell 은 항상 neutral(loud fill 금지 · dual-encode 보존). */
@@ -1321,7 +1324,7 @@ function BoardRowI({ onClick, title, ariaLabel, lead, text, trail }) {
 			aria-label={ariaLabel}
 		>
 			{lead}
-			<span className="text-ink fs-body truncate flex-1 min-w-0">{text}</span>
+			<span className="i-clip text-ink fs-body truncate flex-1 min-w-0">{text}</span>
 			{trail}
 		</button>
 	);
@@ -1551,7 +1554,7 @@ function CompactProposalCardI({ row, onClick }) {
 			onClick={onClick}
 			title={String(primary)}
 			ariaLabel={`View declined suggestion ${row.id} details`}
-			text={truncateI(primary, 80)}
+			text={primary}
 			trail={
 				<>
 					<span className="font-mono text-faint shrink-0">#{row.id}</span>
@@ -1639,7 +1642,7 @@ function ProposalCardI({ row, onClick, onAction, pendingActionId }) {
 				{/* rationale = 1차 콘텐츠로 승격(USER) — fs-body · text-ink · medium weight · 2~3줄 clamp. 카드면에서 가장 강한 텍스트. 부재 시 graceful 미렌더. */}
 				{row.rationale && (
 					<div
-						className="fs-body text-ink font-medium mt-1.5 line-clamp-3"
+						className="i-clip fs-body text-ink font-medium mt-1.5 line-clamp-3"
 						title={String(row.rationale)}
 					>
 						{row.rationale}
@@ -1647,10 +1650,10 @@ function ProposalCardI({ row, onClick, onAction, pendingActionId }) {
 				)}
 				{/* pattern_label = 반복성 높은 2차 카테고리 라벨 → rationale 아래 tiny/faint 태그로 후퇴(USER: de-emphasized, 경쟁 금지). */}
 				<div
-					className="fs-meta text-faint mt-1 line-clamp-1"
+					className="i-clip fs-meta text-faint mt-1 line-clamp-1"
 					title={String(title)}
 				>
-					{truncateI(title, 80)}
+					{title}
 				</div>
 			</button>
 			{/* 허용/거절 액션 (pending/snoozed only · dual-encoded ✓/✕). */}
