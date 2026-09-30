@@ -91,6 +91,27 @@ test("a shared outage shows one Retry, and pressing it re-reads the page", async
   assert.equal((refreshes[0].next as (t: number) => number)(0), 1);
 });
 
+test("a cold error shows one banner, and every region it covers is a quiet placeholder with no Retry", async () => {
+  const { tree } = await renderOutcomesScreen(8);
+  const covered = findNodes(tree, (n) => n.type === "RegionCovered").map((n) => String(n.props.source));
+
+  assert.equal(findNodes(tree, (n) => n.type === "PageErrorBanner").length, 1);
+  assert.equal(findNodes(tree, (n) => n.type === "RegionUnavailable").length, 0, "no covered region repeats the error");
+  assert.equal(getRetryButtons(tree).length, 1, "the banner holds the only Retry");
+  for (const source of ["the status band", "the record ledger", "by-agent failures", "reporting health", "recording channels", "check results", "cross table"]) {
+    assert.ok(covered.includes(source), `${source} is covered by the banner`);
+  }
+});
+
+test("a region failing alone keeps its own error card and Retry, with no page banner", async () => {
+  const { tree } = await renderOutcomesScreen(1);
+  const cards = findNodes(tree, (n) => n.type === "RegionUnavailable");
+
+  assert.equal(findNodes(tree, (n) => n.type === "PageErrorBanner").length, 0);
+  assert.deepEqual(cards.map((n) => n.props.source), ["the record ledger"]);
+  assert.equal(typeof cards[0].props.onRetry, "function", "the lone card keeps its Retry");
+});
+
 test("a failed record body reads as a plain sentence, with the raw answer only behind Details", async () => {
   const mod = await loadScreenModule(OUTCOMES_SRC, { UI: ui.UI, location: { hash: "" }, URLSearchParams });
   const create = (mod.React as { createElement: (t: unknown, p: unknown) => unknown }).createElement;
@@ -129,7 +150,7 @@ test("status folds render open while their detail breakdowns start collapsed", a
 test("paired cards sit side by side in one split row", async () => {
   const { tree } = await renderOutcomesScreen(0);
   const rows = [
-    { name: "per-agent table beside Reporting health", ratio: "split-row--7-5", titles: ["Failed or blocked by agent", "Reporting health"] },
+    { name: "per-agent table beside Reporting health", ratio: "split-row--1-1", titles: ["Failed or blocked by agent", "Reporting health"] },
     { name: "check results beside the crosstab", ratio: "split-row--1-1", titles: ["Automatic check results", "Confident but failed"] },
   ];
 
@@ -139,6 +160,12 @@ test("paired cards sit side by side in one split row", async () => {
     assert.ok(pair, row.name);
     assert.equal(pair.children.filter((child) => typeof child !== "string").length, 2, `${row.name}: exactly two columns`);
   }
+
+  // the short per-agent table rides as a sticky rail beside the taller Reporting health stack
+  const rails = findNodes(tree, (n) => n.type === "SplitColumn" && n.props.isRail === true);
+  assert.equal(rails.length, 1, "one rail column");
+  assert.ok(collectText(rails[0]).includes("Failed or blocked by agent"), "the rail holds the per-agent table");
+  assert.ok(!collectText(rails[0]).includes("Reporting health"), "Reporting health stays in the other column");
 });
 
 // component nodes keep their name as type; the region's card is the first host element beneath them
@@ -184,4 +211,54 @@ test("a region's error card hands a focused, successful Retry to that region's o
     assert.ok(typeof targetId === "string" && targetId.length > 0, `${row.name}: the Retry names a focus target`);
     assert.equal(getRootHost(tree).props.id, targetId, `${row.name}: the target is the region's own card, mounted in every state`);
   }
+});
+
+test("a closed caveat row shows its result and its closure as two separate groups", async () => {
+  const mod = await loadScreenModule(OUTCOMES_SRC, { UI: ui.UI, location: { hash: "" }, URLSearchParams });
+  const create = (mod.React as { createElement: (t: unknown, p: unknown) => unknown }).createElement;
+  const row = { id: 41, agent: "glass-atrium-dev-react", task_type: "feature", result: "done_with_concerns", closed_at: "2026-09-01T10:00:00.000Z", summary: "Split the ledger" };
+  const closure = { pendingIds: new Set(), closedOverrides: new Map() };
+  const tree = renderScreen(create(mod.ResultTableRow as Component, { row, onRowClick: () => undefined, closure })) as RenderedNode;
+
+  const resultGroup = findNodes(tree, (n) => n.props["data-group"] === "result")[0];
+  const closureGroup = findNodes(tree, (n) => n.props["data-group"] === "closure")[0];
+  assert.ok(resultGroup && closureGroup, "both groups render");
+  assert.equal(collectText(resultGroup).trim(), "Done with caveats");
+  assert.equal(collectText(closureGroup).trim(), "Closed");
+  assert.equal(findNodes(resultGroup, (n) => n === closureGroup).length, 0, "the closure group is not nested inside the result group");
+});
+
+// half-card head at xl (1280px): ~490px card − 40px padding − ~180px Mismatches badge − 12px gap
+const HALF_CARD_SUB_BUDGET_PX = 258;
+const CARD_SUB_CHAR_PX = 7;
+
+test("the crosstab subtitle fits one line of a half-width card beside its badge", async () => {
+  const mod = await loadScreenModule(OUTCOMES_SRC, { UI: ui.UI, location: { hash: "" }, URLSearchParams });
+  const create = (mod.React as { createElement: (t: unknown, p: unknown) => unknown }).createElement;
+  const state = { status: "loading", busy: true, data: null, error: null };
+  const tree = renderScreen(create(mod.CrosstabCard as Component, { state, onRetry: () => undefined })) as RenderedNode;
+
+  const [head] = findNodes(tree, (n) => n.type === "CardHead");
+  const sub = String(head.props.sub ?? "");
+  assert.ok(sub.length > 0, "the card keeps a subtitle");
+  assert.ok(sub.length * CARD_SUB_CHAR_PX <= HALF_CARD_SUB_BUDGET_PX, `"${sub}" is ${sub.length * CARD_SUB_CHAR_PX}px`);
+});
+
+test("a channel row keeps to two single lines, the detail line carrying its full text as a tooltip", async () => {
+  const mod = await loadScreenModule(OUTCOMES_SRC, { UI: ui.UI, location: { hash: "" }, URLSearchParams });
+  const create = (mod.React as { createElement: (t: unknown, p: unknown) => unknown }).createElement;
+  const channel = {
+    attribution_source: "structuredoutput-completion", alerting: false, eligible: true,
+    silent_hours: 3.4, recent_peak_daily_count: 171, peak_daily_count: 1204,
+  };
+  const tree = renderScreen(create(mod.ChannelLivenessRow as Component, { channel, days: 30, recencyDays: 7 })) as RenderedNode;
+
+  const lines = getRootHost(tree).children.filter((child): child is RenderedNode => typeof child !== "string");
+  assert.equal(lines.length, 2, "status line + detail line");
+  for (const line of lines) {
+    assert.match(String(line.props.className ?? ""), /whitespace-nowrap|truncate/, `"${collectText(line)}" cannot wrap`);
+  }
+  const detail = lines[1];
+  assert.match(String(detail.props.className), /truncate/);
+  assert.equal(detail.props.title, collectText(detail).trim());
 });
