@@ -878,3 +878,27 @@ describe("the header speaks about loading only after a first read; before it the
     });
   }
 });
+
+test("'rev of #N' stays on one line: it never wraps and the ID column fits it for a six-digit id", async () => {
+  const screen = await loadDocsScreen();
+  const monoCharPx = 7.2;
+  const cellPaddingPx = 28;
+  assert.match(cssRuleBody(readFileSync(DOCS_SRC, "utf8"), " .doc-lineage"), /white-space\s*:\s*nowrap/);
+
+  const tree = renderListCard(screen, {});
+  const idHeader = findNodes(tree, (n) => n.type === "th" && collectText(n) === "ID")[0];
+  const width = (idHeader.props.style as { width: number }).width;
+  assert.ok(width >= cellPaddingPx + monoCharPx * "rev of #123456".length, `ID column ${width}px`);
+});
+
+test("the Title header starts at the title text's x: indented by the lead slot plus the title row gap", async () => {
+  const screen = await loadDocsScreen();
+  const source = readFileSync(DOCS_SRC, "utf8");
+  const px = (rule: string, property: string) => Number(rule.match(new RegExp(`(?:^|[;\\s])${property}\\s*:\\s*(\\d+)px`))?.[1]);
+  const indent = px(cssRuleBody(source, ".doc-title-lead"), "width") + px(cssRuleBody(source, ".title-cell .doc-title-row"), "gap");
+
+  const titleHeader = findNodes(renderListCard(screen, {}), (n) => n.type === "th" && collectText(n) === "Title")[0];
+  const label = findNodes(titleHeader, (n) => n.type === "span" && n.props.className === "doc-col-title-text");
+  assert.equal(label.length, 1);
+  assert.equal(px(cssRuleBody(source, ".doc-col-title-text"), "margin-left"), indent);
+});
