@@ -263,7 +263,8 @@ function ScreenImprovement({ onNav }) {
 		{ source: "correction signals", state: correctionState },
 		{ source: "corpus audits", state: corpusAuditState },
 	];
-	const pageFailure = getPageFailureI(regions);
+	const failures = getPageFailuresI(regions, view);
+	const pageFailure = failures.banner;
 	// a shared outage owns the one Retry → cards drop theirs
 	const regionRetry = pageFailure ? undefined : triggerRefresh;
 	const regionStates = regions.map(({ state }) => state);
@@ -384,6 +385,9 @@ function ScreenImprovement({ onNav }) {
         .i-card-shadow:hover { box-shadow:0 2px 8px rgba(0,0,0,0.08), inset 0 0 0 1px rgb(var(--accent) / 0.4); }
         .i-row-card { transition:box-shadow 120ms, transform 120ms; cursor:pointer; }
         .i-row-card:hover { transform:translateY(-1px); }
+        /* clipped board text → whole text on hover or keyboard focus (a title tooltip never shows on focus) */
+        .i-row-card:is(:hover, :focus-visible) .i-clip { white-space:normal; overflow:visible; display:block;
+          -webkit-line-clamp:unset; overflow-wrap:anywhere; }
         .i-anim-toast { animation:toastInI 180ms ease-out; }
         /* 카드 메타 배지 — 전부 canonical window.UI.Badge(.pill family)로 이관 (screen-local 배지 CSS 폐지).
            tone 은 status Badge 의 내부 Icon(text-{tone})이 운반 · shell 은 항상 neutral(loud fill 금지 · dual-encode 보존). */
@@ -495,7 +499,7 @@ function ScreenImprovement({ onNav }) {
 						reviewReasons={reviewReasonSegments}
 						onNav={onNav}
 						onRetry={regionRetry}
-						shared={pageFailure}
+						shared={failures}
 					/>
 				) : (
 					<>
@@ -520,7 +524,7 @@ function ScreenImprovement({ onNav }) {
 								onAction={runAction}
 								pendingActionId={pendingActionId}
 								onRetry={regionRetry}
-								shared={pageFailure}
+								shared={failures}
 							/>
 						</div>
 						<PatternLedgerCardI
@@ -528,7 +532,7 @@ function ScreenImprovement({ onNav }) {
 							suppression={loopSuppression}
 							onRowClick={setDrawerRow}
 							onRetry={regionRetry}
-							shared={pageFailure}
+							shared={failures}
 						/>
 						<LoopOutputGroupI
 							statsState={statsState}
@@ -538,7 +542,7 @@ function ScreenImprovement({ onNav }) {
 							buckets={buckets}
 							onNav={onNav}
 							onRetry={regionRetry}
-							shared={pageFailure}
+							shared={failures}
 						/>
 					</>
 				)}
@@ -573,7 +577,7 @@ function StatusBandI({
 	onOpenInstrumentation,
 	onRetry,
 }) {
-	const { PageVerdict, getFreshnessVerdict } = window.UI;
+	const { PageVerdict } = window.UI;
 	const s = statsState.data || {};
 	const cycleTotal = Number(s.cycle_total_7d ?? 0);
 	const applied = Number(s.cycles_generated_applied_7d ?? 0);
@@ -583,9 +587,9 @@ function StatusBandI({
 		pendingTotal - Number(suppression?.pending_unpromptable ?? 0),
 	);
 	const statsStatus = bandTileStatusI(statsState, statsState.data);
-	// held count under a failed or aged read → Last known, ok drops to neutral (shared verdict rule)
-	const appliedVerdict = asOf ? getFreshnessVerdict({ tone: "ok", at: asOf, regions: [statsState] }) : null;
-	const isAppliedHeld = appliedVerdict != null && appliedVerdict.tone !== "ok";
+	const appliedHeld = getHeldLabelI(asOf, statsState);
+	// a waiting suggestion warns whatever the read's age; only the all-clear needs a fresh read
+	const awaitingHeld = awaiting > 0 ? null : getHeldLabelI(asOf, listState);
 	// 보류 중 사람이 오늘 풀 수 있는 원인만 센다 — 설계 결정으로 닫아 둔 원인은 wedged 가
 	// 아니다. 판정 집합은 원장 held 구역과 같은 것 하나: 갈라지면 타일과 구역이 다른 수를 말한다.
 	const heldBuckets = getSuppressionListI(suppression, "parked");
@@ -612,23 +616,23 @@ function StatusBandI({
 			<div className="grid grid-cols-4 gap-3">
 				<StatusTileI
 					status={bandTileStatusI(listState, listState.data)}
-					tone={awaiting > 0 ? "text-warn" : "text-ok"}
-					symbol={awaiting > 0 ? "⚠" : "✓"}
+					tone={awaiting > 0 ? "text-warn" : awaitingHeld ? undefined : "text-ok"}
+					symbol={awaiting > 0 ? "⚠" : awaitingHeld ? null : "✓"}
 					label="Awaiting your decision"
 					value={formatIntI(awaiting)}
 					owner="suggestion board"
-					population="Suggestions that need your approval"
+					population={`${awaitingHeld ? `${awaitingHeld} · ` : ""}Suggestions that need your approval`}
 					basis="Pending or snoozed, any age"
 					onRetry={onRetry}
 				/>
 				<StatusTileI
 					status={statsStatus}
-					tone={isAppliedHeld ? undefined : "text-ok"}
-					symbol={isAppliedHeld ? null : "✓"}
+					tone={appliedHeld ? undefined : "text-ok"}
+					symbol={appliedHeld ? null : "✓"}
 					label="Applied (7 days)"
 					value={formatIntI(applied)}
 					owner="loop output"
-					population={`${isAppliedHeld ? `${appliedVerdict.label} · ` : ""}of ${formatIntI(cycleTotal)} cycles · last ${formatCycleStampI(s.latest_cycle_started_at)}`}
+					population={`${appliedHeld ? `${appliedHeld} · ` : ""}of ${formatIntI(cycleTotal)} cycles · last ${formatCycleStampI(s.latest_cycle_started_at)}`}
 					basis="Cycles started in the last 7 days"
 					onRetry={onRetry}
 				/>
@@ -662,6 +666,13 @@ function StatusBandI({
 			/>
 		</section>
 	);
+}
+
+// held count under a failed or aged read → its Last known label, null while fresh (shared verdict rule)
+function getHeldLabelI(at, state) {
+	if (!at) return null;
+	const verdict = window.UI.getFreshnessVerdict({ tone: "ok", at, regions: [state] });
+	return verdict.tone === "ok" ? null : verdict.label;
 }
 
 // Any failed payload → error, never "still loading" · ready only once every payload and value has landed.
@@ -891,6 +902,7 @@ function TrendCardI({ state, aggregate, shared, onRetry }) {
 					<ErrorBannerI
 						focusTargetId={ANCHOR_ID_I.trend}
 						source="loop events"
+						region="trend"
 						error={state.error}
 						isBusy={state.busy}
 						shared={shared}
@@ -931,22 +943,22 @@ function TrendCardI({ state, aggregate, shared, onRetry }) {
 	});
 	return (
 		<div className="card" id={ANCHOR_ID_I.trend}>
-			<CardHead
-				title="Verified vs rejected (trend)"
-				sub={getLoopBasisI(aggregate)}
-				right={<RejectRateHeadlineI before={aggregate.failBefore} after={aggregate.failAfter} />}
-			/>
+			<CardHead title="Verified vs rejected (trend)" sub={getLoopBasisI(aggregate)} />
 			<div className="px-5 pb-4">
-				<div className="fs-meta text-faint mb-1">
-					{`Share of scored cycles rejected, per day · ${formatIntI(aggregate.verifiedTotal)} verified · ${formatIntI(aggregate.rejectTotal)} rejected`}
+				<div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-1 mb-1">
+					<RejectRateHeadlineI before={aggregate.failBefore} after={aggregate.failAfter} />
+					<span className="fs-meta text-faint">
+						{`Share rejected per day · all ${formatIntI(series.length)} cycle days: ${formatIntI(aggregate.verifiedTotal)} verified · ${formatIntI(aggregate.rejectTotal)} rejected`}
+					</span>
 				</div>
 				<TrendChart
 					label="Share of scored cycles rejected, per day"
 					tone="warn"
-					h={64}
+					kind="bars"
+					h={112}
 					yScale
 					maxTicks={5}
-					formatValue={(v) => `${Math.round(v * 100)}% rejected`}
+					formatValue={(v) => `${Math.round(v * 100)}%`}
 					points={points}
 				/>
 			</div>
@@ -954,12 +966,12 @@ function TrendCardI({ state, aggregate, shared, onRetry }) {
 	);
 }
 
-// recent-half count leads; the earlier half rides as "(was …)" so no percentage implies precision
+// counts, never a percentage · each half names its cycle days so neither reads as the all-days total
 function getRejectRatePhraseI(before, after) {
 	if (!after || !after.total) return "No scored cycles yet";
-	const recent = `${formatIntI(after.count)} of ${formatIntI(after.total)} rejected`;
+	const recent = `${formatIntI(after.count)} of ${formatIntI(after.total)} rejected in the latest ${formatIntI(after.days)} cycle days`;
 	if (!before || !before.total) return recent;
-	return `${recent} (was ${formatIntI(before.count)} of ${formatIntI(before.total)})`;
+	return `${recent} (${formatIntI(before.count)} of ${formatIntI(before.total)} in the ${formatIntI(before.days)} before)`;
 }
 
 function RejectRateHeadlineI({ before, after }) {
@@ -1111,6 +1123,7 @@ function KanbanCardI({
 					<ErrorBannerI
 						focusTargetId={ANCHOR_ID_I.suggestionBoard}
 						source="suggestions"
+						region="suggestion board"
 						error={state.error}
 						isBusy={state.busy}
 						shared={shared}
@@ -1311,7 +1324,7 @@ function BoardRowI({ onClick, title, ariaLabel, lead, text, trail }) {
 			aria-label={ariaLabel}
 		>
 			{lead}
-			<span className="text-ink fs-body truncate flex-1 min-w-0">{text}</span>
+			<span className="i-clip text-ink fs-body truncate flex-1 min-w-0">{text}</span>
 			{trail}
 		</button>
 	);
@@ -1541,7 +1554,7 @@ function CompactProposalCardI({ row, onClick }) {
 			onClick={onClick}
 			title={String(primary)}
 			ariaLabel={`View declined suggestion ${row.id} details`}
-			text={truncateI(primary, 80)}
+			text={primary}
 			trail={
 				<>
 					<span className="font-mono text-faint shrink-0">#{row.id}</span>
@@ -1629,7 +1642,7 @@ function ProposalCardI({ row, onClick, onAction, pendingActionId }) {
 				{/* rationale = 1차 콘텐츠로 승격(USER) — fs-body · text-ink · medium weight · 2~3줄 clamp. 카드면에서 가장 강한 텍스트. 부재 시 graceful 미렌더. */}
 				{row.rationale && (
 					<div
-						className="fs-body text-ink font-medium mt-1.5 line-clamp-3"
+						className="i-clip fs-body text-ink font-medium mt-1.5 line-clamp-3"
 						title={String(row.rationale)}
 					>
 						{row.rationale}
@@ -1637,10 +1650,10 @@ function ProposalCardI({ row, onClick, onAction, pendingActionId }) {
 				)}
 				{/* pattern_label = 반복성 높은 2차 카테고리 라벨 → rationale 아래 tiny/faint 태그로 후퇴(USER: de-emphasized, 경쟁 금지). */}
 				<div
-					className="fs-meta text-faint mt-1 line-clamp-1"
+					className="i-clip fs-meta text-faint mt-1 line-clamp-1"
 					title={String(title)}
 				>
-					{truncateI(title, 80)}
+					{title}
 				</div>
 			</button>
 			{/* 허용/거절 액션 (pending/snoozed only · dual-encoded ✓/✕). */}
@@ -1798,6 +1811,7 @@ function BucketRowI({ state, buckets, shared, onRetry }) {
 					<ErrorBannerI
 						focusTargetId={ANCHOR_ID_I.learningMemory}
 						source="suggestions"
+						region="learning memory"
 						error={state.error}
 						isBusy={state.busy}
 						shared={shared}
@@ -2192,10 +2206,10 @@ function DetailBodyI({ fields, sections, footnote, preVerify }) {
 	return (
 		<div className="flex flex-col gap-3">
 			<dl className="grid gap-1.5" style={{ gridTemplateColumns: "120px 1fr" }}>
-				{fields.filter(([, v]) => window.UI.hasFieldValue(v)).map(([k, v]) => (
+				{fields.filter(([, v]) => window.UI.hasFieldValue(v)).map(([k, v, mono]) => (
 					<React.Fragment key={k}>
 						<dt className={labelCls}>{k}</dt>
-						<dd className="fs-body text-ink font-mono break-words">
+						<dd className={`fs-body text-ink break-words${mono ? " font-mono" : ""}`}>
 							{String(v)}
 						</dd>
 					</React.Fragment>
@@ -2284,15 +2298,22 @@ function buildDetailPropsI(row) {
 		const statusBadge = learningStatusBadgeI(row?.status);
 		return {
 			fields: [
-				["ID", row?.id ?? row?.pattern_id],
+				["ID", row?.id ?? row?.pattern_id, true],
 				["Agent", row?.agent],
 				[
 					"Status",
 					row?.status ? `${statusBadge.symbol} ${statusBadge.label}` : null,
 				],
-				["Approval tier", row?.approval_tier || row?.bucket],
+				[
+					"Approval tier",
+					row?.approval_tier ? getTierWordsI(row.approval_tier) : row?.bucket,
+				],
 				["Frequency", row?.frequency],
-				["First seen", row?.discovered_date],
+				[
+					"First seen",
+					row?.discovered_date ? formatDateFullI(row.discovered_date) : null,
+					true,
+				],
 				// last_updated = real-UTC ISO instant → formatKstFull (KST 상세 표기). last_seen fallback 동일.
 				[
 					"Last updated",
@@ -2301,6 +2322,7 @@ function buildDetailPropsI(row) {
 						: row?.last_seen
 							? window.UI.formatKstFull(row.last_seen)
 							: null,
+					true,
 				],
 			],
 			sections: [
@@ -2312,8 +2334,6 @@ function buildDetailPropsI(row) {
 	}
 	// Proposal schema — server emits 16 fields (routes/improvement.ts rowToProposalSummary).
 	// provenance 5 cols (rationale + pre_verify_*) 포함.
-	const tier = row?.approval_tier || "auto";
-	const isSafety = tier !== "auto";
 	const preVerify = preVerifyBadgeI(
 		row?.pre_verify_status,
 		row?.pre_verify_passed,
@@ -2327,19 +2347,20 @@ function buildDetailPropsI(row) {
 
 	return {
 		fields: [
-			["ID", row?.id],
-			["Status", row?.status],
-			["Approval tier", isSafety ? `⚠ Needs your approval (${tier})` : "✓ Applies automatically"],
-			["Classification", row?.classification],
+			["ID", row?.id, true],
+			["Status", getDetailWordsI("status", row?.status)],
+			["Approval tier", getTierWordsI(row?.approval_tier || "auto")],
+			["Classification", getDetailWordsI("classification", row?.classification)],
 			["Target agent", row?.target_agent],
-			["Target file", row?.target_file],
-			["Cycle date", row?.cycle_date],
-			["Model check", row?.haiku_status],
-			["Cost guard", row?.cost_guard_state],
-			// reviewed_at = real-UTC ISO instant → formatKstFull. cycle_date 는 date-only 문자열 → raw 유지(위).
+			["Target file", row?.target_file, true],
+			// cycle_date = date-only string → tz-safe formatDateFullI · reviewed_at = UTC instant → formatKstFull
+			["Cycle date", row?.cycle_date ? formatDateFullI(row.cycle_date) : null, true],
+			["Model check", getModelCheckWordsI(row?.haiku_status)],
+			["Cost guard", getDetailWordsI("costGuard", row?.cost_guard_state)],
 			[
 				"Reviewed at",
 				row?.reviewed_at ? window.UI.formatKstFull(row.reviewed_at) : null,
+				true,
 			],
 		],
 		sections: [
@@ -2348,6 +2369,39 @@ function buildDetailPropsI(row) {
 		],
 		preVerify: preVerifyDetail,
 	};
+}
+
+function getTierWordsI(tier) {
+	return tier === "auto" ? "✓ Applies automatically" : `⚠ Needs your approval (${tier})`;
+}
+
+// stored machine keys → drawer words (cost guard: daemon_cycle.derive_cost_guard_state)
+const DETAIL_WORDS_I = {
+	status: {
+		pending: "Awaiting approval",
+		snoozed: "Snoozed",
+		applied: "Applied",
+		rejected: "Rejected",
+	},
+	classification: { apply: "Recommended to apply", reject: "Recommended to reject" },
+	costGuard: { ok: "Clear", warn: "Quota or budget cap hit", infra_fault: "Auth fault" },
+	modelCheck: { ok: "Passed", skipped: "Skipped", verified: "Verified", error: "Error" },
+};
+
+// an unmapped key still prints as words, never as the raw snake/kebab key
+function getDetailWordsI(kind, value) {
+	if (!window.UI.hasFieldValue(value)) return null;
+	const key = String(value).trim();
+	return DETAIL_WORDS_I[kind][key] ?? window.UI.getDisplayName("pattern", key);
+}
+
+// "<verdict>:<detail>" (skipped:quota-limit) → "Skipped — quota limit"
+function getModelCheckWordsI(status) {
+	if (!window.UI.hasFieldValue(status)) return null;
+	const [verdict, ...rest] = String(status).trim().split(":");
+	const detail = rest.join(":").replace(/[-_]+/g, " ").trim();
+	const head = getDetailWordsI("modelCheck", verdict);
+	return detail ? `${head} — ${detail}` : head;
 }
 
 // pre_verify_axes 4-axis compliance dict {C1..C4} → 사람이 읽는 라벨 (daemon_cycle 4-axis 게이트 원천).
@@ -2407,6 +2461,7 @@ function ChangeSummaryCardI({ state, aggregate, onRetry, shared }) {
 					<ErrorBannerI
 						focusTargetId={ANCHOR_ID_I.changeSummary}
 						source="loop events"
+						region="applied changes"
 						error={state.error}
 						isBusy={state.busy}
 						shared={shared}
@@ -2427,7 +2482,7 @@ function ChangeSummaryCardI({ state, aggregate, onRetry, shared }) {
 		);
 	}
 
-	const { added, removed, eventCount, failBefore, failAfter } = aggregate;
+	const { added, removed, changedCount, eventCount, failBefore, failAfter } = aggregate;
 
 	// 데이터 부재 — 윈도우 내 사이클 이벤트 0건 → 안내 indicator (가짜 0 채움 금지).
 	if (eventCount === 0) {
@@ -2445,40 +2500,58 @@ function ChangeSummaryCardI({ state, aggregate, onRetry, shared }) {
 		);
 	}
 
+	// stretches to the row's tallest card (the trend) → the reject rate anchors the foot, no blank band
 	return (
-		<div className="card" id={ANCHOR_ID_I.changeSummary}>
+		<div className="card flex flex-col" id={ANCHOR_ID_I.changeSummary}>
 			<CardHead
 				title="Self-improvement changes (applied)"
 				sub={getLoopBasisI(aggregate)}
 			/>
-			<div className="px-5 pt-3 flex items-center gap-2 flex-wrap">
-				<span className="fs-meta text-faint uppercase tracking-wider">
-					Lines changed
-				</span>
-				<span
-					className="inline-flex items-center gap-1 fs-meta text-ink"
-					title={`${formatIntI(added)} rule/instruction lines added across ${formatIntI(eventCount)} cycles`}
-				>
-					<SymI s="＋" className="text-ok" size={11} />
-					<span>{formatIntI(added)} added</span>
-				</span>
-				<span
-					className="inline-flex items-center gap-1 fs-meta text-ink"
-					title={`${formatIntI(removed)} rule/instruction lines removed across ${formatIntI(eventCount)} cycles`}
-				>
-					<SymI s="−" className="text-crit" size={11} />
-					<span>{formatIntI(removed)} removed</span>
-				</span>
-			</div>
-			<div className="px-5 pt-2 pb-4">
-				<div className="fs-meta text-faint uppercase tracking-wider">
-					Reject rate, recent half of cycles
+			<div className="px-5 pt-3 pb-4 flex-1 flex flex-col gap-3">
+				<div>
+					<div className="fs-meta text-faint uppercase tracking-wider">
+						Lines changed
+					</div>
+					<div className="mt-1 flex items-baseline gap-x-5 gap-y-1 flex-wrap">
+						<LineCountI
+							symbol="＋"
+							tone="text-ok"
+							count={added}
+							word="added"
+							title={`${formatIntI(added)} rule/instruction lines added across ${formatIntI(eventCount)} cycles`}
+						/>
+						<LineCountI
+							symbol="−"
+							tone="text-crit"
+							count={removed}
+							word="removed"
+							title={`${formatIntI(removed)} rule/instruction lines removed across ${formatIntI(eventCount)} cycles`}
+						/>
+					</div>
+					<div className="fs-meta text-dim mt-1">
+						{`${formatIntI(changedCount)} of ${formatIntI(eventCount)} cycles changed rule lines`}
+					</div>
 				</div>
-				<div className="mt-1">
-					<RejectRateHeadlineI before={failBefore} after={failAfter} />
+				<div className="mt-auto">
+					<div className="fs-meta text-faint uppercase tracking-wider">
+						Reject rate, recent half of cycles
+					</div>
+					<div className="mt-1">
+						<RejectRateHeadlineI before={failBefore} after={failAfter} />
+					</div>
 				</div>
 			</div>
 		</div>
+	);
+}
+
+function LineCountI({ symbol, tone, count, word, title }) {
+	return (
+		<span className="inline-flex items-baseline gap-1" title={title}>
+			<SymI s={symbol} className={tone} size={13} />
+			<span className="fs-display font-semibold text-ink">{formatIntI(count)}</span>
+			<span className="fs-meta text-dim">{word}</span>
+		</span>
 	);
 }
 
@@ -2779,14 +2852,15 @@ function ToastI({ tone, message }) {
 }
 
 // per-region failure: quiet covered note when the page banner names this source, else its own card + Retry
-function ErrorBannerI({ source, error, onRetry, isBusy, shared, focusTargetId }) {
+function ErrorBannerI({ source, region, error, onRetry, isBusy, shared, focusTargetId }) {
 	const { RegionFailure } = window.UI;
 	return (
 		<RegionFailure
 			source={source}
+			region={region}
 			error={error}
 			isBusy={isBusy}
-			shared={shared}
+			failures={shared}
 			focusTargetId={focusTargetId}
 			onRetry={onRetry}
 		/>
@@ -2803,12 +2877,18 @@ function ErrorBannerI({ source, error, onRetry, isBusy, shared, focusTargetId })
 function deriveLoopAggregateI(data) {
 	const events = Array.isArray(data.events) ? data.events : [];
 	let added = 0,
-		removed = 0;
+		removed = 0,
+		changedCount = 0;
 	// 날짜별 verified/reject 버킷.
 	const byDate = new Map();
 	for (const e of events) {
-		added += Number(e.changes_added ?? 0);
-		removed += Number(e.changes_removed ?? 0);
+		const lines = {
+			added: Number(e.changes_added ?? 0),
+			removed: Number(e.changes_removed ?? 0),
+		};
+		added += lines.added;
+		removed += lines.removed;
+		if (lines.added + lines.removed > 0) changedCount += 1;
 		const day = String(e.event_ts ?? "").slice(0, 10);
 		if (!day) continue;
 		const bucket = byDate.get(day) || { date: day, verified: 0, reject: 0 };
@@ -2839,12 +2919,13 @@ function deriveLoopAggregateI(data) {
 	return {
 		added,
 		removed,
+		changedCount,
 		eventCount: events.length,
 		verifiedTotal,
 		rejectTotal,
 		trend,
-		failBefore: { count: before.reject, total: before.total },
-		failAfter: { count: after.reject, total: after.total },
+		failBefore: { count: before.reject, total: before.total, days: mid },
+		failAfter: { count: after.reject, total: after.total, days: trend.length - mid },
 	};
 }
 
@@ -2884,10 +2965,27 @@ function loadRegionI(url, setState, onData) {
 }
 
 // null unless 2+ regions failed with one shared cause (then one page banner owns Retry)
-function getPageFailureI(regions) {
-	return window.UI.getSharedFailure(
-		regions.map(({ source, state }) => ({ source, error: state.error || null })),
-	);
+// board view's failure slots in render order → the first slot a source feeds speaks for it
+const BOARD_FAILURE_SLOTS_I = [
+	["suggestions", "suggestion board"],
+	["pattern ledger", "pattern ledger"],
+	["loop stats", "loop stats"],
+	["loop events", "applied changes"],
+	["loop events", "trend"],
+	["suggestions", "learning memory"],
+];
+
+// one card per failed read over the open view's slots; sources the view renders no slot for follow
+function getPageFailuresI(regions, view) {
+	const errors = new Map(regions.map(({ source, state }) => [source, state.error || null]));
+	const slots = view === "instrumentation" ? [] : BOARD_FAILURE_SLOTS_I;
+	const slotted = new Set(slots.map(([source]) => source));
+	return window.UI.getSourceFailures([
+		...slots.map(([source, region]) => ({ source, region, error: errors.get(source) ?? null })),
+		...regions
+			.filter(({ source }) => !slotted.has(source))
+			.map(({ source, state }) => ({ source, error: state.error || null })),
+	]);
 }
 
 // APPLIED / REJECTED 분리 + snoozed 명시 라우팅.

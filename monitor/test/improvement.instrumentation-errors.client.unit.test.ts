@@ -100,7 +100,7 @@ test("a page-level outage hands every failed card the shared failure, so the ban
 
   assert.equal(banners.length, PAYLOADS.length);
   for (const banner of banners) {
-    assert.equal(banner.props.shared, shared);
+    assert.equal(banner.props.failures, shared);
     assert.equal(banner.props.onRetry, undefined);
   }
 });
@@ -109,9 +109,10 @@ interface PageSandbox {
   React: { createElement: unknown };
   window: { UI: { RegionFailure: unknown } };
   ErrorBannerI: (props: Record<string, unknown>) => RecordedElement;
-  getPageFailureI: (
+  getPageFailuresI: (
     regions: Array<{ source: string; state: { error: string | null } }>,
-  ) => { sources: string[]; error: string } | null;
+    view: string,
+  ) => { banner: { sources: string[]; error: string } | null };
 }
 
 const page = await buildScreenSandbox<PageSandbox>(IMPROVEMENT_SRC);
@@ -124,7 +125,7 @@ test("a failed region renders the shared unavailable card with its own source, n
 
   assert.equal(banner.type, page.window.UI.RegionFailure);
   assert.deepEqual(
-    { source: banner.props.source, error: banner.props.error, onRetry: banner.props.onRetry, shared: banner.props.shared },
+    { source: banner.props.source, error: banner.props.error, onRetry: banner.props.onRetry, shared: banner.props.failures },
     { source: "loop stats", error: "HTTP 500 Internal Server Error — {}", onRetry, shared },
   );
 });
@@ -138,7 +139,7 @@ test("the page outage names exactly the regions that failed with one shared caus
   ] as const;
 
   for (const row of rows) {
-    const failure = page.getPageFailureI(row.regions.map(([source, state]) => ({ source, state })));
+    const failure = page.getPageFailuresI(row.regions.map(([source, state]) => ({ source, state })), "instrumentation").banner;
     assert.deepEqual(failure ? [...failure.sources] : null, row.sources ? [...row.sources] : null, row.name);
   }
 });
