@@ -307,7 +307,7 @@ function getChartXAxisProps(labels) {
   return { tick: ChartAxisTick, interval: 'preserveStartEnd', minTickGap: CHART_TICK_MIN_GAP_PX + Math.ceil((widest * CHART_TICK_CHAR_PX) / 2) };
 }
 
-/** Recharts XAxis `tick` renderer — ends anchored on their own point by visible order, like the HTML tick row. */
+/** Recharts XAxis `tick` renderer — ends anchored by visible order, like the HTML tick row. */
 function ChartAxisTick({ x, y, payload, index, visibleTicksCount }) {
   const anchor = getChartTickAnchor(index, visibleTicksCount);
   // Recharts clamps end labels to the whole chart box, not the plot → an edge label pins to its own point instead

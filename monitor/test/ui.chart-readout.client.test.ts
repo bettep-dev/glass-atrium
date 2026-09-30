@@ -22,6 +22,7 @@ const getChartTickAnchor = ui.getChartTickAnchor as (order: number, total: numbe
 const getChartTickLayout = ui.getChartTickLayout as (labels: string[], kind: string, widthPx: number, maxTicks?: number) => TickSlot[];
 const getChartYScale = ui.getChartYScale as (points: Point[], kind: string, formatValue?: (v: number) => string) => { top: string; bottom: string } | null;
 const getChartImageProps = ui.getChartImageProps as (name: string, points: Point[], formatValue?: (v: number) => string) => Record<string, unknown>;
+const getChartXAxisProps = ui.getChartXAxisProps as (labels: string[]) => { tick: unknown; interval: string; minTickGap: number };
 // module consts are not context globals → read the window.UI export
 const { CHART_TICK_MIN_GAP_PX, CHART_TICK_CHAR_PX } = ui.UI as { CHART_TICK_MIN_GAP_PX: number; CHART_TICK_CHAR_PX: number };
 
@@ -188,7 +189,6 @@ describe("edge ticks anchor by visible order, so neither end label spills past t
   });
 
   test("the shared x-axis gap adds half the widest label to the minimum gap", () => {
-    const getChartXAxisProps = ui.getChartXAxisProps as (labels: string[]) => { tick: unknown; interval: string; minTickGap: number };
     for (const labels of [["09-01", "09-30"], ["2026-09-01", "09-30"], []]) {
       const props = getChartXAxisProps(labels);
       const widest = Math.max(0, ...labels.map((label) => label.length));
