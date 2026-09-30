@@ -975,7 +975,7 @@ function StatusBandO({ analyticsState, attentionState, windowDays, freshness, on
   if (view === 'error') {
     return (
       <div id={STATUS_BAND_ID} className="mb-4 flex-shrink-0" aria-label="Status band">
-        <RegionErrorO source="the status band" error={analyticsState.error} onRetry={onRetry} shared={shared} isBusy={analyticsState.busy} focusTargetId={STATUS_BAND_ID}/>
+        <RegionErrorO source="the status band" state={analyticsState} onRetry={onRetry} shared={shared} focusTargetId={STATUS_BAND_ID}/>
       </div>
     );
   }
@@ -1006,7 +1006,7 @@ function StatusBandO({ analyticsState, attentionState, windowDays, freshness, on
         <VolumeTilesO tiles={volumeTiles} windowLabel={windowLabel}/>
       </div>
       {isAttentionFailed && (
-        <RegionErrorO source="the needs-you count" error={attentionState.error} onRetry={onRetry} shared={shared} isBusy={attentionState.busy} focusTargetId={STATUS_BAND_ID}/>
+        <RegionErrorO source="the needs-you count" state={attentionState} onRetry={onRetry} shared={shared} focusTargetId={STATUS_BAND_ID}/>
       )}
     </div>
   );
@@ -1284,7 +1284,7 @@ function AgentFailureBodyO({ state, onRetry, shared, stickyStyle }) {
   const view = window.UI.getRegionView(state);
   if (view === 'loading') return <AgentFailureSkeletonO stickyStyle={stickyStyle}/>;
   if (view === 'error') {
-    return <RegionErrorO source="by-agent failures" error={state.error} onRetry={onRetry} shared={shared} isBusy={state.busy} focusTargetId={REGION_CARD_IDS.agentFailures}/>;
+    return <RegionErrorO source="by-agent failures" state={state} onRetry={onRetry} shared={shared} focusTargetId={REGION_CARD_IDS.agentFailures}/>;
   }
 
   const rows = buildAgentFailureRowsO(state.data?.agentStack, state.data?.overall?.by_agent_top_10);
@@ -1405,7 +1405,7 @@ function AttributionHealthBody({ state, onRetry, shared }) {
     return <ChartSkeletonO height={200} label="reporting health"/>;
   }
   if (view === 'error') {
-    return <RegionErrorO source="reporting health" error={state.error} onRetry={onRetry} shared={shared} isBusy={state.busy} focusTargetId={REGION_CARD_IDS.attribution}/>;
+    return <RegionErrorO source="reporting health" state={state} onRetry={onRetry} shared={shared} focusTargetId={REGION_CARD_IDS.attribution}/>;
   }
 
   const summary = state.data?.window_summary || null;
@@ -1712,7 +1712,7 @@ function ChannelLivenessBody({ state, onRetry, shared }) {
     return <ChartSkeletonO height={120} label="recording channels"/>;
   }
   if (view === 'error') {
-    return <RegionErrorO source="recording channels" error={state.error} onRetry={onRetry} shared={shared} isBusy={state.busy} focusTargetId={REGION_CARD_IDS.channels}/>;
+    return <RegionErrorO source="recording channels" state={state} onRetry={onRetry} shared={shared} focusTargetId={REGION_CARD_IDS.channels}/>;
   }
 
   const channels  = Array.isArray(state.data?.channels) ? state.data.channels : [];
@@ -1801,7 +1801,7 @@ function GraderBreakdownBody({ state, onRetry, shared }) {
     return <ChartSkeletonO height={120} label="check results"/>;
   }
   if (view === 'error') {
-    return <RegionErrorO source="check results" error={state.error} onRetry={onRetry} shared={shared} isBusy={state.busy} focusTargetId={REGION_CARD_IDS.checks}/>;
+    return <RegionErrorO source="check results" state={state} onRetry={onRetry} shared={shared} focusTargetId={REGION_CARD_IDS.checks}/>;
   }
 
   const breakdown = state.data?.overall?.grader_breakdown;
@@ -1999,7 +1999,7 @@ function CrosstabBody({ state, onRetry, shared }) {
     return <ChartSkeletonO height={160} label="cross table"/>;
   }
   if (view === 'error') {
-    return <RegionErrorO source="cross table" error={state.error} onRetry={onRetry} shared={shared} isBusy={state.busy} focusTargetId={REGION_CARD_IDS.crosstab}/>;
+    return <RegionErrorO source="cross table" state={state} onRetry={onRetry} shared={shared} focusTargetId={REGION_CARD_IDS.crosstab}/>;
   }
 
   const crosstab = state.data?.crosstab;
@@ -2152,7 +2152,7 @@ function LoopEventsBody({ state, onRetry, shared }) {
     return <ChartSkeletonO height={200} label="run events"/>;
   }
   if (view === 'error') {
-    return <RegionErrorO source="run events" error={state.error} onRetry={onRetry} shared={shared} isBusy={state.busy} focusTargetId={REGION_CARD_IDS.loopEvents}/>;
+    return <RegionErrorO source="run events" state={state} onRetry={onRetry} shared={shared} focusTargetId={REGION_CARD_IDS.loopEvents}/>;
   }
 
   const total    = Number(state.data?.total_events ?? 0);
@@ -2525,7 +2525,7 @@ function ResultTableBody({
     return <PayloadUnavailableO label="Records"/>;
   }
   if (view !== 'ready') {
-    return <RegionErrorO source="the record ledger" error={state.error} onRetry={onRetry} shared={shared} isBusy={state.busy} focusTargetId={REGION_CARD_IDS.ledger}/>;
+    return <RegionErrorO source="the record ledger" state={state} onRetry={onRetry} shared={shared} focusTargetId={REGION_CARD_IDS.ledger}/>;
   }
   if (rows.length === 0) {
     return <ResultTableZeroStateO filter={filter} onResetFilter={onResetFilter}/>;
@@ -3191,11 +3191,12 @@ function EmptyStateO({ message }) {
 
 /**
  * Plain sentence + next step; the raw answer stays behind Details, Retry only when no page banner owns it.
+ * @param state - the failed region: its error is the answer, busy while a Retry re-reads it
  * @param focusTargetId - the region's own card, which takes focus when a focused Retry succeeds
  */
-function RegionErrorO({ source, error, onRetry, shared, isBusy = false, focusTargetId }) {
+function RegionErrorO({ source, state, onRetry, shared, focusTargetId }) {
   const { RegionFailure } = window.UI;
-  return <RegionFailure source={source} error={error} shared={shared} onRetry={onRetry} isBusy={isBusy} focusTargetId={focusTargetId} className="m-3"/>;
+  return <RegionFailure source={source} error={state.error} shared={shared} onRetry={onRetry} isBusy={state.busy} focusTargetId={focusTargetId} className="m-3"/>;
 }
 
 // 레인이 실패 배너를 소유하므로 본문은 '적재 실패' 만 말한다 — 같은 오류를 두 번 쓰지 않는다.
