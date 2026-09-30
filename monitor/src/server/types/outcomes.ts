@@ -313,9 +313,10 @@ export interface OutcomeCrossAnalysisResponse {
   fetched_at: string;
 }
 
-// The `days` window immediately before the current one, under the same filters,
-// poisoned exclusion and agent scope. Bounds are the DB's own CURRENT_DATE anchor,
-// so a client labels the span without date arithmetic of its own.
+/**
+ * The `days` window immediately before the current one, under the same filters, poisoned exclusion and agent scope.
+ * Bounds are the DB's own CURRENT_DATE anchor → a client labels the span without date arithmetic of its own.
+ */
 export interface OutcomeCrossAnalysisPriorWindow {
   // YYYY-MM-DD, inclusive — CURRENT_DATE - 2 × days.
   period_start: string;
@@ -348,13 +349,14 @@ export interface OutcomeHeatmapMeta {
   // [meta].timezone → ATRIUM_TIMEZONE), so the grid is tz-bucketed server-side — callers
   // render Sun~Sat / hours 0-23 directly, no client-side shift.
   timezone: string;
-  // Calendar dates in `timezone` the window touches — differs from period_start/period_end
-  // (UTC dates) whenever the bucket tz and UTC disagree on the date.
+  // Dates in `timezone` the window touches — differs from the UTC period_start/period_end when the dates disagree
   bucket_dates: OutcomeHeatmapBucketDates;
 }
 
-// YYYY-MM-DD in the bucket timezone; first/last inclusive, count = dates from first to last.
-// first = the UTC-midnight window anchor seen in that tz; last = that tz's today.
+/**
+ * YYYY-MM-DD in the bucket timezone; first/last inclusive, count = dates from first to last.
+ * first = the UTC-midnight window anchor seen in that tz; last = that tz's today.
+ */
 export interface OutcomeHeatmapBucketDates {
   first: string;
   last: string;
