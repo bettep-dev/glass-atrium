@@ -588,7 +588,7 @@ function StatusBandI({
 	const isAppliedHeld = appliedVerdict != null && appliedVerdict.tone !== "ok";
 	// 보류 중 사람이 오늘 풀 수 있는 원인만 센다 — 설계 결정으로 닫아 둔 원인은 wedged 가
 	// 아니다. 판정 집합은 원장 held 구역과 같은 것 하나: 갈라지면 타일과 구역이 다른 수를 말한다.
-	const heldBuckets = Array.isArray(suppression?.parked) ? suppression.parked : [];
+	const heldBuckets = getSuppressionListI(suppression, "parked");
 	const heldNeedingHuman = sumCountsI(
 		heldBuckets.filter((b) => !HELD_DESIGN_DECISION_CAUSES.has(b.cause)),
 	);
@@ -1930,15 +1930,18 @@ function ParkedLoopBannerI({ applyCap }) {
 // 결정 — 매번 펼치면 행동 가능한 그룹이 그 아래로 묻힌다.
 const HELD_DESIGN_DECISION_CAUSES = new Set(["non-promptable", "other"]);
 
+// suppression list field → [] when the read is absent or malformed
+function getSuppressionListI(suppression, key) {
+	return Array.isArray(suppression?.[key]) ? suppression[key] : [];
+}
+
 // 보류(held) 구역 — 윈도우가 없다. 몇 주 전에 정지된 행이 오늘도 정지 상태이므로,
 // 발견 윈도우를 걸면 숫자는 0 이 아닌데 구역만 비는 판독 불가 상태가 된다.
 // 반려 행은 서버가 원인별로 이미 나눠 보낸다 — 7일 목록에서 따로 모으면 같은 행이 두 번 선다.
 function LedgerHeldSectionI({ suppression }) {
-	const buckets = Array.isArray(suppression?.parked) ? suppression.parked : [];
+	const buckets = getSuppressionListI(suppression, "parked");
 	if (buckets.length === 0) return null;
-	const rows = Array.isArray(suppression?.parked_patterns)
-		? suppression.parked_patterns
-		: [];
+	const rows = getSuppressionListI(suppression, "parked_patterns");
 	return (
 		<div className="px-3 pb-3">
 			<LedgerSectionHeadI
@@ -2062,7 +2065,7 @@ function LedgerInertSectionI({ rows }) {
 
 // Recurrence rate, kept open under held — stalling on the same cause every cycle is a loop-health signal.
 function LedgerRecurrenceSectionI({ suppression }) {
-	const buckets = Array.isArray(suppression?.per_cycle) ? suppression.per_cycle : [];
+	const buckets = getSuppressionListI(suppression, "per_cycle");
 	if (buckets.length === 0) return null;
 	const windowDays = Number(suppression.per_cycle_window_days ?? 0);
 	const windowCycles = Number(suppression.per_cycle_window_cycles ?? 0);
@@ -2578,43 +2581,37 @@ function PatternLedgerCardI({ state, suppression, onRowClick, onRetry, shared })
 		<LedgerLiveSectionI rows={live} maxFreq={maxFreq} onRowClick={onRowClick} />
 	);
 	const sideSections = getLedgerSectionsI(inert, suppression);
+	const columns =
+		inert.length > 0
+			? getLedgerColumnsI(1 + live.length + getLiveRowGroupsI(live).length, sideSections)
+			: null;
 
-	if (inert.length === 0) {
-		return (
-			<section className="card" aria-label="Pattern ledger" id={ANCHOR_ID_I.patternLedger} data-testid="pattern-ledger">
-				<CardHead title="Pattern ledger" />
-				{liveSection}
-				{sideSections.map((section) => section.node)}
-				<LedgerFooterI total={total} declined={declinedAllTime} suppression={suppression} />
-			</section>
-		);
-	}
-
-	const liveWeight = 1 + live.length + getLiveRowGroupsI(live).length;
-	const columns = getLedgerColumnsI(liveWeight, sideSections);
 	return (
 		<section className="card" aria-label="Pattern ledger" id={ANCHOR_ID_I.patternLedger} data-testid="pattern-ledger">
 			<CardHead title="Pattern ledger" />
-			<SplitRow ratio="1:1">
-				<SplitColumn>
+			{columns ? (
+				<SplitRow ratio="1:1">
+					<SplitColumn>
+						{liveSection}
+						{columns.live.map((section) => section.node)}
+					</SplitColumn>
+					<SplitColumn>{columns.side.map((section) => section.node)}</SplitColumn>
+				</SplitRow>
+			) : (
+				<>
 					{liveSection}
-					{columns.live.map((section) => section.node)}
-				</SplitColumn>
-				<SplitColumn>{columns.side.map((section) => section.node)}</SplitColumn>
-			</SplitRow>
-			<LedgerFooterI
-				total={total}
-				declined={declinedAllTime}
-				suppression={suppression}
-			/>
+					{sideSections.map((section) => section.node)}
+				</>
+			)}
+			<LedgerFooterI total={total} declined={declinedAllTime} suppression={suppression} />
 		</section>
 	);
 }
 
 // Ledger sections beside the live list, each weighted by its rendered lines (head + rows · held = strip line + folded summary per cause).
 function getLedgerSectionsI(inert, suppression) {
-	const heldBuckets = Array.isArray(suppression?.parked) ? suppression.parked : [];
-	const recurrenceBuckets = Array.isArray(suppression?.per_cycle) ? suppression.per_cycle : [];
+	const heldBuckets = getSuppressionListI(suppression, "parked");
+	const recurrenceBuckets = getSuppressionListI(suppression, "per_cycle");
 	return [
 		{ key: "inert", weight: inert.length > 0 ? 1 + inert.length : 0, node: <LedgerInertSectionI key="inert" rows={inert} /> },
 		{ key: "held", weight: heldBuckets.length > 0 ? 1 + 2 * heldBuckets.length : 0, node: <LedgerHeldSectionI key="held" suppression={suppression} /> },
