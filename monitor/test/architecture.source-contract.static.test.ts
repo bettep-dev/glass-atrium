@@ -38,10 +38,11 @@ const LEGEND_TOKENS = [
 // 비교식을 정규식으로 쫓는 대신 재료의 부재를 잼 — cadence 와 staleness 를 화면이 어디서도
 // 읽지 않으면 둘을 견주는 식은 성립할 수 없고, 이 단언은 서식 변경에 흔들리지 않음.
 const CLIENT_THRESHOLD_TOKENS = [
-  "expected_cadence_minutes",
   "staleness_minutes",
   "daemonEffectiveTone",
 ];
+// the served cadence is shown as a schedule fact — one reader, so it never becomes an overdue baseline
+const CADENCE_TOKEN = "expected_cadence_minutes";
 
 function countOccurrences(haystack: string, needle: string): number {
   let n = 0;
@@ -87,6 +88,7 @@ test("AC-T2 no cadence-vs-staleness comparison survives in the screen source", (
     [],
     `staleness re-computation residue in architecture.jsx: ${residue.map(([t, c]) => `${t}\u00d7${c}`).join(", ")}`,
   );
+  assert.ok(countOccurrences(SCREEN_SRC, CADENCE_TOKEN) <= 1, "the served cadence has one display reader, not a staleness comparison");
 });
 
 // 심각도 색이 meta/micro 글자에 얹히면 AA 대비(warn 3.05:1 · ok 3.61 · info 3.53)에 못 미침 —
