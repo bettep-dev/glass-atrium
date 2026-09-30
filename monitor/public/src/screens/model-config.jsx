@@ -50,49 +50,49 @@ const DOMAIN_META_MC = {
 	"model.dev": {
 		label: "Dev agents",
 		hint: "Code implementation across the dev fleet",
-		desc: "All development agents (React, NestJS, Python, DB, shell, and the rest of the dev fleet) — code implementation; written into every dev agent file",
+		desc: "Every dev agent file — React, NestJS, Python, DB, shell and the rest of the fleet",
 		editable: true,
 		inherit: true,
 	},
 	"model.research": {
 		label: "Research agent",
 		hint: "Web and codebase research",
-		desc: "glass-atrium-intel-researcher — web and codebase research: source collection, verification, and synthesis",
+		desc: "glass-atrium-intel-researcher — source collection, verification and synthesis",
 		editable: true,
 		inherit: true,
 	},
 	"model.meta": {
 		label: "Meta agent",
 		hint: "Rewrites agent instructions",
-		desc: "glass-atrium-meta-agent — the AutoAgent self-improvement loop's instruction rewriter: regenerates agent instruction files from outcome signals, so its model quality shapes how well every agent evolves",
+		desc: "glass-atrium-meta-agent — the self-improvement loop's rewriter, so its model shapes how well every agent evolves",
 		editable: true,
 		inherit: true,
 	},
 	"model.wiki": {
 		label: "Wiki curator",
 		hint: "Wiki compilation and index writes",
-		desc: "glass-atrium-wiki-curator — sole owner of wiki writes: incremental compilation, index and topic-map updates, health checks, and raw-ingestion validation",
+		desc: "glass-atrium-wiki-curator — the sole wiki writer, also running health checks and raw-ingestion validation",
 		editable: true,
 		inherit: true,
 	},
 	"model.review": {
 		label: "Review",
 		hint: "Code review and bug diagnosis",
-		desc: "glass-atrium-qa-code-reviewer and glass-atrium-qa-debugger — code review verdicts, plan direction review, and root-cause diagnosis; written into both agent files",
+		desc: "glass-atrium-qa-code-reviewer and glass-atrium-qa-debugger — also plan direction review; written into both files",
 		editable: true,
 		inherit: true,
 	},
 	"model.docs": {
 		label: "Documents",
 		hint: "Reports and plans",
-		desc: "glass-atrium-intel-reporter and glass-atrium-intel-planner — report and plan authoring; written into both agent files",
+		desc: "glass-atrium-intel-reporter and glass-atrium-intel-planner — written into both files",
 		editable: true,
 		inherit: true,
 	},
 	"model.daemon_cycle_worker": {
 		label: "Daemon cycle helper",
 		hint: "Background daemon housekeeping steps",
-		desc: "Lightweight helper for daemon housekeeping cycle steps — drafts self-improve proposals, runs pre-verify, and summarizes wiki notes in the background cycles",
+		desc: "Drafts self-improve proposals, runs pre-verify and summarizes wiki notes",
 		editable: true,
 		inherit: false,
 	},
@@ -165,12 +165,12 @@ const BUDGET_META_MC = {
 	"budget.worker_max_usd": {
 		label: "Self-improve + wiki call cap",
 		hint: "Caps one self-improve generation or wiki compile call",
-		desc: "Aborts a single runaway model call in the self-improve generation step and the wiki compile step (both share this cap)",
+		desc: "Aborts the runaway call — the generation and wiki compile steps share this one cap",
 	},
 	"budget.pre_verify_max_usd": {
 		label: "Self-improve pre-verify call cap",
 		hint: "Caps one self-improve pre-verify call",
-		desc: "Aborts a single runaway model call in the self-improve pre-verify step",
+		desc: "Aborts the runaway call — only the pre-verify step reads this cap",
 	},
 };
 
@@ -207,6 +207,7 @@ function ScreenModelConfig() {
 		putRegionFailure,
 		PageVerdict,
 		SplitRow,
+		SplitColumn,
 		formatKstTime,
 	} = window.UI;
 
@@ -384,6 +385,7 @@ function ScreenModelConfig() {
 							<SyncTokenMC
 								state={configState.status}
 								sync={headerSyncMC(data)}
+								freshness={getFreshnessInputMC(asOfAt, configState)}
 							/>
 							<FreshnessStamp {...getFreshnessInputMC(asOfAt, configState)} />
 							<RefreshButton
@@ -399,9 +401,8 @@ function ScreenModelConfig() {
 
 			{verdict && (
 				<PageVerdict
-					tone={verdict.tone}
+					{...getVerdictFreshnessMC(verdict.tone, asOfAt, configState)}
 					chips={verdict.chips}
-					freshness={getFreshnessInputMC(asOfAt, configState)}
 					className="mb-4">
 					{verdict.text}
 				</PageVerdict>
@@ -466,14 +467,21 @@ function ScreenModelConfig() {
 					errors={errors}
 					onModelChange={setModel}
 				/>
-				<BudgetsSectionMC
-					state={sectionState}
-					budgets={data?.budgets}
-					form={form}
-					baseline={baseline}
-					errors={errors}
-					onBudgetChange={setBudget}
-				/>
+				<SplitColumn>
+					<BudgetsSectionMC
+						state={sectionState}
+						budgets={data?.budgets}
+						form={form}
+						baseline={baseline}
+						errors={errors}
+						onBudgetChange={setBudget}
+					/>
+					{/* the shorter caps column carries the tier notes → the model table starts at the top */}
+					<TierNotesMC
+						title="Who each tier covers"
+						rows={sortDomainsMC(data?.domains || []).map((d) => DOMAIN_META_MC[d.domain])}
+					/>
+				</SplitColumn>
 			</SplitRow>
 
 			{ready && isDirty && (
@@ -538,12 +546,11 @@ function ScreenModelConfig() {
 
 // Header sync token — answers "is what I saved what runs?" once per screen, never per row.
 // Tone rides the glyph, text stays plain.
-function SyncTokenMC({ state, sync }) {
-	const { Icon } = window.UI;
+function SyncTokenMC({ state, sync, freshness }) {
+	const { Icon, getFreshnessVerdict } = window.UI;
 
-	if (state === "loading") {
-		return <span className="fs-meta text-faint">Checking sync…</span>;
-	}
+	// the freshness stamp beside it already reads '… loading' → one ellipsis, not two
+	if (state === "loading") return null;
 	if (state !== "ready") {
 		return <span className="fs-meta text-faint">Sync state unavailable</span>;
 	}
@@ -554,6 +561,10 @@ function SyncTokenMC({ state, sync }) {
 		tone: "neutral",
 	};
 
+	// a read the stamp calls stale takes the shared 'Last known' wording, never a settled 'In sync'
+	const label = freshness
+		? getFreshnessVerdict({ ...freshness, tone: meta.tone, label: meta.label }).label
+		: meta.label;
 	// the freshness stamp owns the one tick → only a state needing action spends a glyph
 	const glyph = sync === "ok" || sync === "empty" ? null : "warn";
 
@@ -568,13 +579,22 @@ function SyncTokenMC({ state, sync }) {
 					className={glyph === "warn" ? "text-warn" : "text-dim"}
 				/>
 			)}
-			<span>{meta.label}</span>
+			<span>{label}</span>
 		</span>
 	);
 }
 
 function getFreshnessInputMC(asOfAt, state) {
 	return { at: asOfAt, regions: [state] };
+}
+
+// A warm error's alert already dates the last good read → the verdict settles to 'Last known' without its own age note.
+function getVerdictFreshnessMC(tone, asOfAt, state) {
+	const freshness = getFreshnessInputMC(asOfAt, state);
+	if (state.error == null) return { tone, freshness };
+
+	const verdict = window.UI.getFreshnessVerdict({ ...freshness, tone });
+	return { tone: verdict.tone, label: verdict.label };
 }
 
 // 구획 헤더 — thin rule + h2 section label (카드 박스 아님). title 좌측 라벨 + 우측 슬롯.
@@ -628,14 +648,13 @@ function DomainsSectionMC({
 }) {
 	const { SkeletonRows, TableHead } = window.UI;
 	const rows = sortDomainsMC(domains || []);
-	const sharedMode = getSharedApplyModeMC(rows);
 	const mix = form ? getModelMixMC(rows.map((d) => form.models[d.domain] || d.desired)) : "";
 
 	return (
 		<div className="mb-4" id={MODELS_SECTION_ID_MC}>
 			<SectionHeadMC
 				label="Model assignment"
-				sub={getApplyModeSubMC(sharedMode)}
+				sub={getApplyModeSubMC(rows, DOMAIN_META_MC)}
 				right={
 					<span className="fs-meta flex items-center gap-2">
 						{mix && <span className="text-dim">{mix}</span>}
@@ -644,10 +663,6 @@ function DomainsSectionMC({
 						</a>
 					</span>
 				}
-			/>
-			<TierNotesMC
-				summary="What each tier runs"
-				rows={rows.map((d) => DOMAIN_META_MC[d.domain])}
 			/>
 			{state === "unavailable" ? (
 				<SectionUnavailableMC />
@@ -685,7 +700,6 @@ function DomainsSectionMC({
 									value={form.models[d.domain] ?? ""}
 									defaultValue={baseline?.models[d.domain] ?? ""}
 									error={errors[d.domain]}
-									sharedMode={sharedMode}
 									onChange={(v) => onModelChange(d.domain, v)}
 								/>
 							))
@@ -715,13 +729,13 @@ function RowHintMC({ hint }) {
 }
 
 // Full descriptions behind one section disclosure — a disclosure per row repeats one affordance N times.
-function TierNotesMC({ summary, rows }) {
+function TierNotesMC({ title, rows }) {
 	const notes = rows.filter((meta) => meta?.desc && meta.desc !== meta.hint);
 	if (notes.length === 0) return null;
 
 	return (
-		<details className="fs-meta text-dim mb-2">
-			<summary>{summary}</summary>
+		<section className="fs-meta text-dim mt-3" aria-label={title}>
+			<div className="text-faint">{title}</div>
 			<dl className="mt-1 flex flex-col gap-1">
 				{notes.map((meta) => (
 					<div key={meta.label}>
@@ -730,7 +744,7 @@ function TierNotesMC({ summary, rows }) {
 					</div>
 				))}
 			</dl>
-		</details>
+		</section>
 	);
 }
 
@@ -754,6 +768,11 @@ function groupFilesByModelMC(fileRows) {
 	return [...groups];
 }
 
+// Files toggle at the control radius every other pill uses, not the 12px card fold.
+const FILES_PILL_STYLE_MC = { borderRadius: "var(--radius-control)" };
+// Names wrap side by side and the list scrolls past ~5 lines → an opened list keeps its ledger row short.
+const FILES_LIST_STYLE_MC = { maxHeight: 112 };
+
 // Agent file ("agents/glass-atrium-dev-react.md") → its agent name, for the shared name atom.
 function getFileAgentNameMC(file) {
 	const base = String(file ?? "").split("/").pop();
@@ -765,13 +784,13 @@ function getFileAgentNameMC(file) {
  * Matching the saved target → ✓ 'Matches saved' (tooltip 'In effect: …') · differing → the value + one warn badge · absent → nothing.
  */
 function LiveValueMC({ value, drift, files, driftTitle }) {
-	const { AgentName, Badge, Disclosure, Icon } = window.UI;
+	const { AgentName, Badge, Icon } = window.UI;
 	const fileRows = Array.isArray(files) ? files : [];
 	const isSteady = !drift && value != null;
 	const label = liveLabelMC(value);
 	const fileGroups = groupFilesByModelMC(fileRows);
 	// files lagging the saved model or disagreeing among themselves → the fold opens itself
-	const foldTone = drift || fileGroups.length > 1 ? "warn" : "ok";
+	const isFoldAlerting = drift || fileGroups.length > 1;
 
 	return (
 		<div className="flex flex-col gap-1 min-w-0">
@@ -797,20 +816,31 @@ function LiveValueMC({ value, drift, files, driftTitle }) {
 				)}
 			</div>
 			{fileRows.length > 0 && (
-				<Disclosure kind="detail" level={3} title={`${fileRows.length} files`} tone={foldTone} className="mt-1">
-					<div className="fs-meta text-faint flex flex-col gap-1">
+				<details className="fs-meta" open={isFoldAlerting || undefined}>
+					<summary
+						className="inline-flex items-center gap-1 px-2 border border-line text-dim hover:text-ink cursor-pointer"
+						style={FILES_PILL_STYLE_MC}>
+						{isFoldAlerting && <Icon name="warn" size={12} className="text-warn" />}
+						{`${fileRows.length} files`}
+					</summary>
+					<div
+						className="text-faint flex flex-col gap-1 mt-1 overflow-y-auto"
+						style={FILES_LIST_STYLE_MC}
+						tabIndex={0}
+						role="region"
+						aria-label={`${fileRows.length} agent files`}>
 						{fileGroups.map(([model, files]) => (
 							<div key={model}>
 								<div className="font-mono text-dim is-wrap">{model}</div>
-								{files.map((file) => (
-									<div key={file} className="font-mono truncate pl-3">
-										<AgentName name={getFileAgentNameMC(file)} />
-									</div>
-								))}
+								<div className="font-mono flex flex-wrap gap-x-3 pl-3">
+									{files.map((file) => (
+										<AgentName key={file} name={getFileAgentNameMC(file)} />
+									))}
+								</div>
 							</div>
 						))}
 					</div>
-				</Disclosure>
+				</details>
 			)}
 		</div>
 	);
@@ -833,22 +863,19 @@ function getSharedApplyModeMC(rows) {
 	return shared;
 }
 
-function getApplyModeSubMC(mode) {
+/**
+ * The section's one take-effect line — the shared mode first, then each row departing from it by name.
+ * @param metaTable - DOMAIN_META_MC or BUDGET_META_MC, for the departing rows' labels
+ */
+function getApplyModeSubMC(rows, metaTable) {
+	const mode = getSharedApplyModeMC(rows);
 	if (!mode) return null;
-	const meta = getApplyModeMetaMC(mode);
-	return meta.desc ? `Takes effect: ${meta.label} · ${meta.desc}` : `Takes effect: ${meta.label}`;
-}
 
-// Row-level take-effect note — only where the row departs from the section's shared mode.
-function ApplyModeNoteMC({ mode, sharedMode }) {
-	if (!mode || mode === sharedMode) return null;
 	const meta = getApplyModeMetaMC(mode);
-
-	return (
-		<div className="fs-meta text-dim" title={meta.desc || undefined}>
-			Takes effect: {meta.label}
-		</div>
-	);
+	const departures = rows
+		.filter((r) => r.apply_mode && r.apply_mode !== mode)
+		.map((r) => `${metaTable[r.domain]?.label ?? r.domain}: ${getApplyModeMetaMC(r.apply_mode).label}`);
+	return [`Takes effect: ${meta.label}`, meta.desc, ...departures].filter(Boolean).join(" · ");
 }
 
 function DomainRowMC({
@@ -857,7 +884,6 @@ function DomainRowMC({
 	value,
 	defaultValue,
 	error,
-	sharedMode,
 	onChange,
 }) {
 	const { Badge } = window.UI;
@@ -906,7 +932,6 @@ function DomainRowMC({
 					files={d.files}
 					driftTitle="Live value differs from the saved target — press Save again"
 				/>
-				<ApplyModeNoteMC mode={d.apply_mode} sharedMode={sharedMode} />
 			</td>
 		</tr>
 	);
@@ -1051,17 +1076,12 @@ function BudgetsSectionMC({
 }) {
 	const { SkeletonRows, TableHead } = window.UI;
 	const rows = sortBudgetsMC(budgets || []);
-	const sharedMode = getSharedApplyModeMC(rows);
 
 	return (
 		<div className="mb-4" id={BUDGETS_SECTION_ID_MC}>
 			<SectionHeadMC
 				label="Per-call budget caps"
-				sub={getApplyModeSubMC(sharedMode)}
-			/>
-			<TierNotesMC
-				summary="What each cap stops"
-				rows={rows.map((b) => BUDGET_META_MC[b.domain])}
+				sub={getApplyModeSubMC(rows, BUDGET_META_MC)}
 			/>
 			{state === "unavailable" ? (
 				<SectionUnavailableMC />
@@ -1098,7 +1118,6 @@ function BudgetsSectionMC({
 									value={form.budgets[b.domain] ?? ""}
 									defaultValue={baseline?.budgets[b.domain] ?? ""}
 									error={errors[b.domain]}
-									sharedMode={sharedMode}
 									onChange={(v) => onBudgetChange(b.domain, v)}
 								/>
 							))
@@ -1106,6 +1125,10 @@ function BudgetsSectionMC({
 					</tbody>
 				</table>
 			)}
+			<TierNotesMC
+				title="When a cap trips"
+				rows={rows.map((b) => BUDGET_META_MC[b.domain])}
+			/>
 		</div>
 	);
 }
@@ -1124,7 +1147,7 @@ const BUDGET_FIELD_STYLE_MC = { width: "calc(6ch + 4px + var(--ctl-pad-x))" };
  * 예산 1행 — $ 입력(2-decimal 문자열) + invalid 즉시 field-adjacent role=alert (T-MDL-4)
  * + 실측 + 섹션 공통과 다른 행만 반영 시점 표시 + ghost default/reset (T-MDL-6).
  */
-function BudgetRowMC({ budget: b, value, defaultValue, error, sharedMode, onChange }) {
+function BudgetRowMC({ budget: b, value, defaultValue, error, onChange }) {
 	const meta = BUDGET_META_MC[b.domain] || { label: b.domain, hint: "", desc: "" };
 	// Save banner points at "the highlighted fields" → the field is marked the moment it is invalid.
 	const showError = Boolean(error);
@@ -1178,7 +1201,6 @@ function BudgetRowMC({ budget: b, value, defaultValue, error, sharedMode, onChan
 					drift={b.drift}
 					driftTitle="daemon-config.json differs from the saved cap — press Save again"
 				/>
-				<ApplyModeNoteMC mode={b.apply_mode} sharedMode={sharedMode} />
 			</td>
 		</tr>
 	);

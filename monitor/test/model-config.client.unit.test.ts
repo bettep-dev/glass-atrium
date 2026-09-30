@@ -540,6 +540,8 @@ async function loadMcScreens(
     formatKstTime: realUiMc.formatKstTime,
     SplitRow: (p: Record<string, unknown>) =>
       hMc("div", { "data-atom": "SplitRow", "data-ratio": p.ratio }, p.children),
+    SplitColumn: (p: Record<string, unknown>) => hMc("div", { "data-atom": "SplitColumn" }, p.children),
+    getFreshnessVerdict: getFreshnessVerdictMc,
     // body mounts only while open, as in the atom
     Disclosure: (p: Record<string, unknown>) => {
       const open = getDisclosureOpenMc(p.kind, p.tone);
@@ -815,14 +817,40 @@ test("the header sync token answers once per state and leaves the as-of stamp to
   assert.strictEqual(tagsMc(drifted, "i").length, 1, "tone rides the glyph, not the text");
 
   // Loading and error are distinct readings — neither may look like a settled 'in sync'.
-  for (const [state, expected] of [
-    ["loading", "Checking sync"],
-    ["error", "unavailable"],
-  ] as const) {
-    const token = textMc(renderComponentMc(screens.SyncTokenMC, { state, sync: undefined }));
-    assert.ok(token.includes(expected), `${state} → '${expected}'`);
-    assert.ok(!token.includes("In sync"), `${state} never reads as in sync`);
-  }
+  const unavailable = textMc(renderComponentMc(screens.SyncTokenMC, { state: "error", sync: undefined }));
+  assert.ok(unavailable.includes("unavailable") && !unavailable.includes("In sync"), "error never reads as in sync");
+  // the stamp beside it already reads '… loading' → the token adds no second ellipsis
+  assert.strictEqual(textMc(renderComponentMc(screens.SyncTokenMC, { state: "loading", sync: undefined })), "");
+});
+
+test("a warm read error turns the sync token to the shared 'Last known' wording, never a settled 'In sync'", () => {
+  const readAt = Date.parse("2026-01-10T12:00:00.000Z");
+  const region = { status: "ready", data: {}, error: null, busy: false };
+  const tokenFor = (sync: string, error: string | null) =>
+    textMc(
+      renderComponentMc(screens.SyncTokenMC, {
+        state: "ready",
+        sync,
+        freshness: { at: readAt, now: readAt + 1_000, regions: [{ ...region, error }] },
+      }),
+    );
+
+  assert.strictEqual(tokenFor("ok", null), "In sync", "a fresh read keeps its state word");
+  assert.strictEqual(tokenFor("ok", "HTTP 500"), "Last known", "a stale in-sync read drops to the neutral shared word");
+  assert.strictEqual(tokenFor("drift", "HTTP 500"), "Last known: Drift", "a stale alarm keeps its word behind the shared prefix");
+});
+
+test("a warm read error hands the verdict no age note — the alert under it already dates the last good read", () => {
+  const verdictFor = sandboxFnMc<(tone: string, at: number | null, state: object) => Record<string, unknown>>(
+    "getVerdictFreshnessMC",
+  );
+  const settled = { status: "ready", data: {}, error: null, busy: false };
+
+  assert.ok("freshness" in verdictFor("ok", 1, settled), "a clean read keeps the ticking freshness input");
+  const warm = verdictFor("ok", 1, { ...settled, error: "HTTP 500" });
+  assert.ok(!("freshness" in warm), "a warm error carries no freshness, so no 'Read Ns ago' note");
+  assert.strictEqual(warm.label, "Last known");
+  assert.strictEqual(warm.tone, "neutral", "an ok verdict never stays green over the error");
 });
 
 test("the drift banner carries exactly one remedy, matched to its cause", () => {
@@ -1236,9 +1264,12 @@ test("each ledger is an h2 section with a captioned table, so the outline never 
   }
 });
 
-test("tier descriptions sit behind one section disclosure, not one per row", () => {
-  const tree = renderComponentMc(screens.DomainsSectionMC, domainsPropsMc(THREE_TIERS_MC));
-  assert.strictEqual(tagsMc(tree, "details").length, 1, "one disclosure for three described tiers");
+test("tier notes show one unfolded entry per described tier", () => {
+  const [domainMeta] = vm.runInContext("[DOMAIN_META_MC]", screens) as Array<Record<string, unknown>>;
+  const rows = THREE_TIERS_MC.map((d) => domainMeta[(d as { domain: string }).domain]);
+  const tree = renderComponentMc(screens.TierNotesMC, { title: "Who each tier covers", rows });
+  assert.strictEqual(tagsMc(tree, "details").length, 0, "the notes are not folded away");
+  assert.strictEqual(tagsMc(tree, "dt").length, rows.length, "one entry per tier");
   assert.ok(textMc(tree).includes("glass-atrium-meta-agent"), "every description stays reachable");
 });
 
@@ -1421,6 +1452,19 @@ test("the model mix counts every tier once under its family, and each select nam
   assert.ok(tags.every((t) => t === "Opus 4.8" || t === "Sonnet 5"), "each tag names its select's family");
 });
 
+test("the file list toggle is a control-radius pill, not a heading or a card", () => {
+  const tree = renderComponentMc(screens.LiveValueMC, {
+    value: "claude-opus-4-8",
+    drift: false,
+    files: [{ file: "agents/glass-atrium-dev-react.md", model: "claude-opus-4-8" }],
+  });
+  const [summary] = tagsMc(tree, "summary");
+  assert.ok(summary, "the toggle is a native summary");
+  assert.ok(textMc(summary.children).includes("1 files"), "the toggle names the file count");
+  assert.strictEqual((summary.props.style as Record<string, string>)?.borderRadius, "var(--radius-control)");
+  assert.strictEqual(findAllMc(tree, (n) => /^h[1-6]$/.test(n.tag) || "data-kind" in n.props).length, 0, "no heading, no card fold");
+});
+
 test("a file list stays folded while every file carries the saved model, and opens on drift or mixed models", () => {
   const filesOf = (models: string[]) => models.map((model, i) => ({ file: `glass-atrium-dev-${i}.md`, model }));
   const rows = [
@@ -1433,10 +1477,39 @@ test("a file list stays folded while every file carries the saved model, and ope
       screens.DomainsSectionMC,
       domainsPropsMc([{ ...DOMAIN_ROW_FIXTURE_MC[0], drift: row.drift, files: row.files }]),
     );
-    const [fold] = tagsMc(tree, "details").filter((d) => d.props["data-kind"] === "detail");
-    assert.ok(fold, `${row.name}: the file list sits in a detail fold`);
-    assert.strictEqual(fold.props.open, row.open, `${row.name}: open state`);
-    assert.strictEqual(textMc(fold.children).includes("dev-0"), row.open, `${row.name}: files shown only while open`);
+    const [fold] = tagsMc(tree, "details");
+    assert.ok(fold, `${row.name}: the file list sits in a fold`);
+    assert.strictEqual(Boolean(fold.props.open), row.open, `${row.name}: open state`);
+  }
+});
+
+test("each section states 'Takes effect' once, naming a departing row inside that one line", () => {
+  const tree = renderComponentMc(
+    screens.DomainsSectionMC,
+    domainsPropsMc([
+      DOMAIN_ROW_FIXTURE_MC[0],
+      { ...DOMAIN_ROW_FIXTURE_MC[0], domain: "model.research" },
+      { ...DOMAIN_ROW_FIXTURE_MC[0], domain: "model.daemon_cycle_worker", apply_mode: "next-cycle" },
+    ]),
+  );
+  const lines = textsMc(findAllMc(tree, (n) => n.children.some((c) => typeof c === "string" && c.includes("Takes effect"))));
+  assert.strictEqual(lines.length, 1, "one take-effect line per section");
+  assert.ok(lines[0].includes("Next spawn") && lines[0].includes("Daemon cycle helper: Next cycle"), lines[0]);
+});
+
+test("tier notes sit outside the ledger and never restate a row's own hint", () => {
+  const section = renderComponentMc(screens.DomainsSectionMC, domainsPropsMc());
+  assert.strictEqual(tagsMc(section, "dl").length, 0, "nothing folds open above the model table");
+
+  const screen = renderComponentMc(screens.ScreenModelConfig);
+  const [rail] = findAllMc(screen, (n) => n.props["data-atom"] === "SplitColumn");
+  assert.ok(rail, "the caps column is a split column that can hold the notes");
+
+  // script-scope consts stay off the context global, so read them through the context itself
+  const tables = vm.runInContext("[DOMAIN_META_MC, BUDGET_META_MC]", screens) as object[];
+  const metas = tables.flatMap((table) => Object.values(table));
+  for (const meta of metas as Array<{ label: string; hint: string; desc: string }>) {
+    assert.ok(!meta.desc.toLowerCase().includes(meta.hint.toLowerCase()), `${meta.label}: note restates its hint`);
   }
 });
 
