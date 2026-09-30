@@ -1604,3 +1604,27 @@ test("the day tooltip heads its reasons with how many runs have one, the two rea
   const text = collectText(tree).replace(/\s+/g, " ");
   assert.match(text, /9 of 20 have a recorded reason/, "a run with no self-check cannot also mismatch its confidence, so the reasons add up");
 });
+
+test("the No record and Unfinished counts state their definitions on the page, where the two cards that differ sit", async () => {
+  const rows = [
+    {
+      name: "the ledger defines No record",
+      component: "AgentSummaryCard",
+      props: { state: { status: "ready", data: { agents: [], meta: { total_agents: 0 } }, error: null }, days: 30, onRetry: () => undefined },
+      definition: /No record: Launches minus runs, from the agent summary/,
+    },
+    {
+      name: "the lifecycle card defines Unfinished",
+      component: "LifecycleStatsCard",
+      props: {
+        state: { status: "ready", data: { rows: [{ agent_type: "glass-atrium-dev-shell", start_count: 4, stop_count: 3, completed_count: 3 }] }, error: null },
+        days: 30, onSelect: () => undefined, onRetry: () => undefined,
+      },
+      definition: /Unfinished: SubagentStart events minus completed outcomes/,
+    },
+  ];
+  for (const row of rows) {
+    const tree = await renderComponent(row.component, row.props);
+    assert.match(collectText(tree).replace(/\s+/g, " "), row.definition, row.name);
+  }
+});

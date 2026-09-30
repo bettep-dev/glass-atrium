@@ -875,8 +875,14 @@ function AgentSummaryCard({ failures, state, days, sortBy, onSortChange, selecte
         failureStatus={failureStatus}
         trendStatus={trendStatus}
       />
+      {data && <CountDefinitionAg label="No record" note={NOTE.NO_RECORD}/>}
     </div>
   );
+}
+
+// A count whose sibling card counts differently states its definition beside it, not only in a header tooltip.
+function CountDefinitionAg({ label, note }) {
+  return <p className="card-body pt-0 mb-0 fs-meta text-dim">{`${label}: ${note}`}</p>;
 }
 
 function AgentSummaryBody({ failures, state, days, sortBy, onSortChange, selectedAgent, onSelect, onRetry, trendByAgent, failureByAgent, overageByAgent, failureStatus, trendStatus }) {
@@ -2810,6 +2816,7 @@ function LifecycleStatsCard({ failures, state, days, onSelect, onRetry }) {
       <div className="card-body ag-card-body">
         <LifecycleStatsBody failures={failures} state={state} days={days} onSelect={onSelect} onRetry={onRetry}/>
       </div>
+      {state.status === 'ready' && <CountDefinitionAg label="Unfinished" note={NOTE.UNFINISHED}/>}
     </div>
   );
 }
