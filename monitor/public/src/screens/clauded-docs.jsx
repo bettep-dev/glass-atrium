@@ -1345,8 +1345,7 @@ function DocListCardCD({
 	const nowMs = Date.now();
 	const openSummary = isSectioned ? getOpenSummaryCD(orderedRows, nowMs) : null;
 	const hasOpenSummary = openSummary != null && openSummary.openCount > 0;
-	// sections already name the stage → the column holds the meter only
-	const statusColumnWidth = isSectioned ? 96 : 135;
+	const statusColumnWidth = 135;
 	const rovingId = getRovingIdCD(orderedRows.map((r) => r.id), focusRowId, selectedId);
 	const commonFormat = getCommonFormatCD(orderedRows);
 	const commonAudience = getCommonAudienceCD(orderedRows);
@@ -1659,7 +1658,6 @@ function DocListCardCD({
 													<DocStagePillCD
 														isRowControl
 														docStatus={shownStage}
-														isLabelVisible={!isSectioned || shownStage !== storedStage}
 														onPickStage={(stage) => onPickStage(row.id, stage, null)}
 														isChanging={togglingIds.has(row.id)}
 														note={row.group_stage_uniform === false ? "members differ" : null}
@@ -2868,7 +2866,6 @@ function DocStagePillCD({
 	isChanging,
 	note,
 	isRowControl = false,
-	isLabelVisible = true,
 }) {
 	const { Icon, ROW_CONTROL_PROPS } = window.UI;
 	const [menuOpen, setMenuOpen] = useStateCD(false);
@@ -2903,9 +2900,7 @@ function DocStagePillCD({
 					<Icon name="check" size={11} />
 				</span>
 			)}
-			{(isLabelVisible || isChanging) && (
-				<span className="doc-stage-label">{isChanging ? "Changing…" : entry.label}</span>
-			)}
+			<span className="doc-stage-label">{isChanging ? "Changing…" : entry.label}</span>
 		</>
 	);
 
@@ -2977,8 +2972,11 @@ function DocStagePillCD({
 // last-status-model → the line under the pill. The operator's own action is a reserved literal
 // and reads as such; a model id renders through its display name. An unknown actor renders nowhere.
 function formatActorCD(model) {
-	return model === OPERATOR_ACTOR_CD ? "operator" : window.UI.getDisplayName("model", model);
+	return model === OPERATOR_ACTOR_CD ? "operator" : window.UI.getDisplayName("model", String(model).replace(MODEL_CONTEXT_TAG_CD, ""));
 }
+
+// trailing context-window tag ("[1m]") → not part of the model name, so both spellings read alike
+const MODEL_CONTEXT_TAG_CD = /\[[^\]]*\]$/;
 
 // DocCheckboxCD — 5-state spec — 16px square · 2px border · 4px radius · WCAG 2.2 AA focus-visible
 //   · default     — bg-zinc-900 border-zinc-600

@@ -455,13 +455,18 @@ describe("the ledger names the Tags column only when a row differs, and states a
   }
 });
 
-test("the last stage actor under a pill is labelled as such, never a bare model id", async () => {
+test("the last stage actor reads one display name for a model id with or without its context-window tag", async () => {
   const screen = await loadDocsScreen();
-  const props = listCardProps(() => undefined);
-  (props.rows as Array<Record<string, unknown>>)[0].last_status_model = "claude-opus-5-5[1m]";
-  const actors = findNodes(renderScreen((screen.DocListCardCD as Component)(props)), (n) => n.props.className === "doc-stage-actor");
-  assert.equal(actors.length, 1);
-  assert.match(collectText(actors[0]), /^set by \S/);
+  const actorText = (model: string) => {
+    const props = listCardProps(() => undefined);
+    (props.rows as Array<Record<string, unknown>>)[0].last_status_model = model;
+    const actors = findNodes(renderScreen((screen.DocListCardCD as Component)(props)), (n) => n.props.className === "doc-stage-actor");
+    assert.equal(actors.length, 1, model);
+    return collectText(actors[0]);
+  };
+
+  assert.equal(actorText("claude-opus-5-5[1m]"), actorText("claude-opus-5-5"));
+  assert.equal(actorText("claude-opus-5-5"), "set by Opus 5.5");
 });
 
 test("the filter chips and the stage names speak the English of the rest of the screen", async () => {
@@ -479,7 +484,7 @@ test("the filter chips and the stage names speak the English of the rest of the 
   }
 });
 
-test("inside a stage section the pill drops the word its section header already says, keeping its accessible name", async () => {
+test("every row pill names its stage in words, inside a stage section as in search", async () => {
   const screen = await loadDocsScreen();
   const labelsIn = (tree: ReturnType<typeof renderScreen>) => findNodes(tree, (n) => n.props.className === "doc-stage-label");
   const inReview = (props: Record<string, unknown>) => {
@@ -489,11 +494,11 @@ test("inside a stage section the pill drops the word its section header already 
   const sectioned = renderScreen((screen.DocListCardCD as Component)(inReview(listCardProps(() => undefined))));
   const rowPills = findNodes(sectioned, (n) => n.type === "button" && n.props["aria-haspopup"] === "menu");
   assert.equal(rowPills.length, 2);
-  assert.equal(labelsIn(sectioned).length, 0);
+  assert.deepEqual(labelsIn(sectioned).map((n) => collectText(n)), ["Doc review", "Doc review"], "no pill is a bare row of dots");
   for (const pill of rowPills) assert.match(String(pill.props["aria-label"]), /^Doc review — stage 1 of 5/);
 
   const searched = renderListCard(screen, { isSearchMode: true, rows: inReview(listCardProps(() => undefined)).rows });
-  assert.equal(labelsIn(searched).length, 2, "search mode has no section header, so the pill names the stage");
+  assert.equal(labelsIn(searched).length, 2);
 });
 
 test("a pill that changes the stage shows a menu caret, and a read-only pill does not", async () => {
@@ -841,7 +846,7 @@ test("Created shows relative age with the date in a tooltip, and only an open ro
   assert.equal(ageCells.filter((td) => /stale/i.test(collectText(td))).length, 1);
 });
 
-test("the Status column narrows to the meter inside stage sections and keeps room for the stage name in a flat list", async () => {
+test("the Status column keeps room for the stage name inside stage sections as in a flat list", async () => {
   const screen = await loadDocsScreen();
   const statusWidth = (overrides: Record<string, unknown>) => {
     const tree = renderListCard(screen, overrides);
@@ -850,5 +855,5 @@ test("the Status column narrows to the meter inside stage sections and keeps roo
   };
   const sectioned = statusWidth({});
   const flat = statusWidth({ isSearchMode: true });
-  assert.ok(sectioned < flat, `sectioned ${sectioned} < flat ${flat}`);
+  assert.equal(sectioned, flat);
 });
