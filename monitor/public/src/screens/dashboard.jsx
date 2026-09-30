@@ -490,6 +490,7 @@ const RESULT_ROW_META = {
   done_with_concerns: { label: 'Done with caveats', tone: 'warn' },
   fail: { label: 'Failed', tone: 'crit' },
   blocked: { label: 'Blocked', tone: 'crit' },
+  needs_context: { label: 'Needed more context', tone: 'info' },
 };
 
 function ResultPanel({ panel }) {
@@ -513,6 +514,7 @@ function ResultPanel({ panel }) {
           );
         })}
       </ul>
+      <p className="fs-meta text-dim">Done with caveats counts every run reported with caveats; the tile counts only caveats still open.</p>
       <BreakageAgents agents={panel.agents}/>
     </>
   );
@@ -1017,7 +1019,7 @@ function describeOutcomeHint(rate) {
   if (rate.status === 'unavailable') return 'No reported outcomes to judge.';
   if (rate.status === 'empty') return 'No outcomes recorded in the last 7 days.';
   if (rate.status === 'low-n') return `Needs ${window.UI.LOW_N_MIN} reported outcomes to judge.`;
-  const caveats = `${getSharePct(rate.openCaveats, rate.writerTotal)} (${formatInt(rate.openCaveats)}) finished with caveats`;
+  const caveats = `${getSharePct(rate.openCaveats, rate.writerTotal)} (${formatInt(rate.openCaveats)}) with caveats still open`;
   return `${caveats} · alert at ${formatAlertLine(window.UI.OUTCOME_OPEN_CAVEAT_WARN_SHARE)}`;
 }
 
@@ -1158,12 +1160,12 @@ function toHarnessRegion(harness) {
 }
 
 // same payload and same writer rule as the Task results tile → the panel's failed + blocked is the tile's breakage
+// known results always get a row, zero included → an absent Failed reads as none, not as missing
 function buildResultPanel(data) {
   const byResult = new Map((data?.by_result ?? []).map((row) => [row.result, row]));
   const order = Object.keys(RESULT_ROW_META);
   const results = [...order, ...[...byResult.keys()].filter((result) => !order.includes(result))];
-  const rows = results.filter((result) => byResult.has(result))
-    .map((result) => ({ result, count: window.UI.getWriterCount(byResult.get(result)) }));
+  const rows = results.map((result) => ({ result, count: window.UI.getWriterCount(byResult.get(result)) }));
   const start = data?.prior_window?.period_end;
   return {
     rows, writerTotal: window.UI.getWriterTotal(data), agents: getBreakageAgents(data?.by_agent_result),

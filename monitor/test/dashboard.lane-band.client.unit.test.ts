@@ -394,7 +394,7 @@ test("the outcome tile leads with the failed share and moves the verdict into it
   assert.match(tile.value, /^20\.0%/, "the failed share is the headline");
   assert.equal(tile.badge, "Failures above alert line");
   assert.match(String(tile.detail), /40 of 200 failed or blocked · alert at 5%/, "the detail names both results the share counts");
-  assert.match(tile.hint, /5\.0% \(10\) finished with caveats · alert at 10%/, "the caveat alert line sits beside the caveat share");
+  assert.match(tile.hint, /5\.0% \(10\) with caveats still open · alert at 10%/, "the caveat alert line sits beside the caveat share");
   assert.doesNotMatch(tile.hint, /writer-emitted/, "the counting rule moves out of the visible hint");
   assert.match(String(tile.note), /writer-emitted/, "and into the tile's tooltip");
 });

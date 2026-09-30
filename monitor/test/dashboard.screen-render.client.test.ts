@@ -167,6 +167,46 @@ test("the Task results tile headlines a bare failed share on one line, with its 
   assert.match(String(lowN.detail), /too few to judge/i);
 });
 
+// Real-enough UI for the week results panel: writer counts follow ui.jsx (count minus reconstructed).
+const panelMod = (await loadScreenModule(DASH_SRC, {
+  UI: {
+    formatInt: (n: number) => String(n),
+    getWriterCount: (row?: { count: number; reconstructed_count?: number }) => (row ? row.count - (row.reconstructed_count ?? 0) : 0),
+    getWriterTotal: (data: { total: number; reconstructed_total?: number }) => data.total - (data.reconstructed_total ?? 0),
+  },
+  React: createReactStub(),
+})) as ScreenModule;
+
+function renderResultPanel(byResult: Array<{ result: string; count: number }>): RenderedNode {
+  const total = byResult.reduce((sum, row) => sum + row.count, 0);
+  const panel = (panelMod.buildResultPanel as (data: unknown) => unknown)({ total, reconstructed_total: 0, by_result: byResult, by_agent_result: [] });
+  return renderScreen(panelMod.React.createElement(panelMod.ResultPanel as Component, { panel })) as RenderedNode;
+}
+
+describe("the week results panel", () => {
+  const rowTexts = (tree: RenderedNode) =>
+    findNodes(tree, (n) => classOf(n).includes("dash-result-row")).map((row) => collectText(row).replace(/\s+/g, " ").trim());
+
+  test("names every result in words and keeps a known result with no runs as a zero row", () => {
+    const tree = renderResultPanel([
+      { result: "done", count: 400 },
+      { result: "done_with_concerns", count: 250 },
+      { result: "needs_context", count: 88 },
+    ]);
+    const rows = rowTexts(tree);
+    for (const row of rows) assert.doesNotMatch(row, /[a-z]+_[a-z]+/, `"${row}" shows a label, not a raw result enum`);
+    assert.ok(rows.some((row) => /^Failed ?0$/.test(row)), `a zero Failed row stays visible: ${JSON.stringify(rows)}`);
+  });
+
+  test("states that its caveat row counts every caveat while the tile counts only open ones", () => {
+    const panelText = collectText(renderResultPanel([{ result: "done", count: 10 }, { result: "done_with_concerns", count: 5 }]));
+    const tile = buildOutcomeTile({ status: "ready", data: { status: "ok", tone: "ok", writerTotal: 40, breakage: 1, openCaveats: 2 } });
+    assert.match(String(tile.hint), /still open/i, "the tile's caveat figure says it counts open caveats");
+    assert.match(panelText, /Done with caveats counts every/i, "the panel defines its caveat row beside it");
+    assert.match(panelText, /tile counts only .*still open/i, "the panel names how the tile's figure differs");
+  });
+});
+
 const buildFleetTile = rateMod.buildFleetTile as (state: unknown) => Record<string, string>;
 
 test("the fleet tile names suspension once across its value, verdict and detail, whatever the breaker state", () => {
