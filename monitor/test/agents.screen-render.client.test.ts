@@ -43,6 +43,16 @@ UI_SCALARS.formatInt = REAL_UI.formatInt;
 // The page verdict rolls tones up and names agents with the shipped helpers.
 UI_SCALARS.getWorstTone = REAL_UI.getWorstTone;
 UI_SCALARS.getAgentDisplayName = REAL_UI.getAgentDisplayName;
+// RegionFailure's contract (ui.jsx): covered when `shared.sources` names its `source`, else the error card with its own Retry.
+UI_SCALARS.RegionFailure = Object.defineProperty(
+  (props: Record<string, unknown>) => {
+    const shared = props.shared as { sources?: unknown[] } | null | undefined;
+    const atom = shared?.sources?.includes(props.source) ? "RegionCovered" : "RegionUnavailable";
+    return { __element: true, type: "ui-atom", props: { ...props, atom } };
+  },
+  "name",
+  { value: "RegionFailure" },
+);
 
 function uiStub(overrides: Record<string, unknown> = {}): unknown {
   const scalars = { ...UI_SCALARS, ...overrides };
@@ -624,23 +634,73 @@ test("the header's Refresh and freshness stamp read every region, so a first loa
   assert.equal((stamp?.props.regions as unknown[]).length, 9, "the stamp sees all nine page regions");
 });
 
-test("an outage every region shares shows one page banner with the only Retry", async () => {
+test("an outage every region shares shows one page banner with the only Retry, and every region it covers stays quiet", async () => {
   const initial = REAL_UI.INITIAL_REGION_STATE as Record<string, unknown>;
   const failed = { ...initial, status: "error", busy: false, error: "HTTP 503 Service Unavailable — down" };
   const tree = await renderScreenAgents(failed);
   const banners = findAtoms(tree, "PageErrorBanner");
   assert.equal(banners.length, 1);
   assert.equal(typeof banners[0].props.onRetry, "function");
-  const regions = findAtoms(tree, "RegionUnavailable");
-  assert.ok(regions.length > 1, "each region still keeps its quiet placeholder");
-  assert.deepEqual(regions.filter((n) => n.props.onRetry !== undefined), [], "no region repeats the Retry");
+  assert.deepEqual(findAtoms(tree, "RegionUnavailable").map((n) => n.props.source), [], "no region repeats the error card");
+  assert.ok(findAtoms(tree, "RegionCovered").length > 1, "each covered region holds its place with the quiet placeholder");
 });
 
 test("a region that fails alone keeps its own Retry and no page banner appears", async () => {
   const tree = await renderComponent("AgentAlarmLane", { state: ERROR_STATE, onRetry: () => undefined });
+  assert.deepEqual(findAtoms(tree, "RegionCovered"), []);
   const [region] = findAtoms(tree, "RegionUnavailable");
   assert.equal(typeof region?.props.onRetry, "function");
   assert.deepEqual(findAtoms(tree, "PageErrorBanner"), []);
+});
+
+test("the drawer's health word takes the page verdict's tone for the same agent: a failed run is never Healthy, a blocked run changes nothing", async () => {
+  const mod = await loadAgentsScreen();
+  const buildTiles = mod.buildAgentStatusTiles as (args: Record<string, unknown>) => Array<{ key: string; tone: string }>;
+  const getVerdict = mod.getDrawerHealthVerdictAg as (entry: unknown, hasSignal: boolean, failure: unknown) => { tone: string; label: string };
+  const healthyEntry = { agent: "dev-react", healthIndex: 0.95, totalRevisions: 20, dominantDriver: null };
+  const rows = [
+    { name: "a failed run on a healthy rework index", failure: { fail_count: 2, blocked_count: 0 }, hasSignal: true },
+    { name: "a failed run with too few runs to judge rework", failure: { fail_count: 1, blocked_count: 0 }, hasSignal: false },
+    { name: "a blocked run only", failure: { fail_count: 0, blocked_count: 3 }, hasSignal: true },
+  ];
+  for (const row of rows) {
+    const tiles = buildTiles({
+      days: 30, summaryState: LOADING_STATE, overageState: LOADING_STATE, overageByAgent: new Map(),
+      failureState: { status: "ready", data: { rows: [] }, error: null }, failureByAgent: new Map([["dev-react", row.failure]]),
+    });
+    const isListed = tiles.find((tile) => tile.key === "failed")?.tone === "crit";
+    const verdict = getVerdict(healthyEntry, row.hasSignal, row.failure);
+    assert.equal(verdict.tone === "crit", isListed, `${row.name}: drawer tone follows the Failed tile`);
+    assert.equal(verdict.label === "Healthy", !isListed && row.hasSignal, `${row.name}: health word`);
+  }
+});
+
+test("the task-type matrix scroller is a named tab stop, so a keyboard reaches the columns it clips", async () => {
+  const tree = await renderComponent("SuccessRateMatrixTable", { matrix: { agents: [], cells: {} } });
+  const [scroller] = findNodes(tree, (n) => /overflow-x-auto/.test(String(n.props?.className ?? "")));
+  assert.equal(scroller?.props.tabIndex, 0);
+  assert.equal(scroller?.props.role, "region");
+  assert.match(String(scroller?.props["aria-label"]), /success rate/i);
+});
+
+test("a crosstab cell keeps its rate and sample on one line instead of wrapping at 1024", async () => {
+  const cell = { totalCount: 12, pooledRate: 0.5, rateDenominator: 4, successCount: 2, reconstructed: 0, points: [] };
+  const tree = await renderComponent("SuccessRateCell", { agent: "dev-react", taskType: "feature", cell });
+  const line = findNodes(tree, (n) => /%$/.test(collectText(n).split("·")[0].trim()) && /\bflex\b/.test(String(n.props?.className ?? "")) && /n=/.test(collectText(n))).at(-1);
+  assert.match(String(line?.props.className), /\bwhitespace-nowrap\b/);
+});
+
+test("No record and Unfinished each name the other count and say why the two can differ", async () => {
+  const mod = await loadAgentsScreen();
+  const ledger = renderLedger(mod);
+  const lifecycle = await renderComponent("LifecycleStatsTable", { rows: [{ agent_type: "dev-react", start_count: 5, stop_count: 4, completed_count: 3 }], onSelect: () => undefined });
+  const getTitle = (tree: RenderedNode | string | null, label: string) =>
+    String(findNodes(tree, (n) => n.props?.title != null && collectText(n).trim() === label)[0]?.props.title ?? "");
+  const noRecord = getTitle(ledger, "No record");
+  const unfinished = getTitle(lifecycle, "Unfinished");
+  assert.match(noRecord, /Unfinished/, "the ledger column names the lifecycle count");
+  assert.match(unfinished, /No record/, "the lifecycle column names the ledger count");
+  for (const title of [noRecord, unfinished]) assert.match(title, /can differ/, title);
 });
 
 test("a loading region shows a labelled status placeholder with its height reserved, never an empty box", async () => {
