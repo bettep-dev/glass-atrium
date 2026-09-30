@@ -655,8 +655,8 @@ function buildLastRunTileW(state, at) {
 
 	const hours = d.hours_since_last_cycle;
 	const overdue = isCycleOverdueW(hours);
-	const outcome = getLastRunOutcomeW(state, at);
-	const tone = overdue ? "crit" : outcome.tone === "ok" ? "neutral" : outcome.tone;
+	const outcome = getLastRunOutcomeW(state, at, overdue);
+	const tone = outcome.tone === "ok" ? "neutral" : outcome.tone;
 
 	return {
 		key: "last-run",
@@ -664,7 +664,7 @@ function buildLastRunTileW(state, at) {
 		state: "ready",
 		value: window.UI.formatRelativeTime(d.last_cycle_started_at),
 		sub: overdue
-			? `Overdue · cycle ${d.last_run_date}`
+			? `${outcome.label} · cycle ${d.last_run_date}`
 			: `${outcome.label}${describeP95W(d.cycle_p95_ms)}`,
 		hint: `Cycle ${d.last_run_date}`,
 		tone,
@@ -672,9 +672,11 @@ function buildLastRunTileW(state, at) {
 }
 
 // A held summary under a failed or aged read takes the shared verdict: Last known, ok → neutral, warn/crit kept.
-function getLastRunOutcomeW(state, at) {
+function getLastRunOutcomeW(state, at, overdue) {
 	const status = state.data?.last_status;
-	const outcome = { tone: wikiStatusToneW(status), label: wikiStatusLabelW(status) };
+	const outcome = overdue
+		? { tone: "crit", label: "Overdue" }
+		: { tone: wikiStatusToneW(status), label: wikiStatusLabelW(status) };
 	if (!at) return outcome;
 
 	return window.UI.getFreshnessVerdict({ ...outcome, at, regions: [state] });

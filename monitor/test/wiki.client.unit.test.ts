@@ -566,6 +566,8 @@ describe("the last-run tile keeps the shared freshness rule over a failed refres
     { name: "a settled healthy run names its outcome", summary: healthySummary({ cycle_p95_ms: 1000 }), sub: /^Healthy · p95/, tone: "neutral" },
     { name: "a healthy run held under a failed read reads Last known, never Healthy", summary: warm(healthySummary({ cycle_p95_ms: 1000 })), sub: /^Last known · p95/, tone: "neutral" },
     { name: "a failed run held under a failed read keeps its alarm", summary: warm(healthySummary({ last_status: "fail" })), sub: /^Last known: Failed$/, tone: "crit" },
+    { name: "a settled missed cycle reads Overdue", summary: healthySummary({ hours_since_last_cycle: 40 }), sub: /^Overdue · cycle /, tone: "crit" },
+    { name: "a missed cycle held under a failed read reads Last known: Overdue and keeps crit", summary: warm(healthySummary({ hours_since_last_cycle: 40 })), sub: /^Last known: Overdue · cycle /, tone: "crit" },
   ];
   for (const row of rows) {
     test(row.name, () => {
