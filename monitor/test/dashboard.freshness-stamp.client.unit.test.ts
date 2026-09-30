@@ -123,3 +123,14 @@ test("the version label stays beside the stamp and never claims a version it doe
   assert.strictEqual(sandbox.describeVersion(null), "version unknown");
   assert.strictEqual(sandbox.describeVersion({ status: "loading" }), null, "a pending read names no version, so the stamp alone says loading");
 });
+
+test("the state handed to the shell leaves out the harness region the shell already owns", () => {
+  const harness = { status: "error", error: "HTTP 500" } as unknown as HarnessFold;
+  const input = sandbox.getFreshnessInputD(READ_AT, [ready, ready], harness) as FreshnessInput & { shellRegions?: PanelState[] };
+  assert.notEqual(getState(READ_AT, [ready, ready], harness), "fresh", "the rendered stamp still answers for the harness tile");
+  assert.equal(
+    sandbox.window.UI.getFreshnessState({ at: READ_AT, regions: input.shellRegions ?? input.regions, now: NOW } as FreshnessInput & { now: number }),
+    "fresh",
+    "a harness-only failure is not reported to the shell as a page failure",
+  );
+});

@@ -25,7 +25,7 @@ const UPDATE_PENDING_VERSION = 'pending';
 const DASH_REGION_URLS = {
   cost: '/api/cost/kpi',
   agents: '/api/agents/summary?days=7&order=runs&limit=1',
-  outcomes: '/api/outcomes/cross-analysis?days=7',
+  outcomes: '/api/outcomes/cross-analysis?days=7&prior_window=1',
   update: UPDATE_STATUS_ENDPOINT,
   updateJob: UPDATE_JOB_ENDPOINT,
 };
@@ -722,6 +722,7 @@ const BADGE = {
   HARNESS_DOWN: 'Action needed',
   // the detail line leads with the judged pace → the badge names that multiple, never the so-far one
   SPEND_HOT: `Pace above ${SPEND_PACE_CUT}×`,
+  SPEND_NORMAL: 'Within pace',
 };
 
 function describeHarnessHint(harness, { isPartlyUnread, lostCount, downCount }) {
@@ -764,7 +765,7 @@ function buildOutcomeTile(outcomesState) {
   return {
     ...base, status: OUTCOME_TILE_STATUS[rate.status], tone: rate.tone, badge: OUTCOME_VERDICT[rate.status],
     value: describeOutcomeValue(rate), detail: describeOutcomeDetail(rate), hint: describeOutcomeHint(rate),
-    note: OUTCOME_COUNTING_NOTE,
+    trend: describeOutcomeTrend(rate, outcomesState.data?.prior_window), note: OUTCOME_COUNTING_NOTE,
   };
 }
 
@@ -786,7 +787,7 @@ function describeOutcomeValue(rate) {
 function describeOutcomeDetail(rate) {
   if (rate.status === 'low-n') return 'outcomes · too few to judge';
   if (!Object.hasOwn(OUTCOME_VERDICT, rate.status)) return null;
-  return `${formatInt(rate.breakage)} of ${formatInt(rate.writerTotal)} failed · alert at ${formatAlertLine(window.UI.OUTCOME_BREAKAGE_CRIT_SHARE)}`;
+  return `${formatInt(rate.breakage)} of ${formatInt(rate.writerTotal)} failed or blocked · alert at ${formatAlertLine(window.UI.OUTCOME_BREAKAGE_CRIT_SHARE)}`;
 }
 
 function describeOutcomeHint(rate) {
@@ -795,6 +796,30 @@ function describeOutcomeHint(rate) {
   if (rate.status === 'low-n') return `Needs ${window.UI.LOW_N_MIN} reported outcomes to judge.`;
   const caveats = `${getSharePct(rate.openCaveats, rate.writerTotal)} (${formatInt(rate.openCaveats)}) finished with caveats`;
   return `${caveats} · alert at ${formatAlertLine(window.UI.OUTCOME_OPEN_CAVEAT_WARN_SHARE)}`;
+}
+
+// shares, never counts → a busier week at the same failure rate reads level
+function describeOutcomeTrend(rate, prior) {
+  if (!prior || !Object.hasOwn(OUTCOME_VERDICT, rate.status)) return null;
+  const priorRange = formatDayRange(prior);
+  const priorRate = window.UI.resolveOutcomeRate(prior);
+  if (!Object.hasOwn(OUTCOME_VERDICT, priorRate.status)) return `No comparison — too few reported outcomes in ${priorRange}`;
+  const points = (rate.breakage / rate.writerTotal - priorRate.breakage / priorRate.writerTotal) * 100;
+  const change = Math.abs(points) < 0.05 ? 'Level' : `${points > 0 ? 'Up' : 'Down'} ${Math.abs(points).toFixed(1)} pts`;
+  return `${change} since ${formatDay(prior.period_end)} vs ${getSharePct(priorRate.breakage, priorRate.writerTotal)} in ${priorRange}`;
+}
+
+const DAY_MS = 24 * 60 * 60 * 1000;
+
+// server-anchored YYYY-MM-DD → MM-DD; never re-derived from the browser clock
+function formatDay(date) {
+  return String(date).slice(5, 10);
+}
+
+// period_end is exclusive → the last day shown is the day before it
+function formatDayRange({ period_start: start, period_end: end }) {
+  const last = new Date(Date.parse(`${end}T00:00:00Z`) - DAY_MS).toISOString().slice(0, 10);
+  return `${formatDay(start)} – ${formatDay(last)}`;
 }
 
 function formatAlertLine(share) {
@@ -842,21 +867,22 @@ function buildSpendTile(costState, kpi) {
   if (pending) return pending;
 
   const pace = resolveSpendPace(costState);
-  const tone = pace.status === 'hot' ? 'warn' : 'neutral';
+  const tone = { hot: 'warn', normal: 'ok' }[pace.status] ?? 'neutral';
   const reading = { ...base, status: 'ready', tone, value: formatUsd(pace.today), trend: describeSpendTrend(kpi) };
   if (pace.status === 'no-basis') {
     return { ...reading, hint: 'No spend in the last 7 days — no baseline to compare against.' };
   }
   return {
-    ...reading, badge: tone === 'warn' ? BADGE.SPEND_HOT : undefined, detail: describeSpendPace(pace),
-    hint: `${(pace.today / pace.basis).toFixed(1)}× the average so far · alarm at ${SPEND_PACE_CUT}×`,
+    ...reading, badge: tone === 'warn' ? BADGE.SPEND_HOT : BADGE.SPEND_NORMAL, detail: describeSpendPace(pace),
+    hint: `Alarm at ${SPEND_PACE_CUT}× the 7-day average/day, on so-far or the 3-hour pace`,
   };
 }
 
 // day-over-day from one payload (the shell's /api/dashboard/kpi) → today and its comparand never mix sources
 function describeSpendTrend(kpi) {
   const prior = Number(kpi?.yesterday_same_time_cost_usd);
-  if (kpi?.today_cost_usd == null || !(prior > 0)) return null;
+  if (kpi?.today_cost_usd == null || kpi.yesterday_same_time_cost_usd == null) return 'Change on yesterday unavailable — the harness read carries no spend';
+  if (!(prior > 0)) return 'No spend yesterday by this time to compare against';
   const change = Math.round(((Number(kpi.today_cost_usd) - prior) / prior) * 100);
   const comparand = `${formatUsd(prior)} yesterday by this time`;
   if (change === 0) return `Level with ${comparand}`;
@@ -878,8 +904,9 @@ function describeVersion(harness) {
 
 // wave regions + the shell harness — update-job polls on its own, so it stays out and never moves the stamp
 // the stamp also answers for the harness tile → a pending harness read keeps it busy, a failed one keeps it off Fresh
+// the shell owns the harness read → its page state leaves that region out, so a harness-only failure is reported once
 function getFreshnessInputD(settledAt, waveStates, harness) {
-  return { at: settledAt, regions: [...waveStates, toHarnessRegion(harness)] };
+  return { at: settledAt, regions: [...waveStates, toHarnessRegion(harness)], shellRegions: waveStates };
 }
 
 // the shell fold carries no busy flag → its read in flight is status 'loading'
