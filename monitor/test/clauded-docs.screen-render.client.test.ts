@@ -63,6 +63,11 @@ async function loadDocsScreen(react: Record<string, unknown> = createReactStub()
   return loadScreenModule(DOCS_SRC, { UI: uiStub(SHIPPED_ATOMS), React: react });
 }
 
+function getScreenCss(screen: Record<string, unknown>): string {
+  const tree = renderScreen((screen.ScreenClaudedDocs as Component)({}));
+  return findNodes(tree, (n) => n.type === "style").map((n) => collectText(n)).join("\n");
+}
+
 function cssRuleBody(source: string, selector: string): string {
   const escaped = selector.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
   const match = source.match(new RegExp(`${escaped}\\s*\\{([^}]*)\\}`));
@@ -883,7 +888,7 @@ test("'rev of #N' stays on one line: it never wraps and the ID column fits it fo
   const screen = await loadDocsScreen();
   const monoCharPx = 7.2;
   const cellPaddingPx = 28;
-  assert.match(cssRuleBody(readFileSync(DOCS_SRC, "utf8"), " .doc-lineage"), /white-space\s*:\s*nowrap/);
+  assert.match(cssRuleBody(getScreenCss(screen), " .doc-lineage"), /white-space\s*:\s*nowrap/);
 
   const tree = renderListCard(screen, {});
   const idHeader = findNodes(tree, (n) => n.type === "th" && collectText(n) === "ID")[0];
@@ -893,7 +898,7 @@ test("'rev of #N' stays on one line: it never wraps and the ID column fits it fo
 
 test("the Title header starts at the title text's x: indented by the lead slot plus the title row gap", async () => {
   const screen = await loadDocsScreen();
-  const source = readFileSync(DOCS_SRC, "utf8");
+  const source = getScreenCss(screen);
   const px = (rule: string, property: string) => Number(rule.match(new RegExp(`(?:^|[;\\s])${property}\\s*:\\s*(\\d+)px`))?.[1]);
   const indent = px(cssRuleBody(source, ".doc-title-lead"), "width") + px(cssRuleBody(source, ".title-cell .doc-title-row"), "gap");
 
