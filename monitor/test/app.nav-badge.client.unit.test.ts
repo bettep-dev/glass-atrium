@@ -53,6 +53,7 @@ interface HarnessFold {
 }
 interface AppHelpers {
   harnessToNavBadges: (harness: HarnessFold | null) => { architecture?: { badges: Badge[] } | null };
+  agentsToNavBadges: (agentsState: unknown) => { agents?: Badge | null };
   systemsRollup: (harness: HarnessFold | null, pageState?: ShellPageState | null) => Rollup;
   getHarness: (stores: Record<string, unknown>) => HarnessFold & { unreadSources: string[]; error: string | null };
   parseHashScreen: () => string;
@@ -417,6 +418,83 @@ test("harnessToNavBadges: polled-and-clean emits the key with a null badge; unpo
     !("architecture" in app.harnessToNavBadges(app.foldHarness({}))),
     "an unobserved fold claims nothing about the slot",
   );
+});
+
+// --- The Agents nav numeral: agents unsafe to route, read from the circuit-breaker summary ---
+
+function breakerAlarm(agent: string, suspended: boolean): Record<string, unknown> {
+  return { agent, suspended, consecutive_fails: suspended ? 3 : 2, suspended_at: suspended ? "2026-10-01T09:00:00Z" : null };
+}
+function breakerSummary(alarms: Record<string, unknown>[]): unknown {
+  const suspended = alarms.filter((a) => a.suspended).length;
+  return {
+    data: [],
+    meta: {
+      circuit_breaker: {
+        source: "loaded",
+        registry_agents: 23,
+        suspended_count: suspended,
+        streak_count: alarms.length - suspended,
+        alarms,
+      },
+    },
+  };
+}
+
+test("the Agents nav numeral equals the unsafe-to-route count, crit once any agent is suspended", async (t) => {
+  const rows = [
+    { name: "one streak", alarms: [breakerAlarm("glass-atrium-dev-react", false)], tone: "warn" },
+    { name: "two streaks", alarms: [breakerAlarm("glass-atrium-dev-react", false), breakerAlarm("glass-atrium-dev-node", false)], tone: "warn" },
+    { name: "one suspended", alarms: [breakerAlarm("glass-atrium-qa-debugger", true)], tone: "crit" },
+    {
+      name: "suspended plus a streak",
+      alarms: [breakerAlarm("glass-atrium-qa-debugger", true), breakerAlarm("glass-atrium-dev-node", false)],
+      tone: "crit",
+    },
+  ];
+  for (const row of rows) {
+    await t.test(row.name, () => {
+      const slot = app.agentsToNavBadges(ready(breakerSummary(row.alarms))).agents;
+      assert.strictEqual(slot?.badge, String(row.alarms.length));
+      assert.strictEqual(slot?.badgeTone, row.tone);
+      for (const alarm of row.alarms) assert.ok(slot?.title?.includes(String(alarm.agent)), `${alarm.agent} is named`);
+    });
+  }
+});
+
+test("the Agents nav numeral renders nothing at zero, while unread, or when the breaker is unavailable", async (t) => {
+  const unavailable = { meta: { circuit_breaker: { source: "unavailable", registry_agents: 23, suspended_count: 0, streak_count: 0, alarms: [] } } };
+  const rows = [
+    { name: "loaded with no alarm", state: ready(breakerSummary([])) },
+    { name: "never answered", state: { status: "loading", data: null } },
+    { name: "first read failed", state: { status: "error", data: null, error: "HTTP 500" } },
+    { name: "breaker unavailable", state: ready(unavailable) },
+    { name: "summary without a breaker", state: ready({ data: [], meta: {} }) },
+  ];
+  for (const row of rows) {
+    await t.test(row.name, () => {
+      assert.strictEqual(app.agentsToNavBadges(row.state).agents?.badge, undefined);
+    });
+  }
+});
+
+test("a failed agent-store read leaves the footer and the System map numeral unchanged", () => {
+  const stores = allHealthy({ liveState: ready(daemonPayload(1)), kpiState: ready({ last_1h_fail_count: 2 }) });
+  const without = app.getHarness(stores);
+  const withFailedAgents = app.getHarness({ ...stores, agentsState: { status: "error", data: null, error: "HTTP 503" } });
+  assert.deepStrictEqual(app.systemsRollup(withFailedAgents), app.systemsRollup(without));
+  assert.deepStrictEqual(app.harnessToNavBadges(withFailedAgents), app.harnessToNavBadges(without));
+  assert.strictEqual(withFailedAgents.unreadSources.length, 0, "the agent store is not a harness source");
+  assert.ok(!("agents" in app.harnessToNavBadges(withFailedAgents)), "the harness never claims the Agents slot");
+});
+
+// A daemon row may still carry the retired `stale` flag; the verdict is effective_status alone.
+test("a legacy stale flag on a healthy daemon row adds no System map badge", () => {
+  const legacy = {
+    daemons: daemonPayload(0).daemons.map((row) => ({ ...row, stale: true })),
+  };
+  const fold = app.foldHarness(allHealthy({ liveState: ready(legacy), kpiState: ready({ last_1h_fail_count: 0 }) }));
+  assert.strictEqual(app.harnessToNavBadges(fold).architecture, null);
 });
 
 // The sidebar never reads greener than the page in view: the header stamp's read state takes only the ALL SYSTEMS slot.
