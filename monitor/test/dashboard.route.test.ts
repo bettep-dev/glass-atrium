@@ -1,5 +1,5 @@
 // Integration tests for the /api/dashboard routes (KPI panel, cost timeseries, daemon board).
-// Runner: npx tsx --test test/dashboard.route.test.ts
+// Runner: npx tsx --import ./test/lib/select-test-db.ts --test test/dashboard.route.test.ts
 // DB: real Postgres — read-only except the prior-window sum case, which seeds and removes its own cost_events rows.
 
 import test, { after, before, describe } from "node:test";
