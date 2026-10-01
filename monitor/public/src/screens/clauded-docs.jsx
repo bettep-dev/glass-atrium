@@ -33,25 +33,29 @@ const RETIRED_STAGE_ALIAS_CD = "progress";
 // absent value, so the screen renders it distinctly from a model id.
 const OPERATOR_ACTOR_CD = "operator";
 
-// column 구성: checkbox + status + id + title + tags + author + created_at (검색 모드도 동일 — relevance 컬럼 없음).
-//   · Tags drops out when no row carries a tag of its own → one column fewer.
-const LEDGER_COLUMN_COUNT_CD = 7;
-/**
- * px floor each ledger column holds before the table scrolls sideways → th widths + every ledger/rail container threshold derive from here.
- * Container queries cannot read var() → the <style> block interpolates these.
- */
-const LEDGER_FLOOR_CD = {
-	select: 44, // ponytail: .doc-checkbox-cell as rendered (measured) — the cell CSS sets it, this mirrors it; a checkbox-cell change → re-measure
-	status: 191, // ponytail: "Implementing" pill 160.8px measured at 1440 + cell padding 28 — a longer label or pill/font change → re-measure; the rail-placement e2e rows are the tripwire
-	id: 130, // ponytail: "rev of #123456" (mono 14자 × 7.2px + padding 28px) — 7자리 id 부터는 재측정 필요
-	title: 394,
-	tags: 152,
-	author: 110,
-	created: 100,
-	titleNarrow: 240,
+const LEDGER_CD = {
+	// column 구성: checkbox + status + id + title + tags + author + created_at (검색 모드도 동일 — relevance 컬럼 없음).
+	//   · Tags drops out when no row carries a tag of its own → one column fewer.
+	COLUMN_COUNT: 7,
+	/**
+	 * px floor each ledger column holds before the table scrolls sideways → th widths + every ledger/rail container threshold derive from here.
+	 * Container queries cannot read var() → the <style> block interpolates these.
+	 */
+	FLOOR: {
+		select: 44, // ponytail: .doc-checkbox-cell as rendered (measured) — the cell CSS sets it, this mirrors it; a checkbox-cell change → re-measure
+		status: 191, // ponytail: "Implementing" pill 160.8px measured at 1440 + cell padding 28 — a longer label or pill/font change → re-measure; the rail-placement e2e rows are the tripwire
+		id: 130, // ponytail: "rev of #123456" (mono 14자 × 7.2px + padding 28px) — 7자리 id 부터는 재측정 필요
+		title: 394,
+		tags: 152,
+		author: 110,
+		created: 100,
+		titleNarrow: 240,
+		// Tags drops first + the narrow title floor applies only below this sum → both left out
+		get sum() {
+			return this.select + this.status + this.id + this.title + this.author + this.created;
+		},
+	},
 };
-// Tags drops first + the narrow title floor applies only below this sum → both left out
-const LEDGER_FLOOR_SUM_CD = LEDGER_FLOOR_CD.select + LEDGER_FLOOR_CD.status + LEDGER_FLOOR_CD.id + LEDGER_FLOOR_CD.title + LEDGER_FLOOR_CD.author + LEDGER_FLOOR_CD.created;
 const OPEN_SUMMARY_RAIL_WIDTH_CD = 200;
 
 // Open-versus-closed chips. countKey indexes the server's group-unit counts (group_counts);
@@ -1044,12 +1048,12 @@ function ScreenClaudedDocs(/* { onNav } */) {
         /* 선택 checkbox column — 항상 노출 (hover-only 시 사용자가 모름 → glass-atrium-design-designer reject). */
         .doc-checkbox-cell { width: 28px; padding: 4px 6px 4px 12px; text-align: center; vertical-align: middle; }
         .doc-checkbox-cell input[type="checkbox"] { width: 16px; height: 16px; cursor: pointer; accent-color: rgb(var(--accent)); }
-        .doc-col-title { min-width: ${LEDGER_FLOOR_CD.title}px; }
+        .doc-col-title { min-width: ${LEDGER_CD.FLOOR.title}px; }
         /* column floors + Tags → a narrower ledger drops Tags, the viewer still carries it */
         .doc-ledger-scroll { container: doc-ledger / inline-size; }
-        @container doc-ledger (width < ${LEDGER_FLOOR_SUM_CD + LEDGER_FLOOR_CD.tags}px) { .doc-col-tags { display: none; } }
+        @container doc-ledger (width < ${LEDGER_CD.FLOOR.sum + LEDGER_CD.FLOOR.tags}px) { .doc-col-tags { display: none; } }
         /* a ledger under its column floors → the title floor narrows */
-        @container doc-ledger (width < ${LEDGER_FLOOR_SUM_CD}px) { .doc-col-title { min-width: ${LEDGER_FLOOR_CD.titleNarrow}px; } }
+        @container doc-ledger (width < ${LEDGER_CD.FLOOR.sum}px) { .doc-col-title { min-width: ${LEDGER_CD.FLOOR.titleNarrow}px; } }
         /* 선택된 행 강조 — 기존 .is-selected (viewer focus) 와 색 구분: --accent 약한 채도. */
         .doc-row.is-multi-selected { background: rgb(var(--accent) / 0.10); }
         .doc-row.is-multi-selected.is-selected { background: rgb(var(--accent) / 0.16); }
@@ -1117,7 +1121,7 @@ function ScreenClaudedDocs(/* { onNav } */) {
         .doc-open-summary { border-bottom: 1px solid rgb(var(--line)); }
         /* rail beside only when the ledger keeps its column floors there → narrower stacks the rail above */
         .doc-layout { container: doc-layout / inline-size; }
-        @container doc-layout (width >= ${LEDGER_FLOOR_SUM_CD + OPEN_SUMMARY_RAIL_WIDTH_CD}px) {
+        @container doc-layout (width >= ${LEDGER_CD.FLOOR.sum + OPEN_SUMMARY_RAIL_WIDTH_CD}px) {
           .doc-layout .doc-layout-row { flex-direction: row-reverse; align-items: flex-start; }
           .doc-layout .doc-open-summary { flex-direction: column; align-items: stretch; width: ${OPEN_SUMMARY_RAIL_WIDTH_CD}px; flex-shrink: 0; position: sticky; top: 1.5rem; padding-block: 0.75rem; border-bottom: 0; border-left: 1px solid rgb(var(--line)); }
         }
@@ -1127,7 +1131,7 @@ function ScreenClaudedDocs(/* { onNav } */) {
         .doc-open-summary-group dt { color: rgb(var(--ink)); }
         .doc-open-summary-group dd { margin: 0 8px 0 0; color: rgb(var(--ink)); font-family: 'JetBrains Mono', monospace; font-variant-numeric: tabular-nums; }
         .doc-open-summary-group .is-stale { color: rgb(var(--warn)); font-weight: 600; }
-        @container doc-layout (width >= ${LEDGER_FLOOR_SUM_CD + OPEN_SUMMARY_RAIL_WIDTH_CD}px) {
+        @container doc-layout (width >= ${LEDGER_CD.FLOOR.sum + OPEN_SUMMARY_RAIL_WIDTH_CD}px) {
           .doc-open-summary .doc-open-summary-block { display: block; }
           .doc-open-summary .doc-open-summary-heading { margin-bottom: 4px; }
           .doc-open-summary .doc-open-summary-group { display: grid; grid-template-columns: minmax(0, 1fr) auto; column-gap: 12px; row-gap: 2px; }
@@ -1406,7 +1410,7 @@ function DocListCardCD({
 	const commonFormat = getCommonFormatCD(orderedRows);
 	const commonAudience = getCommonAudienceCD(orderedRows);
 	const hasTagsColumn = orderedRows.some((row) => hasOwnTagCD(row, commonFormat, commonAudience));
-	const columnCount = hasTagsColumn ? LEDGER_COLUMN_COUNT_CD : LEDGER_COLUMN_COUNT_CD - 1;
+	const columnCount = hasTagsColumn ? LEDGER_CD.COLUMN_COUNT : LEDGER_CD.COLUMN_COUNT - 1;
 	// shared tag values in words → said once beside the count, never per row nor under the header
 	const sharedTagsLabel =
 		commonAudience === "hidden"
@@ -1622,20 +1626,20 @@ function DocListCardCD({
 								</th>
 								{/* doc_status badge 별도 column 분리 (title inline 제거 · 사용자 directive). */}
 								{/* width 는 표가 넘칠 때 min-content 까지 눌린다 → 컬럼마다 min-width 바닥을 같이 준다. */}
-								<th scope="col" style={{ width: LEDGER_FLOOR_CD.status, minWidth: LEDGER_FLOOR_CD.status }}>Status</th>
+								<th scope="col" style={{ width: LEDGER_CD.FLOOR.status, minWidth: LEDGER_CD.FLOOR.status }}>Status</th>
 								{/* ID — 문서 번호 노출 (그룹 루트 행은 대표 문서 번호). */}
-								<th scope="col" style={{ width: LEDGER_FLOOR_CD.id, minWidth: LEDGER_FLOOR_CD.id }}>ID</th>
+								<th scope="col" style={{ width: LEDGER_CD.FLOOR.id, minWidth: LEDGER_CD.FLOOR.id }}>ID</th>
 								<th scope="col" className="doc-col-title">
 									<span className="doc-col-title-text">Title</span>
 								</th>
 								{/* 태그 전용 column — 서술 칩을 제목 셀에서 분리. */}
 								{hasTagsColumn && (
-									<th scope="col" className="doc-col-tags" style={{ width: LEDGER_FLOOR_CD.tags, minWidth: LEDGER_FLOOR_CD.tags }}>
+									<th scope="col" className="doc-col-tags" style={{ width: LEDGER_CD.FLOOR.tags, minWidth: LEDGER_CD.FLOOR.tags }}>
 										Tags
 									</th>
 								)}
-								<th scope="col" style={{ width: LEDGER_FLOOR_CD.author, minWidth: LEDGER_FLOOR_CD.author }}>Author</th>
-								<th scope="col" style={{ width: LEDGER_FLOOR_CD.created, minWidth: LEDGER_FLOOR_CD.created }}>Created</th>
+								<th scope="col" style={{ width: LEDGER_CD.FLOOR.author, minWidth: LEDGER_CD.FLOOR.author }}>Author</th>
+								<th scope="col" style={{ width: LEDGER_CD.FLOOR.created, minWidth: LEDGER_CD.FLOOR.created }}>Created</th>
 							</tr>
 						</thead>
 						<tbody onKeyDown={moveRowFocusCD}>
@@ -2114,7 +2118,7 @@ function GroupMembersRowsCD({
 		[memberState, draggingId, moveMember],
 	);
 
-	const colSpan = hasTagsColumn ? LEDGER_COLUMN_COUNT_CD : LEDGER_COLUMN_COUNT_CD - 1;
+	const colSpan = hasTagsColumn ? LEDGER_CD.COLUMN_COUNT : LEDGER_CD.COLUMN_COUNT - 1;
 	// 재정렬 affordance 노출 조건: rep 포함 멤버 ≥ 2 (rep 도 행에 포함되므로 2건이면 순서 바꿔 rep 변경 가능)
 	//   AND onReorder 주입됨 AND search mode 아님 (search 는 rank 정렬 — 재정렬 의미 없음).
 	const members = memberState.status === "ready" ? memberState.data || [] : [];
