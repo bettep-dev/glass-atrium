@@ -372,7 +372,7 @@ test("a window tag names the range its figures were read for, never the range st
   const rows = [
     { name: "a 30d payload on screen while 7d loads", state: { status: "ready", data: {}, error: null, busy: true, key: "/api/cost/by-model?days=30", pendingKey: "/api/cost/by-model?days=7" }, requested: 7, shown: 30 },
     { name: "the 7d payload landed", state: { status: "ready", data: {}, error: null, busy: false, key: "/api/cost/by-model?days=7", pendingKey: null }, requested: 7, shown: 7 },
-    { name: "the 7d request failed over the held 90d payload", state: { status: "ready", data: {}, error: "boom", busy: false, key: "/api/dashboard/cost-timeseries?days=90", pendingKey: null }, requested: 7, shown: 90 },
+    { name: "the 7d request failed over the held 90d payload", state: { status: "ready", data: {}, error: "boom", busy: false, key: "/api/dashboard/cost-timeseries?days=90&prior_window=1", pendingKey: null }, requested: 7, shown: 90 },
     { name: "nothing landed yet", state: { status: "loading", data: null, error: null, busy: true, key: null, pendingKey: "/api/cost/by-model?days=7" }, requested: 7, shown: 7 },
   ];
   for (const row of rows) {
@@ -1156,14 +1156,16 @@ describe("the token volume total compares with the server's prior window, cut at
     { name: "fewer tokens read down", tokens: [50, 50, 50, 50], prior: 400, glyph: "\u25bc", spoken: new RegExp(`\\bdown\\s+50\\s*%\\s*${span}`) },
     { name: "equal totals read unchanged", tokens: [100, 100, 100, 100], prior: 400, glyph: "\u2014", spoken: new RegExp(`\\bunchanged\\s+0\\s*%\\s*${span}`) },
     { name: "today's partial day counts toward the total it sits under", tokens: [100, 100, 100, 500], prior: 400, glyph: "\u25b2", spoken: new RegExp(`\\bup\\s+100\\s*%\\s*${span}`) },
-    { name: "an absent prior window reads as no comparison", tokens: [100, 100], prior: null, glyph: "", spoken: /No comparison — the prior window did not arrive/ },
-    { name: "a zero prior window states no percentage", tokens: [100, 100], prior: 0, glyph: "", spoken: /No comparison — the 2 days before 01-03 held no tokens\./ },
+    { name: "an absent prior window reads as no comparison", tokens: [100, 100], prior: null, glyph: null, spoken: /No comparison — the prior window did not arrive/ },
+    { name: "a zero prior window states no percentage", tokens: [100, 100], prior: 0, glyph: null, spoken: /No comparison — the 2 days before 01-03 held no tokens\./ },
   ];
   for (const row of rows) {
     test(row.name, async () => {
       const mod = await loadCostRender();
       const tree = renderIn(mod, "TokenStackedBody", { state: getTokenTrend(row.tokens, row.prior), days: 30, onRetry: () => {} });
-      assert.ok(collectText(tree).includes(row.glyph), `the direction glyph ${row.glyph} is drawn`);
+      const text = collectText(tree);
+      if (row.glyph === null) assert.doesNotMatch(text, /[\u25b2\u25bc]/, "no direction glyph is drawn without a comparison");
+      else assert.ok(text.includes(row.glyph), `the direction glyph ${row.glyph} is drawn`);
       assert.match(getSpokenText(tree), row.spoken, "the direction is announced in words, not only drawn");
     });
   }
