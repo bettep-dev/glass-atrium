@@ -1,6 +1,6 @@
 // Integration tests for the /api/dashboard routes (KPI panel, cost timeseries, daemon board).
 // Runner: npx tsx --test test/dashboard.route.test.ts
-// DB: real Postgres (read-only) — existing cost_events fixture drives assertions.
+// DB: real Postgres — read-only except the prior-window sum case, which seeds and removes its own cost_events rows.
 
 import test, { after, before, describe } from "node:test";
 import assert from "node:assert/strict";
@@ -318,13 +318,45 @@ test("GET /api/dashboard/cost-timeseries: the prior cut is the bucket-tz time of
   assert.ok(driftSeconds <= 60, `cut ${cutTime} is the bucket-tz clock at request time (${before.time})`);
 });
 
-test("GET /api/dashboard/cost-timeseries: prior sums match the time-cut ground truth", async () => {
-  const body = await getTimeseries("days=30&prior_window=1");
-  const prior = body.prior_window;
-  assert.ok(prior !== undefined, "opt-in returns the block");
-  // Oracle binds the response's own bounds + cut → no clock race; the last prior day counts up to the cut only.
+const PRIOR_SEED_SESSION = `prior-window-sum-${process.pid}`;
+
+interface PriorSeedRow {
+  name: string;
+  date: string;
+  time: string;
+  scale: number;
+}
+
+// Each row carries a distinct power of ten → a wrongly counted or dropped row shows in every sum.
+function getPriorSeedRows(prior: PriorWindowBody): PriorSeedRow[] {
   const lastPriorDay = getShiftedDay(prior.period_end, -1);
-  const oracle = await getPrisma().$queryRaw<
+  return [
+    { name: "first prior day", date: prior.period_start, time: "12:00:00", scale: 1 },
+    { name: "last prior day, at midnight (before any cut)", date: lastPriorDay, time: "00:00:00", scale: 10 },
+    { name: "last prior day, after the cut", date: lastPriorDay, time: "23:59:59.999999", scale: 100 },
+    { name: "period_end (the shown first day)", date: prior.period_end, time: "00:00:00", scale: 1_000 },
+    { name: "the day before period_start", date: getShiftedDay(prior.period_start, -1), time: "12:00:00", scale: 10_000 },
+  ];
+}
+
+async function seedPriorRows(rows: PriorSeedRow[]): Promise<void> {
+  for (const [index, row] of rows.entries()) {
+    await getPrisma().$executeRaw`
+      INSERT INTO core.cost_events
+        (event_date, event_time, session_id, kind, dedup_key, input_tokens, output_tokens,
+         cache_read_tokens, cache_creation_tokens, cost_usd, duration_ms, num_turns,
+         stop_reason, model, parse_error)
+      VALUES (${row.date}::date, ${row.time}::time, ${PRIOR_SEED_SESSION}, 'turn', ${`${PRIOR_SEED_SESSION}-${index}`},
+              ${row.scale}, ${2 * row.scale}, ${3 * row.scale}, ${4 * row.scale}, ${row.scale / 2}, 0, 1,
+              'end_turn', 'model-cheap', false)
+    `;
+  }
+}
+
+// Rows outside the seed session (a dev DB's own history) → same time-cut filter as the route.
+async function findUnseededPriorSums(prior: PriorWindowBody) {
+  const lastPriorDay = getShiftedDay(prior.period_end, -1);
+  const [row] = await getPrisma().$queryRaw<
     Array<{ input: bigint; output: bigint; cache_read: bigint; cache_creation: bigint; cost: unknown }>
   >`
     SELECT
@@ -334,30 +366,44 @@ test("GET /api/dashboard/cost-timeseries: prior sums match the time-cut ground t
       COALESCE(SUM(cache_creation_tokens), 0)::bigint AS cache_creation,
       COALESCE(SUM(cost_usd), 0)                      AS cost
     FROM core.cost_events
-    WHERE (event_date >= ${prior.period_start}::date AND event_date < ${lastPriorDay}::date)
-       OR (event_date = ${lastPriorDay}::date AND event_time <= ${prior.cut_time}::time)
+    WHERE session_id <> ${PRIOR_SEED_SESSION}
+      AND ((event_date >= ${prior.period_start}::date AND event_date < ${lastPriorDay}::date)
+        OR (event_date = ${lastPriorDay}::date AND event_time <= ${prior.cut_time}::time))
   `;
-  const expected = oracle[0];
-  assert.ok(expected !== undefined, "oracle returns one row");
+  assert.ok(row !== undefined, "unseeded oracle returns one row");
+  return {
+    input_tokens: Number(row.input),
+    output_tokens: Number(row.output),
+    cache_read_tokens: Number(row.cache_read),
+    cache_creation_tokens: Number(row.cache_creation),
+    cost_usd: Number(String(row.cost)),
+  };
+}
+
+test("GET /api/dashboard/cost-timeseries: prior sums count [period_start, period_end) with the last day cut at cut_time", async (t) => {
+  t.after(async () => {
+    await getPrisma().$executeRaw`DELETE FROM core.cost_events WHERE session_id = ${PRIOR_SEED_SESSION}`;
+  });
+  const probe = (await getTimeseries("days=30&prior_window=1")).prior_window;
+  assert.ok(probe !== undefined, "opt-in returns the block");
+  await seedPriorRows(getPriorSeedRows(probe));
+
+  const prior = (await getTimeseries("days=30&prior_window=1")).prior_window;
+  assert.ok(prior !== undefined, "opt-in returns the block");
+  assert.strictEqual(prior.period_start, probe.period_start, "the bucket day did not roll between probe and read");
+  const unseeded = await findUnseededPriorSums(prior);
+  // Counted: first prior day (1) + last prior day before the cut (10) → 11 per unit.
   assert.deepStrictEqual(
     {
-      input_tokens: prior.input_tokens,
-      output_tokens: prior.output_tokens,
-      cache_read_tokens: prior.cache_read_tokens,
-      cache_creation_tokens: prior.cache_creation_tokens,
+      input_tokens: prior.input_tokens - unseeded.input_tokens,
+      output_tokens: prior.output_tokens - unseeded.output_tokens,
+      cache_read_tokens: prior.cache_read_tokens - unseeded.cache_read_tokens,
+      cache_creation_tokens: prior.cache_creation_tokens - unseeded.cache_creation_tokens,
     },
-    {
-      input_tokens: Number(expected.input),
-      output_tokens: Number(expected.output),
-      cache_read_tokens: Number(expected.cache_read),
-      cache_creation_tokens: Number(expected.cache_creation),
-    },
+    { input_tokens: 11, output_tokens: 22, cache_read_tokens: 33, cache_creation_tokens: 44 },
   );
-  const expectedCost = Number(String(expected.cost));
-  assert.ok(
-    Math.abs(prior.cost_usd - expectedCost) < 1e-6,
-    `cost_usd matches the time-cut ground truth (api=${prior.cost_usd}, oracle=${expectedCost})`,
-  );
+  const seededCost = prior.cost_usd - unseeded.cost_usd;
+  assert.ok(Math.abs(seededCost - 5.5) < 1e-6, `seeded cost_usd is 5.5 (got ${seededCost})`);
 });
 
 test("GET /api/dashboard/cost-timeseries: an off-list days returns 400 with or without the opt-in", async () => {
