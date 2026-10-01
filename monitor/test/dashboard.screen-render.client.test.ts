@@ -190,6 +190,15 @@ describe("the week results panel", () => {
     assert.ok(rows.some((row) => /^Failed ?0$/.test(row)), `a zero Failed row stays visible: ${JSON.stringify(rows)}`);
   });
 
+  test("names each result with the shared registry word every other screen uses", async () => {
+    const uiMod = await loadScreenModule(resolve(__dirname, "../public/src/ui.jsx"), { document: { documentElement: {} }, Intl });
+    const resultMeta = (uiMod.UI as { RESULT_META: Record<string, { label: string }> }).RESULT_META;
+    const rows = rowTexts(renderResultPanel(Object.keys(resultMeta).map((result) => ({ result, count: 7 }))));
+    for (const [result, { label }] of Object.entries(resultMeta)) {
+      assert.ok(rows.some((row) => row.startsWith(label) && /^ ?7$/.test(row.slice(label.length))), `${result} reads "${label}": ${JSON.stringify(rows)}`);
+    }
+  });
+
   test("states that its caveat row counts every caveat while the tile counts only open ones", () => {
     const panelText = collectText(renderResultPanel([{ result: "done", count: 10 }, { result: "done_with_concerns", count: 5 }]));
     const tile = buildOutcomeTile({ status: "ready", data: { status: "ok", tone: "ok", writerTotal: 40, breakage: 1, openCaveats: 2 } });

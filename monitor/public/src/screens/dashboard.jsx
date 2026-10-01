@@ -490,7 +490,7 @@ const RESULT_ROW_META = {
   done_with_concerns: { label: 'Done with caveats', tone: 'warn' },
   fail: { label: 'Failed', tone: 'crit' },
   blocked: { label: 'Blocked', tone: 'crit' },
-  needs_context: { label: 'Needed more context', tone: 'info' },
+  needs_context: { label: 'Needs info', tone: 'info' },
 };
 
 function ResultPanel({ panel }) {
