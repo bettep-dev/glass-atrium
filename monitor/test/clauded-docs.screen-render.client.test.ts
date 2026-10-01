@@ -5,7 +5,6 @@
 
 import test, { describe } from "node:test";
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, resolve } from "node:path";
 import {
@@ -59,8 +58,18 @@ const SHIPPED_ATOMS = {
   getRegionView: shippedUi.getRegionView,
 };
 
+// in-memory Storage → the screen's group-expand hydrate reads an empty store instead of failing
+function createMemoryStorage(): Pick<Storage, "getItem" | "setItem" | "removeItem"> {
+  const items = new Map<string, string>();
+  return {
+    getItem: (key) => items.get(key) ?? null,
+    setItem: (key, value) => { items.set(key, String(value)); },
+    removeItem: (key) => { items.delete(key); },
+  };
+}
+
 async function loadDocsScreen(react: Record<string, unknown> = createReactStub()): Promise<Record<string, unknown>> {
-  return loadScreenModule(DOCS_SRC, { UI: uiStub(SHIPPED_ATOMS), React: react });
+  return loadScreenModule(DOCS_SRC, { UI: uiStub(SHIPPED_ATOMS), React: react, localStorage: createMemoryStorage() });
 }
 
 function getScreenCss(screen: Record<string, unknown>): string {
@@ -76,13 +85,13 @@ function cssRuleBody(source: string, selector: string): string {
 }
 
 test("a done stage reads in the neutral tone like every other stage, on the pill and on its filter chip", async () => {
-  const source = readFileSync(DOCS_SRC, "utf8");
+  const screen = await loadDocsScreen();
+  const source = getScreenCss(screen);
   for (const selector of [".doc-stage-pill.is-terminal", ".doc-stage-glyph.is-terminal"]) {
     const rule = source.match(new RegExp(`${selector.replace(/\./g, "\\.")}\\s*\\{([^}]*)\\}`));
     assert.doesNotMatch(rule ? rule[1] : "", /--ok/, `${selector} carries no success tone`);
   }
 
-  const screen = await loadDocsScreen();
   const donePips = findNodes(renderScreen((screen.DocStagePillCD as Component)({ docStatus: "done" })),
     (n) => String(n.props.className ?? "").includes("stage-pip"));
   for (const pip of donePips) assert.doesNotMatch(String(pip.props.className), /is-terminal/, "done pips fill like any stage");
@@ -131,14 +140,14 @@ test("a search snippet reads as plain words: markdown syntax and a leading title
   }
 });
 
-test("the snippet line clamps at two lines", () => {
-  const rule = cssRuleBody(readFileSync(DOCS_SRC, "utf8"), ".doc-snippet");
+test("the snippet line clamps at two lines", async () => {
+  const rule = cssRuleBody(getScreenCss(await loadDocsScreen()), ".doc-snippet");
   assert.match(rule, /-webkit-line-clamp\s*:\s*2/);
   assert.match(rule, /overflow\s*:\s*hidden/);
 });
 
-test("the snippet line starts at the title's x: indented by the lead slot plus the title row gap", () => {
-  const source = readFileSync(DOCS_SRC, "utf8");
+test("the snippet line starts at the title's x: indented by the lead slot plus the title row gap", async () => {
+  const source = getScreenCss(await loadDocsScreen());
   const px = (rule: string, property: string) => {
     const match = rule.match(new RegExp(`(?:^|[;\\s])${property}\\s*:\\s*(\\d+)px`));
     assert.ok(match, `${property} is set in px`);
@@ -311,8 +320,8 @@ test("the opened viewer settles focus on Close after the dialog's own first-cont
 });
 
 test("below the icon-rail width the ledger drops its Tags column and lets the title column narrow", async () => {
-  const source = readFileSync(DOCS_SRC, "utf8");
   const screen = await loadDocsScreen();
+  const source = getScreenCss(screen);
   const props = listCardProps(() => undefined);
   (props.rows as Array<Record<string, unknown>>)[0].format = "html";
   const tree = renderScreen((screen.DocListCardCD as Component)(props));
@@ -582,8 +591,11 @@ describe("a stage pill draws the shared stage pip, filled up to its stage", () =
   }
 });
 
-test("no Documents style or class draws text on the 11px micro step below the 12px floor", () => {
-  assert.doesNotMatch(readFileSync(DOCS_SRC, "utf8"), /fs-micro/);
+test("no Documents style or class draws text on the 11px micro step below the 12px floor", async () => {
+  const screen = await loadDocsScreen();
+  const listCard = renderScreen((screen.DocListCardCD as Component)(listCardProps(() => undefined)));
+  const classNames = findNodes(listCard, (n) => typeof n.props.className === "string").map((n) => String(n.props.className));
+  assert.doesNotMatch([getScreenCss(screen), ...classNames].join("\n"), /fs-micro/);
 });
 
 test("a markdown body never nests an h1 under the viewer's h2 title", async () => {

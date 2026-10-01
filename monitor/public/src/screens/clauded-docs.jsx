@@ -1817,7 +1817,7 @@ function DocListCardCD({
 					</div>
 				)}
 				{/* Load More 버튼.
-            · canLoadMore = !isSearchMode AND ready AND rows.length < total
+            · canLoadMore = !isSearchMode AND ready AND consumedCount < total (server groups consumed, not deduped rows)
             · isLoadingMore = offset>0 진행 중 — 버튼 label 'loading' 으로 전환 + disabled */}
 				{state.status === "ready" && canLoadMore && (
 					<div className="flex justify-center py-3 px-4">

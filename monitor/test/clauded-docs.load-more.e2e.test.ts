@@ -225,7 +225,7 @@ async function getRowTitles(page: Page, label: string): Promise<string[]> {
 
 // load-more: 60 seeds → initial 50 + Load More click → 60.
 
-test("load-more: 60 seeds → initial 50 visible + Load More button → click → 60 visible + button hidden", async () => {
+test("load-more: 60 seeds → initial 50 visible + Load More button → click → 60 visible", async () => {
   const ids = await seedManyDocs(60, "ac3lm");
   try {
     const context: BrowserContext = await browser.newContext();
@@ -253,10 +253,6 @@ test("load-more: 60 seeds → initial 50 visible + Load More button → click �
       );
       // React batching → setLoadedRows 반영까지 polling.
       await waitForRowCountAtLeast(page, 60);
-
-      const afterLoadMore = await countVisibleRows(page);
-      assert.ok(afterLoadMore >= 60, `Load More 후 ≥60 rows (got ${afterLoadMore})`);
-      assert.ok(afterLoadMore > initialRowCount, `행 증가 (initial ${initialRowCount} → after ${afterLoadMore})`);
     } finally {
       await context.close();
     }
@@ -299,8 +295,6 @@ test("filter-reset: Load More 누적 후 doc_status chip 변경 → 페이지 re
         (url) => url.includes("offset=50"),
       );
       await waitForRowCountAtLeast(page, 60);
-      const afterLoadMore = await countVisibleRows(page);
-      assert.ok(afterLoadMore >= 60, `Load More 후 ≥60 rows (got ${afterLoadMore})`);
       const seededTitles = await getRowTitles(page, "ac3reset");
       assert.strictEqual(
         new Set(seededTitles).size,
@@ -314,9 +308,6 @@ test("filter-reset: Load More 누적 후 doc_status chip 변경 → 페이지 re
       // clickDocStatusChip 는 offset 미포함 응답 대기 → reset 완료 시그널.
       await clickDocStatusChip(page, "All");
       await waitForRowCountAtMost(page, 50);
-      const afterReset = await countVisibleRows(page);
-      assert.ok(afterReset <= 50,
-        `doc_status change 시 페이지 리셋 — row 수 ≤50 (got ${afterReset})`);
     } finally {
       await context.close();
     }
@@ -887,12 +878,15 @@ test("cascade-toast: 3-doc group 생성 → 'Grouped 3' toast 가시 + TOAST_DUR
   try {
     const context: BrowserContext = await browser.newContext();
     const page: Page = await context.newPage();
+    // toast 수명을 실시계 대신 page clock 으로 구동 — full-suite 부하에서도 결정적.
+    await page.clock.install();
     try {
       await page.goto(`${serverUrl}/#clauded-docs`, { waitUntil: "networkidle" });
       await page.locator("tr.doc-row").first().waitFor({ state: "visible" });
 
-      // 3 doc multi-select + group 결성.
+      // 3 doc multi-select + group 결성 — 시계 정지 후 toast 타이머는 runFor 로만 진행.
       for (const t of titles) await checkRowByTitle(page, t);
+      await page.clock.pauseAt(await page.evaluate(() => Date.now() + 1000));
       await clickGroupCreateButton(page);
 
       // 토스트 가시 — '.doc-toast.ok' 매칭 + 'role="status" aria-live="polite"'.
@@ -906,10 +900,12 @@ test("cascade-toast: 3-doc group 생성 → 'Grouped 3' toast 가시 + TOAST_DUR
       assert.strictEqual(role, "status", `토스트 role=status (WCAG 4.1.3 status messages)`);
       assert.strictEqual(ariaLive, "polite", `토스트 aria-live=polite (assertive 아님)`);
 
-      // TOAST_DURATION_MS_CD = 3200 ms 후 자동 dismiss — setToast(null) 트리거.
-      //   · 토스트 DOM 자체가 detach (`toast && (...)`).
-      //   · waitFor state=detached 로 3.5초 윈도우 안에서 dismiss 확인 (margin 0.3초).
-      await toast.waitFor({ state: "detached", timeout: 4000 });
+      // TOAST_DURATION_MS_CD 직전까지 유지 → 도달 시 detach (`toast && (...)`).
+      const toastDurationMs = 3200;
+      await page.clock.runFor(toastDurationMs - 1);
+      assert.strictEqual(await toast.count(), 1, "the toast stays until its full duration elapses");
+      await page.clock.runFor(1);
+      await toast.waitFor({ state: "detached", timeout: 2000 });
     } finally {
       await context.close();
     }
