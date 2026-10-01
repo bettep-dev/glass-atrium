@@ -152,8 +152,10 @@ function ScreenDashboard({ onNav, harness, onRetryHarness }) {
         .dash-strip-partial { background: transparent; border: 1px dashed currentColor; }
         .dash-result-row { display: grid; grid-template-columns: 9rem 1fr 4.5rem; align-items: center; gap: 0.5rem; }
         .dash-result-fill { height: 0.5rem; background: currentColor; border-radius: 2px; }
-        .dash-hour-grid { display: grid; grid-template-columns: 2.5rem repeat(24, minmax(0, 1fr)); gap: 2px; align-items: center; line-height: 1; }
-        .dash-hour-cell { height: 0.75rem; background: currentColor; border-radius: 2px; }
+        /* tracks capped at the cell cap → capped cells keep even 2px gaps instead of floating in wider tracks */
+        .dash-hour-grid { display: grid; grid-template-columns: 2.5rem repeat(24, minmax(0, 1.25rem)); justify-content: start; gap: 2px; align-items: center; line-height: 1; }
+        .dash-hour-cell { aspect-ratio: 1; background: currentColor; border-radius: 2px; }
+        .dash-hour-tick { white-space: nowrap; }
         /* two columns (xl) → an even count puts two rows on the bottom line; both drop the hairline, not only the last */
         @media (min-width: 1280px) { .dash-alarm-grid > .alarm-row:nth-child(odd):nth-last-child(2) { border-bottom: none; } }
       `}</style>
@@ -187,11 +189,9 @@ function ScreenDashboard({ onNav, harness, onRetryHarness }) {
           onRefetchJob={refetchUpdateJob}
         />
         <StatusBand tiles={tiles} onNav={onNav} onRetry={retryTile} sharedSources={sharedSources}/>
-        <WeekRow spendState={spendDaysState} outcomesState={outcomesState} onRetrySpend={() => loadRegion('spendDays')}
+        <WeekRow spendState={spendDaysState} outcomesState={outcomesState} heatmapState={heatmapState}
+          onRetrySpend={() => loadRegion('spendDays')} onRetryHeatmap={() => loadRegion('heatmap')}
           sharedSources={sharedSources}/>
-        <WeekPanel id="dash-week-hours" title="Runs by hour" state={heatmapState} source="runs by hour"
-          onRetry={() => loadRegion('heatmap')} isRetryShared={sharedSources.includes('runs by hour')}
-          render={(data) => <HourGrid grid={buildHourGrid(data)}/>}/>
       </div>
     </div>
   );
@@ -407,17 +407,23 @@ function StatusTileValue({ tile }) {
   );
 }
 
-// the week behind the triage band → each half states its own span (the strip 7 days, the results 7 days + today)
-function WeekRow({ spendState, outcomesState, onRetrySpend, sharedSources = NO_SHARED_SOURCES }) {
+// the week behind the triage band → each panel states its own span (the strip 7 days, the results 7 days + today)
+// results | runs by hour pair from xl (both this week's runs; half width keeps the hour cells square and short) → Spend's strip spans the row below
+function WeekRow({ spendState, outcomesState, heatmapState, onRetrySpend, onRetryHeatmap, sharedSources = NO_SHARED_SOURCES }) {
   return (
-    <div className="grid grid-cols-1 xl:grid-cols-2 gap-card">
+    <>
+      <div className="grid grid-cols-1 xl:grid-cols-2 gap-card">
+        <WeekPanel id="dash-week-results" title="This week's task results" state={outcomesState} source="task results"
+          isRetryShared={sharedSources.includes('task results')}
+          render={(data) => <ResultPanel panel={buildResultPanel(data)}/>}/>
+        <WeekPanel id="dash-week-hours" title="Runs by hour" state={heatmapState} source="runs by hour"
+          onRetry={onRetryHeatmap} isRetryShared={sharedSources.includes('runs by hour')}
+          render={(data) => <HourGrid grid={buildHourGrid(data)}/>}/>
+      </div>
       <WeekPanel id="dash-week-spend" title="Spend per day" state={spendState} source="daily spend" onRetry={onRetrySpend}
         isRetryShared={sharedSources.includes('daily spend')}
         render={(data) => <SpendStrip strip={buildSpendStrip(data.points)}/>}/>
-      <WeekPanel id="dash-week-results" title="This week's task results" state={outcomesState} source="task results"
-        isRetryShared={sharedSources.includes('task results')}
-        render={(data) => <ResultPanel panel={buildResultPanel(data)}/>}/>
-    </div>
+    </>
   );
 }
 
@@ -571,7 +577,7 @@ function HourGrid({ grid }) {
           </React.Fragment>
         ))}
         <span/>
-        {HOUR.OF_DAY.map((hour) => <span key={hour}>{HOUR.TICKS.has(hour) ? formatHour(hour) : ''}</span>)}
+        {HOUR.OF_DAY.map((hour) => <span key={hour} className="dash-hour-tick">{HOUR.TICKS.has(hour) ? formatHourTick(hour) : ''}</span>)}
       </div>
     </>
   );
@@ -582,7 +588,12 @@ function getRowLabel(row) {
 }
 
 function formatHour(hour) {
-  return `${String(hour).padStart(2, '0')}:00`;
+  return `${formatHourTick(hour)}:00`;
+}
+
+// a 20px column fits two digits, not HH:00 → the tooltip keeps the full hour
+function formatHourTick(hour) {
+  return String(hour).padStart(2, '0');
 }
 
 function describeHourGrid(grid) {

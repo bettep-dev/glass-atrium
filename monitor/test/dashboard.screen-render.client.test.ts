@@ -593,3 +593,35 @@ test("a tile's trend renders on the lead side under its value, and a tile withou
   const without = render("StatusTile", { tile: READY_TILE, onNav: () => {}, onRetry: () => {} });
   assert.doesNotMatch(collectText(without), /yesterday/);
 });
+
+describe("the week block", () => {
+  const LOADING = { data: null, error: null, busy: true };
+  const sectionIds = (node: RenderedNode) =>
+    findNodes(node, (n) => n.type === "section" && String(n.props.id ?? "").startsWith("dash-week-")).map((n) => n.props.id);
+
+  test("pairs Runs by hour with the task results and gives Spend per day its own row after them", () => {
+    const tree = render("WeekRow", {
+      spendState: LOADING, outcomesState: LOADING, heatmapState: LOADING, onRetrySpend: () => {}, onRetryHeatmap: () => {},
+    });
+    assert.deepEqual(sectionIds(tree), ["dash-week-results", "dash-week-hours", "dash-week-spend"]);
+    const pairs = findNodes(tree, (n) => classOf(n).split(/\s+/).includes("xl:grid-cols-2"));
+    assert.equal(pairs.length, 1, "one two-column row from xl");
+    assert.deepEqual(sectionIds(pairs[0]), ["dash-week-results", "dash-week-hours"], "Spend stays out of the paired row");
+  });
+});
+
+test("hour ticks read as bare two-digit hours while each cell's tooltip keeps the full hour", () => {
+  const counts = Array.from({ length: 24 }, (_, hour) => (hour === 5 ? 4 : 0));
+  const grid = {
+    rows: [{ day: "Mon", counts, fold: null }], total: 4, max: 4, span: "Sep 24 – Sep 30", folds: [],
+    peak: { day: "Mon", hour: 5, count: 4, fold: null },
+  };
+  const tree = render("HourGrid", { grid });
+  const [chart] = findNodes(tree, (n) => n.props.role === "img");
+  const ticks = chart.children.slice(-24).map(collectText).filter(Boolean);
+  assert.deepEqual(ticks, ["00", "06", "12", "18"]);
+  const cells = findNodes(chart, (n) => typeof n.props.title === "string" && String(n.props.title).includes("runs"));
+  assert.equal(cells.length, 24, "one tooltip cell per hour");
+  // formatInt is a stubbed atom here → the hour prefix is the asserted part
+  assert.match(String(cells[5].props.title), /^Mon 05:00 — /);
+});
