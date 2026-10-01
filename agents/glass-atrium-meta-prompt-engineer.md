@@ -264,8 +264,6 @@ The canonical is `GLASS_ATRIUM_GLOBAL_RULES.md` → `### Output Language`: the E
   - Disposition, not just a check: a pin whose target text is gone is retired in the same pass.
   - A coupled test outside the delegated file set → **Scope discipline**.
 - **Per-file scope**: the pass covers each file it opens, in that same pass
-- **Prompt-audit pass**: one instance of this pass; contract: `scoped/scope-meta.md` → `## Prompt Deliverable Team Rule`
-  - Position: `rules/glass-atrium/orchestrator-role.md` → `## Document-Driven Workflow` step 6 → **Prompt-file tail**.
 
 ## Corpus Transform Contract (prose → hierarchical outline)
 

@@ -40,9 +40,13 @@ Maintainer-facing material for that rule file. Nothing here binds either META ag
 | `Absolute Rules` | nothing cites it by name — kept because the heading names the content beneath it |
 | `CQRS Exception` | `scoped/scope-planning.md` and `scoped/scope-design.md`, both by pointer |
 | `Outcome-Driven Rewrite Policy` | `rules/glass-atrium/orchestrator-role.md` → Capability Probe |
-| `Prompt Deliverable Team Rule` | `rules/glass-atrium/orchestrator-role.md` → `## Delegation Criteria` and step 6 of `## Document-Driven Workflow` · `skills/glass-atrium-ops-orchestrator.md` → the routing-table row for prompt/rule authoring and `##### Stage gates` |
+| `Prompt Deliverable Team Rule` | the citer list under this table |
 | `DEV Rule Inheritance` | `rules/glass-atrium/core-compliance-matrix.md` → Tier-3 META-inheritance bullet |
 
+- `Prompt Deliverable Team Rule` is cited from:
+  - `rules/glass-atrium/orchestrator-role.md` → `## Delegation Criteria` and step 6 of `## Document-Driven Workflow`;
+  - `skills/glass-atrium-ops-orchestrator.md` → the routing-table row for prompt/rule authoring and `##### Stage gates`;
+  - `scoped/shared-authoring-hygiene.md` → `## Prompt-Audit Overrides`.
 - `Skills Array Order` has no external citer (it occurs only in `scoped/scope-meta.md` and this note), so it stays out of the register.
 
 ## Stale material removed
