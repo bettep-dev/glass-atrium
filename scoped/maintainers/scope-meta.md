@@ -32,6 +32,16 @@ Maintainer-facing material for that rule file. Nothing here binds either META ag
 - **Tag**: `Absolute Rules` and `Skills Array Order` carry `[META]` only — no DEV rule file holds either heading or a matching pointer, so a DEV half would name no counterpart.
 - **Skills Array Order kept as a sort rule**: the bullet obliges a readability sort (core → supplementary) and nothing more; its null-result clause is cut, not the section.
   - Why: that clause steered where the author spends effort and changed neither the sort nor its acceptance.
+- **Add-review routing resolves every target class to an existing agent** — no owner review, no exempt class.
+  - The ORCHESTRATOR pair and `rules/glass-atrium/core-compliance-matrix.md` take the Tier-1 reviewer: the pair's only member is the main session, and the matrix is neither a Tier-1 rule nor a scope file, so neither has a member agent.
+  - A `shared-*` file with no member agent takes the same reviewer: its policy SoT is a Tier-1 rule and its text reaches several agents.
+  - Templates and references route by citer: the agent whose body cites the file is the one the added text reaches.
+- **A rejected add that carries an owner-adopted option goes back to its author, never to `flag`.**
+  - A reviewer may correct an owner decision's wording but cannot undo it, so a second rejection is the owner's call.
+- **Decided-keep records are named in the pass delegation, never pointed to from the rule file.**
+  - `## Companion-citation convention` bars rule-file prose from citing a companion; a delegation prompt is not a corpus file, so the convention stays intact.
+  - The delegation can also name the keeps a plan settled, which no corpus pointer could reach.
+  - Backing: honor-system — a record the composer leaves unnamed lets its keep be reopened.
 
 ## Heading-citation register — do not rename these
 
@@ -40,9 +50,13 @@ Maintainer-facing material for that rule file. Nothing here binds either META ag
 | `Absolute Rules` | nothing cites it by name — kept because the heading names the content beneath it |
 | `CQRS Exception` | `scoped/scope-planning.md` and `scoped/scope-design.md`, both by pointer |
 | `Outcome-Driven Rewrite Policy` | `rules/glass-atrium/orchestrator-role.md` → Capability Probe |
-| `Prompt Deliverable Team Rule` | `rules/glass-atrium/orchestrator-role.md` → `## Delegation Criteria` · `skills/glass-atrium-ops-orchestrator.md` → the routing-table row for prompt/rule authoring |
+| `Prompt Deliverable Team Rule` | the citer list under this table |
 | `DEV Rule Inheritance` | `rules/glass-atrium/core-compliance-matrix.md` → Tier-3 META-inheritance bullet |
 
+- `Prompt Deliverable Team Rule` is cited from:
+  - `rules/glass-atrium/orchestrator-role.md` → `## Delegation Criteria` and step 6 of `## Document-Driven Workflow`;
+  - `skills/glass-atrium-ops-orchestrator.md` → the routing-table row for prompt/rule authoring and `##### Stage gates`;
+  - `scoped/shared-authoring-hygiene.md` → `## Prompt-Audit Overrides`.
 - `Skills Array Order` has no external citer (it occurs only in `scoped/scope-meta.md` and this note), so it stays out of the register.
 
 ## Stale material removed
@@ -64,6 +78,8 @@ Do not restore any item below.
 ## Prompt Deliverable Team Rule — the delivery gap that was NOT moved
 
 The composer-facing line stays in the rule file rather than moving here, because it changes what the delegation author does: `agents/glass-atrium-intel-reporter.md` states the verdict-only constraint nowhere, so the delegation prompt is the only channel that carries it to the reviewer. If that constraint ever lands in the reporter body, the line becomes a duplicate and should be cut then.
+
+- The add-review composer line under **Add review** follows the same reasoning for the add reviewers; cut it only once every reviewer the add-review table names carries the constraint in its own body.
 
 ## Open questions
 

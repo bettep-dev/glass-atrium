@@ -6,6 +6,8 @@
 
 `implementation → simplify → review of the modified files → LOCAL DEPLOY (combined unmerged tree) → EMPIRICAL VERIFICATION on the live install → PR → CI → merge → sha-parity + recovery-snapshot reconcile`
 
+- Prompt-file cycles insert steps into this order: the pointer site, step 6's **Prompt-file tail**.
+
 ## Steps of the order
 
 - **Deploy the COMBINED tree** — all of the cycle's branches composed over current `main`, deployed to the live install through the sanctioned updater's local-source seam (`ATRIUM_UPDATE_SRC_DIR` + `ATRIUM_UPDATE_SRC_MANIFEST`; copy-step idiom: `skills/glass-atrium-ops-orchestrator.md` → Deploy-Safety Idiom).

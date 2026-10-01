@@ -35,7 +35,9 @@ Maintainer-facing material for that rule file. Nothing here binds the orchestrat
 
 ### `## Machine-Read Structure`
 
-- **Live-file pin**: `CostTierRuleTextTest` is the only suite that reads the rule file's text (byte contract above).
+- **Live-file pin**: these suites read the rule file's text; what each reads and what breaks it is its row in the rule file's consumer table.
+  - `CostTierRuleTextTest` (byte contract above).
+  - `hooks/test/inject-session-context.bats` → "the workflow pre-flight carries both close-token forms of the grammar SoT".
 - **Indifferent suites**: `hooks/test/enforce-workflow-verify-stage*.bats` and `hooks/test/enforce-verification-gate*.bats` drive the hooks through their own fixtures and never read the rule file. They neither guard nor fail on its wording; they guard the token and verdict literals at the hook.
 
 ### `#### Deliverable exposure and designer composition (Decision phase)`
@@ -113,4 +115,15 @@ Maintainer-facing material for that rule file. Nothing here binds the orchestrat
 - `## Document-Driven Workflow` is the orchestrator-side lifecycle SoT. `skills/glass-atrium-ops-orchestrator.md` → `#### Pipeline Acceptance Criteria` mirrors its gate sequence as per-stage acceptance detail and carries the ultracode in-script verify-stage skeleton.
   - The skill cites the rule file as the SoT for step 4's procedure (`#### Pipeline Acceptance Criteria`) and for step 6's pre-PR default and live-suite threshold (`#### Deploy-Safety Idiom`). Edit the two together; neither is a redundancy to delete.
   - Step 6's per-cycle order line and its narrow post-merge cases live in `skills/glass-atrium-ops-delegation-contracts/references/live-deploy-gate.md`; `#### Deploy-Safety Idiom` cites that file for them, so an edit there moves with the skill's citer too.
+  - Step 6's **Prompt-file tail** is an insertion into the reference file's per-cycle order, never a second order; the reference file's `## Per-cycle order` points to it by that lead.
+    - The tail is also the single site of the prompt-file cycle trigger class; every other file points to the tail rather than restating the class.
+      - Why the class reaches code: model-received text is prompt text whatever file carries it, and the add-review table already routes code-file hunks to a DEV reviewer.
+      - The class is stated with examples, never as a file list: a list drifts as hooks and daemon prompts are added or moved.
+      - A code hunk whose coupled test must change: `scoped/shared-authoring-hygiene.md` → `## Prompt-Audit Overrides` → **Test-consumed literals**.
+    - Citers that move with it:
+      - `live-deploy-gate.md` → `## Per-cycle order`;
+      - `skills/glass-atrium-ops-delegation-contracts/SKILL.md` → Reference Index row "Pre-merge live-deploy gate";
+      - `#### Deploy-Safety Idiom` → the step-6 pointer;
+      - `#### Pipeline Acceptance Criteria` → `##### Stage gates`;
+      - `scoped/scope-meta.md` → `## Prompt Deliverable Team Rule` → **Prompt-audit pass**.
 - Step 6's pointer to `scoped/shared-testing.md` → Destructive-Path Suite Safety keeps the phrase "pointer only, the procedure is single-sited there": `scoped/maintainers/shared-testing.md` quotes it as the reason that section stays single-sited. Reword both together or neither.
