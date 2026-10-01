@@ -1048,8 +1048,12 @@ function TokenStackedBody({ state, days, failures, onRetry }) {
 }
 
 function computeTokenWindowDelta(trendState, totalTokens) {
-  const sumTokens = (block) => TOKEN_CATEGORIES.reduce((sum, cat) => sum + (Number(block[cat.key]) || 0), 0);
-  return computePriorDelta(totalTokens, getPriorWindow(trendState), sumTokens);
+  return computePriorDelta(totalTokens, getPriorWindow(trendState), getTokenTotal);
+}
+
+// missing or null category (gap-day chart row) → 0
+function getTokenTotal(row) {
+  return TOKEN_CATEGORIES.reduce((sum, cat) => sum + (Number(row[cat.key]) || 0), 0);
 }
 
 // 토큰 누적 차트용 row builder (Area·Column 공유).
@@ -1075,7 +1079,7 @@ function toTokenChartRows(points) {
 function getTokenDayPoints(points) {
   return toTokenChartRows(points).map((r) => ({
     label: r.fullDate,
-    value: r.isNoData ? null : TOKEN_CATEGORIES.reduce((sum, cat) => sum + r[cat.key], 0),
+    value: r.isNoData ? null : getTokenTotal(r),
   }));
 }
 
@@ -1092,7 +1096,7 @@ function getTokenAxisFormatter(maxValue) {
 }
 
 function getTokenStackMax(rows) {
-  return rows.reduce((m, r) => Math.max(m, TOKEN_CATEGORIES.reduce((s, cat) => s + r[cat.key], 0)), 0);
+  return rows.reduce((m, r) => Math.max(m, getTokenTotal(r)), 0);
 }
 
 // Window total + share per category, legend order; null when the window holds no token.
