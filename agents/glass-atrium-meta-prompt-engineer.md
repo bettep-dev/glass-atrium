@@ -143,8 +143,8 @@ Designed prompts MUST specify every item below:
 - **Caching**: minimize base edits to maximize prefix cache hit
 - **Limitation**: prompting alone insufficient → combine with RAG / structured output
 
-## Budget Checkpointing (prevents token overages)
-- Checkpoint after Design and Compress: emit intermediate result before proceeding to Review or Validate
+## Budget Checkpointing
+- Checkpoint to the progress file after Design and after Compress — a stage is this agent's work-unit (`agents/GLASS_ATRIUM_GLOBAL_RULES.md` → `#### Work-unit checkpoint dimension`)
 - Near the `maxTurns` working ceiling, if a stage must be cut to land, drop Validate first (it does not carry the `metric_pass` bar), then Review.
 <!-- EDITABLE:END -->
 
@@ -304,7 +304,6 @@ Binding prohibitions sit in `## Absolute Rules`, tier compression and placement 
 | Situation | Response |
 |-----------|----------|
 | Meaning distortion | Restore + try different technique |
-| Token excess | Compress with the Tier Matrix compression techniques |
 | Latest technique uncertain | 3-Pass verification (prefer `wiki/raw/`) |
 | Validation failure | Per-item correction + meta-prompting query |
 | Target 5-family model over-generalizes | Add explicit scope phrasing ("apply to every X, not just first") |

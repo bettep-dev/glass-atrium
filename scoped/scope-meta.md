@@ -44,25 +44,32 @@ Every prompt, agent body, rule or skill deliverable authored by glass-atrium-met
   - Trigger class and position in the delivery tail: `rules/glass-atrium/orchestrator-role.md` → `## Document-Driven Workflow` step 6 → **Prompt-file tail**.
   - Actor: glass-atrium-meta-prompt-engineer.
   - Input: only the files the cycle modified.
+    - On a code file, the audited span is the file's prompt surface as guide Step 1 inventories it; the file's other code is not audited.
+    - Read beside them, never audited: the records of decided diet keeps, which the composer names in each pass delegation — the target file's maintainer note where one exists, and any plan that settled keeps.
   - Method: the bundled `/claude-api` prompt-audit guide, loaded through the Skill tool when the pass runs; no guide copy is written out for a run.
     - The pass is an instance of `agents/glass-atrium-meta-prompt-engineer.md` → `## Corpus Edit Pass`.
     - It also obeys that body's `## Corpus Transform Contract` → `tabulate-only-the-tabular` on every hunk, not only in a prose → outline restructure.
   - Output: an audit report carrying the guide's Step 5 fields, the diet component each finding matches, the add-review result and the override outcome.
     - Hunks follow guide Step 6, one finding per hunk.
   - Application: `remove`, `rewrite`, `move` and `add` findings at high or medium confidence are applied; `flag` and low-confidence findings stay in the report only.
+    - A hunk an override keeps proposed-only is written into the report and left unapplied; the user takes or leaves it.
   - Probes: guide Step 7 behavioural probes are metered, so a cycle's probes run only on the user's approval for that cycle.
     - A contested hunk left without a probe is marked as a hypothesis.
   - The structure verdict on the audit hunks judges the override outcome; no other step judges it.
 - **Add review**: after the pass applies its hunks and before the structure verdict, each target file carrying an `add` finding gets one verdict-only spawn on its add hunks.
   - The composer states the verdict-only constraint in each add-review delegation prompt, as for the structure verdict.
   - A rejected add drops to `flag`, so it stays in the report only.
+    - A hunk the composer marks as carrying an owner-adopted option never drops: its author rewords it keeping the option, the same reviewer re-reviews once, and a second rejection goes to the owner.
   - The reviewer per target file:
 
 | Target file | Add reviewer |
 |---|---|
 | an agent body | the agent that body instructs; the glass-atrium-meta-prompt-engineer body goes to glass-atrium-meta-agent |
 | a scope or `shared-*` file | an agent that is a member of that file, matched to the domain the added text governs |
-| a Tier-1 rule or a skill | glass-atrium-qa-code-reviewer |
+| a Tier-1 rule, a skill, a file of the ORCHESTRATOR pair, or `rules/glass-atrium/core-compliance-matrix.md` | glass-atrium-qa-code-reviewer |
+| a `shared-*` file with no member agent | glass-atrium-qa-code-reviewer |
+| a maintainer note under `scoped/maintainers/` | the reviewer its paired file's row names |
+| a file under `agents/templates/` or `agents/references/` | the agent whose body cites it; several citers or a Tier-1 citer → glass-atrium-qa-code-reviewer |
 | a code file — hook, script, Python module, test | the DEV agent whose domain covers it: glass-atrium-dev-shell for shell, glass-atrium-dev-python for Python |
 
 ## Skills Array Order [META]

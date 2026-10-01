@@ -32,6 +32,16 @@ Maintainer-facing material for that rule file. Nothing here binds either META ag
 - **Tag**: `Absolute Rules` and `Skills Array Order` carry `[META]` only — no DEV rule file holds either heading or a matching pointer, so a DEV half would name no counterpart.
 - **Skills Array Order kept as a sort rule**: the bullet obliges a readability sort (core → supplementary) and nothing more; its null-result clause is cut, not the section.
   - Why: that clause steered where the author spends effort and changed neither the sort nor its acceptance.
+- **Add-review routing resolves every target class to an existing agent** — no owner review, no exempt class.
+  - The ORCHESTRATOR pair and `rules/glass-atrium/core-compliance-matrix.md` take the Tier-1 reviewer: the pair's only member is the main session, and the matrix is neither a Tier-1 rule nor a scope file, so neither has a member agent.
+  - A `shared-*` file with no member agent takes the same reviewer: its policy SoT is a Tier-1 rule and its text reaches several agents.
+  - Templates and references route by citer: the agent whose body cites the file is the one the added text reaches.
+- **A rejected add that carries an owner-adopted option goes back to its author, never to `flag`.**
+  - A reviewer may correct an owner decision's wording but cannot undo it, so a second rejection is the owner's call.
+- **Decided-keep records are named in the pass delegation, never pointed to from the rule file.**
+  - `## Companion-citation convention` bars rule-file prose from citing a companion; a delegation prompt is not a corpus file, so the convention stays intact.
+  - The delegation can also name the keeps a plan settled, which no corpus pointer could reach.
+  - Backing: honor-system — a record the composer leaves unnamed lets its keep be reopened.
 
 ## Heading-citation register — do not rename these
 

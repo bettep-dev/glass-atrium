@@ -19,6 +19,7 @@ Binds every prompt, agent instruction, rule and skill you author or edit, and ev
     - A note that a scope file does not reach the agent reading it stays too.
     - A kept note's date that does no work goes; the note stays.
 - **No derived values**: a count or total a reader could compute from the members named in the same passage is noise — name the members and drop the number.
+  - Diet component `파생값` — the test is the `No derived values` rule itself, carve-out included.
   - Carve-out: a bare cardinality standing beside no list may be the only signal that the list is closed, so removal there is a judgement, not automatic.
 
 ## Prompt-Audit Overrides
@@ -31,5 +32,8 @@ Binds every prompt, agent instruction, rule and skill you author or edit, and ev
 - **Fragile operations**: in Atrium these are git, deploy, destructive commands, the updater seam, harness paths and secrets — their text keeps its exact wording.
 - **Honest-backing notes**: they stay; their single site is `## Authoring Hygiene` → `No history-type content` → its carve-out.
 - **Test-consumed literals**: a finding that would change text a coupled test asserts (`agents/glass-atrium-meta-prompt-engineer.md` → `## Corpus Edit Pass` → **Coupled test**) drops to `flag` when its hunk cannot carry the test change.
+- **API-feature replacements**: a `replace-with-API-feature` finding stays in the report only, as `flag` — its edit lands in agent frontmatter, harness settings or daemon `claude -p` flags, which other gates and plans own.
+- **Group 2 findings**: an edit that a guide Group 2 row marks as proposed only is applied only when an `agents/glass-atrium-meta-prompt-engineer.md` → `## Structure Self-Check` row or a named diet component independently supports it; otherwise it stays proposed-only.
 - **Bullet walls**: the guide's Group 1c row "Bullet walls and heavy formatting for behavioral guidance" is not applied — bullets and tables stay, because `agents/glass-atrium-meta-prompt-engineer.md` → `## Structure Self-Check` → `One line, one rule` and `Decision table` outrank it.
-- **Decided diet keeps**: text an earlier diet decision kept is not reopened.
+- **Decided diet keeps**: a decided keep's text is not reopened.
+  - A keep counts as decided only when the pass delegation names its record; record kinds: `scoped/scope-meta.md` → **Prompt-audit pass** → Input.
