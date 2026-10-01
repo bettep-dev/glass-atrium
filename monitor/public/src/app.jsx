@@ -96,7 +96,7 @@ function Sidebar({ active, onNav, harness, agentsState, pageState }) {
 							dyn?.badges ??
 							(hasDyn
 								? dyn?.badge
-									? [{ badge: dyn.badge, badgeTone: dyn.badgeTone, title: dyn.title }]
+									? [dyn]
 									: []
 								: n.badge
 									? [{ badge: n.badge, badgeTone: n.badgeTone }]

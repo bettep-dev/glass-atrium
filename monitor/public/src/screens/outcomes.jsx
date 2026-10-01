@@ -966,12 +966,11 @@ function buildStatusBandTilesO(data, attentionCount) {
  * The prior needs-you count reads closure as of now, so the hero compares shares, not two snapshots in time.
  * @param priorAttentionCount - the prior window's needs-you count; null → the hero states no change
  */
-function buildBandTrendsO(data, attentionCount, priorAttentionCount) {
+function buildBandTrendsO(data, tiles, priorAttentionCount) {
   const prior = data?.overall?.prior_window;
   if (!prior) return {};
   const priorData = { overall: prior, byResultCount: buildByResultCountMapO(prior.by_result) };
   const priorTiles = buildStatusBandTilesO(priorData, priorAttentionCount);
-  const tiles = buildStatusBandTilesO(data, attentionCount);
   return Object.fromEntries(tiles.map((tile, i) => [tile.key, getBandTrendO(tile, priorTiles[i], prior)]));
 }
 
@@ -1028,9 +1027,10 @@ function StatusBandO({ analyticsState, attentionState, windowDays, freshness, on
   const attentionCount = attentionState.status === 'ready'
     ? (Number(attentionState.data?.total) || 0)
     : null;
-  const trends = buildBandTrendsO(analyticsState.data, attentionCount, attentionState.data?.priorTotal ?? null);
+  const bandTiles = buildStatusBandTilesO(analyticsState.data, attentionCount);
+  const trends = buildBandTrendsO(analyticsState.data, bandTiles, attentionState.data?.priorTotal ?? null);
   // stale or partial read → an ok tile drops to neutral, warn/crit kept (the verdict's rule)
-  const tiles = buildStatusBandTilesO(analyticsState.data, attentionCount)
+  const tiles = bandTiles
     .map((tile) => ({ ...tile, trend: trends[tile.key] ?? null }))
     .map((tile) => (freshness ? { ...tile, tone: getFreshnessVerdict({ ...freshness, tone: tile.tone }).tone } : tile));
   // 창은 analyticsDaysO 로 접힌 {7,30,90} 뿐 — 북마크된 'all' 이 90d 를 읽고 'all time' 으로 표기되던 거짓말 제거.

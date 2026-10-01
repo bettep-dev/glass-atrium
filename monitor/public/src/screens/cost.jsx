@@ -684,8 +684,7 @@ function TrendDeltaC({ delta, span }) {
   if (typeof delta !== 'number' || !Number.isFinite(delta)) {
     return <div className="cost-foot mt-1.5">No trend — fewer than two complete days in the window.</div>;
   }
-  const glyph = delta > 0 ? '\u25b2' : delta < 0 ? '\u25bc' : '\u2014';
-  const direction = delta > 0 ? 'up' : delta < 0 ? 'down' : 'unchanged';
+  const [glyph, direction] = delta > 0 ? ['\u25b2', 'up'] : delta < 0 ? ['\u25bc', 'down'] : ['\u2014', 'unchanged'];
   return (
     <div className="cost-foot mt-1.5">
       <span className="font-mono mr-1" aria-hidden="true">{glyph}</span>
