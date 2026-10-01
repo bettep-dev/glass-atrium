@@ -1,9 +1,14 @@
 /* Component classes — light wrappers over Tailwind */
 
 /* the one focus indicator — outline + offset gap, never box-shadow → rings drawn with box-shadow or stroke stay untouched */
-:focus-visible {
+:focus-visible,
+[data-focus-handoff]:focus {
 	outline: var(--focus-ring-width) solid rgb(var(--focus-ring));
 	outline-offset: var(--focus-ring-offset);
+}
+/* a disclosure chevron marks the open state — instant, so nothing to reduce under prefers-reduced-motion */
+details[open] > summary .chevron {
+	transform: rotate(180deg);
 }
 
 /* ── Tier 3 — neue elevation/glass surfaces (§3.3, Tier 2 만 소비) ─────
@@ -120,6 +125,7 @@
 }
 .btn:hover {
 	background: rgb(var(--sunken));
+	border-color: rgb(var(--faint));
 }
 .btn.primary {
 	background: rgb(var(--ink));

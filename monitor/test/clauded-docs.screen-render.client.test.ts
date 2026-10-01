@@ -430,8 +430,9 @@ test("each stage group opens with a level-2 heading under the page H1, and the l
   rows[0] = { ...rows[0], doc_status: "doc_review" };
   rows[1] = { ...rows[1], doc_status: "implementing" };
   const tree = renderScreen((screen.DocListCardCD as Component)(props));
+  const [ledger] = findNodes(tree, (n) => n.type === "table");
 
-  const headings = findNodes(tree, (n) => n.props.role === "heading" || /^h[1-6]$/.test(String(n.type)));
+  const headings = findNodes(ledger, (n) => n.props.role === "heading" || /^h[1-6]$/.test(String(n.type)));
   assert.deepEqual(headings.map((n) => collectText(n)), ["Doc review", "Implementing"]);
   for (const heading of headings) assert.equal(heading.props["aria-level"], 2, "one level below the page H1");
 });
@@ -906,4 +907,60 @@ test("the Title header starts at the title text's x: indented by the lead slot p
   const label = findNodes(titleHeader, (n) => n.type === "span" && n.props.className === "doc-col-title-text");
   assert.equal(label.length, 1);
   assert.equal(px(cssRuleBody(source, ".doc-col-title-text"), "margin-left"), indent);
+});
+
+function renderPipelineCard(screen: Record<string, unknown>, state: Record<string, unknown>) {
+  const props = listCardProps(() => undefined);
+  props.rows = pipelineRows();
+  return renderScreen((screen.DocListCardCD as Component)({ ...props, asOf: "2026-09-30T00:00:00Z", state }));
+}
+
+const SETTLED_LIST = { status: "ready", data: {}, error: null, busy: false };
+const WARM_ERROR_LIST = { status: "ready", data: {}, error: "HTTP 500", busy: false };
+
+test("the open-summary rail titles each group with a level-2 heading and pairs every label with its own count", async () => {
+  const screen = await loadDocsScreen();
+  const [rail] = findNodes(renderPipelineCard(screen, SETTLED_LIST), (n) => n.type === "aside");
+
+  assert.deepEqual(findNodes(rail, (n) => n.type === "h2").map((n) => collectText(n)), ["Open by stage", "Age"]);
+  for (const list of findNodes(rail, (n) => n.type === "dl")) {
+    const cells = findNodes(list, (n) => n.type === "dt" || n.type === "dd").map((n) => n.type);
+    assert.equal(cells.length % 2, 0, "every label has a count");
+    cells.forEach((type, i) => assert.equal(type, i % 2 === 0 ? "dt" : "dd", `cell ${i} alternates label then count`));
+  }
+  const ageTerms = findNodes(rail, (n) => n.type === "dt").map((n) => collectText(n));
+  assert.ok(ageTerms.includes("Over 7 days"), `age labels stand alone: ${ageTerms.join(" | ")}`);
+});
+
+test("a warm list error marks the rail counts Last known, and a settled read does not", async () => {
+  const screen = await loadDocsScreen();
+  const railText = (state: Record<string, unknown>) =>
+    collectText(findNodes(renderPipelineCard(screen, state), (n) => n.type === "aside")[0]);
+
+  assert.doesNotMatch(railText(SETTLED_LIST), /Last known/);
+  assert.match(railText(WARM_ERROR_LIST), /Last known/);
+});
+
+describe("the header hands its read state to the shell exactly once, with or without a first read", () => {
+  const rows = [
+    { name: "a failed first read reaches the shell directly", asOf: null, state: { status: "error", data: null, error: "HTTP 500", busy: false }, direct: 1 },
+    { name: "a first read in flight reaches the shell directly", asOf: null, state: { status: "loading", data: null, error: null, busy: true }, direct: 1 },
+    { name: "after a read the stamp reaches the shell, so the page does not", asOf: "2026-09-30T00:00:00Z", state: SETTLED_LIST, direct: 0 },
+  ];
+
+  for (const row of rows) {
+    test(row.name, async () => {
+      const calls: unknown[] = [];
+      const screen = await loadScreenModule(DOCS_SRC, {
+        UI: uiStub({ ...SHIPPED_ATOMS, useShellPageState: (input: unknown) => calls.push(input) }),
+        React: createReactStub(),
+      });
+      const tree = renderScreen((screen.DocHeaderActionsCD as Component)({ asOf: row.asOf, listState: row.state, onRefresh: () => undefined }));
+
+      const stamps = findNodes(tree, (n) => n.props.atom === "FreshnessStamp").length;
+      assert.equal(calls.length + stamps, 1, "one shell caller");
+      assert.equal(calls.length, row.direct);
+      if (row.direct) assert.deepEqual(plain(calls[0]), { at: null, regions: [row.state] });
+    });
+  }
 });

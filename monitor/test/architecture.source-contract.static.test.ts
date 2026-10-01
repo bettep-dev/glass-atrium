@@ -35,10 +35,9 @@ const LEGEND_TOKENS = [
 ];
 
 // 서버가 이미 내는 판정을 화면이 다시 재면 같은 입력에 답이 둘이 됨.
-// 비교식을 정규식으로 쫓는 대신 재료의 부재를 잼 — cadence 와 staleness 를 화면이 어디서도
-// 읽지 않으면 둘을 견주는 식은 성립할 수 없고, 이 단언은 서식 변경에 흔들리지 않음.
+// 비교식을 정규식으로 쫓는 대신 재료의 부재를 잼 — staleness 를 화면이 어디서도 읽지 않으면
+// cadence 와 견주는 식은 성립할 수 없고, 이 단언은 서식 변경에 흔들리지 않음.
 const CLIENT_THRESHOLD_TOKENS = [
-  "expected_cadence_minutes",
   "staleness_minutes",
   "daemonEffectiveTone",
 ];
@@ -77,7 +76,7 @@ test("the canvas svg width override survives legend excision", () => {
   assert.match(rule[0], /width:\s*100%\s*!important/);
 });
 
-test("AC-T2 no cadence-vs-staleness comparison survives in the screen source", () => {
+test("no cadence-vs-staleness comparison survives in the screen source", () => {
   const residue = CLIENT_THRESHOLD_TOKENS.map(
     (token) => [token, countOccurrences(SCREEN_SRC, token)] as const,
   ).filter(([, count]) => count > 0);

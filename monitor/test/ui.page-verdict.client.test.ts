@@ -79,6 +79,7 @@ describe("PageVerdict", () => {
     const card = {
       hasAttribute: (name: string) => attributes.has(name),
       setAttribute: (name: string, value: string) => { attributes.set(name, value); },
+      addEventListener: () => undefined,
       scrollIntoView: () => { calls.push("scroll"); },
       focus: () => { calls.push("focus"); },
     };
@@ -91,6 +92,29 @@ describe("PageVerdict", () => {
 
     assert.deepEqual(calls, ["scroll", "focus"]);
     assert.equal(attributes.get("tabindex"), "-1");
+  });
+
+  test("a chip handoff scrolls only as far as needed and rings the card until it loses focus", () => {
+    const attributes = new Map<string, string>();
+    const blurListeners: Array<() => void> = [];
+    let scrollOptions: unknown = null;
+    const card = {
+      hasAttribute: (name: string) => attributes.has(name),
+      setAttribute: (name: string, value: string) => { attributes.set(name, value); },
+      removeAttribute: (name: string) => { attributes.delete(name); },
+      addEventListener: (type: string, listener: () => void) => { if (type === "blur") blurListeners.push(listener); },
+      scrollIntoView: (options: unknown) => { scrollOptions = options; },
+      focus: () => undefined,
+    };
+    doc.reset();
+    doc.elements.set("cost-burn", card);
+    const tree = renderVerdict({ tone: "warn", chips: [{ label: "Burn rate", targetId: "cost-burn" }] });
+    (findNodes(tree, (n: RenderedNode) => n.type === "button")[0].props.onClick as () => void)();
+
+    assert.equal((scrollOptions as { block?: string } | null)?.block, "nearest", "a card already in view does not jump");
+    assert.ok(attributes.has("data-focus-handoff"), "the handoff marker draws the ring a mouse-driven focus would miss");
+    blurListeners.forEach((listener) => listener());
+    assert.ok(!attributes.has("data-focus-handoff"), "the ring leaves with focus");
   });
 });
 

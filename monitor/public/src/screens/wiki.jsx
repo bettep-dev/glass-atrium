@@ -382,7 +382,7 @@ function WikiAlarmLane({ summaryState, indexState, backlogState, cyclesState }) 
 			))}
 			{model.unchecked.length > 0 && (
 				<li className="fs-meta text-faint px-4 py-2">
-					{`Couldn't check: ${model.unchecked.join(", ")} — the lane is incomplete.`}
+					{`Couldn't read ${model.unchecked.join(", ")} — alarms from ${model.unchecked.length === 1 ? "it" : "them"} are not shown.`}
 				</li>
 			)}
 		</ul>
@@ -617,7 +617,7 @@ function WikiTile({ tile }) {
 	return (
 		<div className="rounded-md border border-line bg-sunken p-2.5 min-w-0">
 			<div
-				className="fs-meta text-faint truncate"
+				className="fs-meta text-faint leading-tight break-words"
 				title={tile.label}
 			>
 				{tile.label}
@@ -635,7 +635,7 @@ function WikiTile({ tile }) {
 			</div>
 			{tile.sub && (
 				<div
-					className="fs-meta text-faint mt-1 leading-tight truncate"
+					className="fs-meta text-faint mt-1 leading-tight break-words"
 					title={tile.hint || tile.sub}
 				>
 					{tile.sub}
@@ -656,10 +656,10 @@ function buildTileBandModel(summaryState, indexState, backlogState, cyclesState,
 
 // Shared non-ready tile shapes — loading, error and unavailable stay distinguishable and
 // none of them renders as a number (a zero nobody loaded is the failure mode).
-// An errored tile carries no text of its own: the band's single banner names the failure.
+// Loading and errored tiles carry no sub text: the "…" value and the band's single banner speak for them.
 function tilePlaceholderW(key, label, state) {
 	const SUB = {
-		loading: "Loading",
+		loading: null,
 		error: null,
 		unavailable: "Not reported yet",
 		empty: "Nothing recorded",
@@ -749,9 +749,10 @@ function buildCompiledTileW(
 			: isStalled
 				? `${formatCountW(waiting)} originals waiting, none compiled`
 				: "Nothing to compile — no originals waiting";
-	const total = sumCompiledW(cyclesState);
+	// same span as Run history → the two totals read alike
+	const trend = buildThroughputModel(cyclesState);
 	const windowTotal =
-		typeof total === "number" ? `${formatCountW(total)} in ${WIKI_CYCLE_DAYS} d` : null;
+		trend.rows.length > 0 ? `${formatCountW(trend.total)} in ${trend.spanDays} d` : null;
 
 	return {
 		key: "compiled",
@@ -909,6 +910,9 @@ function WikiMaintenanceSection({ backlogState, cyclesState, shared, onRetry }) 
 								Dry run — nothing merges until you approve it.
 							</div>
 						)}
+						<div className="fs-meta text-dim leading-tight">
+							Each proposal merges the notes after the arrow into the note before it.
+						</div>
 						<ul className="flex flex-col gap-2 m-0 p-0 list-none">
 							{model.proposals.map((proposal, i) => (
 								<MergeSuggestionItem
@@ -1096,7 +1100,7 @@ function WikiRunTableSection({ reportState, days, onChangeDays, shared, onRetry 
 	);
 }
 
-// One streak → "27 healthy runs in a row since …"; several → how many streaks the window holds.
+// One unchanged stretch → "27 healthy runs in a row since …"; several → how often status or backlog changed.
 function describeRunTableW(state, days) {
 	if (window.UI.getRegionView(state) === "loading") return "Loading…";
 	if (window.UI.getRegionView(state) === "error") return "Unavailable";
@@ -1105,7 +1109,10 @@ function describeRunTableW(state, days) {
 	if (reports.length === 0) return `No runs in ${days} d`;
 
 	const groups = groupConstantRunsW(sortRunsNewestFirstW(reports));
-	if (groups.length > 1) return `${reports.length} runs in ${groups.length} streaks`;
+	if (groups.length > 1) {
+		const changes = groups.length - 1;
+		return `${reports.length} runs · status or backlog changed ${changes} ${changes === 1 ? "time" : "times"}`;
+	}
 
 	const [only] = groups;
 	const status = wikiStatusLabelW(only.newest.status).toLowerCase();
@@ -1123,13 +1130,14 @@ function sortRunsNewestFirstW(reports) {
 
 // The server's p95 shares the cycles window, so it rides the same summary line.
 function describeRunHistoryW(cyclesState, model, summaryState) {
-	if (window.UI.getRegionView(cyclesState) === "loading") return "Loading…";
+	if (window.UI.getRegionView(cyclesState) === "loading") return null;
 	if (window.UI.getRegionView(cyclesState) === "error") return "Unavailable";
 	if (model.rows.length === 0) return "No runs in range";
 
 	const p95 =
 		summaryState.status === "ready" ? summaryState.data?.cycle_p95_ms : null;
-	return `${model.spanDays} runs · last ${model.newestDate}${describeP95W(p95)}`;
+	const runs = model.rows.length === 1 ? "run" : "runs";
+	return `${model.rows.length} ${runs} in ${model.spanDays} d · last ${model.newestDate}${describeP95W(p95)}`;
 }
 
 /**
@@ -1178,10 +1186,10 @@ function openOnOwnFocusW(event) {
 }
 
 // Open section shell — the status-card counterpart of WikiDisclosureW.
-// Content-sized → a short card beside a taller one leaves no stretched empty box.
+// Fills its split-row cell → a paired card ends level with its neighbour.
 function WikiCardW({ id, label, count, children }) {
 	return (
-		<section id={id} className="rounded-md border border-line bg-sunken p-3 flex flex-col gap-2 min-w-0">
+		<section id={id} className="rounded-md border border-line bg-sunken p-3 flex flex-col gap-2 min-w-0 h-full">
 			<div className="flex items-center gap-2 flex-wrap">
 				<h2 className="m-0 fs-body text-ink font-medium">{label}</h2>
 				<span className="ml-auto fs-meta text-dim">{count}</span>
@@ -1266,7 +1274,7 @@ function describeNoteCoverageW(rows) {
 }
 
 function describeNotesByTypeW(state) {
-	if (window.UI.getRegionView(state) === "loading") return "Loading…";
+	if (window.UI.getRegionView(state) === "loading") return null;
 	if (window.UI.getRegionView(state) === "error") return "Unavailable";
 	const rows = Array.isArray(state.data?.by_type) ? state.data.by_type : [];
 	return `${rows.length} types`;
@@ -1364,7 +1372,7 @@ function buildThroughputModel(state) {
 	const ascending = [...rows].sort((a, b) =>
 		(a.run_date || "").localeCompare(b.run_date || ""),
 	);
-	const compiledSeries = ascending.map((r) => Number(r.compiled_count) || 0);
+	const { dates: compiledDates, series: compiledSeries } = fillRunDaysW(ascending);
 	// 비0 포인트 수 — 캡션의 active days 수치 · 희소 판정은 SparseTrendW 가 자체 계산.
 	const nonZeroCount = compiledSeries.filter((v) => v > 0).length;
 
@@ -1373,7 +1381,7 @@ function buildThroughputModel(state) {
 	return {
 		rows,
 		compiledSeries,
-		compiledDates: ascending.map((r) => r.run_date || ""),
+		compiledDates,
 		mix,
 		isMixUniform: isNearUniformMixW(mix),
 		newestDate: ascending[ascending.length - 1]?.run_date || "",
@@ -1384,6 +1392,36 @@ function buildThroughputModel(state) {
 }
 
 const EMPTY_MIX = { ok: 0, partial: 0, error: 0, quota: 0 };
+
+const DAY_MS_W = 86_400_000;
+
+// Every calendar day first run → last run; a day without a run reads zero, so bars sit on an even date axis.
+function fillRunDaysW(ascending) {
+	const compiledByDate = new Map();
+	for (const r of ascending) {
+		compiledByDate.set(r.run_date, (compiledByDate.get(r.run_date) || 0) + (Number(r.compiled_count) || 0));
+	}
+	const first = Date.parse(`${ascending[0].run_date}T00:00:00Z`);
+	const last = Date.parse(`${ascending[ascending.length - 1].run_date}T00:00:00Z`);
+	if (Number.isNaN(first) || Number.isNaN(last)) {
+		return { dates: [...compiledByDate.keys()].map((d) => d || ""), series: [...compiledByDate.values()] };
+	}
+
+	const dates = [];
+	for (let t = first; t <= last; t += DAY_MS_W) dates.push(new Date(t).toISOString().slice(0, 10));
+	return { dates, series: dates.map((d) => compiledByDate.get(d) ?? 0) };
+}
+
+// ui.jsx CHART_MAX_TICKS — the chart's own tick ceiling.
+const TREND_MAX_TICKS_W = 7;
+
+// Largest tick cap that splits the count−1 day gaps into equal steps (first + last alone always do).
+function getEvenTickCapW(count) {
+	for (let cap = Math.min(TREND_MAX_TICKS_W, Math.max(2, count)); cap > 2; cap--) {
+		if ((count - 1) % (cap - 1) === 0) return cap;
+	}
+	return 2;
+}
 
 // One status above this share of runs → the mix is near-uniform.
 const STATUS_UNIFORM_PCT = 95;
@@ -1454,6 +1492,8 @@ function MergeSuggestionItem({ proposal }) {
 				<span className="text-ink font-medium break-words min-w-0">{target}</span>
 				<span className="inline-flex items-center text-faint">
 					<Icon name="arrow-left" size={12} />
+					{/* the arrow glyph is aria-hidden → direction needs a text equivalent per row */}
+					<span className="sr-only">{" absorbs "}</span>
 				</span>
 				<span className="text-dim break-words min-w-0">{sources}</span>
 				{similarity && <span className="ml-auto text-dim">{similarity}</span>}
@@ -1470,8 +1510,12 @@ function MergeSuggestionItem({ proposal }) {
 // The cleaner tags every action DRY-RUN → the list states it once, each row keeps its own action.
 const DRY_RUN_TAIL_W = /\s*DRY-RUN\b[\s\S]*$/;
 
+// "Merge notes/a.md into notes/b.md." restates the row's target ← sources → the list explains the arrow once.
+const MERGE_RESTATEMENT_W = /^Merge\s+\S.*\s+into\s+\S+$/i;
+
 function readProposalActionW(proposal) {
-	return (proposal.suggested_action || proposal.llm_verdict || "").replace(DRY_RUN_TAIL_W, "");
+	const action = (proposal.suggested_action || proposal.llm_verdict || "").replace(DRY_RUN_TAIL_W, "").trim();
+	return MERGE_RESTATEMENT_W.test(action) ? "" : action;
 }
 
 function isDryRunProposalW(proposal) {
@@ -1543,15 +1587,15 @@ function WikiReportsTable({ reports, isLoading = false }) {
 	return (
 		<div className="overflow-x-auto rounded-md border border-line">
 			<Table
-				caption="Wiki compile runs, newest first; unchanged consecutive runs share a row"
+				caption="Wiki compile runs, newest first, one row per run"
 				columns={WIKI_REPORT_COLUMNS}
 				className="w-report-tbl"
 			>
 				{isLoading ? (
 					<SkeletonRows rows={5} columns={WIKI_REPORT_COLUMNS.length} rowHeight={36} />
 				) : (
-					groupConstantRunsW(reports).map((group) => (
-						<WikiReportRow key={group.key} group={group} Badge={Badge} />
+					reports.map((report) => (
+						<WikiReportRow key={report.run_date} report={report} Badge={Badge} />
 					))
 				)}
 			</Table>
@@ -1560,22 +1604,14 @@ function WikiReportsTable({ reports, isLoading = false }) {
 }
 
 // The status badge carries the tone; the row takes no stripe.
-function WikiReportRow({ group, Badge }) {
-	const report = group.newest;
+function WikiReportRow({ report, Badge }) {
 	const tone = wikiStatusToneW(report.status);
-	const range =
-		group.count > 1
-			? `${group.oldest.run_date} – ${report.run_date}`
-			: report.run_date;
 
 	return (
 		<tr>
 			<td>
 				<span className="font-mono text-ink font-medium">
-					{range}
-					{group.count > 1 && (
-						<span className="text-faint font-normal">{` · ${group.count} runs`}</span>
-					)}
+					{report.run_date}
 				</span>
 			</td>
 			<td>
@@ -1611,7 +1647,7 @@ function groupConstantRunsW(reports) {
 			current.oldest = report;
 			current.count += 1;
 		} else {
-			groups.push({ key: report.run_date, newest: report, oldest: report, count: 1 });
+			groups.push({ newest: report, oldest: report, count: 1 });
 		}
 	}
 	return groups;
@@ -1656,6 +1692,8 @@ function SparseTrendW({ label, series, dates, stat }) {
 					points={series.map((value, i) => ({ label: dates[i] || "", value }))}
 					formatValue={formatCountW}
 					yScale
+					maxTicks={getEvenTickCapW(series.length)}
+					h={112}
 				/>
 			)}
 		</div>

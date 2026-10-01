@@ -624,7 +624,7 @@ test("buildLedgerSectionsO: Needs you reads the whole window, not the page it ha
   assert.deepStrictEqual(sameRealm(routine.rows.map((r) => r.id)), [1, 4], "routine never repeats a needs-you row");
   assert.match(needsYou.heading, /1,717/, "the header carries the window count, not the page count");
   assert.match(needsYou.heading, /30d/, "the header names its window");
-  assert.match(routine.heading, /on this page/);
+  assert.match(routine.heading, /^Routine · 2 shown$/);
 });
 
 test("buildNeedsYouUrlO: the ledger's own filter plus the attention predicate, always from the first row", () => {
@@ -943,7 +943,7 @@ test("buildLedgerSectionsO: the window heading counts the rows actually shown un
   const [needsYou] = sameRealm(view.buildLedgerSectionsO([], undefined, {
     rows: needsYouRows(50), total: 1718, windowLabel: "30d",
   }, 10));
-  assert.match(needsYou.heading, /1,718 in 30d · first 10 shown/);
+  assert.match(needsYou.heading, /1,718 in 30d · 10 shown$/);
 });
 
 test("getDetailPositionLabelO: the drawer counts position in the grouped order the ledger displays", () => {

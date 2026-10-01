@@ -152,19 +152,25 @@ function getThemeTokens(): Array<Record<string, number[]>> {
     .filter((tokens) => tokens.ink && tokens.elev && tokens.accent && tokens.warn);
 }
 
+function getContrast(a: number[], b: number[]): number {
+  const [hi, lo] = [getLuminance(a), getLuminance(b)].sort((x, y) => y - x);
+  return (hi + 0.05) / (lo + 0.05);
+}
+
 for (const isPolar of [false, true]) {
-  test(`the busiest ${isPolar ? "polar" : "plain"} crosstab cell keeps its count at 4.5:1 in every theme`, () => {
+  test(`the busiest ${isPolar ? "polar" : "plain"} crosstab cell keeps its count at 4.5:1 and its fill at 3:1 in every theme`, () => {
     const tree = render("CrosstabCell", { cell: { count: 8623, isPolar }, max: 8623, rowLabel: "high", colLabel: "pass" });
     const td = findNodes(tree, (n) => n.type === "td")[0];
-    const match = /var\(--([a-z]+)\) \/ ([\d.]+)/.exec(String((td.props.style as { background: string }).background));
-    assert.ok(match, "cell tint not found");
+    assert.strictEqual((td.props.style as { background?: string } | undefined)?.background, undefined, "the count sits on the plain card");
+    const fill = findNodes(tree, (n) => /^rgb\(var\(--[a-z]+\)\)$/.test(String((n.props.style as { background?: string } | undefined)?.background)))[0];
+    assert.ok(fill, "solid fill not found");
+    const fillVar = /--([a-z]+)/.exec(String((fill.props.style as { background: string }).background))![1];
     const themes = getThemeTokens();
     assert.strictEqual(themes.length, 2);
     for (const tokens of themes) {
-      const alpha = Number(match[2]);
-      const bg = tokens[match[1]].map((c, i) => c * alpha + tokens.elev[i] * (1 - alpha));
-      const [hi, lo] = [getLuminance(tokens.ink), getLuminance(bg)].sort((a, b) => b - a);
-      assert.ok((hi + 0.05) / (lo + 0.05) >= 4.5, `contrast ${((hi + 0.05) / (lo + 0.05)).toFixed(2)} at alpha ${alpha}`);
+      assert.ok(getContrast(tokens.ink, tokens.elev) >= 4.5, "count contrast");
+      const fillContrast = getContrast(tokens[fillVar], tokens.elev);
+      assert.ok(fillContrast >= 3, `fill contrast ${fillContrast.toFixed(2)}`);
     }
   });
 }

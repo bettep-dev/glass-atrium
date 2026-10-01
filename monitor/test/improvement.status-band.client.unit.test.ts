@@ -40,6 +40,13 @@ interface BandSandbox {
   StatusBandI: (props: Record<string, unknown>) => RecordedElement;
   InstrumentationViewI: (props: Record<string, unknown>) => RecordedElement | null;
   getBannerFocusTargetI: (view: string) => string;
+  getPageFailuresI: (regions: unknown[], view: string) => { banner: unknown; speakers: Map<string, string> };
+  KanbanCardI: (props: Record<string, unknown>) => RecordedElement;
+  BucketRowI: (props: Record<string, unknown>) => RecordedElement;
+  ErrorBannerI: (props: Record<string, unknown>) => RecordedElement;
+  BoardRowI: (props: Record<string, unknown>) => RecordedElement;
+  CompactProposalCardI: (props: Record<string, unknown>) => RecordedElement;
+  ProposalCardI: (props: Record<string, unknown>) => RecordedElement;
   getBandVerdictI: (input: Record<string, unknown>) => { tone: string; sentence: string };
   getInstrumentationChipsI: (
     verdicts: unknown,
@@ -175,6 +182,30 @@ test("a ready tile renders its value and its population", () => {
   assert.equal(tile.props.value, "3");
   assert.equal(tile.props.hint, "of 12 cycles in the last 7 days");
   assert.match(textOf(tile), /Applied \(7 days\)/);
+});
+
+// no body text under 12px — the population line is body text, not a micro caption
+test("a ready tile renders its population at the body type scale", () => {
+  const tile = sandbox.StatusTileI({
+    status: "ready",
+    tone: "text-ok",
+    symbol: "✓",
+    label: "Applied (7 days)",
+    value: "3",
+    population: "of 12 cycles in the last 7 days",
+  });
+  const card = (tile.type as (props: Record<string, unknown>) => unknown)(tile.props);
+  const holders = collectElements(card, []).filter(
+    (el) => typeof el.props.className === "string" && textOf(el).includes("of 12 cycles in the last 7 days"),
+  );
+  assert.ok(holders.length > 0, "the population reaches the rendered card");
+  for (const el of holders) {
+    assert.doesNotMatch(String(el.props.className), /\bfs-micro\b/, "population rendered at the 11px micro scale");
+  }
+  assert.ok(
+    holders.some((el) => /\bfs-meta\b/.test(String(el.props.className))),
+    "population carries the 12px body scale",
+  );
 });
 
 // The unit guard: `applied_last_7d` counts proposals and `cycle_total_7d` counts
@@ -459,4 +490,76 @@ test("a gauge whose payload has not landed reads not read, never a verdict", () 
     { status: "loading" },
   );
   assert.deepEqual(Array.from(chips, (c) => c.label), ["not read", "not read"]);
+});
+
+test("a failed refresh drops the held decision tile's ok tone under a Last known marker", () => {
+  const asOf = new Date().toISOString();
+  const renderAwaiting = (listState: Record<string, unknown>) =>
+    collectElements(sandbox.StatusBandI({
+      asOf,
+      statsState: { ...LANDED, data: { cycle_total_7d: 1 } },
+      listState,
+      learningLogState: LANDED,
+      suppression: { pending_total: 0, parked: [] },
+      awaiting: 0,
+      onRetry: () => {},
+    }), []).find((el) => el.props.label === "Awaiting your decision");
+  const settled = renderAwaiting({ ...LANDED, data: {} });
+  const warmError = renderAwaiting({ ...LANDED, data: {}, error: "HTTP 500" });
+
+  assert.ok(settled && warmError, "the band must render the decision tile");
+  assert.equal(settled.props.tone, "text-ok");
+  assert.notEqual(warmError.props.tone, "text-ok", "an empty queue read before a failed refresh is not the all-clear");
+  assert.equal(warmError.props.symbol, null);
+  assert.match(String(warmError.props.population), /^Last known · /);
+});
+
+test("a failed suggestions read speaks once, from the first board region it feeds", () => {
+  const failed = { status: "error", data: null, error: "HTTP 500" };
+  const regions = [
+    { source: "suggestions", state: failed },
+    { source: "loop stats", state: LANDED },
+    { source: "pattern ledger", state: LANDED },
+    { source: "loop events", state: LANDED },
+  ];
+  const failures = sandbox.getPageFailuresI(regions, "board");
+  const cards = [
+    sandbox.KanbanCardI({ state: failed, columnRows: { safety: [], applied: [], rejected: [] }, failures, onRetry: () => {} }),
+    sandbox.BucketRowI({ state: failed, buckets: null, failures, onRetry: () => {} }),
+  ];
+  const resolved = cards.map((card) => {
+    const wrapper = collectElements(card, []).find((el) => el.type === sandbox.ErrorBannerI);
+    assert.ok(wrapper, "each suggestions region renders its failure slot");
+    const failure = sandbox.ErrorBannerI(wrapper.props);
+    const slot = (failure.type as (props: Record<string, unknown>) => RecordedElement)(failure.props);
+    return (slot.type as { name: string }).name;
+  });
+
+  assert.equal(failures.banner, null, "one failed source is not a shared outage");
+  assert.deepEqual(resolved, ["RegionUnavailable", "RegionCovered"]);
+});
+
+describe("a suggestion board row keeps its full text, clipped only until hover or focus", () => {
+  const long =
+    "Move the verification gate ahead of the regex removal so reviewers see the API change before the three matching suite edits";
+  const rows = [
+    {
+      name: "a declined row's reason",
+      render: () => {
+        const row = sandbox.CompactProposalCardI({ row: { id: 7, rationale: long }, onClick: () => {} });
+        return sandbox.BoardRowI(row.props);
+      },
+    },
+    {
+      name: "a proposal card's pattern label",
+      render: () => sandbox.ProposalCardI({ row: { id: 7, pattern_label: long, rationale: "Short reason" }, onClick: () => {} }),
+    },
+  ];
+  for (const row of rows) {
+    test(row.name, () => {
+      const text = collectElements(row.render(), []).find((el) => el.props.children === long);
+      assert.ok(text, "the row must render the whole text, never a character-cut copy");
+      assert.match(String(text.props.className), /\bi-clip\b/, "the clipped text must unclip on hover and focus");
+    });
+  }
 });

@@ -25,7 +25,7 @@ const PAYLOAD_SLOT_ID_I = Object.freeze({
 
 // One banner per failed payload, in place of the group that payload owns.
 // `source` = the page's region name, so a shared outage banner naming it quiets this card
-function PayloadErrorCardI({ title, source, state, onRetry, shared, focusTargetId }) {
+function PayloadErrorCardI({ title, source, state, onRetry, failures, focusTargetId }) {
 	const { CardHead, RegionFailure } = window.UI;
 	return (
 		<div className="card">
@@ -35,7 +35,7 @@ function PayloadErrorCardI({ title, source, state, onRetry, shared, focusTargetI
 					source={source}
 					error={state.error}
 					isBusy={state.busy}
-					shared={shared}
+					failures={failures}
 					focusTargetId={focusTargetId}
 					onRetry={onRetry}
 				/>
@@ -147,7 +147,7 @@ function ImprovementInstrumentationViewI({
 	reviewReasons,
 	onNav,
 	onRetry,
-	shared,
+	failures,
 }) {
 	const { SplitRow, getRegionView } = window.UI;
 
@@ -159,7 +159,7 @@ function ImprovementInstrumentationViewI({
 						focusTargetId={PAYLOAD_SLOT_ID_I.flaggedResults}
 						title="Flagged results"
 						source="loop stats"
-						shared={shared}
+						failures={failures}
 						state={statsState}
 						onRetry={onRetry}
 					/>
@@ -178,7 +178,7 @@ function ImprovementInstrumentationViewI({
 							focusTargetId={PAYLOAD_SLOT_ID_I.corpusGrowth}
 							title="Corpus growth"
 							source="corpus audits"
-							shared={shared}
+							failures={failures}
 							state={corpusAuditState}
 							onRetry={onRetry}
 						/>
@@ -192,7 +192,7 @@ function ImprovementInstrumentationViewI({
 							focusTargetId={PAYLOAD_SLOT_ID_I.correctionSignals}
 							title="Correction signals"
 							source="correction signals"
-							shared={shared}
+							failures={failures}
 							state={correctionState}
 							onRetry={onRetry}
 						/>
@@ -207,7 +207,7 @@ function ImprovementInstrumentationViewI({
 						focusTargetId={PAYLOAD_SLOT_ID_I.proposalMeasurements}
 						title="Proposal measurements"
 						source="suggestions"
-						shared={shared}
+						failures={failures}
 						state={listState}
 						onRetry={onRetry}
 					/>

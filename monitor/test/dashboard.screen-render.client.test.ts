@@ -134,7 +134,7 @@ test("a tile heads with an h2 whose window keeps its own case, and leads with th
   assert.equal(collectText(value[0]), "40");
 });
 
-// Real-enough UI for the outcome tile builder: the rate passes through untouched so each judged status can be driven directly.
+// Real-enough UI for the outcome tile and results panel: the rate passes through untouched, writer counts follow ui.jsx (count minus reconstructed).
 const rateMod = (await loadScreenModule(DASH_SRC, {
   UI: {
     resolveOutcomeRate: (data: unknown) => data,
@@ -145,9 +145,11 @@ const rateMod = (await loadScreenModule(DASH_SRC, {
     OUTCOME_BREAKAGE_CRIT_SHARE: 0.05,
     OUTCOME_OPEN_CAVEAT_WARN_SHARE: 0.1,
     getRegionView: getRegionViewStub,
+    getWriterCount: (row?: { count: number; reconstructed_count?: number }) => (row ? row.count - (row.reconstructed_count ?? 0) : 0),
+    getWriterTotal: (data: { total: number; reconstructed_total?: number }) => data.total - (data.reconstructed_total ?? 0),
   },
   React: createReactStub(),
-})) as Record<string, unknown>;
+})) as ScreenModule;
 const buildOutcomeTile = rateMod.buildOutcomeTile as (state: unknown) => Record<string, string>;
 
 test("the Task results tile headlines a bare failed share on one line, with its counts and caveat share on the lines below", () => {
@@ -165,6 +167,36 @@ test("the Task results tile headlines a bare failed share on one line, with its 
   const lowN = buildOutcomeTile({ status: "ready", data: { status: "low-n", tone: "neutral", writerTotal: 12, breakage: 1, openCaveats: 0 } });
   assert.equal(lowN.value, "12", "too small a sample still shows how many there are");
   assert.match(String(lowN.detail), /too few to judge/i);
+});
+
+function renderResultPanel(byResult: Array<{ result: string; count: number }>): RenderedNode {
+  const total = byResult.reduce((sum, row) => sum + row.count, 0);
+  const panel = (rateMod.buildResultPanel as (data: unknown) => unknown)({ total, reconstructed_total: 0, by_result: byResult, by_agent_result: [] });
+  return renderScreen(rateMod.React.createElement(rateMod.ResultPanel as Component, { panel })) as RenderedNode;
+}
+
+describe("the week results panel", () => {
+  const rowTexts = (tree: RenderedNode) =>
+    findNodes(tree, (n) => classOf(n).includes("dash-result-row")).map((row) => collectText(row).replace(/\s+/g, " ").trim());
+
+  test("names every result in words and keeps a known result with no runs as a zero row", () => {
+    const tree = renderResultPanel([
+      { result: "done", count: 400 },
+      { result: "done_with_concerns", count: 250 },
+      { result: "needs_context", count: 88 },
+    ]);
+    const rows = rowTexts(tree);
+    for (const row of rows) assert.doesNotMatch(row, /[a-z]+_[a-z]+/, `"${row}" shows a label, not a raw result enum`);
+    assert.ok(rows.some((row) => /^Failed ?0$/.test(row)), `a zero Failed row stays visible: ${JSON.stringify(rows)}`);
+  });
+
+  test("states that its caveat row counts every caveat while the tile counts only open ones", () => {
+    const panelText = collectText(renderResultPanel([{ result: "done", count: 10 }, { result: "done_with_concerns", count: 5 }]));
+    const tile = buildOutcomeTile({ status: "ready", data: { status: "ok", tone: "ok", writerTotal: 40, breakage: 1, openCaveats: 2 } });
+    assert.match(String(tile.hint), /still open/i, "the tile's caveat figure says it counts open caveats");
+    assert.match(panelText, /Done with caveats counts every/i, "the panel defines its caveat row beside it");
+    assert.match(panelText, /tile counts only .*still open/i, "the panel names how the tile's figure differs");
+  });
 });
 
 const buildFleetTile = rateMod.buildFleetTile as (state: unknown) => Record<string, string>;
@@ -244,29 +276,55 @@ test("a failed tile keeps its drill to the owning screen, whether it shows its o
 });
 
 const FAILED_TILE = {
-  id: "fleet", label: "Fleet", window: "7 d", status: "error", tone: "neutral", value: "—", hint: "",
+  id: "fleet", label: "Fleet", window: "7 d", status: "error", tone: "neutral", value: "—",
   region: "agents", source: "the fleet summary", error: "HTTP 500 Internal Server Error",
+  detail: "Couldn't load the fleet summary.", hint: "The server answered with an error.", canRetry: true,
   target: "agents", targetLabel: "Agents",
 };
 
-test("a failed tile shows the shared unavailable card, whose Retry reloads only that tile's region", () => {
+test("a failed week panel whose cause the page banner carries points up to it instead of offering a second Retry", () => {
+  const rows = [
+    { name: "its own failure", isRetryShared: false, retries: 1, isPointingUp: false },
+    { name: "a failure the banner carries", isRetryShared: true, retries: 0, isPointingUp: true },
+  ];
+
+  for (const row of rows) {
+    const tree = render("WeekPanel", {
+      id: "dash-week-hours", title: "Runs by hour", source: "runs by hour", state: { data: null, error: "HTTP 500", busy: false },
+      onRetry: () => {}, render: () => null, isRetryShared: row.isRetryShared,
+    });
+    assert.equal(findNodes(tree, (n) => n.props.atom === "RetryButton").length, row.retries, `${row.name}: Retry count`);
+    assert.equal(/notice above/.test(collectText(tree)), row.isPointingUp, `${row.name}: points to the banner`);
+  }
+});
+
+test("a failed tile states its error flat inside the tile, with one Retry that reloads only that tile's region", () => {
   const retried: string[] = [];
   const tree = render("StatusTile", { tile: FAILED_TILE, onNav: () => {}, onRetry: (region: string) => retried.push(region) });
-  const cards = findNodes(tree, (n) => n.props.atom === "RegionUnavailable");
-  assert.equal(cards.length, 1);
-  assert.equal(cards[0].props.source, "the fleet summary");
-  assert.equal(cards[0].props.error, "HTTP 500 Internal Server Error");
-  (cards[0].props.onRetry as () => void)();
+  assert.equal(findNodes(tree, (n) => /\b(sub-)?card\b/.test(classOf(n))).length, 1, "no card nests inside the tile");
+  assert.match(collectText(tree), /Couldn't load the fleet summary/, "the error sentence sits in the tile itself");
+  const retries = findNodes(tree, (n) => n.props.atom === "RetryButton");
+  assert.equal(retries.length, 1, "one Retry per failed tile");
+  (retries[0].props.onRetry as () => void)();
   assert.deepEqual(retried, ["agents"]);
-  assert.equal(findNodes(tree, (n) => n.type === "button").length, 0, "the card owns the tile's only Retry");
+});
+
+test("a failed tile's raw error detail sits in a keyboard-reachable disclosure, never only in a hover title", () => {
+  const failureDetail = "PrismaClientKnownRequestError: P1001";
+  const tree = render("StatusTile", { tile: { ...FAILED_TILE, failureDetail }, onNav: () => {}, onRetry: () => {} });
+  const disclosures = findNodes(tree, (n) => n.type === "details");
+  assert.equal(disclosures.length, 1, "one disclosure");
+  assert.equal(findNodes(disclosures[0], (n) => n.type === "summary").length, 1, "a focusable summary opens it");
+  assert.match(collectText(disclosures[0]), /P1001/);
+  assert.equal(findNodes(tree, (n) => n.props.title === failureDetail).length, 0, "no hover-only copy");
 });
 
 test("a failed tile's Retry shows itself in flight and hands focus to its own tile card on recovery", () => {
   for (const isBusy of [true, false]) {
     const tree = render("StatusTile", { tile: { ...FAILED_TILE, isBusy }, onNav: () => {}, onRetry: () => {} });
-    const [card] = findNodes(tree, (n) => n.props.atom === "RegionUnavailable");
-    assert.equal(card.props.isBusy, isBusy);
-    const targets = findNodes(tree, (n) => n.props.id === card.props.focusTargetId);
+    const [retry] = findNodes(tree, (n) => n.props.atom === "RetryButton");
+    assert.equal(retry.props.isBusy, isBusy);
+    const targets = findNodes(tree, (n) => n.props.id === retry.props.focusTargetId);
     assert.equal(targets.length, 1, "the focus target is the tile card that stays mounted");
     assert.ok(/\bcard\b/.test(classOf(targets[0])), classOf(targets[0]));
   }
@@ -275,6 +333,8 @@ test("a failed tile's Retry shows itself in flight and hands focus to its own ti
 test("a tile whose outage the page banner already carries stays one level: no nested card, no repeated error, no Retry", () => {
   const tree = render("StatusTile", { tile: FAILED_TILE, onNav: () => {}, onRetry: () => {}, isRetryShared: true });
   assert.equal(findNodes(tree, (n) => n.props.atom === "RegionUnavailable").length, 0, "the banner already states the error");
+  assert.doesNotMatch(collectText(tree), /Couldn't load/, "the tile does not repeat the banner's sentence");
+  assert.equal(findNodes(tree, (n) => n.props.atom === "RetryButton").length, 0, "the banner owns the only Retry");
   assert.equal(findNodes(tree, (n) => /\b(sub-)?card\b/.test(classOf(n))).length, 1, "only the tile itself is a card");
   assert.equal(findNodes(tree, (n) => n.type === "button").length, 0, "the banner owns the only Retry");
   assert.equal(collectText(findNodes(tree, (n) => n.props.atom === "KpiValue")[0]), "—", "the value slot keeps its unknown dash");

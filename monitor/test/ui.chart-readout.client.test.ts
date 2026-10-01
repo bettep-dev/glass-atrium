@@ -232,6 +232,16 @@ describe("tick labels thin out before they collide", () => {
   test("an unmeasured row (width 0) keeps the count-based ticks", () => {
     assert.deepEqual(getChartTickLayout(dayLabels(30), "line", 0, 7).map((slot) => slot.index), getChartTicks(30, 7));
   });
+
+  test("a cap that lands on even steps keeps them even while the row thins out", () => {
+    for (const { count, maxTicks } of [{ count: 13, maxTicks: 7 }, { count: 25, maxTicks: 7 }, { count: 7, maxTicks: 7 }]) {
+      for (let widthPx = 60; widthPx <= 1200; widthPx += 10) {
+        const indexes = getChartTickLayout(dayLabels(count), "line", widthPx, maxTicks).map((slot) => slot.index);
+        const steps = new Set(indexes.slice(1).map((index, i) => index - indexes[i]));
+        assert.ok(steps.size <= 1, `${count} days at ${widthPx}px: ticks ${indexes.join(",")} step unevenly`);
+      }
+    }
+  });
 });
 
 describe("the optional y-scale states the plotted extent", () => {

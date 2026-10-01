@@ -67,6 +67,7 @@ interface PageStateSandbox {
   getPartStatusAR: (row: HealthRow & { statusLabel: string }, freshness: HealthFreshness) => { tone: string | null; text: string };
   getPartBoxAR: (row: HealthRow, nodeIndex: Map<string, { label: string }>) => { nodeId: string; label: string } | null;
   getPartCauseAR: (facts: Record<string, unknown>) => string | null;
+  getPartScheduleAR: (row: ScheduleRow, formatRelative: (iso: string) => string) => string | null;
   getDrillDaemonAR: (partRows: DaemonPartRow[], unscopedId: string) => string | null;
   getRunSummaryAR: (runs: RunRow[]) => { text: string; failures: RunRow[] };
   getMapLegendItemsAR: () => Array<{ key: string; mark?: string; text?: string }>;
@@ -287,6 +288,28 @@ test("a part's cause line comes only from a fact that explains the state", () =>
     { name: "no explaining fact", facts: {}, cause: null },
   ];
   for (const row of rows) assert.strictEqual(sandbox.getPartCauseAR(row.facts), row.cause, row.name);
+});
+
+interface ScheduleRow {
+  tone: string | null;
+  cadenceMinutes: number | null;
+  nextRunAt: string | null;
+}
+
+describe("a down part says how often it runs and when it is due next, from the served cadence and next-run fields", () => {
+  const formatRelative = (iso: string) => `at ${iso}`;
+  const NEXT = "2026-01-10T12:15:00.000Z";
+  const rows: Array<{ name: string; row: ScheduleRow; schedule: string | null }> = [
+    { name: "a minute cadence with a next run", row: { tone: "crit", cadenceMinutes: 15, nextRunAt: NEXT }, schedule: `runs every 15 min · next run at ${NEXT}` },
+    { name: "an hour cadence with no next run served", row: { tone: "warn", cadenceMinutes: 60, nextRunAt: null }, schedule: "runs hourly" },
+    { name: "a multi-hour cadence", row: { tone: "crit", cadenceMinutes: 120, nextRunAt: null }, schedule: "runs every 2 h" },
+    { name: "a daily cadence", row: { tone: "crit", cadenceMinutes: 1440, nextRunAt: NEXT }, schedule: `runs daily · next run at ${NEXT}` },
+    { name: "a next run with no cadence served", row: { tone: "crit", cadenceMinutes: null, nextRunAt: NEXT }, schedule: `next run at ${NEXT}` },
+    { name: "a healthy part", row: { tone: "ok", cadenceMinutes: 15, nextRunAt: NEXT }, schedule: null },
+    { name: "a down part with neither field", row: { tone: "crit", cadenceMinutes: null, nextRunAt: null }, schedule: null },
+  ];
+  for (const { name, row, schedule } of rows)
+    test(name, () => assert.strictEqual(sandbox.getPartScheduleAR(row, formatRelative), schedule));
 });
 
 test("the page verdict takes the worst part tone, with one chip per flagged part focusing its row", () => {

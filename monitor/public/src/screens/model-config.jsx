@@ -57,35 +57,38 @@ const DOMAIN_META_MC = {
 	"model.research": {
 		label: "Research agent",
 		hint: "Web and codebase research",
-		desc: "glass-atrium-intel-researcher — source collection, verification and synthesis",
+		desc: "Source collection, verification and synthesis",
+		source: "glass-atrium-intel-researcher",
 		editable: true,
 		inherit: true,
 	},
 	"model.meta": {
 		label: "Meta agent",
 		hint: "Rewrites agent instructions",
-		desc: "glass-atrium-meta-agent — the self-improvement loop's rewriter, so its model shapes how well every agent evolves",
+		desc: "The self-improvement loop's rewriter, so its model shapes how well every agent evolves",
+		source: "glass-atrium-meta-agent",
 		editable: true,
 		inherit: true,
 	},
 	"model.wiki": {
 		label: "Wiki curator",
 		hint: "Wiki compilation and index writes",
-		desc: "glass-atrium-wiki-curator — the sole wiki writer, also running health checks and raw-ingestion validation",
+		desc: "The sole wiki writer, also running health checks and raw-ingestion validation",
+		source: "glass-atrium-wiki-curator",
 		editable: true,
 		inherit: true,
 	},
 	"model.review": {
 		label: "Review",
 		hint: "Code review and bug diagnosis",
-		desc: "glass-atrium-qa-code-reviewer and glass-atrium-qa-debugger — also plan direction review; written into both files",
+		desc: "Also plan direction review — one save writes both agent files",
 		editable: true,
 		inherit: true,
 	},
 	"model.docs": {
 		label: "Documents",
 		hint: "Reports and plans",
-		desc: "glass-atrium-intel-reporter and glass-atrium-intel-planner — written into both files",
+		desc: "One save writes both agent files",
 		editable: true,
 		inherit: true,
 	},
@@ -93,6 +96,7 @@ const DOMAIN_META_MC = {
 		label: "Daemon cycle helper",
 		hint: "Background daemon housekeeping steps",
 		desc: "Drafts self-improve proposals, runs pre-verify and summarizes wiki notes",
+		source: "daemon-config.json",
 		editable: true,
 		inherit: false,
 	},
@@ -166,11 +170,13 @@ const BUDGET_META_MC = {
 		label: "Self-improve + wiki call cap",
 		hint: "Caps one self-improve generation or wiki compile call",
 		desc: "Aborts the runaway call — the generation and wiki compile steps share this one cap",
+		source: "daemon-config.json",
 	},
 	"budget.pre_verify_max_usd": {
 		label: "Self-improve pre-verify call cap",
 		hint: "Caps one self-improve pre-verify call",
 		desc: "Aborts the runaway call — only the pre-verify step reads this cap",
+		source: "daemon-config.json",
 	},
 };
 
@@ -374,6 +380,8 @@ function ScreenModelConfig() {
 			: "unavailable";
 	const verdict = ready ? getPageVerdictMC(data) : null;
 	const freshness = getFreshnessInputMC(asOfAt, configState);
+	// a failed reload leaves held rows on screen → their match is as of the last good read, not now
+	const isStale = configState.error != null;
 
 	return (
 		<div className="flex flex-col min-w-0">
@@ -398,6 +406,11 @@ function ScreenModelConfig() {
 						</>
 					}
 				/>
+			</div>
+
+			{/* mounted in every state → a screen reader hears the Refresh/Retry outcome when the text lands */}
+			<div className="sr-only" role="status" aria-live="polite">
+				{getReadAnnouncementMC(configState, asOfAt, refreshTick)}
 			</div>
 
 			{verdict && (
@@ -466,6 +479,7 @@ function ScreenModelConfig() {
 					form={form}
 					baseline={baseline}
 					errors={errors}
+					isStale={isStale}
 					onModelChange={setModel}
 				/>
 				<SplitColumn>
@@ -475,6 +489,7 @@ function ScreenModelConfig() {
 						form={form}
 						baseline={baseline}
 						errors={errors}
+						isStale={isStale}
 						onBudgetChange={setBudget}
 					/>
 					{/* the shorter caps column carries the tier notes → the model table starts at the top */}
@@ -598,6 +613,21 @@ function getVerdictFreshnessMC(tone, asOfAt, state) {
 	return { tone: verdict.tone, label: verdict.label };
 }
 
+/**
+ * What the live region says once a Refresh or Retry settles — silent on the first load, while busy,
+ * and after a save (its toast speaks).
+ * A warm failure mounts the role=alert card, which owns that announcement; a cold Retry failure lands
+ * in an alert already mounted by the first failure, so only this region can say it.
+ */
+function getReadAnnouncementMC(state, asOfAt, refreshTick) {
+	if (refreshTick === 0 || state.busy) return "";
+
+	if (state.error != null) return state.data != null ? "" : "Couldn't read model config.";
+
+	const time = asOfAt !== null ? window.UI.formatKstTime(asOfAt) : null;
+	return state.key === "config" && time ? `Model config reloaded — as of ${time}.` : "";
+}
+
 // 구획 헤더 — thin rule + h2 section label (카드 박스 아님). title 좌측 라벨 + 우측 슬롯.
 function SectionHeadMC({ label, sub, right }) {
 	const { SectionLabel } = window.UI;
@@ -645,6 +675,7 @@ function DomainsSectionMC({
 	form,
 	baseline,
 	errors,
+	isStale,
 	onModelChange,
 }) {
 	const { SkeletonRows, TableHead } = window.UI;
@@ -701,6 +732,7 @@ function DomainsSectionMC({
 									value={form.models[d.domain] ?? ""}
 									defaultValue={baseline?.models[d.domain] ?? ""}
 									error={errors[d.domain]}
+									isStale={isStale}
 									onChange={(v) => onModelChange(d.domain, v)}
 								/>
 							))
@@ -731,12 +763,13 @@ function RowHintMC({ hint }) {
 
 // Full descriptions in one labelled list per section — a note per row repeats one affordance N times.
 function TierNotesMC({ title, rows }) {
+	const { SectionLabel } = window.UI;
 	const notes = rows.filter((meta) => meta?.desc && meta.desc !== meta.hint);
 	if (notes.length === 0) return null;
 
 	return (
 		<section className="fs-meta text-dim mt-3" aria-label={title}>
-			<div className="text-faint">{title}</div>
+			<SectionLabel level={3}>{title}</SectionLabel>
 			<dl className="mt-1 flex flex-col gap-1">
 				{notes.map((meta) => (
 					<div key={meta.label}>
@@ -770,11 +803,12 @@ function groupFilesByModelMC(fileRows) {
 }
 
 // Files toggle at the control radius every other pill uses, not the 12px card fold.
-// Names wrap side by side and the list scrolls past ~5 lines → an opened list keeps its ledger row short.
-const FILES_MC = Object.freeze({
-	PILL_STYLE: { borderRadius: "var(--radius-control)" },
-	LIST_STYLE: { maxHeight: 112 },
-});
+const FILES_PILL_STYLE_MC = { borderRadius: "var(--radius-control)" };
+
+// source = an agent name or a config file name — kept a flat string so the meta tables stay one level deep.
+function isConfigFileMC(source) {
+	return /\.json$/.test(source);
+}
 
 // Agent file ("agents/glass-atrium-dev-react.md") → its agent name, for the shared name atom.
 function getFileAgentNameMC(file) {
@@ -785,8 +819,9 @@ function getFileAgentNameMC(file) {
 /**
  * In effect = measured at the consumption point.
  * Matching the saved target → ✓ 'Matches saved' (tooltip 'In effect: …') · differing → the value + one warn badge · absent → nothing.
+ * A failed reload dates the match to the last good read · no file list → names the source, or that it yielded no value.
  */
-function LiveValueMC({ value, drift, files, driftTitle }) {
+function LiveValueMC({ value, drift, files, source, isStale, driftTitle }) {
 	const { AgentName, Badge, Icon } = window.UI;
 	const fileRows = Array.isArray(files) ? files : [];
 	const isSteady = !drift && value != null;
@@ -798,7 +833,11 @@ function LiveValueMC({ value, drift, files, driftTitle }) {
 	return (
 		<div className="flex flex-col gap-1 min-w-0">
 			<div className="flex items-center gap-2 min-w-0">
-				{isSteady ? (
+				{isSteady && isStale ? (
+					<span className="fs-meta text-faint" title={`At the last good read: ${label}`}>
+						Matched at last read
+					</span>
+				) : isSteady ? (
 					<span className="fs-meta text-faint flex items-center gap-1" title={`In effect: ${label}`}>
 						<Icon name="check" size={12} className="text-ok" />
 						Matches saved
@@ -822,14 +861,13 @@ function LiveValueMC({ value, drift, files, driftTitle }) {
 				<details className="fs-meta" open={isFoldAlerting || undefined}>
 					<summary
 						className="inline-flex items-center gap-1 px-2 border border-line text-dim hover:text-ink cursor-pointer"
-						style={FILES_MC.PILL_STYLE}>
+						style={FILES_PILL_STYLE_MC}>
 						{isFoldAlerting && <Icon name="warn" size={12} className="text-warn" />}
 						{`${fileRows.length} ${fileRows.length === 1 ? "file" : "files"}`}
+						<Icon name="chevron-down" size={12} className="chevron" />
 					</summary>
 					<div
-						className="text-faint flex flex-col gap-1 mt-1 overflow-y-auto"
-						style={FILES_MC.LIST_STYLE}
-						tabIndex={0}
+						className="text-faint flex flex-col gap-1 mt-1"
 						role="region"
 						aria-label={`${fileRows.length} agent files`}>
 						{fileGroups.map(([model, files]) => (
@@ -844,6 +882,13 @@ function LiveValueMC({ value, drift, files, driftTitle }) {
 						))}
 					</div>
 				</details>
+			)}
+			{fileRows.length === 0 && source && (
+				<div className="fs-meta text-faint">
+					{/* null live value = source unreadable or key missing → never claim a read */}
+					{value != null ? "Read from" : "No value read from"}{" "}
+					{isConfigFileMC(source) ? <span className="font-mono">{source}</span> : <AgentName name={source} />}
+				</div>
 			)}
 		</div>
 	);
@@ -887,6 +932,7 @@ function DomainRowMC({
 	value,
 	defaultValue,
 	error,
+	isStale,
 	onChange,
 }) {
 	const { Badge } = window.UI;
@@ -933,6 +979,8 @@ function DomainRowMC({
 					value={d.actual}
 					drift={d.drift}
 					files={d.files}
+					source={meta.source}
+					isStale={isStale}
 					driftTitle="Live value differs from the saved target — press Save again"
 				/>
 			</td>
@@ -1075,6 +1123,7 @@ function BudgetsSectionMC({
 	form,
 	baseline,
 	errors,
+	isStale,
 	onBudgetChange,
 }) {
 	const { SkeletonRows, TableHead } = window.UI;
@@ -1121,6 +1170,7 @@ function BudgetsSectionMC({
 									value={form.budgets[b.domain] ?? ""}
 									defaultValue={baseline?.budgets[b.domain] ?? ""}
 									error={errors[b.domain]}
+									isStale={isStale}
 									onChange={(v) => onBudgetChange(b.domain, v)}
 								/>
 							))
@@ -1150,7 +1200,7 @@ const BUDGET_FIELD_STYLE_MC = { width: "calc(6ch + 4px + var(--ctl-pad-x))" };
  * 예산 1행 — $ 입력(2-decimal 문자열) + invalid 즉시 field-adjacent role=alert (T-MDL-4)
  * + 실측 + ghost default/reset (T-MDL-6).
  */
-function BudgetRowMC({ budget: b, value, defaultValue, error, onChange }) {
+function BudgetRowMC({ budget: b, value, defaultValue, error, isStale, onChange }) {
 	const meta = BUDGET_META_MC[b.domain] || { label: b.domain, hint: "", desc: "" };
 	// Save banner points at "the highlighted fields" → the field is marked the moment it is invalid.
 	const showError = Boolean(error);
@@ -1202,6 +1252,8 @@ function BudgetRowMC({ budget: b, value, defaultValue, error, onChange }) {
 				<LiveValueMC
 					value={b.actual ? `$${b.actual}` : null}
 					drift={b.drift}
+					source={meta.source}
+					isStale={isStale}
 					driftTitle="daemon-config.json differs from the saved cap — press Save again"
 				/>
 			</td>

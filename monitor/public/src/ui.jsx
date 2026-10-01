@@ -264,11 +264,17 @@ function getChartTickLayout(labels, kind, widthPx, maxTicks = CHART_MAX_TICKS) {
 }
 
 function getFittingTicks(labels, kind, widthPx, maxTicks) {
-  for (let cap = Math.max(2, maxTicks); cap >= 2; cap--) {
-    const ticks = getChartTicks(labels.length, cap);
+  const count = labels.length;
+  const top = Math.max(2, maxTicks);
+  const hasEvenSteps = (cap) => (count - 1) % (Math.min(cap, count) - 1) === 0;
+  // even steps at the caller's cap stay even → only caps dividing count-1 are tried
+  const isEvenOnly = count >= 2 && hasEvenSteps(top);
+  for (let cap = top; cap >= 2; cap--) {
+    if (isEvenOnly && !hasEvenSteps(cap)) continue;
+    const ticks = getChartTicks(count, cap);
     if (isTickRowClear(ticks, labels, kind, widthPx)) return ticks;
   }
-  return [labels.length - 1];
+  return [count - 1];
 }
 
 function isTickRowClear(ticks, labels, kind, widthPx) {
@@ -612,10 +618,10 @@ function KpiValue({ children, unit, tone }) {
 }
 
 // label + 26px mono value + delta + 68×26 inline sparkline
-function KPI({ label, value, unit, delta, deltaInverse=false, sparkData, sparkColor='currentColor', onClick, hint }) {
+function KPI({ label, value, unit, delta, deltaInverse=false, sparkData, sparkColor='currentColor', onClick, hint, hintClassName='fs-micro' }) {
   return <button onClick={onClick} className="kpi text-left">
     <div className="kpi-label">{label}</div>
-    {hint && <div className="fs-micro text-faint font-mono kpi-hint">{hint}</div>}
+    {hint && <div className={`${hintClassName} text-faint font-mono kpi-hint`}>{hint}</div>}
     <KpiValue unit={unit}>{value}</KpiValue>
     {typeof delta === 'number' && <Delta value={delta} inverse={deltaInverse} />}
     {sparkData && <div className="kpi-spark"><Sparkline data={sparkData} w={68} h={26} color={sparkColor}/></div>}
@@ -1155,7 +1161,7 @@ function PageHeader({ title, sub, right }) {
   return <div className="flex flex-wrap items-center gap-x-3 gap-y-2 mb-4">
     <div className="min-w-0">
       <h1 className="fs-display font-semibold leading-tight">{title}</h1>
-      {hasSub && <div className="text-[11px] font-mono text-faint tracking-wider uppercase">{sub}</div>}
+      {hasSub && <div className="fs-meta font-mono text-faint tracking-wider uppercase">{sub}</div>}
     </div>
     {right && <div className="ml-auto flex flex-wrap items-center justify-end gap-2 min-w-0">{right}</div>}
   </div>;
@@ -1395,12 +1401,64 @@ function useFreshnessTick(isEnabled) {
   }, [isEnabled]);
 }
 
+// shell ↔ page bridge — app.jsx registers the sink and the harness reader; pageState is replayed on register (child effects run first)
+const shellBridge = { putPageState: null, readHarness: null, pageState: null, owner: null };
+
+/** Shell side: registers the sidebar's page-state sink and its coalesced harness read; call with no argument to detach. */
+function setShellBridge({ putPageState = null, readHarness = null } = {}) {
+  shellBridge.putPageState = putPageState;
+  shellBridge.readHarness = readHarness;
+  putPageState?.(shellBridge.pageState);
+}
+
+/** One shell harness re-read, joined to any read already in flight; never rejects (every source settles). */
+function getHarnessRead() {
+  return Promise.resolve(shellBridge.readHarness?.());
+}
+
+/**
+ * Page read state the shell shows → { state, at }: 'loading' only for a first read in flight, else the settled stamp state.
+ * A refresh over held data reports its settled state, so the sidebar never flickers to Checking.
+ */
+function getShellPageState({ at, loading = false, failed = false, regions, staleAfterMs, now }) {
+  const settledRegions = Array.isArray(regions) ? regions.filter(Boolean).map((region) => ({ ...region, busy: false })) : regions;
+  const settled = getFreshnessState({ at, failed, regions: settledRegions, staleAfterMs, now });
+  const isInFlight = loading || getRegionSummary(regions).isBusy;
+
+  if (settled === 'not-read') return { state: isInFlight ? 'loading' : 'not-read', at: null };
+  return { state: settled, at };
+}
+
+/**
+ * Hands the page's read state to the shell sidebar and clears it on unmount, so the next page never inherits it.
+ * FreshnessStamp calls it; a page whose stamp is gated calls it directly with the stamp's inputs. One caller per page.
+ */
+function useShellPageState(input) {
+  const ownerRef = useRef({});
+  const { state, at } = getShellPageState(input);
+  const atMs = at ? new Date(at).getTime() : null;
+
+  useEffect(() => {
+    shellBridge.owner = ownerRef.current;
+    shellBridge.pageState = { state, at };
+    shellBridge.putPageState?.(shellBridge.pageState);
+  }, [state, atMs]);
+  useEffect(() => () => {
+    if (shellBridge.owner !== ownerRef.current) return;
+    shellBridge.owner = null;
+    shellBridge.pageState = null;
+    shellBridge.putPageState?.(null);
+  }, []);
+}
+
 /**
  * Shared "as of HH:MM" stamp — a refresh in flight keeps the last stamp and sets aria-busy.
  * A read stamp re-renders on its own tick, so age-based staleness holds on screens that never poll.
+ * @param shellRegions - regions handed to the shell when they differ from the rendered set (a region the shell already owns is left out)
  */
-function FreshnessStamp({ at, loading = false, failed = false, regions, staleAfterMs, now }) {
+function FreshnessStamp({ at, loading = false, failed = false, regions, shellRegions, staleAfterMs, now }) {
   const state = getFreshnessState({ at, loading, failed, regions, staleAfterMs, now });
+  useShellPageState({ at, loading, failed, regions: shellRegions ?? regions, staleAfterMs, now });
   const meta = FRESHNESS_META[state];
   const glyph = meta.tone ? TONE_GLYPH[meta.tone] : '…';
   const toneClass = meta.tone ? `text-${meta.tone}` : 'text-faint';
@@ -1411,15 +1469,17 @@ function FreshnessStamp({ at, loading = false, failed = false, regions, staleAft
   const word = failedNote ? `${meta.word}, ${failedNote}` : meta.word;
   useFreshnessTick(isRead && now === undefined);
 
-  const readText = isRead ? `as of ${formatKstTime(at)}` : meta.word.toLowerCase();
-  const text = failedNote ? `${readText} · ${failedNote}` : readText;
+  const readText = `as of ${formatKstTime(at)}`;
+  const text = !isRead ? word : failedNote ? `${readText} · ${failedNote}` : readText;
+  // unread → the visible text is the word itself; first read → no text, the paired Refresh label already reads "Loading…"
+  const hasSrWord = isRead || state === 'loading';
   const title = isRead ? `${word} — read ${formatKstFull(at)} (${formatRelativeTime(at)})` : word;
 
   return (
     <span className="fs-meta font-mono text-faint whitespace-nowrap" title={title} aria-busy={isBusy ? 'true' : undefined}>
       <span aria-hidden="true" className={`mr-1 ${toneClass}`}>{glyph}</span>
-      <span className="sr-only">{word}</span>
-      <span data-stamp-text="true">{text}</span>
+      {hasSrWord && <span className="sr-only">{word}</span>}
+      {state !== 'loading' && <span data-stamp-text="true">{text}</span>}
     </span>
   );
 }
@@ -1434,7 +1494,11 @@ function RefreshButton({ isBusy = false, hasRead = false, onRefresh, label = 'Re
   const busyText = hasRead ? 'Refreshing…' : 'Loading…';
   // motion-safe → the icon stays static under prefers-reduced-motion; the label still carries the busy cue
   const iconClass = isBusy ? 'motion-safe:animate-spin' : '';
-  const handleClick = (event) => { if (!isBusy) onRefresh?.(event); };
+  const handleClick = (event) => {
+    if (isBusy) return;
+    onRefresh?.(event);
+    getHarnessRead();
+  };
 
   return (
     <button type="button" className="btn ghost sm w-28 justify-center" onClick={handleClick}
@@ -1493,11 +1557,11 @@ function getErrorCopy(error, source) {
 }
 
 /**
- * The outage ≥2 failed regions share, or null — non-null → one PageErrorBanner + a RegionFailure per region.
- * @param entries - `{ source, error }` per region; a null error is a healthy region
+ * The outage ≥2 failed sources share, or null — non-null → one PageErrorBanner + a RegionFailure per region.
+ * @param entries - `{ source, error }` per region; a null error is a healthy region, and regions of one source count once
  */
 function getSharedFailure(entries) {
-  const failed = (entries || []).filter((entry) => entry && entry.error != null);
+  const failed = getFirstPerSource(entries);
   if (failed.length < 2) return null;
 
   const causeKeys = new Set(failed.map((entry) => {
@@ -1506,6 +1570,27 @@ function getSharedFailure(entries) {
   }));
   if (causeKeys.size !== 1) return null;
   return { sources: failed.map((entry) => entry.source), error: failed[0].error };
+}
+
+// failed entries, first region per source in render order
+function getFirstPerSource(entries) {
+  const seen = new Set();
+  return (entries || []).filter((entry) => {
+    if (!entry || entry.error == null || seen.has(entry.source)) return false;
+    seen.add(entry.source);
+    return true;
+  });
+}
+
+/**
+ * Who speaks for each failed source — pass the result to every RegionFailure as `failures`, render PageErrorBanner from `banner`.
+ * ≥2 same-cause sources → `banner` speaks for all; otherwise the first region a source feeds carries its card + Retry, the rest stay covered.
+ * @param entries - `{ source, region, error }` per region in render order; `source` names the failed read, `region` the slot (defaults to source)
+ */
+function getSourceFailures(entries) {
+  const speaking = getFirstPerSource(entries);
+  const speakers = new Map(speaking.map((entry) => [entry.source, entry.region ?? entry.source]));
+  return { banner: getSharedFailure(speaking), speakers };
 }
 
 function ErrorDetails({ detail }) {
@@ -1549,7 +1634,11 @@ function useFocusHandoff(targetId) {
 // focusable while busy (aria-disabled + click guard) → keyboard focus survives the request
 function RetryButton({ onRetry, isBusy = false, focusTargetId }) {
   const controlRef = useFocusHandoff(focusTargetId);
-  const handleClick = (event) => { if (!isBusy) onRetry?.(event); };
+  const handleClick = (event) => {
+    if (isBusy) return;
+    onRetry?.(event);
+    getHarnessRead();
+  };
 
   return (
     <button ref={controlRef} type="button" className="btn sm self-start" onClick={handleClick}
@@ -1584,31 +1673,37 @@ function RegionUnavailable({ source, error, onRetry, isBusy = false, focusTarget
 const REGION_COVERED_NOTE = 'Not loaded — see the notice above';
 
 /**
- * Quiet slot for a region the page banner already speaks for: its name + a pointer to the notice, no sentence, no Retry.
- * @param focusTargetId - the region's card id; the banner's Retry hands focus to the first covered card on recovery
+ * Quiet slot for a region another surface speaks for: its name + a pointer to that surface, no sentence, no Retry.
+ * @param region - slot name shown; defaults to source
+ * @param speaker - failed source whose card (not the page banner) speaks for this slot
+ * @param focusTargetId - the region's card id; the banner's Retry hands focus to the first banner-covered card on recovery
  * @param minHeight - reserved slot height so the grid keeps its shape
  */
-function RegionCovered({ source, focusTargetId, minHeight, className = '' }) {
-  const name = source ? source.charAt(0).toUpperCase() + source.slice(1) : '';
+function RegionCovered({ source, region, speaker, focusTargetId, minHeight, className = '' }) {
+  const label = region ?? source;
+  const name = label ? label.charAt(0).toUpperCase() + label.slice(1) : '';
   return (
     <div className={`sub-card bg-sunken flex flex-col gap-1 ${className}`.trim()} style={minHeight ? { minHeight } : undefined}
-      data-covered-card-id={focusTargetId}>
+      data-covered-card-id={speaker ? undefined : focusTargetId}>
       <span className="fs-body text-dim">{name}</span>
-      <span className="fs-meta text-faint">{REGION_COVERED_NOTE}</span>
+      <span className="fs-meta text-faint">{speaker ? `Not loaded — see the ${speaker} notice` : REGION_COVERED_NOTE}</span>
     </div>
   );
 }
 
 /**
- * The one failed-region atom every page renders: RegionCovered when `shared` names this source, else RegionUnavailable with its own Retry.
- * @param shared - the page's getSharedFailure result, or null
+ * The one failed-region atom every page renders: covered when the banner or a sibling region speaks for its source, else RegionUnavailable with its own Retry.
+ * @param failures - the page's getSourceFailures result; pass it with `region` so one source speaks once
+ * @param shared - legacy per-region getSharedFailure result, read only when `failures` is absent
  */
-function RegionFailure({ source, error, shared, onRetry, isBusy = false, focusTargetId, minHeight, className = '' }) {
-  if (shared?.sources?.includes(source)) {
-    return <RegionCovered source={source} focusTargetId={focusTargetId} minHeight={minHeight} className={className}/>;
-  }
-  return <RegionUnavailable source={source} error={error} onRetry={onRetry} isBusy={isBusy}
-    focusTargetId={focusTargetId} minHeight={minHeight} className={className}/>;
+function RegionFailure({ source, region, error, failures, shared, onRetry, isBusy = false, focusTargetId, minHeight, className = '' }) {
+  const banner = failures ? failures.banner : shared;
+  const speaker = failures?.speakers.get(source);
+  const slot = { source, region, focusTargetId, minHeight, className };
+
+  if (banner?.sources?.includes(source)) return <RegionCovered {...slot}/>;
+  if (speaker != null && speaker !== (region ?? source)) return <RegionCovered {...slot} speaker={source}/>;
+  return <RegionUnavailable {...slot} error={error} onRetry={onRetry} isBusy={isBusy}/>;
 }
 
 // first covered slot in document order → the first region the shared Retry brings back
@@ -1965,13 +2060,16 @@ function VerdictChip({ chip }) {
   return <button type="button" className="btn ghost sm" onClick={() => putCardFocus(chip.targetId)}>{chip.label}</button>;
 }
 
-// instant scroll (no smooth) → nothing to reduce under prefers-reduced-motion; tabindex -1 lets a plain card take focus.
+// instant nearest scroll → no jump when the card is already in view, nothing to reduce under prefers-reduced-motion; tabindex -1 lets a plain card take focus.
 function putCardFocus(id) {
   const card = id ? document.getElementById(id) : null;
   if (!card) return;
 
   if (!card.hasAttribute('tabindex')) card.setAttribute('tabindex', '-1');
-  card.scrollIntoView({ block: 'start' });
+  // programmatic focus after a mouse Retry misses :focus-visible → the marker draws the ring until the card blurs
+  card.setAttribute('data-focus-handoff', 'true');
+  card.addEventListener('blur', () => card.removeAttribute('data-focus-handoff'), { once: true });
+  card.scrollIntoView({ block: 'nearest' });
   card.focus({ preventScroll: true });
 }
 
@@ -2070,7 +2168,8 @@ window.UI = {
   TypeScaleStyle, toneVarColor,
   titleOf, stripHtmlTags, formatRelativeTime,
   FreshnessStamp, getFreshnessState, getFreshnessVerdict, getRegionSummary, getRegionView, RefreshButton,
-  getFetchError, getErrorCopy, getSharedFailure, RegionUnavailable, RegionCovered, RegionFailure, PageErrorBanner, RetryButton, LoadingPlaceholder, SkeletonRows,
+  setShellBridge, getHarnessRead, getShellPageState, useShellPageState,
+  getFetchError, getErrorCopy, getSharedFailure, getSourceFailures, RegionUnavailable, RegionCovered, RegionFailure, PageErrorBanner, RetryButton, LoadingPlaceholder, SkeletonRows,
   INITIAL_REGION_STATE, putRegionRequest, putRegionData, putRegionFailure,
   setDisplayTimezone, getDisplayTimezone, tzShortLabel,
   formatKstDateTime, formatKstTime, formatKstDate, formatKstFull,

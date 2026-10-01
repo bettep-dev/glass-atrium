@@ -960,6 +960,75 @@ test("column-width: 1010px 카드 바닥에서 제목 본문 상자가 목록·�
   }
 });
 
+// open-summary rail from its breakpoint: one label/count grid, the Oldest open link aligned to the labels
+test("open-summary rail: at 1440px labels and counts share one two-column grid and Oldest open starts at the label edge", async () => {
+  const ids = await seedManyDocs(3, "grid");
+  try {
+    const context: BrowserContext = await browser.newContext({ viewport: { width: 1440, height: 900 } });
+    const page: Page = await context.newPage();
+    try {
+      await page.goto(`${serverUrl}/#clauded-docs`, { waitUntil: "networkidle" });
+      const rail = page.locator("aside.doc-open-summary");
+      await rail.waitFor({ state: "visible" });
+      const columns = await rail.locator(".doc-open-summary-group").first().evaluate((el) => {
+        const tracks = getComputedStyle(el).gridTemplateColumns.split(" ").filter(Boolean);
+        const [label, count] = [el.querySelector("dt"), el.querySelector("dd")].map((c) => c?.getBoundingClientRect());
+        return { tracks: tracks.length, sameRow: !!label && !!count && Math.abs(label.top - count.top) < 2 };
+      });
+      assert.equal(columns.tracks, 2, "labels and counts share one two-column grid");
+      assert.ok(columns.sameRow, "a count sits on its label's row");
+
+      const edges = await rail.evaluate((el) => ({
+        label: el.querySelector("dt")?.getBoundingClientRect().left,
+        oldest: el.querySelector(".doc-open-oldest")?.getBoundingClientRect().left,
+      }));
+      assert.ok(edges.label != null && edges.oldest != null, "rail shows a label and an Oldest open link");
+      assert.ok(Math.abs(edges.oldest - edges.label) < 1, `Oldest open starts at the label edge (${edges.oldest} vs ${edges.label})`);
+    } finally {
+      await context.close();
+    }
+  } finally {
+    for (const id of ids) await deleteDoc(id);
+  }
+});
+
+// the list card keeps tabindex=-1 after a Retry handoff → only the handoff marker may draw its ring
+test("list card: a mouse click never rings the card, a Retry handoff rings it inside the clipped edge", async () => {
+  const ids = await seedManyDocs(3, "ring");
+  try {
+    const context: BrowserContext = await browser.newContext({ viewport: { width: 1440, height: 900 } });
+    const page: Page = await context.newPage();
+    try {
+      await page.goto(`${serverUrl}/#clauded-docs`, { waitUntil: "networkidle" });
+      const card = page.locator(".card.doc-list-card");
+      await card.waitFor({ state: "visible" });
+      const ring = () => card.evaluate((el) => {
+        const style = getComputedStyle(el);
+        return { focused: document.activeElement === el, style: style.outlineStyle, offset: parseFloat(style.outlineOffset) };
+      });
+
+      await card.evaluate((el) => el.setAttribute("tabindex", "-1"));
+      await card.click({ position: { x: 2, y: 2 } });
+      const clicked = await ring();
+      assert.ok(clicked.focused, "the click focuses the card itself");
+      assert.equal(clicked.style, "none", "a plain mouse focus draws no ring");
+
+      await card.evaluate((el) => {
+        el.blur();
+        el.setAttribute("data-focus-handoff", "true");
+        (el as HTMLElement).focus();
+      });
+      const handed = await ring();
+      assert.notEqual(handed.style, "none", "the handoff draws the ring");
+      assert.ok(handed.offset < 0, `the ring sits inside the clipped card (offset ${handed.offset})`);
+    } finally {
+      await context.close();
+    }
+  } finally {
+    for (const id of ids) await deleteDoc(id);
+  }
+});
+
 // open-summary rail at a desktop width: pinned on page scroll, ledger fits its remaining column
 test("open-summary rail: at 1440px the rail stays in view on page scroll and the ledger fits beside it", async () => {
   const ids = await seedManyDocs(30, "rail");
