@@ -45,18 +45,13 @@ export interface CostTimeseriesResponse {
 }
 
 /** The shown window moved back `days` days, its last day cut at the request's bucket-tz time of day. */
-export interface CostTimeseriesPriorWindow {
+export interface CostTimeseriesPriorWindow extends Omit<CostTimeseriesPoint, "date" | "session_count"> {
   /** Inclusive — the shown first day minus `days`. */
   period_start: string;
   /** Exclusive — the shown first day. */
   period_end: string;
   /** Bucket-tz HH:MM:SS → the last prior day counts events at or before it. */
   cut_time: string;
-  input_tokens: number;
-  output_tokens: number;
-  cache_read_tokens: number;
-  cache_creation_tokens: number;
-  cost_usd: number;
 }
 
 // Mirrors `core.DaemonStatus` Prisma enum — exhaustive union (not `string`) so

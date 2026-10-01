@@ -83,14 +83,9 @@ interface TimeseriesRow {
   session_count: bigint;
 }
 
-interface PriorWindowRow {
+interface PriorWindowRow extends Omit<TimeseriesRow, "date" | "session_count"> {
   period_start: Date;
   period_end: Date;
-  input_tokens: bigint;
-  output_tokens: bigint;
-  cache_read_tokens: bigint;
-  cache_creation_tokens: bigint;
-  cost_usd: Prisma.Decimal;
 }
 
 export async function registerDashboardRoutes(app: FastifyInstance): Promise<void> {
@@ -216,8 +211,7 @@ async function handleCostTimeseries(
     // Pin the series window to the day-bucket timezone's "today", the SAME calendar
     // day the KPI path buckets on — session-tz CURRENT_DATE would drift a day behind
     // (00:00–08:59 KST renders yesterday-as-today). Bound as a bind param (::date).
-    const clock = getBucketTzClock(new Date());
-    const todayIso = clock.day;
+    const { day: todayIso, time: cutTime } = getBucketTzClock(new Date());
     const hasPriorWindow = request.query.prior_window === "1" || request.query.prior_window === "true";
     // generate_series fills gap days with zero rows (LEFT JOIN). Interval embedded
     // via Prisma.raw is safe here because `days` was validated against allowlist.
@@ -237,7 +231,7 @@ async function handleCostTimeseries(
       GROUP BY d
       ORDER BY d ASC
     `,
-      hasPriorWindow ? findCostPriorWindow(windowLowerBound, days, clock.time) : undefined,
+      hasPriorWindow ? findCostPriorWindow(windowLowerBound, days, cutTime) : undefined,
     ]);
 
     const points: CostTimeseriesPoint[] = rows.map((row) => ({
