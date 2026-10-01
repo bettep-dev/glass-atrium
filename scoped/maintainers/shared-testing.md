@@ -44,6 +44,7 @@ Every section kept in the rule file is kept because a NAMED reader outside the f
     - bolded leads: **Authoring scope** · **Grouping** · **Fold-back** · **ID ban** · **Deletion duty** · **DAMP carve-out**.
   - Also stable, because the `Test Depth and Upkeep` ledger rows above point into it: `## Test Depth and Upkeep` and its bolded leads **Depth follows risk** · **Coupled-test check** · **One-off disposition**.
   - **Naming** binds the same way: `agents/glass-atrium-dev-python.md` → `### Tests = Specification` cites it.
+  - **Test data** and **Shared fixture** bind the same way: `agents/glass-atrium-dev-python.md` → `### Testing` cites them.
 
 ## Backing honesty — Test Quality
 

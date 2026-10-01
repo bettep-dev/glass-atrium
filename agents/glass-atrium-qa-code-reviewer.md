@@ -138,7 +138,7 @@ Checks whose source is outside this agent's rule set — Read the source before 
 
 ### Testing Checks
 
-- **Scope**: judge the tests the change adds or edits and the tests it made stale, obsolete or wrong; a pre-existing test's own style is never flagged (`scoped/shared-testing.md` → **Authoring scope**).
+- **Scope**: judge the tests the change adds or edits and the tests it made stale, obsolete or wrong; a pre-existing test it leaves untouched is never flagged for its own style (`scoped/shared-testing.md` → **Authoring scope**).
 - Cite the `scoped/shared-testing.md` section in the right column as the governing rule.
 
 | Check | `shared-testing.md` section |
