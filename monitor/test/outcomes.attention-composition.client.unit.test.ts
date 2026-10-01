@@ -1182,8 +1182,12 @@ describe("Task results reads opt into the prior window", () => {
     assert.strictEqual(params.get("days"), "30");
     assert.strictEqual(params.get("prior_window"), "1");
   });
-  test("only the needs-you headline asks for the prior count, and its total is returned", async () => {
+  test("only the needs-you headline asks for the prior count, and its total is returned", async (t) => {
     const urls: string[] = [];
+    const realFetch = trendHelpers.fetch;
+    t.after(() => {
+      trendHelpers.fetch = realFetch;
+    });
     trendHelpers.fetch = async (url: string) => {
       urls.push(url);
       const isHead = !url.includes("review_flag");
