@@ -268,23 +268,11 @@ test("filter-reset: Load More 누적 후 doc_status chip 변경 → 페이지 re
   try {
     const context: BrowserContext = await browser.newContext();
     const page: Page = await context.newPage();
-    const keyWarnings: string[] = [];
-    page.on("console", (msg) => {
-      if (msg.text().includes("same key")) keyWarnings.push(msg.text());
-    });
     try {
       await page.goto(`${serverUrl}/#clauded-docs`, { waitUntil: "networkidle" });
 
       // 기본 '열림' filter — 60 시드 (doc_review 기본값 · 최신) 가 첫 page 점유.
       await waitForRowCountAtLeast(page, 50);
-
-      // a doc landing between page 1 and Load More shifts the offset window → page 2 repeats page 1's last group
-      const late = await postCreate({
-        title: makeTitle("ac3reset-late", 0),
-        author: "load-more-tester",
-        html_body: makeHtmlBody("ac3reset-late"),
-      });
-      ids.push(late.id);
 
       // Load More click → 누적 ≥60. Promise.all 로 click + offset=50 응답 동기화.
       const loadMoreBtn = loadMoreButton(page);
@@ -295,19 +283,57 @@ test("filter-reset: Load More 누적 후 doc_status chip 변경 → 페이지 re
         (url) => url.includes("offset=50"),
       );
       await waitForRowCountAtLeast(page, 60);
-      const seededTitles = await getRowTitles(page, "ac3reset");
-      assert.strictEqual(
-        new Set(seededTitles).size,
-        seededTitles.length,
-        `a group repeated across the shifted page renders once (${seededTitles.length} rows, ${new Set(seededTitles).size} unique)`,
-      );
-      assert.deepStrictEqual(keyWarnings, [], "no duplicate React keys after Load More");
 
       // 'All' chip 으로 filter 변경 → offset 리셋 + 새 첫 50 fetch.
       // 누적된 60+ 행이 사라지고 최대 50 행만 표시되어야 (리셋 증거).
       // clickDocStatusChip 는 offset 미포함 응답 대기 → reset 완료 시그널.
       await clickDocStatusChip(page, "All");
       await waitForRowCountAtMost(page, 50);
+    } finally {
+      await context.close();
+    }
+  } finally {
+    for (const id of ids) await deleteDoc(id);
+  }
+});
+
+// load-more under a concurrent writer: offset paging shifts by one → page 2 repeats page 1's last group
+test("load-more: a doc created between page 1 and Load More still renders every group once with no duplicate React keys", async () => {
+  const ids = await seedManyDocs(60, "ac3shift");
+  try {
+    const context: BrowserContext = await browser.newContext();
+    const page: Page = await context.newPage();
+    const keyWarnings: string[] = [];
+    page.on("console", (msg) => {
+      if (msg.text().includes("same key")) keyWarnings.push(msg.text());
+    });
+    try {
+      await page.goto(`${serverUrl}/#clauded-docs`, { waitUntil: "networkidle" });
+      await waitForRowCountAtLeast(page, 50);
+
+      const interleavedDoc = await postCreate({
+        title: makeTitle("ac3shift-interleaved", 0),
+        author: "load-more-tester",
+        html_body: makeHtmlBody("ac3shift-interleaved"),
+      });
+      ids.push(interleavedDoc.id);
+
+      const loadMoreBtn = loadMoreButton(page);
+      await loadMoreBtn.waitFor({ state: "visible" });
+      await clickAndWaitForListResponse(
+        page,
+        async () => { await loadMoreBtn.click(); },
+        (url) => url.includes("offset=50"),
+      );
+      await waitForRowCountAtLeast(page, 60);
+
+      const seededTitles = await getRowTitles(page, "ac3shift");
+      assert.strictEqual(
+        new Set(seededTitles).size,
+        seededTitles.length,
+        `a group repeated across the shifted page renders once (${seededTitles.length} rows, ${new Set(seededTitles).size} unique)`,
+      );
+      assert.deepStrictEqual(keyWarnings, [], "no duplicate React keys after Load More");
     } finally {
       await context.close();
     }
@@ -1058,12 +1084,12 @@ test("list card: a mouse click never rings the card, a Retry handoff rings it in
 test("open-summary rail: at 1440px the rail stays in view on page scroll and the ledger fits beside it", async () => {
   const ids = await seedManyDocs(29, "rail");
   // newest row in a format other than the page majority → the Tags column is on, as with real mixed data
-  const mixed = await postCreate({
+  const mixedFormatDoc = await postCreate({
     title: makeTitle("rail-md", 0),
     author: "load-more-tester",
     md_body: "# rail-md\n\nmixed-format row",
   });
-  ids.push(mixed.id);
+  ids.push(mixedFormatDoc.id);
   try {
     const context: BrowserContext = await browser.newContext({ viewport: { width: 1440, height: 900 } });
     const page: Page = await context.newPage();
