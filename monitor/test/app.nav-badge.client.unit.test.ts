@@ -478,14 +478,36 @@ test("the Agents nav numeral renders nothing at zero, while unread, or when the 
   }
 });
 
+interface SidebarSurface {
+  Sidebar: (props: Record<string, unknown>) => unknown;
+  React: { createElement: (type: unknown, props: unknown, ...children: unknown[]) => unknown };
+}
+const collectText = (node: unknown): string[] => {
+  if (typeof node === "string" || typeof node === "number") return [String(node)];
+  if (Array.isArray(node)) return node.flatMap(collectText);
+  if (node === null || typeof node !== "object" || !("children" in node)) return [];
+  return collectText((node as { children: unknown[] }).children);
+};
+// Sidebar's visible text, with agentsState reaching it beside the harness exactly as App passes them
+const renderSidebarText = (harness: unknown, agentsState: unknown): string[] => {
+  const surface = app as unknown as SidebarSurface;
+  const stubCreate = surface.React.createElement;
+  surface.React.createElement = (type, props, ...children) => ({ type, props, children });
+  try {
+    return collectText(surface.Sidebar({ active: "dashboard", onNav: () => {}, harness, agentsState, pageState: null }));
+  } finally {
+    surface.React.createElement = stubCreate;
+  }
+};
+
 test("a failed agent-store read leaves the footer and the System map numeral unchanged", () => {
-  const stores = allHealthy({ liveState: ready(daemonPayload(1)), kpiState: ready({ last_1h_fail_count: 2 }) });
-  const without = app.getHarness(stores);
-  const withFailedAgents = app.getHarness({ ...stores, agentsState: { status: "error", data: null, error: "HTTP 503" } });
-  assert.deepStrictEqual(app.systemsRollup(withFailedAgents), app.systemsRollup(without));
-  assert.deepStrictEqual(app.harnessToNavBadges(withFailedAgents), app.harnessToNavBadges(without));
-  assert.strictEqual(withFailedAgents.unreadSources.length, 0, "the agent store is not a harness source");
-  assert.ok(!("agents" in app.harnessToNavBadges(withFailedAgents)), "the harness never claims the Agents slot");
+  const harness = app.getHarness(allHealthy({ liveState: ready(daemonPayload(1)), kpiState: ready({ last_1h_fail_count: 2 }) }));
+  const unread = renderSidebarText(harness, { status: "loading", data: null });
+  const failed = renderSidebarText(harness, { status: "error", data: null, error: "HTTP 503" });
+  const systemMapNumeral = app.harnessToNavBadges(harness).architecture?.badges[0]?.badge;
+  assert.ok(systemMapNumeral && unread.includes(systemMapNumeral), "the render reaches the System map numeral");
+  assert.ok(unread.includes(app.systemsRollup(harness).label), "the render reaches the footer");
+  assert.deepStrictEqual(failed, unread);
 });
 
 // A daemon row may still carry the retired `stale` flag; the verdict is effective_status alone.
