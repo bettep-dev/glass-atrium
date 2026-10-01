@@ -424,7 +424,7 @@ function ScreenClaudedDocs(/* { onNav } */) {
 						putRegionData(s, ctrl, { rows, total, docTotal, hiddenDocTotal, bigmEnabled, groupCounts }),
 					);
 				// Load More — 기존 누적 + 신규 page · 첫 페이지 / search — 교체.
-				setLoadedRows((prev) => (isLoadMore ? appendNewGroupRowsCD(prev, rows) : rows));
+				setLoadedRows((prev) => (isLoadMore ? getMergedGroupRowsCD(prev, rows) : rows));
 				const pageLength = Array.isArray(managedData?.groups) ? managedData.groups.length : rows.length;
 				setConsumedCount(currentOffset + pageLength);
 			})
@@ -3534,9 +3534,9 @@ function getGroupKeyCD(row) {
 	return row.folder_id != null ? `folder:${row.folder_id}` : `doc:${row.id}`;
 }
 
-// Load More append minus groups already held — a concurrent insert shifts the offset window and page 2 repeats page 1's tail
+// held rows + page rows not already held — a concurrent insert shifts the offset window and page 2 repeats page 1's tail
 // ponytail: a concurrent delete shifts the window back and skips a group, which dedupe cannot recover → keyset cursor + dedupe on /groups
-function appendNewGroupRowsCD(heldRows, pageRows) {
+function getMergedGroupRowsCD(heldRows, pageRows) {
 	const heldKeys = new Set(heldRows.map(getGroupKeyCD));
 	return heldRows.concat(pageRows.filter((row) => !heldKeys.has(getGroupKeyCD(row))));
 }
