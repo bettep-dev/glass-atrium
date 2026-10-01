@@ -8,13 +8,12 @@
 // retired "rendered-pixel legibility proxy" measured scale alone, which is the half of
 // the trade that a wider graph does not move.
 //
-// Two halves, asserted together on purpose — each alone is satisfiable by wrecking the
-// other. Fit alone passes by shrinking the map until the text is unreadable; the scale
-// floor alone passes by drawing at the floor and letting the overflow be cut.
+// The default view is an overview: the drawing at 70% of the contain fit, centred, with no label
+// floor — detail is read by zooming in. Readings asserted together:
 //   1. containment — every `.node` / `.cluster` client rect within the canvas rect.
-//   2. legibility  — every node, zone and edge label renders at >= MIN_RENDERED_LABEL_PX.
-// A third reading keeps the fit honest in the other direction: the map fills the pane on its
-// binding axis, so a scale capped below the contain fit turns red.
+//   2. overview share — the drawing spans ~70% of its frame on the binding axis, centred on both axes.
+//   3. reach — zoom-in presses from the default view bring every label to >= MIN_RENDERED_LABEL_PX.
+//   4. reset — the Reset control returns a zoomed-in map to the same default view.
 //
 // Viewport table: 1024 and 1440 are the widths the evaluators scored; 1396 is the width the user
 // actually runs; 1512 and 1920 are the two the fit was first reasoned about. Heights are the window heights
@@ -56,11 +55,20 @@ const PUBLIC_ROOT = resolve(HERE, "..", "public");
 // the 12px meta step, measured on the drawn labels — owned here so lowering the screen's floor cannot pass
 const MIN_RENDERED_LABEL_PX = 12;
 
-// a fitted map reaches at least this share of the pane on its binding axis (the rest is diagramPadding)
+// the default view's share of the contain fit
+const DEFAULT_VIEW_SHARE = 0.7;
+
+// drawn boxes span at least this share of the viewBox on its binding axis (the rest is diagramPadding)
 const MIN_BINDING_AXIS_FILL = 0.9;
 
-// empty pane above or below the drawing — the viewBox padding plus the zone title band, at scale <= 1, stays under this
-const MAX_FRAME_GAP_PX = 24;
+// zoom-in presses from the default view within which every label reaches MIN_RENDERED_LABEL_PX
+const ZOOM_IN_PRESS_BUDGET = 3;
+
+// presses that take the map well past the default view before Reset — far enough to move the library's zoom base
+const ZOOM_IN_PRESSES_BEFORE_RESET = 8;
+
+// slack difference between opposite sides of a centred drawing — viewBox padding asymmetry at scale <= 0.7 plus rounding
+const MAX_CENTRING_SKEW_PX = 8;
 
 // CTM-derived reads (labelPx, scale) carry float noise → the label floor and the scale-1 cap compare within it
 const CTM_FLOAT_TOLERANCE = 1e-6;
@@ -82,12 +90,14 @@ const BOUND_DAEMON = "autoagent";
 interface FitReading {
 	paneWidth: number;
 	paneHeight: number;
+	// pane width left of the zoom controls — the area the drawing is fitted and centred in
+	drawableWidth: number;
 	scale: number;
 	labelPx: number;
 	boxCount: number;
 	drawnWidthPx: number;
 	drawnHeightPx: number;
-	gapPx: { above: number; below: number };
+	gapPx: { above: number; below: number; left: number; right: number };
 	worstOverflowPx: number;
 	worstId: string;
 	// the drawn box reaching deepest under the zoom controls — a positive 2D overlap depth means a box sits under a button
@@ -148,6 +158,16 @@ after(async () => {
 // 화면에 resize 리스너가 없어 fit 은 최초 렌더에서 한 번만 적용됨 — 그래서 뷰포트마다 새 페이지를 염
 // (이미 뜬 페이지의 크기를 바꾸면 fit 이 다시 걸리지 않아 이전 폭의 배율을 재게 됨).
 async function readFit(width: number, height: number, extraSource?: string): Promise<FitReading> {
+	const { page, canvasSelector } = await openFittedPage(width, height, extraSource);
+	try {
+		return await measureFit(page, canvasSelector);
+	} finally {
+		await page.close();
+	}
+}
+
+// page at the map's default view — the fit mark is set and its scale has reached the CTM
+async function openFittedPage(width: number, height: number, extraSource?: string): Promise<{ page: Page; canvasSelector: string }> {
 	assert.ok(browser, "browser must be up");
 	const page = await browser.newPage({ viewport: { width, height } });
 	try {
@@ -192,8 +212,15 @@ async function readFit(width: number, height: number, extraSource?: string): Pro
 		);
 		// 배율이 meet 과 같은 뷰포트는 위 대조로 pan 반영을 못 가림 — 라이브러리의 다음 프레임 반영을 한 프레임 넘겨 보장.
 		await page.evaluate(() => new Promise((resolve) => requestAnimationFrame(resolve)));
+		return { page, canvasSelector };
+	} catch (e) {
+		await page.close();
+		throw e;
+	}
+}
 
-		return await page.evaluate((sel) => {
+async function measureFit(page: Page, canvasSelector: string): Promise<FitReading> {
+	return await page.evaluate((sel) => {
 			const canvas = document.querySelector(sel) as HTMLElement;
 			const pane = canvas.getBoundingClientRect();
 			const vp = canvas.querySelector(".svg-pan-zoom_viewport") as SVGGraphicsElement;
@@ -243,25 +270,79 @@ async function readFit(width: number, height: number, extraSource?: string): Pro
 				}
 			}
 
-			// lane mode only: its controls row under the drawing is chrome, not an empty band → the band below ends at its top
-			const isLaneMode = canvas.hasAttribute("data-arch-controls-lane");
-			const frameBottom =
-				isLaneMode && controls && controls.top >= drawn.bottom ? Math.min(pane.bottom, controls.top) : pane.bottom;
+			const drawableRight = controls ? Math.min(pane.right, controls.left) : pane.right;
 
 			return {
 				paneWidth: pane.width,
 				paneHeight: pane.height,
+				drawableWidth: drawableRight - pane.left,
 				scale,
 				labelPx: declared * scale,
 				boxCount: boxes.length,
 				drawnWidthPx: drawn.right - drawn.left,
 				drawnHeightPx: drawn.bottom - drawn.top,
-				gapPx: { above: drawn.top - pane.top, below: frameBottom - drawn.bottom },
+				gapPx: {
+					above: drawn.top - pane.top,
+					below: pane.bottom - drawn.bottom,
+					left: drawn.left - pane.left,
+					right: drawableRight - drawn.right,
+				},
 				worstOverflowPx,
 				worstId,
 				controls: { intrusionPx: controlsIntrusionPx, intruderId: controlsIntruderId },
 			};
 		}, canvasSelector);
+}
+
+async function readViewportScale(page: Page, canvasSelector: string): Promise<number> {
+	return page.evaluate((sel) => {
+		const vp = document.querySelector(`${sel} .svg-pan-zoom_viewport`);
+		return vp instanceof SVGGraphicsElement ? (vp.getCTM()?.a ?? 0) : 0;
+	}, canvasSelector);
+}
+
+// clicks a zoom control and waits until the library has flushed a different scale into the CTM
+async function pressZoomControl(page: Page, canvasSelector: string, name: string): Promise<void> {
+	const before = await readViewportScale(page, canvasSelector);
+	await page.getByRole("button", { name }).click();
+	await page.waitForFunction(
+		({ sel, prev }) => {
+			const vp = document.querySelector(`${sel} .svg-pan-zoom_viewport`);
+			const m = vp instanceof SVGGraphicsElement ? vp.getCTM() : null;
+			return Boolean(m && Math.abs(m.a - prev) > 1e-6);
+		},
+		{ sel: canvasSelector, prev: before },
+		{ timeout: 10_000 },
+	);
+	await page.evaluate(() => new Promise((resolve) => requestAnimationFrame(resolve)));
+}
+
+// smallest label size at the default view, then after each zoom-in press up to the budget
+async function readZoomInLabelPx(width: number, height: number): Promise<number[]> {
+	const { page, canvasSelector } = await openFittedPage(width, height);
+	try {
+		const sizes = [(await measureFit(page, canvasSelector)).labelPx];
+		for (let press = 1; press <= ZOOM_IN_PRESS_BUDGET; press += 1) {
+			await pressZoomControl(page, canvasSelector, "Zoom in");
+			sizes.push((await measureFit(page, canvasSelector)).labelPx);
+		}
+		return sizes;
+	} finally {
+		await page.close();
+	}
+}
+
+// default-view scale, the scale after zooming well in, and the scale the Reset control returns to
+async function readResetAfterZoomIn(width: number, height: number, extraSource?: string) {
+	const { page, canvasSelector } = await openFittedPage(width, height, extraSource);
+	try {
+		const defaultScale = await readViewportScale(page, canvasSelector);
+		for (let press = 0; press < ZOOM_IN_PRESSES_BEFORE_RESET; press += 1) {
+			await pressZoomControl(page, canvasSelector, "Zoom in");
+		}
+		const zoomedScale = await readViewportScale(page, canvasSelector);
+		await pressZoomControl(page, canvasSelector, "Reset diagram view");
+		return { defaultScale, zoomedScale, resetScale: await readViewportScale(page, canvasSelector) };
 	} finally {
 		await page.close();
 	}
@@ -512,21 +593,27 @@ for (const { width, height } of VIEWPORTS) {
 		});
 	}
 
-	test(`every label stays legible at ${width}x${height}`, async () => {
-		const r = await readFit(width, height);
-		assert.ok(r.labelPx > 0, "no drawn label was measured");
+	test(`zooming in from the default view makes every label legible within ${ZOOM_IN_PRESS_BUDGET} presses at ${width}x${height}`, async () => {
+		const sizes = await readZoomInLabelPx(width, height);
+		assert.ok(sizes[0] > 0, "no drawn label was measured");
+		const reached = sizes.findIndex((px) => px >= MIN_RENDERED_LABEL_PX - CTM_FLOAT_TOLERANCE);
 		assert.ok(
-			r.labelPx >= MIN_RENDERED_LABEL_PX - CTM_FLOAT_TOLERANCE,
-			`the smallest label renders at ${r.labelPx.toFixed(2)}px, under the ${MIN_RENDERED_LABEL_PX}px floor (scale ${r.scale.toFixed(4)})`,
+			reached >= 0,
+			`labels stay under ${MIN_RENDERED_LABEL_PX}px after ${ZOOM_IN_PRESS_BUDGET} zoom-in presses: ${sizes.map((px) => px.toFixed(2)).join(" → ")}`,
 		);
 	});
 
-	test(`the map fills the pane on its binding axis and still flows left to right at ${width}x${height}`, async () => {
+	test(`the default view spans 70% of its frame on the binding axis and still flows left to right at ${width}x${height}`, async () => {
 		const r = await readFit(width, height);
-		const fill = Math.max(r.drawnWidthPx / r.paneWidth, r.drawnHeightPx / r.paneHeight);
+		const fill = Math.max(r.drawnWidthPx / r.drawableWidth, r.drawnHeightPx / r.paneHeight);
+		const atNaturalShare = r.scale >= DEFAULT_VIEW_SHARE - CTM_FLOAT_TOLERANCE;
 		assert.ok(
-			fill >= MIN_BINDING_AXIS_FILL || r.scale >= 1 - CTM_FLOAT_TOLERANCE,
-			`the map fills ${(fill * 100).toFixed(0)}% of the pane on its binding axis at scale ${r.scale.toFixed(4)}`,
+			fill <= DEFAULT_VIEW_SHARE + 0.01,
+			`the map fills ${(fill * 100).toFixed(1)}% of its frame on the binding axis — more than the 70% overview`,
+		);
+		assert.ok(
+			fill >= DEFAULT_VIEW_SHARE * MIN_BINDING_AXIS_FILL || atNaturalShare,
+			`the map fills ${(fill * 100).toFixed(1)}% of its frame on the binding axis at scale ${r.scale.toFixed(4)} — less than the 70% overview`,
 		);
 		assert.ok(
 			r.drawnWidthPx > r.drawnHeightPx,
@@ -536,13 +623,24 @@ for (const { width, height } of VIEWPORTS) {
 }
 
 for (const { width, height } of VIEWPORTS) {
-	test(`the drawing fills its frame with no empty band above or below it at ${width}x${height}`, async () => {
+	test(`the default view is centred on both axes of its frame at ${width}x${height}`, async () => {
 		const r = await readFit(width, height);
 		const gaps = `pane ${r.paneWidth.toFixed(0)}x${r.paneHeight.toFixed(0)} · drawn ${r.drawnWidthPx.toFixed(0)}x${r.drawnHeightPx.toFixed(0)} · ` +
-			`${r.gapPx.above.toFixed(0)}px empty above, ${r.gapPx.below.toFixed(0)}px below`;
-		assert.ok(r.gapPx.above <= MAX_FRAME_GAP_PX, `a band above the drawing: ${gaps}`);
-		assert.ok(r.gapPx.below <= MAX_FRAME_GAP_PX, `a band below the drawing: ${gaps}`);
+			`slack above ${r.gapPx.above.toFixed(1)} below ${r.gapPx.below.toFixed(1)} left ${r.gapPx.left.toFixed(1)} right ${r.gapPx.right.toFixed(1)}`;
+		assert.ok(Math.abs(r.gapPx.above - r.gapPx.below) <= MAX_CENTRING_SKEW_PX, `not centred vertically: ${gaps}`);
+		assert.ok(Math.abs(r.gapPx.left - r.gapPx.right) <= MAX_CENTRING_SKEW_PX, `not centred horizontally: ${gaps}`);
 	});
+
+	for (const partSet of [
+		{ name: "the served map", extraSource: undefined },
+		{ name: "a wider and taller map", extraSource: WIDE_TALL_PROBE },
+	]) {
+		test(`Reset returns a zoomed-in map to the default view with ${partSet.name} at ${width}x${height}`, async () => {
+			const r = await readResetAfterZoomIn(width, height, partSet.extraSource);
+			assert.ok(r.zoomedScale > r.defaultScale * 2, `zoom-in did not move past the default view: ${JSON.stringify(r)}`);
+			assert.ok(Math.abs(r.resetScale - r.defaultScale) < 1e-3, `Reset landed at ${r.resetScale.toFixed(4)}, not the default ${r.defaultScale.toFixed(4)}`);
+		});
+	}
 }
 
 test("a zone whose title repeats its lone member hides the title and keeps no band for it", async () => {
