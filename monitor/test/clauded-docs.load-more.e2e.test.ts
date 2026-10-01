@@ -18,7 +18,7 @@ import "dotenv/config";
 
 import Fastify, { type FastifyInstance } from "fastify";
 import fastifyStatic from "@fastify/static";
-import type { Browser, BrowserContext, Page } from "playwright";
+import type { Browser, BrowserContext, Locator, Page } from "playwright";
 import { chromium } from "playwright";
 
 import { disconnectPrisma, getPrisma } from "../src/server/db.js";
@@ -187,6 +187,23 @@ function loadMoreButton(page: Page) {
   return page.getByRole("button", { name: /^Show [\d,]+ more$/ });
 }
 
+// helper — a test's own row by its unique seed title, paging with Load More until it renders.
+//   · other test files share this DB and insert newer docs concurrently → an own row can sit past page 1.
+async function revealRowByTitle(page: Page, title: string, rowSelector = "tr.doc-row"): Promise<Locator> {
+  const row = page.locator(rowSelector, { hasText: title }).first();
+  const loadMore = loadMoreButton(page);
+  while ((await row.count()) === 0 && (await loadMore.isVisible())) {
+    await clickAndWaitForListResponse(
+      page,
+      async () => { await loadMore.click(); },
+      (url) => url.includes("/groups") && url.includes("offset="),
+    );
+    await page.getByRole("button", { name: "Loading more" }).waitFor({ state: "hidden" });
+  }
+  await row.waitFor({ state: "visible" });
+  return row;
+}
+
 // helper — 'doc-row' 가시 행 수 카운트.
 async function countVisibleRows(page: Page): Promise<number> {
   return await page.locator("tr.doc-row").count();
@@ -287,8 +304,17 @@ test("filter-reset: Load More 누적 후 doc_status chip 변경 → 페이지 re
       // 'All' chip 으로 filter 변경 → offset 리셋 + 새 첫 50 fetch.
       // 누적된 60+ 행이 사라지고 최대 50 행만 표시되어야 (리셋 증거).
       // clickDocStatusChip 는 offset 미포함 응답 대기 → reset 완료 시그널.
+      // a reset that lands one render late still fires a stale offset=50 request first, which the row count alone cannot see
+      const offsetRequests: string[] = [];
+      page.on("request", (req) => {
+        const url = new URL(req.url());
+        if (url.pathname.endsWith("/api/clauded-docs/groups") && url.searchParams.has("offset")) {
+          offsetRequests.push(url.search);
+        }
+      });
       await clickDocStatusChip(page, "All");
       await waitForRowCountAtMost(page, 50);
+      assert.deepStrictEqual(offsetRequests, [], "the chip change requests only the first page");
     } finally {
       await context.close();
     }
@@ -371,8 +397,7 @@ test("superseded-drawer: supersedes_id 가진 doc 선택 → meta sidebar 'Versi
       await page.locator("tr.doc-row").first().waitFor({ state: "visible" });
 
       // successor 행 클릭 → fullscreen viewer 진입 → meta sidebar 노출.
-      const succRow = page.locator("tr.doc-row", { hasText: succTitle });
-      await succRow.waitFor({ state: "visible" });
+      const succRow = await revealRowByTitle(page, succTitle);
       await succRow.click();
 
       // (a) viewer meta sidebar — DocMetaPanelCD → PredecessorPanelCD 의 'Version history' <details> 섹션 PRESENT.
@@ -492,7 +517,7 @@ test("cascade-doc-status: folder group cascade — PUT doc_status=done on B → 
       const bRow = page.locator("tr.doc-row", { hasText: bTitle });
       const cRow = page.locator("tr.doc-row", { hasText: cTitle });
       // 둘 중 하나는 group representative 로 노출 (DISTINCT ON folder_id · created_at DESC) — C 가 더 최근 생성 → C 가 representative.
-      await cRow.waitFor({ state: "visible", timeout: 5000 });
+      await revealRowByTitle(page, cTitle);
       const bVisible = await bRow.count();
       const cVisible = await cRow.count();
       assert.ok(cVisible > 0,
@@ -524,8 +549,7 @@ test("cascade-doc-status: folder group cascade — PUT doc_status=done on B → 
 async function checkRowByTitle(page: Page, title: string): Promise<void> {
   // group 펼침 시 representative 는 root + member 행 양쪽에 렌더 → .first() (DOM 순서 = root) 로
   // strict-mode 단일화 — selection 은 doc id 기준이라 어느 행의 checkbox 든 동일.
-  const row = page.locator("tr.doc-row", { hasText: title }).first();
-  await row.waitFor({ state: "visible" });
+  const row = await revealRowByTitle(page, title);
   // row 내 checkbox — aria-label=`Select ${title}`.
   await row.getByRole("checkbox", { name: `Select ${title}`, exact: true }).check();
 }
@@ -567,8 +591,7 @@ async function clickUngroupButton(page: Page): Promise<void> {
 // helper — group root row 의 toggle 클릭 (member rows expand) + member list fetch 대기.
 //   · expand 시 GroupMembersRowsCD 가 /api/clauded-docs?folder_id=X 호출.
 async function expandGroup(page: Page, rootTitle: string): Promise<void> {
-  const rootRow = page.locator("tr.doc-row.is-group-root", { hasText: rootTitle });
-  await rootRow.waitFor({ state: "visible" });
+  const rootRow = await revealRowByTitle(page, rootTitle, "tr.doc-row.is-group-root");
   const toggleBtn = rootRow.locator("button.doc-group-toggle").first();
   await toggleBtn.waitFor({ state: "visible" });
   await Promise.all([
@@ -656,8 +679,7 @@ test("group-create: 격리 3 doc multi-select → 'Group' 클릭 → POST /group
       await listReloaded;
 
       // C (created_at DESC 기준 최신) 가 group representative — member_count_badge 노출 확인.
-      const cRow = page.locator("tr.doc-row.is-group-root", { hasText: titles[2] });
-      await cRow.waitFor({ state: "visible", timeout: 5000 });
+      const cRow = await revealRowByTitle(page, titles[2], "tr.doc-row.is-group-root");
       // 멤버수 배지 = shared Badge(role="count") → [data-doc-member-count] wrapper 안 .pill--count.
       //   group-root row 로 scope → 페이지 내 다른 count pill 과 미충돌.
       const badge = cRow.locator("[data-doc-member-count] .pill--count");
@@ -981,7 +1003,7 @@ test("column-width: 1010px 카드 바닥에서 제목 본문 상자가 목록·�
     const page: Page = await context.newPage();
     try {
       await page.goto(`${serverUrl}/#clauded-docs`, { waitUntil: "networkidle" });
-      await page.locator("tr.doc-row", { hasText: "widthpin" }).first().waitFor({ state: "visible" });
+      await revealRowByTitle(page, wideTitle);
 
       const listBox = await measureTitleBox(page, "widthpin");
       assert.strictEqual(
@@ -1084,8 +1106,9 @@ test("list card: a mouse click never rings the card, a Retry handoff rings it in
 test("open-summary rail: at 1440px the rail stays in view on page scroll and the ledger fits beside it", async () => {
   const ids = await seedManyDocs(29, "rail");
   // newest row in a format other than the page majority → the Tags column is on, as with real mixed data
+  const mixedFormatTitle = makeTitle("rail-md", 0);
   const mixedFormatDoc = await postCreate({
-    title: makeTitle("rail-md", 0),
+    title: mixedFormatTitle,
     author: "load-more-tester",
     md_body: "# rail-md\n\nmixed-format row",
   });
@@ -1096,6 +1119,7 @@ test("open-summary rail: at 1440px the rail stays in view on page scroll and the
     try {
       await page.goto(`${serverUrl}/#clauded-docs`, { waitUntil: "networkidle" });
       await page.locator("aside.doc-open-summary").waitFor({ state: "visible" });
+      await revealRowByTitle(page, mixedFormatTitle);
       await page.locator("table.tbl th.doc-col-tags").waitFor({ state: "attached" });
 
       const ledger = await page.evaluate(() => {
