@@ -489,9 +489,9 @@ describe("healthy live fixture", () => {
 			assert.ok(probe.legend.some((line) => line.text.includes(word)), `legend lacks "${word}" — read: ${JSON.stringify(probe.legend)}`);
 	});
 
-	test("the Fit control shows its name and only a title repeating its one box is hidden", async () => {
-		const fit = ctx.page.getByRole("button", { name: "Fit diagram to view" });
-		assert.match(await fit.innerText(), /\bFit\b/);
+	test("the Reset control shows its name and only a title repeating its one box is hidden", async () => {
+		const reset = ctx.page.getByRole("button", { name: "Reset diagram view" });
+		assert.match(await reset.innerText(), /\bReset\b/);
 
 		const titles = await ctx.page.evaluate((canvas) =>
 			[...document.querySelectorAll(`${canvas} svg g.cluster`)].map((el) => {

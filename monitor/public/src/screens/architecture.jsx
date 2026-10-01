@@ -27,14 +27,12 @@ const MAP_LABEL = {
 	},
 };
 
-// smallest rendered label (the 12px meta step) — the fit never shrinks the map below it
-const MIN_RENDERED_LABEL_PX = 12;
+// default/Reset view = this share of the contain fit — an overview with no label floor; detail is read by zooming in
+const DEFAULT_VIEW_SHARE = 0.7;
 
-// scale floor derived from the two above, so the floor is a rendered size rather than a bare ratio
-const LEGIBLE_FIT_FLOOR = MIN_RENDERED_LABEL_PX / MAP_LABEL.fontPx;
-
-// svg-pan-zoom 라이브러리 minZoom — LEGIBLE_FIT_FLOOR 보다 낮아야 zoom() 이 minZoom 으로 되끌어올려지지 않음.
+// svg-pan-zoom minZoom, relative to the zoom at the last resize() — the default view rebases it, so it bounds zoom-out from there
 const PAN_ZOOM_MIN = 0.2;
+const PAN_ZOOM_MAX = 5;
 
 // zone inset around its members (SVG user units) — the gap ELK itself leaves under the last member
 const ZONE_PAD = 12;
@@ -67,7 +65,6 @@ const CANVAS = {
 	// pane clamped to its drawing's height
 	FIT_HEIGHT_ATTR: "data-arch-fit-height",
 	// drawing floor-bound and too wide for the room beside the zoom controls → they fold into a row under it
-	CONTROLS_LANE_ATTR: "data-arch-controls-lane",
 };
 // map slot wrapper — outlives the error-to-map swap, so a map Retry hands focus here on recovery
 const MAP_REGION_ID_AR = "arch-map-region";
@@ -715,8 +712,6 @@ function ScreenArchitecture(
 					// 줌/팬/맞춤 컨트롤 클러스터 — 캔버스 우하단, hint 위. 불투명 면(상시 chrome) → blur 금지.
 					".arch-zoom-controls { position: absolute; right: 8px; bottom: 28px; display: flex; flex-direction: column; gap: 4px; z-index: 2; } " +
 					// lane mode — one row of controls with the hint on its left, a toolbar under the drawing rather than over it
-					`.arch-mermaid-canvas[${CANVAS.CONTROLS_LANE_ATTR}] .arch-zoom-controls { flex-direction: row; bottom: 6px; } ` +
-					`.arch-mermaid-canvas[${CANVAS.CONTROLS_LANE_ATTR}] .arch-canvas-hint { right: auto; left: 8px; } ` +
 					".arch-zoom-btn { min-width: 32px; height: 32px; display: inline-flex; gap: 4px; align-items: center; justify-content: center; " +
 					"background: rgb(var(--elev)); border: 1px solid rgb(var(--line)); border-radius: 6px; color: rgb(var(--dim)); " +
 					'cursor: pointer; font-family: "JetBrains Mono", monospace; font-size: 16px; line-height: 1; padding: 0; ' +
@@ -971,9 +966,9 @@ function MermaidCanvas({
 		const inst = panZoomRef.current;
 		if (inst) inst.zoomBy(factor);
 	}, []);
-	const fitToView = useCallbackAR(() => {
+	const resetView = useCallbackAR(() => {
 		const inst = panZoomRef.current;
-		if (inst) applyLegibleFitAR(inst, containerRef.current);
+		if (inst) applyDefaultViewAR(inst, containerRef.current);
 	}, []);
 	const panBy = useCallbackAR((dx, dy) => {
 		const inst = panZoomRef.current;
@@ -1201,9 +1196,8 @@ function MermaidCanvas({
 			instance = window.svgPanZoom(svgEl, {
 				// 컨트롤 아이콘 제거 — 마우스 휠/드래그/더블클릭만 사용.
 				controlIconsEnabled: false,
-				// 라이브러리 줌 하한 — 전폭 fit 비율이 LEGIBLE_FIT_FLOOR 미만이어도 zoom() 을 되끌어올리지 않도록 더 낮게 (PAN_ZOOM_MIN).
 				minZoom: PAN_ZOOM_MIN,
-				maxZoom: 5,
+				maxZoom: PAN_ZOOM_MAX,
 				zoomScaleSensitivity: 0.3,
 				panEnabled: true,
 				zoomEnabled: true,
@@ -1211,8 +1205,7 @@ function MermaidCanvas({
 				mouseWheelZoomEnabled: true,
 				// false → 단일 클릭은 React onClick 으로 정상 버블링 → 노드 클릭 → 상세 모달 보존.
 				preventMouseEventsDefault: false,
-				// 자동 fit/center 비활성 — 라이브러리 fit 는 폭 기준 으깸·floor 무시 →
-				// applyLegibleFitAR 가 절대 행렬 스케일을 직접 계산.
+				// 자동 fit/center 비활성 → applyDefaultViewAR 가 절대 행렬 스케일을 직접 계산.
 				fit: false,
 				center: false,
 				contain: false,
@@ -1224,7 +1217,7 @@ function MermaidCanvas({
 			raf1 = requestAnimationFrame(() => {
 				raf2 = requestAnimationFrame(() => {
 					if (panZoomRef.current !== instance) return; // 그새 교체됨
-					applyLegibleFitAR(instance, root);
+					applyDefaultViewAR(instance, root);
 				});
 			});
 		} catch (_e) {
@@ -1289,7 +1282,7 @@ function MermaidCanvas({
 		[onSelectNode],
 	);
 
-	// 키보드 탐색 — +/- 줌, 화살표 팬, 0 맞춤. 캔버스 포커스 시 동작 (touch/mouse 동등 a11y).
+	// 키보드 탐색 — +/- 줌, 화살표 팬, 0 기본 보기 복귀. 캔버스 포커스 시 동작 (touch/mouse 동등 a11y).
 	const handleKeyDown = useCallbackAR(
 		(e) => {
 			const PAN_STEP = 40;
@@ -1303,7 +1296,7 @@ function MermaidCanvas({
 					zoomBy(0.8);
 					break;
 				case "0":
-					fitToView();
+					resetView();
 					break;
 				case "ArrowUp":
 					panBy(0, PAN_STEP);
@@ -1322,7 +1315,7 @@ function MermaidCanvas({
 			}
 			e.preventDefault();
 		},
-		[zoomBy, fitToView, panBy],
+		[zoomBy, resetView, panBy],
 	);
 
 	if (renderState.status === "rendering" || renderState.status === "idle") {
@@ -1380,16 +1373,16 @@ function MermaidCanvas({
 					<button
 						type="button"
 						className="arch-zoom-btn arch-zoom-btn-labelled"
-						onClick={fitToView}
-						aria-label="Fit diagram to view"
-						title="Fit to view (0)"
+						onClick={resetView}
+						aria-label="Reset diagram view"
+						title="Reset view (0)"
 					>
 						<ArchIconTargetAR />
-						Fit
+						Reset
 					</button>
 				</div>
 
-				{/* 가독 fit 안내 — 넓은 LR 그래프는 휠/+−·드래그/화살표·키보드로 탐색 */}
+				{/* 기본 보기는 개요 — 세부 라벨은 휠/+−·드래그/화살표·키보드로 확대해 탐색 */}
 				{healthPending && (
 					<div className="arch-canvas-busy" role="status">
 						Loading health…
@@ -2145,16 +2138,18 @@ async function fetchJsonAR(url, signal) {
 	return res.json();
 }
 
-// 초기 줌 절대 스케일 — 인자만으로 계산(DOM·instance 미참조). 하한은 폭-fit 으로 내려 클램프되지 않음.
-function getLegibleFitScaleAR(paneW, paneH, graphW, graphH) {
-	if (!(paneW > 0 && paneH > 0 && graphW > 0 && graphH > 0)) return LEGIBLE_FIT_FLOOR;
+// default-view absolute scale from arguments alone (no DOM/instance) · unmeasured dims → the 70% rule at natural size
+function getDefaultViewScaleAR(paneW, paneH, graphW, graphH) {
+	if (!(paneW > 0 && paneH > 0 && graphW > 0 && graphH > 0)) return DEFAULT_VIEW_SHARE;
 	const containFit = Math.min(paneW / graphW, paneH / graphH);
-	return Math.max(Math.min(containFit, 1), LEGIBLE_FIT_FLOOR);
+	return DEFAULT_VIEW_SHARE * Math.min(containFit, 1);
 }
 
-// svg-pan-zoom 초기 줌을 절대 스케일로 직접 적용 (라이브러리 fit:true 는 하한을 무시함).
-// 단계: resize() pane 갱신 → targetAbs = getLegibleFitScaleAR → 상대 zoom(R) → pan(viewBox 원점 상쇄 + 정렬).
-function applyLegibleFitAR(instance, root) {
+/**
+ * Sets the default view: the drawing at DEFAULT_VIEW_SHARE of the contain fit, centred in the frame a contain-fit drawing would fill.
+ * The library zoom bounds are relative to the zoom at the last resize(), so they are widened for the jump and rebased after it — a Reset from a deep zoom-in lands exactly here.
+ */
+function applyDefaultViewAR(instance, root) {
 	// 직전 렌더의 short-graph clamp 를 측정 전 제거 → getSizes() 가 실제 전체 pane 측정 (early-return 가드보다 위 배치 필수).
 	clearCanvasSizingAR(root);
 	if (!instance || typeof instance.getSizes !== "function") return;
@@ -2172,34 +2167,50 @@ function applyLegibleFitAR(instance, root) {
 
 	// the zoom controls stand over the pane's right edge → the drawing fits beside them, so no box sits under a button
 	const drawableW = s.width - getControlsGutterAR(root);
-	const targetAbs = getLegibleFitScaleAR(drawableW, s.height, realW, realH);
+	const targetAbs = getDefaultViewScaleAR(drawableW, s.height, realW, realH);
+	const frameH = (realH * targetAbs) / DEFAULT_VIEW_SHARE;
 
 	// 공개 zoom 은 상대(=절대/originalState) · init 직후 현재 절대행렬 = viewport CTM .a → relative = targetAbs / 현재절대.
 	const curAbs = readViewportScaleAR(root) || s.realZoom || 1;
 	const relative = curAbs > 0 ? targetAbs / curAbs : targetAbs;
+	zoomUnclampedAR(instance, relative);
 
-	instance.zoom(relative);
-
-	const fittedGraphH = realH * targetAbs;
-	const fittedGraphW = realW * targetAbs;
-	// floor-bound: no legible scale fits beside the controls → they move into a lane under the drawing instead
-	const shouldUseLane = fittedGraphW > drawableW + 0.5;
-	if (shouldUseLane) getCanvasAR(root)?.setAttribute(CANVAS.CONTROLS_LANE_ATTR, "");
-	const laneH = shouldUseLane ? getControlsLaneHeightAR(root) : 0;
-
-	// pan({x,y}) 는 viewport CTM 의 e/f(화면픽셀 평행이동) 직접 설정 · 콘텐츠 viewBox.x/y 시작 → 좌상단(0,0) 정렬에 -origin*scale 필요 (fit/center:false 라 라이브러리 미보정).
-	const baseX = -(s.viewBox.x || 0) * targetAbs;
-	const baseY = -(s.viewBox.y || 0) * targetAbs;
-	// 좁은 그래프는 가로 가운데 · 낮은 그래프는 pane 을 그림 높이로 줄임 → 위아래 빈 띠 없음 (넓은/높은 그래프는 좌상단 시작).
-	const slackX = Math.max(0, (drawableW - fittedGraphW) / 2);
-	instance.pan({ x: baseX + slackX, y: baseY });
-	// with a lane the pane grows to the drawing plus the lane, so the drawing never runs down under the controls row
-	if (laneH > 0 || fittedGraphH < s.height) setCanvasHeightAR(root, fittedGraphH + laneH, instance);
+	// pan({x,y}) 는 viewport CTM 의 e/f(화면픽셀 평행이동) 직접 설정 · viewBox 원점 상쇄(-origin*scale) + 양축 가운데 slack.
+	const slackX = Math.max(0, (drawableW - realW * targetAbs) / 2);
+	const slackY = Math.max(0, (Math.min(frameH, s.height) - realH * targetAbs) / 2);
+	instance.pan({
+		x: -(s.viewBox.x || 0) * targetAbs + slackX,
+		y: -(s.viewBox.y || 0) * targetAbs + slackY,
+	});
+	if (frameH < s.height - 0.5) setCanvasHeightAR(root, frameH);
+	rebaseZoomAR(instance);
 
 	// fit-applied mark — until the library's next-frame CTM flush, the viewport still holds its viewBox meet scale
 	root
 		?.querySelector(".svg-pan-zoom_viewport")
 		?.setAttribute("data-arch-fit-scale", String(targetAbs));
+}
+
+// relative zoom that the library's [minZoom, maxZoom] bounds cannot clamp, bounds restored afterwards
+function zoomUnclampedAR(instance, relative) {
+	if (typeof instance.setMinZoom !== "function") {
+		instance.zoom(relative);
+		return;
+	}
+	instance.setMinZoom(Math.min(PAN_ZOOM_MIN, relative));
+	instance.setMaxZoom(Math.max(PAN_ZOOM_MAX, relative));
+	instance.zoom(relative);
+	instance.setMinZoom(PAN_ZOOM_MIN);
+	instance.setMaxZoom(PAN_ZOOM_MAX);
+}
+
+// resize() re-reads the pane size and re-bases the zoom bounds on the current zoom — the buttons scale about the cached pane centre
+function rebaseZoomAR(instance) {
+	try {
+		instance.resize();
+	} catch (_e) {
+		/* stale pane size only shifts the zoom centre */
+	}
 }
 
 // width the zoom controls take from the pane's right edge, measured so any control size or offset is covered
@@ -2208,14 +2219,6 @@ function getControlsGutterAR(root) {
 	const controls = canvas?.querySelector(".arch-zoom-controls");
 	if (!controls) return 0;
 	return Math.max(0, canvas.getBoundingClientRect().right - controls.getBoundingClientRect().left);
-}
-
-// height the controls row takes from the pane's bottom edge — meaningful only once the lane attribute is set
-function getControlsLaneHeightAR(root) {
-	const canvas = getCanvasAR(root);
-	const controls = canvas?.querySelector(".arch-zoom-controls");
-	if (!controls) return 0;
-	return Math.max(0, canvas.getBoundingClientRect().bottom - controls.getBoundingClientRect().top);
 }
 
 // .svg-pan-zoom_viewport 의 실제 변환행렬 스케일(.a) = 사용자가 측정하는 절대 스케일.
@@ -2235,21 +2238,14 @@ function clearCanvasSizingAR(root) {
 	canvas.style.height = "";
 	canvas.style.flex = "";
 	canvas.removeAttribute(CANVAS.FIT_HEIGHT_ATTR);
-	canvas.removeAttribute(CANVAS.CONTROLS_LANE_ATTR);
 }
 
-// the zoom buttons scale about the pane centre → the cached pane size follows the clamp
-function setCanvasHeightAR(root, heightPx, instance) {
+function setCanvasHeightAR(root, heightPx) {
 	const canvas = getCanvasAR(root);
 	if (!canvas) return;
 	canvas.style.height = `${Math.ceil(heightPx)}px`;
 	canvas.style.flex = "none";
 	canvas.setAttribute(CANVAS.FIT_HEIGHT_ATTR, "");
-	try {
-		instance.resize();
-	} catch (_e) {
-		/* stale pane size only shifts the zoom centre */
-	}
 }
 
 function getCanvasAR(root) {
