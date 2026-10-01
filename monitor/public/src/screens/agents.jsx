@@ -567,14 +567,17 @@ function InstrumentationFold({ failures, lifecycleState, reviewState, activation
 // unread → a stated gap, never a 0 % that reads as a clean result
 function getActivationLineAg(activationState, days) {
   const clause = getActivationClauseAg(activationState);
-  return clause ? `${clause} activations · last ${days}d` : 'Activation rate unavailable';
+  return clause ? `${clause} · last ${days}d` : 'Activation rate unavailable';
 }
 
+// zero activations → no rate: a % over an empty denominator also reads as clean
 function getActivationClauseAg(activationState) {
   const summary = activationState?.status === 'ready' ? activationState.data?.summary : null;
   if (!summary) return null;
+  const total = Number(summary.total_activations) || 0;
+  if (total === 0) return 'no activations';
   const rate = Number(summary.overall_false_positive_rate) || 0;
-  return `activation false-positive ${(rate * 100).toFixed(1)}% of ${formatIntAg(Number(summary.total_activations) || 0)}`;
+  return `activation false-positive ${(rate * 100).toFixed(1)}% of ${formatIntAg(total)} activations`;
 }
 
 // One clause per loaded source — an unread source adds nothing rather than a zero.
@@ -1865,7 +1868,7 @@ function getCrossingMetricsAg(overageState, overageByAgent, agentId) {
   if (overageState?.status !== 'ready') return { count: 'unavailable', peak: 'unavailable' };
   const overage = overageByAgent?.get(agentId);
   const count = overage ? overage.overage_count : 0;
-  return { count: formatIntAg(count), peak: count > 0 ? `${formatIntAg(overage.max_crossed_pct)}%` : '—' };
+  return { count: formatIntAg(count), peak: count > 0 ? `${formatIntAg(overage.max_crossed_pct)}% of budget` : '—' };
 }
 
 // latency p50/p95/p99 한 줄 — 페어링 없으면 inline empty (Performance 내부 독립 degrade).

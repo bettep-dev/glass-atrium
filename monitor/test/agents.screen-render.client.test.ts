@@ -1066,20 +1066,23 @@ test("the instrumentation verdict names only what has loaded, and warns on unfin
     { name: "every run finished", l: lifecycle(8, 8), r: review, tone: "ok", sub: "0 runs with no completion record · 14.0% flagged" },
     { name: "only review flags read", l: loading, r: review, tone: "neutral", sub: "14.0% flagged" },
     { name: "nothing read yet", l: loading, r: loading, tone: "neutral", sub: "Is the measuring apparatus intact" },
-    { name: "activations read add their false-positive share", l: lifecycle(8, 8), r: review, a: ACTIVATIONS_READY, tone: "ok", sub: "0 runs with no completion record · 14.0% flagged · activation false-positive 2.5% of 1,200" },
-    { name: "only activations read", l: loading, r: loading, a: ACTIVATIONS_READY, tone: "neutral", sub: "activation false-positive 2.5% of 1,200" },
+    { name: "activations read add their false-positive share", l: lifecycle(8, 8), r: review, a: ACTIVATIONS_READY, tone: "ok", sub: "0 runs with no completion record · 14.0% flagged · activation false-positive 2.5% of 1,200 activations" },
+    { name: "only activations read", l: loading, r: loading, a: ACTIVATIONS_READY, tone: "neutral", sub: "activation false-positive 2.5% of 1,200 activations" },
+    { name: "a window with no activations states that, never a rate over an empty denominator", l: loading, r: loading, a: ACTIVATIONS_EMPTY, tone: "neutral", sub: "no activations" },
     { name: "an unread activation source adds nothing, never 0 %", l: loading, r: review, a: ACTIVATIONS_FAILED, tone: "neutral", sub: "14.0% flagged" },
   ];
   for (const row of rows) assert.deepEqual({ ...verdict(row.l, row.r, row.a) }, { tone: row.tone, sub: row.sub }, row.name);
 });
 
 const ACTIVATIONS_READY = { status: "ready", data: { summary: { total_activations: 1200, overall_false_positive_rate: 0.025 } }, error: null };
+const ACTIVATIONS_EMPTY = { status: "ready", data: { summary: { total_activations: 0, overall_false_positive_rate: 0 } }, error: null };
 const ACTIVATIONS_FAILED = { status: "error", data: null, error: { message: "HTTP 503" } };
 
 test("the Instrumentation fold body states the activation false-positive rate, and an unread source says unavailable rather than 0 %", async () => {
   const idle = { status: "loading", data: null, error: null };
   const rows = [
     { name: "read", a: ACTIVATIONS_READY, line: /activation false-positive 2\.5% of 1,200 activations · last 30d/ },
+    { name: "read with no activations", a: ACTIVATIONS_EMPTY, line: /no activations · last 30d/ },
     { name: "failed", a: ACTIVATIONS_FAILED, line: /Activation rate unavailable/ },
     { name: "not yet read", a: idle, line: /Activation rate unavailable/ },
   ];
@@ -1099,7 +1102,7 @@ test("the drawer's Performance section states the agent's budget crossings and p
   const latencyState = { status: "ready", data: { agents: [] }, error: null };
   const crossed = new Map([["glass-atrium-dev-react", { overage_count: 3, max_crossed_pct: 140 }]]);
   const rows = [
-    { name: "crossed", state: { status: "ready", data: { rows: [] }, error: null }, map: crossed, count: "3", peak: "140%" },
+    { name: "crossed", state: { status: "ready", data: { rows: [] }, error: null }, map: crossed, count: "3", peak: "140% of budget" },
     { name: "loaded with no crossing", state: { status: "ready", data: { rows: [] }, error: null }, map: new Map(), count: "0", peak: "—" },
     { name: "overage read failed", state: { status: "error", data: null, error: { message: "HTTP 503" } }, map: new Map(), count: "unavailable", peak: "unavailable" },
   ];
