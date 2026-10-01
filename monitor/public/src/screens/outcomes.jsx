@@ -311,6 +311,11 @@ function analyticsDaysO(days) {
   return ANALYTICS_PERIOD_OPTIONS.some((o) => o.value === days) ? days : 90;
 }
 
+// the folded window is always 7/30/90 → the prior window is always a valid opt-in
+function buildAnalyticsUrlO(days) {
+  return `/api/outcomes/cross-analysis?days=${days}&prior_window=1`;
+}
+
 // Needs-you 질의 — 서버 parseFilters 는 needs_attention 에 'true'|'false' 만 받는다(그 밖 → 400).
 // 창은 analyticsDaysO 로 접힌 분석 창: 타일 1 의 분자·분모가 다른 창을 읽으면 비율이 성립하지 않는다.
 // limit=1 → total 만 소비.
@@ -326,13 +331,14 @@ const ATTENTION_PARTS_O = [
   { key: 'open', filter: { review_flag: 'false', result: 'done_with_concerns' } },
 ];
 
-// headline + parts in one wave → the parts are read beside the total they add up to
+// headline + parts in one wave → the parts are read beside the total they add up to; only the headline needs a prior count
 async function fetchAttentionO(days, signal) {
-  const urls = [{}, ...ATTENTION_PARTS_O.map((part) => part.filter)]
+  const urls = [{ prior_window: '1' }, ...ATTENTION_PARTS_O.map((part) => part.filter)]
     .map((filter) => `/api/outcomes/search?${buildAttentionParamsO(days, filter).toString()}`);
   const [head, ...parts] = await Promise.all(urls.map((url) => fetchJsonO(url, signal)));
   return {
     total: Number(head?.total) || 0,
+    priorTotal: head?.prior_window ? Number(head.prior_window.total) || 0 : null,
     parts: Object.fromEntries(ATTENTION_PARTS_O.map((part, i) => [part.key, Number(parts[i]?.total) || 0])),
   };
 }
@@ -555,7 +561,7 @@ function ScreenOutcomes({ onNav }) {
 
   // 분석 fetch — 창 변경 시 재실행. AbortController 분리 → 탐색기 wave 와 독립.
   useEffectO(() => {
-    return runRegionFetchO(setAnalyticsState, `/api/outcomes/cross-analysis?days=${analyticsPeriod}`, {
+    return runRegionFetchO(setAnalyticsState, buildAnalyticsUrlO(analyticsPeriod), {
       mapData: buildAnalyticsDataO,
       onData: markFreshO,
     });
@@ -955,6 +961,41 @@ function buildStatusBandTilesO(data, attentionCount) {
   ];
 }
 
+/**
+ * Share change of each band tile against the prior window — the Dashboard Task results tile's wording.
+ * The prior needs-you count reads closure as of now, so the hero compares shares, not two snapshots in time.
+ * @param priorAttentionCount - the prior window's needs-you count; null → the hero states no change
+ */
+function buildBandTrendsO(data, attentionCount, priorAttentionCount) {
+  const prior = data?.overall?.prior_window;
+  if (!prior) return {};
+  const priorData = { overall: prior, byResultCount: buildByResultCountMapO(prior.by_result) };
+  const priorTiles = buildStatusBandTilesO(priorData, priorAttentionCount);
+  const tiles = buildStatusBandTilesO(data, attentionCount);
+  return Object.fromEntries(tiles.map((tile, i) => [tile.key, getBandTrendO(tile, priorTiles[i], prior)]));
+}
+
+function getBandTrendO(tile, priorTile, prior) {
+  const { LOW_N_MIN } = window.UI;
+  if (tile.count === null || priorTile.count === null || tile.population < LOW_N_MIN) return null;
+  const priorRange = formatDayRangeO(prior);
+  if (priorTile.population < LOW_N_MIN) return `No comparison — too few records in ${priorRange}`;
+  const points = (tile.count / tile.population - priorTile.count / priorTile.population) * 100;
+  const change = Math.abs(points) < 0.05 ? 'Level' : `${points > 0 ? 'Up' : 'Down'} ${Math.abs(points).toFixed(1)} pts`;
+  const priorShare = window.UI.formatPctWithDenominator(priorTile.count, priorTile.population).split(' (')[0];
+  return `${change} since ${formatDayO(prior.period_end)} vs ${priorShare} in ${priorRange}`;
+}
+
+function formatDayO(date) {
+  return String(date).slice(5, 10);
+}
+
+// period_end is exclusive → the last day shown is the day before it
+function formatDayRangeO({ period_start: start, period_end: end }) {
+  const last = new Date(Date.parse(`${end}T00:00:00Z`) - 86400000).toISOString().slice(0, 10);
+  return `${formatDayO(start)} – ${formatDayO(last)}`;
+}
+
 function StatusBandO({ analyticsState, attentionState, windowDays, freshness, onRetry, shared }) {
   const { getRegionView, getFreshnessVerdict } = window.UI;
   const view = getRegionView(analyticsState);
@@ -987,8 +1028,10 @@ function StatusBandO({ analyticsState, attentionState, windowDays, freshness, on
   const attentionCount = attentionState.status === 'ready'
     ? (Number(attentionState.data?.total) || 0)
     : null;
+  const trends = buildBandTrendsO(analyticsState.data, attentionCount, attentionState.data?.priorTotal ?? null);
   // stale or partial read → an ok tile drops to neutral, warn/crit kept (the verdict's rule)
   const tiles = buildStatusBandTilesO(analyticsState.data, attentionCount)
+    .map((tile) => ({ ...tile, trend: trends[tile.key] ?? null }))
     .map((tile) => (freshness ? { ...tile, tone: getFreshnessVerdict({ ...freshness, tone: tile.tone }).tone } : tile));
   // 창은 analyticsDaysO 로 접힌 {7,30,90} 뿐 — 북마크된 'all' 이 90d 를 읽고 'all time' 으로 표기되던 거짓말 제거.
   const windowLabel = `${windowDays}d`;
@@ -1025,7 +1068,8 @@ function BandTileO({ tile, windowLabel, unloadedText = '—', reasons = null, cl
   const reasonText = reasons
     ? ` — reasons: ${reasons.map((r) => `${r.label} ${r.count === null ? 'not loaded' : r.count}`).join(', ')}`
     : '';
-  const ariaLabel = `${tile.label}: ${loaded ? tile.count : 'not loaded'}${reasonText} — ${tile.hint}${canJump ? ' — show them in the ledger' : ''}`;
+  const trendText = tile.trend ? ` — ${tile.trend}` : '';
+  const ariaLabel = `${tile.label}: ${loaded ? tile.count : 'not loaded'}${trendText}${reasonText} — ${tile.hint}${canJump ? ' — show them in the ledger' : ''}`;
   const Tag = canJump ? 'button' : 'div';
   const lead = (
     <>
@@ -1039,6 +1083,7 @@ function BandTileO({ tile, windowLabel, unloadedText = '—', reasons = null, cl
       </div>
       <KpiValue>{loaded ? formatIntO(tile.count) : <span className="fs-body text-dim">{unloadedText}</span>}</KpiValue>
       <div className="fs-meta font-mono text-faint">{share} · {windowLabel}</div>
+      {tile.trend && <div className="fs-meta text-dim">{tile.trend}</div>}
     </>
   );
 
@@ -1171,6 +1216,7 @@ function VolumeTilesO({ tiles, windowLabel }) {
             {tile.label}
             <span className="ml-auto font-mono text-ink">{formatIntO(tile.count)}</span>
             <span className="w-full text-right font-mono text-faint">{formatPctWithDenominator(tile.count, tile.population)}</span>
+            {tile.trend && <span className="w-full text-right">{tile.trend}</span>}
           </div>
         );
       })}
