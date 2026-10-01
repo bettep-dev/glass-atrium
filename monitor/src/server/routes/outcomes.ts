@@ -38,6 +38,7 @@ import type {
   OutcomeCrossAnalysisCell,
   OutcomeCrossAnalysisFilterEcho,
   OutcomeCrossAnalysisPriorWindow,
+  OutcomeSearchPriorWindow,
   OutcomeCloseByCidResponse,
   OutcomeCloseResponse,
   OutcomeCrossAnalysisResponse,
@@ -75,6 +76,8 @@ const CLOSABLE_RESULT: OutcomeResultLiteral = "done_with_concerns";
 // attention population. The caveat half is CLOSABLE_RESULT while it stays unclosed,
 // and the flag half is review_flag; buildWhereClause ORs the three.
 const ATTENTION_RESULTS: readonly OutcomeResultLiteral[] = ["fail", "blocked"];
+
+const PRIOR_WINDOW_INVALID: OutcomesErrorBody = { error: "invalid_param", param: "prior_window", allowed: [7, 30, 90] };
 
 const CLOSE_ROUTE = "/api/outcomes/:id/close";
 const CLOSE_BY_CID_ROUTE = "/api/outcomes/close-by-cid";
@@ -481,6 +484,8 @@ interface SearchQuerystring {
   // Attention filter — 'true' narrows to the rows asking for an operator action.
   // /search-only per contract.
   needs_attention?: string;
+  // '1'/'true' adds prior_window — the preceding `days` window's count; 400 with days=all.
+  prior_window?: string;
 }
 
 interface CrossAnalysisQuerystring {
@@ -555,6 +560,10 @@ async function handleSearch(
     return reply.code(400).send(filtersResult.error);
   }
   const filters = filtersResult.filters;
+  const hasPriorWindow = parsePriorWindowParam(request.query.prior_window, filters.days);
+  if (hasPriorWindow === null) {
+    return reply.code(400).send(PRIOR_WINDOW_INVALID);
+  }
 
   const limit = parseLimitParam(request.query.limit);
   if (limit === null) {
@@ -588,8 +597,8 @@ async function handleSearch(
 
   const prisma = getPrisma();
   try {
-    // Two parallel queries: paginated rows + total count for pagination disclosure.
-    const [rows, countRows] = await Promise.all([
+    // Parallel queries: paginated rows + total count for pagination disclosure (+ opt-in prior-window count).
+    const [rows, countRows, priorWindow] = await Promise.all([
       prisma.$queryRaw<OutcomeSearchDbRow[]>`
         SELECT
           id,
@@ -625,6 +634,9 @@ async function handleSearch(
         FROM core.outcomes
         ${whereClause}
       `,
+      hasPriorWindow && filters.days !== "all"
+        ? getSearchPriorWindow({ ...filters, days: filters.days }, scopeAgentKeys)
+        : Promise.resolve(undefined),
     ]);
 
     const totalRow = countRows[0];
@@ -687,6 +699,7 @@ async function handleSearch(
       filter: filterEcho,
       total,
       rows: mapped,
+      ...(priorWindow === undefined ? {} : { prior_window: priorWindow }),
       fetched_at: new Date().toISOString(),
     };
   } catch (error) {
@@ -927,9 +940,9 @@ async function handleCrossAnalysis(
     return reply.code(400).send(filtersResult.error);
   }
   const filters = filtersResult.filters;
-  const hasPriorWindow = request.query.prior_window === "1" || request.query.prior_window === "true";
-  if (hasPriorWindow && filters.days === "all") {
-    return reply.code(400).send({ error: "invalid_param", param: "prior_window", allowed: [7, 30, 90] });
+  const hasPriorWindow = parsePriorWindowParam(request.query.prior_window, filters.days);
+  if (hasPriorWindow === null) {
+    return reply.code(400).send(PRIOR_WINDOW_INVALID);
   }
   // Registry-scoped by default (closes the by_result/cross-tab/grader gap — the
   // original 65/605 `done_with_concerns` cross-analysis miscount included
@@ -1227,24 +1240,61 @@ async function getPriorWindow(
   scopeAgentKeys: string[] | undefined,
 ): Promise<OutcomeCrossAnalysisPriorWindow> {
   const priorWhere = buildWhereClause(filters, { excludePoisoned: true, scopeAgentKeys, isPriorWindow: true });
-  const [byResultRows, [period]] = await Promise.all([
+  const baseWhere = buildWhereClause(filters, { scopeAgentKeys, isPriorWindow: true });
+  const [byResultRows, baseTotal, period] = await Promise.all([
     findByResultRows(priorWhere),
-    getPrisma().$queryRaw<PeriodBoundDbRow[]>`
-      SELECT to_char(CURRENT_DATE - ${filters.days * 2}::int, 'YYYY-MM-DD') AS period_start,
-             to_char(CURRENT_DATE - ${filters.days}::int, 'YYYY-MM-DD') AS period_end
-    `,
+    getRowCount(baseWhere),
+    getPriorPeriod(filters.days),
   ]);
+  const byResult = toByResult(byResultRows);
+  const total = byResult.reduce((sum, row) => sum + row.count, 0);
+  return {
+    ...period,
+    total,
+    reconstructed_total: byResult.reduce((sum, row) => sum + row.reconstructed_count, 0),
+    excluded_poisoned_count: baseTotal - total,
+    by_result: byResult,
+  };
+}
+
+/** Matching-row count for the `days` window just before the current one, under /search's own filters and scope. */
+async function getSearchPriorWindow(
+  filters: ParsedFilters & { days: number },
+  scopeAgentKeys: string[] | undefined,
+): Promise<OutcomeSearchPriorWindow> {
+  const priorWhere = buildWhereClause(filters, { scopeAgentKeys, isPriorWindow: true });
+  const [total, period] = await Promise.all([getRowCount(priorWhere), getPriorPeriod(filters.days)]);
+  return { ...period, total };
+}
+
+async function getRowCount(where: Prisma.Sql): Promise<number> {
+  const [row] = await getPrisma().$queryRaw<CountRow[]>`
+    SELECT COUNT(*)::bigint AS total
+    FROM core.outcomes
+    ${where}
+  `;
+  if (row === undefined) {
+    throw new Error("count query returned no row");
+  }
+  return bigintToNumber(row.total);
+}
+
+// YYYY-MM-DD bounds of the prior window: start inclusive, end exclusive.
+async function getPriorPeriod(days: number): Promise<PeriodBoundDbRow> {
+  const [period] = await getPrisma().$queryRaw<PeriodBoundDbRow[]>`
+    SELECT to_char(CURRENT_DATE - ${days * 2}::int, 'YYYY-MM-DD') AS period_start,
+           to_char(CURRENT_DATE - ${days}::int, 'YYYY-MM-DD') AS period_end
+  `;
   if (period === undefined) {
     throw new Error("prior-window period query returned no row");
   }
-  const byResult = toByResult(byResultRows);
-  return {
-    period_start: period.period_start,
-    period_end: period.period_end,
-    total: byResult.reduce((sum, row) => sum + row.count, 0),
-    reconstructed_total: byResult.reduce((sum, row) => sum + row.reconstructed_count, 0),
-    by_result: byResult,
-  };
+  return period;
+}
+
+/** `true` on '1'/'true', `false` when absent or any other value, `null` when requested on the unbounded days=all window. */
+function parsePriorWindowParam(value: string | undefined, days: OutcomesWindowDays): boolean | null {
+  const hasPriorWindow = value === "1" || value === "true";
+  return hasPriorWindow && days === "all" ? null : hasPriorWindow;
 }
 
 // GET /api/outcomes/heatmap?days={1-90}&result={all|empty|failed|done} — DOW × Hour 7×24 grid.
