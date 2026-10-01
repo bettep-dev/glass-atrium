@@ -1093,6 +1093,9 @@ test("the Instrumentation fold body states the activation false-positive rate, a
     const text = collectText(tree);
     assert.match(text, row.line, `${row.name}: ${text}`);
     if (row.a !== ACTIVATIONS_READY) assert.doesNotMatch(text, /\b0(\.0)?\s*%/, `${row.name}: no zero rate`);
+    // only dim/faint are registered secondary-ink colors — any other text-* class falls back to full ink
+    const [line] = findNodes(tree, (n) => n.type === "p" && row.line.test(collectText(n)));
+    assert.match(String(line?.props.className ?? ""), /\btext-(dim|faint)\b/, `${row.name}: secondary-ink tone`);
   }
 });
 

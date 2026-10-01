@@ -558,7 +558,7 @@ function InstrumentationFold({ failures, lifecycleState, reviewState, activation
 
   return (
     <window.UI.Disclosure kind="status" title="Instrumentation" sub={sub} tone={tone} className="mb-4">
-      <p className="fs-meta text-muted mb-3">{getActivationLineAg(activationState, days)}</p>
+      <p className="fs-meta text-dim mb-3">{getActivationLineAg(activationState, days)}</p>
       <ReviewFlagTimelineCard failures={failures} state={reviewState} days={days} onRetry={onRetry}/>
     </window.UI.Disclosure>
   );
