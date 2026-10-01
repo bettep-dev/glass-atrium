@@ -284,12 +284,12 @@ The delegation-size discipline (`orchestrator-role.md` → `### Spawn Budget`) a
 ### Quality Gates [ORCHESTRATOR]
 
 - **Output verification**: build success + existing tests passing, required before accepting team deliverables.
-  - Unit tests recommended alongside DEV implementations.
+  - Tests scale to the code's risk, never one per file (`scoped/shared-testing.md` → **Depth follows risk**).
 - **Writer/Reviewer separation**: a fresh-session review is recommended after complex implementations, to reduce same-session self-bias.
 - **Confidence-based routing**:
   - confidence=low → automatic glass-atrium-qa-code-reviewer deployment
   - confidence=medium + security code → glass-atrium-qa-code-reviewer deployment
-  - TDD absolute rules always apply regardless of confidence
+  - The test-first bar applies regardless of confidence (`rules/glass-atrium/core-outcome-record.md` → `### Field Input Guide` → `metric_pass`).
 - **Orchestrator-forced Deep-review override**: compose a glass-atrium-qa-code-reviewer **Deep (4-pass)** review, deterministically and regardless of the writer's self-reported confidence, when either trigger holds:
   - a delegation's `[SCOPE] files=` lists ≥ 10 paths;
   - any listed path starts with a sensitive-path prefix — `hooks/` · `settings*.json` · `rules/` · `agents/` (frontmatter) · `autoagent/`.
