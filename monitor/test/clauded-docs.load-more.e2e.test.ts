@@ -1101,82 +1101,132 @@ test("list card: a mouse click never rings the card, a Retry handoff rings it in
   }
 });
 
+// mirrors LEDGER_FLOOR_CD in screens/clauded-docs.jsx (browser JSX, outside the test import graph) → a floor change there moves every boundary row below
+const LEDGER_FLOOR = { sum: 969, title: 394, tags: 152 };
+const OPEN_SUMMARY_RAIL_WIDTH = 200;
+// app shell beside the card: viewport − shell = the doc-layout container width (asserted per row)
+const SHELL_WIDTH = 270;
+// first viewport width at which each container threshold holds
+const THRESHOLD_VIEWPORT = {
+  railBeside: SHELL_WIDTH + LEDGER_FLOOR.sum + OPEN_SUMMARY_RAIL_WIDTH,
+  tagsShownBeside: SHELL_WIDTH + OPEN_SUMMARY_RAIL_WIDTH + LEDGER_FLOOR.sum + LEDGER_FLOOR.tags,
+  titleFloorStacked: SHELL_WIDTH + LEDGER_FLOOR.sum,
+};
+
 // the rail sits beside the ledger only while the ledger keeps its column floors there → never a sideways scroll
 describe("open-summary rail: placement follows the ledger's minimum width", () => {
-  const rows = [
-    // shell 270px leaves a ~950px stacked ledger, under the 973px floors → the title floor drops so the ledger fits
-    { name: "at 1220px a stacked ledger narrower than its column floors drops the title floor and fits", width: 1220, placement: "stacked", isTagsShown: false },
-    { name: "at 1280px the rail stacks above the ledger and the ledger fits the card", width: 1280, placement: "stacked", isTagsShown: false },
-    { name: "at 1440px the widest Status cell leaves too little room beside the rail → the rail stacks and the ledger fits", width: 1440, placement: "stacked", isTagsShown: true },
-    // shell 270px + layout 1173px = the switch: the ledger beside the rail is exactly its 973px column floors
-    { name: "at 1443px, the first width with room beside the rail, the rail sits beside and the ledger fits", width: 1443, placement: "beside", isTagsShown: false },
-    // shell 270px + rail 200px + 1124px = one px short of the column floors + Tags 152
-    { name: "at 1594px a ledger one px short of room for Tags drops the column and fits", width: 1594, placement: "beside", isTagsShown: false },
-    { name: "at 1920px the rail sits beside the ledger, stays in view on page scroll, and the ledger fits", width: 1920, placement: "beside", isTagsShown: true },
+  const seedIds: number[] = [];
+  const mixedFormatTitle = makeTitle("rail-md", 0);
+  // formatActorCD passes an unknown id through raw, and a raw id with no break opportunity is the widest
+  // "set by" line a real row can show — wider than any family name with a two-digit minor ("Sonnet 4.10")
+  const widestActor = "gpt_4o_mini_2024_07_18_preview";
+
+  before(async () => {
+    seedIds.push(...(await seedManyDocs(29, "rail")));
+    // newest row in a format other than the page majority → the Tags column is on, as with real mixed data
+    const mixedFormatDoc = await postCreate({
+      title: mixedFormatTitle,
+      author: "load-more-tester",
+      md_body: "# rail-md\n\nmixed-format row",
+      doc_status: "implementing",
+      last_status_model: widestActor,
+    });
+    seedIds.push(mixedFormatDoc.id);
+  });
+
+  after(async () => {
+    for (const id of seedIds) await deleteDoc(id);
+  });
+
+  async function openLedger(width: number): Promise<{ context: BrowserContext; page: Page }> {
+    const context: BrowserContext = await browser.newContext({ viewport: { width, height: 900 } });
+    const page: Page = await context.newPage();
+    await page.goto(`${serverUrl}/#clauded-docs`, { waitUntil: "networkidle" });
+    await page.locator("aside.doc-open-summary").waitFor({ state: "visible" });
+    return { context, page };
+  }
+
+  const placementRows = [
+    { name: "one px below the rail switch the rail stacks and the wide ledger keeps Tags", width: THRESHOLD_VIEWPORT.railBeside - 1, placement: "stacked", isTagsShown: true, isTitleFloorHeld: true },
+    { name: "at the rail switch the rail sits beside a ledger exactly its column floors wide", width: THRESHOLD_VIEWPORT.railBeside, placement: "beside", isTagsShown: false, isTitleFloorHeld: true },
+    { name: "one px below room for Tags beside the rail the ledger drops the column", width: THRESHOLD_VIEWPORT.tagsShownBeside - 1, placement: "beside", isTagsShown: false, isTitleFloorHeld: true },
+    { name: "at room for Tags beside the rail the ledger shows the column", width: THRESHOLD_VIEWPORT.tagsShownBeside, placement: "beside", isTagsShown: true, isTitleFloorHeld: true },
+    { name: "one px below the column floors a stacked ledger drops the title floor", width: THRESHOLD_VIEWPORT.titleFloorStacked - 1, placement: "stacked", isTagsShown: false, isTitleFloorHeld: false },
+    { name: "at the column floors a stacked ledger keeps the title floor", width: THRESHOLD_VIEWPORT.titleFloorStacked, placement: "stacked", isTagsShown: false, isTitleFloorHeld: true },
+    { name: "at 1220px a stacked ledger narrower than its column floors drops the title floor", width: 1220, placement: "stacked", isTagsShown: false, isTitleFloorHeld: false },
+    { name: "at 1280px the rail stacks above the ledger", width: 1280, placement: "stacked", isTagsShown: false, isTitleFloorHeld: true },
+    { name: "at 1440px the rail sits beside the ledger", width: 1440, placement: "beside", isTagsShown: false, isTitleFloorHeld: true },
+    { name: "at 1920px the rail sits beside the ledger with Tags shown", width: 1920, placement: "beside", isTagsShown: true, isTitleFloorHeld: true },
   ] as const;
 
-  for (const row of rows) {
-    test(row.name, async () => {
-      const ids = await seedManyDocs(29, `rail-${row.width}`);
-      // newest row in a format other than the page majority → the Tags column is on, as with real mixed data;
-      // its Status cell is the widest a real row shows: the longest stage label + a "set by <model>" line
-      const mixedFormatTitle = makeTitle(`rail-md-${row.width}`, 0);
-      const mixedFormatDoc = await postCreate({
-        title: mixedFormatTitle,
-        author: "load-more-tester",
-        md_body: "# rail-md\n\nmixed-format row",
-        doc_status: "implementing",
-        // → "Sonnet 4.5": a six-letter family + major.minor, the longest name getDisplayName("model") yields
-        last_status_model: "claude-sonnet-4-5",
-      });
-      ids.push(mixedFormatDoc.id);
+  for (const row of placementRows) {
+    test(`${row.name}, and the ledger fits without a sideways scroll`, async () => {
+      const { context, page } = await openLedger(row.width);
       try {
-        const context: BrowserContext = await browser.newContext({ viewport: { width: row.width, height: 900 } });
-        const page: Page = await context.newPage();
-        try {
-          await page.goto(`${serverUrl}/#clauded-docs`, { waitUntil: "networkidle" });
-          await page.locator("aside.doc-open-summary").waitFor({ state: "visible" });
-          const mixedFormatRow = await revealRowByTitle(page, mixedFormatTitle);
-          await page.locator("table.tbl th.doc-col-tags").waitFor({ state: "attached" });
-          await mixedFormatRow.locator(".doc-stage-actor", { hasText: "set by Sonnet 4.5" }).waitFor({ state: "visible" });
+        const mixedFormatRow = await revealRowByTitle(page, mixedFormatTitle);
+        await page.locator("table.tbl th.doc-col-tags").waitFor({ state: "attached" });
+        await mixedFormatRow.locator(".doc-stage-actor", { hasText: `set by ${widestActor}` }).waitFor({ state: "visible" });
 
-          const layout = await page.evaluate(() => {
-            const scroller = document.querySelector("table.tbl")?.parentElement;
-            const railBox = document.querySelector("aside.doc-open-summary")?.getBoundingClientRect();
-            if (!scroller || !railBox) throw new Error("ledger scroller or rail missing");
-            const ledgerBox = scroller.getBoundingClientRect();
-            const columns = [...document.querySelectorAll("table.tbl thead th")]
-              .map((th) => `${th.textContent?.trim() || "select"}=${Math.round(th.getBoundingClientRect().width)}`)
-              .join(" ");
-            const placement =
-              railBox.left >= ledgerBox.right - 0.5 ? "beside" : railBox.bottom <= ledgerBox.top + 0.5 ? "stacked" : "overlapping";
-            const isTagsShown = (document.querySelector("table.tbl th.doc-col-tags")?.getBoundingClientRect().width ?? 0) > 0;
-            return { scrollWidth: scroller.scrollWidth, clientWidth: scroller.clientWidth, columns, placement, isTagsShown };
-          });
-          assert.ok(
-            layout.scrollWidth <= layout.clientWidth,
-            `ledger overflows its column (${layout.scrollWidth} > ${layout.clientWidth}; ${layout.columns}) → last header clipped`,
-          );
-          assert.equal(layout.placement, row.placement, `rail placement at ${row.width}px (${layout.columns})`);
-          assert.equal(layout.isTagsShown, row.isTagsShown, `Tags column shown at ${row.width}px (${layout.columns})`);
-
-          const rail = page.locator("aside.doc-open-summary");
-          const restingTop = await rail.evaluate((el) => el.getBoundingClientRect().top + window.scrollY);
-          // past the rail's resting offset → only a rail pinned beside the ledger is still in view
-          const scrollBy = Math.ceil(restingTop) + 200;
-          await page.evaluate((y) => window.scrollTo(0, y), scrollBy);
-          await page.waitForFunction((y) => window.scrollY >= y, scrollBy);
-          const railTop = await rail.evaluate((el) => el.getBoundingClientRect().top);
-          assert.equal(
-            railTop >= 0,
-            row.placement === "beside",
-            `rail top ${railTop} after page scroll — pinned in view beside the ledger, scrolled away with the page when stacked`,
-          );
-        } finally {
-          await context.close();
-        }
+        const layout = await page.evaluate(() => {
+          const layoutBox = document.querySelector(".doc-layout")?.getBoundingClientRect();
+          const scroller = document.querySelector("table.tbl")?.parentElement;
+          const railBox = document.querySelector("aside.doc-open-summary")?.getBoundingClientRect();
+          const titleBox = document.querySelector("table.tbl th.doc-col-title")?.getBoundingClientRect();
+          if (!layoutBox || !scroller || !railBox || !titleBox) throw new Error("layout, ledger scroller, rail or title header missing");
+          const ledgerBox = scroller.getBoundingClientRect();
+          const columns = [...document.querySelectorAll("table.tbl thead th")]
+            .map((th) => `${th.textContent?.trim() || "select"}=${Math.round(th.getBoundingClientRect().width)}`)
+            .join(" ");
+          const placement =
+            railBox.left >= ledgerBox.right - 0.5 ? "beside" : railBox.bottom <= ledgerBox.top + 0.5 ? "stacked" : "overlapping";
+          const isTagsShown = (document.querySelector("table.tbl th.doc-col-tags")?.getBoundingClientRect().width ?? 0) > 0;
+          return {
+            layoutWidth: Math.round(layoutBox.width),
+            scrollWidth: scroller.scrollWidth,
+            clientWidth: scroller.clientWidth,
+            titleWidth: titleBox.width,
+            columns,
+            placement,
+            isTagsShown,
+          };
+        });
+        assert.equal(layout.layoutWidth, row.width - SHELL_WIDTH, `doc-layout width at ${row.width}px — the shell width the boundary rows derive from`);
+        assert.ok(
+          layout.scrollWidth <= layout.clientWidth,
+          `ledger overflows its column (${layout.scrollWidth} > ${layout.clientWidth}; ${layout.columns}) → last header clipped`,
+        );
+        assert.equal(layout.placement, row.placement, `rail placement at ${row.width}px (${layout.columns})`);
+        assert.equal(layout.isTagsShown, row.isTagsShown, `Tags column shown at ${row.width}px (${layout.columns})`);
+        assert.equal(layout.titleWidth >= LEDGER_FLOOR.title - 0.5, row.isTitleFloorHeld, `title column ≥ its ${LEDGER_FLOOR.title}px floor at ${row.width}px (${layout.columns})`);
       } finally {
-        for (const id of ids) await deleteDoc(id);
+        await context.close();
+      }
+    });
+  }
+
+  const stickyRows = [
+    { name: "at 1280px the stacked rail scrolls away with the page", width: 1280, isPinned: false },
+    { name: "at 1440px the rail beside the ledger stays in view on page scroll", width: 1440, isPinned: true },
+    { name: "at 1920px the rail beside the ledger stays in view on page scroll", width: 1920, isPinned: true },
+  ] as const;
+
+  for (const row of stickyRows) {
+    test(row.name, async () => {
+      const { context, page } = await openLedger(row.width);
+      try {
+        await waitForRowCountAtLeast(page, seedIds.length);
+        const rail = page.locator("aside.doc-open-summary");
+        const restingTop = await rail.evaluate((el) => el.getBoundingClientRect().top + window.scrollY);
+        // past the rail's resting offset → only a rail pinned beside the ledger is still in view
+        const scrollBy = Math.ceil(restingTop) + 200;
+
+        await page.evaluate((y) => window.scrollTo(0, y), scrollBy);
+        await page.waitForFunction((y) => window.scrollY >= y, scrollBy);
+
+        const railTop = await rail.evaluate((el) => el.getBoundingClientRect().top);
+        assert.equal(railTop >= 0, row.isPinned, `rail top ${railTop} after page scroll at ${row.width}px`);
+      } finally {
+        await context.close();
       }
     });
   }
