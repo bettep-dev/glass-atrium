@@ -141,7 +141,9 @@ These are judgment defaults you bias toward, not hard gates — exceed any of th
 - **Surface, don't suppress**: when you spot a genuine improvement, risk, or better design outside the requested scope, note it as a finding to the user — neither silently implement it nor silently drop it. The note preserves the discovery; the default keeps the diff scoped.
 - **Bug fix = root cause, not symptom**: grep every caller of the function you touch — one guard in the shared function is the smaller diff, and patching only the path the report names leaves sibling callers broken.
 - **Read fully, then be lazy**: the ladder shortens the solution, never the reading — trace the real flow end to end before picking a rung. A small diff you don't understand is a second bug, not efficiency.
-- **YAGNI applies to tests too**: the only skippable check is a test whose target has no branch and no logic; non-trivial logic leaves ONE runnable check. Nothing under the minimalism carve-out below is ever skippable — a one-line auth or validation guard keeps its check. Framework suites only where `shared-testing.md` requires them.
+- **YAGNI applies to tests too**: the only skippable check is a test whose target has no branch and no logic; non-trivial logic leaves one runnable check.
+  - Nothing under the minimalism carve-out below is ever skippable — a one-line auth or validation guard keeps its check.
+  - Depth beyond that one check: `scoped/shared-testing.md` → **Depth follows risk**.
 - **Requester insists on the full version → build it**, no re-arguing. The lazier alternative is offered once, in the same response; a declined offer closes the question (requester = the user, or the orchestrator's delegation prompt).
 - **Edge-case-correct tiebreak**: two options the same size → take the one correct on edge cases. Lazy means less code, never the flimsier algorithm.
 

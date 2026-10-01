@@ -26,10 +26,17 @@ Every section kept in the rule file is kept because a NAMED reader outside the f
 |---|---|---|
 | Test Quality (with Meaningless-Test Prohibitions) | whoever adjudicates a hand-run `audit-test-smells.sh` finding — it reports a shape, never a defect | `scripts/audit-test-smells.sh` header (Convention SoT) · `scripts/test/audit-test-smells.bats` header |
 | Test Quality · Mocking Rules · Test Structure · Authoring scope | glass-atrium-qa-code-reviewer — its delivered checklist cites this file and it must cite a governing rule | `agents/glass-atrium-qa-code-reviewer.md` → `### Testing Checks` |
+| Test Structure | glass-atrium-dev-python — its naming and test-data lines | `agents/glass-atrium-dev-python.md` → `### Tests = Specification` · `### Testing` |
 | Rationalization Rejection (Testing) | every agent — via the charter's excuse→rebuttal home-file list and the `feature` note's exception pointer | `GLASS_ATRIUM_GLOBAL_RULES.md` → Rationalization Rejection · `core-outcome-record.md` → the `feature` note |
 | 3-Tier Test Hierarchy | every agent — the delivered commit rule defers its which-tests-when half to here | `core-git-workflow.md` → Commits |
 | Destructive-Path Suite Safety | the operator or session about to run a suite that can reach the live database — not an agent at spawn | `orchestrator-role.md` → Document-Driven Workflow step 6 |
 | Mechanical Success Metrics | every agent — a pointer stub resolving an inbound Tier-1 reference back to its canonical | `core-outcome-record.md` → Automatic Verification Criteria |
+| Test Depth and Upkeep | glass-atrium-qa-code-reviewer — its depth and coupled-test checks | `agents/glass-atrium-qa-code-reviewer.md` → `### Testing Checks` |
+| Test Depth and Upkeep | glass-atrium-qa-code-reviewer — the named-removal exemption on its High risk trigger | `scoped/scope-qa.md` → `## Regression Risk Estimation [QA]` |
+| Test Depth and Upkeep | every DEV agent sizing its tests | `scoped/scope-dev.md` → **YAGNI applies to tests too** |
+| Test Depth and Upkeep | the DEV bodies that carry a local test-size line | `agents/glass-atrium-dev-python.md` → `### Testing` · `agents/glass-atrium-dev-nestjs.md` → **Tests** |
+| Test Depth and Upkeep | the orchestrator, reading its skill on demand | `skills/glass-atrium-ops-orchestrator.md` → `### Quality Gates [ORCHESTRATOR]` |
+| Test Depth and Upkeep | the orchestrator, declaring a DEV/PLANNING delegation's `[SCOPE] files=` | `rules/glass-atrium/orchestrator-role.md` → `### Context Handoff Size` → **`files=` completeness duty** |
 
 - **Heading stability**: `## Test Quality`, `### Meaningless-Test Prohibitions`, `## Destructive-Path Suite Safety (live-postgres reach)` and `## Mechanical Success Metrics` are named verbatim by the pointers above. Renaming one dangles its inbound pointer even though no suite reads the body.
   - Also stable: `## Rationalization Rejection (Testing)` and its bolded lead **Qualifier on the last row (the deliberate-break exception)** — the sandbox write-confinement lane edits one sentence under that lead, and `### What makes a test a test` → **Watch it fail** points at it.
@@ -37,6 +44,9 @@ Every section kept in the rule file is kept because a NAMED reader outside the f
   - Cited by `agents/glass-atrium-qa-code-reviewer.md` → `### Testing Checks`, some also by in-file pointers — grep before renaming one:
     - headings: `### What makes a test a test` · `#### The prohibited shapes` · `## Mocking Rules` · `## Test Structure` · `### Where a test lives` · `### Names, comments and test data` · `### Table form per stack`;
     - bolded leads: **Authoring scope** · **Grouping** · **Fold-back** · **ID ban** · **Deletion duty** · **DAMP carve-out**.
+  - Also stable, because the `Test Depth and Upkeep` ledger rows above point into it: `## Test Depth and Upkeep` and its bolded leads **Depth follows risk** · **Coupled-test check**.
+  - **Naming** is named verbatim by `agents/glass-atrium-dev-python.md` → `### Tests = Specification`.
+  - **Test data** and **Shared fixture** are named verbatim by `agents/glass-atrium-dev-python.md` → `### Testing`.
 
 ## Backing honesty — Test Quality
 
@@ -46,10 +56,18 @@ Every section kept in the rule file is kept because a NAMED reader outside the f
 ## Test-authoring delta — provenance
 
 - Sources: Kent Beck's Test Desiderata (isolation, determinism) · Khorikov, *You are naming your tests wrong* (behavior names) · Google Testing Blog on DAMP and change-detector tests · the bats-core FAQ (loop table form).
-- Placement: the home-file, naming/data and per-stack H3s sit under `## Test Structure`, not `## Test Quality`, so `## Test Quality` stays near the 8 KB H2 shape-cap guide; the scope bound sits in the file lead because it governs both H2s.
+  - **Depth follows risk** and the reflex row: Google SWE book ch.12 (a test per behavior) · Fowler, *Test Coverage* · Petrovic et al. (mutation testing at Google) · Hora & Robbes (over-mocking).
+  - **Coupled-test check**: TEBench (agents miss green-but-stale tests).
+  - Test-gaming guard under **Watch it fail**: the Anthropic prompting guide's hard-coding paragraph · ImpossibleBench · EvilGenie.
+- Placement: the home-file, naming/data and per-stack H3s sit under `## Test Structure`, not `## Test Quality`, so `## Test Quality` stays near the 8 KB H2 shape-cap guide; the scope bound sits in the file lead because it governs every H2 it names.
+  - `## Test Depth and Upkeep` is its own H2: depth also governs a behavior's first test, which the `### Decision procedure` heading excludes, and a numbered lead step there would renumber the steps other text cites.
+  - `### Legitimate example tests` sits under `## Test Depth and Upkeep`, so the `## Test Quality` span stays well under 8192 B (`wc -c`).
+    - Its in-file pointers: the change-detector carve-out · **One-off disposition**.
 - Do not reintroduce, each works against readable tests: a regression pin named for its defect · a DAMP carve-out that covers byte-identical fixtures across files · a property-first ranking with no real-invariant bound · a fixed naming template or regex naming grammar.
-- Honour the research's exclusions: no comment scaffold, no assertion-count cap, no numeric trigger (duplication percentage, line count, rows per table, builder variants), no blanket property or mutation mandate.
+  - A greenfield file is no exception: the **Naming** example shows content, never a template.
+- Honour the research's exclusions: no comment scaffold, no assertion-count cap, no numeric trigger (duplication percentage, line count, rows per table, builder variants, a coverage figure or test count), no blanket property or mutation mandate.
 - **The file-lead Authoring scope bullet** exists because the home-file and fold-back rules otherwise collide with `scoped/scope-dev.md` → "Everything outside that set is SURFACED, never performed" (an extra test, a neighbouring cleanup). Change the two together.
+  - Its coupled-test reach stays consistent with that line: a fix lands only inside the declared file set, and the rest is surfaced in `concerns` (**Coupled-test check**).
 - **Table form per stack**:
   - TypeScript lists `node:test` first because `monitor/test` imports it and not Vitest.
   - The JUnit `name` placeholder and the `@CsvSource` / `@ValueSource` / `@MethodSource` sources were checked against the official JUnit user guide, *Parameterized Classes and Tests* (docs.junit.org, 6.1.3).
@@ -74,12 +92,14 @@ The rule file states only that every row is reviewer-applied. The mapping below 
 | An assertion on the source text or line order of the code under test | Google Testing Blog 2015 (source-pin sub-case) | MECHANICAL `[no tooling]` |
 | Near-duplicate cases that one property or one parameterized table would cover | van Deursen et al. 2001 | JUDGMENT `[no tooling]` |
 | A test whose target has no branch and no logic | — (trivial getter/setter/constructor test) | JUDGMENT `[no tooling]` |
+| A test written per file, class or function by reflex, or to reach a count or coverage figure | Google SWE book ch.12 (per-behavior tests) | JUDGMENT `[no tooling]` |
 | Control flow that can SKIP an assertion | Meszaros 2007 | JUDGMENT `[no tooling]` |
 
 - **Trivial-target row**: resolving the production target from the test is not implemented; the rule file now states the read as the reviewer's own duty instead.
 - **Conditional-logic row**: deliberately excluded from the auditor, because its carve-out requires reading which branch the assertion sits on. The same reasoning is recorded in the `scripts/audit-test-smells.sh` header.
 - **DAMP carve-out source**: Google Testing Blog, *Tests Too DRY? Make Them DAMP!*, 2019.
 - **Empirical backing for the list as a whole**: smelly tests carry measurably higher defect risk than clean ones (Palomba et al., ASE 2016; corroborated ICSME 2018).
+  - Contested by Panichella et al., EMSE 2022 (smells rarely track maintainability flaws), so the rule file does not state it; its rows rest on **The one question that decides a test's worth** instead.
 
 ## Rationalization Rejection — reconciliations
 
