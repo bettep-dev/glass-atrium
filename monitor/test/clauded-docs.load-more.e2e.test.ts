@@ -1101,16 +1101,18 @@ test("list card: a mouse click never rings the card, a Retry handoff rings it in
   }
 });
 
-// mirrors LEDGER_FLOOR_CD in screens/clauded-docs.jsx (browser JSX, outside the test import graph) → a floor change there moves every boundary row below
+// mirrors LEDGER_CD.FLOOR in screens/clauded-docs.jsx (browser JSX, outside the test import graph) → a floor change there moves every boundary row below
 const LEDGER_FLOOR = { sum: 969, title: 394, tags: 152 };
-const OPEN_SUMMARY_RAIL_WIDTH = 200;
-// app shell beside the card: viewport − shell = the doc-layout container width (asserted per row)
-const SHELL_WIDTH = 270;
+const WIDTH = {
+  OPEN_SUMMARY_RAIL: 200,
+  // app shell beside the card: viewport − shell = the doc-layout container width (asserted per row)
+  SHELL: 270,
+};
 // first viewport width at which each container threshold holds
 const THRESHOLD_VIEWPORT = {
-  railBeside: SHELL_WIDTH + LEDGER_FLOOR.sum + OPEN_SUMMARY_RAIL_WIDTH,
-  tagsShownBeside: SHELL_WIDTH + OPEN_SUMMARY_RAIL_WIDTH + LEDGER_FLOOR.sum + LEDGER_FLOOR.tags,
-  titleFloorStacked: SHELL_WIDTH + LEDGER_FLOOR.sum,
+  railBeside: WIDTH.SHELL + LEDGER_FLOOR.sum + WIDTH.OPEN_SUMMARY_RAIL,
+  tagsShownBeside: WIDTH.SHELL + WIDTH.OPEN_SUMMARY_RAIL + LEDGER_FLOOR.sum + LEDGER_FLOOR.tags,
+  titleFloorStacked: WIDTH.SHELL + LEDGER_FLOOR.sum,
 };
 
 // the rail sits beside the ledger only while the ledger keeps its column floors there → never a sideways scroll
@@ -1146,20 +1148,27 @@ describe("open-summary rail: placement follows the ledger's minimum width", () =
     return { context, page };
   }
 
-  const placementRows = [
-    { name: "one px below the rail switch the rail stacks and the wide ledger keeps Tags", width: THRESHOLD_VIEWPORT.railBeside - 1, placement: "stacked", isTagsShown: true, isTitleFloorHeld: true },
-    { name: "at the rail switch the rail sits beside a ledger exactly its column floors wide", width: THRESHOLD_VIEWPORT.railBeside, placement: "beside", isTagsShown: false, isTitleFloorHeld: true },
-    { name: "one px below room for Tags beside the rail the ledger drops the column", width: THRESHOLD_VIEWPORT.tagsShownBeside - 1, placement: "beside", isTagsShown: false, isTitleFloorHeld: true },
-    { name: "at room for Tags beside the rail the ledger shows the column", width: THRESHOLD_VIEWPORT.tagsShownBeside, placement: "beside", isTagsShown: true, isTitleFloorHeld: true },
-    { name: "one px below the column floors a stacked ledger drops the title floor", width: THRESHOLD_VIEWPORT.titleFloorStacked - 1, placement: "stacked", isTagsShown: false, isTitleFloorHeld: false },
-    { name: "at the column floors a stacked ledger keeps the title floor", width: THRESHOLD_VIEWPORT.titleFloorStacked, placement: "stacked", isTagsShown: false, isTitleFloorHeld: true },
-    { name: "at 1220px a stacked ledger narrower than its column floors drops the title floor", width: 1220, placement: "stacked", isTagsShown: false, isTitleFloorHeld: false },
-    { name: "at 1280px the rail stacks above the ledger", width: 1280, placement: "stacked", isTagsShown: false, isTitleFloorHeld: true },
-    { name: "at 1440px the rail sits beside the ledger", width: 1440, placement: "beside", isTagsShown: false, isTitleFloorHeld: true },
-    { name: "at 1920px the rail sits beside the ledger with Tags shown", width: 1920, placement: "beside", isTagsShown: true, isTitleFloorHeld: true },
-  ] as const;
+  const rows = {
+    placement: [
+      { name: "one px below the rail switch the rail stacks and the wide ledger keeps Tags", width: THRESHOLD_VIEWPORT.railBeside - 1, placement: "stacked", isTagsShown: true, isTitleFloorHeld: true },
+      { name: "at the rail switch the rail sits beside a ledger exactly its column floors wide", width: THRESHOLD_VIEWPORT.railBeside, placement: "beside", isTagsShown: false, isTitleFloorHeld: true },
+      { name: "one px below room for Tags beside the rail the ledger drops the column", width: THRESHOLD_VIEWPORT.tagsShownBeside - 1, placement: "beside", isTagsShown: false, isTitleFloorHeld: true },
+      { name: "at room for Tags beside the rail the ledger shows the column", width: THRESHOLD_VIEWPORT.tagsShownBeside, placement: "beside", isTagsShown: true, isTitleFloorHeld: true },
+      { name: "one px below the column floors a stacked ledger drops the title floor", width: THRESHOLD_VIEWPORT.titleFloorStacked - 1, placement: "stacked", isTagsShown: false, isTitleFloorHeld: false },
+      { name: "at the column floors a stacked ledger keeps the title floor", width: THRESHOLD_VIEWPORT.titleFloorStacked, placement: "stacked", isTagsShown: false, isTitleFloorHeld: true },
+      { name: "at 1220px a stacked ledger narrower than its column floors drops the title floor", width: 1220, placement: "stacked", isTagsShown: false, isTitleFloorHeld: false },
+      { name: "at 1280px the rail stacks above the ledger", width: 1280, placement: "stacked", isTagsShown: false, isTitleFloorHeld: true },
+      { name: "at 1440px the rail sits beside the ledger", width: 1440, placement: "beside", isTagsShown: false, isTitleFloorHeld: true },
+      { name: "at 1920px the rail sits beside the ledger with Tags shown", width: 1920, placement: "beside", isTagsShown: true, isTitleFloorHeld: true },
+    ] as const,
+    sticky: [
+      { name: "at 1280px the stacked rail scrolls away with the page", width: 1280, isPinned: false },
+      { name: "at 1440px the rail beside the ledger stays in view on page scroll", width: 1440, isPinned: true },
+      { name: "at 1920px the rail beside the ledger stays in view on page scroll", width: 1920, isPinned: true },
+    ] as const,
+  };
 
-  for (const row of placementRows) {
+  for (const row of rows.placement) {
     test(`${row.name}, and the ledger fits without a sideways scroll`, async () => {
       const { context, page } = await openLedger(row.width);
       try {
@@ -1190,7 +1199,7 @@ describe("open-summary rail: placement follows the ledger's minimum width", () =
             isTagsShown,
           };
         });
-        assert.equal(layout.layoutWidth, row.width - SHELL_WIDTH, `doc-layout width at ${row.width}px — the shell width the boundary rows derive from`);
+        assert.equal(layout.layoutWidth, row.width - WIDTH.SHELL, `doc-layout width at ${row.width}px — the shell width the boundary rows derive from`);
         assert.ok(
           layout.scrollWidth <= layout.clientWidth,
           `ledger overflows its column (${layout.scrollWidth} > ${layout.clientWidth}; ${layout.columns}) → last header clipped`,
@@ -1204,13 +1213,7 @@ describe("open-summary rail: placement follows the ledger's minimum width", () =
     });
   }
 
-  const stickyRows = [
-    { name: "at 1280px the stacked rail scrolls away with the page", width: 1280, isPinned: false },
-    { name: "at 1440px the rail beside the ledger stays in view on page scroll", width: 1440, isPinned: true },
-    { name: "at 1920px the rail beside the ledger stays in view on page scroll", width: 1920, isPinned: true },
-  ] as const;
-
-  for (const row of stickyRows) {
+  for (const row of rows.sticky) {
     test(row.name, async () => {
       const { context, page } = await openLedger(row.width);
       try {
