@@ -160,10 +160,11 @@ On every code review, tag the change with a regression-risk label and carry it o
 
 | Label | Triggers |
 |---|---|
-| **High** | core business logic changed AND no test added · an existing test was removed · the added test cannot fail |
+| **High** | core business logic changed AND no test added · a test removed without a named reason · the added test cannot fail |
 | **Med** | non-core change covered by existing tests |
 | **Low** | config / docs / non-executable artifact only |
 
 - A test that cannot fail counts as NO test added (`scoped/shared-testing.md` → `### Meaningless-Test Prohibitions`).
+- A named reason is a **Deletion duty** subsumption or a **Coupled-test check** removal, stated in the change's `concerns` (`scoped/shared-testing.md` → **Deletion duty**); judge whether it holds.
 - State in one line the relationship the added test asserts. Unable to state it → treat it as no test added.
 - **High** → list the affected test paths in the review output, so the orchestrator can route the next-step verification correctly.

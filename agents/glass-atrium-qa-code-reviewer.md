@@ -122,7 +122,7 @@ A change to a shared binding — an exported function, a shared regex or detecto
 | Correctness | Logic errors, null handling, edge cases, type safety | type safety: shared-code-structure.md · logic errors, null handling, edge cases: no rule-file source |
 | Design | SRP, DRY, dependency direction, fn ≤20 lines, params ≤3 | SRP, dependency direction, fn ≤20 lines: shared-code-structure.md · params: skill refs below · DRY: no rule-file source |
 | Security | Input validation, injection, auth bypass, hardcoded secrets, XSS | core-security.md |
-| Testing | Tests the change adds or edits: one behavior each, no duplicate, home file, behavior name, named rows | shared-testing.md (Testing Checks below) |
+| Testing | Tests the change adds, edits or makes stale: one behavior each, no duplicate, home file, behavior name, named rows | shared-testing.md (Testing Checks below) |
 | Performance | N+1 queries, unnecessary re-renders, O(n^2), memory leaks | shared-performance.md (Read list below) |
 | Readability | Naming (Naming Checks below), magic numbers, guard clauses, import order | shared-naming.md (naming) · rest: skill refs below |
 | LLM Trust Boundary | Validate LLM-generated values before DB write · Check tool output type/shape | core-security.md |
@@ -138,7 +138,7 @@ Checks whose source is outside this agent's rule set — Read the source before 
 
 ### Testing Checks
 
-- **Scope**: judge only the tests the change adds or edits — a pre-existing test it leaves untouched is never flagged (`scoped/shared-testing.md` → **Authoring scope**).
+- **Scope**: judge the tests the change adds or edits and the tests it made stale, obsolete or wrong; a pre-existing test's own style is never flagged (`scoped/shared-testing.md` → **Authoring scope**).
 - Cite the `scoped/shared-testing.md` section in the right column as the governing rule.
 
 | Check | `shared-testing.md` section |
@@ -155,6 +155,8 @@ Checks whose source is outside this agent's rule set — Read the source before 
 | Realistic test data; a large byte-identical fixture becomes one named fixture | `### Names, comments and test data` |
 | Matches no row of the prohibited-shapes table | `### Meaningless-Test Prohibitions` → `#### The prohibited shapes` |
 | Mocks only at boundaries | `## Mocking Rules` |
+| Depth tracks risk: no reflex per-file or per-method test, no missing check on a risky path | `## Test Depth and Upkeep` → **Depth follows risk** |
+| A test the change made stale, obsolete or wrong is fixed in scope or named in `concerns`; none loosened to go green | `## Test Depth and Upkeep` → **Coupled-test check** |
 
 ### Naming Checks
 
