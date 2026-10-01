@@ -45,7 +45,8 @@ Every prompt, agent body, rule or skill deliverable authored by glass-atrium-met
   - Actor: glass-atrium-meta-prompt-engineer.
   - Input: only the files the cycle modified.
     - On a code file, the audited span is the file's prompt surface as guide Step 1 inventories it; the file's other code is not audited.
-    - Read beside them, never audited: the records of decided diet keeps, which the composer names in each pass delegation — the target file's maintainer note where one exists, and any plan that settled keeps.
+    - Read beside them, never audited: the records of decided diet keeps — the target file's maintainer note where one exists, and any plan that settled keeps.
+      - The composer names those records in each pass delegation.
   - Method: the bundled `/claude-api` prompt-audit guide, loaded through the Skill tool when the pass runs; no guide copy is written out for a run.
     - The pass is an instance of `agents/glass-atrium-meta-prompt-engineer.md` → `## Corpus Edit Pass`.
     - It also obeys that body's `## Corpus Transform Contract` → `tabulate-only-the-tabular` on every hunk, not only in a prose → outline restructure.
