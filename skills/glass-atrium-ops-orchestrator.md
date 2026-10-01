@@ -174,16 +174,16 @@ Every delegation prompt MUST declare these fields, so a sub-agent never exhausts
 
 | Field | Meaning | Default |
 |-------|---------|---------|
-| `tool_budget` | Max total tool uses; hitting the ceiling → stop + emit status | glass-atrium-intel-researcher ~15 · glass-atrium-intel-planner ~12 · glass-atrium-qa-code-reviewer ~14 · DEV: formula below |
-| `output_cap` | Max final-output size | 1500 KR chars or equivalent |
+| `tool_budget` | Max total tool uses; hitting the ceiling → stop + emit status | glass-atrium-intel-researcher ~15 · glass-atrium-intel-planner ~12 · glass-atrium-qa-code-reviewer ~14 · DEV: `[SIZE-EST]` estimate (below) |
+| `output_cap` | Final-output shape | the decision-relevant result inline; bulk to a file returned by path (`#### Resilient Workflow Authoring` → File-handoff) |
 | `reserved_output` | Emit tail reserved before work starts | Reserve-then-check (below) |
 | `scope_cap` | Explicit item/file count — no expansion without re-delegation | explicit item count |
-| `tool_preference` | Default extraction tool selection | defuddle-first for HTML ≥ 10KB · WebFetch for structured/API pages < 8KB |
+| `tool_preference` | Default extraction tool selection | HTML ≥ 10KB: WebFetch with a narrow prompt (Bash-holding agents: defuddle-first) · structured/API < 8KB: WebFetch |
 | `spawn_budget` | Max sub-agent invocations per Wave; hitting the ceiling → stop + escalate to user | glass-atrium-intel-researcher ~3 · glass-atrium-intel-planner ~2 · glass-atrium-qa-code-reviewer ~1 (per-wave soft budgets) |
 
-- **DEV `tool_budget`** `[default, adjustable]`: est ≈ reads + 3×(files to edit) + 4×(suite runs) + 5 margin.
-  - Reads not estimable (exploration-heavy or unfamiliar surface) → floor reads at 2×(files to edit).
-  - est ≳40, or borderline with unknown reads → SPLIT (`orchestrator-role.md` → Spawn Budget → Delegation-size discipline).
+- **DEV `tool_budget`**: the `[SIZE-EST]` `tool_uses~=` estimate for the same delegation.
+  - Split thresholds: `orchestrator-role.md` → `#### Delegation-size discipline` → **Split triggers** (HARD SECONDARY · Empirical tool_use calibration).
+  - Token format and per-file calibration: `skills/glass-atrium-ops-delegation-contracts/references/delegation-size-discipline.md`.
 - **`reserved_output`**: apply **Reserve-then-check** from `skills/glass-atrium-ops-delegation-contracts/references/delegation-size-discipline.md` → **`[SIZE-EST]` analysis mode** — gate the read scope against `input_budget` before work, never after.
 - **`spawn_budget`** bounds invocations only; concurrency is bounded by the engine's runtime self-cap (`orchestrator-role.md` → `### Spawn Budget`).
 - Hitting `tool_budget` before completion → the graceful exit in `GLASS_ATRIUM_GLOBAL_RULES.md` → `### Turn Budget & Graceful Exit`, carrying partial findings; never a silent exit.
@@ -202,21 +202,8 @@ Both aids help the sub-agent self-anchor; neither is hook-enforced.
   - `TASK_TYPE: <planning|document|implementation|analysis|research|review|debug>`
   - Optional because the planner, reporter and DEV descriptions already carry prompt-level rules for it.
   - Vocabulary matches the Capability-Based Agent Selection phase labels (analysis · planning · implementation · document · research · review).
-- **English keywords (SHOULD)**: an agent invocation prompt includes the target agent's core English technical keywords, which improves self-routing accuracy.
-  - Pair the task description with the keywords (e.g., "Modify user auth logic — nestjs, jwt, guard").
-  - Keywords match the agent's `domains` field in `agent-registry.json`.
-
-Recommended keywords per agent:
-
-| Agent | Recommended domain keywords (prompt content, NOT routing keys) |
-|---------|-----------------|
-| glass-atrium-dev-nestjs | nestjs, prisma, jwt, swagger, ddd, cqrs |
-| glass-atrium-dev-react | nextjs, react, tailwind, server-component |
-| glass-atrium-dev-android | kotlin, compose, coroutine, room, hilt |
-| glass-atrium-dev-node | nodejs, cli, mcp-server, esm, stream |
-| glass-atrium-dev-db | postgresql, prisma, schema, query-optimization |
-| glass-atrium-meta-prompt-engineer | prompt, prompt-design, agent-instructions, token-optimization |
-| glass-atrium-intel-researcher | research, web-search, literature-review, trend-analysis |
+- **Domain keywords (optional)**: pair the task description with the target agent's matching `domains` terms from `agent-registry.json` (e.g., "Modify user auth logic — nestjs, jwt, passport").
+  - They anchor the sub-agent's reading of the task and are never routing keys — the spawn's typed `agentType` already fixes the agent.
 
 #### Read-Extent Discipline [ORCHESTRATOR]
 
@@ -344,7 +331,7 @@ MANDATORY when authoring any workflow: the cap rules, the authoring idioms, and 
 - Both modes — schema non-emit, and invalid-emission / retry-cap-exceeded with its summary-collapse signature — are defined at `GLASS_ATRIUM_GLOBAL_RULES.md` → `#### Emit-before-cap`.
   - Each rejects the `agent({schema})` promise identically, with no engine-layer salvage, so ONE `.catch(() => null)` converts both into a null the retry path handles.
   - A bare null also arises from user-skip or terminal API death.
-- **The ROOT CAUSE is a SHAPE mismatch OR an over-tight length cap** — BOTH reproduce the IDENTICAL collapse loop, which is why a verbatim retry cannot break it.
+- **The root cause is a SHAPE mismatch or an over-tight length cap** — both reproduce the same collapse loop, which is why a verbatim retry cannot break it.
   - **SHAPE**: a FLAT, all-string `additionalProperties: false` schema cannot hold rich/multi-faceted output. The model must invent an UNDECLARED key (rejected) or NEST an object where a string is declared (type violation), so it keeps shrinking prose and never resolves the error.
   - **LENGTH**: a `maxLength`/`maxItems` cap TOO TIGHT for the field's realistic content forces the same prose-shrink toward a string that never fits the impossible size.
   - A SHAPE mismatch collapses even with NO cap present, so removing caps alone does not rescue a rigid flat schema.
@@ -356,7 +343,7 @@ MANDATORY when authoring any workflow: the cap rules, the authoring idioms, and 
 MANDATORY when authoring any workflow — these bind EVERY workflow output schema you author. The failure they prevent (`StructuredOutput schema retry cap (5) exceeded`) burns all five internal retries and loses the entire delegation.
 
 - **No caps** — no `maxLength` anywhere on a workflow output schema, and no per-element `maxItems`.
-  - The failure tracks the AUTHOR, not the engine: on the same days, same engine and same models, the one session authoring UNCAPPED schemas logged ZERO cap-violation complaints while every capped sibling logged them in the thousands.
+  - Why: the failure follows the author's caps, not the engine or the models.
   - The single admitted exception is ONE top-level `maxItems` on an inherently multi-item array (Shape-tolerant schema, below) — a single constraint that does not multiply across elements.
 - **Never cap `completion_block`** — the standing rule mandates the FULL multi-line block, and real blocks have overrun every cap they were given.
   - Schema compliance and rule compliance are mutually exclusive under ANY such cap, so this one needs no threshold argument.
@@ -451,7 +438,7 @@ async function robustAgent(agentType, opts) {
       schema: { type: 'object', additionalProperties: false,
         properties: { analysis: { type: 'string' }, completion_block: { type: 'string' } },
         required: ['analysis'] },
-      goal: `${opts.goal}\nRETRY — the prior tight schema failed validation, so you now have a PERMISSIVE schema. Put ALL output prose into the single analysis free-text field (no tight caps); if the content is large or multi-item, WRITE IT TO A FILE and return the path + a compact summary in analysis. Put the full multi-line [COMPLETION] block into completion_block (the recorder reads it from the StructuredOutput input). RESERVE BUDGET to emit StructuredOutput before the working ceiling — never end on prose.`,
+      goal: `${opts.goal}\nRetry: the first attempt returned no result, so this attempt uses a permissive schema. Put all output prose in the single analysis field. If the content is large or multi-item, write it to a file and return the path plus a compact summary in analysis. Put the full multi-line [COMPLETION] block in completion_block; the recorder reads it from the StructuredOutput input. Leave enough budget to call StructuredOutput before the working ceiling, and do not end on prose.`,
     });
   }
   if (result == null || result === '') {
@@ -524,10 +511,10 @@ const renderEntry = (a) => {
   return a.path + ' — ' + a.extent;
 };
 const budgetGuard =
-  'HARD BUDGET ~12 tool uses: reserve the emit tail — the terminal StructuredOutput IS the deliverable. ' +
-  'READ ONLY the allowlist below (no repo sweep); effort=medium (raise to high ONLY for narrow deep reasoning); ' +
-  'emit ONLY 2-3 fields, all UNCAPPED — write bulk evidence to a FILE and return its path in findings. ' +
-  'STOP and EMIT a partial cited answer when approaching the ceiling — a partial beats a lost one.';
+  'Hard budget: about 15 tool uses. The terminal StructuredOutput is the deliverable, so keep enough budget to emit it. ' +
+  'Read only the allowlist below, at the stated extent; no repo sweep; effort=medium (raise to high ONLY for narrow deep reasoning). ' +
+  'Emit only the declared fields, none of them capped; write bulk evidence to a file and return its path in findings. ' +
+  'When you near the budget, stop and emit a partial cited answer: a partial beats a lost one.';
 // bounded schema: <=2-3 fields, one free-text absorber (Shape-tolerant schema, above).
 // UNCAPPED by construction — NO maxLength/maxItems on ANY property, and completion_block is
 // NEVER capped (the recorder needs the FULL multi-line block). Bulk evidence goes to a FILE and
@@ -769,7 +756,7 @@ Backing: authoring the tokens, the stage and the declaration is the primary obli
         schema: { type: 'object', additionalProperties: false,
           properties: { analysis: { type: 'string' }, completion_block: { type: 'string' } },
           required: ['analysis'] },
-        goal: `${opts.goal}\nRETRY — the prior tight schema failed validation, so you now have a PERMISSIVE schema. Put ALL output prose into the single analysis free-text field (no tight caps); if the content is large or multi-item, WRITE IT TO A FILE and return the path + a compact summary in analysis. Put the full multi-line [COMPLETION] block into completion_block (the recorder reads it from the StructuredOutput input). RESERVE BUDGET to emit StructuredOutput before the working ceiling — never end on prose.`,
+        goal: `${opts.goal}\nRetry: the first attempt returned no result, so this attempt uses a permissive schema. Put all output prose in the single analysis field. If the content is large or multi-item, write it to a file and return the path plus a compact summary in analysis. Put the full multi-line [COMPLETION] block in completion_block; the recorder reads it from the StructuredOutput input. Leave enough budget to call StructuredOutput before the working ceiling, and do not end on prose.`,
       });
     }
     if (result == null || result === '') {
@@ -971,12 +958,6 @@ System hygiene checks — all READ-ONLY: each surfaces a candidate for the user 
 | Outcome-Record generation gaps | PostgreSQL `core.outcomes` |
 | `MEMORY.md` item freshness | user-facing memory index — report a stale item, never rewrite it |
 
-### Initializer Agent Pattern [ORCHESTRATOR]
-
-- Recommended to create context snapshot first when entering complex projects
-- Snapshot contents: project structure · core patterns · recent changes · caveats
-- Pass snapshot-based context to task agents → save initialization turns
-
 ### Numeric Threshold Adjustment Policy [ORCHESTRATOR]
 
 `[default, adjustable]` values → adjustment within 0.5-2x with rationale stated · history recorded in Outcome Record
@@ -1022,7 +1003,7 @@ Candidate practices, each carrying its own adoption trigger where one exists. Re
 
 #### Bilevel Meta-Optimization Loop
 
-- Every 10 tasks, aggregate Outcome Records → pattern analysis → generate instruction improvement candidates
+- Outcome-Record aggregation → pattern analysis → instruction-improvement candidates runs in the self-improvement daemon (`autoagent/daemon-cycle.sh`: `hooks/learning-aggregator.py` aggregates, `autoagent/daemon_cycle.py` builds the candidates); no orchestrator-side task counter drives it
 - **Self-goal-setting is forbidden** — an improvement candidate never becomes its own objective
 - **Which candidates need user approval is not decided here**: `core-learning-log.md` → Instruction Improvement Approval Tier is the canonical, and the orchestrator's operational delta is `### Self-Improvement User-Approval Trigger` below
 
@@ -1225,7 +1206,7 @@ Boundary rule: **pre-enumerable condition → engine; semantic interpretation �
       - Why: in schema mode the engine frames StructuredOutput as the sole deliverable, so the agent does not reliably raw-save without the grant.
       - It departs from side-effect-free stages on purpose: building the wiki is glass-atrium-intel-researcher's core function.
       - Agent side: `glass-atrium-intel-researcher.md` → `### Raw Source Storage Pipeline` (Schema/Workflow-mode persistence clause).
-  - **Quality gates as explicit verify-stages** — the four serial Decision-phase probes, Plan Direction Verification (Stage-2 gate), Sprint Contract Gate, Pipeline Acceptance Criteria. The engine infers none of them; the orchestrator encodes each as a gate stage.
+  - **Quality gates as explicit verify-stages** — the four Decision-phase probes, Plan Direction Verification (Stage-2 gate), Sprint Contract Gate, Pipeline Acceptance Criteria. The engine infers none of them; the orchestrator encodes each as a gate stage.
 - **Non-brittleness**: Dynamic Workflows is a research preview — describe the layering principle, and do not hardcode preview-specific field names likely to churn.
 
 #### Hook layer split under the engine
@@ -1514,7 +1495,7 @@ Signals that an orchestration is defective: the scan list, then the named guards
 - Pipeline stage started before the prior stage's acceptance criteria are verified
 - A very large fan-out (well beyond a normal team) composed without reasoning in `reason` about synthesis value and total-session token cost
 - `background: true` + `isolation: worktree` used together (Issue #33045)
-- Free-text delegation prompt without structured format or English domain keywords
+- Free-text delegation prompt without structured format
 - Sub-agent chain depth > 2 (orchestrator → worker → sub-worker) — nesting forbidden (`orchestrator-role.md` → `### Spawn Budget`)
 - A single Wave fanning out beyond the Workflow engine's runtime concurrency self-cap — split into sequential Waves
 - Routing decided by keyword/alias match instead of `domains` semantic match
@@ -1592,5 +1573,5 @@ A spawn without an `agentType` matching the routing decision starts a generic su
 - [ ] **File ownership**: no two agents in one Wave/Team mutate the index in one worktree (`rules/glass-atrium/core-git-workflow.md` → Commits → **Concurrent worktree** → **Index-owner rule**); within a worktree, an explicit ownership matrix
 - [ ] **Pipeline acceptance**: each stage transition has documented acceptance-criteria verification
 - [ ] **Outcome Record**: every completed task has an Outcome Record with the minimum fields (agent, task_type, result)
-- [ ] **Domain-keyword hints (recommended, not routing keys)**: delegation prompts include the target agent's recommended domain keywords as prompt content; routing stays capability-based
+- [ ] **Domain-keyword hints (optional, not routing keys)**: where a delegation pairs keywords, they come from the target agent's registry `domains`; routing stays capability-based
 - [ ] **Compatibility precondition**: a candidate declaring a `compatibility` field had its runtime precondition confirmed pre-spawn — halt and remediate when unmet (`orchestrator-role.md` → `### Phase Notes` → Compatibility Probe)

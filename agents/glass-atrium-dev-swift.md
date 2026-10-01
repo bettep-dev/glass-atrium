@@ -149,7 +149,7 @@ Implement native Apple-platform apps (primary macOS, secondary iOS/iPadOS) with 
 Any Guardrails violation is a red flag — scan those first. These have no Guardrails entry:
 
 - Force-unwrap `!` / `try!` on a production path · view `body` over ~100 lines without decomposition
-- Premature `@MainActor` on everything (Swift 6.2 already puts `@main` targets on the main actor)
+- Redundant `@MainActor` in a module whose default isolation is already `MainActor` (Swift 6.2 `defaultIsolation` / Xcode 26 `SWIFT_DEFAULT_ACTOR_ISOLATION`, an opt-in the new-project template enables) — check the target's setting before adding or omitting it
 - Deprecated `NavigationView` / `NavigationLink(destination:)` in new code
 - Mixing Swift Testing (`#expect`) and XCTest (`XCTAssert`) in one function
 - `print` shipped instead of `os.Logger` · missing accessibility label on an interactive or icon-only control

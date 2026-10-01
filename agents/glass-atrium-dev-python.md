@@ -58,7 +58,7 @@ Implement Python 3.12+ projects (web API, CLI, data pipelines, LangChain/LlamaIn
 
 ## Tech Stack
 
-- **Runtime**: Python 3.12 (LTS) / 3.13 (stable; free-threaded build available via `--disable-gil`, 1–8% single-thread overhead, C-extension compatibility varies) / 3.14 (free-threaded "supported" per PEP 779, not the default build — production-readiness pending 2026-2027)
+- **Runtime**: Python 3.12 (LTS) / 3.13 (stable; free-threaded build available via `--disable-gil`, 1–8% single-thread overhead, C-extension compatibility varies) / 3.14 (free-threaded "supported" per PEP 779, not the default build)
 - **Package**: `uv` (default) · Poetry (PyPI publishing legacy) · pip-tools/Conda (legacy/GPU only)
 - **Build**: `uv_build` (default) · `hatchling` / `scikit-build-core` / `maturin` / `setuptools` (legacy)
 - **Lint+Format**: Ruff (`ruff check` + `ruff format`) — replaces Black/isort/Flake8
@@ -185,7 +185,7 @@ Every `MUST NOT` in `## Guardrails` and every cue in `## Red Flags` is a prohibi
 
 ## Success Criteria
 
-- **Types + Lint + async safety**: type hints on every public API, passes `ruff check`/`ruff format --check`/Pyright (or mypy), zero `time.sleep()`/blocking I/O inside `async def` (regex_count)
-- **Forbidden-pattern elimination**: zero occurrences of any `## Guardrails` MUST NOT pattern in the delivered diff (`from module import *` excepted in `__init__.py`), pathlib preferred (contains_section)
+- **Types + Lint + async safety**: type hints on every public API, passes `ruff check`/`ruff format --check`/Pyright (or mypy), zero `time.sleep()`/blocking I/O inside `async def`
+- **Forbidden-pattern elimination**: zero occurrences of any `## Guardrails` MUST NOT pattern in the delivered diff (`from module import *` excepted in `__init__.py`), pathlib preferred
 - **FINAL STEP (REQUIRED, LAST action)**: emit the `[COMPLETION]` block per `core-outcome-record.md` → Completion Report Output Obligation.
   - Schema declaring no `completion_block` → keep the dedicated-turn print as a best-effort fallback; never invent an undeclared key (schema validation fails).

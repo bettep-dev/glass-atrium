@@ -72,7 +72,7 @@ The noun rule is `scoped/shared-naming.md` → **Identifier-kind binary**. The c
   - Worked case of the ban: `IUserService` X → `UserService` O
 - **Entity nouns**: class/type names are nouns naming the design intent — avoid verbified-noun fillers (`DataProcessor` → `Parser`/`Validator`/`Transformer`).
   - Exception: `-able` capability contracts (`Runnable`, `Callable`, `Comparable`) and `-er` agent nouns (`Reader`, `Writer`) are legitimate, NOT the filler pattern.
-- **Forbidden suffixes**: `*Manager`·`*Helper`·`*Util`·`*Processor`·`*Wrapper`·`*Handler` (standalone)
+- **Forbidden suffixes**: `*Manager`·`*Helper`·`*Util`·`*Processor`·`*Wrapper`·`*Handler` — a qualifier (`ErrorHandler`) does not rescue one (`references/ANTI-PATTERNS.md` → `## Forbidden Class/Type Suffixes`)
 - **DTO**: class name = specify direction (`CreateUserRequest`·`UserResponse`) / filename = `.dto.ts` allowed
 
 ### Enums/Constants

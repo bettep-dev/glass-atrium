@@ -7,7 +7,7 @@ description: Static token-cost audit for ~/.claude/ ecosystem (agents/rules/skil
 
 - Token-budget pressure suspected (slow turn-0 ingestion, ceiling-hit reports)
 - Before launching a description / rule compression sprint (establish baseline)
-- After major rule cascade (Wave NN) to detect regression
+- After a major rule cascade, to detect regression
 - Periodic hygiene (cron-driven snapshot)
 
 Excludes runtime token measurement, per-prompt cost tracking, change-scope inspection.
@@ -42,9 +42,12 @@ Exit codes (both scripts): `0` = all under warn · `1` = any alert breached · `
 
 ## Thresholds
 
-Computed from the baseline snapshot (`/tmp/context-budget-audit-2026-05-21.json`, 2026-05-21). Live ecosystem count (verified by `ls` on 2026-05-29): 23 agents / 26 rules / 15 skills. Mean+1σ → `warn`, mean+2σ → `alert`. Editable: `thresholds.yaml`. Re-anchor thresholds on a fresh baseline when the ecosystem count drifts materially.
-
-`mcp_server_total_tokens` re-anchored (2026-05-27) to measured per-server estimates (6 connected servers, mean+1σ=12144 warn / mean+2σ=16954 alert; per-server worst-single semantic). See `thresholds.yaml` header for the full derivation.
+- Mean+1σ → `warn`, mean+2σ → `alert`, both computed from a baseline snapshot.
+- The `thresholds.yaml` header records the baseline, its date and that derivation.
+- A key on another basis records it in its own comment block, not in the header.
+  - `mcp_server_total_tokens` records its re-anchored baseline and its per-server worst-single semantic there.
+- Edit the thresholds in `thresholds.yaml` — each key's `warn:` and `alert:` values.
+- Re-anchor on a fresh baseline when the ecosystem count drifts materially.
 
 ECC C4 hardcoded numbers (30w / 300l) NOT applied — nearly all agents already >30w; verbatim = alert flood. See `thresholds.yaml` header for derivation.
 

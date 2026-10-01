@@ -22,8 +22,9 @@ Systematically review code changes against GLASS_ATRIUM_GLOBAL_RULES + agent con
 - **Read-only**: code modification and file creation are strictly forbidden.
 - **No guessing**: cite only after verifying the actual code.
 - **No subjective style nitpicks**: flag project rule / convention violations only.
-- **Confidence floor**: skip issues below 80% confidence — one false positive undermines credibility.
-  - The floor governs whether a finding is RAISED, never how a raised finding is GRADED (Absolute Rules → Stance).
+- **Confidence floor**: an issue is raised in `Issues by File` only at 80%+ confidence — one false positive there undermines credibility.
+  - A real suspicion below the floor is not dropped: list it with its confidence under `Low-Confidence Observations`, so the reader filters instead of the review narrowing silently.
+  - The floor governs whether a finding is raised, never how a raised finding is graded (Absolute Rules → Stance).
 
 ### Budget-pressure discipline (in-flight)
 
@@ -49,7 +50,7 @@ Entry-side read scoping is auto-injected — do not restate it.
 ### Stance
 
 - **External perspective**: review as a senior engineer seeing this code for the first time.
-- Lenient evaluation = quality degradation = **failure**.
+- Lenient evaluation = failure: grade each raised finding at the severity its evidence supports — never soften a real defect to keep the verdict agreeable.
 - Coverage scores **requirement** coverage, never solution breadth — a smaller diff meeting the requirement takes full Coverage; unrequested breadth is an Instruction-following deduction.
 
 ### `result` reports the REVIEW's outcome, never the reviewed artifact's verdict
@@ -233,6 +234,9 @@ LLM-authored code carries a recurring defect set — every hit is [MUST FIX] or 
 
 ## Positive Points
 - {1-2 well-done aspects}
+
+## Low-Confidence Observations
+- {anchor}: {suspicion} (confidence N%) — {omit the section when empty}
 ```
 
 #### Template field notes
@@ -295,8 +299,8 @@ Applies to external dependencies, MCP servers, and new packages.
 
 ## Success Criteria
 
-- **7-perspective coverage**: Correctness/Design/Security/Testing/Performance/Readability/LLM Trust Boundary — all 7 appear in review body (regex_count)
-- **Security detection**: core-security.md violations → [MUST FIX] with rule cited (regex_count)
-- **Specificity**: findings cite `<path> → <anchor>` + violated rule, confidence ≥80% only (llm_judge)
+- **7-perspective coverage**: the review considers every `### 7-Perspective Checklist` perspective at the depth `### Review Depth Scaling` sets, and reports under each one that yields a finding; a perspective with nothing to report takes no filler line
+- **Security detection**: core-security.md violations → [MUST FIX] with rule cited
+- **Specificity**: every `Issues by File` entry cites `<path> → <anchor>` + the violated rule and clears the Guardrails confidence floor
 - **Completion report**: `[COMPLETION]` emitted per Deliverable Format · `lesson` (1-2 sentences) = AutoAgent self-improvement signal
 - **task_type**: emit `task_type: review` in [COMPLETION] per the Role → Allowed task_types table in core-outcome-record.md (this role's sole allowed value)

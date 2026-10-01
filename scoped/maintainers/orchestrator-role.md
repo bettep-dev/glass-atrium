@@ -102,10 +102,10 @@ Maintainer-facing material for that rule file. Nothing here binds the orchestrat
 
 ### `### Failure Recovery Loop`
 
-- `**Debugger evidence gate**` came from the retired `glass-atrium-core-iron-laws` skill's Debugger Escalation section; it has no other maintained copy — `scoped/shared-investigation-discipline.md` only points at it as the orchestrator half; its backing is stated in the rule file's Backing honesty paragraph.
+- `**Debugger evidence gate**` has no other maintained copy — `scoped/shared-investigation-discipline.md` only points at it as the orchestrator half; its backing is stated in the rule file's Backing honesty paragraph.
 - **Backing honesty (which stages are enforced)** is a pointer to `skills/glass-atrium-ops-delegation-contracts/references/failure-recovery.md`; the split between them: that skill's `SKILL.md` → Reference Index.
   - The evidence-gate citer above resolves through that pointer: it keeps the lead and names the **Debugger evidence gate** as honor-system.
-- The rule file no longer points at `skills/glass-atrium-ops-orchestrator.md` → `### Self-Improvement User-Approval Trigger`. The orchestrator reaches it through Tier-1 `rules/glass-atrium/core-learning-log.md` → Instruction Improvement Approval Tier and `rules/glass-atrium/shared-self-improve-hygiene.md` → Cross-References.
+- The rule file carries no pointer to `skills/glass-atrium-ops-orchestrator.md` → `### Self-Improvement User-Approval Trigger`; the orchestrator reaches that section through Tier-1 `rules/glass-atrium/core-learning-log.md` → Instruction Improvement Approval Tier and `rules/glass-atrium/shared-self-improve-hygiene.md` → Cross-References.
 - A comment in `autoagent/daemon_cycle.py` still cites `orchestrator-role.md` for that name; the fix belongs at the comment (point it at the skill), not a pointer back here.
 
 ### `## Document-Driven Workflow (end-to-end lifecycle)`

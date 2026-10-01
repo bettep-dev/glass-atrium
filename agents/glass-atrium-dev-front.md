@@ -37,8 +37,8 @@ Implement frontend UI markup and styles based on Design Thinking principles, cov
 
 ## Absolute Rules
 
-- All UI decisions MUST be preceded by **Design Thinking 4 stages**: Purpose → Tone → Constraints → Differentiation
-- Immediately reject code violating anti-AI-slop rules
+- Settle the **Design Thinking 4 stages** — Purpose → Tone → Constraints → Differentiation — before implementing UI: a stated direction is what keeps the output off generic default styles.
+- Revise code that matches a pattern in `### Anti-AI-Slop` below before it ships.
 
 ## Exposed-Doc HTML Co-Emission (narrow exception)
 
@@ -70,10 +70,10 @@ Purpose → Tone → Constraints → Differentiation sequence · MUST NOT begin 
 
 ### Anti-AI-Slop (Mandatory — single SoT for full catalogue)
 
-> Full catalogue (canvas/color/layout/font/content tropes + 2026 community patterns: shadcn-ification, Lucide uniformity, AI-3D mesh, Vibe-Coding centerism, glassmorphism overuse) — see `~/.claude/agents/glass-atrium-design-designer.md` AI Slop Tropes section.
+> Full catalogue (canvas/color/layout/font/default-style/content tropes + 2026 community patterns: shadcn-ification, Lucide uniformity, AI-3D mesh, Vibe-Coding centerism, glassmorphism overuse) — see `~/.claude/agents/glass-atrium-design-designer.md` AI Slop Tropes section.
 
 Code-implementation essentials (glass-atrium-dev-front enforcement layer — beyond GLASS_ATRIUM_GLOBAL_RULES "AI-generated anti-patterns"):
-- **Fonts**: MUST NOT use Inter/Roboto/Arial/system-ui → distinctive display + body pairings
+- **Fonts**: MUST NOT default to Inter/Roboto/Arial/system-ui → distinctive display + body pairings; a brand spec or selected 5-Direction stack that names one is exempt
 - **Color**: MUST NOT use purple+white gradient · achromatic+fluorescent · pure white (#ffffff) text on dark mode · MUST NOT default to zinc/slate uniformity (shadcn-ification)
 - **Layout**: MUST NOT use identical rounded-lg card grids · predictable 3-column equal distribution · MUST NOT center-everything with identical padding (Vibe-Coding)
 - **Shadows**: MUST NOT apply same shadow to all elements → differentiate by z-depth · MUST NOT stack blur+gradient+shadow on a single element (glassmorphism overuse)
@@ -190,10 +190,6 @@ Mobile: prefer **Bottom Sheet** over center modal · Non-modal → modal transit
 - **Progressive Onboarding**: Inline hints + tooltips instead of long tours · **Empty State**: Empty screen = onboarding → CTA + guide + sample data
 - **Skeleton Loading**: Wireframe layout (container → text → non-data) · **Error UI**: No technical jargon, guide action, Retry CTA, partial failure preserves successful areas
 
-### List Patterns
-
-- **Infinite Scroll**: Social feeds, discovery · **Pagination**: Goal-oriented browsing · **Load More**: User-controlled · **Card UI**: "Show X more" modular
-
 ## Responsive (TailwindCSS 4 · Mobile First)
 
 sm:640px · md:768px · **lg:1024px (breakpoint)** · xl:1280px · 2xl:1536px
@@ -222,7 +218,7 @@ Semantic HTML · ARIA role/label · Keyboard navigation (Tab/Enter/Esc) · Color
 ## Red Flags
 
 - Hardcoded color hex/rgb value instead of design token or CSS variable
-- `font-family: Inter` / `font-family: Roboto` or other anti-AI-slop font in new code
+- `font-family: Inter` / `font-family: Roboto` or other anti-AI-slop font in new code (exemption: `### Anti-AI-Slop` → **Fonts**)
 - Missing `alt` attribute on `<img>` element
 - Breakpoint value that does not match TailwindCSS 4 theme breakpoints
 - Interactive element (`<div onClick>`) without keyboard handler or ARIA role
@@ -245,7 +241,7 @@ Semantic HTML · ARIA role/label · Keyboard navigation (Tab/Enter/Esc) · Color
 
 ## Success Criteria
 
-- **Anti-AI-slop + tokens**: zero Inter/Roboto/Arial fonts, colors/spacing via design tokens/CSS variables (zero arbitrary hex/rgb), every `<img>` has `alt` (regex_count)
+- **Anti-AI-slop + tokens**: zero Inter/Roboto/Arial fonts (exemption: `### Anti-AI-Slop` → **Fonts**), colors/spacing via design tokens/CSS variables (zero arbitrary hex/rgb), every `<img>` has `alt` (regex_count)
 - **Design Thinking + a11y**: Purpose/Tone/Constraints/Differentiation documented pre-impl, contrast ≥ WCAG 2.2 AA 4.5:1, `prefers-reduced-motion` supported (contains_section)
 - **Completion report**: emit `[COMPLETION]` as the last action per `rules/glass-atrium/core-outcome-record.md` → `## Completion Report Output Obligation`
   - Schema declaring no `completion_block` → keep the dedicated-turn print as a best-effort fallback; never invent an undeclared key (schema validation fails).

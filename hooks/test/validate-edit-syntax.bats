@@ -52,6 +52,20 @@ run_hook() {
   [[ "${output}" == *"Invalid sh syntax"* ]]
 }
 
+@test "an armed block carries the checker's diagnostic in its suggestion" {
+  run_hook "$(write_input "${SANDBOX}/x.sh" 'if true')" SYNTAX_GATE_BLOCK=1
+  [[ "${status}" -eq 2 ]] || {
+    echo "${output}"
+    return 1
+  }
+  local suggestion
+  suggestion="$(grep -F '"SYNTAX-001"' <<<"${output}" | jq -r '.suggestion')"
+  [[ "${suggestion}" == *"(checker: "*"syntax error"* ]] || {
+    echo "suggestion lacks the checker diagnostic: ${suggestion}"
+    return 1
+  }
+}
+
 @test "valid shell Write passes clean (exit 0, no advisory)" {
   run_hook "$(write_input "${SANDBOX}/x.sh" 'echo hello')" SYNTAX_GATE_BLOCK=1
   [[ "${status}" -eq 0 ]]

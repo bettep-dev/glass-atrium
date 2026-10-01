@@ -50,7 +50,6 @@ Dropped outright (not moved) — each would preserve a claim a future editor cou
 - The Tier-2 loading stanza and the 2026-09-10 delivery-status block, including its three consequence bullets and the disposition rule. Self-refuting the moment the file is read by the agent it names, and superseded by the per-section condition lines now in the rule file.
 - `### Reader — why this section survives the disposition rule` — a disposition argument for a decision already taken. Its factual finding survives in the ledger row above.
 - The Sprint Contract Gate's "Heading kept, body removed" note and its Sizable-task pair note — both restated the canonical's location, which the stub line now states once.
-- "Two pointers were DELETED from this list" — deletion bookkeeping for an edit two waves old.
 - The rubric pair note, the D8 pair note and the Threshold SoT pair note — five-, three- and two-site edit registers. The linkage they carried is in the ledger table above.
 - The Regression Risk "Undelivered, and a RELOCATE candidate for the reviewer body" note — superseded: the rule file reaches the reviewer whole (**How the reviewer reaches this file** below).
 - Duplicates of text the reviewer's own body already delivers: the D8 skip list, the pass threshold, gradient localization, the `qa_score` record format, the 20-point total's restatement inside the D8 section, and the score-trend sentence.

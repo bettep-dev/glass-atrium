@@ -402,8 +402,8 @@ build_meter_block() {
   ceiling=$((10#${max_turns} * 8 / 10))
   printf '%s\n' \
     "**Turn-budget meter (auto-injected · GLOBAL_RULES Turn Budget & Graceful Exit)**" \
-    "- Your maxTurns hard cap is ${max_turns} TURNS (a TURN cap, not a tool_use cap). The hard cap kills you mid-tool-use → no [COMPLETION] block → costly orchestrator recovery." \
-    "- Working ceiling = ${ceiling} turns (80% of cap). As you APPROACH ${ceiling}: STOP, do NOT push to the hard cap." \
+    "- Your maxTurns hard cap is ${max_turns} turns (a turn cap, not a tool_use cap). Hitting it ends the run mid-tool-use → no [COMPLETION] block → costly orchestrator recovery." \
+    "- Working ceiling = ${ceiling} turns (80% of cap). Near ${ceiling}, wrap up as below; do not push to the hard cap." \
     "- On approach: finish the current write (no partial files), checkpoint done/remaining with Write/Edit to progress-{task}.md in ~/.claude-personal/projects/<home-encoded>/memory/ (Bash-only agent: put done/remaining in summary; the orchestrator writes the file), then emit a terminal [COMPLETION] block with result: needs_context and a 1-line resume point in summary. (schema-mode: block in completion_block, StructuredOutput still the LAST call.)" \
     "- Splitting > truncation: a clean needs_context handoff resumes cleanly; a hard-cap kill does not."
 }

@@ -80,7 +80,7 @@ The daemon classifies your patch before it is applied (`autoagent/daemon_cycle.p
 - Preserve the target's editable-region marker count. The target's rule membership is NOT in the body — it lives in that agent's `agent-registry.json` entry (`rules.scope` / `rules.shared` / `rules.conditional`), which you do not write.
   - Enforced at apply time: `autoagent/daemon-apply.sh` → `verify_patched` fails the apply when a marker count drops, and its landing-zone gate fail-closes (`no_marker`) on a target left with no editable region — a rewrite that drops them makes the target unpatchable.
 - Leave the written file unstaged — you hold no shell grant, so committing is neither reachable nor yours to do.
-- Final response reports line count before/after plus a 2-4 bullet summary of the key changes.
+- Final response reports line count before/after plus a short bullet summary of the key changes.
 
 ## Modification Principles
 

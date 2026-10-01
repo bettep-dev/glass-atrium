@@ -30,7 +30,8 @@ Maintainer-facing material for that rule file. Nothing here binds either META ag
   - `agents/GLASS_ATRIUM_GLOBAL_RULES.md` → `### Precedence Resolution` makes the assigned scope file the final authority, the whole file and never a named section inside it.
   - The section preamble therefore states that this file governs and that the section concentrates that authority, and sends the precedence order to the charter anchor — the shape `scoped/scope-planning.md` → `## Absolute Rules [PLANNING]` already carries.
 - **Tag**: `Absolute Rules` and `Skills Array Order` carry `[META]` only — no DEV rule file holds either heading or a matching pointer, so a DEV half would name no counterpart.
-- **Judgement recorded, not acted on**: the `Skills Array Order` bullet is an unsourced null-result preference ("order has no significant effect") that obliges nobody. Deleting the section is the stronger disposition.
+- **Skills Array Order kept as a sort rule**: the bullet obliges a readability sort (core → supplementary) and nothing more; its null-result clause is cut, not the section.
+  - Why: that clause steered where the author spends effort and changed neither the sort nor its acceptance.
 
 ## Heading-citation register — do not rename these
 
@@ -50,7 +51,7 @@ Do not restore any item below.
 
 - **Loading stanza** (`> **Loading**: Tier 2 … agent_scope ∈ {…}` plus `> **Inherits**` and `> **See**`). The `agent_scope ∈ { … }` brace-list parsers (`scripts/agent_lifecycle/readers.py` → `parse_scope_dev_roster`, `autoagent/lib/roster_merge.py` → `_get_markdown_slots`) are anchored on `scoped/scope-dev.md` alone, so no reader needs it here.
 - **Pair note under `## Absolute Rules`** tying this file to `## Absolute Rules` and `## Skills Array Order` in `scoped/scope-dev.md` — that file carries neither heading, so there is no pair to maintain.
-- **`Skills Array Order` evidence claim** (what survives: `## Decisions taken on review, with their reasoning` → **Judgement recorded, not acted on**).
+- **`Skills Array Order` evidence claim and null-result clause** ("Order has no significant effect on model behaviour, so spend the effort on content quality instead."). What survives: `## Decisions taken on review, with their reasoning` → **Skills Array Order kept as a sort rule**.
 - **`## CQRS Exception` antecedent** — the "DEV CQRS separation" the heading excepts is stated in no DEV rule file. Read the positive grant in the rule file rather than inferring a DEV rule from the heading name.
 
 ## Duplicates dropped, with the delivered copy that made them redundant

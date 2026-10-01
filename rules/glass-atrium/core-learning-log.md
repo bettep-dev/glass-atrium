@@ -25,7 +25,7 @@ The self-improvement loop (`autoagent/daemon_cycle.py`) user-approval queue is *
 - `autoagent/daemon-apply.sh` auto-applies.
 - Conditions: classification == "apply" + `haiku_status` starting with `ok` + diff non-empty + non-safety scope.
   - Prefix, never equality: the legitimate `ok:retried` / `ok:fuzzy-parsed` variants must pass the same gate, and a missing or `skipped:*` status fails closed (`daemon_cycle.py` → `is_apply_eligible_haiku_status`).
-- Pre-verify quality issue (rule-scope misapplication / failure to add ≤5-line body, etc.) → 1 Haiku LLM retry, then Auto if re-verification passes / reject if it fails
+- Pre-verify quality issue (rule-scope misapplication / failure to add ≤5-line body, etc.) → 1 LLM retry on the daemon worker model (`WORKER_MODEL`), then Auto if re-verification passes / reject if it fails
   - Entry into the user queue is forbidden on this path.
 
 **Tier 2 — Safety**:

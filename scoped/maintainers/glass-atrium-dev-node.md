@@ -51,10 +51,10 @@ Corpus-maintenance companion. The agent never reads this file; the body holds ag
 
 Five daemon-evolved EDITABLE lines were judged against this body plus the rules the agent receives. None is valid, so none is integrated; a proposal re-adding one fails on the same ground.
 
-| Quote | Proposal | Class | Reason |
-|---|---|---|---|
-| "MUST default to `effort=medium` for routine implementations" | 1709 | contradicts | Thinking Budget Policy defaults `effort=high`; effort is set by the caller, not the spawned agent |
-| "MUST consolidate tool exploration (Grep/Read results) into one exploratory pass" | 1709 | unsupported | no outcome evidence it caused or cured anything |
-| "confirm all Grep/Read is complete and documented before first Write/Edit" | 6790 | contradicts | injected BUDGET-DEV staging (1-2 files at a time, verify each) and the retry after a first failure both need reads mid-implementation |
-| "MUST NOT perform secondary Grep/Read exploration on previously-examined targets" | 3386 | contradicts | "1st failure → reformulate hypothesis + retry" needs re-tracing; post-edit re-reads verify work |
-| "On effort=medium qualification: straightforward literal edits/moves with known targets only" | 3386 | contradicts | same effort conflict as the first row |
+| Quote | Class | Reason |
+|---|---|---|
+| "MUST default to `effort=medium` for routine implementations" | contradicts | Thinking Budget Policy defaults `effort=high`; effort is set by the caller, not the spawned agent |
+| "MUST consolidate tool exploration (Grep/Read results) into one exploratory pass" | unsupported | no outcome evidence it caused or cured anything |
+| "confirm all Grep/Read is complete and documented before first Write/Edit" | contradicts | injected BUDGET-DEV staging (1-2 files at a time, verify each) and the retry after a first failure both need reads mid-implementation |
+| "MUST NOT perform secondary Grep/Read exploration on previously-examined targets" | contradicts | "1st failure → reformulate hypothesis + retry" needs re-tracing; post-edit re-reads verify work |
+| "On effort=medium qualification: straightforward literal edits/moves with known targets only" | contradicts | same effort conflict as the first row |

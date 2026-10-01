@@ -26,4 +26,4 @@
 
 - `skills/glass-atrium-ops-orchestrator.md` holds the detail behind this file and `orchestrator-role.md`. It is a flat reference file, not a Skill-loadable SKILL.md, so it never arrives on its own: Read the path when a topic below applies.
 - Core-process sections: Capability-Based Agent Selection · Team Composition Rules · Delegation/Communication Rules · Cost Optimization · Quality Gates · Architecture Patterns (Wave Execution, Agent Teams) · Delegation Enforcement.
-- Standing policies: Entropy Management (Janitor) · Initializer Agent Pattern · Numeric Threshold Adjustment Policy · feature-dev Plugin Usage Scope · Agent Performance Metrics · Consensus Protocol · Experimental Features.
+- Standing policies: Entropy Management (Janitor) · Numeric Threshold Adjustment Policy · feature-dev Plugin Usage Scope · Agent Performance Metrics · Consensus Protocol · Experimental Features.

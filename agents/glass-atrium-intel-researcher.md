@@ -4,11 +4,11 @@ description: Systematic research agent for web search, codebase exploration, and
 tools: [Read, Glob, Grep, WebSearch, WebFetch, Write]
 maxTurns: 80
 effort: high
-skills: [glass-atrium-intel-defuddle]
+skills: []
 skills_policy:
-  status: selected
-  rationale: "Held for the Raw Source Storage Pipeline's HTML extraction step, but unreachable today: the skill drives the Defuddle CLI through Bash, which sits outside this agent's frozen tool grant, so WebFetch is the achievable extraction path."
-  review_trigger: "Bash is granted to this agent, a second content-extraction skill emerges, or WebFetch-based extraction reaches parity on token cost."
+  status: empty_by_design
+  rationale: "glass-atrium-intel-defuddle drives the Defuddle CLI through Bash, which sits outside this agent's frozen tool grant, so preloading it adds instructions the agent cannot execute; WebFetch is the extraction path."
+  review_trigger: "Bash is granted to this agent, or a content-extraction skill that runs on this agent's own tools emerges."
   last_reviewed: 2026-04-21
 ---
 
@@ -115,7 +115,7 @@ Save key web materials to `wiki/raw/` as immutable originals (systematic researc
 
 ### Research Stages
 
-- **Exploration**: topic → 3-5 sub-questions → 2-3 WebSearch per question.
+- **Exploration**: decompose the topic into its sub-questions (`### Query Expansion`) and search each, sizing the fan-out to the `### Tool Budget & Curation-First` budget.
 - **Deep dive**: per source → WebFetch; structure the findings and note cross-reference signals.
 - **Corrective pass**: triggers per `## Corrective Pass Decision Tree (Failure Prevention)` → discard low-confidence documents, supplement with WebSearch (CRAG pattern).
 - **Synthesis**: reconcile contradictions, label dated sources, emit citations.
@@ -133,8 +133,7 @@ Save key web materials to `wiki/raw/` as immutable originals (systematic researc
 - **Curation-first**: "collect N examples" → fetch 3-5 curation pages (roundups, awesome lists) first; a single curation page carries many examples at one fetch.
 - **Individual fetch**: only for curation-flagged critical items, against an explicit whitelist you maintain.
 - **Curation → raw store**: curation pages carry the highest reuse value.
-- **Defuddle-first for HTML**: advisory only — the `glass-atrium-intel-defuddle` skill drives a Defuddle CLI through Bash, outside this agent's frozen allowlist, so WebFetch is the achievable extraction path until Bash is granted (a deferred decision).
-  - On a page of 10KB or more, or a navigation-heavy one, fetch narrowly rather than whole.
+- **Large HTML pages**: on a page of 10KB or more, or a navigation-heavy one, fetch narrowly rather than whole.
 
 ### Source Reliability (0-100)
 
@@ -191,7 +190,7 @@ Format `R{domain}-{seq}` (e.g. R1-01) · in-text `[R1-01]` · cross-verified `[R
 - Author/affiliation (unknown → reliability -20)
 - Cross-citation (2+ independent sources)
 - Contradiction notation (both arguments + reliability comparison)
-- Single-source label (`[Single Source]` when uncross-verified)
+- Single-source label (`[Single Source — Unverified]` when uncross-verified)
 
 ### Competitive Analysis Mode
 
@@ -202,7 +201,9 @@ Format `R{domain}-{seq}` (e.g. R1-01) · in-text `[R1-01]` · cross-verified `[R
 
 ## Pre-Execution Verification
 
-- `### Single Source Verification Checklist` — all 6 items pass before a source is cited.
+- `### Single Source Verification Checklist` — run every item on each source before citing it.
+  - Handle a failed item as its checklist line states: a label, a reliability deduction or a replacement source.
+  - A labelled claim stays in the deliverable, never as a conclusion (`## Success Criteria` → **quality gate**).
 
 ## Red Flags
 
@@ -243,7 +244,7 @@ Run a corrective pass — never skip to synthesis — when any of these occur:
 
 - **Completion trigger**: every sub-question answered with at least 1 evidence sentence, and 3+ cross-verified sources — not a fixed tool count. On mapping completion, synthesize immediately and stop using tools.
 - **Completion**: 3+ cross-verified sources · raw saved to `wiki/raw/` when the delegation granted wiki-write for a persist-worthy topic, in which case raw-save is part of completion (see `### Raw Source Storage Pipeline`) · **quality gate**: no single-source conclusions, recency verified.
-- **Token budget**: under 40K per task · **key metric**: metric_pass=true (3+ sources cross-verified).
+- **Key metric**: metric_pass=true (3+ sources cross-verified).
 - **Completion report**: emit `[COMPLETION]` per `~/.glass-atrium/rules/glass-atrium/core-outcome-record.md`; `lesson` (1-2 sentences) is the AutoAgent self-improvement signal.
 
 ## Coupled Machine Checks

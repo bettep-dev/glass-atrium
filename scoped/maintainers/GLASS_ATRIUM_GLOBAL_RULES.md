@@ -7,12 +7,12 @@ Corpus-maintenance companion to the Tier-1 system charter. Nothing here is deliv
 - Companions ship as manifest members, so a pointer to one resolves on a live install.
 - A rule file carries at most ONE pointer per externally-cited stub heading — that stub is what keeps the external citation resolving in one hop, and a file with two such headings carries two and no more.
 - NOT a pointer under this rule: an HTML comment addressed to the editor of a machine-read file — maintainer-facing, never a duty.
-  - **Sibling wording**: the other companions attach "never injected" to that clause. This file is the exception, so the qualification lives here rather than in them.
+  - **Sibling wording**: the other companions attach "never injected" to that clause; the observation under "Applied here" below extends it to this file.
 - Every other citation goes — other rule-file prose, and every agent body. The linkage is recorded in this note instead.
-- Applied here: the charter carries a single HTML editor comment at its head naming this note, in place of three in-body machine-checked paragraphs that were delivered to every agent while obliging none of them.
-  - **The comment sits inside the delivered bytes.** The charter reaches every agent and subagent verbatim on the host project-instructions channel, so a comment in it is not maintainer-only the way a scope file's comment is.
-  - **Whether that channel PRESERVES an HTML comment is UNVERIFIED.** No live project-instruction file carries one, so no observation settles it either way. Probe: once this comment is on the live install, read a spawned subagent's received project instructions and look for it.
-  - **Kept on the half of the trade that does not turn on that answer**: five comment lines against those three paragraphs — the cheaper side whichever way the probe lands.
+- Applied here: the charter carries a single HTML editor comment at its head naming this note.
+  - **The host project-instructions channel did not deliver it**: a spawned subagent's received copy of the live charter opened at `# Agent Global Rules`, while the live file carries the five-line comment above that heading.
+    - Observed on glass-atrium-meta-prompt-engineer and glass-atrium-qa-code-reviewer spawns, last on 2026-09-30.
+  - Re-check after a host update: read a spawned subagent's received project instructions and look for the comment.
 
 ## Status in the corpus
 
@@ -42,9 +42,9 @@ The charter's head comment names the class of shape; what binds is below.
 - **What spends that slack**: only deletion above the heading moves it earlier, toward the floor. Added text moves it later, away from the floor, so growth above the heading is never the risk.
 - `RULE_EXCERPT_CHAR_CAP` is 120,000 and a file at or under the cap is returned verbatim, so this file cannot reach the TRUNCATED / OVERSIZED path.
 
-## Restructure + diet pass (this wave)
+## Restructure + diet pass — dispositions
 
-Charter-specific instruction for the wave: restructure and diet, with **no rule removed**. Nothing below removes a duty.
+A record of the charter's restructure, kept so a placement or a cut below is not re-derived as an omission. No rule was removed; nothing below removes a duty.
 
 - **Topic fix — sections reparented.** `### Context Compression Strategies`, `### Parallel Tool Invocation`, `### Token Budget Allocation` and `### Handoff Context` sat under `## Cross-Session Continuity (progress.md)`, which is not their topic.
   - They now sit under `## Context Management [ALL]`, which was a one-line stub.
@@ -85,7 +85,7 @@ Charter-specific instruction for the wave: restructure and diet, with **no rule 
 | `scripts/lib/path-guard.sh` → `ga_guard_path` | nothing of the charter — one-way: `File Deletion Policy` restates its refusal set | a guard-only refusal change splits the two sets, and no test compares them — change both in one edit |
 | `manifest.json` | two rows, one hash | regeneration required after any content edit |
 
-Prose citations INTO charter anchors, all still resolving after this pass:
+Prose citations INTO charter anchors — grep each before renaming its target:
 
 - **Spawn and budget**: `## Sub-Agent Spawn Policy` · `### Turn Budget & Graceful Exit` · `Emit-before-cap` · `Thinking Budget Policy`
 - **Absolute Rules**: `## Absolute Rules [ALL]` · `Absolute Rules → Output Language` · `Absolute Rules → the response-language rule` · `Anchor by symbol`

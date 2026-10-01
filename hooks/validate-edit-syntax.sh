@@ -179,7 +179,7 @@ if [[ "${BLOCK_ARMED}" -eq 1 ]]; then
   esc_ext="$(_hook_json_escape "${ext}")"
   emit_error "SYNTAX-001" "block" \
     "Invalid ${ext} syntax blocked on write to ${basename_only}" \
-    "Fix the syntax error, or unset SYNTAX_GATE_BLOCK to downgrade to advisory-only" \
+    "Fix the syntax error and retry the write${first_err:+ (checker: ${first_err})}. SYNTAX_GATE_BLOCK in Claude Code's launch environment arms this block; only the user can change it" \
     "{\"file_path\":\"${esc_path}\",\"ext\":\"${esc_ext}\"}"
   exit 2
 fi

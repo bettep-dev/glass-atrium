@@ -179,7 +179,8 @@ Philosophy: Markdown · Canvas: PDF/PNG · Colors: HEX/RGB · Fonts: per Typogra
 
 - **Font precedence**: brand spec > selected 5-Direction stack (displayFont/bodyFont/monoFont) > Poppins/Lora (last-resort scaffolding — use only when no brand spec and no 5-Direction is selected)
 - **Heading (24pt+)**: Poppins (fallback: Arial) · **Body (<24pt)**: Lora (fallback: Georgia)
-  - A fallback is the rendering substitute when the primary face is unavailable — never a chosen face. Selecting Arial (or Inter / Roboto) as a primary is an AI Slop Trope, and the two rules do not conflict.
+  - A fallback is the rendering substitute when the primary face is unavailable — never a chosen face.
+  - Selecting Arial (or Inter / Roboto) as a primary is an AI Slop Trope (`### AI Slop Tropes` → **Font tropes**), so the Arial fallback does not conflict with it.
 - **Type roles** (each own line-height/tracking, values per direction's scale): Heading (negative tracking, condensed line-height) · Label (single-line scannable nav/form — no tall line-height) · Copy (multi-line body — tall line-height) · Button (medium weight)
   - Do NOT collapse Label into Copy; single-line UI text needs a different line-height than prose.
   - Each direction names a default body + label size from its type scale (deviation needs intent — prevents size proliferation).
@@ -498,7 +499,7 @@ This list is a shape contract, not prose: the `glass-atrium-design-md-lint` sect
 - **Philosophy**: consistency with stated design philosophy / brand direction / movement name. Does this deliverable embody the declared philosophy or drift from it?
 - **Hierarchy**: visual hierarchy clarity. Does the eye traverse the intended path? Is the primary action obvious within 1 second?
 - **Execution**: technical execution detail quality. Are spacing, alignment, contrast, and motion timing crafted rather than approximate?
-- **Specificity**: real content vs placeholder / filler. Are values, copy, and components specific to the project — or generic AI-defaults pattern-matched from training data?
+- **Specificity**: real content vs placeholder / filler. Are values, copy, and components specific to the project — or patterns listed under `### AI Slop Tropes`?
 - **Restraint**: "one decisive flourish per design" — no overdesign. Is there exactly one signature gesture, or has the design become a collage of attention-seeking elements?
 
 **Band rubric** (per axis):
@@ -564,8 +565,16 @@ DIVERGED (reported, not reconciled — rule owner's call, not a one-sided edit):
 
 **Font tropes**:
 
-- Overused fonts: Inter · Roboto · Arial · Fraunces · generic system fonts
+- Overused fonts: Inter · Roboto · Arial · Fraunces · generic system fonts — as a default primary; a brand spec or a selected 5-Direction stack that names one of them is not the trope
 - Emoji unless brand system explicitly includes it
+
+**Default-style tropes** (fallbacks an undirected frontend draft reaches for — when a first result shows another one, add it here):
+
+- Off-white page background chosen as a default — a background taken from the brand palette (`Light (warm white)` included) or the selected direction's `--bg` is not the trope
+- Italic accent words inside headlines
+- Numbered "01 / 02 / 03" section labels
+- Monospace labels as the default label treatment — a selected direction whose posture names mono (editorial-monocle metadata, tech-utility code/IDs) is not the trope
+- Pill-shaped buttons — status pills and full-pill avatars/tags are not buttons
 
 **Content tropes**:
 
@@ -601,7 +610,7 @@ DIVERGED (reported, not reconciled — rule owner's call, not a one-sided edit):
 
 ## Success Criteria
 
-- **Completion**: Design artifacts produced (philosophy, canvas, theme spec) · **Quality gate**: No generic AI aesthetics, brand consistency verified
+- **Completion**: Design artifacts produced (philosophy, canvas, theme spec) · **Quality gate**: no pattern from `### AI Slop Tropes` present, brand consistency verified
 - **Token budget**: <30K tokens/task · **Typical duration**: 3-6 turns · **Key metric**: metric_pass=true (deliverable matches philosophy)
 - **task_type**: emit `task_type: doc` for DESIGN-doc deliverables (philosophy/canvas/theme spec) or `task_type: review` for a design-review verdict, per the Role → Allowed task_types table in core-outcome-record.md
 

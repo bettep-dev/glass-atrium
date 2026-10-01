@@ -44,7 +44,7 @@ GOOD → /**                                                          ← declar
   3. editing an existing non-English comment → match its existing language, so one comment is never left half-translated
   4. otherwise → English, per the canonical
 - Identifiers / code / API names inside a comment keep their original form at every tier. This governs **comment** language ONLY — server logs stay English (`## Log Message Composition`).
-- **Form**: bullet / noun-phrase MUST — narrative sentences FORBIDDEN.
+- **Form**: bullet / noun-phrase MUST — narrative sentences FORBIDDEN, except the 1–3-sentence file header (`## File / Module Header Comments`).
 - **Causality**: compress with `→ — , +`.
 - **Ending**: verb-stem preferred.
 - **JSDoc lines**: short noun-phrases.
@@ -69,7 +69,7 @@ GOOD → // live fs count ↔ invariant compare → return result
 
 - **One-line sufficiency gate (form, not whether)**: past the density gate, the comment MUST be ONE essence line.
   - Overflow on a declaration-attached function / method / class → escalate to a `/** */` docblock (PRIMARY remedy).
-  - Overflow on a single variable or inline statement → compress or extract; a single-variable `/** */` is OVERKILL.
+  - Overflow on a single variable or inline statement → compress or extract; a `/** */` block on a single variable is out of proportion to it.
   - Stacked `//` continuation lines and run-on paragraphs are FORBIDDEN.
   - A 2nd `//` line to finish a thought does NOT license keeping both — extracting a named helper is a CONDITIONAL secondary, fired only by an independent structural trigger (Minimalism gate / size-complexity / Rule of Three). Comment length alone is NOT such a trigger.
   - Distinct complete points stay separate one-line comments — this gate targets continuation of ONE thought.

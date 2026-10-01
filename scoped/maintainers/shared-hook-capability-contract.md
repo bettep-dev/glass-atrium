@@ -19,7 +19,6 @@ Maintainer-facing material for that rule file. Nothing here binds a hook author;
 
 - **Taxonomy provenance**: the five action names are borrowed from guardrails-ai's `OnFailAction` enum so a hook's behaviour is describable in one word. Guardrails ships eight members (`REASK`, `FIX`, `FILTER`, `REFRAIN`, `NOOP`, `EXCEPTION`, `FIX_REASK`, `CUSTOM` — `guardrails/types/on_fail.py`); Atrium names the five its hooks exercise. Docs-only, no import and no dependency.
 - **Unmapped members (gap register)**: `REFRAIN` — suppress the WHOLE output, where `FILTER` strips one element; guardrails implements them as separate `apply_refrain` / `apply_filters` functions, and Atrium conflates both under `filter` because no hook needs the split. `FIX_REASK` — auto-fix, reverify, reask if still failing; no Atrium hook chains all three, so it is a candidate hardening. `CUSTOM` — arbitrary user callback, out of scope for a fixed vocabulary.
-- **Naming history**: the read-side `track-outcome.sh` parse tiers previously had both exit-0 dispositions called `filter`. The rule file now states the current mapping (synthesis = `filter`, warn-only = `noop`) without the history.
 - **Corpus-maintenance duty (`UserPromptSubmit`)**: the wrapper-shape list in `hooks/inject-reply-language.sh` → `get_prompt_kind` and its fixtures in `hooks/test/inject-reply-language.bats` move together — one prefix, one fixture per shape. This is an instruction to an editor, which is why it lives here.
 - **Known gap (agent-context prompts)**: `get_prompt_kind` silences only frame-shaped agent prompts; a frameless machine prompt (a task notification, a "Background agent" notice) in an agent context still gets the pointer, and the UserPromptSubmit envelope carries no `agent_id`, so no static signal exists — the stream-6 live probe checks a background-task notification inside a teammate or background-agent context.
   - Shapes that get the line: task notification · cross-session message or idle notice (peer) · channel message · compaction summary · hook feedback.
@@ -30,11 +29,11 @@ Maintainer-facing material for that rule file. Nothing here binds a hook author;
 - **Cross-references**: `hooks/hook-utils.sh` (`hook_emit_error` = channel a, `hook_read_input`, `hook_get_field`, `hook_get_tool_input`, `hook_is_subagent`) · `settings.json` (the authority for which events are wired) · `rules/glass-atrium/core-security.md` (LLM01 tool-input trust boundary, LLM06 tool authorization, LLM07 prompt leakage) · `rules/glass-atrium/orchestrator-role.md` Harness Path Protection (the `enforce-foreground-harness.sh` channel-b rationale) · `rules/glass-atrium/shared-self-improve-hygiene.md` Precondition Loud-Fail (the autoagent exception to fail-open, still named inline in the rule file's Authoring Rules).
 - **Why This Exists** section: dropped. Its three facts — events differ, PostToolUse cannot mutate, the channels are non-substitutable — are each stated where they bind, in the capability table and the channel rules.
 
-## Follow-up fix pass — on_fail taxonomy shape
+## on_fail taxonomy shape
 
-The five dispositions were five long prose bullets repeating the same three facets. They are now one table (Disposition | Mechanism | Used by | Reserved for), heading and disposition names unchanged, with the two non-uniform carve-out sentences kept as bullets below it (the `fix` no-silent-loop fall-through, and `noop` never being labelled `filter`).
-
-- No hook name, worked case or reservation clause was dropped — the facets were transposed, not cut.
+- The on_fail taxonomy is one table (Disposition | Mechanism | Used by | Reserved for).
+- Its two non-uniform carve-outs are bullets below the table: the `fix` no-silent-loop fall-through, and `noop` never being labelled `filter`.
+- Keep that shape — the carve-outs are not uniform rows.
 - **Accepted shape-cap overage**: the `exception` and `noop` "Used by" cells run past the 120-char cell guide. The alternative was abbreviating live hook filenames, which are the cells' whole value; the overage is the cheaper trade.
 
 ## Readers and coupled tests

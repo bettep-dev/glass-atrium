@@ -78,7 +78,7 @@ if printf '%s' "${CMD}" | grep -qE "${PATTERN}"; then
   # Row names are script literals → the hand-built context stays valid JSON on the jq-less fallback.
   emit_error "SEC-010" "block" \
     "Dangerous system command blocked" \
-    "Request explicit user confirmation before executing" \
+    "This hook blocks the command whatever the approval; if the user wants it run, ask them to run it themselves" \
     "{\"row\":\"${MATCHED_ROW}\"}"
   exit 2
 fi

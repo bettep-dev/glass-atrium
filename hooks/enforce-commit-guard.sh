@@ -19,11 +19,11 @@ COMMAND=$(hook_get_tool_input "${INPUT}" "command")
 # Format: regex<US>code<US>message<US>suggestion
 readonly US=$'\x1f'
 RULES=(
-  "git\s+push\s+.*--force|git\s+push\s+-f\b${US}GIT-001${US}Force push blocked${US}Request explicit user confirmation for force push"
-  "git\s+reset\s+--hard${US}GIT-002${US}Hard reset blocked${US}Request explicit user confirmation for hard reset"
-  "git\s+clean\s+-fd${US}GIT-003${US}Clean force-delete blocked${US}Request explicit user confirmation"
-  "git\s+checkout\s+\.\s*\$${US}GIT-004${US}Discard-all blocked${US}Request explicit user confirmation"
-  "git\s+restore\s+\.\s*\$${US}GIT-005${US}Restore-all blocked${US}Request explicit user confirmation"
+  "git\s+push\s+.*--force|git\s+push\s+-f\b${US}GIT-001${US}Force push blocked${US}This hook blocks force push whatever the approval; if the user confirms it, ask them to run it themselves"
+  "git\s+reset\s+--hard${US}GIT-002${US}Hard reset blocked${US}This hook blocks git reset --hard whatever the approval; if the user confirms it, ask them to run it themselves"
+  "git\s+clean\s+-fd${US}GIT-003${US}Clean force-delete blocked${US}This hook blocks git clean -fd whatever the approval; if the user confirms it, ask them to run it themselves"
+  "git\s+checkout\s+\.\s*\$${US}GIT-004${US}Discard-all blocked${US}This hook blocks git checkout . whatever the approval; if the user confirms it, ask them to run it themselves"
+  "git\s+restore\s+\.\s*\$${US}GIT-005${US}Restore-all blocked${US}This hook blocks git restore . whatever the approval; if the user confirms it, ask them to run it themselves"
   "git\s+push\s+\S+\s+(main|master)\b${US}GIT-006${US}Push to main/master blocked${US}Create a feature branch and use a pull request"
 )
 

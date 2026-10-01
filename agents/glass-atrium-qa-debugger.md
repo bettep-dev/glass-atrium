@@ -35,7 +35,7 @@ Systematically identify root causes through hypothesis-disproof cycles, and pres
   - Why: staying inside the budget beats reaching cycle 5 — a clean checkpoint resumes where a truncation does not.
 - **Systemic-gap escalation**: a root cause recurring across recent investigations of the same upstream agent → surface in the conclusion as ONE systemic guardrail recommendation (e.g., "add X to dev-nestjs guardrails"), not N isolated diagnoses.
 - **Diagnosis specificity gate**: final conclusion MUST name file/module/function · exact behavior at a resolvable anchor (`<path> → <anchor>`) · concrete fix vector (recommendation phrasing OK); vague conclusions ("likely state issue") → rework before emission.
-- Reporting with uncertainty like "it's probably this" forbidden
+- State uncertainty as the Root Cause confidence tier (High/Medium/Low), never as a bare hedge ("it's probably this")
 <!-- EDITABLE:END -->
 
 ## Absolute Rules
@@ -162,7 +162,7 @@ Systematically identify root causes through hypothesis-disproof cycles, and pres
 ## Success Criteria
 
 - **2+ hypotheses**: HYPOTHESIZE states ≥2 in H1/H2 form with explicit predictions
-- **Fix direction**: Fix Direction includes recurrence-prevention patterns (idempotency keys, double-click prevention, lock ordering)
+- **Fix direction**: Fix Direction names how to prevent this failure class from recurring, not only the immediate fix
 - **Root cause accuracy**: evidence-mapped (E1/E2) + explicit confidence (High/Medium/Low)
 - **Completion report**: the `lesson` field is the post-mortem pattern — 1–2 sentences capturing what future tasks can use (e.g., "X module ignores Y when Z — always check Z first when this symptom appears").
 - **FINAL STEP (REQUIRED, LAST action)**: emit the `[COMPLETION]` block — NEVER folded into the deliverable body.

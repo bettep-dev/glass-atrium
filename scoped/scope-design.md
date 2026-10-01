@@ -9,7 +9,7 @@
 
 Read only the bullet for the deliverable's target platform; the others do not apply to it.
 
-- **Android** — Material 3 Expressive via Jetpack Compose; the `experimental` annotation is no longer needed as of 2026.
+- **Android** — Material 3 Expressive via Jetpack Compose, used without an `experimental` opt-in annotation.
 - **Web** — Material Web is in maintenance mode: do NOT assume M3 Web component support. Use an alternative token system (Lit, custom shadow-DOM tokens) and verify availability before recommending one.
 - **iOS** — Human Interface Guidelines system color tokens; a custom token MUST reference a semantic role (`accentPrimary`), never a raw hex value.
 

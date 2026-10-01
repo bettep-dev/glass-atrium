@@ -28,7 +28,7 @@ The principles — Controller → Service → Repository import direction, high 
 ## LCOM4 Metric
 
 - LCOM4 >= 2 → class split signal
-- Practical threshold: LCOM (normalized 0-1) > 0.8 **&&** fields > 10 **&&** methods > 10
+- Practical threshold: normalized LCOM > 0.8 with more than 10 fields and 10 methods — measure it with the project's metrics tool where one exists; without a tool, judge by `## Class Split Signals` rather than computing LCOM by hand
 
 ## Class Split Signals
 

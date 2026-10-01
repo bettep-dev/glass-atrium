@@ -2,7 +2,7 @@
 
 > Reference for `glass-atrium-design-designer`: by-hand OKLch color algorithms.
 > - Covers seed→tonal-ramp derivation, the 12-step UI-role contract, multi-role seed offsets and contrast-guaranteed foreground derivation.
-> - The agent emits palettes by hand and runs no build tool — every table and procedure here is instruction-resident knowledge, not a code import.
+> - The agent emits palettes without a build tool — every table and procedure here is instruction-resident knowledge, not a code import; the numeric conversions it names run as a one-off script via Bash, never as a project dependency.
 
 ## Applicability (opt-in escalation, not a default mandate)
 
@@ -97,7 +97,8 @@ target lighter Y = 4.5 * (bg_Y + 0.05) - 0.05          # sRGB-normalized luminan
 
 - **Dark background → use the lighter foreground** (solve for the lighter `Y` above).
 - **Light background → use the darker foreground** (`darker_Y = (bg_Y + 0.05) / ratio - 0.05`).
-- Then pick the OKLch `L` whose relative luminance matches the solved `Y`, and **verify**.
+- Then find the OKLch `L` whose relative luminance matches the solved `Y` with a `python3` or `node` one-off, and verify the emitted pair with the `glass-atrium-design-contrast-check` skill.
+  - Why: OKLch → linear sRGB → `Y` is a matrix-and-cube chain hand arithmetic gets wrong.
 - **Fallback**: text from step 11 (AA) or step 12 (AAA) on a step-1/2 background needs no derivation (see `## 12-Step UI-Role Contract`).
 
 ---

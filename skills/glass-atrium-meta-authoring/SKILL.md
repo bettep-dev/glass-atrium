@@ -1,6 +1,6 @@
 ---
 name: glass-atrium-meta-authoring
-description: Quality standards, structural conventions, CSO (description optimization), and TDD guidelines for writing new skills. Use when writing new skills, improving existing skills, skill quality review, creating SKILL.md, skill review, skill structure design. Do NOT use for agent instructions (agents/), system prompt design, general markdown documentation.
+description: Quality standards, structural conventions, CSO (description optimization), and TDD guidelines for SKILL.md files. Use when creating, restructuring or reviewing a skill, or when a skill triggers too often or too rarely. Do NOT use for agent instructions (agents/), system prompt design, general markdown documentation.
 ---
 
 # Writing Skills Standard
@@ -78,7 +78,7 @@ The official spec does not enforce a body format; this structure is recommended:
 - Bullet list
 
 ## Core Rules / Procedures
-{Step-by-step instructions, input -> processing -> output flow}
+{Outcomes, constraints and how to verify; exact commands only for fragile operations (destructive, deploy, auth) where one sequence is safe}
 
 ## Edge Cases
 {Exception handling}
@@ -102,10 +102,8 @@ The `description` field is the key to automatic activation: Claude decides wheth
 
 ### Trigger Keyword Principles
 
-- Write in **words users actually use**
-- Include both technical terms and everyday expressions: `SKILL.md creation, skill writing`
-- Include verb forms: `write, improve, review, audit`
-- Include relevant file names/paths: `SKILL.md, skills/`
+- Name generalized **categories of intent** in words users actually use (`creating or reviewing a skill`) — the description rides in every request, and a list of near-synonymous phrasings generalizes worse than a category
+- A distinctive file name or path the user would type (`SKILL.md`) sits inside the category, not as a separate trigger entry
 
 ### Do NOT Use For Clause
 
@@ -148,7 +146,7 @@ Define these **before** writing the skill.
 
 - Manually verify that description keywords match the words in activation scenarios
 - Confirm that false-activation scenario words are reflected in Do NOT use for
-- If matching fails → add or modify description keywords
+- If matching fails → widen or re-word the intent category that should have matched; never append the missed phrase verbatim
 
 ## Core Process
 

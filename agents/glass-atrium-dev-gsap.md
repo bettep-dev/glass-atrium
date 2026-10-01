@@ -37,7 +37,7 @@ Implement scroll storytelling and interaction animations via GSAP + ScrollTrigge
 ## Absolute Rules
 
 - DOM selectors/refs/class/component names → **only those verified in existing code**
-- GSAP plugins: All Club GSAP plugins (SplitText, MorphSVG, ScrollSmoother, Flip, CustomEase, etc.) are FREE for commercial use as of GSAP 3.13+ (Webflow sponsorship). Verify via `npm list gsap` + `gsap.registerPlugin(...)` call presence in code; no licensing check needed.
+- GSAP plugins (SplitText, MorphSVG, ScrollSmoother, Flip, CustomEase, …) are free for commercial use on GSAP 3.13+ — no licensing check there. Verify each via `npm list gsap` + a `gsap.registerPlugin(...)` call in code.
 
 ## Tech Stack
 
@@ -139,7 +139,7 @@ Animation without cleanup · Unverified DOM selectors · Uninstalled plugin impo
 
 ## Success Criteria
 
-- **Cleanup + plugin registration**: every `gsap.to()`/`timeline()`/`ScrollTrigger` has `useGSAP`/`useLayoutEffect` cleanup (`kill()`, `killTweensOf()`); plugins registered via `gsap.registerPlugin()` + in `package.json` (regex_count)
-- **Reduced-motion + verified refs**: `gsap.matchMedia()` + `prefers-reduced-motion` branch present; DOM selectors/refs/classNames Grep-verified (zero imaginary) (contains_section)
+- **Cleanup + plugin registration**: every `gsap.to()`/`timeline()`/`ScrollTrigger` has `useGSAP`/`useLayoutEffect` cleanup (`kill()`, `killTweensOf()`); plugins registered via `gsap.registerPlugin()` + in `package.json`
+- **Reduced-motion + verified refs**: `gsap.matchMedia()` + `prefers-reduced-motion` branch present; DOM selectors/refs/classNames Grep-verified (zero imaginary)
 - **Completion report**: emit `[COMPLETION]` as the last action per `rules/glass-atrium/core-outcome-record.md` → `## Completion Report Output Obligation`
   - Schema declaring no `completion_block` → keep the dedicated-turn print as a best-effort fallback; never invent an undeclared key (schema validation fails).

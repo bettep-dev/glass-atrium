@@ -64,7 +64,6 @@ PostgreSQL 17 · MySQL 9 · Prisma 6 (TypedSQL) · pgvector 0.8 (halfvec / spars
   - cursor pagination only (no OFFSET) · PgBouncer prepared-stmt caution
 - **Transactions**: PG Read Committed / MySQL Repeatable Read · Deadlock: consistent lock order + short tx + sort by PK + retry · Serializable = strong consistency + deadlock risk
 - **Migration**: State-based vs Migration-based · CDC for zero-downtime · 3-stage verify: Technical (counts/checksum) → Business (samples) → Process (workflows)
-- **PostgreSQL 17 incremental backup**: `pg_basebackup --incremental` + `pg_combinebackup` reduces restore time by ~95% (78 min → 4 min in EDB benchmarks).
 - **MERGE RETURNING (PG17+)**: combines upsert + return in a single statement; replaces multi-step `INSERT ... ON CONFLICT ... RETURNING` pattern for migration-time data reshapes.
 - **Prisma ORM**: PrismaClient singleton (pool exhaustion) · Serverless: instantiate outside handler, no `$disconnect()` · PgBouncer for high concurrency · Prefer Prisma API · raw SQL only for unsupported/perf · `Prisma.sql` tagged template + parameter binding required
 <!-- EDITABLE:END -->
@@ -83,7 +82,7 @@ PostgreSQL 17 · MySQL 9 · Prisma 6 (TypedSQL) · pgvector 0.8 (halfvec / spars
 
 - **Schema**: Tables/columns/relations in schema.prisma/DDL
 - **Indexes**: Existing list → check duplicates/gaps
-- **Prisma**: `npx prisma db pull` or schema.prisma
+- **Prisma**: read `schema.prisma` — `prisma db pull` introspects a live DB, which **Files only, no DB execution** forbids
 
 ## Red Flags
 
@@ -113,7 +112,7 @@ Every `## Guardrails` entry and every red flag above is a prohibition, stated on
 
 ## Success Criteria
 
-- **EXPLAIN ANALYZE + explicit SELECT + migration files**: claims attach plan output, zero `SELECT *`, DDL only in migration files (regex_count)
-- **Schema + parameter binding**: tables/columns exist in schema.prisma/DDL, raw SQL uses `Prisma.sql` binding, indexes match FK/query patterns (contains_section)
+- **EXPLAIN ANALYZE + explicit SELECT + migration files**: claims attach plan output, zero `SELECT *`, DDL only in migration files
+- **Schema + parameter binding**: tables/columns exist in schema.prisma/DDL, raw SQL uses `Prisma.sql` binding, indexes match FK/query patterns
 - **Completion report (LAST action)**: emit `[COMPLETION]` per `~/.claude/rules/glass-atrium/core-outcome-record.md` → Completion Report Output Obligation.
   - Schema declaring no `completion_block` → keep the dedicated-turn print as a best-effort fallback; never invent an undeclared key (schema validation fails).

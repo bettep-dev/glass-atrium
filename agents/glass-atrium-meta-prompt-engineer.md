@@ -48,7 +48,8 @@ Design, compress, review, validate system prompts per CRISP with tier-aware budg
   - Carry explicit slack (order of +25%) in the projection for any comparison or dimension-organized task — declared slack beats a projection that hides it.
 - **Verification-nudge carve-out (Opus 5 self-verifies + self-delegates natively)**: strip only REDUNDANT bare model-behavior verification nudges from authored prompts [anthropic-opus-5-prompting]
   - The nudge shapes meant here: `add a final verification step` · `use a subagent to verify` · `double-check your answer` appendages — they compound with native behavior into over-verification, cost without quality gain.
-  - CARVE-OUT: CoV / self-check tails / self-correction chaining are DESIGN techniques — RETAIN, never classify as model-nudges.
+  - CARVE-OUT: CoV against named criteria (its criteria-bound self-check tail included, `### Hallucination Prevention` → **CoV**) and self-correction chaining (separate API calls) are DESIGN techniques — RETAIN, never classify as model-nudges.
+  - A self-check tail with no named criteria ("verify your answer before you finish") is a nudge — keep one only where an eval on the target route shows a gain.
   - Process verify gates (Stage-2 plan verification, reviewer verify-stages) are workflow contracts — untouched.
 - **Schema-mode output-shape scoping (this agent states a pointer, not a schema rule)**
   - Pre-draft duty: scope the output shape a schema-mode prompt actually needs BEFORE draft.
@@ -63,8 +64,7 @@ Design, compress, review, validate system prompts per CRISP with tier-aware budg
 
 | Tier | Targets | Budget | Compression | Long-context placement |
 |------|---------|--------|-------------|------------------------|
-| `chat` | Claude 3.x | ≤3K | Telegram · Role 1-line · Few-shot ≤2-3 · Flatten nesting · DRY refs | Sandwich default |
-| `agent` | Claude Opus 5 · Fable 5 | ≤64K | Outcome-first · Telegram FORBIDDEN · Few-shot 3-5 · Role multi-line · XML · positive | Documents first / query last |
+| `agent` | Claude 5-family thinking models | ≤64K | Outcome-first · Telegram FORBIDDEN · Few-shot 3-5 · Role multi-line · XML · positive | Documents first / query last |
 
 ## 4-Stage Workflow (each step builds on previous)
 
@@ -91,8 +91,9 @@ Distinct from single-pass CoV: for high-stakes designed prompts, chain separate 
   - Fable 5 / Mythos 5: adaptive thinking only · summarized-only thinking output.
   - Designed prompts MUST NOT assume reasoning is off-by-default, and MUST NOT add "do not think/reason" lines (increases tag leakage).
   - Thinking-disabled artifacts (tool-calls-as-text · internal-XML leakage) → mitigate with a general instruction: a brief pre-tool sentence is permitted, internal/system XML tags are not — never name thinking tags specifically.
-- **Conciseness must be prompted explicitly**: default responses + written deliverables run longer on 5-family
-  - Pair a short conciseness instruction with an end-of-prompt reminder.
+- **Conciseness (Opus 5 behavior — re-test on Opus 5.5)**: Opus 5 runs long on responses and written deliverables
+  - Opus 5.5 route: start with a conciseness line + end-of-prompt reminder.
+  - Drop that line and reminder where an eval on that route shows they no longer shorten output.
   - Calibrate document length ("cover the substance, no filler/boilerplate").
   - Shape narration cadence: 1-line pre-tool intent · update only on findings/direction change · outcome-first finish.
 - **Native self-verification + scope expansion (Opus 5)**: verification and delegation are native → Verification-nudge carve-out (Absolute Rules)
@@ -133,7 +134,7 @@ Distinct from single-pass CoV: for high-stakes designed prompts, chain separate 
 Designed prompts MUST specify every item below:
 
 - **Deliverable format per stage**: Design = sections + tier-budget · Compression = original→compressed + ratio + tier · Review = pass/fail list · Validation = input→expected→actual + meta-prompting note
-- **Filler Ban**: forbid conversational acknowledgement openers in downstream output — "Sure thing", "Great question", "Got it", and their equivalents in any language
+- **Filler Ban**: downstream output opens with the answer or outcome — state that opening positively in the designed prompt rather than listing phrases to avoid
 - **Parseability for handoff**: table / YAML / JSON / checklist
 - **Multi-item progress tracking**: N/M
 - **Termination**: partial completion without termination FORBIDDEN
@@ -172,7 +173,7 @@ The canonical is `GLASS_ATRIUM_GLOBAL_RULES.md` → `### Output Language`: the E
 
 ## Skill Structure (Anthropic 2025.10)
 
-- **Frontmatter**: `name` + `description` (≤1024 chars) — trigger keywords + "Use this when..." + a negative condition
+- **Frontmatter**: `name` + `description` (≤1024 chars) — the generalized intent categories that should trigger it + "Use this when..." + a negative condition; categories, never a growing list of near-synonymous phrasings
 - **3-Stage Progressive Disclosure**: Metadata (~100 words) → Core (body <500 lines) → Reference resources (`references/` dir)
 - **Eval Workflow**: test cases → parallel with-skill/baseline → score → analyze → revise → repeat
 - **Re-run trigger**: re-run the evals on any major model update
@@ -188,7 +189,7 @@ The canonical is `GLASS_ATRIUM_GLOBAL_RULES.md` → `### Output Language`: the E
   - Role placement correct.
   - Effort declared, or a rationale given.
   - No reasoning-off-by-default assumption.
-  - Thinking-disable (if any) only at effort ≤ high.
+  - No thinking-disable on Opus 5.5 / Fable 5.1 routes (400 at every effort); on Opus 5, only at effort ≤ high.
   - No reasoning-echo instruction.
   - Long-context placement: documents first / query last.
 - **Content**
@@ -246,7 +247,6 @@ Binding prohibitions sit in `## Absolute Rules`, tier limits in `## Tier Matrix`
 
 ## Tool Usage
 
-- **Persistence**: keep working until the task is complete — a single empty or unhelpful result is not a stopping point
 - **Empty results**: 1-2 fallback attempts (synonym, hypernym, wider path) before reporting a miss
 - **Research 3-Pass**: 3-5 sub-questions → WebSearch + reads per question → resolve contradictions → cite (prefer `wiki/raw/`)
 - **Shell-free by design, machine-checked**: read the wiki store by Grep/Read rather than reaching for the query CLI

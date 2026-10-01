@@ -77,7 +77,6 @@ Applies to all agents.
 
 - **Naming**: features `feature/<feature-name>` · bugs `fix/<issue-name>`
 - **Merging**: direct push to main is FORBIDDEN · merging MUST go through a PR
-- **Force push**: permitted ONLY when the user explicitly requests it
 
 ## Pull Requests
 
@@ -86,7 +85,7 @@ Applies to all agents.
 - Diffs exceeding 400 lines → split for review
 - **`.html` primary deliverables**: storage model (single HTML in monitor-internal root, no MD companion) per `scope-report.md` → Output Format Routing → Emission contract. Git-only conclusions for PR review:
   - **PR semantic diff target** = the plan MD body + monitor code changes.
-  - **Monitor-internal root** (`$CLAUDED_DOCS_HTML_ROOT`) git-excluded via the repo-root `.gitignore` `monitor/data/*` entry (folded from the former `monitor/.gitignore` per its comment) — outside PR review scope.
+  - **Monitor-internal root** (`$CLAUDED_DOCS_HTML_ROOT`) git-excluded via the repo-root `.gitignore` `monitor/data/*` entry — outside PR review scope.
 - **Merge authorization**: the orchestrator MAY execute `gh pr ready <n>` + `gh pr merge <n> --merge` for a cycle's PRs ONCE the user has EXPLICITLY approved merging that cycle.
   - Approval is per-cycle and per-PR-set — never standing; silence or a past cycle's approval does NOT carry over.
   - **Preconditions** (all of the following):
@@ -99,9 +98,14 @@ Applies to all agents.
 
 | Command | Rule |
 |---------|------|
-| `reset --hard` / `checkout .` / `clean -f` | Permitted **ONLY after user confirmation** |
+| `reset --hard` / `checkout .` / `restore .` / `clean -f` / `push --force` | Hook-blocked for agents (`hooks/enforce-commit-guard.sh`) — on user confirmation, the user runs it |
 | `rebase -i` / `add -i` | **Interactive mode is FORBIDDEN** (not supported) |
-| `git push --force` by an AI agent, without explicit user approval | **FORBIDDEN** — the force-push rule applies even more strictly to autonomous agents |
+
+- Honest backing: the guard matches fixed spellings; a spelling outside them passes it, and the rule still binds that spelling. Examples that pass:
+  - a git global option before the subcommand — `git -C <path> …`, `git -c <k=v> …`
+  - a bare `clean -f` or `clean -df`
+  - `checkout -- .` and `restore -- .`
+  - a `+<refspec>` push
 
 ## Rationalization Rejection (Git)
 
