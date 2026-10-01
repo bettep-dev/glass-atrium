@@ -118,7 +118,10 @@ function Sidebar({ active, onNav, harness, agentsState, pageState }) {
 										style={b.badgeTone === "crit" ? NAV_BADGE_CRIT_STYLE : undefined}
 										title={b.title}
 									>
-										{b.badge}
+										{/* glyph = tone shape (non-colour cue) · description = what AT hears instead of the bare numeral */}
+										{b.glyph && <span aria-hidden="true">{`${b.glyph} `}</span>}
+										<span aria-hidden={b.description ? "true" : undefined}>{b.badge}</span>
+										{b.description && <span className="sr-only">{`, ${b.description}`}</span>}
 									</span>
 								))}
 							</button>
@@ -234,9 +237,14 @@ function agentsToNavBadges(agentsState) {
 	if (unsafeCount <= 0) return { agents: null };
 
 	const names = breaker.alarms.map((alarm) => alarm.agent).join(" · ");
-	const title = `${unsafeCount} ${unsafeCount === 1 ? "agent" : "agents"} unsafe to route: ${names}`;
+	const split = [
+		breaker.suspended_count > 0 && `${breaker.suspended_count} suspended`,
+		breaker.streak_count > 0 && `${breaker.streak_count} on a fail streak`,
+	].filter(Boolean);
+	const title = `${unsafeCount} ${unsafeCount === 1 ? "agent" : "agents"} unsafe to route (${split.join(", ")}): ${names}`;
 	const badgeTone = breaker.suspended_count > 0 ? "crit" : "warn";
-	return { agents: { badge: String(unsafeCount), badgeTone, source: "breaker", title } };
+	const glyph = window.UI.TONE_GLYPH[badgeTone];
+	return { agents: { badge: String(unsafeCount), badgeTone, glyph, source: "breaker", title, description: title } };
 }
 
 // ALL SYSTEMS 풋터 도트 = 레인/타일과 같은 harness fold 파생. 폴링이 실패한 순간에도

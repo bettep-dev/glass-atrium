@@ -537,6 +537,47 @@ test("the rendered Agents nav badge's tooltip names every agent it counts", () =
   for (const alarm of alarms) assert.ok(title.includes(String(alarm.agent)), `${alarm.agent} is named in the rendered tooltip`);
 });
 
+// assistive tech reads what is not aria-hidden; sighted users read what is not sr-only
+const collectReadText = (node: unknown, isSkipped: (n: RenderedNode) => boolean): string[] => {
+  if (typeof node === "string" || typeof node === "number") return [String(node)];
+  if (Array.isArray(node)) return node.flatMap((child) => collectReadText(child, isSkipped));
+  if (!isRenderedNode(node) || isSkipped(node)) return [];
+  return collectReadText(node.children, isSkipped);
+};
+const isAriaHidden = (n: RenderedNode): boolean => n.props?.["aria-hidden"] === "true";
+const isSrOnly = (n: RenderedNode): boolean => String(n.props?.className ?? "").split(" ").includes("sr-only");
+
+// A title on a non-focusable span reaches neither keyboard nor screen-reader users, and tone alone is colour.
+test("the rendered Agents badge describes itself to assistive tech and tells suspended from streak-only without colour", async (t) => {
+  const rows = [
+    {
+      name: "streak only",
+      alarms: [buildBreakerAlarm("glass-atrium-dev-react", "streak"), buildBreakerAlarm("glass-atrium-dev-node", "streak")],
+      split: ["2 on a fail streak"],
+    },
+    {
+      name: "one suspended",
+      alarms: [buildBreakerAlarm("glass-atrium-qa-debugger", "suspended"), buildBreakerAlarm("glass-atrium-dev-node", "streak")],
+      split: ["1 suspended", "1 on a fail streak"],
+    },
+  ];
+  const visibleByRow = new Map<string, string>();
+  for (const row of rows) {
+    await t.test(row.name, () => {
+      const tree = renderSidebar(app.getHarness(allHealthy()), ready(buildBreakerSummary(row.alarms)));
+      const [agentsItem] = findNodes(tree, (n) => n.props?.key === "agents");
+      const [agentsBadge] = findNodes(agentsItem, (n) => String(n.props?.className ?? "").includes("nav-badge"));
+      const spoken = collectReadText(agentsItem, isAriaHidden).join("");
+
+      assert.match(spoken, /unsafe to route/);
+      for (const part of row.split) assert.ok(spoken.includes(part), `assistive tech hears "${part}"`);
+      for (const alarm of row.alarms) assert.ok(spoken.includes(String(alarm.agent)), `assistive tech hears ${alarm.agent}`);
+      visibleByRow.set(row.name, collectReadText(agentsBadge, isSrOnly).join(""));
+    });
+  }
+  assert.notStrictEqual(visibleByRow.get("streak only"), visibleByRow.get("one suspended"), "same count, different shape");
+});
+
 // A daemon row may still carry the retired `stale` flag; the verdict is effective_status alone.
 test("a legacy stale flag on a healthy daemon row adds no System map badge", () => {
   const legacy = {
