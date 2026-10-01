@@ -15,23 +15,28 @@ function SymI(props) {
 const confidenceBadgeMetaI = (value) =>
 	window.ImprovementShared.confidenceBadgeMetaI(value);
 
-function ReviewReasonSegmentsI(props) {
-	return React.createElement(
-		window.ImprovementShared.ReviewReasonSegmentsI,
-		props,
-	);
-}
+// Slot wrappers outlive the error ↔ card swap → a Retry unmounting on recovery hands focus to its own slot
+const PAYLOAD_SLOT_ID_I = Object.freeze({
+	flaggedResults: "improvement-flagged-results",
+	corpusGrowth: "improvement-corpus-growth",
+	correctionSignals: "improvement-correction-signals",
+	proposalMeasurements: "improvement-proposal-measurements",
+});
 
 // One banner per failed payload, in place of the group that payload owns.
-function PayloadErrorCardI({ title, state, onRetry }) {
-	const { CardHead, RegionUnavailable } = window.UI;
+// `source` = the page's region name, so a shared outage banner naming it quiets this card
+function PayloadErrorCardI({ title, source, state, onRetry, failures, focusTargetId }) {
+	const { CardHead, RegionFailure } = window.UI;
 	return (
 		<div className="card">
 			<CardHead title={title} />
-			<div className="p-4">
-				<RegionUnavailable
-					source={title.toLowerCase()}
+			<div className="px-5 py-4">
+				<RegionFailure
+					source={source}
 					error={state.error}
+					isBusy={state.busy}
+					failures={failures}
+					focusTargetId={focusTargetId}
 					onRetry={onRetry}
 				/>
 			</div>
@@ -50,7 +55,7 @@ function FlaggedResultsCardI({ state, reviewReasons, onNav }) {
 		return (
 			<div className="card">
 				<CardHead title={title} />
-				<div className="p-3">
+				<div className="px-5 py-4">
 					<LoadingPlaceholder label="flagged results" minHeight={60} />
 				</div>
 			</div>
@@ -74,20 +79,59 @@ function FlaggedResultsCardI({ state, reviewReasons, onNav }) {
 					</button>
 				}
 			/>
-			<div className="px-3 pb-3">
-				<div className="fs-body font-mono text-ink tnum">
+			<div className="px-5 pb-4">
+				<div className="fs-display font-mono text-ink tnum">
 					{formatIntI(Number(state.data.review_flag_last_7d ?? 0))}
 				</div>
-				{/* is-wrap 필수 — 사유 세그먼트가 잘리면 수만 남고 모집단이 사라진다. */}
-				<div className="card-sub is-wrap fs-meta mt-1">
-					<ReviewReasonSegmentsI
-						segments={reviewReasons}
-						fallback="Outcomes flagged in the last 7 days"
-					/>
-				</div>
+				<FlaggedReasonBarsI segments={reviewReasons} />
 			</div>
 		</div>
 	);
+}
+
+// Ranked reason bars — the dominant reason leads; bar length relative to the largest.
+function FlaggedReasonBarsI({ segments }) {
+	const { Bar } = window.UI;
+	const ranked = getRankedReasonsI(segments);
+
+	if (ranked.length === 0) {
+		return (
+			<div className="card-sub fs-meta mt-1">
+				Outcomes flagged in the last 7 days
+			</div>
+		);
+	}
+
+	return (
+		<ul
+			className="mt-3 space-y-1.5"
+			aria-label={`Why results were flagged — ${segments.classifiedTotal} rows classified`}
+		>
+			{ranked.map((s) => (
+				<li
+					key={s.key}
+					className="grid grid-cols-[minmax(0,14rem)_1fr_3.5rem] items-center gap-3 fs-meta"
+					title={s.title}
+				>
+					<span className="truncate">{s.label}</span>
+					<Bar
+						value={s.count}
+						max={ranked[0].count}
+						ariaLabel={`${s.label} ${formatIntI(s.count)}`}
+					/>
+					<span className="font-mono tnum text-right">
+						{formatIntI(s.count)}
+					</span>
+				</li>
+			))}
+		</ul>
+	);
+}
+
+// Stable sort → ties keep the shared REVIEW_FLAG_REASON_ORDER the segments arrive in.
+function getRankedReasonsI(segments) {
+	if (!segments) return [];
+	return [...segments.items].sort((a, b) => b.count - a.count);
 }
 
 // 계기판 뷰 — 패널 순서는 relocate 이전 화면 순서를 그대로 보존한다.
@@ -103,57 +147,84 @@ function ImprovementInstrumentationViewI({
 	reviewReasons,
 	onNav,
 	onRetry,
+	failures,
 }) {
+	const { SplitRow, getRegionView } = window.UI;
+
 	return (
 		<div className="space-sections">
-			{statsState.status === "error" ? (
-				<PayloadErrorCardI
-					title="Flagged results"
-					state={statsState}
-					onRetry={onRetry}
-				/>
-			) : (
-				<FlaggedResultsCardI
-					state={statsState}
-					reviewReasons={reviewReasons}
-					onNav={onNav}
-				/>
-			)}
-			{corpusAuditState.status === "error" ? (
-				<PayloadErrorCardI
-					title="Corpus growth"
-					state={corpusAuditState}
-					onRetry={onRetry}
-				/>
-			) : (
-				<CorpusGrowthCardI state={corpusAuditState} />
-			)}
-			{correctionState.status === "error" ? (
-				<PayloadErrorCardI
-					title="Correction signals"
-					state={correctionState}
-					onRetry={onRetry}
-				/>
-			) : (
-				<CorrectionSignalsCardI state={correctionState} />
-			)}
-			{listState.status === "error" ? (
-				<PayloadErrorCardI
-					title="Proposal measurements"
-					state={listState}
-					onRetry={onRetry}
-				/>
-			) : (
-				<>
-					<StyleRefCardI state={listState} styleRef={styleRef} />
-					<ProseOnlyAddCardI state={listState} summary={proseOnlyAdd} />
-					<TierBreakdownCardI state={listState} tierBreakdown={tierBreakdown} />
-					<ConfidenceDistCardI
-						state={listState}
-						confidenceDist={confidenceDist}
+			<div id={PAYLOAD_SLOT_ID_I.flaggedResults}>
+				{getRegionView(statsState) === "error" ? (
+					<PayloadErrorCardI
+						focusTargetId={PAYLOAD_SLOT_ID_I.flaggedResults}
+						title="Flagged results"
+						source="loop stats"
+						failures={failures}
+						state={statsState}
+						onRetry={onRetry}
 					/>
-				</>
-			)}
+				) : (
+					<FlaggedResultsCardI
+						state={statsState}
+						reviewReasons={reviewReasons}
+						onNav={onNav}
+					/>
+				)}
+			</div>
+			<SplitRow ratio="1:1">
+				<div id={PAYLOAD_SLOT_ID_I.corpusGrowth}>
+					{getRegionView(corpusAuditState) === "error" ? (
+						<PayloadErrorCardI
+							focusTargetId={PAYLOAD_SLOT_ID_I.corpusGrowth}
+							title="Corpus growth"
+							source="corpus audits"
+							failures={failures}
+							state={corpusAuditState}
+							onRetry={onRetry}
+						/>
+					) : (
+						<CorpusGrowthCardI state={corpusAuditState} />
+					)}
+				</div>
+				<div id={PAYLOAD_SLOT_ID_I.correctionSignals}>
+					{getRegionView(correctionState) === "error" ? (
+						<PayloadErrorCardI
+							focusTargetId={PAYLOAD_SLOT_ID_I.correctionSignals}
+							title="Correction signals"
+							source="correction signals"
+							failures={failures}
+							state={correctionState}
+							onRetry={onRetry}
+						/>
+					) : (
+						<CorrectionSignalsCardI state={correctionState} />
+					)}
+				</div>
+			</SplitRow>
+			<div id={PAYLOAD_SLOT_ID_I.proposalMeasurements} className="space-sections">
+				{getRegionView(listState) === "error" ? (
+					<PayloadErrorCardI
+						focusTargetId={PAYLOAD_SLOT_ID_I.proposalMeasurements}
+						title="Proposal measurements"
+						source="suggestions"
+						failures={failures}
+						state={listState}
+						onRetry={onRetry}
+					/>
+				) : (
+					<>
+						<StyleRefCardI state={listState} styleRef={styleRef} />
+						<SplitRow ratio="1:1">
+							<ProseOnlyAddCardI state={listState} summary={proseOnlyAdd} />
+							<ConfidenceDistCardI
+								state={listState}
+								confidenceDist={confidenceDist}
+							/>
+						</SplitRow>
+						<TierBreakdownCardI state={listState} tierBreakdown={tierBreakdown} />
+					</>
+				)}
+			</div>
 		</div>
 	);
 }
@@ -178,7 +249,7 @@ function TierBreakdownCardI({ state, tierBreakdown }) {
 		return (
 			<div className="card">
 				<CardHead title="Results by check status (30 days)" />
-				<div className="p-3">
+				<div className="px-5 py-4">
 					<LoadingPlaceholder label="check-status results" minHeight={68} />
 				</div>
 			</div>
@@ -196,7 +267,7 @@ function TierBreakdownCardI({ state, tierBreakdown }) {
 		return (
 			<div className="card">
 				<CardHead title="Results by check status (30 days)" />
-				<div className="px-3 pb-3">
+				<div className="px-5 pb-4">
 					<div
 						className="placeholder"
 					>
@@ -242,7 +313,7 @@ function TierBreakdownCardI({ state, tierBreakdown }) {
 	return (
 		<div className="card">
 			<CardHead title="Results by check status (30 days)" />
-			<div className="grid grid-cols-4 gap-2 p-3">
+			<div className="grid grid-cols-4 gap-2 px-5 py-4">
 				{cards.map(([sym, tone, label, value, hint]) => (
 					<div
 						key={label}
@@ -288,7 +359,7 @@ function ConfidenceDistCardI({ state, confidenceDist }) {
 		return (
 			<div className="card">
 				<CardHead title="Suggestion confidence (measured)" sub="30 days" />
-				<div className="p-3">
+				<div className="px-5 py-4">
 					<LoadingPlaceholder label="suggestion confidence" minHeight={68} />
 				</div>
 			</div>
@@ -321,7 +392,7 @@ function ConfidenceDistCardI({ state, confidenceDist }) {
 		return (
 			<div className="card">
 				<CardHead title="Suggestion confidence (measured)" sub="30 days" />
-				<div className="px-3 pb-3">
+				<div className="px-5 pb-4">
 					<div
 						className="placeholder"
 					>
@@ -365,7 +436,7 @@ function ConfidenceDistCardI({ state, confidenceDist }) {
 	return (
 		<div className="card">
 			<CardHead title="Suggestion confidence (measured)" sub="30 days" />
-			<div className="grid grid-cols-1 gap-2 p-3">
+			<div className="grid grid-cols-1 gap-2 px-5 py-4">
 				{cards.map(([sym, tone, label, value, hint, bar]) => (
 					<div
 						key={label}
@@ -404,7 +475,7 @@ function laneLabelI(promotionTier) {
 // confidence_avg NULL → "—" (formatRateI null-safe).
 function ConfidenceLaneTableI({ buckets }) {
 	return (
-		<div className="px-3 pb-3">
+		<div className="px-5 pb-4">
 			<table className="w-full fs-meta font-mono">
 				<thead>
 					<tr className="text-faint uppercase tracking-wider">
@@ -457,13 +528,13 @@ function ProseOnlyAddCardI({ state, summary }) {
 				title={`Add-only patches (${formatIntI(Number(summary.window_days ?? 0))} days)`}
 			/>
 			{rows.length === 0 ? (
-				<div className="px-3 pb-3">
+				<div className="px-5 pb-4">
 					<div className="placeholder">
 						No add-only patches in this window
 					</div>
 				</div>
 			) : (
-				<div className="px-3 pb-3">
+				<div className="px-5 pb-4">
 					<table className="w-full fs-meta font-mono">
 						<thead>
 							<tr className="text-faint uppercase tracking-wider">
@@ -492,7 +563,7 @@ function ProseOnlyAddCardI({ state, summary }) {
 					</table>
 				</div>
 			)}
-			<div className="px-3 pb-3 card-sub fs-meta">
+			<div className="px-5 pb-4 card-sub fs-meta">
 				{summary.truncation_caveat}
 			</div>
 		</div>
@@ -531,7 +602,7 @@ function StyleRefCardI({ state, styleRef }) {
 					title="Style-check rate (7 days)"
 					sub="Agents that checked existing files before coding"
 				/>
-				<div className="p-3">
+				<div className="px-5 py-4">
 					<LoadingPlaceholder label="style-check rates" minHeight={68} />
 				</div>
 			</div>
@@ -587,7 +658,7 @@ function StyleRefCardI({ state, styleRef }) {
 		[
 			gradeBadge.symbol,
 			gradeBadge.tone,
-			"Threshold met",
+			"Graduation gate",
 			gradeBadge.label,
 			gradeBadge.hint,
 			null,
@@ -616,7 +687,7 @@ function StyleRefCardI({ state, styleRef }) {
 				title="Style-check rate (7 days)"
 				sub="Agents that checked existing files before coding"
 			/>
-			<div className="grid grid-cols-3 gap-2 p-3">
+			<div className="grid grid-cols-3 gap-2 px-5 py-4">
 				{headlineCards.map(([sym, tone, label, value, hint, bar]) => (
 					<div
 						key={label}
@@ -653,7 +724,7 @@ function StyleRefCardI({ state, styleRef }) {
 			{hasData ? (
 				<StyleRefAgentTableI rows={agentRows} />
 			) : (
-				<div className="px-3 pb-3">
+				<div className="px-5 pb-4">
 					<div
 						className="placeholder"
 					>
@@ -670,7 +741,7 @@ function StyleRefAgentTableI({ rows }) {
 	// per-agent rate 열은 없다 — 세 bucket 을 하나의 비율로 접으면 adjudicated 여부가 사라진다.
 	// 헤더는 dim text + uppercase tracking · 본문은 mono.
 	return (
-		<div className="px-3 pb-3">
+		<div className="px-5 pb-4">
 			<table className="w-full fs-meta font-mono">
 				<thead>
 					<tr className="text-faint uppercase tracking-wider">
@@ -733,7 +804,7 @@ function StyleRefSplitI({
 		["Greenfield", greenfield, "text-info"],
 	];
 	return (
-		<div className="px-3 pb-1">
+		<div className="px-5 pb-1">
 			<div className="flex flex-wrap items-baseline gap-x-4 gap-y-1 fs-meta font-mono">
 				{cells.map(([label, count, tone]) => (
 					<span key={label} className="inline-flex items-baseline gap-1">
@@ -834,7 +905,7 @@ function CorrectionSignalsCardI({ state }) {
 		return (
 			<div className="card">
 				<CardHead title={title} />
-				<div className="p-3">
+				<div className="px-5 py-4">
 					<LoadingPlaceholder label="correction signals" minHeight={60} />
 				</div>
 			</div>
@@ -847,7 +918,7 @@ function CorrectionSignalsCardI({ state }) {
 		return (
 			<div className="card">
 				<CardHead title={title} />
-				<div className="px-3 pb-3">
+				<div className="px-5 pb-4">
 					<div className="placeholder">
 						No correction signals recorded yet — appears once a run logs a
 						stage1/stage2 detection.
@@ -869,7 +940,7 @@ function CorrectionSignalsCardI({ state }) {
 				title={title}
 				sub={`${formatIntI(total)} signals${latest ? ` · latest ${latest}` : ""}`}
 			/>
-			<div className="px-3 pb-3 space-y-2">
+			<div className="px-5 pb-4 space-y-2">
 				<div className="fs-body">
 					<span className="font-mono text-ink">{agreePct}%</span>{" "}
 					<span className="text-faint">stage1/stage2 agreement</span>
@@ -892,6 +963,9 @@ function CorrectionSignalsCardI({ state }) {
 						{formatIntI(agr.neither_matched)}
 					</span>
 				</div>
+				<div className="card-sub is-wrap fs-meta">
+					Agreement = both + neither (the two stages concur) ÷ all signals.
+				</div>
 				<div className="fs-meta font-mono text-faint">
 					revision delta Σ {formatIntI(d.revision_delta_sum)} · peak{" "}
 					{formatIntI(d.revision_delta_max)}
@@ -912,7 +986,7 @@ function CorpusGrowthCardI({ state }) {
 		return (
 			<div className="card">
 				<CardHead title={title} />
-				<div className="p-3">
+				<div className="px-5 py-4">
 					<LoadingPlaceholder label="corpus audits" minHeight={60} />
 				</div>
 			</div>
@@ -925,7 +999,7 @@ function CorpusGrowthCardI({ state }) {
 		return (
 			<div className="card" data-testid="corpus-growth-card">
 				<CardHead title={title} />
-				<div className="px-3 pb-3">
+				<div className="px-5 pb-4">
 					<div className="placeholder">
 						No corpus readings yet — appears once a daemon cycle writes one.
 					</div>
@@ -951,10 +1025,7 @@ function CorpusGrowthCardI({ state }) {
 		: "no baseline yet";
 	const compliance = formatRateI(latest.compliance_rate);
 	const override = formatRateI(latest.override_rate);
-	const alerts = [
-		latest.trend_alert ? "trend" : null,
-		latest.absolute_alert ? "absolute" : null,
-	].filter(Boolean);
+	const verdict = getCorpusGrowthVerdictI(latest);
 
 	return (
 		<div className="card" data-testid="corpus-growth-card">
@@ -962,7 +1033,7 @@ function CorpusGrowthCardI({ state }) {
 				title={title}
 				sub={`${formatIntI(Number(state.data.total_audits ?? 0))} readings · latest ${latest.cycle_date}`}
 			/>
-			<div className="px-3 pb-3 space-y-2">
+			<div className="px-5 pb-4 space-y-2">
 				<div className="flex items-center gap-3 flex-wrap">
 					<span className="fs-display font-mono text-ink">
 						{formatIntI(Number(latest.word_count ?? 0))}
@@ -989,8 +1060,10 @@ function CorpusGrowthCardI({ state }) {
 					<span>
 						threshold {formatIntI(Number(latest.seeded_threshold ?? 0))}
 					</span>
-					{alerts.length > 0 && (
-						<span className="text-warn">⚠ {alerts.join(" + ")} alert</span>
+					{verdict.tone === "text-warn" && (
+						<span className="text-warn">
+							{verdict.symbol} {verdict.label}
+						</span>
 					)}
 				</div>
 				<div className="flex items-center gap-4 fs-meta font-mono text-faint flex-wrap">
@@ -1018,4 +1091,40 @@ function CorpusGrowthCardI({ state }) {
 	);
 }
 
+// Same shape as styleRefGradeBadgeI → the Operator view renders every gauge chip alike.
+function getCorpusGrowthVerdictI(latest) {
+	if (!latest) {
+		return {
+			symbol: "ℹ",
+			tone: "text-info",
+			label: "pending",
+			hint: "No corpus reading yet",
+		};
+	}
+	const hint = `threshold ${formatIntI(Number(latest.seeded_threshold ?? 0))} words`;
+	const alerts = [
+		latest.trend_alert ? "trend" : null,
+		latest.absolute_alert ? "absolute" : null,
+	].filter(Boolean);
+	if (alerts.length > 0) {
+		return {
+			symbol: "⚠",
+			tone: "text-warn",
+			label: `${alerts.join(" + ")} alert`,
+			hint,
+		};
+	}
+	return {
+		symbol: "✓",
+		tone: "text-ok",
+		label: "within threshold",
+		hint,
+	};
+}
+
 window.ImprovementInstrumentationView = ImprovementInstrumentationViewI;
+// Per-gauge verdicts, read by improvement.jsx at render time instead of copying the rules.
+window.ImprovementInstrumentationVerdicts = Object.freeze({
+	styleRefGradeBadgeI,
+	getCorpusGrowthVerdictI,
+});

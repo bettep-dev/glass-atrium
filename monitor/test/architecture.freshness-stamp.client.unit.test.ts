@@ -27,11 +27,30 @@ interface FreshnessInput {
   regions: RegionState[];
 }
 
+interface PartRow {
+  id: string;
+  name: string;
+  tone: string | null;
+  statusLabel?: string | null;
+  nodeIds: string[];
+}
+
+interface MapVerdict {
+  tone: string;
+  freshness: FreshnessInput;
+}
+
 interface StampSandbox {
   window: {
-    UI: { getFreshnessState: (input: FreshnessInput & { now: number }) => string };
+    UI: {
+      getFreshnessState: (input: FreshnessInput & { now: number }) => string;
+      getFreshnessVerdict: (input: FreshnessInput & { tone: string; now: number }) => { label: string };
+    };
   };
   getFreshnessInputAR: (healthAsOf: string | null, regions: RegionState[], hasMap: boolean) => FreshnessInput;
+  getPageVerdictAR: (partRows: PartRow[], caption: string, nodeIndex: null, freshness: FreshnessInput) => MapVerdict;
+  getPartStatusAR: (row: PartRow, freshness: FreshnessInput & { now: number }) => { tone: string | null; text: string };
+  getMapCopyNoteAR: (diagState: RegionState) => string | null;
 }
 
 const sandbox = await buildScreenSandbox<StampSandbox>(ARCH_SRC);
@@ -63,5 +82,56 @@ test("the stamp answers for every region: a failure over held data shows, and re
 
   for (const row of rows) {
     assert.strictEqual(getState(row.asOf, row.regions), row.expected, row.name);
+  }
+});
+
+function getPart(id: string, tone: string | null): PartRow {
+  return { id, name: id, tone, nodeIds: [] };
+}
+
+test("the map verdict follows the stamp's freshness: a failed re-read over an all-ok map reads Last known", () => {
+  const okParts = [getPart("pg", "ok"), getPart("hooks", "ok")];
+  const rows = [
+    { name: "settled read", regions: [HELD, HELD], expected: "Healthy" },
+    { name: "re-read failed over held data", regions: [FAILED_OVER_HELD, HELD], expected: "Last known" },
+    { name: "every re-read failed", regions: [FAILED_OVER_HELD, FAILED_OVER_HELD], expected: "Last known" },
+  ];
+
+  for (const row of rows) {
+    const freshness = sandbox.getFreshnessInputAR(READ_AT, row.regions, true);
+    const verdict = sandbox.getPageVerdictAR(okParts, "All 2 parts ok", null, freshness);
+    const shown = sandbox.window.UI.getFreshnessVerdict({ ...verdict.freshness, tone: verdict.tone, now: NOW });
+    assert.strictEqual(shown.label, row.expected, row.name);
+  }
+});
+
+test("a part row's verdict follows the health stamp: an ok row under a failed re-read never stays an unmarked Healthy", () => {
+  const ok: PartRow = { ...getPart("pg", "ok"), statusLabel: "Healthy" };
+  const overdue: PartRow = { ...getPart("cron", "crit"), statusLabel: "Overdue" };
+  const rows = [
+    { name: "settled read keeps the ok verdict", row: ok, regions: [HELD, HELD], tone: "ok", text: "Healthy" },
+    { name: "ok row under a failed re-read", row: ok, regions: [FAILED_OVER_HELD, HELD], tone: "neutral", text: "Last known" },
+    { name: "flagged row under a failed re-read keeps its alarm", row: overdue, regions: [FAILED_OVER_HELD, HELD], tone: "crit", text: "Last known: Overdue" },
+    { name: "row with no verdict", row: getPart("hooks", null), regions: [FAILED_OVER_HELD, HELD], tone: null, text: "Not loaded" },
+  ];
+
+  for (const row of rows) {
+    const shown = sandbox.getPartStatusAR(row.row, { ...sandbox.getFreshnessInputAR(READ_AT, row.regions, true), now: NOW });
+    assert.deepStrictEqual({ tone: shown.tone, text: shown.text }, { tone: row.tone, text: row.text }, row.name);
+  }
+});
+
+test("the map carries a last-good-copy label exactly when a re-read failed over the held map", () => {
+  const rows = [
+    { name: "failed re-read over held map", state: FAILED_OVER_HELD, isLabelled: true },
+    { name: "held map, settled", state: HELD, isLabelled: false },
+    { name: "held map, re-reading", state: REREADING, isLabelled: false },
+    { name: "cold error, nothing held", state: DOWN, isLabelled: false },
+    { name: "first read in flight", state: FIRST_READ, isLabelled: false },
+  ];
+
+  for (const row of rows) {
+    const note = sandbox.getMapCopyNoteAR(row.state);
+    assert.strictEqual(/last good copy/i.test(note ?? ""), row.isLabelled, `${row.name}: ${note}`);
   }
 });

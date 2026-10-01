@@ -953,6 +953,22 @@ test("M1 a 'No data' part keeps its tone on the node, and it outranks an ok daem
   assert.strictEqual(tones.get("shared"), "info", "an ok daemon must not cover a part that has no data");
 });
 
+test("a daemon part carries the cadence /live serves for its daemon, and no other part carries one", () => {
+  const defs = (arch as unknown as { window: { HealthModel: { HEALTH_CARD_DEFS: { id: string; kind: string; daemonName?: string }[] } } })
+    .window.HealthModel.HEALTH_CARD_DEFS;
+  const daemonDefs = defs.filter((d) => d.kind === "daemon");
+  assert.ok(daemonDefs.length > 0, "fixture precondition: the health model must carry a daemon part");
+
+  const liveDaemons = daemonDefs.map((d, index) => ({ daemon_name: d.daemonName, expected_cadence_minutes: 15 * (index + 1) }));
+  const rows = [...callInCtx<{ id: string; cadenceMinutes: number | null }[]>(archCtx, "getHealthPartRows", healthStoreStates(), undefined, liveDaemons)];
+
+  assert.strictEqual(rows.length, defs.length, "one row per card def");
+  for (const row of rows) {
+    const index = daemonDefs.findIndex((d) => d.id === row.id);
+    assert.strictEqual(row.cadenceMinutes, index === -1 ? null : 15 * (index + 1), `cadence of part "${row.id}"`);
+  }
+});
+
 test("M3 a health model that never loaded leaves every bound node unverified", () => {
   const ctx = loadArchWithoutHealthModel(archCode);
   const ids = callInCtx<Set<string>>(ctx, "buildUnverifiedNodeIds", { a: ["n1"], b: ["n2", "n3"] }, healthStoreStates());

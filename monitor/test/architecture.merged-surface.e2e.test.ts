@@ -1810,6 +1810,10 @@ async function openHookHealth(needle: string): Promise<string> {
 	const deadline = Date.now() + 15_000;
 	let text = "";
 	while (Date.now() < deadline) {
+		// each hook event starts collapsed — open them so the whole served configuration is on screen
+		await page.evaluate(() => {
+			for (const details of document.querySelectorAll<HTMLDetailsElement>(".arch-hook-chain details")) details.open = true;
+		});
 		text = await getHookRowText();
 		if (text.includes(needle)) return text;
 		await new Promise((r) => setTimeout(r, 50));
@@ -1888,8 +1892,8 @@ const PAYLOAD_QUOTA_COUNT = 4;
 // health-detail.ts 의 getDoctorFailureMessage 가 rc 를 읽어 내는 문장 그대로.
 const PAYLOAD_DOCTOR_MESSAGE = "doctor verdict: fail (rc=1)";
 
-// 실패 사이클 하나 + 정상 사이클 하나 — 둘 다 날짜를 내야 확장 영역이 '실패만' 이 아니라
-// 최근 실행을 읽고 있음이 드러남.
+// 실패 사이클 하나 + 정상 사이클 하나 — 정상 사이클은 'N/M runs clean' 요약에만 세어지고
+// 목록에는 서지 않음이 드러남.
 function getFailingPayload(): Pick<HealthDaemonPayloadResponse, "entries"> {
 	return {
 		entries: [
@@ -2229,9 +2233,14 @@ interface PartFacts {
 	lastRun: string;
 	alsoLights: string;
 	hasDetail: boolean;
-	// 드릴다운 응답은 한 번에 한 데몬 것임 — 한 노드에 데몬 부품이 둘이면(cron) 한쪽은 상세를,
-	// 다른 쪽은 그 상세를 불러오는 컨트롤을 냄. 둘 중 하나는 반드시 있어야 함.
+	// 데몬 부품마다 최근 실행 토글이 있음 — 드릴된 쪽은 펼쳐진 상태, 다른 쪽은 불러오는 컨트롤임.
 	hasDrill: boolean;
+	// 토글의 aria-expanded 값 — 토글이 없으면 null.
+	drillExpanded: string | null;
+	// 토글의 aria-controls 원값 — 닫힌 토글은 없어야 함(null).
+	drillControls: string | null;
+	// aria-controls 가 실재하는 이 행 자신의 상세 영역을 가리키는지.
+	drillControlsDetail: boolean;
 }
 
 async function getPartFacts(partId: string): Promise<PartFacts> {
@@ -2247,6 +2256,9 @@ async function getPartFacts(partId: string): Promise<PartFacts> {
 				alsoLights: "",
 				hasDetail: false,
 				hasDrill: false,
+				drillExpanded: null,
+				drillControls: null,
+				drillControlsDetail: false,
 			};
 
 		// 머리글이 없으므로 자리로 읽음 — 이름 · 판정 · 마지막 실행이 head 안에서 이 순서임.
@@ -2259,6 +2271,9 @@ async function getPartFacts(partId: string): Promise<PartFacts> {
 			[...row.children]
 				.map((el) => (el.textContent || "").replace(/\s+/g, " ").trim())
 				.find((t) => t.startsWith("Also lights:")) || "";
+		const drill = row.querySelector(".arch-part-drill");
+		const controls = drill ? drill.getAttribute("aria-controls") : null;
+		const region = controls ? document.getElementById(controls) : null;
 
 		return {
 			found: true,
@@ -2269,7 +2284,10 @@ async function getPartFacts(partId: string): Promise<PartFacts> {
 			lastRun: (head[2] || "").replace(/^Last run\s*/, ""),
 			alsoLights: also.replace(/^Also lights:\s*/, ""),
 			hasDetail: Boolean(row.querySelector("[data-health-detail]")),
-			hasDrill: Boolean(row.querySelector(".arch-part-drill")),
+			hasDrill: Boolean(drill),
+			drillExpanded: drill ? drill.getAttribute("aria-expanded") : null,
+			drillControls: controls,
+			drillControlsDetail: region !== null && region === row.querySelector("[data-health-detail]"),
 		};
 	}, partId);
 }
@@ -2591,7 +2609,7 @@ test("AC-T8 the keyboard alone reaches a node and opens its health detail", asyn
 	assert.equal((await getPartFacts("hook-chain")).found, true, "Space must open it too");
 });
 
-test("AC-T9 the expanded region names the failure date and the reason behind it", async () => {
+test("the expanded region counts the clean runs and lists only the failed run with its date and reasons", async () => {
 	await openMapWithHealth(getHealthFixture({ payload: getFailingPayload() }));
 	await openDaemonHealth(BOUND_DAEMON);
 
@@ -2613,9 +2631,15 @@ test("AC-T9 the expanded region names the failure date and the reason behind it"
 		text.includes(`×${PAYLOAD_QUOTA_COUNT}`),
 		`a reason repeated across the cycle must carry its count, not read as a single event — read "${text}"`,
 	);
+	const { entries } = getFailingPayload();
+	const cleanCount = entries.filter((entry) => entry.summary.verdict === "ok" && entry.summary.error_signatures.length === 0).length;
 	assert.ok(
-		text.includes(PAYLOAD_OK_DATE),
-		"a run with no signatures must still state its date — the region lists runs, not only failures",
+		text.includes(`${cleanCount}/${entries.length} runs clean`),
+		`the region must count the clean runs against every stored run — read "${text}"`,
+	);
+	assert.ok(
+		!text.includes(PAYLOAD_OK_DATE),
+		`a clean run is counted in the summary, never listed — the list names failures only — read "${text}"`,
 	);
 });
 
@@ -3037,7 +3061,7 @@ test("AC-B2-4c an unreachable database turns the PostgreSQL entry, not only the 
 // 다만 한 노드에 데몬 부품이 둘이면(cron) 드릴다운 응답이 한 데몬 것뿐이라 한쪽은 상세를,
 // 다른 쪽은 그것을 불러오는 컨트롤을 냄 — 둘 다 '읽을 것이 있음' 이므로 함께 셈. 그 대신
 // '같은 노드에서 상세는 한 번에 하나' 를 아래 마지막 절이 따로 못 박음.
-test("AC-B2-4d only a part with something to show offers a detail or a way to load one", async () => {
+test("only a part with something to show offers a detail or a way to load one", async () => {
 	await openMap(getLiveFixture(), getQueueFixture(), getHookChainFixture());
 
 	const offering: string[] = [];
@@ -3057,8 +3081,8 @@ test("AC-B2-4d only a part with something to show offers a detail or a way to lo
 		"exactly the four daemon parts and the hook chain part have something to show — nothing else does",
 	);
 
-	// 한 노드에 묶인 데몬 부품 둘 — 상세는 한쪽에만, 컨트롤은 다른 쪽에만. 둘 다 상세를 그리면
-	// 한 데몬의 실행 목록이 다른 데몬의 것으로 읽히고, 둘 다 컨트롤이면 열자마자 비어 있음.
+	// 한 노드에 묶인 데몬 부품 둘 — 상세는 한쪽에만, 토글은 양쪽에 있되 펼쳐진 것은 상세를 그린
+	// 쪽뿐. 둘 다 상세를 그리면 한 데몬의 실행 목록이 다른 데몬의 것으로 읽힘.
 	const shared = ["daily-restart-autoagent", "daily-restart-wiki"];
 	await openPartHealth(shared[0]);
 	const both = [await getPartFacts(shared[0]), await getPartFacts(shared[1])];
@@ -3068,9 +3092,14 @@ test("AC-B2-4d only a part with something to show offers a detail or a way to lo
 		"two daemon parts on one node must not both render a detail — the payload response carries one daemon",
 	);
 	assert.deepEqual(
-		both.map((f) => f.hasDrill),
-		[false, true],
-		"the part whose runs are not loaded must carry the control that loads them, or its log is unreachable",
+		both.map((f) => f.drillExpanded),
+		["true", "false"],
+		"each daemon part carries its runs toggle, and only the part whose runs are shown reads expanded",
+	);
+	assert.deepEqual(
+		both.map((f) => [f.drillControlsDetail, f.drillControls === null]),
+		[[true, false], [false, true]],
+		"an open toggle must name the runs region it controls; a closed one points at nothing",
 	);
 
 	// 그 컨트롤을 누르면 드릴다운이 옮겨가고 둘의 역할이 맞바뀜.
@@ -3081,6 +3110,22 @@ test("AC-B2-4d only a part with something to show offers a detail or a way to lo
 		swapped.map((f) => f.hasDetail),
 		[false, true],
 		"pressing the control must move the drilldown to that daemon, not add a second one",
+	);
+});
+
+test("Hide on an open daemon part collapses its runs and reads collapsed", async () => {
+	await openMap(getLiveFixture(), getQueueFixture(), getHookChainFixture());
+	const partId = "daily-restart-autoagent";
+	await openPartHealth(partId);
+	assert.equal((await getPartFacts(partId)).drillExpanded, "true", "fixture precondition: the drilled part opens with its runs shown");
+
+	await page.click(`[data-health-row="${partId}"] .arch-part-drill`);
+	await page.waitForSelector(`[data-health-row="${partId}"] [data-health-detail]`, { state: "detached", timeout: 10_000 });
+	const facts = await getPartFacts(partId);
+	assert.deepEqual(
+		{ expanded: facts.drillExpanded, controls: facts.drillControls },
+		{ expanded: "false", controls: null },
+		"a collapsed toggle must read collapsed and stop naming a region that is gone",
 	);
 });
 

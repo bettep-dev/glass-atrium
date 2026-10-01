@@ -1,5 +1,5 @@
 // 공용 UI atoms — window.UI 로 export, screens/*.jsx 가 destructure 임포트
-const { useEffect, useRef, useState } = React;
+const { useEffect, useLayoutEffect, useRef, useState } = React;
 
 // 포커스 가능 요소 셀렉터 SoT — focus-trap 진입/순환 공용 (DetailSurface).
 const FOCUSABLE_SELECTOR = 'a[href], button:not([disabled]), textarea, input, select, summary, iframe, [contenteditable="true"], [tabindex]:not([tabindex="-1"])';
@@ -219,6 +219,12 @@ function MiniBars({ data, w=60, h=22, color='currentColor', label }) {
 // Panel-width day chart: viewBox x runs 0..CHART_VIEW_W and stretches to the panel (preserveAspectRatio none).
 const CHART_VIEW_W = 100;
 const CHART_MAX_TICKS = 7;
+const CHART_PLOT_FILL = 0.85;
+/** Minimum px between tick labels; Recharts axes get it through getChartXAxisProps. */
+const CHART_TICK_MIN_GAP_PX = 8;
+// ponytail: fixed per-char estimate of a --fs-meta day label (≤7px) → measure with canvas if labels grow wide
+const CHART_TICK_CHAR_PX = 7;
+const CHART_TICK_SHIFT = { start: '0', middle: '-50%', end: '-100%' };
 
 // Evenly spaced day-tick indices, always the first and last day, at most maxTicks.
 function getChartTicks(count, maxTicks = CHART_MAX_TICKS) {
@@ -235,6 +241,86 @@ function getChartIndexAtRatio(ratio, count, kind = 'line') {
   const clamped = Math.min(1, Math.max(0, ratio));
   const index = kind === 'bars' ? Math.floor(clamped * count) : Math.round(clamped * (count - 1));
   return Math.min(count - 1, index);
+}
+
+/** Anchor of the order-th of total visible ticks (SVG textAnchor words): first starts at its point, last ends at it. */
+function getChartTickAnchor(order, total) {
+  if (total <= 1) return 'middle';
+  if (order === 0) return 'start';
+  return order === total - 1 ? 'end' : 'middle';
+}
+
+/**
+ * Day-tick slots for an HTML tick row: evenly spaced, latest day always kept, cap lowered until no two labels collide.
+ * @param widthPx - measured row width; 0 (not yet measured) keeps the count-based ticks
+ * @returns `{ index, left, anchor }` per label — left in % of the plot width
+ */
+function getChartTickLayout(labels, kind, widthPx, maxTicks = CHART_MAX_TICKS) {
+  const count = labels.length;
+  const ticks = widthPx > 0 ? getFittingTicks(labels, kind, widthPx, maxTicks) : getChartTicks(count, maxTicks);
+  // a lone survivor of a crowded row is the latest day, which sits on the right edge
+  const getAnchor = (order) => (ticks.length === 1 && count > 1 ? 'end' : getChartTickAnchor(order, ticks.length));
+  return ticks.map((index, order) => ({ index, left: getChartX(index, count, kind), anchor: getAnchor(order) }));
+}
+
+function getFittingTicks(labels, kind, widthPx, maxTicks) {
+  const count = labels.length;
+  const top = Math.max(2, maxTicks);
+  const hasEvenSteps = (cap) => (count - 1) % (Math.min(cap, count) - 1) === 0;
+  // even steps at the caller's cap stay even → only caps dividing count-1 are tried
+  const isEvenOnly = count >= 2 && hasEvenSteps(top);
+  for (let cap = top; cap >= 2; cap--) {
+    if (isEvenOnly && !hasEvenSteps(cap)) continue;
+    const ticks = getChartTicks(count, cap);
+    if (isTickRowClear(ticks, labels, kind, widthPx)) return ticks;
+  }
+  return [count - 1];
+}
+
+function isTickRowClear(ticks, labels, kind, widthPx) {
+  const boxes = ticks.map((index, order) => {
+    const width = labels[index].length * CHART_TICK_CHAR_PX;
+    const x = (getChartX(index, labels.length, kind) / CHART_VIEW_W) * widthPx;
+    const anchor = getChartTickAnchor(order, ticks.length);
+    const start = anchor === 'start' ? x : anchor === 'end' ? x - width : x - width / 2;
+    return { start, end: start + width };
+  });
+  return boxes.every((box, i) => i === 0 || box.start - boxes[i - 1].end >= CHART_TICK_MIN_GAP_PX);
+}
+
+/** Top/bottom y-axis labels matching ChartPlot's scale (bars from zero, lines from the low); null with no finite value. */
+function getChartYScale(points, kind, formatValue = String) {
+  const values = points.map((point) => point.value).filter(Number.isFinite);
+  if (values.length === 0) return null;
+  const bottom = kind === 'bars' ? 0 : Math.min(...values);
+  return { top: formatValue(Math.max(...values)), bottom: formatValue(bottom) };
+}
+
+/** Spread onto the element wrapping a Recharts chart: a focusable image named by getChartSummary. */
+function getChartImageProps(name, points, formatValue = String) {
+  return { role: 'img', tabIndex: 0, 'aria-label': getChartSummary(name, points, formatValue) };
+}
+
+const CHART_AXIS_TICK_STYLE = { fontSize: 'var(--fs-meta)', fill: 'rgb(var(--faint))', fontFamily: "'JetBrains Mono', monospace" };
+
+/**
+ * Recharts XAxis props for a day axis: shared tick, both ends kept, and a gap that holds with edge anchoring.
+ * Recharts spaces labels as boxes centred on x, measured in the body font (never narrower than the tick font);
+ * an end label anchored on its own point overhangs that box by at most half its width → the gap carries that half.
+ */
+function getChartXAxisProps(labels) {
+  const widest = Math.max(0, ...labels.map((label) => String(label).length));
+  return { tick: ChartAxisTick, interval: 'preserveStartEnd', minTickGap: CHART_TICK_MIN_GAP_PX + Math.ceil((widest * CHART_TICK_CHAR_PX) / 2) };
+}
+
+/** Recharts XAxis `tick` renderer — ends anchored by visible order, like the HTML tick row. */
+function ChartAxisTick({ x, y, payload, index, visibleTicksCount }) {
+  const anchor = getChartTickAnchor(index, visibleTicksCount);
+  // Recharts clamps end labels to the whole chart box, not the plot → an edge label pins to its own point instead
+  const labelX = anchor === 'middle' ? x : payload.coordinate;
+  return <text x={labelX} y={y} dy="0.71em" textAnchor={anchor} style={CHART_AXIS_TICK_STYLE}>
+    {payload.value}
+  </text>;
 }
 
 function getChartReadout(point, formatValue = String) {
@@ -272,7 +358,7 @@ function ChartPlot({ points, kind, h, color, activeIndex }) {
   const finite = values.filter((value) => value !== null);
   const min = kind === 'bars' || finite.length === 0 ? 0 : Math.min(...finite);
   const range = (finite.length ? Math.max(...finite) : 1) - min || 1;
-  const getY = (value) => h - ((value - min) / range) * h * 0.85 - 1;
+  const getY = (value) => h - ((value - min) / range) * h * CHART_PLOT_FILL - 1;
   const crossX = activeIndex === null ? null : getChartX(activeIndex, points.length, kind);
   return <svg width="100%" height={h} viewBox={`0 0 ${CHART_VIEW_W} ${h}`} preserveAspectRatio="none" aria-hidden="true" style={{ display: 'block' }}>
     {kind === 'bars'
@@ -293,13 +379,34 @@ function ChartBars({ values, h, getY, color, activeIndex }) {
 }
 
 function ChartTicks({ points, kind, maxTicks }) {
-  const count = points.length;
-  return <div aria-hidden="true" className="text-faint" style={{ position: 'relative', height: 18, fontSize: 'var(--fs-meta)' }}>
-    {getChartTicks(count, maxTicks).map((i) => {
-      const left = getChartX(i, count, kind);
-      const shift = left <= 0 ? '0' : left >= CHART_VIEW_W ? '-100%' : '-50%';
-      return <span key={i} data-chart-tick="" style={{ position: 'absolute', left: `${left}%`, transform: `translateX(${shift})`, whiteSpace: 'nowrap' }}>{points[i].label}</span>;
-    })}
+  const [rowRef, widthPx] = useElementWidth();
+  const labels = points.map((point) => point.label);
+  return <div ref={rowRef} aria-hidden="true" className="text-faint" style={{ position: 'relative', height: 18, fontSize: 'var(--fs-meta)' }}>
+    {getChartTickLayout(labels, kind, widthPx, maxTicks).map(({ index, left, anchor }) =>
+      <span key={index} data-chart-tick="" style={{ position: 'absolute', left: `${left}%`, transform: `translateX(${CHART_TICK_SHIFT[anchor]})`, whiteSpace: 'nowrap' }}>{labels[index]}</span>)}
+  </div>;
+}
+
+// Live width of the ref'd element; 0 until the first layout measure.
+function useElementWidth() {
+  const ref = useRef(null);
+  const [width, setWidth] = useState(0);
+  useLayoutEffect(() => {
+    const element = ref.current;
+    if (!element || typeof ResizeObserver === 'undefined') return undefined;
+    const observer = new ResizeObserver(([entry]) => setWidth(entry.contentRect.width));
+    observer.observe(element);
+    return () => observer.disconnect();
+  }, []);
+  return [ref, width];
+}
+
+// Max label level with ChartPlot's highest value, min label on the baseline.
+// Both labels share one in-flow grid cell → the TrendChart's auto column takes the wider label's width, never 0.
+function ChartYScale({ scale, h }) {
+  return <div aria-hidden="true" data-chart-y-scale="" className="text-faint tnum" style={{ display: 'grid', gridTemplateRows: `${h}px`, justifyItems: 'end', fontSize: 'var(--fs-meta)' }}>
+    <span style={{ gridArea: '1 / 1', alignSelf: 'start', marginTop: h * (1 - CHART_PLOT_FILL) - 1, transform: 'translateY(-50%)', whiteSpace: 'nowrap' }}>{scale.top}</span>
+    <span style={{ gridArea: '1 / 1', alignSelf: 'end', whiteSpace: 'nowrap' }}>{scale.bottom}</span>
   </div>;
 }
 
@@ -325,18 +432,25 @@ function useChartReadout(count, kind) {
 /**
  * Day-series chart that fills its panel: named image, day ticks, crosshair + polite live readout on hover and focus.
  * @param points - `{ label, value }` per day, oldest first; a null value renders as a gap
- * @param formatValue - formats values in the readout and the accessible summary
+ * @param formatValue - formats values in the readout, the accessible summary and the y-scale
+ * @param yScale - true adds a max/min label column beside the plot
  */
-function TrendChart({ label, points, kind = 'line', h = 64, tone = 'info', formatValue = String, maxTicks = CHART_MAX_TICKS }) {
+function TrendChart({ label, points, kind = 'line', h = 64, tone = 'info', formatValue = String, maxTicks = CHART_MAX_TICKS, yScale = false }) {
   const count = points ? points.length : 0;
   const { activeIndex, handlers } = useChartReadout(count, kind);
   if (count === 0) return <p className="text-faint" style={{ fontSize: 'var(--fs-meta)', margin: 0 }}>No data in range</p>;
   const readout = activeIndex === null ? '' : getChartReadout(points[activeIndex], formatValue);
+  const scale = yScale ? getChartYScale(points, kind, formatValue) : null;
+  const plot = <div {...getChartImageProps(label, points, formatValue)} style={{ cursor: 'crosshair', minWidth: 0 }} {...handlers}>
+    <ChartPlot points={points} kind={kind} h={h} color={toneVarColor(tone)} activeIndex={activeIndex}/>
+  </div>;
+  const ticks = <ChartTicks points={points} kind={kind} maxTicks={maxTicks}/>;
   return <figure className="trend-chart" style={{ margin: 0, minWidth: 0 }}>
-    <div role="img" aria-label={getChartSummary(label, points, formatValue)} tabIndex={0} style={{ cursor: 'crosshair' }} {...handlers}>
-      <ChartPlot points={points} kind={kind} h={h} color={toneVarColor(tone)} activeIndex={activeIndex}/>
-    </div>
-    <ChartTicks points={points} kind={kind} maxTicks={maxTicks}/>
+    {scale
+      ? <div style={{ display: 'grid', gridTemplateColumns: 'auto minmax(0, 1fr)', columnGap: 6 }}>
+          <ChartYScale scale={scale} h={h}/>{plot}<span/>{ticks}
+        </div>
+      : <>{plot}{ticks}</>}
     <div aria-live="polite" style={{ minHeight: 18, fontSize: 'var(--fs-meta)', fontVariantNumeric: 'tabular-nums' }}>{readout}</div>
   </figure>;
 }
@@ -504,10 +618,10 @@ function KpiValue({ children, unit, tone }) {
 }
 
 // label + 26px mono value + delta + 68×26 inline sparkline
-function KPI({ label, value, unit, delta, deltaInverse=false, sparkData, sparkColor='currentColor', onClick, hint }) {
+function KPI({ label, value, unit, delta, deltaInverse=false, sparkData, sparkColor='currentColor', onClick, hint, hintClassName='fs-micro' }) {
   return <button onClick={onClick} className="kpi text-left">
     <div className="kpi-label">{label}</div>
-    {hint && <div className="fs-micro text-faint font-mono kpi-hint">{hint}</div>}
+    {hint && <div className={`${hintClassName} text-faint font-mono kpi-hint`}>{hint}</div>}
     <KpiValue unit={unit}>{value}</KpiValue>
     {typeof delta === 'number' && <Delta value={delta} inverse={deltaInverse} />}
     {sparkData && <div className="kpi-spark"><Sparkline data={sparkData} w={68} h={26} color={sparkColor}/></div>}
@@ -531,14 +645,11 @@ function DetailSurface({ open, onClose, variant = 'drawer', title, sub, footer, 
   const panelRef = useRef(null);
   const titleIdRef = useRef(null);
   if (titleIdRef.current === null) titleIdRef.current = `detail-title-${++detailTitleSeq}`;
-  // 열리기 직전 포커스 트리거 — 닫힘 시 복원 (a11y 포커스 반환).
-  const triggerRef = useRef(null);
 
   // 마운트 전용 — 포커스 캡처/복원 + scroll-lock 은 surface 생애주기(열림→닫힘)에만 묶임.
   // onClose/nav 의존 금지 — 부모 re-render(인라인 onClose 신규 생성)에 캡처/복원이 재실행돼
   // triggerRef 가 상호작용 중 덮어쓰이고 포커스가 트리거로 튀는 회귀 차단. surface 는 open 시에만 마운트.
   useEffect(() => {
-    triggerRef.current = document.activeElement;
     setSurfaceOpen(panelRef, true);
 
     const panel = panelRef.current;
@@ -556,20 +667,18 @@ function DetailSurface({ open, onClose, variant = 'drawer', title, sub, footer, 
     return () => {
       setSurfaceOpen(panelRef, false);
       document.body.style.overflow = prevOverflow;
-      // background revived before the trigger refocus — an inert trigger rejects focus.
       for (const node of inertTargets) node.inert = false;
-      // 트리거 복원 — 닫힘 시 호출처 요소로 포커스 반환.
-      const trigger = triggerRef.current;
-      if (trigger && typeof trigger.focus === 'function') trigger.focus();
     };
   }, []);
 
-  // keydown 핸들러 — Esc 닫기 · Tab 순환 · Arrow nav. onClose/nav 최신 클로저 필요 →
+  // declared after the mount effect → its refocus runs once the background is live again (an inert trigger rejects focus).
+  useDismissFocus({ onDismiss: onClose, isKeyOwner: () => getTopSurface() === panelRef, panelRef });
+
+  // keydown 핸들러 — Tab 순환 · Arrow nav. onClose/nav 최신 클로저 필요 →
   // 재바인딩 무해 (리스너 add/remove 만 반복, 포커스/scroll 상태 무영향).
   useEffect(() => {
     const onKey = (e) => {
       if (getTopSurface() !== panelRef) return;
-      if (e.key === 'Escape') { onClose(); return; }
       if (e.key === 'Tab') {
         const panel = panelRef.current;
         if (!panel) return;
@@ -633,6 +742,97 @@ function DetailSurface({ open, onClose, variant = 'drawer', title, sub, footer, 
       {foot}
     </div>
   </div>;
+}
+
+const isAlwaysKeyOwner = () => true;
+
+/**
+ * Esc-close + focus return shared by the modal DetailSurface and the non-modal Popover.
+ * Call it AFTER the owner's own mount effect — cleanups run in declaration order, so the refocus lands after the owner's teardown.
+ * @param isKeyOwner - Esc gate; a surface stacked under another ignores the key
+ * @param panelRef - surface node; focus an outside click moved elsewhere is never pulled back
+ */
+function useDismissFocus({ onDismiss, isKeyOwner = isAlwaysKeyOwner, panelRef }) {
+  const triggerRef = useRef(null);
+
+  // layout phase → captured before any passive effect moves focus into the surface.
+  useLayoutEffect(() => { triggerRef.current = document.activeElement; }, []);
+
+  useEffect(() => {
+    const panel = panelRef.current;
+
+    return () => {
+      const trigger = triggerRef.current;
+      if (!isFocusLost(panel)) return;
+      if (trigger && typeof trigger.focus === 'function') trigger.focus();
+    };
+  }, []);
+
+  useEffect(() => {
+    const onKey = (e) => {
+      if (e.key === 'Escape' && isKeyOwner()) onDismiss();
+    };
+
+    document.addEventListener('keydown', onKey);
+    return () => document.removeEventListener('keydown', onKey);
+  }, [onDismiss, isKeyOwner]);
+}
+
+// focus dropped with the removed surface (body) or still inside it → the trigger may take it back.
+function isFocusLost(panel) {
+  const active = document.activeElement;
+  return !active || active === document.body || (panel != null && panel.contains(active));
+}
+
+let popoverSeq = 0;
+
+/**
+ * Non-modal popover anchored under a card-head trigger button — the page beside it stays live (no inert, no scroll lock, no trap).
+ * @param label - trigger content; also the panel's accessible name when `title` is omitted and `label` is a string
+ */
+function Popover({ label, title, children, className = '' }) {
+  const [isOpen, setOpen] = useState(false);
+  const rootRef = useRef(null);
+  const idRef = useRef(null);
+  const panelTitle = title || (typeof label === 'string' ? label : undefined);
+
+  if (idRef.current === null) idRef.current = `popover-${++popoverSeq}`;
+
+  return <div ref={rootRef} className={`popover-root ${className}`.trim()}>
+    <button type="button" className="btn ghost sm" aria-haspopup="dialog" aria-expanded={isOpen}
+      aria-controls={isOpen ? idRef.current : undefined} onClick={() => setOpen((v) => !v)}>{label}</button>
+    {isOpen && <PopoverPanel id={idRef.current} title={panelTitle} rootRef={rootRef} onClose={() => setOpen(false)}>{children}</PopoverPanel>}
+  </div>;
+}
+
+// Mounted only while open → focus capture/return follows the open→close lifecycle.
+function PopoverPanel({ id, title, rootRef, onClose, children }) {
+  const panelRef = useRef(null);
+
+  // joins the surface stack → one Esc closes one layer, whichever of popover and modal is on top
+  useEffect(() => {
+    setSurfaceOpen(panelRef, true);
+    const panel = panelRef.current;
+    const target = panel ? (panel.querySelectorAll(FOCUSABLE_SELECTOR)[0] || panel) : null;
+    if (target) target.focus();
+
+    return () => setSurfaceOpen(panelRef, false);
+  }, []);
+
+  useDismissFocus({ onDismiss: onClose, isKeyOwner: () => getTopSurface() === panelRef, panelRef });
+
+  // press, not click — closes before the pressed control takes focus; the trigger (inside root) keeps its own toggle.
+  useEffect(() => {
+    const onPointerDown = (e) => {
+      const root = rootRef.current;
+      if (root && !root.contains(e.target)) onClose();
+    };
+
+    document.addEventListener('pointerdown', onPointerDown);
+    return () => document.removeEventListener('pointerdown', onPointerDown);
+  }, [onClose, rootRef]);
+
+  return <div ref={panelRef} id={id} role="dialog" aria-label={title} tabIndex={-1} className="popover-panel">{children}</div>;
 }
 
 /**
@@ -743,6 +943,65 @@ function DisclosureButton({ isOpen, onToggle, label, controls, className = '' })
     <DisclosureChevron isOpen={isOpen} />
     <span>{label}</span>
   </button>;
+}
+
+const DISCLOSURE_ALERT_TONES = new Set(['warn', 'crit']);
+let disclosureSeq = 0;
+
+// Status cards start open; detail folds start collapsed unless they hold a warn/crit item.
+function getDisclosureOpen(kind, tone) {
+  return kind === 'status' || DISCLOSURE_ALERT_TONES.has(tone);
+}
+
+/**
+ * Card-level fold carrying the one status/detail rule every page shares.
+ * kind 'status' — headline state, starts open · kind 'detail' — per-row lists / history / breakdowns, starts collapsed.
+ * A detail fold opens itself when `tone` escalates to warn/crit; a later recovery never force-closes it.
+ */
+function Disclosure({ kind = 'detail', title, sub, tone, level = 2, children, className = '' }) {
+  const [isOpen, setOpen] = useState(() => getDisclosureOpen(kind, tone));
+  const idRef = useRef(null);
+  const isAlerting = DISCLOSURE_ALERT_TONES.has(tone);
+  const Heading = `h${level}`;
+
+  if (idRef.current === null) idRef.current = `disclosure-${++disclosureSeq}`;
+  useEffect(() => { if (isAlerting) setOpen(true); }, [isAlerting]);
+
+  return <div className={`card ${className}`.trim()}>
+    <Heading className="m-0 px-4 py-1 fs-body font-normal">
+      <DisclosureButton isOpen={isOpen} onToggle={() => setOpen((v) => !v)} controls={isOpen ? idRef.current : undefined}
+        className="w-full text-left gap-2"
+        label={<><span className="font-medium text-ink">{title}</span>{sub && <span className="text-faint fs-meta ml-2">{sub}</span>}</>} />
+    </Heading>
+    {isOpen && <div id={idRef.current} className="px-4 pb-4">{children}</div>}
+  </div>;
+}
+
+// ratio preset → base.css modifier; stacked below xl, side by side at xl.
+const SPLIT_ROW_RATIOS = Object.freeze({ '1:1': '1-1', '7:5': '7-5', '3:2': '3-2', '2:1': '2-1' });
+
+// layout → base.css modifier: content = each column its own height (no stretched empty box) · equal = peer cards match heights.
+const SPLIT_ROW_LAYOUTS = Object.freeze({ content: 'content', equal: 'equal' });
+
+// Two cards (or two in-card columns) side by side at xl in a ratio preset · layout: 'content' (default) | 'equal'.
+function SplitRow({ ratio = '1:1', layout = 'content', children, className = '' }) {
+  const modifier = SPLIT_ROW_RATIOS[ratio] || SPLIT_ROW_RATIOS['1:1'];
+  const layoutModifier = SPLIT_ROW_LAYOUTS[layout] || SPLIT_ROW_LAYOUTS.content;
+
+  return <div className={`split-row split-row--${modifier} split-row--${layoutModifier} ${className}`.trim()}>{children}</div>;
+}
+
+// One SplitRow column holding a card stack (16px apart) · isRail → sticky 24px from the top at xl.
+function SplitColumn({ isRail = false, children, className = '' }) {
+  return <div className={`split-col ${isRail ? 'split-col--rail' : ''} ${className}`.replace(/\s+/g, ' ').trim()}>{children}</div>;
+}
+
+// Tile-internal columns below xl: value + badge (lead) left, detail + hint + drill link right.
+function TileSplit({ lead, detail, className = '' }) {
+  return <div className={`tile-split ${className}`.trim()}>
+    <div className="tile-split-lead">{lead}</div>
+    {detail && <div className="tile-split-detail">{detail}</div>}
+  </div>;
 }
 
 const ROVING_KEY_STEP = {
@@ -902,7 +1161,7 @@ function PageHeader({ title, sub, right }) {
   return <div className="flex flex-wrap items-center gap-x-3 gap-y-2 mb-4">
     <div className="min-w-0">
       <h1 className="fs-display font-semibold leading-tight">{title}</h1>
-      {hasSub && <div className="text-[11px] font-mono text-faint tracking-wider uppercase">{sub}</div>}
+      {hasSub && <div className="fs-meta font-mono text-faint tracking-wider uppercase">{sub}</div>}
     </div>
     {right && <div className="ml-auto flex flex-wrap items-center justify-end gap-2 min-w-0">{right}</div>}
   </div>;
@@ -924,11 +1183,10 @@ function stripHtmlTags(input) {
 }
 
 // ISO timestamp → "5m ago" / "in 5m" 상대시각 — falsy/파싱불가 입력은 '—' (NaN 라벨 차단)
-function formatRelativeTime(iso) {
+function formatRelativeTime(iso, now = Date.now()) {
   if (!iso) return '—';
   const target = new Date(iso).getTime();
   if (!Number.isFinite(target)) return '—';
-  const now = Date.now();
   const diffSec = Math.round((target - now) / 1000);
   const abs = Math.abs(diffSec);
   const past = diffSec <= 0; // sub-second past rounds to -0 → must still read "ago"
@@ -1100,12 +1358,107 @@ function getFreshnessState({ at, loading = false, failed = false, regions, stale
 }
 
 /**
+ * Page verdict over the getFreshnessState inputs → { state, tone, label, note, isBusy } for PageVerdict, KPI tones and all-clear lines.
+ * Unread → neutral "No signal" · stale/partial → "Last known", ok drops to neutral, warn/crit kept · refreshing → the settled verdict, busy.
+ * @param tone - tone the page derives from its data
+ * @param label - page word for that tone; defaults to the tone's canonical word
+ */
+function getFreshnessVerdict({ tone = 'neutral', label, at, loading = false, failed = false, regions, staleAfterMs = FRESHNESS_STALE_MS, now = Date.now() }) {
+  const state = getFreshnessState({ at, loading, failed, regions, staleAfterMs, now });
+  const settledRegions = Array.isArray(regions) ? regions.filter(Boolean).map((region) => ({ ...region, busy: false })) : regions;
+  const settled = getFreshnessState({ at, failed, regions: settledRegions, staleAfterMs, now });
+  const isBusy = state === 'loading' || state === 'refreshing';
+  const pageLabel = label || VERDICT_TONE_LABEL[tone] || VERDICT_TONE_LABEL.neutral;
+
+  const { failedCount, regionCount } = getRegionSummary(settledRegions);
+
+  if (settled === 'not-read') {
+    const note = getUnreadNote({ isBusy, hasFailed: failed || failedCount > 0 });
+    return { state, tone: 'neutral', label: VERDICT_TONE_LABEL.neutral, note, isBusy };
+  }
+  if (settled === 'fresh') return { state, tone, label: pageLabel, note: null, isBusy };
+
+  const isAlarm = tone === 'warn' || tone === 'crit';
+  const ageNote = `Read ${formatRelativeTime(at, now)}`;
+  const note = settled === 'partial' ? `${ageNote} · ${failedCount} of ${regionCount} sources failed` : ageNote;
+  return { state, tone: isAlarm ? tone : 'neutral', label: isAlarm ? `Last known: ${pageLabel}` : 'Last known', note, isBusy };
+}
+
+// a tried-and-failed first read must never read as one that was never tried
+function getUnreadNote({ isBusy, hasFailed }) {
+  if (isBusy) return 'Checking the first read…';
+  return hasFailed ? 'The first read failed — nothing to show yet.' : 'Nothing has been read yet.';
+}
+
+/** Re-renders the caller every FRESHNESS_TICK_MS while enabled → age-based staleness holds on screens that never poll. */
+function useFreshnessTick(isEnabled) {
+  const [, setTick] = useState(0);
+
+  useEffect(() => {
+    if (!isEnabled) return undefined;
+    const intervalId = setInterval(() => setTick((t) => t + 1), FRESHNESS_TICK_MS);
+    return () => clearInterval(intervalId);
+  }, [isEnabled]);
+}
+
+// shell ↔ page bridge — app.jsx registers the sink and the harness reader; pageState is replayed on register (child effects run first)
+const shellBridge = { putPageState: null, readHarness: null, pageState: null, owner: null };
+
+/** Shell side: registers the sidebar's page-state sink and its coalesced harness read; call with no argument to detach. */
+function setShellBridge({ putPageState = null, readHarness = null } = {}) {
+  shellBridge.putPageState = putPageState;
+  shellBridge.readHarness = readHarness;
+  putPageState?.(shellBridge.pageState);
+}
+
+/** One shell harness re-read, joined to any read already in flight; never rejects (every source settles). */
+function getHarnessRead() {
+  return Promise.resolve(shellBridge.readHarness?.());
+}
+
+/**
+ * Page read state the shell shows → { state, at }: 'loading' only for a first read in flight, else the settled stamp state.
+ * A refresh over held data reports its settled state, so the sidebar never flickers to Checking.
+ */
+function getShellPageState({ at, loading = false, failed = false, regions, staleAfterMs, now }) {
+  const settledRegions = Array.isArray(regions) ? regions.filter(Boolean).map((region) => ({ ...region, busy: false })) : regions;
+  const settled = getFreshnessState({ at, failed, regions: settledRegions, staleAfterMs, now });
+  const isInFlight = loading || getRegionSummary(regions).isBusy;
+
+  if (settled === 'not-read') return { state: isInFlight ? 'loading' : 'not-read', at: null };
+  return { state: settled, at };
+}
+
+/**
+ * Hands the page's read state to the shell sidebar and clears it on unmount, so the next page never inherits it.
+ * FreshnessStamp calls it; a page whose stamp is gated calls it directly with the stamp's inputs. One caller per page.
+ */
+function useShellPageState(input) {
+  const ownerRef = useRef({});
+  const { state, at } = getShellPageState(input);
+  const atMs = at ? new Date(at).getTime() : null;
+
+  useEffect(() => {
+    shellBridge.owner = ownerRef.current;
+    shellBridge.pageState = { state, at };
+    shellBridge.putPageState?.(shellBridge.pageState);
+  }, [state, atMs]);
+  useEffect(() => () => {
+    if (shellBridge.owner !== ownerRef.current) return;
+    shellBridge.owner = null;
+    shellBridge.pageState = null;
+    shellBridge.putPageState?.(null);
+  }, []);
+}
+
+/**
  * Shared "as of HH:MM" stamp — a refresh in flight keeps the last stamp and sets aria-busy.
  * A read stamp re-renders on its own tick, so age-based staleness holds on screens that never poll.
+ * @param shellRegions - regions handed to the shell when they differ from the rendered set (a region the shell already owns is left out)
  */
-function FreshnessStamp({ at, loading = false, failed = false, regions, staleAfterMs, now }) {
-  const [, setTick] = useState(0);
+function FreshnessStamp({ at, loading = false, failed = false, regions, shellRegions, staleAfterMs, now }) {
   const state = getFreshnessState({ at, loading, failed, regions, staleAfterMs, now });
+  useShellPageState({ at, loading, failed, regions: shellRegions ?? regions, staleAfterMs, now });
   const meta = FRESHNESS_META[state];
   const glyph = meta.tone ? TONE_GLYPH[meta.tone] : '…';
   const toneClass = meta.tone ? `text-${meta.tone}` : 'text-faint';
@@ -1114,29 +1467,26 @@ function FreshnessStamp({ at, loading = false, failed = false, regions, staleAft
   const { failedCount, regionCount } = getRegionSummary(regions);
   const failedNote = state === 'partial' ? `${failedCount} of ${regionCount} failed` : '';
   const word = failedNote ? `${meta.word}, ${failedNote}` : meta.word;
-  const shouldTick = isRead && now === undefined;
+  useFreshnessTick(isRead && now === undefined);
 
-  useEffect(() => {
-    if (!shouldTick) return undefined;
-    const intervalId = setInterval(() => setTick((t) => t + 1), FRESHNESS_TICK_MS);
-    return () => clearInterval(intervalId);
-  }, [shouldTick]);
-
-  const readText = isRead ? `as of ${formatKstTime(at)}` : meta.word.toLowerCase();
-  const text = failedNote ? `${readText} · ${failedNote}` : readText;
+  const readText = `as of ${formatKstTime(at)}`;
+  const text = !isRead ? word : failedNote ? `${readText} · ${failedNote}` : readText;
+  // unread → the visible text is the word itself; first read → no text, the paired Refresh label already reads "Loading…"
+  const hasSrWord = isRead || state === 'loading';
   const title = isRead ? `${word} — read ${formatKstFull(at)} (${formatRelativeTime(at)})` : word;
 
   return (
     <span className="fs-meta font-mono text-faint whitespace-nowrap" title={title} aria-busy={isBusy ? 'true' : undefined}>
       <span aria-hidden="true" className={`mr-1 ${toneClass}`}>{glyph}</span>
-      <span className="sr-only">{word}</span>
-      <span data-stamp-text="true">{text}</span>
+      {hasSrWord && <span className="sr-only">{word}</span>}
+      {state !== 'loading' && <span data-stamp-text="true">{text}</span>}
     </span>
   );
 }
 
 /**
- * Shared PageHeader Refresh control — one box width across labels, disabled + aria-busy while a request is in flight.
+ * Shared PageHeader Refresh control — one box width across labels, aria-disabled + aria-busy while a request is in flight.
+ * Never natively disabled → a busy control keeps keyboard focus; the click guard makes it inert instead.
  * @param hasRead - a prior read exists; the in-flight label reads "Refreshing…" over held data, "Loading…" on the first wave
  * @param label - accessible name, stable across states (e.g. "Refresh cost data")
  */
@@ -1144,10 +1494,15 @@ function RefreshButton({ isBusy = false, hasRead = false, onRefresh, label = 'Re
   const busyText = hasRead ? 'Refreshing…' : 'Loading…';
   // motion-safe → the icon stays static under prefers-reduced-motion; the label still carries the busy cue
   const iconClass = isBusy ? 'motion-safe:animate-spin' : '';
+  const handleClick = (event) => {
+    if (isBusy) return;
+    onRefresh?.(event);
+    getHarnessRead();
+  };
 
   return (
-    <button type="button" className="btn ghost sm w-28 justify-center" onClick={onRefresh} disabled={isBusy}
-      aria-busy={isBusy ? 'true' : undefined} aria-label={label}>
+    <button type="button" className="btn ghost sm w-28 justify-center" onClick={handleClick}
+      aria-disabled={isBusy ? 'true' : undefined} aria-busy={isBusy ? 'true' : undefined} aria-label={label}>
       <Icon name="refresh" size={14} className={iconClass}/>
       {isBusy ? busyText : 'Refresh'}
     </button>
@@ -1202,11 +1557,11 @@ function getErrorCopy(error, source) {
 }
 
 /**
- * The outage ≥2 failed regions share, or null — a non-null answer means one page banner and one Retry.
- * @param entries - `{ source, error }` per region; a null error is a healthy region
+ * The outage ≥2 failed sources share, or null — non-null → one PageErrorBanner + a RegionFailure per region.
+ * @param entries - `{ source, error }` per region; a null error is a healthy region, and regions of one source count once
  */
 function getSharedFailure(entries) {
-  const failed = (entries || []).filter((entry) => entry && entry.error != null);
+  const failed = getFirstPerSource(entries);
   if (failed.length < 2) return null;
 
   const causeKeys = new Set(failed.map((entry) => {
@@ -1215,6 +1570,27 @@ function getSharedFailure(entries) {
   }));
   if (causeKeys.size !== 1) return null;
   return { sources: failed.map((entry) => entry.source), error: failed[0].error };
+}
+
+// failed entries, first region per source in render order
+function getFirstPerSource(entries) {
+  const seen = new Set();
+  return (entries || []).filter((entry) => {
+    if (!entry || entry.error == null || seen.has(entry.source)) return false;
+    seen.add(entry.source);
+    return true;
+  });
+}
+
+/**
+ * Who speaks for each failed source — pass the result to every RegionFailure as `failures`, render PageErrorBanner from `banner`.
+ * ≥2 same-cause sources → `banner` speaks for all; otherwise the first region a source feeds carries its card + Retry, the rest stay covered.
+ * @param entries - `{ source, region, error }` per region in render order; `source` names the failed read, `region` the slot (defaults to source)
+ */
+function getSourceFailures(entries) {
+  const speaking = getFirstPerSource(entries);
+  const speakers = new Map(speaking.map((entry) => [entry.source, entry.region ?? entry.source]));
+  return { banner: getSharedFailure(speaking), speakers };
 }
 
 function ErrorDetails({ detail }) {
@@ -1227,12 +1603,59 @@ function ErrorDetails({ detail }) {
   );
 }
 
+/** Region branch for render: 'ready' | 'error' | 'loading' — a cold error stays 'error' while its Retry is in flight, so focus never drops to a loader. */
+function getRegionView(region) {
+  if (region?.data != null) return 'ready';
+  if (region?.error != null) return 'error';
+  return 'loading';
+}
+
+/**
+ * Ref for a control that hands focus to a card when it unmounts while focused (Retry leaving on recovery).
+ * Layout cleanup → runs before the node leaves the DOM, while it can still be the active element.
+ * @param targetId - card id for putCardFocus, or a resolver read at handoff time; omit to skip the handoff
+ */
+function useFocusHandoff(targetId) {
+  const controlRef = useRef(null);
+  const targetIdRef = useRef(targetId);
+  targetIdRef.current = targetId;
+
+  useLayoutEffect(() => {
+    const control = controlRef.current;
+    return () => {
+      if (!control || document.activeElement !== control) return;
+      const target = targetIdRef.current;
+      putCardFocus(typeof target === 'function' ? target() : target);
+    };
+  }, []);
+  return controlRef;
+}
+
+// focusable while busy (aria-disabled + click guard) → keyboard focus survives the request
+function RetryButton({ onRetry, isBusy = false, focusTargetId }) {
+  const controlRef = useFocusHandoff(focusTargetId);
+  const handleClick = (event) => {
+    if (isBusy) return;
+    onRetry?.(event);
+    getHarnessRead();
+  };
+
+  return (
+    <button ref={controlRef} type="button" className="btn sm self-start" onClick={handleClick}
+      aria-disabled={isBusy ? 'true' : undefined} aria-busy={isBusy ? 'true' : undefined}>
+      {isBusy ? 'Retrying…' : 'Retry'}
+    </button>
+  );
+}
+
 /**
  * Quiet per-region failure on a neutral surface; keeps the grid slot and shows the raw answer behind Details.
  * @param onRetry - omit when a PageErrorBanner already carries the one Retry for this outage
+ * @param isBusy - a Retry is in flight; keep rendering this card (see getRegionView) so its Retry keeps focus
+ * @param focusTargetId - region card id that takes focus if this card unmounts while its Retry is focused
  * @param minHeight - reserved slot height so the grid keeps its shape
  */
-function RegionUnavailable({ source, error, onRetry, minHeight, className = '' }) {
+function RegionUnavailable({ source, error, onRetry, isBusy = false, focusTargetId, minHeight, className = '' }) {
   const copy = getErrorCopy(error, source);
   return (
     <div className={`sub-card bg-sunken flex flex-col gap-1.5 ${className}`.trim()} style={minHeight ? { minHeight } : undefined}>
@@ -1242,24 +1665,75 @@ function RegionUnavailable({ source, error, onRetry, minHeight, className = '' }
       </div>
       <div className="fs-meta text-dim">{copy.next}</div>
       <ErrorDetails detail={copy.detail}/>
-      {onRetry && <button type="button" className="btn sm self-start" onClick={onRetry}>Retry</button>}
+      {onRetry && <RetryButton onRetry={onRetry} isBusy={isBusy} focusTargetId={focusTargetId}/>}
     </div>
   );
 }
 
-/** One announced banner with one Retry for an outage shared by ≥2 regions (see getSharedFailure). */
-function PageErrorBanner({ sources, error, onRetry }) {
+const REGION_COVERED_NOTE = 'Not loaded — see the notice above';
+
+/**
+ * Quiet slot for a region another surface speaks for: its name + a pointer to that surface, no sentence, no Retry.
+ * @param region - slot name shown; defaults to source
+ * @param speaker - failed source whose card (not the page banner) speaks for this slot
+ * @param focusTargetId - the region's card id; the banner's Retry hands focus to the first banner-covered card on recovery
+ * @param minHeight - reserved slot height so the grid keeps its shape
+ */
+function RegionCovered({ source, region, speaker, focusTargetId, minHeight, className = '' }) {
+  const label = region ?? source;
+  const name = label ? label.charAt(0).toUpperCase() + label.slice(1) : '';
+  return (
+    <div className={`sub-card bg-sunken flex flex-col gap-1 ${className}`.trim()} style={minHeight ? { minHeight } : undefined}
+      data-covered-card-id={speaker ? undefined : focusTargetId}>
+      <span className="fs-body text-dim">{name}</span>
+      <span className="fs-meta text-faint">{speaker ? `Not loaded — see the ${speaker} notice` : REGION_COVERED_NOTE}</span>
+    </div>
+  );
+}
+
+/**
+ * The one failed-region atom every page renders: covered when the banner or a sibling region speaks for its source, else RegionUnavailable with its own Retry.
+ * @param failures - the page's getSourceFailures result; pass it with `region` so one source speaks once
+ * @param shared - legacy per-region getSharedFailure result, read only when `failures` is absent
+ */
+function RegionFailure({ source, region, error, failures, shared, onRetry, isBusy = false, focusTargetId, minHeight, className = '' }) {
+  const banner = failures ? failures.banner : shared;
+  const speaker = failures?.speakers.get(source);
+  const slot = { source, region, focusTargetId, minHeight, className };
+
+  if (banner?.sources?.includes(source)) return <RegionCovered {...slot}/>;
+  if (speaker != null && speaker !== (region ?? source)) return <RegionCovered {...slot} speaker={source}/>;
+  return <RegionUnavailable {...slot} error={error} onRetry={onRetry} isBusy={isBusy}/>;
+}
+
+// first covered slot in document order → the first region the shared Retry brings back
+function getFirstCoveredCardId() {
+  return document.querySelector('[data-covered-card-id]')?.getAttribute('data-covered-card-id') || null;
+}
+
+/**
+ * One announced banner with one Retry for an outage shared by ≥2 regions (see getSharedFailure).
+ * Leaving on recovery with its Retry focused → focus lands on the first covered region's card.
+ * @param isBusy - a Retry is in flight
+ * @param focusTargetId - fallback card id when no covered region declared one
+ */
+function PageErrorBanner({ sources, error, onRetry, isBusy = false, focusTargetId }) {
+  const coveredCardIdRef = useRef(null);
   const sourceList = new Intl.ListFormat('en', { type: 'conjunction' }).format(sources || []);
   const copy = getErrorCopy(error, sourceList);
+  // resolved on focus-in: recovery removes the covered slots in the same commit that removes this banner
+  const handleFocus = () => { coveredCardIdRef.current = getFirstCoveredCardId(); };
+  const getRecoveryTargetId = () => coveredCardIdRef.current || focusTargetId;
+
   return (
-    <div role="alert" className="card p-3 flex items-start gap-2">
+    <div role="alert" className="card p-3 flex items-start gap-2" onFocus={handleFocus}>
       <Icon name={TONE_ICON.crit} size={16} className="text-crit mt-0.5"/>
       <div className="flex flex-col gap-1 min-w-0 flex-1">
         <span className="fs-body font-medium">{copy.sentence}</span>
         <span className="fs-meta text-dim">{copy.next}</span>
         <ErrorDetails detail={copy.detail}/>
       </div>
-      <button type="button" className="btn sm" onClick={onRetry}>Retry</button>
+      <RetryButton onRetry={onRetry} isBusy={isBusy} focusTargetId={getRecoveryTargetId}/>
     </div>
   );
 }
@@ -1551,6 +2025,64 @@ function getWorstTone(tones) {
 // crit 은 DESIGN.md §4.2 severity 표준(✕)에 맞춰 'x' — ⛔(ban)이 아님(ban 은 별도 semantic).
 const TONE_ICON = { ok: 'check', warn: 'warn', crit: 'x', info: 'info', neutral: 'info' };
 
+// default verdict word per tone — the glyph never stands alone.
+const VERDICT_TONE_LABEL = { ok: 'Healthy', warn: 'Needs attention', crit: 'Action needed', info: 'Info', neutral: 'No signal' };
+
+/**
+ * One-line page headline: tone glyph + word, one sentence (children), optional chips.
+ * A chip with `href` drills to another view; one with `targetId` scrolls to that card and focuses it.
+ * @param id - focus target for a page banner's Retry once the page recovers
+ * @param freshness - optional getFreshnessState inputs; the verdict then follows getFreshnessVerdict, and an unread page swaps its sentence for the checking note
+ */
+function PageVerdict({ tone = 'neutral', label, children, chips = [], freshness, id, className = '' }) {
+  const verdict = freshness ? getFreshnessVerdict({ ...freshness, tone, label }) : { tone, label, note: null, isBusy: false };
+  const toneKey = VERDICT_TONE_LABEL[verdict.tone] ? verdict.tone : 'neutral';
+  const isUnread = verdict.state === 'loading' || verdict.state === 'not-read';
+  const sentence = isUnread ? null : children;
+  // re-derived on the stamp's own cadence → a verdict never stays green over a read the stamp calls Stale
+  useFreshnessTick(Boolean(freshness) && !isUnread && freshness.now === undefined);
+
+  return <div id={id} className={`page-verdict page-verdict--${toneKey} ${className}`.trim()} aria-busy={verdict.isBusy ? 'true' : undefined}>
+    <span className="page-verdict-tone">
+      <span className="page-verdict-glyph" aria-hidden="true">{TONE_GLYPH[toneKey]}</span>
+      {verdict.label || VERDICT_TONE_LABEL[toneKey]}
+    </span>
+    {sentence && <span className="page-verdict-text">{sentence}</span>}
+    {verdict.note && <span className="page-verdict-text fs-meta text-dim">{verdict.note}</span>}
+    {chips.length > 0 && <span className="page-verdict-chips">
+      {chips.map((chip) => <VerdictChip key={chip.key || chip.label} chip={chip} />)}
+    </span>}
+  </div>;
+}
+
+function VerdictChip({ chip }) {
+  if (chip.href) return <a className="btn ghost sm" href={chip.href}>{chip.label}</a>;
+  return <button type="button" className="btn ghost sm" onClick={() => putCardFocus(chip.targetId)}>{chip.label}</button>;
+}
+
+// instant nearest scroll → no jump when the card is already in view, nothing to reduce under prefers-reduced-motion; tabindex -1 lets a plain card take focus.
+function putCardFocus(id) {
+  const card = id ? document.getElementById(id) : null;
+  if (!card) return;
+
+  if (!card.hasAttribute('tabindex')) card.setAttribute('tabindex', '-1');
+  // programmatic focus after a mouse Retry misses :focus-visible → the marker draws the ring until the card blurs
+  card.setAttribute('data-focus-handoff', 'true');
+  card.addEventListener('blur', () => card.removeAttribute('data-focus-handoff'), { once: true });
+  card.scrollIntoView({ block: 'nearest' });
+  card.focus({ preventScroll: true });
+}
+
+function isLowSample(n) {
+  return Number.isFinite(n) && n >= 0 && n < LOW_N_MIN;
+}
+
+// Small-n rate marker — the caller mutes the rate itself, this names the sample size.
+function LowSampleMark({ n }) {
+  if (!isLowSample(n)) return null;
+  return <span className="low-sample" title={`Low sample: fewer than ${LOW_N_MIN}, read as a hint`}>(n={formatInt(n)})</span>;
+}
+
 // 불투명 sticky thead 스타일 SoT (S1) — 다수 화면(.tbl)이 미러하므로 단일 출처화.
 // 불투명 --elev fill 유지(§7.5 row blur 금지) — 스크롤 시 헤더가 본문 위에 떠도 가려지지 않음.
 const STICKY_TH_STYLE = { position: 'sticky', top: 0, background: 'rgb(var(--elev))', zIndex: 1 };
@@ -1626,15 +2158,18 @@ function resolveOutcomeRate(data) {
 }
 
 window.UI = {
-  Icon, Pill, Badge, EmptyState, SubCard, Sparkline, MiniBars, Bar, BulletBar, StatusDot, AgentBadge, AgentName, getAgentDisplayName, KPI, KpiValue, DetailSurface, getTrapFocusTarget, getInertTargets, setSurfaceOpen, getTopSurface, Modal, Tabs, CardHead, PageHeader,
+  Icon, Pill, Badge, EmptyState, SubCard, Sparkline, MiniBars, Bar, BulletBar, StatusDot, AgentBadge, AgentName, getAgentDisplayName, KPI, KpiValue, DetailSurface, useDismissFocus, Popover, PopoverPanel, getTrapFocusTarget, getInertTargets, setSurfaceOpen, getTopSurface, Modal, Tabs, CardHead, PageHeader,
   SectionLabel, Table, TableHead, DisclosureChevron, DisclosureButton, getSeverityTone, getWorstTone,
+  Disclosure, getDisclosureOpen, SplitRow, SPLIT_ROW_RATIOS, SPLIT_ROW_LAYOUTS, SplitColumn, TileSplit,
   getRovingIndex, getRovingTabIndex, ROW_CONTROL_PROPS, getRowKeyAction, getRowFocusProps, ChipGroup,
   getDisplayName, hasFieldValue, DetailField,
   TrendChart, getChartTicks, getChartIndexAtRatio, getChartReadout, getChartSummary,
+  getChartTickAnchor, getChartTickLayout, getChartYScale, getChartImageProps, getChartXAxisProps, ChartAxisTick, CHART_TICK_MIN_GAP_PX, CHART_TICK_CHAR_PX,
   TypeScaleStyle, toneVarColor,
   titleOf, stripHtmlTags, formatRelativeTime,
-  FreshnessStamp, getFreshnessState, getRegionSummary, RefreshButton,
-  getFetchError, getErrorCopy, getSharedFailure, RegionUnavailable, PageErrorBanner, LoadingPlaceholder, SkeletonRows,
+  FreshnessStamp, getFreshnessState, getFreshnessVerdict, getRegionSummary, getRegionView, RefreshButton,
+  setShellBridge, getHarnessRead, getShellPageState, useShellPageState,
+  getFetchError, getErrorCopy, getSharedFailure, getSourceFailures, RegionUnavailable, RegionCovered, RegionFailure, PageErrorBanner, RetryButton, LoadingPlaceholder, SkeletonRows,
   INITIAL_REGION_STATE, putRegionRequest, putRegionData, putRegionFailure,
   setDisplayTimezone, getDisplayTimezone, tzShortLabel,
   formatKstDateTime, formatKstTime, formatKstDate, formatKstFull,
@@ -1642,7 +2177,7 @@ window.UI = {
   BADGE_TONE_META, BADGE_OVERRIDES, resolveBadge,
   DAEMON_STATUS_TONE, daemonStatusTone, daemonStatusLabel,
   RESULT_META, CLOSED_META, resolveResultMeta, LOW_N_MIN, formatPctWithDenominator,
-  TONE_GLYPH, TONE_ICON, STICKY_TH_STYLE, reviewFlagReasons, REVIEW_FLAG_REASON_ORDER, REVIEW_FLAG_REASON_META,
+  TONE_GLYPH, TONE_ICON, PageVerdict, isLowSample, LowSampleMark, STICKY_TH_STYLE, reviewFlagReasons, REVIEW_FLAG_REASON_ORDER, REVIEW_FLAG_REASON_META,
   outcomeShareTone, resolveOutcomeRate, OUTCOME_BREAKAGE_CRIT_SHARE, OUTCOME_OPEN_CAVEAT_WARN_SHARE,
   OUTCOME_MISSING_REPORT_WARN_SHARE,
   getOutcomeCount, getOutcomeOpenCount, getWriterTotal, getWriterOpenCount, getWriterCount,

@@ -28,6 +28,11 @@ interface AgentsHelpers {
     topN: number,
   ) => Array<{ agent: string; healthIndex: number; reviewFlagRatio: number; reviewFlaggedReconstructed: number; reviewFlaggedWriter: number }>;
 }
+interface AgentsBreakageHelpers {
+  getWriterBreakageSplit: (failure: {
+    fail_count: number; blocked_count: number; total_breakages: number; reconstructed: number;
+  }) => { breakages: number; blocked: { min: number; max: number } };
+}
 interface OutcomesHelpers {
   buildAgentStackO: (
     byAgentResult: unknown[],
@@ -180,3 +185,25 @@ test("buildAgentStackO: results outside resultOrder are excluded from total (bar
   assert.strictEqual(row.total, 10, "needs_context excluded from total");
   assert.strictEqual(row.byResult.needs_context, undefined, "off-order result not stacked");
 });
+
+// --- drawer breakage headline: the blocked part never falls outside its headline ---
+
+const breakageRows = [
+  { name: "no reconstructed rows → the blocked part is exact", blocked: 3, total: 10, reconstructed: 0, min: 3, max: 3 },
+  { name: "reconstructed rows beside a small blocked part → the part may keep its full size", blocked: 2, total: 10, reconstructed: 3, min: 0, max: 2 },
+  { name: "blocked larger than the writer headline → capped at the headline", blocked: 9, total: 10, reconstructed: 4, min: 5, max: 6 },
+  { name: "every breakage reconstructed → nothing blocked is left to state", blocked: 5, total: 5, reconstructed: 5, min: 0, max: 0 },
+];
+
+for (const row of breakageRows) {
+  test(`getWriterBreakageSplit: ${row.name}`, () => {
+    const split = (agents as unknown as AgentsBreakageHelpers).getWriterBreakageSplit({
+      fail_count: row.total - row.blocked, blocked_count: row.blocked, total_breakages: row.total, reconstructed: row.reconstructed,
+    });
+
+    assert.strictEqual(split.breakages, row.total - row.reconstructed, "headline = writer-emitted breakages");
+    assert.ok(split.blocked.max <= split.breakages, "the blocked part never exceeds its headline");
+    assert.ok(split.blocked.min <= split.blocked.max, "the blocked range never inverts");
+    assert.deepEqual({ min: split.blocked.min, max: split.blocked.max }, { min: row.min, max: row.max }, "reconstructed rows can hide at most their own count of blocked rows");
+  });
+}

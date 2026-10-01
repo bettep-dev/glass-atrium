@@ -38,6 +38,7 @@ interface RejectBucketSummary {
 
 interface SplitSandbox {
   React: { createElement: unknown };
+  RejectSparkI: (props: { trend: Array<{ reject: number }> }) => RecordedElement;
   RejectBucketSplitI: (props: {
     summary: RejectBucketSummary | null | undefined;
   }) => RecordedElement | null;
@@ -121,10 +122,72 @@ test("an absent summary renders nothing at all", () => {
   assert.equal(sandbox.RejectBucketSplitI({ summary: null }), null);
 });
 
-// The lane header counts the rows on the board; the split counts the server window.
-// Without its own basis the split reads as a breakdown of the header and fails to add up.
-test("the split names the day window its counts were taken over", () => {
-  const texts = collectStrings(sandbox.RejectBucketSplitI({ summary: MIXED }), []);
+type HeaderProps = {
+  rowCount: number;
+  summary: RejectBucketSummary | null;
+  label: string;
+  symbol: string;
+  trend: Array<{ date: string; verified: number; reject: number }>;
+};
 
-  assert.ok(texts.some((text) => /last 30 days/i.test(text)), texts.join(" | "));
+const renderHeader = (props: Partial<HeaderProps>) =>
+  (sandbox as unknown as { RejectedHeaderI: (props: HeaderProps) => unknown }).RejectedHeaderI({
+    rowCount: 40,
+    summary: null,
+    label: "Rejected",
+    symbol: "✕",
+    trend: [],
+    ...props,
+  });
+
+// Header count + cause split below it share one population → the split sums to the count.
+test("the rejected header counts the same day window its cause split breaks down", () => {
+  const texts = collectStrings(renderHeader({ summary: MIXED }), []);
+  const splitTotal = Object.values(readCounts(sandbox.RejectBucketSplitI({ summary: MIXED })))
+    .map(Number)
+    .reduce((sum, count) => sum + count, 0);
+
+  assert.ok(texts.includes(String(splitTotal)), texts.join(" | "));
+  assert.ok(!texts.includes("40"), "the fetched row count is a different population");
+  assert.match(texts.join(" "), /last 30 days/i);
 });
+
+test("without a server window the rejected header counts the fetched rows and says so", () => {
+  const texts = collectStrings(renderHeader({ summary: null }), []);
+
+  assert.ok(texts.includes("40"), texts.join(" | "));
+  assert.match(texts.join(" "), /latest 50/i);
+});
+
+test("the rejected header captions its sparkline with a unit", () => {
+  const texts = collectStrings(
+    renderHeader({
+      trend: [
+        { date: "2026-09-24", verified: 1, reject: 2 },
+        { date: "2026-09-25", verified: 2, reject: 1 },
+      ],
+    }),
+    [],
+  ).join(" ");
+
+  assert.match(texts, /per day/i);
+});
+
+const sparkRows = [
+  { name: "a series that peaks mid-window", rejects: [2, 5, 1] },
+  { name: "a series with no rejection", rejects: [0, 0] },
+];
+
+for (const row of sparkRows) {
+  test(`the rejection sparkline is a named image summarising its series: ${row.name}`, () => {
+    const spark = sandbox.RejectSparkI({ trend: row.rejects.map((reject) => ({ reject })) });
+    const name = String(spark.props["aria-label"]);
+    const total = row.rejects.reduce((sum, count) => sum + count, 0);
+
+    assert.equal(spark.props.role, "img");
+    assert.match(name, new RegExp(`${row.rejects.length} days`));
+    assert.match(name, new RegExp(`latest ${row.rejects[row.rejects.length - 1]}\\b`));
+    assert.match(name, new RegExp(`peak ${Math.max(...row.rejects)}\\b`));
+    assert.match(name, new RegExp(`${total} in total`));
+  });
+}

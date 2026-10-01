@@ -351,7 +351,7 @@ test("a failed stats payload raises one banner at the loop output group", () => 
     statsState: { status: "error", data: null, error: "boom" },
     loopEventsState: { status: "loading", data: null, error: null },
     loopAggregate: null,
-    listState: { status: "error", data: null, error: "boom" },
+    listState: { status: "loading", data: null, error: null },
     buckets: null,
     onNav: () => {},
     onRetry: () => {},
@@ -374,7 +374,7 @@ test("the status band never announces a failure the owning group already announc
   assert.equal(buttons.length, 0, "a retry per tile repeats the group's banner");
   const pointers = collect(band, (el) => {
     const kids = ([] as unknown[]).concat(el.props.children);
-    return kids.some((k) => typeof k === "string" && k.includes("Not loaded — see the"));
+    return kids.some((k) => typeof k === "string" && k.includes("Not read — see the"));
   });
   assert.equal(pointers.length, 4, "each tile points at its owning group");
 });

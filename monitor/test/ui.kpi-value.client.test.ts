@@ -45,3 +45,20 @@ test("a unit trails the figure inside the same scaled value", () => {
   const scaled = findNodes(render("KpiValue", { unit: "%" }, "92"), hasKpiScale);
   assert.equal(collectText(scaled[0]).replace(/\s+/g, ""), "92%");
 });
+
+// Learning's status band reads its hint at body scale; every other card keeps the micro hint.
+test("a KPI hint renders at the scale its caller names, and at the micro scale when none is named", () => {
+  const rows = [
+    { name: "no scale named", props: {}, scale: "fs-micro" },
+    { name: "body scale named", props: { hintClassName: "fs-meta" }, scale: "fs-meta" },
+  ];
+  for (const row of rows) {
+    const tree = render("KPI", { label: "Applied", value: "3", hint: "of 12 cycles", ...row.props });
+    const hints = findNodes(tree, (n) => /\bkpi-hint\b/.test(String(n.props.className ?? "")));
+    assert.equal(hints.length, 1, `${row.name}: one hint node`);
+    const classes = String(hints[0].props.className).split(/\s+/);
+    assert.ok(classes.includes(row.scale), `${row.name}: hint carries ${row.scale}`);
+    assert.equal(classes.filter((c) => /^fs-/.test(c)).length, 1, `${row.name}: exactly one type scale`);
+    assert.equal(collectText(hints[0]).trim(), "of 12 cycles");
+  }
+});

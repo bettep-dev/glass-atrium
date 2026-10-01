@@ -70,6 +70,54 @@ CREATE UNIQUE INDEX agent_events_dedup
 SQL
 }
 
+# core.outcomes + its enums as the migration chain leaves them BEFORE
+# 20260930000000_add_effort_to_outcomes_and_cost_events — only the columns
+# _pg_outcome_dualwrite.py writes, plus the outcomes_dedup ON CONFLICT arbiter.
+# A suite applies that migration file itself to reach the current shape.
+eph_pg_outcomes_schema_sql() {
+  cat <<'SQL'
+CREATE SCHEMA IF NOT EXISTS core;
+CREATE TYPE "core"."TaskType" AS ENUM ('bug-fix', 'feature', 'refactor', 'research', 'plan', 'review', 'diagnosis', 'doc', 'cleanup');
+CREATE TYPE "core"."OutcomeResult" AS ENUM ('done', 'done_with_concerns', 'blocked', 'needs_context', 'fail');
+CREATE TYPE "core"."Confidence" AS ENUM ('high', 'medium', 'low');
+CREATE TYPE "core"."GraderVerdict" AS ENUM ('verified_pass', 'unverified', 'verified_fail');
+CREATE TYPE "core"."DowngradeOrigin" AS ENUM ('writer_true_downgraded', 'writer_false', 'synthesized');
+CREATE TYPE "core"."GraderCrosscheck" AS ENUM ('na', 'verified', 'contradicted', 'withhold');
+CREATE TABLE "core"."outcomes" (
+  "id"                  BIGSERIAL NOT NULL,
+  "record_ts"           TIMESTAMPTZ(6) NOT NULL,
+  "agent"               VARCHAR(64) NOT NULL,
+  "task_type"           "core"."TaskType" NOT NULL,
+  "result"              "core"."OutcomeResult" NOT NULL,
+  "confidence"          "core"."Confidence",
+  "metric_pass"         BOOLEAN,
+  "metric_type"         VARCHAR(32),
+  "revision_count"      INTEGER NOT NULL DEFAULT 0,
+  "evaluative_signal"   INTEGER,
+  "directive_hint"      TEXT,
+  "lesson"              TEXT,
+  "concerns"            TEXT[] DEFAULT ARRAY[]::TEXT[],
+  "qa_score"            TEXT,
+  "files_modified"      TEXT[] DEFAULT ARRAY[]::TEXT[],
+  "correlation_id"      VARCHAR(96),
+  "cid"                 VARCHAR(96),
+  "summary"             TEXT NOT NULL,
+  "review_flag"         BOOLEAN NOT NULL DEFAULT false,
+  "body_md"             TEXT,
+  "attribution_source"  TEXT,
+  "style_ref"           TEXT,
+  "style_ref_verified"  BOOLEAN,
+  "grader_verdict"      "core"."GraderVerdict",
+  "downgrade_origin"    "core"."DowngradeOrigin",
+  "review_flag_reasons" TEXT[] NOT NULL DEFAULT '{}',
+  "grader_crosscheck"   "core"."GraderCrosscheck",
+  "inserted_at"         TIMESTAMPTZ(6) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  CONSTRAINT "outcomes_pkey" PRIMARY KEY ("id")
+);
+CREATE UNIQUE INDEX "outcomes_dedup" ON "core"."outcomes" ("record_ts", "agent", "task_type");
+SQL
+}
+
 # Replay the captured bring-up log to stderr so the failing step's diagnostics
 # reach the bats output (Precondition Loud-Fail — a discarded-stderr failure is
 # undiagnosable in the unattended gate context). Args: $1=step-name $2=logfile.

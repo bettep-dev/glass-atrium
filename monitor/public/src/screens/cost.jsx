@@ -24,7 +24,7 @@ const COST_PERIODS = [
   { value: 90, label: '90d' },
 ];
 
-// Token categories (bottom→top stacking) — --cat-1~4 단일 토큰셋.
+// Token categories (legend order; the chart stacks by window total) — --cat-1~4 단일 토큰셋.
 // ModelCostCard 의 cost_cache_creation→--cat-1 … cost_output→--cat-4 매핑과 1:1 정렬
 // → 원장 카테고리 행 · Token volume 스택 · 모델 sub-bar 간 legend 색상 일관성.
 const TOKEN_CATEGORIES = [
@@ -58,6 +58,7 @@ const ANOMALY_SIGMA = 2;
 function ScreenCost({ onNav }) {
   const {
     PageHeader, TypeScaleStyle, FreshnessStamp, RefreshButton, PageErrorBanner, INITIAL_REGION_STATE, getRegionSummary,
+    PageVerdict, SplitRow, Disclosure,
   } = window.UI;
 
   const [days, setDays] = useStateC(30);
@@ -81,11 +82,13 @@ function ScreenCost({ onNav }) {
 
   // One derivation, two readers — the lane states the same verdict tile 1 renders.
   const hotVerdict = computeHotVerdict(kpiState.status === 'ready' ? (kpiState.data || {}) : {});
+  const latestOutsideBand = isLatestOutsideBand(tokenState);
   const alarmRows = computeAlarmRows({
     hot: hotVerdict,
-    latestOutsideBand: isLatestOutsideBand(tokenState),
+    latestOutsideBand,
     parseError: getParseErrorDayCounts(errorState),
   });
+  const spendVerdict = getSpendVerdictC({ hot: hotVerdict, latestOutsideBand, kpiStatus: kpiState.status });
 
   useEffectC(() => {
     const ctrl = new AbortController();
@@ -113,17 +116,9 @@ function ScreenCost({ onNav }) {
   const freshnessInput = getFreshnessInputC(asOfAt, panelStates);
   const isBusy = getRegionSummary(panelStates).isBusy;
 
-  const sharedFailure = getSharedFailureC([
-    ['cost KPIs', kpiState],
-    ['cost trend', tokenState],
-    ['cost by model', modelState],
-    ['cache hit rate', cacheState],
-    ['session costs', sessionState],
-    ['unreadable log entries', errorState],
-    ['turn statistics', turnState],
-  ]);
-  // shared outage → the banner owns the one Retry, so regions drop theirs
-  const regionRetry = sharedFailure ? undefined : triggerRefresh;
+  const sourceFailures = getCostSourceFailuresC({ kpiState, tokenState, modelState, cacheState, sessionState, errorState, turnState });
+  // busy only while a failed region is being re-read — another panel's first load is not this Retry
+  const isRetrying = panelStates.some((state) => state.error != null && state.busy);
 
   return (
     <div className="cost-screen flex flex-col">
@@ -140,13 +135,6 @@ function ScreenCost({ onNav }) {
         .cost-tbl tbody td.num { color: rgb(var(--dim)); }
         .cost-foot { font-size: var(--fs-meta); line-height: 1.5; color: rgb(var(--dim)); }
         .cost-screen .kpi-hint { color: rgb(var(--dim)); }
-        .cost-disc > summary { list-style: none; }
-        .cost-disc > summary::-webkit-details-marker { display: none; }
-        .cost-disc > summary .disc-caret { transition: transform 140ms ease; color: rgb(var(--faint)); }
-        .cost-disc[open] > summary .disc-caret { transform: rotate(90deg); }
-        @media (prefers-reduced-motion: reduce) {
-          .cost-disc > summary .disc-caret { transition: none; }
-        }
       `}</style>
       <div className="flex-shrink-0">
         <PageHeader
@@ -174,61 +162,73 @@ function ScreenCost({ onNav }) {
         />
       </div>
 
-      {sharedFailure && (
+      {sourceFailures.banner && (
         <div className="mb-4">
-          <PageErrorBanner sources={sharedFailure.sources} error={sharedFailure.error} onRetry={triggerRefresh}/>
+          <PageErrorBanner sources={sourceFailures.banner.sources} error={sourceFailures.banner.error} onRetry={triggerRefresh}
+            isBusy={isRetrying} focusTargetId="cost-verdict"/>
         </div>
       )}
+
+      <PageVerdict id="cost-verdict" tone={spendVerdict.tone} label={spendVerdict.label} freshness={freshnessInput} className="mb-4">
+        {spendVerdict.text}
+      </PageVerdict>
 
       <AlarmLaneC rows={alarmRows}/>
 
       {/* Decision tier — the facts a spend decision is made on, in priority order. */}
-      <RefreshingRegionC states={[kpiState, tokenState, modelState]}>
+      <RefreshingRegionC id={COST_REGION_IDS.kpis} states={[kpiState, tokenState, modelState]}>
         <KpiRowC
           kpiState={kpiState}
           hot={hotVerdict}
           trendState={tokenState}
           modelState={modelState}
           days={days}
-          onRetry={regionRetry}
+          onRetry={triggerRefresh}
+          failures={sourceFailures}
         />
       </RefreshingRegionC>
 
-      <RefreshingRegionC states={[tokenState]}>
-        <CostTrendCard state={tokenState} days={days} onRetry={regionRetry}/>
+      <RefreshingRegionC id={COST_REGION_IDS.trend} states={[tokenState]}>
+        <CostTrendCard state={tokenState} days={days} onRetry={triggerRefresh} failures={sourceFailures}/>
       </RefreshingRegionC>
 
-      <RefreshingRegionC states={[modelState]} className="mb-4">
-        <ModelCostCard state={modelState} days={days} onRetry={regionRetry} onNav={onNav}/>
-      </RefreshingRegionC>
+      <SplitRow ratio="1:1" className="mb-4">
+        <RefreshingRegionC id={COST_REGION_IDS.models} states={[modelState]}>
+          <ModelCostCard state={modelState} days={days} onRetry={triggerRefresh} failures={sourceFailures} onNav={onNav}/>
+        </RefreshingRegionC>
+        <RefreshingRegionC id={COST_REGION_IDS.sessions} states={[sessionState]}>
+          <SessionDistributionCard state={sessionState} days={days} onRetry={triggerRefresh} failures={sourceFailures} onNav={onNav}/>
+        </RefreshingRegionC>
+      </SplitRow>
 
-      <RefreshingRegionC states={[sessionState]} className="mb-4">
-        <SessionDistributionCard state={sessionState} days={days} onRetry={regionRetry} onNav={onNav}/>
-      </RefreshingRegionC>
-
-      {/* Instrumentation tier — rare reads, closed by default. */}
+      {/* Instrumentation tier — status summaries, open by default and foldable. */}
       <InstrumentationTierC>
-      <CostDisclosureC title="Token volume" hint="Category split over time, with the cache-hit line">
-        <div className="mb-3"><TokenLegend/></div>
-        <RefreshingRegionC states={[tokenState]}>
-          <TokenStackedBody state={tokenState} days={days} onRetry={regionRetry}/>
-        </RefreshingRegionC>
-        <RefreshingRegionC states={[cacheState]} className="mt-5">
-          <CacheHitBody state={cacheState} days={days} onRetry={regionRetry}/>
-        </RefreshingRegionC>
-      </CostDisclosureC>
+        <Disclosure kind="status" level={3} title="Token volume" sub="Category split over time, with the cache-hit line"
+          className="cost-inst mb-4">
+          <RefreshingRegionC id={COST_REGION_IDS.tokens} states={[tokenState]}>
+            <TokenStackedBody state={tokenState} days={days} onRetry={triggerRefresh}
+              failures={sourceFailures}/>
+          </RefreshingRegionC>
+          <RefreshingRegionC id={COST_REGION_IDS.cache} states={[cacheState]} className="mt-5">
+            <CacheHitBody state={cacheState} days={days} onRetry={triggerRefresh} failures={sourceFailures}/>
+          </RefreshingRegionC>
+        </Disclosure>
 
-      <CostDisclosureC title="Turn statistics" hint="Stop reasons and per-turn aggregates">
-        <RefreshingRegionC states={[turnState]}>
-          <TurnStatsBody state={turnState} days={days} onRetry={regionRetry}/>
-        </RefreshingRegionC>
-      </CostDisclosureC>
-
-      <CostDisclosureC title="Log integrity" hint="Unreadable log entries over the window">
-        <RefreshingRegionC states={[errorState]}>
-          <ParseErrorBody state={errorState} days={days} onRetry={regionRetry}/>
-        </RefreshingRegionC>
-      </CostDisclosureC>
+        {/* both charts fit the 920px lg content column → split from lg; the decision pair's session table does not, so it keeps xl */}
+        <SplitRow ratio="3:2" className="lg:grid-cols-[minmax(0,3fr)_minmax(0,2fr)]">
+          <Disclosure kind="status" level={3} title="Turn statistics" sub="Stop reasons and per-turn aggregates"
+            className="cost-inst">
+            <RefreshingRegionC id={COST_REGION_IDS.turns} states={[turnState]}>
+              <TurnStatsBody state={turnState} days={days} onRetry={triggerRefresh} failures={sourceFailures}/>
+            </RefreshingRegionC>
+          </Disclosure>
+          <Disclosure kind="status" level={3} title="Log integrity" sub="Unreadable log entries over the window"
+            className="cost-inst">
+            <RefreshingRegionC id={COST_REGION_IDS.log} states={[errorState]}>
+              <ParseErrorBody state={errorState} days={days} onRetry={triggerRefresh} failures={sourceFailures}/>
+            </RefreshingRegionC>
+          </Disclosure>
+        </SplitRow>
       </InstrumentationTierC>
     </div>
   );
@@ -239,52 +239,45 @@ function getFreshnessInputC(asOfAt, panelStates) {
   return { at: asOfAt, regions: panelStates };
 }
 
-function getSharedFailureC(namedStates) {
-  return window.UI.getSharedFailure(namedStates.map(([source, state]) => ({ source, error: state.error })));
+// Render order, one entry per region → the trend payload drawn twice counts once and speaks from its first region.
+function getCostSourceFailuresC({ kpiState, tokenState, modelState, cacheState, sessionState, errorState, turnState }) {
+  return window.UI.getSourceFailures([
+    { source: 'cost KPIs', error: kpiState.error },
+    { source: 'cost trend', error: tokenState.error },
+    { source: 'cost by model', error: modelState.error },
+    { source: 'session costs', error: sessionState.error },
+    { source: 'cost trend', region: 'token trend', error: tokenState.error },
+    { source: 'cache hit rate', error: cacheState.error },
+    { source: 'turn statistics', error: turnState.error },
+    { source: 'unreadable log entries', error: errorState.error },
+  ]);
 }
 
+// region wrapper ids → a recovered Retry hands focus to its own region, never to BODY
+const COST_REGION_IDS = {
+  kpis: 'cost-region-kpis', trend: 'cost-region-trend', models: 'cost-region-models', sessions: 'cost-region-sessions',
+  tokens: 'cost-region-tokens', cache: 'cost-region-cache', turns: 'cost-region-turns', log: 'cost-region-log',
+};
+
 /** Held payloads stay rendered during a refresh, dimmed and marked busy until the answer settles. */
-function RefreshingRegionC({ states, className = '', children }) {
+function RefreshingRegionC({ id, states, className = '', children }) {
   const isRefreshing = states.some((state) => state.busy && state.data != null);
   const busyClass = isRefreshing ? 'opacity-60 motion-safe:transition-opacity' : '';
   return (
-    <div className={`${className} ${busyClass}`.trim() || undefined} aria-busy={isRefreshing ? 'true' : undefined}>
+    <div id={id} className={`${className} ${busyClass}`.trim() || undefined} aria-busy={isRefreshing ? 'true' : undefined}>
       {children}
     </div>
   );
 }
 
-// One h2 over one card → the three rare reads are hairline rows of a group, not three identical cards.
 function InstrumentationTierC({ children }) {
   const { SectionLabel } = window.UI;
 
   return (
     <section aria-labelledby="cost-instrumentation" className="mb-4">
       <SectionLabel id="cost-instrumentation" className="mb-2">Instrumentation</SectionLabel>
-      <div className="card">{children}</div>
+      {children}
     </section>
-  );
-}
-
-/**
- * Instrumentation shell — three rare-read groups over one cost-local <details>, not three card idioms.
- * Native disclosure keeps keyboard + screen-reader semantics without a new shared atom.
- */
-function CostDisclosureC({ title, hint, children }) {
-  const { Icon } = window.UI;
-
-  return (
-    <details className="cost-disc border-b border-line last:border-b-0">
-      <summary className="card-head cursor-pointer select-none">
-        {/* card-head is a flex container, which drops the native marker — the caret restores the affordance. */}
-        <Icon name="chevron-right" className="disc-caret mt-0.5" size={12}/>
-        <div className="flex-1 min-w-0">
-          <h3 className="card-title">{title}</h3>
-          {hint && <div className="card-sub mt-0.5">{hint}</div>}
-        </div>
-      </summary>
-      <div className="card-body">{children}</div>
-    </details>
   );
 }
 
@@ -296,10 +289,10 @@ function CostDisclosureC({ title, hint, children }) {
  */
 function computeAlarmRows({ hot, latestOutsideBand, parseError }) {
   const rows = [];
+  const hotTone = getHotToneC(hot, latestOutsideBand);
 
-  if (hot.isHot || hot.isPaceHot || latestOutsideBand) {
-    // red only past the stated so-far cut — a projection or one outlier day is a warning, not a breach
-    rows.push({ key: 'hot', tone: hot.isHot ? 'crit' : 'warn', text: getHotAlarmText(hot, latestOutsideBand) });
+  if (hotTone !== null) {
+    rows.push({ key: 'hot', tone: hotTone, text: getHotAlarmText(hot, latestOutsideBand) });
   }
   if (parseError.crit > 0) {
     rows.push({
@@ -312,9 +305,37 @@ function computeAlarmRows({ hot, latestOutsideBand, parseError }) {
   return rows;
 }
 
+// Hot-trigger tone, or null when none fires — red only past the so-far cut; a projection or one outlier day is a warning
+function getHotToneC(hot, latestOutsideBand) {
+  if (hot.isHot) return 'crit';
+  return hot.isPaceHot || latestOutsideBand ? 'warn' : null;
+}
+
 // The verdict lives in one place: the lane when a hot trigger fires it, tile 1 otherwise.
 function getTileVerdictTextC(hot) {
-  return hot.isHot || hot.isPaceHot ? 'Running hot — today\'s pace is in the alert above.' : hot.verdict;
+  return hot.isHot || hot.isPaceHot ? 'Running hot — see the alert above.' : hot.verdict;
+}
+
+/**
+ * Page headline — names the spend state only; the figures stay in the lane or on tile 1.
+ * Tone mirrors the lane's hot row, so the two never disagree. No budget exists in the payload → no over-budget state.
+ */
+function getSpendVerdictC({ hot, latestOutsideBand, kpiStatus }) {
+  const cut = `${HOT_RATIO_CUT}x the 7-day daily normal`;
+
+  if (kpiStatus !== 'ready' || hot.ratio === null) {
+    const reason = kpiStatus === 'loading' ? 'Reading today\'s spend.'
+      : kpiStatus === 'error' ? 'Today\'s spend is unavailable.' : 'No 7-day cost to compare today against.';
+    return { tone: 'neutral', text: reason };
+  }
+
+  const tone = getHotToneC(hot, latestOutsideBand);
+
+  if (tone === null) return { tone: 'ok', label: 'On pace', text: `Today's spend is under ${cut}.` };
+  const text = hot.isHot ? `Today's spend has passed ${cut}.`
+    : hot.isPaceHot ? 'Today is running above normal — the alert below has the figures.'
+    : 'The newest day ran outside its own normal band.';
+  return { tone, label: 'Above normal', text };
 }
 
 function getHotAlarmText(hot, latestOutsideBand) {
@@ -395,6 +416,8 @@ function toFiniteOrNull(value) {
  * unavailable (payload arrived, this measure is not derivable) · ready.
  */
 function getTileStatus(state, value, isEmpty) {
+  // same branch as the payload's error card → a cold error stays 'error' while its Retry is in flight
+  if (window.UI.getRegionView(state) === 'error') return 'error';
   if (state.status === 'loading') return 'loading';
   if (state.status === 'error') return 'error';
   if (isEmpty) return 'empty';
@@ -519,23 +542,27 @@ function computeCacheShare(modelState) {
   };
 }
 
-function KpiRowC({ kpiState, hot, trendState, modelState, days, onRetry }) {
-  const { RegionUnavailable } = window.UI;
+function KpiRowC({ kpiState, hot, trendState, modelState, days, failures, onRetry }) {
+  const { getRegionView, RegionFailure } = window.UI;
   const kpi = kpiState.status === 'ready' ? (kpiState.data || {}) : {};
   const windowTotal = computeWindowTotal(trendState);
   const cacheShare = computeCacheShare(modelState);
   const costPerDone = toFiniteOrNull(kpi.cost_per_done_usd);
   const doneCount = toFiniteOrNull(kpi.done_count_7d) ?? 0;
+  const trendDays = getShownDays(trendState, days);
+  const modelDays = getShownDays(modelState, days);
 
   return (
     <>
       {/* Payload failure is reported at the owning group — the KPI payload feeds tiles 1 and 3. */}
-      {kpiState.status === 'error' && (
-        <RegionUnavailable source="cost KPIs" error={kpiState.error} onRetry={onRetry} className="mb-4"/>
+      {getRegionView(kpiState) === 'error' && (
+        <RegionFailure source="cost KPIs" error={kpiState.error} isBusy={kpiState.busy}
+          focusTargetId={COST_REGION_IDS.kpis} onRetry={onRetry} failures={failures} className="mb-4"/>
       )}
       <div className="grid grid-cols-2 xl:grid-cols-4 gap-3 mb-4">
         <CostTileC
           label="Today vs. normal"
+          windowTag="today"
           status={getTileStatus(kpiState, hot.ratio, false)}
           value={hot.todayCost === null ? '—' : formatUsdC(hot.todayCost)}
           hint={hot.normalDaily === null ? '' : `${formatUsdC(hot.normalDaily)} 7-day normal/day`}
@@ -544,18 +571,20 @@ function KpiRowC({ kpiState, hot, trendState, modelState, days, onRetry }) {
         </CostTileC>
 
         <CostTileC
-          label={`Cost, last ${days} days`}
+          label={`Cost, last ${trendDays} days`}
+          windowTag={`${trendDays}d`}
           status={getTileStatus(trendState, windowTotal.total, windowTotal.isEmpty)}
           value={windowTotal.total === null ? '—' : formatUsdC(windowTotal.total)}
           hint={windowTotal.total === null
             ? ''
-            : `${windowTotal.dayCount} days · ${formatUsdC(windowTotal.avgDaily)}/day avg · peak ${formatUsdC(windowTotal.peakCost)}`}
+            : `Recorded cost · ${windowTotal.dayCount} days · ${formatUsdC(windowTotal.avgDaily)}/day avg · peak ${formatUsdC(windowTotal.peakCost)}`}
           unavailableNote="Trend payload carries no cost figure.">
           <TrendDeltaC delta={windowTotal.delta} span={windowTotal.deltaSpan}/>
         </CostTileC>
 
         <CostTileC
           label="Cost per finished task"
+          windowTag="7d fixed"
           status={getTileStatus(kpiState, costPerDone, false)}
           value={costPerDone === null ? '—' : formatUsdC(costPerDone)}
           hint={`7-day cost / ${formatIntC(doneCount)} finished`}
@@ -565,29 +594,59 @@ function KpiRowC({ kpiState, hot, trendState, modelState, days, onRetry }) {
 
         <CostTileC
           label="Cache share of cost"
+          windowTag={`${modelDays}d`}
           status={getTileStatus(modelState, cacheShare.share, cacheShare.isEmpty)}
           value={cacheShare.share === null ? '—' : `${(cacheShare.share * 100).toFixed(0)}%`}
           hint={cacheShare.cacheCost === null ? '' : `${formatUsdC(cacheShare.cacheCost)} on cache reads + writes`}
           unavailableNote="No priced model cost in this window.">
-          <div className="cost-foot mt-1.5">{`of ${formatUsdC(cacheShare.totalCost)} priced cost, last ${days} days`}</div>
+          <div className="cost-foot mt-1.5">
+            {getCacheTotalNoteC({
+              listTotal: cacheShare.totalCost,
+              recordedTotal: trendDays === modelDays ? windowTotal.total : null,
+              days: modelDays,
+            })}
+          </div>
         </CostTileC>
       </div>
     </>
   );
 }
 
+// List-price total set beside the recorded total only when both read one window → equal figures never read as a contradiction.
+function getCacheTotalNoteC({ listTotal, recordedTotal, days }) {
+  const listLabel = formatUsdC(listTotal);
+  const base = `of ${listLabel} at list token prices, last ${days} days`;
+  if (recordedTotal === null) return base;
+  return listLabel === formatUsdC(recordedTotal)
+    ? `${base} — matches the recorded total`
+    : `${base} — against ${formatUsdC(recordedTotal)} recorded`;
+}
+
+/**
+ * The range a region's figures were read for — held data keeps its own window while a new range loads.
+ * Nothing landed yet → the requested range, since no figure is on screen to mislabel.
+ */
+function getShownDays(state, requestedDays) {
+  const match = /[?&]days=(\d+)/.exec(state?.key ?? '');
+  return match ? Number(match[1]) : requestedDays;
+}
+
 /**
  * Cost-local tile shell — the shared KPI atom is a single-value button, tile 1 carries a bar + a verdict.
  * All four tiles take this one shell rather than mixing two tile idioms in one band.
  */
-function CostTileC({ label, status, value, hint, unavailableNote, children }) {
+function CostTileC({ label, windowTag, status, value, hint, unavailableNote, children }) {
   const { KpiValue } = window.UI;
   const isReady = status === 'ready';
   const note = getTileNote(status, unavailableNote);
 
   return (
     <div className="kpi" aria-busy={status === 'loading' ? 'true' : undefined}>
-      <div className="kpi-label">{label}</div>
+      {/* window tag at the label's right edge on every tile → the four windows compare at one glance */}
+      <div className="flex items-baseline justify-between gap-2">
+        <div className="kpi-label">{label}</div>
+        <span className="kpi-window fs-meta font-mono text-faint shrink-0">{windowTag}</span>
+      </div>
       <KpiValue>
         {status === 'loading' ? <SkelC w={110} h={26}/> : isReady ? value : '—'}
       </KpiValue>
@@ -639,7 +698,7 @@ function TrendDeltaC({ delta, span }) {
  * The ±2σ band is a toggle here rather than a second card: it asks "is this day unusual" about
  * the very series already drawn.
  */
-function CostTrendCard({ state, days, onRetry }) {
+function CostTrendCard({ state, days, failures, onRetry }) {
   const { CardHead } = window.UI;
   const [bandOn, setBandOn] = useStateC(false);
 
@@ -657,28 +716,29 @@ function CostTrendCard({ state, days, onRetry }) {
             disabled={!bandAvailable}
             aria-pressed={bandOn}
             title={bandAvailable
-              ? 'Overlay the 7-day rolling average and its ±2σ band'
+              ? 'Overlay the 7-day average and the range most days fall inside'
               : `Needs ${ROLLING_WINDOW} days of cost to compute a rolling band`}
             onClick={() => setBandOn((v) => !v)}>
-            ±2σ band
+            Normal range
           </button>
         }
       />
       <div className="card-body">
-        <CostTrendBody state={state} days={days} bandOn={bandOn && bandAvailable} onRetry={onRetry}/>
+        <CostTrendBody state={state} days={days} bandOn={bandOn && bandAvailable} onRetry={onRetry} failures={failures}/>
       </div>
     </div>
   );
 }
 
-function CostTrendBody({ state, days, bandOn, onRetry }) {
-  const { LoadingPlaceholder, RegionUnavailable } = window.UI;
+function CostTrendBody({ state, days, bandOn, failures, onRetry }) {
+  const { getRegionView, LoadingPlaceholder, RegionFailure } = window.UI;
 
-  if (state.status === 'loading') {
+  if (getRegionView(state) === 'loading') {
     return <LoadingPlaceholder label="cost trend" minHeight={260}/>;
   }
-  if (state.status === 'error') {
-    return <RegionUnavailable source="cost trend" error={state.error} onRetry={onRetry} minHeight={260}/>;
+  if (getRegionView(state) === 'error') {
+    return <RegionFailure source="cost trend" error={state.error} isBusy={state.busy} focusTargetId={COST_REGION_IDS.trend}
+      onRetry={onRetry} failures={failures} minHeight={260}/>;
   }
 
   const points = getTrendPoints(state);
@@ -714,6 +774,14 @@ function getUsdAxisFormatter(maxValue) {
   });
 }
 
+// Zero-based 1/2/5 steps, top tick at or above the peak → no $550-style steps.
+function getUsdTicksC(maxValue) {
+  const top = maxValue > 0 ? maxValue : 1;
+  const step = getRoundStepC(top / 5);
+  const count = Math.ceil(top / step - 1e-9);
+  return Array.from({ length: count + 1 }, (_, i) => Number((i * step).toFixed(6)));
+}
+
 function getTrendMax(rows) {
   return rows.reduce((max, row) => Math.max(max, row.actual || 0, row.upperBand || 0), 0);
 }
@@ -736,11 +804,12 @@ function getTrendReadout(row, bandOn) {
  */
 function CostTrendChart({ rows, bandOn }) {
   const { ResponsiveContainer, ComposedChart, Line, Area, XAxis, YAxis, Tooltip, CartesianGrid, ReferenceLine } = window.Recharts;
-  const { getChartTicks, getChartSummary, getRovingIndex } = window.UI;
+  const { getChartImageProps, getRovingIndex } = window.UI;
   const [activeIndex, setActiveIndex] = useStateC(null);
 
   const points = rows.map(toTrendReadoutPoint);
-  const tickDates = getChartTicks(rows.length).map((i) => rows[i].date);
+  const trendMax = getTrendMax(rows);
+  const yTicks = getUsdTicksC(trendMax);
   const activeRow = activeIndex === null ? null : rows[activeIndex];
 
   // no active day → the first arrow press lands on the latest day, as the shared chart atom does
@@ -758,9 +827,7 @@ function CostTrendChart({ rows, bandOn }) {
   return (
     <figure style={{ margin: 0, minWidth: 0 }}>
       <div
-        role="img"
-        tabIndex={0}
-        aria-label={getChartSummary('Daily cost', points, formatUsdC)}
+        {...getChartImageProps(getGapNameC('Daily cost', points), points, formatUsdC)}
         style={{ width: '100%', height: 260, cursor: 'crosshair' }}
         onKeyDown={onKeyDown}
         onFocus={() => setActiveIndex((index) => (index === null ? rows.length - 1 : index))}
@@ -774,14 +841,14 @@ function CostTrendChart({ rows, bandOn }) {
             <CartesianGrid stroke="rgb(var(--line) / 0.6)" strokeDasharray="2 4" vertical={false}/>
             <XAxis
               dataKey="date"
-              ticks={tickDates}
-              interval={0}
-              tick={anomalyAxisTickStyle}
+              {...getDayAxisPropsC(rows)}
               axisLine={anomalyAxisLineStyle}
               tickLine={false}
             />
             <YAxis
-              tickFormatter={getUsdAxisFormatter(getTrendMax(rows))}
+              domain={[0, yTicks[yTicks.length - 1]]}
+              ticks={yTicks}
+              tickFormatter={getUsdAxisFormatter(trendMax)}
               tick={anomalyAxisTickStyle}
               axisLine={anomalyAxisLineStyle}
               tickLine={false}
@@ -847,8 +914,8 @@ function CostTrendChart({ rows, bandOn }) {
           </ComposedChart>
         </ResponsiveContainer>
       </div>
-      <CostTrendLegendC bandOn={bandOn}/>
-      <div aria-live="polite" className="fs-meta tnum" style={{ minHeight: 18 }}>
+      <CostTrendLegendC bandOn={bandOn} rows={rows}/>
+      <div aria-live="polite" className="sr-only">
         {activeRow ? getTrendReadout(activeRow, bandOn) : ''}
       </div>
     </figure>
@@ -870,7 +937,8 @@ function renderPartialDot({ cx, cy, index, payload }) {
   );
 }
 
-function CostTrendLegendC({ bandOn }) {
+function CostTrendLegendC({ bandOn, rows }) {
+  const gapLabel = getNoDataLabelC(rows.map((row) => row.actual));
   return (
     <div className="flex items-center gap-3 flex-wrap mt-2 fs-meta text-dim">
       <span className="flex items-center gap-1.5">
@@ -890,9 +958,10 @@ function CostTrendLegendC({ bandOn }) {
       {bandOn && (
         <span className="flex items-center gap-1.5">
           <span aria-hidden="true" className="w-2.5 h-2.5 rounded-sm" style={{ background: 'rgb(var(--faint) / 0.35)' }}/>
-          ±2σ normal range
+          Normal range (7-day)
         </span>
       )}
+      {gapLabel && <span className="text-faint">{gapLabel}</span>}
     </div>
   );
 }
@@ -909,7 +978,7 @@ function CostTrendTooltipC({ active, payload, bandOn }) {
       <div style={{ color: 'rgb(var(--ink))', marginBottom: 4, fontWeight: 600 }}>{row.fullDate}</div>
       <div style={tooltipRowStyle}>
         <span style={{ width: 8, height: 8, borderRadius: 2, background: 'rgb(var(--accent))' }}/>
-        {row.isPartial ? 'Today so far' : 'Daily cost'} {formatUsdC(row.actual)}
+        {row.isPartial ? 'Today so far' : 'Daily cost'} {row.actual === null ? 'no data' : formatUsdC(row.actual)}
       </div>
       {hasBand && (
         <div style={{ color: 'rgb(var(--faint))', marginTop: 4 }}>
@@ -923,27 +992,15 @@ function CostTrendTooltipC({ active, payload, bandOn }) {
   );
 }
 
-function TokenLegend() {
-  return (
-    <div className="flex items-center gap-3 flex-wrap">
-      {TOKEN_CATEGORIES.map((cat) => (
-        <div key={cat.key} className="flex items-center gap-1.5 fs-meta text-dim">
-          <span className="w-2.5 h-2.5 rounded-sm" style={{ background: `rgb(var(${cat.colorVar}))` }}/>
-          {cat.label}
-        </div>
-      ))}
-    </div>
-  );
-}
+function TokenStackedBody({ state, days, failures, onRetry }) {
+  const { getRegionView, LoadingPlaceholder, RegionFailure } = window.UI;
 
-function TokenStackedBody({ state, days, onRetry }) {
-  const { LoadingPlaceholder, RegionUnavailable } = window.UI;
-
-  if (state.status === 'loading') {
+  if (getRegionView(state) === 'loading') {
     return <LoadingPlaceholder label="token trend" minHeight={300}/>;
   }
-  if (state.status === 'error') {
-    return <RegionUnavailable source="token trend" error={state.error} onRetry={onRetry} minHeight={300}/>;
+  if (getRegionView(state) === 'error') {
+    return <RegionFailure source="cost trend" region="token trend" error={state.error} isBusy={state.busy} focusTargetId={COST_REGION_IDS.tokens}
+      onRetry={onRetry} failures={failures} minHeight={300}/>;
   }
 
   const points = getTrendPoints(state);
@@ -951,15 +1008,10 @@ function TokenStackedBody({ state, days, onRetry }) {
     return <EmptyStateC message={`No cost events in the last ${days} days.`}/>;
   }
 
-  const totalTokens = points.reduce(
-    (s, p) =>
-      s +
-      (Number(p.input_tokens) || 0) +
-      (Number(p.output_tokens) || 0) +
-      (Number(p.cache_read_tokens) || 0) +
-      (Number(p.cache_creation_tokens) || 0),
-    0,
-  );
+  const shares = computeTokenShares(points);
+  const totalTokens = (shares ?? []).reduce((s, r) => s + r.total, 0);
+  const order = shares ? getTokenStackOrder(shares) : TOKEN_CATEGORIES;
+  const dayPoints = getTokenDayPoints(points);
 
   return (
     <>
@@ -971,9 +1023,11 @@ function TokenStackedBody({ state, days, onRetry }) {
           <div className="font-mono fs-display text-dim tracking-tight">{formatTokenCompactC(totalTokens)}</div>
         </div>
       </div>
+      {shares && <TokenShareRowC shares={shares}/>}
       {/* 7d = stacked column · 30d/90d = stacked area. */}
-      <div style={{ width: '100%', height: 280 }}>
-        {days === 7 ? <TokenStackedColumn points={points}/> : <TokenStackedArea points={points}/>}
+      <div style={{ width: '100%', height: 280 }}
+        {...window.UI.getChartImageProps(getGapNameC('Daily tokens', dayPoints), dayPoints, formatTokenCompactC)}>
+        {days === 7 ? <TokenStackedColumn points={points} order={order}/> : <TokenStackedArea points={points} order={order}/>}
       </div>
     </>
   );
@@ -981,22 +1035,88 @@ function TokenStackedBody({ state, days, onRetry }) {
 
 // 토큰 누적 차트용 row builder (Area·Column 공유).
 function toTokenChartRows(points) {
-  return points.map((p) => ({
-    date: typeof p.date === 'string' ? p.date.slice(5) : '',
-    fullDate: p.date,
-    cost_usd: Number(p.cost_usd) || 0,
-    session_count: Number(p.session_count) || 0,
-    cache_creation_tokens: Number(p.cache_creation_tokens) || 0,
-    cache_read_tokens:     Number(p.cache_read_tokens) || 0,
-    input_tokens:          Number(p.input_tokens) || 0,
-    output_tokens:         Number(p.output_tokens) || 0,
+  return points.map((p) => {
+    const isNoData = isNoDataPointC(p);
+    const getCount = (value) => (isNoData ? null : Number(value) || 0);
+    return {
+      date: typeof p.date === 'string' ? p.date.slice(5) : '',
+      fullDate: p.date,
+      isNoData,
+      cost_usd: getCount(p.cost_usd),
+      session_count: Number(p.session_count) || 0,
+      cache_creation_tokens: getCount(p.cache_creation_tokens),
+      cache_read_tokens:     getCount(p.cache_read_tokens),
+      input_tokens:          getCount(p.input_tokens),
+      output_tokens:         getCount(p.output_tokens),
+    };
+  });
+}
+
+// Daily token total per chart day, a gap day kept as a gap → the chart name reads the same days the stack draws.
+function getTokenDayPoints(points) {
+  return toTokenChartRows(points).map((r) => ({
+    label: r.fullDate,
+    value: r.isNoData ? null : TOKEN_CATEGORIES.reduce((sum, cat) => sum + r[cat.key], 0),
   }));
 }
 
-function TokenStackedArea({ points }) {
+const TOKEN_AXIS_UNITS = [[1e12, 'T'], [1e9, 'B'], [1e6, 'M'], [1e3, 'K']];
+
+// Unit + decimals fixed by the data max → one unit per axis, ≤5 chars inside the 48px axis.
+function getTokenAxisFormatter(maxValue) {
+  const [unit, suffix] = TOKEN_AXIS_UNITS.find(([u]) => maxValue >= u) || [1, ''];
+  const decimals = maxValue / unit >= 10 ? 0 : 1;
+  return (value) => {
+    const n = Number(value) || 0;
+    return n === 0 ? '0' : (n / unit).toFixed(decimals) + suffix;
+  };
+}
+
+function getTokenStackMax(rows) {
+  return rows.reduce((m, r) => Math.max(m, TOKEN_CATEGORIES.reduce((s, cat) => s + r[cat.key], 0)), 0);
+}
+
+// Window total + share per category, legend order; null when the window holds no token.
+function computeTokenShares(points) {
+  const totals = TOKEN_CATEGORIES.map((cat) => ({
+    ...cat,
+    total: points.reduce((s, p) => s + (Number(p[cat.key]) || 0), 0),
+  }));
+  const sum = totals.reduce((s, r) => s + r.total, 0);
+  if (sum <= 0) return null;
+  return totals.map((r) => ({ ...r, share: r.total / sum }));
+}
+
+// Ascending by total → the dominant series stacks last, so the top edge carries its own stroke
+// rather than a near-zero series' stroke drawn over it.
+function getTokenStackOrder(shares) {
+  return shares.slice().sort((a, b) => a.total - b.total);
+}
+
+function formatTokenShareC(share) {
+  const pct = share * 100;
+  return pct > 0 && pct < 0.1 ? '<0.1%' : `${pct.toFixed(1)}%`;
+}
+
+// Input/Output are invisible against cache read on the shared axis → their shares stated as text.
+function TokenShareRowC({ shares }) {
+  return (
+    <div className="flex items-center gap-x-4 gap-y-1 flex-wrap mb-3">
+      {shares.map((r) => (
+        <span key={r.key} className="flex items-center gap-1.5 fs-meta text-dim">
+          <span className="w-2.5 h-2.5 rounded-sm" style={{ background: `rgb(var(${r.colorVar}))` }}/>
+          {r.label} <span className="font-mono">{formatTokenShareC(r.share)}</span> · {formatTokenCompactC(r.total)}
+        </span>
+      ))}
+    </div>
+  );
+}
+
+function TokenStackedArea({ points, order }) {
   const { ResponsiveContainer, AreaChart, Area, XAxis, YAxis, Tooltip, CartesianGrid } = window.Recharts;
 
   const rows = toTokenChartRows(points);
+  const formatAxis = getTokenAxisFormatter(getTokenStackMax(rows));
 
   return (
     <ResponsiveContainer width="100%" height="100%">
@@ -1012,19 +1132,19 @@ function TokenStackedArea({ points }) {
         <CartesianGrid stroke="rgb(var(--line))" strokeDasharray="3 3" vertical={false}/>
         <XAxis
           dataKey="date"
-          tick={{ fontSize: 12, fill: 'rgb(var(--faint))', fontFamily: 'JetBrains Mono, monospace' }}
+          {...getDayAxisPropsC(rows)}
           axisLine={{ stroke: 'rgb(var(--line))' }}
           tickLine={false}
         />
         <YAxis
-          tickFormatter={formatTokenCompactC}
+          tickFormatter={formatAxis}
           tick={{ fontSize: 12, fill: 'rgb(var(--faint))', fontFamily: 'JetBrains Mono, monospace' }}
           axisLine={{ stroke: 'rgb(var(--line))' }}
           tickLine={false}
           width={48}
         />
         <Tooltip content={<TokenTooltipC/>}/>
-        {TOKEN_CATEGORIES.map((cat) => (
+        {order.map((cat) => (
           <Area
             key={cat.key}
             type="linear"
@@ -1041,10 +1161,11 @@ function TokenStackedArea({ points }) {
   );
 }
 
-function TokenStackedColumn({ points }) {
+function TokenStackedColumn({ points, order }) {
   const { ResponsiveContainer, BarChart, Bar, XAxis, YAxis, Tooltip, CartesianGrid } = window.Recharts;
 
   const rows = toTokenChartRows(points);
+  const formatAxis = getTokenAxisFormatter(getTokenStackMax(rows));
 
   return (
     <ResponsiveContainer width="100%" height="100%">
@@ -1052,19 +1173,19 @@ function TokenStackedColumn({ points }) {
         <CartesianGrid stroke="rgb(var(--line))" strokeDasharray="3 3" vertical={false}/>
         <XAxis
           dataKey="date"
-          tick={{ fontSize: 12, fill: 'rgb(var(--faint))', fontFamily: 'JetBrains Mono, monospace' }}
+          {...getDayAxisPropsC(rows)}
           axisLine={{ stroke: 'rgb(var(--line))' }}
           tickLine={false}
         />
         <YAxis
-          tickFormatter={formatTokenCompactC}
+          tickFormatter={formatAxis}
           tick={{ fontSize: 12, fill: 'rgb(var(--faint))', fontFamily: 'JetBrains Mono, monospace' }}
           axisLine={{ stroke: 'rgb(var(--line))' }}
           tickLine={false}
           width={48}
         />
         <Tooltip content={<TokenTooltipC/>} cursor={{ fill: 'rgb(var(--accent) / 0.06)' }}/>
-        {TOKEN_CATEGORIES.map((cat) => (
+        {order.map((cat) => (
           <Bar
             key={cat.key}
             dataKey={cat.key}
@@ -1083,6 +1204,9 @@ function TokenTooltipC({ active, payload }) {
     return null;
   }
   const row = payload[0].payload;
+  if (row.isNoData) {
+    return <div style={tooltipStyle}><div style={{ color: 'rgb(var(--ink))', fontWeight: 600 }}>{row.fullDate}</div>No data</div>;
+  }
   const totalTokens =
     row.input_tokens + row.output_tokens + row.cache_read_tokens + row.cache_creation_tokens;
 
@@ -1174,7 +1298,7 @@ function isUnattributedModel(model) {
   return UNATTRIBUTED_MODEL_KEYS.has(model);
 }
 
-function ModelCostCard({ state, days, onRetry, onNav }) {
+function ModelCostCard({ state, days, failures, onRetry, onNav }) {
   const { CardHead, Pill } = window.UI;
 
   const rows = state.status === 'ready' ? (state.data?.rows ?? []) : [];
@@ -1204,7 +1328,7 @@ function ModelCostCard({ state, days, onRetry, onNav }) {
         }
       />
       <div className="card-body">
-        <ModelCostBody state={state} days={days} onRetry={onRetry}/>
+        <ModelCostBody state={state} days={days} onRetry={onRetry} failures={failures}/>
       </div>
     </div>
   );
@@ -1232,14 +1356,15 @@ function rollupModelRows(modelRows, topN) {
   return { top, other };
 }
 
-function ModelCostBody({ state, days, onRetry }) {
-  const { LoadingPlaceholder, RegionUnavailable, SectionLabel, TableHead } = window.UI;
+function ModelCostBody({ state, days, failures, onRetry }) {
+  const { getRegionView, LoadingPlaceholder, RegionFailure, SectionLabel, TableHead } = window.UI;
 
-  if (state.status === 'loading') {
+  if (getRegionView(state) === 'loading') {
     return <LoadingPlaceholder label="cost by model" minHeight={300}/>;
   }
-  if (state.status === 'error') {
-    return <RegionUnavailable source="cost by model" error={state.error} onRetry={onRetry} minHeight={300}/>;
+  if (getRegionView(state) === 'error') {
+    return <RegionFailure source="cost by model" error={state.error} isBusy={state.busy} focusTargetId={COST_REGION_IDS.models}
+      onRetry={onRetry} failures={failures} minHeight={300}/>;
   }
 
   const rows = state.data?.rows ?? [];
@@ -1332,14 +1457,19 @@ function ModelCostRow({ r }) {
       </tr>
       {expanded && (
         <tr>
-          <td colSpan={4} className="fs-meta text-dim font-mono">
-            in {formatTokenCompactC(r.input_tokens)} · out {formatTokenCompactC(r.output_tokens)} ·
-            cache read {formatTokenCompactC(r.cache_read_tokens)} · cache write {formatTokenCompactC(r.cache_creation_tokens)}
+          <td colSpan={4} className="fs-meta text-dim font-mono pl-6">
+            <span aria-hidden="true">└ </span>{getModelTokenDetail(r)}
           </td>
         </tr>
       )}
     </>
   );
+}
+
+// Model name leads the line → still attributable once its header row scrolls out of view.
+function getModelTokenDetail(r) {
+  return `${r.model} — in ${formatTokenCompactC(r.input_tokens)} · out ${formatTokenCompactC(r.output_tokens)}`
+    + ` · cache read ${formatTokenCompactC(r.cache_read_tokens)} · cache write ${formatTokenCompactC(r.cache_creation_tokens)}`;
 }
 
 // 모델별 카테고리 USD 기여도 (sub-bar · computeCategoryCostRows 입력) — 단가 가중(tokens × rate/1M) 분배.
@@ -1388,14 +1518,18 @@ function buildModelCostRows(rows) {
 // C2 결정(차트→테이블 전환 KEEP)으로 ModelCostChart / ModelCostTooltipC 제거 — 모델별 비용은
 // ModelCostBody 테이블이 담당(share 막대 스캔 가능). Recharts 는 다른 차트에서 계속 사용.
 
-function CacheHitBody({ state, days, onRetry }) {
-  const { LoadingPlaceholder, RegionUnavailable } = window.UI;
+// the hit rate measures cache reads → drawn in the Cache read category tone, no extra hue in the card
+const CACHE_HIT_LINE_COLOR = `rgb(var(${TOKEN_CATEGORIES.find((c) => c.key === 'cache_read_tokens').colorVar}))`;
 
-  if (state.status === 'loading') {
+function CacheHitBody({ state, days, failures, onRetry }) {
+  const { getRegionView, LoadingPlaceholder, RegionFailure } = window.UI;
+
+  if (getRegionView(state) === 'loading') {
     return <LoadingPlaceholder label="cache hit rate" minHeight={220}/>;
   }
-  if (state.status === 'error') {
-    return <RegionUnavailable source="cache hit rate" error={state.error} onRetry={onRetry} minHeight={220}/>;
+  if (getRegionView(state) === 'error') {
+    return <RegionFailure source="cache hit rate" error={state.error} isBusy={state.busy} focusTargetId={COST_REGION_IDS.cache}
+      onRetry={onRetry} failures={failures} minHeight={220}/>;
   }
 
   const rows = state.data?.rows ?? [];
@@ -1423,6 +1557,10 @@ function CacheHitBody({ state, days, onRetry }) {
 
   // 실측 범위로 Y 도메인 auto-zoom — 고정 [0,100] 은 99%대 변동을 평탄화함.
   const yDomain = computeCacheYDomain(chartRows);
+  // line gaps (connectNulls off) stay silent on their own → the strip names them
+  const gapLabel = getNoDataLabelC(chartRows.map((r) => r.rate_pct));
+  const flatRate = getFlatCacheRate(chartRows);
+  const ratePoints = chartRows.map((r) => ({ label: r.fullDate, value: r.rate_pct }));
 
   return (
     <>
@@ -1431,10 +1569,16 @@ function CacheHitBody({ state, days, onRetry }) {
           {pooledRate === null ? '—' : (pooledRate * 100).toFixed(1) + '%'}
         </div>
         <div className="fs-meta text-dim">pooled hit rate</div>
+        {gapLabel && <div className="fs-meta text-faint">{gapLabel}</div>}
       </div>
-      <div style={{ width: '100%', height: 220 }}>
-        <CacheHitChart rows={chartRows} yDomain={yDomain}/>
-      </div>
+      {flatRate === null ? (
+        <div style={{ width: '100%', height: 220 }}
+          {...window.UI.getChartImageProps(getGapNameC('Daily cache hit rate', ratePoints), ratePoints, formatRatePctC)}>
+          <CacheHitChart rows={chartRows} yDomain={yDomain}/>
+        </div>
+      ) : (
+        <div className="fs-meta text-dim">{`Flat at ${formatRatePctC(flatRate)} every day with data — no line to draw.`}</div>
+      )}
     </>
   );
 }
@@ -1453,6 +1597,38 @@ function computeCacheYDomain(chartRows) {
   return [Math.max(0, min - pad), Math.min(100, max + pad)];
 }
 
+function formatRatePctC(value) {
+  return `${value.toFixed(1)}%`;
+}
+
+// Every day with data reads as one figure at the shown precision → a sentence, not a 220px flat line; null otherwise.
+function getFlatCacheRate(chartRows) {
+  const vals = chartRows.map((r) => r.rate_pct).filter(Number.isFinite);
+  if (vals.length === 0) return null;
+  const labels = new Set(vals.map(formatRatePctC));
+  return labels.size === 1 ? Math.round(vals[0] * 10) / 10 : null;
+}
+
+// Widest tick label ("100.0%") sets the axis width → the top label is never clipped.
+function getCacheAxisWidth(yDomain, decimals) {
+  const widest = Math.max(...yDomain.map((v) => `${v.toFixed(decimals)}%`.length));
+  return widest * window.UI.CHART_TICK_CHAR_PX + 12;
+}
+
+// Multiples of one 1/2/5 step inside the domain → a top clamped at 100 is always a tick; a ≥5-point domain steps in whole percents.
+function getCacheTicks([lo, hi]) {
+  const step = getRoundStepC((hi - lo) / 5);
+  const first = Math.ceil(lo / step - 1e-9);
+  const last = Math.floor(hi / step + 1e-9);
+  return Array.from({ length: last - first + 1 }, (_, i) => Number(((first + i) * step).toFixed(6)));
+}
+
+// Smallest 1/2/5 × 10^k step at or above the raw step
+function getRoundStepC(raw) {
+  const magnitude = 10 ** Math.floor(Math.log10(raw));
+  return [1, 2, 5, 10].map((m) => m * magnitude).find((s) => s >= raw - 1e-9);
+}
+
 function CacheHitChart({ rows, yDomain = [0, 100] }) {
   const { ResponsiveContainer, LineChart, Line, XAxis, YAxis, Tooltip, CartesianGrid } = window.Recharts;
 
@@ -1465,25 +1641,26 @@ function CacheHitChart({ rows, yDomain = [0, 100] }) {
         <CartesianGrid stroke="rgb(var(--line))" strokeDasharray="3 3" vertical={false}/>
         <XAxis
           dataKey="date"
-          tick={{ fontSize: 12, fill: 'rgb(var(--faint))', fontFamily: 'JetBrains Mono, monospace' }}
+          {...getDayAxisPropsC(rows)}
           axisLine={{ stroke: 'rgb(var(--line))' }}
           tickLine={false}
         />
         <YAxis
           domain={yDomain}
+          ticks={getCacheTicks(yDomain)}
           tickFormatter={(v) => v.toFixed(narrow ? 1 : 0) + '%'}
           tick={{ fontSize: 12, fill: 'rgb(var(--faint))', fontFamily: 'JetBrains Mono, monospace' }}
           axisLine={{ stroke: 'rgb(var(--line))' }}
           tickLine={false}
-          width={narrow ? 50 : 42}
+          width={getCacheAxisWidth(yDomain, narrow ? 1 : 0)}
         />
         <Tooltip content={<CacheHitTooltipC/>}/>
         <Line
           type="linear"
           dataKey="rate_pct"
-          stroke="rgb(var(--info))"
+          stroke={CACHE_HIT_LINE_COLOR}
           strokeWidth={2}
-          dot={{ r: 2.5, fill: 'rgb(var(--info))', stroke: 'none' }}
+          dot={{ r: 2.5, fill: CACHE_HIT_LINE_COLOR, stroke: 'none' }}
           activeDot={{ r: 4 }}
           connectNulls={false}
           isAnimationActive={false}
@@ -1512,8 +1689,9 @@ function CacheHitTooltipC({ active, payload }) {
   );
 }
 
-// 5c. Most expensive sessions — top five + a rolled-up Other row, histogram behind it in the drawer.
-const SESSION_TOPN = 5;
+// 5c. Most expensive sessions — top ten + a rolled-up Other row, histogram behind it in the drawer.
+// Ten rows → the table ends level with the model ledger beside it (top five + Other + Total) at xl.
+const SESSION_TOPN = 10;
 
 // Top N by cost + one Other bucket. The population travels with every count — never a bare "5".
 function rollupSessionRows(sessions, topN) {
@@ -1527,25 +1705,48 @@ function rollupSessionRows(sessions, topN) {
   return { top: sorted.slice(0, topN), other, total: sorted.length };
 }
 
-function SessionDistributionCard({ state, days, onRetry, onNav }) {
+/**
+ * Fewest top sessions holding half of spend, capped at the rows the table shows.
+ * A zero-spend population yields null — a share of nothing is not a headline.
+ */
+function getSpendConcentration(sessions, topN) {
+  const costs = sessions.map((s) => Number(s.total_cost_usd) || 0).sort((a, b) => b - a);
+  const total = costs.reduce((s, c) => s + c, 0);
+  if (total <= 0) return null;
+  const count = Math.min(topN, costs.length);
+  const held = costs.slice(0, count).reduce((s, c) => s + c, 0);
+  return { count, share: held / total };
+}
+
+function getSpendConcentrationText(concentration, sessionCount) {
+  if (!concentration) return null;
+  const pct = Math.round(concentration.share * 100);
+  const who = concentration.count === 1 ? 'Top session' : `Top ${concentration.count} sessions`;
+  return `${who} of ${formatIntC(sessionCount)} = ${pct}% of spend`;
+}
+
+function SessionDistributionCard({ state, days, failures, onRetry, onNav }) {
   const { CardHead, Pill } = window.UI;
   const truncated = state.status === 'ready' && state.data?.truncated === true;
   const totalCount = state.status === 'ready' ? Number(state.data?.total_session_count) || 0 : 0;
   const visibleCount = state.status === 'ready' ? (state.data?.rows?.length ?? 0) : 0;
+  const concentrationText = state.status === 'ready'
+    ? getSpendConcentrationText(getSpendConcentration(state.data?.rows ?? [], SESSION_TOPN), visibleCount)
+    : null;
 
   return (
     <div className="card">
       <CardHead
         title="Most expensive sessions"
         sub={state.status === 'ready'
-          ? `top ${Math.min(SESSION_TOPN, visibleCount)} of ${formatIntC(visibleCount)} sessions`
+          ? concentrationText || `top ${Math.min(SESSION_TOPN, visibleCount)} of ${formatIntC(visibleCount)} sessions`
           : undefined}
         right={truncated
           ? <span title={`Showing ${visibleCount} of ${totalCount} sessions`}><Pill>{`${visibleCount} of ${totalCount} loaded`}</Pill></span>
           : null}
       />
       <div className="card-body">
-        <SessionDistributionBody state={state} days={days} onRetry={onRetry} onNav={onNav}/>
+        <SessionDistributionBody state={state} days={days} onRetry={onRetry} failures={failures} onNav={onNav}/>
       </div>
     </div>
   );
@@ -1559,8 +1760,8 @@ const SESSION_COLUMNS = [
   { key: 'seen', label: 'Last seen', isNumeric: true },
 ];
 
-function SessionDistributionBody({ state, days, onRetry, onNav }) {
-  const { LoadingPlaceholder, RegionUnavailable, Table, getRowFocusProps } = window.UI;
+function SessionDistributionBody({ state, days, failures, onRetry, onNav }) {
+  const { getRegionView, LoadingPlaceholder, RegionFailure, Table, getRowFocusProps } = window.UI;
   const [histogramOpen, setHistogramOpen] = useStateC(false);
   const [openSession, setOpenSession] = useStateC(null);
   const [activeRow, setActiveRow] = useStateC(0);
@@ -1570,11 +1771,12 @@ function SessionDistributionBody({ state, days, onRetry, onNav }) {
   const bins = useMemoC(() => computeSessionBins(sessions), [sessions]);
   const rollup = useMemoC(() => rollupSessionRows(sessions, SESSION_TOPN), [sessions]);
 
-  if (state.status === 'loading') {
+  if (getRegionView(state) === 'loading') {
     return <LoadingPlaceholder label="session costs" minHeight={220}/>;
   }
-  if (state.status === 'error') {
-    return <RegionUnavailable source="session costs" error={state.error} onRetry={onRetry} minHeight={220}/>;
+  if (getRegionView(state) === 'error') {
+    return <RegionFailure source="session costs" error={state.error} isBusy={state.busy} focusTargetId={COST_REGION_IDS.sessions}
+      onRetry={onRetry} failures={failures} minHeight={220}/>;
   }
   if (sessions.length === 0) {
     return <EmptyStateC message={`No session events in the last ${days} days.`}/>;
@@ -1725,7 +1927,8 @@ function SessionHistogramDrawerC({ bins, total, onClose }) {
   return (
     <DetailSurface open onClose={onClose} variant="drawer"
       title={`Cost distribution — ${formatIntC(total)} sessions`}>
-      <div style={{ width: '100%', height: 260 }}>
+      <div style={{ width: '100%', height: 260 }} role="img" tabIndex={0}
+        aria-label={`Sessions by cost: ${bins.map((b) => `${b.label} ${formatIntC(b.count)}`).join(', ')}`}>
         <SessionDistributionChart bins={bins}/>
       </div>
       <SessionHistogramLegendC/>
@@ -1800,14 +2003,15 @@ function SessionBinTooltipC({ active, payload }) {
   );
 }
 
-function ParseErrorBody({ state, days, onRetry }) {
-  const { Badge, LoadingPlaceholder, RegionUnavailable } = window.UI;
+function ParseErrorBody({ state, days, failures, onRetry }) {
+  const { getRegionView, Badge, LoadingPlaceholder, RegionFailure } = window.UI;
 
-  if (state.status === 'loading') {
+  if (getRegionView(state) === 'loading') {
     return <LoadingPlaceholder label="unreadable log entries" minHeight={220}/>;
   }
-  if (state.status === 'error') {
-    return <RegionUnavailable source="unreadable log entries" error={state.error} onRetry={onRetry} minHeight={220}/>;
+  if (getRegionView(state) === 'error') {
+    return <RegionFailure source="unreadable log entries" error={state.error} isBusy={state.busy} focusTargetId={COST_REGION_IDS.log}
+      onRetry={onRetry} failures={failures} minHeight={220}/>;
   }
 
   const rows = state.data?.rows ?? [];
@@ -1827,14 +2031,7 @@ function ParseErrorBody({ state, days, onRetry }) {
     }
   }
 
-  const chartRows = rows.map((r) => ({
-    date: typeof r.event_date === 'string' ? r.event_date.slice(5) : '',
-    fullDate: r.event_date,
-    error_count: Number(r.error_count) || 0,
-    total_count: Number(r.total_count) || 0,
-    error_ratio_pct: (Number(r.error_ratio) || 0) * 100,
-    isCrit: isParseErrorCritDay(r),
-  }));
+  const chartRows = getParseErrorChartRows(rows);
 
   const { crit: critDays, total: dayCount } = getParseErrorDayCounts(state);
 
@@ -1843,7 +2040,7 @@ function ParseErrorBody({ state, days, onRetry }) {
       {/* KPI 2-col (총 발생 + 마지막 발생) → 0건 분기에선 차트 생략 (action-trigger 부재). */}
       <div className="grid grid-cols-2 gap-3 mb-3">
         <div>
-          <div className="fs-meta text-dim">Total parse_error</div>
+          <div className="fs-meta text-dim">Unreadable log entries</div>
           <div className="font-mono fs-stat font-semibold tracking-tight">
             {formatIntC(totalErrors)}
           </div>
@@ -1852,7 +2049,9 @@ function ParseErrorBody({ state, days, onRetry }) {
           <div className="fs-meta text-dim">Last seen</div>
           {/* 날짜 = 보조 stat — fs-stat(18px). */}
           <div className="font-mono fs-stat text-fg/80">
-            {lastErrorDate || <span className="text-dim">—</span>}
+            {lastErrorDate
+              ? <span title={lastErrorDate}>{getDaysAgoText(lastErrorDate)}</span>
+              : <span className="text-dim">—</span>}
           </div>
         </div>
       </div>
@@ -1864,9 +2063,12 @@ function ParseErrorBody({ state, days, onRetry }) {
               <Badge role="metadata">{critDays} of {dayCount} days over threshold</Badge>
             </div>
           )}
-          <div style={{ width: '100%', height: 200 }}>
+          <div style={{ width: '100%', height: 200 }}
+            {...window.UI.getChartImageProps('Daily unreadable log entries',
+              rows.map((r) => ({ label: r.event_date, value: Number(r.error_count) || 0 })), formatIntC)}>
             <ParseErrorChart rows={chartRows}/>
           </div>
+          <ParseErrorLegendC hasCritDay={critDays > 0}/>
         </>
       ) : (
         <div className="fs-body text-dim text-center py-8" aria-label="no parse_error — chart omitted">
@@ -1880,6 +2082,54 @@ function ParseErrorBody({ state, days, onRetry }) {
   );
 }
 
+// Day-granular event date → whole days only; an hour count would claim precision the row lacks.
+function getDaysAgoText(eventDate) {
+  const days = Math.floor((Date.now() - new Date(eventDate).getTime()) / 86400000);
+  if (!Number.isFinite(days)) return eventDate;
+  return days <= 0 ? 'today' : `${days}d ago`;
+}
+
+// Threshold as an entry count per day → bars and threshold share one count axis.
+function getParseErrorChartRows(rows) {
+  return rows.map((r) => {
+    const totalCount = Number(r.total_count) || 0;
+    return {
+      date: typeof r.event_date === 'string' ? r.event_date.slice(5) : '',
+      fullDate: r.event_date,
+      error_count: Number(r.error_count) || 0,
+      total_count: totalCount,
+      threshold_count: totalCount * PARSE_ERROR_CRIT_THRESHOLD,
+      error_ratio_pct: (Number(r.error_ratio) || 0) * 100,
+      isCrit: isParseErrorCritDay(r),
+    };
+  });
+}
+
+const PARSE_ERROR_THRESHOLD_LABEL = `Threshold (${PARSE_ERROR_CRIT_THRESHOLD * 100}% of entries)`;
+
+// Legend ↔ chart share these → the swatches cannot drift from the bars and line
+const PARSE_ERROR_COLOR = {
+  bar: 'rgb(var(--accent) / 0.65)',
+  critBar: 'rgb(var(--crit) / 0.85)',
+  threshold: 'rgb(var(--crit))', // crit tone → the line and the days that cross it read as one alarm
+};
+
+function ParseErrorLegendC({ hasCritDay }) {
+  const swatchClass = 'inline-block w-2.5 h-2.5 rounded-sm mr-1.5';
+  return (
+    <ul className="flex flex-wrap gap-4 mt-2 fs-meta text-dim" aria-label="Log integrity legend">
+      <li><span aria-hidden="true" className={swatchClass} style={{ background: PARSE_ERROR_COLOR.bar }}/>Unreadable entries</li>
+      {hasCritDay && (
+        <li><span aria-hidden="true" className={swatchClass} style={{ background: PARSE_ERROR_COLOR.critBar }}/>Day over threshold</li>
+      )}
+      <li>
+        <span aria-hidden="true" style={{ display: 'inline-block', width: 14, marginRight: 6, verticalAlign: 'middle', borderTop: `2px dashed ${PARSE_ERROR_COLOR.threshold}` }}/>
+        {PARSE_ERROR_THRESHOLD_LABEL}
+      </li>
+    </ul>
+  );
+}
+
 function ParseErrorChart({ rows }) {
   const { ResponsiveContainer, ComposedChart, Line, Bar, Cell, XAxis, YAxis, Tooltip, CartesianGrid } = window.Recharts;
 
@@ -1889,7 +2139,7 @@ function ParseErrorChart({ rows }) {
         <CartesianGrid stroke="rgb(var(--line))" strokeDasharray="3 3" vertical={false}/>
         <XAxis
           dataKey="date"
-          tick={{ fontSize: 12, fill: 'rgb(var(--faint))', fontFamily: 'JetBrains Mono, monospace' }}
+          {...getDayAxisPropsC(rows)}
           axisLine={{ stroke: 'rgb(var(--line))' }}
           tickLine={false}
         />
@@ -1901,27 +2151,18 @@ function ParseErrorChart({ rows }) {
           tickLine={false}
           width={36}
         />
-        <YAxis
-          yAxisId="ratio"
-          orientation="right"
-          domain={[0, 100]}
-          tickFormatter={(v) => v.toFixed(0) + '%'}
-          tick={{ fontSize: 12, fill: 'rgb(var(--faint))', fontFamily: 'JetBrains Mono, monospace' }}
-          axisLine={{ stroke: 'rgb(var(--line))' }}
-          tickLine={false}
-          width={42}
-        />
         <Tooltip content={<ParseErrorTooltipC/>} cursor={{ fill: 'rgb(var(--accent) / 0.06)' }}/>
         <Bar yAxisId="count" dataKey="error_count" isAnimationActive={false}>
           {rows.map((r, i) => (
-            <Cell key={i} fill={r.isCrit ? 'rgb(var(--crit) / 0.85)' : 'rgb(var(--accent) / 0.65)'}/>
+            <Cell key={i} fill={r.isCrit ? PARSE_ERROR_COLOR.critBar : PARSE_ERROR_COLOR.bar}/>
           ))}
         </Bar>
         <Line
-          yAxisId="ratio"
+          yAxisId="count"
           type="linear"
-          dataKey="error_ratio_pct"
-          stroke="rgb(var(--warn))"
+          dataKey="threshold_count"
+          name={PARSE_ERROR_THRESHOLD_LABEL}
+          stroke={PARSE_ERROR_COLOR.threshold}
           strokeWidth={1.5}
           strokeDasharray="4 3"
           dot={false}
@@ -1944,7 +2185,7 @@ function ParseErrorTooltipC({ active, payload }) {
         Errors {formatIntC(row.error_count)} / total {formatIntC(row.total_count)}
       </div>
       <div style={{ color: 'rgb(var(--dim))' }}>
-        Rate {row.error_ratio_pct.toFixed(2)}%{row.isCrit ? ' · over threshold' : ''}
+        Rate {row.error_ratio_pct.toFixed(2)}% · threshold {formatIntC(Math.ceil(row.threshold_count))}{row.isCrit ? ' · over threshold' : ''}
       </div>
     </div>
   );
@@ -1965,6 +2206,7 @@ function computeAnomalyRows(points, window, sigma) {
     // 직전 window 행 (현재 포함) → population std (N divisor).
     const slice = [];
     for (let j = i - window + 1; j <= i; j++) {
+      if (isNoDataPointC(points[j])) continue;
       const v = pointCostC(points[j]);
       if (Number.isFinite(v)) slice.push(v);
     }
@@ -1985,9 +2227,30 @@ function buildTrendRow(p) {
   return {
     date: typeof p.date === 'string' ? p.date.slice(5) : '',
     fullDate: p.date,
-    actual: pointCostC(p),
+    actual: isNoDataPointC(p) ? null : pointCostC(p),
     session_count: Number(p.session_count) || 0,
   };
+}
+
+// The server zero-fills a day with no record → no cost and no session reads as "no data", never a $0 day.
+function isNoDataPointC(p) {
+  return pointCostC(p) === 0 && !(Number(p?.session_count) > 0);
+}
+
+function getNoDataLabelC(values) {
+  const gapCount = values.filter((v) => !Number.isFinite(v)).length;
+  if (gapCount === 0) return null;
+  return `${gapCount} of ${values.length} ${values.length === 1 ? 'day' : 'days'} no data`;
+}
+
+// Chart name carrying its gap count → a screen reader hears the gaps the line leaves out.
+function getGapNameC(name, points) {
+  const gapLabel = getNoDataLabelC(points.map((point) => point.value));
+  return gapLabel ? `${name} (${gapLabel})` : name;
+}
+
+function getDayAxisPropsC(rows) {
+  return window.UI.getChartXAxisProps(rows.map((row) => row.date));
 }
 
 // cost-timeseries point → daily cost (USD). cost_usd 우선 · split 합산 폴백 보존.
@@ -2009,24 +2272,26 @@ const anomalyAxisLineStyle = { stroke: 'rgb(var(--line))' };
 
 // stop_reason 표시 메타 — 라벨 + 색상 토큰 + 한 줄 설명. 미정의 reason 은 폴백.
 const STOP_REASON_META = {
-  no_assistant_in_turn: { label: 'tool-only turn', colorVar: '--dim',    desc: 'no LLM reply (tool calls only)' },
-  end_turn:             { label: 'real LLM turn',   colorVar: '--accent', desc: 'ended with an assistant reply' },
-  tool_use:             { label: 'tool_use',     colorVar: '--info',   desc: 'ended on a tool call' },
-  unknown:              { label: 'unknown',      colorVar: '--faint',  desc: 'stop_reason not recorded' },
+  no_assistant_in_turn: { label: 'Tool calls only',   colorVar: '--dim',    desc: 'no model reply in the turn' },
+  end_turn:             { label: 'Model replied',     colorVar: '--accent', desc: 'ended with an assistant reply' },
+  tool_use:             { label: 'Stopped on a tool', colorVar: '--info',   desc: 'ended on a tool call' },
+  unknown:              { label: 'Not recorded',      colorVar: '--faint',  desc: 'no stop reason logged' },
 };
 
 function turnStopReasonMeta(reason) {
-  return STOP_REASON_META[reason] || { label: reason || '—', colorVar: '--faint', desc: '' };
+  const meta = STOP_REASON_META[reason] || { label: reason || '—', colorVar: '--faint', desc: '' };
+  return { ...meta, raw: reason || '' };
 }
 
-function TurnStatsBody({ state, days, onRetry }) {
-  const { LoadingPlaceholder, RegionUnavailable } = window.UI;
+function TurnStatsBody({ state, days, failures, onRetry }) {
+  const { getRegionView, LoadingPlaceholder, RegionFailure } = window.UI;
 
-  if (state.status === 'loading') {
+  if (getRegionView(state) === 'loading') {
     return <LoadingPlaceholder label="turn statistics" minHeight={220}/>;
   }
-  if (state.status === 'error') {
-    return <RegionUnavailable source="turn statistics" error={state.error} onRetry={onRetry} minHeight={220}/>;
+  if (getRegionView(state) === 'error') {
+    return <RegionFailure source="turn statistics" error={state.error} isBusy={state.busy} focusTargetId={COST_REGION_IDS.turns}
+      onRetry={onRetry} failures={failures} minHeight={220}/>;
   }
 
   const stopReasons = state.data?.stop_reasons ?? [];
@@ -2040,10 +2305,11 @@ function TurnStatsBody({ state, days, onRetry }) {
   const maxEvents = stopReasons.reduce((m, r) => Math.max(m, Number(r.event_count) || 0), 0);
   const totalEvents = stopReasons.reduce((s, r) => s + (Number(r.event_count) || 0), 0);
 
+  // Stacked, never split: the card is the 3fr side of a pair at xl → a table column beside the
+  // aggregates would sit below the table's own minimum width.
   return (
     <>
-      {/* turns 집계 — 평균/최대/총 턴 (세션당 턴 수). */}
-      {turns && <TurnAggregateRow turns={turns}/>}
+      {turns && <TurnAggregateRow turns={turns} sessionPopulation={sessionPopulation}/>}
       <TurnStopReasonTable
         rows={stopReasons}
         maxEvents={maxEvents}
@@ -2053,36 +2319,46 @@ function TurnStatsBody({ state, days, onRetry }) {
   );
 }
 
+/**
+ * Headline per-session average + one phrase reconciling its session count with the population.
+ * turn_session_count = sessions with a logged turn count, a subset of every session with a turn event.
+ */
+function getTurnHeadline(turns, sessionPopulation) {
+  const counted = Number(turns.turn_session_count) || 0;
+  if (counted === 0) {
+    return { value: null, note: 'No session in this window logged a turn count.' };
+  }
+  const value = (Number(turns.avg_turns_per_session) || 0).toFixed(1);
+  const note = counted >= sessionPopulation
+    ? `turns per session, across ${formatIntC(counted)} sessions`
+    : `turns per session, over the ${formatIntC(counted)} of ${formatIntC(sessionPopulation)} sessions that logged a turn count`;
+  return { value, note };
+}
+
 // 주 지표 = 세션당 턴 (SUM per session → AVG, 서버 집계) — maxTurns 예산 산정용 (F29).
 // 이벤트당 평균은 skew-sensitive 보조 지표로 격하.
-function TurnAggregateRow({ turns }) {
-  const avgPerSession = Number(turns.avg_turns_per_session) || 0;
-  const sessionCount = Number(turns.turn_session_count) || 0;
-  const avgPerEvent = Number(turns.avg_turns) || 0;
-  const maxTurns = Number(turns.max_turns) || 0;
-  const totalTurns = Number(turns.total_turns) || 0;
+function TurnAggregateRow({ turns, sessionPopulation }) {
+  const headline = getTurnHeadline(turns, sessionPopulation);
+  const secondary = [
+    { label: 'Avg turns per logged event', value: (Number(turns.avg_turns) || 0).toFixed(2) },
+    { label: 'Most turns in one event', value: formatIntC(Number(turns.max_turns) || 0) },
+    { label: 'Total turns', value: formatIntC(Number(turns.total_turns) || 0) },
+  ];
 
   return (
-    <div className="flex items-start gap-4 mb-3">
-      <div>
-        <div className="fs-meta text-dim">Avg turns/session</div>
-        <div className="font-mono fs-stat font-semibold tracking-tight">
-          {sessionCount > 0 ? avgPerSession.toFixed(2) : '—'}
-        </div>
-        {sessionCount > 0 && <div className="fs-meta text-dim font-normal mt-0.5">· {formatIntC(sessionCount)} sessions</div>}
+    <div className="mb-4">
+      <div className="flex items-baseline gap-2 flex-wrap">
+        {headline.value && <span className="font-mono fs-display font-semibold tracking-tight">{headline.value}</span>}
+        <span className="fs-meta text-dim">{headline.note}</span>
       </div>
-      <div>
-        <div className="fs-meta text-dim">Avg turns/event</div>
-        <div className="font-mono fs-stat text-dim tracking-tight">{avgPerEvent.toFixed(2)}</div>
-      </div>
-      <div>
-        <div className="fs-meta text-dim">Max turns</div>
-        <div className="font-mono fs-stat text-dim tracking-tight">{formatIntC(maxTurns)}</div>
-      </div>
-      <div>
-        <div className="fs-meta text-dim">Total turns</div>
-        <div className="font-mono fs-stat text-dim tracking-tight">{formatIntC(totalTurns)}</div>
-      </div>
+      <dl className="grid grid-cols-3 gap-3 mt-2">
+        {secondary.map((item) => (
+          <div key={item.label} className="min-w-0">
+            <dt className="fs-meta text-dim">{item.label}</dt>
+            <dd className="font-mono fs-stat text-dim tracking-tight">{item.value}</dd>
+          </div>
+        ))}
+      </dl>
     </div>
   );
 }
@@ -2098,7 +2374,7 @@ function TurnStopReasonTable({ rows, maxEvents, totalEvents, sessionPopulation }
   return (
     <table className="tbl cost-tbl">
       <caption className="fs-meta text-dim text-left pb-2">
-        {`${formatIntC(sessionPopulation)} sessions with a recorded turn — a session counts under every stop reason it hit, so Sessions does not sum to that total.`}
+        {`A session counts under every stop reason it hit, so Sessions sums past the ${formatIntC(sessionPopulation)} sessions in this window.`}
       </caption>
       <thead>
         <tr>
@@ -2120,8 +2396,9 @@ function TurnStopReasonTable({ rows, maxEvents, totalEvents, sessionPopulation }
             <tr key={r.stop_reason}>
               {/* 라벨+desc 단일행 고정 — 좁은 뷰포트서 desc 래핑→행높이 1↔2줄 점프 차단:
                   flex 1행 + desc truncate(min-w-0) + 전문 title= 툴팁 보존. */}
-              <td>
-                <div className="flex items-center min-w-0" title={meta.desc ? `${meta.label} — ${meta.desc}` : meta.label}>
+              {/* w-full + max-w-0 → the column takes the leftover width instead of the desc's nowrap width, so truncate engages */}
+              <td className="w-full max-w-0">
+                <div className="flex items-center min-w-0" title={[meta.label, meta.desc, meta.raw].filter(Boolean).join(' — ')}>
                   <span
                     className="inline-block w-[3px] h-3 rounded-sm mr-3 shrink-0"
                     style={{ background: `rgb(var(${meta.colorVar}))` }}

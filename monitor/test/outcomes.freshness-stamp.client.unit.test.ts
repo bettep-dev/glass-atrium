@@ -1,5 +1,5 @@
-// The Task results header stamp reads the page's region states: a refresh in flight keeps
-// the stamp busy, and a failed panel read never reads as fresh.
+// The Task results header stamp and verdict read the page's region states: a refresh in flight keeps
+// the stamp busy, a failed panel read never reads as fresh, and a warm error never reads Healthy.
 //
 // Runner: npx tsx --test test/outcomes.freshness-stamp.client.unit.test.ts
 
@@ -7,11 +7,14 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { fileURLToPath } from "node:url";
 import { dirname, resolve } from "node:path";
+import { readFileSync } from "node:fs";
 
 import { buildScreenSandbox } from "./client-sandbox.js";
+import { collectText, findNodes, loadScreenModule, renderScreen, type RenderedNode } from "./lib/render-screen.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const OUTCOMES_SRC = resolve(__dirname, "../public/src/screens/outcomes.jsx");
+const UI_SRC = resolve(__dirname, "../public/src/ui.jsx");
 
 interface RegionState {
   status: string;
@@ -59,5 +62,115 @@ const rows = [
 for (const row of rows) {
   test(`the stamp: ${row.name}`, () => {
     assert.strictEqual(getState(row.at, row.regions), row.expected);
+  });
+}
+
+// ----- verdict, fold tone, retry, tile role and cell contrast (element-tree harness) -----
+
+const ui = await loadScreenModule(UI_SRC);
+const screen = await loadScreenModule(OUTCOMES_SRC, { UI: ui.UI, location: { hash: "" }, URLSearchParams });
+const create = (screen.React as { createElement: (t: unknown, p: unknown) => unknown }).createElement;
+
+type Component = (props: Record<string, unknown>) => unknown;
+
+function render(name: string, props: Record<string, unknown>): RenderedNode {
+  return renderScreen(create(screen[name] as Component, props)) as RenderedNode;
+}
+
+const OK_OVERALL = { total: 200, reconstructed_total: 0, by_result: [{ result: "done", count: 200 }] };
+const settled: RegionState = { ...first, status: "ready", data: { overall: OK_OVERALL }, busy: false };
+const warmError: RegionState = { ...settled, error: "HTTP 500" };
+const channelsOk: RegionState = { ...first, status: "ready", data: { alerting: [] }, busy: false };
+
+function getVerdictText(analytics: RegionState, at: string | null, regions: RegionState[]): string {
+  const tree = render("PageVerdictO", {
+    analyticsState: analytics, channelLivenessState: regions.includes(first) ? first : channelsOk,
+    windowDays: 7, freshness: { at, regions, now: NOW },
+  });
+  return collectText(tree);
+}
+
+const verdictRows = [
+  { name: "a settled fresh read with an ok rate reads Healthy", analytics: settled, at: READ_AT, regions: [settled, channelsOk], has: "Healthy", lacks: "Last known" },
+  { name: "a warm error over an ok rate reads Last known, never Healthy", analytics: warmError, at: READ_AT, regions: [warmError, channelsOk], has: "Last known", lacks: "Healthy" },
+  { name: "a cold load reads No signal with a checking note, never Healthy", analytics: first, at: null, regions: [first, first], has: "No signal", lacks: "Healthy" },
+];
+
+for (const row of verdictRows) {
+  test(`the verdict: ${row.name}`, () => {
+    const text = getVerdictText(row.analytics, row.at, row.regions);
+    assert.ok(text.includes(row.has), `expected "${row.has}" in: ${text}`);
+    assert.ok(!text.includes(row.lacks), `unexpected "${row.lacks}" in: ${text}`);
+  });
+}
+
+test("a cold-error Retry in flight keeps the status band's failure card instead of a loader", () => {
+  const retrying: RegionState = { ...first, status: "loading", busy: true, error: "HTTP 500" };
+  const tree = render("StatusBandO", { analyticsState: retrying, attentionState: first, windowDays: 7, onRetry: () => undefined });
+  const retry = findNodes(tree, (n) => n.type === "button" && collectText(n).includes("Retrying"));
+  assert.strictEqual(retry.length, 1, collectText(tree));
+  assert.strictEqual(retry[0].props["aria-disabled"], "true");
+});
+
+const foldRows = [
+  { name: "a checkable type failing its check past the breakage share tones the fold crit", rows: [{ task_type: "feature", total: 100, verified_fail: 20, verified_pass: 80 }], expected: "crit" },
+  { name: "every checkable type passing leaves the fold untoned", rows: [{ task_type: "feature", total: 100, verified_fail: 0, verified_pass: 100 }], expected: undefined },
+  { name: "a low-sample failing type claims no tone", rows: [{ task_type: "feature", total: 4, verified_fail: 4 }], expected: undefined },
+  { name: "a type with nothing to check never tones the fold", rows: [{ task_type: "doc", total: 100, verified_fail: 50, by_design_unverified: true }], expected: undefined },
+];
+
+for (const row of foldRows) {
+  test(`the By task type fold: ${row.name}`, () => {
+    assert.strictEqual((screen.getTaskTypeFoldToneO as (r: unknown) => unknown)(row.rows), row.expected);
+  });
+}
+
+test("each reporting-health tile is a named group, so a tab or reader lands on one unit", () => {
+  const summary = { healthy_rate: 0.9, attribution_loss_rate: 0.05, literal_omission_rate: 0.03, synthesized_rate: 0.02 };
+  const tree = render("AttributionSummaryRow", { summary, totalAttributed: 100 });
+  const tiles = findNodes(tree, (n) => n.props.role === "group");
+  const names = tiles.map((n) => String(n.props["aria-label"]));
+  for (const label of ["Recorded properly", "Untraceable"]) {
+    assert.ok(names.some((name) => name.startsWith(label)), `no group named ${label}: ${names.join(" | ")}`);
+  }
+});
+
+// WCAG relative luminance over "R G B" token triplets
+function getLuminance(rgb: number[]): number {
+  const [r, g, b] = rgb.map((c) => {
+    const s = c / 255;
+    return s <= 0.03928 ? s / 12.92 : ((s + 0.055) / 1.055) ** 2.4;
+  });
+  return 0.2126 * r + 0.7152 * g + 0.0722 * b;
+}
+
+function getThemeTokens(): Array<Record<string, number[]>> {
+  const css = readFileSync(resolve(__dirname, "../public/styles/tokens.css"), "utf8");
+  return [...css.matchAll(/\{([^}]*)\}/g)]
+    .map((block) => Object.fromEntries([...block[1].matchAll(/--([a-z-]+):\s*(\d+)\s+(\d+)\s+(\d+);/g)]
+      .map((m) => [m[1], [Number(m[2]), Number(m[3]), Number(m[4])]])))
+    .filter((tokens) => tokens.ink && tokens.elev && tokens.accent && tokens.warn);
+}
+
+function getContrast(a: number[], b: number[]): number {
+  const [hi, lo] = [getLuminance(a), getLuminance(b)].sort((x, y) => y - x);
+  return (hi + 0.05) / (lo + 0.05);
+}
+
+for (const isPolar of [false, true]) {
+  test(`the busiest ${isPolar ? "polar" : "plain"} crosstab cell keeps its count at 4.5:1 and its fill at 3:1 in every theme`, () => {
+    const tree = render("CrosstabCell", { cell: { count: 8623, isPolar }, max: 8623, rowLabel: "high", colLabel: "pass" });
+    const td = findNodes(tree, (n) => n.type === "td")[0];
+    assert.strictEqual((td.props.style as { background?: string } | undefined)?.background, undefined, "the count sits on the plain card");
+    const fill = findNodes(tree, (n) => /^rgb\(var\(--[a-z]+\)\)$/.test(String((n.props.style as { background?: string } | undefined)?.background)))[0];
+    assert.ok(fill, "solid fill not found");
+    const fillVar = /--([a-z]+)/.exec(String((fill.props.style as { background: string }).background))![1];
+    const themes = getThemeTokens();
+    assert.strictEqual(themes.length, 2);
+    for (const tokens of themes) {
+      assert.ok(getContrast(tokens.ink, tokens.elev) >= 4.5, "count contrast");
+      const fillContrast = getContrast(tokens[fillVar], tokens.elev);
+      assert.ok(fillContrast >= 3, `fill contrast ${fillContrast.toFixed(2)}`);
+    }
   });
 }

@@ -28,6 +28,12 @@ interface FreshnessInput {
 
 type Updater = (state: PanelState) => PanelState;
 
+// the shell's harness fold — status, not a region's busy flag, says its read is in flight
+interface HarnessFold {
+  status: string;
+  error: string | null;
+}
+
 interface StampSandbox {
   window: {
     UI: {
@@ -35,9 +41,13 @@ interface StampSandbox {
       INITIAL_REGION_STATE: PanelState;
     };
   };
-  getFreshnessInputD: (settledAt: string | null, waveStates: ReadonlyArray<PanelState>) => FreshnessInput;
+  getFreshnessInputD: (
+    settledAt: string | null,
+    waveStates: ReadonlyArray<PanelState>,
+    harness?: HarnessFold | null,
+  ) => FreshnessInput;
   runFetch: (url: string, setter: (update: Updater) => void, request: AbortController) => Promise<boolean>;
-  describeVersion: (harness: { version?: string } | null) => string;
+  describeVersion: (harness: { status?: string; version?: string } | null) => string | null;
 }
 
 const sandbox = await buildScreenSandbox<StampSandbox>(DASH_SRC);
@@ -50,8 +60,8 @@ const refreshing: PanelState = { ...ready, busy: true };
 const loading: PanelState = { status: "loading", busy: true, error: null };
 const failed: PanelState = { status: "error", busy: false, error: "HTTP 500" };
 
-function getState(settledAt: string | null, waveStates: PanelState[]): string {
-  return sandbox.window.UI.getFreshnessState({ ...sandbox.getFreshnessInputD(settledAt, waveStates), now: NOW });
+function getState(settledAt: string | null, waveStates: PanelState[], harness: HarnessFold | null = null): string {
+  return sandbox.window.UI.getFreshnessState({ ...sandbox.getFreshnessInputD(settledAt, waveStates, harness), now: NOW });
 }
 
 test("a wave in flight keeps the last stamp busy, and any failed panel read never reads as fresh", () => {
@@ -67,6 +77,18 @@ test("a wave in flight keeps the last stamp busy, and any failed panel read neve
   for (const [settledAt, waveStates, expected] of cases) {
     const statuses = waveStates.map((st) => `${st.status}${st.busy ? "+busy" : ""}`).join(",");
     assert.strictEqual(getState(settledAt, waveStates), expected, `settledAt=${settledAt} panels=${statuses}`);
+  }
+});
+
+test("the header stamp answers for the shell harness read, so a pending harness read never reads as fresh", () => {
+  const rows: Array<{ name: string; harness: HarnessFold | null; expected: string }> = [
+    { name: "harness read settled", harness: { status: "ready", error: null }, expected: "fresh" },
+    { name: "harness first read in flight", harness: { status: "loading", error: null }, expected: "refreshing" },
+    { name: "harness latest read failed", harness: { status: "ready", error: "HTTP 500" }, expected: "partial" },
+  ];
+
+  for (const row of rows) {
+    assert.strictEqual(getState(READ_AT, [ready, ready], row.harness), row.expected, row.name);
   }
 });
 
@@ -99,4 +121,16 @@ test("the version label stays beside the stamp and never claims a version it doe
   assert.strictEqual(sandbox.describeVersion({ version: "1.0.1" }), "v1.0.1");
   assert.strictEqual(sandbox.describeVersion({}), "version unknown");
   assert.strictEqual(sandbox.describeVersion(null), "version unknown");
+  assert.strictEqual(sandbox.describeVersion({ status: "loading" }), null, "a pending read names no version, so the stamp alone says loading");
+});
+
+test("the state handed to the shell leaves out the harness region the shell already owns", () => {
+  const harness = { status: "error", error: "HTTP 500" } as unknown as HarnessFold;
+  const input = sandbox.getFreshnessInputD(READ_AT, [ready, ready], harness) as FreshnessInput & { shellRegions?: PanelState[] };
+  assert.notEqual(getState(READ_AT, [ready, ready], harness), "fresh", "the rendered stamp still answers for the harness tile");
+  assert.equal(
+    sandbox.window.UI.getFreshnessState({ at: READ_AT, regions: input.shellRegions ?? input.regions, now: NOW } as FreshnessInput & { now: number }),
+    "fresh",
+    "a harness-only failure is not reported to the shell as a page failure",
+  );
 });

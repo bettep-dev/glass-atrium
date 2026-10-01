@@ -29,6 +29,7 @@ interface ViewSandbox {
   React: { createElement: unknown };
   window: { UI: Record<string, unknown>; ImprovementShared?: Record<string, unknown> };
   ImprovementInstrumentationViewI: (props: Record<string, unknown>) => RecordedElement;
+  [card: string]: unknown;
 }
 
 const PAYLOADS = ["statsState", "listState", "correctionState", "corpusAuditState"] as const;
@@ -39,7 +40,7 @@ function isElement(value: unknown): value is RecordedElement {
 
 const sandbox = await buildScreenSandbox<ViewSandbox>(INSTRUMENTATION_SRC);
 const BannerMarker = () => null;
-sandbox.window.UI.RegionUnavailable = BannerMarker;
+sandbox.window.UI.RegionFailure = BannerMarker;
 sandbox.window.ImprovementShared = {};
 sandbox.React.createElement = (type: unknown, props: Record<string, unknown> | null, ...rest: unknown[]) => ({
   type,
@@ -90,23 +91,31 @@ for (const failed of subsets) {
   });
 }
 
-test("a page-level outage banner leaves no per-card Retry", () => {
-  const props: Record<string, unknown> = { onRetry: undefined };
+test("a page-level outage hands every failed card the shared failure, so the banner alone owns Retry", () => {
+  const failures = {
+    banner: { sources: ["flagged results"], error: "HTTP 503 Service Unavailable" },
+    speakers: new Map(),
+  };
+  const props: Record<string, unknown> = { onRetry: undefined, failures };
   for (const name of PAYLOADS) props[name] = { status: "error", data: null, error: "HTTP 503 Service Unavailable" };
 
   const banners = collectBanners(sandbox.ImprovementInstrumentationViewI(props), []);
 
   assert.equal(banners.length, PAYLOADS.length);
-  for (const banner of banners) assert.equal(banner.props.onRetry, undefined);
+  for (const banner of banners) {
+    assert.equal(banner.props.failures, failures);
+    assert.equal(banner.props.onRetry, undefined);
+  }
 });
 
 interface PageSandbox {
   React: { createElement: unknown };
-  window: { UI: { RegionUnavailable: unknown } };
+  window: { UI: { RegionFailure: unknown } };
   ErrorBannerI: (props: Record<string, unknown>) => RecordedElement;
-  getPageFailureI: (
+  getPageFailuresI: (
     regions: Array<{ source: string; state: { error: string | null } }>,
-  ) => { sources: string[]; error: string } | null;
+    view: string,
+  ) => { banner: { sources: string[]; error: string } | null };
 }
 
 const page = await buildScreenSandbox<PageSandbox>(IMPROVEMENT_SRC);
@@ -114,12 +123,13 @@ page.React.createElement = sandbox.React.createElement;
 
 test("a failed region renders the shared unavailable card with its own source, never the raw answer as copy", () => {
   const onRetry = () => {};
-  const banner = page.ErrorBannerI({ source: "loop stats", error: "HTTP 500 Internal Server Error — {}", onRetry });
+  const failures = { banner: { sources: ["suggestions"], error: "HTTP 503" }, speakers: new Map() };
+  const banner = page.ErrorBannerI({ source: "loop stats", error: "HTTP 500 Internal Server Error — {}", onRetry, failures });
 
-  assert.equal(banner.type, page.window.UI.RegionUnavailable);
+  assert.equal(banner.type, page.window.UI.RegionFailure);
   assert.deepEqual(
-    { source: banner.props.source, error: banner.props.error, onRetry: banner.props.onRetry },
-    { source: "loop stats", error: "HTTP 500 Internal Server Error — {}", onRetry },
+    { source: banner.props.source, error: banner.props.error, onRetry: banner.props.onRetry, failures: banner.props.failures },
+    { source: "loop stats", error: "HTTP 500 Internal Server Error — {}", onRetry, failures },
   );
 });
 
@@ -132,7 +142,7 @@ test("the page outage names exactly the regions that failed with one shared caus
   ] as const;
 
   for (const row of rows) {
-    const failure = page.getPageFailureI(row.regions.map(([source, state]) => ({ source, state })));
+    const failure = page.getPageFailuresI(row.regions.map(([source, state]) => ({ source, state })), "instrumentation").banner;
     assert.deepEqual(failure ? [...failure.sources] : null, row.sources ? [...row.sources] : null, row.name);
   }
 });
@@ -167,4 +177,29 @@ test("while every payload loads, each card announces itself through the status-r
     assert.equal(placeholders.length, 1, "each loading card carries exactly one announced placeholder");
     assert.match(String(placeholders[0]?.props.label ?? ""), /\w/, "the placeholder names what is loading");
   }
+});
+
+// Paired gauges share one split row so both read in one eye span, each card in its own column.
+test("the measurement gauges render as side-by-side pairs, one card per column", () => {
+  const props: Record<string, unknown> = { onRetry: () => {} };
+  for (const name of PAYLOADS) props[name] = { status: "loading", data: null, error: null };
+  const pairs: unknown[][] = [];
+  const walk = (node: unknown): void => {
+    if (Array.isArray(node)) return node.forEach(walk);
+    if (!isElement(node)) return;
+    if (node.type === sandbox.window.UI.SplitRow) {
+      // a column is a slot wrapper (the recovery focus target) around its one card
+      const cards = ([] as unknown[]).concat(node.props.children).filter(isElement).map((c) => (c.type === "div" ? c.props.children : c));
+      pairs.push(cards.filter(isElement).map((c) => c.type));
+      return;
+    }
+    walk(node.props.children);
+  };
+
+  walk(sandbox.ImprovementInstrumentationViewI(props));
+
+  assert.deepEqual(pairs, [
+    [sandbox.CorpusGrowthCardI, sandbox.CorrectionSignalsCardI],
+    [sandbox.ProseOnlyAddCardI, sandbox.ConfidenceDistCardI],
+  ]);
 });

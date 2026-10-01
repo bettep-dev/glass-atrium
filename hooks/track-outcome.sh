@@ -1241,6 +1241,37 @@ def _compute_style_ref_verified(completion_d, payload_d):
 out('style_ref_verified', _compute_style_ref_verified(completion, d))
 
 
+# Effective effort tier from the row's OWN transcript (_effective_transcript_path — never the
+# parent). Assistant records only, since no other record type carries the harness tier; a
+# non-token value counts as absent. Returns (tier, 'true'|'false' mixed flag), ('', '') when
+# no assistant record carries a tier. Forward file order, so the last seen is the last written.
+_EFFORT_TOKEN_RE = re.compile(r'[a-z]{1,16}')
+
+
+def _compute_effort(payload_d):
+    tpath = _effective_transcript_path(payload_d)
+    if not tpath:
+        return '', ''
+    items, _ = _read_subagent_transcript_once(tpath)
+    last_tier = ''
+    tiers = set()
+    for rec in items or ():
+        if not isinstance(rec, dict) or rec.get('type') != 'assistant':
+            continue
+        tier = rec.get('effort')
+        if isinstance(tier, str) and _EFFORT_TOKEN_RE.fullmatch(tier):
+            last_tier = tier
+            tiers.add(tier)
+    if not last_tier:
+        return '', ''
+    return last_tier, 'true' if len(tiers) > 1 else 'false'
+
+
+_effort, _has_mixed_effort = _compute_effort(d)
+out('effort', _effort)
+out('has_mixed_effort', _has_mixed_effort)
+
+
 # Grader Step 4-5 transcript Write/Edit cross-check (plan T2, ADR-6). Scans the
 # SUBAGENT's OWN transcript for Write/Edit file_path history via the single-SoT
 # collector style_ref_match.py::collect_write_paths (the {"Write","Edit"} tool-filter,
@@ -1453,6 +1484,13 @@ STYLE_REF_VERIFIED=$(extract_field style_ref_verified)
 case "${STYLE_REF_VERIFIED}" in
   true | false) ;;
   *) STYLE_REF_VERIFIED="" ;;
+esac
+# Effective effort tier + mixed-tier flag from the row's own transcript; empty = JSON null.
+EFFORT=$(extract_field effort)
+HAS_MIXED_EFFORT=$(extract_field has_mixed_effort)
+case "${HAS_MIXED_EFFORT}" in
+  true | false) ;;
+  *) HAS_MIXED_EFFORT="" ;;
 esac
 # Grader Step 4-5 transcript cross-check inputs (plan T2, ADR-6), computed in the python
 # block from the subagent's OWN transcript. GRADER_WRITE_SCAN is whitelisted to the two
@@ -2665,6 +2703,13 @@ BODY_MD=$(
   if [ -n "${STYLE_REF}" ]; then
     printf '%s\n' "- **Style Ref**: ${STYLE_REF}"
   fi
+  if [[ -n "${EFFORT}" ]]; then
+    if [[ "${HAS_MIXED_EFFORT}" == "true" ]]; then
+      printf '%s\n' "- **Effort**: ${EFFORT} (mixed tiers)"
+    else
+      printf '%s\n' "- **Effort**: ${EFFORT}"
+    fi
+  fi
   if [ -n "${FILES}" ]; then
     printf '%s\n' "- **Files**: ${FILES}"
   fi
@@ -2962,6 +3007,8 @@ if [ -x "${PG_HELPER}" ]; then
     --arg attribution_source "${ATTRIBUTION_SOURCE:-}" \
     --arg style_ref "${STYLE_REF:-}" \
     --arg style_ref_verified "${STYLE_REF_VERIFIED:-}" \
+    --arg effort "${EFFORT:-}" \
+    --arg has_mixed_effort "${HAS_MIXED_EFFORT:-}" \
     --arg grader_verdict "${GRADER_VERDICT:-}" \
     --arg downgrade_origin "${DOWNGRADE_ORIGIN:-}" \
     --arg grader_crosscheck "${GRADER_CROSSCHECK:-}" \
@@ -2986,6 +3033,8 @@ if [ -x "${PG_HELPER}" ]; then
         attribution_source: (if $attribution_source == "" then null else $attribution_source end),
         style_ref: (if $style_ref == "" then null else $style_ref end),
         style_ref_verified: (if $style_ref_verified == "" then null else ($style_ref_verified == "true") end),
+        effort: (if $effort == "" then null else $effort end),
+        has_mixed_effort: (if $effort == "" or $has_mixed_effort == "" then null else ($has_mixed_effort == "true") end),
         grader_verdict: (if $grader_verdict == "" then null else $grader_verdict end),
         downgrade_origin: (if $downgrade_origin == "" then null else $downgrade_origin end),
         grader_crosscheck: (if $grader_crosscheck == "" then null else $grader_crosscheck end)

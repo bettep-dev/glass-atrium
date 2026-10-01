@@ -18,13 +18,10 @@
 //
 // Viewport table: 1024 and 1440 are the widths the evaluators scored; 1396 is the width the user
 // actually runs; 1512 and 1920 are the two the fit was first reasoned about. Heights are the window heights
-// those widths plausibly come with — the pane is the viewport height minus a fixed 158px of
-// chrome (measured at the 800, 850 and 1080 heights: 800→642, 850→692, 1080→922). The fill
-// reading takes whichever axis binds, so the exact height is not load-bearing. The height is a
-// constant subtraction rather than a fraction because the chrome above it is pixel-fixed; the
-// earlier ~0.68 fraction was the shared `.card-body { max-height: 70vh }` cap, since released by
-// the screen. The 158 counts this harness's health-store alert strip (45px), which its fixture
-// raises — without that strip those three heights give 687 / 737 / 967.
+// those widths plausibly come with. The pane shares the viewport with the Part health block under
+// the map: `.arch-main` keeps a 62vh floor and the block takes the rest, so the pane height is no
+// longer a fixed subtraction. The fill reading takes whichever axis binds, so the exact height is not
+// load-bearing.
 //
 // A dagre fallback (the ELK loader losing its race) lays the same source ~44% wider and
 // is caught here as a containment failure — no separate layout-engine guard is needed.
@@ -62,6 +59,9 @@ const MIN_RENDERED_LABEL_PX = 12;
 // a fitted map reaches at least this share of the pane on its binding axis (the rest is diagramPadding)
 const MIN_BINDING_AXIS_FILL = 0.9;
 
+// empty pane above or below the drawing — the viewBox padding plus the zone title band, at scale <= 1, stays under this
+const MAX_FRAME_GAP_PX = 24;
+
 // CTM-derived reads (labelPx, scale) carry float noise → the label floor and the scale-1 cap compare within it
 const CTM_FLOAT_TOLERANCE = 1e-6;
 
@@ -87,8 +87,11 @@ interface FitReading {
 	boxCount: number;
 	drawnWidthPx: number;
 	drawnHeightPx: number;
+	gapPx: { above: number; below: number };
 	worstOverflowPx: number;
 	worstId: string;
+	// the drawn box reaching deepest under the zoom controls — a positive 2D overlap depth means a box sits under a button
+	controls: { intrusionPx: number; intruderId: string };
 }
 
 function getLiveFixture(): ArchitectureLiveResponse {
@@ -144,10 +147,11 @@ after(async () => {
 // 뷰포트 하나를 열어 실측 한 벌을 돌려줌.
 // 화면에 resize 리스너가 없어 fit 은 최초 렌더에서 한 번만 적용됨 — 그래서 뷰포트마다 새 페이지를 염
 // (이미 뜬 페이지의 크기를 바꾸면 fit 이 다시 걸리지 않아 이전 폭의 배율을 재게 됨).
-async function readFit(width: number, height: number): Promise<FitReading> {
+async function readFit(width: number, height: number, extraSource?: string): Promise<FitReading> {
 	assert.ok(browser, "browser must be up");
 	const page = await browser.newPage({ viewport: { width, height } });
 	try {
+		if (extraSource) await addDiagramSource(page, extraSource);
 		await page.goto(`${serverUrl}/#architecture`, { waitUntil: "load" });
 		const runtimeReady = await page
 			.waitForFunction(
@@ -207,6 +211,9 @@ async function readFit(width: number, height: number): Promise<FitReading> {
 			const boxes = Array.from(canvas.querySelectorAll("svg g.node, svg g.cluster"));
 			let worstOverflowPx = Number.NEGATIVE_INFINITY;
 			let worstId = "";
+			const controls = canvas.querySelector(".arch-zoom-controls")?.getBoundingClientRect();
+			let controlsIntrusionPx = Number.NEGATIVE_INFINITY;
+			let controlsIntruderId = "";
 			const drawn = { left: Infinity, right: -Infinity, top: Infinity, bottom: -Infinity };
 			for (const box of boxes) {
 				const r = box.getBoundingClientRect();
@@ -223,11 +230,23 @@ async function readFit(width: number, height: number): Promise<FitReading> {
 					pane.bottom - r.bottom,
 				);
 				const overflow = -inset;
+				const intrusion = controls
+					? Math.min(r.right - controls.left, controls.right - r.left, r.bottom - controls.top, controls.bottom - r.top)
+					: Number.NEGATIVE_INFINITY;
+				if (intrusion > controlsIntrusionPx) {
+					controlsIntrusionPx = intrusion;
+					controlsIntruderId = box.getAttribute("data-arch-node-id") || box.id || "(unnamed)";
+				}
 				if (overflow > worstOverflowPx) {
 					worstOverflowPx = overflow;
 					worstId = box.getAttribute("data-arch-node-id") || box.id || "(unnamed)";
 				}
 			}
+
+			// lane mode only: its controls row under the drawing is chrome, not an empty band → the band below ends at its top
+			const isLaneMode = canvas.hasAttribute("data-arch-controls-lane");
+			const frameBottom =
+				isLaneMode && controls && controls.top >= drawn.bottom ? Math.min(pane.bottom, controls.top) : pane.bottom;
 
 			return {
 				paneWidth: pane.width,
@@ -237,8 +256,10 @@ async function readFit(width: number, height: number): Promise<FitReading> {
 				boxCount: boxes.length,
 				drawnWidthPx: drawn.right - drawn.left,
 				drawnHeightPx: drawn.bottom - drawn.top,
+				gapPx: { above: drawn.top - pane.top, below: frameBottom - drawn.bottom },
 				worstOverflowPx,
 				worstId,
+				controls: { intrusionPx: controlsIntrusionPx, intruderId: controlsIntruderId },
 			};
 		}, canvasSelector);
 	} finally {
@@ -259,6 +280,12 @@ const REDUNDANT_TITLE_ZONE = [
 	'    subgraph fitprobe["Probe store"]',
 	'        fitprobe_store[("Probe store (fixture)")]',
 	"    end",
+].join("\n");
+
+// a short chain ending in a fan — a wider and taller part set than the served map, floor-bound at the narrow widths
+const WIDE_TALL_PROBE = [
+	'    fitwide0["Wide probe step"] --> fitwide1["Wide probe step 1"]',
+	...Array.from({ length: 4 }, (_, i) => `    fitwide1 --> fittall${i}["Tall probe leaf ${i}"]`),
 ].join("\n");
 
 // serves the drawn diagrams with extra source lines appended to the map the screen opens on
@@ -470,6 +497,21 @@ for (const { width, height } of VIEWPORTS) {
 		);
 	});
 
+	for (const partSet of [
+		{ name: "the served map", extraSource: undefined },
+		{ name: "a wider and taller map", extraSource: WIDE_TALL_PROBE },
+	]) {
+		test(`no drawn box sits under the zoom controls with ${partSet.name} at ${width}x${height}`, async () => {
+			const r = await readFit(width, height, partSet.extraSource);
+			assert.ok(r.boxCount > 0, "no node or zone boxes were measured — the map did not render");
+			assert.ok(
+				r.controls.intrusionPx <= EPS_PX,
+				`\`${r.controls.intruderId}\` reaches ${r.controls.intrusionPx.toFixed(1)}px under the zoom controls, so a click there presses a button ` +
+					`(pane ${r.paneWidth.toFixed(0)}x${r.paneHeight.toFixed(0)} at scale ${r.scale.toFixed(4)})`,
+			);
+		});
+	}
+
 	test(`every label stays legible at ${width}x${height}`, async () => {
 		const r = await readFit(width, height);
 		assert.ok(r.labelPx > 0, "no drawn label was measured");
@@ -493,8 +535,53 @@ for (const { width, height } of VIEWPORTS) {
 	});
 }
 
+for (const { width, height } of VIEWPORTS) {
+	test(`the drawing fills its frame with no empty band above or below it at ${width}x${height}`, async () => {
+		const r = await readFit(width, height);
+		const gaps = `pane ${r.paneWidth.toFixed(0)}x${r.paneHeight.toFixed(0)} · drawn ${r.drawnWidthPx.toFixed(0)}x${r.drawnHeightPx.toFixed(0)} · ` +
+			`${r.gapPx.above.toFixed(0)}px empty above, ${r.gapPx.below.toFixed(0)}px below`;
+		assert.ok(r.gapPx.above <= MAX_FRAME_GAP_PX, `a band above the drawing: ${gaps}`);
+		assert.ok(r.gapPx.below <= MAX_FRAME_GAP_PX, `a band below the drawing: ${gaps}`);
+	});
+}
+
 test("a zone whose title repeats its lone member hides the title and keeps no band for it", async () => {
 	const r = await readZones(1440, 900, REDUNDANT_TITLE_ZONE);
 	assert.ok(r.hiddenTitleCount > 0, "no hidden-title zone was measured — the band assertion below would be vacuous");
 	assert.deepEqual(r.titleBands, [], `a zone with a hidden title keeps its title band: ${r.titleBands.join("; ")}`);
 });
+
+// the part health block takes the band under the map — it has to start on the first screen, not after a scroll
+async function readPartHealthPlacement(width: number, height: number) {
+	assert.ok(browser, "browser must be up");
+	const page = await browser.newPage({ viewport: { width, height } });
+	try {
+		await page.goto(`${serverUrl}/#architecture`, { waitUntil: "load" });
+		await page.waitForFunction(
+			() => Number(document.querySelector(".svg-pan-zoom_viewport")?.getAttribute("data-arch-fit-scale")) > 0,
+			null,
+			{ timeout: 60_000 },
+		);
+		await page.waitForSelector(".arch-part-health", { timeout: 10_000 });
+
+		return await page.evaluate(() => {
+			const canvas = document.querySelector(".arch-mermaid-canvas") as HTMLElement;
+			const block = document.querySelector(".arch-part-health") as HTMLElement;
+			return {
+				canvasBottom: canvas.getBoundingClientRect().bottom,
+				blockTop: block.getBoundingClientRect().top,
+				viewportHeight: window.innerHeight,
+			};
+		});
+	} finally {
+		await page.close();
+	}
+}
+
+for (const { width, height } of VIEWPORTS) {
+	test(`the part health block starts under the map on the first screen at ${width}x${height}`, async () => {
+		const r = await readPartHealthPlacement(width, height);
+		assert.ok(r.blockTop >= r.canvasBottom - EPS_PX, `the block (top ${r.blockTop.toFixed(0)}) overlaps the map (bottom ${r.canvasBottom.toFixed(0)})`);
+		assert.ok(r.blockTop < r.viewportHeight, `the block starts at ${r.blockTop.toFixed(0)}px, below the ${r.viewportHeight}px screen`);
+	});
+}

@@ -63,9 +63,9 @@ function parseHashScreen() {
 	return NAV.some((n) => n.id === raw) ? raw : "dashboard";
 }
 
-function Sidebar({ active, onNav, harness }) {
+function Sidebar({ active, onNav, harness, pageState }) {
 	const { Icon } = window.UI;
-	const systems = systemsRollup(harness);
+	const systems = systemsRollup(harness, pageState);
 	const dynamicBadges = harnessToNavBadges(harness);
 	return (
 		<aside aria-label="Sidebar" className="shell-sidebar flex-shrink-0 border-r border-line h-screen sticky top-0 flex flex-col bg-elev">
@@ -114,6 +114,7 @@ function Sidebar({ active, onNav, harness }) {
 										key={i}
 										className={`nav-badge shrink-0 ${b.badgeTone || ""}`}
 										style={b.badgeTone === "crit" ? NAV_BADGE_CRIT_STYLE : undefined}
+										title={b.title}
 									>
 										{b.badge}
 									</span>
@@ -128,7 +129,12 @@ function Sidebar({ active, onNav, harness }) {
 					<div className="flex items-center gap-1.5 mb-1">
 						{/* 라이브 롤업 파생 — ok 상태만 pulse(live-dot), 그 외 정적 (가짜 상시-green 제거). */}
 						<span className={`w-1.5 h-1.5 rounded-full ${systems.dotClass}${systems.tone === "ok" ? " live-dot" : ""}`}></span>
-						<span className="rail-hide font-mono text-dim">{systems.label}</span>
+						{systems.glyph && (
+							<span aria-hidden="true" className="rail-hide font-mono text-crit">
+								{systems.glyph}
+							</span>
+						)}
+						<span className={`rail-hide font-mono ${systems.tone === "crit" ? "text-crit" : "text-dim"}`}>{systems.label}</span>
 					</div>
 				</div>
 			</div>
@@ -186,24 +192,29 @@ function getHarness(stores) {
 	const failedKeys = Object.keys(HARNESS_SOURCES).filter((key) => stores[key]?.error != null);
 	return {
 		...fold,
+		kpi: stores.kpiState?.data ?? null, // raw /api/dashboard/kpi — yesterday_* fields for day-over-day tile trends
 		unreadSources: failedKeys.map((key) => HARNESS_SOURCES[key].label),
 		error: failedKeys.length > 0 ? stores[failedKeys[0]].error : null,
 	};
 }
 
-// harness fold → architecture(System map) nav 슬롯. 두 기여분(KPI 실패 카운트 · 데몬 다운)이
+// harness fold → architecture(System map) nav 슬롯. 두 기여분(KPI 실패 카운트 · 다운 파트)이
 // 한 fold 에서 같이 나오므로 소스별 병합이 필요 없다 — 재폴링이 서로를 덮을 수 없음.
 // 키 존재 = polled 계약 유지: fold 가 아직 아무것도 관측 못 했으면 키 자체를 내지 않는다.
 function harnessToNavBadges(harness) {
 	if (!harness || harness.status !== "ready") return {};
 
 	const badges = [];
-	if (harness.failCount1h > 0) {
-		badges.push({ badge: String(harness.failCount1h), badgeTone: "warn", source: "kpi" });
+	const failCount = harness.failCount1h;
+	if (failCount > 0) {
+		const title = `${failCount} failed ${failCount === 1 ? "task" : "tasks"} in the last hour`;
+		badges.push({ badge: String(failCount), badgeTone: "warn", source: "kpi", title });
 	}
-	if (harness.daemonsDown > 0) {
-		// a down daemon is crit on its Dashboard alarm → the badge follows the worst severity
-		badges.push({ badge: String(harness.daemonsDown), badgeTone: "crit", source: "daemon" });
+	// downNames = the Dashboard lane's harness-alarm set (crit) → numeral + tone match the page, daemons or not
+	const downCount = harness.downNames.length;
+	if (downCount > 0) {
+		const title = `${downCount} harness ${downCount === 1 ? "part" : "parts"} down: ${harness.downNames.join(" · ")}`;
+		badges.push({ badge: String(downCount), badgeTone: "crit", source: "down", title });
 	}
 	return { architecture: badges.length > 0 ? { badges } : null };
 }
@@ -211,20 +222,35 @@ function harnessToNavBadges(harness) {
 // ALL SYSTEMS 풋터 도트 = 레인/타일과 같은 harness fold 파생. 폴링이 실패한 순간에도
 // 두 표면이 어긋나지 않는다 — 첫 폴 대기는 neutral 'CHECKING…', 읽기 실패는 'STATUS UNKNOWN'.
 // 도트 클래스는 StatusDot(ui.jsx) 어휘 재사용 (미등록 클래스 금지).
-function systemsRollup(harness) {
-	if (!harness || harness.status === "loading") {
-		return { tone: "neutral", dotClass: "bg-faint", label: "CHECKING…" };
-	}
+// pageState = the page header stamp's read state (ui.jsx → getShellPageState): outranks only ALL SYSTEMS.
+function systemsRollup(harness, pageState = null) {
+	if (!harness || harness.status === "loading") return getNeutralRollup("CHECKING…");
 
 	const isReady = harness.status === "ready";
-	const issues =
-		isReady && (harness.downNames.length > 0 || harness.daemonsDown > 0 || harness.failCount1h > 0);
+	const downCount = isReady ? harness.downNames.length : 0;
+	// tone = worst alarm severity: a down part is the lane's crit harness alarm
+	if (downCount > 0) {
+		const label = `${downCount} ${downCount === 1 ? "PART" : "PARTS"} DOWN`;
+		return { tone: "crit", dotClass: "bg-crit", glyph: "✕", label };
+	}
+	const issues = isReady && (harness.daemonsDown > 0 || harness.failCount1h > 0);
 	if (issues) return { tone: "warn", dotClass: "bg-warn", label: "ISSUES DETECTED" };
 	// an unread source could hide a fault → unknown, never ALL SYSTEMS
-	if (!isReady || harness.unreadSources?.length > 0) {
-		return { tone: "neutral", dotClass: "bg-faint", label: "STATUS UNKNOWN" };
-	}
-	return { tone: "ok", dotClass: "bg-ok", label: "ALL SYSTEMS" };
+	if (!isReady || harness.unreadSources?.length > 0) return getNeutralRollup("STATUS UNKNOWN");
+	return getPageRollup(pageState) ?? { tone: "ok", dotClass: "bg-ok", label: "ALL SYSTEMS" };
+}
+
+// page read state in the stamp's own words, neutral tone — a read fact, not a harness verdict; fresh → null
+function getPageRollup(pageState) {
+	const { state, at } = pageState ?? {};
+	if (state === "loading") return getNeutralRollup("CHECKING…");
+	if (state === "not-read") return getNeutralRollup("NOT READ");
+	if (state === "stale" || state === "partial") return getNeutralRollup(`LAST KNOWN ${window.UI.formatKstTime(at)}`);
+	return null;
+}
+
+function getNeutralRollup(label) {
+	return { tone: "neutral", dotClass: "bg-faint", label };
 }
 
 function App() {
@@ -272,15 +298,24 @@ function App() {
 	// harness wave — every harness source on one 60s cadence; a failed read keeps the held data.
 	// 레인/타일이 살아있는 판독을 받아야 하므로 마운트 1회로는 부족하다.
 	// 같은 폴이 Dashboard 하네스 타일의 Retry → 화면이 두 번째 요청 경로를 갖지 않는다.
+	// one read in flight at a time: the poll, the Dashboard's re-read and the shared Refresh/Retry all join it
 	const isHarnessMountedRef = useR(true);
-	const pollHarness = useC(async () => {
-		const settled = await readHarnessSources();
-		if (!isHarnessMountedRef.current) return;
-		setKpiState((prev) => toStoreState(settled.kpiState, prev));
-		setHealthState((prev) => toStoreState(settled.healthState, prev));
-		setLiveState((prev) => toStoreState(settled.liveState, prev));
-		setHookState((prev) => toStoreState(settled.hookState, prev));
-		setHookFailState((prev) => toStoreState(settled.hookFailState, prev));
+	const harnessReadRef = useR(null);
+	const pollHarness = useC(() => {
+		if (harnessReadRef.current) return harnessReadRef.current;
+		harnessReadRef.current = readHarnessSources()
+			.then((settled) => {
+				if (!isHarnessMountedRef.current) return;
+				setKpiState((prev) => toStoreState(settled.kpiState, prev));
+				setHealthState((prev) => toStoreState(settled.healthState, prev));
+				setLiveState((prev) => toStoreState(settled.liveState, prev));
+				setHookState((prev) => toStoreState(settled.hookState, prev));
+				setHookFailState((prev) => toStoreState(settled.hookFailState, prev));
+			})
+			.finally(() => {
+				harnessReadRef.current = null;
+			});
+		return harnessReadRef.current;
 	}, []);
 	useE(() => {
 		isHarnessMountedRef.current = true;
@@ -291,6 +326,15 @@ function App() {
 			clearInterval(id);
 		};
 	}, [pollHarness]);
+
+	// page read state from the header stamp (ui.jsx → useShellPageState); the stamp clears it on unmount
+	const [pageState, setPageState] = useS(null);
+	useE(() => {
+		window.UI.setShellBridge({ putPageState: setPageState, readHarness: pollHarness });
+		return () => window.UI.setShellBridge();
+	}, [pollHarness]);
+
+	const displayTimezone = useDisplayTimezone(healthState.data?.timezone);
 
 	// route change → page heading focus (drill + sidebar + back/forward); first mount excluded
 	const focusedRoute = useR(active);
@@ -334,11 +378,11 @@ function App() {
 			<a href={`#${MAIN_CONTENT_ID}`} className="skip-link" onClick={onSkipToContent}>
 				Skip to content
 			</a>
-			<Sidebar active={active} onNav={onNavClick} harness={harness} />
+			<Sidebar active={active} onNav={onNavClick} harness={harness} pageState={pageState} />
 			<div className="flex-1 min-w-0 flex flex-col">
 				<main id={MAIN_CONTENT_ID} tabIndex={-1} className="flex-1 min-w-0 p-6 flex flex-col min-h-0">
 					{Screen ? (
-						<Screen onNav={onNavClick} harness={harness} onRetryHarness={pollHarness} />
+						<Screen key={displayTimezone} onNav={onNavClick} harness={harness} onRetryHarness={pollHarness} />
 					) : (
 						<div className="placeholder">Coming soon — '{active}'</div>
 					)}
@@ -347,6 +391,20 @@ function App() {
 			<TweaksUI tweaks={tweaks} setTweak={setTweak} />
 		</div>
 	);
+}
+
+/**
+ * Effective display tz, seeded from the shell's own /api/health read; the page keys on it.
+ * Key change → remount → memoized time strings re-render in the arrived zone; unchanged zone → no remount.
+ * @param healthTimezone - `timezone` of the latest health read; absent or invalid keeps the default
+ */
+function useDisplayTimezone(healthTimezone) {
+	const [timezone, setTimezone] = useS(() => window.UI.getDisplayTimezone());
+	useE(() => {
+		window.UI.setDisplayTimezone(healthTimezone);
+		setTimezone(window.UI.getDisplayTimezone());
+	}, [healthTimezone]);
+	return timezone;
 }
 
 // 테마(모드+강조색) + 레이아웃(밀도) 두 섹션. TweaksPanel 미로드 시 null
@@ -402,14 +460,5 @@ function hexToRgbTriplet(hex) {
 	return `${r} ${g} ${b}`;
 }
 
-// 표시 tz 시드 — /api/health 의 timezone(config [meta].timezone 렌더)을 1회 fetch 후
-// 렌더 시작. localhost 단발 호출이라 부트 지연 무시 가능 · 실패 시 기본(KST) 유지.
-// 렌더 후 시드 시 이미 그려진 시각 문자열이 stale 해지는 race 차단이 목적.
-fetchJson("/api/health")
-	.then((health) => window.UI.setDisplayTimezone(health && health.timezone))
-	.catch(() => {
-		// 무시 — setDisplayTimezone 미호출 = 기본 tz 폴백이 의도된 동작
-	})
-	.finally(() => {
-		ReactDOM.createRoot(document.getElementById("root")).render(<App />);
-	});
+// 첫 페인트는 API 를 기다리지 않는다 — 표시 tz 는 App 이 셸 health 폴에서 시드 (useDisplayTimezone)
+ReactDOM.createRoot(document.getElementById("root")).render(<App />);
