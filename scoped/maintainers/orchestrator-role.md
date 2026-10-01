@@ -113,4 +113,13 @@ Maintainer-facing material for that rule file. Nothing here binds the orchestrat
 - `## Document-Driven Workflow` is the orchestrator-side lifecycle SoT. `skills/glass-atrium-ops-orchestrator.md` → `#### Pipeline Acceptance Criteria` mirrors its gate sequence as per-stage acceptance detail and carries the ultracode in-script verify-stage skeleton.
   - The skill cites the rule file as the SoT for step 4's procedure (`#### Pipeline Acceptance Criteria`) and for step 6's pre-PR default and live-suite threshold (`#### Deploy-Safety Idiom`). Edit the two together; neither is a redundancy to delete.
   - Step 6's per-cycle order line and its narrow post-merge cases live in `skills/glass-atrium-ops-delegation-contracts/references/live-deploy-gate.md`; `#### Deploy-Safety Idiom` cites that file for them, so an edit there moves with the skill's citer too.
+  - Step 6's **Prompt-file tail** is an insertion into the reference file's per-cycle order, never a second order; the reference file's `## Per-cycle order` points to it by that lead.
+    - The tail is also the single site of the prompt-file cycle trigger class; every other file names "prompt-file cycle" and points here.
+    - Citers that move with it:
+      - `live-deploy-gate.md` → `## Per-cycle order`;
+      - `skills/glass-atrium-ops-delegation-contracts/SKILL.md` → Reference Index row "Pre-merge live-deploy gate";
+      - `#### Deploy-Safety Idiom` → the step-6 pointer;
+      - `#### Pipeline Acceptance Criteria` → `##### Stage gates`;
+      - `scoped/scope-meta.md` → `## Prompt Deliverable Team Rule` → **Prompt-audit pass**;
+      - `agents/glass-atrium-meta-prompt-engineer.md` → `## Corpus Edit Pass` → **Prompt-audit pass**.
 - Step 6's pointer to `scoped/shared-testing.md` → Destructive-Path Suite Safety keeps the phrase "pointer only, the procedure is single-sited there": `scoped/maintainers/shared-testing.md` quotes it as the reason that section stays single-sited. Reword both together or neither.

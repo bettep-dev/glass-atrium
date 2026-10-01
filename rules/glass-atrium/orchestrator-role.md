@@ -445,6 +445,8 @@ The standard plan/report-then-build flow as ONE lifecycle.
 6. **Live deploy + empirical verification (PRE-MERGE delivery gate — live-install bundle members only)** — binds any delivered change touching live-install bundle members. The DEFAULT per-cycle order puts deploy and verification BEFORE the PR, never after the merge.
    - **Live-suite instrument, run from the install root**: `AUTOAGENT_PREFLIGHT_ACTIVE=1 scripts/run-bats-parallel.sh` MUST exit 0 before the PR is opened.
      - Before running a suite file that executes the postgres orphan-clear guards, clear `scoped/shared-testing.md` → Destructive-Path Suite Safety (live-postgres reach) — pointer only, the procedure is single-sited there.
+   - **Prompt-file tail**: a prompt-file cycle — one that modifies a prompt, agent body, rule or skill file — inserts prompt-audit pass → add review → structure verdict on the audit hunks into the per-cycle order, between simplify and the review of the modified files.
+     - The pass contract and the add-review routing: `scoped/scope-meta.md` → `## Prompt Deliverable Team Rule`.
    - SoT for the rest: `skills/glass-atrium-ops-delegation-contracts/references/live-deploy-gate.md`.
      - Held there: the per-cycle order, combined-tree deploy, live-install (not repo-tree) verification, green-before-PR, post-merge sha parity and narrow cases, the delegated-deploy boundary (manual live-install writes FORBIDDEN), the bundle-member list, honest framing.
 

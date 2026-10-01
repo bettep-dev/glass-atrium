@@ -14,3 +14,16 @@ Binds every prompt, agent instruction, rule and skill you author or edit, and ev
   - Carve-out: provenance that changes what the reader DOES stays — an honest-backing note stating what is and is not enforced is a functional reference, not history.
 - **No derived values**: a count or total a reader could compute from the members named in the same passage is noise — name the members and drop the number.
   - Carve-out: a bare cardinality standing beside no list may be the only signal that the list is closed, so removal there is a judgement, not automatic.
+
+## Prompt-Audit Overrides
+
+- **Scope**: binds the prompt-audit pass (`scoped/scope-meta.md` → `## Prompt Deliverable Team Rule`) and the structure verdict that judges its override outcome.
+- Each override states only its delta from the `/claude-api` prompt-audit guide.
+- **Constraint modals**: judge each modal by where it came from — a modal that encodes a real constraint stays.
+  - A booster with no constraint behind it: `agents/glass-atrium-meta-prompt-engineer.md` → `## Structure Self-Check` → `No caps inflation`.
+- **Trigger text**: every `description` field keeps its calibrated urgency.
+- **Fragile operations**: in Atrium these are git, deploy, destructive commands, the updater seam, harness paths and secrets — their text keeps its exact wording.
+- **Honest-backing notes**: they stay; their single site is `## Authoring Hygiene` → `No history-type content` → its carve-out.
+- **Test-consumed literals**: a finding that would change text a coupled test asserts (`agents/glass-atrium-meta-prompt-engineer.md` → `## Corpus Edit Pass` → **Coupled test**) drops to `flag` when its hunk cannot carry the test change.
+- **Bullet walls**: the guide's Group 1c row "Bullet walls and heavy formatting for behavioral guidance" is not applied — bullets and tables stay, because `agents/glass-atrium-meta-prompt-engineer.md` → `## Structure Self-Check` → `One line, one rule` and `Decision table` outrank it.
+- **Decided diet keeps**: text an earlier diet decision kept is not reopened.

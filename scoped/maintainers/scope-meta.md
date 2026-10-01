@@ -40,7 +40,7 @@ Maintainer-facing material for that rule file. Nothing here binds either META ag
 | `Absolute Rules` | nothing cites it by name — kept because the heading names the content beneath it |
 | `CQRS Exception` | `scoped/scope-planning.md` and `scoped/scope-design.md`, both by pointer |
 | `Outcome-Driven Rewrite Policy` | `rules/glass-atrium/orchestrator-role.md` → Capability Probe |
-| `Prompt Deliverable Team Rule` | `rules/glass-atrium/orchestrator-role.md` → `## Delegation Criteria` · `skills/glass-atrium-ops-orchestrator.md` → the routing-table row for prompt/rule authoring |
+| `Prompt Deliverable Team Rule` | `rules/glass-atrium/orchestrator-role.md` → `## Delegation Criteria` and step 6 of `## Document-Driven Workflow` · `skills/glass-atrium-ops-orchestrator.md` → the routing-table row for prompt/rule authoring and `##### Stage gates` |
 | `DEV Rule Inheritance` | `rules/glass-atrium/core-compliance-matrix.md` → Tier-3 META-inheritance bullet |
 
 - `Skills Array Order` has no external citer (it occurs only in `scoped/scope-meta.md` and this note), so it stays out of the register.
@@ -64,6 +64,8 @@ Do not restore any item below.
 ## Prompt Deliverable Team Rule — the delivery gap that was NOT moved
 
 The composer-facing line stays in the rule file rather than moving here, because it changes what the delegation author does: `agents/glass-atrium-intel-reporter.md` states the verdict-only constraint nowhere, so the delegation prompt is the only channel that carries it to the reviewer. If that constraint ever lands in the reporter body, the line becomes a duplicate and should be cut then.
+
+- The add-review composer line under **Add review** follows the same reasoning for the add reviewers; cut it only once every reviewer the add-review table names carries the constraint in its own body.
 
 ## Open questions
 

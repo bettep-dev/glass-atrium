@@ -536,7 +536,7 @@ Binds any delegation that copies files INTO a live install: reach the destinatio
 
 ##### When in the cycle this deploy runs (pointer, not a restatement)
 
-- Order SoT — pre-merge by default, the live-suite instrument and its exit-0 threshold: `orchestrator-role.md` → `## Document-Driven Workflow` step 6.
+- Order SoT — pre-merge by default, the live-suite instrument and its exit-0 threshold, the prompt-file tail: `orchestrator-role.md` → `## Document-Driven Workflow` step 6.
   - The per-cycle order line and the narrow post-merge cases: `skills/glass-atrium-ops-delegation-contracts/references/live-deploy-gate.md` → `## Per-cycle order` · `## Scope and backing`.
 - This section covers only HOW the copy reaches its destination safely.
 
@@ -635,6 +635,8 @@ Two families live here:
   - Domain-specific accuracy verified
   - No placeholder/TODO in content
   - If unmet, request domain agent revision (max 1 time)
+- **After the prompt-audit pass (prompt-file cycles)**: accepted when its audit report exists; an empty report is valid.
+  - Position: `orchestrator-role.md` → `## Document-Driven Workflow` step 6 · contract: `scoped/scope-meta.md` → `## Prompt Deliverable Team Rule`.
 - **After implementation, before document completion — reconciliation in BOTH directions (MANDATORY)**: coverage (every planned work stream built, N/N) and excess (nothing built that the plan and `[SCOPE] files=` never authorized) both clear before `doc_status → done`.
   - Actor and stage write: glass-atrium-qa-code-reviewer reconciles; the orchestrator's stage write follows — `## Managed Document Completion (Direct Handling)` → Step 3.
   - Procedure, the distinction from the correctness gates, and the honest backing (honor-system): `orchestrator-role.md` → `## Document-Driven Workflow` step 4.
