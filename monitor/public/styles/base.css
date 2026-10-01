@@ -616,6 +616,85 @@ details[open] > summary .chevron {
 .alarm-row[data-tone="info"] .alarm-row-glyph { color: rgb(var(--info)); }
 .alarm-row[data-tone="ok"] .alarm-row-glyph { color: rgb(var(--ok)); }
 
+/* alert card — tone rides on the glyph well; never a stripe, a tinted card fill or a tone border.
+   light: solid well + knock-out glyph (a tinted light well leaves --warn at 2.81:1) · dark: tinted well + tone glyph */
+.alert-card {
+	--alert-tone: var(--crit);
+	--alert-well-fill: rgb(var(--alert-tone));
+	--alert-glyph: rgb(var(--elev));
+	container-type: inline-size;
+	padding: 12px 16px;
+	/* motion: effects-fast — opacity only, so it is already the reduced-motion form */
+	animation: detailFade 150ms cubic-bezier(0.2, 0, 0, 1);
+}
+[data-theme="dark"] .alert-card {
+	--alert-well-fill: rgb(var(--alert-tone) / 0.12);
+	--alert-glyph: rgb(var(--alert-tone));
+}
+.alert-card[data-tone="crit"] { --alert-tone: var(--crit); }
+.alert-card[data-tone="warn"] { --alert-tone: var(--warn); }
+.alert-card[data-tone="info"] { --alert-tone: var(--info); }
+.alert-card[data-tone="ok"] { --alert-tone: var(--ok); }
+.alert-card[data-tone="neutral"] { --alert-tone: var(--dim); }
+.alert-card.is-inset {
+	padding: 12px;
+}
+.alert-card-grid {
+	display: grid;
+	grid-template-columns: auto minmax(0, 1fr) auto;
+	column-gap: 12px;
+	align-items: start;
+}
+.alert-card-well {
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	width: var(--ctl-min-h);
+	height: var(--ctl-min-h);
+	border-radius: var(--radius-tile);
+	background: var(--alert-well-fill);
+	color: var(--alert-glyph);
+}
+.alert-card.is-inset .alert-card-well {
+	width: 24px;
+	height: 24px;
+	border-radius: var(--radius-control);
+}
+/* 6px → the 20px title line centres on the 32px well (2px on the 24px inset well) */
+.alert-card-content {
+	display: flex;
+	flex-direction: column;
+	gap: 4px;
+	min-width: 0;
+	padding-top: 6px;
+}
+.alert-card.is-inset .alert-card-content {
+	padding-top: 2px;
+}
+.alert-card-title {
+	line-height: 20px;
+}
+.alert-card-body {
+	max-width: 72ch;
+	line-height: 1.4;
+}
+.alert-card-subjects {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 4px;
+	margin-top: 4px;
+}
+.alert-card-actions {
+	display: flex;
+	gap: 8px;
+}
+@container (max-width: 36rem) {
+	.alert-card-actions {
+		grid-column: 2;
+		margin-top: 8px;
+	}
+}
+
 /* stage pip — empty pips ≥3:1 on every surface, filled pips take the ink */
 .stage-pip {
 	width: 8px;

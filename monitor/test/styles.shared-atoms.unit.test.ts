@@ -7,7 +7,7 @@ import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, resolve } from "node:path";
 
-import { contrastRatio, type Rgba } from "./lib/wcag-contrast.js";
+import { compositeOver, contrastRatio, type Rgba } from "./lib/wcag-contrast.js";
 
 const STYLES = resolve(dirname(fileURLToPath(import.meta.url)), "../public/styles");
 const TOKENS_CSS = readFileSync(resolve(STYLES, "tokens.css"), "utf8");
@@ -189,5 +189,33 @@ test("an alarm row is a flat hairline row whose tone rides on its glyph, never a
   for (const tone of ["crit", "warn", "info", "ok"]) {
     const glyph = getRuleBodies(BASE_CSS, `.alarm-row[data-tone="${tone}"] .alarm-row-glyph`).join(";");
     assert.match(glyph, new RegExp(`color:\\s*rgb\\(var\\(--${tone}\\)\\)`), `${tone} glyph tone`);
+  }
+});
+
+test("an alert card carries its tone only in the glyph well, and every well glyph clears 3:1 in both themes", () => {
+  const TONE_TOKEN = { crit: "--crit", warn: "--warn", info: "--info", ok: "--ok", neutral: "--dim" } as const;
+  const shells = [".alert-card", ".alert-card.is-inset"].map((s) => getRuleBodies(BASE_CSS, s).join(";"));
+  const wells = [
+    ["light", THEMES[0][1], getRuleBodies(BASE_CSS, ".alert-card").join(";")],
+    ["dark", THEMES[1][1], getRuleBodies(BASE_CSS, '[data-theme="dark"] .alert-card').join(";")],
+  ] as const;
+  // rgb(var(--name)) or rgb(var(--name) / alpha) → that colour, --alert-tone standing for the row's tone
+  const getColor = (decl: string | undefined, block: string, tone: string): Rgba => {
+    const m = decl?.match(/^rgb\(var\((--[\w-]+)\)(?:\s*\/\s*([\d.]+))?\)$/);
+    assert.ok(m, `well colour ${decl} is rgb(var(--token)[ / alpha])`);
+    const rgb = getTriplet(block, m[1] === "--alert-tone" ? tone : m[1]);
+    return compositeOver({ ...rgb, a: m[2] ? Number(m[2]) : 1 }, getTriplet(block, "--elev"));
+  };
+
+  for (const shell of shells) assert.doesNotMatch(shell, /border|background/, "card shell stays neutral: no stripe, tone fill or tone border");
+  for (const [tone, token] of Object.entries(TONE_TOKEN)) {
+    const toneRule = getRuleBodies(BASE_CSS, `.alert-card[data-tone="${tone}"]`).join(";");
+    assert.equal(getDecl(toneRule, "--alert-tone"), `var(${token})`, `${tone} → ${token}`);
+    for (const [theme, block, body] of wells) {
+      const well = getColor(getDecl(body, "--alert-well-fill"), block, token);
+      const glyph = getColor(getDecl(body, "--alert-glyph"), block, token);
+      const ratio = contrastRatio(glyph, well);
+      assert.ok(ratio >= 3, `${theme} ${tone} glyph on well = ${ratio.toFixed(2)}:1`);
+    }
   }
 });
