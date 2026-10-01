@@ -1140,10 +1140,11 @@ describe("open-summary rail: placement follows the ledger's minimum width", () =
     for (const id of seedIds) await deleteDoc(id);
   });
 
-  async function openLedger(width: number): Promise<{ context: BrowserContext; page: Page }> {
+  async function openLedger(width: number, font?: string): Promise<{ context: BrowserContext; page: Page }> {
     const context: BrowserContext = await browser.newContext({ viewport: { width, height: 900 } });
     const page: Page = await context.newPage();
     await page.goto(`${serverUrl}/#clauded-docs`, { waitUntil: "networkidle" });
+    if (font) await page.addStyleTag({ content: `.doc-ledger-scroll, .doc-ledger-scroll * { font-family: ${font} !important; }` });
     await page.locator("aside.doc-open-summary").waitFor({ state: "visible" });
     return { context, page };
   }
@@ -1152,6 +1153,8 @@ describe("open-summary rail: placement follows the ledger's minimum width", () =
     placement: [
       { name: "one px below the rail switch the rail stacks and the wide ledger keeps Tags", width: THRESHOLD_VIEWPORT.railBeside - 1, placement: "stacked", isTagsShown: true, isTitleFloorHeld: true },
       { name: "at the rail switch the rail sits beside a ledger exactly its column floors wide", width: THRESHOLD_VIEWPORT.railBeside, placement: "beside", isTagsShown: false, isTitleFloorHeld: true },
+      // a font wider than the macOS default (Linux CI falls back to one) → the floors still bound every column
+      { name: "at the rail switch a ledger set in a wider font is still exactly its column floors wide", width: THRESHOLD_VIEWPORT.railBeside, placement: "beside", isTagsShown: false, isTitleFloorHeld: true, font: "Verdana, 'DejaVu Sans', sans-serif" },
       { name: "one px below room for Tags beside the rail the ledger drops the column", width: THRESHOLD_VIEWPORT.tagsShownBeside - 1, placement: "beside", isTagsShown: false, isTitleFloorHeld: true },
       { name: "at room for Tags beside the rail the ledger shows the column", width: THRESHOLD_VIEWPORT.tagsShownBeside, placement: "beside", isTagsShown: true, isTitleFloorHeld: true },
       { name: "one px below the column floors a stacked ledger drops the title floor", width: THRESHOLD_VIEWPORT.titleFloorStacked - 1, placement: "stacked", isTagsShown: false, isTitleFloorHeld: false },
@@ -1170,7 +1173,7 @@ describe("open-summary rail: placement follows the ledger's minimum width", () =
 
   for (const row of rows.placement) {
     test(`${row.name}, and the ledger fits without a sideways scroll`, async () => {
-      const { context, page } = await openLedger(row.width);
+      const { context, page } = await openLedger(row.width, "font" in row ? row.font : undefined);
       try {
         const mixedFormatRow = await revealRowByTitle(page, mixedFormatTitle);
         await page.locator("table.tbl th.doc-col-tags").waitFor({ state: "attached" });

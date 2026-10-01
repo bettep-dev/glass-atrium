@@ -37,14 +37,15 @@ const LEDGER_CD = {
 	// column 구성: checkbox + status + id + title + tags + author + created_at (검색 모드도 동일 — relevance 컬럼 없음).
 	//   · Tags drops out when no row carries a tag of its own → one column fewer.
 	COLUMN_COUNT: 7,
+	CELL_PADDING: 28, // .tbl th/td horizontal padding (base.css 14px each side)
 	/**
 	 * px floor each ledger column holds before the table scrolls sideways → th widths + every ledger/rail container threshold derive from here.
 	 * Container queries cannot read var() → the <style> block interpolates these.
 	 */
 	FLOOR: {
 		select: 44, // ponytail: .doc-checkbox-cell as rendered (measured) — the cell CSS sets it, this mirrors it; a checkbox-cell change → re-measure
-		status: 191, // ponytail: "Implementing" pill 160.8px measured at 1440 + cell padding 28 — a longer label or pill/font change → re-measure; the rail-placement e2e rows are the tripwire
-		id: 130, // ponytail: "rev of #123456" (mono 14자 × 7.2px + padding 28px) — 7자리 id 부터는 재측정 필요
+		status: 191, // "Implementing" pill 160.8px (macOS, 1440) + cell padding — the ledger caps the pill at this floor and ellipsizes a wider label → font-independent
+		id: 130, // "rev of #123456" (mono 14자 × 7.2px + padding 28px) — 더 넓은 폰트·긴 id 는 .doc-lineage 가 이 폭에서 말줄임
 		title: 394,
 		tags: 152,
 		author: 110,
@@ -1090,7 +1091,7 @@ function ScreenClaudedDocs(/* { onNav } */) {
         .doc-reorder-error { color: rgb(var(--crit)); font-family: 'JetBrains Mono', monospace; }
         /* stage pill — 톤은 meter 채움과 종료 글리프가 운반 · 라벨 텍스트는 중립 유지. */
         /* ID 셀 둘째 줄 계보 — 한 줄 유지 (ID 컬럼 폭은 "rev of #N" 기준). */
-        .doc-lineage { font-size: var(--fs-meta); color: rgb(var(--faint)); white-space: nowrap; text-align: left; }
+        .doc-lineage { font-size: var(--fs-meta); color: rgb(var(--faint)); white-space: nowrap; text-align: left; max-width: ${LEDGER_CD.FLOOR.id - LEDGER_CD.CELL_PADDING}px; overflow: hidden; text-overflow: ellipsis; }
         /* header text at the title text's x — lead slot 20px + title row gap 6px */
         .doc-col-title-text { margin-left: 26px; }
         /* held rows while a read is in flight — dimmed, still readable and selectable. */
@@ -1105,6 +1106,9 @@ function ScreenClaudedDocs(/* { onNav } */) {
         .doc-stage-caret { display: inline-flex; color: rgb(var(--dim)); }
         .doc-stage-meter { display: inline-flex; align-items: center; gap: 3px; }
         .doc-stage-label { font-family: 'Pretendard Variable', Pretendard, ui-sans-serif, system-ui, sans-serif; }
+        /* a max-width caps the pill's min-content → the auto-layout Status column never grows past its floor, whatever font renders the label */
+        .doc-ledger-scroll .doc-stage-picker, .doc-ledger-scroll .doc-stage-pill { max-width: ${LEDGER_CD.FLOOR.status - LEDGER_CD.CELL_PADDING}px; min-width: 0; }
+        .doc-ledger-scroll .doc-stage-label { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
         /* 마지막 상태 변경 행위자 — pill 아래 한 줄. 모르면 줄 자체가 없다. */
         /* anywhere → an unbreakable raw model id wraps instead of widening the Status floor · the title attribute keeps the full id */
         .doc-stage-actor { font-size: var(--fs-meta); font-family: 'JetBrains Mono', monospace; color: rgb(var(--faint)); white-space: normal; word-break: keep-all; overflow-wrap: anywhere; }
