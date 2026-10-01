@@ -1134,7 +1134,7 @@ const buildPriorWindow = (total: number, byResult: Record<string, number>) => ({
   by_result: Object.entries(byResult).map(([result, count]) => ({ result, count, reconstructed_count: 0 })),
 });
 
-const renderBand = (prior: unknown, priorTotal: number | null): string => renderText(helpers.StatusBandO({
+const buildBand = (prior: unknown, priorTotal: number | null): unknown => helpers.StatusBandO({
   analyticsState: {
     status: "ready",
     data: {
@@ -1144,7 +1144,17 @@ const renderBand = (prior: unknown, priorTotal: number | null): string => render
   },
   attentionState: { status: "ready", data: { total: 30, parts: { flagged: 30, fail: 0, blocked: 0, open: 0 }, priorTotal } as { total: number } },
   windowDays: 30,
-}));
+});
+const renderBand = (prior: unknown, priorTotal: number | null): string => renderText(buildBand(prior, priorTotal));
+
+// one tile's subtree → a change line there cannot hide behind another tile's text
+const findTile = (node: unknown, key: string): RenderNode | null => {
+  if (Array.isArray(node)) return node.map((child) => findTile(child, key)).find(Boolean) ?? null;
+  if (node === null || typeof node !== "object" || !("type" in node)) return null;
+  const el = node as RenderNode;
+  if ((el.props as { tile?: { key?: string } } | null)?.tile?.key === key) return el;
+  return findTile(el.children, key);
+};
 
 describe("StatusBandO: every tile states its share change against the prior window", () => {
   const text = renderBand(buildPriorWindow(100, { done: 80, fail: 3, blocked: 3 }), 10);
@@ -1169,10 +1179,14 @@ describe("StatusBandO: every tile states its share change against the prior wind
   test("a response without a prior window draws no change line", () => {
     assert.doesNotMatch(renderBand(undefined, null), /since|No comparison/);
   });
-  test("an unread prior attention count leaves the hero without a change line", () => {
-    const unread = renderBand(buildPriorWindow(100, { done: 80, fail: 3, blocked: 3 }), null);
-    assert.doesNotMatch(unread, /vs 10\.0%/);
-    assert.match(unread, /Down 5\.0 pts/);
+  test("an unread prior attention count leaves the Needs you tile without a change line", () => {
+    const band = buildBand(buildPriorWindow(100, { done: 80, fail: 3, blocked: 3 }), null);
+    const hero = findTile(band, "attention");
+    assert.ok(hero, "the band draws a Needs you tile");
+    const heroText = renderText(hero);
+    assert.match(heroText, /Needs you/);
+    assert.doesNotMatch(heroText, /since|pts|No comparison/, "an unread prior count is never read as zero");
+    assert.match(renderText(band), /Down 5\.0 pts/);
   });
 });
 
