@@ -101,6 +101,11 @@ async function openRenderContext(fixture: CostFixture): Promise<RenderContext> {
     days: trendRows.length,
     points: trendRows,
     timezone: "UTC",
+    // Cost always opts in → a real response carries the block, so the tiles lay out a real delta line.
+    prior_window: {
+      period_start: "2025-12-01", period_end: trendRows[0]?.date ?? "2026-01-01", cut_time: "12:00:00",
+      input_tokens: 1_000, output_tokens: 1_000, cache_read_tokens: 10_000, cache_creation_tokens: 1_000, cost_usd: 1,
+    },
   }));
   // A month's real model spread: more models than the ledger's top five, so it rolls up an Other row.
   app.get("/api/cost/by-model", async () => ({

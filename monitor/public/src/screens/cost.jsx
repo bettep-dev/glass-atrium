@@ -98,9 +98,9 @@ function ScreenCost({ onNav }) {
     const markReceived = () => setAsOfAt(new Date().toISOString());
 
     // 윈도우 경계 = 서버 buildWindowLowerBound SoT (KST 기준 정확히 N일 · 오늘 포함) —
-    // FE 는 days 파라미터만 전달. /api/cost/kpi 는 고정 윈도우(오늘·7d·3h)라 days 미전달.
+    // FE 는 days 파라미터(+ cost-timeseries 의 prior_window opt-in)만 전달. /api/cost/kpi 는 고정 윈도우(오늘·7d·3h)라 days 미전달.
     runFetchC('/api/cost/kpi',                               ctrl, setKpiState, markReceived);
-    runFetchC(`/api/dashboard/cost-timeseries?days=${days}`, ctrl, setTokenState, markReceived);
+    runFetchC(`/api/dashboard/cost-timeseries?days=${days}&prior_window=1`, ctrl, setTokenState, markReceived);
     runFetchC(`/api/cost/by-model?days=${days}`,             ctrl, setModelState, markReceived);
     runFetchC(`/api/cost/cache-hit?days=${days}`,            ctrl, setCacheState, markReceived);
     runFetchC(`/api/cost/session-distribution?days=${days}`, ctrl, setSessionState, markReceived);
@@ -491,21 +491,18 @@ function getHotVerdictText(ratio, paceRatio) {
   return `Today is ${soFar}, ${pace}.`;
 }
 
-// Window total + the recent-half trend over the period the toggle selects.
+// Window total + its change against the server's prior window over the period the toggle selects.
 function computeWindowTotal(trendState) {
   const ready = trendState.status === 'ready';
   const points = getTrendPoints(trendState);
   if (points.length === 0) {
-    return { total: null, delta: null, deltaSpan: 0, dayCount: 0, avgDaily: null, peakCost: null, isEmpty: ready };
+    return { total: null, delta: null, prior: null, dayCount: 0, avgDaily: null, peakCost: null, isEmpty: ready };
   }
   const series = points.map((p) => toFiniteOrNull(p.cost_usd) ?? 0);
   const total = series.reduce((s, v) => s + v, 0);
-  // The series always ends at today (server generate_series → today), a partial day → left out of the trend.
-  const { delta, span } = computeHalfWindowDelta(series.slice(0, -1));
   return {
     total,
-    delta,
-    deltaSpan: span,
+    ...computePriorDelta(total, getPriorWindow(trendState), (block) => block.cost_usd),
     dayCount: points.length,
     avgDaily: total / points.length,
     peakCost: Math.max(...series),
@@ -513,12 +510,23 @@ function computeWindowTotal(trendState) {
   };
 }
 
-// Recent half of the complete days against the equal span before it → never two arbitrary endpoints.
-function computeHalfWindowDelta(series) {
-  const span = Math.floor(series.length / 2);
-  if (span === 0) return { delta: null, span: 0 };
-  const sum = (part) => part.reduce((s, v) => s + v, 0);
-  return { delta: computeSparkDeltaC([sum(series.slice(-2 * span, -span)), sum(series.slice(-span))]), span };
+// The prior block of the payload the figures came from → a held payload names its own window.
+function getPriorWindow(trendState) {
+  const data = trendState.data;
+  const block = data?.prior_window;
+  if (!block || typeof block.period_end !== 'string') return null;
+  return { ...block, days: data.days };
+}
+
+/**
+ * Change of a window figure against the same span before it, its last day cut at this time of day.
+ * A zero prior keeps its window but yields no delta — computeSparkDeltaC reads any rise from 0 as +100%.
+ */
+function computePriorDelta(current, prior, getPriorValue) {
+  const priorValue = prior ? toFiniteOrNull(getPriorValue(prior)) : null;
+  if (priorValue === null) return { delta: null, prior: null };
+  if (priorValue === 0) return { delta: null, prior };
+  return { delta: computeSparkDeltaC([priorValue, current]), prior };
 }
 
 /**
@@ -579,7 +587,7 @@ function KpiRowC({ kpiState, hot, trendState, modelState, days, failures, onRetr
             ? ''
             : `Recorded cost · ${windowTotal.dayCount} days · ${formatUsdC(windowTotal.avgDaily)}/day avg · peak ${formatUsdC(windowTotal.peakCost)}`}
           unavailableNote="Trend payload carries no cost figure.">
-          <TrendDeltaC delta={windowTotal.delta} span={windowTotal.deltaSpan}/>
+          <TrendDeltaC delta={windowTotal.delta} prior={windowTotal.prior} noun="cost"/>
         </CostTileC>
 
         <CostTileC
@@ -679,17 +687,21 @@ function HotBulletC({ hot }) {
   );
 }
 
-// Window trend — direction rides on the glyph, never on the text colour.
-function TrendDeltaC({ delta, span }) {
-  if (typeof delta !== 'number' || !Number.isFinite(delta)) {
-    return <div className="cost-foot mt-1.5">No trend — fewer than two complete days in the window.</div>;
+// Window change — direction rides on the glyph, never on the text colour.
+function TrendDeltaC({ delta, prior, noun }) {
+  if (!prior) {
+    return <div className="cost-foot mt-1.5">No comparison — the prior window did not arrive with this range.</div>;
+  }
+  const span = `the ${prior.days} days before ${prior.period_end.slice(5)}`;
+  if (delta === null) {
+    return <div className="cost-foot mt-1.5">{`No comparison — ${span} held no ${noun}.`}</div>;
   }
   const [glyph, direction] = delta > 0 ? ['\u25b2', 'up'] : delta < 0 ? ['\u25bc', 'down'] : ['\u2014', 'unchanged'];
   return (
     <div className="cost-foot mt-1.5">
       <span className="font-mono mr-1" aria-hidden="true">{glyph}</span>
       <span className="sr-only">{direction} </span>
-      {Math.abs(delta).toFixed(0)}% {span === 1 ? 'last complete day vs the day before' : `last ${span} days vs the ${span} before`}
+      {`${Math.abs(delta).toFixed(0)}% vs ${span}, cut at this time of day`}
     </div>
   );
 }
@@ -1022,7 +1034,7 @@ function TokenStackedBody({ state, days, failures, onRetry }) {
         <div>
           <div className="fs-meta text-dim">Tokens</div>
           <div className="font-mono fs-display text-dim tracking-tight">{formatTokenCompactC(totalTokens)}</div>
-          <TrendDeltaC {...computeTokenWindowDelta(points)}/>
+          <TrendDeltaC {...computeTokenWindowDelta(state, totalTokens)} noun="tokens"/>
         </div>
       </div>
       {shares && <TokenShareRowC shares={shares}/>}
@@ -1035,9 +1047,9 @@ function TokenStackedBody({ state, days, failures, onRetry }) {
   );
 }
 
-// Same rule as the cost tile → today's partial day left out, recent half vs the equal span before it.
-function computeTokenWindowDelta(points) {
-  return computeHalfWindowDelta(getTokenDayPoints(points.slice(0, -1)).map((d) => d.value ?? 0));
+function computeTokenWindowDelta(trendState, totalTokens) {
+  const sumTokens = (block) => TOKEN_CATEGORIES.reduce((sum, cat) => sum + (Number(block[cat.key]) || 0), 0);
+  return computePriorDelta(totalTokens, getPriorWindow(trendState), sumTokens);
 }
 
 // 토큰 누적 차트용 row builder (Area·Column 공유).
