@@ -488,17 +488,31 @@ const collectText = (node: unknown): string[] => {
   if (node === null || typeof node !== "object" || !("children" in node)) return [];
   return collectText((node as { children: unknown[] }).children);
 };
-// Sidebar's visible text, with agentsState reaching it beside the harness exactly as App passes them
-const renderSidebarText = (harness: unknown, agentsState: unknown): string[] => {
+interface RenderedNode {
+  type: unknown;
+  props: Record<string, unknown> | null;
+  children: unknown[];
+}
+const isRenderedNode = (node: unknown): node is RenderedNode =>
+  node !== null && typeof node === "object" && "children" in node && "props" in node;
+const findNodes = (node: unknown, match: (n: RenderedNode) => boolean): RenderedNode[] => {
+  if (Array.isArray(node)) return node.flatMap((child) => findNodes(child, match));
+  if (!isRenderedNode(node)) return [];
+  return [...(match(node) ? [node] : []), ...findNodes(node.children, match)];
+};
+// Sidebar's element tree, with agentsState reaching it beside the harness exactly as App passes them
+const renderSidebar = (harness: unknown, agentsState: unknown): unknown => {
   const surface = app as unknown as SidebarSurface;
   const stubCreate = surface.React.createElement;
   surface.React.createElement = (type, props, ...children) => ({ type, props, children });
   try {
-    return collectText(surface.Sidebar({ active: "dashboard", onNav: () => {}, harness, agentsState, pageState: null }));
+    return surface.Sidebar({ active: "dashboard", onNav: () => {}, harness, agentsState, pageState: null });
   } finally {
     surface.React.createElement = stubCreate;
   }
 };
+const renderSidebarText = (harness: unknown, agentsState: unknown): string[] =>
+  collectText(renderSidebar(harness, agentsState));
 
 test("a failed agent-store read leaves the footer and the System map numeral unchanged", () => {
   const harness = app.getHarness(allHealthy({ liveState: ready(daemonPayload(1)), kpiState: ready({ last_1h_fail_count: 2 }) }));
@@ -508,6 +522,18 @@ test("a failed agent-store read leaves the footer and the System map numeral unc
   assert.ok(systemMapNumeral && unread.includes(systemMapNumeral), "the render reaches the System map numeral");
   assert.ok(unread.includes(app.systemsRollup(harness).label), "the render reaches the footer");
   assert.deepStrictEqual(failed, unread);
+});
+
+// The numeral alone says how many; the rendered tooltip is where the operator reads which agents.
+test("the rendered Agents nav badge's tooltip names every agent it counts", () => {
+  const alarms = [breakerAlarm("glass-atrium-qa-debugger", true), breakerAlarm("glass-atrium-dev-node", false)];
+  const tree = renderSidebar(app.getHarness(allHealthy()), ready(breakerSummary(alarms)));
+  const [agentsItem] = findNodes(tree, (n) => n.props?.key === "agents");
+  const [agentsBadge] = findNodes(agentsItem, (n) => String(n.props?.className ?? "").includes("nav-badge"));
+  const title = String(agentsBadge?.props?.title ?? "");
+
+  assert.ok(agentsBadge, "the Agents item renders its badge");
+  for (const alarm of alarms) assert.ok(title.includes(String(alarm.agent)), `${alarm.agent} is named in the rendered tooltip`);
 });
 
 // A daemon row may still carry the retired `stale` flag; the verdict is effective_status alone.
