@@ -36,6 +36,7 @@ Every section kept in the rule file is kept because a NAMED reader outside the f
 | Test Depth and Upkeep | every DEV agent sizing its tests | `scoped/scope-dev.md` → **YAGNI applies to tests too** |
 | Test Depth and Upkeep | the DEV bodies that carry a local test-size line | `agents/glass-atrium-dev-python.md` → `### Testing` · `agents/glass-atrium-dev-nestjs.md` → **Tests** |
 | Test Depth and Upkeep | the orchestrator, reading its skill on demand | `skills/glass-atrium-ops-orchestrator.md` → `### Quality Gates [ORCHESTRATOR]` |
+| Test Depth and Upkeep | the orchestrator, declaring a DEV/PLANNING delegation's `[SCOPE] files=` | `rules/glass-atrium/orchestrator-role.md` → `### Context Handoff Size` → **`files=` completeness duty** |
 
 - **Heading stability**: `## Test Quality`, `### Meaningless-Test Prohibitions`, `## Destructive-Path Suite Safety (live-postgres reach)` and `## Mechanical Success Metrics` are named verbatim by the pointers above. Renaming one dangles its inbound pointer even though no suite reads the body.
   - Also stable: `## Rationalization Rejection (Testing)` and its bolded lead **Qualifier on the last row (the deliberate-break exception)** — the sandbox write-confinement lane edits one sentence under that lead, and `### What makes a test a test` → **Watch it fail** points at it.
