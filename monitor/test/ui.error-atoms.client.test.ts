@@ -127,6 +127,73 @@ test("the page banner announces one outage with every source named and exactly o
   assert.equal(getButtons(tree).length, 1);
 });
 
+function getByClass(tree: RenderedNode, name: string): RenderedNode[] {
+  return findNodes(tree, (n) => String(n.props.className ?? "").split(/\s+/).includes(name));
+}
+
+test("the page banner is a raised critical alert card: severity word first, Details in the content, Retry in the actions", () => {
+  const tree = render("PageErrorBanner", { sources: ["spend", "sessions"], error: SERVER_ERROR, onRetry: () => {} });
+  const [content] = getByClass(tree, "alert-card-content");
+  const [actions] = getByClass(tree, "alert-card-actions");
+
+  assert.ok(String(getByClass(tree, "alert-card")[0]?.props.className).split(/\s+/).includes("card"), "raised card shell");
+  assert.equal(getByClass(tree, "alert-card")[0]?.props["data-tone"], "crit");
+  assert.equal(collectText(getByClass(tree, "sr-only")[0]).trim(), "Critical:");
+  assert.equal(findNodes(content, (n) => n.type === "details").length, 1, "Details sit in the content column");
+  assert.equal(getButtons(actions).length, 1, "the one Retry sits in the actions slot");
+});
+
+test("an alert card announces by placement: a standalone critical card is an alert, other tones a status, none inside a live host", () => {
+  const rows = [
+    { name: "standalone crit", props: { tone: "crit" }, role: "alert" },
+    { name: "standalone warn", props: { tone: "warn" }, role: "status" },
+    { name: "standalone info", props: { tone: "info" }, role: "status" },
+    { name: "standalone ok", props: { tone: "ok" }, role: "status" },
+    { name: "standalone neutral", props: { tone: "neutral" }, role: "status" },
+    { name: "crit inside a live host", props: { tone: "crit", hasLiveHost: true }, role: undefined },
+  ];
+  for (const row of rows) {
+    const tree = render("AlertCard", { title: "Spend over budget", ...row.props });
+    const roles = findNodes(tree, (n) => n.props.role != null).map((n) => n.props.role);
+
+    assert.deepEqual(roles, row.role ? [row.role] : [], row.name);
+  }
+});
+
+test("an alert card leads its title with a visually-hidden severity word, so tone never rests on colour or glyph alone", () => {
+  const rows = [
+    { tone: "crit", word: "Critical:" },
+    { tone: "warn", word: "Warning:" },
+    { tone: "info", word: "Notice:" },
+    { tone: "ok", word: "Resolved:" },
+    { tone: "neutral", word: "Notice:" },
+  ];
+  for (const row of rows) {
+    const tree = render("AlertCard", { tone: row.tone, title: "Harness drift" });
+    const [title] = getByClass(tree, "alert-card-title");
+
+    assert.equal(collectText(getByClass(title, "sr-only")[0]).trim(), row.word, row.tone);
+    assert.match(collectText(title), new RegExp(`^${row.word}\\s*Harness drift$`), row.tone);
+    assert.equal(getByClass(tree, "alert-card")[0].props["data-tone"], row.tone, `${row.tone} tone rides on the card for its well`);
+  }
+});
+
+test("an alert card renders each optional slot only when given, on the surface the caller picked", () => {
+  const rows = [
+    { name: "title only, raised", props: { surface: "raised" }, shell: "card", subjects: 0, details: 0, actions: 0 },
+    { name: "every slot, inset", props: { surface: "inset", subjects: ["hooks", "rules"], details: "ENOENT", actions: "Retry" }, shell: "sub-card", subjects: 2, details: 1, actions: 1 },
+  ];
+  for (const row of rows) {
+    const tree = render("AlertCard", { tone: "warn", title: "Harness drift", ...row.props });
+    const [chips] = getByClass(tree, "alert-card-subjects");
+
+    assert.ok(String(getByClass(tree, "alert-card")[0].props.className).split(/\s+/).includes(row.shell), `${row.name}: shell`);
+    assert.equal(chips ? chips.children.length : 0, row.subjects, `${row.name}: subject chips`);
+    assert.equal(findNodes(tree, (n) => n.type === "details").length, row.details, `${row.name}: details`);
+    assert.equal(getByClass(tree, "alert-card-actions").length, row.actions, `${row.name}: actions`);
+  }
+});
+
 const FAILURE_SENTENCE = /Couldn't load/g;
 const COVERED_NOTE = "Not loaded — see the notice above";
 
