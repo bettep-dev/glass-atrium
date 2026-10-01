@@ -685,9 +685,11 @@ function TrendDeltaC({ delta, span }) {
     return <div className="cost-foot mt-1.5">No trend — fewer than two complete days in the window.</div>;
   }
   const glyph = delta > 0 ? '\u25b2' : delta < 0 ? '\u25bc' : '\u2014';
+  const direction = delta > 0 ? 'up' : delta < 0 ? 'down' : 'unchanged';
   return (
     <div className="cost-foot mt-1.5">
       <span className="font-mono mr-1" aria-hidden="true">{glyph}</span>
+      <span className="sr-only">{direction} </span>
       {Math.abs(delta).toFixed(0)}% {span === 1 ? 'last complete day vs the day before' : `last ${span} days vs the ${span} before`}
     </div>
   );

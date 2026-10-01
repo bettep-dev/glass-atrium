@@ -1126,18 +1126,26 @@ function getTokenTrend(tokens: readonly number[]): PanelState {
   });
 }
 
+// text a screen reader announces \u2014 an aria-hidden subtree is skipped whole
+function getSpokenText(node: RenderedNode | string | null): string {
+  if (node === null || typeof node === "string") return collectText(node);
+  if (node.props["aria-hidden"] === "true" || node.props["aria-hidden"] === true) return "";
+  return node.children.map(getSpokenText).join(" ");
+}
+
 describe("the token volume total compares the recent half of the complete days with the span before it", () => {
   const rows = [
-    { name: "rising tokens read up even while cost falls", tokens: [100, 100, 200, 200, 5], text: /\u25b2\s*100\s*%\s*last 2 days vs the 2 before/ },
-    { name: "falling tokens read down", tokens: [200, 200, 100, 100, 5], text: /\u25bc\s*50\s*%\s*last 2 days vs the 2 before/ },
-    { name: "today's partial day never moves it", tokens: [100, 100, 100, 100, 9999], text: /\u2014\s*0\s*%\s*last 2 days vs the 2 before/ },
-    { name: "one complete day has no change to state", tokens: [100, 5], text: /No trend/ },
+    { name: "rising tokens read up even while cost falls", tokens: [100, 100, 200, 200, 5], glyph: "\u25b2", spoken: /\bup\s+100\s*%\s*last 2 days vs the 2 before/ },
+    { name: "falling tokens read down", tokens: [200, 200, 100, 100, 5], glyph: "\u25bc", spoken: /\bdown\s+50\s*%\s*last 2 days vs the 2 before/ },
+    { name: "today's partial day never moves it", tokens: [100, 100, 100, 100, 9999], glyph: "\u2014", spoken: /\bunchanged\s+0\s*%\s*last 2 days vs the 2 before/ },
+    { name: "one complete day has no change to state", tokens: [100, 5], glyph: "", spoken: /No trend/ },
   ];
   for (const row of rows) {
     test(row.name, async () => {
       const mod = await loadCostRender();
-      const text = collectText(renderIn(mod, "TokenStackedBody", { state: getTokenTrend(row.tokens), days: 30, onRetry: () => {} }));
-      assert.match(text, row.text);
+      const tree = renderIn(mod, "TokenStackedBody", { state: getTokenTrend(row.tokens), days: 30, onRetry: () => {} });
+      assert.ok(collectText(tree).includes(row.glyph), `the direction glyph ${row.glyph} is drawn`);
+      assert.match(getSpokenText(tree), row.spoken, "the direction is announced in words, not only drawn");
     });
   }
 });
