@@ -233,11 +233,13 @@ get_pointer_quote() {
   local rules="${BATS_TEST_DIRNAME}/../../rules/glass-atrium/orchestrator-role.md"
   [[ -f "${rules}" ]] || skip "grammar SoT absent: ${rules}"
   run_hook
-  local preflight form
+  local preflight form count
   preflight="$(printf '%s\n' "${output}" | grep -F '[WORKFLOW PRE-FLIGHT]')"
   for form in '[PLAN-CLOSE] in-script' '[PLAN-CLOSE] deferred:'; do
-    [[ "${preflight}" == *"${form}"* ]] && grep -qF -- "${form}" "${rules}" || {
-      echo "close-token form missing from the pre-flight line or the grammar SoT: ${form}"
+    # exactly once — a second copy would keep a presence match green after the grammar line is reworded
+    count="$(awk -v needle="${form}" '{ s = $0; while ((i = index(s, needle)) > 0) { n++; s = substr(s, i + length(needle)) } } END { print n + 0 }' "${rules}")"
+    [[ "${preflight}" == *"${form}"* && "${count}" -eq 1 ]] || {
+      echo "close-token form missing from the pre-flight line, or not exactly once in the grammar SoT (count ${count}): ${form}"
       return 1
     }
   done

@@ -33,9 +33,31 @@ const RETIRED_STAGE_ALIAS_CD = "progress";
 // absent value, so the screen renders it distinctly from a model id.
 const OPERATOR_ACTOR_CD = "operator";
 
-// column 구성: checkbox + status + id + title + tags + author + created_at (검색 모드도 동일 — relevance 컬럼 없음).
-//   · Tags drops out when no row carries a tag of its own → one column fewer.
-const LEDGER_COLUMN_COUNT_CD = 7;
+const LEDGER_CD = {
+	// column 구성: checkbox + status + id + title + tags + author + created_at (검색 모드도 동일 — relevance 컬럼 없음).
+	//   · Tags drops out when no row carries a tag of its own → one column fewer.
+	COLUMN_COUNT: 7,
+	CELL_PADDING: 28, // .tbl th/td horizontal padding (base.css 14px each side)
+	/**
+	 * px floor each ledger column holds before the table scrolls sideways → th widths + every ledger/rail container threshold derive from here.
+	 * Container queries cannot read var() → the <style> block interpolates these.
+	 */
+	FLOOR: {
+		select: 44, // ponytail: .doc-checkbox-cell as rendered (measured) — the cell CSS sets it, this mirrors it; a checkbox-cell change → re-measure
+		status: 191, // "Implementing" pill 160.8px (macOS, 1440) + cell padding — the ledger caps the pill at this floor and ellipsizes a wider label → font-independent
+		id: 130, // "rev of #123456" (mono 14자 × 7.2px + padding 28px) — 더 넓은 폰트·긴 id 는 .doc-lineage 가 이 폭에서 말줄임
+		title: 394,
+		tags: 152,
+		author: 110,
+		created: 100,
+		titleNarrow: 240,
+		// Tags drops first + the narrow title floor applies only below this sum → both left out
+		get sum() {
+			return this.select + this.status + this.id + this.title + this.author + this.created;
+		},
+	},
+};
+const OPEN_SUMMARY_RAIL_WIDTH_CD = 200;
 
 // Open-versus-closed chips. countKey indexes the server's group-unit counts (group_counts);
 // a count the payload does not carry renders as nothing, never as 0.
@@ -229,6 +251,8 @@ function ScreenClaudedDocs(/* { onNav } */) {
 	// held rows stay until the offset=0 answer replaces them → search/refresh never blanks the ledger
 	const [loadedRows, setLoadedRows] = useStateCD([]);
 	const [currentOffset, setCurrentOffset] = useStateCD(0);
+	// server rows consumed so far → next Load More offset (deduped loadedRows runs short of the server position)
+	const [consumedCount, setConsumedCount] = useStateCD(0);
 	const [selectedId, setSelectedId] = useStateCD(null);
 	const [viewerState, setViewerState] = useStateCD({
 		status: "idle",
@@ -338,10 +362,13 @@ function ScreenClaudedDocs(/* { onNav } */) {
 		return () => clearTimeout(id);
 	}, [keyword]);
 
-	// filter/search change → offset=0 · held rows stay until the new first page settles
-	useEffectCD(() => {
+	// filter/search/refresh change → offset=0 in the same render · an effect-time reset lets the fetch run once with the old offset
+	const listKey = `${debouncedQ}\n${docStatusFilter}\n${refreshTick}`;
+	const [offsetListKey, setOffsetListKey] = useStateCD(listKey);
+	if (offsetListKey !== listKey) {
+		setOffsetListKey(listKey);
 		setCurrentOffset(0);
-	}, [debouncedQ, docStatusFilter, refreshTick]);
+	}
 
 	// filter / refresh 변경 시 multi-select clear — chip 토글 = "다른 목록 보기" → 이전 선택 의미 소멸.
 	useEffectCD(() => {
@@ -419,7 +446,9 @@ function ScreenClaudedDocs(/* { onNav } */) {
 						putRegionData(s, ctrl, { rows, total, docTotal, hiddenDocTotal, bigmEnabled, groupCounts }),
 					);
 				// Load More — 기존 누적 + 신규 page · 첫 페이지 / search — 교체.
-				setLoadedRows((prev) => (isLoadMore ? prev.concat(rows) : rows));
+				setLoadedRows((prev) => (isLoadMore ? getMergedGroupRowsCD(prev, rows) : rows));
+				const pageLength = Array.isArray(managedData?.groups) ? managedData.groups.length : rows.length;
+				setConsumedCount(currentOffset + pageLength);
 			})
 			.catch((err) => setListState((s) => putRegionFailure(s, ctrl, err)));
 
@@ -430,12 +459,11 @@ function ScreenClaudedDocs(/* { onNav } */) {
 	const loadMore = useCallbackCD(() => {
 		if (listState.busy) return;
 		if (debouncedQ) return; // search mode 미지원
-		const visibleLen = loadedRows.length;
 		const total =
 			listState.status === "ready" ? Number(listState.data?.total ?? 0) : 0;
-		if (visibleLen >= total) return; // 더 가져올 페이지 없음
-		setCurrentOffset(visibleLen);
-	}, [listState, debouncedQ, loadedRows.length]);
+		if (consumedCount >= total) return; // 더 가져올 페이지 없음
+		setCurrentOffset(consumedCount);
+	}, [listState, debouncedQ, consumedCount]);
 
 	// 뷰어 본문 fetch — format query 생략 → 서버 default resolution (rowFormat 자동 감지) 활용.
 	//   · HTML primary / 비-HTML primary (md) / agent-only MD·YAML·JSON·TXT 모두 format 그대로 응답.
@@ -882,8 +910,8 @@ function ScreenClaudedDocs(/* { onNav } */) {
 			: 0;
 	// Load More 버튼 가시성. search mode 미지원 + 누적 < total 일 때만 노출.
 	const canLoadMore =
-		!isSearchMode && listState.status === "ready" && rows.length < total;
-	const loadMoreRemaining = canLoadMore ? Math.max(0, total - rows.length) : 0;
+		!isSearchMode && listState.status === "ready" && consumedCount < total;
+	const loadMoreRemaining = canLoadMore ? Math.max(0, total - consumedCount) : 0;
 	const isLoadingMore = listState.busy && currentOffset > 0 && !isSearchMode;
 
 	const headerRight = <DocHeaderActionsCD asOf={asOf} listState={listState} onRefresh={triggerRefresh} />;
@@ -1021,12 +1049,12 @@ function ScreenClaudedDocs(/* { onNav } */) {
         /* 선택 checkbox column — 항상 노출 (hover-only 시 사용자가 모름 → glass-atrium-design-designer reject). */
         .doc-checkbox-cell { width: 28px; padding: 4px 6px 4px 12px; text-align: center; vertical-align: middle; }
         .doc-checkbox-cell input[type="checkbox"] { width: 16px; height: 16px; cursor: pointer; accent-color: rgb(var(--accent)); }
-        .doc-col-title { min-width: 394px; }
-        /* <1200px the shell's icon rail leaves a ~900px pane → Tags goes (the viewer still carries it), the title floor drops */
-        @media (max-width: 1199px) {
-          .doc-col-tags { display: none; }
-          .doc-col-title { min-width: 240px; }
-        }
+        .doc-col-title { min-width: ${LEDGER_CD.FLOOR.title}px; }
+        /* column floors + Tags → a narrower ledger drops Tags, the viewer still carries it */
+        .doc-ledger-scroll { container: doc-ledger / inline-size; }
+        @container doc-ledger (width < ${LEDGER_CD.FLOOR.sum + LEDGER_CD.FLOOR.tags}px) { .doc-col-tags { display: none; } }
+        /* a ledger under its column floors → the title floor narrows */
+        @container doc-ledger (width < ${LEDGER_CD.FLOOR.sum}px) { .doc-col-title { min-width: ${LEDGER_CD.FLOOR.titleNarrow}px; } }
         /* 선택된 행 강조 — 기존 .is-selected (viewer focus) 와 색 구분: --accent 약한 채도. */
         .doc-row.is-multi-selected { background: rgb(var(--accent) / 0.10); }
         .doc-row.is-multi-selected.is-selected { background: rgb(var(--accent) / 0.16); }
@@ -1063,14 +1091,14 @@ function ScreenClaudedDocs(/* { onNav } */) {
         .doc-reorder-error { color: rgb(var(--crit)); font-family: 'JetBrains Mono', monospace; }
         /* stage pill — 톤은 meter 채움과 종료 글리프가 운반 · 라벨 텍스트는 중립 유지. */
         /* ID 셀 둘째 줄 계보 — 한 줄 유지 (ID 컬럼 폭은 "rev of #N" 기준). */
-        .doc-lineage { font-size: var(--fs-meta); color: rgb(var(--faint)); white-space: nowrap; text-align: left; }
+        .doc-lineage { font-size: var(--fs-meta); color: rgb(var(--faint)); white-space: nowrap; text-align: left; max-width: ${LEDGER_CD.FLOOR.id - LEDGER_CD.CELL_PADDING}px; overflow: hidden; text-overflow: ellipsis; }
         /* header text at the title text's x — lead slot 20px + title row gap 6px */
         .doc-col-title-text { margin-left: 26px; }
         /* held rows while a read is in flight — dimmed, still readable and selectable. */
         .tbl.doc-ledger-busy { opacity: 0.55; transition: opacity 120ms; }
         @media (prefers-reduced-motion: reduce) { .tbl.doc-ledger-busy { transition: none; } }
         .doc-stage-picker { position: relative; display: inline-flex; flex-direction: column; align-items: flex-start; gap: 2px; }
-        .doc-stage-pill { display: inline-flex; align-items: center; gap: 6px; padding: 3px 8px; border: 1px solid rgb(var(--line)); border-radius: 999px; background: transparent; color: rgb(var(--ink)); font-size: var(--fs-meta); line-height: 1.4; white-space: nowrap; }
+        .doc-stage-pill { display: inline-flex; align-items: center; gap: 5px; padding: 3px 6px; border: 1px solid rgb(var(--line)); border-radius: 999px; background: transparent; color: rgb(var(--ink)); font-size: var(--fs-meta); line-height: 1.4; white-space: nowrap; }
         .doc-stage-pill.is-interactive { cursor: pointer; border-radius: 6px; }
         .doc-stage-pill.is-interactive:hover { background: rgb(var(--line) / 0.4); }
         .doc-stage-glyph.is-terminal { display: inline-flex; color: rgb(var(--dim)); }
@@ -1078,8 +1106,12 @@ function ScreenClaudedDocs(/* { onNav } */) {
         .doc-stage-caret { display: inline-flex; color: rgb(var(--dim)); }
         .doc-stage-meter { display: inline-flex; align-items: center; gap: 3px; }
         .doc-stage-label { font-family: 'Pretendard Variable', Pretendard, ui-sans-serif, system-ui, sans-serif; }
+        /* a max-width caps the pill's min-content → the auto-layout Status column never grows past its floor, whatever font renders the label */
+        .doc-ledger-scroll .doc-stage-picker, .doc-ledger-scroll .doc-stage-pill { max-width: ${LEDGER_CD.FLOOR.status - LEDGER_CD.CELL_PADDING}px; min-width: 0; }
+        .doc-ledger-scroll .doc-stage-label { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
         /* 마지막 상태 변경 행위자 — pill 아래 한 줄. 모르면 줄 자체가 없다. */
-        .doc-stage-actor { font-size: var(--fs-meta); font-family: 'JetBrains Mono', monospace; color: rgb(var(--faint)); white-space: normal; word-break: keep-all; overflow-wrap: normal; }
+        /* anywhere → an unbreakable raw model id wraps instead of widening the Status floor · the title attribute keeps the full id */
+        .doc-stage-actor { font-size: var(--fs-meta); font-family: 'JetBrains Mono', monospace; color: rgb(var(--faint)); white-space: normal; word-break: keep-all; overflow-wrap: anywhere; }
         .doc-row.is-stale > td { background: rgb(var(--warn) / 0.03); }
         /* the wash sits under the pill → a --line border fades into it */
         .doc-row.is-stale .doc-stage-pill { border-color: rgb(var(--dim) / 0.6); }
@@ -1091,14 +1123,19 @@ function ScreenClaudedDocs(/* { onNav } */) {
         /* clip trims an outside ring → the shared handoff ring drawn inset */
         .card.doc-list-card[data-focus-handoff]:focus { outline-offset: calc(-1 * var(--focus-ring-width)); }
         .doc-open-summary { border-bottom: 1px solid rgb(var(--line)); }
-        @media (min-width: 1280px) { .doc-open-summary { border-bottom: 0; border-left: 1px solid rgb(var(--line)); } }
+        /* rail beside only when the ledger keeps its column floors there → narrower stacks the rail above */
+        .doc-layout { container: doc-layout / inline-size; }
+        @container doc-layout (width >= ${LEDGER_CD.FLOOR.sum + OPEN_SUMMARY_RAIL_WIDTH_CD}px) {
+          .doc-layout .doc-layout-row { flex-direction: row-reverse; align-items: flex-start; }
+          .doc-layout .doc-open-summary { flex-direction: column; align-items: stretch; width: ${OPEN_SUMMARY_RAIL_WIDTH_CD}px; flex-shrink: 0; position: sticky; top: 1.5rem; padding-block: 0.75rem; border-bottom: 0; border-left: 1px solid rgb(var(--line)); }
+        }
         .doc-open-summary-block { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 8px; }
         .doc-open-summary-heading { margin: 0; font-size: var(--fs-meta); font-weight: 600; color: rgb(var(--dim)); }
         .doc-open-summary-group { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px; margin: 0; font-size: var(--fs-meta); }
         .doc-open-summary-group dt { color: rgb(var(--ink)); }
         .doc-open-summary-group dd { margin: 0 8px 0 0; color: rgb(var(--ink)); font-family: 'JetBrains Mono', monospace; font-variant-numeric: tabular-nums; }
         .doc-open-summary-group .is-stale { color: rgb(var(--warn)); font-weight: 600; }
-        @media (min-width: 1280px) {
+        @container doc-layout (width >= ${LEDGER_CD.FLOOR.sum + OPEN_SUMMARY_RAIL_WIDTH_CD}px) {
           .doc-open-summary .doc-open-summary-block { display: block; }
           .doc-open-summary .doc-open-summary-heading { margin-bottom: 4px; }
           .doc-open-summary .doc-open-summary-group { display: grid; grid-template-columns: minmax(0, 1fr) auto; column-gap: 12px; row-gap: 2px; }
@@ -1377,7 +1414,7 @@ function DocListCardCD({
 	const commonFormat = getCommonFormatCD(orderedRows);
 	const commonAudience = getCommonAudienceCD(orderedRows);
 	const hasTagsColumn = orderedRows.some((row) => hasOwnTagCD(row, commonFormat, commonAudience));
-	const columnCount = hasTagsColumn ? LEDGER_COLUMN_COUNT_CD : LEDGER_COLUMN_COUNT_CD - 1;
+	const columnCount = hasTagsColumn ? LEDGER_CD.COLUMN_COUNT : LEDGER_CD.COLUMN_COUNT - 1;
 	// shared tag values in words → said once beside the count, never per row nor under the header
 	const sharedTagsLabel =
 		commonAudience === "hidden"
@@ -1560,7 +1597,8 @@ function DocListCardCD({
 					</PageVerdict>
 				)}
 				{state.status === "ready" && rows.length > 0 && (
-					<div className="flex flex-col xl:flex-row-reverse xl:items-start">
+					<div className="doc-layout">
+					<div className="doc-layout-row flex flex-col">
 					{hasOpenSummary && (
 						<DocOpenSummaryCD
 							summary={openSummary}
@@ -1570,7 +1608,7 @@ function DocListCardCD({
 						/>
 					)}
 					{/* own x-scroll → a table wider than its column scrolls here instead of running under the sticky rail */}
-					<div className="min-w-0 flex-1 overflow-x-auto">
+					<div className="doc-ledger-scroll min-w-0 flex-1 overflow-x-auto">
 					<table className={isHeldBusy ? "tbl doc-ledger-busy" : "tbl"} aria-busy={isHeldBusy ? "true" : undefined}>
 						<caption className="sr-only">
 							Documents ledger. Up and Down move between rows, Right reaches a row's controls, Enter opens the focused document.
@@ -1592,21 +1630,20 @@ function DocListCardCD({
 								</th>
 								{/* doc_status badge 별도 column 분리 (title inline 제거 · 사용자 directive). */}
 								{/* width 는 표가 넘칠 때 min-content 까지 눌린다 → 컬럼마다 min-width 바닥을 같이 준다. */}
-								<th scope="col" style={{ width: 135, minWidth: 135 }}>Status</th>
-								{/* ID — 문서 번호 노출 (그룹 루트 행은 대표 문서 번호).
-                    ponytail: 130px = "rev of #123456" (mono 14자 × 7.2px + padding 28px) — 7자리 id 부터는 재측정 필요. */}
-								<th scope="col" style={{ width: 130, minWidth: 130 }}>ID</th>
+								<th scope="col" style={{ width: LEDGER_CD.FLOOR.status, minWidth: LEDGER_CD.FLOOR.status }}>Status</th>
+								{/* ID — 문서 번호 노출 (그룹 루트 행은 대표 문서 번호). */}
+								<th scope="col" style={{ width: LEDGER_CD.FLOOR.id, minWidth: LEDGER_CD.FLOOR.id }}>ID</th>
 								<th scope="col" className="doc-col-title">
 									<span className="doc-col-title-text">Title</span>
 								</th>
 								{/* 태그 전용 column — 서술 칩을 제목 셀에서 분리. */}
 								{hasTagsColumn && (
-									<th scope="col" className="doc-col-tags" style={{ width: 152, minWidth: 152 }}>
+									<th scope="col" className="doc-col-tags" style={{ width: LEDGER_CD.FLOOR.tags, minWidth: LEDGER_CD.FLOOR.tags }}>
 										Tags
 									</th>
 								)}
-								<th scope="col" style={{ width: 110, minWidth: 110 }}>Author</th>
-								<th scope="col" style={{ width: 100, minWidth: 100 }}>Created</th>
+								<th scope="col" style={{ width: LEDGER_CD.FLOOR.author, minWidth: LEDGER_CD.FLOOR.author }}>Author</th>
+								<th scope="col" style={{ width: LEDGER_CD.FLOOR.created, minWidth: LEDGER_CD.FLOOR.created }}>Created</th>
 							</tr>
 						</thead>
 						<tbody onKeyDown={moveRowFocusCD}>
@@ -1806,9 +1843,10 @@ function DocListCardCD({
 					</table>
 					</div>
 					</div>
+					</div>
 				)}
 				{/* Load More 버튼.
-            · canLoadMore = !isSearchMode AND ready AND rows.length < total
+            · canLoadMore = !isSearchMode AND ready AND consumedCount < total (server groups consumed, not deduped rows)
             · isLoadingMore = offset>0 진행 중 — 버튼 label 'loading' 으로 전환 + disabled */}
 				{state.status === "ready" && canLoadMore && (
 					<div className="flex justify-center py-3 px-4">
@@ -1841,7 +1879,7 @@ function DocOpenSummaryCD({ summary, isPartial, isLastKnown = false, onSelect })
 	const { oldest } = summary;
 	return (
 		<aside
-			className="doc-open-summary flex flex-wrap items-center gap-x-6 gap-y-2 px-4 py-2 xl:flex-col xl:items-stretch xl:w-[200px] xl:shrink-0 xl:sticky xl:top-6 xl:py-3"
+			className="doc-open-summary flex flex-wrap items-center gap-x-6 gap-y-2 px-4 py-2"
 			aria-label={isLastKnown ? "Open documents summary, last known" : "Open documents summary"}>
 			{isLastKnown && <span className="doc-open-summary-note">Last known</span>}
 			<div className="doc-open-summary-block">
@@ -2084,7 +2122,7 @@ function GroupMembersRowsCD({
 		[memberState, draggingId, moveMember],
 	);
 
-	const colSpan = hasTagsColumn ? LEDGER_COLUMN_COUNT_CD : LEDGER_COLUMN_COUNT_CD - 1;
+	const colSpan = hasTagsColumn ? LEDGER_CD.COLUMN_COUNT : LEDGER_CD.COLUMN_COUNT - 1;
 	// 재정렬 affordance 노출 조건: rep 포함 멤버 ≥ 2 (rep 도 행에 포함되므로 2건이면 순서 바꿔 rep 변경 가능)
 	//   AND onReorder 주입됨 AND search mode 아님 (search 는 rank 정렬 — 재정렬 의미 없음).
 	const members = memberState.status === "ready" ? memberState.data || [] : [];
@@ -3520,6 +3558,18 @@ function buildListUrlCD({ q, docStatus, offset = 0 }) {
 //   · folder_id 보존 → 향후 expand UI 도입 시 fetch helper 사용 (현 scope 외 — single-member groups 가 production 100%)
 //   · 사용자 클릭 시 representative_id 의 viewer 진입 (id = representative_id 매핑)
 //   · 누락 필드 (content_hash 등) 는 viewer fetch 가 추후 보강 — list row 는 representative_* 만 surface
+// group identity = folder_id (a new member swaps representative_id) · a doc outside any folder is its own group
+function getGroupKeyCD(row) {
+	return row.folder_id != null ? `folder:${row.folder_id}` : `doc:${row.id}`;
+}
+
+// held rows + page rows not already held — a concurrent insert shifts the offset window and page 2 repeats page 1's tail
+// ponytail: a concurrent delete shifts the window back and skips a group, which dedupe cannot recover → keyset cursor + dedupe on /groups
+function getMergedGroupRowsCD(heldRows, pageRows) {
+	const heldKeys = new Set(heldRows.map(getGroupKeyCD));
+	return heldRows.concat(pageRows.filter((row) => !heldKeys.has(getGroupKeyCD(row))));
+}
+
 function normalizeGroupToRowCD(group) {
 	if (!group || typeof group !== "object") return null;
 	return {

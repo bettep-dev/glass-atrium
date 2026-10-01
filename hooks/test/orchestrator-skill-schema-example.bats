@@ -87,48 +87,27 @@ assert_absent() {
   assert_absent "${WITHDRAWN_FLOOR_LITERAL}"
 }
 
-# ── R1-R5: the five positive rules are stated explicitly ─────────────────────────────────
-# Each is keyed on a short stable marker, not on the full sentence, so wording edits around the
-# marker do not break the pin. Matching is case-insensitive for the same reason.
+# ── The five positive rules are stated explicitly ────────────────────────────────────────
+# Each row is keyed on a short stable marker, not on the full sentence, so wording edits around
+# the marker do not break the pin. Matching is case-insensitive for the same reason.
 
-@test "R1 rule stated: no maxLength anywhere on a workflow output schema" {
-  assert_present "no \`maxLength\` anywhere on a workflow output schema"
-}
-
-@test "R2 rule stated: never cap completion_block" {
-  assert_present "never cap \`completion_block\`"
-}
-
-@test "R3 rule stated: per-array-element caps are forbidden" {
-  assert_present "per-array-element caps are FORBIDDEN"
-}
-
-@test "R4 rule stated: hand bulk content to a file" {
-  assert_present "hand bulk content to a FILE"
-}
-
-@test "R5 rule stated: a retry must change strategy" {
-  assert_present "a retry must CHANGE STRATEGY"
-}
-
-# ── Aggregate: all five rules present (consistency gate) ─────────────────────────────────
-
-@test "ALL five positive schema-cap rules are present (consistency gate)" {
-  local rule missing=0
-  local rules=(
-    "no \`maxLength\` anywhere on a workflow output schema"
-    "never cap \`completion_block\`"
-    "per-array-element caps are FORBIDDEN"
-    "hand bulk content to a FILE"
-    "a retry must CHANGE STRATEGY"
+@test "the skill states each of the five positive schema-cap rules" {
+  local row name marker
+  local rows=(
+    "no maxLength on a workflow output schema|no \`maxLength\` anywhere on a workflow output schema"
+    "completion_block is never capped|never cap \`completion_block\`"
+    "per-array-element caps are forbidden|per-array-element caps are FORBIDDEN"
+    "bulk content goes to a file|hand bulk content to a FILE"
+    "a retry changes strategy|a retry must CHANGE STRATEGY"
   )
-  for rule in "${rules[@]}"; do
-    if ! grep -Fiq -- "${rule}" "${SKILL}"; then
-      printf 'rule marker absent: %s\n' "${rule}" >&2
-      missing=$((missing + 1))
-    fi
+  for row in "${rows[@]}"; do
+    name="${row%%|*}"
+    marker="${row#*|}"
+    assert_present "${marker}" || {
+      echo "row: ${name}"
+      return 1
+    }
   done
-  [[ "${missing}" -eq 0 ]]
 }
 
 # ── Pointer to the promotion condition (recorded in the hook header, NOT restated here) ──
