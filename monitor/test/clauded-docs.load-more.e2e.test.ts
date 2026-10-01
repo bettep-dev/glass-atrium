@@ -126,8 +126,7 @@ after(async () => {
   resetDocsRootCache();
 });
 
-// 60 docs 만들기 — prefix/doc_type 컬럼은 DROP 됨 (서버가 silent-ignore) → 격리는 SUITE_MARKER
-// title + created_at DESC 정렬(시드 = 최신 → 첫 page 가시)에 의존.
+// seeds isolated by SUITE_MARKER title — parallel suites' newer docs can push them past page 1 → find own rows via revealRowByTitle.
 async function seedManyDocs(count: number, label: string): Promise<number[]> {
   const ids: number[] = [];
   for (let i = 0; i < count; i++) {
@@ -250,7 +249,7 @@ test("load-more: 60 seeds → initial 50 visible + Load More button → click �
     try {
       // 화면 진입 — hash router screen id 'clauded-docs' (app.jsx NAV 항목 id 와 동일 · '#clauded-docs' 패턴).
       // app.jsx parseHashScreen 가 raw hash 를 그대로 NAV.id 와 비교 — '#screen-clauded-docs' 같은 prefix 사용 시 fallback=dashboard.
-      // 기본 stage filter = '열림' — 시드 60건이 doc_review 기본값 + created_at DESC 최신이라 첫 page 포함.
+      // default 'Open' filter — 60 open seeds guarantee a full page 1 plus a Load More, whoever owns its rows.
       await page.goto(`${serverUrl}/#clauded-docs`, { waitUntil: "networkidle" });
 
       // 최초 fetch — limit=50 → 50 행 가시 (총 group ≥ 60 → first page 50).
@@ -288,7 +287,7 @@ test("filter-reset: Load More 누적 후 doc_status chip 변경 → 페이지 re
     try {
       await page.goto(`${serverUrl}/#clauded-docs`, { waitUntil: "networkidle" });
 
-      // 기본 '열림' filter — 60 시드 (doc_review 기본값 · 최신) 가 첫 page 점유.
+      // default 'Open' filter — 60 open seeds guarantee a full page 1 plus a Load More, whoever owns its rows.
       await waitForRowCountAtLeast(page, 50);
 
       // Load More click → 누적 ≥60. Promise.all 로 click + offset=50 응답 동기화.
@@ -392,7 +391,7 @@ test("superseded-drawer: supersedes_id 가진 doc 선택 → meta sidebar 'Versi
     const context: BrowserContext = await browser.newContext();
     const page: Page = await context.newPage();
     try {
-      // 기본 '열림' filter — successor (doc_review · 최신 created_at) 가 첫 page 포함.
+      // default 'Open' filter — the successor can sit past page 1 → revealRowByTitle below.
       await page.goto(`${serverUrl}/#clauded-docs`, { waitUntil: "networkidle" });
       await page.locator("tr.doc-row").first().waitFor({ state: "visible" });
 
@@ -505,7 +504,7 @@ test("cascade-doc-status: folder group cascade — PUT doc_status=done on B → 
     try {
       await page.goto(`${serverUrl}/#clauded-docs`, { waitUntil: "networkidle" });
 
-      // 기본 '열림' filter — 시드 행 (최신 created_at) 이 첫 page 가시.
+      // default 'Open' filter — wait for the initial list before switching chips.
       await page.locator("tr.doc-row").first().waitFor({ state: "visible" });
 
       // '종료' chip → /groups?doc_status=done 호출 → done 상태 그룹만 가시화.
@@ -632,7 +631,7 @@ async function getDocFolderId(id: number): Promise<number | null> {
 // group-create: 3 docs multi-select → POST /group → root + member_count badge.
 
 test("group-create: 격리 3 doc multi-select → 'Group' 클릭 → POST /group → folder_id 결성 + member_count badge 가시", async () => {
-  // 격리 seed 3 doc — SUITE_MARKER title (after() scrub) + 최신 created_at → 첫 page 가시.
+  // 3 isolated seeds — SUITE_MARKER title for the after() scrub; checkRowByTitle pages to each.
   const titles = [
     makeTitle("acg-grp-A", 0),
     makeTitle("acg-grp-B", 0),
@@ -926,13 +925,13 @@ test("cascade-toast: 3-doc group 생성 → 'Grouped 3' toast 가시 + TOAST_DUR
   try {
     const context: BrowserContext = await browser.newContext();
     const page: Page = await context.newPage();
-    // toast 수명을 실시계 대신 page clock 으로 구동 — full-suite 부하에서도 결정적.
+    // toast lifetime runs on the page clock, not wall time → deterministic under full-suite load.
     await page.clock.install();
     try {
       await page.goto(`${serverUrl}/#clauded-docs`, { waitUntil: "networkidle" });
       await page.locator("tr.doc-row").first().waitFor({ state: "visible" });
 
-      // 3 doc multi-select + group 결성 — 시계 정지 후 toast 타이머는 runFor 로만 진행.
+      // select 3 docs + group — with the clock paused, toast timers advance only via runFor.
       for (const t of titles) await checkRowByTitle(page, t);
       await page.clock.pauseAt(await page.evaluate(() => Date.now() + 1000));
       await clickGroupCreateButton(page);
@@ -948,7 +947,7 @@ test("cascade-toast: 3-doc group 생성 → 'Grouped 3' toast 가시 + TOAST_DUR
       assert.strictEqual(role, "status", `토스트 role=status (WCAG 4.1.3 status messages)`);
       assert.strictEqual(ariaLive, "polite", `토스트 aria-live=polite (assertive 아님)`);
 
-      // TOAST_DURATION_MS_CD 직전까지 유지 → 도달 시 detach (`toast && (...)`).
+      // toast stays until TOAST_DURATION_MS_CD elapses, then detaches (`toast && (...)`).
       const toastDurationMs = 3200;
       await page.clock.runFor(toastDurationMs - 1);
       assert.strictEqual(await toast.count(), 1, "the toast stays until its full duration elapses");
