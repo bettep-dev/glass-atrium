@@ -1033,9 +1033,9 @@ function ScreenClaudedDocs(/* { onNav } */) {
           .doc-col-tags { display: none; }
           .doc-col-title { min-width: 240px; }
         }
-        /* column floors + Tags need ~1112px → a narrower ledger (beside the rail, near the card floor) drops Tags, the viewer still carries it */
+        /* column floors (973px) + Tags 152 → a narrower ledger drops Tags, the viewer still carries it */
         .doc-ledger-scroll { container: doc-ledger / inline-size; }
-        @container doc-ledger (width < 1120px) { .doc-col-tags { display: none; } }
+        @container doc-ledger (width < 1125px) { .doc-col-tags { display: none; } }
         /* 선택된 행 강조 — 기존 .is-selected (viewer focus) 와 색 구분: --accent 약한 채도. */
         .doc-row.is-multi-selected { background: rgb(var(--accent) / 0.10); }
         .doc-row.is-multi-selected.is-selected { background: rgb(var(--accent) / 0.16); }
@@ -1100,14 +1100,19 @@ function ScreenClaudedDocs(/* { onNav } */) {
         /* clip trims an outside ring → the shared handoff ring drawn inset */
         .card.doc-list-card[data-focus-handoff]:focus { outline-offset: calc(-1 * var(--focus-ring-width)); }
         .doc-open-summary { border-bottom: 1px solid rgb(var(--line)); }
-        @media (min-width: 1280px) { .doc-open-summary { border-bottom: 0; border-left: 1px solid rgb(var(--line)); } }
+        /* rail beside only when the ledger keeps its column floors there: 973px (select 44 + Status 195 + ID 130 + Title 394 + Author 110 + Created 100) + rail 200 → narrower stacks the rail above */
+        .doc-layout { container: doc-layout / inline-size; }
+        @container doc-layout (width >= 1173px) {
+          .doc-layout .doc-layout-row { flex-direction: row-reverse; align-items: flex-start; }
+          .doc-layout .doc-open-summary { flex-direction: column; align-items: stretch; width: 200px; flex-shrink: 0; position: sticky; top: 1.5rem; padding-block: 0.75rem; border-bottom: 0; border-left: 1px solid rgb(var(--line)); }
+        }
         .doc-open-summary-block { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 8px; }
         .doc-open-summary-heading { margin: 0; font-size: var(--fs-meta); font-weight: 600; color: rgb(var(--dim)); }
         .doc-open-summary-group { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px; margin: 0; font-size: var(--fs-meta); }
         .doc-open-summary-group dt { color: rgb(var(--ink)); }
         .doc-open-summary-group dd { margin: 0 8px 0 0; color: rgb(var(--ink)); font-family: 'JetBrains Mono', monospace; font-variant-numeric: tabular-nums; }
         .doc-open-summary-group .is-stale { color: rgb(var(--warn)); font-weight: 600; }
-        @media (min-width: 1280px) {
+        @container doc-layout (width >= 1173px) {
           .doc-open-summary .doc-open-summary-block { display: block; }
           .doc-open-summary .doc-open-summary-heading { margin-bottom: 4px; }
           .doc-open-summary .doc-open-summary-group { display: grid; grid-template-columns: minmax(0, 1fr) auto; column-gap: 12px; row-gap: 2px; }
@@ -1569,7 +1574,8 @@ function DocListCardCD({
 					</PageVerdict>
 				)}
 				{state.status === "ready" && rows.length > 0 && (
-					<div className="flex flex-col xl:flex-row-reverse xl:items-start">
+					<div className="doc-layout">
+					<div className="doc-layout-row flex flex-col">
 					{hasOpenSummary && (
 						<DocOpenSummaryCD
 							summary={openSummary}
@@ -1601,7 +1607,8 @@ function DocListCardCD({
 								</th>
 								{/* doc_status badge 별도 column 분리 (title inline 제거 · 사용자 directive). */}
 								{/* width 는 표가 넘칠 때 min-content 까지 눌린다 → 컬럼마다 min-width 바닥을 같이 준다. */}
-								<th scope="col" style={{ width: 135, minWidth: 135 }}>Status</th>
+								{/* ponytail: 195px = "Implementing" pill (the longest stage label) + cell padding — a longer label or font change → re-measure; the rail-placement e2e rows are the tripwire. */}
+								<th scope="col" style={{ width: 195, minWidth: 195 }}>Status</th>
 								{/* ID — 문서 번호 노출 (그룹 루트 행은 대표 문서 번호).
                     ponytail: 130px = "rev of #123456" (mono 14자 × 7.2px + padding 28px) — 7자리 id 부터는 재측정 필요. */}
 								<th scope="col" style={{ width: 130, minWidth: 130 }}>ID</th>
@@ -1815,6 +1822,7 @@ function DocListCardCD({
 					</table>
 					</div>
 					</div>
+					</div>
 				)}
 				{/* Load More 버튼.
             · canLoadMore = !isSearchMode AND ready AND consumedCount < total (server groups consumed, not deduped rows)
@@ -1850,7 +1858,7 @@ function DocOpenSummaryCD({ summary, isPartial, isLastKnown = false, onSelect })
 	const { oldest } = summary;
 	return (
 		<aside
-			className="doc-open-summary flex flex-wrap items-center gap-x-6 gap-y-2 px-4 py-2 xl:flex-col xl:items-stretch xl:w-[200px] xl:shrink-0 xl:sticky xl:top-6 xl:py-3"
+			className="doc-open-summary flex flex-wrap items-center gap-x-6 gap-y-2 px-4 py-2"
 			aria-label={isLastKnown ? "Open documents summary, last known" : "Open documents summary"}>
 			{isLastKnown && <span className="doc-open-summary-note">Last known</span>}
 			<div className="doc-open-summary-block">
