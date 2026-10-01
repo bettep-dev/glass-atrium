@@ -213,6 +213,16 @@ async function waitForRowCountAtMost(page: Page, maxCount: number): Promise<void
   );
 }
 
+// helper — titles of the rendered ledger rows carrying a label (a repeated group renders its title twice)
+async function getRowTitles(page: Page, label: string): Promise<string[]> {
+  return await page.evaluate(
+    (fragment) =>
+      Array.from(document.querySelectorAll("tr.doc-row .doc-title-text"), (el) => el.textContent ?? "")
+        .filter((text) => text.includes(fragment)),
+    label,
+  );
+}
+
 // load-more: 60 seeds → initial 50 + Load More click → 60.
 
 test("load-more: 60 seeds → initial 50 visible + Load More button → click → 60 visible + button hidden", async () => {
@@ -262,11 +272,23 @@ test("filter-reset: Load More 누적 후 doc_status chip 변경 → 페이지 re
   try {
     const context: BrowserContext = await browser.newContext();
     const page: Page = await context.newPage();
+    const keyWarnings: string[] = [];
+    page.on("console", (msg) => {
+      if (msg.text().includes("same key")) keyWarnings.push(msg.text());
+    });
     try {
       await page.goto(`${serverUrl}/#clauded-docs`, { waitUntil: "networkidle" });
 
       // 기본 '열림' filter — 60 시드 (doc_review 기본값 · 최신) 가 첫 page 점유.
       await waitForRowCountAtLeast(page, 50);
+
+      // a doc landing between page 1 and Load More shifts the offset window → page 2 repeats page 1's last group
+      const late = await postCreate({
+        title: makeTitle("ac3reset-late", 0),
+        author: "load-more-tester",
+        html_body: makeHtmlBody("ac3reset-late"),
+      });
+      ids.push(late.id);
 
       // Load More click → 누적 ≥60. Promise.all 로 click + offset=50 응답 동기화.
       const loadMoreBtn = loadMoreButton(page);
@@ -279,6 +301,13 @@ test("filter-reset: Load More 누적 후 doc_status chip 변경 → 페이지 re
       await waitForRowCountAtLeast(page, 60);
       const afterLoadMore = await countVisibleRows(page);
       assert.ok(afterLoadMore >= 60, `Load More 후 ≥60 rows (got ${afterLoadMore})`);
+      const seededTitles = await getRowTitles(page, "ac3reset");
+      assert.strictEqual(
+        new Set(seededTitles).size,
+        seededTitles.length,
+        `a group repeated across the shifted page renders once (${seededTitles.length} rows, ${new Set(seededTitles).size} unique)`,
+      );
+      assert.deepStrictEqual(keyWarnings, [], "no duplicate React keys after Load More");
 
       // 'All' chip 으로 filter 변경 → offset 리셋 + 새 첫 50 fetch.
       // 누적된 60+ 행이 사라지고 최대 50 행만 표시되어야 (리셋 증거).
@@ -1031,13 +1060,21 @@ test("list card: a mouse click never rings the card, a Retry handoff rings it in
 
 // open-summary rail at a desktop width: pinned on page scroll, ledger fits its remaining column
 test("open-summary rail: at 1440px the rail stays in view on page scroll and the ledger fits beside it", async () => {
-  const ids = await seedManyDocs(30, "rail");
+  const ids = await seedManyDocs(29, "rail");
+  // newest row in a format other than the page majority → the Tags column is on, as with real mixed data
+  const mixed = await postCreate({
+    title: makeTitle("rail-md", 0),
+    author: "load-more-tester",
+    md_body: "# rail-md\n\nmixed-format row",
+  });
+  ids.push(mixed.id);
   try {
     const context: BrowserContext = await browser.newContext({ viewport: { width: 1440, height: 900 } });
     const page: Page = await context.newPage();
     try {
       await page.goto(`${serverUrl}/#clauded-docs`, { waitUntil: "networkidle" });
       await page.locator("aside.doc-open-summary").waitFor({ state: "visible" });
+      await page.locator("table.tbl th.doc-col-tags").waitFor({ state: "attached" });
 
       const ledger = await page.evaluate(() => {
         const scroller = document.querySelector("table.tbl")?.parentElement;

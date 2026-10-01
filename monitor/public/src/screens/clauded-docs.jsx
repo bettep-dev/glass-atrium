@@ -229,6 +229,8 @@ function ScreenClaudedDocs(/* { onNav } */) {
 	// held rows stay until the offset=0 answer replaces them → search/refresh never blanks the ledger
 	const [loadedRows, setLoadedRows] = useStateCD([]);
 	const [currentOffset, setCurrentOffset] = useStateCD(0);
+	// server rows consumed so far → next Load More offset (deduped loadedRows runs short of the server position)
+	const [consumedCount, setConsumedCount] = useStateCD(0);
 	const [selectedId, setSelectedId] = useStateCD(null);
 	const [viewerState, setViewerState] = useStateCD({
 		status: "idle",
@@ -338,10 +340,13 @@ function ScreenClaudedDocs(/* { onNav } */) {
 		return () => clearTimeout(id);
 	}, [keyword]);
 
-	// filter/search change → offset=0 · held rows stay until the new first page settles
-	useEffectCD(() => {
+	// filter/search/refresh change → offset=0 in the same render · an effect-time reset lets the fetch run once with the old offset
+	const listKey = `${debouncedQ}\n${docStatusFilter}\n${refreshTick}`;
+	const [offsetListKey, setOffsetListKey] = useStateCD(listKey);
+	if (offsetListKey !== listKey) {
+		setOffsetListKey(listKey);
 		setCurrentOffset(0);
-	}, [debouncedQ, docStatusFilter, refreshTick]);
+	}
 
 	// filter / refresh 변경 시 multi-select clear — chip 토글 = "다른 목록 보기" → 이전 선택 의미 소멸.
 	useEffectCD(() => {
@@ -419,7 +424,9 @@ function ScreenClaudedDocs(/* { onNav } */) {
 						putRegionData(s, ctrl, { rows, total, docTotal, hiddenDocTotal, bigmEnabled, groupCounts }),
 					);
 				// Load More — 기존 누적 + 신규 page · 첫 페이지 / search — 교체.
-				setLoadedRows((prev) => (isLoadMore ? prev.concat(rows) : rows));
+				setLoadedRows((prev) => (isLoadMore ? appendNewGroupRowsCD(prev, rows) : rows));
+				const pageLength = Array.isArray(managedData?.groups) ? managedData.groups.length : rows.length;
+				setConsumedCount(currentOffset + pageLength);
 			})
 			.catch((err) => setListState((s) => putRegionFailure(s, ctrl, err)));
 
@@ -430,12 +437,11 @@ function ScreenClaudedDocs(/* { onNav } */) {
 	const loadMore = useCallbackCD(() => {
 		if (listState.busy) return;
 		if (debouncedQ) return; // search mode 미지원
-		const visibleLen = loadedRows.length;
 		const total =
 			listState.status === "ready" ? Number(listState.data?.total ?? 0) : 0;
-		if (visibleLen >= total) return; // 더 가져올 페이지 없음
-		setCurrentOffset(visibleLen);
-	}, [listState, debouncedQ, loadedRows.length]);
+		if (consumedCount >= total) return; // 더 가져올 페이지 없음
+		setCurrentOffset(consumedCount);
+	}, [listState, debouncedQ, consumedCount]);
 
 	// 뷰어 본문 fetch — format query 생략 → 서버 default resolution (rowFormat 자동 감지) 활용.
 	//   · HTML primary / 비-HTML primary (md) / agent-only MD·YAML·JSON·TXT 모두 format 그대로 응답.
@@ -882,8 +888,8 @@ function ScreenClaudedDocs(/* { onNav } */) {
 			: 0;
 	// Load More 버튼 가시성. search mode 미지원 + 누적 < total 일 때만 노출.
 	const canLoadMore =
-		!isSearchMode && listState.status === "ready" && rows.length < total;
-	const loadMoreRemaining = canLoadMore ? Math.max(0, total - rows.length) : 0;
+		!isSearchMode && listState.status === "ready" && consumedCount < total;
+	const loadMoreRemaining = canLoadMore ? Math.max(0, total - consumedCount) : 0;
 	const isLoadingMore = listState.busy && currentOffset > 0 && !isSearchMode;
 
 	const headerRight = <DocHeaderActionsCD asOf={asOf} listState={listState} onRefresh={triggerRefresh} />;
@@ -1027,6 +1033,9 @@ function ScreenClaudedDocs(/* { onNav } */) {
           .doc-col-tags { display: none; }
           .doc-col-title { min-width: 240px; }
         }
+        /* column floors + Tags need ~1112px → a narrower ledger (beside the rail, near the card floor) drops Tags, the viewer still carries it */
+        .doc-ledger-scroll { container: doc-ledger / inline-size; }
+        @container doc-ledger (width < 1120px) { .doc-col-tags { display: none; } }
         /* 선택된 행 강조 — 기존 .is-selected (viewer focus) 와 색 구분: --accent 약한 채도. */
         .doc-row.is-multi-selected { background: rgb(var(--accent) / 0.10); }
         .doc-row.is-multi-selected.is-selected { background: rgb(var(--accent) / 0.16); }
@@ -1570,7 +1579,7 @@ function DocListCardCD({
 						/>
 					)}
 					{/* own x-scroll → a table wider than its column scrolls here instead of running under the sticky rail */}
-					<div className="min-w-0 flex-1 overflow-x-auto">
+					<div className="doc-ledger-scroll min-w-0 flex-1 overflow-x-auto">
 					<table className={isHeldBusy ? "tbl doc-ledger-busy" : "tbl"} aria-busy={isHeldBusy ? "true" : undefined}>
 						<caption className="sr-only">
 							Documents ledger. Up and Down move between rows, Right reaches a row's controls, Enter opens the focused document.
@@ -3520,6 +3529,18 @@ function buildListUrlCD({ q, docStatus, offset = 0 }) {
 //   · folder_id 보존 → 향후 expand UI 도입 시 fetch helper 사용 (현 scope 외 — single-member groups 가 production 100%)
 //   · 사용자 클릭 시 representative_id 의 viewer 진입 (id = representative_id 매핑)
 //   · 누락 필드 (content_hash 등) 는 viewer fetch 가 추후 보강 — list row 는 representative_* 만 surface
+// group identity = folder_id (a new member swaps representative_id) · a doc outside any folder is its own group
+function getGroupKeyCD(row) {
+	return row.folder_id != null ? `folder:${row.folder_id}` : `doc:${row.id}`;
+}
+
+// Load More append minus groups already held — a concurrent insert shifts the offset window and page 2 repeats page 1's tail
+// ponytail: a concurrent delete shifts the window back and skips a group, which dedupe cannot recover → keyset cursor + dedupe on /groups
+function appendNewGroupRowsCD(heldRows, pageRows) {
+	const heldKeys = new Set(heldRows.map(getGroupKeyCD));
+	return heldRows.concat(pageRows.filter((row) => !heldKeys.has(getGroupKeyCD(row))));
+}
+
 function normalizeGroupToRowCD(group) {
 	if (!group || typeof group !== "object") return null;
 	return {
