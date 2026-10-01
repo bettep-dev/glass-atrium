@@ -36,6 +36,23 @@ const OPERATOR_ACTOR_CD = "operator";
 // column 구성: checkbox + status + id + title + tags + author + created_at (검색 모드도 동일 — relevance 컬럼 없음).
 //   · Tags drops out when no row carries a tag of its own → one column fewer.
 const LEDGER_COLUMN_COUNT_CD = 7;
+/**
+ * px floor each ledger column holds before the table scrolls sideways → th widths + every ledger/rail container threshold derive from here.
+ * Container queries cannot read var() → the <style> block interpolates these.
+ */
+const LEDGER_FLOOR_CD = {
+	select: 44, // ponytail: .doc-checkbox-cell as rendered (measured) — the cell CSS sets it, this mirrors it; a checkbox-cell change → re-measure
+	status: 191, // ponytail: "Implementing" pill 160.8px measured at 1440 + cell padding 28 — a longer label or pill/font change → re-measure; the rail-placement e2e rows are the tripwire
+	id: 130, // ponytail: "rev of #123456" (mono 14자 × 7.2px + padding 28px) — 7자리 id 부터는 재측정 필요
+	title: 394,
+	tags: 152,
+	author: 110,
+	created: 100,
+	titleNarrow: 240,
+};
+// Tags drops first + the narrow title floor applies only below this sum → both left out
+const LEDGER_FLOOR_SUM_CD = LEDGER_FLOOR_CD.select + LEDGER_FLOOR_CD.status + LEDGER_FLOOR_CD.id + LEDGER_FLOOR_CD.title + LEDGER_FLOOR_CD.author + LEDGER_FLOOR_CD.created;
+const OPEN_SUMMARY_RAIL_WIDTH_CD = 200;
 
 // Open-versus-closed chips. countKey indexes the server's group-unit counts (group_counts);
 // a count the payload does not carry renders as nothing, never as 0.
@@ -1027,12 +1044,12 @@ function ScreenClaudedDocs(/* { onNav } */) {
         /* 선택 checkbox column — 항상 노출 (hover-only 시 사용자가 모름 → glass-atrium-design-designer reject). */
         .doc-checkbox-cell { width: 28px; padding: 4px 6px 4px 12px; text-align: center; vertical-align: middle; }
         .doc-checkbox-cell input[type="checkbox"] { width: 16px; height: 16px; cursor: pointer; accent-color: rgb(var(--accent)); }
-        .doc-col-title { min-width: 394px; }
-        /* column floors (973px) + Tags 152 → a narrower ledger drops Tags, the viewer still carries it */
+        .doc-col-title { min-width: ${LEDGER_FLOOR_CD.title}px; }
+        /* column floors + Tags → a narrower ledger drops Tags, the viewer still carries it */
         .doc-ledger-scroll { container: doc-ledger / inline-size; }
-        @container doc-ledger (width < 1125px) { .doc-col-tags { display: none; } }
-        /* a ledger under its 973px column floors → the title floor drops 394 → 240 */
-        @container doc-ledger (width < 973px) { .doc-col-title { min-width: 240px; } }
+        @container doc-ledger (width < ${LEDGER_FLOOR_SUM_CD + LEDGER_FLOOR_CD.tags}px) { .doc-col-tags { display: none; } }
+        /* a ledger under its column floors → the title floor narrows */
+        @container doc-ledger (width < ${LEDGER_FLOOR_SUM_CD}px) { .doc-col-title { min-width: ${LEDGER_FLOOR_CD.titleNarrow}px; } }
         /* 선택된 행 강조 — 기존 .is-selected (viewer focus) 와 색 구분: --accent 약한 채도. */
         .doc-row.is-multi-selected { background: rgb(var(--accent) / 0.10); }
         .doc-row.is-multi-selected.is-selected { background: rgb(var(--accent) / 0.16); }
@@ -1076,7 +1093,7 @@ function ScreenClaudedDocs(/* { onNav } */) {
         .tbl.doc-ledger-busy { opacity: 0.55; transition: opacity 120ms; }
         @media (prefers-reduced-motion: reduce) { .tbl.doc-ledger-busy { transition: none; } }
         .doc-stage-picker { position: relative; display: inline-flex; flex-direction: column; align-items: flex-start; gap: 2px; }
-        .doc-stage-pill { display: inline-flex; align-items: center; gap: 6px; padding: 3px 8px; border: 1px solid rgb(var(--line)); border-radius: 999px; background: transparent; color: rgb(var(--ink)); font-size: var(--fs-meta); line-height: 1.4; white-space: nowrap; }
+        .doc-stage-pill { display: inline-flex; align-items: center; gap: 5px; padding: 3px 6px; border: 1px solid rgb(var(--line)); border-radius: 999px; background: transparent; color: rgb(var(--ink)); font-size: var(--fs-meta); line-height: 1.4; white-space: nowrap; }
         .doc-stage-pill.is-interactive { cursor: pointer; border-radius: 6px; }
         .doc-stage-pill.is-interactive:hover { background: rgb(var(--line) / 0.4); }
         .doc-stage-glyph.is-terminal { display: inline-flex; color: rgb(var(--dim)); }
@@ -1085,7 +1102,8 @@ function ScreenClaudedDocs(/* { onNav } */) {
         .doc-stage-meter { display: inline-flex; align-items: center; gap: 3px; }
         .doc-stage-label { font-family: 'Pretendard Variable', Pretendard, ui-sans-serif, system-ui, sans-serif; }
         /* 마지막 상태 변경 행위자 — pill 아래 한 줄. 모르면 줄 자체가 없다. */
-        .doc-stage-actor { font-size: var(--fs-meta); font-family: 'JetBrains Mono', monospace; color: rgb(var(--faint)); white-space: normal; word-break: keep-all; overflow-wrap: normal; }
+        /* anywhere → an unbreakable raw model id wraps instead of widening the Status floor · the title attribute keeps the full id */
+        .doc-stage-actor { font-size: var(--fs-meta); font-family: 'JetBrains Mono', monospace; color: rgb(var(--faint)); white-space: normal; word-break: keep-all; overflow-wrap: anywhere; }
         .doc-row.is-stale > td { background: rgb(var(--warn) / 0.03); }
         /* the wash sits under the pill → a --line border fades into it */
         .doc-row.is-stale .doc-stage-pill { border-color: rgb(var(--dim) / 0.6); }
@@ -1097,11 +1115,11 @@ function ScreenClaudedDocs(/* { onNav } */) {
         /* clip trims an outside ring → the shared handoff ring drawn inset */
         .card.doc-list-card[data-focus-handoff]:focus { outline-offset: calc(-1 * var(--focus-ring-width)); }
         .doc-open-summary { border-bottom: 1px solid rgb(var(--line)); }
-        /* rail beside only when the ledger keeps its column floors there: 973px (select 44 + Status 195 + ID 130 + Title 394 + Author 110 + Created 100) + rail 200 → narrower stacks the rail above */
+        /* rail beside only when the ledger keeps its column floors there → narrower stacks the rail above */
         .doc-layout { container: doc-layout / inline-size; }
-        @container doc-layout (width >= 1173px) {
+        @container doc-layout (width >= ${LEDGER_FLOOR_SUM_CD + OPEN_SUMMARY_RAIL_WIDTH_CD}px) {
           .doc-layout .doc-layout-row { flex-direction: row-reverse; align-items: flex-start; }
-          .doc-layout .doc-open-summary { flex-direction: column; align-items: stretch; width: 200px; flex-shrink: 0; position: sticky; top: 1.5rem; padding-block: 0.75rem; border-bottom: 0; border-left: 1px solid rgb(var(--line)); }
+          .doc-layout .doc-open-summary { flex-direction: column; align-items: stretch; width: ${OPEN_SUMMARY_RAIL_WIDTH_CD}px; flex-shrink: 0; position: sticky; top: 1.5rem; padding-block: 0.75rem; border-bottom: 0; border-left: 1px solid rgb(var(--line)); }
         }
         .doc-open-summary-block { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 8px; }
         .doc-open-summary-heading { margin: 0; font-size: var(--fs-meta); font-weight: 600; color: rgb(var(--dim)); }
@@ -1109,7 +1127,7 @@ function ScreenClaudedDocs(/* { onNav } */) {
         .doc-open-summary-group dt { color: rgb(var(--ink)); }
         .doc-open-summary-group dd { margin: 0 8px 0 0; color: rgb(var(--ink)); font-family: 'JetBrains Mono', monospace; font-variant-numeric: tabular-nums; }
         .doc-open-summary-group .is-stale { color: rgb(var(--warn)); font-weight: 600; }
-        @container doc-layout (width >= 1173px) {
+        @container doc-layout (width >= ${LEDGER_FLOOR_SUM_CD + OPEN_SUMMARY_RAIL_WIDTH_CD}px) {
           .doc-open-summary .doc-open-summary-block { display: block; }
           .doc-open-summary .doc-open-summary-heading { margin-bottom: 4px; }
           .doc-open-summary .doc-open-summary-group { display: grid; grid-template-columns: minmax(0, 1fr) auto; column-gap: 12px; row-gap: 2px; }
@@ -1604,22 +1622,20 @@ function DocListCardCD({
 								</th>
 								{/* doc_status badge 별도 column 분리 (title inline 제거 · 사용자 directive). */}
 								{/* width 는 표가 넘칠 때 min-content 까지 눌린다 → 컬럼마다 min-width 바닥을 같이 준다. */}
-								{/* ponytail: 195px = "Implementing" pill (the longest stage label) + cell padding — a longer label or font change → re-measure; the rail-placement e2e rows are the tripwire. */}
-								<th scope="col" style={{ width: 195, minWidth: 195 }}>Status</th>
-								{/* ID — 문서 번호 노출 (그룹 루트 행은 대표 문서 번호).
-                    ponytail: 130px = "rev of #123456" (mono 14자 × 7.2px + padding 28px) — 7자리 id 부터는 재측정 필요. */}
-								<th scope="col" style={{ width: 130, minWidth: 130 }}>ID</th>
+								<th scope="col" style={{ width: LEDGER_FLOOR_CD.status, minWidth: LEDGER_FLOOR_CD.status }}>Status</th>
+								{/* ID — 문서 번호 노출 (그룹 루트 행은 대표 문서 번호). */}
+								<th scope="col" style={{ width: LEDGER_FLOOR_CD.id, minWidth: LEDGER_FLOOR_CD.id }}>ID</th>
 								<th scope="col" className="doc-col-title">
 									<span className="doc-col-title-text">Title</span>
 								</th>
 								{/* 태그 전용 column — 서술 칩을 제목 셀에서 분리. */}
 								{hasTagsColumn && (
-									<th scope="col" className="doc-col-tags" style={{ width: 152, minWidth: 152 }}>
+									<th scope="col" className="doc-col-tags" style={{ width: LEDGER_FLOOR_CD.tags, minWidth: LEDGER_FLOOR_CD.tags }}>
 										Tags
 									</th>
 								)}
-								<th scope="col" style={{ width: 110, minWidth: 110 }}>Author</th>
-								<th scope="col" style={{ width: 100, minWidth: 100 }}>Created</th>
+								<th scope="col" style={{ width: LEDGER_FLOOR_CD.author, minWidth: LEDGER_FLOOR_CD.author }}>Author</th>
+								<th scope="col" style={{ width: LEDGER_FLOOR_CD.created, minWidth: LEDGER_FLOOR_CD.created }}>Created</th>
 							</tr>
 						</thead>
 						<tbody onKeyDown={moveRowFocusCD}>
