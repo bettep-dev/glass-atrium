@@ -53,6 +53,7 @@ interface HarnessFold {
 }
 interface AppHelpers {
   harnessToNavBadges: (harness: HarnessFold | null) => { architecture?: { badges: Badge[] } | null };
+  agentsToNavBadges: (agentsState: unknown) => { agents?: Badge | null };
   systemsRollup: (harness: HarnessFold | null, pageState?: ShellPageState | null) => Rollup;
   getHarness: (stores: Record<string, unknown>) => HarnessFold & { unreadSources: string[]; error: string | null };
   parseHashScreen: () => string;
@@ -417,6 +418,173 @@ test("harnessToNavBadges: polled-and-clean emits the key with a null badge; unpo
     !("architecture" in app.harnessToNavBadges(app.foldHarness({}))),
     "an unobserved fold claims nothing about the slot",
   );
+});
+
+// --- The Agents nav numeral: agents unsafe to route, read from the circuit-breaker summary ---
+
+function buildBreakerAlarm(agent: string, state: "suspended" | "streak"): Record<string, unknown> {
+  const suspended = state === "suspended";
+  return { agent, suspended, consecutive_fails: suspended ? 3 : 2, suspended_at: suspended ? "2026-10-01T09:00:00Z" : null };
+}
+function buildBreakerSummary(alarms: Record<string, unknown>[]): unknown {
+  const suspended = alarms.filter((a) => a.suspended).length;
+  return {
+    data: [],
+    meta: {
+      circuit_breaker: {
+        source: "loaded",
+        registry_agents: 23,
+        suspended_count: suspended,
+        streak_count: alarms.length - suspended,
+        alarms,
+      },
+    },
+  };
+}
+
+test("the Agents nav numeral equals the unsafe-to-route count, crit once any agent is suspended", async (t) => {
+  const rows = [
+    { name: "one streak", alarms: [buildBreakerAlarm("glass-atrium-dev-react", "streak")], tone: "warn" },
+    { name: "two streaks", alarms: [buildBreakerAlarm("glass-atrium-dev-react", "streak"), buildBreakerAlarm("glass-atrium-dev-node", "streak")], tone: "warn" },
+    { name: "one suspended", alarms: [buildBreakerAlarm("glass-atrium-qa-debugger", "suspended")], tone: "crit" },
+    {
+      name: "suspended plus a streak",
+      alarms: [buildBreakerAlarm("glass-atrium-qa-debugger", "suspended"), buildBreakerAlarm("glass-atrium-dev-node", "streak")],
+      tone: "crit",
+    },
+  ];
+  for (const row of rows) {
+    await t.test(row.name, () => {
+      const slot = app.agentsToNavBadges(ready(buildBreakerSummary(row.alarms))).agents;
+      assert.strictEqual(slot?.badge, String(row.alarms.length));
+      assert.strictEqual(slot?.badgeTone, row.tone);
+      for (const alarm of row.alarms) assert.ok(slot?.title?.includes(String(alarm.agent)), `${alarm.agent} is named`);
+    });
+  }
+});
+
+test("the Agents nav numeral renders nothing at zero, while unread, or when the breaker is unavailable", async (t) => {
+  const unavailable = { meta: { circuit_breaker: { source: "unavailable", registry_agents: 23, suspended_count: 0, streak_count: 0, alarms: [] } } };
+  const rows = [
+    { name: "loaded with no alarm", state: ready(buildBreakerSummary([])) },
+    { name: "never answered", state: { status: "loading", data: null } },
+    { name: "first read failed", state: { status: "error", data: null, error: "HTTP 500" } },
+    { name: "breaker unavailable", state: ready(unavailable) },
+    { name: "summary without a breaker", state: ready({ data: [], meta: {} }) },
+  ];
+  for (const row of rows) {
+    await t.test(row.name, () => {
+      assert.strictEqual(app.agentsToNavBadges(row.state).agents?.badge, undefined);
+    });
+  }
+});
+
+interface SidebarSurface {
+  Sidebar: (props: Record<string, unknown>) => unknown;
+  React: { createElement: (type: unknown, props: unknown, ...children: unknown[]) => unknown };
+}
+const collectText = (node: unknown): string[] => {
+  if (typeof node === "string" || typeof node === "number") return [String(node)];
+  if (Array.isArray(node)) return node.flatMap(collectText);
+  if (node === null || typeof node !== "object" || !("children" in node)) return [];
+  return collectText((node as { children: unknown[] }).children);
+};
+interface RenderedNode {
+  type: unknown;
+  props: Record<string, unknown> | null;
+  children: unknown[];
+}
+const isRenderedNode = (node: unknown): node is RenderedNode =>
+  node !== null && typeof node === "object" && "children" in node && "props" in node;
+const findNodes = (node: unknown, match: (n: RenderedNode) => boolean): RenderedNode[] => {
+  if (Array.isArray(node)) return node.flatMap((child) => findNodes(child, match));
+  if (!isRenderedNode(node)) return [];
+  return [...(match(node) ? [node] : []), ...findNodes(node.children, match)];
+};
+// Sidebar's element tree, with agentsState reaching it beside the harness exactly as App passes them
+const renderSidebar = (harness: unknown, agentsState: unknown): unknown => {
+  const surface = app as unknown as SidebarSurface;
+  const stubCreate = surface.React.createElement;
+  surface.React.createElement = (type, props, ...children) => ({ type, props, children });
+  try {
+    return surface.Sidebar({ active: "dashboard", onNav: () => {}, harness, agentsState, pageState: null });
+  } finally {
+    surface.React.createElement = stubCreate;
+  }
+};
+const renderSidebarText = (harness: unknown, agentsState: unknown): string[] =>
+  collectText(renderSidebar(harness, agentsState));
+
+test("a failed agent-store read leaves the footer and the System map numeral unchanged", () => {
+  const harness = app.getHarness(allHealthy({ liveState: ready(daemonPayload(1)), kpiState: ready({ last_1h_fail_count: 2 }) }));
+  const unread = renderSidebarText(harness, { status: "loading", data: null });
+  const failed = renderSidebarText(harness, { status: "error", data: null, error: "HTTP 503" });
+  const systemMapNumeral = app.harnessToNavBadges(harness).architecture?.badges[0]?.badge;
+  assert.ok(systemMapNumeral && unread.includes(systemMapNumeral), "the render reaches the System map numeral");
+  assert.ok(unread.includes(app.systemsRollup(harness).label), "the render reaches the footer");
+  assert.deepStrictEqual(failed, unread);
+});
+
+// The numeral alone says how many; the rendered tooltip is where the operator reads which agents.
+test("the rendered Agents nav badge's tooltip names every agent it counts", () => {
+  const alarms = [buildBreakerAlarm("glass-atrium-qa-debugger", "suspended"), buildBreakerAlarm("glass-atrium-dev-node", "streak")];
+  const tree = renderSidebar(app.getHarness(allHealthy()), ready(buildBreakerSummary(alarms)));
+  const [agentsItem] = findNodes(tree, (n) => n.props?.key === "agents");
+  const [agentsBadge] = findNodes(agentsItem, (n) => String(n.props?.className ?? "").includes("nav-badge"));
+  const title = String(agentsBadge?.props?.title ?? "");
+
+  assert.ok(agentsBadge, "the Agents item renders its badge");
+  for (const alarm of alarms) assert.ok(title.includes(String(alarm.agent)), `${alarm.agent} is named in the rendered tooltip`);
+});
+
+// assistive tech reads what is not aria-hidden; sighted users read what is not sr-only
+const collectReadText = (node: unknown, isSkipped: (n: RenderedNode) => boolean): string[] => {
+  if (typeof node === "string" || typeof node === "number") return [String(node)];
+  if (Array.isArray(node)) return node.flatMap((child) => collectReadText(child, isSkipped));
+  if (!isRenderedNode(node) || isSkipped(node)) return [];
+  return collectReadText(node.children, isSkipped);
+};
+const isAriaHidden = (n: RenderedNode): boolean => n.props?.["aria-hidden"] === "true";
+const isSrOnly = (n: RenderedNode): boolean => String(n.props?.className ?? "").split(" ").includes("sr-only");
+
+// A title on a non-focusable span reaches neither keyboard nor screen-reader users, and tone alone is colour.
+test("the rendered Agents badge describes itself to assistive tech and tells suspended from streak-only without colour", async (t) => {
+  const rows = [
+    {
+      name: "streak only",
+      alarms: [buildBreakerAlarm("glass-atrium-dev-react", "streak"), buildBreakerAlarm("glass-atrium-dev-node", "streak")],
+      split: ["2 on a fail streak"],
+    },
+    {
+      name: "one suspended",
+      alarms: [buildBreakerAlarm("glass-atrium-qa-debugger", "suspended"), buildBreakerAlarm("glass-atrium-dev-node", "streak")],
+      split: ["1 suspended", "1 on a fail streak"],
+    },
+  ];
+  const visibleByRow = new Map<string, string>();
+  for (const row of rows) {
+    await t.test(row.name, () => {
+      const tree = renderSidebar(app.getHarness(allHealthy()), ready(buildBreakerSummary(row.alarms)));
+      const [agentsItem] = findNodes(tree, (n) => n.props?.key === "agents");
+      const [agentsBadge] = findNodes(agentsItem, (n) => String(n.props?.className ?? "").includes("nav-badge"));
+      const spoken = collectReadText(agentsItem, isAriaHidden).join("");
+
+      assert.match(spoken, /unsafe to route/);
+      for (const part of row.split) assert.ok(spoken.includes(part), `assistive tech hears "${part}"`);
+      for (const alarm of row.alarms) assert.ok(spoken.includes(String(alarm.agent)), `assistive tech hears ${alarm.agent}`);
+      visibleByRow.set(row.name, collectReadText(agentsBadge, isSrOnly).join(""));
+    });
+  }
+  assert.notStrictEqual(visibleByRow.get("streak only"), visibleByRow.get("one suspended"), "same count, different shape");
+});
+
+// A daemon row may still carry the retired `stale` flag; the verdict is effective_status alone.
+test("a legacy stale flag on a healthy daemon row adds no System map badge", () => {
+  const legacy = {
+    daemons: daemonPayload(0).daemons.map((row) => ({ ...row, stale: true })),
+  };
+  const fold = app.foldHarness(allHealthy({ liveState: ready(legacy), kpiState: ready({ last_1h_fail_count: 0 }) }));
+  assert.strictEqual(app.harnessToNavBadges(fold).architecture, null);
 });
 
 // The sidebar never reads greener than the page in view: the header stamp's read state takes only the ALL SYSTEMS slot.

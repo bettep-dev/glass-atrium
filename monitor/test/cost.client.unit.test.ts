@@ -1116,6 +1116,40 @@ const CACHE_ROWS = ["2026-01-08", "2026-01-09", "2026-01-10"].map((event_date, i
   event_date, cache_hit_rate: [0.97, 0.99, 0.985][i], total_cache_read: 900, total_input: 20,
 }));
 
+// Cost falls while tokens rise in the first row → the delta reads the token series, never cost.
+function getTokenTrend(tokens: readonly number[]): PanelState {
+  return ready({
+    points: tokens.map((count, i) => ({
+      date: `2026-01-0${i + 1}`, cost_usd: 10 - i, session_count: 1,
+      input_tokens: count, output_tokens: 0, cache_read_tokens: 0, cache_creation_tokens: 0,
+    })),
+  });
+}
+
+// text a screen reader announces \u2014 an aria-hidden subtree is skipped whole
+function getSpokenText(node: RenderedNode | string | null): string {
+  if (node === null || typeof node === "string") return collectText(node);
+  if (node.props["aria-hidden"] === "true" || node.props["aria-hidden"] === true) return "";
+  return node.children.map(getSpokenText).join(" ");
+}
+
+describe("the token volume total compares the recent half of the complete days with the span before it", () => {
+  const rows = [
+    { name: "rising tokens read up even while cost falls", tokens: [100, 100, 200, 200, 5], glyph: "\u25b2", spoken: /\bup\s+100\s*%\s*last 2 days vs the 2 before/ },
+    { name: "falling tokens read down", tokens: [200, 200, 100, 100, 5], glyph: "\u25bc", spoken: /\bdown\s+50\s*%\s*last 2 days vs the 2 before/ },
+    { name: "today's partial day never moves it", tokens: [100, 100, 100, 100, 9999], glyph: "\u2014", spoken: /\bunchanged\s+0\s*%\s*last 2 days vs the 2 before/ },
+    { name: "one complete day has no change to state", tokens: [100, 5], glyph: "", spoken: /No trend/ },
+  ];
+  for (const row of rows) {
+    test(row.name, async () => {
+      const mod = await loadCostRender();
+      const tree = renderIn(mod, "TokenStackedBody", { state: getTokenTrend(row.tokens), days: 30, onRetry: () => {} });
+      assert.ok(collectText(tree).includes(row.glyph), `the direction glyph ${row.glyph} is drawn`);
+      assert.match(getSpokenText(tree), row.spoken, "the direction is announced in words, not only drawn");
+    });
+  }
+});
+
 test("every chart is a focusable image carrying its own name", async () => {
   const mod = await loadCostRender();
   const rows = [

@@ -1103,3 +1103,98 @@ describe("Confidence vs. reality: the headline counts confident failures and emp
     assert.deepStrictEqual(sameRealm(helpers.getCrosstabVisibleRowsO(byCell)), ["high", "medium", "low"]);
   });
 });
+
+// --- status band: each tile states its share change against the prior window ---
+
+interface PriorTrendHelpers {
+  fetchAttentionO: (days: number, signal?: AbortSignal) => Promise<{ total: number; priorTotal: number | null }>;
+  buildAnalyticsUrlO: (days: number) => string;
+  fetch: (url: string) => Promise<{ ok: boolean; json: () => Promise<unknown> }>;
+}
+const trendHelpers = helpers as unknown as PriorTrendHelpers;
+
+// function components expand → the text a reader sees, wherever a sub-component draws it
+const renderText = (node: unknown): string => {
+  if (typeof node === "string" || typeof node === "number") return String(node);
+  if (Array.isArray(node)) return node.map(renderText).join(" ");
+  if (node === null || typeof node !== "object" || !("type" in node)) return "";
+  const el = node as RenderNode;
+  if (typeof el.type === "function") {
+    return renderText((el.type as (p: unknown) => unknown)({ ...el.props, children: el.children }));
+  }
+  return el.children.map(renderText).join(" ");
+};
+
+const buildPriorWindow = (total: number, byResult: Record<string, number>) => ({
+  period_start: "2026-08-02",
+  period_end: "2026-09-01",
+  total,
+  reconstructed_total: 0,
+  excluded_poisoned_count: 0,
+  by_result: Object.entries(byResult).map(([result, count]) => ({ result, count, reconstructed_count: 0 })),
+});
+
+const renderBand = (prior: unknown, priorTotal: number | null): string => renderText(helpers.StatusBandO({
+  analyticsState: {
+    status: "ready",
+    data: {
+      overall: { total: 200, reconstructed_total: 0, excluded_poisoned_count: 0, prior_window: prior } as AnalyticsData["overall"],
+      byResultCount: { done: 150, fail: 8, blocked: 4 },
+    },
+  },
+  attentionState: { status: "ready", data: { total: 30, parts: { flagged: 30, fail: 0, blocked: 0, open: 0 }, priorTotal } as { total: number } },
+  windowDays: 30,
+}));
+
+describe("StatusBandO: every tile states its share change against the prior window", () => {
+  const text = renderBand(buildPriorWindow(100, { done: 80, fail: 3, blocked: 3 }), 10);
+
+  test("the hero states the points of change, the prior share and the prior range", () => {
+    // 30/200 = 15% now vs 10/100 = 10.0% in the prior window
+    assert.match(text, /Up 5\.0 pts since 09-01 vs 10\.0% in 08-02 – 08-31/);
+  });
+  test("a volume tile whose share fell states the drop", () => {
+    // Done: 150/200 = 75% now vs 80/100 = 80.0%
+    assert.match(text, /Down 5\.0 pts since 09-01 vs 80\.0% in 08-02 – 08-31/);
+  });
+  test("an unchanged share reads as level", () => {
+    // Failed or blocked: 12/200 = 6% vs 6/100 = 6.0%
+    assert.match(text, /Level since 09-01 vs 6\.0% in 08-02 – 08-31/);
+  });
+  test("a prior window under the low-N floor claims no comparison", () => {
+    const small = renderBand(buildPriorWindow(12, { done: 10, fail: 2 }), 2);
+    assert.match(small, /No comparison — too few records in 08-02 – 08-31/);
+    assert.doesNotMatch(small, /pts since/);
+  });
+  test("a response without a prior window draws no change line", () => {
+    assert.doesNotMatch(renderBand(undefined, null), /since|No comparison/);
+  });
+  test("an unread prior attention count leaves the hero without a change line", () => {
+    const unread = renderBand(buildPriorWindow(100, { done: 80, fail: 3, blocked: 3 }), null);
+    assert.doesNotMatch(unread, /vs 10\.0%/);
+    assert.match(unread, /Down 5\.0 pts/);
+  });
+});
+
+describe("Task results reads opt into the prior window", () => {
+  test("the cross-analysis read asks for the prior window over the same days", () => {
+    const params = new URL(trendHelpers.buildAnalyticsUrlO(30), "http://x").searchParams;
+    assert.strictEqual(params.get("days"), "30");
+    assert.strictEqual(params.get("prior_window"), "1");
+  });
+  test("only the needs-you headline asks for the prior count, and its total is returned", async (t) => {
+    const urls: string[] = [];
+    const realFetch = trendHelpers.fetch;
+    t.after(() => {
+      trendHelpers.fetch = realFetch;
+    });
+    trendHelpers.fetch = async (url: string) => {
+      urls.push(url);
+      const isHead = !url.includes("review_flag");
+      return { ok: true, json: async () => (isHead ? { total: 30, prior_window: { total: 11 } } : { total: 1 }) };
+    };
+    const attention = await trendHelpers.fetchAttentionO(30);
+    assert.strictEqual(attention.priorTotal, 11);
+    assert.deepStrictEqual(urls.map((u) => new URL(u, "http://x").searchParams.has("prior_window")), [true, false, false, false, false]);
+  });
+});
