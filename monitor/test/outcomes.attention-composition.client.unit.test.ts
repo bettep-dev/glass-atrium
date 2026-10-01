@@ -1125,7 +1125,7 @@ const renderText = (node: unknown): string => {
   return el.children.map(renderText).join(" ");
 };
 
-const priorWindow = (total: number, byResult: Record<string, number>) => ({
+const buildPriorWindow = (total: number, byResult: Record<string, number>) => ({
   period_start: "2026-08-02",
   period_end: "2026-09-01",
   total,
@@ -1147,7 +1147,7 @@ const renderBand = (prior: unknown, priorTotal: number | null): string => render
 }));
 
 describe("StatusBandO: every tile states its share change against the prior window", () => {
-  const text = renderBand(priorWindow(100, { done: 80, fail: 3, blocked: 3 }), 10);
+  const text = renderBand(buildPriorWindow(100, { done: 80, fail: 3, blocked: 3 }), 10);
 
   test("the hero states the points of change, the prior share and the prior range", () => {
     // 30/200 = 15% now vs 10/100 = 10.0% in the prior window
@@ -1162,7 +1162,7 @@ describe("StatusBandO: every tile states its share change against the prior wind
     assert.match(text, /Level since 09-01 vs 6\.0% in 08-02 – 08-31/);
   });
   test("a prior window under the low-N floor claims no comparison", () => {
-    const small = renderBand(priorWindow(12, { done: 10, fail: 2 }), 2);
+    const small = renderBand(buildPriorWindow(12, { done: 10, fail: 2 }), 2);
     assert.match(small, /No comparison — too few records in 08-02 – 08-31/);
     assert.doesNotMatch(small, /pts since/);
   });
@@ -1170,7 +1170,7 @@ describe("StatusBandO: every tile states its share change against the prior wind
     assert.doesNotMatch(renderBand(undefined, null), /since|No comparison/);
   });
   test("an unread prior attention count leaves the hero without a change line", () => {
-    const unread = renderBand(priorWindow(100, { done: 80, fail: 3, blocked: 3 }), null);
+    const unread = renderBand(buildPriorWindow(100, { done: 80, fail: 3, blocked: 3 }), null);
     assert.doesNotMatch(unread, /vs 10\.0%/);
     assert.match(unread, /Down 5\.0 pts/);
   });

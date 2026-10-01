@@ -422,10 +422,11 @@ test("harnessToNavBadges: polled-and-clean emits the key with a null badge; unpo
 
 // --- The Agents nav numeral: agents unsafe to route, read from the circuit-breaker summary ---
 
-function breakerAlarm(agent: string, suspended: boolean): Record<string, unknown> {
+function buildBreakerAlarm(agent: string, state: "suspended" | "streak"): Record<string, unknown> {
+  const suspended = state === "suspended";
   return { agent, suspended, consecutive_fails: suspended ? 3 : 2, suspended_at: suspended ? "2026-10-01T09:00:00Z" : null };
 }
-function breakerSummary(alarms: Record<string, unknown>[]): unknown {
+function buildBreakerSummary(alarms: Record<string, unknown>[]): unknown {
   const suspended = alarms.filter((a) => a.suspended).length;
   return {
     data: [],
@@ -443,18 +444,18 @@ function breakerSummary(alarms: Record<string, unknown>[]): unknown {
 
 test("the Agents nav numeral equals the unsafe-to-route count, crit once any agent is suspended", async (t) => {
   const rows = [
-    { name: "one streak", alarms: [breakerAlarm("glass-atrium-dev-react", false)], tone: "warn" },
-    { name: "two streaks", alarms: [breakerAlarm("glass-atrium-dev-react", false), breakerAlarm("glass-atrium-dev-node", false)], tone: "warn" },
-    { name: "one suspended", alarms: [breakerAlarm("glass-atrium-qa-debugger", true)], tone: "crit" },
+    { name: "one streak", alarms: [buildBreakerAlarm("glass-atrium-dev-react", "streak")], tone: "warn" },
+    { name: "two streaks", alarms: [buildBreakerAlarm("glass-atrium-dev-react", "streak"), buildBreakerAlarm("glass-atrium-dev-node", "streak")], tone: "warn" },
+    { name: "one suspended", alarms: [buildBreakerAlarm("glass-atrium-qa-debugger", "suspended")], tone: "crit" },
     {
       name: "suspended plus a streak",
-      alarms: [breakerAlarm("glass-atrium-qa-debugger", true), breakerAlarm("glass-atrium-dev-node", false)],
+      alarms: [buildBreakerAlarm("glass-atrium-qa-debugger", "suspended"), buildBreakerAlarm("glass-atrium-dev-node", "streak")],
       tone: "crit",
     },
   ];
   for (const row of rows) {
     await t.test(row.name, () => {
-      const slot = app.agentsToNavBadges(ready(breakerSummary(row.alarms))).agents;
+      const slot = app.agentsToNavBadges(ready(buildBreakerSummary(row.alarms))).agents;
       assert.strictEqual(slot?.badge, String(row.alarms.length));
       assert.strictEqual(slot?.badgeTone, row.tone);
       for (const alarm of row.alarms) assert.ok(slot?.title?.includes(String(alarm.agent)), `${alarm.agent} is named`);
@@ -465,7 +466,7 @@ test("the Agents nav numeral equals the unsafe-to-route count, crit once any age
 test("the Agents nav numeral renders nothing at zero, while unread, or when the breaker is unavailable", async (t) => {
   const unavailable = { meta: { circuit_breaker: { source: "unavailable", registry_agents: 23, suspended_count: 0, streak_count: 0, alarms: [] } } };
   const rows = [
-    { name: "loaded with no alarm", state: ready(breakerSummary([])) },
+    { name: "loaded with no alarm", state: ready(buildBreakerSummary([])) },
     { name: "never answered", state: { status: "loading", data: null } },
     { name: "first read failed", state: { status: "error", data: null, error: "HTTP 500" } },
     { name: "breaker unavailable", state: ready(unavailable) },
@@ -526,8 +527,8 @@ test("a failed agent-store read leaves the footer and the System map numeral unc
 
 // The numeral alone says how many; the rendered tooltip is where the operator reads which agents.
 test("the rendered Agents nav badge's tooltip names every agent it counts", () => {
-  const alarms = [breakerAlarm("glass-atrium-qa-debugger", true), breakerAlarm("glass-atrium-dev-node", false)];
-  const tree = renderSidebar(app.getHarness(allHealthy()), ready(breakerSummary(alarms)));
+  const alarms = [buildBreakerAlarm("glass-atrium-qa-debugger", "suspended"), buildBreakerAlarm("glass-atrium-dev-node", "streak")];
+  const tree = renderSidebar(app.getHarness(allHealthy()), ready(buildBreakerSummary(alarms)));
   const [agentsItem] = findNodes(tree, (n) => n.props?.key === "agents");
   const [agentsBadge] = findNodes(agentsItem, (n) => String(n.props?.className ?? "").includes("nav-badge"));
   const title = String(agentsBadge?.props?.title ?? "");
