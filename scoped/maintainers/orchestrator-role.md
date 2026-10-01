@@ -35,7 +35,9 @@ Maintainer-facing material for that rule file. Nothing here binds the orchestrat
 
 ### `## Machine-Read Structure`
 
-- **Live-file pin**: `CostTierRuleTextTest` is the only suite that reads the rule file's text (byte contract above).
+- **Live-file pin**: these suites read the rule file's text; what each reads and what breaks it is its row in the rule file's consumer table.
+  - `CostTierRuleTextTest` (byte contract above).
+  - `hooks/test/inject-session-context.bats` → "the workflow pre-flight carries both close-token forms of the grammar SoT".
 - **Indifferent suites**: `hooks/test/enforce-workflow-verify-stage*.bats` and `hooks/test/enforce-verification-gate*.bats` drive the hooks through their own fixtures and never read the rule file. They neither guard nor fail on its wording; they guard the token and verdict literals at the hook.
 
 ### `#### Deliverable exposure and designer composition (Decision phase)`

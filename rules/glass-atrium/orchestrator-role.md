@@ -9,10 +9,12 @@ Reword around what these consumers read, never through it.
 | Consumer | Reads | Breaks when |
 |---|---|---|
 | `hooks/test/test_daemon_config_loader.py` → `CostTierRuleTextTest` (repo-tree copy) | the Cost-Tier Selection heading, then the text up to the NEXT `###` substring, for three phrases: the heuristic label on the table · the daemon config-reader module name · the unpinned session-default fallback | the heading is renamed · one of the three phrases is reworded · any `###` substring — a `###` or `####` heading, or a hash-prefixed heading name in prose — lands ahead of them, truncating the parsed span · that heading's exact literal is written a second time ANYWHERE ABOVE it, re-aiming the split at the wrong copy |
+| `hooks/test/inject-session-context.bats` → "the workflow pre-flight carries both close-token forms of the grammar SoT" | the `in-script` and `deferred:` close-token form literals, token included, counted across the file: exactly one of each | either form literal is reworded · either form literal is written a second time anywhere in the file, quoted or not |
 | `hooks/enforce-verification-gate.sh` · `hooks/enforce-workflow-verify-stage.sh` · `hooks/enforce-foreground-harness.sh` · `hooks/inject-session-context.sh` · `hooks/inject-scope-rules.sh` | heading names, quoted into operator-facing block and advisory text | a cited heading is renamed, sending a blocked operator to a section that no longer exists |
 | `scoped/scope-dev.md` · `scope-qa.md` · `scope-planning.md` · `scope-report.md` · `skills/glass-atrium-ops-orchestrator.md` · `skills/glass-atrium-ops-delegation-contracts/` · `agents/glass-atrium-intel-reporter.md` · `agents/glass-atrium-dev-front.md` | the same heading names, plus the bolded leads reserved below | a cited heading or bolded lead is renamed |
 
 - `CostTierRuleTextTest` runs only in the `test-python` CI job, which a markdown-only PR skips: run it locally after any edit to this file.
+- The `inject-session-context.bats` case runs in the bats CI leg, which an edit to this file triggers.
 
 Reserved beyond that table:
 
@@ -27,7 +29,8 @@ Reserved beyond that table:
 - **Bolded leads** cited by name:
   - under `### Phase Notes`: Exposure Determination · Visual-Weight Probe · Foreground Probe · Capability Probe · Compatibility Probe · Verbatim forward-relay · glass-atrium-dev-front markup-exception Monitoring judgment;
   - under `### Spawn Budget` and `### Context Handoff Size`: Split triggers · HARD SECONDARY · Empirical tool_use calibration · Standing obligation (the one under `#### Delegation-size discipline`) · Effort-scaling by task shape · Attestation-token placement;
-  - under `### Failure Recovery Loop`: Backing honesty (which stages are enforced).
+  - under `### Failure Recovery Loop`: Backing honesty (which stages are enforced);
+  - under `## Document-Driven Workflow` step 6: Prompt-file tail.
 - Neither list is exhaustive: grep the corpus for a heading or bolded lead before renaming it.
 
 ## Orchestrator Identity (Control Plane Only)
