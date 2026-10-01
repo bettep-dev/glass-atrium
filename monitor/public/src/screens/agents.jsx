@@ -183,6 +183,8 @@ function ScreenAgents() {
   const [lifecycleState,  setLifecycleState]  = useStateAg(window.UI.INITIAL_REGION_STATE);
   // overageState → budget_overages(P95 막대 크로싱 표기). 404/503(테이블 미배포) 시 error → 표기 미렌더.
   const [overageState,    setOverageState]    = useStateAg(window.UI.INITIAL_REGION_STATE);
+  // summary only — its totals span the whole window whatever the row limit
+  const [activationState, setActivationState] = useStateAg(window.UI.INITIAL_REGION_STATE);
 
   // selectedAgent = 키보드/행 하이라이트 (드릴 진입점) · 드로어 열림과 독립 — 하이라이트는 클릭·포커스로,
   // 드로어는 클릭/Enter 로만 (open trigger 분리).
@@ -223,6 +225,7 @@ function ScreenAgents() {
       runFetchAg(`/api/agents/lifecycle-stats?days=${days}`, ctrl, setLifecycleState),
       // budget_overages P95 막대 크로싱 표기 — days ∈ {7,30,90} 서버 allowlist 와 동일.
       runFetchAg(`/api/agents/budget-overages?days=${days}`, ctrl, setOverageState),
+      runFetchAg(`/api/telemetry/activations?days=${days}&limit=1`, ctrl, setActivationState),
     ];
 
     return () => ctrl.abort();
@@ -437,7 +440,7 @@ function ScreenAgents() {
 
       <TaskTypeFold failures={sourceFailures} state={successState} days={days} onRetry={triggerRefresh}/>
 
-      <InstrumentationFold failures={sourceFailures} lifecycleState={lifecycleState} reviewState={reviewState} days={days} onRetry={triggerRefresh}/>
+      <InstrumentationFold failures={sourceFailures} lifecycleState={lifecycleState} reviewState={reviewState} activationState={activationState} days={days} onRetry={triggerRefresh}/>
       </div>
 
       {/* 행 클릭 시에만 마운트 (로드 시 자동 열림 없음). DetailSurface variant=drawer — focus-trap/scroll-lock/3 닫기 상속. */}
@@ -457,6 +460,8 @@ function ScreenAgents() {
           trendByAgent={trendByAgent}
           trendDates={trendDates}
           failureByAgent={failureByAgent}
+          overageState={overageState}
+          overageByAgent={overageByAgent}
           days={days}
           onClose={closeDrawer}
           onNav={navDrawer}
@@ -548,18 +553,32 @@ function formatAgentListAg(agents) {
 }
 
 // Status fold — open by default, the head carries the verdict so a closed fold still answers.
-function InstrumentationFold({ failures, lifecycleState, reviewState, days, onRetry }) {
-  const { tone, sub } = getInstrumentationVerdict(lifecycleState, reviewState);
+function InstrumentationFold({ failures, lifecycleState, reviewState, activationState, days, onRetry }) {
+  const { tone, sub } = getInstrumentationVerdict(lifecycleState, reviewState, activationState);
 
   return (
     <window.UI.Disclosure kind="status" title="Instrumentation" sub={sub} tone={tone} className="mb-4">
+      <p className="fs-meta text-muted mb-3">{getActivationLineAg(activationState, days)}</p>
       <ReviewFlagTimelineCard failures={failures} state={reviewState} days={days} onRetry={onRetry}/>
     </window.UI.Disclosure>
   );
 }
 
+// unread → a stated gap, never a 0 % that reads as a clean result
+function getActivationLineAg(activationState, days) {
+  const clause = getActivationClauseAg(activationState);
+  return clause ? `${clause} activations · last ${days}d` : 'Activation rate unavailable';
+}
+
+function getActivationClauseAg(activationState) {
+  const summary = activationState?.status === 'ready' ? activationState.data?.summary : null;
+  if (!summary) return null;
+  const rate = Number(summary.overall_false_positive_rate) || 0;
+  return `activation false-positive ${(rate * 100).toFixed(1)}% of ${formatIntAg(Number(summary.total_activations) || 0)}`;
+}
+
 // One clause per loaded source — an unread source adds nothing rather than a zero.
-function getInstrumentationVerdict(lifecycleState, reviewState) {
+function getInstrumentationVerdict(lifecycleState, reviewState, activationState) {
   const parts = [];
   let tone = 'neutral';
 
@@ -572,6 +591,8 @@ function getInstrumentationVerdict(lifecycleState, reviewState) {
     const { flagged, total } = getReviewFlagTotalsAg(readyData(reviewState)?.rows ?? []);
     if (total > 0) parts.push(`${((flagged / total) * 100).toFixed(1)}% flagged`);
   }
+  const activationClause = getActivationClauseAg(activationState);
+  if (activationClause) parts.push(activationClause);
   return { tone, sub: parts.length > 0 ? parts.join(' · ') : INSTRUMENTATION_QUESTION };
 }
 
@@ -764,7 +785,7 @@ function buildAgentStatusTiles({ days, summaryState, failureState, overageState,
     {
       key: 'needsContext',
       feeder: REGION_FEEDERS.summary,
-      label: 'Needs context',
+      label: 'Needs info',
       source: 'needs-context runs',
       sub: `${joinSubAg(['needs_context outcomes', getRunRateTextAg(needsContextCount, totalRuns), `last ${days}d`])} — fix the delegation prompt`,
       status: summaryView,
@@ -1268,7 +1289,7 @@ function AgentDetailDrawer({
   drawerAgent, sortedAgents, summaryState, revisionState, reviewByAgentState,
   latencyState, failureState, lifecycleState,
   detailState, blockedState, recentState, trendByAgent, trendDates, failureByAgent,
-  days, onClose, onNav, onRetry, onDeleted,
+  overageState, overageByAgent, days, onClose, onNav, onRetry, onDeleted,
 }) {
   const { DetailSurface } = window.UI;
 
@@ -1426,6 +1447,8 @@ function AgentDetailDrawer({
               latencyState={latencyState}
               trendByAgent={trendByAgent}
               trendDates={trendDates}
+              overageState={overageState}
+              overageByAgent={overageByAgent}
               onRetry={onRetry}
             />
           </AgentDrawerSection>
@@ -1780,7 +1803,7 @@ function AgentQualitySignalsSection({ drawerAgent, revisionState, reviewByAgentS
 
 // 2. Performance — RED-method 단일 agent 뷰. success-rate 는 hero 가 소유 → 여기선 중복 박스 폐지.
 // runs/launches/needs-info/P95 2-col + latency p50/p95/p99 (허용된 단일 3-up 예외) + 7일 추세.
-function AgentPerformanceSection({ agent, drawerAgent, summaryState, latencyState, trendByAgent, trendDates, onRetry }) {
+function AgentPerformanceSection({ agent, drawerAgent, summaryState, latencyState, trendByAgent, trendDates, overageState, overageByAgent, onRetry }) {
   const { TrendChart } = window.UI;
   const view = window.UI.getRegionView(summaryState);
   if (view === 'loading') {
@@ -1802,6 +1825,7 @@ function AgentPerformanceSection({ agent, drawerAgent, summaryState, latencyStat
   const p95Display = p95Sec == null ? '—' : formatDurationSecAg(p95Sec);
   const trend = trendByAgent ? trendByAgent.get(drawerAgent) : null;
   const hasTrend = Array.isArray(trend) && trend.length > 0;
+  const crossing = getCrossingMetricsAg(overageState, overageByAgent, drawerAgent);
 
   return (
     <div className="space-y-3">
@@ -1811,6 +1835,8 @@ function AgentPerformanceSection({ agent, drawerAgent, summaryState, latencyStat
         <DetailMetric label="Launches" value={invocations == null ? '—' : formatIntAg(invocations)}/>
         <DetailMetric label="Needs info" value={formatIntAg(needsContextCount)}/>
         <DetailMetric label="P95" value={p95Display}/>
+        <DetailMetric label="Budget crossings" value={crossing.count}/>
+        <DetailMetric label="Peak crossing" value={crossing.peak}/>
       </div>
 
       <AgentLatencyRow latency={latency} state={latencyState} onRetry={onRetry}/>
@@ -1832,6 +1858,14 @@ function AgentPerformanceSection({ agent, drawerAgent, summaryState, latencyStat
       </div>
     </div>
   );
+}
+
+// unread overage source → unavailable, never a 0 that reads as no crossing
+function getCrossingMetricsAg(overageState, overageByAgent, agentId) {
+  if (overageState?.status !== 'ready') return { count: 'unavailable', peak: 'unavailable' };
+  const overage = overageByAgent?.get(agentId);
+  const count = overage ? overage.overage_count : 0;
+  return { count: formatIntAg(count), peak: count > 0 ? `${formatIntAg(overage.max_crossed_pct)}%` : '—' };
 }
 
 // latency p50/p95/p99 한 줄 — 페어링 없으면 inline empty (Performance 내부 독립 degrade).

@@ -539,7 +539,7 @@ test("every status-band tile names the window its count covers", async () => {
     overageByAgent: new Map(),
     onRetry: () => undefined,
   });
-  const labels = ["Unsafe to route", "Failed", "Over tool-use cap", "Needs context"];
+  const labels = ["Unsafe to route", "Failed", "Over tool-use cap", "Needs info"];
   const tiles = labels.map((label) => findNodes(tree, (n) => n.type === "div" && collectText(n).startsWith(label))
     .filter((n) => labels.every((other) => other === label || !collectText(n).includes(other)))[0]);
   assert.match(collectText(tiles[0]), /\bnow\b/, "breaker state is current, not windowed");
@@ -1057,7 +1057,7 @@ test("Instrumentation is an open status fold whose head states the verdict, and 
 
 test("the instrumentation verdict names only what has loaded, and warns on unfinished runs", async () => {
   const mod = await loadAgentsScreen({ formatInt: REAL_UI.formatInt });
-  const verdict = mod.getInstrumentationVerdict as (l: unknown, r: unknown) => { tone: string; sub: string };
+  const verdict = mod.getInstrumentationVerdict as (l: unknown, r: unknown, a?: unknown) => { tone: string; sub: string };
   const lifecycle = (start: number, done: number) => ({ status: "ready", data: { rows: [{ agent_type: "a", start_count: start, completed_count: done }] } });
   const review = { status: "ready", data: { rows: [{ review_flagged_count: 14, total_count: 100 }] } };
   const loading = { status: "loading" };
@@ -1066,8 +1066,51 @@ test("the instrumentation verdict names only what has loaded, and warns on unfin
     { name: "every run finished", l: lifecycle(8, 8), r: review, tone: "ok", sub: "0 runs with no completion record · 14.0% flagged" },
     { name: "only review flags read", l: loading, r: review, tone: "neutral", sub: "14.0% flagged" },
     { name: "nothing read yet", l: loading, r: loading, tone: "neutral", sub: "Is the measuring apparatus intact" },
+    { name: "activations read add their false-positive share", l: lifecycle(8, 8), r: review, a: ACTIVATIONS_READY, tone: "ok", sub: "0 runs with no completion record · 14.0% flagged · activation false-positive 2.5% of 1,200" },
+    { name: "only activations read", l: loading, r: loading, a: ACTIVATIONS_READY, tone: "neutral", sub: "activation false-positive 2.5% of 1,200" },
+    { name: "an unread activation source adds nothing, never 0 %", l: loading, r: review, a: ACTIVATIONS_FAILED, tone: "neutral", sub: "14.0% flagged" },
   ];
-  for (const row of rows) assert.deepEqual({ ...verdict(row.l, row.r) }, { tone: row.tone, sub: row.sub }, row.name);
+  for (const row of rows) assert.deepEqual({ ...verdict(row.l, row.r, row.a) }, { tone: row.tone, sub: row.sub }, row.name);
+});
+
+const ACTIVATIONS_READY = { status: "ready", data: { summary: { total_activations: 1200, overall_false_positive_rate: 0.025 } }, error: null };
+const ACTIVATIONS_FAILED = { status: "error", data: null, error: { message: "HTTP 503" } };
+
+test("the Instrumentation fold body states the activation false-positive rate, and an unread source says unavailable rather than 0 %", async () => {
+  const idle = { status: "loading", data: null, error: null };
+  const rows = [
+    { name: "read", a: ACTIVATIONS_READY, line: /activation false-positive 2\.5% of 1,200 activations · last 30d/ },
+    { name: "failed", a: ACTIVATIONS_FAILED, line: /Activation rate unavailable/ },
+    { name: "not yet read", a: idle, line: /Activation rate unavailable/ },
+  ];
+  for (const row of rows) {
+    const tree = await renderComponent("InstrumentationFold", {
+      lifecycleState: idle, reviewState: idle, activationState: row.a, days: 30, onRetry: () => undefined,
+    });
+    const text = collectText(tree);
+    assert.match(text, row.line, `${row.name}: ${text}`);
+    if (row.a !== ACTIVATIONS_READY) assert.doesNotMatch(text, /\b0(\.0)?\s*%/, `${row.name}: no zero rate`);
+  }
+});
+
+test("the drawer's Performance section states the agent's budget crossings and peak, and an unread overage source says unavailable rather than 0", async () => {
+  const agent = { agent_id: "glass-atrium-dev-react", agent_name: "glass-atrium-dev-react", runs: 40, needs_context_count: 0, invocations: 40 };
+  const summaryState = { status: "ready", data: { agents: [agent] }, error: null };
+  const latencyState = { status: "ready", data: { agents: [] }, error: null };
+  const crossed = new Map([["glass-atrium-dev-react", { overage_count: 3, max_crossed_pct: 140 }]]);
+  const rows = [
+    { name: "crossed", state: { status: "ready", data: { rows: [] }, error: null }, map: crossed, count: "3", peak: "140%" },
+    { name: "loaded with no crossing", state: { status: "ready", data: { rows: [] }, error: null }, map: new Map(), count: "0", peak: "—" },
+    { name: "overage read failed", state: { status: "error", data: null, error: { message: "HTTP 503" } }, map: new Map(), count: "unavailable", peak: "unavailable" },
+  ];
+  for (const row of rows) {
+    const tree = await renderComponent("AgentPerformanceSection", {
+      agent, drawerAgent: agent.agent_id, summaryState, latencyState, overageState: row.state, overageByAgent: row.map, onRetry: () => undefined,
+    });
+    const metric = (label: string) => findNodes(tree, (n) => n.type === "DetailMetric" && n.props.label === label)[0]?.props.value;
+    assert.equal(metric("Budget crossings"), row.count, `${row.name}: count`);
+    assert.equal(metric("Peak crossing"), row.peak, `${row.name}: peak`);
+  }
 });
 
 test("every ledger and pairs column header comes from the shared header atom", async () => {
@@ -1228,7 +1271,7 @@ test("a drawer metric sits flat on its section rather than as a card inside a ca
 });
 
 function getBandTile(tree: RenderedNode | string | null, label: string): RenderedNode | null {
-  const labels = ["Unsafe to route", "Failed", "Over tool-use cap", "Needs context"];
+  const labels = ["Unsafe to route", "Failed", "Over tool-use cap", "Needs info"];
   return findNodes(tree, (n) => n.type === "div" && collectText(n).startsWith(label))
     .filter((n) => labels.every((other) => other === label || !collectText(n).includes(other)))[0] ?? null;
 }
@@ -1250,7 +1293,7 @@ test("the over-cap and needs-context tiles state their rate over runs, and the t
     const overCap = getBandTile(tree, "Over tool-use cap");
     assert.equal(findAtoms(overCap, "KpiValue")[0]?.props.tone ?? null, row.tone, `${row.name}: tone`);
     assert.equal(collectText(overCap).match(/([\d.]+)% of 1,?000 runs/)?.[1] ?? null, row.ratePct, `${row.name}: rate`);
-    const needsContext = getBandTile(tree, "Needs context");
+    const needsContext = getBandTile(tree, "Needs info");
     assert.match(collectText(needsContext), /0\.3% of 1,?000 runs/, "needs context states its rate over the same runs");
     assert.equal(findAtoms(needsContext, "KpiValue")[0]?.props.tone ?? null, null, "3 of 1,000 needs-context outcomes stay untoned");
   }
