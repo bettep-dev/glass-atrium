@@ -107,7 +107,16 @@ export interface OutcomeSearchResponse {
   // Total matching rows BEFORE pagination — drives "showing N of M" disclosure.
   total: number;
   rows: OutcomeSearchRow[];
+  // Present only when the request opts in with prior_window.
+  prior_window?: OutcomeSearchPriorWindow;
   fetched_at: string;
+}
+
+// /search opt-in prior window: the matching-row count for the N days before the current window.
+export interface OutcomeSearchPriorWindow {
+  period_start: string;
+  period_end: string;
+  total: number;
 }
 
 // /api/outcomes/:id
@@ -324,6 +333,7 @@ export interface OutcomeCrossAnalysisPriorWindow {
   period_end: string;
   total: number;
   reconstructed_total: number;
+  excluded_poisoned_count: number;
   by_result: OutcomeCrossAnalysisByResult[];
 }
 

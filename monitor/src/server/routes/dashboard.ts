@@ -28,6 +28,7 @@ import { Prisma } from "../../generated/prisma/client.js";
 import { getUpdateStatus } from "../update-status.js";
 import type {
   CostTimeseriesPoint,
+  CostTimeseriesPriorWindow,
   CostTimeseriesResponse,
   DaemonStatusItem,
   DaemonStatusResponse,
@@ -80,6 +81,11 @@ interface TimeseriesRow {
   cache_creation_tokens: bigint;
   cost_usd: Prisma.Decimal;
   session_count: bigint;
+}
+
+interface PriorWindowRow extends Omit<TimeseriesRow, "date" | "session_count"> {
+  period_start: Date;
+  period_end: Date;
 }
 
 export async function registerDashboardRoutes(app: FastifyInstance): Promise<void> {
@@ -192,7 +198,7 @@ async function handleKpi(
 }
 
 async function handleCostTimeseries(
-  request: FastifyRequest<{ Querystring: { days?: string } }>,
+  request: FastifyRequest<{ Querystring: { days?: string; prior_window?: string } }>,
   reply: FastifyReply,
 ): Promise<CostTimeseriesResponse | DashboardErrorBody> {
   const start = Date.now();
@@ -205,11 +211,13 @@ async function handleCostTimeseries(
     // Pin the series window to the day-bucket timezone's "today", the SAME calendar
     // day the KPI path buckets on — session-tz CURRENT_DATE would drift a day behind
     // (00:00–08:59 KST renders yesterday-as-today). Bound as a bind param (::date).
-    const todayIso = computeBucketTzToday(new Date());
+    const { day: todayIso, time: cutTime } = getBucketTzClock(new Date());
+    const hasPriorWindow = request.query.prior_window === "1" || request.query.prior_window === "true";
     // generate_series fills gap days with zero rows (LEFT JOIN). Interval embedded
     // via Prisma.raw is safe here because `days` was validated against allowlist.
     const windowLowerBound = buildWindowLowerBound(todayIso, days);
-    const rows = await prisma.$queryRaw<TimeseriesRow[]>`
+    const [rows, priorWindow] = await Promise.all([
+      prisma.$queryRaw<TimeseriesRow[]>`
       SELECT
         d::date AS date,
         COALESCE(SUM(c.input_tokens), 0)::bigint AS input_tokens,
@@ -222,7 +230,9 @@ async function handleCostTimeseries(
       LEFT JOIN core.cost_events c ON c.event_date = d::date
       GROUP BY d
       ORDER BY d ASC
-    `;
+    `,
+      hasPriorWindow ? findCostPriorWindow(windowLowerBound, days, cutTime) : undefined,
+    ]);
 
     const points: CostTimeseriesPoint[] = rows.map((row) => ({
       date: formatDateOnly(row.date),
@@ -239,10 +249,59 @@ async function handleCostTimeseries(
       "dashboard query complete",
     );
     // `points[].date` is UTC-midnight-derived (formatDateOnly slices toISOString).
-    return { days, points, timezone: "UTC" };
+    return {
+      days,
+      points,
+      timezone: "UTC",
+      ...(priorWindow === undefined ? {} : { prior_window: priorWindow }),
+    };
   } catch (error) {
     return failWithDb(request, reply, "/api/dashboard/cost-timeseries", error);
   }
+}
+
+/**
+ * Sums over the shown window moved back `days` days: [shown first day − days, shown first day),
+ * its last day counted only up to `cutTime` → both spans hold the same part of a day.
+ * Same row filter as the series (every kind) → a filtered prior alone would bias the delta.
+ */
+async function findCostPriorWindow(
+  windowLowerBound: Prisma.Sql,
+  days: number,
+  cutTime: string,
+): Promise<CostTimeseriesPriorWindow> {
+  const [row] = await getPrisma().$queryRaw<PriorWindowRow[]>`
+    WITH bounds AS (
+      SELECT (${windowLowerBound})::date - ${days}::int AS period_start, (${windowLowerBound})::date AS period_end
+    )
+    SELECT
+      b.period_start,
+      b.period_end,
+      COALESCE(SUM(c.input_tokens), 0)::bigint AS input_tokens,
+      COALESCE(SUM(c.output_tokens), 0)::bigint AS output_tokens,
+      COALESCE(SUM(c.cache_read_tokens), 0)::bigint AS cache_read_tokens,
+      COALESCE(SUM(c.cache_creation_tokens), 0)::bigint AS cache_creation_tokens,
+      COALESCE(SUM(c.cost_usd), 0)::numeric(12,6) AS cost_usd
+    FROM bounds b
+    LEFT JOIN core.cost_events c
+      ON c.event_date >= b.period_start
+      AND c.event_date < b.period_end
+      AND (c.event_date < b.period_end - 1 OR c.event_time <= ${cutTime}::time)
+    GROUP BY b.period_start, b.period_end
+  `;
+  if (row === undefined) {
+    throw new Error("cost prior-window query returned no row");
+  }
+  return {
+    period_start: formatDateOnly(row.period_start),
+    period_end: formatDateOnly(row.period_end),
+    cut_time: cutTime,
+    input_tokens: bigintToNumber(row.input_tokens),
+    output_tokens: bigintToNumber(row.output_tokens),
+    cache_read_tokens: bigintToNumber(row.cache_read_tokens),
+    cache_creation_tokens: bigintToNumber(row.cache_creation_tokens),
+    cost_usd: decimalToNumber(row.cost_usd),
+  };
 }
 
 async function handleDaemonStatus(
@@ -325,6 +384,31 @@ export function computeBucketTzToday(now: Date, timeZone: string = DAY_BUCKET_TI
     month: "2-digit",
     day: "2-digit",
   }).format(now);
+}
+
+/**
+ * Bucket-tz calendar day + 24-hour wall-clock time of one instant.
+ * The prior-window cut reads both off the same instant → a request straddling bucket-tz
+ * midnight never pairs one day's date with the next day's time (DB NOW() would be a second instant).
+ */
+export function getBucketTzClock(
+  now: Date,
+  timeZone: string = DAY_BUCKET_TIMEZONE,
+): { day: string; time: string } {
+  // hourCycle h23, not hour12:false → some ICU builds render midnight as "24", which breaks the ::time bind
+  const parts = new Intl.DateTimeFormat("en-CA", {
+    timeZone,
+    hourCycle: "h23",
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+  }).formatToParts(now);
+  const getPart = (type: Intl.DateTimeFormatPartTypes): string =>
+    parts.find((part) => part.type === type)?.value ?? "00";
+  return {
+    day: computeBucketTzToday(now, timeZone),
+    time: `${getPart("hour")}:${getPart("minute")}:${getPart("second")}`,
+  };
 }
 
 // Canonical "last N days" window lower bound, computed from the bucket-tz `today` bind

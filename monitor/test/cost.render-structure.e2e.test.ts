@@ -97,10 +97,17 @@ async function openRenderContext(fixture: CostFixture): Promise<RenderContext> {
   }));
 
   app.get("/api/cost/kpi", async () => fixture.kpi);
-  app.get("/api/dashboard/cost-timeseries", async () => ({
+  app.get<{ Querystring: { prior_window?: string } }>("/api/dashboard/cost-timeseries", async (request) => ({
     days: trendRows.length,
     points: trendRows,
     timezone: "UTC",
+    // the route's opt-in rule → a Cost fetch that drops prior_window=1 lays out no delta line
+    ...(request.query.prior_window === "1" || request.query.prior_window === "true" ? {
+      prior_window: {
+        period_start: "2025-12-01", period_end: trendRows[0]?.date ?? "2026-01-01", cut_time: "12:00:00",
+        input_tokens: 1_000, output_tokens: 1_000, cache_read_tokens: 10_000, cache_creation_tokens: 1_000, cost_usd: 1,
+      },
+    } : {}),
   }));
   // A month's real model spread: more models than the ledger's top five, so it rolls up an Other row.
   app.get("/api/cost/by-model", async () => ({
@@ -356,6 +363,14 @@ describe("calm fixture — nothing is running hot", () => {
       assert.equal(tags.length, 1, "each tile names its window exactly once");
       assert.ok(tags[0]!.length > 0, "a window tag is never blank");
     }
+  });
+
+  test("the tiles compare with the prior window the screen opts into", async () => {
+    const feet = await ctx.page.evaluate(() =>
+      Array.from(document.querySelectorAll(".cost-screen .cost-foot")).map((el) => (el.textContent || "").trim()),
+    );
+    assert.ok(feet.some((text) => /cut at this time of day/.test(text)), "a measured delta line renders");
+    assert.ok(!feet.some((text) => /did not arrive/.test(text)), "no tile reads the prior window as missing");
   });
 
   test("each card pair splits from the narrowest width its content fits and stacks below it", async () => {

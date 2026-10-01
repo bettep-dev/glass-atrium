@@ -46,7 +46,7 @@ interface AlarmRow {
 interface WindowTotal {
   total: number | null;
   delta: number | null;
-  deltaSpan: number;
+  prior: { days: number; period_end: string } | null;
   dayCount: number;
   avgDaily: number | null;
   peakCost: number | null;
@@ -372,7 +372,7 @@ test("a window tag names the range its figures were read for, never the range st
   const rows = [
     { name: "a 30d payload on screen while 7d loads", state: { status: "ready", data: {}, error: null, busy: true, key: "/api/cost/by-model?days=30", pendingKey: "/api/cost/by-model?days=7" }, requested: 7, shown: 30 },
     { name: "the 7d payload landed", state: { status: "ready", data: {}, error: null, busy: false, key: "/api/cost/by-model?days=7", pendingKey: null }, requested: 7, shown: 7 },
-    { name: "the 7d request failed over the held 90d payload", state: { status: "ready", data: {}, error: "boom", busy: false, key: "/api/dashboard/cost-timeseries?days=90", pendingKey: null }, requested: 7, shown: 90 },
+    { name: "the 7d request failed over the held 90d payload", state: { status: "ready", data: {}, error: "boom", busy: false, key: "/api/dashboard/cost-timeseries?days=90&prior_window=1", pendingKey: null }, requested: 7, shown: 90 },
     { name: "nothing landed yet", state: { status: "loading", data: null, error: null, busy: true, key: null, pendingKey: "/api/cost/by-model?days=7" }, requested: 7, shown: 7 },
   ];
   for (const row of rows) {
@@ -380,42 +380,56 @@ test("a window tag names the range its figures were read for, never the range st
   }
 });
 
-test("the trend delta states direction, which the total alone cannot", () => {
-  const rising = cost.computeWindowTotal(getTrendPoints([1, 2, 3, 4]));
-  const falling = cost.computeWindowTotal(getTrendPoints([4, 3, 2, 1]));
+// The shown window's prior span, as the server returns it on the opt-in.
+const PRIOR_BOUNDS = { period_start: "2025-12-30", period_end: "2026-01-03", cut_time: "14:05:00" };
 
-  // Both windows total 10: the delta is the only figure that separates them.
-  assert.strictEqual(rising.total, falling.total);
-  assert.ok(rising.delta !== null && rising.delta > 0, "a rising window reads up");
-  assert.ok(falling.delta !== null && falling.delta < 0, "a falling window reads down");
-  assert.strictEqual(
-    cost.computeWindowTotal(getTrendPoints([5])).delta,
-    null,
-    "one day has no first-to-last pair, so there is no change to state",
-  );
-  assert.strictEqual(cost.computeWindowTotal(getTrendPoints([2, 2, 2])).delta, 0);
+// Tokens split over all four categories → a delta reading one category alone misses the total.
+function getPriorBlock(costUsd: number, tokens = 0): Record<string, unknown> {
+  return {
+    ...PRIOR_BOUNDS, cost_usd: costUsd,
+    input_tokens: tokens / 2, cache_read_tokens: tokens / 4, output_tokens: tokens / 8, cache_creation_tokens: tokens / 8,
+  };
+}
+
+function getTrendWithPrior(costs: readonly number[], prior: Record<string, unknown> | null): PanelState {
+  return ready({
+    days: costs.length,
+    points: costs.map((c, i) => ({ day: `d${i}`, cost_usd: c })),
+    ...(prior === null ? {} : { prior_window: prior }),
+  });
+}
+
+describe("the cost tile's delta compares the window total with the server's prior window", () => {
+  const rows = [
+    { name: "a total above the prior window reads up", costs: [1, 2, 3, 4], prior: 5, delta: 100 },
+    { name: "a total below the prior window reads down", costs: [1, 2, 3, 4], prior: 20, delta: -50 },
+    { name: "a total equal to the prior window reads unchanged, whatever the shape", costs: [4, 3, 2, 1], prior: 10, delta: 0 },
+  ];
+  for (const row of rows) {
+    test(row.name, () => {
+      assert.strictEqual(cost.computeWindowTotal(getTrendWithPrior(row.costs, getPriorBlock(row.prior))).delta, row.delta);
+    });
+  }
 });
 
-test("the trend compares the recent half of the complete days with the equal span before it", () => {
-  for (const firstDay of [0, 10, 1000]) {
-    const flat = cost.computeWindowTotal(getTrendPoints([firstDay, 1, 1, 1, 1, 9]));
-    assert.strictEqual(flat.delta, 0, `a first day of ${firstDay} outside both halves never moves it`);
-    assert.strictEqual(flat.deltaSpan, 2);
+test("every shown day moves the cost delta — the first day and today's partial point included", () => {
+  const base = [2, 2, 2, 2];
+  const flat = cost.computeWindowTotal(getTrendWithPrior(base, getPriorBlock(8))).delta;
+  for (const index of [0, base.length - 1]) {
+    const raised = base.map((c, i) => (i === index ? c + 4 : c));
+    const delta = cost.computeWindowTotal(getTrendWithPrior(raised, getPriorBlock(8))).delta;
+    assert.ok(delta !== null && flat !== null && delta > flat, `raising day ${index} raises the delta`);
   }
-  const doubled = cost.computeWindowTotal(getTrendPoints([7, 1, 1, 2, 2, 9]));
-  assert.strictEqual(doubled.delta, 100, "the recent two days spent twice the two before");
-  assert.strictEqual(cost.computeWindowTotal(getTrendPoints([5])).deltaSpan, 0);
 });
 
-test("the trend reads complete days only — today's partial point never moves it", () => {
-  for (const today of [0, 0.1, 4, 100]) {
-    assert.strictEqual(cost.computeWindowTotal(getTrendPoints([4, 4, 4, today])).delta, 0, `today=${today}`);
-  }
-  assert.strictEqual(
-    cost.computeWindowTotal(getTrendPoints([3, 1])).delta,
-    null,
-    "one complete day plus today has no first-to-last pair",
-  );
+test("the cost delta states no percentage without a prior window or against a zero one", () => {
+  const absent = cost.computeWindowTotal(getTrendWithPrior([1, 2], null));
+  assert.strictEqual(absent.delta, null);
+  assert.strictEqual(absent.prior, null, "an absent block is no comparison, never a fallback rule");
+
+  const zero = cost.computeWindowTotal(getTrendWithPrior([1, 2], getPriorBlock(0)));
+  assert.strictEqual(zero.delta, null, "a zero base has no percentage change");
+  assert.strictEqual(zero.prior?.period_end, PRIOR_BOUNDS.period_end, "a zero prior still names its window");
 });
 
 test("the stamp reads the region states: busy is never fresh, and one failed region of several is partial", () => {
@@ -1115,6 +1129,65 @@ const TREND_WITH_GAP = ready({
 const CACHE_ROWS = ["2026-01-08", "2026-01-09", "2026-01-10"].map((event_date, i) => ({
   event_date, cache_hit_rate: [0.97, 0.99, 0.985][i], total_cache_read: 900, total_input: 20,
 }));
+
+// Prior cost far above the shown cost → a delta reading cost instead of tokens would read down.
+function getTokenTrend(tokens: readonly number[], priorTokens: number | null): PanelState {
+  return ready({
+    days: tokens.length,
+    points: tokens.map((count, i) => ({
+      date: `2026-01-0${i + 3}`, cost_usd: 1, session_count: 1,
+      input_tokens: count, output_tokens: 0, cache_read_tokens: 0, cache_creation_tokens: 0,
+    })),
+    ...(priorTokens === null ? {} : { prior_window: getPriorBlock(1000, priorTokens) }),
+  });
+}
+
+// text a screen reader announces \u2014 an aria-hidden subtree is skipped whole
+function getSpokenText(node: RenderedNode | string | null): string {
+  if (node === null || typeof node === "string") return collectText(node);
+  if (node.props["aria-hidden"] === "true" || node.props["aria-hidden"] === true) return "";
+  return node.children.map(getSpokenText).join(" ");
+}
+
+describe("the token volume total compares with the server's prior window, cut at this time of day", () => {
+  const span = "vs the 4 days before 01-03, cut at this time of day";
+  const rows = [
+    { name: "more tokens than the prior window read up, whatever cost did", tokens: [100, 100, 100, 100], prior: 200, glyph: "\u25b2", spoken: new RegExp(`\\bup\\s+100\\s*%\\s*${span}`) },
+    { name: "fewer tokens read down", tokens: [50, 50, 50, 50], prior: 400, glyph: "\u25bc", spoken: new RegExp(`\\bdown\\s+50\\s*%\\s*${span}`) },
+    { name: "equal totals read unchanged", tokens: [100, 100, 100, 100], prior: 400, glyph: "\u2014", spoken: new RegExp(`\\bunchanged\\s+0\\s*%\\s*${span}`) },
+    { name: "today's partial day counts toward the total it sits under", tokens: [100, 100, 100, 500], prior: 400, glyph: "\u25b2", spoken: new RegExp(`\\bup\\s+100\\s*%\\s*${span}`) },
+    { name: "an absent prior window reads as no comparison", tokens: [100, 100], prior: null, glyph: null, spoken: /No comparison — the prior window did not arrive/ },
+    { name: "a zero prior window states no percentage", tokens: [100, 100], prior: 0, glyph: null, spoken: /No comparison — the 2 days before 01-03 held no tokens\./ },
+  ];
+  for (const row of rows) {
+    test(row.name, async () => {
+      const mod = await loadCostRender();
+      const tree = renderIn(mod, "TokenStackedBody", { state: getTokenTrend(row.tokens, row.prior), days: 30, onRetry: () => {} });
+      const text = collectText(tree);
+      if (row.glyph === null) assert.doesNotMatch(text, /[\u25b2\u25bc]/, "no direction glyph is drawn without a comparison");
+      else assert.ok(text.includes(row.glyph), `the direction glyph ${row.glyph} is drawn`);
+      assert.match(getSpokenText(tree), row.spoken, "the direction is announced in words, not only drawn");
+    });
+  }
+});
+
+describe("the cost tile names its prior window in words", () => {
+  const rows = [
+    { name: "a measured change names the window it compares with", prior: 5, spoken: /\bup\s+100\s*%\s*vs the 4 days before 01-03, cut at this time of day/ },
+    { name: "a zero prior says the window held no cost", prior: 0, spoken: /No comparison — the 4 days before 01-03 held no cost\./ },
+  ];
+  for (const row of rows) {
+    test(row.name, async () => {
+      const mod = await loadCostRender();
+      const kpi = getKpiAtRatio(1, 1);
+      const tree = renderIn(mod, "KpiRowC", {
+        kpiState: ready(kpi), hot: cost.computeHotVerdict(kpi), trendState: getTrendWithPrior([1, 2, 3, 4], getPriorBlock(row.prior)),
+        modelState: ready({ rows: [] }), days: 30, onRetry: () => {},
+      });
+      assert.match(getSpokenText(tree), row.spoken);
+    });
+  }
+});
 
 test("every chart is a focusable image carrying its own name", async () => {
   const mod = await loadCostRender();

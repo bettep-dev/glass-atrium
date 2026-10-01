@@ -42,6 +42,8 @@ const NAV_BADGE_CRIT_STYLE = {
 	borderColor: "transparent",
 };
 const MAIN_CONTENT_ID = "main-content";
+// circuit-breaker source for the Agents nav numeral — same cheap one-row read as the Dashboard's
+const AGENT_SUMMARY_URL = "/api/agents/summary?days=7&order=runs&limit=1";
 
 // page h1 → focus target (tabindex -1 = programmatic only, authored value kept); no h1 → the region
 function focusRouteHeading(region) {
@@ -63,10 +65,10 @@ function parseHashScreen() {
 	return NAV.some((n) => n.id === raw) ? raw : "dashboard";
 }
 
-function Sidebar({ active, onNav, harness, pageState }) {
+function Sidebar({ active, onNav, harness, agentsState, pageState }) {
 	const { Icon } = window.UI;
 	const systems = systemsRollup(harness, pageState);
-	const dynamicBadges = harnessToNavBadges(harness);
+	const dynamicBadges = { ...harnessToNavBadges(harness), ...agentsToNavBadges(agentsState) };
 	return (
 		<aside aria-label="Sidebar" className="shell-sidebar flex-shrink-0 border-r border-line h-screen sticky top-0 flex flex-col bg-elev">
 			<div className="shell-brand px-4 py-4 border-b border-line">
@@ -94,7 +96,7 @@ function Sidebar({ active, onNav, harness, pageState }) {
 							dyn?.badges ??
 							(hasDyn
 								? dyn?.badge
-									? [{ badge: dyn.badge, badgeTone: dyn.badgeTone }]
+									? [dyn]
 									: []
 								: n.badge
 									? [{ badge: n.badge, badgeTone: n.badgeTone }]
@@ -116,7 +118,10 @@ function Sidebar({ active, onNav, harness, pageState }) {
 										style={b.badgeTone === "crit" ? NAV_BADGE_CRIT_STYLE : undefined}
 										title={b.title}
 									>
-										{b.badge}
+										{/* glyph = tone shape (non-colour cue) · description = what AT hears instead of the bare numeral */}
+										{b.glyph && <span aria-hidden="true">{`${b.glyph} `}</span>}
+										<span aria-hidden={b.description ? "true" : undefined}>{b.badge}</span>
+										{b.description && <span className="sr-only">{`, ${b.description}`}</span>}
 									</span>
 								))}
 							</button>
@@ -219,6 +224,29 @@ function harnessToNavBadges(harness) {
 	return { architecture: badges.length > 0 ? { badges } : null };
 }
 
+/**
+ * Agents nav slot = agents unsafe to route now (suspended + on a fail streak), the Agents screen's alarm set.
+ * Own store, outside the harness fold → an unread summary never moves the footer or the System map numeral.
+ * Never read → no key · unavailable or zero → null: never a zero that was not loaded.
+ */
+function agentsToNavBadges(agentsState) {
+	if (agentsState?.status !== "ready") return {};
+
+	const breaker = agentsState.data?.meta?.circuit_breaker;
+	const unsafeCount = breaker?.source === "loaded" ? breaker.suspended_count + breaker.streak_count : 0;
+	if (unsafeCount <= 0) return { agents: null };
+
+	const names = breaker.alarms.map((alarm) => alarm.agent).join(" · ");
+	const split = [
+		breaker.suspended_count > 0 && `${breaker.suspended_count} suspended`,
+		breaker.streak_count > 0 && `${breaker.streak_count} on a fail streak`,
+	].filter(Boolean);
+	const title = `${unsafeCount} ${unsafeCount === 1 ? "agent" : "agents"} unsafe to route (${split.join(", ")}): ${names}`;
+	const badgeTone = breaker.suspended_count > 0 ? "crit" : "warn";
+	const glyph = window.UI.TONE_GLYPH[badgeTone];
+	return { agents: { badge: String(unsafeCount), badgeTone, glyph, source: "breaker", title, description: title } };
+}
+
 // ALL SYSTEMS 풋터 도트 = 레인/타일과 같은 harness fold 파생. 폴링이 실패한 순간에도
 // 두 표면이 어긋나지 않는다 — 첫 폴 대기는 neutral 'CHECKING…', 읽기 실패는 'STATUS UNKNOWN'.
 // 도트 클래스는 StatusDot(ui.jsx) 어휘 재사용 (미등록 클래스 금지).
@@ -266,6 +294,7 @@ function App() {
 	const [healthState, setHealthState] = useS(HARNESS_STORE_INITIAL);
 	const [hookState, setHookState] = useS(HARNESS_STORE_INITIAL);
 	const [hookFailState, setHookFailState] = useS(HARNESS_STORE_INITIAL);
+	const [agentsState, setAgentsState] = useS(HARNESS_STORE_INITIAL);
 
 	// density 는 attribute 만 노출, CSS 매핑은 차후
 	useE(() => {
@@ -303,14 +332,16 @@ function App() {
 	const harnessReadRef = useR(null);
 	const pollHarness = useC(() => {
 		if (harnessReadRef.current) return harnessReadRef.current;
-		harnessReadRef.current = readHarnessSources()
-			.then((settled) => {
+		harnessReadRef.current = Promise.allSettled([readHarnessSources(), fetchJson(AGENT_SUMMARY_URL)])
+			.then(([harnessRead, agentsRead]) => {
 				if (!isHarnessMountedRef.current) return;
+				const settled = harnessRead.value; // readHarnessSources settles every source → never rejects
 				setKpiState((prev) => toStoreState(settled.kpiState, prev));
 				setHealthState((prev) => toStoreState(settled.healthState, prev));
 				setLiveState((prev) => toStoreState(settled.liveState, prev));
 				setHookState((prev) => toStoreState(settled.hookState, prev));
 				setHookFailState((prev) => toStoreState(settled.hookFailState, prev));
+				setAgentsState((prev) => toStoreState(agentsRead, prev));
 			})
 			.finally(() => {
 				harnessReadRef.current = null;
@@ -378,7 +409,7 @@ function App() {
 			<a href={`#${MAIN_CONTENT_ID}`} className="skip-link" onClick={onSkipToContent}>
 				Skip to content
 			</a>
-			<Sidebar active={active} onNav={onNavClick} harness={harness} pageState={pageState} />
+			<Sidebar active={active} onNav={onNavClick} harness={harness} agentsState={agentsState} pageState={pageState} />
 			<div className="flex-1 min-w-0 flex flex-col">
 				<main id={MAIN_CONTENT_ID} tabIndex={-1} className="flex-1 min-w-0 p-6 flex flex-col min-h-0">
 					{Screen ? (

@@ -490,7 +490,7 @@ const RESULT_ROW_META = {
   done_with_concerns: { label: 'Done with caveats', tone: 'warn' },
   fail: { label: 'Failed', tone: 'crit' },
   blocked: { label: 'Blocked', tone: 'crit' },
-  needs_context: { label: 'Needed more context', tone: 'info' },
+  needs_context: { label: 'Needs info', tone: 'info' },
 };
 
 function ResultPanel({ panel }) {
@@ -1227,7 +1227,7 @@ function getFoldsByWeekday({ first, last, count }) {
   return new Map([...labelsByWeekday].filter(([, labels]) => labels.length > 1).map(([dow, labels]) => [dow, labels.join(' + ')]));
 }
 
-// the route ends the series on its bucket-timezone today → the last point is still accruing, as cost.jsx computeWindowTotal reads it
+// the route ends the series on its bucket-timezone today → the last point is still accruing
 function buildSpendStrip(points) {
   const series = points ?? [];
   const bars = series.map((point, i) => ({ date: point.date, cost: Number(point.cost_usd) || 0, isPartial: i === series.length - 1 }));
