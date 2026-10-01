@@ -26,6 +26,7 @@ Every section kept in the rule file is kept because a NAMED reader outside the f
 |---|---|---|
 | Test Quality (with Meaningless-Test Prohibitions) | whoever adjudicates a hand-run `audit-test-smells.sh` finding — it reports a shape, never a defect | `scripts/audit-test-smells.sh` header (Convention SoT) · `scripts/test/audit-test-smells.bats` header |
 | Test Quality · Mocking Rules · Test Structure · Authoring scope | glass-atrium-qa-code-reviewer — its delivered checklist cites this file and it must cite a governing rule | `agents/glass-atrium-qa-code-reviewer.md` → `### Testing Checks` |
+| Test Structure | glass-atrium-dev-python — its naming and test-data lines | `agents/glass-atrium-dev-python.md` → `### Tests = Specification` · `### Testing` |
 | Rationalization Rejection (Testing) | every agent — via the charter's excuse→rebuttal home-file list and the `feature` note's exception pointer | `GLASS_ATRIUM_GLOBAL_RULES.md` → Rationalization Rejection · `core-outcome-record.md` → the `feature` note |
 | 3-Tier Test Hierarchy | every agent — the delivered commit rule defers its which-tests-when half to here | `core-git-workflow.md` → Commits |
 | Destructive-Path Suite Safety | the operator or session about to run a suite that can reach the live database — not an agent at spawn | `orchestrator-role.md` → Document-Driven Workflow step 6 |
@@ -42,9 +43,9 @@ Every section kept in the rule file is kept because a NAMED reader outside the f
   - Cited by `agents/glass-atrium-qa-code-reviewer.md` → `### Testing Checks`, some also by in-file pointers — grep before renaming one:
     - headings: `### What makes a test a test` · `#### The prohibited shapes` · `## Mocking Rules` · `## Test Structure` · `### Where a test lives` · `### Names, comments and test data` · `### Table form per stack`;
     - bolded leads: **Authoring scope** · **Grouping** · **Fold-back** · **ID ban** · **Deletion duty** · **DAMP carve-out**.
-  - Also stable, because the `Test Depth and Upkeep` ledger rows above point into it: `## Test Depth and Upkeep` and its bolded leads **Depth follows risk** · **Coupled-test check** · **One-off disposition**.
-  - **Naming** binds the same way: `agents/glass-atrium-dev-python.md` → `### Tests = Specification` cites it.
-  - **Test data** and **Shared fixture** bind the same way: `agents/glass-atrium-dev-python.md` → `### Testing` cites them.
+  - Also stable, because the `Test Depth and Upkeep` ledger rows above point into it: `## Test Depth and Upkeep` and its bolded leads **Depth follows risk** · **Coupled-test check**.
+  - **Naming** is named verbatim by `agents/glass-atrium-dev-python.md` → `### Tests = Specification`.
+  - **Test data** and **Shared fixture** are named verbatim by `agents/glass-atrium-dev-python.md` → `### Testing`.
 
 ## Backing honesty — Test Quality
 

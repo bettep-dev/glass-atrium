@@ -155,7 +155,7 @@ Checks whose source is outside this agent's rule set — Read the source before 
 | Realistic test data; a large byte-identical fixture becomes one named fixture | `### Names, comments and test data` |
 | Matches no row of the prohibited-shapes table | `### Meaningless-Test Prohibitions` → `#### The prohibited shapes` |
 | Mocks only at boundaries | `## Mocking Rules` |
-| Depth tracks risk: no reflex per-file or per-method test, no missing check on a risky path | `## Test Depth and Upkeep` → **Depth follows risk** |
+| Depth tracks risk: a risky path gets its relationship plus boundaries; glue gets one caller-facing check | `## Test Depth and Upkeep` → **Depth follows risk** |
 | A test the change made stale, obsolete or wrong is fixed in scope or named in `concerns`; none loosened to go green | `## Test Depth and Upkeep` → **Coupled-test check** |
 
 ### Naming Checks
