@@ -598,7 +598,7 @@ async function handleSearch(
   const prisma = getPrisma();
   try {
     // Parallel queries: paginated rows + total count for pagination disclosure (+ opt-in prior-window count).
-    const [rows, countRows, priorWindow] = await Promise.all([
+    const [rows, total, priorWindow] = await Promise.all([
       prisma.$queryRaw<OutcomeSearchDbRow[]>`
         SELECT
           id,
@@ -629,21 +629,11 @@ async function handleSearch(
         LIMIT ${limit}
         OFFSET ${offset}
       `,
-      prisma.$queryRaw<CountRow[]>`
-        SELECT COUNT(*)::bigint AS total
-        FROM core.outcomes
-        ${whereClause}
-      `,
+      getRowCount(whereClause),
       hasPriorWindow && filters.days !== "all"
         ? getSearchPriorWindow({ ...filters, days: filters.days }, scopeAgentKeys)
         : Promise.resolve(undefined),
     ]);
-
-    const totalRow = countRows[0];
-    if (totalRow === undefined) {
-      throw new Error("count query returned no row");
-    }
-    const total = bigintToNumber(totalRow.total);
 
     // Defensive: skip rows whose enum text drifted off the registered surface.
     // Should never happen given PG enum constraint, but a future migration could
@@ -988,7 +978,7 @@ async function handleCrossAnalysis(
       downgradeRows,
       taskTypeGraderRows,
       countRows,
-      baseCountRows,
+      baseTotal,
       priorWindow,
     ] =
       await Promise.all([
@@ -1083,24 +1073,19 @@ async function handleCrossAnalysis(
           FROM core.outcomes
           ${analyticsWhere}
         `,
-        prisma.$queryRaw<CountRow[]>`
-          SELECT COUNT(*)::bigint AS total
-          FROM core.outcomes
-          ${whereClause}
-        `,
+        getRowCount(whereClause),
         hasPriorWindow && filters.days !== "all"
           ? getPriorWindow({ ...filters, days: filters.days }, scopeAgentKeys)
           : Promise.resolve(undefined),
       ]);
 
     const totalRow = countRows[0];
-    const baseTotalRow = baseCountRows[0];
-    if (totalRow === undefined || baseTotalRow === undefined) {
+    if (totalRow === undefined) {
       throw new Error("count query returned no row");
     }
     const total = bigintToNumber(totalRow.total);
     const reconstructedTotal = bigintToNumber(totalRow.reconstructed_total);
-    const excludedPoisonedCount = bigintToNumber(baseTotalRow.total) - total;
+    const excludedPoisonedCount = baseTotal - total;
 
     const graderBreakdown = buildGraderBreakdown(graderRows);
     const downgradeBreakdown = buildDowngradeBreakdown(downgradeRows);
