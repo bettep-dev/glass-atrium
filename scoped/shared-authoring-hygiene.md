@@ -10,8 +10,14 @@ Binds every prompt, agent instruction, rule and skill you author or edit, and ev
 - **No unclear-source citations**: the test is whether the reader must FOLLOW the reference in order to act.
   - Keep: a rule file the agent must obey · a hook, script or API the rule invokes · a canonical-SoT pointer.
   - Omit: a `(src: …)` pointing at an internal session artifact · a derivation note · a "3-angle review" · a research claim with no checkable reference.
+  - Diet component `산문 참조` — a sentence pointing at another file's section by name fails the test when its target no longer exists · already reaches the reader through spawn-time injection or a Tier-1 rule · sits in a file the reader never receives.
+    - Carve-out: a reference stating what a machine reads stays; one stating a rule's actual backing stays under `No history-type content` → its carve-out.
 - **No history-type content**: no Wave / ADR provenance tags, correlation IDs, `doc NNNN` / `plan doc` references, edit-history dates, changelog narration, "(NEW)", "(was X before)". Version history lives in git, not in a prompt body.
+  - Diet component `이력성 내용` — the test: does removing the text change what the reader does? Dates included.
+  - Also history: a dated measurement stamp on a rule · "corrected on" · "superseded the earlier wording" · attribution of who established a fact · a note that a claim was refuted or re-measured.
   - Carve-out: provenance that changes what the reader DOES stays — an honest-backing note stating what is and is not enforced is a functional reference, not history.
+    - A note that a scope file does not reach the agent reading it stays too.
+    - A kept note's date that does no work goes; the note stays.
 - **No derived values**: a count or total a reader could compute from the members named in the same passage is noise — name the members and drop the number.
   - Carve-out: a bare cardinality standing beside no list may be the only signal that the list is closed, so removal there is a judgement, not automatic.
 
