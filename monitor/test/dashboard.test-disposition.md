@@ -13,10 +13,10 @@ Runner for every row (both variables exported, see the plan's worktree contract)
 | `app.nav-badge.client.unit.test.ts` | `app.jsx` nav slot merge + ALL SYSTEMS footer | 13 | stays — extend for the stream-2 harness fold; never re-add drift cases |
 | `dashboard-cost.kpi-membership-gate.route.test.ts` | `/api/dashboard/kpi` + `/api/cost/kpi` registry gate | 2 | stays unchanged — server-side; the Dashboard now reads `/api/dashboard/kpi` only, which carries the cost fields tiles 3-4 need |
 | `dashboard.client.unit.test.ts` | `deriveUpdateView` — the `UpdateBadge` state machine | 18 | stays green as written — it is the guard that stream 4 re-hosts `UpdateBadge` rather than rewriting it |
-| `dashboard.cost-timeseries-tz.unit.test.ts` | `computeBucketTzToday` bounding `/api/dashboard/cost-timeseries` | 5 | stays in place, ownership moves to Cost & usage — the screen drops the trend fetch, the route does not change; any rename is out of this plan |
+| `dashboard.cost-timeseries-tz.unit.test.ts` | `computeBucketTzToday` bounding `/api/dashboard/cost-timeseries` | 5 | stays in place, ownership moves to Cost & usage — the route gains the opt-in `prior_window` block, cut by `getBucketTzClock` off the same instant; the `computeBucketTzToday` cases stay valid since that helper is unchanged |
 | `dashboard.daemon-status.test.ts` | `buildDaemonStatusItems` missing/stale synthesis | 4 | stays — the shell fold consumes this board |
 | `dashboard.dwc-closure.client.unit.test.ts` | `getOpenCount` · `computeOutcomeHint` · `computeWorstRollup` | 10 | re-homes — the open-DWC and threshold cases follow the outcome-rate classifier to its shared export (stream 2); the `computeWorstRollup` cases retire with the worst-severity badge |
-| `dashboard.route.test.ts` | `/api/dashboard/kpi` integration | 7 | stays unchanged |
+| `dashboard.route.test.ts` | `/api/dashboard/kpi` integration | 7 | stays; gains the `/api/dashboard/cost-timeseries` opt-in prior-window cases |
 | `dashboard.synthesized-exclusion.client.unit.test.ts` | `getWriterTotal` · `getWriterOpenCount` · hint · rollup | 9 | re-homes — writer-population cases follow the shared classifier; the `computeWorstRollup` facet retires with the badge |
 | `dashboard.update-status.unit.test.ts` | update-availability resolver + its route | 25 | stays unchanged — server-side |
 | `dashboard.update.route.test.ts` | `POST /api/dashboard/update` + update-job | 12 | stays unchanged — stream 4 must not reopen the apply flow |

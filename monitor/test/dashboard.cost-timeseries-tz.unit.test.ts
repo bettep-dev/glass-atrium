@@ -5,10 +5,10 @@
 // frozen-clock unit — the pure day-resolver IS the last series point value.
 // Runner: npx tsx --test test/dashboard.cost-timeseries-tz.unit.test.ts
 
-import test from "node:test";
+import test, { describe } from "node:test";
 import assert from "node:assert/strict";
 
-import { computeBucketTzToday } from "../src/server/routes/dashboard.js";
+import { computeBucketTzToday, getBucketTzClock } from "../src/server/routes/dashboard.js";
 
 const KST = "Asia/Seoul"; // UTC+9
 
@@ -42,4 +42,22 @@ test("05:00 UTC (14:00 KST) → bucket-tz today matches the shared calendar day"
 test("default timeZone arg returns a valid YYYY-MM-DD string", () => {
   const iso = computeBucketTzToday(new Date("2026-07-17T05:00:00Z"));
   assert.match(iso, /^\d{4}-\d{2}-\d{2}$/);
+});
+
+// Prior-window cut: the anchor day and the cut time come from ONE instant, so a request
+// straddling bucket-tz midnight never pairs one day's date with the next day's time.
+describe("the bucket-tz clock reads the anchor day and the cut time off one instant", () => {
+  const rows = [
+    { name: "just before KST midnight → same KST day, last second", instant: "2026-07-17T14:59:59Z", day: "2026-07-17", time: "23:59:59" },
+    { name: "just after KST midnight → next KST day, hour 00 (never 24)", instant: "2026-07-17T15:00:30Z", day: "2026-07-18", time: "00:00:30" },
+    { name: "mid KST day → shared calendar day", instant: "2026-07-17T05:07:09Z", day: "2026-07-17", time: "14:07:09" },
+  ];
+  for (const row of rows) {
+    test(row.name, () => {
+      const now = new Date(row.instant);
+      const clock = getBucketTzClock(now, KST);
+      assert.deepStrictEqual(clock, { day: row.day, time: row.time });
+      assert.strictEqual(clock.day, computeBucketTzToday(now, KST), "the cut day is the series anchor day");
+    });
+  }
 });

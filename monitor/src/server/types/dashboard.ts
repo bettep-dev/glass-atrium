@@ -40,6 +40,23 @@ export interface CostTimeseriesResponse {
   points: CostTimeseriesPoint[];
   // `points[].date` is date-only → the label documents the UTC-midnight boundary.
   timezone: "UTC";
+  // Present only on `?prior_window=1|true`.
+  prior_window?: CostTimeseriesPriorWindow;
+}
+
+/** The shown window moved back `days` days, its last day cut at the request's bucket-tz time of day. */
+export interface CostTimeseriesPriorWindow {
+  /** Inclusive — the shown first day minus `days`. */
+  period_start: string;
+  /** Exclusive — the shown first day. */
+  period_end: string;
+  /** Bucket-tz HH:MM:SS → the last prior day counts events at or before it. */
+  cut_time: string;
+  input_tokens: number;
+  output_tokens: number;
+  cache_read_tokens: number;
+  cache_creation_tokens: number;
+  cost_usd: number;
 }
 
 // Mirrors `core.DaemonStatus` Prisma enum — exhaustive union (not `string`) so
