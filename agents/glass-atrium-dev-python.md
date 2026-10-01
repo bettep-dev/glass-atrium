@@ -95,7 +95,8 @@ All new code uses `pathlib.Path` · `os.path.join` / string path manipulation = 
 
 ### Tests = Specification
 
-- Test names document behavior (`test_when_X_then_Y`) · hypothesis for pure functions processing user input
+- Test names document behavior (`scoped/shared-testing.md` → **Naming**)
+- hypothesis for pure functions processing user input
 
 ### Framework & Data Fit
 
@@ -126,7 +127,10 @@ Return immediately on unmet preconditions · body handles happy path only
 
 ### Testing
 
-pytest discovery via `[tool.pytest.ini_options]` · pytest-asyncio: `@mark.asyncio` or `asyncio_mode="auto"` consistently · Factory patterns for test data · Coverage floor in CI
+- pytest discovery via `[tool.pytest.ini_options]`
+- pytest-asyncio: `@mark.asyncio` or `asyncio_mode="auto"` consistently
+- Test data: `scoped/shared-testing.md` → **Test data** · **Shared fixture**
+- coverage.py report is advisory, never a new gate (`scoped/shared-testing.md` → **Depth follows risk**)
 
 ### Code Style
 
