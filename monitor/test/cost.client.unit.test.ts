@@ -1116,6 +1116,32 @@ const CACHE_ROWS = ["2026-01-08", "2026-01-09", "2026-01-10"].map((event_date, i
   event_date, cache_hit_rate: [0.97, 0.99, 0.985][i], total_cache_read: 900, total_input: 20,
 }));
 
+// Cost falls while tokens rise in the first row → the delta reads the token series, never cost.
+function getTokenTrend(tokens: readonly number[]): PanelState {
+  return ready({
+    points: tokens.map((count, i) => ({
+      date: `2026-01-0${i + 1}`, cost_usd: 10 - i, session_count: 1,
+      input_tokens: count, output_tokens: 0, cache_read_tokens: 0, cache_creation_tokens: 0,
+    })),
+  });
+}
+
+describe("the token volume total compares the recent half of the complete days with the span before it", () => {
+  const rows = [
+    { name: "rising tokens read up even while cost falls", tokens: [100, 100, 200, 200, 5], text: /\u25b2\s*100\s*%\s*last 2 days vs the 2 before/ },
+    { name: "falling tokens read down", tokens: [200, 200, 100, 100, 5], text: /\u25bc\s*50\s*%\s*last 2 days vs the 2 before/ },
+    { name: "today's partial day never moves it", tokens: [100, 100, 100, 100, 9999], text: /\u2014\s*0\s*%\s*last 2 days vs the 2 before/ },
+    { name: "one complete day has no change to state", tokens: [100, 5], text: /No trend/ },
+  ];
+  for (const row of rows) {
+    test(row.name, async () => {
+      const mod = await loadCostRender();
+      const text = collectText(renderIn(mod, "TokenStackedBody", { state: getTokenTrend(row.tokens), days: 30, onRetry: () => {} }));
+      assert.match(text, row.text);
+    });
+  }
+});
+
 test("every chart is a focusable image carrying its own name", async () => {
   const mod = await loadCostRender();
   const rows = [

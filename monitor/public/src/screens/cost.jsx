@@ -1021,6 +1021,7 @@ function TokenStackedBody({ state, days, failures, onRetry }) {
         <div>
           <div className="fs-meta text-dim">Tokens</div>
           <div className="font-mono fs-display text-dim tracking-tight">{formatTokenCompactC(totalTokens)}</div>
+          <TrendDeltaC {...computeTokenWindowDelta(points)}/>
         </div>
       </div>
       {shares && <TokenShareRowC shares={shares}/>}
@@ -1031,6 +1032,11 @@ function TokenStackedBody({ state, days, failures, onRetry }) {
       </div>
     </>
   );
+}
+
+// Same rule as the cost tile → today's partial day left out, recent half vs the equal span before it.
+function computeTokenWindowDelta(points) {
+  return computeHalfWindowDelta(getTokenDayPoints(points.slice(0, -1)).map((d) => d.value ?? 0));
 }
 
 // 토큰 누적 차트용 row builder (Area·Column 공유).
