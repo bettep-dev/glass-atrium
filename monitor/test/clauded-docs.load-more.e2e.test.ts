@@ -1104,6 +1104,8 @@ test("list card: a mouse click never rings the card, a Retry handoff rings it in
 // the rail sits beside the ledger only while the ledger keeps its column floors there → never a sideways scroll
 describe("open-summary rail: placement follows the ledger's minimum width", () => {
   const rows = [
+    // shell 270px leaves a ~950px stacked ledger, under the 973px floors → the title floor drops so the ledger fits
+    { name: "at 1220px a stacked ledger narrower than its column floors drops the title floor and fits", width: 1220, placement: "stacked", isTagsShown: false },
     { name: "at 1280px the rail stacks above the ledger and the ledger fits the card", width: 1280, placement: "stacked", isTagsShown: false },
     { name: "at 1440px the widest Status cell leaves too little room beside the rail → the rail stacks and the ledger fits", width: 1440, placement: "stacked", isTagsShown: true },
     // shell 270px + layout 1173px = the switch: the ledger beside the rail is exactly its 973px column floors

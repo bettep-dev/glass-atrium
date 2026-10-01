@@ -1028,14 +1028,11 @@ function ScreenClaudedDocs(/* { onNav } */) {
         .doc-checkbox-cell { width: 28px; padding: 4px 6px 4px 12px; text-align: center; vertical-align: middle; }
         .doc-checkbox-cell input[type="checkbox"] { width: 16px; height: 16px; cursor: pointer; accent-color: rgb(var(--accent)); }
         .doc-col-title { min-width: 394px; }
-        /* <1200px the shell's icon rail leaves a ~900px pane → Tags goes (the viewer still carries it), the title floor drops */
-        @media (max-width: 1199px) {
-          .doc-col-tags { display: none; }
-          .doc-col-title { min-width: 240px; }
-        }
         /* column floors (973px) + Tags 152 → a narrower ledger drops Tags, the viewer still carries it */
         .doc-ledger-scroll { container: doc-ledger / inline-size; }
         @container doc-ledger (width < 1125px) { .doc-col-tags { display: none; } }
+        /* a ledger under its 973px column floors → the title floor drops 394 → 240 */
+        @container doc-ledger (width < 973px) { .doc-col-title { min-width: 240px; } }
         /* 선택된 행 강조 — 기존 .is-selected (viewer focus) 와 색 구분: --accent 약한 채도. */
         .doc-row.is-multi-selected { background: rgb(var(--accent) / 0.10); }
         .doc-row.is-multi-selected.is-selected { background: rgb(var(--accent) / 0.16); }

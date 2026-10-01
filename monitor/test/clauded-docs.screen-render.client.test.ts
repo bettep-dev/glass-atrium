@@ -319,19 +319,15 @@ test("the opened viewer settles focus on Close after the dialog's own first-cont
   assert.deepEqual(focused, ["dialog-first-control", "close"]);
 });
 
-test("below the icon-rail width the ledger drops its Tags column and lets the title column narrow", async () => {
+// the width at which Tags hides is owned by the e2e rail table → this pins only the column hook it hides by
+test("the Tags header and every row's Tags cell carry the doc-col-tags column class", async () => {
   const screen = await loadDocsScreen();
-  const source = getScreenCss(screen);
   const props = listCardProps(() => undefined);
   (props.rows as Array<Record<string, unknown>>)[0].format = "html";
   const tree = renderScreen((screen.DocListCardCD as Component)(props));
 
   const tagCells = findNodes(tree, (n) => (n.type === "th" || n.type === "td") && String(n.props.className).includes("doc-col-tags"));
   assert.equal(tagCells.length, 3, "the Tags header and both row cells carry the column class");
-  const narrow = source.match(/@media \(max-width: 1199px\) \{([\s\S]*?)\n\s*\}/);
-  assert.ok(narrow, "a narrow-pane rule exists");
-  assert.match(narrow[1], /\.doc-col-tags\s*\{\s*display:\s*none/);
-  assert.match(narrow[1], /\.doc-col-title\s*\{\s*min-width:\s*\d+px/);
 });
 
 test("'rev of #N' is a control that opens the predecessor", async () => {
