@@ -58,12 +58,12 @@ run_migrate() {
 
 @test "migrate: relocates an enumerated Tier-A file to the new root" {
   mkdir -p "${SRC}/data"
-  printf '{}\n' >"${SRC}/data/lessons.json"
+  printf '{}\n' >"${SRC}/data/wiki-dedup-verified-hashes.json"
 
   run_migrate
   [[ "${status}" -eq 0 ]] || { echo "status=${status} output=${output}" >&2; return 1; }
-  [[ -f "${DST}/data/lessons.json" ]] || { echo "file not relocated" >&2; return 1; }
-  [[ ! -e "${SRC}/data/lessons.json" ]] || { echo "source file not removed" >&2; return 1; }
+  [[ -f "${DST}/data/wiki-dedup-verified-hashes.json" ]] || { echo "file not relocated" >&2; return 1; }
+  [[ ! -e "${SRC}/data/wiki-dedup-verified-hashes.json" ]] || { echo "source file not removed" >&2; return 1; }
 }
 
 @test "migrate: idempotent — a second run against a migrated tree is a clean no-op" {
@@ -122,18 +122,18 @@ run_migrate() {
 
 @test "migrate: a stale duplicate file is Trashed (dest wins), never rm'd" {
   mkdir -p "${SRC}/data" "${DST}/data"
-  printf 'source-copy\n' >"${SRC}/data/lessons.json"
-  printf 'dest-copy\n' >"${DST}/data/lessons.json"
+  printf 'source-copy\n' >"${SRC}/data/wiki-dedup-verified-hashes.json"
+  printf 'dest-copy\n' >"${DST}/data/wiki-dedup-verified-hashes.json"
 
   run_migrate
   [[ "${status}" -eq 0 ]] || { echo "status=${status} output=${output}" >&2; return 1; }
   # dest is authoritative — unchanged …
-  run cat "${DST}/data/lessons.json"
+  run cat "${DST}/data/wiki-dedup-verified-hashes.json"
   [[ "${output}" == "dest-copy" ]] || { echo "dest overwritten: ${output}" >&2; return 1; }
   # … the source dup is gone from the legacy root …
-  [[ ! -e "${SRC}/data/lessons.json" ]] || { echo "stale source dup not removed" >&2; return 1; }
+  [[ ! -e "${SRC}/data/wiki-dedup-verified-hashes.json" ]] || { echo "stale source dup not removed" >&2; return 1; }
   # … and recoverable in Trash.
-  run bash -c 'ls -A "$1" 2>/dev/null | grep -q lessons.json' _ "${TRASH}"
+  run bash -c 'ls -A "$1" 2>/dev/null | grep -q wiki-dedup-verified-hashes.json' _ "${TRASH}"
   [[ "${status}" -eq 0 ]] || { echo "stale dup not found in Trash" >&2; return 1; }
 }
 
@@ -154,7 +154,7 @@ run_migrate() {
 
 @test "migrate: fixture-root SANDBOX mode skips the host launchd/tmux lifecycle" {
   mkdir -p "${SRC}/data"
-  printf '{}\n' >"${SRC}/data/lessons.json"
+  printf '{}\n' >"${SRC}/data/wiki-dedup-verified-hashes.json"
 
   run_migrate
   [[ "${status}" -eq 0 ]] || { echo "status=${status} output=${output}" >&2; return 1; }
@@ -178,7 +178,7 @@ run_scan_count() {
 
 @test "doctor: data_sep_leftover_scan counts Tier-A leftovers under the legacy root" {
   mkdir -p "${SRC}/data/outcomes"
-  printf '{}\n' >"${SRC}/data/lessons.json"
+  printf '{}\n' >"${SRC}/data/wiki-dedup-verified-hashes.json"
 
   run_scan_count "${SRC}"
   [[ "${status}" -eq 0 ]] || { echo "status=${status} stderr=${stderr}" >&2; return 1; }

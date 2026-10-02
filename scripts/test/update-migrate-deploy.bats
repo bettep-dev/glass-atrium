@@ -50,6 +50,9 @@ setup() {
   STATE="${WORK}/state"
   CALLS="${WORK}/calls.log" # every stub invocation, in order
   mkdir -p "${INSTALL}" "${MONITOR}" "${STATE}"
+  # Both roots the finalize retire step reads → sandboxed, so no run reaches a live store.
+  export GA_DATA_ROOT="${WORK}/data-root"
+  export GA_TARGET_HOME="${WORK}/target-home"
 }
 
 teardown() {

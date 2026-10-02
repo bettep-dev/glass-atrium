@@ -47,6 +47,9 @@ setup() {
   printf '#!/bin/sh\necho "arbiter model seam stubbed in bats" >&2\nexit 1\n' >"${CLAUDE_STUB}"
   chmod +x "${CLAUDE_STUB}"
   export AUTOAGENT_CLAUDE_BIN="${CLAUDE_STUB}"
+  # Both roots the finalize retire step reads → sandboxed, so no run reaches a live store.
+  export GA_DATA_ROOT="${WORK}/data-root"
+  export GA_TARGET_HOME="${WORK}/target-home"
 }
 
 teardown() {
@@ -2610,6 +2613,173 @@ refused_record() {
   [[ "$(cat "${INSTALL}/monitor/__pycache__/mod.cpython-311.pyc")" == "bytecode" ]] || return 1
   [[ "$(cat "${INSTALL}/monitor/src/generated/client.ts")" == "generated" ]] || return 1
   [[ "$(cat "${INSTALL}/monitor/.env")" == "SECRET=1" ]] || return 1
+}
+
+# ---------------------------------------------------------------------------
+# The retired lesson store. Runtime data carries no shipped hash, so the retired map
+# cannot select it; the finalize step moves it from the data root (GA_DATA_ROOT) and
+# the legacy root (run_update_sweep pins GA_TARGET_HOME to FARM) on every run.
+# ---------------------------------------------------------------------------
+
+# Seed a distinct store body at each root, so a moved copy names its origin.
+seed_lesson_stores() {
+  seed_file "${GA_DATA_ROOT}" "data/lessons.json" "data-root store"
+  seed_file "${FARM}" "data/lessons.json" "legacy store"
+}
+
+# Echo the retire step's per-run sink under the Trash dir, or nothing when none was made.
+lesson_sink_dir() {
+  local d
+  for d in "${TRASH}"/glass-atrium-update-retired-data-*; do
+    [[ -d "${d}" ]] && printf '%s\n' "${d}"
+  done
+}
+
+# Assert both seeded stores left their roots for one sink that keeps each origin path.
+assert_lesson_stores_trashed() {
+  local sink
+  sink="$(lesson_sink_dir)"
+  [[ -n "${sink}" && "$(printf '%s\n' "${sink}" | wc -l | tr -d ' ')" == "1" ]] \
+    || { echo "expected one retired-data sink, got: ${sink}"; return 1; }
+  [[ ! -e "${GA_DATA_ROOT}/data/lessons.json" ]] || { echo "data-root store still in place"; return 1; }
+  [[ ! -e "${FARM}/data/lessons.json" ]] || { echo "legacy store still in place"; return 1; }
+  [[ "$(cat "${sink}${GA_DATA_ROOT}/data/lessons.json")" == "data-root store" ]] \
+    || { echo "data-root store not in the sink"; return 1; }
+  [[ "$(cat "${sink}${FARM}/data/lessons.json")" == "legacy store" ]] \
+    || { echo "legacy store not in the sink"; return 1; }
+}
+
+@test "retired lesson store: an applied release moves it into Trash at both data roots" {
+  sweep_sandbox
+  seed_lesson_stores
+  seed_file "${INSTALL}" "scripts/tool.sh" "old"
+  seed_file "${NEWSRC}" "scripts/tool.sh" "new content"
+  write_manifest "${WORK}/manifest.json" "scripts/tool.sh"
+
+  run_update_sweep
+
+  [[ "${status}" -eq 0 ]] || { echo "${output}"; return 1; }
+  [[ "$(cat "${INSTALL}/scripts/tool.sh")" == "new content" ]] || { echo "${output}"; return 1; }
+  [[ "${output}" == *"retired lesson store moved → Trash: ${GA_DATA_ROOT}/data/lessons.json"* ]] \
+    || { echo "${output}"; return 1; }
+  assert_lesson_stores_trashed
+}
+
+@test "retired lesson store: a store under a root the run did not resolve stays in place" {
+  sweep_sandbox
+  seed_lesson_stores
+  # HOME-default roots of another install → the run resolves GA_DATA_ROOT and GA_TARGET_HOME instead.
+  local home="${WORK}/home"
+  seed_file "${home}" ".glass-atrium/data/lessons.json" "default data-root store"
+  seed_file "${home}" ".claude/data/lessons.json" "default legacy store"
+  seed_file "${INSTALL}" "scripts/tool.sh" "old"
+  seed_file "${NEWSRC}" "scripts/tool.sh" "new content"
+  write_manifest "${WORK}/manifest.json" "scripts/tool.sh"
+
+  HOME="${home}" run_update_sweep
+
+  [[ "${status}" -eq 0 ]] || { echo "${output}"; return 1; }
+  assert_lesson_stores_trashed
+  [[ "$(cat "${home}/.glass-atrium/data/lessons.json")" == "default data-root store" ]] \
+    || { echo "${output}"; return 1; }
+  [[ "$(cat "${home}/.claude/data/lessons.json")" == "default legacy store" ]] \
+    || { echo "${output}"; return 1; }
+}
+
+@test "retired lesson store: an already-up-to-date run still moves it into Trash" {
+  sweep_sandbox
+  seed_lesson_stores
+  seed_file "${INSTALL}" "scripts/tool.sh" "same"
+  seed_file "${NEWSRC}" "scripts/tool.sh" "same"
+  write_manifest "${WORK}/manifest.json" "scripts/tool.sh"
+
+  run_update_sweep
+
+  [[ "${status}" -eq 0 ]] || { echo "${output}"; return 1; }
+  [[ "${output}" == *"already up to date"* ]] || { echo "${output}"; return 1; }
+  assert_lesson_stores_trashed
+}
+
+@test "retired lesson store: an absent store is a silent no-op" {
+  sweep_sandbox
+  seed_file "${INSTALL}" "scripts/tool.sh" "old"
+  seed_file "${NEWSRC}" "scripts/tool.sh" "new content"
+  write_manifest "${WORK}/manifest.json" "scripts/tool.sh"
+
+  run_update_sweep
+
+  [[ "${status}" -eq 0 ]] || { echo "${output}"; return 1; }
+  [[ "${output}" != *"retired lesson store"* ]] || { echo "${output}"; return 1; }
+  [[ -z "$(lesson_sink_dir)" ]] || { echo "sink created for an absent store"; return 1; }
+}
+
+@test "retired lesson store: a failed move WARNs, leaves the store, and the run completes" {
+  sweep_sandbox
+  # A FILE where the sink's parent must be → every move fails at its named row.
+  TRASH="${WORK}/trash-is-a-file"
+  printf '%s' "not a dir" >"${TRASH}"
+  seed_lesson_stores
+  seed_file "${INSTALL}" "scripts/tool.sh" "old"
+  seed_file "${NEWSRC}" "scripts/tool.sh" "new content"
+  write_manifest "${WORK}/manifest.json" "scripts/tool.sh"
+
+  run_update_sweep
+
+  [[ "${status}" -eq 0 ]] || { echo "${output}"; return 1; }
+  [[ "${output}" == *"WARN: retired lesson store NOT moved — ${GA_DATA_ROOT}/data/lessons.json"* ]] \
+    || { echo "${output}"; return 1; }
+  [[ "${output}" == *"WARN: retired lesson store NOT moved — ${FARM}/data/lessons.json"* ]] \
+    || { echo "${output}"; return 1; }
+  [[ "$(cat "${GA_DATA_ROOT}/data/lessons.json")" == "data-root store" ]] || return 1
+  [[ "$(cat "${FARM}/data/lessons.json")" == "legacy store" ]] || return 1
+  # The finalize step after the retire step still ran.
+  [[ -f "${STATE}/update-state/baseline-manifest.json" ]] || { echo "${output}"; return 1; }
+}
+
+# Echo each bats suite (path relative to GA) that executes the real updater: a variable
+# bound to scripts/update.sh run as a command, or a sourced entry that reaches the retire step.
+updater_exec_suites() {
+  local tree suite
+  for tree in test hooks/test scripts/test autoagent/test; do
+    for suite in "${GA}/${tree}"/*.bats; do
+      [[ -f "${suite}" ]] || continue
+      awk '
+        /^[[:space:]]*#/ { next }
+        match($0, /[A-Z_]+="[^"]*scripts\/update\.sh"/) {
+          name = substr($0, RSTART, RLENGTH); sub(/=.*/, "", name); bound[name] = 1
+        }
+        { for (v in bound) if (index($0, "bash \"${" v "}\"") || index($0, "run \"${" v "}\"")) hit = 1 }
+        /^[[:space:]]*(run[[:space:]]+)?(update_run|update_finalize_merge_and_anchors|update_retire_lesson_store)([^a-z_]|$)/ { hit = 1 }
+        /[;&|][[:space:]]*(update_run|update_finalize_merge_and_anchors|update_retire_lesson_store)([^a-z_]|$)/ { hit = 1 }
+        END { exit !hit }
+      ' "${suite}" && printf '%s\n' "${suite#"${GA}/"}"
+    done
+  done
+  return 0
+}
+
+# True when the suite's setup() exports both retire-step roots under its own ${WORK} sandbox.
+has_data_root_seam() {
+  local body
+  body="$(awk '/^setup\(\) \{/,/^\}/' "$1")"
+  # shellcheck disable=SC2016  # literal seam text, not an expansion
+  [[ "${body}" == *'export GA_DATA_ROOT="${WORK}/'* && "${body}" == *'export GA_TARGET_HOME="${WORK}/'* ]]
+}
+
+# Stage 1 of the full suite runs bats under the real HOME, so an updater suite without the
+# seam moves the live lesson store into ~/.Trash on every run.
+@test "every suite that runs the real updater sandboxes both data roots the retire step reads" {
+  local suites suite unsandboxed=""
+  suites="$(updater_exec_suites)"
+  # Anchor: the e2e suite runs the updater only through a bound variable → an enumeration missing it proves nothing.
+  [[ "${suites}" == *"scripts/test/glass-atrium-update-e2e.bats"* ]] \
+    || { echo "enumeration missed a known updater suite: ${suites}"; return 1; }
+  while IFS= read -r suite; do
+    # shellcheck disable=SC2310  # pure predicate — nothing inside it for errexit to catch
+    has_data_root_seam "${GA}/${suite}" || unsandboxed+="${suite} "
+  done <<<"${suites}"
+  [[ -z "${unsandboxed}" ]] \
+    || { echo "updater suites whose setup() lacks the data-root seam: ${unsandboxed}"; return 1; }
 }
 
 # ---------------------------------------------------------------------------

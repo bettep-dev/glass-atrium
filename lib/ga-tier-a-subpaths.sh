@@ -17,7 +17,6 @@ if [[ -z "${GA_TIER_A_SUBPATHS_INITED:-}" ]]; then
     data/doc-routing-leak-fired.log
     data/egress-secret-advisory-fired.log
     data/learning
-    data/lessons.json
     data/outcome-spool
     data/outcomes
     data/outcomes-audit-queue.txt

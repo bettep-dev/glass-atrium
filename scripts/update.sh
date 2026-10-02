@@ -4196,9 +4196,32 @@ update_sweep_removed_files() {
   update_log "retired sweep: removed=${removed_n} preserved=${preserved_n} family-skipped=${family_n} unmoved=${unmoved_n} refused=${refused_n}"
 }
 
-# The merge → base-content-capture → retirement-sweep → baseline-capture finalize
-# sequence, shared by the main post-apply path and the already-up-to-date early
-# return, which is how a drop-only release still sweeps. Two order constraints are
+# Move the retired lesson store into a per-run Trash sink from the data root and the
+# legacy pre-migration root (resolved as doctor's Tier-A leftover scan resolves it).
+# Runtime data has no shipped hash, so the retired map can never select it. Every run
+# re-checks, because an aggregator run that began before the apply may write it once
+# more. Absent → no-op; a failed move is one named WARN, never fatal, like the sweep.
+update_retire_lesson_store() {
+  local data_dir src sink
+  sink="$(update_trash_dir)/glass-atrium-update-retired-data-$(date +%Y%m%d-%H%M%S)_$$"
+  for data_dir in "${GA_DATA_ROOT:-${HOME}/.glass-atrium}/data" \
+    "${GA_TARGET_HOME:-${HOME}/.claude}/data"; do
+    src="${data_dir}/lessons.json"
+    [[ -e "${src}" || -L "${src}" ]] || continue
+    # Origin path kept under the sink → the two roots' same-named stores never collide.
+    if mkdir -p -- "${sink}/${data_dir#/}" && mv -f -- "${src}" "${sink}/${data_dir#/}/"; then
+      update_log "retired lesson store moved → Trash: ${src}"
+    else
+      update_log "WARN: retired lesson store NOT moved — ${src} (mv into ${sink} failed)"
+    fi
+  done
+  return 0
+}
+
+# The merge → base-content-capture → retirement-sweep → lesson-store retirement →
+# baseline-capture finalize sequence, shared by the main post-apply path and the
+# already-up-to-date early return, which is how a drop-only release still sweeps.
+# Two order constraints are
 # load-bearing: update_capture_base_content reads the merge's own outcome ledger to
 # decide which bodies may advance, so it runs after the merge and before
 # update_capture_baseline advances the hash anchor — a base left at the OLD anchor
@@ -4223,6 +4246,7 @@ update_finalize_merge_and_anchors() {
   update_capture_base_content "${new_dir}"
   update_consume_editable_reset "${root}"
   update_sweep_removed_files "${manifest}" "${root}"
+  update_retire_lesson_store
   update_capture_baseline "${manifest}"
   update_ticker_stop
 }

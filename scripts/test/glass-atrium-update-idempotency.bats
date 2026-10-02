@@ -50,6 +50,9 @@ setup() {
   NEWSRC="${WORK}/newsrc"   # the staged new-release tree (test seam source)
   STATE="${WORK}/state"     # daemon-reports + update-state (baseline, base-agents) sandbox
   mkdir -p "${INSTALL}" "${NEWSRC}" "${STATE}"
+  # Both roots the finalize retire step reads → sandboxed, so no run reaches a live store.
+  export GA_DATA_ROOT="${WORK}/data-root"
+  export GA_TARGET_HOME="${WORK}/target-home"
 }
 
 # No gate stub exists, deliberately. run_update points AUTOAGENT_CLAUDE_BIN at a
