@@ -550,25 +550,27 @@ for (const { width, height } of VIEWPORTS.filter((viewport) => viewport.width ==
 }
 
 // the ⊐ — drawn zone ids in source order; these three run back along the bottom row, Safety first
-const DRAWN_ZONE_IDS = [...CANONICAL_MAP.mermaid_drawn.matchAll(/subgraph\s+(\w+)/g)].map(([, id]) => id);
-const BOTTOM_ROW_ZONE_IDS = ["hooks", "data", "export"];
+const ZONE_IDS = {
+	DRAWN: [...CANONICAL_MAP.mermaid_drawn.matchAll(/subgraph\s+(\w+)/g)].map(([, id]) => id),
+	BOTTOM_ROW: ["hooks", "data", "export"],
+};
 
 for (const { width, height } of VIEWPORTS) {
 	test(`the bottom row runs right to left under the top row with Safety under Agents at ${width}x${height}`, async () => {
 		const boxes = await readZoneBoxes(width, height);
 		const drawn = JSON.stringify(Object.fromEntries(boxes));
-		assert.deepEqual([...boxes.keys()].sort(), [...DRAWN_ZONE_IDS].sort(), `drawn zones: ${drawn}`);
+		assert.deepEqual([...boxes.keys()].sort(), [...ZONE_IDS.DRAWN].sort(), `drawn zones: ${drawn}`);
 		const getBox = (id: string) => {
 			const box = boxes.get(id);
 			if (!box) throw new Error(`zone ${id} was not drawn: ${drawn}`);
 			return box;
 		};
 		const getCentreX = (id: string) => (getBox(id).left + getBox(id).right) / 2;
-		const topRowBottom = Math.max(...DRAWN_ZONE_IDS.filter((id) => !BOTTOM_ROW_ZONE_IDS.includes(id)).map((id) => getBox(id).bottom));
+		const topRowBottom = Math.max(...ZONE_IDS.DRAWN.filter((id) => !ZONE_IDS.BOTTOM_ROW.includes(id)).map((id) => getBox(id).bottom));
 
-		for (const id of BOTTOM_ROW_ZONE_IDS) assert.ok(getBox(id).top >= topRowBottom, `${id} does not sit below the top row: ${drawn}`);
+		for (const id of ZONE_IDS.BOTTOM_ROW) assert.ok(getBox(id).top >= topRowBottom, `${id} does not sit below the top row: ${drawn}`);
 		for (const [from, to] of [["entry", "orch"], ["daemon", "orch"], ["orch", "agents"], ["hooks", "data"], ["data", "export"]]) {
-			const step = BOTTOM_ROW_ZONE_IDS.includes(from) ? -1 : 1;
+			const step = ZONE_IDS.BOTTOM_ROW.includes(from) ? -1 : 1;
 			assert.ok((getCentreX(to) - getCentreX(from)) * step > 0, `${from} → ${to} runs against its row's direction: ${drawn}`);
 		}
 		assert.ok(Math.abs(getCentreX("hooks") - getCentreX("agents")) <= EPS_PX, `Safety is not centred under Agents: ${drawn}`);

@@ -25,20 +25,27 @@ const MAP_LABEL = {
 	},
 };
 
-// reverse-ㄷ map rows
-const MAP_ROW = {
-	// zones of the bottom row, laid out right to left under the end of the top row
-	BOTTOM_ZONES: ["hooks", "data", "export"],
-	IDS: { top: "map_row_top", bottom: "map_row_bottom" },
-	// space between the rows (SVG units) — two label bands: the bent turn edge's label above, the straight one's below
-	GAP: 160,
+const MAP = {
+	// reverse-ㄷ map rows
+	ROW: {
+		// zones of the bottom row, laid out right to left under the end of the top row
+		BOTTOM_ZONES: ["hooks", "data", "export"],
+		IDS: { top: "map_row_top", bottom: "map_row_bottom" },
+		// space between the rows (SVG units) — two label bands: the bent turn edge's label above, the straight one's below
+		GAP: 160,
+	},
+	EDGE: {
+		LABEL_RE: /(--\s*")([^"]*)("\s*-->)/,
+		// a whole edge line — from id, optional label, to id
+		LINE_RE: /^\s*([\w-]+)\s*(?:--\s*"([^"]*)"\s*)?-->\s*([\w-]+)\s*$/,
+	},
 };
 
 // default/Reset view = this share of the contain fit — an overview with no label floor; detail is read by zooming in
 const DEFAULT_VIEW_SHARE = 0.7;
 
 // band under the map kept on the first screen (CSS px) — the part health block's title shows there, so the page reads as scrollable
-const PART_HEALTH_PEEK_PX = 48;
+const PART_HEALTH = { PEEK_PX: 48 };
 
 // svg-pan-zoom min/max zoom, relative to the zoom at the last resize() — the default view rebases it, so it bounds zoom-out from there
 const PAN_ZOOM = { MIN: 0.2, MAX: 5 };
@@ -2247,13 +2254,13 @@ function clearCanvasSizingAR(root) {
 	canvas.removeAttribute(CANVAS.FIT_HEIGHT_ATTR);
 }
 
-// tallest pane whose bottom leaves PART_HEALTH_PEEK_PX of the first screen under it — the ⊐ is tall enough to push the block off it
+// tallest pane whose bottom leaves PART_HEALTH.PEEK_PX of the first screen under it — the ⊐ is tall enough to push the block off it
 function getFirstScreenCanvasHeightAR(root) {
 	const canvas = getCanvasAR(root);
 	const page = canvas?.closest(".arch-page");
 	if (!page) return Infinity;
 	const screenBottom = Math.min(page.getBoundingClientRect().bottom, window.innerHeight);
-	const height = screenBottom - (canvas.getBoundingClientRect().top + page.scrollTop) - PART_HEALTH_PEEK_PX;
+	const height = screenBottom - (canvas.getBoundingClientRect().top + page.scrollTop) - PART_HEALTH.PEEK_PX;
 	return height > 0 ? height : Infinity;
 }
 
@@ -2393,12 +2400,6 @@ function getCornerGlyphTextAR(tone, attentionCount) {
 
 const MAP_NODE_LINE_RE = /^(\s*[A-Za-z_][\w-]*)(\(\[|\[\(|\[\[|\[|\(\(|\(|\{)(?:"([^"]*)"|([^"\]\)}]*))(\]\)|\)\]|\]\]|\]|\)\)|\)|\})\s*$/;
 
-const MAP_EDGE = {
-	LABEL_RE: /(--\s*")([^"]*)("\s*-->)/,
-	// a whole edge line — from id, optional label, to id
-	LINE_RE: /^\s*([\w-]+)\s*(?:--\s*"([^"]*)"\s*)?-->\s*([\w-]+)\s*$/,
-};
-
 /**
  * Draws every map label on one line — stored breaks are dropped and the wrap ceiling sits above the widest label.
  * Edge labels get no-break spaces: mermaid wraps them at its own fixed width, which wrappingWidth does not reach.
@@ -2409,8 +2410,8 @@ function buildSingleLineMapSourceAR(source) {
 		.map((line) => {
 			const zone = /^(\s*subgraph\s+[\w-]+\s*\[)"([^"]*)"(\]\s*)$/.exec(line);
 			if (zone) return `${zone[1]}"${getLabelWordsAR(zone[2]).join(" ")}"${zone[3]}`;
-			const edge = MAP_EDGE.LABEL_RE.exec(line);
-			if (edge) return line.replace(MAP_EDGE.LABEL_RE, `$1${getLabelWordsAR(edge[2]).join("\u00a0")}$3`);
+			const edge = MAP.EDGE.LABEL_RE.exec(line);
+			if (edge) return line.replace(MAP.EDGE.LABEL_RE, `$1${getLabelWordsAR(edge[2]).join("\u00a0")}$3`);
 			const node = MAP_NODE_LINE_RE.exec(line);
 			if (!node) return line;
 			const [, head, open, quotedLabel, bareLabel, close] = node;
@@ -2432,14 +2433,14 @@ function getMapRowsAR(source) {
 
 // source lines sorted three ways — zone blocks into their row, edges between the rows into turn edges, the rest kept for the root
 function getMapRowLinesAR(lines, zoneIdByMemberId) {
-	const getRow = (id) => (MAP_ROW.BOTTOM_ZONES.includes(zoneIdByMemberId.get(id) ?? id) ? "bottom" : "top");
+	const getRow = (id) => (MAP.ROW.BOTTOM_ZONES.includes(zoneIdByMemberId.get(id) ?? id) ? "bottom" : "top");
 	const rows = { top: [], bottom: [] };
 	const rest = [];
 	const turnEdges = [];
 	let zone = "";
 	for (const line of lines) {
 		zone = /^\s*subgraph\s+([\w-]+)/.exec(line)?.[1] ?? zone;
-		const edge = zone ? null : MAP_EDGE.LINE_RE.exec(line);
+		const edge = zone ? null : MAP.EDGE.LINE_RE.exec(line);
 		if (zone) rows[getRow(zone)].push(line);
 		else if (edge && getRow(edge[1]) !== getRow(edge[3]))
 			turnEdges.push({ from: edge[1], label: getLabelWordsAR(edge[2] ?? "").join(" "), to: edge[3] });
@@ -2452,7 +2453,7 @@ function getMapRowLinesAR(lines, zoneIdByMemberId) {
 // root LR, not TB — an edge leaving a top-row zone member lays the top row out in the root's direction
 function buildMapRowSourceAR(rows, rest) {
 	const getRowBlock = (row, direction) =>
-		[`    subgraph ${MAP_ROW.IDS[row]}[" "]`, `        direction ${direction}`, ...rows[row], "    end"];
+		[`    subgraph ${MAP.ROW.IDS[row]}[" "]`, `        direction ${direction}`, ...rows[row], "    end"];
 	return ["flowchart LR", ...getRowBlock("top", "LR"), ...getRowBlock("bottom", "RL"), ...rest].join("\n");
 }
 
@@ -2479,7 +2480,7 @@ function setMapRowLayoutAR(svgEl, turnEdges) {
 
 // the two row frames, the parts drawn in the bottom one, and the gap's edges — the lowest top-row zone bottom, the highest bottom-row zone top
 function getMapRowPartsAR(svgEl) {
-	const frames = Object.values(MAP_ROW.IDS).map((id) => getZoneElAR(svgEl, id));
+	const frames = Object.values(MAP.ROW.IDS).map((id) => getZoneElAR(svgEl, id));
 	if (frames.some((frame) => !frame)) return null;
 	const box = { top: getSvgBoxAR(svgEl, frames[0]), bottom: getSvgBoxAR(svgEl, frames[1]) };
 	const parts = [...svgEl.querySelectorAll("g.cluster, g.node, path.flowchart-link, g.edgeLabel")].filter((el) => !frames.includes(el));
@@ -2500,11 +2501,11 @@ function isCentreInAR(svgEl, box, el) {
 
 // the bottom row's offset — the straight turn edge's target zone centred under its source zone, one row gap below the top row
 function getRowShiftAR(svgEl, turnEdges, gapTop, bottomTop) {
-	const straight = turnEdges.find((edge) => MAP_ROW.BOTTOM_ZONES[0] === edge.to) ?? turnEdges[0];
+	const straight = turnEdges.find((edge) => MAP.ROW.BOTTOM_ZONES[0] === edge.to) ?? turnEdges[0];
 	const from = straight && getZoneBoxAR(svgEl, straight.from);
 	const to = straight && getZoneBoxAR(svgEl, straight.to);
 	if (!from || !to) return null;
-	return { dx: getBoxCentreAR(from).x - getBoxCentreAR(to).x, dy: gapTop + MAP_ROW.GAP - bottomTop };
+	return { dx: getBoxCentreAR(from).x - getBoxCentreAR(to).x, dy: gapTop + MAP.ROW.GAP - bottomTop };
 }
 
 // one turn edge as a clone of a drawn link — same classes and marker, so edge counts, styles and the orthogonality check cover it
@@ -2538,10 +2539,10 @@ function getTurnRouteAR(from, to, gapTop) {
 	const toCx = getBoxCentreAR(to).x;
 	if (Math.abs(fromCx - toCx) < 1) {
 		const points = [{ x: fromCx, y: from.bottom }, { x: fromCx, y: to.top }];
-		return { points, label: { midX: fromCx, maxRight: Infinity, y: gapTop + MAP_ROW.GAP * 0.72 } };
+		return { points, label: { midX: fromCx, maxRight: Infinity, y: gapTop + MAP.ROW.GAP * 0.72 } };
 	}
 	const startX = fromCx + Math.sign(toCx - fromCx) * 0.3 * (from.right - from.left);
-	const bendY = gapTop + MAP_ROW.GAP * 0.3;
+	const bendY = gapTop + MAP.ROW.GAP * 0.3;
 	const points = [{ x: startX, y: from.bottom }, { x: startX, y: bendY }, { x: toCx, y: bendY }, { x: toCx, y: to.top }];
 	return { points, label: { midX: (startX + toCx) / 2, maxRight: startX - ZONE_PAD, y: bendY } };
 }
