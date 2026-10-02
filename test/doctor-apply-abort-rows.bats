@@ -2,7 +2,7 @@
 # doctor-apply-abort-rows.bats — pins run_doctor §14 (autoagent apply-abort surface).
 #
 # WHY THIS SECTION EXISTS: daemon-apply.sh loud-fails exit 16 when the green-suite gate cannot
-# certify the harness, and the launchd path discards its stderr. The abort row in the daily
+# certify the harness, and its stderr reaches only a rotated /tmp launchd log. The abort row in the daily
 # applied-log JSONL is the only durable trace, and until §14 nothing ever read it — doctor reported
 # a healthy install while the daemon had applied nothing for days.
 #
@@ -26,8 +26,9 @@
 #        `applied` would hold the verdict red for the rest of the window.
 #   AC7  the producer's full status-literal set is the one the abort/non-abort split assumes, so a
 #        NEW unclassified literal fails loudly instead of being read as recovery.
-#   AC8  a post-gate backlog-anomaly abort is classified as an abort (not as recovery) and its FAIL
-#        line names ITS remedy, not the green-suite gate's.
+#   reason → remedy  each abort reason with a dedicated clause (backlog anomaly · apply-record table
+#        unconfirmed · apply record not written) is classified as an abort (not as recovery) and its
+#        FAIL line names ITS remedy, never the generic "not reached the apply loop" one.
 #
 # Run via: bats test/doctor-apply-abort-rows.bats
 # Requires: bats, bash 3.2+, python3
@@ -250,39 +251,63 @@ assert_output_lacks() {
   }
 }
 
-# ── AC8 — the POST-gate abort producer: classified as an abort, remedied as itself ──────────────
+# ── reason → remedy: each dedicated abort reason is remedied as itself ──────────────────────────
 #
-# Reaching the tripwire needs a psql-stubbed backlog the doctor sandbox has no mirror for, so the
-# row is hand-written here for the same reason the superseding rows above are — and its two literals
-# are pinned against the producer source so a rename fails this test rather than degrading it. The
-# producer-authored half lives in autoagent/test/daemon-apply-backlog-anomaly-row.bats.
+# Reaching these producers needs a psql-stubbed backlog the doctor sandbox has no mirror for, so the
+# rows are hand-written here for the same reason the superseding rows above are — and every literal
+# they carry is pinned against the producer source so a rename fails this test rather than degrading
+# it. The producer-authored halves live in autoagent/test/daemon-apply-backlog-anomaly-row.bats and
+# autoagent/test/daemon-apply-landed-record.bats.
 
-append_anomaly_abort_row() {
-  printf '%s\n' \
-    '{"ts":"'"${TODAY}"'T12:00:00.000Z","status":"abort","reason":"backlog_anomaly","exit_code":7,"eligible_pending":137,"threshold":100,"patch_source":"backlog"}' \
-    >>"${REPORTS}/autoagent-applied-${TODAY}.jsonl"
+ANOMALY_ABORT_BODY='"status":"abort","reason":"backlog_anomaly","exit_code":7,"eligible_pending":137,"threshold":100,"patch_source":"backlog"'
+
+# Append one abort row under today's date; $1 = the row's fields after `ts`.
+append_abort_row() {
+  printf '{"ts":"%sT12:00:00.000Z",%s}\n' "${TODAY}" "$1" >>"${REPORTS}/autoagent-applied-${TODAY}.jsonl"
 }
 
-@test "AC8: a post-gate backlog-anomaly abort FAILs and names the backlog remedy, not the gate" {
-  local missing=""
-  grep -q '"status":"abort","reason":"backlog_anomaly"' "${APPLY_SH}" || missing="${missing} anomaly-reason"
-  grep -q '"reason":"preflight_fatal"' "${APPLY_SH}" || missing="${missing} preflight-reason"
+@test "an abort row's reason picks its own remedy, never the generic not-reached-the-loop one" {
+  local missing="" row name body remedy verdict
+  grep -qF '"status":"abort","reason":"backlog_anomaly"' "${APPLY_SH}" || missing="${missing} anomaly-reason"
+  grep -qF '"status":"abort","reason":"%s","exit_code":%d,"patch_source":"%s"' "${APPLY_SH}" || missing="${missing} source-read-row-shape"
+  grep -qF 'source_read_abort_row apply_record_table_unconfirmed 25' "${APPLY_SH}" || missing="${missing} table-unconfirmed-reason"
+  grep -qF 'source_read_abort_row apply_record_failed 26' "${APPLY_SH}" || missing="${missing} record-failed-reason"
+  # the exit-26 remedy sends the operator to this stderr line, so it has to stay the producer's
+  grep -qF 'apply record NOT written cause=' "${APPLY_SH}" || missing="${missing} record-failed-cause-line"
+  grep -qF '"reason":"preflight_fatal"' "${APPLY_SH}" || missing="${missing} preflight-reason"
   [[ -z "${missing}" ]] || {
     echo "producer grammar changed — the reason literals §14 branches on are absent:${missing}" >&2
     return 1
   }
-  append_anomaly_abort_row
-  run_doctor_seam
-  assert_output_has "FAIL : autoagent apply aborted in the last" || return 1
-  assert_output_has "abort row:" || return 1
-  # the remedy has to be THIS producer's: the green-suite clause would send the operator at a suite
-  # that was never red, which is the same wrong-cause report the silent tripwire used to cause.
-  assert_output_has "core.autoagent_proposals" || return 1
-  assert_output_lacks "re-open the gate"
+  # name | row fields after ts | the remedy that reason alone owns
+  local -a rows=(
+    "backlog anomaly (exit 7)|${ANOMALY_ABORT_BODY}|core.autoagent_proposals"
+    'apply-record table unconfirmed (exit 25)|"status":"abort","reason":"apply_record_table_unconfirmed","exit_code":25,"patch_source":"backlog"|glass-atrium db-setup'
+    'apply record not written (exit 26)|"status":"abort","reason":"apply_record_failed","exit_code":26,"patch_source":"single"|apply record NOT written cause='
+  )
+  # Appending is enough: the scan reports the LAST abort row, so each iteration's row is the verdict.
+  # The remedy is read off the §14 FAIL line alone — other doctor sections print some of the same commands.
+  for row in "${rows[@]}"; do
+    IFS='|' read -r name body remedy <<<"${row}"
+    append_abort_row "${body}"
+    run_doctor_seam
+    assert_output_has "abort row: {\"ts\":\"${TODAY}T12:00:00.000Z\",${body}}" || {
+      echo "row: ${name}"
+      return 1
+    }
+    verdict="$(printf '%s\n' "${output}" | grep -F 'FAIL : autoagent apply aborted in the last')" || {
+      echo "row: ${name} — no §14 FAIL line in: ${output}"
+      return 1
+    }
+    [[ "${verdict}" == *"${remedy}"* && "${verdict}" != *"has not reached its apply loop"* ]] || {
+      echo "row: ${name} — want '${remedy}', not the generic clause, in: ${verdict}"
+      return 1
+    }
+  done
 }
 
-@test "AC8b: a later non-abort row supersedes the anomaly abort too" {
-  append_anomaly_abort_row
+@test "a later non-abort row supersedes a backlog-anomaly abort, not only a preflight abort" {
+  append_abort_row "${ANOMALY_ABORT_BODY}"
   append_non_abort_row "${TODAY}" "applied"
   run_doctor_seam
   assert_output_has 'abort superseded by a later non-abort row not marked "gate":"skipped"' || return 1
