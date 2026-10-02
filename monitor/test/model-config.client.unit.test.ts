@@ -34,7 +34,11 @@ import {
   BUDGET_MIN_USD,
   BUDGET_MAX_USD,
   BUDGET_SEED_DEFAULT_USD,
+  EFFORT_LEVELS,
+  INHERIT_VALUE,
   MODEL_DOMAINS,
+  TIER_DOMAINS,
+  validateTierValue,
 } from "../src/server/model-config-consts.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -43,6 +47,7 @@ const MC_SRC = resolve(__dirname, "../public/src/screens/model-config.jsx");
 interface McForm {
   models: Record<string, string>;
   budgets: Record<string, string>;
+  tiers?: Record<string, string>;
 }
 interface McHelpers {
   validateFormMC: (form: McForm, knownModels: string[]) => Record<string, string>;
@@ -176,6 +181,18 @@ test("client budget regex + bound mirrors match server SoT (via validateFormMC)"
   assert.ok(!errAt(ceilStr), `client ceiling ${ceilStr} accepted (matches BUDGET_MAX_USD)`);
   assert.ok(errAt(belowFloor), `client rejects below floor ${belowFloor}`);
   assert.ok(errAt(aboveCeil), `client rejects above ceiling ${aboveCeil}`);
+});
+
+test("client tier mirrors match server validateTierValue on every knob (via validateFormMC)", () => {
+  const samples = [INHERIT_VALUE, ...EFFORT_LEVELS, "HIGH", "ultra", "", " high", "16000", "999999", "1000000", "0", "0123", "1.5", "-1"];
+  for (const def of TIER_DOMAINS) {
+    for (const value of samples) {
+      const clientErr = !!sameRealm(
+        mc.validateFormMC({ models: {}, budgets: {}, tiers: { [def.key]: value } }, []),
+      )[def.key];
+      assert.strictEqual(clientErr, validateTierValue(def, value) !== null, `${def.key}='${value}'`);
+    }
+  }
 });
 
 test("budget input placeholder advertises the shipped default cap, not a stale literal", () => {
@@ -344,15 +361,21 @@ test("diffFormMC: model + budget both changed → both keys present", () => {
 
 // --- buildFormMC: GET response → edit buffer (desired mirror) ---
 
-test("buildFormMC: maps domains/budgets desired into the form buffer", () => {
+test("buildFormMC: maps domains/budgets/tiers desired into the form buffer", () => {
   const data = {
     domains: [{ domain: "model.dev", desired: "claude-opus-4-8" }, { domain: "model.research", desired: null }],
     budgets: [{ domain: "budget.worker_max_usd", desired: "0.50" }],
+    tiers: [
+      { domain: "tier.worker_effort", desired: "high" },
+      { domain: "tier.pre_verify_max_output_tokens", desired: null },
+    ],
   };
   const form = sameRealm(mc.buildFormMC(data));
   assert.strictEqual(form.models["model.dev"], "claude-opus-4-8");
   assert.strictEqual(form.models["model.research"], "", "null desired → empty string buffer");
   assert.strictEqual(form.budgets["budget.worker_max_usd"], "0.50");
+  assert.strictEqual(form.tiers?.["tier.worker_effort"], "high");
+  assert.strictEqual(form.tiers?.["tier.pre_verify_max_output_tokens"], INHERIT_VALUE, "an unset knob is the CLI default");
 });
 
 // --- sortDomainsMC / sortBudgetsMC: known order first, unknown appended (no silent drop) ---
@@ -659,6 +682,93 @@ function budgetsPropsMc(budgets: unknown[] = BUDGET_ROW_FIXTURE_MC): Record<stri
   };
 }
 
+const TIER_ROW_FIXTURE_MC = [
+  { domain: "tier.worker_effort", desired: null, actual: null, file_error: null, drift: false, apply_mode: "next-cycle" },
+  { domain: "tier.worker_max_output_tokens", desired: "32000", actual: "32000", file_error: null, drift: false, apply_mode: "next-cycle" },
+  { domain: "tier.pre_verify_max_output_tokens", desired: null, actual: null, file_error: null, drift: false, apply_mode: "next-cycle" },
+];
+
+function tiersPropsMc(onTierChange: (key: string, value: string) => void = () => {}): Record<string, unknown> {
+  const form = {
+    models: {},
+    budgets: {},
+    tiers: {
+      "tier.worker_effort": INHERIT_VALUE,
+      "tier.worker_max_output_tokens": "32000",
+      "tier.pre_verify_max_output_tokens": INHERIT_VALUE,
+    },
+  };
+  return {
+    state: "ready",
+    tiers: TIER_ROW_FIXTURE_MC,
+    isFileRead: true,
+    form,
+    baseline: { models: {}, budgets: {}, tiers: { ...form.tiers } },
+    errors: {},
+    onTierChange,
+  };
+}
+
+test("the call-tier ledger offers the CLI default plus the five levels, and an unset cap reads as a blank field", () => {
+  const tree = renderComponentMc(screens.TiersSectionMC, tiersPropsMc());
+
+  const selects = tagsMc(tree, "select");
+  assert.strictEqual(selects.length, 1, "one select per effort row");
+  assert.strictEqual(selects[0].props.value, INHERIT_VALUE);
+  assert.deepStrictEqual(
+    tagsMc(selects[0].children, "option").map((o) => o.props.value),
+    [INHERIT_VALUE, ...EFFORT_LEVELS],
+  );
+  assert.deepStrictEqual(
+    tagsMc(tree, "input").map((i) => i.props.value),
+    ["32000", ""],
+    "a saved cap shows its digits, an unset one is blank — never the word inherit",
+  );
+});
+
+test("clearing a cap field records the knob as unset ('inherit'), never as an empty value", () => {
+  const changes: Array<[string, string]> = [];
+  const tree = renderComponentMc(screens.TiersSectionMC, tiersPropsMc((key, value) => changes.push([key, value])));
+  const [filled] = tagsMc(tree, "input").filter((i) => i.props.value === "32000");
+
+  (filled.props.onChange as (e: { target: { value: string } }) => void)({ target: { value: "" } });
+
+  assert.deepStrictEqual(changes, [["tier.worker_max_output_tokens", INHERIT_VALUE]]);
+});
+
+describe("a knob with no key in the file reads as the CLI default in effect only when the file was read", () => {
+  const rows = [
+    { name: "a read file: the CLI default, never an unread value", isFileRead: true, isCliDefault: true },
+    { name: "a missing file: an unread value, never the CLI default", isFileRead: false, isCliDefault: false },
+  ];
+  for (const row of rows) {
+    test(row.name, () => {
+      const tree = renderComponentMc(screens.TiersSectionMC, { ...tiersPropsMc(), isFileRead: row.isFileRead });
+      const effortRow = tagsMc(tree, "tr").find((tr) => textMc(tr.children).includes("generation effort"));
+      assert.ok(effortRow, "the generation effort row is rendered");
+
+      const cell = tagsMc(effortRow.children, "td")[2];
+      const live = textMc(cell.children);
+      const titles = findAllMc(cell.children, (n) => typeof n.props.title === "string").map((n) => String(n.props.title));
+      assert.strictEqual([live, ...titles].some((s) => s.includes("CLI default")), row.isCliDefault, `${live} | ${titles.join(" | ")}`);
+      assert.strictEqual(live.includes("No value read"), !row.isCliDefault, live);
+    });
+  }
+});
+
+test("a knob whose file value the daemon rejects shows the rejection in its row, never a match or the CLI default", () => {
+  const rejected = { ...TIER_ROW_FIXTURE_MC[0], file_error: '"ultra" is not a valid tier (allowed: low, medium, high, xhigh, max)' };
+  const tree = renderComponentMc(screens.TiersSectionMC, { ...tiersPropsMc(), tiers: [rejected, ...TIER_ROW_FIXTURE_MC.slice(1)] });
+  const effortRow = tagsMc(tree, "tr").find((tr) => textMc(tr.children).includes("generation effort"));
+  assert.ok(effortRow, "the generation effort row is rendered");
+
+  const cell = tagsMc(effortRow.children, "td")[2];
+  const live = textMc(cell.children);
+  const titles = findAllMc(cell.children, (n) => typeof n.props.title === "string").map((n) => String(n.props.title));
+  assert.ok(live.includes('"ultra"'), `the rejected value is named: ${live}`);
+  assert.ok(![live, ...titles].some((s) => s.includes("Matches saved") || s.includes("CLI default")), `${live} | ${titles.join(" | ")}`);
+});
+
 const tonedMc = (nodes: McNode[], tone: string): McTag[] =>
   findAllMc(nodes, (n) => n.props["data-tone"] === tone);
 
@@ -863,6 +973,11 @@ test("the drift banner carries exactly one remedy, matched to its cause", () => 
   const pending = textMc(renderComponentMc(screens.DriftBannerMC, { sync: "pending-migration" }));
   assert.ok(pending.includes("db-setup"), "a pending migration is fixed by db-setup");
   assert.ok(!pending.includes("Save again"), "saving cannot fix an un-migrated DB");
+
+  const rejected = textMc(renderComponentMc(screens.DriftBannerMC, { sync: "file-invalid" }));
+  assert.ok(rejected.includes("rejects"), `a rejected value is named as the cause: ${rejected}`);
+  assert.ok(rejected.includes("Save again"), "saving rewrites the rejected key");
+  assert.ok(!rejected.includes("db-setup"), "the migration remedy does not leak into a rejected value");
 });
 
 test("save results surface only when a surface did not write cleanly", () => {
@@ -932,15 +1047,18 @@ test("the unsaved-changes count equals the field count the partial PUT sends", (
   const baseline = {
     models: { "model.dev": "claude-opus-4-8", "model.wiki": "claude-sonnet-5" },
     budgets: { "budget.worker_max_usd": "10.00" },
+    tiers: { "tier.worker_effort": "inherit", "tier.pre_verify_effort": "high" },
   };
   const form = {
     models: { "model.dev": "claude-fable-5", "model.wiki": "claude-sonnet-5" },
     budgets: { "budget.worker_max_usd": "12.00" },
+    tiers: { "tier.worker_effort": "medium", "tier.pre_verify_effort": "high" },
   };
   assert.strictEqual(count(mc.diffFormMC(baseline, baseline)), 0, "no diff → no count");
   const payload = mc.diffFormMC(baseline, form) as Record<string, Record<string, string>>;
   const sent = sameRealm(payload);
   const fields = Object.values(sent).reduce((n, group) => n + Object.keys(group).length, 0);
+  assert.deepStrictEqual(sent.tiers, { "tier.worker_effort": "medium" }, "only the changed knob is sent");
   assert.strictEqual(count(payload), fields, "count tracks the payload, not the row total");
 });
 
@@ -998,31 +1116,41 @@ test("a failed GET keeps the region out of ready and never advances the stamp", 
 });
 
 test("a refresh keeps every unsaved edit and takes every untouched field from the new read", () => {
-  type FormMc = { models: Record<string, string>; budgets: Record<string, string> };
+  type FormMc = { models: Record<string, string>; budgets: Record<string, string>; tiers: Record<string, string> };
   const getRefreshedForm = sandboxFnMc<(form: FormMc | null, prevData: unknown, data: unknown) => FormMc>(
     "getRefreshedFormMC",
   );
-  const readOf = (dev: string, dp: string, worker: string) => ({
+  const readOf = (dev: string, dp: string, worker: string, effort: string, cap: string) => ({
     domains: [
       { domain: "model.dev", desired: dev },
       { domain: "model.dp", desired: dp },
     ],
     budgets: [{ domain: "budget.worker_max_usd", desired: worker }],
+    tiers: [
+      { domain: "tier.worker_effort", desired: effort },
+      { domain: "tier.worker_max_output_tokens", desired: cap },
+    ],
   });
-  const prevRead = readOf("claude-opus-4-8", "claude-sonnet-4-6", "10.00");
-  const nextRead = readOf("claude-opus-5", "claude-haiku-4-5", "12.00");
+  const prevRead = readOf("claude-opus-4-8", "claude-sonnet-4-6", "10.00", "low", "8000");
+  const nextRead = readOf("claude-opus-5", "claude-haiku-4-5", "12.00", "medium", "16000");
   const edited: FormMc = {
     models: { "model.dev": "claude-sonnet-4-6", "model.dp": "claude-sonnet-4-6" },
     budgets: { "budget.worker_max_usd": "3.00" },
+    tiers: { "tier.worker_effort": "xhigh", "tier.worker_max_output_tokens": "8000" },
   };
 
   assert.deepStrictEqual(sameRealm(getRefreshedForm(edited, prevRead, nextRead)), {
     models: { "model.dev": "claude-sonnet-4-6", "model.dp": "claude-haiku-4-5" },
     budgets: { "budget.worker_max_usd": "3.00" },
+    tiers: { "tier.worker_effort": "xhigh", "tier.worker_max_output_tokens": "16000" },
   });
   assert.deepStrictEqual(
     sameRealm(getRefreshedForm(null, null, nextRead)),
-    { models: { "model.dev": "claude-opus-5", "model.dp": "claude-haiku-4-5" }, budgets: { "budget.worker_max_usd": "12.00" } },
+    {
+      models: { "model.dev": "claude-opus-5", "model.dp": "claude-haiku-4-5" },
+      budgets: { "budget.worker_max_usd": "12.00" },
+      tiers: { "tier.worker_effort": "medium", "tier.worker_max_output_tokens": "16000" },
+    },
     "the first read has no buffer to keep",
   );
 });
@@ -1126,7 +1254,11 @@ test("the drift banner triggers on any drifted row, not on the file state alone"
 });
 
 test("the drift banner's remedy is pressable and resends the drifted rows' saved targets", () => {
-  type McPayload = { models?: Record<string, string>; budgets?: Record<string, string> } | null;
+  type McPayload = {
+    models?: Record<string, string>;
+    budgets?: Record<string, string>;
+    tiers?: Record<string, string>;
+  } | null;
   const buildResync = sandboxFnMc<(data: unknown, edits: unknown) => McPayload>("resyncPayloadMC");
   const data = {
     daemon_config_sync: "ok",
@@ -1135,6 +1267,11 @@ test("the drift banner's remedy is pressable and resends the drifted rows' saved
       { domain: "model.wiki", desired: "claude-haiku-4-8", actual: "claude-haiku-4-8", drift: false },
     ],
     budgets: [{ domain: "budget.worker_max_usd", desired: "10.00", actual: "10.00", drift: false }],
+    tiers: [
+      { domain: "tier.worker_effort", desired: "inherit", actual: "low", drift: true },
+      { domain: "tier.pre_verify_effort", desired: "high", actual: "high", drift: false },
+      { domain: "tier.worker_max_output_tokens", desired: null, actual: null, drift: false },
+    ],
   };
 
   // Sandbox objects carry the vm realm's prototype — compare a host-realm copy.
@@ -1145,6 +1282,11 @@ test("the drift banner's remedy is pressable and resends the drifted rows' saved
     "a drifted row is resent by its saved target, a steady row is not",
   );
   assert.strictEqual(drifted?.budgets, undefined, "no drifted budget row → no budget field");
+  assert.deepStrictEqual(
+    { ...(drifted?.tiers ?? {}) },
+    { "tier.worker_effort": "inherit" },
+    "a drifted knob is resent too — 'inherit' is a saved target, an unsaved knob is not",
+  );
   assert.strictEqual(
     buildResync({ daemon_config_sync: "ok", domains: [], budgets: [] }, null),
     null,
@@ -1161,6 +1303,22 @@ test("the drift banner's remedy is pressable and resends the drifted rows' saved
   assert.ok(fileMissing?.budgets, "and every budget key that file consumes");
 
   // The PUT response reinitializes the form buffer, so an unsaved edit must ride along.
+  // Save again must reach a rejected knob that has no saved row, or the banner offers a remedy that heals nothing.
+  const rejected = buildResync(
+    {
+      daemon_config_sync: "file-invalid",
+      domains: [],
+      budgets: [],
+      tiers: [{ domain: "tier.worker_effort", desired: null, actual: null, file_error: '"ultra" is not a valid tier', drift: false }],
+    },
+    null,
+  );
+  assert.deepStrictEqual(
+    { ...(rejected?.tiers ?? {}) },
+    { "tier.worker_effort": "inherit" },
+    "a rejected knob with no saved row is rewritten to the CLI default its row shows",
+  );
+
   const edited = buildResync(data, { models: { "model.wiki": "claude-sonnet-4-8" } });
   assert.strictEqual(
     edited?.models?.["model.wiki"],
@@ -1514,12 +1672,16 @@ test("tier notes sit outside the ledger and never restate a row's own hint", () 
   }
 });
 
-test("the two ledgers share one split row, model assignment leading", () => {
+test("the three ledgers share one split row, model assignment leading", () => {
   const tree = renderComponentMc(screens.ScreenModelConfig);
   const [split] = findAllMc(tree, (n) => n.props["data-atom"] === "SplitRow");
   assert.ok(split, "a split row holds the ledgers");
   assert.strictEqual(split.props["data-ratio"], "3:2");
-  assert.deepStrictEqual(textsMc(tagsMc(split.children, "h2")), ["Model assignment", "Per-call budget caps"]);
+  assert.deepStrictEqual(textsMc(tagsMc(split.children, "h2")), [
+    "Model assignment",
+    "Per-call budget caps",
+    "Daemon call tiers",
+  ]);
 });
 
 test("every cap carries its own reference link to Cost & usage", () => {
@@ -1629,6 +1791,7 @@ const ALL_TIERS_MC = [
 const SCREEN_DATA_MC = {
   domains: DOMAIN_ROW_FIXTURE_MC,
   budgets: BUDGET_ROW_FIXTURE_MC,
+  tiers: TIER_ROW_FIXTURE_MC,
   known_models: [],
   daemon_config_sync: "ok",
 };
