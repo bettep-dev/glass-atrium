@@ -10,8 +10,9 @@ Run this before any UI decision — component implementation, page layout, anima
 |---|---|
 | project has a `DESIGN.md` (root / `docs/` / `design-system/`) | read it before emitting markup or styles |
 | project has a `motion-philosophy.md` | read it before any animation / transition / spring-family decision |
-| neither exists | proceed on framework defaults, and flag the absence in `[COMPLETION]` `lesson` so a later session can ask glass-atrium-design-designer to author one |
+| neither exists | proceed on framework defaults, and flag the absence in `[COMPLETION]` `concerns` |
 
+- Why the flag: it lets an operator ask glass-atrium-design-designer to author the missing document.
 - Re-deriving a token value from a screenshot, a mockup, a description, or memory instead of reading the document is FORBIDDEN.
 
 ## Token Lookup Order
@@ -50,7 +51,7 @@ Applies only where a `DESIGN.md` exists AND is DTCG-aligned (W3C Design Tokens 2
 
 - Consume the generated CSS variables in `:root {}`; the JSON blocks are the SSoT.
 - Composite types in use: `color` · `typography` · `dimension` · `duration` · `cubicBezier` · `transition`.
-- `DESIGN.md` present but not DTCG-aligned → fall back to ad-hoc CSS variables, and flag it in `[COMPLETION]` `lesson` for a later migration.
+- `DESIGN.md` present but not DTCG-aligned → fall back to ad-hoc CSS variables, and flag it in `[COMPLETION]` `concerns` for a later migration.
 
 ## Rationalization Rejection
 

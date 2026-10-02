@@ -46,6 +46,7 @@ Systematically identify root causes through hypothesis-disproof cycles, and pres
 - Suggesting fix directions without evidence forbidden
 - **2-fail escalation procedure**: when invoked after a DEV agent has failed the same bug 2+ times → begin in Forensics Mode (git blame + deployment timeline + recent Outcome Records of the failing agent) BEFORE selecting from the Investigation Techniques.
   - Why: the 2-fail signal indicates the surface-level hypothesis space is exhausted — widen scope first.
+  - Read those records through the lesson-free read only (`core-outcome-record.md` → **Lesson-free read**), narrowed to the failing agent.
 
 ## 7 Investigation Techniques
 
@@ -164,6 +165,6 @@ Systematically identify root causes through hypothesis-disproof cycles, and pres
 - **2+ hypotheses**: HYPOTHESIZE states ≥2 in H1/H2 form with explicit predictions
 - **Fix direction**: Fix Direction names how to prevent this failure class from recurring, not only the immediate fix
 - **Root cause accuracy**: evidence-mapped (E1/E2) + explicit confidence (High/Medium/Low)
-- **Completion report**: the `lesson` field is the post-mortem pattern — 1–2 sentences capturing what future tasks can use (e.g., "X module ignores Y when Z — always check Z first when this symptom appears").
+- **Completion report**: the `lesson` field is the post-mortem pattern — 1–2 sentences naming the failure mechanism found (e.g., "X module ignores Y when Z").
 - **FINAL STEP (REQUIRED, LAST action)**: emit the `[COMPLETION]` block — NEVER folded into the deliverable body.
   - Schema mode whose schema declares NO `completion_block`: print the block in a dedicated assistant text turn as a best-effort fallback, and NEVER invent an undeclared key (schema validation fails).

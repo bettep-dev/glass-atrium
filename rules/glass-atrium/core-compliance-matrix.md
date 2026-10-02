@@ -121,7 +121,7 @@ Two SubagentStart channels carry text, and they divide the work by kind:
 | Channel | Code | What it carries |
 |---|---|---|
 | Part slots | `hooks/inject-scope-part-*.sh` → `hooks/lib/inject_chunk.py` | every `scoped/` file in the row's `scope` and `shared` entries, packed whole at heading boundaries (an over-cap section is named by an in-context marker instead); `.conditional` entries as path pointers only |
-| Slot 1 | `hooks/inject-scope-rules.sh` | the named marker blocks below, plus the emit-format directive, the turn-budget meter and the lesson recall, which the hook builds rather than extracts |
+| Slot 1 | `hooks/inject-scope-rules.sh` | the named marker blocks below, plus the emit-format directive and the turn-budget meter, which the hook builds rather than extracts |
 
 - **Slot 1 MUST carry no scope-file text.** The comment-logging, style_ref, minimalism, naming and plan-gate cores ride the part slots only; `hooks/inject-scope-rules.sh` extracts none of them, and their source files carry no marker.
 - **Overflow audit**: `python3 hooks/lib/inject_chunk.py --audit` MUST report `events=none` for every agent. An OVERFLOW displaces a member band, and no slot-1 copy remains behind it.

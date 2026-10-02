@@ -214,7 +214,7 @@ LLM-authored code carries a recurring defect set — every hit is [MUST FIX] or 
 - The `[COMPLETION]` block goes AFTER the review below, NEVER inside the review body — folding it into the body loses the outcome record.
 - Its form and its two channels are auto-injected on every spawn, so follow them there: MANUAL/TEXT = a dedicated assistant text turn, print-block-then-emit · SCHEMA/WORKFLOW = the `completion_block` field on the terminal `StructuredOutput` call.
 - Schema declaring NO `completion_block` → dedicated-turn print as best-effort fallback, and NEVER invent an undeclared key (schema validation would fail).
-- **Failure cost**: a missed emit on the mode-appropriate channel → SubagentStop synthesizes a lesson-less row (`confidence=low`, `metric_pass=false`).
+- **Failure cost**: a missed emit on the mode-appropriate channel → SubagentStop synthesizes the row and your self-assessment is lost (`confidence=low`, `metric_pass=false`).
 - **Machine-checked repetition**: `hooks/test/emit-discipline-doc-consistency.bats` reads this live file and pins the `print-block-then-emit` marker in the channel bullet above, plus its placement ahead of the review-summary template heading below — keep both when dieting.
 
 #### Review template
@@ -304,5 +304,5 @@ Applies to external dependencies, MCP servers, and new packages.
 - **7-perspective coverage**: the review considers every `### 7-Perspective Checklist` perspective at the depth `### Review Depth Scaling` sets, and reports under each one that yields a finding; a perspective with nothing to report takes no filler line
 - **Security detection**: core-security.md violations → [MUST FIX] with rule cited
 - **Specificity**: every `Issues by File` entry cites `<path> → <anchor>` + the violated rule and clears the Guardrails confidence floor
-- **Completion report**: `[COMPLETION]` emitted per Deliverable Format · `lesson` (1-2 sentences) = AutoAgent self-improvement signal
+- **Completion report**: `[COMPLETION]` emitted per Deliverable Format
 - **task_type**: emit `task_type: review` in [COMPLETION] per the Role → Allowed task_types table in core-outcome-record.md (this role's sole allowed value)

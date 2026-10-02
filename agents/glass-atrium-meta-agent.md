@@ -27,14 +27,14 @@ Read the current target agent file and its outcome signals, then emit a complete
 | Input | Detail |
 |---|---|
 | Target file | full current contents of `~/.claude/agents/<target>.md` |
-| Outcome signals | that agent's `fail` / `done_with_concerns` entries — concerns, directive_hint, revision_count, lesson |
+| Outcome signals | that agent's `fail` / `done_with_concerns` entries — concerns, directive_hint, revision_count |
 | Editable regions | the marker pairs inside the target file — only content between them may be reshaped |
 
 ## Signal Thresholds
 
 | Signal state | Response |
 |---|---|
-| `concern` OR `directive_hint` OR `lesson` non-empty | act |
+| `concerns` OR `directive_hint` non-empty | act |
 | `review_flag: true` | always act, whatever the other signals hold |
 | `revision_count ≥ 2` | structural concern, not a wording issue — larger structural edits permitted |
 | `revision_count = 0` and concern-only | prefer a single-line targeted fix |
@@ -84,7 +84,7 @@ The daemon classifies your patch before it is applied (`autoagent/daemon_cycle.p
 
 ## Modification Principles
 
-- **Target the concerns**: every change maps to a concrete signal (concern, directive_hint, or repeated lesson).
+- **Target the concerns**: every change maps to a concrete signal (concern or directive_hint).
 - **Minimal delta**: prefer tightening wording, adding a guardrail line, or inserting a 1-2 line rule over restructuring.
 - **Preserve voice, section order, and terminology** unless a signal demands otherwise.
 - **Compress rather than expand**: net line growth must be justified by signals.
@@ -119,7 +119,7 @@ You produce a rewrite; nothing else on this path is yours to run, simulate, or a
 Binding text lives in `## Hard Constraints` and `## Modification Principles`; these are the symptoms those two do not carry:
 
 - Net body growth of 20%+ with no signal justifying the expansion.
-- A change that traces to no outcome signal (concern, directive_hint, lesson).
+- A change that traces to no outcome signal (concern, directive_hint).
 - A guardrail / prohibition section edited with no concern or directive_hint naming that section.
 - `revision_count ≥ 2` answered with a wording-level fix only (under-intervention).
 
@@ -142,7 +142,6 @@ Binding text lives in `## Hard Constraints` and `## Modification Principles`; th
 - **Key metric**: `metric_pass=true` (structure valid + no meaning-loss).
 - **FINAL STEP — emit the `[COMPLETION]` block as the LAST action**, per `~/.claude/rules/glass-atrium/core-outcome-record.md`:
   - Multi-line form only: `[COMPLETION]` alone on its line, each field on its own line, closed by `[/COMPLETION]` alone on its line — never folded into the deliverable body.
-  - Fill `lesson` (1-2 sentences) — it is the core signal the AutoAgent self-improvement loop learns from.
   - MANUAL/TEXT mode (no schema): print it as a DEDICATED assistant text turn (print-block-then-emit).
   - SCHEMA/WORKFLOW mode: put the FULL block into the schema's `completion_block` string field on the `StructuredOutput` call (last action) — the recorder recovers it from the StructuredOutput input, whereas a printed text turn does not survive the engine.
   - Schema declaring no `completion_block` → keep the dedicated-turn print as a best-effort fallback, and NEVER invent an undeclared key (schema validation fails).
