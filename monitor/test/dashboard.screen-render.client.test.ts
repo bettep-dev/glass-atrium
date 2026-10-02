@@ -524,11 +524,12 @@ test("a lane with no alarm renders no text and leaves the layout, whether its so
 
 test("a lane holding an alarm while another source loads shows only that card, in flow", () => {
   const lane = render("AlarmLane", { alarms: [HARNESS_ALARM], readiness: { status: "loading", unread: [] }, onNav: () => {} });
-  assert.equal(alertCardsOf(lane).length, 1);
+  const cards = alertCardsOf(lane);
+  assert.equal(cards.length, 1);
   assert.equal(findNodes(lane, (n) => n.props.atom === "LoadingPlaceholder").length, 0, "no loading line under the card");
   const [section] = findNodes(lane, (n) => n.props["aria-label"] === "Alarms");
   assert.ok(!classOf(section).split(/\s+/).includes("sr-only"));
-  assert.doesNotMatch(collectText(lane), /No other alarms/);
+  assert.equal(collectText(lane), collectText(cards[0]), "the lane carries no text beyond its card");
 });
 
 describe("an empty alarm lane stays silent once its sources are read, and says it couldn't check when one went unread", () => {
