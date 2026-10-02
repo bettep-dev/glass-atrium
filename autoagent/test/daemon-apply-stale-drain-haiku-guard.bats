@@ -153,6 +153,10 @@ case "${sql}" in
     # mark_stale_attempt CTE — emit the canned verdict token.
     printf '%s\n' "${STUB_STALE_VERDICT:-incremented}"
     ;;
+  *"to_regclass('core.autoagent_apply_records')"*)
+    # the apply-record table preflight — present
+    printf 't\n'
+    ;;
   *) : ;;
 esac
 exit 0
