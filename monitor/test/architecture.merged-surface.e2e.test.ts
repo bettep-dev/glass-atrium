@@ -840,14 +840,6 @@ async function getZoneRingProbe(): Promise<ZoneRingProbe> {
 	}, selectors.canvas);
 }
 
-test("the zone ring probe reads the seven drawn zones and no row frame of the ⊐", async () => {
-	await openMap(getLiveFixture());
-	const probe = await getZoneRingProbe();
-
-	assert.equal(Object.keys(probe.zoneClasses).length, 7, `probed zones: ${Object.keys(probe.zoneClasses).join(", ")}`);
-	assert.ok(!Object.keys(probe.zoneClasses).some((id) => id.startsWith("map_row")), "a row frame was probed as a zone");
-});
-
 // 존 하나가 정확히 이 클래스 하나만 들었는지 + 그 색으로 실제로 그려지는지.
 // 색은 토큰에서 읽어 대조함 — 리터럴을 적으면 토큰이 바뀔 때 화면과 갈라짐.
 async function assertZoneRing(
@@ -859,6 +851,10 @@ async function assertZoneRing(
 	assert.ok(
 		Object.hasOwn(probe.zoneClasses, zoneId),
 		`fixture precondition: the canvas draws no zone '${zoneId}' — the assertion below would be vacuous`,
+	);
+	assert.ok(
+		!Object.keys(probe.zoneClasses).some((id) => id.startsWith("map_row")),
+		`probe precondition: a row frame of the ⊐ was read as a zone — probed: ${Object.keys(probe.zoneClasses).join(", ")}`,
 	);
 	assert.deepEqual(
 		probe.zoneClasses[zoneId],
