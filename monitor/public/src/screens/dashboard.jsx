@@ -262,14 +262,13 @@ function getAlarmReadiness(sources) {
 function AlarmCard({ alarm, onNav, children }) {
   const { AlertCard, Badge } = window.UI;
   const title = <>{alarm.title}{alarm.isHeld && <> <Badge tone="neutral">Last known</Badge></>}</>;
-  const hasActions = Boolean(children) || Boolean(alarm.target);
-  const actions = hasActions && (
+  const actions = children || alarm.target ? (
     <>
       {children}
       {alarm.target && <DrillLink target={alarm.target} label={alarm.targetLabel} onNav={onNav}/>}
     </>
-  );
-  return <AlertCard tone={alarm.tone} hasLiveHost title={title} body={alarm.detail} actions={actions || undefined}/>;
+  ) : null;
+  return <AlertCard tone={alarm.tone} hasLiveHost title={title} body={alarm.detail} actions={actions}/>;
 }
 
 // 상태 밴드 — 4타일 고정, 좁은 폭에선 2×2. 값 · 힌트 한 줄 · 소유 화면 링크.
@@ -333,7 +332,7 @@ function TileDetail({ tile, isCovered }) {
 function TileFailure({ tile, retry }) {
   return (
     <window.UI.AlertCard tone="crit" surface="inset" title={tile.detail} body={tile.hint}
-      details={tile.failureDetail} actions={retry || undefined}/>
+      details={tile.failureDetail} actions={retry}/>
   );
 }
 

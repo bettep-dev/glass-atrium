@@ -64,7 +64,6 @@ const ARCH_CANVAS_ID = "arch-map-canvas";
 const CANVAS = {
 	// pane clamped to its drawing's height
 	FIT_HEIGHT_ATTR: "data-arch-fit-height",
-	// drawing floor-bound and too wide for the room beside the zoom controls → they fold into a row under it
 };
 // map slot wrapper — outlives the error-to-map swap, so a map Retry hands focus here on recovery
 const MAP_REGION_ID_AR = "arch-map-region";
@@ -711,7 +710,6 @@ function ScreenArchitecture(
 					`#${ARCH_CANVAS_ID} .arch-node-live-crit > rect.arch-ring-state, #${ARCH_CANVAS_ID} .arch-zone-live-crit > rect.arch-ring-state { display: inline; stroke: rgb(var(--crit)) !important; } ` +
 					// 줌/팬/맞춤 컨트롤 클러스터 — 캔버스 우하단, hint 위. 불투명 면(상시 chrome) → blur 금지.
 					".arch-zoom-controls { position: absolute; right: 8px; bottom: 28px; display: flex; flex-direction: column; gap: 4px; z-index: 2; } " +
-					// lane mode — one row of controls with the hint on its left, a toolbar under the drawing rather than over it
 					".arch-zoom-btn { min-width: 32px; height: 32px; display: inline-flex; gap: 4px; align-items: center; justify-content: center; " +
 					"background: rgb(var(--elev)); border: 1px solid rgb(var(--line)); border-radius: 6px; color: rgb(var(--dim)); " +
 					'cursor: pointer; font-family: "JetBrains Mono", monospace; font-size: 16px; line-height: 1; padding: 0; ' +
