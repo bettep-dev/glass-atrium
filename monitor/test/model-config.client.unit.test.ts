@@ -1238,7 +1238,7 @@ test("a failed save names the next step and keeps the server's raw answer behind
   assert.strictEqual(textsMc(tagsMc(tree, "button")).filter((t) => t === "Retry").length, 1, "one Retry for the save");
 });
 
-test("the drift banner triggers on any drifted row, not on the file state alone", () => {
+test("the drift banner triggers on any drifted model or budget row, not on the file state alone", () => {
   const hasDrift = sandboxFnMc<(data: unknown) => boolean>("hasRowDriftMC");
   assert.strictEqual(hasDrift({ domains: [], budgets: [] }), false, "nothing drifted → no trigger");
   assert.strictEqual(

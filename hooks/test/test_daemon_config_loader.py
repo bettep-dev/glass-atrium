@@ -75,6 +75,21 @@ _CONTRACT_KEYS = {
 
 _ABSENT = object()
 
+_scratch_root: Path | None = None
+
+
+def setUpModule() -> None:
+    global _scratch_root
+    scratch = tempfile.TemporaryDirectory(prefix="ga-daemon-config-loader-")
+    unittest.addModuleCleanup(scratch.cleanup)
+    _scratch_root = Path(scratch.name)
+
+
+def _create_scratch_dir() -> Path:
+    # One dir per call → no two cases share a config path; the module cleanup removes them all.
+    return Path(tempfile.mkdtemp(dir=_scratch_root))
+
+
 def _write_config(payload: object) -> Path:
     """Serialize ``payload`` to a throwaway config file, returning its path.
 
@@ -82,13 +97,13 @@ def _write_config(payload: object) -> Path:
     own json.loads sees a valid-JSON-but-wrong-shape document; a raw corrupt
     string is written verbatim via the ``raw_text`` escape hatch below.
     """
-    tmp = Path(tempfile.mkdtemp()) / "daemon-config.json"
+    tmp = _create_scratch_dir() / "daemon-config.json"
     tmp.write_text(json.dumps(payload), encoding="utf-8")
     return tmp
 
 
 def _write_raw(raw_text: str) -> Path:
-    tmp = Path(tempfile.mkdtemp()) / "daemon-config.json"
+    tmp = _create_scratch_dir() / "daemon-config.json"
     tmp.write_text(raw_text, encoding="utf-8")
     return tmp
 
@@ -510,7 +525,7 @@ class TierKnobTest(unittest.TestCase):
     def test_each_load_reports_only_its_own_rejections(self) -> None:
         rejected = _write_config({"pre_verify_effort": "ultra"})
         later_loads = (
-            ("missing file", Path(tempfile.mkdtemp()) / "does-not-exist.json"),
+            ("missing file", _create_scratch_dir() / "does-not-exist.json"),
             ("corrupt file", _write_raw("{ not json")),
             ("clean file", _write_config({"pre_verify_effort": "high"})),
         )

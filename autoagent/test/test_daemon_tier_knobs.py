@@ -142,7 +142,7 @@ class PreVerifyCallTierTest(unittest.TestCase):
 
 @unittest.skipIf(_IMPORT_ERROR is not None, f"module import failed: {_IMPORT_ERROR}")
 class MainKnobGateTest(unittest.TestCase):
-    """A rejected knob stops every _main mode that spends an LLM call, and no other."""
+    """A rejected knob stops every cycle run (dry run and skip-haiku too) and, on a pre-verify knob, the single regen; no other mode."""
 
     def setUp(self) -> None:
         # The LLM-spending entry points raise if reached, so a missing gate fails

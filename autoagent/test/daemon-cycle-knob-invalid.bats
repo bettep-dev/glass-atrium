@@ -47,9 +47,9 @@ run_driver_with_config() {
 
 @test "a rejected tier knob fails the cycle stage with rc 9, a FATAL line and no CLI call" {
   run_driver_with_config '{"worker_model": "claude-sonnet-5", "worker_effort": "ultra"}'
-  [ "${status}" -eq 1 ] || { echo "${output}"; return 1; }
+  [[ "${status}" -eq 1 ]] || { echo "${output}"; return 1; }
   grep -qF '[daemon-cycle] stage=cycle rc=9 FAILED' <<<"${output}" || { echo "${output}"; return 1; }
   grep -qF 'FATAL: daemon-config.json worker_effort="ultra"' <<<"${output}" \
     || { echo "${output}"; return 1; }
-  [ ! -e "${WORK}/claude-calls" ] || { echo "the CLI stub ran"; return 1; }
+  [[ ! -e "${WORK}/claude-calls" ]] || { echo "the CLI stub ran"; return 1; }
 }
