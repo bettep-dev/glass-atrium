@@ -1,6 +1,6 @@
 // Shared error and placeholder atoms: a plain sentence per outage, the raw answer only behind Details,
 // one Retry per shared outage, and loading slots that read as loading rather than as data.
-import test from "node:test";
+import test, { describe } from "node:test";
 import assert from "node:assert/strict";
 import { fileURLToPath } from "node:url";
 import { dirname, resolve } from "node:path";
@@ -125,6 +125,79 @@ test("the page banner announces one outage with every source named and exactly o
   assert.match(getVisibleText(tree), /Couldn't load spend, sessions, and models\./);
   assert.doesNotMatch(getVisibleText(tree), /HTTP 500/);
   assert.equal(getButtons(tree).length, 1);
+});
+
+function getByClass(tree: RenderedNode, name: string): RenderedNode[] {
+  return findNodes(tree, (n) => String(n.props.className ?? "").split(/\s+/).includes(name));
+}
+
+test("the page banner is a raised critical alert card: severity word first, Details in the content, Retry in the actions", () => {
+  const tree = render("PageErrorBanner", { sources: ["spend", "sessions"], error: SERVER_ERROR, onRetry: () => {} });
+  const [content] = getByClass(tree, "alert-card-content");
+  const [actions] = getByClass(tree, "alert-card-actions");
+
+  assert.ok(String(getByClass(tree, "alert-card")[0]?.props.className).split(/\s+/).includes("card"), "raised card shell");
+  assert.equal(getByClass(tree, "alert-card")[0]?.props["data-tone"], "crit");
+  assert.equal(collectText(getByClass(tree, "sr-only")[0]).trim(), "Critical:");
+  assert.equal(findNodes(content, (n) => n.type === "details").length, 1, "Details sit in the content column");
+  assert.equal(getButtons(actions).length, 1, "the one Retry sits in the actions slot");
+});
+
+describe("an alert card announces by placement: a standalone critical card is an alert, other tones a status, none inside a live host", () => {
+  const rows = [
+    { name: "standalone crit", props: { tone: "crit" }, role: "alert" },
+    { name: "standalone warn", props: { tone: "warn" }, role: "status" },
+    { name: "standalone info", props: { tone: "info" }, role: "status" },
+    { name: "standalone ok", props: { tone: "ok" }, role: "status" },
+    { name: "standalone neutral", props: { tone: "neutral" }, role: "status" },
+    { name: "crit inside a live host", props: { tone: "crit", hasLiveHost: true }, role: undefined },
+  ];
+  for (const row of rows) {
+    test(row.name, () => {
+      const tree = render("AlertCard", { title: "Spend over budget", ...row.props });
+      const roles = findNodes(tree, (n) => n.props.role != null).map((n) => n.props.role);
+
+      assert.deepEqual(roles, row.role ? [row.role] : []);
+    });
+  }
+});
+
+describe("an alert card leads its title with a visually-hidden severity word, so tone never rests on colour or glyph alone", () => {
+  const rows = [
+    { name: "a crit card reads Critical:", tone: "crit", word: "Critical:" },
+    { name: "a warn card reads Warning:", tone: "warn", word: "Warning:" },
+    { name: "a info card reads Notice:", tone: "info", word: "Notice:" },
+    { name: "a ok card reads Resolved:", tone: "ok", word: "Resolved:" },
+    { name: "a neutral card reads Notice:", tone: "neutral", word: "Notice:" },
+  ];
+  for (const row of rows) {
+    test(row.name, () => {
+      const tree = render("AlertCard", { tone: row.tone, title: "Harness drift" });
+      const [title] = getByClass(tree, "alert-card-title");
+
+      assert.equal(collectText(getByClass(title, "sr-only")[0]).trim(), row.word, "hidden severity word");
+      assert.match(collectText(title), new RegExp(`^${row.word}\\s*Harness drift$`), "the word leads the title");
+      assert.equal(getByClass(tree, "alert-card")[0].props["data-tone"], row.tone, "tone rides on the card for its well");
+    });
+  }
+});
+
+describe("an alert card renders each optional slot only when given, on the surface the caller picked", () => {
+  const rows = [
+    { name: "title only, raised", props: { surface: "raised" }, shell: "card", subjects: 0, details: 0, actions: 0 },
+    { name: "every slot, inset", props: { surface: "inset", subjects: ["hooks", "rules"], details: "ENOENT", actions: "Retry" }, shell: "sub-card", subjects: 2, details: 1, actions: 1 },
+  ];
+  for (const row of rows) {
+    test(row.name, () => {
+      const tree = render("AlertCard", { tone: "warn", title: "Harness drift", ...row.props });
+      const [chips] = getByClass(tree, "alert-card-subjects");
+
+      assert.ok(String(getByClass(tree, "alert-card")[0].props.className).split(/\s+/).includes(row.shell), "shell");
+      assert.equal(chips ? chips.children.length : 0, row.subjects, "subject chips");
+      assert.equal(findNodes(tree, (n) => n.type === "details").length, row.details, "details");
+      assert.equal(getByClass(tree, "alert-card-actions").length, row.actions, "actions");
+    });
+  }
 });
 
 const FAILURE_SENTENCE = /Couldn't load/g;
