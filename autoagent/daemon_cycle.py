@@ -2032,7 +2032,6 @@ class Outcome:
     confidence: str
     metric_pass: str
     summary: str  # truncated to 240 chars
-    lesson: str   # truncated to 240 chars
     # Polarity signals — defaulted so every pre-existing Outcome(...) call site
     # stays valid (frozen dataclass; defaults trail the required fields). Absent
     # source value → NEUTRAL (0), never silently bucketed as success.
@@ -2086,16 +2085,14 @@ class SolutionAttempt:
     """One instruction-improvement attempt in Solution History.
 
     OPRO 3-tuple (score / applied_date + the instruction cell) plus the
-    reflective mutation signal (lesson + directive_hint) that GEPA feeds into
-    the next optimization cycle. `score` is a 1-5 scalar; `applied_date` is an
-    ISO 'YYYY-MM-DD' string (lexical order == chronological).
+    caller-supplied directive_hint. `score` is a 1-5 scalar; `applied_date` is
+    an ISO 'YYYY-MM-DD' string (lexical order == chronological).
     """
 
     agent: str
     task_type: str
     score: float
     applied_date: str
-    lesson: str = ""
     directive_hint: str = ""
 
 
@@ -2120,8 +2117,7 @@ def retain_pareto_winners(
 
     AD-10 (GEPA): Solution History keeps MULTIPLE winners per cell — the
     non-dominated frontier over (score, recency) — NOT a single scalar-best, so a
-    newer-but-lower-score variant survives alongside an older-but-higher one and
-    their lesson+directive_hint diversity feeds the next reflective mutation. A
+    newer-but-lower-score variant survives alongside an older-but-higher one. A
     cell is retained ONLY when it has >= `min_occurrence` attempts (GEPA
     min-occurrence floor); thinner cells are dropped.
 
@@ -2180,7 +2176,6 @@ def solution_attempt_from_outcome(
         task_type=outcome.task_type,
         score=score,
         applied_date=applied_date,
-        lesson=outcome.lesson,
         directive_hint=directive_hint,
     )
 
@@ -2681,7 +2676,6 @@ def _fetch_outcomes_from_pg(
                 confidence=row.get("confidence", ""),
                 metric_pass=metric_pass_str,
                 summary=(row.get("summary") or "")[:240],
-                lesson=(row.get("lesson") or "")[:240],
                 # provenance for the synthesized-measurement-gap FAILURE carve-out
                 attribution_source=str(row.get("attribution_source") or ""),
             )
@@ -2829,7 +2823,6 @@ def _fetch_generation_outcomes_from_pg(
                 confidence=row.get("confidence", ""),
                 metric_pass=metric_pass_str,
                 summary=(row.get("summary") or "")[:240],
-                lesson=(row.get("lesson") or "")[:240],
                 # revision_count: None/missing/unparseable → neutral 0.
                 # evaluative_signal: preserve -1/0/+1 (None → neutral 0); do NOT
                 # coerce a missing signal into success polarity.
@@ -2908,9 +2901,8 @@ def _parse_outcome_file(path: Path) -> Outcome:
 
     body_after = text[m.end():] if m else text
 
-    # Best-effort summary/lesson extraction from markdown body.
+    # Best-effort summary extraction from markdown body.
     summary = _extract_field(body_after, ["summary"])
-    lesson = _extract_field(body_after, ["lesson", "Lesson"])
 
     # revision_count: absent/unparseable → 0. evaluative_signal: absent → 0
     # (neutral); 0 and absent are both neutral here, only -1 is failure polarity.
@@ -2929,7 +2921,6 @@ def _parse_outcome_file(path: Path) -> Outcome:
         confidence=fields.get("confidence", ""),
         metric_pass=fields.get("metric_pass", ""),
         summary=summary[:240],
-        lesson=lesson[:240],
         revision_count=revision_count,
         evaluative_signal=evaluative_signal,
         # absent in legacy frontmatter → "" (neutral provenance)
@@ -3072,7 +3063,7 @@ Rules for the DIFF block (it is applied with `git apply`, which reads these line
 
 # Prompt-token guard for the consolidated outcomes block. With no sample cap,
 # yesterday may hold many outcomes — every signal's compact 1-line summary is
-# always included, but if the verbatim summary/lesson BODY total exceeds budget,
+# always included, but if the verbatim summary BODY total exceeds budget,
 # only the BODY is truncated with an explicit (loud) note (never silent-drop).
 GENERATION_OUTCOMES_BODY_BUDGET_CHARS = 8000
 
@@ -4012,7 +4003,7 @@ def _run_haiku_with_retry(
 def _neutralize_field(text: str, *, cap: int = 160) -> str:
     """Flatten newlines then repr-quote agent-authored free-text for prompt injection.
 
-    Agent-authored summary/lesson/label originate from [COMPLETION] blocks that are
+    Agent-authored summary/label originate from [COMPLETION] blocks that are
     influenceable by tool outputs / fetched URLs / file content (untrusted relay).
     Flattening embedded newlines collapses any line-start RATIONALE:/DIFF:/'--- a/'
     /'+++ b/'/@@ marker so no fake diff/response anchor survives at line-start, and
@@ -4033,8 +4024,6 @@ def _render_outcomes_block(outcomes: list[Outcome]) -> str:
         )
         if o.summary:
             lines.append(f"   summary: {_neutralize_field(o.summary)}")
-        if o.lesson:
-            lines.append(f"   lesson: {_neutralize_field(o.lesson)}")
     return "\n".join(lines)
 
 
@@ -4115,7 +4104,7 @@ def _is_success_outcome(o: Outcome) -> bool:
     """SUCCESS polarity: clean first-try done — never an absent/missing signal.
 
     structuredoutput-derived carve-out: that row's done is synthesis-assigned
-    (writer-unverified, lesson-less) → NEUTRAL, never a SUCCESS exemplar."""
+    (writer-unverified) → NEUTRAL, never a SUCCESS exemplar."""
     if o.attribution_source == ATTRIBUTION_STRUCTUREDOUTPUT_DERIVED:
         return False
     return (
@@ -4153,12 +4142,9 @@ def _render_outcome_section(
     bodies_truncated = 0
     for i, o in enumerate(outcomes, start=1):
         lines.append(_outcome_header(i, o))  # header always — preserve count
-        body_pieces: list[str] = []
-        if o.summary:
-            body_pieces.append(f"   summary: {_neutralize_field(o.summary)}")
-        if o.lesson:
-            body_pieces.append(f"   lesson: {_neutralize_field(o.lesson)}")
-        body_text = "\n".join(body_pieces)
+        body_text = (
+            f"   summary: {_neutralize_field(o.summary)}" if o.summary else ""
+        )
         if body_text and body_chars + len(body_text) <= body_budget:
             lines.append(body_text)
             body_chars += len(body_text)
@@ -4183,7 +4169,7 @@ def _render_generation_outcomes_block(
                    silently counted as success.
 
     Each outcome's 1-line header is always included (lossless signal count); once
-    the verbatim summary/lesson BODY total exceeds body_budget (chars, shared
+    the verbatim summary BODY total exceeds body_budget (chars, shared
     across all sections), later BODY text is dropped with an explicit loud note.
     Sequential rendering — sample size is small (no ThreadPoolExecutor).
     """
@@ -4224,7 +4210,7 @@ def _render_generation_outcomes_block(
         lines.append(
             f"   [NOTE: {bodies_truncated} outcome bodies omitted to fit the "
             f"{body_budget}-char prompt budget — headers above are complete; "
-            f"only verbatim summary/lesson text was truncated]"
+            f"only verbatim summary text was truncated]"
         )
     return "\n".join(lines)
 
@@ -11042,7 +11028,7 @@ def run_cycle(
             outcomes_dir=outcomes_dir,
         )
         # AD-10 Solution History: bridge each generation outcome into a
-        # SolutionAttempt (OPRO 3-tuple + reflective signal). applied_date is the
+        # SolutionAttempt (OPRO 3-tuple). applied_date is the
         # cycle day — the outcomes share the generation window, so recency is a
         # per-cycle constant here; cross-cycle recency spread arrives with the
         # durable store (deferred, see below). directive_hint is not on the
