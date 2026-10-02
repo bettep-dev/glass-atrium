@@ -840,6 +840,14 @@ async function getZoneRingProbe(): Promise<ZoneRingProbe> {
 	}, selectors.canvas);
 }
 
+test("the zone ring probe reads the seven drawn zones and no row frame of the ⊐", async () => {
+	await openMap(getLiveFixture());
+	const probe = await getZoneRingProbe();
+
+	assert.equal(Object.keys(probe.zoneClasses).length, 7, `probed zones: ${Object.keys(probe.zoneClasses).join(", ")}`);
+	assert.ok(!Object.keys(probe.zoneClasses).some((id) => id.startsWith("map_row")), "a row frame was probed as a zone");
+});
+
 // 존 하나가 정확히 이 클래스 하나만 들었는지 + 그 색으로 실제로 그려지는지.
 // 색은 토큰에서 읽어 대조함 — 리터럴을 적으면 토큰이 바뀔 때 화면과 갈라짐.
 async function assertZoneRing(
@@ -1176,6 +1184,9 @@ test("P0-2 every canvas edge is axis-aligned while the dagre control is not", as
 	await openMap(getLiveFixture());
 	const canvas = await getCanvasProbe();
 
+	// the two turn edges the screen draws between the ⊐'s rows are canvas links too, so the check covers them
+	const turnLinkCount = await page.evaluate((sel) => document.querySelectorAll(`${sel} path.flowchart-link[id$="_turn"]`).length, selectors.canvas);
+	assert.equal(turnLinkCount, 2, "the ⊐'s two turn edges are drawn as canvas links");
 	assertOrthogonalLinks(canvas.links, "canonical map canvas");
 
 	// 대조군은 대각을 실제로 가졌음을 양성으로 세워야 한다.
