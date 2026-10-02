@@ -1194,7 +1194,7 @@ test("P1 the security category's node stroke uses no status hue", () => {
   assert.ok(!statusHexes.includes(stroke), `${stroke} collides with a status hue ${statusHexes}`);
 });
 
-test("the pre-layout label measure uses the font family mermaid lays the map out with", () => {
+test("the turn label measure uses the font family mermaid lays the map out with", () => {
   const ctx = createArchContext();
   const measureContext = { font: "", measureText: (text: string) => ({ width: text.length }) };
   (ctx.window as Record<string, unknown>).MERMAID_CONFIG = { themeVariables: { fontFamily: "Probe Face, serif" } };
@@ -1206,13 +1206,13 @@ test("the pre-layout label measure uses the font family mermaid lays the map out
   assert.match(measureContext.font, /px Probe Face, serif$/, `measured with "${measureContext.font}"`);
 });
 
-test("the drawn map's label lines come from the client measure alone, never from stored breaks", () => {
-  const measure = (text: string) => text.length * 10;
+test("drawn labels are single-line whatever the stored breaks", () => {
   const drawn = CANONICAL_MAP.mermaid_drawn;
   const unbroken = drawn.replace(/\s*<br\s*\/?>\s*/gi, " ");
 
-  const fromStored = callInCtx<string>(archCtx, "buildMeasuredMapSourceAR", drawn, measure);
-  const fromUnbroken = callInCtx<string>(archCtx, "buildMeasuredMapSourceAR", unbroken, measure);
+  const fromStored = callInCtx<string>(archCtx, "buildSingleLineMapSourceAR", drawn);
+  const fromUnbroken = callInCtx<string>(archCtx, "buildSingleLineMapSourceAR", unbroken);
 
+  assert.doesNotMatch(fromStored, /<br\s*\/?>/i, "a stored break reached the drawn source");
   assert.strictEqual(fromStored, fromUnbroken);
 });

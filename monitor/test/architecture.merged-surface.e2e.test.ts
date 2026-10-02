@@ -852,6 +852,10 @@ async function assertZoneRing(
 		Object.hasOwn(probe.zoneClasses, zoneId),
 		`fixture precondition: the canvas draws no zone '${zoneId}' — the assertion below would be vacuous`,
 	);
+	assert.ok(
+		!Object.keys(probe.zoneClasses).some((id) => id.startsWith("map_row")),
+		`probe precondition: a row frame of the ⊐ was read as a zone — probed: ${Object.keys(probe.zoneClasses).join(", ")}`,
+	);
 	assert.deepEqual(
 		probe.zoneClasses[zoneId],
 		[expectedClass],
@@ -1176,6 +1180,9 @@ test("P0-2 every canvas edge is axis-aligned while the dagre control is not", as
 	await openMap(getLiveFixture());
 	const canvas = await getCanvasProbe();
 
+	// the two turn edges the screen draws between the ⊐'s rows are canvas links too, so the check covers them
+	const turnLinkCount = await page.evaluate((sel) => document.querySelectorAll(`${sel} path.flowchart-link[id$="_turn"]`).length, selectors.canvas);
+	assert.equal(turnLinkCount, 2, "the ⊐'s two turn edges are drawn as canvas links");
 	assertOrthogonalLinks(canvas.links, "canonical map canvas");
 
 	// 대조군은 대각을 실제로 가졌음을 양성으로 세워야 한다.

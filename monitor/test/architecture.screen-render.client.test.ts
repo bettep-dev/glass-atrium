@@ -218,6 +218,23 @@ test("the hook chain lists each event collapsed, its hook paths behind a summary
   assert.equal(findNodes(summary, (n) => collectText(n).includes("/h/a.sh")).length, 0, "the hook paths sit behind the summary, not in it");
 });
 
+test("the hook chain gives every matcher group of one event its own key, even when settings repeat a matcher", async () => {
+  const mod = await loadArch();
+  // settings.json may list one matcher twice under an event, and a matcher-less group reads as ''
+  const groups = [
+    { matcher: "Bash", hooks: [{ command: "/h/guard.sh", type: "command", timeout: 5 }] },
+    { matcher: "Bash", hooks: [{ command: "/h/audit.sh", type: "command", timeout: null }] },
+    { matcher: "", hooks: [{ command: "/h/any-a.sh", type: "command", timeout: null }] },
+    { matcher: "", hooks: [{ command: "/h/any-b.sh", type: "command", timeout: null }] },
+  ];
+  const state = { status: "ready", data: { source_path: "/s/settings.json", source_mtime: null, events: [{ event: "PreToolUse", groups }] } };
+
+  const tree = renderScreen(mod.React.createElement(mod.HookChainDetail, { state }));
+  const keys = findNodes(tree, (n) => n.type === "li" && /\barch-hook-group\b/.test(String(n.props.className))).map((n) => n.props.key);
+  assert.equal(keys.length, groups.length, "precondition: each matcher group renders one list item");
+  assert.equal(new Set(keys).size, keys.length, `sibling group keys collide, so React drops or merges rows: ${JSON.stringify(keys)}`);
+});
+
 test("a part's Open box action carries the bordered button style, not the borderless ghost", async () => {
   const mod = await loadArch();
   const nodeIndex = new Map([["canonical.cron", { id: "canonical.cron", label: "Scheduled background jobs" }]]);

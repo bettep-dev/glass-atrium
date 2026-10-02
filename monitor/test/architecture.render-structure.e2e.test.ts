@@ -499,6 +499,8 @@ describe("healthy live fixture", () => {
 				return { id: el.id, shown: label ? label.getBoundingClientRect().width > 0 : false };
 			}),
 		ctx.selectors.canvas);
+		// exactly the seven zones — the row frames the ⊐ is laid out with are gone
+		assert.equal(titles.length, 7, `drawn zones — read: ${JSON.stringify(titles)}`);
 		const hidden = titles.filter((t) => !t.shown).map((t) => t.id.replace(/^.*-/, ""));
 		// no drawn zone has a lone member whose label opens with the zone title, so every title shows
 		assert.deepEqual(hidden.sort(), [], `hidden group titles — read: ${JSON.stringify(titles)}`);
@@ -539,24 +541,41 @@ describe("healthy live fixture", () => {
 		}
 	});
 
-	test("Tab moves through the map nodes in left-to-right flow order", async () => {
-		// document order of tabindex=0 stops IS the Tab sequence; one inline mapper (tsx __name)
-		const stops = await ctx.page.evaluate((canvas) =>
-			[...document.querySelectorAll(`${canvas} svg g.node[tabindex="0"]`)].map((el) => {
-				const r = el.getBoundingClientRect();
-				return { id: el.getAttribute("data-arch-node-id"), cx: r.left + r.width / 2, top: r.top, width: r.width };
+	test("Tab follows the ⊐ — the top row left to right, then the bottom row back right to left", async () => {
+		// document order of tabindex=0 stops IS the Tab sequence; inline mappers only (tsx __name)
+		const { stops, bottomZones } = await ctx.page.evaluate(
+			({ canvas, bottomZoneIds }) => ({
+				stops: [...document.querySelectorAll(`${canvas} svg g.node[tabindex="0"]`)].map((el) => {
+					const r = el.getBoundingClientRect();
+					return { id: el.getAttribute("data-arch-node-id"), cx: r.left + r.width / 2, cy: r.top + r.height / 2, top: r.top, width: r.width };
+				}),
+				bottomZones: [...document.querySelectorAll(`${canvas} svg g.cluster`)]
+					.filter((el) => bottomZoneIds.includes(el.id.slice(el.id.lastIndexOf("-") + 1)))
+					.map((el) => el.getBoundingClientRect().toJSON() as { left: number; right: number; top: number; bottom: number }),
 			}),
-		ctx.selectors.canvas);
+			{ canvas: ctx.selectors.canvas, bottomZoneIds: ["hooks", "data", "export"] },
+		);
+		assert.equal(bottomZones.length, 3, "the three bottom-row zones are drawn");
 		assert.ok(stops.length > 3, `focusable node count ${stops.length}`);
+
+		const order = stops.map((s) => s.id).join(", ");
+		const isBottomRow = (s: (typeof stops)[number]) => bottomZones.some((b) => s.cx > b.left && s.cx < b.right && s.cy > b.top && s.cy < b.bottom);
+		const turn = stops.findIndex(isBottomRow);
+		assert.ok(turn > 0 && stops.slice(turn).every(isBottomRow), `Tab does not finish the top row before the bottom row: ${order}`);
 
 		const minWidth = Math.min(...stops.map((s) => s.width));
 		const leftmost = Math.min(...stops.map((s) => s.cx));
 		assert.ok(stops[0].cx - leftmost <= minWidth / 2, `first stop ${stops[0].id} is not in the entry column`);
-		for (let i = 1; i < stops.length; i++) {
-			const [prev, next] = [stops[i - 1], stops[i]];
-			const sameColumn = Math.abs(next.cx - prev.cx) <= minWidth / 2;
-			assert.ok(sameColumn ? next.top >= prev.top : next.cx > prev.cx, `Tab steps back from ${prev.id} to ${next.id}`);
-		}
+		// same column → downward; else the row's direction (+1 left to right, -1 right to left)
+		const assertRowFlow = (row: typeof stops, direction: 1 | -1) => {
+			for (let i = 1; i < row.length; i++) {
+				const [prev, next] = [row[i - 1], row[i]];
+				const sameColumn = Math.abs(next.cx - prev.cx) <= minWidth / 2;
+				assert.ok(sameColumn ? next.top >= prev.top : (next.cx - prev.cx) * direction > 0, `Tab steps against the flow from ${prev.id} to ${next.id}: ${order}`);
+			}
+		};
+		assertRowFlow(stops.slice(0, turn), 1);
+		assertRowFlow(stops.slice(turn), -1);
 	});
 
 	test("AC-18 no tab controls in the DOM", async () => {
@@ -892,7 +911,7 @@ describe("fault live fixture", () => {
 							);
 							const zones = Array.from(document.querySelectorAll(`${sel} svg g.cluster`)).map((group) => shapes.get(group) as DOMRect);
 							// per-line text boxes, not the label's line box — the half-leading under the last line paints nothing
-							const labels = Array.from(document.querySelectorAll(`${sel} svg :is(g.node .nodeLabel, g.cluster .cluster-label)`))
+							const labels = Array.from(document.querySelectorAll(`${sel} svg :is(g.node .nodeLabel, g.cluster .cluster-label, g.edgeLabel .edgeLabel)`))
 								.flatMap((label) => {
 									const rects: DOMRect[] = [];
 									const walker = document.createTreeWalker(label, NodeFilter.SHOW_TEXT);

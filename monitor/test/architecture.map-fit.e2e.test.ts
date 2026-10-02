@@ -469,8 +469,30 @@ async function readZones(width: number, height: number, extraSource?: string): P
 	}
 }
 
-// drawn node-label (or zone-title) lines, words grouped by rendered line top
-async function readLabelLines(width: number, height: number, of: "node" | "zone" = "node"): Promise<{ id: string; lines: string[]; tooltip: string; name: string }[]> {
+// drawn zone boxes by zone id — the cluster id's last '-' segment
+async function readZoneBoxes(width: number, height: number): Promise<Map<string, { left: number; right: number; top: number; bottom: number }>> {
+	const { page } = await openFittedPage(width, height);
+	try {
+		const entries = await page.evaluate(() =>
+			Array.from(document.querySelectorAll(".arch-mermaid-canvas svg g.cluster")).map((el) => {
+				const r = el.getBoundingClientRect();
+				return [el.id.slice(el.id.lastIndexOf("-") + 1), { left: r.left, right: r.right, top: r.top, bottom: r.bottom }] as const;
+			}),
+		);
+		return new Map(entries);
+	} finally {
+		await page.close();
+	}
+}
+
+// drawn node-label, zone-title or edge-label lines, words grouped by rendered line top
+const LABEL_SELECTORS = {
+	node: { group: "g.node", label: ".nodeLabel" },
+	zone: { group: "g.cluster", label: ":scope > .cluster-label" },
+	edge: { group: "g.edgeLabel", label: ".edgeLabel" },
+};
+
+async function readLabelLines(width: number, height: number, of: keyof typeof LABEL_SELECTORS = "node"): Promise<{ id: string; lines: string[]; tooltip: string; name: string }[]> {
 	assert.ok(browser, "browser must be up");
 	const page = await browser.newPage({ viewport: { width, height } });
 	try {
@@ -480,9 +502,9 @@ async function readLabelLines(width: number, height: number, of: "node" | "zone"
 			null,
 			{ timeout: 60_000 },
 		);
-		return await page.evaluate((kind) =>
-			Array.from(document.querySelectorAll(`.arch-mermaid-canvas svg ${kind === "zone" ? "g.cluster" : "g.node"}`)).map((node) => {
-				const label = node.querySelector(kind === "zone" ? ":scope > .cluster-label" : ".nodeLabel") ?? node;
+		return await page.evaluate((selectors) =>
+			Array.from(document.querySelectorAll(`.arch-mermaid-canvas svg ${selectors.group}`)).map((node) => {
+				const label = node.querySelector(selectors.label) ?? node;
 				const lineByTop: [number, string[]][] = [];
 				const walker = document.createTreeWalker(label, NodeFilter.SHOW_TEXT);
 				for (let text = walker.nextNode(); text; text = walker.nextNode()) {
@@ -503,7 +525,7 @@ async function readLabelLines(width: number, height: number, of: "node" | "zone"
 					name: node.getAttribute("aria-label") ?? "",
 				};
 			}),
-			of,
+			LABEL_SELECTORS[of],
 		);
 	} finally {
 		await page.close();
@@ -511,24 +533,47 @@ async function readLabelLines(width: number, height: number, of: "node" | "zone"
 }
 
 for (const { width, height } of VIEWPORTS.filter((viewport) => viewport.width === 1024 || viewport.width === 1440)) {
-	test(`node labels read in lines of several words, not one word per line, at ${width}x${height}`, async () => {
-		const labels = await readLabelLines(width, height);
+	test(`every node and edge label is drawn on one line at ${width}x${height}`, async () => {
+		const nodes = await readLabelLines(width, height);
+		const edges = (await readLabelLines(width, height, "edge")).filter((label) => label.lines.length > 0);
+		const labels = [...nodes, ...edges];
 		const drawn = labels.map((label) => `${label.id}: ${label.lines.join(" | ")}`).join("; ");
-		assert.ok(labels.length > 0, "no node label was measured");
-		// fewer lines than words ⟺ at least one line carries two words — held per label, not summed over the map;
-		// a bare symbol ('+') is not a word, so 'checks +' still reads as a one-word line
-		const oneWordPerLine = labels.filter((label) => {
-			const words = label.lines.join(" ").split(" ").filter((token) => /[\p{L}\p{N}]/u.test(token)).length;
-			return words > 1 && label.lines.length >= words;
-		});
+		// a multi-word label on both sides — one-word labels alone would pass the one-line check vacuously
+		const hasMultiWord = (set: typeof labels) => set.some((label) => label.lines.join(" ").split(" ").length > 1);
+		assert.ok(hasMultiWord(nodes) && hasMultiWord(edges), `no multi-word node and edge label to check: ${drawn}`);
 		assert.deepEqual(
-			oneWordPerLine.map((label) => `${label.id}: ${label.lines.join(" | ")}`),
+			labels.filter((label) => label.lines.length > 1).map((label) => `${label.id}: ${label.lines.join(" | ")}`),
 			[],
-			`labels drawn one word per line: ${drawn}`,
+			`labels drawn on more than one line: ${drawn}`,
 		);
-		const plans = labels.find((label) => label.id.endsWith("main_session"));
-		assert.ok(plans, `the orchestrator node was not drawn: ${drawn}`);
-		assert.ok(plans.lines.every((line) => line.includes(" ")), `a one-word line in the orchestrator label: ${plans.lines.join(" | ")}`);
+	});
+}
+
+// the ⊐ — drawn zone ids in source order; these three run back along the bottom row, Safety first
+const ZONE_IDS = {
+	DRAWN: [...CANONICAL_MAP.mermaid_drawn.matchAll(/subgraph\s+(\w+)/g)].map(([, id]) => id),
+	BOTTOM_ROW: ["hooks", "data", "export"],
+};
+
+for (const { width, height } of VIEWPORTS) {
+	test(`the bottom row runs right to left under the top row with Safety under Agents at ${width}x${height}`, async () => {
+		const boxes = await readZoneBoxes(width, height);
+		const drawn = JSON.stringify(Object.fromEntries(boxes));
+		assert.deepEqual([...boxes.keys()].sort(), [...ZONE_IDS.DRAWN].sort(), `drawn zones: ${drawn}`);
+		const getBox = (id: string) => {
+			const box = boxes.get(id);
+			if (!box) throw new Error(`zone ${id} was not drawn: ${drawn}`);
+			return box;
+		};
+		const getCentreX = (id: string) => (getBox(id).left + getBox(id).right) / 2;
+		const topRowBottom = Math.max(...ZONE_IDS.DRAWN.filter((id) => !ZONE_IDS.BOTTOM_ROW.includes(id)).map((id) => getBox(id).bottom));
+
+		for (const id of ZONE_IDS.BOTTOM_ROW) assert.ok(getBox(id).top >= topRowBottom, `${id} does not sit below the top row: ${drawn}`);
+		for (const [from, to] of [["entry", "orch"], ["daemon", "orch"], ["orch", "agents"], ["hooks", "data"], ["data", "export"]]) {
+			const step = ZONE_IDS.BOTTOM_ROW.includes(from) ? -1 : 1;
+			assert.ok((getCentreX(to) - getCentreX(from)) * step > 0, `${from} → ${to} runs against its row's direction: ${drawn}`);
+		}
+		assert.ok(Math.abs(getCentreX("hooks") - getCentreX("agents")) <= EPS_PX, `Safety is not centred under Agents: ${drawn}`);
 	});
 }
 
@@ -619,7 +664,7 @@ for (const { width, height } of VIEWPORTS) {
 		);
 	});
 
-	test(`the default view spans 70% of its frame on the binding axis and still flows left to right at ${width}x${height}`, async () => {
+	test(`the default view spans 70% of its frame on the binding axis at ${width}x${height}`, async () => {
 		const r = await readFit(width, height);
 		const fill = Math.max(r.drawnWidthPx / r.drawableWidth, r.drawnHeightPx / r.paneHeight);
 		const atNaturalShare = r.scale >= DEFAULT_VIEW_SHARE - CTM_FLOAT_TOLERANCE;
@@ -630,10 +675,6 @@ for (const { width, height } of VIEWPORTS) {
 		assert.ok(
 			fill >= DEFAULT_VIEW_SHARE * MIN_BINDING_AXIS_FILL || atNaturalShare,
 			`the map fills ${(fill * 100).toFixed(1)}% of its frame on the binding axis at scale ${r.scale.toFixed(4)} — less than the 70% overview`,
-		);
-		assert.ok(
-			r.drawnWidthPx > r.drawnHeightPx,
-			`drawn ${r.drawnWidthPx.toFixed(0)}x${r.drawnHeightPx.toFixed(0)} — the flow no longer reads left to right`,
 		);
 	});
 }

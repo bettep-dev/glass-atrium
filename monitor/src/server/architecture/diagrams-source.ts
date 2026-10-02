@@ -508,25 +508,25 @@ export const CANONICAL_MAP: CanonicalMap = {
 	 * `repo` 는 흐름에 마디가 없어 빠짐 (ADR-8) — source 에는 그대로 남고 원장에 오름.
 	 * 자리가 없어서가 아님: `faithful` 아래에서 되돌려도 10노드·8엣지로 여전히 pass 임 (ADR-15 §8).
 	 * 라벨 여유: `main_session` 의 `Plans the work, then assigns it` 이 최장 라벨로 31자, faithful 라벨 상한은 50 임.
-	 * 라벨은 30px 지도 글꼴에서 한 줄에 두 낱말이 들어가는 짧은 표시명임 — 긴 설명은 NODE_DESCRIPTIONS 가 실음.
+	 * 라벨은 30px 지도 글꼴에서 한 줄로 그려지는 짧은 표시명임 — 긴 설명은 NODE_DESCRIPTIONS 가 실음.
 	 * 라벨이 존 제목으로 시작하지 않으므로 존 제목은 모두 보임 (제목 숨김은 단일 멤버가 제목을 되풀이할 때만).
-	 * `autoagent_d` 는 세 낱말임: `Self-improvement` 가 존의 줄 폭을 정하므로 `loop daemon` 이 그 폭 안의 둘째 줄이 됨.
 	 * 라벨의 `daemon` · `Chromium` 은 flow-extractor NODE_TYPE_RULES 가 노드 type 을 읽는 낱말이라 지우면 드로어 Pill 이 거짓이 됨.
 	 * 노드 9/14 · 엣지 7/18 도 같은 방향으로 느슨함 — 그래서 볼륨을 지키는 것은 밴드가 아니라
 	 * `architecture.budget.test.ts` 의 회귀 잠금 ①(실측값 정확 고정)②(상한 두 행 고정)③(drawn ⊆ source)임.
 	 * 이 주석을 mermaid 문자열 안으로 옮기지 말 것 — drawn 은 계수 대상이라 주석이 콘텐츠로 세어짐.
 	 * 방향 LR — source 일곱 편과 같은 방향임. drawn 만 다른 방향을 쓰면 계수는 같아도(AC-10) 사람이 읽는 형태가 갈라짐.
+	 * 화면은 이 문자열을 렌더 시점에 두 줄로 나눠 ⊐ 로 쌓음 — 위 줄 LR(Inputs→Agents) · 아래 줄 RL(Safety→Documents),
+	 * Safety 가 Agents 아래에 섬. 두 줄을 잇는 엣지 둘은 레이아웃에서 빼고 화면이 직교 꺾은선으로 그림
+	 * (architecture.jsx getMapRowsAR · setMapRowLayoutAR) — 저장 문자열은 그대로임.
 	 * 캔버스의 기본 보기는 `0.7 × min(contain, 1)` 배율로 그림 전체를 가운데에 담는 개요이고 하한이 없어 잘리지 않음
 	 * (architecture.jsx getDefaultViewScaleAR) — 세부는 확대해서 읽으므로, 개요의 글자 크기는 방향이 아니라 pane 대비 그래프 변의 길이가 정함.
-	 * 라벨·존 제목·엣지 라벨의 `<br/>` 은 그림의 줄을 정하지 않음 — 화면(architecture.jsx buildMeasuredMapSourceAR)이 모두 지우고 잰 폭으로 다시 끊음.
+	 * 라벨·존 제목·엣지 라벨의 `<br/>` 은 그림의 줄을 정하지 않음 — 화면(architecture.jsx buildSingleLineMapSourceAR)이 모두 지우고 한 줄로 그림.
 	 * 남기는 이유: 파서가 `<br/>` 을 접어 source 라벨과 같게 읽는지를 flow-extractor ADR-20 절이 이 문자열로 잼.
 	 * 글자는 한 자도 빠지지 않음: `<br/>` 을 이미 있는 공백 옆에 넣었고 계수기가 태그를 지우므로
 	 * (content-budget getLabelText) 라벨 글자 수가 그대로 남고, 화면의 라벨→node id 각인도 textContent 를 읽어 맞음.
 	 * 감축은 drawn 에만 넣음 — source 일곱 편은 그려지지 않는 문서인데 flow-extractor 테스트가 그 존 제목
 	 * 문자열을 정확히 대조하므로, 같은 `<br/>` 을 source 에 넣으면 그리는 것은 그대로인 채 그 대조만 깨짐.
-	 * 그래프 변 (mermaid 11.15.0 + ELK + public/mermaid-config.js, SVG 사용자 단위): LR 1774.6×471.
-	 * 남은 폭의 3분의 1은 존이 아니라 엣지 라벨이 벌린 랭크 사이 간격임 — 더 줄이려면 세 줄짜리 엣지 라벨이
-	 * 되는데 그렇게 얻는 값이 45 단위뿐이라(실측) 여기서 멈춤.
+	 * 그려진 ⊐ 의 변 (mermaid 11.15.0 + ELK + public/mermaid-config.js, SVG 사용자 단위, 실측): 1452×853.
 	 * pane 폭 = 뷰포트 폭 - 290px · 높이 = 뷰포트 높이 - 158px (실측 1396×800→1106×642 · 1512×850→1222×692 ·
 	 * 1920×1080→1630×922) — 지도가 pane 을 다 쓰는 배분임 (ADR-20).
 	 * 높이 쪽이 비율이 아니라 상수인 이유: 위 chrome(main padding · PageHeader · 카드 테두리/여백)이
@@ -534,8 +534,8 @@ export const CANONICAL_MAP: CanonicalMap = {
 	 * 계기 픽스처의 값이고, 그 띠가 없으면 113 임(같은 세 뷰포트에서 687 · 737 · 967).
 	 * 종전에는 여기에 base.css 의 `.card-body { max-height: 70vh }` 가 얹혀 높이가 뷰포트의 0.68 배로
 	 * 잘렸고(1396×800 에서 pane 540), 그 상한을 이 화면에서 풀어 지금 값이 됨.
-	 * 세 폭 모두 폭이 먼저 걸리고 높이는 남으므로, 배율을 정하는 것은 폭 하나임 — 높이를 100 남짓 더 준
-	 * 뒤에도 배율 셋이 그대로인 것이 그 근거임(실측).
+	 * ⊐ 은 폭보다 높이가 먼저 걸릴 수 있음 — pane 높이는 그 아래 부품 헬스 블록의 제목이 첫 화면에 남도록 묶임
+	 * (architecture.jsx getFirstScreenCanvasHeightAR).
 	 * 방향을 되돌리거나 노드·라벨을 늘리면 개요 배율과 확대 후 라벨 크기가 바뀌므로 다시 잴 것 —
 	 * 계기는 test/architecture.map-fit.e2e 이고, 그 세 뷰포트에서 잘림을 배율이 아니라 상자 위치로 직접 잼.
 	 * 레이아웃·테마는 public/mermaid-config.js 가 전역으로 준다 — 여기에 `%%{init}%%` 지시자를 두면 그 설정의 사본이 된다.

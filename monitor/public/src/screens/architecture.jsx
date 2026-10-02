@@ -12,12 +12,10 @@ const {
 // Constants
 
 const MAP_LABEL = {
-	// map-only label size — the shared 14px renders under 12px once the wide LR graph is fitted to a 1024 pane
+	// map-only label size — the shared 14px renders under 12px once the map is fitted to a 1024 pane
 	fontPx: 30,
-	// node label line target (SVG units) — two short words at the map font; a longer word sets its own line width
-	linePx: 150,
-	// mermaid wrap ceiling — above every pre-broken node line, so the layout keeps the breaks measured before it
-	wrapPx: 320,
+	// mermaid wrap ceiling (SVG units) — above the widest one-line map label, so mermaid never breaks one
+	wrapPx: 2000,
 	// map-only override at render time — layout engine, spacing and theme stay in the shared mermaid-config.js
 	get directive() {
 		return (
@@ -27,8 +25,27 @@ const MAP_LABEL = {
 	},
 };
 
+const MAP = {
+	// reverse-ㄷ map rows
+	ROW: {
+		// zones of the bottom row, laid out right to left under the end of the top row
+		BOTTOM_ZONES: ["hooks", "data", "export"],
+		IDS: { top: "map_row_top", bottom: "map_row_bottom" },
+		// space between the rows (SVG units) — two label bands: the bent turn edge's label above, the straight one's below
+		GAP: 160,
+	},
+	EDGE: {
+		LABEL_RE: /(--\s*")([^"]*)("\s*-->)/,
+		// a whole edge line — from id, optional label, to id
+		LINE_RE: /^\s*([\w-]+)\s*(?:--\s*"([^"]*)"\s*)?-->\s*([\w-]+)\s*$/,
+	},
+};
+
 // default/Reset view = this share of the contain fit — an overview with no label floor; detail is read by zooming in
 const DEFAULT_VIEW_SHARE = 0.7;
+
+// band under the map kept on the first screen (CSS px) — the part health block's title shows there, so the page reads as scrollable
+const PART_HEALTH = { PEEK_PX: 48 };
 
 // svg-pan-zoom min/max zoom, relative to the zoom at the last resize() — the default view rebases it, so it bounds zoom-out from there
 const PAN_ZOOM = { MIN: 0.2, MAX: 5 };
@@ -992,7 +1009,7 @@ function MermaidCanvas({
 		const elkReady = window.ensureElkLayout ? window.ensureElkLayout() : Promise.resolve();
 
 		Promise.all([fontsReady, elkReady])
-			.then(() => (cancelled ? null : window.mermaid.render(renderId, MAP_LABEL.directive + buildMeasuredMapSourceAR(source, getMapTextWidthAR))))
+			.then(() => (cancelled ? null : window.mermaid.render(renderId, MAP_LABEL.directive + getMapRowsAR(buildSingleLineMapSourceAR(source)).rowSource)))
 			.then((result) => {
 				if (cancelled || !result) return;
 				setRenderState({ status: "ready", error: null, svgHtml: result.svg });
@@ -1007,6 +1024,15 @@ function MermaidCanvas({
 			cancelled = true;
 		};
 	}, [source, diagramId]);
+
+	// first post-render effect — every later effect measures the composed rows, so this must run before them
+	useEffectAR(() => {
+		if (renderState.status !== "ready") return;
+		const svgEl = containerRef.current?.querySelector("svg");
+		if (!svgEl || svgEl.dataset.archRows === "1") return;
+		svgEl.dataset.archRows = "1";
+		setMapRowLayoutAR(svgEl, getMapRowsAR(source).turnEdges);
+	}, [renderState.status, renderState.svgHtml, source]);
 
 	// SVG 가 DOM 에 들어간 직후 — 라벨 매칭으로 backend node id 를 dataset 에 저장 (노드 클릭 → 상세).
 	useEffectAR(() => {
@@ -1497,8 +1523,9 @@ function HookChainDetail({ state }) {
 									<span className="fs-meta text-faint">{row.hookCount} hooks</span>
 								</summary>
 								<ul className="arch-hook-groups">
-									{row.groups.map((group) => (
-										<li key={group.matcher} className="arch-hook-group">
+									{/* position in the key — settings.json may repeat a matcher (or leave it empty) within one event; order is fixed settings order */}
+									{row.groups.map((group, groupIndex) => (
+										<li key={`${groupIndex}-${group.matcher}`} className="arch-hook-group">
 											<span className="fs-meta font-mono text-dim">{group.matcher}</span>
 											<ul className="arch-hook-list">
 												{group.hooks.map((hook, index) => (
@@ -2164,7 +2191,8 @@ function applyDefaultViewAR(instance, root) {
 
 	// the zoom controls stand over the pane's right edge → the drawing fits beside them, so no box sits under a button
 	const drawableW = s.width - getControlsGutterAR(root);
-	const targetAbs = getDefaultViewScaleAR(drawableW, s.height, realW, realH);
+	const paneH = Math.min(s.height, getFirstScreenCanvasHeightAR(root));
+	const targetAbs = getDefaultViewScaleAR(drawableW, paneH, realW, realH);
 	const frameH = (realH * targetAbs) / DEFAULT_VIEW_SHARE;
 
 	// zoom() is relative to the zoom resize() just rebased on (= realZoom) · the CTM lags it by a frame after a zoom, so it is not the base
@@ -2173,7 +2201,7 @@ function applyDefaultViewAR(instance, root) {
 
 	// pan({x,y}) 는 viewport CTM 의 e/f(화면픽셀 평행이동) 직접 설정 · viewBox 원점 상쇄(-origin*scale) + 양축 가운데 slack.
 	const slackX = Math.max(0, (drawableW - realW * targetAbs) / 2);
-	const slackY = Math.max(0, (Math.min(frameH, s.height) - realH * targetAbs) / 2);
+	const slackY = Math.max(0, (Math.min(frameH, paneH) - realH * targetAbs) / 2);
 	instance.pan({
 		x: -(s.viewBox.x || 0) * targetAbs + slackX,
 		y: -(s.viewBox.y || 0) * targetAbs + slackY,
@@ -2225,6 +2253,16 @@ function clearCanvasSizingAR(root) {
 	canvas.style.height = "";
 	canvas.style.flex = "";
 	canvas.removeAttribute(CANVAS.FIT_HEIGHT_ATTR);
+}
+
+// tallest pane whose bottom leaves PART_HEALTH.PEEK_PX of the first screen under it — the ⊐ is tall enough to push the block off it
+function getFirstScreenCanvasHeightAR(root) {
+	const canvas = getCanvasAR(root);
+	const page = canvas?.closest(".arch-page");
+	if (!page) return Infinity;
+	const screenBottom = Math.min(page.getBoundingClientRect().bottom, window.innerHeight);
+	const height = screenBottom - (canvas.getBoundingClientRect().top + page.scrollTop) - PART_HEALTH.PEEK_PX;
+	return height > 0 ? height : Infinity;
 }
 
 function setCanvasHeightAR(root, heightPx) {
@@ -2363,93 +2401,202 @@ function getCornerGlyphTextAR(tone, attentionCount) {
 
 const MAP_NODE_LINE_RE = /^(\s*[A-Za-z_][\w-]*)(\(\[|\[\(|\[\[|\[|\(\(|\(|\{)(?:"([^"]*)"|([^"\]\)}]*))(\]\)|\)\]|\]\]|\]|\)\)|\)|\})\s*$/;
 
-const MAP_EDGE_LABEL_RE = /(--\s*")([^"]*)("\s*-->)/;
-
 /**
- * Re-breaks node and edge labels into lines of several words before layout — mermaid's single wrapping
- * width gives every wrapped node the same box, so each label gets a box sized from its own words.
- * A node's line limit is never under the longest word in its zone: the zone column is that wide anyway.
- * A zone title breaks at that same word floor, so the title never widens its zone past the members.
+ * Draws every map label on one line — stored breaks are dropped and the wrap ceiling sits above the widest label.
+ * Edge labels get no-break spaces: mermaid wraps them at its own fixed width, which wrappingWidth does not reach.
  */
-function buildMeasuredMapSourceAR(source, measureText) {
-	const lines = source.split("\n");
-	const zoneFloor = getZoneWordFloorAR(lines, measureText);
-	let zone = "";
-	return lines
+function buildSingleLineMapSourceAR(source) {
+	return source
+		.split("\n")
 		.map((line) => {
-			const zoneMatch = /^(\s*subgraph\s+([\w-]+)\s*\[)"([^"]*)"(\]\s*)$/.exec(line) ?? /^\s*subgraph\s+([\w-]+)/.exec(line);
-			if (zoneMatch) {
-				zone = zoneMatch[2] ?? zoneMatch[1];
-				if (zoneMatch.length < 5) return line;
-				const titleLines = getLabelLinesAR(getLabelWordsAR(zoneMatch[3]), measureText, zoneFloor.get(zone) || 0);
-				return `${zoneMatch[1]}"${titleLines.join(" <br/>")}"${zoneMatch[4]}`;
-			}
-			if (/^\s*end\s*$/.test(line)) zone = "";
-			const edge = MAP_EDGE_LABEL_RE.exec(line);
-			if (edge) {
-				const labelLines = getLabelLinesAR(getLabelWordsAR(edge[2]), measureText, MAP_LABEL.linePx);
-				return line.replace(MAP_EDGE_LABEL_RE, `$1${labelLines.join(" <br/>")}$3`);
-			}
+			const zone = /^(\s*subgraph\s+[\w-]+\s*\[)"([^"]*)"(\]\s*)$/.exec(line);
+			if (zone) return `${zone[1]}"${getLabelWordsAR(zone[2]).join(" ")}"${zone[3]}`;
+			const edge = MAP.EDGE.LABEL_RE.exec(line);
+			if (edge) return line.replace(MAP.EDGE.LABEL_RE, `$1${getLabelWordsAR(edge[2]).join("\u00a0")}$3`);
 			const node = MAP_NODE_LINE_RE.exec(line);
 			if (!node) return line;
 			const [, head, open, quotedLabel, bareLabel, close] = node;
 			const words = getLabelWordsAR(quotedLabel ?? bareLabel);
-			if (words.length === 0) return line;
-			const limit = Math.max(MAP_LABEL.linePx, zoneFloor.get(zone) || 0);
-			return `${head}${open}"${getLabelLinesAR(words, measureText, limit).join(" <br/>")}"${close}`;
+			return words.length === 0 ? line : `${head}${open}"${words.join(" ")}"${close}`;
 		})
 		.join("\n");
+}
+
+/**
+ * Splits the flat map source into a top row (left to right) and a bottom row (right to left).
+ * Edges between the rows stay out of the layout — ELK lays out any subgraph an edge leaves in its parent's single direction — and are returned for the screen to draw.
+ */
+function getMapRowsAR(source) {
+	const { zoneIdByMemberId } = buildZoneRingPlanAR(source);
+	const { rows, rest, turnEdges } = getMapRowLinesAR(source.split("\n").slice(1), zoneIdByMemberId);
+	return { rowSource: buildMapRowSourceAR(rows, rest), turnEdges };
+}
+
+// source lines sorted three ways — zone blocks into their row, edges between the rows into turn edges, the rest kept for the root
+function getMapRowLinesAR(lines, zoneIdByMemberId) {
+	const getRow = (id) => (MAP.ROW.BOTTOM_ZONES.includes(zoneIdByMemberId.get(id) ?? id) ? "bottom" : "top");
+	const rows = { top: [], bottom: [] };
+	const rest = [];
+	const turnEdges = [];
+	let zone = "";
+	for (const line of lines) {
+		zone = /^\s*subgraph\s+([\w-]+)/.exec(line)?.[1] ?? zone;
+		const edge = zone ? null : MAP.EDGE.LINE_RE.exec(line);
+		if (zone) rows[getRow(zone)].push(line);
+		else if (edge && getRow(edge[1]) !== getRow(edge[3]))
+			turnEdges.push({ from: edge[1], label: getLabelWordsAR(edge[2] ?? "").join(" "), to: edge[3] });
+		else rest.push(line);
+		if (/^\s*end\s*$/.test(line)) zone = "";
+	}
+	return { rows, rest, turnEdges };
+}
+
+// root LR, not TB — an edge leaving a top-row zone member lays the top row out in the root's direction
+function buildMapRowSourceAR(rows, rest) {
+	const getRowBlock = (row, direction) =>
+		[`    subgraph ${MAP.ROW.IDS[row]}[" "]`, `        direction ${direction}`, ...rows[row], "    end"];
+	return ["flowchart LR", ...getRowBlock("top", "LR"), ...getRowBlock("bottom", "RL"), ...rest].join("\n");
+}
+
+/**
+ * Stacks the bottom row under the top row's end (Safety under Agents), removes the row frames,
+ * draws the turn edges as axis-aligned polylines, and fits the viewBox to the composed drawing.
+ * Bottom-row nodes are marked so Tab can follow the ⊐ back right to left.
+ */
+function setMapRowLayoutAR(svgEl, turnEdges) {
+	const rows = getMapRowPartsAR(svgEl);
+	const shift = rows && getRowShiftAR(svgEl, turnEdges, rows.gapTop, rows.bottomTop);
+	if (!shift) return;
+
+	for (const el of rows.bottomParts) {
+		el.setAttribute("transform", `translate(${shift.dx}, ${shift.dy}) ${el.getAttribute("transform") || ""}`.trim());
+		if (el.matches("g.node")) el.dataset.archRow = "bottom";
+	}
+	for (const frame of rows.frames) frame.remove();
+	for (const edge of turnEdges) createTurnEdgeAR(svgEl, edge, rows.gapTop);
+	const drawn = svgEl.getBBox();
+	const pad = ZONE_TITLE_BAND;
+	svgEl.setAttribute("viewBox", `${drawn.x - pad} ${drawn.y - pad} ${drawn.width + 2 * pad} ${drawn.height + 2 * pad}`);
+}
+
+// the two row frames, the parts drawn in the bottom one, and the gap's edges — the lowest top-row zone bottom, the highest bottom-row zone top
+function getMapRowPartsAR(svgEl) {
+	const frames = Object.values(MAP.ROW.IDS).map((id) => getZoneElAR(svgEl, id));
+	if (frames.some((frame) => !frame)) return null;
+	const box = { top: getSvgBoxAR(svgEl, frames[0]), bottom: getSvgBoxAR(svgEl, frames[1]) };
+	const parts = [...svgEl.querySelectorAll("g.cluster, g.node, path.flowchart-link, g.edgeLabel")].filter((el) => !frames.includes(el));
+	const getZoneBoxes = (rowBox) =>
+		parts.filter((el) => el.matches("g.cluster") && isCentreInAR(svgEl, rowBox, el)).map((el) => getSvgBoxAR(svgEl, el));
+	return {
+		frames,
+		bottomParts: parts.filter((el) => isCentreInAR(svgEl, box.bottom, el)),
+		gapTop: Math.max(...getZoneBoxes(box.top).map((zoneBox) => zoneBox.bottom)),
+		bottomTop: Math.min(...getZoneBoxes(box.bottom).map((zoneBox) => zoneBox.top)),
+	};
+}
+
+function isCentreInAR(svgEl, box, el) {
+	const { x, y } = getBoxCentreAR(getSvgBoxAR(svgEl, el));
+	return x >= box.left && x <= box.right && y >= box.top && y <= box.bottom;
+}
+
+// the bottom row's offset — the straight turn edge's target zone centred under its source zone, one row gap below the top row
+function getRowShiftAR(svgEl, turnEdges, gapTop, bottomTop) {
+	const straight = turnEdges.find((edge) => MAP.ROW.BOTTOM_ZONES[0] === edge.to) ?? turnEdges[0];
+	const from = straight && getZoneBoxAR(svgEl, straight.from);
+	const to = straight && getZoneBoxAR(svgEl, straight.to);
+	if (!from || !to) return null;
+	return { dx: getBoxCentreAR(from).x - getBoxCentreAR(to).x, dy: gapTop + MAP.ROW.GAP - bottomTop };
+}
+
+// one turn edge as a clone of a drawn link — same classes and marker, so edge counts, styles and the orthogonality check cover it
+function createTurnEdgeAR(svgEl, edge, gapTop) {
+	const from = getZoneBoxAR(svgEl, edge.from);
+	const to = getZoneBoxAR(svgEl, edge.to);
+	const pathTemplate = svgEl.querySelector("path.flowchart-link");
+	if (!from || !to || !pathTemplate) return;
+
+	const route = getTurnRouteAR(from, to, gapTop);
+	const path = pathTemplate.cloneNode(true);
+	path.removeAttribute("transform");
+	path.removeAttribute("data-points");
+	path.id = `L_${edge.from}_${edge.to}_turn`;
+	path.setAttribute("d", `M${route.points.map(({ x, y }) => `${x},${y}`).join("L")}`);
+	pathTemplate.parentNode.appendChild(path);
+	const labelEl = edge.label ? createTurnLabelAR(svgEl, edge.label) : null;
+	if (!labelEl) return;
+	const box = getSvgBoxAR(svgEl, labelEl);
+	const centre = getBoxCentreAR(box);
+	const cx = Math.min(route.label.midX, route.label.maxRight - (box.right - box.left) / 2);
+	labelEl.setAttribute("transform", `translate(${cx - centre.x}, ${route.label.y - centre.y})`);
+}
+
+/**
+ * Axis-aligned route: straight down when the target sits under the source, else down → across the gap's upper band → down.
+ * The bent route's label sits on its crossing, clear of the straight edge leaving the same zone.
+ */
+function getTurnRouteAR(from, to, gapTop) {
+	const fromCx = getBoxCentreAR(from).x;
+	const toCx = getBoxCentreAR(to).x;
+	if (Math.abs(fromCx - toCx) < 1) {
+		const points = [{ x: fromCx, y: from.bottom }, { x: fromCx, y: to.top }];
+		return { points, label: { midX: fromCx, maxRight: Infinity, y: gapTop + MAP.ROW.GAP * 0.72 } };
+	}
+	const startX = fromCx + Math.sign(toCx - fromCx) * 0.3 * (from.right - from.left);
+	const bendY = gapTop + MAP.ROW.GAP * 0.3;
+	const points = [{ x: startX, y: from.bottom }, { x: startX, y: bendY }, { x: toCx, y: bendY }, { x: toCx, y: to.top }];
+	return { points, label: { midX: (startX + toCx) / 2, maxRight: startX - ZONE_PAD, y: bendY } };
+}
+
+// a clone of a drawn edge label carrying the turn edge's text — same classes, so the label counts and styles stay one
+function createTurnLabelAR(svgEl, text) {
+	const template = [...svgEl.querySelectorAll("g.edgeLabel")].find((el) => (el.textContent || "").trim() !== "");
+	const label = template?.cloneNode(true);
+	const textEl = label?.querySelector("p, span.edgeLabel");
+	const frame = label?.querySelector("foreignObject");
+	if (!label || !textEl || !frame) return null;
+	const widthDelta = getMapTextWidthAR(text) - getMapTextWidthAR(textEl.textContent || "");
+	const width = Number.parseFloat(frame.getAttribute("width")) + widthDelta;
+	const height = Number.parseFloat(frame.getAttribute("height"));
+	textEl.textContent = text;
+	frame.setAttribute("width", String(width));
+	label.querySelector("g.label")?.setAttribute("transform", `translate(${-width / 2}, ${-height / 2})`);
+	label.removeAttribute("transform");
+	template.parentNode.appendChild(label);
+	return label;
+}
+
+function getZoneElAR(svgEl, zoneId) {
+	return [...svgEl.querySelectorAll("g.cluster")].find((el) => matchZoneIdAR(el.id || "", [zoneId]) === zoneId) ?? null;
+}
+
+function getZoneBoxAR(svgEl, zoneId) {
+	const el = getZoneElAR(svgEl, zoneId);
+	return el ? getSvgBoxAR(svgEl, el) : null;
+}
+
+// element box in the svg's own user space (viewBox units) — groups carry their own transforms
+function getSvgBoxAR(svgEl, el) {
+	const b = el.getBBox();
+	const m = svgEl.getScreenCTM().inverse().multiply(el.getScreenCTM());
+	return { left: b.x * m.a + m.e, top: b.y * m.d + m.f, right: (b.x + b.width) * m.a + m.e, bottom: (b.y + b.height) * m.d + m.f };
+}
+
+function getBoxCentreAR(box) {
+	return { x: (box.left + box.right) / 2, y: (box.top + box.bottom) / 2 };
 }
 
 function getLabelWordsAR(label) {
 	return label.replace(/<br\s*\/?>/gi, " ").split(/\s+/).filter(Boolean);
 }
 
-// zone id → its longest node-label word
-function getZoneWordFloorAR(lines, measureText) {
-	const floor = new Map();
-	let zone = "";
-	for (const line of lines) {
-		const zoneMatch = /^\s*subgraph\s+([\w-]+)/.exec(line);
-		if (zoneMatch) zone = zoneMatch[1];
-		else if (/^\s*end\s*$/.test(line)) zone = "";
-		const node = zone ? MAP_NODE_LINE_RE.exec(line) : null;
-		if (!node) continue;
-		const widest = Math.max(0, ...getLabelWordsAR(node[3] ?? node[4]).map(measureText));
-		floor.set(zone, Math.max(floor.get(zone) || 0, widest));
-	}
-	return floor;
-}
-
-// greedy fill at the line target, then the narrowest width that keeps that line count — balanced lines, narrow box
-function getLabelLinesAR(words, measureText, lineTarget) {
-	const widestWord = Math.max(...words.map(measureText));
-	const limit = Math.max(widestWord, lineTarget);
-	const lineCount = getGreedyLinesAR(words, measureText, limit).length;
-	for (let width = widestWord; width < limit; width += 2) {
-		const lines = getGreedyLinesAR(words, measureText, width);
-		if (lines.length <= lineCount) return lines;
-	}
-	return getGreedyLinesAR(words, measureText, limit);
-}
-
-function getGreedyLinesAR(words, measureText, limit) {
-	const lines = [];
-	for (const word of words) {
-		const last = lines[lines.length - 1];
-		if (last !== undefined && measureText(`${last} ${word}`) <= limit) lines[lines.length - 1] = `${last} ${word}`;
-		else lines.push(word);
-	}
-	return lines;
-}
-
 let mapTextContextAR = null;
 
-// canvas measure at the map font — runs after document.fonts.ready, so the measured face is the drawn one
+// canvas measure at the map font — turn labels size their frame by it after document.fonts.ready, so the measured face is the drawn one
 function getMapTextWidthAR(text) {
 	if (!mapTextContextAR) {
 		mapTextContextAR = document.createElement("canvas").getContext("2d");
-		// same face mermaid lays out with — a copied family drifts and the pre-layout wrap regresses silently
+		// same face mermaid lays out with — a copied family drifts and a turn label's frame no longer fits its text
 		mapTextContextAR.font = `${MAP_LABEL.fontPx}px ${window.MERMAID_CONFIG.themeVariables.fontFamily}`;
 	}
 	return mapTextContextAR.measureText(text).width;
@@ -2947,14 +3094,18 @@ function fitZoneBoxesAR(root, zoneIdByMemberId) {
 	});
 }
 
-// zones whose drawn box runs into another zone's box — zone rects share one parent group, so their bboxes compare directly
+// zones whose drawn box runs into another zone's box — boxes read in the zones' shared parent space, as bottom-row zones carry the row translate
 function getCrowdedZonesAR(zoneEls) {
-	const boxes = zoneEls.map((el) => el.querySelector(":scope > rect")?.getBBox());
+	const frameEl = zoneEls[0]?.parentElement;
+	const boxes = zoneEls.map((el) => {
+		const rect = el.querySelector(":scope > rect");
+		return frameEl && rect ? getUnionBoxAR(frameEl, [rect]) : null;
+	});
 	const crowded = new Set();
 	boxes.forEach((a, i) =>
 		boxes.forEach((b, j) => {
 			if (i >= j || !a || !b) return;
-			if (a.x < b.x + b.width && b.x < a.x + a.width && a.y < b.y + b.height && b.y < a.y + a.height) {
+			if (a.left < b.right && b.left < a.right && a.top < b.bottom && b.top < a.bottom) {
 				crowded.add(zoneEls[i]);
 				crowded.add(zoneEls[j]);
 			}
@@ -3167,28 +3318,37 @@ function getGroupSpaceBoxAR(shape, box) {
 }
 
 /**
- * Re-appends the focusable map nodes in flow order so Tab follows the left-to-right flow.
+ * Re-appends the focusable map nodes in flow order so Tab follows the ⊐ — the top row left to right, then the bottom row back.
  * Each node moves only within its own parent group and keeps its transform → nothing moves on screen.
  */
 function setFlowTabOrderAR(root) {
 	const stops = [...root.querySelectorAll('svg g.node[tabindex="0"]')].map((el) => {
 		const box = el.getBoundingClientRect();
-		return { el, cx: box.left + box.width / 2, top: box.top, width: box.width };
+		return { el, cx: box.left + box.width / 2, top: box.top, width: box.width, row: el.dataset.archRow === "bottom" ? "bottom" : "top" };
 	});
 	if (stops.length < 2 || stops.some((stop) => !(stop.width > 0))) return;
 	for (const { el } of getFlowOrderAR(stops)) el.parentNode.appendChild(el);
 }
 
-// column by column, top to bottom — a column = centres within half the narrowest node of its first node
+// top-row columns left to right, then bottom-row columns right to left · each column top to bottom
 function getFlowOrderAR(stops) {
 	const tolerance = Math.min(...stops.map((stop) => stop.width)) / 2;
+	const columns = {
+		top: getColumnsAR(stops.filter((stop) => stop.row !== "bottom"), tolerance),
+		bottom: getColumnsAR(stops.filter((stop) => stop.row === "bottom"), tolerance).reverse(),
+	};
+	return [...columns.top, ...columns.bottom].flatMap((column) => column.sort((a, b) => a.top - b.top));
+}
+
+// left to right · a column = centres within the tolerance of its first node
+function getColumnsAR(stops, tolerance) {
 	const columns = [];
 	for (const stop of [...stops].sort((a, b) => a.cx - b.cx)) {
 		const column = columns.at(-1);
 		if (column && stop.cx - column[0].cx <= tolerance) column.push(stop);
 		else columns.push([stop]);
 	}
-	return columns.flatMap((column) => column.sort((a, b) => a.top - b.top));
+	return columns;
 }
 
 // 스키마 node id (`${diagramId}.${mermaidId}`) → unscoped mermaid id (마지막 '.' 뒤 segment).
