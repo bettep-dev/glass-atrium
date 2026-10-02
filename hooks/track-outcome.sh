@@ -2639,6 +2639,21 @@ if [[ "${SCOPE_EXCESS_FOUND}" -eq 1 ]]; then
   review_flag_add_reason "scope-excess"
 fi
 
+# qa-score-malformed — a present qa_score off the cov=N,ins=N,instr=N,clar=N shape, each N 1-5.
+# The ,d8=N tail is the HTML-primary review extension (scoped/scope-qa.md → D8 Visual Decision Sub-Pass).
+# ADVISORY: the value is stored unchanged. Checked as stored — the parser trims only the ends, so
+# inner whitespace, a wrapped value or a folded non-template line is a malformed stored value.
+if [[ -n "${QA_SCORE:-}" ]]; then
+  case "${QA_SCORE}" in
+    cov=[1-5],ins=[1-5],instr=[1-5],clar=[1-5]) ;;
+    cov=[1-5],ins=[1-5],instr=[1-5],clar=[1-5],d8=[1-5]) ;;
+    *)
+      REVIEW_FLAG="true"
+      review_flag_add_reason "qa-score-malformed"
+      ;;
+  esac
+fi
+
 # DOWNGRADE_ORIGIN provenance — recorded alongside grader_verdict (NOT a metric_pass mutation).
 # Decision order: synthesized record (no [COMPLETION]) → 'synthesized'; writer metric_pass=false
 # (honest negative) → 'writer_false'; writer metric_pass=true AND grader verified_fail →
