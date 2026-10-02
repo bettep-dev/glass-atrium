@@ -2425,14 +2425,14 @@ function buildSingleLineMapSourceAR(source) {
  * Edges between the rows stay out of the layout — ELK lays out any subgraph an edge leaves in its parent's single direction — and are returned for the screen to draw.
  */
 function getMapRowsAR(source) {
-	const { rows, rest, turnEdges } = getMapRowLinesAR(source.split("\n").slice(1));
+	const { zoneIdByMemberId } = buildZoneRingPlanAR(source);
+	const { rows, rest, turnEdges } = getMapRowLinesAR(source.split("\n").slice(1), zoneIdByMemberId);
 	return { rowSource: buildMapRowSourceAR(rows, rest), turnEdges };
 }
 
 // source lines sorted three ways — zone blocks into their row, edges between the rows into turn edges, the rest kept for the root
-function getMapRowLinesAR(lines) {
-	const zoneByMemberId = getZoneByMemberIdAR(lines);
-	const getRow = (id) => (MAP_ROW.BOTTOM_ZONES.includes(zoneByMemberId.get(id) ?? id) ? "bottom" : "top");
+function getMapRowLinesAR(lines, zoneIdByMemberId) {
+	const getRow = (id) => (MAP_ROW.BOTTOM_ZONES.includes(zoneIdByMemberId.get(id) ?? id) ? "bottom" : "top");
 	const rows = { top: [], bottom: [] };
 	const rest = [];
 	const turnEdges = [];
@@ -2454,20 +2454,6 @@ function buildMapRowSourceAR(rows, rest) {
 	const getRowBlock = (row, direction) =>
 		[`    subgraph ${MAP_ROW.IDS[row]}[" "]`, `        direction ${direction}`, ...rows[row], "    end"];
 	return ["flowchart LR", ...getRowBlock("top", "LR"), ...getRowBlock("bottom", "RL"), ...rest].join("\n");
-}
-
-// member node id → its zone id
-function getZoneByMemberIdAR(lines) {
-	const zoneByMemberId = new Map();
-	let zone = "";
-	for (const line of lines) {
-		const zoneMatch = /^\s*subgraph\s+([\w-]+)/.exec(line);
-		if (zoneMatch) zone = zoneMatch[1];
-		else if (/^\s*end\s*$/.test(line)) zone = "";
-		const node = zone && !zoneMatch ? MAP_NODE_LINE_RE.exec(line) : null;
-		if (node) zoneByMemberId.set(node[1].trim(), zone);
-	}
-	return zoneByMemberId;
 }
 
 /**
@@ -2508,31 +2494,27 @@ function getMapRowPartsAR(svgEl) {
 }
 
 function isCentreInAR(svgEl, box, el) {
-	const b = getSvgBoxAR(svgEl, el);
-	const cx = (b.left + b.right) / 2;
-	const cy = (b.top + b.bottom) / 2;
-	return cx >= box.left && cx <= box.right && cy >= box.top && cy <= box.bottom;
+	const { x, y } = getBoxCentreAR(getSvgBoxAR(svgEl, el));
+	return x >= box.left && x <= box.right && y >= box.top && y <= box.bottom;
 }
 
 // the bottom row's offset — the straight turn edge's target zone centred under its source zone, one row gap below the top row
 function getRowShiftAR(svgEl, turnEdges, gapTop, bottomTop) {
 	const straight = turnEdges.find((edge) => MAP_ROW.BOTTOM_ZONES[0] === edge.to) ?? turnEdges[0];
-	const fromEl = straight && getZoneElAR(svgEl, straight.from);
-	const toEl = straight && getZoneElAR(svgEl, straight.to);
-	if (!fromEl || !toEl) return null;
-	const from = getSvgBoxAR(svgEl, fromEl);
-	const to = getSvgBoxAR(svgEl, toEl);
-	return { dx: (from.left + from.right) / 2 - (to.left + to.right) / 2, dy: gapTop + MAP_ROW.GAP - bottomTop };
+	const from = straight && getZoneBoxAR(svgEl, straight.from);
+	const to = straight && getZoneBoxAR(svgEl, straight.to);
+	if (!from || !to) return null;
+	return { dx: getBoxCentreAR(from).x - getBoxCentreAR(to).x, dy: gapTop + MAP_ROW.GAP - bottomTop };
 }
 
 // one turn edge as a clone of a drawn link — same classes and marker, so edge counts, styles and the orthogonality check cover it
 function createTurnEdgeAR(svgEl, edge, gapTop) {
-	const fromEl = getZoneElAR(svgEl, edge.from);
-	const toEl = getZoneElAR(svgEl, edge.to);
+	const from = getZoneBoxAR(svgEl, edge.from);
+	const to = getZoneBoxAR(svgEl, edge.to);
 	const pathTemplate = svgEl.querySelector("path.flowchart-link");
-	if (!fromEl || !toEl || !pathTemplate) return;
+	if (!from || !to || !pathTemplate) return;
 
-	const route = getTurnRouteAR(getSvgBoxAR(svgEl, fromEl), getSvgBoxAR(svgEl, toEl), gapTop);
+	const route = getTurnRouteAR(from, to, gapTop);
 	const path = pathTemplate.cloneNode(true);
 	path.removeAttribute("transform");
 	path.removeAttribute("data-points");
@@ -2542,8 +2524,9 @@ function createTurnEdgeAR(svgEl, edge, gapTop) {
 	const labelEl = edge.label ? createTurnLabelAR(svgEl, edge.label) : null;
 	if (!labelEl) return;
 	const box = getSvgBoxAR(svgEl, labelEl);
+	const centre = getBoxCentreAR(box);
 	const cx = Math.min(route.label.midX, route.label.maxRight - (box.right - box.left) / 2);
-	labelEl.setAttribute("transform", `translate(${cx - (box.left + box.right) / 2}, ${route.label.y - (box.top + box.bottom) / 2})`);
+	labelEl.setAttribute("transform", `translate(${cx - centre.x}, ${route.label.y - centre.y})`);
 }
 
 /**
@@ -2551,8 +2534,8 @@ function createTurnEdgeAR(svgEl, edge, gapTop) {
  * The bent route's label sits on its crossing, clear of the straight edge leaving the same zone.
  */
 function getTurnRouteAR(from, to, gapTop) {
-	const fromCx = (from.left + from.right) / 2;
-	const toCx = (to.left + to.right) / 2;
+	const fromCx = getBoxCentreAR(from).x;
+	const toCx = getBoxCentreAR(to).x;
 	if (Math.abs(fromCx - toCx) < 1) {
 		const points = [{ x: fromCx, y: from.bottom }, { x: fromCx, y: to.top }];
 		return { points, label: { midX: fromCx, maxRight: Infinity, y: gapTop + MAP_ROW.GAP * 0.72 } };
@@ -2566,15 +2549,15 @@ function getTurnRouteAR(from, to, gapTop) {
 // a clone of a drawn edge label carrying the turn edge's text — same classes, so the label counts and styles stay one
 function createTurnLabelAR(svgEl, text) {
 	const template = [...svgEl.querySelectorAll("g.edgeLabel")].find((el) => (el.textContent || "").trim() !== "");
-	const textEl = template?.querySelector("p, span.edgeLabel");
-	const frame = template?.querySelector("foreignObject");
-	if (!template || !textEl || !frame) return null;
-	const label = template.cloneNode(true);
+	const label = template?.cloneNode(true);
+	const textEl = label?.querySelector("p, span.edgeLabel");
+	const frame = label?.querySelector("foreignObject");
+	if (!label || !textEl || !frame) return null;
 	const widthDelta = getMapTextWidthAR(text) - getMapTextWidthAR(textEl.textContent || "");
 	const width = Number.parseFloat(frame.getAttribute("width")) + widthDelta;
 	const height = Number.parseFloat(frame.getAttribute("height"));
-	label.querySelector("p, span.edgeLabel").textContent = text;
-	label.querySelector("foreignObject").setAttribute("width", String(width));
+	textEl.textContent = text;
+	frame.setAttribute("width", String(width));
 	label.querySelector("g.label")?.setAttribute("transform", `translate(${-width / 2}, ${-height / 2})`);
 	label.removeAttribute("transform");
 	template.parentNode.appendChild(label);
@@ -2585,11 +2568,20 @@ function getZoneElAR(svgEl, zoneId) {
 	return [...svgEl.querySelectorAll("g.cluster")].find((el) => matchZoneIdAR(el.id || "", [zoneId]) === zoneId) ?? null;
 }
 
+function getZoneBoxAR(svgEl, zoneId) {
+	const el = getZoneElAR(svgEl, zoneId);
+	return el ? getSvgBoxAR(svgEl, el) : null;
+}
+
 // element box in the svg's own user space (viewBox units) — groups carry their own transforms
 function getSvgBoxAR(svgEl, el) {
 	const b = el.getBBox();
 	const m = svgEl.getScreenCTM().inverse().multiply(el.getScreenCTM());
 	return { left: b.x * m.a + m.e, top: b.y * m.d + m.f, right: (b.x + b.width) * m.a + m.e, bottom: (b.y + b.height) * m.d + m.f };
+}
+
+function getBoxCentreAR(box) {
+	return { x: (box.left + box.right) / 2, y: (box.top + box.bottom) / 2 };
 }
 
 function getLabelWordsAR(label) {

@@ -471,15 +471,8 @@ async function readZones(width: number, height: number, extraSource?: string): P
 
 // drawn zone boxes by zone id — the cluster id's last '-' segment
 async function readZoneBoxes(width: number, height: number): Promise<Map<string, { left: number; right: number; top: number; bottom: number }>> {
-	assert.ok(browser, "browser must be up");
-	const page = await browser.newPage({ viewport: { width, height } });
+	const { page } = await openFittedPage(width, height);
 	try {
-		await page.goto(`${serverUrl}/#architecture`, { waitUntil: "load" });
-		await page.waitForFunction(
-			() => Number(document.querySelector(".svg-pan-zoom_viewport")?.getAttribute("data-arch-fit-scale")) > 0,
-			null,
-			{ timeout: 60_000 },
-		);
 		const entries = await page.evaluate(() =>
 			Array.from(document.querySelectorAll(".arch-mermaid-canvas svg g.cluster")).map((el) => {
 				const r = el.getBoundingClientRect();
