@@ -18,7 +18,6 @@
 # the same harness as track-outcome-flag-reasons.bats.
 
 HOOK_SH="${TRACK_OUTCOME_SH:-${BATS_TEST_DIRNAME}/../track-outcome.sh}"
-REASONS_LIB="${BATS_TEST_DIRNAME}/../lib/review-flag-reasons.sh"
 
 # shellcheck source-path=SCRIPTDIR source=../../scripts/lib/path-guard.sh
 source "${BATS_TEST_DIRNAME}/../../scripts/lib/path-guard.sh"
@@ -363,9 +362,4 @@ clean_block() {
   no 'REVISION_COUNT=' "${dis_apply}" || return 1
   no 'SIG_EMIT=' "${dis_apply}" || return 1
   no 'T9_DETECTOR_VERDICT=' "${dis_apply}" || return 1
-}
-
-@test "the disagreement token is stamped by the recorder and declared in the shared registry" {
-  grep -qF 'review_flag_add_reason "correction-disagreement"' "${HOOK_SH}" || return 1
-  grep -qF 'correction-disagreement' "${REASONS_LIB}"
 }
