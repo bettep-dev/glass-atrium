@@ -30,9 +30,8 @@ const MAP_LABEL = {
 // default/Reset view = this share of the contain fit — an overview with no label floor; detail is read by zooming in
 const DEFAULT_VIEW_SHARE = 0.7;
 
-// svg-pan-zoom minZoom, relative to the zoom at the last resize() — the default view rebases it, so it bounds zoom-out from there
-const PAN_ZOOM_MIN = 0.2;
-const PAN_ZOOM_MAX = 5;
+// svg-pan-zoom min/max zoom, relative to the zoom at the last resize() — the default view rebases it, so it bounds zoom-out from there
+const PAN_ZOOM = { MIN: 0.2, MAX: 5 };
 
 // zone inset around its members (SVG user units) — the gap ELK itself leaves under the last member
 const ZONE_PAD = 12;
@@ -656,7 +655,7 @@ function ScreenArchitecture(
 					".arch-mermaid-canvas svg :is(.node, .cluster) rect:not(.arch-ring) { rx: 8px; ry: 8px; } " +
 					// pan-drag 중 SVG 텍스트 select 차단 (클릭/줌/팬 보존).
 					".arch-mermaid-canvas { user-select: none; -webkit-user-select: none; } " +
-					// 줌 floor 힌트 — 캔버스 우하단 작은 안내 (가독 fit 적용됨 = 휠/드래그로 탐색).
+					// 캔버스 우하단 작은 안내 — 박스 클릭 = 상세.
 					".arch-canvas-hint { position: absolute; right: 8px; bottom: 6px; font-size: var(--fs-meta); " +
 					'color: rgb(var(--faint)); font-family: "JetBrains Mono", monospace; pointer-events: none; ' +
 					"background: rgb(var(--surface) / 0.7); padding: 1px 6px; border-radius: 4px; } " +
@@ -1173,7 +1172,7 @@ function MermaidCanvas({
 			.forEach((el) => ensureRingRectAR(el, RING_STATE_CLASS));
 	}, [renderState.status, renderState.svgHtml]);
 
-	// svg-pan-zoom 활성화 — diagramId 변경 → cleanup → 신규 SVG 재초기화 + 가독 fit.
+	// svg-pan-zoom 활성화 — diagramId 변경 → cleanup → 신규 SVG 재초기화 + 기본 보기(개요).
 	useEffectAR(() => {
 		if (renderState.status !== "ready") return;
 		if (!window.svgPanZoom) return;
@@ -1194,8 +1193,8 @@ function MermaidCanvas({
 			instance = window.svgPanZoom(svgEl, {
 				// 컨트롤 아이콘 제거 — 마우스 휠/드래그/더블클릭만 사용.
 				controlIconsEnabled: false,
-				minZoom: PAN_ZOOM_MIN,
-				maxZoom: PAN_ZOOM_MAX,
+				minZoom: PAN_ZOOM.MIN,
+				maxZoom: PAN_ZOOM.MAX,
 				zoomScaleSensitivity: 0.3,
 				panEnabled: true,
 				zoomEnabled: true,
@@ -1394,7 +1393,7 @@ function MermaidCanvas({
 	);
 }
 
-// fit-to-view 아이콘 — Icon SoT 의 'target' 마크업 재사용 (currentColor 상속).
+// Reset 아이콘 — Icon SoT 의 'target' 마크업 재사용 (currentColor 상속).
 function ArchIconTargetAR() {
 	const { Icon } = window.UI;
 	return <Icon name="target" size={15} />;
@@ -2195,11 +2194,11 @@ function zoomUnclampedAR(instance, relative) {
 		instance.zoom(relative);
 		return;
 	}
-	instance.setMinZoom(Math.min(PAN_ZOOM_MIN, relative));
-	instance.setMaxZoom(Math.max(PAN_ZOOM_MAX, relative));
+	instance.setMinZoom(Math.min(PAN_ZOOM.MIN, relative));
+	instance.setMaxZoom(Math.max(PAN_ZOOM.MAX, relative));
 	instance.zoom(relative);
-	instance.setMinZoom(PAN_ZOOM_MIN);
-	instance.setMaxZoom(PAN_ZOOM_MAX);
+	instance.setMinZoom(PAN_ZOOM.MIN);
+	instance.setMaxZoom(PAN_ZOOM.MAX);
 }
 
 // resize() re-reads the pane size and re-bases the zoom bounds on the current zoom — the buttons scale about the cached pane centre

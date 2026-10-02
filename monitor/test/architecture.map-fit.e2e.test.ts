@@ -52,7 +52,7 @@ import type { ArchitectureLiveResponse } from "../src/server/types/architecture.
 const HERE = dirname(fileURLToPath(import.meta.url));
 const PUBLIC_ROOT = resolve(HERE, "..", "public");
 
-// the 12px meta step, measured on the drawn labels — owned here so lowering the screen's floor cannot pass
+// the 12px meta step the zoomed-in labels must reach, measured on the drawn labels — owned here, never read from the screen
 const MIN_RENDERED_LABEL_PX = 12;
 
 // the default view's share of the contain fit
@@ -196,7 +196,7 @@ async function openFittedPage(width: number, height: number, extraSource?: strin
 			() => (window as never as { ARCH_SELECTORS: { canvas: string } }).ARCH_SELECTORS.canvas,
 		);
 		// 미적용 상태는 배율 1 이 아니라 svg-pan-zoom 초기화의 viewBox meet 배율 — 각인 뒤 두 프레임가량 남아
-		// 1024 에서 floor 미만으로 읽힘. 그래서 fit 표식 + 그 배율이 CTM 에 실린 것까지 기다림.
+		// 1024 에서 기본 보기 배율과 어긋나게 읽힘. 그래서 fit 표식 + 그 배율이 CTM 에 실린 것까지 기다림.
 		await page.waitForSelector(`${canvasSelector} svg g.node[data-arch-node-id]`, {
 			timeout: 30_000,
 		});
@@ -363,7 +363,7 @@ const REDUNDANT_TITLE_ZONE = [
 	"    end",
 ].join("\n");
 
-// a short chain ending in a fan — a wider and taller part set than the served map, floor-bound at the narrow widths
+// a short chain ending in a fan — a wider and taller part set than the served map, shrunk hardest by the contain fit at the narrow widths
 const WIDE_TALL_PROBE = [
 	'    fitwide0["Wide probe step"] --> fitwide1["Wide probe step 1"]',
 	...Array.from({ length: 4 }, (_, i) => `    fitwide1 --> fittall${i}["Tall probe leaf ${i}"]`),

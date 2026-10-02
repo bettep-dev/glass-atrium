@@ -213,7 +213,7 @@ async function loadArch(): Promise<{
   assert.strictEqual(
     typeof h.getDefaultViewScaleAR,
     "function",
-    "getDefaultViewScaleAR must be reachable (AC-13 instrument)",
+    "getDefaultViewScaleAR must be reachable (default-view instrument)",
   );
   assert.strictEqual(
     typeof h.getMapHealthEndpoints,
@@ -353,7 +353,7 @@ test("AC-T2 판정 필드가 없으면 상태를 지어내지 않고 미상으�
   );
 });
 
-// --- AC-13: default-view scale — 70% of the contain fit, no legibility floor ---
+// --- default-view scale — 70% of the contain fit, no legibility floor ---
 
 // the default view's share of the contain fit — paired with the screen's overview rule
 const DEFAULT_VIEW_SHARE = 0.7;
@@ -367,7 +367,7 @@ const FIT_GRID: Array<{ name: string; dims: [number, number, number, number]; co
   { name: "a small graph capped at natural size (fit 4)", dims: [800, 800, 200, 200], containFit: 4 },
 ];
 
-describe("AC-13 the default view scale is 70% of the contain fit capped at natural size", () => {
+describe("the default view scale is 70% of the contain fit capped at natural size", () => {
   for (const row of FIT_GRID) {
     test(row.name, () => {
       const s = arch.getDefaultViewScaleAR(...row.dims);
@@ -377,7 +377,7 @@ describe("AC-13 the default view scale is 70% of the contain fit capped at natur
   }
 });
 
-describe("AC-13 unmeasured dimensions fall back to 70% of natural size", () => {
+describe("unmeasured dimensions fall back to 70% of natural size", () => {
   const rows: Array<{ name: string; dims: [number, number, number, number] }> = [
     { name: "a zero pane width", dims: [0, 400, 400, 400] },
     { name: "a negative pane height", dims: [400, -1, 400, 400] },
