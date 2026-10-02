@@ -416,6 +416,41 @@ seed_test_roots() {
   [[ "${status}" -ne 0 ]]
 }
 
+# Row = "<name>|<path>|<want>": the reviewer catch-rate answer key never ships; the runner
+# sharing its name prefix and the suite beside it do.
+CATCH_RATE_ROWS=(
+  "corpus diff|autoagent/reviewer-catch-rate/case-01.diff|absent"
+  "corpus label file|autoagent/reviewer-catch-rate/labels.tsv|absent"
+  "runner sharing the corpus name|autoagent/reviewer-catch-rate.sh|present"
+  "suite reading the corpus|autoagent/test/reviewer-catch-rate.bats|present"
+)
+
+@test "generate: the reviewer catch-rate corpus stays out of files[] while its runner and suite ship" {
+  local row name path want files got
+  for row in "${CATCH_RATE_ROWS[@]}"; do
+    IFS='|' read -r name path want <<<"${row}"
+    mkdir -p "${WORK}/${path%/*}"
+    printf '# %s\n' "${name}" >"${WORK}/${path}"
+    git -C "${WORK}" add -- "${path}"
+  done
+  git -C "${WORK}" commit -qm 'seed catch-rate lane'
+  run "${SCRIPT}"
+  [[ "${status}" -eq 0 ]] || {
+    echo "${output}"
+    return 1
+  }
+  files="$(jq -r '.files[]' "${MANIFEST}")"
+  for row in "${CATCH_RATE_ROWS[@]}"; do
+    IFS='|' read -r name path want <<<"${row}"
+    got=absent
+    if [[ $'\n'"${files}"$'\n' == *$'\n'"${path}"$'\n'* ]]; then got=present; fi
+    [[ "${got}" == "${want}" ]] || {
+      echo "${name}: ${path} is ${got} in files[], want ${want}"
+      return 1
+    }
+  done
+}
+
 @test "generate: every tracked .bats under the four roots is bundled (count parity)" {
   seed_test_roots
   run "${SCRIPT}"
