@@ -624,7 +624,7 @@ details[open] > summary .chevron {
 	--alert-glyph: rgb(var(--elev));
 	container-type: inline-size;
 	padding: 12px 16px;
-	/* motion: effects-fast — opacity only, so it is already the reduced-motion form */
+	/* motion: effects-fast — an opacity-only entry, stopped under reduced motion */
 	animation: detailFade 150ms cubic-bezier(0.2, 0, 0, 1);
 }
 [data-theme="dark"] .alert-card {
@@ -1018,7 +1018,8 @@ details[open] > summary .chevron {
 		animation: none;
 	}
 	.kpi-value.updated,
-	[class*="valueFlash"] {
+	[class*="valueFlash"],
+	.alert-card {
 		animation: none;
 	}
 	.card.raised-2:hover,
