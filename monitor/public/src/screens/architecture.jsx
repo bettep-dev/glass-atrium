@@ -3093,14 +3093,18 @@ function fitZoneBoxesAR(root, zoneIdByMemberId) {
 	});
 }
 
-// zones whose drawn box runs into another zone's box — zone rects share one parent group, so their bboxes compare directly
+// zones whose drawn box runs into another zone's box — boxes read in the zones' shared parent space, as bottom-row zones carry the row translate
 function getCrowdedZonesAR(zoneEls) {
-	const boxes = zoneEls.map((el) => el.querySelector(":scope > rect")?.getBBox());
+	const frameEl = zoneEls[0]?.parentElement;
+	const boxes = zoneEls.map((el) => {
+		const rect = el.querySelector(":scope > rect");
+		return frameEl && rect ? getUnionBoxAR(frameEl, [rect]) : null;
+	});
 	const crowded = new Set();
 	boxes.forEach((a, i) =>
 		boxes.forEach((b, j) => {
 			if (i >= j || !a || !b) return;
-			if (a.x < b.x + b.width && b.x < a.x + a.width && a.y < b.y + b.height && b.y < a.y + a.height) {
+			if (a.left < b.right && b.left < a.right && a.top < b.bottom && b.top < a.bottom) {
 				crowded.add(zoneEls[i]);
 				crowded.add(zoneEls[j]);
 			}
