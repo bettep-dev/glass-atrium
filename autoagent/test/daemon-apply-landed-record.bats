@@ -436,7 +436,8 @@ PY
     return 1
   }
   [[ -n "$(applied_field landed_diff)" ]] || return 1
-  [[ "${output}" == *"FATAL"*"apply record"* ]] || {
+  # trailing space = the token boundary the monitor route's cause parser requires
+  [[ "${output}" == *"FATAL"*"apply record NOT written cause=insert_failed "* ]] || {
     echo "${output}"
     return 1
   }
@@ -462,6 +463,10 @@ PY
     run_apply offset_diff --proposal-id "${ROW_ID}"
     if ga_guard_path "${stub_tool}"; then rm -f -- "${stub_tool:?}"; fi
     [[ "${status}" -eq 26 ]] || {
+      echo "${name}: ${output}"
+      return 1
+    }
+    [[ "${output}" == *"FATAL"*"apply record NOT written cause=digest_or_diff_missing "* ]] || {
       echo "${name}: ${output}"
       return 1
     }
