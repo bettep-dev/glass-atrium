@@ -11,7 +11,8 @@ aggregator emit and the ``daemon_cycle.py`` staleness recompute — covered here
     non-trivial batch (and stays quiet on tiny batches / live metrics);
 (3) poisoned_window rows produce NO pattern end-to-end (real reader against
     live PG fixtures, inserted in an open never-committed transaction —
-    rolled back on teardown, database left byte-identical).
+    rolled back on teardown, database left byte-identical);
+(4) a run over lesson-carrying rows writes no lesson store under its data root.
 
 Run with either runner:
     uv run --with pytest --with psycopg pytest autoagent/test/test_negative_signal_triggers.py -v
@@ -32,7 +33,7 @@ import tempfile
 import time
 import unittest
 from pathlib import Path
-from types import SimpleNamespace
+from types import ModuleType, SimpleNamespace
 from unittest import mock
 
 _REPO_ROOT = Path(__file__).resolve().parent.parent.parent
@@ -111,8 +112,7 @@ class TestNegativeSignalPredicate(unittest.TestCase):
             _row(grader_verdict="verified_fail"),
             _row(review_flag=True),
             _row(revision_count=2),
-            # read_outcomes_since hands the integer column; the lesson-routing call site
-            # hands the frontmatter string. Both are the same user-correction signal.
+            # predicate accepts evaluative_signal as int and as its frontmatter string
             _row(evaluative_signal=-1),
             _row(evaluative_signal="-1"),
         ):
@@ -211,46 +211,43 @@ class _AggregatorRunFixture(unittest.TestCase):
             ),
             encoding="utf-8",
         )
-        # main() ingests this batch's lessons on every run → keep them off the live store
-        lessons = mock.patch.object(
-            agg, "LESSON_STORE_FILE", os.path.join(self._tmpdir, "lessons.json")
-        )
-        lessons.start()
-        self.addCleanup(lessons.stop)
 
     def _cleanup_tmpdir(self) -> None:
         for name in os.listdir(self._tmpdir):
             os.unlink(os.path.join(self._tmpdir, name))
         os.rmdir(self._tmpdir)
 
-    def _run(self, rows: list[dict]) -> str:
+    def _run(self, rows: list[dict], aggregator: ModuleType | None = None) -> str:
+        """aggregator overrides the shared module, e.g. one loaded under a scratch data root."""
+        module = aggregator or agg
+
         def _record_upsert(**kwargs) -> None:
             self.upserts.append(kwargs)
 
         patchers = (
-            mock.patch.object(agg, "HAS_PG_DUALWRITE", True),
-            mock.patch.object(agg, "OUTCOMES_DIR", self._tmpdir),
+            mock.patch.object(module, "HAS_PG_DUALWRITE", True),
+            mock.patch.object(module, "OUTCOMES_DIR", self._tmpdir),
             mock.patch.object(
-                agg, "AUDIT_QUEUE_FILE", os.path.join(self._tmpdir, "audit-queue.txt")
+                module, "AUDIT_QUEUE_FILE", os.path.join(self._tmpdir, "audit-queue.txt")
             ),
             mock.patch.object(
-                agg,
+                module,
                 "AUDIT_QUEUE_PG_OFFSET_FILE",
                 os.path.join(self._tmpdir, "audit-queue-pg-offset"),
             ),
-            mock.patch.object(agg, "_pg_read_aggregator_watermark", lambda name: 0.0),
-            mock.patch.object(agg, "_pg_read_outcomes_since", lambda since: rows),
-            mock.patch.object(agg, "_pg_read_learning_log_signatures", lambda: {}),
-            mock.patch.object(agg, "_pg_upsert_learning_pattern", _record_upsert),
-            mock.patch.object(agg, "_pg_update_aggregator_state", lambda **kw: None),
-            mock.patch.object(agg, "_pg_batch_complete", lambda summary: None),
+            mock.patch.object(module, "_pg_read_aggregator_watermark", lambda name: 0.0),
+            mock.patch.object(module, "_pg_read_outcomes_since", lambda since: rows),
+            mock.patch.object(module, "_pg_read_learning_log_signatures", lambda: {}),
+            mock.patch.object(module, "_pg_upsert_learning_pattern", _record_upsert),
+            mock.patch.object(module, "_pg_update_aggregator_state", lambda **kw: None),
+            mock.patch.object(module, "_pg_batch_complete", lambda summary: None),
         )
         for patcher in patchers:
             patcher.start()
             self.addCleanup(patcher.stop)
         stderr = io.StringIO()
         with contextlib.redirect_stderr(stderr):
-            agg.main(registry_path=self.registry_path)
+            module.main(registry_path=self.registry_path)
         return stderr.getvalue()
 
     def _upsert_signatures(self) -> set[str]:
@@ -289,6 +286,24 @@ class TestPerAgentTriggerEmission(_AggregatorRunFixture):
         self.assertNotIn(
             _count_signature(_TRIGGER_AGENT), self._upsert_signatures()
         )
+
+
+class TestRunLeavesNoLessonStore(_AggregatorRunFixture):
+    """Lesson text is outcome data only — a run over lesson-carrying rows writes no store."""
+
+    def test_when_rows_carry_lessons_then_data_root_gains_no_lesson_store(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="ap3-agg-root-") as base_root:
+            data_root = Path(base_root) / "data"
+            data_root.mkdir()
+            with mock.patch.dict(os.environ, {"GA_DATA_ROOT": base_root}):
+                scratch_agg = _load_aggregator()
+            self._run(
+                [_row(result="blocked", lesson="Retry the flaky step once")] * 3,
+                aggregator=scratch_agg,
+            )
+            # positive control — the run reached pattern emission over these rows
+            self.assertIn(_count_signature(_TRIGGER_AGENT), self._upsert_signatures())
+            self.assertNotIn("lessons.json", os.listdir(data_root))
 
 
 class TestDeadSignalWarn(_AggregatorRunFixture):

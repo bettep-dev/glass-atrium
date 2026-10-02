@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # Pure outcome-signal rules — the SINGLE definition of the negative-signal
-# predicate (learning-aggregator pattern emit + lesson-bucket routing,
-# daemon_cycle staleness recompute) and of the Role → Allowed task_types
+# predicate (learning-aggregator pattern emit, daemon_cycle staleness
+# recompute) and of the Role → Allowed task_types
 # allowlist that predicate depends on.
 #
 # STDLIB-ONLY BY CONTRACT, psycopg-free in particular. learning-aggregator imports
@@ -58,11 +58,10 @@ def _role_task_type_allowed(agent, task_type):
 # Negative-signal trigger predicate (AP-3)
 # ---------------------------------------------------------------------------
 # Every learning consumer keys on this ONE definition: the learning-aggregator
-# pattern emit (patterns 1/5) and lesson-bucket routing, plus the daemon_cycle
-# staleness recompute — so the emit condition, the EPM route and the live-window
-# recompute cannot drift apart (drift = live patterns mis-skipped as stale, or a
-# row routed to failure memory by one consumer and not the other). Defined over the
-# row dict _pg_learning_dualwrite.read_outcomes_since returns.
+# pattern emit (patterns 1/5) and the daemon_cycle staleness recompute — so the
+# emit condition and the live-window recompute cannot drift apart (drift = live
+# patterns mis-skipped as stale). Defined over the row dict
+# _pg_learning_dualwrite.read_outcomes_since returns.
 
 # done_with_concerns stays negative by PAIRED CONTRACT with the Result-selection
 # criterion in core-outcome-record.md: that criterion admits the result only for the
@@ -161,8 +160,8 @@ def _is_structural_polar_mismatch(row: dict) -> bool:
     Mirrors the D1 BRANCH, not merely its structural predicate. D1 gates that one arm;
     the underconfidence (low+true) and ABSENT-metric_pass arms still set review_flag on
     structural rows, so a carve-out keyed on _is_structural_row alone is a SUPERSET of
-    what D1 suppresses and silently drops those two live signals out of both memory
-    buckets."""
+    what D1 suppresses and silently drops those two live signals from the negative
+    predicate."""
     # Cheap conjuncts first: all three are pure and total (every access is
     # row.get(...) or ""), so the order is verdict-identical and skips the
     # frozenset-plus-prefix-loop structural test on the common non-mismatch row.

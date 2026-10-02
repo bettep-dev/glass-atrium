@@ -2,7 +2,7 @@
 
 Teammate-class spawns reached the recorder carrying an ephemeral instance name, and the
 write seam applied a length clamp and an unknown-fallback only — so an unregistered identity
-persisted silently and the ingest allowlist then dropped the row's lesson. The guard DETECTS
+persisted silently and the aggregator's registry allowlist then dropped its patterns. The guard DETECTS
 that at the single write seam: it raises the advisory review flag and stamps its reason token,
 and it never drops or rewrites the row. The agent value is part of the ON CONFLICT key, so a
 rewrite would additionally convert the upsert into a duplicate row.

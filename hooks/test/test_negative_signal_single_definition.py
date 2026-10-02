@@ -8,14 +8,12 @@ SAME batch in one production pass. The mirror existed only because the shared mo
 a missing psycopg at import; the predicate body itself never touched the driver. The rules
 now live in the stdlib-only ``hooks/_outcome_signal.py``.
 
-Three things are pinned here, all of which fail against the pre-extraction tree:
+Two things are pinned here, both of which fail against the pre-extraction tree:
 (1) the driver-absent import path — including the SystemExit hazard the extraction had to
     route around (``_pg_outcome_dualwrite`` calls ``sys.exit()`` at module scope, and
     SystemExit is a BaseException no ``except Exception`` guard catches);
 (2) the deliberately re-added ``evaluative_signal == -1`` OR-term, which existed only in the
-    mirror and would otherwise have been dropped by the collapse;
-(3) the measured routing change at the mirror's call site — the shared carve-outs move rows
-    OUT of failure memory, and a genuine failure still lands in it.
+    mirror and would otherwise have been dropped by the collapse.
 
     python3 -m unittest hooks.test.test_negative_signal_single_definition -v
 """
@@ -110,12 +108,6 @@ def _row(**over):
     return base
 
 
-def _lesson_row(**over):
-    row = _row(metric_pass=True, confidence="high", lesson="x")
-    row.update(over)
-    return row
-
-
 class DriverAbsentImport(unittest.TestCase):
     """The extraction's whole point: the rules load on the path the shared module dies on."""
 
@@ -134,7 +126,7 @@ class DriverAbsentImport(unittest.TestCase):
             except SystemExit as exc:  # noqa: PERF203 — the hazard under test
                 self.fail(f"aggregator import raised SystemExit({exc.code})")
             self.assertFalse(agg.HAS_PG_DUALWRITE)
-            self.assertEqual(agg.classify_lesson_bucket({"result": "fail"}), "epm")
+            self.assertEqual(agg._negative_signal_hits({"result": "fail"}), ("result=fail",))
             self.assertIn("evaluative_signal=-1", agg._NEGATIVE_SIGNAL_NAMES)
 
     def test_when_psycopg_absent_then_dualwrite_import_still_kills_the_process(self):
@@ -151,9 +143,7 @@ class SingleDefinition(unittest.TestCase):
     def test_when_aggregator_read_then_no_second_predicate(self):
         agg = _load_aggregator()
         self.assertFalse(hasattr(agg, "_record_is_negative"))
-        self.assertIs(
-            agg._is_negative_signal_outcome, _outcome_signal.is_negative_signal_outcome
-        )
+        self.assertIs(agg._negative_signal_hits, _outcome_signal.negative_signal_hits)
 
     @unittest.skipIf(
         importlib.util.find_spec("psycopg") is None, "psycopg absent: re-export unreachable"
@@ -208,77 +198,6 @@ class ReviewFlagTerm(unittest.TestCase):
                 self.assertEqual(
                     _outcome_signal.negative_signal_hits(_row(review_flag=raw)), ()
                 )
-
-
-class LessonRoutingBehaviourChange(unittest.TestCase):
-    """Measured effect of adopting the shared carve-outs at the mirror's call site."""
-
-    def setUp(self):
-        self.agg = _load_aggregator()
-
-    def test_when_structural_high_plus_false_then_leaves_failure_memory(self):
-        # The ONE shape the carve-out covers: track-outcome.sh D1 stopped emitting this
-        # flag on fresh rows, so a legacy row carrying it is not a failure signal. It
-        # reaches no bucket because the CTM gate independently rejects metric_pass!=true —
-        # accepted only here, where the fresh-row equivalent already routes to None.
-        row = _lesson_row(
-            task_type="cleanup", confidence="high", metric_pass=False, review_flag=True
-        )
-        self.assertEqual(_outcome_signal.negative_signal_hits(row), ())
-        self.assertIsNone(self.agg.classify_lesson_bucket(row))
-
-    def test_when_structural_underconfidence_then_still_failure_memory(self):
-        # D1 leaves the low+true branch flagging, so this arm is live on FRESH rows —
-        # carving it out would be an ongoing lesson loss. The two code arms are the worse
-        # half: _is_code_task_type short-circuits before the confidence gate, so a flagged
-        # row became an injectable CTM success exemplar.
-        for agent, task_type in (
-            ("glass-atrium-dev-python", "cleanup"),  # no-test-bar, non-code
-            ("glass-atrium-dev-python", "doc"),
-            ("glass-atrium-dev-python", "refactor"),  # no-test-bar, code arm
-            ("glass-atrium-intel-planner", "bug-fix"),  # off-role, code arm
-        ):
-            with self.subTest(agent=agent, task_type=task_type):
-                row = _lesson_row(
-                    agent=agent,
-                    task_type=task_type,
-                    confidence="low",
-                    metric_pass=True,
-                    review_flag=True,
-                )
-                self.assertEqual(self.agg.classify_lesson_bucket(row), "epm")
-
-    def test_when_structural_metric_pass_absent_then_still_failure_memory(self):
-        # D1's third branch: an ABSENT metric_pass is the writer-cannot-self-judge signal,
-        # distinct from the literal false the carve-out gates.
-        for absent in ("", None):
-            with self.subTest(absent=absent):
-                row = _lesson_row(task_type="cleanup", metric_pass=absent, review_flag=True)
-                self.assertEqual(self.agg.classify_lesson_bucket(row), "epm")
-
-    def test_when_measurement_gap_then_leaves_failure_memory(self):
-        row = _lesson_row(
-            result="done_with_concerns", attribution_source="completion-synthesized"
-        )
-        self.assertIsNone(self.agg.classify_lesson_bucket(row))
-
-    def test_when_code_row_carries_writer_review_flag_then_still_failure_memory(self):
-        # The carve-out is structural-only: a genuine on-role code row keeps the flag as a
-        # real overconfidence signal.
-        self.assertEqual(
-            self.agg.classify_lesson_bucket(_lesson_row(review_flag=True)), "epm"
-        )
-
-    def test_when_structural_row_carries_real_failure_then_still_failure_memory(self):
-        for over in (
-            {"result": "fail"},
-            {"revision_count": 2},
-            {"grader_verdict": "verified_fail"},
-            {"evaluative_signal": -1},
-        ):
-            with self.subTest(over=over):
-                row = _lesson_row(task_type="cleanup", **over)
-                self.assertEqual(self.agg.classify_lesson_bucket(row), "epm")
 
 
 if __name__ == "__main__":

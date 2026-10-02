@@ -173,7 +173,7 @@ class EmitRosterGate(unittest.TestCase):
 
     def test_when_registry_unavailable_then_fail_open_emits(self):
         # FORBIDDEN SHORTCUT guard: registry=None (missing/malformed) must SKIP
-        # validation, mirroring the lesson path — a fail-closed gate would silently
+        # validation, per the loader's fail-open contract — a fail-closed gate would silently
         # drop every real pattern the moment the registry is unreadable.
         entries, reason = self._emit("glass-atrium-dev-python", None)
         self.assertEqual(reason, "")
@@ -191,7 +191,7 @@ class EmitRosterGate(unittest.TestCase):
 
 
 class RegistryLoaderFailOpen(unittest.TestCase):
-    """_load_registry_agents (reused from the lesson path) — every unusable shape
+    """_load_registry_agents — every unusable shape
     returns None, which _emit_xc reads as 'skip validation'."""
 
     def _write(self, text):
