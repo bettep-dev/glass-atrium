@@ -23,6 +23,8 @@ CI_YML="${GA}/.github/workflows/ci.yml"
 # whose loss would follow from dropping that glob. It is a real bash-leg policy input:
 # test/licenses-audit-gate.bats reads that document as its sole input, so a licenses-only PR
 # that skipped the bash leg would retire the gate on exactly the change kind it polices.
+# labels.tsv stands for the reviewer catch-rate corpus data, which autoagent/test/reviewer-catch-rate.bats
+# reads as its input: `autoagent/**` sits in the python filter, so only a corpus-dir glob reaches it.
 POLICY_PATHS='requirements.txt
 requirements-dev.txt
 config.toml.example
@@ -31,7 +33,8 @@ glass-atrium
 .github/workflows/ci.yml
 rules/glass-atrium/core-security.md
 skills/glass-atrium-ops-token-audit/thresholds.yaml
-LICENSES-THIRD-PARTY.md'
+LICENSES-THIRD-PARTY.md
+autoagent/reviewer-catch-rate/labels.tsv'
 
 # Emits one glob per `- '<glob>'` line of the detect-changes `bash:` filter. The range ends at
 # the next bare key at any indent (`python:`), so a renamed sibling cannot silently widen it.

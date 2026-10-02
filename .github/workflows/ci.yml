@@ -254,6 +254,10 @@ jobs:
               - 'scripts/**'
               - 'test/**'
               - 'autoagent/test/**'
+              # Reviewer catch-rate corpus data (*.tsv, *.diff): `autoagent/**` is
+              # the python filter, and autoagent/test/reviewer-catch-rate.bats reads
+              # it as its input. Pinned by scripts/test/ci-change-filter-coverage.bats.
+              - 'autoagent/reviewer-catch-rate/**'
               - '**/*.sh'
               - '**/*.bats'
               - 'rules/**'
