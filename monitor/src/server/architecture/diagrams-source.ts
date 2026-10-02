@@ -178,9 +178,9 @@ export const DIAGRAMS = [
 	{
 		id: 4,
 		slug: "v2-loops-learn",
-		title: "How the system turns outcomes into lessons",
+		title: "How the system turns outcomes into patterns",
 		description:
-			"After each task an agent reports how it went; a collector gathers those signals plus correction and quality flags. An aggregator sorts the patterns into a 'what worked' bucket and a 'what failed' bucket, then a confidence gate decides which lessons are trustworthy enough to act on. The trusted lessons flow into the self-improvement loop (next diagram).",
+			"After each task an agent reports how it went; a collector gathers those signals plus correction and quality flags. An aggregator sorts the patterns into a 'what worked' bucket and a 'what failed' bucket, then a confidence gate decides which patterns are trustworthy enough to act on. The trusted patterns flow into the self-improvement loop (next diagram).",
 		mermaid_source: `flowchart LR
     subgraph work["Task execution"]
         agent_work[agent task]
@@ -219,7 +219,7 @@ export const DIAGRAMS = [
     epm --> flag_gate
     flag_gate --> ladder
     flag_gate -. "not trusted yet" .-> floor_node
-    ladder -- "trusted lessons" --> to_autoagent
+    ladder -- "trusted patterns" --> to_autoagent
     floor_node -. "held back, retried later" .-> to_autoagent
     measurement -. "evidence" .-> to_autoagent`,
 	},
@@ -228,9 +228,9 @@ export const DIAGRAMS = [
 		slug: "v2-loops-autoagent",
 		title: "How agent instructions get auto-improved",
 		description:
-			"A daily background job takes the trusted lessons, drafts one improvement per agent, and runs it through pre-checks, a cost cap, and a trial run. Safe changes apply automatically; risky ones wait for a person's approval. After a change is applied, the system watches whether results improve and feeds that back into the learning loop. A separate self-monitor keeps the background daemons alive.",
+			"A daily background job takes the trusted patterns, drafts one improvement per agent, and runs it through pre-checks, a cost cap, and a trial run. Safe changes apply automatically; risky ones wait for a person's approval. After a change is applied, the system watches whether results improve and feeds that back into the learning loop. A separate self-monitor keeps the background daemons alive.",
 		mermaid_source: `flowchart LR
-    from_learn[/"← Learning loop<br/>(boundary: trusted lessons)"/]
+    from_learn[/"← Learning loop<br/>(boundary: trusted patterns)"/]
 
     subgraph autoagent["Drafting & checking an improvement"]
         cycle[claude-autoagent-daemon · daily run]
