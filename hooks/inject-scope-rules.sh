@@ -2,8 +2,8 @@
 # inject-scope-rules.sh — SubagentStart hook, slot 1: the [COMPLETION] emit-format contract, a budget
 # meter, and the roster-gated blocks no part slot carries.
 #
-# Slot 1 carries only the non-droppable emit/meter pair, the wiki-untrusted clause, the two budget
-# blocks and the lesson recall. Scope-file text (comment-logging, style_ref, minimalism, naming,
+# Slot 1 carries only the non-droppable emit/meter pair, the wiki-untrusted clause and the two budget
+# blocks. Scope-file text (comment-logging, style_ref, minimalism, naming,
 # plan-gate) is NOT extracted here: the part slots (inject-scope-part-NN.sh) deliver it whole by
 # registry membership, so a slot-1 copy would reach the agent twice.
 # Two BUDGET-SIZING blocks (shared-turn-budget.md — injection-text SoT; policy SoT = GLOBAL_RULES
@@ -39,7 +39,7 @@
 # C03 — observability: the drop sink records only what was SHED, so "did this agent actually see that
 # rule at that spawn" was an assumption. One bounded MANIFEST line per injection-attempted spawn now
 # records what WAS injected (agent id/type · ordered kept labels with their source paths · assembled
-# bytes · an optional digest · the runtime-derived lesson ids+scores), into its OWN capped sink so the
+# bytes · an optional digest), into its OWN capped sink so the
 # drop-rate numerator's rotation is untouched. `--manifest-coverage` is its required reader.
 #
 # T8 — membership vs. delivery (roster disclaimer): this hook injects a FIXED set of extracted
@@ -87,31 +87,6 @@ readonly BUDGET_SRC_FILE="${INJECT_SCOPE_RULES_BUDGET_SRC:-${HOME}/.glass-atrium
 # Bash-holding wiki-reader roster below. UNLIKE the scoped/ sources, rule docs live under
 # ~/.glass-atrium/rules/glass-atrium; the default carries that path. Env-overridable for the Bats sandbox.
 readonly WIKI_UNTRUSTED_SRC_FILE="${INJECT_SCOPE_RULES_WIKI_UNTRUSTED_SRC:-${HOME}/.glass-atrium/rules/glass-atrium/core-wiki-reference.md}"
-
-# AD-3 lesson store — the CTM/EPM JSON the learning-aggregator writes (default under
-# HOOK_DATA_DIR = ~/.glass-atrium/data). Env-overridable for the Bats sandbox. Absent file →
-# no lesson block (fail-open, universal). Read with jq (already required above); a PG read from
-# this <1s hook is impractical, so the store is a local JSON file the aggregator maintains.
-readonly LESSON_SRC_FILE="${INJECT_SCOPE_RULES_LESSONS_SRC:-${HOOK_DATA_DIR}/lessons.json}"
-# Hard per-block byte cap — the lesson block is the LOWEST-priority (first-dropped) block, so
-# it must stay small; this bounds it independent of the assembly ceiling. Enforced via
-# truncate_bytes_utf8_safe (NOT a raw head -c): lesson text carries multibyte chars (U+00B7
-# header · em-dash / arrow bodies), so a byte cut must never split a codepoint.
-readonly LESSON_MAX_BYTES=1200
-# top-K CTM lessons + top-K EPM warnings per matched agent (AD-3: 3-5 range).
-readonly LESSON_TOP_K=5
-# CTM injectability floor — mirrors the aggregator CTM_MIN_SCORE / core-learning-log.md score>=4.
-readonly LESSON_MIN_SCORE=4
-# Min residual (bytes) below which a ceiling-pressed lesson is FULL-dropped instead of truncate-kept.
-# Empirically (build_lesson_block): the block header is 84B and the "Apply (worked before):\n- [tag] "
-# bullet prefix adds 36B (120B before any lesson TEXT), so a 150B floor guarantees a truncate-keep
-# preserves the header PLUS at least one WHOLE CTM line (~30B of first-line text). A sub-floor residual
-# would keep only a contentless/partial header, so it full-drops instead (correct for the heaviest DEV
-# agents; lighter agents keep a real truncated lesson).
-readonly LESSON_MIN_RESIDUAL_BYTES=150
-# join_block appends the lesson to the assembled base with a 2-byte "\n\n" separator; the residual
-# available for lesson TEXT is the full-ceiling headroom minus this separator.
-readonly LESSON_JOIN_SEP_BYTES=2
 
 # budget AGENT-INJECT block boundaries — two DISTINCT marker names (one per roster variant), so
 # neither sed range collides with the other nor with any other block.
@@ -164,9 +139,9 @@ readonly WIKI_UNTRUSTED_AGENTS=" glass-atrium-intel-planner glass-atrium-intel-r
 # NO-SHED path, where no drop marker exists; on the shed path the marker is budgeted INSIDE the
 # ceiling (see INJECT_MARKER_JOIN_BYTES) rather than parked in a margin above it.
 # The ~900B meter fits even the 2KB preview, so meter delivery holds in every degradation mode. With
-# the real sources every slot-1 assembly sits far under this ceiling, even with a full-cap lesson
-# block, so only an oversized source or a synthetic fixture reaches the drop loop; the ceiling still
-# guards that path. The zero-drop property is pinned by hooks/test/inject-scope-rules-nodrop.bats
+# the real sources every slot-1 assembly sits far under this ceiling, so only an oversized source or
+# a synthetic fixture reaches the drop loop; the ceiling still guards that path. The zero-drop property
+# is pinned by hooks/test/inject-scope-rules-nodrop.bats
 # against the real repo sources. UNIVERSAL: the envelope
 # carries no spawn-mode discriminator, so engine/schema-mode spawns are bounded identically to
 # manual ones.
@@ -180,7 +155,7 @@ readonly INJECT_CTX_MAX_BYTES="${INJECT_SCOPE_RULES_CTX_MAX_BYTES:-9984}"
 # sheds it alone exceeds any margin the ceiling leaves, and an over-cap emit does not degrade
 # gracefully: the whole additionalContext collapses to the ~2KB preview, taking the emit directive's
 # tail and the meter with it. The accounting converges because each named shed frees a whole block
-# (hundreds-to-1200B) while its name+path costs ~40-60B. When even the non-droppable blocks plus the
+# (hundreds of bytes) while its name+path costs ~40-60B. When even the non-droppable blocks plus the
 # marker exceed the ceiling, the MARKER is dropped and the fact logged: a lost marker is recoverable,
 # a collapsed preview is not.
 readonly INJECT_MARKER_JOIN_BYTES=2 # join_block's blank-line separator ahead of the marker
@@ -232,7 +207,7 @@ readonly METER_MIN_MAX_TURNS=4
 # labels (a case cannot be derived from a list); the suite pins it equal to this roster.
 # Kept UNPADDED: a leading space would make it a roster slot to the roster merge's shell-array parser.
 # Older manifest lines naming a label outside this roster are silently absent from --manifest-coverage.
-readonly MANIFEST_BLOCK_LABELS="emit meter wiki-untrusted budget-dev budget-analysis lesson"
+readonly MANIFEST_BLOCK_LABELS="emit meter wiki-untrusted budget-dev budget-analysis"
 
 # Named aggregation query over the drop sink — reports the block-drop count (numerator, from the drop
 # sink) against spawns-with-injection-attempted (denominator, from the spawn counter) plus the drop
@@ -451,132 +426,15 @@ byte_len() {
   printf '%s' "${1}" | wc -c | tr -cd '0-9'
 }
 
-# Byte-truncate a string to at most N bytes, then strip any trailing INCOMPLETE UTF-8 sequence so the
-# result is ALWAYS valid UTF-8. BOUNDARY-SAFE rationale (do NOT assume "English → head -c is safe"):
-# the lesson header carries U+00B7 (·) and lesson bodies carry em-dash / arrow multibyte chars, so a
-# raw `head -c N` can split a codepoint mid-sequence → invalid UTF-8. That invalid tail then breaks the
-# downstream `jq -nc --arg ctx` in a jq-version-dependent way — a strict jq REJECTS it → empty
-# OUTPUT_JSON → the fail-open path skips the ENTIRE injection (every block lost, not just the lesson) —
-# while a lenient jq (1.7.x-apple) SUBSTITUTES the split byte with U+FFFD, injecting a corrupted lesson.
-# Both outcomes are wrong, so truncation must never split a codepoint. Algorithm: head -c to the byte
-# cap, then inspect the final up-to-4 bytes (max UTF-8 sequence length): walk back to the sequence lead
-# byte and, when the trailing bytes are fewer than the lead's declared length, drop that partial tail.
-# Args: $1=string $2=max bytes · stdout: a valid-UTF-8 truncation (<= $2 bytes).
-truncate_bytes_utf8_safe() {
-  local s="${1}" max="${2}" out out_bytes strip keep
-  out="$(printf '%s' "${s}" | head -c "${max}")"
-  out_bytes="$(byte_len "${out}")"
-  [[ "${out_bytes}" -eq 0 ]] && return 0
-  # od → decimal byte values of the last <=4 bytes; awk finds the final sequence's lead byte and
-  # reports how many trailing bytes to drop (0 when the final sequence is complete).
-  strip="$(printf '%s' "${out}" | tail -c 4 | od -An -tu1 | tr -s ' ' '\n' | grep -E '^[0-9]+$' | awk '
-    { b[NR] = $1 }
-    END {
-      n = NR
-      if (n == 0) { print 0; exit }
-      cont = 0; i = n
-      while (i >= 1 && b[i] >= 128 && b[i] <= 191) { cont++; i-- }
-      if (i < 1) { print 0; exit }
-      lead = b[i]
-      if (lead < 128) len = 1
-      else if (lead >= 240) len = 4
-      else if (lead >= 224) len = 3
-      else if (lead >= 192) len = 2
-      else len = 1
-      seqlen = cont + 1
-      if (seqlen < len) print seqlen; else print 0
-    }')"
-  [[ -z "${strip}" ]] && strip=0
-  keep=$((out_bytes - strip))
-  [[ "${keep}" -lt 0 ]] && keep=0
-  printf '%s' "${out}" | head -c "${keep}"
-}
-
-# AD-3: build the spawn-time lesson-recall block (Reflexion / LangMem procedural memory).
-# Selects the current AGENT_TYPE's top-K CTM lessons (score >= LESSON_MIN_SCORE, live) +
-# top-K EPM warnings (live) from the lesson store, sorted by score then frequency, formatted
-# as a compact advisory. Empty when the store is absent OR no lesson matches this agent (a
-# no-match spawn is left unchanged). Hard-capped at LESSON_MAX_BYTES.
-#
-# task_type NOTE: the SubagentStart envelope carries ONLY agent_type — task_type is not known
-# until the agent acts — so matching is agent-keyed and each line carries its task_type tag as
-# metadata (the AD-3 "agent + task_type match" collapses to agent-key + per-line task_type tag).
-#
-# C03 stdout CONTRACT (two-part, split by the caller): line 1 = the manifest metadata
-# "<source_capped 0|1> <id@score CSV>", lines 2..N = the lesson block text. The metadata rides the
-# SAME jq pass that produced the injected lines rather than a second read of the store: the store
-# MUTATES, so a re-query could disagree with what was actually injected, and a manifest that can
-# disagree with the injection it describes is worse than no manifest. Empty output (no store, no
-# match) carries neither part. The lesson store has no id column, so the identifier falls back to a
-# slug of the lesson text — the same (agent, task_type, text) identity the aggregator dedups on.
-build_lesson_block() {
-  [[ -f "${LESSON_SRC_FILE}" ]] || return 0
-  local ctm epm ctm_out epm_out ctm_ids epm_ids ids body="" capped=0
-  ctm_out="$(jq -r --arg a "${AGENT_TYPE}" --argjson k "${LESSON_TOP_K}" --argjson min "${LESSON_MIN_SCORE}" '
-    (.ctm // [])
-    | map(select(.agent == $a and (.tombstoned != true) and ((.score // 0) >= $min)))
-    | sort_by(-(.score // 0), -(.frequency // 0))
-    | .[:$k]
-    | (map("ctm:\(.task_type // "any")/\(.id // ((.text // "") | ascii_downcase | gsub("[^a-z0-9]+"; "-") | .[0:20]))@\(.score // 0)") | join(",")),
-      (map("- [\(.task_type // "any")] \(.text)") | join("\n"))
-  ' "${LESSON_SRC_FILE}" 2>/dev/null || true)"
-  epm_out="$(jq -r --arg a "${AGENT_TYPE}" --argjson k "${LESSON_TOP_K}" '
-    (.epm // [])
-    | map(select(.agent == $a and (.tombstoned != true)))
-    | sort_by(-(.frequency // 0), -(.score // 0))
-    | .[:$k]
-    | (map("epm:\(.task_type // "any")/\(.id // ((.text // "") | ascii_downcase | gsub("[^a-z0-9]+"; "-") | .[0:20]))@\(.score // 0)") | join(",")),
-      (map("- AVOID [\(.task_type // "any")] \(.text)") | join("\n"))
-  ' "${LESSON_SRC_FILE}" 2>/dev/null || true)"
-
-  # Line 1 of each jq output is the id CSV; the remainder is the display text (byte-identical to the
-  # pre-C03 per-record output, so the assembled block size is unchanged).
-  ctm_ids="$(printf '%s\n' "${ctm_out}" | head -1)"
-  ctm="$(printf '%s\n' "${ctm_out}" | tail -n +2)"
-  epm_ids="$(printf '%s\n' "${epm_out}" | head -1)"
-  epm="$(printf '%s\n' "${epm_out}" | tail -n +2)"
-
-  [[ -z "${ctm}" && -z "${epm}" ]] && return 0
-
-  body="**Prior-lesson recall (auto-injected · CTM success + EPM warnings, agent-matched)**"
-  if [[ -n "${ctm}" ]]; then
-    body="$(printf '%s\nApply (worked before):\n%s' "${body}" "${ctm}")"
-  fi
-  if [[ -n "${epm}" ]]; then
-    body="$(printf '%s\nAvoid (failed before):\n%s' "${body}" "${epm}")"
-  fi
-
-  # Hard byte cap — the block is the first-dropped candidate but this bounds its size at the source
-  # too. UTF-8-boundary-safe: the header (U+00B7 ·) and bodies (em-dash / arrow) are multibyte, so a
-  # raw head -c could split a codepoint → invalid UTF-8 → downstream jq rejection (or a U+FFFD
-  # substitution on lenient jq) → whole-injection fail-open or a corrupted lesson; truncate_bytes_
-  # utf8_safe strips any partial trailing sequence.
-  local body_bytes
-  body_bytes="$(byte_len "${body}")"
-  if [[ "${body_bytes}" -gt "${LESSON_MAX_BYTES}" ]]; then
-    body="$(truncate_bytes_utf8_safe "${body}" "${LESSON_MAX_BYTES}")"
-    # C03: a source-cap cut drops the tail of the listed ids, so the manifest must say so rather than
-    # over-claim. The caller ORs this with the ceiling-pressure truncation into one manifest field.
-    capped=1
-  fi
-  ids="${ctm_ids}"
-  if [[ -n "${epm_ids}" ]]; then
-    ids="${ids:+${ids},}${epm_ids}"
-  fi
-  printf '%s %s\n%s' "${capped}" "${ids}" "${body}"
-}
-
 # Append a persisted drop-marker line. Fail-open: EVERY statement is guarded (|| true / || return 0
 # / if-then) so a logging glitch can NEVER trip set -e → the ERR trap → a spawn-suppressing exit
 # (a logging failure must not cost the injection). Bounded: the log is removed once it crosses
 # INJECT_DROP_LOG_MAX_BYTES (cheap soft rotation). Args: $1=dropped block label $2=pre-drop byte
 # size (DF-15: the OFFENDING over-ceiling total that prompted the drop, NOT the shrunk post-drop size)
-# $3=event token (optional, default DROP; PARTIAL = lesson truncate-and-keep — a DISTINCT word so the
-# aggregate_drop_rate ' DROP ' grep never counts partials as full drops) $4=kept residual bytes
-# (optional, PARTIAL rows only — appended as a trailing kept_bytes=N field; DROP rows are byte-identical
-# to the 2-arg form).
+# $3=event token (optional, default DROP; MARKERLOST for an omitted marker — a DISTINCT word so the
+# aggregate_drop_rate ' DROP ' grep never counts it as a full drop).
 append_drop_log() {
-  local block="${1}" pre_drop_bytes="${2}" event="${3:-DROP}" kept_bytes="${4:-}" kept_field="" log_dir="${INJECT_DROP_LOG%/*}" sz="" ts="" pdb="" overage=0
+  local block="${1}" pre_drop_bytes="${2}" event="${3:-DROP}" log_dir="${INJECT_DROP_LOG%/*}" sz="" ts="" pdb="" overage=0
   mkdir -p "${log_dir}" 2>/dev/null || return 0
   if [[ -f "${INJECT_DROP_LOG}" ]]; then
     sz="$(wc -c <"${INJECT_DROP_LOG}" 2>/dev/null | tr -cd '0-9' || true)"
@@ -594,39 +452,30 @@ append_drop_log() {
   [[ -z "${pdb}" ]] && pdb=0
   overage=$((10#${pdb} - INJECT_CTX_MAX_BYTES))
   ts="$(date -u +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || true)"
-  [[ -n "${kept_bytes}" ]] && kept_field=" kept_bytes=${kept_bytes}"
-  printf '%s [inject-scope-rules] %s agent=%s block=%s pre_drop_bytes=%s ceiling=%s overage_bytes=%s%s\n' \
-    "${ts}" "${event}" "${AGENT_TYPE}" "${block}" "${pre_drop_bytes}" "${INJECT_CTX_MAX_BYTES}" "${overage}" "${kept_field}" \
+  printf '%s [inject-scope-rules] %s agent=%s block=%s pre_drop_bytes=%s ceiling=%s overage_bytes=%s\n' \
+    "${ts}" "${event}" "${AGENT_TYPE}" "${block}" "${pre_drop_bytes}" "${INJECT_CTX_MAX_BYTES}" "${overage}" \
     >>"${INJECT_DROP_LOG}" 2>/dev/null || true
   return 0
 }
 
 # AM-T16: map a shed block label to its Read-resolvable rule-doc source path. Returns the SAME
 # *_SRC_FILE constant the block was extracted from, so a marker path can never drift from the real
-# source. The lesson block is the ONE runtime-derived exception (sourced at runtime from a JSON store
-# via jq, NOT a rule document) — it has no Read-resolvable path, so it returns empty and the caller
-# tags it instead. Args: $1=block label · stdout: source path (empty for lesson / unknown).
+# source. Args: $1=block label · stdout: source path (empty for an unknown label).
 marker_source_path() {
   case "${1}" in
     budget-dev | budget-analysis) printf '%s' "${BUDGET_SRC_FILE}" ;;
     wiki-untrusted) printf '%s' "${WIKI_UNTRUSTED_SRC_FILE}" ;;
-    *) : ;; # lesson (runtime-derived) + any unknown → no path
+    *) : ;; # unknown label → no path
   esac
 }
 
 # AM-T16: append one shed-block entry to the running (semicolon-joined, single-line) marker-entry
-# list. A rule-doc-sourced block carries its resolvable source path; the lesson block is tagged
-# EXACTLY "runtime-derived, no source path — recovers via re-spawn, not Read" and carries NO path
-# (its most-frequent-shed blind spot would otherwise pass the path-existence criterion vacuously, or
-# worse point at the all-agent JSON store). Args: $1=existing entries $2=block label · stdout: joined.
+# list; each entry carries its block's resolvable source path. Args: $1=existing entries $2=block
+# label · stdout: joined.
 append_marker_entry() {
   local existing="${1}" label="${2}" entry="" src_path
-  if [[ "${label}" == "lesson" ]]; then
-    entry="lesson: runtime-derived, no source path — recovers via re-spawn, not Read"
-  else
-    src_path="$(marker_source_path "${label}")"
-    entry="${label}: ${src_path}"
-  fi
+  src_path="$(marker_source_path "${label}")"
+  entry="${label}: ${src_path}"
   if [[ -z "${existing}" ]]; then
     printf '%s' "${entry}"
   else
@@ -654,7 +503,6 @@ build_drop_marker() {
 # `if` condition). Args: $1=block label · returns: 0 if present, 1 otherwise.
 block_is_present() {
   case "${1}" in
-    lesson) [[ -n "${LESSON_BLOCK}" ]] ;;
     wiki-untrusted) [[ -n "${WIKI_UNTRUSTED_BLOCK}" ]] ;;
     budget-analysis) [[ -n "${BUDGET_ANALYSIS_BLOCK}" ]] ;;
     budget-dev) [[ -n "${BUDGET_DEV_BLOCK}" ]] ;;
@@ -683,7 +531,7 @@ increment_spawn_attempts() {
 # omits the field. An unguarded call to a missing tool would trip the ERR trap — precisely the fail-open
 # violation this hook's discipline exists to prevent. Args: $1=assembled context · stdout: hex or empty.
 manifest_digest() {
-  local ctx="${1}" cmd="${INJECT_MANIFEST_DIGEST_CMD}" out=""
+  local ctx="${1}" cmd="${INJECT_MANIFEST_DIGEST_CMD}" hex=""
   if [[ -z "${cmd}" ]]; then
     if command -v shasum >/dev/null 2>&1; then
       cmd="shasum"
@@ -695,22 +543,19 @@ manifest_digest() {
   fi
   command -v "${cmd}" >/dev/null 2>&1 || return 0
   case "${cmd##*/}" in
-    shasum) out="$(printf '%s' "${ctx}" | "${cmd}" -a 256 2>/dev/null | awk '{ print $1 }' || true)" ;;
-    *) out="$(printf '%s' "${ctx}" | "${cmd}" 2>/dev/null | awk '{ print $1 }' || true)" ;;
+    shasum) hex="$(printf '%s' "${ctx}" | "${cmd}" -a 256 2>/dev/null | awk '{ print $1 }' || true)" ;;
+    *) hex="$(printf '%s' "${ctx}" | "${cmd}" 2>/dev/null | awk '{ print $1 }' || true)" ;;
   esac
-  printf '%s' "${out}"
+  printf '%s' "${hex}"
 }
 
 # C03: the Read-resolvable source a kept block came from. Delegates the rule-doc blocks to
 # marker_source_path (one declaration, so a manifest path can never drift from the extraction source)
-# and adds the two the drop marker never needs: emit/meter are printf'd in THIS file, and the lesson
-# block's source IS the runtime store (the drop marker withholds that path because a shed lesson
-# recovers via re-spawn, but a manifest describing what WAS injected should name where it came from).
+# and adds the two the drop marker never needs: emit/meter are printf'd in THIS file.
 # Args: $1=block label · stdout: source path.
 manifest_block_source() {
   case "${1}" in
     emit | meter) printf '%s' "${BASH_SOURCE[0]}" ;; # the two blocks still authored in shell — see build_emit_format_block
-    lesson) printf '%s' "${LESSON_SRC_FILE}" ;;
     *) marker_source_path "${1}" ;;
   esac
 }
@@ -725,7 +570,6 @@ manifest_block_kept() {
     wiki-untrusted) [[ "${keep_wiki_untrusted}" -eq 1 && -n "${WIKI_UNTRUSTED_BLOCK}" ]] ;;
     budget-dev) [[ "${keep_budget_dev}" -eq 1 && -n "${BUDGET_DEV_BLOCK}" ]] ;;
     budget-analysis) [[ "${keep_budget_analysis}" -eq 1 && -n "${BUDGET_ANALYSIS_BLOCK}" ]] ;;
-    lesson) [[ "${keep_lesson}" -eq 1 && -n "${LESSON_BLOCK}" ]] ;;
     *) return 1 ;;
   esac
 }
@@ -733,7 +577,7 @@ manifest_block_kept() {
 # C03: the ordered "label:source_path" list of kept blocks, semicolon-joined. Order is the assembly
 # display order, so the record reads as the child saw it. stdout: the joined list (may be empty).
 build_manifest_blocks() {
-  local out="" label src
+  local joined="" label src
   local labels
   # Strict-mode IFS is $'\n\t', so the space-separated roster needs an explicit split.
   IFS=' ' read -r -a labels <<<"${MANIFEST_BLOCK_LABELS}"
@@ -742,14 +586,14 @@ build_manifest_blocks() {
     # shellcheck disable=SC2310
     if manifest_block_kept "${label}"; then
       src="$(manifest_block_source "${label}")"
-      if [[ -z "${out}" ]]; then
-        out="${label}:${src}"
+      if [[ -z "${joined}" ]]; then
+        joined="${label}:${src}"
       else
-        out="${out};${label}:${src}"
+        joined="${joined};${label}:${src}"
       fi
     fi
   done
-  printf '%s' "${out}"
+  printf '%s' "${joined}"
 }
 
 # C03: append the one-line positive-injection manifest. Fail-open on EVERY statement (identical idiom
@@ -760,7 +604,7 @@ build_manifest_blocks() {
 # Args: $1=assembled context $2=assembled byte size.
 append_manifest_log() {
   local ctx="${1}" ctx_size="${2}" log_dir="${INJECT_MANIFEST_LOG%/*}"
-  local sz="" ts="" raw_id="" agent_id="" safe_type="" digest="" digest_field="" lesson_field="" blocks=""
+  local sz="" ts="" raw_id="" agent_id="" safe_type="" digest="" digest_field="" blocks=""
   mkdir -p "${log_dir}" 2>/dev/null || return 0
   if [[ -f "${INJECT_MANIFEST_LOG}" ]]; then
     sz="$(wc -c <"${INJECT_MANIFEST_LOG}" 2>/dev/null | tr -cd '0-9' || true)"
@@ -780,14 +624,10 @@ append_manifest_log() {
   [[ -z "${safe_type}" ]] && safe_type="unknown"
   digest="$(manifest_digest "${ctx}")"
   [[ -n "${digest}" ]] && digest_field=" digest=${digest}"
-  # shellcheck disable=SC2310 # pure predicate in a condition — set -e suppression intended
-  if [[ -n "${LESSON_IDS}" ]] && manifest_block_kept "lesson"; then
-    lesson_field=" lessons=${LESSON_IDS} lesson_truncated=${LESSON_TRUNCATED}"
-  fi
   blocks="$(build_manifest_blocks)"
   ts="$(date -u +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || true)"
-  printf '%s [inject-scope-rules] MANIFEST agent_id=%s agent=%s ctx_bytes=%s%s%s blocks=%s\n' \
-    "${ts}" "${agent_id}" "${safe_type}" "${ctx_size}" "${digest_field}" "${lesson_field}" "${blocks}" \
+  printf '%s [inject-scope-rules] MANIFEST agent_id=%s agent=%s ctx_bytes=%s%s blocks=%s\n' \
+    "${ts}" "${agent_id}" "${safe_type}" "${ctx_size}" "${digest_field}" "${blocks}" \
     >>"${INJECT_MANIFEST_LOG}" 2>/dev/null || true
   return 0
 }
@@ -805,18 +645,18 @@ join_block() {
 
 # Assemble additionalContext: the two NON-DROPPABLE blocks first (EMIT-FORMAT, then METER), then the
 # wiki-untrusted security clause (H2/R2 — displayed high, right after the meter, so a Bash-holding
-# wiki-reader sees it prominently), followed by the droppable blocks in display order (budget-dev,
-# budget-analysis, lesson), each gated by its keep-flag. Reads the module-level *_BLOCK variables.
+# wiki-reader sees it prominently), followed by the droppable budget blocks in display order (budget-dev,
+# budget-analysis), each gated by its keep-flag. Reads the module-level *_BLOCK variables.
 # Emit-first/meter-second is load-bearing: both must survive the 2KB preview, so neither may sit
 # behind a larger droppable block. Emit leads as the PRIMARY fix.
-# Args: $1=keep_budget_dev $2=keep_budget_analysis $3=keep_lesson $4=keep_wiki_untrusted (each 0/1).
-# Every call site passes all four positionally — a mismatched site does not fail, it shifts the flags.
+# Args: $1=keep_budget_dev $2=keep_budget_analysis $3=keep_wiki_untrusted (each 0/1).
+# Every call site passes all three positionally — a mismatched site does not fail, it shifts the flags.
 # stdout: the assembled context (no trailing newline). DROP PRIORITY (distinct from display order):
 # wiki-untrusted is the FIRST block the drop loop sheds under ceiling pressure (its light roster never
-# overflows, so this is inert in practice), then the AD-3 lesson block, then the two budget blocks
-# (DISJOINT rosters make their mutual order inert).
+# overflows, so this is inert in practice), then the two budget blocks (DISJOINT rosters make their
+# mutual order inert).
 assemble_ctx() {
-  local keep_budget_dev="${1}" keep_budget_analysis="${2}" keep_lesson="${3}" keep_wiki_untrusted="${4}"
+  local keep_budget_dev="${1}" keep_budget_analysis="${2}" keep_wiki_untrusted="${3}"
   local ctx=""
   if [[ -n "${EMIT_BLOCK}" ]]; then
     ctx="${EMIT_BLOCK}"
@@ -833,9 +673,6 @@ assemble_ctx() {
   if [[ "${keep_budget_analysis}" -eq 1 && -n "${BUDGET_ANALYSIS_BLOCK}" ]]; then
     ctx="$(join_block "${ctx}" "${BUDGET_ANALYSIS_BLOCK}")"
   fi
-  if [[ "${keep_lesson}" -eq 1 && -n "${LESSON_BLOCK}" ]]; then
-    ctx="$(join_block "${ctx}" "${LESSON_BLOCK}")"
-  fi
   printf '%s' "${ctx}"
 }
 
@@ -849,20 +686,6 @@ BUDGET_ANALYSIS_BLOCK="$(extract_scope_block "${BUDGET_ANALYSIS_AGENTS}" "${BUDG
 # wiki-untrusted security clause (H2/R2) — roster-gated to the Bash-holding wiki-reader cluster (an
 # empty extraction self-skips for every other agent).
 WIKI_UNTRUSTED_BLOCK="$(extract_scope_block "${WIKI_UNTRUSTED_AGENTS}" "${WIKI_UNTRUSTED_SRC_FILE}" "${WIKI_UNTRUSTED_MARKER_START}" "${WIKI_UNTRUSTED_MARKER_END}" "wiki-untrusted")"
-
-# AD-3 lesson-recall block — universal (any agent_type), self-skipping on no store / no match
-# (a no-match spawn is unchanged). NOT a roster gate: build_lesson_block returns empty unless
-# THIS agent has matching lessons.
-LESSON_RAW="$(build_lesson_block)"
-LESSON_BLOCK=""
-LESSON_IDS=""
-LESSON_TRUNCATED=0
-if [[ -n "${LESSON_RAW}" ]]; then
-  LESSON_META="$(printf '%s\n' "${LESSON_RAW}" | head -1)"
-  LESSON_BLOCK="$(printf '%s\n' "${LESSON_RAW}" | tail -n +2)"
-  LESSON_TRUNCATED="${LESSON_META%% *}"
-  LESSON_IDS="${LESSON_META#* }"
-fi
 
 # Emit-format block — ALL subagents (universal, ALWAYS-ON), assembled FIRST. Unconditional:
 # independent of SUBAGENT_BUDGET_METER_OFF + read_max_turns (the two coupling holes that would
@@ -888,20 +711,19 @@ fi
 
 # Combine blocks (EMIT-FORMAT first, METER second), then enforce the byte ceiling. assemble_ctx
 # places the two non-droppable blocks first + appends the kept droppable blocks; the drop loop
-# below removes the lowest-value blocks in the PINNED order wiki-untrusted → lesson → budget-analysis
+# below removes the lowest-value blocks in the PINNED order wiki-untrusted → budget-analysis
 # → budget-dev until the total fits INJECT_CTX_MAX_BYTES.
 # Neither emit-format nor meter is a drop candidate, so under extreme pressure only those two
 # survive.
 keep_budget_dev=1
 keep_budget_analysis=1
-keep_lesson=1
 keep_wiki_untrusted=1
-CTX="$(assemble_ctx "${keep_budget_dev}" "${keep_budget_analysis}" "${keep_lesson}" "${keep_wiki_untrusted}")"
+CTX="$(assemble_ctx "${keep_budget_dev}" "${keep_budget_analysis}" "${keep_wiki_untrusted}")"
 ctx_bytes="$(byte_len "${CTX}")"
 # wiki-untrusted FIRST — its LIGHT roster (Bash-holding wiki-readers) never overflows, so this shed
 # is inert in practice, but ordering it first protects the budget blocks if the roster ever grows to
-# a heavier agent. lesson next (AD-3 best-effort recall), then the two budget blocks (DISJOINT
-# rosters, mutual order inert). Inert with the real sources: only an oversized source reaches it.
+# a heavier agent. Then the two budget blocks (DISJOINT rosters, mutual order inert). Inert with the
+# real sources: only an oversized source reaches it.
 #
 # T16: the loop compares against effective_ceiling (FULL while nothing has shed, then FULL minus the
 # rendered marker for the shed set, recomputed after each shed) and accumulates a marker entry for
@@ -909,37 +731,8 @@ ctx_bytes="$(byte_len "${CTX}")"
 effective_ceiling="${INJECT_CTX_MAX_BYTES}"
 marker_entries=""
 shed_count=0
-for drop_block in wiki-untrusted lesson budget-analysis budget-dev; do
+for drop_block in wiki-untrusted budget-analysis budget-dev; do
   [[ "${ctx_bytes}" -le "${effective_ceiling}" ]] && break
-
-  # AD-3 lesson TRUNCATE-AND-KEEP short-circuit (attempted BEFORE the full-drop path). The 1200B-
-  # capped lesson is the CTM/EPM recall signal — fully dropping it on every near-ceiling DEV spawn
-  # loses the whole signal, so keep a truncated slice when one whole CTM line still fits. Residual =
-  # the room left for the lesson TEXT measured against the FULL ceiling (never effective_ceiling — a
-  # marker reserve must not also shrink the lesson's own budget) minus the join separator. residual
-  # >= floor → keep a UTF-8-boundary-safe truncation (guaranteed >=1 whole CTM line) and BREAK WITHOUT
-  # lowering the ceiling / recording a shed, so shed_count stays 0 and no in-context drop marker is
-  # emitted; the ONLY record is a PARTIAL sink row (distinct event token — never counted by the
-  # aggregate ' DROP ' grep). Only a sub-floor residual falls through to the normal full-drop path below.
-  if [[ "${drop_block}" == "lesson" && -n "${LESSON_BLOCK}" ]]; then
-    lesson_base_ctx="$(assemble_ctx "${keep_budget_dev}" "${keep_budget_analysis}" 0 "${keep_wiki_untrusted}")"
-    lesson_base_bytes="$(byte_len "${lesson_base_ctx}")"
-    lesson_residual=$((INJECT_CTX_MAX_BYTES - lesson_base_bytes - LESSON_JOIN_SEP_BYTES))
-    if [[ "${lesson_residual}" -ge "${LESSON_MIN_RESIDUAL_BYTES}" ]]; then
-      # Sink row FIRST — ctx_bytes still holds the pre-truncation over-ceiling assembled total here
-      # (the reassembly below overwrites it, and truncate overwrites LESSON_BLOCK in place).
-      append_drop_log "lesson" "${ctx_bytes}" "PARTIAL" "${lesson_residual}"
-      LESSON_BLOCK="$(truncate_bytes_utf8_safe "${LESSON_BLOCK}" "${lesson_residual}")"
-      # C03: the manifest lists the SELECTED lesson ids, whose tail this cut may have removed — the
-      # flag keeps the record from over-claiming what the child actually received.
-      LESSON_TRUNCATED=1
-      keep_lesson=1
-      CTX="$(assemble_ctx "${keep_budget_dev}" "${keep_budget_analysis}" "${keep_lesson}" "${keep_wiki_untrusted}")"
-      ctx_bytes="$(byte_len "${CTX}")"
-      printf '[inject-scope-rules] lesson block truncated to %d-byte residual and kept (agent=%s)\n' "${lesson_residual}" "${AGENT_TYPE}" >&2
-      break
-    fi
-  fi
 
   # DF-15: the OFFENDING size is the over-ceiling total that PROMPTED this drop — captured BEFORE the
   # block is removed. The post-drop reassembly below shrinks ctx_bytes, so logging that would under-
@@ -974,25 +767,12 @@ for drop_block in wiki-untrusted lesson budget-analysis budget-dev; do
   # identical to before).
   case "${drop_block}" in
     wiki-untrusted) keep_wiki_untrusted=0 ;;
-    lesson) keep_lesson=0 ;;
     budget-analysis) keep_budget_analysis=0 ;;
     budget-dev) keep_budget_dev=0 ;;
     *) ;; # unreachable — the loop iterates a fixed literal set; present only to satisfy SC2249.
   esac
-  CTX="$(assemble_ctx "${keep_budget_dev}" "${keep_budget_analysis}" "${keep_lesson}" "${keep_wiki_untrusted}")"
+  CTX="$(assemble_ctx "${keep_budget_dev}" "${keep_budget_analysis}" "${keep_wiki_untrusted}")"
   ctx_bytes="$(byte_len "${CTX}")"
-  # After a PRESENT lesson's FULL-drop, BREAK *iff the lesson-free assembly now fits the FULL ceiling*.
-  # The marker budgeting (effective_ceiling = FULL - 2 - the rendered marker) is otherwise the ONLY
-  # reason the top-of-loop guard would keep going, cascading into a budget block whenever the base
-  # sits inside the marker band — a block shed purely to pay for a marker. With the break the marker
-  # is what yields: the post-loop size check omits it and records MARKERLOST. Nothing is parked ABOVE
-  # the full ceiling.
-  # THREE guards, all required: (a) this IS the lesson iteration, (b) a lesson was actually present
-  # (else the loop must proceed to shed the lower-priority blocks — the forced-shed path the marker /
-  # dropsink suites exercise), (c) the lesson-free ctx already fits the FULL ceiling (a SYNTHETIC
-  # over-full assembly, e.g. an oversized budget-dev fixture, is genuinely too big and MUST keep
-  # shedding past the lesson).
-  [[ "${drop_block}" == "lesson" && -n "${LESSON_BLOCK}" && "${ctx_bytes}" -le "${INJECT_CTX_MAX_BYTES}" ]] && break
 done
 
 # T16 in-context drop marker — appended AFTER the loop, and size-checked before it is appended. The

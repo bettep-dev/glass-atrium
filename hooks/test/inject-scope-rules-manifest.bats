@@ -3,9 +3,8 @@
 #
 #   The drop sink records only what was SHED, so "did this agent actually see that rule at that spawn"
 #   was an assumption. C03 emits one bounded manifest line per injection-attempted spawn naming the
-#   kept block labels with their source paths, the assembled byte size, an optional digest and — for
-#   the runtime-derived lesson block alone — the injected lesson ids and scores. Its reader
-#   (`--manifest-coverage`) is a required co-deliverable: the writer alone is an orphaned signal.
+#   kept block labels with their source paths, the assembled byte size and an optional digest. Its
+#   reader (`--manifest-coverage`) is a required co-deliverable: the writer alone is an orphaned signal.
 #
 #   ACs pinned here:
 #     AC1  an injection-attempted spawn emits EXACTLY one manifest line naming the kept block labels
@@ -15,13 +14,12 @@
 #          with manifest emission enabled.
 #     AC4  an unwritable manifest sink leaves the injection and the exit status unchanged (fail-open).
 #     AC5  an absent digest tool still writes the line, without a digest field, exit status unchanged.
-#     AC6  the kept lesson carries its ids and scores plus a truncation flag that never over-claims.
 #     AC7  the reader reports per-agent block coverage matching the fixture sink.
 #
-#   FAIL-AT-HEAD: 12 of the 14 rows fail against the pre-C03 hook, which writes no manifest sink at all
+#   FAIL-AT-HEAD: 9 of the 11 C03 rows fail against the pre-C03 hook, which writes no manifest sink at all
 #   and treats the reader flag as an ordinary no-arg hook invocation. Every row that could pass VACUOUSLY
-#   on an absent sink (the two that assert a field is NOT present) is anchored by an accompanying
-#   line-count assertion, so absence of the whole sink fails them. AC3 and AC4 are the two deliberate
+#   on an absent sink (the one that asserts a field is NOT present) is anchored by an accompanying
+#   line-count assertion, so absence of the whole sink fails it. AC3 and AC4 are the two deliberate
 #   exceptions — preserved invariants guarding that the new sink never corrupts the drop-rate signal and
 #   that its append can never trip the ERR trap into a spawn-suppressing exit.
 #
@@ -39,7 +37,6 @@ setup() {
   MANIFEST="${BATS_TEST_TMPDIR}/manifest.log"
   DROPLOG="${BATS_TEST_TMPDIR}/drop.log"
   COUNTER="${BATS_TEST_TMPDIR}/spawns.count"
-  LESSONS="${BATS_TEST_TMPDIR}/lessons.json"
 
   # A BUDGET-DEV fixture whose one small block sits well under the ceiling → a no-drop spawn.
   BUDGET_FIT="${BATS_TEST_TMPDIR}/budget-fit.md"
@@ -62,13 +59,12 @@ setup() {
 
 # Drive the hook's SubagentStart injection path. All scope sources except the BUDGET-DEV block are
 # sandboxed to /nonexistent and the meter is off, so for a BUDGET_DEV_AGENTS member the assembly is
-# emit + budget-dev (+ lesson when a store is given). $1=agent $2=budget source $3=lessons store
-# $4=extra env assignment (may be empty).
+# emit + budget-dev. $1=agent $2=budget source $3=extra env assignment (may be empty).
 run_inject() {
-  local agent="${1}" budget_src="${2}" lessons="${3:-/nonexistent}" extra="${4:-IGNORED_BY_HOOK=1}"
+  local agent="${1}" budget_src="${2}" extra="${3:-IGNORED_BY_HOOK=1}"
   run bash -c '
-    agent="$1"; hook="$2"; budget="$3"; lessons="$4"; extra="$5"
-    manifest="$6"; droplog="$7"; counter="$8"; ceiling="$9"
+    agent="$1"; hook="$2"; budget="$3"; extra="$4"
+    manifest="$5"; droplog="$6"; counter="$7"; ceiling="$8"
     printf "%s" "{\"agent_type\":\"${agent}\",\"agent_id\":\"sess-A1\"}" | env \
       INJECT_SCOPE_RULES_MANIFEST_LOG="${manifest}" \
       INJECT_SCOPE_RULES_DROP_LOG="${droplog}" \
@@ -78,10 +74,9 @@ run_inject() {
       INJECT_SCOPE_RULES_AGENTS_DIR=/nonexistent \
       INJECT_SCOPE_RULES_BUDGET_SRC="${budget}" \
       INJECT_SCOPE_RULES_WIKI_UNTRUSTED_SRC=/nonexistent \
-      INJECT_SCOPE_RULES_LESSONS_SRC="${lessons}" \
       "${extra}" \
       "${hook}"
-  ' _ "${agent}" "${HOOK_SH}" "${budget_src}" "${lessons}" "${extra}" \
+  ' _ "${agent}" "${HOOK_SH}" "${budget_src}" "${extra}" \
     "${MANIFEST}" "${DROPLOG}" "${COUNTER}" "${CEILING_OVERRIDE:-9984}"
 }
 
@@ -95,19 +90,6 @@ run_query() {
       INJECT_SCOPE_RULES_SPAWN_COUNTER="${counter}" \
       "${hook}" "${mode}" </dev/null
   ' _ "${HOOK_SH}" "${1}" "${MANIFEST}" "${DROPLOG}" "${COUNTER}"
-}
-
-# A lesson store for $1 with a short first CTM line plus a $2-char filler, mirroring the dropsink
-# suite's fixture so the truncate-keep boundary is dialable.
-write_lessons() {
-  local agent="${1}" fill="${2}"
-  jq -nc --arg a "${agent}" --argjson n "${fill}" '{
-    ctm: [
-      {agent: $a, task_type: "bug-fix", text: "KEPTLINE_ONE_WHOLE", score: 5, frequency: 9},
-      {agent: $a, task_type: "feature", text: ("F" * $n), score: 4, frequency: 8}
-    ],
-    epm: [{agent: $a, task_type: "refactor", text: "EPM_NEVER_EVAL", score: 2, frequency: 3}]
-  }' >"${LESSONS}"
 }
 
 manifest_lines() {
@@ -245,7 +227,7 @@ assert_manifest_has() {
 # ── AC5 — absent digest tool → line still written, digest field omitted ────────────────────────────
 
 @test "AC5: an absent digest tool writes the manifest line without a digest field" {
-  run_inject "glass-atrium-dev-front" "${BUDGET_FIT}" /nonexistent \
+  run_inject "glass-atrium-dev-front" "${BUDGET_FIT}" \
     "INJECT_SCOPE_RULES_DIGEST_CMD=ga-no-such-digest-tool"
   assert_status 0
   [[ "$(manifest_lines)" == "1" ]] || {
@@ -266,47 +248,6 @@ assert_manifest_has() {
   assert_status 0
   grep -qE 'digest=[0-9a-f]{64}' "${MANIFEST}" || {
     echo "no hex digest recorded (log: $(cat "${MANIFEST}"))" >&2
-    return 1
-  }
-}
-
-# ── AC6 — kept lesson carries its ids and scores; the flag never over-claims ───────────────────────
-
-@test "AC6: a kept lesson block records its ids and scores with lesson_truncated=0" {
-  write_lessons "glass-atrium-dev-front" 40
-  run_inject "glass-atrium-dev-front" "${BUDGET_FIT}" "${LESSONS}"
-  assert_status 0
-  assert_manifest_has 'lessons=ctm:bug-fix/keptline-one-whole@5'
-  assert_manifest_has 'epm:refactor/epm-never-eval@2'
-  assert_manifest_has 'lesson_truncated=0'
-  assert_manifest_has "lesson:${LESSONS}"
-}
-
-@test "AC6: a source-capped lesson records lesson_truncated=1 rather than over-claiming" {
-  # A filler far past LESSON_MAX_BYTES (1200) forces the in-source cap.
-  write_lessons "glass-atrium-dev-front" 4000
-  run_inject "glass-atrium-dev-front" "${BUDGET_FIT}" "${LESSONS}"
-  assert_status 0
-  assert_manifest_has 'lesson_truncated=1'
-}
-
-@test "AC6: a fully shed lesson is named neither as a kept block nor by its ids" {
-  write_lessons "glass-atrium-dev-front" 40
-  # BUDGET_BIG breaches the ceiling → the lesson is the first real shed for this assembly.
-  run_inject "glass-atrium-dev-front" "${BUDGET_BIG}" "${LESSONS}"
-  assert_status 0
-  # Anchored: the line must exist and simply lack the lesson fields (an absent sink would pass the two
-  # negative assertions below vacuously).
-  [[ "$(manifest_lines)" == "1" ]] || {
-    echo "expected 1 manifest line, got $(manifest_lines)" >&2
-    return 1
-  }
-  ! grep -q 'lessons=' "${MANIFEST}" || {
-    echo "manifest lists lesson ids for a shed lesson (log: $(cat "${MANIFEST}"))" >&2
-    return 1
-  }
-  ! grep -q 'lesson:' "${MANIFEST}" || {
-    echo "manifest names the lesson as kept after it was shed (log: $(cat "${MANIFEST}"))" >&2
     return 1
   }
 }

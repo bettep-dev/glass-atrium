@@ -90,7 +90,6 @@ inject_ctx() {
     INJECT_SCOPE_RULES_DROP_LOG="${INJECT_SCOPE_RULES_DROP_LOG}" \
     INJECT_SCOPE_RULES_SPAWN_COUNTER="${INJECT_SCOPE_RULES_SPAWN_COUNTER}" \
     INJECT_SCOPE_RULES_MANIFEST_LOG="${INJECT_SCOPE_RULES_MANIFEST_LOG}" \
-    INJECT_SCOPE_RULES_LESSONS_SRC=/nonexistent \
     bash "${INJECT_HOOK}" 2>/dev/null | jq -r '.hookSpecificOutput.additionalContext // ""'
 }
 
@@ -212,7 +211,7 @@ bytelen() { wc -c | tr -cd '0-9'; }
       printf "%s" "$(jq -nc --arg a "$1" '\''{agent_type:$a}'\'')" | env \
         INJECT_SCOPE_RULES_BUDGET_SRC="$2" INJECT_SCOPE_RULES_WIKI_UNTRUSTED_SRC="$3" \
         INJECT_SCOPE_RULES_AGENTS_DIR="$4" INJECT_SCOPE_RULES_DROP_LOG="$5" \
-        INJECT_SCOPE_RULES_SPAWN_COUNTER="$6" INJECT_SCOPE_RULES_LESSONS_SRC=/nonexistent \
+        INJECT_SCOPE_RULES_SPAWN_COUNTER="$6" \
         bash "$7" 2>&1
     ' _ "${agent}" "${BUDGET_SRC}" "${WIKI_UNTRUSTED_SRC}" "${AGENTS_DIR}" \
       "${INJECT_SCOPE_RULES_DROP_LOG}" "${INJECT_SCOPE_RULES_SPAWN_COUNTER}" "${INJECT_HOOK}"
