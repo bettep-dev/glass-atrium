@@ -636,6 +636,46 @@ model AutoagentProposal {
   @@schema("core")
 }
 
+/// Source: autoagent/daemon-apply.sh — one row per apply that landed bytes in an
+/// agent file, keyed by apply time. The queryable copy: the JSONL applied row holds
+/// the same record and survives the database drop that removes this table.
+/// An incomplete index → a flip or record-step failure, an exit-12 flip and a backfill
+/// flip leave no row here, so a watermark reader cross-checks the JSONL applied rows.
+///
+/// Append-only via migration raw SQL only (20261002000000_add_autoagent_apply_records);
+/// the Prisma DSL declares neither part, so a squash MUST carry that SQL:
+///   - trigger autoagent_apply_records_append_only → rejects UPDATE, DELETE, TRUNCATE
+///   - CHECKs → both hashes a whole 64-hex digest, landed_diff non-empty
+/// Guards app code paths, not a security boundary: the owning role can disable the
+/// trigger, session_replication_role=replica skips it, and a DROP fires nothing.
+model AutoagentApplyRecord {
+  id BigInt @id @default(autoincrement())
+
+  // Proposal identity copied in, no relation: ids get reused across database drops
+  proposalId   BigInt   @map("proposal_id")
+  cycleDate    DateTime @map("cycle_date") @db.Date
+  patternLabel String   @map("pattern_label") @db.VarChar(256)
+  targetFile   String   @map("target_file")
+  targetAgent  String?  @map("target_agent") @db.VarChar(64)
+
+  // Landing instant, same as the JSONL row's; no default → an insert omitting it fails
+  appliedAt DateTime @map("applied_at") @db.Timestamptz(6)
+  // apply_diff branch that landed: `recount` (located diff) | `eof-append` (header-less fragment)
+  strategy  String   @db.VarChar(16)
+
+  beforeSha256 String  @map("before_sha256") @db.VarChar(64)
+  afterSha256  String  @map("after_sha256") @db.VarChar(64)
+  // Before-image → verified target, never the proposal text: --recount can land at an offset
+  landedDiff   String  @map("landed_diff")
+  // Null = the worker model id was unresolvable (fail-open config helper)
+  modelId      String? @map("model_id") @db.VarChar(64)
+
+  // Watermark reads: applied_at range, id as the keyset tie-break
+  @@index([appliedAt, id], map: "autoagent_apply_records_applied_at_idx")
+  @@map("autoagent_apply_records")
+  @@schema("core")
+}
+
 /// Source: P3 git-free self-update pipeline — single-active-job tracker for the
 /// route-enqueued updater. A crashed updater leaves a detectably-stale row
 /// (heartbeat_at frozen), swept via the status index. Single-active-job is NOT
