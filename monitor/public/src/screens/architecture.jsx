@@ -2167,9 +2167,8 @@ function applyDefaultViewAR(instance, root) {
 	const targetAbs = getDefaultViewScaleAR(drawableW, s.height, realW, realH);
 	const frameH = (realH * targetAbs) / DEFAULT_VIEW_SHARE;
 
-	// 공개 zoom 은 상대(=절대/originalState) · init 직후 현재 절대행렬 = viewport CTM .a → relative = targetAbs / 현재절대.
-	const curAbs = readViewportScaleAR(root) || s.realZoom || 1;
-	const relative = curAbs > 0 ? targetAbs / curAbs : targetAbs;
+	// zoom() is relative to the zoom resize() just rebased on (= realZoom) · the CTM lags it by a frame after a zoom, so it is not the base
+	const relative = s.realZoom > 0 ? targetAbs / s.realZoom : targetAbs;
 	zoomUnclampedAR(instance, relative);
 
 	// pan({x,y}) 는 viewport CTM 의 e/f(화면픽셀 평행이동) 직접 설정 · viewBox 원점 상쇄(-origin*scale) + 양축 가운데 slack.
@@ -2216,15 +2215,6 @@ function getControlsGutterAR(root) {
 	const controls = canvas?.querySelector(".arch-zoom-controls");
 	if (!controls) return 0;
 	return Math.max(0, canvas.getBoundingClientRect().right - controls.getBoundingClientRect().left);
-}
-
-// .svg-pan-zoom_viewport 의 실제 변환행렬 스케일(.a) = 사용자가 측정하는 절대 스케일.
-function readViewportScaleAR(root) {
-	if (!root) return 0;
-	const vp = root.querySelector(".svg-pan-zoom_viewport");
-	if (!vp || typeof vp.getCTM !== "function") return 0;
-	const m = vp.getCTM();
-	return m ? m.a : 0;
 }
 
 // 캔버스 인라인 sizing (short-graph clamp) 제거 → CSS 기본 flex-fill 복원 (이전 그래프 height/flex 잔존이 다음 측정 오염 차단).

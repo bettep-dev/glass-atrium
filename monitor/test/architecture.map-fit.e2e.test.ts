@@ -70,7 +70,7 @@ const ZOOM_IN_PRESSES_BEFORE_RESET = 8;
 // slack difference between opposite sides of a centred drawing — viewBox padding asymmetry at scale <= 0.7 plus rounding
 const MAX_CENTRING_SKEW_PX = 8;
 
-// CTM-derived reads (labelPx, scale) carry float noise → the label floor and the scale-1 cap compare within it
+// CTM-derived reads (labelPx, scale) carry float noise → the zoomed-in label floor and the natural-size default share compare within it
 const CTM_FLOAT_TOLERANCE = 1e-6;
 
 // 서브픽셀 여유. 링(stroke-width 2.5 사용자 단위)까지 client rect 에 들어오므로
@@ -343,6 +343,22 @@ async function readResetAfterZoomIn(width: number, height: number, extraSource?:
 		const zoomedScale = await readViewportScale(page, canvasSelector);
 		await pressZoomControl(page, canvasSelector, "Reset diagram view");
 		return { defaultScale, zoomedScale, resetScale: await readViewportScale(page, canvasSelector) };
+	} finally {
+		await page.close();
+	}
+}
+
+// default-view scale, and where Reset lands when it follows a zoom-in inside one frame — before the library flushes that zoom into the CTM
+async function readResetInZoomFrame(width: number, height: number) {
+	const { page, canvasSelector } = await openFittedPage(width, height);
+	try {
+		const defaultScale = await readViewportScale(page, canvasSelector);
+		await page.evaluate((sel) => {
+			const canvas = document.querySelector(sel);
+			for (const key of ["+", "0"]) canvas?.dispatchEvent(new KeyboardEvent("keydown", { key, bubbles: true }));
+		}, canvasSelector);
+		await page.evaluate(() => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+		return { defaultScale, resetScale: await readViewportScale(page, canvasSelector) };
 	} finally {
 		await page.close();
 	}
@@ -642,6 +658,12 @@ for (const { width, height } of VIEWPORTS) {
 		});
 	}
 }
+
+test("Reset pressed in the same frame as a zoom-in still lands on the default view", async () => {
+	const { width, height } = VIEWPORTS[0];
+	const r = await readResetInZoomFrame(width, height);
+	assert.ok(Math.abs(r.resetScale - r.defaultScale) < 1e-3, `Reset landed at ${r.resetScale.toFixed(4)}, not the default ${r.defaultScale.toFixed(4)}`);
+});
 
 test("a zone whose title repeats its lone member hides the title and keeps no band for it", async () => {
 	const r = await readZones(1440, 900, REDUNDANT_TITLE_ZONE);
