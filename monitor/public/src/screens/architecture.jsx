@@ -1523,8 +1523,9 @@ function HookChainDetail({ state }) {
 									<span className="fs-meta text-faint">{row.hookCount} hooks</span>
 								</summary>
 								<ul className="arch-hook-groups">
-									{row.groups.map((group) => (
-										<li key={group.matcher} className="arch-hook-group">
+									{/* position in the key — settings.json may repeat a matcher (or leave it empty) within one event; order is fixed settings order */}
+									{row.groups.map((group, groupIndex) => (
+										<li key={`${groupIndex}-${group.matcher}`} className="arch-hook-group">
 											<span className="fs-meta font-mono text-dim">{group.matcher}</span>
 											<ul className="arch-hook-list">
 												{group.hooks.map((hook, index) => (
