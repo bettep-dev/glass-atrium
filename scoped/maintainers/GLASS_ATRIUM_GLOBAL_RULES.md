@@ -32,11 +32,11 @@ The charter's head comment names the class of shape; what binds is below.
 | Schema-cap token ABSENCE | same suite (C1/C2) | The charter must carry NO schema size-cap key name and not the old "cap every field" prescription. State any cap rule in the skill, never here. Do not paste a cap token into this note either. |
 | Emit marker phrase | `hooks/test/emit-discipline-doc-consistency.bats` (S1) | The hyphenated phrase `print-block-then-emit` present, grepped case-insensitively; the same phrase must also be present in `hooks/inject-scope-rules.sh` and `agents/glass-atrium-qa-code-reviewer.md`. |
 
-- **A renamed heading is worse than a deleted one.** `text.find` returns -1, the test calls `skipTest`, and unittest scores a skip as green — so a rename goes quiet instead of red.
+- **A renamed, deleted, demoted or indented heading fails the suite.** The test filters `_split_heading_blocks` on `startswith` the needle and asserts exactly one block, so any of these goes red.
 - **The `[ALL]` suffix is free, the rest of the heading is not**: the test's needle is the prefix `### Turn Budget & Graceful Exit`, used by `find` for the offset and by `startswith` for the block, so the suffix may change while no word before it may.
 - **Never write that heading literal anywhere ABOVE its own position**: the test resolves the offset with a first-occurrence find, so a second copy higher up reports the wrong offset.
-- **Keep it a line-start `###` heading**: the block lookup is a `next(...)` over `_split_heading_blocks` filtered on `startswith`, so a demoted or indented heading raises `StopIteration` — a test ERROR rather than a legible failure.
-- **The test reads the LIVE install** (`daemon_cycle.GLOBAL_RULES_FILE` → `HOME/.claude/agents/GLASS_ATRIUM_GLOBAL_RULES.md`), never the repo tree — re-measure the deployed copy before a PR.
+- **The test reads the tracked repo copy** (`_TRACKED_GLOBAL_RULES` → `agents/GLASS_ATRIUM_GLOBAL_RULES.md`, patched in as `daemon_cycle.GLOBAL_RULES_FILE`), so a branch run measures the branch.
+  - CI runs it only on the Python leg, which a markdown-only change skips: run `python3 -m unittest autoagent.test.test_pre_verify_section_excerpt` locally after a charter edit.
 - **Headroom — stated qualitatively, never as a number here**: the heading opens far past the 6,000-character floor, so the slack is ample rather than tight.
   - Why no pair is written: a measured offset/total drifts on the very next edit above the heading — measure the file yourself when a cut above the heading is actually planned.
 - **What spends that slack**: only deletion above the heading moves it earlier, toward the floor. Added text moves it later, away from the floor, so growth above the heading is never the risk.
@@ -75,7 +75,7 @@ A record of the charter's restructure, kept so a placement or a cut below is not
 
 | Reader | Reads | Consequence of a careless edit |
 |---|---|---|
-| `autoagent/test/test_pre_verify_section_excerpt.py` | live charter, heading offset + whole-block extraction | red on a 6000-char breach; SILENT SKIP on a rename |
+| `autoagent/test/test_pre_verify_section_excerpt.py` | tracked charter, heading offset + whole-block extraction | red on a 6000-char breach or a rename; CI skips it on a markdown-only change |
 | `hooks/test/schema-cap-authority-single-site.bats` | live charter, 3 clauses present + 2 cap tokens absent | red on reword or on re-prescribing a cap |
 | `hooks/test/emit-discipline-doc-consistency.bats` | live charter + inject hook + reviewer body | red if the marker phrase leaves any of the three |
 | `scripts/test/deploy-coverage-partition.bats` | deploy partition | pins that the EDITABLE merge loop skips this basename |
@@ -98,8 +98,6 @@ Prose citations INTO charter anchors — grep each before renaming its target:
 
 ## Outstanding
 
-- **Open, owner elsewhere — the live-install read named under Machine-read shapes has no branch-side counterpart**: parametrizing the corpus path of `autoagent/test/test_pre_verify_section_excerpt.py` → `test_when_real_global_rules_read_then_turn_budget_section_is_whole` would make a repo-tree run meaningful for a branch.
-  - Not taken here: that is a change to the test file, which this note does not own. Until someone takes it, the deployed-copy re-measure is a charter edit's only position coverage, and a branch copy has to be measured by hand.
 - **Open, owner elsewhere — two code comments still say every `rules/glass-atrium/` member already arrives on the host project-instructions channel**: untrue for the two path-scoped members.
   - Their delivery: `rules/glass-atrium/core-compliance-matrix.md` → `### Membership vs. Delivery (per tier)` → **Path-scoped delivery**.
   - `hooks/lib/inject_chunk.py` → `get_membership` → the comment reading "already arrive on the host".
