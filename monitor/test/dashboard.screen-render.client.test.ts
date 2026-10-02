@@ -317,20 +317,22 @@ test("a failed week panel whose cause the page banner carries points up to it in
   }
 });
 
-test("a week panel's own failure is one inset alert card carrying its Retry: crit when nothing loaded, neutral over a held reading", () => {
+describe("a week panel's own failure is one inset alert card carrying its Retry: crit when nothing loaded, neutral over a held reading", () => {
   const rows = [
     { name: "nothing loaded", state: { data: null, error: "HTTP 500", busy: false }, tone: "crit" },
     { name: "a held reading", state: { data: {}, error: "HTTP 500", busy: false }, tone: "neutral" },
   ];
   for (const row of rows) {
-    const tree = render("WeekPanel", {
-      id: "dash-week-hours", title: "Runs by hour", source: "runs by hour", state: row.state, onRetry: () => {}, render: () => null,
+    test(row.name, () => {
+      const tree = render("WeekPanel", {
+        id: "dash-week-hours", title: "Runs by hour", source: "runs by hour", state: row.state, onRetry: () => {}, render: () => null,
+      });
+      const cards = alertCardsOf(tree);
+      assert.equal(cards.length, 1, "one card");
+      assert.equal(cards[0].props.surface, "inset", "inside the panel");
+      assert.equal(cards[0].props.tone, row.tone, "tone");
+      assert.equal(findNodes(cards[0], (n) => n.props.atom === "RetryButton").length, 1, "the Retry is the card's action");
     });
-    const cards = alertCardsOf(tree);
-    assert.equal(cards.length, 1, `${row.name}: one card`);
-    assert.equal(cards[0].props.surface, "inset", `${row.name}: inside the panel`);
-    assert.equal(cards[0].props.tone, row.tone, `${row.name}: tone`);
-    assert.equal(findNodes(cards[0], (n) => n.props.atom === "RetryButton").length, 1, `${row.name}: the Retry is the card's action`);
   }
 });
 
