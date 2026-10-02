@@ -25,11 +25,14 @@ const MAP_LABEL = {
 	},
 };
 
-// reverse-ㄷ map — zones of the bottom row, laid out right to left under the end of the top row
-const MAP_ROW_BOTTOM_ZONES_AR = ["hooks", "data", "export"];
-const MAP_ROW_IDS_AR = { top: "map_row_top", bottom: "map_row_bottom" };
-// space between the rows (SVG units) — two label bands: the bent turn edge's label above, the straight one's below
-const MAP_ROW_GAP_AR = 160;
+// reverse-ㄷ map rows
+const MAP_ROW = {
+	// zones of the bottom row, laid out right to left under the end of the top row
+	BOTTOM_ZONES: ["hooks", "data", "export"],
+	IDS: { top: "map_row_top", bottom: "map_row_bottom" },
+	// space between the rows (SVG units) — two label bands: the bent turn edge's label above, the straight one's below
+	GAP: 160,
+};
 
 // default/Reset view = this share of the contain fit — an overview with no label floor; detail is read by zooming in
 const DEFAULT_VIEW_SHARE = 0.7;
@@ -2390,7 +2393,11 @@ function getCornerGlyphTextAR(tone, attentionCount) {
 
 const MAP_NODE_LINE_RE = /^(\s*[A-Za-z_][\w-]*)(\(\[|\[\(|\[\[|\[|\(\(|\(|\{)(?:"([^"]*)"|([^"\]\)}]*))(\]\)|\)\]|\]\]|\]|\)\)|\)|\})\s*$/;
 
-const MAP_EDGE_LABEL_RE = /(--\s*")([^"]*)("\s*-->)/;
+const MAP_EDGE = {
+	LABEL_RE: /(--\s*")([^"]*)("\s*-->)/,
+	// a whole edge line — from id, optional label, to id
+	LINE_RE: /^\s*([\w-]+)\s*(?:--\s*"([^"]*)"\s*)?-->\s*([\w-]+)\s*$/,
+};
 
 /**
  * Draws every map label on one line — stored breaks are dropped and the wrap ceiling sits above the widest label.
@@ -2402,8 +2409,8 @@ function buildSingleLineMapSourceAR(source) {
 		.map((line) => {
 			const zone = /^(\s*subgraph\s+[\w-]+\s*\[)"([^"]*)"(\]\s*)$/.exec(line);
 			if (zone) return `${zone[1]}"${getLabelWordsAR(zone[2]).join(" ")}"${zone[3]}`;
-			const edge = MAP_EDGE_LABEL_RE.exec(line);
-			if (edge) return line.replace(MAP_EDGE_LABEL_RE, `$1${getLabelWordsAR(edge[2]).join("\u00a0")}$3`);
+			const edge = MAP_EDGE.LABEL_RE.exec(line);
+			if (edge) return line.replace(MAP_EDGE.LABEL_RE, `$1${getLabelWordsAR(edge[2]).join("\u00a0")}$3`);
 			const node = MAP_NODE_LINE_RE.exec(line);
 			if (!node) return line;
 			const [, head, open, quotedLabel, bareLabel, close] = node;
@@ -2413,36 +2420,40 @@ function buildSingleLineMapSourceAR(source) {
 		.join("\n");
 }
 
-const MAP_EDGE_LINE_RE = /^\s*([\w-]+)\s*(?:--\s*"([^"]*)"\s*)?-->\s*([\w-]+)\s*$/;
-
 /**
  * Splits the flat map source into a top row (left to right) and a bottom row (right to left).
  * Edges between the rows stay out of the layout — ELK lays out any subgraph an edge leaves in its parent's single direction — and are returned for the screen to draw.
  */
 function getMapRowsAR(source) {
-	const lines = source.split("\n").slice(1);
+	const { rows, rest, turnEdges } = getMapRowLinesAR(source.split("\n").slice(1));
+	return { rowSource: buildMapRowSourceAR(rows, rest), turnEdges };
+}
+
+// source lines sorted three ways — zone blocks into their row, edges between the rows into turn edges, the rest kept for the root
+function getMapRowLinesAR(lines) {
 	const zoneByMemberId = getZoneByMemberIdAR(lines);
-	const getRow = (id) => (MAP_ROW_BOTTOM_ZONES_AR.includes(zoneByMemberId.get(id) ?? id) ? "bottom" : "top");
+	const getRow = (id) => (MAP_ROW.BOTTOM_ZONES.includes(zoneByMemberId.get(id) ?? id) ? "bottom" : "top");
 	const rows = { top: [], bottom: [] };
 	const rest = [];
 	const turnEdges = [];
 	let zone = "";
 	for (const line of lines) {
 		zone = /^\s*subgraph\s+([\w-]+)/.exec(line)?.[1] ?? zone;
-		const edge = zone ? null : MAP_EDGE_LINE_RE.exec(line);
+		const edge = zone ? null : MAP_EDGE.LINE_RE.exec(line);
 		if (zone) rows[getRow(zone)].push(line);
 		else if (edge && getRow(edge[1]) !== getRow(edge[3]))
 			turnEdges.push({ from: edge[1], label: getLabelWordsAR(edge[2] ?? "").join(" "), to: edge[3] });
 		else rest.push(line);
 		if (/^\s*end\s*$/.test(line)) zone = "";
 	}
-	const rowBlock = (row, direction) =>
-		[`    subgraph ${MAP_ROW_IDS_AR[row]}[" "]`, `        direction ${direction}`, ...rows[row], "    end"];
-	return {
-		// root LR, not TB — an edge leaving a top-row zone member lays the top row out in the root's direction
-		rowSource: ["flowchart LR", ...rowBlock("top", "LR"), ...rowBlock("bottom", "RL"), ...rest].join("\n"),
-		turnEdges,
-	};
+	return { rows, rest, turnEdges };
+}
+
+// root LR, not TB — an edge leaving a top-row zone member lays the top row out in the root's direction
+function buildMapRowSourceAR(rows, rest) {
+	const getRowBlock = (row, direction) =>
+		[`    subgraph ${MAP_ROW.IDS[row]}[" "]`, `        direction ${direction}`, ...rows[row], "    end"];
+	return ["flowchart LR", ...getRowBlock("top", "LR"), ...getRowBlock("bottom", "RL"), ...rest].join("\n");
 }
 
 // member node id → its zone id
@@ -2482,17 +2493,17 @@ function setMapRowLayoutAR(svgEl, turnEdges) {
 
 // the two row frames, the parts drawn in the bottom one, and the gap's edges — the lowest top-row zone bottom, the highest bottom-row zone top
 function getMapRowPartsAR(svgEl) {
-	const frames = Object.values(MAP_ROW_IDS_AR).map((id) => getZoneElAR(svgEl, id));
+	const frames = Object.values(MAP_ROW.IDS).map((id) => getZoneElAR(svgEl, id));
 	if (frames.some((frame) => !frame)) return null;
-	const [topBox, bottomBox] = frames.map((frame) => getSvgBoxAR(svgEl, frame));
+	const box = { top: getSvgBoxAR(svgEl, frames[0]), bottom: getSvgBoxAR(svgEl, frames[1]) };
 	const parts = [...svgEl.querySelectorAll("g.cluster, g.node, path.flowchart-link, g.edgeLabel")].filter((el) => !frames.includes(el));
 	const getZoneBoxes = (rowBox) =>
 		parts.filter((el) => el.matches("g.cluster") && isCentreInAR(svgEl, rowBox, el)).map((el) => getSvgBoxAR(svgEl, el));
 	return {
 		frames,
-		bottomParts: parts.filter((el) => isCentreInAR(svgEl, bottomBox, el)),
-		gapTop: Math.max(...getZoneBoxes(topBox).map((box) => box.bottom)),
-		bottomTop: Math.min(...getZoneBoxes(bottomBox).map((box) => box.top)),
+		bottomParts: parts.filter((el) => isCentreInAR(svgEl, box.bottom, el)),
+		gapTop: Math.max(...getZoneBoxes(box.top).map((zoneBox) => zoneBox.bottom)),
+		bottomTop: Math.min(...getZoneBoxes(box.bottom).map((zoneBox) => zoneBox.top)),
 	};
 }
 
@@ -2505,13 +2516,13 @@ function isCentreInAR(svgEl, box, el) {
 
 // the bottom row's offset — the straight turn edge's target zone centred under its source zone, one row gap below the top row
 function getRowShiftAR(svgEl, turnEdges, gapTop, bottomTop) {
-	const straight = turnEdges.find((edge) => MAP_ROW_BOTTOM_ZONES_AR[0] === edge.to) ?? turnEdges[0];
+	const straight = turnEdges.find((edge) => MAP_ROW.BOTTOM_ZONES[0] === edge.to) ?? turnEdges[0];
 	const fromEl = straight && getZoneElAR(svgEl, straight.from);
 	const toEl = straight && getZoneElAR(svgEl, straight.to);
 	if (!fromEl || !toEl) return null;
 	const from = getSvgBoxAR(svgEl, fromEl);
 	const to = getSvgBoxAR(svgEl, toEl);
-	return { dx: (from.left + from.right) / 2 - (to.left + to.right) / 2, dy: gapTop + MAP_ROW_GAP_AR - bottomTop };
+	return { dx: (from.left + from.right) / 2 - (to.left + to.right) / 2, dy: gapTop + MAP_ROW.GAP - bottomTop };
 }
 
 // one turn edge as a clone of a drawn link — same classes and marker, so edge counts, styles and the orthogonality check cover it
@@ -2544,10 +2555,10 @@ function getTurnRouteAR(from, to, gapTop) {
 	const toCx = (to.left + to.right) / 2;
 	if (Math.abs(fromCx - toCx) < 1) {
 		const points = [{ x: fromCx, y: from.bottom }, { x: fromCx, y: to.top }];
-		return { points, label: { midX: fromCx, maxRight: Infinity, y: gapTop + MAP_ROW_GAP_AR * 0.72 } };
+		return { points, label: { midX: fromCx, maxRight: Infinity, y: gapTop + MAP_ROW.GAP * 0.72 } };
 	}
 	const startX = fromCx + Math.sign(toCx - fromCx) * 0.3 * (from.right - from.left);
-	const bendY = gapTop + MAP_ROW_GAP_AR * 0.3;
+	const bendY = gapTop + MAP_ROW.GAP * 0.3;
 	const points = [{ x: startX, y: from.bottom }, { x: startX, y: bendY }, { x: toCx, y: bendY }, { x: toCx, y: to.top }];
 	return { points, label: { midX: (startX + toCx) / 2, maxRight: startX - ZONE_PAD, y: bendY } };
 }
@@ -3324,9 +3335,11 @@ function setFlowTabOrderAR(root) {
 // top-row columns left to right, then bottom-row columns right to left · each column top to bottom
 function getFlowOrderAR(stops) {
 	const tolerance = Math.min(...stops.map((stop) => stop.width)) / 2;
-	const topColumns = getColumnsAR(stops.filter((stop) => stop.row !== "bottom"), tolerance);
-	const bottomColumns = getColumnsAR(stops.filter((stop) => stop.row === "bottom"), tolerance).reverse();
-	return [...topColumns, ...bottomColumns].flatMap((column) => column.sort((a, b) => a.top - b.top));
+	const columns = {
+		top: getColumnsAR(stops.filter((stop) => stop.row !== "bottom"), tolerance),
+		bottom: getColumnsAR(stops.filter((stop) => stop.row === "bottom"), tolerance).reverse(),
+	};
+	return [...columns.top, ...columns.bottom].flatMap((column) => column.sort((a, b) => a.top - b.top));
 }
 
 // left to right · a column = centres within the tolerance of its first node
