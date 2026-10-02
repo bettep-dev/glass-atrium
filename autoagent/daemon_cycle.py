@@ -43,6 +43,7 @@ from collections import defaultdict
 from collections.abc import Callable
 from dataclasses import asdict, dataclass, field, replace
 from datetime import date, datetime, timedelta, timezone
+from enum import IntEnum
 from itertools import groupby
 from pathlib import Path, PurePosixPath
 from typing import Literal, NamedTuple
@@ -231,6 +232,9 @@ from daemon_config import (  # noqa: E402 — hooks dir prepended above (repo-re
     WORKER_MAX_BUDGET_USD,
     WORKER_MODEL,
     PRE_VERIFY_MAX_BUDGET_USD,
+    TIER_KNOBS,
+    KNOB_ERRORS,
+    CONFIG_PATH as DAEMON_CONFIG_PATH,
 )
 
 # Per-cycle agent cap sentinel — 0/negative/None → unlimited (ALL agents).
@@ -427,18 +431,20 @@ POST_APPLY_REGRESSION_EVAL_RESULT = "post-apply-regression"
 DAYS_SINCE_APPLIED_CRIT_THRESHOLD = int(
     os.environ.get("AUTOAGENT_DAYS_SINCE_APPLIED_THRESHOLD", "14") or "14"
 )
-# Named non-clean _main exit code for a systemic zero-output regression. The
-# launchd wrapper (daemon-cycle.sh) folds any non-zero rc into a DEGRADED run,
-# so this stops an unattended regression reporting clean exit 0.
-CYCLE_REGRESSION_EXIT_CODE = 6
-# Named non-clean _main exit code for a PG failure during the auth-mislabel
-# backfill (P2c). Loud-fail per shared-self-improve-hygiene: a backfill PG error
-# surfaces a distinct code (NOT silent absorption) so the operator/monitor can
-# tell a backfill DB fault apart from a generation regression.
-BACKFILL_PG_EXIT_CODE = 7
-# Parked-pattern guard mode failed (read, input or write) — stdout stays empty and the
-# apply path applies nothing that run.
-PARKED_GUARD_FAILURE_EXIT_CODE = 8
+
+
+class ExitCode(IntEnum):
+    """Named non-zero `_main` exit codes, one per loud-fail its caller tells apart."""
+
+    # systemic zero-output regression — the launchd wrapper never sees a clean 0
+    CYCLE_REGRESSION = 6
+    # PG fault in the auth-mislabel backfill — distinct from a generation regression
+    BACKFILL_PG = 7
+    # parked-pattern guard failed (read, input or write) — empty stdout, nothing applies
+    PARKED_GUARD_FAILURE = 8
+    # rejected daemon-config.json tier knob — the CLI would silently run its default
+    DAEMON_CONFIG_INVALID = 9
+
 
 # Intra-cycle Haiku spacing (FIX #5) ----------------------------------------
 #
@@ -3472,6 +3478,55 @@ def _build_failure_proposal(
     )
 
 
+KNOB_INVALID_RATIONALE_PREFIX = "invalid daemon-config knob:"
+
+
+def _get_knob_errors(*roles: str) -> dict[str, str]:
+    """Rejected tier knobs (key → reason) of the given roles, from the import-time load."""
+    prefixes = tuple(f"{role}_" for role in roles)
+    return {key: reason for key, reason in KNOB_ERRORS.items() if key.startswith(prefixes)}
+
+
+def _get_knob_reason(knob_errors: dict[str, str]) -> str:
+    """One-line reason naming every rejected knob — early-exit rationale + payload reason."""
+    rejected = "; ".join(f"{key}={reason}" for key, reason in knob_errors.items())
+    return flatten_log_field(f"{KNOB_INVALID_RATIONALE_PREFIX} {rejected}")
+
+
+def _write_knob_fatal_lines(knob_errors: dict[str, str]) -> None:
+    """One FATAL stderr line per rejected knob (Precondition Loud-Fail's second leg)."""
+    for key, reason in knob_errors.items():
+        sys.stderr.write(
+            f"[daemon-cycle] FATAL: daemon-config.json {key}={flatten_log_field(reason)} "
+            f"— fix it on the monitor Model Config screen (path={DAEMON_CONFIG_PATH})\n"
+        )
+
+
+def _get_tier_call(role: Literal["worker", "pre_verify"]) -> tuple[list[str], dict[str, str]]:
+    """Extra argv + child env for one `claude -p` call, from that role's tier knobs.
+
+    Unset knobs add nothing: the env stays today's, so an inherited
+    CLAUDE_CODE_MAX_OUTPUT_TOKENS passes through unchanged. A set tier drops an
+    inherited CLAUDE_CODE_EFFORT_LEVEL — the CLI ranks that env var above
+    --effort, so the knob would otherwise lose silently.
+    """
+    knobs = TIER_KNOBS[role]
+    env = {**os.environ, "OTEL_METRICS_EXPORTER": "none"}
+    tier_argv: list[str] = []
+    if knobs.effort:
+        tier_argv = ["--effort", knobs.effort]
+        inherited = env.pop("CLAUDE_CODE_EFFORT_LEVEL", None)
+        if inherited is not None:
+            sys.stderr.write(
+                "[daemon-cycle] WARN: dropping inherited CLAUDE_CODE_EFFORT_LEVEL="
+                f"{flatten_log_field(inherited)} from the {role} call — it would "
+                f"override daemon-config.json {role}_effort={knobs.effort}\n"
+            )
+    if knobs.max_output_tokens:
+        env["CLAUDE_CODE_MAX_OUTPUT_TOKENS"] = knobs.max_output_tokens
+    return tier_argv, env
+
+
 def _invoke_haiku_cli(
     *,
     prompt: str,
@@ -3488,7 +3543,23 @@ def _invoke_haiku_cli(
 
     The `error_proposal_partial` is partial — caller fills `target_file` field
     based on its scope. Returned with empty target_file/parse_mode='skipped'.
+
+    A rejected worker_* tier knob returns that early exit without a call — the
+    path the _main gate never sees (the gap arbiter, run from the updater merge).
     """
+    knob_errors = _get_knob_errors("worker")
+    if knob_errors:
+        _write_knob_fatal_lines(knob_errors)
+        return None, PatchProposal(
+            target_file="",
+            rationale=_get_knob_reason(knob_errors),
+            proposed_diff="",
+            touched_frontmatter=False,
+            estimated_added_lines=0,
+            raw_response="",
+            parse_mode="skipped",
+        ), 0
+    tier_argv, env = _get_tier_call("worker")
     started = time.perf_counter()
     try:
         completed = subprocess.run(  # nosec — list form, no shell=True
@@ -3498,12 +3569,13 @@ def _invoke_haiku_cli(
                 "--output-format", "text",
                 "--max-budget-usd", WORKER_MAX_BUDGET_USD,
                 "--model", WORKER_MODEL,
+                *tier_argv,
             ],
             capture_output=True,
             text=True,
             timeout=timeout_sec,
             check=False,
-            env={**os.environ, "OTEL_METRICS_EXPORTER": "none"},
+            env=env,
         )
         duration_ms = int((time.perf_counter() - started) * 1000)
         return completed, None, duration_ms
@@ -6655,6 +6727,7 @@ def run_pre_verify(
     prompt = _build_pre_verify_prompt(patch, pattern)
     # AD-9: resolve the verifier model (warns on same-class-as-author, advisory).
     verifier_model = resolve_verifier_model()
+    tier_argv, env = _get_tier_call("pre_verify")
 
     try:
         completed = subprocess.run(  # nosec — list form, no shell=True
@@ -6664,12 +6737,13 @@ def run_pre_verify(
                 "--output-format", "text",
                 "--max-budget-usd", PRE_VERIFY_MAX_BUDGET_USD,
                 "--model", verifier_model,
+                *tier_argv,
             ],
             capture_output=True,
             text=True,
             timeout=timeout_sec,
             check=False,
-            env={**os.environ, "OTEL_METRICS_EXPORTER": "none"},
+            env=env,
         )
     except subprocess.TimeoutExpired:
         return PreVerifyResult(
@@ -7877,7 +7951,7 @@ def backfill_auth_mislabeled_proposals(
 
     Loud-fail (shared-self-improve-hygiene): a PG error is logged with a named
     type and re-raised (NO 2>/dev/null / || true absorption); `_main` maps it to
-    BACKFILL_PG_EXIT_CODE. `dry_run=True` performs evidence collection + row
+    ExitCode.BACKFILL_PG. `dry_run=True` performs evidence collection + row
     selection but skips the UPDATE (returns the would-be changes for inspection).
 
     Returns per-row before/after result dicts for reporting.
@@ -10110,7 +10184,7 @@ def _emit_parked_pattern_guard(stdin_text: str, *, reject_parked: bool) -> int:
             f"python {sys.version.split()[0]}, pattern read import ok="
             f"{HAS_PG_PATTERN_READ}) — nothing applies this run\n"
         )
-        return PARKED_GUARD_FAILURE_EXIT_CODE
+        return ExitCode.PARKED_GUARD_FAILURE
     for entry in parked:
         rows = _build_row_status_text(entry["rows"])
         outcome = "rejected" if entry["proposal_id"] in rejected else "not applied"
@@ -11442,7 +11516,7 @@ def run_cycle(
         # Loud-Fail compliance: a systemic zero-output regression must NOT exit
         # clean. is_systemic_regression keeps the quiet-night discriminator
         # (patches=[] → ok), so only a real regression flips the status →
-        # _main returns CYCLE_REGRESSION_EXIT_CODE.
+        # _main returns ExitCode.CYCLE_REGRESSION.
         try:
             if is_systemic_regression(report):
                 report.cycle_status = "regression"
@@ -11655,7 +11729,7 @@ def _main(argv: list[str]) -> int:
                 f"[daemon-cycle] P2c backfill aborted: {type(exc).__name__}: "
                 f"{str(exc)[:200]}\n"
             )
-            return BACKFILL_PG_EXIT_CODE
+            return ExitCode.BACKFILL_PG
         sys.stdout.write(json.dumps(backfilled, ensure_ascii=False, indent=2) + "\n")
         return 0
 
@@ -11665,8 +11739,24 @@ def _main(argv: list[str]) -> int:
     if args.regenerate_stale and args.proposal_id is not None:
         # Single-proposal: one structured JSON object to stdout (machine),
         # human text already went to stderr. Exit code: 0 on a clean
-        # determination (regenerated/already_applied), non-zero only on
-        # invalid/unrecoverable (caller branches on action + exit code).
+        # determination (regenerated/already_applied), 1 on
+        # invalid/unrecoverable, ExitCode.DAEMON_CONFIG_INVALID on a rejected
+        # pre_verify_* knob — checked before any PG read and still answered with
+        # the one stdout object, because the caller reads `.action`, not the code.
+        knob_errors = _get_knob_errors("pre_verify")
+        if knob_errors:
+            _write_knob_fatal_lines(knob_errors)
+            refused = SingleRegenResult(
+                proposal_id=args.proposal_id,
+                action="unrecoverable",
+                preverify_passed=None,
+                preverify_axes=None,
+                reason=_get_knob_reason(knob_errors),
+            )
+            sys.stdout.write(
+                json.dumps(refused.to_payload(), ensure_ascii=False, indent=2) + "\n"
+            )
+            return ExitCode.DAEMON_CONFIG_INVALID
         single = regenerate_single_proposal(
             args.proposal_id,
             agents_dir=args.agents_dir,
@@ -11684,6 +11774,12 @@ def _main(argv: list[str]) -> int:
         )
         sys.stdout.write(json.dumps(results, ensure_ascii=False, indent=2) + "\n")
         return 0
+
+    # Ungated by --dry-run / --skip-haiku → a preflight dry run surfaces a rejected knob too
+    knob_errors = _get_knob_errors("worker", "pre_verify")
+    if knob_errors:
+        _write_knob_fatal_lines(knob_errors)
+        return ExitCode.DAEMON_CONFIG_INVALID
 
     report = run_cycle(
         limit=args.limit,
@@ -11707,7 +11803,7 @@ def _main(argv: list[str]) -> int:
     # daemon-cycle.sh wrapper folds any non-zero rc into a DEGRADED run, so an
     # unattended launchd run no longer masks a multi-day regression as success.
     if report.cycle_status == "regression":
-        return CYCLE_REGRESSION_EXIT_CODE
+        return ExitCode.CYCLE_REGRESSION
 
     return 0
 

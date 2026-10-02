@@ -52,11 +52,14 @@ for _p in (_AUTOAGENT_DIR, _LIB_DIR):
         sys.path.insert(0, str(_p))
 
 try:
+    import daemon_cycle as dc
     import editable_merge as em
     import gap_arbiter as ga
+    from daemon_config import TierKnobs
 
     _IMPORT_ERROR: Exception | None = None
 except Exception as exc:  # noqa: BLE001 — import failure -> skip, not error
+    dc = None  # type: ignore[assignment]
     em = None  # type: ignore[assignment]
     ga = None  # type: ignore[assignment]
     _IMPORT_ERROR = exc
@@ -64,6 +67,11 @@ except Exception as exc:  # noqa: BLE001 — import failure -> skip, not error
 
 _STUB = """#!/bin/sh
 if [ -n "$ARB_STUB_ARGV" ]; then printf '%s\\n' "$@" >> "$ARB_STUB_ARGV"; fi
+if [ -n "$ARB_STUB_ENV" ]; then
+  printf '%s|%s|%s\\n' "${CLAUDE_CODE_MAX_OUTPUT_TOKENS-<unset>}" \\
+    "${CLAUDE_CODE_EFFORT_LEVEL-<unset>}" \\
+    "${OTEL_METRICS_EXPORTER-<unset>}" >> "$ARB_STUB_ENV"
+fi
 if [ -n "$ARB_STUB_COUNT" ]; then printf 'x' >> "$ARB_STUB_COUNT"; fi
 if [ -n "$ARB_STUB_SLEEP" ]; then sleep "$ARB_STUB_SLEEP"; fi
 if [ -n "$ARB_STUB_ANSWER" ]; then printf '%s\\n' "$ARB_STUB_ANSWER"; fi
@@ -76,6 +84,51 @@ def _write_stub(dirpath: Path) -> str:
     stub.write_text(_STUB, encoding="utf-8")
     stub.chmod(0o755)
     return str(stub)
+
+
+def _run_get_decision_in_fresh_process(
+    tmpdir: Path, config: dict[str, object], env: dict[str, str]
+) -> subprocess.CompletedProcess[str]:
+    """Run one get_decision in a fresh interpreter whose loader reads ``config``.
+
+    The loader resolves at import, so a config change is only observable in a new
+    process. Stdout carries the decision as JSON (failure class, kept-local flag).
+    """
+    config_path = tmpdir / "daemon-config.json"
+    config_path.write_text(json.dumps(config), encoding="utf-8")
+    driver = tmpdir / "driver.py"
+    driver.write_text(
+        textwrap.dedent(
+            f"""
+            import json, sys
+            sys.path.insert(0, {str(_LIB_DIR)!r})
+            import gap_arbiter as ga
+            request = ga.GapRequest(
+                agent="a", region_index=1, region_count=1,
+                region_context="c", base_lines=(), local_lines=("l",),
+                release_lines=("r",),
+            )
+            decision = ga.get_decision(
+                request,
+                run_state=ga.RunState(ceiling=4),
+                claude_bin={_write_stub(tmpdir)!r},
+            )
+            print(json.dumps({{
+                "failure_class": decision.failure_class,
+                "kept_local": decision.lines == request.local_lines,
+            }}))
+            """
+        ),
+        encoding="utf-8",
+    )
+    return subprocess.run(
+        [sys.executable, str(driver)],
+        capture_output=True,
+        text=True,
+        check=False,
+        timeout=120,
+        env={**os.environ, "DAEMON_CONFIG": str(config_path), **env},
+    )
 
 
 def _adjacency_request() -> "ga.GapRequest":
@@ -140,6 +193,21 @@ def _answer(choice: str, refs: tuple[tuple[str, int], ...] = ()) -> "ga.Answer":
     )
 
 
+def _isolate_tier_knobs(case: unittest.TestCase) -> None:
+    """Pin the in-process daemon_cycle to no rejected and no set tier knob.
+
+    Its import-time load reads whatever daemon-config.json this process finds, so
+    an operator's live file would otherwise steer every in-process drive.
+    """
+    unset = TierKnobs("", "")
+    for patcher in (
+        mock.patch.object(dc, "KNOB_ERRORS", {}),
+        mock.patch.dict(dc.TIER_KNOBS, {"worker": unset, "pre_verify": unset}),
+    ):
+        patcher.start()
+        case.addCleanup(patcher.stop)
+
+
 @unittest.skipIf(_IMPORT_ERROR is not None, f"module import failed: {_IMPORT_ERROR}")
 class PromptAssemblyTest(unittest.TestCase):
     def test_numbering_makes_every_anchor_line_referenceable(self):
@@ -171,6 +239,9 @@ class PromptAssemblyTest(unittest.TestCase):
 
 @unittest.skipIf(_IMPORT_ERROR is not None, f"module import failed: {_IMPORT_ERROR}")
 class ConfigSourceTest(unittest.TestCase):
+    def setUp(self):
+        _isolate_tier_knobs(self)
+
     def test_argv_carries_the_model_and_cap_the_loader_resolved(self):
         with tempfile.TemporaryDirectory() as tmp:
             tmpdir = Path(tmp)
@@ -195,43 +266,10 @@ class ConfigSourceTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             tmpdir = Path(tmp)
             argv = tmpdir / "argv"
-            config = tmpdir / "daemon-config.json"
-            config.write_text(
-                json.dumps(
-                    {"worker_model": "fixture-model-id", "worker_max_budget_usd": "1.25"}
-                ),
-                encoding="utf-8",
-            )
-            driver = tmpdir / "driver.py"
-            driver.write_text(
-                textwrap.dedent(
-                    f"""
-                    import sys
-                    sys.path.insert(0, {str(_LIB_DIR)!r})
-                    import gap_arbiter as ga
-                    request = ga.GapRequest(
-                        agent="a", region_index=1, region_count=1,
-                        region_context="c", base_lines=(), local_lines=("l",),
-                        release_lines=("r",),
-                    )
-                    ga.get_decision(
-                        request,
-                        run_state=ga.RunState(ceiling=4),
-                        claude_bin={_write_stub(tmpdir)!r},
-                    )
-                    """
-                ),
-                encoding="utf-8",
-            )
-            completed = subprocess.run(
-                [sys.executable, str(driver)],
-                capture_output=True,
-                text=True,
-                check=False,
-                timeout=120,
-                env={
-                    **os.environ,
-                    "DAEMON_CONFIG": str(config),
+            completed = _run_get_decision_in_fresh_process(
+                tmpdir,
+                {"worker_model": "fixture-model-id", "worker_max_budget_usd": "1.25"},
+                {
                     "ARB_STUB_ARGV": str(argv),
                     "ARB_STUB_ANSWER": "CHOICE: LOCAL\nRATIONALE: fixture",
                 },
@@ -240,6 +278,67 @@ class ConfigSourceTest(unittest.TestCase):
             recorded = argv.read_text(encoding="utf-8").splitlines()
         self.assertEqual(recorded[recorded.index("--model") + 1], "fixture-model-id")
         self.assertEqual(recorded[recorded.index("--max-budget-usd") + 1], "1.25")
+
+    def test_every_arbiter_call_carries_exactly_the_set_worker_knobs(self):
+        # The arbiter reaches the CLI through daemon_cycle's worker helper, so it
+        # inherits the worker tier knobs — on its strict re-call too.
+        rows = (
+            # (row name, config, stub answer, expected --effort per call, env line, calls)
+            ("unset knobs leave argv and env as today", {}, "CHOICE: LOCAL\nRATIONALE: r",
+             None, "4321|low|none", 1),
+            ("set knobs reach the call and its strict re-call",
+             {"worker_effort": "high", "worker_max_output_tokens": "16000"},
+             "not an answer", "high", "16000|<unset>|none", 2),
+            ("pre-verify knobs never reach the worker call",
+             {"pre_verify_effort": "max", "pre_verify_max_output_tokens": "999"},
+             "CHOICE: LOCAL\nRATIONALE: r", None, "4321|low|none", 1),
+        )
+        for name, config, answer, effort, env_line, expected_calls in rows:
+            with self.subTest(name), tempfile.TemporaryDirectory() as tmp:
+                tmpdir = Path(tmp)
+                completed = _run_get_decision_in_fresh_process(
+                    tmpdir,
+                    config,
+                    {
+                        "ARB_STUB_ARGV": str(tmpdir / "argv"),
+                        "ARB_STUB_ENV": str(tmpdir / "env"),
+                        "ARB_STUB_ANSWER": answer,
+                        "CLAUDE_CODE_MAX_OUTPUT_TOKENS": "4321",
+                        "CLAUDE_CODE_EFFORT_LEVEL": "low",
+                        "OTEL_METRICS_EXPORTER": "otlp",
+                    },
+                )
+                self.assertEqual(completed.returncode, 0, completed.stderr)
+                argv = (tmpdir / "argv").read_text(encoding="utf-8").splitlines()
+                env = (tmpdir / "env").read_text(encoding="utf-8").splitlines()
+                calls = argv.count("-p")
+                self.assertEqual(calls, expected_calls)
+                if effort is None:
+                    self.assertNotIn("--effort", argv)
+                else:
+                    efforts = [argv[i + 1] for i, arg in enumerate(argv) if arg == "--effort"]
+                    self.assertEqual(efforts, [effort] * calls)
+                self.assertEqual(env, [env_line] * calls)
+
+    def test_a_rejected_worker_knob_never_runs_the_cli_and_keeps_local_loudly(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            tmpdir = Path(tmp)
+            completed = _run_get_decision_in_fresh_process(
+                tmpdir,
+                {"worker_effort": "ultra"},
+                {
+                    "ARB_STUB_ARGV": str(tmpdir / "argv"),
+                    "ARB_STUB_ANSWER": "CHOICE: RELEASE\nRATIONALE: r",
+                },
+            )
+            self.assertEqual(completed.returncode, 0, completed.stderr)
+            self.assertFalse((tmpdir / "argv").exists(), "the stub CLI must never run")
+        decision = json.loads(completed.stdout.splitlines()[-1])
+        self.assertTrue(decision["kept_local"])
+        self.assertEqual(decision["failure_class"], ga.FAILURE_UNAVAILABLE)
+        fatal = [line for line in completed.stderr.splitlines() if "FATAL" in line]
+        self.assertEqual(len(fatal), 1, completed.stderr)
+        self.assertIn('worker_effort="ultra"', fatal[0])
 
     def test_the_module_declares_no_model_id_and_no_second_budget_constant(self):
         source = (_LIB_DIR / "gap_arbiter.py").read_text(encoding="utf-8")
@@ -446,6 +545,9 @@ class ResidualCountTest(unittest.TestCase):
 
 @unittest.skipIf(_IMPORT_ERROR is not None, f"module import failed: {_IMPORT_ERROR}")
 class FailureLadderTest(unittest.TestCase):
+    def setUp(self):
+        _isolate_tier_knobs(self)
+
     def _drive(self, env, *, ceiling=4, claude_bin=None, tmpdir=None, **kwargs):
         request = _adjacency_request()
         # A fresh counter per drive — the stub appends, so a shared path would
