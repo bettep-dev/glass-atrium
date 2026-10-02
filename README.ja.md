@@ -180,19 +180,19 @@ curl -fsSL https://github.com/bettep-dev/glass-atrium/raw/main/install.sh | bash
 ## モニター画面
 
 <p align="center"><img src="https://github.com/bettep-dev/glass-atrium/raw/main/docs/assets/screen-dashboard.webp" alt="ダッシュボード" width="100%"></p>
-<p align="center"><em>ダッシュボード概要 — 今日のコスト、直近 30 日の支出、トークン使用推移、セッション・失敗カウンターを一目で見渡せます。</em></p>
+<p align="center"><em>ダッシュボード — 停止したハーネス部品と平常を上回る支出を最上部で知らせ、ハーネス状態・7 日間のタスク結果・エージェント状況・今日の支出のタイルに続けて、今週のタスク結果と時間帯別の実行分布を表示します。</em></p>
 
-<p align="center"><img src="https://github.com/bettep-dev/glass-atrium/raw/main/docs/assets/screen-cost.webp" alt="コスト・トークン" width="100%"></p>
-<p align="center"><em>コスト・トークン — コスト KPI に、30 日の日別コスト推移(スパイクマーカー)とバーンレート予測を添えて示します。</em></p>
+<p align="center"><img src="https://github.com/bettep-dev/glass-atrium/raw/main/docs/assets/screen-cost.webp" alt="コスト・使用量" width="100%"></p>
+<p align="center"><em>コスト・使用量 — 今日の支出が 7 日平均に対して平常範囲内かをまず知らせ、今日と平常の比較・30 日コスト・完了タスクあたりコスト・キャッシュ比率の KPI、日別コスト推移、トークン種別・モデル別コスト、コストの大きいセッションを表示します。</em></p>
 
 <p align="center"><img src="https://github.com/bettep-dev/glass-atrium/raw/main/docs/assets/screen-agents.webp" alt="エージェント" width="100%"></p>
-<p align="center"><em>エージェント — エージェント別の実行数、成功率、P95、トレンドのスパークラインを表示します。</em></p>
+<p align="center"><em>エージェント — ルーティングしてはいけないエージェントと、失敗・ツール使用上限超過・コンテキスト不足の件数をまず示し、成功率の低いエージェント・タスクの組み合わせと完了記録のない実行を、エージェント別 P95 とあわせて表にまとめます。</em></p>
 
 <p align="center"><img src="https://github.com/bettep-dev/glass-atrium/raw/main/docs/assets/screen-learning.webp" alt="学習" width="100%"></p>
-<p align="center"><em>学習 — 自己改善提案ボード(待機/適用/却下)と、信頼度、事前検査の結果を表示します。</em></p>
+<p align="center"><em>学習 — 自己改善ループの承認待ち・最近の適用・提案可能なバックログ・人の判断が必要な保留パターンの数と計測状態を示し、提案ボードで適用履歴と原因別の却下履歴を分けて表示します。</em></p>
 
 <p align="center"><img src="https://github.com/bettep-dev/glass-atrium/raw/main/docs/assets/screen-system-map.webp" alt="System map" width="100%"></p>
-<p align="center"><em>System map — 維持される Mermaid アーキテクチャダイアグラムに、ライブ状態のオーバーレイを重ねました。</em></p>
+<p align="center"><em>System map — 注意が必要な部品を最上部で示し、デーモン・オーケストレーター・エージェントから安全チェック・ストア・ドキュメントへ続く構成図に部品ごとの状態リングを重ね、下の部品状態リストで各部品の状態を表示します。</em></p>
 
 ## ライセンス
 

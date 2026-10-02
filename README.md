@@ -180,19 +180,19 @@ The body (the system prompt) is authored by **glass-atrium-meta-prompt-engineer*
 ## Monitor screens
 
 <p align="center"><img src="https://github.com/bettep-dev/glass-atrium/raw/main/docs/assets/screen-dashboard.webp" alt="Dashboard" width="100%"></p>
-<p align="center"><em>Dashboard overview — today's cost, the last 30 days of spend, the token-usage trend, and the session and failure counters at a glance.</em></p>
+<p align="center"><em>Dashboard — flags stopped harness parts and spend running ahead of normal at the top, then shows tiles for harness health, 7-day task results, the agent fleet and today's spend, followed by this week's task results and runs by hour.</em></p>
 
-<p align="center"><img src="https://github.com/bettep-dev/glass-atrium/raw/main/docs/assets/screen-cost.webp" alt="Cost & tokens" width="100%"></p>
-<p align="center"><em>Cost & tokens — cost KPIs, the 30-day daily cost trend (with spike markers), and a burn-rate forecast.</em></p>
+<p align="center"><img src="https://github.com/bettep-dev/glass-atrium/raw/main/docs/assets/screen-cost.webp" alt="Cost & usage" width="100%"></p>
+<p align="center"><em>Cost & usage — first says whether today's spend is within the normal range of the 7-day average, then shows KPIs for today vs. normal, 30-day cost, cost per finished task and cache share, the daily cost trend, cost by token type and model, and the most expensive sessions.</em></p>
 
 <p align="center"><img src="https://github.com/bettep-dev/glass-atrium/raw/main/docs/assets/screen-agents.webp" alt="Agents" width="100%"></p>
-<p align="center"><em>Agents — per-agent run counts, success rates, P95, and trend sparklines.</em></p>
+<p align="center"><em>Agents — leads with the agents unsafe to route to and the failed, over-tool-use-cap and needs-context counts, then tables the agent-task pairs with low success rates and the runs with no completion record, with per-agent P95.</em></p>
 
 <p align="center"><img src="https://github.com/bettep-dev/glass-atrium/raw/main/docs/assets/screen-learning.webp" alt="Learning" width="100%"></p>
-<p align="center"><em>Learning — the self-improvement proposal board (pending/applied/rejected) with confidence and pre-verification results.</em></p>
+<p align="center"><em>Learning — shows the self-improvement loop's awaiting-approval, recently applied, proposable-backlog and human-held pattern counts plus instrumentation status, and splits the suggestion board into applied history and rejections by cause.</em></p>
 
 <p align="center"><img src="https://github.com/bettep-dev/glass-atrium/raw/main/docs/assets/screen-system-map.webp" alt="System map" width="100%"></p>
-<p align="center"><em>System map — the maintained Mermaid architecture diagrams with a live-status overlay.</em></p>
+<p align="center"><em>System map — calls out the parts that need attention at the top, overlays per-part status rings on a diagram running from the daemons, orchestrator and agents to the safety checks, store and documents, and lists each part's state in the part-health list below.</em></p>
 
 ## License
 
