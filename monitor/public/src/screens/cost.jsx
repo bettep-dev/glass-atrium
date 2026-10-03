@@ -495,14 +495,13 @@ function computeWindowTotal(trendState) {
   const ready = trendState.status === 'ready';
   const points = getTrendPoints(trendState);
   if (points.length === 0) {
-    return { total: null, delta: null, prior: null, dayCount: 0, avgDaily: null, peakCost: null, isEmpty: ready };
+    return { total: null, delta: null, prior: null, avgDaily: null, peakCost: null, isEmpty: ready };
   }
   const series = points.map((p) => toFiniteOrNull(p.cost_usd) ?? 0);
   const total = series.reduce((s, v) => s + v, 0);
   return {
     total,
     ...computePriorDelta(total, getPriorWindow(trendState), (block) => block.cost_usd),
-    dayCount: points.length,
     avgDaily: total / points.length,
     peakCost: Math.max(...series),
     isEmpty: false,
@@ -584,7 +583,9 @@ function KpiRowC({ kpiState, hot, trendState, modelState, days, failures, onRetr
           value={windowTotal.total === null ? '—' : formatUsdC(windowTotal.total)}
           hint={windowTotal.total === null
             ? ''
-            : `Recorded cost · ${windowTotal.dayCount} days · ${formatUsdC(windowTotal.avgDaily)}/day avg · peak ${formatUsdC(windowTotal.peakCost)}`}
+            : `${formatUsdC(windowTotal.avgDaily)}/day avg · peak ${formatUsdC(windowTotal.peakCost)}`}
+          labelId="cost-tile-window-label"
+          info="Recorded cost: the sum of the cost events recorded on each day of the window, today's partial day included. The average divides that total by the days shown; the peak is the costliest single day."
           unavailableNote="Trend payload carries no cost figure.">
           <TrendDeltaC delta={windowTotal.delta} prior={windowTotal.prior} noun="cost"/>
         </CostTileC>
@@ -642,16 +643,20 @@ function getShownDays(state, requestedDays) {
  * Cost-local tile shell — the shared KPI atom is a single-value button, tile 1 carries a bar + a verdict.
  * All four tiles take this one shell rather than mixing two tile idioms in one band.
  */
-function CostTileC({ label, windowTag, status, value, hint, unavailableNote, children }) {
-  const { KpiValue } = window.UI;
+function CostTileC({ label, labelId, info, windowTag, status, value, hint, unavailableNote, children }) {
+  const { CardInfo, KpiValue } = window.UI;
   const isReady = status === 'ready';
   const note = getTileNote(status, unavailableNote);
 
   return (
     <div className="kpi" aria-busy={status === 'loading' ? 'true' : undefined}>
       {/* window tag at the label's right edge on every tile → the four windows compare at one glance */}
-      <div className="flex items-baseline justify-between gap-2">
-        <div className="kpi-label">{label}</div>
+      {/* one control-height label row on every tile → an ⓘ on one tile never drops its value below its peers' */}
+      <div className="flex items-center justify-between gap-2 min-h-[32px]">
+        <div className="flex items-center gap-1 min-w-0">
+          <div id={labelId} className="kpi-label">{label}</div>
+          {info && <CardInfo label={`How ${label} is counted`} describedBy={labelId}>{info}</CardInfo>}
+        </div>
         <span className="kpi-window fs-meta font-mono text-faint shrink-0">{windowTag}</span>
       </div>
       <KpiValue>
@@ -1332,13 +1337,16 @@ function ModelCostCard({ state, days, failures, onRetry, onNav }) {
   // getTokenRate = exact + family-prefix → date-suffixed id 는 family 단가로 해소되므로 실제 miss 만 카운트.
   const fallbackCount = rows.reduce(
     (s, r) => s + (!isUnattributedModel(r.model) && !window.getTokenRate(r.model) ? 1 : 0), 0);
+  const { other } = rollupModelRows(buildModelCostRows(rows), getListBudgetC(CARD_SIZE.MODEL));
 
   return (
     <Card
-      size={MODEL_CARD_SIZE}
+      size={CARD_SIZE.MODEL}
       title="Cost by model"
       info="Cost per agent is not available — cost events carry a model, not an agent. A session using several models counts under each, so the Total row carries no session count."
-      foot={<ModelCostFootC rows={rows} isShowingAll={isShowingAll} onToggle={() => setShowingAll((v) => !v)}/>}
+      foot={other && (
+        <ModelCostFootC other={other} modelCount={rows.length} isShowingAll={isShowingAll} onToggle={() => setShowingAll((v) => !v)}/>
+      )}
       right={
           <div className="flex items-center gap-2">
             {fallbackCount > 0 && (
@@ -1357,17 +1365,14 @@ function ModelCostCard({ state, days, failures, onRetry, onNav }) {
 }
 
 // Rows past the M budget fold into one foot line; "Show all" opens them in the ledger itself.
-function ModelCostFootC({ rows, isShowingAll, onToggle }) {
-  const { other } = rollupModelRows(buildModelCostRows(rows), getListBudgetC(MODEL_CARD_SIZE));
-  if (!other) return null;
-
+function ModelCostFootC({ other, modelCount, isShowingAll, onToggle }) {
   return (
     <>
       <span className="truncate">
-        {isShowingAll ? `All ${rows.length} models` : `Other · ${other.count} more model${other.count === 1 ? '' : 's'} · ${formatUsdC(other.cost_usd)}`}
+        {isShowingAll ? `All ${modelCount} models` : `Other · ${other.count} more model${other.count === 1 ? '' : 's'} · ${formatUsdC(other.cost_usd)}`}
       </span>
       <button type="button" className="btn ghost sm ml-auto shrink-0" aria-expanded={isShowingAll} onClick={onToggle}>
-        {isShowingAll ? `Show top ${getListBudgetC(MODEL_CARD_SIZE)}` : `Show all ${rows.length}`}
+        {isShowingAll ? `Show top ${getListBudgetC(CARD_SIZE.MODEL)}` : `Show all ${modelCount}`}
       </button>
     </>
   );
@@ -1375,8 +1380,7 @@ function ModelCostFootC({ rows, isShowingAll, onToggle }) {
 
 // Slot per decision card: the ledger's share bar, Total row and footnote cost about four rows,
 // so sessions take the L budget and both bodies fill one stretched row without a half-empty card.
-const MODEL_CARD_SIZE = 'M';
-const SESSION_CARD_SIZE = 'L';
+const CARD_SIZE = Object.freeze({ MODEL: 'M', SESSION: 'L' });
 
 function getListBudgetC(size) {
   return window.UI.CARD_SLOTS[size].rowCount;
@@ -1419,7 +1423,7 @@ function ModelCostBody({ state, days, failures, onRetry, isShowingAll = false })
   }
 
   const modelRows = buildModelCostRows(rows);
-  const { top } = rollupModelRows(modelRows, isShowingAll ? modelRows.length : getListBudgetC(MODEL_CARD_SIZE));
+  const { top } = rollupModelRows(modelRows, isShowingAll ? modelRows.length : getListBudgetC(CARD_SIZE.MODEL));
   const totalCost = modelRows.reduce((s, r) => s + r.cost_usd, 0);
 
   return (
@@ -1757,7 +1761,7 @@ function SessionDistributionCard({ state, days, failures, onRetry, onNav }) {
   const truncated = state.status === 'ready' && state.data?.truncated === true;
   const totalCount = state.status === 'ready' ? Number(state.data?.total_session_count) || 0 : 0;
   const sessions = state.status === 'ready' ? (state.data?.rows ?? []) : [];
-  const budget = getListBudgetC(SESSION_CARD_SIZE);
+  const budget = getListBudgetC(CARD_SIZE.SESSION);
   const rollup = useMemoC(() => rollupSessionRows(sessions, budget), [sessions, budget]);
   const bins = useMemoC(() => computeSessionBins(sessions), [sessions]);
   const concentrationText = state.status === 'ready'
@@ -1766,7 +1770,7 @@ function SessionDistributionCard({ state, days, failures, onRetry, onNav }) {
 
   return (
     <Card
-      size={SESSION_CARD_SIZE}
+      size={CARD_SIZE.SESSION}
       title="Most expensive sessions"
       sub={state.status === 'ready'
         ? concentrationText || `Top ${Math.min(budget, sessions.length)} of ${formatIntC(sessions.length)}`

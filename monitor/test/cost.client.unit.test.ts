@@ -47,7 +47,6 @@ interface WindowTotal {
   total: number | null;
   delta: number | null;
   prior: { days: number; period_end: string } | null;
-  dayCount: number;
   avgDaily: number | null;
   peakCost: number | null;
   isEmpty: boolean;
@@ -353,7 +352,6 @@ test("a missing or unusable kpi figure stays null rather than collapsing to zero
 test("the window total sums the series, and an unloaded window is distinguishable from an empty one", () => {
   const total = cost.computeWindowTotal(getTrendPoints([1, 2, 3, 4]));
   assert.strictEqual(total.total, 10);
-  assert.strictEqual(total.dayCount, 4);
   assert.strictEqual(total.avgDaily, 2.5);
   assert.strictEqual(total.peakCost, 4);
   assert.strictEqual(total.isEmpty, false);
@@ -1190,6 +1188,43 @@ describe("the cost tile names its prior window in words", () => {
   }
 });
 
+test("every KPI hint fits the 40-character KPI-hint cap at the widest realistic figures", async () => {
+  const mod = (await loadScreenModule(COST_SRC, {
+    UI: getAtomUi(), React: createReactStub(), Recharts: RECHARTS_STUB,
+    getTokenRate: () => ({ input: 1, output: 1, cache_read: 1, cache_creation: 1 }),
+  })) as RenderModule;
+  const kpi = {
+    window_7d_cost_usd: 699_999.93, today_cost_usd: 123_456.78, burn_rate_3h_usd_per_hour: 9_999.99,
+    cost_per_done_usd: 1_234.56, done_count_7d: 123_456, day_bucket_timezone: "UTC", fetched_at: NOON_UTC,
+  };
+  const modelRows = [{
+    model: "claude-opus-4", cost_usd: 999_999.99, session_count: 12_345,
+    input_tokens: 9e9, output_tokens: 9e9, cache_read_tokens: 9e11, cache_creation_tokens: 9e10,
+  }];
+  const tree = renderIn(mod, "KpiRowC", {
+    kpiState: ready(kpi), hot: cost.computeHotVerdict(kpi), modelState: ready({ rows: modelRows }), days: 90, onRetry: () => {},
+    trendState: ready({ days: 90, points: Array.from({ length: 90 }, (_, i) => ({ date: `d${i}`, cost_usd: 123_456.78 - i })) }),
+  });
+  const hints = findNodes(tree, (n) => /\bkpi-hint\b/.test(String(n.props.className ?? ""))).map((n) => collectText(n));
+  assert.equal(hints.length, 4, "every tile states a hint at these figures");
+  for (const hint of hints) assert.ok(hint.length <= 40, `"${hint}" is ${hint.length} chars`);
+});
+
+test("the window-cost tile keeps its counting rule behind an info trigger described by the tile label", async () => {
+  const mod = await loadCostRender();
+  const kpi = getKpiAtRatio(1, 1);
+  const tree = renderIn(mod, "KpiRowC", {
+    kpiState: ready(kpi), hot: cost.computeHotVerdict(kpi), trendState: getTrendPoints([1, 2, 3]),
+    modelState: ready({ rows: [] }), days: 30, onRetry: () => {},
+  });
+  const infos = findNodes(tree, (n) => n.props.atom === "CardInfo");
+  assert.equal(infos.length, 1, "one tile carries a counting rule");
+  const [info] = infos;
+  const [label] = findNodes(tree, (n) => n.props.id === info.props.describedBy);
+  assert.equal(label ? collectText(label) : null, "Cost, last 30 days");
+  assert.match(collectText(info), /recorded cost/i);
+});
+
 test("every chart is a focusable image carrying its own name", async () => {
   const mod = await loadCostRender();
   const rows = [
@@ -1375,9 +1410,23 @@ describe("the decision lists keep to their slot's row budget and roll the rest i
       const shown = findNodes(card, (n) => n.type === "button" && n.props["aria-expanded"] !== undefined).length;
       const hidden = count - shown;
       assert.equal(shown, Math.min(count, budget), "rows shown never pass the budget");
+      assert.equal(Boolean(card.props.foot), hidden > 0, "the card carries a foot exactly when rows are rolled up");
       const foot = card.props.foot ? collectText(renderScreen(card.props.foot)) : "";
       assert.equal(foot.includes(`Other · ${hidden} more model`), hidden > 0, foot || "no foot");
       assert.equal(foot.includes(`Show all ${count}`), hidden > 0, foot || "no foot");
+    });
+  }
+
+  for (const { name, state } of [
+    { name: "a loading", state: loading },
+    { name: "a failed", state: failed },
+    { name: "an empty", state: ready({ rows: [] }) },
+  ]) {
+    test(`models — ${name} ledger carries no foot`, async () => {
+      const mod = await loadCostRender();
+      const [card] = findNodes(renderIn(mod, "ModelCostCard", { state, days: 30, onRetry: () => {}, onNav: () => {} }), (n) => n.props.atom === "Card");
+      assert.ok(card, "ModelCostCard renders the shared Card");
+      assert.equal(Boolean(card.props.foot), false, "no foot strip without a rolled-up row");
     });
   }
 
@@ -1391,6 +1440,7 @@ describe("the decision lists keep to their slot's row budget and roll the rest i
       const hidden = count - shown;
       assert.equal(shown, Math.min(count, budget), "rows shown never pass the budget");
       assert.equal(findNodes(card, (n) => /^Other /.test(String(n.props["aria-label"] ?? ""))).length, 0, "Other is no table row");
+      assert.equal(Boolean(card.props.foot), hidden > 0, "the card carries a foot exactly when rows are rolled up");
       const foot = card.props.foot ? collectText(renderScreen(card.props.foot)) : "";
       assert.equal(foot.includes(`Other · ${hidden} of ${count} sessions`), hidden > 0, foot || "no foot");
     });
