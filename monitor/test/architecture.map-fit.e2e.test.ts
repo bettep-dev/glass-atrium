@@ -63,11 +63,21 @@ const DEFAULT_VIEW_SHARE = 0.9;
 // parallel runs of different edges sit at least this far apart (layout units) — closer, two lanes read as one line
 const MIN_LANE_GAP_UNITS = 24;
 
-// a screen-drawn edge label keeps this clearance (layout units) from every edge but its own
-const LABEL_CLEARANCE_UNITS = 16;
-
-// a screen-drawn label's opaque mask keeps this clearance (layout units) from every zone frame — any less and the frame's stroke, straddling its edge, is erased
-const LABEL_FRAME_CLEARANCE_UNITS = 3;
+const LABEL = {
+	// drawn node-label, zone-title or edge-label lines, words grouped by rendered line top
+	SELECTORS: {
+		node: { group: "g.node", label: ".nodeLabel" },
+		zone: { group: "g.cluster", label: ":scope > .cluster-label" },
+		edge: { group: "g.edgeLabel", label: ".edgeLabel" },
+	},
+	// a screen-drawn edge label's clearance (layout units)
+	CLEARANCE_UNITS: {
+		// from every edge but its own
+		EDGE: 16,
+		// opaque mask from every zone frame — any less and the frame's stroke, straddling its edge, is erased
+		FRAME: 3,
+	},
+};
 
 // an arrowhead under this length (CSS px) reads as a dot, not a direction
 const MIN_ARROWHEAD_PX = 6;
@@ -492,14 +502,7 @@ async function readZones(width: number, height: number, extraSource?: string): P
 	}
 }
 
-// drawn node-label, zone-title or edge-label lines, words grouped by rendered line top
-const LABEL_SELECTORS = {
-	node: { group: "g.node", label: ".nodeLabel" },
-	zone: { group: "g.cluster", label: ":scope > .cluster-label" },
-	edge: { group: "g.edgeLabel", label: ".edgeLabel" },
-};
-
-async function readLabelLines(width: number, height: number, of: keyof typeof LABEL_SELECTORS = "node"): Promise<{ id: string; lines: string[]; tooltip: string; name: string }[]> {
+async function readLabelLines(width: number, height: number, of: keyof typeof LABEL.SELECTORS = "node"): Promise<{ id: string; lines: string[]; tooltip: string; name: string }[]> {
 	assert.ok(browser, "browser must be up");
 	const page = await browser.newPage({ viewport: { width, height } });
 	try {
@@ -532,7 +535,7 @@ async function readLabelLines(width: number, height: number, of: keyof typeof LA
 					name: node.getAttribute("aria-label") ?? "",
 				};
 			}),
-			LABEL_SELECTORS[of],
+			LABEL.SELECTORS[of],
 		);
 	} finally {
 		await page.close();
@@ -814,7 +817,7 @@ for (const { width, height } of VIEWPORTS) {
 			const nearest = foreign.sort((a, b) => a.units - b.units)[0];
 			t.diagnostic(`${label.edge}: own edge ${ownUnits.toFixed(0)}u · nearest other ${nearest.id} ${nearest.units.toFixed(0)}u`);
 			assert.ok(ownUnits < nearest.units, `${label.edge} sits ${ownUnits.toFixed(0)}u from its own edge, nearer ${nearest.id} at ${nearest.units.toFixed(0)}u`);
-			assert.ok(nearest.units >= LABEL_CLEARANCE_UNITS, `${label.edge} sits ${nearest.units.toFixed(0)}u from ${nearest.id}, inside its ${LABEL_CLEARANCE_UNITS}u band`);
+			assert.ok(nearest.units >= LABEL.CLEARANCE_UNITS.EDGE, `${label.edge} sits ${nearest.units.toFixed(0)}u from ${nearest.id}, inside its ${LABEL.CLEARANCE_UNITS.EDGE}u band`);
 		}
 	});
 
@@ -827,8 +830,8 @@ for (const { width, height } of VIEWPORTS) {
 			const nearest = frames.sort((a, b) => a.units - b.units)[0];
 			t.diagnostic(`${label.edge}: nearest frame ${nearest.id} ${nearest.units.toFixed(1)}u`);
 			assert.ok(
-				nearest.units >= LABEL_FRAME_CLEARANCE_UNITS,
-				`${label.edge} sits ${nearest.units.toFixed(1)}u from the ${nearest.id} frame, inside its ${LABEL_FRAME_CLEARANCE_UNITS}u clearance`,
+				nearest.units >= LABEL.CLEARANCE_UNITS.FRAME,
+				`${label.edge} sits ${nearest.units.toFixed(1)}u from the ${nearest.id} frame, inside its ${LABEL.CLEARANCE_UNITS.FRAME}u clearance`,
 			);
 			for (const other of shape.labels.slice(i + 1))
 				assert.ok(getBoxSeparation(label.box, other.box) > 0, `${label.edge} overlaps ${other.edge}`);
