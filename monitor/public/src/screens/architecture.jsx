@@ -55,8 +55,8 @@ const MAP = {
 		// one x,y pair of a path's d attribute
 		POINT_RE: /(-?[\d.]+(?:e-?\d+)?)[ ,](-?[\d.]+(?:e-?\d+)?)/g,
 	},
-	// map pane sizing (CSS px) — below FLOOR.MAX_WIDTH_PX the fit height never drops under FLOOR.PX, so labels keep the 13px floor even when the part health block leaves the first screen
-	PANE: { FLOOR: { PX: 500, MAX_WIDTH_PX: 1280 }, CONTROLS_MIN_INSET_PX: 48 },
+	// map pane sizing (CSS px) — at any width the fit height never drops under FLOOR_PX, so labels keep the 13px floor even when the part health block leaves the first screen
+	PANE: { FLOOR_PX: 500, CONTROLS_MIN_INSET_PX: 48 },
 };
 
 // default/Reset view = this share of the contain fit — the overview keeps every label at the 13px floor down to a 1024 window
@@ -2223,8 +2223,8 @@ function applyDefaultViewAR(instance, root) {
 
 	// pan({x,y}) 는 viewport CTM 의 e/f(화면픽셀 평행이동) 직접 설정 · viewBox 원점 상쇄(-origin*scale) + 양축 가운데 slack.
 	const slackX = Math.max(0, (drawableW - realW * targetAbs) / 2);
-	// on a narrow viewport the short-graph clamp never takes the pane under the floor, a width-bound drawing included
-	const clampH = isPaneFloorViewportAR() ? Math.max(frameH, MAP.PANE.FLOOR.PX) : frameH;
+	// the short-graph clamp never takes the pane under the floor, a width-bound drawing included
+	const clampH = Math.max(frameH, MAP.PANE.FLOOR_PX);
 	const slackY = Math.max(0, (Math.min(clampH, s.height) - realH * targetAbs) / 2);
 	instance.pan({
 		x: -(s.viewBox.x || 0) * targetAbs + slackX,
@@ -2279,22 +2279,17 @@ function clearCanvasSizingAR(root) {
 	canvas.removeAttribute(CANVAS.FIT_HEIGHT_ATTR);
 }
 
-// narrow viewport — the pane floor applies, and wins over the part health peek band
-function isPaneFloorViewportAR() {
-	return window.innerWidth < MAP.PANE.FLOOR.MAX_WIDTH_PX;
-}
-
 // grows a short pane to the floor before the fit measures it · the fit still clamps the canvas to its frame when width binds
 function applyPaneFloorAR(root) {
 	const canvas = getCanvasAR(root);
-	if (!canvas || !isPaneFloorViewportAR() || canvas.getBoundingClientRect().height >= MAP.PANE.FLOOR.PX) return;
-	setCanvasHeightAR(root, MAP.PANE.FLOOR.PX);
+	if (!canvas || canvas.getBoundingClientRect().height >= MAP.PANE.FLOOR_PX) return;
+	setCanvasHeightAR(root, MAP.PANE.FLOOR_PX);
 }
 
-// height the default view fits in — the first-screen height, raised to the floor on a narrow viewport
+// height the default view fits in — the first-screen height, raised to the floor, which wins over the part health peek band
 function getFitPaneHeightAR(root, paneH) {
 	const firstScreen = Math.min(paneH, getFirstScreenCanvasHeightAR(root));
-	return isPaneFloorViewportAR() ? Math.min(paneH, Math.max(firstScreen, MAP.PANE.FLOOR.PX)) : firstScreen;
+	return Math.min(paneH, Math.max(firstScreen, MAP.PANE.FLOOR_PX));
 }
 
 // tallest pane whose bottom leaves PART_HEALTH.PEEK_PX of the first screen under it — the map is tall enough to push the block off it

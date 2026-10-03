@@ -930,12 +930,6 @@ for (const { width, height } of VIEWPORTS) {
 		);
 	});
 
-	test(`every label reaches the meta floor in the default view at ${width}x${height}`, async () => {
-		const r = await readFit(width, height);
-		assert.ok(r.labelPx > 0, "no drawn label was measured");
-		assert.ok(r.labelPx >= MIN_RENDERED_LABEL_PX - CTM_FLOAT_TOLERANCE, `the smallest label is ${r.labelPx.toFixed(2)}px at scale ${r.scale.toFixed(4)}`);
-	});
-
 	test(`the default view spans 90% of its frame on the binding axis at ${width}x${height}`, async () => {
 		const r = await readFit(width, height);
 		const fill = Math.max(r.drawnWidthPx / r.drawableWidth, r.drawnHeightPx / r.paneHeight);
@@ -984,15 +978,25 @@ test("a zone whose title repeats its lone member hides the title and keeps no ba
 	assert.deepEqual(r.titleBands, [], `a zone with a hidden title keeps its title band: ${r.titleBands.join("; ")}`);
 });
 
-// below this width the map keeps a pane floor that wins over the part health peek band — owned here, never read from the screen
-const PANE_FLOOR = { PX: 500, MAX_WIDTH_PX: 1280 };
+// at any width the map keeps a pane floor that wins over the part health peek band — owned here, never read from the screen
+const PANE_FLOOR = { PX: 500 };
 
-// narrow windows, two of them short enough that the first-screen band alone would leave the map under the pane floor
-const NARROW_VIEWPORTS = [
+// windows narrow or short enough that the first-screen band alone would leave the map under the pane floor — 1366x768 is a common laptop window
+const FLOOR_VIEWPORTS = [
 	{ width: 1024, height: 768 },
 	{ width: 1024, height: 600 },
 	{ width: 1180, height: 640 },
+	{ width: 1280, height: 720 },
+	{ width: 1366, height: 768 },
 ];
+
+for (const { width, height } of [...VIEWPORTS, ...FLOOR_VIEWPORTS.slice(1)]) {
+	test(`every label reaches the meta floor in the default view at ${width}x${height}`, async () => {
+		const r = await readFit(width, height);
+		assert.ok(r.labelPx > 0, "no drawn label was measured");
+		assert.ok(r.labelPx >= MIN_RENDERED_LABEL_PX - CTM_FLOAT_TOLERANCE, `the smallest label is ${r.labelPx.toFixed(2)}px at scale ${r.scale.toFixed(4)}`);
+	});
+}
 
 async function readPartHealthPlacement(width: number, height: number) {
 	const { page, canvasSelector } = await openFittedPage(width, height);
@@ -1018,23 +1022,24 @@ function isHeightBound(fit: FitReading): boolean {
 	return fit.drawnHeightPx / fit.paneHeight >= fit.drawnWidthPx / fit.drawableWidth;
 }
 
-for (const { width, height } of [...VIEWPORTS, ...NARROW_VIEWPORTS.slice(1)]) {
+for (const { width, height } of [...VIEWPORTS, ...FLOOR_VIEWPORTS.slice(1)]) {
 	test(`the part health block starts under the map, never over it, at ${width}x${height}`, async () => {
 		const r = await readPartHealthPlacement(width, height);
 		assert.ok(r.blockTop >= r.canvasBottom - EPS_PX, `the block (top ${r.blockTop.toFixed(0)}) overlaps the map (bottom ${r.canvasBottom.toFixed(0)})`);
 	});
-}
 
-for (const { width, height } of VIEWPORTS.filter((viewport) => viewport.width >= PANE_FLOOR.MAX_WIDTH_PX)) {
-	test(`at ${PANE_FLOOR.MAX_WIDTH_PX}px wide or more the part health block starts on the first screen at ${width}x${height}`, async () => {
+	test(`the part health block leaves the first screen only when the map pane sits at its ${PANE_FLOOR.PX}px floor at ${width}x${height}`, async () => {
 		const r = await readPartHealthPlacement(width, height);
-		assert.ok(r.blockTop < r.viewportHeight, `the block starts at ${r.blockTop.toFixed(0)}px, below the ${r.viewportHeight}px screen`);
+		assert.ok(
+			r.blockTop < r.viewportHeight || r.fit.paneHeight <= PANE_FLOOR.PX + EPS_PX,
+			`the block starts at ${r.blockTop.toFixed(0)}px, below the ${r.viewportHeight}px screen, under a ${r.fit.paneHeight.toFixed(0)}px pane above the floor`,
+		);
 	});
 }
 
-test(`below ${PANE_FLOOR.MAX_WIDTH_PX}px wide the map keeps its ${PANE_FLOOR.PX}px pane floor on either binding axis, even when the part health block leaves the first screen`, async (t) => {
+test(`at any width the map keeps its ${PANE_FLOOR.PX}px pane floor on either binding axis, even when the part health block leaves the first screen`, async (t) => {
 	const readings = [];
-	for (const viewport of NARROW_VIEWPORTS) readings.push({ ...viewport, ...(await readPartHealthPlacement(viewport.width, viewport.height)) });
+	for (const viewport of FLOOR_VIEWPORTS) readings.push({ ...viewport, ...(await readPartHealthPlacement(viewport.width, viewport.height)) });
 
 	for (const r of readings) {
 		t.diagnostic(
