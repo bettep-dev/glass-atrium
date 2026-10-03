@@ -30,14 +30,33 @@ const CROSS_ANALYSIS = {
   ],
 };
 const POLAR_TOTAL_TEXT = "1,500";
-// room past the meta's painted width → a platform painting text a few percent wider still shows it whole
-const META_SLACK = 0.2;
+// header text painted 10% wider → twice the Linux-over-macOS chromium widening CI implies (under 5%)
+const TEXT_SCALE = 1.1;
 
-interface HeadFit {
-  meta: string;
+interface MetaFit {
+  text: string;
   needPx: number;
   shownPx: number;
-  badge: string;
+}
+
+// in-page: every text on each meta's header line paints `scale`× as wide → the meta's painted width vs. the width it gets
+function getWidenedMetaFits(subs: Element[], scale: number): MetaFit[] {
+  const sizes: [HTMLElement, number][] = [];
+  for (const sub of subs) {
+    const head = sub.closest(".card-head");
+    if (head === null) throw new Error(`"${sub.textContent}" sits outside a card head`);
+    const walker = document.createTreeWalker(head, NodeFilter.SHOW_TEXT);
+    while (walker.nextNode()) {
+      const parent = walker.currentNode.parentElement;
+      if (parent && walker.currentNode.textContent?.trim()) sizes.push([parent, Number.parseFloat(getComputedStyle(parent).fontSize)]);
+    }
+  }
+  for (const [el, px] of sizes) el.style.fontSize = `${px * scale}px`;
+  return subs.map((sub) => {
+    const text = document.createRange();
+    text.selectNodeContents(sub);
+    return { text: sub.textContent ?? "", needPx: text.getBoundingClientRect().width, shownPx: sub.getBoundingClientRect().width };
+  });
 }
 
 describe("outcomes crosstab header", () => {
@@ -61,29 +80,20 @@ describe("outcomes crosstab header", () => {
   });
 
   for (const width of [1280, 1440, 1920]) {
-    test(`the meta reads whole beside the mismatch badge with ${META_SLACK * 100}% to spare at ${width}px`, async () => {
+    test(`the meta reads whole beside the mismatch badge with the header text ${TEXT_SCALE}× as wide at ${width}px`, async () => {
       const page = await browser.newPage({ viewport: { width, height: 900 } });
       try {
         await page.goto(`${serverUrl}/#outcomes`, { waitUntil: "load" });
         await page.waitForSelector(`${CROSSTAB_HEAD} .pill`, { timeout: 30_000 });
         await page.evaluate(() => document.fonts.ready);
-        const fit: HeadFit = await page.$eval(CROSSTAB_HEAD, (head) => {
-          const sub = head.querySelector(".card-sub") as HTMLElement;
-          const text = document.createRange();
-          text.selectNodeContents(sub);
-          return {
-            meta: sub.textContent ?? "",
-            needPx: text.getBoundingClientRect().width,
-            shownPx: sub.clientWidth,
-            badge: head.querySelector(".pill")?.textContent ?? "",
-          };
-        });
-        const slack = fit.shownPx / fit.needPx - 1;
+        const badge = await page.textContent(`${CROSSTAB_HEAD} .pill`);
+        const [fit] = await page.$$eval(`${CROSSTAB_HEAD} .card-sub`, getWidenedMetaFits, TEXT_SCALE);
 
-        assert.ok(fit.badge.includes(POLAR_TOTAL_TEXT), `the badge keeps the mismatch count: "${fit.badge}"`);
+        assert.ok(badge?.includes(POLAR_TOTAL_TEXT), `the badge keeps the mismatch count: "${badge}"`);
+        assert.ok(fit, "the header carries a meta");
         assert.ok(
-          slack >= META_SLACK,
-          `"${fit.meta}" needs ${fit.needPx.toFixed(1)}px, shows ${fit.shownPx}px (${(slack * 100).toFixed(1)}% to spare)`,
+          fit.needPx <= fit.shownPx,
+          `text ×${TEXT_SCALE}: "${fit.text}" needs ${fit.needPx.toFixed(1)}px, shows ${fit.shownPx.toFixed(1)}px`,
         );
       } finally {
         await page.close();

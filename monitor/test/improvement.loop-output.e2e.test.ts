@@ -22,8 +22,14 @@ const LOOP_METAS = [
   "#improvement-trend .card-head .card-sub",
   "#improvement-learning-memory .card-head .card-sub",
 ].join(", ");
-// room past the meta's painted width → a platform painting text a few percent wider still shows it whole
-const META_SLACK = 0.2;
+// header text painted 10% wider → twice the Linux-over-macOS chromium widening CI implies (under 5%)
+const TEXT_SCALE = 1.1;
+
+interface MetaFit {
+  text: string;
+  needPx: number;
+  shownPx: number;
+}
 
 // eight cycle days with a rising reject share → a full 0–100% axis
 function getLoopEvents() {
@@ -45,6 +51,26 @@ function getCutLoopEvents() {
     changes_added: 1,
     changes_removed: 0,
   }));
+}
+
+// in-page: every text on each meta's header line paints `scale`× as wide → the meta's painted width vs. the width it gets
+function getWidenedMetaFits(subs: Element[], scale: number): MetaFit[] {
+  const sizes: [HTMLElement, number][] = [];
+  for (const sub of subs) {
+    const head = sub.closest(".card-head");
+    if (head === null) throw new Error(`"${sub.textContent}" sits outside a card head`);
+    const walker = document.createTreeWalker(head, NodeFilter.SHOW_TEXT);
+    while (walker.nextNode()) {
+      const parent = walker.currentNode.parentElement;
+      if (parent && walker.currentNode.textContent?.trim()) sizes.push([parent, Number.parseFloat(getComputedStyle(parent).fontSize)]);
+    }
+  }
+  for (const [el, px] of sizes) el.style.fontSize = `${px * scale}px`;
+  return subs.map((sub) => {
+    const text = document.createRange();
+    text.selectNodeContents(sub);
+    return { text: sub.textContent ?? "", needPx: text.getBoundingClientRect().width, shownPx: sub.getBoundingClientRect().width };
+  });
 }
 
 // stripped app serving these loop events; every other /api read answers empty
@@ -92,26 +118,17 @@ for (const width of [1440, 1024]) {
 
 // 1280 is the narrowest three-card row; below it the cards pair up and widen
 for (const width of [1280, 1440]) {
-  test(`every loop card shows its whole header meta with ${META_SLACK * 100}% to spare at ${width}px`, async () => {
+  test(`every loop card shows its whole header meta with its header text ${TEXT_SCALE}× as wide at ${width}px`, async () => {
     await withLearningPage(width, getCutLoopEvents(), async (page) => {
       await page.waitForSelector(LOOP_METAS, { timeout: 30_000 });
       await page.evaluate(() => document.fonts.ready);
-      const metas = await page.evaluate(
-        (selector) =>
-          [...document.querySelectorAll<HTMLElement>(selector)].map((sub) => {
-            const text = document.createRange();
-            text.selectNodeContents(sub);
-            return { text: sub.textContent ?? "", needPx: text.getBoundingClientRect().width, shownPx: sub.clientWidth };
-          }),
-        LOOP_METAS,
-      );
+      const metas = await page.$$eval(LOOP_METAS, getWidenedMetaFits, TEXT_SCALE);
 
       assert.equal(metas.length, 3, "all three loop cards head a meta");
       for (const meta of metas) {
-        const slack = meta.shownPx / meta.needPx - 1;
         assert.ok(
-          slack >= META_SLACK,
-          `${width}px: "${meta.text}" needs ${meta.needPx.toFixed(1)}px, shows ${meta.shownPx}px (${(slack * 100).toFixed(1)}% to spare)`,
+          meta.needPx <= meta.shownPx,
+          `${width}px, text ×${TEXT_SCALE}: "${meta.text}" needs ${meta.needPx.toFixed(1)}px, shows ${meta.shownPx.toFixed(1)}px`,
         );
       }
     });
