@@ -209,12 +209,19 @@ describe("the week results panel", () => {
     }
   });
 
-  test("states that its caveat row counts every caveat while the tile counts only open ones", () => {
+  test("states that the tile, unlike its caveat row, counts only open caveats", () => {
     const panelText = collectText(renderResultPanel([{ result: "done", count: 10 }, { result: "done_with_concerns", count: 5 }]));
     const tile = buildOutcomeTile({ status: "ready", data: { status: "ok", tone: "ok", writerTotal: 40, breakage: 1, openCaveats: 2 } });
-    assert.match(String(tile.hint), /still open/i, "the tile's caveat figure says it counts open caveats");
-    assert.match(panelText, /Done with caveats counts every/i, "the panel defines its caveat row beside it");
-    assert.match(panelText, /tile counts only .*still open/i, "the panel names how the tile's figure differs");
+    assert.match(String(tile.hint), /open caveats/i, "the tile's caveat figure says it counts open caveats");
+    assert.match(panelText, /tile: open caveats only/i, "the panel names how the tile's figure differs");
+  });
+
+  test("every prose line on the panel fits the 90-char footnote cap", () => {
+    const FOOTNOTE_CAP = 90;
+    const tree = renderResultPanel([{ result: "done", count: 4_400 }, { result: "done_with_concerns", count: 83 }, { result: "fail", count: 52 }]);
+    const lines = findNodes(tree, (n) => n.type === "p").map((n) => collectText(n).replace(/\s+/g, " ").trim());
+    assert.ok(lines.length > 0, "the panel carries prose lines");
+    for (const line of lines) assert.ok(line.length <= FOOTNOTE_CAP, `"${line}" is ${line.length} chars`);
   });
 });
 

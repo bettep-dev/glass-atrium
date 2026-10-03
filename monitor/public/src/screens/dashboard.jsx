@@ -162,7 +162,7 @@ function ScreenDashboard({ onNav, harness, onRetryHarness }) {
       <div className="flex-shrink-0">
         <PageHeader
           title="Dashboard"
-          sub={<span className="fs-meta">Triage</span>} // the shared eyebrow is 11px → fs-meta holds the 12px floor
+          sub={<span className="fs-meta">Triage</span>}
           right={
             <>
               {version && <span className="fs-meta font-mono text-dim">{version}</span>}
@@ -478,7 +478,7 @@ function ResultPanel({ panel }) {
           );
         })}
       </ul>
-      <p className="fs-meta text-dim">Done with caveats counts every run reported with caveats; the tile counts only caveats still open.</p>
+      <p className="fs-meta text-dim">Tile: open caveats only</p>
       <BreakageAgents agents={panel.agents}/>
     </>
   );
@@ -782,7 +782,7 @@ function buildAlarms({ harness, costState, installKind }) {
       id: 'spend',
       tone: 'warn',
       title: 'Spend is running ahead of the 7-day average',
-      detail: `${formatUsd(spend.today)} so far · ${formatUsd(spend.pace)}/day at the last 3 hours' rate · ${formatUsd(spend.basis)} 7-day avg/day`,
+      detail: describeSpendAlarm(spend),
       isHeld: costState?.error != null,
       target: 'cost',
       targetLabel: 'Cost & usage',
@@ -988,8 +988,8 @@ function describeOutcomeHint(rate) {
   if (rate.status === 'unavailable') return 'No reported outcomes to judge.';
   if (rate.status === 'empty') return 'No outcomes recorded in the last 7 days.';
   if (rate.status === 'low-n') return `Needs ${window.UI.LOW_N_MIN} reported outcomes to judge.`;
-  const caveats = `${getSharePct(rate.openCaveats, rate.writerTotal)} (${formatInt(rate.openCaveats)}) with caveats still open`;
-  return `${caveats} · alert at ${formatAlertLine(window.UI.OUTCOME_OPEN_CAVEAT_WARN_SHARE)}`;
+  const caveats = `Open caveats ${getSharePct(rate.openCaveats, rate.writerTotal)} (${formatInt(rate.openCaveats)})`;
+  return `${caveats} · alert ${formatAlertLine(window.UI.OUTCOME_OPEN_CAVEAT_WARN_SHARE)}`;
 }
 
 // shares, never counts → a busier week at the same failure rate reads level
@@ -1078,11 +1078,12 @@ function buildSpendTile(costState, harness) {
   const tone = { hot: 'warn', normal: 'ok' }[pace.status] ?? 'neutral';
   const reading = { ...base, status: 'ready', tone, value: formatUsd(pace.today), trend: describeSpendTrend(harness) };
   if (pace.status === 'no-basis') {
-    return { ...reading, hint: 'No spend in the last 7 days — no baseline to compare against.' };
+    return { ...reading, hint: 'No spend in 7 days — no baseline' };
   }
   return {
     ...reading, badge: tone === 'warn' ? BADGE.SPEND_HOT : BADGE.SPEND_NORMAL, detail: describeSpendPace(pace),
-    hint: `Alarm at ${SPEND_PACE_CUT}× the 7-day average/day, on so-far or the 3-hour pace`,
+    hint: `Alarm at ${SPEND_PACE_CUT}× the 7-day avg/day`,
+    note: `Alarms when today's spend so far, or the last 3 hours' rate, reaches ${SPEND_PACE_CUT}× the 7-day average/day`,
   };
 }
 
@@ -1103,6 +1104,12 @@ function describeSpendTrend(harness) {
 }
 
 // the verdict trips on the larger of so-far and pace → the lead line states that same figure
+// the leg that crossed the cut → one figure and its window; the tile beside it carries the 7-day basis
+function describeSpendAlarm(spend) {
+  if (spend.pace >= spend.today) return `${formatUsd(spend.pace)}/day at the last 3 hours' rate`;
+  return `${formatUsd(spend.today)} spent so far today`;
+}
+
 function describeSpendPace(pace) {
   const judged = Math.max(pace.today, pace.pace);
   return `On pace for ${formatUsd(judged)} today, ${(judged / pace.basis).toFixed(1)}× the 7-day average (${formatUsd(pace.basis)})`;

@@ -394,7 +394,7 @@ test("the outcome tile leads with the failed share and moves the verdict into it
   assert.match(tile.value, /^20\.0%/, "the failed share is the headline");
   assert.equal(tile.badge, "Failures above alert line");
   assert.match(String(tile.detail), /40 of 200 failed or blocked · alert at 5%/, "the detail names both results the share counts");
-  assert.match(tile.hint, /5\.0% \(10\) with caveats still open · alert at 10%/, "the caveat alert line sits beside the caveat share");
+  assert.match(tile.hint, /^Open caveats 5\.0% \(10\) · alert 10%$/, "the caveat alert line sits beside the caveat share");
   assert.doesNotMatch(tile.hint, /writer-emitted/, "the counting rule moves out of the visible hint");
   assert.match(String(tile.note), /writer-emitted/, "and into the tile's tooltip");
 });
@@ -420,6 +420,46 @@ test("the spend alarm names its pace window in plain words", () => {
   assert.equal(alarm.id, "spend");
   assert.match(String(alarm.detail), /at the last 3 hours' rate/);
   assert.doesNotMatch(String(alarm.detail), /3 h burn/);
+});
+
+// design copy caps: a KPI hint is one line of 40 chars or fewer; the spend alarm detail is one figure plus a short label
+const KPI_HINT_CAP = 40;
+const ALARM_LABEL_CAP = 32;
+
+test("every status tile's authored hint fits the 40-char KPI hint cap, in each state the tile can show", () => {
+  const outcomes = (byResult: Array<{ result: string; count: number }>) =>
+    ready({ total: byResult.reduce((sum, row) => sum + row.count, 0), by_result: byResult });
+  const rows = [
+    { name: "harness healthy", tile: "harness", args: { harness: HEALTHY } },
+    { name: "outcomes judged, five-figure counts", tile: "outcomes", args: { outcomesState: outcomes([{ result: "fail", count: 12_000 }, { result: "done_with_concerns", count: 25_000 }, { result: "done", count: 63_000 }]) } },
+    { name: "outcomes too few to judge", tile: "outcomes", args: { outcomesState: outcomes([{ result: "done", count: 3 }]) } },
+    { name: "outcomes none recorded", tile: "outcomes", args: { outcomesState: outcomes([]) } },
+    { name: "spend under the cut", tile: "spend", args: { costState: kpi(50, 100) } },
+    { name: "spend over the cut", tile: "spend", args: { costState: kpi(1_300, 1_000) } },
+    { name: "spend with no 7-day basis", tile: "spend", args: { costState: kpi(0, 0) } },
+  ];
+  for (const row of rows) {
+    const tiles = dash.buildTiles({ harness: HEALTHY, costState: LOADING, agentsState: LOADING, outcomesState: LOADING, ...row.args });
+    const hint = tileOf(tiles, row.tile).hint;
+    assert.ok(hint, `${row.name}: the state carries a hint`);
+    assert.ok(hint.length <= KPI_HINT_CAP, `${row.name}: "${hint}" is ${hint.length} chars`);
+  }
+});
+
+test("the spend alarm detail is the leg that crossed the cut, as one figure plus a label within the 32-char cap", () => {
+  const rows = [
+    { name: "the 3-hour pace leads", today: 1_300, pace: 1_450, figure: "$1,450.00", label: /at the last 3 hours' rate/ },
+    { name: "so-far leads", today: 1_500, pace: 900, figure: "$1,500.00", label: /so far/ },
+  ];
+  for (const row of rows) {
+    const [alarm] = dash.buildAlarms({ harness: HEALTHY, costState: kpi(row.today, 1_000, row.pace), installKind: "hidden" });
+    const detail = String(alarm.detail);
+    const figure = detail.match(/^\$[\d,]+\.\d{2}/)?.[0] ?? "";
+    assert.equal(figure, row.figure, `${row.name}: "${detail}" leads with the figure that crossed the cut`);
+    const label = detail.slice(figure.length);
+    assert.match(label, row.label, `${row.name}: the label names its leg`);
+    assert.ok(label.length <= ALARM_LABEL_CAP, `${row.name}: label "${label}" is ${label.length} chars`);
+  }
 });
 
 test("the spend tile tones only on the pace verdict, never on the amount", () => {
@@ -776,7 +816,7 @@ test("the spend tile states one ratio and names the basis of its alarm", () => {
   const tile = tileOf(dash.buildTiles({ harness: HEALTHY, costState: kpi(3, 10, 8), agentsState: LOADING, outcomesState: LOADING }), "spend");
   const text = `${tile.detail} ${tile.hint}`;
   assert.equal((text.match(/\b\d+\.\d×/g) ?? []).length, 1, text);
-  assert.match(tile.hint, /alarm at 1\.25× the 7-day average/i);
+  assert.match(tile.hint, /alarm at 1\.25× the 7-day avg/i);
 });
 
 test("the spend tile says why its day-over-day change is missing, telling a pending, a failed and an empty read apart", () => {
