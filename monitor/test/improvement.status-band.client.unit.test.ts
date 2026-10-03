@@ -240,6 +240,23 @@ test("the applied tile is counted over the same population it names", () => {
   assert.match(String(applied.props.basis), /last 7 days/);
 });
 
+test("the applied tile names a one-cycle week in the singular", () => {
+  const band = sandbox.StatusBandI({
+    statsState: {
+      status: "ready",
+      data: { cycle_total_7d: 1, cycles_generated_applied_7d: 1, latest_cycle_started_at: "2026-09-16T10:00:00.000Z" },
+    },
+    listState: { status: "ready", data: {} },
+    learningLogState: { status: "ready" },
+    suppression: { pending_total: 0, parked: [] },
+    awaiting: 0,
+    onRetry: () => {},
+  });
+  const applied = collectElements(band, []).find((el) => el.props.label === "Applied (7 days)");
+
+  assert.match(String(applied?.props.population), /^of 1 cycle · last /);
+});
+
 test("the decision tile reads ok at zero and warns while something awaits a decision", () => {
   const renderAwaiting = (awaiting: number) =>
     collectElements(

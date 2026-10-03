@@ -40,6 +40,7 @@ interface LoopSandbox {
   TrendCardI: (props: Record<string, unknown>) => RecordedElement;
   BucketRowI: (props: Record<string, unknown>) => RecordedElement;
   RejectRateHeadlineI: (props: Record<string, unknown>) => RecordedElement;
+  LineCountI: (props: Record<string, unknown>) => RecordedElement;
   getRejectRatePhraseI: (
     before: { count: number; total: number },
     after: { count: number; total: number },
@@ -119,12 +120,6 @@ const ROWS = {
       perDay: 2,
       expected: { text: "All 4 cycles", title: "All 4 cycles · 2025–2026" },
     },
-    {
-      name: "a single recorded cycle reads in the singular",
-      days: ["2026-09-24"],
-      perDay: 1,
-      expected: { text: "All 1 cycle", title: "All 1 cycle · 09/24–09/24" },
-    },
   ],
   PHRASE: [
     {
@@ -156,6 +151,15 @@ describe("the loop basis names its count on the header line and its dates in the
       assert.deepEqual({ ...sandbox.getLoopBasisI(aggregate) }, row.expected);
     });
   }
+});
+
+// the noun only — the one-day span in the title belongs to getDateSpanI, not to this row
+test("a single recorded cycle names its basis in the singular, on the line and in the hover title", () => {
+  const aggregate = sandbox.deriveLoopAggregateI({ events: getEvents(["2026-09-24"], 1) });
+  const { text, title } = sandbox.getLoopBasisI(aggregate);
+
+  assert.equal(text, "All 1 cycle");
+  assert.ok(title.startsWith("All 1 cycle · "), title);
 });
 
 test("both loop cards head their numbers with the same stated basis", () => {
@@ -278,6 +282,17 @@ const FOOT_ROWS = [
     edits: [{ added: 2, removed: 0 }],
     expected: "1 of 1 cycle changed rule lines",
   },
+  {
+    name: "one changed cycle out of several keeps the basis noun plural",
+    edits: [
+      { added: 3, removed: 0 },
+      { added: 0, removed: 0 },
+      { added: 0, removed: 0 },
+      { added: 0, removed: 0 },
+      { added: 0, removed: 0 },
+    ],
+    expected: "1 of 5 cycles changed rule lines",
+  },
 ];
 
 describe("the applied card foot counts changed cycles out of its basis", () => {
@@ -293,6 +308,48 @@ describe("the applied card foot counts changed cycles out of its basis", () => {
       const text = getPrintedText(sandbox.ChangeSummaryCardI({ state: READY, aggregate }));
 
       assert.ok(text.includes(row.expected), text);
+    });
+  }
+});
+
+// each hover title's nouns agree with their own counts: lines with the line count, cycles with the basis
+const LINE_TITLE_ROWS = [
+  {
+    name: "several lines over several cycles read in the plural",
+    edits: [
+      { added: 3, removed: 2 },
+      { added: 1, removed: 0 },
+    ],
+    expected: [
+      "4 rule/instruction lines added across 2 cycles",
+      "2 rule/instruction lines removed across 2 cycles",
+    ],
+  },
+  {
+    name: "a single cycle and a single line each read in the singular",
+    edits: [{ added: 1, removed: 2 }],
+    expected: [
+      "1 rule/instruction line added across 1 cycle",
+      "2 rule/instruction lines removed across 1 cycle",
+    ],
+  },
+];
+
+describe("the applied card's line counts title their lines and cycles in agreement with each count", () => {
+  for (const row of LINE_TITLE_ROWS) {
+    test(row.name, () => {
+      const events = row.edits.map((edit, i) => ({
+        event_ts: `2026-09-2${i}T01:00:00Z`,
+        eval_result: "verified",
+        changes_added: edit.added,
+        changes_removed: edit.removed,
+      }));
+      const aggregate = sandbox.deriveLoopAggregateI({ events });
+      const titles = collectElements(sandbox.ChangeSummaryCardI({ state: READY, aggregate }), [])
+        .filter((el) => el.type === sandbox.LineCountI)
+        .map((el) => el.props.title);
+
+      assert.deepEqual(titles, row.expected);
     });
   }
 });

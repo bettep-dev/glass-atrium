@@ -644,7 +644,7 @@ function StatusBandI({
 					label="Applied (7 days)"
 					value={formatIntI(applied)}
 					owner="loop output"
-					population={`${appliedHeld ? `${appliedHeld} · ` : ""}of ${formatIntI(cycleTotal)} cycles · last ${formatCycleStampI(s.latest_cycle_started_at)}`}
+					population={`${appliedHeld ? `${appliedHeld} · ` : ""}of ${getCycleCountTextI(cycleTotal)} · last ${formatCycleStampI(s.latest_cycle_started_at)}`}
 					basis="Cycles started in the last 7 days"
 					onRetry={onRetry}
 				/>
@@ -871,6 +871,10 @@ function formatCycleStampI(iso) {
 		hour: "2-digit",
 		minute: "2-digit",
 	});
+}
+
+function getCycleCountTextI(count) {
+	return `${formatIntI(count)} ${count === 1 ? "cycle" : "cycles"}`;
 }
 
 // 뷰 전환 — nav 항목이 아니라 화면 안의 전환이다. 선택 상태는 aria-pressed 와 ✓ 글리프가
@@ -2544,19 +2548,19 @@ function ChangeSummaryCardI({ state, aggregate, onRetry, failures }) {
 								tone="text-ok"
 								count={added}
 								word="added"
-								title={`${formatIntI(added)} rule/instruction lines added across ${formatIntI(eventCount)} cycles`}
+								title={`${formatIntI(added)} rule/instruction ${added === 1 ? "line" : "lines"} added across ${getCycleCountTextI(eventCount)}`}
 							/>
 							<LineCountI
 								symbol="−"
 								tone="text-crit"
 								count={removed}
 								word="removed"
-								title={`${formatIntI(removed)} rule/instruction lines removed across ${formatIntI(eventCount)} cycles`}
+								title={`${formatIntI(removed)} rule/instruction ${removed === 1 ? "line" : "lines"} removed across ${getCycleCountTextI(eventCount)}`}
 							/>
 						</div>
 					</>
 				),
-				foot: `${formatIntI(changedCount)} of ${formatIntI(eventCount)} ${eventCount === 1 ? "cycle" : "cycles"} changed rule lines`,
+				foot: `${formatIntI(changedCount)} of ${getCycleCountTextI(eventCount)} changed rule lines`,
 			})}
 		</div>
 	);
@@ -2966,7 +2970,7 @@ function getLoopBasisI(aggregate) {
 	const { eventCount } = aggregate;
 	const trend = aggregate.trend || [];
 	const qualifier = eventCount >= LOOP_EVENTS_LIMIT ? "Last" : "All";
-	const text = `${qualifier} ${formatIntI(eventCount)} ${eventCount === 1 ? "cycle" : "cycles"}`;
+	const text = `${qualifier} ${getCycleCountTextI(eventCount)}`;
 	if (trend.length === 0) return { text, title: text };
 	return { text, title: `${text} · ${getDateSpanI(trend[0].date, trend[trend.length - 1].date)}` };
 }
