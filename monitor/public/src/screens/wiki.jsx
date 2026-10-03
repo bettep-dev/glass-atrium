@@ -1088,7 +1088,6 @@ function WikiRunHistorySection({ cyclesState, summaryState, shared, onRetry }) {
 // Per-run record — a detail fold whose summary line states the run streak without a click.
 function WikiRunTableSection({ reportState, days, onChangeDays, shared, onRetry }) {
 	const { CardInfo } = window.UI;
-	const noteId = `${WIKI_REGION_IDS.runTable}-note`;
 
 	return (
 		<WikiDisclosureW
@@ -1098,10 +1097,10 @@ function WikiRunTableSection({ reportState, days, onChangeDays, shared, onRetry 
 			bodyClassName="px-3 pb-3 flex flex-col gap-2"
 		>
 			<div className="flex items-center gap-2 flex-wrap">
-				<span id={noteId} className="fs-meta text-faint leading-tight">
+				<span className="fs-meta text-faint leading-tight">
 					{`The window drives the table only — the trend keeps a fixed ${WIKI_CYCLE_DAYS}-day window.`}
 				</span>
-				<CardInfo label="How a change is counted" describedBy={noteId}>
+				<CardInfo label="How a change is counted" describedBy={`${WIKI_REGION_IDS.runTable}-title`}>
 					A change is a run whose status or backlog differs from the run before.
 				</CardInfo>
 				<div
@@ -1199,7 +1198,7 @@ function WikiDisclosureW({
 				<span className="w-chevron inline-block fs-meta text-faint" aria-hidden="true">
 					▶
 				</span>
-				<h2 className="m-0 fs-body text-ink font-medium">{label}</h2>
+				<h2 id={id ? `${id}-title` : undefined} className="m-0 fs-body text-ink font-medium">{label}</h2>
 				<span className="ml-auto fs-meta text-dim">{count}</span>
 			</summary>
 			<div className={bodyClassName}>{children}</div>

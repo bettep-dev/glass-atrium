@@ -192,6 +192,16 @@ test("the Per-run fold's body prose fits the 90-char footnote cap, a longer qual
   assert.equal(findNodes(fold, (n) => n.props.atom === "CardInfo").length, 1, "the change definition opens from one ⓘ");
 });
 
+test("the Per-run fold's ⓘ is described by the fold's own heading", async () => {
+  const mod = await loadWikiScreen();
+  const tree = renderScreen(mod.React.createElement(mod.WikiRunTableSection as Component, RUN_TABLE_LOADING));
+  const [trigger] = findNodes(tree, (n) => n.props.atom === "CardInfo");
+  const [described] = findNodes(tree, (n) => n.props.id !== undefined && n.props.id === trigger.props.describedBy);
+
+  assert.equal(described?.type, "h2", "the described-by id names a heading");
+  assert.deepEqual(described?.children, ["Per-run table"]);
+});
+
 test("the run-history trend and notes by type share one split row, the trend on the wider side", async () => {
   const mod = await loadWikiScreen();
   const tree = renderScreen(mod.React.createElement(mod.WikiStatusRow as Component, {
