@@ -588,7 +588,7 @@ describe("a stage pill draws the shared stage pip, filled up to its stage", () =
   }
 });
 
-test("no Documents style, size class or inline size draws text below the 13px meta floor", async () => {
+test("the Documents style block and the rendered list card's size classes and inline sizes stay at or above the 13px meta floor", async () => {
   const META_FLOOR_PX = 13;
   const screen = await loadDocsScreen();
   const listCard = renderScreen((screen.DocListCardCD as Component)(listCardProps(() => undefined)));
