@@ -45,7 +45,7 @@ PG_HELPER_SRC="${HOOKS_DIR}/_pg_outcome_dualwrite.py"
 source "${BATS_TEST_DIRNAME}/../../scripts/lib/path-guard.sh"
 
 # One throwaway cluster per file (lib/ephemeral-pg.bash), PGHOST/PGPORT exported at it → every
-# host-less connection here (row reads, teardown DELETE, constraint probe, the hook's own write)
+# host-less connection here (row reads, teardown DELETE, the hook's own write)
 # lands in it, never in the invoking shell's database.
 setup_file() {
   # shellcheck source-path=SCRIPTDIR source=lib/ephemeral-pg.bash
