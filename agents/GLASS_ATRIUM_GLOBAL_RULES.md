@@ -1,8 +1,8 @@
 <!-- MAINTAINER: four shapes in this file are machine-read — one heading whose POSITION is asserted,
      two pointer-clause needle sets, and one hyphenated marker phrase. Read
      scoped/maintainers/GLASS_ATRIUM_GLOBAL_RULES.md before cutting above a heading, renaming a
-     heading, or re-adding a schema constraint. A renamed heading makes its suite SKIP silently
-     rather than fail, so a rename is worse than a red. -->
+     heading, or re-adding a schema constraint. The heading-position suite is Python, which CI
+     skips on a markdown-only change: run it locally after a charter edit. -->
 
 # Agent Global Rules
 
@@ -107,13 +107,33 @@ The canonical rule for what language this system writes in.
 ## Thinking Budget Policy [ALL]
 
 - Reasoning spend is controlled by the `effort` parameter (max / xhigh / high / medium / low).
-- Default `effort=high`; lower for cost-sensitive pipelines; `xhigh` for highest-capability tasks (long-horizon agents, deep reasoning); `max` may overthink — reserve for genuinely hardest tasks.
+- **Default tier**: a spawn with neither an `agent()` option nor a frontmatter `effort:` key takes its parent session's tier, on every path.
+  - Measured for a parent tier at or above settings `effortLevel`.
+- **Tier surface and precedence, per path**:
+
+| Path | Surface an author sets a tier through | Measured precedence |
+|---|---|---|
+| Workflow spawn | the `agent()` option, per spawn | `agent()` option > frontmatter `effort:` key and parent tier; a key > a higher parent tier |
+| Manual, unnamed `Agent` call | the agent's frontmatter `effort:` key, agent-wide — the `Agent` tool takes no per-spawn tier | frontmatter `effort:` key > parent tier, in both directions |
+| Manual, named `Agent` call (in-process teammate) | none | a key did not lower a higher parent tier |
+
+- Unmeasured: whether a key alone raises a spawn above a lower parent tier — on a workflow spawn with no `agent()` option, or on a named `Agent` call.
+- **Task-class rule**: a **Task-class targets** line alone never justifies setting or changing a spawn's tier.
+  - A tier moves for a task-class reason only through a measured per-class decision, `rules/glass-atrium/orchestrator-role.md` → `### Failure Recovery Loop` → **Retry effort escalation**, or a deliberate measurement arm listed in the run's record of its arms.
+- **Task-class targets**:
+  - Effort buys verification depth and edge-case coverage.
+  - Verification and brownfield bug fixing target high or above.
+  - xhigh or max targets autonomous end-to-end builds and other long-horizon deep reasoning; `max` may overthink — reserve it for the genuinely hardest tasks.
+  - Security review and vulnerability hunting carry no charter tier; glass-atrium-sec-guard keeps its frontmatter key.
+  - Low is for in-the-loop sketching, which delegated subagents never are.
+  - Detailed specs narrow the gap between tiers, so plan-backed implementation is the first candidate for a lower tier.
 - **Thinking is on**: `effort` governs thinking volume, not visible response length — prompt conciseness explicitly when short output is wanted.
   - Control thinking through `effort` alone: on the main-session model, a `thinking: {type: "disabled"}` or `budget_tokens` request is a 400 at every effort level.
   - Never write a "do not think" rule or tell an agent that reasoning is off; raise `effort` when reasoning is shallow.
 - **Request-surface facts** — for code that builds API requests. They move with each model release, so confirm each one against the current model's migration notes before relying on it:
   - Max output is 128k.
   - Start `max_tokens` at 64k and size it for thinking plus the reply — thinking counts toward it.
+    - A tier raise weighs the output-token cap in the same change.
   - 1M context is the main-session model's default and maximum.
   - Mid-conversation `role:"system"` messages are accepted — append a late instruction instead of editing the system prompt, which keeps the prompt cache and earlier thinking blocks valid.
   - Mid-conversation tool changes are a beta.
