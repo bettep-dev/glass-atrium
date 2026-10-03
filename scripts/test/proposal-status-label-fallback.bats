@@ -3,8 +3,10 @@
 # the `unadjudicated` ProposalStatus label (new code running before its migration).
 #
 # Relationship: a write requesting `unadjudicated` persists it where the label exists and
-# persists `rejected` where it does not; every other status persists as requested; the
-# shared label probe answers present / absent, and unknown when the query cannot run.
+# persists `rejected` where it does not; every other status persists as requested; a
+# stored terminal row survives a non-terminal re-push through both conflict arms on either
+# schema; the shared label probe answers present / absent, and unknown when the query
+# cannot run.
 #
 # Isolation: PGHOST/PGPORT point every psycopg connection at a throwaway socket-only cluster
 # (hooks/test/lib/ephemeral-pg.bash); each test clones glass_atrium from a template built
@@ -124,6 +126,29 @@ PY
     _use_db "${template}" || { echo "${row}: clone failed"; return 1; }
     run _drive push "${requested}"
     [[ "${status}" -eq 0 ]] || { echo "${row}: ${output}"; return 1; }
+    [[ "$(_q "SELECT status FROM core.autoagent_proposals WHERE pattern_label = 'label-fallback'")" == "${expected}" ]] \
+      || { echo "${row}: stored $(_q "SELECT status FROM core.autoagent_proposals")"; return 1; }
+  done
+}
+
+@test "a stored terminal row survives a non-terminal re-push through both conflict arms on either schema" {
+  local rows=(
+    "label_present unadjudicated NULL unadjudicated"
+    "label_present unadjudicated now() unadjudicated"
+    "label_absent rejected NULL rejected"
+    "label_absent rejected now() rejected"
+    "label_absent reverted NULL reverted"
+  )
+  local row template stored reviewed_at expected
+  for row in "${rows[@]}"; do
+    read -r template stored reviewed_at expected <<<"${row}"
+    _use_db "${template}" || { echo "${row}: clone failed"; return 1; }
+    run _drive push pending
+    [[ "${status}" -eq 0 ]] || { echo "${row}: seed: ${output}"; return 1; }
+    _q "UPDATE core.autoagent_proposals SET status = '${stored}', reviewed_at = ${reviewed_at}" >/dev/null \
+      || { echo "${row}: stamp failed"; return 1; }
+    run _drive push pending
+    [[ "${status}" -eq 0 ]] || { echo "${row}: re-push: ${output}"; return 1; }
     [[ "$(_q "SELECT status FROM core.autoagent_proposals WHERE pattern_label = 'label-fallback'")" == "${expected}" ]] \
       || { echo "${row}: stored $(_q "SELECT status FROM core.autoagent_proposals")"; return 1; }
   done

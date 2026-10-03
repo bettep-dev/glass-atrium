@@ -23,8 +23,9 @@ the updater's accountability record, which always sends a terminal status.
 
 Every case drives the helper's REAL statement text through a stdlib SQL engine (see
 _pg_stub_backend), so it runs on the test-python-pytest gating leg and can fail the
-merge. `reverted` is absent from the co-movement matrix: the helper coerces it away,
-so no push carries it. A REVIEWED reverted row is covered by the freeze pins below.
+merge. One terminal set drives both conflict arms. `reverted` never arrives on a
+push (the helper coerces it away), so a stored `reverted` row is seeded straight into
+the store, and the incoming side of the matrix covers the pushable members only.
 
 Two rules sit above the co-movement arms:
 - Reviewed-row freeze: a stored terminal row carrying `reviewed_at` (the apply flip,
@@ -57,11 +58,11 @@ _PATTERN_LABEL = "rationale-co-movement"
 _TARGET_FILE = "agents/glass-atrium-dev-python.md"
 _KEY = (_CYCLE_DATE, _PATTERN_LABEL, _TARGET_FILE)
 
-# The arm's own terminal set; `reverted` is not writable through the helper.
-_TERMINAL = ("applied", "approved", "rejected")
+# One terminal set for both conflict arms; `reverted` is not writable through the helper.
+_TERMINAL = ("applied", "approved", "rejected", "reverted", "unadjudicated")
 _NON_TERMINAL = ("pending", "snoozed")
-_STORABLE = _TERMINAL + _NON_TERMINAL
-_REVIEWED_TERMINAL = (*_TERMINAL, "reverted")
+_PUSHABLE_TERMINAL = tuple(s for s in _TERMINAL if s != "reverted")
+_STORABLE = _PUSHABLE_TERMINAL + _NON_TERMINAL
 _REVIEWED_AT = "2026-07-26 03:51:48"
 _MARKER = "skipped:chronic-timeout-backoff"
 _REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -178,6 +179,11 @@ class _Proposals:
             reviewed_by=actor,
         )
 
+    def seed(self, status: str, rationale: str, actor: str = "") -> None:
+        # Unreviewed stored row of any status: `reverted` cannot arrive by push.
+        self.push("pending", rationale, actor)
+        self._set_columns(status=status)
+
     def get_stored(self) -> dict[str, str]:
         stored = backend.read_proposal(self._db_path, _KEY)
         assert stored is not None, "the seeding push stored no row"
@@ -213,11 +219,15 @@ class _Proposals:
     def set_review(self, status: str) -> None:
         # The helper writes no reviewed_at and coerces `reverted`, so the review
         # stamp the apply flip or the reject route leaves is set straight in the store.
+        self._set_columns(status=status, reviewed_at=_REVIEWED_AT)
+
+    def _set_columns(self, **columns: str) -> None:
+        assignments = ", ".join("%s = ?" % name for name in columns)
         with closing(sqlite3.connect(self._db_path)) as db:
             db.execute(
-                "UPDATE autoagent_proposals SET status = ?, reviewed_at = ?"
-                " WHERE cycle_date = ? AND pattern_label = ? AND target_file = ?",
-                (status, _REVIEWED_AT, *_KEY),
+                "UPDATE autoagent_proposals SET " + assignments
+                + " WHERE cycle_date = ? AND pattern_label = ? AND target_file = ?",
+                (*columns.values(), *_KEY),
             )
             db.commit()
 
@@ -247,7 +257,7 @@ def test_when_a_terminal_status_is_preserved_then_its_rationale_is_preserved(
     proposals: _Proposals, stored_status: str, incoming_status: str
 ):
     # The defect: the status survived the re-push and the text explaining it did not.
-    proposals.push(stored_status, _stamp(stored_status))
+    proposals.seed(stored_status, _stamp(stored_status))
 
     proposals.push(incoming_status, _generation_text(incoming_status))
 
@@ -275,7 +285,7 @@ def test_when_no_status_is_preserved_then_the_incoming_rationale_replaces_it(
 
 
 @pytest.mark.parametrize("stored_status", _STORABLE)
-@pytest.mark.parametrize("incoming_status", _TERMINAL)
+@pytest.mark.parametrize("incoming_status", _PUSHABLE_TERMINAL)
 def test_when_the_incoming_status_is_terminal_then_its_rationale_comes_with_it(
     proposals: _Proposals, stored_status: str, incoming_status: str
 ):
@@ -299,7 +309,7 @@ def test_when_a_terminal_status_is_preserved_then_its_actor_is_preserved(
 ):
     # The stored row carries NO reviewed_at — a machine transition stamps the actor
     # alone — so the freeze never fires and this arm is the whole protection.
-    proposals.push(stored_status, _stamp(stored_status), _STORED_ACTOR)
+    proposals.seed(stored_status, _stamp(stored_status), _STORED_ACTOR)
 
     proposals.push(incoming_status, _generation_text(incoming_status), _INCOMING_ACTOR)
 
@@ -311,7 +321,7 @@ def test_when_a_terminal_status_is_preserved_then_its_actor_is_preserved(
 
 
 @pytest.mark.parametrize("stored_status", _STORABLE)
-@pytest.mark.parametrize("incoming_status", _TERMINAL)
+@pytest.mark.parametrize("incoming_status", _PUSHABLE_TERMINAL)
 def test_when_the_incoming_status_is_terminal_then_its_actor_comes_with_it(
     proposals: _Proposals, stored_status: str, incoming_status: str
 ):
@@ -362,7 +372,7 @@ def test_when_the_status_label_exists_then_an_unadjudicated_push_persists_it(
     assert proposals.get_stored()["status"] == "unadjudicated"
 
 
-@pytest.mark.parametrize("stored_status", _REVIEWED_TERMINAL)
+@pytest.mark.parametrize("stored_status", _TERMINAL)
 @pytest.mark.parametrize("incoming_status", _STORABLE)
 def test_when_a_reviewed_row_is_terminal_then_no_re_push_changes_any_column(
     proposals: _Proposals, stored_status: str, incoming_status: str

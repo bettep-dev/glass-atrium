@@ -476,9 +476,9 @@ def _coerce_classification(raw):
     return _CLASSIFICATION_TO_ENUM.get(str(raw), ("reject", "auto"))
 
 
-# Statuses a re-push must not downgrade. The freeze WHERE below carries its own
-# 4-member set including 'reverted' — a different set, deliberately not this one.
-_TERMINAL_STATUS_SQL = "('applied', 'approved', 'rejected')"
+# Terminal statuses for both conflict arms: never downgraded by a re-push, frozen once reviewed.
+# Compared as status::text → the 'unadjudicated' literal still plans on a schema lacking the label.
+_TERMINAL_STATUS_SQL = "('applied', 'approved', 'rejected', 'reverted', 'unadjudicated')"
 _BACKOFF_MARKER = "skipped:chronic-timeout-backoff"
 
 # Preserve-the-stored-verdict predicate: stored terminal AND incoming non-terminal,
@@ -487,8 +487,8 @@ _BACKOFF_MARKER = "skipped:chronic-timeout-backoff"
 # Status, its rationale and its actor move together, so all three CASE arms read it
 # from here — identical by construction, not by a comment asking for it.
 _PRESERVE_STORED_VERDICT_SQL = f"""
-                            core.autoagent_proposals.status IN {_TERMINAL_STATUS_SQL}
-                            AND EXCLUDED.status NOT IN {_TERMINAL_STATUS_SQL}
+                            core.autoagent_proposals.status::text IN {_TERMINAL_STATUS_SQL}
+                            AND EXCLUDED.status::text NOT IN {_TERMINAL_STATUS_SQL}
                             AND NOT (
                                 COALESCE(core.autoagent_proposals.haiku_status, '')
                                     = '{_BACKOFF_MARKER}'
@@ -692,8 +692,7 @@ def write_autoagent_proposal(
             project_key = EXCLUDED.project_key,
             promotion_tier = EXCLUDED.promotion_tier
         -- Reviewed terminal row (apply flip or reject route) → frozen, all columns.
-        WHERE NOT (core.autoagent_proposals.status
-                       IN ('applied', 'approved', 'rejected', 'reverted')
+        WHERE NOT (core.autoagent_proposals.status::text IN {_TERMINAL_STATUS_SQL}
                    AND core.autoagent_proposals.reviewed_at IS NOT NULL)
         RETURNING id
     """
