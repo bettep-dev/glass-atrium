@@ -98,30 +98,52 @@ const READY = { status: "ready" };
 // the loop-events URL fetches at most this many rows, newest first
 const FETCH_CAP = 200;
 
-// the header meta holds the basis on one line → a qualified count plus the shortest date span that stays unambiguous
-const BASIS_ROWS = [
-  {
-    name: "a count cut at the row limit reads as the latest cycles over their dates",
-    days: ["2026-09-20", "2026-09-21", "2026-09-22", "2026-09-23"],
-    perDay: FETCH_CAP / 4,
-    expected: `Last ${FETCH_CAP} · 09/20–09/23`,
-  },
-  {
-    name: "a count under the row limit reads as every recorded cycle",
-    days: ["2026-09-24", "2026-09-25"],
-    perDay: 2,
-    expected: "All 4 · 09/24–09/25",
-  },
-  {
-    name: "a span across a year boundary names its years, so no month-day pair is ambiguous",
-    days: ["2025-12-31", "2026-01-01"],
-    perDay: 2,
-    expected: "All 4 · 2025–2026",
-  },
-];
+const ROWS = {
+  // the header meta holds the basis on one line → a qualified count plus the shortest date span that stays unambiguous
+  BASIS: [
+    {
+      name: "a count cut at the row limit reads as the latest cycles over their dates",
+      days: ["2026-09-20", "2026-09-21", "2026-09-22", "2026-09-23"],
+      perDay: FETCH_CAP / 4,
+      expected: `Last ${FETCH_CAP} · 09/20–09/23`,
+    },
+    {
+      name: "a count under the row limit reads as every recorded cycle",
+      days: ["2026-09-24", "2026-09-25"],
+      perDay: 2,
+      expected: "All 4 · 09/24–09/25",
+    },
+    {
+      name: "a span across a year boundary names its years, so no month-day pair is ambiguous",
+      days: ["2025-12-31", "2026-01-01"],
+      perDay: 2,
+      expected: "All 4 · 2025–2026",
+    },
+  ],
+  PHRASE: [
+    {
+      name: "both halves scored → recent count leads over its days, earlier count names its own",
+      before: { count: 4, total: 5, days: 2 },
+      after: { count: 3, total: 5, days: 3 },
+      expected: "3 of 5 rejected in the latest 3 cycle days (4 of 5 in the 2 before)",
+    },
+    {
+      name: "no earlier scored cycle → recent count alone, still over its days",
+      before: { count: 0, total: 0, days: 1 },
+      after: { count: 2, total: 7, days: 2 },
+      expected: "2 of 7 rejected in the latest 2 cycle days",
+    },
+    {
+      name: "no recent scored cycle → no count to state",
+      before: { count: 1, total: 4, days: 2 },
+      after: { count: 0, total: 0, days: 2 },
+      expected: "No scored cycles yet",
+    },
+  ],
+};
 
 describe("the loop basis names its count and dates in one header line", () => {
-  for (const row of BASIS_ROWS) {
+  for (const row of ROWS.BASIS) {
     test(row.name, () => {
       const aggregate = sandbox.deriveLoopAggregateI({ events: getEvents(row.days, row.perDay) });
 
@@ -174,29 +196,8 @@ test("the trend plots one chart of the daily reject share, ticked by MM/DD and t
   assert.ok(typeof charts[0].props.label === "string" && (charts[0].props.label as string).length > 0);
 });
 
-const PHRASE_ROWS = [
-  {
-    name: "both halves scored → recent count leads over its days, earlier count names its own",
-    before: { count: 4, total: 5, days: 2 },
-    after: { count: 3, total: 5, days: 3 },
-    expected: "3 of 5 rejected in the latest 3 cycle days (4 of 5 in the 2 before)",
-  },
-  {
-    name: "no earlier scored cycle → recent count alone, still over its days",
-    before: { count: 0, total: 0, days: 1 },
-    after: { count: 2, total: 7, days: 2 },
-    expected: "2 of 7 rejected in the latest 2 cycle days",
-  },
-  {
-    name: "no recent scored cycle → no count to state",
-    before: { count: 1, total: 4, days: 2 },
-    after: { count: 0, total: 0, days: 2 },
-    expected: "No scored cycles yet",
-  },
-];
-
 describe("the reject rate reads as counts, never a percentage", () => {
-  for (const row of PHRASE_ROWS) {
+  for (const row of ROWS.PHRASE) {
     test(row.name, () => {
       assert.equal(sandbox.getRejectRatePhraseI(row.before, row.after), row.expected);
     });
