@@ -557,7 +557,7 @@ describe("healthy live fixture", () => {
 		}
 	});
 
-	test("Tab reads the left column top to bottom, then the right column top to bottom", async () => {
+	test("Tab reads the sources column top to bottom, then the spine top to bottom", async () => {
 		// document order of tabindex=0 stops IS the Tab sequence; inline mappers only (tsx __name)
 		const { stops, zones } = await ctx.page.evaluate(
 			(canvas) => ({
@@ -572,7 +572,7 @@ describe("healthy live fixture", () => {
 			}),
 			ctx.selectors.canvas,
 		);
-		// zones in reading order — the left column (the Inputs | Daemons band first, Inputs on its left), then the right column
+		// zones in reading order — the sources column (Inputs above Daemons), then the pipeline spine
 		const readingOrder = ["entry", "daemon", "orch", "agents", "hooks", "data", "export"];
 		assert.deepEqual(zones.map((z) => z.id).sort(), [...readingOrder].sort(), "the seven zones are drawn");
 		assert.ok(stops.length > readingOrder.length, `focusable node count ${stops.length}`);

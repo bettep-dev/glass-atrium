@@ -59,8 +59,14 @@ const MIN_RENDERED_LABEL_PX = 13;
 // the default view's share of the contain fit
 const DEFAULT_VIEW_SHARE = 0.9;
 
-// the two column jumps' vertical lanes stay this far apart (CSS px) — closer, the two arrows read as one line
-const MIN_JUMP_LANE_GAP_PX = 8;
+// parallel runs of different edges sit at least this far apart (layout units) — closer, two lanes read as one line
+const MIN_LANE_GAP_UNITS = 24;
+
+// a screen-drawn edge label keeps this clearance (layout units) from every edge but its own
+const LABEL_CLEARANCE_UNITS = 16;
+
+// an arrowhead under this length (CSS px) reads as a dot, not a direction
+const MIN_ARROWHEAD_PX = 6;
 
 // drawn boxes span at least this share of the viewBox on its binding axis (the rest is diagramPadding)
 const MIN_BINDING_AXIS_FILL = 0.9;
@@ -274,6 +280,15 @@ async function measureFit(page: Page, canvasSelector: string): Promise<FitReadin
 				}
 			}
 
+			// edges and their labels are part of the drawing too — a lane or label right of the spine widens it past every box
+			for (const el of Array.from(canvas.querySelectorAll("svg path.flowchart-link, svg g.edgeLabel foreignObject"))) {
+				const r = el.getBoundingClientRect();
+				if (r.width === 0 && r.height === 0) continue;
+				drawn.left = Math.min(drawn.left, r.left);
+				drawn.right = Math.max(drawn.right, r.right);
+				drawn.top = Math.min(drawn.top, r.top);
+				drawn.bottom = Math.max(drawn.bottom, r.bottom);
+			}
 			const drawableRight = controls ? Math.min(pane.right, controls.left) : pane.right;
 
 			return {
@@ -537,16 +552,15 @@ for (const { width, height } of VIEWPORTS.filter((viewport) => viewport.width ==
 	});
 }
 
-// the newspaper map — drawn zone ids in source order, and the zones of each column top to bottom (the band's two zones share a row)
+// the two-column map — drawn zone ids in source order, each column's zones top to bottom, and the wrapper each column is laid out in
 const ZONE_IDS = {
 	DRAWN: [...CANONICAL_MAP.mermaid_drawn.matchAll(/subgraph\s+(\w+)/g)].map(([, id]) => id),
-	LEFT: ["entry", "daemon", "orch", "agents"],
-	RIGHT: ["hooks", "data", "export"],
-	// side by side in one row, so each keeps its own frame width
-	BAND: ["entry", "daemon"],
+	SOURCES: ["entry", "daemon"],
+	PIPELINE: ["orch", "agents", "hooks", "data", "export"],
+	COLUMN: { sources: "map_col_sources", pipeline: "map_col_pipeline" },
 };
 
-// drawn member ids per zone, from the drawn source's subgraph blocks
+// drawn member ids per zone in declaration order, from the drawn source's subgraph blocks
 const MEMBER_IDS = new Map(
 	[...CANONICAL_MAP.mermaid_drawn.matchAll(/subgraph\s+(\w+)\[[^\]]*\]\n([\s\S]*?)\n\s*end/g)].map(([, zone, body]) => [
 		zone,
@@ -555,44 +569,62 @@ const MEMBER_IDS = new Map(
 );
 
 type Box = { left: number; right: number; top: number; bottom: number };
+type Point = { x: number; y: number };
 
 interface MapShape {
+	// CSS px per layout unit at the default view
+	scale: number;
 	zones: Record<string, Box>;
+	// zone id → the column wrapper the screen laid it out in
+	columns: Record<string, string>;
 	members: { id: string; box: Box }[];
-	// screen polylines of every drawn link, sampled along the path · kind is the screen-drawn edge kind ("" for ELK-routed)
-	links: { id: string; kind: string; points: { x: number; y: number }[] }[];
+	// screen polylines of every drawn link, sampled along the path · kind is the screen-drawn edge kind ("" for ELK-routed) · headPx the arrowhead length
+	links: { id: string; kind: string; points: Point[]; headPx: number }[];
+	// screen-drawn edge labels and the `from>to` edge each one captions
+	labels: { edge: string; box: Box }[];
 }
 
-// zone frames, member boxes and sampled link polylines in client px at the default view
+// zone frames, member boxes, sampled link polylines and screen-drawn labels in client px at the default view
 async function readMapShape(width: number, height: number): Promise<MapShape> {
 	const { page, canvasSelector } = await openFittedPage(width, height);
 	try {
-		return await page.evaluate((sel) => ({
-			zones: Object.fromEntries(
-				Array.from(document.querySelectorAll(`${sel} svg g.cluster`)).map((el) => {
-					const r = (el.querySelector(":scope > rect") ?? el).getBoundingClientRect();
-					return [el.id.slice(el.id.lastIndexOf("-") + 1), { left: r.left, right: r.right, top: r.top, bottom: r.bottom }];
+		// inline mappers only — a named helper inside evaluate gains tsx's __name wrapper, which the page does not define
+		return await page.evaluate((sel) => {
+			const clusters = Array.from(document.querySelectorAll(`${sel} svg g.cluster`));
+			const vp = document.querySelector(`${sel} .svg-pan-zoom_viewport`) as SVGGraphicsElement;
+			return {
+				scale: vp.getCTM()?.a ?? 0,
+				zones: Object.fromEntries(
+					clusters.map((el) => [el.id.slice(el.id.lastIndexOf("-") + 1), (el.querySelector(":scope > rect") ?? el).getBoundingClientRect().toJSON() as Box]),
+				),
+				columns: Object.fromEntries(clusters.map((el) => [el.id.slice(el.id.lastIndexOf("-") + 1), el.getAttribute("data-arch-column") ?? ""])),
+				members: Array.from(document.querySelectorAll(`${sel} svg g.node`)).map((el) => ({
+					id: /flowchart-(.+)-\d+$/.exec(el.id)?.[1] ?? el.id,
+					box: el.getBoundingClientRect().toJSON() as Box,
+				})),
+				links: Array.from(document.querySelectorAll(`${sel} svg path.flowchart-link`)).map((el) => {
+					const path = el as SVGPathElement;
+					const ctm = path.getScreenCTM() as DOMMatrix;
+					const length = path.getTotalLength();
+					const count = Math.max(2, Math.ceil(length / 4));
+					const markerId = /url\(["']?#([^"')]+)/.exec(path.getAttribute("marker-end") || getComputedStyle(path).markerEnd || "")?.[1];
+					const marker = markerId ? document.getElementById(markerId) : null;
+					return {
+						id: path.getAttribute("data-id") || path.id,
+						kind: path.getAttribute("data-arch-edge") ?? "",
+						points: Array.from({ length: count + 1 }, (_, i) => {
+							const p = path.getPointAtLength((length * i) / count).matrixTransform(ctm);
+							return { x: p.x, y: p.y };
+						}),
+						headPx: marker && marker.getAttribute("markerUnits") === "userSpaceOnUse" ? Number(marker.getAttribute("markerWidth")) * ctm.a : 0,
+					};
 				}),
-			),
-			members: Array.from(document.querySelectorAll(`${sel} svg g.node`)).map((el) => {
-				const r = el.getBoundingClientRect();
-				return { id: /flowchart-(.+)-\d+$/.exec(el.id)?.[1] ?? el.id, box: { left: r.left, right: r.right, top: r.top, bottom: r.bottom } };
-			}),
-			links: Array.from(document.querySelectorAll(`${sel} svg path.flowchart-link`)).map((el) => {
-				const path = el as SVGPathElement;
-				const ctm = path.getScreenCTM() as DOMMatrix;
-				const length = path.getTotalLength();
-				const count = Math.max(2, Math.ceil(length / 4));
-				return {
-					id: path.id,
-					kind: path.getAttribute("data-arch-edge") ?? "",
-					points: Array.from({ length: count + 1 }, (_, i) => {
-						const p = path.getPointAtLength((length * i) / count).matrixTransform(ctm);
-						return { x: p.x, y: p.y };
-					}),
-				};
-			}),
-		}), canvasSelector);
+				labels: Array.from(document.querySelectorAll(`${sel} svg g.edgeLabel[data-arch-edge-label]`)).map((el) => ({
+					edge: el.getAttribute("data-arch-edge-label") ?? "",
+					box: (el.querySelector("foreignObject") ?? el).getBoundingClientRect().toJSON() as Box,
+				})),
+			};
+		}, canvasSelector);
 	} finally {
 		await page.close();
 	}
@@ -614,30 +646,65 @@ function getUnion(boxes: Box[]): Box {
 }
 
 // proper crossing of two segments — touching at an end does not count
-function isCrossing(a: { x: number; y: number }, b: { x: number; y: number }, c: { x: number; y: number }, d: { x: number; y: number }): boolean {
-	const side = (p: typeof a, q: typeof a, r: typeof a) => (q.x - p.x) * (r.y - p.y) - (q.y - p.y) * (r.x - p.x);
+function isCrossing(a: Point, b: Point, c: Point, d: Point): boolean {
+	const side = (p: Point, q: Point, r: Point) => (q.x - p.x) * (r.y - p.y) - (q.y - p.y) * (r.x - p.x);
 	const [d1, d2, d3, d4] = [side(c, d, a), side(c, d, b), side(a, b, c), side(a, b, d)];
 	return d1 * d2 < 0 && d3 * d4 < 0;
 }
 
+type Run = { link: string; kind: string; axis: "x" | "y"; at: number; min: number; max: number };
+
+// axis-aligned runs of a sampled polyline — consecutive steps on one x are a vertical run, on one y a horizontal one
+function getRuns(link: MapShape["links"][number]): Run[] {
+	const runs: (Run & { end: number })[] = [];
+	link.points.slice(1).forEach((p, i) => {
+		const q = link.points[i];
+		const axis = Math.abs(p.x - q.x) < 0.5 && Math.abs(p.y - q.y) >= 0.5 ? "x" : Math.abs(p.y - q.y) < 0.5 && Math.abs(p.x - q.x) >= 0.5 ? "y" : null;
+		if (!axis) return;
+		const at = axis === "x" ? p.x : p.y;
+		const [a, b] = axis === "x" ? [q.y, p.y] : [q.x, p.x];
+		const last = runs.at(-1);
+		if (last && last.axis === axis && last.end === i && Math.abs(last.at - at) < 0.5) {
+			last.min = Math.min(last.min, a, b);
+			last.max = Math.max(last.max, a, b);
+			last.end = i + 1;
+		} else runs.push({ link: link.id, kind: link.kind, axis, at, min: Math.min(a, b), max: Math.max(a, b), end: i + 1 });
+	});
+	return runs;
+}
+
+// gap from a box to the nearest sampled point of a link (0 when a point lies inside)
+function getBoxGap(box: Box, points: Point[]): number {
+	return Math.min(...points.map((q) => Math.hypot(Math.max(box.left - q.x, q.x - box.right, 0), Math.max(box.top - q.y, q.y - box.bottom, 0))));
+}
+
+// a link draws the `from>to` edge — an ELK edge keeps the source ids, a screen-drawn one adds its own suffix
+function isLinkOf(linkId: string, edge: string): boolean {
+	const [from, to] = edge.split(">");
+	return linkId.startsWith(`L_${from}_${to}_`);
+}
+
 for (const { width, height } of VIEWPORTS) {
-	test(`the two columns sit side by side, top-aligned, each read top to bottom at ${width}x${height}`, async () => {
+	test(`the sources column sits left of the spine, top-aligned with Orchestrator, each column read top to bottom at ${width}x${height}`, async () => {
 		const shape = await readMapShape(width, height);
 		const drawn = JSON.stringify(shape.zones);
 		assert.deepEqual(Object.keys(shape.zones).sort(), [...ZONE_IDS.DRAWN].sort(), `drawn zones (the column frames must be gone): ${drawn}`);
+		for (const [column, ids] of [[ZONE_IDS.COLUMN.sources, ZONE_IDS.SOURCES], [ZONE_IDS.COLUMN.pipeline, ZONE_IDS.PIPELINE]] as const)
+			for (const id of ids) assert.equal(shape.columns[id], column, `${id} was not laid out in ${column}: ${JSON.stringify(shape.columns)}`);
 		const box = (id: string) => getZoneBox(shape, id);
-		const left = getUnion(ZONE_IDS.LEFT.map(box));
-		const right = getUnion(ZONE_IDS.RIGHT.map(box));
-		assert.ok(left.right <= right.left + EPS_PX, `the columns overlap horizontally: ${drawn}`);
-		assert.ok(Math.abs(left.top - right.top) <= EPS_PX, `the columns are not top-aligned (${left.top.toFixed(1)} vs ${right.top.toFixed(1)}): ${drawn}`);
-		assert.ok(box("entry").right <= box("daemon").left + EPS_PX, `Inputs does not sit left of Daemons in the band: ${drawn}`);
-		for (const [above, below] of [["entry", "orch"], ["daemon", "orch"], ["orch", "agents"], ["hooks", "data"], ["data", "export"]])
-			assert.ok(box(below).top >= box(above).bottom - EPS_PX, `${below} does not sit below ${above}: ${drawn}`);
+		const left = getUnion(ZONE_IDS.SOURCES.map(box));
+		const right = getUnion(ZONE_IDS.PIPELINE.map(box));
+		assert.ok(left.right <= right.left + EPS_PX, `the sources column overlaps the spine horizontally: ${drawn}`);
+		assert.ok(left.bottom > right.top && right.bottom > left.top, `the columns do not share a vertical extent: ${drawn}`);
+		assert.ok(Math.abs(left.top - box("orch").top) <= EPS_PX, `the sources column is not top-aligned with Orchestrator (${left.top.toFixed(1)} vs ${box("orch").top.toFixed(1)}): ${drawn}`);
+		for (const ids of [ZONE_IDS.SOURCES, ZONE_IDS.PIPELINE])
+			for (const [i, below] of ids.slice(1).entries())
+				assert.ok(box(below).top >= box(ids[i]).bottom - EPS_PX, `${below} does not sit below ${ids[i]}: ${drawn}`);
 	});
 
-	test(`each column's stacked zone frames share one width and one left edge, the band excepted, at ${width}x${height}`, async () => {
+	test(`each column's stacked zone frames share one width and one left edge at ${width}x${height}`, async () => {
 		const shape = await readMapShape(width, height);
-		for (const ids of [ZONE_IDS.LEFT.filter((id) => !ZONE_IDS.BAND.includes(id)), ZONE_IDS.RIGHT]) {
+		for (const ids of [ZONE_IDS.SOURCES, ZONE_IDS.PIPELINE]) {
 			const frames = ids.map((id) => ({ id, box: getZoneBox(shape, id) }));
 			const spans = frames.map(({ id, box }) => `${id} ${box.left.toFixed(1)}–${box.right.toFixed(1)}`).join(", ");
 			const [first] = frames;
@@ -648,14 +715,15 @@ for (const { width, height } of VIEWPORTS) {
 		}
 	});
 
-	test(`the Daemons members stack and every member sits inside its own zone at ${width}x${height}`, async () => {
+	test(`the Daemons members stack in declaration order and every member sits inside its own zone at ${width}x${height}`, async () => {
 		const shape = await readMapShape(width, height);
-		const daemons = shape.members.filter((m) => (MEMBER_IDS.get("daemon") ?? []).includes(m.id));
-		assert.equal(daemons.length, (MEMBER_IDS.get("daemon") ?? []).length, `Daemons members drawn: ${JSON.stringify(daemons)}`);
+		const declared = MEMBER_IDS.get("daemon") ?? [];
+		const daemons = declared.map((id) => shape.members.find((m) => m.id === id)).filter((m) => m !== undefined);
+		assert.equal(daemons.length, declared.length, `Daemons members drawn: ${JSON.stringify(shape.members.map((m) => m.id))}`);
 		for (const [i, a] of daemons.entries())
 			for (const b of daemons.slice(i + 1)) {
 				assert.ok(Math.min(a.box.right, b.box.right) > Math.max(a.box.left, b.box.left), `${a.id} and ${b.id} do not overlap horizontally`);
-				assert.ok(a.box.bottom <= b.box.top + EPS_PX || b.box.bottom <= a.box.top + EPS_PX, `${a.id} and ${b.id} share a row`);
+				assert.ok(b.box.top >= a.box.bottom - EPS_PX, `${b.id} does not sit below ${a.id}, against the declaration order ${declared.join(", ")}`);
 			}
 		for (const [zone, ids] of MEMBER_IDS) {
 			const frame = getZoneBox(shape, zone);
@@ -667,17 +735,26 @@ for (const { width, height } of VIEWPORTS) {
 		}
 	});
 
-	test(`every edge runs down or across without a crossing and the column jumps keep apart at ${width}x${height}`, async (t) => {
+	test(`every edge runs down or across without a crossing, and parallel lanes keep apart, at ${width}x${height}`, async (t) => {
 		const shape = await readMapShape(width, height);
-		assert.equal(shape.links.length, 7, `drawn links: ${shape.links.map((l) => l.id).join(", ")}`);
-		const jumps = shape.links.filter((l) => l.kind === "jump");
-		assert.equal(jumps.length, 2, `column jumps: ${shape.links.map((l) => `${l.id}:${l.kind}`).join(", ")}`);
-		// the column jumps alone climb into the right column — every other edge has no upward step and ends pointing down
-		for (const link of shape.links.filter((l) => l.kind !== "jump")) {
-			const rise = Math.max(...link.points.slice(1).map((p, i) => link.points[i].y - p.y));
+		const kinds = shape.links.map((l) => `${l.id}:${l.kind || "elk"}`).join(", ");
+		assert.equal(shape.links.length, 7, `drawn links: ${kinds}`);
+		assert.equal(shape.links.filter((l) => l.kind === "bus").length, 2, `bus edges into Orchestrator: ${kinds}`);
+		assert.equal(shape.links.filter((l) => l.kind === "bypass").length, 1, `bypass edges: ${kinds}`);
+		for (const link of shape.links) {
+			const steps = link.points.slice(1).map((p, i) => ({ dx: p.x - link.points[i].x, dy: p.y - link.points[i].y }));
+			const last = steps.at(-1) ?? { dx: 0, dy: 0 };
+			if (link.kind === "bus") {
+				// a bus climbs only on its vertical run and enters Orchestrator's left side
+				const offBus = steps.filter((s) => s.dy < -EPS_PX && Math.abs(s.dx) >= 0.5);
+				assert.deepEqual(offBus, [], `${link.id} climbs off its vertical run`);
+				assert.ok(last.dx > Math.abs(last.dy), `${link.id} does not end pointing right`);
+				continue;
+			}
+			const rise = Math.max(...steps.map((s) => -s.dy));
 			assert.ok(rise <= EPS_PX, `${link.id} steps ${rise.toFixed(1)}px up`);
-			const [prev, last] = link.points.slice(-2);
-			assert.ok(last.y - prev.y > Math.abs(last.x - prev.x), `${link.id} does not end pointing down`);
+			if (link.kind === "bypass") assert.ok(-last.dx > Math.abs(last.dy), `${link.id} does not end pointing left into its target's right side`);
+			else assert.ok(last.dy > Math.abs(last.dx), `${link.id} does not end pointing down`);
 		}
 		const crossings = shape.links.flatMap((a, i) =>
 			shape.links.slice(i + 1).flatMap((b) =>
@@ -685,13 +762,47 @@ for (const { width, height } of VIEWPORTS) {
 			),
 		);
 		assert.deepEqual(crossings, [], "edges cross");
-		// a jump's lane is its vertical run: the x where the path stays longest
-		const laneX = jumps.map((l) => {
-			const xs = l.points.map((p) => Math.round(p.x));
-			return xs.sort((a, b) => xs.filter((x) => x === b).length - xs.filter((x) => x === a).length)[0];
+		// facing parallel runs of different edges — only the two bus edges may coincide, on their designed merge into Orchestrator
+		const runs = shape.links.flatMap(getRuns);
+		const gaps = runs.flatMap((a, i) =>
+			runs.slice(i + 1).flatMap((b) => {
+				if (a.link === b.link || a.axis !== b.axis || (a.kind === "bus" && b.kind === "bus")) return [];
+				if (Math.min(a.max, b.max) - Math.max(a.min, b.min) <= 2) return [];
+				return [{ pair: `${a.link} ∥ ${b.link}`, units: Math.abs(a.at - b.at) / shape.scale }];
+			}),
+		);
+		t.diagnostic(`closest parallel lanes: ${gaps.sort((a, b) => a.units - b.units).slice(0, 3).map((g) => `${g.pair} ${g.units.toFixed(1)}u`).join(" · ")}`);
+		const close = gaps.filter((g) => g.units < MIN_LANE_GAP_UNITS - 0.5);
+		assert.deepEqual(close.map((g) => `${g.pair} ${g.units.toFixed(1)}u`), [], `parallel lanes closer than ${MIN_LANE_GAP_UNITS} units`);
+	});
+
+	test(`every arrowhead reads as a direction, on a visible final leg, at ${width}x${height}`, async (t) => {
+		const shape = await readMapShape(width, height);
+		const legs = shape.links.map((link) => {
+			const lastRun = getRuns(link).at(-1);
+			return { id: link.id, headPx: link.headPx, legPx: lastRun ? lastRun.max - lastRun.min : 0 };
 		});
-		t.diagnostic(`jump lanes ${Math.abs(laneX[0] - laneX[1])}px apart`);
-		assert.ok(Math.abs(laneX[0] - laneX[1]) >= MIN_JUMP_LANE_GAP_PX, `the jump lanes sit ${Math.abs(laneX[0] - laneX[1])}px apart: ${laneX.join(", ")}`);
+		t.diagnostic(legs.map((l) => `${l.id}: head ${l.headPx.toFixed(1)}px on a ${l.legPx.toFixed(1)}px leg`).join(" · "));
+		for (const leg of legs) {
+			assert.ok(leg.headPx >= MIN_ARROWHEAD_PX, `${leg.id}: the arrowhead is ${leg.headPx.toFixed(1)}px long, under ${MIN_ARROWHEAD_PX}px`);
+			assert.ok(leg.legPx > leg.headPx, `${leg.id}: the ${leg.legPx.toFixed(1)}px final leg is no longer than its ${leg.headPx.toFixed(1)}px head`);
+		}
+	});
+
+	test(`each screen-drawn edge label sits nearer its own edge than any other and clear of every other edge at ${width}x${height}`, async (t) => {
+		const shape = await readMapShape(width, height);
+		const labelled = ["orch>agents", "agents>hooks", "agents>data", "hooks>data", "data>export"];
+		assert.deepEqual(shape.labels.map((l) => l.edge).sort(), [...labelled].sort(), "the screen draws the spine and bypass labels");
+		for (const label of shape.labels) {
+			const own = shape.links.filter((l) => isLinkOf(l.id, label.edge));
+			assert.equal(own.length, 1, `${label.edge}: own edge among ${shape.links.map((l) => l.id).join(", ")}`);
+			const ownUnits = getBoxGap(label.box, own[0].points) / shape.scale;
+			const foreign = shape.links.filter((l) => l !== own[0]).map((l) => ({ id: l.id, units: getBoxGap(label.box, l.points) / shape.scale }));
+			const nearest = foreign.sort((a, b) => a.units - b.units)[0];
+			t.diagnostic(`${label.edge}: own edge ${ownUnits.toFixed(0)}u · nearest other ${nearest.id} ${nearest.units.toFixed(0)}u`);
+			assert.ok(ownUnits < nearest.units, `${label.edge} sits ${ownUnits.toFixed(0)}u from its own edge, nearer ${nearest.id} at ${nearest.units.toFixed(0)}u`);
+			assert.ok(nearest.units >= LABEL_CLEARANCE_UNITS, `${label.edge} sits ${nearest.units.toFixed(0)}u from ${nearest.id}, inside its ${LABEL_CLEARANCE_UNITS}u band`);
+		}
 	});
 }
 
@@ -884,7 +995,7 @@ for (const { width, height } of VIEWPORTS.filter((viewport) => viewport.width >=
 	});
 }
 
-test(`below ${PANE_FLOOR.MAX_WIDTH_PX}px wide a height-bound map keeps its ${PANE_FLOOR.PX}px pane floor, even when the part health block leaves the first screen`, async (t) => {
+test(`below ${PANE_FLOOR.MAX_WIDTH_PX}px wide the map keeps its ${PANE_FLOOR.PX}px pane floor on either binding axis, even when the part health block leaves the first screen`, async (t) => {
 	const readings = [];
 	for (const viewport of NARROW_VIEWPORTS) readings.push({ ...viewport, ...(await readPartHealthPlacement(viewport.width, viewport.height)) });
 
@@ -893,10 +1004,10 @@ test(`below ${PANE_FLOOR.MAX_WIDTH_PX}px wide a height-bound map keeps its ${PAN
 			`${r.width}x${r.height}: pane ${r.fit.paneWidth.toFixed(0)}x${r.fit.paneHeight.toFixed(0)} · drawn ${r.fit.drawnWidthPx.toFixed(0)}x${r.fit.drawnHeightPx.toFixed(0)} · ` +
 				`${isHeightBound(r.fit) ? "height" : "width"}-bound · block top ${r.blockTop.toFixed(0)} of ${r.viewportHeight}`,
 		);
+		// the short-graph clamp never takes the pane under the floor — a width-bound drawing keeps it too
 		assert.ok(
-			!isHeightBound(r.fit) || r.fit.paneHeight >= PANE_FLOOR.PX - EPS_PX,
-			`${r.width}x${r.height}: the map fits a ${r.fit.paneHeight.toFixed(0)}px pane on its height — under the ${PANE_FLOOR.PX}px floor`,
+			r.fit.paneHeight >= PANE_FLOOR.PX - EPS_PX,
+			`${r.width}x${r.height}: the map pane is ${r.fit.paneHeight.toFixed(0)}px — under the ${PANE_FLOOR.PX}px floor`,
 		);
 	}
-	assert.ok(readings.some((r) => isHeightBound(r.fit)), "no narrow viewport fits the map on its height — the floor went unexercised");
 });
