@@ -910,7 +910,7 @@ function TrendCardI({ state, aggregate, failures, onRetry }) {
 	if (getRegionView(state) === "error") {
 		return (
 			<div className="card" id={ANCHOR_ID_I.trend}>
-				<CardHead title="Verified vs rejected (trend)" />
+				<CardHead title="Verified vs rejected" />
 				<div className="px-5 pb-4">
 					<ErrorBannerI
 						focusTargetId={ANCHOR_ID_I.trend}
@@ -928,7 +928,7 @@ function TrendCardI({ state, aggregate, failures, onRetry }) {
 	if (state.status === "loading" || !aggregate) {
 		return (
 			<div className="card" id={ANCHOR_ID_I.trend}>
-				<CardHead title="Verified vs rejected (trend)" />
+				<CardHead title="Verified vs rejected" />
 				<div className="px-5 pb-4">
 					<LoadingPlaceholder label="the trend" minHeight={60} />
 				</div>
@@ -941,7 +941,7 @@ function TrendCardI({ state, aggregate, failures, onRetry }) {
 	if (series.length < 2) {
 		return (
 			<div className="card" id={ANCHOR_ID_I.trend}>
-				<CardHead title="Verified vs rejected (trend)" />
+				<CardHead title="Verified vs rejected" />
 				<div className="px-5 pb-4">
 					<div className="placeholder">Not enough days to plot a trend</div>
 				</div>
@@ -956,7 +956,7 @@ function TrendCardI({ state, aggregate, failures, onRetry }) {
 	});
 	return (
 		<div className="card" id={ANCHOR_ID_I.trend}>
-			<CardHead title="Verified vs rejected (trend)" sub={getLoopBasisI(aggregate)} />
+			<CardHead title="Verified vs rejected" sub={getLoopBasisI(aggregate)} />
 			{getLoopSlotsI({
 				metric: <RejectRateHeadlineI before={aggregate.failBefore} after={aggregate.failAfter} />,
 				visual: (
@@ -1825,7 +1825,7 @@ function BucketRowI({ state, buckets, failures, onRetry }) {
 	if (getRegionView(state) === "error") {
 		return (
 			<div className="card" id={ANCHOR_ID_I.learningMemory}>
-				<CardHead title="Learning memory: wins & mistakes (CTM · EPM)" />
+				<CardHead title="Learning memory" />
 				<div className="p-3">
 					<ErrorBannerI
 						focusTargetId={ANCHOR_ID_I.learningMemory}
@@ -1844,8 +1844,8 @@ function BucketRowI({ state, buckets, failures, onRetry }) {
 		return (
 			<div className="card" id={ANCHOR_ID_I.learningMemory}>
 				<CardHead
-					title="Learning memory: wins & mistakes (CTM · EPM)"
-					sub="All time · every agent"
+					title="Learning memory"
+					sub="CTM/EPM · all time · all agents"
 				/>
 				<div className="p-3">
 					<LoadingPlaceholder label="learning memory" minHeight={68} />
@@ -1864,8 +1864,8 @@ function BucketRowI({ state, buckets, failures, onRetry }) {
 	return (
 		<div className="card" id={ANCHOR_ID_I.learningMemory}>
 			<CardHead
-				title="Learning memory: wins & mistakes (CTM · EPM)"
-				sub="All time · every agent"
+				title="Learning memory"
+				sub="CTM/EPM · all time · all agents"
 			/>
 			{getLoopSlotsI({
 				metric: cards.map(([sym, tone, label, value]) => (
@@ -2472,7 +2472,7 @@ function ChangeSummaryCardI({ state, aggregate, onRetry, failures }) {
 	if (getRegionView(state) === "error") {
 		return (
 			<div className="card" id={ANCHOR_ID_I.changeSummary}>
-				<CardHead title="Self-improvement changes (applied)" />
+				<CardHead title="Applied changes" />
 				<div className="px-5 pb-4">
 					<ErrorBannerI
 						focusTargetId={ANCHOR_ID_I.changeSummary}
@@ -2490,7 +2490,7 @@ function ChangeSummaryCardI({ state, aggregate, onRetry, failures }) {
 	if (state.status === "loading" || !aggregate) {
 		return (
 			<div className="card" id={ANCHOR_ID_I.changeSummary}>
-				<CardHead title="Self-improvement changes (applied)" />
+				<CardHead title="Applied changes" />
 				<div className="px-5 pb-4">
 					<LoadingPlaceholder label="applied changes" minHeight={68} />
 				</div>
@@ -2504,7 +2504,7 @@ function ChangeSummaryCardI({ state, aggregate, onRetry, failures }) {
 	if (eventCount === 0) {
 		return (
 			<div className="card" id={ANCHOR_ID_I.changeSummary}>
-				<CardHead title="Self-improvement changes (applied)" />
+				<CardHead title="Applied changes" />
 				<div className="px-5 pb-4">
 					<div
 						className="placeholder"
@@ -2519,7 +2519,7 @@ function ChangeSummaryCardI({ state, aggregate, onRetry, failures }) {
 	return (
 		<div className="card" id={ANCHOR_ID_I.changeSummary}>
 			<CardHead
-				title="Self-improvement changes (applied)"
+				title="Applied changes"
 				sub={getLoopBasisI(aggregate)}
 			/>
 			{getLoopSlotsI({
