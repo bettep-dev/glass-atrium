@@ -149,7 +149,7 @@ function ImprovementInstrumentationViewI({
 	onRetry,
 	failures,
 }) {
-	const { SplitRow, getRegionView } = window.UI;
+	const { SplitRow, SplitColumn, getRegionView } = window.UI;
 
 	return (
 		<div className="space-sections">
@@ -214,14 +214,17 @@ function ImprovementInstrumentationViewI({
 				) : (
 					<>
 						<StyleRefCardI state={listState} styleRef={styleRef} />
+						{/* two short gauges stack → the pair fills Confidence's height instead of stretching one half-empty */}
 						<SplitRow ratio="1:1" layout="equal">
-							<ProseOnlyAddCardI state={listState} summary={proseOnlyAdd} />
+							<SplitColumn>
+								<ProseOnlyAddCardI state={listState} summary={proseOnlyAdd} />
+								<TierBreakdownCardI state={listState} tierBreakdown={tierBreakdown} />
+							</SplitColumn>
 							<ConfidenceDistCardI
 								state={listState}
 								confidenceDist={confidenceDist}
 							/>
 						</SplitRow>
-						<TierBreakdownCardI state={listState} tierBreakdown={tierBreakdown} />
 					</>
 				)}
 			</div>
@@ -242,13 +245,15 @@ function ImprovementInstrumentationViewI({
 //   - 모든 카운트 0 → "데이터 부재" 회색 indicator (migration 미적용 OR 30d 빈 cohort)
 //   - error 상태 → 뷰가 카드 대신 목록 payload 오류 배너 1개를 렌더
 
+const TIER_BREAKDOWN_SUB_I = "30 days · self-reported";
+
 function TierBreakdownCardI({ state, tierBreakdown }) {
 	const { CardHead, LoadingPlaceholder } = window.UI;
 	if (state.status === "error") return null;
 	if (state.status === "loading" || !tierBreakdown) {
 		return (
 			<div className="card">
-				<CardHead title="Results by check status" sub="30 days" />
+				<CardHead title="Results by check status" sub={TIER_BREAKDOWN_SUB_I} />
 				<div className="px-5 py-4">
 					<LoadingPlaceholder label="check-status results" minHeight={68} />
 				</div>
@@ -266,7 +271,7 @@ function TierBreakdownCardI({ state, tierBreakdown }) {
 	if (totalCnt === 0) {
 		return (
 			<div className="card">
-				<CardHead title="Results by check status" sub="30 days" />
+				<CardHead title="Results by check status" sub={TIER_BREAKDOWN_SUB_I} />
 				<div className="px-5 pb-4">
 					<div
 						className="placeholder"
@@ -287,7 +292,7 @@ function TierBreakdownCardI({ state, tierBreakdown }) {
 		[
 			"✓",
 			"text-ok",
-			"Self-reported pass",
+			"Pass",
 			formatIntI(passCnt),
 			passRatePct === null
 				? "nothing checked"
@@ -296,14 +301,14 @@ function TierBreakdownCardI({ state, tierBreakdown }) {
 		[
 			"✕",
 			"text-crit",
-			"Self-reported fail",
+			"Fail",
 			formatIntI(failCnt),
 			`${formatIntI(codeBasedTotal)} checked`,
 		],
 		[
 			"ℹ",
 			"text-info",
-			"Before auto-checking (old)",
+			"Legacy",
 			formatIntI(baselineCnt),
 			"",
 		],
@@ -312,7 +317,11 @@ function TierBreakdownCardI({ state, tierBreakdown }) {
 
 	return (
 		<div className="card">
-			<CardHead title="Results by check status" sub="30 days" />
+			<CardHead
+				title="Results by check status"
+				sub={TIER_BREAKDOWN_SUB_I}
+				info="Pass and Fail are each task's self-reported result, recorded since automatic checking began; the pass rate uses these two only. Legacy counts tasks recorded before automatic checking."
+			/>
 			<div className="grid grid-cols-4 gap-2 px-5 py-4">
 				{cards.map(([sym, tone, label, value, hint]) => (
 					<div
@@ -527,6 +536,7 @@ function ProseOnlyAddCardI({ state, summary }) {
 			<CardHead
 				title="Add-only patches"
 				sub={`${formatIntI(Number(summary.window_days ?? 0))} days`}
+				info={summary.truncation_caveat || null}
 			/>
 			{rows.length === 0 ? (
 				<div className="px-5 pb-4">
@@ -564,9 +574,6 @@ function ProseOnlyAddCardI({ state, summary }) {
 					</table>
 				</div>
 			)}
-			<div className="px-5 pb-4 card-sub fs-meta">
-				{summary.truncation_caveat}
-			</div>
 		</div>
 	);
 }

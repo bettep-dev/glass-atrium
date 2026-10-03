@@ -156,3 +156,39 @@ test(`every authored header meta on the Learning screen fits ${CAP.META} charact
     }
   }
 });
+
+const FOOTNOTE_CAP = 90;
+
+// Authored strings a card renders outside its header — the CardHead element is recorded, never walked.
+function getBodyStrings(sandbox: ScreenSandbox, node: unknown, out: string[] = []): string[] {
+  if (typeof node === "string") out.push(node);
+  else if (Array.isArray(node)) for (const child of node) getBodyStrings(sandbox, child, out);
+  else if (isElement(node) && node.type !== sandbox.window.UI.CardHead) getBodyStrings(sandbox, node.props.children, out);
+  return out;
+}
+
+test(`a gauge qualifier past the ${FOOTNOTE_CAP}-character footnote cap opens from the header ⓘ, never under the card`, () => {
+  const caveat =
+    "Floor, not a total — the verdict is derived from the stored diff, which is truncated before classification, so a longer patch whose removals fall past the cut is still classified prose-only-add.";
+  const qualifierRows = [
+    {
+      name: "add-only patches, populated",
+      card: "ProseOnlyAddCardI",
+      props: { state: READY, summary: { window_days: 30, agents: [{ agent: "glass-atrium-dev-db", count: 3 }], total: 3, truncation_caveat: caveat } },
+    },
+    {
+      name: "check status, populated",
+      card: "TierBreakdownCardI",
+      props: { state: READY, tierBreakdown: { code_based_pass_30d: 8, code_based_fail_30d: 2, pre_3tier_baseline_count: 1, window_days: 30 } },
+    },
+  ];
+
+  for (const row of qualifierRows) {
+    const node = (gauges[row.card] as Card)(row.props);
+    const [head] = getRowHeads({ ...row, sandbox: gauges });
+    assert.ok(String(head?.props.info ?? "").length > 0, `${row.name}: the header carries an ⓘ drawer`);
+    for (const text of getBodyStrings(gauges, node)) {
+      assert.ok(text.length <= FOOTNOTE_CAP, `${row.name}: "${text.slice(0, 40)}…" sits under the card at ${text.length} characters`);
+    }
+  }
+});
