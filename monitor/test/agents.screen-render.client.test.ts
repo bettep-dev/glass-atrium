@@ -47,6 +47,9 @@ UI_SCALARS.getAgentDisplayName = REAL_UI.getAgentDisplayName;
 UI_SCALARS.getChartImageProps = REAL_UI.getChartImageProps;
 UI_SCALARS.ChartAxisTick = REAL_UI.ChartAxisTick;
 UI_SCALARS.getChartXAxisProps = REAL_UI.getChartXAxisProps;
+// Paired cards cap their lists with the shipped slot budget.
+UI_SCALARS.CARD_SLOTS = REAL_UI.CARD_SLOTS;
+UI_SCALARS.getSlotRows = REAL_UI.getSlotRows;
 // RegionFailure's contract (ui.jsx): covered when the banner names its `source` or another region speaks for it, else the error card with its own Retry.
 UI_SCALARS.RegionFailure = Object.defineProperty(
   (props: Record<string, unknown>) => {
@@ -441,8 +444,8 @@ test("the ledger and instrumentation card adopt the shared labels", async () => 
   const card = renderScreen(
     React.createElement(mod.LifecycleStatsCard as Component, { state: { status: "loading" }, days: 30, onSelect: () => {}, onRetry: () => {} }),
   );
-  const cardHead = findNodes(card, (n) => n.props?.atom === "CardHead")[0];
-  assert.equal(cardHead?.props.title, "No completion record");
+  const [lifecycleCard] = findAtoms(card, "Card");
+  assert.equal(lifecycleCard?.props.title, "No completion record");
 });
 
 test("the page header renders every title as the page h1 with the sub-line under it", async () => {
@@ -1050,6 +1053,7 @@ test("Instrumentation is an open status fold whose head states the verdict, and 
   assert.equal(fold?.props.kind, "status");
   const split = findAtoms(tree, "SplitRow")[0];
   assert.equal(split?.props.ratio, "1:1");
+  assert.equal(split?.props.layout, "equal", "the two peer cards end at one edge");
   for (const card of ["TopNFailingAgentsCard", "LifecycleStatsCard"]) {
     assert.equal(findNodes(split, (n) => n.type === card).length, 1, `${card} inside the split`);
   }
@@ -1243,7 +1247,7 @@ const REVIEW_FLAG_ROWS = [
   { date: "09-24", fullDate: "2026-09-24", empty_metric_count: 2, polar_mismatch_count: 1, review_flag_ratio_pct: 12.5 },
 ];
 
-test("review-flag chart dates take the shared day-axis tick, end-keeping interval and label gap, and its value axes stay at or above the 12px floor", async () => {
+test("review-flag chart dates take the shared day-axis tick, end-keeping interval and label gap, and its value axes read the meta token", async () => {
   const tree = await renderComponent("QualityHealthTimelineChart", { rows: REVIEW_FLAG_ROWS });
   const [dateAxis] = findAtoms(tree, "XAxis");
   const getDayAxisProps = REAL_UI.getChartXAxisProps as (labels: string[]) => Record<string, unknown>;
@@ -1253,11 +1257,13 @@ test("review-flag chart dates take the shared day-axis tick, end-keeping interva
   }
   const valueAxes = findAtoms(tree, "YAxis");
   assert.equal(valueAxes.length, 2);
+  // an SVG presentation attribute cannot resolve a var() → the token rides the CSS style
   for (const axis of valueAxes) {
-    const tick = axis.props.tick as { fontSize: number };
-    const label = axis.props.label as { fontSize: number } | undefined;
-    assert.ok(tick.fontSize >= 12, `tick ${tick.fontSize}px`);
-    if (label) assert.ok(label.fontSize >= 12, `label ${label.fontSize}px`);
+    for (const part of [axis.props.tick, axis.props.label] as Array<{ fontSize?: unknown; style?: { fontSize?: unknown } } | undefined>) {
+      if (!part) continue;
+      assert.equal(part.fontSize, undefined, "no numeric size beside the token");
+      assert.equal(part.style?.fontSize, "var(--fs-meta)");
+    }
   }
 });
 
@@ -1366,13 +1372,12 @@ test("the failing-pairs limit keeps a solid signal over a worse small sample whi
   assert.equal(out.failingTotal, 2);
 });
 
-test("the failing-pairs subtitle counts the rows shown and claims a cap only when some are hidden", async () => {
+test("the failing-pairs header meta counts failing over judged pairs within the 32-character meta cap", async () => {
   const mod = await loadAgentsScreen();
   const getSub = mod.getFailingPairsSub as (...a: unknown[]) => string;
-  const sub = getSub("ready", 7, 7, 40, 30);
-  assert.match(sub, /^7 of 40 pairs below 95%/);
-  assert.doesNotMatch(sub, /top \d/, "no cap is claimed when every failing pair is shown");
-  assert.match(getSub("ready", 8, 11, 40, 30), /showing 8 of 11/);
+  const sub = getSub("ready", 117, 1404, 90);
+  assert.equal(sub, "117 of 1404 below 95% · 90d");
+  assert.ok(sub.length <= 32, `${sub.length} chars`);
 });
 
 test("the failing-pairs table ranks solid pairs above a divider that names the low-sample group", async () => {
@@ -1678,7 +1683,8 @@ test("the No record and Unfinished counts state their definitions on the page, w
       name: "the ledger defines No record",
       component: "AgentSummaryCard",
       props: { state: { status: "ready", data: { agents: [], meta: { total_agents: 0 } }, error: null }, days: 30, onRetry: () => undefined },
-      definition: /No record: Launches minus runs, from the agent summary/,
+      definition: /No record = launches − runs/,
+      info: /Launches minus runs, from the agent summary/,
     },
     {
       name: "the lifecycle card defines Unfinished",
@@ -1687,13 +1693,68 @@ test("the No record and Unfinished counts state their definitions on the page, w
         state: { status: "ready", data: { rows: [{ agent_type: "glass-atrium-dev-shell", start_count: 4, stop_count: 3, completed_count: 3 }] }, error: null },
         days: 30, onSelect: () => undefined, onRetry: () => undefined,
       },
-      definition: /Unfinished: SubagentStart events minus completed outcomes/,
+      definition: /Unfinished = started − completed/,
+      info: /SubagentStart events minus completed outcomes/,
     },
   ];
   for (const row of rows) {
-    const tree = await renderComponent(row.component, row.props);
-    assert.match(collectText(tree).replace(/\s+/g, " "), row.definition, row.name);
+    const tree = await renderComponent(row.component, row.props) as RenderedNode;
+    const footText = findNodes(tree, (n) => n.props.foot != null).map((n) => collectText(renderScreen(n.props.foot))).join(" ");
+    assert.match(`${collectText(tree)} ${footText}`.replace(/\s+/g, " "), row.definition, `${row.name}: short form on the page`);
+    const infos = findNodes(tree, (n) => typeof n.props.info === "string").map((n) => String(n.props.info));
+    assert.ok(infos.some((info) => row.info.test(info)), `${row.name}: full definition in the card's info drawer`);
   }
+});
+
+// More rows than the S slot holds, so each paired card has a remainder for its foot.
+function getLifecycleRows(count: number): Record<string, unknown>[] {
+  return Array.from({ length: count }, (_, i) => ({ agent_type: `glass-atrium-dev-${i}`, start_count: 40 - i, stop_count: 4, completed_count: 3, p95_duration_sec: 60 }));
+}
+
+function getFailingRows(count: number): Record<string, unknown>[] {
+  return Array.from({ length: count }, (_, i) => ({
+    agent: `glass-atrium-dev-${i}`, task_type: "feature", event_date: "2026-09-01", total_count: 20, success_count: 10, failure_count: 10, reconstructed_count: 0,
+  }));
+}
+
+describe("the paired failing-pairs and no-record cards keep the S row budget and roll the rest into the card foot", () => {
+  const rows = [
+    {
+      name: "Most-failing pairs",
+      component: "TopNFailingAgentsCard",
+      props: { state: { status: "ready", data: { rows: getFailingRows(9) }, error: null }, days: 30, onRetry: () => undefined, failureByAgent: new Map() },
+      total: 9,
+    },
+    {
+      name: "No completion record",
+      component: "LifecycleStatsCard",
+      props: { state: { status: "ready", data: { rows: getLifecycleRows(12) }, error: null }, days: 30, onSelect: () => undefined, onRetry: () => undefined },
+      total: 12,
+    },
+  ];
+  for (const row of rows) {
+    test(row.name, async () => {
+      const tree = await renderComponent(row.component, row.props) as RenderedNode;
+      const [card] = findAtoms(tree, "Card");
+      assert.equal(card?.props.size, "S", "both peers take the S slot");
+      const bodyRows = findNodes(card, (n) => n.type === "tr").slice(1);
+      assert.equal(bodyRows.length, 5, "the body shows the S budget of five rows");
+      const foot = collectText(renderScreen(card.props.foot));
+      assert.match(foot, new RegExp(`Show all ${row.total}`), `foot: ${foot}`);
+    });
+  }
+});
+
+test("every status-band hint fits the 40-character KPI-hint cap", async () => {
+  const ready = { status: "ready", data: [], error: null };
+  const failureByAgent = new Map([0, 1].map((i) => [`glass-atrium-dev-${i}`, { fail_count: 1, blocked_count: 5, total_breakages: 6, breakage_rate: 0.1 }]));
+  const agents = [{ agent_id: "a", runs: 11352, needs_context_count: 20 }];
+  const mod = await loadAgentsScreen();
+  const tiles = (mod.buildAgentStatusTiles as (s: Record<string, unknown>) => Array<{ label: string; sub: string }>)({
+    days: 30, summaryState: getSummaryState(BREAKER_LOADED_ZERO, agents), failureState: ready, overageState: ready,
+    failureByAgent, overageByAgent: new Map([["run-1", { overage_count: 1 }]]),
+  });
+  for (const tile of tiles) assert.ok(tile.sub.length <= 40, `${tile.label}: "${tile.sub}" is ${tile.sub.length} chars`);
 });
 
 test("the drawer names its agent in words for a screen reader, the hyphenated id staying visual only", async () => {
