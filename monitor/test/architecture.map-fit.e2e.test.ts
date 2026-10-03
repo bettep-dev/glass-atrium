@@ -14,7 +14,8 @@
 //   2. overview share — the drawing spans ~90% of its frame on the binding axis, centred on both axes.
 //   3. legibility — every label at >= MIN_RENDERED_LABEL_PX in the default view, and still within the zoom-in press budget.
 //   4. reset — the Reset control returns a zoomed-in map to the same default view.
-//   5. shape — two columns read top to bottom: Inputs | Daemons, Orchestrator, Agents on the left; Safety, Store, Documents on the right.
+//   5. shape — a sources column (Inputs above Daemons) beside the pipeline spine (Orchestrator → Agents → Safety → Store → Documents),
+//      the bus into Orchestrator and the bypass right of the spine; every screen-drawn label clear of frames, other labels and the zoom controls.
 //
 // Viewport table: 1024 and 1440 are the widths the evaluators scored; 1396 is the width the user
 // actually runs; 1512 and 1920 are the two the fit was first reasoned about. Heights are the window heights
@@ -64,6 +65,9 @@ const MIN_LANE_GAP_UNITS = 24;
 
 // a screen-drawn edge label keeps this clearance (layout units) from every edge but its own
 const LABEL_CLEARANCE_UNITS = 16;
+
+// a screen-drawn label's opaque mask keeps this clearance (layout units) from every zone frame — any less and the frame's stroke, straddling its edge, is erased
+const LABEL_FRAME_CLEARANCE_UNITS = 3;
 
 // an arrowhead under this length (CSS px) reads as a dot, not a direction
 const MIN_ARROWHEAD_PX = 6;
@@ -582,6 +586,8 @@ interface MapShape {
 	links: { id: string; kind: string; points: Point[]; headPx: number }[];
 	// screen-drawn edge labels and the `from>to` edge each one captions
 	labels: { edge: string; box: Box }[];
+	pane: Box;
+	controls: Box | null;
 }
 
 // zone frames, member boxes, sampled link polylines and screen-drawn labels in client px at the default view
@@ -623,6 +629,8 @@ async function readMapShape(width: number, height: number): Promise<MapShape> {
 					edge: el.getAttribute("data-arch-edge-label") ?? "",
 					box: (el.querySelector("foreignObject") ?? el).getBoundingClientRect().toJSON() as Box,
 				})),
+				pane: (document.querySelector(sel) as HTMLElement).getBoundingClientRect().toJSON() as Box,
+				controls: (document.querySelector(`${sel} .arch-zoom-controls`)?.getBoundingClientRect().toJSON() as Box | undefined) ?? null,
 			};
 		}, canvasSelector);
 	} finally {
@@ -676,6 +684,11 @@ function getRuns(link: MapShape["links"][number]): Run[] {
 // gap from a box to the nearest sampled point of a link (0 when a point lies inside)
 function getBoxGap(box: Box, points: Point[]): number {
 	return Math.min(...points.map((q) => Math.hypot(Math.max(box.left - q.x, q.x - box.right, 0), Math.max(box.top - q.y, q.y - box.bottom, 0))));
+}
+
+// separation of two boxes — positive on the axis they clear each other on, negative by the overlap depth when they overlap
+function getBoxSeparation(a: Box, b: Box): number {
+	return Math.max(a.left - b.right, b.left - a.right, a.top - b.bottom, b.top - a.bottom);
 }
 
 // a link draws the `from>to` edge — an ELK edge keeps the source ids, a screen-drawn one adds its own suffix
@@ -802,6 +815,27 @@ for (const { width, height } of VIEWPORTS) {
 			t.diagnostic(`${label.edge}: own edge ${ownUnits.toFixed(0)}u · nearest other ${nearest.id} ${nearest.units.toFixed(0)}u`);
 			assert.ok(ownUnits < nearest.units, `${label.edge} sits ${ownUnits.toFixed(0)}u from its own edge, nearer ${nearest.id} at ${nearest.units.toFixed(0)}u`);
 			assert.ok(nearest.units >= LABEL_CLEARANCE_UNITS, `${label.edge} sits ${nearest.units.toFixed(0)}u from ${nearest.id}, inside its ${LABEL_CLEARANCE_UNITS}u band`);
+		}
+	});
+
+	test(`each screen-drawn edge label clears every zone frame and every other label, inside the pane and off the zoom controls, at ${width}x${height}`, async (t) => {
+		const shape = await readMapShape(width, height);
+		assert.ok(shape.labels.length > 0, "no screen-drawn label was measured");
+		assert.ok(shape.controls, "the zoom controls were not drawn");
+		for (const [i, label] of shape.labels.entries()) {
+			const frames = Object.entries(shape.zones).map(([id, box]) => ({ id, units: getBoxSeparation(label.box, box) / shape.scale }));
+			const nearest = frames.sort((a, b) => a.units - b.units)[0];
+			t.diagnostic(`${label.edge}: nearest frame ${nearest.id} ${nearest.units.toFixed(1)}u`);
+			assert.ok(
+				nearest.units >= LABEL_FRAME_CLEARANCE_UNITS,
+				`${label.edge} sits ${nearest.units.toFixed(1)}u from the ${nearest.id} frame, inside its ${LABEL_FRAME_CLEARANCE_UNITS}u clearance`,
+			);
+			for (const other of shape.labels.slice(i + 1))
+				assert.ok(getBoxSeparation(label.box, other.box) > 0, `${label.edge} overlaps ${other.edge}`);
+			const [box, pane] = [label.box, shape.pane];
+			const insetPx = Math.min(box.left - pane.left, pane.right - box.right, box.top - pane.top, pane.bottom - box.bottom);
+			assert.ok(insetPx >= -EPS_PX, `${label.edge} reaches ${(-insetPx).toFixed(1)}px past the pane edge`);
+			assert.ok(getBoxSeparation(label.box, shape.controls) > -EPS_PX, `${label.edge} sits under the zoom controls: ${JSON.stringify(label.box)}`);
 		}
 	});
 }

@@ -33,16 +33,16 @@ const MAP = {
 		IDS: { sources: "map_col_sources", pipeline: "map_col_pipeline" },
 		// zone whose edge-less members ELK packs in an order of its own — the screen restacks them in declaration order
 		STACK_ZONE: "daemon",
-		// spine edge drawn in a lane right of the spine — laid out inside it, it would run through the zone between its ends
-		BYPASS: { from: "agents", to: "data" },
+		// spine edge drawn in a lane right of the spine, LANE units out (SVG units) — laid out inside it, it would run through the zone between its ends
+		BYPASS: { from: "agents", to: "data", LANE: 60 },
 		// room between the columns (SVG units) — the bus into Orchestrator runs down its middle
 		GUTTER: 80,
-		// space between stacked spine zones (SVG units) — the arrow leg and its label · four gaps, so each unit costs 4 of the drawing height that binds the 1024 fit
-		SPINE_GAP: 60,
-		// bypass lane distance right of the spine (SVG units)
-		BYPASS_LANE: 60,
-		// space between restacked members (SVG units)
-		MEMBER_GAP: 24,
+		GAP: {
+			// drawn space between stacked spine zones (SVG units), under the zone below's title band — its 45-unit label line sits centred, 3.5 clear of each frame · four gaps, so each unit costs 4 of the drawing height that binds the 1024 fit
+			SPINE: 52,
+			// space between restacked members (SVG units)
+			MEMBER: 24,
+		},
 		// clearance between a screen-drawn label and its own edge (SVG units)
 		LABEL_PAD: 16,
 		// map arrowhead over the shared marker's size
@@ -55,6 +55,8 @@ const MAP = {
 		// one x,y pair of a path's d attribute
 		POINT_RE: /(-?[\d.]+(?:e-?\d+)?)[ ,](-?[\d.]+(?:e-?\d+)?)/g,
 	},
+	// map pane sizing (CSS px) — below FLOOR.MAX_WIDTH_PX the fit height never drops under FLOOR.PX, so labels keep the 13px floor even when the part health block leaves the first screen
+	PANE: { FLOOR: { PX: 500, MAX_WIDTH_PX: 1280 }, CONTROLS_MIN_INSET_PX: 48 },
 };
 
 // default/Reset view = this share of the contain fit — the overview keeps every label at the 13px floor down to a 1024 window
@@ -62,9 +64,6 @@ const DEFAULT_VIEW_SHARE = 0.9;
 
 // band under the map kept on the first screen (CSS px) — the part health block's title shows there, so the page reads as scrollable
 const PART_HEALTH = { PEEK_PX: 48 };
-
-// map pane sizing (CSS px) — below FLOOR.MAX_WIDTH_PX the fit height never drops under FLOOR.PX, so labels keep the 13px floor even when the part health block leaves the first screen
-const MAP_PANE = { FLOOR: { PX: 500, MAX_WIDTH_PX: 1280 }, CONTROLS_MIN_INSET_PX: 48 };
 
 // svg-pan-zoom min/max zoom, relative to the zoom at the last resize() — the default view rebases it, so it bounds zoom-out from there
 const PAN_ZOOM = { MIN: 0.2, MAX: 5 };
@@ -1053,7 +1052,7 @@ function MermaidCanvas({
 		const svgEl = containerRef.current?.querySelector("svg");
 		if (!svgEl || svgEl.dataset.archColumns === "1") return;
 		svgEl.dataset.archColumns = "1";
-		setMapColumnLayoutAR(svgEl, getMapColumnsAR(source));
+		setMapColumnLayoutAR(svgEl, getMapColumnsAR(source), buildRedundantZoneIdsAR(source));
 	}, [renderState.status, renderState.svgHtml, source]);
 
 	// SVG 가 DOM 에 들어간 직후 — 라벨 매칭으로 backend node id 를 dataset 에 저장 (노드 클릭 → 상세).
@@ -2213,7 +2212,7 @@ function applyDefaultViewAR(instance, root) {
 	if (realW <= 0 || realH <= 0 || s.width <= 0 || s.height <= 0) return;
 
 	// the zoom controls stand over the pane's right edge → the drawing fits beside them, so no box sits under a button
-	const drawableW = s.width - Math.max(getControlsGutterAR(root), MAP_PANE.CONTROLS_MIN_INSET_PX);
+	const drawableW = s.width - Math.max(getControlsGutterAR(root), MAP.PANE.CONTROLS_MIN_INSET_PX);
 	const paneH = getFitPaneHeightAR(root, s.height);
 	const targetAbs = getDefaultViewScaleAR(drawableW, paneH, realW, realH);
 	const frameH = (realH * targetAbs) / DEFAULT_VIEW_SHARE;
@@ -2225,7 +2224,7 @@ function applyDefaultViewAR(instance, root) {
 	// pan({x,y}) 는 viewport CTM 의 e/f(화면픽셀 평행이동) 직접 설정 · viewBox 원점 상쇄(-origin*scale) + 양축 가운데 slack.
 	const slackX = Math.max(0, (drawableW - realW * targetAbs) / 2);
 	// on a narrow viewport the short-graph clamp never takes the pane under the floor, a width-bound drawing included
-	const clampH = isPaneFloorViewportAR() ? Math.max(frameH, MAP_PANE.FLOOR.PX) : frameH;
+	const clampH = isPaneFloorViewportAR() ? Math.max(frameH, MAP.PANE.FLOOR.PX) : frameH;
 	const slackY = Math.max(0, (Math.min(clampH, s.height) - realH * targetAbs) / 2);
 	instance.pan({
 		x: -(s.viewBox.x || 0) * targetAbs + slackX,
@@ -2282,20 +2281,20 @@ function clearCanvasSizingAR(root) {
 
 // narrow viewport — the pane floor applies, and wins over the part health peek band
 function isPaneFloorViewportAR() {
-	return window.innerWidth < MAP_PANE.FLOOR.MAX_WIDTH_PX;
+	return window.innerWidth < MAP.PANE.FLOOR.MAX_WIDTH_PX;
 }
 
 // grows a short pane to the floor before the fit measures it · the fit still clamps the canvas to its frame when width binds
 function applyPaneFloorAR(root) {
 	const canvas = getCanvasAR(root);
-	if (!canvas || !isPaneFloorViewportAR() || canvas.getBoundingClientRect().height >= MAP_PANE.FLOOR.PX) return;
-	setCanvasHeightAR(root, MAP_PANE.FLOOR.PX);
+	if (!canvas || !isPaneFloorViewportAR() || canvas.getBoundingClientRect().height >= MAP.PANE.FLOOR.PX) return;
+	setCanvasHeightAR(root, MAP.PANE.FLOOR.PX);
 }
 
 // height the default view fits in — the first-screen height, raised to the floor on a narrow viewport
 function getFitPaneHeightAR(root, paneH) {
 	const firstScreen = Math.min(paneH, getFirstScreenCanvasHeightAR(root));
-	return isPaneFloorViewportAR() ? Math.min(paneH, Math.max(firstScreen, MAP_PANE.FLOOR.PX)) : firstScreen;
+	return isPaneFloorViewportAR() ? Math.min(paneH, Math.max(firstScreen, MAP.PANE.FLOOR.PX)) : firstScreen;
 }
 
 // tallest pane whose bottom leaves PART_HEALTH.PEEK_PX of the first screen under it — the map is tall enough to push the block off it
@@ -2527,7 +2526,7 @@ function buildMapColumnSourceAR(columns, rest) {
  * places the sources column one gutter left of the spine, top-aligned with it, draws the bus into Orchestrator,
  * ranks the nodes for Tab and fits the viewBox to the composed drawing.
  */
-function setMapColumnLayoutAR(svgEl, { screenEdges, spineLabels, zoneIdByMemberId }) {
+function setMapColumnLayoutAR(svgEl, { screenEdges, spineLabels, zoneIdByMemberId }, redundantZoneIds) {
 	const frames = Object.values(MAP.COL.IDS).map((id) => getZoneElAR(svgEl, id));
 	if (frames.some((frame) => !frame)) return;
 	for (const frame of frames) frame.remove();
@@ -2535,9 +2534,9 @@ function setMapColumnLayoutAR(svgEl, { screenEdges, spineLabels, zoneIdByMemberI
 		for (const id of zoneIds) getZoneElAR(svgEl, id)?.setAttribute("data-arch-column", MAP.COL.IDS[column]);
 
 	setStackedMembersAR(svgEl, zoneIdByMemberId);
-	setSpineGapsAR(svgEl, zoneIdByMemberId);
+	setSpineGapsAR(svgEl, zoneIdByMemberId, redundantZoneIds);
 	setColumnFrameWidthsAR(svgEl);
-	for (const spineLabel of spineLabels) setSpineLabelAR(svgEl, spineLabel);
+	for (const spineLabel of spineLabels) setSpineLabelAR(svgEl, spineLabel, redundantZoneIds);
 	for (const edge of screenEdges.filter((screenEdge) => screenEdge.kind === "bypass")) createBypassEdgeAR(svgEl, edge);
 	setSourcesColumnPlaceAR(svgEl, zoneIdByMemberId);
 	for (const edge of screenEdges.filter((screenEdge) => screenEdge.kind === "bus")) createBusEdgeAR(svgEl, edge);
@@ -2580,7 +2579,7 @@ function setStackedMembersAR(svgEl, zoneIdByMemberId) {
 	let top = union.top;
 	members.forEach((el, i) => {
 		translateMapPartAR(el, cx - getBoxCentreAR(boxes[i]).x, top - boxes[i].top);
-		top += boxes[i].bottom - boxes[i].top + MAP.COL.MEMBER_GAP;
+		top += boxes[i].bottom - boxes[i].top + MAP.COL.GAP.MEMBER;
 	});
 	setStackFrameAR(svgEl, rect, getUnionSvgBoxAR(svgEl, members), { pad, cx });
 }
@@ -2611,16 +2610,17 @@ function setZoneFrameBoxAR(svgEl, rect, box) {
 }
 
 /**
- * Opens each spine gap to MAP.COL.SPINE_GAP — ELK leaves its fixed subgraph spacing and mermaid exposes no knob for it.
+ * Opens each spine gap so it is drawn MAP.COL.GAP.SPINE tall once the zone below gains its title band — ELK leaves its fixed
+ * subgraph spacing and mermaid exposes no knob for it.
  * Every zone under the gap moves down with it, and the ELK edges' points under it follow, so each spine edge lengthens.
  */
-function setSpineGapsAR(svgEl, zoneIdByMemberId) {
+function setSpineGapsAR(svgEl, zoneIdByMemberId, redundantZoneIds) {
 	const chain = MAP.COL.ZONES.pipeline;
 	const paths = [...svgEl.querySelectorAll("path.flowchart-link")];
 	for (const [i, zoneId] of chain.slice(1).entries()) {
 		const above = getZoneBoxAR(svgEl, chain[i]);
 		const below = getZoneBoxAR(svgEl, zoneId);
-		const dy = above && below ? MAP.COL.SPINE_GAP - (below.top - above.bottom) : 0;
+		const dy = above && below ? MAP.COL.GAP.SPINE + getZoneTitleBandAR(zoneId, redundantZoneIds) - (below.top - above.bottom) : 0;
 		if (dy < 0.5) continue;
 		for (const id of chain.slice(i + 1)) for (const el of getZonePartsAR(svgEl, id, zoneIdByMemberId)) translateMapPartAR(el, 0, dy);
 		for (const path of paths) setPathPointsBelowAR(svgEl, path, above.bottom + 0.5, dy);
@@ -2658,11 +2658,16 @@ function setZoneFrameSpanAR(svgEl, rect, span) {
 	if (at && shift) titleEl.setAttribute("transform", `translate(${Number(at[1]) + shift}, ${at[2]})`);
 }
 
+// the band the zone-title effect later adds above a zone frame — none where the zone hides its title
+function getZoneTitleBandAR(zoneId, redundantZoneIds) {
+	return redundantZoneIds.has(zoneId) ? 0 : ZONE_TITLE_BAND;
+}
+
 /**
- * A spine edge's label right of its own edge, level with the gap the edge crosses.
+ * A spine edge's label right of its own edge, centred in the gap the edge crosses as it is finally drawn — under the title band.
  * Inside the gap no other edge runs, so the label sits nearer its own edge than any other line.
  */
-function setSpineLabelAR(svgEl, { from, to, fromZone, toZone, label }) {
+function setSpineLabelAR(svgEl, { from, to, fromZone, toZone, label }, redundantZoneIds) {
 	const above = getZoneBoxAR(svgEl, fromZone);
 	const below = getZoneBoxAR(svgEl, toZone);
 	const path = [...svgEl.querySelectorAll("path.flowchart-link")].find((el) => (el.getAttribute("data-id") || "").startsWith(`L_${from}_${to}_`));
@@ -2670,7 +2675,8 @@ function setSpineLabelAR(svgEl, { from, to, fromZone, toZone, label }) {
 	const inGap = getSvgPathPointsAR(svgEl, path).filter((point) => point.y >= above.bottom && point.y <= below.top);
 	const edgeRight = Math.max(...inGap.map((point) => point.x));
 	if (!Number.isFinite(edgeRight)) return;
-	setTurnLabelAR(svgEl, label, `${from}>${to}`, { left: edgeRight + MAP.COL.LABEL_PAD, y: (above.bottom + below.top) / 2 });
+	const drawnTop = below.top - getZoneTitleBandAR(toZone, redundantZoneIds);
+	setScreenLabelAR(svgEl, label, `${from}>${to}`, { left: edgeRight + MAP.COL.LABEL_PAD, y: (above.bottom + drawnTop) / 2 });
 }
 
 // path points every few svg units, in the svg's own user space
@@ -2690,13 +2696,13 @@ function createBypassEdgeAR(svgEl, edge) {
 	const from = getZoneBoxAR(svgEl, edge.fromZone);
 	const to = getZoneBoxAR(svgEl, edge.toZone);
 	if (!from || !to) return;
-	const laneX = Math.max(...spine.map((box) => box.right)) + MAP.COL.BYPASS_LANE;
+	const laneX = Math.max(...spine.map((box) => box.right)) + MAP.COL.BYPASS.LANE;
 	const [fromY, toY] = [getBoxCentreAR(from).y, getBoxCentreAR(to).y];
 	createScreenPathAR(svgEl, edge, [{ x: from.right, y: fromY }, { x: laneX, y: fromY }, { x: laneX, y: toY }, { x: to.right, y: toY }]);
 	// level with the zone it passes, where neither horizontal leg runs
 	const passed = spine.filter((box) => box.top >= from.bottom && box.bottom <= to.top);
 	const labelY = passed.length ? getBoxCentreAR(getBoxesUnionAR(passed)).y : (from.bottom + to.top) / 2;
-	if (edge.label) setTurnLabelAR(svgEl, edge.label, `${edge.from}>${edge.to}`, { left: laneX + MAP.COL.LABEL_PAD, y: labelY });
+	if (edge.label) setScreenLabelAR(svgEl, edge.label, `${edge.from}>${edge.to}`, { left: laneX + MAP.COL.LABEL_PAD, y: labelY });
 }
 
 // the sources column one gutter left of the spine, its top on Orchestrator's — ELK centres it, on either side of the spine, under the root TB
@@ -2726,7 +2732,7 @@ function createScreenPathAR(svgEl, edge, points) {
 	const path = template.cloneNode(true);
 	path.removeAttribute("transform");
 	path.removeAttribute("data-points");
-	path.id = `L_${edge.from}_${edge.to}_turn`;
+	path.id = `L_${edge.from}_${edge.to}_screen`;
 	path.setAttribute("data-id", path.id);
 	path.setAttribute("data-arch-edge", edge.kind);
 	path.setAttribute("d", `M${points.map(({ x, y }) => `${x},${y}`).join("L")}`);
@@ -2759,8 +2765,8 @@ function translateMapPartAR(el, dx, dy) {
 }
 
 // a screen-drawn label: its left edge at `at.left`, its middle at `at.y` (svg units) · tagged with the `from>to` edge it captions
-function setTurnLabelAR(svgEl, text, edgeKey, at) {
-	const labelEl = createTurnLabelAR(svgEl, text);
+function setScreenLabelAR(svgEl, text, edgeKey, at) {
+	const labelEl = createScreenLabelAR(svgEl, text);
 	if (!labelEl) return;
 	labelEl.setAttribute("data-arch-edge-label", edgeKey);
 	const box = getSvgBoxAR(svgEl, labelEl);
@@ -2780,7 +2786,7 @@ function setReadingRankAR(svgEl, zoneIdByMemberId) {
  * A screen-drawn edge label in mermaid's own markup — same classes, so label counts and styles stay one.
  * Every map edge reaches ELK unlabelled, so there is no drawn label to clone, and the frame is sized from the rendered text.
  */
-function createTurnLabelAR(svgEl, text) {
+function createScreenLabelAR(svgEl, text) {
 	const host = svgEl.querySelector("g.edgeLabels") ?? svgEl.querySelector("g.edgePaths")?.parentNode;
 	if (!host) return null;
 	const { label, inner, frame, box } = getEdgeLabelMarkupAR(text);
