@@ -42,7 +42,8 @@ export const ACTIONABLE_PROPOSAL_STATUSES: ReadonlySet<ProposalStatus> = new Set
 // --auto-regen regenerates + pre-verifies + re-applies a stale diff inline, so
 // the 200 surface keys off how the change landed: direct apply (exit 0) →
 // neither flag · after-regen (exit 10) → regenerated · already-present (exit 12)
-// → already_applied. The two flags are mutually exclusive; absence = direct apply.
+// → already_applied · record not written (exit 26) → record_missing. The flags are
+// mutually exclusive; absence = direct apply.
 export interface ApproveProposalResponse {
   id: number;
   status: "applied";
@@ -50,6 +51,10 @@ export interface ApproveProposalResponse {
   regenerated?: true;
   // exit 12 — change already present in the file → row marked applied, NO new commit.
   already_applied?: true;
+  // exit 26 — bytes landed + row applied, but its core.autoagent_apply_records row was not written.
+  record_missing?: true;
+  // record_missing only — the cause token + where the record survives (the JSONL applied row).
+  reason?: string;
 }
 
 // Reject (200) — status flipped to `rejected` + reviewed_at/reviewed_by stamped.
@@ -78,6 +83,8 @@ export interface RejectProposalResponse {
 //   row_unreadable (422)   ← exit 23: stored proposal row unreadable (nothing applied);
 //                            a data problem, so no retry — Reject is the way out
 //   apply_error (503)      ← exit 21: proposal DB query failed (nothing applied; retryable)
+//   apply_error (503)      ← exit 25: apply-record table unconfirmed (nothing applied; retry after
+//                            the pending monitor migration runs)
 //   apply_error (500)      ← other infra failure (exit 2 bad-arg / 3 no-psql / 6 DB-update-fail / other)
 //   internal (500)         ← unexpected route-level failure
 export type ImprovementMutationErrorBody =

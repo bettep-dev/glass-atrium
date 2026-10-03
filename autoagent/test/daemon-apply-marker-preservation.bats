@@ -189,7 +189,8 @@ verify() {
 # successive daemon-apply invocations (the fossilization scenario is inherently
 # multi-cycle). It honors the batch SELECT's status='pending' predicate and the
 # mark_stale_attempt CTE's increment-then-flip-at-threshold semantics; the id-only
-# single lookup returns the row with its stored status and an ok generation outcome.
+# single lookup returns the row with its stored status and an ok generation outcome; the
+# apply-record table probe answers present.
 install_psql_stub() {
   cat >"$1/psql" <<'STUB'
 #!/usr/bin/env bash
@@ -236,6 +237,9 @@ case "${sql}" in
     ;;
   *"id::text = :'pid'"*)
     emit_row "|${row_status}|ok"
+    ;;
+  *"to_regclass('core.autoagent_apply_records')"*)
+    printf 't\n'
     ;;
   *) : ;;
 esac

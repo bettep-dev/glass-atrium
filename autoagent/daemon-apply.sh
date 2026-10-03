@@ -233,6 +233,18 @@
 #          stamped: a row filed under the wrong mover is worse than one filed
 #          under none, and a silent fall back to the machine default would file
 #          an operator's approval as the daemon's. Does NOT collide with 0/2-23.
+#
+# Apply-record exit codes (core.autoagent_apply_records — the queryable copy of the landed record the
+# applied JSONL row carries; backlog and single sources only, never a dry run or the report fallback):
+#     25 — the record table could not be confirmed present: the probe answered anything but `t` (the
+#          monitor migration has not run) or the probe itself failed. Checked BEFORE the first apply,
+#          so nothing is applied and no row moves; one abort row lands (reason
+#          apply_record_table_unconfirmed). Does NOT collide with 0/2-24.
+#     26 — a landed apply's database record was NOT written: the INSERT failed, or a whole-file digest
+#          or the landed diff could not be computed. Raised AFTER the bytes landed and the row flipped
+#          applied, so the row cannot be re-applied, and its JSONL applied row holds the record. The
+#          drain stops at that row; one abort row lands (reason apply_record_failed).
+#          Does NOT collide with 0/2-25.
 
 set -Eeuo pipefail
 IFS=$'\n\t'
@@ -1647,6 +1659,7 @@ assert_removal_evidence() {
 #       (caller's patch_apply_failed path).
 #
 # label/diff_target args (3rd/4th, optional) attribute the skip log to the patch.
+# On rc 0 it sets APPLY_STRATEGY (recount | eof-append) — the landed record's strategy field.
 #
 # Boundary (why headers decide rc 3 vs Strategy B): a diff WITH '--- '/'+++ '
 # headers asserts an exact target location; if --recount cannot land it there,
@@ -1706,6 +1719,7 @@ apply_diff() {
         # no-EOF-append safety invariant for located diffs is preserved.
         if git -C "${GIT_ROOT}" apply --recount --whitespace=nowarn \
             ${_APPLY_DIR_ARGS[@]+"${_APPLY_DIR_ARGS[@]}"} "${tmp}" 2>"${apply_err}"; then
+            APPLY_STRATEGY="recount"
             return 0
         fi
         # A LOCATED diff that won't land. Do NOT EOF-append (wrong place +
@@ -1754,6 +1768,7 @@ sys.stdout.write("\n".join(out))
             printf '\n' >>"${target}"
         fi
         printf '%s\n' "${addition}" >>"${target}"
+        APPLY_STRATEGY="eof-append"
         return 0
     fi
 
@@ -2084,6 +2099,115 @@ PSQL
     return 0
 }
 
+# -- Landed record (core.autoagent_apply_records + the applied JSONL row) --
+# The record is what LANDED, read from the transaction's own before-image against the verified target —
+# never the proposal text, which `git apply --recount` may land at an offset. The JSONL applied row is
+# the durable copy (it survives a database drop); the table is the queryable copy, written as its own
+# statement AFTER the status flip, so a record failure can never leave a landed row pending.
+
+# assert_apply_record_table — exit 25 unless the record table exists (backlog/single, non-dry-run).
+# scripts/update.sh migrates AFTER its file apply, so an updated script can run before its table exists.
+assert_apply_record_table() {
+    local probe_out="" probe_rc=0 err_file err_msg
+    err_file="$(mktemp -t autoagent-recprobe.XXXXXX)"
+    if probe_out="$(psql -d glass_atrium -v ON_ERROR_STOP=1 -tAq 2>"${err_file}" <<'PSQL'
+SELECT to_regclass('core.autoagent_apply_records') IS NOT NULL;
+PSQL
+    )"; then
+        probe_rc=0
+    else
+        probe_rc=$?
+    fi
+    err_msg="$(tr '\n' ' ' <"${err_file}" | cut -c1-200)"
+    delete_scratch_files "${err_file}"
+    if [[ "${probe_rc}" -eq 0 && "${probe_out}" == "t" ]]; then
+        return 0
+    fi
+    printf '[daemon-apply] FATAL: core.autoagent_apply_records not confirmed (probe rc=%d answer=%s err=%s) — nothing applied; run the pending monitor migration\n' \
+        "${probe_rc}" "${probe_out}" "${err_msg}" >&2
+    emit_abort_row 'apply-record table' source_read_abort_row apply_record_table_unconfirmed 25
+    exit 25
+}
+
+# get_landed_diff BEFORE AFTER — unified diff of the bytes that landed, or non-zero + a loud stderr line.
+# diff exits 1 whenever the files differ — every landing — so only rc 1 with output is a diff:
+# rc 0 (no byte changed) and rc >= 2 (diff error) are both failures.
+get_landed_diff() {
+    local before="$1" after="$2" name="${2##*/}" landed="" rc=0
+    if landed="$(diff -u -L "a/${name}" -L "b/${name}" -- "${before}" "${after}")"; then
+        rc=0
+    else
+        rc=$?
+    fi
+    if [[ "${rc}" -ne 1 || -z "${landed}" ]]; then
+        printf '[daemon-apply] WARN apply_record landed_diff failed rc=%d target=%s\n' "${rc}" "${after}" >&2
+        return 1
+    fi
+    printf '%s\n' "${landed}"
+}
+
+# insert_apply_record — ONE INSERT of the landed record from the loop's row globals, every value a psql
+# -v binding on the quoted heredoc. Non-zero (detail on stderr) unless psql succeeds AND returns one id:
+# a zero-row INSERT is a record that silently did not land. Plain INSERT — the append-only trigger
+# rejects the UPDATE an ON CONFLICT clause would fire.
+insert_apply_record() {
+    local out="" rc=0 err_file err_msg
+    err_file="$(mktemp -t autoagent-record.XXXXXX)"
+    if out="$(
+        psql -d glass_atrium -v ON_ERROR_STOP=1 -tAq \
+            -v "pid=${patch_id}" -v "cd=${patch_cycle}" -v "lbl=${PATCH_LABEL}" -v "tgt=${PATCH_TARGET}" \
+            -v "agent=${PATCH_AGENT}" -v "at=${timestamp}" -v "strategy=${APPLY_STRATEGY}" \
+            -v "bsha=${record_before_sha}" -v "asha=${record_after_sha}" -v "diff=${record_diff}" \
+            -v "mid=${record_model_id}" \
+            2>"${err_file}" <<'PSQL'
+INSERT INTO core.autoagent_apply_records
+    (proposal_id, cycle_date, pattern_label, target_file, target_agent, applied_at,
+     strategy, before_sha256, after_sha256, landed_diff, model_id)
+VALUES
+    (:'pid'::bigint, :'cd'::date, :'lbl', :'tgt', nullif(:'agent', ''), :'at'::timestamptz,
+     :'strategy', nullif(:'bsha', ''), nullif(:'asha', ''), nullif(:'diff', ''), nullif(:'mid', ''))
+RETURNING id;
+PSQL
+    )"; then
+        rc=0
+    else
+        rc=$?
+    fi
+    err_msg="$(tr '\n' ' ' <"${err_file}" | cut -c1-200)"
+    delete_scratch_files "${err_file}"
+    if [[ "${rc}" -ne 0 || ! "${out}" =~ ^[0-9]+$ ]]; then
+        printf '[daemon-apply] ERROR apply_record insert failed rc=%d returned=%s err=%s\n' "${rc}" "${out}" "${err_msg}" >&2
+        return 1
+    fi
+    printf '[daemon-apply] apply_record id=%s target=%s\n' "${out}" "${PATCH_TARGET}" >&2
+}
+
+# create_apply_record ENFORCE — the table copy of the landed record, run after the status flip. ENFORCE
+# mirrors update_db_status: 1 (backlog/single) → exit 26 · 0 (report fallback, which applies only with
+# psql absent) → WARN. A missing digest or diff never blocks the flip — it is caught here, after it.
+create_apply_record() {
+    local enforce="$1" cause=""
+    # shellcheck disable=SC2310  # the rc IS the branch; insert_apply_record reports its own failure
+    if ! command -v psql >/dev/null 2>&1; then
+        cause="psql_not_found"
+    elif [[ -z "${record_before_sha}" || -z "${record_after_sha}" || -z "${record_diff}" ]]; then
+        cause="digest_or_diff_missing"
+    elif ! insert_apply_record; then
+        cause="insert_failed"
+    else
+        return 0
+    fi
+    if [[ "${enforce}" != "1" ]]; then
+        printf '[daemon-apply] WARN apply record NOT written cause=%s target=%s (report source: best-effort, the JSONL applied row is the record)\n' \
+            "${cause}" "${PATCH_TARGET}" >&2
+        return 0
+    fi
+    printf '[daemon-apply] FATAL: apply record NOT written cause=%s target=%s pattern=%s — the row is applied and its JSONL applied row holds the record\n' \
+        "${cause}" "${PATCH_TARGET}" "${PATCH_LABEL}" >&2
+    emit_abort_row 'apply-record' source_read_abort_row apply_record_failed 26
+    exit 26
+}
+
 # mark_stale_attempt — bounded-retry → terminal-drain for the batch
 # stale/needs_regen path (apply_diff rc 3). The batch backlog NEVER auto-regens by
 # design, so a row whose stored diff no longer lands just re-selects every
@@ -2306,9 +2430,9 @@ emit_abort_row() {
     fi
 }
 
-# source_read_abort_row REASON EXIT_CODE — the ONE row a batch source that could not be read lands.
-# `abort` for the reasons at the backlog_anomaly_row header; `reason` names the failed read. Every field
-# is a closed producer literal, so no escaping.
+# source_read_abort_row REASON EXIT_CODE — the ONE row a batch source that could not be read lands, and
+# the row the apply-record refusals (exit 25/26) land. `abort` for the reasons at the backlog_anomaly_row
+# header; `reason` names the failure. Every field is a closed producer literal, so no escaping.
 # shellcheck disable=SC2329
 #   Invoked INDIRECTLY as the builder emit_abort_row runs.
 source_read_abort_row() {
@@ -2783,6 +2907,7 @@ PY
     # captured path); this convention-derived global is the fallback anchor and
     # feeds the restore-fail log strings below.
     VERIFY_BEFORE_IMAGE="${backup_subdir}/${GIT_TARGET##*/}.bak"
+    APPLY_STRATEGY=""
     # Invoked BARE (never `|| rc=$?`) — see git-txn.sh "set -e contract": bare
     # invocation keeps set -e active inside the function, so a contract violation
     # (wrong arity / bad callback) loud-fails the daemon instead of being masked.
@@ -2889,17 +3014,36 @@ PY
 
     APPLIED=$((APPLIED + 1))
 
+    # The landed record, read inside the apply-lock window (see the "Landed record" helpers). A failed
+    # digest or diff leaves its field empty and is routed to exit 26 AFTER the flip, never before it.
+    record_before_sha="$(get_body_hash "${GIT_TXN_BEFORE_IMAGE}")"
+    record_after_sha="$(get_body_hash "${GIT_TARGET}")"
+    # shellcheck disable=SC2310  # the rc IS the branch; get_landed_diff reports its own failure
+    if ! record_diff="$(get_landed_diff "${GIT_TXN_BEFORE_IMAGE}" "${GIT_TARGET}")"; then
+        record_diff=""
+    fi
+    record_model_id="$(get_model_id)"
+
     # applied row carries cycle_date + proposal_id so a future drain's
     # already_applied can match the full 4-tuple (and skip ONLY a true re-attempt
     # of this exact proposal, not other distinct-cycle proposals for the agent).
-    emit_log "$(printf '{"ts":%s,"status":"applied","pattern_label":%s,"pattern_agent":%s,"target_file":%s,"cycle_date":%s,"proposal_id":%s,"commit_message":%s}' \
+    # It also carries the full landed record (the durable copy). Every field stays a
+    # masked substitution: an assignment that could trip errexit here would stop the
+    # run between the landing and the flip.
+    # shellcheck disable=SC2312  # masking is the point — see the comment above
+    emit_log "$(printf '{"ts":%s,"status":"applied","pattern_label":%s,"pattern_agent":%s,"target_file":%s,"cycle_date":%s,"proposal_id":%s,"commit_message":%s,"strategy":%s,"before_sha256":%s,"after_sha256":%s,"landed_diff":%s,"model_id":%s}' \
         "$(printf '%s' "${timestamp}" | json_escape)" \
         "$(printf '%s' "${PATCH_LABEL}" | json_escape)" \
         "$(printf '%s' "${PATCH_AGENT}" | json_escape)" \
         "$(printf '%s' "${PATCH_TARGET}" | json_escape)" \
         "$(printf '%s' "${patch_cycle}" | json_escape)" \
         "$(printf '%s' "${patch_id}" | json_escape)" \
-        "$(printf '%s' "${apply_msg}" | json_escape)")"
+        "$(printf '%s' "${apply_msg}" | json_escape)" \
+        "$(printf '%s' "${APPLY_STRATEGY}" | json_escape)" \
+        "$(printf '%s' "${record_before_sha}" | json_escape)" \
+        "$(printf '%s' "${record_after_sha}" | json_escape)" \
+        "$(printf '%s' "${record_diff}" | json_escape)" \
+        "$(printf '%s' "${record_model_id}" | json_escape)")"
 
     # -- DB status sync (idempotency gate) --------------------------------
     # Transition core.autoagent_proposals.status: pending/snoozed → 'applied'.
@@ -2909,10 +3053,13 @@ PY
     # Backlog AND single sources → enforce=1 (loud-fail exit 6 if the flip
     # fails, so the committed patch can never be silently re-applied). Report
     # source → enforce=0 (legacy best-effort for no-DB / today-only fallback).
+    # The table copy of the landed record follows the flip with the same enforce split.
     if [[ "${PATCH_SOURCE}" == "backlog" ]] || [[ "${PATCH_SOURCE}" == "single" ]]; then
         update_db_status "${PATCH_LABEL}" "${PATCH_TARGET}" "${patch_cycle}" 1 "${patch_id}"
+        create_apply_record 1
     else
         update_db_status "${PATCH_LABEL}" "${PATCH_TARGET}" "${patch_cycle}" 0 "${patch_id}"
+        create_apply_record 0
     fi
 done
 }
@@ -2965,6 +3112,14 @@ run_regen_for_single() {
     printf '%s\t%s\n' "${action}" "${axes}"
     return 0
 }
+
+# -- Apply-record table preflight (exit 25) --------------------------------
+# Before the first apply AND before any housekeeping write: the sources whose landing writes a table
+# record must find the table, else nothing is applied. A dry run writes no record, and the report
+# fallback applies only with psql absent, so neither is checked.
+if [[ "${DRY_RUN}" -eq 0 ]] && { [[ "${PATCH_SOURCE}" == "backlog" ]] || [[ "${PATCH_SOURCE}" == "single" ]]; }; then
+    assert_apply_record_table
+fi
 
 # -- Retention prune (once per real cycle) ---------------------------------
 # Housekeeping: drop age-expired before-image subdirs under BACKUP_DIR (the newest

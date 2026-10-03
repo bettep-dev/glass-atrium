@@ -199,12 +199,8 @@ function ScreenImprovement({ onNav }) {
 				});
 				const body = await res.json().catch(() => ({}));
 				if (res.ok) {
-					showToast(
-						"ok",
-						action === "approve"
-							? `Suggestion #${id} approved and applied (applied)`
-							: `Suggestion #${id} rejected (rejected)`,
-					);
+					const toast = getSuccessToastI(action, id, body);
+					showToast(toast.tone, toast.message);
 					triggerRefresh();
 					return;
 				}
@@ -554,6 +550,18 @@ function ScreenImprovement({ onNav }) {
 			{toast && <ToastI tone={toast.tone} message={toast.message} />}
 		</div>
 	);
+}
+
+// 2xx toast — an approve whose apply record was not written (exit 26) warns: the row is applied, the table copy is not
+function getSuccessToastI(action, id, body) {
+	if (action !== "approve") {
+		return { tone: "ok", message: `Suggestion #${id} rejected (rejected)` };
+	}
+	if (body?.record_missing) {
+		const reason = body.reason ? String(body.reason) : "apply record not written";
+		return { tone: "warn", message: `Suggestion #${id} applied, but ${reason}` };
+	}
+	return { tone: "ok", message: `Suggestion #${id} approved and applied (applied)` };
 }
 
 const sumCountsI = (list) =>
