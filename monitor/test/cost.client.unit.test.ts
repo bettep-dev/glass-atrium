@@ -71,6 +71,7 @@ interface CostHelpers {
   window: {
     getTokenRate?: (model: string) => Record<string, number> | null;
     UI: {
+      CARD_SLOTS: Record<"S" | "M" | "L", { rowCount: number; plotPx: number }>;
       INITIAL_REGION_STATE: PanelState;
       formatUsdCompact: (value: number | null) => string;
       getFreshnessState: (input: {
@@ -1323,4 +1324,75 @@ test("the log integrity legend lists the over-threshold swatch only when such a 
   const mod = (await loadScreenModule(COST_SRC, { UI: getAtomUi(), React: createReactStub() })) as RenderModule;
   assert.doesNotMatch(collectText(renderIn(mod, "ParseErrorLegendC", { hasCritDay: false })), /Day over threshold/);
   assert.match(collectText(renderIn(mod, "ParseErrorLegendC", { hasCritDay: true })), /Day over threshold/);
+});
+
+describe("the card pairs share one edge", () => {
+  const LG_SPLIT = /lg:grid-cols-\[minmax\(0,(\d+)fr\)_minmax\(0,(\d+)fr\)\]/;
+
+  test("every pair stretches as peers, and the one lg override names the same split as its ratio", async () => {
+    const mod = await loadCostRender();
+    const rows = findNodes(renderIn(mod, "ScreenCost", { onNav: () => {} }), (n) => n.props.atom === "SplitRow");
+    assert.equal(rows.length, 2, "the decision pair and the instrumentation pair");
+    assert.deepEqual(rows.map((row) => row.props.layout), ["equal", "equal"]);
+    const overrides = rows.flatMap((row) => {
+      const split = String(row.props.className ?? "").match(LG_SPLIT);
+      return split ? [{ ratio: row.props.ratio, lg: `${split[1]}:${split[2]}` }] : [];
+    });
+    assert.deepEqual(overrides, [{ ratio: "2:1", lg: "2:1" }]);
+  });
+});
+
+describe("the decision lists keep to their slot's row budget and roll the rest into the card foot", () => {
+  const getCard = async (name: string, data: unknown): Promise<RenderedNode> => {
+    const mod = (await loadScreenModule(COST_SRC, {
+      UI: getAtomUi(), React: createReactStub(), Recharts: RECHARTS_STUB,
+      getTokenRate: () => ({ input: 1, output: 1, cache_read: 1, cache_creation: 1 }),
+    })) as RenderModule;
+    const tree = renderIn(mod, name, { state: ready(data), days: 30, onRetry: () => {}, onNav: () => {} });
+    const [card] = findNodes(tree, (n) => n.props.atom === "Card");
+    assert.ok(card, `${name} renders the shared Card`);
+    return card;
+  };
+  const slots = cost.window.UI.CARD_SLOTS;
+  // the ledger card also carries the share bar, Total row and footnote → sessions take the larger slot
+  const modelBudget = slots.M.rowCount;
+  const sessionBudget = slots.L.rowCount;
+  const getPopulations = (budget: number) => [
+    { name: "a population inside the budget", count: budget },
+    { name: "one past the budget", count: budget + 1 },
+    { name: "far past the budget", count: budget + 12 },
+  ];
+
+  for (const { name, count } of getPopulations(modelBudget)) {
+    const budget = modelBudget;
+    test(`models — ${name}`, async () => {
+      const rows = Array.from({ length: count }, (_, i) => ({
+        model: `model-${i}`, cost_usd: 100 - i, session_count: 2,
+        input_tokens: 10, output_tokens: 10, cache_read_tokens: 10, cache_creation_tokens: 10,
+      }));
+      const card = await getCard("ModelCostCard", { rows });
+      assert.equal(card.props.size, "M");
+      const shown = findNodes(card, (n) => n.type === "button" && n.props["aria-expanded"] !== undefined).length;
+      const hidden = count - shown;
+      assert.equal(shown, Math.min(count, budget), "rows shown never pass the budget");
+      const foot = card.props.foot ? collectText(renderScreen(card.props.foot)) : "";
+      assert.equal(foot.includes(`Other · ${hidden} more model`), hidden > 0, foot || "no foot");
+      assert.equal(foot.includes(`Show all ${count}`), hidden > 0, foot || "no foot");
+    });
+  }
+
+  for (const { name, count } of getPopulations(sessionBudget)) {
+    const budget = sessionBudget;
+    test(`sessions — ${name}`, async () => {
+      const rows = Array.from({ length: count }, (_, i) => ({ session_id: `session-${i}`, total_cost_usd: 50 - i }));
+      const card = await getCard("SessionDistributionCard", { rows, total_session_count: count, truncated: false });
+      assert.equal(card.props.size, "L");
+      const shown = findNodes(card, (n) => n.type === "tr" && /^Session /.test(String(n.props["aria-label"] ?? ""))).length;
+      const hidden = count - shown;
+      assert.equal(shown, Math.min(count, budget), "rows shown never pass the budget");
+      assert.equal(findNodes(card, (n) => /^Other /.test(String(n.props["aria-label"] ?? ""))).length, 0, "Other is no table row");
+      const foot = card.props.foot ? collectText(renderScreen(card.props.foot)) : "";
+      assert.equal(foot.includes(`Other · ${hidden} of ${count} sessions`), hidden > 0, foot || "no foot");
+    });
+  }
 });
