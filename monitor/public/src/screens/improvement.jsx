@@ -2556,7 +2556,7 @@ function ChangeSummaryCardI({ state, aggregate, onRetry, failures }) {
 						</div>
 					</>
 				),
-				foot: `${formatIntI(changedCount)} of ${formatIntI(eventCount)} cycles changed rule lines`,
+				foot: `${formatIntI(changedCount)} of ${formatIntI(eventCount)} ${eventCount === 1 ? "cycle" : "cycles"} changed rule lines`,
 			})}
 		</div>
 	);
@@ -2966,7 +2966,7 @@ function getLoopBasisI(aggregate) {
 	const { eventCount } = aggregate;
 	const trend = aggregate.trend || [];
 	const qualifier = eventCount >= LOOP_EVENTS_LIMIT ? "Last" : "All";
-	const text = `${qualifier} ${formatIntI(eventCount)} cycles`;
+	const text = `${qualifier} ${formatIntI(eventCount)} ${eventCount === 1 ? "cycle" : "cycles"}`;
 	if (trend.length === 0) return { text, title: text };
 	return { text, title: `${text} · ${getDateSpanI(trend[0].date, trend[trend.length - 1].date)}` };
 }

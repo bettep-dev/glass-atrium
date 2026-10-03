@@ -119,6 +119,12 @@ const ROWS = {
       perDay: 2,
       expected: { text: "All 4 cycles", title: "All 4 cycles · 2025–2026" },
     },
+    {
+      name: "a single recorded cycle reads in the singular",
+      days: ["2026-09-24"],
+      perDay: 1,
+      expected: { text: "All 1 cycle", title: "All 1 cycle · 09/24–09/24" },
+    },
   ],
   PHRASE: [
     {
@@ -254,24 +260,41 @@ function getPrintedText(node: RecordedElement): string {
     .join(" ");
 }
 
-test("the applied card counts the cycles that changed rule lines out of every cycle in its basis", () => {
-  const edits = [
-    { added: 4, removed: 0 },
-    { added: 0, removed: 2 },
-    { added: 0, removed: 0 },
-    { added: 0, removed: 0 },
-    { added: 1, removed: 1 },
-  ];
-  const events = edits.map((edit, i) => ({
-    event_ts: `2026-09-2${i}T01:00:00Z`,
-    eval_result: "verified",
-    changes_added: edit.added,
-    changes_removed: edit.removed,
-  }));
-  const aggregate = sandbox.deriveLoopAggregateI({ events });
-  const text = getPrintedText(sandbox.ChangeSummaryCardI({ state: READY, aggregate }));
+// the foot's noun agrees with the basis count, not with the changed count
+const FOOT_ROWS = [
+  {
+    name: "the applied card counts the cycles that changed rule lines out of every cycle in its basis",
+    edits: [
+      { added: 4, removed: 0 },
+      { added: 0, removed: 2 },
+      { added: 0, removed: 0 },
+      { added: 0, removed: 0 },
+      { added: 1, removed: 1 },
+    ],
+    expected: "3 of 5 cycles changed rule lines",
+  },
+  {
+    name: "the applied card names a single-cycle basis in the singular",
+    edits: [{ added: 2, removed: 0 }],
+    expected: "1 of 1 cycle changed rule lines",
+  },
+];
 
-  assert.ok(text.includes("3 of 5 cycles changed rule lines"), text);
+describe("the applied card foot counts changed cycles out of its basis", () => {
+  for (const row of FOOT_ROWS) {
+    test(row.name, () => {
+      const events = row.edits.map((edit, i) => ({
+        event_ts: `2026-09-2${i}T01:00:00Z`,
+        eval_result: "verified",
+        changes_added: edit.added,
+        changes_removed: edit.removed,
+      }));
+      const aggregate = sandbox.deriveLoopAggregateI({ events });
+      const text = getPrintedText(sandbox.ChangeSummaryCardI({ state: READY, aggregate }));
+
+      assert.ok(text.includes(row.expected), text);
+    });
+  }
 });
 
 const LOOP_SLOTS = ["i-loop-metric", "i-loop-visual", "card-foot"];
