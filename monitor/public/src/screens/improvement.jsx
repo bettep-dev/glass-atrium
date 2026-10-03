@@ -1845,7 +1845,7 @@ function BucketRowI({ state, buckets, failures, onRetry }) {
 			<div className="card" id={ANCHOR_ID_I.learningMemory}>
 				<CardHead
 					title="Learning memory"
-					sub="CTM/EPM · all time · all agents"
+					sub="CTM/EPM · all time"
 				/>
 				<div className="p-3">
 					<LoadingPlaceholder label="learning memory" minHeight={68} />
@@ -1865,7 +1865,7 @@ function BucketRowI({ state, buckets, failures, onRetry }) {
 		<div className="card" id={ANCHOR_ID_I.learningMemory}>
 			<CardHead
 				title="Learning memory"
-				sub="CTM/EPM · all time · all agents"
+				sub="CTM/EPM · all time"
 			/>
 			{getLoopSlotsI({
 				metric: cards.map(([sym, tone, label, value]) => (
@@ -1888,7 +1888,7 @@ function BucketRowI({ state, buckets, failures, onRetry }) {
 						))}
 					</div>
 				),
-				foot: "Not the group's 7-day window",
+				foot: "All agents · not the group's 7-day window",
 			})}
 		</div>
 	);

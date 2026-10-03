@@ -17,7 +17,11 @@ import { chromium, type Page } from "playwright";
 const HERE = dirname(fileURLToPath(import.meta.url));
 const PUBLIC_ROOT = resolve(HERE, "..", "public");
 const TREND_LABELS = "#improvement-trend [data-chart-y-scale] span";
-const BASIS_METAS = "#improvement-change-summary .card-sub, #improvement-trend .card-sub";
+const LOOP_METAS = [
+  "#improvement-change-summary .card-head .card-sub",
+  "#improvement-trend .card-head .card-sub",
+  "#improvement-learning-memory .card-head .card-sub",
+].join(", ");
 
 // eight cycle days with a rising reject share → a full 0–100% axis
 function getLoopEvents() {
@@ -86,9 +90,9 @@ for (const width of [1440, 1024]) {
 
 // 1280 is the narrowest three-card row; below it the cards pair up and widen
 for (const width of [1280, 1440]) {
-  test(`both loop cards show their whole basis at ${width}px`, async () => {
+  test(`every loop card shows its whole header meta at ${width}px`, async () => {
     await withLearningPage(width, getCutLoopEvents(), async (page) => {
-      await page.waitForSelector(BASIS_METAS, { timeout: 30_000 });
+      await page.waitForSelector(LOOP_METAS, { timeout: 30_000 });
       await page.evaluate(() => document.fonts.ready);
       const metas = await page.evaluate(
         (selector) =>
@@ -96,10 +100,10 @@ for (const width of [1280, 1440]) {
             text: sub.textContent ?? "",
             isWhole: sub.scrollWidth <= sub.clientWidth,
           })),
-        BASIS_METAS,
+        LOOP_METAS,
       );
 
-      assert.equal(metas.length, 2, "both loop cards head a basis");
+      assert.equal(metas.length, 3, "all three loop cards head a meta");
       for (const meta of metas) {
         assert.ok(meta.isWhole, `${width}px: "${meta.text}" is cut`);
       }
