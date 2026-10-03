@@ -2293,7 +2293,7 @@ function SuccessRateMatrixCard({ failures, state, days, onRetry }) {
   return (
     <div id={IDS.REGION_CARD.successRates} className="card min-w-0">
       <CardHead
-        title="Success by agent and task type"
+        title="Success by agent"
         sub={subText}
         right={
           <>

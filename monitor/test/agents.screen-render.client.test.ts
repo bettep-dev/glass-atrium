@@ -1401,6 +1401,19 @@ test("the review-flag and task-type headers keep their meta within the 32-charac
   }
 });
 
+test("the review-flag and success-matrix cards keep their titles within the 24-character cap", async () => {
+  const props = { state: LOADING_STATE, days: 90, onRetry: () => undefined };
+  const heads = [
+    ...findAtoms(await renderComponent("ReviewFlagTimelineCard", props), "CardHead"),
+    ...findAtoms(await renderComponent("SuccessRateMatrixCard", { ...props, failures: undefined }), "CardHead"),
+  ];
+  assert.equal(heads.length, 2, "both card heads render");
+  for (const head of heads) {
+    const title = String(head.props.title);
+    assert.ok(title.length <= 24, `"${title}" is ${title.length} chars`);
+  }
+});
+
 test("the failing-pairs table ranks solid pairs above a divider that names the low-sample group", async () => {
   const mod = await loadAgentsScreen();
   const React = mod.React as { createElement: (t: unknown, p: unknown) => unknown };
