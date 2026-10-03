@@ -2701,22 +2701,26 @@ const QH_HEALTH_BULLET_ZONES = [
 // review_flag timeline 좌축/우축 라벨 — re-render 마다 신규 객체 생성 회피 (Recharts 패턴).
 // 좌축 막대는 flag "사유"(empty_metric + polar_mismatch) 스택이지 총 flag 수가 아님 →
 // 'Flagged per day' 는 과대표시 (총 flagged 는 우측 rate 라인·툴팁이 담당). 라벨을 사유 기준으로 정정.
-const QH_TIMELINE_COUNT_AXIS_LABEL = {
-  value: 'Flag reasons / day',
-  angle: -90,
-  position: 'insideLeft',
-  fill: 'rgb(var(--dim))',
-  style: { textAnchor: 'middle', fontSize: 'var(--fs-meta)' },
-};
-// an SVG presentation attribute cannot resolve a var() → the meta token rides the CSS style
-const QH_TIMELINE_TICK_STYLE = { fill: 'rgb(var(--faint))', fontFamily: 'JetBrains Mono, monospace', style: { fontSize: 'var(--fs-meta)' } };
-const QH_TIMELINE_RATIO_AXIS_LABEL = {
-  value: 'Rate (%)',
-  angle: 90,
-  position: 'insideRight',
-  fill: 'rgb(var(--crit))',
-  style: { textAnchor: 'middle', fontSize: 'var(--fs-meta)' },
-};
+const QH_TIMELINE = Object.freeze({
+  AXIS_LABEL: {
+    COUNT: {
+      value: 'Flag reasons / day',
+      angle: -90,
+      position: 'insideLeft',
+      fill: 'rgb(var(--dim))',
+      style: { textAnchor: 'middle', fontSize: 'var(--fs-meta)' },
+    },
+    RATIO: {
+      value: 'Rate (%)',
+      angle: 90,
+      position: 'insideRight',
+      fill: 'rgb(var(--crit))',
+      style: { textAnchor: 'middle', fontSize: 'var(--fs-meta)' },
+    },
+  },
+  // an SVG presentation attribute cannot resolve a var() → the meta token rides the CSS style
+  TICK_STYLE: { fill: 'rgb(var(--faint))', fontFamily: 'JetBrains Mono, monospace', style: { fontSize: 'var(--fs-meta)' } },
+});
 
 // Titled like its Lifecycle sibling → the flagged total never reads as an orphan tile.
 function ReviewFlagTimelineCard({ failures, state, days, onRetry }) {
@@ -2795,8 +2799,8 @@ function QualityHealthTimelineChart({ rows }) {
           <YAxis
             yAxisId="count"
             allowDecimals={false}
-            label={QH_TIMELINE_COUNT_AXIS_LABEL}
-            tick={QH_TIMELINE_TICK_STYLE}
+            label={QH_TIMELINE.AXIS_LABEL.COUNT}
+            tick={QH_TIMELINE.TICK_STYLE}
             axisLine={{ stroke: 'rgb(var(--line))' }}
             tickLine={false}
             width={48}
@@ -2806,8 +2810,8 @@ function QualityHealthTimelineChart({ rows }) {
             orientation="right"
             domain={[0, 100]}
             tickFormatter={(v) => v.toFixed(0) + '%'}
-            label={QH_TIMELINE_RATIO_AXIS_LABEL}
-            tick={QH_TIMELINE_TICK_STYLE}
+            label={QH_TIMELINE.AXIS_LABEL.RATIO}
+            tick={QH_TIMELINE.TICK_STYLE}
             axisLine={{ stroke: 'rgb(var(--line))' }}
             tickLine={false}
             width={56}
