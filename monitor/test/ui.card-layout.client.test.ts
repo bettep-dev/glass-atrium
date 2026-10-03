@@ -93,3 +93,129 @@ describe("tile split", () => {
     assert.equal(findNodes(tree, (n) => classesOf(n).includes("tile-split-detail")).length, 0);
   });
 });
+
+// useState stub whose state starts at `state` and records every setter call → open/closed states without a DOM
+function loadWithState(state: unknown) {
+  const calls: unknown[] = [];
+  const react = { ...React, useState: () => [state, (next: unknown) => calls.push(next)] };
+  return { calls, mod: loadScreenModule(UI_SRC, { React: react }) };
+}
+
+describe("card header", () => {
+  const headOf = (props: Record<string, unknown>) => render("CardHead", props);
+
+  test("title and meta share one header line rather than stacking", () => {
+    const tree = headOf({ title: "Spend by model", sub: "last 7 days" });
+    const [line] = findNodes(tree, (n) => classesOf(n).includes("card-head-text"));
+    assert.ok(line, "a one-line text group");
+    assert.equal(findNodes(line, (n) => n.type === "h2").length, 1);
+    assert.equal(findNodes(line, (n) => classesOf(n).includes("card-sub")).length, 1);
+  });
+
+  test("the info trigger is a real button described by the card title", () => {
+    const tree = headOf({ title: "Spend by model", info: "Counted once per model." });
+    const [h2] = findNodes(tree, (n) => n.type === "h2");
+    const [button] = findNodes(tree, (n) => n.type === "button");
+    assert.ok(h2.props.id, "the title carries an id to be described by");
+    assert.equal(button.props.type, "button");
+    assert.equal(button.props["aria-describedby"], h2.props.id);
+    assert.equal(button.props["aria-haspopup"], "dialog");
+    assert.ok(String(button.props["aria-label"] ?? "").length > 0, "an accessible name");
+    assert.equal(typeof button.props.onClick, "function", "opens on click and keyboard, not on hover");
+  });
+
+  test("a header with no info renders no trigger", () => {
+    assert.equal(findNodes(headOf({ title: "Spend by model" }), (n) => n.type === "button").length, 0);
+  });
+
+  test("activating the trigger opens the drawer that holds the info text", async () => {
+    const closed = loadWithState(false);
+    const closedUi = await closed.mod;
+    const create = (closedUi.React as typeof React).createElement;
+    const closedTree = renderScreen(create(closedUi.CardHead as Component, { title: "Spend", info: "Counted once per model." })) as RenderedNode;
+    assert.ok(!collectText(closedTree).includes("Counted once per model."), "closed → info stays off the page");
+    (findNodes(closedTree, (n) => n.type === "button")[0].props.onClick as () => void)();
+    assert.deepEqual(closed.calls, [true]);
+
+    const openUi = await loadWithState(true).mod;
+    const openTree = renderScreen(create(openUi.CardHead as Component, { title: "Spend", info: "Counted once per model." })) as RenderedNode;
+    const [drawer] = findNodes(openTree, (n) => n.type === "DetailSurface");
+    assert.ok(drawer, "open → a detail drawer");
+    assert.ok(collectText(drawer).includes("Counted once per model."));
+  });
+});
+
+describe("card slots", () => {
+  const slots = (ui.UI as Record<string, unknown>).CARD_SLOTS as Record<string, { rowCount: number; plotPx: number }>;
+  const getSlotRows = (ui.UI as Record<string, unknown>).getSlotRows as (items: unknown[], size?: string) => { rows: unknown[]; hiddenCount: number };
+
+  test("S, M and L grow in both visible rows and plot height", () => {
+    assert.deepEqual(Object.keys(slots), ["S", "M", "L"]);
+    const [s, m, l] = [slots.S, slots.M, slots.L];
+    assert.ok(s.rowCount < m.rowCount && m.rowCount < l.rowCount);
+    assert.ok(s.plotPx < m.plotPx && m.plotPx < l.plotPx);
+  });
+
+  for (const size of ["S", "M", "L"]) {
+    for (const total of [0, slots[size].rowCount, slots[size].rowCount + 7]) {
+      test(`a ${size} card shows at most its row budget and counts the rest (${total} items)`, () => {
+        const items = Array.from({ length: total }, (_, i) => i);
+        const { rows, hiddenCount } = getSlotRows(items, size);
+        assert.deepEqual(rows, items.slice(0, rows.length), "rows keep their order");
+        assert.ok(rows.length <= slots[size].rowCount);
+        assert.equal(rows.length + hiddenCount, total);
+      });
+    }
+  }
+
+  test("an unknown size budgets as M", () => {
+    const items = Array.from({ length: 30 }, (_, i) => i);
+    assert.equal(getSlotRows(items, "XL").rows.length, slots.M.rowCount);
+  });
+});
+
+describe("card", () => {
+  test("a sized card carries its slot modifier, and an unsized one none", () => {
+    const sized = findNodes(render("Card", { size: "M", title: "Runs" }, "body"), (n) => classesOf(n).includes("card"))[0];
+    const plain = findNodes(render("Card", { title: "Runs" }, "body"), (n) => classesOf(n).includes("card"))[0];
+    assert.ok(classesOf(sized).includes("card--m"));
+    assert.equal(classesOf(plain).filter((c) => c.startsWith("card--")).length, 0);
+  });
+
+  test("the foot renders after the body, so it pins to the card's bottom edge", () => {
+    const card = findNodes(render("Card", { title: "Runs", foot: "Show all 12" }, "rows"), (n) => classesOf(n).includes("card"))[0];
+    const parts = card.children.filter((c): c is RenderedNode => typeof c !== "string").map((c) => classesOf(c));
+    const bodyAt = parts.findIndex((c) => c.includes("card-body"));
+    const footAt = parts.findIndex((c) => c.includes("card-foot"));
+    assert.ok(bodyAt >= 0 && footAt > bodyAt, `parts ${JSON.stringify(parts)}`);
+  });
+
+  test("a card with no foot renders no empty foot strip", () => {
+    assert.equal(findNodes(render("Card", { title: "Runs" }, "rows"), (n) => classesOf(n).includes("card-foot")).length, 0);
+  });
+});
+
+describe("clamping helpers", () => {
+  const long = "a rejection reason long enough to need clamping in a narrow column";
+
+  test("a one-line table cell carries its full text as a tooltip", () => {
+    const [cell] = findNodes(render("ClampCell", { text: long }), (n) => n.type === "td");
+    assert.ok(classesOf(cell).includes("cell-clamp"));
+    assert.equal(cell.props.title, long);
+    assert.equal(collectText(cell), long);
+  });
+
+  test("a two-line clamp carries its full text as a tooltip", () => {
+    const [node] = findNodes(render("ClampText", { text: long }), (n) => classesOf(n).includes("clamp-2"));
+    assert.equal(node.props.title, long);
+    assert.equal(collectText(node), long);
+  });
+});
+
+describe("disclosure in a stretched row", () => {
+  test("only a collapsed fold is marked collapsed", () => {
+    const cardOf = (kind: string) => findNodes(render("Disclosure", { kind, title: "History" }, "rows"), (n) => classesOf(n).includes("card"))[0];
+    assert.ok(classesOf(cardOf("detail")).includes("is-collapsed"), "detail starts collapsed");
+    assert.ok(!classesOf(cardOf("status")).includes("is-collapsed"), "status starts open");
+  });
+});

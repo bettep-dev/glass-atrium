@@ -78,6 +78,11 @@
   /* minimum hit height for every interactive atom */
   --ctl-min-h: 32px;
 
+  /* card anatomy — one-line header · inner padding · single-line list/table row */
+  --card-head-h: 48px;
+  --card-pad:    16px;
+  --row-h:       40px;
+
   /* one filled selected state — pressed toggles, active segments, selected tabs */
   --selected-fill:  28  25  23;
   --selected-ink:  250 250 249;

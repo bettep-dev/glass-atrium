@@ -881,14 +881,79 @@ function Tabs({ items, value, onChange }) {
   </div>;
 }
 
-function CardHead({ title, sub, right }) {
+// id sequence for the title an info trigger is described by — works without useId (render-harness React stub).
+let cardTitleSeq = 0;
+
+/**
+ * One-line card header: title + meta, then the ⓘ trigger and actions on the right.
+ * @param info - long explanation moved off the card; opens in the detail drawer
+ * @param infoLabel - trigger name and drawer title
+ */
+function CardHead({ title, sub, info, infoLabel = 'How this is counted', right }) {
+  const titleIdRef = useRef(null);
+  if (titleIdRef.current === null) titleIdRef.current = `card-title-${++cardTitleSeq}`;
+
   return <div className="card-head">
-    <div className="flex-1 min-w-0">
-      <h2 className="card-title">{title}</h2>
-      {sub && <div className="card-sub mt-0.5" title={window.UI.titleOf(sub)}>{sub}</div>}
+    <div className="card-head-text">
+      <h2 id={titleIdRef.current} className="card-title">{title}</h2>
+      {sub && <span className="card-sub" title={window.UI.titleOf(sub)}>{sub}</span>}
     </div>
-    {right && <div className="ml-auto flex items-center gap-2 shrink-0">{right}</div>}
+    {(info || right) && <div className="ml-auto flex items-center gap-2 shrink-0">
+      {info && <CardInfo label={infoLabel} describedBy={titleIdRef.current}>{info}</CardInfo>}
+      {right}
+    </div>}
   </div>;
+}
+
+// ⓘ trigger: a real button (click + keyboard), named by `label`, described by the card title → opens the detail drawer.
+function CardInfo({ label, describedBy, children }) {
+  const [isOpen, setOpen] = useState(false);
+
+  return <>
+    <button type="button" className="btn ghost sm icon" aria-label={label} aria-describedby={describedBy}
+      aria-haspopup="dialog" aria-expanded={isOpen} onClick={() => setOpen(true)}>
+      <Icon name="info" size={16} />
+    </button>
+    {isOpen && <DetailSurface open title={label} onClose={() => setOpen(false)}>{children}</DetailSurface>}
+  </>;
+}
+
+// S/M/L card slots — visible list rows and chart plot height; peers in one row share a slot so their ends align.
+const CARD_SLOTS = Object.freeze({
+  S: Object.freeze({ rowCount: 5, plotPx: 160 }),
+  M: Object.freeze({ rowCount: 8, plotPx: 220 }),
+  L: Object.freeze({ rowCount: 12, plotPx: 300 }),
+});
+
+// Caps a list at its slot's row budget → the rows to render + how many a "Show all N" foot stands for.
+function getSlotRows(items, size = 'M') {
+  const { rowCount } = CARD_SLOTS[size] || CARD_SLOTS.M;
+  return { rows: items.slice(0, rowCount), hiddenCount: Math.max(0, items.length - rowCount) };
+}
+
+/**
+ * Card anatomy: one-line header, a body that fills the card, an optional foot pinned to the bottom edge.
+ * @param size - 'S' | 'M' | 'L' slot; S/M bodies never scroll inside the card
+ * @param foot - "Show all N" / "Other" / one footnote
+ */
+function Card({ size, title, sub, info, infoLabel, right, foot, isFlush = false, children, className = '' }) {
+  const sizeClass = CARD_SLOTS[size] ? `card--${size.toLowerCase()}` : '';
+
+  return <div className={`card ${sizeClass} ${className}`.replace(/\s+/g, ' ').trim()}>
+    {title && <CardHead title={title} sub={sub} info={info} infoLabel={infoLabel} right={right} />}
+    <div className={`card-body ${isFlush ? 'flush' : ''}`.trim()}>{children}</div>
+    {foot && <div className="card-foot">{foot}</div>}
+  </div>;
+}
+
+// One-line table cell: ellipsis on overflow, the full text in the native title.
+function ClampCell({ text, children, className = '' }) {
+  return <td className={`cell-clamp ${className}`.trim()} title={titleOf(text)}>{children ?? text}</td>;
+}
+
+// Two-line clamp for data prose (reasons, proposals) — the full text stays in the title and the drawer.
+function ClampText({ text, children, className = '' }) {
+  return <span className={`clamp-2 ${className}`.trim()} title={titleOf(text)}>{children ?? text}</span>;
 }
 
 // Section title as a real outline heading, wearing the uppercase section-label style.
@@ -957,7 +1022,7 @@ function Disclosure({ kind = 'detail', title, sub, tone, level = 2, children, cl
   if (idRef.current === null) idRef.current = `disclosure-${++disclosureSeq}`;
   useEffect(() => { if (isAlerting) setOpen(true); }, [isAlerting]);
 
-  return <div className={`card ${className}`.trim()}>
+  return <div className={`card ${isOpen ? '' : 'is-collapsed'} ${className}`.replace(/\s+/g, ' ').trim()}>
     <Heading className="m-0 px-4 py-1 fs-body font-normal">
       <DisclosureButton isOpen={isOpen} onToggle={() => setOpen((v) => !v)} controls={isOpen ? idRef.current : undefined}
         className="w-full text-left gap-2"
@@ -2179,7 +2244,7 @@ function resolveOutcomeRate(data) {
 }
 
 window.UI = {
-  Icon, Pill, Badge, EmptyState, SubCard, Sparkline, MiniBars, Bar, BulletBar, StatusDot, AgentBadge, AgentName, getAgentDisplayName, KPI, KpiValue, DetailSurface, useDismissFocus, Popover, PopoverPanel, getTrapFocusTarget, getInertTargets, setSurfaceOpen, getTopSurface, Modal, Tabs, CardHead, PageHeader,
+  Icon, Pill, Badge, EmptyState, SubCard, Sparkline, MiniBars, Bar, BulletBar, StatusDot, AgentBadge, AgentName, getAgentDisplayName, KPI, KpiValue, DetailSurface, useDismissFocus, Popover, PopoverPanel, getTrapFocusTarget, getInertTargets, setSurfaceOpen, getTopSurface, Modal, Tabs, CardHead, CardInfo, Card, CARD_SLOTS, getSlotRows, ClampCell, ClampText, PageHeader,
   SectionLabel, Table, TableHead, DisclosureChevron, DisclosureButton, getSeverityTone, getWorstTone,
   Disclosure, getDisclosureOpen, SplitRow, SPLIT_ROW_RATIOS, SPLIT_ROW_LAYOUTS, SplitColumn, TileSplit,
   getRovingIndex, getRovingTabIndex, ROW_CONTROL_PROPS, getRowKeyAction, getRowFocusProps, ChipGroup,

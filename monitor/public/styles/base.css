@@ -38,12 +38,15 @@ details[open] > summary .chevron {
 	}
 }
 
+/* flex column → the body takes the remaining height and the foot pins to the bottom edge.
+   Light rests on its 1px border alone (border-first elevation); depth arrives only at raised-2. */
 .card {
+	display: flex;
+	flex-direction: column;
 	background: rgb(var(--elev));
 	border: 1px solid rgb(var(--line));
 	border-radius: var(--radius-card);
 	overflow: hidden;
-	box-shadow: var(--shadow-raised);
 }
 /* 상단 inset 하이라이트는 다크 전용 — 라이트 순백(255) 위 흰선 비가시(§7.1) */
 [data-theme="dark"] .card {
@@ -62,14 +65,34 @@ details[open] > summary .chevron {
 	background: rgb(var(--surface-raised-2));
 	box-shadow: var(--shadow-raised-2), inset 0 1px 0 rgb(var(--glass-border) / 0.06);
 }
-/* 카드 padding: head 16x20 / body 20px — 8px 리듬 정합 */
+/* one 48px line: title + meta left, actions right · wraps only when the controls do not fit */
 .card-head {
+	flex: none;
 	display: flex;
 	flex-wrap: wrap;
-	align-items: flex-start;
-	gap: 12px;
-	padding: 16px 20px;
+	align-items: center;
+	gap: 8px 12px;
+	min-height: var(--card-head-h);
+	padding: 4px var(--card-pad);
 	border-bottom: 1px solid rgb(var(--line));
+}
+.card-head-text {
+	flex: 1 1 auto;
+	min-width: 0;
+	display: flex;
+	align-items: baseline;
+	gap: 8px;
+}
+.card-head-text > .card-title {
+	flex: 0 1 auto;
+	min-width: 0;
+	white-space: nowrap;
+	overflow: hidden;
+	text-overflow: ellipsis;
+}
+.card-head-text > .card-sub {
+	flex: 1 1 0;
+	min-width: 0;
 }
 .card-title {
 	font-size: var(--fs-title);
@@ -95,15 +118,36 @@ details[open] > summary .chevron {
 	overflow: visible;
 	text-overflow: clip;
 }
-/* card-body 공통 max-height + 내부 스크롤 — 페이지 무한 길이 회피.
-   인라인 flex/overflow 또는 인라인 maxHeight 카드는 더 높은 specificity 로 본 규칙 override. */
+/* body fills the card · the 70vh inner scroll stays only on a lone unsized or L card */
 .card-body {
-	padding: 20px;
+	flex: 1 1 auto;
+	min-height: 0;
+	padding: var(--card-pad);
 	max-height: 70vh;
 	overflow-y: auto;
 }
+/* S/M lists cap by row count; a stretched row grows instead of nesting a scroller */
+.split-row--equal .card-body,
+.card--s .card-body,
+.card--m .card-body {
+	max-height: none;
+	overflow-y: visible;
+}
 .card-body.flush {
 	padding: 0;
+}
+/* pinned foot — "Show all N" / "Other" / one footnote line up across a stretched row */
+.card-foot {
+	flex: none;
+	margin-top: auto;
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	min-height: var(--row-h);
+	padding: 0 var(--card-pad);
+	border-top: 1px solid rgb(var(--line));
+	font-size: var(--fs-meta);
+	color: rgb(var(--dim));
 }
 
 .btn {
@@ -260,6 +304,15 @@ details[open] > summary .chevron {
 }
 .split-row--content { align-items: start; }
 .split-row--equal { align-items: stretch; }
+/* a wrapper grid item (region host) passes the stretched height on to its card */
+.split-row--equal > :not(.card, .split-col):has(> .card) {
+	display: flex;
+	flex-direction: column;
+}
+.split-row--equal > :not(.card, .split-col) > .card { flex: 1 1 auto; }
+/* a collapsed fold keeps its header height instead of stretching into an empty box */
+.split-row--equal > .card.is-collapsed { align-self: start; }
+.split-row--equal > * > .card.is-collapsed { flex: none; }
 
 /* Split column (SplitColumn) — a card stack in one SplitRow column; the rail variant pins it while the taller column scrolls (xl only) */
 .split-col {
@@ -313,6 +366,25 @@ details[open] > summary .chevron {
 	text-transform: uppercase;
 	letter-spacing: 0.04em;
 	background: rgb(var(--sunken));
+}
+.tbl td {
+	height: var(--row-h);
+}
+/* one-line data cell — ellipsis, full text in the cell's title */
+.tbl td.cell-clamp {
+	max-width: 0;
+	white-space: nowrap;
+	overflow: hidden;
+	text-overflow: ellipsis;
+}
+/* two-line clamp for data prose (reasons, proposals) — full text in the title and the drawer */
+.clamp-2 {
+	display: -webkit-box;
+	-webkit-box-orient: vertical;
+	-webkit-line-clamp: 2;
+	line-clamp: 2;
+	overflow: hidden;
+	overflow-wrap: anywhere;
 }
 .tbl tbody tr {
 	cursor: pointer;
