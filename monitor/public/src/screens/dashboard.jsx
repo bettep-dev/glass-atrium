@@ -144,8 +144,9 @@ function ScreenDashboard({ onNav, harness, onRetryHarness }) {
         .space-sections > * + .dash-lane.sr-only + * { margin-top: 24px; }
         /* 타일 힌트 — 2줄분 min-height 예약 → 폭이 줄어도 밴드 높이 불변. 저작 힌트는 2줄 안에서 줄바꿈. */
         .dash-tile-hint { min-height: calc(var(--fs-meta) * 1.4 * 2); line-height: 1.4; }
-        /* a hint carrying data → one line; only the data takes the ellipsis, the label and figure stay whole */
-        .dash-tile-hint-line { display: flex; align-items: flex-start; white-space: nowrap; }
+        /* a hint carrying data → one line while it fits whole, else data + figure wrap to the reserved second line; only the data takes the ellipsis */
+        .dash-tile-hint-line { display: flex; flex-wrap: wrap; align-items: flex-start; white-space: nowrap; }
+        .dash-tile-hint-rest { display: flex; flex: 1 1 auto; min-width: 0; }
         .dash-tile-hint-fixed { flex-shrink: 0; white-space: pre; }
         .dash-tile-hint-data { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
         .dash-tile-detail { min-height: calc(var(--fs-body) * 1.5); }
@@ -339,8 +340,10 @@ function TileDetail({ tile, isCovered }) {
       {hintData ? (
         <div className="fs-meta text-dim dash-tile-hint dash-tile-hint-line" title={tile.hint}>
           <span className="dash-tile-hint-fixed">{hintData.lead}</span>
-          <span className="dash-tile-hint-data">{hintData.data}</span>
-          <span className="dash-tile-hint-fixed">{hintData.tail}</span>
+          <span className="dash-tile-hint-rest">
+            <span className="dash-tile-hint-data">{hintData.data}</span>
+            <span className="dash-tile-hint-fixed">{hintData.tail}</span>
+          </span>
         </div>
       ) : (
         <div className="fs-meta text-dim dash-tile-hint">

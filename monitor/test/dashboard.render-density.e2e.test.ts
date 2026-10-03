@@ -128,6 +128,52 @@ describe("Dashboard density at 1024", () => {
   });
 });
 
+// A data hint clamps its data, never the authored words around it: each part stays inside the hint box,
+// and the data keeps a visible fragment even when the tile column is narrow.
+interface HintSpan {
+  text: string;
+  isData: boolean;
+  left: number;
+  right: number;
+  width: number;
+}
+
+async function getDataHints(page: Page): Promise<Array<{ box: { left: number; right: number }; spans: HintSpan[] }>> {
+  return page.evaluate(() =>
+    [...document.querySelectorAll<HTMLElement>(".dash-tile-hint-line")].map((line) => {
+      const box = line.getBoundingClientRect();
+      const spans = [...line.querySelectorAll<HTMLElement>(".dash-tile-hint-fixed, .dash-tile-hint-data")]
+        .filter((span) => (span.textContent ?? "").trim() !== "")
+        .map((span) => {
+          const rect = span.getBoundingClientRect();
+          const isData = span.classList.contains("dash-tile-hint-data");
+          return { text: span.textContent ?? "", isData, left: rect.left, right: rect.right, width: rect.width };
+        });
+      return { box: { left: box.left, right: box.right }, spans };
+    }),
+  );
+}
+
+describe("Data hints at narrow tile widths", () => {
+  for (const width of [1024, 1200]) {
+    test(`every data hint part stays inside its box and the data stays visible at ${width}`, async () => {
+      const page = await openDashboard({ width, height: 768 });
+      await page.evaluate(() => document.fonts.ready);
+      const hints = await getDataHints(page);
+      await page.close();
+      assert.ok(hints.length > 0, "the fixture renders a data hint");
+      for (const hint of hints) {
+        for (const span of hint.spans) {
+          assert.ok(span.left >= hint.box.left - 0.5 && span.right <= hint.box.right + 0.5,
+            `"${span.text}" spans ${span.left}–${span.right}, outside its box ${hint.box.left}–${hint.box.right}`);
+        }
+        const data = hint.spans.find((span) => span.isData);
+        assert.ok(data && data.width > 0, `the data is not visible: ${JSON.stringify(hint.spans)}`);
+      }
+    });
+  }
+});
+
 // Runs by hour reads as a grid of squares: no cell outgrows the cap, and the panel sits beside the results from xl
 const HOUR_CELL_MAX_PX = 20;
 

@@ -268,18 +268,22 @@ test("a ready tile puts its value on the lead side and its detail and hint on th
   assert.equal(findNodes(detail, (n) => classOf(n).includes("dash-tile-hint")).length, 1);
 });
 
-test("a hint carrying data clamps only the data on one line, keeping its authored words and figure whole", () => {
+test("a hint carrying data clamps only the data, keeping its authored words and figure whole", () => {
   const hintData = { lead: "Most runs: ", data: "glass-atrium-intel-researcher", tail: ", 12,345" };
   const tile = { ...READY_TILE, hint: "Most runs: glass-atrium-intel-researcher, 12,345", hintData };
   const tree = render("StatusTile", { tile, onNav: () => {}, onRetry: () => {} });
   const [hint] = findNodes(tree, (n) => classOf(n).includes("dash-tile-hint"));
-  assert.match(classOf(hint), /\bdash-tile-hint-line\b/, "the hint is one unwrapped line");
-  const parts = hint.children.map((child) => [classOf(child as RenderedNode), collectText(child as RenderedNode)]);
-  assert.deepEqual(parts, [
-    ["dash-tile-hint-fixed", hintData.lead],
+  assert.match(classOf(hint), /\bdash-tile-hint-line\b/, "the hint sets its data apart");
+  const partsOf = (node: RenderedNode) => node.children.map((child) => [classOf(child as RenderedNode), collectText(child as RenderedNode)]);
+  const [lead, rest] = hint.children as RenderedNode[];
+  assert.deepEqual(partsOf(hint)[0], ["dash-tile-hint-fixed", hintData.lead], "the label leads, whole");
+  // data + figure travel together → a narrow tile wraps them below the label as one unit
+  assert.equal(classOf(rest), "dash-tile-hint-rest");
+  assert.deepEqual(partsOf(rest), [
     ["dash-tile-hint-data", hintData.data],
     ["dash-tile-hint-fixed", hintData.tail],
-  ], "only the data part takes the ellipsis; the label and the figure stay whole");
+  ], "only the data part takes the ellipsis; the figure stays whole");
+  assert.equal(hint.children.length, 2, `unexpected parts: ${classOf(lead)}`);
   const plain = render("StatusTile", { tile: READY_TILE, onNav: () => {}, onRetry: () => {} });
   const [plainHint] = findNodes(plain, (n) => classOf(n).includes("dash-tile-hint"));
   assert.doesNotMatch(classOf(plainHint), /dash-tile-hint-line/, "an authored hint keeps its two-line wrap");
