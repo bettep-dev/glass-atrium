@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
-# Suite-level hermetic baseline for this bats directory. bats resolves setup_suite.bash
-# per test-file DIRECTORY, so each directory holding suites carries its own loader.
+# Suite-level hermetic baseline for the hooks/test root. bats runs ONE setup_suite.bash per
+# call — the first argument's directory's — so this file governs hooks/test only when hooks/test
+# leads the call; every harness shape keeps it there (CI per file, scripts/run-bats-parallel.sh per root).
 
 setup_suite() {
   # shellcheck source-path=SCRIPTDIR source=../../test/lib/bats-hermetic-env.bash

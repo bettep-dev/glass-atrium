@@ -17,11 +17,11 @@
 #            changes NOTHING when the field is absent).
 #
 # The stderr-channel cases (tagged [stderr]) run DB-free: PG is fail-opened via PGHOST and the
-# attribution decision is read off the diagnostic channel (computed BEFORE the PG INSERT), so the
-# regression holds even where a CHECK is not yet widened to the 11th token. [spool] cases run
-# DB-free the same way and read the outcome the hook spools when its PG write fails. Only the DB-row
-# case (recovered VALUES reach core.outcomes) needs the file's ephemeral cluster AND the widened CHECK
-# → it self-skips when the cluster's CHECK lacks the token, mirroring schema-mode-completion.bats.
+# attribution decision is read off the diagnostic channel (computed BEFORE the PG INSERT). [spool]
+# cases run DB-free the same way and read the outcome the hook spools when its PG write fails. The
+# DB-row cases (recovered VALUES reach core.outcomes) run against the file's ephemeral cluster, which
+# carries the db-hygiene migration verbatim → a migration CHECK lacking structuredoutput-completion
+# rejects the INSERT and those cases FAIL, as production would lose the outcome.
 #
 # Isolation mirrors track-outcome-schema-mode-completion.bats exactly: HOME is sandboxed so the
 # transcript resolution + diag log stay in the tmp dir; a UNIQUE per-run agent scopes the row
@@ -362,7 +362,8 @@ spooled_field() {
   done
 }
 
-# DB-backed driver: real PG (PYTHONPATH pinned to psycopg) — proves recovered VALUES reach the row.
+# DB-backed driver: the file's ephemeral cluster (inherited PGHOST, PYTHONPATH pinned to psycopg) —
+# proves recovered VALUES reach the row.
 run_hook_db() {
   run env \
     HOME="${SANDBOX_HOME}" \
@@ -375,29 +376,6 @@ run_hook_db() {
 # oc/no echo a diagnostic + return non-zero so each caller's `|| return 1` aborts AT the failure.
 oc() { [[ "${2}" == *"${1}"* ]] || { printf 'assert-contains FAILED: [%s] absent from output:\n%s\n' "${1}" "${2}" >&2; return 1; }; }
 no() { [[ "${2}" != *"${1}"* ]] || { printf 'assert-omits FAILED: [%s] present in output:\n%s\n' "${1}" "${2}" >&2; return 1; }; }
-
-# Constraint skip-probe — the VALID DB-row case INSERTs attribution_source =
-# 'structuredoutput-completion'; a cluster CHECK without the 11-value set (its DDL drifted from the
-# migration) rejects that INSERT → skip. A missing constraint rejects
-# nothing → run.
-skip_unless_live_check_allows_completion_token() {
-  local con_def
-  con_def="$(PYTHONPATH="${PSYCOPG_PP}" python3 - 2>/dev/null <<'PY'
-import psycopg
-with psycopg.connect("dbname=glass_atrium", connect_timeout=2) as conn:
-    with conn.cursor() as cur:
-        cur.execute(
-            "SELECT pg_get_constraintdef(oid) FROM pg_constraint "
-            "WHERE conname = 'outcomes_attribution_source_check'")
-        row = cur.fetchone()
-        print("NO_CONSTRAINT" if row is None else row[0])
-PY
-)" || con_def=""
-  case "${con_def}" in
-    *structuredoutput-completion* | NO_CONSTRAINT) ;;
-    *) skip "cluster CHECK lacks structuredoutput-completion (ephemeral DDL drifted from the migration)" ;;
-  esac
-}
 
 @test "[stderr] VALID completion_block → tier-1 promotion + structuredoutput-completion (not synthesized)" {
   write_transcript_cb valid
@@ -456,8 +434,7 @@ PY
 
 @test "VALID completion_block recovery lands writer VALUES in core.outcomes (structuredoutput-completion)" {
   # DB-backed — proves the recovered result/confidence/metric_pass/attribution reach the row (the
-  # stderr channel exposes only the decision, not the persisted values). Gated on the cluster CHECK
-  # carrying the 11th token (the INSERT writes it).
+  # stderr channel exposes only the decision, not the persisted values).
   write_transcript_cb valid
   write_payload
 
@@ -469,7 +446,6 @@ PY
   [ "${status}" -eq 0 ] || return 1
   oc "attribution=structuredoutput-completion" "${output}" || return 1
 
-  skip_unless_live_check_allows_completion_token
   run count_rows
   [ "${output}" = "1" ]
   # Writer-claimed fields recorded verbatim from the recovered block.
@@ -507,7 +483,6 @@ PY
   [ "${status}" -eq 0 ] || return 1
   oc "attribution=structuredoutput-completion" "${output}" || return 1
 
-  skip_unless_live_check_allows_completion_token
   run fetch_col lesson
   # Exact match ⇒ no sentinel bleed AND no trailing whitespace.
   [ "${output}" = "put the [COMPLETION] block in the SO completion_block field" ] || return 1
@@ -525,7 +500,6 @@ PY
   oc "attribution=structuredoutput-completion" "${output}" || return 1
   oc "completion_block recovered from terminal StructuredOutput input (tier-1 promotion)" "${output}" || return 1
 
-  skip_unless_live_check_allows_completion_token
   # concerns is a text[] column → fetch_col prints the psycopg list repr. An exact match pins the
   # single clean element (a bled ' [/COMPLETION]' would change the repr), and the case guard states
   # the sentinel-absence intent explicitly.
@@ -550,7 +524,6 @@ PY
   oc "attribution=structuredoutput-completion" "${output}" || return 1
   no "attribution=structuredoutput-derived" "${output}" || return 1
 
-  skip_unless_live_check_allows_completion_token
   run fetch_col lesson
   [ "${output}" = "writer truncated before the closing sentinel" ] || return 1
   case "${output}" in *"[/COMPLETION]"*) return 1 ;; esac
@@ -623,7 +596,7 @@ PY
   run_hook_db
   wait "${appender_pid}" 2>/dev/null || true
   [ "${status}" -eq 0 ] || return 1
-  # DB-free rescue regression (unconditional — computed BEFORE the PG INSERT): the fresh re-read
+  # DB-free rescue regression (computed BEFORE the PG INSERT): the fresh re-read
   # settled the terminal SO AND its completion_block, so the writer block is promoted, not synthesized.
   oc "terminal_structuredoutput=1" "${output}" || return 1
   oc "completion_block recovered from terminal StructuredOutput input (tier-1 promotion)" "${output}" || return 1
@@ -631,8 +604,6 @@ PY
   no "attribution=structuredoutput-derived" "${output}" || return 1
   no "attribution=completion-synthesized" "${output}" || return 1
 
-  # Gate the DB-row value assertions on the cluster CHECK (the INSERT writes the 11th token).
-  skip_unless_live_check_allows_completion_token
   run count_rows
   [ "${output}" = "1" ] || return 1
   # Writer-claimed fields recovered through the race land verbatim.

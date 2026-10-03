@@ -24,11 +24,10 @@
 # T9 absent paired tool_result (kill mid-call) → no match, stays completion-synthesized
 # T10 budget pin → counter at budget + errored SO ⇒ budget-truncation (heuristic still live)
 #
-# R2-positive cases (T3/T4/T7/T8) run the DB-free stderr rescue regression UNCONDITIONALLY —
-# a terminal_so=1 event LANDS attribution=structuredoutput-derived on the stderr diagnostic
-# channel (computed BEFORE the PG INSERT), so the regression holds even in a token-absent CHECK
-# env. Only the DB-row assertions (which INSERT the 10th attribution token) are gated behind the
-# cluster-CHECK probe → they self-skip when the cluster's CHECK lacks the token.
+# R2-positive cases (T3/T4/T7/T8, RACE) assert attribution=structuredoutput-derived twice: on the
+# stderr diagnostic channel (computed BEFORE the PG INSERT) and on the persisted row. The cluster
+# carries the db-hygiene migration verbatim → a migration CHECK lacking the token rejects the
+# INSERT and the row assertions FAIL, as production would lose the outcome.
 #
 # Isolation: HOME is sandboxed so the transcript resolution (~/.claude/projects/...) and the
 # diag log are redirected into the test temp dir. The PG helper is resolved by the hook as a
@@ -272,28 +271,6 @@ run_hook() {
     bash -c 'bash "$1" < "$2" 2>&1' _ "${HOOK_SH}" "${PAYLOAD_FILE}"
 }
 
-# Constraint skip-probe — R2-positive cases INSERT attribution_source = 'structuredoutput-derived'
-# into the file's cluster; a cluster CHECK without that token (its DDL drifted from the migration)
-# rejects the INSERT → skip. A missing constraint rejects nothing → run.
-skip_unless_live_check_allows_r2_token() {
-  local con_def
-  con_def="$(PYTHONPATH="${PSYCOPG_PP}" python3 - 2>/dev/null <<'PY'
-import psycopg
-with psycopg.connect("dbname=glass_atrium", connect_timeout=2) as conn:
-    with conn.cursor() as cur:
-        cur.execute(
-            "SELECT pg_get_constraintdef(oid) FROM pg_constraint "
-            "WHERE conname = 'outcomes_attribution_source_check'")
-        row = cur.fetchone()
-        print("NO_CONSTRAINT" if row is None else row[0])
-PY
-)" || con_def=""
-  case "${con_def}" in
-    *structuredoutput-derived* | NO_CONSTRAINT) ;;
-    *) skip "cluster CHECK lacks structuredoutput-derived (ephemeral DDL drifted from the migration)" ;;
-  esac
-}
-
 @test "T1 block-then-emit: [COMPLETION] text turn before StructuredOutput is honored (structured path)" {
   write_transcript block-then-emit
   write_payload
@@ -363,21 +340,16 @@ PY
 
   run_hook
   [ "${status}" -eq 0 ] || return 1
-  # DB-free rescue regression (unconditional — survives a token-absent CHECK): the attribution
-  # decision rides the stderr diagnostic channel, computed BEFORE the PG INSERT, so a terminal_so=1
-  # event LANDS structuredoutput-derived even where the widened token would be rejected by the row
-  # INSERT below. This is the portable proof; the DB-row assertions are the extra confirmation.
+  # DB-free rescue regression: the attribution decision rides the stderr diagnostic channel,
+  # computed BEFORE the PG INSERT → a terminal_so=1 event LANDS structuredoutput-derived there; the
+  # DB-row assertions below confirm the persisted row.
   # Routed through oc/no (|| return 1) so each is load-bearing regardless of position — a bare
-  # intermediate [[ ]] is silently ignored under bash 3.2 on macOS (bash 5.3 on CI does abort), and
-  # these run BEFORE the skip gate, so the regression stays enforced even when the CHECK/token
-  # is absent.
+  # intermediate [[ ]] is silently ignored under bash 3.2 on macOS (bash 5.3 on CI does abort).
   oc "terminal_structuredoutput=1" "${output}" || return 1
   oc "attribution=structuredoutput-derived" "${output}" || return 1
   no "attribution=completion-synthesized" "${output}" || return 1
   no "attribution=budget-truncation" "${output}" || return 1
 
-  # Gate ONLY the DB-row assertions on the cluster CHECK — the INSERT writes the widened token.
-  skip_unless_live_check_allows_r2_token
   run count_rows
   [ "${output}" = "1" ]
   # F2 tuple lock (structuredoutput-derived): done, but writer-unverified — confidence stays low +
@@ -405,18 +377,16 @@ PY
 
   run_hook
   [ "${status}" -eq 0 ] || return 1
-  # DB-free rescue regression (unconditional): direct terminal evidence beats the cumulative >=40
+  # DB-free rescue regression: direct terminal evidence beats the cumulative >=40
   # heuristic on the stderr channel, computed BEFORE the PG INSERT — a hard-kill cannot leave a
   # paired non-error tool_result in terminal position, and successful schema runs routinely sit
   # at/over 40 (the 40-52 band), so structuredoutput-derived (not budget-truncation) must win.
-  # Routed through oc/no (|| return 1) so each is load-bearing before the skip gate (a bare
+  # Routed through oc/no (|| return 1) so each is load-bearing mid-body (a bare
   # intermediate [[ ]] is silently ignored under bash 3.2 on macOS; bash 5.3 on CI does abort).
   oc "terminal_structuredoutput=1" "${output}" || return 1
   oc "attribution=structuredoutput-derived" "${output}" || return 1
   no "attribution=budget-truncation" "${output}" || return 1
 
-  # Gate ONLY the DB-row assertions on the cluster CHECK — the INSERT writes the widened token.
-  skip_unless_live_check_allows_r2_token
   run count_rows
   [ "${output}" = "1" ]
   run fetch_col attribution_source
@@ -476,16 +446,13 @@ PY
 
   run_hook
   [ "${status}" -eq 0 ] || return 1
-  # DB-free rescue regression (unconditional): the consumed emit supersedes the rate-limit keyword
-  # heuristic on the stderr channel, computed BEFORE the PG INSERT — terminal_so=1 LANDS
-  # structuredoutput-derived even in a token-absent CHECK env where the row INSERT below is rejected.
-  # Routed through oc (|| return 1) so each is load-bearing before the skip gate (a bare mid-body
+  # DB-free rescue regression: the consumed emit supersedes the rate-limit keyword heuristic on
+  # the stderr channel, computed BEFORE the PG INSERT — terminal_so=1 LANDS structuredoutput-derived.
+  # Routed through oc (|| return 1) so each is load-bearing mid-body (a bare mid-body
   # [[ ]] is silently ignored under bash 3.2 on macOS; bash 5.3 on CI does abort).
   oc "terminal_structuredoutput=1" "${output}" || return 1
   oc "attribution=structuredoutput-derived" "${output}" || return 1
 
-  # Gate ONLY the DB-row assertions on the cluster CHECK — the INSERT writes the widened token.
-  skip_unless_live_check_allows_r2_token
   run count_rows
   [ "${output}" = "1" ]
   # NOT blocked — a successfully consumed emit refutes the rate-limit-cut hypothesis even
@@ -500,16 +467,14 @@ PY
 
   run_hook
   [ "${status}" -eq 0 ] || return 1
-  # DB-free rescue regression (unconditional): adjacency-pairing would read the errored foreign-id
-  # decoy → completion-synthesized; strict tool_use_id pairing finds the real success result. This
-  # rides the stderr channel, computed BEFORE the PG INSERT, so it survives a token-absent CHECK.
-  # Routed through oc (|| return 1) so each is load-bearing before the skip gate (a bare mid-body
+  # DB-free rescue regression: adjacency-pairing would read the errored foreign-id decoy →
+  # completion-synthesized; strict tool_use_id pairing finds the real success result. This rides
+  # the stderr channel, computed BEFORE the PG INSERT.
+  # Routed through oc (|| return 1) so each is load-bearing mid-body (a bare mid-body
   # [[ ]] is silently ignored under bash 3.2 on macOS; bash 5.3 on CI does abort).
   oc "terminal_structuredoutput=1" "${output}" || return 1
   oc "attribution=structuredoutput-derived" "${output}" || return 1
 
-  # Gate ONLY the DB-row assertions on the cluster CHECK — the INSERT writes the widened token.
-  skip_unless_live_check_allows_r2_token
   run count_rows
   [ "${output}" = "1" ]
   run fetch_col result
@@ -551,19 +516,17 @@ PY
   run_hook
   wait "${appender_pid}" 2>/dev/null || true
   [ "${status}" -eq 0 ] || return 1
-  # DB-free rescue regression (unconditional): the re-read paired the late-flushed SO
+  # DB-free rescue regression: the re-read paired the late-flushed SO
   # result → terminal_so=1 LANDS structuredoutput-derived on the stderr channel,
   # computed BEFORE the PG INSERT. A single-snapshot read would have mislabeled this
   # as completion-synthesized (the pre-fix bug). Routed through oc/no so each is
-  # load-bearing before the skip gate.
+  # load-bearing mid-body.
   oc "terminal_structuredoutput=1" "${output}" || return 1
   oc "attribution=structuredoutput-derived" "${output}" || return 1
   no "attribution=completion-synthesized" "${output}" || return 1
 
-  # Gate ONLY the DB-row assertions on the cluster CHECK — the INSERT writes the token.
   # The `[ ]` builtin form already aborts under errexit on both platforms; the `|| return 1` on
   # each is kept for the diagnostic — it names the failing line rather than the test.
-  skip_unless_live_check_allows_r2_token
   run count_rows
   [ "${output}" = "1" ] || return 1
   run fetch_col result

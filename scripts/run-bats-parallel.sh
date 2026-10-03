@@ -1,10 +1,11 @@
 #!/usr/bin/env bash
 # run-bats-parallel.sh — run the harness verification suite as three staged runs.
 #
-# Stage 1 runs all 4 bats roots (test/ hooks/test/ scripts/test/ autoagent/test/)
-# under `bats --jobs <N> --no-parallelize-within-files`: files run concurrently while
-# tests WITHIN a file stay sequential, preserving setup_file-once and ordered-
-# side-effect semantics. The job count derives from the host core count at
+# Stage 1 runs the 4 bats roots (test/ hooks/test/ scripts/test/ autoagent/test/), each
+# in its OWN `bats --jobs <N> --no-parallelize-within-files` call: files of a root run
+# concurrently while tests WITHIN a file stay sequential, preserving setup_file-once and
+# ordered-side-effect semantics. One call per root because bats runs ONE setup_suite.bash
+# per call (rationale at run_bats_roots). The job count derives from the host core count at
 # runtime (macOS sysctl first, GNU nproc fallback for Linux).
 # Stages 2 and 3 run the TWO unittest roots — hooks/test and autoagent/test — each in
 # its OWN sandbox HOME with the data-root env scrubbed alongside it (see the stages
@@ -49,9 +50,9 @@
 # ci.yml sets none of those variables, so a fresh runner carries no leak to scrub there.
 #
 # Sequential fallback (to isolate a parallel-only flake), run from the checkout with
-# stage 1's start shape — an empty scratch cwd, absolute roots:
+# stage 1's start shape — an empty scratch cwd, absolute roots, one bats call per root:
 #   repo="${PWD}"; cd -- "$(mktemp -d)"
-#   bats --recursive "${repo}"/{test,hooks/test,scripts/test,autoagent/test}
+#   for r in test hooks/test scripts/test autoagent/test; do bats --recursive "${repo}/${r}"; done
 set -Eeuo pipefail
 IFS=$'\n\t'
 
@@ -143,6 +144,27 @@ run_stage() {
     "${label}" "${rc}" "$((SECONDS - t0))" >&2
 }
 
+# run_bats_roots — run each bats root in its OWN bats call under DAEMON_ENV_SCRUB and
+# return the highest call rc, so a failing root never stops a later one.
+# bats runs ONE setup_suite.bash per call — the first argument's directory's — so a single
+# call over every root hands test/'s loader to all four and drops each root's own:
+# hooks/test's database isolation (ga_bats_isolate_pg) among them. A call per root gives
+# every root the loader a per-file CI run and a single-directory run give it.
+# $1 = bats job count · $2.. = absolute bats roots
+# SC2329: invoked indirectly through run_stage's "$@" — not dead code.
+# shellcheck disable=SC2329
+run_bats_roots() {
+  local job_count="${1}" root rc worst=0
+  shift
+  for root in "$@"; do
+    rc=0
+    env "${DAEMON_ENV_SCRUB[@]}" \
+      bats --jobs "${job_count}" --no-parallelize-within-files --recursive "${root}" || rc=$?
+    if ((rc > worst)); then worst="${rc}"; fi
+  done
+  return "${worst}"
+}
+
 # probe_git_usable — exit TOOLCHAIN_PRECONDITION_RC unless git can INITIALIZE a
 # repository, not merely answer --version. An unaccepted Xcode licence leaves the
 # latter working while every `git init` fails, which reds hundreds of suite rows at
@@ -214,9 +236,7 @@ main() {
   BATS_CWD_DIR="$(mktemp -d -t run-bats-parallel-cwd.XXXXXX)"
   cd -- "${BATS_CWD_DIR}"
 
-  run_stage 'stage 1/4 bats' \
-    env "${DAEMON_ENV_SCRUB[@]}" \
-    bats --jobs "${job_count}" --no-parallelize-within-files --recursive "${bats_roots[@]}"
+  run_stage 'stage 1/4 bats' run_bats_roots "${job_count}" "${bats_roots[@]}"
 
   # The python stages name their roots relative to the repository.
   cd -- "${REPO_ROOT}"

@@ -64,6 +64,10 @@
 # - bats process cwd → reaches a test only when that seat is not taken;
 # - stage 1 → starts outside the repository;
 # - python stages → resolve their relative roots against the repository root.
+#
+# The thirteenth pins stage 1's per-root invocations. bats runs ONE setup_suite.bash per
+# invocation — the first argument's directory's — so a shared invocation would hand test/'s
+# loader to every root and drop each root's own (hooks/test's database isolation among them).
 
 bats_require_minimum_version 1.5.0
 
@@ -178,7 +182,7 @@ assert_daemon_env_scrubbed() {
 }
 
 # The stage-1 twin. It reads the bats stub's log because stage 1 makes no python3 call at
-# all.
+# all. Stage 1 is one bats call per root, so EVERY recorded value must be the unset sentinel.
 assert_stage1_daemon_env_scrubbed() {
   local log="${STUB_LOG_DIR}/bats-daemon-env.log" name
   [[ -s "${log}" ]] || {
@@ -187,11 +191,12 @@ assert_stage1_daemon_env_scrubbed() {
   }
 
   for name in "${DAEMON_ENV_NAMES[@]}"; do
-    grep -qx -- "${name}=__UNSET__" "${log}" || {
-      printf 'stage 1 inherited %s; its env wrapper is missing or incomplete:\n%s\n' \
+    if awk -v n="${name}" 'index($0, n "=") == 1 && $0 != n "=__UNSET__" { hit = 1 }
+      END { exit !hit }' "${log}"; then
+      printf 'a stage 1 bats call inherited %s; its env wrapper is missing or incomplete:\n%s\n' \
         "${name}" "$(cat "${log}")" >&2
       return 1
-    }
+    fi
   done
 }
 
@@ -238,6 +243,10 @@ done >>"${STUB_LOG_DIR}/bats-daemon-env.log"
 if [[ -n "${STUB_BATS_IMPORT_PROBE:-}" ]]; then
   cd -- "${STUB_LOG_DIR}/pyprobe" && "${REAL_PYTHON3}" -c 'import ga_probe_mod'
 fi
+# Fails only the call whose LAST argument is the named root.
+if [[ -n "${STUB_BATS_FAIL_ROOT:-}" && "${*: -1}" == "${STUB_BATS_FAIL_ROOT}" ]]; then
+  exit 3
+fi
 exit "${STUB_BATS_RC:-0}"
 STUB
 
@@ -282,8 +291,9 @@ teardown() {
 @test "(1) the child inherits bytecode suppression and each stage banner carries its duration" {
   run_runner_expecting 0 || return 1
 
+  # One record per stage-1 bats call; every call must have inherited it.
   local seen
-  seen="$(cat "${STUB_LOG_DIR}/bats-env.log")"
+  seen="$(sort -u "${STUB_LOG_DIR}/bats-env.log")"
   [[ "${seen}" == "1" ]] || {
     printf 'child PYTHONDONTWRITEBYTECODE=%s (want 1)\n' "${seen}" >&2
     return 1
@@ -621,16 +631,22 @@ STUB
   local repo_dir repo_phys bats_cwd
   repo_dir="$(cd -- "${SANDBOX}" && pwd)"
   repo_phys="$(cd -- "${SANDBOX}" && pwd -P)"
-  bats_cwd="$(cat "${STUB_LOG_DIR}/bats-cwd.log")"
-  [[ -n "${bats_cwd}" && "${bats_cwd}" != "${repo_phys}" && "${bats_cwd}" != "${repo_phys}/"* ]] || {
-    printf 'stage 1 ran from %s (want a scratch dir outside the repo %s)\n' \
-      "${bats_cwd}" "${repo_phys}" >&2
+  [[ -s "${STUB_LOG_DIR}/bats-cwd.log" ]] || {
+    printf 'no stage 1 cwd record — the bats stub never ran\n' >&2
     return 1
   }
-  [[ ! -e "${bats_cwd}" ]] || {
-    printf 'the stage-1 scratch cwd outlived the runner: %s\n' "${bats_cwd}" >&2
-    return 1
-  }
+  # One record per stage-1 bats call; each is checked on its own.
+  while IFS= read -r bats_cwd; do
+    [[ -n "${bats_cwd}" && "${bats_cwd}" != "${repo_phys}" && "${bats_cwd}" != "${repo_phys}/"* ]] || {
+      printf 'stage 1 ran from %s (want a scratch dir outside the repo %s)\n' \
+        "${bats_cwd}" "${repo_phys}" >&2
+      return 1
+    }
+    [[ ! -e "${bats_cwd}" ]] || {
+      printf 'the stage-1 scratch cwd outlived the runner: %s\n' "${bats_cwd}" >&2
+      return 1
+    }
+  done <"${STUB_LOG_DIR}/bats-cwd.log"
 
   # A relative root would resolve against the scratch cwd, not the repository.
   local argv root
@@ -650,4 +666,28 @@ STUB
       return 1
     }
   done
+}
+
+# A root handed to bats beside another root runs under that other root's setup_suite.bash,
+# never its own. The failing FIRST root also proves the later roots still run and its rc
+# still reaches the runner's.
+@test "(13) stage 1 hands each root to its own bats call, and a failing root keeps its rc without stopping the rest" {
+  local repo_dir
+  repo_dir="$(cd -- "${SANDBOX}" && pwd)"
+  export STUB_BATS_FAIL_ROOT="${repo_dir}/test"
+  run_runner_expecting 3 || return 1
+
+  local want got per_call
+  want="$(printf '%s\n' "${repo_dir}/test" "${repo_dir}/hooks/test" \
+    "${repo_dir}/scripts/test" "${repo_dir}/autoagent/test")"
+  got="$(awk '{ print $NF }' "${STUB_LOG_DIR}/bats-args.log")"
+  # Roots counted per call: one call naming two roots would still end on a distinct root.
+  per_call="$(awk -v r="${repo_dir}/" \
+    '{ n = 0; for (i = 1; i <= NF; i++) if (index($i, r) == 1) n++; seen[n] = 1 }
+      END { for (k in seen) print k }' "${STUB_LOG_DIR}/bats-args.log")"
+  [[ "${got}" == "${want}" && "${per_call}" == "1" ]] || {
+    printf 'stage 1 bats calls (want one per root, in root order):\n%s\n' \
+      "$(cat "${STUB_LOG_DIR}/bats-args.log")" >&2
+    return 1
+  }
 }

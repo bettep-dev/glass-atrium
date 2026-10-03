@@ -23,7 +23,7 @@ setup() {
 # the operator's live database on a developer machine.
 @test "the default database target is a socket path no server listens on" {
   [[ "${PGHOST:-}" == /* ]] || {
-    echo "PGHOST is not pinned to an absolute socket dir: '${PGHOST:-}'" >&2
+    echo "PGHOST is not pinned to an absolute socket dir: '${PGHOST:-}' — hooks/test/setup_suite.bash did not run; bats runs one setup_suite.bash per call, so give hooks/test its own call" >&2
     return 1
   }
   local socket
