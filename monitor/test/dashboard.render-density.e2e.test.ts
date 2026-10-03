@@ -190,3 +190,56 @@ describe("Runs by hour layout", () => {
     assertSquareCells(layout.cells);
   });
 });
+
+// The 13px meta floor covers every rendered text node: the page, the shell's nav rail and footer,
+// and the Tweaks panel the shell mounts in edit mode.
+const META_FLOOR_PX = 13;
+
+async function openDashboardWithTweaks(viewport: Viewport): Promise<Page> {
+  const page = await openDashboard(viewport);
+  await page.evaluate(() => window.postMessage({ type: "__activate_edit_mode" }, window.location.origin));
+  await page.waitForSelector(".twk-panel", { timeout: 10_000 });
+  return page;
+}
+
+// visible text nodes below the floor, as "<px> <tag.class>: <text>"
+async function getBelowFloorText(page: Page): Promise<string[]> {
+  return page.evaluate((floor) => {
+    const found: string[] = [];
+    const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
+    while (walker.nextNode()) {
+      const text = (walker.currentNode.textContent ?? "").trim();
+      const el = walker.currentNode.parentElement;
+      if (!text || !el) continue;
+      const style = getComputedStyle(el);
+      // clipped rail labels keep their accessible name but draw nothing
+      const isDrawn = el.getBoundingClientRect().width > 1 && style.visibility !== "hidden" && el.closest(".sr-only") === null;
+      const px = parseFloat(style.fontSize);
+      if (isDrawn && px < floor) found.push(`${px}px ${el.tagName.toLowerCase()}.${String(el.className)}: ${text.slice(0, 40)}`);
+    }
+    return found;
+  }, META_FLOOR_PX);
+}
+
+describe("Type floor on the Dashboard page, shell and Tweaks panel included", () => {
+  for (const viewport of [{ width: 1024, height: 768 }, { width: 1440, height: 900 }]) {
+    test(`no drawn text sits below the 13px meta floor at ${viewport.width}`, async () => {
+      const page = await openDashboardWithTweaks(viewport);
+      const belowFloor = await getBelowFloorText(page);
+      await page.close();
+      assert.deepEqual(belowFloor, []);
+    });
+  }
+
+  test("nav labels draw at the control step, one above the meta floor", async () => {
+    const page = await openDashboard({ width: 1440, height: 900 });
+    const sizes = await page.evaluate(() => {
+      const control = getComputedStyle(document.documentElement).getPropertyValue("--fs-control").trim();
+      const labels = Array.from(document.querySelectorAll(".nav-item .rail-hide")).map((el) => getComputedStyle(el).fontSize);
+      return { control, labels };
+    });
+    await page.close();
+    assert.equal(sizes.labels.length, 9, "one label per nav item");
+    for (const size of sizes.labels) assert.equal(size, sizes.control, `a nav label draws at ${size}, not ${sizes.control}`);
+  });
+});

@@ -45,8 +45,8 @@ const LEDGER_CD = {
 	FLOOR: {
 		select: 44, // ponytail: .doc-checkbox-cell as rendered (measured) — the cell CSS sets it, this mirrors it; a checkbox-cell change → re-measure
 		status: 191, // "Implementing" pill 160.8px (macOS, 1440) + cell padding — the ledger caps the pill at this floor and ellipsizes a wider label → font-independent
-		id: 130, // "rev of #123456" (mono 14자 × 7.2px + padding 28px) — 더 넓은 폰트·긴 id 는 .doc-lineage 가 이 폭에서 말줄임
-		title: 394,
+		id: 90, // "#123456" — 7 mono glyphs × 7.8px (13px × 0.6em) + padding 28px
+		title: 434, // a title beside its trailing "rev of #N" pill · id + title keep the sum the container thresholds read
 		tags: 152,
 		author: 110,
 		created: 100,
@@ -951,7 +951,9 @@ function ScreenClaudedDocs(/* { onNav } */) {
         .doc-row.is-pending-delete { box-shadow: inset 4px 0 0 rgb(var(--crit)); }
         /* margin-left = lead slot 20px + title row gap 6px → the snippet starts under the title */
         .doc-snippet { margin-left: 26px; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; overflow-wrap: anywhere; }
-        button.doc-lineage { display: block; background: none; border: 0; padding: 0; font-family: inherit; cursor: pointer; text-decoration: underline; text-underline-offset: 2px; }
+        /* trailing title-line pills never shrink → the title text ellipsizes first */
+        button.doc-lineage { flex: none; cursor: pointer; text-decoration: underline; text-underline-offset: 2px; }
+        .doc-revision-count { flex: none; }
         .doc-snippet mark { background: rgb(var(--warn) / 0.28); color: rgb(var(--ink)); padding: 0 2px; border-radius: 2px; }
         /* R6 본문 컨테이너 — iframe 자리 대체.
            스크롤 양도 — overflow:visible + height:auto → 문서가 자기 <body>{...} 룰을 .doc-body-isolation 으로 rescope 할 때 동일 selector·동일 specificity 후순위 승리로 overflow 를 visible 재설정해 wrap 의 overflow-y 를 무력화하던 회귀 차단(스크롤 컨테이너를 .doc-fs-body-wrap 으로 이관).
@@ -986,7 +988,7 @@ function ScreenClaudedDocs(/* { onNav } */) {
         .doc-search-icon { position: absolute; left: 10px; top: 50%; transform: translateY(-50%); pointer-events: none; color: rgb(var(--faint)); }
         .doc-editor-input { width: 100%; padding: 8px 10px; font-size: var(--fs-title); background: rgb(var(--surface)); border: 1px solid rgb(var(--line)); border-radius: var(--radius-badge); color: rgb(var(--ink)); }
         .doc-editor-input:focus { border-color: rgb(var(--accent)); }
-        .doc-editor-textarea { width: 100%; min-height: 320px; max-height: 60vh; padding: 10px 12px; font-size: 12.5px; background: rgb(var(--surface)); border: 1px solid rgb(var(--line)); border-radius: var(--radius-badge); color: rgb(var(--ink)); font-family: 'JetBrains Mono', monospace; line-height: 1.55; resize: vertical; }
+        .doc-editor-textarea { width: 100%; min-height: 320px; max-height: 60vh; padding: 10px 12px; font-size: var(--fs-meta); background: rgb(var(--surface)); border: 1px solid rgb(var(--line)); border-radius: var(--radius-badge); color: rgb(var(--ink)); font-family: 'JetBrains Mono', monospace; line-height: 1.55; resize: vertical; }
         .doc-editor-textarea:focus { border-color: rgb(var(--accent)); }
         /* (retired) format('H')/audience/format-row/chain 표시 배지 — 전부 canonical window.UI.Badge 로 이전, screen-local CSS 미사용분 제거. */
         /* version-history (T-DOC-3) — base.css .acked 는 .alert-row 스코프라 div 미적용 → predecessor 전용 dim 룰.
@@ -1038,8 +1040,8 @@ function ScreenClaudedDocs(/* { onNav } */) {
            ui.jsx CardHead 미수정(scope discipline) · .doc-fs-container 스코프 한정 override.
            본문 가독 영역 확폭 + 헤더는 메타/액션 chrome 으로 물러남(design §1 중심 명료). */
         .doc-fs-container .card-head { padding: 10px 16px; }
-        .doc-fs-container .card-head .card-title { font-size: 13px; }
-        .doc-fs-container .card-head .card-sub { font-size: 12px; }
+        .doc-fs-container .card-head .card-title { font-size: var(--fs-control); }
+        .doc-fs-container .card-head .card-sub { font-size: var(--fs-meta); }
         /* WCAG 2.2 §2.5.8 Target Size (AA) — 24×24 px floor (본 화면 스코프 한정 · padding 보존). */
         .card button.btn.sm,
         .modal-head button.btn.sm,
@@ -1082,7 +1084,7 @@ function ScreenClaudedDocs(/* { onNav } */) {
         tr.doc-row.is-group-root { border-top: 1px solid rgb(var(--line) / 0.4); }
         /* DnD 재정렬 affordance.
            drag handle ⠿ — leading slot 내 grab cursor + subtle hover. handle 만 grab (행 전체 draggable 이나 시각 hint 는 handle 한정). */
-        .doc-drag-handle { display: inline-flex; align-items: center; justify-content: center; width: 16px; height: 20px; font-size: 12px; line-height: 1; color: rgb(var(--faint)); cursor: grab; border-radius: var(--radius-badge); user-select: none; }
+        .doc-drag-handle { display: inline-flex; align-items: center; justify-content: center; width: 16px; height: 20px; font-size: var(--fs-meta); line-height: 1; color: rgb(var(--faint)); cursor: grab; border-radius: var(--radius-badge); user-select: none; }
         .doc-drag-handle:hover { color: rgb(var(--dim)); background: rgb(var(--line) / 0.5); }
         .doc-drag-handle:active { cursor: grabbing; }
         /* 끌고 있는 멤버 행 — dim + 점선 (drop target 시각 분리). dark base 정합. */
@@ -1090,8 +1092,6 @@ function ScreenClaudedDocs(/* { onNav } */) {
         /* 재정렬 rollback inline 에러 — crit hue (toast 와 별개 · 영향 그룹 인접 표시). */
         .doc-reorder-error { color: rgb(var(--crit)); font-family: 'JetBrains Mono', monospace; }
         /* stage pill — 톤은 meter 채움과 종료 글리프가 운반 · 라벨 텍스트는 중립 유지. */
-        /* ID 셀 둘째 줄 계보 — 한 줄 유지 (ID 컬럼 폭은 "rev of #N" 기준). */
-        .doc-lineage { font-size: var(--fs-meta); color: rgb(var(--faint)); white-space: nowrap; text-align: left; max-width: ${LEDGER_CD.FLOOR.id - LEDGER_CD.CELL_PADDING}px; overflow: hidden; text-overflow: ellipsis; }
         /* header text at the title text's x — lead slot 20px + title row gap 6px */
         .doc-col-title-text { margin-left: 26px; }
         /* held rows while a read is in flight — dimmed, still readable and selectable. */
@@ -1109,9 +1109,9 @@ function ScreenClaudedDocs(/* { onNav } */) {
         /* a max-width caps the pill's min-content → the auto-layout Status column never grows past its floor, whatever font renders the label */
         .doc-ledger-scroll .doc-stage-picker, .doc-ledger-scroll .doc-stage-pill { max-width: ${LEDGER_CD.FLOOR.status - LEDGER_CD.CELL_PADDING}px; min-width: 0; }
         .doc-ledger-scroll .doc-stage-label { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
-        /* 마지막 상태 변경 행위자 — pill 아래 한 줄. 모르면 줄 자체가 없다. */
-        /* anywhere → an unbreakable raw model id wraps instead of widening the Status floor · the title attribute keeps the full id */
-        .doc-stage-actor { font-size: var(--fs-meta); font-family: 'JetBrains Mono', monospace; color: rgb(var(--faint)); white-space: normal; word-break: keep-all; overflow-wrap: anywhere; }
+        /* one-line rows → the --row-h cell height sets the row; the 24px pill stays the WCAG 2.5.8 target floor */
+        .doc-ledger-scroll .tbl tr.doc-row > td { padding-block: 4px; }
+        .doc-ledger-scroll .doc-stage-pill { padding-block: 2px; }
         .doc-row.is-stale > td { background: rgb(var(--warn) / 0.03); }
         /* the wash sits under the pill → a --line border fades into it */
         .doc-row.is-stale .doc-stage-pill { border-color: rgb(var(--dim) / 0.6); }
@@ -1715,7 +1715,8 @@ function DocListCardCD({
 												/>
 											</td>
 											{/* optimisticStatusOverrides 우선 — 서버 refresh 도착 전 고른 stage 즉시 반영. */}
-											<td>
+											{/* last stage actor → the cell tooltip + the viewer rail, so the row stays one line · unknown → no tooltip */}
+											<td title={row.last_status_model ? `Set by ${formatActorCD(row.last_status_model)}` : undefined}>
 													<DocStagePillCD
 														isRowControl
 														docStatus={shownStage}
@@ -1723,40 +1724,13 @@ function DocListCardCD({
 														isChanging={togglingIds.has(row.id)}
 														note={row.group_stage_uniform === false ? "members differ" : null}
 													/>
-													{/* 마지막 상태 변경 행위자 — 모를 때는 목록도 뷰어도 표시하지 않는다. */}
-													{row.last_status_model && (
-														<div
-															className="doc-stage-actor"
-															title={`Last stage action by ${row.last_status_model}`}>
-															{`set by ${formatActorCD(row.last_status_model)}`}
-														</div>
-													)}
 												</td>
 											<td className="doc-meta-text-mono" style={{ color: "rgb(var(--dim))" }}>
-													<div>#{row.id}</div>
-													{/* 계보는 ID 셀 둘째 줄 — 목록에서 잘려 나가던 사실을 되돌린다. */}
-													{row.supersedes_id != null && (
-														<button
-															type="button"
-															className="doc-lineage"
-															{...ROW_CONTROL_PROPS}
-															title={`Open #${row.supersedes_id}, which this replaces`}
-															onClick={(e) => {
-																e.stopPropagation();
-																onSelect(row.supersedes_id);
-															}}>
-															rev of #{row.supersedes_id}
-														</button>
-													)}
-													{row.revision_count > 0 && (
-														<div className="doc-revision-count" title="Older revisions matching this search, open the document's version history to reach them">
-															{`+${row.revision_count} revision${row.revision_count === 1 ? "" : "s"}`}
-														</div>
-													)}
+													#{row.id}
 												</td>
 											<td className="title-cell">
 												<div
-													className="doc-title-row font-medium fs-title"
+													className="doc-title-row font-medium fs-body"
 													style={{ color: "rgb(var(--ink))" }}
 												>
 													{/* 고정폭 leading slot — group-root 시 chevron, 그 외 빈칸 (제목 시작 x 통일). */}
@@ -1786,6 +1760,25 @@ function DocListCardCD({
 														<span className="doc-title-text" title={row.title}>
 															{row.title}
 														</span>
+														{/* lineage + collapsed revisions trail the title as pills → one row line */}
+														{row.supersedes_id != null && (
+															<button
+																type="button"
+																className="doc-lineage pill pill--count"
+																{...ROW_CONTROL_PROPS}
+																title={`Open #${row.supersedes_id}, which this replaces`}
+																onClick={(e) => {
+																	e.stopPropagation();
+																	onSelect(row.supersedes_id);
+																}}>
+																rev of #{row.supersedes_id}
+															</button>
+														)}
+														{row.revision_count > 0 && (
+															<span className="doc-revision-count pill pill--count" title="Older revisions matching this search, open the document's version history to reach them">
+																{`+${row.revision_count} revision${row.revision_count === 1 ? "" : "s"}`}
+															</span>
+														)}
 														{/* +N 멤버수 = 순수 수량 → count pill (neutral). 서술 태그가 아니므로 Tags 컬럼이 아닌
 														    제목 뒤 trailing 유지 — 세는 대상이 이 행의 제목이다. */}
 														{/* data-doc-member-count → e2e 가 group-root 멤버수 배지를 다른 count pill 과 구분해 anchor 하는 안정 hook. */}
@@ -3045,7 +3038,7 @@ function DocStagePillCD({
 // trailing context-window tag ("[1m]") → not part of the model name, so both spellings read alike
 const MODEL_CONTEXT_TAG_CD = /\[[^\]]*\]$/;
 
-// last-status-model → the line under the pill. The operator's own action is a reserved literal
+// last-status-model → the Status cell tooltip and the viewer rail. The operator's own action is a reserved literal
 // and reads as such; a model id renders through its display name. An unknown actor renders nowhere.
 function formatActorCD(model) {
 	return model === OPERATOR_ACTOR_CD ? "operator" : window.UI.getDisplayName("model", String(model).replace(MODEL_CONTEXT_TAG_CD, ""));
@@ -3185,7 +3178,7 @@ function PredecessorPanelCD({ predecessorId, currentDoc, onNavigate }) {
 					<div className="doc-revision-predecessor acked flex flex-col gap-1">
 						<div className="flex items-center gap-2 flex-wrap">
 							<span
-								className="text-[11px] font-mono"
+								className="fs-meta font-mono"
 								style={{ color: "rgb(var(--dim))" }}
 							>
 								#{predState.data.id}
@@ -3208,13 +3201,13 @@ function PredecessorPanelCD({ predecessorId, currentDoc, onNavigate }) {
 							)}
 						</div>
 						<div
-							className="text-[12px] mt-1"
+							className="fs-body mt-1"
 							style={{ color: "rgb(var(--ink))", overflowWrap: "break-word" }}
 						>
 							{predState.data.title}
 						</div>
 						<div
-							className="text-[10.5px] font-mono"
+							className="fs-meta font-mono"
 							style={{ color: "rgb(var(--faint))" }}
 						>
 							{formatDateTimeCD(predState.data.created_at)} ·{" "}
@@ -3331,7 +3324,7 @@ function EditorModalCD({ seed, onClose, onUpdate }) {
 					>
 						<label className="flex flex-col gap-1">
 							<span
-								className="text-[10.5px] font-mono uppercase tracking-wider"
+								className="fs-meta font-mono uppercase tracking-wider"
 								style={{ color: "rgb(var(--faint))" }}
 							>
 								Title
@@ -3348,7 +3341,7 @@ function EditorModalCD({ seed, onClose, onUpdate }) {
 						</label>
 						<label className="flex flex-col gap-1">
 							<span
-								className="text-[10.5px] font-mono uppercase tracking-wider"
+								className="fs-meta font-mono uppercase tracking-wider"
 								style={{ color: "rgb(var(--faint))" }}
 							>
 								Author
@@ -3367,7 +3360,7 @@ function EditorModalCD({ seed, onClose, onUpdate }) {
 					</div>
 					<label className="flex flex-col gap-1 mt-3">
 						<span
-							className="text-[10.5px] font-mono uppercase tracking-wider"
+							className="fs-meta font-mono uppercase tracking-wider"
 							style={{ color: "rgb(var(--faint))" }}
 						>
 							HTML body
@@ -3413,7 +3406,7 @@ function ErrorBannerCD({ title, detail, onRetry }) {
 				borderColor: "rgb(var(--crit) / 0.4)",
 				background: "rgb(var(--crit) / 0.1)",
 				color: "rgb(var(--crit))",
-				fontSize: 12,
+				fontSize: "var(--fs-meta)",
 			}}
 			role="alert"
 		>
@@ -3423,7 +3416,7 @@ function ErrorBannerCD({ title, detail, onRetry }) {
 			</div>
 			{detail && (
 				<div
-					className="font-mono text-[11px]"
+					className="font-mono fs-meta"
 					style={{ color: "rgb(var(--dim))" }}
 				>
 					{detail}

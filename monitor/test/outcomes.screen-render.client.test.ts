@@ -48,11 +48,11 @@ function buildReactStub(failedRegionCount: number, setterCalls: SetterCall[]): R
   return { ...base, useState };
 }
 
-async function renderOutcomesScreen(failedRegionCount: number): Promise<ScreenHarness> {
+async function renderOutcomesScreen(failedRegionCount: number, uiOverrides: Record<string, unknown> = {}): Promise<ScreenHarness> {
   const setterCalls: SetterCall[] = [];
   const React = buildReactStub(failedRegionCount, setterCalls);
   const mod = await loadScreenModule(OUTCOMES_SRC, {
-    UI: ui.UI,
+    UI: { ...(ui.UI as Record<string, unknown>), ...uiOverrides },
     React,
     location: { hash: "" },
     URLSearchParams,
@@ -136,7 +136,7 @@ test("status folds render open while their detail breakdowns start collapsed", a
   const rows = [
     { title: "Reporting health", isOpen: true },
     { title: "Self-report quality", isOpen: true },
-    { title: "Daily breakdown and budget-killed subagents", isOpen: false },
+    { title: "Daily breakdown", isOpen: false },
     { title: "By task type", isOpen: false },
   ];
 
@@ -147,29 +147,64 @@ test("status folds render open while their detail breakdowns start collapsed", a
   }
 });
 
-test("paired cards sit side by side in one split row", async () => {
-  const { tree } = await renderOutcomesScreen(0);
-  const rows = [
-    // equal: peer reporting cards end level · content: each card keeps its own height
-    { name: "record attribution beside recording channels, ending level", ratio: "split-row--1-1", layout: "split-row--equal", titles: ["Record attribution", "Recording channels"] },
-    { name: "check results beside the crosstab", ratio: "split-row--1-1", layout: "split-row--content", titles: ["Automatic check results", "Confident but failed"] },
-  ];
+// the shared SplitRow with another default layout → a row that names its own layout renders the same under either
+function withSplitRowDefault(layout: string): Record<string, unknown> {
+  const SplitRow = (ui.UI as Record<string, Component>).SplitRow;
+  return { SplitRow: (props: Record<string, unknown>) => SplitRow({ layout, ...props }) };
+}
 
-  for (const row of rows) {
-    const splitRows = findNodes(tree, (n) => String(n.props.className ?? "").includes(row.ratio));
-    const pair = splitRows.find((n) => row.titles.every((title) => collectText(n).includes(title)));
-    assert.ok(pair, row.name);
-    assert.equal(pair.children.filter((child) => typeof child !== "string").length, 2, `${row.name}: exactly two columns`);
-    assert.ok(String(pair.props.className).includes(row.layout), `${row.name}: ${row.layout}`);
-  }
-});
+for (const sharedDefault of ["content", "equal"]) {
+  test(`paired cards sit side by side in one split row, each row naming its own layout (shared default ${sharedDefault})`, async () => {
+    const { tree } = await renderOutcomesScreen(0, withSplitRowDefault(sharedDefault));
+    const rows = [
+      // equal: peer reporting cards end level · content: each card keeps its own height
+      { name: "record attribution beside recording channels, ending level", ratio: "split-row--1-1", layout: "split-row--equal", titles: ["Record attribution", "Recording channels"] },
+      { name: "check results beside the crosstab", ratio: "split-row--1-1", layout: "split-row--content", titles: ["Automatic check results", "Confident but failed"] },
+    ];
+
+    for (const row of rows) {
+      const splitRows = findNodes(tree, (n) => String(n.props.className ?? "").includes(row.ratio));
+      const pair = splitRows.find((n) => row.titles.every((title) => collectText(n).includes(title)));
+      assert.ok(pair, row.name);
+      assert.equal(pair.children.filter((child) => typeof child !== "string").length, 2, `${row.name}: exactly two columns`);
+      assert.ok(String(pair.props.className).includes(row.layout), `${row.name}: ${row.layout}`);
+    }
+  });
+}
 
 test("the per-agent table spans the full width", async () => {
   const { tree } = await renderOutcomesScreen(0);
   const splitRows = findNodes(tree, (n) => String(n.props.className ?? "").includes("split-row"));
 
   // no half-width column → no empty stretch under the per-agent table beside the taller Reporting health stack
-  assert.ok(!splitRows.some((n) => collectText(n).includes("Failed or blocked by agent")), "per-agent table sits in no split row");
+  assert.ok(!splitRows.some((n) => collectText(n).includes("Failures by agent")), "per-agent table sits in no split row");
+});
+
+// design.md copy caps → a longer header wraps the 48px card head; the long form belongs in the card's ⓘ drawer
+const COPY_CAP = { title: 24, meta: 32 };
+
+function getHeaderCopy(tree: RenderedNode): { kind: string; title: string; sub: unknown }[] {
+  return findNodes(tree, (n) => n.type === "CardHead" || n.type === "Disclosure")
+    .map((n) => ({ kind: String(n.type), title: String(n.props.title), sub: n.props.sub }));
+}
+
+test("every card and fold header on the screen fits the title and header-meta caps, loaded or not", async () => {
+  const mod = await loadScreenModule(OUTCOMES_SRC, { UI: ui.UI, location: { hash: "" }, URLSearchParams });
+  const create = (mod.React as { createElement: (t: unknown, p: unknown) => unknown }).createElement;
+  const crosstab = { total: 12_000, polarTotal: 1_500, byCell: { "high|false": { count: 1_234 } } };
+  const readyCrosstab = { status: "ready", busy: false, data: { crosstab }, error: null };
+  const headers = [
+    ...getHeaderCopy((await renderOutcomesScreen(0)).tree),
+    ...getHeaderCopy(renderScreen(create(mod.CrosstabCard as Component, { state: readyCrosstab, onRetry: () => undefined })) as RenderedNode),
+  ];
+
+  assert.ok(headers.length >= 8, `the screen's headers are all collected (${headers.length})`);
+  for (const header of headers) {
+    assert.ok(header.title.length <= COPY_CAP.title, `${header.kind} title "${header.title}" is ${header.title.length} chars`);
+    if (typeof header.sub === "string") {
+      assert.ok(header.sub.length <= COPY_CAP.meta, `${header.kind} "${header.title}" meta "${header.sub}" is ${header.sub.length} chars`);
+    }
+  }
 });
 
 // component nodes keep their name as type; the region's card is the first host element beneath them
