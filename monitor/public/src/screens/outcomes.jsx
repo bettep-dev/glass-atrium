@@ -758,7 +758,7 @@ function ScreenOutcomes({ onNav }) {
           <AttributionHealthCard state={attributionState} period={analyticsPeriod} {...regionRetry}/>
           <ChannelLivenessCard state={channelLivenessState} {...regionRetry}/>
         </window.UI.SplitRow>
-        <window.UI.Disclosure kind="detail" level={3} title="Daily breakdown and budget-killed subagents">
+        <window.UI.Disclosure kind="detail" level={3} title="Daily breakdown" sub="Budget-killed subagents">
           <AttributionBreakdownO state={attributionState}/>
         </window.UI.Disclosure>
       </window.UI.Disclosure>
@@ -1286,7 +1286,8 @@ function AgentFailureTableO({ state, onRetry, shared }) {
 
   return (
     <div id={REGION_CARD_IDS.agentFailures} className="card">
-      <CardHead title="Failed or blocked by agent" sub="Registry agents only · non-zero rows · worst rate first"/>
+      <CardHead title="Failures by agent" sub="Worst failure rate first"
+        info={<p className="fs-body m-0">Failed or blocked records per registry agent. Agents with none are left out; the worst rate comes first.</p>}/>
       <div className="card-body" style={{ padding: 0 }}>
         <AgentFailureBodyO state={state} onRetry={onRetry} shared={shared} stickyStyle={STICKY_TH_STYLE}/>
       </div>
@@ -2083,10 +2084,11 @@ function CrosstabCard({ state, onRetry, shared }) {
   return (
     <div id={REGION_CARD_IDS.crosstab} className="card mb-4">
       <CardHead
-        title={confidentFailed
-          ? `Confident but failed: ${formatIntO(confidentFailed.count)} (${formatRateO(confidentFailed.share)})`
-          : 'Confident but failed'}
-        sub="High confidence, own check failed"
+        title="Confident but failed"
+        sub={confidentFailed
+          ? `${formatIntO(confidentFailed.count)} records (${formatRateO(confidentFailed.share)})`
+          : 'High confidence, check failed'}
+        info={<p className="fs-body m-0">Records whose writer reported high confidence while the record's own check failed.</p>}
         right={
           state.status === 'ready' && (
             <Badge role="status" tone="warn" icon>
