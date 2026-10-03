@@ -118,6 +118,44 @@ CREATE UNIQUE INDEX "outcomes_dedup" ON "core"."outcomes" ("record_ts", "agent",
 SQL
 }
 
+# The outcome recorder's secondary tables + the attribution CHECK, copied from
+# monitor/prisma/migrations (20260611000000_init_squashed, 20260718000001_db_hygiene_promote_ddl).
+# Applied on top of eph_pg_outcomes_schema_sql.
+eph_pg_recorder_schema_sql() {
+  cat <<'SQL'
+CREATE TYPE "core"."HookErrorKind" AS ENUM ('connection_refused', 'timeout', 'constraint_violation', 'unknown', 'identifier_rejected');
+CREATE TABLE "core"."hook_failures" (
+  "id"              BIGSERIAL NOT NULL,
+  "failure_ts"      TIMESTAMPTZ(6) NOT NULL,
+  "hook_name"       VARCHAR(64) NOT NULL,
+  "target_table"    VARCHAR(96) NOT NULL,
+  "error_kind"      "core"."HookErrorKind" NOT NULL,
+  "payload_ref"     VARCHAR(128),
+  "retry_attempted" BOOLEAN NOT NULL,
+  CONSTRAINT "hook_failures_pkey" PRIMARY KEY ("id")
+);
+CREATE TABLE "core"."correction_signals" (
+  "id"                   BIGSERIAL NOT NULL,
+  "event_ts"             TIMESTAMPTZ(6) NOT NULL,
+  "task_type"            VARCHAR(32) NOT NULL,
+  "stage1_matched"       BOOLEAN NOT NULL,
+  "stage2_matched"       BOOLEAN NOT NULL,
+  "final_detected"       BOOLEAN NOT NULL,
+  "revision_count_delta" INTEGER NOT NULL,
+  "outcome_id"           BIGINT,
+  CONSTRAINT "correction_signals_pkey" PRIMARY KEY ("id")
+);
+CREATE UNIQUE INDEX "correction_signals_dedup" ON "core"."correction_signals"("event_ts", "task_type", "outcome_id");
+ALTER TABLE "core"."correction_signals" ADD CONSTRAINT "correction_signals_outcome_id_fkey" FOREIGN KEY ("outcome_id") REFERENCES "core"."outcomes"("id") ON DELETE SET NULL ON UPDATE CASCADE;
+ALTER TABLE "core"."outcomes" ADD CONSTRAINT "outcomes_attribution_source_check"
+    CHECK (("attribution_source" IS NULL) OR ("attribution_source" = ANY (ARRAY[
+        'hook-input','cron-derived','agent-id-missing','subagent-stop-missing',
+        'completion-missing','conversation-only','truncated_completion','completion-synthesized',
+        'budget-truncation','structuredoutput-derived','structuredoutput-completion'
+    ]::text[]))) NOT VALID;
+SQL
+}
+
 # Replay the captured bring-up log to stderr so the failing step's diagnostics
 # reach the bats output (Precondition Loud-Fail — a discarded-stderr failure is
 # undiagnosable in the unattended gate context). Args: $1=step-name $2=logfile.
@@ -191,4 +229,52 @@ eph_build_fixture() {
   # Subagent 2 (dedup_key "suba2"): 200/100/50/0.
   printf '%s\n' '{"type":"assistant","message":{"role":"assistant","id":"msg-suba2","model":"claude-opus-4-8","stop_reason":"end_turn","usage":{"input_tokens":200,"output_tokens":100,"cache_read_input_tokens":50,"cache_creation_input_tokens":0}}}' \
     >"${sessdir}/transcript/subagents/agent-suba2.jsonl" || return 1
+}
+
+# setup_file body shared by the recorder suites. Exports PSYCOPG_PP (psycopg's site dir, for hooks
+# run under a sandbox HOME) and DB_SKIP (a named skip reason; empty once the cluster is up).
+# Args: $1=datadir $2=sockdir $3=port
+eph_pg_setup_recorder_file() {
+  local bin
+  export PSYCOPG_PP="" DB_SKIP=""
+  for bin in initdb pg_ctl createdb psql python3; do
+    if ! command -v "${bin}" >/dev/null 2>&1; then
+      DB_SKIP="missing required tool: ${bin} (PostgreSQL client/server + python3)"
+      return 0
+    fi
+  done
+  PSYCOPG_PP="$(python3 -c 'import psycopg,os;print(os.path.dirname(os.path.dirname(psycopg.__file__)))' 2>/dev/null || true)"
+  if [[ -z "${PSYCOPG_PP}" ]]; then
+    DB_SKIP="psycopg module not importable"
+    return 0
+  fi
+  eph_pg_start_recorder "${1}" "${2}" "${3}"
+}
+
+# Cluster carrying every table + constraint the outcome recorder writes, then PGHOST/PGPORT
+# exported at it → every host-less psycopg connection of the calling suite and its hooks lands
+# here. Args: $1=datadir $2=sockdir $3=port
+eph_pg_start_recorder() {
+  local datadir="${1}" sockdir="${2}" port="${3}" ddl
+  local effort_sql="${BASH_SOURCE[0]%/*}/../../../monitor/prisma/migrations/20260930000000_add_effort_to_outcomes_and_cost_events/migration.sql"
+  eph_pg_start "${datadir}" "${sockdir}" "${port}" glass_atrium || return 1
+  ddl="$(eph_pg_outcomes_schema_sql && eph_pg_recorder_schema_sql)" || return 1
+  LC_ALL=C psql -h "${sockdir}" -p "${port}" -d glass_atrium -v ON_ERROR_STOP=1 -q \
+    <<<"${ddl}" || return 1
+  LC_ALL=C psql -h "${sockdir}" -p "${port}" -d glass_atrium -v ON_ERROR_STOP=1 -q \
+    -f "${effort_sql}" || return 1
+  export PGHOST="${sockdir}" PGPORT="${port}"
+}
+
+# Read-only scalar query at the libpq target the bats run was INVOKED with — where a leaking write
+# would land. setup_suite.bash records that target before pointing PGHOST at a dead socket; without
+# the record the current PGHOST/PGPORT is that target. Prints "unavailable" when nothing answers.
+# Arg: $1=sql
+eph_pg_query_caller_target() {
+  local host="${GA_BATS_CALLER_PGHOST-${PGHOST-}}" port="${GA_BATS_CALLER_PGPORT-${PGPORT-}}"
+  local -a target=(env -u PGHOST -u PGPORT -u PGHOSTADDR -u PGSERVICE)
+  if [[ -n "${host}" ]]; then target+=("PGHOST=${host}"); fi
+  if [[ -n "${port}" ]]; then target+=("PGPORT=${port}"); fi
+  "${target[@]}" PGCONNECT_TIMEOUT=2 PGOPTIONS='-c default_transaction_read_only=on' \
+    psql -X -d glass_atrium -tAqc "${1}" 2>/dev/null || echo "unavailable"
 }

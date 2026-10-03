@@ -8,8 +8,8 @@
 # or refusal are each LOUD (named warn code on stderr: DATA-074, DATA-075) rather than silently
 # absorbed, with the hook staying non-blocking (exit 0).
 #
-# PG-free by construction: the hook's dual-write helper is tolerated non-blocking (`|| true`), so no
-# ephemeral cluster is needed here — agent-tracker.bats owns the write-contract coverage.
+# The hook's real dual-write runs on every fire, and `|| true` only tolerates a failed write, so fire()
+# points it at a socket that cannot exist; agent-tracker.bats owns the write-contract coverage.
 # GA_DATA_ROOT sandboxes HOOK_DATA_DIR into BATS_TEST_TMPDIR so no live runtime path is touched.
 #
 # BATS GATING NOTE: @test bodies run under errexit; a mid-body bare `[[ ]]` / `(( ))` is inert on
@@ -17,6 +17,8 @@
 # 1.13.0 on both legs, so bash is the variable, not bats). Every assertion carries `|| return 1`.
 
 HOOK_SH="${BATS_TEST_DIRNAME}/../agent-tracker.sh"
+# shellcheck source-path=SCRIPTDIR source=lib/ephemeral-pg.bash
+source "${BATS_TEST_DIRNAME}/lib/ephemeral-pg.bash"
 
 setup() {
   [[ -f "${HOOK_SH}" ]] || skip "agent-tracker.sh not found: ${HOOK_SH}"
@@ -32,7 +34,7 @@ fire() {
   local payload
   payload="$(jq -n --arg e "${1}" --arg a "${2}" --arg t "glass-atrium-dev-shell" \
     '{hook_event_name:$e, agent_id:$a, agent_type:$t}')"
-  run bash -c 'printf "%s" "$1" | GA_DATA_ROOT="$2" bash "$3" 2>&1' \
+  run bash -c 'printf "%s" "$1" | GA_DATA_ROOT="$2" PGHOST="/nonexistent-socket-xyzzy" bash "$3" 2>&1' \
     _ "${payload}" "${GA_DATA}" "${HOOK_SH}"
 }
 
@@ -94,4 +96,18 @@ fire() {
       return 1
     }
   done
+}
+
+@test "the tracker's event write never lands in the invoking shell's database" {
+  # Per-run id → a write is a NEW row, never absorbed by the ON CONFLICT arbiter of an earlier run.
+  local aid="bats-live-child-gate-$$-${RANDOM}" before after
+  local query="SELECT count(*) FROM core.agent_events WHERE agent_id = '${aid}';"
+  before="$(eph_pg_query_caller_target "${query}")"
+  fire "SubagentStart" "${aid}"
+  fire "SubagentStop" "${aid}"
+  after="$(eph_pg_query_caller_target "${query}")"
+  [[ "${before}" == "${after}" ]] || {
+    echo "fixture rows reached the invoking shell's database: before=${before} after=${after}" >&2
+    return 1
+  }
 }
