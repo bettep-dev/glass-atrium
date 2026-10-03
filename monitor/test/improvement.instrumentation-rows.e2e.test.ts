@@ -52,16 +52,31 @@ const SUGGESTIONS = {
   },
 };
 
+// a roster well past the S slot's five rows — the stacked column must stay bounded whatever the data
+const LONG_ROSTER_SUGGESTIONS = {
+  ...SUGGESTIONS,
+  prose_only_add_summary: {
+    ...SUGGESTIONS.prose_only_add_summary,
+    agents: Array.from({ length: 14 }, (_, index) => ({ agent: `glass-atrium-agent-${index + 1}`, count: 14 - index })),
+    total: 105,
+  },
+};
+
+const ROSTERS = [
+  { name: "four add-only agents", suggestions: SUGGESTIONS },
+  { name: "fourteen add-only agents", suggestions: LONG_ROSTER_SUGGESTIONS },
+];
+
 interface RowReading {
   cards: string;
   bodies: number[];
 }
 
-// stripped app serving the suggestion payload, switched to the instrumentation view
-async function withInstrumentationPage(width: number, check: (page: Page) => Promise<void>) {
+// stripped app serving a suggestion payload, switched to the instrumentation view
+async function withInstrumentationPage(width: number, check: (page: Page) => Promise<void>, suggestions: object = SUGGESTIONS) {
   const app = Fastify({ logger: false });
   await app.register(fastifyStatic, { root: PUBLIC_ROOT, prefix: "/", index: ["index.html"] });
-  app.get("/api/improvement", async () => SUGGESTIONS);
+  app.get("/api/improvement", async () => suggestions);
   app.get("/api/*", async () => ({ rows: [] }));
   const serverUrl = await app.listen({ host: "127.0.0.1", port: 0 });
   const browser = await chromium.launch({ headless: true });
@@ -100,17 +115,23 @@ function readStretchedRows(page: Page): Promise<RowReading[]> {
 
 // xl and up lay peers side by side; 1440 and 1920 are the two shipped desktop widths
 for (const width of [1440, 1920]) {
-  test(`every stretched instrumentation row keeps its shorter body at 75% or more at ${width}px`, async () => {
-    await withInstrumentationPage(width, async (page) => {
-      const rows = await readStretchedRows(page);
+  for (const roster of ROSTERS) {
+    test(`every stretched instrumentation row keeps its shorter body at 75% or more with ${roster.name} at ${width}px`, async () => {
+      await withInstrumentationPage(
+        width,
+        async (page) => {
+          const rows = await readStretchedRows(page);
 
-      assert.ok(rows.length >= 2, "the view stretches its gauge rows");
-      for (const row of rows) {
-        const ratio = Math.min(...row.bodies) / Math.max(...row.bodies);
-        assert.ok(ratio >= STRETCH_FLOOR, `${width}px: [${row.cards}] is ${(ratio * 100).toFixed(1)}% filled`);
-      }
+          assert.ok(rows.length >= 2, "the view stretches its gauge rows");
+          for (const row of rows) {
+            const ratio = Math.min(...row.bodies) / Math.max(...row.bodies);
+            assert.ok(ratio >= STRETCH_FLOOR, `${width}px: [${row.cards}] is ${(ratio * 100).toFixed(1)}% filled`);
+          }
+        },
+        roster.suggestions,
+      );
     });
-  });
+  }
 }
 
 // 1280 is the narrowest width where the check-status card sits in a half column

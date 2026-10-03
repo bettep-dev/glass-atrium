@@ -523,16 +523,23 @@ function ConfidenceLaneTableI({ buckets }) {
 	);
 }
 
+// Add-only patches stacks with Results by check status beside Suggestion confidence → a short S slot keeps that pair level
+const PROSE_ONLY_ADD_CARD_SIZE_I = "S";
+
 // prose-only-add per-agent rolling count. 카드가 항상 존재해야 하는 이유: 0 건은
 // "추가만 하는 패치가 없었다"는 판독이고, 카드 부재는 "측정하지 않는다"이다 — 다른 뜻이다.
 function ProseOnlyAddCardI({ state, summary }) {
-	const { CardHead } = window.UI;
+	const { CardHead, CARD_SLOTS, getSlotRows } = window.UI;
+	const [isShowingAll, setShowingAll] = React.useState(false);
 	if (state.status === "error") return null;
 	if (state.status === "loading" || !summary) return null;
-	const rows = Array.isArray(summary.agents) ? summary.agents : [];
+	const agents = Array.isArray(summary.agents) ? summary.agents : [];
 	const total = Number(summary.total ?? 0);
+	// S slot → the stacked column stays bounded whatever the roster length
+	const { rows: slotRows, hiddenCount } = getSlotRows(agents, PROSE_ONLY_ADD_CARD_SIZE_I);
+	const rows = isShowingAll ? agents : slotRows;
 	return (
-		<div className="card">
+		<div className={`card card--${PROSE_ONLY_ADD_CARD_SIZE_I.toLowerCase()}`}>
 			<CardHead
 				title="Add-only patches"
 				sub={`${formatIntI(Number(summary.window_days ?? 0))} days`}
@@ -572,6 +579,13 @@ function ProseOnlyAddCardI({ state, summary }) {
 							</tr>
 						</tbody>
 					</table>
+				</div>
+			)}
+			{(hiddenCount > 0 || isShowingAll) && (
+				<div className="card-foot">
+					<button type="button" className="btn ghost sm ml-auto shrink-0" aria-expanded={isShowingAll} onClick={() => setShowingAll((v) => !v)}>
+						{isShowingAll ? `Show top ${CARD_SLOTS[PROSE_ONLY_ADD_CARD_SIZE_I].rowCount}` : `Show all ${agents.length}`}
+					</button>
 				</div>
 			)}
 		</div>
