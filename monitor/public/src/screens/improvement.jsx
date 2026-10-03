@@ -411,8 +411,8 @@ function ScreenImprovement({ onNav }) {
         .i-loop-grid > .card { display:grid; grid-row:span 4; grid-template-rows:subgrid; row-gap:0; }
         .i-loop-metric { flex:none; min-height:var(--i-loop-metric-h); display:flex; flex-wrap:wrap; align-items:center; gap:4px 16px; padding:8px var(--card-pad) 0; }
         .i-loop-visual { flex:none; padding:8px var(--card-pad) 0; overflow:hidden; }
-        /* ledger columns stretch to one height → each column's last section sits on the shared bottom edge */
-        .i-ledger-cols > .split-col > :last-child { margin-top:auto; }
+        /* ledger columns stretch to one height → a column's later last section sits on the shared bottom edge · a lone section keeps the top */
+        .i-ledger-cols > .split-col > :not(:first-child):last-child { margin-top:auto; }
         .board-terminal-grid { display:grid; grid-template-columns:minmax(0,2fr) minmax(0,1fr); gap:12px; }
         @media (max-width:640px) { .board-terminal-grid { grid-template-columns:1fr; } }
         /* 알람 레인 — 보고 표면과 구조적으로 구분되는 유일한 자리. tint 는 컨테이너가
