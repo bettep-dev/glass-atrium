@@ -184,10 +184,12 @@ test("the measurement gauges render as side-by-side pairs, one card per column",
   const props: Record<string, unknown> = { onRetry: () => {} };
   for (const name of PAYLOADS) props[name] = { status: "loading", data: null, error: null };
   const pairs: unknown[][] = [];
+  const layouts: unknown[] = [];
   const walk = (node: unknown): void => {
     if (Array.isArray(node)) return node.forEach(walk);
     if (!isElement(node)) return;
     if (node.type === sandbox.window.UI.SplitRow) {
+      layouts.push(node.props.layout);
       // a column is a slot wrapper (the recovery focus target) around its one card
       const cards = ([] as unknown[]).concat(node.props.children).filter(isElement).map((c) => (c.type === "div" ? c.props.children : c));
       pairs.push(cards.filter(isElement).map((c) => c.type));
@@ -202,4 +204,5 @@ test("the measurement gauges render as side-by-side pairs, one card per column",
     [sandbox.CorpusGrowthCardI, sandbox.CorrectionSignalsCardI],
     [sandbox.ProseOnlyAddCardI, sandbox.ConfidenceDistCardI],
   ]);
+  assert.deepEqual(layouts, ["equal", "equal"], "peer gauges stretch to one height, so their bottoms meet");
 });

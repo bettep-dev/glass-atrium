@@ -38,6 +38,7 @@ interface LoopSandbox {
   getLoopBasisI: (aggregate: LoopAggregate) => string;
   ChangeSummaryCardI: (props: Record<string, unknown>) => RecordedElement;
   TrendCardI: (props: Record<string, unknown>) => RecordedElement;
+  BucketRowI: (props: Record<string, unknown>) => RecordedElement;
   RejectRateHeadlineI: (props: Record<string, unknown>) => RecordedElement;
   getRejectRatePhraseI: (
     before: { count: number; total: number },
@@ -259,14 +260,46 @@ test("the applied card counts the cycles that changed rule lines out of every cy
   assert.ok(text.includes("3 of 5 cycles changed rule lines"), text);
 });
 
-test("the applied card stretches to its row, so the reject rate sits at its foot instead of a blank band", () => {
-  const aggregate = sandbox.deriveLoopAggregateI({ events: getEvents(["2026-09-24", "2026-09-25"], 3) });
-  const card = sandbox.ChangeSummaryCardI({ state: READY, aggregate });
-  const classOf = (el: RecordedElement) => String(el.props.className ?? "");
-  const body = collectElements(card, []).find((el) => /\bflex-1\b/.test(classOf(el)));
-  const foot = collectElements(body ?? card, []).find((el) => /\bmt-auto\b/.test(classOf(el)));
+const LOOP_SLOTS = ["i-loop-metric", "i-loop-visual", "card-foot"];
 
-  assert.match(classOf(card), /\bflex-col\b/);
-  assert.ok(body, "a body grows into the row height");
-  assert.ok(foot && collectElements(foot, []).some((el) => el.type === sandbox.RejectRateHeadlineI), "the reject rate anchors the foot");
+function getLoopCards() {
+  const aggregate = sandbox.deriveLoopAggregateI({ events: getEvents(["2026-09-24", "2026-09-25"], 3) });
+  const buckets = { ctm: 12, epm: 4, outcome: null, joinMeta: null };
+  return [
+    { name: "applied", card: sandbox.ChangeSummaryCardI({ state: READY, aggregate }) },
+    { name: "trend", card: sandbox.TrendCardI({ state: READY, aggregate }) },
+    { name: "learning memory", card: sandbox.BucketRowI({ state: READY, buckets }) },
+  ];
+}
+
+function getSlotOf(card: RecordedElement, slot: string): RecordedElement[] {
+  return collectElements(card, []).filter((el) => new RegExp(`\\b${slot}\\b`).test(String(el.props.className ?? "")));
+}
+
+describe("every loop card stacks one metric, one visual and one pinned foot, in that order", () => {
+  for (const { name, card } of getLoopCards()) {
+    test(name, () => {
+      const order = collectElements(card, [])
+        .map((el) => LOOP_SLOTS.find((slot) => new RegExp(`\\b${slot}\\b`).test(String(el.props.className ?? ""))))
+        .filter(Boolean);
+      assert.deepEqual(order, LOOP_SLOTS, `${name}: slots ${order.join(" > ")}`);
+    });
+  }
+});
+
+test("the applied card leads with its reject rate, in the metric slot", () => {
+  const [applied] = getLoopCards();
+  const [metric] = getSlotOf(applied.card, "i-loop-metric");
+  assert.ok(metric && collectElements(metric, []).some((el) => el.type === sandbox.RejectRateHeadlineI), "the reject rate heads the card");
+});
+
+test("the learning-memory card heads its card with both counts, its tiles keeping only what each count means", () => {
+  const [, , { card }] = getLoopCards();
+  const [metric] = getSlotOf(card, "i-loop-metric");
+  const [visual] = getSlotOf(card, "i-loop-visual");
+  const metricText = getPrintedText(metric);
+
+  assert.match(metricText, /\b12\b/, metricText);
+  assert.match(metricText, /\b4\b/, metricText);
+  assert.doesNotMatch(getPrintedText(visual), /\b12\b|\b4\b/, "a count printed twice reads as two figures");
 });

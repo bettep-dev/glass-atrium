@@ -171,7 +171,7 @@ function ImprovementInstrumentationViewI({
 					/>
 				)}
 			</div>
-			<SplitRow ratio="1:1">
+			<SplitRow ratio="1:1" layout="equal">
 				<div id={PAYLOAD_SLOT_ID_I.corpusGrowth}>
 					{getRegionView(corpusAuditState) === "error" ? (
 						<PayloadErrorCardI
@@ -214,7 +214,7 @@ function ImprovementInstrumentationViewI({
 				) : (
 					<>
 						<StyleRefCardI state={listState} styleRef={styleRef} />
-						<SplitRow ratio="1:1">
+						<SplitRow ratio="1:1" layout="equal">
 							<ProseOnlyAddCardI state={listState} summary={proseOnlyAdd} />
 							<ConfidenceDistCardI
 								state={listState}
