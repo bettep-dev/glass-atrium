@@ -14,6 +14,10 @@ cycle with successes alongside all-quota failures still reads 'quota_exceeded'.
 A chronic-timeout back-off row rides branch (3) for the same reason: run_cycle
 leaves its error empty because the skip is intentional, not a cycle fault.
 
+The same writer sends each patch's proposal status: a status the patch carries is
+forwarded as-is, and only an absent one falls back — `rejected` for a reject
+classification (a gate verdict, never `unadjudicated`), `pending` otherwise.
+
 Run with either runner:
     python3 -m unittest autoagent.test.test_cycle_status_classification -v
     uv run --python 3.13 --with pytest pytest \\
@@ -22,9 +26,12 @@ Run with either runner:
 
 from __future__ import annotations
 
+import json
 import sys
+import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 _REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 _SCRIPTS_DIR = _REPO_ROOT / "scripts"
@@ -106,6 +113,39 @@ class CycleStatusClassification(unittest.TestCase):
     def test_when_failing_patch_failure_class_absent_alone_then_partial(self) -> None:
         payload = {"patches": [_patch(error="boom", failure_class="")]}
         self.assertEqual(writer._aggregate(payload)["status"], "partial")
+
+
+class ProposalStatusSent(unittest.TestCase):
+    def _get_sent_status(self, patch: dict) -> str:
+        sent: list[dict] = []
+
+        def record(envelope: dict) -> bool:
+            sent.append(envelope)
+            return True
+
+        with tempfile.TemporaryDirectory() as tmp:
+            report = Path(tmp) / "autoagent-2026-10-03.json"
+            report.write_text(json.dumps({"patches": [patch]}), encoding="utf-8")
+            with (
+                mock.patch.object(writer, "OUT_PATH", str(report)),
+                mock.patch.object(writer, "CYCLE_DATE", "2026-10-03"),
+                mock.patch.object(writer, "_invoke_helper", side_effect=record),
+            ):
+                self.assertEqual(writer.main(), 0)
+        (proposal,) = [e for e in sent if e["op"] == "write_autoagent_proposal"]
+        return proposal["args"]["status"]
+
+    def test_a_carried_status_is_sent_and_only_an_absent_one_falls_back(self) -> None:
+        rows = [
+            ("reject without status", _patch(), "rejected"),
+            ("reject with empty status", _patch(status=""), "rejected"),
+            ("apply without status", _patch(classification="body-tweak"), "pending"),
+            ("reject carrying unadjudicated", _patch(status="unadjudicated"), "unadjudicated"),
+            ("apply carrying snoozed", _patch(classification="body-tweak", status="snoozed"), "snoozed"),
+        ]
+        for name, patch, expected in rows:
+            with self.subTest(name):
+                self.assertEqual(self._get_sent_status(patch), expected)
 
 
 if __name__ == "__main__":

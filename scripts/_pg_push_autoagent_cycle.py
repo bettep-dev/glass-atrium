@@ -216,7 +216,8 @@ def main():
         patch_classification = patch.get("classification") or "reject"
         # Status fallback derives from classification — a reject patch with an
         # absent/empty status settles as 'rejected', not the blanket 'pending'
-        # (which would fossilize auto-reject rows).
+        # (which would fossilize auto-reject rows). A status-less reject is the
+        # gate's verdict, so never 'unadjudicated': non-verdicts carry their status.
         status_fallback = (
             "rejected" if patch_classification == "reject" else "pending"
         )
