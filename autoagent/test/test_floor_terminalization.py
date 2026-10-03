@@ -9,7 +9,7 @@ a standing "New suggestions" pile on the monitor LEARNING board.
 
 ``daemon_cycle.resolve_floor_terminalization`` closes that limbo at the GENERATION
 source: an apply-ineligible auto+pending candidate is rewritten to a terminal
-``status='rejected'`` so every auto-tier proposal reaches a terminal state within
+``status='unadjudicated'`` so every auto-tier proposal reaches a terminal state within
 its cycle, while safety-tier rows stay pending for human approval.
 
 Recurrence prevention: GENERATION and APPLY share ONE acceptance predicate
@@ -75,7 +75,7 @@ class TestApplyEligiblePredicate(unittest.TestCase):
 class TestResolveFloorTerminalization(unittest.TestCase):
     """Decision contract: limbo rows terminalize; everything else passes through."""
 
-    def test_when_auto_pending_mention_then_terminalized_to_rejected(self) -> None:
+    def test_when_auto_pending_mention_then_terminalized_to_unadjudicated(self) -> None:
         result = dc.resolve_floor_terminalization(
             classification="body-auto",
             approval_tier="auto",
@@ -84,7 +84,7 @@ class TestResolveFloorTerminalization(unittest.TestCase):
             rationale="haiku rationale",
         )
         self.assertTrue(result.terminalized)
-        self.assertEqual(result.status_value, "rejected")
+        self.assertEqual(result.status_value, "unadjudicated")
         self.assertEqual(result.approval_tier, "")
         self.assertEqual(result.classification, "reject")
         self.assertEqual(result.rationale, dc._BELOW_FLOOR_REJECT_REASON)
@@ -224,7 +224,7 @@ class TestSimulatedCycleTerminalState(unittest.TestCase):
         )
         # Auto-tier limbo is closed AT generation — no 'pending' row survives.
         self.assertTrue(terminalize.terminalized)
-        self.assertEqual(terminalize.status_value, "rejected")
+        self.assertEqual(terminalize.status_value, "unadjudicated")
         self.assertNotEqual(terminalize.status_value, "pending")
         self.assertEqual(terminalize.approval_tier, "")
         # The persisted rationale flips to the below-floor reason (board reads true).

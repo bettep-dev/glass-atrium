@@ -16,7 +16,7 @@ Four properties are covered:
     mechanism), and the monitor route's stored LIKE marker is still a prefix of
     the head;
 (3) the two fixes COMPOSED over one store — the same-cycle stamp this predicate
-    writes still explains the rejected status after a later run re-pushes that
+    writes still explains the terminal status after a later run re-pushes that
     identity through _pg_dual_write_daemon's UPSERT, and the run's own row is
     still live for its own push. Either fix reverted and this pair goes red;
 (4) the CALL-SITE binding — the cycle loop passes its own cycle date and the
@@ -134,12 +134,12 @@ class TestSupersedePredicate(unittest.TestCase):
 
     def test_when_label_drifted_in_same_cycle_then_row_transitions(self) -> None:
         row = self._row(_RUN_DATE, _DRIFTED_LABEL)
-        self.assertEqual(row["status"], "rejected")
+        self.assertEqual(row["status"], "unadjudicated")
         self.assertEqual(row["rationale"], dc._SUPERSEDE_REASON_SAME_CYCLE)
 
     def test_when_row_is_from_a_prior_cycle_then_row_transitions(self) -> None:
         row = self._row(_PRIOR_DATE, _RUN_LABEL)
-        self.assertEqual(row["status"], "rejected")
+        self.assertEqual(row["status"], "unadjudicated")
         self.assertEqual(row["rationale"], dc._SUPERSEDE_REASON_CROSS_DAY)
 
 
@@ -186,14 +186,14 @@ class TestSupersedeRationaleConsumers(unittest.TestCase):
 class TestSupersedeStampSurvivesRepush(unittest.TestCase):
     """The two fixes composed over ONE store: the supersede stamps, the push keeps it.
 
-    The identity exclusion is what makes a SAME-CYCLE rejected row exist at all —
+    The identity exclusion is what makes a SAME-CYCLE terminated row exist at all —
     without it the run's own row is the one terminalized, and no drifted-label row
     survives the cycle carrying a stamp. The rationale co-movement in the UPSERT's
     conflict arm is what keeps that stamp when a later run re-sends the identity
     with the report's baked-in 'pending'. Revert either and the pair stops holding:
-    without the exclusion the run's own row goes rejected and the drifted row's
+    without the exclusion the run's own row is terminated and the drifted row's
     stamp is the cross-day text, and without the co-movement the stamp is replaced
-    by the incoming generation text while the rejected status it explains stays —
+    by the incoming generation text while the terminal status it explains stays —
     which is exactly the unrecognised text the failure classifier defaults to the
     quality class, advancing the reject streak.
 
@@ -244,7 +244,7 @@ class TestSupersedeStampSurvivesRepush(unittest.TestCase):
     ) -> None:
         self.assertEqual(
             self._row(_DRIFTED_LABEL),
-            {"status": "rejected", "rationale": dc._SUPERSEDE_REASON_SAME_CYCLE},
+            {"status": "unadjudicated", "rationale": dc._SUPERSEDE_REASON_SAME_CYCLE},
         )
 
     def test_when_the_row_is_the_runs_own_then_its_next_push_still_refreshes_it(
@@ -267,7 +267,7 @@ class TestSupersedeStampSurvivesRepush(unittest.TestCase):
                 (_RUN_DATE, _DRIFTED_LABEL, _TARGET),
                 columns=("status", "reviewed_by"),
             ),
-            {"status": "rejected", "reviewed_by": dc._SUPERSEDE_ACTOR},
+            {"status": "unadjudicated", "reviewed_by": dc._SUPERSEDE_ACTOR},
         )
 
 

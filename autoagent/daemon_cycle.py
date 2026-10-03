@@ -187,6 +187,7 @@ try:
     with contextlib.redirect_stderr(io.StringIO()):
         from _pg_dual_write_daemon import (
             _connect as _pg_connect,
+            PROPOSAL_STATUS_SQL as _PG_PROPOSAL_STATUS_SQL,
             write_autoagent_loop_event as _pg_write_loop_event,
             write_autoagent_corpus_audit as _pg_write_corpus_audit,
         )
@@ -1500,7 +1501,7 @@ PromotionTier = Literal[
 # status='pending' — that produces the auto+pending+mention limbo that fossilizes
 # as a standing "New suggestions" pile (apply excludes it; auto-tier is not a
 # human-approval candidate either). is_apply_eligible_promotion_tier() lets
-# generation terminalize a floor row to 'rejected' instead, so GENERATION and
+# generation terminalize a floor row to 'unadjudicated' instead, so GENERATION and
 # APPLY can never disagree on a single row's eligibility.
 #   NULL/None → legacy pre-feature rows (eligible) · "" → operator BYPASS,
 #   floorless (eligible) · the four above-floor tiers → eligible · "mention" →
@@ -1511,7 +1512,7 @@ APPLY_ELIGIBLE_PROMOTION_TIERS = frozenset(
 # Rationale persisted on a floor row terminalized at generation (vs. emitted as
 # auto-pending limbo). Distinct from a quality reject so the board reads true.
 # Stable head of the confidence-floor reject reason. classify_failure_rationale
-# prefix-matches THIS literal to map a floor-terminalized 'rejected' row to a
+# prefix-matches THIS literal to map a floor-terminalized row to a
 # non-adjudication class (so consecutive_reject_count looks past it) — keep the
 # reason string below derived from this prefix so the two cannot drift.
 _BELOW_FLOOR_REJECT_PREFIX = "deferred: below confidence floor"
@@ -1653,7 +1654,8 @@ def resolve_floor_terminalization(
     forever — auto-apply never acts on it AND auto-tier is not a safety-queue
     candidate. GENERATION and APPLY must agree on ONE acceptance predicate
     (is_apply_eligible_promotion_tier), so an ineligible auto row is rewritten to
-    a terminal reject here rather than emitted as auto-pending.
+    a terminal 'unadjudicated' row here rather than emitted as auto-pending — a
+    floor hold is not a gate verdict, so it never takes 'rejected'.
 
     Only the (approval_tier='auto', status='pending', ineligible-tier) shape is
     rewritten. Safety tier (approval_tier='safety') and already-terminal rows
@@ -1687,7 +1689,7 @@ def resolve_floor_terminalization(
     return FloorTerminalization(
         classification="reject",
         approval_tier="",
-        status_value="rejected",
+        status_value="unadjudicated",
         rationale=_BELOW_FLOOR_REJECT_REASON,
         terminalized=True,
     )
@@ -8385,11 +8387,11 @@ def supersede_prior_pending_for_agent(
     cycle_date: str,
     pattern_label: str,
 ) -> int:
-    """Terminate the same agent's OTHER pending proposals → 'rejected'.
+    """Terminate the same agent's OTHER pending proposals → 'unadjudicated'.
 
     One proposal per agent per cycle — but a leftover same-agent PENDING row
     re-accumulates backlog across multiple rows. The new proposal has fresher
-    data + current-file anchoring, so supersede (transition to rejected) the
+    data + current-file anchoring, so supersede (transition to unadjudicated) the
     others to block same-agent duplicate accumulation.
 
     The run's OWN row is excluded by the (cycle_date, pattern_label, target_file)
@@ -8399,10 +8401,11 @@ def supersede_prior_pending_for_agent(
     have applied. Everything else still transitions, including a same-cycle row
     under a drifted label.
 
-    monitor has no dedicated supersede enum, so this is marked 'rejected' +
-    rationale + the supersede actor (ProposalStatus enum preserved — no schema
-    change). The stamp is per row: the run's own cycle date carries the
-    same-cycle tail, an older row the cross-day tail.
+    A supersede is not a gate verdict, so the row takes 'unadjudicated' +
+    rationale + the supersede actor; on a schema without that label the shared
+    status fragment stores 'rejected' and the backfill relabels it. The stamp is
+    per row: the run's own cycle date carries the same-cycle tail, an older row
+    the cross-day tail.
 
     Loud-fail: PG errors logged via named exception + re-raised. PG unavailable →
     return 0 (supersede skipped — the new proposal still emits normally).
@@ -8415,7 +8418,7 @@ def supersede_prior_pending_for_agent(
         pattern_label: the consolidated label the run's own push will own.
 
     Returns:
-        count of other pending rows terminated (transitioned to rejected).
+        count of other pending rows terminated.
     """
     if not HAS_PG_LOOP_WRITE:
         sys.stderr.write(
@@ -8439,7 +8442,7 @@ def supersede_prior_pending_for_agent(
     # will update, so it must survive its own supersede.
     update_sql = (
         "UPDATE core.autoagent_proposals "
-        "SET status = 'rejected', "
+        f"SET status = {_PG_PROPOSAL_STATUS_SQL}, "
         "rationale = CASE WHEN cycle_date = %s::date THEN %s ELSE %s END, "
         "reviewed_by = %s "
         "WHERE status = 'pending' "
@@ -8449,6 +8452,7 @@ def supersede_prior_pending_for_agent(
         "RETURNING id"
     )
     update_params = (
+        "unadjudicated",
         cycle_date,
         _SUPERSEDE_REASON_SAME_CYCLE,
         _SUPERSEDE_REASON_CROSS_DAY,
@@ -8476,7 +8480,7 @@ def supersede_prior_pending_for_agent(
         sys.stderr.write(
             f"[daemon-cycle] supersede: agent={target_agent} terminated "
             f"{len(superseded_ids)} other pending row(s) ids={superseded_ids} "
-            f"→ rejected (fresher per-agent proposal)\n"
+            f"→ unadjudicated (fresher per-agent proposal)\n"
         )
     return len(superseded_ids)
 
@@ -9155,8 +9159,8 @@ def classify_failure_rationale(rationale: str) -> str:
     if text.startswith(_BELOW_FLOOR_REJECT_PREFIX):
         # Confidence-floor terminalization (resolve_floor_terminalization) — a
         # MECHANICAL, explicitly-recoverable reject ("resurfaces when the pattern
-        # clears the floor"), NOT a quality verdict. It persists status='rejected'
-        # but no review side ever adjudicated the candidate, so it MUST NOT advance
+        # clears the floor"), NOT a quality verdict. It persists 'unadjudicated'
+        # ('rejected' on a pre-label schema) — no review side adjudicated it, so it MUST NOT advance
         # the kill streak (the exact de-conflation class for a new reject variant).
         return FAILURE_CLASS_SKIPPED
     if text.startswith("claude CLI not found"):
@@ -10125,11 +10129,11 @@ def find_parked_proposals(
 
 
 def update_parked_proposal_status(parked: list[dict]) -> list[int]:
-    """Transition parked proposals still pending/snoozed → 'rejected'; return those ids.
+    """Transition parked proposals still pending/snoozed → 'unadjudicated'; return those ids.
 
-    Same shape as the same-agent supersede: status + rationale + actor, no enum
-    change, one transaction. A row that left pending/snoozed since selection is
-    left untouched.
+    Same shape as the same-agent supersede: status through the shared fragment +
+    rationale + actor, one transaction. A row that left pending/snoozed since
+    selection is left untouched.
     """
     if not parked:
         return []
@@ -10137,7 +10141,7 @@ def update_parked_proposal_status(parked: list[dict]) -> list[int]:
         raise RuntimeError("proposal write helper unavailable (psycopg/helper import failed)")
     update_sql = (
         "UPDATE core.autoagent_proposals "
-        "SET status = 'rejected', rationale = %s, reviewed_by = %s "
+        f"SET status = {_PG_PROPOSAL_STATUS_SQL}, rationale = %s, reviewed_by = %s "
         "WHERE status IN ('pending', 'snoozed') AND id = %s "
         "RETURNING id"
     )
@@ -10148,7 +10152,8 @@ def update_parked_proposal_status(parked: list[dict]) -> list[int]:
                 rows = _build_row_status_text(entry["rows"])
                 rationale = f"{_PARKED_PATTERN_REASON} (rows {rows})"
                 cur.execute(
-                    update_sql, (rationale, _PARKED_PATTERN_ACTOR, entry["proposal_id"])
+                    update_sql,
+                    ("unadjudicated", rationale, _PARKED_PATTERN_ACTOR, entry["proposal_id"]),
                 )
                 rejected.extend(row[0] for row in cur.fetchall())
         conn.commit()
@@ -11386,7 +11391,7 @@ def run_cycle(
                 "[daemon-cycle] INFO: floor terminalize — auto candidate for "
                 f"agent={agent} target={proposal.target_file} resolved to "
                 f"promotion_tier='{promotion_tier}' (auto-apply ineligible); "
-                "persisted status='rejected' instead of auto-pending limbo\n"
+                "persisted status='unadjudicated' instead of auto-pending limbo\n"
             )
 
         # T4 prose-only-add detection — DETECTION-ONLY WARNING per candidate patch

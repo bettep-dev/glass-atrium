@@ -253,8 +253,9 @@ class GuardedRejectWriteTest(unittest.TestCase):
         conn.commit.assert_called_once()
         for (sql, params), entry in zip(executed, parked):
             self.assertIn("status IN ('pending', 'snoozed')", sql)
-            self.assertIn("SET status = 'rejected'", sql)
-            rationale = params[0]
+            # A parked reject is a guard, never a verdict → the non-verdict status is requested.
+            requested_status, rationale = params[0], params[1]
+            self.assertEqual(requested_status, "unadjudicated")
             self.assertTrue(rationale.startswith(dc._PARKED_PATTERN_REASON))
             for row in entry["rows"]:
                 self.assertIn(f"{row['id']}:{row['status']}", rationale)
@@ -283,7 +284,7 @@ class GuardedRejectWriteTest(unittest.TestCase):
         sql, params = executed[0]
         self.assertIn("reviewed_by = %s", sql)
         self.assertNotIn("reviewed_at", sql)
-        self.assertEqual(params[1], dc._PARKED_PATTERN_ACTOR)
+        self.assertEqual(params[2], dc._PARKED_PATTERN_ACTOR)
         # The id stays last: the positional pin above must survive the added parameter.
         self.assertEqual(params[-1], 7497)
 

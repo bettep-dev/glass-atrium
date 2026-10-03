@@ -2,8 +2,9 @@
 # proposal-status-label-fallback.bats — proposal status writes on a schema with and without
 # the `unadjudicated` ProposalStatus label (new code running before its migration).
 #
-# Relationship: a write requesting `unadjudicated` persists it where the label exists and
-# persists `rejected` where it does not; every other status persists as requested; a
+# Relationship: a write requesting `unadjudicated` — the cycle push, the supersede and the
+# parked guard — persists it where the label exists and persists `rejected` where it does
+# not; every other status persists as requested; a
 # stored terminal row survives a non-terminal re-push through both conflict arms on either
 # schema; the shared label probe answers present / absent, and unknown when the query
 # cannot run.
@@ -36,6 +37,7 @@ setup_file() {
   export EPH_SOCKDIR="${BATS_FILE_TMPDIR}/sock"
   export EPH_PORT="55449"
   export LF_SCRIPTS="${BATS_TEST_DIRNAME}/.."
+  export LF_AUTOAGENT="${BATS_TEST_DIRNAME}/../../autoagent"
   local migrations="${BATS_TEST_DIRNAME}/../../monitor/prisma/migrations"
 
   eph_pg_start "${EPH_DATADIR}" "${EPH_SOCKDIR}" "${EPH_PORT}" "eph_bootstrap" || return 1
@@ -75,10 +77,11 @@ _q() {
   psql -h "${EPH_SOCKDIR}" -p "${EPH_PORT}" -d glass_atrium -tAqc "${1}"
 }
 
-# $1 mode (push <status> | probe | probe-closed) — drives the real helper; refuses to run
+# $1 mode (push <status> | probe | probe-closed | supersede | park) — drives the real helper
+# and the daemon's direct writers; refuses to run
 # unless libpq is pointed at this suite's cluster.
 _drive() {
-  LF_EXPECT_PGHOST="${EPH_SOCKDIR}" PYTHONPATH="${LF_SCRIPTS}" python3 - "$@" <<'PY'
+  LF_EXPECT_PGHOST="${EPH_SOCKDIR}" PYTHONPATH="${LF_SCRIPTS}:${LF_AUTOAGENT}" python3 - "$@" <<'PY'
 import os
 import sys
 
@@ -111,6 +114,25 @@ elif mode == "probe-closed":
     conn = helper._connect()
     conn.close()
     print(helper.get_proposal_status_label_state(conn))
+elif mode == "supersede":
+    import daemon_cycle
+
+    daemon_cycle.supersede_prior_pending_for_agent(
+        "glass-atrium-dev-python",
+        "agents/glass-atrium-dev-python.md",
+        cycle_date="2026-10-04",
+        pattern_label="label-fallback-next",
+    )
+elif mode == "park":
+    import daemon_cycle
+
+    with helper._connect() as conn:
+        (proposal_id,) = conn.execute(
+            "SELECT id FROM core.autoagent_proposals WHERE pattern_label = 'label-fallback'"
+        ).fetchone()
+    daemon_cycle.update_parked_proposal_status(
+        [{"proposal_id": proposal_id, "rows": [{"id": 1, "status": "rejected"}]}]
+    )
 PY
 }
 
@@ -125,6 +147,26 @@ PY
     read -r template requested expected <<<"${row}"
     _use_db "${template}" || { echo "${row}: clone failed"; return 1; }
     run _drive push "${requested}"
+    [[ "${status}" -eq 0 ]] || { echo "${row}: ${output}"; return 1; }
+    [[ "$(_q "SELECT status FROM core.autoagent_proposals WHERE pattern_label = 'label-fallback'")" == "${expected}" ]] \
+      || { echo "${row}: stored $(_q "SELECT status FROM core.autoagent_proposals")"; return 1; }
+  done
+}
+
+@test "the supersede and parked writers store unadjudicated, and rejected only where the label is absent" {
+  local rows=(
+    "label_present supersede unadjudicated"
+    "label_absent supersede rejected"
+    "label_present park unadjudicated"
+    "label_absent park rejected"
+  )
+  local row template writer expected
+  for row in "${rows[@]}"; do
+    read -r template writer expected <<<"${row}"
+    _use_db "${template}" || { echo "${row}: clone failed"; return 1; }
+    run _drive push pending
+    [[ "${status}" -eq 0 ]] || { echo "${row}: seed: ${output}"; return 1; }
+    run _drive "${writer}"
     [[ "${status}" -eq 0 ]] || { echo "${row}: ${output}"; return 1; }
     [[ "$(_q "SELECT status FROM core.autoagent_proposals WHERE pattern_label = 'label-fallback'")" == "${expected}" ]] \
       || { echo "${row}: stored $(_q "SELECT status FROM core.autoagent_proposals")"; return 1; }
