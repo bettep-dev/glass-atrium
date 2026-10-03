@@ -764,7 +764,7 @@ function ScreenOutcomes({ onNav }) {
       </window.UI.Disclosure>
 
       <window.UI.Disclosure kind="status" title="Self-report quality" sub={selfReportSummaryO(analyticsState)} className="mt-4">
-        <window.UI.SplitRow ratio="1:1">
+        <window.UI.SplitRow ratio="1:1" layout="content">
           <GraderBreakdownCard state={analyticsState} {...regionRetry}/>
           <CrosstabCard state={analyticsState} {...regionRetry}/>
         </window.UI.SplitRow>
@@ -867,7 +867,7 @@ function reportingHealthSummaryO(channelLivenessState) {
 function selfReportSummaryO(analyticsState) {
   if (analyticsState.status !== 'ready') return getUnloadedSummaryO(analyticsState.status);
   const overall = analyticsState.data?.overall;
-  return `${formatIntO(window.UI.getWriterTotal(overall))} writer-emitted of ${formatIntO(Number(overall?.total) || 0)} records`;
+  return `${formatIntO(window.UI.getWriterTotal(overall))} of ${formatIntO(Number(overall?.total) || 0)} self-reported`;
 }
 
 function loopEventsSummaryO(loopEventsState) {
@@ -1129,7 +1129,7 @@ function PageVerdictO({ analyticsState, channelLivenessState, attentionState, wi
   const silent = channelLivenessState.status === 'ready' ? (channelLivenessState.data?.alerting || []) : [];
 
   if (silent.length > 0) {
-    return <PageVerdict tone="crit" freshness={freshness} className="mb-4">{`Recording stopped on ${silent.join(', ')} — every count on this page is understated until it resumes.`}</PageVerdict>;
+    return <PageVerdict tone="crit" freshness={freshness} className="mb-4">{`Recording stopped on ${silent.join(', ')} — every count here is understated.`}</PageVerdict>;
   }
   if (view !== 'ready') {
     const reason = view === 'loading' ? 'the window totals are still loading' : "the window totals didn't load";
@@ -1156,7 +1156,7 @@ function getHeroFloorVerdictO(verdict, data, attentionState) {
   return {
     tone: hero.tone,
     chips: [LEDGER_JUMP_CHIP_O],
-    text: `${verdict.text.slice(0, -1)}, but ${formatIntO(count)} records (${formatShareO(count, hero.population)}) still need you.`,
+    text: `${formatShareO(count, hero.population)} need you · ${verdict.text}`,
   };
 }
 
@@ -1166,12 +1166,12 @@ function getRateVerdictO(rate, windowLabel) {
     return { tone: 'neutral', chips: [], text: `No task results written by agents in the ${windowLabel} to judge.` };
   }
   if (rate.status === 'low-n') {
-    return { tone: 'neutral', chips: [], text: `Only ${formatInt(rate.writerTotal)} agent-written records in the ${windowLabel} — too few to judge (needs ${LOW_N_MIN}).` };
+    return { tone: 'neutral', chips: [], text: `Only ${formatInt(rate.writerTotal)} records, ${windowLabel} — too few to judge (needs ${LOW_N_MIN}).` };
   }
   return {
     tone: rate.tone,
     chips: rate.tone === 'ok' ? [] : [LEDGER_JUMP_CHIP_O],
-    text: `${formatShareO(rate.breakage, rate.writerTotal)} of ${formatInt(rate.writerTotal)} agent-written records in the ${windowLabel} failed or were blocked, and ${formatShareO(rate.openCaveats, rate.writerTotal)} still carry an open caveat.`,
+    text: `${formatShareO(rate.breakage, rate.writerTotal)} failed or blocked · ${formatShareO(rate.openCaveats, rate.writerTotal)} caveat open · ${formatInt(rate.writerTotal)} records, ${windowLabel}.`,
   };
 }
 

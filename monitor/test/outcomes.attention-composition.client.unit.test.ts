@@ -484,15 +484,15 @@ describe("PageVerdictO: the Task results verdict follows the shared outcome-rate
   const recording = { status: "ready" as const, data: { alerting: [] as string[] } };
   const healthyWindow = ready({ done: 195, fail: 2, done_with_concerns: 3 }, 1);
   const rows = [
-    { name: "breakage at or above 5% is crit", state: ready({ done: 180, fail: 12, done_with_concerns: 8 }, 2), liveness: recording, tone: "crit", text: /6\.0% of 200 .*failed or were blocked/ },
-    { name: "open caveats at or above 10% alone are warn", state: ready({ done: 170, done_with_concerns: 30 }, 25), liveness: recording, tone: "warn", text: /12\.5% still carry an open caveat/ },
-    { name: "both shares under their steps are ok", state: healthyWindow, liveness: recording, tone: "ok", text: /1\.0% of 200/ },
+    { name: "breakage at or above 5% is crit", state: ready({ done: 180, fail: 12, done_with_concerns: 8 }, 2), liveness: recording, tone: "crit", text: /6\.0% failed or blocked .*200 records/ },
+    { name: "open caveats at or above 10% alone are warn", state: ready({ done: 170, done_with_concerns: 30 }, 25), liveness: recording, tone: "warn", text: /12\.5% caveat open/ },
+    { name: "both shares under their steps are ok", state: healthyWindow, liveness: recording, tone: "ok", text: /1\.0% failed or blocked .*200 records/ },
     { name: "a sample under the low-N floor claims no tone", state: ready({ fail: 10 }), liveness: recording, tone: "neutral", text: /too few to judge/ },
     { name: "an empty window claims no tone", state: ready({}), liveness: recording, tone: "neutral", text: /No task results/ },
     { name: "a failed read is unknown, never all-clear", state: { status: "error" as const, error: "boom" }, liveness: recording, tone: "neutral", text: /unknown/ },
     { name: "a stopped recording channel is crit over an ok rate", state: healthyWindow, liveness: { status: "ready" as const, data: { alerting: ["subagent-stop"] } }, tone: "crit", text: /Recording stopped on subagent-stop .*understated/ },
     { name: "an unchecked recording channel holds back the all-clear", state: healthyWindow, liveness: { status: "error" as const, error: "boom" }, tone: "neutral", text: /couldn't check the recording channels/ },
-    { name: "a flagged rate stands while the recording channels are still loading", state: ready({ done: 180, fail: 12, done_with_concerns: 8 }, 2), liveness: { status: "loading" as const }, tone: "crit", text: /failed or were blocked/ },
+    { name: "a flagged rate stands while the recording channels are still loading", state: ready({ done: 180, fail: 12, done_with_concerns: 8 }, 2), liveness: { status: "loading" as const }, tone: "crit", text: /failed or blocked/ },
   ];
   for (const row of rows) {
     test(row.name, () => {
@@ -500,6 +500,35 @@ describe("PageVerdictO: the Task results verdict follows the shared outcome-rate
       assert.strictEqual(node.type, helpers.window.UI.PageVerdict, "renders the shared PageVerdict atom");
       assert.strictEqual(node.props!.tone, row.tone);
       assert.match(String(node.children.join("")), row.text);
+    });
+  }
+});
+
+// copy cap: a verdict is one line → numbers first, at most 90 characters at a five-digit window
+describe("PageVerdictO: a judged verdict leads with its shares and fits the 90-character line cap", () => {
+  const VERDICT_CAP = 90;
+  const windowOf = (counts: Record<string, number>, open: number) => {
+    const total = Object.values(counts).reduce((a, b) => a + b, 0);
+    return {
+      status: "ready" as const,
+      data: {
+        overall: { total, reconstructed_total: 0, by_result: Object.entries(counts).map(([result, count]) => ({ result, count, writer_open_count: result === "done_with_concerns" ? open : 0 })) },
+        byResultCount: counts,
+      },
+    };
+  };
+  const recording = { status: "ready" as const, data: { alerting: [] as string[] } };
+  const rows = [
+    { name: "a crit rate", analytics: windowOf({ done: 10500, fail: 652, done_with_concerns: 200 }, 120), attention: { status: "loading" as const } },
+    { name: "an ok rate", analytics: windowOf({ done: 11200, fail: 52, done_with_concerns: 100 }, 40), attention: { status: "loading" as const } },
+    { name: "an ok rate raised by the hero", analytics: windowOf({ done: 11200, fail: 52, done_with_concerns: 100 }, 40), attention: { status: "ready" as const, data: { total: 3405, parts: { flagged: 3405, fail: 0, blocked: 0, open: 0 } } } },
+  ];
+  for (const row of rows) {
+    test(row.name, () => {
+      const node = helpers.PageVerdictO({ analyticsState: row.analytics, channelLivenessState: recording, attentionState: row.attention, windowDays: 30 } as never) as RenderNode;
+      const text = String(node.children.join(""));
+      assert.match(text, /^\d+\.\d% /, `leads with a share: "${text}"`);
+      assert.ok(text.length <= VERDICT_CAP, `"${text}" is ${text.length} chars`);
     });
   }
 });
@@ -538,9 +567,9 @@ describe("PageVerdictO: the verdict is never greener than the needs-you hero", (
     });
   }
 
-  test("a verdict raised by the hero names the needs-you count and links to it", () => {
+  test("a verdict raised by the hero leads with the needs-you share and links to it", () => {
     const node = helpers.PageVerdictO({ analyticsState: healthy, channelLivenessState: recording, attentionState: attention(60), windowDays: 30 } as never) as RenderNode;
-    assert.match(String(node.children.join("")), /60 records .*need you/);
+    assert.match(String(node.children.join("")), /^30\.0% need you · /);
     assert.ok((node.props!.chips as { key: string }[]).some((chip) => chip.key === "needs-you"));
   });
 });
@@ -748,9 +777,12 @@ test("reportingHealthSummaryO: a silent channel is named in the closed summary l
 test("selfReportSummaryO / loopEventsSummaryO: the summary counts what the section holds", () => {
   assert.strictEqual(
     helpers.selfReportSummaryO({ status: "ready", data: aboveFloor({ done: 190 }, 40) }),
-    "160 writer-emitted of 200 records",
+    "160 of 200 self-reported",
     "the closed line names both populations, so the card's all-records counts reconcile with it",
   );
+  // header meta cap → a six-digit window still fits one header line
+  const wide = helpers.selfReportSummaryO({ status: "ready", data: aboveFloor({ done: 120000 }, 4000) });
+  assert.ok(wide.length <= 32, `"${wide}" is ${wide.length} chars`);
   assert.strictEqual(helpers.loopEventsSummaryO({ status: "ready", data: { events: [{}, {}, {}] } }), "3 recent cycle events");
   assert.strictEqual(helpers.loopEventsSummaryO({ status: "ready", data: {} }), "0 recent cycle events");
 });

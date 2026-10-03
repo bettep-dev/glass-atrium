@@ -48,11 +48,11 @@ function buildReactStub(failedRegionCount: number, setterCalls: SetterCall[]): R
   return { ...base, useState };
 }
 
-async function renderOutcomesScreen(failedRegionCount: number): Promise<ScreenHarness> {
+async function renderOutcomesScreen(failedRegionCount: number, uiOverrides: Record<string, unknown> = {}): Promise<ScreenHarness> {
   const setterCalls: SetterCall[] = [];
   const React = buildReactStub(failedRegionCount, setterCalls);
   const mod = await loadScreenModule(OUTCOMES_SRC, {
-    UI: ui.UI,
+    UI: { ...(ui.UI as Record<string, unknown>), ...uiOverrides },
     React,
     location: { hash: "" },
     URLSearchParams,
@@ -147,22 +147,30 @@ test("status folds render open while their detail breakdowns start collapsed", a
   }
 });
 
-test("paired cards sit side by side in one split row", async () => {
-  const { tree } = await renderOutcomesScreen(0);
-  const rows = [
-    // equal: peer reporting cards end level · content: each card keeps its own height
-    { name: "record attribution beside recording channels, ending level", ratio: "split-row--1-1", layout: "split-row--equal", titles: ["Record attribution", "Recording channels"] },
-    { name: "check results beside the crosstab", ratio: "split-row--1-1", layout: "split-row--content", titles: ["Automatic check results", "Confident but failed"] },
-  ];
+// the shared SplitRow with another default layout → a row that names its own layout renders the same under either
+function withSplitRowDefault(layout: string): Record<string, unknown> {
+  const SplitRow = (ui.UI as Record<string, Component>).SplitRow;
+  return { SplitRow: (props: Record<string, unknown>) => SplitRow({ layout, ...props }) };
+}
 
-  for (const row of rows) {
-    const splitRows = findNodes(tree, (n) => String(n.props.className ?? "").includes(row.ratio));
-    const pair = splitRows.find((n) => row.titles.every((title) => collectText(n).includes(title)));
-    assert.ok(pair, row.name);
-    assert.equal(pair.children.filter((child) => typeof child !== "string").length, 2, `${row.name}: exactly two columns`);
-    assert.ok(String(pair.props.className).includes(row.layout), `${row.name}: ${row.layout}`);
-  }
-});
+for (const sharedDefault of ["content", "equal"]) {
+  test(`paired cards sit side by side in one split row, each row naming its own layout (shared default ${sharedDefault})`, async () => {
+    const { tree } = await renderOutcomesScreen(0, withSplitRowDefault(sharedDefault));
+    const rows = [
+      // equal: peer reporting cards end level · content: each card keeps its own height
+      { name: "record attribution beside recording channels, ending level", ratio: "split-row--1-1", layout: "split-row--equal", titles: ["Record attribution", "Recording channels"] },
+      { name: "check results beside the crosstab", ratio: "split-row--1-1", layout: "split-row--content", titles: ["Automatic check results", "Confident but failed"] },
+    ];
+
+    for (const row of rows) {
+      const splitRows = findNodes(tree, (n) => String(n.props.className ?? "").includes(row.ratio));
+      const pair = splitRows.find((n) => row.titles.every((title) => collectText(n).includes(title)));
+      assert.ok(pair, row.name);
+      assert.equal(pair.children.filter((child) => typeof child !== "string").length, 2, `${row.name}: exactly two columns`);
+      assert.ok(String(pair.props.className).includes(row.layout), `${row.name}: ${row.layout}`);
+    }
+  });
+}
 
 test("the per-agent table spans the full width", async () => {
   const { tree } = await renderOutcomesScreen(0);
