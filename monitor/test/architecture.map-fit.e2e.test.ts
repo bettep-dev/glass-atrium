@@ -821,37 +821,67 @@ test("a zone whose title repeats its lone member hides the title and keeps no ba
 	assert.deepEqual(r.titleBands, [], `a zone with a hidden title keeps its title band: ${r.titleBands.join("; ")}`);
 });
 
-// the part health block takes the band under the map — it has to start on the first screen, not after a scroll
-async function readPartHealthPlacement(width: number, height: number) {
-	assert.ok(browser, "browser must be up");
-	const page = await browser.newPage({ viewport: { width, height } });
-	try {
-		await page.goto(`${serverUrl}/#architecture`, { waitUntil: "load" });
-		await page.waitForFunction(
-			() => Number(document.querySelector(".svg-pan-zoom_viewport")?.getAttribute("data-arch-fit-scale")) > 0,
-			null,
-			{ timeout: 60_000 },
-		);
-		await page.waitForSelector(".arch-part-health", { timeout: 10_000 });
+// below this width the map keeps a pane floor that wins over the part health peek band — owned here, never read from the screen
+const PANE_FLOOR = { PX: 500, MAX_WIDTH_PX: 1280 };
 
-		return await page.evaluate(() => {
-			const canvas = document.querySelector(".arch-mermaid-canvas") as HTMLElement;
+// narrow windows, two of them short enough that the first-screen band alone would leave the map under the pane floor
+const NARROW_VIEWPORTS = [
+	{ width: 1024, height: 768 },
+	{ width: 1024, height: 600 },
+	{ width: 1180, height: 640 },
+];
+
+async function readPartHealthPlacement(width: number, height: number) {
+	const { page, canvasSelector } = await openFittedPage(width, height);
+	try {
+		await page.waitForSelector(".arch-part-health", { timeout: 10_000 });
+		const fit = await measureFit(page, canvasSelector);
+		const placement = await page.evaluate((sel) => {
+			const canvas = document.querySelector(sel) as HTMLElement;
 			const block = document.querySelector(".arch-part-health") as HTMLElement;
 			return {
 				canvasBottom: canvas.getBoundingClientRect().bottom,
 				blockTop: block.getBoundingClientRect().top,
 				viewportHeight: window.innerHeight,
 			};
-		});
+		}, canvasSelector);
+		return { fit, ...placement };
 	} finally {
 		await page.close();
 	}
 }
 
-for (const { width, height } of VIEWPORTS) {
-	test(`the part health block starts under the map on the first screen at ${width}x${height}`, async () => {
+function isHeightBound(fit: FitReading): boolean {
+	return fit.drawnHeightPx / fit.paneHeight >= fit.drawnWidthPx / fit.drawableWidth;
+}
+
+for (const { width, height } of [...VIEWPORTS, ...NARROW_VIEWPORTS.slice(1)]) {
+	test(`the part health block starts under the map, never over it, at ${width}x${height}`, async () => {
 		const r = await readPartHealthPlacement(width, height);
 		assert.ok(r.blockTop >= r.canvasBottom - EPS_PX, `the block (top ${r.blockTop.toFixed(0)}) overlaps the map (bottom ${r.canvasBottom.toFixed(0)})`);
+	});
+}
+
+for (const { width, height } of VIEWPORTS.filter((viewport) => viewport.width >= PANE_FLOOR.MAX_WIDTH_PX)) {
+	test(`at ${PANE_FLOOR.MAX_WIDTH_PX}px wide or more the part health block starts on the first screen at ${width}x${height}`, async () => {
+		const r = await readPartHealthPlacement(width, height);
 		assert.ok(r.blockTop < r.viewportHeight, `the block starts at ${r.blockTop.toFixed(0)}px, below the ${r.viewportHeight}px screen`);
 	});
 }
+
+test(`below ${PANE_FLOOR.MAX_WIDTH_PX}px wide a height-bound map keeps its ${PANE_FLOOR.PX}px pane floor, even when the part health block leaves the first screen`, async (t) => {
+	const readings = [];
+	for (const viewport of NARROW_VIEWPORTS) readings.push({ ...viewport, ...(await readPartHealthPlacement(viewport.width, viewport.height)) });
+
+	for (const r of readings) {
+		t.diagnostic(
+			`${r.width}x${r.height}: pane ${r.fit.paneWidth.toFixed(0)}x${r.fit.paneHeight.toFixed(0)} · drawn ${r.fit.drawnWidthPx.toFixed(0)}x${r.fit.drawnHeightPx.toFixed(0)} · ` +
+				`${isHeightBound(r.fit) ? "height" : "width"}-bound · block top ${r.blockTop.toFixed(0)} of ${r.viewportHeight}`,
+		);
+		assert.ok(
+			!isHeightBound(r.fit) || r.fit.paneHeight >= PANE_FLOOR.PX - EPS_PX,
+			`${r.width}x${r.height}: the map fits a ${r.fit.paneHeight.toFixed(0)}px pane on its height — under the ${PANE_FLOOR.PX}px floor`,
+		);
+	}
+	assert.ok(readings.some((r) => isHeightBound(r.fit)), "no narrow viewport fits the map on its height — the floor went unexercised");
+});

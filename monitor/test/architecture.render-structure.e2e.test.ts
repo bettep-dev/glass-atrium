@@ -489,6 +489,22 @@ describe("healthy live fixture", () => {
 			assert.ok(probe.legend.some((line) => line.text.includes(word)), `legend lacks "${word}" — read: ${JSON.stringify(probe.legend)}`);
 	});
 
+	test("every text in the Part health block renders at 13px or larger, each row's meta line included", async () => {
+		await ctx.page.waitForSelector(".arch-part-health .arch-part-meta", { timeout: 10_000 });
+		const texts = await ctx.page.evaluate(() =>
+			[...document.querySelectorAll(".arch-part-health *")]
+				.filter((el) => [...el.childNodes].some((node) => node.nodeType === Node.TEXT_NODE && (node.textContent || "").trim() !== ""))
+				.map((el) => ({
+					text: (el as HTMLElement).innerText,
+					isMeta: el.classList.contains("arch-part-meta"),
+					px: Number.parseFloat(getComputedStyle(el).fontSize),
+				})),
+		);
+
+		assert.ok(texts.some((line) => line.isMeta), `no row meta line was measured — read: ${JSON.stringify(texts)}`);
+		for (const line of texts) assert.ok(line.px >= 13, `"${line.text}" renders at ${line.px}px`);
+	});
+
 	test("the Reset control shows its name and only a title repeating its one box is hidden", async () => {
 		const reset = ctx.page.getByRole("button", { name: "Reset diagram view" });
 		assert.match(await reset.innerText(), /\bReset\b/);

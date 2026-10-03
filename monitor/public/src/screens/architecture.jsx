@@ -12,7 +12,7 @@ const {
 // Constants
 
 const MAP_LABEL = {
-	// map-only label size — the shared 14px renders under 12px once the map is fitted to a 1024 pane
+	// map-only label size — the shared 14px renders under the 13px floor once the map is fitted to a 1024 pane
 	fontPx: 30,
 	// mermaid wrap ceiling (SVG units) — above the widest one-line map label, so mermaid never breaks one
 	wrapPx: 2000,
@@ -648,7 +648,7 @@ function ScreenArchitecture(
 					".arch-drawer-subheading { margin: 0 0 2px; font-size: var(--fs-meta); font-weight: 400; } " +
 					".arch-part-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; } " +
 					".arch-part-row { display: grid; grid-template-columns: minmax(0, 1fr) auto auto; column-gap: 8px; align-items: center; } " +
-					".arch-part-meta { grid-column: 1 / -1; font-size: 12px; } " +
+					".arch-part-meta { grid-column: 1 / -1; font-size: var(--fs-meta); } " +
 					".arch-col-card { display: flex; flex-direction: column; min-height: 0; flex: 1; } " +
 					// max-height 를 여기서 풂 — styles/base.css 의 `.card-body { max-height: 70vh }` 는 무한히 긴
 					// 페이지를 막는 공통 규칙인데, 이 카드는 flex 로 이미 제 높이가 정해져 있어 그 상한이
@@ -721,7 +721,7 @@ function ScreenArchitecture(
 					".arch-canvas-busy { position: absolute; left: 8px; top: 6px; font-size: var(--fs-meta); " +
 					'color: rgb(var(--dim)); font-family: "JetBrains Mono", monospace; pointer-events: none; ' +
 					"background: rgb(var(--surface) / 0.7); padding: 1px 6px; border-radius: 4px; } " +
-					// corner badge at the label size, so it holds the same 12px floor; its opaque pill keeps the ring and the border out of the text
+					// corner badge at the label size, so it holds the same 13px floor; its opaque pill keeps the ring and the border out of the text
 					`#${ARCH_CANVAS_ID} text.arch-ring-glyph { display: none; font-family: "JetBrains Mono", monospace; font-size: ${MAP_LABEL.fontPx}px; font-weight: 700; pointer-events: none; ` +
 					"text-anchor: start; } " +
 					`#${ARCH_CANVAS_ID} rect.arch-ring-glyph-pill { display: none; fill: rgb(var(--surface)); stroke-width: 1.5; vector-effect: non-scaling-stroke; pointer-events: none; } ` +
@@ -2820,7 +2820,8 @@ function PartHealthBlockAR({ partRows, attentionEmpty, freshness, nodeIndex, onS
 				<h2 id={`${PART_HEALTH_ID_AR}-title`} className="arch-part-health-title">Part health</h2>
 			</div>
 			<div className="card-body">
-				<SplitRow ratio="1:1">
+				{/* two lists in one card, not peer cards → each column keeps its content height */}
+				<SplitRow ratio="1:1" layout="content">
 					<PartHealthListAR title="Needs attention" rows={attention} empty={attentionEmpty} {...listProps} />
 					<SplitColumn>
 						{/* a cold read leaves only unloaded parts → the Not loaded list speaks, not a false 'No other parts' */}
