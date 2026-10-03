@@ -2959,14 +2959,24 @@ function deriveLoopAggregateI(data) {
 }
 
 // loop-events carries no day window → the basis is the newest rows up to the request limit
+// one header line: ~145px at the 1280 three-card row → no "cycles" noun (both feet name it)
 function getLoopBasisI(aggregate) {
 	const { eventCount } = aggregate;
 	const trend = aggregate.trend || [];
+	const qualifier = eventCount >= LOOP_EVENTS_LIMIT ? "Last" : "All";
 	const span =
-		trend.length > 0 ? `, ${trend[0].date} to ${trend[trend.length - 1].date}` : "";
-	if (eventCount >= LOOP_EVENTS_LIMIT)
-		return `Latest ${formatIntI(eventCount)} cycles${span}`;
-	return `All ${formatIntI(eventCount)} recorded cycles${span}`;
+		trend.length > 0
+			? ` · ${getDateSpanI(trend[0].date, trend[trend.length - 1].date)}`
+			: "";
+	return `${qualifier} ${formatIntI(eventCount)}${span}`;
+}
+
+// MM/DD drops the year → a span across a year boundary states its years instead
+function getDateSpanI(first, last) {
+	const firstYear = String(first).slice(0, 4);
+	const lastYear = String(last).slice(0, 4);
+	if (firstYear !== lastYear) return `${firstYear}–${lastYear}`;
+	return `${formatDateI(first)}–${formatDateI(last)}`;
 }
 
 // newest request per region setter → a superseded answer cannot move the stamp either

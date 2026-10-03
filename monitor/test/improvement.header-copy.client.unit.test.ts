@@ -74,6 +74,10 @@ function getLoopAggregate(days: string[]) {
 
 const loopAggregate = getLoopAggregate(["2026-09-24", "2026-09-25"]);
 const emptyAggregate = getLoopAggregate([]);
+// the loop-events fetch limit → the longest basis: a cut count over a two-month span
+const cutLoopAggregate = getLoopAggregate(
+  Array.from({ length: 200 }, (_, i) => `2026-${i < 100 ? "08" : "09"}-${String(1 + (i % 28)).padStart(2, "0")}`),
+);
 
 function ready(data: Record<string, unknown>) {
   return { status: "ready", data, error: null };
@@ -94,8 +98,10 @@ const titleRows: Array<{ name: string; sandbox: ScreenSandbox; card: string; pro
   { name: "learning memory, populated", sandbox: page, card: "BucketRowI", props: { state: READY, buckets: { ctm: 4, epm: 2 } } },
 ];
 
-// Cards whose header meta is authored copy (or a short count + date), never a loop basis.
+// Cards whose header meta is authored copy, or a count with its dates.
 const metaRows: typeof titleRows = [
+  { name: "applied changes, cut at the fetch limit", sandbox: page, card: "ChangeSummaryCardI", props: { state: READY, aggregate: cutLoopAggregate } },
+  { name: "trend, cut at the fetch limit", sandbox: page, card: "TrendCardI", props: { state: READY, aggregate: cutLoopAggregate } },
   { name: "learning memory, loading", sandbox: page, card: "BucketRowI", props: { state: LOADING } },
   { name: "learning memory, populated", sandbox: page, card: "BucketRowI", props: { state: READY, buckets: { ctm: 4, epm: 2 } } },
   { name: "flagged results, loading", sandbox: gauges, card: "FlaggedResultsCardI", props: { state: LOADING } },

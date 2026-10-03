@@ -98,26 +98,36 @@ const READY = { status: "ready" };
 // the loop-events URL fetches at most this many rows, newest first
 const FETCH_CAP = 200;
 
-test("a cycle count cut at the row limit names its count and dates, never a day window or fetch wording", () => {
-  const days = ["2026-09-20", "2026-09-21", "2026-09-22", "2026-09-23"];
-  const aggregate = sandbox.deriveLoopAggregateI({
-    events: getEvents(days, FETCH_CAP / days.length),
-  });
+// the header meta holds the basis on one line → a qualified count plus the shortest date span that stays unambiguous
+const BASIS_ROWS = [
+  {
+    name: "a count cut at the row limit reads as the latest cycles over their dates",
+    days: ["2026-09-20", "2026-09-21", "2026-09-22", "2026-09-23"],
+    perDay: FETCH_CAP / 4,
+    expected: `Last ${FETCH_CAP} · 09/20–09/23`,
+  },
+  {
+    name: "a count under the row limit reads as every recorded cycle",
+    days: ["2026-09-24", "2026-09-25"],
+    perDay: 2,
+    expected: "All 4 · 09/24–09/25",
+  },
+  {
+    name: "a span across a year boundary names its years, so no month-day pair is ambiguous",
+    days: ["2025-12-31", "2026-01-01"],
+    perDay: 2,
+    expected: "All 4 · 2025–2026",
+  },
+];
 
-  const basis = sandbox.getLoopBasisI(aggregate);
+describe("the loop basis names its count and dates in one header line", () => {
+  for (const row of BASIS_ROWS) {
+    test(row.name, () => {
+      const aggregate = sandbox.deriveLoopAggregateI({ events: getEvents(row.days, row.perDay) });
 
-  assert.match(basis, new RegExp(`Latest ${FETCH_CAP} cycles`));
-  assert.doesNotMatch(basis, /fetch cap/);
-  assert.match(basis, /2026-09-20 to 2026-09-23/);
-  assert.doesNotMatch(basis, /days/);
-});
-
-test("a cycle count under the fetch cap reads as every recorded cycle", () => {
-  const aggregate = sandbox.deriveLoopAggregateI({
-    events: getEvents(["2026-09-24", "2026-09-25"], 2),
-  });
-
-  assert.equal(sandbox.getLoopBasisI(aggregate), "All 4 recorded cycles, 2026-09-24 to 2026-09-25");
+      assert.equal(sandbox.getLoopBasisI(aggregate), row.expected);
+    });
+  }
 });
 
 test("both loop cards head their numbers with the same stated basis", () => {
