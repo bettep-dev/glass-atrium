@@ -23,7 +23,10 @@ Pinned invariants:
 The cycle runs with ``skip_haiku=False`` on purpose: ``skip_haiku`` forces the
 streak to 0 and would bypass the branch under test. No network is reached — the
 back-off branch makes no Haiku call, and the fresh-timeout case stubs the
-generator. ``skip_loop_emit=True`` blocks every PG write.
+generator. ``skip_loop_emit=True`` skips only the cycle's gated emits — the
+discharge head stage and the regression-gate reads run regardless — so setUp
+turns the PG availability flags off and seals every connect, read, write and
+helper-subprocess seam.
 
 Run with either runner:
     python3 -m unittest autoagent.test.test_chronic_backoff_error_seam -v
@@ -60,6 +63,20 @@ except Exception as exc:  # noqa: BLE001 — psycopg absent → skip, not error
 
 _PROBE_AGENT = "backoff-seam-probe-agent"
 
+# Every daemon_cycle callable that opens a PG connection or forks the PG helper.
+_PG_REACH_SEAMS = (
+    "_pg_connect",
+    "_pg_read_pending_patterns",
+    "_pg_read_coverage_patterns",
+    "_pg_read_outcomes_since",
+    "_pg_count_outcomes_since",
+    "_pg_reject_learning_pattern",
+    "_pg_discharge_learning_pattern",
+    "_pg_write_loop_event",
+    "_pg_write_corpus_audit",
+    "_invoke_pg_helper_subprocess",
+)
+
 
 @unittest.skipIf(dc is None, f"import failed: {_IMPORT_ERROR}")
 class BackoffErrorSeam(unittest.TestCase):
@@ -92,10 +109,26 @@ class BackoffErrorSeam(unittest.TestCase):
             ("FEATURE_FLAGS_FILE", self.tmp_dir / "no-such-flags.json"),
             # Intra-cycle spacing is a real sleep on the non-backoff branch.
             ("INTER_CALL_SPACING_SEC", 0.0),
+            # The cycle's own availability gates → every PG stage skips.
+            ("HAS_PG_LOOP_WRITE", False),
+            ("HAS_PG_PATTERN_READ", False),
+            ("HAS_PG_OUTCOME_READ", False),
         ):
             patcher = mock.patch.object(dc, target, repl)
             patcher.start()
             self.addCleanup(patcher.stop)
+        self.pg_reach: list[str] = []
+        for name in _PG_REACH_SEAMS:
+            patcher = mock.patch.object(dc, name, self._refuse_pg(name), create=True)
+            patcher.start()
+            self.addCleanup(patcher.stop)
+
+    def _refuse_pg(self, name: str):  # noqa: ANN202 — seam signatures differ
+        def _refuse(*_args: object, **_kwargs: object) -> None:
+            self.pg_reach.append(name)
+            raise AssertionError(f"PG reach from a sealed test: {name}")
+
+        return _refuse
 
     def _run(self, *, streak: int, proposal: "dc.PatchProposal | None") -> "dc.PatchResult":
         def _no_haiku(*args: object, **kwargs: object) -> "dc.PatchProposal":
@@ -118,6 +151,10 @@ class BackoffErrorSeam(unittest.TestCase):
                     )
         self.assertEqual(len(report.patches), 1)
         return report.patches[0]
+
+    def test_when_cycle_runs_then_no_postgres_seam_is_reached(self) -> None:
+        self._run(streak=dc.TIMEOUT_BACKOFF_THRESHOLD, proposal=None)
+        self.assertEqual(self.pg_reach, [])
 
     def test_when_streak_at_threshold_then_error_empty(self) -> None:
         patch = self._run(streak=dc.TIMEOUT_BACKOFF_THRESHOLD, proposal=None)

@@ -126,6 +126,20 @@ class TestInfraFailureLeavesStreakUnchanged(unittest.TestCase):
 
 _ARM_PROBE_AGENT = "reject-arm-probe-agent"
 
+# Every daemon_cycle callable that opens a PG connection or forks the PG helper.
+_PG_REACH_SEAMS = (
+    "_pg_connect",
+    "_pg_read_pending_patterns",
+    "_pg_read_coverage_patterns",
+    "_pg_read_outcomes_since",
+    "_pg_count_outcomes_since",
+    "_pg_reject_learning_pattern",
+    "_pg_discharge_learning_pattern",
+    "_pg_write_loop_event",
+    "_pg_write_corpus_audit",
+    "_invoke_pg_helper_subprocess",
+)
+
 
 def _reject_arm_rows() -> list[tuple[str, str, str]]:
     """(row name, rationale, stored status) — one row per failure class the arm meets."""
@@ -161,8 +175,10 @@ class TestRunCycleRejectArmStatus(unittest.TestCase):
     """The reject arm stores a gate verdict as 'rejected', anything else as 'unadjudicated'.
 
     One cycle per row over a single target whose stubbed generation returns an
-    empty diff (classify_patch_area R3 → 'reject'); skip_loop_emit=True blocks
-    every PG write.
+    empty diff (classify_patch_area R3 → 'reject'). skip_loop_emit=True skips only
+    the cycle's gated emits — the discharge head stage and the regression-gate
+    reads run regardless — so setUp turns the PG availability flags off and seals
+    every connect, read, write and helper-subprocess seam.
     """
 
     def setUp(self) -> None:
@@ -190,10 +206,26 @@ class TestRunCycleRejectArmStatus(unittest.TestCase):
             ("FEATURE_FLAGS_FILE", self.tmp_dir / "no-such-flags.json"),
             ("INTER_CALL_SPACING_SEC", 0.0),
             ("consecutive_timeout_count", lambda _t: 0),
+            # The cycle's own availability gates → every PG stage skips.
+            ("HAS_PG_LOOP_WRITE", False),
+            ("HAS_PG_PATTERN_READ", False),
+            ("HAS_PG_OUTCOME_READ", False),
         ):
             patcher = mock.patch.object(dc, target, repl)
             patcher.start()
             self.addCleanup(patcher.stop)
+        self.pg_reach: list[str] = []
+        for name in _PG_REACH_SEAMS:
+            patcher = mock.patch.object(dc, name, self._refuse_pg(name), create=True)
+            patcher.start()
+            self.addCleanup(patcher.stop)
+
+    def _refuse_pg(self, name: str):  # noqa: ANN202 — seam signatures differ
+        def _refuse(*_args: object, **_kwargs: object) -> None:
+            self.pg_reach.append(name)
+            raise AssertionError(f"PG reach from a sealed test: {name}")
+
+        return _refuse
 
     def _stored_status(self, rationale: str) -> str:
         proposal = dc.PatchProposal(
@@ -227,6 +259,10 @@ class TestRunCycleRejectArmStatus(unittest.TestCase):
         for name, rationale, expected in _reject_arm_rows():
             with self.subTest(row=name):
                 self.assertEqual(self._stored_status(rationale), expected, name)
+
+    def test_cycle_reaches_no_postgres_seam(self) -> None:
+        self._stored_status(_GENERATOR_RATIONALE)
+        self.assertEqual(self.pg_reach, [])
 
     def test_unadjudicated_rows_cover_every_non_adjudication_class(self) -> None:
         # A class added to the set without a row here would go unpinned.
