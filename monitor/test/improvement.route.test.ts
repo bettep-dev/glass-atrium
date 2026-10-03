@@ -757,6 +757,58 @@ test("POST approve: exit 23 → 422 { status: 'row_unreadable' } leading with Re
   assert.ok(body.reason.includes("row is unreadable"), "the daemon's stderr rides along for diagnosis");
 });
 
+test("POST approve: exit 25 → 503 { status: 'apply_error' } leading with the pending-migration remedy", async () => {
+  // assert_apply_record_table's refusal line verbatim — checked before the first apply, so nothing moved
+  process.env.AUTOAGENT_APPLY_SCRIPT = writeStderrStub(
+    "apply-record-table-unconfirmed.sh",
+    25,
+    "[daemon-apply] FATAL: core.autoagent_apply_records not confirmed (probe rc=0 answer=f err=) — nothing applied; run the pending monitor migration",
+  );
+  const res = await app.inject({ method: "POST", url: "/api/improvement/4242/approve" });
+  assert.strictEqual(res.statusCode, 503, "nothing changed and a retry after the migration succeeds — never the generic 500");
+  const body = res.json() as { status: string; id: number; reason: string };
+  assert.strictEqual(body.status, "apply_error");
+  assert.strictEqual(body.id, 4242);
+  assert.ok(body.reason.startsWith("nothing applied"), "the outcome leads, since the approve toast truncates");
+  assert.match(body.reason.slice(0, 80), /run the pending monitor migration/, "the remedy survives the 80-char toast cut");
+  assert.ok(body.reason.includes("not confirmed"), "the daemon's stderr rides along for diagnosis");
+});
+
+test("POST approve: exit 26 → 200 { status: 'applied', record_missing: true } naming the cause and the JSONL record", async () => {
+  // create_apply_record's refusal line verbatim — raised after the bytes landed and the row flipped applied
+  const causes = ["psql_not_found", "digest_or_diff_missing", "insert_failed"];
+  for (const cause of causes) {
+    process.env.AUTOAGENT_APPLY_SCRIPT = writeStderrStub(
+      `apply-record-failed-${cause}.sh`,
+      26,
+      `[daemon-apply] FATAL: apply record NOT written cause=${cause} target=agents/glass-atrium-dev-shell.md pattern=p-shell — the row is applied and its JSONL applied row holds the record`,
+    );
+    const res = await app.inject({ method: "POST", url: "/api/improvement/4242/approve" });
+    assert.strictEqual(res.statusCode, 200, `cause ${cause}: the row is applied, so the answer is a success the card refreshes on`);
+    const body = res.json() as { id: number; status: string; record_missing?: boolean; reason?: string };
+    assert.strictEqual(body.id, 4242);
+    assert.strictEqual(body.status, "applied");
+    assert.strictEqual(body.record_missing, true, `cause ${cause}`);
+    assert.ok(body.reason?.includes(`cause=${cause}`), `reason names cause ${cause}`);
+    assert.ok(body.reason?.includes("JSONL applied row"), "reason names where the record survives");
+  }
+});
+
+test("POST approve: exit 26 with no parseable cause → 200 record_missing, no stderr text copied into the reason", async () => {
+  process.env.AUTOAGENT_APPLY_SCRIPT = writeStderrStub(
+    "apply-record-failed-garbled.sh",
+    26,
+    "[daemon-apply] FATAL: apply record NOT written cause=Garbled tail",
+  );
+  const res = await app.inject({ method: "POST", url: "/api/improvement/4242/approve" });
+  assert.strictEqual(res.statusCode, 200);
+  const body = res.json() as { status: string; record_missing?: boolean; reason?: string };
+  assert.strictEqual(body.status, "applied");
+  assert.strictEqual(body.record_missing, true);
+  assert.ok(body.reason?.includes("JSONL applied row"), "the record's location survives a garbled line");
+  assert.doesNotMatch(body.reason ?? "", /Garbled|cause=/, "no stderr text is copied from an unparseable line");
+});
+
 test("POST approve: exit 2 (bad arg) → 500 { status: 'apply_error' }", async () => {
   process.env.AUTOAGENT_APPLY_SCRIPT = writeExitStub("apply-badarg.sh", 2);
   const res = await app.inject({ method: "POST", url: "/api/improvement/4242/approve" });

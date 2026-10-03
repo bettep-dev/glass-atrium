@@ -5,8 +5,9 @@
 # WHY THIS ROW EXISTS. doctor §14 reports an apply-preflight abort as a live condition until a LATER
 # post-gate row proves the gate re-opened. A cycle that clears the gate and finds zero eligible
 # patches used to print to stderr and exit 0 having written NOTHING, so a recovered-but-idle daemon
-# never superseded its own earlier abort: the launchd path discards that stderr, and the applied log
-# — the only durable trace — stayed silent. The row is the missing evidence, not a cosmetic log line.
+# never superseded its own earlier abort: on the launchd path that stderr survives only in the
+# rotating /tmp/autoagent-daemon-loop.log, and the applied log — the only durable trace — stayed
+# silent. The row is the missing evidence, not a cosmetic log line.
 #
 # LITERAL CHOICE. The row carries the EXISTING `skip` literal with a new `reason`, never a dedicated
 # one. The producer's status-literal set is pinned by string equality in test/doctor-apply-abort-rows

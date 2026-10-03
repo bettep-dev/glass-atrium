@@ -213,7 +213,7 @@ dump_log() {
     return 1
   }
   [[ -f "${APPLIED_LOG}" ]] || {
-    echo "no applied log — the tripwire is stderr-only again, which launchd discards" >&2
+    echo "no applied log — the tripwire is stderr-only again, which survives only in the rotating /tmp/autoagent-daemon-loop.log" >&2
     echo "daemon output: ${output}" >&2
     return 1
   }

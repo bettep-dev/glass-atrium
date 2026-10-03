@@ -745,16 +745,12 @@ run_doctor() {
     log "  ---- ${snapshot_path_anomaly} live recovery repo(s) carry a control-character path (file-less pathological tree) — NOT staleness: a snapshot run would no-op; inspect the path named above and remove the empty tree once verified ----"
   fi
 
-  # 14. autoagent apply-abort surface. daemon-apply.sh loud-fails on two terminal paths and persists
-  #     ONE abort row per abort into the daily applied-log JSONL: PRE-gate (exit 16) when the
-  #     green-suite gate cannot certify the harness, and POST-gate (exit 7) when the eligible-pending
-  #     backlog exceeds the anomaly threshold and the apply loop refuses to drain it. Both carry the
-  #     same `abort` literal (why: _apply_abort_scan below); the row's `reason` names which, and the
-  #     verdict line reads it to print the matching remedy. That row is the only durable trace of
-  #     either: the launchd path discards the daemon's stderr, so without this section an aborted
+  # 14. autoagent apply-abort surface. daemon-apply.sh persists ONE abort row per abort into the
+  #     daily applied-log JSONL; every such row carries the same `abort` literal (why:
+  #     _apply_abort_scan below) and its own `reason`. That row is the only durable trace of an
+  #     abort: stderr survives only in a rotated launchd log, so without this section an aborted
   #     apply stage is invisible once the cycle ends. FAIL rather than warn — an install whose daemon
-  #     has stopped applying is a live condition with a concrete remedy (fix the red suite / drain
-  #     the flooded proposal table), not an advisory.
+  #     has stopped applying is a live condition with a concrete remedy, not an advisory.
   #     SUPERSESSION, not counting: a later row that is neither an abort nor gate-skipped means a
   #     subsequent cycle got far enough to write one, so the older abort is history. Supersession is
   #     that set rather than a landed patch, because a recovered daemon with nothing eligible to apply
@@ -778,11 +774,17 @@ run_doctor() {
     abort_row="$(printf '%s\n' "${abort_scan}" | sed -n '2p')"
     case "${abort_state}" in
       abort)
-        # The two producers need opposite remedies, so the row's `reason` picks the clause: naming
-        # the gate on a backlog anomaly sends the operator at a suite that was never red.
+        # The row's `reason` picks the clause; the generic one blames a gate or loop that did run.
+        # Exit 26's row names no cause, so its clause points at the producer's stderr line.
         case "${abort_row}" in
           *'"reason":"backlog_anomaly"'*)
             abort_cause="the apply loop refused to drain an eligible-pending backlog above the anomaly threshold; drain or correct core.autoagent_proposals (a generation runaway floods it), then let the next cycle apply"
+            ;;
+          *'"reason":"apply_record_table_unconfirmed"'*)
+            abort_cause="the apply-record table core.autoagent_apply_records could not be confirmed, so nothing was applied; run the pending monitor migration ('glass-atrium db-setup'), then let the next cycle apply"
+            ;;
+          *'"reason":"apply_record_failed"'*)
+            abort_cause="a patch landed and its row is applied, but its database record was not written — the JSONL applied row holds the record, so nothing re-applies; the cause is only on the daemon's 'apply record NOT written cause=' stderr line (patch_source backlog: /tmp/autoagent-daemon-loop.log · single: the monitor log for an Approve), fix it, then let the next cycle drain the rest"
             ;;
           *)
             abort_cause="the daemon has not reached its apply loop since; fix the named cause, then let the next cycle re-open the gate"
@@ -1751,10 +1753,9 @@ APPLY_ABORT_WINDOW_DAYS="${APPLY_ABORT_WINDOW_DAYS:-14}"
 # Classify the daily applied-log JSONL files under $1 against the YYYY-MM-DD cutoff $2. Producer
 # grammar (autoagent/daemon-apply.sh): one JSON object per line carrying a `"status":"<literal>"`
 # field. `abort` is the sole abort-class literal, and the axis is the literal itself rather than
-# which gate stage produced it: the pre-gate preflight abort (exit 16) and the post-gate
-# backlog-anomaly tripwire (exit 7) both write it — two different producer sites, one literal (why
-# the tripwire reuses it rather than taking its own: the backlog_anomaly_row header in
-# autoagent/daemon-apply.sh). Their `reason` fields separate them for the verdict line.
+# which gate stage produced it: every abort producer in autoagent/daemon-apply.sh writes it (why one
+# literal rather than one per producer: the backlog_anomaly_row header there), and the row's `reason`
+# picks the remedy on the §14 verdict line.
 # Every other literal (applied · skip · reject · needs_regen · dryrun · error) is a non-abort
 # literal, and the classifier treats them alike — it keys on the abort/non-abort split rather than
 # on `applied` alone: `applied` fires only when a patch actually LANDS, so a recovered daemon with

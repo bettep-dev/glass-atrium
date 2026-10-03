@@ -28,6 +28,11 @@ const BUDGET_MAX_USD_MC = 50.0;
 // _FALLBACK 과 동일 값). 필드를 한 번도 건드리지 않은 운영자가 실제로 돌리고 있는 값이라
 // 빈 입력의 placeholder 는 이 값을 광고해야 한다.
 const BUDGET_SEED_DEFAULT_MC = "10.00";
+// Tier-knob mirrors of the server SoT (model-config-consts EFFORT_LEVELS / OUTPUT_CAP_PATTERN) — keep in sync.
+const EFFORT_LEVELS_MC = ["low", "medium", "high", "xhigh", "max"];
+const OUTPUT_CAP_RE_MC = /^[1-9][0-9]{0,5}$/;
+// What an unset knob ('inherit' → key removed) runs at: no --effort flag / no output-cap env.
+const CLI_DEFAULT_LABEL_MC = "CLI default";
 
 const CUSTOM_OPTION_MC = "__custom__";
 
@@ -161,6 +166,11 @@ const SYNC_META_MC = {
 		tone: "warn",
 		desc: "these values are being read from the pre-rename config rows — run `glass-atrium db-setup` to complete the rename",
 	},
+	"file-invalid": {
+		label: "Rejected value",
+		tone: "warn",
+		desc: "daemon-config.json holds a call-tier value the daemon rejects — every daemon cycle stops until Save rewrites it",
+	},
 };
 
 // 예산 도메인 표시 메타 — 라벨/평이 설명. key = GET budgets[].domain (BudgetDomainKey).
@@ -176,6 +186,39 @@ const BUDGET_META_MC = {
 		label: "Self-improve pre-verify call cap",
 		hint: "Caps one self-improve pre-verify call",
 		desc: "Aborts the runaway call — only the pre-verify step reads this cap",
+		source: "daemon-config.json",
+	},
+};
+
+// Tier-knob display meta — key = GET tiers[].domain; kind picks the control and the client check.
+// Labels name the self-improve calls only: wiki compile reads neither knob.
+const TIER_META_MC = {
+	"tier.worker_effort": {
+		label: "Self-improve generation effort",
+		hint: "--effort on one self-improve generation call",
+		desc: "CLI default = no --effort flag, so the settings or model default governs the call",
+		kind: "effort",
+		source: "daemon-config.json",
+	},
+	"tier.pre_verify_effort": {
+		label: "Self-improve pre-verify effort",
+		hint: "--effort on one self-improve pre-verify call",
+		desc: "CLI default = no --effort flag; keep pre-verify at or above the generation level",
+		kind: "effort",
+		source: "daemon-config.json",
+	},
+	"tier.worker_max_output_tokens": {
+		label: "Self-improve generation output cap",
+		hint: "Max output tokens for one generation call",
+		desc: "Sets CLAUDE_CODE_MAX_OUTPUT_TOKENS — the CLI silently lowers a value above the model's own limit",
+		kind: "output-cap",
+		source: "daemon-config.json",
+	},
+	"tier.pre_verify_max_output_tokens": {
+		label: "Self-improve pre-verify output cap",
+		hint: "Max output tokens for one pre-verify call",
+		desc: "Sets CLAUDE_CODE_MAX_OUTPUT_TOKENS for pre-verify — blank = the model default",
+		kind: "output-cap",
 		source: "daemon-config.json",
 	},
 };
@@ -198,7 +241,12 @@ const MODEL_FAMILY_RE_MC = /^claude-(opus|sonnet|haiku|fable)-(\d+)(?:-(\d+))?$/
 const IN_EFFECT_TITLE_MC = {
 	models: "Read back from the agent files and daemon-config.json",
 	budgets: "Read back from daemon-config.json",
+	tiers: "Read back from daemon-config.json",
 };
+
+// PUT group → the GET rows carrying its saved targets; one list drives every form helper.
+const FORM_GROUP_ROWS_MC = { models: "domains", budgets: "budgets", tiers: "tiers" };
+const FORM_GROUPS_MC = Object.keys(FORM_GROUP_ROWS_MC);
 
 function ScreenModelConfig() {
 	const {
@@ -218,7 +266,7 @@ function ScreenModelConfig() {
 	} = window.UI;
 
 	const [configState, setConfigState] = useStateMC(INITIAL_REGION_STATE);
-	// form = 편집 버퍼 { models: {domain→value}, budgets: {budgetKey→value} } — GET 의 desired 미러.
+	// form = edit buffer { models, budgets, tiers }, each keyed by GET domain → mirrors GET desired.
 	const [form, setForm] = useStateMC(null);
 	const [saving, setSaving] = useStateMC(false);
 	const [saveError, setSaveError] = useStateMC(null);
@@ -319,6 +367,9 @@ function ScreenModelConfig() {
 	const setBudget = (key, value) => {
 		setForm((f) => (f ? { ...f, budgets: { ...f.budgets, [key]: value } } : f));
 	};
+	const setTier = (key, value) => {
+		setForm((f) => (f ? { ...f, tiers: { ...f.tiers, [key]: value } } : f));
+	};
 	// One transport for both Save controls — the sticky bar sends the edit diff, the drift banner
 	// sends the saved targets of the rows that drifted.
 	const submit = async (body) => {
@@ -351,7 +402,7 @@ function ScreenModelConfig() {
 		if (!isDirty || saving) return;
 		setForm(
 			baseline
-				? { models: { ...baseline.models }, budgets: { ...baseline.budgets } }
+				? Object.fromEntries(FORM_GROUPS_MC.map((group) => [group, { ...baseline[group] }]))
 				: form,
 		);
 		setSaveError(null);
@@ -491,6 +542,16 @@ function ScreenModelConfig() {
 						errors={errors}
 						isStale={isStale}
 						onBudgetChange={setBudget}
+					/>
+					<TiersSectionMC
+						state={sectionState}
+						tiers={data?.tiers}
+						isFileRead={data?.daemon_config_sync !== "file-missing"}
+						form={form}
+						baseline={baseline}
+						errors={errors}
+						isStale={isStale}
+						onTierChange={setTier}
 					/>
 					{/* the shorter caps column carries the tier notes → the model table starts at the top */}
 					<TierNotesMC
@@ -1261,6 +1322,160 @@ function BudgetRowMC({ budget: b, value, defaultValue, error, isStale, onChange 
 	);
 }
 
+// Daemon call-tier section — the --effort level and output-token cap per self-improve call.
+function TiersSectionMC({
+	state,
+	tiers,
+	isFileRead,
+	form,
+	baseline,
+	errors,
+	isStale,
+	onTierChange,
+}) {
+	const { SkeletonRows, TableHead } = window.UI;
+	// server order = TIER_DOMAINS order; an unknown knob renders with fallback meta (never dropped)
+	const rows = tiers || [];
+
+	return (
+		<div className="mb-4">
+			<SectionHeadMC
+				label="Daemon call tiers"
+				sub={getApplyModeSubMC(rows, TIER_META_MC)}
+			/>
+			{state === "unavailable" ? (
+				<SectionUnavailableMC />
+			) : (
+				<table className="tbl" style={LEDGER_TABLE_STYLE_MC}>
+					<caption className="sr-only">Effort level and output-token cap per background call</caption>
+					<LedgerColsMC />
+					<thead>
+						<tr>
+							<TableHead>Background call</TableHead>
+							<TableHead>Setting</TableHead>
+							<TableHead>
+								<span title={IN_EFFECT_TITLE_MC.tiers}>In effect</span>
+							</TableHead>
+						</tr>
+					</thead>
+					<tbody aria-busy={state === "loading" ? "true" : undefined}>
+						{state === "loading" ? (
+							<SkeletonRows
+								rows={Object.keys(TIER_META_MC).length}
+								columns={LEDGER_COL_COUNT_MC}
+								rowHeight={LEDGER_ROW_HEIGHT_MC}
+							/>
+						) : rows.length === 0 ? (
+							<EmptyRowMC
+								colSpan={LEDGER_COL_COUNT_MC}
+								message="No call tiers reported."
+							/>
+						) : (
+							rows.map((t) => (
+								<TierRowMC
+									key={t.domain}
+									tier={t}
+									value={form.tiers?.[t.domain] ?? "inherit"}
+									defaultValue={baseline?.tiers?.[t.domain] ?? "inherit"}
+									error={errors[t.domain]}
+									isFileRead={isFileRead}
+									isStale={isStale}
+									onChange={(v) => onTierChange(t.domain, v)}
+								/>
+							))
+						)}
+					</tbody>
+				</table>
+			)}
+			<TierNotesMC
+				title="What each setting does"
+				rows={rows.map((t) => TIER_META_MC[t.domain])}
+			/>
+		</div>
+	);
+}
+
+// Mono digits → 11ch holds the "CLI default" placeholder and the widest cap (6 digits) plus the caret.
+const TIER_CAP_FIELD_STYLE_MC = { width: "calc(11ch + 4px + var(--ctl-pad-x))" };
+
+/**
+ * One knob row — an effort select (CLI default + the five levels) or a token-count field where
+ * blank = unset ('inherit'), plus In effect and the saved-value reset.
+ */
+function TierRowMC({ tier: t, value, defaultValue, error, isFileRead, isStale, onChange }) {
+	const meta = TIER_META_MC[t.domain] || { label: t.domain, hint: "", desc: "", kind: "", source: "daemon-config.json" };
+	const showError = Boolean(error);
+	const overridden = value !== defaultValue;
+	// absent key = the unset state, not an unread one — unless the file itself was not read
+	const live = t.actual ?? (isFileRead ? CLI_DEFAULT_LABEL_MC : null);
+	const labelOf = (v) => (v === "inherit" ? CLI_DEFAULT_LABEL_MC : v);
+
+	return (
+		<tr className="is-grouped" style={{ verticalAlign: "top" }}>
+			<td>
+				<div className="fs-body">{meta.label}</div>
+				<RowHintMC hint={meta.hint} />
+			</td>
+			<td>
+				{meta.kind === "effort" ? (
+					<select
+						className={`field field-select field--mono${showError ? " is-error" : ""}`}
+						value={value}
+						onChange={(e) => onChange(e.target.value)}
+						aria-label={`${meta.label} level`}
+						aria-invalid={showError ? "true" : undefined}>
+						{["inherit", ...EFFORT_LEVELS_MC].map((level) => (
+							<option key={level} value={level}>
+								{level === "inherit" ? `${CLI_DEFAULT_LABEL_MC} — no --effort` : level}
+							</option>
+						))}
+					</select>
+				) : (
+					<input
+						type="text"
+						inputMode="numeric"
+						className={`field field--mono text-right${showError ? " is-error" : ""}`}
+						style={TIER_CAP_FIELD_STYLE_MC}
+						value={value === "inherit" ? "" : value}
+						placeholder={CLI_DEFAULT_LABEL_MC}
+						onChange={(e) => onChange(e.target.value === "" ? "inherit" : e.target.value)}
+						aria-label={`${meta.label} in tokens`}
+						aria-invalid={showError ? "true" : undefined}
+					/>
+				)}
+				{showError && (
+					<div className="fs-meta text-crit mt-1" role="alert">
+						<span aria-hidden="true">✕ </span>
+						{error}
+					</div>
+				)}
+				<GhostResetMC
+					overridden={overridden}
+					defaultValue={labelOf(defaultValue)}
+					onReset={() => onChange(defaultValue)}
+				/>
+			</td>
+			<td>
+				{/* a rejected file value is in effect nowhere — the daemon refuses the whole cycle */}
+				{t.file_error ? (
+					<div className="fs-meta text-crit" role="alert">
+						<span aria-hidden="true">✕ </span>
+						{`The daemon rejects the file value: ${t.file_error}`}
+					</div>
+				) : (
+					<LiveValueMC
+						value={live}
+						drift={t.drift}
+						source={meta.source}
+						isStale={isStale}
+						driftTitle="daemon-config.json differs from the saved setting — press Save again"
+					/>
+				)}
+			</td>
+		</tr>
+	);
+}
+
 // Save 의 per-surface 결과 공시 — 문제 행(failed/skipped)만 펼쳐 두고 ok 행은 접힌 disclosure 뒤로
 // (silent skip 금지, AC-5 — 접어도 목록에는 남는다).
 function SurfaceResultsCardMC({ results, onDismiss }) {
@@ -1333,8 +1548,9 @@ function SurfaceResultRowMC({ result: r }) {
 // warn-tone: 구조 정합성 신호 (info-tone 은 architecture 화면 전용).
 function DriftBannerMC({ sync, onResync, saving }) {
 	const { Icon } = window.UI;
-	// Remedies differ — Save fixes drift/file-missing, db-setup fixes pending-migration.
+	// Remedies differ — Save fixes drift/file-missing/file-invalid, db-setup fixes pending-migration.
 	const pendingMigration = sync === "pending-migration";
+	const isFileInvalid = sync === "file-invalid";
 
 	return (
 		<div
@@ -1349,7 +1565,9 @@ function DriftBannerMC({ sync, onResync, saving }) {
 				<div className="fs-body font-medium text-ink">
 					{pendingMigration
 						? "Config rows still carry their pre-rename names"
-						: "Saved config not yet fully live"}
+						: isFileInvalid
+							? "The daemon rejects a value in daemon-config.json"
+							: "Saved config not yet fully live"}
 				</div>
 				<div className="fs-meta text-dim mt-1">
 					{pendingMigration ? (
@@ -1358,6 +1576,8 @@ function DriftBannerMC({ sync, onResync, saving }) {
 							<span className="font-mono">glass-atrium db-setup</span> to complete
 							the rename.
 						</>
+					) : isFileInvalid ? (
+						"Every daemon cycle stops until it is rewritten. Save again writes the saved setting over it."
 					) : (
 						"Save again to rewrite the surfaces that consume these values."
 					)}
@@ -1466,31 +1686,27 @@ function SectionUnavailableMC() {
 
 // 순수 helper
 function buildFormMC(data) {
-	const models = {};
-	for (const d of data.domains || []) {
-		models[d.domain] = d.desired ?? "";
+	const form = {};
+	for (const [group, rowsKey] of Object.entries(FORM_GROUP_ROWS_MC)) {
+		form[group] = {};
+		for (const row of data[rowsKey] || []) {
+			// unset knob = the CLI default · unset model or cap = an empty field
+			form[group][row.domain] = row.desired ?? (group === "tiers" ? "inherit" : "");
+		}
 	}
-	const budgets = {};
-	for (const b of data.budgets || []) {
-		budgets[b.domain] = b.desired ?? "";
-	}
-	return { models, budgets };
+	return form;
 }
 
 // 변경분만 PUT (partial 계약) — 변경 없음 = null (Save 비활성 근거).
 function diffFormMC(baseline, form) {
-	const models = {};
-	for (const [domain, v] of Object.entries(form.models)) {
-		if (baseline.models[domain] !== v) models[domain] = v;
-	}
-	const budgets = {};
-	for (const [key, v] of Object.entries(form.budgets)) {
-		if (baseline.budgets[key] !== v) budgets[key] = v;
-	}
-
 	const payload = {};
-	if (Object.keys(models).length > 0) payload.models = models;
-	if (Object.keys(budgets).length > 0) payload.budgets = budgets;
+	for (const group of FORM_GROUPS_MC) {
+		const changed = {};
+		for (const [key, v] of Object.entries(form[group] || {})) {
+			if ((baseline[group] || {})[key] !== v) changed[key] = v;
+		}
+		if (Object.keys(changed).length > 0) payload[group] = changed;
+	}
 	return Object.keys(payload).length > 0 ? payload : null;
 }
 
@@ -1520,6 +1736,17 @@ function validateFormMC(form, knownModels) {
 		if (n < BUDGET_MIN_USD_MC || n > BUDGET_MAX_USD_MC) {
 			errors[key] =
 				`Must be between $${BUDGET_MIN_USD_MC.toFixed(2)} and $${BUDGET_MAX_USD_MC.toFixed(2)}`;
+		}
+	}
+
+	// 'inherit' = unset on every knob; a knob this screen has no meta for is left to the server.
+	for (const [key, v] of Object.entries(form.tiers || {})) {
+		if (v === "inherit") continue;
+		const kind = TIER_META_MC[key]?.kind;
+		if (kind === "effort" && !EFFORT_LEVELS_MC.includes(v)) {
+			errors[key] = `Pick ${CLI_DEFAULT_LABEL_MC} or one of: ${EFFORT_LEVELS_MC.join(", ")}`;
+		} else if (kind === "output-cap" && !OUTPUT_CAP_RE_MC.test(v)) {
+			errors[key] = "A whole number of tokens from 1 to 999999, no leading zero — or blank";
 		}
 	}
 
@@ -1557,7 +1784,7 @@ function getRefreshedFormMC(form, prevData, data) {
 	if (!form || !prevData) return next;
 
 	const saved = buildFormMC(prevData);
-	for (const group of ["models", "budgets"]) {
+	for (const group of FORM_GROUPS_MC) {
 		for (const key of Object.keys(next[group])) {
 			const edit = form[group][key];
 			if (edit !== undefined && edit !== saved[group][key]) next[group][key] = edit;
@@ -1571,22 +1798,17 @@ function getRefreshedFormMC(form, prevData, data) {
 // buffer, so a value left out here would be discarded.
 function resyncPayloadMC(data, edits) {
 	const fileDrift = (data.daemon_config_sync ?? "ok") !== "ok";
-	const models = {};
-	for (const d of data.domains || []) {
-		if (!(d.drift || fileDrift) || !d.desired) continue;
-		models[d.domain] = d.desired;
-	}
-	const budgets = {};
-	for (const b of data.budgets || []) {
-		if (!(b.drift || fileDrift) || !b.desired) continue;
-		budgets[b.domain] = b.desired;
-	}
-	Object.assign(models, edits?.models || {});
-	Object.assign(budgets, edits?.budgets || {});
-
 	const payload = {};
-	if (Object.keys(models).length > 0) payload.models = models;
-	if (Object.keys(budgets).length > 0) payload.budgets = budgets;
+	for (const [group, rowsKey] of Object.entries(FORM_GROUP_ROWS_MC)) {
+		const targets = {};
+		for (const row of data[rowsKey] || []) {
+			// a rejected knob with no saved row is rewritten to the CLI default its row shows
+			const target = row.desired ?? (row.file_error ? "inherit" : null);
+			if ((row.drift || fileDrift) && target) targets[row.domain] = target;
+		}
+		Object.assign(targets, edits?.[group] || {});
+		if (Object.keys(targets).length > 0) payload[group] = targets;
+	}
 	return Object.keys(payload).length > 0 ? payload : null;
 }
 
@@ -1686,10 +1908,7 @@ function extractSurfaceResultsMC(data) {
 // Unsaved count = fields in the partial PUT payload, so the wording matches what is sent.
 function countChangesMC(payload) {
 	if (!payload) return 0;
-	return (
-		Object.keys(payload.models || {}).length +
-		Object.keys(payload.budgets || {}).length
-	);
+	return FORM_GROUPS_MC.reduce((n, group) => n + Object.keys(payload[group] || {}).length, 0);
 }
 
 async function fetchJsonMC(url, signal) {

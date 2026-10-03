@@ -1850,6 +1850,13 @@ const REVIEW_ACTOR_OPERATOR = "monitor-user";
 //        the same bytes; stderr names the row — Reject is the way out
 //   24 = unknown --actor token — unreachable from here (the actor above is a fixed
 //        literal, not request input), so it falls to the generic apply_error 500
+//   25 = apply-record table unconfirmed (core.autoagent_apply_records absent — the
+//        monitor migration has not run, or the probe failed); checked before the first
+//        apply, so nothing applied — 503, a retry after the migration succeeds
+//   26 = apply record not written (insert failed, or a digest or the landed diff could
+//        not be computed) AFTER the bytes landed and the row flipped applied — answered
+//        200 applied + record_missing; the JSONL applied row holds the record and stderr
+//        names the cause token
 //   2 = bad arg · 3 = no psql · 6 = DB update failed · 17 = parked-pattern guard gave
 //       no verdict (infra-class failures)
 const APPLY_EXIT_APPLIED = 0;
@@ -1865,6 +1872,8 @@ const APPLY_EXIT_NOT_FOUND = 19;
 const APPLY_EXIT_GENERATION_NOT_OK = 20;
 const APPLY_EXIT_QUERY_FAILED = 21;
 const APPLY_EXIT_ROW_UNREADABLE = 23;
+const APPLY_EXIT_RECORD_TABLE_UNCONFIRMED = 25;
+const APPLY_EXIT_RECORD_NOT_WRITTEN = 26;
 
 // Approve-only exit-18 refusal — route-local like RestoreErrorBody
 interface ApproveRefusalBody {
@@ -1939,6 +1948,21 @@ async function handleApprove(
     // without a new commit. 200 `applied`, flagged `already_applied`.
     request.log.info(logBase, "proposal already applied in-file — row marked applied, no new commit");
     return { id, status: "applied", already_applied: true };
+  }
+  if (exitCode === APPLY_EXIT_RECORD_NOT_WRITTEN) {
+    // Row is applied, so a success the card refreshes on; error log — the missing table row needs an operator
+    const cause = getApplyRecordCause(stderr);
+    request.log.error(
+      { ...logBase, stderr, cause },
+      "proposal applied but its apply record was NOT written (status flipped; the JSONL applied row holds the record)",
+    );
+    const causeText = cause ? ` (cause=${cause})` : "";
+    return {
+      id,
+      status: "applied",
+      record_missing: true,
+      reason: `apply record not written${causeText} — the JSONL applied row holds it`,
+    };
   }
   if (exitCode === APPLY_EXIT_NOOP) {
     request.log.warn({ ...logBase, stderr }, "approve no-op (already terminal)");
@@ -2048,6 +2072,16 @@ async function handleApprove(
       status: "row_unreadable",
       id,
       reason: `use Reject — stored proposal row is unreadable (row data, not a DB outage), nothing applied: ${truncateStderr(stderr)}`,
+    };
+  }
+  if (exitCode === APPLY_EXIT_RECORD_TABLE_UNCONFIRMED) {
+    // Outcome + remedy first since the approve toast truncates
+    request.log.error({ ...logBase, stderr }, "approve failed — apply-record table unconfirmed (nothing applied)");
+    reply.code(503);
+    return {
+      status: "apply_error",
+      id,
+      reason: `nothing applied — run the pending monitor migration (glass-atrium db-setup), then approve again: ${truncateStderr(stderr)}`,
     };
   }
 
@@ -3080,6 +3114,12 @@ function parseParkedRows(stderr: string): string | undefined {
 // Exit-20 outcome token — value charset only, so no free stderr text rides into the reason
 function parseGenerationOutcome(stderr: string): string | undefined {
   const match = /use Reject — proposal id=\d+ generation outcome haiku_status=([\w:.<>-]{1,32}) is not ok-prefixed/.exec(stderr);
+  return match?.[1];
+}
+
+// Exit-26 cause token — value charset only, so no free stderr text rides into the reason
+function getApplyRecordCause(stderr: string): string | undefined {
+  const match = /apply record NOT written cause=([a-z_]{1,32})(?=\s)/.exec(stderr);
   return match?.[1];
 }
 

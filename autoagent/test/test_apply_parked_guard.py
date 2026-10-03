@@ -322,7 +322,7 @@ class GuardFailureTest(unittest.TestCase):
                 rc, stdout, stderr, write = _run_guard(
                     argv, stdin_text, coverage=coverage, write_error=write_error
                 )
-                self.assertEqual(rc, dc.PARKED_GUARD_FAILURE_EXIT_CODE)
+                self.assertEqual(rc, dc.ExitCode.PARKED_GUARD_FAILURE)
                 self.assertNotEqual(rc, 0)
                 self.assertEqual(stdout, "")
                 self.assertIn(sys.executable, stderr)

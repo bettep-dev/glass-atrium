@@ -64,7 +64,8 @@ teardown() {
 }
 
 # install_psql_stub — the status flip logs its bindings AND its statement text (the provenance rows
-# below read both) and returns one id; the backlog SELECT answers
+# below read both) and returns one id; the record-table probe answers present and the record
+# INSERT returns one id; the backlog SELECT answers
 # from its fixture file. The Nth single lookup answers from single.rows.N when scripted (a
 # single.rows.N.rc file scripts a query failure instead), else from single.rows.
 install_psql_stub() {
@@ -77,6 +78,8 @@ case "${sql}" in
     printf 'flip-sql<<<\n%s\n>>>\n' "${sql}" >>"${STUB_PSQL_LOG}"
     printf '1\n'
     ;;
+  *"to_regclass('core.autoagent_apply_records')"*) printf 't\n' ;;
+  *"INSERT INTO core.autoagent_apply_records"*) printf '1\n' ;;
   *stale_attempt_count*) printf 'incremented\n' ;;
   *"ORDER BY cycle_date ASC, id ASC"*)
     printf '%s\n' "${sql}" >"${STUB_BACKLOG_ROWS:?}.sql"

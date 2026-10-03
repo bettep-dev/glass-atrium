@@ -18,7 +18,8 @@
 #
 # The stderr-channel cases (tagged [stderr]) run DB-free: PG is fail-opened via PGHOST and the
 # attribution decision is read off the diagnostic channel (computed BEFORE the PG INSERT), so the
-# regression holds even where the live CHECK is not yet widened to the 11th token. Only the DB-row
+# regression holds even where the live CHECK is not yet widened to the 11th token. [spool] cases run
+# DB-free the same way and read the outcome the hook spools when its PG write fails. Only the DB-row
 # case (recovered VALUES reach core.outcomes) needs the live DB AND the widened CHECK → it self-skips
 # until the ALTER lands (orchestrator deploy step), mirroring schema-mode-completion.bats.
 #
@@ -67,11 +68,11 @@ setup() {
 
   PAYLOAD_FILE="${CB_TMP}/payload.json"
 
-  # DB-free stderr cases stop here so the psycopg/DB probe below never skips them (the decision
-  # rides the stderr channel — no live DB). Mirrors the [inline] early-return in
+  # DB-free [stderr]/[spool] cases stop here so the psycopg/DB probe below never skips them (they
+  # read the stderr channel or the spool — no live DB). Mirrors the [inline] early-return in
   # track-outcome-schema-mode-completion.bats.
   case "${BATS_TEST_DESCRIPTION}" in
-    *"[stderr]"*) return 0 ;;
+    *"[stderr]"* | *"[spool]"*) return 0 ;;
   esac
 
   [[ -n "${PSYCOPG_PP}" ]] || skip "psycopg module not importable"
@@ -156,6 +157,18 @@ truncated_block = (
     f"summary: truncated-writer recovery for {agent}\n"
     "lesson: writer truncated before the closing sentinel"
 )
+# closer_then_prose: prose AFTER the closer is not part of the block, so it must not fold into the
+# last field (lesson).
+closer_then_prose_block = valid_block + "\n\n## Review Summary\n- **Overall**: pass"
+# template_then_real / real_then_template: the quoted emit-format template (pipe-joined result) on
+# either side of the real block — only the real block's result validates, so it must be recovered.
+template_block = (
+    "[COMPLETION]\n"
+    "result: done|done_with_concerns|blocked|needs_context|fail\n"
+    "task_type: bug-fix|feature|refactor|research|plan|review|diagnosis|doc|cleanup\n"
+    "lesson: discovered pattern or know-how (1-2 sentences)\n"
+    "[/COMPLETION]"
+)
 SO_ID = "toolu_cb_so01"
 so_input = {"done": True, "notes": "schema deliverable"}
 if mode == "valid":
@@ -164,6 +177,12 @@ elif mode == "concerns_last":
     so_input["completion_block"] = concerns_last_block
 elif mode == "truncated":
     so_input["completion_block"] = truncated_block
+elif mode == "closer_then_prose":
+    so_input["completion_block"] = closer_then_prose_block
+elif mode == "template_then_real":
+    so_input["completion_block"] = template_block + "\n\n" + valid_block
+elif mode == "real_then_template":
+    so_input["completion_block"] = valid_block + "\n\n" + template_block
 elif mode == "garbage":
     so_input["completion_block"] = "just prose about the run, no [COMPLETION] fields present at all"
 elif mode == "badresult":
@@ -325,12 +344,22 @@ PY
 }
 
 # DB-free stderr driver: PG fail-opened (PGHOST → nonexistent socket), stderr merged into stdout.
+# The failed PG write spools the outcome envelope into ${CB_TMP}/spool.
 run_hook_stderr() {
   run env \
     HOME="${SANDBOX_HOME}" \
     PGHOST="/nonexistent-socket-xyzzy" \
     CLAUDE_GATE_INFLIGHT="" \
+    OUTCOME_SPOOL_DIR="${CB_TMP}/spool" \
     bash -c 'bash "$1" < "$2" 2>&1' _ "${HOOK_SH}" "${PAYLOAD_FILE}"
+}
+
+spooled_field() {
+  local f
+  for f in "${CB_TMP}/spool"/*; do
+    [[ -f "${f}" ]] && jq -r ".outcome.${1} // \"\"" "${f}"
+    return
+  done
 }
 
 # DB-backed driver: real PG (PYTHONPATH pinned to psycopg) — proves recovered VALUES reach the row.
@@ -527,6 +556,53 @@ PY
   case "${output}" in *"[/COMPLETION]"*) return 1 ;; esac
   run fetch_col result
   [ "${output}" = "done" ] || return 1
+}
+
+@test "[spool] prose after the closer: the recovered block stops at the first closer" {
+  write_transcript_cb closer_then_prose
+  write_payload
+
+  run_hook_stderr
+  [[ "${status}" -eq 0 ]] || {
+    echo "${output}"
+    return 1
+  }
+  oc "attribution=structuredoutput-completion" "${output}" || return 1
+  local got_lesson
+  got_lesson="$(spooled_field lesson)" || true
+  [[ "${got_lesson}" == "put the [COMPLETION] block in the SO completion_block field" ]] || {
+    echo "lesson='${got_lesson}'"
+    echo "${output}"
+    return 1
+  }
+}
+
+@test "[spool] several blocks in completion_block: the recovered block is the last whose result validates" {
+  # Rows: template first (the last block validates) · template last (an earlier block validates).
+  # Each row's spool is moved aside after its read, so a later row never reads an earlier envelope.
+  local row got_lesson
+  for row in template_then_real real_then_template; do
+    write_transcript_cb "${row}"
+    write_payload
+
+    run_hook_stderr
+    [[ "${status}" -eq 0 ]] || {
+      echo "${row}"
+      echo "${output}"
+      return 1
+    }
+    oc "attribution=structuredoutput-completion" "${output}" || {
+      echo "${row}"
+      return 1
+    }
+    got_lesson="$(spooled_field lesson)" || true
+    [[ "${got_lesson}" == "put the [COMPLETION] block in the SO completion_block field" ]] || {
+      echo "${row}: lesson='${got_lesson}'"
+      echo "${output}"
+      return 1
+    }
+    mv -- "${CB_TMP}/spool" "${CB_TMP}/spool-${row}"
+  done
 }
 
 @test "RACE: terminal SO partial in the memo read, settles on the fresh re-read ⇒ completion_block recovery still lands" {

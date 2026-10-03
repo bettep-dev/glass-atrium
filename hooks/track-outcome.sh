@@ -237,29 +237,34 @@ def parse_completion_body(text):
 
     return result
 
-def _strip_completion_sentinels(block):
-    """Strip a leading '[COMPLETION]' opener line and a trailing '[/COMPLETION]' closer line
-    from a captured SO-input completion_block BEFORE field parsing. The SO-input block carries
-    the FULL multi-line block INCLUDING both sentinels; parse_completion_body reads the colon-less
-    '[/COMPLETION]' closer as a CONTINUATION of the last field, gluing the sentinel (and any
-    trailing whitespace) onto that value — so the last field (lesson/concerns/summary/… — whichever
-    it is) leaks the closer. The text-channel tiers never hit this: _T1/_T2 capture group(1), the
-    region strictly BETWEEN the anchors. Block-level (not per-field) → field-agnostic, cleaning
-    whatever field lands last. Tolerates surrounding blank/whitespace/CRLF lines and a MISSING
-    closer (writer truncation — the last line is then a real field, left untouched)."""
+def _get_completion_bodies(block):
+    """Split a captured SO-input completion_block into its block bodies, sentinels removed, BEFORE
+    field parsing — each body is the region _T1 captures on the text channel. parse_completion_body
+    reads every colon-less line as a continuation of the last field, so a closer left in a body, and
+    any prose after it, would fold into that field (lesson/concerns/qa_score/… — whichever is last).
+    The first body starts after one leading lone '[COMPLETION]' opener (or at the first non-blank
+    line when the opener is missing); each later body starts after a lone opener that follows a
+    closer. A body ends before its lone '[/COMPLETION]' closer; prose between blocks belongs to none.
+    Field-agnostic; tolerates blank/whitespace/CRLF lines and a MISSING closer (writer truncation —
+    the body then runs to its last non-blank line). Always returns at least one body."""
     lines = block.split('\n')
-    start, end = 0, len(lines)
-    # Leading: skip blank/whitespace lines, then drop one lone [COMPLETION] opener.
-    while start < end and not lines[start].strip():
+    bodies = []
+    start = 0
+    while start < len(lines) and not lines[start].strip():
         start += 1
-    if start < end and lines[start].strip() == '[COMPLETION]':
+    if start < len(lines) and lines[start].strip() == '[COMPLETION]':
         start += 1
-    # Trailing: skip blank/whitespace lines, then drop one lone [/COMPLETION] closer.
-    while end > start and not lines[end - 1].strip():
-        end -= 1
-    if end > start and lines[end - 1].strip() == '[/COMPLETION]':
-        end -= 1
-    return '\n'.join(lines[start:end])
+    while start is not None:
+        end = start
+        while end < len(lines) and lines[end].strip() != '[/COMPLETION]':
+            end += 1
+        if end == len(lines):
+            while end > start and not lines[end - 1].strip():
+                end -= 1
+        bodies.append('\n'.join(lines[start:end]))
+        start = next((i + 1 for i in range(end + 1, len(lines))
+                      if lines[i].strip() == '[COMPLETION]'), None)
+    return bodies
 
 try:
     d = json.load(sys.stdin)
@@ -1044,11 +1049,19 @@ diag(f"terminal_structuredoutput={terminal_so}")
 # parse_tier 3 + an empty grader body → byte-identical today-synthesis (structuredoutput-derived).
 so_completion_block = ''
 if parse_tier == 3 and terminal_so == '1' and terminal_so_block:
-    # _strip_completion_sentinels drops the [COMPLETION]/[/COMPLETION] lines (else the colon-less
-    # closer folds into the last field — see its docstring); the cleaned block doubles as the grader
-    # body, matching the text-channel _block_text (m_tier1/m_tier2 group(1)) semantics.
-    _clean_so_block = _strip_completion_sentinels(terminal_so_block)
+    # Body selection = the text channel's tier-1 rule (_t1_matches): the LAST body, else the last
+    # earlier one whose result validates — a quoted emit-format template on either side of the real
+    # block must not bind. The selected body doubles as the grader body, matching the text-channel
+    # _block_text (m_tier1/m_tier2 group(1)) semantics.
+    _so_bodies = _get_completion_bodies(terminal_so_block)
+    _clean_so_block = _so_bodies[-1]
     _so_fields = parse_completion_body(_clean_so_block)
+    if _so_fields.get('result', '').strip() not in _VALID_RESULTS:
+        for _body in reversed(_so_bodies[:-1]):
+            _cand = parse_completion_body(_body)
+            if _cand.get('result', '').strip() in _VALID_RESULTS:
+                _clean_so_block, _so_fields = _body, _cand
+                break
     if (_INLINE_CORE_FIELDS & set(_so_fields)) \
             and _so_fields.get('result', '').strip() in _VALID_RESULTS:
         parse_tier = 1
@@ -2624,6 +2637,21 @@ fi
 if [[ "${SCOPE_EXCESS_FOUND}" -eq 1 ]]; then
   REVIEW_FLAG="true"
   review_flag_add_reason "scope-excess"
+fi
+
+# qa-score-malformed — a present qa_score off the cov=N,ins=N,instr=N,clar=N shape, each N 1-5.
+# The ,d8=N tail is the HTML-primary review extension (scoped/scope-qa.md → D8 Visual Decision Sub-Pass).
+# ADVISORY: the value is stored unchanged. Checked as stored — the parser trims only the ends, so
+# inner whitespace, a wrapped value or a folded non-template line is a malformed stored value.
+if [[ -n "${QA_SCORE:-}" ]]; then
+  case "${QA_SCORE}" in
+    cov=[1-5],ins=[1-5],instr=[1-5],clar=[1-5]) ;;
+    cov=[1-5],ins=[1-5],instr=[1-5],clar=[1-5],d8=[1-5]) ;;
+    *)
+      REVIEW_FLAG="true"
+      review_flag_add_reason "qa-score-malformed"
+      ;;
+  esac
 fi
 
 # DOWNGRADE_ORIGIN provenance — recorded alongside grader_verdict (NOT a metric_pass mutation).
