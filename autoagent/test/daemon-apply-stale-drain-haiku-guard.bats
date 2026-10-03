@@ -465,7 +465,7 @@ dryrun_log_path() {
   make_probe
   STUB_STALE_VERDICT="incremented"
   local terminal
-  for terminal in applied rejected approved reverted; do
+  for terminal in applied rejected approved reverted unadjudicated; do
     STUB_STATUS="${terminal}" run_single "skipped:chronic-timeout-backoff"
     [[ "${status}" -eq 8 && "${output}" == *"already terminal (status=${terminal})"* ]] || {
       echo "status=${terminal}: expected exit 8 naming the status, got ${status}: ${output}" >&2

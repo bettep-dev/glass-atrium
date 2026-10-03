@@ -7,7 +7,7 @@
 export type ImprovementTier = "auto" | "safety";
 
 // PG ProposalStatus enum mirror. pending/approved/snoozed = non-terminal ·
-// applied/rejected/reverted = terminal. Every non-terminal status reaches a
+// applied/rejected/reverted/unadjudicated = terminal. Every non-terminal status reaches a
 // terminal one via the daemon (auto) or the user (approve/reject); 'reverted'
 // is set ONLY by a human/CLI back-out of an applied row (the daemon-side
 // post-apply regression watch is detection-only — it never writes it).
@@ -17,15 +17,17 @@ export type ProposalStatus =
   | "rejected"
   | "applied"
   | "snoozed"
-  | "reverted";
+  | "reverted"
+  | "unadjudicated";
 
 // Terminal states — no further transition (applied = git-reversible only;
-// rejected = learning-log EPM feed candidate; reverted = human/CLI back-out).
-// approve/reject re-call → 409.
+// rejected = learning-log EPM feed candidate; reverted = human/CLI back-out;
+// unadjudicated = closed without a gate verdict). approve/reject re-call → 409.
 export const TERMINAL_PROPOSAL_STATUSES: ReadonlySet<ProposalStatus> = new Set([
   "applied",
   "rejected",
   "reverted",
+  "unadjudicated",
 ]);
 
 // Statuses the approve/reject endpoints act on. Mirrors the complement of
@@ -67,7 +69,7 @@ export interface RejectProposalResponse {
 // Discriminated mutation-error envelope — `status` literal is the discriminator
 // (distinct from the GET-side ImprovementErrorBody, which keys on `error`).
 // Branch → daemon-apply exit code + HTTP status:
-//   noop (409)             ← exit 8: already terminal (applied/rejected/approved/reverted) — idempotent no-op
+//   noop (409)             ← exit 8: already terminal (applied/rejected/approved/reverted/unadjudicated) — idempotent no-op
 //   not_found (404)        ← exit 19: no proposal with that id
 //   generation_not_ok (409) ← exit 20: stored generation outcome (haiku_status) not ok-prefixed;
 //                            nothing applied, row untouched — Reject is the way out
@@ -315,7 +317,7 @@ export interface ImprovementProposalRow {
   id: number;
   cycle_date: string; // 'YYYY-MM-DD'
   approval_tier: ImprovementTier;
-  status: string; // ProposalStatus enum text (pending / approved / rejected / applied / snoozed / reverted)
+  status: string; // ProposalStatus enum text (pending / approved / rejected / applied / snoozed / reverted / unadjudicated)
   target_agent: string | null;
   target_file: string;
   pattern_label: string;

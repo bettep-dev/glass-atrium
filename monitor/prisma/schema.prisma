@@ -169,6 +169,9 @@ enum ProposalStatus {
   // Never set by the daemon (post-apply regression watch is DETECTION-ONLY);
   // read by drop_reverted_patterns + the reject-streak look-past.
   reverted
+  // Terminal without a gate verdict (supersede, back-off, quota, auth, skipped,
+  // parked) — keeps `rejected` meaning a real verdict only.
+  unadjudicated
 
   @@schema("core")
 }

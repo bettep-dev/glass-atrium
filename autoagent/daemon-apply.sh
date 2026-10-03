@@ -134,7 +134,7 @@
 #         (loud-fail tripwire — a proposal-generation bug must NOT trigger a
 #         runaway mass-apply; nothing is applied, operator must investigate)
 #     8 — --proposal-id: already TERMINAL (status applied/rejected/approved/
-#         reverted). No-op, idempotent: nothing changed. Scriptable "nothing
+#         reverted/unadjudicated). No-op, idempotent: nothing changed. Scriptable "nothing
 #         to do" signal.
 #     9 — --proposal-id: apply FAILED (diff rejected by git apply --recount →
 #         needs_regen; row left pending). Scriptable "could not apply".
@@ -1447,7 +1447,7 @@ select_single_proposal() {
         exit 23
     fi
     case "${status}" in
-        applied | rejected | approved | reverted)
+        applied | rejected | approved | reverted | unadjudicated)
             printf '[daemon-apply] proposal id=%s already terminal (status=%s) — no-op\n' \
                 "${PROPOSAL_ID}" "${status}" >&2
             exit 8

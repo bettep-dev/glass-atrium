@@ -85,6 +85,7 @@ STATUS_DISPOSITIONS = {
     "applied": {"kind": TERMINAL, "sites": ()},
     "rejected": {"kind": TERMINAL, "sites": ()},
     "reverted": {"kind": TERMINAL, "sites": ()},
+    "unadjudicated": {"kind": TERMINAL, "sites": ()},
     "approved": {"kind": TERMINAL, "sites": ()},  # no writer sets it
 }
 
