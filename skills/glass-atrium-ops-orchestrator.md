@@ -301,7 +301,7 @@ The delegation-size discipline (`orchestrator-role.md` → `### Spawn Budget`) a
   - Machine-checked repetition: `hooks/test/enforce-verification-gate-scope.bats` extracts the path-count number from this bullet and compares it with the hook's constant, so the two move together or that suite fails.
 - **Error recovery**: `orchestrator-role.md` → `### Failure Recovery Loop` (retry limits, escalation, circuit-breaker, checkpoint resumption); infinite retry forbidden.
 - **Team termination**: complete → aggregate results → **reconcile and close** each plan the team built from (`## Managed Document Completion (Direct Handling)` → Step 3) → **Outcome Record** → retrospective (actual vs plan) → **instruction upgrade review**.
-  - The retrospective's durable half is the Outcome Record's `lesson` field plus internal CTM/EPM accumulation.
+  - The retrospective's durable half is the Outcome Record's `summary` and `concerns` plus the learning-log aggregation (`core-learning-log.md` → Learning Log Auto-Aggregation).
   - A user-facing memory write (`MEMORY.md` / `feedback_*.md`) is NOT a step here — it fires only on an explicit user instruction to remember (`core-learning-log.md` → Long-Term Memory Write-Gate).
 
 ### Architecture Patterns [ORCHESTRATOR]
@@ -388,7 +388,7 @@ MANDATORY when authoring any workflow — these bind EVERY workflow output schem
 - **Never let one agent crash the run**: ALWAYS `.catch(() => null)` agent thunks and `.filter(Boolean)` parallel/pipeline results, so ONE agent's failure never rejects the whole workflow — it degrades to a surfaced-incomplete item, re-delegable in a follow-up.
 - **Self-recover, never hard-stop**: a mis-sized or failed delegation MUST self-recover (re-delegate / continue); never end the run on a missing result with lost work.
 - **Print-block-then-emit (record honesty — every schema-mode delegation MUST provide the completion channel)**: RESERVE an optional `completion_block` string property in the schema and instruct the agent to fill it with the full multi-line `[COMPLETION]` block.
-  - Why, and what the recorder does with each channel: `GLASS_ATRIUM_GLOBAL_RULES.md` → `#### Emit-before-cap` — a schema-mode printed text turn is never recorded, and a run missing the property falls to lesson-less synthesis.
+  - Why, and what the recorder does with each channel: `GLASS_ATRIUM_GLOBAL_RULES.md` → `#### Emit-before-cap` — a schema-mode printed text turn is never recorded, and a run missing the property falls to synthesis, which loses the writer's self-assessment.
   - Reference form — the Analysis-Track worked example's `const AnalysisSchema = { findings: 'string', completion_block: 'string' };`, where `completion_block` is a DECLARED, UNCAPPED schema member.
   - Prose telling the agent to "include a completion block" reserves nothing — an undeclared key is rejected by `additionalProperties: false`.
   - Machine-checked repetition: `hooks/test/orchestrator-skill-schema-example.bats` requires both properties UNCAPPED in this file, and the reserved property as a declared member inside the Analysis-Track fence itself — paraphrase neither away.

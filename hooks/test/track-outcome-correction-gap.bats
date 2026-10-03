@@ -3,7 +3,7 @@
 #
 # Contract pinned (plan clauded-docs/224 T4): the Correction-emission rule requires the agent to
 # co-emit all three of revision_count + evaluative_signal=-1 + directive_hint. When an agent emits
-# evaluative_signal=-1 but OMITS directive_hint, the correction is lesson-less — the recorder now
+# evaluative_signal=-1 but OMITS directive_hint, the emit is a correction gap — the recorder now
 # raises a loud aggregation-visible review_flag + a 1-line stderr note so the gap is surfaced. The
 # recorder NEVER distills the hint from the user message, so the flag is READ-ONLY vs the correction
 # WRITE path (AGENT_PROVIDED_CORRECTION / EVALUATIVE_SIGNAL / DIRECTIVE_HINT / SIG_EMIT untouched).

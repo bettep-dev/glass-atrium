@@ -10,6 +10,17 @@ Applies to all agents. [ALL]
 - **Required fields**: `agent` · `task_type` · `result`.
 - **Session-end fallback**: if no Outcome Record exists at session end, record at least the required fields.
 - **Record-side names**: the record stores the template's `files` as `files_modified`, and `cid` both as `cid` and as `correlation_id`; `metric_type` shares the 9-type task_type value set.
+- **Lesson-free read**: every agent and main session reads prior Outcome Records only through this command — the search listing, with the `lesson` key deleted from every row before any output reaches the reader:
+
+  ```
+  curl -sSf "http://127.0.0.1:$(bash -c '. "${GA_ROOT:-$HOME/.glass-atrium}/scripts/lib/atrium-config.sh" && atrium_monitor_port')/api/outcomes/search?limit=20" | jq 'del(.rows[].lesson)'
+  ```
+
+  - To narrow it, change only the query string (e.g. `agent=<name>`, `days=7|30|90`); keep the `jq` stage exactly as written.
+  - Never read a record through `/api/outcomes/<id>` or its body: both return `lesson` in full.
+  - Why: `lesson` is the writer's own unverified advice; result, summary, concerns, revision count and review flags are the facts a read needs.
+  - The port comes from the install's own resolver, so the command runs unchanged on every install.
+  - Honest backing: honor-system — no hook stops a call to the detail route.
 
 ### task_type set (canonical 9-type contract — SoT)
 
@@ -91,7 +102,7 @@ directive_hint: one-line distilled English summary       # OPTIONAL, emit ONLY w
 files: changed_file1, changed_file2                      # omit if no file changes
 summary: 1-line summary                                  # REQUIRED
 concerns: condition1, condition2                         # OPTIONAL, valid on ANY result — one item per condition; on done rows it carries caveats that do NOT meet the done_with_concerns criterion
-lesson: discovered pattern or know-how (1-2 sentences)   # RECOMMENDED, core signal for AutoAgent self-improvement loop
+lesson: discovered pattern or know-how (1-2 sentences)   # RECOMMENDED — see Field Input Guide → lesson
 token_usage: input=N, output=N                           # OPTIONAL, OTel gen_ai.usage.* mapping
 agent_version: 1.0.0                                     # OPTIONAL, instruction-version tracking
 qa_score: cov=N,ins=N,instr=N,clar=N                     # OPTIONAL, QA review only — coverage/insight/instruction-following/clarity (each 1-5)
@@ -113,7 +124,7 @@ cid: correlation_id from orchestrator                    # OPTIONAL, omit if not
     - Whether a schema reserves the property is settled at authoring time — Workflow pre-flight item 8 (`skills/glass-atrium-ops-orchestrator.md` → `### Ultracode / Workflow-tool Mode`). `hooks/enforce-workflow-verify-stage.sh` checks the declaration, advisory only; whether the property is filled is unchecked.
 - **Correction-emission rule (agent owns the boolean "a correction happened")**: when the user's latest message corrected, rejected, or asked to redo this work — judged SEMANTICALLY in ANY language — the agent MUST emit all three: `revision_count` ≥ 1 + `evaluative_signal: -1` + `directive_hint: <one-line distilled English summary>`.
   - The three are the TRIGGER that populates `core.correction_signals`; what each value means, including which values are not a correction, is in `### Field Input Guide`.
-  - **Omitting `directive_hint` is a lesson-less correction**: `evaluative_signal: -1` without it makes `track-outcome.sh` raise an aggregation-visible `review_flag` plus a 1-line stderr note. The recorder NEVER distills the hint from the user message, so it MUST come from your own emit.
+  - **Omitting `directive_hint` is a correction gap**: `evaluative_signal: -1` without it makes `track-outcome.sh` raise an aggregation-visible `review_flag` plus a 1-line stderr note. The recorder NEVER distills the hint from the user message, so it MUST come from your own emit.
   - A request that only resumes or pushes the SAME work forward MUST NOT emit the three fields, e.g. `진행해` / `이어서 진행해` / `계속` / `다시 이어서` / `resume` / `continue` / `try again to continue` / a status check.
     - It is an episodic one-off signal (`core-learning-log.md` → Correction Signal Capture), not a correction of the work's content.
 - **`## Summary` section**: `track-outcome.sh` copies the `summary` field into the record body's required `## Summary` section, so fill `summary` faithfully.
@@ -196,7 +207,8 @@ Emit on the terminal turn only: an every-turn emit is noise, and a skipped emit 
   - On a `done_with_concerns` row the caveat goes HERE rather than into `summary` — the structured per-item column an operator filters, counts and clusters on.
   - No quality bar and no length expectation: a rough entry beats an empty column. Filling it never changes `result` (``### Whose outcome `result` describes``).
   - Recorder: `track-outcome.sh` copies the value into the record's `## Concerns` section, reads that section back when a `done_with_concerns` row has no `concerns:` line, and clamps the stored value to 800 chars.
-- **`lesson`**: 1-2 sentences of discovery that saves time on future tasks (e.g. "X must go through Y — direct call forbidden") — the core signal the AutoAgent self-improvement loop learns from.
+- **`lesson`**: 1-2 sentences of discovery from this task (e.g. "X must go through Y — direct call forbidden").
+  - Recorded as outcome data and shown in the monitor; no prompt, spawn injection or self-improvement step reads it.
 - **`token_usage`**: record when cost tracking is needed; pairs with OTel `gen_ai.usage.*` for external integration.
 - **`agent_version`**: the instruction file version (e.g. from frontmatter), enabling before/after performance comparison across instruction edits.
 

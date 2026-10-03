@@ -176,7 +176,7 @@ completion_block() {
 
 @test "correction-gap — a -1 correction emitted without a directive hint" {
   write_inline_payload "$(completion_block 'result: done' 'task_type: cleanup' 'metric_pass: true' \
-    'confidence: high' 'evaluative_signal: -1' 'summary: lesson-less correction')"
+    'confidence: high' 'evaluative_signal: -1' 'summary: correction without a directive hint')"
   run_hook
   [[ "$(spooled_field review_flag_reasons)" == *"correction-gap"* ]]
 }

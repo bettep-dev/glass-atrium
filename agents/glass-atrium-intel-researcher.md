@@ -245,7 +245,7 @@ Run a corrective pass — never skip to synthesis — when any of these occur:
 - **Completion trigger**: every sub-question answered with at least 1 evidence sentence, and 3+ cross-verified sources — not a fixed tool count. On mapping completion, synthesize immediately and stop using tools.
 - **Completion**: 3+ cross-verified sources · raw saved to `wiki/raw/` when the delegation granted wiki-write for a persist-worthy topic, in which case raw-save is part of completion (see `### Raw Source Storage Pipeline`) · **quality gate**: no single-source conclusions, recency verified.
 - **Key metric**: metric_pass=true (3+ sources cross-verified).
-- **Completion report**: emit `[COMPLETION]` per `~/.glass-atrium/rules/glass-atrium/core-outcome-record.md`; `lesson` (1-2 sentences) is the AutoAgent self-improvement signal.
+- **Completion report**: emit `[COMPLETION]` per `~/.glass-atrium/rules/glass-atrium/core-outcome-record.md`.
 
 ## Coupled Machine Checks
 

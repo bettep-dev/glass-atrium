@@ -8,7 +8,7 @@ FRESH under a HOME sandbox (with no GA_DATA_ROOT) and asserts:
 
 (1) the default anchors on ``$HOME/.glass-atrium`` — NOT the legacy ``.claude``;
 (2) a preserved env override still derives off the seam-anchored default
-    (learning-aggregator's CLAUDE_LESSONS_STORE_FILE default path);
+    (daemon_config's DAEMON_CONFIG default path);
 (3) GA_DATA_ROOT redirects the root (env-override parity with the shell seam).
 
 Covered: the original set (project_key.py / _pg_push_autoagent_loop_events.py /
@@ -119,15 +119,9 @@ class DefaultResolutionTest(unittest.TestCase):
     def test_learning_aggregator_data_dir_under_glass_atrium(self) -> None:
         with mock.patch.dict("os.environ", {"HOME": _SANDBOX_HOME}, clear=False):
             os.environ.pop("GA_DATA_ROOT", None)
-            os.environ.pop("CLAUDE_LESSONS_STORE_FILE", None)
             m = _load_fresh(_HOOKS / "learning-aggregator.py", "learning_agg_probe")
             self.assertEqual(
                 m.DATA_DIR, str(Path(_SANDBOX_HOME) / ".glass-atrium" / "data")
-            )
-            # The preserved env override defaults off the seam-anchored data root.
-            self.assertEqual(
-                m.LESSON_STORE_FILE,
-                str(Path(_SANDBOX_HOME) / ".glass-atrium" / "data" / "lessons.json"),
             )
 
     def test_status_backfill_reports_under_glass_atrium(self) -> None:

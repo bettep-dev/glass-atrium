@@ -274,7 +274,7 @@ Prevent context bloat during long sessions (10+ turns).
 - **Schema-mode caveat** — the printed text turn does NOT survive: the engine consumes ONLY the StructuredOutput call, so a schema-mode run's printed `[COMPLETION]` text is never recorded.
   - The RELIABLE schema-mode channel is a `completion_block` string property ON the StructuredOutput payload (reserve it in the schema — see `skills/glass-atrium-ops-orchestrator.md` → `#### Resilient Workflow Authoring [ORCHESTRATOR]`) carrying the full multi-line block.
   - The manual Agent path keeps the reverse-scan capture: `_last_assistant_text_from_transcript()` PREFERS the last `[COMPLETION]`-bearing assistant text, so a printed text turn is honored there.
-- Omitting BOTH channels forfeits the writer signal: the run falls to `structuredoutput-derived` synthesis (`result=done`, still `confidence=low` + `metric_pass=false` + no lesson, `downgrade_origin=synthesized`) — a lesson-less row the self-improvement loop cannot learn from.
+- Omitting BOTH channels forfeits the writer signal: the run falls to `structuredoutput-derived` synthesis (`result=done`, still `confidence=low` + `metric_pass=false`, `downgrade_origin=synthesized`) — a row carrying defaults in place of the writer's self-assessment.
 - Orchestrator-side resilience complement (retry-on-null / isolated-failure authoring + delegation-prompt duty): `skills/glass-atrium-ops-orchestrator.md` → `#### Resilient Workflow Authoring [ORCHESTRATOR]`.
 
 ## AI-Generated Anti-Pattern Prohibition [ALL]
@@ -298,7 +298,7 @@ Prevent context bloat during long sessions (10+ turns).
 
 - **Memory persistence is user-instructed-only**: the main session MUST NOT proactively or automatically write user-facing memory (`feedback_*.md` / `MEMORY.md` in the personal memory dir); a persisted memory fires ONLY when the user explicitly instructs it (e.g. `기억해` / "remember this", judged semantically in any language).
   - Daemon auto-generation of `feedback_*.md` from clustered correction signals is FORBIDDEN — a prohibition held by the absence of that code path, not by a runtime gate.
-  - Internal CTM/EPM self-improvement learning under `memory/core-learning-log.md` is exempt: only user-facing memory writes require the explicit instruction.
+  - The learning-log aggregation that feeds self-improvement is exempt: only user-facing memory writes require the explicit instruction.
   - Detail + the 4-condition Long-Term Memory Write-Gate: `rules/glass-atrium/core-learning-log.md`.
 
 ## Hook Operation Policy [ALL]

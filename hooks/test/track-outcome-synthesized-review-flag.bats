@@ -14,8 +14,8 @@
 # Isolation: the hook is invoked DIRECTLY as a command (its shebang), never interpreter-prefixed.
 # The DB dual-write is stubbed by a PATH python3 shim that exits non-zero, so the outcome envelope
 # dead-letters into a sandboxed spool dir — that spooled JSON is the assertion surface and no live
-# Postgres is touched. The two python predicate suites import their modules with a stubbed driver
-# surface and assert over frozen in-test row dicts, so they are database-free as well.
+# Postgres is touched. The python predicate suite imports its module with a stubbed driver
+# surface and asserts over frozen in-test row dicts, so it is database-free as well.
 #
 # CID: 2026-07-31T1530_loopexec_a4f6
 
@@ -269,39 +269,6 @@ assert "result=fail" in failed, failed
 truncated = pg.negative_signal_hits(row(attribution_source="budget-truncation",
                                         result="done_with_concerns", review_flag=False))
 assert "result=done_with_concerns" in truncated, truncated
-PY
-  [ "${status}" -eq 0 ]
-}
-
-# ---------------------------------------------------------------------------
-# neutrality — the aggregator's lesson-routing call site
-# ---------------------------------------------------------------------------
-
-@test "flagged schema-derived row stays out of the aggregator failure bucket" {
-  run env HOOKS_DIR="${HOOKS_DIR}" "${REAL_PY3}" - <<'PY'
-import importlib.util, os, sys
-hooks = os.environ["HOOKS_DIR"]
-sys.path.insert(0, hooks)
-spec = importlib.util.spec_from_file_location(
-    "learning_aggregator", os.path.join(hooks, "learning-aggregator.py"))
-agg = importlib.util.module_from_spec(spec)
-spec.loader.exec_module(agg)
-
-def row(**kw):
-    base = dict(agent="glass-atrium-dev-shell", task_type="feature", result="done",
-                metric_pass=True, confidence="high", lesson="x", review_flag=False,
-                revision_count=0, grader_verdict="", attribution_source="")
-    base.update(kw)
-    return base
-
-schema_derived = row(attribution_source="structuredoutput-derived", review_flag=True)
-assert agg._is_negative_signal_outcome(schema_derived) is False, schema_derived
-assert agg.classify_lesson_bucket(schema_derived) != "epm"
-
-# Narrowness pin: a genuine writer-flagged row still routes to failure memory.
-genuine = row(attribution_source="hook-input", review_flag=True)
-assert agg._is_negative_signal_outcome(genuine) is True, genuine
-assert agg.classify_lesson_bucket(genuine) == "epm"
 PY
   [ "${status}" -eq 0 ]
 }

@@ -46,40 +46,16 @@ The self-improvement loop (`autoagent/daemon_cycle.py`) user-approval queue is *
 
 ## Solution History (OPRO-style)
 
-- Each instruction-improvement attempt is recorded as 3-tuple: `(instruction cell = agent + task_type, score 1–5, applied_date)`, carrying the reflective signal (`lesson` + `directive_hint`) the next cycle mutates on.
+- Each instruction-improvement attempt is recorded as 3-tuple: `(instruction cell = agent + task_type, score 1–5, applied_date)`, plus a `directive_hint` field (`autoagent/daemon_cycle.py` → `SolutionAttempt`).
+  - Honest backing: the generation path (`run_cycle` → `solution_attempt_from_outcome`) passes no hint, so `directive_hint` is empty today.
 - Retention keeps the per-cell Pareto-nondominated frontier over (score, recency): multiple winners per cell survive, so an older-higher-score and a newer-lower-score variant both feed the next cycle. A cell with fewer than 5 attempts carries insufficient evidence and is dropped (`autoagent/daemon_cycle.py` → `retain_pareto_winners`).
   - Honest backing: the cross-cycle durable store does NOT exist. Retention runs within one cycle — every attempt shares an `applied_date`, so the recency objective is constant and cells rarely reach the 5-attempt floor — and lands in the cycle report only. Nothing yet carries a frontier into the next optimizer's context.
-- Successful patches → CTM bucket via the tiered admission rule: high confidence admits immediately at the injectable floor (score ≥ 4); medium confidence stores a provisional sub-floor score (3, non-injectable) and promotes to the floor on corroborating re-observation (frequency ≥ 2); a `grader_verdict` of `verified_fail` never admits. Repeated failures (revision_count ≥ 2 OR result=fail) → EPM bucket.
-
-## Memory Type Classification (CTM / EPM)
-
-- **CTM** (Correct-Template Memory): reusable success patterns — tiered admission per task_type: a high-confidence variant enters at the injectable floor (score ≥ 4) immediately, a medium-confidence one enters provisional (sub-floor score 3) and promotes at frequency ≥ 2, and `grader_verdict=verified_fail` is never admitted
-- **EPM** (Error-Pattern Memory): repeated failure patterns — revision_count ≥ 2 or result=fail accumulations
-- New task start → query CTM for similar success examples + EPM for patterns to avoid
-- Both buckets are labelled sub-sections (`### CTM` / `### EPM`) of the `memory/core-learning-log.md` narrative; the runtime store is the separate JSON file described below.
-- **Episodic vs semantic boundary**: episodes are session-scoped, lessons are durable — only a distilled `lesson` enters CTM. That accumulation is internal self-improvement signal and is exempt from the Long-Term Memory Write-Gate below, which binds USER-FACING memory only.
-
-> **Four-position lockstep — do NOT de-duplicate the tiered admission rule.** It is stated deliberately at four contract positions: the Solution-History routing bullet, the CTM definition bullet above, the lesson-store intro paragraph below, and the spawn-time-injection bullet below. `hooks/test/test_lesson_store_integrity.py` (`DocLockstep`) reads this file and asserts that each of those four lines still states the tiered rule on ONE physical line, and that no stale score-only phrasing remains. Collapsing the four into a single site fails that test — the repetition is a machine-checked contract, not accidental duplication.
-
-### CTM/EPM Lesson Store (size-capped, consolidation-op ingest)
-
-The runtime CTM/EPM buckets are materialized as a machine-readable lesson store — a JSON file the learning-aggregator writes (`hooks/learning-aggregator.py`, `ingest_outcome_lessons`) and the spawn-time injector reads (`hooks/inject-scope-rules.sh`). This is the operational store distinct from the human-readable `memory/core-learning-log.md` narrative; both hold the same CTM (tiered success admission: high immediate at the injectable floor, medium provisional sub-floor until corroborated at frequency ≥ 2, `verified_fail` excluded) / EPM (failure) lesson classification.
-
-- **AD-1 — size-capped labeled blocks**: each bucket carries a per-bucket char cap (`CTM_BUCKET_MAX_CHARS` / `EPM_BUCKET_MAX_CHARS`, 4000 each).
-  - On overflow, `enforce_bucket_cap` evicts with a digest: tombstoned dead-weight goes first, then live entries ascending by (score, frequency), until the ACTIVE (non-tombstoned) lesson-text sum is ≤ cap. The hook holds no LLM, so the evicted set leaves a count/tag digest footer rather than a true summary.
-  - **Invariant**: a bucket's active size never exceeds its cap.
-  - Capacity eviction is the SOLE hard-removal path, and is distinct from the AD-2 tombstone below (staleness, not capacity).
-- **AD-2 — consolidation ops on ingest**: lesson ingest is ADD / UPDATE / MERGE / TOMBSTONE — NEVER a hard-delete.
-  - A DUPLICATE lesson (same agent + task_type + numeric/case/space-normalized text) bumps frequency and keeps the max score (`UPDATE`); it never appends a new row.
-  - A re-observed tombstoned lesson resurrects (`MERGE`).
-  - A STALE lesson is soft-deleted via `tombstone_lesson` (row retained, `tombstoned: true`), excluded from injection and the active-cap sum but resurrectable.
-- **AD-3 — spawn-time lesson injection**: on SubagentStart, `inject-scope-rules.sh` injects the current agent's top-K (K=5) live CTM lessons (score ≥ 4 — the injectable floor; a provisional medium lesson sits below it at sub-floor score 3 until its frequency ≥ 2 promotion) + EPM warnings, agent-matched, hard-capped at `LESSON_MAX_BYTES` (1200 B), as the LOWEST-priority (first-dropped) injection block so the proven scope blocks always win the ~9984 B assembly ceiling.
-  - Matching is agent-keyed because task_type is not known at spawn (the envelope carries only agent_type); each lesson carries its task_type as an inline tag.
-  - A no-match spawn (or absent store) is left unchanged (fail-open).
 
 ## Correction Signal Capture
 
-User corrections (rejection / "redo this" / "change it like this") = evaluative signal (-1) + directive signal. A raw correction is an **episodic** signal — session-scoped, discarded after the session. It does NOT enter long-term memory directly; only its distilled `lesson` (when semantic) is persisted (see Long-Term Memory Write-Gate below).
+- User corrections (rejection / "redo this" / "change it like this") = evaluative signal (-1) + directive signal.
+- A raw correction is an **episodic** signal — session-scoped, discarded after the session.
+- It does NOT enter long-term memory directly; only a fact distilled from it (when semantic) is persisted, under the Long-Term Memory Write-Gate below.
 
 **Not a correction (negative example)**: continuation/urging/retry/status utterances that merely resume or push the SAME work forward (e.g. `진행해` / `이어서 진행해` / `계속` / `다시 이어서` / `resume` / `continue` / `try again to continue` / a status check) are NOT corrections — they MUST NOT fire `evaluative_signal: -1` / `revision_count` / `directive_hint`.
 - These are the episodic one-off (retry / continue / status) signals already discarded by the Long-Term Memory Write-Gate's content-type condition below.
@@ -93,7 +69,7 @@ User corrections (rejection / "redo this" / "change it like this") = evaluative 
 **Procedure**:
 1. Increment `revision_count` (transient session signal) — per **Signal origin** above, your emitted value is both the trigger and the effective count
 2. Distill the directive into a one-line English `directive_hint` (transient session signal — NOT raw verbatim, NOT Korean, NOT a persistence target as-is)
-3. **No auto-persistence to user-facing memory**: a correction signal NEVER auto-writes `feedback_*.md` / `MEMORY.md` in the personal memory dir. Internal CTM/EPM accumulation (`memory/core-learning-log.md`) may still record the distilled pattern, but a user-facing write requires the explicit user instruction — condition and honest backing both in **Long-Term Memory Write-Gate** below
+3. **No auto-persistence to user-facing memory**: a correction signal NEVER auto-writes `feedback_*.md` / `MEMORY.md` in the personal memory dir — the aggregation exemption, the explicit-instruction condition and their honest backing: **Long-Term Memory Write-Gate** below
 4. If confined to a specific agent → tag as an instruction-update candidate for that agent (independent of persistence — the tag is a transient routing signal, not a long-term memory write)
 
 ### Long-Term Memory Write-Gate
@@ -110,6 +86,6 @@ Repetition alone does NOT justify persistence. Before writing any `feedback_*.md
 
 Beyond those conditions:
 
-- **Persisted value**: the distilled English `lesson` — a reusable, context-independent pattern (see `core-outcome-record.md` Field Input Guide → `lesson`), never the raw directive_hint, which is time- and context-bound and is the pollution source. Episodes are dropped; only lessons are kept.
+- **Persisted value**: a distilled English fact — a reusable, context-independent pattern, never the raw directive_hint, which is time- and context-bound and is the pollution source.
 - **Language**: all persisted learning-log / memory record data is English (the user-facing reply language is separate).
-- **Internal-vs-user-facing boundary**: internal CTM/EPM learning under `memory/core-learning-log.md` (instruction-improvement signal for the self-improvement loop) is NOT gated by the explicit-instruction condition — only writes to the user-facing personal memory dir (`feedback_*.md` + `MEMORY.md`) are.
+- **Internal-vs-user-facing boundary**: the learning-log aggregation (`## Learning Log Auto-Aggregation` — instruction-improvement signal for the self-improvement loop) is NOT gated by the explicit-instruction condition — only writes to the user-facing personal memory dir (`feedback_*.md` + `MEMORY.md`) are.

@@ -102,7 +102,6 @@ class TestRetainParetoWinners(unittest.TestCase):
                 task_type=tt,
                 score=float(i + 1),
                 applied_date=f"2026-07-{i + 1:02d}",
-                lesson=f"lesson-{i}",
                 directive_hint=f"hint-{i}",
             )
             for i in range(n)
@@ -124,45 +123,40 @@ class TestRetainParetoWinners(unittest.TestCase):
         # a lower score → both are Pareto-nondominated (tradeoff frontier).
         agent, tt = "dev-node", "refactor"
         attempts = [
-            dc.SolutionAttempt(agent, tt, 5.0, "2026-01-01", "high-old", "h0"),
-            dc.SolutionAttempt(agent, tt, 3.0, "2026-06-01", "mid-new", "h1"),
-            dc.SolutionAttempt(agent, tt, 2.0, "2026-03-01", "dominated", "h2"),
-            dc.SolutionAttempt(agent, tt, 1.0, "2026-02-01", "dominated2", "h3"),
-            dc.SolutionAttempt(agent, tt, 4.0, "2026-04-01", "dominated3", "h4"),
+            dc.SolutionAttempt(agent, tt, 5.0, "2026-01-01"),
+            dc.SolutionAttempt(agent, tt, 3.0, "2026-06-01"),
+            dc.SolutionAttempt(agent, tt, 2.0, "2026-03-01"),
+            dc.SolutionAttempt(agent, tt, 1.0, "2026-02-01"),
+            dc.SolutionAttempt(agent, tt, 4.0, "2026-04-01"),
         ]
         winners = dc.retain_pareto_winners(attempts)
         cell = winners[(agent, tt)]
-        lessons = {w.lesson for w in cell}
-        # high-old (best score) and mid-new (best recency) both survive.
-        self.assertIn("high-old", lessons)
-        self.assertIn("mid-new", lessons)
+        winner_dates = {w.applied_date for w in cell}
+        # 5.0@2026-01 (best score) and 3.0@2026-06 (best recency) both survive.
+        self.assertIn("2026-01-01", winner_dates)
+        self.assertIn("2026-06-01", winner_dates)
         self.assertGreaterEqual(len(cell), 2)
-        # The 4.0@2026-04 attempt is dominated by 5.0@2026-01? No — newer date but
-        # lower score, so it is NOT dominated by high-old; it IS dominated by
-        # mid-new only if mid-new is both >= score AND >= date, which it is not
-        # (3.0 < 4.0). So verify domination removed the strictly-worse points.
-        self.assertNotIn("dominated2", lessons)
+        # 4.0@2026-04 is newer than 5.0@2026-01 and higher-scored than
+        # 3.0@2026-06, so neither dominates it; 1.0@2026-02 is strictly worse
+        # than 2.0@2026-03 on both axes → removed.
+        self.assertNotIn("2026-02-01", winner_dates)
 
     def test_winners_sorted_score_desc(self) -> None:
         agent, tt = "dev-node", "bug-fix"
         attempts = [
-            dc.SolutionAttempt(agent, tt, 5.0, "2026-01-01", "a", ""),
-            dc.SolutionAttempt(agent, tt, 3.0, "2026-06-01", "b", ""),
-            dc.SolutionAttempt(agent, tt, 4.0, "2026-05-01", "c", ""),
-            dc.SolutionAttempt(agent, tt, 2.0, "2026-04-01", "d", ""),
-            dc.SolutionAttempt(agent, tt, 1.0, "2026-03-01", "e", ""),
+            dc.SolutionAttempt(agent, tt, 5.0, "2026-01-01"),
+            dc.SolutionAttempt(agent, tt, 3.0, "2026-06-01"),
+            dc.SolutionAttempt(agent, tt, 4.0, "2026-05-01"),
+            dc.SolutionAttempt(agent, tt, 2.0, "2026-04-01"),
+            dc.SolutionAttempt(agent, tt, 1.0, "2026-03-01"),
         ]
         cell = dc.retain_pareto_winners(attempts)[(agent, tt)]
         scores = [w.score for w in cell]
         self.assertEqual(scores, sorted(scores, reverse=True))
 
-    def test_reflective_signal_preserved_on_winners(self) -> None:
-        # AC intent: lesson + directive_hint travel with the retained winners
-        # (the reflective mutation signal for the next cycle).
+    def test_directive_hint_preserved_on_winners(self) -> None:
         cell = dc.retain_pareto_winners(self._cell(5))[("dev-python", "feature")]
-        top = cell[0]
-        self.assertTrue(top.lesson)
-        self.assertTrue(top.directive_hint)
+        self.assertTrue(cell[0].directive_hint)
 
     def test_separate_cells_retained_independently(self) -> None:
         # Two distinct (agent, task_type) cells, each at the floor → both kept.
@@ -190,7 +184,6 @@ class TestSolutionAttemptFromOutcome(unittest.TestCase):
             confidence="high",
             metric_pass="true",
             summary="s",
-            lesson="l",
         )
         base.update(kw)
         return dc.Outcome(**base)

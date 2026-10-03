@@ -1603,7 +1603,7 @@ fi
 # CORRECTION_HINT_GAP (computed here where the correction vars are in scope; APPLIED in/after the
 # REVIEW_FLAG block below — an early REVIEW_FLAG set would be clobbered by REVIEW_FLAG's re-init):
 # agent emitted a correction (evaluative_signal=-1) but omitted the distilled directive_hint the
-# Correction-emission rule requires as the 3rd co-emitted element = a lesson-less correction.
+# Correction-emission rule requires as the 3rd co-emitted element = a correction gap.
 # READ-ONLY — never mutates AGENT_PROVIDED_CORRECTION or the core.correction_signals write path.
 CORRECTION_HINT_GAP=0
 if [ "${C_EVALUATIVE_SIGNAL}" = "-1" ] && [ -z "${C_DIRECTIVE_HINT}" ]; then
@@ -2491,8 +2491,8 @@ fi
 # (WAS_OFF_ROLE == true). The underconfidence (low+true) and EMPTY-metric_pass branches are UNCHANGED —
 # they still flag structural rows, so the consumer-side carve-out mirrors this BRANCH (structural AND
 # high AND metric_pass=false), never the structural predicate alone: _outcome_signal
-# ._is_structural_polar_mismatch. Keyed on the structural predicate alone it would discard those two
-# live signals from both lesson buckets.
+# ._is_structural_polar_mismatch. Keyed on the structural predicate alone it would drop those two
+# live signals from the negative predicate.
 # Each setter below stamps a concrete reason token into REVIEW_FLAG_REASONS, so a flagged row names
 # its own trigger instead of being re-derived against a stale taxonomy at read time. The vocabulary
 # is declared once in lib/review-flag-reasons.sh; the carrier is cleared by the final guard.
@@ -2562,12 +2562,12 @@ fi
 # Correction-gap loud flag (applied here, in/after the REVIEW_FLAG block, per the early-clobber note
 # where CORRECTION_HINT_GAP is computed): a -1 correction with an empty directive_hint only partially
 # met the 3-element co-emission → raise review_flag + a loud 1-line stderr note so the learning
-# aggregation registers the lesson-less correction. READ-ONLY vs the correction WRITE path — the
+# aggregation registers the correction gap. READ-ONLY vs the correction WRITE path — the
 # SIG_EMIT / core.correction_signals dualwrite, EVALUATIVE_SIGNAL and DIRECTIVE_HINT are untouched.
 if [[ "${CORRECTION_HINT_GAP}" -eq 1 ]]; then
   REVIEW_FLAG="true"
   review_flag_add_reason "correction-gap"
-  printf '[outcome-record] correction-gap: evaluative_signal=-1 with empty directive_hint (lesson-less correction), agent=%s\n' \
+  printf '[outcome-record] correction-gap: evaluative_signal=-1 with empty directive_hint, agent=%s\n' \
     "${AGENT_TYPE}" >&2
 fi
 

@@ -4,8 +4,7 @@
 #   A dropped scope block is silent to the subagent — it learns nothing about what it is missing.
 #   T16 appends ONE terse, NON-DROPPABLE marker line (placed AFTER the shed loop) naming each shed
 #   block, under a CONDITIONALLY reserved ceiling that lowers exactly ONCE. AM-T16 gives each
-#   RULE-DOC-SOURCED named block its Read-resolvable source path (+ a "you MAY Read it" clause); the
-#   LESSON block is the runtime-derived exception, tagged and carrying NO path.
+#   RULE-DOC-SOURCED named block its Read-resolvable source path (+ a "you MAY Read it" clause).
 #
 #   ACs pinned here (T16):
 #     M1  a forced shed → exactly one fixed-width marker line naming each shed block (also AM-T16's
@@ -17,10 +16,9 @@
 #   ACs pinned here (AM-T16):
 #     A2  a rule-doc-sourced named block carries its resolvable source path.
 #     A3  an emitted rule-doc-sourced path EXISTS.
-#     A4  the lesson block is tagged "runtime-derived, no source path" and carries ZERO path.
 #     A5  the widened marker stays within the ceiling (byte accounting converges, no extra shed).
 #
-#   FAIL-AT-HEAD: HEAD appends NO marker at all, so every marker-presence AC (M1, M3-M5, A2-A5)
+#   FAIL-AT-HEAD: HEAD appends NO marker at all, so every marker-presence AC (M1, M3-M5, A2, A3, A5)
 #   fails against the pre-T16 hook and passes after. M2 is a preserved invariant (the pre-T16 hook
 #   also emits no marker on a no-shed spawn) but its full-ceiling assertion pins the conditional
 #   reserve the pre-T16 hook lacks.
@@ -38,8 +36,6 @@ CEILING_DEFAULT=9984
 
 MARKER_NEEDLE='Injection shed'
 EMIT_NEEDLE='REQUIRED by the outcome recorder'
-# The EXACT AM-T16 lesson tag — asserted verbatim (the amendment says "tag it exactly").
-LESSON_TAG='lesson: runtime-derived, no source path — recovers via re-spawn, not Read'
 
 setup() {
   [[ -x "${HOOK_SH}" ]] || skip "hook not executable: ${HOOK_SH}"
@@ -49,7 +45,6 @@ setup() {
   COUNTER="${BATS_TEST_TMPDIR}/spawns.count"
   BUDGET="${BATS_TEST_TMPDIR}/budget.md"
   WIKI=/nonexistent
-  LESSONS="${BATS_TEST_TMPDIR}/lessons.json"
 
   # C03: the positive-injection manifest sink writes on EVERY spawn and defaults under the live
   # ~/.glass-atrium/logs — sandbox it too (exported → inherited through each run helper's `env`).
@@ -71,22 +66,13 @@ make_block() {
   } >"${out}"
 }
 
-# Write a lesson store with one big CTM lesson for glass-atrium-dev-front (present → shed candidate).
-make_lessons() {
-  local text
-  text="$(head -c 4000 /dev/zero | tr '\0' 'L')"
-  jq -nc --arg t "${text}" \
-    '{ctm:[{agent:"glass-atrium-dev-front",task_type:"bug-fix",text:$t,score:5,frequency:3}]}' \
-    >"${LESSONS}"
-}
-
-# Drive the hook's SubagentStart injection for $1 with the ${BUDGET} + ${WIKI} fixtures, an overridable
-# ceiling $2, and an optional lesson store $3 (default absent). The meter is off, so a
-# BUDGET_DEV_AGENTS member sees budget-dev (+ lesson). The drop sink + counter go to the Bats tmpdir.
+# Drive the hook's SubagentStart injection for $1 with the ${BUDGET} + ${WIKI} fixtures and an
+# overridable ceiling $2. The meter is off, so a BUDGET_DEV_AGENTS member sees budget-dev. The drop
+# sink + counter go to the Bats tmpdir.
 run_marker() {
-  local agent="${1}" ceiling="${2}" lessons="${3:-/nonexistent}"
+  local agent="${1}" ceiling="${2}"
   run bash -c '
-    agent="$1"; hook="$2"; budget="$3"; droplog="$4"; counter="$5"; ceiling="$6"; lessons="$7"; wiki="$8"
+    agent="$1"; hook="$2"; budget="$3"; droplog="$4"; counter="$5"; ceiling="$6"; wiki="$7"
     printf "%s" "{\"agent_type\":\"${agent}\"}" | env \
       INJECT_SCOPE_RULES_CTX_MAX_BYTES="${ceiling}" \
       INJECT_SCOPE_RULES_DROP_LOG="${droplog}" \
@@ -95,9 +81,8 @@ run_marker() {
       INJECT_SCOPE_RULES_AGENTS_DIR=/nonexistent \
       INJECT_SCOPE_RULES_BUDGET_SRC="${budget}" \
       INJECT_SCOPE_RULES_WIKI_UNTRUSTED_SRC="${wiki}" \
-      INJECT_SCOPE_RULES_LESSONS_SRC="${lessons}" \
       "${hook}"
-  ' _ "${agent}" "${HOOK_SH}" "${BUDGET}" "${DROPLOG}" "${COUNTER}" "${ceiling}" "${lessons}" "${WIKI}"
+  ' _ "${agent}" "${HOOK_SH}" "${BUDGET}" "${DROPLOG}" "${COUNTER}" "${ceiling}" "${WIKI}"
 }
 
 # additionalContext string from the hook's JSON stdout (the JSON line is the only one starting '{';
@@ -190,21 +175,6 @@ ctx_units() {
   }
 }
 
-# ── AM-T16 A4 — the lesson block is tagged runtime-derived and carries ZERO path ─────────────────
-
-@test "A4: the lesson block is tagged 'runtime-derived, no source path' with zero path claimed" {
-  make_lessons
-  make_block 9000 # emit + lesson + budget-dev all exceed the ceiling → lesson (lowest) sheds first
-  run_marker "glass-atrium-dev-front" "${CEILING_DEFAULT}" "${LESSONS}"
-  assert_status 0
-  # The EXACT runtime-derived tag is present (AM-T16: "tag it exactly").
-  assert_ctx_contains "${LESSON_TAG}"
-  # The lesson entry claims no path: the runtime-derived tag itself contains "no source path", and
-  # no LESSONS store path leaks into the marker (only rule-doc paths appear as "<label>: <path>").
-  assert_ctx_not_contains "lesson: ${LESSONS}"
-  assert_ctx_not_contains "${LESSONS}"
-}
-
 # ── M2 — no shed → NO marker AND the FULL ceiling was used (fixture between the two ceilings) ─────
 
 @test "M2: a no-shed spawn keeps the FULL ceiling — the marker budget is conditional" {
@@ -268,9 +238,10 @@ ctx_units() {
 # ── M3 — the ceiling lowers at MOST once per invocation (multi-shed) ─────────────────────────────
 
 @test "M3: the ceiling-lowered diagnostic fires exactly once however many blocks shed" {
-  make_lessons
-  make_block 9000 # lesson + budget-dev both shed under the default ceiling
-  run_marker "glass-atrium-dev-front" "${CEILING_DEFAULT}" "${LESSONS}"
+  WIKI="${BATS_TEST_TMPDIR}/wiki.md"
+  make_block 4000 WIKI-UNTRUSTED "${WIKI}"
+  make_block 9000 BUDGET-ANALYSIS # wiki-untrusted, then budget-analysis, both shed under the default ceiling
+  run_marker "glass-atrium-qa-code-reviewer" "${CEILING_DEFAULT}"
   assert_status 0
   # The budgeted ceiling is re-derived on EVERY shed (the marker grows with each entry), but the
   # operator needs the fact once — so the "ceiling lowered" diagnostic (merged stderr) fires EXACTLY
@@ -283,8 +254,8 @@ ctx_units() {
   }
   # Both real sheds are named (2 present blocks): the fixed-width count reads 02.
   assert_ctx_contains "Injection shed 02"
-  assert_ctx_contains "${LESSON_TAG}"
-  assert_ctx_contains "budget-dev: ${BUDGET}"
+  assert_ctx_contains "wiki-untrusted: ${WIKI}"
+  assert_ctx_contains "budget-analysis: ${BUDGET}"
 }
 
 # ── M4 — a ceiling under the non-droppable block → shed once, never loop, never shed silently ─────
