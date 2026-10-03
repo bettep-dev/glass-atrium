@@ -1,10 +1,11 @@
 // Integration tests for GET/PUT /api/model-config (spec doc 36166 AC-1..AC-6, AC-9).
 //
-// Runner: node:test via tsx — npx tsx --test test/model-config.route.test.ts
+// Runner: MONITOR_TEST_DATABASE_URL=… npx tsx --import ./test/lib/select-test-db.ts --test test/model-config.route.test.ts
 //
 // Test infra:
-//   - DB: real Postgres (DATABASE_URL from .env). monitor.model_config rows are
-//     snapshotted in before() and restored byte-for-byte in after() (updated_at included).
+//   - DB: real Postgres, the test-only database MONITOR_TEST_DATABASE_URL names
+//     → select-test-db.ts swaps it into DATABASE_URL; unset → the run refuses to start.
+//     monitor.model_config rows: snapshotted in before(), restored byte-for-byte in after() (updated_at included).
 //   - External surfaces (daemon-config.json / agents dir / apply-lock)
 //     are tmpdir fixtures injected via the MODEL_CONFIG_* env seams — the live harness
 //     files are never touched. The pricing SoT roster is a tmpdir fixture too
@@ -40,6 +41,7 @@ import type {
   ModelConfigGetResponse,
   ModelConfigPutResponse,
   SurfaceResult,
+  TierDomainStatus,
 } from "../src/server/types/model-config.js";
 
 // Suite baseline — every test starts from (or restores toward) this state. Mirrors the
@@ -476,14 +478,80 @@ test("D2: bare alias PUT → 400 with remediation message on EVERY domain (dev/r
   assert.strictEqual(await getDbValue("model.research"), "claude-sonnet-5", "DB unchanged after rejects");
 });
 
-test("unknown domain key → 400", async () => {
-  const res = await app.inject({
-    method: "PUT",
-    url: "/api/model-config",
-    payload: { models: { "model.bogus": "claude-haiku-4-5" } },
-  });
-  assert.strictEqual(res.statusCode, 400);
-  assert.strictEqual((res.json() as { field: string }).field, "models.model.bogus");
+test("PUT: a key only another group knows → 400 naming the group-qualified field with that group's reason", async () => {
+  const rows: ReadonlyArray<{ name: string; payload: object; field: string; reason: string }> = [
+    {
+      name: "a budget key under models",
+      payload: { models: { "budget.worker_max_usd": "2.00" } },
+      field: "models.budget.worker_max_usd",
+      reason: "unknown domain key",
+    },
+    {
+      name: "a tier key under budgets",
+      payload: { budgets: { "tier.worker_effort": "high" } },
+      field: "budgets.tier.worker_effort",
+      reason: "unknown budget key",
+    },
+    {
+      name: "a model key under tiers",
+      payload: { tiers: { "model.dev": "claude-haiku-4-5" } },
+      field: "tiers.model.dev",
+      reason: "unknown tier key",
+    },
+  ];
+  for (const row of rows) {
+    const res = await app.inject({ method: "PUT", url: "/api/model-config", payload: row.payload });
+    assert.strictEqual(res.statusCode, 400, `${row.name} must 400: ${res.body}`);
+    assert.deepStrictEqual(
+      res.json(),
+      { error: "invalid_body", field: row.field, reason: row.reason },
+      row.name,
+    );
+  }
+});
+
+test("PUT: a group that is not an object, or a body with no group → 400 naming it, and nothing is written", async () => {
+  // Each malformed group follows a valid one the handler validates first — a write has something to land.
+  const rows: ReadonlyArray<{ name: string; payload: object; field: string; reason: string }> = [
+    {
+      name: "tiers null",
+      payload: { budgets: { "budget.worker_max_usd": "2.00" }, tiers: null },
+      field: "tiers",
+      reason: "must be an object",
+    },
+    {
+      name: "tiers an array",
+      payload: { budgets: { "budget.worker_max_usd": "2.00" }, tiers: [] },
+      field: "tiers",
+      reason: "must be an object",
+    },
+    {
+      name: "budgets a string",
+      payload: { models: { "model.daemon_cycle_worker": "claude-sonnet-4-6" }, budgets: "x" },
+      field: "budgets",
+      reason: "must be an object",
+    },
+    {
+      name: "an empty body",
+      payload: {},
+      field: "body",
+      reason: "must contain 'models', 'budgets' and/or 'tiers'",
+    },
+  ];
+  const getConfigRows = () => getPrisma().modelConfig.findMany({ orderBy: { configKey: "asc" } });
+  const rowsBefore = await getConfigRows();
+  const fileBefore = readFileSync(daemonConfigPath, "utf8");
+  for (const row of rows) {
+    const res = await app.inject({ method: "PUT", url: "/api/model-config", payload: row.payload });
+    assert.strictEqual(res.statusCode, 400, `${row.name} must 400: ${res.body}`);
+    assert.deepStrictEqual(
+      res.json(),
+      { error: "invalid_body", field: row.field, reason: row.reason },
+      row.name,
+    );
+    assert.deepStrictEqual(await getConfigRows(), rowsBefore, `${row.name}: no model_config row written`);
+    assert.strictEqual(readFileSync(daemonConfigPath, "utf8"), fileBefore, `${row.name}: daemon-config.json untouched`);
+  }
 });
 
 test("AC-3: per-call budget format → 400 atomic (no cross-field invariant)", async () => {
@@ -769,6 +837,189 @@ test("daemon_config_sync: rendered-view mismatch → 'drift', missing file → '
   });
   assert.strictEqual(res3.statusCode, 200);
   assert.strictEqual((res3.json() as ModelConfigPutResponse).daemon_config_sync, "ok");
+});
+
+// ----- tier knobs: daemon `claude -p` --effort level + output-token cap ----------------
+
+// Independent oracle: tier domain → the daemon-config.json key hooks/daemon_config.py reads.
+const TIER_FILE_KEY: Readonly<Record<string, string>> = {
+  "tier.worker_effort": "worker_effort",
+  "tier.pre_verify_effort": "pre_verify_effort",
+  "tier.worker_max_output_tokens": "worker_max_output_tokens",
+  "tier.pre_verify_max_output_tokens": "pre_verify_max_output_tokens",
+};
+
+function tierOf(body: ModelConfigGetResponse, key: string): TierDomainStatus {
+  const found = body.tiers.find((t) => t.domain === key);
+  assert.ok(found, `tier ${key} present`);
+  return found;
+}
+
+// Tier rows are not in BASELINE, so each tier test starts from (and leaves) none of them.
+async function resetTierState(): Promise<void> {
+  await getPrisma().modelConfig.deleteMany({ where: { configKey: { startsWith: "tier." } } });
+  writeDaemonConfigFixture();
+  await resetDbBaseline();
+}
+
+async function putTiers(tiers: Record<string, unknown>): Promise<ModelConfigPutResponse> {
+  const res = await app.inject({ method: "PUT", url: "/api/model-config", payload: { tiers } });
+  assert.strictEqual(res.statusCode, 200, res.body);
+  return res.json() as ModelConfigPutResponse;
+}
+
+test("GET: every tier knob reads as unset on a fresh DB — no saved value, no file key, no drift", async () => {
+  await resetTierState();
+  const res = await app.inject({ method: "GET", url: "/api/model-config" });
+  assert.strictEqual(res.statusCode, 200);
+  const body = res.json() as ModelConfigGetResponse;
+
+  assert.deepStrictEqual(body.tiers.map((t) => t.domain).sort(), Object.keys(TIER_FILE_KEY).sort());
+  for (const tier of body.tiers) {
+    assert.deepStrictEqual(
+      { desired: tier.desired, actual: tier.actual, file_error: tier.file_error, drift: tier.drift, apply_mode: tier.apply_mode },
+      { desired: null, actual: null, file_error: null, drift: false, apply_mode: "next-cycle" },
+      tier.domain,
+    );
+  }
+  assert.strictEqual(body.daemon_config_sync, "ok", "an absent row over an absent key is in sync");
+});
+
+test("PUT tiers: a saved level and cap render verbatim under the daemon's keys, other keys untouched", async () => {
+  await resetTierState();
+  const body = await putTiers({ "tier.worker_effort": "high", "tier.pre_verify_max_output_tokens": "32000" });
+
+  assert.strictEqual(surfaceOf(body, "daemon-config.json").status, "ok");
+  const rendered = JSON.parse(readFileSync(daemonConfigPath, "utf8")) as Record<string, unknown>;
+  assert.strictEqual(rendered[TIER_FILE_KEY["tier.worker_effort"]], "high");
+  assert.strictEqual(rendered[TIER_FILE_KEY["tier.pre_verify_max_output_tokens"]], "32000", "a cap stays a JSON string");
+  assert.ok(!(TIER_FILE_KEY["tier.pre_verify_effort"] in rendered), "an unsaved knob writes no key");
+  assert.strictEqual(rendered.worker_max_budget_usd, "10.00", "untouched daemon keys survive");
+  assert.strictEqual(rendered._comment, DAEMON_CONFIG_FIXTURE._comment);
+  assert.deepStrictEqual(
+    { actual: tierOf(body, "tier.worker_effort").actual, drift: tierOf(body, "tier.worker_effort").drift },
+    { actual: "high", drift: false },
+  );
+  assert.strictEqual(body.daemon_config_sync, "ok");
+  assert.strictEqual(await getDbValue("tier.worker_effort"), "high");
+  await resetTierState();
+});
+
+test("PUT tiers: 'inherit' deletes the knob's key, so the CLI default governs again", async () => {
+  await resetTierState();
+  await putTiers({ "tier.worker_effort": "high", "tier.worker_max_output_tokens": "16000" });
+
+  const body = await putTiers({ "tier.worker_effort": "inherit" });
+
+  const rendered = JSON.parse(readFileSync(daemonConfigPath, "utf8")) as Record<string, unknown>;
+  assert.ok(!(TIER_FILE_KEY["tier.worker_effort"] in rendered), "inherit removes the key");
+  assert.strictEqual(rendered[TIER_FILE_KEY["tier.worker_max_output_tokens"]], "16000", "a sibling knob is kept");
+  assert.deepStrictEqual(
+    { desired: tierOf(body, "tier.worker_effort").desired, actual: tierOf(body, "tier.worker_effort").actual, drift: tierOf(body, "tier.worker_effort").drift },
+    { desired: "inherit", actual: null, drift: false },
+  );
+  assert.strictEqual(body.daemon_config_sync, "ok");
+  await resetTierState();
+});
+
+test("PUT tiers: a value outside the accepted set → 400 naming the field, and nothing is written", async () => {
+  await resetTierState();
+  const fileBefore = readFileSync(daemonConfigPath, "utf8");
+  const rows: ReadonlyArray<{ name: string; key: string; value: unknown }> = [
+    { name: "an uppercase level", key: "tier.worker_effort", value: "HIGH" },
+    { name: "a level the CLI does not list", key: "tier.pre_verify_effort", value: "ultra" },
+    { name: "an empty level", key: "tier.worker_effort", value: "" },
+    { name: "a padded level", key: "tier.worker_effort", value: " high" },
+    { name: "a level on a cap key", key: "tier.worker_max_output_tokens", value: "high" },
+    { name: "a zero cap", key: "tier.worker_max_output_tokens", value: "0" },
+    { name: "a zero-led cap", key: "tier.worker_max_output_tokens", value: "0123" },
+    { name: "a seven-digit cap", key: "tier.pre_verify_max_output_tokens", value: "1234567" },
+    { name: "a fractional cap", key: "tier.worker_max_output_tokens", value: "1.5" },
+    { name: "a negative cap", key: "tier.worker_max_output_tokens", value: "-1" },
+    { name: "a JSON-number cap", key: "tier.worker_max_output_tokens", value: 16000 },
+  ];
+  for (const row of rows) {
+    // A valid budget rides along — validate-all-first means the bad tier blocks it too.
+    const res = await app.inject({
+      method: "PUT",
+      url: "/api/model-config",
+      payload: { budgets: { "budget.worker_max_usd": "2.00" }, tiers: { [row.key]: row.value } },
+    });
+    assert.strictEqual(res.statusCode, 400, `${row.name} must 400: ${res.body}`);
+    assert.strictEqual((res.json() as { field: string }).field, `tiers.${row.key}`, row.name);
+  }
+  const tierRows = await getPrisma().modelConfig.count({ where: { configKey: { startsWith: "tier." } } });
+  assert.strictEqual(tierRows, 0, "no tier row written");
+  assert.strictEqual(await getDbValue("budget.worker_max_usd"), "10.00", "the valid budget was not written either");
+  assert.strictEqual(readFileSync(daemonConfigPath, "utf8"), fileBefore, "daemon-config.json untouched");
+});
+
+test("tier drift: a file that disagrees with the saved knob drifts that row and the file state", async () => {
+  await resetTierState();
+  await putTiers({ "tier.worker_effort": "high", "tier.pre_verify_effort": "inherit" });
+  const rows: ReadonlyArray<{ name: string; file: Record<string, unknown>; domain: string }> = [
+    { name: "a hand-edited level", file: { ...DAEMON_CONFIG_FIXTURE, worker_effort: "low" }, domain: "tier.worker_effort" },
+    { name: "a hand-removed key", file: { ...DAEMON_CONFIG_FIXTURE }, domain: "tier.worker_effort" },
+    {
+      name: "an 'inherit' knob whose key is back",
+      file: { ...DAEMON_CONFIG_FIXTURE, worker_effort: "high", pre_verify_effort: "max" },
+      domain: "tier.pre_verify_effort",
+    },
+  ];
+  for (const row of rows) {
+    writeFileSync(daemonConfigPath, `${JSON.stringify(row.file, null, 2)}\n`, "utf8");
+    const res = await app.inject({ method: "GET", url: "/api/model-config" });
+    const body = res.json() as ModelConfigGetResponse;
+    assert.strictEqual(tierOf(body, row.domain).drift, true, row.name);
+    assert.strictEqual(body.daemon_config_sync, "drift", row.name);
+  }
+  await resetTierState();
+});
+
+// hooks/daemon_config.py exits every cycle on these values, so the row must say so — with or without a saved row.
+test("tier read-back: a file value the daemon loader rejects shows on its row and takes the file state off 'ok'", async () => {
+  const rows: ReadonlyArray<{ name: string; saved: Record<string, string>; domain: string; value: unknown; isDrift: boolean }> = [
+    { name: "a level the CLI does not list, no saved row", saved: {}, domain: "tier.worker_effort", value: "ultra", isDrift: false },
+    { name: "a JSON-number cap, no saved row", saved: {}, domain: "tier.worker_max_output_tokens", value: 16000, isDrift: false },
+    { name: "the PUT-only word 'inherit' in the file", saved: {}, domain: "tier.pre_verify_effort", value: "inherit", isDrift: false },
+    {
+      name: "a rejected level over a saved one",
+      saved: { "tier.worker_effort": "high" },
+      domain: "tier.worker_effort",
+      value: "ultra",
+      isDrift: true,
+    },
+  ];
+  for (const row of rows) {
+    await resetTierState();
+    if (Object.keys(row.saved).length > 0) {
+      await putTiers(row.saved);
+    }
+    const file = { ...DAEMON_CONFIG_FIXTURE, [TIER_FILE_KEY[row.domain]]: row.value };
+    writeFileSync(daemonConfigPath, `${JSON.stringify(file, null, 2)}\n`, "utf8");
+    const body = (await app.inject({ method: "GET", url: "/api/model-config" })).json() as ModelConfigGetResponse;
+    const tier = tierOf(body, row.domain);
+
+    assert.ok(tier.file_error?.includes(JSON.stringify(row.value)), `${row.name}: the row names the rejected value — ${tier.file_error}`);
+    assert.strictEqual(tier.actual, null, `${row.name}: a rejected value is never reported in effect`);
+    assert.strictEqual(tier.drift, row.isDrift, `${row.name}: drift`);
+    assert.strictEqual(body.daemon_config_sync, "file-invalid", row.name);
+  }
+  await resetTierState();
+});
+
+test("tier read-back: a key the daemon loader reads as unset is in sync with a saved 'inherit'", async () => {
+  for (const [name, value] of [["an empty string", ""], ["a JSON null", null]] as const) {
+    await resetTierState();
+    await putTiers({ "tier.worker_effort": "inherit" });
+    writeFileSync(daemonConfigPath, `${JSON.stringify({ ...DAEMON_CONFIG_FIXTURE, worker_effort: value }, null, 2)}\n`, "utf8");
+    const body = (await app.inject({ method: "GET", url: "/api/model-config" })).json() as ModelConfigGetResponse;
+    const tier = tierOf(body, "tier.worker_effort");
+
+    assert.deepStrictEqual({ actual: tier.actual, file_error: tier.file_error, drift: tier.drift }, { actual: null, file_error: null, drift: false }, name);
+    assert.strictEqual(body.daemon_config_sync, "ok", name);
+  }
+  await resetTierState();
 });
 
 // ----- un-migrated DB (the post-update window) ---------------------------------------
