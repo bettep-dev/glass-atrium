@@ -7027,25 +7027,30 @@ def emit_loop_events(report: CycleReport) -> int:
 
 # -- cycle-level all-reject alert --------------------------------------------
 
-# Statuses every all-reject discriminator reads as terminal-negative. Named once
+# Terminal non-output statuses every all-reject discriminator reads. Named once
 # so the in-memory and the persisted walk cannot drift apart on the set.
-_TERMINAL_NEGATIVE_STATUSES = frozenset({"rejected", "reverted"})
+# 'unadjudicated' only reaches _is_non_adjudication_reject here, never counts.
+_TERMINAL_NEGATIVE_STATUSES = frozenset({"rejected", "reverted", "unadjudicated"})
 
 
 def _is_non_adjudication_reject(status: str, rationale: str | None) -> bool:
-    """A 'rejected' row the classifier SoT says was never genuinely adjudicated.
+    """A terminal row that was never genuinely adjudicated.
 
     The single discriminator both all-reject walks and consecutive_reject_count
     set a row aside on, delegated to classify_failure_rationale — never a
     parallel rationale.startswith(...) test, and never a status/agent carve-out
     per infra class.
 
-    Status-gated deliberately: ONLY a 'rejected' row is classifiable. A
+    Status-gated deliberately: an 'unadjudicated' row is set aside by status
+    alone — its writer already classified it non-adjudicating. Of the rest ONLY
+    a 'rejected' row is classifiable. A
     'pending'/'snoozed'/'applied' row is pipeline output and is judged by status
     alone — classifying it would let a blank-rationale queued row vanish instead
     of breaking the streak, silently extending it over a night that shipped.
     'reverted' is terminal by status for the same reason, in the other direction.
     """
+    if status == "unadjudicated":
+        return True
     return (
         status == "rejected"
         and classify_failure_rationale(rationale or "") in _NON_ADJUDICATION_CLASSES
@@ -9240,6 +9245,7 @@ def consecutive_reject_count(
         budget-too-low / transient-overload / empty-or-error) → looked past:
         the candidate was never genuinely adjudicated, so it MUST NOT advance
         the kill streak (the de-conflation root-cause fix);
+      - 'unadjudicated' → looked past by status, whatever its rationale;
       - 'rejected' classifying as a genuine QUALITY reject → streak += 1;
       - 'snoozed' (stale-drain, legacy back-off) / 'pending' (not yet adjudicated) /
         'reverted' (human/CLI back-out — terminal-non-resurrectable: it must

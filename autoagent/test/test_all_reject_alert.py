@@ -238,6 +238,20 @@ class TestAllRejectedThisCycleClassification(unittest.TestCase):
             dc._all_rejected_this_cycle(_cycle_report([_patch_result("reverted", rationale="")]))
         )
 
+    def test_when_an_unadjudicated_row_sits_beside_a_quality_reject_then_set_aside(
+        self,
+    ) -> None:
+        # Set aside by status: a quality rationale on it must neither count it
+        # as a rejection nor let it break the all-rejected claim as output.
+        for rationale in (_QUALITY_RATIONALE, ""):
+            with self.subTest(rationale=rationale):
+                unadjudicated = _patch_result("unadjudicated", rationale=rationale)
+                quality_reject = _patch_result("rejected", rationale=_QUALITY_RATIONALE)
+                self.assertTrue(
+                    dc._all_rejected_this_cycle(_cycle_report([unadjudicated, quality_reject]))
+                )
+                self.assertFalse(dc._all_rejected_this_cycle(_cycle_report([unadjudicated])))
+
 
 # daemon_cycle imports cleanly without psycopg (HAS_PG_LOOP_WRITE=False) but then
 # leaves _pg_connect unbound — patch.object on it would ERROR, so skip instead.
@@ -340,6 +354,19 @@ class TestAllRejectStreakWalk(unittest.TestCase):
             ("2026-06-08", "applied", _QUALITY_RATIONALE),
         ]
         self.assertEqual(dc._all_reject_streak_from_rows(rows), 1)
+
+    def test_when_a_date_holds_only_unadjudicated_rows_then_it_drops_out(self) -> None:
+        # Status alone decides: even a quality rationale cannot make it extend.
+        for rationale in (_QUALITY_RATIONALE, "", _backoff_rationale()):
+            with self.subTest(rationale=rationale):
+                rows = [
+                    ("2026-06-09", "rejected", _QUALITY_RATIONALE),
+                    ("2026-06-08", "unadjudicated", rationale),
+                    ("2026-06-07", "rejected", _QUALITY_RATIONALE),
+                    ("2026-06-06", "applied", _QUALITY_RATIONALE),
+                ]
+                # Dropping out gives 2; extending would give 3, breaking 1.
+                self.assertEqual(dc._all_reject_streak_from_rows(rows), 2)
 
     def test_when_no_rows_then_zero(self) -> None:
         self.assertEqual(dc._all_reject_streak_from_rows([]), 0)

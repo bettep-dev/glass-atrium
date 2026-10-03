@@ -166,6 +166,18 @@ class TestConsecutiveRejectCount(unittest.TestCase):
         ]
         self.assertEqual(dc.consecutive_reject_count(_LEGACY_LABEL, rows), 1)
 
+    def test_when_unadjudicated_rows_then_looked_past_whatever_the_rationale(
+        self,
+    ) -> None:
+        rows = [
+            ("unadjudicated", _LEGACY_PROPOSAL_LABEL, "quality reject — pre-verify failed"),
+            _reject(),
+            ("unadjudicated", _LEGACY_PROPOSAL_LABEL, ""),
+            _reject(),
+        ]
+        # Looked past gives 2; counting would give 4, breaking 0.
+        self.assertEqual(dc.consecutive_reject_count(_LEGACY_LABEL, rows), 2)
+
     def test_when_label_not_covering_then_row_ignored(self) -> None:
         rows = [
             _reject(label="some unrelated pattern label"),
