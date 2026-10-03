@@ -8,12 +8,13 @@
 // retired "rendered-pixel legibility proxy" measured scale alone, which is the half of
 // the trade that a wider graph does not move.
 //
-// The default view is an overview: the drawing at 70% of the contain fit, centred, with no label
-// floor — detail is read by zooming in. Readings asserted together:
+// The default view is an overview: the drawing at 90% of the contain fit, centred, with every label
+// at the 13px meta floor or more. Readings asserted together:
 //   1. containment — every `.node` / `.cluster` client rect within the canvas rect.
-//   2. overview share — the drawing spans ~70% of its frame on the binding axis, centred on both axes.
-//   3. reach — zoom-in presses from the default view bring every label to >= MIN_RENDERED_LABEL_PX.
+//   2. overview share — the drawing spans ~90% of its frame on the binding axis, centred on both axes.
+//   3. legibility — every label at >= MIN_RENDERED_LABEL_PX in the default view, and still within the zoom-in press budget.
 //   4. reset — the Reset control returns a zoomed-in map to the same default view.
+//   5. shape — two columns read top to bottom: Inputs | Daemons, Orchestrator, Agents on the left; Safety, Store, Documents on the right.
 //
 // Viewport table: 1024 and 1440 are the widths the evaluators scored; 1396 is the width the user
 // actually runs; 1512 and 1920 are the two the fit was first reasoned about. Heights are the window heights
@@ -52,11 +53,14 @@ import type { ArchitectureLiveResponse } from "../src/server/types/architecture.
 const HERE = dirname(fileURLToPath(import.meta.url));
 const PUBLIC_ROOT = resolve(HERE, "..", "public");
 
-// the 12px meta step the zoomed-in labels must reach, measured on the drawn labels — owned here, never read from the screen
-const MIN_RENDERED_LABEL_PX = 12;
+// the 13px meta floor every drawn label must reach — owned here, never read from the screen
+const MIN_RENDERED_LABEL_PX = 13;
 
 // the default view's share of the contain fit
-const DEFAULT_VIEW_SHARE = 0.7;
+const DEFAULT_VIEW_SHARE = 0.9;
+
+// the two column jumps' vertical lanes stay this far apart (CSS px) — closer, the two arrows read as one line
+const MIN_JUMP_LANE_GAP_PX = 8;
 
 // drawn boxes span at least this share of the viewBox on its binding axis (the rest is diagramPadding)
 const MIN_BINDING_AXIS_FILL = 0.9;
@@ -67,7 +71,7 @@ const ZOOM_IN_PRESS_BUDGET = 3;
 // presses that take the map well past the default view before Reset — far enough to move the library's zoom base
 const ZOOM_IN_PRESSES_BEFORE_RESET = 8;
 
-// slack difference between opposite sides of a centred drawing — viewBox padding asymmetry at scale <= 0.7 plus rounding
+// slack difference between opposite sides of a centred drawing — viewBox padding asymmetry plus rounding
 const MAX_CENTRING_SKEW_PX = 8;
 
 // CTM-derived reads (labelPx, scale) carry float noise → the zoomed-in label floor and the natural-size default share compare within it
@@ -469,22 +473,6 @@ async function readZones(width: number, height: number, extraSource?: string): P
 	}
 }
 
-// drawn zone boxes by zone id — the cluster id's last '-' segment
-async function readZoneBoxes(width: number, height: number): Promise<Map<string, { left: number; right: number; top: number; bottom: number }>> {
-	const { page } = await openFittedPage(width, height);
-	try {
-		const entries = await page.evaluate(() =>
-			Array.from(document.querySelectorAll(".arch-mermaid-canvas svg g.cluster")).map((el) => {
-				const r = el.getBoundingClientRect();
-				return [el.id.slice(el.id.lastIndexOf("-") + 1), { left: r.left, right: r.right, top: r.top, bottom: r.bottom }] as const;
-			}),
-		);
-		return new Map(entries);
-	} finally {
-		await page.close();
-	}
-}
-
 // drawn node-label, zone-title or edge-label lines, words grouped by rendered line top
 const LABEL_SELECTORS = {
 	node: { group: "g.node", label: ".nodeLabel" },
@@ -549,31 +537,146 @@ for (const { width, height } of VIEWPORTS.filter((viewport) => viewport.width ==
 	});
 }
 
-// the ⊐ — drawn zone ids in source order; these three run back along the bottom row, Safety first
+// the newspaper map — drawn zone ids in source order, and the zones of each column top to bottom (the band's two zones share a row)
 const ZONE_IDS = {
 	DRAWN: [...CANONICAL_MAP.mermaid_drawn.matchAll(/subgraph\s+(\w+)/g)].map(([, id]) => id),
-	BOTTOM_ROW: ["hooks", "data", "export"],
+	LEFT: ["entry", "daemon", "orch", "agents"],
+	RIGHT: ["hooks", "data", "export"],
 };
 
-for (const { width, height } of VIEWPORTS) {
-	test(`the bottom row runs right to left under the top row with Safety under Agents at ${width}x${height}`, async () => {
-		const boxes = await readZoneBoxes(width, height);
-		const drawn = JSON.stringify(Object.fromEntries(boxes));
-		assert.deepEqual([...boxes.keys()].sort(), [...ZONE_IDS.DRAWN].sort(), `drawn zones: ${drawn}`);
-		const getBox = (id: string) => {
-			const box = boxes.get(id);
-			if (!box) throw new Error(`zone ${id} was not drawn: ${drawn}`);
-			return box;
-		};
-		const getCentreX = (id: string) => (getBox(id).left + getBox(id).right) / 2;
-		const topRowBottom = Math.max(...ZONE_IDS.DRAWN.filter((id) => !ZONE_IDS.BOTTOM_ROW.includes(id)).map((id) => getBox(id).bottom));
+// drawn member ids per zone, from the drawn source's subgraph blocks
+const MEMBER_IDS = new Map(
+	[...CANONICAL_MAP.mermaid_drawn.matchAll(/subgraph\s+(\w+)\[[^\]]*\]\n([\s\S]*?)\n\s*end/g)].map(([, zone, body]) => [
+		zone,
+		[...body.matchAll(/^\s*(\w+)[[("]/gm)].map(([, id]) => id),
+	]),
+);
 
-		for (const id of ZONE_IDS.BOTTOM_ROW) assert.ok(getBox(id).top >= topRowBottom, `${id} does not sit below the top row: ${drawn}`);
-		for (const [from, to] of [["entry", "orch"], ["daemon", "orch"], ["orch", "agents"], ["hooks", "data"], ["data", "export"]]) {
-			const step = ZONE_IDS.BOTTOM_ROW.includes(from) ? -1 : 1;
-			assert.ok((getCentreX(to) - getCentreX(from)) * step > 0, `${from} → ${to} runs against its row's direction: ${drawn}`);
+type Box = { left: number; right: number; top: number; bottom: number };
+
+interface MapShape {
+	zones: Record<string, Box>;
+	members: { id: string; box: Box }[];
+	// screen polylines of every drawn link, sampled along the path · kind is the screen-drawn edge kind ("" for ELK-routed)
+	links: { id: string; kind: string; points: { x: number; y: number }[] }[];
+}
+
+// zone frames, member boxes and sampled link polylines in client px at the default view
+async function readMapShape(width: number, height: number): Promise<MapShape> {
+	const { page, canvasSelector } = await openFittedPage(width, height);
+	try {
+		return await page.evaluate((sel) => ({
+			zones: Object.fromEntries(
+				Array.from(document.querySelectorAll(`${sel} svg g.cluster`)).map((el) => {
+					const r = (el.querySelector(":scope > rect") ?? el).getBoundingClientRect();
+					return [el.id.slice(el.id.lastIndexOf("-") + 1), { left: r.left, right: r.right, top: r.top, bottom: r.bottom }];
+				}),
+			),
+			members: Array.from(document.querySelectorAll(`${sel} svg g.node`)).map((el) => {
+				const r = el.getBoundingClientRect();
+				return { id: /flowchart-(.+)-\d+$/.exec(el.id)?.[1] ?? el.id, box: { left: r.left, right: r.right, top: r.top, bottom: r.bottom } };
+			}),
+			links: Array.from(document.querySelectorAll(`${sel} svg path.flowchart-link`)).map((el) => {
+				const path = el as SVGPathElement;
+				const ctm = path.getScreenCTM() as DOMMatrix;
+				const length = path.getTotalLength();
+				const count = Math.max(2, Math.ceil(length / 4));
+				return {
+					id: path.id,
+					kind: path.getAttribute("data-arch-edge") ?? "",
+					points: Array.from({ length: count + 1 }, (_, i) => {
+						const p = path.getPointAtLength((length * i) / count).matrixTransform(ctm);
+						return { x: p.x, y: p.y };
+					}),
+				};
+			}),
+		}), canvasSelector);
+	} finally {
+		await page.close();
+	}
+}
+
+function getZoneBox(shape: MapShape, id: string): Box {
+	const box = shape.zones[id];
+	if (!box) throw new Error(`zone ${id} was not drawn: ${JSON.stringify(Object.keys(shape.zones))}`);
+	return box;
+}
+
+function getUnion(boxes: Box[]): Box {
+	return {
+		left: Math.min(...boxes.map((b) => b.left)),
+		right: Math.max(...boxes.map((b) => b.right)),
+		top: Math.min(...boxes.map((b) => b.top)),
+		bottom: Math.max(...boxes.map((b) => b.bottom)),
+	};
+}
+
+// proper crossing of two segments — touching at an end does not count
+function isCrossing(a: { x: number; y: number }, b: { x: number; y: number }, c: { x: number; y: number }, d: { x: number; y: number }): boolean {
+	const side = (p: typeof a, q: typeof a, r: typeof a) => (q.x - p.x) * (r.y - p.y) - (q.y - p.y) * (r.x - p.x);
+	const [d1, d2, d3, d4] = [side(c, d, a), side(c, d, b), side(a, b, c), side(a, b, d)];
+	return d1 * d2 < 0 && d3 * d4 < 0;
+}
+
+for (const { width, height } of VIEWPORTS) {
+	test(`the two columns sit side by side, top-aligned, each read top to bottom at ${width}x${height}`, async () => {
+		const shape = await readMapShape(width, height);
+		const drawn = JSON.stringify(shape.zones);
+		assert.deepEqual(Object.keys(shape.zones).sort(), [...ZONE_IDS.DRAWN].sort(), `drawn zones (the column frames must be gone): ${drawn}`);
+		const box = (id: string) => getZoneBox(shape, id);
+		const left = getUnion(ZONE_IDS.LEFT.map(box));
+		const right = getUnion(ZONE_IDS.RIGHT.map(box));
+		assert.ok(left.right <= right.left + EPS_PX, `the columns overlap horizontally: ${drawn}`);
+		assert.ok(Math.abs(left.top - right.top) <= EPS_PX, `the columns are not top-aligned (${left.top.toFixed(1)} vs ${right.top.toFixed(1)}): ${drawn}`);
+		assert.ok(box("entry").right <= box("daemon").left + EPS_PX, `Inputs does not sit left of Daemons in the band: ${drawn}`);
+		for (const [above, below] of [["entry", "orch"], ["daemon", "orch"], ["orch", "agents"], ["hooks", "data"], ["data", "export"]])
+			assert.ok(box(below).top >= box(above).bottom - EPS_PX, `${below} does not sit below ${above}: ${drawn}`);
+	});
+
+	test(`the Daemons members stack and every member sits inside its own zone at ${width}x${height}`, async () => {
+		const shape = await readMapShape(width, height);
+		const daemons = shape.members.filter((m) => (MEMBER_IDS.get("daemon") ?? []).includes(m.id));
+		assert.equal(daemons.length, (MEMBER_IDS.get("daemon") ?? []).length, `Daemons members drawn: ${JSON.stringify(daemons)}`);
+		for (const [i, a] of daemons.entries())
+			for (const b of daemons.slice(i + 1)) {
+				assert.ok(Math.min(a.box.right, b.box.right) > Math.max(a.box.left, b.box.left), `${a.id} and ${b.id} do not overlap horizontally`);
+				assert.ok(a.box.bottom <= b.box.top + EPS_PX || b.box.bottom <= a.box.top + EPS_PX, `${a.id} and ${b.id} share a row`);
+			}
+		for (const [zone, ids] of MEMBER_IDS) {
+			const frame = getZoneBox(shape, zone);
+			for (const member of shape.members.filter((m) => ids.includes(m.id)))
+				assert.ok(
+					member.box.left >= frame.left - EPS_PX && member.box.right <= frame.right + EPS_PX && member.box.top >= frame.top - EPS_PX && member.box.bottom <= frame.bottom + EPS_PX,
+					`${member.id} leaves its ${zone} frame: ${JSON.stringify({ member: member.box, frame })}`,
+				);
 		}
-		assert.ok(Math.abs(getCentreX("hooks") - getCentreX("agents")) <= EPS_PX, `Safety is not centred under Agents: ${drawn}`);
+	});
+
+	test(`every edge runs down or across without a crossing and the column jumps keep apart at ${width}x${height}`, async (t) => {
+		const shape = await readMapShape(width, height);
+		assert.equal(shape.links.length, 7, `drawn links: ${shape.links.map((l) => l.id).join(", ")}`);
+		const jumps = shape.links.filter((l) => l.kind === "jump");
+		assert.equal(jumps.length, 2, `column jumps: ${shape.links.map((l) => `${l.id}:${l.kind}`).join(", ")}`);
+		// the column jumps alone climb into the right column — every other edge has no upward step and ends pointing down
+		for (const link of shape.links.filter((l) => l.kind !== "jump")) {
+			const rise = Math.max(...link.points.slice(1).map((p, i) => link.points[i].y - p.y));
+			assert.ok(rise <= EPS_PX, `${link.id} steps ${rise.toFixed(1)}px up`);
+			const [prev, last] = link.points.slice(-2);
+			assert.ok(last.y - prev.y > Math.abs(last.x - prev.x), `${link.id} does not end pointing down`);
+		}
+		const crossings = shape.links.flatMap((a, i) =>
+			shape.links.slice(i + 1).flatMap((b) =>
+				a.points.slice(1).some((p, j) => b.points.slice(1).some((q, k) => isCrossing(a.points[j], p, b.points[k], q))) ? [`${a.id} × ${b.id}`] : [],
+			),
+		);
+		assert.deepEqual(crossings, [], "edges cross");
+		// a jump's lane is its vertical run: the x where the path stays longest
+		const laneX = jumps.map((l) => {
+			const xs = l.points.map((p) => Math.round(p.x));
+			return xs.sort((a, b) => xs.filter((x) => x === b).length - xs.filter((x) => x === a).length)[0];
+		});
+		t.diagnostic(`jump lanes ${Math.abs(laneX[0] - laneX[1])}px apart`);
+		assert.ok(Math.abs(laneX[0] - laneX[1]) >= MIN_JUMP_LANE_GAP_PX, `the jump lanes sit ${Math.abs(laneX[0] - laneX[1])}px apart: ${laneX.join(", ")}`);
 	});
 }
 
@@ -664,17 +767,23 @@ for (const { width, height } of VIEWPORTS) {
 		);
 	});
 
-	test(`the default view spans 70% of its frame on the binding axis at ${width}x${height}`, async () => {
+	test(`every label reaches the meta floor in the default view at ${width}x${height}`, async () => {
+		const r = await readFit(width, height);
+		assert.ok(r.labelPx > 0, "no drawn label was measured");
+		assert.ok(r.labelPx >= MIN_RENDERED_LABEL_PX - CTM_FLOAT_TOLERANCE, `the smallest label is ${r.labelPx.toFixed(2)}px at scale ${r.scale.toFixed(4)}`);
+	});
+
+	test(`the default view spans 90% of its frame on the binding axis at ${width}x${height}`, async () => {
 		const r = await readFit(width, height);
 		const fill = Math.max(r.drawnWidthPx / r.drawableWidth, r.drawnHeightPx / r.paneHeight);
 		const atNaturalShare = r.scale >= DEFAULT_VIEW_SHARE - CTM_FLOAT_TOLERANCE;
 		assert.ok(
 			fill <= DEFAULT_VIEW_SHARE + 0.01,
-			`the map fills ${(fill * 100).toFixed(1)}% of its frame on the binding axis — more than the 70% overview`,
+			`the map fills ${(fill * 100).toFixed(1)}% of its frame on the binding axis — more than the 90% overview`,
 		);
 		assert.ok(
 			fill >= DEFAULT_VIEW_SHARE * MIN_BINDING_AXIS_FILL || atNaturalShare,
-			`the map fills ${(fill * 100).toFixed(1)}% of its frame on the binding axis at scale ${r.scale.toFixed(4)} — less than the 70% overview`,
+			`the map fills ${(fill * 100).toFixed(1)}% of its frame on the binding axis at scale ${r.scale.toFixed(4)} — less than the 90% overview`,
 		);
 	});
 }
