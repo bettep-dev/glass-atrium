@@ -145,6 +145,7 @@ function ScreenDashboard({ onNav, harness, onRetryHarness }) {
         /* 타일 힌트 — 2줄분 min-height 예약(clamp 없음) → 폭이 줄어도 밴드 높이 불변. */
         .dash-tile-hint { min-height: calc(var(--fs-meta) * 1.4 * 2); line-height: 1.4; }
         .dash-tile-detail { min-height: calc(var(--fs-body) * 1.5); }
+        .dash-tile-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; min-height: var(--ctl-min-h); }
         /* the shared .btn hover shifts ~4 RGB levels → an underline makes the drill's hover visible */
         .dash-drill:hover, .dash-drill:focus-visible { text-decoration: underline; text-underline-offset: 3px; }
         .dash-strip-track { height: 4rem; }
@@ -293,8 +294,9 @@ const SHARED_FAILURE_HINT = `Not loaded — ${POINTER.BANNER}.`;
 // 상태 4종이 서로 다르게 읽히는 지점 — loading(status 자리표시) · error(공용 unavailable 카드) · unavailable/empty(중립 문구) · ready(값).
 // 값 자리는 never 0-for-unknown: 미수신은 '—' 로 남는다.
 function StatusTile({ tile, onNav, onRetry, isRetryShared = false }) {
-  const { RetryButton } = window.UI;
+  const { RetryButton, CardInfo } = window.UI;
   const cardId = getTileCardId(tile);
+  const titleId = `${cardId}-title`;
   const isCovered = tile.status === 'error' && isRetryShared;
   const isFailed = tile.status === 'error' && !isCovered;
   const retry = tile.canRetry && !isRetryShared && (
@@ -303,10 +305,18 @@ function StatusTile({ tile, onNav, onRetry, isRetryShared = false }) {
   return (
     <div id={cardId} className={`card p-3 flex flex-col gap-1.5 ${tile.isBusy ? 'opacity-70' : ''}`.trim()}
       aria-busy={tile.isBusy ? 'true' : undefined}>
-      <h2 className="fs-meta text-dim uppercase tracking-wide">
-        {tile.label}
-        {tile.window && <span className="normal-case"> ({tile.window})</span>}
-      </h2>
+      {/* every tile reserves the ⓘ row height → a tile with a note keeps its value on the band's baseline */}
+      <div className="dash-tile-head">
+        <h2 id={titleId} className="fs-meta text-dim uppercase tracking-wide">
+          {tile.label}
+          {tile.window && <span className="normal-case"> ({tile.window})</span>}
+        </h2>
+        {tile.note && (
+          <CardInfo label={tile.noteLabel ?? 'How this is counted'} describedBy={titleId}>
+            <p className="fs-body">{tile.note}</p>
+          </CardInfo>
+        )}
+      </div>
       {/* a failure is one inset card in the tile carrying its Retry; a banner-carried one points up instead of repeating */}
       <window.UI.TileSplit lead={<StatusTileValue tile={tile}/>}
         detail={isFailed ? <TileFailure tile={tile} retry={retry}/> : <TileDetail tile={tile} isCovered={isCovered}/>}/>
@@ -321,7 +331,7 @@ function TileDetail({ tile, isCovered }) {
   return (
     <>
       <div className="fs-body text-dim dash-tile-detail">{isCovered ? null : tile.detail}</div>
-      <div className="fs-meta text-dim dash-tile-hint" title={tile.note}>
+      <div className="fs-meta text-dim dash-tile-hint">
         {isCovered ? SHARED_FAILURE_HINT : tile.hint}
       </div>
     </>
@@ -850,7 +860,7 @@ function markHeldTile(tile, state) {
   const isAlarm = tile.tone === 'warn' || tile.tone === 'crit';
   return {
     ...tile, tone: isAlarm ? tile.tone : 'neutral', isHeld: true, badge: 'Last known', error: state.error, canRetry: true,
-    hint: `Showing the last reading — couldn't refresh ${tile.source}.`,
+    hint: `Couldn't refresh ${tile.source}`,
   };
 }
 
@@ -888,6 +898,7 @@ function describeHarnessReading(harness) {
     detail: lostCount > 0 ? `${lostCount} not read` : undefined,
     trend: describeHarnessCoverage(harness, isPartlyUnread),
     hint: describeHarnessHint(harness, { isPartlyUnread, lostCount, downCount }),
+    ...describeUnreadNote(harness),
     canRetry: isPartlyUnread,
   };
 }
@@ -906,13 +917,21 @@ const BADGE = {
   SPEND_NORMAL: 'Within pace',
 };
 
+// the 40-char hint cap fits one source name → further sources count as +N, named in full in the tile's drawer note
 function describeHarnessHint(harness, { isPartlyUnread, lostCount, downCount }) {
   if (isPartlyUnread) {
-    const sources = harness.unreadSources.join(' · ');
-    return lostCount > 0 ? `Couldn't read ${sources}.` : `Showing the last reading — couldn't refresh ${sources}.`;
+    const [first, ...rest] = harness.unreadSources;
+    const more = rest.length > 0 ? ` +${rest.length}` : '';
+    return `${lostCount > 0 ? "Couldn't read" : "Couldn't refresh"} ${first}${more}`;
   }
   // the headline already carries the count → the hint names the parts instead of restating it
   return downCount > 0 ? `Not answering: ${joinPartNames(harness.downNames)}` : 'All polled parts healthy';
+}
+
+function describeUnreadNote(harness) {
+  const sources = harness.unreadSources ?? [];
+  if (sources.length < 2) return {};
+  return { note: `Not read this time: ${sources.join(' · ')}.`, noteLabel: 'Unread sources' };
 }
 
 // its own line under the count → an unpolled part never reads as one more down part

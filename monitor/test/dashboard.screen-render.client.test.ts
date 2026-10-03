@@ -259,14 +259,32 @@ test("a tile's drill sits at the tile foot, and a tile with no destination has n
 });
 
 test("a ready tile puts its value on the lead side and its detail and hint on the detail side", () => {
-  const tile = { ...READY_TILE, detail: "7 of 40 failed", note: "Counts writer-emitted outcomes only." };
+  const tile = { ...READY_TILE, detail: "7 of 40 failed" };
   const tree = render("StatusTile", { tile, onNav: () => {}, onRetry: () => {} });
   const [lead] = findNodes(tree, (n) => classOf(n) === "tile-split-lead");
   const [detail] = findNodes(tree, (n) => classOf(n) === "tile-split-detail");
   assert.equal(findNodes(lead, (n) => n.props.atom === "KpiValue").length, 1, "the value leads");
   assert.equal(findNodes(detail, (n) => classOf(n).includes("dash-tile-detail")).length, 1);
-  const [hint] = findNodes(detail, (n) => classOf(n).includes("dash-tile-hint"));
-  assert.equal(hint.props.title, tile.note, "the counting note rides on the hint as a tooltip");
+  assert.equal(findNodes(detail, (n) => classOf(n).includes("dash-tile-hint")).length, 1);
+});
+
+test("a tile's note opens from a focusable ⓘ described by the tile heading, never from a hover-only title", () => {
+  const rows = [
+    { name: "a tile with a note", tile: { ...READY_TILE, note: "Counts writer-emitted outcomes only." }, infoCount: 1 },
+    { name: "a tile without one", tile: READY_TILE, infoCount: 0 },
+  ];
+  for (const row of rows) {
+    const tree = render("StatusTile", { tile: row.tile, onNav: () => {}, onRetry: () => {} });
+    const infos = findNodes(tree, (n) => n.props.atom === "CardInfo");
+    assert.equal(infos.length, row.infoCount, row.name);
+    assert.equal(findNodes(tree, (n) => n.props.title != null && n.props.atom == null).length, 0, `${row.name}: no hover-only title`);
+  }
+  const tree = render("StatusTile", { tile: rows[0].tile, onNav: () => {}, onRetry: () => {} });
+  const [heading] = findNodes(tree, (n) => n.type === "h2");
+  const [info] = findNodes(tree, (n) => n.props.atom === "CardInfo");
+  assert.ok(heading.props.id, "the heading carries an id");
+  assert.equal(info.props.describedBy, heading.props.id, "the ⓘ is described by the tile heading");
+  assert.match(collectText(info), /writer-emitted/, "the drawer carries the note");
 });
 
 test("a unit renders on the value's own line so the number and its word read as one phrase", () => {

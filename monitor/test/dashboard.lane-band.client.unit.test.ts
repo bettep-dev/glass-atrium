@@ -396,7 +396,7 @@ test("the outcome tile leads with the failed share and moves the verdict into it
   assert.match(String(tile.detail), /40 of 200 failed or blocked · alert at 5%/, "the detail names both results the share counts");
   assert.match(tile.hint, /^Open caveats 5\.0% \(10\) · alert 10%$/, "the caveat alert line sits beside the caveat share");
   assert.doesNotMatch(tile.hint, /writer-emitted/, "the counting rule moves out of the visible hint");
-  assert.match(String(tile.note), /writer-emitted/, "and into the tile's tooltip");
+  assert.match(String(tile.note), /writer-emitted/, "and into the tile's ⓘ drawer note");
 });
 
 test("the spend tile leads with the judged pace — the larger of so-far and the 3-hour pace — against the 7-day average", () => {
@@ -423,26 +423,56 @@ test("the spend alarm names its pace window in plain words", () => {
 });
 
 // design copy caps: a KPI hint is one line of 40 chars or fewer; the spend alarm detail is one figure plus a short label
-const KPI_HINT_CAP = 40;
-const ALARM_LABEL_CAP = 32;
+const CAP = { KPI_HINT: 40, ALARM_LABEL: 32 };
 
-test("every status tile's authored hint fits the 40-char KPI hint cap, in each state the tile can show", () => {
+// every harness store the shell reads, by its label → the longest unread list a fold can carry
+const HARNESS_SOURCE_LABELS = ["the failure count", "daemon status", "the health probe", "the hook chain", "hook failures"];
+
+// excluded: a cold failure's hint is the shared error copy, and a hint naming parts or agents carries data, which is clamped, never rewritten
+test("every hint the dashboard authors for a status tile fits the 40-char KPI hint cap, held readings included", () => {
   const outcomes = (byResult: Array<{ result: string; count: number }>) =>
     ready({ total: byResult.reduce((sum, row) => sum + row.count, 0), by_result: byResult });
+  const fleet = ready({ meta: { total_agents: 3, circuit_breaker: { source: "loaded", suspended_count: 0, streak_count: 0 } } });
   const rows = [
     { name: "harness healthy", tile: "harness", args: { harness: HEALTHY } },
+    { name: "harness readings unavailable", tile: "harness", args: { harness: { ...HEALTHY, status: "unavailable" } } },
+    { name: "harness held over one failed source", tile: "harness", args: { harness: unreadFold({ unreadSources: ["the failure count"] }) } },
+    { name: "harness held over every failed source", tile: "harness", args: { harness: unreadFold({ unreadSources: HARNESS_SOURCE_LABELS }) } },
+    { name: "harness parts lost to one cold source", tile: "harness", args: { harness: unreadFold({ partsOk: 2, partsChecked: 2, unreadSources: ["the failure count"] }) } },
+    { name: "harness parts lost to every cold source", tile: "harness", args: { harness: unreadFold({ partsOk: 2, partsChecked: 2, unreadSources: HARNESS_SOURCE_LABELS }) } },
     { name: "outcomes judged, five-figure counts", tile: "outcomes", args: { outcomesState: outcomes([{ result: "fail", count: 12_000 }, { result: "done_with_concerns", count: 25_000 }, { result: "done", count: 63_000 }]) } },
     { name: "outcomes too few to judge", tile: "outcomes", args: { outcomesState: outcomes([{ result: "done", count: 3 }]) } },
     { name: "outcomes none recorded", tile: "outcomes", args: { outcomesState: outcomes([]) } },
+    { name: "outcomes held after a failed refresh", tile: "outcomes", args: { outcomesState: held(outcomes([{ result: "done", count: 3 }]), "HTTP 500") } },
+    { name: "fleet suspension state unavailable", tile: "fleet", args: { agentsState: ready({ meta: { total_agents: 3 } }) } },
+    { name: "fleet held after a failed refresh", tile: "fleet", args: { agentsState: held(fleet, "HTTP 500") } },
     { name: "spend under the cut", tile: "spend", args: { costState: kpi(50, 100) } },
     { name: "spend over the cut", tile: "spend", args: { costState: kpi(1_300, 1_000) } },
     { name: "spend with no 7-day basis", tile: "spend", args: { costState: kpi(0, 0) } },
+    { name: "spend held after a failed refresh", tile: "spend", args: { costState: held(kpi(50, 100), "HTTP 500") } },
   ];
   for (const row of rows) {
     const tiles = dash.buildTiles({ harness: HEALTHY, costState: LOADING, agentsState: LOADING, outcomesState: LOADING, ...row.args });
     const hint = tileOf(tiles, row.tile).hint;
     assert.ok(hint, `${row.name}: the state carries a hint`);
-    assert.ok(hint.length <= KPI_HINT_CAP, `${row.name}: "${hint}" is ${hint.length} chars`);
+    assert.ok(hint.length <= CAP.KPI_HINT, `${row.name}: "${hint}" is ${hint.length} chars`);
+  }
+});
+
+test("a harness hint too short to name every unread source names the first and counts the rest, and its drawer note names them all", () => {
+  const rows = [
+    { name: "one held source", unreadSources: ["daemon status"], hint: "Couldn't refresh daemon status", hasNote: false },
+    { name: "two held sources", unreadSources: ["daemon status", "the hook chain"], hint: "Couldn't refresh daemon status +1", hasNote: true },
+    { name: "every source held", unreadSources: HARNESS_SOURCE_LABELS, hint: "Couldn't refresh the failure count +4", hasNote: true },
+  ];
+  for (const row of rows) {
+    const tile = tileOf(
+      dash.buildTiles({ harness: unreadFold({ unreadSources: row.unreadSources }), costState: LOADING, agentsState: LOADING, outcomesState: LOADING }),
+      "harness",
+    );
+    assert.equal(tile.hint, row.hint, row.name);
+    assert.equal(tile.note != null, row.hasNote, `${row.name}: a drawer note only when the hint cannot name every source`);
+    for (const source of row.hasNote ? row.unreadSources : []) assert.ok(String(tile.note).includes(source), `${row.name}: note names ${source}`);
   }
 });
 
@@ -458,7 +488,7 @@ test("the spend alarm detail is the leg that crossed the cut, as one figure plus
     assert.equal(figure, row.figure, `${row.name}: "${detail}" leads with the figure that crossed the cut`);
     const label = detail.slice(figure.length);
     assert.match(label, row.label, `${row.name}: the label names its leg`);
-    assert.ok(label.length <= ALARM_LABEL_CAP, `${row.name}: label "${label}" is ${label.length} chars`);
+    assert.ok(label.length <= CAP.ALARM_LABEL, `${row.name}: label "${label}" is ${label.length} chars`);
   }
 });
 
