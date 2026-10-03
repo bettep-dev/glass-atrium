@@ -276,11 +276,22 @@ jobs:
             python:
               - 'autoagent/**'
               - '**/*.py'
+              # Python suites read non-.py hook files by path (track-outcome.sh,
+              # pricing.json, inject-scope-rules.sh, …). Pinned by
+              # scripts/test/ci-change-filter-coverage.bats.
+              - 'hooks/**'
             monitor:
               - 'monitor/**'
               - '**/*.ts'
               - 'package.json'
               - 'package-lock.json'
+              # Hook files monitor tests read by path. Exact paths, not 'hooks/**',
+              # so a hook-only PR does not start the DB+chromium job. Pinned by
+              # scripts/test/ci-change-filter-coverage.bats.
+              - 'hooks/lib/review-flag-reasons.sh'
+              - 'hooks/lib/style-ref-consts.sh'
+              - 'hooks/lib/styleref-roster.sh'
+              - 'hooks/pricing.json'
 
   # ---------------------------------------------------------------------------
   # Bats suites for hooks, operational scripts, the installer, AND the autoagent
