@@ -533,7 +533,12 @@ function ProseOnlyAddCardI({ state, summary }) {
 	const [isShowingAll, setShowingAll] = React.useState(false);
 	if (state.status === "error") return null;
 	if (state.status === "loading" || !summary) return null;
-	const agents = Array.isArray(summary.agents) ? summary.agents : [];
+	// server orders by agent name → rank by count before the slot cut, so the collapsed rows are the top ones
+	const agents = (Array.isArray(summary.agents) ? [...summary.agents] : []).sort(
+		(a, b) =>
+			Number(b.count ?? 0) - Number(a.count ?? 0) ||
+			String(a.agent).localeCompare(String(b.agent)),
+	);
 	const total = Number(summary.total ?? 0);
 	// S slot → the stacked column stays bounded whatever the roster length
 	const { rows: slotRows, hiddenCount } = getSlotRows(agents, PROSE_ONLY_ADD_CARD_SIZE_I);
