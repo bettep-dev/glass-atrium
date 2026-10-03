@@ -146,7 +146,7 @@ function findSummaryHeading(tree: RenderedNode | string | null, label: string): 
 const RUN_HISTORY_LOADING = { cyclesState: LOADING, summaryState: LOADING, onRetry: () => {} };
 const RUN_TABLE_LOADING = { reportState: LOADING, days: 30, onChangeDays: () => {}, onRetry: () => {} };
 
-test("detail sections fold behind an h2 in their summary; status sections render open with a plain h2", async () => {
+test("detail sections fold behind an h2 in their summary; status sections render open as titled cards", async () => {
   const mod = await loadWikiScreen();
   const { createElement } = mod.React;
   const rows: Array<{ name: string; folds: boolean; element: unknown }> = [
@@ -158,12 +158,13 @@ test("detail sections fold behind an h2 in their summary; status sections render
 
   for (const row of rows) {
     const tree = renderScreen(row.element);
-    const heading = findNodes(tree, (n) => n.type === "h2").find((h2) => collectText(h2) === row.name);
-    assert.ok(heading, `${row.name} names itself with an h2`);
     if (!row.folds) {
+      assert.deepEqual(findCardTitles(tree), [row.name], `${row.name} names itself through the shared card's heading`);
       assert.equal(findNodes(tree, (n) => n.type === "details").length, 0, `${row.name} is open, never behind a click`);
       continue;
     }
+    const heading = findNodes(tree, (n) => n.type === "h2").find((h2) => collectText(h2) === row.name);
+    assert.ok(heading, `${row.name} names itself with an h2`);
     const summary = findNodes(tree, (n) => n.type === "summary").find((s) => findNodes(s, (n) => n === heading).length > 0);
     assert.ok(summary, `${row.name} keeps its h2 inside the toggling summary`);
     assert.equal((summary?.children[0] as RenderedNode).props["aria-hidden"], "true", `${row.name} keeps the chevron first`);
@@ -178,9 +179,14 @@ test("the run-history trend and notes by type share one split row, the trend on 
   const split = findNodes(tree, (n) => n.props.atom === "SplitRow");
   assert.equal(split.length, 1);
   assert.equal(split[0].props.ratio, "2:1");
-  const headings = findNodes(split[0], (n) => n.type === "h2").map((h) => collectText(h));
-  assert.deepEqual(headings, ["Run history", "Notes by type"]);
+  assert.equal(split[0].props.layout, "equal", "the peers stretch to one edge");
+  assert.deepEqual(findCardTitles(split[0]), ["Run history", "Notes by type"]);
 });
+
+// Card stays a stub here → its title prop is the heading the real atom renders.
+function findCardTitles(tree: RenderedNode | string | null): string[] {
+  return findNodes(tree, (n) => n.props.atom === "Card").map((card) => String(card.props.title));
+}
 
 test("one polite live region announces a wave in flight as loading", async () => {
   const mod = await loadWikiScreen();
@@ -466,7 +472,8 @@ test("wiki text never drops below the 12px step and words are never set in mono"
     renderScreen(createElement(mod.WikiMaintenanceSection, { backlogState: READY_BACKLOG, onRetry: () => {} })),
     renderScreen(createElement(mod.MergeSuggestionItem, { proposal: { cluster_hash: "c1", target_slug: "t", source_slugs: ["s"], suggested_action: "merge because both notes describe one concept" } })),
   ];
-  const words = ["Search index", "Clean", "Merge proposals", "Run history", "merge because both notes describe one concept"];
+  // Card titles render through the shared atom, outside this stub tree → not listed.
+  const words = ["Search index", "Clean", "Merge proposals", "merge because both notes describe one concept"];
   const seen = new Set<string>();
   for (const tree of trees) {
     for (const node of findNodes(tree, () => true)) {
@@ -582,6 +589,25 @@ test("tile labels and captions wrap instead of cutting the figure's words", asyn
   for (const node of findNodes(band, () => true)) assert.doesNotMatch(classOf(node), /\btruncate\b/);
 });
 
+test("a tile whose detail moved off its caption opens it from an info trigger described by the tile label", async () => {
+  const mod = await loadWikiScreen();
+  const ready = (data: unknown) => ({ status: "ready", data, error: null });
+  const band = renderScreen(
+    mod.React.createElement(mod.WikiTileBand as Component, {
+      summaryState: ready({ last_cycle_started_at: new Date().toISOString(), latest_compiled_count: 0, last_status: "ok" }),
+      indexState: ready({ notes_total: 40 }),
+      backlogState: ready({ backlog: { run_date: "2026-01-01", true_backlog: 13, deadlink_dryrun: [] } }),
+      onRetry: () => {},
+    }),
+  );
+  const triggers = findNodes(band, (n) => n.props.atom === "CardInfo");
+  assert.deepEqual(triggers.map((n) => n.props.label), ["How Compiled last cycle is counted", "How Library notes is counted"]);
+  for (const trigger of triggers) {
+    const [label] = findNodes(band, (n) => n.props.id === trigger.props.describedBy);
+    assert.ok(label, `${trigger.props.label}: the described-by id names a rendered label`);
+  }
+});
+
 test("a feeder the alarm list could not read is named in plain words", async () => {
   const mod = await loadWikiScreen();
   const ready = (data: unknown) => ({ status: "ready", data, error: null });
@@ -608,15 +634,24 @@ test("a loading open card or tile states loading once, through its placeholder, 
   assert.equal(findNodes(trees[2], (n) => n.props["aria-busy"] === "true").length, 4, "each tile still reports busy");
 });
 
-test("the two status cards fill their shared row, so Notes by type ends level with Run history", async () => {
+test("the two status cards share the S slot inside their region hosts, the coverage line pinned to the foot", async () => {
   const mod = await loadWikiScreen();
   const ready = (data: unknown) => ({ status: "ready", data, error: null });
   const row = renderScreen(
     mod.React.createElement(mod.WikiStatusRow as Component, {
-      cyclesState: ready({ cycles: [] }), summaryState: ready({}), indexState: ready({ by_type: [{ note_type: "raw", count: 3 }] }), onRetry: () => {},
+      cyclesState: ready({ cycles: [] }),
+      summaryState: ready({}),
+      indexState: ready({ by_type: [{ note_type: "raw", count: 120 }, { note_type: "source-summary", count: 96 }] }),
+      onRetry: () => {},
     }),
   );
-  const cards = findNodes(row, (n) => n.type === "section");
-  assert.equal(cards.length, 2);
-  for (const card of cards) assert.match(classOf(card), /\bh-full\b/);
+  const cards = findNodes(row, (n) => n.props.atom === "Card");
+  assert.deepEqual(cards.map((card) => card.props.size), ["S", "S"], "peers in one row share a slot");
+
+  const hostIds = findNodes(row, (n) => n.type === "div" && typeof n.props.id === "string").map((n) => n.props.id);
+  assert.deepEqual(hostIds, ["wiki-run-history", "wiki-notes-by-type"], "the region ids stay focus targets");
+
+  const notes = cards[1];
+  assert.equal(collectText(renderScreen(notes.props.foot)), "96 summary notes for 120 saved originals");
+  assert.doesNotMatch(collectText(notes), /summary notes for/, "the coverage line leaves the body once it sits in the foot");
 });
