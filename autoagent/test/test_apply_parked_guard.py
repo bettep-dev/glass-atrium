@@ -20,6 +20,7 @@ from __future__ import annotations
 import contextlib
 import io
 import json
+import os
 import sys
 import unittest
 from pathlib import Path
@@ -28,12 +29,13 @@ from unittest import mock
 _REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 _HOOKS_DIR = _REPO_ROOT / "hooks"
 _AUTOAGENT_DIR = _REPO_ROOT / "autoagent"
+_STUB_DIR = _REPO_ROOT / "scripts" / "test"
 
-if str(_HOOKS_DIR) not in sys.path:
-    sys.path.insert(0, str(_HOOKS_DIR))
-if str(_AUTOAGENT_DIR) not in sys.path:
-    sys.path.insert(0, str(_AUTOAGENT_DIR))
+for _anchor in (_HOOKS_DIR, _AUTOAGENT_DIR, _STUB_DIR):
+    if str(_anchor) not in sys.path:
+        sys.path.insert(0, str(_anchor))
 
+import _pg_stub_backend as stub  # noqa: E402
 import daemon_cycle as dc  # noqa: E402
 
 _SEALS: list = []
@@ -222,6 +224,15 @@ class GuardWriteFlagTest(unittest.TestCase):
 
 class GuardedRejectWriteTest(unittest.TestCase):
     """The write is status-guarded to pending/snoozed and stamps the Python-owned head."""
+
+    def setUp(self) -> None:
+        # create=True: the fragment is bound only when psycopg imported, and the gating leg
+        # has no psycopg; the helper is loaded for its text, never connected.
+        with stub.load_helper(Path(os.devnull)) as helper:
+            fragment = helper.PROPOSAL_STATUS_SQL
+        status = mock.patch.object(dc, "_PG_PROPOSAL_STATUS_SQL", fragment, create=True)
+        status.start()
+        self.addCleanup(status.stop)
 
     def test_should_reject_only_actionable_rows_with_the_parked_rationale(self) -> None:
         executed: list[tuple[str, tuple]] = []

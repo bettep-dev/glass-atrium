@@ -11427,8 +11427,8 @@ def run_cycle(
         # Same-agent supersede — only when the new proposal is an actual emit
         # target (pending), terminate the agent's OTHER pending rows (block
         # backlog re-accumulation). The skip_loop_emit (test/preflight) path does
-        # not touch PG → supersede also skipped. A floor-terminalized row is now
-        # 'rejected', so it correctly does NOT trigger supersede as a fresh emit.
+        # not touch PG → supersede also skipped. A floor-terminalized row is not
+        # pending → never a fresh emit → never triggers supersede.
         # The cycle date + consolidated label are the identity this run's own push
         # will update, so they are what the supersede must spare.
         if status_value == "pending" and not skip_loop_emit:

@@ -84,14 +84,17 @@ def _generation_text(run: int) -> str:
 
 def _run_supersede(db_path: Path) -> None:
     """Drive the real supersede statement against the stdlib backend."""
-    # create=True: the connect alias is bound only when psycopg imported, and the
-    # gating leg has no psycopg — the seam must exist either way.
+    # create=True: the connect alias and the status fragment are bound only when
+    # psycopg imported, and the gating leg has no psycopg — both seams must exist.
+    with stub.load_helper(db_path) as helper:
+        fragment = helper.PROPOSAL_STATUS_SQL
     quiet = contextlib.redirect_stderr(io.StringIO())
     armed = mock.patch.object(dc, "HAS_PG_LOOP_WRITE", True)
     seam = mock.patch.object(
         dc, "_pg_connect", lambda: stub.create_connection(db_path), create=True
     )
-    with quiet, armed, seam:
+    status = mock.patch.object(dc, "_PG_PROPOSAL_STATUS_SQL", fragment, create=True)
+    with quiet, armed, seam, status:
         dc.supersede_prior_pending_for_agent(
             _AGENT, _TARGET, cycle_date=_RUN_DATE, pattern_label=_RUN_LABEL
         )
