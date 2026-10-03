@@ -637,10 +637,11 @@ function WikiTile({ tile }) {
 				aria-busy={tile.state === "loading" ? "true" : undefined}
 			>
 				{alarmed && (
-					<span className={`text-${tile.tone} flex-shrink-0`} aria-hidden="true">
+					<span className={`text-${tile.tone} flex-shrink-0`} aria-hidden="true" title={tile.toneLabel}>
 						<Icon name={TONE_ICON[tile.tone]} size={13} />
 					</span>
 				)}
+				{alarmed && tile.toneLabel && <span className="sr-only">{`${tile.toneLabel}:`}</span>}
 				{tile.value}
 			</div>
 			{tile.sub && (
@@ -851,11 +852,17 @@ function buildLibraryTileW(indexState, summaryState, backlogState) {
 
 	const sub = `${describeOriginalsW(payload.true_backlog)} · ${describeBrokenLinksW(payload.deadlink_dryrun)}`;
 	const age = describeSnapshotAgeW(payload.run_date);
+	const info = [LIBRARY_COUNTING_NOTE_W, age && `${age}.`].filter(Boolean).join(" ");
+	if (!age) return { ...tile, sub, info };
+
+	// the caption stays at the 40-char cap → the warn glyph marks the snapshot, its date rides info + tooltip
 	return {
 		...tile,
 		sub,
-		hint: age ? `${sub} · ${age}` : undefined,
-		info: [LIBRARY_COUNTING_NOTE_W, age && `${age}.`].filter(Boolean).join(" "),
+		hint: `${sub} · ${age}`,
+		info,
+		tone: "warn",
+		toneLabel: payload.run_date ? "Stale snapshot" : "Undated snapshot",
 	};
 }
 
@@ -1089,7 +1096,7 @@ function WikiRunTableSection({ reportState, days, onChangeDays, shared, onRetry 
 		>
 			<div className="flex items-center gap-2 flex-wrap">
 				<span className="fs-meta text-faint leading-tight">
-					{`The window drives the table only — the trend keeps a fixed ${WIKI_CYCLE_DAYS}-day window.`}
+					{`Changes count runs whose status or backlog differs from the run before. The window drives the table only — the trend keeps a fixed ${WIKI_CYCLE_DAYS}-day window.`}
 				</span>
 				<div
 					className="seg ml-auto"
@@ -1114,7 +1121,7 @@ function WikiRunTableSection({ reportState, days, onChangeDays, shared, onRetry 
 	);
 }
 
-// One unchanged stretch → "27 healthy runs in a row since …"; several → how often status or backlog changed.
+// header meta ≤ 32 chars → "27 runs · all healthy" or "30 runs · 12 changes"; the body line defines a change.
 function describeRunTableW(state, days) {
 	if (window.UI.getRegionView(state) === "loading") return "Loading…";
 	if (window.UI.getRegionView(state) === "error") return "Unavailable";
@@ -1125,14 +1132,14 @@ function describeRunTableW(state, days) {
 	const groups = groupConstantRunsW(sortRunsNewestFirstW(reports));
 	if (groups.length > 1) {
 		const changes = groups.length - 1;
-		return `${reports.length} runs · status or backlog changed ${changes} ${changes === 1 ? "time" : "times"}`;
+		return `${reports.length} runs · ${changes} ${changes === 1 ? "change" : "changes"}`;
 	}
 
 	const [only] = groups;
 	const status = wikiStatusLabelW(only.newest.status).toLowerCase();
 	return only.count === 1
 		? `1 ${status} run on ${only.newest.run_date}`
-		: `${only.count} ${status} runs in a row since ${only.oldest.run_date}`;
+		: `${only.count} runs · all ${status}`;
 }
 
 // The server returns runs ascending by run_date.

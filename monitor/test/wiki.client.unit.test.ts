@@ -604,16 +604,24 @@ function libraryTile(index: FetchState, backlog: FetchState): (GlanceTile & { hi
   return helpers.buildTileBandModel(ready({}), index, backlog).find((tile) => tile.key === "library");
 }
 
-test("a stale or undated library snapshot is dated behind its info trigger and tooltip, never on the visible line", () => {
+test("a stale or undated library snapshot carries a visible warn cue, and its date rides the info trigger and tooltip", () => {
   const index = ready({ notes_total: 40 });
   const staleDate = isoDaysAgo(9);
   const rows = [
-    { name: "stale", run_date: staleDate, dated: new RegExp(`as of ${staleDate}, cycle overdue`) },
-    { name: "undated", run_date: null, dated: /run date not reported/i },
+    { name: "stale", run_date: staleDate, tone: "warn", cue: /^Stale snapshot$/, dated: new RegExp(`as of ${staleDate}, cycle overdue`) },
+    { name: "undated", run_date: null, tone: "warn", cue: /^Undated snapshot$/, dated: /run date not reported/i },
+    { name: "current", run_date: isoDaysAgo(0), tone: "neutral", cue: undefined, dated: undefined },
   ];
   for (const row of rows) {
-    const tile = libraryTile(index, ready({ backlog: { run_date: row.run_date, true_backlog: 13, deadlink_dryrun: [] } }));
-    assert.doesNotMatch(tile?.sub ?? "", row.dated, `${row.name}: visible line`);
+    const tile = libraryTile(index, ready({ backlog: { run_date: row.run_date, true_backlog: 13, deadlink_dryrun: [] } })) as
+      | (GlanceTile & { hint?: string; toneLabel?: string })
+      | undefined;
+    assert.equal(tile?.tone, row.tone, `${row.name}: tone`);
+    if (!row.cue || !row.dated) {
+      assert.equal(tile?.toneLabel, undefined, `${row.name}: no cue`);
+      continue;
+    }
+    assert.match(tile?.toneLabel ?? "", row.cue, `${row.name}: cue`);
     assert.match(tile?.info ?? "", row.dated, `${row.name}: info`);
     assert.match(tile?.hint ?? "", row.dated, `${row.name}: tooltip`);
   }
@@ -657,9 +665,26 @@ test("note types read as human labels with their share of all notes", () => {
 test("the per-run fold's summary states the unchanged stretch or how often it changed, so a one-row table needs no click", () => {
   const h = helpers as unknown as { describeRunTableW: (state: FetchState, days: number) => string };
   const same = Array.from({ length: 27 }, () => ["ok", 0, 3] as [string, number, number]);
-  assert.equal(h.describeRunTableW(ready({ reports: runs(same) }), 30), `27 healthy runs in a row since ${isoDaysAgo(26)}`);
-  assert.equal(h.describeRunTableW(ready({ reports: runs([["ok", 0, 3], ["error", 0, 3], ["ok", 0, 3]]) }), 30), "3 runs · status or backlog changed 2 times");
-  assert.equal(h.describeRunTableW(ready({ reports: runs([["ok", 0, 3], ["error", 0, 3], ["error", 0, 3]]) }), 30), "3 runs · status or backlog changed 1 time");
+  assert.equal(h.describeRunTableW(ready({ reports: runs(same) }), 30), "27 runs · all healthy");
+  assert.equal(h.describeRunTableW(ready({ reports: runs([["ok", 0, 3], ["error", 0, 3], ["ok", 0, 3]]) }), 30), "3 runs · 2 changes");
+  assert.equal(h.describeRunTableW(ready({ reports: runs([["ok", 0, 3], ["error", 0, 3], ["error", 0, 3]]) }), 30), "3 runs · 1 change");
+});
+
+// Widest realistic values: a 90-day window, a change every run, the longest status label and run date.
+test("the per-run fold's summary fits the 32-character header-meta cap at its widest", () => {
+  const h = helpers as unknown as { describeRunTableW: (state: FetchState, days: number) => string };
+  const alternating = Array.from({ length: 90 }, (_, i) => [i % 2 === 0 ? "ok" : "error", 0, 3] as [string, number, number]);
+  const quotaStreak = Array.from({ length: 90 }, () => ["quota_exceeded", 0, 3] as [string, number, number]);
+  const rows = [
+    { name: "90 runs, a change every run", state: ready({ reports: runs(alternating) }) },
+    { name: "90 runs at the usage limit", state: ready({ reports: runs(quotaStreak) }) },
+    { name: "one run at the usage limit", state: ready({ reports: runs(quotaStreak.slice(0, 1)) }) },
+    { name: "no runs in the window", state: ready({ reports: [] }) },
+  ];
+  for (const row of rows) {
+    const meta = h.describeRunTableW(row.state, 90);
+    assert.ok(meta.length <= 32, `${row.name}: "${meta}" is ${meta.length} chars`);
+  }
 });
 
 describe("the run trend fills every calendar day between its first and last run", () => {
