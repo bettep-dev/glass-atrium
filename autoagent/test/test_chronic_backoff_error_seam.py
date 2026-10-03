@@ -10,8 +10,8 @@ every subsequent cycle to 'partial' for a candidate nobody is generating.
 
 Pinned invariants:
   (1) streak >= threshold → no Haiku call, error EMPTY,
-      haiku_status='skipped:chronic-timeout-backoff', status='rejected' — the
-      rationale still rides the proposal row for observability;
+      haiku_status='skipped:chronic-timeout-backoff', status='unadjudicated' —
+      terminal but no verdict; the rationale still rides the proposal row;
   (2) streak < threshold → the fresh timeout keeps its error, so the first N
       timeouts stay visible as 'partial' (the suppression is bounded, not blanket);
   (3) parse_mode='timeout-stall' → haiku_status='skipped:timeout-stall' — the
@@ -136,10 +136,13 @@ class BackoffErrorSeam(unittest.TestCase):
         self.assertEqual(patch.haiku_status, "skipped:chronic-timeout-backoff")
 
     def test_when_backed_off_then_status_is_terminal_at_any_streak(self) -> None:
-        # A non-terminal marker is re-selectable by the apply side and reads as output.
+        # A non-terminal marker is re-selectable by the apply side and reads as output;
+        # 'rejected' would claim a gate verdict no Haiku call produced.
         for streak in (dc.TIMEOUT_BACKOFF_THRESHOLD, dc.TIMEOUT_BACKOFF_THRESHOLD + 5):
             with self.subTest(streak=streak):
-                self.assertEqual(self._run(streak=streak, proposal=None).status, "rejected")
+                self.assertEqual(
+                    self._run(streak=streak, proposal=None).status, "unadjudicated"
+                )
 
     def test_when_streak_below_threshold_then_fresh_timeout_keeps_error(self) -> None:
         # Bound of the suppression: the first N timeouts still flip the cycle to

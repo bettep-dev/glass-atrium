@@ -260,7 +260,7 @@ OUTCOME_SAMPLE_LIMIT = 5
 # GENERATION-side chronic timeout had NO back-off at all. This threshold bounds
 # it: after N CONSECUTIVE Haiku-timeouts on the SAME target_file (counted from the
 # persisted core.autoagent_proposals rows), the generation path STOPS re-invoking
-# Haiku for that target and instead emits a loud, observable 'rejected' marker row
+# Haiku for that target and instead emits a loud, observable 'unadjudicated' marker row
 # (no Haiku spend, no `error` → no spurious 'partial'). A single non-timeout row
 # (e.g. an 'ok' generation) breaks the streak and re-arms the candidate, so a
 # transiently-flaky-but-occasionally-generatable target recovers on its own.
@@ -8631,7 +8631,7 @@ def backoff_skip_proposal(target_file: str, streak: int) -> PatchProposal:
     No Haiku call was made — this is the loud, persisted record of the back-off
     decision (per shared-self-improve-hygiene Precondition Loud-Fail: the skip is
     surfaced in the proposal row, never silent). Empty diff + a back-off rationale
-    + parse_mode='skipped'. run_cycle maps this to a terminal 'rejected' row whose
+    + parse_mode='skipped'. run_cycle maps this to a terminal 'unadjudicated' row whose
     `error` field stays EMPTY, so the cycle does not flip to 'partial'.
 
     Args:
@@ -9139,7 +9139,7 @@ def classify_failure_rationale(rationale: str) -> str:
         return FAILURE_CLASS_SUPERSEDE
     if text.startswith(_PARKED_PATTERN_REASON):
         return FAILURE_CLASS_PARKED_PATTERN
-    # Back-off marker (stored 'rejected') ran no Haiku call → no verdict, as a timeout.
+    # Back-off marker ran no Haiku call → no verdict, as a timeout.
     if text.startswith(
         (HAIKU_TIMEOUT_RATIONALE_PREFIX, TIMEOUT_BACKOFF_RATIONALE_PREFIX)
     ):
@@ -9231,6 +9231,18 @@ def route_failed_pre_verify(
     if is_infra_pre_verify_status(verify_status):
         return classification, "", "pending"
     return "reject", "", "rejected"
+
+
+def get_reject_status(rationale: str) -> str:
+    """Terminal status for a 'reject'-classified candidate, keyed on its rationale.
+
+    'rejected' is reserved for a real gate verdict; a rationale the classifier
+    reads as non-adjudicating (infra, quota, back-off, supersede, parked) is
+    stored 'unadjudicated' — 'rejected' on a pre-label schema (N9 fragment).
+    """
+    if classify_failure_rationale(rationale) in _NON_ADJUDICATION_CLASSES:
+        return "unadjudicated"
+    return "rejected"
 
 
 def consecutive_reject_count(
@@ -11323,17 +11335,17 @@ def run_cycle(
             approval_tier = "safety"
             status_value = "pending"
         elif is_backoff_skip:
-            # Terminal 'rejected' — no apply or stale-drain selector re-picks a marker
-            # Told apart from a quality reject by haiku_status + the rationale prefix
+            # Terminal — no apply or stale-drain selector re-picks a marker; no Haiku
+            # call ran, so the back-off rationale classifies non-adjudicating
             verify = None
             approval_tier = ""
-            status_value = "rejected"
+            status_value = get_reject_status(proposal.rationale)
         else:
-            # 'reject' classification — no further gating. Persist 'rejected'
+            # 'reject' classification — no further gating. Persist a terminal status
             # explicitly (an empty sentinel was coerced to 'pending' → fossilized).
             verify = None
             approval_tier = ""
-            status_value = "rejected"
+            status_value = get_reject_status(proposal.rationale)
 
         # Confidence-weighted promotion ladder. Gate-OFF (flag false / lib missing)
         # → defaults preserve the pre-feature behavior. Gate-ON → Beta-Binomial

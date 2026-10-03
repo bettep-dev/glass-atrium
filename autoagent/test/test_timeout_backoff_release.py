@@ -311,10 +311,13 @@ class RejectedMarkerHistoryTest(unittest.TestCase):
         ):
             return dc.read_backoff_state("/tmp/probe-agent.md")
 
-    def test_when_markers_stored_rejected_then_state_matches_snoozed_history(self):
-        rejected = self._read("rejected")
-        self.assertEqual(rejected.held_cycles, 4)
-        self.assertEqual(rejected, self._read("snoozed"))
+    def test_marker_state_is_identical_whatever_status_the_markers_carry(self):
+        # 'unadjudicated' = current writer · 'rejected' / 'snoozed' = older rows.
+        unadjudicated = self._read("unadjudicated")
+        self.assertEqual(unadjudicated.held_cycles, 4)
+        for status in ("rejected", "snoozed"):
+            with self.subTest(status=status):
+                self.assertEqual(self._read(status), unadjudicated)
 
 
 @unittest.skipIf(dc is None, "daemon_cycle import failed: %s" % (_IMPORT_ERROR,))

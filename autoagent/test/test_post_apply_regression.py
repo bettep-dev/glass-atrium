@@ -57,11 +57,12 @@ _CYCLE_DATE = date(2026, 6, 30)
 _QUALITY_RATIONALE = "quality reject — pre-verify failed"
 
 
-def _marker_row() -> tuple[str, str]:
-    """(haiku_status, rationale) a production back-off marker row persists."""
+def _marker_row() -> tuple[str, str, str]:
+    """(haiku_status, rationale, status) a production back-off marker row persists."""
     return (
         dc.TIMEOUT_BACKOFF_HAIKU_STATUS,
         dc.TIMEOUT_BACKOFF_RATIONALE_TEMPLATE.format(n=3, thr=3),
+        "unadjudicated",
     )
 
 
@@ -400,12 +401,12 @@ class TestRevertedStatusBranches(unittest.TestCase):
 class TestBackoffMarkerCycleRegression(unittest.TestCase):
     """A back-off marker is neither output nor a rejection for the regression exit.
 
-    The marker is recognized by the RATIONALE prefix a production back-off row
-    carries — the classifier SoT — so each fixture row pairs its haiku_status
-    with the rationale that row would really persist.
+    Each fixture row carries the haiku_status, rationale and status a production
+    row persists — the marker is set aside by its 'unadjudicated' status, the
+    quality row counted by its rationale class.
     """
 
-    def _is_regression(self, rows: list[tuple[str, str]]) -> bool:
+    def _is_regression(self, rows: list[tuple[str, str, str]]) -> bool:
         report = dc.CycleReport(
             cycle_date="2026-07-01",
             generated_at="2026-07-01T00:00:00.000Z",
@@ -422,9 +423,9 @@ class TestBackoffMarkerCycleRegression(unittest.TestCase):
                     proposed_diff="",
                     outcomes_sampled=0,
                     haiku_status=haiku_status,
-                    status="rejected",
+                    status=status,
                 )
-                for haiku_status, rationale in rows
+                for haiku_status, rationale, status in rows
             ],
         )
         with mock.patch.object(
@@ -438,7 +439,9 @@ class TestBackoffMarkerCycleRegression(unittest.TestCase):
     def test_when_markers_beside_all_rejected_patches_then_still_a_regression(
         self,
     ) -> None:
-        self.assertTrue(self._is_regression([_marker_row(), ("ok", _QUALITY_RATIONALE)]))
+        self.assertTrue(
+            self._is_regression([_marker_row(), ("ok", _QUALITY_RATIONALE, "rejected")])
+        )
 
 
 @unittest.skipIf(dc is None, f"import failed: {_IMPORT_ERROR}")

@@ -15,9 +15,13 @@
 
 from __future__ import annotations
 
+import contextlib
+import io
 import sys
+import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 _REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 _HOOKS_DIR = _REPO_ROOT / "hooks"
@@ -118,6 +122,120 @@ class TestInfraFailureLeavesStreakUnchanged(unittest.TestCase):
             ("rejected", _LABEL, _GENERATOR_RATIONALE),
         ]
         self.assertEqual(dc.consecutive_reject_count(_LABEL, rows), 3)
+
+
+_ARM_PROBE_AGENT = "reject-arm-probe-agent"
+
+
+def _reject_arm_rows() -> list[tuple[str, str, str]]:
+    """(row name, rationale, stored status) — one row per failure class the arm meets."""
+    return [
+        ("skipped (non-zero exit)", "haiku non-zero exit 1", "unadjudicated"),
+        ("quota", "haiku quota limit detected (usage cap)", "unadjudicated"),
+        ("budget", "local --max-budget-usd ceiling too low (0.01)", "unadjudicated"),
+        ("transient", "haiku transient overload (529)", "unadjudicated"),
+        (
+            "timeout",
+            f"{dc.HAIKU_TIMEOUT_RATIONALE_PREFIX} {dc.HAIKU_TIMEOUT_SEC}s",
+            "unadjudicated",
+        ),
+        ("supersede", dc._SUPERSEDE_REASON, "unadjudicated"),
+        ("auth", "haiku auth failure (401/credential) rc=1", "unadjudicated"),
+        ("parked pattern", dc._PARKED_PATTERN_REASON, "unadjudicated"),
+        ("quality", _GENERATOR_RATIONALE, "rejected"),
+        (
+            "removal refusal",
+            f"{dc.REMOVAL_REFUSAL_REASON_PREFIX}: {_GENERATOR_RATIONALE}",
+            "rejected",
+        ),
+        (
+            "oversize refusal",
+            f"{dc.OVERSIZE_DIFF_REFUSAL_REASON_PREFIX}: {_GENERATOR_RATIONALE}",
+            "rejected",
+        ),
+    ]
+
+
+@unittest.skipIf(dc is None, f"import failed: {_IMPORT_ERROR}")
+class TestRunCycleRejectArmStatus(unittest.TestCase):
+    """The reject arm stores a gate verdict as 'rejected', anything else as 'unadjudicated'.
+
+    One cycle per row over a single target whose stubbed generation returns an
+    empty diff (classify_patch_area R3 → 'reject'); skip_loop_emit=True blocks
+    every PG write.
+    """
+
+    def setUp(self) -> None:
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        self.tmp_dir = Path(tmp.name)
+        self.agents_dir = self.tmp_dir / "agents"
+        self.agents_dir.mkdir()
+        self.target_md = self.agents_dir / f"{_ARM_PROBE_AGENT}.md"
+        self.target_md.write_text("# probe agent\n", encoding="utf-8")
+
+        pattern = dc.Pattern(
+            date="2026-07-01",
+            label="reject arm probe pattern",
+            frequency="9",
+            agent=_ARM_PROBE_AGENT,
+            status="identified",
+            tier="user-pending",
+            raw_line=f"pg:learning_log:1:reject arm probe pattern|{_ARM_PROBE_AGENT}",
+            row_id=1,
+        )
+        for target, repl in (
+            ("read_user_pending_patterns", lambda *a, **k: [pattern]),
+            ("fetch_generation_outcomes", lambda *a, **k: []),
+            ("FEATURE_FLAGS_FILE", self.tmp_dir / "no-such-flags.json"),
+            ("INTER_CALL_SPACING_SEC", 0.0),
+            ("consecutive_timeout_count", lambda _t: 0),
+        ):
+            patcher = mock.patch.object(dc, target, repl)
+            patcher.start()
+            self.addCleanup(patcher.stop)
+
+    def _stored_status(self, rationale: str) -> str:
+        proposal = dc.PatchProposal(
+            target_file=str(self.target_md),
+            rationale=rationale,
+            proposed_diff="",
+            touched_frontmatter=False,
+            estimated_added_lines=0,
+            raw_response="",
+            parse_mode="skipped",
+        )
+        with mock.patch.object(
+            dc, "generate_consolidated_proposal", lambda *a, **k: proposal
+        ):
+            with contextlib.redirect_stderr(io.StringIO()):
+                report = dc.run_cycle(
+                    log_path=self.tmp_dir / "learning-log.md",
+                    outcomes_dir=self.tmp_dir,
+                    agents_dir=self.agents_dir,
+                    skip_haiku=False,
+                    skip_pre_verify=True,
+                    skip_loop_emit=True,
+                )
+        self.assertEqual(len(report.patches), 1)
+        self.assertEqual(report.patches[0].classification, "reject")
+        return report.patches[0].status
+
+    def test_reject_arm_stores_unadjudicated_only_for_non_adjudication_classes(
+        self,
+    ) -> None:
+        for name, rationale, expected in _reject_arm_rows():
+            with self.subTest(row=name):
+                self.assertEqual(self._stored_status(rationale), expected, name)
+
+    def test_unadjudicated_rows_cover_every_non_adjudication_class(self) -> None:
+        # A class added to the set without a row here would go unpinned.
+        covered = {
+            dc.classify_failure_rationale(rationale)
+            for _, rationale, expected in _reject_arm_rows()
+            if expected == "unadjudicated"
+        }
+        self.assertEqual(covered, set(dc._NON_ADJUDICATION_CLASSES))
 
 
 if __name__ == "__main__":
