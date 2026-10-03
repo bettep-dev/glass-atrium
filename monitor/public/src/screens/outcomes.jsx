@@ -996,7 +996,7 @@ function formatDayRangeO({ period_start: start, period_end: end }) {
 }
 
 function StatusBandO({ analyticsState, attentionState, windowDays, freshness, onRetry, shared }) {
-  const { getRegionView, getFreshnessVerdict } = window.UI;
+  const { getRegionView, getFreshnessVerdict, CardInfo } = window.UI;
   const view = getRegionView(analyticsState);
   if (view === 'loading') {
     return (
@@ -1039,17 +1039,25 @@ function StatusBandO({ analyticsState, attentionState, windowDays, freshness, on
   const isAttentionFailed = getRegionView(attentionState) === 'error';
   const heroTile = tiles.find((tile) => tile.key === 'attention');
   const volumeTiles = getVolumeTilesO(tiles);
+  const labelId = `${REGION_CARD_IDS.statusBand}-label`;
+  // a jumpable hero is a button → the rules ⓘ sits in the volume column, never inside a tile control
+  const info = (
+    <CardInfo label="How the status band is counted" describedBy={labelId}>
+      <BandRulesO tiles={tiles}/>
+    </CardInfo>
+  );
 
   return (
     <div id={REGION_CARD_IDS.statusBand} className="mb-4 flex-shrink-0">
-      <div className="grid grid-cols-4 gap-3" role="group" aria-label="Status band">
+      <span id={labelId} className="sr-only">Status band</span>
+      <div className="grid grid-cols-4 gap-3" role="group" aria-labelledby={labelId}>
         <BandTileO
           tile={heroTile}
           windowLabel={windowLabel}
           unloadedText={getUnloadedSummaryO(attentionState.status)}
           reasons={buildNeedsYouReasonsO(analyticsState.data, attentionState.status === 'ready' ? attentionState.data : null)}
           className="col-span-3"/>
-        <VolumeTilesO tiles={volumeTiles} windowLabel={windowLabel}/>
+        <VolumeTilesO tiles={volumeTiles} windowLabel={windowLabel} info={info}/>
       </div>
       {isAttentionFailed && (
         <RegionErrorO source="the needs-you count" state={attentionState} onRetry={onRetry} shared={shared} focusTargetId={REGION_CARD_IDS.statusBand}/>
@@ -1091,8 +1099,7 @@ function BandTileO({ tile, windowLabel, unloadedText = '—', reasons = null, cl
     <Tag
       {...(canJump ? { type: 'button', onClick: () => focusLedgerSectionO(tile.jumpTo) } : { role: 'group' })}
       className={`${canJump ? 'kpi' : 'kpi cursor-default'} ${className}`.trim()}
-      aria-label={ariaLabel}
-      title={tile.hint}>
+      aria-label={ariaLabel}>
       {reasons ? <TileSplit lead={lead} detail={<NeedsYouReasonsO reasons={reasons}/>}/> : lead}
     </Tag>
   );
@@ -1141,8 +1148,9 @@ function PageVerdictO({ analyticsState, channelLivenessState, attentionState, wi
   if (verdict.tone !== 'ok' || channelLivenessState.status === 'ready') {
     return <PageVerdict tone={verdict.tone} chips={verdict.chips} freshness={freshness} className="mb-4">{verdict.text}</PageVerdict>;
   }
-  const gap = channelLivenessState.status === 'loading' ? 'still checking the recording channels' : "couldn't check the recording channels";
-  return <PageVerdict tone="neutral" freshness={freshness} className="mb-4">{`${verdict.text.slice(0, -1)} — ${gap}.`}</PageVerdict>;
+  // the unchecked state rides the tone word → the shares keep the one-line cap
+  const label = channelLivenessState.status === 'loading' ? 'Checking channels' : "Couldn't check channels";
+  return <PageVerdict tone="neutral" label={label} freshness={freshness} className="mb-4">{verdict.text}</PageVerdict>;
 }
 
 const TONE_RANK_O = { neutral: 0, ok: 1, warn: 2, crit: 3 };
@@ -1204,14 +1212,15 @@ function getVolumeTilesO(tiles) {
 }
 
 // volume facts demoted beside the hero; the Self-reported glyph stays the missing-report grade channel
-function VolumeTilesO({ tiles, windowLabel }) {
+function VolumeTilesO({ tiles, windowLabel, info = null }) {
   const { formatPctWithDenominator } = window.UI;
   return (
     <div className="kpi cursor-default fs-meta flex flex-col justify-between gap-2" role="group" aria-label={`Volume · ${windowLabel}`}>
+      {info && <div className="flex justify-end">{info}</div>}
       {tiles.map((tile) => {
         const glyph = getBandTileGlyphO(tile.tone);
         return (
-          <div key={tile.key} className="flex flex-wrap items-center gap-x-1 text-dim" title={tile.hint}>
+          <div key={tile.key} className="flex flex-wrap items-center gap-x-1 text-dim">
             {glyph && <span className={`text-${tile.tone}`} role="img" aria-label={tile.tone === 'crit' ? 'critical' : 'warning'}><GlyphO name={glyph} size={12}/></span>}
             {tile.label}
             <span className="ml-auto font-mono text-ink">{formatIntO(tile.count)}</span>
@@ -1221,6 +1230,19 @@ function VolumeTilesO({ tiles, windowLabel }) {
         );
       })}
     </div>
+  );
+}
+
+function BandRulesO({ tiles }) {
+  return (
+    <dl className="fs-body flex flex-col gap-3">
+      {tiles.map((tile) => (
+        <div key={tile.key}>
+          <dt className="text-ink">{tile.label}</dt>
+          <dd className="text-dim">{tile.hint}</dd>
+        </div>
+      ))}
+    </dl>
   );
 }
 

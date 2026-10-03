@@ -383,7 +383,7 @@ function WeekRow({ spendState, outcomesState, heatmapState, onRetrySpend, onRetr
     <>
       <div className="grid grid-cols-1 xl:grid-cols-2 gap-card">
         <WeekPanel id="dash-week-results" title="This week's task results" state={outcomesState} source="task results"
-          isRetryShared={sharedSources.includes('task results')}
+          note={OUTCOME_COUNTING_NOTE} isRetryShared={sharedSources.includes('task results')}
           render={(data) => <ResultPanel panel={buildResultPanel(data)}/>}/>
         <WeekPanel id="dash-week-hours" title="Runs by hour" state={heatmapState} source="runs by hour"
           onRetry={onRetryHeatmap} isRetryShared={sharedSources.includes('runs by hour')}
@@ -397,15 +397,24 @@ function WeekRow({ spendState, outcomesState, heatmapState, onRetrySpend, onRetr
 }
 
 // a panel without onRetry shares its source with a tile → the tile speaks for the failure, the panel only points to it
-function WeekPanel({ id, title, state, source, onRetry, render, isRetryShared = false }) {
-  const { Badge, LoadingPlaceholder } = window.UI;
+function WeekPanel({ id, title, state, source, onRetry, render, note = null, isRetryShared = false }) {
+  const { Badge, LoadingPlaceholder, CardInfo } = window.UI;
   const view = getPanelView(state);
+  const titleId = `${id}-title`;
   return (
-    <section id={id} className="card p-3 flex flex-col gap-2" aria-labelledby={`${id}-title`}
+    <section id={id} className="card p-3 flex flex-col gap-2" aria-labelledby={titleId}
       aria-busy={state.busy ? 'true' : undefined}>
-      <div className="flex items-center gap-2">
-        <h2 id={`${id}-title`} className="fs-meta text-dim uppercase tracking-wide">{title}</h2>
-        {view === 'held' && <Badge role="status" tone="neutral">Last known</Badge>}
+      {/* every panel reserves the ⓘ row height → side-by-side panels start their bodies on one line */}
+      <div className="dash-tile-head">
+        <div className="flex items-center gap-2">
+          <h2 id={titleId} className="fs-meta text-dim uppercase tracking-wide">{title}</h2>
+          {view === 'held' && <Badge role="status" tone="neutral">Last known</Badge>}
+        </div>
+        {note && (
+          <CardInfo label="How this is counted" describedBy={titleId}>
+            <p className="fs-body">{note}</p>
+          </CardInfo>
+        )}
       </div>
       {view === 'loading' && <LoadingPlaceholder label={title.toLowerCase()}/>}
       <PanelFailure id={id} view={view} state={state} source={source} onRetry={onRetry} isRetryShared={isRetryShared}/>
@@ -471,7 +480,7 @@ function ResultPanel({ panel }) {
   if (panel.writerTotal <= 0) return <p className="fs-meta text-dim">No reported outcomes, {panel.span}.</p>;
   return (
     <>
-      <p className="fs-meta text-dim" title={OUTCOME_COUNTING_NOTE}>
+      <p className="fs-meta text-dim">
         {panel.span} · {formatInt(panel.writerTotal)} reported outcomes, the tile's count
       </p>
       <ul className="flex flex-col gap-1.5">

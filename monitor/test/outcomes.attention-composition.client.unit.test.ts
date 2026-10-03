@@ -89,6 +89,7 @@ interface OutcomesHelpers {
     needsYou?: { rows: LedgerRow[]; total: number; windowLabel: string } | null,
   ) => { key: string; label: string; heading: string; rows: LedgerRow[]; anchorId?: string }[];
   BandTileO: (props: { tile: BandTile; windowLabel: string }) => RenderNode;
+  VolumeTilesO: (props: { tiles: BandTile[]; windowLabel: string; info?: unknown }) => RenderNode;
   ResultTable: (props: Record<string, unknown>) => RenderNode;
   ResultTableRow: (props: { row: LedgerRow & { agent: string; task_type: string }; onRowClick: () => void; closure?: ClosureState }) => RenderNode;
   focusLedgerSectionO: (id: string, doc: { getElementById: (id: string) => unknown }) => boolean;
@@ -102,7 +103,7 @@ interface OutcomesHelpers {
   buildActiveFilterEntriesO: (filter: Record<string, unknown>) => { key: string; label: string; patch: Record<string, string> | null }[];
   ActiveFilterChips: (props: { filter: Record<string, unknown>; onRemove?: (patch: Record<string, string>) => void; onClearAll?: () => void }) => RenderNode | null;
   getNeedsYouReasonO: (row: LedgerRow & { review_flag_reasons?: string[] }, closedAt: string | null) => string | null;
-  window: { UI: { getAgentDisplayName: (name: string) => string; Popover: unknown; PageVerdict: unknown } };
+  window: { UI: { getAgentDisplayName: (name: string) => string; Popover: unknown; PageVerdict: unknown; CardInfo: unknown } };
 }
 
 interface RenderNode {
@@ -491,7 +492,8 @@ describe("PageVerdictO: the Task results verdict follows the shared outcome-rate
     { name: "an empty window claims no tone", state: ready({}), liveness: recording, tone: "neutral", text: /No task results/ },
     { name: "a failed read is unknown, never all-clear", state: { status: "error" as const, error: "boom" }, liveness: recording, tone: "neutral", text: /unknown/ },
     { name: "a stopped recording channel is crit over an ok rate", state: healthyWindow, liveness: { status: "ready" as const, data: { alerting: ["subagent-stop"] } }, tone: "crit", text: /Recording stopped on subagent-stop .*understated/ },
-    { name: "an unchecked recording channel holds back the all-clear", state: healthyWindow, liveness: { status: "error" as const, error: "boom" }, tone: "neutral", text: /couldn't check the recording channels/ },
+    { name: "an unchecked recording channel holds back the all-clear and says so in the tone word", state: healthyWindow, liveness: { status: "error" as const, error: "boom" }, tone: "neutral", text: /1\.0% failed or blocked/, label: "Couldn't check channels" },
+    { name: "a recording channel still loading holds back the all-clear and says so in the tone word", state: healthyWindow, liveness: { status: "loading" as const }, tone: "neutral", text: /1\.0% failed or blocked/, label: "Checking channels" },
     { name: "a flagged rate stands while the recording channels are still loading", state: ready({ done: 180, fail: 12, done_with_concerns: 8 }, 2), liveness: { status: "loading" as const }, tone: "crit", text: /failed or blocked/ },
   ];
   for (const row of rows) {
@@ -499,6 +501,7 @@ describe("PageVerdictO: the Task results verdict follows the shared outcome-rate
       const node = helpers.PageVerdictO({ analyticsState: row.state, channelLivenessState: row.liveness, windowDays: 30 }) as RenderNode;
       assert.strictEqual(node.type, helpers.window.UI.PageVerdict, "renders the shared PageVerdict atom");
       assert.strictEqual(node.props!.tone, row.tone);
+      assert.strictEqual(node.props!.label, (row as { label?: string }).label, "only an unchecked channel replaces the tone word");
       assert.match(String(node.children.join("")), row.text);
     });
   }
@@ -518,14 +521,18 @@ describe("PageVerdictO: a judged verdict leads with its shares and fits the 90-c
     };
   };
   const recording = { status: "ready" as const, data: { alerting: [] as string[] } };
+  const okWindow = windowOf({ done: 11200, fail: 52, done_with_concerns: 100 }, 40);
+  const unreadHero = { status: "loading" as const };
   const rows = [
-    { name: "a crit rate", analytics: windowOf({ done: 10500, fail: 652, done_with_concerns: 200 }, 120), attention: { status: "loading" as const } },
-    { name: "an ok rate", analytics: windowOf({ done: 11200, fail: 52, done_with_concerns: 100 }, 40), attention: { status: "loading" as const } },
-    { name: "an ok rate raised by the hero", analytics: windowOf({ done: 11200, fail: 52, done_with_concerns: 100 }, 40), attention: { status: "ready" as const, data: { total: 3405, parts: { flagged: 3405, fail: 0, blocked: 0, open: 0 } } } },
+    { name: "a crit rate", analytics: windowOf({ done: 10500, fail: 652, done_with_concerns: 200 }, 120), attention: unreadHero, liveness: recording },
+    { name: "an ok rate", analytics: okWindow, attention: unreadHero, liveness: recording },
+    { name: "an ok rate raised by the hero", analytics: okWindow, attention: { status: "ready" as const, data: { total: 3405, parts: { flagged: 3405, fail: 0, blocked: 0, open: 0 } } }, liveness: recording },
+    { name: "an ok rate while the recording channels are still loading", analytics: okWindow, attention: unreadHero, liveness: { status: "loading" as const } },
+    { name: "an ok rate whose recording channels couldn't be checked", analytics: okWindow, attention: unreadHero, liveness: { status: "error" as const, error: "boom" } },
   ];
   for (const row of rows) {
     test(row.name, () => {
-      const node = helpers.PageVerdictO({ analyticsState: row.analytics, channelLivenessState: recording, attentionState: row.attention, windowDays: 30 } as never) as RenderNode;
+      const node = helpers.PageVerdictO({ analyticsState: row.analytics, channelLivenessState: row.liveness, attentionState: row.attention, windowDays: 30 } as never) as RenderNode;
       const text = String(node.children.join(""));
       assert.match(text, /^\d+\.\d% /, `leads with a share: "${text}"`);
       assert.ok(text.length <= VERDICT_CAP, `"${text}" is ${text.length} chars`);
@@ -811,6 +818,51 @@ test("Needs-you tile: jumps to the ledger's whole-window Needs-you heading, and 
     assert.strictEqual(asRendered({ ...attention, count }).type, "div", `count ${count} offers no jump`);
   }
   assert.strictEqual(asRendered(tileOf(tiles, "broken")).type, "div", "tiles without a target stay static");
+});
+
+// design.md copy rule: a definition over a cap opens from a focusable ⓘ, never a hover-only title
+describe("StatusBandO: the tile rules open from one focusable ⓘ described by the band label, never from a hover-only title", () => {
+  const data = aboveFloor({ done: 150, fail: 8, blocked: 4 });
+  const tiles = helpers.buildStatusBandTilesO(data, 25);
+  const band = helpers.StatusBandO({ analyticsState: { status: "ready", data }, attentionState: { status: "ready", data: { total: 25, parts: { flagged: 25, fail: 0, blocked: 0, open: 0 } } as { total: number } }, windowDays: 30 });
+  const bandNodes = flattenNodes(band);
+  const volume = bandNodes.find((n) => n.type === helpers.VolumeTilesO)!;
+  const info = volume.props!.info as RenderNode;
+  const hoverTitled = (node: RenderNode) => flattenNodes(node).filter((n) => n.props?.title != null);
+
+  test("no tile carries a hover-only title", () => {
+    const hero = tileOf(tiles, "attention");
+    const rendered = [
+      { name: "a jumpable hero", node: helpers.BandTileO({ tile: hero, windowLabel: "30d" }) },
+      { name: "a static hero", node: helpers.BandTileO({ tile: { ...hero, count: 0 }, windowLabel: "30d" }) },
+      { name: "the volume column", node: helpers.VolumeTilesO({ tiles: tiles.filter((tile) => tile.key !== "attention"), windowLabel: "30d" }) },
+    ];
+    for (const row of rendered) assert.deepStrictEqual(hoverTitled(row.node).length, 0, `${row.name} has no hover-only title`);
+  });
+
+  test("the hero's accessible name still carries its rule", () => {
+    const hero = tileOf(tiles, "attention");
+    assert.ok(String(helpers.BandTileO({ tile: hero, windowLabel: "30d" }).props!["aria-label"]).includes(hero.hint));
+  });
+
+  test("the ⓘ sits outside every tile button, is described by the band label, and its drawer names every tile's rule", () => {
+    assert.strictEqual(info.type, helpers.window.UI.CardInfo, "the shared ⓘ trigger");
+    const label = bandNodes.find((n) => n.props?.id === info.props!.describedBy);
+    assert.ok(label, "the ⓘ points at an element in the band");
+    assert.strictEqual(renderText(label).trim(), "Status band");
+    assert.ok(bandNodes.some((n) => n.props?.role === "group" && n.props["aria-labelledby"] === label!.props!.id), "the band is named by the same label");
+    const drawer = renderText(info.children);
+    for (const tile of tiles) {
+      assert.ok(drawer.includes(tile.label), `the drawer names ${tile.key}`);
+      assert.ok(drawer.includes(tile.hint), `the drawer states ${tile.key}'s rule`);
+    }
+  });
+
+  test("the volume column renders the ⓘ it is handed", () => {
+    const marker = { type: "marker", props: {}, children: [] };
+    const column = helpers.VolumeTilesO({ tiles: tiles.filter((tile) => tile.key !== "attention"), windowLabel: "30d", info: marker });
+    assert.ok(flattenNodes(column).includes(marker as RenderNode));
+  });
 });
 
 test("focusLedgerSectionO: scrolls to and focuses the target, and reports a missing one", () => {

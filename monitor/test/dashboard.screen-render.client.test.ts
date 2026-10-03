@@ -287,6 +287,23 @@ test("a tile's note opens from a focusable ⓘ described by the tile heading, ne
   assert.match(collectText(info), /writer-emitted/, "the drawer carries the note");
 });
 
+test("the results panel's counting note opens from a focusable ⓘ described by the panel heading, never from a hover-only title", () => {
+  const loading = { data: null, error: null, busy: true };
+  const row = render("WeekRow", { spendState: loading, outcomesState: loading, heatmapState: loading, onRetrySpend: () => {}, onRetryHeatmap: () => {} });
+  const panels = findNodes(row, (n) => n.type === "section");
+  const infoCounts = Object.fromEntries(panels.map((panel) => [panel.props.id, findNodes(panel, (n) => n.props.atom === "CardInfo").length]));
+  assert.deepEqual(infoCounts, { "dash-week-results": 1, "dash-week-hours": 0, "dash-week-spend": 0 }, "only the results panel carries a counting note");
+
+  const results = panels.find((panel) => panel.props.id === "dash-week-results")!;
+  const [heading] = findNodes(results, (n) => n.type === "h2");
+  const [info] = findNodes(results, (n) => n.props.atom === "CardInfo");
+  assert.equal(info.props.describedBy, heading.props.id, "the ⓘ is described by the panel heading");
+  assert.match(collectText(info), /writer-emitted/, "the drawer carries the note");
+
+  const panel = renderResultPanel([{ result: "done", count: 40 }, { result: "fail", count: 2 }]);
+  assert.equal(findNodes(panel, (n) => n.props.title != null).length, 0, "no hover-only title on the panel body");
+});
+
 test("a unit renders on the value's own line so the number and its word read as one phrase", () => {
   const tree = render("StatusTile", { tile: { ...READY_TILE, value: "0", unit: "suspended" }, onNav: () => {}, onRetry: () => {} });
   const [lead] = findNodes(tree, (n) => classOf(n) === "tile-split-lead");
