@@ -171,6 +171,27 @@ test("detail sections fold behind an h2 in their summary; status sections render
   }
 });
 
+// Visible prose under a node — an ⓘ drawer's content is opened on demand, so it is not part of the line.
+function getVisibleStrings(node: RenderedNode | string | null): string[] {
+  if (node === null) return [];
+  if (typeof node === "string") return node.trim() ? [node.trim()] : [];
+  if (node.props.atom === "CardInfo") return [];
+  return node.children.flatMap(getVisibleStrings);
+}
+
+test("the Per-run fold's body prose fits the 90-char footnote cap, a longer qualifier behind its ⓘ", async () => {
+  const FOOTNOTE_CAP = 90;
+  const mod = await loadWikiScreen();
+  const tree = renderScreen(mod.React.createElement(mod.WikiRunTableSection as Component, RUN_TABLE_LOADING));
+  const [fold] = findNodes(tree, (n) => n.type === "details");
+  const body = fold.children.filter((child) => typeof child === "string" || child.type !== "summary");
+  const lines = body.flatMap(getVisibleStrings);
+
+  assert.ok(lines.length > 0, "the fold body carries a note");
+  for (const line of lines) assert.ok(line.length <= FOOTNOTE_CAP, `"${line.slice(0, 40)}…" is ${line.length} chars`);
+  assert.equal(findNodes(fold, (n) => n.props.atom === "CardInfo").length, 1, "the change definition opens from one ⓘ");
+});
+
 test("the run-history trend and notes by type share one split row, the trend on the wider side", async () => {
   const mod = await loadWikiScreen();
   const tree = renderScreen(mod.React.createElement(mod.WikiStatusRow as Component, {

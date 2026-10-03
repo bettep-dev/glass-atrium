@@ -1087,6 +1087,9 @@ function WikiRunHistorySection({ cyclesState, summaryState, shared, onRetry }) {
 
 // Per-run record — a detail fold whose summary line states the run streak without a click.
 function WikiRunTableSection({ reportState, days, onChangeDays, shared, onRetry }) {
+	const { CardInfo } = window.UI;
+	const noteId = `${WIKI_REGION_IDS.runTable}-note`;
+
 	return (
 		<WikiDisclosureW
 			id={WIKI_REGION_IDS.runTable}
@@ -1095,9 +1098,12 @@ function WikiRunTableSection({ reportState, days, onChangeDays, shared, onRetry 
 			bodyClassName="px-3 pb-3 flex flex-col gap-2"
 		>
 			<div className="flex items-center gap-2 flex-wrap">
-				<span className="fs-meta text-faint leading-tight">
-					{`Changes count runs whose status or backlog differs from the run before. The window drives the table only — the trend keeps a fixed ${WIKI_CYCLE_DAYS}-day window.`}
+				<span id={noteId} className="fs-meta text-faint leading-tight">
+					{`The window drives the table only — the trend keeps a fixed ${WIKI_CYCLE_DAYS}-day window.`}
 				</span>
+				<CardInfo label="How a change is counted" describedBy={noteId}>
+					A change is a run whose status or backlog differs from the run before.
+				</CardInfo>
 				<div
 					className="seg ml-auto"
 					role="group"
@@ -1121,7 +1127,7 @@ function WikiRunTableSection({ reportState, days, onChangeDays, shared, onRetry 
 	);
 }
 
-// header meta ≤ 32 chars → "27 runs · all healthy" or "30 runs · 12 changes"; the body line defines a change.
+// header meta ≤ 32 chars → "27 runs · all healthy" or "30 runs · 12 changes"; the body ⓘ defines a change.
 function describeRunTableW(state, days) {
 	if (window.UI.getRegionView(state) === "loading") return "Loading…";
 	if (window.UI.getRegionView(state) === "error") return "Unavailable";
