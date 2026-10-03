@@ -922,7 +922,7 @@ test("every tick on one token axis carries one unit, fits the axis, and reads ba
     const suffixes = new Set(labels.filter((l) => l !== "0").map((l) => l.replace(/[\d.]/g, "")));
     assert.strictEqual(suffixes.size, 1, `${name}: ${labels.join(" ")}`);
     labels.forEach((label, i) => {
-      // the 48px axis at 12px mono holds five characters
+      // the 48px axis at the 13px mono meta step holds five characters
       assert.ok(label.length <= 5, `${name}: ${label}`);
       const digits = label.replace(/[^\d.]/g, "");
       const unit = TOKEN_UNIT[label.replace(/[\d.]/g, "")]!;

@@ -923,7 +923,7 @@ test("a compatibility requirement rides a short row tag with the full text on ho
 
 const FS_MICRO = /\bfs-micro\b/;
 
-test("the Agents page never renders text below the 12px meta step", async () => {
+test("the Agents page never sets text in the retired micro type step", async () => {
   const mod = await loadAgentsScreen();
   const React = mod.React as { createElement: (t: unknown, p: unknown) => unknown };
   const trees = [

@@ -482,7 +482,7 @@ test("alarms are flat hairline rows whose tone rides a leading glyph, with no st
   }
 });
 
-test("wiki text never drops below the 12px step and words are never set in mono", async () => {
+test("wiki text never uses the retired micro type step and words are never set in mono", async () => {
   const mod = await loadWikiScreen();
   const { createElement } = mod.React;
   const ready = (data: unknown) => ({ status: "ready", data, error: null });
@@ -498,7 +498,7 @@ test("wiki text never drops below the 12px step and words are never set in mono"
   const seen = new Set<string>();
   for (const tree of trees) {
     for (const node of findNodes(tree, () => true)) {
-      assert.doesNotMatch(classOf(node), /\bfs-micro\b/, "the 11px step is retired");
+      assert.doesNotMatch(classOf(node), /\bfs-micro\b/, "the micro step is retired");
       const ownText = node.children.filter((c) => typeof c === "string").join("").trim();
       if (words.includes(ownText)) {
         seen.add(ownText);
