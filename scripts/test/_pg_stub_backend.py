@@ -39,7 +39,7 @@ import sqlite3
 import sys
 from contextlib import closing, contextmanager
 from pathlib import Path
-from types import ModuleType
+from types import ModuleType, SimpleNamespace
 
 _SCRIPTS_ROOT = Path(__file__).resolve().parent.parent
 _HELPER = _SCRIPTS_ROOT / "_pg_dual_write_daemon.py"
@@ -64,9 +64,11 @@ _NAMED = re.compile(r"%\((\w+)\)s")
 _MODEL_BLOCK = r"^model %s \{$(.*?)^\}$"
 _FIELD = re.compile(r"^\s+(\w+)\s+(\w+)(\?)?(\[\])?(.*)$")
 _MAPPED = re.compile(r'@map\("(\w+)"\)')
-_ENUM_BLOCK = re.compile(r"^enum (\w+) \{$(.*?)^\}$", re.M | re.S)
-_ENUM_LABEL = re.compile(r'^[ \t]+(\w+)(?:[ \t]+@map\("([^"]+)"\))?[ \t]*$', re.M)
-_ENUM_SCHEMA = re.compile(r'@@schema\("(\w+)"\)')
+_ENUM = SimpleNamespace(
+    BLOCK=re.compile(r"^enum (\w+) \{$(.*?)^\}$", re.M | re.S),
+    LABEL=re.compile(r'^[ \t]+(\w+)(?:[ \t]+@map\("([^"]+)"\))?[ \t]*$', re.M),
+    SCHEMA=re.compile(r'@@schema\("(\w+)"\)'),
+)
 # One alternation, so CREATE and DROP keep their relative order within a file.
 # Identifier quoting is OPTIONAL at every position: the corpus already carries an
 # unquoted `CREATE INDEX notes_ts_gin ON wiki.notes`, and a quoted-only pattern would
@@ -157,9 +159,9 @@ def _create_enum_catalog(db: sqlite3.Connection) -> None:
     )
     namespaces: dict[str, int] = {}
     schema_text = _SCHEMA.read_text(encoding="utf-8")
-    for type_oid, block in enumerate(_ENUM_BLOCK.finditer(schema_text), start=1):
+    for type_oid, block in enumerate(_ENUM.BLOCK.finditer(schema_text), start=1):
         name, body = block.groups()
-        schema = _ENUM_SCHEMA.search(body)
+        schema = _ENUM.SCHEMA.search(body)
         if schema is None:
             raise AssertionError("enum %s declares no @@schema in %s" % (name, _SCHEMA))
         namespace_oid = namespaces.setdefault(schema.group(1), len(namespaces) + 1)
@@ -169,7 +171,7 @@ def _create_enum_catalog(db: sqlite3.Connection) -> None:
         )
         db.executemany(
             "INSERT INTO pg_catalog.pg_enum VALUES (?, ?)",
-            [(type_oid, mapped or label) for label, mapped in _ENUM_LABEL.findall(body)],
+            [(type_oid, mapped or label) for label, mapped in _ENUM.LABEL.findall(body)],
         )
     db.executemany(
         "INSERT INTO pg_catalog.pg_namespace VALUES (?, ?)",
