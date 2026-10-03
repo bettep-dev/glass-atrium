@@ -142,8 +142,12 @@ function ScreenDashboard({ onNav, harness, onRetryHarness }) {
         /* an idle lane is out of flow → no blank band and no section gap of its own; a lane between two sections keeps one gap */
         .space-sections > .dash-lane.sr-only + * { margin-top: 0; }
         .space-sections > * + .dash-lane.sr-only + * { margin-top: 24px; }
-        /* 타일 힌트 — 2줄분 min-height 예약(clamp 없음) → 폭이 줄어도 밴드 높이 불변. */
+        /* 타일 힌트 — 2줄분 min-height 예약 → 폭이 줄어도 밴드 높이 불변. 저작 힌트는 2줄 안에서 줄바꿈. */
         .dash-tile-hint { min-height: calc(var(--fs-meta) * 1.4 * 2); line-height: 1.4; }
+        /* a hint carrying data → one line; only the data takes the ellipsis, the label and figure stay whole */
+        .dash-tile-hint-line { display: flex; align-items: flex-start; white-space: nowrap; }
+        .dash-tile-hint-fixed { flex-shrink: 0; white-space: pre; }
+        .dash-tile-hint-data { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
         .dash-tile-detail { min-height: calc(var(--fs-body) * 1.5); }
         .dash-tile-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; min-height: var(--ctl-min-h); }
         /* the shared .btn hover shifts ~4 RGB levels → an underline makes the drill's hover visible */
@@ -328,12 +332,21 @@ function StatusTile({ tile, onNav, onRetry, isRetryShared = false }) {
 }
 
 function TileDetail({ tile, isCovered }) {
+  const hintData = isCovered ? null : tile.hintData;
   return (
     <>
       <div className="fs-body text-dim dash-tile-detail">{isCovered ? null : tile.detail}</div>
-      <div className="fs-meta text-dim dash-tile-hint">
-        {isCovered ? SHARED_FAILURE_HINT : tile.hint}
-      </div>
+      {hintData ? (
+        <div className="fs-meta text-dim dash-tile-hint dash-tile-hint-line" title={tile.hint}>
+          <span className="dash-tile-hint-fixed">{hintData.lead}</span>
+          <span className="dash-tile-hint-data">{hintData.data}</span>
+          <span className="dash-tile-hint-fixed">{hintData.tail}</span>
+        </div>
+      ) : (
+        <div className="fs-meta text-dim dash-tile-hint">
+          {isCovered ? SHARED_FAILURE_HINT : tile.hint}
+        </div>
+      )}
     </>
   );
 }
@@ -869,7 +882,7 @@ function markHeldTile(tile, state) {
   const isAlarm = tile.tone === 'warn' || tile.tone === 'crit';
   return {
     ...tile, tone: isAlarm ? tile.tone : 'neutral', isHeld: true, badge: 'Last known', error: state.error, canRetry: true,
-    hint: `Couldn't refresh ${tile.source}`,
+    hint: `Couldn't refresh ${tile.source}`, hintData: null,
   };
 }
 
@@ -906,7 +919,7 @@ function describeHarnessReading(harness) {
     value: downCount > 0 ? `${downCount} of ${partCount} down` : `${harness.partsOk} of ${partCount} up`,
     detail: lostCount > 0 ? `${lostCount} not read` : undefined,
     trend: describeHarnessCoverage(harness, isPartlyUnread),
-    hint: describeHarnessHint(harness, { isPartlyUnread, lostCount, downCount }),
+    ...describeHarnessHint(harness, { isPartlyUnread, lostCount, downCount }),
     ...describeUnreadNote(harness),
     canRetry: isPartlyUnread,
   };
@@ -931,10 +944,17 @@ function describeHarnessHint(harness, { isPartlyUnread, lostCount, downCount }) 
   if (isPartlyUnread) {
     const [first, ...rest] = harness.unreadSources;
     const more = rest.length > 0 ? ` +${rest.length}` : '';
-    return `${lostCount > 0 ? "Couldn't read" : "Couldn't refresh"} ${first}${more}`;
+    return { hint: `${lostCount > 0 ? "Couldn't read" : "Couldn't refresh"} ${first}${more}` };
   }
   // the headline already carries the count → the hint names the parts instead of restating it
-  return downCount > 0 ? `Not answering: ${joinPartNames(harness.downNames)}` : 'All polled parts healthy';
+  if (downCount === 0) return { hint: 'All polled parts healthy' };
+  return getDataHint({ lead: 'Not answering: ', data: joinPartNames(harness.downNames), noteLabel: 'Parts not answering' });
+}
+
+// data in a hint is clamped, never rewritten → set apart from the authored words, and named in full in the tile's ⓘ drawer
+function getDataHint({ lead, data, tail = '', noteLabel }) {
+  const hint = `${lead}${data}${tail}`;
+  return { hint, hintData: { lead, data, tail }, note: `${hint}.`, noteLabel };
 }
 
 function describeUnreadNote(harness) {
@@ -1074,7 +1094,7 @@ function buildFleetTile(agentsState) {
     ...base, status: 'ready', tone, badge: FLEET_VERDICT[tone], value: formatInt(suspended), unit: 'suspended',
     detail: `${formatInt(streak)} on a failing streak`,
     trend: describeFleetReach(agentCount, Number(breaker.registry_agents)),
-    hint: describeBusiestAgent(agentsState.data?.agents?.[0]),
+    ...describeBusiestAgent(agentsState.data?.agents?.[0]),
   };
 }
 
@@ -1087,8 +1107,8 @@ function describeFleetReach(agentCount, registryCount) {
 // the region reads order=runs&limit=1 → its one row is the busiest agent of the window
 function describeBusiestAgent(row) {
   const runs = Number(row?.runs);
-  if (!row || !Number.isFinite(runs)) return null;
-  return `Most runs: ${row.agent_name ?? row.agent_id}, ${formatInt(runs)}`;
+  if (!row || !Number.isFinite(runs)) return { hint: null };
+  return getDataHint({ lead: 'Most runs: ', data: row.agent_name ?? row.agent_id, tail: `, ${formatInt(runs)}`, noteLabel: 'Busiest agent' });
 }
 
 // the value's unit already says "suspended" → the verdict never repeats it

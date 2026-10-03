@@ -36,6 +36,7 @@ interface Tile {
   detail?: string | null;
   trend?: string | null;
   note?: string;
+  hintData?: { lead: string; data: string; tail: string } | null;
   target: string | null;
   badge?: string;
   canRetry?: boolean;
@@ -428,12 +429,26 @@ const CAP = { KPI_HINT: 40, ALARM_LABEL: 32 };
 // every harness store the shell reads, by its label → the longest unread list a fold can carry
 const HARNESS_SOURCE_LABELS = ["the failure count", "daemon status", "the health probe", "the hook chain", "hook failures"];
 
-// excluded: a cold failure's hint is the shared error copy, and a hint naming parts or agents carries data, which is clamped, never rewritten
-test("every hint the dashboard authors for a status tile fits the 40-char KPI hint cap, held readings included", () => {
+// seven down parts with long names → a down list far past the hint cap
+const LONG_PART_NAMES = ["Chromium Export", "autoagent", "glass-atrium-wiki-curator", "daily-restart-wiki", "Hook Chain", "PostgreSQL", "monitor"];
+const LONG_AGENT = "glass-atrium-intel-researcher";
+function busiestFleet(): unknown {
+  return ready({
+    agents: [{ agent_id: LONG_AGENT, agent_name: LONG_AGENT, runs: 12_345 }],
+    meta: { total_agents: 3, circuit_breaker: { source: "loaded", registry_agents: 20, suspended_count: 0, streak_count: 0 } },
+  });
+}
+
+// data a hint carries (part or agent names) is never rewritten → it is set apart to clamp, and only the authored words count toward the cap
+// excluded: a cold failure's hint is the shared error copy
+test("every hint the dashboard authors for a status tile fits the 40-char KPI hint cap, held readings included, with any data it carries set apart to clamp", () => {
   const outcomes = (byResult: Array<{ result: string; count: number }>) =>
     ready({ total: byResult.reduce((sum, row) => sum + row.count, 0), by_result: byResult });
   const fleet = ready({ meta: { total_agents: 3, circuit_breaker: { source: "loaded", suspended_count: 0, streak_count: 0 } } });
-  const rows = [
+  const rows: Array<{ name: string; tile: string; args: Record<string, unknown>; hasData?: boolean }> = [
+    { name: "harness with every part down", tile: "harness", args: { harness: { ...HEALTHY, partsOk: 0, downNames: LONG_PART_NAMES } }, hasData: true },
+    { name: "fleet busiest agent with a long name", tile: "fleet", args: { agentsState: busiestFleet() }, hasData: true },
+    { name: "fleet held over a busiest agent", tile: "fleet", args: { agentsState: held(busiestFleet(), "HTTP 500") } },
     { name: "harness healthy", tile: "harness", args: { harness: HEALTHY } },
     { name: "harness readings unavailable", tile: "harness", args: { harness: { ...HEALTHY, status: "unavailable" } } },
     { name: "harness held over one failed source", tile: "harness", args: { harness: unreadFold({ unreadSources: ["the failure count"] }) } },
@@ -453,9 +468,25 @@ test("every hint the dashboard authors for a status tile fits the 40-char KPI hi
   ];
   for (const row of rows) {
     const tiles = dash.buildTiles({ harness: HEALTHY, costState: LOADING, agentsState: LOADING, outcomesState: LOADING, ...row.args });
-    const hint = tileOf(tiles, row.tile).hint;
-    assert.ok(hint, `${row.name}: the state carries a hint`);
-    assert.ok(hint.length <= CAP.KPI_HINT, `${row.name}: "${hint}" is ${hint.length} chars`);
+    const tile = tileOf(tiles, row.tile);
+    assert.ok(tile.hint, `${row.name}: the state carries a hint`);
+    const { lead, data, tail } = tile.hintData ?? { lead: tile.hint, data: "", tail: "" };
+    assert.equal(`${lead}${data}${tail}`, tile.hint, `${row.name}: the clamped parts read back as the whole hint`);
+    assert.equal(data !== "", row.hasData === true, `${row.name}: only a hint carrying data sets a part apart to clamp`);
+    const authored = `${lead}${tail}`;
+    assert.ok(authored.length <= CAP.KPI_HINT, `${row.name}: "${authored}" is ${authored.length} chars`);
+  }
+});
+
+test("a hint carrying data names it in full in the tile's drawer note, so a clamped name is never hover-only", () => {
+  const rows = [
+    { name: "every part down", tile: "harness", args: { harness: { ...HEALTHY, partsOk: 0, downNames: LONG_PART_NAMES } }, data: LONG_PART_NAMES },
+    { name: "busiest agent", tile: "fleet", args: { agentsState: busiestFleet() }, data: [LONG_AGENT] },
+  ];
+  for (const row of rows) {
+    const tile = tileOf(dash.buildTiles({ harness: HEALTHY, costState: LOADING, agentsState: LOADING, outcomesState: LOADING, ...row.args }), row.tile);
+    const note = String(tile.note).replace(/\u2011/g, "-");
+    for (const name of row.data) assert.ok(note.includes(name), `${row.name}: the note names ${name} — note was "${note}"`);
   }
 });
 

@@ -268,6 +268,23 @@ test("a ready tile puts its value on the lead side and its detail and hint on th
   assert.equal(findNodes(detail, (n) => classOf(n).includes("dash-tile-hint")).length, 1);
 });
 
+test("a hint carrying data clamps only the data on one line, keeping its authored words and figure whole", () => {
+  const hintData = { lead: "Most runs: ", data: "glass-atrium-intel-researcher", tail: ", 12,345" };
+  const tile = { ...READY_TILE, hint: "Most runs: glass-atrium-intel-researcher, 12,345", hintData };
+  const tree = render("StatusTile", { tile, onNav: () => {}, onRetry: () => {} });
+  const [hint] = findNodes(tree, (n) => classOf(n).includes("dash-tile-hint"));
+  assert.match(classOf(hint), /\bdash-tile-hint-line\b/, "the hint is one unwrapped line");
+  const parts = hint.children.map((child) => [classOf(child as RenderedNode), collectText(child as RenderedNode)]);
+  assert.deepEqual(parts, [
+    ["dash-tile-hint-fixed", hintData.lead],
+    ["dash-tile-hint-data", hintData.data],
+    ["dash-tile-hint-fixed", hintData.tail],
+  ], "only the data part takes the ellipsis; the label and the figure stay whole");
+  const plain = render("StatusTile", { tile: READY_TILE, onNav: () => {}, onRetry: () => {} });
+  const [plainHint] = findNodes(plain, (n) => classOf(n).includes("dash-tile-hint"));
+  assert.doesNotMatch(classOf(plainHint), /dash-tile-hint-line/, "an authored hint keeps its two-line wrap");
+});
+
 test("a tile's note opens from a focusable ⓘ described by the tile heading, never from a hover-only title", () => {
   const rows = [
     { name: "a tile with a note", tile: { ...READY_TILE, note: "Counts writer-emitted outcomes only." }, infoCount: 1 },
