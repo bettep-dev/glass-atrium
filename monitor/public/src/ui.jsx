@@ -2133,6 +2133,7 @@ const REVIEW_FLAG_REASON_META = {
   'probe-omission': { label: 'No convention probe', title: 'Code change recorded with no convention reference' },
   'unregistered-agent-probe-exempt': { label: 'Probe-exempt agent', title: 'The recorded agent never received the convention-probe instruction' },
   'scope-excess': { label: 'Outside declared scope', title: 'An edited path fell outside the file list the delegation declared' },
+  'qa-score-malformed': { label: 'Malformed QA score', title: 'The reported qa_score does not match cov=N,ins=N,instr=N,clar=N, optionally followed by ,d8=N, with each N from 1 to 5' },
 };
 
 // carrier 가 빈 구행(사유 기록 이전) — 사유를 지어내지 않고 명시적 미분류 상태로 렌더.
