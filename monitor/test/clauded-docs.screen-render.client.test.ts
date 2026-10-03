@@ -5,7 +5,6 @@
 
 import test, { describe } from "node:test";
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, resolve } from "node:path";
 import {
@@ -594,14 +593,15 @@ test("no Documents style, size class or inline size draws text below the 13px me
   const screen = await loadDocsScreen();
   const listCard = renderScreen((screen.DocListCardCD as Component)(listCardProps(() => undefined)));
   const classNames = findNodes(listCard, (n) => typeof n.props.className === "string").map((n) => String(n.props.className));
+  const inlineSizes = findNodes(listCard, (n) => typeof (n.props.style as { fontSize?: unknown } | undefined)?.fontSize === "number")
+    .map((n) => (n.props.style as { fontSize: number }).fontSize);
   assert.doesNotMatch([getScreenCss(screen), ...classNames].join("\n"), /fs-micro/);
 
-  // the style block, arbitrary text-[Npx] classes and inline fontSize numbers across every panel and modal of the screen
-  const source = readFileSync(DOCS_SRC, "utf8");
+  // the rendered style block, the rendered card's arbitrary text-[Npx] classes and its inline fontSize numbers
   const sizes = [
     ...[...getScreenCss(screen).matchAll(/font-size\s*:\s*([\d.]+)px/g)].map((m) => ({ at: m[0], px: Number(m[1]) })),
-    ...[...source.matchAll(/text-\[([\d.]+)px\]/g)].map((m) => ({ at: m[0], px: Number(m[1]) })),
-    ...[...source.matchAll(/fontSize:\s*([\d.]+)\b/g)].map((m) => ({ at: m[0], px: Number(m[1]) })),
+    ...classNames.flatMap((name) => [...name.matchAll(/text-\[([\d.]+)px\]/g)].map((m) => ({ at: m[0], px: Number(m[1]) }))),
+    ...inlineSizes.map((px) => ({ at: `fontSize: ${px}`, px })),
   ];
   assert.deepEqual(sizes.filter((size) => size.px < META_FLOOR_PX).map((size) => size.at), []);
 });

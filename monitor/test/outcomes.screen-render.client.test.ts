@@ -3,7 +3,7 @@
 //
 // Runner: npx tsx --test test/outcomes.screen-render.client.test.ts
 
-import test from "node:test";
+import test, { describe } from "node:test";
 import assert from "node:assert/strict";
 import { fileURLToPath } from "node:url";
 import { dirname, resolve } from "node:path";
@@ -204,6 +204,27 @@ test("every card and fold header on the screen fits the title and header-meta ca
     if (typeof header.sub === "string") {
       assert.ok(header.sub.length <= COPY_CAP.meta, `${header.kind} "${header.title}" meta "${header.sub}" is ${header.sub.length} chars`);
     }
+  }
+});
+
+describe("the cross-table header shows its count meta only when there are records, and always shows the mismatch badge", () => {
+  const rows = [
+    { name: "a ready cross table with records", crosstab: { total: 12_000, polarTotal: 1_500, byCell: { "high|false": { count: 1_234 } } }, hasMeta: true },
+    { name: "a ready cross table with no records", crosstab: { total: 0, polarTotal: 0, byCell: {} }, hasMeta: false },
+  ];
+  for (const row of rows) {
+    test(row.name, async () => {
+      const mod = await loadScreenModule(OUTCOMES_SRC, { UI: ui.UI, location: { hash: "" }, URLSearchParams });
+      const create = (mod.React as { createElement: (t: unknown, p: unknown) => unknown }).createElement;
+      const state = { status: "ready", busy: false, data: { crosstab: row.crosstab }, error: null };
+      const [head] = findNodes(renderScreen(create(mod.CrosstabCard as Component, { state, onRetry: () => undefined })) as RenderedNode,
+        (n) => n.type === "CardHead");
+
+      assert.equal(findNodes(head, (n) => n.props.className === "card-sub").length, row.hasMeta ? 1 : 0);
+      const badges = findNodes(head, (n) => n.type === "Badge");
+      assert.equal(badges.length, 1);
+      assert.match(collectText(badges[0]), new RegExp(`${row.crosstab.polarTotal.toLocaleString("en-US")}\\s+mismatches`));
+    });
   }
 });
 
