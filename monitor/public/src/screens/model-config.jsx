@@ -118,22 +118,22 @@ const DOMAIN_ORDER_MC = [
 	"model.daemon_cycle_worker",
 ];
 
-// Take-effect labels — GET apply_mode, rendered as each section's one take-effect line.
+// Take-effect timing — GET apply_mode → "Applies <when>" header meta; desc = the caveat the drawer carries.
 const APPLY_MODE_META_MC = {
 	"next-spawn": {
-		label: "Next spawn",
+		when: "at next spawn",
 		desc: "Saved now — a running agent keeps its current model until it next spawns",
 	},
 	"next-cycle": {
-		label: "Next cycle",
+		when: "at next cycle",
 		desc: "Saved now — the daemon picks it up on its next cycle",
 	},
 	"tmux-restart": {
-		label: "After tmux restart",
+		when: "after tmux restart",
 		desc: "Saved now — the tmux session must restart before it is used",
 	},
 	immediate: {
-		label: "Immediately",
+		when: "immediately",
 		desc: "In force as soon as the save lands",
 	},
 };
@@ -179,13 +179,13 @@ const BUDGET_META_MC = {
 	"budget.worker_max_usd": {
 		label: "Self-improve + wiki call cap",
 		hint: "Caps one self-improve generation or wiki compile call",
-		desc: "Aborts the runaway call — the generation and wiki compile steps share this one cap",
+		desc: "Shared cap: generation + wiki compile",
 		source: "daemon-config.json",
 	},
 	"budget.pre_verify_max_usd": {
 		label: "Self-improve pre-verify call cap",
 		hint: "Caps one self-improve pre-verify call",
-		desc: "Aborts the runaway call — only the pre-verify step reads this cap",
+		desc: "Read by the pre-verify step only",
 		source: "daemon-config.json",
 	},
 };
@@ -196,28 +196,32 @@ const TIER_META_MC = {
 	"tier.worker_effort": {
 		label: "Self-improve generation effort",
 		hint: "--effort on one self-improve generation call",
-		desc: "CLI default = no --effort flag, so the settings or model default governs the call",
+		desc: "Default: no --effort flag",
+		note: "With no flag, the settings or model default governs the call",
 		kind: "effort",
 		source: "daemon-config.json",
 	},
 	"tier.pre_verify_effort": {
 		label: "Self-improve pre-verify effort",
 		hint: "--effort on one self-improve pre-verify call",
-		desc: "CLI default = no --effort flag; keep pre-verify at or above the generation level",
+		desc: "Default: no --effort flag",
+		note: "Keep pre-verify at or above the generation level",
 		kind: "effort",
 		source: "daemon-config.json",
 	},
 	"tier.worker_max_output_tokens": {
 		label: "Self-improve generation output cap",
 		hint: "Max output tokens for one generation call",
-		desc: "Sets CLAUDE_CODE_MAX_OUTPUT_TOKENS — the CLI silently lowers a value above the model's own limit",
+		desc: "Sets CLAUDE_CODE_MAX_OUTPUT_TOKENS",
+		note: "The CLI silently lowers a value above the model's own limit",
 		kind: "output-cap",
 		source: "daemon-config.json",
 	},
 	"tier.pre_verify_max_output_tokens": {
 		label: "Self-improve pre-verify output cap",
 		hint: "Max output tokens for one pre-verify call",
-		desc: "Sets CLAUDE_CODE_MAX_OUTPUT_TOKENS for pre-verify — blank = the model default",
+		desc: "Sets CLAUDE_CODE_MAX_OUTPUT_TOKENS for pre-verify",
+		note: "Blank = the model default",
 		kind: "output-cap",
 		source: "daemon-config.json",
 	},
@@ -522,7 +526,8 @@ function ScreenModelConfig() {
 				</div>
 			)}
 
-			<SplitRow ratio="3:2">
+			{/* 1:1 over 2:1 — a third-width column overflows the cap and tier fields at 1280 */}
+			<SplitRow ratio="1:1" layout="equal">
 				<DomainsSectionMC
 					state={sectionState}
 					domains={data?.domains}
@@ -552,11 +557,6 @@ function ScreenModelConfig() {
 						errors={errors}
 						isStale={isStale}
 						onTierChange={setTier}
-					/>
-					{/* the shorter caps column carries the tier notes → the model table starts at the top */}
-					<TierNotesMC
-						title="Who each tier covers"
-						rows={sortDomainsMC(data?.domains || []).map((d) => DOMAIN_META_MC[d.domain])}
 					/>
 				</SplitColumn>
 			</SplitRow>
@@ -689,21 +689,15 @@ function getReadAnnouncementMC(state, asOfAt, refreshTick) {
 	return state.key === "config" && time ? `Model config reloaded — as of ${time}.` : "";
 }
 
-// 구획 헤더 — thin rule + h2 section label (카드 박스 아님). title 좌측 라벨 + 우측 슬롯.
-function SectionHeadMC({ label, sub, right }) {
-	const { SectionLabel } = window.UI;
+const SETTINGS_INFO_LABEL_MC = "About settings";
 
+// About settings drawer — the card's timing caveat, an optional lead line, then its glossary.
+function SettingsInfoMC({ caveat, lead, title, rows }) {
 	return (
-		<div className="border-t border-line pt-4 mb-3">
-			<div className="flex items-center justify-between gap-2">
-				<SectionLabel>{label}</SectionLabel>
-				{right ?? null}
-			</div>
-			{sub && (
-				<div className="card-sub is-wrap mt-1">
-					{sub}
-				</div>
-			)}
+		<div className="flex flex-col gap-3 fs-body">
+			{caveat && <p>{caveat}</p>}
+			{lead && <p>{lead}</p>}
+			<TierNotesMC title={title} rows={rows} />
 		</div>
 	);
 }
@@ -739,68 +733,78 @@ function DomainsSectionMC({
 	isStale,
 	onModelChange,
 }) {
-	const { SkeletonRows, TableHead } = window.UI;
+	const { Card, SkeletonRows, TableHead } = window.UI;
 	const rows = sortDomainsMC(domains || []);
 	const mix = form ? getModelMixMC(rows.map((d) => form.models[d.domain] || d.desired)) : "";
+	const timing = getApplyTimingMC(rows);
 
 	return (
-		<div className="mb-4" id={MODELS_SECTION_ID_MC}>
-			<SectionHeadMC
-				label="Model assignment"
-				sub={getApplyModeSubMC(rows, DOMAIN_META_MC)}
-				right={
-					<span className="fs-meta flex items-center gap-2">
-						{mix && <span className="text-dim">{mix}</span>}
-						<a href="#cost" className={LINK_CLASS_MC}>
-							Cost & usage
-						</a>
-					</span>
+		<div id={MODELS_SECTION_ID_MC}>
+			<Card
+				size="L"
+				title="Model assignment"
+				sub={timing.meta}
+				info={
+					<SettingsInfoMC
+						caveat={timing.caveat}
+						title="Who each tier covers"
+						rows={rows.map((d) => DOMAIN_META_MC[d.domain])}
+					/>
 				}
-			/>
-			{state === "unavailable" ? (
-				<SectionUnavailableMC />
-			) : (
-				<table className="tbl" style={LEDGER_TABLE_STYLE_MC}>
-					<caption className="sr-only">Model assignment per agent tier</caption>
-					<LedgerColsMC />
-					<thead>
-						<tr>
-							<TableHead>Agent tier</TableHead>
-							<TableHead>Model</TableHead>
-							<TableHead>
-								<span title={IN_EFFECT_TITLE_MC.models}>In effect</span>
-							</TableHead>
-						</tr>
-					</thead>
-					<tbody aria-busy={state === "loading" ? "true" : undefined}>
-						{state === "loading" ? (
-							<SkeletonRows
-								rows={DOMAIN_ORDER_MC.length}
-								columns={LEDGER_COL_COUNT_MC}
-								rowHeight={LEDGER_ROW_HEIGHT_MC}
-							/>
-						) : rows.length === 0 ? (
-							<EmptyRowMC
-								colSpan={LEDGER_COL_COUNT_MC}
-								message="No model domains reported."
-							/>
-						) : (
-							rows.map((d) => (
-								<DomainRowMC
-									key={d.domain}
-									domain={d}
-									knownModels={knownModels}
-									value={form.models[d.domain] ?? ""}
-									defaultValue={baseline?.models[d.domain] ?? ""}
-									error={errors[d.domain]}
-									isStale={isStale}
-									onChange={(v) => onModelChange(d.domain, v)}
+				infoLabel={SETTINGS_INFO_LABEL_MC}
+				right={
+					<a href="#cost" className={`fs-meta ${LINK_CLASS_MC}`}>
+						Cost & usage
+					</a>
+				}
+				foot={mix ? <span className="truncate min-w-0" title={mix}>{mix}</span> : null}
+				isFlush={state !== "unavailable"}>
+				{state === "unavailable" ? (
+					<SectionUnavailableMC />
+				) : (
+					<table className="tbl" style={LEDGER_TABLE_STYLE_MC}>
+						<caption className="sr-only">Model assignment per agent tier</caption>
+						<LedgerColsMC />
+						<thead>
+							<tr>
+								<TableHead>Agent tier</TableHead>
+								<TableHead>Model</TableHead>
+								<TableHead>
+									<span title={IN_EFFECT_TITLE_MC.models}>In effect</span>
+								</TableHead>
+							</tr>
+						</thead>
+						<tbody aria-busy={state === "loading" ? "true" : undefined}>
+							{state === "loading" ? (
+								<SkeletonRows
+									rows={DOMAIN_ORDER_MC.length}
+									columns={LEDGER_COL_COUNT_MC}
+									rowHeight={LEDGER_ROW_HEIGHT_MC}
 								/>
-							))
-						)}
-					</tbody>
-				</table>
-			)}
+							) : rows.length === 0 ? (
+								<EmptyRowMC
+									colSpan={LEDGER_COL_COUNT_MC}
+									message="No model domains reported."
+								/>
+							) : (
+								rows.map((d) => (
+									<DomainRowMC
+										key={d.domain}
+										domain={d}
+										departure={timing.departures.get(d.domain)}
+										knownModels={knownModels}
+										value={form.models[d.domain] ?? ""}
+										defaultValue={baseline?.models[d.domain] ?? ""}
+										error={errors[d.domain]}
+										isStale={isStale}
+										onChange={(v) => onModelChange(d.domain, v)}
+									/>
+								))
+							)}
+						</tbody>
+					</table>
+				)}
+			</Card>
 		</div>
 	);
 }
@@ -829,13 +833,14 @@ function TierNotesMC({ title, rows }) {
 	if (notes.length === 0) return null;
 
 	return (
-		<section className="fs-meta text-dim mt-3" aria-label={title}>
+		<section className="text-dim" aria-label={title}>
 			<SectionLabel level={3}>{title}</SectionLabel>
-			<dl className="mt-1 flex flex-col gap-1">
+			<dl className="mt-1 flex flex-col gap-2">
 				{notes.map((meta) => (
 					<div key={meta.label}>
 						<dt className="text-ink">{meta.label}</dt>
 						<dd className="is-wrap">{meta.desc}</dd>
+						{meta.note && <dd className="is-wrap">{meta.note}</dd>}
 					</div>
 				))}
 			</dl>
@@ -956,7 +961,7 @@ function LiveValueMC({ value, drift, files, source, isStale, driftTitle }) {
 }
 
 function getApplyModeMetaMC(mode) {
-	return APPLY_MODE_META_MC[mode] || { label: mode, desc: "" };
+	return APPLY_MODE_META_MC[mode] || { when: mode, desc: "" };
 }
 
 // Most rows share one apply_mode → the section states it once; rows that differ name their own.
@@ -973,22 +978,27 @@ function getSharedApplyModeMC(rows) {
 }
 
 /**
- * The section's one take-effect line — the shared mode first, then each row departing from it by name.
- * @param metaTable - DOMAIN_META_MC or BUDGET_META_MC, for the departing rows' labels
+ * A card's take-effect timing: the shared mode as header meta, its caveat for the drawer,
+ * and departures (domain → that row's own "Applies …" line, rendered in the row only).
  */
-function getApplyModeSubMC(rows, metaTable) {
+function getApplyTimingMC(rows) {
 	const mode = getSharedApplyModeMC(rows);
-	if (!mode) return null;
+	const departures = new Map();
+	if (!mode) return { meta: null, caveat: null, departures };
 
-	const meta = getApplyModeMetaMC(mode);
-	const departures = rows
-		.filter((r) => r.apply_mode && r.apply_mode !== mode)
-		.map((r) => `${metaTable[r.domain]?.label ?? r.domain}: ${getApplyModeMetaMC(r.apply_mode).label}`);
-	return [`Takes effect: ${meta.label}`, meta.desc, ...departures].filter(Boolean).join(" · ");
+	for (const r of rows) {
+		if (r.apply_mode && r.apply_mode !== mode) departures.set(r.domain, getApplyLineMC(r.apply_mode));
+	}
+	return { meta: getApplyLineMC(mode), caveat: getApplyModeMetaMC(mode).desc || null, departures };
+}
+
+function getApplyLineMC(mode) {
+	return `Applies ${getApplyModeMetaMC(mode).when}`;
 }
 
 function DomainRowMC({
 	domain: d,
+	departure,
 	knownModels,
 	value,
 	defaultValue,
@@ -1014,6 +1024,7 @@ function DomainRowMC({
 			<td style={cellPad}>
 				<div className="fs-body font-medium text-ink">{meta.label}</div>
 				<RowHintMC hint={meta.hint} />
+				<RowHintMC hint={departure} />
 			</td>
 			<td style={cellPad}>
 				{editable ? (
@@ -1187,62 +1198,71 @@ function BudgetsSectionMC({
 	isStale,
 	onBudgetChange,
 }) {
-	const { SkeletonRows, TableHead } = window.UI;
+	const { Card, SkeletonRows, TableHead } = window.UI;
 	const rows = sortBudgetsMC(budgets || []);
+	const timing = getApplyTimingMC(rows);
 
 	return (
-		<div className="mb-4" id={BUDGETS_SECTION_ID_MC}>
-			<SectionHeadMC
-				label="Per-call budget caps"
-				sub={getApplyModeSubMC(rows, BUDGET_META_MC)}
-			/>
-			{state === "unavailable" ? (
-				<SectionUnavailableMC />
-			) : (
-				<table className="tbl" style={LEDGER_TABLE_STYLE_MC}>
-					<caption className="sr-only">Per-call budget cap per background call</caption>
-					<LedgerColsMC />
-					<thead>
-						<tr>
-							<TableHead>Background call</TableHead>
-							<TableHead>Per-call cap</TableHead>
-							<TableHead>
-								<span title={IN_EFFECT_TITLE_MC.budgets}>In effect</span>
-							</TableHead>
-						</tr>
-					</thead>
-					<tbody aria-busy={state === "loading" ? "true" : undefined}>
-						{state === "loading" ? (
-							<SkeletonRows
-								rows={2}
-								columns={LEDGER_COL_COUNT_MC}
-								rowHeight={LEDGER_ROW_HEIGHT_MC}
-							/>
-						) : rows.length === 0 ? (
-							<EmptyRowMC
-								colSpan={LEDGER_COL_COUNT_MC}
-								message="No budget caps reported."
-							/>
-						) : (
-							rows.map((b) => (
-								<BudgetRowMC
-									key={b.domain}
-									budget={b}
-									value={form.budgets[b.domain] ?? ""}
-									defaultValue={baseline?.budgets[b.domain] ?? ""}
-									error={errors[b.domain]}
-									isStale={isStale}
-									onChange={(v) => onBudgetChange(b.domain, v)}
+		<div id={BUDGETS_SECTION_ID_MC}>
+			<Card
+				size="M"
+				title="Per-call budget caps"
+				sub={timing.meta}
+				info={
+					<SettingsInfoMC
+						caveat={timing.caveat}
+						lead="A cap that trips aborts the runaway call."
+						title="When a cap trips"
+						rows={rows.map((b) => BUDGET_META_MC[b.domain])}
+					/>
+				}
+				infoLabel={SETTINGS_INFO_LABEL_MC}
+				isFlush={state !== "unavailable"}>
+				{state === "unavailable" ? (
+					<SectionUnavailableMC />
+				) : (
+					<table className="tbl" style={LEDGER_TABLE_STYLE_MC}>
+						<caption className="sr-only">Per-call budget cap per background call</caption>
+						<LedgerColsMC />
+						<thead>
+							<tr>
+								<TableHead>Background call</TableHead>
+								<TableHead>Per-call cap</TableHead>
+								<TableHead>
+									<span title={IN_EFFECT_TITLE_MC.budgets}>In effect</span>
+								</TableHead>
+							</tr>
+						</thead>
+						<tbody aria-busy={state === "loading" ? "true" : undefined}>
+							{state === "loading" ? (
+								<SkeletonRows
+									rows={2}
+									columns={LEDGER_COL_COUNT_MC}
+									rowHeight={LEDGER_ROW_HEIGHT_MC}
 								/>
-							))
-						)}
-					</tbody>
-				</table>
-			)}
-			<TierNotesMC
-				title="When a cap trips"
-				rows={rows.map((b) => BUDGET_META_MC[b.domain])}
-			/>
+							) : rows.length === 0 ? (
+								<EmptyRowMC
+									colSpan={LEDGER_COL_COUNT_MC}
+									message="No budget caps reported."
+								/>
+							) : (
+								rows.map((b) => (
+									<BudgetRowMC
+										key={b.domain}
+										budget={b}
+										departure={timing.departures.get(b.domain)}
+										value={form.budgets[b.domain] ?? ""}
+										defaultValue={baseline?.budgets[b.domain] ?? ""}
+										error={errors[b.domain]}
+										isStale={isStale}
+										onChange={(v) => onBudgetChange(b.domain, v)}
+									/>
+								))
+							)}
+						</tbody>
+					</table>
+				)}
+			</Card>
 		</div>
 	);
 }
@@ -1261,7 +1281,7 @@ const BUDGET_FIELD_STYLE_MC = { width: "calc(6ch + 4px + var(--ctl-pad-x))" };
  * 예산 1행 — $ 입력(2-decimal 문자열) + invalid 즉시 field-adjacent role=alert (T-MDL-4)
  * + 실측 + ghost default/reset (T-MDL-6).
  */
-function BudgetRowMC({ budget: b, value, defaultValue, error, isStale, onChange }) {
+function BudgetRowMC({ budget: b, departure, value, defaultValue, error, isStale, onChange }) {
 	const meta = BUDGET_META_MC[b.domain] || { label: b.domain, hint: "", desc: "" };
 	// Save banner points at "the highlighted fields" → the field is marked the moment it is invalid.
 	const showError = Boolean(error);
@@ -1272,6 +1292,7 @@ function BudgetRowMC({ budget: b, value, defaultValue, error, isStale, onChange 
 			<td>
 				<div className="fs-body">{meta.label}</div>
 				<RowHintMC hint={meta.hint} />
+				<RowHintMC hint={departure} />
 			</td>
 			<td>
 				<div className="flex flex-wrap items-center gap-x-2 gap-y-1">
@@ -1333,16 +1354,27 @@ function TiersSectionMC({
 	isStale,
 	onTierChange,
 }) {
-	const { SkeletonRows, TableHead } = window.UI;
+	const { Card, SkeletonRows, TableHead } = window.UI;
 	// server order = TIER_DOMAINS order; an unknown knob renders with fallback meta (never dropped)
 	const rows = tiers || [];
+	const timing = getApplyTimingMC(rows);
 
+	// last card of the stretched caps column → takes the slack so the column ends with the model card
 	return (
-		<div className="mb-4">
-			<SectionHeadMC
-				label="Daemon call tiers"
-				sub={getApplyModeSubMC(rows, TIER_META_MC)}
-			/>
+		<Card
+			size="M"
+			className="flex-auto"
+			title="Daemon call tiers"
+			sub={timing.meta}
+			info={
+				<SettingsInfoMC
+					caveat={timing.caveat}
+					title="What each setting does"
+					rows={rows.map((t) => TIER_META_MC[t.domain])}
+				/>
+			}
+			infoLabel={SETTINGS_INFO_LABEL_MC}
+			isFlush={state !== "unavailable"}>
 			{state === "unavailable" ? (
 				<SectionUnavailableMC />
 			) : (
@@ -1375,6 +1407,7 @@ function TiersSectionMC({
 								<TierRowMC
 									key={t.domain}
 									tier={t}
+									departure={timing.departures.get(t.domain)}
 									value={form.tiers?.[t.domain] ?? "inherit"}
 									defaultValue={baseline?.tiers?.[t.domain] ?? "inherit"}
 									error={errors[t.domain]}
@@ -1387,11 +1420,7 @@ function TiersSectionMC({
 					</tbody>
 				</table>
 			)}
-			<TierNotesMC
-				title="What each setting does"
-				rows={rows.map((t) => TIER_META_MC[t.domain])}
-			/>
-		</div>
+		</Card>
 	);
 }
 
@@ -1402,7 +1431,7 @@ const TIER_CAP_FIELD_STYLE_MC = { width: "calc(11ch + 4px + var(--ctl-pad-x))" }
  * One knob row — an effort select (CLI default + the five levels) or a token-count field where
  * blank = unset ('inherit'), plus In effect and the saved-value reset.
  */
-function TierRowMC({ tier: t, value, defaultValue, error, isFileRead, isStale, onChange }) {
+function TierRowMC({ tier: t, departure, value, defaultValue, error, isFileRead, isStale, onChange }) {
 	const meta = TIER_META_MC[t.domain] || { label: t.domain, hint: "", desc: "", kind: "", source: "daemon-config.json" };
 	const showError = Boolean(error);
 	const overridden = value !== defaultValue;
@@ -1415,6 +1444,7 @@ function TierRowMC({ tier: t, value, defaultValue, error, isFileRead, isStale, o
 			<td>
 				<div className="fs-body">{meta.label}</div>
 				<RowHintMC hint={meta.hint} />
+				<RowHintMC hint={departure} />
 			</td>
 			<td>
 				{meta.kind === "effort" ? (
