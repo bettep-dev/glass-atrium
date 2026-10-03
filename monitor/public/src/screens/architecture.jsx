@@ -30,6 +30,8 @@ const MAP = {
 	COL: {
 		// zones per column in reading order — the left column opens on an Inputs | Daemons band
 		ZONES: { left: ["entry", "daemon", "orch", "agents"], right: ["hooks", "data", "export"] },
+		// side by side in one row, so each keeps its own frame width — every other zone takes its column's one width
+		BAND: ["entry", "daemon"],
 		IDS: { left: "map_col_left", right: "map_col_right" },
 		// an edge into this zone from a sibling zone would lay the left column out in the root's LR, so the screen draws it as a drop
 		DROP_TARGET: "orch",
@@ -51,14 +53,16 @@ const DEFAULT_VIEW_SHARE = 0.9;
 // band under the map kept on the first screen (CSS px) — the part health block's title shows there, so the page reads as scrollable
 const PART_HEALTH = { PEEK_PX: 48 };
 
-// map pane sizing (CSS px) — below FLOOR_MAX_WIDTH_PX the fit height never drops under FLOOR_PX, so labels keep the 13px floor even when the part health block leaves the first screen
-const MAP_PANE = { FLOOR_PX: 500, FLOOR_MAX_WIDTH_PX: 1280, CONTROLS_MIN_INSET_PX: 48 };
+// map pane sizing (CSS px) — below FLOOR.MAX_WIDTH_PX the fit height never drops under FLOOR.PX, so labels keep the 13px floor even when the part health block leaves the first screen
+const MAP_PANE = { FLOOR: { PX: 500, MAX_WIDTH_PX: 1280 }, CONTROLS_MIN_INSET_PX: 48 };
 
 // svg-pan-zoom min/max zoom, relative to the zoom at the last resize() — the default view rebases it, so it bounds zoom-out from there
 const PAN_ZOOM = { MIN: 0.2, MAX: 5 };
 
 // zone inset around its members (SVG user units) — the gap ELK itself leaves under the last member
 const ZONE_PAD = 12;
+
+const TRANSLATE_RE = /translate\(\s*([-\d.e]+)[\s,]+([-\d.e]+)\s*\)/;
 
 // 존 제목 띠 높이(SVG 사용자 단위) — 렌더 후 조정이라 지시자의 diagramPadding 여유 안이어야 viewBox 를 넘지 않음.
 const ZONE_TITLE_BAND = 8;
@@ -2265,20 +2269,20 @@ function clearCanvasSizingAR(root) {
 
 // narrow viewport — the pane floor applies, and wins over the part health peek band
 function isPaneFloorViewportAR() {
-	return window.innerWidth < MAP_PANE.FLOOR_MAX_WIDTH_PX;
+	return window.innerWidth < MAP_PANE.FLOOR.MAX_WIDTH_PX;
 }
 
 // grows a short pane to the floor before the fit measures it · the fit still clamps the canvas to its frame when width binds
 function applyPaneFloorAR(root) {
 	const canvas = getCanvasAR(root);
-	if (!canvas || !isPaneFloorViewportAR() || canvas.getBoundingClientRect().height >= MAP_PANE.FLOOR_PX) return;
-	setCanvasHeightAR(root, MAP_PANE.FLOOR_PX);
+	if (!canvas || !isPaneFloorViewportAR() || canvas.getBoundingClientRect().height >= MAP_PANE.FLOOR.PX) return;
+	setCanvasHeightAR(root, MAP_PANE.FLOOR.PX);
 }
 
 // height the default view fits in — the first-screen height, raised to the floor on a narrow viewport
 function getFitPaneHeightAR(root, paneH) {
 	const firstScreen = Math.min(paneH, getFirstScreenCanvasHeightAR(root));
-	return isPaneFloorViewportAR() ? Math.min(paneH, Math.max(firstScreen, MAP_PANE.FLOOR_PX)) : firstScreen;
+	return isPaneFloorViewportAR() ? Math.min(paneH, Math.max(firstScreen, MAP_PANE.FLOOR.PX)) : firstScreen;
 }
 
 // tallest pane whose bottom leaves PART_HEALTH.PEEK_PX of the first screen under it — the map is tall enough to push the block off it
@@ -2461,30 +2465,34 @@ function getMapColumnsAR(source) {
 // source lines sorted three ways — zone blocks into their column, edges the screen draws, the rest kept for the root
 function getMapColumnLinesAR(lines, zoneIdByMemberId) {
 	const getZone = (id) => zoneIdByMemberId.get(id) ?? id;
-	const getColumn = (id) => (MAP.COL.ZONES.right.includes(getZone(id)) ? "right" : "left");
 	const columns = { left: [], right: [] };
 	const rest = [];
 	const screenEdges = [];
 	let zone = "";
 	for (const line of lines) {
 		zone = /^\s*subgraph\s+([\w-]+)/.exec(line)?.[1] ?? zone;
-		const edge = zone ? null : MAP.EDGE.LINE_RE.exec(line);
-		const isJump = Boolean(edge) && getColumn(edge[1]) !== getColumn(edge[3]);
-		const isDrop = Boolean(edge) && getZone(edge[3]) === MAP.COL.DROP_TARGET && getZone(edge[1]) !== MAP.COL.DROP_TARGET;
-		if (zone) columns[getColumn(zone)].push(line);
-		else if (isJump || isDrop)
-			screenEdges.push({
-				from: edge[1],
-				to: edge[3],
-				fromZone: getZone(edge[1]),
-				toZone: getZone(edge[3]),
-				kind: isJump ? "jump" : "drop",
-				label: getLabelWordsAR(edge[2] ?? "").join(" "),
-			});
+		const screenEdge = zone ? null : getScreenEdgeAR(line, getZone);
+		if (zone) columns[getZoneColumnAR(getZone(zone))].push(line);
+		else if (screenEdge) screenEdges.push(screenEdge);
 		else rest.push(line);
 		if (/^\s*end\s*$/.test(line)) zone = "";
 	}
 	return { columns, rest, screenEdges };
+}
+
+// a root-level source line → the edge the screen draws for it, or null when it is no edge or ELK lays it out
+function getScreenEdgeAR(line, getZone) {
+	const edge = MAP.EDGE.LINE_RE.exec(line);
+	if (!edge) return null;
+	const [, from, label, to] = edge;
+	const isJump = getZoneColumnAR(getZone(from)) !== getZoneColumnAR(getZone(to));
+	const isDrop = getZone(to) === MAP.COL.DROP_TARGET && getZone(from) !== MAP.COL.DROP_TARGET;
+	if (!isJump && !isDrop) return null;
+	return { from, to, fromZone: getZone(from), toZone: getZone(to), kind: isJump ? "jump" : "drop", label: getLabelWordsAR(label ?? "").join(" ") };
+}
+
+function getZoneColumnAR(zoneId) {
+	return MAP.COL.ZONES.right.includes(zoneId) ? "right" : "left";
 }
 
 // root LR — with no edge joining the wrappers, each keeps its own TB and the left one packs Inputs | Daemons as a band above Orchestrator
@@ -2495,13 +2503,14 @@ function buildMapColumnSourceAR(columns, rest) {
 }
 
 /**
- * Places the right column one gutter right of the left one, top-aligned — ELK stacks the two wrappers under the root LR —
- * then removes the column frames, draws the screen edges as axis-aligned polylines, ranks the nodes for Tab
- * and fits the viewBox to the composed drawing.
+ * Gives each column's stacked zones one frame width, places the right column one gutter right of the left one,
+ * top-aligned — ELK stacks the two wrappers under the root LR — then removes the column frames, draws the screen edges
+ * as axis-aligned polylines, ranks the nodes for Tab and fits the viewBox to the composed drawing.
  */
 function setMapColumnLayoutAR(svgEl, { screenEdges, zoneIdByMemberId }) {
 	const columns = getMapColumnPartsAR(svgEl);
 	if (!columns) return;
+	setColumnFrameWidthsAR(svgEl);
 	const gutter = getJumpGutterAR(screenEdges);
 	const dx = columns.box.left.right + gutter - columns.box.right.left;
 	const dy = getColumnTopAR(svgEl, "left") - getColumnTopAR(svgEl, "right");
@@ -2509,11 +2518,36 @@ function setMapColumnLayoutAR(svgEl, { screenEdges, zoneIdByMemberId }) {
 	for (const frame of columns.frames) frame.remove();
 
 	const laneOriginX = Math.min(...MAP.COL.ZONES.right.map((id) => getZoneBoxAR(svgEl, id)?.left ?? Infinity)) - gutter;
-	for (const edge of screenEdges) createScreenEdgeAR(svgEl, edge, screenEdges, laneOriginX);
+	for (const edge of screenEdges) createScreenEdgeAR(svgEl, edge, { screenEdges, laneOriginX });
 	setReadingRankAR(svgEl, zoneIdByMemberId);
 	const drawn = svgEl.getBBox();
 	const pad = ZONE_TITLE_BAND;
 	svgEl.setAttribute("viewBox", `${drawn.x - pad} ${drawn.y - pad} ${drawn.width + 2 * pad} ${drawn.height + 2 * pad}`);
+}
+
+// a column's stacked zone frames span their union — widening only, so every member stays inside its own frame
+function setColumnFrameWidthsAR(svgEl) {
+	for (const zoneIds of Object.values(MAP.COL.ZONES)) {
+		const rects = zoneIds
+			.filter((id) => !MAP.COL.BAND.includes(id))
+			.map((id) => getZoneElAR(svgEl, id)?.querySelector(":scope > rect"))
+			.filter(Boolean);
+		const boxes = rects.map((rect) => getSvgBoxAR(svgEl, rect));
+		const span = { left: Math.min(...boxes.map((b) => b.left)), right: Math.max(...boxes.map((b) => b.right)) };
+		for (const rect of rects) setZoneFrameSpanAR(svgEl, rect, span);
+	}
+}
+
+// one zone frame stretched to a horizontal span in svg units, its title re-centred over the new frame
+function setZoneFrameSpanAR(svgEl, rect, span) {
+	const box = getSvgBoxAR(svgEl, rect);
+	const scale = svgEl.getScreenCTM().inverse().multiply(rect.getScreenCTM()).a;
+	rect.setAttribute("x", String(Number.parseFloat(rect.getAttribute("x")) + (span.left - box.left) / scale));
+	rect.setAttribute("width", String((span.right - span.left) / scale));
+	const titleEl = rect.parentElement.querySelector(":scope > .cluster-label");
+	const at = TRANSLATE_RE.exec(titleEl?.getAttribute("transform") || "");
+	const shift = (span.left + span.right - box.left - box.right) / 2 / scale;
+	if (at && shift) titleEl.setAttribute("transform", `translate(${Number(at[1]) + shift}, ${at[2]})`);
 }
 
 // the two column frames, the parts drawn in the right one, and each column's union box
@@ -2562,15 +2596,18 @@ function getJumpGutterAR(screenEdges) {
 	return MAP.COL.JUMP_LANE * jumps.length + widest + 2 * MAP.COL.LABEL_PAD + 2 * ZONE_PAD;
 }
 
-// one screen edge as a clone of a drawn link — same classes and marker, so edge counts, styles and the orthogonality check cover it
-function createScreenEdgeAR(svgEl, edge, screenEdges, laneOriginX) {
+/**
+ * One screen edge as a clone of a drawn link — same classes and marker, so edge counts, styles and the orthogonality check cover it.
+ * @param layout - every screen edge, and the x the column jumps' lanes step off
+ */
+function createScreenEdgeAR(svgEl, edge, { screenEdges, laneOriginX }) {
 	const from = getZoneBoxAR(svgEl, edge.fromZone);
 	const to = getZoneBoxAR(svgEl, edge.toZone);
 	const pathTemplate = svgEl.querySelector("path.flowchart-link");
 	if (!from || !to || !pathTemplate) return;
 
-	const siblings = screenEdges.filter((other) => other.kind === edge.kind);
-	const route = edge.kind === "jump" ? getJumpRouteAR(svgEl, edge, siblings, from, to, laneOriginX) : getDropRouteAR(svgEl, edge, siblings, from, to);
+	const routeInput = { edge, from, to, siblings: screenEdges.filter((other) => other.kind === edge.kind), laneOriginX };
+	const route = edge.kind === "jump" ? getJumpRouteAR(svgEl, routeInput) : getDropRouteAR(svgEl, routeInput);
 	const path = pathTemplate.cloneNode(true);
 	path.removeAttribute("transform");
 	path.removeAttribute("data-points");
@@ -2578,31 +2615,37 @@ function createScreenEdgeAR(svgEl, edge, screenEdges, laneOriginX) {
 	path.setAttribute("data-arch-edge", edge.kind);
 	path.setAttribute("d", `M${route.points.map(({ x, y }) => `${x},${y}`).join("L")}`);
 	pathTemplate.parentNode.appendChild(path);
-	const labelEl = edge.label ? createTurnLabelAR(svgEl, edge.label) : null;
+	if (edge.label) setTurnLabelAR(svgEl, edge.label, route.label);
+}
+
+// a screen edge's label, centred on a point in svg units
+function setTurnLabelAR(svgEl, text, at) {
+	const labelEl = createTurnLabelAR(svgEl, text);
 	if (!labelEl) return;
 	const centre = getBoxCentreAR(getSvgBoxAR(svgEl, labelEl));
-	labelEl.setAttribute("transform", `translate(${route.label.x - centre.x}, ${route.label.y - centre.y})`);
+	labelEl.setAttribute("transform", `translate(${at.x - centre.x}, ${at.y - centre.y})`);
 }
 
 /**
  * Column jump: right out of the source zone → up or down its own lane → right into the target's left side.
  * Lanes step off one shared x, the higher target on the outer lane, so the two vertical runs stay a full lane apart and never cross.
+ * @param routeInput - the edge, its source and target zone boxes, its sibling jumps and the shared lane origin x
  */
-function getJumpRouteAR(svgEl, edge, jumps, from, to, laneOriginX) {
-	const rank = [...jumps].sort((a, b) => getZoneBoxAR(svgEl, a.toZone).top - getZoneBoxAR(svgEl, b.toZone).top).indexOf(edge);
+function getJumpRouteAR(svgEl, { edge, from, to, siblings, laneOriginX }) {
+	const rank = [...siblings].sort((a, b) => getZoneBoxAR(svgEl, a.toZone).top - getZoneBoxAR(svgEl, b.toZone).top).indexOf(edge);
 	const laneX = laneOriginX + MAP.COL.JUMP_LANE * (rank + 1);
-	const exitY = from.top + ((from.bottom - from.top) * (rank + 1)) / (jumps.length + 1);
+	const exitY = from.top + ((from.bottom - from.top) * (rank + 1)) / (siblings.length + 1);
 	const entryY = getBoxCentreAR(to).y;
 	const points = [{ x: from.right, y: exitY }, { x: laneX, y: exitY }, { x: laneX, y: entryY }, { x: to.left, y: entryY }];
 	return { points, label: { x: (laneX + to.left) / 2, y: entryY } };
 }
 
 // drop: down out of the source zone → across a band above the target → down into the target's top, the drops spread along that top
-function getDropRouteAR(svgEl, edge, drops, from, to) {
-	const rank = drops.indexOf(edge);
-	const toX = to.left + ((to.right - to.left) * (rank + 1)) / (drops.length + 1);
+function getDropRouteAR(svgEl, { edge, from, to, siblings }) {
+	const rank = siblings.indexOf(edge);
+	const toX = to.left + ((to.right - to.left) * (rank + 1)) / (siblings.length + 1);
 	const fromX = getBoxCentreAR(from).x;
-	const bendY = (Math.max(...drops.map((drop) => getZoneBoxAR(svgEl, drop.fromZone)?.bottom ?? from.bottom)) + to.top) / 2;
+	const bendY = (Math.max(...siblings.map((drop) => getZoneBoxAR(svgEl, drop.fromZone)?.bottom ?? from.bottom)) + to.top) / 2;
 	const points = [{ x: fromX, y: from.bottom }, { x: fromX, y: bendY }, { x: toX, y: bendY }, { x: toX, y: to.top }];
 	return { points, label: { x: (fromX + toX) / 2, y: bendY } };
 }
@@ -3233,7 +3276,7 @@ function wrapZoneTitleAR(zoneEl, rect, memberBox) {
 	const titleEl = zoneEl.querySelector(":scope > .cluster-label");
 	const frameEl = titleEl?.querySelector("foreignObject");
 	const textEl = frameEl?.firstElementChild;
-	const at = /translate\(\s*([-\d.e]+)[\s,]+([-\d.e]+)\s*\)/.exec(titleEl?.getAttribute("transform") || "");
+	const at = TRANSLATE_RE.exec(titleEl?.getAttribute("transform") || "");
 	if (!textEl || !at) return;
 
 	const title = getWrappedTitleSizeAR(textEl, memberBox.right - memberBox.left);

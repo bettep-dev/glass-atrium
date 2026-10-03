@@ -542,6 +542,8 @@ const ZONE_IDS = {
 	DRAWN: [...CANONICAL_MAP.mermaid_drawn.matchAll(/subgraph\s+(\w+)/g)].map(([, id]) => id),
 	LEFT: ["entry", "daemon", "orch", "agents"],
 	RIGHT: ["hooks", "data", "export"],
+	// side by side in one row, so each keeps its own frame width
+	BAND: ["entry", "daemon"],
 };
 
 // drawn member ids per zone, from the drawn source's subgraph blocks
@@ -631,6 +633,19 @@ for (const { width, height } of VIEWPORTS) {
 		assert.ok(box("entry").right <= box("daemon").left + EPS_PX, `Inputs does not sit left of Daemons in the band: ${drawn}`);
 		for (const [above, below] of [["entry", "orch"], ["daemon", "orch"], ["orch", "agents"], ["hooks", "data"], ["data", "export"]])
 			assert.ok(box(below).top >= box(above).bottom - EPS_PX, `${below} does not sit below ${above}: ${drawn}`);
+	});
+
+	test(`each column's stacked zone frames share one width and one left edge, the band excepted, at ${width}x${height}`, async () => {
+		const shape = await readMapShape(width, height);
+		for (const ids of [ZONE_IDS.LEFT.filter((id) => !ZONE_IDS.BAND.includes(id)), ZONE_IDS.RIGHT]) {
+			const frames = ids.map((id) => ({ id, box: getZoneBox(shape, id) }));
+			const spans = frames.map(({ id, box }) => `${id} ${box.left.toFixed(1)}–${box.right.toFixed(1)}`).join(", ");
+			const [first] = frames;
+			for (const { box } of frames.slice(1)) {
+				assert.ok(Math.abs(box.left - first.box.left) <= EPS_PX, `the frames do not share a left edge: ${spans}`);
+				assert.ok(Math.abs(box.right - first.box.right) <= EPS_PX, `the frames do not share one width: ${spans}`);
+			}
+		}
 	});
 
 	test(`the Daemons members stack and every member sits inside its own zone at ${width}x${height}`, async () => {
