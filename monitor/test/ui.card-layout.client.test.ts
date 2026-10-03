@@ -112,6 +112,17 @@ describe("card header", () => {
     assert.equal(findNodes(line, (n) => classesOf(n).includes("card-sub")).length, 1);
   });
 
+  test("an ellipsised text meta keeps its whole text in the hover title; a node meta sets none", () => {
+    const rows = [
+      { name: "text meta", sub: "1,234 · 10.3% of 11,352 records this window", title: "1,234 · 10.3% of 11,352 records this window" },
+      { name: "node meta", sub: React.createElement("span", null, "3 sources"), title: undefined },
+    ];
+    for (const row of rows) {
+      const [meta] = findNodes(headOf({ title: "Confident but failed", sub: row.sub }), (n) => classesOf(n).includes("card-sub"));
+      assert.equal(meta?.props.title, row.title, row.name);
+    }
+  });
+
   test("the info trigger is a real button described by the card title", () => {
     const tree = headOf({ title: "Spend by model", info: "Counted once per model." });
     const [h2] = findNodes(tree, (n) => n.type === "h2");
