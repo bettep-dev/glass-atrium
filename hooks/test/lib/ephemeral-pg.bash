@@ -118,9 +118,9 @@ CREATE UNIQUE INDEX "outcomes_dedup" ON "core"."outcomes" ("record_ts", "agent",
 SQL
 }
 
-# The outcome recorder's secondary tables + the attribution CHECK, copied from
-# monitor/prisma/migrations (20260611000000_init_squashed, 20260718000001_db_hygiene_promote_ddl).
-# Applied on top of eph_pg_outcomes_schema_sql.
+# The outcome recorder's secondary tables, copied from
+# monitor/prisma/migrations/20260611000000_init_squashed. Applied on top of
+# eph_pg_outcomes_schema_sql; the value-domain CHECKs come from the migration file itself.
 eph_pg_recorder_schema_sql() {
   cat <<'SQL'
 CREATE TYPE "core"."HookErrorKind" AS ENUM ('connection_refused', 'timeout', 'constraint_violation', 'unknown', 'identifier_rejected');
@@ -147,12 +147,6 @@ CREATE TABLE "core"."correction_signals" (
 );
 CREATE UNIQUE INDEX "correction_signals_dedup" ON "core"."correction_signals"("event_ts", "task_type", "outcome_id");
 ALTER TABLE "core"."correction_signals" ADD CONSTRAINT "correction_signals_outcome_id_fkey" FOREIGN KEY ("outcome_id") REFERENCES "core"."outcomes"("id") ON DELETE SET NULL ON UPDATE CASCADE;
-ALTER TABLE "core"."outcomes" ADD CONSTRAINT "outcomes_attribution_source_check"
-    CHECK (("attribution_source" IS NULL) OR ("attribution_source" = ANY (ARRAY[
-        'hook-input','cron-derived','agent-id-missing','subagent-stop-missing',
-        'completion-missing','conversation-only','truncated_completion','completion-synthesized',
-        'budget-truncation','structuredoutput-derived','structuredoutput-completion'
-    ]::text[]))) NOT VALID;
 SQL
 }
 
@@ -255,14 +249,18 @@ eph_pg_setup_recorder_file() {
 # exported at it → every host-less psycopg connection of the calling suite and its hooks lands
 # here. Args: $1=datadir $2=sockdir $3=port
 eph_pg_start_recorder() {
-  local datadir="${1}" sockdir="${2}" port="${3}" ddl
-  local effort_sql="${BASH_SOURCE[0]%/*}/../../../monitor/prisma/migrations/20260930000000_add_effort_to_outcomes_and_cost_events/migration.sql"
+  local datadir="${1}" sockdir="${2}" port="${3}" ddl migration
+  local migrations_dir="${BASH_SOURCE[0]%/*}/../../../monitor/prisma/migrations"
   eph_pg_start "${datadir}" "${sockdir}" "${port}" glass_atrium || return 1
   ddl="$(eph_pg_outcomes_schema_sql && eph_pg_recorder_schema_sql)" || return 1
   LC_ALL=C psql -h "${sockdir}" -p "${port}" -d glass_atrium -v ON_ERROR_STOP=1 -q \
     <<<"${ddl}" || return 1
-  LC_ALL=C psql -h "${sockdir}" -p "${port}" -d glass_atrium -v ON_ERROR_STOP=1 -q \
-    -f "${effort_sql}" || return 1
+  # Chain order; applied verbatim so the value-domain CHECKs match production by construction.
+  for migration in 20260718000001_db_hygiene_promote_ddl \
+    20260930000000_add_effort_to_outcomes_and_cost_events; do
+    LC_ALL=C psql -h "${sockdir}" -p "${port}" -d glass_atrium -v ON_ERROR_STOP=1 -q \
+      -f "${migrations_dir}/${migration}/migration.sql" || return 1
+  done
   export PGHOST="${sockdir}" PGPORT="${port}"
 }
 
