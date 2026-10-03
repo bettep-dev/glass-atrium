@@ -306,7 +306,7 @@ test("parseQaScoreO: the scale bounds round-trip (4 = all ones, 20 = all fives)"
 });
 
 describe("parseQaScoreO: a d8 tail stays out of the four-key sum and average", () => {
-  // a sum-correct, avg-wrong fix (key digit dropped, d8 value kept) fails the second row on both
+  // a partial fix (key digit dropped, d8 value kept) is sum-wrong but avg-right on the first row → the second row fails it on both
   const rows = [
     { name: "a d8 tail beside mixed core scores", qaScore: "cov=4,ins=3,instr=5,clar=4,d8=4", score: { sum: 16, avg: 4 } },
     { name: "a high d8 tail beside the lowest core scores", qaScore: "cov=1,ins=1,instr=1,clar=1,d8=5", score: { sum: 4, avg: 1 } },
