@@ -2102,11 +2102,16 @@ function CrosstabCard({ state, onRetry, shared }) {
   const polarTotal = crosstab ? crosstab.polarTotal : 0;
   const confidentFailed = getConfidentFailedO(crosstab);
 
+  // the meta keeps the share (width capped at "100.0%"; a count widens with the install) → the count rides the hover title
   return (
     <div id={REGION_CARD_IDS.crosstab} className="card mb-4">
       <CardHead
         title="Confident but failed"
-        sub={confidentFailed && `${formatIntO(confidentFailed.count)} · ${formatRateO(confidentFailed.share)}`}
+        sub={confidentFailed && (
+          <span title={`${formatIntO(confidentFailed.count)} of ${formatIntO(crosstab.total)} records · ${formatRateO(confidentFailed.share)}`}>
+            {formatRateO(confidentFailed.share)}
+          </span>
+        )}
         info={<p className="fs-body m-0">Records whose writer reported high confidence while the record's own check failed.</p>}
         right={
           state.status === 'ready' && (

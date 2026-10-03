@@ -201,16 +201,19 @@ test("every card and fold header on the screen fits the title and header-meta ca
   assert.ok(headers.length >= 8, `the screen's headers are all collected (${headers.length})`);
   for (const header of headers) {
     assert.ok(header.title.length <= COPY_CAP.title, `${header.kind} title "${header.title}" is ${header.title.length} chars`);
-    if (typeof header.sub === "string") {
-      assert.ok(header.sub.length <= COPY_CAP.meta, `${header.kind} "${header.title}" meta "${header.sub}" is ${header.sub.length} chars`);
-    }
+    const meta = typeof header.sub === "string" ? header.sub : collectText(renderScreen(header.sub) as RenderedNode | null);
+    assert.ok(meta.length <= COPY_CAP.meta, `${header.kind} "${header.title}" meta "${meta}" is ${meta.length} chars`);
   }
 });
 
-describe("the cross-table header shows its count meta only when there are records, and always shows the mismatch badge", () => {
+describe("the cross-table header shows its share meta, count in the hover title, only when there are records, and always shows the mismatch badge", () => {
   const rows = [
-    { name: "a ready cross table with records", crosstab: { total: 12_000, polarTotal: 1_500, byCell: { "high|false": { count: 1_234 } } }, hasMeta: true },
-    { name: "a ready cross table with no records", crosstab: { total: 0, polarTotal: 0, byCell: {} }, hasMeta: false },
+    {
+      name: "a ready cross table with records",
+      crosstab: { total: 12_000, polarTotal: 1_500, byCell: { "high|false": { count: 1_234 } } },
+      metas: [{ text: "10.3%", title: "1,234 of 12,000 records · 10.3%" }],
+    },
+    { name: "a ready cross table with no records", crosstab: { total: 0, polarTotal: 0, byCell: {} }, metas: [] },
   ];
   for (const row of rows) {
     test(row.name, async () => {
@@ -220,7 +223,11 @@ describe("the cross-table header shows its count meta only when there are record
       const [head] = findNodes(renderScreen(create(mod.CrosstabCard as Component, { state, onRetry: () => undefined })) as RenderedNode,
         (n) => n.type === "CardHead");
 
-      assert.equal(findNodes(head, (n) => n.props.className === "card-sub").length, row.hasMeta ? 1 : 0);
+      const metas = findNodes(head, (n) => n.props.className === "card-sub").map((meta) => ({
+        text: collectText(meta),
+        title: findNodes(meta, (n) => typeof n.props.title === "string")[0]?.props.title,
+      }));
+      assert.deepEqual(metas, row.metas);
       const badges = findNodes(head, (n) => n.type === "Badge");
       assert.equal(badges.length, 1);
       assert.match(collectText(badges[0]), new RegExp(`${row.crosstab.polarTotal.toLocaleString("en-US")}\\s+mismatches`));

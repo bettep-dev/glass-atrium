@@ -954,9 +954,10 @@ function TrendCardI({ state, aggregate, failures, onRetry }) {
 		const scored = d.verified + d.reject;
 		return { label: formatDateI(d.date), value: scored > 0 ? d.reject / scored : null };
 	});
+	const basis = getLoopBasisI(aggregate);
 	return (
 		<div className="card" id={ANCHOR_ID_I.trend}>
-			<CardHead title="Verified vs rejected" sub={getLoopBasisI(aggregate)} />
+			<CardHead title="Verified vs rejected" sub={<span title={basis.title}>{basis.text}</span>} />
 			{getLoopSlotsI({
 				metric: <RejectRateHeadlineI before={aggregate.failBefore} after={aggregate.failAfter} />,
 				visual: (
@@ -2516,11 +2517,12 @@ function ChangeSummaryCardI({ state, aggregate, onRetry, failures }) {
 		);
 	}
 
+	const basis = getLoopBasisI(aggregate);
 	return (
 		<div className="card" id={ANCHOR_ID_I.changeSummary}>
 			<CardHead
 				title="Applied changes"
-				sub={getLoopBasisI(aggregate)}
+				sub={<span title={basis.title}>{basis.text}</span>}
 			/>
 			{getLoopSlotsI({
 				metric: (
@@ -2959,16 +2961,14 @@ function deriveLoopAggregateI(data) {
 }
 
 // loop-events carries no day window → the basis is the newest rows up to the request limit
-// one header line: ~145px at the 1280 three-card row → no "cycles" noun (both feet name it)
+// ~145px beside the longest title at the 1280 three-card row → the line keeps the count, the hover title adds the dates
 function getLoopBasisI(aggregate) {
 	const { eventCount } = aggregate;
 	const trend = aggregate.trend || [];
 	const qualifier = eventCount >= LOOP_EVENTS_LIMIT ? "Last" : "All";
-	const span =
-		trend.length > 0
-			? ` · ${getDateSpanI(trend[0].date, trend[trend.length - 1].date)}`
-			: "";
-	return `${qualifier} ${formatIntI(eventCount)}${span}`;
+	const text = `${qualifier} ${formatIntI(eventCount)} cycles`;
+	if (trend.length === 0) return { text, title: text };
+	return { text, title: `${text} · ${getDateSpanI(trend[0].date, trend[trend.length - 1].date)}` };
 }
 
 // MM/DD drops the year → a span across a year boundary states its years instead

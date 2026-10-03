@@ -22,6 +22,8 @@ const LOOP_METAS = [
   "#improvement-trend .card-head .card-sub",
   "#improvement-learning-memory .card-head .card-sub",
 ].join(", ");
+// room past the meta's painted width → a platform painting text a few percent wider still shows it whole
+const META_SLACK = 0.2;
 
 // eight cycle days with a rising reject share → a full 0–100% axis
 function getLoopEvents() {
@@ -90,22 +92,27 @@ for (const width of [1440, 1024]) {
 
 // 1280 is the narrowest three-card row; below it the cards pair up and widen
 for (const width of [1280, 1440]) {
-  test(`every loop card shows its whole header meta at ${width}px`, async () => {
+  test(`every loop card shows its whole header meta with ${META_SLACK * 100}% to spare at ${width}px`, async () => {
     await withLearningPage(width, getCutLoopEvents(), async (page) => {
       await page.waitForSelector(LOOP_METAS, { timeout: 30_000 });
       await page.evaluate(() => document.fonts.ready);
       const metas = await page.evaluate(
         (selector) =>
-          [...document.querySelectorAll<HTMLElement>(selector)].map((sub) => ({
-            text: sub.textContent ?? "",
-            isWhole: sub.scrollWidth <= sub.clientWidth,
-          })),
+          [...document.querySelectorAll<HTMLElement>(selector)].map((sub) => {
+            const text = document.createRange();
+            text.selectNodeContents(sub);
+            return { text: sub.textContent ?? "", needPx: text.getBoundingClientRect().width, shownPx: sub.clientWidth };
+          }),
         LOOP_METAS,
       );
 
       assert.equal(metas.length, 3, "all three loop cards head a meta");
       for (const meta of metas) {
-        assert.ok(meta.isWhole, `${width}px: "${meta.text}" is cut`);
+        const slack = meta.shownPx / meta.needPx - 1;
+        assert.ok(
+          slack >= META_SLACK,
+          `${width}px: "${meta.text}" needs ${meta.needPx.toFixed(1)}px, shows ${meta.shownPx}px (${(slack * 100).toFixed(1)}% to spare)`,
+        );
       }
     });
   });

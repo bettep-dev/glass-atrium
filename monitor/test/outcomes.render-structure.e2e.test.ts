@@ -30,11 +30,13 @@ const CROSS_ANALYSIS = {
   ],
 };
 const POLAR_TOTAL_TEXT = "1,500";
+// room past the meta's painted width → a platform painting text a few percent wider still shows it whole
+const META_SLACK = 0.2;
 
 interface HeadFit {
   meta: string;
-  clientWidth: number;
-  scrollWidth: number;
+  needPx: number;
+  shownPx: number;
   badge: string;
 }
 
@@ -59,23 +61,30 @@ describe("outcomes crosstab header", () => {
   });
 
   for (const width of [1280, 1440, 1920]) {
-    test(`the meta reads whole beside the mismatch badge at ${width}px`, async () => {
+    test(`the meta reads whole beside the mismatch badge with ${META_SLACK * 100}% to spare at ${width}px`, async () => {
       const page = await browser.newPage({ viewport: { width, height: 900 } });
       try {
         await page.goto(`${serverUrl}/#outcomes`, { waitUntil: "load" });
         await page.waitForSelector(`${CROSSTAB_HEAD} .pill`, { timeout: 30_000 });
+        await page.evaluate(() => document.fonts.ready);
         const fit: HeadFit = await page.$eval(CROSSTAB_HEAD, (head) => {
           const sub = head.querySelector(".card-sub") as HTMLElement;
+          const text = document.createRange();
+          text.selectNodeContents(sub);
           return {
             meta: sub.textContent ?? "",
-            clientWidth: sub.clientWidth,
-            scrollWidth: sub.scrollWidth,
+            needPx: text.getBoundingClientRect().width,
+            shownPx: sub.clientWidth,
             badge: head.querySelector(".pill")?.textContent ?? "",
           };
         });
+        const slack = fit.shownPx / fit.needPx - 1;
 
         assert.ok(fit.badge.includes(POLAR_TOTAL_TEXT), `the badge keeps the mismatch count: "${fit.badge}"`);
-        assert.ok(fit.scrollWidth <= fit.clientWidth, `"${fit.meta}" needs ${fit.scrollWidth}px, shows ${fit.clientWidth}px`);
+        assert.ok(
+          slack >= META_SLACK,
+          `"${fit.meta}" needs ${fit.needPx.toFixed(1)}px, shows ${fit.shownPx}px (${(slack * 100).toFixed(1)}% to spare)`,
+        );
       } finally {
         await page.close();
       }

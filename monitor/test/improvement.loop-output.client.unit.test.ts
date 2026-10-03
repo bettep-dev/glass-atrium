@@ -35,7 +35,7 @@ interface LoopSandbox {
   React: { createElement: unknown };
   window: { UI: Record<string, unknown> };
   deriveLoopAggregateI: (data: { events: LoopEvent[] }) => LoopAggregate;
-  getLoopBasisI: (aggregate: LoopAggregate) => string;
+  getLoopBasisI: (aggregate: LoopAggregate) => { text: string; title: string };
   ChangeSummaryCardI: (props: Record<string, unknown>) => RecordedElement;
   TrendCardI: (props: Record<string, unknown>) => RecordedElement;
   BucketRowI: (props: Record<string, unknown>) => RecordedElement;
@@ -99,25 +99,25 @@ const READY = { status: "ready" };
 const FETCH_CAP = 200;
 
 const ROWS = {
-  // the header meta holds the basis on one line → a qualified count plus the shortest date span that stays unambiguous
+  // the header line holds a qualified count; the hover title adds the shortest date span that stays unambiguous
   BASIS: [
     {
-      name: "a count cut at the row limit reads as the latest cycles over their dates",
+      name: "a count cut at the row limit reads as the latest cycles, dated in the hover title",
       days: ["2026-09-20", "2026-09-21", "2026-09-22", "2026-09-23"],
       perDay: FETCH_CAP / 4,
-      expected: `Last ${FETCH_CAP} · 09/20–09/23`,
+      expected: { text: `Last ${FETCH_CAP} cycles`, title: `Last ${FETCH_CAP} cycles · 09/20–09/23` },
     },
     {
       name: "a count under the row limit reads as every recorded cycle",
       days: ["2026-09-24", "2026-09-25"],
       perDay: 2,
-      expected: "All 4 · 09/24–09/25",
+      expected: { text: "All 4 cycles", title: "All 4 cycles · 09/24–09/25" },
     },
     {
       name: "a span across a year boundary names its years, so no month-day pair is ambiguous",
       days: ["2025-12-31", "2026-01-01"],
       perDay: 2,
-      expected: "All 4 · 2025–2026",
+      expected: { text: "All 4 cycles", title: "All 4 cycles · 2025–2026" },
     },
   ],
   PHRASE: [
@@ -142,12 +142,12 @@ const ROWS = {
   ],
 };
 
-describe("the loop basis names its count and dates in one header line", () => {
+describe("the loop basis names its count on the header line and its dates in the hover title", () => {
   for (const row of ROWS.BASIS) {
     test(row.name, () => {
       const aggregate = sandbox.deriveLoopAggregateI({ events: getEvents(row.days, row.perDay) });
 
-      assert.equal(sandbox.getLoopBasisI(aggregate), row.expected);
+      assert.deepEqual({ ...sandbox.getLoopBasisI(aggregate) }, row.expected);
     });
   }
 });
@@ -163,8 +163,11 @@ test("both loop cards head their numbers with the same stated basis", () => {
       (el) => el.type === CardHead,
     );
     assert.deepEqual(
-      heads.map((el) => el.props.sub),
-      [basis],
+      heads.map((el) => {
+        const meta = el.props.sub as RecordedElement;
+        return { text: meta.props.children, title: meta.props.title };
+      }),
+      [{ ...basis }],
       `${card.name} states the basis once`,
     );
   }
