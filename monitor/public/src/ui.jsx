@@ -1033,15 +1033,15 @@ function Disclosure({ kind = 'detail', title, sub, tone, level = 2, children, cl
 }
 
 // ratio preset → base.css modifier; stacked below xl, side by side at xl.
-const SPLIT_ROW_RATIOS = Object.freeze({ '1:1': '1-1', '7:5': '7-5', '3:2': '3-2', '2:1': '2-1' });
+const SPLIT_ROW_RATIOS = Object.freeze({ '1:1': '1-1', '2:1': '2-1' });
 
-// layout → base.css modifier: content = each column its own height (no stretched empty box) · equal = peer cards match heights.
+// layout → base.css modifier: equal = peer cards match heights · content = each column its own height (rails, non-peer rows).
 const SPLIT_ROW_LAYOUTS = Object.freeze({ content: 'content', equal: 'equal' });
 
-// Two cards (or two in-card columns) side by side at xl in a ratio preset · layout: 'content' (default) | 'equal'.
-function SplitRow({ ratio = '1:1', layout = 'content', children, className = '' }) {
+// Two cards (or two in-card columns) side by side at xl in a ratio preset · layout: 'equal' (default) | 'content'.
+function SplitRow({ ratio = '1:1', layout = 'equal', children, className = '' }) {
   const modifier = SPLIT_ROW_RATIOS[ratio] || SPLIT_ROW_RATIOS['1:1'];
-  const layoutModifier = SPLIT_ROW_LAYOUTS[layout] || SPLIT_ROW_LAYOUTS.content;
+  const layoutModifier = SPLIT_ROW_LAYOUTS[layout] || SPLIT_ROW_LAYOUTS.equal;
 
   return <div className={`split-row split-row--${modifier} split-row--${layoutModifier} ${className}`.trim()}>{children}</div>;
 }

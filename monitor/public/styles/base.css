@@ -340,8 +340,6 @@ details[open] > summary .chevron {
 
 @media (min-width: 1280px) {
 	.split-row--1-1 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-	.split-row--7-5 { grid-template-columns: minmax(0, 7fr) minmax(0, 5fr); }
-	.split-row--3-2 { grid-template-columns: minmax(0, 3fr) minmax(0, 2fr); }
 	.split-row--2-1 { grid-template-columns: minmax(0, 2fr) minmax(0, 1fr); }
 	.split-col--rail {
 		position: sticky;
@@ -606,7 +604,7 @@ details[open] > summary .chevron {
 	padding: 6px 10px;
 	border-radius: var(--radius-control);
 	color: rgb(var(--dim));
-	font-size: 13px;
+	font-size: var(--fs-control);
 	cursor: pointer;
 	border: none;
 	background: none;

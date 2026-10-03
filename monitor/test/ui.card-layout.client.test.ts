@@ -30,8 +30,8 @@ describe("split row ratio presets", () => {
     });
   }
 
-  test("the four presets the plan names are all offered", () => {
-    assert.deepEqual(Object.keys(ratios).sort(), ["1:1", "2:1", "3:2", "7:5"]);
+  test("only the even and the two-to-one spans are offered", () => {
+    assert.deepEqual(Object.keys(ratios).sort(), ["1:1", "2:1"]);
   });
 
   test("an unknown ratio falls back to the even split rather than a missing modifier", () => {
@@ -50,18 +50,18 @@ describe("split row layout variants", () => {
 
   for (const [layout, modifier] of Object.entries(layouts)) {
     test(`${layout} renders its modifier beside the ratio modifier`, () => {
-      const classes = classesOf(rowOf({ ratio: "3:2", layout }));
+      const classes = classesOf(rowOf({ ratio: "2:1", layout }));
       assert.ok(classes.includes(`split-row--${modifier}`));
-      assert.ok(classes.includes(`split-row--${ratios["3:2"]}`));
+      assert.ok(classes.includes(`split-row--${ratios["2:1"]}`));
     });
   }
 
-  test("content-sized is the default, so a short card never stretches unasked", () => {
-    assert.ok(classesOf(rowOf({})).includes(`split-row--${layouts.content}`));
+  test("equal is the default, so peer cards end at one edge unless the row opts out", () => {
+    assert.ok(classesOf(rowOf({})).includes(`split-row--${layouts.equal}`));
   });
 
-  test("an unknown layout falls back to content-sized rather than a missing modifier", () => {
-    assert.ok(classesOf(rowOf({ layout: "masonry" })).includes(`split-row--${layouts.content}`));
+  test("an unknown layout falls back to equal rather than a missing modifier", () => {
+    assert.ok(classesOf(rowOf({ layout: "masonry" })).includes(`split-row--${layouts.equal}`));
   });
 });
 
