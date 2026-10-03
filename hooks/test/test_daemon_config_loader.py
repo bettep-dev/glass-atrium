@@ -9,7 +9,8 @@ would either break import for the ~7 test modules that import daemon_cycle.py
 at collection time, or silently mis-budget every worker call. Protected
 invariants:
 
-(1) the live config read yields exactly the 3 contract keys, all non-empty str;
+(1) the live config read yields exactly the contract keys, all str — the 3
+    model/budget keys non-empty, the 4 tier knobs possibly "" (unset);
 (2) every degradation branch (missing file / corrupt JSON / non-dict payload /
     missing key / non-string value / empty-string value) falls back per-key
     WITHOUT raising — a partially-valid file still contributes its good keys;
@@ -17,7 +18,13 @@ invariants:
 (4) the values are STRINGS in 2-decimal form ('10.00', not 10 or 10.0) — the
     CLI consumes the decimal as-is, so a float re-serialize would drift;
 (5) the module-level constants (WORKER_MAX_BUDGET_USD / PRE_VERIFY_MAX_BUDGET_USD
-    / WORKER_MODEL) — the names the daemon binds to — equal the loaded values.
+    / WORKER_MODEL / TIER_KNOBS) — the names the daemon binds to — equal the
+    loaded values;
+(6) a tier knob resolves to its value only when accepted; any other set value
+    resolves to unset AND is named in KNOB_ERRORS, so the daemon can fail loud
+    instead of silently running at the default tier;
+(7) the monitor (model-config-consts.ts) accepts exactly the effort levels and
+    output-cap shape this loader accepts — the monitor writes the file read here.
 
 No database needed. Each error-branch case writes a throwaway config into a
 TemporaryDirectory and passes it via the ``path`` injection arg.
@@ -51,7 +58,36 @@ if str(_HOOKS_ROOT) not in sys.path:
 
 import daemon_config as dc  # noqa: E402 — sys.path insert immediately above
 
-_CONTRACT_KEYS = ("worker_max_budget_usd", "pre_verify_max_budget_usd", "worker_model")
+# all: every key the loader returns · non_empty: the keys whose fallback is never ""
+# (hand-written oracle, deliberately not derived from _FALLBACK)
+_CONTRACT_KEYS = {
+    "all": (
+        "worker_max_budget_usd",
+        "pre_verify_max_budget_usd",
+        "worker_model",
+        "worker_effort",
+        "pre_verify_effort",
+        "worker_max_output_tokens",
+        "pre_verify_max_output_tokens",
+    ),
+    "non_empty": ("worker_max_budget_usd", "pre_verify_max_budget_usd", "worker_model"),
+}
+
+_ABSENT = object()
+
+_scratch_root: Path | None = None
+
+
+def setUpModule() -> None:
+    global _scratch_root
+    scratch = tempfile.TemporaryDirectory(prefix="ga-daemon-config-loader-")
+    unittest.addModuleCleanup(scratch.cleanup)
+    _scratch_root = Path(scratch.name)
+
+
+def _create_scratch_dir() -> Path:
+    # One dir per call → no two cases share a config path; the module cleanup removes them all.
+    return Path(tempfile.mkdtemp(dir=_scratch_root))
 
 
 def _write_config(payload: object) -> Path:
@@ -61,13 +97,13 @@ def _write_config(payload: object) -> Path:
     own json.loads sees a valid-JSON-but-wrong-shape document; a raw corrupt
     string is written verbatim via the ``raw_text`` escape hatch below.
     """
-    tmp = Path(tempfile.mkdtemp()) / "daemon-config.json"
+    tmp = _create_scratch_dir() / "daemon-config.json"
     tmp.write_text(json.dumps(payload), encoding="utf-8")
     return tmp
 
 
 def _write_raw(raw_text: str) -> Path:
-    tmp = Path(tempfile.mkdtemp()) / "daemon-config.json"
+    tmp = _create_scratch_dir() / "daemon-config.json"
     tmp.write_text(raw_text, encoding="utf-8")
     return tmp
 
@@ -75,14 +111,15 @@ def _write_raw(raw_text: str) -> Path:
 class LiveConfigReadTest(unittest.TestCase):
     """The default (live) read — the path the daemon actually exercises."""
 
-    def test_live_read_yields_exactly_three_contract_keys(self) -> None:
+    def test_live_read_yields_exactly_the_contract_keys(self) -> None:
         out = dc.load_daemon_config()
-        self.assertEqual(set(out.keys()), set(_CONTRACT_KEYS))
+        self.assertEqual(set(out.keys()), set(_CONTRACT_KEYS["all"]))
 
-    def test_live_values_are_non_empty_strings(self) -> None:
+    def test_live_values_are_strings_and_model_budget_values_non_empty(self) -> None:
         out = dc.load_daemon_config()
-        for key in _CONTRACT_KEYS:
+        for key in _CONTRACT_KEYS["all"]:
             self.assertIsInstance(out[key], str, f"{key} must be str")
+        for key in _CONTRACT_KEYS["non_empty"]:
             self.assertTrue(out[key], f"{key} must be non-empty")
 
     def test_budget_values_are_string_decimals_not_floats(self) -> None:
@@ -171,7 +208,7 @@ class FallbackBranchTest(unittest.TestCase):
         )
         out = dc.load_daemon_config(path=path)
         self.assertNotIn("_comment", out)
-        self.assertEqual(set(out.keys()), set(_CONTRACT_KEYS))
+        self.assertEqual(set(out.keys()), set(_CONTRACT_KEYS["all"]))
 
 
 class ConsumerBindingTest(unittest.TestCase):
@@ -182,6 +219,12 @@ class ConsumerBindingTest(unittest.TestCase):
         self.assertEqual(dc.WORKER_MAX_BUDGET_USD, loaded["worker_max_budget_usd"])
         self.assertEqual(dc.PRE_VERIFY_MAX_BUDGET_USD, loaded["pre_verify_max_budget_usd"])
         self.assertEqual(dc.WORKER_MODEL, loaded["worker_model"])
+        for role in ("worker", "pre_verify"):
+            for field in dc.TierKnobs._fields:
+                with self.subTest(role=role, field=field):
+                    self.assertEqual(
+                        getattr(dc.TIER_KNOBS[role], field), loaded[f"{role}_{field}"]
+                    )
 
     def test_module_constants_are_non_empty_strings(self) -> None:
         for value in (dc.WORKER_MAX_BUDGET_USD, dc.PRE_VERIFY_MAX_BUDGET_USD, dc.WORKER_MODEL):
@@ -354,23 +397,31 @@ class LegacyKeyCompatTest(unittest.TestCase):
         self.assertIn("haiku_model", buf.getvalue())
         self.assertIn("WARN", buf.getvalue())
 
-    def test_module_import_is_stderr_silent_on_a_legacy_config(self) -> None:
+    def test_module_import_is_stderr_silent_on_a_misconfigured_file(self) -> None:
         # REGRESSION: the legacy WARN originally fired from the module-level
         # _CONFIG resolution, so merely IMPORTING this module printed to stderr.
         # That broke the sensitive-patterns guard CLI's byte-silent clean-path
         # contract (test_sensitive_patterns.CliExitContract), which imports this
-        # transitively. Import must stay silent; the loud channel is the shell seam.
-        path = _write_config({"haiku_model": "claude-opus-4-8"})
-        res = subprocess.run(
-            [sys.executable, "-c", "import daemon_config"],
-            cwd=str(Path(dc.__file__).parent),
-            env={**os.environ, "DAEMON_CONFIG": str(path)},
-            capture_output=True,
-            text=True,
-            check=False,
+        # transitively. Import must stay silent; the loud channels are the shell
+        # seam (legacy keys) and the daemon_cycle gate (rejected tier knobs).
+        rows = (
+            ("legacy key", {"haiku_model": "claude-opus-4-8"}),
+            ("rejected tier knob", {"worker_effort": "ultra"}),
         )
-        self.assertEqual(res.returncode, 0, res.stderr)
-        self.assertEqual(res.stderr, "", "importing daemon_config must not write to stderr")
+        for name, payload in rows:
+            with self.subTest(name):
+                res = subprocess.run(
+                    [sys.executable, "-c", "import daemon_config"],
+                    cwd=str(Path(dc.__file__).parent),
+                    env={**os.environ, "DAEMON_CONFIG": str(_write_config(payload))},
+                    capture_output=True,
+                    text=True,
+                    check=False,
+                )
+                self.assertEqual(res.returncode, 0, res.stderr)
+                self.assertEqual(
+                    res.stderr, "", "importing daemon_config must not write to stderr"
+                )
 
     def test_legacy_keys_in_use_is_exposed_for_callers(self) -> None:
         # The silent import still has to make the fact retrievable.
@@ -399,6 +450,107 @@ class LegacyKeyCompatTest(unittest.TestCase):
         with redirect_stderr(buf):
             dc.load_daemon_config(path=path)
         self.assertEqual(buf.getvalue(), "")
+
+
+class TierKnobTest(unittest.TestCase):
+    """A tier knob resolves to its value only when it is in the accepted set.
+
+    Every other set value resolves to unset ("") AND is named in KNOB_ERRORS —
+    the CLI ignores a bad --effort / output cap with exit 0, so a value passed
+    through would degrade silently.
+    """
+
+    # (row name, knob field, raw value, outcome) — run against both roles' keys
+    _ROWS = (
+        ("absent", "effort", _ABSENT, "unset"),
+        ("json null", "effort", None, "unset"),
+        ("empty string", "effort", "", "unset"),
+        ("level low", "effort", "low", "accepted"),
+        ("level medium", "effort", "medium", "accepted"),
+        ("level high", "effort", "high", "accepted"),
+        ("level xhigh", "effort", "xhigh", "accepted"),
+        ("level max", "effort", "max", "accepted"),
+        ("uppercase level", "effort", "HIGH", "rejected"),
+        ("unknown level", "effort", "ultra", "rejected"),
+        ("padded level", "effort", " high", "rejected"),
+        ("json number tier", "effort", 3, "rejected"),
+        ("cap absent", "max_output_tokens", _ABSENT, "unset"),
+        ("cap empty string", "max_output_tokens", "", "unset"),
+        ("cap typical", "max_output_tokens", "16000", "accepted"),
+        ("cap lower bound", "max_output_tokens", "1", "accepted"),
+        ("cap upper bound", "max_output_tokens", "999999", "accepted"),
+        ("cap zero", "max_output_tokens", "0", "rejected"),
+        ("cap negative", "max_output_tokens", "-1", "rejected"),
+        ("cap decimal", "max_output_tokens", "1.5", "rejected"),
+        ("cap leading zero", "max_output_tokens", "0123", "rejected"),
+        ("cap above the digit ceiling", "max_output_tokens", "1234567", "rejected"),
+        ("cap not a number", "max_output_tokens", "abc", "rejected"),
+        ("cap trailing newline", "max_output_tokens", "16000\n", "rejected"),
+        ("cap json number", "max_output_tokens", 16000, "rejected"),
+    )
+
+    def test_a_knob_resolves_only_to_an_accepted_value_and_names_every_rejection(
+        self,
+    ) -> None:
+        for name, field, raw, outcome in self._ROWS:
+            for role in ("worker", "pre_verify"):
+                key = f"{role}_{field}"
+                with self.subTest(name, key=key):
+                    payload = {} if raw is _ABSENT else {key: raw}
+                    out = dc.load_daemon_config(path=_write_config(payload), warn=False)
+                    self.assertEqual(out[key], raw if outcome == "accepted" else "")
+                    if outcome == "rejected":
+                        self.assertIn(key, dc.KNOB_ERRORS)
+                        self.assertIn(json.dumps(raw), dc.KNOB_ERRORS[key])
+                    else:
+                        self.assertNotIn(key, dc.KNOB_ERRORS)
+
+    def test_rejected_knobs_leave_the_model_and_budget_keys_intact(self) -> None:
+        path = _write_config(
+            {
+                "worker_model": "claude-opus-4-8",
+                "worker_max_budget_usd": "1.25",
+                "pre_verify_max_budget_usd": "0.75",
+                "worker_effort": "ultra",
+                "pre_verify_max_output_tokens": 0,
+            }
+        )
+        out = dc.load_daemon_config(path=path, warn=False)
+        self.assertEqual(
+            (out["worker_model"], out["worker_max_budget_usd"], out["pre_verify_max_budget_usd"]),
+            ("claude-opus-4-8", "1.25", "0.75"),
+        )
+        self.assertEqual(set(dc.KNOB_ERRORS), {"worker_effort", "pre_verify_max_output_tokens"})
+
+    def test_each_load_reports_only_its_own_rejections(self) -> None:
+        rejected = _write_config({"pre_verify_effort": "ultra"})
+        later_loads = (
+            ("missing file", _create_scratch_dir() / "does-not-exist.json"),
+            ("corrupt file", _write_raw("{ not json")),
+            ("clean file", _write_config({"pre_verify_effort": "high"})),
+        )
+        for name, later in later_loads:
+            with self.subTest(name):
+                dc.load_daemon_config(path=rejected, warn=False)
+                with redirect_stderr(io.StringIO()):
+                    dc.load_daemon_config(path=later, warn=False)
+                self.assertEqual(dc.KNOB_ERRORS, {})
+
+    def test_the_monitor_accepts_exactly_the_levels_and_cap_shape_the_loader_accepts(
+        self,
+    ) -> None:
+        # The monitor writes the file this loader reads, so a value one side accepts
+        # and the other rejects stops every daemon cycle (or hides a usable tier).
+        consts = (
+            _HOOKS_ROOT.parent / "monitor" / "src" / "server" / "model-config-consts.ts"
+        ).read_text(encoding="utf-8")
+        levels = re.search(r"export const EFFORT_LEVELS = \[([^\]]*)\] as const;", consts)
+        cap = re.search(r"export const OUTPUT_CAP_PATTERN = /\^(.*)\$/;", consts)
+        self.assertIsNotNone(levels, "EFFORT_LEVELS literal not found in model-config-consts.ts")
+        self.assertIsNotNone(cap, "OUTPUT_CAP_PATTERN literal not found in model-config-consts.ts")
+        self.assertEqual(tuple(re.findall(r'"([^"]*)"', levels.group(1))), dc.EFFORT_LEVELS)
+        # JS /^…$/ without flags anchors the whole string, as the loader's fullmatch does.
+        self.assertEqual(cap.group(1), dc._OUTPUT_CAP_PATTERN.pattern)
 
 
 class CostTierRuleTextTest(unittest.TestCase):

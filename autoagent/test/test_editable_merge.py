@@ -113,6 +113,10 @@ def setUpModule() -> None:
     rebindings reach the in-process ones. The stub exits non-zero — the arbiter's
     unavailable arm, so contested gaps keep local and every decline this module
     asserts is unchanged.
+
+    ``DAEMON_CONFIG`` names a path no file sits at, so every subprocess drive
+    resolves no daemon-config.json, as CI does: an operator's rejected tier knob
+    would otherwise stop the arbiter call before it reaches a stub.
     """
     global _SUITE_SANDBOX_DIR
     _SUITE_SANDBOX_DIR = tempfile.mkdtemp(prefix="ga-editable-merge-suite-")
@@ -128,6 +132,7 @@ def setUpModule() -> None:
     for key, value in (
         ("ATRIUM_UPDATE_STATE_DIR", str(state)),
         ("AUTOAGENT_CLAUDE_BIN", str(stub)),
+        ("DAEMON_CONFIG", str(root / "daemon-config.json")),
     ):
         _SUITE_ENV_RESTORE[key] = os.environ.get(key)
         os.environ[key] = value

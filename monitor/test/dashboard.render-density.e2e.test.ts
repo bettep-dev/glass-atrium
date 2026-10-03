@@ -127,3 +127,66 @@ describe("Dashboard density at 1024", () => {
     assert.ok(overflow <= 0, `page overflows by ${overflow}px at 1024`);
   });
 });
+
+// Runs by hour reads as a grid of squares: no cell outgrows the cap, and the panel sits beside the results from xl
+const HOUR_CELL_MAX_PX = 20;
+
+interface Box {
+  top: number;
+  bottom: number;
+  left: number;
+  width: number;
+}
+
+interface WeekLayout {
+  results: Box;
+  hours: Box;
+  spend: Box;
+  cells: Array<{ width: number; height: number }>;
+}
+
+async function getWeekLayout(page: Page): Promise<WeekLayout> {
+  return page.evaluate(() => {
+    // anonymous callbacks only → tsx's keepNames helper does not exist inside the page
+    const [results, hours, spend] = ["dash-week-results", "dash-week-hours", "dash-week-spend"].map((id) => {
+      const rect = document.querySelector(`#${id}`)?.getBoundingClientRect();
+      return { top: rect?.top ?? NaN, bottom: rect?.bottom ?? NaN, left: rect?.left ?? NaN, width: rect?.width ?? NaN };
+    });
+    const cells = Array.from(document.querySelectorAll("#dash-week-hours [role=img] .dash-hour-cell")).map((el) => {
+      const rect = el.getBoundingClientRect();
+      return { width: rect.width, height: rect.height };
+    });
+    return { results, hours, spend, cells };
+  });
+}
+
+function assertSquareCells(cells: WeekLayout["cells"]): void {
+  assert.equal(cells.length, 7 * 24, "one cell per weekday and hour");
+  for (const cell of cells) {
+    assert.ok(Math.abs(cell.width - cell.height) < 0.5, `cell ${cell.width}×${cell.height} is not square`);
+    assert.ok(cell.width > 0 && cell.width <= HOUR_CELL_MAX_PX + 0.01, `cell ${cell.width}px exceeds ${HOUR_CELL_MAX_PX}px`);
+  }
+}
+
+describe("Runs by hour layout", () => {
+  test("at 1440 it sits beside the task results with square capped cells, and Spend spans the row below", async () => {
+    const page = await openDashboard({ width: 1440, height: 900 });
+    const layout = await getWeekLayout(page);
+    await page.close();
+    assert.ok(Math.abs(layout.hours.top - layout.results.top) < 1, "Runs by hour shares the results row");
+    assert.ok(layout.hours.left > layout.results.left, "Runs by hour is the right half");
+    assert.ok(layout.spend.top >= Math.max(layout.results.bottom, layout.hours.bottom), "Spend starts below the pair");
+    assert.ok(layout.spend.width >= layout.results.width + layout.hours.width, "Spend spans the full width");
+    assertSquareCells(layout.cells);
+  });
+
+  test("at 1024 it stacks Results, Runs by hour, Spend in one column with square capped cells", async () => {
+    const page = await openDashboard({ width: 1024, height: 768 });
+    const layout = await getWeekLayout(page);
+    await page.close();
+    const tops = [layout.results.top, layout.hours.top, layout.spend.top];
+    assert.ok(tops[0] < tops[1] && tops[1] < tops[2], `panel tops ${tops.join(" / ")} are not Results, Runs by hour, Spend`);
+    assert.ok(Math.abs(layout.hours.left - layout.results.left) < 1, "one column");
+    assertSquareCells(layout.cells);
+  });
+});

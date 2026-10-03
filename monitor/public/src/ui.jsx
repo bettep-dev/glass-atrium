@@ -1726,14 +1726,44 @@ function PageErrorBanner({ sources, error, onRetry, isBusy = false, focusTargetI
   const getRecoveryTargetId = () => coveredCardIdRef.current || focusTargetId;
 
   return (
-    <div role="alert" className="card p-3 flex items-start gap-2" onFocus={handleFocus}>
-      <Icon name={TONE_ICON.crit} size={16} className="text-crit mt-0.5"/>
-      <div className="flex flex-col gap-1 min-w-0 flex-1">
-        <span className="fs-body font-medium">{copy.sentence}</span>
-        <span className="fs-meta text-dim">{copy.next}</span>
-        <ErrorDetails detail={copy.detail}/>
+    <AlertCard tone="crit" title={copy.sentence} body={copy.next} details={copy.detail} onFocus={handleFocus}
+      actions={<RetryButton onRetry={onRetry} isBusy={isBusy} focusTargetId={getRecoveryTargetId}/>}/>
+  );
+}
+
+const ALERT_SEVERITY_WORD = { crit: 'Critical', warn: 'Warning', info: 'Notice', ok: 'Resolved', neutral: 'Notice' };
+
+/**
+ * The one conditional-alert card: tone rides only on the glyph well, the shell stays neutral.
+ * @param surface - 'raised' page-level card · 'inset' inside an existing card or panel
+ * @param subjects - names of affected parts, shown as neutral chips
+ * @param details - raw error kept behind a collapsed Details
+ * @param actions - up to two secondary `.btn.sm` controls
+ * @param hasLiveHost - a mounted live container announces it → no role here; else alert for crit, status otherwise
+ */
+function AlertCard({ tone = 'crit', surface = 'raised', title, body, subjects, details, actions, hasLiveHost = false, onFocus, className = '' }) {
+  const role = hasLiveHost ? undefined : tone === 'crit' ? 'alert' : 'status';
+  const isInset = surface === 'inset';
+  const shell = isInset ? 'sub-card bg-sunken alert-card is-inset' : 'card alert-card';
+
+  return (
+    <div role={role} className={`${shell} ${className}`.trim()} data-tone={tone} onFocus={onFocus}>
+      <div className="alert-card-grid">
+        <span className="alert-card-well" aria-hidden="true">
+          <Icon name={TONE_ICON[tone]} size={isInset ? 14 : 16}/>
+        </span>
+        <div className="alert-card-content">
+          <span className="alert-card-title fs-body font-medium">
+            <span className="sr-only">{`${ALERT_SEVERITY_WORD[tone]}: `}</span>{title}
+          </span>
+          {body && <span className="alert-card-body fs-meta text-dim">{body}</span>}
+          {subjects?.length > 0 && (
+            <div className="alert-card-subjects">{subjects.map((subject) => <Badge key={subject}>{subject}</Badge>)}</div>
+          )}
+          <ErrorDetails detail={details}/>
+        </div>
+        {actions && <div className="alert-card-actions">{actions}</div>}
       </div>
-      <RetryButton onRetry={onRetry} isBusy={isBusy} focusTargetId={getRecoveryTargetId}/>
     </div>
   );
 }
@@ -2103,6 +2133,7 @@ const REVIEW_FLAG_REASON_META = {
   'probe-omission': { label: 'No convention probe', title: 'Code change recorded with no convention reference' },
   'unregistered-agent-probe-exempt': { label: 'Probe-exempt agent', title: 'The recorded agent never received the convention-probe instruction' },
   'scope-excess': { label: 'Outside declared scope', title: 'An edited path fell outside the file list the delegation declared' },
+  'qa-score-malformed': { label: 'Malformed QA score', title: 'The reported qa_score does not match cov=N,ins=N,instr=N,clar=N, optionally followed by ,d8=N, with each N from 1 to 5' },
 };
 
 // carrier 가 빈 구행(사유 기록 이전) — 사유를 지어내지 않고 명시적 미분류 상태로 렌더.
@@ -2169,7 +2200,7 @@ window.UI = {
   titleOf, stripHtmlTags, formatRelativeTime,
   FreshnessStamp, getFreshnessState, getFreshnessVerdict, getRegionSummary, getRegionView, RefreshButton,
   setShellBridge, getHarnessRead, getShellPageState, useShellPageState,
-  getFetchError, getErrorCopy, getSharedFailure, getSourceFailures, RegionUnavailable, RegionCovered, RegionFailure, PageErrorBanner, RetryButton, LoadingPlaceholder, SkeletonRows,
+  getFetchError, getErrorCopy, getSharedFailure, getSourceFailures, RegionUnavailable, RegionCovered, RegionFailure, PageErrorBanner, AlertCard, RetryButton, LoadingPlaceholder, SkeletonRows,
   INITIAL_REGION_STATE, putRegionRequest, putRegionData, putRegionFailure,
   setDisplayTimezone, getDisplayTimezone, tzShortLabel,
   formatKstDateTime, formatKstTime, formatKstDate, formatKstFull,

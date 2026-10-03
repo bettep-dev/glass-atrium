@@ -169,6 +169,13 @@ test("a pending migration outranks the drift it causes", () => {
   assert.strictEqual(computeDaemonConfigSync(resolution, UN_MIGRATED_FILE), "pending-migration");
 });
 
+test("a tier value the daemon rejects outranks a pending migration", () => {
+  // The daemon exits every cycle on it, and db-setup does not fix it.
+  const resolution = resolveDesiredWithLegacy(rowsOf(UN_MIGRATED));
+
+  assert.strictEqual(computeDaemonConfigSync(resolution, { ...UN_MIGRATED_FILE, worker_effort: "ultra" }), "file-invalid");
+});
+
 test("a missing file still outranks a pending migration", () => {
   // Nothing to compare against, so the more fundamental state is reported first.
   const resolution = resolveDesiredWithLegacy(rowsOf(UN_MIGRATED));
