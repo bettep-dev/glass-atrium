@@ -852,6 +852,10 @@ async function assertZoneRing(
 		Object.hasOwn(probe.zoneClasses, zoneId),
 		`fixture precondition: the canvas draws no zone '${zoneId}' — the assertion below would be vacuous`,
 	);
+	assert.ok(
+		!Object.keys(probe.zoneClasses).some((id) => id.startsWith("map_row")),
+		`probe precondition: a row frame of the ⊐ was read as a zone — probed: ${Object.keys(probe.zoneClasses).join(", ")}`,
+	);
 	assert.deepEqual(
 		probe.zoneClasses[zoneId],
 		[expectedClass],
@@ -1176,6 +1180,9 @@ test("P0-2 every canvas edge is axis-aligned while the dagre control is not", as
 	await openMap(getLiveFixture());
 	const canvas = await getCanvasProbe();
 
+	// the two turn edges the screen draws between the ⊐'s rows are canvas links too, so the check covers them
+	const turnLinkCount = await page.evaluate((sel) => document.querySelectorAll(`${sel} path.flowchart-link[id$="_turn"]`).length, selectors.canvas);
+	assert.equal(turnLinkCount, 2, "the ⊐'s two turn edges are drawn as canvas links");
 	assertOrthogonalLinks(canvas.links, "canonical map canvas");
 
 	// 대조군은 대각을 실제로 가졌음을 양성으로 세워야 한다.
@@ -1969,21 +1976,16 @@ async function openPartHealth(partId: string): Promise<void> {
 	const selector = `svg g.node[data-arch-node-id$=".${nodeId}"]`;
 	await page.waitForSelector(selector, { timeout: 30_000 });
 
-	// 닫기 · 맞춤 · 누르기 · 항목 대기는 openNodePanel 안에 있음 — 항목까지 한 시도로 묶어야
+	// 닫기 · 기본 보기 · 누르기 · 항목 대기는 openNodePanel 안에 있음 — 항목까지 한 시도로 묶어야
 	// 빗나간 누르기가 되풀이에 닿음.
 	await openNodePanel(selector, `${nodeId}' for part '${partId}`, {
 		confirm: `[data-health-row="${partId}"]`,
 	});
 }
 
-// 노드가 그려진 자리를 재고 그 좌표를 직접 누름 — locator.click 을 쓰지 않는 이유가 있음.
-// 드라이버는 누르기 전에 대상을 시야로 끌어오려 스크롤하는데, 캔버스의 휠 확대(svg-pan-zoom,
-// 기본 감도 0.1)가 그 스크롤을 확대로 읽어 배율이 틱마다 1.1 배씩 올라감. 한 번 커지면 노드는
-// 더 밖으로 나가 스크롤이 다시 일어나고, 상한에 걸릴 때까지 되풀이됨
-// (실측: 0.6566 → 1.7071 = 0.6566 × 1.1^10, 그 뒤 어떤 노드도 못 누름).
-// 좌표로 누르면 스크롤이 아예 없고, 노드가 정말 그 자리에 그려졌는지까지 함께 재게 됨.
-// 노드를 누르는 자리는 전부 이 문을 지남 — 한 곳이라도 locator.click 으로 남으면 그 한 번이
-// 배율을 올려 놓고, 그 뒤의 모든 누르기가 실패함.
+// 노드가 그려진 자리를 재고 그 좌표를 직접 누름 — 드라이버의 스크롤·재시도 없이 한 번만 누르고,
+// 노드가 정말 그 자리에 그려졌는지까지 함께 재게 됨.
+// 노드를 누르는 자리는 전부 이 문을 지남 — 아래 더블클릭 간격 지킴이 모든 누르기에 걸려야 함.
 async function clickNodeAt(selector: string, describe: string): Promise<void> {
 	// 노드가 트리에 들어오기를 먼저 기다림. 아래 되밀기는 '자리가 밀렸다' 만 고치고 '아직 없다' 는
 	// 못 고침 — box 가 null 이면 되밀기를 건너뛰고 바로 단언으로 감. 캔버스를 갈아끼우는 경로
@@ -1994,8 +1996,8 @@ async function clickNodeAt(selector: string, describe: string): Promise<void> {
 		.catch(() => null);
 
 	let box = await readNodeBox(selector);
-	// 자리를 못 잡았으면 맞춤을 한 번 되밀고 다시 잼. 배율은 재는 순간과 누르는 순간 사이에도
-	// 밀릴 수 있어(부하가 높으면 자동 맞춤이 늦게 앉음) 미리 재는 것만으로는 경합이 남음.
+	// 자리를 못 잡았으면 기본 보기를 한 번 되밀고 다시 잼. 배율은 재는 순간과 누르는 순간 사이에도
+	// 밀릴 수 있어(부하가 높으면 기본 보기가 늦게 앉음) 미리 재는 것만으로는 경합이 남음.
 	// 되민 뒤에도 밖이면 그때는 진짜 결함이므로 아래 단언이 붉어짐 — 자가 치유가 실패를 삼키지 않음.
 	if (box && !box.inside) {
 		await forceRefitCanvas();
@@ -2009,7 +2011,26 @@ async function clickNodeAt(selector: string, describe: string): Promise<void> {
 			`node ${box.node} · pane ${box.pane} · scale ${box.scale} · ${box.overlays} overlay(s) standing`,
 	);
 
+	await waitOutDoubleClickWindow(box.x, box.y);
 	await page.mouse.click(box.x, box.y);
+	lastNodeClick = { x: box.x, y: box.y, at: Date.now() };
+}
+
+/**
+ * svg-pan-zoom 3.6.2 reads two mousedowns under 250ms and 10px apart as a double-click and zooms x2.6 at that point (Utils.isDblClick, not the browser click count).
+ * Two parts bound to one node open it at the same coordinates ~20ms apart, so without this gap the second open zooms the map in.
+ */
+const DOUBLE_CLICK = { RADIUS_PX: 10, GAP_MS: 400 };
+let lastNodeClick: { x: number; y: number; at: number } | null = null;
+
+async function waitOutDoubleClickWindow(x: number, y: number): Promise<void> {
+	if (!lastNodeClick) return;
+
+	const distance = Math.hypot(x - lastNodeClick.x, y - lastNodeClick.y);
+	const remaining = DOUBLE_CLICK.GAP_MS - (Date.now() - lastNodeClick.at);
+	if (distance >= DOUBLE_CLICK.RADIUS_PX || remaining <= 0) return;
+
+	await page.waitForTimeout(remaining);
 }
 
 async function readNodeBox(selector: string) {
@@ -2034,36 +2055,32 @@ async function readNodeBox(selector: string) {
 	}, selector);
 }
 
-// 지도를 맞춤 배율에 세움. 노드가 그려진 것과 맞춤이 걸린 것은 다른 순간이고, openMap 은 SVG 가
-// 나타나면 돌아오므로 그 사이에 재면 원래 배율의 자리를 재게 됨 — 그 상태에서는 지도가 pane 을
-// 넘어 가장자리 노드가 아예 못 눌림(실측: 맞춤 전 1.7071 · 맞춤 후 0.6566, pane 1150x610).
-// 자동 맞춤이 앉기를 기다리는 대신 화면의 맞춤 컨트롤(캔버스 포커스 + `0` = fitToView)을 눌러
-// 결정적으로 세움 — 언제 앉는지에 기대지 않게 됨. 하네스가 변환행렬을 직접 쓰지는 않음:
-// 그러면 제품이 그리는 자리가 아니라 하네스가 정한 자리를 재게 됨.
-// 화면의 맞춤 컨트롤(캔버스 포커스 + `0` = fitToView)을 눌러 배율을 되돌림.
+// 지도를 기본 보기(개요)에 세움. 노드가 그려진 것과 기본 보기가 걸린 것은 다른 순간이고, openMap 은
+// SVG 가 나타나면 돌아오므로 그 사이에 재면 다른 배율의 자리를 재게 됨.
+// 기본 보기가 앉기를 기다리는 대신 화면의 Reset 컨트롤(캔버스 포커스 + `0` = resetView)을 눌러
+// 결정적으로 세우고, 그 배율이 CTM 에 실릴 때까지 기다림 — 라이브러리는 다음 프레임에 반영함.
 // 하네스가 변환행렬을 직접 쓰지는 않음: 그러면 제품이 그리는 자리가 아니라 하네스가 정한 자리를 재게 됨.
 async function forceRefitCanvas(): Promise<void> {
 	const canvas = page.locator(".arch-mermaid-canvas");
 	if ((await canvas.count()) === 0) return;
 	await canvas.focus();
 	await page.keyboard.press("0");
-	await page.waitForFunction(
-		() => {
-			const vp = document.querySelector(".arch-mermaid-canvas .svg-pan-zoom_viewport");
-			const m = vp instanceof SVGGraphicsElement ? vp.getCTM() : null;
-			return Boolean(m && m.a > 0 && m.a <= 1);
-		},
-		null,
-		{ timeout: 30_000 },
-	);
+	await page.waitForFunction(readCanvasFitted, FIT_SCALE_TOLERANCE, { timeout: 30_000 });
 }
 
+// CTM float noise around the stamped scale, same bound map-fit e2e waits on
+const FIT_SCALE_TOLERANCE = 1e-3;
+
 async function isCanvasFitted(): Promise<boolean> {
-	return await page.evaluate(() => {
-		const vp = document.querySelector(".arch-mermaid-canvas .svg-pan-zoom_viewport");
-		const m = vp instanceof SVGGraphicsElement ? vp.getCTM() : null;
-		return Boolean(m && m.a > 0 && m.a <= 1);
-	});
+	return await page.evaluate(readCanvasFitted, FIT_SCALE_TOLERANCE);
+}
+
+// fitted = the CTM carries the default-view scale the product stamped — any zoomed state fails, whatever its scale
+function readCanvasFitted(tolerance: number): boolean {
+	const vp = document.querySelector(".arch-mermaid-canvas .svg-pan-zoom_viewport");
+	const m = vp instanceof SVGGraphicsElement ? vp.getCTM() : null;
+	const fitScale = Number(vp?.getAttribute("data-arch-fit-scale"));
+	return Boolean(m && fitScale > 0 && Math.abs(m.a - fitScale) < tolerance);
 }
 
 async function waitForFittedCanvas(): Promise<void> {
@@ -2086,19 +2103,8 @@ async function waitForFittedCanvas(): Promise<void> {
 	// 여기서 놓친 밀림은 clickNodeAt 이 누르기 직전에 다시 재어 되밀음.
 	if (await isCanvasFitted()) return;
 
+	// Reset 이 기본 보기 배율에 앉지 않으면 그 자체가 결함이라 forceRefitCanvas 의 대기가 붉어짐.
 	await forceRefitCanvas();
-
-	// 화면의 상한이 1 이므로 그것을 앵커로 씀 — 안 내려오면 맞춤이 걸리지 않은 것이고,
-	// 그 사실 자체가 결함이라 여기서 붉어져야 함.
-	await page.waitForFunction(
-		() => {
-			const vp = document.querySelector(".arch-mermaid-canvas .svg-pan-zoom_viewport");
-			const m = vp instanceof SVGGraphicsElement ? vp.getCTM() : null;
-			return Boolean(m && m.a > 0 && m.a <= 1);
-		},
-		null,
-		{ timeout: 30_000 },
-	);
 }
 
 async function closePanelIfOpen(): Promise<void> {
@@ -2109,7 +2115,7 @@ async function closePanelIfOpen(): Promise<void> {
 // 노드를 눌러 패널을 세우는 단 하나의 문. 자리마다 기한을 늘리던 것을 걷어내고 여는 행위 자체를
 // 되풀이함 — 기한이 다했다는 것은 누르기가 빗나갔다는 뜻이고(패널은 누르는 즉시 섬, 왕복이 없음),
 // 빗나간 누르기는 아무리 오래 기다려도 패널을 세우지 못하므로 기한을 늘리는 고침은 원리상 듣지 않음.
-// 여는 것은 멱등임 — 열려 있으면 닫고, 맞춤을 다시 세우고, 자리를 다시 재어 누름.
+// 여는 것은 멱등임 — 열려 있으면 닫고, 기본 보기를 다시 세우고, 자리를 다시 재어 누름.
 // 기한 총합은 늘리지 않음: 5 + 10 + 15 = 30초로, 이 파일이 한 번에 기다리던 30초와 같음.
 // 뒤 시도일수록 길게 잡는 이유 — 앞선 빗나감은 빨리 잡고, 정말 느린 기계에는 마지막 한 번을 길게 줌.
 const OPEN_PANEL_ATTEMPT_MS = [5_000, 10_000, 15_000];
@@ -2206,7 +2212,7 @@ async function closePanel(): Promise<void> {
 	// 헬스 구획이 아니라 오버레이의 사라짐을 기다림 — 헬스를 싣지 않은 노드를 연 경우
 	// 구획이 애초에 없어 detached 를 영원히 기다리게 됨.
 	// 기한은 파일의 다른 요소 대기와 같은 30초 — 브라우저 스위트 셋이 동시에 도는 조합 실행에서
-	// 15초는 한 번 걸렸음(맵 렌더 + 맞춤이 그만큼 늦어짐). 붉게 실패하므로 위험은 flake 뿐이지만,
+	// 15초는 한 번 걸렸음(맵 렌더 + 기본 보기가 그만큼 늦어짐). 붉게 실패하므로 위험은 flake 뿐이지만,
 	// 흔들리는 스위트는 이 시험들이 내는 신호 자체를 깎음.
 	await page.waitForSelector(".detail-overlay", { state: "detached", timeout: 30_000 });
 }

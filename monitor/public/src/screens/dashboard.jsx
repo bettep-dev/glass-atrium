@@ -139,8 +139,9 @@ function ScreenDashboard({ onNav, harness, onRetryHarness }) {
         @keyframes ga-spin { to { transform: rotate(360deg); } }
         .ga-spin { animation: ga-spin 0.9s linear infinite; transform-origin: center; }
         @media (prefers-reduced-motion: reduce) { .ga-spin { animation: none; } }
-        /* one alarm row's height — the lane keeps it while loading and when empty, so the band never jumps */
-        .dash-lane-slot { min-height: calc(var(--fs-body) * 1.5 + var(--fs-meta) * 1.4 + 1.5rem); }
+        /* an idle lane is out of flow → no blank band and no section gap of its own; a lane between two sections keeps one gap */
+        .space-sections > .dash-lane.sr-only + * { margin-top: 0; }
+        .space-sections > * + .dash-lane.sr-only + * { margin-top: 24px; }
         /* 타일 힌트 — 2줄분 min-height 예약(clamp 없음) → 폭이 줄어도 밴드 높이 불변. */
         .dash-tile-hint { min-height: calc(var(--fs-meta) * 1.4 * 2); line-height: 1.4; }
         .dash-tile-detail { min-height: calc(var(--fs-body) * 1.5); }
@@ -152,10 +153,10 @@ function ScreenDashboard({ onNav, harness, onRetryHarness }) {
         .dash-strip-partial { background: transparent; border: 1px dashed currentColor; }
         .dash-result-row { display: grid; grid-template-columns: 9rem 1fr 4.5rem; align-items: center; gap: 0.5rem; }
         .dash-result-fill { height: 0.5rem; background: currentColor; border-radius: 2px; }
-        .dash-hour-grid { display: grid; grid-template-columns: 2.5rem repeat(24, minmax(0, 1fr)); gap: 2px; align-items: center; line-height: 1; }
-        .dash-hour-cell { height: 0.75rem; background: currentColor; border-radius: 2px; }
-        /* two columns (xl) → an even count puts two rows on the bottom line; both drop the hairline, not only the last */
-        @media (min-width: 1280px) { .dash-alarm-grid > .alarm-row:nth-child(odd):nth-last-child(2) { border-bottom: none; } }
+        /* tracks capped at the cell cap → capped cells keep even 2px gaps instead of floating in wider tracks */
+        .dash-hour-grid { display: grid; grid-template-columns: 2.5rem repeat(24, minmax(0, 1.25rem)); justify-content: start; gap: 2px; align-items: center; line-height: 1; }
+        .dash-hour-cell { aspect-ratio: 1; background: currentColor; border-radius: 2px; }
+        .dash-hour-tick { white-space: nowrap; }
       `}</style>
 
       <div className="flex-shrink-0">
@@ -187,11 +188,9 @@ function ScreenDashboard({ onNav, harness, onRetryHarness }) {
           onRefetchJob={refetchUpdateJob}
         />
         <StatusBand tiles={tiles} onNav={onNav} onRetry={retryTile} sharedSources={sharedSources}/>
-        <WeekRow spendState={spendDaysState} outcomesState={outcomesState} onRetrySpend={() => loadRegion('spendDays')}
+        <WeekRow spendState={spendDaysState} outcomesState={outcomesState} heatmapState={heatmapState}
+          onRetrySpend={() => loadRegion('spendDays')} onRetryHeatmap={() => loadRegion('heatmap')}
           sharedSources={sharedSources}/>
-        <WeekPanel id="dash-week-hours" title="Runs by hour" state={heatmapState} source="runs by hour"
-          onRetry={() => loadRegion('heatmap')} isRetryShared={sharedSources.includes('runs by hour')}
-          render={(data) => <HourGrid grid={buildHourGrid(data)}/>}/>
       </div>
     </div>
   );
@@ -212,52 +211,33 @@ function getPageSharedFailure(tiles, panels = []) {
   return getSharedFailure([...tileEntries, ...panels]) ?? getSharedFailure(tileEntries);
 }
 
-// 경보 레인 — 비어도 한 행 높이를 지킨다(도착·새로고침 때 밴드가 밀리지 않게).
-// polite live region 은 항상 마운트 — 먼저 있어야 나중에 붙는 경보 행이 안내된다.
-// 행 순서는 worst-first: 가장 위험한 사실이 첫 줄에 온다.
+// alarm lane — no card → no text and no space; the polite region stays mounted so a later card is announced
+// worst-first order → the most dangerous fact leads
 function AlarmLane({ alarms, readiness = ALARM_READINESS_LOADING, onNav, updateState, updateJobState, onRefetchJob }) {
-  const hasAlarms = alarms.length > 0;
-  const [reserved, setReserved] = useStateD(0);
-  const slots = getLaneSlots(alarms.length, readiness, reserved);
-  if (slots.reserved !== reserved) setReserved(slots.reserved);
-  const trailer = slots.trailer && <LaneTrailer trailer={slots.trailer} hasAlarms={hasAlarms} unread={readiness.unread}/>;
-  const isLoading = slots.trailer === 'loading';
+  const isUnread = readiness.status === 'unknown';
+  const isIdle = alarms.length === 0 && !isUnread;
   return (
-    <section className="dash-lane" aria-label="Alarms">
-      <div aria-live="polite">
-        {hasAlarms && <AlarmList alarms={alarms} onNav={onNav} updateState={updateState}
-          updateJobState={updateJobState} onRefetchJob={onRefetchJob}/>}
-        {!isLoading && trailer}
+    <section className={isIdle ? 'dash-lane sr-only' : 'dash-lane'} aria-label="Alarms">
+      <div aria-live="polite" className="flex flex-col gap-2">
+        {alarms.map((alarm) => (
+          <AlarmCard key={alarm.id} alarm={alarm} onNav={onNav}>
+            {alarm.id === 'install' && (
+              <UpdateBadge availabilityState={updateState} jobState={updateJobState} onRefetchJob={onRefetchJob}/>
+            )}
+          </AlarmCard>
+        ))}
+        {isUnread && <UnreadAlarmsCard unread={readiness.unread}/>}
       </div>
-      {/* the loading line is its own status region → beside the polite one, never inside, so it is announced once */}
-      {isLoading && trailer}
     </section>
   );
 }
 
-/**
- * The lane's height plan: its rows plus at most one trailing line.
- * A loading source reserves one slot below the rows; once it settles the lane holds that slot with a
- * status line until a row takes it → a settle moves the band neither when it adds a row nor when it adds none.
- * @param reserved - most slots the lane reserved while a source loaded (0 before any)
- * @returns reserved - the next reservation · trailer - 'loading' | 'unknown' | 'clear', or null for rows only
- */
-function getLaneSlots(rowCount, readiness, reserved) {
-  if (readiness.status === 'loading') return { reserved: Math.max(reserved, rowCount + 1), trailer: 'loading' };
-  if (readiness.status === 'unknown') return { reserved, trailer: 'unknown' };
-  return { reserved, trailer: rowCount === 0 || rowCount < reserved ? 'clear' : null };
-}
-
-// one slot-high line under the rows — its wording depends on whether rows sit above it
-function LaneTrailer({ trailer, hasAlarms, unread }) {
-  const { LoadingPlaceholder } = window.UI;
-  if (trailer === 'loading') return <LoadingPlaceholder label={hasAlarms ? 'other alarms' : 'alarms'} className="dash-lane-slot"/>;
-  const sources = unread.join(' · ');
-  const text = {
-    unknown: hasAlarms ? `Couldn't read ${sources} — more alarms may be hidden.` : `Alarms unknown — couldn't read ${sources}.`,
-    clear: hasAlarms ? 'No other alarms.' : 'No alarms need you right now.',
-  }[trailer];
-  return <p className="dash-lane-slot fs-meta text-dim flex items-center">{text}</p>;
+// a source that settled without an answer is information, not an empty lane → the header Refresh is its action
+function UnreadAlarmsCard({ unread }) {
+  return (
+    <window.UI.AlertCard tone="neutral" hasLiveHost title="Couldn't check for alarms"
+      body={`Couldn't read ${unread.join(' · ')} — more alarms may be hidden.`}/>
+  );
 }
 
 const ALARM_READINESS_LOADING = Object.freeze({ status: 'loading', unread: [] });
@@ -277,44 +257,18 @@ function getAlarmReadiness(sources) {
   return { status: unread.length > 0 ? 'unknown' : 'read', unread };
 }
 
-function AlarmList({ alarms, onNav, updateState, updateJobState, onRefetchJob }) {
-  return (
-    <div role="list" className="dash-alarm-grid grid grid-cols-1 xl:grid-cols-2 gap-x-4">
-      {alarms.map((alarm) => (
-        <AlarmRow key={alarm.id} alarm={alarm} onNav={onNav}>
-          {alarm.id === 'install' && (
-            <UpdateBadge
-              availabilityState={updateState}
-              jobState={updateJobState}
-              onRefetchJob={onRefetchJob}
-            />
-          )}
-        </AlarmRow>
-      ))}
-    </div>
-  );
-}
-
-// 한 줄 = 한 사실. 소유 화면 링크를 갖거나(target) 자기 조치를 품거나(children) 둘 중 하나.
-// flat hairline row (.alarm-row) — tone rides on the leading glyph only
-function AlarmRow({ alarm, onNav, children }) {
-  const { Badge, Icon, TONE_ICON } = window.UI;
-  return (
-    <div role="listitem" className="alarm-row" data-tone={alarm.tone}>
-      <span className="alarm-row-glyph"><Icon name={TONE_ICON[alarm.tone]} size={16}/></span>
-      <div className="min-w-0">
-        <div className="fs-body font-medium text-ink flex flex-wrap items-center gap-x-2 gap-y-1">
-          <span>{alarm.title}</span>
-          {alarm.isHeld && <Badge tone="neutral">Last known</Badge>}
-        </div>
-        {alarm.detail && <div className="fs-meta text-dim">{alarm.detail}</div>}
-      </div>
-      <div className="flex items-center gap-2">
-        {children}
-        {alarm.target && <DrillLink target={alarm.target} label={alarm.targetLabel} onNav={onNav}/>}
-      </div>
-    </div>
-  );
+// 한 카드 = 한 사실. 소유 화면 링크를 갖거나(target) 자기 조치를 품거나(children) 둘 중 하나.
+// the lane's polite region announces the card → no role of its own
+function AlarmCard({ alarm, onNav, children }) {
+  const { AlertCard, Badge } = window.UI;
+  const title = <>{alarm.title}{alarm.isHeld && <> <Badge tone="neutral">Last known</Badge></>}</>;
+  const actions = children || alarm.target ? (
+    <>
+      {children}
+      {alarm.target && <DrillLink target={alarm.target} label={alarm.targetLabel} onNav={onNav}/>}
+    </>
+  ) : null;
+  return <AlertCard tone={alarm.tone} hasLiveHost title={title} body={alarm.detail} actions={actions}/>;
 }
 
 // 상태 밴드 — 4타일 고정, 좁은 폭에선 2×2. 값 · 힌트 한 줄 · 소유 화면 링크.
@@ -342,6 +296,10 @@ function StatusTile({ tile, onNav, onRetry, isRetryShared = false }) {
   const { RetryButton } = window.UI;
   const cardId = getTileCardId(tile);
   const isCovered = tile.status === 'error' && isRetryShared;
+  const isFailed = tile.status === 'error' && !isCovered;
+  const retry = tile.canRetry && !isRetryShared && (
+    <RetryButton onRetry={() => onRetry(tile.region)} isBusy={tile.isBusy} focusTargetId={cardId}/>
+  );
   return (
     <div id={cardId} className={`card p-3 flex flex-col gap-1.5 ${tile.isBusy ? 'opacity-70' : ''}`.trim()}
       aria-busy={tile.isBusy ? 'true' : undefined}>
@@ -349,31 +307,32 @@ function StatusTile({ tile, onNav, onRetry, isRetryShared = false }) {
         {tile.label}
         {tile.window && <span className="normal-case"> ({tile.window})</span>}
       </h2>
-      {/* a failure stays flat in the tile → one card, one Retry; a banner-carried one points up instead of repeating */}
-      <window.UI.TileSplit
-        lead={<StatusTileValue tile={tile}/>}
-        detail={
-          <>
-            <div className="fs-body text-dim dash-tile-detail">{isCovered ? null : tile.detail}</div>
-            <div className="fs-meta text-dim dash-tile-hint" title={tile.note}>
-              {isCovered ? SHARED_FAILURE_HINT : tile.hint}
-            </div>
-            {/* the raw cause in a <details> → keyboard and screen readers reach it, as RegionUnavailable's ErrorDetails does */}
-            {!isCovered && tile.failureDetail && (
-              <details className="fs-meta text-faint">
-                <summary className="cursor-pointer">Details</summary>
-                <code className="block mt-1 font-mono break-all">{tile.failureDetail}</code>
-              </details>
-            )}
-          </>
-        }
-      />
-      {tile.canRetry && !isRetryShared && (
-        <RetryButton onRetry={() => onRetry(tile.region)} isBusy={tile.isBusy} focusTargetId={cardId}/>
-      )}
+      {/* a failure is one inset card in the tile carrying its Retry; a banner-carried one points up instead of repeating */}
+      <window.UI.TileSplit lead={<StatusTileValue tile={tile}/>}
+        detail={isFailed ? <TileFailure tile={tile} retry={retry}/> : <TileDetail tile={tile} isCovered={isCovered}/>}/>
+      {!isFailed && retry}
       {/* the drill stays a card-foot child, a failed tile's too → mt-auto keeps the four CTAs on one baseline at xl */}
       {tile.target && <DrillLink target={tile.target} label={tile.targetLabel} onNav={onNav} className="self-start mt-auto"/>}
     </div>
+  );
+}
+
+function TileDetail({ tile, isCovered }) {
+  return (
+    <>
+      <div className="fs-body text-dim dash-tile-detail">{isCovered ? null : tile.detail}</div>
+      <div className="fs-meta text-dim dash-tile-hint" title={tile.note}>
+        {isCovered ? SHARED_FAILURE_HINT : tile.hint}
+      </div>
+    </>
+  );
+}
+
+// the raw cause rides in the card's Details disclosure → keyboard and screen readers reach it
+function TileFailure({ tile, retry }) {
+  return (
+    <window.UI.AlertCard tone="crit" surface="inset" title={tile.detail} body={tile.hint}
+      details={tile.failureDetail} actions={retry}/>
   );
 }
 
@@ -407,17 +366,23 @@ function StatusTileValue({ tile }) {
   );
 }
 
-// the week behind the triage band → each half states its own span (the strip 7 days, the results 7 days + today)
-function WeekRow({ spendState, outcomesState, onRetrySpend, sharedSources = NO_SHARED_SOURCES }) {
+// the week behind the triage band → each panel states its own span (the strip 7 days, the results 7 days + today)
+// results | runs by hour pair from xl (both this week's runs; half width keeps the hour cells square and short) → Spend's strip spans the row below
+function WeekRow({ spendState, outcomesState, heatmapState, onRetrySpend, onRetryHeatmap, sharedSources = NO_SHARED_SOURCES }) {
   return (
-    <div className="grid grid-cols-1 xl:grid-cols-2 gap-card">
+    <>
+      <div className="grid grid-cols-1 xl:grid-cols-2 gap-card">
+        <WeekPanel id="dash-week-results" title="This week's task results" state={outcomesState} source="task results"
+          isRetryShared={sharedSources.includes('task results')}
+          render={(data) => <ResultPanel panel={buildResultPanel(data)}/>}/>
+        <WeekPanel id="dash-week-hours" title="Runs by hour" state={heatmapState} source="runs by hour"
+          onRetry={onRetryHeatmap} isRetryShared={sharedSources.includes('runs by hour')}
+          render={(data) => <HourGrid grid={buildHourGrid(data)}/>}/>
+      </div>
       <WeekPanel id="dash-week-spend" title="Spend per day" state={spendState} source="daily spend" onRetry={onRetrySpend}
         isRetryShared={sharedSources.includes('daily spend')}
         render={(data) => <SpendStrip strip={buildSpendStrip(data.points)}/>}/>
-      <WeekPanel id="dash-week-results" title="This week's task results" state={outcomesState} source="task results"
-        isRetryShared={sharedSources.includes('task results')}
-        render={(data) => <ResultPanel panel={buildResultPanel(data)}/>}/>
-    </div>
+    </>
   );
 }
 
@@ -447,19 +412,18 @@ function getPanelView(state) {
 
 // a failure the page banner carries points up to it → one cause, one Retry
 function PanelFailure({ id, view, state, source, onRetry, isRetryShared }) {
-  const { RetryButton, getErrorCopy } = window.UI;
+  const { AlertCard, RetryButton, getErrorCopy } = window.UI;
   if (view !== 'error' && view !== 'held') return null;
   if (!onRetry || isRetryShared) {
     const lead = view === 'held' ? 'Showing the last reading' : 'Not loaded';
     return <p className="fs-meta text-dim">{lead} — {isRetryShared ? POINTER.BANNER : POINTER.RESULTS_TILE}.</p>;
   }
-  const sentence = view === 'held' ? `Showing the last reading — couldn't refresh ${source}.` : getErrorCopy(state.error, source).sentence;
-  return (
-    <>
-      <p className={view === 'held' ? 'fs-meta text-dim' : 'fs-body'}>{sentence}</p>
-      <RetryButton onRetry={onRetry} isBusy={state.busy} focusTargetId={id}/>
-    </>
-  );
+  const retry = <RetryButton onRetry={onRetry} isBusy={state.busy} focusTargetId={id}/>;
+  if (view === 'held') {
+    return <AlertCard tone="neutral" surface="inset" title={`Showing the last reading — couldn't refresh ${source}.`} actions={retry}/>;
+  }
+  const copy = getErrorCopy(state.error, source);
+  return <AlertCard tone="crit" surface="inset" title={copy.sentence} body={copy.next} details={copy.detail} actions={retry}/>;
 }
 
 function SpendStrip({ strip }) {
@@ -571,7 +535,7 @@ function HourGrid({ grid }) {
           </React.Fragment>
         ))}
         <span/>
-        {HOUR.OF_DAY.map((hour) => <span key={hour}>{HOUR.TICKS.has(hour) ? formatHour(hour) : ''}</span>)}
+        {HOUR.OF_DAY.map((hour) => <span key={hour} className="dash-hour-tick">{HOUR.TICKS.has(hour) ? formatHourTick(hour) : ''}</span>)}
       </div>
     </>
   );
@@ -582,7 +546,12 @@ function getRowLabel(row) {
 }
 
 function formatHour(hour) {
-  return `${String(hour).padStart(2, '0')}:00`;
+  return `${formatHourTick(hour)}:00`;
+}
+
+// a 20px column fits two digits, not HH:00 → the tooltip keeps the full hour
+function formatHourTick(hour) {
+  return String(hour).padStart(2, '0');
 }
 
 function describeHourGrid(grid) {

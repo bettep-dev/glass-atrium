@@ -10,6 +10,7 @@ import type {
   BudgetDomainKey,
   FrontmatterSurface,
   ModelDomainKey,
+  TierDomainKey,
 } from "./types/model-config.js";
 
 // SoT-derived known-model roster (pricing.json, D3)
@@ -169,6 +170,54 @@ export const BUDGET_DOMAINS: ReadonlyArray<BudgetDomainDef> = [
   {
     key: "budget.pre_verify_max_usd",
     daemonConfigKey: "pre_verify_max_budget_usd",
+    applyMode: "next-cycle",
+  },
+];
+
+// `claude --effort <level>` values, exact lowercase — the CLI's alias spellings stay out so monitor, loader and CLI cannot drift.
+export const EFFORT_LEVELS = ["low", "medium", "high", "xhigh", "max"] as const;
+
+/**
+ * CLAUDE_CODE_MAX_OUTPUT_TOKENS value.
+ * 6-digit ceiling = fat-finger guard only — the CLI silently caps a value above the model's own limit.
+ */
+export const OUTPUT_CAP_PATTERN = /^[1-9][0-9]{0,5}$/;
+
+export interface TierDomainDef {
+  key: TierDomainKey;
+  // daemon-config.json key hooks/daemon_config.py reads for this knob.
+  daemonConfigKey: string;
+  kind: "effort" | "output-cap";
+  applyMode: ApplyMode;
+}
+
+/**
+ * Daemon `claude -p` tier knobs, read at daemon module-init each launchd cycle.
+ * 'inherit' = key removed → no --effort flag / no output-cap env → the CLI default governs.
+ */
+export const TIER_DOMAINS: ReadonlyArray<TierDomainDef> = [
+  {
+    key: "tier.worker_effort",
+    daemonConfigKey: "worker_effort",
+    kind: "effort",
+    applyMode: "next-cycle",
+  },
+  {
+    key: "tier.pre_verify_effort",
+    daemonConfigKey: "pre_verify_effort",
+    kind: "effort",
+    applyMode: "next-cycle",
+  },
+  {
+    key: "tier.worker_max_output_tokens",
+    daemonConfigKey: "worker_max_output_tokens",
+    kind: "output-cap",
+    applyMode: "next-cycle",
+  },
+  {
+    key: "tier.pre_verify_max_output_tokens",
+    daemonConfigKey: "pre_verify_max_output_tokens",
+    kind: "output-cap",
     applyMode: "next-cycle",
   },
 ];
@@ -425,4 +474,52 @@ export function validateBudgetValue(value: unknown): string | null {
     return `must not exceed '${BUDGET_MAX_USD.toFixed(2)}'`;
   }
   return null;
+}
+
+/** Validation reason for a tier-knob value, or null when valid. 'inherit' (unset) is valid on every knob. */
+export function validateTierValue(def: TierDomainDef, value: unknown): string | null {
+  if (typeof value !== "string") {
+    return "must be a string";
+  }
+  if (value === INHERIT_VALUE) {
+    return null;
+  }
+  if (def.kind === "effort") {
+    return (EFFORT_LEVELS as ReadonlyArray<string>).includes(value)
+      ? null
+      : `must be '${INHERIT_VALUE}' or one of: ${EFFORT_LEVELS.join(", ")}`;
+  }
+  return OUTPUT_CAP_PATTERN.test(value)
+    ? null
+    : `must be '${INHERIT_VALUE}' or a whole number of tokens from 1 to 999999, no leading zero`;
+}
+
+/** One tier knob's daemon-config.json value as the daemon loader resolves it. */
+export type TierFileValue =
+  | { state: "unset" }
+  | { state: "accepted"; value: string }
+  | { state: "rejected"; reason: string };
+
+// Reason wording of hooks/daemon_config.py → _get_knob_error, so the row and the daemon's FATAL line read alike.
+const TIER_FILE_REJECT_TAIL: Readonly<Record<TierDomainDef["kind"], string>> = {
+  effort: `tier (allowed: ${EFFORT_LEVELS.join(", ")})`,
+  "output-cap": "output cap (allowed: a positive integer string, 1-999999)",
+};
+
+/**
+ * Read-back twin of hooks/daemon_config.py → _get_knob_error.
+ * Absent, null or "" → unset.
+ * A value the PUT accepts, 'inherit' aside → in effect.
+ * Anything else → rejected.
+ * 'inherit' → rejected too: the PUT removes the key for it → never a valid file value.
+ * A rejected knob stops every daemon cycle (autoagent/daemon_cycle.py → ExitCode.DAEMON_CONFIG_INVALID).
+ */
+export function getTierFileValue(def: TierDomainDef, raw: unknown): TierFileValue {
+  if (raw === undefined || raw === null || raw === "") {
+    return { state: "unset" };
+  }
+  if (typeof raw === "string" && raw !== INHERIT_VALUE && validateTierValue(def, raw) === null) {
+    return { state: "accepted", value: raw };
+  }
+  return { state: "rejected", reason: `${JSON.stringify(raw)} is not a valid ${TIER_FILE_REJECT_TAIL[def.kind]}` };
 }

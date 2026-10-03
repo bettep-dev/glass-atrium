@@ -1,7 +1,9 @@
 """Shared daemon-config SoT loader (I6+I7).
 
 Single read path for the background-worker per-call budget ceiling, the
-pre-verify per-call budget ceiling, and the background-worker model id. The
+pre-verify per-call budget ceiling, the background-worker model id, and the
+per-role tier knobs (effort level + output-token cap) of the worker and
+pre-verify calls. The
 "worker" is the model the unattended loops run their own LLM calls on — the
 autoagent patch generator and the wiki compile/dedup calls. It is named for that
 ROLE, never for a model tier: the previous `haiku_*` vocabulary named a model
@@ -34,8 +36,10 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import sys
 from pathlib import Path
+from typing import Literal, NamedTuple
 
 # Pin this hook's own dir on sys.path so the sibling ga_paths seam resolves under
 # any invocation (script or importlib) — mirrors learning-aggregator.py's insert.
@@ -53,6 +57,28 @@ CONFIG_PATH = Path(
     os.environ.get("DAEMON_CONFIG")
     or str(ga_paths.get_data_root() / "daemon-config.json")
 )
+
+# `claude --effort` levels, exact lowercase — no CLI aliases, so monitor/loader/CLI cannot drift
+EFFORT_LEVELS: tuple[str, ...] = ("low", "medium", "high", "xhigh", "max")
+
+# 6-digit ceiling = fat-finger guard only — the CLI silently caps at the model's own limit
+_OUTPUT_CAP_PATTERN = re.compile(r"[1-9][0-9]{0,5}")
+
+# Validated, never silently defaulted — the CLI ignores a bad --effort / output cap (exit 0)
+_KNOB_KINDS: dict[str, Literal["tier", "output cap"]] = {
+    "worker_effort": "tier",
+    "pre_verify_effort": "tier",
+    "worker_max_output_tokens": "output cap",
+    "pre_verify_max_output_tokens": "output cap",
+}
+
+
+class TierKnobs(NamedTuple):
+    """One role's tier knobs; "" = unset → the call carries no flag / no env var."""
+
+    effort: str
+    max_output_tokens: str
+
 
 # Defensive fallback literals, used ONLY when daemon-config.json is missing or
 # unreadable — i.e. on a fresh install, until the first monitor Save writes the file.
@@ -88,6 +114,8 @@ _FALLBACK: dict[str, str] = {
     # inheriting the session default. Bumping the daemon to a newer Sonnet is a
     # deliberate edit here (and to the sibling shell/monitor seams), not automatic.
     "worker_model": "claude-sonnet-5",
+    # Tier knobs ship unset — today's call shape (no --effort, child env untouched).
+    **dict.fromkeys(_KNOB_KINDS, ""),
 }
 
 # Legacy daemon-config.json keys, mapped to their current names. An install that
@@ -113,7 +141,9 @@ def load_daemon_config(
     leading "_comment" documentation key is ignored.
 
     Per-key resolution order: current key → pre-retirement legacy key
-    (_LEGACY_KEY_ALIASES) → in-code literal.
+    (_LEGACY_KEY_ALIASES) → in-code literal. A tier knob instead resolves to its
+    value when accepted, else to "" (unset); a set-but-rejected knob is also
+    named in ``KNOB_ERRORS``, never written to stderr here.
 
     Args:
         path: override config path (test injection); None → CONFIG_PATH.
@@ -128,9 +158,10 @@ def load_daemon_config(
             governs. ``LEGACY_KEYS_IN_USE`` exposes the same fact to callers.
 
     Returns:
-        dict with exactly the 3 keys worker_max_budget_usd /
-        pre_verify_max_budget_usd / worker_model — all str values.
+        dict with exactly the _FALLBACK keys — all str values.
     """
+    global KNOB_ERRORS
+    KNOB_ERRORS = {}
     config_path = path if path is not None else CONFIG_PATH
     try:
         raw = json.loads(config_path.read_text(encoding="utf-8"))
@@ -156,6 +187,8 @@ def load_daemon_config(
     out: dict[str, str] = {}
     legacy_used: list[str] = []
     for key, fallback_value in _FALLBACK.items():
+        if key in _KNOB_KINDS:
+            continue
         value = raw.get(key)
         if not (isinstance(value, str) and value):
             # Current key absent/blank → try the pre-retirement name before the
@@ -174,13 +207,41 @@ def load_daemon_config(
         out[key] = value if isinstance(value, str) and value else fallback_value
     global LEGACY_KEYS_IN_USE
     LEGACY_KEYS_IN_USE = tuple(legacy_used)
+    for key, kind in _KNOB_KINDS.items():
+        value = raw.get(key)
+        error = _get_knob_error(kind, value)
+        if error is not None:
+            KNOB_ERRORS[key] = error
+        out[key] = value if error is None and isinstance(value, str) else ""
     return out
+
+
+def _get_knob_error(kind: Literal["tier", "output cap"], value: object) -> str | None:
+    """Reason a set knob value is rejected; None when it is unset or accepted.
+
+    The raw value is quoted as JSON — one line whatever it holds, and the form the
+    operator finds in the file.
+    """
+    if value is None or value == "":
+        return None
+    if kind == "tier":
+        if isinstance(value, str) and value in EFFORT_LEVELS:
+            return None
+        allowed = ", ".join(EFFORT_LEVELS)
+    else:
+        if isinstance(value, str) and _OUTPUT_CAP_PATTERN.fullmatch(value):
+            return None
+        allowed = "a positive integer string, 1-999999"
+    return f"{json.dumps(value)} is not a valid {kind} (allowed: {allowed})"
 
 
 # Pre-retirement config keys this process actually read, populated by the most
 # recent load_daemon_config() call. Non-empty => the on-disk daemon-config.json
 # still carries the old names and one monitor Save will migrate it.
 LEGACY_KEYS_IN_USE: tuple[str, ...] = ()
+
+# Rejected tier knobs of the latest load, key → reason — import silent; daemon_cycle fails loud
+KNOB_ERRORS: dict[str, str] = {}
 
 # Module-level cache — resolved once at import. Stage-2 owners read these three
 # names (NOT the function) to replace their literals, e.g.:
@@ -190,3 +251,9 @@ _CONFIG = load_daemon_config(warn=False)
 WORKER_MAX_BUDGET_USD: str = _CONFIG["worker_max_budget_usd"]
 PRE_VERIFY_MAX_BUDGET_USD: str = _CONFIG["pre_verify_max_budget_usd"]
 WORKER_MODEL: str = _CONFIG["worker_model"]
+TIER_KNOBS: dict[Literal["worker", "pre_verify"], TierKnobs] = {
+    "worker": TierKnobs(_CONFIG["worker_effort"], _CONFIG["worker_max_output_tokens"]),
+    "pre_verify": TierKnobs(
+        _CONFIG["pre_verify_effort"], _CONFIG["pre_verify_max_output_tokens"]
+    ),
+}
