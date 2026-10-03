@@ -2327,7 +2327,7 @@ function TurnStatsBody({ state, days, failures, onRetry }) {
   const maxEvents = stopReasons.reduce((m, r) => Math.max(m, Number(r.event_count) || 0), 0);
   const totalEvents = stopReasons.reduce((s, r) => s + (Number(r.event_count) || 0), 0);
 
-  // Stacked, never split: the card is the 3fr side of a pair at xl → a table column beside the
+  // Stacked, never split: the card is the 2fr side of a pair from lg → a table column beside the
   // aggregates would sit below the table's own minimum width.
   return (
     <>

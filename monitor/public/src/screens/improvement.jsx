@@ -1311,7 +1311,7 @@ function KanbanColumnI({
 	);
 }
 
-// '＋N more' — a real focusable toggle (T8), expanding the lane in place; volume stays a number.
+// '＋N more' — a real focusable toggle, expanding the lane in place; volume stays a number.
 function LaneMoreToggleI({ hiddenCount, isExpanded, noun, onToggle }) {
 	return (
 		<button

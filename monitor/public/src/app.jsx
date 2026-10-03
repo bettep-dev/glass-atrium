@@ -42,11 +42,8 @@ const NAV_BADGE_CRIT_STYLE = {
 	borderColor: "transparent",
 };
 const MAIN_CONTENT_ID = "main-content";
-// tokens.css steps, inline → the shell holds the type floor on screens that mount no TypeScaleStyle
-const TEXT_STYLE = {
-	META: { fontSize: "var(--fs-meta)" },
-	CONTROL: { fontSize: "var(--fs-control)" },
-};
+// tokens.css meta step, inline → the shell holds the type floor on screens that mount no TypeScaleStyle
+const META_TEXT_STYLE = { fontSize: "var(--fs-meta)" };
 // circuit-breaker source for the Agents nav numeral — same cheap one-row read as the Dashboard's
 const AGENT_SUMMARY_URL = "/api/agents/summary?days=7&order=runs&limit=1";
 
@@ -82,7 +79,7 @@ function Sidebar({ active, onNav, harness, agentsState, pageState }) {
 						<img src="/assets/favicon/icon-192.png" alt="Atrium Monitor" className="w-full h-full object-cover" />
 					</div>
 					<div className="rail-hide">
-						<div className="font-semibold leading-none" style={TEXT_STYLE.META}>
+						<div className="font-semibold leading-none" style={META_TEXT_STYLE}>
 							Atrium Monitor
 						</div>
 					</div>
@@ -115,9 +112,7 @@ function Sidebar({ active, onNav, harness, agentsState, pageState }) {
 							>
 								<Icon name={n.icon} size={14} />
 								{/* min-w-0 + truncate — 영문 라벨 + 복수 배지 동시 표시 시 220px 초과분은 라벨 말줄임 (배지는 shrink-0 보존). */}
-								<span className="rail-hide flex-1 min-w-0 truncate" style={TEXT_STYLE.CONTROL}>
-									{n.label}
-								</span>
+								<span className="rail-hide flex-1 min-w-0 truncate">{n.label}</span>
 								{badges.map((b, i) => (
 									<span
 										key={i}
@@ -137,7 +132,7 @@ function Sidebar({ active, onNav, harness, agentsState, pageState }) {
 				</div>
 			</nav>
 			<div className="p-3 border-t border-line">
-				<div className="bg-sunken rounded-md p-2.5" style={TEXT_STYLE.META}>
+				<div className="bg-sunken rounded-md p-2.5" style={META_TEXT_STYLE}>
 					<div className="flex items-center gap-1.5 mb-1">
 						{/* 라이브 롤업 파생 — ok 상태만 pulse(live-dot), 그 외 정적 (가짜 상시-green 제거). */}
 						<span className={`w-1.5 h-1.5 rounded-full ${systems.dotClass}${systems.tone === "ok" ? " live-dot" : ""}`}></span>

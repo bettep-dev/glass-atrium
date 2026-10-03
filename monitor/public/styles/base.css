@@ -211,7 +211,7 @@ details[open] > summary .chevron {
 
 /* ── Badge shell — 단일 canonical FORM (전 role/변형 공용) ────────────────────
    window.UI.Badge(ui.jsx) 의 styling layer. 모든 role 이 이 neutral shell FORM 을 공유한다:
-   neutral(--sunken/--dim/--line) · min-height 22px + padding 3/8(border-box, 폼요소 패밀리 호흡) · --radius-badge · --fs-micro · weight 500.
+   neutral(--sunken/--dim/--line) · min-height 22px + padding 3/8(border-box, 폼요소 패밀리 호흡) · --radius-badge · --fs-meta · weight 500.
    tone 은 shell 에 칠하지 않는다 — 내부 심볼(Icon/glyph)에 text-{tone} 로만 (dead .pill.crit/.warn/.info/.ok 제거). */
 .pill {
 	display: inline-flex;
