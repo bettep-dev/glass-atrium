@@ -1293,9 +1293,9 @@ describe("a config banner is the shared alert card, its tone never painted on a 
   }
 });
 
-test("the drift banner triggers on any drifted model or budget row, not on the file state alone", () => {
+test("the drift banner triggers on any drifted row of any group, not on the file state alone", () => {
   const hasDrift = sandboxFnMc<(data: unknown) => boolean>("hasRowDriftMC");
-  assert.strictEqual(hasDrift({ domains: [], budgets: [] }), false, "nothing drifted → no trigger");
+  assert.strictEqual(hasDrift({ domains: [], budgets: [], tiers: [] }), false, "nothing drifted → no trigger");
   assert.strictEqual(
     hasDrift({ domains: [{ domain: "model.dev", drift: true }], budgets: [] }),
     true,
@@ -1305,6 +1305,11 @@ test("the drift banner triggers on any drifted model or budget row, not on the f
     hasDrift({ domains: [], budgets: [{ domain: "budget.worker_max_usd", drift: true }] }),
     true,
     "one drifted budget row raises it on its own",
+  );
+  assert.strictEqual(
+    hasDrift({ domains: [], budgets: [], tiers: [{ domain: "tier.worker_effort", drift: true }] }),
+    true,
+    "one drifted tier row raises it on its own",
   );
 });
 
