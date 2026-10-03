@@ -2100,21 +2100,18 @@ function CrosstabCard({ state, onRetry, shared }) {
 
   const crosstab   = state.status === 'ready' ? state.data?.crosstab : null;
   const polarTotal = crosstab ? crosstab.polarTotal : 0;
-  const polarPct   = crosstab && crosstab.total > 0 ? (polarTotal / crosstab.total * 100) : 0;
   const confidentFailed = getConfidentFailedO(crosstab);
 
   return (
     <div id={REGION_CARD_IDS.crosstab} className="card mb-4">
       <CardHead
         title="Confident but failed"
-        sub={confidentFailed
-          ? `${formatIntO(confidentFailed.count)} records (${formatRateO(confidentFailed.share)})`
-          : 'High confidence, check failed'}
+        sub={confidentFailed && `${formatIntO(confidentFailed.count)} · ${formatRateO(confidentFailed.share)}`}
         info={<p className="fs-body m-0">Records whose writer reported high confidence while the record's own check failed.</p>}
         right={
           state.status === 'ready' && (
             <Badge role="status" tone="warn" icon>
-              Mismatches: {formatIntO(polarTotal)} ({polarPct.toFixed(1)}%)
+              {formatIntO(polarTotal)} mismatches
             </Badge>
           )
         }
