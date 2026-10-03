@@ -365,6 +365,17 @@ test("the run-history summary carries the cycle p95 exactly when the server repo
   helpers.window.UI.formatDuration = originalFormat;
 });
 
+test("the run-history summary fits the 32-character header-meta cap at its widest", () => {
+  const originalFormat = helpers.window.UI.formatDuration;
+  helpers.window.UI.formatDuration = (v: number, unit: string) => `${v}${unit}`;
+  const cycles = unchangedCycles(30);
+  const summary = helpers.describeRunHistoryW(cycles, helpers.buildThroughputModel(cycles), ready({ cycle_p95_ms: 125000 }));
+  helpers.window.UI.formatDuration = originalFormat;
+
+  assert.match(summary, /^30 runs in 30 d\b.*p95 125000ms$/);
+  assert.ok(summary.length <= 32, `"${summary}" is ${summary.length} chars`);
+});
+
 // Broken links ride the library tile's caption, not a line of their own.
 test("the library tile's caption carries the broken-link count, and says so when the backlog omits it", () => {
   const index = ready({ notes_total: 40 });

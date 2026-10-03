@@ -1380,6 +1380,18 @@ test("the failing-pairs header meta counts failing over judged pairs within the 
   assert.ok(sub.length <= 32, `${sub.length} chars`);
 });
 
+test("the review-flag and task-type headers keep their meta within the 32-character cap", async () => {
+  const headers = [
+    ...findAtoms(await renderComponent("ReviewFlagTimelineCard", { state: LOADING_STATE, days: 90, onRetry: () => undefined }), "CardHead"),
+    ...findAtoms(await renderComponent("TaskTypeFold", { state: LOADING_STATE, days: 90, onRetry: () => undefined }), "Disclosure"),
+  ];
+  assert.equal(headers.length, 2, "both headers render");
+  for (const header of headers) {
+    const sub = String(header.props.sub);
+    assert.ok(sub.length <= 32, `${header.props.title}: "${sub}" is ${sub.length} chars`);
+  }
+});
+
 test("the failing-pairs table ranks solid pairs above a divider that names the low-sample group", async () => {
   const mod = await loadAgentsScreen();
   const React = mod.React as { createElement: (t: unknown, p: unknown) => unknown };

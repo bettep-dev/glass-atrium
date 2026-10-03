@@ -626,7 +626,7 @@ function TaskTypeFold({ failures, state, days, onRetry }) {
   const tone = useMemoAg(() => getTaskTypeTone(state), [state]);
 
   return (
-    <window.UI.Disclosure kind="detail" title="By task type" sub="Success rate per agent × task type" tone={tone} className="mb-4">
+    <window.UI.Disclosure kind="detail" title="By task type" sub="Success rate, agent × task type" tone={tone} className="mb-4">
       <SuccessRateMatrixCard failures={failures} state={state} days={days} onRetry={onRetry}/>
     </window.UI.Disclosure>
   );
@@ -2724,7 +2724,7 @@ function ReviewFlagTimelineCard({ failures, state, days, onRetry }) {
 
   return (
     <div id={IDS.REGION_CARD.reviewFlags} className="card flex flex-col min-h-0">
-      <CardHead title="Review flags" sub={`Last ${days} days · flag reasons per day and flagged rate`}/>
+      <CardHead title="Review flags" sub={`Flag reasons and rate · ${days} days`}/>
       <div className="card-body ag-card-body">
         <QualityHealthTimeline failures={failures} state={state} onRetry={onRetry}/>
       </div>

@@ -102,7 +102,7 @@ function ScreenWiki() {
         .alarm-row[data-tone="neutral"] .alarm-row-glyph { color: rgb(var(--dim)); }
         /* Name, bar and count stay within reading distance on a wide panel. */
         .w-type-list { max-width: 40rem; }
-        .w-type-row { display: grid; grid-template-columns: minmax(0, 9rem) minmax(0, 1fr) 3.5rem 2.5rem; align-items: center; gap: 0.75rem; }
+        .w-type-row { display: grid; grid-template-columns: minmax(0, 9rem) minmax(0, 1fr) 3.5rem 2.5rem; align-items: center; gap: 0.75rem; height: var(--row-h); }
         .w-type-track { display: block; height: 6px; border-radius: 9999px; background: rgb(var(--line)); }
         .w-type-fill { display: block; height: 100%; border-radius: inherit; background: rgb(var(--dim)); }
       `}</style>
@@ -1005,7 +1005,7 @@ function WikiStatusRow({ cyclesState, summaryState, indexState, shared, onRetry 
 	const { SplitRow } = window.UI;
 
 	return (
-		<SplitRow ratio="2:1">
+		<SplitRow ratio="2:1" layout="equal">
 			<WikiRunHistorySection
 				cyclesState={cyclesState}
 				summaryState={summaryState}
@@ -1026,41 +1026,43 @@ function WikiRunHistorySection({ cyclesState, summaryState, shared, onRetry }) {
 	);
 
 	return (
-		<WikiCardW
-			id={WIKI_REGION_IDS.runHistory}
-			label="Run history"
-			count={describeRunHistoryW(cyclesState, model, summaryState)}
-		>
-			{window.UI.getRegionView(cyclesState) === "loading" ? (
-				<LoadingPlaceholder label="run history" minHeight={120} />
-			) : window.UI.getRegionView(cyclesState) === "error" ? (
-				<WikiRegionFailureW
-					feeders={[WIKI_FEEDERS.runHistory]}
-					source="run history"
-					error={cyclesState.error}
-					isBusy={cyclesState.busy}
-					shared={shared}
-					focusTargetId={WIKI_REGION_IDS.runHistory}
-					onRetry={onRetry}
-				/>
-			) : model.rows.length === 0 ? (
-				<EmptyStateW
-					message={`No wiki compile runs in the last ${WIKI_CYCLE_DAYS} days.`}
-				/>
-			) : (
-				<>
-					{/* The window is a fetch bound, not what is drawn → name the days the bars cover. */}
-					<SparseTrendW
-						label={`Notes per day · ${model.spanDays} ${model.spanDays === 1 ? "day" : "days"}`}
-						series={model.compiledSeries}
-						dates={model.compiledDates}
-						stat={`${formatCountW(model.total)} notes in ${model.spanDays} d · ${model.activeDays} active days`}
+		<div id={WIKI_REGION_IDS.runHistory} className="min-w-0">
+			<window.UI.Card
+				size={STATUS_CARD_SIZE_W}
+				title="Run history"
+				sub={describeRunHistoryW(cyclesState, model, summaryState)}
+			>
+				{window.UI.getRegionView(cyclesState) === "loading" ? (
+					<LoadingPlaceholder label="run history" minHeight={120} />
+				) : window.UI.getRegionView(cyclesState) === "error" ? (
+					<WikiRegionFailureW
+						feeders={[WIKI_FEEDERS.runHistory]}
+						source="run history"
+						error={cyclesState.error}
+						isBusy={cyclesState.busy}
+						shared={shared}
+						focusTargetId={WIKI_REGION_IDS.runHistory}
+						onRetry={onRetry}
 					/>
-					{/* A near-uniform mix carries no information — only a mixed run set earns the bar. */}
-					{!model.isMixUniform && <WikiStatusMixW mix={model.mix} />}
-				</>
-			)}
-		</WikiCardW>
+				) : model.rows.length === 0 ? (
+					<EmptyStateW
+						message={`No wiki compile runs in the last ${WIKI_CYCLE_DAYS} days.`}
+					/>
+				) : (
+					<div className="flex flex-col gap-2">
+						{/* The window is a fetch bound, not what is drawn → name the days the bars cover. */}
+						<SparseTrendW
+							label={`Notes per day · ${model.spanDays} ${model.spanDays === 1 ? "day" : "days"}`}
+							series={model.compiledSeries}
+							dates={model.compiledDates}
+							stat={`${formatCountW(model.total)} notes in ${model.spanDays} d · ${model.activeDays} active days`}
+						/>
+						{/* A near-uniform mix carries no information — only a mixed run set earns the bar. */}
+						{!model.isMixUniform && <WikiStatusMixW mix={model.mix} />}
+					</div>
+				)}
+			</window.UI.Card>
+		</div>
 	);
 }
 
@@ -1137,7 +1139,7 @@ function describeRunHistoryW(cyclesState, model, summaryState) {
 	const p95 =
 		summaryState.status === "ready" ? summaryState.data?.cycle_p95_ms : null;
 	const runs = model.rows.length === 1 ? "run" : "runs";
-	return `${model.rows.length} ${runs} in ${model.spanDays} d · last ${model.newestDate}${describeP95W(p95)}`;
+	return `${model.rows.length} ${runs} in ${model.spanDays} d${describeP95W(p95)}`;
 }
 
 /**
@@ -1185,19 +1187,8 @@ function openOnOwnFocusW(event) {
 	if (event.target === event.currentTarget) event.currentTarget.open = true;
 }
 
-// Open section shell — the status-card counterpart of WikiDisclosureW.
-// Fills its split-row cell → a paired card ends level with its neighbour.
-function WikiCardW({ id, label, count, children }) {
-	return (
-		<section id={id} className="rounded-md border border-line bg-sunken p-3 flex flex-col gap-2 min-w-0 h-full">
-			<div className="flex items-center gap-2 flex-wrap">
-				<h2 className="m-0 fs-body text-ink font-medium">{label}</h2>
-				<span className="ml-auto fs-meta text-dim">{count}</span>
-			</div>
-			{children}
-		</section>
-	);
-}
+// Status-row peers share one slot → their feet pin to one edge of the stretched row.
+const STATUS_CARD_SIZE_W = "S";
 
 // Notes by type — the library's composition, open as a compact list.
 function WikiNotesByTypeSection({ state, shared, onRetry }) {
@@ -1209,27 +1200,32 @@ function WikiNotesByTypeSection({ state, shared, onRetry }) {
 	const coverage = describeNoteCoverageW(rows);
 
 	return (
-		<WikiCardW id={WIKI_REGION_IDS.notesByType} label="Notes by type" count={describeNotesByTypeW(state)}>
-			{window.UI.getRegionView(state) === "loading" ? (
-				<LoadingPlaceholder label="note types" />
-			) : window.UI.getRegionView(state) === "error" ? (
-				<WikiRegionFailureW
-					feeders={[WIKI_FEEDERS.notesByType]}
-					source="notes by type"
-					error={state.error}
-					isBusy={state.busy}
-					shared={shared}
-					focusTargetId={WIKI_REGION_IDS.notesByType}
-					onRetry={onRetry}
-				/>
-			) : rows.length === 0 ? (
-				<EmptyStateW message="No notes indexed yet." />
-			) : (
-				<>
-					<ul className="w-type-list flex flex-col gap-1.5 m-0 p-0 list-none">
+		<div id={WIKI_REGION_IDS.notesByType} className="min-w-0">
+			<window.UI.Card
+				size={STATUS_CARD_SIZE_W}
+				title="Notes by type"
+				sub={describeNotesByTypeW(state)}
+				foot={coverage && <span className="truncate">{coverage}</span>}
+			>
+				{window.UI.getRegionView(state) === "loading" ? (
+					<LoadingPlaceholder label="note types" />
+				) : window.UI.getRegionView(state) === "error" ? (
+					<WikiRegionFailureW
+						feeders={[WIKI_FEEDERS.notesByType]}
+						source="notes by type"
+						error={state.error}
+						isBusy={state.busy}
+						shared={shared}
+						focusTargetId={WIKI_REGION_IDS.notesByType}
+						onRetry={onRetry}
+					/>
+				) : rows.length === 0 ? (
+					<EmptyStateW message="No notes indexed yet." />
+				) : (
+					<ul className="w-type-list flex flex-col m-0 p-0 list-none">
 						{rows.map((t) => (
 							<li key={t.type} className="w-type-row fs-meta" title={t.type}>
-								<span className="text-dim break-words">{t.label}</span>
+								<span className="text-dim truncate">{t.label}</span>
 								<span className="w-type-track" aria-hidden="true">
 									<span className="w-type-fill" style={{ width: `${t.share}%` }} />
 								</span>
@@ -1238,12 +1234,9 @@ function WikiNotesByTypeSection({ state, shared, onRetry }) {
 							</li>
 						))}
 					</ul>
-					{coverage && (
-						<div className="fs-meta text-faint leading-tight">{coverage}</div>
-					)}
-				</>
-			)}
-		</WikiCardW>
+				)}
+			</window.UI.Card>
+		</div>
 	);
 }
 
@@ -1351,7 +1344,6 @@ function buildThroughputModel(state) {
 			compiledSeries: [],
 			compiledDates: [],
 			mix: EMPTY_MIX,
-			newestDate: "",
 			spanDays: 0,
 		};
 	}
@@ -1363,7 +1355,6 @@ function buildThroughputModel(state) {
 			compiledSeries: [],
 			compiledDates: [],
 			mix: EMPTY_MIX,
-			newestDate: "",
 			spanDays: 0,
 		};
 	}
@@ -1384,7 +1375,6 @@ function buildThroughputModel(state) {
 		compiledDates,
 		mix,
 		isMixUniform: isNearUniformMixW(mix),
-		newestDate: ascending[ascending.length - 1]?.run_date || "",
 		activeDays: nonZeroCount,
 		total: sumCompiledW(state),
 		spanDays: compiledSeries.length,
