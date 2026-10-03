@@ -8,12 +8,14 @@
 // retired "rendered-pixel legibility proxy" measured scale alone, which is the half of
 // the trade that a wider graph does not move.
 //
-// The default view is an overview: the drawing at 70% of the contain fit, centred, with no label
-// floor — detail is read by zooming in. Readings asserted together:
+// The default view is an overview: the drawing at 90% of the contain fit, centred, with every label
+// at the 13px meta floor or more. Readings asserted together:
 //   1. containment — every `.node` / `.cluster` client rect within the canvas rect.
-//   2. overview share — the drawing spans ~70% of its frame on the binding axis, centred on both axes.
-//   3. reach — zoom-in presses from the default view bring every label to >= MIN_RENDERED_LABEL_PX.
+//   2. overview share — the drawing spans ~90% of its frame on the binding axis, centred on both axes.
+//   3. legibility — every label at >= MIN_RENDERED_LABEL_PX in the default view, and still within the zoom-in press budget.
 //   4. reset — the Reset control returns a zoomed-in map to the same default view.
+//   5. shape — a sources column (Inputs above Daemons) beside the pipeline spine (Orchestrator → Agents → Safety → Store → Documents),
+//      the bus into Orchestrator and the bypass right of the spine; every screen-drawn label clear of frames, other labels and the zoom controls.
 //
 // Viewport table: 1024 and 1440 are the widths the evaluators scored; 1396 is the width the user
 // actually runs; 1512 and 1920 are the two the fit was first reasoned about. Heights are the window heights
@@ -52,11 +54,33 @@ import type { ArchitectureLiveResponse } from "../src/server/types/architecture.
 const HERE = dirname(fileURLToPath(import.meta.url));
 const PUBLIC_ROOT = resolve(HERE, "..", "public");
 
-// the 12px meta step the zoomed-in labels must reach, measured on the drawn labels — owned here, never read from the screen
-const MIN_RENDERED_LABEL_PX = 12;
+// the 13px meta floor every drawn label must reach — owned here, never read from the screen
+const MIN_RENDERED_LABEL_PX = 13;
 
 // the default view's share of the contain fit
-const DEFAULT_VIEW_SHARE = 0.7;
+const DEFAULT_VIEW_SHARE = 0.9;
+
+// parallel runs of different edges sit at least this far apart (layout units) — closer, two lanes read as one line
+const MIN_LANE_GAP_UNITS = 24;
+
+const LABEL = {
+	// drawn node-label, zone-title or edge-label lines, words grouped by rendered line top
+	SELECTORS: {
+		node: { group: "g.node", label: ".nodeLabel" },
+		zone: { group: "g.cluster", label: ":scope > .cluster-label" },
+		edge: { group: "g.edgeLabel", label: ".edgeLabel" },
+	},
+	// a screen-drawn edge label's clearance (layout units)
+	CLEARANCE_UNITS: {
+		// from every edge but its own
+		EDGE: 16,
+		// opaque mask from every zone frame — any less and the frame's stroke, straddling its edge, is erased
+		FRAME: 3,
+	},
+};
+
+// an arrowhead under this length (CSS px) reads as a dot, not a direction
+const MIN_ARROWHEAD_PX = 6;
 
 // drawn boxes span at least this share of the viewBox on its binding axis (the rest is diagramPadding)
 const MIN_BINDING_AXIS_FILL = 0.9;
@@ -67,7 +91,7 @@ const ZOOM_IN_PRESS_BUDGET = 3;
 // presses that take the map well past the default view before Reset — far enough to move the library's zoom base
 const ZOOM_IN_PRESSES_BEFORE_RESET = 8;
 
-// slack difference between opposite sides of a centred drawing — viewBox padding asymmetry at scale <= 0.7 plus rounding
+// slack difference between opposite sides of a centred drawing — viewBox padding asymmetry plus rounding
 const MAX_CENTRING_SKEW_PX = 8;
 
 // CTM-derived reads (labelPx, scale) carry float noise → the zoomed-in label floor and the natural-size default share compare within it
@@ -270,6 +294,15 @@ async function measureFit(page: Page, canvasSelector: string): Promise<FitReadin
 				}
 			}
 
+			// edges and their labels are part of the drawing too — a lane or label right of the spine widens it past every box
+			for (const el of Array.from(canvas.querySelectorAll("svg path.flowchart-link, svg g.edgeLabel foreignObject"))) {
+				const r = el.getBoundingClientRect();
+				if (r.width === 0 && r.height === 0) continue;
+				drawn.left = Math.min(drawn.left, r.left);
+				drawn.right = Math.max(drawn.right, r.right);
+				drawn.top = Math.min(drawn.top, r.top);
+				drawn.bottom = Math.max(drawn.bottom, r.bottom);
+			}
 			const drawableRight = controls ? Math.min(pane.right, controls.left) : pane.right;
 
 			return {
@@ -469,30 +502,7 @@ async function readZones(width: number, height: number, extraSource?: string): P
 	}
 }
 
-// drawn zone boxes by zone id — the cluster id's last '-' segment
-async function readZoneBoxes(width: number, height: number): Promise<Map<string, { left: number; right: number; top: number; bottom: number }>> {
-	const { page } = await openFittedPage(width, height);
-	try {
-		const entries = await page.evaluate(() =>
-			Array.from(document.querySelectorAll(".arch-mermaid-canvas svg g.cluster")).map((el) => {
-				const r = el.getBoundingClientRect();
-				return [el.id.slice(el.id.lastIndexOf("-") + 1), { left: r.left, right: r.right, top: r.top, bottom: r.bottom }] as const;
-			}),
-		);
-		return new Map(entries);
-	} finally {
-		await page.close();
-	}
-}
-
-// drawn node-label, zone-title or edge-label lines, words grouped by rendered line top
-const LABEL_SELECTORS = {
-	node: { group: "g.node", label: ".nodeLabel" },
-	zone: { group: "g.cluster", label: ":scope > .cluster-label" },
-	edge: { group: "g.edgeLabel", label: ".edgeLabel" },
-};
-
-async function readLabelLines(width: number, height: number, of: keyof typeof LABEL_SELECTORS = "node"): Promise<{ id: string; lines: string[]; tooltip: string; name: string }[]> {
+async function readLabelLines(width: number, height: number, of: keyof typeof LABEL.SELECTORS = "node"): Promise<{ id: string; lines: string[]; tooltip: string; name: string }[]> {
 	assert.ok(browser, "browser must be up");
 	const page = await browser.newPage({ viewport: { width, height } });
 	try {
@@ -525,7 +535,7 @@ async function readLabelLines(width: number, height: number, of: keyof typeof LA
 					name: node.getAttribute("aria-label") ?? "",
 				};
 			}),
-			LABEL_SELECTORS[of],
+			LABEL.SELECTORS[of],
 		);
 	} finally {
 		await page.close();
@@ -549,31 +559,287 @@ for (const { width, height } of VIEWPORTS.filter((viewport) => viewport.width ==
 	});
 }
 
-// the ⊐ — drawn zone ids in source order; these three run back along the bottom row, Safety first
+// the two-column map — drawn zone ids in source order, each column's zones top to bottom, and the wrapper each column is laid out in
 const ZONE_IDS = {
 	DRAWN: [...CANONICAL_MAP.mermaid_drawn.matchAll(/subgraph\s+(\w+)/g)].map(([, id]) => id),
-	BOTTOM_ROW: ["hooks", "data", "export"],
+	SOURCES: ["entry", "daemon"],
+	PIPELINE: ["orch", "agents", "hooks", "data", "export"],
+	COLUMN: { sources: "map_col_sources", pipeline: "map_col_pipeline" },
 };
 
-for (const { width, height } of VIEWPORTS) {
-	test(`the bottom row runs right to left under the top row with Safety under Agents at ${width}x${height}`, async () => {
-		const boxes = await readZoneBoxes(width, height);
-		const drawn = JSON.stringify(Object.fromEntries(boxes));
-		assert.deepEqual([...boxes.keys()].sort(), [...ZONE_IDS.DRAWN].sort(), `drawn zones: ${drawn}`);
-		const getBox = (id: string) => {
-			const box = boxes.get(id);
-			if (!box) throw new Error(`zone ${id} was not drawn: ${drawn}`);
-			return box;
-		};
-		const getCentreX = (id: string) => (getBox(id).left + getBox(id).right) / 2;
-		const topRowBottom = Math.max(...ZONE_IDS.DRAWN.filter((id) => !ZONE_IDS.BOTTOM_ROW.includes(id)).map((id) => getBox(id).bottom));
+// drawn member ids per zone in declaration order, from the drawn source's subgraph blocks
+const MEMBER_IDS = new Map(
+	[...CANONICAL_MAP.mermaid_drawn.matchAll(/subgraph\s+(\w+)\[[^\]]*\]\n([\s\S]*?)\n\s*end/g)].map(([, zone, body]) => [
+		zone,
+		[...body.matchAll(/^\s*(\w+)[[("]/gm)].map(([, id]) => id),
+	]),
+);
 
-		for (const id of ZONE_IDS.BOTTOM_ROW) assert.ok(getBox(id).top >= topRowBottom, `${id} does not sit below the top row: ${drawn}`);
-		for (const [from, to] of [["entry", "orch"], ["daemon", "orch"], ["orch", "agents"], ["hooks", "data"], ["data", "export"]]) {
-			const step = ZONE_IDS.BOTTOM_ROW.includes(from) ? -1 : 1;
-			assert.ok((getCentreX(to) - getCentreX(from)) * step > 0, `${from} → ${to} runs against its row's direction: ${drawn}`);
+type Box = { left: number; right: number; top: number; bottom: number };
+type Point = { x: number; y: number };
+
+interface MapShape {
+	// CSS px per layout unit at the default view
+	scale: number;
+	zones: Record<string, Box>;
+	// zone id → the column wrapper the screen laid it out in
+	columns: Record<string, string>;
+	members: { id: string; box: Box }[];
+	// screen polylines of every drawn link, sampled along the path · kind is the screen-drawn edge kind ("" for ELK-routed) · headPx the arrowhead length
+	links: { id: string; kind: string; points: Point[]; headPx: number }[];
+	// screen-drawn edge labels and the `from>to` edge each one captions
+	labels: { edge: string; box: Box }[];
+	pane: Box;
+	controls: Box | null;
+}
+
+// zone frames, member boxes, sampled link polylines and screen-drawn labels in client px at the default view
+async function readMapShape(width: number, height: number): Promise<MapShape> {
+	const { page, canvasSelector } = await openFittedPage(width, height);
+	try {
+		// inline mappers only — a named helper inside evaluate gains tsx's __name wrapper, which the page does not define
+		return await page.evaluate((sel) => {
+			const clusters = Array.from(document.querySelectorAll(`${sel} svg g.cluster`));
+			const vp = document.querySelector(`${sel} .svg-pan-zoom_viewport`) as SVGGraphicsElement;
+			return {
+				scale: vp.getCTM()?.a ?? 0,
+				zones: Object.fromEntries(
+					clusters.map((el) => [el.id.slice(el.id.lastIndexOf("-") + 1), (el.querySelector(":scope > rect") ?? el).getBoundingClientRect().toJSON() as Box]),
+				),
+				columns: Object.fromEntries(clusters.map((el) => [el.id.slice(el.id.lastIndexOf("-") + 1), el.getAttribute("data-arch-column") ?? ""])),
+				members: Array.from(document.querySelectorAll(`${sel} svg g.node`)).map((el) => ({
+					id: /flowchart-(.+)-\d+$/.exec(el.id)?.[1] ?? el.id,
+					box: el.getBoundingClientRect().toJSON() as Box,
+				})),
+				links: Array.from(document.querySelectorAll(`${sel} svg path.flowchart-link`)).map((el) => {
+					const path = el as SVGPathElement;
+					const ctm = path.getScreenCTM() as DOMMatrix;
+					const length = path.getTotalLength();
+					const count = Math.max(2, Math.ceil(length / 4));
+					const markerId = /url\(["']?#([^"')]+)/.exec(path.getAttribute("marker-end") || getComputedStyle(path).markerEnd || "")?.[1];
+					const marker = markerId ? document.getElementById(markerId) : null;
+					return {
+						id: path.getAttribute("data-id") || path.id,
+						kind: path.getAttribute("data-arch-edge") ?? "",
+						points: Array.from({ length: count + 1 }, (_, i) => {
+							const p = path.getPointAtLength((length * i) / count).matrixTransform(ctm);
+							return { x: p.x, y: p.y };
+						}),
+						headPx: marker && marker.getAttribute("markerUnits") === "userSpaceOnUse" ? Number(marker.getAttribute("markerWidth")) * ctm.a : 0,
+					};
+				}),
+				labels: Array.from(document.querySelectorAll(`${sel} svg g.edgeLabel[data-arch-edge-label]`)).map((el) => ({
+					edge: el.getAttribute("data-arch-edge-label") ?? "",
+					box: (el.querySelector("foreignObject") ?? el).getBoundingClientRect().toJSON() as Box,
+				})),
+				pane: (document.querySelector(sel) as HTMLElement).getBoundingClientRect().toJSON() as Box,
+				controls: (document.querySelector(`${sel} .arch-zoom-controls`)?.getBoundingClientRect().toJSON() as Box | undefined) ?? null,
+			};
+		}, canvasSelector);
+	} finally {
+		await page.close();
+	}
+}
+
+function getZoneBox(shape: MapShape, id: string): Box {
+	const box = shape.zones[id];
+	if (!box) throw new Error(`zone ${id} was not drawn: ${JSON.stringify(Object.keys(shape.zones))}`);
+	return box;
+}
+
+function getUnion(boxes: Box[]): Box {
+	return {
+		left: Math.min(...boxes.map((b) => b.left)),
+		right: Math.max(...boxes.map((b) => b.right)),
+		top: Math.min(...boxes.map((b) => b.top)),
+		bottom: Math.max(...boxes.map((b) => b.bottom)),
+	};
+}
+
+// proper crossing of two segments — touching at an end does not count
+function isCrossing(a: Point, b: Point, c: Point, d: Point): boolean {
+	const side = (p: Point, q: Point, r: Point) => (q.x - p.x) * (r.y - p.y) - (q.y - p.y) * (r.x - p.x);
+	const [d1, d2, d3, d4] = [side(c, d, a), side(c, d, b), side(a, b, c), side(a, b, d)];
+	return d1 * d2 < 0 && d3 * d4 < 0;
+}
+
+type Run = { link: string; kind: string; axis: "x" | "y"; at: number; min: number; max: number };
+
+// axis-aligned runs of a sampled polyline — consecutive steps on one x are a vertical run, on one y a horizontal one
+function getRuns(link: MapShape["links"][number]): Run[] {
+	const runs: (Run & { end: number })[] = [];
+	link.points.slice(1).forEach((p, i) => {
+		const q = link.points[i];
+		const axis = Math.abs(p.x - q.x) < 0.5 && Math.abs(p.y - q.y) >= 0.5 ? "x" : Math.abs(p.y - q.y) < 0.5 && Math.abs(p.x - q.x) >= 0.5 ? "y" : null;
+		if (!axis) return;
+		const at = axis === "x" ? p.x : p.y;
+		const [a, b] = axis === "x" ? [q.y, p.y] : [q.x, p.x];
+		const last = runs.at(-1);
+		if (last && last.axis === axis && last.end === i && Math.abs(last.at - at) < 0.5) {
+			last.min = Math.min(last.min, a, b);
+			last.max = Math.max(last.max, a, b);
+			last.end = i + 1;
+		} else runs.push({ link: link.id, kind: link.kind, axis, at, min: Math.min(a, b), max: Math.max(a, b), end: i + 1 });
+	});
+	return runs;
+}
+
+// gap from a box to the nearest sampled point of a link (0 when a point lies inside)
+function getBoxGap(box: Box, points: Point[]): number {
+	return Math.min(...points.map((q) => Math.hypot(Math.max(box.left - q.x, q.x - box.right, 0), Math.max(box.top - q.y, q.y - box.bottom, 0))));
+}
+
+// separation of two boxes — positive on the axis they clear each other on, negative by the overlap depth when they overlap
+function getBoxSeparation(a: Box, b: Box): number {
+	return Math.max(a.left - b.right, b.left - a.right, a.top - b.bottom, b.top - a.bottom);
+}
+
+// a link draws the `from>to` edge — an ELK edge keeps the source ids, a screen-drawn one adds its own suffix
+function isLinkOf(linkId: string, edge: string): boolean {
+	const [from, to] = edge.split(">");
+	return linkId.startsWith(`L_${from}_${to}_`);
+}
+
+for (const { width, height } of VIEWPORTS) {
+	test(`the sources column sits left of the spine, top-aligned with Orchestrator, each column read top to bottom at ${width}x${height}`, async () => {
+		const shape = await readMapShape(width, height);
+		const drawn = JSON.stringify(shape.zones);
+		assert.deepEqual(Object.keys(shape.zones).sort(), [...ZONE_IDS.DRAWN].sort(), `drawn zones (the column frames must be gone): ${drawn}`);
+		for (const [column, ids] of [[ZONE_IDS.COLUMN.sources, ZONE_IDS.SOURCES], [ZONE_IDS.COLUMN.pipeline, ZONE_IDS.PIPELINE]] as const)
+			for (const id of ids) assert.equal(shape.columns[id], column, `${id} was not laid out in ${column}: ${JSON.stringify(shape.columns)}`);
+		const box = (id: string) => getZoneBox(shape, id);
+		const left = getUnion(ZONE_IDS.SOURCES.map(box));
+		const right = getUnion(ZONE_IDS.PIPELINE.map(box));
+		assert.ok(left.right <= right.left + EPS_PX, `the sources column overlaps the spine horizontally: ${drawn}`);
+		assert.ok(left.bottom > right.top && right.bottom > left.top, `the columns do not share a vertical extent: ${drawn}`);
+		assert.ok(Math.abs(left.top - box("orch").top) <= EPS_PX, `the sources column is not top-aligned with Orchestrator (${left.top.toFixed(1)} vs ${box("orch").top.toFixed(1)}): ${drawn}`);
+		for (const ids of [ZONE_IDS.SOURCES, ZONE_IDS.PIPELINE])
+			for (const [i, below] of ids.slice(1).entries())
+				assert.ok(box(below).top >= box(ids[i]).bottom - EPS_PX, `${below} does not sit below ${ids[i]}: ${drawn}`);
+	});
+
+	test(`each column's stacked zone frames share one width and one left edge at ${width}x${height}`, async () => {
+		const shape = await readMapShape(width, height);
+		for (const ids of [ZONE_IDS.SOURCES, ZONE_IDS.PIPELINE]) {
+			const frames = ids.map((id) => ({ id, box: getZoneBox(shape, id) }));
+			const spans = frames.map(({ id, box }) => `${id} ${box.left.toFixed(1)}–${box.right.toFixed(1)}`).join(", ");
+			const [first] = frames;
+			for (const { box } of frames.slice(1)) {
+				assert.ok(Math.abs(box.left - first.box.left) <= EPS_PX, `the frames do not share a left edge: ${spans}`);
+				assert.ok(Math.abs(box.right - first.box.right) <= EPS_PX, `the frames do not share one width: ${spans}`);
+			}
 		}
-		assert.ok(Math.abs(getCentreX("hooks") - getCentreX("agents")) <= EPS_PX, `Safety is not centred under Agents: ${drawn}`);
+	});
+
+	test(`the Daemons members stack in declaration order and every member sits inside its own zone at ${width}x${height}`, async () => {
+		const shape = await readMapShape(width, height);
+		const declared = MEMBER_IDS.get("daemon") ?? [];
+		const daemons = declared.map((id) => shape.members.find((m) => m.id === id)).filter((m) => m !== undefined);
+		assert.equal(daemons.length, declared.length, `Daemons members drawn: ${JSON.stringify(shape.members.map((m) => m.id))}`);
+		for (const [i, a] of daemons.entries())
+			for (const b of daemons.slice(i + 1)) {
+				assert.ok(Math.min(a.box.right, b.box.right) > Math.max(a.box.left, b.box.left), `${a.id} and ${b.id} do not overlap horizontally`);
+				assert.ok(b.box.top >= a.box.bottom - EPS_PX, `${b.id} does not sit below ${a.id}, against the declaration order ${declared.join(", ")}`);
+			}
+		for (const [zone, ids] of MEMBER_IDS) {
+			const frame = getZoneBox(shape, zone);
+			for (const member of shape.members.filter((m) => ids.includes(m.id)))
+				assert.ok(
+					member.box.left >= frame.left - EPS_PX && member.box.right <= frame.right + EPS_PX && member.box.top >= frame.top - EPS_PX && member.box.bottom <= frame.bottom + EPS_PX,
+					`${member.id} leaves its ${zone} frame: ${JSON.stringify({ member: member.box, frame })}`,
+				);
+		}
+	});
+
+	test(`every edge runs down or across without a crossing, and parallel lanes keep apart, at ${width}x${height}`, async (t) => {
+		const shape = await readMapShape(width, height);
+		const kinds = shape.links.map((l) => `${l.id}:${l.kind || "elk"}`).join(", ");
+		assert.equal(shape.links.length, 7, `drawn links: ${kinds}`);
+		assert.equal(shape.links.filter((l) => l.kind === "bus").length, 2, `bus edges into Orchestrator: ${kinds}`);
+		assert.equal(shape.links.filter((l) => l.kind === "bypass").length, 1, `bypass edges: ${kinds}`);
+		for (const link of shape.links) {
+			const steps = link.points.slice(1).map((p, i) => ({ dx: p.x - link.points[i].x, dy: p.y - link.points[i].y }));
+			const last = steps.at(-1) ?? { dx: 0, dy: 0 };
+			if (link.kind === "bus") {
+				// a bus climbs only on its vertical run and enters Orchestrator's left side
+				const offBus = steps.filter((s) => s.dy < -EPS_PX && Math.abs(s.dx) >= 0.5);
+				assert.deepEqual(offBus, [], `${link.id} climbs off its vertical run`);
+				assert.ok(last.dx > Math.abs(last.dy), `${link.id} does not end pointing right`);
+				continue;
+			}
+			const rise = Math.max(...steps.map((s) => -s.dy));
+			assert.ok(rise <= EPS_PX, `${link.id} steps ${rise.toFixed(1)}px up`);
+			if (link.kind === "bypass") assert.ok(-last.dx > Math.abs(last.dy), `${link.id} does not end pointing left into its target's right side`);
+			else assert.ok(last.dy > Math.abs(last.dx), `${link.id} does not end pointing down`);
+		}
+		const crossings = shape.links.flatMap((a, i) =>
+			shape.links.slice(i + 1).flatMap((b) =>
+				a.points.slice(1).some((p, j) => b.points.slice(1).some((q, k) => isCrossing(a.points[j], p, b.points[k], q))) ? [`${a.id} × ${b.id}`] : [],
+			),
+		);
+		assert.deepEqual(crossings, [], "edges cross");
+		// facing parallel runs of different edges — only the two bus edges may coincide, on their designed merge into Orchestrator
+		const runs = shape.links.flatMap(getRuns);
+		const gaps = runs.flatMap((a, i) =>
+			runs.slice(i + 1).flatMap((b) => {
+				if (a.link === b.link || a.axis !== b.axis || (a.kind === "bus" && b.kind === "bus")) return [];
+				if (Math.min(a.max, b.max) - Math.max(a.min, b.min) <= 2) return [];
+				return [{ pair: `${a.link} ∥ ${b.link}`, units: Math.abs(a.at - b.at) / shape.scale }];
+			}),
+		);
+		t.diagnostic(`closest parallel lanes: ${gaps.sort((a, b) => a.units - b.units).slice(0, 3).map((g) => `${g.pair} ${g.units.toFixed(1)}u`).join(" · ")}`);
+		const close = gaps.filter((g) => g.units < MIN_LANE_GAP_UNITS - 0.5);
+		assert.deepEqual(close.map((g) => `${g.pair} ${g.units.toFixed(1)}u`), [], `parallel lanes closer than ${MIN_LANE_GAP_UNITS} units`);
+	});
+
+	test(`every arrowhead reads as a direction, on a visible final leg, at ${width}x${height}`, async (t) => {
+		const shape = await readMapShape(width, height);
+		const legs = shape.links.map((link) => {
+			const lastRun = getRuns(link).at(-1);
+			return { id: link.id, headPx: link.headPx, legPx: lastRun ? lastRun.max - lastRun.min : 0 };
+		});
+		t.diagnostic(legs.map((l) => `${l.id}: head ${l.headPx.toFixed(1)}px on a ${l.legPx.toFixed(1)}px leg`).join(" · "));
+		for (const leg of legs) {
+			assert.ok(leg.headPx >= MIN_ARROWHEAD_PX, `${leg.id}: the arrowhead is ${leg.headPx.toFixed(1)}px long, under ${MIN_ARROWHEAD_PX}px`);
+			assert.ok(leg.legPx > leg.headPx, `${leg.id}: the ${leg.legPx.toFixed(1)}px final leg is no longer than its ${leg.headPx.toFixed(1)}px head`);
+		}
+	});
+
+	test(`each screen-drawn edge label sits nearer its own edge than any other and clear of every other edge at ${width}x${height}`, async (t) => {
+		const shape = await readMapShape(width, height);
+		const labelled = ["orch>agents", "agents>hooks", "agents>data", "hooks>data", "data>export"];
+		assert.deepEqual(shape.labels.map((l) => l.edge).sort(), [...labelled].sort(), "the screen draws the spine and bypass labels");
+		for (const label of shape.labels) {
+			const own = shape.links.filter((l) => isLinkOf(l.id, label.edge));
+			assert.equal(own.length, 1, `${label.edge}: own edge among ${shape.links.map((l) => l.id).join(", ")}`);
+			const ownUnits = getBoxGap(label.box, own[0].points) / shape.scale;
+			const foreign = shape.links.filter((l) => l !== own[0]).map((l) => ({ id: l.id, units: getBoxGap(label.box, l.points) / shape.scale }));
+			const nearest = foreign.sort((a, b) => a.units - b.units)[0];
+			t.diagnostic(`${label.edge}: own edge ${ownUnits.toFixed(0)}u · nearest other ${nearest.id} ${nearest.units.toFixed(0)}u`);
+			assert.ok(ownUnits < nearest.units, `${label.edge} sits ${ownUnits.toFixed(0)}u from its own edge, nearer ${nearest.id} at ${nearest.units.toFixed(0)}u`);
+			assert.ok(nearest.units >= LABEL.CLEARANCE_UNITS.EDGE, `${label.edge} sits ${nearest.units.toFixed(0)}u from ${nearest.id}, inside its ${LABEL.CLEARANCE_UNITS.EDGE}u band`);
+		}
+	});
+
+	test(`each screen-drawn edge label clears every zone frame and every other label, inside the pane and off the zoom controls, at ${width}x${height}`, async (t) => {
+		const shape = await readMapShape(width, height);
+		assert.ok(shape.labels.length > 0, "no screen-drawn label was measured");
+		assert.ok(shape.controls, "the zoom controls were not drawn");
+		for (const [i, label] of shape.labels.entries()) {
+			const frames = Object.entries(shape.zones).map(([id, box]) => ({ id, units: getBoxSeparation(label.box, box) / shape.scale }));
+			const nearest = frames.sort((a, b) => a.units - b.units)[0];
+			t.diagnostic(`${label.edge}: nearest frame ${nearest.id} ${nearest.units.toFixed(1)}u`);
+			assert.ok(
+				nearest.units >= LABEL.CLEARANCE_UNITS.FRAME,
+				`${label.edge} sits ${nearest.units.toFixed(1)}u from the ${nearest.id} frame, inside its ${LABEL.CLEARANCE_UNITS.FRAME}u clearance`,
+			);
+			for (const other of shape.labels.slice(i + 1))
+				assert.ok(getBoxSeparation(label.box, other.box) > 0, `${label.edge} overlaps ${other.edge}`);
+			const [box, pane] = [label.box, shape.pane];
+			const insetPx = Math.min(box.left - pane.left, pane.right - box.right, box.top - pane.top, pane.bottom - box.bottom);
+			assert.ok(insetPx >= -EPS_PX, `${label.edge} reaches ${(-insetPx).toFixed(1)}px past the pane edge`);
+			assert.ok(getBoxSeparation(label.box, shape.controls) > -EPS_PX, `${label.edge} sits under the zoom controls: ${JSON.stringify(label.box)}`);
+		}
 	});
 }
 
@@ -664,17 +930,23 @@ for (const { width, height } of VIEWPORTS) {
 		);
 	});
 
-	test(`the default view spans 70% of its frame on the binding axis at ${width}x${height}`, async () => {
+	test(`every label reaches the meta floor in the default view at ${width}x${height}`, async () => {
+		const r = await readFit(width, height);
+		assert.ok(r.labelPx > 0, "no drawn label was measured");
+		assert.ok(r.labelPx >= MIN_RENDERED_LABEL_PX - CTM_FLOAT_TOLERANCE, `the smallest label is ${r.labelPx.toFixed(2)}px at scale ${r.scale.toFixed(4)}`);
+	});
+
+	test(`the default view spans 90% of its frame on the binding axis at ${width}x${height}`, async () => {
 		const r = await readFit(width, height);
 		const fill = Math.max(r.drawnWidthPx / r.drawableWidth, r.drawnHeightPx / r.paneHeight);
 		const atNaturalShare = r.scale >= DEFAULT_VIEW_SHARE - CTM_FLOAT_TOLERANCE;
 		assert.ok(
 			fill <= DEFAULT_VIEW_SHARE + 0.01,
-			`the map fills ${(fill * 100).toFixed(1)}% of its frame on the binding axis — more than the 70% overview`,
+			`the map fills ${(fill * 100).toFixed(1)}% of its frame on the binding axis — more than the 90% overview`,
 		);
 		assert.ok(
 			fill >= DEFAULT_VIEW_SHARE * MIN_BINDING_AXIS_FILL || atNaturalShare,
-			`the map fills ${(fill * 100).toFixed(1)}% of its frame on the binding axis at scale ${r.scale.toFixed(4)} — less than the 70% overview`,
+			`the map fills ${(fill * 100).toFixed(1)}% of its frame on the binding axis at scale ${r.scale.toFixed(4)} — less than the 90% overview`,
 		);
 	});
 }
@@ -712,37 +984,67 @@ test("a zone whose title repeats its lone member hides the title and keeps no ba
 	assert.deepEqual(r.titleBands, [], `a zone with a hidden title keeps its title band: ${r.titleBands.join("; ")}`);
 });
 
-// the part health block takes the band under the map — it has to start on the first screen, not after a scroll
-async function readPartHealthPlacement(width: number, height: number) {
-	assert.ok(browser, "browser must be up");
-	const page = await browser.newPage({ viewport: { width, height } });
-	try {
-		await page.goto(`${serverUrl}/#architecture`, { waitUntil: "load" });
-		await page.waitForFunction(
-			() => Number(document.querySelector(".svg-pan-zoom_viewport")?.getAttribute("data-arch-fit-scale")) > 0,
-			null,
-			{ timeout: 60_000 },
-		);
-		await page.waitForSelector(".arch-part-health", { timeout: 10_000 });
+// below this width the map keeps a pane floor that wins over the part health peek band — owned here, never read from the screen
+const PANE_FLOOR = { PX: 500, MAX_WIDTH_PX: 1280 };
 
-		return await page.evaluate(() => {
-			const canvas = document.querySelector(".arch-mermaid-canvas") as HTMLElement;
+// narrow windows, two of them short enough that the first-screen band alone would leave the map under the pane floor
+const NARROW_VIEWPORTS = [
+	{ width: 1024, height: 768 },
+	{ width: 1024, height: 600 },
+	{ width: 1180, height: 640 },
+];
+
+async function readPartHealthPlacement(width: number, height: number) {
+	const { page, canvasSelector } = await openFittedPage(width, height);
+	try {
+		await page.waitForSelector(".arch-part-health", { timeout: 10_000 });
+		const fit = await measureFit(page, canvasSelector);
+		const placement = await page.evaluate((sel) => {
+			const canvas = document.querySelector(sel) as HTMLElement;
 			const block = document.querySelector(".arch-part-health") as HTMLElement;
 			return {
 				canvasBottom: canvas.getBoundingClientRect().bottom,
 				blockTop: block.getBoundingClientRect().top,
 				viewportHeight: window.innerHeight,
 			};
-		});
+		}, canvasSelector);
+		return { fit, ...placement };
 	} finally {
 		await page.close();
 	}
 }
 
-for (const { width, height } of VIEWPORTS) {
-	test(`the part health block starts under the map on the first screen at ${width}x${height}`, async () => {
+function isHeightBound(fit: FitReading): boolean {
+	return fit.drawnHeightPx / fit.paneHeight >= fit.drawnWidthPx / fit.drawableWidth;
+}
+
+for (const { width, height } of [...VIEWPORTS, ...NARROW_VIEWPORTS.slice(1)]) {
+	test(`the part health block starts under the map, never over it, at ${width}x${height}`, async () => {
 		const r = await readPartHealthPlacement(width, height);
 		assert.ok(r.blockTop >= r.canvasBottom - EPS_PX, `the block (top ${r.blockTop.toFixed(0)}) overlaps the map (bottom ${r.canvasBottom.toFixed(0)})`);
+	});
+}
+
+for (const { width, height } of VIEWPORTS.filter((viewport) => viewport.width >= PANE_FLOOR.MAX_WIDTH_PX)) {
+	test(`at ${PANE_FLOOR.MAX_WIDTH_PX}px wide or more the part health block starts on the first screen at ${width}x${height}`, async () => {
+		const r = await readPartHealthPlacement(width, height);
 		assert.ok(r.blockTop < r.viewportHeight, `the block starts at ${r.blockTop.toFixed(0)}px, below the ${r.viewportHeight}px screen`);
 	});
 }
+
+test(`below ${PANE_FLOOR.MAX_WIDTH_PX}px wide the map keeps its ${PANE_FLOOR.PX}px pane floor on either binding axis, even when the part health block leaves the first screen`, async (t) => {
+	const readings = [];
+	for (const viewport of NARROW_VIEWPORTS) readings.push({ ...viewport, ...(await readPartHealthPlacement(viewport.width, viewport.height)) });
+
+	for (const r of readings) {
+		t.diagnostic(
+			`${r.width}x${r.height}: pane ${r.fit.paneWidth.toFixed(0)}x${r.fit.paneHeight.toFixed(0)} · drawn ${r.fit.drawnWidthPx.toFixed(0)}x${r.fit.drawnHeightPx.toFixed(0)} · ` +
+				`${isHeightBound(r.fit) ? "height" : "width"}-bound · block top ${r.blockTop.toFixed(0)} of ${r.viewportHeight}`,
+		);
+		// the short-graph clamp never takes the pane under the floor — a width-bound drawing keeps it too
+		assert.ok(
+			r.fit.paneHeight >= PANE_FLOOR.PX - EPS_PX,
+			`${r.width}x${r.height}: the map pane is ${r.fit.paneHeight.toFixed(0)}px — under the ${PANE_FLOOR.PX}px floor`,
+		);
+	}
+});

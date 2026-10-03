@@ -353,10 +353,10 @@ test("AC-T2 판정 필드가 없으면 상태를 지어내지 않고 미상으�
   );
 });
 
-// --- default-view scale — 70% of the contain fit, no legibility floor ---
+// --- default-view scale — 90% of the contain fit ---
 
 // the default view's share of the contain fit — paired with the screen's overview rule
-const DEFAULT_VIEW_SHARE = 0.7;
+const DEFAULT_VIEW_SHARE = 0.9;
 
 // pane/graph grid spanning fits far under the retired 12px floor, around 1, and above the natural-size cap
 const FIT_GRID: Array<{ name: string; dims: [number, number, number, number]; containFit: number }> = [
@@ -367,7 +367,7 @@ const FIT_GRID: Array<{ name: string; dims: [number, number, number, number]; co
   { name: "a small graph capped at natural size (fit 4)", dims: [800, 800, 200, 200], containFit: 4 },
 ];
 
-describe("the default view scale is 70% of the contain fit capped at natural size", () => {
+describe("the default view scale is 90% of the contain fit capped at natural size", () => {
   for (const row of FIT_GRID) {
     test(row.name, () => {
       const s = arch.getDefaultViewScaleAR(...row.dims);
@@ -377,7 +377,7 @@ describe("the default view scale is 70% of the contain fit capped at natural siz
   }
 });
 
-describe("unmeasured dimensions fall back to 70% of natural size", () => {
+describe("unmeasured dimensions fall back to 90% of natural size", () => {
   const rows: Array<{ name: string; dims: [number, number, number, number] }> = [
     { name: "a zero pane width", dims: [0, 400, 400, 400] },
     { name: "a negative pane height", dims: [400, -1, 400, 400] },
@@ -1192,18 +1192,6 @@ test("P1 the security category's node stroke uses no status hue", () => {
   assert.ok(stroke, "security classDef must declare a stroke");
   assert.ok(statusHexes.length >= 6, `precondition: both themes' ok/warn/crit read — ${statusHexes}`);
   assert.ok(!statusHexes.includes(stroke), `${stroke} collides with a status hue ${statusHexes}`);
-});
-
-test("the turn label measure uses the font family mermaid lays the map out with", () => {
-  const ctx = createArchContext();
-  const measureContext = { font: "", measureText: (text: string) => ({ width: text.length }) };
-  (ctx.window as Record<string, unknown>).MERMAID_CONFIG = { themeVariables: { fontFamily: "Probe Face, serif" } };
-  ctx.document = { documentElement: {}, createElement: () => ({ getContext: () => measureContext }) };
-  vm.runInContext(archCode, ctx);
-
-  callInCtx<number>(ctx, "getMapTextWidthAR", "label");
-
-  assert.match(measureContext.font, /px Probe Face, serif$/, `measured with "${measureContext.font}"`);
 });
 
 test("drawn labels are single-line whatever the stored breaks", () => {
