@@ -1059,46 +1059,55 @@ test("Instrumentation is an open status fold whose head states the verdict, and 
   }
 });
 
-test("the instrumentation verdict names only what has loaded, and warns on unfinished runs", async () => {
+test("the instrumentation head names the first loaded source's lead figure within the 32-character meta cap, and warns on unfinished runs", async () => {
   const mod = await loadAgentsScreen({ formatInt: REAL_UI.formatInt });
   const verdict = mod.getInstrumentationVerdict as (l: unknown, r: unknown, a?: unknown) => { tone: string; sub: string };
   const lifecycle = (start: number, done: number) => ({ status: "ready", data: { rows: [{ agent_type: "a", start_count: start, completed_count: done }] } });
   const review = { status: "ready", data: { rows: [{ review_flagged_count: 14, total_count: 100 }] } };
   const loading = { status: "loading" };
   const rows = [
-    { name: "unfinished runs warn", l: lifecycle(20, 8), r: review, tone: "warn", sub: "12 runs with no completion record · 14.0% flagged" },
-    { name: "every run finished", l: lifecycle(8, 8), r: review, tone: "ok", sub: "0 runs with no completion record · 14.0% flagged" },
+    { name: "unfinished runs warn", l: lifecycle(20, 8), r: review, tone: "warn", sub: "12 runs with no record" },
+    { name: "every run finished", l: lifecycle(8, 8), r: review, tone: "ok", sub: "0 runs with no record" },
     { name: "only review flags read", l: loading, r: review, tone: "neutral", sub: "14.0% flagged" },
-    { name: "nothing read yet", l: loading, r: loading, tone: "neutral", sub: "Is the measuring apparatus intact" },
-    { name: "activations read add their false-positive share", l: lifecycle(8, 8), r: review, a: ACTIVATIONS_READY, tone: "ok", sub: "0 runs with no completion record · 14.0% flagged · activation false-positive 2.5% of 1,200 activations" },
-    { name: "only activations read", l: loading, r: loading, a: ACTIVATIONS_READY, tone: "neutral", sub: "activation false-positive 2.5% of 1,200 activations" },
+    { name: "nothing read yet", l: loading, r: loading, tone: "neutral", sub: "Is the measuring apparatus sound" },
+    { name: "activations never lengthen a head that already has a lead", l: lifecycle(8, 8), r: review, a: ACTIVATIONS_READY, tone: "ok", sub: "0 runs with no record" },
+    { name: "only activations read", l: loading, r: loading, a: ACTIVATIONS_READY, tone: "neutral", sub: "2.5% activation false-positive" },
     { name: "a window with no activations states that, never a rate over an empty denominator", l: loading, r: loading, a: ACTIVATIONS_EMPTY, tone: "neutral", sub: "no activations" },
     { name: "an unread activation source adds nothing, never 0 %", l: loading, r: review, a: ACTIVATIONS_FAILED, tone: "neutral", sub: "14.0% flagged" },
+    { name: "widest: a 5-digit orphan total", l: lifecycle(99_999, 0), r: review, a: ACTIVATIONS_READY, tone: "warn", sub: "99,999 runs with no record" },
+    { name: "widest: a full false-positive share leads alone", l: loading, r: loading, a: ACTIVATIONS_ALL_FALSE, tone: "neutral", sub: "100.0% activation false-positive" },
   ];
-  for (const row of rows) assert.deepEqual({ ...verdict(row.l, row.r, row.a) }, { tone: row.tone, sub: row.sub }, row.name);
+  for (const row of rows) {
+    const got = verdict(row.l, row.r, row.a);
+    assert.deepEqual({ ...got }, { tone: row.tone, sub: row.sub }, row.name);
+    assert.ok(got.sub.length <= 32, `${row.name}: "${got.sub}" is ${got.sub.length} chars`);
+  }
 });
 
 const ACTIVATIONS_READY = { status: "ready", data: { summary: { total_activations: 1200, overall_false_positive_rate: 0.025 } }, error: null };
 const ACTIVATIONS_EMPTY = { status: "ready", data: { summary: { total_activations: 0, overall_false_positive_rate: 0 } }, error: null };
 const ACTIVATIONS_FAILED = { status: "error", data: null, error: { message: "HTTP 503" } };
+const ACTIVATIONS_ALL_FALSE = { status: "ready", data: { summary: { total_activations: 9999, overall_false_positive_rate: 1 } }, error: null };
 
-test("the Instrumentation fold body states the activation false-positive rate, and an unread source says unavailable rather than 0 %", async () => {
+test("the Instrumentation fold body carries every clause the head leaves out, and an unread source says unavailable rather than 0 %", async () => {
   const idle = { status: "loading", data: null, error: null };
+  const lifecycle = { status: "ready", data: { rows: [{ agent_type: "a", start_count: 2000, completed_count: 127 }] }, error: null };
+  const review = { status: "ready", data: { rows: [{ review_flagged_count: 14, total_count: 100 }] }, error: null };
   const rows = [
-    { name: "read", a: ACTIVATIONS_READY, line: /activation false-positive 2\.5% of 1,200 activations · last 30d/ },
-    { name: "read with no activations", a: ACTIVATIONS_EMPTY, line: /no activations · last 30d/ },
-    { name: "failed", a: ACTIVATIONS_FAILED, line: /Activation rate unavailable/ },
-    { name: "not yet read", a: idle, line: /Activation rate unavailable/ },
+    { name: "read", l: idle, r: idle, a: ACTIVATIONS_READY, line: /activation false-positive 2\.5% of 1,200 activations · last 30d/ },
+    { name: "every source read", l: lifecycle, r: review, a: ACTIVATIONS_READY, line: /^1,873 runs with no completion record · 14\.0% flagged · activation false-positive 2\.5% of 1,200 activations · last 30d$/ },
+    { name: "read with no activations", l: idle, r: idle, a: ACTIVATIONS_EMPTY, line: /no activations · last 30d/ },
+    { name: "failed", l: idle, r: idle, a: ACTIVATIONS_FAILED, line: /Activation rate unavailable/ },
+    { name: "not yet read", l: idle, r: idle, a: idle, line: /Activation rate unavailable/ },
   ];
   for (const row of rows) {
     const tree = await renderComponent("InstrumentationFold", {
-      lifecycleState: idle, reviewState: idle, activationState: row.a, days: 30, onRetry: () => undefined,
+      lifecycleState: row.l, reviewState: row.r, activationState: row.a, days: 30, onRetry: () => undefined,
     });
-    const text = collectText(tree);
-    assert.match(text, row.line, `${row.name}: ${text}`);
-    if (row.a !== ACTIVATIONS_READY) assert.doesNotMatch(text, /\b0(\.0)?\s*%/, `${row.name}: no zero rate`);
-    // only dim/faint are registered secondary-ink colors — any other text-* class falls back to full ink
     const [line] = findNodes(tree, (n) => n.type === "p" && row.line.test(collectText(n)));
+    assert.ok(line, `${row.name}: ${collectText(tree)}`);
+    if (row.a !== ACTIVATIONS_READY) assert.doesNotMatch(collectText(tree), /\b0(\.0)?\s*%/, `${row.name}: no zero rate`);
+    // only dim/faint are registered secondary-ink colors — any other text-* class falls back to full ink
     assert.match(String(line?.props.className ?? ""), /\btext-(dim|faint)\b/, `${row.name}: secondary-ink tone`);
   }
 });

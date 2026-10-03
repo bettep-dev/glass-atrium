@@ -589,6 +589,25 @@ test("tile labels and captions wrap instead of cutting the figure's words", asyn
   for (const node of findNodes(band, () => true)) assert.doesNotMatch(classOf(node), /\btruncate\b/);
 });
 
+test("a tile whose detail moved off its caption opens it from an info trigger described by the tile label", async () => {
+  const mod = await loadWikiScreen();
+  const ready = (data: unknown) => ({ status: "ready", data, error: null });
+  const band = renderScreen(
+    mod.React.createElement(mod.WikiTileBand as Component, {
+      summaryState: ready({ last_cycle_started_at: new Date().toISOString(), latest_compiled_count: 0, last_status: "ok" }),
+      indexState: ready({ notes_total: 40 }),
+      backlogState: ready({ backlog: { run_date: "2026-01-01", true_backlog: 13, deadlink_dryrun: [] } }),
+      onRetry: () => {},
+    }),
+  );
+  const triggers = findNodes(band, (n) => n.props.atom === "CardInfo");
+  assert.deepEqual(triggers.map((n) => n.props.label), ["How Compiled last cycle is counted", "How Library notes is counted"]);
+  for (const trigger of triggers) {
+    const [label] = findNodes(band, (n) => n.props.id === trigger.props.describedBy);
+    assert.ok(label, `${trigger.props.label}: the described-by id names a rendered label`);
+  }
+});
+
 test("a feeder the alarm list could not read is named in plain words", async () => {
   const mod = await loadWikiScreen();
   const ready = (data: unknown) => ({ status: "ready", data, error: null });

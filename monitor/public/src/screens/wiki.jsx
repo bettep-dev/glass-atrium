@@ -558,11 +558,11 @@ function readProposalsW(backlog) {
 // Backlog figures are a per-cycle snapshot: past one cycle they are dated, and an
 // undated or stale snapshot must not read as the current count.
 function describeSnapshotAgeW(runDate) {
-	if (!runDate) return " (run date not reported)";
+	if (!runDate) return "Run date not reported";
 
 	const ageDays = ageInUtcDaysW(runDate);
 	const stale = typeof ageDays === "number" && ageDays > BACKLOG_STALE_DAYS;
-	return stale ? ` (as of ${runDate}, cycle overdue)` : "";
+	return stale ? `Figures as of ${runDate}, cycle overdue` : null;
 }
 
 // Four-tile band — last run · compiled last cycle · search index · library totals.
@@ -610,17 +610,27 @@ function readTileBandFailuresW(summaryState, indexState) {
 
 // Report surface → neutral chrome; a warn/crit tile carries its tone on a glyph beside the
 // figure, leaving tinted containers to the alarm lane (39578 §C/§D).
+// detail past the 40-char caption cap opens from an ⓘ beside the label
 function WikiTile({ tile }) {
-	const { Icon, TONE_ICON } = window.UI;
+	const { Icon, TONE_ICON, CardInfo } = window.UI;
 	const alarmed = tile.tone === "warn" || tile.tone === "crit";
+	const labelId = `wiki-tile-${tile.key}-label`;
 
 	return (
 		<div className="rounded-md border border-line bg-sunken p-2.5 min-w-0">
-			<div
-				className="fs-meta text-faint leading-tight break-words"
-				title={tile.label}
-			>
-				{tile.label}
+			<div className="flex items-center gap-1">
+				<span
+					id={labelId}
+					className="fs-meta text-faint leading-tight break-words min-w-0"
+					title={tile.label}
+				>
+					{tile.label}
+				</span>
+				{tile.info && (
+					<CardInfo label={`How ${tile.label} is counted`} describedBy={labelId}>
+						{tile.info}
+					</CardInfo>
+				)}
 			</div>
 			<div
 				className={`${tile.isWord ? "" : "font-mono "}fs-stat font-semibold mt-0.5 flex items-center gap-1.5 ${tile.state === "ready" ? "" : "text-faint"}`}
@@ -747,8 +757,8 @@ function buildCompiledTileW(
 		count !== 0 || typeof waiting !== "number"
 			? null
 			: isStalled
-				? `${formatCountW(waiting)} originals waiting, none compiled`
-				: "Nothing to compile — no originals waiting";
+				? `Stalled · ${formatCountW(waiting)} waiting`
+				: "Nothing waiting";
 	// same span as Run history → the two totals read alike
 	const trend = buildThroughputModel(cyclesState);
 	const windowTotal =
@@ -760,6 +770,9 @@ function buildCompiledTileW(
 		state: "ready",
 		value: formatCountW(count),
 		sub: [cause, windowTotal].filter(Boolean).join(" · ") || null,
+		info: isStalled
+			? `${formatCountW(waiting)} saved originals are waiting and the last cycle compiled none.`
+			: undefined,
 		tone: isStalled ? "warn" : "neutral",
 	};
 }
@@ -833,28 +846,27 @@ function buildLibraryTileW(indexState, summaryState, backlogState) {
 
 	const payload =
 		backlogState.status === "ready" ? backlogState.data?.backlog : null;
-	const backlog = payload?.true_backlog;
+	const tile = { key: "library", label, state: "ready", value: formatCountW(total), tone: "neutral" };
+	if (!payload) return { ...tile, sub: "Backlog not reported" };
 
+	const sub = `${describeOriginalsW(payload.true_backlog)} · ${describeBrokenLinksW(payload.deadlink_dryrun)}`;
+	const age = describeSnapshotAgeW(payload.run_date);
 	return {
-		key: "library",
-		label,
-		state: "ready",
-		value: formatCountW(total),
-		sub: payload
-			? `${describeOriginalsW(backlog)} · ${describeBrokenLinksW(payload.deadlink_dryrun)}${describeSnapshotAgeW(payload.run_date)}`
-			: "Backlog not reported",
-		tone: "neutral",
+		...tile,
+		sub,
+		hint: age ? `${sub} · ${age}` : undefined,
+		info: [LIBRARY_COUNTING_NOTE_W, age && `${age}.`].filter(Boolean).join(" "),
 	};
 }
 
+// A missing key reads as "unreported", never as zero.
 function describeOriginalsW(backlog) {
-	if (typeof backlog !== "number") return "originals not reported";
-	return `${backlog === 0 ? "No" : formatCountW(backlog)} originals waiting`;
+	if (typeof backlog !== "number") return "Waiting unreported";
+	return `${backlog === 0 ? "None" : formatCountW(backlog)} waiting`;
 }
 
-// A missing key reads as "not reported", never as zero.
 function describeBrokenLinksW(deadLinks) {
-	if (!Array.isArray(deadLinks)) return "broken links not reported";
+	if (!Array.isArray(deadLinks)) return "links unreported";
 	const count = deadLinks.length;
 	return `${formatCountW(count)} broken ${count === 1 ? "link" : "links"}`;
 }
@@ -1276,6 +1288,8 @@ function describeNotesByTypeW(state) {
 // 백로그 stale 임계(일) — wiki 데몬 사이클이 일일 → run_date 가 1일 초과 경과면 stale.
 // CYCLE_FRESH_OK_HOURS(24h)와 정합하되 run_date 는 날짜 단위라 일 카운트로 비교.
 const BACKLOG_STALE_DAYS = 1;
+const LIBRARY_COUNTING_NOTE_W =
+	"Waiting counts saved originals not yet compiled into notes; broken links come from the last dead-link dry run.";
 
 // 'YYYY-MM-DD'(UTC) run_date → 오늘(UTC) 대비 경과일. 비정상/null → null (stale 분기 보류).
 // 데몬 run_date 가 UTC date 기준이므로 today 도 UTC 로 맞춰 비교 (outcomes.isoDayKeyO 패턴 미러).

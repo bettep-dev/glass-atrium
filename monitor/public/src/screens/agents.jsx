@@ -481,7 +481,7 @@ function ScreenAgents() {
   );
 }
 
-const INSTRUMENTATION_QUESTION = 'Is the measuring apparatus intact';
+const INSTRUMENTATION_QUESTION = 'Is the measuring apparatus sound';
 
 // Page verdict — worst tone across the health rule and every status tile; the all-clear waits for every feeder.
 function AgentPageVerdict({ revisionState, reviewByAgentState, statusTiles, days, freshness }) {
@@ -560,51 +560,63 @@ function formatAgentListAg(agents) {
   return agents.length > 3 ? `${names.join(', ')} +${agents.length - 3} more` : names.join(', ');
 }
 
-// Status fold — open by default, the head carries the verdict so a closed fold still answers.
+// Status fold — open by default; the head carries the lead figure, the body every clause.
 function InstrumentationFold({ failures, lifecycleState, reviewState, activationState, days, onRetry }) {
   const { tone, sub } = getInstrumentationVerdict(lifecycleState, reviewState, activationState);
 
   return (
     <window.UI.Disclosure kind="status" title="Instrumentation" sub={sub} tone={tone} className="mb-4">
-      <p className="fs-meta text-dim mb-3">{getActivationLineAg(activationState, days)}</p>
+      <p className="fs-meta text-dim mb-3">{getInstrumentationDetailAg(lifecycleState, reviewState, activationState, days)}</p>
       <ReviewFlagTimelineCard failures={failures} state={reviewState} days={days} onRetry={onRetry}/>
     </window.UI.Disclosure>
   );
 }
 
-// unread → a stated gap, never a 0 % that reads as a clean result
-function getActivationLineAg(activationState, days) {
-  const clause = getActivationClauseAg(activationState);
-  return clause ? `${clause} · last ${days}d` : 'Activation rate unavailable';
+// unread activations → a stated gap, never a 0 % that reads as a clean result
+function getInstrumentationDetailAg(lifecycleState, reviewState, activationState, days) {
+  const clauses = getInstrumentationClausesAg(lifecycleState, reviewState, activationState).map((clause) => clause.full);
+  const read = clauses.length > 0 ? `${clauses.join(' · ')} · last ${days}d` : null;
+  return getActivationClauseAg(activationState) ? read : joinSubAg([read, 'Activation rate unavailable']);
 }
 
 // zero activations → no rate: a % over an empty denominator also reads as clean
 function getActivationClauseAg(activationState) {
+  const rate = getActivationRateAg(activationState);
+  if (!rate) return null;
+  return rate.total === 0 ? 'no activations' : `activation false-positive ${rate.pct}% of ${formatIntAg(rate.total)} activations`;
+}
+
+function getActivationRateAg(activationState) {
   const summary = activationState?.status === 'ready' ? activationState.data?.summary : null;
   if (!summary) return null;
-  const total = Number(summary.total_activations) || 0;
-  if (total === 0) return 'no activations';
-  const rate = Number(summary.overall_false_positive_rate) || 0;
-  return `activation false-positive ${(rate * 100).toFixed(1)}% of ${formatIntAg(total)} activations`;
+  return { total: Number(summary.total_activations) || 0, pct: ((Number(summary.overall_false_positive_rate) || 0) * 100).toFixed(1) };
+}
+
+// The head shows the first loaded source's lead (32-char meta cap); unfinished runs set the tone.
+function getInstrumentationVerdict(lifecycleState, reviewState, activationState) {
+  const [lead] = getInstrumentationClausesAg(lifecycleState, reviewState, activationState);
+  const tone = lifecycleState.status !== 'ready' ? 'neutral'
+    : getOrphanTotalAg(readyData(lifecycleState)?.rows ?? []) > 0 ? 'warn' : 'ok';
+  return { tone, sub: lead?.lead ?? INSTRUMENTATION_QUESTION };
 }
 
 // One clause per loaded source — an unread source adds nothing rather than a zero.
-function getInstrumentationVerdict(lifecycleState, reviewState, activationState) {
-  const parts = [];
-  let tone = 'neutral';
-
+function getInstrumentationClausesAg(lifecycleState, reviewState, activationState) {
+  const clauses = [];
   if (lifecycleState.status === 'ready') {
-    const orphans = getOrphanTotalAg(readyData(lifecycleState)?.rows ?? []);
-    parts.push(`${formatIntAg(orphans)} runs with no completion record`);
-    tone = orphans > 0 ? 'warn' : 'ok';
+    const orphans = formatIntAg(getOrphanTotalAg(readyData(lifecycleState)?.rows ?? []));
+    clauses.push({ lead: `${orphans} runs with no record`, full: `${orphans} runs with no completion record` });
   }
   if (reviewState.status === 'ready') {
     const { flagged, total } = getReviewFlagTotalsAg(readyData(reviewState)?.rows ?? []);
-    if (total > 0) parts.push(`${((flagged / total) * 100).toFixed(1)}% flagged`);
+    if (total > 0) {
+      const share = `${((flagged / total) * 100).toFixed(1)}% flagged`;
+      clauses.push({ lead: share, full: share });
+    }
   }
-  const activationClause = getActivationClauseAg(activationState);
-  if (activationClause) parts.push(activationClause);
-  return { tone, sub: parts.length > 0 ? parts.join(' · ') : INSTRUMENTATION_QUESTION };
+  const rate = getActivationRateAg(activationState);
+  if (rate) clauses.push({ lead: rate.total === 0 ? 'no activations' : `${rate.pct}% activation false-positive`, full: getActivationClauseAg(activationState) });
+  return clauses;
 }
 
 function getOrphanTotalAg(rows) {
