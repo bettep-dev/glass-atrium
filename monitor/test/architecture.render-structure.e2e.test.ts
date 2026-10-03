@@ -489,6 +489,26 @@ describe("healthy live fixture", () => {
 			assert.ok(probe.legend.some((line) => line.text.includes(word)), `legend lacks "${word}" — read: ${JSON.stringify(probe.legend)}`);
 	});
 
+	test("each legend swatch holds its mark's line inside its border", async () => {
+		await ctx.page.waitForSelector(".arch-legend-swatch", { timeout: 10_000 });
+		const swatches = await ctx.page.evaluate(() =>
+			[...document.querySelectorAll(".arch-legend-swatch")]
+				.filter((el) => (el.textContent || "").trim() !== "")
+				.map((el) => {
+					const style = getComputedStyle(el);
+					return {
+						mark: (el.textContent || "").trim(),
+						line: Number.parseFloat(style.lineHeight) || Number.parseFloat(style.fontSize),
+						inner: el.clientHeight - Number.parseFloat(style.paddingTop) - Number.parseFloat(style.paddingBottom),
+					};
+				}),
+		);
+
+		assert.ok(swatches.length > 0, "no legend swatch carries a mark");
+		for (const swatch of swatches)
+			assert.ok(swatch.line <= swatch.inner, `"${swatch.mark}" sets a ${swatch.line}px line in a ${swatch.inner}px swatch`);
+	});
+
 	test("every text in the Part health block renders at 13px or larger, each row's meta line included", async () => {
 		await ctx.page.waitForSelector(".arch-part-health .arch-part-meta", { timeout: 10_000 });
 		const texts = await ctx.page.evaluate(() =>

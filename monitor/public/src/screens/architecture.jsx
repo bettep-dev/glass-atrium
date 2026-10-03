@@ -779,7 +779,8 @@ function ScreenArchitecture(
 					".arch-caption { display: flex; flex-direction: column; gap: 6px; margin: -8px 0 12px; } " +
 					".arch-legend { display: flex; flex-wrap: wrap; gap: 4px 16px; margin: 0; padding: 0; list-style: none; } " +
 					".arch-legend-item { display: inline-flex; align-items: center; gap: 6px; } " +
-					".arch-legend-swatch { display: inline-flex; align-items: center; justify-content: center; width: 20px; height: 14px; " +
+					// height = the meta line + both 2px borders, so the swatch's mark never spills over its ring
+					".arch-legend-swatch { display: inline-flex; align-items: center; justify-content: center; width: 20px; height: calc(var(--fs-meta) + 4px); " +
 					'border: 2px solid rgb(var(--faint)); border-radius: 4px; font-family: "JetBrains Mono", monospace; font-size: var(--fs-meta); font-weight: 700; line-height: 1; } ' +
 					".arch-legend-swatch-warn { border-color: rgb(var(--warn)); color: rgb(var(--warn)); } " +
 					".arch-legend-swatch-crit { border-color: rgb(var(--crit)); color: rgb(var(--crit)); } " +
