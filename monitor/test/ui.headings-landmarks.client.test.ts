@@ -44,13 +44,20 @@ test("the shell's sidebar and primary navigation are named landmarks", () => {
 });
 
 test("type scale keeps h1 > section h2 > column header, with the KPI value largest", () => {
-  const css = readFileSync(resolve(__dirname, "../public/styles/base.css"), "utf8");
-  const ui = readFileSync(resolve(SRC, "ui.jsx"), "utf8");
-  const px = (re: RegExp, text: string): number => Number(text.match(re)?.[1]);
-  const h1 = px(/--fs-display:\s*(\d+)px/, ui);
-  const h2 = px(/\.card-title\s*\{[^}]*?font-size:\s*var\(--fs-title,\s*(\d+)px\)/, css);
-  const th = px(/\.tbl th\s*\{[^}]*?font-size:\s*(\d+)px/, css);
-  const kpi = px(/\.kpi-value\s*\{[^}]*?font-size:\s*(\d+)px/, css);
+  const styles = resolve(__dirname, "../public/styles");
+  const css = readFileSync(resolve(styles, "base.css"), "utf8");
+  const tokens = readFileSync(resolve(styles, "tokens.css"), "utf8");
+  // a font-size → px, through one var() hop into the tokens.css type steps
+  const px = (value: string): number => {
+    const name = value.match(/^var\((--[\w-]+)\)$/)?.[1];
+    const resolved = name ? tokens.match(new RegExp(`${name}\\s*:\\s*([^;]+);`))?.[1] ?? "" : value;
+    return Number(resolved.match(/^(\d+)px$/)?.[1]);
+  };
+  const fontSize = (selector: string): number => px(css.match(new RegExp(`${selector}\\s*\\{[^}]*?font-size:\\s*([^;]+);`))?.[1].trim() ?? "");
+  const h1 = px("var(--fs-display)");
+  const h2 = fontSize("\\.card-title");
+  const th = fontSize("\\.tbl th");
+  const kpi = fontSize("\\.kpi-value");
   assert.ok(kpi > h1 && h1 > h2 && h2 > th, `kpi ${kpi} > h1 ${h1} > h2 ${h2} > th ${th}`);
 });
 

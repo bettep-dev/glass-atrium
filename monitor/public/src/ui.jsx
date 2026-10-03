@@ -117,12 +117,12 @@ function Pill({ children, tone='neutral' }) {
 // 공용 빈-상태 atom (canonical) — 화면별 EmptyState* 복제 + 보드 dashed-col idiom 의 단일 SoT.
 //   .placeholder(base.css) dashed 관용구 재사용 → repo 전역 단일 빈-상태 표기.
 //   message = 핵심 원인 한 줄 · hint = 다음 단계/부연(선택) · action = 슬롯(재시도 버튼 등, 선택).
-//   타입은 6단 스케일 토큰(fs-meta/fs-micro)로 고정 — 화면별 off-scale px 리터럴 제거.
+//   타입은 스케일 토큰(fs-meta)로 고정 — 화면별 off-scale px 리터럴 제거.
 function EmptyState({ message, hint, action, className='' }) {
   return (
     <div className={`placeholder ${className}`.trim()}>
       <div className="fs-meta">{message}</div>
-      {hint && <div className="fs-micro text-faint mt-1">{hint}</div>}
+      {hint && <div className="fs-meta text-faint mt-1">{hint}</div>}
       {action && <div className="mt-2 flex justify-center">{action}</div>}
     </div>
   );
@@ -142,22 +142,12 @@ function SubCard({ children, sunken=false, label, labelLevel=3, className='' }) 
   );
 }
 
-// Content-level 타입 스케일 토큰 SoT — 레벨당 1 토큰으로 ad-hoc font-size 규격화 (시각 일관성)
-// 6단 — display 22(카드 지배 수치) · stat 18(일반 KPI) · title 14 · body 13 · meta 12 · micro 11
-// CSS var = 토큰 SoT · .fs-* = 소비 layer (className 단독 적용 가능)
-// .hero-stat = 패널당 단 하나의 지배 수치용 30px (display 22 보다 한 단 위) — 18px name 과 묶이지 않게 결정적 우위.
+// Content-level 타입 스케일 소비 layer — 단계 값은 tokens.css 단일 SoT, 여기는 .fs-* 클래스만
+// .hero-stat = 패널당 단 하나의 지배 수치용 30px (display 24 보다 한 단 위) — 20px name 과 묶이지 않게 결정적 우위.
 //   tabular-nums = 자릿수 고정 폭(드로어 hero 수치 정렬). negative tracking = 56px 미만 대형 수치 가독.
-// SPA 단일 screen 마운트 — screen 별 <style> 무조건 렌더 → 가드 시 재진입에서 토큰 소실 회귀
+// SPA 단일 screen 마운트 — screen 별 <style> 무조건 렌더 → 가드 시 재진입에서 클래스 소실 회귀
 function TypeScaleStyle() {
   return <style>{`
-    :root {
-      --fs-display: 22px;
-      --fs-stat:  18px;
-      --fs-title: 15px;
-      --fs-body:  14px;
-      --fs-meta:  12px;
-      --fs-micro: 11px;
-    }
     .fs-display { font-size: var(--fs-display); }
     .fs-stat  { font-size: var(--fs-stat); }
     .fs-title { font-size: var(--fs-title); line-height: 1.4; }
@@ -222,8 +212,8 @@ const CHART_MAX_TICKS = 7;
 const CHART_PLOT_FILL = 0.85;
 /** Minimum px between tick labels; Recharts axes get it through getChartXAxisProps. */
 const CHART_TICK_MIN_GAP_PX = 8;
-// ponytail: fixed per-char estimate of a --fs-meta day label (≤7px) → measure with canvas if labels grow wide
-const CHART_TICK_CHAR_PX = 7;
+// ponytail: fixed per-char estimate of a --fs-meta mono day label (13px × 0.6em ≈ 7.8px, rounded up for fallback faces) → measure with canvas if labels grow wide
+const CHART_TICK_CHAR_PX = 8;
 const CHART_TICK_SHIFT = { start: '0', middle: '-50%', end: '-100%' };
 
 // Evenly spaced day-tick indices, always the first and last day, at most maxTicks.
@@ -542,7 +532,7 @@ function StatusDot({ status }) {
   const toneClass = isKnown ? `text-${status}` : 'text-faint';
 
   return (
-    <span className={`inline-block fs-micro leading-none mr-1.5 align-middle ${toneClass}`} title={word}>
+    <span className={`inline-block fs-meta leading-none mr-1.5 align-middle ${toneClass}`} title={word}>
       <span aria-hidden="true">{glyph}</span>
       <span className="sr-only">{word}</span>
     </span>
@@ -617,8 +607,8 @@ function KpiValue({ children, unit, tone }) {
   </div>;
 }
 
-// label + 26px mono value + delta + 68×26 inline sparkline
-function KPI({ label, value, unit, delta, deltaInverse=false, sparkData, sparkColor='currentColor', onClick, hint, hintClassName='fs-micro' }) {
+// label + --fs-kpi mono value + delta + 68×26 inline sparkline
+function KPI({ label, value, unit, delta, deltaInverse=false, sparkData, sparkColor='currentColor', onClick, hint, hintClassName='fs-meta' }) {
   return <button onClick={onClick} className="kpi text-left">
     <div className="kpi-label">{label}</div>
     {hint && <div className={`${hintClassName} text-faint font-mono kpi-hint`}>{hint}</div>}

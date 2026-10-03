@@ -72,7 +72,7 @@ details[open] > summary .chevron {
 	border-bottom: 1px solid rgb(var(--line));
 }
 .card-title {
-	font-size: var(--fs-title, 15px);
+	font-size: var(--fs-title);
 	font-weight: 600;
 	letter-spacing: -0.005em;
 }
@@ -80,7 +80,7 @@ details[open] > summary .chevron {
    --faint + mono 는 timestamp/id 같은 진짜 메타데이터 전용 (이 클래스 대상 아님).
    기본 1행 클램프(nowrap+ellipsis) → 전체 내용은 native title 툴팁으로 hover 노출. */
 .card-sub {
-	font-size: 14px;
+	font-size: var(--fs-meta);
 	color: rgb(var(--dim));
 	font-family: "Pretendard Variable", Pretendard, ui-sans-serif, system-ui, sans-serif;
 	line-height: 1.5;
@@ -298,7 +298,7 @@ details[open] > summary .chevron {
 .tbl {
 	width: 100%;
 	border-collapse: collapse;
-	font-size: 13px;
+	font-size: var(--fs-control);
 }
 .tbl th,
 .tbl td {
@@ -309,7 +309,7 @@ details[open] > summary .chevron {
 .tbl th {
 	font-weight: 500;
 	color: rgb(var(--dim));
-	font-size: 12px;
+	font-size: var(--fs-meta);
 	text-transform: uppercase;
 	letter-spacing: 0.04em;
 	background: rgb(var(--sunken));
@@ -356,7 +356,7 @@ details[open] > summary .chevron {
 .tab {
 	padding: 4px 11px;
 	min-height: var(--ctl-min-h);
-	font-size: 12px;
+	font-size: var(--fs-meta);
 	border: none;
 	background: none;
 	color: rgb(var(--dim));
@@ -375,7 +375,7 @@ details[open] > summary .chevron {
 .seg button {
 	padding: 5px 10px;
 	min-height: var(--ctl-min-h);
-	font-size: 12px;
+	font-size: var(--fs-meta);
 	background: none;
 	border: none;
 	color: rgb(var(--dim));
@@ -431,7 +431,7 @@ details[open] > summary .chevron {
 	margin-top: 2px;
 }
 .kpi-value {
-	font-size: 28px;
+	font-size: var(--fs-kpi);
 	line-height: 1.15;
 	font-weight: 600;
 	letter-spacing: -0.025em;
@@ -439,7 +439,7 @@ details[open] > summary .chevron {
 	font-family: "JetBrains Mono", monospace;
 }
 .kpi-value .unit {
-	font-size: 14px;
+	font-size: var(--fs-title); /* half of --fs-kpi → 2:1 figure-to-unit */
 	color: rgb(var(--dim));
 	font-weight: 500;
 	margin-left: 3px;
@@ -887,7 +887,7 @@ details[open] > summary .chevron {
 	gap: 8px;
 	flex-shrink: 0;
 }
-.detail-title { font-weight: 600; font-size: var(--fs-title, 13px); color: rgb(var(--ink)); }
+.detail-title { font-weight: 600; font-size: var(--fs-title); color: rgb(var(--ink)); }
 .detail-sub { margin-top: 2px; font-size: var(--fs-meta); color: rgb(var(--faint)); }
 .detail-body { padding: 18px 20px; overflow-y: auto; flex: 1 1 auto; }
 /* bare — children 이 자체 header/close 소유 시 padding 만 제거 (overflow/flex 스크롤 거동 유지) */
@@ -928,7 +928,7 @@ details[open] > summary .chevron {
 	color: rgb(var(--faint));
 	text-align: center;
 	font-family: "JetBrains Mono", monospace;
-	font-size: 12px;
+	font-size: var(--fs-meta);
 }
 
 .alert-detail {
@@ -1176,7 +1176,7 @@ details[open] > summary .chevron {
 	gap: 8px;
 	font-family: "JetBrains Mono", ui-monospace, SFMono-Regular, monospace;
 	font-feature-settings: "tnum" 1;
-	font-size: 12px;
+	font-size: var(--fs-meta);
 	line-height: 1.5;
 	padding: 1px 8px;
 	white-space: pre-wrap;
@@ -1227,7 +1227,7 @@ details[open] > summary .chevron {
 	right: 24px;
 	padding: 10px 14px;
 	border-radius: var(--radius-tile);
-	font-size: var(--fs-body, 13px);
+	font-size: var(--fs-body);
 	box-shadow: var(--shadow-overlay);
 	z-index: var(--z-toast);
 	max-width: 480px;

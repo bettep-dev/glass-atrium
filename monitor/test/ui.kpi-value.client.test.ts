@@ -46,11 +46,10 @@ test("a unit trails the figure inside the same scaled value", () => {
   assert.equal(collectText(scaled[0]).replace(/\s+/g, ""), "92%");
 });
 
-// Learning's status band reads its hint at body scale; every other card keeps the micro hint.
-test("a KPI hint renders at the scale its caller names, and at the micro scale when none is named", () => {
+test("a KPI hint renders at the scale its caller names, and at the meta floor when none is named", () => {
   const rows = [
-    { name: "no scale named", props: {}, scale: "fs-micro" },
-    { name: "body scale named", props: { hintClassName: "fs-meta" }, scale: "fs-meta" },
+    { name: "no scale named", props: {}, scale: "fs-meta" },
+    { name: "body scale named", props: { hintClassName: "fs-body" }, scale: "fs-body" },
   ];
   for (const row of rows) {
     const tree = render("KPI", { label: "Applied", value: "3", hint: "of 12 cycles", ...row.props });

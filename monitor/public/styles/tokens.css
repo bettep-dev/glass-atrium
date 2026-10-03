@@ -59,13 +59,15 @@
   /* ── Badge form (신규 · additive) ─ kind B length: 전 배지 shell 공용 radius (form 통일) */
   --radius-badge: 6px;
 
-  /* type steps — whole px, 12px meta floor (ui.jsx TypeScaleStyle still repeats the on-floor values) */
-  --fs-display: 22px;
-  --fs-stat:    18px;
-  --fs-title:   15px;
-  --fs-body:    14px;
-  --fs-control: 13px;
-  --fs-meta:    12px;
+  /* type steps — the only scale source, whole px, 13px meta floor */
+  --fs-kpi:     32px;
+  --fs-display: 24px;
+  --fs-stat:    20px;
+  --fs-title:   16px;
+  --fs-body:    15px;
+  --fs-control: 14px;
+  --fs-meta:    13px;
+  --fs-micro:   var(--fs-meta); /* retired step — kept as an alias so no caller drops below the floor */
 
   /* radius by role — inline glyph/pip < control < tile < card/overlay */
   --radius-inline:   4px;
@@ -163,7 +165,7 @@ body {
 
 /* Code block */
 .code-block {
-  font-family: 'JetBrains Mono', monospace; font-size: 12px;
+  font-family: 'JetBrains Mono', monospace; font-size: var(--fs-meta);
   background: rgb(var(--sunken)); border: 1px solid rgb(var(--line));
   border-radius: 6px; padding: 10px 12px;
   white-space: pre-wrap; word-break: break-all;
