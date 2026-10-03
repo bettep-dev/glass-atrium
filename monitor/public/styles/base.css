@@ -90,9 +90,11 @@ details[open] > summary .chevron {
 	overflow: hidden;
 	text-overflow: ellipsis;
 }
+/* inline-size containment → the meta adds no width to the header's line-break size, so it ellipsizes before the controls wrap */
 .card-head-text > .card-sub {
 	flex: 1 1 0;
 	min-width: 0;
+	contain: inline-size;
 }
 .card-title {
 	font-size: var(--fs-title);
