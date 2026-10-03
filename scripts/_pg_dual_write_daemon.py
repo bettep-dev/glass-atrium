@@ -496,6 +496,58 @@ _PRESERVE_STORED_VERDICT_SQL = f"""
                                     <> '{_BACKOFF_MARKER}')"""
 
 
+# Label test shared by the status fragment and the probe → one text, one answer.
+_UNADJUDICATED_LABEL_SQL = """
+    SELECT 1
+      FROM pg_catalog.pg_enum AS e
+      JOIN pg_catalog.pg_type AS t ON t.oid = e.enumtypid
+      JOIN pg_catalog.pg_namespace AS n ON n.oid = t.typnamespace
+     WHERE n.nspname = 'core'
+       AND t.typname = 'ProposalStatus'
+       AND e.enumlabel = 'unadjudicated'"""
+
+# Status value for every proposals.status writer; its one %s is the requested status.
+# Label absent (code ahead of its migration) → 'unadjudicated' stores 'rejected'; backfill relabels.
+# Text in the subquery, cast once outside at run time → probe + write in one statement.
+PROPOSAL_STATUS_SQL = f"""(
+    SELECT CASE
+             WHEN r.requested = 'unadjudicated'
+                  AND NOT EXISTS ({_UNADJUDICATED_LABEL_SQL})
+             THEN 'rejected'
+             ELSE r.requested
+           END
+      FROM (SELECT %s::text AS requested) AS r
+)::core."ProposalStatus"
+"""
+
+
+def get_proposal_status_label_state(conn):
+    """Whether core."ProposalStatus" carries the 'unadjudicated' label on `conn`.
+
+    Returns "present" or "absent" when the catalog answers, "unknown" when the query
+    cannot run (closed connection, server fault) — the caller decides what an unknown
+    schema means; the fault itself is named on stderr.
+    """
+    try:
+        with conn.cursor() as cur:
+            cur.execute(f"SELECT EXISTS ({_UNADJUDICATED_LABEL_SQL})")
+            row = cur.fetchone()
+    except psycopg.Error as exc:
+        sys.stderr.write(
+            json.dumps(
+                {
+                    "hook": "_pg_dual_write_daemon",
+                    "op": "get_proposal_status_label_state",
+                    "error_kind": _classify_error(exc),
+                    "message": str(exc),
+                }
+            )
+            + "\n"
+        )
+        return "unknown"
+    return "present" if row and row[0] else "absent"
+
+
 def write_autoagent_proposal(
     cycle_date,
     pattern_label,
@@ -555,7 +607,9 @@ def write_autoagent_proposal(
     # Caller-provided approval_tier overrides the coerced one (only when valid)
     if approval_tier in ("auto", "llm", "user"):
         tier_enum = approval_tier
-    if status not in ("pending", "approved", "rejected", "applied", "snoozed"):
+    if status not in (
+        "pending", "approved", "rejected", "applied", "snoozed", "unadjudicated"
+    ):
         # A reject-classification row with an empty/invalid status MUST settle as
         # 'rejected', not 'pending' — else auto-reject proposals fossilize in the
         # pending queue.
@@ -574,7 +628,7 @@ def write_autoagent_proposal(
         VALUES (%s, %s, %s, %s,
                 %s::core."ProposalClassification", %s, %s,
                 %s::core."ApprovalTier",
-                %s::core."ProposalStatus",
+                {PROPOSAL_STATUS_SQL},
                 %s, %s, %s,
                 %s, %s,
                 COALESCE(%s, CURRENT_TIMESTAMP),

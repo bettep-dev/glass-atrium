@@ -22,6 +22,8 @@ The helper's SQL text is never re-implemented here: two mechanical rewrites
 engine, so the conditional arms under test are the ones that ship. The attached
 file database is aliased as `core`, so the schema-qualified table name and the
 conflict arm's self-referencing `core.autoagent_proposals.<column>` run verbatim.
+A `pg_catalog` stand-in carries the enums the Prisma schema declares, so a statement
+probing an enum label runs verbatim too and sees exactly the declared labels.
 
 What it cannot see, so nothing here may claim it: the date-typed cycle_date
 column and its cast, the driver's type adaptation, and real concurrency. Those
@@ -62,6 +64,9 @@ _NAMED = re.compile(r"%\((\w+)\)s")
 _MODEL_BLOCK = r"^model %s \{$(.*?)^\}$"
 _FIELD = re.compile(r"^\s+(\w+)\s+(\w+)(\?)?(\[\])?(.*)$")
 _MAPPED = re.compile(r'@map\("(\w+)"\)')
+_ENUM_BLOCK = re.compile(r"^enum (\w+) \{$(.*?)^\}$", re.M | re.S)
+_ENUM_LABEL = re.compile(r'^[ \t]+(\w+)(?:[ \t]+@map\("([^"]+)"\))?[ \t]*$', re.M)
+_ENUM_SCHEMA = re.compile(r'@@schema\("(\w+)"\)')
 # One alternation, so CREATE and DROP keep their relative order within a file.
 # Identifier quoting is OPTIONAL at every position: the corpus already carries an
 # unquoted `CREATE INDEX notes_ts_gin ON wiki.notes`, and a quoted-only pattern would
@@ -118,6 +123,8 @@ class _Connection:
         # ATTACH aliases the file as schema `core` → a caller's schema-qualified
         # `core.<table>` runs verbatim, with no table-name rewrite.
         self._db.execute("ATTACH DATABASE ? AS core", (str(db_path),))
+        self._db.execute("ATTACH DATABASE ':memory:' AS pg_catalog")
+        _create_enum_catalog(self._db)
 
     def __enter__(self) -> "_Connection":
         return self
@@ -134,6 +141,40 @@ class _Connection:
 
     def rollback(self) -> None:
         self._db.rollback()
+
+
+def _create_enum_catalog(db: sqlite3.Connection) -> None:
+    """pg_namespace / pg_type / pg_enum rows for every enum the Prisma schema declares.
+
+    Labels are stored as the database spells them — the `@map` value where one is
+    given — under the `@@schema` the enum names.
+    """
+    db.executescript(
+        "CREATE TABLE pg_catalog.pg_namespace (oid INTEGER PRIMARY KEY, nspname TEXT);"
+        "CREATE TABLE pg_catalog.pg_type"
+        " (oid INTEGER PRIMARY KEY, typname TEXT, typnamespace INTEGER);"
+        "CREATE TABLE pg_catalog.pg_enum (enumtypid INTEGER, enumlabel TEXT);"
+    )
+    namespaces: dict[str, int] = {}
+    schema_text = _SCHEMA.read_text(encoding="utf-8")
+    for type_oid, block in enumerate(_ENUM_BLOCK.finditer(schema_text), start=1):
+        name, body = block.groups()
+        schema = _ENUM_SCHEMA.search(body)
+        if schema is None:
+            raise AssertionError("enum %s declares no @@schema in %s" % (name, _SCHEMA))
+        namespace_oid = namespaces.setdefault(schema.group(1), len(namespaces) + 1)
+        db.execute(
+            "INSERT INTO pg_catalog.pg_type VALUES (?, ?, ?)",
+            (type_oid, name, namespace_oid),
+        )
+        db.executemany(
+            "INSERT INTO pg_catalog.pg_enum VALUES (?, ?)",
+            [(type_oid, mapped or label) for label, mapped in _ENUM_LABEL.findall(body)],
+        )
+    db.executemany(
+        "INSERT INTO pg_catalog.pg_namespace VALUES (?, ?)",
+        [(oid, nspname) for nspname, oid in namespaces.items()],
+    )
 
 
 class Error(Exception):

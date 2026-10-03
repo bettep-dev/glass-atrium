@@ -352,6 +352,16 @@ def test_a_born_terminal_row_names_its_creator(proposals: _Proposals):
     }
 
 
+def test_when_the_status_label_exists_then_an_unadjudicated_push_persists_it(
+    proposals: _Proposals,
+):
+    # The stub catalog carries the schema's own enum, so this is the label-present
+    # branch; the label-absent branch lives in proposal-status-label-fallback.bats.
+    proposals.push("unadjudicated", _stamp("unadjudicated"))
+
+    assert proposals.get_stored()["status"] == "unadjudicated"
+
+
 @pytest.mark.parametrize("stored_status", _REVIEWED_TERMINAL)
 @pytest.mark.parametrize("incoming_status", _STORABLE)
 def test_when_a_reviewed_row_is_terminal_then_no_re_push_changes_any_column(
