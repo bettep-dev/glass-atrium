@@ -511,6 +511,18 @@ function getDisclosureOpenMc(kind: unknown, tone: unknown): boolean {
 const getFreshnessVerdictMc = realUiMc.getFreshnessVerdict as (input: Record<string, unknown>) => { tone: unknown; label: unknown };
 const getAgentDisplayNameMc = realUiMc.getAgentDisplayName as (name: unknown) => string;
 
+// The drawer body rides in a marked slot → face text and drawer text stay separately readable.
+function cardHeadStubMc(p: Record<string, unknown>): McElement {
+  return hMc(
+    "div",
+    { className: "card-head" },
+    hMc("h2", { className: "card-title" }, p.title),
+    p.sub ? hMc("span", { className: "card-sub", title: p.sub }, p.sub) : null,
+    p.info ? hMc("div", { "data-slot": "card-info", "data-info-label": p.infoLabel ?? "How this is counted" }, p.info) : null,
+    p.right,
+  );
+}
+
 async function loadMcScreens(
   overrides: { react?: Record<string, unknown>; fetch?: unknown } = {},
 ): Promise<Record<string, unknown>> {
@@ -534,7 +546,15 @@ async function loadMcScreens(
     TypeScaleStyle: () => null,
     Badge: (p: Record<string, unknown>) =>
       hMc("span", { className: `badge ${p.className ?? ""}`.trim(), "data-tone": p.tone ?? "neutral" }, p.children),
-    CardHead: (p: Record<string, unknown>) => hMc("div", { className: "card-head" }, p.title, p.right),
+    CardHead: cardHeadStubMc,
+    Card: (p: Record<string, unknown>) =>
+      hMc(
+        "div",
+        { className: "card", "data-atom": "Card", "data-size": p.size },
+        p.title ? hMc(cardHeadStubMc, { title: p.title, sub: p.sub, info: p.info, infoLabel: p.infoLabel, right: p.right }) : null,
+        hMc("div", { className: "card-body" }, p.children),
+        p.foot ? hMc("div", { className: "card-foot" }, p.foot) : null,
+      ),
     SectionLabel: (p: Record<string, unknown>) =>
       hMc(p.level === 3 ? "h3" : "h2", { className: "section-label" }, p.children),
     DetailSurface: (p: Record<string, unknown>) =>
@@ -562,7 +582,7 @@ async function loadMcScreens(
       hMc("span", { "data-atom": "AgentName", title: p.name }, getAgentDisplayNameMc(p.name)),
     formatKstTime: realUiMc.formatKstTime,
     SplitRow: (p: Record<string, unknown>) =>
-      hMc("div", { "data-atom": "SplitRow", "data-ratio": p.ratio }, p.children),
+      hMc("div", { "data-atom": "SplitRow", "data-ratio": p.ratio, "data-layout": p.layout }, p.children),
     SplitColumn: (p: Record<string, unknown>) => hMc("div", { "data-atom": "SplitColumn" }, p.children),
     getFreshnessVerdict: getFreshnessVerdictMc,
     // body mounts only while open, as in the atom
@@ -886,7 +906,7 @@ test("section headers survive every state, and a non-ready body never reads as z
     const props = name === "DomainsSectionMC" ? domainsPropsMc() : budgetsPropsMc();
     const label = textMc(
       findAllMc(renderComponentMc(screens[name], { ...props, state: "ready" }), (n) =>
-        String(n.props.className ?? "").includes("border-t"),
+        String(n.props.className ?? "").includes("card-head"),
       ),
     );
     assert.ok(label.length > 0, `${name}: section header present when ready`);
@@ -1432,14 +1452,20 @@ test("tier notes show one unfolded entry per described tier", () => {
   assert.ok(textMc(tree).includes("self-improvement loop"), "every description stays reachable");
 });
 
-test("no ledger text drops below the 12px type floor", () => {
+test("no ledger text drops below the 13px type floor", () => {
   const overridden = {
     ...domainsPropsMc([{ ...DOMAIN_ROW_FIXTURE_MC[0], files: [{ file: "agents/a.md", model: "claude-opus-4-8" }] }]),
     baseline: { models: { "model.dev": "claude-sonnet-5" }, budgets: {} },
   };
   const tree = renderComponentMc(screens.DomainsSectionMC, overridden);
   const micro = findAllMc(tree, (n) => String(n.props.className ?? "").includes("fs-micro"));
-  assert.strictEqual(micro.length, 0, "no fs-micro (11px) text");
+  assert.strictEqual(micro.length, 0, "no fs-micro text");
+  const literal = findAllMc(tree, (n) => {
+    const px = /text-\[(\d+)px\]/.exec(String(n.props.className ?? ""))?.[1];
+    const inline = (n.props.style as { fontSize?: unknown } | undefined)?.fontSize;
+    return (px !== undefined && Number(px) < 13) || (typeof inline === "number" && inline < 13);
+  });
+  assert.strictEqual(literal.length, 0, "no literal size below 13px");
 });
 
 test("the saved-value line keeps its slot whether or not the field differs, so an edit never grows the row", () => {
@@ -1472,14 +1498,26 @@ test("Cost & usage is linked once per ledger, and an unpriced tier says why its 
 
 const countMc = (text: string, needle: string): number => text.split(needle).length - 1;
 
-test("a take-effect mode shared by every row is stated once, and a row that differs names its own", () => {
-  const uniform = textMc(renderComponentMc(screens.DomainsSectionMC, domainsPropsMc(THREE_TIERS_MC)));
-  assert.strictEqual(countMc(uniform, "Next spawn"), 1, "three next-spawn rows → stated once");
+// The card face an operator reads with every drawer closed.
+function faceMc(nodes: McNode[]): McNode[] {
+  return nodes.flatMap((n): McNode[] =>
+    typeof n === "string" ? [n] : n.props["data-slot"] === "card-info" ? [] : [{ ...n, children: faceMc(n.children) }],
+  );
+}
+const drawersMc = (nodes: McNode[]): McTag[] => findAllMc(nodes, (n) => n.props["data-slot"] === "card-info");
+const headMetaMc = (nodes: McNode[]): string[] =>
+  textsMc(findAllMc(faceMc(nodes), (n) => String(n.props.className ?? "").includes("card-sub")));
+const footMc = (nodes: McNode[]): string[] =>
+  textsMc(findAllMc(nodes, (n) => String(n.props.className ?? "").includes("card-foot")));
+
+test("a timing shared by every row is stated once on the card face, and a row that differs names its own", () => {
+  const uniform = textMc(faceMc(renderComponentMc(screens.DomainsSectionMC, domainsPropsMc(THREE_TIERS_MC))));
+  assert.strictEqual(countMc(uniform, "next spawn"), 1, "three next-spawn rows → stated once");
 
   const mixed = THREE_TIERS_MC.map((d, i) => (i === 2 ? { ...d, apply_mode: "next-cycle" } : d));
-  const text = textMc(renderComponentMc(screens.DomainsSectionMC, domainsPropsMc(mixed)));
-  assert.strictEqual(countMc(text, "Next spawn"), 1, "the shared mode stays stated once");
-  assert.strictEqual(countMc(text, "Next cycle"), 1, "the differing row names its own mode");
+  const text = textMc(faceMc(renderComponentMc(screens.DomainsSectionMC, domainsPropsMc(mixed))));
+  assert.strictEqual(countMc(text, "next spawn"), 1, "the shared mode stays stated once");
+  assert.strictEqual(countMc(text, "next cycle"), 1, "the differing row names its own mode");
 });
 
 test("the per-file list groups files under each model, so every model value is shown whole once", () => {
@@ -1642,28 +1680,63 @@ test("a file list stays folded while every file carries the saved model, and ope
   }
 });
 
-test("each section states 'Takes effect' once, naming a departing row inside that one line", () => {
-  const tree = renderComponentMc(
-    screens.DomainsSectionMC,
-    domainsPropsMc([
-      DOMAIN_ROW_FIXTURE_MC[0],
-      { ...DOMAIN_ROW_FIXTURE_MC[0], domain: "model.research" },
-      { ...DOMAIN_ROW_FIXTURE_MC[0], domain: "model.daemon_cycle_worker", apply_mode: "next-cycle" },
-    ]),
-  );
-  const lines = textsMc(findAllMc(tree, (n) => n.children.some((c) => typeof c === "string" && c.includes("Takes effect"))));
-  assert.strictEqual(lines.length, 1, "one take-effect line per section");
-  assert.ok(lines[0].includes("Next spawn") && lines[0].includes("Daemon cycle helper: Next cycle"), lines[0]);
+describe("each card states its shared timing in a header meta within the 32-char cap", () => {
+  const rows = [
+    { name: "model assignment", section: "DomainsSectionMC", props: () => domainsPropsMc(THREE_TIERS_MC), meta: "Applies at next spawn" },
+    { name: "budget caps", section: "BudgetsSectionMC", props: () => budgetsPropsMc(), meta: "Applies at next cycle" },
+    { name: "call tiers", section: "TiersSectionMC", props: () => tiersPropsMc(), meta: "Applies at next cycle" },
+  ];
+  for (const row of rows) {
+    test(row.name, () => {
+      const metas = headMetaMc(renderComponentMc(screens[row.section], row.props()));
+      assert.deepStrictEqual(metas, [row.meta], `${row.name}: one header meta`);
+      assert.ok(metas[0].length <= 32, `${row.name}: "${metas[0]}" exceeds the 32-char meta cap`);
+    });
+  }
 });
 
-test("tier notes sit outside the ledger and never restate a row's own hint", () => {
-  const section = renderComponentMc(screens.DomainsSectionMC, domainsPropsMc());
-  assert.strictEqual(tagsMc(section, "dl").length, 0, "nothing folds open above the model table");
+test("a row departing from the card's timing states its own timing in its row", () => {
+  const departing = { ...DOMAIN_ROW_FIXTURE_MC[0], domain: "model.daemon_cycle_worker", apply_mode: "next-cycle" };
+  const tree = renderComponentMc(screens.DomainsSectionMC, domainsPropsMc([...THREE_TIERS_MC, departing]));
+  assert.deepStrictEqual(headMetaMc(tree), ["Applies at next spawn"], "the header keeps the shared mode alone");
+  const rows = tagsMc(tagsMc(tree, "tbody")[0].children, "tr");
+  const own = rows.filter((row) => textMc(row.children).includes("Applies at next cycle"));
+  assert.strictEqual(own.length, 1, "exactly one row states a timing of its own");
+  assert.ok(textMc(own[0].children).includes("Daemon cycle helper"), "the departing row carries it");
+});
 
-  const screen = renderComponentMc(screens.ScreenModelConfig);
-  const [rail] = findAllMc(screen, (n) => n.props["data-atom"] === "SplitColumn");
-  assert.ok(rail, "the caps column is a split column that can hold the notes");
+test("the model mix sits in the card foot, so the header line keeps room for its meta", () => {
+  const models = { "model.dev": "claude-opus-4-8", "model.research": "claude-sonnet-5", "model.meta": "claude-opus-4-8" };
+  const tree = renderComponentMc(screens.DomainsSectionMC, {
+    ...domainsPropsMc(THREE_TIERS_MC),
+    form: { models, budgets: {} },
+    baseline: { models: { ...models }, budgets: {} },
+  });
+  assert.deepStrictEqual(footMc(tree), ["Opus 4.8 ×2 · Sonnet 5 ×1"], "the foot carries the mix");
+  const head = textsMc(findAllMc(faceMc(tree), (n) => String(n.props.className ?? "").includes("card-head")));
+  assert.ok(!head.join(" ").includes("×"), `the header carries no mix: ${head}`);
+});
 
+describe("each card's glossary opens from its About settings drawer, never on the card face", () => {
+  const rows = [
+    { name: "model assignment", section: "DomainsSectionMC", props: () => domainsPropsMc(THREE_TIERS_MC), heading: "Who each tier covers" },
+    { name: "budget caps", section: "BudgetsSectionMC", props: () => budgetsPropsMc(), heading: "When a cap trips" },
+    { name: "call tiers", section: "TiersSectionMC", props: () => tiersPropsMc(), heading: "What each setting does" },
+  ];
+  for (const row of rows) {
+    test(row.name, () => {
+      const tree = renderComponentMc(screens[row.section], row.props());
+      assert.strictEqual(tagsMc(faceMc(tree), "dl").length, 0, `${row.name}: no glossary on the face`);
+      const drawers = drawersMc(tree);
+      assert.strictEqual(drawers.length, 1, `${row.name}: one drawer`);
+      assert.strictEqual(drawers[0].props["data-info-label"], "About settings");
+      assert.deepStrictEqual(textsMc(tagsMc(drawers[0].children, "h3")), [row.heading]);
+      assert.ok(tagsMc(drawers[0].children, "dt").length > 0, `${row.name}: the drawer lists its entries`);
+    });
+  }
+});
+
+test("a glossary entry never restates its row's own hint", () => {
   // script-scope consts stay off the context global, so read them through the context itself
   const tables = vm.runInContext("[DOMAIN_META_MC, BUDGET_META_MC]", screens) as object[];
   const metas = tables.flatMap((table) => Object.values(table));
@@ -1672,11 +1745,38 @@ test("tier notes sit outside the ledger and never restate a row's own hint", () 
   }
 });
 
+test("long take-effect, cap and default sentences read as short labels; their detail sits in the drawer", () => {
+  const [budgetMeta, tierMeta] = vm.runInContext("[BUDGET_META_MC, TIER_META_MC]", screens) as Array<
+    Record<string, { desc: string; note?: string }>
+  >;
+  assert.strictEqual(budgetMeta["budget.worker_max_usd"].desc, "Shared cap: generation + wiki compile");
+  for (const knob of ["tier.worker_effort", "tier.pre_verify_effort"]) {
+    assert.strictEqual(tierMeta[knob].desc, "Default: no --effort flag", knob);
+  }
+
+  const domains = renderComponentMc(screens.DomainsSectionMC, domainsPropsMc(THREE_TIERS_MC));
+  const caveat = "a running agent keeps its current model";
+  assert.ok(!textMc(faceMc(domains)).includes(caveat), "the running-agent caveat is off the face");
+  assert.ok(textMc(drawersMc(domains)[0].children).includes(caveat), "the caveat is in the drawer");
+
+  const tiers = renderComponentMc(screens.TiersSectionMC, tiersPropsMc());
+  const precedence = "settings or model default governs the call";
+  assert.ok(textMc(drawersMc(tiers)[0].children).includes(precedence), "the precedence note is in the drawer");
+});
+
 test("the three ledgers share one split row, model assignment leading", () => {
   const tree = renderComponentMc(screens.ScreenModelConfig);
   const [split] = findAllMc(tree, (n) => n.props["data-atom"] === "SplitRow");
   assert.ok(split, "a split row holds the ledgers");
-  assert.strictEqual(split.props["data-ratio"], "3:2");
+  // 1:1 over 2:1 — at 1280 a third-width column overflows the cap and tier fields
+  assert.strictEqual(split.props["data-ratio"], "1:1");
+  assert.strictEqual(split.props["data-layout"], "equal", "peer cards stretch to one end edge");
+  const [lead, column] = split.children.filter((c): c is McTag => typeof c !== "string");
+  const cardSizesOf = (node: McTag): unknown[] =>
+    findAllMc([node], (n) => n.props["data-atom"] === "Card").map((c) => c.props["data-size"]);
+  assert.deepStrictEqual(cardSizesOf(lead), ["L"], "model assignment is the L card");
+  assert.strictEqual(column.props["data-atom"], "SplitColumn", "caps and tiers stack in one column");
+  assert.deepStrictEqual(cardSizesOf(column), ["M", "M"], "caps and tiers are M cards");
   assert.deepStrictEqual(textsMc(tagsMc(split.children, "h2")), [
     "Model assignment",
     "Per-call budget caps",
@@ -1766,14 +1866,6 @@ test("a cap field fits the longest valid cap and is never squeezed by its link",
 
   assert.ok(widthCh >= BUDGET_MAX_USD.toFixed(2).length, `field width ${widthCh}ch holds ${BUDGET_MAX_USD.toFixed(2)}`);
   assert.ok(String(affix?.props.className).includes("flex-shrink-0"), "the field keeps its width beside the link");
-});
-
-test("a section lead line wraps instead of clipping", () => {
-  const tree = renderComponentMc(screens.BudgetsSectionMC, budgetsPropsMc());
-  const leads = findAllMc(tree, (n) => String(n.props.className ?? "").includes("card-sub"));
-
-  assert.ok(leads.length > 0, "the caps section carries a lead line");
-  assert.ok(leads.every((n) => String(n.props.className).includes("is-wrap")), "every lead line wraps");
 });
 
 // Screen-level reads: announcements, stale rows, file lists, rail headings, In-effect sources.
@@ -1879,7 +1971,7 @@ test("the file list toggle shows a chevron and its opened list is never clipped 
   assert.strictEqual(tagsMc(list.children, "span").length, files.length, "every file is listed");
 });
 
-test("the rail labels are headings, and their notes never repeat the agent a row already names", async () => {
+test("the glossary labels are headings, and their notes never repeat the agent a row already names", async () => {
   const tree = await renderSeededScreenMc({
     config: seededConfigMc({ status: "ready", data: { ...SCREEN_DATA_MC, domains: ALL_TIERS_MC }, key: "config", busy: false }),
     form: SCREEN_FORM_MC,

@@ -184,7 +184,7 @@ test("a ready tile renders its value and its population", () => {
   assert.match(textOf(tile), /Applied \(7 days\)/);
 });
 
-// no body text under 12px — the population line is body text, not a micro caption
+// the population line is body text, not a micro caption
 test("a ready tile renders its population at the body type scale", () => {
   const tile = sandbox.StatusTileI({
     status: "ready",
@@ -200,11 +200,11 @@ test("a ready tile renders its population at the body type scale", () => {
   );
   assert.ok(holders.length > 0, "the population reaches the rendered card");
   for (const el of holders) {
-    assert.doesNotMatch(String(el.props.className), /\bfs-micro\b/, "population rendered at the 11px micro scale");
+    assert.doesNotMatch(String(el.props.className), /\bfs-micro\b/, "population rendered at the retired micro step");
   }
   assert.ok(
     holders.some((el) => /\bfs-meta\b/.test(String(el.props.className))),
-    "population carries the 12px body scale",
+    "population carries the 13px meta step",
   );
 });
 

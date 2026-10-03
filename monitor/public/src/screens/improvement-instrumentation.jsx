@@ -66,7 +66,7 @@ function FlaggedResultsCardI({ state, reviewReasons, onNav }) {
 		<div className="card">
 			<CardHead
 				title={title}
-				sub="Outcomes flagged in the last 7 days · quarantined excluded"
+				sub="Quarantined rows excluded"
 				right={
 					<button
 						className="btn ghost sm"
@@ -171,7 +171,7 @@ function ImprovementInstrumentationViewI({
 					/>
 				)}
 			</div>
-			<SplitRow ratio="1:1">
+			<SplitRow ratio="1:1" layout="equal">
 				<div id={PAYLOAD_SLOT_ID_I.corpusGrowth}>
 					{getRegionView(corpusAuditState) === "error" ? (
 						<PayloadErrorCardI
@@ -214,7 +214,7 @@ function ImprovementInstrumentationViewI({
 				) : (
 					<>
 						<StyleRefCardI state={listState} styleRef={styleRef} />
-						<SplitRow ratio="1:1">
+						<SplitRow ratio="1:1" layout="equal">
 							<ProseOnlyAddCardI state={listState} summary={proseOnlyAdd} />
 							<ConfidenceDistCardI
 								state={listState}
@@ -248,7 +248,7 @@ function TierBreakdownCardI({ state, tierBreakdown }) {
 	if (state.status === "loading" || !tierBreakdown) {
 		return (
 			<div className="card">
-				<CardHead title="Results by check status (30 days)" />
+				<CardHead title="Results by check status" sub="30 days" />
 				<div className="px-5 py-4">
 					<LoadingPlaceholder label="check-status results" minHeight={68} />
 				</div>
@@ -266,7 +266,7 @@ function TierBreakdownCardI({ state, tierBreakdown }) {
 	if (totalCnt === 0) {
 		return (
 			<div className="card">
-				<CardHead title="Results by check status (30 days)" />
+				<CardHead title="Results by check status" sub="30 days" />
 				<div className="px-5 pb-4">
 					<div
 						className="placeholder"
@@ -312,7 +312,7 @@ function TierBreakdownCardI({ state, tierBreakdown }) {
 
 	return (
 		<div className="card">
-			<CardHead title="Results by check status (30 days)" />
+			<CardHead title="Results by check status" sub="30 days" />
 			<div className="grid grid-cols-4 gap-2 px-5 py-4">
 				{cards.map(([sym, tone, label, value, hint]) => (
 					<div
@@ -358,7 +358,7 @@ function ConfidenceDistCardI({ state, confidenceDist }) {
 	if (state.status === "loading" || !confidenceDist) {
 		return (
 			<div className="card">
-				<CardHead title="Suggestion confidence (measured)" sub="30 days" />
+				<CardHead title="Suggestion confidence" sub="Measured · 30 days" />
 				<div className="px-5 py-4">
 					<LoadingPlaceholder label="suggestion confidence" minHeight={68} />
 				</div>
@@ -391,7 +391,7 @@ function ConfidenceDistCardI({ state, confidenceDist }) {
 	if (buckets.length === 0 || totalProposals === 0) {
 		return (
 			<div className="card">
-				<CardHead title="Suggestion confidence (measured)" sub="30 days" />
+				<CardHead title="Suggestion confidence" sub="Measured · 30 days" />
 				<div className="px-5 pb-4">
 					<div
 						className="placeholder"
@@ -435,7 +435,7 @@ function ConfidenceDistCardI({ state, confidenceDist }) {
 
 	return (
 		<div className="card">
-			<CardHead title="Suggestion confidence (measured)" sub="30 days" />
+			<CardHead title="Suggestion confidence" sub="Measured · 30 days" />
 			<div className="grid grid-cols-1 gap-2 px-5 py-4">
 				{cards.map(([sym, tone, label, value, hint, bar]) => (
 					<div
@@ -525,7 +525,8 @@ function ProseOnlyAddCardI({ state, summary }) {
 	return (
 		<div className="card">
 			<CardHead
-				title={`Add-only patches (${formatIntI(Number(summary.window_days ?? 0))} days)`}
+				title="Add-only patches"
+				sub={`${formatIntI(Number(summary.window_days ?? 0))} days`}
 			/>
 			{rows.length === 0 ? (
 				<div className="px-5 pb-4">
@@ -599,8 +600,8 @@ function StyleRefCardI({ state, styleRef }) {
 		return (
 			<div className="card">
 				<CardHead
-					title="Style-check rate (7 days)"
-					sub="Agents that checked existing files before coding"
+					title="Style-check rate"
+					sub="7 days · checked before coding"
 				/>
 				<div className="px-5 py-4">
 					<LoadingPlaceholder label="style-check rates" minHeight={68} />
@@ -684,8 +685,8 @@ function StyleRefCardI({ state, styleRef }) {
 	return (
 		<div className="card">
 			<CardHead
-				title="Style-check rate (7 days)"
-				sub="Agents that checked existing files before coding"
+				title="Style-check rate"
+				sub="7 days · checked before coding"
 			/>
 			<div className="grid grid-cols-3 gap-2 px-5 py-4">
 				{headlineCards.map(([sym, tone, label, value, hint, bar]) => (
@@ -898,13 +899,13 @@ function formatRateI(rate) {
 // 가짜 0 금지. error(503/테이블 부재) → 뷰가 카드 대신 재시도 가능한 오류 배너를 렌더.
 function CorrectionSignalsCardI({ state }) {
 	const { CardHead, formatKstDate, LoadingPlaceholder } = window.UI;
-	const title = "Detection agreement (correction signals)";
+	const title = "Detection agreement";
 
 	if (state.status === "error") return null;
 	if (state.status === "loading" || !state.data) {
 		return (
 			<div className="card">
-				<CardHead title={title} />
+				<CardHead title={title} sub="Correction signals" />
 				<div className="px-5 py-4">
 					<LoadingPlaceholder label="correction signals" minHeight={60} />
 				</div>
@@ -917,7 +918,7 @@ function CorrectionSignalsCardI({ state }) {
 	if (!d.total_signals) {
 		return (
 			<div className="card">
-				<CardHead title={title} />
+				<CardHead title={title} sub="Correction signals" />
 				<div className="px-5 pb-4">
 					<div className="placeholder">
 						No correction signals recorded yet — appears once a run logs a
@@ -979,13 +980,13 @@ function CorrectionSignalsCardI({ state }) {
 // null 은 "판독 불가", 0 은 "측정된 0" 으로 서로 다른 판독 → null 을 0 으로 접지 않는다.
 function CorpusGrowthCardI({ state }) {
 	const { CardHead, Sparkline, LoadingPlaceholder } = window.UI;
-	const title = "Corpus growth (per-cycle audit)";
+	const title = "Corpus growth";
 
 	if (state.status === "error") return null;
 	if (state.status === "loading" || !state.data) {
 		return (
 			<div className="card">
-				<CardHead title={title} />
+				<CardHead title={title} sub="Per-cycle audit" />
 				<div className="px-5 py-4">
 					<LoadingPlaceholder label="corpus audits" minHeight={60} />
 				</div>
@@ -998,7 +999,7 @@ function CorpusGrowthCardI({ state }) {
 	if (!latest) {
 		return (
 			<div className="card" data-testid="corpus-growth-card">
-				<CardHead title={title} />
+				<CardHead title={title} sub="Per-cycle audit" />
 				<div className="px-5 pb-4">
 					<div className="placeholder">
 						No corpus readings yet — appears once a daemon cycle writes one.
@@ -1031,7 +1032,7 @@ function CorpusGrowthCardI({ state }) {
 		<div className="card" data-testid="corpus-growth-card">
 			<CardHead
 				title={title}
-				sub={`${formatIntI(Number(state.data.total_audits ?? 0))} readings · latest ${latest.cycle_date}`}
+				sub={`${formatIntI(Number(state.data.total_audits ?? 0))} audits · latest ${latest.cycle_date}`}
 			/>
 			<div className="px-5 pb-4 space-y-2">
 				<div className="flex items-center gap-3 flex-wrap">

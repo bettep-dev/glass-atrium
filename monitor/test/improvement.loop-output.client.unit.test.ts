@@ -38,6 +38,7 @@ interface LoopSandbox {
   getLoopBasisI: (aggregate: LoopAggregate) => string;
   ChangeSummaryCardI: (props: Record<string, unknown>) => RecordedElement;
   TrendCardI: (props: Record<string, unknown>) => RecordedElement;
+  BucketRowI: (props: Record<string, unknown>) => RecordedElement;
   RejectRateHeadlineI: (props: Record<string, unknown>) => RecordedElement;
   getRejectRatePhraseI: (
     before: { count: number; total: number },
@@ -97,26 +98,58 @@ const READY = { status: "ready" };
 // the loop-events URL fetches at most this many rows, newest first
 const FETCH_CAP = 200;
 
-test("a cycle count cut at the row limit names its count and dates, never a day window or fetch wording", () => {
-  const days = ["2026-09-20", "2026-09-21", "2026-09-22", "2026-09-23"];
-  const aggregate = sandbox.deriveLoopAggregateI({
-    events: getEvents(days, FETCH_CAP / days.length),
-  });
+const ROWS = {
+  // the header meta holds the basis on one line → a qualified count plus the shortest date span that stays unambiguous
+  BASIS: [
+    {
+      name: "a count cut at the row limit reads as the latest cycles over their dates",
+      days: ["2026-09-20", "2026-09-21", "2026-09-22", "2026-09-23"],
+      perDay: FETCH_CAP / 4,
+      expected: `Last ${FETCH_CAP} · 09/20–09/23`,
+    },
+    {
+      name: "a count under the row limit reads as every recorded cycle",
+      days: ["2026-09-24", "2026-09-25"],
+      perDay: 2,
+      expected: "All 4 · 09/24–09/25",
+    },
+    {
+      name: "a span across a year boundary names its years, so no month-day pair is ambiguous",
+      days: ["2025-12-31", "2026-01-01"],
+      perDay: 2,
+      expected: "All 4 · 2025–2026",
+    },
+  ],
+  PHRASE: [
+    {
+      name: "both halves scored → recent count leads over its days, earlier count names its own",
+      before: { count: 4, total: 5, days: 2 },
+      after: { count: 3, total: 5, days: 3 },
+      expected: "3 of 5 rejected in the latest 3 cycle days (4 of 5 in the 2 before)",
+    },
+    {
+      name: "no earlier scored cycle → recent count alone, still over its days",
+      before: { count: 0, total: 0, days: 1 },
+      after: { count: 2, total: 7, days: 2 },
+      expected: "2 of 7 rejected in the latest 2 cycle days",
+    },
+    {
+      name: "no recent scored cycle → no count to state",
+      before: { count: 1, total: 4, days: 2 },
+      after: { count: 0, total: 0, days: 2 },
+      expected: "No scored cycles yet",
+    },
+  ],
+};
 
-  const basis = sandbox.getLoopBasisI(aggregate);
+describe("the loop basis names its count and dates in one header line", () => {
+  for (const row of ROWS.BASIS) {
+    test(row.name, () => {
+      const aggregate = sandbox.deriveLoopAggregateI({ events: getEvents(row.days, row.perDay) });
 
-  assert.match(basis, new RegExp(`Latest ${FETCH_CAP} cycles`));
-  assert.doesNotMatch(basis, /fetch cap/);
-  assert.match(basis, /2026-09-20 to 2026-09-23/);
-  assert.doesNotMatch(basis, /days/);
-});
-
-test("a cycle count under the fetch cap reads as every recorded cycle", () => {
-  const aggregate = sandbox.deriveLoopAggregateI({
-    events: getEvents(["2026-09-24", "2026-09-25"], 2),
-  });
-
-  assert.equal(sandbox.getLoopBasisI(aggregate), "All 4 recorded cycles, 2026-09-24 to 2026-09-25");
+      assert.equal(sandbox.getLoopBasisI(aggregate), row.expected);
+    });
+  }
 });
 
 test("both loop cards head their numbers with the same stated basis", () => {
@@ -163,29 +196,8 @@ test("the trend plots one chart of the daily reject share, ticked by MM/DD and t
   assert.ok(typeof charts[0].props.label === "string" && (charts[0].props.label as string).length > 0);
 });
 
-const PHRASE_ROWS = [
-  {
-    name: "both halves scored → recent count leads over its days, earlier count names its own",
-    before: { count: 4, total: 5, days: 2 },
-    after: { count: 3, total: 5, days: 3 },
-    expected: "3 of 5 rejected in the latest 3 cycle days (4 of 5 in the 2 before)",
-  },
-  {
-    name: "no earlier scored cycle → recent count alone, still over its days",
-    before: { count: 0, total: 0, days: 1 },
-    after: { count: 2, total: 7, days: 2 },
-    expected: "2 of 7 rejected in the latest 2 cycle days",
-  },
-  {
-    name: "no recent scored cycle → no count to state",
-    before: { count: 1, total: 4, days: 2 },
-    after: { count: 0, total: 0, days: 2 },
-    expected: "No scored cycles yet",
-  },
-];
-
 describe("the reject rate reads as counts, never a percentage", () => {
-  for (const row of PHRASE_ROWS) {
+  for (const row of ROWS.PHRASE) {
     test(row.name, () => {
       assert.equal(sandbox.getRejectRatePhraseI(row.before, row.after), row.expected);
     });
@@ -259,14 +271,46 @@ test("the applied card counts the cycles that changed rule lines out of every cy
   assert.ok(text.includes("3 of 5 cycles changed rule lines"), text);
 });
 
-test("the applied card stretches to its row, so the reject rate sits at its foot instead of a blank band", () => {
-  const aggregate = sandbox.deriveLoopAggregateI({ events: getEvents(["2026-09-24", "2026-09-25"], 3) });
-  const card = sandbox.ChangeSummaryCardI({ state: READY, aggregate });
-  const classOf = (el: RecordedElement) => String(el.props.className ?? "");
-  const body = collectElements(card, []).find((el) => /\bflex-1\b/.test(classOf(el)));
-  const foot = collectElements(body ?? card, []).find((el) => /\bmt-auto\b/.test(classOf(el)));
+const LOOP_SLOTS = ["i-loop-metric", "i-loop-visual", "card-foot"];
 
-  assert.match(classOf(card), /\bflex-col\b/);
-  assert.ok(body, "a body grows into the row height");
-  assert.ok(foot && collectElements(foot, []).some((el) => el.type === sandbox.RejectRateHeadlineI), "the reject rate anchors the foot");
+function getLoopCards() {
+  const aggregate = sandbox.deriveLoopAggregateI({ events: getEvents(["2026-09-24", "2026-09-25"], 3) });
+  const buckets = { ctm: 12, epm: 4, outcome: null, joinMeta: null };
+  return [
+    { name: "applied", card: sandbox.ChangeSummaryCardI({ state: READY, aggregate }) },
+    { name: "trend", card: sandbox.TrendCardI({ state: READY, aggregate }) },
+    { name: "learning memory", card: sandbox.BucketRowI({ state: READY, buckets }) },
+  ];
+}
+
+function getSlotOf(card: RecordedElement, slot: string): RecordedElement[] {
+  return collectElements(card, []).filter((el) => new RegExp(`\\b${slot}\\b`).test(String(el.props.className ?? "")));
+}
+
+describe("every loop card stacks one metric, one visual and one pinned foot, in that order", () => {
+  for (const { name, card } of getLoopCards()) {
+    test(name, () => {
+      const order = collectElements(card, [])
+        .map((el) => LOOP_SLOTS.find((slot) => new RegExp(`\\b${slot}\\b`).test(String(el.props.className ?? ""))))
+        .filter(Boolean);
+      assert.deepEqual(order, LOOP_SLOTS, `${name}: slots ${order.join(" > ")}`);
+    });
+  }
+});
+
+test("the applied card leads with its reject rate, in the metric slot", () => {
+  const [applied] = getLoopCards();
+  const [metric] = getSlotOf(applied.card, "i-loop-metric");
+  assert.ok(metric && collectElements(metric, []).some((el) => el.type === sandbox.RejectRateHeadlineI), "the reject rate heads the card");
+});
+
+test("the learning-memory card heads its card with both counts, its tiles keeping only what each count means", () => {
+  const [, , { card }] = getLoopCards();
+  const [metric] = getSlotOf(card, "i-loop-metric");
+  const [visual] = getSlotOf(card, "i-loop-visual");
+  const metricText = getPrintedText(metric);
+
+  assert.match(metricText, /\b12\b/, metricText);
+  assert.match(metricText, /\b4\b/, metricText);
+  assert.doesNotMatch(getPrintedText(visual), /\b12\b|\b4\b/, "a count printed twice reads as two figures");
 });
