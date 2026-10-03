@@ -2911,10 +2911,14 @@ function SortableHeader({ label, sortKey, currentSort, onSortChange, align, widt
 // 요약 셀의 고정 flag 슬롯 폭 — 폭이 행마다 달라지면 요약 텍스트가 세로로 정렬되지 않는다.
 const SUMMARY_FLAG_SLOT = 18;
 
+// values only, never key-name digits — the d8 tail sits outside the 4 core keys → excluded from sum + avg
 function parseQaScoreO(qaScore) {
   if (typeof qaScore !== 'string' || qaScore.trim() === '') return null;
-  const nums = qaScore.match(/\d+(\.\d+)?/g);
-  if (!nums || nums.length === 0) return null;
+  const nums = qaScore
+    .split(',')
+    .filter((pair) => pair.split('=')[0].trim() !== 'd8')
+    .flatMap((pair) => pair.slice(pair.indexOf('=') + 1).match(/\d+(\.\d+)?/g) ?? []);
+  if (nums.length === 0) return null;
   const sum = nums.reduce((acc, n) => acc + Number(n), 0);
   return { sum, avg: sum / nums.length };
 }
