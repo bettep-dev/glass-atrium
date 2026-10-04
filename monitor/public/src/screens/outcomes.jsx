@@ -396,6 +396,7 @@ function crosstabConfidenceKeyO(confidence) {
 // 화면 전용 inline CSS — render 마다 string 재할당 회피 위해 모듈 상수.
 const SCREEN_OUTCOMES_CSS = `
 @keyframes skelPulseO { 0%,100%{opacity:.7} 50%{opacity:.35} }
+.skel-pulse-o { animation: skelPulseO 1.4s ease-in-out infinite; }
 .outcome-md { font-size: var(--fs-body); line-height: 1.65; color: rgb(var(--ink)); font-family: 'Pretendard Variable', Pretendard, ui-sans-serif, system-ui, sans-serif; }
 /* md 헤딩 3레벨 → title 토큰 공통 (동일 content-level) · 시각 위계는 font-weight 600 + margin 으로 보존 */
 .outcome-md h1, .outcome-md h2, .outcome-md h3, .outcome-md h4 { font-weight: 600; margin: 14px 0 6px; line-height: 1.3; }
@@ -411,8 +412,12 @@ const SCREEN_OUTCOMES_CSS = `
 .outcome-md table { border-collapse: collapse; margin: 8px 0; font-size: var(--fs-meta); }
 .outcome-md th, .outcome-md td { border: 1px solid rgb(var(--line)); padding: 4px 8px; text-align: left; }
 .outcome-md th { background: rgb(var(--sunken)); font-weight: 500; }
-.outcome-row { transition: background 100ms; }
+.outcome-row { transition: background 120ms; }
 .outcome-row:hover { background: rgb(var(--accent) / 0.06); }
+@media (prefers-reduced-motion: reduce) {
+  .skel-pulse-o { animation: none; }
+  .outcome-row { transition: none; }
+}
 `;
 
 function ScreenOutcomes({ onNav }) {
@@ -810,18 +815,12 @@ function AlarmLaneO({ channelLivenessState, searchState }) {
 
 // 고volume 채널의 침묵은 다른 모든 카드에서 '품질 변화' 로 위장한다 → 레인 행 자격.
 function SilentChannelRowO({ channels }) {
-  const { Icon } = window.UI;
+  const { AlertCard } = window.UI;
   return (
-    <div
-      role="alert"
-      className="rounded-md border p-3 flex items-start gap-3 mx-3"
-      style={{ background: 'rgb(var(--crit) / 0.08)', borderColor: 'rgb(var(--crit) / 0.4)' }}>
-      <Icon name="x" size={16} className="text-crit mt-0.5"/>
-      <div className="flex-1 min-w-0">
-        <div className="fs-body font-medium text-ink">{channels.length === 1 ? 'Silent channel' : 'Silent channels'}: {channels.join(', ')}</div>
-        <div className="fs-meta text-dim mt-1">Was writing daily and has recorded nothing past the silence threshold.</div>
-      </div>
-    </div>
+    <AlertCard
+      tone="crit"
+      title={`${channels.length === 1 ? 'Silent channel' : 'Silent channels'}: ${channels.join(', ')}`}
+      body="Was writing daily and has recorded nothing past the silence threshold."/>
   );
 }
 
@@ -1348,7 +1347,7 @@ function AgentFailureSkeletonO({ stickyStyle }) {
         {[0, 1, 2].map((i) => (
           <tr key={i}>
             <td colSpan={AGENT_FAILURE_COLUMNS_O.length} className="px-3 py-2 border-b border-line">
-              <div style={{ height: 12, borderRadius: 4, background: 'rgb(var(--sunken))', animation: 'skelPulseO 1.4s ease-in-out infinite' }}/>
+              <div className="skel-pulse-o" style={{ height: 12, borderRadius: 4, background: 'rgb(var(--sunken))' }}/>
             </td>
           </tr>
         ))}
@@ -1431,12 +1430,12 @@ function KpiSkeletonO({ className = '' }) {
   return (
     <div className={`kpi ${className}`.trim()} aria-busy="true">
       <div
+        className="skel-pulse-o"
         style={{
           height: 70,
           borderRadius: 6,
           background: 'rgb(var(--sunken))',
           opacity: 0.7,
-          animation: 'skelPulseO 1.4s ease-in-out infinite',
         }}/>
     </div>
   );
@@ -3354,31 +3353,13 @@ function PayloadUnavailableO({ label }) {
 // blocked banner — shown when 30s+ of repeated backend failures suggest an outage rather than a
 // transient network blip. User can still trigger refresh manually via the page header.
 function BlockedBannerO({ detail }) {
-  const { Icon } = window.UI;
+  const { AlertCard } = window.UI;
   return (
-    <div
-      role="alert"
-      className="rounded-md border p-4 m-3"
-      style={{
-        background: 'rgb(var(--warn) / 0.08)',
-        borderColor: 'rgb(var(--warn) / 0.4)',
-      }}>
-      <div className="flex items-start gap-3">
-        <Icon name="warn" size={18} className="text-warn mt-0.5"/>
-        <div className="flex-1 min-w-0">
-          <div className="fs-title font-medium text-ink">Server not responding (30 s timeout)</div>
-          <div className="fs-meta text-dim mt-1">
-            Not responding. Check the service or try again shortly.
-          </div>
-          {detail && (
-            <details className="fs-meta text-faint mt-2">
-              <summary className="cursor-pointer">Details</summary>
-              <code className="block mt-1 font-mono break-all">{detail}</code>
-            </details>
-          )}
-        </div>
-      </div>
-    </div>
+    <AlertCard
+      tone="warn"
+      title="Server not responding (30 s timeout)"
+      body="Not responding. Check the service or try again shortly."
+      details={detail}/>
   );
 }
 
