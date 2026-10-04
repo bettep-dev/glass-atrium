@@ -35,7 +35,7 @@ import Fastify, { type FastifyInstance } from "fastify";
 import { disconnectPrisma, getPrisma } from "../src/server/db.js";
 import { resetAgentRegistryCache } from "../src/server/agents/registry.js";
 import { registerImprovementRoutes } from "../src/server/routes/improvement.js";
-import { TEST_URL_ENV, isSameDatabase, isSameServer } from "./lib/select-test-db.js";
+import { LIVE_URL_ENV, TEST_URL_ENV, isSameDatabase, isSameServer } from "./lib/select-test-db.js";
 
 const SUITE_MARKER = `impr-rb-${randomUUID().slice(0, 8)}`;
 const AGENT = `${SUITE_MARKER}-agent`;
@@ -290,7 +290,7 @@ test("a row under the historical updater label stays excluded", async (t) => {
 test("an unadjudicated row is never a quality reject: supersede and parked are lifecycle, the rest infra", async (t) => {
   if (!dbReady) return t.skip("DB unavailable");
   const start = await fetchBuckets();
-  // Each row carries an ok model status, the shape a quality booking would take.
+  // Every row but the quota one carries an ok model status, the shape a quality booking would take.
   await insertProposal({ tag: "unadj-backoff", status: "unadjudicated" });
   await insertProposal({ tag: "unadj-quota", status: "unadjudicated", haikuStatus: "skipped:quota-limit" });
   await insertProposal({ tag: "unadj-supersede", status: "unadjudicated", rationale: SUPERSEDE_RATIONALE });
@@ -303,8 +303,11 @@ test("an unadjudicated row is never a quality reject: supersede and parked are l
   );
 });
 
-// The route reads one DATABASE_URL, so the case swaps it for the label-absent database and
-// restores it after. The swap target must sit beside the test database, never elsewhere.
+/**
+ * Points the route's one DATABASE_URL at `url` for `read`, then restores it.
+ * Same-server is not safety: the live database can share the test server, so the caller
+ * refuses a `url` naming the live handle before swapping.
+ */
 async function withDatabase<T>(url: string, read: () => Promise<T>): Promise<T> {
   const prior = process.env.DATABASE_URL;
   await disconnectPrisma();
@@ -332,6 +335,11 @@ test(
     assert.ok(
       !isSameDatabase(absentUrl, testUrl),
       `${LABEL_ABSENT_URL_ENV} must name a database other than ${TEST_URL_ENV}`,
+    );
+    const liveUrl = process.env[LIVE_URL_ENV];
+    assert.ok(
+      liveUrl === undefined || liveUrl.length === 0 || !isSameDatabase(absentUrl, liveUrl),
+      `${LABEL_ABSENT_URL_ENV} names the live database (${LIVE_URL_ENV}) — refusing to write there`,
     );
     await withDatabase(absentUrl, async () => {
       const labels = await getPrisma().$queryRaw<Array<{ present: boolean }>>`
