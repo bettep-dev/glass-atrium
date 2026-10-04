@@ -1515,6 +1515,7 @@ INJECT_DROP_WINDOW_DAYS="${INJECT_DROP_WINDOW_DAYS:-7}"
 # capture reports the coverage unread instead of a clean zero.
 # The status list is the terminal set the upsert freeze already uses; a row that is still pending
 # or snoozed has not been moved to a final state by anyone, so it names no missing mover.
+# Compared as status::text → the 'unadjudicated' literal still plans on a schema lacking the label.
 _pg_proposal_actor_probe() {
   # GA-ABSORB[handled@the terminal-row-read unread branch of doctor section 25]: stderr only — the rc is captured and branched on there
   psql -h "${PG_SOCKET}" -d "$1" -tA -F $'\x1f' 2>/dev/null <<'SQL'
@@ -1522,8 +1523,7 @@ SELECT count(*),
        count(*) FILTER (WHERE reviewed_at IS NOT NULL AND reviewed_by IS NULL),
        count(*) FILTER (WHERE reviewed_at IS NULL AND reviewed_by IS NULL)
 FROM core.autoagent_proposals
-WHERE status IN ('applied'::core."ProposalStatus", 'approved'::core."ProposalStatus",
-                 'rejected'::core."ProposalStatus", 'reverted'::core."ProposalStatus")
+WHERE status::text IN ('applied', 'approved', 'rejected', 'reverted', 'unadjudicated')
 SQL
 }
 

@@ -7,7 +7,7 @@
 # not; every other status persists as requested; a
 # stored terminal row survives a non-terminal re-push through both conflict arms on either
 # schema; the shared label probe answers present / absent, and unknown when the query
-# cannot run.
+# cannot run; the doctor's terminal-row probe counts the same terminal set on either schema.
 #
 # Isolation: PGHOST/PGPORT point every psycopg connection at a throwaway socket-only cluster
 # (hooks/test/lib/ephemeral-pg.bash); each test clones glass_atrium from a template built
@@ -75,6 +75,21 @@ _use_db() {
 
 _q() {
   psql -h "${EPH_SOCKDIR}" -p "${EPH_PORT}" -d glass_atrium -tAqc "${1}"
+}
+
+# $1 pattern label, $2 status, $3 reviewed_at SQL, $4 reviewed_by SQL → one proposal row.
+_seed_row() {
+  _q "INSERT INTO core.autoagent_proposals (cycle_date, pattern_label, target_file, classification,
+        approval_tier, status, reviewed_at, reviewed_by, source_file, source_file_mtime)
+      VALUES ('2026-10-03', '${1}', 'agents/glass-atrium-dev-python.md', 'apply', 'auto', '${2}',
+        ${3}, ${4}, 'autoagent-2026-10-03.json', 0)" >/dev/null
+}
+
+# The real lib/ga-doctor.sh probe against this suite's glass_atrium: its explicit -h is the
+# cluster's socket dir, and PGPORT (exported by setup) names the cluster's port.
+_doctor_probe() {
+  PG_SOCKET="${EPH_SOCKDIR}" bash -c 'source "$1/lib/ga-doctor.sh" && _pg_proposal_actor_probe glass_atrium' \
+    _ "${BATS_TEST_DIRNAME}/../.."
 }
 
 # $1 mode (push <status> | probe | probe-closed | supersede | park) — drives the real helper
@@ -209,5 +224,29 @@ PY
     run --separate-stderr _drive "${mode}"
     [[ "${status}" -eq 0 ]] || { echo "${row}: ${output} ${stderr}"; return 1; }
     [[ "${output}" == "${expected}" ]] || { echo "${row}: answered ${output}"; return 1; }
+  done
+}
+
+@test "the doctor's terminal-row probe counts the stored unadjudicated write as terminal on either schema" {
+  # The last row is what the writers store for a requested unadjudicated: the label where it
+  # exists, rejected where it does not. Expected: 5 terminal, 1 instant without actor, 3 with neither.
+  local rows=(
+    "label_present unadjudicated"
+    "label_absent rejected"
+  )
+  local row template stored
+  for row in "${rows[@]}"; do
+    read -r template stored <<<"${row}"
+    _use_db "${template}" || { echo "${row}: clone failed"; return 1; }
+    _seed_row open pending NULL NULL || { echo "${row}: seed failed"; return 1; }
+    _seed_row parked snoozed NULL NULL || { echo "${row}: seed failed"; return 1; }
+    _seed_row landed applied 'now()' "'daemon-apply-flip'" || { echo "${row}: seed failed"; return 1; }
+    _seed_row approved approved NULL NULL || { echo "${row}: seed failed"; return 1; }
+    _seed_row drained rejected 'now()' NULL || { echo "${row}: seed failed"; return 1; }
+    _seed_row reverted reverted NULL NULL || { echo "${row}: seed failed"; return 1; }
+    _seed_row stored "${stored}" NULL NULL || { echo "${row}: seed failed"; return 1; }
+    run _doctor_probe
+    [[ "${status}" -eq 0 ]] || { echo "${row}: probe exit ${status}: ${output}"; return 1; }
+    [[ "${output}" == $'5\x1f1\x1f3' ]] || { echo "${row}: counted ${output//$'\x1f'/ }"; return 1; }
   done
 }

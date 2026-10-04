@@ -320,13 +320,20 @@ warn_total_of_output() {
   done
   # Terminal rows only: a pending or snoozed row has not been moved to a final state by anyone, so
   # it names no missing mover and would inflate the report with rows that are not a gap.
-  for needle in applied approved rejected reverted; do
-    grep -qF -- "'${needle}'::core.\"ProposalStatus\"" "${STUB_STATE}/calls.log" || {
+  for needle in applied approved rejected reverted unadjudicated; do
+    grep -qF -- "'${needle}'" "${STUB_STATE}/calls.log" || {
       echo "the probe's status filter omits ${needle}" >&2
       echo "${sql}" >&2
       return 1
     }
   done
+  # A schema without the unadjudicated label rejects an enum cast of it when planning the
+  # statement, so the list is compared as text (proposal-status-label-fallback.bats runs it).
+  grep -qF -- "status::text IN" "${STUB_STATE}/calls.log" || {
+    echo "the probe compares status against enum casts, which a pre-label schema cannot plan" >&2
+    echo "${sql}" >&2
+    return 1
+  }
   grep -qF -- "'pending'" "${STUB_STATE}/calls.log" && {
     echo "the probe counts non-terminal rows as a provenance gap" >&2
     return 1
