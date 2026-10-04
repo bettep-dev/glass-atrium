@@ -130,8 +130,8 @@ test("AC-T-tone the glyph class table is read by icon elements only", () => {
   );
 });
 
-// ui.jsx Badge paints its label in text-{tone} when a status badge drops its glyph.
-test("AC-T-tone no status badge drops its glyph, which would put tone on the label", () => {
+// ui.jsx Badge keeps the label neutral and carries the tone on its glyph — a status badge without one carries no tone at all.
+test("AC-T-tone no status badge drops its glyph, which would leave its status without a tone cue", () => {
   const offenders = (SCREEN_SRC.match(/<Badge\b[^>]*>/g) || []).filter(
     (tag) => tag.includes('role="status"') && tag.includes("glyph={false}"),
   );
