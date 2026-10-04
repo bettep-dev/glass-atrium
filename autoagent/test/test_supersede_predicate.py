@@ -83,22 +83,28 @@ def _generation_text(run: int) -> str:
 
 
 
-def _run_supersede(db_path: Path) -> None:
+def _run_supersede(testcase: unittest.TestCase, db_path: Path) -> None:
     """Drive the real supersede statement against the stdlib backend."""
-    # create=True: the connect alias and the status fragment are bound only when
-    # psycopg imported, and the gating leg has no psycopg — both seams must exist.
+    # Sealed first: on the import-succeeded leg a renamed _pg_connect fails here,
+    # never patched as a dead attribute while the real connect stays live.
+    pg_reach = seal_pg_reach(testcase)
     with stub.load_helper(db_path) as helper:
         fragment = helper.PROPOSAL_STATUS_SQL
     quiet = contextlib.redirect_stderr(io.StringIO())
     armed = mock.patch.object(dc, "HAS_PG_LOOP_WRITE", True)
-    seam = mock.patch.object(
-        dc, "_pg_connect", lambda: stub.create_connection(db_path), create=True
+    seam = mock.patch.object(dc, "_pg_connect", lambda: stub.create_connection(db_path))
+    # The fragment is unbound only when the helper import failed.
+    status = mock.patch.object(
+        dc,
+        "_PG_PROPOSAL_STATUS_SQL",
+        fragment,
+        create=dc._PG_LOOP_IMPORT_EXC is not None,
     )
-    status = mock.patch.object(dc, "_PG_PROPOSAL_STATUS_SQL", fragment, create=True)
     with quiet, armed, seam, status:
         dc.supersede_prior_pending_for_agent(
             _AGENT, _TARGET, cycle_date=_RUN_DATE, pattern_label=_RUN_LABEL
         )
+    testcase.assertEqual(pg_reach, [])
 
 
 class TestSupersedePredicate(unittest.TestCase):
@@ -124,7 +130,7 @@ class TestSupersedePredicate(unittest.TestCase):
             db.commit()
 
     def _supersede(self) -> None:
-        _run_supersede(self.db)
+        _run_supersede(self, self.db)
 
     def _row(self, cycle_date: str, label: str) -> dict[str, str]:
         row = stub.read_proposal(self.db, (cycle_date, label, _TARGET))
@@ -216,7 +222,7 @@ class TestSupersedeStampSurvivesRepush(unittest.TestCase):
         with stub.load_helper(self.db) as helper:
             self._push(helper, _RUN_LABEL, _generation_text(1))
             self._push(helper, _DRIFTED_LABEL, _generation_text(1))
-            _run_supersede(self.db)
+            _run_supersede(self, self.db)
             self._push(helper, _RUN_LABEL, _generation_text(2))
             self._push(helper, _DRIFTED_LABEL, _generation_text(2))
 

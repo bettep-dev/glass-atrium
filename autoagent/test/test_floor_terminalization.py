@@ -39,11 +39,12 @@ _AUTOAGENT_DIR = _REPO_ROOT / "autoagent"
 _HOOKS_DIR = _REPO_ROOT / "hooks"
 _STUB_DIR = _REPO_ROOT / "scripts" / "test"
 
-for _anchor in (_HOOKS_DIR, _AUTOAGENT_DIR, _STUB_DIR):
+for _anchor in (_HOOKS_DIR, _AUTOAGENT_DIR, _STUB_DIR, Path(__file__).resolve().parent):
     if str(_anchor) not in sys.path:
         sys.path.insert(0, str(_anchor))
 
 import _pg_stub_backend as stub  # noqa: E402 — anchors pinned by the loop above
+from _pg_seal import seal_pg_reach
 
 try:
     import daemon_cycle as dc
@@ -183,6 +184,7 @@ class TestGenerationClosedStatement(unittest.TestCase):
             )
             db.commit()
         self.connects: list[Path] = []
+        self.pg_reach = seal_pg_reach(self)
 
     def _connect(self) -> object:
         self.connects.append(self.db)
@@ -193,14 +195,21 @@ class TestGenerationClosedStatement(unittest.TestCase):
         with stub.load_helper(self.db) as helper:
             fragment = helper.PROPOSAL_STATUS_SQL
         err = io.StringIO()
-        # create=True: both names are bound only when psycopg imported.
+        # The seal bound _pg_connect on both legs; the fragment is unbound only
+        # when the helper import failed.
         with (
             mock.patch.object(dc, "HAS_PG_LOOP_WRITE", has_pg),
-            mock.patch.object(dc, "_pg_connect", self._connect, create=True),
-            mock.patch.object(dc, "_PG_PROPOSAL_STATUS_SQL", fragment, create=True),
+            mock.patch.object(dc, "_pg_connect", self._connect),
+            mock.patch.object(
+                dc,
+                "_PG_PROPOSAL_STATUS_SQL",
+                fragment,
+                create=dc._PG_LOOP_IMPORT_EXC is not None,
+            ),
             contextlib.redirect_stderr(err),
         ):
             count = dc.update_generation_closed_proposals()
+        self.assertEqual(self.pg_reach, [])
         return count, err.getvalue()
 
     def _rows(self) -> dict[str, dict[str, object]]:
