@@ -494,7 +494,7 @@ build_step_plan() {
   STEP_SUPPRESS=()
   case "${action}" in
     install)
-      # run_install body (doctor gate → stale-daemon clear → render → farm → wire → migrate → DB →
+      # run_install body (doctor gate → stale-daemon retirement → render → farm → wire → migrate → DB →
       # repoint → post-check → baseline capture) then run_bootstrap's build + health gate, THEN the
       # 14th step that registers the 8 launchd jobs (CHANGE 1: menu Install now auto-loads
       # launchd via menu_load_launchd_jobs, opt-out GA_NO_LOAD_LAUNCHD=1 / --no-load-launchd).
@@ -507,7 +507,7 @@ build_step_plan() {
       # stay equal-length (14 each) and in this order; run_plan iterates [0, #STEP_FN).
       STEP_LABEL=(
         "Doctor preflight"
-        "Clear stale daemon sessions"
+        "Retire stale daemon jobs"
         "Render config.toml"
         "Render launchd plists"
         "Symlink farm"
@@ -523,7 +523,7 @@ build_step_plan() {
       )
       STEP_LABEL_ACTIVE=(
         "Running doctor preflight…"
-        "Clearing stale daemon sessions…"
+        "Retiring stale daemon jobs…"
         "Rendering config.toml…"
         "Rendering launchd plists…"
         "Farming symlinks…"
@@ -539,7 +539,7 @@ build_step_plan() {
       )
       STEP_FN=(
         "run_doctor_preflight"
-        "kill_daemon_tmux_sessions"
+        "retire_launchd_jobs_or_warn"
         "render_config"
         "render_plists"
         "run_symlink_farm install"

@@ -448,13 +448,17 @@ PY
   [[ "$2" -lt "$3" ]]
 }
 
-@test "R2(wiring): run_install clears stale daemon tmux sessions at install start" {
-  # after the ga-core split: the definition + the stop_detached_daemons call-site moved into
-  # ga-daemons.sh; only run_install's install-start call remains in ga-core.sh. Sum both files.
-  core_n="$(grep -cF 'kill_daemon_tmux_sessions' "${GA}/lib/ga-core.sh" || true)"
-  daemons_n="$(grep -cF 'kill_daemon_tmux_sessions' "${GA}/lib/ga-daemons.sh" || true)"
-  [[ -z "${core_n}" ]] && core_n=0
-  [[ -z "${daemons_n}" ]] && daemons_n=0
-  # 1 definition + 2 call-sites (run_install start in ga-core.sh + def & stop_detached_daemons call in ga-daemons.sh).
-  [[ "$(( core_n + daemons_n ))" -ge 3 ]]
+@test "R2(wiring): install start reaches the session-and-port leg only through the retirement gate" {
+  # callers of kill_daemon_tmux_sessions across the engine + launcher, keyed by enclosing function (comments skipped)
+  run awk '
+    /^[A-Za-z_][A-Za-z0-9_]*\(\) \{/ { fn = $1; sub(/\(\)$/, "", fn); next }
+    /^[[:space:]]*#/ { next }
+    /kill_daemon_tmux_sessions/ { print fn }
+  ' "${GA}"/lib/*.sh "${LAUNCHER}"
+  [[ "${status}" -eq 0 ]] || { echo "${output}"; return 1; }
+  # only the uninstall teardown and the residue-gated retirement routine call it
+  [[ "$(printf '%s\n' "${output}" | sort -u | tr '\n' ' ')" == "retire_launchd_jobs stop_detached_daemons " ]] \
+    || { echo "${output}"; return 1; }
+  # run_install's install-start step is the gated caller form
+  [[ "$(declare -f run_install)" == *"retire_launchd_jobs_or_warn"* ]] || return 1
 }
