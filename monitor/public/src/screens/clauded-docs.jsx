@@ -949,7 +949,7 @@ function ScreenClaudedDocs(/* { onNav } */) {
         .tbl tbody tr.doc-row.is-selected { background: rgb(var(--accent) / 0.035); }
         .doc-row.is-selected .doc-title-text { font-weight: 600; }
         /* awaiting delete confirmation → struck-through title + aria-busy; the crit glyph before the title carries the tone.
-           no row opacity — any fade drops the light empty pip on a checked row below 3:1 (0.85: 2.59; unfaded 3.21) */
+           no row opacity — any fade drops the light empty pip on a checked row below 3:1 (default accent: 0.85 → 2.72; unfaded 3.41) */
         .doc-row.is-pending-delete .doc-title-text { text-decoration: line-through; }
         /* margin-left = lead slot 20px + title row gap 6px → the snippet starts under the title */
         .doc-snippet { margin-left: 26px; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; overflow-wrap: anywhere; }
