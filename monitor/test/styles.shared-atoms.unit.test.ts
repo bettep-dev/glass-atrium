@@ -258,3 +258,75 @@ test("every animated rule in the base layer stops its animation under reduced mo
     assert.match(gate, /animation:\s*none|animation-duration:\s*0\.01ms/, `${selector} stops under prefers-reduced-motion`);
   }
 });
+
+test("every transitioning rule in the shared stylesheets drops its transition under reduced motion", () => {
+  const transitioned = SOURCES.flatMap(([file, source]) => {
+    const reduced = getReducedMotionCss(source);
+    return [...source.replace(/\/\*[\s\S]*?\*\//g, "").matchAll(/([^{}]+)\{([^{}]*)\}/g)]
+      .filter((m) => !/^none\b/.test(getDecl(m[2], "transition") ?? "none"))
+      .flatMap((m) => m[1].split(",").map((s) => [file, s.trim(), reduced] as const));
+  });
+
+  assert.ok(transitioned.length > 0, "the scan finds the shared transitioning rules");
+  for (const [file, selector, reduced] of transitioned) {
+    const gate = getRuleBodies(reduced, selector).join(";");
+    assert.match(gate, /transition:\s*none/, `${file} ${selector} keeps its transition under prefers-reduced-motion`);
+  }
+});
+
+// rgb(var(--name)) → that theme's triplet; the white keyword → 255 255 255
+function getThemeColor(decl: string | undefined, block: string): Rgba {
+  if (decl === "white") return { r: 255, g: 255, b: 255, a: 1 };
+  const name = decl?.match(/^rgb\(var\((--[\w-]+)\)\)$/)?.[1];
+  assert.ok(name, `colour ${decl} is rgb(var(--token)) or white`);
+  return getTriplet(block, name);
+}
+
+test("a danger button's label clears 4.5:1 on its crit fill in both themes", () => {
+  const body = getRuleBodies(BASE_CSS, ".btn.danger").join(";");
+  for (const [theme, block] of THEMES) {
+    const ratio = contrastRatio(getThemeColor(getDecl(body, "color"), block), getThemeColor(getDecl(body, "background"), block));
+    assert.ok(ratio >= 4.5, `${theme} danger label on fill = ${ratio.toFixed(2)}:1`);
+  }
+});
+
+test("a transient shell stays neutral in every tone, and a toast's tone rides only on its glyph", () => {
+  const toast = getRuleBodies(BASE_CSS, ".doc-toast").join(";");
+  assert.equal(getDecl(toast, "background"), "rgb(var(--overlay-surface))", "toast fill is the opaque overlay surface");
+  assert.equal(getDecl(toast, "color"), "rgb(var(--ink))", "toast text is ink");
+  assert.match(toast, /border(-color)?\s*:[^;]*rgb\(var\(--line\)\)/, "toast edge is the neutral line");
+
+  const glyph = getRuleBodies(BASE_CSS, ".doc-toast-glyph").join(";");
+  for (const tone of ["crit", "warn", "info", "ok"]) {
+    for (const shell of [".doc-toast", ".nav-badge"]) {
+      const toned = getRuleBodies(BASE_CSS, `${shell}.${tone}`).join(";");
+      assert.doesNotMatch(toned, /(^|[;\s])(background|border|border-color|color)\s*:/, `${shell}.${tone} paints its shell or text`);
+    }
+    const toneRule = getRuleBodies(BASE_CSS, `.doc-toast.${tone}`).join(";");
+    assert.equal(getDecl(toneRule, "--toast-tone"), `var(--${tone})`, `.doc-toast.${tone} names its glyph tone`);
+    for (const [theme, block] of THEMES) {
+      const fg = getTriplet(block, `--${tone}`);
+      const ratio = contrastRatio(fg, getTriplet(block, "--overlay-surface"));
+      assert.ok(ratio >= 3, `${theme} ${tone} toast glyph = ${ratio.toFixed(2)}:1`);
+    }
+  }
+  assert.equal(getDecl(glyph, "color"), "rgb(var(--toast-tone))", "the glyph draws the toast's tone");
+});
+
+// A nested [data-theme="dark"] scope (viewer chrome) must resolve aliases against its own tokens and keep the user's accent tweak.
+test("a nested dark scope resolves the surface aliases against its own tokens and inherits the accent tweak", () => {
+  const rules = [...TOKENS_CSS.replace(/\/\*[\s\S]*?\*\//g, "").matchAll(/([^{}]+)\{([^{}]*)\}/g)].map((m) => ({
+    selectors: m[1].split(",").map((s) => s.trim()),
+    body: m[2],
+  }));
+  const isNestedThemed = (s: string) => /^\[data-theme(="dark")?\]$/.test(s);
+
+  for (const alias of ["--surface-sunken", "--surface-base", "--surface-raised", "--surface-raised-2", "--surface-overlay"]) {
+    const declaring = rules.filter((r) => getDecl(r.body, alias) !== undefined);
+    assert.ok(declaring.length > 0, `${alias} is declared`);
+    assert.ok(declaring.every((r) => r.selectors.some(isNestedThemed)), `${alias} is declared only where a nested themed scope re-resolves it`);
+  }
+  const accent = rules.filter((r) => getDecl(r.body, "--accent") !== undefined);
+  assert.deepEqual(accent.filter((r) => r.selectors.some(isNestedThemed)).map((r) => r.selectors.join(", ")), []);
+  assert.ok(accent.some((r) => r.selectors.includes(':root[data-theme="dark"]')), "the dark accent default stays on the root");
+});

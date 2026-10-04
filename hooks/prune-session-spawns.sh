@@ -11,8 +11,8 @@
 #
 # File deletion policy: per Tier-1 rule markers are session-internal state (not
 # regenerable) — `mv ~/.Trash/` mandatory, `rm` FORBIDDEN.
-# Env overrides (testing): SESSION_SPAWNS_DIR, PRUNE_TRASH_DIR, SESSION_SPAWNS_TTL
-# (seconds, default 86400). --dry-run lists only.
+# Env overrides (testing): SESSION_SPAWNS_DIR, AGENT_TOOL_BUDGET_DIR, PRUNE_TRASH_DIR,
+# SESSION_SPAWNS_TTL (seconds, default 86400). --dry-run lists only.
 
 set -Eeuo pipefail
 IFS=$'\n\t'
@@ -86,6 +86,8 @@ sweep_dir() {
   local candidates=("${dir}"/*)
   shopt -u nullglob
   candidate_count=$((candidate_count + ${#candidates[@]}))
+  # bash < 4.4 under `set -u` treats an empty "${candidates[@]}" as unbound
+  [[ ${#candidates[@]} -gt 0 ]] || return 0
 
   for file in "${candidates[@]}"; do
     # Skip directories/special entries — markers/counters are regular files only.

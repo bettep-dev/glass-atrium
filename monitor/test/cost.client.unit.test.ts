@@ -1225,23 +1225,25 @@ test("the window-cost tile keeps its counting rule behind an info trigger descri
   assert.match(collectText(info), /recorded cost/i);
 });
 
+// one row per chart the page draws
+const CHART_BODIES = [
+  { name: "cost over time", component: "CostTrendBody", props: { state: TREND_WITH_GAP, days: 30, bandOn: false } },
+  { name: "token volume, area", component: "TokenStackedBody", props: { state: TREND_WITH_GAP, days: 30 } },
+  { name: "token volume, columns", component: "TokenStackedBody", props: { state: TREND_WITH_GAP, days: 7 } },
+  { name: "cache hit rate", component: "CacheHitBody", props: { state: ready({ rows: CACHE_ROWS }), days: 30 } },
+  {
+    name: "log integrity", component: "ParseErrorBody",
+    props: { state: ready({ rows: [{ event_date: "2026-01-09", error_count: 3, total_count: 40, error_ratio: 0.075 }] }), days: 30 },
+  },
+  {
+    name: "session cost distribution", component: "SessionHistogramDrawerC",
+    props: { bins: [{ label: "$0–0.01", count: 3, isOutlier: false }, { label: "$1–5", count: 2, isOutlier: false }], total: 5 },
+  },
+];
+
 test("every chart is a focusable image carrying its own name", async () => {
   const mod = await loadCostRender();
-  const rows = [
-    { name: "cost over time", component: "CostTrendBody", props: { state: TREND_WITH_GAP, days: 30, bandOn: false } },
-    { name: "token volume, area", component: "TokenStackedBody", props: { state: TREND_WITH_GAP, days: 30 } },
-    { name: "token volume, columns", component: "TokenStackedBody", props: { state: TREND_WITH_GAP, days: 7 } },
-    { name: "cache hit rate", component: "CacheHitBody", props: { state: ready({ rows: CACHE_ROWS }), days: 30 } },
-    {
-      name: "log integrity", component: "ParseErrorBody",
-      props: { state: ready({ rows: [{ event_date: "2026-01-09", error_count: 3, total_count: 40, error_ratio: 0.075 }] }), days: 30 },
-    },
-    {
-      name: "session cost distribution", component: "SessionHistogramDrawerC",
-      props: { bins: [{ label: "$0–0.01", count: 3, isOutlier: false }, { label: "$1–5", count: 2, isOutlier: false }], total: 5 },
-    },
-  ];
-  for (const row of rows) {
+  for (const row of CHART_BODIES) {
     const tree = renderIn(mod, row.component, { onRetry: () => {}, onClose: () => {}, ...row.props });
     const charts = findNodes(tree, isChart);
     const images = findNodes(tree, (n) => n.props.role === "img" && findNodes(n, isChart).length > 0);
@@ -1445,4 +1447,49 @@ describe("the decision lists keep to their slot's row budget and roll the rest i
       assert.equal(foot.includes(`Other · ${hidden} of ${count} sessions`), hidden > 0, foot || "no foot");
     });
   }
+});
+
+// --- Floating surfaces and motion follow the shared overlay and reduced-motion contracts ---
+
+test("every chart tooltip floats on the opaque overlay surface and follows the pointer without motion", async () => {
+  const mod = await loadCostRender();
+  for (const row of CHART_BODIES) {
+    const tree = renderIn(mod, row.component, { onRetry: () => {}, onClose: () => {}, ...row.props });
+    const [chart] = findNodes(tree, isChart);
+    const tooltips = findNodes(tree, (n) => n.type === "recharts-Tooltip");
+    assert.equal(tooltips.length, 1, `${row.name}: one tooltip`);
+    const [tooltip] = tooltips;
+    assert.equal(tooltip.props.isAnimationActive, false, `${row.name}: no tooltip slide`);
+    const content = tooltip.props.content as { type: unknown; props: Record<string, unknown> };
+    const datum = (chart.props.data as unknown[])[0];
+    const card = renderScreen({ ...content, props: { ...content.props, active: true, payload: [{ payload: datum }] } });
+    const [surface] = findNodes(card, (n) => n.type === "div");
+    const style = (surface?.props.style ?? {}) as Record<string, unknown>;
+    assert.equal(style.background, "rgb(var(--overlay-surface))", `${row.name}: opaque overlay surface`);
+    assert.equal(style.boxShadow, "var(--shadow-overlay)", `${row.name}: overlay shadow token`);
+    assert.equal(style.borderRadius, "var(--radius-tile)", `${row.name}: tile radius token`);
+  }
+});
+
+test("a loading skeleton pulses through a class the screen's reduced-motion rule holds still", async () => {
+  const mod = await loadCostRender();
+  const skeleton = findNodes(renderIn(mod, "SkelC", {}), (n) => n.type === "span")[0];
+  assert.equal((skeleton?.props.style as Record<string, unknown>).animation, undefined, "no inline loop a stylesheet cannot override");
+  const classes = String(skeleton?.props.className ?? "").split(/\s+/).filter(Boolean);
+  const css = findNodes(renderIn(mod, "ScreenCost", { onNav: () => {} }), (n) => n.type === "style").map(collectText).join("\n");
+  const reduceStart = css.search(/@media\s*\(prefers-reduced-motion:\s*reduce\)/);
+  assert.ok(reduceStart >= 0, "the screen declares a reduced-motion block");
+  const pulsing = classes.filter((c) => new RegExp(`\\.${c}\\s*\\{[^}]*animation:\\s*skelPulseC`).test(css));
+  assert.equal(pulsing.length, 1, `one skeleton class runs the pulse: ${classes.join(" ")}`);
+  assert.match(css.slice(reduceStart), new RegExp(`\\.${pulsing[0]}\\s*\\{[^}]*animation:\\s*none`), "reduced motion stops that class");
+});
+
+test("a refreshing region dims at the 120ms state timing, and only when motion is allowed", async () => {
+  const mod = await loadCostRender();
+  const busy = { status: "ready", data: { points: [] }, error: null, busy: true };
+  const region = findNodes(renderIn(mod, "RefreshingRegionC", { id: "r", states: [busy], children: "x" }), (n) => n.type === "div")[0];
+  const tokens = String(region?.props.className ?? "").split(/\s+/);
+  assert.ok(tokens.includes("opacity-60"), "a refresh dims the held payload");
+  assert.deepEqual(tokens.filter((t) => /^(?:transition|duration-|animate-)/.test(t)), [], "every motion utility is gated");
+  assert.ok(tokens.includes("motion-safe:duration-[120ms]"), "the dim eases at the state timing");
 });

@@ -130,6 +130,8 @@ function ScreenCost({ onNav }) {
           - .kpi-hint --dim override: KPI 타일 sub-caption 을 --faint 에서 --dim 으로 (ui.jsx 정의 셀프 보존, cost 화면만 승격). */}
       <style>{`
         @keyframes skelPulseC { 0%,100%{opacity:.7} 50%{opacity:.35} }
+        .skel-pulse-c { animation: skelPulseC 1.4s ease-in-out infinite; }
+        @media (prefers-reduced-motion: reduce) { .skel-pulse-c { animation: none; } }
         .cost-tbl tbody td { color: rgb(var(--dim)); }
         .cost-tbl tbody td.num { color: rgb(var(--dim)); }
         .cost-foot { font-size: var(--fs-meta); line-height: 1.5; color: rgb(var(--dim)); }
@@ -261,7 +263,7 @@ const COST_REGION_IDS = {
 /** Held payloads stay rendered during a refresh, dimmed and marked busy until the answer settles. */
 function RefreshingRegionC({ id, states, className = '', children }) {
   const isRefreshing = states.some((state) => state.busy && state.data != null);
-  const busyClass = isRefreshing ? 'opacity-60 motion-safe:transition-opacity' : '';
+  const busyClass = isRefreshing ? 'opacity-60 motion-safe:transition-opacity motion-safe:duration-[120ms]' : '';
   return (
     <div id={id} className={`${className} ${busyClass}`.trim() || undefined} aria-busy={isRefreshing ? 'true' : undefined}>
       {children}
@@ -871,7 +873,7 @@ function CostTrendChart({ rows, bandOn }) {
               tickLine={false}
               width={56}
             />
-            <Tooltip content={<CostTrendTooltipC bandOn={bandOn}/>}/>
+            <Tooltip content={<CostTrendTooltipC bandOn={bandOn}/>} isAnimationActive={false}/>
             {bandOn && (
               <Area
                 type="linear"
@@ -1170,7 +1172,7 @@ function TokenStackedArea({ points, order }) {
           tickLine={false}
           width={48}
         />
-        <Tooltip content={<TokenTooltipC/>}/>
+        <Tooltip content={<TokenTooltipC/>} isAnimationActive={false}/>
         {order.map((cat) => (
           <Area
             key={cat.key}
@@ -1211,7 +1213,7 @@ function TokenStackedColumn({ points, order }) {
           tickLine={false}
           width={48}
         />
-        <Tooltip content={<TokenTooltipC/>} cursor={{ fill: 'rgb(var(--accent) / 0.06)' }}/>
+        <Tooltip content={<TokenTooltipC/>} cursor={{ fill: 'rgb(var(--accent) / 0.06)' }} isAnimationActive={false}/>
         {order.map((cat) => (
           <Bar
             key={cat.key}
@@ -1687,7 +1689,7 @@ function CacheHitChart({ rows, yDomain = [0, 100] }) {
           tickLine={false}
           width={getCacheAxisWidth(yDomain, narrow ? 1 : 0)}
         />
-        <Tooltip content={<CacheHitTooltipC/>}/>
+        <Tooltip content={<CacheHitTooltipC/>} isAnimationActive={false}/>
         <Line
           type="linear"
           dataKey="rate_pct"
@@ -2000,7 +2002,7 @@ function SessionDistributionChart({ bins }) {
           tickLine={false}
           width={36}
         />
-        <Tooltip content={<SessionBinTooltipC/>} cursor={{ fill: 'rgb(var(--accent) / 0.06)' }}/>
+        <Tooltip content={<SessionBinTooltipC/>} cursor={{ fill: 'rgb(var(--accent) / 0.06)' }} isAnimationActive={false}/>
         <Bar dataKey="count" isAnimationActive={false}>
           {bins.map((b, i) => (
             <Cell key={i} fill={b.isOutlier ? 'rgb(var(--warn) / 0.85)' : 'rgb(var(--accent) / 0.85)'}/>
@@ -2172,7 +2174,7 @@ function ParseErrorChart({ rows }) {
           tickLine={false}
           width={36}
         />
-        <Tooltip content={<ParseErrorTooltipC/>} cursor={{ fill: 'rgb(var(--accent) / 0.06)' }}/>
+        <Tooltip content={<ParseErrorTooltipC/>} cursor={{ fill: 'rgb(var(--accent) / 0.06)' }} isAnimationActive={false}/>
         <Bar yAxisId="count" dataKey="error_count" isAnimationActive={false}>
           {rows.map((r, i) => (
             <Cell key={i} fill={r.isCrit ? PARSE_ERROR_COLOR.critBar : PARSE_ERROR_COLOR.bar}/>
@@ -2465,6 +2467,7 @@ function SkelC({ w = '100%', h = 14, style }) {
   return (
     <span
       aria-hidden="true"
+      className="skel-pulse-c"
       style={{
         display: 'inline-block',
         width: w,
@@ -2472,7 +2475,6 @@ function SkelC({ w = '100%', h = 14, style }) {
         background: 'rgb(var(--sunken))',
         borderRadius: 4,
         opacity: 0.7,
-        animation: 'skelPulseC 1.4s ease-in-out infinite',
         ...style,
       }}
     />
@@ -2481,14 +2483,14 @@ function SkelC({ w = '100%', h = 14, style }) {
 
 // 순수 helper
 const tooltipStyle = {
-  background: 'rgb(var(--elev))',
+  background: 'rgb(var(--overlay-surface))',
   border: '1px solid rgb(var(--line))',
-  borderRadius: 8,
+  borderRadius: 'var(--radius-tile)',
   padding: '8px 12px',
   // 툴팁 = HTML DOM div → fs-meta 보조 콘텐츠 tier.
   fontSize: 'var(--fs-meta)',
   fontFamily: 'JetBrains Mono, monospace',
-  boxShadow: '0 4px 12px rgba(0,0,0,0.12)',
+  boxShadow: 'var(--shadow-overlay)',
 };
 
 const tooltipRowStyle = {

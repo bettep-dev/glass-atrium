@@ -267,6 +267,7 @@ function ScreenModelConfig() {
 		SplitRow,
 		SplitColumn,
 		formatKstTime,
+		TONE_GLYPH,
 	} = window.UI;
 
 	const [configState, setConfigState] = useStateMC(INITIAL_REGION_STATE);
@@ -614,6 +615,9 @@ function ScreenModelConfig() {
 					aria-live="polite"
 					style={{ top: 24, bottom: "auto" }}
 				>
+					<span className="doc-toast-glyph" aria-hidden="true">
+						{TONE_GLYPH[toast.tone]}
+					</span>
 					{toast.message}
 				</div>
 			)}
@@ -1149,10 +1153,14 @@ function ModelFamilyTagMC({ model }) {
 
 // Unpriced tier only — the section header carries the one Cost & usage link.
 function PricingNoteMC({ pricingKnown }) {
+	const { TONE_GLYPH } = window.UI;
 	if (pricingKnown !== false) return null;
 
 	return (
-		<div className="fs-meta mt-1 text-warn">
+		<div className="fs-meta mt-1 text-dim">
+			<span className="text-warn" aria-hidden="true">
+				{TONE_GLYPH.warn}
+			</span>{" "}
 			No price listed — billed at the conservative fallback rate
 		</div>
 	);
@@ -1577,53 +1585,43 @@ function SurfaceResultRowMC({ result: r }) {
 // Config drift banner — one remedy, carried here only: file mismatch or any drifted row raises it.
 // warn-tone: 구조 정합성 신호 (info-tone 은 architecture 화면 전용).
 function DriftBannerMC({ sync, onResync, saving }) {
-	const { Icon } = window.UI;
+	const { AlertCard } = window.UI;
 	// Remedies differ — Save fixes drift/file-missing/file-invalid, db-setup fixes pending-migration.
 	const pendingMigration = sync === "pending-migration";
-	const isFileInvalid = sync === "file-invalid";
+	const { title, body } = getDriftCopyMC(sync);
+	const resync =
+		!pendingMigration && onResync ? (
+			<button className="btn primary sm" onClick={onResync} disabled={saving}>
+				Save again
+			</button>
+		) : null;
 
-	return (
-		<div
-			role="alert"
-			className="rounded-md border p-3 flex items-start gap-3"
-			style={{
-				background: "rgb(var(--warn) / 0.08)",
-				borderColor: "rgb(var(--warn) / 0.4)",
-			}}>
-			<Icon name="git" size={16} className="text-warn mt-0.5" />
-			<div className="flex-1 min-w-0">
-				<div className="fs-body font-medium text-ink">
-					{pendingMigration
-						? "Config rows still carry their pre-rename names"
-						: isFileInvalid
-							? "The daemon rejects a value in daemon-config.json"
-							: "Saved config not yet fully live"}
-				</div>
-				<div className="fs-meta text-dim mt-1">
-					{pendingMigration ? (
-						<>
-							Values below are read from the old rows. Run{" "}
-							<span className="font-mono">glass-atrium db-setup</span> to complete
-							the rename.
-						</>
-					) : isFileInvalid ? (
-						"Every daemon cycle stops until it is rewritten. Save again writes the saved setting over it."
-					) : (
-						"Save again to rewrite the surfaces that consume these values."
-					)}
-				</div>
-				{!pendingMigration && onResync && (
-					<button
-						className="btn primary sm mt-2"
-						onClick={onResync}
-						disabled={saving}
-					>
-						Save again
-					</button>
-				)}
-			</div>
-		</div>
-	);
+	return <AlertCard tone="warn" title={title} body={body} actions={resync} />;
+}
+
+function getDriftCopyMC(sync) {
+	if (sync === "pending-migration") {
+		return {
+			title: "Config rows still carry their pre-rename names",
+			body: (
+				<>
+					Values below are read from the old rows. Run{" "}
+					<span className="font-mono">glass-atrium db-setup</span> to complete the
+					rename.
+				</>
+			),
+		};
+	}
+	if (sync === "file-invalid") {
+		return {
+			title: "The daemon rejects a value in daemon-config.json",
+			body: "Every daemon cycle stops until it is rewritten. Save again writes the saved setting over it.",
+		};
+	}
+	return {
+		title: "Saved config not yet fully live",
+		body: "Save again to rewrite the surfaces that consume these values.",
+	};
 }
 
 // Discard 확인 다이얼로그 (T-MDL-5) — DetailSurface confirm variant. consequence 문구 명시 +
@@ -1676,32 +1674,22 @@ function DiscardConfirmMC({ onConfirm, onCancel }) {
 
 // 공통 chrome
 function ErrorBannerMC({ title, detail, onRetry }) {
-	const { Icon, getErrorCopy } = window.UI;
+	const { AlertCard, getErrorCopy } = window.UI;
 	const copy = getErrorCopy(detail, "");
+	const retry = (
+		<button className="btn sm" onClick={onRetry} aria-label="Retry">
+			Retry
+		</button>
+	);
+
 	return (
-		<div
-			role="alert"
-			className="rounded-md border p-3 flex items-start gap-3"
-			style={{
-				background: "rgb(var(--crit) / 0.08)",
-				borderColor: "rgb(var(--crit) / 0.4)",
-			}}
-		>
-			<Icon name="warn" size={16} className="text-crit mt-0.5" />
-			<div className="flex-1 min-w-0">
-				<div className="fs-body font-medium text-ink">{title}</div>
-				<div className="fs-meta text-dim mt-1">{copy.next}</div>
-				{copy.detail && (
-					<details className="fs-meta text-faint mt-1">
-						<summary className="cursor-pointer">Details</summary>
-						<code className="block mt-1 font-mono break-all">{copy.detail}</code>
-					</details>
-				)}
-			</div>
-			<button className="btn sm" onClick={onRetry} aria-label="Retry">
-				Retry
-			</button>
-		</div>
+		<AlertCard
+			tone="crit"
+			title={title}
+			body={copy.next}
+			details={copy.detail}
+			actions={retry}
+		/>
 	);
 }
 

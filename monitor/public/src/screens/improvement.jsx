@@ -54,7 +54,7 @@ const TOAST_DURATION_MS = 3200;
 // (terminal 컬럼 오염 방지) · 카드에 snoozed 마커.
 // variant — 레인별 카드 밀도 (T1). full = AppliedHistoryRowI 이력 행 · compact =
 // CompactProposalCardI 단일행. applied/safety=full, rejected=compact.
-// rejected.tone='crit' 유지 — 심볼-전용 착색용(✕·count·스파크에만, T7 색상 예약).
+// rejected.tone='crit' colours the ✕ glyph and the reject spark only, never the count.
 const KANBAN_COLUMNS = [
 	{
 		key: "safety",
@@ -98,9 +98,6 @@ const TONE_TEXT_CLASS = {
 	crit: "text-crit",
 	info: "text-info",
 };
-// crit 을 ✕ 로 정합(reconcile) — DESIGN.md §4.2 severity 표준(crit=✕) + ui.jsx TONE_GLYPH/TONE_ICON 일치.
-// ⛔(ban) 은 별도 semantic 로 예약 (styleRefGradeBadgeI 의 'block' 게이트에만 잔류).
-const TONE_SYMBOL = { ok: "✓", warn: "⚠", crit: "✕", info: "ℹ" };
 
 // 'text-ok' → 'ok' — 배지 헬퍼(confidenceBadgeMetaI/preVerifyBadgeI)의 tone 문자열을 canonical
 // Badge 의 tone prop(prefix 없는 키)로 변환. 매핑 미스 → 'neutral'(shell neutral 유지).
@@ -114,7 +111,6 @@ const SYMBOL_ICON_I = {
 	"⚠": "warn",
 	"✕": "x",
 	"×": "x",
-	"⛔": "ban",
 	ℹ: "info",
 	"⏸": "pause",
 	"↻": "refresh",
@@ -371,34 +367,24 @@ function ScreenImprovement({ onNav }) {
 			{/* 타입 스케일 토큰 (ui.jsx SoT) — 멱등 마운트. .fs-* 유틸 + --fs-* CSS var 공급. */}
 			<TypeScaleStyle />
 			<style>{`
-        @keyframes toastInI   { from{opacity:0;transform:translateY(8px)} to{opacity:1;transform:translateY(0)} }
         @keyframes spinI { from{transform:rotate(0)} to{transform:rotate(360deg)} }
-        @media (prefers-reduced-motion: reduce) { [class*="i-anim-"], .i-act-spin { animation-duration:0.01ms !important; } }
-        /* inset ring — column overflow-y-auto 클리핑 회피 (outset ring 잘림 방지). */
-        .i-card-shadow { box-shadow:0 1px 2px rgba(0,0,0,0.04), inset 0 0 0 1px rgb(var(--line)); }
-        .i-card-shadow:hover { box-shadow:0 2px 8px rgba(0,0,0,0.08), inset 0 0 0 1px rgb(var(--accent) / 0.4); }
-        .i-row-card { transition:box-shadow 120ms, transform 120ms; cursor:pointer; }
-        .i-row-card:hover { transform:translateY(-1px); }
+        @media (prefers-reduced-motion: reduce) { .i-act-spin { animation-duration:0.01ms !important; } }
+        .i-row-card { cursor:pointer; }
+        /* interactive tile — hover = raised-2 shadow step + faint ring, never a transform lift */
+        .i-tile-hover { transition:box-shadow 120ms; }
+        .i-tile-hover:hover { box-shadow:0 0 0 1px rgb(var(--faint)), var(--shadow-raised-2); }
+        @media (prefers-reduced-motion: reduce) { .i-tile-hover { transition:none; } }
         /* clipped board text → whole text on hover or keyboard focus (a title tooltip never shows on focus) */
         .i-row-card:is(:hover, :focus-visible) .i-clip { white-space:normal; overflow:visible; display:block;
           -webkit-line-clamp:unset; overflow-wrap:anywhere; }
-        .i-anim-toast { animation:toastInI 180ms ease-out; }
         /* 카드 메타 배지 — 전부 canonical window.UI.Badge(.pill family)로 이관 (screen-local 배지 CSS 폐지).
            tone 은 status Badge 의 내부 Icon(text-{tone})이 운반 · shell 은 항상 neutral(loud fill 금지 · dual-encode 보존). */
         /* 시그니처 셀 — 2줄 클램프 + 셀 최소폭(crush 방지) + 행 최소높이(1↔2줄 점프 차단). */
         /* line-clamp-2 = webkit box · word-break 으로 긴 단일 토큰도 줄바꿈 → 가로 overflow 방지. */
-        /* 허용/거절 액션 버튼 — dual-encoded (색 + ✓/✕ 기호) · WCAG AA contrast. */
-        .i-act-btn { flex:1; display:inline-flex; align-items:center; justify-content:center; gap:4px; font-family:'JetBrains Mono',monospace; font-size:var(--fs-meta); font-weight:600; padding:5px 8px; border-radius:6px; border:1px solid transparent; cursor:pointer; transition:background 120ms, border-color 120ms; }
-        /* RC4 in-flight — opacity 둔감화 + pointer-events:none 가 실제 중복 클릭 게이트. */
-        .i-act-btn:disabled { opacity:.55; cursor:progress; pointer-events:none; }
         /* 스피너 — 텍스트 글리프(↻)에서 인라인 <svg>(Icon 'refresh')로 교체됨. svg 루트는
            transform-origin/transform-box 기본값이 브라우저별로 갈려 off-center wobble 위험 →
            fill-box + center 로 아이콘 자기 중심 회전 고정(제자리 스핀 보장). reduced-motion 시 정지. */
         .i-act-spin { display:inline-block; transform-box:fill-box; transform-origin:center; animation:spinI 0.7s linear infinite; }
-        .i-act-approve { color:rgb(var(--ok)); border-color:rgb(var(--ok) / 0.45); background:rgb(var(--ok) / 0.1); }
-        .i-act-approve:hover { background:rgb(var(--ok) / 0.2); border-color:rgb(var(--ok) / 0.7); }
-        .i-act-reject { color:rgb(var(--crit)); border-color:rgb(var(--crit) / 0.45); background:rgb(var(--crit) / 0.1); }
-        .i-act-reject:hover { background:rgb(var(--crit) / 0.2); border-color:rgb(var(--crit) / 0.7); }
         /* T3 — 종결 그리드 비대칭(applied 2fr : rejected 1fr). 인라인 gridTemplateColumns 금지
            (미디어쿼리가 인라인 스타일을 못 이김) → 클래스 선언 + <640px 단일 컬럼 붕괴를 같은
            블록에서 직접 출하(base.css L607 은 drawer 전용 → 보드 붕괴 미담당 · 검증 완료). */
@@ -415,31 +401,15 @@ function ScreenImprovement({ onNav }) {
         .i-ledger-cols > .split-col > :not(:first-child):last-child { margin-top:auto; }
         .board-terminal-grid { display:grid; grid-template-columns:minmax(0,2fr) minmax(0,1fr); gap:12px; }
         @media (max-width:640px) { .board-terminal-grid { grid-template-columns:1fr; } }
-        /* 알람 레인 — 보고 표면과 구조적으로 구분되는 유일한 자리. tint 는 컨테이너가
-           운반하고 텍스트 색으로 심각도를 싣지 않는다(라이트 테마 AA 미달). */
-        .i-alarm-lane { border:1px solid rgb(var(--warn) / 0.45); border-radius:10px;
-          background:rgb(var(--warn) / 0.06); padding:2px; }
-        /* T2 — AWAITING 존. 0건 = 슬림 idle 스트립(amber 없음, --sunken/--line 중립).
-           ≥1건 = 상단 full-width --warn 배너(populated-대기에만 amber 소비 · T7). */
+        /* awaiting zone — 0 rows = slim neutral idle strip · 1+ rows = the warn AlertCard over the scrolling list */
         .i-await-strip { display:flex; align-items:center; gap:6px; min-height:30px; padding:0 12px;
           background:rgb(var(--sunken)); border:1px solid rgb(var(--line)); border-radius:8px;
           color:rgb(var(--faint)); font-family:'JetBrains Mono',monospace; font-size:var(--fs-meta); }
-        .i-await-banner { border:1px solid rgb(var(--warn) / 0.45); border-radius:10px;
-          background:rgb(var(--warn) / 0.08); padding:10px 12px; animation:iAwaitInI 200ms ease-out; }
-        .i-await-head { display:flex; align-items:center; gap:8px; font-family:'JetBrains Mono',monospace;
-          text-transform:uppercase; letter-spacing:0.05em; color:rgb(var(--warn)); font-size:var(--fs-meta); }
-        .i-await-body { display:flex; flex-direction:column; gap:8px; margin-top:8px;
-          max-height:40vh; overflow-y:auto; }
-        @keyframes iAwaitInI { from { opacity:0; transform:translateY(-4px); } to { opacity:1; transform:translateY(0); } }
-        /* T8 — reduced-motion: 공간 오버슈트 제거, opacity-only 전이(keyframe 재정의). */
-        @media (prefers-reduced-motion: reduce) {
-          @keyframes iAwaitInI { from { opacity:0; } to { opacity:1; } }
-        }
+        .i-await-body { display:flex; flex-direction:column; gap:8px; max-height:40vh; overflow-y:auto; }
         /* T6 — APPLIED/REJECTED 종결-컬럼 헤더 공용 밴드. 두 헤더 동일 min-height + 세로중앙 정렬 →
            헤더 아래 리스트 시작 Y 일치(컬럼 간 top/height 동기화). 26px = fs-stat 18px count 를 담는 높이. */
         .i-col-header { min-height:26px; display:flex; align-items:center; }
-        /* T6 — APPLIED hero. 18px --ok count(상태 밴드 수치보다 작게) 는 hero 축 세로중앙(.i-col-header) · ✓+APPLIED 라벨은
-           별도 inline-flex 그룹으로 묶어 자기들끼리 세로중앙(✓ mid = 라벨 mid) → 붕 뜸 제거. gap 만 담당. */
+        /* applied hero — ink count below the status band's figure size · ✓ + label grouped so the glyph centres on the label */
         .i-applied-hero { gap:6px; }
         /* T5 — REJECTED 컴팩트 행(단일행 · rationale 숨김 · 중립 chrome). --crit 는 ✕ 심볼에만. */
         .i-compact-row { display:flex; align-items:center; gap:6px; padding:5px 8px; }
@@ -776,7 +746,7 @@ function InstrumentationStripI({ styleRef, corpusAuditState, at, onOpen }) {
 				>
 					<SymI s={chip.symbol} className={chip.tone} size={11} />
 					<span className="text-ink">{chip.name}</span>
-					<span className={chip.tone}>{chip.label}</span>
+					<span className="text-dim">{chip.label}</span>
 				</span>
 			))}
 			<button type="button" className="btn ghost sm" onClick={onOpen}>
@@ -832,7 +802,7 @@ function StatusTileI({ status, tone, symbol, label, value, population, basis, ow
 function TilePlaceholderI({ status, label, owner, onRetry }) {
 	const { LoadingPlaceholder } = window.UI;
 	return (
-		<div className="i-card-shadow bg-elev rounded-md p-2.5 min-w-0">
+		<div className="sub-card bg-elev p-2.5 min-w-0">
 			<div className="fs-meta text-faint min-h-[2.4em]">{label}</div>
 			{status === "loading" ? (
 				<LoadingPlaceholder label={label} minHeight={28} className="mt-1" />
@@ -1199,16 +1169,17 @@ function AwaitingZoneI({ rows, onRowClick, onAction, pendingActionId }) {
 	);
 }
 
-// ≥1건 — 상단 full-width amber 배너 (populated-대기에만 --warn 소비 · T7). maxHeight 40vh 스크롤.
+// 1+ rows — the warn AlertCard heads the list (the zone around it is the live region) · list scrolls past 40vh
 function AwaitingBannerI({ rows, onRowClick, onAction, pendingActionId }) {
+	const { AlertCard } = window.UI;
 	return (
-		<div className="i-await-banner">
-			<div className="i-await-head">
-				<SymI s={SAFETY_COLUMN.symbol} size={13} />
-				<span>{SAFETY_COLUMN.label}</span>
-				<span className="tnum">{formatIntI(rows.length)}</span>
-				<span className="ml-auto fs-meta">Your call</span>
-			</div>
+		<div className="flex flex-col gap-2">
+			<AlertCard
+				tone="warn"
+				hasLiveHost
+				title={`${SAFETY_COLUMN.label} · ${formatIntI(rows.length)}`}
+				body="Your call"
+			/>
 			<div className="i-await-body">
 				{rows.map((row) => (
 					<ProposalCardI
@@ -1375,7 +1346,7 @@ function BoardRowI({ onClick, title, ariaLabel, lead, text, trail }) {
 		<button
 			type="button"
 			onClick={onClick}
-			className="i-row-card bg-elev rounded-md w-full min-w-0 text-left px-2 py-1.5 flex items-center gap-2 fs-meta"
+			className="i-row-card i-tile-hover bg-elev rounded-md w-full min-w-0 text-left px-2 py-1.5 flex items-center gap-2 fs-meta"
 			title={title}
 			aria-label={ariaLabel}
 		>
@@ -1386,19 +1357,19 @@ function BoardRowI({ onClick, title, ariaLabel, lead, text, trail }) {
 	);
 }
 
-// T6 — APPLIED hero 헤더. fs-stat --ok tnum count + ✓ + 'APPLIED'(fs-meta 라벨 ≈ 2:1). 부피막대 없음.
+// applied lane header — ink count + ok ✓ glyph + dim label; the tone rides on the glyph alone
 function AppliedHeroHeaderI({ count, label, symbol }) {
 	return (
 		<div className="i-applied-hero i-col-header">
 			<span
-				className="fs-stat tnum font-mono text-ok"
+				className="fs-stat tnum font-mono text-ink"
 				style={{ lineHeight: 1 }}
 			>
 				{formatIntI(count)}
 			</span>
 			<span className="inline-flex items-center gap-1.5">
 				<SymI s={symbol} className="text-ok" size={14} />
-				<span className="fs-meta uppercase tracking-wider text-ok">
+				<span className="fs-meta uppercase tracking-wider text-dim">
 					{label}
 				</span>
 			</span>
@@ -1406,8 +1377,7 @@ function AppliedHeroHeaderI({ count, label, symbol }) {
 	);
 }
 
-// T5/T6/T7 — REJECTED 중립 헤더. --crit 는 ✕ 심볼·count·스파크에만, 라벨 chrome 은 그레이(--dim).
-// reject 스파크는 헤더 우측(loopAggregate.trend reject 계열 · stroke --crit/0.6 ≠ --warn).
+// rejected lane header — crit on the ✕ glyph and the reject spark only · label dim, count ink
 // count + cause split share the server day window; the fetched rows count only when no window came back
 function RejectedHeaderI({ rowCount, summary, label, symbol, trend }) {
 	const hasSpark = Array.isArray(trend) && trend.length >= 2;
@@ -1422,7 +1392,7 @@ function RejectedHeaderI({ rowCount, summary, label, symbol, trend }) {
 		<div className="i-col-header gap-1.5 fs-meta font-mono uppercase tracking-wider whitespace-nowrap min-w-0">
 			<SymI s={symbol} className="text-crit" size={13} />
 			<span className="text-dim">{label}</span>
-			<span className="text-crit tnum">{formatIntI(count)}</span>
+			<span className="text-ink tnum">{formatIntI(count)}</span>
 			<span className="text-faint normal-case tracking-normal truncate min-w-0">{basis}</span>
 			{hasSpark ? (
 				<span className="ml-auto flex items-center gap-1">
@@ -1609,7 +1579,7 @@ function ProposalCardI({ row, onClick, onAction, pendingActionId }) {
 	const isSnoozed = status === "snoozed";
 
 	return (
-		<div className="i-card-shadow bg-elev rounded-md">
+		<div className="sub-card i-tile-hover bg-elev p-0">
 			<button
 				type="button"
 				onClick={onClick}
@@ -1693,11 +1663,9 @@ function ProposalCardI({ row, onClick, onAction, pendingActionId }) {
 	);
 }
 
-// 허용(approve)/거절(reject) 버튼 행 — dual-encoded (색 + 기호 ✓/✕).
-// safety 카드는 "High-risk — your call" 라벨 추가 (안전 게이트 강조).
-// 클릭 시 onAction 위임 → 부모가 fetch + toast + refresh 처리.
-// isPending — 이 카드 액션 in-flight → 두 버튼 disable + aria-busy + 스피너
-//   (응답까지 중복 클릭 차단 · .i-act-btn:disabled 가 실제 게이트).
+// approve / reject row — shared .btn sm: approve = ok ✓ glyph + ink label · reject = destructive crit outline.
+// a safety card adds a "Your call" line (warn ⚠ glyph, dim words).
+// isPending → both buttons disabled + aria-busy + spinner until the answer lands (no double submit).
 function ProposalActionsI({ row, isSafety, onAction, isPending }) {
 	const stop = (fn) => (e) => {
 		e.stopPropagation();
@@ -1706,14 +1674,14 @@ function ProposalActionsI({ row, isSafety, onAction, isPending }) {
 	return (
 		<div className="px-2.5 pb-2.5 pt-0">
 			{isSafety && (
-				<div className="fs-meta text-warn mb-1.5 flex items-center gap-1">
-					<SymI s="⚠" size={11} /> Your call
+				<div className="fs-meta text-dim mb-1.5 flex items-center gap-1">
+					<SymI s="⚠" className="text-warn" size={11} /> Your call
 				</div>
 			)}
 			<div className="flex items-center gap-1.5">
 				<button
 					type="button"
-					className="i-act-btn i-act-approve"
+					className="btn sm flex-1 justify-center"
 					onClick={stop(() => onAction("approve", row))}
 					disabled={isPending}
 					aria-busy={isPending}
@@ -1725,13 +1693,14 @@ function ProposalActionsI({ row, isSafety, onAction, isPending }) {
 						</>
 					) : (
 						<>
-							<SymI s="✓" size={13} /> Approve
+							<SymI s="✓" className="text-ok" size={13} /> Approve
 						</>
 					)}
 				</button>
 				<button
 					type="button"
-					className="i-act-btn i-act-reject"
+					className="btn sm flex-1 justify-center"
+					style={REJECT_OUTLINE_STYLE}
 					onClick={stop(() => onAction("reject", row))}
 					disabled={isPending}
 					aria-busy={isPending}
@@ -1751,6 +1720,9 @@ function ProposalActionsI({ row, isSafety, onAction, isPending }) {
 		</div>
 	);
 }
+
+// destructive outline (design.md §7.4) — crit label + crit border, no fill; the agents Delete button's shape
+const REJECT_OUTLINE_STYLE = { color: "rgb(var(--crit))", borderColor: "rgb(var(--crit))" };
 
 // confidence_observed(NN%) 배지 — empirical posterior (0.0-1.0).
 // canonical status Badge(.pill)로 렌더 — 밴드 tone 은 선행 Icon(TONE_ICON[tone])이 운반, shell 은 neutral.
@@ -1883,7 +1855,7 @@ function BucketRowI({ state, buckets, failures, onRetry }) {
 				visual: (
 					<div className="grid grid-cols-2 gap-2">
 						{cards.map(([sym, tone, label, , hint]) => (
-							<div key={label} className="i-card-shadow bg-elev rounded-md p-2.5 min-w-0">
+							<div key={label} className="sub-card bg-elev p-2.5 min-w-0">
 								<div className="flex items-start gap-1.5 fs-meta">
 									<SymI s={sym} className={tone} size={13} />
 									<span>{label}</span>
@@ -1906,7 +1878,7 @@ function BucketRowI({ state, buckets, failures, onRetry }) {
 function AlarmLaneI({ applyCap }) {
 	if (Number(applyCap?.capped_patterns ?? 0) <= 0) return null;
 	return (
-		<div className="i-alarm-lane" role="region" aria-label="Alarms">
+		<div className="flex flex-col gap-2" role="region" aria-label="Alarms">
 			<ParkedLoopBannerI applyCap={applyCap} />
 		</div>
 	);
@@ -1925,25 +1897,14 @@ function ParkedLoopBannerI({ applyCap }) {
 	const capped = Number(applyCap.capped_patterns ?? 0);
 	if (capped <= 0) return null;
 	const agents = Number(applyCap.capped_agents ?? 0);
+	const { AlertCard } = window.UI;
+	// the hint stays in the wrapping body — a "do not do this" warning cannot hide behind a clamp or a hover
 	return (
-		<div className="card" role="status" data-testid="parked-loop-banner">
-			<div className="flex items-start gap-2 p-3">
-				<SymI s="⚠" className="text-warn" size={14} />
-				<div className="min-w-0">
-					<div className="fs-meta">
-						Repeat-apply cap — {formatIntI(capped)} parked{" "}
-						{capped === 1 ? "pattern" : "patterns"} across {formatIntI(agents)}{" "}
-						{agents === 1 ? "agent" : "agents"}
-					</div>
-					{/* is-wrap 필수 — .card-sub 기본값은 nowrap+ellipsis 1줄 클램프다. 이 경고는
-					    500자대이고, 잘린 앞부분이 하필 되돌리기를 권하는 문장처럼 읽힌다.
-					    title 툴팁만으로는 부족하다: 하지 말라는 경고를 hover 뒤에 둘 수 없다. */}
-					<div className="card-sub is-wrap fs-meta mt-1">
-						{applyCap.rearm_hint}
-					</div>
-				</div>
-			</div>
-		</div>
+		<AlertCard
+			tone="warn"
+			title={`Repeat-apply cap — ${formatIntI(capped)} parked ${capped === 1 ? "pattern" : "patterns"} across ${formatIntI(agents)} ${agents === 1 ? "agent" : "agents"}`}
+			body={applyCap.rearm_hint}
+		/>
 	);
 }
 
@@ -2270,7 +2231,7 @@ function PreVerifyDetailI({ badge, rationale, axes, labelCls }) {
 			<div className="bg-sunken p-2.5 rounded-md flex flex-col gap-2">
 				<div className="flex items-center gap-1.5 fs-meta">
 					<SymI s={badge.symbol} className={badge.tone} size={13} />
-					<span className={badge.tone}>{badge.label}</span>
+					<span className="text-dim">{badge.label}</span>
 					{badge.titleHint && badge.titleHint !== badge.label && (
 						<span className="text-faint">· {badge.titleHint}</span>
 					)}
@@ -2802,7 +2763,7 @@ function CandidateRowI({ rank, pattern, maxFreq, onClick }) {
 		<button
 			type="button"
 			onClick={onClick}
-			className="i-card-shadow i-row-card bg-elev rounded-md text-left p-2.5 w-full flex items-center gap-2"
+			className="sub-card i-row-card i-tile-hover bg-elev text-left p-2.5 w-full flex items-center gap-2"
 			aria-label={`Candidate ${rank}: ${label}${pattern.agent ? ` — ${pattern.agent}` : ""} — seen ${freq} times`}
 		>
 			<span
@@ -2855,32 +2816,10 @@ function candidateSeverityI(freq, maxFreq) {
 // ----- Shared chrome --------------------------------------------------------
 
 function ToastI({ tone, message }) {
-	// tone 색상은 기호(✓/⚠/✕/ℹ)로 dual-encode — 왼쪽 보더 강조 효과 제거 (사용자 directive).
-	const symbol = TONE_SYMBOL[tone] || TONE_SYMBOL.info;
+	const { TONE_GLYPH } = window.UI;
 	return (
-		<div
-			role="status"
-			aria-live="polite"
-			className="i-anim-toast"
-			style={{
-				position: "fixed",
-				bottom: 24,
-				right: 24,
-				zIndex: 200,
-				background: "rgb(var(--elev))",
-				border: "1px solid rgb(var(--line))",
-				borderRadius: 8,
-				padding: "10px 16px",
-				fontSize: "var(--fs-body)",
-				fontFamily: "JetBrains Mono, monospace",
-				color: "rgb(var(--ink))",
-				boxShadow: "0 8px 24px rgba(0,0,0,0.18)",
-				maxWidth: 360,
-			}}
-		>
-			<span style={{ marginRight: 8 }}>
-				<SymI s={symbol} />
-			</span>
+		<div role="status" aria-live="polite" className={`doc-toast ${tone}`}>
+			<span className="doc-toast-glyph" aria-hidden="true">{TONE_GLYPH[tone] || TONE_GLYPH.info}</span>
 			{message}
 		</div>
 	);

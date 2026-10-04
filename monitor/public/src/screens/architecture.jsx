@@ -2104,55 +2104,31 @@ const TONE_GLYPH_CLASS = {
 	warn: "text-warn",
 	crit: "text-crit",
 	info: "text-info",
+	ok: "text-ok",
 };
 
 /**
- * 경보 레인의 행 — 심각도별 tint · 아이콘 · 이름 배지를 한 상자로 실음.
- * tone 은 CSS 변수명으로 그대로 들어가므로, 새 tone 은 같은 이름의 변수가 tokens.css 에 있어야 함.
- * role=alert 는 행이 가짐 — 레인이 가지면 네 사실이 한 경보로 접혀 이름을 따로 셀 수 없음.
+ * 경보 레인의 행 — 공유 AlertCard 한 장으로 그림, tone 은 카드의 글리프 우물에만 실림.
+ * role=alert 는 행 래퍼가 가짐 — 레인이 가지면 네 사실이 한 경보로 접혀 이름을 따로 셀 수 없음 · 카드는 hasLiveHost 로 역할을 내려놓음.
  */
 function AlarmRowAR({ row, onRetry }) {
-	const { Icon, Badge } = window.UI;
+	const { AlertCard } = window.UI;
+	const retry = onRetry && row.retry && (
+		<button className="btn sm" onClick={onRetry}>
+			Retry
+		</button>
+	);
 	return (
-		<div
-			role="alert"
-			data-alarm={row.key}
-			data-alarm-tone={row.tone}
-			className="arch-alarm-row rounded-md border p-3 flex items-start gap-3"
-			style={{
-				background: `rgb(var(--${row.tone}) / 0.08)`,
-				borderColor: `rgb(var(--${row.tone}) / 0.4)`,
-			}}
-		>
-			<Icon
-				name={row.icon}
-				size={16}
-				className={`${TONE_GLYPH_CLASS[row.tone]} mt-0.5`}
+		<div role="alert" data-alarm={row.key} data-alarm-tone={row.tone} className="arch-alarm-row">
+			<AlertCard
+				tone={row.tone}
+				hasLiveHost
+				title={row.title}
+				body={row.note}
+				details={row.detail}
+				subjects={row.badges}
+				actions={retry || null}
 			/>
-			<div className="flex-1 min-w-0">
-				<div className="fs-body font-medium text-ink">{row.title}</div>
-				<div className="fs-meta text-dim mt-1">{row.note}</div>
-				{row.detail && (
-					<details className="fs-meta text-faint mt-1">
-						<summary className="cursor-pointer">Details</summary>
-						<code className="block mt-1 font-mono break-all">{row.detail}</code>
-					</details>
-				)}
-				{row.badges.length > 0 && (
-					<div className="flex flex-wrap gap-1.5 mt-2">
-						{row.badges.map((name) => (
-							<Badge key={name}>
-								{name}
-							</Badge>
-						))}
-					</div>
-				)}
-			</div>
-			{onRetry && row.retry && (
-				<button className="btn sm" onClick={onRetry}>
-					Retry
-				</button>
-			)}
 		</div>
 	);
 }
@@ -2874,12 +2850,6 @@ function getPartStatusAR(row, freshness) {
 	return { tone: verdict.tone, text: verdict.label };
 }
 
-// neutral has no tone text class — a last-known row reads dim, an unjudged one faint
-function getPartToneClassAR(tone) {
-	if (!tone) return "text-faint";
-	return tone === "neutral" ? "text-dim" : `text-${tone}`;
-}
-
 const PART_TONE_RANK_AR = { crit: 0, warn: 1, info: 3, ok: 4 };
 // a part with no verdict yet ranks between the flagged and the answered ones
 const PART_UNJUDGED_RANK_AR = 2;
@@ -3025,7 +2995,7 @@ function PartHealthListAR({ title, rows, empty, freshness, nodeIndex, onSelectNo
 }
 
 function PartHealthRowAR({ row, freshness, nodeIndex, onSelectNode }) {
-	const { formatRelativeTime } = window.UI;
+	const { formatRelativeTime, Icon, TONE_ICON } = window.UI;
 	const box = getPartBoxAR(row, nodeIndex);
 	const status = getPartStatusAR(row, freshness);
 	const schedule = getPartScheduleAR(row, formatRelativeTime);
@@ -3036,7 +3006,13 @@ function PartHealthRowAR({ row, freshness, nodeIndex, onSelectNode }) {
 	return (
 		<li id={getPartRowIdAR(row)} tabIndex={-1} className="arch-part-row">
 			<span>{row.name}</span>
-			<span className={getPartToneClassAR(status.tone)}>{status.text}</span>
+			{/* verdict word stays neutral, tone on the glyph only · an unjudged row reads faint */}
+			<span className={status.tone ? "text-dim" : "text-faint"}>
+				{status.tone && status.tone !== "neutral" && (
+					<Icon name={TONE_ICON[status.tone]} size={12} className={`${TONE_GLYPH_CLASS[status.tone]} mr-1`} />
+				)}
+				{status.text}
+			</span>
 			{box ? (
 				<button type="button" className="btn sm" onClick={() => onSelectNode(box.nodeId)} aria-label={`Open ${box.label} for ${row.name}`}>
 					Open box
@@ -3050,7 +3026,7 @@ function PartHealthRowAR({ row, freshness, nodeIndex, onSelectNode }) {
 }
 
 // 레인 정렬 순위 — 심각도만으로 셈. 같은 tone 안의 순서는 조립 순서(안정 정렬)가 냄.
-// 글리프 색 표의 모든 tone 이 여기 있어야 함 — 빠진 tone 은 NaN 비교로 제자리를 잃음.
+// 레인이 내는 모든 tone 이 여기 있어야 함 — 빠진 tone 은 NaN 비교로 제자리를 잃음.
 const ALARM_TONE_RANK = { crit: 1, warn: 2, info: 3 };
 
 /**
@@ -3064,7 +3040,6 @@ function getAlarmRows({ offWriters, healthStoreErrors, liveState, governance }) 
 		rows.push({
 			key: "dual-write",
 			tone: "crit",
-			icon: "warn",
 			title: "Dual-write stopped — these writers are not recording",
 			// 스캔 실패도 같은 false 로 떨어짐(live-overlay 의 fail-loud 기본값) — 두 원인을 함께 적음.
 			note: "Marker scan found no dual-write block, or could not read the file.",
@@ -3075,7 +3050,6 @@ function getAlarmRows({ offWriters, healthStoreErrors, liveState, governance }) 
 		rows.push({
 			key: "health-store",
 			tone: "crit",
-			icon: "warn",
 			title: "Couldn't load system health",
 			note: "These stores did not answer; the parts they judge carry no verdict.",
 			badges: healthStoreErrors,
@@ -3086,7 +3060,6 @@ function getAlarmRows({ offWriters, healthStoreErrors, liveState, governance }) 
 		rows.push({
 			key: "live-overlay",
 			tone: "crit",
-			icon: "warn",
 			title: "Couldn't load the live overlay",
 			note: "The live endpoint did not answer; ring verdicts and part bindings are missing.",
 			detail: liveState.error,
@@ -3099,7 +3072,6 @@ function getAlarmRows({ offWriters, healthStoreErrors, liveState, governance }) 
 		rows.push({
 			key: "governance",
 			tone: "warn",
-			icon: "warn",
 			title: governance?.sourceMissing
 				? "Governance membership unverifiable — compliance matrix unreadable"
 				: "Governance document missing",

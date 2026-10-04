@@ -75,8 +75,6 @@ const SPARK_HEIGHT = 20;
 
 // Whole concern items, two lines max → the full text rides the tooltip.
 const CONCERN_CLAMP_STYLE = { display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical', overflow: 'hidden' };
-// Every listed pair is failing, so its rate keeps the failure tint whatever its sample size.
-const PAIR_RATE_STYLE = { color: 'rgb(var(--crit))' };
 // Delete reads destructive without the filled weight of a primary action.
 const DELETE_OUTLINE_STYLE = { color: 'rgb(var(--crit))', borderColor: 'rgb(var(--crit))' };
 
@@ -409,7 +407,7 @@ function ScreenAgents() {
       {/* held values stay on screen, dimmed, until the refresh settles */}
       <div
         aria-busy={isAnyRegionBusy ? 'true' : undefined}
-        className={isAnyRegionBusy && summaryAsOfAt != null ? 'opacity-70 motion-safe:transition-opacity' : undefined}>
+        className={isAnyRegionBusy && summaryAsOfAt != null ? 'opacity-70 motion-safe:transition-opacity motion-safe:duration-[120ms]' : undefined}>
       <AgentPageVerdict
         revisionState={revisionState}
         reviewByAgentState={reviewByAgentState}
@@ -1155,7 +1153,8 @@ function AgentSummaryRow({ agent, days, isSelected, onSelect, focusProps, trend,
           <NotLoadedMarkAg title={failTitle}/>
         ) : breakage.count > 0 ? (
           <span className="inline-flex items-baseline justify-end gap-1.5">
-            <span className={failTone}>{failedCount > 0 ? formatIntAg(failedCount) : '—'}</span>
+            <FailShareGlyph tone={failTone} label={getFailShareLabel('failed')}/>
+            <span className={failedCount > 0 ? '' : 'text-faint'}>{failedCount > 0 ? formatIntAg(failedCount) : '—'}</span>
             {blockedCount > 0 && <span className="fs-meta text-dim">{formatIntAg(blockedCount)} blocked</span>}
           </span>
         ) : (
@@ -1165,7 +1164,7 @@ function AgentSummaryRow({ agent, days, isSelected, onSelect, focusProps, trend,
         {isFailureRead && breakage.count > 0 && (
           <Bar
             value={Math.max(breakage.rate, 0.01)}
-            tone={barToneFromClass(failTone)}
+            tone={failTone}
             ariaLabel={`breakage rate ${(breakage.rate * 100).toFixed(1)}%`}
           />
         )}
@@ -1183,7 +1182,7 @@ function AgentSummaryRow({ agent, days, isSelected, onSelect, focusProps, trend,
               <span className={p95Tone || 'text-ok'} aria-hidden="true">
                 <Icon name={TONE_ICON[p95Glyph]} size={13}/>
               </span>
-              <span className={p95Tone === 'text-crit' ? p95Tone : undefined}>{formatDurationSecAg(p95Sec)}</span>
+              <span>{formatDurationSecAg(p95Sec)}</span>
             </span>
           ) : (
             <span className="text-faint">—</span>
@@ -1249,13 +1248,14 @@ function ActivityMark({ status, lastRunAt }) {
 }
 
 function CompatibilityDetailBlock({ compatibility }) {
+  const { SubCard } = window.UI;
   if (!compatibility) return null;
   return (
     <div className="mb-4 agent-compatibility-detail">
       <div className="fs-meta text-faint mb-2">Requires</div>
-      <div className="rounded-md border border-info/30 bg-info/[0.06] px-3 py-2 fs-body leading-relaxed text-dim">
+      <SubCard sunken className="fs-body leading-relaxed text-dim">
         {compatibility}
-      </div>
+      </SubCard>
     </div>
   );
 }
@@ -1517,20 +1517,15 @@ function AgentDrawerNameAg({ name }) {
 // typed-name 삭제 확인 패널 — drawer 본문 서브상태.
 // full name 정확 일치 시에만 푸터 커밋 버튼 활성 (비가역 작업 게이트는 푸터가 소유 · 여기선 입력+공시).
 function AgentDeleteConfirmPanel({ agentName, value, committing, error, onChange }) {
-  const { Icon } = window.UI;
+  const { AlertCard } = window.UI;
   const matches = value === agentName;
   return (
     <div className="space-y-4">
-      <div
-        role="note"
-        className="rounded-md border p-3 flex items-start gap-3"
-        style={{ background: 'rgb(var(--warn) / 0.08)', borderColor: 'rgb(var(--warn) / 0.4)' }}>
-        <Icon name="warn" size={16} className="text-warn mt-0.5 shrink-0"/>
-        <div className="fs-meta text-dim leading-relaxed">
-          <span className="font-medium text-ink">This removes a real agent.</span>{' '}
-          Moves <span className="font-mono text-ink">{agentName}</span>'s file to the Trash and unwires it from the system.
-        </div>
-      </div>
+      <AlertCard
+        tone="warn"
+        surface="inset"
+        title="This removes a real agent."
+        body={<>Moves <span className="font-mono text-ink">{agentName}</span>'s file to the Trash and unwires it from the system.</>}/>
 
       <div>
         <div className="fs-meta font-medium text-ink">Type the agent name to confirm</div>
@@ -1551,11 +1546,7 @@ function AgentDeleteConfirmPanel({ agentName, value, committing, error, onChange
         )}
       </div>
 
-      {error && (
-        <div role="alert" className="rounded-md border border-crit/40 bg-crit/[0.08] px-3 py-2.5 fs-meta text-dim">
-          <span className="font-medium text-crit">Delete failed.</span> {error}
-        </div>
-      )}
+      {error && <AlertCard tone="crit" surface="inset" title="Delete failed." body={error}/>}
     </div>
   );
 }
@@ -1977,7 +1968,7 @@ function AgentReliabilityBreakages({ drawerAgent, failureByAgent, failureState, 
       {failure && failure.total_breakages > 0 ? (
         <>
           <div className="flex items-center gap-2 flex-wrap">
-            <Badge role="status" tone={failureTone(failure.total_breakages, failure.breakage_rate) === 'text-crit' ? 'crit' : 'neutral'}>
+            <Badge role="status" tone={failureTone(failure.total_breakages, failure.breakage_rate)}>
               {formatIntAg(split.breakages)} failed or blocked{failure.reconstructed > 0 ? '' : ` · ${rateText}`}
             </Badge>
             {split.blocked.max > 0 && (
@@ -2156,7 +2147,7 @@ function resultToneAg(result) {
 }
 
 function RecentActivityRow({ row }) {
-  const { Badge } = window.UI;
+  const { Badge, Icon, TONE_ICON } = window.UI;
   const revision = Number(row.revision_count) || 0;
   return (
     <div className="flex items-center justify-between gap-2 rounded border border-line px-3 py-2 fs-body">
@@ -2166,7 +2157,12 @@ function RecentActivityRow({ row }) {
       </div>
       <div className="flex items-center gap-2 shrink-0 fs-meta font-mono text-faint tnum">
         {row.confidence && <span title="confidence">{row.confidence}</span>}
-        {revision > 0 && <span title="revision_count" className="text-warn">rev {revision}</span>}
+        {revision > 0 && (
+          <span title="revision_count" className="inline-flex items-center gap-1">
+            <span className="text-warn inline-flex" aria-hidden="true"><Icon name={TONE_ICON.warn} size={11}/></span>
+            rev {revision}
+          </span>
+        )}
         <span title={row.record_ts}>{formatRelativeTimeAg(row.record_ts)}</span>
       </div>
     </div>
@@ -2205,19 +2201,15 @@ function MergedBreakageSection({ detailState, blockedState, days, onRetry }) {
 }
 
 function MergedBreakageBody({ merged, days }) {
-  const { Icon } = window.UI;
+  const { Icon, EmptyState } = window.UI;
   if (!merged || merged.total === 0) {
-    return (
-      <div className="rounded-md border border-dashed border-ok/40 px-3 py-3 fs-meta font-mono text-dim">
-        No failed or blocked tasks in the last {days} days
-      </div>
-    );
+    return <EmptyState message={`No failed or blocked tasks in the last ${days} days`}/>;
   }
 
   return (
     <div>
       <div className="fs-meta font-mono text-dim mb-2">
-        Total {formatIntAg(merged.total)} = <span className="text-crit inline-flex items-center gap-1"><Icon name="x" size={11}/>fail {formatIntAg(merged.failTotal)}</span> + <span className="text-info inline-flex items-center gap-1"><Icon name="info" size={11}/>blocked {formatIntAg(merged.blockedTotal)}</span>
+        Total {formatIntAg(merged.total)} = <span className="inline-flex items-center gap-1"><span className="text-crit inline-flex" aria-hidden="true"><Icon name="x" size={11}/></span>fail {formatIntAg(merged.failTotal)}</span> + <span className="inline-flex items-center gap-1"><span className="text-info inline-flex" aria-hidden="true"><Icon name="info" size={11}/></span>blocked {formatIntAg(merged.blockedTotal)}</span>
       </div>
       <div className="space-y-2">
         {merged.reasons.map((r) => {
@@ -2425,12 +2417,6 @@ function getCellFailShareTone(cell) {
   return getFailShareTone(cell.failureCount, cell.rateDenominator);
 }
 
-// Tier-scaled highlight — green-bias 매트릭스에서 미달 셀 즉시 식별 (research R1).
-const CELL_HIGHLIGHT_BY_TONE = {
-  '--faint': { bgOpacity: 0.06, borderAccent: undefined },
-  '--crit':  { bgOpacity: 0.28, borderAccent: '1px solid rgb(var(--crit) / 0.55)' },
-};
-
 function SuccessRateCell({ agent, taskType, cell }) {
   // 데이터 없음.
   if (!cell || cell.totalCount === 0) {
@@ -2458,8 +2444,6 @@ function SuccessRateCell({ agent, taskType, cell }) {
   const failShareTone = getCellFailShareTone(cell);
   const isCrit = failShareTone === 'crit';
   const colorVar = isCrit ? '--crit' : '--faint';
-  const { bgOpacity, borderAccent } = CELL_HIGHLIGHT_BY_TONE[colorVar];
-  const bg = `rgb(var(${colorVar}) / ${bgOpacity})`;
   const ariaLabel =
     `${agent} ${taskType} — pooled success rate ${(cell.pooledRate * 100).toFixed(0)}% (${cell.successCount}/${cell.rateDenominator}), ` +
     `${cell.totalCount} total` +
@@ -2469,7 +2453,6 @@ function SuccessRateCell({ agent, taskType, cell }) {
   return (
     <td
       className="text-center px-1 py-1.5 border-b border-line relative"
-      style={{ background: bg, outline: borderAccent, outlineOffset: -1 }}
       title={`${agent} · ${taskType}\npooled ${(cell.pooledRate * 100).toFixed(1)}% (${cell.successCount}/${cell.rateDenominator})${isLowSample ? ` · small sample (n=${cell.rateDenominator} < ${window.UI.LOW_N_MIN})` : ''} · ${cell.totalCount} total${cell.reconstructed > 0 ? ` · ${cell.reconstructed} reconstructed excluded` : ''}`}
       aria-label={ariaLabel}>
       <div className="flex flex-col items-center gap-0.5">
@@ -2641,9 +2624,12 @@ function TopNFailingAgentsTable({ pairs, failureByAgent, days }) {
         </td>
         <td
           className="text-right px-2 py-1.5 border-b border-line font-semibold whitespace-nowrap"
-          style={PAIR_RATE_STYLE}
           title={`pooled passed ${p.successCount} / (passed+failed) ${p.rateDenominator} · ${p.totalCount} total${isLowSample ? ` · small sample (n=${p.rateDenominator} < ${lowN})` : ''}`}>
-          {window.UI.formatPctWithDenominator(p.successCount, p.rateDenominator)}
+          {/* every listed pair is failing → the glyph marks it whatever its sample size */}
+          <span className="inline-flex items-center justify-end gap-1">
+            <FailShareGlyph tone="crit"/>
+            {window.UI.formatPctWithDenominator(p.successCount, p.rateDenominator)}
+          </span>
           {isLowSample && <window.UI.LowSampleMark n={p.rateDenominator}/>}
           {/* Pair success-rate bar — crit like the matrix, except n < LOW_N_MIN, which the legend keeps neutral. */}
           <window.UI.Bar
@@ -2828,7 +2814,7 @@ function QualityHealthTimelineChart({ rows }) {
             tickLine={false}
             width={56}
           />
-          <Tooltip content={<QualityHealthTimelineTooltip/>} cursor={{ fill: 'rgb(var(--accent) / 0.06)' }}/>
+          <Tooltip content={<QualityHealthTimelineTooltip/>} cursor={{ fill: 'rgb(var(--accent) / 0.06)' }} isAnimationActive={false}/>
           <Bar yAxisId="count" dataKey="empty_metric_count"   stackId="rf" fill={`rgb(var(--warn) / 0.85)`}   isAnimationActive={false}/>
           <Bar yAxisId="count" dataKey="polar_mismatch_count" stackId="rf" fill={`rgb(var(--accent) / 0.85)`} isAnimationActive={false}/>
           <Line
@@ -2876,7 +2862,8 @@ function QualityHealthTimelineTooltip({ active, payload }) {
         <span style={{ width: 8, height: 8, borderRadius: 2, background: 'rgb(var(--accent))' }}/>
         Confidence mismatch {formatIntAg(row.polar_mismatch_count)} of {formatIntAg(row.total_count)} runs
       </div>
-      <div style={{ color: 'rgb(var(--crit))', marginTop: 4 }}>
+      <div style={{ ...tooltipRowStyle, marginTop: 4 }}>
+        <span style={{ width: 10, borderTop: '1.5px dashed rgb(var(--crit))' }}/>
         Flagged rate {row.review_flag_ratio_pct.toFixed(1)}%
       </div>
     </div>
@@ -3026,6 +3013,7 @@ function LifecycleStatsRow({ row, onSelect, focusProps }) {
   const orphanRatio = startCount > 0 ? orphanCount / startCount : 0;
   const orphanTone = orphanRatioTone(orphanRatio);
   const p95Sec = row.p95_duration_sec == null ? null : Number(row.p95_duration_sec);
+  const { StatusDot } = window.UI;
 
   const handleClick = onSelect ? () => onSelect(row.agent_type) : undefined;
 
@@ -3033,7 +3021,7 @@ function LifecycleStatsRow({ row, onSelect, focusProps }) {
     <tr
       {...focusProps}
       onClick={handleClick}
-      className={onSelect ? 'cursor-pointer hover:bg-sunken transition-colors' : undefined}
+      className={onSelect ? 'cursor-pointer hover:bg-sunken motion-safe:transition-colors motion-safe:duration-[120ms]' : undefined}
       title={`${row.agent_type} — start ${startCount} · stop ${formatIntAg(row.stop_count)} · completed ${completedCount} · orphan ${orphanCount} (${(orphanRatio * 100).toFixed(0)}%)`}>
       <td className="text-left text-ink px-2 py-1.5 border-b border-line truncate" style={{ maxWidth: 160 }}>
         <span className="flex items-center gap-1.5">
@@ -3042,7 +3030,8 @@ function LifecycleStatsRow({ row, onSelect, focusProps }) {
       </td>
       <td className="text-right text-dim px-2 py-1.5 border-b border-line">{formatIntAg(startCount)}</td>
       <td className="text-right text-dim px-2 py-1.5 border-b border-line">{formatIntAg(completedCount)}</td>
-      <td className={`text-right px-2 py-1.5 border-b border-line font-semibold ${orphanTone}`}>
+      <td className={`text-right px-2 py-1.5 border-b border-line font-semibold ${orphanTone ? 'text-ink' : 'text-dim'}`}>
+        {orphanTone && <StatusDot status={orphanTone}/>}
         {orphanCount > 0 ? `${formatIntAg(orphanCount)} · ${(orphanRatio * 100).toFixed(0)}%` : '0'}
       </td>
       <td className="text-right text-dim px-2 py-1.5 border-b border-line">
@@ -3062,14 +3051,14 @@ function EmptyStateAg({ message }) {
 // Pure helpers
 
 const tooltipStyle = {
-  background: 'rgb(var(--elev))',
+  background: 'rgb(var(--overlay-surface))',
   border: '1px solid rgb(var(--line))',
-  borderRadius: 8,
+  borderRadius: 'var(--radius-tile)',
   padding: '8px 12px',
   // 툴팁 = HTML DOM div → 11.5px→var(--fs-meta)(11px) 매핑 (밀도 높은 보조 콘텐츠 tier · cost.jsx tooltipStyle 동일 선례).
   fontSize: 'var(--fs-meta)',
   fontFamily: 'JetBrains Mono, monospace',
-  boxShadow: '0 4px 12px rgba(0,0,0,0.12)',
+  boxShadow: 'var(--shadow-overlay)',
 };
 
 const tooltipRowStyle = {
@@ -3511,17 +3500,17 @@ function getSummaryRateAg(agent) {
   return { successPct, needsContextCount, denominator, numerator, isLowSample, tone };
 }
 
-function getFailShareLabel() {
-  return `failed or blocked ≥ ${(window.UI.OUTCOME_BREAKAGE_CRIT_SHARE * 100).toFixed(0)}%`;
+function getFailShareLabel(outcome = 'failed or blocked') {
+  return `${outcome} ≥ ${(window.UI.OUTCOME_BREAKAGE_CRIT_SHARE * 100).toFixed(0)}%`;
 }
 
 // Tone rides a glyph beside the success numeral, never the numeral itself.
-function FailShareGlyph({ tone }) {
+function FailShareGlyph({ tone, label = getFailShareLabel() }) {
   if (tone !== 'crit') return null;
   const { Icon, TONE_ICON } = window.UI;
 
   return (
-    <span className="text-crit inline-flex items-center" title={getFailShareLabel()}>
+    <span className="text-crit inline-flex items-center" title={label}>
       <span aria-hidden="true"><Icon name={TONE_ICON.crit} size={12}/></span>
       <span className="sr-only">high failure share</span>
     </span>
@@ -3561,12 +3550,11 @@ function p95GlyphTone(p95Sec, warnSec = P95_AGENT.WARN_SEC) {
   return 'ok';
 }
 
-// Failed-or-blocked numeral — the one Agents rate scale over the agent's outcomes (population = count ÷ rate).
+// Failed-or-blocked share → tone KEY for its glyph and bar — the one Agents rate scale over the agent's outcomes (population = count ÷ rate).
 function failureTone(count, rate) {
-  if (count === 0) return 'text-faint';
-  const population = rate > 0 ? Math.round(count / rate) : 0;
-  if (population < window.UI.LOW_N_MIN) return '';
-  return getFailShareTone(count, population) === 'crit' ? 'text-crit' : '';
+  const population = count > 0 && rate > 0 ? Math.round(count / rate) : 0;
+  if (population < window.UI.LOW_N_MIN) return 'neutral';
+  return getFailShareTone(count, population) === 'crit' ? 'crit' : 'neutral';
 }
 
 // CSS-class 톤('text-ok' 등 · ''=무톤) → Bar/StatusDot KEY(ok|warn|crit|neutral) 변환.
@@ -3609,11 +3597,11 @@ function qualityHealthDriverPhrase(driver) {
   return `high rework ${driver.value.toFixed(2)}`;
 }
 
-// orphan spawn 비율(start 대비 미완) → 톤 — 높을수록 누수 심각.
+// orphan spawn 비율(start 대비 미완) → StatusDot tone KEY — 높을수록 누수 심각, 미달 = null.
 function orphanRatioTone(ratio) {
-  if (ratio >= ORPHAN_RATIO_CRIT_THRESHOLD) return 'text-crit';
-  if (ratio >= ORPHAN_RATIO_WARN_THRESHOLD) return 'text-warn';
-  return 'text-dim';
+  if (ratio >= ORPHAN_RATIO_CRIT_THRESHOLD) return 'crit';
+  if (ratio >= ORPHAN_RATIO_WARN_THRESHOLD) return 'warn';
+  return null;
 }
 
 // duration_sec → 인간화 (≥60s "Mm Ss") — 공용 formatDuration(ui.jsx SoT)에 위임, lifecycle p95 표시.

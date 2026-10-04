@@ -35,12 +35,6 @@ const Screens = {
 };
 
 const NAV_BADGE_POLL_MS = 60_000;
-// no .nav-badge.crit rule in styles yet → local tone fill mirroring .nav-badge.warn
-const NAV_BADGE_CRIT_STYLE = {
-	background: "rgb(var(--crit) / 0.15)",
-	color: "rgb(var(--crit))",
-	borderColor: "transparent",
-};
 const MAIN_CONTENT_ID = "main-content";
 // tokens.css meta step, inline → the shell holds the type floor on screens that mount no TypeScaleStyle
 const META_TEXT_STYLE = { fontSize: "var(--fs-meta)" };
@@ -117,11 +111,10 @@ function Sidebar({ active, onNav, harness, agentsState, pageState }) {
 									<span
 										key={i}
 										className={`nav-badge shrink-0 ${b.badgeTone || ""}`}
-										style={b.badgeTone === "crit" ? NAV_BADGE_CRIT_STYLE : undefined}
 										title={b.title}
 									>
-										{/* glyph = tone shape (non-colour cue) · description = what AT hears instead of the bare numeral */}
-										{b.glyph && <span aria-hidden="true">{`${b.glyph} `}</span>}
+										{/* neutral shell + numeral, tone on the glyph only · description = what AT hears instead of the bare numeral */}
+										{b.glyph && <span aria-hidden="true" className={`text-${b.badgeTone}`}>{`${b.glyph} `}</span>}
 										<span aria-hidden={b.description ? "true" : undefined}>{b.badge}</span>
 										{b.description && <span className="sr-only">{`, ${b.description}`}</span>}
 									</span>
@@ -137,11 +130,11 @@ function Sidebar({ active, onNav, harness, agentsState, pageState }) {
 						{/* 라이브 롤업 파생 — ok 상태만 pulse(live-dot), 그 외 정적 (가짜 상시-green 제거). */}
 						<span className={`w-1.5 h-1.5 rounded-full ${systems.dotClass}${systems.tone === "ok" ? " live-dot" : ""}`}></span>
 						{systems.glyph && (
-							<span aria-hidden="true" className="rail-hide font-mono text-crit">
+							<span aria-hidden="true" className={`rail-hide font-mono text-${systems.tone}`}>
 								{systems.glyph}
 							</span>
 						)}
-						<span className={`rail-hide font-mono ${systems.tone === "crit" ? "text-crit" : "text-dim"}`}>{systems.label}</span>
+						<span className="rail-hide font-mono text-dim">{systems.label}</span>
 					</div>
 				</div>
 			</div>
@@ -215,13 +208,13 @@ function harnessToNavBadges(harness) {
 	const failCount = harness.failCount1h;
 	if (failCount > 0) {
 		const title = `${failCount} failed ${failCount === 1 ? "task" : "tasks"} in the last hour`;
-		badges.push({ badge: String(failCount), badgeTone: "warn", source: "kpi", title });
+		badges.push({ badge: String(failCount), badgeTone: "warn", glyph: window.UI.TONE_GLYPH.warn, source: "kpi", title, description: title });
 	}
 	// downNames = the Dashboard lane's harness-alarm set (crit) → numeral + tone match the page, daemons or not
 	const downCount = harness.downNames.length;
 	if (downCount > 0) {
 		const title = `${downCount} harness ${downCount === 1 ? "part" : "parts"} down: ${harness.downNames.join(" · ")}`;
-		badges.push({ badge: String(downCount), badgeTone: "crit", source: "down", title });
+		badges.push({ badge: String(downCount), badgeTone: "crit", glyph: window.UI.TONE_GLYPH.crit, source: "down", title, description: title });
 	}
 	return { architecture: badges.length > 0 ? { badges } : null };
 }
@@ -261,10 +254,10 @@ function systemsRollup(harness, pageState = null) {
 	// tone = worst alarm severity: a down part is the lane's crit harness alarm
 	if (downCount > 0) {
 		const label = `${downCount} ${downCount === 1 ? "PART" : "PARTS"} DOWN`;
-		return { tone: "crit", dotClass: "bg-crit", glyph: "✕", label };
+		return { tone: "crit", dotClass: "bg-crit", glyph: window.UI.TONE_GLYPH.crit, label };
 	}
 	const issues = isReady && (harness.daemonsDown > 0 || harness.failCount1h > 0);
-	if (issues) return { tone: "warn", dotClass: "bg-warn", label: "ISSUES DETECTED" };
+	if (issues) return { tone: "warn", dotClass: "bg-warn", glyph: window.UI.TONE_GLYPH.warn, label: "ISSUES DETECTED" };
 	// an unread source could hide a fault → unknown, never ALL SYSTEMS
 	if (!isReady || harness.unreadSources?.length > 0) return getNeutralRollup("STATUS UNKNOWN");
 	return getPageRollup(pageState) ?? { tone: "ok", dotClass: "bg-ok", label: "ALL SYSTEMS" };
