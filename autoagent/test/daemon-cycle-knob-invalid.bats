@@ -37,7 +37,8 @@ teardown() {
 
 run_driver_with_config() {
   printf '%s\n' "$1" >"${WORK}/daemon-config.json"
-  run env HOME="${WORK}/home" GA_DATA_ROOT="${WORK}/data" \
+  # the dead PGHOST holds only with no PGHOSTADDR / PGSERVICE to route libpq past it
+  run env -u PGHOSTADDR -u PGSERVICE HOME="${WORK}/home" GA_DATA_ROOT="${WORK}/data" \
     DAEMON_CONFIG="${WORK}/daemon-config.json" \
     AUTOAGENT_CLAUDE_BIN="${WORK}/claude-stub" \
     AUTOAGENT_AGENTS_DIR="${WORK}/home/agents" \

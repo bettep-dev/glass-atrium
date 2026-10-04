@@ -80,8 +80,10 @@ make_real_pg_helper() {
 
 # Drive the real helper down the connect-failure path: the "dbname=glass_atrium"
 # conninfo leaves host unset, so libpq consults PGHOST — a nonexistent socket dir
-# fails deterministically for every user, with no DB anywhere in reach.
+# fails deterministically for every user, with no DB anywhere in reach. PGHOSTADDR or PGSERVICE
+# would route libpq past PGHOST, so neither may survive into the helper.
 force_pg_unreachable() {
+  unset PGHOSTADDR PGSERVICE
   export PGHOST="${WORK}/nonexistent-pg-socket-dir"
 }
 
