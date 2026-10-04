@@ -354,12 +354,13 @@ has_abort_row() {
   }
 }
 
-# one row per gated source: the backlog drain, and --proposal-id (the monitor Approve route)
+# every probe answer on each gated source: the backlog drain, and --proposal-id (the monitor Approve route)
 @test "a record table that cannot be confirmed stops the run before any apply with exit 25" {
   local rows=(
     "table absent, backlog source|f||"
     "probe failed, backlog source|error||"
     "table absent, single source|f|--proposal-id|${ROW_ID}"
+    "probe failed, single source|error|--proposal-id|${ROW_ID}"
   )
   local row name answer flag value
   for row in "${rows[@]}"; do

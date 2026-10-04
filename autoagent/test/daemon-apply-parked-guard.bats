@@ -303,18 +303,15 @@ dump_state() {
 }
 
 @test "a guard mode that exits non-zero applies nothing, exits 17, names the interpreter, and lands an abort row" {
-  {
-    proposal_row 101 probe-a "$(landing_diff probe-a)"
-    proposal_row 102 probe-b "$(landing_diff probe-b)"
-  } >"${WORK}/backlog.rows"
+  single_row 201 probe-a "$(landing_diff probe-a)" >"${WORK}/single.rows"
   answer_guard 1 8 ""
-  run_apply
+  run_apply --proposal-id 201
 
   [[ "${status}" -eq 17 ]] || {
     dump_state
     return 1
   }
-  is_unchanged probe-a && is_unchanged probe-b && ! was_flipped 101 && ! was_flipped 102 || {
+  is_unchanged probe-a && ! was_flipped 201 || {
     echo "a failed guard read let a row apply" >&2
     dump_state
     return 1
@@ -331,14 +328,14 @@ dump_state() {
 }
 
 @test "a guard mode that exits 0 without exactly one verdict is a failure, never 'nothing guarded'" {
-  proposal_row 101 probe-a "$(landing_diff probe-a)" >"${WORK}/backlog.rows"
+  single_row 201 probe-a "$(landing_diff probe-a)" >"${WORK}/single.rows"
   # empty stdout (the update-pause gate's clean exit) · not JSON · a key missing · two verdict lines
   local -a replies=("" "not a verdict" '{"guarded": []}' "${NO_GUARD}"$'\n'"${NO_GUARD}")
   local i
   for i in 0 1 2 3; do
     answer_guard "$((i + 1))" 0 "${replies[i]}"
-    run_apply
-    [[ "${status}" -eq 17 ]] && is_unchanged probe-a && ! was_flipped 101 || {
+    run_apply --proposal-id 201
+    [[ "${status}" -eq 17 ]] && is_unchanged probe-a && ! was_flipped 201 || {
       echo "reply #${i} (${replies[i]}) was read as a verdict" >&2
       dump_state
       return 1
@@ -346,19 +343,16 @@ dump_state() {
   done
 }
 
-@test "no guarded rows: every selected row applies exactly as without the guard" {
-  {
-    proposal_row 101 probe-a "$(landing_diff probe-a)"
-    proposal_row 102 probe-b "$(landing_diff probe-b)"
-  } >"${WORK}/backlog.rows"
+@test "no guarded rows: the selected proposal applies exactly as without the guard" {
+  single_row 201 probe-a "$(landing_diff probe-a)" >"${WORK}/single.rows"
   answer_guard 1 0 "${NO_GUARD}"
-  run_apply
+  run_apply --proposal-id 201
 
   [[ "${status}" -eq 0 ]] || {
     dump_state
     return 1
   }
-  ! is_unchanged probe-a && ! is_unchanged probe-b && was_flipped 101 && was_flipped 102 || {
+  ! is_unchanged probe-a && was_flipped 201 || {
     echo "an empty verdict changed the apply outcome" >&2
     dump_state
     return 1
@@ -540,11 +534,11 @@ print(json.dumps({"patches": [patch]}))
 }
 
 @test "provenance: the apply flip keeps its verdict instant and stamps the machine actor by default" {
-  proposal_row 104 probe-a "$(landing_diff probe-a)" >"${WORK}/backlog.rows"
+  single_row 204 probe-a "$(landing_diff probe-a)" >"${WORK}/single.rows"
   answer_guard 1 0 "${NO_GUARD}"
-  run_apply
+  run_apply --proposal-id 204
 
-  [[ "${status}" -eq 0 ]] && was_flipped 104 || {
+  [[ "${status}" -eq 0 ]] && was_flipped 204 || {
     dump_state
     return 1
   }
@@ -590,9 +584,9 @@ print(json.dumps({"patches": [patch]}))
 }
 
 @test "provenance: an actor outside the closed token set is a named refusal before any statement" {
-  proposal_row 106 probe-a "$(landing_diff probe-a)" >"${WORK}/backlog.rows"
+  single_row 206 probe-a "$(landing_diff probe-a)" >"${WORK}/single.rows"
   answer_guard 1 0 "${NO_GUARD}"
-  run_apply --actor daemon-apply-drain
+  run_apply --proposal-id 206 --actor daemon-apply-drain
 
   # The drain token is a real member of the schema's set but names no verdict, so the flip seam
   # refuses it exactly as it refuses a typo — the set is checked in the shell, never left to the

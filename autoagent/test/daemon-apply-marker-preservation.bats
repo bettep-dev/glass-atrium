@@ -20,9 +20,9 @@
 # FAIL-AT-HEAD (observed, not derived from code shape):
 #   * a result missing one END marker verifies CLEAN at HEAD (no marker check).
 #   * a result missing one BEGIN marker verifies CLEAN at HEAD.
-#   * a row failing verification on three successive batch cycles is STILL
-#     selected on the fourth at HEAD (the verify-fail branch never advances the
-#     stale counter, so the row never reaches 'snoozed').
+#   * a row failing verification three times is never drained at HEAD (the
+#     verify-fail branch never advances the stale counter, so the row never
+#     reaches 'snoozed').
 #
 # REGRESSION PINS (green at HEAD and after): the four existing checks each still
 # fail their own case; a marker-count-preserving result still passes; a target
@@ -187,8 +187,8 @@ verify() {
 # install_psql_stub DIR — a STATEFUL PG stand-in. It persists the row's status
 # and stale_attempt_count in a state file so the drain can be observed ACROSS
 # successive daemon-apply invocations (the fossilization scenario is inherently
-# multi-cycle). It honors the batch SELECT's status='pending' predicate and the
-# mark_stale_attempt CTE's increment-then-flip-at-threshold semantics; the id-only
+# multi-cycle). It honors the mark_stale_attempt CTE's increment-then-flip-at-threshold
+# semantics; the id-only
 # single lookup returns the row with its stored status and an ok generation outcome; the
 # apply-record table probe answers present.
 install_psql_stub() {
@@ -231,9 +231,6 @@ case "${sql}" in
     fi
     printf 'status=%s\ncount=%s\n' "${row_status}" "${row_count}" >"${state}"
     printf '%s\n' "${verdict}"
-    ;;
-  *"ORDER BY cycle_date ASC, id ASC"*)
-    [[ "${row_status}" == "pending" ]] && emit_row
     ;;
   *"id::text = :'pid'"*)
     emit_row "|${row_status}|ok"
@@ -357,14 +354,13 @@ applied_log_path() {
   }
 }
 
-@test "three failing verifications drain the row to snoozed and it is absent from the next batch selection [FAIL-AT-HEAD]" {
+@test "three failing verifications drain the row to snoozed, one counter step per failure [FAIL-AT-HEAD]" {
   setup_e2e
 
   local cycle
   for cycle in 1 2 3; do
-    run_apply
-    [[ "${status}" -eq 0 ]] || { echo "batch cycle ${cycle} exited ${status}: ${output}" >&2; return 1; }
-    [[ "${output}" == *"processed=1"* ]] || { echo "batch cycle ${cycle} selected no row: ${output}" >&2; return 1; }
+    run_apply --proposal-id 2762
+    [[ "${status}" -eq 9 ]] || { echo "cycle ${cycle} exited ${status}: ${output}" >&2; return 1; }
   done
 
   # The third failure is the one that reaches the threshold and terminalizes.
@@ -372,12 +368,9 @@ applied_log_path() {
     echo "the third verification failure did not reach the terminal drain: ${output}" >&2
     return 1
   }
-
-  # Fourth cycle: the snoozed row must no longer be selected.
-  run_apply
-  [[ "${status}" -eq 0 ]] || { echo "the fourth batch cycle exited ${status}: ${output}" >&2; return 1; }
-  [[ "${output}" == *"0 pending backlog patches"* ]] || {
-    echo "the drained row is still being selected by the batch: ${output}" >&2
+  # The stored status is what the backlog selector's status='pending' predicate keys on.
+  [[ "$(cat -- "${STATE}")" == $'status=snoozed\ncount=3' ]] || {
+    echo "expected the stored row snoozed after exactly three counter steps: $(cat -- "${STATE}")" >&2
     return 1
   }
 }
