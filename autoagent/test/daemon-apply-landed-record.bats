@@ -112,9 +112,6 @@ case "${sql}" in
     printf 'applied' >"${pg}/row-status"
     printf '%s\n' "${STUB_ROW_ID}"
     ;;
-  *"ORDER BY cycle_date ASC, id ASC"*)
-    if [[ "${row_status}" == "pending" ]]; then emit_row; fi
-    ;;
   *"id::text = :'pid'"*)
     emit_row "|${row_status}|ok"
     ;;
@@ -354,11 +351,9 @@ has_abort_row() {
   }
 }
 
-# every probe answer on each gated source: the backlog drain, and --proposal-id (the monitor Approve route)
+# every probe answer on the gated --proposal-id source (the monitor Approve route)
 @test "a record table that cannot be confirmed stops the run before any apply with exit 25" {
   local rows=(
-    "table absent, backlog source|f||"
-    "probe failed, backlog source|error||"
     "table absent, single source|f|--proposal-id|${ROW_ID}"
     "probe failed, single source|error|--proposal-id|${ROW_ID}"
   )
@@ -390,40 +385,20 @@ has_abort_row() {
   done
 }
 
-# single row = the load-bearing one: only the gate's dry-run clause keeps a single source from the probe
-@test "a dry run never probes the record table, whichever source selects its row" {
-  python3 - "${WORK}/report.json" "${LABEL}" "${PROBE}" "$(offset_diff)" <<'PY'
-import json, sys
-patch = {"classification": "body-auto", "approval_tier": "auto", "pre_verify_passed": True,
-         "haiku_status": "ok", "pattern_label": sys.argv[2], "pattern_agent": "probe",
-         "target_file": sys.argv[3], "proposed_diff": sys.argv[4] + "\n"}
-with open(sys.argv[1], "w", encoding="utf-8") as fh:
-    json.dump({"patches": [patch]}, fh)
-PY
-  local rows=(
-    "single source|--proposal-id|${ROW_ID}"
-    "report source|--report|${WORK}/report.json"
-  )
-  local row name flag value
-  for row in "${rows[@]}"; do
-    IFS='|' read -r name flag value <<<"${row}"
-    : >"${PG}/psql.log"
-    # absent table → a probe that ran ends the dry run with exit 25
-    STUB_PROBE=f run_apply offset_diff "${flag}" "${value}" --dry-run
-    [[ "${status}" -eq 0 ]] || {
-      echo "${name}: ${output}"
-      return 1
-    }
-    [[ "${output}" == *"processed=1"* ]] || {
-      echo "${name}: the dry run reached no row: ${output}"
-      return 1
-    }
-    run grep -c 'to_regclass' "${PG}/psql.log"
-    [[ "${output}" == "0" ]] || {
-      echo "${name}: the dry run probed the record table (to_regclass lines: ${output})"
-      return 1
-    }
-  done
+# only the gate's dry-run clause keeps the single source from the probe
+@test "a dry run never probes the record table" {
+  : >"${PG}/psql.log"
+  # absent table → a probe that ran ends the dry run with exit 25
+  STUB_PROBE=f run_apply offset_diff --proposal-id "${ROW_ID}" --dry-run
+  [[ "${status}" -eq 0 && "${output}" == *"processed=1"* ]] || {
+    echo "the dry run failed or reached no row: ${output}"
+    return 1
+  }
+  run grep -c 'to_regclass' "${PG}/psql.log"
+  [[ "${output}" == "0" ]] || {
+    echo "the dry run probed the record table (to_regclass lines: ${output})"
+    return 1
+  }
 }
 
 @test "a failed record insert keeps the row applied and the JSONL record, and exits 26" {

@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # AutoAgent daemon — auto-apply stage.
 #
-# Patch source — backlog-draining selection:
+# Patch source — backlog-draining selection (batch mode CLOSED until live trials):
 #   PRIMARY: query the cross-cycle PG backlog
 #       (core.autoagent_proposals WHERE approval_tier='auto'
 #        AND classification='apply' AND pre_verify_passed=true
@@ -53,8 +53,8 @@
 # via trap, even on SIGINT/SIGTERM.
 #
 # Usage:
-#     daemon-apply.sh                 # drain the ENTIRE auto-tier pending
-#                                     # backlog oldest-first (no processing cap)
+#     daemon-apply.sh                 # batch mode: CLOSED until live trials —
+#                                     # selects nothing, lands one closed row
 #     daemon-apply.sh --dry-run       # simulate; log to the data root's
 #                                     # .dryrun.jsonl, no agent file writes
 #     daemon-apply.sh --limit 5       # OPTIONAL manual cap for ad-hoc operator
@@ -2443,6 +2443,46 @@ source_read_abort_row() {
         "${ts_json}" "$1" "$2" "${PATCH_SOURCE}"
 }
 
+# zero_eligible_row — serialise the ONE post-gate row a cycle with nothing to apply writes. Built
+# field-by-field for the same reason preflight_abort_row is: a nested `$(… | json_escape)` inside the
+# printf would swallow a python3-absent failure and emit a MALFORMED row, which reads worse than no
+# row at all. Returns non-zero instead, so the caller reports the miss out loud.
+# `skip` is DELIBERATELY reused rather than given a dedicated literal: the reader (doctor §14) keys on
+# the pre/post-gate boundary, `skip` already sits in the post-gate set the producer emits with a
+# reason field at two other sites, and a NEW literal would redden the literal-set pin under the
+# preflight test root — tripping a fatal preflight and writing the very abort row this row exists to
+# supersede. The condition itself travels in `reason`.
+# $1 = the patch source this cycle drained (backlog | report | closed).
+zero_eligible_row() {
+    local source="$1" ts_json source_json cycle_json
+    ts_json="$(ts_now_json)" || return 1
+    source_json="$(printf '%s' "${source}" | json_escape)" || return 1
+    cycle_json="$(printf '%s' "${CYCLE_DATE}" | json_escape)" || return 1
+    [[ -n "${ts_json}" && -n "${source_json}" && -n "${cycle_json}" ]] || return 1
+    # `gate` is a producer-controlled closed literal (cleared | skipped), so it needs
+    # no json_escape pass and adds no failure path to the field-by-field build above.
+    # It sits AFTER patch_source deliberately: the literal-set pin extracts
+    # `"status":"<lit>"` occurrences, so appending a FIELD leaves that set untouched.
+    printf '{"ts":%s,"status":"skip","reason":"zero_eligible","patch_source":%s,"gate":"%s","cycle_date":%s}' \
+        "${ts_json}" "${source_json}" "${GATE_OUTCOME}" "${cycle_json}"
+}
+
+# emit_zero_eligible_row — land that row, or say out loud that it could not be landed. The row is the
+# ONLY durable evidence of what this cycle did with the preflight gate — cleared it or skipped it,
+# which its `gate` field now says rather than leaves the reader to assume: without it a recovered-but-idle
+# daemon writes nothing at all, so an earlier abort in the window is never superseded and the doctor
+# keeps reporting a condition that already cleared. Never changes the exit — a cycle with nothing to
+# apply is a clean cycle whether or not its heartbeat landed.
+emit_zero_eligible_row() {
+    local row=""
+    if row="$(zero_eligible_row "$1")" && emit_log "${row}"; then
+        printf '[daemon-apply] zero-eligible post-gate row recorded → %s\n' "${APPLIED_LOG}" >&2
+    else
+        printf '[daemon-apply] WARN: zero-eligible post-gate row NOT persisted (%s) — an earlier abort in the window will not be superseded\n' \
+            "${APPLIED_LOG}" >&2
+    fi
+}
+
 # Select the patch source. Three modes:
 #   SINGLE   = --proposal-id N: exactly one proposal, tier/pre_verify gate
 #              bypassed (explicit user approval). Highest priority.
@@ -2458,6 +2498,15 @@ PATCH_SOURCE="report"
 BATCH_PATCH_LINES=""
 # Generation outcome (haiku_status) of the single proposal, set by select_single_proposal.
 SINGLE_HAIKU_STATUS=""
+
+# Batch mode is closed until live trials: no flag, env or data-root input reopens it, so every install
+# selects nothing here — no backlog SELECT, no report read. The batch sources below stay for the
+# reopening (interim closure); --proposal-id is the only apply path.
+if [[ -z "${PROPOSAL_ID}" ]]; then
+    printf '[daemon-apply] batch auto-apply closed until live trials — nothing selected, nothing applied\n' >&2
+    emit_zero_eligible_row closed
+    exit 0
+fi
 
 if [[ -n "${PROPOSAL_ID}" ]]; then
     # Single-proposal mode. Requires psql (the row lives in PG). enforce=1
@@ -2503,46 +2552,6 @@ fi
 while IFS= read -r _row; do
     [[ -n "${_row}" ]] && PATCH_ROWS+=("${_row}")
 done <<<"${BATCH_PATCH_LINES}"
-
-# zero_eligible_row — serialise the ONE post-gate row a cycle with nothing to apply writes. Built
-# field-by-field for the same reason preflight_abort_row is: a nested `$(… | json_escape)` inside the
-# printf would swallow a python3-absent failure and emit a MALFORMED row, which reads worse than no
-# row at all. Returns non-zero instead, so the caller reports the miss out loud.
-# `skip` is DELIBERATELY reused rather than given a dedicated literal: the reader (doctor §14) keys on
-# the pre/post-gate boundary, `skip` already sits in the post-gate set the producer emits with a
-# reason field at two other sites, and a NEW literal would redden the literal-set pin under the
-# preflight test root — tripping a fatal preflight and writing the very abort row this row exists to
-# supersede. The condition itself travels in `reason`.
-# $1 = the patch source this cycle drained (backlog | report).
-zero_eligible_row() {
-    local source="$1" ts_json source_json cycle_json
-    ts_json="$(ts_now_json)" || return 1
-    source_json="$(printf '%s' "${source}" | json_escape)" || return 1
-    cycle_json="$(printf '%s' "${CYCLE_DATE}" | json_escape)" || return 1
-    [[ -n "${ts_json}" && -n "${source_json}" && -n "${cycle_json}" ]] || return 1
-    # `gate` is a producer-controlled closed literal (cleared | skipped), so it needs
-    # no json_escape pass and adds no failure path to the field-by-field build above.
-    # It sits AFTER patch_source deliberately: the literal-set pin extracts
-    # `"status":"<lit>"` occurrences, so appending a FIELD leaves that set untouched.
-    printf '{"ts":%s,"status":"skip","reason":"zero_eligible","patch_source":%s,"gate":"%s","cycle_date":%s}' \
-        "${ts_json}" "${source_json}" "${GATE_OUTCOME}" "${cycle_json}"
-}
-
-# emit_zero_eligible_row — land that row, or say out loud that it could not be landed. The row is the
-# ONLY durable evidence of what this cycle did with the preflight gate — cleared it or skipped it,
-# which its `gate` field now says rather than leaves the reader to assume: without it a recovered-but-idle
-# daemon writes nothing at all, so an earlier abort in the window is never superseded and the doctor
-# keeps reporting a condition that already cleared. Never changes the exit — a cycle with nothing to
-# apply is a clean cycle whether or not its heartbeat landed.
-emit_zero_eligible_row() {
-    local row=""
-    if row="$(zero_eligible_row "$1")" && emit_log "${row}"; then
-        printf '[daemon-apply] zero-eligible post-gate row recorded → %s\n' "${APPLIED_LOG}" >&2
-    else
-        printf '[daemon-apply] WARN: zero-eligible post-gate row NOT persisted (%s) — an earlier abort in the window will not be superseded\n' \
-            "${APPLIED_LOG}" >&2
-    fi
-}
 
 # Empty here means a real empty backlog or report: a failed batch read exited 21/22/23 above, and the single
 # source exits 21/19/23/8 in select_single_proposal instead.

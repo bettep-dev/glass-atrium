@@ -17,8 +17,7 @@ source "${GA}/scripts/lib/path-guard.sh"
 
 NO_GUARD='{"guarded": [], "rejected": []}'
 
-# mirror_path — symlink every PATH executable into $1 except psql, so a run without the stub dir
-# takes the report source (precedent: daemon-apply-backlog-anomaly-row.bats).
+# mirror_path — symlink every PATH executable into $1 except psql, so the stub dir's psql is the only one.
 mirror_path() {
   local dest="$1" d f name old_ifs="${IFS}"
   mkdir -p -- "${dest}"
@@ -56,7 +55,6 @@ setup() {
   install_psql_stub
   install_cycle_stub
   write_probe probe-a
-  write_probe probe-b
 }
 
 teardown() {
@@ -65,8 +63,7 @@ teardown() {
 
 # install_psql_stub — the status flip logs its bindings AND its statement text (the provenance rows
 # below read both) and returns one id; the record-table probe answers present and the record
-# INSERT returns one id; the backlog SELECT answers
-# from its fixture file. The Nth single lookup answers from single.rows.N when scripted (a
+# INSERT returns one id. The Nth single lookup answers from single.rows.N when scripted (a
 # single.rows.N.rc file scripts a query failure instead), else from single.rows.
 install_psql_stub() {
   cat >"${STUB}/psql" <<'STUB'
@@ -81,10 +78,6 @@ case "${sql}" in
   *"to_regclass('core.autoagent_apply_records')"*) printf 't\n' ;;
   *"INSERT INTO core.autoagent_apply_records"*) printf '1\n' ;;
   *stale_attempt_count*) printf 'incremented\n' ;;
-  *"ORDER BY cycle_date ASC, id ASC"*)
-    printf '%s\n' "${sql}" >"${STUB_BACKLOG_ROWS:?}.sql"
-    cat -- "${STUB_BACKLOG_ROWS}"
-    ;;
   *"id::text = :'pid'"*)
     calls="${STUB_SINGLE_ROW:?}.calls"
     n=1
@@ -105,7 +98,6 @@ esac
 exit 0
 STUB
   chmod +x "${STUB}/psql"
-  : >"${WORK}/backlog.rows"
   : >"${WORK}/single.rows"
 }
 
@@ -207,7 +199,7 @@ run_apply() {
   run env -u AUTOAGENT_ALLOW_UNVERIFIED PATH="${STUB}:${MIRROR}" HOME="${WORK}/home" \
     AUTOAGENT_REPORTS_DIR="${REPORTS}" AUTOAGENT_PREFLIGHT_ACTIVE=1 \
     AUTOAGENT_DAEMON_CYCLE_PY="${CYCLE_STUB}" \
-    STUB_PSQL_LOG="${PSQL_LOG}" STUB_BACKLOG_ROWS="${WORK}/backlog.rows" \
+    STUB_PSQL_LOG="${PSQL_LOG}" \
     STUB_SINGLE_ROW="${WORK}/single.rows" STUB_CYCLE_CALLS="${CALLS}" STUB_GUARD_DIR="${GUARD_DIR}" \
     bash "${REAL_SCRIPT}" --agents-dir "${AGENTS}" --report "${WORK}/report.json" "$@"
 }
@@ -241,40 +233,6 @@ dump_state() {
   cat -- "${CALLS}" >&2 2>&1 || true
   echo "applied log:" >&2
   cat -- "${APPLIED_LOG}" >&2 2>&1 || true
-}
-
-@test "batch: a guarded row neither lands nor flips, its unguarded neighbour applies, and the live batch passes the reject flag" {
-  {
-    proposal_row 101 probe-a "$(landing_diff probe-a)"
-    proposal_row 102 probe-b "$(landing_diff probe-b)"
-  } >"${WORK}/backlog.rows"
-  answer_guard 1 0 "$(guarded_verdict 101 '[101]')"
-  run_apply
-
-  [[ "${status}" -eq 0 ]] || {
-    dump_state
-    return 1
-  }
-  is_unchanged probe-a && ! was_flipped 101 || {
-    echo "the guarded proposal landed or had its status flipped" >&2
-    dump_state
-    return 1
-  }
-  ! is_unchanged probe-b && was_flipped 102 || {
-    echo "the unguarded proposal in the same batch did not apply" >&2
-    dump_state
-    return 1
-  }
-  [[ "$(count_calls --parked-pattern-guard --reject-parked '"stdin_ids": "101,102"')" -eq 1 ]] || {
-    echo "expected ONE live-batch guard call carrying --reject-parked and both selected rows" >&2
-    dump_state
-    return 1
-  }
-  grep '"reason":"parked_pattern"' "${APPLIED_LOG}" | grep '"proposal_id":"101"' | grep -q '"rejected":true' || {
-    echo "no skip row records the guarded proposal and its reject" >&2
-    dump_state
-    return 1
-  }
 }
 
 @test "single: a guarded proposal is refused with its own exit, names the parked rows and the Reject way out, and touches nothing" {
@@ -361,29 +319,6 @@ dump_state() {
     dump_state
     return 1
   }
-}
-
-@test "batch: a '|' inside a stored label shifts no field — the backlog SELECT encodes every free-text column and the row applies under its whole label" {
-  proposal_row 103 probe-a "$(landing_diff probe-a)" 'probe|pipe|label' >"${WORK}/backlog.rows"
-  answer_guard 1 0 "${NO_GUARD}"
-  run_apply
-
-  [[ "${status}" -eq 0 ]] && ! is_unchanged probe-a && was_flipped 103 || {
-    dump_state
-    return 1
-  }
-  grep '"status":"applied"' "${APPLIED_LOG}" | grep -qF '"pattern_label":"probe|pipe|label"' || {
-    echo "the applied row does not carry the whole '|'-bearing label" >&2
-    dump_state
-    return 1
-  }
-  local column
-  for column in "pattern_label" "coalesce(target_agent, '')" "target_file"; do
-    grep -qF "encode(convert_to(${column}, 'UTF8'), 'base64')" "${WORK}/backlog.rows.sql" || {
-      echo "the backlog SELECT sends ${column} unencoded, so a '|' in it would shift every later field" >&2
-      return 1
-    }
-  done
 }
 
 @test "auto-regen: the re-attempt after a regenerate is guarded too" {
@@ -499,35 +434,6 @@ dump_state() {
   }
   [[ "$(count_calls --reject-parked)" -eq 0 ]] || {
     echo "a dry-run passed --reject-parked" >&2
-    dump_state
-    return 1
-  }
-}
-
-@test "report source: rows carry no proposal id, so the guard is never called and a notice says so" {
-  DIFF="$(landing_diff probe-a)" TARGET="${AGENTS}/probe-a.md" python3 -c '
-import json, os
-patch = {"classification": "body-auto", "approval_tier": "auto", "pre_verify_passed": True,
-         "haiku_status": "ok", "pattern_label": "probe-report", "pattern_agent": "probe-a",
-         "target_file": os.environ["TARGET"], "proposed_diff": os.environ["DIFF"] + "\n"}
-print(json.dumps({"patches": [patch]}))
-' >"${WORK}/report.json"
-  # No stub dir on PATH: psql is absent, so a LIVE run takes the report source.
-  run env -u AUTOAGENT_ALLOW_UNVERIFIED PATH="${MIRROR}" HOME="${WORK}/home" \
-    AUTOAGENT_REPORTS_DIR="${REPORTS}" AUTOAGENT_PREFLIGHT_ACTIVE=1 \
-    AUTOAGENT_DAEMON_CYCLE_PY="${CYCLE_STUB}" STUB_CYCLE_CALLS="${CALLS}" STUB_GUARD_DIR="${GUARD_DIR}" \
-    bash "${REAL_SCRIPT}" --agents-dir "${AGENTS}" --report "${WORK}/report.json"
-
-  [[ "${status}" -eq 0 ]] && ! is_unchanged probe-a || {
-    dump_state
-    return 1
-  }
-  [[ "$(count_calls --parked-pattern-guard)" -eq 0 ]] || {
-    dump_state
-    return 1
-  }
-  [[ "${output}" == *"parked-pattern guard unavailable"* ]] || {
-    echo "the report source applied unguarded without saying so" >&2
     dump_state
     return 1
   }
