@@ -409,6 +409,8 @@ ALL_REJECT_ALERT_THRESHOLD = int(
 )
 # eval_result stamped on the alert loop event (grep-able, monitor-surfaced).
 ALL_REJECT_ALERT_EVAL_RESULT = "all-reject-alert"
+# eval_result stamped on the credential-outage loop event (grep-able).
+AUTH_OUTAGE_EVAL_RESULT = "auth-outage"
 
 # Post-apply regression watch (C1, DETECTION-ONLY) --------------------------
 #
@@ -450,6 +452,8 @@ class ExitCode(IntEnum):
     BACKFILL_DEFERRED = 10
     # unadjudicated backfill caller holds no .apply-lock in the mode's ancestor chain
     BACKFILL_LOCK_NOT_HELD = 11
+    # credential outage (cost guard 'infra_fault') — wins over CYCLE_REGRESSION, its consequence
+    AUTH_OUTAGE = 12
     # unadjudicated backfill committed but its completion record or marker removal failed
     BACKFILL_RECORD_FAILED = 13
 
@@ -7154,6 +7158,41 @@ def alert_all_reject_streak(report: CycleReport) -> None:
     )
 
 
+def alert_auth_outage(report: CycleReport, *, skip_loop_emit: bool) -> None:
+    """Credential-outage CRIT — stderr line, plus one loop event unless skip_loop_emit.
+
+    Precondition Loud-Fail's second and third legs beside ExitCode.AUTH_OUTAGE;
+    the event is census class, one row per (cycle instant, daemon-cycle, cause).
+    """
+    sys.stderr.write(
+        "[daemon-cycle] CRIT: auth outage — cost guard 'infra_fault': a credential "
+        "failure (401) stopped this cycle's generation; re-authenticate the claude "
+        f"CLI; exit {int(ExitCode.AUTH_OUTAGE)}\n"
+    )
+    if skip_loop_emit:
+        return
+    try:
+        _invoke_pg_helper(
+            {
+                "op": "write_autoagent_loop_event",
+                "args": {
+                    "event_ts": report.generated_at,
+                    "agent": "daemon-cycle",
+                    "eval_result": AUTH_OUTAGE_EVAL_RESULT,
+                    "changes_added": 0,
+                    "changes_removed": 0,
+                    "rice": None,
+                    "subject": None,
+                },
+            }
+        )
+    except Exception as exc:  # noqa: BLE001 — fail-loud-and-skip; the exit code still reports it
+        sys.stderr.write(
+            "[daemon-cycle] WARN: auth-outage loop event lost: "
+            f"{type(exc).__name__}: {str(exc)[:160]}\n"
+        )
+
+
 # -- post-apply regression watch (C1, detection-only) ------------------------
 
 
@@ -11967,6 +12006,7 @@ def _main(argv: list[str]) -> int:
         _write_knob_fatal_lines(knob_errors)
         return ExitCode.DAEMON_CONFIG_INVALID
 
+    skip_loop_emit = args.skip_loop_emit or args.dry_run
     report = run_cycle(
         limit=args.limit,
         log_path=args.log_path,
@@ -11974,7 +12014,7 @@ def _main(argv: list[str]) -> int:
         agents_dir=args.agents_dir,
         skip_haiku=args.skip_haiku or args.dry_run,
         skip_pre_verify=args.skip_pre_verify or args.skip_haiku or args.dry_run,
-        skip_loop_emit=args.skip_loop_emit or args.dry_run,
+        skip_loop_emit=skip_loop_emit,
     )
 
     payload = render_report_json(report)
@@ -11984,6 +12024,11 @@ def _main(argv: list[str]) -> int:
         sys.stderr.write(f"[daemon-cycle] wrote {args.out}\n")
     else:
         sys.stdout.write(payload + "\n")
+
+    # Outage code wins: an auth outage rejects every patch → a co-occurring regression is its consequence
+    if derive_cost_guard_state(report) == "infra_fault":
+        alert_auth_outage(report, skip_loop_emit=skip_loop_emit)
+        return ExitCode.AUTH_OUTAGE
 
     # Non-clean exit on a systemic zero-output regression (Loud-Fail). The
     # daemon-cycle.sh wrapper folds any non-zero rc into a DEGRADED run, so an

@@ -256,23 +256,140 @@ class MainKnobGateTest(unittest.TestCase):
 
 
 
+def _cycle_report(failure_classes: tuple[str, ...], cycle_status: str) -> dc.CycleReport:
+    report = dc.CycleReport(
+        cycle_date="2026-10-04",
+        generated_at="2026-10-04T03:00:00.000Z",
+        patterns_processed=len(failure_classes),
+        cost_guard={},
+        cycle_status=cycle_status,
+    )
+    for failure_class in failure_classes:
+        report.patches.append(
+            dc.PatchResult(
+                pattern_label=f"{failure_class} pattern",
+                pattern_agent="glass-atrium-dev-python",
+                pattern_frequency="5",
+                target_file="/nonexistent/glass-atrium-dev-python.md",
+                classification="reject",
+                rationale=f"{failure_class} fixture",
+                proposed_diff="",
+                outcomes_sampled=0,
+                haiku_status="skipped:fixture",
+                status="rejected",
+                failure_class=failure_class,
+            )
+        )
+    return report
+
+
+@unittest.skipIf(_IMPORT_ERROR is not None, f"module import failed: {_IMPORT_ERROR}")
+class MainAuthOutageExitTest(unittest.TestCase):
+    """A credential outage exits its own code, over a co-occurring regression, with a CRIT line and one loop event."""
+
+    def setUp(self) -> None:
+        patcher = mock.patch.object(dc, "HAS_PAUSE_LIB", False)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+        self.pg_reach = seal_pg_reach(self)
+        # The loop-event sink is faked on purpose, after the seal.
+        self.envelopes: list[dict[str, object]] = []
+        patcher = mock.patch.object(dc, "_invoke_pg_helper", self._record)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
+    def tearDown(self) -> None:
+        self.assertEqual(self.pg_reach, [])
+
+    def _record(self, envelope: dict[str, object]) -> bool:
+        self.envelopes.append(envelope)
+        return True
+
+    def _run_main(self, argv: list[str], report: dc.CycleReport) -> tuple[int, str]:
+        self.envelopes.clear()
+        stderr = io.StringIO()
+        with (
+            mock.patch.object(dc, "KNOB_ERRORS", {}),
+            mock.patch.object(dc, "run_cycle", return_value=report),
+            redirect_stdout(io.StringIO()),
+            redirect_stderr(stderr),
+        ):
+            rc = dc._main(argv)
+        return rc, stderr.getvalue()
+
+    def _get_outage_events(self) -> list[dict[str, object]]:
+        return [
+            envelope["args"]
+            for envelope in self.envelopes
+            if envelope["args"]["eval_result"] == dc.AUTH_OUTAGE_EVAL_RESULT
+        ]
+
+    def test_an_auth_failure_alone_decides_the_outage_code_whatever_else_holds(self) -> None:
+        auth, quality, quota = dc.FAILURE_CLASS_AUTH, dc.FAILURE_CLASS_QUALITY, dc.FAILURE_CLASS_QUOTA
+        rows = (
+            ("auth failure alone", (auth,), "ok", dc.ExitCode.AUTH_OUTAGE),
+            ("auth failure beside a regression", (quality, auth), "regression", dc.ExitCode.AUTH_OUTAGE),
+            ("auth failure beside a quota cap", (quota, auth), "ok", dc.ExitCode.AUTH_OUTAGE),
+            ("regression without an auth failure", (quality,), "regression", dc.ExitCode.CYCLE_REGRESSION),
+            ("quota cap without an auth failure", (quota,), "ok", 0),
+        )
+        for name, failure_classes, cycle_status, expected_rc in rows:
+            with self.subTest(name):
+                report = _cycle_report(failure_classes, cycle_status)
+                rc, stderr = self._run_main([], report)
+                is_outage = expected_rc == dc.ExitCode.AUTH_OUTAGE
+                self.assertEqual(rc, expected_rc, stderr)
+                self.assertEqual("CRIT: auth outage" in stderr, is_outage, stderr)
+                self.assertEqual(
+                    self._get_outage_events(),
+                    [
+                        {
+                            "event_ts": report.generated_at,
+                            "agent": "daemon-cycle",
+                            "eval_result": dc.AUTH_OUTAGE_EVAL_RESULT,
+                            "changes_added": 0,
+                            "changes_removed": 0,
+                            "rice": None,
+                            "subject": None,
+                        }
+                    ]
+                    if is_outage
+                    else [],
+                )
+
+    def test_a_no_write_run_keeps_the_outage_code_and_line_but_emits_no_event(self) -> None:
+        for argv in (["--skip-loop-emit"], ["--dry-run"]):
+            with self.subTest(argv=argv):
+                rc, stderr = self._run_main(argv, _cycle_report((dc.FAILURE_CLASS_AUTH,), "ok"))
+                self.assertEqual(rc, dc.ExitCode.AUTH_OUTAGE, stderr)
+                self.assertIn("CRIT: auth outage", stderr)
+                self.assertEqual(self.envelopes, [])
+
+
 @unittest.skipIf(_IMPORT_ERROR is not None, f"module import failed: {_IMPORT_ERROR}")
 class ExitCodeContractTest(unittest.TestCase):
-    """The codes the shell legs branch on: each name one value, the backfill trio fixed."""
+    """Each name owns one value; the reserved codes keep the numbers assigned to them."""
 
     def test_every_exit_code_name_owns_a_distinct_value(self) -> None:
         values = [int(member) for member in dc.ExitCode.__members__.values()]
         self.assertEqual(len(values), len(set(values)))
 
-    def test_the_backfill_codes_keep_the_values_the_legs_branch_on(self) -> None:
+    def test_the_reserved_codes_keep_their_assigned_values(self) -> None:
         self.assertEqual(
             {
                 "BACKFILL_PG": int(dc.ExitCode.BACKFILL_PG),
                 "BACKFILL_DEFERRED": int(dc.ExitCode.BACKFILL_DEFERRED),
                 "BACKFILL_LOCK_NOT_HELD": int(dc.ExitCode.BACKFILL_LOCK_NOT_HELD),
+                "AUTH_OUTAGE": int(dc.ExitCode.AUTH_OUTAGE),
                 "BACKFILL_RECORD_FAILED": int(dc.ExitCode.BACKFILL_RECORD_FAILED),
             },
-            {"BACKFILL_PG": 7, "BACKFILL_DEFERRED": 10, "BACKFILL_LOCK_NOT_HELD": 11, "BACKFILL_RECORD_FAILED": 13},
+            {
+                "BACKFILL_PG": 7,
+                "BACKFILL_DEFERRED": 10,
+                "BACKFILL_LOCK_NOT_HELD": 11,
+                "AUTH_OUTAGE": 12,
+                "BACKFILL_RECORD_FAILED": 13,
+            },
         )
 
 
