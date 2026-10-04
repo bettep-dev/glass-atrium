@@ -17,7 +17,9 @@ sample stays capped. Protected invariants:
     (the old capped-n regression stays 'mention');
 (4) the daemon-apply.sh backlog gate (live SQL, executed verbatim from the
     script) accepts a 'candidate' row and still rejects 'mention'
-    (the deleted daemon-apply bats no longer cover this — commit c9cce51).
+    (the deleted daemon-apply bats no longer cover this — commit c9cce51);
+(5) a safety-routed body-auto proposal, stored by the dual-write writer outside
+    the 'auto' tier, is not selected by that gate.
 
 Live-PG classes run only on the ephemeral cluster ``live-pg-ephemeral.bats``
 builds (elsewhere they skip, never touching an install's live database) and
@@ -70,6 +72,15 @@ except Exception as exc:  # noqa: BLE001 — psycopg absent → skip, not error
     dc = None  # type: ignore[assignment]
     _IMPORT_ERROR = exc
 
+# The writer daemon_cycle bound on import (repo scripts/ first on its sys.path).
+try:
+    import _pg_dual_write_daemon as dual_write
+
+    _WRITER_IMPORT_ERROR: Exception | None = None
+except Exception as exc:  # noqa: BLE001 — psycopg absent → skip, not error
+    dual_write = None  # type: ignore[assignment]  # sentinel consumed by skipIf only
+    _WRITER_IMPORT_ERROR = exc
+
 _PROBE_AGENT = "f1-obscount-probe"
 _QUALIFYING_ROWS = 12
 _SAMPLE_CAP = 5
@@ -77,6 +88,11 @@ _SAMPLE_CAP = 5
 _APPLY_SH = _AUTOAGENT_DIR / "daemon-apply.sh"
 _GATE_CANDIDATE_LABEL = "f1-gate-candidate-fixture"
 _GATE_MENTION_LABEL = "f1-gate-mention-fixture"
+_GATE_SAFETY_LABEL = "f1-gate-safety-routed-fixture"
+# Columns of every backlog predicate other than approval_tier.
+_BACKLOG_PREDICATE_COLUMNS = (
+    "classification::text, pre_verify_passed, status::text, promotion_tier"
+)
 
 
 class _RecordingCursor:
@@ -114,8 +130,8 @@ class _RecordingConn:
 
 
 class _NonCommittingConn:
-    """Hand the helper an already-open transaction; swallow its context exit so
-    neither commit nor close fires — the owning test rolls back instead.
+    """Hand the helper an already-open transaction; swallow its context exit and
+    its commit so neither commit nor close fires — the owning test rolls back instead.
     """
 
     def __init__(self, conn: object) -> None:
@@ -129,6 +145,9 @@ class _NonCommittingConn:
 
     def cursor(self):  # noqa: ANN201 — real psycopg cursor, type lives upstream
         return self._conn.cursor()
+
+    def commit(self) -> None:
+        return None
 
 
 @unittest.skipIf(pgdw is None, f"import failed: {_IMPORT_ERROR}")
@@ -267,13 +286,15 @@ class TestCandidateTierReachable(unittest.TestCase):
 
 
 @unittest.skipIf(pgdw is None, f"import failed: {_IMPORT_ERROR}")
+@unittest.skipIf(dual_write is None, f"import failed: {_WRITER_IMPORT_ERROR}")
 class TestApplyGateAllowlist(unittest.TestCase):
-    """The backlog SELECT (verbatim from daemon-apply.sh) passes 'candidate'
-    and excludes 'mention'."""
+    """The backlog SELECT (verbatim from daemon-apply.sh) passes 'candidate',
+    excludes 'mention' and excludes the safety-routed row."""
 
     conn = None
     candidate_id: int = -1
     mention_id: int = -1
+    safety_id: int = -1
 
     @classmethod
     def _backlog_sql(cls) -> str:
@@ -295,6 +316,7 @@ class TestApplyGateAllowlist(unittest.TestCase):
         cls.conn = get_ephemeral_connection()
         cls.addClassCleanup(cls._rollback_and_close)
 
+        cycle_date = date.today()
         with cls.conn.cursor() as cur:
             for label, tier, attr in (
                 (_GATE_CANDIDATE_LABEL, "candidate", "candidate_id"),
@@ -311,7 +333,7 @@ class TestApplyGateAllowlist(unittest.TestCase):
                     "        %s, %s, %s, %s, %s) "
                     "RETURNING id",
                     (
-                        date.today(),
+                        cycle_date,
                         label,
                         f"/tmp/{label}.md",
                         _PROBE_AGENT,
@@ -326,6 +348,39 @@ class TestApplyGateAllowlist(unittest.TestCase):
                     ),
                 )
                 setattr(cls, attr, cur.fetchone()[0])
+        cls.safety_id = cls._write_safety_routed_row(cycle_date)
+
+    @classmethod
+    def _write_safety_routed_row(cls, cycle_date: date) -> int:
+        """Store a safety-routed body-auto proposal through the real writer, on the
+        class transaction, eligible on every other backlog predicate."""
+        connect = mock.patch.object(
+            dual_write, "_connect", lambda: _NonCommittingConn(cls.conn)
+        )
+        with connect:
+            dual_write.write_autoagent_proposal(
+                cycle_date=cycle_date,
+                pattern_label=_GATE_SAFETY_LABEL,
+                target_file=f"/tmp/{_GATE_SAFETY_LABEL}.md",
+                target_agent=_PROBE_AGENT,
+                classification="body-auto",
+                rationale="f1 gate fixture",
+                haiku_status="ok",
+                approval_tier="safety",
+                status="pending",
+                proposed_diff="f1 gate fixture diff",
+                cost_guard_state="ok",
+                source_file="f1-gate-fixture",
+                source_file_mtime=0,
+                pre_verify_passed=True,
+                promotion_tier="candidate",
+            )
+        with cls.conn.cursor() as cur:
+            cur.execute(
+                "SELECT id FROM core.autoagent_proposals WHERE pattern_label = %s",
+                (_GATE_SAFETY_LABEL,),
+            )
+            return cur.fetchone()[0]
 
     @classmethod
     def _rollback_and_close(cls) -> None:
@@ -341,6 +396,24 @@ class TestApplyGateAllowlist(unittest.TestCase):
             selected_ids = {row[0] for row in cur.fetchall()}
         self.assertIn(self.candidate_id, selected_ids)
         self.assertNotIn(self.mention_id, selected_ids)
+
+    def test_when_gate_runs_then_safety_routed_row_is_not_selected(self) -> None:
+        with self.conn.cursor() as cur:
+            cur.execute(
+                f"SELECT id, {_BACKLOG_PREDICATE_COLUMNS} "
+                "FROM core.autoagent_proposals WHERE id IN (%s, %s)",
+                (self.candidate_id, self.safety_id),
+            )
+            predicate_values = {row[0]: row[1:] for row in cur.fetchall()}
+            cur.execute(self._backlog_sql())
+            selected_ids = {row[0] for row in cur.fetchall()}
+        self.assertEqual(
+            predicate_values[self.safety_id],
+            predicate_values[self.candidate_id],
+            "the safety row must differ from the candidate row only in approval_tier",
+        )
+        self.assertIn(self.candidate_id, selected_ids)
+        self.assertNotIn(self.safety_id, selected_ids)
 
 
 if __name__ == "__main__":
