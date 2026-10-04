@@ -208,13 +208,13 @@ function harnessToNavBadges(harness) {
 	const failCount = harness.failCount1h;
 	if (failCount > 0) {
 		const title = `${failCount} failed ${failCount === 1 ? "task" : "tasks"} in the last hour`;
-		badges.push({ badge: String(failCount), badgeTone: "warn", glyph: window.UI.TONE_GLYPH.warn, source: "kpi", title });
+		badges.push({ badge: String(failCount), badgeTone: "warn", glyph: window.UI.TONE_GLYPH.warn, source: "kpi", title, description: title });
 	}
 	// downNames = the Dashboard lane's harness-alarm set (crit) → numeral + tone match the page, daemons or not
 	const downCount = harness.downNames.length;
 	if (downCount > 0) {
 		const title = `${downCount} harness ${downCount === 1 ? "part" : "parts"} down: ${harness.downNames.join(" · ")}`;
-		badges.push({ badge: String(downCount), badgeTone: "crit", glyph: window.UI.TONE_GLYPH.crit, source: "down", title });
+		badges.push({ badge: String(downCount), badgeTone: "crit", glyph: window.UI.TONE_GLYPH.crit, source: "down", title, description: title });
 	}
 	return { architecture: badges.length > 0 ? { badges } : null };
 }

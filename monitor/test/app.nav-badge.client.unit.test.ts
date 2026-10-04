@@ -580,6 +580,19 @@ test("the rendered Agents badge describes itself to assistive tech and tells sus
   assert.notStrictEqual(visibleByRow.get("streak only"), visibleByRow.get("one suspended"), "same count, different shape");
 });
 
+// The System map numerals say how many of what only through their description: the tone glyph is aria-hidden.
+test("the rendered System map badges describe their failures and down parts to assistive tech", () => {
+  const harness = app.getHarness(allHealthy({ liveState: ready(daemonPayload(2)), kpiState: ready({ last_1h_fail_count: 4 }) }));
+  const tree = renderSidebar(harness, ready(buildBreakerSummary([])));
+  const [mapItem] = findNodes(tree, (n) => n.props?.key === "architecture");
+  const spoken = collectReadText(mapItem, isAriaHidden).join("");
+
+  assert.strictEqual(harness.downNames.length, 2, "precondition: two parts are down");
+  assert.match(spoken, /4 failed tasks in the last hour/);
+  assert.match(spoken, /2 harness parts down/);
+  for (const name of harness.downNames) assert.ok(spoken.includes(name), `assistive tech hears ${name}`);
+});
+
 // A daemon row may still carry the retired `stale` flag; the verdict is effective_status alone.
 test("a legacy stale flag on a healthy daemon row adds no System map badge", () => {
   const legacy = {
@@ -632,7 +645,7 @@ test("every toned nav badge carries its tone's glyph, whichever store raised it"
   for (const b of badges) assert.strictEqual(b.glyph, app.ui.TONE_GLYPH[b.badgeTone], `${b.source} ${b.badgeTone} badge glyph`);
 });
 
-const classTokens = (n: RenderedNode): string[] => String(n.props?.className ?? "").split(/\s+/).filter(Boolean);
+const getClassTokens = (n: RenderedNode): string[] => String(n.props?.className ?? "").split(/\s+/).filter(Boolean);
 const TONE_TEXT_CLASSES = ["text-ok", "text-warn", "text-crit", "text-info"];
 
 // The badge shell and the rollup words stay neutral on the sunken surface (light warn 2.51, crit 3.52 as tinted text).
@@ -647,21 +660,21 @@ test("the sidebar's nav badges and rollup put their tone on the glyph only, neve
   for (const row of rows) {
     await t.test(row.name, () => {
       const tree = renderSidebar(row.harness, agents);
-      const badges = findNodes(tree, (n) => classTokens(n).includes("nav-badge"));
+      const badges = findNodes(tree, (n) => getClassTokens(n).includes("nav-badge"));
       assert.ok(badges.length >= 2, "precondition: the render reaches the toned badges");
       for (const badge of badges) {
-        const tone = classTokens(badge).find((c) => c === "warn" || c === "crit");
+        const tone = getClassTokens(badge).find((c) => c === "warn" || c === "crit");
         assert.strictEqual(badge.props?.style, undefined, `a ${tone} badge paints no inline tone fill`);
         const [glyph, ...words] = badge.children.filter(isRenderedNode);
-        assert.ok(classTokens(glyph).includes(`text-${tone}`), `a ${tone} badge's glyph carries the tone`);
-        for (const word of words) assert.deepStrictEqual(classTokens(word).filter((c) => TONE_TEXT_CLASSES.includes(c)), [], `a ${tone} badge's numeral stays neutral`);
+        assert.ok(getClassTokens(glyph).includes(`text-${tone}`), `a ${tone} badge's glyph carries the tone`);
+        for (const word of words) assert.deepStrictEqual(getClassTokens(word).filter((c) => TONE_TEXT_CLASSES.includes(c)), [], `a ${tone} badge's numeral stays neutral`);
       }
 
       const rollup = app.systemsRollup(row.harness);
       const [label] = findNodes(tree, (n) => collectText(n.children).join("") === rollup.label);
       const [glyph] = findNodes(tree, (n) => collectText(n.children).join("") === rollup.glyph);
-      assert.ok(classTokens(label).includes("text-dim"), `the ${row.tone} rollup label reads dim`);
-      assert.ok(classTokens(glyph).includes(`text-${row.tone}`), `the ${row.tone} rollup glyph carries the tone`);
+      assert.ok(getClassTokens(label).includes("text-dim"), `the ${row.tone} rollup label reads dim`);
+      assert.ok(getClassTokens(glyph).includes(`text-${row.tone}`), `the ${row.tone} rollup glyph carries the tone`);
     });
   }
 });
