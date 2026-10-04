@@ -6,15 +6,15 @@
 //   - GET /api/improvement happy path · 200 + shape
 //   - GET /api/improvement?tier=auto · 200 + tier filter narrowing
 //   - GET /api/improvement actionable_proposals · safety-tier + non-terminal only
+//   - GET /api/improvement · a safety-routed row lands in the safety column, an auto row in auto
 //   - GET /api/improvement?limit=200 (max) · 200 + bounded
 //   - GET /api/improvement invalid query · 400 invalid_param
 //   - GET /api/improvement/stats · 200 + shape + cache hit on 2nd call
 //   - GET /api/improvement/stats · latest_cycle_started_at = unwindowed last autoagent cycle start
 //
 // Test infra:
-//   - DB: real Postgres (DATABASE_URL from .env) — read-only assertions only,
-//     no inserts or scrub. Existing fixture data drives the assertions
-//     (78 proposals + outcomes already present).
+//   - DB: the test database test/lib/select-test-db.ts selects · insert cases scrub
+//     their own rows in `finally`.
 //   - App: stripped Fastify (improvement route only) + app.inject() — no port binding.
 
 import test, { after, before } from "node:test";
@@ -32,6 +32,7 @@ import { disconnectPrisma, getPrisma } from "../src/server/db.js";
 import {
   buildAgentMembershipFilter,
   loadCanonicalAgentKeys,
+  resetAgentRegistryCache,
 } from "../src/server/agents/registry.js";
 import {
   __resetImprovementStatsCacheForTests,
@@ -256,6 +257,69 @@ test("GET /api/improvement?tier=auto: actionable_proposals stays empty of auto r
       "safety",
       `tier=auto must not surface auto actionable rows: ${p.approval_tier}`,
     );
+  }
+});
+
+// The dual-write writer stores a safety-routed proposal under 'user', never 'auto'
+// (scripts/_pg_dual_write_daemon.py → _APPROVAL_TIER_TO_ENUM).
+// A one-agent registry fixture scopes every surface to this test's two rows.
+test("GET /api/improvement: a safety-routed proposal counts in the safety column, an auto one in auto", async () => {
+  const prisma = getPrisma();
+  const agent = `__test_safety_column_${process.pid}__`;
+  const registryPath = path.join(stubDir, "agent-registry.json");
+  writeFileSync(registryPath, JSON.stringify({ agents: { [agent]: { domains: ["test"] } } }), "utf8");
+  const priorRegistryPath = process.env.AGENT_REGISTRY_PATH;
+  process.env.AGENT_REGISTRY_PATH = registryPath;
+  resetAgentRegistryCache();
+  const insert = async (
+    tier: "user" | "auto",
+    status: "pending" | "applied",
+  ): Promise<number> => {
+    const rows = await prisma.$queryRaw<Array<{ id: bigint }>>`
+      INSERT INTO core.autoagent_proposals
+        (cycle_date, pattern_label, target_file, target_agent, classification,
+         approval_tier, status, pre_verify_passed, source_file, source_file_mtime)
+      VALUES
+        (CURRENT_DATE, ${agent}, ${`/__test__/safety-column-${tier}.md`}, ${agent},
+         'apply'::core."ProposalClassification", CAST(${tier} AS core."ApprovalTier"),
+         CAST(${status} AS core."ProposalStatus"), TRUE, '/__test__/source.md', 0)
+      RETURNING id
+    `;
+    const inserted = rows[0];
+    assert.ok(inserted !== undefined, "fixture insert returned a row");
+    return Number(inserted.id);
+  };
+  try {
+    const safetyId = await insert("user", "pending");
+    const autoId = await insert("auto", "applied");
+    const res = await app.inject({ method: "GET", url: "/api/improvement?limit=50" });
+    assert.strictEqual(res.statusCode, 200);
+    const body = res.json() as {
+      tier_distribution: { auto: number; safety: number };
+      proposals: Array<{ id: number; approval_tier: string }>;
+      actionable_proposals: Array<{ id: number; approval_tier: string }>;
+    };
+    const tierById = (rows: Array<{ id: number; approval_tier: string }>): Record<number, string> =>
+      Object.fromEntries(rows.map((p) => [p.id, p.approval_tier]));
+    assert.deepStrictEqual(body.tier_distribution, { auto: 1, safety: 1 }, "tier_distribution");
+    assert.deepStrictEqual(
+      tierById(body.proposals),
+      { [safetyId]: "safety", [autoId]: "auto" },
+      "proposals[].approval_tier",
+    );
+    assert.deepStrictEqual(
+      tierById(body.actionable_proposals),
+      { [safetyId]: "safety" },
+      "the Awaiting approval feed",
+    );
+  } finally {
+    await prisma.$executeRaw`DELETE FROM core.autoagent_proposals WHERE target_agent = ${agent}`;
+    if (priorRegistryPath === undefined) {
+      delete process.env.AGENT_REGISTRY_PATH;
+    } else {
+      process.env.AGENT_REGISTRY_PATH = priorRegistryPath;
+    }
+    resetAgentRegistryCache();
   }
 });
 
