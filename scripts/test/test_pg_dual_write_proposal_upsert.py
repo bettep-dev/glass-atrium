@@ -36,10 +36,10 @@ Two rules sit above the co-movement arms:
   so a non-marker push takes its status and rationale even when non-terminal. The
   exemption widens the non-terminal arm only: a non-terminal marker push (the legacy
   `snoozed` shape) keeps both, and a terminal push takes both as for any row. The
-  daemon writes markers `rejected`, so its same-key re-push keeps status `rejected`
-  and lands the newer marker rationale, whose back-off prefix the classifier and the
-  held-cycle count read unchanged. Outside the freeze every other column always
-  takes the push; the exemption decides status and rationale alone.
+  daemon writes markers `unadjudicated`, so its same-key re-push keeps status
+  `unadjudicated` and lands the newer marker rationale, whose back-off prefix the
+  classifier and the held-cycle count read unchanged. Outside the freeze every other
+  column always takes the push; the exemption decides status and rationale alone.
 """
 
 from __future__ import annotations
@@ -455,18 +455,18 @@ def test_when_a_marker_yields_to_a_non_marker_then_its_actor_yields_with_it(
     }
 
 
-def test_when_an_unreviewed_rejected_marker_is_re_pushed_then_the_newer_rationale_lands(
+def test_when_an_unreviewed_unadjudicated_marker_is_re_pushed_then_the_newer_rationale_lands(
     proposals: _Proposals,
 ):
-    # The shape the daemon writes today: a terminal push, so the exemption never
+    # The shape the back-off arm stores: a terminal push, so the exemption never
     # decides it — a marker carve-out in the terminal arm would keep the stale text.
-    proposals.push_outcome("rejected", _stamp("rejected"), _MARKER)
+    proposals.push_outcome("unadjudicated", _stamp("unadjudicated"), _MARKER)
 
-    proposals.push_outcome("rejected", _generation_text("rejected"), _MARKER)
+    proposals.push_outcome("unadjudicated", _generation_text("unadjudicated"), _MARKER)
 
     assert proposals.get_stored() == {
-        "status": "rejected",
-        "rationale": _generation_text("rejected"),
+        "status": "unadjudicated",
+        "rationale": _generation_text("unadjudicated"),
     }
 
 

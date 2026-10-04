@@ -85,7 +85,7 @@ def _patch_result(
         pattern_agent="probe-agent",
         pattern_frequency="3",
         target_file="/tmp/probe-agent.md",
-        classification="reject" if status == "rejected" else "body-auto",
+        classification="reject" if status in ("rejected", "unadjudicated") else "body-auto",
         rationale=rationale,
         proposed_diff="",
         outcomes_sampled=0,
@@ -108,11 +108,12 @@ def _report(
     statuses: list[str], markers: int = 0, rationale: str = _QUALITY_RATIONALE
 ) -> "dc.CycleReport":
     patches = [_patch_result(s, rationale=rationale) for s in statuses]
-    # Markers are pinned through the RATIONALE prefix a production back-off row
-    # carries, not through the back-off haiku_status: the classifier is the SoT,
-    # and a blank-rationale marker would drop out too, via the skipped class.
+    # Markers take the status the back-off arm stores: _is_non_adjudication_reject
+    # sets an 'unadjudicated' row aside by status alone, whatever its rationale.
     patches += [
-        _patch_result("rejected", dc.TIMEOUT_BACKOFF_HAIKU_STATUS, _backoff_rationale())
+        _patch_result(
+            "unadjudicated", dc.TIMEOUT_BACKOFF_HAIKU_STATUS, _backoff_rationale()
+        )
         for _ in range(markers)
     ]
     return _cycle_report(patches)

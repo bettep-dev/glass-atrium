@@ -91,7 +91,7 @@ class CycleStatusClassification(unittest.TestCase):
                     error="",
                     failure_class="",
                     haiku_status="skipped:chronic-timeout-backoff",
-                    status="snoozed",
+                    status="unadjudicated",
                 )
             ]
         }
