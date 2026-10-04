@@ -239,6 +239,37 @@ PY
   grep -qF 'pkill -f spawn-unix-fd.py' "${REC}"
 }
 
+@test "R2(retired): uninstall kills every retired session and frees both configured fakechat ports" {
+  is_sandbox_target() { printf 'no\n'; }
+  stub_tmux
+  stub_pkill
+  kill() { printf 'kill %s\n' "$*" >>"${REC}"; return 0; }
+  sleep() { return 0; }
+  printf '[ports]\nautoagent_fakechat = 18787\nwiki_fakechat = 18788\n' >"${SANDBOX}/config.toml"
+  export ATRIUM_CONFIG_TOML="${SANDBOX}/config.toml"
+  # a listener owner only on the configured ports; 424242 is above the macOS pid ceiling
+  cat >"${STUB_BIN}/lsof" <<STUB
+#!/bin/bash
+printf 'lsof %s\n' "\$*" >>"${REC}"
+case "\$1" in -iTCP:18787 | -iTCP:18788) printf '424242\n' ;; esac
+exit 0
+STUB
+  chmod +x "${STUB_BIN}/lsof"
+  # shellcheck disable=SC2154  # GA_DAEMON_SESSIONS is assigned by ga_init_env in setup
+  GA_TMUX_PRESENT="${GA_DAEMON_SESSIONS[*]}"
+  export GA_TMUX_PRESENT
+  run stop_detached_daemons
+  [[ "${status}" -eq 0 ]] || { echo "${output}"; return 1; }
+  local sess port
+  for sess in "${GA_DAEMON_SESSIONS[@]}"; do
+    grep -qF "tmux kill-session ${sess}" "${REC}" || { echo "session ${sess}"; cat "${REC}"; return 1; }
+  done
+  for port in 18787 18788; do
+    grep -qF "lsof -iTCP:${port} " "${REC}" || { echo "port ${port}"; cat "${REC}"; return 1; }
+  done
+  grep -qF 'kill -TERM 424242' "${REC}" || { cat "${REC}"; return 1; }
+}
+
 # === REGRESSION GUARD — uninstall leaves the postgres server + socket UNTOUCHED ==========
 
 @test "R2(pg-untouched): stop_detached_daemons NEVER stops pg (no brew-stop / no SIGINT / no socket-rm)" {
@@ -430,7 +461,7 @@ PY
 }
 
 
-# === wiring — run_uninstall ordering + install-start tmux clear (unchanged) ================
+# === wiring — run_uninstall ordering + the gated install-start caller ==================
 
 @test "R2(wiring): run_uninstall calls stop_detached_daemons BETWEEN launchd teardown and DB drop" {
   # static ordering proof against the engine source (no destructive run).
