@@ -26,9 +26,9 @@ Terminal protection: a 'rejected' learning_log row can never resurrect to
 'identified' (state-machine pin), so a snoozed row generates no proposal on
 any later cycle.
 
-Live-PG classes insert fixtures in an open, never-committed transaction
-(rolled back on teardown — the database is left byte-identical; no DELETE
-needed). Loop-event emission is captured by a recorder in place of
+Live-PG classes run only on the ephemeral cluster ``live-pg-ephemeral.bats``
+builds (elsewhere they skip, never touching an install's live database) and
+insert fixtures in an open, never-committed transaction rolled back on teardown. Loop-event emission is captured by a recorder in place of
 ``_invoke_pg_helper``, so no test writes ``core.autoagent_loop_events``.
 
 Run with either runner:
@@ -59,6 +59,11 @@ if str(_HOOKS_DIR) not in sys.path:
     sys.path.insert(0, str(_HOOKS_DIR))
 if str(_AUTOAGENT_DIR) not in sys.path:
     sys.path.insert(0, str(_AUTOAGENT_DIR))
+# unittest discover and ``-m unittest`` from another cwd leave this directory off sys.path.
+if str(Path(__file__).resolve().parent) not in sys.path:
+    sys.path.insert(0, str(Path(__file__).resolve().parent))
+
+from _pg_seal import get_ephemeral_connection
 
 try:
     import _pg_learning_dualwrite as pgdw
@@ -586,13 +591,9 @@ class TestRejectLearningPatternLivePg(unittest.TestCase):
     def setUpClass(cls) -> None:
         if pgdw is None:
             raise unittest.SkipTest(f"import failed: {_IMPORT_ERROR}")
-        import psycopg
         from types import SimpleNamespace
 
-        try:
-            cls.conn = psycopg.connect("dbname=glass_atrium", connect_timeout=2)
-        except Exception as exc:  # noqa: BLE001 — no PG → skip the live class
-            raise unittest.SkipTest(f"PG unreachable: {type(exc).__name__}: {exc}")
+        cls.conn = get_ephemeral_connection()
         cls.addClassCleanup(cls._rollback_and_close)
 
         stub = SimpleNamespace(connect=lambda *a, **k: _NonCommittingConn(cls.conn))

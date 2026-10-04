@@ -1,16 +1,23 @@
-"""Live-DB seal for tests that drive ``daemon_cycle`` without a database.
+"""Live-DB seal for the autoagent tests: no test reaches an install's live database.
 
+``seal_pg_reach`` serves tests that drive ``daemon_cycle`` without a database;
+``get_ephemeral_connection`` serves classes that need real PostgreSQL.
 Not a test module (no ``test_`` prefix): consumers anchor this directory on
-``sys.path`` and import it after ``daemon_cycle``.
+``sys.path``; ``seal_pg_reach`` callers import ``daemon_cycle`` first.
 """
 
 from __future__ import annotations
 
+import os
 import sys
 import tempfile
 import unittest
 from pathlib import Path
+from typing import TYPE_CHECKING
 from unittest import mock
+
+if TYPE_CHECKING:
+    import psycopg
 
 # Seam names keyed by the ``daemon_cycle`` import-exception attribute that binds them;
 # ``None`` = defined by ``daemon_cycle`` itself on every leg.
@@ -83,3 +90,38 @@ def _get_refusal(reach: list[str], name: str):  # noqa: ANN202 — seam signatur
         raise AssertionError(f"PG reach from a sealed test: {name}")
 
     return _refuse
+
+
+def get_ephemeral_connection() -> psycopg.Connection:
+    """Connect to the suite-provisioned ephemeral cluster, else skip the calling class.
+
+    Only a runner that starts its own cluster declares ``EPH_SOCKDIR`` / ``EPH_PORT``
+    (``live-pg-ephemeral.bats``); every other run skips with a named reason. The
+    database name is ``glass_atrium`` because the daemon's ``_connect()`` is wired to it.
+    """
+    sockdir = os.environ.get("EPH_SOCKDIR", "")
+    if not sockdir:
+        raise unittest.SkipTest(
+            "no ephemeral cluster: EPH_SOCKDIR unset — run autoagent/test/live-pg-ephemeral.bats"
+        )
+    for name in ("PGHOSTADDR", "PGSERVICE"):
+        if os.environ.get(name):
+            raise unittest.SkipTest(
+                f"{name} set: it redirects a libpq connect past the cluster host"
+            )
+    if os.environ.get("PGHOST") != sockdir:
+        raise AssertionError(
+            f"PGHOST={os.environ.get('PGHOST')!r} is not EPH_SOCKDIR={sockdir!r} — "
+            "a libpq-default connect in the code under test would miss the ephemeral cluster"
+        )
+    import psycopg
+
+    try:
+        return psycopg.connect(
+            dbname="glass_atrium",
+            host=sockdir,
+            port=os.environ.get("EPH_PORT") or None,
+            connect_timeout=2,
+        )
+    except psycopg.OperationalError as exc:
+        raise unittest.SkipTest(f"ephemeral cluster unreachable: {exc}") from exc

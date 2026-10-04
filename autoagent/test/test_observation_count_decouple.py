@@ -19,9 +19,10 @@ sample stays capped. Protected invariants:
     script) accepts a 'candidate' row and still rejects 'mention'
     (the deleted daemon-apply bats no longer cover this — commit c9cce51).
 
-Live-PG classes insert fixtures in an open, never-committed transaction
-(rolled back on teardown — the database is left byte-identical; no DELETE
-needed). The SQL-shape class needs no database.
+Live-PG classes run only on the ephemeral cluster ``live-pg-ephemeral.bats``
+builds (elsewhere they skip, never touching an install's live database) and
+insert fixtures in an open, never-committed transaction rolled back on teardown.
+The SQL-shape class needs no database.
 
 Run with either runner:
     uv run --with pytest pytest autoagent/test/test_observation_count_decouple.py -v
@@ -52,6 +53,11 @@ if str(_HOOKS_DIR) not in sys.path:
     sys.path.insert(0, str(_HOOKS_DIR))
 if str(_AUTOAGENT_DIR) not in sys.path:
     sys.path.insert(0, str(_AUTOAGENT_DIR))
+# unittest discover and ``-m unittest`` from another cwd leave this directory off sys.path.
+if str(Path(__file__).resolve().parent) not in sys.path:
+    sys.path.insert(0, str(Path(__file__).resolve().parent))
+
+from _pg_seal import get_ephemeral_connection
 
 try:
     import _pg_learning_dualwrite as pgdw
@@ -164,12 +170,7 @@ class TestTrueCountWithCappedSample(unittest.TestCase):
 
     @classmethod
     def setUpClass(cls) -> None:
-        import psycopg
-
-        try:
-            cls.conn = psycopg.connect("dbname=glass_atrium", connect_timeout=2)
-        except Exception as exc:  # noqa: BLE001 — no PG → skip the live class
-            raise unittest.SkipTest(f"PG unreachable: {type(exc).__name__}: {exc}")
+        cls.conn = get_ephemeral_connection()
         cls.addClassCleanup(cls._rollback_and_close)
 
         now = time.time()
@@ -291,12 +292,7 @@ class TestApplyGateAllowlist(unittest.TestCase):
 
     @classmethod
     def setUpClass(cls) -> None:
-        import psycopg
-
-        try:
-            cls.conn = psycopg.connect("dbname=glass_atrium", connect_timeout=2)
-        except Exception as exc:  # noqa: BLE001 — no PG → skip the live class
-            raise unittest.SkipTest(f"PG unreachable: {type(exc).__name__}: {exc}")
+        cls.conn = get_ephemeral_connection()
         cls.addClassCleanup(cls._rollback_and_close)
 
         with cls.conn.cursor() as cur:
