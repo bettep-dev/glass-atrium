@@ -731,7 +731,7 @@ ApprovalTier = Literal["auto", "safety", ""]
 #   - .env: credential file (LLM02 Sensitive Information)
 #   - com.claude.*.plist / com.glass-atrium.*.plist: launchctl bootstrap
 #     surface (TCC / agent loop) — this project's live LaunchAgents are named
-#     com.glass-atrium.* (autoagent-daemon, monitor, daemon-daily-restart, ...)
+#     com.glass-atrium.* (monitor, autoagent-cycle, wiki-compile, ...)
 #
 # Consumer reach, which bounds what a row here can buy: both consumers pass an
 # agent BODY path — classify_safety_tier a target_file built as

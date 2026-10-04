@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
-# _pg_dual_write_daemon.py — Shared PG dual-write helper for the daemons
-# (wiki + autoagent). Sister of ~/.claude/hooks/_pg_dual_write.py.
+# _pg_dual_write_daemon.py — Shared PG dual-write helper for the wiki and
+# autoagent cycles. Sister of ~/.claude/hooks/_pg_dual_write.py.
 #
 # Envelope = daemon-table-aware operations (op-routed):
 #       - write_wiki_note            -> wiki.notes UPSERT keyed by path
@@ -1061,6 +1061,7 @@ def main():
     # hook_name: prefer args.daemon_name when present (write_daemon_run/payload
     # carry it explicitly); fall back to op-string heuristic for wiki-only ops
     # (write_wiki_note / bump_wiki_dirty / clear_wiki_dirty).
+    # "<name>-daemon": stored hook_failures label, kept as-is — names the cycle, not a launchd job
     daemon_arg = args.get("daemon_name") if isinstance(args, dict) else None
     if daemon_arg:
         hook_name = "%s-daemon" % daemon_arg
