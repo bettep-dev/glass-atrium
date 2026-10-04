@@ -373,7 +373,8 @@ class FlagFileIgnoredByCycleTest(unittest.TestCase):
     def _run(self, *, skip_loop_emit: bool = True) -> object:
         """One cycle over a stored user-pending pattern → the report; reach list stays empty."""
         self.calls.clear()
-        with contextlib.redirect_stderr(io.StringIO()):
+        self.stderr = io.StringIO()
+        with contextlib.redirect_stderr(self.stderr):
             report = self.dc.run_cycle(
                 log_path=self.root / "learning-log.md",
                 outcomes_dir=self.root,
@@ -431,6 +432,25 @@ class FlagFileIgnoredByCycleTest(unittest.TestCase):
     def test_closed_cycle_still_runs_the_post_apply_regression_watch(self) -> None:
         self._run(skip_loop_emit=False)
         self.assertEqual(self.calls.count("alert_post_apply_regression"), 1)
+
+    def test_terminalization_fault_warns_and_the_cycle_continues(self) -> None:
+        # Psycopg importable but the server down → the helper raises at run time.
+        def _raise(*_args: object, **_kwargs: object) -> int:
+            self.calls.append("update_generation_closed_proposals")
+            raise RuntimeError("connection refused")
+
+        with mock.patch.object(self.dc, "update_generation_closed_proposals", _raise):
+            report = self._run(skip_loop_emit=False)
+        self.assertEqual(report.patterns_processed, 1, "report survives the fault")
+        self.assertIn(
+            "update_generation_closed_proposals raised", self.stderr.getvalue()
+        )
+        self.assertEqual(
+            self.calls.count("alert_post_apply_regression"),
+            1,
+            "post-loop steps still run",
+        )
+
 
 if __name__ == "__main__":
     unittest.main()
