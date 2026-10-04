@@ -136,9 +136,10 @@ plant_residue() {
   printf '%s\n' "${GA_DAEMON_SESSIONS[@]}" >"${TMUX_PRESENT}"
 }
 
-# mutation_lines — every recorded call that changes or signals something (read-only probes excluded).
-mutation_lines() {
-  grep -E '^(launchctl (bootout|bootstrap|unload|load)|rm |tmux kill-session|kill |pkill |lsof |pgrep )' "${REC}" || true
+# get_mutation_lines — recorded calls beyond a read-only probe (launchctl allowlisted to list|print, others denylisted).
+get_mutation_lines() {
+  grep -E '^(launchctl |rm |tmux kill-session|kill |pkill |lsof |pgrep )' "${REC}" \
+    | grep -vE '^launchctl (list|print)( |$)' || true
 }
 
 @test "residue present: each retired label is booted out and its plist removed, sessions killed, configured ports freed" {
@@ -172,7 +173,7 @@ mutation_lines() {
   run retire_launchd_jobs
   [[ "${status}" -eq 0 ]] || { echo "${output}"; return 1; }
   [[ "${output}" == *"no retired residue"* ]] || { echo "${output}"; return 1; }
-  [[ -z "$(mutation_lines)" ]] || { mutation_lines; return 1; }
+  [[ -z "$(get_mutation_lines)" ]] || { get_mutation_lines; return 1; }
   grep -q '^launchctl list' "${REC}" || { cat "${REC}"; return 1; }
 }
 
@@ -184,7 +185,7 @@ mutation_lines() {
   run retire_launchd_jobs
   [[ "${status}" -eq 0 ]] || { echo "${output}"; return 1; }
   [[ "${output}" == *"no retired residue"* ]] || { echo "${output}"; return 1; }
-  [[ -z "$(mutation_lines)" ]] || { mutation_lines; return 1; }
+  [[ -z "$(get_mutation_lines)" ]] || { get_mutation_lines; return 1; }
 }
 
 @test "dry-run and a sandbox verdict each record no call at all" {
