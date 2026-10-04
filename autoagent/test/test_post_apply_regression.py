@@ -58,6 +58,8 @@ _APPLIED_TS = datetime(2026, 7, 1, 12, 0, 0, tzinfo=timezone.utc)
 _PROBE_AGENT = "post-apply-probe-agent"
 _PROBE_LABEL = "post-apply probe pattern"
 _PROPOSAL_ID = 123
+_LATER_AGENT = "post-apply-later-agent"
+_LATER_PROPOSAL_ID = 456
 _CYCLE_DATE = date(2026, 6, 30)
 # Unrecognized by classify_failure_rationale → a genuine QUALITY reject. The
 # cycle-level discriminators set a rejected row aside on its rationale class, so
@@ -269,6 +271,7 @@ class TestAlertPostApplyRegression(unittest.TestCase):
     def setUp(self) -> None:
         self.emitted: list[dict] = []
         self.window_rows: list[dict] = []
+        self.later_rows: list[tuple] = []
         scratch = tempfile.TemporaryDirectory()
         self.addCleanup(scratch.cleanup)
         self.target_path = Path(scratch.name) / "probe.md"
@@ -295,7 +298,8 @@ class TestAlertPostApplyRegression(unittest.TestCase):
                         _APPLIED_TS,
                         str(self.target_path),
                         self.diff_text,
-                    )
+                    ),
+                    *self.later_rows,
                 ],
             ),
             ("_pg_read_outcomes_since", lambda since_epoch, **kw: self.window_rows),
@@ -310,6 +314,21 @@ class TestAlertPostApplyRegression(unittest.TestCase):
             dc.alert_post_apply_regression()
         self.assertEqual(self.pg_reach, [])
         return stderr.getvalue()
+
+    def _add_later_watched_row(self) -> None:
+        """Queue a later applied row with its edit intact — its event proves the watch went on."""
+        later_path = self.target_path.with_name("later.md")
+        later_path.write_text(_BODY_WITH_EDIT, encoding="utf-8")
+        self.later_rows = [
+            (
+                _LATER_PROPOSAL_ID,
+                _LATER_AGENT,
+                _CYCLE_DATE,
+                _APPLIED_TS,
+                str(later_path),
+                _added_diff(_ADDED_RULE),
+            )
+        ]
 
     def test_when_post_window_degrades_then_one_event_names_id(self) -> None:
         # pre 1/10 negative (rate .167) → post 3/5 negative (rate .571): fires.
@@ -347,21 +366,33 @@ class TestAlertPostApplyRegression(unittest.TestCase):
     def test_proposal_whose_added_lines_all_left_the_body_raises_no_warn(self) -> None:
         # The WARN's subject is the applied edit: once none of its added lines is
         # in the body, it points at nothing; any surviving added line keeps it.
+        # A skipped row never ends the watch — the later applied row still fires.
+        both = (_PROBE_AGENT, _LATER_AGENT)
+        later_only = (_LATER_AGENT,)
         rows = (
-            ("every added line in the body", _added_diff(_ADDED_RULE, _SECOND_ADDED_RULE), 1),
-            ("one added line gone, one still in the body", _added_diff(_ADDED_RULE, "- Gone."), 1),
-            ("every added line gone from the body", _added_diff("- Gone rule.", "- Also gone."), 0),
-            ("diff adds no content line", _added_diff(""), 1),
+            ("every added line in the body", _added_diff(_ADDED_RULE, _SECOND_ADDED_RULE), both),
+            (
+                "one added line gone, one still in the body",
+                _added_diff(_ADDED_RULE, "- Gone."),
+                both,
+            ),
+            (
+                "every added line gone from the body",
+                _added_diff("- Gone.", "- Also gone."),
+                later_only,
+            ),
+            ("diff adds no content line", _added_diff(""), both),
         )
-        for name, diff_text, expected_events in rows:
+        self._add_later_watched_row()
+        for name, diff_text, warned_agents in rows:
             with self.subTest(name):
                 self.emitted.clear()
                 self.diff_text = diff_text
                 self.window_rows = _windows(1, 10, 3, 5)
                 err = self._run()
 
-                self.assertEqual(len(self.emitted), expected_events)
-                self.assertEqual("WARN: post-apply regression" in err, expected_events == 1)
+                self.assertEqual(tuple(env["args"]["agent"] for env in self.emitted), warned_agents)
+                self.assertEqual(f"id={_PROPOSAL_ID} agent=" in err, _PROBE_AGENT in warned_agents)
 
     def test_when_target_body_unreadable_then_skipped_with_named_line(self) -> None:
         # One unreadable body skips only its own row, never the whole watch.
@@ -369,6 +400,7 @@ class TestAlertPostApplyRegression(unittest.TestCase):
             ("target file missing", lambda: self.target_path.unlink()),
             ("target body not UTF-8", lambda: self.target_path.write_bytes(b"- \xff\xfe rule\n")),
         )
+        self._add_later_watched_row()
         for name, make_unreadable in rows:
             with self.subTest(name):
                 self.emitted.clear()
@@ -376,8 +408,9 @@ class TestAlertPostApplyRegression(unittest.TestCase):
                 self.window_rows = _windows(1, 10, 3, 5)
                 err = self._run()
 
-                self.assertEqual(self.emitted, [])
-                self.assertNotIn("WARN: post-apply regression", err)
+                self.assertEqual([env["args"]["agent"] for env in self.emitted], [_LATER_AGENT])
+                self.assertIn(f"id={_LATER_PROPOSAL_ID} agent=", err)
+                self.assertNotIn(f"id={_PROPOSAL_ID} agent=", err)
                 self.assertIn(str(self.target_path), err)
 
     def test_when_same_cycle_rerun_then_dedup_key_is_identical(self) -> None:
