@@ -178,6 +178,38 @@ class TestManifestRotation(_IngestCase):
         stored = [(row[1], row[3]) for _, row in sorted(self.table.rows.items())]
         self.assertEqual(stored, [(None, None), (None, None), ("a41f0c2e9b", "e0e449e3-7b17")])
 
+    def test_a_released_hook_line_with_lesson_fields_gives_one_row_with_its_fields(
+        self,
+    ) -> None:
+        # Shape written by the v1.0.1 hook: lesson fields between digest= and blocks=.
+        self._append(
+            self.live_log,
+            "2026-10-02T00:27:59Z [inject-scope-rules] MANIFEST"
+            " agent_id=a28df590243a1e0a2 agent=glass-atrium-qa-code-reviewer"
+            " ctx_bytes=4392 digest=a7332d0c467addde"
+            " lessons=ctm:review/when-a-change-adds-s@5,"
+            "epm:review/when-a-baseline-snap@5 lesson_truncated=1"
+            " blocks=emit:/Users/dev/.glass-atrium/hooks/inject-scope-rules.sh"
+            ";lesson:/Users/dev/.glass-atrium/data/lessons.json\n",
+        )
+        self._ingest(_CYCLE_1)
+
+        self.assertEqual(
+            list(self.table.rows.values()),
+            [
+                (
+                    0,
+                    "a28df590243a1e0a2",
+                    "glass-atrium-qa-code-reviewer",
+                    None,
+                    datetime(2026, 10, 2, 0, 27, 59, tzinfo=timezone.utc),
+                    4392,
+                    "emit:/Users/dev/.glass-atrium/hooks/inject-scope-rules.sh"
+                    ";lesson:/Users/dev/.glass-atrium/data/lessons.json",
+                )
+            ],
+        )
+
     def test_an_insert_failure_keeps_the_spool_and_skips_the_rename(self) -> None:
         self._append(self.live_log, _get_line())
         self._ingest(_CYCLE_1)

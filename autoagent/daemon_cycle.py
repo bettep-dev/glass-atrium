@@ -11196,10 +11196,12 @@ MANIFEST_LOG_NAME = "inject-scope-rules.manifest.log"
 # Spool name contract shared with hooks/inject-scope-rules.sh → INJECT_MANIFEST_SPOOL_SUFFIX_RE.
 MANIFEST_SPOOL_SUFFIX_RE = re.compile(r"[0-9]{8}T[0-9]{6}Z\.[0-9]+\.spool")
 MANIFEST_SPOOL_CLOSED_EVAL_RESULT = "manifest-spool-closed"
+# Lesson fields: the v1.0.1 hook's shape, still in upgrading installs' live logs.
 _MANIFEST_LINE_RE = re.compile(
     r"(?P<ts>\S+) \[inject-scope-rules\] MANIFEST agent_id=(?P<agent_id>\S+)"
     r"(?: session_id=(?P<session_id>\S+))? agent=(?P<agent>\S+)"
-    r" ctx_bytes=(?P<ctx_bytes>[0-9]+)(?: digest=\S+)? blocks=(?P<blocks>.*)"
+    r" ctx_bytes=(?P<ctx_bytes>[0-9]+)(?: digest=\S+)?"
+    r"(?: lessons=\S+ lesson_truncated=[0-9]+)? blocks=(?P<blocks>.*)"
 )
 _MANIFEST_UNKNOWN_ID = "unknown"
 # core.spawn_manifest column bounds: a line past them could never insert, so it is
