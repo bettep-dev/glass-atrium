@@ -533,32 +533,6 @@ function StatusDot({ status }) {
   );
 }
 
-// 22px 원형 컬러 배지 + 이니셜. 색 = categorical agent 팔레트 토큰(tokens.css --agent-N, 테마 불변) —
-//   하드코딩 hex 제거. named agent 는 고정 슬롯, 그 외 id 해시로 안정 배정.
-const AGENT_NAMED_VAR = {
-  'glass-atrium-intel-planner':    '--agent-1',
-  'glass-atrium-intel-researcher': '--agent-2',
-  writer:   '--agent-3',
-  reviewer: '--agent-4',
-  coder:    '--agent-5',
-  analyst:  '--agent-6',
-};
-const AGENT_PALETTE_VARS = ['--agent-1', '--agent-2', '--agent-3', '--agent-4', '--agent-5', '--agent-6', '--agent-7', '--agent-8'];
-
-function AgentBadge({ a, size=22 }) {
-  const id = a?.id || a?.agent_id || '';
-  const name = a?.name || a?.agent_name || id || '?';
-  const initial = name[0] ? name[0].toUpperCase() : '?';
-  const colorVar = AGENT_NAMED_VAR[id] || AGENT_PALETTE_VARS[(strHash(id) >>> 0) % AGENT_PALETTE_VARS.length];
-  // 이니셜 전경 = 고정 dark ink(--agent-ink) → 밝은 amber/cyan fill 에서도 ≥3:1 대비 (기존 white ~2:1 회귀 해소).
-  //   팔레트 8색 전부 dark ink 로 ≥3.9:1 검증 완료 (fill 은 테마 불변 categorical).
-  return <span className="agent-badge inline-grid place-items-center font-mono font-semibold shrink-0"
-    style={{width:size, height:size, fontSize: size*0.5, borderRadius: size*0.3,
-      background: `rgb(var(${colorVar}))`, color: 'rgb(var(--agent-ink))', letterSpacing:'-0.02em'}}>
-    {initial}
-  </span>;
-}
-
 const AGENT_NAME_PREFIX = 'glass-atrium-';
 
 /** Display form of an agent name — the shared install prefix dropped; a missing name → '—'. */
@@ -582,15 +556,6 @@ function AgentName({ name, className = '' }) {
       <span className="sr-only">{full}</span>
     </span>
   );
-}
-
-// djb2-lite — 시각 팔레트용 결정적 해시 (crypto 불필요)
-function strHash(str) {
-  let h = 5381;
-  for (let i = 0; i < str.length; i++) {
-    h = ((h << 5) + h) + str.charCodeAt(i);
-  }
-  return h;
 }
 
 // Headline figure on the .kpi-value scale — tone rides a decorative glyph, the figure stays neutral ink.
@@ -869,12 +834,6 @@ function Modal({ title, onClose, children, footer }) {
     title={title} footer={footer}>{children}</DetailSurface>;
 }
 
-function Tabs({ items, value, onChange }) {
-  return <div className="tabs">
-    {items.map(it => <button key={it.value} className={`tab ${value===it.value?'active':''}`} onClick={() => onChange(it.value)}>{it.label}</button>)}
-  </div>;
-}
-
 // id sequence for the title an info trigger is described by — works without useId (render-harness React stub).
 let cardTitleSeq = 0;
 
@@ -938,16 +897,6 @@ function Card({ size, title, sub, info, infoLabel, right, foot, isFlush = false,
     <div className={`card-body ${isFlush ? 'flush' : ''}`.trim()}>{children}</div>
     {foot && <div className="card-foot">{foot}</div>}
   </div>;
-}
-
-// One-line table cell: ellipsis on overflow, the full text in the native title.
-function ClampCell({ text, children, className = '' }) {
-  return <td className={`cell-clamp ${className}`.trim()} title={titleOf(text)}>{children ?? text}</td>;
-}
-
-// Two-line clamp for data prose (reasons, proposals) — the full text stays in the title and the drawer.
-function ClampText({ text, children, className = '' }) {
-  return <span className={`clamp-2 ${className}`.trim()} title={titleOf(text)}>{children ?? text}</span>;
 }
 
 // Section title as a real outline heading, wearing the uppercase section-label style.
@@ -1959,14 +1908,6 @@ function formatDuration(value, unit = 'sec') {
   return `${Math.floor(sec / 3600)}h ${Math.floor((sec % 3600) / 60)}m`;
 }
 
-// byte 크기 → human-readable; 비숫자/NaN/음수 → '—'. <1KB = "N B" · 그 외 "N.N KB" (페이로드 ≤수십 KB 도메인)
-function formatBytes(bytes) {
-  const n = Number(bytes);
-  if (!Number.isFinite(n) || n < 0) return '—';
-  if (n < 1024) return `${n} B`;
-  return `${(n / 1024).toFixed(1)} KB`;
-}
-
 // K=1소수 · M/B/T=2소수 압축 · 1e3 미만 = 원값 문자열 · Math.abs 부호 무관 임계
 function formatTokenCompact(value) {
   const n = Number(value) || 0;
@@ -2238,7 +2179,7 @@ function resolveOutcomeRate(data) {
 }
 
 window.UI = {
-  Icon, Pill, Badge, EmptyState, SubCard, Sparkline, MiniBars, Bar, BulletBar, StatusDot, AgentBadge, AgentName, getAgentDisplayName, KPI, KpiValue, DetailSurface, useDismissFocus, Popover, PopoverPanel, getTrapFocusTarget, getInertTargets, setSurfaceOpen, getTopSurface, Modal, Tabs, CardHead, CardInfo, Card, CARD_SLOTS, getSlotRows, ClampCell, ClampText, PageHeader,
+  Icon, Pill, Badge, EmptyState, SubCard, Sparkline, MiniBars, Bar, BulletBar, StatusDot, AgentName, getAgentDisplayName, KPI, KpiValue, DetailSurface, useDismissFocus, Popover, PopoverPanel, getTrapFocusTarget, getInertTargets, setSurfaceOpen, getTopSurface, Modal, CardHead, CardInfo, Card, CARD_SLOTS, getSlotRows, PageHeader,
   SectionLabel, Table, TableHead, DisclosureChevron, DisclosureButton, getSeverityTone, getWorstTone,
   Disclosure, getDisclosureOpen, SplitRow, SPLIT_ROW_RATIOS, SPLIT_ROW_LAYOUTS, SplitColumn, TileSplit,
   getRovingIndex, getRovingTabIndex, ROW_CONTROL_PROPS, getRowKeyAction, getRowFocusProps, ChipGroup,
@@ -2253,7 +2194,7 @@ window.UI = {
   INITIAL_REGION_STATE, putRegionRequest, putRegionData, putRegionFailure,
   setDisplayTimezone, getDisplayTimezone, tzShortLabel,
   formatKstDateTime, formatKstTime, formatKstDate, formatKstFull,
-  formatUsd, formatUsdCompact, formatInt, formatTokenCompact, formatDuration, formatBytes,
+  formatUsd, formatUsdCompact, formatInt, formatTokenCompact, formatDuration,
   BADGE_TONE_META, BADGE_OVERRIDES, resolveBadge,
   DAEMON_STATUS_TONE, daemonStatusTone, daemonStatusLabel,
   RESULT_META, CLOSED_META, resolveResultMeta, LOW_N_MIN, formatPctWithDenominator,

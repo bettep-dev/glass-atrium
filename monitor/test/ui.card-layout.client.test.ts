@@ -206,23 +206,6 @@ describe("card", () => {
   });
 });
 
-describe("clamping helpers", () => {
-  const long = "a rejection reason long enough to need clamping in a narrow column";
-
-  test("a one-line table cell carries its full text as a tooltip", () => {
-    const [cell] = findNodes(render("ClampCell", { text: long }), (n) => n.type === "td");
-    assert.ok(classesOf(cell).includes("cell-clamp"));
-    assert.equal(cell.props.title, long);
-    assert.equal(collectText(cell), long);
-  });
-
-  test("a two-line clamp carries its full text as a tooltip", () => {
-    const [node] = findNodes(render("ClampText", { text: long }), (n) => classesOf(n).includes("clamp-2"));
-    assert.equal(node.props.title, long);
-    assert.equal(collectText(node), long);
-  });
-});
-
 describe("disclosure in a stretched row", () => {
   test("only a collapsed fold is marked collapsed", () => {
     const cardOf = (kind: string) => findNodes(render("Disclosure", { kind, title: "History" }, "rows"), (n) => classesOf(n).includes("card"))[0];

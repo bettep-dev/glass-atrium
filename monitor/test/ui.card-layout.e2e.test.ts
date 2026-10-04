@@ -153,7 +153,6 @@ describe("split row layout variants at real viewports", () => {
   });
 });
 
-const LONG_TEXT = "a merge proposal whose wording runs far past the width of the column it sits in, so it has to clamp";
 const tallBody = (px: number) => `<div style="height: ${px}px;">rows</div>`;
 const anatomyCard = (body: string, foot = "") =>
   `<div class="card"><div class="card-head"><div class="card-head-text"><h2 class="card-title">Runs</h2></div></div><div class="card-body">${body}</div>${foot}</div>`;
@@ -194,9 +193,7 @@ const ANATOMY_PAGE = `<!doctype html><html data-theme="light"><head><style>*, ::
     <div class="card card--l" id="lone-l"><div class="card-body">${tallBody(2000)}</div></div>
     <div style="width: 400px;"><table class="tbl" id="rows"><tbody>
       <tr><td>one line</td><td>2</td></tr>
-      <tr><td class="cell-clamp" title="${LONG_TEXT}">${LONG_TEXT}</td><td>3</td></tr>
     </tbody></table></div>
-    <p class="clamp-2" id="clamp" style="width: 160px; font-size: 15px; line-height: 1.5;">${LONG_TEXT} ${LONG_TEXT}</p>
   </div>
 </body></html>`;
 const ROW_H_PX = 40;
@@ -272,15 +269,8 @@ describe("card anatomy at real viewports", () => {
     assert.ok(body.scroll > body.client && body.overflow === "auto");
   });
 
-  test("table rows are one 40px line, a long cell ellipsizing instead of wrapping", async () => {
+  test("table rows are one 40px line", async () => {
     const heights = await anatomy.$$eval("#rows tr", (rows) => rows.map((r) => r.getBoundingClientRect().height));
     for (const height of heights) assert.ok(Math.abs(height - ROW_H_PX) < 1, `row ${height}px`);
-    const cell = await anatomy.$eval("#rows .cell-clamp", (el) => ({ client: el.clientWidth, scroll: el.scrollWidth }));
-    assert.ok(cell.scroll > cell.client, "the long cell is cut, not widened");
-  });
-
-  test("a two-line clamp stops at two lines", async () => {
-    const clamp = await boxOf("#clamp");
-    assert.ok(clamp.height <= 2 * 15 * 1.5 + 1, `clamp ${clamp.height}px`);
   });
 });
