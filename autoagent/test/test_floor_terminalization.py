@@ -145,12 +145,14 @@ class TestPromotionTierIsALabel(unittest.TestCase):
 
 _CLOSED_TARGET = "agents/glass-atrium-dev-python.md"
 _CLOSED_COLUMNS = ("status", "approval_tier", "rationale", "reviewed_by", "reviewed_at")
-# (pattern label, approval tier, stored status) — one row per shape the statement
-# must tell apart: the one pending auto row it closes, and every row it must spare.
+# (pattern label, stored ApprovalTier, stored ProposalStatus) — the one pending auto
+# row it closes, then every other stored tier on a pending row and every other
+# stored status on an auto row, each of which it must spare.
 _CLOSED_SEED_ROWS: tuple[tuple[str, str, str], ...] = (
     ("pending auto", "auto", "pending"),
-    ("pending safety", "safety", "pending"),
-    ("pending untiered", "", "pending"),
+    ("pending user-pending", "user-pending", "pending"),
+    ("pending user", "user", "pending"),
+    ("pending llm", "llm", "pending"),
     ("rejected auto", "auto", "rejected"),
     ("unadjudicated auto", "auto", "unadjudicated"),
     ("applied auto", "auto", "applied"),
