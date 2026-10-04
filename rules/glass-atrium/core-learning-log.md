@@ -41,7 +41,7 @@ The self-improvement loop (`autoagent/daemon_cycle.py`) user-approval queue is *
   - git push --force / rebase published branch
   - security-permission change (chmod / TCC / launchctl daemon lifecycle (bootstrap/bootout/kickstart/load/unload))
   - launchd plist change — any path whose FINAL component matches `com.claude.*.plist` or `com.glass-atrium.*.plist`
-    - This project's live labels are `com.glass-atrium.*` — monitor, autoagent-daemon, daemon-daily-restart, …
+    - This project's live labels are `com.glass-atrium.*` — monitor, autoagent-cycle, wiki-compile, …
     - A plist under any other label prefix is not matched by this path-pattern set.
   - frontmatter identity field (name / tools / scope) change
   - weakening of GLASS_ATRIUM_GLOBAL_RULES / core-security.md absolute rules, or any change to `core-learning-log.md` — the Tier-2 trigger list's own home
