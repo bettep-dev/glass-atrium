@@ -44,6 +44,13 @@ JOBS=(
   wiki-compile
 )
 
+# the retired com.glass-atrium.* labels (mirrors LAUNCHD_RETIRED_JOBS)
+RETIRED_JOBS=(
+  autoagent-daemon
+  wiki-daemon
+  daemon-daily-restart
+)
+
 setup() {
   command -v shasum >/dev/null 2>&1 || command -v sha256sum >/dev/null 2>&1 || skip "shasum/sha256sum required"
   [[ -f "${GA}/lib/ga-core.sh" ]] || skip "ga-core.sh not found: ${GA}/lib/ga-core.sh"
@@ -92,6 +99,38 @@ deploy_all() {
   local job
   for job in "${JOBS[@]}"; do
     deploy_ref "${job}"
+  done
+}
+
+# Leave a deployed plist for every retired label (the shape an install keeps until the retirement runs).
+deploy_retired() {
+  local job
+  for job in "${RETIRED_JOBS[@]}"; do
+    printf '<plist/>\n' >"${LA}/com.glass-atrium.${job}.plist"
+  done
+}
+
+# The launchd-drift term of the PASS breakdown equals $1.
+assert_drift_term() {
+  local term
+  term="$(sed -n 's/.* \([0-9][0-9]*\) launchd-drift + .*/\1/p' <<<"${output}")"
+  [[ "${term}" == "$1" ]] || {
+    echo "launchd-drift term '${term}', expected $1"
+    echo "${output}"
+    return 1
+  }
+}
+
+# Every retired label is named in its own warn line carrying the --load-launchd remedy.
+assert_retired_warns() {
+  local job
+  for job in "${RETIRED_JOBS[@]}"; do
+    [[ "${output}" == *"warn : retired launchd job still deployed: com.glass-atrium.${job} — run --load-launchd to retire it"* ]] \
+      || {
+        echo "missing retired warn: ${job}"
+        echo "${output}"
+        return 1
+      }
   done
 }
 
@@ -155,6 +194,37 @@ run_doctor_sandbox() {
 
   [[ "${output}" == *"no deployed com.glass-atrium launchd plists"* ]] || return 1
   [[ "${output}" != *"stale-deployed launchd plist drift"* ]] || return 1
+}
+
+# === 3b. deployed retired-label plists -> one §11 warning each =================
+
+@test "each deployed retired-label plist is one §11 warning, outside the active-roster compare" {
+  deploy_all
+  deploy_retired
+
+  run_doctor_sandbox
+
+  assert_retired_warns
+  # the active compare still sees only the active roster
+  [[ "${output}" == *"${#JOBS[@]} deployed launchd plist(s) match the current renderer output"* ]] \
+    || {
+      echo "${output}"
+      return 1
+    }
+  assert_drift_term "${#RETIRED_JOBS[@]}"
+}
+
+@test "deployed retired-label plists are counted when no active plist is deployed (skip rule unchanged)" {
+  deploy_retired
+
+  run_doctor_sandbox
+
+  [[ "${output}" == *"no deployed com.glass-atrium launchd plists"* ]] || {
+    echo "${output}"
+    return 1
+  }
+  assert_retired_warns
+  assert_drift_term "${#RETIRED_JOBS[@]}"
 }
 
 # === 4. mktemp failure -> loud skip, renderer NEVER invoked ====================

@@ -648,7 +648,7 @@ run_doctor() {
     [[ -f "${LAUNCH_AGENTS}/${ld_label}.plist" ]] && deployed_count=$((deployed_count + 1))
   done
   if [[ "${deployed_count}" -eq 0 ]]; then
-    log "  ok   : no deployed com.glass-atrium launchd plists (not-yet-loaded install — deploy-drift check skipped)"
+    log "  ok   : no deployed com.glass-atrium launchd plists in the active roster (not-yet-loaded install — deploy-drift check skipped)"
   elif [[ ! -f "${PLIST_RENDERER}" ]]; then
     log "  warn : launchd deploy-drift check skipped — plist renderer missing (${PLIST_RENDERER})"
   else
@@ -693,6 +693,12 @@ run_doctor() {
       if ga_guard_path "${ld_tmp}"; then rm -rf -- "${ld_tmp:?}"; fi
     fi
   fi
+  # retired labels: presence-only, outside the skips above — the renderer no longer writes their plists
+  local launchd_retired
+  # launchd_retired_deployed logs each deployed retired plist to stderr + echoes the count (stdout verdict).
+  # shellcheck disable=SC2311
+  launchd_retired="$(launchd_retired_deployed)"
+  launchd_drift=$((launchd_drift + launchd_retired))
 
   # 12. domain-data separation (D6) — relocation correctness. Asserts the new HOME-anchored runtime
   #     root (GA_DATA_ROOT/data) landed AND warns on stale Tier-A leftovers still under the legacy
@@ -2041,6 +2047,20 @@ launchd_deploy_drift() {
     fi
   done
   printf '%d\n' "${drift}"
+}
+
+# deployed retired-label scan — run_doctor §11 helper. Each LAUNCHD_RETIRED_JOBS label whose plist is still
+# deployed under ${LAUNCH_AGENTS} is residue the retirement has not reached: logged as a warn (stderr) with the
+# --load-launchd remedy, and the total is the stdout verdict. Read-only — no launchctl, no file change.
+launchd_retired_deployed() {
+  local ld_job label retired=0
+  for ld_job in "${LAUNCHD_RETIRED_JOBS[@]}"; do
+    label="${LAUNCHD_LABEL_PREFIX}.${ld_job}"
+    [[ -f "${LAUNCH_AGENTS}/${label}.plist" ]] || continue
+    log "  warn : retired launchd job still deployed: ${label} — run --load-launchd to retire it"
+    retired=$((retired + 1))
+  done
+  printf '%d\n' "${retired}"
 }
 
 # domain-data separation leftover scan (run_doctor §12 helper — D6). For each Tier-A ENUMERATED
