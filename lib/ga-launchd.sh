@@ -1,5 +1,5 @@
 # shellcheck shell=bash
-# shellcheck disable=SC2154  # references shared globals (GA_ROOT/LAUNCH_AGENTS/LAUNCHD_JOBS/LAUNCHD_LABEL_PREFIX/PLIST_RENDERER/RENDERED_PLIST_DIR/CONFIG_TOML/BOOTSTRAP_EXIT_*/DRY_RUN/LOAD_LAUNCHD/REPOINT_LAUNCHD) assigned by ga_init_env in ga-env.sh — present at runtime after lib/ga-core.sh sources every domain, unresolvable when linted standalone
+# shellcheck disable=SC2154  # references shared globals (GA_ROOT/LAUNCH_AGENTS/LAUNCHD_JOBS/LAUNCHD_RETIRED_JOBS/LAUNCHD_LABEL_PREFIX/PLIST_RENDERER/RENDERED_PLIST_DIR/CONFIG_TOML/BOOTSTRAP_EXIT_*/DRY_RUN/LOAD_LAUNCHD/REPOINT_LAUNCHD) assigned by ga_init_env in ga-env.sh — present at runtime after lib/ga-core.sh sources every domain, unresolvable when linted standalone
 # Glass Atrium — launchd plist render + job load/unload lifecycle domain. Sourced in-process by lib/ga-core.sh; no file-scope strict mode / traps (owned by the entry point).
 
 # launchd repoint (guarded, OFF by default, never in dry-run)
@@ -25,7 +25,7 @@ repoint_launchd() {
   log "launchd repoint done"
 }
 
-# launchd plist render (file-write only — NEVER touches launchctl). Renders the 8
+# launchd plist render (file-write only — NEVER touches launchctl). Renders the active-roster
 # com.glass-atrium.* plists from the rendered config.toml. Loading them into
 # ~/Library/LaunchAgents stays a MANUAL user action (see scripts/daemon-README.md); the only
 # launchctl mutation glass-atrium performs is --repoint-launchd above.
@@ -56,7 +56,7 @@ load_launchd_jobs() {
 
   log "== bootstrap [4/4]: --load-launchd — loading ${#LAUNCHD_JOBS[@]} com.glass-atrium.* launchd jobs =="
 
-  # GUARD — only load if the plists were rendered. The renderer writes all 8 in one pass, so the
+  # GUARD — only load if the plists were rendered. The renderer writes the whole roster in one pass, so the
   # first job's plist is a sufficient presence probe; a missing dir = render gap (loud-fail, exit 22).
   local first_plist="${RENDERED_PLIST_DIR}/${LAUNCHD_LABEL_PREFIX}.${LAUNCHD_JOBS[0]}.plist"
   if [[ ! -d "${RENDERED_PLIST_DIR}" || ! -f "${first_plist}" ]]; then
@@ -140,15 +140,16 @@ load_launchd_jobs() {
 }
 
 # unload_launchd_jobs — uninstall teardown: bootout + remove the deployed plist for each
-# LAUNCHD_JOBS (inverse of load_launchd_jobs). IDEMPOTENT (not-loaded job / absent plist fine).
+# LAUNCHD_JOBS and LAUNCHD_RETIRED_JOBS label (inverse of load_launchd_jobs, plus the retired labels). IDEMPOTENT (not-loaded job / absent plist fine).
 # launchctl absent → skip with a log. SANDBOX-GUARDED — is_sandbox_target (fake HOME or
 # GA_TARGET_HOME) skips the WHOLE teardown, because the gui/${UID} domain is shared with the real
 # user regardless of HOME. The deployed plists in ${LAUNCH_AGENTS} are regenerable COPIES of the
 # rendered SoT (${RENDERED_PLIST_DIR}, left intact) — so `rm -f` is correct (generated artifact,
 # not user config). Returns 0 (best-effort, never fatal).
 unload_launchd_jobs() {
+  local jobs=("${LAUNCHD_JOBS[@]}" "${LAUNCHD_RETIRED_JOBS[@]}")
   if "${DRY_RUN}"; then
-    log "dry-run: skipping launchd teardown (${#LAUNCHD_JOBS[@]} com.glass-atrium.* jobs — bootout + plist rm)"
+    log "dry-run: skipping launchd teardown (${#jobs[@]} com.glass-atrium.* jobs — bootout + plist rm)"
     return 0
   fi
   # SANDBOX GUARD: gui-domain labels are per-UID, NOT per-HOME — a sandboxed run (fake HOME or
@@ -167,8 +168,8 @@ unload_launchd_jobs() {
     return 0
   fi
   local job label plist booted=0 removed=0
-  log "uninstall: tearing down ${#LAUNCHD_JOBS[@]} com.glass-atrium.* launchd jobs"
-  for job in "${LAUNCHD_JOBS[@]}"; do
+  log "uninstall: tearing down ${#jobs[@]} com.glass-atrium.* launchd jobs"
+  for job in "${jobs[@]}"; do
     label="${LAUNCHD_LABEL_PREFIX}.${job}"
     plist="${LAUNCH_AGENTS}/${label}.plist"
     launchctl bootout "gui/${UID}/${label}" >/dev/null 2>&1 && booted=$((booted + 1)) || true

@@ -67,21 +67,26 @@ ga_init_env() {
   # from here, copies them into ~/Library/LaunchAgents, then launchctl bootstraps.
   readonly RENDERED_PLIST_DIR="${GA_PLIST_OUT:-${GA_ROOT}/rendered/launchd}"
   readonly LAUNCHD_LABEL_PREFIX="com.glass-atrium"
-  # job names mirror render-launchd-plists.sh JOBS 1:1 (8 com.glass-atrium.* stanzas); drift vs the renderer
-  # = a load gap. bash 3.2 + set -u: an in-function `readonly -a ARR=(...)` is function-local for nounset, so
+  # LAUNCHD_JOBS = the active roster; render-launchd-plists.sh JOBS mirrors it 1:1 (drift vs the renderer =
+  # a load gap). bash 3.2 + set -u: an in-function `readonly -a ARR=(...)` is function-local for nounset, so
   # a cross-function `${ARR[@]}` aborts "unbound" — use the two-step idiom (plain global assign, then
   # `readonly` WITHOUT -a) so every caller can expand it.
   LAUNCHD_JOBS=(
     monitor
-    autoagent-daemon
-    wiki-daemon
     monitor-log-rotate
     pg-backup
     autoagent-cycle
     wiki-compile
-    daemon-daily-restart
   )
   readonly LAUNCHD_JOBS
+  # LAUNCHD_RETIRED_JOBS — labels no longer rendered or loaded, disjoint from LAUNCHD_JOBS; teardown still
+  # covers them, so an install that skipped the retiring update is cleaned up.
+  LAUNCHD_RETIRED_JOBS=(
+    autoagent-daemon
+    wiki-daemon
+    daemon-daily-restart
+  )
+  readonly LAUNCHD_RETIRED_JOBS
 
   # GA_DAEMON_SESSIONS — the DETACHED daemon tmux session names. SoT = the bootstrap scripts' `readonly
   # SESSION=` (scripts/wiki-daemon-bootstrap.sh:15 'claude-wiki-daemon' + scripts/autoagent-daemon-bootstrap.sh:16

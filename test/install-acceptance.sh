@@ -171,12 +171,20 @@ INSTALL_RC=$?
 grep -q 'DB bootstrap skipped (GA_SKIP_DB_SETUP set)' "${SANDBOX}/install1.log" \
   && ok "DB bootstrap gated off (GA_SKIP_DB_SETUP honored)" \
   || no "GA_SKIP_DB_SETUP skip message missing from install log"
-# launchd plist render wired into run_install — 8 plists in the sandboxed
-# GA_PLIST_OUT dir (file-write only; launchctl never invoked by render_plists)
+# launchd plist render wired into run_install — one plist per active roster job
+# (lib/ga-env.sh LAUNCHD_JOBS) in the sandboxed GA_PLIST_OUT dir (file-write only;
+# launchctl never invoked by render_plists)
+ROSTER_COUNT="$(
+  # subshell: sourcing the engine arms readonly globals — keep them contained
+  # shellcheck source=lib/ga-env.sh
+  source "${GA}/lib/ga-env.sh" || exit 1
+  ga_init_env "${GA}" >/dev/null 2>&1
+  printf '%s\n' "${#LAUNCHD_JOBS[@]}"
+)"
 PLIST_COUNT="$(find "${GA_PLIST_OUT}" -name 'com.glass-atrium.*.plist' 2>/dev/null | wc -l | tr -d ' ')"
-[[ "${PLIST_COUNT}" -eq 8 ]] \
-  && ok "launchd plist render: 8 plists in sandboxed GA_PLIST_OUT" \
-  || no "launchd plist render: expected 8 plists, found ${PLIST_COUNT}"
+[[ "${ROSTER_COUNT}" =~ ^[0-9]+$ && "${ROSTER_COUNT}" -gt 0 && "${PLIST_COUNT}" -eq "${ROSTER_COUNT}" ]] \
+  && ok "launchd plist render: ${PLIST_COUNT} plists in sandboxed GA_PLIST_OUT = active roster LAUNCHD_JOBS" \
+  || no "launchd plist render: expected one plist per active roster job (LAUNCHD_JOBS count '${ROSTER_COUNT}'), found ${PLIST_COUNT}"
 
 # --- AC2: config rendered with real $HOME, zero unexpanded ${HOME} ---
 hdr "STEP 2 / AC2 — config.toml render"
