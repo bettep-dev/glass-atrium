@@ -58,7 +58,7 @@ test("never-fired daemon + old install anchor → board escalates to 'stale' (sh
 // resolveDaemonStatuses is pinned here and in the next case — both synthesis branches, a fresh row
 // proving the board still publishes a real status rather than blanket-overwriting one, and a
 // daemon no row mentions proving membership comes from DAEMON_BOARD rather than from the rows.
-test("a present row publishes the synthesized status, never its own last_status (F#38 delegation)", () => {
+test("a present row publishes the synthesized status, never its own last_status", () => {
   const rows = [
     // Overdue: the run itself ended 'ok' — the silence since is what makes the board stale.
     {
