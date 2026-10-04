@@ -1244,7 +1244,7 @@ function KanbanColumnI({
 	const emptyHint =
 		column.key === "applied"
 			? "Approved suggestions move here once the loop applies them."
-			: "Suggestions the loop or a reviewer turned down show up here.";
+			: "Suggestions turned down, or closed without a verdict, show up here.";
 	// 헤더 sticky + --elev 배경 — 카드 본문 톤과 통일 · row scroll 시 헤더 비침 차단.
 	return (
 		<div className="flex flex-col min-h-0 min-w-0 gap-2">
@@ -1403,7 +1403,7 @@ function RejectBucketSplitI({ summary }) {
 		[
 			"Infra",
 			summary.infra_count,
-			"The model call yielded no usable diff (quota / transient / auth) — never judged",
+			"Never judged — the model call yielded no usable diff (quota / transient / auth), or the loop closed the row without a verdict",
 		],
 		[
 			"Lifecycle",
@@ -1557,12 +1557,27 @@ function groupByLabelI(rows) {
 function CompactProposalCardI({ row, onClick }) {
 	// group head carries the pattern label → the row leads with its own reason
 	const primary = row.rationale || "No rationale recorded";
+	// closed by the loop with no gate verdict → shares the column, never reads as a reject
+	const isJudged = row.status !== "unadjudicated";
 	// 행별 ✕ 없음 — 열 헤더 ✕/--crit 가 rejected 상태를 이미 인코딩
 	return (
 		<BoardRowI
 			onClick={onClick}
 			title={String(primary)}
-			ariaLabel={`View declined suggestion ${row.id} details`}
+			ariaLabel={
+				isJudged
+					? `View declined suggestion ${row.id} details`
+					: `View suggestion ${row.id} details — closed without a verdict`
+			}
+			lead={
+				isJudged ? null : (
+					<span
+						className="text-faint uppercase tracking-wider shrink-0"
+						title="Closed by the loop without a verdict — not a rejection">
+						Not judged
+					</span>
+				)
+			}
 			text={primary}
 			trail={
 				<>
@@ -2998,6 +3013,7 @@ function getPageFailuresI(regions, view) {
 
 // APPLIED / REJECTED 분리 + snoozed 명시 라우팅.
 //   applied / rejected → terminal 전용 컬럼 (혼합 폐지).
+//   unadjudicated → rejected 컬럼 · 판정 없는 종결 → 카드에 non-verdict 표시 (보드 이탈 금지).
 //   non-terminal (pending / snoozed / approved) → safety actionable 컬럼.
 //     actionable feed 는 safety-tier only (auto 는 생성 시점 종결) → tier 분기 불필요.
 //     snoozed 는 terminal 컬럼 오염 방지차 actionable 컬럼 유지 · 카드 버튼으로 종결 가능.
@@ -3009,7 +3025,7 @@ function groupByColumnI(proposals) {
 			out.applied.push(p);
 			continue;
 		}
-		if (status === "rejected") {
+		if (status === "rejected" || status === "unadjudicated") {
 			out.rejected.push(p);
 			continue;
 		}

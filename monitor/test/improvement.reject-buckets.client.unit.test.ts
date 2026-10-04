@@ -36,12 +36,19 @@ interface RejectBucketSummary {
   total: number;
 }
 
+type BoardColumns = Record<"safety" | "applied" | "rejected", Array<{ id: number }>>;
+
 interface SplitSandbox {
   React: { createElement: unknown };
   RejectSparkI: (props: { trend: Array<{ reject: number }> }) => RecordedElement;
   RejectBucketSplitI: (props: {
     summary: RejectBucketSummary | null | undefined;
   }) => RecordedElement | null;
+  groupByColumnI: (proposals: Array<{ id: number; status: string }>) => BoardColumns;
+  CompactProposalCardI: (props: {
+    row: { id: number; status: string; rationale: string };
+    onClick: () => void;
+  }) => RecordedElement;
 }
 
 const LABELS = ["Quality", "Infra", "Lifecycle"];
@@ -189,5 +196,50 @@ for (const row of sparkRows) {
     assert.match(name, new RegExp(`latest ${row.rejects[row.rejects.length - 1]}\\b`));
     assert.match(name, new RegExp(`peak ${Math.max(...row.rejects)}\\b`));
     assert.match(name, new RegExp(`${total} in total`));
+  });
+}
+
+// The board renders safety from the actionable feed and only applied / rejected from the
+// terminal feed, so a terminal row grouped anywhere else leaves the board.
+const terminalRows = [
+  { name: "an applied row", status: "applied", column: "applied" },
+  { name: "a rejected row", status: "rejected", column: "rejected" },
+  { name: "a row closed without a verdict", status: "unadjudicated", column: "rejected" },
+] as const;
+
+for (const row of terminalRows) {
+  test(`a terminal-feed row stays on the board in exactly one column: ${row.name}`, () => {
+    const columns = sandbox.groupByColumnI([{ id: 1, status: row.status }]);
+    const holding = Object.entries(columns)
+      .filter(([, rows]) => rows.some((p) => p.id === 1))
+      .map(([key]) => key);
+
+    assert.deepEqual(holding, [row.column]);
+  });
+}
+
+// A Rejected-column row renders through the page-local BoardRowI atom.
+function renderRejectedRow(status: string): RecordedElement {
+  const card = sandbox.CompactProposalCardI({
+    row: { id: 9, status, rationale: "Model call hit the quota limit" },
+    onClick: () => {},
+  });
+  return (card.type as (props: Record<string, unknown>) => RecordedElement)(card.props);
+}
+
+const rejectedColumnRows = [
+  { name: "a row closed without a verdict", status: "unadjudicated", isVerdict: false },
+  { name: "a rejected row", status: "rejected", isVerdict: true },
+];
+
+for (const row of rejectedColumnRows) {
+  test(`a Rejected-column row is marked non-verdict only when it reached no verdict: ${row.name}`, () => {
+    const button = renderRejectedRow(row.status);
+    const texts = collectStrings(button, []).join(" ");
+    const name = String(button.props["aria-label"]);
+
+    assert.equal(/not judged/i.test(texts), !row.isVerdict, texts);
+    assert.equal(/without a verdict/i.test(name), !row.isVerdict, name);
+    assert.equal(/declined/i.test(name), row.isVerdict, name);
   });
 }
