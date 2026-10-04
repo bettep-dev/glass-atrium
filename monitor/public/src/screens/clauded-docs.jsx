@@ -921,13 +921,12 @@ function ScreenClaudedDocs(/* { onNav } */) {
 			{/* 타입 스케일 토큰 (ui.jsx SoT) — 멱등 마운트. .fs-* 유틸 + --fs-* CSS var 공급. */}
 			<TypeScaleStyle />
 			<style>{`
-        @keyframes skelPulseCD { 0%,100%{opacity:.7} 50%{opacity:.35} }
         @keyframes docSpinCD { to { transform: rotate(360deg); } }
         /* 내려받기 in-flight 회전자 — 라벨 없는 아이콘 바의 1차 진행 신호. */
         .doc-action-spinner { animation: docSpinCD 900ms linear infinite; transform-origin: 50% 50%; }
-        @media (prefers-reduced-motion: reduce) { .doc-action-spinner { animation: none; } }
-        .doc-row { transition: background 100ms; }
-        .doc-row:hover { background: rgb(var(--accent) / 0.06); }
+        /* motion: effects 120ms — a row state change, no overshoot */
+        .doc-row { transition: background 120ms; }
+        @media (prefers-reduced-motion: reduce) { .doc-action-spinner { animation: none; } .doc-row { transition: none; } }
         /* title-cell 레이아웃 — 고정폭 leading slot(20px) + 제목 main(flex).
            사유 — chevron toggle 이 group-root 행에만 있어 일반/멤버 행은 제목 시작 x 가 어긋남.
            모든 행에 동일폭 slot 예약 → 제목 컬럼 정렬 통일 + 행 높이 차이 제거. */
@@ -945,16 +944,19 @@ function ScreenClaudedDocs(/* { onNav } */) {
            위 .doc-title-text 가 nowrap 대신 클램프인 사유와 같은 함정 — 상한을 풀면 제목 본문 상자가 343→340px 로 깎이고 나머지는 가로 스크롤로 나간다.
            124px = 컬럼 152px − td 좌우 padding 28px. 상한을 넘긴 칩은 잘려 사라지고(rev 가시폭 0px), 그 rev 가 가리키는 선행 문서는 뷰어 Version history 패널이 운반한다. */
         .doc-tags-cell > span { max-width: 124px; overflow: hidden; }
-        /* 선택 행 강조 — 2px 좌측 border accent only (S5: full-row flood 금지 · bg fill 제거).
-           대비 보조 = 좌측 막대 폭을 3→4px 로 굵혀 fill 제거에 따른 식별성 손실 보상. */
-        .doc-row.is-selected { box-shadow: inset 4px 0 0 rgb(var(--accent)); }
-        .doc-row.is-pending-delete { box-shadow: inset 4px 0 0 rgb(var(--crit)); }
+        /* plain hover → base.css --sunken (design.md §7.5) · row-state fills scoped .tbl tbody tr.doc-row → they outrank it and hold under hover */
+        /* viewer row → a fill apart from checked (0.10) and both (0.16); the heavier title is its non-colour cue */
+        .tbl tbody tr.doc-row.is-selected { background: rgb(var(--accent) / 0.13); }
+        .doc-row.is-selected .doc-title-text { font-weight: 600; }
+        /* awaiting delete confirmation → struck-through title + aria-busy; the crit glyph before the title carries the tone.
+           no row opacity — any fade drops the light empty pip on a checked row below 3:1 (0.85: 2.59; unfaded 3.21) */
+        .doc-row.is-pending-delete .doc-title-text { text-decoration: line-through; }
         /* margin-left = lead slot 20px + title row gap 6px → the snippet starts under the title */
         .doc-snippet { margin-left: 26px; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; overflow-wrap: anywhere; }
         /* trailing title-line pills never shrink → the title text ellipsizes first */
         button.doc-lineage { flex: none; cursor: pointer; text-decoration: underline; text-underline-offset: 2px; }
         .doc-revision-count { flex: none; }
-        .doc-snippet mark { background: rgb(var(--warn) / 0.28); color: rgb(var(--ink)); padding: 0 2px; border-radius: 2px; }
+        .doc-snippet mark { background: rgb(var(--accent) / 0.2); color: rgb(var(--ink)); padding: 0 2px; border-radius: 2px; }
         /* R6 본문 컨테이너 — iframe 자리 대체.
            스크롤 양도 — overflow:visible + height:auto → 문서가 자기 <body>{...} 룰을 .doc-body-isolation 으로 rescope 할 때 동일 selector·동일 specificity 후순위 승리로 overflow 를 visible 재설정해 wrap 의 overflow-y 를 무력화하던 회귀 차단(스크롤 컨테이너를 .doc-fs-body-wrap 으로 이관).
            CARVE-OUT(rgb 9 9 11) — --surface(warm 12 10 9) 미사용은 의도적. 문서 자체 bg-zinc-950 과 hue·값을 정확히 일치시켜 cascade 비결정성 제거 (cool zinc reading palette). --surface 교체 시 hue 불일치 + 결정성 붕괴 → swap 금지.
@@ -995,8 +997,6 @@ function ScreenClaudedDocs(/* { onNav } */) {
            current=강조 / predecessor=.acked(opacity 0.5) 시각 구분. summary chevron 은 native 유지. */
         .doc-revision-predecessor.acked { opacity: 0.5; }
         .doc-version-history > summary { list-style: revert; }
-        /* superseded 문서 배너 — 구 revision 열람 중임을 본문 위에서 경고 (stale 문서에 owner 가 액션하는 사고 차단, F34). */
-        .doc-superseded-banner { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; padding: 8px 16px; background: rgb(var(--warn) / 0.12); border-bottom: 1px solid rgb(var(--warn) / 0.4); color: rgb(var(--warn)); font-size: var(--fs-body); font-weight: 500; }
         /* code viewer (yaml/json/txt) — dark base (bg-zinc-900 + border-zinc-800).
            github-dark.min.css 가 .hljs span.hljs-* 토큰 색상 부여 — 본 컨테이너는 chrome (배경/테두리/패딩/폰트) 만 정의. */
         .doc-code-pre { margin: 16px 0; padding: 16px; background: rgb(24 24 27); border: 1px solid rgb(39 39 42); border-radius: 6px; overflow-x: auto; font-family: 'JetBrains Mono', ui-monospace, SFMono-Regular, monospace; font-size: 13px; line-height: 1.6; color: rgb(228 228 231); }
@@ -1028,6 +1028,8 @@ function ScreenClaudedDocs(/* { onNav } */) {
            line-height 1.75 · letter-spacing 0.012em(light-on-dark halation 보정) · 상속 base → 코드블록/헤딩 등 per-element 로컬 override 유지. */
         .doc-fs-body-inner > .doc-body-isolation { line-height: 1.75; letter-spacing: 0.012em; }
         /* meta sidebar — grid cell 풀높이 sticky · cool zinc(rgb 13 13 16 solid · 0.6 alpha 제거 → 본문 위 비침 제거) · border-left cool zinc(rgb 34 34 38 · --line warm 대체). */
+        /* inherited text colour was computed under the app theme → each chrome scope re-resolves it from its own ink */
+        .doc-fs-container [data-theme="dark"] { color: rgb(var(--ink)); }
         .doc-fs-meta-side { overflow-y: auto; border-left: 1px solid rgb(34 34 38); background: rgb(13 13 16); padding: 20px 24px; }
         /* 모바일 <768px — meta 하단 stack + border-top · wrap padding 축소 · bg 통일 반복(데스크톱 룰의 cool zinc 를 미디어 블록에서 재확인).
            max-width min(90%,1280px) 는 폰에서 90% 자동 승리(1280 캡 미발동) → px floor 없음 → overflow 무발생. 스크롤은 wrap 에서 동일 동작. */
@@ -1051,6 +1053,11 @@ function ScreenClaudedDocs(/* { onNav } */) {
         /* 선택 checkbox column — 항상 노출 (hover-only 시 사용자가 모름 → glass-atrium-design-designer reject). */
         .doc-checkbox-cell { width: 28px; padding: 4px 6px 4px 12px; text-align: center; vertical-align: middle; }
         .doc-checkbox-cell input[type="checkbox"] { width: 16px; height: 16px; cursor: pointer; accent-color: rgb(var(--accent)); }
+        /* ledger checkbox — neutral at rest, the one selected state when checked or mixed; a toggle is discrete → no transition */
+        .doc-checkbox { appearance: none; width: 16px; height: 16px; margin: 0; border: 1.5px solid rgb(var(--faint)); border-radius: var(--radius-inline); background: rgb(var(--elev)); cursor: pointer; }
+        .doc-checkbox:hover { border-color: rgb(var(--dim)); }
+        .doc-checkbox:checked, .doc-checkbox:indeterminate { background: rgb(var(--selected-fill)); border-color: rgb(var(--selected-fill)); }
+        .doc-checkbox-mark { color: rgb(var(--selected-ink)); }
         .doc-col-title { min-width: ${LEDGER_CD.FLOOR.title}px; }
         /* column floors + Tags → a narrower ledger drops Tags, the viewer still carries it */
         .doc-ledger-scroll { container: doc-ledger / inline-size; }
@@ -1058,8 +1065,8 @@ function ScreenClaudedDocs(/* { onNav } */) {
         /* a ledger under its column floors → the title floor narrows */
         @container doc-ledger (width < ${LEDGER_CD.FLOOR.sum}px) { .doc-col-title { min-width: ${LEDGER_CD.FLOOR.titleNarrow}px; } }
         /* 선택된 행 강조 — 기존 .is-selected (viewer focus) 와 색 구분: --accent 약한 채도. */
-        .doc-row.is-multi-selected { background: rgb(var(--accent) / 0.10); }
-        .doc-row.is-multi-selected.is-selected { background: rgb(var(--accent) / 0.16); }
+        .tbl tbody tr.doc-row.is-multi-selected { background: rgb(var(--accent) / 0.10); }
+        .tbl tbody tr.doc-row.is-multi-selected.is-selected { background: rgb(var(--accent) / 0.16); }
         /* group action bar — filter chip 행 아래 sticky · zinc-900 코드블록 톤.
            height 고정 (44px min) 사유 — hint(텍스트 1줄) vs active(btn.sm 툴바) 두 모드의
            natural height 차이가 아래 목록을 (de)select 마다 점프시킴 → 상수 높이 + box-sizing
@@ -1074,9 +1081,7 @@ function ScreenClaudedDocs(/* { onNav } */) {
         /* group root row — chevron + member_count badge slot (folder icon 미사용). indent 시각 hint. */
         .doc-group-toggle { display: inline-flex; align-items: center; gap: 4px; cursor: pointer; background: transparent; border: none; padding: 2px 6px; color: rgb(var(--dim)); font-size: var(--fs-meta); border-radius: var(--radius-badge); }
         .doc-group-toggle:hover { background: rgb(var(--line) / 0.5); color: rgb(var(--ink)); }
-        .doc-group-toggle .chevron { transition: transform 160ms ease-out; }
         .doc-group-toggle.is-expanded .chevron { transform: rotate(90deg); }
-        @media (prefers-reduced-motion: reduce) { .doc-group-toggle .chevron { transition: none; } }
         /* member rows — indent + 좌측 가는 가이드 선 (group 소속 시각 hint). */
         tr.doc-row.is-group-member td.title-cell { padding-left: 32px; position: relative; }
         tr.doc-row.is-group-member td.title-cell::before { content: ''; position: absolute; left: 14px; top: 0; bottom: 0; width: 1px; background: rgb(var(--line)); }
@@ -1089,8 +1094,9 @@ function ScreenClaudedDocs(/* { onNav } */) {
         .doc-drag-handle:active { cursor: grabbing; }
         /* 끌고 있는 멤버 행 — dim + 점선 (drop target 시각 분리). dark base 정합. */
         tr.doc-row.is-group-member.is-dragging { opacity: 0.5; box-shadow: inset 0 0 0 1px rgb(var(--accent) / 0.5); }
-        /* 재정렬 rollback inline 에러 — crit hue (toast 와 별개 · 영향 그룹 인접 표시). */
-        .doc-reorder-error { color: rgb(var(--crit)); font-family: 'JetBrains Mono', monospace; }
+        /* reorder rollback error beside its group — the crit glyph carries the tone, the message stays ink */
+        .doc-reorder-error { color: rgb(var(--ink)); font-family: 'JetBrains Mono', monospace; }
+        .doc-inline-alert { display: inline-flex; align-items: center; gap: 6px; }
         /* stage pill — 톤은 meter 채움과 종료 글리프가 운반 · 라벨 텍스트는 중립 유지. */
         /* header text at the title text's x — lead slot 20px + title row gap 6px */
         .doc-col-title-text { margin-left: 26px; }
@@ -1112,10 +1118,7 @@ function ScreenClaudedDocs(/* { onNav } */) {
         /* one-line rows → the --row-h cell height sets the row; the 24px pill stays the WCAG 2.5.8 target floor */
         .doc-ledger-scroll .tbl tr.doc-row > td { padding-block: 4px; }
         .doc-ledger-scroll .doc-stage-pill { padding-block: 2px; }
-        .doc-row.is-stale > td { background: rgb(var(--warn) / 0.03); }
-        /* the wash sits under the pill → a --line border fades into it */
-        .doc-row.is-stale .doc-stage-pill { border-color: rgb(var(--dim) / 0.6); }
-        .doc-age-flag { font-size: var(--fs-meta); font-weight: 600; color: rgb(var(--warn)); font-family: 'Pretendard Variable', Pretendard, ui-sans-serif, system-ui, sans-serif; }
+        .doc-age-flag { display: flex; align-items: center; gap: 4px; font-size: var(--fs-meta); font-weight: 600; color: rgb(var(--dim)); font-family: 'Pretendard Variable', Pretendard, ui-sans-serif, system-ui, sans-serif; }
         /* .card overflow:hidden = a scroll container → traps the rail's sticky in the card · clip trims the corners only, sticky stays viewport-relative */
         .card.doc-list-card:not(:has(.popover-panel)) { overflow: clip; }
         /* Retry's focus handoff scrolls the card up to reveal it → the margin keeps the page header in view */
@@ -1132,9 +1135,8 @@ function ScreenClaudedDocs(/* { onNav } */) {
         .doc-open-summary-block { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 8px; }
         .doc-open-summary-heading { margin: 0; font-size: var(--fs-meta); font-weight: 600; color: rgb(var(--dim)); }
         .doc-open-summary-group { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px; margin: 0; font-size: var(--fs-meta); }
-        .doc-open-summary-group dt { color: rgb(var(--ink)); }
+        .doc-open-summary-group dt { display: inline-flex; align-items: center; gap: 4px; color: rgb(var(--ink)); }
         .doc-open-summary-group dd { margin: 0 8px 0 0; color: rgb(var(--ink)); font-family: 'JetBrains Mono', monospace; font-variant-numeric: tabular-nums; }
-        .doc-open-summary-group .is-stale { color: rgb(var(--warn)); font-weight: 600; }
         @container doc-layout (width >= ${LEDGER_CD.FLOOR.sum + OPEN_SUMMARY_RAIL_WIDTH_CD}px) {
           .doc-open-summary .doc-open-summary-block { display: block; }
           .doc-open-summary .doc-open-summary-heading { margin-bottom: 4px; }
@@ -1144,7 +1146,7 @@ function ScreenClaudedDocs(/* { onNav } */) {
         }
         .doc-open-summary-note { font-size: var(--fs-meta); color: rgb(var(--faint)); }
         .doc-stage-note { font-size: var(--fs-meta); color: rgb(var(--dim)); }
-        .doc-stage-menu { position: absolute; top: calc(100% + 4px); left: 0; z-index: 5; display: flex; flex-direction: column; min-width: 148px; padding: 4px; background: rgb(var(--elev)); border: 1px solid rgb(var(--line)); border-radius: var(--radius-badge); box-shadow: 0 8px 20px rgb(0 0 0 / 0.35); }
+        .doc-stage-menu { position: absolute; top: calc(100% + 4px); left: 0; z-index: 5; display: flex; flex-direction: column; min-width: 148px; padding: 4px; background: rgb(var(--elev)); border: 1px solid rgb(var(--line)); border-radius: var(--radius-card); box-shadow: var(--shadow-overlay); }
         .doc-stage-menu-item { display: flex; align-items: center; gap: 8px; padding: 6px 8px; min-height: 28px; background: transparent; border: none; border-radius: var(--radius-badge); color: rgb(var(--ink)); font-size: var(--fs-meta); text-align: left; cursor: pointer; }
         .doc-stage-menu-item:hover { background: rgb(var(--line) / 0.6); }
         .doc-stage-menu-item[aria-checked="true"] { color: rgb(var(--accent)); }
@@ -1262,17 +1264,27 @@ function ScreenClaudedDocs(/* { onNav } */) {
 				/>
 			)}
 
-			{toast && (
-				<div
-					className={`doc-toast ${toast.tone}`}
-					role="status"
-					aria-live="polite"
-				>
-					{toast.message}
-				</div>
-			)}
+			{toast && <DocToastCD toast={toast} />}
 		</div>
 	);
+}
+
+// tone rides the leading glyph; the shell stays neutral (base.css .doc-toast)
+function DocToastCD({ toast }) {
+	return (
+		<div className={`doc-toast ${toast.tone}`} role="status" aria-live="polite">
+			<span className="doc-toast-glyph" aria-hidden="true">{window.UI.TONE_GLYPH[toast.tone]}</span>
+			{toast.message}
+		</div>
+	);
+}
+
+// literal classes so the Tailwind runtime scan sees each tone
+const TONE_TEXT_CLASS_CD = { crit: "text-crit", warn: "text-warn" };
+
+// severity glyph before neutral words — a tone never paints the words themselves
+function ToneGlyphCD({ tone }) {
+	return <window.UI.Icon name={window.UI.TONE_ICON[tone]} size={12} className={TONE_TEXT_CLASS_CD[tone]} />;
 }
 
 // before the first read the list placeholder is the one loading label → no stamp, and Refresh is not busy yet
@@ -1615,7 +1627,7 @@ function DocListCardCD({
 						</caption>
 						<thead>
 							<tr>
-								{/* designer-approved DocCheckboxCD (5-state · emerald-600 · WCAG 2.2 AA).
+								{/* DocCheckboxCD (theme-token states · WCAG 2.2 AA).
                     select-all 3-state cycle: unchecked → checked → indeterminate → checked (단방향 — UX 단순화). */}
 								<th scope="col" className="doc-checkbox-cell">
 									<DocCheckboxCD
@@ -1702,6 +1714,7 @@ function DocListCardCD({
 											tabIndex={row.id === rovingId ? 0 : -1}
 											aria-label={row.title}
 											aria-current={isSelectedViewer ? "true" : undefined}
+											aria-busy={isPending ? "true" : undefined}
 										>
 											<td
 												className="doc-checkbox-cell"
@@ -1757,6 +1770,7 @@ function DocListCardCD({
 														)}
 													</span>
 													<span className="doc-title-main">
+														{isPending && <ToneGlyphCD tone="crit" />}
 														<span className="doc-title-text" title={row.title}>
 															{row.title}
 														</span>
@@ -1890,11 +1904,14 @@ function DocOpenSummaryCD({ summary, isPartial, isLastKnown = false, onSelect })
 				<h2 className="doc-open-summary-heading">Age</h2>
 				<dl className="doc-open-summary-group">
 					{AGE_BUCKETS_CD.map((bucket) => {
-						const staleClass = bucket.key === "stale" && summary.buckets.stale > 0 ? "is-stale" : undefined;
+						const isStaleShown = bucket.key === "stale" && summary.buckets.stale > 0;
 						return (
 							<React.Fragment key={bucket.key}>
-								<dt className={staleClass}>{bucket.label}</dt>
-								<dd className={staleClass}>{formatIntCD(summary.buckets[bucket.key])}</dd>
+								<dt>
+									{isStaleShown && <ToneGlyphCD tone="warn" />}
+									{bucket.label}
+								</dt>
+								<dd>{formatIntCD(summary.buckets[bucket.key])}</dd>
 							</React.Fragment>
 						);
 					})}
@@ -1918,7 +1935,12 @@ function DocAgeCellCD({ createdAt, age, isStale }) {
 			style={{ color: "rgb(var(--dim))" }}
 			title={`Created ${formatDateCD(createdAt)}`}>
 			{age ? age.label : "—"}
-			{isStale && <div className="doc-age-flag">stale</div>}
+			{isStale && (
+				<div className="doc-age-flag">
+					<ToneGlyphCD tone="warn" />
+					stale
+				</div>
+			)}
 		</td>
 	);
 }
@@ -2143,9 +2165,12 @@ function GroupMembersRowsCD({
 				<td
 					colSpan={colSpan - 1}
 					className="fs-meta"
-					style={{ color: "rgb(var(--crit))", padding: "6px 12px" }}
+					style={{ color: "rgb(var(--ink))", padding: "6px 12px" }}
 				>
-					Couldn't load group members — {memberState.error}
+					<span className="doc-inline-alert">
+						<ToneGlyphCD tone="crit" />
+						Couldn't load group members — {memberState.error}
+					</span>
 				</td>
 			</tr>
 		);
@@ -2174,7 +2199,10 @@ function GroupMembersRowsCD({
 				className="doc-reorder-error fs-meta"
 				style={{ padding: "4px 12px" }}
 			>
-				{reorderError}
+				<span className="doc-inline-alert">
+					<ToneGlyphCD tone="crit" />
+					{reorderError}
+				</span>
 			</td>
 		</tr>
 	) : null;
@@ -2249,6 +2277,8 @@ function GroupMembersRowsCD({
 				}}
 				tabIndex={-1}
 				aria-label={`${member.title} (group member)`}
+				aria-current={isSelectedViewer ? "true" : undefined}
+				aria-busy={isPending ? "true" : undefined}
 			>
 				<td className="doc-checkbox-cell" onClick={(e) => e.stopPropagation()}>
 					<DocCheckboxCD
@@ -2298,6 +2328,7 @@ function GroupMembersRowsCD({
 							)}
 						</span>
 						<span className="doc-title-main">
+							{isPending && <ToneGlyphCD tone="crit" />}
 							<span className="doc-title-text" title={member.title}>
 								{member.title}
 							</span>
@@ -2328,6 +2359,7 @@ function GroupMembersRowsCD({
 // 뷰어 패널 (전체화면 컨테이너 안에 마운트).
 // 외부 .doc-fs-container 가 카드 시각언어 담당 → 내부 .card 중첩 회피.
 // 본문 grid split: main(좌, fluid) + meta(우, sidebar). non-ready 상태는 main 만 표시.
+// chrome sits on the fixed dark viewer canvas in either app theme → data-theme="dark" on every chrome region, never on the rendered document
 function ViewerPanelCD({
 	state,
 	pendingDelete,
@@ -2339,10 +2371,11 @@ function ViewerPanelCD({
 	onNavigate,
 	showToast,
 }) {
-	const { CardHead, Icon } = window.UI;
+	const { CardHead, AlertCard } = window.UI;
 	const isReady = state.status === "ready";
 	return (
 		<div className="h-full flex flex-col min-h-0">
+			<div data-theme="dark">
 			<CardHead
 				title={
 					isReady
@@ -2364,23 +2397,28 @@ function ViewerPanelCD({
 			/>
 			{/* superseded 배너 — successor 존재 = 구 revision 열람 중 (superseded 행은 server contract 상 done 고정, F34). */}
 			{isReady && state.data.superseded_by_id != null && (
-				<div className="doc-superseded-banner" role="status">
-					<Icon name="warn" size={14} />
-					<span>A newer version exists — you're viewing an old revision</span>
-					<button
-						type="button"
-						className="btn sm"
-						onClick={() => onNavigate?.(state.data.superseded_by_id)}
-						aria-label={`View latest revision #${state.data.superseded_by_id}`}
-					>
-						View latest → #{state.data.superseded_by_id}
-					</button>
-				</div>
+				<AlertCard
+					tone="warn"
+					surface="inset"
+					className="mx-4 mb-3"
+					title="A newer version exists — you're viewing an old revision"
+					actions={
+						<button
+							type="button"
+							className="btn sm"
+							onClick={() => onNavigate?.(state.data.superseded_by_id)}
+							aria-label={`View latest revision #${state.data.superseded_by_id}`}
+						>
+							View latest → #{state.data.superseded_by_id}
+						</button>
+					}
+				/>
 			)}
+			</div>
 			{isReady ? (
 				<div className="doc-fs-split">
 					<ViewerBodyCD state={state} />
-					<aside className="doc-fs-meta-side" aria-label="Document metadata">
+					<aside className="doc-fs-meta-side" data-theme="dark" aria-label="Document metadata">
 						{/* doc(=viewer cache) 를 cachedRow 로 전달 → GET 스킵 (네트워크 절감). */}
 						<DocMetaPanelCD
 							doc={state.data}
@@ -2759,14 +2797,23 @@ function ViewerBodyCD({ state }) {
 		state.data?.format,
 	]);
 
+	// every state other than the rendered document is viewer chrome → the dark scope (see ViewerPanelCD)
 	if (state.status === "idle") {
-		return <div className="doc-empty m-4">Select a document from the list</div>;
+		return <div data-theme="dark" className="doc-empty m-4">Select a document from the list</div>;
 	}
 	if (state.status === "loading") {
-		return <window.UI.LoadingPlaceholder label="the document" minHeight={260} className="m-4" />;
+		return (
+			<div data-theme="dark">
+				<window.UI.LoadingPlaceholder label="the document" minHeight={260} className="m-4" />
+			</div>
+		);
 	}
 	if (state.status === "error") {
-		return <window.UI.RegionUnavailable source="this document" error={state.error} className="m-4" />;
+		return (
+			<div data-theme="dark">
+				<window.UI.RegionUnavailable source="this document" error={state.error} className="m-4" />
+			</div>
+		);
 	}
 
 	// 본문 렌더 — 분기 (MD primary + 4-format code viewer):
@@ -2794,13 +2841,15 @@ function ViewerBodyCD({ state }) {
 	}
 	if (renderError || rendered == null) {
 		return (
-			<ErrorBannerCD
-				title="Couldn't render the document body"
-				detail={
-					renderError ||
-					"DOMPurify or DOMParser unavailable — refresh the page and try again"
-				}
-			/>
+			<div data-theme="dark">
+				<ErrorBannerCD
+					title="Couldn't render the document body"
+					detail={
+						renderError ||
+						"DOMPurify or DOMParser unavailable — refresh the page and try again"
+					}
+				/>
+			</div>
 		);
 	}
 
@@ -3044,12 +3093,8 @@ function formatActorCD(model) {
 	return model === OPERATOR_ACTOR_CD ? "operator" : window.UI.getDisplayName("model", String(model).replace(MODEL_CONTEXT_TAG_CD, ""));
 }
 
-// DocCheckboxCD — 5-state spec — 16px square · 2px border · 4px radius · WCAG 2.2 AA focus-visible
-//   · default     — bg-zinc-900 border-zinc-600
-//   · hover       — bg-zinc-800 border-zinc-400
+// DocCheckboxCD — 16px square drawn by the screen's .doc-checkbox rules (theme tokens, single selected state)
 //   · focus-visible — global :focus-visible outline (base.css)
-//   · checked     — bg-emerald-600 border-emerald-600 + white check SVG
-//   · indeterminate — bg-emerald-600 border-emerald-600 + white minus SVG
 //
 // Implementation 결정 (glass-atrium-design-designer 자문 4-Axis 16/20 정합):
 //   · native <input type=checkbox> 보존 — screen reader / keyboard / form submit 호환
@@ -3058,7 +3103,6 @@ function formatActorCD(model) {
 //   · check/minus SVG inline overlay (절대 위치 + peer state 의존하지 않음 — React conditional render)
 //     ※ peer-checked 미사용 사유 — native checkbox 자체에 ::after / pseudo-element 불가 (browser 제한)
 //     → wrapper span 으로 SVG overlay 배치, checked/indeterminate 분기 React 측에서 처리
-//   · transition-colors duration-150 — glass-atrium-design-designer 자문 motion: spatial-fast equivalent (CSS-only)
 function DocCheckboxCD({
 	checked,
 	indeterminate,
@@ -3090,16 +3134,15 @@ function DocCheckboxCD({
 				onClick={onClick}
 				aria-label={ariaLabel}
 				{...(isRowControl ? ROW_CONTROL_PROPS : null)}
-				className="appearance-none w-4 h-4 rounded border-2 border-zinc-600 bg-zinc-900 hover:bg-zinc-800 hover:border-zinc-400 checked:bg-emerald-600 checked:border-emerald-600 transition-colors duration-150 cursor-pointer"
-				style={{ margin: 0 }}
+				className="doc-checkbox"
 			/>
 			{/* check SVG — checked 단독 시 표시 (indeterminate 우선) */}
 			{checked && !indeterminate && (
-				<Icon name="check" size={12} stroke={3} className="pointer-events-none absolute text-white" />
+				<Icon name="check" size={12} stroke={3} className="doc-checkbox-mark pointer-events-none absolute" />
 			)}
 			{/* minus SVG — indeterminate 시 표시 (체크박스 자체는 checked attribute 무시) */}
 			{indeterminate && (
-				<Icon name="minus" size={12} stroke={3} className="pointer-events-none absolute text-white" />
+				<Icon name="minus" size={12} stroke={3} className="doc-checkbox-mark pointer-events-none absolute" />
 			)}
 		</span>
 	);
@@ -3155,23 +3198,26 @@ function PredecessorPanelCD({ predecessorId, currentDoc, onNavigate }) {
 				<div className="doc-revision-current">
 					<span
 						className="fs-meta font-mono uppercase tracking-wider"
-						style={{ color: "rgb(var(--ok))" }}
+						style={{ color: "rgb(var(--ink))" }}
 					>
 						Current revision
 					</span>
 				</div>
 				{/* predecessor — .acked (opacity 0.5) dim. */}
 				{predState.status === "loading" && (
-					<div style={skeletonBlockStyleCD(40)} />
+					<window.UI.LoadingPlaceholder label="the previous revision" />
 				)}
 				{predState.status === "error" && (
 					<div
-						className="fs-meta"
-						style={{ color: "rgb(var(--warn))" }}
+						className="fs-meta doc-inline-alert"
+						style={{ color: "rgb(var(--ink))" }}
 						role="alert"
 					>
-						Couldn't load previous revision #{predecessorId} —{" "}
-						{predState.error}
+						<ToneGlyphCD tone="warn" />
+						<span>
+							Couldn't load previous revision #{predecessorId} —{" "}
+							{predState.error}
+						</span>
 					</div>
 				)}
 				{predState.status === "ready" && predState.data && (
@@ -3398,38 +3444,14 @@ function EditorModalCD({ seed, onClose, onUpdate }) {
 }
 
 function ErrorBannerCD({ title, detail, onRetry }) {
-	const { Icon } = window.UI;
-	return (
-		<div
-			className="m-4 p-3 rounded-md border"
-			style={{
-				borderColor: "rgb(var(--crit) / 0.4)",
-				background: "rgb(var(--crit) / 0.1)",
-				color: "rgb(var(--crit))",
-				fontSize: "var(--fs-meta)",
-			}}
-			role="alert"
-		>
-			<div className="flex items-center gap-2 mb-1">
-				<Icon name="warn" size={14} />
-				<span className="font-semibold">{title}</span>
-			</div>
-			{detail && (
-				<div
-					className="font-mono fs-meta"
-					style={{ color: "rgb(var(--dim))" }}
-				>
-					{detail}
-				</div>
-			)}
-			{onRetry && (
-				<button type="button" className="btn ghost sm mt-2" onClick={onRetry}>
-					<Icon name="refresh" size={12} />
-					Retry
-				</button>
-			)}
-		</div>
+	const { AlertCard, Icon } = window.UI;
+	const retry = onRetry && (
+		<button type="button" className="btn sm" onClick={onRetry}>
+			<Icon name="refresh" size={12} />
+			Retry
+		</button>
 	);
+	return <AlertCard tone="crit" surface="inset" className="m-4" title={title} body={detail} actions={retry || undefined} />;
 }
 
 // asOf advances on successful list reads only · the region carries busy and failed → stamp never reads Fresh mid-read
@@ -4807,16 +4829,6 @@ if (
 			console.error("[clauded-docs viewer R6 self-tests] runner failed", e);
 		}
 	}, 0);
-}
-
-function skeletonBlockStyleCD(height) {
-	return {
-		height,
-		borderRadius: "var(--radius-badge)",
-		background: "rgb(var(--sunken))",
-		opacity: 0.7,
-		animation: "skelPulseCD 1.4s ease-in-out infinite",
-	};
 }
 
 window.ScreenClaudedDocs = ScreenClaudedDocs;

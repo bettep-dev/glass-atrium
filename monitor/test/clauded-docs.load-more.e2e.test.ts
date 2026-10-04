@@ -1333,6 +1333,57 @@ describe("Type floor on the Documents screen, its viewer, version history and st
     await page.getByRole("menu", { name: "Set stage" }).waitFor({ state: "visible" });
   }
 
+  // every drawn text in the viewer chrome against its composited background; the rendered document is out of scope.
+  // A source string, not a function: the test transform names inner arrows with a helper the page does not have.
+  const CHROME_CONTRAST_MISSES = `(() => {
+    const parse = (value) => (value.match(/[\\d.]+/g) || []).map(Number);
+    const lum = ([r, g, b]) => {
+      const f = (v) => { v /= 255; return v <= 0.03928 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4; };
+      return 0.2126 * f(r) + 0.7152 * f(g) + 0.0722 * f(b);
+    };
+    const backgroundOf = (start) => {
+      const layers = [];
+      for (let el = start; el; el = el.parentElement) {
+        const [r, g, b, a = 1] = parse(getComputedStyle(el).backgroundColor);
+        if (a > 0) layers.push([r, g, b, a]);
+        if (a >= 1) break;
+      }
+      return layers.reverse().reduce((under, [r, g, b, a]) => [r, g, b].map((v, i) => v * a + under[i] * (1 - a)), [255, 255, 255]);
+    };
+    const misses = [];
+    const container = document.querySelector(".doc-fs-container");
+    for (const el of Array.from(container ? container.querySelectorAll("*") : [])) {
+      if (el.closest(".doc-body-isolation") || el.closest(".sr-only")) continue;
+      const text = Array.from(el.childNodes).filter((n) => n.nodeType === 3).map((n) => n.textContent.trim()).join("");
+      if (!text || el.getBoundingClientRect().width < 1) continue;
+      const [hi, lo] = [lum(parse(getComputedStyle(el).color)), lum(backgroundOf(el))].sort((a, b) => b - a);
+      const ratio = (hi + 0.05) / (lo + 0.05);
+      if (ratio < 4.5) misses.push(ratio.toFixed(2) + " " + el.tagName.toLowerCase() + "." + String(el.className) + ": " + text.slice(0, 40));
+    }
+    return misses;
+  })()`;
+
+  for (const theme of ["light", "dark"]) {
+    test(`every drawn text in the viewer chrome of an old revision clears 4.5:1 in the ${theme} theme`, async () => {
+      const context: BrowserContext = await browser.newContext({ viewport: { width: 1440, height: 900 } });
+      try {
+        const page: Page = await context.newPage();
+        await page.goto(`${serverUrl}/#clauded-docs`, { waitUntil: "networkidle" });
+        // the app's mount effect writes data-theme from its tweaks → switch only once a fetched ledger row shows, a later commit than that effect
+        await revealRowByTitle(page, title.successor);
+        await page.evaluate((value) => document.documentElement.setAttribute("data-theme", value), theme);
+        await openViewerPanels(page);
+        await page.keyboard.press("Escape");
+        await page.locator("aside.doc-fs-meta-side").getByRole("button", { name: /View previous revision/ }).click();
+        await page.getByRole("button", { name: /View latest revision/ }).waitFor({ state: "visible" });
+        assert.equal(await page.evaluate(() => document.documentElement.getAttribute("data-theme")), theme);
+        assert.deepEqual(await page.evaluate(CHROME_CONTRAST_MISSES), []);
+      } finally {
+        await context.close();
+      }
+    });
+  }
+
   const rows = [
     { name: "the ledger with its rail and bulk action bar", open: openLedgerWithSelection, width: 1024 },
     { name: "the ledger with its rail and bulk action bar", open: openLedgerWithSelection, width: 1440 },
