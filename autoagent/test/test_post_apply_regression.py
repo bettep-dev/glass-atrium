@@ -275,9 +275,9 @@ class TestAlertPostApplyRegression(unittest.TestCase):
         self.later_rows: list[tuple] = []
         scratch = tempfile.TemporaryDirectory()
         self.addCleanup(scratch.cleanup)
-        self.target_path = Path(scratch.name) / "probe.md"
-        self.target_path.write_text(_BODY.WITH_EDIT, encoding="utf-8")
-        self.target_file = str(self.target_path)
+        self.target = SimpleNamespace(path=Path(scratch.name) / "probe.md")
+        self.target.path.write_text(_BODY.WITH_EDIT, encoding="utf-8")
+        self.target.file = str(self.target.path)
         self.diff_text = _added_diff(_ADDED_RULE)
         self.backup_root = Path(scratch.name) / "agents-bak"
         self.before_image = self.backup_root / f"{_CYCLE_DATE}_p{_PROPOSAL_ID}"
@@ -301,7 +301,7 @@ class TestAlertPostApplyRegression(unittest.TestCase):
                         _PROBE_AGENT,
                         _CYCLE_DATE,
                         _APPLIED_TS,
-                        self.target_file,
+                        self.target.file,
                         self.diff_text,
                     ),
                     *self.later_rows,
@@ -322,7 +322,7 @@ class TestAlertPostApplyRegression(unittest.TestCase):
 
     def _add_later_watched_row(self) -> None:
         """Queue a later applied row with its edit intact — its event proves the watch went on."""
-        later_path = self.target_path.with_name("later.md")
+        later_path = self.target.path.with_name("later.md")
         later_path.write_text(_BODY.WITH_EDIT, encoding="utf-8")
         self.later_rows = [
             (
@@ -374,7 +374,7 @@ class TestAlertPostApplyRegression(unittest.TestCase):
         # A skipped row never ends the watch → the later applied row still fires
         both = (_PROBE_AGENT, _LATER_AGENT)
         later_only = (_LATER_AGENT,)
-        absolute = str(self.target_path)
+        absolute = str(self.target.path)
         rows = (
             (
                 "every added line in the body",
@@ -398,7 +398,7 @@ class TestAlertPostApplyRegression(unittest.TestCase):
             (
                 "relative target_file read under the base root, edit intact",
                 _added_diff(_ADDED_RULE),
-                self.target_path.name,
+                self.target.path.name,
                 both,
             ),
         )
@@ -407,7 +407,7 @@ class TestAlertPostApplyRegression(unittest.TestCase):
             with self.subTest(name):
                 self.emitted.clear()
                 self.diff_text = diff_text
-                self.target_file = target_file
+                self.target.file = target_file
                 self.window_rows = _windows(1, 10, 3, 5)
                 err = self._run()
 
@@ -417,8 +417,8 @@ class TestAlertPostApplyRegression(unittest.TestCase):
     def test_when_target_body_unreadable_then_skipped_with_named_line(self) -> None:
         # One unreadable body skips only its own row, never the whole watch.
         rows = (
-            ("target file missing", lambda: self.target_path.unlink()),
-            ("target body not UTF-8", lambda: self.target_path.write_bytes(b"- \xff\xfe rule\n")),
+            ("target file missing", lambda: self.target.path.unlink()),
+            ("target body not UTF-8", lambda: self.target.path.write_bytes(b"- \xff\xfe rule\n")),
         )
         self._add_later_watched_row()
         for name, make_unreadable in rows:
@@ -431,7 +431,7 @@ class TestAlertPostApplyRegression(unittest.TestCase):
                 self.assertEqual([env["args"]["agent"] for env in self.emitted], [_LATER_AGENT])
                 self.assertIn(f"id={_LATER_PROPOSAL_ID} agent=", err)
                 self.assertNotIn(f"id={_PROPOSAL_ID} agent=", err)
-                self.assertIn(str(self.target_path), err)
+                self.assertIn(str(self.target.path), err)
 
     def test_when_same_cycle_rerun_then_dedup_key_is_identical(self) -> None:
         # The loop-event UPSERT keys on (event_ts, agent, eval_result); the
