@@ -57,6 +57,7 @@ interface RowReading {
 
 interface Ledger {
   card: Rgba;
+  sunken: Rgba;
   rest: Record<State, RowReading>;
   hovered: Record<State, RowReading>;
 }
@@ -95,8 +96,15 @@ async function readLedger(theme: string): Promise<Ledger> {
     hovered[state] = await readRow(page, state);
   }
   const card = parseColor(await page.evaluate(() => getComputedStyle(document.querySelector(".card")!).backgroundColor));
+  const sunken = parseColor(
+    await page.evaluate(() => {
+      const probe = document.querySelector(".card")!.appendChild(document.createElement("div"));
+      probe.style.background = "rgb(var(--sunken))";
+      return getComputedStyle(probe).backgroundColor;
+    }),
+  );
   await page.close();
-  return { card, rest, hovered };
+  return { card, sunken, rest, hovered };
 }
 
 // a row's opacity composites its whole group over the card → the fill's alpha and every opaque text colour scale by it
@@ -124,6 +132,11 @@ describe("ledger row fills under the shared table hover", () => {
       for (const state of ["viewer", "checked", "both"] as const) {
         assert.equal(rgbKey(paintedFill(hovered[state], card)), rgbKey(paintedFill(rest[state], card)), `${state} row changes fill on hover`);
       }
+    });
+
+    test(`${theme}: a hovered plain row paints the shared table hover --sunken`, () => {
+      const { card, sunken, hovered } = ledgers[theme];
+      assert.equal(rgbKey(paintedFill(hovered.plain, card)), rgbKey(sunken));
     });
 
     test(`${theme}: hover, viewer focus, checked and both paint four distinct fills, and hover differs from a resting row`, () => {
