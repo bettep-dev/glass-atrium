@@ -1,8 +1,9 @@
 #!/usr/bin/env bats
 # doctor-proposal-provenance.bats — pins run_doctor §25 (terminal proposal rows naming no actor).
 #
-# Every status writer stamps core.autoagent_proposals.reviewed_by from this release on, and nothing
-# backfills the rows written before it. This section is the standing surface that would notice the
+# Every status writer stamps core.autoagent_proposals.reviewed_by from this release on, but the
+# unadjudicated backfill, which relabels status only and keeps the stored actor; nothing backfills
+# the actor of rows written before it. This section is the standing surface that would notice the
 # gap reopening. Registration kind B (report-only): its log line only, and AC5 asserts the warning
 # total does not move — a counted warning would be red on every established install forever, and
 # scoping it by id or date to go green is the workaround class this item exists to avoid.
