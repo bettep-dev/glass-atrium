@@ -1860,7 +1860,7 @@ test("a run's rework count reads in the row meta tier, its warn tone on a glyph 
   }
 });
 
-test("the failure-cause split tones its icons only, and an empty window reads as the shared empty state", async () => {
+test("the failure-cause split tones its icons only, never its words or counts", async () => {
   const merged = { total: 5, failTotal: 3, blockedTotal: 2, reasons: [{ category: "timeout", count: 5, failCount: 3, blockedCount: 2 }] };
   const tree = await renderComponent("MergedBreakageBody", { merged, days: 30 });
   const text = collectText(tree).replace(/\s+/g, " ");
@@ -1869,7 +1869,9 @@ test("the failure-cause split tones its icons only, and an empty window reads as
   const toned = findNodes(tree, (n) => /\btext-(?:crit|info)\b/.test(String(n.props?.className ?? "")));
   assert.equal(toned.length, 2, "one toned node per split term");
   for (const node of toned) assert.equal(collectText(node).trim(), "", "the tone wraps the icon, never the word or count");
+});
 
+test("an empty failure-cause window reads as the shared empty state with no tone border", async () => {
   const empty = await renderComponent("MergedBreakageBody", { merged: { total: 0, failTotal: 0, blockedTotal: 0, reasons: [] }, days: 30 });
   const [state] = findAtoms(empty, "EmptyState");
   assert.match(String(state?.props.message ?? ""), /No failed or blocked tasks in the last 30 days/);
