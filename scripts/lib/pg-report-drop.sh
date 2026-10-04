@@ -1,13 +1,13 @@
 #!/usr/bin/env bash
-# pg-report-drop.sh — terminal drop sink for the converted PG reporting channel,
-# shared by the unattended daemons that write core.daemon_runs rows
-# (daemon-daily-restart.sh, wiki-daily-compile.sh). Sourced, not executable.
+# pg-report-drop.sh — terminal drop sink for the converted PG reporting channel
+# of the unattended job that writes core.daemon_runs rows
+# (wiki-daily-compile.sh). Sourced, not executable.
 #
 # The sink is the last channel by design: it never recurses into the PG channel
 # that just failed and never aborts its caller, so every write here is
 # best-effort. The record format and the rotation ceiling are a durable contract
-# (pinned by scripts/test/absorption-conversion.bats) — a single definition keeps
-# the two daemons from drifting apart on it.
+# (pinned by scripts/test/absorption-conversion.bats, which loads this lib
+# directly) — so it stays one definition outside its caller.
 #
 # PG_DROP_TAG identifies the emitting script in both channels; sourcing scripts
 # set it BEFORE the source (it is bound here, not at call time).
