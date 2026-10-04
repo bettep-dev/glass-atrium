@@ -4,7 +4,7 @@
 - **값의 출처**: `public/styles/tokens.css`(토큰) · `public/styles/base.css`(class) · `public/src/ui.jsx`(atom). 본 문서의 값 블록은 그 미러 → 어긋나면 같은 변경에서 둘 다 고친다.
 - **번호 고정**: 코드 주석 · 테스트가 `design.md §N` 으로 인용한다 → 섹션 · 소절 번호를 바꾸지 않는다.
 - **스택**:
-  - React 18 + JSX → esbuild precompile(`npm run build:jsx` → `public/dist/*.js`). 로드 순서 tweaks-panel → ui → screens → app (window-global 의존).
+  - React 18 + JSX → esbuild precompile(`npm run build:jsx` → `public/dist/` · screen 은 `public/dist/screens/`). 로드 순서 tweaks-panel → ui → screens → app (window-global 의존).
   - Tailwind CDN(JIT) + 런타임 `tailwind.config` 객체 · `rgb(var(--ink) / <alpha>)` 규약.
   - 아이콘: Lucide 0.469 를 `Icon` atom 으로만 (기본 size 16 · stroke 1.6). 손수 복사한 SVG path 금지.
   - 기본 테마 dark (`<html data-theme="dark">` + `app.jsx` → `TWEAK_DEFAULTS.theme`), Tweaks 패널이 light 로 전환.
@@ -801,10 +801,11 @@
 
 ## 11. AI Model Guidelines (MCP / Codegen 소비 규칙)
 
-- Figma Make · MCP-fed coding agent 가 이 문서를 소비할 때의 규칙. 자동 생성 레이아웃은 본 철학 검토 없이 머지 금지.
+- Figma Make · MCP-fed coding agent 가 이 문서를 소비할 때의 규칙. 자동 생성 레이아웃은 §1 철학과 §10 체크리스트로 검토한 뒤 머지한다.
 - **스택 사실 (코드 생성 전 필수)**:
   - Tailwind CDN-JIT + 런타임 `tailwind.config` 객체. Tailwind v4 `@theme` / Oxide / OKLCH 가 **아니다** → `@theme` 자동 토큰 · `text-[var(…)]` 색 파싱 가정 불가.
-  - JSX 는 esbuild 로 precompile — `public/src` 를 고치면 `npm run build:jsx`.
+  - JSX 는 esbuild 로 precompile — `public/src` 의 `.jsx` 를 고치면 `npm run build:jsx` (`public/src/data/*.js` 는 빌드 없이 로드).
+    - 새 `.jsx` 파일은 `package.json` → `build:jsx` 진입점 목록과 `index.html` 의 `dist/` script 태그에 함께 추가 — 목록 밖 파일은 빌드 · 로드되지 않는다.
   - UI 는 `window.UI` atom 으로 생성 (`Card` · `CardHead` · `SplitRow` · `DetailSurface` · `Badge` · `Table`/`ClampCell` · `KPI` · `EmptyState` · `AgentName`).
   - 로딩 · 오류 · 신선도 상태도 atom 으로: `LoadingPlaceholder` · `SkeletonRows` · `RegionFailure` · `PageErrorBanner` · `AlertCard` · `RetryButton` · `FreshnessStamp` · `RefreshButton` (§3.3).
   - 생성 금지: 소비처 없는 예약 class · atom `.glass-surface` · `.card-raised` · `.elev-overlay` · `AgentBadge` · stripe class `.sev-bar` · `.alert-row` (§4.2 no-stripe — severity 행은 `.alarm-row`).
