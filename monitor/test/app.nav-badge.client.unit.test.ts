@@ -164,7 +164,7 @@ function ready(data: unknown): unknown {
   return { status: "ready", data };
 }
 function daemonPayload(down: number): { daemons: { daemon_name: string; effective_status: string }[] } {
-  const names = ["autoagent", "wiki", "daily-restart-autoagent", "daily-restart-wiki"];
+  const names = ["autoagent", "wiki"];
   return {
     daemons: names.map((daemon_name, i) => ({
       daemon_name,
@@ -172,7 +172,7 @@ function daemonPayload(down: number): { daemons: { daemon_name: string; effectiv
     })),
   };
 }
-// Every shell-polled store answering healthy — the 7-part denominator the tile reads.
+// Every shell-polled store answering healthy — the 5-part denominator the tile reads.
 function allHealthy(over: Record<string, unknown> = {}): Record<string, unknown> {
   return {
     liveState: ready(daemonPayload(0)),
@@ -201,7 +201,7 @@ test("the nav down numeral equals the lane's down-part count for every mix of do
   const rows = [
     { name: "nothing down", over: {} },
     { name: "one daemon down", over: { liveState: ready(daemonPayload(1)) } },
-    { name: "every daemon down", over: { liveState: ready(daemonPayload(4)) } },
+    { name: "every daemon down", over: { liveState: ready(daemonPayload(2)) } },
     {
       name: "two daemons plus the hook chain",
       over: { liveState: ready(daemonPayload(2)), hookFailState: ready({ count_24h: 1, unretried_count_24h: 1 }) },
@@ -252,10 +252,10 @@ test("a fold with nothing checked is loading while any part store is pending, un
 });
 
 test("partsOk counts only observed-healthy parts and never exceeds partsChecked", () => {
-  for (const down of [0, 2, 4]) {
+  for (const down of [0, 1, 2]) {
     const fold = app.foldHarness(allHealthy({ liveState: ready(daemonPayload(down)) }));
-    assert.equal(fold.partsChecked, 7, "4 daemons + pg + browser + hook chain are all shell-polled");
-    assert.equal(fold.partsOk, 7 - down);
+    assert.equal(fold.partsChecked, 5, "2 daemons + pg + browser + hook chain are all shell-polled");
+    assert.equal(fold.partsOk, 5 - down);
     assert.ok(fold.partsOk <= fold.partsChecked);
     assert.equal(fold.downNames.length, down);
     assert.equal(fold.version, "1.0.0");
@@ -269,22 +269,22 @@ test("an unretried hook failure puts the hook chain in the lane's down set", () 
     allHealthy({ hookFailState: ready({ count_24h: 3, unretried_count_24h: 2 }) }),
   );
   assert.deepEqual([...fold.downNames], ["Hook Chain"]);
-  assert.equal(fold.partsOk, 6);
-  assert.equal(fold.partsChecked, 7);
+  assert.equal(fold.partsOk, 4);
+  assert.equal(fold.partsChecked, 5);
 });
 
 test("a hook store that has not answered leaves the part unchecked, not down", () => {
   const fold = app.foldHarness(allHealthy({ hookState: { status: "loading", data: null } }));
   assert.deepEqual([...fold.downNames], [], "silence is not a fault");
   assert.deepEqual([...fold.uncheckedNames], ["Hook Chain"]);
-  assert.equal(fold.partsChecked, 6, "the denominator is what answered");
+  assert.equal(fold.partsChecked, 4, "the denominator is what answered");
 });
 
 // The map is the owner of the part set — a part it reads as 'no data' must not read as down here.
 test("a part the System map calls 'no data' is unchecked in the fold, never down", () => {
   const noRows = app.foldHarness(allHealthy({ liveState: ready({ daemons: [] }) }));
   assert.deepEqual([...noRows.downNames], [], "an absent daemon row is unknown, not down");
-  assert.equal(noRows.uncheckedNames.length, 4);
+  assert.equal(noRows.uncheckedNames.length, 2);
 
   const unprobed = app.foldHarness(
     allHealthy({ healthState: ready({ status: "ok", db: "open", browser: "unprobed" }) }),
@@ -342,7 +342,7 @@ test("systemsRollup: every part healthy and no failures → ALL SYSTEMS", () => 
 
 // The footer tone follows the worst alarm: a down part is crit on the lane, so the footer is crit too.
 test("systemsRollup: a down part is crit with the ✕ glyph and the lane's down count", () => {
-  for (const down of [1, 3]) {
+  for (const down of [1, 2]) {
     const fold = app.foldHarness(allHealthy({ liveState: ready(daemonPayload(down)), kpiState: ready({ last_1h_fail_count: 4 }) }));
     const r = app.systemsRollup(fold);
     assert.strictEqual(r.tone, "crit", `${down} down outranks the fail count`);

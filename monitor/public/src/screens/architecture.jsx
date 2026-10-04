@@ -162,7 +162,7 @@ const FOCUS_RING_GAP = RING_GAP + 5;
 const RING_GAP_BY_CLASS = { [RING_FOCUS_CLASS]: FOCUS_RING_GAP };
 
 // 한 노드에 여러 판정이 겹칠 때 남길 하나 — 테두리는 한 겹뿐이라 최악이 이김.
-// cron 처럼 재시작 데몬 둘이 같은 노드를 짚는 자리에서 한쪽 결함이 다른 쪽 정상에 덮이지 않게 함.
+// 데몬과 부품이 같은 노드를 짚는 자리(autoagent_d)에서 한쪽 결함이 다른 쪽 정상에 덮이지 않게 함.
 // info ('No data') outranks ok — a part with no data must not read as all-clear under an ok neighbour.
 const RING_TONE_RANK = { ok: 1, info: 2, warn: 3, crit: 4 };
 
@@ -176,7 +176,6 @@ const DIAGRAM_SOURCE_AR = "the system map";
 const LIVE_SOURCE_AR = "the live overlay";
 
 // 페이로드 드릴다운 기본 데몬 — payload 를 실제로 기록하는 데몬(autoagent/wiki) 중 첫째.
-// daily-restart-* 는 run status 만 남기고 payload 를 쓰지 않아 항상 빈 entries 임.
 const MAP_PAYLOAD_DAEMON = "autoagent";
 
 // health 폴링 주기 — 장애 대응 표면이라 수동 Refresh 만으로는 늦음.
@@ -472,7 +471,7 @@ function ScreenArchitecture(
 	}, [activeDiagram]);
 
 	// unscoped mermaid node id → daemon 목록 — 서버 DAEMON_NODE_BINDINGS(node_ids) 기반. 소비자는 노드 상세 드로어의 daemon pill.
-	//   한 노드에 복수 daemon 바인딩 가능(cron: daily-restart-autoagent/-wiki) → id 당 목록 보존, last-writer-wins 드롭 방지 (F39).
+	//   한 노드에 복수 daemon 바인딩 가능 → id 당 목록 보존, last-writer-wins 드롭 방지 (F39).
 	const liveDaemonsByNodeId = useMemoAR(() => {
 		if (liveState.status !== "ready") return new Map();
 		return buildLiveDaemonsByNodeId(liveState.data?.daemons);
@@ -481,7 +480,7 @@ function ScreenArchitecture(
 	// 링 근거원 — 데몬 판정 ∪ 부품 판정.
 	// 데몬은 /live 의 node_ids 로, 부품은 같은 응답의 part_bindings 로 노드를 찾음.
 	// 판정 자체는 부품 쪽만 health 응답에서 옴.
-	// 두 원천을 한 Map 으로 접는 이유 — cron 처럼 양쪽이 같은 노드를 짚는 자리가 있고 테두리는 한 겹뿐임.
+	// 두 원천을 한 Map 으로 접는 이유 — autoagent_d 처럼 양쪽이 같은 노드를 짚는 자리가 있고 테두리는 한 겹뿐임.
 	// health 응답 넷이 deps 에 있어야 폴링 한 틱이 새 Map 이 됨.
 	// 캔버스 효과는 이 참조가 바뀔 때만 다시 칠함 — 빼면 첫 렌더만 맞고 이후 조용히 낡음.
 	const ringToneByNodeId = useMemoAR(
@@ -545,7 +544,7 @@ function ScreenArchitecture(
 		[liveState.data, daemonHealthState, pgState, hookState, hookFailState],
 	);
 
-	// caption population per node — two parts can share one node (cron), so one glyph may stand for several.
+	// caption population per node — parts may share one node, so one glyph may stand for several.
 	const attentionCountByNodeId = useMemoAR(
 		() => buildAttentionCountByNodeIdAR(healthPartRows),
 		[healthPartRows],
@@ -748,7 +747,7 @@ function ScreenArchitecture(
 					".arch-part-head { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; min-width: 0; } " +
 					// 로그 목록은 부품 이름 아래로 한 칸 들여씀 — 어느 부품의 로그인지 들여쓰기만으로 냄.
 					".arch-part-detail { padding-left: 10px; display: flex; flex-direction: column; gap: 8px; } " +
-					// 드릴다운 전환 — 한 노드에 데몬 부품이 둘 이상일 때만 섬(cron). 진짜 button 이라
+					// 드릴다운 전환 — 한 노드에 데몬 부품이 둘 이상일 때만 섬. 진짜 button 이라
 					// 키보드 활성과 포커스 순서를 브라우저에서 그대로 받음.
 					".arch-part-drill { align-self: flex-start; min-height: 32px; margin: 0 0 0 10px; padding: 0 10px; " +
 					"background: rgb(var(--elev)); border: 1px solid rgb(var(--line)); border-radius: 6px; " +
@@ -1636,7 +1635,7 @@ function HookFailureDetail({ state }) {
 }
 
 // 노드 상세의 헬스 구획 — 걷어낸 표가 서던 자리 (ADR-20). 표는 부품 명부 전체를 한 화면에
-// 폈고 이쪽은 클릭한 노드에 묶인 부품만 냄. 일곱 전원이 여전히 닿는 근거는 화면이 아니라
+// 폈고 이쪽은 클릭한 노드에 묶인 부품만 냄. 부품 전원이 여전히 닿는 근거는 화면이 아니라
 // 바인딩 계기임: 모든 부품이 노드를 최소 하나 갖고(AC-B2-2b) 그 노드가 전부 그려지므로
 // (AC-B2-2a) 그려지지 않는 노드 뒤에 숨는 부품이 있을 수 없음 — 그 조합은 붉은 테스트임.
 // 표가 내던 네 열 중 Nodes 만 형태가 바뀜: 클릭한 노드는 여는 행위가 이미 말했으므로 나머지
@@ -1687,7 +1686,7 @@ function NodePartHealth({
 				{rows.map((row) => {
 					const renderDetail = HEALTH_ROW_DETAILS[row.kind];
 					// 드릴다운 응답은 한 번에 한 데몬 것임 — 다른 데몬의 실행 목록을 이 데몬의 것으로
-					// 그리지 않도록 이름이 맞을 때만 상세를 폄 (cron 은 데몬 부품 둘이 같은 노드에 묶임).
+					// 그리지 않도록 이름이 맞을 때만 상세를 폄 (한 노드에 데몬 부품이 둘 이상 묶일 수 있음).
 					const isDrilled = !row.daemonName || row.daemonName === payloadDaemon;
 					// 남은 바인딩만 부름 — 클릭한 노드는 패널을 연 행위가 이미 말했음.
 					const alsoLights = row.nodeIds.filter((id) => id !== unscoped);
@@ -2279,7 +2278,7 @@ function getCanvasAR(root) {
 }
 
 // 서버 daemon 목록 → unscoped mermaid node id 별 daemon 배열 (F39).
-//   한 노드에 복수 daemon 바인딩 시(cron) last-writer-wins 로 하나가 유실되지 않도록 id 당 목록 축적.
+//   한 노드에 복수 daemon 바인딩 시 last-writer-wins 로 하나가 유실되지 않도록 id 당 목록 축적.
 function buildLiveDaemonsByNodeId(daemons) {
 	const m = new Map();
 	for (const d of daemons || []) {

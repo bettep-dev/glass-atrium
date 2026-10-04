@@ -66,7 +66,7 @@ const dash = await buildScreenSandbox<DashHelpers>(DASH_SRC);
 
 // Every part the shell polls answered healthy — the hook chain rides the harness wave too.
 const HEALTHY: Fold = {
-  status: "ready", partsOk: 7, partsChecked: 7, partsTotal: 7,
+  status: "ready", partsOk: 5, partsChecked: 5, partsTotal: 5,
   downNames: [], uncheckedNames: [], version: "1.0.0",
 };
 const LOADING = { status: "loading", data: null, error: null };
@@ -98,7 +98,7 @@ test("a healthy harness with normal spend and no update produces no lane rows", 
 
 test("every down part becomes one harness row naming the parts", () => {
   const rows = dash.buildAlarms({
-    harness: { ...HEALTHY, partsOk: 4, downNames: ["PostgreSQL", "autoagent"] },
+    harness: { ...HEALTHY, partsOk: 3, downNames: ["PostgreSQL", "autoagent"] },
     costState: kpi(10, 10),
     installKind: "hidden",
   });
@@ -122,13 +122,13 @@ test("an unavailable harness fold raises no alarm — absence is not a fault", (
 // a held reading whose refresh failed → its row keeps its tone but reads last known, as its tile does
 const HELD_ALARM_ROWS = [
   { name: "a down part held over a failed harness read", id: "harness", isHeld: true,
-    harness: { ...HEALTHY, partsOk: 6, downNames: ["autoagent"], unreadSources: ["daemon status"], error: "HTTP 500" },
+    harness: { ...HEALTHY, partsOk: 4, downNames: ["autoagent"], unreadSources: ["daemon status"], error: "HTTP 500" },
     costState: kpi(10, 10) },
   { name: "a down part fresh beside a failed failure-count read", id: "harness", isHeld: false,
-    harness: { ...HEALTHY, partsOk: 6, downNames: ["autoagent"], unreadSources: ["the failure count"], error: "HTTP 500" },
+    harness: { ...HEALTHY, partsOk: 4, downNames: ["autoagent"], unreadSources: ["the failure count"], error: "HTTP 500" },
     costState: kpi(10, 10) },
   { name: "a down part from a fresh harness read", id: "harness", isHeld: false,
-    harness: { ...HEALTHY, partsOk: 6, downNames: ["autoagent"] }, costState: kpi(10, 10) },
+    harness: { ...HEALTHY, partsOk: 4, downNames: ["autoagent"] }, costState: kpi(10, 10) },
   { name: "hot spend held over a failed cost read", id: "spend", isHeld: true,
     harness: HEALTHY, costState: { ...(kpi(500, 10) as object), error: "HTTP 500" } },
   { name: "hot spend from a fresh cost read", id: "spend", isHeld: false, harness: HEALTHY, costState: kpi(500, 10) },
@@ -308,14 +308,14 @@ test("the harness tile counts only the parts the shell actually polled", () => {
     dash.buildTiles({
       harness: {
         ...HEALTHY,
-        partsOk: 5, partsChecked: 6,
+        partsOk: 3, partsChecked: 4,
         downNames: ["autoagent"], uncheckedNames: ["Hook Chain"],
       },
       costState: LOADING, agentsState: LOADING, outcomesState: LOADING,
     }),
     "harness",
   );
-  assert.equal(tile.value, "1 of 6 down", "the verdict leads, over what answered, not what exists");
+  assert.equal(tile.value, "1 of 4 down", "the verdict leads, over what answered, not what exists");
   assert.equal(tile.tone, "crit");
   assert.ok(tile.trend?.includes("Hook Chain"), "the unchecked part is named, not silently dropped");
   assert.ok(!tile.hint.includes("Hook Chain"), "the verdict line never lists an unpolled part beside the down ones");
@@ -324,7 +324,7 @@ test("the harness tile counts only the parts the shell actually polled", () => {
 test("the harness and fleet tiles fill the line under their count with a secondary fact", () => {
   const harness = tileOf(
     dash.buildTiles({ harness: HEALTHY, costState: LOADING, agentsState: LOADING, outcomesState: LOADING }), "harness");
-  assert.equal(harness.trend, "All 7 parts polled on every harness read", "a fully polled harness says its coverage");
+  assert.equal(harness.trend, "All 5 parts polled on every harness read", "a fully polled harness says its coverage");
   const agentsState = ready({
     agents: [{ agent_id: "glass-atrium-dev-react", agent_name: "glass-atrium-dev-react", runs: 1458 }],
     meta: { total_agents: 12, circuit_breaker: { source: "loaded", registry_agents: 20, suspended_count: 0, streak_count: 0, alarms: [] } },
@@ -345,7 +345,7 @@ test("the harness hint's down list names exactly the down parts, never an unpoll
   for (const row of rows) {
     const tile = tileOf(
       dash.buildTiles({
-        harness: { ...HEALTHY, partsOk: 4, partsChecked: 4 + row.downNames.length, downNames: row.downNames, uncheckedNames: row.uncheckedNames },
+        harness: { ...HEALTHY, partsOk: 5 - row.uncheckedNames.length - row.downNames.length, partsChecked: 5 - row.uncheckedNames.length, downNames: row.downNames, uncheckedNames: row.uncheckedNames },
         costState: LOADING, agentsState: LOADING, outcomesState: LOADING,
       }),
       "harness",
@@ -438,8 +438,8 @@ test("the spend tile tones only on the pace verdict, never on the amount", () =>
 
 test("the harness tile headlines its verdict — the down count when any part is down, else the healthy count", () => {
   const cases: Array<[Fold, string]> = [
-    [{ ...HEALTHY }, "7 of 7 up"],
-    [{ ...HEALTHY, partsOk: 4, downNames: ["a", "b", "c"] }, "3 of 7 down"],
+    [{ ...HEALTHY }, "5 of 5 up"],
+    [{ ...HEALTHY, partsOk: 2, downNames: ["a", "b", "c"] }, "3 of 5 down"],
   ];
   for (const [fold, value] of cases) {
     const tile = tileOf(
@@ -451,14 +451,14 @@ test("the harness tile headlines its verdict — the down count when any part is
 });
 
 test("the harness tile names its down parts instead of restating the count", () => {
-  const harness = { ...HEALTHY, partsOk: 5, downNames: ["autoagent", "monitor"] };
+  const harness = { ...HEALTHY, partsOk: 3, downNames: ["autoagent", "monitor"] };
   const tile = tileOf(
     dash.buildTiles({ harness, costState: LOADING, agentsState: LOADING, outcomesState: LOADING }),
     "harness",
   );
-  assert.equal(tile.value, "2 of 7 down");
+  assert.equal(tile.value, "2 of 5 down");
   assert.match(tile.hint, /autoagent · monitor/, "the down parts are named on the tile");
-  assert.doesNotMatch(tile.hint, /\bof 7\b/, "the count stays in the headline alone");
+  assert.doesNotMatch(tile.hint, /\bof 5\b/, "the count stays in the headline alone");
 });
 
 test("tile labels carry no window text — the window is its own field so the heading case cannot swallow it", () => {
@@ -483,8 +483,8 @@ function held(state: unknown, error: string): unknown {
 function unreadFold(over: Record<string, unknown>): Fold {
   return { ...HEALTHY, unreadSources: ["daemon status"], error: "HTTP 500", ...over } as Fold;
 }
-// the five parts a two-part read leaves out — foldHarness lists every part it could not judge
-const LOST_PARTS = ["Chromium Export", "autoagent", "glass-atrium-wiki-curator", "daily-restart-wiki", "Hook Chain"];
+// the three parts a two-part read leaves out — foldHarness lists every part it could not judge
+const LOST_PARTS = ["autoagent", "glass-atrium-wiki-curator", "Hook Chain"];
 
 test("a region whose refresh failed over held data reads last-known and carries the failure", () => {
   const fleet = ready({ meta: { total_agents: 3, circuit_breaker: { source: "loaded", suspended_count: 0, streak_count: 0 } } });
@@ -582,7 +582,7 @@ test("a harness refresh that failed over held readings reads last-known, keeping
   ];
 
   for (const row of rows) {
-    const harness = unreadFold({ partsOk: 7 - row.downNames.length, downNames: row.downNames });
+    const harness = unreadFold({ partsOk: 5 - row.downNames.length, downNames: row.downNames });
     const tile = tileOf(
       dash.buildTiles({ harness, costState: kpi(1, 10), agentsState: ready({}), outcomesState: ready({}) }),
       "harness",
@@ -595,8 +595,8 @@ test("a harness refresh that failed over held readings reads last-known, keeping
 
 test("parts lost to a cold read failure count against every part, never only the parts still read", () => {
   const rows = [
-    { name: "two up, five never read", partsOk: 2, downNames: [] as string[], value: "2 of 7 up" },
-    { name: "one down, five never read", partsOk: 1, downNames: ["PostgreSQL"], value: "1 of 7 down" },
+    { name: "two up, three never read", partsOk: 2, downNames: [] as string[], value: "2 of 5 up" },
+    { name: "one down, three never read", partsOk: 1, downNames: ["PostgreSQL"], value: "1 of 5 down" },
   ];
 
   for (const row of rows) {
@@ -606,14 +606,14 @@ test("parts lost to a cold read failure count against every part, never only the
       "harness",
     );
     assert.equal(tile.value, row.value, `${row.name}: value`);
-    assert.equal(tile.detail, "5 not read", `${row.name}: the lost parts are counted`);
+    assert.equal(tile.detail, "3 not read", `${row.name}: the lost parts are counted`);
   }
 });
 
 test("the coverage line credits the System map only when every read answered, so a lost part never reads as unpolled by design", () => {
   const rows = [
-    { name: "every read answered", fold: { ...HEALTHY, partsOk: 6, partsChecked: 6, uncheckedNames: ["Hook Chain"] } as Fold, isOnMap: true },
-    { name: "a failed read lost five parts", fold: unreadFold({ partsOk: 2, partsChecked: 2, uncheckedNames: LOST_PARTS }), isOnMap: false },
+    { name: "every read answered", fold: { ...HEALTHY, partsOk: 4, partsChecked: 4, uncheckedNames: ["Hook Chain"] } as Fold, isOnMap: true },
+    { name: "a failed read lost three parts", fold: unreadFold({ partsOk: 2, partsChecked: 2, uncheckedNames: LOST_PARTS }), isOnMap: false },
   ];
 
   for (const row of rows) {
@@ -623,12 +623,12 @@ test("the coverage line credits the System map only when every read answered, so
     );
     const trend = tile.trend ?? "";
     assert.equal(/System map/.test(trend), row.isOnMap, `${row.name}: System map credit in "${trend}"`);
-    assert.match(trend, new RegExp(`^${row.fold.partsChecked} of 7 parts`), `${row.name}: states how many parts it covers`);
+    assert.match(trend, new RegExp(`^${row.fold.partsChecked} of 5 parts`), `${row.name}: states how many parts it covers`);
   }
 });
 
 test("part names keep their hyphens unbreakable wherever the page lists them", () => {
-  const harness = { ...HEALTHY, partsOk: 6, downNames: ["daily-restart-autoagent"], uncheckedNames: ["glass-atrium-wiki-curator"] };
+  const harness = { ...HEALTHY, partsOk: 3, partsChecked: 4, downNames: ["glass-atrium-wiki-curator"], uncheckedNames: ["Chromium Export"] };
   const tile = tileOf(
     dash.buildTiles({ harness, costState: kpi(1, 10), agentsState: ready({}), outcomesState: ready({}) }),
     "harness",
@@ -641,7 +641,7 @@ test("part names keep their hyphens unbreakable wherever the page lists them", (
 
   for (const { where, text } of lists) {
     assert.doesNotMatch(text, /-/, `${where}: no breakable hyphen`);
-    assert.match(text, /daily\u2011restart\u2011autoagent/, `${where}: still names the part`);
+    assert.match(text, /glass\u2011atrium\u2011wiki\u2011curator/, `${where}: still names the part`);
   }
 });
 
@@ -681,7 +681,7 @@ test("a harness tile with down parts says 'down' once across its value, verdict,
   for (const row of rows) {
     const tile = tileOf(
       dash.buildTiles({
-        harness: { ...HEALTHY, partsOk: 5, downNames: row.downNames, uncheckedNames: row.uncheckedNames },
+        harness: { ...HEALTHY, partsOk: 2, downNames: row.downNames, uncheckedNames: row.uncheckedNames },
         costState: LOADING, agentsState: LOADING, outcomesState: LOADING,
       }),
       "harness",

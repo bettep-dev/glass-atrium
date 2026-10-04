@@ -176,17 +176,15 @@ interface HealthFixture {
 	failedStores: HealthStore[];
 }
 
-// HEALTH_CARD_DEFS 의 daemon 카드 이름 — 이 둘만 명부에 두고 daily-restart-* 는 뺌.
-// 빠진 둘은 '못 찾음' 경로로 info 버킷에 들어가므로 분자/분모가 서로 다른 수가 됨:
-// 총계만 세는 픽스처는 버킷 배분이 뒤집혀도 초록이 됨.
+// HEALTH_CARD_DEFS 의 daemon 카드 이름 — 명부의 데몬 둘 전원.
 const HEALTH_OK_DAEMONS = ["autoagent", "wiki"];
 
 // 응답이 내는 마지막 실행 시각 — 명부에 있는 데몬만 이 값을 받고, 나머지 부품은 낼 실행이 없음.
 const DAEMON_RUN_TS = "2026-08-20T09:10:11.000Z";
 
-// 부품 명부의 크기 — HEALTH_CARD_DEFS 7종(PG · Chromium · daemon×4 · hook chain).
+// 부품 명부의 크기 — HEALTH_CARD_DEFS 5종(PG · Chromium · daemon×2 · hook chain).
 // 표의 행 수가 이 명부를 따르는지 재는 자리라 화면이 아니라 명부의 사실임.
-const HEALTH_EXPECTED_TOTAL = 7;
+const HEALTH_EXPECTED_TOTAL = 5;
 
 // 페이로드 항목 수 — 맵은 도착 건수만 한 줄로 냄(날짜·사유 펼침은 T9c 몫).
 const HEALTH_PAYLOAD_ENTRIES = 3;
@@ -710,7 +708,7 @@ const OK_DAEMON = "wiki";
 // 데몬 원천과 부품 원천이 같은 노드에서 만나는 자리 — HEALTH_CARD_DEFS 의 autoagent 카드 id.
 const DAEMON_PART_ID = "daemon-cycle";
 
-// 데몬 넷 밖의 부품 셋(PG · Chromium export · hook chain) → 그 판정을 대신 내는 존.
+// 데몬 둘 밖의 부품 셋(PG · Chromium export · hook chain) → 그 판정을 대신 내는 존.
 // 화면은 이 짝을 리터럴로 갖지 않음 — 그려지는 소스의 subgraph 멤버십과 part_bindings 를 곱해
 // "헬스 노드를 하나만 담은 존" 을 파생함. 여기 리터럴은 그 파생이 오늘 무엇을 내는지 못 박는 자리이고,
 // 집합 동등(그 셋이 전부인가)은 AC-B2-3f 가 따로 잼.
@@ -776,7 +774,7 @@ interface RingProbe {
 	ringed: string[];
 	ringClasses: string[];
 	// 노드 하나가 실제로 든 링 클래스 목록 — 총계만으로는 어느 노드가 어느 tone 인지 못 가름.
-	// 두 원천이 같은 노드를 짚는 자리(autoagent_d · cron)의 최악-우선 결과를 재는 유일한 다리임.
+	// 두 원천이 같은 노드를 짚는 자리(autoagent_d)의 최악-우선 결과를 재는 유일한 다리임.
 	classByNode: Record<string, string[]>;
 }
 
@@ -1024,7 +1022,7 @@ test("AC-B2-3b a fault daemon verdict outranks the healthy part verdict on the s
 });
 
 /**
- * AC-B2-3d — 부품 판정이 자기 자리를 켬. 데몬 넷 밖의 세 부품(PG · Chromium export · hook chain)은
+ * AC-B2-3d — 부품 판정이 자기 자리를 켬. 데몬 둘 밖의 세 부품(PG · Chromium export · hook chain)은
  * 이 경로가 없으면 영영 판정 없이 남음.
  * 그 셋은 저마다 헬스 노드를 하나만 담은 존에 있어, 판정이 노드가 아니라 존 상자에 걸림 —
  * 그래서 존이 켜졌는지와 노드가 안 켜졌는지를 함께 잼. 앞만 재면 판정이 두 겹으로 읽히는 회귀가 지나감.
@@ -1938,12 +1936,10 @@ interface RowExpansionProbe {
 
 // 데몬 이름 → 그 데몬을 실은 부품 id. 패널은 부품 단위이고 픽스처는 데몬 이름으로 말하므로
 // 둘 사이를 옮기는 자리가 필요함. 명부(health-model.js)와 같은 짝이지만 여기서 다시 적지 않고
-// 하네스가 쓰는 넷만 이름으로 고정함 — 유도하면 구현의 규칙을 되읽어 무엇을 세든 초록이 됨.
+// 하네스가 쓰는 둘만 이름으로 고정함 — 유도하면 구현의 규칙을 되읽어 무엇을 세든 초록이 됨.
 const DAEMON_PART_BY_NAME: Record<string, string> = {
 	autoagent: "daemon-cycle",
 	wiki: "glass-atrium-wiki-curator",
-	"daily-restart-autoagent": "daily-restart-autoagent",
-	"daily-restart-wiki": "daily-restart-wiki",
 };
 
 /**
@@ -1967,7 +1963,7 @@ async function getPanelDetailProbe(daemon: string): Promise<RowExpansionProbe> {
 }
 
 // 부품 → 그 부품을 켜는 노드를 열어 상세 패널을 세움. 표를 걷어낸 뒤로 헬스 단언은 전부 이 문을
-// 지남: 명부 일곱을 한 화면에 펴던 표 대신 부품은 제 노드의 패널에서만 보임. 짝은 서버 상수에서
+// 지남: 명부 전원을 한 화면에 펴던 표 대신 부품은 제 노드의 패널에서만 보임. 짝은 서버 상수에서
 // 뽑음 — 하네스가 부품↔노드를 다시 적으면 바인딩이 어긋나도 두 사본이 함께 틀린 채 초록이 됨.
 async function openPartHealth(partId: string): Promise<void> {
 	const [nodeId] = PART_NODE_BINDINGS[partId] ?? [];
@@ -2098,7 +2094,7 @@ async function waitForFittedCanvas(): Promise<void> {
 		{ timeout: 30_000 },
 	);
 
-	// 이미 맞춰져 있으면 그대로 둠 — 부품 일곱을 순회하는 절은 여기를 열네 번 지나는데, 매번
+	// 이미 맞춰져 있으면 그대로 둠 — 부품 다섯을 순회하는 절은 여기를 열 번 지나는데, 매번
 	// 포커스 + 키 + 폴링을 다시 돌리면 전체 스위트를 함께 돌릴 때 그 값이 기한을 넘겼음(실측 30.5초).
 	// 여기서 놓친 밀림은 clickNodeAt 이 누르기 직전에 다시 재어 되밀음.
 	if (await isCanvasFitted()) return;
@@ -2760,16 +2756,10 @@ test("AC-T9 a payload response still on its way reads as loading, not as unreada
 
 // --- AC-B2-4: the health table stands on the part roster ---------------------
 
-// 확장 컨트롤을 내야 하는 행 — 데몬 넷 + Hook Chain (AC-B2-4d). 명부에서 유도하지 않고 이름으로
+// 확장 컨트롤을 내야 하는 행 — 데몬 둘 + Hook Chain (AC-B2-4d). 명부에서 유도하지 않고 이름으로
 // 고정함: 유도하면 구현의 규칙을 그대로 되읽어 무엇을 세든 초록이 됨. 부품이 하나 늘면 여기가
 // 붉어지는 것이 맞음 — 새 부품은 '펼칠 것이 있는가' 를 스스로 밝혀야 함.
-const EXPANDABLE_PART_IDS = [
-	"daemon-cycle",
-	"glass-atrium-wiki-curator",
-	"daily-restart-autoagent",
-	"daily-restart-wiki",
-	"hook-chain",
-];
+const EXPANDABLE_PART_IDS = ["daemon-cycle", "glass-atrium-wiki-curator", "hook-chain"];
 
 // 판정 앵커 — 항목의 '등장' 이 아니라 tone 이 붙은 것을 기다림. 항목은 부품 명부로 서므로 health
 // 응답 없이도 패널을 여는 순간 그려짐: 등장을 기다리면 여는 것을 기다린 것이지 판정을 기다린 것이
@@ -2883,12 +2873,12 @@ async function waitForRowCount(expected: number): Promise<number> {
 	return count;
 }
 
-// 데몬 행 — 확장 컨트롤을 갖는 다섯 중 hook 행을 뺀 넷. 이 넷만 데몬 응답을 원천으로 삼음.
+// 데몬 행 — 확장 컨트롤을 갖는 셋 중 hook 행을 뺀 둘. 이 둘만 데몬 응답을 원천으로 삼음.
 const DAEMON_PART_IDS = EXPANDABLE_PART_IDS.filter((id) => id !== "hook-chain");
 
 // 항목 하나가 내는 판정 두 갈래 — tone 속성과 판정 글자. 둘을 함께 읽는 이유는 속성만 재면
 // 글자로 지어낸 판정('Healthy')을 못 보고, 글자만 재면 앵커 계약이 안 걸리기 때문임.
-// 데몬 넷은 서로 다른 노드에 묶여 있으므로 표에서 한 번에 읽던 것을 노드 순회로 읽음.
+// 데몬 둘은 서로 다른 노드에 묶여 있으므로 표에서 한 번에 읽던 것을 노드 순회로 읽음.
 async function getDaemonRowVerdicts(): Promise<{ id: string; tone: string | null; status: string }[]> {
 	const out: { id: string; tone: string | null; status: string }[] = [];
 	for (const id of DAEMON_PART_IDS) {
@@ -2973,7 +2963,7 @@ test("AC-B2-6f a daemon part with no response carries no verdict, never a fabric
 		"a daemon part whose response never arrived must carry no tone and read 'Not loaded' — a tone or a verdict word would be invented",
 	);
 
-	// 대조군 — 응답이 오면 같은 넷이 판정을 실음. 없으면 위 절은 '항목이 없어서' 초록일 수 있음.
+	// 대조군 — 응답이 오면 같은 둘이 판정을 실음. 없으면 위 절은 '항목이 없어서' 초록일 수 있음.
 	await openMap(getLiveFixture());
 	await waitForPartVerdict("daemon-cycle");
 	await closePanel();
@@ -3064,7 +3054,7 @@ test("AC-B2-4c an unreachable database turns the PostgreSQL entry, not only the 
 
 // 확장 컨트롤은 접을 것과 함께 사라졌음 — 남은 계약은 '읽을 것이 있는 부품만 상세를 낸다' 이고,
 // 그것이 원래 그 컨트롤이 지키던 약속임(빈 영역을 여는 자리는 읽을 것이 있다고 거짓말함).
-// 다만 한 노드에 데몬 부품이 둘이면(cron) 드릴다운 응답이 한 데몬 것뿐이라 한쪽은 상세를,
+// 다만 한 노드에 데몬 부품이 둘이면 드릴다운 응답이 한 데몬 것뿐이라 한쪽은 상세를,
 // 다른 쪽은 그것을 불러오는 컨트롤을 냄 — 둘 다 '읽을 것이 있음' 이므로 함께 셈. 그 대신
 // '같은 노드에서 상세는 한 번에 하나' 를 아래 마지막 절이 따로 못 박음.
 test("only a part with something to show offers a detail or a way to load one", async () => {
@@ -3084,12 +3074,15 @@ test("only a part with something to show offers a detail or a way to load one", 
 	assert.deepEqual(
 		[...offering].sort(),
 		[...EXPANDABLE_PART_IDS].sort(),
-		"exactly the four daemon parts and the hook chain part have something to show — nothing else does",
+		"exactly the daemon parts and the hook chain part have something to show — nothing else does",
 	);
 
 	// 한 노드에 묶인 데몬 부품 둘 — 상세는 한쪽에만, 토글은 양쪽에 있되 펼쳐진 것은 상세를 그린
 	// 쪽뿐. 둘 다 상세를 그리면 한 데몬의 실행 목록이 다른 데몬의 것으로 읽힘.
-	const shared = ["daily-restart-autoagent", "daily-restart-wiki"];
+	// 명부의 데몬 부품은 노드를 따로 가지므로 응답의 part_bindings 로 둘째를 첫째의 노드에 묶음.
+	const shared = ["daemon-cycle", "glass-atrium-wiki-curator"];
+	const sharedBindings = { ...PART_NODE_BINDINGS, [shared[1]]: [...PART_NODE_BINDINGS[shared[0]]] };
+	await openMap(getLiveFixture({ part_bindings: sharedBindings }), getQueueFixture(), getHookChainFixture());
 	await openPartHealth(shared[0]);
 	const both = [await getPartFacts(shared[0]), await getPartFacts(shared[1])];
 	assert.deepEqual(
@@ -3121,7 +3114,7 @@ test("only a part with something to show offers a detail or a way to load one", 
 
 test("Hide on an open daemon part collapses its runs and reads collapsed", async () => {
 	await openMap(getLiveFixture(), getQueueFixture(), getHookChainFixture());
-	const partId = "daily-restart-autoagent";
+	const partId = "daemon-cycle";
 	await openPartHealth(partId);
 	assert.equal((await getPartFacts(partId)).drillExpanded, "true", "fixture precondition: the drilled part opens with its runs shown");
 
@@ -3195,7 +3188,7 @@ test("B2-4 guard the residual bindings come from the served part_bindings, not a
 	await openMap(getLiveFixture());
 
 	// 기대값은 서버 상수에서 뽑음 — 하네스가 목록을 다시 적으면 두 사본이 함께 틀린 채 초록이 됨.
-	// 연 노드를 뺀 나머지가 기대값이고, 오늘 일곱 부품은 모두 노드 하나에만 묶여 있으므로 전부 빔.
+	// 연 노드를 뺀 나머지가 기대값이고, 오늘 다섯 부품은 모두 노드 하나에만 묶여 있으므로 전부 빔.
 	const roster = await getRosterPartIds();
 	assert.equal(
 		roster.length,
@@ -3239,20 +3232,20 @@ test("B2-4 guard the residual bindings come from the served part_bindings, not a
 	);
 });
 
-// 응답이 실행을 실어 준 데몬 부품 — 명부에 있는 둘. 나머지 부품은 낼 실행이 없음.
-const RAN_PART_IDS = ["daemon-cycle", "glass-atrium-wiki-curator"];
+// 응답이 실행을 실어 준 데몬 부품 — autoagent 하나. wiki 는 실행 없이 답해 '—' 갈래를 채움.
+const RAN_PART_IDS = ["daemon-cycle"];
 
 // 대조 순간 — 첫 절이 실은 값과 자릿수까지 떨어뜨림. 상대시각은 버킷으로 접히므로 가까운 두 값은
 // 같은 글로 접혀 '움직였는가' 를 못 재게 됨.
 const DAEMON_RUN_ALT_TS = "2019-03-04T05:06:07.000Z";
 
-// 명부에 있는 두 데몬이 같은 순간을 보고하는 health 픽스처 — 절마다 그 순간만 갈아끼움.
+// autoagent 만 그 순간을 보고하는 health 픽스처 — 절마다 그 순간만 갈아끼움.
 function getRanDaemonFixture(runTs: string): HealthFixture {
 	return getHealthFixture({
 		daemons: HEALTH_OK_DAEMONS.map((daemon_name) => ({
 			daemon_name,
 			effective_status: "ok" as const,
-			last_run_at: runTs,
+			last_run_at: daemon_name === "autoagent" ? runTs : null,
 		})),
 	});
 }

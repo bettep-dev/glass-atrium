@@ -93,12 +93,6 @@
    "glass-atrium-wiki-curator": [
     "wiki_d"
    ],
-   "daily-restart-autoagent": [
-    "cron"
-   ],
-   "daily-restart-wiki": [
-    "cron"
-   ],
    "hook-chain": [
     "hook_pipeline"
    ]

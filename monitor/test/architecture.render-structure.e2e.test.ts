@@ -881,10 +881,14 @@ describe("fault live fixture", () => {
 	for (const { width, height } of [{ width: 1440, height: 900 }, { width: 1024, height: 768 }]) {
 		test(`a counted fault badge sits at most half off its own node's bottom border, clear of every label, neighbour node and other zone, at ${width}x${height}`, async () => {
 			const pattern = "**/api/health/daemons";
-			// two more faulted parts bound to one node → the badge carries its widest text, the count
+			const livePattern = "**/api/architecture/live";
+			// both daemon parts faulted and served onto one node → the badge carries its widest text, the count
 			const health = getDaemonHealthFixture(FAULT_VERDICT);
-			for (const daemonName of ["daily-restart-autoagent", "daily-restart-wiki"]) health.daemons.push({ ...health.daemons[0], daemon_name: daemonName });
+			health.daemons.push({ ...health.daemons[0], daemon_name: "wiki" });
+			const live = getLiveFixture(FAULT_VERDICT, 999);
+			live.part_bindings = { ...PART_NODE_BINDINGS, "glass-atrium-wiki-curator": [...PART_NODE_BINDINGS["daemon-cycle"]] };
 			await ctx.page.route(pattern, (route) => route.fulfill({ json: health }));
+			await ctx.page.route(livePattern, (route) => route.fulfill({ json: live }));
 			try {
 				await ctx.page.setViewportSize({ width, height });
 				await ctx.page.reload({ waitUntil: "load" });
@@ -976,6 +980,7 @@ describe("fault live fixture", () => {
 				assert.deepEqual(hidden, [], `badge text painted over: ${hidden.map((g) => `${g.id} '${g.text}' (${g.box} · ${g.occluders.join(" ")})`).join("; ")}`);
 			} finally {
 				await ctx.page.unroute(pattern);
+				await ctx.page.unroute(livePattern);
 				await ctx.page.setViewportSize({ width: 1440, height: 900 });
 				await ctx.page.reload({ waitUntil: "load" });
 				await ctx.page.waitForSelector(`${ctx.selectors.canvas} svg g.node[data-arch-node-id]`, { timeout: 30_000 });

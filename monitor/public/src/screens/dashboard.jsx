@@ -924,7 +924,7 @@ function describeHarnessCoverage(harness, isPartlyUnread) {
   return `${counted} polled here; ${joinPartNames(harness.uncheckedNames)} checked on the System map`;
 }
 
-// U+2011 non-breaking hyphen → a name like daily-restart-autoagent never wraps mid-name in a narrow tile
+// U+2011 non-breaking hyphen → a name like glass-atrium-wiki-curator never wraps mid-name in a narrow tile
 function joinPartNames(names) {
   return names.map((name) => name.replace(/-/g, '\u2011')).join(' · ');
 }
