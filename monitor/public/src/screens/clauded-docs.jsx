@@ -927,7 +927,8 @@ function ScreenClaudedDocs(/* { onNav } */) {
         /* motion: effects 120ms — a row state change, no overshoot */
         .doc-row { transition: background 120ms; }
         @media (prefers-reduced-motion: reduce) { .doc-action-spinner { animation: none; } .doc-row { transition: none; } }
-        .doc-row:hover { background: rgb(var(--accent) / 0.06); }
+        /* .tbl tbody tr.doc-row → outranks base.css .tbl tbody tr:hover (--sunken), so every row-state fill below is the one that paints */
+        .tbl tbody tr.doc-row:hover { background: rgb(var(--accent) / 0.06); }
         /* title-cell 레이아웃 — 고정폭 leading slot(20px) + 제목 main(flex).
            사유 — chevron toggle 이 group-root 행에만 있어 일반/멤버 행은 제목 시작 x 가 어긋남.
            모든 행에 동일폭 slot 예약 → 제목 컬럼 정렬 통일 + 행 높이 차이 제거. */
@@ -945,12 +946,12 @@ function ScreenClaudedDocs(/* { onNav } */) {
            위 .doc-title-text 가 nowrap 대신 클램프인 사유와 같은 함정 — 상한을 풀면 제목 본문 상자가 343→340px 로 깎이고 나머지는 가로 스크롤로 나간다.
            124px = 컬럼 152px − td 좌우 padding 28px. 상한을 넘긴 칩은 잘려 사라지고(rev 가시폭 0px), 그 rev 가 가리키는 선행 문서는 뷰어 Version history 패널이 운반한다. */
         .doc-tags-cell > span { max-width: 124px; overflow: hidden; }
-        /* viewer row → a fill apart from checked (0.10) and both (0.16); the heavier title is its non-colour cue */
-        .doc-row.is-selected { background: rgb(var(--accent) / 0.13); }
+        /* viewer row → a fill apart from checked (0.10) and both (0.16), kept under hover; the heavier title is its non-colour cue */
+        .tbl tbody tr.doc-row.is-selected { background: rgb(var(--accent) / 0.13); }
         .doc-row.is-selected .doc-title-text { font-weight: 600; }
         /* awaiting delete confirmation → dimmed + aria-busy; the crit glyph before the title carries the tone.
-           0.8 keeps the dim cells at 4.5:1 on light elev (0.55 drops ink itself to 3.89) */
-        .doc-row.is-pending-delete { opacity: 0.8; }
+           0.85 keeps light dim cells ≥ 4.5:1 on every fill the row paints — checked 4.59, hover 4.81, rest 5.16 (0.8 drops checked to 4.08) */
+        .doc-row.is-pending-delete { opacity: 0.85; }
         /* margin-left = lead slot 20px + title row gap 6px → the snippet starts under the title */
         .doc-snippet { margin-left: 26px; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; overflow-wrap: anywhere; }
         /* trailing title-line pills never shrink → the title text ellipsizes first */
@@ -1065,8 +1066,8 @@ function ScreenClaudedDocs(/* { onNav } */) {
         /* a ledger under its column floors → the title floor narrows */
         @container doc-ledger (width < ${LEDGER_CD.FLOOR.sum}px) { .doc-col-title { min-width: ${LEDGER_CD.FLOOR.titleNarrow}px; } }
         /* 선택된 행 강조 — 기존 .is-selected (viewer focus) 와 색 구분: --accent 약한 채도. */
-        .doc-row.is-multi-selected { background: rgb(var(--accent) / 0.10); }
-        .doc-row.is-multi-selected.is-selected { background: rgb(var(--accent) / 0.16); }
+        .tbl tbody tr.doc-row.is-multi-selected { background: rgb(var(--accent) / 0.10); }
+        .tbl tbody tr.doc-row.is-multi-selected.is-selected { background: rgb(var(--accent) / 0.16); }
         /* group action bar — filter chip 행 아래 sticky · zinc-900 코드블록 톤.
            height 고정 (44px min) 사유 — hint(텍스트 1줄) vs active(btn.sm 툴바) 두 모드의
            natural height 차이가 아래 목록을 (de)select 마다 점프시킴 → 상수 높이 + box-sizing

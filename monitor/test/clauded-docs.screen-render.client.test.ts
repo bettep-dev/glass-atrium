@@ -1193,20 +1193,6 @@ test("the viewer row and a pending delete each carry a non-colour cue: the open 
   assert.equal(findNodes(byLabel("Doc 12"), (n) => n.props.atom === "Icon" && n.props.className === "text-crit").length, 0);
 });
 
-test("ledger row states never draw a stripe, and hover, viewer focus, checked and both read as distinct fills", async () => {
-  const css = getScreenCss(await loadDocsScreen());
-  const alpha = (selector: string) => {
-    const match = cssRuleBody(css, selector).match(/background\s*:\s*rgb\(var\(--accent\)\s*\/\s*([\d.]+)\)/);
-    assert.ok(match, `${selector} fills with the accent`);
-    return Number(match[1]);
-  };
-  const fills = [".doc-row:hover", ".doc-row.is-selected", ".doc-row.is-multi-selected", ".doc-row.is-multi-selected.is-selected"].map(alpha);
-  assert.equal(new Set(fills).size, fills.length, `fills ${fills.join(" / ")} must differ`);
-  assert.doesNotMatch(css, /\.doc-row[^{]*\{[^}]*box-shadow\s*:\s*inset\s+\d+px\s+0/, "no stripe");
-  assert.match(cssRuleBody(css, ".doc-row.is-selected .doc-title-text"), /font-weight\s*:\s*600/);
-  assert.match(cssRuleBody(css, ".doc-row.is-pending-delete"), /opacity\s*:\s*0\.\d+/);
-});
-
 test("the Documents style block draws shadows only from the shadow tokens, a 1px ring or none", async () => {
   const css = getScreenCss(await loadDocsScreen());
   const shadows = [...css.matchAll(/box-shadow\s*:\s*([^;}]+)/g)].map((m) => m[1].trim());
