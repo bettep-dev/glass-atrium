@@ -102,11 +102,16 @@ deploy_all() {
   done
 }
 
+# Leave a deployed plist for retired label <job>.
+deploy_retired_plist() {
+  printf '<plist/>\n' >"${LA}/com.glass-atrium.$1.plist"
+}
+
 # Leave a deployed plist for every retired label (the shape an install keeps until the retirement runs).
 deploy_retired() {
   local job
   for job in "${RETIRED_JOBS[@]}"; do
-    printf '<plist/>\n' >"${LA}/com.glass-atrium.${job}.plist"
+    deploy_retired_plist "${job}"
   done
 }
 
@@ -225,6 +230,30 @@ run_doctor_sandbox() {
   }
   assert_retired_warns
   assert_drift_term "${#RETIRED_JOBS[@]}"
+}
+
+@test "only a deployed retired-label plist is warned and counted, an absent one stays silent" {
+  local deployed="${RETIRED_JOBS[1]}" job
+  local warn="retired launchd job still deployed: com.glass-atrium."
+  deploy_all
+  deploy_retired_plist "${deployed}"
+
+  run_doctor_sandbox
+
+  [[ "${output}" == *"${warn}${deployed} — "* ]] || {
+    echo "missing retired warn: ${deployed}"
+    echo "${output}"
+    return 1
+  }
+  for job in "${RETIRED_JOBS[@]}"; do
+    [[ "${job}" == "${deployed}" ]] && continue
+    [[ "${output}" != *"${warn}${job} — "* ]] || {
+      echo "retired warn for absent plist: ${job}"
+      echo "${output}"
+      return 1
+    }
+  done
+  assert_drift_term 1
 }
 
 # === 4. mktemp failure -> loud skip, renderer NEVER invoked ====================
