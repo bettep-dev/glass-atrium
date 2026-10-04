@@ -561,10 +561,10 @@ model AutoagentProposal {
   //   that absence is the defined value, not a gap.
   // reviewedBy — the actor that produced the row's CURRENT status, whatever kind
   //   of transition it was. Every status writer stamps it but the unadjudicated
-  //   backfill, which relabels status only and keeps the stored actor (a NULL stays
-  //   NULL, so the parked-guard provenance fix still matches). Closed token set, each
-  //   inside VarChar(64), one per writer — a shared default would file one
-  //   writer's rows under another:
+  //   backfill, which relabels status only and keeps the stored actor: a NULL stays
+  //   NULL, so lib/ga-doctor.sh → _pg_proposal_actor_probe still counts the row as
+  //   naming no actor. Closed token set, each inside VarChar(64), one per writer —
+  //   a shared default would file one writer's rows under another:
   //     `monitor-user` — operator route (kept verbatim; live rows carry it)
   //     `daemon-apply-flip` — apply flip
   //     `daemon-apply-drain` — stale drain

@@ -8065,11 +8065,9 @@ def backfill_auth_mislabeled_proposals(
     return results
 
 
-# -- unadjudicated backfill (E2) ---------------------------------------------
-#
-# Relabels stored non-verdict 'rejected' rows to 'unadjudicated': rows written before
-# the label existed, plus the updater's unlanded rows. Writes status only, so the stored
-# actor survives. Every gate before the first connection needs no connection.
+# Unadjudicated backfill: relabels stored non-verdict 'rejected' rows to 'unadjudicated' —
+# rows written before the label existed, plus the updater's unlanded rows. Writes status
+# only, so the stored actor survives; every gate before the first connection needs none.
 _UNADJUDICATED_BACKFILL_PAGE_SIZE = 500
 _UNADJUDICATED_BACKFILL_LOG = "[daemon-cycle] unadjudicated backfill"
 _INSTALL_DB_NAME = "glass_atrium"
