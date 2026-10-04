@@ -110,7 +110,7 @@ function Sidebar({ active, onNav, harness, agentsState, pageState }) {
 								{badges.map((b, i) => (
 									<span
 										key={i}
-										className={`nav-badge shrink-0 ${b.badgeTone || ""}`}
+										className="nav-badge shrink-0"
 										title={b.title}
 									>
 										{/* neutral shell + numeral, tone on the glyph only · description = what AT hears instead of the bare numeral */}

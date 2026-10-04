@@ -7,6 +7,7 @@ import assert from "node:assert/strict";
 import vm from "node:vm";
 import { fileURLToPath } from "node:url";
 import { dirname, resolve } from "node:path";
+import { getReducedMotionCss } from "./lib/css-source.js";
 import { loadScreenModule } from "./lib/render-screen.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -21,18 +22,6 @@ function getRules(css: string): { selectors: string[]; body: string }[] {
     selectors: m[1].split(",").map((s) => s.trim()),
     body: m[2],
   }));
-}
-
-function getReducedMotionCss(css: string): string {
-  const blocks: string[] = [];
-  for (const m of css.matchAll(/@media\s*\(prefers-reduced-motion:\s*reduce\)\s*\{/g)) {
-    const start = (m.index ?? 0) + m[0].length;
-    let depth = 1;
-    let end = start;
-    for (; end < css.length && depth > 0; end++) depth += css[end] === "{" ? 1 : css[end] === "}" ? -1 : 0;
-    blocks.push(css.slice(start, end - 1));
-  }
-  return blocks.join("\n");
 }
 
 const getTransition = (body: string): string | undefined => body.match(/(?:^|[;\s{])transition\s*:\s*([^;}]+)/)?.[1].trim();

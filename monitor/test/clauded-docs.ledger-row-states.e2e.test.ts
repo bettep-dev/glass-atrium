@@ -1,5 +1,5 @@
 // Documents ledger row states measured in a real browser on the shipped tokens.css, base.css and the screen's own style block:
-// the fill each state paints under the shared table hover, and the pending-delete dimming's contrast on that fill.
+// the fill each state paints under the shared table hover, the pending-delete cue matching its twin, and each text pair's contrast on that fill.
 // Runner: npx tsx --test test/clauded-docs.ledger-row-states.e2e.test.ts — needs an installed chromium; no network, no app server.
 import test, { after, before, describe } from "node:test";
 import assert from "node:assert/strict";
@@ -73,43 +73,8 @@ interface Ledger {
   hovered: Record<State, RowReading>;
 }
 
-async function readRow(page: Page, state: State): Promise<RowReading> {
-  const raw = await page.evaluate((id) => {
-    const row = document.getElementById(id)!;
-    const style = getComputedStyle(row);
-    // no named helper in here: tsx's keepNames wraps it in a __name call the page does not define
-    const [dim, faint, title, pip, critGlyph, warnGlyph] = [".dim", ".faint", ".doc-title-text", ".stage-pip", ".glyph-crit", ".glyph-warn"].map((selector) =>
-      getComputedStyle(row.querySelector(selector)!),
-    );
-    return {
-      fill: style.backgroundColor,
-      dim: dim.color,
-      faint: faint.color,
-      ink: title.color,
-      pip: pip.backgroundColor,
-      glyph: { crit: critGlyph.color, warn: warnGlyph.color },
-      opacity: Number(style.opacity),
-      boxShadow: style.boxShadow,
-      title: { weight: title.fontWeight, decoration: title.textDecorationLine },
-    };
-  }, state);
-  return {
-    ...raw,
-    fill: parseColor(raw.fill),
-    dim: parseColor(raw.dim),
-    faint: parseColor(raw.faint),
-    ink: parseColor(raw.ink),
-    pip: parseColor(raw.pip),
-    glyph: { crit: parseColor(raw.glyph.crit), warn: parseColor(raw.glyph.warn) },
-  };
-}
-
 async function readLedger(theme: string): Promise<Ledger> {
-  const page = await browser.newPage({ viewport: { width: 900, height: 600 }, reducedMotion: "reduce" });
-  await page.setContent(ledgerPage(theme));
-  await page.addStyleTag({ path: resolve(STYLES, "tokens.css") });
-  await page.addStyleTag({ path: resolve(STYLES, "base.css") });
-  await page.addStyleTag({ content: SCREEN_CSS });
+  const page = await openLedgerPage(theme);
   const states = Object.keys(STATES) as State[];
   const rest = {} as Record<State, RowReading>;
   const hovered = {} as Record<State, RowReading>;
@@ -118,6 +83,55 @@ async function readLedger(theme: string): Promise<Ledger> {
     await page.hover(`#${state}`);
     hovered[state] = await readRow(page, state);
   }
+  const surfaces = await readSurfaces(page);
+  await page.close();
+  return { ...surfaces, rest, hovered };
+}
+
+async function openLedgerPage(theme: string): Promise<Page> {
+  const page = await browser.newPage({ viewport: { width: 900, height: 600 }, reducedMotion: "reduce" });
+  await page.setContent(ledgerPage(theme));
+  await page.addStyleTag({ path: resolve(STYLES, "tokens.css") });
+  await page.addStyleTag({ path: resolve(STYLES, "base.css") });
+  await page.addStyleTag({ content: SCREEN_CSS });
+  return page;
+}
+
+async function readRow(page: Page, state: State): Promise<RowReading> {
+  return parseRowStyles(await page.evaluate(readRowStyles, state));
+}
+
+// runs in the page → closes over nothing and holds no named helper: tsx's keepNames wraps one in a __name call the page does not define
+const readRowStyles = (id: string) => {
+  const row = document.getElementById(id)!;
+  const style = getComputedStyle(row);
+  const [dim, faint, title, pip, critGlyph, warnGlyph] = [".dim", ".faint", ".doc-title-text", ".stage-pip", ".glyph-crit", ".glyph-warn"].map((selector) =>
+    getComputedStyle(row.querySelector(selector)!),
+  );
+  return {
+    fill: style.backgroundColor,
+    dim: dim.color,
+    faint: faint.color,
+    ink: title.color,
+    pip: pip.backgroundColor,
+    glyph: { crit: critGlyph.color, warn: warnGlyph.color },
+    opacity: Number(style.opacity),
+    boxShadow: style.boxShadow,
+    title: { weight: title.fontWeight, decoration: title.textDecorationLine },
+  };
+};
+
+const parseRowStyles = (raw: ReturnType<typeof readRowStyles>): RowReading => ({
+  ...raw,
+  fill: parseColor(raw.fill),
+  dim: parseColor(raw.dim),
+  faint: parseColor(raw.faint),
+  ink: parseColor(raw.ink),
+  pip: parseColor(raw.pip),
+  glyph: { crit: parseColor(raw.glyph.crit), warn: parseColor(raw.glyph.warn) },
+});
+
+async function readSurfaces(page: Page): Promise<Pick<Ledger, "card" | "sunken">> {
   const card = parseColor(await page.evaluate(() => getComputedStyle(document.querySelector(".card")!).backgroundColor));
   const sunken = parseColor(
     await page.evaluate(() => {
@@ -126,8 +140,7 @@ async function readLedger(theme: string): Promise<Ledger> {
       return getComputedStyle(probe).backgroundColor;
     }),
   );
-  await page.close();
-  return { card, sunken, rest, hovered };
+  return { card, sunken };
 }
 
 // a row's opacity composites its whole group over the card → the fill's alpha and every opaque text colour scale by it

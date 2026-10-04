@@ -646,7 +646,7 @@ test("every toned nav badge carries its tone's glyph, whichever store raised it"
 });
 
 const getClassTokens = (n: RenderedNode): string[] => String(n.props?.className ?? "").split(/\s+/).filter(Boolean);
-const TONE_TEXT_CLASSES = ["text-ok", "text-warn", "text-crit", "text-info"];
+const TONE = { NAMES: ["ok", "warn", "crit", "info"], TEXT_CLASSES: ["text-ok", "text-warn", "text-crit", "text-info"] };
 
 // The badge shell and the rollup words stay neutral on the sunken surface (light warn 2.51, crit 3.52 as tinted text).
 test("the sidebar's nav badges and rollup put their tone on the glyph only, never on the shell or the words", async (t) => {
@@ -663,11 +663,13 @@ test("the sidebar's nav badges and rollup put their tone on the glyph only, neve
       const badges = findNodes(tree, (n) => getClassTokens(n).includes("nav-badge"));
       assert.ok(badges.length >= 2, "precondition: the render reaches the toned badges");
       for (const badge of badges) {
-        const tone = getClassTokens(badge).find((c) => c === "warn" || c === "crit");
-        assert.strictEqual(badge.props?.style, undefined, `a ${tone} badge paints no inline tone fill`);
         const [glyph, ...words] = badge.children.filter(isRenderedNode);
-        assert.ok(getClassTokens(glyph).includes(`text-${tone}`), `a ${tone} badge's glyph carries the tone`);
-        for (const word of words) assert.deepStrictEqual(getClassTokens(word).filter((c) => TONE_TEXT_CLASSES.includes(c)), [], `a ${tone} badge's numeral stays neutral`);
+        const tone = getClassTokens(glyph).find((c) => TONE.TEXT_CLASSES.includes(c))?.slice("text-".length) ?? "";
+        assert.ok(tone === "warn" || tone === "crit", `a badge glyph carries a raised tone, not "${tone}"`);
+        assert.strictEqual(collectText(glyph.children).join("").trim(), app.ui.TONE_GLYPH[tone], `a ${tone} badge's glyph is its tone's shape`);
+        assert.deepStrictEqual(getClassTokens(badge).filter((c) => TONE.NAMES.includes(c)), [], `a ${tone} badge shell names no tone`);
+        assert.strictEqual(badge.props?.style, undefined, `a ${tone} badge paints no inline tone fill`);
+        for (const word of words) assert.deepStrictEqual(getClassTokens(word).filter((c) => TONE.TEXT_CLASSES.includes(c)), [], `a ${tone} badge's numeral stays neutral`);
       }
 
       const rollup = app.systemsRollup(row.harness);

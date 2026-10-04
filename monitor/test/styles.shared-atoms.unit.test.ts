@@ -7,6 +7,7 @@ import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, resolve } from "node:path";
 
+import { getReducedMotionCss } from "./lib/css-source.js";
 import { compositeOver, contrastRatio, type Rgba } from "./lib/wcag-contrast.js";
 
 const STYLES = resolve(dirname(fileURLToPath(import.meta.url)), "../public/styles");
@@ -37,20 +38,6 @@ function getRuleBodies(source: string, selector: string): string[] {
 
 function getDecl(body: string, prop: string): string | undefined {
   return body.match(new RegExp(`(?:^|[;\\s])${prop}\\s*:\\s*([^;]+)`))?.[1].trim();
-}
-
-// the rules inside every `@media (prefers-reduced-motion: reduce)` block, comments stripped
-function getReducedMotionCss(source: string): string {
-  const css = source.replace(/\/\*[\s\S]*?\*\//g, "");
-  const blocks: string[] = [];
-  for (const m of css.matchAll(/@media\s*\(prefers-reduced-motion:\s*reduce\)\s*\{/g)) {
-    const start = (m.index ?? 0) + m[0].length;
-    let depth = 1;
-    let end = start;
-    for (; end < css.length && depth > 0; end++) depth += css[end] === "{" ? 1 : css[end] === "}" ? -1 : 0;
-    blocks.push(css.slice(start, end - 1));
-  }
-  return blocks.join("\n");
 }
 
 // Custom properties declared in any light-theme :root block of either stylesheet.

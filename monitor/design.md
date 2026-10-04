@@ -550,7 +550,8 @@
 - `.tabs`: `--sunken` track · 1px `--line` · `--radius-control` · padding 3 · gap 2.
 - `.tab`: padding 4px 11px · min-height 32 · `--fs-meta` · `--dim` · 500 · `--radius-inline`.
 - `.seg`: `--elev` · 1px `--line` · `--radius-control` · clip. 버튼 padding 5px 10px · min-height 32 · `--fs-meta` · `--dim` · 사이 1px `--line`.
-- **filled selected 상태는 하나**: `.tab.active` · `[aria-selected]` · `.seg button.active` · `[aria-pressed]` · `.btn[aria-pressed]` · `.pill--interactive[aria-pressed]` 모두 `--selected-fill` / `--selected-ink` · 500.
+- **filled selected 상태는 하나**: `.tab.active` · `[aria-selected]` · `.seg button.active` · `[aria-pressed]` · `.btn[aria-pressed]` · `.pill--interactive[aria-pressed]` · stage menu `[aria-checked]` 모두 `--selected-fill` / `--selected-ink` · 500.
+  - stage menu 의 checked 항목은 fill 에 더해 check mark — 색이 유일한 신호가 되지 않게.
 - `.seg` focus ring 은 inset (`outline-offset` = −ring width) — `.seg` 가 자식을 clip 하므로.
 
 ### 7.7 Sidebar — `.shell-sidebar` · `.nav-item`
