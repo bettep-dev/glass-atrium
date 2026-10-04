@@ -91,7 +91,7 @@ class _IngestCase(unittest.TestCase):
         self.base_root = Path(tmp.name)
         self.log_root = self.base_root / "logs"
         self.log_root.mkdir()
-        self.live_log = self.log_root / dc.MANIFEST_LOG_NAME
+        self.live_log = self.log_root / dc.MANIFEST.LOG_NAME
         self.pg_reach = seal_pg_reach(self)
         self.table = _SpawnManifestTable()
         self.events: list[dict[str, object]] = []
@@ -119,7 +119,7 @@ class _IngestCase(unittest.TestCase):
         return ingest
 
     def _get_spools(self) -> list[Path]:
-        return sorted(self.log_root.glob(f"{dc.MANIFEST_LOG_NAME}.*.spool"))
+        return sorted(self.log_root.glob(f"{dc.MANIFEST.LOG_NAME}.*.spool"))
 
     def _append(self, path: Path, text: str) -> None:
         with path.open("a", encoding="utf-8") as handle:
@@ -236,7 +236,7 @@ class TestManifestRotation(_IngestCase):
 
         ingest = self._ingest(_CYCLE_1)
 
-        self.assertEqual([p.name for p in self.log_root.iterdir()], [dc.MANIFEST_LOG_NAME])
+        self.assertEqual([p.name for p in self.log_root.iterdir()], [dc.MANIFEST.LOG_NAME])
         self.assertTrue(ingest.status.startswith("skipped:"), ingest.status)
         self.assertIn("WARN: manifest ingest skipped", self.stderr)
 
@@ -316,7 +316,7 @@ class TestManifestIngestCycleWiring(unittest.TestCase):
         tmp = tempfile.TemporaryDirectory()
         self.addCleanup(tmp.cleanup)
         self.root = Path(tmp.name)
-        self.live_log = self.root / "logs" / dc.MANIFEST_LOG_NAME
+        self.live_log = self.root / "logs" / dc.MANIFEST.LOG_NAME
         self.live_log.parent.mkdir()
         self.live_log.write_text(_get_line(), encoding="utf-8")
         (self.root / "agents").mkdir()
@@ -378,7 +378,7 @@ class TestManifestIngestCycleWiring(unittest.TestCase):
         report, stderr = self._run(skip_loop_emit=True)
 
         self.assertEqual(
-            sorted(p.name for p in self.live_log.parent.iterdir()), [dc.MANIFEST_LOG_NAME]
+            sorted(p.name for p in self.live_log.parent.iterdir()), [dc.MANIFEST.LOG_NAME]
         )
         self.assertIsNone(report.manifest_ingest)
         self.assertIn("manifest ingest skipped — no-write mode", stderr)

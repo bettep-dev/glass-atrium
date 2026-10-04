@@ -47,6 +47,7 @@ from datetime import date, datetime, timedelta, timezone
 from enum import IntEnum
 from itertools import groupby
 from pathlib import Path, PurePosixPath
+from types import SimpleNamespace
 from typing import Literal, NamedTuple, Optional
 
 # -- Constants --------------------------------------------------------------
@@ -11192,21 +11193,21 @@ def _pg_import_degradation_lines() -> list[str]:
 # renames the live log instead: a rename keeps the inode, so a racing append
 # lands in the spool, and the next cycle's re-read stores it before the unlink.
 
-MANIFEST_LOG_NAME = "inject-scope-rules.manifest.log"
-# Spool name contract shared with hooks/inject-scope-rules.sh → INJECT_MANIFEST_SPOOL_SUFFIX_RE.
-MANIFEST_SPOOL_SUFFIX_RE = re.compile(r"[0-9]{8}T[0-9]{6}Z\.[0-9]+\.spool")
-MANIFEST_SPOOL_CLOSED_EVAL_RESULT = "manifest-spool-closed"
-# Lesson fields: the v1.0.1 hook's shape, still in upgrading installs' live logs.
-_MANIFEST_LINE_RE = re.compile(
-    r"(?P<ts>\S+) \[inject-scope-rules\] MANIFEST agent_id=(?P<agent_id>\S+)"
-    r"(?: session_id=(?P<session_id>\S+))? agent=(?P<agent>\S+)"
-    r" ctx_bytes=(?P<ctx_bytes>[0-9]+)(?: digest=\S+)?"
-    r"(?: lessons=\S+ lesson_truncated=[0-9]+)? blocks=(?P<blocks>.*)"
+MANIFEST = SimpleNamespace(
+    LOG_NAME="inject-scope-rules.manifest.log",
+    # Spool name contract shared with hooks/inject-scope-rules.sh → INJECT_MANIFEST_SPOOL_SUFFIX_RE.
+    SPOOL_SUFFIX_RE=re.compile(r"[0-9]{8}T[0-9]{6}Z\.[0-9]+\.spool"),
+    # Lesson fields: the v1.0.1 hook's shape, still in upgrading installs' live logs.
+    LINE_RE=re.compile(
+        r"(?P<ts>\S+) \[inject-scope-rules\] MANIFEST agent_id=(?P<agent_id>\S+)"
+        r"(?: session_id=(?P<session_id>\S+))? agent=(?P<agent>\S+)"
+        r" ctx_bytes=(?P<ctx_bytes>[0-9]+)(?: digest=\S+)?"
+        r"(?: lessons=\S+ lesson_truncated=[0-9]+)? blocks=(?P<blocks>.*)"
+    ),
+    UNKNOWN_ID="unknown",
+    AGENT_TYPE_MAX_CHARS=64,
 )
-_MANIFEST_UNKNOWN_ID = "unknown"
-# core.spawn_manifest column bounds: a line past them could never insert, so it is
-# counted as a line without a row instead of failing every re-read of its spool.
-_MANIFEST_AGENT_TYPE_MAX_CHARS = 64
+MANIFEST_SPOOL_CLOSED_EVAL_RESULT = "manifest-spool-closed"
 _PG_INTEGER_MAX = 2**31 - 1
 
 # Optional, not `str | None`: an install's CLT python3 3.9 cannot evaluate the union.
@@ -11233,7 +11234,7 @@ class ManifestIngest:
 
 def get_manifest_log_path() -> Path:
     """The hook's live MANIFEST log under the install log root (hooks/hook-utils.sh → HOOK_LOG_DIR)."""
-    return ga_paths.get_log_root() / MANIFEST_LOG_NAME
+    return ga_paths.get_log_root() / MANIFEST.LOG_NAME
 
 
 def get_manifest_ingest_lock_path(live_log: Path) -> Path:
@@ -11333,7 +11334,7 @@ def _find_manifest_spools(live_log: Path) -> list[Path]:
     return sorted(
         path
         for path in live_log.parent.glob(f"{live_log.name}.*.spool")
-        if MANIFEST_SPOOL_SUFFIX_RE.fullmatch(path.name.removeprefix(prefix))
+        if MANIFEST.SPOOL_SUFFIX_RE.fullmatch(path.name.removeprefix(prefix))
     )
 
 
@@ -11384,7 +11385,7 @@ def _get_manifest_rows(data: bytes, *, is_final: bool) -> tuple[list[ManifestRow
 
 
 def _get_manifest_row(offset: int, line: str) -> ManifestRow | None:
-    match = _MANIFEST_LINE_RE.fullmatch(line)
+    match = MANIFEST.LINE_RE.fullmatch(line)
     if match is None:
         return None
     try:
@@ -11395,7 +11396,8 @@ def _get_manifest_row(offset: int, line: str) -> ManifestRow | None:
         return None
     ctx_bytes = int(match["ctx_bytes"])
     agent_type = match["agent"]
-    if ctx_bytes > _PG_INTEGER_MAX or len(agent_type) > _MANIFEST_AGENT_TYPE_MAX_CHARS:
+    # Over a spawn_manifest column bound → uninsertable → no row, not a stuck spool.
+    if ctx_bytes > _PG_INTEGER_MAX or len(agent_type) > MANIFEST.AGENT_TYPE_MAX_CHARS:
         return None
     return (
         offset,
@@ -11409,7 +11411,7 @@ def _get_manifest_row(offset: int, line: str) -> ManifestRow | None:
 
 
 def _get_manifest_id(value: str | None) -> str | None:
-    return None if value in (None, _MANIFEST_UNKNOWN_ID) else value
+    return None if value in (None, MANIFEST.UNKNOWN_ID) else value
 
 
 def run_cycle(
