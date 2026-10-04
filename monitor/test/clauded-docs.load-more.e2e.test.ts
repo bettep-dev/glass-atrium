@@ -1369,6 +1369,8 @@ describe("Type floor on the Documents screen, its viewer, version history and st
       try {
         const page: Page = await context.newPage();
         await page.goto(`${serverUrl}/#clauded-docs`, { waitUntil: "networkidle" });
+        // the app's mount effect writes data-theme from its tweaks → switch only once a fetched ledger row shows, a later commit than that effect
+        await revealRowByTitle(page, title.successor);
         await page.evaluate((value) => document.documentElement.setAttribute("data-theme", value), theme);
         await openViewerPanels(page);
         await page.keyboard.press("Escape");
