@@ -419,9 +419,11 @@ AUTH_OUTAGE_EVAL_RESULT = "auth-outage"
 # pre-apply rate (both windows share the learning-signal exclusion scope of
 # the PG helper — attribution failures + poisoned_window excluded).
 # Degradation → ONE WARN loop event naming the proposal id + its agents-bak
-# before-image path. NO auto-revert / agent-file write / safety-queue insert —
-# a weeks-latency revert would clobber intervening user edits, and the safety
-# queue is reserved for irreversible external-effect triggers.
+# before-image path (or that retention pruned it); a proposal whose added
+# lines all left the target body is skipped. NO auto-revert / agent-file
+# write / safety-queue insert — a weeks-latency revert would clobber
+# intervening user edits, and the safety queue is reserved for irreversible
+# external-effect triggers.
 POST_APPLY_REGRESSION_EVAL_RESULT = "post-apply-regression"
 
 # Days-since-last-applied corroborating crit (FIX #4) -----------------------
@@ -7252,6 +7254,7 @@ def _split_outcome_windows(
 def _fetch_applied_proposals() -> list[tuple] | None:
     """Recently APPLIED proposal rows for the regression watch, newest-first.
 
+    Row: (id, target_agent, cycle_date, reviewed_at, target_file, proposed_diff).
     reviewed_at is the apply-side status-flip timestamp (daemon-apply.sh
     update_db_status) — the pre/post window boundary. Bounded to the outcome
     lookback window (an older apply has no comparable outcome history) with
@@ -7262,7 +7265,7 @@ def _fetch_applied_proposals() -> list[tuple] | None:
         return None
 
     select_sql = (
-        "SELECT id, target_agent, cycle_date, reviewed_at "
+        "SELECT id, target_agent, cycle_date, reviewed_at, target_file, proposed_diff "
         "FROM core.autoagent_proposals "
         "WHERE status::text = 'applied' AND reviewed_at IS NOT NULL "
         "AND target_agent IS NOT NULL "
@@ -7288,13 +7291,60 @@ def _backup_subdir_path(cycle_date: object, proposal_id: object) -> Path:
 
     Derivation parity with daemon-apply.sh: BACKUP_DIR
     (${AUTOAGENT_BACKUP_DIR:-<root>/agents-bak}) + '<cycle>_p<id>'. Existence
-    is NOT checked — retention prune may already have dropped the subdir; the
-    WARN names the recorded rollback anchor either way.
+    is the caller's check — retention prune may already have dropped the subdir.
     """
     backup_root = os.environ.get("AUTOAGENT_BACKUP_DIR") or str(
         Path(__file__).resolve().parent.parent / "agents-bak"
     )
     return Path(backup_root) / f"{cycle_date}_p{proposal_id}"
+
+
+def _is_applied_edit_gone(proposed_diff: str | None, target_file: str) -> bool:
+    """True iff no added content line of the applied diff remains in the target body.
+
+    Verbatim line match, blank adds ignored (`_added_content_lines`). A diff with
+    no added content stays watched — its presence is undecidable. An unreadable
+    body holds none of the lines → True, with a named stderr line.
+    """
+    added = _added_content_lines(proposed_diff or "")
+    if not added:
+        return False
+    target_path = Path(target_file)
+    if not target_path.is_absolute():
+        target_path = ga_paths.get_base_root() / target_path
+    try:
+        body_lines = set(target_path.read_text(encoding="utf-8").splitlines())
+    except OSError as exc:
+        sys.stderr.write(
+            f"[daemon-cycle] post-apply watch: target body unreadable — {target_path} "
+            f"({type(exc).__name__}); its applied edit counts as gone\n"
+        )
+        return True
+    return not any(line.rstrip("\n") in body_lines for line in added)
+
+
+def _get_revert_hint(cycle_date: object, proposal_id: object) -> str:
+    """WARN tail: the before-image restore path while it exists, else that it was pruned.
+
+    A pruned before-image leaves no file to restore, and a 'reverted' status
+    without a restore would record a revert that never happened — so the
+    pruned branch names no revert path.
+    """
+    backup_subdir = _backup_subdir_path(cycle_date, proposal_id)
+    if not backup_subdir.is_dir():
+        return (
+            "before-image: pruned by agents-bak retention — no file revert path; "
+            "DETECTION-ONLY — no auto-revert, no status mutation, no "
+            "safety-queue insert; loop event emitted"
+        )
+    return (
+        f"before-image: {backup_subdir}; "
+        "DETECTION-ONLY — no auto-revert, no status mutation, no "
+        "safety-queue insert; loop event emitted; revert path (human/CLI): "
+        "restore the agent file from the before-image, then psql: "
+        "UPDATE core.autoagent_proposals SET status='reverted' "
+        f"WHERE id={proposal_id}"
+    )
 
 
 def alert_post_apply_regression() -> None:
@@ -7307,18 +7357,22 @@ def alert_post_apply_regression() -> None:
     (attribution failures + poisoned_window excluded inside the PG helper).
     Degradation (post rate exceeding pre by >= POST_APPLY_REGRESSION_RATE_DELTA
     with post n >= POST_APPLY_REGRESSION_MIN_POST_OBSERVATIONS) emits ONE WARN
-    loop event whose stderr line names the proposal id + agents-bak
-    before-image path. event_ts keys on the proposal's apply timestamp, so the
-    loop-event UPSERT natural key (event_ts, agent, eval_result) dedups a
-    same-cycle re-run and every later re-detection into a single row.
+    loop event whose stderr line names the proposal id + the agents-bak
+    before-image path, or that retention pruned it. A proposal whose added lines
+    all left the target body is skipped (_is_applied_edit_gone): the WARN would
+    point at an edit no longer there. event_ts keys on the proposal's apply
+    timestamp, so the loop-event UPSERT natural key (event_ts, agent,
+    eval_result) dedups a same-cycle re-run and every later re-detection into
+    a single row.
 
     Detection-only invariant: zero agent-file writes, zero proposal-status
     mutations, zero safety-queue inserts — the only write is the loop event.
     A human/CLI revert (status 'reverted') is the follow-up the WARN enables,
-    never an automatic action — the stderr line names the concrete path
-    (before-image restore + the status='reverted' UPDATE), since no setter
-    exists anywhere in the pipeline. Once set, _fetch_applied_proposals'
-    status='applied' predicate drops the row, so the WARN stops re-firing.
+    never an automatic action — while the before-image exists, the stderr line
+    names the concrete path (before-image restore + the status='reverted'
+    UPDATE), since no setter exists anywhere in the pipeline. Once set,
+    _fetch_applied_proposals' status='applied' predicate drops the row, so the
+    WARN stops re-firing.
     """
     if not HAS_PG_LOOP_WRITE or not HAS_PG_OUTCOME_READ or not HAS_CONFIDENCE_LIB:
         return
@@ -7328,8 +7382,10 @@ def alert_post_apply_regression() -> None:
         return
 
     lookback_seconds = PG_OUTCOME_LOOKBACK_DAYS * 86400
-    for proposal_id, agent, cycle_date, applied_ts in applied_rows:
+    for proposal_id, agent, cycle_date, applied_ts, target_file, diff in applied_rows:
         if not agent or applied_ts is None:
+            continue
+        if _is_applied_edit_gone(diff, target_file):
             continue
         window_rows = _pg_read_outcomes_since(
             applied_ts.timestamp() - lookback_seconds, agent=agent
@@ -7342,18 +7398,12 @@ def alert_post_apply_regression() -> None:
         if post_rate - pre_rate < POST_APPLY_REGRESSION_RATE_DELTA:
             continue
 
-        backup_subdir = _backup_subdir_path(cycle_date, proposal_id)
         sys.stderr.write(
             f"[daemon-cycle] WARN: post-apply regression — proposal "
             f"id={proposal_id} agent={agent} soft-negative rate "
             f"pre={pre_rate:.3f} → post={post_rate:.3f} "
             f"(delta >= {POST_APPLY_REGRESSION_RATE_DELTA}, "
-            f"post n={len(post_rows)}); before-image: {backup_subdir}; "
-            "DETECTION-ONLY — no auto-revert, no status mutation, no "
-            "safety-queue insert; loop event emitted; revert path (human/CLI): "
-            "restore the agent file from the before-image, then psql: "
-            "UPDATE core.autoagent_proposals SET status='reverted' "
-            f"WHERE id={proposal_id}\n"
+            f"post n={len(post_rows)}); {_get_revert_hint(cycle_date, proposal_id)}\n"
         )
         _invoke_pg_helper(
             {
