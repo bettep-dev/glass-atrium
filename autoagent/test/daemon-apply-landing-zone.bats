@@ -22,14 +22,16 @@
 # Requires: bats >= 1.5.0 (brew install bats-core), bash 3.2+, git (for `git apply`
 # only), python3
 #
-# Hermetic strategy: the PG backlog path is masked by pointing PATH at a stub bin
-# that MIRRORS every real command EXCEPT psql (whole-PATH mirror — robust to the
-# git-free daemon's shifting command set, where a hand-maintained allowlist would
-# silently 127 on a newly-used binary like basename/mv/stat). backlog_source_
-# available() (command -v psql) is therefore false and daemon-apply takes the
-# deterministic JSON-report fallback, exercising the full apply_patch_rows → guard →
-# (apply | reject) flow against the report-sourced patch. No PG, no live agents/
-# dir, no git repo is touched. git is NOT mirrored: the stub carries an
+# Hermetic strategy: every case drives the single-proposal path (--proposal-id) with
+# PATH at a stub bin that MIRRORS every real command EXCEPT psql and git (whole-PATH
+# mirror — robust to the git-free daemon's shifting command set, where a
+# hand-maintained allowlist would silently 127 on a newly-used binary like
+# basename/mv/stat). A psql stand-in answers the id lookup from a per-test row file
+# and acknowledges the status flip and the landed record; the parked-pattern guard
+# (a psycopg reader no psql stub isolates) answers "no guard fires" through the
+# AUTOAGENT_DAEMON_CYCLE_PY seam. That exercises the full apply_patch_rows → guard →
+# (apply | reject) flow with no PG, no live agents/ dir, no git repo and a
+# throwaway HOME. git is NOT mirrored: the stub carries an
 # allow-only-apply git shim (precedent: git-txn-gitfree.bats) that delegates
 # `git [-C <dir>] apply` to the real git and HARD-FAILS every other subcommand —
 # a suppressed non-apply git call inside the daemon can never pass unnoticed at
@@ -39,6 +41,7 @@ bats_require_minimum_version 1.5.0
 
 GA="$(cd -- "${BATS_TEST_DIRNAME}/../.." && pwd)"
 REAL_SCRIPT="${GA}/autoagent/daemon-apply.sh"
+PROPOSAL_ID=401
 # shellcheck source-path=SCRIPTDIR source=../../scripts/lib/path-guard.sh
 source "${GA}/scripts/lib/path-guard.sh"
 
@@ -47,8 +50,8 @@ source "${GA}/scripts/lib/path-guard.sh"
 # daemon + its sourced libs (git-txn.sh / apply-lock.sh) call a broad, evolving set
 # of coreutils (basename/dirname/mv/stat/cp/…); an allowlist that misses one makes
 # the daemon exit 127 mid-run and every test fail opaquely. Mirroring the whole
-# PATH keeps psql the ONLY thing masked, so command -v psql fails under the
-# stub-only PATH → the deterministic report-fallback path is taken.
+# PATH keeps psql (and git) the only commands left for install_psql_stub and
+# build_git_apply_shim to provide.
 build_psql_masked_stub() {
   local stub="$1" d f name
   local IFS=:
@@ -57,7 +60,7 @@ build_psql_masked_stub() {
     for f in "${d}"/*; do
       [[ -x "${f}" && ! -d "${f}" ]] || continue
       name="${f##*/}"
-      # psql masked (forces the report fallback); git replaced by the
+      # psql replaced by install_psql_stub; git replaced by the
       # allow-only-apply shim build_git_apply_shim writes into the stub.
       [[ "${name}" == "psql" || "${name}" == "git" ]] && continue
       [[ -e "${stub}/${name}" ]] || ln -sf "${f}" "${stub}/${name}"
@@ -98,18 +101,59 @@ EOF
   chmod +x "${stub}/git"
 }
 
-# setup_file — build the psql-masked stub + git shim ONCE (read-only, shared
-# across tests). Per-test setup only creates the mutable agents/reports dirs.
-# `skip` is illegal here; a missing daemon-apply.sh is handled by the per-test
-# setup skip below.
+# install_psql_stub — the PG stand-in for the single path: the id lookup answers
+# the per-test row file; the status flip, record-table probe, record insert and
+# stale-drain step each answer as a healthy database would.
+install_psql_stub() {
+  cat >"$1/psql" <<'STUB'
+#!/usr/bin/env bash
+sql="$(cat)"
+case "${sql}" in
+  *"'applied'::core"*) printf '1\n' ;;
+  *"to_regclass('core.autoagent_apply_records')"*) printf 't\n' ;;
+  *"INSERT INTO core.autoagent_apply_records"*) printf '1\n' ;;
+  *stale_attempt_count*) printf 'incremented\n' ;;
+  *"id::text = :'pid'"*) cat -- "${STUB_SINGLE_ROW:?}" ;;
+  *) : ;;
+esac
+exit 0
+STUB
+  chmod +x "$1/psql"
+}
+
+# build_guard_passthrough PATH — Python stand-in for the AUTOAGENT_DAEMON_CYCLE_PY seam (run as
+# `python3 <seam>`): the parked-pattern guard answers "no guard fires" (stdin drained for the
+# piping printf); every other mode execs the real file.
+build_guard_passthrough() {
+  local real_literal
+  real_literal="$(python3 -c 'import json, sys; print(json.dumps(sys.argv[1]))' "${GA}/autoagent/daemon_cycle.py")"
+  cat >"$1" <<PY
+import os
+import sys
+
+if "--parked-pattern-guard" in sys.argv[1:]:
+    sys.stdin.buffer.read()
+    sys.stdout.write('{"guarded": [], "rejected": []}\n')
+    sys.exit(0)
+os.execv(sys.executable, [sys.executable, ${real_literal}] + sys.argv[1:])
+PY
+}
+
+# setup_file — build the stub bin (PATH mirror, psql stand-in, git shim) and the
+# guard stand-in ONCE (read-only, shared across tests). Per-test setup only
+# creates the mutable agents/reports/home dirs. `skip` is illegal here; a missing
+# daemon-apply.sh is handled by the per-test setup skip below.
 setup_file() {
   STUB="${BATS_FILE_TMPDIR}/bin"
+  GUARD_SEAM="${BATS_FILE_TMPDIR}/daemon_cycle_passthrough.py"
   mkdir -p -- "${STUB}"
   if [[ -f "${GA}/autoagent/daemon-apply.sh" ]]; then
     build_psql_masked_stub "${STUB}"
+    install_psql_stub "${STUB}"
     build_git_apply_shim "${STUB}"
+    build_guard_passthrough "${GUARD_SEAM}"
   fi
-  export STUB
+  export STUB GUARD_SEAM
 }
 
 setup() {
@@ -118,7 +162,7 @@ setup() {
   WORK="$(cd -- "$(mktemp -d -t daemon-apply-lz-bats.XXXXXX)" && pwd -P)"
   AGENTS="${WORK}/agents" # PLAIN dir — the git-free daemon needs NO repo here.
   REPORTS="${WORK}/reports"
-  mkdir -p "${AGENTS}" "${REPORTS}"
+  mkdir -p "${AGENTS}" "${REPORTS}" "${WORK}/home"
 }
 
 teardown() {
@@ -141,49 +185,38 @@ snapshot_pristine() {
   cp -p -- "$1" "${PRISTINE_SNAPSHOT}"
 }
 
-# write_report — emit a one-patch JSON report (report-fallback shape) selecting
-# the given target + diff. The diff body is passed verbatim; a trailing newline
-# is added to mirror the PG-sourced proposed_diff convention.
-write_report() {
-  local target="$1" label="$2" diff="$3"
-  python3 - "${target}" "${label}" "${diff}" >"${WORK}/report.json" <<'PY'
-import json
-import sys
-
-target, label, diff = sys.argv[1], sys.argv[2], sys.argv[3]
-print(
-    json.dumps(
-        {
-            "patches": [
-                {
-                    "classification": "body-auto",
-                    "approval_tier": "auto",
-                    "pre_verify_passed": True,
-                    "haiku_status": "ok",
-                    "pattern_label": label,
-                    "pattern_agent": "probe",
-                    "target_file": target,
-                    "proposed_diff": diff + "\n",
-                }
-            ]
-        }
-    )
-)
-PY
+# b64 — base64 without line breaks, as the single lookup encodes free text.
+b64() {
+  printf '%s' "$1" | base64 | tr -d '\n'
 }
 
-# run_apply — invoke daemon-apply.sh on the report fixture with the psql-masked
-# stub PATH (report fallback) and the plain agents dir (no git repo).
+# write_proposal_row — the stored pending proposal the single lookup returns for
+# the given target + label + diff, in the lookup's eight fields. The diff gains a
+# trailing newline to mirror the PG-sourced proposed_diff convention.
+write_proposal_row() {
+  local target="$1" label="$2" diff="$3" label_b64 agent_b64 target_b64 diff_b64
+  label_b64="$(b64 "${label}")"
+  agent_b64="$(b64 probe)"
+  target_b64="$(b64 "${target}")"
+  diff_b64="$(b64 "${diff}"$'\n')"
+  printf '%s|2026-06-26|%s|%s|%s|%s|pending|ok\n' "${PROPOSAL_ID}" "${label_b64}" \
+    "${agent_b64}" "${target_b64}" "${diff_b64}" >"${WORK}/proposal.row"
+}
+
+# run_apply — apply the stored proposal through --proposal-id with the stub PATH,
+# the guard stand-in and the plain agents dir (no git repo). HOME is throwaway: the
+# end-of-run status backfill is HOME-anchored, so a real HOME runs the live
+# install's backfill against the live data root.
 # AUTOAGENT_PREFLIGHT_ACTIVE=1: this suite exercises the landing-zone guard, not
-# the test-suite preflight — the sentinel skips the batch-path green-suite (whose
-# roots ARE present under the live GA_ROOT here) so the apply path runs directly.
+# the test-suite preflight, so the sentinel lets the apply path run directly.
 run_apply() {
-  run env PATH="${STUB}" AUTOAGENT_REPORTS_DIR="${REPORTS}" \
-    AUTOAGENT_PREFLIGHT_ACTIVE=1 \
-    bash "${REAL_SCRIPT}" --report "${WORK}/report.json" --agents-dir "${AGENTS}"
+  run env PATH="${STUB}" HOME="${WORK}/home" AUTOAGENT_REPORTS_DIR="${REPORTS}" \
+    AUTOAGENT_PREFLIGHT_ACTIVE=1 STUB_SINGLE_ROW="${WORK}/proposal.row" \
+    AUTOAGENT_DAEMON_CYCLE_PY="${GUARD_SEAM}" \
+    bash "${REAL_SCRIPT}" --proposal-id "${PROPOSAL_ID}" --agents-dir "${AGENTS}"
 }
 
-# applied_log_path — today's report-fallback applied JSONL.
+# applied_log_path — today's applied JSONL.
 applied_log_path() {
   printf '%s/autoagent-applied-%s.jsonl' "${REPORTS}" "$(date -u +%Y-%m-%d)"
 }
@@ -205,7 +238,7 @@ applied_log_path() {
  editable goal line one
 +inserted editable line
  editable goal line two'
-  write_report "${AGENTS}/probe.md" "probe-in" "${diff}"
+  write_proposal_row "${AGENTS}/probe.md" "probe-in" "${diff}"
   run_apply
 
   [[ "${status}" -eq 0 ]]
@@ -234,7 +267,7 @@ applied_log_path() {
  - MUST NOT do the dangerous thing
 +- injected protected rule
  - protected rule line alpha'
-  write_report "${AGENTS}/probe.md" "probe-out" "${diff}"
+  write_proposal_row "${AGENTS}/probe.md" "probe-out" "${diff}"
   run_apply
 
   # Loud reject reason recorded.
@@ -266,7 +299,7 @@ applied_log_path() {
  plain unmarked body line one
 +inserted line
  plain unmarked body line two'
-  write_report "${AGENTS}/probe.md" "probe-nomarker" "${diff}"
+  write_proposal_row "${AGENTS}/probe.md" "probe-nomarker" "${diff}"
   run_apply
 
   grep -q '"reason":"landing_zone_reject"' "$(applied_log_path)"
@@ -302,7 +335,7 @@ applied_log_path() {
  work editable line one
 +inserted into work region
  work editable line two'
-  write_report "${AGENTS}/probe.md" "probe-multi" "${diff}"
+  write_proposal_row "${AGENTS}/probe.md" "probe-multi" "${diff}"
   run_apply
 
   [[ "${status}" -eq 0 ]]
@@ -327,7 +360,7 @@ applied_log_path() {
   # placement is EOF, which by construction lands OUTSIDE any editable region.
   local diff='+appended fragment line one
 +appended fragment line two'
-  write_report "${AGENTS}/probe.md" "probe-headerless" "${diff}"
+  write_proposal_row "${AGENTS}/probe.md" "probe-headerless" "${diff}"
   run_apply
 
   grep -q '"reason":"landing_zone_reject"' "$(applied_log_path)"
@@ -362,7 +395,7 @@ applied_log_path() {
  editable goal line one
 +inserted editable line
  editable goal line two'
-  write_report "${AGENTS}/locked/probe.md" "probe-readerr" "${diff}"
+  write_proposal_row "${AGENTS}/locked/probe.md" "probe-readerr" "${diff}"
 
   # Revoke traversal on the parent dir so the guard's open() fails (fail-closed).
   # teardown restores perms (chmod -R u+rwX) before rm -rf.
@@ -408,7 +441,7 @@ applied_log_path() {
  - MUST NOT do the dangerous thing
 +- injected protected rule
  - protected rule line alpha'
-  write_report "${AGENTS}/probe.md" "probe-mixed" "${diff}"
+  write_proposal_row "${AGENTS}/probe.md" "probe-mixed" "${diff}"
   run_apply
 
   # Loud out_of_region reject reason recorded (the protected hunk is the trigger).
@@ -440,7 +473,7 @@ applied_log_path() {
  editable goal line one
 +inserted editable line
  editable goal line two'
-  write_report "${AGENTS}/probe.md" "probe-sigterm" "${diff}"
+  write_proposal_row "${AGENTS}/probe.md" "probe-sigterm" "${diff}"
 
   # Handshake seam (git shim): READY appears once the daemon is INSIDE the
   # in-flight `git apply` — i.e. mid-run, .apply-lock held; RESUME lets the
@@ -448,10 +481,11 @@ applied_log_path() {
   # child exits (the TERM trap cannot run while git is still in flight).
   local ready="${WORK}/git-apply.ready" resume="${WORK}/git-apply.resume"
 
-  env PATH="${STUB}" AUTOAGENT_REPORTS_DIR="${REPORTS}" \
+  env PATH="${STUB}" HOME="${WORK}/home" AUTOAGENT_REPORTS_DIR="${REPORTS}" \
     LZ_GIT_APPLY_READY="${ready}" LZ_GIT_APPLY_RESUME="${resume}" \
-    AUTOAGENT_PREFLIGHT_ACTIVE=1 \
-    bash "${REAL_SCRIPT}" --report "${WORK}/report.json" --agents-dir "${AGENTS}" \
+    AUTOAGENT_PREFLIGHT_ACTIVE=1 STUB_SINGLE_ROW="${WORK}/proposal.row" \
+    AUTOAGENT_DAEMON_CYCLE_PY="${GUARD_SEAM}" \
+    bash "${REAL_SCRIPT}" --proposal-id "${PROPOSAL_ID}" --agents-dir "${AGENTS}" \
     </dev/null >"${WORK}/daemon.log" 2>&1 3>&- &
   DAEMON_PID=$!
 
