@@ -136,7 +136,7 @@ fi
 # DEV-set — core-compliance-matrix.md Scope Legend canonical DEV agents. Space-separated tokens for
 # bash 3.2 (no declare -A). AUTO-SYNCED from the scope-dev.md DEV roster by agent_lifecycle (the
 # add/delete transaction + `python -m agent_lifecycle sync-gate-roster`) — do NOT hand-edit.
-readonly DEV_SET="glass-atrium-dev-front glass-atrium-dev-react glass-atrium-dev-angular glass-atrium-dev-gsap glass-atrium-dev-android glass-atrium-dev-nestjs glass-atrium-dev-node glass-atrium-dev-python glass-atrium-dev-db glass-atrium-dev-rag glass-atrium-dev-animator glass-atrium-dev-shell glass-atrium-dev-swift"
+readonly DEV_SET="glass-atrium-dev-front glass-atrium-dev-react glass-atrium-dev-angular glass-atrium-dev-gsap glass-atrium-dev-android glass-atrium-dev-nestjs glass-atrium-dev-node glass-atrium-dev-python glass-atrium-dev-db glass-atrium-dev-rag glass-atrium-dev-animator glass-atrium-dev-shell glass-atrium-dev-swift glass-atrium-dev-aws"
 
 # Deep-review override (surface 5): a declaration listing this many paths, or any path under one of
 # these prefixes, outweighs the writer-reported confidence when the review is composed. The prose SoT

@@ -355,7 +355,7 @@ trap 'printf "[enforce-workflow-verify-stage] internal error at line %d: %s — 
 # the DEV_SET in enforce-verification-gate.sh. The declaration grammar validates agent names against
 # THIS single runtime roster (never a second hardcoded list) so a newly created dev agent is accepted
 # the moment sync-gate-roster runs.
-readonly DEV_SET="glass-atrium-dev-front glass-atrium-dev-react glass-atrium-dev-angular glass-atrium-dev-gsap glass-atrium-dev-android glass-atrium-dev-nestjs glass-atrium-dev-node glass-atrium-dev-python glass-atrium-dev-db glass-atrium-dev-rag glass-atrium-dev-animator glass-atrium-dev-shell glass-atrium-dev-swift"
+readonly DEV_SET="glass-atrium-dev-front glass-atrium-dev-react glass-atrium-dev-angular glass-atrium-dev-gsap glass-atrium-dev-android glass-atrium-dev-nestjs glass-atrium-dev-node glass-atrium-dev-python glass-atrium-dev-db glass-atrium-dev-rag glass-atrium-dev-animator glass-atrium-dev-shell glass-atrium-dev-swift glass-atrium-dev-aws"
 
 # Firing-trace log path (passive probe). Lives in the live runtime data dir alongside
 # session-spawns/. WORKFLOW_GATE_FIRED_LOG override exists for Bats fail-safe testing only —
