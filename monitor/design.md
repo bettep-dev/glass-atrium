@@ -39,7 +39,7 @@
 **2) 가리지 않는 레이어드 깊이 (Layered Depth Without Occlusion)**
 
 - 깊이 = **휘도 차(luminance delta) + 경계(border)**. 아래 레이어를 뭉개는 blur 로 표현하지 않는다.
-- 사이드바 = 같은 평면 · 카드 = raised · drawer/dialog/popover = overlay. 어떤 레이어도 그 아래 정보를 흐려 가리지 않는다.
+- 사이드바 · 카드 · KPI = raised · drawer/dialog/popover = overlay (§6.1). 어떤 레이어도 그 아래 정보를 흐려 가리지 않는다.
 
 **3) 위에서 오는 확산광 (Diffuse Top-Light)**
 
@@ -90,7 +90,7 @@
 3. **Restraint — 절제된 투명도.** glass/blur 는 transient · light-dismiss 표면에만. 상시 표면은 불투명. "모든 카드에 backdrop-blur" 금지 (Fluent: Acrylic = transient, Mica/Solid = 상시).
 4. **Elevation through border and luminance, not blur.**
    - light: raised = 1px `--line` border 만. shadow 는 raised-2(hover/focus)와 overlay 부터.
-   - dark: 휘도 step + `--shadow-raised` + 상단 inset 하이라이트.
+   - dark: 휘도 step(28 fill) + 1px `--line` 이 주채널. `--shadow-raised` + 상단 inset 하이라이트는 `.card` 만 (`.sub-card` 는 inset 0.04 만) — KPI · 사이드바는 fill step + border 만.
 5. **정확히 4단계 elevation.** `sunken → base → raised → overlay`. raised-2 는 raised 의 hover/focus 상태이지 별도 단계가 아니다. 테마별 채널: §6.1.
 6. **Semantic 토큰은 테마별로 값이 갈리는 곳을 매개한다.**
    - Tier 2 alias 가 있고 그 alias 가 테마마다 다른 primitive 를 가리키면(예: `--surface-raised-2`) component 는 alias 를 쓴다.
@@ -332,7 +332,8 @@
   - `KpiValue tone`: glyph 장식(aria-hidden), 수치는 neutral ink.
   - `PageVerdict`: glyph 만 tone, 단어와 문장은 ink.
 - **Badge 3 role** (`ui.jsx` → `Badge`):
-  - `status` — 반응이 필요한 lifecycle/health. 선행 glyph 가 tone 운반. glyph 가 없을 때만(`glyph` false) 라벨이 tone 을 운반, shell 은 여전히 neutral.
+  - `status` — 반응이 필요한 lifecycle/health. 선행 glyph 가 tone 운반, 라벨은 `--dim`.
+    - `glyph` false 면 라벨 텍스트가 tone 을 운반 (shell 은 neutral) → light 에서 AA 미달이라 규칙이 아니라 알려진 예외 (아래 **no-glyph status 라벨**).
   - `metadata` — 서술 속성 (agent-only · md · model id). neutral, glyph 없음, 소문자.
   - `count` — 순수 수량. neutral, glyph 없음, mono tabular.
   - 변형: `absent`(dashed · 무배경 · `--faint`) · `interactive`(`<button>`) · icon-only(정사각, 의미는 aria-label/title).
@@ -340,15 +341,38 @@
   - light: tone 색 **solid well + `--elev` knock-out glyph** — tinted light well 은 `--warn` glyph 를 2.81:1 로 떨어뜨린다.
   - dark: tone 0.12 tinted well + tone glyph.
 - **severity 요소는 glass/blur 위에 두지 않는다** — desaturation 이 응급 신호를 약화 (§6.3).
-- **알려진 예외 (현재 코드, 수정 대상)**:
-  - `.nav-badge.warn` 과 `app.jsx` → `NAV_BADGE_CRIT_STYLE`: tone 0.15 tinted fill + tone 텍스트.
-    - light 최악 = active · hover `.nav-item` 의 `--sunken` 위: warn 2.51 · crit 3.52 (< 4.5). 사이드바 `--elev` 위 2.71 / 3.82.
-    - dark 최악 = `--elev` 위: crit 5.05 · warn 7.53.
-  - `.doc-toast.<tone>`: tone 0.14 tinted fill + tone 텍스트(`--fs-body`). `position: fixed` 라 어떤 면 위에도 뜬다 → 수치는 가장 불리한 면 기준.
-    - light 최악 = `--sunken` 위: warn 2.53 · info 2.88 · ok 2.94 · crit 3.58 (< 4.5). `--surface` 위 2.64 / 3.00 / 3.06 / 3.73.
-    - dark 최악 = `--elev-2`(raised-2 카드) 위: crit 4.71 · ok 6.38 · info 6.74 · warn 7.05. `--elev` 위 crit 5.14 · `--surface` 위 crit 6.03.
-  - `clauded-docs.jsx` → `.doc-row.is-selected` / `.is-pending-delete`: inset 4px accent / crit stripe.
-  - light `--warn` glyph on `--sunken` 배지 shell = 2.92:1 (UI 3:1 미달).
+- **알려진 예외 (현재 코드, 수정 대상)** — tone 을 shell · fill · border · stripe · 라벨 텍스트에 칠한 자리 전부.
+  - 찾는 법: `grep -nE "var\(--(crit|warn|ok|info)\) ?/ ?0?\.[0-9]+|(bg|border)-(crit|warn|ok|info)/" public/src public/styles`. 차트 data mark(막대 fill · sparkline stroke) hit 은 shell 이 아니라 목록 밖.
+  - 명암비 = WCAG 2.2, tint 를 아래 면에 합성한 값. 아래 tone 텍스트 쌍은 dark 에서 전부 ≥ 4.5 (최저 = toast crit on `--elev-2` 4.71) → 수치는 light 만 적는다 (toast · nav badge 제외).
+  - **shell (`app.jsx` · `base.css`)**:
+    - `.nav-badge.warn` 과 `app.jsx` → `NAV_BADGE_CRIT_STYLE`: tone 0.15 tinted fill + tone 텍스트.
+      - light 최악 = active · hover `.nav-item` 의 `--sunken` 위: warn 2.51 · crit 3.52 (< 4.5). 사이드바 `--elev` 위 2.71 / 3.82.
+      - dark 최악 = `--elev` 위: crit 5.05 · warn 7.53.
+    - 사이드바 시스템 롤업 (`systemsRollup`): crit 일 때 glyph + 라벨 `text-crit` on `bg-sunken` → light 4.43 (< 4.5) · dark 6.62.
+    - `.doc-toast.<tone>` (clauded-docs · model-config 공용): tone 0.14 tinted fill + tone 0.4 border + tone 텍스트(`--fs-body`). `position: fixed` 라 어떤 면 위에도 뜬다 → 수치는 가장 불리한 면 기준.
+      - light 최악 = `--sunken` 위: warn 2.53 · info 2.88 · ok 2.94 · crit 3.58 (< 4.5). `--surface` 위 2.64 / 3.00 / 3.06 / 3.73.
+      - dark 최악 = `--elev-2`(raised-2 카드) 위: crit 4.71 · ok 6.38 · info 6.74 · warn 7.05. `--elev` 위 crit 5.14 · `--surface` 위 crit 6.03.
+  - **no-glyph status 라벨** (`Badge role="status" glyph={false}` · tone 이 있는 모든 `Pill`): 라벨 텍스트가 tone, `--sunken` shell 위.
+    - light: warn 2.92 · info 3.38 · ok 3.45 · crit 4.43 (전부 < 4.5) · dark ≥ 6.62.
+    - 출하 자리: `agents.jsx` → `SuccessRateMatrixCard` `<Pill tone="warn">Row limit hit — some rows missing</Pill>` · `LifecycleStatsCard` `<Pill tone="warn">{…} unfinished</Pill>`.
+  - **glyph**: light `--warn` glyph on `--sunken` 배지 shell = 2.92:1 (UI 3:1 미달).
+  - **`agents.jsx`**:
+    - `CompatibilityDetailBlock`: `bg-info/[0.06] border-info/30`.
+    - `AgentDeleteConfirmPanel`: note = warn 0.08 fill + warn 0.4 border · 실패 `role="alert"` = `bg-crit/[0.08] border-crit/40` + "Delete failed." `text-crit` → light 4.27.
+    - `MergedBreakageBody` 빈 상태: dashed `border-ok/40`.
+    - `SuccessRateCell` (`CELL_HIGHLIGHT_BY_TONE`): 미달 셀 crit 0.28 fill + crit 0.55 border.
+  - **`improvement.jsx`**:
+    - `.i-act-approve` / `.i-act-reject`: tone 텍스트 + tone 0.45 border + tone 0.1 fill (hover 0.2 / 0.7) → light ok 3.34 · crit 4.14.
+    - `.i-await-banner`: warn 0.08 fill + warn 0.45 border · `.i-await-head` warn 텍스트 → light 2.93 (`--elev` 위) / 2.81 (`--surface` 위).
+    - `.i-alarm-lane`: warn 0.06 fill + warn 0.45 border.
+  - **`outcomes.jsx`**: `SilentChannelRowO` = crit 0.08 fill + crit 0.4 border · `BlockedBannerO` = warn 0.08 fill + warn 0.4 border.
+  - **`model-config.jsx`**: `DriftBannerMC` = warn 0.08 fill + warn 0.4 border · `ErrorBannerMC` = crit 0.08 fill + crit 0.4 border.
+  - **`clauded-docs.jsx`**:
+    - `.doc-row.is-selected` / `.is-pending-delete`: inset 4px accent / crit stripe.
+    - `.doc-row.is-stale > td`: warn 0.03 행 fill.
+    - `.doc-superseded-banner`: warn 0.12 fill + warn 0.4 하단 border + warn 텍스트 → light 2.80.
+    - `ErrorBannerCD`: crit 0.1 fill + crit 0.4 border + crit 텍스트 → light 4.14.
+    - `.doc-snippet mark`: 검색 hit 하이라이트 = warn 0.28 fill (severity hue 의 비-severity 사용).
 - `.diff-line--add/--del` 의 옅은 tint 는 허용 — `+`/`−` glyph 가 1차 신호.
 
 ### 4.3 Categorical — 차트 · 식별 전용
@@ -448,11 +472,13 @@
 |-------|------|------|-------|------|
 | **sunken** | `--surface-sunken` | 홈 · `th` · 배지 shell · tabs track · 미니바 트랙 | 245 fill | 24 fill |
 | **base** | `--surface-base` | 페이지 바탕 | 250 | 12 (가장 어두움) |
-| **raised** | `--surface-raised` | 카드 · KPI · 사이드바 | 255 fill + 1px `--line`, **shadow 없음** | 28 fill + 1px `--line` + `--shadow-raised` + inset 하이라이트 |
+| **raised** | `--surface-raised` | 카드 · KPI · 사이드바 | 255 fill + 1px `--line`, **shadow 없음** | 28 fill + 1px `--line`. `.card` 만 + `--shadow-raised` + inset 하이라이트 |
 | raised-2 (상태) | `--surface-raised-2` | 선택형 카드 hover/focus | raised + `--shadow-raised-2` + border `--faint` | 36 fill + `--shadow-raised-2` + inset |
-| **overlay** | `--surface-overlay` | drawer · dialog · popover · toast | 255 fill + `--shadow-overlay` | 28 fill + `--shadow-overlay` |
+| **overlay** | `--surface-overlay` | drawer · dialog · popover | 255 fill + `--shadow-overlay` | 28 fill + `--shadow-overlay` |
 
 - 5단계 이상 금지. overlay 는 그림자가 필수, raised 는 테마별로 다르다.
+- dark raised 의 shadow · inset 채널은 `.card` 전용 (`[data-theme="dark"] .card`). `.kpi` 와 사이드바 `aside`(`bg-elev` · `border-r`)는 양 테마 모두 fill step + border 만.
+- `.doc-toast` 는 z 200 에 뜨지만 overlay 면이 아니다: 불투명 fill 없이 tone 0.14 tint + `--shadow-overlay` (§4.2 예외 · §6.5).
 
 ### 6.2 떠오름 채널 — blur 가 아니라 border · luminance
 
@@ -496,7 +522,7 @@
   - `--overlay-surface` + 1px `--line` + `--radius-card` + `--shadow-overlay`.
   - z = overlay − 1 → 열린 `DetailSurface` 가 덮는다. 열려 있는 동안만 카드가 overflow 를 푼다 (`.card:has(.popover-panel)`).
 - **`.save-banner`**: sticky bottom dirty-state 바. 불투명 `--elev` + 상단 1px `--line` + `--shadow-overlay` · z 10 · padding 12px 20px.
-- **`.doc-toast`**: fixed 우하단 24px · `--radius-tile` · `--fs-body` · `--shadow-overlay` · max-w 480. tone fill 은 §4.2 예외.
+- **`.doc-toast`**: fixed 우하단 24px · `--radius-tile` · `--fs-body` · `--shadow-overlay` · max-w 480. tone fill · tone border 는 §4.2 예외.
 - **z stack** (`tokens.css` → `--z-overlay` 주석, 테마 무관):
 
 | z | 레이어 |
@@ -545,7 +571,7 @@
 
 ### 7.2 KPI — `KPI` · `KpiValue` (`.kpi*`)
 
-- `.kpi`: `<button>` · `--elev` · 1px `--line` · `--radius-card` · padding 14px 16px · min-height 110 · hover border `--faint` 120ms.
+- `.kpi`: `<button>` · `--elev` · 1px `--line` · `--radius-card` · padding 14px 16px · min-height 110 · hover border `--faint` 120ms. 양 테마 shadow · inset 없음 (§6.1).
 - `.kpi-label`: `--fs-meta` `--dim` 500. hint: `--fs-meta` mono `--faint`.
 - `.kpi-value`: `--fs-kpi` 32 mono 600 · -0.025em · line-height 1.15. `.unit`: `--fs-title` 16 `--dim` 500 Pretendard (2:1).
 - `.kpi-delta`: `--fs-meta` mono · up = `--crit` · down = `--ok` · flat = `--faint` (`Delta inverse` 로 의미 반전).
@@ -556,6 +582,7 @@
 
 - **neutral shell 하나** (모든 role · tone 공용): `--sunken` bg · `--dim` text · 1px `--line` · min-height 22 · padding 3px 8px · `--radius-badge` 6 · `--fs-meta` · 500 · Pretendard · nowrap.
 - tone 은 내부 glyph/Icon 에만 (§4.2). `Pill` 은 `Badge` 로 위임 (neutral → metadata, 그 외 → status `glyph` false).
+  - tone 이 있는 `Pill` 은 라벨 텍스트가 tone → light AA 미달 (§4.2 알려진 예외 → no-glyph status 라벨). 새 toned 상태 표시는 glyph 가 있는 `Badge role="status"` 로.
 - 변형:
   - `.pill--absent`: 투명 · `--faint` · dashed `--line`.
   - `.pill--meta`: 소문자. `.pill--count`: mono tabular.
@@ -602,7 +629,7 @@
 - `.nav-item`: `--fs-control` · `--dim` · padding 6px 10px · `--radius-control` · Icon 14. hover/active = `--sunken` + `--ink`, active 500.
 - `.nav-num`: mono `--fs-meta` `--faint` (active 는 `--dim`).
 - `.nav-badge`: mono `--fs-meta` · `--sunken` · 1px `--line` · pill radius. 내용 = glyph + 값 + sr-only 설명 (`title` 동반). warn/crit tinted fill 은 §4.2 예외.
-- liveness: 시스템 롤업 dot 는 ok 일 때만 `.live-dot`, 그 외 정적.
+- liveness: 시스템 롤업 dot 는 ok 일 때만 `.live-dot`, 그 외 정적. crit 롤업의 `text-crit` glyph · 라벨은 §4.2 예외.
 
 ### 7.8 DetailSurface — drawer · fullscreen · confirm (`.detail-*`)
 
