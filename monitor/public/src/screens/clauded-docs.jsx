@@ -1149,8 +1149,11 @@ function ScreenClaudedDocs(/* { onNav } */) {
         .doc-stage-menu { position: absolute; top: calc(100% + 4px); left: 0; z-index: 5; display: flex; flex-direction: column; min-width: 148px; padding: 4px; background: rgb(var(--overlay-surface)); border: 1px solid rgb(var(--line)); border-radius: var(--radius-card); box-shadow: var(--shadow-overlay); }
         .doc-stage-menu-item { display: flex; align-items: center; gap: 8px; padding: 6px 8px; min-height: 28px; background: transparent; border: none; border-radius: var(--radius-badge); color: rgb(var(--ink)); font-size: var(--fs-meta); text-align: left; cursor: pointer; }
         .doc-stage-menu-item:hover { background: rgb(var(--line) / 0.6); }
-        .doc-stage-menu-item[aria-checked="true"] { color: rgb(var(--accent)); }
+        /* checked → the one filled selected state + a check mark, not accent text: the accent is user-picked, so no text pair on it is bounded */
+        .doc-stage-menu-item[aria-checked="true"], .doc-stage-menu-item[aria-checked="true"]:hover { background: rgb(var(--selected-fill)); color: rgb(var(--selected-ink)); font-weight: 500; }
         .doc-stage-menu-rank { font-family: 'JetBrains Mono', monospace; font-size: var(--fs-meta); color: rgb(var(--faint)); }
+        .doc-stage-menu-item[aria-checked="true"] .doc-stage-menu-rank { color: inherit; }
+        .doc-stage-menu-mark { margin-left: auto; }
         .doc-filter-label { font-size: var(--fs-meta); color: rgb(var(--faint)); white-space: nowrap; }
         .doc-filter-divider { align-self: stretch; width: 1px; margin: 4px 4px; background: rgb(var(--line)); }
         /* chip 안 건수 — 그룹 단위 corpus 집계. 없는 수치는 자리도 만들지 않는다. */
@@ -3076,6 +3079,7 @@ function DocStagePillCD({
 							}}>
 							<span className="doc-stage-menu-rank">{index + 1}</span>
 							{stage.label}
+							{stage.value === entry.value && <Icon name="check" size={12} stroke={3} className="doc-stage-menu-mark" />}
 						</button>
 					))}
 				</span>

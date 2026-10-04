@@ -1313,9 +1313,9 @@ describe("Type floor on the Documents screen, its viewer, version history and st
     await page.getByRole("menu", { name: "Set stage" }).waitFor({ state: "visible" });
   }
 
-  // every drawn text in the viewer chrome against its composited background; the rendered document is out of scope.
+  // every drawn text under the scope root against its composited background; the rendered document is out of scope.
   // A source string, not a function: the test transform names inner arrows with a helper the page does not have.
-  const CHROME_CONTRAST_MISSES = `(() => {
+  const getContrastMissesScript = (scopeSelector: string): string => `(() => {
     const parse = (value) => (value.match(/[\\d.]+/g) || []).map(Number);
     const lum = ([r, g, b]) => {
       const f = (v) => { v /= 255; return v <= 0.03928 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4; };
@@ -1331,7 +1331,7 @@ describe("Type floor on the Documents screen, its viewer, version history and st
       return layers.reverse().reduce((under, [r, g, b, a]) => [r, g, b].map((v, i) => v * a + under[i] * (1 - a)), [255, 255, 255]);
     };
     const misses = [];
-    const container = document.querySelector(".doc-fs-container");
+    const container = document.querySelector(${JSON.stringify(scopeSelector)});
     for (const el of Array.from(container ? container.querySelectorAll("*") : [])) {
       if (el.closest(".doc-body-isolation") || el.closest(".sr-only")) continue;
       const text = Array.from(el.childNodes).filter((n) => n.nodeType === 3).map((n) => n.textContent.trim()).join("");
@@ -1357,7 +1357,27 @@ describe("Type floor on the Documents screen, its viewer, version history and st
         await page.locator("aside.doc-fs-meta-side").getByRole("button", { name: /View previous revision/ }).click();
         await page.getByRole("button", { name: /View latest revision/ }).waitFor({ state: "visible" });
         assert.equal(await page.evaluate(() => document.documentElement.getAttribute("data-theme")), theme);
-        assert.deepEqual(await page.evaluate(CHROME_CONTRAST_MISSES), []);
+        assert.deepEqual(await page.evaluate(getContrastMissesScript(".doc-fs-container")), []);
+      } finally {
+        await context.close();
+      }
+    });
+
+    test(`every item of the open stage menu clears 4.5:1 in the ${theme} theme, its checked item hovered and marked by a check`, async () => {
+      const context: BrowserContext = await browser.newContext({ viewport: { width: 1440, height: 900 } });
+      try {
+        const page: Page = await context.newPage();
+        await page.goto(`${serverUrl}/#clauded-docs`, { waitUntil: "networkidle" });
+        const row = await revealRowByTitle(page, title.successor);
+        await page.evaluate((value) => document.documentElement.setAttribute("data-theme", value), theme);
+        await row.getByRole("button", { name: /change stage$/ }).click();
+        const menu = page.getByRole("menu", { name: "Set stage" });
+        await menu.waitFor({ state: "visible" });
+        const checked = menu.getByRole("menuitemradio", { checked: true });
+        await checked.hover();
+        assert.deepEqual(await page.evaluate(getContrastMissesScript('[role="menu"]')), []);
+        assert.equal(await menu.locator(".doc-stage-menu-mark").count(), 1);
+        assert.equal(await checked.locator(".doc-stage-menu-mark").count(), 1);
       } finally {
         await context.close();
       }

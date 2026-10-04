@@ -1208,6 +1208,15 @@ test("the stage menu floats on the opaque overlay surface, ringed by the line to
   assert.match(menu, /box-shadow\s*:\s*var\(--shadow-overlay\)/);
 });
 
+test("the checked stage-menu item draws the one filled selected state at rest and on hover, never the user-picked accent", async () => {
+  const css = getScreenCss(await loadDocsScreen());
+  const checked = cssRuleBody(css, '.doc-stage-menu-item[aria-checked="true"], .doc-stage-menu-item[aria-checked="true"]:hover');
+  assert.match(checked, /background\s*:\s*rgb\(var\(--selected-fill\)\)/);
+  assert.match(checked, /color\s*:\s*rgb\(var\(--selected-ink\)\)/);
+  assert.doesNotMatch(checked, /--accent/);
+  assert.match(cssRuleBody(css, '.doc-stage-menu-item[aria-checked="true"] .doc-stage-menu-rank'), /color\s*:\s*inherit/);
+});
+
 test("a ledger checkbox draws on theme tokens: neutral at rest, the one selected state when checked or mixed, and no transition", async () => {
   const screen = await loadDocsScreen();
   const css = getScreenCss(screen);
