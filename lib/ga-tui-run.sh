@@ -27,7 +27,7 @@ parse_token_summary() {
     glyph="$(c "${C_OK}" "${G_OK}")"
     head="$(c "${C_STRONG}" "Token provisioned")"
     TOKEN_SUMMARY="${glyph} ${head}"
-    TOKEN_SUMMARY_ROW2="$(c "${C_DIM}" "env: CLAUDE_CODE_OAUTH_TOKEN ${G_DOT} launchd daemons will authenticate")"
+    TOKEN_SUMMARY_ROW2="$(c "${C_DIM}" "env: CLAUDE_CODE_OAUTH_TOKEN ${G_DOT} launchd jobs will authenticate")"
     return 0
   fi
   case "${rc}" in
@@ -458,21 +458,12 @@ build_monitor() {
   log "== monitor build done =="
 }
 
-# CHANGE 1 (menu launchd auto-load) — the 11th install step. The interactive menu Install
-# was render-only (LOAD_LAUNCHD defaults false in ga-core.sh), so it NEVER registered the 8
-# com.glass-atrium.* launchd jobs — the user had to run --load-launchd manually afterward.
-# This wrapper flips LOAD_LAUNCHD=true (the SAME engine switch the --load-launchd flag sets)
-# then delegates to the existing engine load_launchd_jobs (post-health-gate: this step runs
-# only AFTER bootstrap_health_gate passed, so a loaded job always tracks a verified build).
-# OPT-OUT (CI / non-interactive): GA_NO_LOAD_LAUNCHD=1 (env, mirrors the GA_* override
-# pattern) OR the --no-load-launchd passthrough flag (NO_LOAD_LAUNCHD=true) → keep the
-# historical render-only behavior (log + no-op). The 8 daemons run on launchd; 2 of them
-# (autoagent-cycle, wiki-compile) invoke Claude on a daily schedule — this is the cost/
-# consent note preserved from docs/INSTALL.md §7 (the menu Install now owns the load that
-# was previously the operator's manual --load-launchd step).
-#
-# COST/CONSENT: this registers 8 launchd jobs; 2 of them call Claude daily (autoagent-cycle,
-# wiki-compile). Opt out with GA_NO_LOAD_LAUNCHD=1 or --no-load-launchd to defer the load.
+# menu_load_launchd_jobs — the menu Install's launchd load step (LOAD_LAUNCHD defaults false in
+# ga-core.sh, so without it a menu install only renders). Flips LOAD_LAUNCHD=true, the switch the
+# --load-launchd flag sets, then runs the engine load_launchd_jobs — last in the plan, after
+# bootstrap_health_gate, so a loaded job always tracks a verified build.
+# COST/CONSENT: registers the active LAUNCHD_JOBS roster; 2 of them call Claude daily (autoagent-cycle,
+# wiki-compile). Opt out with GA_NO_LOAD_LAUNCHD=1 or --no-load-launchd → render-only (log + no-op).
 menu_load_launchd_jobs() {
   if [[ "${GA_NO_LOAD_LAUNCHD:-}" == "1" || "${NO_LOAD_LAUNCHD:-false}" == "true" ]]; then
     log "== install: launchd auto-load opted out (GA_NO_LOAD_LAUNCHD / --no-load-launchd) — load manually later: re-run with --load-launchd =="
@@ -481,7 +472,7 @@ menu_load_launchd_jobs() {
   # flip the engine switch the --load-launchd flag would set, then reuse the engine loader
   # verbatim (idempotent bootout→bootstrap per job; named exit codes 22/23 on a render gap /
   # bootstrap failure propagate as the step's rc). DRY_RUN is handled inside load_launchd_jobs.
-  log "== install: registering the 8 com.glass-atrium.* launchd jobs (2 call Claude daily: autoagent-cycle, wiki-compile) =="
+  log "== install: registering the ${#LAUNCHD_JOBS[@]} com.glass-atrium.* launchd jobs (2 call Claude daily: autoagent-cycle, wiki-compile) =="
   LOAD_LAUNCHD=true
   load_launchd_jobs
 }
@@ -496,8 +487,8 @@ build_step_plan() {
     install)
       # run_install body (doctor gate → stale-daemon retirement → render → farm → wire → migrate → DB →
       # repoint → post-check → baseline capture) then run_bootstrap's build + health gate, THEN the
-      # 14th step that registers the 8 launchd jobs (CHANGE 1: menu Install now auto-loads
-      # launchd via menu_load_launchd_jobs, opt-out GA_NO_LOAD_LAUNCHD=1 / --no-load-launchd).
+      # 14th step that registers the active launchd roster (menu_load_launchd_jobs, opt-out
+      # GA_NO_LOAD_LAUNCHD=1 / --no-load-launchd).
       # The load step runs LAST — post-health-gate by position, so a loaded job always tracks
       # a verified build. baseline capture is run_install's final body step (capture_install_
       # baseline — snapshots the base@install anchor + seeds the base-content store), so the
