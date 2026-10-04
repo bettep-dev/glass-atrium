@@ -560,8 +560,8 @@ const REJECT_BUCKET_QUALITY = "quality";
 
 // Head of daemon_cycle.py's _SUPERSEDE_REASON, stamped on a prior-cycle pending row that
 // supersede_prior_pending_for_agent terminates. The tail carries the anchoring detail, so
-// the marker is a prefix match. Rows written before the unadjudicated label existed carry
-// 'rejected', so the rationale text stays the discriminator for them.
+// the marker is a prefix match. The rationale, never the status, separates a supersede row
+// from other non-verdict rows, whether it carries 'rejected' or 'unadjudicated'.
 const SUPERSEDE_RATIONALE_LIKE = "superseded by fresher per-agent proposal%";
 
 // Head of daemon_cycle.py's _PARKED_PATTERN_REASON — apply guard's unjudged reject, lifecycle like a supersede

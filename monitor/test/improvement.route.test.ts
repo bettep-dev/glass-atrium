@@ -520,14 +520,10 @@ test("GET /api/improvement/stats: review_flag_last_7d excludes poisoned_window r
   assertWithinBracket(body.review_flag_last_7d, before, after, "review_flag_last_7d");
 });
 
-// Both rejected counts are verdict-only: an unadjudicated row reached no verdict, so it
-// leaves the apply_rate denominator untouched. The rejected row beside it keeps the
-// verdict-only count above zero, so a reader stuck at 0 cannot pass either.
-//
-// Both counts are table-global and sibling files insert AND delete rejected rows
-// concurrently, so a plain before/after delta or bracket can be crossed by an
-// insert-then-delete mid-read. A SHARE lock blocks every writer (reads still pass) for
-// the read window; the before/after bracket then only absorbs a midnight crossing.
+// Verdict-only counts: an unadjudicated row reached no verdict → never counted.
+// The rejected row beside it fails a reader stuck at 0.
+// Siblings insert + delete rejected rows mid-read → a SHARE lock holds writers off.
+// The before/after bracket absorbs only a midnight crossing.
 test("GET /api/improvement/stats: rejected counts take a rejected row and never an unadjudicated one", async () => {
   const prisma = getPrisma();
   const label = `__test_stats_verdict_${process.pid}__`;
