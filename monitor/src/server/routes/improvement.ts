@@ -560,8 +560,8 @@ const REJECT_BUCKET_QUALITY = "quality";
 
 // Head of daemon_cycle.py's _SUPERSEDE_REASON, stamped on a prior-cycle pending row that
 // supersede_prior_pending_for_agent terminates. The tail carries the anchoring detail, so
-// the marker is a prefix match. No status enum distinguishes these rows — the daemon
-// reuses 'rejected' — which is why the rationale text is the only discriminator available.
+// the marker is a prefix match. Rows written before the unadjudicated label existed carry
+// 'rejected', so the rationale text stays the discriminator for them.
 const SUPERSEDE_RATIONALE_LIKE = "superseded by fresher per-agent proposal%";
 
 // Head of daemon_cycle.py's _PARKED_PATTERN_REASON — apply guard's unjudged reject, lifecycle like a supersede
@@ -902,6 +902,10 @@ async function handleImprovement(
       //     mechanical rows book as quality rejects (the defect).
       //   - COALESCE on both columns keeps the CASE total: a NULL rationale or NULL status
       //     compares NULL against LIKE and would otherwise fall through untyped.
+      //   - An unadjudicated row reached no verdict: past the lifecycle arms it is infra,
+      //     whatever its model status, so it precedes the quality arm too.
+      //   - status::text, never an enum literal: an install not yet migrated lacks the
+      //     unadjudicated label, and a literal cast to it fails the whole statement.
       //   - The provenance filter drops updater-written release rows, which are not
       //     rejections at all — the same guard the prose-only-add count carries.
       //   - GROUP BY 1 (ordinal): the bucket labels are bind parameters, so a repeated
@@ -913,6 +917,8 @@ async function handleImprovement(
               THEN ${REJECT_BUCKET_LIFECYCLE}
             WHEN COALESCE(rationale, '') LIKE ${PARKED_PATTERN_RATIONALE_LIKE}
               THEN ${REJECT_BUCKET_LIFECYCLE}
+            WHEN status::text = 'unadjudicated'
+              THEN ${REJECT_BUCKET_INFRA}
             WHEN COALESCE(haiku_status, '') LIKE ${HAIKU_OK_LIKE}
               THEN ${REJECT_BUCKET_QUALITY}
             ELSE ${REJECT_BUCKET_INFRA}
@@ -921,7 +927,7 @@ async function handleImprovement(
         FROM core.autoagent_proposals
         ${buildProposalWhere(windowDays, null, agent, canonicalKeys)}
         ${buildDaemonProvenanceFilter()}
-          AND status = 'rejected'::core."ProposalStatus"
+          AND status::text IN ('rejected', 'unadjudicated')
         GROUP BY 1
         ORDER BY 1
       `,
@@ -1826,7 +1832,7 @@ const REVIEW_ACTOR_OPERATOR = "monitor-user";
 
 // daemon-apply.sh --proposal-id --auto-regen exit-code contract:
 //   0  = applied (direct — diff landed, no regen needed; status flipped by script)
-//   8  = no-op, already terminal (status applied/rejected/approved/reverted)
+//   8  = no-op, already terminal (status applied/rejected/approved/reverted/unadjudicated)
 //   9  = apply failed without auto-regen (won't occur on this route — we always
 //        pass --auto-regen — but kept as a defensive fallback branch)
 //   10 = applied-after-regen (stale diff → regenerated + pre-verify passed →

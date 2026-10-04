@@ -520,6 +520,46 @@ test("GET /api/improvement/stats: review_flag_last_7d excludes poisoned_window r
   assertWithinBracket(body.review_flag_last_7d, before, after, "review_flag_last_7d");
 });
 
+// Both rejected counts are verdict-only: an unadjudicated row reached no verdict, so it
+// leaves the apply_rate denominator untouched. The rejected row beside it proves the
+// counts still move.
+test("GET /api/improvement/stats: rejected counts take a rejected row and never an unadjudicated one", async () => {
+  const prisma = getPrisma();
+  const label = `__test_stats_verdict_${process.pid}__`;
+  const fetchRejected = async (): Promise<[number, number]> => {
+    __resetImprovementStatsCacheForTests();
+    const res = await app.inject({ method: "GET", url: "/api/improvement/stats" });
+    assert.strictEqual(res.statusCode, 200);
+    const body = res.json() as { rejected_last_7d: number; rejected_all_time: number };
+    return [body.rejected_last_7d, body.rejected_all_time];
+  };
+  const insertToday = async (status: "rejected" | "unadjudicated"): Promise<void> => {
+    await prisma.$executeRaw`
+      INSERT INTO core.autoagent_proposals
+        (cycle_date, pattern_label, target_file, classification, approval_tier, status,
+         source_file, source_file_mtime)
+      VALUES
+        (CURRENT_DATE, ${label}, ${`/__test__/stats-verdict-${status}.md`},
+         'reject'::core."ProposalClassification", 'auto'::core."ApprovalTier",
+         CAST(${status} AS core."ProposalStatus"), '/__test__/source.md', 0)
+    `;
+  };
+  try {
+    const [last7dBefore, allTimeBefore] = await fetchRejected();
+    await insertToday("unadjudicated");
+    await insertToday("rejected");
+    const [last7dAfter, allTimeAfter] = await fetchRejected();
+    assert.deepStrictEqual(
+      [last7dAfter - last7dBefore, allTimeAfter - allTimeBefore],
+      [1, 1],
+      "each count takes the rejected row alone",
+    );
+  } finally {
+    await prisma.$executeRaw`DELETE FROM core.autoagent_proposals WHERE pattern_label = ${label}`;
+    __resetImprovementStatsCacheForTests();
+  }
+});
+
 test("GET /api/improvement/stats: 30s in-process cache returns identical payload", async () => {
   __resetImprovementStatsCacheForTests();
   const first = await app.inject({ method: "GET", url: "/api/improvement/stats" });
