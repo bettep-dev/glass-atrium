@@ -323,22 +323,6 @@ details[open] > summary .chevron {
 .tbl td {
 	height: var(--row-h);
 }
-/* one-line data cell — ellipsis, full text in the cell's title */
-.tbl td.cell-clamp {
-	max-width: 0;
-	white-space: nowrap;
-	overflow: hidden;
-	text-overflow: ellipsis;
-}
-/* two-line clamp for data prose (reasons, proposals) — full text in the title and the drawer */
-.clamp-2 {
-	display: -webkit-box;
-	-webkit-box-orient: vertical;
-	-webkit-line-clamp: 2;
-	line-clamp: 2;
-	overflow: hidden;
-	overflow-wrap: anywhere;
-}
 .tbl tbody tr {
 	cursor: pointer;
 }
@@ -357,26 +341,6 @@ details[open] > summary .chevron {
 
 .tbl tbody tr.is-grouped > td {
 	border-bottom: none;
-}
-
-.tabs {
-	display: inline-flex;
-	padding: 3px;
-	background: rgb(var(--sunken));
-	border: 1px solid rgb(var(--line));
-	border-radius: var(--radius-control);
-	gap: 2px;
-}
-.tab {
-	padding: 4px 11px;
-	min-height: var(--ctl-min-h);
-	font-size: var(--fs-meta);
-	border: none;
-	background: none;
-	color: rgb(var(--dim));
-	border-radius: var(--radius-inline);
-	font-weight: 500;
-	cursor: pointer;
 }
 
 .seg {
@@ -403,8 +367,6 @@ details[open] > summary .chevron {
 .btn[aria-pressed="true"]:hover,
 .seg button.active,
 .seg button[aria-pressed="true"],
-.tab.active,
-.tab[aria-selected="true"],
 .pill--interactive[aria-pressed="true"] {
 	background: rgb(var(--selected-fill));
 	color: rgb(var(--selected-ink));

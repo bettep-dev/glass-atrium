@@ -834,12 +834,6 @@ function Modal({ title, onClose, children, footer }) {
     title={title} footer={footer}>{children}</DetailSurface>;
 }
 
-function Tabs({ items, value, onChange }) {
-  return <div className="tabs">
-    {items.map(it => <button key={it.value} className={`tab ${value===it.value?'active':''}`} onClick={() => onChange(it.value)}>{it.label}</button>)}
-  </div>;
-}
-
 // id sequence for the title an info trigger is described by — works without useId (render-harness React stub).
 let cardTitleSeq = 0;
 
@@ -903,16 +897,6 @@ function Card({ size, title, sub, info, infoLabel, right, foot, isFlush = false,
     <div className={`card-body ${isFlush ? 'flush' : ''}`.trim()}>{children}</div>
     {foot && <div className="card-foot">{foot}</div>}
   </div>;
-}
-
-// One-line table cell: ellipsis on overflow, the full text in the native title.
-function ClampCell({ text, children, className = '' }) {
-  return <td className={`cell-clamp ${className}`.trim()} title={titleOf(text)}>{children ?? text}</td>;
-}
-
-// Two-line clamp for data prose (reasons, proposals) — the full text stays in the title and the drawer.
-function ClampText({ text, children, className = '' }) {
-  return <span className={`clamp-2 ${className}`.trim()} title={titleOf(text)}>{children ?? text}</span>;
 }
 
 // Section title as a real outline heading, wearing the uppercase section-label style.
@@ -1924,14 +1908,6 @@ function formatDuration(value, unit = 'sec') {
   return `${Math.floor(sec / 3600)}h ${Math.floor((sec % 3600) / 60)}m`;
 }
 
-// byte 크기 → human-readable; 비숫자/NaN/음수 → '—'. <1KB = "N B" · 그 외 "N.N KB" (페이로드 ≤수십 KB 도메인)
-function formatBytes(bytes) {
-  const n = Number(bytes);
-  if (!Number.isFinite(n) || n < 0) return '—';
-  if (n < 1024) return `${n} B`;
-  return `${(n / 1024).toFixed(1)} KB`;
-}
-
 // K=1소수 · M/B/T=2소수 압축 · 1e3 미만 = 원값 문자열 · Math.abs 부호 무관 임계
 function formatTokenCompact(value) {
   const n = Number(value) || 0;
@@ -2203,7 +2179,7 @@ function resolveOutcomeRate(data) {
 }
 
 window.UI = {
-  Icon, Pill, Badge, EmptyState, SubCard, Sparkline, MiniBars, Bar, BulletBar, StatusDot, AgentName, getAgentDisplayName, KPI, KpiValue, DetailSurface, useDismissFocus, Popover, PopoverPanel, getTrapFocusTarget, getInertTargets, setSurfaceOpen, getTopSurface, Modal, Tabs, CardHead, CardInfo, Card, CARD_SLOTS, getSlotRows, ClampCell, ClampText, PageHeader,
+  Icon, Pill, Badge, EmptyState, SubCard, Sparkline, MiniBars, Bar, BulletBar, StatusDot, AgentName, getAgentDisplayName, KPI, KpiValue, DetailSurface, useDismissFocus, Popover, PopoverPanel, getTrapFocusTarget, getInertTargets, setSurfaceOpen, getTopSurface, Modal, CardHead, CardInfo, Card, CARD_SLOTS, getSlotRows, PageHeader,
   SectionLabel, Table, TableHead, DisclosureChevron, DisclosureButton, getSeverityTone, getWorstTone,
   Disclosure, getDisclosureOpen, SplitRow, SPLIT_ROW_RATIOS, SPLIT_ROW_LAYOUTS, SplitColumn, TileSplit,
   getRovingIndex, getRovingTabIndex, ROW_CONTROL_PROPS, getRowKeyAction, getRowFocusProps, ChipGroup,
@@ -2218,7 +2194,7 @@ window.UI = {
   INITIAL_REGION_STATE, putRegionRequest, putRegionData, putRegionFailure,
   setDisplayTimezone, getDisplayTimezone, tzShortLabel,
   formatKstDateTime, formatKstTime, formatKstDate, formatKstFull,
-  formatUsd, formatUsdCompact, formatInt, formatTokenCompact, formatDuration, formatBytes,
+  formatUsd, formatUsdCompact, formatInt, formatTokenCompact, formatDuration,
   BADGE_TONE_META, BADGE_OVERRIDES, resolveBadge,
   DAEMON_STATUS_TONE, daemonStatusTone, daemonStatusLabel,
   RESULT_META, CLOSED_META, resolveResultMeta, LOW_N_MIN, formatPctWithDenominator,

@@ -126,7 +126,7 @@ test("mono stays on numeric atoms and off word-carrying atoms", () => {
 });
 
 test("every interactive control atom is at least 32px tall", () => {
-  for (const selector of [".btn", ".btn.sm", ".btn.icon", ".seg button", ".tab", ".pill--interactive", ".field"]) {
+  for (const selector of [".btn", ".btn.sm", ".btn.icon", ".seg button", ".pill--interactive", ".field"]) {
     const heights = getRuleBodies(BASE_CSS, selector).flatMap((b) =>
       ["min-height", "height"].map((p) => getDecl(b, p)).filter((v): v is string => !!v && v !== "auto"),
     );
@@ -141,8 +141,6 @@ test("every pressed or selected control draws the one filled selected-state toke
     '.btn[aria-pressed="true"]',
     '.seg button[aria-pressed="true"]',
     ".seg button.active",
-    '.tab[aria-selected="true"]',
-    ".tab.active",
     '.pill--interactive[aria-pressed="true"]',
   ];
   for (const selector of selectors) {
