@@ -326,22 +326,21 @@ test(
   async (t) => {
     if (!dbReady) return t.skip("DB unavailable");
     const testUrl = process.env[TEST_URL_ENV];
-    const absentUrl = labelAbsentUrl;
-    assert.ok(testUrl && absentUrl, "both database URLs are set");
+    const url = { absent: labelAbsentUrl, live: process.env[LIVE_URL_ENV] };
+    assert.ok(testUrl && url.absent, "both database URLs are set");
     assert.ok(
-      isSameServer(absentUrl, testUrl),
+      isSameServer(url.absent, testUrl),
       `${LABEL_ABSENT_URL_ENV} must name the server of ${TEST_URL_ENV}`,
     );
     assert.ok(
-      !isSameDatabase(absentUrl, testUrl),
+      !isSameDatabase(url.absent, testUrl),
       `${LABEL_ABSENT_URL_ENV} must name a database other than ${TEST_URL_ENV}`,
     );
-    const liveUrl = process.env[LIVE_URL_ENV];
     assert.ok(
-      liveUrl === undefined || liveUrl.length === 0 || !isSameDatabase(absentUrl, liveUrl),
+      url.live === undefined || url.live.length === 0 || !isSameDatabase(url.absent, url.live),
       `${LABEL_ABSENT_URL_ENV} names the live database (${LIVE_URL_ENV}) — refusing to write there`,
     );
-    await withDatabase(absentUrl, async () => {
+    await withDatabase(url.absent, async () => {
       const labels = await getPrisma().$queryRaw<Array<{ present: boolean }>>`
         SELECT 'unadjudicated' = ANY (enum_range(NULL::core."ProposalStatus")::text[]) AS present
       `;
