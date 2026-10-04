@@ -11182,345 +11182,17 @@ def run_cycle(
             solution_attempt_from_outcome(outcome, report.cycle_date)
             for outcome in outcomes
         )
-        # Chronic Haiku-timeout back-off (generation side) — BEFORE the Haiku call.
-        # A target that already timed out TIMEOUT_BACKOFF_THRESHOLD consecutive
-        # times re-selects from core.learning_log every cycle with no memory of
-        # those failures; without this gate it burns a fresh HAIKU_TIMEOUT_SEC call
-        # and re-emits the 'partial'-causing error indefinitely. Skip the Haiku call
-        # entirely and emit a loud, persisted back-off record instead. skip_haiku
-        # (test/preflight) bypasses the gate — no real generation happens there.
-        target_md = agents_dir / f"{agent}.md"
-        timeout_streak = (
-            0 if skip_haiku else consecutive_timeout_count(str(target_md))
-        )
-        is_backoff_skip = timeout_streak >= TIMEOUT_BACKOFF_THRESHOLD
-        if is_backoff_skip:
-            # Self-lock guard: the streak's own break condition is produced only
-            # by the call this branch suppresses, so a bounded hold opens for one
-            # cycle and lets that call happen. Read only here — the rare path.
-            backoff_state = read_backoff_state(str(target_md))
-            if backoff_state.probe_due:
-                is_backoff_skip = False
-                sys.stderr.write(
-                    f"[daemon-cycle] timeout-backoff: agent={agent} held "
-                    f"{backoff_state.held_cycles} consecutive cycles "
-                    f"(bound {TIMEOUT_BACKOFF_PROBE_CYCLES}) — admitting ONE probe "
-                    f"generation (streak {timeout_streak}, "
-                    f"{backoff_state.superseded_skipped} row(s) looked past as "
-                    f"recorded under a superseded ceiling).\n"
-                )
-        if is_backoff_skip:
-            sys.stderr.write(
-                f"[daemon-cycle] timeout-backoff: agent={agent} target={target_md.name} "
-                f"reached {timeout_streak} consecutive haiku timeouts "
-                f"(threshold {TIMEOUT_BACKOFF_THRESHOLD}) — SKIP generation "
-                f"(no Haiku call, snoozed). Recovers on the next non-timeout cycle.\n"
-            )
-            proposal = backoff_skip_proposal(str(target_md), timeout_streak)
-        else:
-            proposal = generate_consolidated_proposal(
+        report.patches.append(
+            build_patch_result(
                 agent,
                 agent_patterns,
                 outcomes,
-                agents_dir=agents_dir,
-                skip_haiku=skip_haiku,
-            )
-            # Intra-cycle spacing (FIX #5): a small sleep after each REAL Haiku
-            # call so the per-agent loop does not self-contend its shared
-            # OAuth/usage window (effective concurrency cap of 1 with a gap).
-            # Bounded + cheap; skipped on test/preflight (skip_haiku) and the
-            # back-off branch (no real call there). 0 disables.
-            if not skip_haiku and INTER_CALL_SPACING_SEC > 0:
-                time.sleep(INTER_CALL_SPACING_SEC)
-        # Lead pattern = group head (freq DESC) — feeds the date / single-pattern
-        # context for pre-verify / promotion (the label is computed separately).
-        lead_pattern = agent_patterns[0]
-        consolidated_label = _consolidated_pattern_label(agent, agent_patterns)
-
-        target_path = Path(proposal.target_file)
-        classification = classify_patch_area(
-            proposal,
-            target_path,
-            seen_targets=seen_targets,
-            agents_dir=agents_dir,
-        )
-        # Track only successfully-resolved targets for conflict detection.
-        if classification != "reject" or proposal.proposed_diff.strip():
-            seen_targets.add(str(target_path.resolve()))
-
-        # Map proposal.parse_mode to haiku_status so cycle JSON shows the
-        # explicit recovery path. NO silent coerce — fuzzy/retried states
-        # surface distinctly from strict happy path.
-        #
-        # parse_mode='quota-limit' → haiku_status='skipped:quota-limit'. Branch
-        # ordering: quota check comes BEFORE empty-diff fallback because quota
-        # always yields empty diff (would otherwise collapse to empty-or-error
-        # and lose the budget-exhaustion signal in monitor dashboard).
-        if skip_haiku:
-            haiku_status = "skipped:test"
-        elif is_backoff_skip:
-            # Chronic-timeout back-off — distinct status so the monitor dashboard
-            # can flag a backed-off candidate vs. a generic empty/error. Branch
-            # FIRST among the non-test cases (it always yields an empty diff and
-            # must not collapse into 'skipped:empty-or-error').
-            haiku_status = TIMEOUT_BACKOFF_HAIKU_STATUS
-        elif proposal.parse_mode == "budget-too-low":
-            # Local budget-config failure — distinct from external quota. Like quota,
-            # it always yields an empty diff, so branch before empty-or-error to
-            # preserve the signal.
-            haiku_status = "skipped:budget-too-low"
-        elif proposal.parse_mode == "quota-limit":
-            haiku_status = "skipped:quota-limit"
-        elif proposal.parse_mode == "transient-overload":
-            # Transient infra blip (Overloaded / 529 / connection reset / timeout)
-            # whose bounded retries were exhausted. Always an empty diff, so branch
-            # before empty-or-error to keep the infra-blip signal distinct from a
-            # genuinely empty / parse-failed output in the monitor dashboard.
-            haiku_status = "skipped:transient"
-        elif proposal.parse_mode == "auth-failure":
-            # 401/credential failure (expired non-interactive OAuth token). Always
-            # an empty diff, so branch before empty-or-error to keep the auth
-            # signal distinct from a genuinely empty / parse-failed output — the
-            # monitor cost-guard chip reads this to show "Auth fault", not a
-            # spending warning.
-            haiku_status = "skipped:auth"
-        elif proposal.parse_mode == "timeout-stall":
-            # Escalated-retry timeout — a TRUE stall (even the longer bound
-            # produced nothing), distinct from a slow generation that completed.
-            # Always an empty diff → branch before empty-or-error so the stall
-            # stays queryable.
-            haiku_status = "skipped:timeout-stall"
-        elif not proposal.proposed_diff:
-            haiku_status = "skipped:empty-or-error"
-        elif proposal.parse_mode == "escalated":
-            # Legacy tag — no longer produced, kept so a persisted or out-of-tree
-            # shape still resolves instead of collapsing into the plain 'ok' else.
-            haiku_status = "ok:escalated"
-        elif proposal.parse_mode == "retried":
-            haiku_status = "ok:retried"
-        elif proposal.parse_mode == "fuzzy":
-            haiku_status = "ok:fuzzy-parsed"
-        else:
-            haiku_status = "ok"
-
-        # Second axis: a clean parse at the escalated bound is slow generation,
-        # not a stall. Suffix-composed so the parse path above survives it.
-        haiku_status = build_escalated_haiku_status(
-            haiku_status, escalated_timeout=proposal.escalated_timeout
-        )
-
-        # Pre-verify gate. Only body-auto candidates pay the LLM cost;
-        # frontmatter-dryrun is already user-bound, reject is a no-op.
-        #
-        # 2-tier (auto/safety) branch logic:
-        #   - safety match           → approval_tier='safety', status='pending'
-        #   - verified non-safety    → approval_tier='auto',   status='pending'
-        #   - unverified non-safety  → classification flipped to 'reject',
-        #                              approval_tier='', status='' (auto-reject;
-        #                              quality issue absorbed by the impl-retry
-        #                              upstream — user queue is NOT a fallback)
-        #
-        # A pre-verify fail without a safety match signals a quality issue, not an
-        # authorization gap.
-        if classification == "body-auto":
-            verify = run_pre_verify(
-                proposal,
-                lead_pattern,
-                skip_pre_verify=skip_pre_verify or skip_haiku,
-            )
-            safety_flag = classify_safety_tier(proposal)
-            if safety_flag == "safety":
-                # Safety override — always queue for explicit user approval,
-                # regardless of pre-verify verdict (security-first per
-                # core-security.md High-impact actions).
-                approval_tier = "safety"
-                status_value = "pending"
-                # Loud WARN when a diff-embedded hazard recipe reached the safety
-                # gate (Precondition Loud-Fail — never silent). Only a diff trigger
-                # warns: a path/frontmatter safety hit is self-evident from the
-                # target, whereas the diff pattern that caught the hazard is not.
-                diff_hit = match_sensitive_diff(proposal.proposed_diff)
-                if diff_hit is not None:
-                    sys.stderr.write(
-                        f"[daemon-cycle] WARN: safety-diff match — agent={agent} "
-                        f"target={proposal.target_file} pattern=/{diff_hit}/ → "
-                        "routed to Tier-2 user-approval queue (NOT auto-applied).\n"
-                    )
-            elif verify.passed:
-                approval_tier = "auto"
-                status_value = "pending"  # apply stage flips this to 'applied'
-            else:
-                # Pre-verify did NOT pass. Distinguish a GENUINE quality verdict
-                # (the verifier ran and refused the candidate → auto-reject) from
-                # an INFRA non-adjudication (verifier timeout / CLI-missing /
-                # non-zero exit → the candidate was never adjudicated). Recording
-                # an infra OUTAGE as a terminal 'rejected' carries the GENERATOR
-                # rationale, which the kill-streak classifier reads as a quality
-                # reject → the consecutive_reject streak fossilizes healthy agents
-                # on an infra night (DF-6). Route infra failures to 'pending'
-                # (re-verified next cycle) so the streak is untouched.
-                #
-                # For a genuine quality reject: persist 'rejected' explicitly — an
-                # empty sentinel was coerced to 'pending' downstream, fossilizing
-                # auto-reject rows at pending. The Haiku retry already absorbed the
-                # recoverable subset upstream, so this residual should NOT block
-                # user attention (the user queue is NOT a quality fallback).
-                classification, approval_tier, status_value = route_failed_pre_verify(
-                    classification, verify.status
-                )
-                if status_value == "pending":
-                    sys.stderr.write(
-                        "[daemon-cycle] WARN: pre-verify INFRA failure "
-                        f"(status={verify.status}) for agent={agent} "
-                        f"target={proposal.target_file} — row left pending, NOT a "
-                        "quality reject (consecutive_reject streak untouched)\n"
-                    )
-        elif classification == "frontmatter-dryrun":
-            # Frontmatter identity (name / tools / scope / etc.) is a safety trigger
-            # (LLM06 Excessive Agency). Surface as safety tier; pre-verify is
-            # skipped since the dryrun bucket already gates on human review.
-            verify = None
-            approval_tier = "safety"
-            status_value = "pending"
-        elif is_backoff_skip:
-            # Terminal — no apply or stale-drain selector re-picks a marker; no Haiku
-            # call ran, so the back-off rationale classifies non-adjudicating
-            verify = None
-            approval_tier = ""
-            status_value = get_reject_status(proposal.rationale)
-        else:
-            # 'reject' classification — no further gating. Persist a terminal status
-            # explicitly (an empty sentinel was coerced to 'pending' → fossilized).
-            verify = None
-            approval_tier = ""
-            status_value = get_reject_status(proposal.rationale)
-
-        promotion_tier = "mention"
-
-        # Closed-apply terminalization — close the auto+pending limbo at the SOURCE
-        # so every auto-tier candidate reaches a terminal state this cycle; it would
-        # otherwise sit pending forever, fossilizing as a standing "New
-        # suggestions" pile. Safety tier is untouched (the gate is auto-only) — the
-        # human queue is preserved.
-        terminalize = resolve_floor_terminalization(
-            classification=classification,
-            approval_tier=approval_tier,
-            status_value=status_value,
-            promotion_tier=promotion_tier,
-            rationale=proposal.rationale,
-        )
-        classification = terminalize.classification
-        approval_tier = terminalize.approval_tier
-        status_value = terminalize.status_value
-        effective_rationale = terminalize.rationale
-        if terminalize.terminalized:
-            sys.stderr.write(
-                "[daemon-cycle] INFO: closed-apply terminalize — auto candidate for "
-                f"agent={agent} target={proposal.target_file} "
-                f"(promotion_tier='{promotion_tier}', label only); "
-                "persisted status='unadjudicated' instead of auto-pending limbo\n"
-            )
-
-        # T4 prose-only-add detection — DETECTION-ONLY WARNING per candidate patch
-        # diff (added>0, removed==0, no hook file touched). It NEVER rejects the
-        # patch; it only produces a warning verdict, PERSISTED on the proposal row.
-        prose_only_add: bool | None = None
-        if proposal.proposed_diff:
-            try:
-                prose_only_add = bool(
-                    classify_prose_only_add(
-                        proposal.proposed_diff,
-                        target_file=str(proposal.target_file),
-                    )["warning"]
-                )
-            except Exception as exc:  # noqa: BLE001 — branched below, never absorbed
-                # Same named-channel treatment as the corpus-audit emit: the lost
-                # measurement is enumerable afterwards, and the cycle continues.
-                record_sink_degradation("patch_classification", exc)
-        if not skip_loop_emit and proposal.proposed_diff:
-            # Deterministic reference-resolution guard — WARNS on an added line
-            # that cites an unresolved ~/.claude/*.md or rules/*.md pointer (the
-            # C1-C4 LLM verifier does no on-disk existence check). Detection-only.
-            try:
-                classify_dead_reference(
-                    proposal.proposed_diff, target_file=str(proposal.target_file)
-                )
-            except Exception as exc:  # noqa: BLE001 — detection must never break the cycle
-                sys.stderr.write(
-                    "[daemon-cycle] WARN: classify_dead_reference raised — reference "
-                    f"resolution lost: {type(exc).__name__}: {str(exc)[:160]}\n"
-                )
-
-        # Same-agent supersede — only when the new proposal is an actual emit
-        # target (pending), terminate the agent's OTHER pending rows (block
-        # backlog re-accumulation). The skip_loop_emit (test/preflight) path does
-        # not touch PG → supersede also skipped. A floor-terminalized row is not
-        # pending → never a fresh emit → never triggers supersede.
-        # The cycle date + consolidated label are the identity this run's own push
-        # will update, so they are what the supersede must spare.
-        if status_value == "pending" and not skip_loop_emit:
-            supersede_prior_pending_for_agent(
-                agent,
-                proposal.target_file,
                 cycle_date=report.cycle_date,
-                pattern_label=consolidated_label,
-            )
-
-        report.patches.append(
-            PatchResult(
-                pattern_label=consolidated_label,
-                pattern_agent=agent,
-                pattern_frequency=lead_pattern.frequency,
-                target_file=proposal.target_file,
-                classification=classification,
-                rationale=effective_rationale,
-                proposed_diff=proposal.proposed_diff,
-                outcomes_sampled=len(outcomes),
-                haiku_status=haiku_status,
-                # Accurate count from the FULL diff (proposed_diff is stored
-                # whole or, past STORED_DIFF_CHAR_LIMIT, refused and stored empty
-                # → cannot be re-derived without zeroing every refused row).
-                estimated_added_lines=proposal.estimated_added_lines,
-                estimated_removed_lines=proposal.estimated_removed_lines,
-                # error drives the cycle 'partial' status (_pg_push_autoagent_cycle.py
-                # saw_error). A chronic-timeout back-off is an INTENTIONAL bounded
-                # skip, NOT a cycle error — leave error empty so a backed-off
-                # candidate stops flipping every cycle to 'partial' (the rationale is
-                # still persisted on the proposal row + emitted to stderr for
-                # observability). The non-backoff timeout (streak < threshold) keeps
-                # surfacing as an error so the first N timeouts remain visible.
-                error=(
-                    ""
-                    if proposal.proposed_diff or skip_haiku or is_backoff_skip
-                    else proposal.rationale
-                ),
-                pre_verify_passed=verify.passed if verify is not None else None,
-                pre_verify_status=verify.status if verify is not None else "",
-                pre_verify_rationale=verify.rationale if verify is not None else "",
-                pre_verify_axes=_compose_pre_verify_axes(
-                    verify.axes if verify is not None else None, prose_only_add
-                ),
-                pre_verify_latency_ms=verify.latency_ms if verify is not None else 0,
-                approval_tier=approval_tier,
-                status=status_value,
-                promotion_tier=terminalize.promotion_tier,
-                # Carry the structured Haiku-failure evidence from the proposal
-                # into the SERIALIZED row. Without this copy the dataclass
-                # defaults ('' / None) reach PG → failure_class stays empty and
-                # the cost-guard badge never lights (the live failure_class=['','']
-                # symptom). raw_response head is redacted (a 401 stream may echo a
-                # token) and bounded to 400 chars.
-                failure_class=proposal.failure_class,
-                failure_returncode=proposal.failure_returncode,
-                failure_signal=proposal.failure_signal,
-                failure_duration_ms=proposal.failure_duration_ms,
-                failure_attempt=proposal.failure_attempt,
-                failure_probe_result=proposal.failure_probe_result,
-                failure_log_path=proposal.failure_log_path,
-                failure_raw_head=redact_secrets(proposal.raw_response[:400]),
-                # Same explicit-copy duty as the failure_* block above — an omitted
-                # mirror silently reaches PG as the dataclass default.
-                generation_duration_ms=proposal.generation_duration_ms,
+                agents_dir=agents_dir,
+                seen_targets=seen_targets,
+                skip_haiku=skip_haiku,
+                skip_pre_verify=skip_pre_verify,
+                skip_loop_emit=skip_loop_emit,
             )
         )
 
@@ -11624,6 +11296,364 @@ def run_cycle(
     report.cost_guard["state"] = derive_cost_guard_state(report)
 
     return report
+
+
+def build_patch_result(
+    agent: str,
+    agent_patterns: list[Pattern],
+    outcomes: list[Outcome],
+    *,
+    cycle_date: str,
+    agents_dir: Path,
+    seen_targets: set[str],
+    skip_haiku: bool,
+    skip_pre_verify: bool,
+    skip_loop_emit: bool,
+) -> PatchResult:
+    """Generation unit — one agent's gated patterns → one routed proposal row.
+
+    Runs the timeout back-off, the Haiku generation, classification, pre-verify
+    routing, closed-apply terminalization and the same-agent supersede.
+    ``seen_targets`` is the cycle's conflict set: read, then extended in place.
+    ``cycle_date`` is the identity the supersede spares.
+    """
+    # Chronic Haiku-timeout back-off (generation side) — BEFORE the Haiku call.
+    # A target that already timed out TIMEOUT_BACKOFF_THRESHOLD consecutive
+    # times re-selects from core.learning_log every cycle with no memory of
+    # those failures; without this gate it burns a fresh HAIKU_TIMEOUT_SEC call
+    # and re-emits the 'partial'-causing error indefinitely. Skip the Haiku call
+    # entirely and emit a loud, persisted back-off record instead. skip_haiku
+    # (test/preflight) bypasses the gate — no real generation happens there.
+    target_md = agents_dir / f"{agent}.md"
+    timeout_streak = 0 if skip_haiku else consecutive_timeout_count(str(target_md))
+    is_backoff_skip = timeout_streak >= TIMEOUT_BACKOFF_THRESHOLD
+    if is_backoff_skip:
+        # Self-lock guard: the streak's own break condition is produced only
+        # by the call this branch suppresses, so a bounded hold opens for one
+        # cycle and lets that call happen. Read only here — the rare path.
+        backoff_state = read_backoff_state(str(target_md))
+        if backoff_state.probe_due:
+            is_backoff_skip = False
+            sys.stderr.write(
+                f"[daemon-cycle] timeout-backoff: agent={agent} held "
+                f"{backoff_state.held_cycles} consecutive cycles "
+                f"(bound {TIMEOUT_BACKOFF_PROBE_CYCLES}) — admitting ONE probe "
+                f"generation (streak {timeout_streak}, "
+                f"{backoff_state.superseded_skipped} row(s) looked past as "
+                f"recorded under a superseded ceiling).\n"
+            )
+    if is_backoff_skip:
+        sys.stderr.write(
+            f"[daemon-cycle] timeout-backoff: agent={agent} target={target_md.name} "
+            f"reached {timeout_streak} consecutive haiku timeouts "
+            f"(threshold {TIMEOUT_BACKOFF_THRESHOLD}) — SKIP generation "
+            f"(no Haiku call, snoozed). Recovers on the next non-timeout cycle.\n"
+        )
+        proposal = backoff_skip_proposal(str(target_md), timeout_streak)
+    else:
+        proposal = generate_consolidated_proposal(
+            agent,
+            agent_patterns,
+            outcomes,
+            agents_dir=agents_dir,
+            skip_haiku=skip_haiku,
+        )
+        # Intra-cycle spacing (FIX #5): a small sleep after each REAL Haiku
+        # call so the per-agent loop does not self-contend its shared
+        # OAuth/usage window (effective concurrency cap of 1 with a gap).
+        # Bounded + cheap; skipped on test/preflight (skip_haiku) and the
+        # back-off branch (no real call there). 0 disables.
+        if not skip_haiku and INTER_CALL_SPACING_SEC > 0:
+            time.sleep(INTER_CALL_SPACING_SEC)
+    # Lead pattern = group head (freq DESC) — feeds the date / single-pattern
+    # context for pre-verify / promotion (the label is computed separately).
+    lead_pattern = agent_patterns[0]
+    consolidated_label = _consolidated_pattern_label(agent, agent_patterns)
+
+    target_path = Path(proposal.target_file)
+    classification = classify_patch_area(
+        proposal,
+        target_path,
+        seen_targets=seen_targets,
+        agents_dir=agents_dir,
+    )
+    # Track only successfully-resolved targets for conflict detection.
+    if classification != "reject" or proposal.proposed_diff.strip():
+        seen_targets.add(str(target_path.resolve()))
+
+    # Map proposal.parse_mode to haiku_status so cycle JSON shows the
+    # explicit recovery path. NO silent coerce — fuzzy/retried states
+    # surface distinctly from strict happy path.
+    #
+    # parse_mode='quota-limit' → haiku_status='skipped:quota-limit'. Branch
+    # ordering: quota check comes BEFORE empty-diff fallback because quota
+    # always yields empty diff (would otherwise collapse to empty-or-error
+    # and lose the budget-exhaustion signal in monitor dashboard).
+    if skip_haiku:
+        haiku_status = "skipped:test"
+    elif is_backoff_skip:
+        # Chronic-timeout back-off — distinct status so the monitor dashboard
+        # can flag a backed-off candidate vs. a generic empty/error. Branch
+        # FIRST among the non-test cases (it always yields an empty diff and
+        # must not collapse into 'skipped:empty-or-error').
+        haiku_status = TIMEOUT_BACKOFF_HAIKU_STATUS
+    elif proposal.parse_mode == "budget-too-low":
+        # Local budget-config failure — distinct from external quota. Like quota,
+        # it always yields an empty diff, so branch before empty-or-error to
+        # preserve the signal.
+        haiku_status = "skipped:budget-too-low"
+    elif proposal.parse_mode == "quota-limit":
+        haiku_status = "skipped:quota-limit"
+    elif proposal.parse_mode == "transient-overload":
+        # Transient infra blip (Overloaded / 529 / connection reset / timeout)
+        # whose bounded retries were exhausted. Always an empty diff, so branch
+        # before empty-or-error to keep the infra-blip signal distinct from a
+        # genuinely empty / parse-failed output in the monitor dashboard.
+        haiku_status = "skipped:transient"
+    elif proposal.parse_mode == "auth-failure":
+        # 401/credential failure (expired non-interactive OAuth token). Always
+        # an empty diff, so branch before empty-or-error to keep the auth
+        # signal distinct from a genuinely empty / parse-failed output — the
+        # monitor cost-guard chip reads this to show "Auth fault", not a
+        # spending warning.
+        haiku_status = "skipped:auth"
+    elif proposal.parse_mode == "timeout-stall":
+        # Escalated-retry timeout — a TRUE stall (even the longer bound
+        # produced nothing), distinct from a slow generation that completed.
+        # Always an empty diff → branch before empty-or-error so the stall
+        # stays queryable.
+        haiku_status = "skipped:timeout-stall"
+    elif not proposal.proposed_diff:
+        haiku_status = "skipped:empty-or-error"
+    elif proposal.parse_mode == "escalated":
+        # Legacy tag — no longer produced, kept so a persisted or out-of-tree
+        # shape still resolves instead of collapsing into the plain 'ok' else.
+        haiku_status = "ok:escalated"
+    elif proposal.parse_mode == "retried":
+        haiku_status = "ok:retried"
+    elif proposal.parse_mode == "fuzzy":
+        haiku_status = "ok:fuzzy-parsed"
+    else:
+        haiku_status = "ok"
+
+    # Second axis: a clean parse at the escalated bound is slow generation,
+    # not a stall. Suffix-composed so the parse path above survives it.
+    haiku_status = build_escalated_haiku_status(
+        haiku_status, escalated_timeout=proposal.escalated_timeout
+    )
+
+    # Pre-verify gate. Only body-auto candidates pay the LLM cost;
+    # frontmatter-dryrun is already user-bound, reject is a no-op.
+    #
+    # 2-tier (auto/safety) branch logic:
+    #   - safety match           → approval_tier='safety', status='pending'
+    #   - verified non-safety    → approval_tier='auto',   status='pending'
+    #   - unverified non-safety  → classification flipped to 'reject',
+    #                              approval_tier='', status='' (auto-reject;
+    #                              quality issue absorbed by the impl-retry
+    #                              upstream — user queue is NOT a fallback)
+    #
+    # A pre-verify fail without a safety match signals a quality issue, not an
+    # authorization gap.
+    if classification == "body-auto":
+        verify = run_pre_verify(
+            proposal,
+            lead_pattern,
+            skip_pre_verify=skip_pre_verify or skip_haiku,
+        )
+        safety_flag = classify_safety_tier(proposal)
+        if safety_flag == "safety":
+            # Safety override — always queue for explicit user approval,
+            # regardless of pre-verify verdict (security-first per
+            # core-security.md High-impact actions).
+            approval_tier = "safety"
+            status_value = "pending"
+            # Loud WARN when a diff-embedded hazard recipe reached the safety
+            # gate (Precondition Loud-Fail — never silent). Only a diff trigger
+            # warns: a path/frontmatter safety hit is self-evident from the
+            # target, whereas the diff pattern that caught the hazard is not.
+            diff_hit = match_sensitive_diff(proposal.proposed_diff)
+            if diff_hit is not None:
+                sys.stderr.write(
+                    f"[daemon-cycle] WARN: safety-diff match — agent={agent} "
+                    f"target={proposal.target_file} pattern=/{diff_hit}/ → "
+                    "routed to Tier-2 user-approval queue (NOT auto-applied).\n"
+                )
+        elif verify.passed:
+            approval_tier = "auto"
+            status_value = "pending"  # apply stage flips this to 'applied'
+        else:
+            # Pre-verify did NOT pass. Distinguish a GENUINE quality verdict
+            # (the verifier ran and refused the candidate → auto-reject) from
+            # an INFRA non-adjudication (verifier timeout / CLI-missing /
+            # non-zero exit → the candidate was never adjudicated). Recording
+            # an infra OUTAGE as a terminal 'rejected' carries the GENERATOR
+            # rationale, which the kill-streak classifier reads as a quality
+            # reject → the consecutive_reject streak fossilizes healthy agents
+            # on an infra night (DF-6). Route infra failures to 'pending'
+            # (re-verified next cycle) so the streak is untouched.
+            #
+            # For a genuine quality reject: persist 'rejected' explicitly — an
+            # empty sentinel was coerced to 'pending' downstream, fossilizing
+            # auto-reject rows at pending. The Haiku retry already absorbed the
+            # recoverable subset upstream, so this residual should NOT block
+            # user attention (the user queue is NOT a quality fallback).
+            classification, approval_tier, status_value = route_failed_pre_verify(
+                classification, verify.status
+            )
+            if status_value == "pending":
+                sys.stderr.write(
+                    "[daemon-cycle] WARN: pre-verify INFRA failure "
+                    f"(status={verify.status}) for agent={agent} "
+                    f"target={proposal.target_file} — row left pending, NOT a "
+                    "quality reject (consecutive_reject streak untouched)\n"
+                )
+    elif classification == "frontmatter-dryrun":
+        # Frontmatter identity (name / tools / scope / etc.) is a safety trigger
+        # (LLM06 Excessive Agency). Surface as safety tier; pre-verify is
+        # skipped since the dryrun bucket already gates on human review.
+        verify = None
+        approval_tier = "safety"
+        status_value = "pending"
+    elif is_backoff_skip:
+        # Terminal — no apply or stale-drain selector re-picks a marker; no Haiku
+        # call ran, so the back-off rationale classifies non-adjudicating
+        verify = None
+        approval_tier = ""
+        status_value = get_reject_status(proposal.rationale)
+    else:
+        # 'reject' classification — no further gating. Persist a terminal status
+        # explicitly (an empty sentinel was coerced to 'pending' → fossilized).
+        verify = None
+        approval_tier = ""
+        status_value = get_reject_status(proposal.rationale)
+
+    promotion_tier = "mention"
+
+    # Closed-apply terminalization — close the auto+pending limbo at the SOURCE
+    # so every auto-tier candidate reaches a terminal state this cycle; it would
+    # otherwise sit pending forever, fossilizing as a standing "New
+    # suggestions" pile. Safety tier is untouched (the gate is auto-only) — the
+    # human queue is preserved.
+    terminalize = resolve_floor_terminalization(
+        classification=classification,
+        approval_tier=approval_tier,
+        status_value=status_value,
+        promotion_tier=promotion_tier,
+        rationale=proposal.rationale,
+    )
+    classification = terminalize.classification
+    approval_tier = terminalize.approval_tier
+    status_value = terminalize.status_value
+    effective_rationale = terminalize.rationale
+    if terminalize.terminalized:
+        sys.stderr.write(
+            "[daemon-cycle] INFO: closed-apply terminalize — auto candidate for "
+            f"agent={agent} target={proposal.target_file} "
+            f"(promotion_tier='{promotion_tier}', label only); "
+            "persisted status='unadjudicated' instead of auto-pending limbo\n"
+        )
+
+    # T4 prose-only-add detection — DETECTION-ONLY WARNING per candidate patch
+    # diff (added>0, removed==0, no hook file touched). It NEVER rejects the
+    # patch; it only produces a warning verdict, PERSISTED on the proposal row.
+    prose_only_add: bool | None = None
+    if proposal.proposed_diff:
+        try:
+            prose_only_add = bool(
+                classify_prose_only_add(
+                    proposal.proposed_diff,
+                    target_file=str(proposal.target_file),
+                )["warning"]
+            )
+        except Exception as exc:  # noqa: BLE001 — branched below, never absorbed
+            # Same named-channel treatment as the corpus-audit emit: the lost
+            # measurement is enumerable afterwards, and the cycle continues.
+            record_sink_degradation("patch_classification", exc)
+    if not skip_loop_emit and proposal.proposed_diff:
+        # Deterministic reference-resolution guard — WARNS on an added line
+        # that cites an unresolved ~/.claude/*.md or rules/*.md pointer (the
+        # C1-C4 LLM verifier does no on-disk existence check). Detection-only.
+        try:
+            classify_dead_reference(
+                proposal.proposed_diff, target_file=str(proposal.target_file)
+            )
+        except Exception as exc:  # noqa: BLE001 — detection must never break the cycle
+            sys.stderr.write(
+                "[daemon-cycle] WARN: classify_dead_reference raised — reference "
+                f"resolution lost: {type(exc).__name__}: {str(exc)[:160]}\n"
+            )
+
+    # Same-agent supersede — only when the new proposal is an actual emit
+    # target (pending), terminate the agent's OTHER pending rows (block
+    # backlog re-accumulation). The skip_loop_emit (test/preflight) path does
+    # not touch PG → supersede also skipped. A floor-terminalized row is not
+    # pending → never a fresh emit → never triggers supersede.
+    # The cycle date + consolidated label are the identity this run's own push
+    # will update, so they are what the supersede must spare.
+    if status_value == "pending" and not skip_loop_emit:
+        supersede_prior_pending_for_agent(
+            agent,
+            proposal.target_file,
+            cycle_date=cycle_date,
+            pattern_label=consolidated_label,
+        )
+
+    return PatchResult(
+        pattern_label=consolidated_label,
+        pattern_agent=agent,
+        pattern_frequency=lead_pattern.frequency,
+        target_file=proposal.target_file,
+        classification=classification,
+        rationale=effective_rationale,
+        proposed_diff=proposal.proposed_diff,
+        outcomes_sampled=len(outcomes),
+        haiku_status=haiku_status,
+        # Accurate count from the FULL diff (proposed_diff is stored
+        # whole or, past STORED_DIFF_CHAR_LIMIT, refused and stored empty
+        # → cannot be re-derived without zeroing every refused row).
+        estimated_added_lines=proposal.estimated_added_lines,
+        estimated_removed_lines=proposal.estimated_removed_lines,
+        # error drives the cycle 'partial' status (_pg_push_autoagent_cycle.py
+        # saw_error). A chronic-timeout back-off is an INTENTIONAL bounded
+        # skip, NOT a cycle error — leave error empty so a backed-off
+        # candidate stops flipping every cycle to 'partial' (the rationale is
+        # still persisted on the proposal row + emitted to stderr for
+        # observability). The non-backoff timeout (streak < threshold) keeps
+        # surfacing as an error so the first N timeouts remain visible.
+        error=(
+            ""
+            if proposal.proposed_diff or skip_haiku or is_backoff_skip
+            else proposal.rationale
+        ),
+        pre_verify_passed=verify.passed if verify is not None else None,
+        pre_verify_status=verify.status if verify is not None else "",
+        pre_verify_rationale=verify.rationale if verify is not None else "",
+        pre_verify_axes=_compose_pre_verify_axes(
+            verify.axes if verify is not None else None, prose_only_add
+        ),
+        pre_verify_latency_ms=verify.latency_ms if verify is not None else 0,
+        approval_tier=approval_tier,
+        status=status_value,
+        promotion_tier=terminalize.promotion_tier,
+        # Carry the structured Haiku-failure evidence from the proposal
+        # into the SERIALIZED row. Without this copy the dataclass
+        # defaults ('' / None) reach PG → failure_class stays empty and
+        # the cost-guard badge never lights (the live failure_class=['','']
+        # symptom). raw_response head is redacted (a 401 stream may echo a
+        # token) and bounded to 400 chars.
+        failure_class=proposal.failure_class,
+        failure_returncode=proposal.failure_returncode,
+        failure_signal=proposal.failure_signal,
+        failure_duration_ms=proposal.failure_duration_ms,
+        failure_attempt=proposal.failure_attempt,
+        failure_probe_result=proposal.failure_probe_result,
+        failure_log_path=proposal.failure_log_path,
+        failure_raw_head=redact_secrets(proposal.raw_response[:400]),
+        # Same explicit-copy duty as the failure_* block above — an omitted
+        # mirror silently reaches PG as the dataclass default.
+        generation_duration_ms=proposal.generation_duration_ms,
+    )
 
 
 # -- CLI entry --------------------------------------------------------------
