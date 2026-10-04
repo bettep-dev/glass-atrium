@@ -41,26 +41,6 @@
      "wiki_fc"
     ],
     "expected_cadence_minutes": 1440
-   },
-   {
-    "daemon_name": "daily-restart-autoagent",
-    "effective_status": "ok",
-    "last_run_at": "2026-09-29T20:30:05.000Z",
-    "staleness_minutes": 807,
-    "node_ids": [
-     "cron"
-    ],
-    "expected_cadence_minutes": 1440
-   },
-   {
-    "daemon_name": "daily-restart-wiki",
-    "effective_status": "ok",
-    "last_run_at": "2026-09-29T20:35:55.000Z",
-    "staleness_minutes": 801,
-    "node_ids": [
-     "cron"
-    ],
-    "expected_cadence_minutes": 1440
    }
   ],
   "writers": [

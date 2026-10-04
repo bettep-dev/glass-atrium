@@ -223,7 +223,7 @@ test("GET /api/dashboard/kpi: same-time-of-day fields match the time-cut ground 
 });
 
 // GET /api/dashboard/daemon-status
-test("GET /api/dashboard/daemon-status: board carries role-qualified daily-restart entries", async () => {
+test("GET /api/dashboard/daemon-status: board carries the active daemons only", async () => {
   const res = await app.inject({ method: "GET", url: "/api/dashboard/daemon-status" });
   assert.strictEqual(res.statusCode, 200);
   const body = res.json() as {
@@ -232,8 +232,8 @@ test("GET /api/dashboard/daemon-status: board carries role-qualified daily-resta
   };
   assert.deepStrictEqual(
     body.items.map((i) => i.daemon_name),
-    ["autoagent", "wiki", "daily-restart-autoagent", "daily-restart-wiki"],
-    "fixed board order — legacy merged 'daily-restart' carries no card",
+    ["autoagent", "wiki"],
+    "fixed board order — every daily-restart name is history-only and carries no card",
   );
   for (const item of body.items) {
     assert.ok(item.expected_next_at !== null, `${item.daemon_name} carries a next-fire schedule`);

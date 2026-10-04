@@ -47,16 +47,8 @@ const ALLOWED_TIMESERIES_DAYS: ReadonlySet<number> = new Set([7, 30, 90]);
 const DEFAULT_TIMESERIES_DAYS = 7;
 
 // Why hard-coded daemon list: the daemon mini-board cards are a fixed set.
-// daily-restart runs are role-qualified (one row per restarted daemon) so each
-// role gets its own card — consistent with the system-health board. Legacy
-// merged "daily-restart" rows stay readable but carry no card/schedule.
-type ActiveDaemonName = Exclude<DaemonStatusItem["daemon_name"], "daily-restart">;
-const DAEMON_BOARD: ReadonlyArray<ActiveDaemonName> = [
-  "autoagent",
-  "wiki",
-  "daily-restart-autoagent",
-  "daily-restart-wiki",
-];
+// Every daily-restart name is history-only — past rows stay readable, no card/schedule.
+const DAEMON_BOARD: ReadonlyArray<DaemonStatusItem["daemon_name"]> = ["autoagent", "wiki"];
 
 interface KpiCostRow {
   today_cost: Prisma.Decimal | null;

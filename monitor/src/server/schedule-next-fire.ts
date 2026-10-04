@@ -22,25 +22,23 @@ export type CronRule =
   | { type: "daily-at"; hour: number; minute: number }
   | { type: "weekly-at"; dayOfWeek: number; hour: number; minute: number };
 
-// Raw daemon schedule source — the three config-derived "HH:MM" strings rendered into monitor/.env
+// Raw daemon schedule source — the two config-derived "HH:MM" strings rendered into monitor/.env
 // (ATRIUM_SCHEDULE_*) by render-monitor-env.sh. Each may be undefined (env unset). Injectable seam:
 // module-load default reads process.env, unit tests pass a fixed object (mirrors timezone.ts HostTimezoneResolver seam).
 // Config.toml stays the upper SoT — the backend consumes rendered env, never grows a second config.toml parser.
 export interface RawDaemonSchedule {
   autoagent?: string;
   wiki?: string;
-  "daily-restart"?: string;
 }
 
-// The three logical schedule keys + .env var names (fixed order autoagent/wiki/daily-restart).
-// daily-restart fans out to TWO role-qualified rows (one launchd job → two monitor rows); the other two are 1:1.
-const SCHEDULE_KEYS = ["autoagent", "wiki", "daily-restart"] as const;
+// The logical schedule keys + .env var names, one monitor row each.
+// daily-restart names are history-only → no key; a stale ATRIUM_SCHEDULE_DAILY_RESTART in .env is never read.
+const SCHEDULE_KEYS = ["autoagent", "wiki"] as const;
 type ScheduleKey = (typeof SCHEDULE_KEYS)[number];
 
 const ENV_NAME: Record<ScheduleKey, string> = {
   autoagent: "ATRIUM_SCHEDULE_AUTOAGENT",
   wiki: "ATRIUM_SCHEDULE_WIKI",
-  "daily-restart": "ATRIUM_SCHEDULE_DAILY_RESTART",
 };
 
 // Dev fallback = current config truth (incl. wiki 04:50), fired only on a totally-absent injected source.
@@ -48,10 +46,9 @@ const ENV_NAME: Record<ScheduleKey, string> = {
 const DEV_FALLBACK_SCHEDULE: Record<ScheduleKey, string> = {
   autoagent: "04:30",
   wiki: "04:50",
-  "daily-restart": "05:30",
 };
 
-// Build the 4-row schedule map from an injectable raw source, applying the daily-restart fan-out.
+// Build the schedule map from an injectable raw source.
 // Loud-fail (mirrors timezone.ts): a present-but-malformed value throws at module load with the env-var name.
 // Partial-presence throws (never mix rendered + fallback); only a TOTALLY-absent source degrades to the dev fallback + one stderr warning.
 export function buildDaemonCronSchedule(
@@ -70,14 +67,14 @@ export function buildDaemonCronSchedule(
       // not a silent wrong value, is the signal.
       alarm(
         "no ATRIUM_SCHEDULE_* env under NODE_ENV=production — the dev-fallback schedule " +
-          "{autoagent 04:30, wiki 04:50, daily-restart 05:30} would misrepresent Next-due. Run " +
+          "{autoagent 04:30, wiki 04:50} would misrepresent Next-due. Run " +
           "render-monitor-env.sh then restart the monitor to render the schedule from config.toml.",
       );
     } else {
       // Dev path: tsx watch with no rendered .env. Visible, one-shot warning — never silent.
       process.stderr.write(
         "[schedule] WARNING: no ATRIUM_SCHEDULE_* env present — using dev-fallback " +
-          "{autoagent 04:30, wiki 04:50, daily-restart 05:30}. Run render-monitor-env.sh " +
+          "{autoagent 04:30, wiki 04:50}. Run render-monitor-env.sh " +
           "to render concrete schedule values from config.toml.\n",
       );
     }
@@ -90,14 +87,13 @@ export function buildDaemonCronSchedule(
       .join(", ");
     throw new Error(
       `partial daemon schedule env — ${missing} absent while others are set; render all ` +
-        "three ATRIUM_SCHEDULE_* together (never mix a rendered value with a fallback)",
+        "ATRIUM_SCHEDULE_* keys together (never mix a rendered value with a fallback)",
     );
   }
 
   return assembleSchedule({
     autoagent: source.autoagent as string,
     wiki: source.wiki as string,
-    "daily-restart": source["daily-restart"] as string,
   });
 }
 
@@ -106,27 +102,15 @@ export function buildDaemonCronSchedule(
 export const DAEMON_CRON_SCHEDULE: Record<string, CronRule> = buildDaemonCronSchedule({
   autoagent: process.env.ATRIUM_SCHEDULE_AUTOAGENT,
   wiki: process.env.ATRIUM_SCHEDULE_WIKI,
-  "daily-restart": process.env.ATRIUM_SCHEDULE_DAILY_RESTART,
 });
 
-// Assemble the 4 CronRule rows from validated HH:MM strings (daily-restart fans out to two identical-time rows).
+// Assemble one CronRule row per schedule key from validated HH:MM strings.
 function assembleSchedule(raw: Record<ScheduleKey, string>): Record<string, CronRule> {
   const autoagent = parseHhMm(raw.autoagent, ENV_NAME.autoagent);
   const wiki = parseHhMm(raw.wiki, ENV_NAME.wiki);
-  const dailyRestart = parseHhMm(raw["daily-restart"], ENV_NAME["daily-restart"]);
   return {
     autoagent: { type: "daily-at", hour: autoagent.hour, minute: autoagent.minute },
     wiki: { type: "daily-at", hour: wiki.hour, minute: wiki.minute },
-    "daily-restart-autoagent": {
-      type: "daily-at",
-      hour: dailyRestart.hour,
-      minute: dailyRestart.minute,
-    },
-    "daily-restart-wiki": {
-      type: "daily-at",
-      hour: dailyRestart.hour,
-      minute: dailyRestart.minute,
-    },
   };
 }
 

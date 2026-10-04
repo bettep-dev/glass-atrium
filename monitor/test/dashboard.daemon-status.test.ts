@@ -16,12 +16,7 @@ import {
   expectedIntervalMinutes,
 } from "../src/server/schedule-next-fire.js";
 
-const DAEMON_BOARD = [
-  "autoagent",
-  "wiki",
-  "daily-restart-autoagent",
-  "daily-restart-wiki",
-] as const;
+const DAEMON_BOARD = ["autoagent", "wiki"] as const;
 
 // One derivation covers the board: every DAEMON_BOARD entry is built as a daily-at rule.
 const CADENCE_MIN = expectedIntervalMinutes(DAEMON_CRON_SCHEDULE.autoagent);
@@ -60,10 +55,10 @@ test("never-fired daemon + old install anchor → board escalates to 'stale' (sh
 
 // The cases above feed rows=[], where the raw row value and the synthesized verdict cannot
 // disagree. A PRESENT row is the only shape that separates them, so the delegation to
-// resolveDaemonStatuses is pinned here — on both synthesis branches at once, plus a fresh row
+// resolveDaemonStatuses is pinned here and in the next case — both synthesis branches, a fresh row
 // proving the board still publishes a real status rather than blanket-overwriting one, and a
 // daemon no row mentions proving membership comes from DAEMON_BOARD rather than from the rows.
-test("a present row publishes the synthesized status, never its own last_status — and a daemon with no row stays on the board (F#38 delegation)", () => {
+test("a present row publishes the synthesized status, never its own last_status (F#38 delegation)", () => {
   const rows = [
     // Overdue: the run itself ended 'ok' — the silence since is what makes the board stale.
     {
@@ -71,14 +66,8 @@ test("a present row publishes the synthesized status, never its own last_status 
       last_run_at: minutesAgo(CADENCE_MIN * STALE_MULTIPLIER + 1),
       last_status: "ok",
     },
-    // Row present, no run recorded: 'missing' comes from the anchor, not from the row.
-    { daemon_name: "wiki", last_run_at: null, last_status: "ok" },
     // Inside the cadence window the row's own status IS the verdict.
-    {
-      daemon_name: "daily-restart-autoagent",
-      last_run_at: minutesAgo(1),
-      last_status: "quota_exceeded",
-    },
+    { daemon_name: "wiki", last_run_at: minutesAgo(1), last_status: "quota_exceeded" },
   ];
 
   const items = buildDaemonStatusItems(rows, NOW, null);
@@ -91,20 +80,44 @@ test("a present row publishes the synthesized status, never its own last_status 
   );
   assert.strictEqual(
     itemOf(items, "wiki").last_status,
+    "quota_exceeded",
+    "an in-cadence row lost its real status — synthesis must replace a stale/missing verdict only, " +
+      "never overwrite a fresh run's outcome",
+  );
+});
+
+test("a row with no recorded run reads 'missing', and a daemon with no row stays on the board", () => {
+  // Row present, no run recorded: 'missing' comes from the anchor, not from the row.
+  const items = buildDaemonStatusItems(
+    [{ daemon_name: "wiki", last_run_at: null, last_status: "ok" }],
+    NOW,
+    null,
+  );
+
+  assert.strictEqual(
+    itemOf(items, "wiki").last_status,
     "missing",
     "a row with no last_run_at surfaced its raw last_status — a daemon that never ran reads as " +
       "healthy on the dashboard while the other two boards call it missing",
   );
   assert.strictEqual(
-    itemOf(items, "daily-restart-autoagent").last_status,
-    "quota_exceeded",
-    "an in-cadence row lost its real status — synthesis must replace a stale/missing verdict only, " +
-      "never overwrite a fresh run's outcome",
-  );
-  assert.strictEqual(
-    itemOf(items, "daily-restart-wiki").last_status,
+    itemOf(items, "autoagent").last_status,
     "missing",
     "a daemon with no row dropped off the board — the board is DAEMON_BOARD-driven, not rows-driven",
+  );
+});
+
+test("history-only daily-restart rows carry no card and no schedule on the board", () => {
+  const rows = ["daily-restart", "daily-restart-autoagent", "daily-restart-wiki"].map((name) => ({
+    daemon_name: name,
+    last_run_at: minutesAgo(1),
+    last_status: "ok",
+  }));
+
+  assert.deepStrictEqual(
+    buildDaemonStatusItems(rows, NOW, null).map((item) => item.daemon_name),
+    [...DAEMON_BOARD],
+    "a retired daily-restart job still owns a board card",
   );
 });
 

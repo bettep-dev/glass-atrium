@@ -28,12 +28,7 @@ import type { DaemonStatusCard } from "../src/server/types/health-detail.js";
 import { buildScreenSandbox } from "./client-sandbox.js";
 
 // live-overlay.ts DAEMON_NAMES mirror — the overlay surface this binding serves.
-const EXPECTED_DAEMONS = [
-  "autoagent",
-  "wiki",
-  "daily-restart-autoagent",
-  "daily-restart-wiki",
-] as const;
+const EXPECTED_DAEMONS = ["autoagent", "wiki"] as const;
 
 // Node-definition matcher: id immediately followed by a shape opener
 // ([, (, {, [/ …) at a token boundary — mermaid node declaration form.
