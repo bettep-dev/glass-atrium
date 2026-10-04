@@ -512,7 +512,8 @@ print(json.dumps({
         # count fold and the query builder, so an llm-tiered row would inflate
         # the operator awaiting-decision count for a row awaiting nothing.
         "approval_tier": "auto",
-        "status": "applied" if landed else "rejected",
+        # Unlanded → no gate verdict, never rejected; a label-absent schema stores rejected
+        "status": "applied" if landed else "unadjudicated",
         # Born terminal, so no later transition stamps it: the actor arrives with
         # the insert. Its own token — this row is an updater accountability
         # record, never a daemon push.
@@ -541,8 +542,8 @@ print(json.dumps({
 #
 # Equally deliberate: the emit does not read whether the body actually landed. A run
 # that offered the discard and did not apply it is itself the accountability event, so
-# it still records — as status=rejected, since the outcome ledger below supplies the
-# landed split.
+# it still records — as status=unadjudicated, since the outcome ledger below supplies
+# the landed split.
 #
 # Best-effort with a loud warning, following the conflict-decline precedent — a
 # database write failure must NEVER abort a deploy.

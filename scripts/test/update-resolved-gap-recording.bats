@@ -21,12 +21,13 @@
 #                  the CLI rejects the envelope, so the landed row is the assertion.
 #   T3 upsert    — the same file resolved repeatedly on one day yields ONE row whose
 #                  status tracks the LAST outcome, in BOTH directions (a same-day
-#                  decline-then-accept must not leave rejected on landed content).
+#                  decline-then-accept must not leave unadjudicated on landed content).
 #   T4 outage    — a non-zero CLI exit produces one warning and returns 0 (a database
 #                  write failure must never abort a deploy).
 #   T5 no helper — an absent dual-write helper warns and returns 0.
-#   T6 rejected  — a file that did NOT land records classification reject / status
-#                  rejected (nothing was discarded, so the row must not read applied).
+#   T6 unlanded  — a file that did NOT land records classification reject / status
+#                  unadjudicated (nothing was discarded, so the row must not read
+#                  applied; no gate verdict concluded, so it must not read rejected).
 #   T7 rationale — the rationale carries the hunk count, the dropped/added line
 #                  counts and a bounded excerpt of the dropped daemon lines.
 #   T9 multi-row — a run of two rows splits landed per row and stamps BOTH with one
@@ -36,7 +37,7 @@
 #                  skipped:no-model-call, and stays outside every LIKE 'ok%'
 #                  apply-eligibility gate. An invariant rather than one fixture:
 #                  the arbiter verdict has no non-gated complement to contrast.
-#   T10 no ledger — an empty or absent ledger PATH records rejected and still
+#   T10 no ledger — an empty or absent ledger PATH records unadjudicated and still
 #                  returns 0 (an unreadable ledger must not abort the deploy).
 #   T12 roster   — the landed lookup keys on the row's manifest-relative target, so a
 #                  path that is not an agent body splits landed by the same rule.
@@ -344,17 +345,20 @@ db_available() {
   [[ "$rationale" == *"2 gap(s)"* ]] || return 1
 }
 
-@test "T6 a file that did not land records reject / rejected" {
+@test "T6 a file that did not land records reject / unadjudicated" {
   write_tsv
   : >"${LEDGER}" # no GIT_TXN_OK entry → the transaction never landed
   run run_driver
-  [ "$status" -eq 0 ]
+  [ "$status" -eq 0 ] || {
+    echo "${output}"
+    return 1
+  }
 
   run envelope_field classification
   [ "$output" = "reject" ]
 
   run envelope_field status
-  [ "$output" = "rejected" ]
+  [ "$output" = "unadjudicated" ]
 
   rationale="$(envelope_field rationale)"
   [[ "$rationale" == *"not applied"* ]] || return 1
@@ -430,18 +434,24 @@ roster_paths() {
   [[ "$output" == *"(${unlanded_rel}, landed=0)"* ]] || return 1
 }
 
-@test "T10 an empty or absent ledger path records rejected and still returns 0" {
+@test "T10 an empty or absent ledger path records unadjudicated and still returns 0" {
   # The guard's not-taken branch. Neither shape may abort: the emitter runs after
   # the merge landed and before the base-content capture, so an abort here strands
   # the merge at the old base.
   write_tsv
   LEDGER="" run run_driver
-  [ "$status" -eq 0 ]
-  [ "$(envelope_field status)" = "rejected" ]
+  [ "$status" -eq 0 ] || {
+    echo "${output}"
+    return 1
+  }
+  [ "$(envelope_field status)" = "unadjudicated" ]
 
   LEDGER="${WORK}/never-written.ledger" run run_driver
-  [ "$status" -eq 0 ]
-  [ "$(envelope_field status)" = "rejected" ]
+  [ "$status" -eq 0 ] || {
+    echo "${output}"
+    return 1
+  }
+  [ "$(envelope_field status)" = "unadjudicated" ]
 }
 
 @test "T4 a non-zero CLI exit warns once and continues the update" {
@@ -497,7 +507,7 @@ roster_paths() {
   # transition: upserting twice from one state pins the row count alone and can
   # never observe a preserved-terminal clobber. The row is one per body per day,
   # so a same-day decline-then-accept is a legitimate operator sequence — and the
-  # accept must not keep reading rejected on content that landed.
+  # accept must not keep reading unadjudicated on content that landed.
   status_now() {
     cluster_psql -c \
       "SELECT status FROM core.autoagent_proposals
@@ -534,7 +544,7 @@ roster_paths() {
       WHERE pattern_label = 'editable-region-arbiter-resolved'
         AND target_file = 'agents/${target}'")"
   [ "${count}" = "1" ]
-  [ "${first}" = "rejected" ]
+  [ "${first}" = "unadjudicated" ]
   [ "${second}" = "applied" ]
-  [ "${third}" = "rejected" ]
+  [ "${third}" = "unadjudicated" ]
 }
