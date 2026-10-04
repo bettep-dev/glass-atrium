@@ -7,7 +7,10 @@
 #   0. backfill     — head stage, every mode: while pending (completion record
 #                     absent or re-arm marker present in the reports dir), run
 #                     daemon_cycle.py --backfill-unadjudicated under .apply-lock.
-#   1. cycle        — pattern → outcomes → Haiku patch → classification →
+#   0b.retire       — every mode but --backfill-only: the launcher's
+#                     retire-launchd-jobs routine retires the long-running
+#                     daemon jobs while any of their residue remains.
+#   1. cycle       — pattern → outcomes → Haiku patch → classification →
 #                     pre-verify (4-axis review per body-auto patch) → JSON.
 #                     Pre-verify is embedded inside the cycle stage so each
 #                     patch carries its `pre_verify_passed`/`approval_tier`
@@ -244,7 +247,7 @@ while [[ $# -gt 0 ]]; do
             shift
             ;;
         -h|--help)
-            sed -n '2,46p' "${BASH_SOURCE[0]}"
+            sed -n '2,49p' "${BASH_SOURCE[0]}"
             exit 0
             ;;
         *)
@@ -843,6 +846,36 @@ run_backfill_stage() {
     fold_backfill_rc "${rc}"
 }
 
+# RETIRE: hands the retired long-running daemon jobs to the launcher's residue-gated routine. It lives
+# on this job because launchd runs this driver from the store on disk, so the first cycle after an
+# update reaches it whichever release's updater did the swap.
+# An unusable launcher is a named skip at rc 0, as in run_doctor_stage: the stage is permanent, so a
+# fold would mark every cycle on that install degraded forever. A non-zero routine rc means observed
+# residue is still present → degraded, never an abort. stdout → stderr: this driver's stdout carries
+# no status.
+run_retire_stage() {
+    if [[ ! -x "${DOCTOR_ENTRY}" ]]; then
+        local why="not executable"
+        if [[ ! -e "${DOCTOR_ENTRY}" ]]; then
+            why="absent"
+        fi
+        printf '[daemon-cycle] stage=retire SKIP: %s %s — retired daemon jobs not checked this cycle\n' \
+            "${DOCTOR_ENTRY}" "${why}" >&2
+        return 0
+    fi
+    local rc=0 args=("retire-launchd-jobs")
+    if [[ "${DRY_RUN}" -eq 1 ]]; then
+        args+=("--dry-run")
+    fi
+    "${DOCTOR_ENTRY}" "${args[@]}" >&2 || rc=$?
+    if [[ "${rc}" -ne 0 ]]; then
+        printf '[daemon-cycle] stage=retire rc=%d FAILED — retired daemon residue not cleared, cycle degraded\n' \
+            "${rc}" >&2
+        return "${rc}"
+    fi
+    printf '[daemon-cycle] stage=retire rc=0\n' >&2
+}
+
 # -- Dispatch --------------------------------------------------------------
 
 # Aggregate exit tracking: each stage is independent (a failure logs its own rc
@@ -885,6 +918,12 @@ if [[ "${STAGE_MODE}" == "backfill" ]]; then
     exit "${backfill_rc}"
 fi
 record_stage_rc "${backfill_rc}"
+
+# Ahead of dispatch: the one point every remaining mode passes, --backfill-only having exited above.
+retire_rc=0
+# shellcheck disable=SC2310  # errexit is not relied on: the rc is folded on the next line
+run_retire_stage || retire_rc=$?
+record_stage_rc "${retire_rc}"
 
 set +e
 case "${STAGE_MODE}" in
