@@ -677,8 +677,8 @@ MD
   [[ "${output}" == *"HAR-002"* ]] || return 1
 }
 
-@test "bash: cp into a launchd plist (autoagent-daemon) → block" {
-  run_hook "Bash" "$(bash_input 'cp /tmp/evil.plist ~/Library/LaunchAgents/com.glass-atrium.autoagent-daemon.plist')"
+@test "bash: cp into a launchd plist (autoagent-cycle) → block" {
+  run_hook "Bash" "$(bash_input 'cp /tmp/evil.plist ~/Library/LaunchAgents/com.glass-atrium.autoagent-cycle.plist')"
   [[ "${status}" -eq 2 ]] || return 1
 }
 
