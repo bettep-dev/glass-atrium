@@ -59,9 +59,11 @@ teardown() {
 }
 
 # setup_database presence-probe path — DB 'present' (psql echo 1) so no delegation.
-# Curated PATH: STUB_BIN + system coreutils only (real pg bindir excluded).
+# Curated PATH: STUB_BIN + system coreutils only (real pg bindir excluded). The reports dir sits in
+# the sandbox: the DB-present branch writes the backfill re-arm marker there, never the live data dir.
 run_setup_probe() {
   run env GA_TARGET_HOME="${TARGET}" GA_DB_NAME=claude_oss_e2e \
+    AUTOAGENT_REPORTS_DIR="${SANDBOX}/reports" \
     GA_REC="${REC}" PATH="${STUB_BIN}:/usr/bin:/bin" \
     bash -c '
       set -Eeuo pipefail
@@ -97,7 +99,15 @@ exit 0
 STUB
   chmod +x "${STUB_BIN}/psql"
   run_setup_probe
-  [[ "${status}" -eq 0 ]] || return 1
+  [[ "${status}" -eq 0 ]] || {
+    echo "${output}"
+    return 1
+  }
+  # the DB-present branch re-arms the backfill marker inside the sandbox reports dir.
+  [[ -f "${SANDBOX}/reports/.unadjudicated-backfill-pending" ]] || {
+    echo "${output}"
+    return 1
+  }
   # DB_NAME bound as a psql variable; the SQL travels over STDIN with a :'dbname' placeholder.
   grep -qF -- '-v dbname=claude_oss_e2e' "${REC}/psql-args" || return 1
   grep -qF -- "datname=:'dbname'" "${REC}/psql-stdin" || return 1
