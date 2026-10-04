@@ -633,6 +633,22 @@ jobs:
         with:
           persist-credentials: false
 
+      # The daemon's floor is an install's CLT python3 3.9 (end of the launchd
+      # PATH): a 3.10+ construct evaluated at import breaks the cycle there, and the
+      # matrix below cannot see it. Set up before the matrix Python, which then wins
+      # the PATH for every later step.
+      - name: Set up Python 3.9 (daemon import floor)
+        id: python-floor
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.9"
+
+      - name: Import daemon_cycle on Python 3.9
+        working-directory: autoagent
+        env:
+          PYTHON_FLOOR: ${{ steps.python-floor.outputs.python-path }}
+        run: '"${PYTHON_FLOOR}" -c "import daemon_cycle"'
+
       - name: Set up Python
         uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
