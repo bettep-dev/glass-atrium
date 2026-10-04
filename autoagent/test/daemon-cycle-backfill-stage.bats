@@ -78,21 +78,30 @@ EOF
   chmod +x "${WORK}/bin/python-stub"
 }
 
-# make_stage_stubs — the non-python stages and the doctor entry, each logging its own name, plus the
-# claude CLI the driver resolves at load time (never executed by any stage here).
+# make_stage_stubs — the non-python stages, each logging its own name, the launcher (its retirement
+# call logs `retire`, any other call `doctor`), plus the claude CLI the driver resolves at load time
+# (never executed by any stage here).
 make_stage_stubs() {
   local name path
-  for name in apply regression doctor; do
+  for name in apply regression; do
     case "${name}" in
       apply) path="${WORK}/real/autoagent/daemon-apply.sh" ;;
       regression) path="${WORK}/real/autoagent/archive/daemon-regression-deprecated-2026-05-02.sh" ;;
-      doctor) path="${WORK}/real/glass-atrium" ;;
       *) return 1 ;;
     esac
     # shellcheck disable=SC2016  # STUB_CALL_LOG expands when the stub runs, not here
     printf '#!/usr/bin/env bash\nprintf "%s\\n" >>"${STUB_CALL_LOG}"\n' "${name}" >"${path}"
     chmod +x "${path}"
   done
+  cat >"${WORK}/real/glass-atrium" <<'EOF'
+#!/usr/bin/env bash
+if [[ "${1:-}" == retire-launchd-jobs ]]; then
+  printf 'retire\n' >>"${STUB_CALL_LOG}"
+else
+  printf 'doctor\n' >>"${STUB_CALL_LOG}"
+fi
+EOF
+  chmod +x "${WORK}/real/glass-atrium"
   printf '#!/usr/bin/env bash\nexit 1\n' >"${WORK}/bin/claude"
   chmod +x "${WORK}/bin/claude"
 }
@@ -244,7 +253,7 @@ listing() {
 }
 
 @test "the mode runs ahead of the first stage of every dispatch mode" {
-  local row name args first
+  local row name args first order
   local -a argv
   local rows=(
     "no argument||cycle *"
@@ -260,8 +269,10 @@ listing() {
     argv=()
     if [[ -n "${args}" ]]; then argv=("${args}"); fi
     run_driver ${argv[@]+"${argv[@]}"}
+    # the retirement stage's own position is pinned in daemon-cycle-retire-stage.bats
+    order="$(grep -v '^retire$' "${CALL_LOG}" || true)"
     # shellcheck disable=SC2053  # the expected first stage is a glob pattern
-    [[ "$(sed -n 1p "${CALL_LOG}")" == mode* && "$(sed -n 2p "${CALL_LOG}")" == ${first} ]] || {
+    [[ "$(sed -n 1p <<<"${order}")" == mode* && "$(sed -n 2p <<<"${order}")" == ${first} ]] || {
       echo "${name}: call order: $(cat "${CALL_LOG}")"
       echo "${output}"
       return 1

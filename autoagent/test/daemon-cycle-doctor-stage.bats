@@ -1,8 +1,8 @@
 #!/usr/bin/env bats
 # daemon-cycle-doctor-stage.bats — pins the TERMINAL DOCTOR STAGE in the cycle driver (T3-1).
 #
-# WHY: no scheduled job invokes the doctor — eight launchd jobs were enumerated and none of them runs
-# it — so a verdict exists only when an operator asks for one, and every honesty fix that landed INTO
+# WHY: no scheduled job invokes the doctor — no job in the launchd roster runs it — so a verdict
+# exists only when an operator asks for one, and every honesty fix that landed INTO
 # the doctor is read by nobody unattended. The cycle is the scheduled carrier that already writes a
 # durable per-cycle report, so the stage is terminal and its verdict is folded into that report.
 #
@@ -106,13 +106,17 @@ EOF
 }
 
 # make_doctor_stub — the harness entry point beside the driver's own root (SCRIPT_DIR is <ga>/autoagent,
-# so the doctor entry resolves to <ga>/glass-atrium). Records its invocation and exits $1, so a red
-# install is simulated by a code rather than by an actual unhealthy fixture tree.
+# so the doctor entry resolves to <ga>/glass-atrium). Records its invocation; the doctor call exits $1,
+# so a red install is simulated by a code rather than by an actual unhealthy fixture tree. The cycle's
+# retirement call exits 0, so a red row here is red for the doctor alone.
 make_doctor_stub() {
   local code="$1"
   cat >"${WORK}/real/glass-atrium" <<EOF
 #!/usr/bin/env bash
 printf 'doctor-stub %s\n' "\$*" >>"${CALL_LOG}"
+if [[ "\${1:-}" == retire-launchd-jobs ]]; then
+  exit 0
+fi
 printf '  ok   : doctor stub\n' >&2
 exit ${code}
 EOF
