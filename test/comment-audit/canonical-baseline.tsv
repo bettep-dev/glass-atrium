@@ -80,7 +80,6 @@ scripts/lib/apply-lock.sh	152	158	0.9620	1	3	0	0
 scripts/lib/apply-spine.sh	113	193	0.5855	0	0	3	8
 scripts/lib/atrium-config.sh	84	120	0.7000	0	0	0	0
 scripts/lib/claude-auth-env.sh	17	23	0.7391	1	0	0	0
-scripts/lib/daemon-bootstrap-common.sh	213	248	0.8589	3	0	1	0
 scripts/lib/daemon-lock.sh	29	33	0.8788	1	0	0	0
 scripts/lib/mirror-farm.sh	80	76	1.0526	1	0	0	0
 scripts/lib/wiki-compile-lock.sh	19	23	0.8261	0	0	0	0
@@ -166,4 +165,4 @@ monitor/src/server/types/telemetry.ts	30	69	0.4348	0	0	0	4
 monitor/src/server/types/wiki.ts	62	64	0.9688	0	0	0	5
 monitor/src/server/update-status.ts	66	349	0.1891	0	0	0	5
 monitor/src/server/version.ts	21	60	0.3500	0	0	0	0
-TOTAL	15242	37052	0.4114	181	25	144	390	files=167
+TOTAL	15029	36804	0.4084	178	25	143	390	files=166

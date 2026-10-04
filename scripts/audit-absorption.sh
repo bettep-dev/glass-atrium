@@ -51,7 +51,6 @@ SCOPE_FILES=(
   scripts/pg-backup.sh
   scripts/monitor-log-rotate.sh
   scripts/lib/apply-lock.sh
-  scripts/lib/daemon-bootstrap-common.sh
   scripts/lib/daemon-lock.sh
   scripts/lib/pg-report-drop.sh
   scripts/lib/wiki-envelope.sh

@@ -308,19 +308,3 @@ _boot_ga() {
   grep -qF 'lsof -iTCP:8788' "${REC}"
   refute_rec 'lsof -iTCP:99999'
 }
-
-# ======================================================================================
-# Section C — static wiring (source-level proofs)
-# ======================================================================================
-
-@test "C1(bootstrap-wiring): daemon_bootstrap_reclaim_port calls fakechat_free_port, NO port-blind match" {
-  local body
-  body="$(awk '/^daemon_bootstrap_reclaim_port\(\) \{/{f=1} f{print} f&&/^}/{exit}' \
-    "${GA}/scripts/lib/daemon-bootstrap-common.sh")"
-  [[ -n "${body}" ]]
-  # the reclaim delegates to the shared, port-scoped helper with its OWN resolved port.
-  [[ "${body}" == *'fakechat_free_port "${FAKECHAT_PORT_DEFAULT}"'* ]]
-  # and NEVER re-introduces a port-blind cmdline match (the peer-kill bug).
-  [[ "${body}" != *'plugin:fakechat@'* ]]
-  [[ "${body}" != *'pkill'* ]]
-}
