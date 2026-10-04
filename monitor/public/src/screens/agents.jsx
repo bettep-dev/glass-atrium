@@ -63,8 +63,8 @@ function lowInvocationThresholdForWindow(days) {
 // Top-N failing — 매트릭스 green-bias 보완 (action-triggering compact view).
 const TOPN_FAILING_THRESHOLD = 0.95;
 const CIRCUIT_BREAKER_UNREADABLE_COPY = 'circuit-breaker state unreadable — check permissions on the hook data dir';
-// One row budget for the top-N failing card and the lifecycle card it pairs with → the two fill one row height at xl.
-const PAIRED_CARD_ROW_LIMIT = 12;
+// One slot for the top-N failing card and the lifecycle card it pairs with → the two fill one row height at xl.
+const PAIRED_CARD_SIZE = 'S';
 
 // 랭킹 최소 표본 floor (A5) — 합산 분모(성공+실패) < 3 쌍은 비율 신뢰 불가 → 랭킹 제외.
 const TOPN_MIN_SAMPLE = 3;
@@ -139,6 +139,12 @@ const NOTE = {
     + 'No record (agent ledger) counts launches minus runs from the agent summary, so the two can differ.',
 };
 
+// On-page forms of NOTE (≤ 90 chars) → the full definition rides each card's info drawer.
+const NOTE_SHORT = {
+  NO_RECORD: 'No record = launches − runs · can differ from Unfinished',
+  UNFINISHED: 'Unfinished = started − completed',
+};
+
 // 'unknown' / 'subagent_stop_missing' — non-actionable agent ID 묶음 (radar / row 시각 분리).
 const NON_ACTIONABLE_AGENT_IDS = new Set([UNKNOWN_AGENT_ID, SYNTHETIC_SENTINEL_AGENT_ID]);
 
@@ -154,6 +160,8 @@ function isNonActionableAgentAg(agentId, visualSet = NON_ACTIONABLE_AGENT_IDS) {
 const AGENTS_INLINE_CSS = '.ag-card-body { display: flex; flex-direction: column; flex: 1 1 auto; min-height: 0; overflow: hidden; } '
   + '.ag-card-body-scroll { flex: 1 1 auto; min-height: 0; overflow: auto; } '
   + '.tbl td { vertical-align: top; } '
+  // paired S cards: every row on the shared row-height token → five rows end at one pixel in both cards
+  + '.ag-paired-tbl td { height: var(--row-h); } '
   // row fills its scroller edge to edge → the global outset ring is clipped; inset keeps the focus-ring token visible
   + 'tr[data-roving-row]:focus-visible { outline-offset: calc(var(--focus-ring-width) * -1); }';
 
@@ -414,7 +422,7 @@ function ScreenAgents() {
       <AgentStatusBand failures={sourceFailures} tiles={statusTiles} onRetry={triggerRefresh}/>
 
       {/* Both "which agent is broken" lists side by side at xl, stacked below it. */}
-      <window.UI.SplitRow ratio="1:1" className="mb-4">
+      <window.UI.SplitRow ratio="1:1" layout="equal" className="mb-4">
         <TopNFailingAgentsCard failures={sourceFailures} state={successState} days={days} onRetry={triggerRefresh} failureByAgent={failureByAgent}/>
         <LifecycleStatsCard failures={sourceFailures} state={lifecycleState} days={days} onSelect={setSelectedAgent} onRetry={triggerRefresh}/>
       </window.UI.SplitRow>
@@ -473,7 +481,7 @@ function ScreenAgents() {
   );
 }
 
-const INSTRUMENTATION_QUESTION = 'Is the measuring apparatus intact';
+const INSTRUMENTATION_QUESTION = 'Is the measuring apparatus sound';
 
 // Page verdict — worst tone across the health rule and every status tile; the all-clear waits for every feeder.
 function AgentPageVerdict({ revisionState, reviewByAgentState, statusTiles, days, freshness }) {
@@ -552,51 +560,63 @@ function formatAgentListAg(agents) {
   return agents.length > 3 ? `${names.join(', ')} +${agents.length - 3} more` : names.join(', ');
 }
 
-// Status fold — open by default, the head carries the verdict so a closed fold still answers.
+// Status fold — open by default; the head carries the lead figure, the body every clause.
 function InstrumentationFold({ failures, lifecycleState, reviewState, activationState, days, onRetry }) {
   const { tone, sub } = getInstrumentationVerdict(lifecycleState, reviewState, activationState);
 
   return (
     <window.UI.Disclosure kind="status" title="Instrumentation" sub={sub} tone={tone} className="mb-4">
-      <p className="fs-meta text-dim mb-3">{getActivationLineAg(activationState, days)}</p>
+      <p className="fs-meta text-dim mb-3">{getInstrumentationDetailAg(lifecycleState, reviewState, activationState, days)}</p>
       <ReviewFlagTimelineCard failures={failures} state={reviewState} days={days} onRetry={onRetry}/>
     </window.UI.Disclosure>
   );
 }
 
-// unread → a stated gap, never a 0 % that reads as a clean result
-function getActivationLineAg(activationState, days) {
-  const clause = getActivationClauseAg(activationState);
-  return clause ? `${clause} · last ${days}d` : 'Activation rate unavailable';
+// unread activations → a stated gap, never a 0 % that reads as a clean result
+function getInstrumentationDetailAg(lifecycleState, reviewState, activationState, days) {
+  const clauses = getInstrumentationClausesAg(lifecycleState, reviewState, activationState).map((clause) => clause.full);
+  const read = clauses.length > 0 ? `${clauses.join(' · ')} · last ${days}d` : null;
+  return getActivationClauseAg(activationState) ? read : joinSubAg([read, 'Activation rate unavailable']);
 }
 
 // zero activations → no rate: a % over an empty denominator also reads as clean
 function getActivationClauseAg(activationState) {
+  const rate = getActivationRateAg(activationState);
+  if (!rate) return null;
+  return rate.total === 0 ? 'no activations' : `activation false-positive ${rate.pct}% of ${formatIntAg(rate.total)} activations`;
+}
+
+function getActivationRateAg(activationState) {
   const summary = activationState?.status === 'ready' ? activationState.data?.summary : null;
   if (!summary) return null;
-  const total = Number(summary.total_activations) || 0;
-  if (total === 0) return 'no activations';
-  const rate = Number(summary.overall_false_positive_rate) || 0;
-  return `activation false-positive ${(rate * 100).toFixed(1)}% of ${formatIntAg(total)} activations`;
+  return { total: Number(summary.total_activations) || 0, pct: ((Number(summary.overall_false_positive_rate) || 0) * 100).toFixed(1) };
+}
+
+// The head shows the first loaded source's lead (32-char meta cap); unfinished runs set the tone.
+function getInstrumentationVerdict(lifecycleState, reviewState, activationState) {
+  const [lead] = getInstrumentationClausesAg(lifecycleState, reviewState, activationState);
+  const tone = lifecycleState.status !== 'ready' ? 'neutral'
+    : getOrphanTotalAg(readyData(lifecycleState)?.rows ?? []) > 0 ? 'warn' : 'ok';
+  return { tone, sub: lead?.lead ?? INSTRUMENTATION_QUESTION };
 }
 
 // One clause per loaded source — an unread source adds nothing rather than a zero.
-function getInstrumentationVerdict(lifecycleState, reviewState, activationState) {
-  const parts = [];
-  let tone = 'neutral';
-
+function getInstrumentationClausesAg(lifecycleState, reviewState, activationState) {
+  const clauses = [];
   if (lifecycleState.status === 'ready') {
-    const orphans = getOrphanTotalAg(readyData(lifecycleState)?.rows ?? []);
-    parts.push(`${formatIntAg(orphans)} runs with no completion record`);
-    tone = orphans > 0 ? 'warn' : 'ok';
+    const orphans = formatIntAg(getOrphanTotalAg(readyData(lifecycleState)?.rows ?? []));
+    clauses.push({ lead: `${orphans} runs with no record`, full: `${orphans} runs with no completion record` });
   }
   if (reviewState.status === 'ready') {
     const { flagged, total } = getReviewFlagTotalsAg(readyData(reviewState)?.rows ?? []);
-    if (total > 0) parts.push(`${((flagged / total) * 100).toFixed(1)}% flagged`);
+    if (total > 0) {
+      const share = `${((flagged / total) * 100).toFixed(1)}% flagged`;
+      clauses.push({ lead: share, full: share });
+    }
   }
-  const activationClause = getActivationClauseAg(activationState);
-  if (activationClause) parts.push(activationClause);
-  return { tone, sub: parts.length > 0 ? parts.join(' · ') : INSTRUMENTATION_QUESTION };
+  const rate = getActivationRateAg(activationState);
+  if (rate) clauses.push({ lead: rate.total === 0 ? 'no activations' : `${rate.pct}% activation false-positive`, full: getActivationClauseAg(activationState) });
+  return clauses;
 }
 
 function getOrphanTotalAg(rows) {
@@ -618,7 +638,7 @@ function TaskTypeFold({ failures, state, days, onRetry }) {
   const tone = useMemoAg(() => getTaskTypeTone(state), [state]);
 
   return (
-    <window.UI.Disclosure kind="detail" title="By task type" sub="Success rate per agent × task type" tone={tone} className="mb-4">
+    <window.UI.Disclosure kind="detail" title="By task type" sub="Success rate, agent × task type" tone={tone} className="mb-4">
       <SuccessRateMatrixCard failures={failures} state={state} days={days} onRetry={onRetry}/>
     </window.UI.Disclosure>
   );
@@ -763,8 +783,9 @@ function buildAgentStatusTiles({ days, summaryState, failureState, overageState,
       source: 'failed runs',
       // runs, not agents → the tile sums to the ledger's Failed or blocked column over the same window
       sub: blocked?.agents
-        ? `agents with a failed run · last ${days}d · ${formatIntAg(blocked.runs)} blocked runs in ${formatAgentCountAg(blocked.agents)} — a compliant halt, counted in the ledger's Failed or blocked`
+        ? `last ${days}d · ${formatIntAg(blocked.runs)} blocked runs in ${formatAgentCountAg(blocked.agents)}`
         : `agents with a failed run · last ${days}d`,
+      info: 'Agents with at least one failed run. Blocked runs are a compliant halt, not a defect: they count in the ledger\'s Failed or blocked column, never in this tile.',
       status: window.UI.getRegionView(failureState),
       busy: failureState.busy,
       value: failedAgents ? failedAgents.length : null,
@@ -777,7 +798,8 @@ function buildAgentStatusTiles({ days, summaryState, failureState, overageState,
       feeder: REGION_FEEDERS.overage,
       label: 'Over tool-use cap',
       source: 'tool-use overruns',
-      sub: joinSubAg(['runs that crossed their tool-use budget', getRunRateTextAg(overCapCount, totalRuns), `last ${days}d`]),
+      sub: joinSubAg([getRunRateTextAg(overCapCount, totalRuns), `last ${days}d`]),
+      info: 'Runs that crossed their tool-use budget, over every run in the window.',
       status: window.UI.getRegionView(overageState),
       busy: overageState.busy,
       value: overCapCount,
@@ -790,7 +812,8 @@ function buildAgentStatusTiles({ days, summaryState, failureState, overageState,
       feeder: REGION_FEEDERS.summary,
       label: 'Needs info',
       source: 'needs-context runs',
-      sub: `${joinSubAg(['needs_context outcomes', getRunRateTextAg(needsContextCount, totalRuns), `last ${days}d`])} — fix the delegation prompt`,
+      sub: joinSubAg([getRunRateTextAg(needsContextCount, totalRuns), `last ${days}d`]),
+      info: 'needs_context outcomes over every run in the window. A high rate points at the delegation prompt.',
       status: summaryView,
       busy: summaryState.busy,
       value: needsContextCount,
@@ -827,13 +850,18 @@ function joinSubAg(parts) {
   return parts.filter(Boolean).join(' · ');
 }
 
-function AgentStatusTile({ failures, feeder, label, sub, unavailableSub, status, value, tone, error, busy, cardId, onRetry }) {
-  const { Badge, KpiValue } = window.UI;
+// The hint stays one short line; the counting rule behind it opens from the ⓘ trigger.
+function AgentStatusTile({ failures, feeder, label, sub, info, unavailableSub, status, value, tone, error, busy, cardId, onRetry }) {
+  const { Badge, KpiValue, CardInfo } = window.UI;
+  const labelId = `${cardId}-label`;
 
   return (
     <div id={cardId} className="card h-full flex flex-col min-h-0">
       <div className="card-body flex flex-col gap-1">
-        <span className="text-faint fs-meta">{label}</span>
+        <div className="flex items-center gap-1 min-h-[32px]">
+          <span id={labelId} className="text-faint fs-meta">{label}</span>
+          {info && <CardInfo label={`How ${label} is counted`} describedBy={labelId}>{info}</CardInfo>}
+        </div>
         {status === 'loading' && <span className="text-faint" aria-busy="true">…</span>}
         {status === 'error' && (
           <window.UI.RegionFailure source={feeder} region={label.toLowerCase()} error={error} isBusy={busy} failures={failures} focusTargetId={cardId} onRetry={onRetry}/>
@@ -879,7 +907,8 @@ function AgentSummaryCard({ failures, state, days, sortBy, onSortChange, selecte
       <CardHead
         title="Performance by agent"
         sub={subText}
-        right={null}
+        info={NOTE.NO_RECORD}
+        infoLabel="How No record is counted"
       />
       <AgentSummaryBody
         failures={failures}
@@ -896,14 +925,14 @@ function AgentSummaryCard({ failures, state, days, sortBy, onSortChange, selecte
         failureStatus={failureStatus}
         trendStatus={trendStatus}
       />
-      {data && <CountDefinitionAg label="No record" note={NOTE.NO_RECORD}/>}
+      {data && <CountDefinitionAg note={NOTE_SHORT.NO_RECORD}/>}
     </div>
   );
 }
 
 // A count whose sibling card counts differently states its definition beside it, not only in a header tooltip.
-function CountDefinitionAg({ label, note }) {
-  return <p className="card-body pt-0 mb-0 fs-meta text-dim">{`${label}: ${note}`}</p>;
+function CountDefinitionAg({ note }) {
+  return <p className="card-body pt-0 mb-0 fs-meta text-dim">{note}</p>;
 }
 
 function AgentSummaryBody({ failures, state, days, sortBy, onSortChange, selectedAgent, onSelect, onRetry, trendByAgent, failureByAgent, overageByAgent, failureStatus, trendStatus }) {
@@ -2264,7 +2293,7 @@ function SuccessRateMatrixCard({ failures, state, days, onRetry }) {
   return (
     <div id={IDS.REGION_CARD.successRates} className="card min-w-0">
       <CardHead
-        title="Success by agent and task type"
+        title="Success by agent"
         sub={subText}
         right={
           <>
@@ -2491,35 +2520,54 @@ function SuccessRateSparkline({ points, colorVar, name }) {
 const TABLE_HEAD_CLASS = 'font-sans uppercase tracking-wider fs-meta text-dim font-medium px-2 py-1.5 border-b border-line';
 
 function TopNFailingAgentsCard({ failures, state, days, onRetry, failureByAgent }) {
-  const { CardHead } = window.UI;
+  const [isShowingAll, setShowingAll] = useStateAg(false);
 
-  // 매트릭스와 동일 row 입력 — duplicate fetch 회피.
+  // 매트릭스와 동일 row 입력 — duplicate fetch 회피 · every failing pair kept, the slot decides how many show.
   const { failingPairs, failingTotal, measuredPairs } = useMemoAg(
-    () => buildTopNFailing(readyData(state)?.rows ?? [], TOPN_FAILING_THRESHOLD, PAIRED_CARD_ROW_LIMIT),
+    () => buildTopNFailing(readyData(state)?.rows ?? [], TOPN_FAILING_THRESHOLD, Number.POSITIVE_INFINITY),
     [state],
   );
+  const { rows, hiddenCount } = window.UI.getSlotRows(failingPairs, PAIRED_CARD_SIZE);
 
   // Denominator = the agent × task-type pairs actually measured in the window.
-
   return (
-    <div id={IDS.REGION_CARD.failingPairs} className="card h-full flex flex-col min-h-0">
-      <CardHead
+    <div id={IDS.REGION_CARD.failingPairs} className="min-w-0">
+      <window.UI.Card
+        size={PAIRED_CARD_SIZE}
         title="Most-failing pairs"
-        sub={getFailingPairsSub(state.status, failingPairs.length, failingTotal, measuredPairs, days)}
-      />
-      <div className="card-body ag-card-body">
-        <TopNFailingAgentsBody failures={failures} state={state} days={days} onRetry={onRetry} pairs={failingPairs} failureByAgent={failureByAgent}/>
-      </div>
+        sub={getFailingPairsSub(state.status, failingTotal, measuredPairs, days)}
+        foot={state.status === 'ready' && (
+          <PairedCardFootAg note={`Below ${(TOPN_FAILING_THRESHOLD * 100).toFixed(0)}% · solid samples first`} total={failingPairs.length}
+            hiddenCount={hiddenCount} isShowingAll={isShowingAll} onToggle={() => setShowingAll((v) => !v)}/>
+        )}>
+        <TopNFailingAgentsBody failures={failures} state={state} days={days} onRetry={onRetry} pairs={isShowingAll ? failingPairs : rows} failureByAgent={failureByAgent}/>
+      </window.UI.Card>
     </div>
   );
 }
 
 // Loaded-only `n of N` head — a never-loaded zero is forbidden by the state contract.
-function getFailingPairsSub(status, shownCount, failingTotal, measuredCount, days) {
+function getFailingPairsSub(status, failingTotal, measuredCount, days) {
   if (status === 'loading') return `last ${days} days`;
-  if (status !== 'ready') return 'Failing pairs unavailable — payload not loaded';
-  const shown = failingTotal > shownCount ? ` · showing ${shownCount} of ${failingTotal}` : '';
-  return `${failingTotal} of ${measuredCount} pairs below ${(TOPN_FAILING_THRESHOLD * 100).toFixed(0)}%${shown} · last ${days} days`;
+  if (status !== 'ready') return 'Unavailable — not loaded';
+  return `${failingTotal} of ${measuredCount} below ${(TOPN_FAILING_THRESHOLD * 100).toFixed(0)}% · ${days}d`;
+}
+
+/**
+ * Pinned foot of a paired S card: one short note, then "Show all N" while rows sit past the slot.
+ * @param total - every row the card holds; the toggle opens them in the card itself
+ */
+function PairedCardFootAg({ note, total, hiddenCount, isShowingAll, onToggle }) {
+  return (
+    <>
+      <span className="truncate">{note}</span>
+      {(hiddenCount > 0 || isShowingAll) && (
+        <button type="button" className="btn ghost sm ml-auto shrink-0" aria-expanded={isShowingAll} onClick={onToggle}>
+          {isShowingAll ? `Show top ${window.UI.CARD_SLOTS[PAIRED_CARD_SIZE].rowCount}` : `Show all ${total}`}
+        </button>
+      )}
+    </>
+  );
 }
 
 function TopNFailingAgentsBody({ failures, state, days, onRetry, pairs, failureByAgent }) {
@@ -2615,7 +2663,7 @@ function TopNFailingAgentsTable({ pairs, failureByAgent, days }) {
 
   return (
     <div className="overflow-auto" style={{ flex: '1 1 auto', minHeight: 0 }}>
-      <table className="w-full fs-meta font-mono" style={{ borderCollapse: 'separate', borderSpacing: 0 }}>
+      <table className="ag-paired-tbl w-full fs-meta font-mono" style={{ borderCollapse: 'separate', borderSpacing: 0 }}>
         <thead>
           <tr>
             {TOPN_FAILING_COLUMNS.map((c) => (
@@ -2665,22 +2713,26 @@ const QH_HEALTH_BULLET_ZONES = [
 // review_flag timeline 좌축/우축 라벨 — re-render 마다 신규 객체 생성 회피 (Recharts 패턴).
 // 좌축 막대는 flag "사유"(empty_metric + polar_mismatch) 스택이지 총 flag 수가 아님 →
 // 'Flagged per day' 는 과대표시 (총 flagged 는 우측 rate 라인·툴팁이 담당). 라벨을 사유 기준으로 정정.
-const QH_TIMELINE_COUNT_AXIS_LABEL = {
-  value: 'Flag reasons / day',
-  angle: -90,
-  position: 'insideLeft',
-  fill: 'rgb(var(--dim))',
-  fontSize: 12,
-  style: { textAnchor: 'middle' },
-};
-const QH_TIMELINE_RATIO_AXIS_LABEL = {
-  value: 'Rate (%)',
-  angle: 90,
-  position: 'insideRight',
-  fill: 'rgb(var(--crit))',
-  fontSize: 12,
-  style: { textAnchor: 'middle' },
-};
+const QH_TIMELINE = Object.freeze({
+  AXIS_LABEL: {
+    COUNT: {
+      value: 'Flag reasons / day',
+      angle: -90,
+      position: 'insideLeft',
+      fill: 'rgb(var(--dim))',
+      style: { textAnchor: 'middle', fontSize: 'var(--fs-meta)' },
+    },
+    RATIO: {
+      value: 'Rate (%)',
+      angle: 90,
+      position: 'insideRight',
+      fill: 'rgb(var(--crit))',
+      style: { textAnchor: 'middle', fontSize: 'var(--fs-meta)' },
+    },
+  },
+  // an SVG presentation attribute cannot resolve a var() → the meta token rides the CSS style
+  TICK_STYLE: { fill: 'rgb(var(--faint))', fontFamily: 'JetBrains Mono, monospace', style: { fontSize: 'var(--fs-meta)' } },
+});
 
 // Titled like its Lifecycle sibling → the flagged total never reads as an orphan tile.
 function ReviewFlagTimelineCard({ failures, state, days, onRetry }) {
@@ -2688,7 +2740,7 @@ function ReviewFlagTimelineCard({ failures, state, days, onRetry }) {
 
   return (
     <div id={IDS.REGION_CARD.reviewFlags} className="card flex flex-col min-h-0">
-      <CardHead title="Review flags" sub={`Last ${days} days · flag reasons per day and flagged rate`}/>
+      <CardHead title="Review flags" sub={`Flag reasons and rate · ${days} days`}/>
       <div className="card-body ag-card-body">
         <QualityHealthTimeline failures={failures} state={state} onRetry={onRetry}/>
       </div>
@@ -2759,8 +2811,8 @@ function QualityHealthTimelineChart({ rows }) {
           <YAxis
             yAxisId="count"
             allowDecimals={false}
-            label={QH_TIMELINE_COUNT_AXIS_LABEL}
-            tick={{ fontSize: 12, fill: 'rgb(var(--faint))', fontFamily: 'JetBrains Mono, monospace' }}
+            label={QH_TIMELINE.AXIS_LABEL.COUNT}
+            tick={QH_TIMELINE.TICK_STYLE}
             axisLine={{ stroke: 'rgb(var(--line))' }}
             tickLine={false}
             width={48}
@@ -2770,8 +2822,8 @@ function QualityHealthTimelineChart({ rows }) {
             orientation="right"
             domain={[0, 100]}
             tickFormatter={(v) => v.toFixed(0) + '%'}
-            label={QH_TIMELINE_RATIO_AXIS_LABEL}
-            tick={{ fontSize: 12, fill: 'rgb(var(--faint))', fontFamily: 'JetBrains Mono, monospace' }}
+            label={QH_TIMELINE.AXIS_LABEL.RATIO}
+            tick={QH_TIMELINE.TICK_STYLE}
             axisLine={{ stroke: 'rgb(var(--line))' }}
             tickLine={false}
             width={56}
@@ -2868,31 +2920,45 @@ const ORPHAN_RATIO_CRIT_THRESHOLD = 0.35;
 const ORPHAN_RATIO_WARN_THRESHOLD = 0.2;
 
 function LifecycleStatsCard({ failures, state, days, onSelect, onRetry }) {
-  const { CardHead, Pill } = window.UI;
+  const { Pill } = window.UI;
+  const [isShowingAll, setShowingAll] = useStateAg(false);
 
-  const rows = readyData(state)?.rows ?? [];
+  const readyRows = readyData(state)?.rows ?? [];
   const totalOrphans = state.status === 'ready'
-    ? getOrphanTotalAg(rows)
+    ? getOrphanTotalAg(readyRows)
     : 0;
+  const lifecycleRows = useMemoAg(() => getLifecycleRowsAg(readyRows), [state]);
+  const { rows, hiddenCount } = window.UI.getSlotRows(lifecycleRows, PAIRED_CARD_SIZE);
 
   return (
-    <div id={IDS.REGION_CARD.lifecycle} className="card h-full flex flex-col min-h-0">
-      <CardHead
+    <div id={IDS.REGION_CARD.lifecycle} className="min-w-0">
+      <window.UI.Card
+        size={PAIRED_CARD_SIZE}
         title="No completion record"
-        sub={`Last ${days} days · top ${PAIRED_CARD_ROW_LIMIT}`}
+        sub={`Last ${days} days`}
+        info={NOTE.UNFINISHED}
+        infoLabel="How Unfinished is counted"
         right={state.status === 'ready' && totalOrphans > 0
           ? <Pill tone="warn">{formatIntAg(totalOrphans)} unfinished</Pill>
           : null}
-      />
-      <div className="card-body ag-card-body">
-        <LifecycleStatsBody failures={failures} state={state} days={days} onSelect={onSelect} onRetry={onRetry}/>
-      </div>
-      {state.status === 'ready' && <CountDefinitionAg label="Unfinished" note={NOTE.UNFINISHED}/>}
+        foot={state.status === 'ready' && (
+          <PairedCardFootAg note={NOTE_SHORT.UNFINISHED} total={lifecycleRows.length}
+            hiddenCount={hiddenCount} isShowingAll={isShowingAll} onToggle={() => setShowingAll((v) => !v)}/>
+        )}>
+        <LifecycleStatsBody failures={failures} state={state} days={days} rows={isShowingAll ? lifecycleRows : rows} onSelect={onSelect} onRetry={onRetry}/>
+      </window.UI.Card>
     </div>
   );
 }
 
-function LifecycleStatsBody({ failures, state, days, onSelect, onRetry }) {
+// Agents that launched at least once, most launches first.
+function getLifecycleRowsAg(rows) {
+  return rows
+    .filter((r) => r && r.agent_type && (Number(r.start_count) || 0) > 0)
+    .sort((a, b) => (Number(b.start_count) || 0) - (Number(a.start_count) || 0));
+}
+
+function LifecycleStatsBody({ failures, state, days, rows, onSelect, onRetry }) {
   const view = window.UI.getRegionView(state);
   if (view === 'loading') {
     return <window.UI.LoadingPlaceholder label="lifecycle stats" minHeight={260}/>;
@@ -2900,10 +2966,6 @@ function LifecycleStatsBody({ failures, state, days, onSelect, onRetry }) {
   if (view === 'error') {
     return <window.UI.RegionFailure source={REGION_FEEDERS.lifecycle} region="lifecycle stats" error={state.error} isBusy={state.busy} failures={failures} focusTargetId={IDS.REGION_CARD.lifecycle} onRetry={onRetry}/>;
   }
-  const rows = (readyData(state)?.rows ?? [])
-    .filter((r) => r && r.agent_type && (Number(r.start_count) || 0) > 0)
-    .sort((a, b) => (Number(b.start_count) || 0) - (Number(a.start_count) || 0))
-    .slice(0, PAIRED_CARD_ROW_LIMIT);
   if (rows.length === 0) {
     return <EmptyStateAg message={`No lifecycle events in the last ${days} days.`}/>;
   }
@@ -2927,7 +2989,7 @@ function LifecycleStatsTable({ rows, onSelect }) {
 
   return (
     <div className="overflow-auto" style={{ flex: '1 1 auto', minHeight: 0 }}>
-      <table className="w-full fs-meta font-mono" style={{ borderCollapse: 'separate', borderSpacing: 0 }}>
+      <table className="ag-paired-tbl w-full fs-meta font-mono" style={{ borderCollapse: 'separate', borderSpacing: 0 }}>
         <thead>
           <tr>
             {LIFECYCLE_COLUMNS.map((c) => (

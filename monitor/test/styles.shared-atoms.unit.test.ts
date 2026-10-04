@@ -10,6 +10,7 @@ import { dirname, resolve } from "node:path";
 import { compositeOver, contrastRatio, type Rgba } from "./lib/wcag-contrast.js";
 
 const STYLES = resolve(dirname(fileURLToPath(import.meta.url)), "../public/styles");
+const UI_JSX = readFileSync(resolve(STYLES, "../src/ui.jsx"), "utf8");
 const TOKENS_CSS = readFileSync(resolve(STYLES, "tokens.css"), "utf8");
 const BASE_CSS = readFileSync(resolve(STYLES, "base.css"), "utf8");
 const SOURCES = [
@@ -18,7 +19,7 @@ const SOURCES = [
 ] as const;
 
 const CONTROL_FLOOR_PX = 32;
-const META_FLOOR_PX = 12;
+const META_FLOOR_PX = 13;
 
 function getBlock(source: string, selector: string): string {
   const open = source.indexOf("{", source.indexOf(selector));
@@ -93,7 +94,7 @@ const THEMES = [
   ["dark", getBlock(TOKENS_CSS, '[data-theme="dark"]')],
 ] as const;
 
-test("every font size in the shared stylesheets is a whole-pixel step at or above the 12px meta floor", () => {
+test("every font size in the shared stylesheets is a whole-pixel step at or above the 13px meta floor", () => {
   const offenders: string[] = [];
   for (const [file, css] of SOURCES) {
     for (const m of css.replace(/\/\*[\s\S]*?\*\//g, "").matchAll(/(?<![\w-])font-size\s*:\s*([^;}]+)/g)) {
@@ -105,11 +106,21 @@ test("every font size in the shared stylesheets is a whole-pixel step at or abov
 });
 
 test("the named type steps descend strictly and bottom out at the meta floor", () => {
-  const steps = ["--fs-display", "--fs-stat", "--fs-title", "--fs-body", "--fs-control", "--fs-meta"].map((name) =>
+  const steps = ["--fs-kpi", "--fs-display", "--fs-stat", "--fs-title", "--fs-body", "--fs-control", "--fs-meta"].map((name) =>
     getPx(`var(${name})`),
   );
   for (let i = 1; i < steps.length; i += 1) assert.ok(steps[i - 1] > steps[i], `step ${i} ${steps.join(" > ")}`);
   assert.equal(steps.at(-1), META_FLOOR_PX);
+});
+
+test("the retired micro step renders at the meta floor", () => {
+  assert.equal(getPx("var(--fs-micro)"), getPx("var(--fs-meta)"));
+});
+
+test("tokens.css is the only place a type step is declared", () => {
+  const declared = (source: string) => [...source.matchAll(/(--fs-[\w-]+)\s*:/g)].map((m) => m[1]);
+  assert.deepEqual({ base: declared(BASE_CSS), ui: declared(UI_JSX) }, { base: [], ui: [] });
+  assert.ok(declared(TOKENS_CSS).includes("--fs-meta"), "tokens.css declares the steps");
 });
 
 test("mono stays on numeric atoms and off word-carrying atoms", () => {

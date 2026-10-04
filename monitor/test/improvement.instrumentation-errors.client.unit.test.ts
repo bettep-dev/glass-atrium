@@ -179,18 +179,26 @@ test("while every payload loads, each card announces itself through the status-r
   }
 });
 
-// Paired gauges share one split row so both read in one eye span, each card in its own column.
-test("the measurement gauges render as side-by-side pairs, one card per column", () => {
+// Paired gauges share one split row so both read in one eye span; two short gauges stack in one column to fill a tall partner's height.
+test("the measurement gauges pair side by side, the two short gauges stacked beside Suggestion confidence", () => {
   const props: Record<string, unknown> = { onRetry: () => {} };
   for (const name of PAYLOADS) props[name] = { status: "loading", data: null, error: null };
   const pairs: unknown[][] = [];
+  const layouts: unknown[] = [];
   const walk = (node: unknown): void => {
     if (Array.isArray(node)) return node.forEach(walk);
     if (!isElement(node)) return;
     if (node.type === sandbox.window.UI.SplitRow) {
-      // a column is a slot wrapper (the recovery focus target) around its one card
-      const cards = ([] as unknown[]).concat(node.props.children).filter(isElement).map((c) => (c.type === "div" ? c.props.children : c));
-      pairs.push(cards.filter(isElement).map((c) => c.type));
+      layouts.push(node.props.layout);
+      // a column is a slot wrapper (the recovery focus target) around its one card, a SplitColumn stack, or a bare card
+      const columns = ([] as unknown[]).concat(node.props.children).filter(isElement);
+      pairs.push(
+        columns.map((column) => {
+          const isWrapper = column.type === "div" || column.type === sandbox.window.UI.SplitColumn;
+          const cards = isWrapper ? ([] as unknown[]).concat(column.props.children) : [column];
+          return cards.filter(isElement).map((card) => card.type);
+        }),
+      );
       return;
     }
     walk(node.props.children);
@@ -199,7 +207,8 @@ test("the measurement gauges render as side-by-side pairs, one card per column",
   walk(sandbox.ImprovementInstrumentationViewI(props));
 
   assert.deepEqual(pairs, [
-    [sandbox.CorpusGrowthCardI, sandbox.CorrectionSignalsCardI],
-    [sandbox.ProseOnlyAddCardI, sandbox.ConfidenceDistCardI],
+    [[sandbox.CorpusGrowthCardI], [sandbox.CorrectionSignalsCardI]],
+    [[sandbox.ProseOnlyAddCardI, sandbox.TierBreakdownCardI], [sandbox.ConfidenceDistCardI]],
   ]);
+  assert.deepEqual(layouts, ["equal", "equal"], "peer gauges stretch to one height, so their bottoms meet");
 });

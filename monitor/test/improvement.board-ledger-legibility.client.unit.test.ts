@@ -268,7 +268,7 @@ test("the applied count sits below the status band's figure size", () => {
   assert.doesNotMatch(classOf(count), /\bfs-display\b/);
 });
 
-test("loop output captions wrap and its cards reflow instead of squeezing three abreast", () => {
+test("loop output cards reflow instead of squeezing three abreast", () => {
   const idle = { status: "loading", data: null };
   const tree = sandbox.LoopOutputGroupI({
     statsState: idle,
@@ -279,10 +279,52 @@ test("loop output captions wrap and its cards reflow instead of squeezing three 
     onNav: () => {},
     onRetry: () => {},
   });
-  assert.ok(tree && /\bi-loop-output\b/.test(classOf(tree)), "caption wrap scope missing");
   const grids = findAll(tree, (el) => /\bi-loop-grid\b/.test(classOf(el)));
   assert.equal(grids.length, 1);
   assert.doesNotMatch(classOf(grids[0]), /\bgrid-cols-3\b/);
+});
+
+// Renders function components on the way down, stopping at a match so a row atom counts once.
+function findRendered(node: unknown, match: (el: RecordedElement) => boolean, out: RecordedElement[] = []) {
+  if (Array.isArray(node)) {
+    for (const child of node) findRendered(child, match, out);
+    return out;
+  }
+  if (!isElement(node)) return out;
+  if (match(node)) {
+    out.push(node);
+    return out;
+  }
+  if (typeof node.type === "function") return findRendered(expand(node), match, out);
+  for (const value of Object.values(node.props)) findRendered(value, match, out);
+  return out;
+}
+
+const BOARD_LANE_ROWS = [
+  { name: "applied", column: { key: "applied", label: "Applied", symbol: "✓", variant: "full" }, total: 9, more: 1 },
+  { name: "rejected", column: { key: "rejected", label: "Rejected", symbol: "✕", variant: "compact" }, total: 29, more: 21 },
+];
+
+describe("each board lane shows eight rows and pins a show-all foot below its list", () => {
+  for (const row of BOARD_LANE_ROWS) {
+    test(row.name, () => {
+      const rows = Array.from({ length: row.total }, (_, i) => ({
+        id: i + 1,
+        pattern_label: `pattern ${i % 3}`,
+        target_agent: AGENT,
+        rationale: `reason ${i}`,
+      }));
+      const tree = sandbox.KanbanColumnI({ column: row.column, rows, onRowClick: () => {} });
+      const shown = findRendered(tree, (el) => el.type === sandbox.AppliedHistoryRowI || el.type === sandbox.CompactProposalCardI);
+      const [list] = findAll(tree, (el) => /\boverflow-y-auto\b/.test(classOf(el)));
+      const [foot] = findRendered(tree, (el) => el.type === "button" && /\bi-more-btn\b/.test(classOf(el)));
+
+      assert.equal(shown.length, 8, `${row.name}: ${shown.length} rows shown`);
+      assert.ok(foot, `${row.name}: no show-all foot`);
+      assert.match(visibleText(foot), new RegExp(`\\b${row.more}\\s+more\\b`));
+      assert.ok(!findRendered(list, (el) => el === foot).length, "the foot pins below the list instead of scrolling with it");
+    });
+  }
 });
 
 test("a ledger row sets its pattern label in sans and keeps mono for the date", () => {
@@ -444,14 +486,14 @@ test("a suggestion board row sets its title at the body size, leaving ids and da
   assert.doesNotMatch(classOf(title), /\bfs-meta\b/);
 });
 
-test("a held cause states its remedy prose at the body size", () => {
+test("a held cause reads as one label line, its remedy kept off the strip for the ledger's drawer", () => {
   const hint = "Raise the cap after a human reads the rows";
   const tree = sandbox.HeldCauseStripI({ buckets: [{ cause: "repeat-apply-cap", label: "Repeat-apply cap", count: 2, agents: 1, hint }] });
-  const [prose] = findAll(tree, (el) => el.type === "span" && visibleText(el) === hint);
+  const text = visibleText(tree);
 
-  assert.ok(prose, "the held strip prints the remedy");
-  assert.match(classOf(prose), /\bfs-body\b/);
-  assert.doesNotMatch(classOf(prose), /\bfs-meta\b/);
+  assert.match(text, /Repeat-apply cap/);
+  assert.match(text, /2 held/);
+  assert.doesNotMatch(text, /Raise the cap/, "remedy prose on the strip");
 });
 
 test("the rejected column header never wraps its label, count or basis", () => {

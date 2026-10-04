@@ -471,13 +471,14 @@ test("the last stage actor reads one display name for a model id with or without
   const actorText = (model: string) => {
     const props = listCardProps(() => undefined);
     (props.rows as Array<Record<string, unknown>>)[0].last_status_model = model;
-    const actors = findNodes(renderScreen((screen.DocListCardCD as Component)(props)), (n) => n.props.className === "doc-stage-actor");
-    assert.equal(actors.length, 1, model);
-    return collectText(actors[0]);
+    const tree = renderScreen((screen.DocListCardCD as Component)(props));
+    const actorCells = findNodes(tree, (n) => n.type === "td" && typeof n.props.title === "string" && n.props.title.startsWith("Set by"));
+    assert.equal(actorCells.length, 1, model);
+    return actorCells[0].props.title;
   };
 
   assert.equal(actorText("claude-opus-5-5[1m]"), actorText("claude-opus-5-5"));
-  assert.equal(actorText("claude-opus-5-5"), "set by Opus 5.5");
+  assert.equal(actorText("claude-opus-5-5"), "Set by Opus 5.5");
 });
 
 test("the filter chips and the stage names speak the English of the rest of the screen", async () => {
@@ -587,11 +588,22 @@ describe("a stage pill draws the shared stage pip, filled up to its stage", () =
   }
 });
 
-test("no Documents style or class draws text on the 11px micro step below the 12px floor", async () => {
+test("the Documents style block and the rendered list card's size classes and inline sizes stay at or above the 13px meta floor", async () => {
+  const META_FLOOR_PX = 13;
   const screen = await loadDocsScreen();
   const listCard = renderScreen((screen.DocListCardCD as Component)(listCardProps(() => undefined)));
   const classNames = findNodes(listCard, (n) => typeof n.props.className === "string").map((n) => String(n.props.className));
+  const inlineSizes = findNodes(listCard, (n) => typeof (n.props.style as { fontSize?: unknown } | undefined)?.fontSize === "number")
+    .map((n) => (n.props.style as { fontSize: number }).fontSize);
   assert.doesNotMatch([getScreenCss(screen), ...classNames].join("\n"), /fs-micro/);
+
+  // the rendered style block, the rendered card's arbitrary text-[Npx] classes and its inline fontSize numbers
+  const sizes = [
+    ...[...getScreenCss(screen).matchAll(/font-size\s*:\s*([\d.]+)px/g)].map((m) => ({ at: m[0], px: Number(m[1]) })),
+    ...classNames.flatMap((name) => [...name.matchAll(/text-\[([\d.]+)px\]/g)].map((m) => ({ at: m[0], px: Number(m[1]) }))),
+    ...inlineSizes.map((px) => ({ at: `fontSize: ${px}`, px })),
+  ];
+  assert.deepEqual(sizes.filter((size) => size.px < META_FLOOR_PX).map((size) => size.at), []);
 });
 
 test("a markdown body never nests an h1 under the viewer's h2 title", async () => {
@@ -893,16 +905,36 @@ describe("the header speaks about loading only after a first read; before it the
   }
 });
 
-test("'rev of #N' stays on one line: it never wraps and the ID column fits it for a six-digit id", async () => {
+test("'rev of #N' trails the title as a pill that never wraps or shrinks, so the ID cell holds the id alone", async () => {
   const screen = await loadDocsScreen();
-  const monoCharPx = 7.2;
-  const cellPaddingPx = 28;
-  assert.match(cssRuleBody(getScreenCss(screen), " .doc-lineage"), /white-space\s*:\s*nowrap/);
-
   const tree = renderListCard(screen, {});
+  const [revisionRow] = findNodes(tree, (n) => n.type === "tr" && n.props["aria-label"] === "Doc 11");
+
+  const [titleMain] = findNodes(revisionRow, (n) => n.props.className === "doc-title-main");
+  const lineage = findNodes(titleMain, (n) => String(n.props.className ?? "").includes("doc-lineage"));
+  assert.equal(lineage.length, 1);
+  assert.match(collectText(lineage[0]), /^rev of #\s*7$/);
+  assert.match(String(lineage[0].props.className), /\bpill\b/);
+  assert.match(cssRuleBody(getScreenCss(screen), ".doc-lineage"), /flex\s*:\s*none/);
+
+  const idCell = findNodes(revisionRow, (n) => n.type === "td" && String(n.props.className).includes("doc-meta-text-mono"))[0];
+  assert.match(collectText(idCell), /^#\s*11$/);
+
+  // a six-digit id in 13px mono (0.6em a glyph) plus the cell padding fits the ID column
   const idHeader = findNodes(tree, (n) => n.type === "th" && collectText(n) === "ID")[0];
   const width = (idHeader.props.style as { width: number }).width;
-  assert.ok(width >= cellPaddingPx + monoCharPx * "rev of #123456".length, `ID column ${width}px`);
+  assert.ok(width >= 28 + 13 * 0.6 * "#123456".length, `ID column ${width}px`);
+});
+
+test("the last stage actor rides the Status cell's tooltip, never a line under the pill", async () => {
+  const screen = await loadDocsScreen();
+  const base = listCardProps(() => undefined);
+  const [first, second] = base.rows as Array<Record<string, unknown>>;
+  const tree = renderListCard(screen, { rows: [{ ...first, last_status_model: "operator" }, second] });
+
+  assert.equal(findNodes(tree, (n) => String(n.props.className ?? "").includes("doc-stage-actor")).length, 0);
+  const statusCells = findNodes(tree, (n) => n.type === "td" && findNodes(n, (c) => c.type === "DocStagePillCD").length > 0);
+  assert.deepEqual(statusCells.map((td) => td.props.title), ["Set by operator", undefined]);
 });
 
 test("the Title header starts at the title text's x: indented by the lead slot plus the title row gap", async () => {

@@ -468,11 +468,11 @@ describe("healthy live fixture", () => {
 		assert.equal(svgCount, 1, `rendered diagram svg count inside ${ctx.selectors.canvas}`);
 	});
 
-	test("the caption is a sentence-case status line over a legend, all at 12px or larger", async () => {
+	test("the caption is a sentence-case status line over a legend, all at 13px or larger", async () => {
 		await ctx.page.waitForSelector(".arch-legend li", { timeout: 10_000 });
 		// one inline mapper — tsx wraps a named inner function in __name, which the browser lacks
 		const [status, ...legend] = await ctx.page.evaluate(() =>
-			[...document.querySelectorAll(".arch-caption .page-verdict-text, .arch-legend li")].map((el) => ({
+			[...document.querySelectorAll(".arch-caption .page-verdict-text, .arch-legend li, .arch-legend-swatch")].map((el) => ({
 				text: (el as HTMLElement).innerText,
 				transform: getComputedStyle(el).textTransform,
 				px: Number.parseFloat(getComputedStyle(el).fontSize),
@@ -483,10 +483,46 @@ describe("healthy live fixture", () => {
 		assert.ok(probe.status, "a status line renders under the page title");
 		for (const line of [probe.status, ...probe.legend]) {
 			assert.notEqual(line.transform, "uppercase", `"${line.text}" renders uppercase`);
-			assert.ok(line.px >= 12, `"${line.text}" renders at ${line.px}px`);
+			assert.ok(line.px >= 13, `"${line.text}" renders at ${line.px}px`);
 		}
 		for (const word of ["needs attention", "critical", "not verified", "Orchestrator border", "Safety checks border"])
 			assert.ok(probe.legend.some((line) => line.text.includes(word)), `legend lacks "${word}" — read: ${JSON.stringify(probe.legend)}`);
+	});
+
+	test("each legend swatch holds its mark's line inside its border", async () => {
+		await ctx.page.waitForSelector(".arch-legend-swatch", { timeout: 10_000 });
+		const swatches = await ctx.page.evaluate(() =>
+			[...document.querySelectorAll(".arch-legend-swatch")]
+				.filter((el) => (el.textContent || "").trim() !== "")
+				.map((el) => {
+					const style = getComputedStyle(el);
+					return {
+						mark: (el.textContent || "").trim(),
+						line: Number.parseFloat(style.lineHeight) || Number.parseFloat(style.fontSize),
+						inner: el.clientHeight - Number.parseFloat(style.paddingTop) - Number.parseFloat(style.paddingBottom),
+					};
+				}),
+		);
+
+		assert.ok(swatches.length > 0, "no legend swatch carries a mark");
+		for (const swatch of swatches)
+			assert.ok(swatch.line <= swatch.inner, `"${swatch.mark}" sets a ${swatch.line}px line in a ${swatch.inner}px swatch`);
+	});
+
+	test("every text in the Part health block renders at 13px or larger, each row's meta line included", async () => {
+		await ctx.page.waitForSelector(".arch-part-health .arch-part-meta", { timeout: 10_000 });
+		const texts = await ctx.page.evaluate(() =>
+			[...document.querySelectorAll(".arch-part-health *")]
+				.filter((el) => [...el.childNodes].some((node) => node.nodeType === Node.TEXT_NODE && (node.textContent || "").trim() !== ""))
+				.map((el) => ({
+					text: (el as HTMLElement).innerText,
+					isMeta: el.classList.contains("arch-part-meta"),
+					px: Number.parseFloat(getComputedStyle(el).fontSize),
+				})),
+		);
+
+		assert.ok(texts.some((line) => line.isMeta), `no row meta line was measured — read: ${JSON.stringify(texts)}`);
+		for (const line of texts) assert.ok(line.px >= 13, `"${line.text}" renders at ${line.px}px`);
 	});
 
 	test("the Reset control shows its name and only a title repeating its one box is hidden", async () => {
@@ -499,7 +535,7 @@ describe("healthy live fixture", () => {
 				return { id: el.id, shown: label ? label.getBoundingClientRect().width > 0 : false };
 			}),
 		ctx.selectors.canvas);
-		// exactly the seven zones — the row frames the ⊐ is laid out with are gone
+		// exactly the seven zones — the column frames the map is laid out with are gone
 		assert.equal(titles.length, 7, `drawn zones — read: ${JSON.stringify(titles)}`);
 		const hidden = titles.filter((t) => !t.shown).map((t) => t.id.replace(/^.*-/, ""));
 		// no drawn zone has a lone member whose label opens with the zone title, so every title shows
@@ -541,41 +577,41 @@ describe("healthy live fixture", () => {
 		}
 	});
 
-	test("Tab follows the ⊐ — the top row left to right, then the bottom row back right to left", async () => {
+	test("Tab reads the sources column top to bottom, then the spine top to bottom", async () => {
 		// document order of tabindex=0 stops IS the Tab sequence; inline mappers only (tsx __name)
-		const { stops, bottomZones } = await ctx.page.evaluate(
-			({ canvas, bottomZoneIds }) => ({
+		const { stops, zones } = await ctx.page.evaluate(
+			(canvas) => ({
 				stops: [...document.querySelectorAll(`${canvas} svg g.node[tabindex="0"]`)].map((el) => {
 					const r = el.getBoundingClientRect();
-					return { id: el.getAttribute("data-arch-node-id"), cx: r.left + r.width / 2, cy: r.top + r.height / 2, top: r.top, width: r.width };
+					return { id: el.getAttribute("data-arch-node-id"), cx: r.left + r.width / 2, cy: r.top + r.height / 2 };
 				}),
-				bottomZones: [...document.querySelectorAll(`${canvas} svg g.cluster`)]
-					.filter((el) => bottomZoneIds.includes(el.id.slice(el.id.lastIndexOf("-") + 1)))
-					.map((el) => el.getBoundingClientRect().toJSON() as { left: number; right: number; top: number; bottom: number }),
+				zones: [...document.querySelectorAll(`${canvas} svg g.cluster`)].map((el) => ({
+					id: el.id.slice(el.id.lastIndexOf("-") + 1),
+					box: el.getBoundingClientRect().toJSON() as { left: number; right: number; top: number; bottom: number },
+				})),
 			}),
-			{ canvas: ctx.selectors.canvas, bottomZoneIds: ["hooks", "data", "export"] },
+			ctx.selectors.canvas,
 		);
-		assert.equal(bottomZones.length, 3, "the three bottom-row zones are drawn");
-		assert.ok(stops.length > 3, `focusable node count ${stops.length}`);
+		// zones in reading order — the sources column (Inputs above Daemons), then the pipeline spine
+		const readingOrder = ["entry", "daemon", "orch", "agents", "hooks", "data", "export"];
+		assert.deepEqual(zones.map((z) => z.id).sort(), [...readingOrder].sort(), "the seven zones are drawn");
+		assert.ok(stops.length > readingOrder.length, `focusable node count ${stops.length}`);
 
 		const order = stops.map((s) => s.id).join(", ");
-		const isBottomRow = (s: (typeof stops)[number]) => bottomZones.some((b) => s.cx > b.left && s.cx < b.right && s.cy > b.top && s.cy < b.bottom);
-		const turn = stops.findIndex(isBottomRow);
-		assert.ok(turn > 0 && stops.slice(turn).every(isBottomRow), `Tab does not finish the top row before the bottom row: ${order}`);
-
-		const minWidth = Math.min(...stops.map((s) => s.width));
-		const leftmost = Math.min(...stops.map((s) => s.cx));
-		assert.ok(stops[0].cx - leftmost <= minWidth / 2, `first stop ${stops[0].id} is not in the entry column`);
-		// same column → downward; else the row's direction (+1 left to right, -1 right to left)
-		const assertRowFlow = (row: typeof stops, direction: 1 | -1) => {
-			for (let i = 1; i < row.length; i++) {
-				const [prev, next] = [row[i - 1], row[i]];
-				const sameColumn = Math.abs(next.cx - prev.cx) <= minWidth / 2;
-				assert.ok(sameColumn ? next.top >= prev.top : (next.cx - prev.cx) * direction > 0, `Tab steps against the flow from ${prev.id} to ${next.id}: ${order}`);
-			}
-		};
-		assertRowFlow(stops.slice(0, turn), 1);
-		assertRowFlow(stops.slice(turn), -1);
+		const getRank = (s: (typeof stops)[number]) =>
+			readingOrder.findIndex((id) => {
+				const b = zones.find((z) => z.id === id)?.box;
+				return Boolean(b && s.cx > b.left && s.cx < b.right && s.cy > b.top && s.cy < b.bottom);
+			});
+		const ranks = stops.map(getRank);
+		assert.ok(ranks.every((rank) => rank >= 0), `a stop sits in no zone: ${order}`);
+		for (let i = 1; i < stops.length; i++) {
+			const sameZone = ranks[i] === ranks[i - 1];
+			assert.ok(
+				sameZone ? stops[i].cy > stops[i - 1].cy : ranks[i] > ranks[i - 1],
+				`Tab steps against the reading order from ${stops[i - 1].id} to ${stops[i].id}: ${order}`,
+			);
+		}
 	});
 
 	test("AC-18 no tab controls in the DOM", async () => {
@@ -890,6 +926,17 @@ describe("fault live fixture", () => {
 				await ctx.page.reload({ waitUntil: "load" });
 				await ctx.page.waitForFunction(
 					(sel) => Array.from(document.querySelectorAll(`${sel} svg text.arch-ring-glyph`)).some((glyph) => (glyph.textContent || "").includes("×")),
+					ctx.selectors.canvas,
+					{ timeout: 30_000 },
+				);
+				// badges are read at the default view — before the fit reaches the CTM, a member low in the left column can sit outside the canvas
+				await ctx.page.waitForFunction(
+					(sel) => {
+						const vp = document.querySelector(`${sel} .svg-pan-zoom_viewport`);
+						const m = vp instanceof SVGGraphicsElement ? vp.getCTM() : null;
+						const fitScale = Number(vp?.getAttribute("data-arch-fit-scale"));
+						return Boolean(m && fitScale > 0 && Math.abs(m.a - fitScale) < 1e-3);
+					},
 					ctx.selectors.canvas,
 					{ timeout: 30_000 },
 				);

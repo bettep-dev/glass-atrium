@@ -125,12 +125,11 @@ function ScreenCost({ onNav }) {
       {/* 공유 타입스케일(--fs 토큰 + fs 클래스) 마운트 — SPA 단일 screen 모델: cost 활성 시 토큰·클래스 가용화 (ui.jsx 정의 소비, 미정의 시 클래스 no-op 회귀 차단). */}
       <TypeScaleStyle/>
       {/* Screen-scoped readability layer (W3-T5):
-          - .cost-tbl: 행 높이 28→32px (vertical padding ↑) · 본문 셀 --faint→--dim 으로 승격 (산문 가독 tier).
-          - .cost-foot: 카드 하단 footnote/helper line — fs-meta(12px) --dim (text-faint mono 보다 한 단 밝게, 읽기용).
+          - .cost-tbl: 본문 셀 --faint→--dim 으로 승격 (산문 가독 tier) · 행 높이는 공용 --row-h.
+          - .cost-foot: 카드 하단 footnote/helper line — fs-meta --dim (text-faint mono 보다 한 단 밝게, 읽기용).
           - .kpi-hint --dim override: KPI 타일 sub-caption 을 --faint 에서 --dim 으로 (ui.jsx 정의 셀프 보존, cost 화면만 승격). */}
       <style>{`
         @keyframes skelPulseC { 0%,100%{opacity:.7} 50%{opacity:.35} }
-        .cost-tbl td { padding-top: 11px; padding-bottom: 11px; }
         .cost-tbl tbody td { color: rgb(var(--dim)); }
         .cost-tbl tbody td.num { color: rgb(var(--dim)); }
         .cost-foot { font-size: var(--fs-meta); line-height: 1.5; color: rgb(var(--dim)); }
@@ -192,7 +191,7 @@ function ScreenCost({ onNav }) {
         <CostTrendCard state={tokenState} days={days} onRetry={triggerRefresh} failures={sourceFailures}/>
       </RefreshingRegionC>
 
-      <SplitRow ratio="1:1" className="mb-4">
+      <SplitRow ratio="1:1" layout="equal" className="mb-4">
         <RefreshingRegionC id={COST_REGION_IDS.models} states={[modelState]}>
           <ModelCostCard state={modelState} days={days} onRetry={triggerRefresh} failures={sourceFailures} onNav={onNav}/>
         </RefreshingRegionC>
@@ -203,7 +202,7 @@ function ScreenCost({ onNav }) {
 
       {/* Instrumentation tier — status summaries, open by default and foldable. */}
       <InstrumentationTierC>
-        <Disclosure kind="status" level={3} title="Token volume" sub="Category split over time, with the cache-hit line"
+        <Disclosure kind="status" level={3} title="Token volume" sub="By category, with cache hit rate"
           className="cost-inst mb-4">
           <RefreshingRegionC id={COST_REGION_IDS.tokens} states={[tokenState]}>
             <TokenStackedBody state={tokenState} days={days} onRetry={triggerRefresh}
@@ -214,15 +213,15 @@ function ScreenCost({ onNav }) {
           </RefreshingRegionC>
         </Disclosure>
 
-        {/* both charts fit the 920px lg content column → split from lg; the decision pair's session table does not, so it keeps xl */}
-        <SplitRow ratio="3:2" className="lg:grid-cols-[minmax(0,3fr)_minmax(0,2fr)]">
-          <Disclosure kind="status" level={3} title="Turn statistics" sub="Stop reasons and per-turn aggregates"
+        {/* both cards fit the 920px lg column at 2:1 → split from lg (a 1:1 half overlaps the stop-reason table); the decision pair's session table does not, so it keeps xl */}
+        <SplitRow ratio="2:1" layout="equal" className="lg:grid-cols-[minmax(0,2fr)_minmax(0,1fr)]">
+          <Disclosure kind="status" level={3} title="Turn statistics" sub="Stop reasons and turn counts"
             className="cost-inst">
             <RefreshingRegionC id={COST_REGION_IDS.turns} states={[turnState]}>
               <TurnStatsBody state={turnState} days={days} onRetry={triggerRefresh} failures={sourceFailures}/>
             </RefreshingRegionC>
           </Disclosure>
-          <Disclosure kind="status" level={3} title="Log integrity" sub="Unreadable log entries over the window"
+          <Disclosure kind="status" level={3} title="Log integrity" sub="Unreadable / day"
             className="cost-inst">
             <RefreshingRegionC id={COST_REGION_IDS.log} states={[errorState]}>
               <ParseErrorBody state={errorState} days={days} onRetry={triggerRefresh} failures={sourceFailures}/>
@@ -496,14 +495,13 @@ function computeWindowTotal(trendState) {
   const ready = trendState.status === 'ready';
   const points = getTrendPoints(trendState);
   if (points.length === 0) {
-    return { total: null, delta: null, prior: null, dayCount: 0, avgDaily: null, peakCost: null, isEmpty: ready };
+    return { total: null, delta: null, prior: null, avgDaily: null, peakCost: null, isEmpty: ready };
   }
   const series = points.map((p) => toFiniteOrNull(p.cost_usd) ?? 0);
   const total = series.reduce((s, v) => s + v, 0);
   return {
     total,
     ...computePriorDelta(total, getPriorWindow(trendState), (block) => block.cost_usd),
-    dayCount: points.length,
     avgDaily: total / points.length,
     peakCost: Math.max(...series),
     isEmpty: false,
@@ -585,7 +583,9 @@ function KpiRowC({ kpiState, hot, trendState, modelState, days, failures, onRetr
           value={windowTotal.total === null ? '—' : formatUsdC(windowTotal.total)}
           hint={windowTotal.total === null
             ? ''
-            : `Recorded cost · ${windowTotal.dayCount} days · ${formatUsdC(windowTotal.avgDaily)}/day avg · peak ${formatUsdC(windowTotal.peakCost)}`}
+            : `${formatUsdC(windowTotal.avgDaily)}/day avg · peak ${formatUsdC(windowTotal.peakCost)}`}
+          labelId="cost-tile-window-label"
+          info="Recorded cost: the sum of the cost events recorded on each day of the window, today's partial day included. The average divides that total by the days shown; the peak is the costliest single day."
           unavailableNote="Trend payload carries no cost figure.">
           <TrendDeltaC delta={windowTotal.delta} prior={windowTotal.prior} noun="cost"/>
         </CostTileC>
@@ -643,16 +643,20 @@ function getShownDays(state, requestedDays) {
  * Cost-local tile shell — the shared KPI atom is a single-value button, tile 1 carries a bar + a verdict.
  * All four tiles take this one shell rather than mixing two tile idioms in one band.
  */
-function CostTileC({ label, windowTag, status, value, hint, unavailableNote, children }) {
-  const { KpiValue } = window.UI;
+function CostTileC({ label, labelId, info, windowTag, status, value, hint, unavailableNote, children }) {
+  const { CardInfo, KpiValue } = window.UI;
   const isReady = status === 'ready';
   const note = getTileNote(status, unavailableNote);
 
   return (
     <div className="kpi" aria-busy={status === 'loading' ? 'true' : undefined}>
       {/* window tag at the label's right edge on every tile → the four windows compare at one glance */}
-      <div className="flex items-baseline justify-between gap-2">
-        <div className="kpi-label">{label}</div>
+      {/* one control-height label row on every tile → an ⓘ on one tile never drops its value below its peers' */}
+      <div className="flex items-center justify-between gap-2 min-h-[32px]">
+        <div className="flex items-center gap-1 min-w-0">
+          <div id={labelId} className="kpi-label">{label}</div>
+          {info && <CardInfo label={`How ${label} is counted`} describedBy={labelId}>{info}</CardInfo>}
+        </div>
         <span className="kpi-window fs-meta font-mono text-faint shrink-0">{windowTag}</span>
       </div>
       <KpiValue>
@@ -862,7 +866,7 @@ function CostTrendChart({ rows, bandOn }) {
               domain={[0, yTicks[yTicks.length - 1]]}
               ticks={yTicks}
               tickFormatter={getUsdAxisFormatter(trendMax)}
-              tick={anomalyAxisTickStyle}
+              tick={axisTickStyle}
               axisLine={anomalyAxisLineStyle}
               tickLine={false}
               width={56}
@@ -1161,7 +1165,7 @@ function TokenStackedArea({ points, order }) {
         />
         <YAxis
           tickFormatter={formatAxis}
-          tick={{ fontSize: 12, fill: 'rgb(var(--faint))', fontFamily: 'JetBrains Mono, monospace' }}
+          tick={axisTickStyle}
           axisLine={{ stroke: 'rgb(var(--line))' }}
           tickLine={false}
           width={48}
@@ -1202,7 +1206,7 @@ function TokenStackedColumn({ points, order }) {
         />
         <YAxis
           tickFormatter={formatAxis}
-          tick={{ fontSize: 12, fill: 'rgb(var(--faint))', fontFamily: 'JetBrains Mono, monospace' }}
+          tick={axisTickStyle}
           axisLine={{ stroke: 'rgb(var(--line))' }}
           tickLine={false}
           width={48}
@@ -1322,7 +1326,8 @@ function isUnattributedModel(model) {
 }
 
 function ModelCostCard({ state, days, failures, onRetry, onNav }) {
-  const { CardHead, Pill } = window.UI;
+  const { Card, Pill } = window.UI;
+  const [isShowingAll, setShowingAll] = useStateC(false);
 
   const rows = state.status === 'ready' ? (state.data?.rows ?? []) : [];
   // pill 카운트 분리 — 실모델 N개 + 미귀속 legacy 1개를 합산 표기하지 않음.
@@ -1332,12 +1337,17 @@ function ModelCostCard({ state, days, failures, onRetry, onNav }) {
   // getTokenRate = exact + family-prefix → date-suffixed id 는 family 단가로 해소되므로 실제 miss 만 카운트.
   const fallbackCount = rows.reduce(
     (s, r) => s + (!isUnattributedModel(r.model) && !window.getTokenRate(r.model) ? 1 : 0), 0);
+  const { other } = rollupModelRows(buildModelCostRows(rows), getListBudgetC(CARD_SIZE.MODEL));
 
   return (
-    <div className="card">
-      <CardHead
-        title="Cost by model"
-        right={
+    <Card
+      size={CARD_SIZE.MODEL}
+      title="Cost by model"
+      info="Cost per agent is not available — cost events carry a model, not an agent. A session using several models counts under each, so the Total row carries no session count."
+      foot={other && (
+        <ModelCostFootC other={other} modelCount={rows.length} isShowingAll={isShowingAll} onToggle={() => setShowingAll((v) => !v)}/>
+      )}
+      right={
           <div className="flex items-center gap-2">
             {fallbackCount > 0 && (
               <span title={`${fallbackCount} model${fallbackCount === 1 ? '' : 's'} without a catalog price — cost split falls back to token-count ratio`}>
@@ -1348,22 +1358,39 @@ function ModelCostCard({ state, days, failures, onRetry, onNav }) {
               Models &amp; budgets ›
             </button>
           </div>
-        }
-      />
-      <div className="card-body">
-        <ModelCostBody state={state} days={days} onRetry={onRetry} failures={failures}/>
-      </div>
-    </div>
+        }>
+      <ModelCostBody state={state} days={days} onRetry={onRetry} failures={failures} isShowingAll={isShowingAll}/>
+    </Card>
   );
 }
 
-// Top-N 실모델 + 나머지 'Other' 롤업 (T-CST-3 — NOT pie). 미귀속/단가미상 행은 정상 실모델과
-// 동일 정렬 풀에서 비용 desc → 상위 N 외 전부 단일 Other 버킷으로 합산 (avg/session 은 합산 후 재계산).
-const MODEL_TOPN = 5;
+// Rows past the M budget fold into one foot line; "Show all" opens them in the ledger itself.
+function ModelCostFootC({ other, modelCount, isShowingAll, onToggle }) {
+  return (
+    <>
+      <span className="truncate">
+        {isShowingAll ? `All ${modelCount} models` : `Other · ${other.count} more model${other.count === 1 ? '' : 's'} · ${formatUsdC(other.cost_usd)}`}
+      </span>
+      <button type="button" className="btn ghost sm ml-auto shrink-0" aria-expanded={isShowingAll} onClick={onToggle}>
+        {isShowingAll ? `Show top ${getListBudgetC(CARD_SIZE.MODEL)}` : `Show all ${modelCount}`}
+      </button>
+    </>
+  );
+}
 
+// Slot per decision card: the ledger's share bar, Total row and footnote cost about four rows,
+// so sessions take the L budget and both bodies fill one stretched row without a half-empty card.
+const CARD_SIZE = Object.freeze({ MODEL: 'M', SESSION: 'L' });
+
+function getListBudgetC(size) {
+  return window.UI.CARD_SLOTS[size].rowCount;
+}
+
+// Top-N 실모델 + 나머지 'Other' 롤업 (T-CST-3 — NOT pie). 미귀속/단가미상 행은 정상 실모델과
+// 동일 정렬 풀에서 비용 desc → 상위 N 외 전부 단일 Other 버킷으로 합산 — N = 카드 행 예산, 초과 없음.
 function rollupModelRows(modelRows, topN) {
   const sorted = modelRows.slice().sort((a, b) => b.cost_usd - a.cost_usd);
-  if (sorted.length <= topN + 1) {
+  if (sorted.length <= topN) {
     return { top: sorted, other: null };
   }
   const top = sorted.slice(0, topN);
@@ -1379,7 +1406,7 @@ function rollupModelRows(modelRows, topN) {
   return { top, other };
 }
 
-function ModelCostBody({ state, days, failures, onRetry }) {
+function ModelCostBody({ state, days, failures, onRetry, isShowingAll = false }) {
   const { getRegionView, LoadingPlaceholder, RegionFailure, SectionLabel, TableHead } = window.UI;
 
   if (getRegionView(state) === 'loading') {
@@ -1396,7 +1423,7 @@ function ModelCostBody({ state, days, failures, onRetry }) {
   }
 
   const modelRows = buildModelCostRows(rows);
-  const { top, other } = rollupModelRows(modelRows, MODEL_TOPN);
+  const { top } = rollupModelRows(modelRows, isShowingAll ? modelRows.length : getListBudgetC(CARD_SIZE.MODEL));
   const totalCost = modelRows.reduce((s, r) => s + r.cost_usd, 0);
 
   return (
@@ -1404,50 +1431,33 @@ function ModelCostBody({ state, days, failures, onRetry }) {
       <SectionLabel level={3} className="mb-2">By token type</SectionLabel>
       <CategoryShareRowC rows={computeCategoryCostRows(modelRows)}/>
       <SectionLabel level={3} className="mb-2 mt-4">By model</SectionLabel>
-      <div style={{ maxHeight: 360, overflowY: 'auto' }}>
-        <table className="tbl cost-tbl">
-          <caption className="sr-only">{`Cost by model, last ${days} days — top ${MODEL_TOPN} plus Other`}</caption>
-          <thead>
-            <tr>
-              <TableHead isSticky>Model</TableHead>
-              <TableHead isNumeric isSticky>Cost</TableHead>
-              <TableHead isNumeric isSticky>Sessions</TableHead>
-              <TableHead isNumeric isSticky>Avg / session</TableHead>
-            </tr>
-          </thead>
-          <tbody>
-            {top.map((r) => (
-              <ModelCostRow key={r.fullModel} r={r}/>
-            ))}
-            {other && (
-              <tr>
-                <td>
-                  <span className="text-dim">Other · {other.count} more models</span>
-                </td>
-                <td className="num">{formatUsdC(other.cost_usd)}</td>
-                <td className="num">{formatIntC(other.session_count)}</td>
-                <td className="num text-dim">
-                  {other.session_count > 0 ? formatUsdC(other.cost_usd / other.session_count) : '—'}
-                </td>
-              </tr>
-            )}
-          </tbody>
-          <tfoot>
-            <tr style={{ borderTop: '2px solid rgb(var(--line))' }}>
-              <td className="font-semibold">Total</td>
-              <td className="num font-semibold">{formatUsdC(totalCost)}</td>
-              {/* A session spanning several models sits in each model's count → the column does not sum. */}
-              <td className="num text-dim">—</td>
-              <td className="num text-dim">—</td>
-            </tr>
-          </tfoot>
-        </table>
-      </div>
-      {/* Named gap, never proxied — cost_events carry a model, not an agent. */}
-      <div className="cost-foot mt-2">
-        Sessions are counted per model, so a session using several models appears in each — the Total row carries no session count.
-        Cost per agent is not available — cost events carry a model, not an agent.
-      </div>
+      <table className="tbl cost-tbl">
+        <caption className="sr-only">{`Cost by model, last ${days} days — the costliest ${top.length} of ${modelRows.length}`}</caption>
+        <thead>
+          <tr>
+            <TableHead isSticky>Model</TableHead>
+            <TableHead isNumeric isSticky>Cost</TableHead>
+            <TableHead isNumeric isSticky>Sessions</TableHead>
+            <TableHead isNumeric isSticky>Avg / session</TableHead>
+          </tr>
+        </thead>
+        <tbody>
+          {top.map((r) => (
+            <ModelCostRow key={r.fullModel} r={r}/>
+          ))}
+        </tbody>
+        <tfoot>
+          <tr style={{ borderTop: '2px solid rgb(var(--line))' }}>
+            <td className="font-semibold">Total</td>
+            <td className="num font-semibold">{formatUsdC(totalCost)}</td>
+            {/* A session spanning several models sits in each model's count → the column does not sum. */}
+            <td className="num text-dim">—</td>
+            <td className="num text-dim">—</td>
+          </tr>
+        </tfoot>
+      </table>
+      {/* Named gap, never proxied — the per-agent gap sits behind the card's info button. */}
+      <div className="cost-foot mt-2">Multi-model sessions count once per model</div>
     </>
   );
 }
@@ -1672,7 +1682,7 @@ function CacheHitChart({ rows, yDomain = [0, 100] }) {
           domain={yDomain}
           ticks={getCacheTicks(yDomain)}
           tickFormatter={(v) => v.toFixed(narrow ? 1 : 0) + '%'}
-          tick={{ fontSize: 12, fill: 'rgb(var(--faint))', fontFamily: 'JetBrains Mono, monospace' }}
+          tick={axisTickStyle}
           axisLine={{ stroke: 'rgb(var(--line))' }}
           tickLine={false}
           width={getCacheAxisWidth(yDomain, narrow ? 1 : 0)}
@@ -1712,10 +1722,7 @@ function CacheHitTooltipC({ active, payload }) {
   );
 }
 
-// 5c. Most expensive sessions — top ten + a rolled-up Other row, histogram behind it in the drawer.
-// Ten rows → the table ends level with the model ledger beside it (top five + Other + Total) at xl.
-const SESSION_TOPN = 10;
-
+// 5c. Most expensive sessions — the L row budget + an Other foot, histogram behind it in the drawer.
 // Top N by cost + one Other bucket. The population travels with every count — never a bare "5".
 function rollupSessionRows(sessions, topN) {
   const sorted = sessions
@@ -1744,34 +1751,49 @@ function getSpendConcentration(sessions, topN) {
 function getSpendConcentrationText(concentration, sessionCount) {
   if (!concentration) return null;
   const pct = Math.round(concentration.share * 100);
-  const who = concentration.count === 1 ? 'Top session' : `Top ${concentration.count} sessions`;
+  const who = concentration.count === 1 ? 'Top 1' : `Top ${concentration.count}`;
   return `${who} of ${formatIntC(sessionCount)} = ${pct}% of spend`;
 }
 
 function SessionDistributionCard({ state, days, failures, onRetry, onNav }) {
-  const { CardHead, Pill } = window.UI;
+  const { Card, Pill } = window.UI;
+  const [histogramOpen, setHistogramOpen] = useStateC(false);
   const truncated = state.status === 'ready' && state.data?.truncated === true;
   const totalCount = state.status === 'ready' ? Number(state.data?.total_session_count) || 0 : 0;
-  const visibleCount = state.status === 'ready' ? (state.data?.rows?.length ?? 0) : 0;
+  const sessions = state.status === 'ready' ? (state.data?.rows ?? []) : [];
+  const budget = getListBudgetC(CARD_SIZE.SESSION);
+  const rollup = useMemoC(() => rollupSessionRows(sessions, budget), [sessions, budget]);
+  const bins = useMemoC(() => computeSessionBins(sessions), [sessions]);
   const concentrationText = state.status === 'ready'
-    ? getSpendConcentrationText(getSpendConcentration(state.data?.rows ?? [], SESSION_TOPN), visibleCount)
+    ? getSpendConcentrationText(getSpendConcentration(sessions, budget), sessions.length)
     : null;
 
   return (
-    <div className="card">
-      <CardHead
-        title="Most expensive sessions"
-        sub={state.status === 'ready'
-          ? concentrationText || `top ${Math.min(SESSION_TOPN, visibleCount)} of ${formatIntC(visibleCount)} sessions`
-          : undefined}
-        right={truncated
-          ? <span title={`Showing ${visibleCount} of ${totalCount} sessions`}><Pill>{`${visibleCount} of ${totalCount} loaded`}</Pill></span>
-          : null}
-      />
-      <div className="card-body">
-        <SessionDistributionBody state={state} days={days} onRetry={onRetry} failures={failures} onNav={onNav}/>
-      </div>
-    </div>
+    <Card
+      size={CARD_SIZE.SESSION}
+      title="Most expensive sessions"
+      sub={state.status === 'ready'
+        ? concentrationText || `Top ${Math.min(budget, sessions.length)} of ${formatIntC(sessions.length)}`
+        : undefined}
+      right={truncated
+        ? <span title={`Showing ${sessions.length} of ${totalCount} sessions`}><Pill>{`${sessions.length} of ${totalCount} loaded`}</Pill></span>
+        : null}
+      foot={rollup.other && (
+        <>
+          <span className="truncate">
+            {`Other · ${formatIntC(rollup.other.count)} of ${formatIntC(rollup.total)} sessions · ${formatUsdC(rollup.other.cost_usd)}`}
+          </span>
+          <button type="button" className="btn ghost sm ml-auto shrink-0" onClick={() => setHistogramOpen(true)}
+            aria-label={`Cost distribution of all ${formatIntC(rollup.total)} sessions`}>
+            Distribution ›
+          </button>
+        </>
+      )}>
+      <SessionDistributionBody state={state} rows={rollup.top} days={days} onRetry={onRetry} failures={failures} onNav={onNav}/>
+      {histogramOpen && (
+        <SessionHistogramDrawerC bins={bins} total={rollup.total} onClose={() => setHistogramOpen(false)}/>
+      )}
+    </Card>
   );
 }
 
@@ -1783,16 +1805,11 @@ const SESSION_COLUMNS = [
   { key: 'seen', label: 'Last seen', isNumeric: true },
 ];
 
-function SessionDistributionBody({ state, days, failures, onRetry, onNav }) {
+// rows = the card's budgeted top sessions; the rest is the card foot's Other line.
+function SessionDistributionBody({ state, rows = [], days, failures, onRetry, onNav }) {
   const { getRegionView, LoadingPlaceholder, RegionFailure, Table, getRowFocusProps } = window.UI;
-  const [histogramOpen, setHistogramOpen] = useStateC(false);
   const [openSession, setOpenSession] = useStateC(null);
   const [activeRow, setActiveRow] = useStateC(0);
-
-  // Hooks run before any early return — an unready payload reduces to an empty list.
-  const sessions = state.status === 'ready' ? (state.data?.rows ?? []) : [];
-  const bins = useMemoC(() => computeSessionBins(sessions), [sessions]);
-  const rollup = useMemoC(() => rollupSessionRows(sessions, SESSION_TOPN), [sessions]);
 
   if (getRegionView(state) === 'loading') {
     return <LoadingPlaceholder label="session costs" minHeight={220}/>;
@@ -1801,41 +1818,22 @@ function SessionDistributionBody({ state, days, failures, onRetry, onNav }) {
     return <RegionFailure source="session costs" error={state.error} isBusy={state.busy} focusTargetId={COST_REGION_IDS.sessions}
       onRetry={onRetry} failures={failures} minHeight={220}/>;
   }
-  if (sessions.length === 0) {
+  if (rows.length === 0) {
     return <EmptyStateC message={`No session events in the last ${days} days.`}/>;
   }
 
-  const rowCount = rollup.top.length + (rollup.other ? 1 : 0);
-  const openRow = (index) => (index < rollup.top.length ? setOpenSession(rollup.top[index]) : setHistogramOpen(true));
+  const openRow = (index) => setOpenSession(rows[index]);
   const getFocusProps = (index) => getRowFocusProps({
-    index, activeIndex: activeRow, count: rowCount, onActivate: openRow, onActiveChange: setActiveRow,
+    index, activeIndex: activeRow, count: rows.length, onActivate: openRow, onActiveChange: setActiveRow,
   });
 
   return (
     <>
       <Table caption={`Most expensive sessions, last ${days} days — open a row for its details`} columns={SESSION_COLUMNS} className="cost-tbl">
-        {rollup.top.map((s, i) => (
+        {rows.map((s, i) => (
           <SessionRowC key={s.session_id} session={s} focusProps={getFocusProps(i)} onOpen={() => openRow(i)}/>
         ))}
-        {rollup.other && (
-          <tr
-            {...getFocusProps(rollup.top.length)}
-            className="cursor-pointer"
-            aria-label={`Other ${rollup.other.count} of ${rollup.total} sessions, ${formatUsdC(rollup.other.cost_usd)} — open the cost distribution`}
-            onClick={() => setHistogramOpen(true)}>
-            <td colSpan={2} className="text-dim">
-              Other · {formatIntC(rollup.other.count)} of {formatIntC(rollup.total)} sessions
-              <span className="btn sm ml-2" aria-hidden="true">Distribution ›</span>
-            </td>
-            <td className="num font-mono text-ink font-semibold">{formatUsdC(rollup.other.cost_usd)}</td>
-            <td className="num"/>
-            <td className="num"/>
-          </tr>
-        )}
       </Table>
-      {histogramOpen && (
-        <SessionHistogramDrawerC bins={bins} total={rollup.total} onClose={() => setHistogramOpen(false)}/>
-      )}
       {openSession && (
         <SessionDetailDrawerC session={openSession} onClose={() => setOpenSession(null)} onNav={onNav}/>
       )}
@@ -1987,7 +1985,7 @@ function SessionDistributionChart({ bins }) {
         <CartesianGrid stroke="rgb(var(--line))" strokeDasharray="3 3" vertical={false}/>
         <XAxis
           dataKey="label"
-          tick={{ fontSize: 12, fill: 'rgb(var(--faint))', fontFamily: 'JetBrains Mono, monospace' }}
+          tick={axisTickStyle}
           axisLine={{ stroke: 'rgb(var(--line))' }}
           tickLine={false}
           interval={0}
@@ -1997,7 +1995,7 @@ function SessionDistributionChart({ bins }) {
         />
         <YAxis
           allowDecimals={false}
-          tick={{ fontSize: 12, fill: 'rgb(var(--faint))', fontFamily: 'JetBrains Mono, monospace' }}
+          tick={axisTickStyle}
           axisLine={{ stroke: 'rgb(var(--line))' }}
           tickLine={false}
           width={36}
@@ -2063,7 +2061,7 @@ function ParseErrorBody({ state, days, failures, onRetry }) {
       {/* KPI 2-col (총 발생 + 마지막 발생) → 0건 분기에선 차트 생략 (action-trigger 부재). */}
       <div className="grid grid-cols-2 gap-3 mb-3">
         <div>
-          <div className="fs-meta text-dim">Unreadable log entries</div>
+          <div className="fs-meta text-dim">Unreadable entries</div>
           <div className="font-mono fs-stat font-semibold tracking-tight">
             {formatIntC(totalErrors)}
           </div>
@@ -2086,7 +2084,7 @@ function ParseErrorBody({ state, days, failures, onRetry }) {
               <Badge role="metadata">{critDays} of {dayCount} days over threshold</Badge>
             </div>
           )}
-          <div style={{ width: '100%', height: 200 }}
+          <div style={{ width: '100%', height: window.UI.CARD_SLOTS.M.plotPx }}
             {...window.UI.getChartImageProps('Daily unreadable log entries',
               rows.map((r) => ({ label: r.event_date, value: Number(r.error_count) || 0 })), formatIntC)}>
             <ParseErrorChart rows={chartRows}/>
@@ -2169,7 +2167,7 @@ function ParseErrorChart({ rows }) {
         <YAxis
           yAxisId="count"
           allowDecimals={false}
-          tick={{ fontSize: 12, fill: 'rgb(var(--faint))', fontFamily: 'JetBrains Mono, monospace' }}
+          tick={axisTickStyle}
           axisLine={{ stroke: 'rgb(var(--line))' }}
           tickLine={false}
           width={36}
@@ -2286,7 +2284,8 @@ function pointCostC(p) {
 }
 
 // Axis style hoist — JSX inline-object 할당 회피.
-const anomalyAxisTickStyle = { fontSize: 12, fill: 'rgb(var(--faint))', fontFamily: 'JetBrains Mono, monospace' };
+// CSS style, not the font-size attribute — an SVG presentation attribute cannot resolve the --fs-meta token
+const axisTickStyle = { style: { fontSize: 'var(--fs-meta)' }, fill: 'rgb(var(--faint))', fontFamily: 'JetBrains Mono, monospace' };
 const anomalyAxisLineStyle = { stroke: 'rgb(var(--line))' };
 
 // Turn statistics body — /api/cost/turn-stats: stop_reason 분포 + turns 집계.
@@ -2328,7 +2327,7 @@ function TurnStatsBody({ state, days, failures, onRetry }) {
   const maxEvents = stopReasons.reduce((m, r) => Math.max(m, Number(r.event_count) || 0), 0);
   const totalEvents = stopReasons.reduce((s, r) => s + (Number(r.event_count) || 0), 0);
 
-  // Stacked, never split: the card is the 3fr side of a pair at xl → a table column beside the
+  // Stacked, never split: the card is the 2fr side of a pair from lg → a table column beside the
   // aggregates would sit below the table's own minimum width.
   return (
     <>
@@ -2397,7 +2396,7 @@ function TurnStopReasonTable({ rows, maxEvents, totalEvents, sessionPopulation }
   return (
     <table className="tbl cost-tbl">
       <caption className="fs-meta text-dim text-left pb-2">
-        {`A session counts under every stop reason it hit, so Sessions sums past the ${formatIntC(sessionPopulation)} sessions in this window.`}
+        Counted once per stop reason
       </caption>
       <thead>
         <tr>
@@ -2486,7 +2485,7 @@ const tooltipStyle = {
   border: '1px solid rgb(var(--line))',
   borderRadius: 8,
   padding: '8px 12px',
-  // 툴팁 = HTML DOM div → fs-meta(12px) 보조 콘텐츠 tier.
+  // 툴팁 = HTML DOM div → fs-meta 보조 콘텐츠 tier.
   fontSize: 'var(--fs-meta)',
   fontFamily: 'JetBrains Mono, monospace',
   boxShadow: '0 4px 12px rgba(0,0,0,0.12)',

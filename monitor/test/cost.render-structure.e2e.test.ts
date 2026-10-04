@@ -32,8 +32,8 @@ const LEDGER_MODELS = [
 ];
 // The seven payloads the screen reads — the trend series lives under the dashboard namespace.
 const COST_PAYLOAD_PREFIXES = ["/api/cost/", "/api/dashboard/cost-timeseries"];
-// Two columns "end near the same height": less than one table row of dead space under the shorter.
-const DECISION_SPLIT_MAX_SLACK_PX = 48;
+// The type scale's floor: no chart label renders below it.
+const META_FLOOR_PX = 13;
 
 // A calm month of ordinary spend whose newest day sits inside its own band; 30 days crowd a 1024 axis.
 const CALM_TREND_COSTS = Array.from({ length: 30 }, (_, i) => [11, 9, 10][i % 3]!);
@@ -109,7 +109,7 @@ async function openRenderContext(fixture: CostFixture): Promise<RenderContext> {
       },
     } : {}),
   }));
-  // A month's real model spread: more models than the ledger's top five, so it rolls up an Other row.
+  // A month's real model spread: more models than the ledger's row budget, so it rolls up an Other foot.
   app.get("/api/cost/by-model", async () => ({
     rows: LEDGER_MODELS.map((model, i) => ({
       model,
@@ -407,21 +407,56 @@ describe("calm fixture — nothing is running hot", () => {
     }
   });
 
-  test("the decision split's two columns end near the same height at 1440", async () => {
-    const columnBottoms = await ctx.page.evaluate((selector) => {
-      const title = Array.from(document.querySelectorAll(selector))
-        .find((t) => (t.textContent || "").trim() === "Cost by model");
-      const row = title?.closest(".split-row");
-      if (!row) return [];
-      return Array.from(row.children).map((col) => {
-        const cards = Array.from(col.querySelectorAll(".card"));
-        return Math.max(...cards.map((c) => c.getBoundingClientRect().bottom));
-      });
-    }, CARD_TITLE_SELECTOR);
-    assert.equal(columnBottoms.length, 2, "the decision split holds two columns");
-    const slack = Math.abs(columnBottoms[0]! - columnBottoms[1]!);
-    assert.ok(slack <= DECISION_SPLIT_MAX_SLACK_PX,
-      `empty space under the shorter column is ${Math.round(slack)}px (bottoms ${columnBottoms.map(Math.round).join(" | ")})`);
+  test("peer cards in a pair end at the same edge wherever the pair shares a row", async () => {
+    const pairs = [
+      { titles: ["Cost by model", "Most expensive sessions"], widths: [1440, 1920] },
+      { titles: ["Turn statistics", "Log integrity"], widths: [1024, 1440, 1920] },
+    ];
+    try {
+      for (const { titles, widths } of pairs) {
+        for (const width of widths) {
+          await ctx.page.setViewportSize({ width, height: 900 });
+          const bottoms = await ctx.page.evaluate(({ names, selector }) => {
+            const titleEls = Array.from(document.querySelectorAll(selector));
+            return names.map((name) => titleEls
+              .find((t) => (t.textContent || "").trim() === name)?.closest(".card")?.getBoundingClientRect().bottom ?? Number.NaN);
+          }, { names: titles, selector: CARD_TITLE_SELECTOR });
+          const spread = Math.abs(bottoms[0]! - bottoms[1]!);
+          assert.ok(spread < 1, `${titles.join(" | ")} at ${width}: bottoms ${bottoms.map(Math.round).join(" | ")}`);
+        }
+      }
+    } finally {
+      await ctx.page.setViewportSize({ width: 1440, height: 900 });
+    }
+  });
+
+  test("the instrumentation pair keeps one 2:1 split from lg up", async () => {
+    try {
+      for (const width of [1024, 1440]) {
+        await ctx.page.setViewportSize({ width, height: 900 });
+        const columns = await ctx.page.evaluate((selector) => {
+          const title = Array.from(document.querySelectorAll(selector))
+            .find((t) => (t.textContent || "").trim() === "Turn statistics");
+          const row = title?.closest(".split-row");
+          return row ? Array.from(row.children).map((col) => col.getBoundingClientRect().width) : [];
+        }, CARD_TITLE_SELECTOR);
+        assert.equal(columns.length, 2, `two columns at ${width}`);
+        assert.ok(Math.abs(columns[0]! / columns[1]! - 2) < 0.02, `columns ${columns.map(Math.round).join(" | ")} at ${width}`);
+      }
+    } finally {
+      await ctx.page.setViewportSize({ width: 1440, height: 900 });
+    }
+  });
+
+  test("no chart label renders below the meta floor", async () => {
+    const sizes = await ctx.page.evaluate(() =>
+      Array.from(document.querySelectorAll(".cost-screen .recharts-wrapper text"))
+        .filter((t) => (t.textContent || "").trim() !== "")
+        .map((t) => ({ text: (t.textContent || "").trim(), px: parseFloat(getComputedStyle(t).fontSize) })),
+    );
+    assert.ok(sizes.length > 0, "the screen draws chart labels");
+    const small = sizes.filter((s) => s.px < META_FLOOR_PX);
+    assert.deepEqual(small, [], `${small.length} of ${sizes.length} chart labels below ${META_FLOOR_PX}px`);
   });
 
   test("x-axis labels on every chart keep the minimum gap and stay over the plot at 1024", async () => {

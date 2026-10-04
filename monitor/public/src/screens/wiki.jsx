@@ -102,7 +102,7 @@ function ScreenWiki() {
         .alarm-row[data-tone="neutral"] .alarm-row-glyph { color: rgb(var(--dim)); }
         /* Name, bar and count stay within reading distance on a wide panel. */
         .w-type-list { max-width: 40rem; }
-        .w-type-row { display: grid; grid-template-columns: minmax(0, 9rem) minmax(0, 1fr) 3.5rem 2.5rem; align-items: center; gap: 0.75rem; }
+        .w-type-row { display: grid; grid-template-columns: minmax(0, 9rem) minmax(0, 1fr) 3.5rem 2.5rem; align-items: center; gap: 0.75rem; height: var(--row-h); }
         .w-type-track { display: block; height: 6px; border-radius: 9999px; background: rgb(var(--line)); }
         .w-type-fill { display: block; height: 100%; border-radius: inherit; background: rgb(var(--dim)); }
       `}</style>
@@ -558,11 +558,11 @@ function readProposalsW(backlog) {
 // Backlog figures are a per-cycle snapshot: past one cycle they are dated, and an
 // undated or stale snapshot must not read as the current count.
 function describeSnapshotAgeW(runDate) {
-	if (!runDate) return " (run date not reported)";
+	if (!runDate) return "Run date not reported";
 
 	const ageDays = ageInUtcDaysW(runDate);
 	const stale = typeof ageDays === "number" && ageDays > BACKLOG_STALE_DAYS;
-	return stale ? ` (as of ${runDate}, cycle overdue)` : "";
+	return stale ? `Figures as of ${runDate}, cycle overdue` : null;
 }
 
 // Four-tile band — last run · compiled last cycle · search index · library totals.
@@ -610,27 +610,38 @@ function readTileBandFailuresW(summaryState, indexState) {
 
 // Report surface → neutral chrome; a warn/crit tile carries its tone on a glyph beside the
 // figure, leaving tinted containers to the alarm lane (39578 §C/§D).
+// detail past the 40-char caption cap opens from an ⓘ beside the label
 function WikiTile({ tile }) {
-	const { Icon, TONE_ICON } = window.UI;
+	const { Icon, TONE_ICON, CardInfo } = window.UI;
 	const alarmed = tile.tone === "warn" || tile.tone === "crit";
+	const labelId = `wiki-tile-${tile.key}-label`;
 
 	return (
 		<div className="rounded-md border border-line bg-sunken p-2.5 min-w-0">
-			<div
-				className="fs-meta text-faint leading-tight break-words"
-				title={tile.label}
-			>
-				{tile.label}
+			<div className="flex items-center gap-1">
+				<span
+					id={labelId}
+					className="fs-meta text-faint leading-tight break-words min-w-0"
+					title={tile.label}
+				>
+					{tile.label}
+				</span>
+				{tile.info && (
+					<CardInfo label={`How ${tile.label} is counted`} describedBy={labelId}>
+						{tile.info}
+					</CardInfo>
+				)}
 			</div>
 			<div
 				className={`${tile.isWord ? "" : "font-mono "}fs-stat font-semibold mt-0.5 flex items-center gap-1.5 ${tile.state === "ready" ? "" : "text-faint"}`}
 				aria-busy={tile.state === "loading" ? "true" : undefined}
 			>
 				{alarmed && (
-					<span className={`text-${tile.tone} flex-shrink-0`} aria-hidden="true">
+					<span className={`text-${tile.tone} flex-shrink-0`} aria-hidden="true" title={tile.toneLabel}>
 						<Icon name={TONE_ICON[tile.tone]} size={13} />
 					</span>
 				)}
+				{alarmed && tile.toneLabel && <span className="sr-only">{`${tile.toneLabel}:`}</span>}
 				{tile.value}
 			</div>
 			{tile.sub && (
@@ -747,8 +758,8 @@ function buildCompiledTileW(
 		count !== 0 || typeof waiting !== "number"
 			? null
 			: isStalled
-				? `${formatCountW(waiting)} originals waiting, none compiled`
-				: "Nothing to compile — no originals waiting";
+				? `Stalled · ${formatCountW(waiting)} waiting`
+				: "Nothing waiting";
 	// same span as Run history → the two totals read alike
 	const trend = buildThroughputModel(cyclesState);
 	const windowTotal =
@@ -760,6 +771,9 @@ function buildCompiledTileW(
 		state: "ready",
 		value: formatCountW(count),
 		sub: [cause, windowTotal].filter(Boolean).join(" · ") || null,
+		info: isStalled
+			? `${formatCountW(waiting)} saved originals are waiting and the last cycle compiled none.`
+			: undefined,
 		tone: isStalled ? "warn" : "neutral",
 	};
 }
@@ -833,28 +847,33 @@ function buildLibraryTileW(indexState, summaryState, backlogState) {
 
 	const payload =
 		backlogState.status === "ready" ? backlogState.data?.backlog : null;
-	const backlog = payload?.true_backlog;
+	const tile = { key: "library", label, state: "ready", value: formatCountW(total), tone: "neutral" };
+	if (!payload) return { ...tile, sub: "Backlog not reported" };
 
+	const sub = `${describeOriginalsW(payload.true_backlog)} · ${describeBrokenLinksW(payload.deadlink_dryrun)}`;
+	const age = describeSnapshotAgeW(payload.run_date);
+	const info = [LIBRARY_COUNTING_NOTE_W, age && `${age}.`].filter(Boolean).join(" ");
+	if (!age) return { ...tile, sub, info };
+
+	// the caption stays at the 40-char cap → the warn glyph marks the snapshot, its date rides info + tooltip
 	return {
-		key: "library",
-		label,
-		state: "ready",
-		value: formatCountW(total),
-		sub: payload
-			? `${describeOriginalsW(backlog)} · ${describeBrokenLinksW(payload.deadlink_dryrun)}${describeSnapshotAgeW(payload.run_date)}`
-			: "Backlog not reported",
-		tone: "neutral",
+		...tile,
+		sub,
+		hint: `${sub} · ${age}`,
+		info,
+		tone: "warn",
+		toneLabel: payload.run_date ? "Stale snapshot" : "Undated snapshot",
 	};
 }
 
+// A missing key reads as "unreported", never as zero.
 function describeOriginalsW(backlog) {
-	if (typeof backlog !== "number") return "originals not reported";
-	return `${backlog === 0 ? "No" : formatCountW(backlog)} originals waiting`;
+	if (typeof backlog !== "number") return "Waiting unreported";
+	return `${backlog === 0 ? "None" : formatCountW(backlog)} waiting`;
 }
 
-// A missing key reads as "not reported", never as zero.
 function describeBrokenLinksW(deadLinks) {
-	if (!Array.isArray(deadLinks)) return "broken links not reported";
+	if (!Array.isArray(deadLinks)) return "links unreported";
 	const count = deadLinks.length;
 	return `${formatCountW(count)} broken ${count === 1 ? "link" : "links"}`;
 }
@@ -1005,7 +1024,7 @@ function WikiStatusRow({ cyclesState, summaryState, indexState, shared, onRetry 
 	const { SplitRow } = window.UI;
 
 	return (
-		<SplitRow ratio="2:1">
+		<SplitRow ratio="2:1" layout="equal">
 			<WikiRunHistorySection
 				cyclesState={cyclesState}
 				summaryState={summaryState}
@@ -1026,46 +1045,50 @@ function WikiRunHistorySection({ cyclesState, summaryState, shared, onRetry }) {
 	);
 
 	return (
-		<WikiCardW
-			id={WIKI_REGION_IDS.runHistory}
-			label="Run history"
-			count={describeRunHistoryW(cyclesState, model, summaryState)}
-		>
-			{window.UI.getRegionView(cyclesState) === "loading" ? (
-				<LoadingPlaceholder label="run history" minHeight={120} />
-			) : window.UI.getRegionView(cyclesState) === "error" ? (
-				<WikiRegionFailureW
-					feeders={[WIKI_FEEDERS.runHistory]}
-					source="run history"
-					error={cyclesState.error}
-					isBusy={cyclesState.busy}
-					shared={shared}
-					focusTargetId={WIKI_REGION_IDS.runHistory}
-					onRetry={onRetry}
-				/>
-			) : model.rows.length === 0 ? (
-				<EmptyStateW
-					message={`No wiki compile runs in the last ${WIKI_CYCLE_DAYS} days.`}
-				/>
-			) : (
-				<>
-					{/* The window is a fetch bound, not what is drawn → name the days the bars cover. */}
-					<SparseTrendW
-						label={`Notes per day · ${model.spanDays} ${model.spanDays === 1 ? "day" : "days"}`}
-						series={model.compiledSeries}
-						dates={model.compiledDates}
-						stat={`${formatCountW(model.total)} notes in ${model.spanDays} d · ${model.activeDays} active days`}
+		<div id={WIKI_REGION_IDS.runHistory} className="min-w-0">
+			<window.UI.Card
+				size={STATUS_CARD_SIZE_W}
+				title="Run history"
+				sub={describeRunHistoryW(cyclesState, model, summaryState)}
+			>
+				{window.UI.getRegionView(cyclesState) === "loading" ? (
+					<LoadingPlaceholder label="run history" minHeight={120} />
+				) : window.UI.getRegionView(cyclesState) === "error" ? (
+					<WikiRegionFailureW
+						feeders={[WIKI_FEEDERS.runHistory]}
+						source="run history"
+						error={cyclesState.error}
+						isBusy={cyclesState.busy}
+						shared={shared}
+						focusTargetId={WIKI_REGION_IDS.runHistory}
+						onRetry={onRetry}
 					/>
-					{/* A near-uniform mix carries no information — only a mixed run set earns the bar. */}
-					{!model.isMixUniform && <WikiStatusMixW mix={model.mix} />}
-				</>
-			)}
-		</WikiCardW>
+				) : model.rows.length === 0 ? (
+					<EmptyStateW
+						message={`No wiki compile runs in the last ${WIKI_CYCLE_DAYS} days.`}
+					/>
+				) : (
+					<div className="flex flex-col gap-2">
+						{/* The window is a fetch bound, not what is drawn → name the days the bars cover. */}
+						<SparseTrendW
+							label={`Notes per day · ${model.spanDays} ${model.spanDays === 1 ? "day" : "days"}`}
+							series={model.compiledSeries}
+							dates={model.compiledDates}
+							stat={`${formatCountW(model.total)} notes in ${model.spanDays} d · ${model.activeDays} active days`}
+						/>
+						{/* A near-uniform mix carries no information — only a mixed run set earns the bar. */}
+						{!model.isMixUniform && <WikiStatusMixW mix={model.mix} />}
+					</div>
+				)}
+			</window.UI.Card>
+		</div>
 	);
 }
 
 // Per-run record — a detail fold whose summary line states the run streak without a click.
 function WikiRunTableSection({ reportState, days, onChangeDays, shared, onRetry }) {
+	const { CardInfo } = window.UI;
+
 	return (
 		<WikiDisclosureW
 			id={WIKI_REGION_IDS.runTable}
@@ -1077,6 +1100,9 @@ function WikiRunTableSection({ reportState, days, onChangeDays, shared, onRetry 
 				<span className="fs-meta text-faint leading-tight">
 					{`The window drives the table only — the trend keeps a fixed ${WIKI_CYCLE_DAYS}-day window.`}
 				</span>
+				<CardInfo label="How a change is counted" describedBy={`${WIKI_REGION_IDS.runTable}-title`}>
+					A change is a run whose status or backlog differs from the run before.
+				</CardInfo>
 				<div
 					className="seg ml-auto"
 					role="group"
@@ -1100,7 +1126,7 @@ function WikiRunTableSection({ reportState, days, onChangeDays, shared, onRetry 
 	);
 }
 
-// One unchanged stretch → "27 healthy runs in a row since …"; several → how often status or backlog changed.
+// header meta ≤ 32 chars → "27 runs · all healthy" or "30 runs · 12 changes"; the body ⓘ defines a change.
 function describeRunTableW(state, days) {
 	if (window.UI.getRegionView(state) === "loading") return "Loading…";
 	if (window.UI.getRegionView(state) === "error") return "Unavailable";
@@ -1111,14 +1137,14 @@ function describeRunTableW(state, days) {
 	const groups = groupConstantRunsW(sortRunsNewestFirstW(reports));
 	if (groups.length > 1) {
 		const changes = groups.length - 1;
-		return `${reports.length} runs · status or backlog changed ${changes} ${changes === 1 ? "time" : "times"}`;
+		return `${reports.length} runs · ${changes} ${changes === 1 ? "change" : "changes"}`;
 	}
 
 	const [only] = groups;
 	const status = wikiStatusLabelW(only.newest.status).toLowerCase();
 	return only.count === 1
 		? `1 ${status} run on ${only.newest.run_date}`
-		: `${only.count} ${status} runs in a row since ${only.oldest.run_date}`;
+		: `${only.count} runs · all ${status}`;
 }
 
 // The server returns runs ascending by run_date.
@@ -1137,7 +1163,7 @@ function describeRunHistoryW(cyclesState, model, summaryState) {
 	const p95 =
 		summaryState.status === "ready" ? summaryState.data?.cycle_p95_ms : null;
 	const runs = model.rows.length === 1 ? "run" : "runs";
-	return `${model.rows.length} ${runs} in ${model.spanDays} d · last ${model.newestDate}${describeP95W(p95)}`;
+	return `${model.rows.length} ${runs} in ${model.spanDays} d${describeP95W(p95)}`;
 }
 
 /**
@@ -1172,7 +1198,7 @@ function WikiDisclosureW({
 				<span className="w-chevron inline-block fs-meta text-faint" aria-hidden="true">
 					▶
 				</span>
-				<h2 className="m-0 fs-body text-ink font-medium">{label}</h2>
+				<h2 id={id ? `${id}-title` : undefined} className="m-0 fs-body text-ink font-medium">{label}</h2>
 				<span className="ml-auto fs-meta text-dim">{count}</span>
 			</summary>
 			<div className={bodyClassName}>{children}</div>
@@ -1185,19 +1211,8 @@ function openOnOwnFocusW(event) {
 	if (event.target === event.currentTarget) event.currentTarget.open = true;
 }
 
-// Open section shell — the status-card counterpart of WikiDisclosureW.
-// Fills its split-row cell → a paired card ends level with its neighbour.
-function WikiCardW({ id, label, count, children }) {
-	return (
-		<section id={id} className="rounded-md border border-line bg-sunken p-3 flex flex-col gap-2 min-w-0 h-full">
-			<div className="flex items-center gap-2 flex-wrap">
-				<h2 className="m-0 fs-body text-ink font-medium">{label}</h2>
-				<span className="ml-auto fs-meta text-dim">{count}</span>
-			</div>
-			{children}
-		</section>
-	);
-}
+// Status-row peers share one slot → their feet pin to one edge of the stretched row.
+const STATUS_CARD_SIZE_W = "S";
 
 // Notes by type — the library's composition, open as a compact list.
 function WikiNotesByTypeSection({ state, shared, onRetry }) {
@@ -1209,27 +1224,32 @@ function WikiNotesByTypeSection({ state, shared, onRetry }) {
 	const coverage = describeNoteCoverageW(rows);
 
 	return (
-		<WikiCardW id={WIKI_REGION_IDS.notesByType} label="Notes by type" count={describeNotesByTypeW(state)}>
-			{window.UI.getRegionView(state) === "loading" ? (
-				<LoadingPlaceholder label="note types" />
-			) : window.UI.getRegionView(state) === "error" ? (
-				<WikiRegionFailureW
-					feeders={[WIKI_FEEDERS.notesByType]}
-					source="notes by type"
-					error={state.error}
-					isBusy={state.busy}
-					shared={shared}
-					focusTargetId={WIKI_REGION_IDS.notesByType}
-					onRetry={onRetry}
-				/>
-			) : rows.length === 0 ? (
-				<EmptyStateW message="No notes indexed yet." />
-			) : (
-				<>
-					<ul className="w-type-list flex flex-col gap-1.5 m-0 p-0 list-none">
+		<div id={WIKI_REGION_IDS.notesByType} className="min-w-0">
+			<window.UI.Card
+				size={STATUS_CARD_SIZE_W}
+				title="Notes by type"
+				sub={describeNotesByTypeW(state)}
+				foot={coverage && <span className="truncate">{coverage}</span>}
+			>
+				{window.UI.getRegionView(state) === "loading" ? (
+					<LoadingPlaceholder label="note types" />
+				) : window.UI.getRegionView(state) === "error" ? (
+					<WikiRegionFailureW
+						feeders={[WIKI_FEEDERS.notesByType]}
+						source="notes by type"
+						error={state.error}
+						isBusy={state.busy}
+						shared={shared}
+						focusTargetId={WIKI_REGION_IDS.notesByType}
+						onRetry={onRetry}
+					/>
+				) : rows.length === 0 ? (
+					<EmptyStateW message="No notes indexed yet." />
+				) : (
+					<ul className="w-type-list flex flex-col m-0 p-0 list-none">
 						{rows.map((t) => (
 							<li key={t.type} className="w-type-row fs-meta" title={t.type}>
-								<span className="text-dim break-words">{t.label}</span>
+								<span className="text-dim truncate">{t.label}</span>
 								<span className="w-type-track" aria-hidden="true">
 									<span className="w-type-fill" style={{ width: `${t.share}%` }} />
 								</span>
@@ -1238,12 +1258,9 @@ function WikiNotesByTypeSection({ state, shared, onRetry }) {
 							</li>
 						))}
 					</ul>
-					{coverage && (
-						<div className="fs-meta text-faint leading-tight">{coverage}</div>
-					)}
-				</>
-			)}
-		</WikiCardW>
+				)}
+			</window.UI.Card>
+		</div>
 	);
 }
 
@@ -1283,6 +1300,8 @@ function describeNotesByTypeW(state) {
 // 백로그 stale 임계(일) — wiki 데몬 사이클이 일일 → run_date 가 1일 초과 경과면 stale.
 // CYCLE_FRESH_OK_HOURS(24h)와 정합하되 run_date 는 날짜 단위라 일 카운트로 비교.
 const BACKLOG_STALE_DAYS = 1;
+const LIBRARY_COUNTING_NOTE_W =
+	"Waiting counts saved originals not yet compiled into notes; broken links come from the last dead-link dry run.";
 
 // 'YYYY-MM-DD'(UTC) run_date → 오늘(UTC) 대비 경과일. 비정상/null → null (stale 분기 보류).
 // 데몬 run_date 가 UTC date 기준이므로 today 도 UTC 로 맞춰 비교 (outcomes.isoDayKeyO 패턴 미러).
@@ -1351,7 +1370,6 @@ function buildThroughputModel(state) {
 			compiledSeries: [],
 			compiledDates: [],
 			mix: EMPTY_MIX,
-			newestDate: "",
 			spanDays: 0,
 		};
 	}
@@ -1363,7 +1381,6 @@ function buildThroughputModel(state) {
 			compiledSeries: [],
 			compiledDates: [],
 			mix: EMPTY_MIX,
-			newestDate: "",
 			spanDays: 0,
 		};
 	}
@@ -1384,7 +1401,6 @@ function buildThroughputModel(state) {
 		compiledDates,
 		mix,
 		isMixUniform: isNearUniformMixW(mix),
-		newestDate: ascending[ascending.length - 1]?.run_date || "",
 		activeDays: nonZeroCount,
 		total: sumCompiledW(state),
 		spanDays: compiledSeries.length,

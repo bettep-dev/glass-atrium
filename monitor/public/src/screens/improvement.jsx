@@ -83,8 +83,6 @@ const KANBAN_COLUMNS = [
 // applied·rejected 2트랙만 순회 (T3). safety 엔트리 label/symbol 은 ROW-1 이 소비.
 const SAFETY_COLUMN = KANBAN_COLUMNS.find((col) => col.key === "safety");
 const TERMINAL_COLUMNS = KANBAN_COLUMNS.filter((col) => col.key !== "safety");
-// REJECTED 컴팩션 — 최근 N행 표시 후 나머지는 '＋N more' 요약으로 접음 (T5).
-const REJECTED_RECENT_CAP = 8;
 
 // 카드 액션 가능 status (mutation 엔드포인트 actionable set 미러 — routes/improvement.ts
 // ACTIONABLE_PROPOSAL_STATUSES). pending/snoozed 만 허용/거절 버튼 노출.
@@ -404,11 +402,17 @@ function ScreenImprovement({ onNav }) {
         /* T3 — 종결 그리드 비대칭(applied 2fr : rejected 1fr). 인라인 gridTemplateColumns 금지
            (미디어쿼리가 인라인 스타일을 못 이김) → 클래스 선언 + <640px 단일 컬럼 붕괴를 같은
            블록에서 직접 출하(base.css L607 은 drawer 전용 → 보드 붕괴 미담당 · 검증 완료). */
-        /* loop output — captions wrap to 2 lines · peer cards share one height · the third card spans the row until three fit (no lone half-width card at 1024) */
-        .i-loop-output .card-sub { white-space:normal; display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; }
-        .i-loop-grid { display:grid; grid-template-columns:minmax(0,1fr); gap:12px; align-items:stretch; }
+        /* loop output — peer cards share one height · the third card spans the row until three fit (no lone half-width card at 1024) */
+        .i-loop-grid { --i-loop-metric-h:56px; display:grid; grid-template-columns:minmax(0,1fr); gap:12px; align-items:stretch; }
         @media (min-width:768px) { .i-loop-grid { grid-template-columns:repeat(2, minmax(0,1fr)); } .i-loop-grid > :nth-child(3) { grid-column:1 / -1; } }
         @media (min-width:1280px) { .i-loop-grid { grid-template-columns:repeat(3, minmax(0,1fr)); } .i-loop-grid > :nth-child(3) { grid-column:auto; } }
+        /* one loop-card anatomy — metric and visual slots start at the same offsets in all three cards */
+        /* subgrid rows → a metric that wraps in one card moves the visual slot of all three together */
+        .i-loop-grid > .card { display:grid; grid-row:span 4; grid-template-rows:subgrid; row-gap:0; }
+        .i-loop-metric { flex:none; min-height:var(--i-loop-metric-h); display:flex; flex-wrap:wrap; align-items:center; gap:4px 16px; padding:8px var(--card-pad) 0; }
+        .i-loop-visual { flex:none; padding:8px var(--card-pad) 0; overflow:hidden; }
+        /* ledger columns stretch to one height → a column's later last section sits on the shared bottom edge · a lone section keeps the top */
+        .i-ledger-cols > .split-col > :not(:first-child):last-child { margin-top:auto; }
         .board-terminal-grid { display:grid; grid-template-columns:minmax(0,2fr) minmax(0,1fr); gap:12px; }
         @media (max-width:640px) { .board-terminal-grid { grid-template-columns:1fr; } }
         /* 알람 레인 — 보고 표면과 구조적으로 구분되는 유일한 자리. tint 는 컨테이너가
@@ -640,7 +644,7 @@ function StatusBandI({
 					label="Applied (7 days)"
 					value={formatIntI(applied)}
 					owner="loop output"
-					population={`${appliedHeld ? `${appliedHeld} · ` : ""}of ${formatIntI(cycleTotal)} cycles · last ${formatCycleStampI(s.latest_cycle_started_at)}`}
+					population={`${appliedHeld ? `${appliedHeld} · ` : ""}of ${getCycleCountTextI(cycleTotal)} · last ${formatCycleStampI(s.latest_cycle_started_at)}`}
 					basis="Cycles started in the last 7 days"
 					onRetry={onRetry}
 				/>
@@ -869,6 +873,10 @@ function formatCycleStampI(iso) {
 	});
 }
 
+function getCycleCountTextI(count) {
+	return `${formatIntI(count)} ${count === 1 ? "cycle" : "cycles"}`;
+}
+
 // 뷰 전환 — nav 항목이 아니라 화면 안의 전환이다. 선택 상태는 aria-pressed 와 ✓ 글리프가
 // 함께 운반한다(색 단독 금지).
 function ViewToggleI({ view, onChange }) {
@@ -906,7 +914,7 @@ function TrendCardI({ state, aggregate, failures, onRetry }) {
 	if (getRegionView(state) === "error") {
 		return (
 			<div className="card" id={ANCHOR_ID_I.trend}>
-				<CardHead title="Verified vs rejected (trend)" />
+				<CardHead title="Verified vs rejected" />
 				<div className="px-5 pb-4">
 					<ErrorBannerI
 						focusTargetId={ANCHOR_ID_I.trend}
@@ -924,7 +932,7 @@ function TrendCardI({ state, aggregate, failures, onRetry }) {
 	if (state.status === "loading" || !aggregate) {
 		return (
 			<div className="card" id={ANCHOR_ID_I.trend}>
-				<CardHead title="Verified vs rejected (trend)" />
+				<CardHead title="Verified vs rejected" />
 				<div className="px-5 pb-4">
 					<LoadingPlaceholder label="the trend" minHeight={60} />
 				</div>
@@ -937,7 +945,7 @@ function TrendCardI({ state, aggregate, failures, onRetry }) {
 	if (series.length < 2) {
 		return (
 			<div className="card" id={ANCHOR_ID_I.trend}>
-				<CardHead title="Verified vs rejected (trend)" />
+				<CardHead title="Verified vs rejected" />
 				<div className="px-5 pb-4">
 					<div className="placeholder">Not enough days to plot a trend</div>
 				</div>
@@ -950,27 +958,26 @@ function TrendCardI({ state, aggregate, failures, onRetry }) {
 		const scored = d.verified + d.reject;
 		return { label: formatDateI(d.date), value: scored > 0 ? d.reject / scored : null };
 	});
+	const basis = getLoopBasisI(aggregate);
 	return (
 		<div className="card" id={ANCHOR_ID_I.trend}>
-			<CardHead title="Verified vs rejected (trend)" sub={getLoopBasisI(aggregate)} />
-			<div className="px-5 pb-4">
-				<div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-1 mb-1">
-					<RejectRateHeadlineI before={aggregate.failBefore} after={aggregate.failAfter} />
-					<span className="fs-meta text-faint">
-						{`Share rejected per day · all ${formatIntI(series.length)} cycle days: ${formatIntI(aggregate.verifiedTotal)} verified · ${formatIntI(aggregate.rejectTotal)} rejected`}
-					</span>
-				</div>
-				<TrendChart
-					label="Share of scored cycles rejected, per day"
-					tone="warn"
-					kind="bars"
-					h={112}
-					yScale
-					maxTicks={5}
-					formatValue={(v) => `${Math.round(v * 100)}%`}
-					points={points}
-				/>
-			</div>
+			<CardHead title="Verified vs rejected" sub={<span title={basis.title}>{basis.text}</span>} />
+			{getLoopSlotsI({
+				metric: <RejectRateHeadlineI before={aggregate.failBefore} after={aggregate.failAfter} />,
+				visual: (
+					<TrendChart
+						label="Share of scored cycles rejected, per day"
+						tone="warn"
+						kind="bars"
+						h={112}
+						yScale
+						maxTicks={5}
+						formatValue={(v) => `${Math.round(v * 100)}%`}
+						points={points}
+					/>
+				),
+				foot: `Share rejected per day · all ${formatIntI(series.length)} cycle days: ${formatIntI(aggregate.verifiedTotal)} verified · ${formatIntI(aggregate.rejectTotal)} rejected`,
+			})}
 		</div>
 	);
 }
@@ -1011,7 +1018,7 @@ function LoopOutputGroupI({
 		<section className="space-y-3 i-loop-output" aria-label="Loop output" id={ANCHOR_ID_I.loopOutput}>
 			<CardHead
 				title="Loop output"
-				sub="Last 7 days of cycles unless a card names its own basis"
+				sub="7-day cycles unless a card says"
 				right={
 					<button
 						className="btn ghost sm"
@@ -1124,7 +1131,8 @@ function KanbanCardI({
 			<div className="flex-shrink-0">
 				<CardHead
 					title="Suggestion board"
-					sub={`Applied and rejected: latest ${BOARD_RECENT_LIMIT} suggestions · awaiting: every open one`}
+					sub={`Lanes: latest ${BOARD_RECENT_LIMIT} suggestions`}
+					info={`Applied and rejected lanes read the latest ${BOARD_RECENT_LIMIT} suggestions. Awaiting shows every open one.`}
 				/>
 			</div>
 			{isError ? (
@@ -1236,8 +1244,12 @@ function KanbanColumnI({
 	rejectBuckets,
 	onRowClick,
 }) {
-	const { EmptyState } = window.UI;
+	const { EmptyState, getSlotRows } = window.UI;
+	const [isExpanded, setExpanded] = useSI(false);
 	const isCompact = column.variant === "compact";
+	// both lanes cap at the M slot → their show-all feet line up across the grid
+	const { rows: cappedRows, hiddenCount } = getSlotRows(rows, "M");
+	const shown = isExpanded ? rows : cappedRows;
 	// 빈-컬럼 안내 — 원인 한 줄 + 다음-단계 힌트 (bare "Empty" 대체, 공용 EmptyState atom SoT).
 	const emptyMessage =
 		column.key === "applied" ? "Nothing applied yet" : "Nothing rejected";
@@ -1281,10 +1293,10 @@ function KanbanColumnI({
 				{rows.length === 0 ? (
 					<EmptyState message={emptyMessage} hint={emptyHint} />
 				) : isCompact ? (
-					<RejectedCompactListI rows={rows} onRowClick={onRowClick} />
+					<RejectedCompactListI rows={shown} onRowClick={onRowClick} />
 				) : (
 					<ul className="flex flex-col gap-1">
-						{rows.map((row) => (
+						{shown.map((row) => (
 							<li key={row.id}>
 								<AppliedHistoryRowI row={row} onClick={() => onRowClick(row)} />
 							</li>
@@ -1292,7 +1304,42 @@ function KanbanColumnI({
 					</ul>
 				)}
 			</div>
+			{hiddenCount > 0 ? (
+				<LaneMoreToggleI
+					hiddenCount={hiddenCount}
+					isExpanded={isExpanded}
+					noun={isCompact ? "declined" : "applied"}
+					onToggle={() => setExpanded((prev) => !prev)}
+				/>
+			) : null}
 		</div>
+	);
+}
+
+// '＋N more' — a real focusable toggle, expanding the lane in place; volume stays a number.
+function LaneMoreToggleI({ hiddenCount, isExpanded, noun, onToggle }) {
+	return (
+		<button
+			type="button"
+			className="i-more-btn"
+			onClick={onToggle}
+			aria-expanded={isExpanded}
+			aria-label={
+				isExpanded
+					? `Show fewer ${noun} suggestions`
+					: `View all ${noun} suggestions (${formatIntI(hiddenCount)} more)`
+			}
+		>
+			{isExpanded ? (
+				<>
+					<SymI s="−" size={13} /> show less
+				</>
+			) : (
+				<>
+					<SymI s="＋" size={13} /> {formatIntI(hiddenCount)} more · view all
+				</>
+			)}
+		</button>
 	);
 }
 
@@ -1478,48 +1525,16 @@ function getRejectSparkNameI(reject) {
 	return `Rejections per day over ${reject.length} days — latest ${latest}, peak ${peak}, ${total} in total`;
 }
 
-// T5 — 최근 REJECTED_RECENT_CAP 행만 표시 + 나머지는 '＋N more' 요약(38 은 숫자로 인정).
-// '＋N more' 는 실제 포커스 가능 버튼(T8) → in-place 확장 토글(전용 화면 없음, 볼륨은 숫자로만).
+// Declined lane rows, grouped under their shared pattern label (the lane caps and expands them).
 function RejectedCompactListI({ rows, onRowClick }) {
-	const [isExpanded, setExpanded] = useSI(false);
-	const shown = isExpanded ? rows : rows.slice(0, REJECTED_RECENT_CAP);
-	const moreCount = rows.length - REJECTED_RECENT_CAP;
-
-	return (
-		<React.Fragment>
-			{groupByLabelI(shown).map((group) => (
-				<RejectedGroupI
-					key={group.label}
-					label={group.label}
-					rows={group.rows}
-					onRowClick={onRowClick}
-				/>
-			))}
-			{moreCount > 0 && (
-				<button
-					type="button"
-					className="i-more-btn"
-					onClick={() => setExpanded((prev) => !prev)}
-					aria-expanded={isExpanded}
-					aria-label={
-						isExpanded
-							? "Show fewer declined suggestions"
-							: `View all declined suggestions (${formatIntI(moreCount)} more)`
-					}
-				>
-					{isExpanded ? (
-						<>
-							<SymI s="−" size={12} /> show less
-						</>
-					) : (
-						<>
-							<SymI s="＋" size={12} /> {formatIntI(moreCount)} more · view all
-						</>
-					)}
-				</button>
-			)}
-		</React.Fragment>
-	);
+	return groupByLabelI(rows).map((group) => (
+		<RejectedGroupI
+			key={group.label}
+			label={group.label}
+			rows={group.rows}
+			onRowClick={onRowClick}
+		/>
+	));
 }
 
 // Shared pattern label printed once as the group head, not on every declined row.
@@ -1815,7 +1830,7 @@ function BucketRowI({ state, buckets, failures, onRetry }) {
 	if (getRegionView(state) === "error") {
 		return (
 			<div className="card" id={ANCHOR_ID_I.learningMemory}>
-				<CardHead title="Learning memory: wins & mistakes (CTM · EPM)" />
+				<CardHead title="Learning memory" />
 				<div className="p-3">
 					<ErrorBannerI
 						focusTargetId={ANCHOR_ID_I.learningMemory}
@@ -1834,8 +1849,8 @@ function BucketRowI({ state, buckets, failures, onRetry }) {
 		return (
 			<div className="card" id={ANCHOR_ID_I.learningMemory}>
 				<CardHead
-					title="Learning memory: wins & mistakes (CTM · EPM)"
-					sub="All time, every agent — not the group's 7-day cycle window"
+					title="Learning memory"
+					sub="CTM/EPM · all time"
 				/>
 				<div className="p-3">
 					<LoadingPlaceholder label="learning memory" minHeight={68} />
@@ -1844,55 +1859,42 @@ function BucketRowI({ state, buckets, failures, onRetry }) {
 		);
 	}
 
-	const { ctm, epm, outcome, joinMeta } = buckets;
-	// linked_agent_count = DISTINCT 연결 에이전트 수 (record-level 연결은 FK 부재로 측정 불가).
-	const linkedAgents = Number(joinMeta?.linked_agent_count ?? 0);
+	const { ctm, epm } = buckets;
 	// 보고 표면 — 크롬은 중립, 톤은 SymI 글리프에만.
 	const cards = [
 		// CTM 실제 유도식 = confidence high + metric_pass + done — 학습 패턴 카드(learning_log)와 산출 기준이 다름.
-		[
-			"✓",
-			"text-ok",
-			"Confirmed wins",
-			formatIntI(ctm),
-			"Confidence high · check passed · done",
-		],
-		[
-			"⚠",
-			"text-warn",
-			"Mistake patterns (EPM)",
-			formatIntI(epm),
-			"Cases that failed or needed repeated rework",
-		],
+		["✓", "text-ok", "Confirmed wins", ctm, "Confidence high · check passed · done"],
+		["⚠", "text-warn", "Mistake patterns (EPM)", epm, "Cases that failed or needed repeated rework"],
 	];
 	return (
 		<div className="card" id={ANCHOR_ID_I.learningMemory}>
 			<CardHead
-				title="Learning memory: wins & mistakes (CTM · EPM)"
-				sub="All time, every agent — not the group's 7-day cycle window"
+				title="Learning memory"
+				sub="CTM/EPM · all time"
 			/>
-			<div className="grid grid-cols-2 gap-2 p-3">
-				{cards.map(([sym, tone, label, value, hint]) => (
-					<div
-						key={label}
-						className="i-card-shadow bg-elev rounded-md p-2.5 min-w-0"
-					>
-						<div className="flex items-start gap-1.5 fs-meta min-h-[2.4em]">
-							<SymI s={sym} className={tone} size={12} />
-							<span>{label}</span>
-						</div>
-						<div className="fs-stat font-semibold text-ink mt-1 font-mono">
-							{value}
-						</div>
-						<div
-							className="card-sub fs-meta mt-1"
-							title={window.UI.titleOf(hint)}
-						>
-							{hint}
-						</div>
+			{getLoopSlotsI({
+				metric: cards.map(([sym, tone, label, value]) => (
+					<span key={label} className="inline-flex items-baseline gap-1.5">
+						<SymI s={sym} className={tone} size={13} />
+						<span className="fs-stat font-semibold text-ink font-mono">{formatIntI(value)}</span>
+						<span className="fs-meta text-dim">{label}</span>
+					</span>
+				)),
+				visual: (
+					<div className="grid grid-cols-2 gap-2">
+						{cards.map(([sym, tone, label, , hint]) => (
+							<div key={label} className="i-card-shadow bg-elev rounded-md p-2.5 min-w-0">
+								<div className="flex items-start gap-1.5 fs-meta">
+									<SymI s={sym} className={tone} size={13} />
+									<span>{label}</span>
+								</div>
+								<div className="card-sub is-wrap fs-meta mt-1">{hint}</div>
+							</div>
+						))}
 					</div>
-				))}
-			</div>
+				),
+				foot: "All agents · not the group's 7-day window",
+			})}
 		</div>
 	);
 }
@@ -2000,7 +2002,7 @@ function HeldCauseStripI({ buckets }) {
 							<SymI
 								s={isHumanCause ? "⚠" : "ℹ"}
 								className={isHumanCause ? "text-warn" : "text-faint"}
-								size={11}
+								size={13}
 							/>
 						</span>
 						<span className="text-ink">{b.label}</span>
@@ -2010,8 +2012,6 @@ function HeldCauseStripI({ buckets }) {
 						<span className="text-dim tnum">
 							{`${formatIntI(agents)} ${agents === 1 ? "agent" : "agents"}`}
 						</span>
-						{/* is-wrap required — .card-sub clamps to one line, and a clipped remedy leaves only the numbers. */}
-						<span className="card-sub is-wrap fs-body">{b.hint}</span>
 					</li>
 				);
 			})}
@@ -2143,32 +2143,44 @@ function RecurrenceRowsI({ buckets, windowCycles }) {
 // 원장 푸터 — 모든 수치가 자기 게이트를 데리고 다닌다. 이웃한 숫자가 서로 다른 윈도우와
 // 모집단을 가질 때, 게이트 없는 숫자는 조용히 비교당한다. 폐지된 Learned-patterns 카드에서
 // 살아남은 사실(전체 패턴 수 · 반려 수)도 여기에 있다.
-function LedgerFooterI({ total, declined, suppression }) {
-	const pendingTotal = Number(suppression?.pending_total ?? 0);
+function LedgerFooterI({ total, declined }) {
+	return (
+		<div className="card-foot">
+			{`${formatIntI(total)} patterns · ${formatIntI(declined)} declined, all time · rows above: last 7 days`}
+		</div>
+	);
+}
+
+// "How this is counted" drawer — each cause's remedy and the figures' gates, kept off the card face.
+function LedgerNotesI({ suppression }) {
+	const causes = new Map();
+	for (const key of ["parked", "per_cycle"]) {
+		for (const b of getSuppressionListI(suppression, key)) causes.set(`${b.cause}:${b.hint}`, b);
+	}
 	const unpromptable = Number(suppression?.pending_unpromptable ?? 0);
+	const pendingTotal = Number(suppression?.pending_total ?? 0);
 	const offRegistry = Number(suppression?.off_registry_parked ?? 0);
 	return (
-		<div className="px-3 pb-3 flex flex-col gap-1">
-			<div className="card-sub is-wrap fs-meta">
-				{formatIntI(total)} patterns recorded all time · {formatIntI(declined)}{" "}
-				declined all time · the live and inert rows above are the last 7 days of
-				discovery
-			</div>
+		<div className="flex flex-col gap-3 fs-body">
+			<p>The live and inert rows are the last 7 days of discovery; totals and declines are all time.</p>
+			{[...causes.values()].map((b) => (
+				<p key={`${b.cause}:${b.hint}`}>
+					<span className="text-ink font-semibold">{b.label}</span> — {b.hint}
+				</p>
+			))}
 			{suppression ? (
-				<div className="card-sub is-wrap fs-meta">
-					{formatIntI(unpromptable)} of {formatIntI(pendingTotal)} pending rows can
-					never propose — counted
-					across every agent, because the intake skip reads the label. The held
-					figures above are narrower: agents in agent-registry.json only.
-				</div>
+				<p>
+					{formatIntI(unpromptable)} of {formatIntI(pendingTotal)} pending rows can never propose —
+					counted across every agent, because the intake skip reads the label. The held figures are
+					narrower: agents in agent-registry.json only.
+				</p>
 			) : null}
 			{offRegistry > 0 ? (
-				<div className="card-sub is-wrap fs-meta">
-					{formatIntI(offRegistry)} parked{" "}
-					{offRegistry === 1 ? "pattern is" : "patterns are"} excluded from every
-					held figure: the agent is not in agent-registry.json. Still parked, still
-					not proposing.
-				</div>
+				<p>
+					{formatIntI(offRegistry)} parked {offRegistry === 1 ? "pattern is" : "patterns are"} excluded
+					from every held figure: the agent is not in agent-registry.json. Still parked, still not
+					proposing.
+				</p>
 			) : null}
 		</div>
 	);
@@ -2465,7 +2477,7 @@ function ChangeSummaryCardI({ state, aggregate, onRetry, failures }) {
 	if (getRegionView(state) === "error") {
 		return (
 			<div className="card" id={ANCHOR_ID_I.changeSummary}>
-				<CardHead title="Self-improvement changes (applied)" />
+				<CardHead title="Applied changes" />
 				<div className="px-5 pb-4">
 					<ErrorBannerI
 						focusTargetId={ANCHOR_ID_I.changeSummary}
@@ -2483,7 +2495,7 @@ function ChangeSummaryCardI({ state, aggregate, onRetry, failures }) {
 	if (state.status === "loading" || !aggregate) {
 		return (
 			<div className="card" id={ANCHOR_ID_I.changeSummary}>
-				<CardHead title="Self-improvement changes (applied)" />
+				<CardHead title="Applied changes" />
 				<div className="px-5 pb-4">
 					<LoadingPlaceholder label="applied changes" minHeight={68} />
 				</div>
@@ -2497,7 +2509,7 @@ function ChangeSummaryCardI({ state, aggregate, onRetry, failures }) {
 	if (eventCount === 0) {
 		return (
 			<div className="card" id={ANCHOR_ID_I.changeSummary}>
-				<CardHead title="Self-improvement changes (applied)" />
+				<CardHead title="Applied changes" />
 				<div className="px-5 pb-4">
 					<div
 						className="placeholder"
@@ -2509,48 +2521,62 @@ function ChangeSummaryCardI({ state, aggregate, onRetry, failures }) {
 		);
 	}
 
-	// stretches to the row's tallest card (the trend) → the reject rate anchors the foot, no blank band
+	const basis = getLoopBasisI(aggregate);
 	return (
-		<div className="card flex flex-col" id={ANCHOR_ID_I.changeSummary}>
+		<div className="card" id={ANCHOR_ID_I.changeSummary}>
 			<CardHead
-				title="Self-improvement changes (applied)"
-				sub={getLoopBasisI(aggregate)}
+				title="Applied changes"
+				sub={<span title={basis.title}>{basis.text}</span>}
 			/>
-			<div className="px-5 pt-3 pb-4 flex-1 flex flex-col gap-3">
-				<div>
-					<div className="fs-meta text-faint uppercase tracking-wider">
-						Lines changed
-					</div>
-					<div className="mt-1 flex items-baseline gap-x-5 gap-y-1 flex-wrap">
-						<LineCountI
-							symbol="＋"
-							tone="text-ok"
-							count={added}
-							word="added"
-							title={`${formatIntI(added)} rule/instruction lines added across ${formatIntI(eventCount)} cycles`}
-						/>
-						<LineCountI
-							symbol="−"
-							tone="text-crit"
-							count={removed}
-							word="removed"
-							title={`${formatIntI(removed)} rule/instruction lines removed across ${formatIntI(eventCount)} cycles`}
-						/>
-					</div>
-					<div className="fs-meta text-dim mt-1">
-						{`${formatIntI(changedCount)} of ${formatIntI(eventCount)} cycles changed rule lines`}
-					</div>
-				</div>
-				<div className="mt-auto">
-					<div className="fs-meta text-faint uppercase tracking-wider">
-						Reject rate, recent half of cycle days
-					</div>
-					<div className="mt-1">
+			{getLoopSlotsI({
+				metric: (
+					<div>
+						<div className="fs-meta text-faint uppercase tracking-wider">
+							Reject rate, recent half
+						</div>
 						<RejectRateHeadlineI before={failBefore} after={failAfter} />
 					</div>
-				</div>
-			</div>
+				),
+				visual: (
+					<>
+						<div className="fs-meta text-faint uppercase tracking-wider">
+							Lines changed
+						</div>
+						<div className="mt-1 flex items-baseline gap-x-5 gap-y-1 flex-wrap">
+							<LineCountI
+								symbol="＋"
+								tone="text-ok"
+								count={added}
+								word="added"
+								title={`${formatIntI(added)} rule/instruction ${added === 1 ? "line" : "lines"} added across ${getCycleCountTextI(eventCount)}`}
+							/>
+							<LineCountI
+								symbol="−"
+								tone="text-crit"
+								count={removed}
+								word="removed"
+								title={`${formatIntI(removed)} rule/instruction ${removed === 1 ? "line" : "lines"} removed across ${getCycleCountTextI(eventCount)}`}
+							/>
+						</div>
+					</>
+				),
+				foot: `${formatIntI(changedCount)} of ${getCycleCountTextI(eventCount)} changed rule lines`,
+			})}
 		</div>
+	);
+}
+
+// One loop-card anatomy → metric, visual and foot start at the same offsets in all three cards.
+function getLoopSlotsI({ metric, visual, foot }) {
+	const { CARD_SLOTS } = window.UI;
+	return (
+		<>
+			<div className="i-loop-metric">{metric}</div>
+			<div className="i-loop-visual" style={{ height: CARD_SLOTS.S.plotPx }}>
+				{visual}
+			</div>
+			<div className="card-foot">{foot}</div>
+		</>
 	);
 }
 
@@ -2670,9 +2696,9 @@ function PatternLedgerCardI({ state, suppression, onRowClick, onRetry, failures 
 
 	return (
 		<section className="card" aria-label="Pattern ledger" id={ANCHOR_ID_I.patternLedger} data-testid="pattern-ledger">
-			<CardHead title="Pattern ledger" />
+			<CardHead title="Pattern ledger" info={<LedgerNotesI suppression={suppression} />} />
 			{columns ? (
-				<SplitRow ratio="1:1">
+				<SplitRow ratio="1:1" layout="equal" className="i-ledger-cols">
 					<SplitColumn>
 						{liveSection}
 						{columns.live.map((section) => section.node)}
@@ -2685,7 +2711,7 @@ function PatternLedgerCardI({ state, suppression, onRowClick, onRetry, failures 
 					{sideSections.map((section) => section.node)}
 				</>
 			)}
-			<LedgerFooterI total={total} declined={declinedAllTime} suppression={suppression} />
+			<LedgerFooterI total={total} declined={declinedAllTime} />
 		</section>
 	);
 }
@@ -2939,14 +2965,22 @@ function deriveLoopAggregateI(data) {
 }
 
 // loop-events carries no day window → the basis is the newest rows up to the request limit
+// ~145px beside the longest title at the 1280 three-card row → the line keeps the count, the hover title adds the dates
 function getLoopBasisI(aggregate) {
 	const { eventCount } = aggregate;
 	const trend = aggregate.trend || [];
-	const span =
-		trend.length > 0 ? `, ${trend[0].date} to ${trend[trend.length - 1].date}` : "";
-	if (eventCount >= LOOP_EVENTS_LIMIT)
-		return `Latest ${formatIntI(eventCount)} cycles${span}`;
-	return `All ${formatIntI(eventCount)} recorded cycles${span}`;
+	const qualifier = eventCount >= LOOP_EVENTS_LIMIT ? "Last" : "All";
+	const text = `${qualifier} ${getCycleCountTextI(eventCount)}`;
+	if (trend.length === 0) return { text, title: text };
+	return { text, title: `${text} · ${getDateSpanI(trend[0].date, trend[trend.length - 1].date)}` };
+}
+
+// MM/DD drops the year → a span across a year boundary states its years instead
+function getDateSpanI(first, last) {
+	const firstYear = String(first).slice(0, 4);
+	const lastYear = String(last).slice(0, 4);
+	if (firstYear !== lastYear) return `${firstYear}–${lastYear}`;
+	return `${formatDateI(first)}–${formatDateI(last)}`;
 }
 
 // newest request per region setter → a superseded answer cannot move the stamp either

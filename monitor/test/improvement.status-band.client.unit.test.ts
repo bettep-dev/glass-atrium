@@ -184,7 +184,7 @@ test("a ready tile renders its value and its population", () => {
   assert.match(textOf(tile), /Applied \(7 days\)/);
 });
 
-// no body text under 12px — the population line is body text, not a micro caption
+// the population line is body text, not a micro caption
 test("a ready tile renders its population at the body type scale", () => {
   const tile = sandbox.StatusTileI({
     status: "ready",
@@ -200,11 +200,11 @@ test("a ready tile renders its population at the body type scale", () => {
   );
   assert.ok(holders.length > 0, "the population reaches the rendered card");
   for (const el of holders) {
-    assert.doesNotMatch(String(el.props.className), /\bfs-micro\b/, "population rendered at the 11px micro scale");
+    assert.doesNotMatch(String(el.props.className), /\bfs-micro\b/, "population rendered at the retired micro step");
   }
   assert.ok(
     holders.some((el) => /\bfs-meta\b/.test(String(el.props.className))),
-    "population carries the 12px body scale",
+    "population carries the 13px meta step",
   );
 });
 
@@ -238,6 +238,23 @@ test("the applied tile is counted over the same population it names", () => {
   );
   assert.match(String(applied.props.population), /of 12 cycles/);
   assert.match(String(applied.props.basis), /last 7 days/);
+});
+
+test("the applied tile names a one-cycle week in the singular", () => {
+  const band = sandbox.StatusBandI({
+    statsState: {
+      status: "ready",
+      data: { cycle_total_7d: 1, cycles_generated_applied_7d: 1, latest_cycle_started_at: "2026-09-16T10:00:00.000Z" },
+    },
+    listState: { status: "ready", data: {} },
+    learningLogState: { status: "ready" },
+    suppression: { pending_total: 0, parked: [] },
+    awaiting: 0,
+    onRetry: () => {},
+  });
+  const applied = collectElements(band, []).find((el) => el.props.label === "Applied (7 days)");
+
+  assert.match(String(applied?.props.population), /^of 1 cycle · last /);
 });
 
 test("the decision tile reads ok at zero and warns while something awaits a decision", () => {

@@ -66,7 +66,7 @@ function FlaggedResultsCardI({ state, reviewReasons, onNav }) {
 		<div className="card">
 			<CardHead
 				title={title}
-				sub="Outcomes flagged in the last 7 days · quarantined excluded"
+				sub="Quarantined rows excluded"
 				right={
 					<button
 						className="btn ghost sm"
@@ -149,7 +149,7 @@ function ImprovementInstrumentationViewI({
 	onRetry,
 	failures,
 }) {
-	const { SplitRow, getRegionView } = window.UI;
+	const { SplitRow, SplitColumn, getRegionView } = window.UI;
 
 	return (
 		<div className="space-sections">
@@ -171,7 +171,7 @@ function ImprovementInstrumentationViewI({
 					/>
 				)}
 			</div>
-			<SplitRow ratio="1:1">
+			<SplitRow ratio="1:1" layout="equal">
 				<div id={PAYLOAD_SLOT_ID_I.corpusGrowth}>
 					{getRegionView(corpusAuditState) === "error" ? (
 						<PayloadErrorCardI
@@ -214,14 +214,17 @@ function ImprovementInstrumentationViewI({
 				) : (
 					<>
 						<StyleRefCardI state={listState} styleRef={styleRef} />
-						<SplitRow ratio="1:1">
-							<ProseOnlyAddCardI state={listState} summary={proseOnlyAdd} />
+						{/* two short gauges stack → the pair fills Confidence's height instead of stretching one half-empty */}
+						<SplitRow ratio="1:1" layout="equal">
+							<SplitColumn>
+								<ProseOnlyAddCardI state={listState} summary={proseOnlyAdd} />
+								<TierBreakdownCardI state={listState} tierBreakdown={tierBreakdown} />
+							</SplitColumn>
 							<ConfidenceDistCardI
 								state={listState}
 								confidenceDist={confidenceDist}
 							/>
 						</SplitRow>
-						<TierBreakdownCardI state={listState} tierBreakdown={tierBreakdown} />
 					</>
 				)}
 			</div>
@@ -242,13 +245,15 @@ function ImprovementInstrumentationViewI({
 //   - 모든 카운트 0 → "데이터 부재" 회색 indicator (migration 미적용 OR 30d 빈 cohort)
 //   - error 상태 → 뷰가 카드 대신 목록 payload 오류 배너 1개를 렌더
 
+const TIER_BREAKDOWN_SUB_I = "30 days · self-reported";
+
 function TierBreakdownCardI({ state, tierBreakdown }) {
 	const { CardHead, LoadingPlaceholder } = window.UI;
 	if (state.status === "error") return null;
 	if (state.status === "loading" || !tierBreakdown) {
 		return (
 			<div className="card">
-				<CardHead title="Results by check status (30 days)" />
+				<CardHead title="Results by check status" sub={TIER_BREAKDOWN_SUB_I} />
 				<div className="px-5 py-4">
 					<LoadingPlaceholder label="check-status results" minHeight={68} />
 				</div>
@@ -266,7 +271,7 @@ function TierBreakdownCardI({ state, tierBreakdown }) {
 	if (totalCnt === 0) {
 		return (
 			<div className="card">
-				<CardHead title="Results by check status (30 days)" />
+				<CardHead title="Results by check status" sub={TIER_BREAKDOWN_SUB_I} />
 				<div className="px-5 pb-4">
 					<div
 						className="placeholder"
@@ -287,7 +292,7 @@ function TierBreakdownCardI({ state, tierBreakdown }) {
 		[
 			"✓",
 			"text-ok",
-			"Self-reported pass",
+			"Pass",
 			formatIntI(passCnt),
 			passRatePct === null
 				? "nothing checked"
@@ -296,14 +301,14 @@ function TierBreakdownCardI({ state, tierBreakdown }) {
 		[
 			"✕",
 			"text-crit",
-			"Self-reported fail",
+			"Fail",
 			formatIntI(failCnt),
 			`${formatIntI(codeBasedTotal)} checked`,
 		],
 		[
 			"ℹ",
 			"text-info",
-			"Before auto-checking (old)",
+			"Legacy",
 			formatIntI(baselineCnt),
 			"",
 		],
@@ -312,7 +317,11 @@ function TierBreakdownCardI({ state, tierBreakdown }) {
 
 	return (
 		<div className="card">
-			<CardHead title="Results by check status (30 days)" />
+			<CardHead
+				title="Results by check status"
+				sub={TIER_BREAKDOWN_SUB_I}
+				info="Pass and Fail are each task's self-reported result, recorded since automatic checking began; the pass rate uses these two only. Legacy counts tasks recorded before automatic checking."
+			/>
 			<div className="grid grid-cols-4 gap-2 px-5 py-4">
 				{cards.map(([sym, tone, label, value, hint]) => (
 					<div
@@ -358,7 +367,7 @@ function ConfidenceDistCardI({ state, confidenceDist }) {
 	if (state.status === "loading" || !confidenceDist) {
 		return (
 			<div className="card">
-				<CardHead title="Suggestion confidence (measured)" sub="30 days" />
+				<CardHead title="Suggestion confidence" sub="Measured · 30 days" />
 				<div className="px-5 py-4">
 					<LoadingPlaceholder label="suggestion confidence" minHeight={68} />
 				</div>
@@ -391,7 +400,7 @@ function ConfidenceDistCardI({ state, confidenceDist }) {
 	if (buckets.length === 0 || totalProposals === 0) {
 		return (
 			<div className="card">
-				<CardHead title="Suggestion confidence (measured)" sub="30 days" />
+				<CardHead title="Suggestion confidence" sub="Measured · 30 days" />
 				<div className="px-5 pb-4">
 					<div
 						className="placeholder"
@@ -435,7 +444,7 @@ function ConfidenceDistCardI({ state, confidenceDist }) {
 
 	return (
 		<div className="card">
-			<CardHead title="Suggestion confidence (measured)" sub="30 days" />
+			<CardHead title="Suggestion confidence" sub="Measured · 30 days" />
 			<div className="grid grid-cols-1 gap-2 px-5 py-4">
 				{cards.map(([sym, tone, label, value, hint, bar]) => (
 					<div
@@ -514,18 +523,32 @@ function ConfidenceLaneTableI({ buckets }) {
 	);
 }
 
+// Add-only patches stacks with Results by check status beside Suggestion confidence → a short S slot keeps that pair level
+const PROSE_ONLY_ADD_CARD_SIZE_I = "S";
+
 // prose-only-add per-agent rolling count. 카드가 항상 존재해야 하는 이유: 0 건은
 // "추가만 하는 패치가 없었다"는 판독이고, 카드 부재는 "측정하지 않는다"이다 — 다른 뜻이다.
 function ProseOnlyAddCardI({ state, summary }) {
-	const { CardHead } = window.UI;
+	const { CardHead, CARD_SLOTS, getSlotRows } = window.UI;
+	const [isShowingAll, setShowingAll] = React.useState(false);
 	if (state.status === "error") return null;
 	if (state.status === "loading" || !summary) return null;
-	const rows = Array.isArray(summary.agents) ? summary.agents : [];
+	// server orders by agent name → rank by count before the slot cut, so the collapsed rows are the top ones
+	const agents = (Array.isArray(summary.agents) ? [...summary.agents] : []).sort(
+		(a, b) =>
+			Number(b.count ?? 0) - Number(a.count ?? 0) ||
+			String(a.agent).localeCompare(String(b.agent)),
+	);
 	const total = Number(summary.total ?? 0);
+	// S slot → the stacked column stays bounded whatever the roster length
+	const { rows: slotRows, hiddenCount } = getSlotRows(agents, PROSE_ONLY_ADD_CARD_SIZE_I);
+	const rows = isShowingAll ? agents : slotRows;
 	return (
-		<div className="card">
+		<div className={`card card--${PROSE_ONLY_ADD_CARD_SIZE_I.toLowerCase()}`}>
 			<CardHead
-				title={`Add-only patches (${formatIntI(Number(summary.window_days ?? 0))} days)`}
+				title="Add-only patches"
+				sub={`${formatIntI(Number(summary.window_days ?? 0))} days`}
+				info={summary.truncation_caveat || null}
 			/>
 			{rows.length === 0 ? (
 				<div className="px-5 pb-4">
@@ -563,9 +586,13 @@ function ProseOnlyAddCardI({ state, summary }) {
 					</table>
 				</div>
 			)}
-			<div className="px-5 pb-4 card-sub fs-meta">
-				{summary.truncation_caveat}
-			</div>
+			{(hiddenCount > 0 || isShowingAll) && (
+				<div className="card-foot">
+					<button type="button" className="btn ghost sm ml-auto shrink-0" aria-expanded={isShowingAll} onClick={() => setShowingAll((v) => !v)}>
+						{isShowingAll ? `Show top ${CARD_SLOTS[PROSE_ONLY_ADD_CARD_SIZE_I].rowCount}` : `Show all ${agents.length}`}
+					</button>
+				</div>
+			)}
 		</div>
 	);
 }
@@ -599,8 +626,8 @@ function StyleRefCardI({ state, styleRef }) {
 		return (
 			<div className="card">
 				<CardHead
-					title="Style-check rate (7 days)"
-					sub="Agents that checked existing files before coding"
+					title="Style-check rate"
+					sub="7 days · checked before coding"
 				/>
 				<div className="px-5 py-4">
 					<LoadingPlaceholder label="style-check rates" minHeight={68} />
@@ -684,8 +711,8 @@ function StyleRefCardI({ state, styleRef }) {
 	return (
 		<div className="card">
 			<CardHead
-				title="Style-check rate (7 days)"
-				sub="Agents that checked existing files before coding"
+				title="Style-check rate"
+				sub="7 days · checked before coding"
 			/>
 			<div className="grid grid-cols-3 gap-2 px-5 py-4">
 				{headlineCards.map(([sym, tone, label, value, hint, bar]) => (
@@ -898,13 +925,13 @@ function formatRateI(rate) {
 // 가짜 0 금지. error(503/테이블 부재) → 뷰가 카드 대신 재시도 가능한 오류 배너를 렌더.
 function CorrectionSignalsCardI({ state }) {
 	const { CardHead, formatKstDate, LoadingPlaceholder } = window.UI;
-	const title = "Detection agreement (correction signals)";
+	const title = "Detection agreement";
 
 	if (state.status === "error") return null;
 	if (state.status === "loading" || !state.data) {
 		return (
 			<div className="card">
-				<CardHead title={title} />
+				<CardHead title={title} sub="Correction signals" />
 				<div className="px-5 py-4">
 					<LoadingPlaceholder label="correction signals" minHeight={60} />
 				</div>
@@ -917,7 +944,7 @@ function CorrectionSignalsCardI({ state }) {
 	if (!d.total_signals) {
 		return (
 			<div className="card">
-				<CardHead title={title} />
+				<CardHead title={title} sub="Correction signals" />
 				<div className="px-5 pb-4">
 					<div className="placeholder">
 						No correction signals recorded yet — appears once a run logs a
@@ -979,13 +1006,13 @@ function CorrectionSignalsCardI({ state }) {
 // null 은 "판독 불가", 0 은 "측정된 0" 으로 서로 다른 판독 → null 을 0 으로 접지 않는다.
 function CorpusGrowthCardI({ state }) {
 	const { CardHead, Sparkline, LoadingPlaceholder } = window.UI;
-	const title = "Corpus growth (per-cycle audit)";
+	const title = "Corpus growth";
 
 	if (state.status === "error") return null;
 	if (state.status === "loading" || !state.data) {
 		return (
 			<div className="card">
-				<CardHead title={title} />
+				<CardHead title={title} sub="Per-cycle audit" />
 				<div className="px-5 py-4">
 					<LoadingPlaceholder label="corpus audits" minHeight={60} />
 				</div>
@@ -998,7 +1025,7 @@ function CorpusGrowthCardI({ state }) {
 	if (!latest) {
 		return (
 			<div className="card" data-testid="corpus-growth-card">
-				<CardHead title={title} />
+				<CardHead title={title} sub="Per-cycle audit" />
 				<div className="px-5 pb-4">
 					<div className="placeholder">
 						No corpus readings yet — appears once a daemon cycle writes one.
@@ -1031,7 +1058,7 @@ function CorpusGrowthCardI({ state }) {
 		<div className="card" data-testid="corpus-growth-card">
 			<CardHead
 				title={title}
-				sub={`${formatIntI(Number(state.data.total_audits ?? 0))} readings · latest ${latest.cycle_date}`}
+				sub={`${formatIntI(Number(state.data.total_audits ?? 0))} audits · latest ${latest.cycle_date}`}
 			/>
 			<div className="px-5 pb-4 space-y-2">
 				<div className="flex items-center gap-3 flex-wrap">

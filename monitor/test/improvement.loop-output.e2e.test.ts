@@ -1,5 +1,5 @@
-// E2E chromium check for the Learning screen's loop-output row (screens/improvement.jsx):
-// the trend's y labels are painted inside their card, which a node render cannot measure.
+// E2E chromium checks for the Learning screen's loop-output row (screens/improvement.jsx):
+// the trend's y labels and both cards' basis metas are painted whole, which a node render cannot measure.
 //
 // Runner: npx tsx --test test/improvement.loop-output.e2e.test.ts
 // Prereqs (unmet → RED, no skip guard): `npm run build:jsx`, installed chromium, CDN network.
@@ -12,11 +12,24 @@ import { fileURLToPath } from "node:url";
 
 import Fastify from "fastify";
 import fastifyStatic from "@fastify/static";
-import { chromium } from "playwright";
+import { chromium, type Page } from "playwright";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const PUBLIC_ROOT = resolve(HERE, "..", "public");
 const TREND_LABELS = "#improvement-trend [data-chart-y-scale] span";
+const LOOP_METAS = [
+  "#improvement-change-summary .card-head .card-sub",
+  "#improvement-trend .card-head .card-sub",
+  "#improvement-learning-memory .card-head .card-sub",
+].join(", ");
+// header text painted 10% wider → twice the Linux-over-macOS chromium widening CI implies (under 5%)
+const TEXT_SCALE = 1.1;
+
+interface MetaFit {
+  text: string;
+  needPx: number;
+  shownPx: number;
+}
 
 // eight cycle days with a rising reject share → a full 0–100% axis
 function getLoopEvents() {
@@ -30,18 +43,58 @@ function getLoopEvents() {
   );
 }
 
+// the loop-events fetch limit, newest first → the longest basis a card heads
+function getCutLoopEvents() {
+  return Array.from({ length: 200 }, (_, i) => ({
+    event_ts: `2026-09-${String(1 + (i % 30)).padStart(2, "0")}T0${i % 10}:00:00Z`,
+    eval_result: i % 3 === 0 ? "reject" : "verified",
+    changes_added: 1,
+    changes_removed: 0,
+  }));
+}
+
+// in-page: every text on each meta's header line paints `scale`× as wide → the meta's painted width vs. the width it gets
+function getWidenedMetaFits(subs: Element[], scale: number): MetaFit[] {
+  const sizes: [HTMLElement, number][] = [];
+  for (const sub of subs) {
+    const head = sub.closest(".card-head");
+    if (head === null) throw new Error(`"${sub.textContent}" sits outside a card head`);
+    const walker = document.createTreeWalker(head, NodeFilter.SHOW_TEXT);
+    while (walker.nextNode()) {
+      const parent = walker.currentNode.parentElement;
+      if (parent && walker.currentNode.textContent?.trim()) sizes.push([parent, Number.parseFloat(getComputedStyle(parent).fontSize)]);
+    }
+  }
+  for (const [el, px] of sizes) el.style.fontSize = `${px * scale}px`;
+  return subs.map((sub) => {
+    const text = document.createRange();
+    text.selectNodeContents(sub);
+    return { text: sub.textContent ?? "", needPx: text.getBoundingClientRect().width, shownPx: sub.getBoundingClientRect().width };
+  });
+}
+
+// stripped app serving these loop events; every other /api read answers empty
+async function withLearningPage(width: number, events: unknown[], check: (page: Page) => Promise<void>) {
+  const app = Fastify({ logger: false });
+  await app.register(fastifyStatic, { root: PUBLIC_ROOT, prefix: "/", index: ["index.html"] });
+  app.get("/api/improvement/loop-events", async () => ({ events }));
+  app.get("/api/*", async () => ({ rows: [] }));
+  const serverUrl = await app.listen({ host: "127.0.0.1", port: 0 });
+  const browser = await chromium.launch({ headless: true });
+
+  try {
+    const page = await browser.newPage({ viewport: { width, height: 900 } });
+    await page.goto(`${serverUrl}/#improvement`, { waitUntil: "load" });
+    await check(page);
+  } finally {
+    await browser.close();
+    await app.close();
+  }
+}
+
 for (const width of [1440, 1024]) {
   test(`the trend's y labels sit whole inside their card at ${width}px`, async () => {
-    const app = Fastify({ logger: false });
-    await app.register(fastifyStatic, { root: PUBLIC_ROOT, prefix: "/", index: ["index.html"] });
-    app.get("/api/improvement/loop-events", async () => ({ events: getLoopEvents() }));
-    app.get("/api/*", async () => ({ rows: [] }));
-    const serverUrl = await app.listen({ host: "127.0.0.1", port: 0 });
-    const browser = await chromium.launch({ headless: true });
-
-    try {
-      const page = await browser.newPage({ viewport: { width, height: 900 } });
-      await page.goto(`${serverUrl}/#improvement`, { waitUntil: "load" });
+    await withLearningPage(width, getLoopEvents(), async (page) => {
       await page.waitForSelector(TREND_LABELS, { timeout: 30_000 });
       const labels = await page.evaluate((selector) => {
         const card = document.getElementById("improvement-trend")!.getBoundingClientRect();
@@ -59,9 +112,25 @@ for (const width of [1440, 1024]) {
       for (const label of labels) {
         assert.ok(label.isInside && label.isWhole, `${width}px: "${label.text}" is clipped`);
       }
-    } finally {
-      await browser.close();
-      await app.close();
-    }
+    });
+  });
+}
+
+// 1280 is the narrowest three-card row; below it the cards pair up and widen
+for (const width of [1280, 1440]) {
+  test(`every loop card shows its whole header meta with its header text ${TEXT_SCALE}× as wide at ${width}px`, async () => {
+    await withLearningPage(width, getCutLoopEvents(), async (page) => {
+      await page.waitForSelector(LOOP_METAS, { timeout: 30_000 });
+      await page.evaluate(() => document.fonts.ready);
+      const metas = await page.$$eval(LOOP_METAS, getWidenedMetaFits, TEXT_SCALE);
+
+      assert.equal(metas.length, 3, "all three loop cards head a meta");
+      for (const meta of metas) {
+        assert.ok(
+          meta.needPx <= meta.shownPx,
+          `${width}px, text ×${TEXT_SCALE}: "${meta.text}" needs ${meta.needPx.toFixed(1)}px, shows ${meta.shownPx.toFixed(1)}px`,
+        );
+      }
+    });
   });
 }

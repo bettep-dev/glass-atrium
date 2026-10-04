@@ -853,8 +853,8 @@ async function assertZoneRing(
 		`fixture precondition: the canvas draws no zone '${zoneId}' — the assertion below would be vacuous`,
 	);
 	assert.ok(
-		!Object.keys(probe.zoneClasses).some((id) => id.startsWith("map_row")),
-		`probe precondition: a row frame of the ⊐ was read as a zone — probed: ${Object.keys(probe.zoneClasses).join(", ")}`,
+		!Object.keys(probe.zoneClasses).some((id) => id.startsWith("map_row") || id.startsWith("map_col")),
+		`probe precondition: a layout frame of the map was read as a zone — probed: ${Object.keys(probe.zoneClasses).join(", ")}`,
 	);
 	assert.deepEqual(
 		probe.zoneClasses[zoneId],
@@ -1180,9 +1180,9 @@ test("P0-2 every canvas edge is axis-aligned while the dagre control is not", as
 	await openMap(getLiveFixture());
 	const canvas = await getCanvasProbe();
 
-	// the two turn edges the screen draws between the ⊐'s rows are canvas links too, so the check covers them
-	const turnLinkCount = await page.evaluate((sel) => document.querySelectorAll(`${sel} path.flowchart-link[id$="_turn"]`).length, selectors.canvas);
-	assert.equal(turnLinkCount, 2, "the ⊐'s two turn edges are drawn as canvas links");
+	// the three edges the screen draws — two bus edges into Orchestrator, the bypass right of the spine — are canvas links too, so the check covers them
+	const screenLinkCount = await page.evaluate((sel) => document.querySelectorAll(`${sel} path.flowchart-link[id$="_screen"]`).length, selectors.canvas);
+	assert.equal(screenLinkCount, 3, "the map's three screen-drawn edges are drawn as canvas links");
 	assertOrthogonalLinks(canvas.links, "canonical map canvas");
 
 	// 대조군은 대각을 실제로 가졌음을 양성으로 세워야 한다.

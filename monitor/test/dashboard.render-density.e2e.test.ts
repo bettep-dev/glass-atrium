@@ -128,6 +128,52 @@ describe("Dashboard density at 1024", () => {
   });
 });
 
+// A data hint clamps its data, never the authored words around it: each part stays inside the hint box,
+// and the data keeps a visible fragment even when the tile column is narrow.
+interface HintSpan {
+  text: string;
+  isData: boolean;
+  left: number;
+  right: number;
+  width: number;
+}
+
+async function getDataHints(page: Page): Promise<Array<{ box: { left: number; right: number }; spans: HintSpan[] }>> {
+  return page.evaluate(() =>
+    [...document.querySelectorAll<HTMLElement>(".dash-tile-hint-line")].map((line) => {
+      const box = line.getBoundingClientRect();
+      const spans = [...line.querySelectorAll<HTMLElement>(".dash-tile-hint-fixed, .dash-tile-hint-data")]
+        .filter((span) => (span.textContent ?? "").trim() !== "")
+        .map((span) => {
+          const rect = span.getBoundingClientRect();
+          const isData = span.classList.contains("dash-tile-hint-data");
+          return { text: span.textContent ?? "", isData, left: rect.left, right: rect.right, width: rect.width };
+        });
+      return { box: { left: box.left, right: box.right }, spans };
+    }),
+  );
+}
+
+describe("Data hints at narrow tile widths", () => {
+  for (const width of [1024, 1200]) {
+    test(`every data hint part stays inside its box and the data stays visible at ${width}`, async () => {
+      const page = await openDashboard({ width, height: 768 });
+      await page.evaluate(() => document.fonts.ready);
+      const hints = await getDataHints(page);
+      await page.close();
+      assert.ok(hints.length > 0, "the fixture renders a data hint");
+      for (const hint of hints) {
+        for (const span of hint.spans) {
+          assert.ok(span.left >= hint.box.left - 0.5 && span.right <= hint.box.right + 0.5,
+            `"${span.text}" spans ${span.left}–${span.right}, outside its box ${hint.box.left}–${hint.box.right}`);
+        }
+        const data = hint.spans.find((span) => span.isData);
+        assert.ok(data && data.width > 0, `the data is not visible: ${JSON.stringify(hint.spans)}`);
+      }
+    });
+  }
+});
+
 // Runs by hour reads as a grid of squares: no cell outgrows the cap, and the panel sits beside the results from xl
 const HOUR_CELL_MAX_PX = 20;
 
@@ -188,5 +234,58 @@ describe("Runs by hour layout", () => {
     assert.ok(tops[0] < tops[1] && tops[1] < tops[2], `panel tops ${tops.join(" / ")} are not Results, Runs by hour, Spend`);
     assert.ok(Math.abs(layout.hours.left - layout.results.left) < 1, "one column");
     assertSquareCells(layout.cells);
+  });
+});
+
+// The 13px meta floor covers every rendered text node: the page, the shell's nav rail and footer,
+// and the Tweaks panel the shell mounts in edit mode.
+const META_FLOOR_PX = 13;
+
+async function openDashboardWithTweaks(viewport: Viewport): Promise<Page> {
+  const page = await openDashboard(viewport);
+  await page.evaluate(() => window.postMessage({ type: "__activate_edit_mode" }, window.location.origin));
+  await page.waitForSelector(".twk-panel", { timeout: 10_000 });
+  return page;
+}
+
+// visible text nodes below the floor, as "<px> <tag.class>: <text>"
+async function getBelowFloorText(page: Page): Promise<string[]> {
+  return page.evaluate((floor) => {
+    const found: string[] = [];
+    const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
+    while (walker.nextNode()) {
+      const text = (walker.currentNode.textContent ?? "").trim();
+      const el = walker.currentNode.parentElement;
+      if (!text || !el) continue;
+      const style = getComputedStyle(el);
+      // clipped rail labels keep their accessible name but draw nothing
+      const isDrawn = el.getBoundingClientRect().width > 1 && style.visibility !== "hidden" && el.closest(".sr-only") === null;
+      const px = parseFloat(style.fontSize);
+      if (isDrawn && px < floor) found.push(`${px}px ${el.tagName.toLowerCase()}.${String(el.className)}: ${text.slice(0, 40)}`);
+    }
+    return found;
+  }, META_FLOOR_PX);
+}
+
+describe("Type floor on the Dashboard page, shell and Tweaks panel included", () => {
+  for (const viewport of [{ width: 1024, height: 768 }, { width: 1440, height: 900 }]) {
+    test(`no drawn text sits below the 13px meta floor at ${viewport.width}`, async () => {
+      const page = await openDashboardWithTweaks(viewport);
+      const belowFloor = await getBelowFloorText(page);
+      await page.close();
+      assert.deepEqual(belowFloor, []);
+    });
+  }
+
+  test("nav labels draw at the control step, one above the meta floor", async () => {
+    const page = await openDashboard({ width: 1440, height: 900 });
+    const sizes = await page.evaluate(() => {
+      const control = getComputedStyle(document.documentElement).getPropertyValue("--fs-control").trim();
+      const labels = Array.from(document.querySelectorAll(".nav-item .rail-hide")).map((el) => getComputedStyle(el).fontSize);
+      return { control, labels };
+    });
+    await page.close();
+    assert.equal(sizes.labels.length, 9, "one label per nav item");
+    for (const size of sizes.labels) assert.equal(size, sizes.control, `a nav label draws at ${size}, not ${sizes.control}`);
   });
 });
