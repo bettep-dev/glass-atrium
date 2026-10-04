@@ -1,30 +1,15 @@
 #!/usr/bin/env bats
-# fakechat-port-cleanup.bats — coverage for the STRICTLY PORT-SCOPED fakechat port
-# reap (scripts/lib/fakechat-cleanup.sh) folded into the daemon bootstrap stale-port
-# reclaim AND the ga install/uninstall teardown (kill_daemon_tmux_sessions).
+# fakechat-port-cleanup.bats — fakechat_free_port (scripts/lib/fakechat-cleanup.sh): the port-scoped reap
+# of a fakechat port's listener owner tree + its port-keyed spawn helper, standalone (section A) and
+# through its teardown caller kill_daemon_tmux_sessions (section B).
 #
-# The confirmed bug: rapidly restarting a daemon leaves an orphan bun MCP child
-# reparented to PID 1 still holding 127.0.0.1:<fakechat-port> — the next
-# `claude --channels plugin:fakechat` session's bun then never binds (EADDRINUSE).
+# Safety property: every fakechat session runs one identical argv (the port rides an env var), so a
+# `plugin:fakechat@` cmdline match is port-blind → freeing one port must never signal another port's tree.
 #
-# THE CRITICAL SAFETY PROPERTY (verify-stage MUST-FIX): the fakechat port is passed
-# to bun via the tmux `-e FAKECHAT_PORT=` ENV, NOT argv — both daemons' command lines
-# are IDENTICAL (`claude --channels plugin:fakechat@claude-plugins-official`). So a
-# `pgrep -f 'plugin:fakechat@'` match is PORT-BLIND and would TERM the LIVE HEALTHY
-# PEER daemon on every restart. This suite pins that fakechat_free_port reaches the
-# owner DIRECTLY by port and NEVER kills a peer.
-#
-# NEGATIVE-ASSERTION TEETH: bats runs each test body under set -e, but a bare `! cmd`
-# is EXEMPT from set -e mid-test (SC2314) — a toothless `! grep` would pass even if
-# the peer WERE killed. Every "must NOT appear" check therefore goes through
-# refute_rec (a plain-function non-zero return DOES trip set -e).
-#
-# Hermetic + SAFE toward the live machine (the AGENT never touches a real proc):
-#   * lsof / pgrep resolve to PATH-stub RECORDERS keyed on the queried port;
-#   * kill / sleep are RECORDER / no-op function overrides (never a real signal);
-#   * tmux is a PATH stub (has-session always MISS) so a real daemon session is never
-#     touched by the ga-domain integration tests;
-#   * FAKECHAT_PORT_FREE_TIMEOUT_SECS=0 collapses the settle-poll to instant.
+# Hermetic toward the live machine:
+#   * lsof / pgrep / pkill / launchctl / tmux / rm → PATH recorders; kill / sleep → function recorders;
+#   * HOME → a scratch dir before ga_init_env; FAKECHAT_PORT_FREE_TIMEOUT_SECS=0 → instant settle-poll.
+# Negative checks go through refute_rec: a bare `! grep` is exempt from bats' set -e (SC2314).
 
 GA="$(cd -- "${BATS_TEST_DIRNAME}/.." && pwd)"
 LIB="${GA}/scripts/lib/fakechat-cleanup.sh"
@@ -39,6 +24,11 @@ setup() {
   REC="${SANDBOX}/rec"
   : >"${REC}"
   export REC SANDBOX
+  # captured before STUB_BIN joins PATH — teardown's removal must bypass the rm recorder.
+  REAL_RM="$(command -v rm)"
+  # ga_init_env + atrium_config_port read under HOME → a scratch home, never the live one.
+  export HOME="${SANDBOX}/home"
+  mkdir -p "${HOME}"
   # settle-poll → instant (a real ceiling would busy-spin against the no-op sleep).
   export FAKECHAT_PORT_FREE_TIMEOUT_SECS=0
   # kill / sleep RECORDERS — nested function defs are global in bash, so these shadow
@@ -52,6 +42,12 @@ setup() {
   printf '#!/bin/bash\nexit 0\n' >"${STUB_BIN}/lsof"
   printf '#!/bin/bash\nexit 0\n' >"${STUB_BIN}/pgrep"
   chmod +x "${STUB_BIN}/lsof" "${STUB_BIN}/pgrep"
+  # record-only pkill / launchctl / rm — a broad reap, a launchd call or a removal lands in REC.
+  local tool
+  for tool in pkill launchctl rm; do
+    printf '#!/bin/bash\nprintf "%s %%s\\n" "$*" >>"%s"\nexit 0\n' "${tool}" "${REC}" >"${STUB_BIN}/${tool}"
+    chmod +x "${STUB_BIN}/${tool}"
+  done
   export PATH="${STUB_BIN}:${PATH}"
   # suspend any inherited ERR trap; the lib is sourceable without strict-mode fallout.
   trap - ERR
@@ -60,7 +56,8 @@ setup() {
 }
 
 teardown() {
-  if ga_guard_path "${SANDBOX:-}"; then rm -rf -- "${SANDBOX:?}"; fi
+  local real_rm="${REAL_RM:-/bin/rm}"
+  if ga_guard_path "${SANDBOX:-}"; then "${real_rm}" -rf -- "${SANDBOX:?}"; fi
 }
 
 # refute_rec NEEDLE — FAIL the test if NEEDLE (fixed string) is present in the
@@ -96,8 +93,8 @@ STUB
 }
 
 # pgrep RECORDER: `-P <pid>` → GA_PGREP_P_<pid> children; `-f "spawn-unix-fd.py <port> "`
-# → GA_PGREP_HELP_<port> (the port is the pattern's 2nd word — port-keyed, so a peer
-# daemon's helper on a different port is never returned).
+# → GA_PGREP_HELP_<port> (the port is the pattern's 2nd word — port-keyed, so a helper
+# on a different port is never returned).
 stub_pgrep_byport() {
   cat >"${STUB_BIN}/pgrep" <<STUB
 #!/bin/bash
@@ -118,7 +115,7 @@ STUB
   chmod +x "${STUB_BIN}/pgrep"
 }
 
-# tmux stub — has-session ALWAYS misses so a real daemon session is never touched.
+# tmux stub — has-session ALWAYS misses so a real tmux session is never touched.
 stub_tmux_absent_sessions() {
   cat >"${STUB_BIN}/tmux" <<STUB
 #!/bin/bash
@@ -131,7 +128,7 @@ STUB
   chmod +x "${STUB_BIN}/tmux"
 }
 
-# _boot_ga — source the ga install/uninstall domain (defines kill_daemon_tmux_sessions +
+# _boot_ga — source lib/ga-core.sh (defines kill_daemon_tmux_sessions +
 # atrium_config_port + fakechat_free_port via ga_init_env) for the integration tests.
 _boot_ga() {
   [[ -f "${GA}/lib/ga-core.sh" ]] || skip "ga-core.sh not found: ${GA}/lib/ga-core.sh"
@@ -151,7 +148,10 @@ _boot_ga() {
   stub_pgrep_byport
   export GA_LSOF_8787="1111" GA_PGREP_P_1111="3333" GA_PGREP_HELP_8787="2222"
   run fakechat_free_port 8787
-  [[ "${status}" -eq 0 ]]
+  [[ "${status}" -eq 0 ]] || {
+    echo "${output}"
+    return 1
+  }
   grep -qF 'kill -TERM 1111' "${REC}" # owner
   grep -qF 'kill -TERM 3333' "${REC}" # descendant (pgrep -P recursion)
   grep -qF 'kill -TERM 2222' "${REC}" # port-keyed spawn-unix helper
@@ -162,37 +162,45 @@ _boot_ga() {
   refute_rec 'lsof -iTCP:8788'
 }
 
-@test "A2(peer-preserved): freeing 8787 NEVER signals the live peer daemon (8788) — the MUST-FIX" {
-  # target 8787 owner tree; the PEER role's claude (9999) + its bun on 8788 (8888) are LIVE.
-  # fakechat_free_port 8787 must reach ONLY the 8787 owner tree — never the peer, never 8788.
+@test "A2(port-scoped): freeing 8787 NEVER signals a session, listener or helper on another fakechat port" {
+  # another fakechat session (claude 9999) + its bun listener on 8788 (8888) + its helper (7777) are live.
   stub_lsof_byport
   stub_pgrep_byport
   export GA_LSOF_8787="1111" GA_PGREP_HELP_8787="2222"
-  export GA_LSOF_8788="8888"      # peer bun — must never be queried/killed
-  export GA_PGREP_HELP_8788="7777" # peer helper
+  export GA_LSOF_8788="8888"       # 8788 listener — must never be queried/killed
+  export GA_PGREP_HELP_8788="7777" # 8788 helper
   export GA_PGREP_P_1111=""        # target owner has no children here
   run fakechat_free_port 8787
-  [[ "${status}" -eq 0 ]]
+  [[ "${status}" -eq 0 ]] || {
+    echo "${output}"
+    return 1
+  }
   grep -qF 'kill -TERM 1111' "${REC}" # target owner reaped
   grep -qF 'kill -TERM 2222' "${REC}" # target port-keyed helper reaped
-  # PEER daemon fully preserved (each negative has teeth via refute_rec):
-  refute_rec '9999'              # peer claude never signalled (a plugin:fakechat@ match would hit it)
-  refute_rec '8888'              # peer bun never signalled
-  refute_rec '7777'              # peer helper never signalled
-  refute_rec 'lsof -iTCP:8788'   # peer port never even probed
-  refute_rec 'plugin:fakechat@'  # NO port-blind cmdline match
-  refute_rec 'pkill'             # NO broad reap
+  # the 8788 tree fully preserved (each negative has teeth via refute_rec):
+  refute_rec '9999'             # 8788 claude never signalled (a plugin:fakechat@ match would hit it)
+  refute_rec '8888'             # 8788 listener never signalled
+  refute_rec '7777'             # 8788 helper never signalled
+  refute_rec 'lsof -iTCP:8788'  # 8788 never even probed
+  refute_rec 'plugin:fakechat@' # NO port-blind cmdline match
+  refute_rec 'pkill'            # NO broad reap
 }
 
 @test "A3(invalid-port): a non-integer / out-of-range port is a no-op, never signals" {
   stub_lsof_byport
   run fakechat_free_port "not-a-port"
-  [[ "${status}" -eq 0 ]]
+  [[ "${status}" -eq 0 ]] || {
+    echo "${output}"
+    return 1
+  }
   [[ "${output}" == *"invalid port"* ]]
   refute_rec 'kill'
   refute_rec 'lsof' # never even probes on a garbage port
   run fakechat_free_port 99999
-  [[ "${status}" -eq 0 ]]
+  [[ "${status}" -eq 0 ]] || {
+    echo "${output}"
+    return 1
+  }
   [[ "${output}" == *"invalid port"* ]]
 }
 
@@ -201,7 +209,10 @@ _boot_ga() {
   stub_pgrep_byport
   # GA_LSOF_8787 / GA_PGREP_HELP_8787 unset → owner + helper both empty.
   run fakechat_free_port 8787
-  [[ "${status}" -eq 0 ]]
+  [[ "${status}" -eq 0 ]] || {
+    echo "${output}"
+    return 1
+  }
   [[ "${output}" == *"already free"* ]]
   refute_rec 'kill'
 }
@@ -211,14 +222,17 @@ _boot_ga() {
   stub_pgrep_byport
   export GA_LSOF_8787="5555" GA_LSOF_STICKY=1 # the port stays held across re-probes
   run fakechat_free_port 8787
-  [[ "${status}" -eq 0 ]]
+  [[ "${status}" -eq 0 ]] || {
+    echo "${output}"
+    return 1
+  }
   grep -qF 'kill -TERM 5555' "${REC}" # graceful TERM first
   grep -qF 'kill -KILL 5555' "${REC}" # then force-KILL the survivor (race-closer)
   [[ "${output}" == *"still held after settle"* ]]
 }
 
 # ======================================================================================
-# Section B — kill_daemon_tmux_sessions integration (ga install/uninstall domain)
+# Section B — kill_daemon_tmux_sessions integration (teardown caller of fakechat_free_port)
 # ======================================================================================
 
 @test "B1(dry-run): DRY_RUN skips the port-free entirely (report-only, no signal)" {
@@ -229,7 +243,10 @@ _boot_ga() {
   export GA_LSOF_8787="1111" GA_LSOF_8788="2222"
   DRY_RUN=true
   run kill_daemon_tmux_sessions
-  [[ "${status}" -eq 0 ]]
+  [[ "${status}" -eq 0 ]] || {
+    echo "${output}"
+    return 1
+  }
   [[ "${output}" == *"dry-run"* ]]
   refute_rec 'kill'
   refute_rec 'lsof' # the whole teardown short-circuits before any probe
@@ -242,7 +259,10 @@ _boot_ga() {
   stub_lsof_byport
   export GA_LSOF_8787="1111" GA_LSOF_8788="2222"
   run kill_daemon_tmux_sessions
-  [[ "${status}" -eq 0 ]]
+  [[ "${status}" -eq 0 ]] || {
+    echo "${output}"
+    return 1
+  }
   [[ "${output}" == *"sandbox target"* ]]
   refute_rec 'kill'
   refute_rec 'lsof'
@@ -258,7 +278,10 @@ _boot_ga() {
   export ATRIUM_CONFIG_TOML="${SANDBOX}/absent-config.toml"
   export GA_LSOF_8787="7001" GA_LSOF_8788="8001"
   run kill_daemon_tmux_sessions
-  [[ "${status}" -eq 0 ]]
+  [[ "${status}" -eq 0 ]] || {
+    echo "${output}"
+    return 1
+  }
   grep -qF 'lsof -iTCP:8787' "${REC}" # autoagent port freed
   grep -qF 'lsof -iTCP:8788' "${REC}" # wiki port freed
   grep -qF 'kill -TERM 7001' "${REC}"
@@ -276,7 +299,10 @@ _boot_ga() {
   export ATRIUM_CONFIG_TOML="${SANDBOX}/bad-config.toml"
   export GA_LSOF_8787="7001" GA_LSOF_8788="8001"
   run kill_daemon_tmux_sessions
-  [[ "${status}" -eq 0 ]] # NEVER a die on a configured-invalid port
+  [[ "${status}" -eq 0 ]] || {
+    echo "${output}"
+    return 1
+  } # NEVER a die on a configured-invalid port
   [[ "${output}" == *"invalid configured [ports].autoagent_fakechat"* ]]
   grep -qF 'lsof -iTCP:8787' "${REC}" # freed the literal fallback, not the invalid 99999
   grep -qF 'lsof -iTCP:8788' "${REC}"
