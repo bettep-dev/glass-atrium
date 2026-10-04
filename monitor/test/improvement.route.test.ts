@@ -521,18 +521,16 @@ test("GET /api/improvement/stats: review_flag_last_7d excludes poisoned_window r
 });
 
 // Both rejected counts are verdict-only: an unadjudicated row reached no verdict, so it
-// leaves the apply_rate denominator untouched. The rejected row beside it proves the
-// counts still move.
+// leaves the apply_rate denominator untouched. The rejected row beside it keeps the
+// verdict-only count above zero, so a reader stuck at 0 cannot pass either.
+//
+// Both counts are table-global and sibling files insert AND delete rejected rows
+// concurrently, so a plain before/after delta or bracket can be crossed by an
+// insert-then-delete mid-read. A SHARE lock blocks every writer (reads still pass) for
+// the read window; the before/after bracket then only absorbs a midnight crossing.
 test("GET /api/improvement/stats: rejected counts take a rejected row and never an unadjudicated one", async () => {
   const prisma = getPrisma();
   const label = `__test_stats_verdict_${process.pid}__`;
-  const fetchRejected = async (): Promise<[number, number]> => {
-    __resetImprovementStatsCacheForTests();
-    const res = await app.inject({ method: "GET", url: "/api/improvement/stats" });
-    assert.strictEqual(res.statusCode, 200);
-    const body = res.json() as { rejected_last_7d: number; rejected_all_time: number };
-    return [body.rejected_last_7d, body.rejected_all_time];
-  };
   const insertToday = async (status: "rejected" | "unadjudicated"): Promise<void> => {
     await prisma.$executeRaw`
       INSERT INTO core.autoagent_proposals
@@ -545,14 +543,35 @@ test("GET /api/improvement/stats: rejected counts take a rejected row and never 
     `;
   };
   try {
-    const [last7dBefore, allTimeBefore] = await fetchRejected();
     await insertToday("unadjudicated");
     await insertToday("rejected");
-    const [last7dAfter, allTimeAfter] = await fetchRejected();
-    assert.deepStrictEqual(
-      [last7dAfter - last7dBefore, allTimeAfter - allTimeBefore],
-      [1, 1],
-      "each count takes the rejected row alone",
+    await prisma.$transaction(
+      async (tx) => {
+        await tx.$executeRaw`LOCK TABLE core.autoagent_proposals IN SHARE MODE`;
+        // statement_timestamp, not CURRENT_DATE: the latter is frozen at transaction start.
+        const countVerdictOnly = async (): Promise<[number, number]> => {
+          const rows = await tx.$queryRaw<Array<{ last_7d: bigint; all_time: bigint }>>`
+            SELECT
+              COUNT(*) FILTER (
+                WHERE cycle_date >= statement_timestamp()::date - INTERVAL '7 days'
+              )::bigint AS last_7d,
+              COUNT(*)::bigint AS all_time
+            FROM core.autoagent_proposals
+            WHERE status = 'rejected'::core."ProposalStatus"
+          `;
+          return [Number(rows[0]?.last_7d ?? 0n), Number(rows[0]?.all_time ?? 0n)];
+        };
+        const [last7dBefore, allTimeBefore] = await countVerdictOnly();
+        __resetImprovementStatsCacheForTests();
+        const res = await app.inject({ method: "GET", url: "/api/improvement/stats" });
+        const [last7dAfter, allTimeAfter] = await countVerdictOnly();
+        assert.strictEqual(res.statusCode, 200);
+        const body = res.json() as { rejected_last_7d: number; rejected_all_time: number };
+        assertWithinBracket(body.rejected_last_7d, last7dBefore, last7dAfter, "rejected_last_7d");
+        assert.strictEqual(allTimeAfter, allTimeBefore, "the SHARE lock holds every writer off");
+        assert.strictEqual(body.rejected_all_time, allTimeBefore, "rejected_all_time");
+      },
+      { maxWait: 30_000, timeout: 30_000 },
     );
   } finally {
     await prisma.$executeRaw`DELETE FROM core.autoagent_proposals WHERE pattern_label = ${label}`;
