@@ -5,6 +5,7 @@ import test, { after, before, describe } from "node:test";
 import assert from "node:assert/strict";
 import { resolve, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
+import vm from "node:vm";
 
 import type { Browser, Page } from "playwright";
 import { chromium } from "playwright";
@@ -21,6 +22,12 @@ const docsScreen = await loadScreenModule(resolve(HERE, "../public/src/screens/c
   React: createReactStub(),
   localStorage: { getItem: () => null, setItem: () => {}, removeItem: () => {} },
 });
+// App writes the Tweaks default accent inline on <html> at mount → rows paint under it, never under the tokens.css fallback
+const app = await loadScreenModule(resolve(HERE, "../public/src/app.jsx"), {
+  ReactDOM: { createRoot: () => ({ render: () => {} }) },
+  document: { getElementById: () => null },
+});
+const RUNTIME_ACCENT = (app.hexToRgbTriplet as (hex: string) => string)(vm.runInContext("TWEAK_DEFAULTS.accent", app) as string);
 const SCREEN_CSS = findNodes(renderScreen((docsScreen.ScreenClaudedDocs as (props: unknown) => unknown)({})), (n) => n.type === "style")
   .map((n) => collectText(n))
   .join("\n");
@@ -36,7 +43,7 @@ const STATES = {
 type State = keyof typeof STATES;
 
 // the ledger sits in the list card's elev; the cells carry the screen's dim meta text, an empty stage pip, the stale flag's warn glyph, the crit glyph and the ink title
-const ledgerPage = (theme: string) => `<!doctype html><html data-theme="${theme}"><body style="margin: 0;">
+const ledgerPage = (theme: string) => `<!doctype html><html data-theme="${theme}" style="--accent: ${RUNTIME_ACCENT};"><body style="margin: 0;">
   <div style="padding: 48px;"><div class="card"><table class="tbl"><tbody>
     ${Object.entries(STATES).map(([state, classes]) => `<tr id="${state}" class="doc-row ${classes}">
       <td><span class="doc-stage-meter"><span class="stage-pip"></span></span></td>
@@ -201,8 +208,8 @@ describe("row-state contrast floors on every fill", () => {
   const pairColor = (r: RowReading, pair: Pair) => (pair === "crit" || pair === "warn" ? r.glyph[pair] : r[pair]);
   // a pending row paints its twin's fill → it inherits the twin's open pairs
   const FILL_OF: Record<State, State> = { plain: "plain", viewer: "viewer", checked: "checked", both: "both", pending: "plain", pendingChecked: "checked" };
-  // plan-pinned checked (0.10) and both (0.16) fills → below-floor pairs wait on an owner palette decision, recorded in design.md §4.2
-  const OPEN_BELOW_FLOOR = new Set(["light checked warn", "light both warn", "light both pip", "dark both pip"]);
+  // plan-pinned both (0.16) fill under the default accent → the below-floor pair waits on an owner palette decision, recorded in design.md §4.2
+  const OPEN_BELOW_FLOOR = new Set(["light both warn"]);
   const rows = THEMES.flatMap((theme) =>
     (Object.keys(STATES) as State[]).flatMap((state) =>
       (["rest", "hovered"] as const).map((pointer) => ({ name: `${theme} ${state} row ${pointer}`, theme, state, pointer })),
@@ -224,8 +231,13 @@ describe("row-state contrast floors on every fill", () => {
     });
 
     for (const pair of pairs.filter(isOpen)) {
-      test(`${row.name}: ${pair} ≥ ${FLOORS[pair]}:1`, { todo: "checked/both fill alpha or light --warn / --pip-empty awaits an owner decision" }, () => {
+      test(`${row.name}: ${pair} ≥ ${FLOORS[pair]}:1`, { todo: "both fill alpha or light --warn awaits an owner decision" }, () => {
         assert.ok(ratioOf(pair) >= FLOORS[pair], `${pair} ${ratioOf(pair).toFixed(3)}:1`);
+      });
+
+      // a listed pair that clears its floor is a stale exception → drop its key so the floor binds
+      test(`${row.name}: ${pair} stays listed open only while below ${FLOORS[pair]}:1`, () => {
+        assert.ok(ratioOf(pair) < FLOORS[pair], `${pair} ${ratioOf(pair).toFixed(3)}:1 clears its floor`);
       });
     }
   }

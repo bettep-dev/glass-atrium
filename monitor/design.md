@@ -318,18 +318,18 @@
   - finder 2 (tone 을 칠한 라벨 · 수치): `grep -rnE "text-(crit|warn|ok|info)\b" public/src` + 보간 class `grep -rnE 'text-\$\{' public/src`.
     - 준수 hit: class 가 glyph · `Icon` · `SymI` 에 붙거나, 그 class 를 담는 tone 표 · 헬퍼 반환값 (`TONE_GLYPH_CLASS` · `TONE_SYMBOL` 계열) · 정렬 class (`` `text-${align}` ``) · 차트 막대 `currentColor`.
     - 단어를 감싸는 허용 hit 은 폼 오류 메시지뿐 (`model-config.jsx` field 메시지 · save-banner 요약 · `agents.jsx` 이름 불일치 메시지).
-  - full-opacity tone **fill** (`background` · SVG `fill` · `bg-<tone>`) 은 세 finder 밖 — 차트 data mark 외 소비처가 없어야 한다.
+  - full-opacity tone **fill** (`background` · SVG `fill` · `bg-<tone>`) 은 세 finder 밖 — 차트 data mark 와 사이드바 시스템 롤업 dot (§7.7, 롤업 단어 · glyph 와 짝) 외 소비처가 없어야 한다.
 - `.diff-line--add/--del` 의 옅은 tint 는 허용 — `+`/`−` glyph 가 1차 신호.
 - **미해결 예외 — 팔레트 결정 대기**: clauded-docs ledger 행 상태 fill (§7.5) 위 대비 쌍. tone shell 이 아니라 accent fill 의 명암 미달.
+  - 측정 accent = 런타임 기본값 (`TWEAK_DEFAULTS.accent` 59 130 246, 양 테마 — §4.4). `tokens.css` fallback 은 mount 전에만 칠해져 측정 밖. 사용자가 고른 다른 accent 도 측정 밖.
 
 | 행 상태 fill | 쌍 | Light | Dark |
 |---|---|---|---|
-| checked `--accent` 0.10 (pending-checked 포함) | stale warn glyph | 3.00 (2.996) | 8.99 |
-| both (viewer + checked) `--accent` 0.16 | stale warn glyph | 2.75 | 8.05 |
-| both `--accent` 0.16 | 빈 stage pip | 2.95 | 2.80 |
+| both (viewer + checked) `--accent` 0.16 | stale warn glyph | 2.86 | 8.64 |
 
-- 해법 후보: fill alpha 를 낮추거나 light `--warn` / `--pip-empty` triplet 조정 — owner 또는 designer 결정.
-- `clauded-docs.ledger-row-states.e2e.test.ts` → `OPEN_BELOW_FLOOR` 가 이 쌍을 매 실행 todo 로 보고한다. 고친 쌍은 key 를 지워 binding floor 로. 그 밖의 미달 쌍은 suite 실패.
+- floor 를 겨우 넘는 쌍 (binding): light checked 0.10 warn 3.07 · light both pip 3.07 · dark both pip 3.01.
+- 해법 후보: both fill alpha 를 낮추거나 light `--warn` triplet 조정 — owner 또는 designer 결정 대기.
+- `clauded-docs.ledger-row-states.e2e.test.ts` → `OPEN_BELOW_FLOOR` 가 이 쌍을 매 실행 todo 로 보고한다. key 는 미달인 동안만 유지 — floor 를 넘으면 suite 실패 → key 를 지워 binding floor 로. 그 밖의 미달 쌍도 suite 실패.
 
 ### 4.3 Categorical — 차트 · 식별 전용
 
@@ -564,7 +564,10 @@
 - 면: `bg-elev` 불투명 · `border-r` · sticky, glass 금지.
 - `.nav-item`: `--fs-control` · `--dim` · padding 6px 10px · `--radius-control` · Icon 14 · hover/active = `--sunken` + `--ink`, active 500. `.nav-num`: mono `--fs-meta` `--faint` (active `--dim`).
 - `.nav-badge`: mono `--fs-meta` · `--sunken` · 1px `--line` · pill radius — tone 과 무관한 neutral shell. 내용 = tone glyph (`text-<tone>`, aria-hidden, tone 있는 배지는 모두) + 값 + sr-only 설명 (`title` 동반).
-- 시스템 롤업: 라벨 `--dim`, tone 은 glyph 에만 (✕ crit · ⚠ warn). dot 는 ok 일 때만 `.live-dot`, 그 외 정적.
+- 시스템 롤업 (`app.jsx` → `systemsRollup`): 라벨 `--dim` + tone glyph (✕ crit · ⚠ warn) + 6px dot.
+  - dot = full-opacity tone fill (`dotClass` `bg-crit` · `bg-warn` · `bg-ok`, neutral `bg-faint`) — §4.2 의 허용 fill. 짝 = 롤업 단어 (crit · warn 은 glyph 도).
+  - < 1200px rail 에선 glyph · 라벨이 clip → 보이는 건 dot 뿐, 단어는 접근 이름으로 남는다.
+  - dot 는 ok 일 때만 `.live-dot`, 그 외 정적.
 
 ### 7.8 DetailSurface — drawer · fullscreen · confirm (`.detail-*`)
 

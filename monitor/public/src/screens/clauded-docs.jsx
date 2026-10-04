@@ -945,7 +945,7 @@ function ScreenClaudedDocs(/* { onNav } */) {
            124px = 컬럼 152px − td 좌우 padding 28px. 상한을 넘긴 칩은 잘려 사라지고(rev 가시폭 0px), 그 rev 가 가리키는 선행 문서는 뷰어 Version history 패널이 운반한다. */
         .doc-tags-cell > span { max-width: 124px; overflow: hidden; }
         /* plain hover → base.css --sunken (design.md §7.5) · row-state fills scoped .tbl tbody tr.doc-row → they outrank it and hold under hover */
-        /* viewer row → a fill apart from checked (0.10) and both (0.16), kept under 0.10 → the light warn glyph stays ≥ 3:1 (0.06: 3.17; 0.13: 2.87); the heavier title is its non-colour cue */
+        /* viewer row → a fill apart from checked (0.10) and both (0.16), kept under 0.10 → the light warn glyph stays ≥ 3:1 at the default accent (0.06: 3.22; 0.13: 2.97); the heavier title is its non-colour cue */
         .tbl tbody tr.doc-row.is-selected { background: rgb(var(--accent) / 0.06); }
         .doc-row.is-selected .doc-title-text { font-weight: 600; }
         /* awaiting delete confirmation → struck-through title + aria-busy; the crit glyph before the title carries the tone.
