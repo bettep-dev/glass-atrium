@@ -100,9 +100,8 @@ WIKI_COMPILE_SELF_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=lib/atrium-config.sh
 . "$WIKI_COMPILE_SELF_DIR/lib/atrium-config.sh"
 
-# Terminal best-effort drop sink for the converted PG reporting channel — shared
-# with daemon-daily-restart.sh, so the record format and rotation ceiling stay one
-# definition. PG_DROP_TAG must be bound before the source, and the source itself
+# Terminal best-effort drop sink for the converted PG reporting channel.
+# PG_DROP_TAG must be bound before the source, and the source itself
 # stays above the helper block wiki-source-raw.bats extracts as a shim.
 # SC2034: consumed by the sourced sink lib, invisible to a per-file scan.
 # shellcheck disable=SC2034
@@ -189,9 +188,9 @@ WORKER_MODEL="$(atrium_resolve_worker_model "${DAEMON_CONFIG:-}")"
 
 # WIKI_STARTED_AT for the PG aggregate row.
 WIKI_STARTED_AT="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
-# UTC run_date so cron and the daemon (wiki-daemon-cycle.sh, UTC) UPSERT the
-# SAME (run_date, daemon_name) daemon_runs row — a local-time key splits the row
-# at the KST/UTC date boundary, leaving the cron side without its payload.
+# UTC run_date so this cron and wiki-daemon-cycle.sh (UTC, run next by the same
+# job) UPSERT the SAME (run_date, daemon_name) daemon_runs row — a local-time key
+# splits the row at the KST/UTC date boundary, leaving the cron side without its payload.
 WIKI_RUN_DATE="$(date -u +%Y-%m-%d)"
 PG_HELPER="$WIKI_COMPILE_SELF_DIR/_pg_dual_write_daemon.py"
 
@@ -982,8 +981,8 @@ fi
 
 echo "[$(date -u +%Y-%m-%dT%H:%M:%SZ)] wiki-daily-compile finished success=${SUCCESS}/${TOTAL} failed=${#FAILED[@]} sync_exit=${SYNC_EXIT}" >>"$LOG_FILE"
 
-# Write the aggregate core.daemon_runs row for the wiki cycle — guarantees the 09:00
-# health-check cron-readback finds a wiki-daemon row for today (wiki-sync writes per-step).
+# Write the aggregate core.daemon_runs row for the wiki cycle — the monitor wiki screen
+# reads its compiled counts (wiki-sync writes per-step).
 # status: sync-fail or SUCCESS=0 → error / some fail → partial / all ok → ok (no 'fail' in
 # the DaemonStatus enum). Best-effort: a PG failure MUST NOT block the script.
 WIKI_AGG_STATUS="ok"
