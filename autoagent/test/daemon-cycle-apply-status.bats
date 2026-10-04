@@ -660,7 +660,7 @@ PY
 
 # ── AC24 — the dispatch tail runs no loop-events push ─────────────────────────────────────────
 
-@test "AC24: a dispatched cycle never runs a loop-events push helper left on the install" {
+@test "a dispatched cycle never runs a loop-events push helper left on the install" {
   make_stage_stubs 0
   make_helper 0
   cat >"${FAKE_HOME}/.glass-atrium/scripts/_pg_push_autoagent_loop_events.py" <<EOF
