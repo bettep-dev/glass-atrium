@@ -51,7 +51,6 @@ hooks/lib/code-based-grader.sh	98	74	1.3243	2	0	6	0
 hooks/lib/hook-utils.sh	38	41	0.9268	1	0	0	0
 hooks/lib/style-ref-consts.sh	43	21	2.0476	3	0	0	0
 scripts/audit-context.sh	20	255	0.0784	0	0	0	0
-scripts/autoagent-daemon-healthcheck.sh	69	83	0.8313	1	0	0	0
 scripts/gate-audit.sh	65	153	0.4248	0	0	2	0
 scripts/generate-manifest.sh	156	166	0.9398	3	0	2	1
 scripts/llm-preflight.sh	44	98	0.4490	0	0	0	0
@@ -66,7 +65,6 @@ scripts/render-monitor-env.sh	92	90	1.0222	1	0	0	5
 scripts/sync-registry-tools.sh	48	136	0.3529	0	0	1	0
 scripts/update.sh	721	1061	0.6795	16	3	8	40
 scripts/wiki-daemon-cycle.sh	101	216	0.4676	0	0	1	0
-scripts/wiki-daemon-healthcheck.sh	69	83	0.8313	1	0	0	0
 scripts/wiki-daily-compile.sh	185	314	0.5892	2	0	1	0
 scripts/wiki-deadlinks.sh	35	84	0.4167	1	0	1	0
 scripts/wiki-dedup.sh	33	104	0.3173	1	0	0	0
@@ -164,4 +162,4 @@ monitor/src/server/types/telemetry.ts	30	69	0.4348	0	0	0	4
 monitor/src/server/types/wiki.ts	62	64	0.9688	0	0	0	5
 monitor/src/server/update-status.ts	66	349	0.1891	0	0	0	5
 monitor/src/server/version.ts	21	60	0.3500	0	0	0	0
-TOTAL	14879	36643	0.4061	177	25	143	390	files=165
+TOTAL	14741	36477	0.4041	175	25	143	390	files=163

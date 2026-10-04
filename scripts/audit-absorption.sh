@@ -44,8 +44,6 @@ SCOPE_FILES=(
   autoagent/daemon-cycle.sh
   autoagent/lib/git-txn.sh
   scripts/wiki-daily-compile.sh
-  scripts/autoagent-daemon-healthcheck.sh
-  scripts/wiki-daemon-healthcheck.sh
   scripts/pii-scan.sh
   scripts/pg-backup.sh
   scripts/monitor-log-rotate.sh
