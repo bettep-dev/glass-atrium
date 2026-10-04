@@ -228,12 +228,12 @@ export const DIAGRAMS = [
 		slug: "v2-loops-autoagent",
 		title: "How agent instructions get auto-improved",
 		description:
-			"A daily background job takes the trusted patterns, drafts one improvement per agent, and runs it through pre-checks, a cost cap, and a trial run. Safe changes apply automatically; risky ones wait for a person's approval. After a change is applied, the system watches whether results improve and feeds that back into the learning loop. A separate self-monitor keeps the background daemons alive.",
+			"A daily background job takes the trusted patterns, drafts one improvement per agent, and runs it through pre-checks, a cost cap, and a trial run. Safe changes apply automatically; risky ones wait for a person's approval. After a change is applied, the system watches whether results improve and feeds that back into the learning loop.",
 		mermaid_source: `flowchart LR
     from_learn[/"← Learning loop<br/>(boundary: trusted patterns)"/]
 
     subgraph autoagent["Drafting & checking an improvement"]
-        cycle[claude-autoagent-daemon · daily run]
+        cycle["daemon-cycle.sh · daily run"]
         vet["Pre-checks & trial run"]
         tier_classify{"Safe to auto-apply?"}
     end
@@ -244,15 +244,6 @@ export const DIAGRAMS = [
         user_decision["Person approves or rejects"]
         applied["Instruction updated"]
         regression["Watch whether results improve"]
-    end
-
-    subgraph defense["Keeping the background daemons alive"]
-        autoagent_loop_self["AutoAgent self-health check"]
-        wiki_loop_self["Wiki self-health check"]
-        autoagent_ka["AutoAgent daemon restarter"]
-        wiki_ka["Wiki daemon restarter"]
-        autoagent_fc["AutoAgent heartbeat :8787"]
-        wiki_fc["Wiki heartbeat :8788"]
     end
 
     subgraph improvement_view["Dashboard"]
@@ -272,15 +263,7 @@ export const DIAGRAMS = [
     applied --> regression
     regression -. "outcomes fed back" .-> to_learn
 
-    applied -. "applied changes" .-> dashboard
-
-    autoagent_loop_self -. "self-probe (tmux + HTTP)" .-> autoagent_fc
-    wiki_loop_self -. "self-probe (tmux + HTTP)" .-> wiki_fc
-    autoagent_loop_self -. "on failure restart" .-> autoagent_ka
-    wiki_loop_self -. "on failure restart" .-> wiki_ka
-    autoagent_ka -- "restart whole daemon" --> autoagent_loop_self
-    wiki_ka -- "restart whole daemon" --> wiki_loop_self
-    autoagent_fc -. "heartbeat source" .-> cycle`,
+    applied -. "applied changes" .-> dashboard`,
 	},
 	{
 		id: 6,
@@ -413,19 +396,15 @@ void _diagramCount;
 
 // 데몬 → mermaid 노드 id 명시 바인딩 — live overlay 노드 ring 점등의 유일 근거.
 // 노드 id 는 위 DIAGRAMS mermaid_source 에 실재해야 함 (architecture.daemon-binding 테스트가 검증).
-// daily-restart 2종은 전용 노드 부재 → launchd 작업 묶음 노드(cron)에 바인딩.
 export const DAEMON_NODE_BINDINGS: Readonly<Record<string, readonly string[]>> = {
-	autoagent: ["autoagent_d", "autoagent_loop_self", "autoagent_ka", "autoagent_fc"],
-	wiki: ["wiki_d", "wiki_loop_self", "wiki_ka", "wiki_fc"],
-	"daily-restart-autoagent": ["cron"],
-	"daily-restart-wiki": ["cron"],
+	autoagent: ["autoagent_d"],
+	wiki: ["wiki_d"],
 };
 
 // 헬스 부품(health-model.js HEALTH_CARD_DEFS) → canonical drawn 노드 id (ADR-11).
 // 링과 표가 같은 명부를 읽게 하는 자리 — 부품 전원이 그려지는 노드를 가져야 하고
 // 빈 목록은 실패임 (ADR-14: 지배값은 예산이 아니라 부품 커버리지임).
-// DAEMON_NODE_BINDINGS 와 겹치는 데몬 둘은 그 표의 drawn 투영임 — 나머지 여섯 다이어그램에만 있는
-// 노드(`*_loop_self` · `*_ka` · `*_fc`)는 그려지지 않으므로 여기 실리지 않음 (ADR-19).
+// DAEMON_NODE_BINDINGS 와 겹치는 데몬 둘은 그 표와 같은 노드를 가리킴 (ADR-19).
 export const PART_NODE_BINDINGS: Readonly<Record<string, readonly string[]>> = {
 	pg: ["pg_db"],
 	browser: ["doc_export"],
@@ -447,7 +426,7 @@ export const NODE_DESCRIPTIONS: Readonly<Record<string, string>> = {
 		"Scheduled job that reads the recorded outcomes and proposes instruction improvements. It wakes the orchestrator rather than editing anything itself.",
 	wiki_d:
 		"Scheduled job that compiles and indexes the wiki store, then wakes the orchestrator with what it found.",
-	cron: "The schedule itself — the background jobs that start the daemons and restart them daily.",
+	cron: "The schedule itself — the launchd jobs that run the daemons' daily cycles.",
 	main_session:
 		"The orchestrator. It plans the work and assigns it; carrying the work out is the specialist agents' job, not its own.",
 	agent_layer:

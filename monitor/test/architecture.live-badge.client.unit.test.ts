@@ -1,6 +1,6 @@
 // Unit tests for the client-side cron-node live-badge fold in
-// public/src/screens/architecture.jsx (F39): two daemons can bind ONE node id
-// (cron: daily-restart-autoagent + daily-restart-wiki, per DAEMON_NODE_BINDINGS).
+// public/src/screens/architecture.jsx (F39): two daemons can bind ONE node id —
+// the served node_ids are payload data, never a guaranteed one-to-one map.
 // buildLiveDaemonsByNodeId must keep a LIST per node id so no status is dropped.
 // Pre-fix, the Map was `set(nid, d)` (last-writer-wins) — one daemon silently
 // vanished and the drawer showed a single pill.
@@ -267,8 +267,8 @@ const daemon = (
 
 test("two daemons on one node id are BOTH kept as a list (no last-writer-wins drop)", () => {
   const map = arch.buildLiveDaemonsByNodeId([
-    daemon("daily-restart-autoagent", "ok"),
-    daemon("daily-restart-wiki", "error"),
+    daemon("autoagent", "ok"),
+    daemon("wiki", "error"),
   ]);
   const bound = map.get("cron");
   assert.ok(bound, "node 'cron' must have a bound list");
@@ -278,24 +278,24 @@ test("two daemons on one node id are BOTH kept as a list (no last-writer-wins dr
   // deepStrictEqual would trip on the cross-realm Array.prototype mismatch.
   assert.strictEqual(
     bound.map((d) => d.daemon_name).sort().join(","),
-    "daily-restart-autoagent,daily-restart-wiki",
+    "autoagent,wiki",
   );
 });
 
 test("collision keeps both regardless of input order (order-independent)", () => {
   const map = arch.buildLiveDaemonsByNodeId([
-    daemon("daily-restart-wiki", "error"),
-    daemon("daily-restart-autoagent", "ok"),
+    daemon("wiki", "error"),
+    daemon("autoagent", "ok"),
   ]);
   assert.strictEqual(map.get("cron")?.length, 2);
 });
 
 test("one daemon bound to many node ids appears under each id as a length-1 list", () => {
   const map = arch.buildLiveDaemonsByNodeId([
-    daemon("autoagent", "ok", { node_ids: ["autoagent_d", "autoagent_ka"] }),
+    daemon("autoagent", "ok", { node_ids: ["autoagent_d", "cron"] }),
   ]);
   assert.strictEqual(map.get("autoagent_d")?.length, 1);
-  assert.strictEqual(map.get("autoagent_ka")?.length, 1);
+  assert.strictEqual(map.get("cron")?.length, 1);
   assert.strictEqual(map.get("autoagent_d")?.[0].daemon_name, "autoagent");
 });
 
@@ -1015,7 +1015,7 @@ test("V4 dashed strokes on the map mean unverified and nothing else", () => {
 // --- 39731 conformance: C1–C4 ------------------------------------------------------------
 test("C1 a daemons store that has not answered leaves no verdict ring from the live daemon statuses", () => {
   const critDaemon = arch.buildLiveDaemonsByNodeId([
-    { daemon_name: "daily-restart", status: "error", effective_status: "error", node_ids: ["cron"] },
+    { daemon_name: "autoagent", status: "error", effective_status: "error", node_ids: ["cron"] },
   ]);
 
   for (const status of ["error", "loading", "ready"]) {

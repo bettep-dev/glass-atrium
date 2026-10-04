@@ -22,10 +22,7 @@
     "last_run_at": "2026-09-29T19:30:04.000Z",
     "staleness_minutes": 867,
     "node_ids": [
-     "autoagent_d",
-     "autoagent_loop_self",
-     "autoagent_ka",
-     "autoagent_fc"
+     "autoagent_d"
     ],
     "expected_cadence_minutes": 1440
    },
@@ -35,10 +32,7 @@
     "last_run_at": "2026-09-29T19:50:29.000Z",
     "staleness_minutes": 847,
     "node_ids": [
-     "wiki_d",
-     "wiki_loop_self",
-     "wiki_ka",
-     "wiki_fc"
+     "wiki_d"
     ],
     "expected_cadence_minutes": 1440
    }
