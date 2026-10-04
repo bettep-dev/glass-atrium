@@ -139,6 +139,18 @@ enum LearningStatus {
   approved
   applied
   rejected
+  // Non-terminal: the aggregator's failed pair verdict or the daemon's roster mismatch.
+  // Leaves only on a new passing detection + confirmation pair → identified.
+  dormant
+
+  @@schema("core")
+}
+
+// Closed set of per-pattern metrics a learning_log row is measured on.
+// A row with no key has no metric → not eligible for generation.
+enum MetricKey {
+  budget_overage
+  emit_failure
 
   @@schema("core")
 }
@@ -318,6 +330,30 @@ model AgentEvent {
   @@schema("core")
 }
 
+/// One row per MANIFEST line (hooks/inject-scope-rules.sh → append_manifest_log), written by the
+/// daemon's MANIFEST ingest through _pg_dual_write_daemon.py. (spool, line_offset) is the ingest
+/// position and the only position state → a re-read of a spool inserts nothing twice.
+model SpawnManifest {
+  id         BigInt   @id @default(autoincrement())
+  // Spool file name, unique per rename of the live log
+  spool      String
+  // 0-based line ordinal within the spool, not a byte offset
+  lineOffset Int      @map("line_offset")
+  // NULL = the line's id was `unknown`; never unique → several NULL rows coexist
+  agentId    String?  @map("agent_id")
+  agentType  String   @map("agent_type") @db.VarChar(64)
+  // NULL = no session id recorded on the line (a line predating the field)
+  sessionId  String?  @map("session_id")
+  startedAt  DateTime @map("started_at") @db.Timestamptz(6)
+  ctxBytes   Int      @map("ctx_bytes")
+  blocks     String
+
+  @@unique([spool, lineOffset], map: "spawn_manifest_spool_line_offset_key")
+  @@index([agentId], map: "spawn_manifest_agent_id_idx")
+  @@map("spawn_manifest")
+  @@schema("core")
+}
+
 /// Source: outcome-record.sh frontmatter (per plan §3.2 outcomes — all flat columns,
 /// concerns as TEXT[] per revision 2 normalization)
 model Outcome {
@@ -409,6 +445,15 @@ model Outcome {
   effort            String?       @db.VarChar(16)
   // TRUE = the transcript held more than one distinct tier; NULL whenever effort is NULL.
   hasMixedEffort    Boolean?      @map("has_mixed_effort")
+  // Spawn provenance, recorded by track-outcome.sh at SubagentStop. NULL = not recorded:
+  // a main-session row, or a row predating the carrier.
+  // agent_id — the raw envelope id; joins core.spawn_manifest.agent_id.
+  agentId           String?       @map("agent_id")
+  // session_id — the envelope's parent session id.
+  sessionId         String?       @map("session_id")
+  // The recorder's own correction-detector verdict, stored beside the agent-emitted
+  // correction fields and independent of them.
+  userCorrectionDetected Boolean? @map("user_correction_detected")
   // TRUE = 오염 윈도우 격리 행 (2026-05-24 .. 2026-06-06 18:04 KST · metric_pass=false ·
   // grader_verdict NULL) — 학습 파이프라인 소비자가 제외해야 할 quarantine 플래그.
   // raw-SQL 런북(maintenance/poisoned-window-quarantine)만 set — writer/grader 미기입.
@@ -472,6 +517,10 @@ model LearningLog {
   /// 2026-05-04 #26-pre: status 전이 audit 컬럼. PATCH /api/learning/patterns/:id/status 활성화 (사용자 명시 §8 권한 가드).
   lastTransitionAt     DateTime?      @map("last_transition_at") @db.Timestamptz(6)
   lastTransitionReason String?        @map("last_transition_reason") @db.VarChar(500)
+  // Written by learning-aggregator.py → upsert_learning_pattern. NULL = keyless pattern.
+  metricKey            MetricKey?     @map("metric_key")
+
+  proposals AutoagentProposal[]
 
   @@unique([patternSignature], map: "learning_log_pattern_uniq")
   @@index([discoveredDate], map: "learning_log_date_idx")
@@ -589,6 +638,13 @@ model AutoagentProposal {
   // hasher or config lib) reads as ABSENT rather than as a recorded sample.
   appliedBodySha256 String? @map("applied_body_sha256") @db.VarChar(64)
   appliedModelId    String? @map("applied_model_id") @db.VarChar(64)
+  // Stamped at proposal insert by _pg_dual_write_daemon.py → write_autoagent_proposal.
+  // NULL = not recorded (a row predating the stamp). Changes whenever the generator's input set changes.
+  generatorInputVersion String? @map("generator_input_version") @db.VarChar(64)
+  // Pattern the proposal was generated from, same writer. NULL = no pattern recorded,
+  // or the pattern row was deleted (ON DELETE SET NULL).
+  learningPatternId BigInt? @map("learning_pattern_id")
+  learningPattern   LearningLog? @relation(fields: [learningPatternId], references: [id], onDelete: SetNull, map: "autoagent_proposals_learning_pattern_id_fkey")
   indexedAt       DateTime               @default(now()) @map("indexed_at") @db.Timestamptz(6)
 
   // Phase 3 (2026-05-02 ADR R2 step 1) — pre-verify 4-axis verdict snapshot.

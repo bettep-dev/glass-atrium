@@ -164,7 +164,7 @@ class CoverageReadContractTest(unittest.TestCase):
         self.assertEqual(result, [])
 
     def test_when_rows_span_every_status_then_every_row_is_returned(self) -> None:
-        statuses = ("identified", "proposed", "approved", "applied", "rejected")
+        statuses = ("identified", "proposed", "approved", "applied", "rejected", "dormant")
         rows = [
             (i, f"label {i}|glass-atrium-dev-nestjs", "glass-atrium-dev-nestjs", status)
             for i, status in enumerate(statuses, start=1)
