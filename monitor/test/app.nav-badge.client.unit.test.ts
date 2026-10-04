@@ -31,6 +31,7 @@ const UI_SRC = resolve(__dirname, "../public/src/ui.jsx");
 interface Badge {
   badge: string;
   badgeTone: string;
+  glyph?: string;
   source?: string;
   title?: string;
 }
@@ -74,6 +75,7 @@ interface StampInput {
 interface UiSurface {
   getShellPageState: (input: StampInput) => ShellPageState;
   formatKstTime: (at: string) => string;
+  TONE_GLYPH: Record<string, string>;
 }
 interface AppSurface extends AppHelpers {
   setHash: (hash: string) => void;
@@ -347,17 +349,17 @@ test("systemsRollup: a down part is crit with the ✕ glyph and the lane's down 
     const r = app.systemsRollup(fold);
     assert.strictEqual(r.tone, "crit", `${down} down outranks the fail count`);
     assert.strictEqual(r.dotClass, "bg-crit");
-    assert.strictEqual(r.glyph, "✕");
+    assert.strictEqual(r.glyph, app.ui.TONE_GLYPH.crit);
     assert.strictEqual(r.label, `${fold.downNames.length} ${down === 1 ? "PART" : "PARTS"} DOWN`);
   }
 });
 
-test("systemsRollup: failures with no down part stay warn, without the crit glyph", () => {
+test("systemsRollup: failures with no down part stay warn, with the warn glyph", () => {
   const r = app.systemsRollup(app.foldHarness(allHealthy({ kpiState: ready({ last_1h_fail_count: 4 }) })));
   assert.strictEqual(r.tone, "warn");
   assert.strictEqual(r.dotClass, "bg-warn");
   assert.strictEqual(r.label, "ISSUES DETECTED");
-  assert.ok(!r.glyph);
+  assert.strictEqual(r.glyph, app.ui.TONE_GLYPH.warn);
 });
 
 // An unread source is unknown, never healthy: the footer must not keep "ALL SYSTEMS" over a lost store.
@@ -611,6 +613,55 @@ test("the sidebar slot follows the page's read state, below every harness word",
 
       assert.strictEqual(rollup.label, row.label);
       assert.strictEqual(rollup.tone, row.tone);
+    });
+  }
+});
+
+// Colour alone is no signal: every toned numeral in the nav carries its tone's shape.
+test("every toned nav badge carries its tone's glyph, whichever store raised it", () => {
+  const fold = app.foldHarness(allHealthy({ liveState: ready(daemonPayload(2)), kpiState: ready({ last_1h_fail_count: 4 }) }));
+  const suspended = ready(buildBreakerSummary([buildBreakerAlarm("glass-atrium-qa-debugger", "suspended")]));
+  const streak = ready(buildBreakerSummary([buildBreakerAlarm("glass-atrium-dev-node", "streak")]));
+  const badges = [
+    ...(app.harnessToNavBadges(fold).architecture?.badges ?? []),
+    app.agentsToNavBadges(suspended).agents,
+    app.agentsToNavBadges(streak).agents,
+  ].filter((b): b is Badge => Boolean(b));
+
+  assert.deepStrictEqual(new Set(badges.map((b) => b.badgeTone)), new Set(["warn", "crit"]), "precondition: both tones are raised");
+  for (const b of badges) assert.strictEqual(b.glyph, app.ui.TONE_GLYPH[b.badgeTone], `${b.source} ${b.badgeTone} badge glyph`);
+});
+
+const classTokens = (n: RenderedNode): string[] => String(n.props?.className ?? "").split(/\s+/).filter(Boolean);
+const TONE_TEXT_CLASSES = ["text-ok", "text-warn", "text-crit", "text-info"];
+
+// The badge shell and the rollup words stay neutral on the sunken surface (light warn 2.51, crit 3.52 as tinted text).
+test("the sidebar's nav badges and rollup put their tone on the glyph only, never on the shell or the words", async (t) => {
+  const crit = app.getHarness(allHealthy({ liveState: ready(daemonPayload(1)), kpiState: ready({ last_1h_fail_count: 3 }) }));
+  const warn = app.getHarness(allHealthy({ kpiState: ready({ last_1h_fail_count: 3 }) }));
+  const agents = ready(buildBreakerSummary([buildBreakerAlarm("glass-atrium-qa-debugger", "suspended")]));
+  const rows = [
+    { name: "a down part with failures and a suspended agent", harness: crit, tone: "crit" },
+    { name: "failures with no down part", harness: warn, tone: "warn" },
+  ];
+  for (const row of rows) {
+    await t.test(row.name, () => {
+      const tree = renderSidebar(row.harness, agents);
+      const badges = findNodes(tree, (n) => classTokens(n).includes("nav-badge"));
+      assert.ok(badges.length >= 2, "precondition: the render reaches the toned badges");
+      for (const badge of badges) {
+        const tone = classTokens(badge).find((c) => c === "warn" || c === "crit");
+        assert.strictEqual(badge.props?.style, undefined, `a ${tone} badge paints no inline tone fill`);
+        const [glyph, ...words] = badge.children.filter(isRenderedNode);
+        assert.ok(classTokens(glyph).includes(`text-${tone}`), `a ${tone} badge's glyph carries the tone`);
+        for (const word of words) assert.deepStrictEqual(classTokens(word).filter((c) => TONE_TEXT_CLASSES.includes(c)), [], `a ${tone} badge's numeral stays neutral`);
+      }
+
+      const rollup = app.systemsRollup(row.harness);
+      const [label] = findNodes(tree, (n) => collectText(n.children).join("") === rollup.label);
+      const [glyph] = findNodes(tree, (n) => collectText(n.children).join("") === rollup.glyph);
+      assert.ok(classTokens(label).includes("text-dim"), `the ${row.tone} rollup label reads dim`);
+      assert.ok(classTokens(glyph).includes(`text-${row.tone}`), `the ${row.tone} rollup glyph carries the tone`);
     });
   }
 });
