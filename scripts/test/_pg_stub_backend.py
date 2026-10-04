@@ -62,6 +62,7 @@ _LINE_COMMENT = re.compile(r"--[^\n]*")
 _CAST = re.compile(r'::(?:\w+\.)?"?\w+"?')
 _NAMED = re.compile(r"%\((\w+)\)s")
 _MODEL_BLOCK = r"^model %s \{$(.*?)^\}$"
+_MODEL_NAME = re.compile(r"^model (\w+) \{$", re.M)
 _FIELD = re.compile(r"^\s+(\w+)\s+(\w+)(\?)?(\[\])?(.*)$")
 _MAPPED = re.compile(r'@map\("(\w+)"\)')
 _ENUM = SimpleNamespace(
@@ -296,19 +297,19 @@ def _get_model_columns(model: str) -> list[str]:
     Read rather than remembered: a hand-copied list agrees with itself forever
     and drifts on the next migration.
     """
-    block = re.search(
-        _MODEL_BLOCK % model, _SCHEMA.read_text(encoding="utf-8"), re.M | re.S
-    )
+    schema_text = _SCHEMA.read_text(encoding="utf-8")
+    block = re.search(_MODEL_BLOCK % model, schema_text, re.M | re.S)
     if block is None:
         raise AssertionError("%s model not found in %s" % (model, _SCHEMA))
+    models = set(_MODEL_NAME.findall(schema_text))
 
     columns: list[str] = []
     for line in block.group(1).splitlines():
         field = _FIELD.match(line)
         if field is None or line.lstrip().startswith(("//", "@@")):
             continue
-        name, _type, _optional, is_list, tail = field.groups()
-        if is_list:
+        name, field_type, _optional, is_list, tail = field.groups()
+        if is_list or field_type in models:
             continue  # relation field, not a column
         mapped = _MAPPED.search(tail)
         columns.append(
