@@ -201,7 +201,7 @@ Net: an agent holds its Tier-1 bodies and the ORCHESTRATOR pair through the unce
 | Scope | Agents |
 |-------|--------|
 | ALL | All agents |
-| DEV | glass-atrium-dev-front, glass-atrium-dev-react, glass-atrium-dev-angular, glass-atrium-dev-gsap, glass-atrium-dev-android, glass-atrium-dev-nestjs, glass-atrium-dev-node, glass-atrium-dev-python, glass-atrium-dev-db, glass-atrium-dev-rag, glass-atrium-dev-animator, glass-atrium-dev-shell, glass-atrium-dev-swift |
+| DEV | glass-atrium-dev-front, glass-atrium-dev-react, glass-atrium-dev-angular, glass-atrium-dev-gsap, glass-atrium-dev-android, glass-atrium-dev-nestjs, glass-atrium-dev-node, glass-atrium-dev-python, glass-atrium-dev-db, glass-atrium-dev-rag, glass-atrium-dev-animator, glass-atrium-dev-shell, glass-atrium-dev-swift, glass-atrium-dev-aws |
 | META | glass-atrium-meta-prompt-engineer, glass-atrium-meta-agent |
 | DESIGN | glass-atrium-design-designer |
 | ~~DATA~~ | All DATA agents archived; scope inactive — see Archived Agents section |
