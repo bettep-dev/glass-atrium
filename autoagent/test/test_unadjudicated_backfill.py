@@ -16,9 +16,11 @@ import contextlib
 import io
 import json
 import os
+import re
 import sys
 import tempfile
 import unittest
+from collections.abc import Callable, Iterator
 from pathlib import Path
 from typing import Self
 from unittest import mock
@@ -55,29 +57,126 @@ _ROOT = "/opt/ga"
 _STRANGER_PID = 99999901
 
 
+_TABLE_SQL = "core.autoagent_proposals"
+_COLUMNS = ("id", "status", "rationale", "reviewed_by", "reviewed_at")
+_STATUS_PARAM_SQL = '(%s)::core."ProposalStatus"'
+_NOW = object()
+_SELECT_SQL_RE = re.compile(
+    rf"SELECT (?P<columns>\w+(?:, \w+)*) FROM {re.escape(_TABLE_SQL)} "
+    r"WHERE (?P<where>.+) ORDER BY id LIMIT %s"
+)
+_UPDATE_SQL_RE = re.compile(
+    rf"UPDATE {re.escape(_TABLE_SQL)} SET (?P<assignments>.+?) WHERE (?P<where>.+)"
+)
+_STATUS_EQ_RE = re.compile(r"status = '(?P<value>\w+)'")
+_STATUS_IN_RE = re.compile(r"status IN \((?P<values>'\w+'(?:, ?'\w+')*)\)")
+
+
+class UnsupportedStatementError(AssertionError):
+    """A statement shape the fake cannot evaluate faithfully — refused, never approximated."""
+
+
 class _FakeProposals:
-    """In-memory ``core.autoagent_proposals`` answering the mode's keyset SELECT and UPDATE."""
+    """In-memory ``core.autoagent_proposals`` evaluating the SELECT and UPDATE text it receives.
+
+    Selected columns, assigned columns and every WHERE term come from the statement, so a
+    widened predicate or an extra SET column changes the table the assertions read.
+    """
 
     def __init__(self, rows: list[dict[str, object]]) -> None:
         self.rows = {int(row["id"]): dict(row) for row in rows}
         self.statements: list[str] = []
+        self.selected_ids: list[int] = []
+        self.page: list[tuple] = []
+        self.after_select = lambda: None
         self.on_commit = lambda: None
 
     def execute(self, sql: str, params: tuple) -> int:
-        self.statements.append(sql)
-        if sql.lstrip().upper().startswith("SELECT"):
-            after_id, limit = params
-            self.page = [
-                (pid, row["rationale"], row["reviewed_by"])
-                for pid, row in sorted(self.rows.items())
-                if row["status"] == "rejected" and pid > after_id
-            ][:limit]
-            return len(self.page)
-        status_value, ids = params
-        hits = [pid for pid in ids if self.rows[pid]["status"] == "rejected"]
-        for pid in hits:
-            self.rows[pid]["status"] = status_value
+        statement = " ".join(sql.split())
+        self.statements.append(statement)
+        bound = iter(params)
+        if select := _SELECT_SQL_RE.fullmatch(statement):
+            return self._select(select, bound)
+        if update := _UPDATE_SQL_RE.fullmatch(statement):
+            return self._update(update, bound)
+        raise UnsupportedStatementError(statement)
+
+    def _select(self, match: re.Match[str], bound: Iterator[object]) -> int:
+        columns = _get_columns(match["columns"].split(", "))
+        is_kept = _get_row_filter(match["where"], bound)
+        limit = next(bound)
+        _require_consumed(bound)
+        kept = [row for _, row in sorted(self.rows.items()) if is_kept(row)][:limit]
+        self.selected_ids.extend(int(row["id"]) for row in kept)
+        self.page = [tuple(row[column] for column in columns) for row in kept]
+        self.after_select()
+        return len(self.page)
+
+    def _update(self, match: re.Match[str], bound: Iterator[object]) -> int:
+        assignments = _get_assignments(match["assignments"], bound)
+        is_kept = _get_row_filter(match["where"], bound)
+        _require_consumed(bound)
+        hits = [row for row in self.rows.values() if is_kept(row)]
+        for row in hits:
+            row.update(assignments)
         return len(hits)
+
+
+def _get_columns(names: list[str]) -> list[str]:
+    unknown = [name for name in names if name not in _COLUMNS]
+    if unknown:
+        raise UnsupportedStatementError(f"unknown column(s): {unknown}")
+    return names
+
+
+def _get_row_filter(
+    where: str, bound: Iterator[object]
+) -> Callable[[dict[str, object]], bool]:
+    """Conjunction of the WHERE terms; params bind in text order."""
+    checks = [_get_term_check(term, bound) for term in where.split(" AND ")]
+    return lambda row: all(check(row) for check in checks)
+
+
+def _get_term_check(
+    term: str, bound: Iterator[object]
+) -> Callable[[dict[str, object]], bool]:
+    if term == "id > %s":
+        after_id = next(bound)
+        return lambda row: row["id"] > after_id
+    if term == "id = ANY(%s)":
+        ids = set(next(bound))
+        return lambda row: row["id"] in ids
+    if match := _STATUS_EQ_RE.fullmatch(term):
+        return lambda row: row["status"] == match["value"]
+    if match := _STATUS_IN_RE.fullmatch(term):
+        values = set(re.findall(r"'(\w+)'", match["values"]))
+        return lambda row: row["status"] in values
+    raise UnsupportedStatementError(f"WHERE term: {term}")
+
+
+def _get_assignments(text: str, bound: Iterator[object]) -> dict[str, object]:
+    assignments: dict[str, object] = {}
+    for item in text.split(", "):
+        column, _, expression = item.partition(" = ")
+        assignments[_get_columns([column])[0]] = _get_assigned_value(expression, bound)
+    return assignments
+
+
+def _get_assigned_value(expression: str, bound: Iterator[object]) -> object:
+    if expression in (_STATUS_PARAM_SQL, "%s"):
+        return next(bound)
+    if expression == "now()":
+        return _NOW
+    if expression == "NULL":
+        return None
+    if match := re.fullmatch(r"'([^']*)'", expression):
+        return match[1]
+    raise UnsupportedStatementError(f"SET expression: {expression}")
+
+
+def _require_consumed(bound: Iterator[object]) -> None:
+    if next(bound, _NOW) is not _NOW:
+        raise UnsupportedStatementError("more params than placeholders")
 
 
 class _FakeCursor:
@@ -171,7 +270,7 @@ class UnadjudicatedBackfillTest(unittest.TestCase):
             ("HAS_PG_LOOP_WRITE", True),
             ("_pg_connect", self._connect),
             ("get_proposal_status_label_state", lambda _conn: self.label_state),
-            ("_PG_PROPOSAL_STATUS_SQL", '(%s)::core."ProposalStatus"'),
+            ("_PG_PROPOSAL_STATUS_SQL", _STATUS_PARAM_SQL),
         ):
             patcher = mock.patch.object(dc, name, value, create=True)
             patcher.start()
@@ -248,8 +347,15 @@ class UnadjudicatedBackfillTest(unittest.TestCase):
                 mock.patch.object(dc, "_UNADJUDICATED_BACKFILL_PAGE_SIZE", page_size),
             ):
                 self.table.rows = {row["id"]: dict(row) for row in rows}
+                self.table.selected_ids.clear()
                 rc, stderr = self._run()
                 self.assertEqual(rc, 0, stderr)
+                read_statuses = {
+                    row["status"]
+                    for row in rows
+                    if row["id"] in self.table.selected_ids
+                }
+                self.assertEqual(read_statuses, {"rejected"})
                 expected = {row["id"]: row["status"] for row in rows}
                 expected.update({pid: "unadjudicated" for pid in relabeled})
                 self.assertEqual(self._statuses(), expected)
@@ -259,6 +365,23 @@ class UnadjudicatedBackfillTest(unittest.TestCase):
                         self.assertEqual(
                             stored[column], row[column], (row["id"], column)
                         )
+
+    def test_a_row_that_leaves_rejected_after_the_page_read_keeps_its_new_status(
+        self,
+    ) -> None:
+        self.table.rows = {
+            1: _row(1, "haiku transient overload", None),
+            2: _row(2, "haiku transient overload", None),
+        }
+
+        def flip_once() -> None:
+            self.table.rows[2]["status"] = "pending"
+            self.table.after_select = lambda: None
+
+        self.table.after_select = flip_once
+        rc, stderr = self._run()
+        self.assertEqual(rc, 0, stderr)
+        self.assertEqual(self._statuses(), {1: "unadjudicated", 2: "pending"})
 
     def test_a_second_run_selects_nothing_and_changes_nothing(self) -> None:
         self.table.rows = {1: _row(1, "haiku transient overload", None)}
