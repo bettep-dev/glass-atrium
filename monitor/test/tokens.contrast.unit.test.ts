@@ -19,7 +19,7 @@ const css = readFileSync(TOKENS_CSS, "utf8");
 // Isolate the [data-theme="dark"] block so light-theme triplets (the same
 // var names appear in :root) can't be matched by mistake. The block runs from
 // the selector's opening brace to its matching closing brace.
-function darkThemeBlock(source: string): string {
+function getDarkThemeBlock(source: string): string {
   const sel = source.indexOf('[data-theme="dark"]');
   assert.ok(sel !== -1, 'tokens.css must contain a [data-theme="dark"] block');
   const open = source.indexOf("{", sel);
@@ -43,13 +43,13 @@ function parseTriplet(block: string, name: string): Rgba {
 }
 
 // The light theme is the plain `:root` block — not the alias rule that also names a nested scope.
-function lightThemeBlock(source: string): string {
+function getLightThemeBlock(source: string): string {
   const m = source.match(/(?:^|\n):root\s*\{([^}]*)\}/);
   assert.ok(m, "tokens.css must contain a plain :root block");
   return m[1];
 }
 
-const dark = darkThemeBlock(css);
+const dark = getDarkThemeBlock(css);
 const surface = parseTriplet(dark, "--surface");
 const dim = parseTriplet(dark, "--dim");
 const ink = parseTriplet(dark, "--ink");
@@ -76,7 +76,7 @@ test("--ink on --surface meets WCAG AA 4.5:1 (primary text floor)", () => {
   assert.ok(ratio > 18 && ratio < 19, `--ink ratio ${ratio.toFixed(2)} outside expected ~18.9 band`);
 });
 
-const light = lightThemeBlock(css);
+const light = getLightThemeBlock(css);
 const LIGHT_SURFACES = ["--elev", "--surface", "--sunken"] as const;
 const UI_GLYPH = 3;
 

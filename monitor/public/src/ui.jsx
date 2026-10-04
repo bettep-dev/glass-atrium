@@ -72,17 +72,17 @@ function Icon({ name, size=16, className='', stroke=1.6, ariaHidden=true }) {
   return <svg {...props} />;
 }
 
-// 단일 배지 SoT (canonical) — 전 screen 이 window.UI.Badge 로만 배지를 렌더 (screen-local 배지 JSX/CSS 금지).
-//   .pill CSS family = styling layer (neutral shell SoT). 3 role 로 의미 구분:
-//   status   = 사용자가 반응해야 할 lifecycle/health 상태 → 선행 tone 심볼(Icon/glyph)이 톤 운반.
-//   metadata = 상태 아닌 서술 속성(agent-only, md, model-id) → neutral, glyph 없음.
-//   count    = 순수 수량(+1, 27 agents) → neutral, glyph 없음, 가장 작게.
-// 하드 규칙 (DESIGN.md §4.2/§7.3 neutral-shell 진화):
-//   · shell 은 모든 tone 에서 neutral(--sunken/--dim/--line) — tone-fill 을 .pill 껍데기에 칠하지 않는다.
-//   · tone 은 내부 심볼(Icon/glyph)에 text-{tone} 으로만 적용 → dual-encode = shape(글리프)+color+인접 label(DESIGN.md §8).
-//   · label 텍스트는 --dim 유지(AA-safe: --sunken 위 warn/ok/info tone 은 11px 3:1 sub-AA) — glyph=false status 도 label 은 neutral.
-//   · metadata/count 는 톤을 받아도 항상 neutral (color≠metadata/count).
-// 변형: absent=true → .pill--absent(dashed/faint) · interactive=true → <button>+.pill--interactive(WCAG 2.2 §2.5.8 타깃)
+// Single badge SoT (canonical) — every screen renders badges only through window.UI.Badge (no screen-local badge JSX/CSS).
+//   .pill CSS family = styling layer (neutral shell SoT). 3 roles separate the meaning:
+//   status   = lifecycle/health state the user must react to → a leading tone symbol (Icon/glyph) carries the tone.
+//   metadata = descriptive non-state attribute (agent-only, md, model-id) → neutral, no glyph.
+//   count    = plain quantity (+1, 27 agents) → neutral, no glyph, smallest size.
+// Hard rules (DESIGN.md §4.2/§7.3 neutral shell):
+//   · shell neutral in every tone (--sunken/--dim/--line) — no tone fill on the .pill shell.
+//   · tone only on the inner symbol (Icon/glyph) via text-{tone} → dual-encode = shape (glyph) + color + adjacent label (DESIGN.md §8).
+//   · label text stays --dim (AA-safe: warn/ok/info tones on --sunken are 3:1 at 11px, sub-AA) — a glyph=false status keeps a neutral label too.
+//   · metadata/count stay neutral even when given a tone (color ≠ metadata/count).
+// Variants: absent=true → .pill--absent (dashed/faint) · interactive=true → <button> + .pill--interactive (WCAG 2.2 §2.5.8 target)
 function Badge({ children, role='metadata', tone='neutral', absent=false, glyph=true, icon=false, interactive=false, title, onClick, className='' }) {
   const isStatus = role === 'status';
   const hasTone = isStatus && tone !== 'neutral';
@@ -159,7 +159,7 @@ function TypeScaleStyle() {
   `}</style>;
 }
 
-// 증감 표시 — 기본 up=나쁨(crit)/down=좋음(ok), inverse=true 면 반전 (상승이 좋은 지표용). tone 은 화살표만, 수치는 neutral
+// Change indicator — default up=bad (crit)/down=good (ok), inverse=true flips it (metrics where a rise is good); tone on the arrow only, value neutral
 function Delta({ value, inverse=false }) {
   const sign = value > 0 ? 'up' : value < 0 ? 'down' : 'flat';
   const isBad = inverse ? sign === 'down' : sign === 'up';
