@@ -35,16 +35,13 @@ TEMPLATE="${GA}/config.toml.example"
 # shellcheck source-path=SCRIPTDIR source=../scripts/lib/path-guard.sh
 source "${GA}/scripts/lib/path-guard.sh"
 
-# the 8 com.glass-atrium.* jobs (mirrors LAUNCHD_JOBS / render-launchd-plists.sh JOBS)
+# the active com.glass-atrium.* jobs (mirrors LAUNCHD_JOBS / render-launchd-plists.sh JOBS)
 JOBS=(
   monitor
-  autoagent-daemon
-  wiki-daemon
   monitor-log-rotate
   pg-backup
   autoagent-cycle
   wiki-compile
-  daemon-daily-restart
 )
 
 setup() {
@@ -90,7 +87,7 @@ deploy_ref() {
   cp -f -- "${REF}/com.glass-atrium.$1.plist" "${LA}/com.glass-atrium.$1.plist"
 }
 
-# Deploy byte-identical references for all 8 jobs (the healthy loaded install).
+# Deploy byte-identical references for every active job (the healthy loaded install).
 deploy_all() {
   local job
   for job in "${JOBS[@]}"; do
@@ -132,11 +129,11 @@ run_doctor_sandbox() {
   deploy_all
   # tamper ONE deployed plist so its content diverges from the current renderer output
   # (the stale-deploy shape: a renderer/PATH change that was never re-deployed).
-  printf '<!-- stale -->\n' >>"${LA}/com.glass-atrium.autoagent-daemon.plist"
+  printf '<!-- stale -->\n' >>"${LA}/com.glass-atrium.autoagent-cycle.plist"
 
   run_doctor_sandbox
 
-  [[ "${output}" == *"stale-deployed launchd plist drift: com.glass-atrium.autoagent-daemon"* ]] || return 1
+  [[ "${output}" == *"stale-deployed launchd plist drift: com.glass-atrium.autoagent-cycle"* ]] || return 1
   # advisory: the drift feeds the warn summary, never a hard FAIL banner.
   [[ "${output}" == *"stale-deployed launchd plist(s) — re-render + --load-launchd to redeploy"* ]] || return 1
   # The rollup enumerates every warn category in section order. Anchored on two terms and the
