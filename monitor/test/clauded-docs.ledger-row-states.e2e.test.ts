@@ -1,5 +1,5 @@
 // Documents ledger row states measured in a real browser on the shipped tokens.css, base.css and the screen's own style block:
-// the fill each state paints under the shared table hover, and the pending-delete dimming's contrast on that fill.
+// the fill each state paints under the shared table hover, the pending-delete cue matching its twin, and each text pair's contrast on that fill.
 // Runner: npx tsx --test test/clauded-docs.ledger-row-states.e2e.test.ts — needs an installed chromium; no network, no app server.
 import test, { after, before, describe } from "node:test";
 import assert from "node:assert/strict";

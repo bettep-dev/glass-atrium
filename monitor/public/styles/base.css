@@ -1279,7 +1279,7 @@ details[open] > summary .chevron {
 	margin-left: auto;
 }
 
-/* ── Toast — top-level transient notice on the --z-toast stack, shared by clauded-docs + model-config.
+/* ── Toast — the one top-level transient notice on the --z-toast stack, shared by every screen that toasts.
    Opaque neutral overlay shell (it can sit over any surface, the dark document canvas included);
    the tone class only names --toast-tone, which colours the leading .doc-toast-glyph. */
 .doc-toast {

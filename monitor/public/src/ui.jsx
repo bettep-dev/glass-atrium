@@ -80,7 +80,7 @@ function Icon({ name, size=16, className='', stroke=1.6, ariaHidden=true }) {
 // Hard rules (DESIGN.md §4.2/§7.3 neutral shell):
 //   · shell neutral in every tone (--sunken/--dim/--line) — no tone fill on the .pill shell.
 //   · tone only on the inner symbol (Icon/glyph) via text-{tone} → dual-encode = shape (glyph) + color + adjacent label (DESIGN.md §8).
-//   · label text stays --dim (AA-safe: warn/ok/info tones on --sunken are 3:1 at 11px, sub-AA) — a glyph=false status keeps a neutral label too.
+//   · label text stays --dim (AA-safe: light warn/ok/info tones on --sunken read 3.15–3.45:1, sub-AA at --fs-meta) — a glyph=false status keeps a neutral label too.
 //   · metadata/count stay neutral even when given a tone (color ≠ metadata/count).
 // Variants: absent=true → .pill--absent (dashed/faint) · interactive=true → <button> + .pill--interactive (WCAG 2.2 §2.5.8 target)
 function Badge({ children, role='metadata', tone='neutral', absent=false, glyph=true, icon=false, interactive=false, title, onClick, className='' }) {
