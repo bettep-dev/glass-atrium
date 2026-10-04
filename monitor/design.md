@@ -66,7 +66,7 @@
 ### 3.0 구조
 
 - **Tier 1 — primitive**: `tokens.css` `:root` / `[data-theme="dark"]`. 색은 raw `R G B` triplet (kind A), 길이·스칼라·그림자·z 는 완결 리터럴 (kind B).
-- **Tier 2 — semantic / material**: 표면 elevation alias · glass · shadow 합성 토큰.
+- **Tier 2 — semantic / material**: 표면 elevation alias · shadow 합성 토큰.
 - **Tier 3 — component**: `base.css` class + `window.UI` atom (§3.3).
 
 ### 3.1 Tier 1 — PRIMITIVE (kind A 색 · 전체)
@@ -87,13 +87,9 @@
   --crit: 216 33 34;  --warn: 210 113 0;  --ok: 5 150 105;  --info: 8 145 178;
   /* categorical — chart fill only */
   --cat-1: 124 58 237;  --cat-2: 13 148 136;  --cat-3: 37 99 235;  --cat-4: 219 39 119;
-  /* agent identity — 테마 불변 */
-  --agent-1: 59 130 246;  --agent-2: 139 92 246;  --agent-3: 6 182 212;  --agent-4: 16 185 129;
-  --agent-5: 245 158 11;  --agent-6: 236 72 153;  --agent-7: 239 68 68;  --agent-8: 8 145 178;
-  --agent-ink: 28 25 23;
   /* elevation · glass primitives */
   --elev-2: 252 252 251;  --overlay-surface: 255 255 255;
-  --glass-tint: 255 255 255;  --glass-border: 255 255 255;
+  --glass-border: 255 255 255;
 }
 [data-theme="dark"] {
   --surface: 12 10 9;  --elev: 28 25 23;  --sunken: 24 20 17;  --line: 41 37 36;
@@ -104,7 +100,7 @@
   --crit: 248 113 113;  --warn: 251 191 36;  --ok: 52 211 153;  --info: 34 211 238;
   --cat-1: 167 139 250;  --cat-2: 45 212 191;  --cat-3: 96 165 250;  --cat-4: 244 114 182;
   --elev-2: 36 32 30;  --overlay-surface: 28 25 23;
-  --glass-tint: 28 25 23;  --glass-border: 255 255 255;
+  --glass-border: 255 255 255;
 }
 :root[data-theme="dark"] {
   --accent: 96 165 250;       /* root 에만 → 중첩 dark scope 는 사용자 accent tweak 을 상속 */
@@ -116,15 +112,10 @@
 ```css
 /* surface elevation aliases — var() 는 선언한 자리에서 풀린다 → 모든 themed scope(중첩 dark chrome 포함)가 자기 primitive 로 재해석 */
 :root, [data-theme] {
-  --surface-sunken:   var(--sunken);
-  --surface-base:     var(--surface);
-  --surface-raised:   var(--elev);
   --surface-raised-2: var(--elev);            /* light: 순백 유지, 떠오름은 shadow */
   --surface-overlay:  var(--overlay-surface);
 }
 :root {
-  /* glass / material (kind B) */
-  --glass-blur: 12px;  --material-glass-alpha: 0.75;
   /* shadow (kind B box-shadow list) */
   --shadow-raised:   0 1px 3px rgba(0,0,0,0.06), 0 1px 2px rgba(0,0,0,0.04);
   --shadow-raised-2: 0 2px 6px rgba(0,0,0,0.08), 0 1px 3px rgba(0,0,0,0.05);
@@ -132,7 +123,6 @@
 }
 [data-theme="dark"] {
   --surface-raised-2: var(--elev-2);          /* dark: 휘도 step (36 > 28) */
-  --material-glass-alpha: 0.82;
   --shadow-raised:   0 1px 4px rgba(0,0,0,0.3), 0 1px 2px rgba(0,0,0,0.2);
   --shadow-raised-2: 0 3px 10px rgba(0,0,0,0.4), 0 1px 3px rgba(0,0,0,0.25);
   --shadow-overlay:  0 10px 40px rgba(0,0,0,0.5), 0 2px 8px rgba(0,0,0,0.3);
@@ -147,8 +137,8 @@
 
 | Kind | 형식 | 범위 | 소비 |
 |------|------|------|------|
-| **A — RGB-triplet** | `R G B` (alpha 없음) | §3.1 의 모든 색 · 표면 (~33개). 그중 Tailwind `theme.extend.colors` 매핑은 16개 (surface · elev · sunken · line · ink · dim · faint · accent · crit · warn · ok · info · cat-1..4) | `rgb(var(--ink) / α)` · Tailwind `bg-elev` 등 |
-| **B — 완결 리터럴** | length · scalar · box-shadow · z-index | 아래 블록 + §3.2 의 glass/shadow | `var(--fs-meta)` 그대로 (alpha 합성 불가) |
+| **A — RGB-triplet** | `R G B` (alpha 없음) | §3.1 의 모든 색 · 표면 (23개). 그중 Tailwind `theme.extend.colors` 매핑은 12개 (surface · elev · sunken · line · ink · dim · faint · accent · crit · warn · ok · info) | `rgb(var(--ink) / α)` · Tailwind `bg-elev` 등 |
+| **B — 완결 리터럴** | length · scalar · box-shadow · z-index | 아래 블록 + §3.2 의 shadow | `var(--fs-meta)` 그대로 (alpha 합성 불가) |
 
 ```css
 :root {
@@ -189,12 +179,12 @@
 | 배지·상태 | `Badge` · `Pill`(→ Badge) · `StatusDot` | `.pill*` |
 | agent 이름 | `AgentName` | caller `className` (텍스트만) |
 | 수치 | `KPI` · `KpiValue` · `Sparkline` · `MiniBars` · `TrendChart` · `Bar` · `BulletBar` | `.kpi*` |
-| 표 | `Table` · `TableHead` · `ClampCell` · `ClampText` | `.tbl` · `.cell-clamp` · `.clamp-2` |
+| 표 | `Table` · `TableHead` | `.tbl` |
 | 페이지 | `PageHeader` · `PageVerdict` · `SectionLabel` · `EmptyState` | `.page-verdict*` · `.section-label` · `.placeholder` |
 | 신선도 | `FreshnessStamp` · `RefreshButton` | `.fs-meta` mono `--faint` · `.btn.ghost.sm` |
 | 로딩 | `LoadingPlaceholder` · `SkeletonRows` | `role="status"` `.fs-meta` `--dim` · inline bar |
 | 오류 · region | `RegionFailure`(→ `RegionUnavailable` / `RegionCovered`) · `PageErrorBanner`(→ `AlertCard`) · `AlertCard` · `RetryButton` | `.sub-card.bg-sunken` · `.alert-card*` · `.btn.sm` |
-| 기타 | `Icon` · `Tabs` · `ChipGroup` · `DetailField` | `.tabs` · `.seg` |
+| 기타 | `Icon` · `ChipGroup` · `DetailField` | `.seg` |
 
 - **KPI 내부 전용**: `Delta` (`.kpi-delta`) 는 `KPI` 의 `delta` prop 으로만 렌더 — `window.UI` export 아님.
 - **`AgentName`**: `glass-atrium-` prefix 를 뗀 짧은 이름 + 전체 이름은 sr-only 텍스트 · `title`. agent 식별은 이 텍스트로만 (아바타 없음 — §4.3).
@@ -211,18 +201,12 @@
     - `RegionCovered`: region 이름 `--fs-body` `--dim` + "Not loaded — see the … notice" `--fs-meta` `--faint`. 문장 · Retry 없음.
   - 2개 이상 region 이 같은 장애를 공유 → `PageErrorBanner` = `AlertCard tone="crit"` + `RetryButton` 1개 (§7.9). 복구 시 focus 는 첫 covered region 카드로.
   - `RetryButton` · `RefreshButton`: busy 중에도 native `disabled` 금지 — `aria-disabled` + `aria-busy` + click guard 로 키보드 focus 유지. 라벨 "Retrying…".
-- **예약 class · atom — 정의만 있고 `public/src/screens` · `app.jsx` 소비처 없음**: `base.css` 의 `.glass-surface` · `.card-raised` · `.elev-overlay` · `.alert-row` (유일한 hit 는 `clauded-docs.jsx` 주석) · `tokens.css` 의 `.sev-bar` · `ui.jsx` 의 `AgentBadge`.
-  - `.glass-surface` 는 향후 transient glass 표면 전용, 상시 표면 금지.
-  - `.sev-bar` (3px tone stripe, `.crit`/`.warn`/`.info`/`.ok`) · `.alert-row` (`4px 1fr auto` stripe grid) 는 쓰지 않는다 — §4.2 no-stripe. severity 행은 `.alarm-row` (§7.9).
-  - `AgentBadge` 재도입 금지 — floor · 명암 예외 (§4.3).
-  - 표면이 필요하면 `Card` / `DetailSurface` / `Popover`.
 
 ### 3.4 소비 경로 · shadow 규칙
 
-- **Tailwind 유틸**: 매핑된 16색만 (`bg-elev` · `text-dim` · `border-line` …). 그 외 토큰은 class 안 `var()` 또는 inline style.
+- **Tailwind 유틸**: 매핑된 12색만 (`bg-elev` · `text-dim` · `border-line` …). 그 외 토큰은 class 안 `var()` 또는 inline style.
 - **CDN 런타임 class-scan 유지** (`index.html` → "Tailwind CDN (JIT) — viewer R6 path" 주석): PostCSS 빌드로 바꾸면 런타임 유틸이 조용히 빠진다.
 - **Shadow 는 `--shadow-*` 만**:
-  - Tailwind `boxShadow.card` / `.float` 는 정의만, 소비처 없음 — 쓰지 않는다.
   - 떠 있는 면 (Recharts tooltip `tooltipStyle` · `.doc-stage-menu` · `.doc-toast`) = `--overlay-surface` + 1px `--line` + `--shadow-overlay`.
   - 하드코딩 그림자 finder (comma · space 문법 둘 다, 토큰 경유 `rgb(var(--…))` ring 제외): `grep -rnE "(boxShadow|box-shadow)[^;]*rgba?\([0-9]" public/src public/styles` → 허용 hit 은 `tweaks-panel.jsx` ×5 (§3.5) 뿐.
 
@@ -249,7 +233,7 @@
 | `--elev` | 카드 · 패널 · 사이드바 면 (raised) |
 | `--elev-2` | raised-2 fill — **dark 전용** (light 는 인버전이라 미사용) |
 | `--overlay-surface` | drawer · dialog · popover 불투명 면 |
-| `--sunken` | 함몰 홈 · `th` · 배지 shell · tabs track |
+| `--sunken` | 함몰 홈 · `th` · 배지 shell |
 | `--line` | 1px 경계선 · ring |
 | `--ink` | 본문 텍스트 (dark 에서도 순백 아님) |
 | `--dim` | 읽는 캡션 · 2차 텍스트 · card meta |
@@ -306,15 +290,15 @@
   - `status` — 반응이 필요한 lifecycle/health. 선행 glyph 가 tone, 라벨 `--dim`. `glyph` false 면 tone 없음 (라벨도 neutral). tone 있는 `Pill` → glyph 가 있는 status `Badge`.
   - `metadata` — 서술 속성 (agent-only · md · model id): neutral · glyph 없음 · 소문자.
   - `count` — 순수 수량: neutral · glyph 없음 · mono tabular.
-  - 변형: `absent`(dashed · 무배경 · `--faint`) · `interactive`(`<button>`) · icon-only(정사각, 의미는 aria-label/title).
+  - 변형: `absent`(dashed · 무배경 · `--faint`) · `interactive`(`<button>`).
 - **alert-card glyph well** (`base.css` → `.alert-card`): light = tone **solid well + `--elev` knock-out glyph** (tinted light well 은 `--warn` glyph 를 0.12 tint 위 3.01 로 떨어뜨린다) · dark = tone 0.12 tinted well + tone glyph.
 - **severity 요소는 glass/blur 위에 두지 않는다** — desaturation 이 응급 신호를 약화 (§6.3).
 - **finder** (merged tree 기준): hit 마다 읽고 아래 분류에 넣는다. 분류 밖 hit = 새 위반.
   - finder 1 (alpha tint · inset stripe): `grep -rnE "var\(--(crit|warn|ok|info|[$]\{[^}]+\})\) */ *0?\.[0-9]+|(bg|border)-(crit|warn|ok|info)/|inset [0-9]+px 0 0 rgb\(var\(--(crit|warn|ok|info)\)\)" public/src public/styles`.
     - 보간 tone (`var(--${…})`) 도 잡는다.
-    - 허용 hit: 차트 data mark (`cost.jsx` outlier 범례 · `Cell` · `critBar` · `improvement.jsx` reject spark stroke · `agents.jsx` `bg-crit/70` 막대 · warn `Bar`) · `.diff-line--add/--del` tint.
+    - 허용 hit: 차트 data mark (`cost.jsx` outlier 범례 · `Cell` · `critBar` · `improvement.jsx` reject spark stroke · `agents.jsx` `bg-crit/70` 막대 · warn `Bar`).
   - finder 1b (full-opacity tone border · stroke · box-shadow): `grep -rnE "(border(-[a-z]+)?|stroke|outline|box-shadow) *: *[^;\"]*rgb\(var\(--(crit|warn|ok|info)\)\)|(border[A-Za-z]*|stroke|boxShadow) *: *[\"'][^\"']*rgb\(var\(--(crit|warn|ok|info)\)\)|stroke=\"rgb\(var\(--(crit|warn|ok|info)\)\)\"" public/src public/styles`.
-    - 허용 hit: 위 허용 예외 (폼 오류 · System map 링 · 범례) · destructive action (`.btn.danger` · `DELETE_OUTLINE_STYLE` · `REJECT_OUTLINE_STYLE` · `DiscardConfirmMC`) · 차트 (`agents.jsx` quality-health crit `Line` 과 그 tooltip key swatch) · 미소비 `.pulse-ring` (§8).
+    - 허용 hit: 위 허용 예외 (폼 오류 · System map 링 · 범례) · destructive action (`.btn.danger` · `DELETE_OUTLINE_STYLE` · `REJECT_OUTLINE_STYLE` · `DiscardConfirmMC`) · 차트 (`agents.jsx` quality-health crit `Line` 과 그 tooltip key swatch).
   - finder 2 (tone 을 칠한 라벨 · 수치): `grep -rnE "text-(crit|warn|ok|info)\b" public/src` + 보간 class `grep -rnE 'text-\$\{' public/src`.
     - 준수 hit: class 가 glyph · `Icon` · `SymI` 에 붙거나, 그 class 를 담는 tone 표 · 헬퍼 반환값 (`improvement.jsx` → `TONE_TEXT_CLASS` · `clauded-docs.jsx` → `TONE_TEXT_CLASS_CD` · `architecture.jsx` → `TONE_GLYPH_CLASS`) · 정렬 class (`` `text-${align}` ``) · 차트 막대 `currentColor`.
     - 단어를 감싸는 허용 hit 은 폼 오류 메시지뿐 (`model-config.jsx` field 메시지 · save-banner 요약 · `agents.jsx` 이름 불일치 메시지).
@@ -323,24 +307,21 @@
       - 차트 data mark: `wiki.jsx` status mix 막대 · `agents.jsx` latency `bg-info` 막대와 범례 swatch · quality-health 차트 (`RATIO` 축 라벨 · tooltip key swatch).
       - 사이드바 시스템 롤업 dot (§7.7 `dotClass`) — 롤업 단어 · glyph 와 짝.
       - light alert-card glyph well (`--alert-well-fill`, 위 alert-card 항목) — `--elev` knock-out glyph 를 담는 glyph carrier. dark 는 0.12 tint 라 hit 아님.
-      - destructive action `.btn.danger` (§7.4) · System map 링 badge glyph (`text.arch-ring-glyph` fill = glyph 의 tone) · 미소비 `.sev-bar` (§3.3, 쓰지 않음).
-- `.diff-line--add/--del` 의 옅은 tint 는 허용 — `+`/`−` glyph 가 1차 신호.
+      - destructive action `.btn.danger` (§7.4) · System map 링 badge glyph (`text.arch-ring-glyph` fill = glyph 의 tone).
 
 ### 4.3 Categorical — 차트 · 식별 전용
 
 - `--cat-1..4` (값 §3.1) = 분류 시각화 (chart fill · swatch) 전용, 위험도용 아님.
 - `--cat-2` 3.74:1 · `--cat-4` 4.60:1 on light `--elev` (sunken 3.43 / 4.21) → **fill/swatch 한정, text 색 금지**.
-- **Agent 식별 팔레트 `--agent-1..8` + `--agent-ink` · `AgentBadge` — 정의만, 소비처 없음, 재도입 금지**:
-  - agent 식별은 `AgentName` 텍스트로만 (§3.3). Agents ledger 는 이니셜 아바타를 그리지 않는다 — 모든 이름이 `glass-atrium-` 으로 시작해 이니셜이 전부 G (`agents.screen-render.client.test.ts`).
-  - atom 형태: 22px **둥근 사각** (`borderRadius` size×0.3 = 6.6px) fill, 테마 불변. named agent 는 고정 슬롯, 그 외 id 해시. 이니셜 전경 = `--agent-ink`(고정 dark).
-  - 재도입 금지 근거: 이니셜 11px (`fontSize` size×0.5) — 13px floor (§5.2) 미달 · 명암비 4.13–8.14, 최저 `--agent-2` 4.13:1 — 11px 텍스트 4.5:1 기준 (§2 원칙 2) 미달.
+- **agent 식별은 `AgentName` 텍스트로만** (§3.3) — 이니셜 아바타 없음. 모든 이름이 `glass-atrium-` 으로 시작해 이니셜이 전부 G (`agents.screen-render.client.test.ts`).
 
 ### 4.4 Accent
 
-- `--accent` 는 인터랙션 전용 (link · focus 된 field border · 선택 hint). 화면당 ≤ 2 (CTA/인터랙션 한정, 장식 금지). categorical 팔레트에 새 색 추가 금지.
+- `--accent` 는 인터랙션 전용 (focus 된 field border · 선택 hint). 화면당 ≤ 2 (CTA/인터랙션 한정, 장식 금지). categorical 팔레트에 새 색 추가 금지.
 - **런타임 값은 Tweaks**: `App` effect 가 `<html>` 에 `--accent` 를 `tweaks.accent` 로 inline 기록 (기본 `#3b82f6` = 59 130 246, 양 테마 공통) → `tokens.css` 값은 fallback.
   - dark fallback 은 `:root[data-theme="dark"]` 에만 → 중첩 `data-theme="dark"` scope (문서 viewer chrome, §6.5) 도 사용자 accent 를 상속.
 - accent 가 사용자 선택이므로 focus 는 `--focus-ring` (테마별 고정, 모든 면에서 ≥ 3:1).
+- 본문 링크 (`outcomes.jsx` → `.outcome-md a`) = `--ink` 텍스트 + `currentColor` underline — accent 는 링크 텍스트를 칠하지 않는다 (사용자 선택이라 명암 무한정). 링크 신호는 underline (색 단독 아님), ink 는 모든 면에서 ≥ 15.46 (§4.1).
 
 ---
 
@@ -393,7 +374,7 @@
 
 - **cap 초과 설명** → card header 의 focusable ⓘ (`CardInfo`)가 여는 drawer 로. **hover-only `title` 로 정의를 숨기지 않는다.**
   - drawer 제목 = `infoLabel`: 기본 "How this is counted" · 설정 용어집 "About settings" (`model-config.jsx` → `SETTINGS_INFO_LABEL_MC`). ⓘ 의 `aria-describedby` = 카드 제목.
-- **데이터는 고치지 않고 clamp**: 요약 · 문서 제목 = 1줄 ellipsis + `title` (`ClampCell`) · 사유 · 제안 = 2줄 (`ClampText`), 전문은 행 drawer.
+- **데이터는 고치지 않고 clamp**: 요약 · 문서 제목 = 1줄 ellipsis + `title` (Tailwind `truncate` 또는 `-webkit-line-clamp: 1`) · 사유 · 제안 = 2줄 (`-webkit-line-clamp: 2`), 전문은 행 drawer.
 - **header-meta slack**: 전체가 읽혀야 하는 header meta 는 텍스트를 1.1배 넓게 그려도 들어가야 한다 (`improvement.loop-output.e2e` · `outcomes.render-structure.e2e` → `TEXT_SCALE`).
   - 긴 형태는 caller 의 `<span title>` 에 — node meta 엔 `CardHead` 가 title 을 달지 않는다 (예: `improvement.jsx` → `getLoopBasisI` = `{ text, title }`).
 
@@ -405,10 +386,10 @@
 
 | Level | 토큰 | 쓰임 | Light | Dark |
 |-------|------|------|-------|------|
-| **sunken** | `--surface-sunken` | 홈 · `th` · 배지 shell · tabs track · 미니바 트랙 | 245 fill | 24 fill |
-| **base** | `--surface-base` | 페이지 바탕 | 250 | 12 (가장 어두움) |
-| **raised** | `--surface-raised` | 카드 · KPI · 사이드바 | 255 fill + 1px `--line`, **shadow 없음** | 28 fill + 1px `--line`. `.card` 만 + `--shadow-raised` + inset 하이라이트 |
-| raised-2 (상태) | `--surface-raised-2` | 선택형 카드 hover/focus | raised + `--shadow-raised-2` + border `--faint` | 36 fill + `--shadow-raised-2` + inset |
+| **sunken** | `--sunken` | 홈 · `th` · 배지 shell · 미니바 트랙 | 245 fill | 24 fill |
+| **base** | `--surface` | 페이지 바탕 | 250 | 12 (가장 어두움) |
+| **raised** | `--elev` | 카드 · KPI · 사이드바 | 255 fill + 1px `--line`, **shadow 없음** | 28 fill + 1px `--line`. `.card` 만 + `--shadow-raised` + inset 하이라이트 |
+| raised-2 (상태) | `--surface-raised-2` | 인터랙티브 타일 · 컨트롤 hover (`.i-tile-hover` · `.arch-zoom-btn`) | raised + `--shadow-raised-2` + border `--faint` | 36 fill + `--shadow-raised-2` |
 | **overlay** | `--surface-overlay` | drawer · dialog · popover | 255 fill + `--shadow-overlay` | 28 fill + `--shadow-overlay` |
 
 - 5단계 이상 금지. overlay 는 그림자 필수, raised 는 테마별로 다르다.
@@ -440,7 +421,7 @@
 
 1. **Scrim**: 텍스트가 얹히면 그 뒤에 `rgb(var(--elev) / 0.85)` 이상 면 — 4.5:1 확보.
 2. **Border**: `1px solid` `--glass-border` 0.15 — 경계가 blur 에만 의존하지 않게.
-3. **dark 보상**: fill 불투명도 ↑ (`--material-glass-alpha` 0.82), 휘도 step 확보.
+3. **dark 보상**: fill 불투명도 ↑, 휘도 step 확보.
 4. **Fallback**: `@media (prefers-reduced-transparency)` 로 불투명 대체 (§9.3).
 
 ### 6.5 기타 표면 · z stack
@@ -499,7 +480,6 @@
 
   - 한 행의 peer 는 같은 slot → 끝선 일치 (두 M 목록 = 8 × 40 + 40 foot).
   - `getSlotRows` 가 row budget 으로 자르고 숨긴 개수를 돌려준다 → foot 의 `Show all N` / `Show top N` 이 제자리에서 토글.
-- **raised-2**: 선택형 카드만 (`.card.raised-2:hover` · `.card.is-focused`, §6.1) · 120ms `border-color` · `box-shadow`. **blur 금지.**
 
 ### 7.2 KPI — `KPI` · `KpiValue` (`.kpi*`)
 
@@ -515,7 +495,7 @@
 - **neutral shell 하나** (모든 role · tone 공용): `--sunken` bg · `--dim` text · 1px `--line` · min-height 22 · padding 3px 8px · `--radius-badge` 6 · `--fs-meta` · 500 · Pretendard · nowrap.
 - tone 은 내부 glyph/Icon 에만 (§4.2), 라벨은 항상 `--dim`. `Pill` → `Badge` 위임 (neutral → metadata · tone 있음 → glyph 가 있는 status).
   - glyph 명암 (`--sunken` shell 위): light warn 3.15 · info 3.38 · ok 3.45 · crit 4.63 · dark ≥ 6.62.
-- 변형: `.pill--absent` (투명 · `--faint` · dashed `--line`) · `.pill--meta` (소문자) · `.pill--count` (mono tabular) · `.pill--ctl-h` (같은 행 `.field` 와 높이, `--ctl-h`) · `.pill--interactive` (`<button>` · min-height `--ctl-min-h` · min-width 24 · pressed = selected fill) · `.pill--icon-only` (정사각, 의미는 aria-label/title).
+- 변형: `.pill--absent` (투명 · `--faint` · dashed `--line`) · `.pill--meta` (소문자) · `.pill--count` (mono tabular) · `.pill--ctl-h` (같은 행 `.field` 와 높이, `--ctl-h`) · `.pill--interactive` (`<button>` · min-height `--ctl-min-h` · min-width 24 · pressed = selected fill).
 - glass 위에 올리지 않는다 (AP-6).
 
 ### 7.4 Button — `.btn`
@@ -530,27 +510,24 @@
 - `.sm`: padding 4px 9px · `--fs-meta`. `.icon`: 32×32 정사각, padding 0.
 - disabled: opacity 0.5 · `not-allowed`. pressed (`aria-pressed="true"`) = `--selected-fill` / `--selected-ink`.
 
-### 7.5 Table — `Table` · `TableHead` · `ClampCell` · `ClampText` (`.tbl`)
+### 7.5 Table — `Table` · `TableHead` (`.tbl`)
 
 - `.tbl`: `--fs-control` · cell padding 9px 14px · 하단 1px `--line` · `td` height `--row-h` 40 · `.num` mono 우측 정렬 nowrap.
 - `th`: `--fs-meta` · uppercase · 0.04em · 500 · `--dim` on `--sunken` · `TableHead` 가 `scope="col"`.
 - sticky head (`isHeadSticky` → `STICKY_TH_STYLE`): 불투명 `--elev`, z 1 — 스크롤 시 본문을 가리지 않게.
-- clamp: `.cell-clamp` = 1줄 + `title` · `.clamp-2` = 2줄 + `title` + drawer 전문.
 - row: cursor pointer · hover `--sunken` · 마지막 행 border 없음. **row blur 금지.**
 - **행 상태 fill** (clauded-docs ledger, stripe 없음): selector `.tbl tbody tr.doc-row` 로 공용 hover 를 이기고 hover 중에도 유지.
   - viewer 행 (`.is-selected`): `--accent` 0.035 + 제목 600 + `aria-current="true"`.
   - checked (`.is-multi-selected`): `--accent` 0.07 · 비-색 cue = checkbox. viewer + checked = 0.11.
   - 삭제 대기 (`.is-pending-delete`): 행 opacity 없음 — 제목 line-through + `aria-busy` + 제목 앞 crit glyph.
   - accent ladder 상한 = light warn glyph ≥ 3:1 (런타임 기본 accent 59 130 246 → α ≤ 0.12). binding: light both warn 3.03 · dark both pip 3.22 · light both pip 3.26 · light both faint 4.70. 사용자가 고른 다른 accent 는 측정 밖.
-- 그룹 행: `.is-grouped` 라벨 행 + `.row-desc` 전폭 설명 행 = 한 논리 행, hover 를 함께 밝힌다.
+- 그룹 행 (`.is-grouped`, `model-config.jsx`): 하단 border 없음.
 - caption: 기본 sr-only, `isCaptionShown` 이면 section-label 스타일.
 
-### 7.6 Tabs · Segmented — `Tabs` (`.tabs`/`.tab`) · `.seg`
+### 7.6 Segmented — `.seg`
 
-- `.tabs`: `--sunken` track · 1px `--line` · `--radius-control` · padding 3 · gap 2.
-- `.tab`: padding 4px 11px · min-height 32 · `--fs-meta` · `--dim` · 500 · `--radius-inline`.
 - `.seg`: `--elev` · 1px `--line` · `--radius-control` · clip. 버튼 padding 5px 10px · min-height 32 · `--fs-meta` · `--dim` · 사이 1px `--line`.
-- **filled selected 상태는 하나**: `.tab.active` · `[aria-selected]` · `.seg button.active` · `[aria-pressed]` · `.btn[aria-pressed]` · `.pill--interactive[aria-pressed]` · stage menu `[aria-checked]` 모두 `--selected-fill` / `--selected-ink` · 500.
+- **filled selected 상태는 하나**: `.seg button.active` · `[aria-pressed]` · `.btn[aria-pressed]` · `.pill--interactive[aria-pressed]` · stage menu `[aria-checked]` 모두 `--selected-fill` / `--selected-ink` · 500.
   - stage menu 의 checked 항목은 fill 에 더해 check mark — 색이 유일한 신호가 되지 않게.
 - `.seg` focus ring 은 inset (`outline-offset` = −ring width) — `.seg` 가 자식을 clip 하므로.
 
@@ -558,7 +535,7 @@
 
 - 폭 220px. **< 1200px 에서 56px icon rail**: 라벨은 제거하지 않고 clip (`.rail-hide`) → 접근 이름 유지. 첫 배지는 우상단, 나머지 배지는 clip.
 - 면: `bg-elev` 불투명 · `border-r` · sticky, glass 금지.
-- `.nav-item`: `--fs-control` · `--dim` · padding 6px 10px · `--radius-control` · Icon 14 · hover/active = `--sunken` + `--ink`, active 500. `.nav-num`: mono `--fs-meta` `--faint` (active `--dim`).
+- `.nav-item`: `--fs-control` · `--dim` · padding 6px 10px · `--radius-control` · Icon 14 · hover/active = `--sunken` + `--ink`, active 500.
 - `.nav-badge`: mono `--fs-meta` · `--sunken` · 1px `--line` · pill radius — tone 과 무관한 neutral shell. 내용 = tone glyph (`text-<tone>`, aria-hidden, tone 있는 배지는 모두) + 값 + sr-only 설명 (`title` 동반).
 - 시스템 롤업 (`app.jsx` → `systemsRollup`): 라벨 `--dim` + tone glyph (✕ crit · ⚠ warn) + 6px dot.
   - dot = full-opacity tone fill (`dotClass` `bg-crit` · `bg-warn` · `bg-ok`, neutral `bg-faint`) — §4.2 의 허용 fill. 짝 = 롤업 단어 (crit · warn 은 glyph 도).
@@ -621,7 +598,7 @@
 | 항목 | 값 |
 |------|----|
 | main padding | 24 (`<main>` `p-6`) |
-| card gap · section gap | 16 (`.gap-card` · `.space-cards`) · 24 (`.gap-section` · `.space-sections`) |
+| card gap · section gap | 16 (`.gap-card` · `.space-cards`) · 24 (`.space-sections`) |
 | card 내부 | `--card-pad` 16 · head 48 · row 40 |
 | radius role | inline 4 < control 6 < tile 8 < card 12 · badge 6 |
 | SplitRow 나란히 | ≥ 1280px |
@@ -637,12 +614,11 @@
 - **`Popover({ label, title })`**: 트리거 = `btn ghost sm` (`aria-haspopup="dialog"` · `aria-expanded`) · 패널 `role="dialog"`.
   - non-modal: inert · scroll-lock · trap 없음. Esc 또는 바깥 press 로 닫히고 포커스는 트리거로. 치수 §6.5.
 
-### 7.13 폼 · diff · 기타 atom
+### 7.13 폼 · 기타 atom
 
 - **`.field`** (input · select): min-height `--ctl-h` 32 · padding `--ctl-pad-y` × `--ctl-pad-x` · `--ctl-font` · `--elev` · 1px `--line` · `--ctl-radius` · disabled opacity 0.5.
   - hover border `--faint` · focus = `--accent` border + 전역 focus outline · error `.is-error` = `--crit` border + `--fs-meta` crit 메시지 — §4.2 허용 예외 (메시지는 crit ≥ 4.5 인 면 위에서만).
   - `.field--mono`: mono tnum · `.field-select`: 테마별 `--faint` chevron · `.field-affix` (`$` 등): wrapper 가 border · focus 소유, `:has(:focus-visible)` 로 outline.
-- **`.diff-line`**: mono `--fs-meta` · `--add` / `--del` 은 `+`/`−` glyph(`--ok`/`--crit`) + 0.10 tint — glyph 가 1차 신호.
 - **`.stage-pip`**: 8px 원 · 빈 pip `--pip-empty` · 채움 `--ink`.
 - **`.low-sample`** (`LowSampleMark`): 작은 표본 비율 옆 italic `--faint` `(n=N)`.
 - **`.page-verdict`** (`PageVerdict`): glyph 가 tone, 단어 · 문장은 ink. chip 은 resting button chrome (`--elev` · `--line` · `--ink`), 맨 텍스트 금지.
@@ -676,7 +652,7 @@
 
 ## 8. 모션 (Motion — 절제된 라이브 마이크로 인터랙션)
 
-- **상시 ambient 루프는 `.live-dot` 하나** (1.6s `liveBlink`, opacity 1→0.35) — 사이드바 시스템 롤업이 ok 일 때만. 새 상시 루프 신설 금지. `.pulse-ring` (`tokens.css`) 은 정의만, 소비처 없음 — 쓰지 않는다.
+- **상시 ambient 루프는 `.live-dot` 하나** (1.6s `liveBlink`, opacity 1→0.35) — 사이드바 시스템 롤업이 ok 일 때만. 새 상시 루프 신설 금지.
 - **로딩 표시** (로딩 중에만 돈다, 모두 reduced-motion 게이트 필수 §8.4):
   - skeleton pulse 1.4s ease-in-out — 화면 `<style>` class 로만 (inline `animation` 은 reduce 블록이 덮지 못해 금지): `.skel-pulse-c`(cost) · `.skel-pulse-o`(outcomes).
   - spinner: `.ga-spin` 0.9s (dashboard) · `.doc-action-spinner` 900ms (clauded-docs) · `.i-act-spin` 0.7s (improvement) · `RefreshButton` · `LoadingPlaceholder` icon `motion-safe:animate-spin` (Tailwind 1s).
@@ -689,15 +665,13 @@
   - drawer: `detailDrawerSlide` translateX 100%→0, 240ms `cubic-bezier(0.16, 1, 0.3, 1)`.
   - fullscreen: `detailFade` opacity, 180ms ease-out · confirm: `detailPop` opacity + scale 0.97→1, 180ms ease-out.
   - alert-card: `detailFade` 150ms `cubic-bezier(0.2, 0, 0, 1)` (effects-fast).
-- **secondary — hover 깊이 · 상태**: `border-color` + `box-shadow` (+ `background`) 120ms — `.btn` · `.kpi` · `.card.raised-2` · `.field` · 화면 행 `.doc-row` · `.outcome-row` (background) · improvement 타일 `.i-tile-hover` (box-shadow, transform lift 없음) · `.arch-zoom-btn`. Tailwind 유틸은 `motion-safe:` + `duration-[120ms]`.
+- **secondary — hover 깊이 · 상태**: `border-color` + `box-shadow` (+ `background`) 120ms — `.btn` · `.kpi` · `.field` · 화면 행 `.doc-row` · `.outcome-row` (background) · improvement 타일 `.i-tile-hover` (box-shadow, transform lift 없음) · `.arch-zoom-btn`. Tailwind 유틸은 `motion-safe:` + `duration-[120ms]`.
 - **ambient**: `.live-dot` 만.
 - **즉시** (transition 없음): disclosure chevron 회전 · checkbox toggle (`.doc-checkbox`) · Recharts `Tooltip` 추종 (`isAnimationActive={false}`, series 와 동일).
 
 ### 8.2 데이터 변경 신호
 
 - 데이터 변경은 애니메이션하지 않는다 — 새 값은 제자리에서 다시 렌더. 리스트 reorder transition · sparkline draw 도 없다.
-- `base.css` 의 `@keyframes valueFlash` + `.kpi-value.updated` 는 정의만, `.updated` 를 토글하는 코드 없음.
-- 이 신호를 배선할 때는 effects 계열(opacity/color, overshoot 없음), §8.4 게이트 안에서.
 
 ### 8.3 타이밍 표준
 
@@ -709,7 +683,7 @@
 ### 8.4 prefers-reduced-motion 계약 (필수)
 
 - 모든 모션은 `@media (prefers-reduced-motion: reduce)` 게이트를 갖는다. reduce 범위:
-  - `base.css` (파일 순서): `DetailSurface` 3 variant 진입 (`.detail-drawer` · `.detail-fullscreen` · `.detail-confirm` 의 `.detail-panel`) `animation-duration: 0.01ms !important` · `.live-dot` `animation: none` + opacity 0.8 · `.pulse-ring::after` · `.kpi-value.updated` · `[class*="valueFlash"]` · `.alert-card` 애니메이션 정지 · `.card.raised-2:hover` / `.is-focused` · `.btn` · `.kpi` transition 제거 · `.field` · `.field-affix` transition 제거.
+  - `base.css` (파일 순서): `DetailSurface` 3 variant 진입 (`.detail-drawer` · `.detail-fullscreen` · `.detail-confirm` 의 `.detail-panel`) `animation-duration: 0.01ms !important` · `.live-dot` `animation: none` + opacity 0.8 · `.alert-card` 애니메이션 정지 · `.btn` · `.kpi` transition 제거 · `.field` · `.field-affix` transition 제거.
   - 화면별 `<style>`: `.ga-spin` · `.skel-pulse-c` · `.skel-pulse-o` · `.outcome-row` · `.doc-action-spinner` · `.doc-row` · `.tbl.doc-ledger-busy` · `.i-act-spin` (`animation-duration: 0.01ms`) · `.i-tile-hover` · architecture 노드 · `.arch-zoom-btn` · dev-only `.twk-seg-thumb` · `.twk-toggle` (`__TWEAKS_STYLE`).
   - Tailwind 유틸: `motion-safe:` prefix 가 게이트 (`animate-spin` · `transition-colors` · `transition-opacity`).
 - **finder** (merged tree 에서 허용 hit 만):
@@ -735,7 +709,7 @@
 ### 9.2 backdrop-filter 성능 예산
 
 - **뷰포트당 동시 backdrop-filter ≤ 2** — drawer/fullscreen 위 confirm 스택이 상한. 스크롤 리스트 아이템 금지.
-- blur radius ≤ 12px (`--glass-blur`) · production overlay scrim = 8px.
+- blur radius ≤ 12px · production overlay scrim = 8px.
 - 각 backdrop-filter = 새 GPU 컴포지팅 레이어 + 스크롤마다 repaint → 상시 표면 금지.
 
 ### 9.3 prefers-reduced-transparency 계약
@@ -749,9 +723,6 @@
     .modal-backdrop, .detail-overlay { background: rgb(0 0 0 / 0.35); backdrop-filter: blur(8px); }
   }
 }
-@media (prefers-reduced-transparency: reduce) {
-  .glass-surface { background: rgb(var(--elev)); backdrop-filter: none; }
-}
 ```
 
 ---
@@ -762,7 +733,7 @@
 
 **토큰**
 - [ ] 새 hue 없음 — 신규 색은 warm-stone 에서 도출한 kind A triplet, alpha 는 사용처 합성. 토큰 변경은 `tokens.css` 와 §3 블록을 같은 변경에서.
-- [ ] font-size 는 `--fs-*` 만 (px 리터럴 없음) · radius 는 role 토큰 · shadow 는 `--shadow-*` 만 (Tailwind `shadow-card`/`shadow-float` · 하드코딩 금지, §3.4 finder 허용 hit 만).
+- [ ] font-size 는 `--fs-*` 만 (px 리터럴 없음) · radius 는 role 토큰 · shadow 는 `--shadow-*` 만 (하드코딩 금지, §3.4 finder 허용 hit 만).
 
 **타이포 · 카피**
 - [ ] 렌더 텍스트 ≥ 13px (map default view · tweaks 패널 포함) · 수치는 mono tnum, 값:단위 2:1 (KPI 32/16).
@@ -805,9 +776,8 @@
   - Tailwind CDN-JIT + 런타임 `tailwind.config` 객체. Tailwind v4 `@theme` / Oxide / OKLCH 가 **아니다** → `@theme` 자동 토큰 · `text-[var(…)]` 색 파싱 가정 불가.
   - JSX 는 esbuild 로 precompile — `public/src` 의 `.jsx` 를 고치면 `npm run build:jsx` (`public/src/data/*.js` 는 빌드 없이 로드).
     - 새 `.jsx` 파일은 `package.json` → `build:jsx` 진입점 목록과 `index.html` 의 `dist/` script 태그에 함께 추가 — 목록 밖 파일은 빌드 · 로드되지 않는다.
-  - UI 는 `window.UI` atom 으로 생성 (`Card` · `CardHead` · `SplitRow` · `DetailSurface` · `Badge` · `Table`/`ClampCell` · `KPI` · `EmptyState` · `AgentName`).
+  - UI 는 `window.UI` atom 으로 생성 (`Card` · `CardHead` · `SplitRow` · `DetailSurface` · `Badge` · `Table` · `KPI` · `EmptyState` · `AgentName`).
   - 로딩 · 오류 · 신선도 상태도 atom 으로: `LoadingPlaceholder` · `SkeletonRows` · `RegionFailure` · `PageErrorBanner` · `AlertCard` · `RetryButton` · `FreshnessStamp` · `RefreshButton` (§3.3).
-  - 생성 금지: 소비처 없는 예약 class · atom `.glass-surface` · `.card-raised` · `.elev-overlay` · `AgentBadge` · stripe class `.sev-bar` · `.alert-row` (§4.2 no-stripe — severity 행은 `.alarm-row`).
 
 **Non-negotiable**
 
@@ -822,7 +792,7 @@
 
 **Flexible**
 
-- `--glass-blur` (8–12px) · `--material-glass-alpha` (light 0.7–0.8 / dark 0.8–0.85).
+- glass blur (8–12px) · glass fill 불투명도 (light 0.7–0.8 / dark 0.8–0.85).
 - 카드 slot 선택 (S/M/L) · `SplitRow layout` 선택 (근거: peer 여부).
 - overlay 진입 easing (effects 계열, overshoot 없음).
 
