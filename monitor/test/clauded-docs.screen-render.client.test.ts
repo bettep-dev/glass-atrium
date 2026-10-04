@@ -56,6 +56,8 @@ const SHIPPED_ATOMS = {
   getRowKeyAction: shippedUi.getRowKeyAction,
   getDisplayName: shippedUi.getDisplayName,
   getRegionView: shippedUi.getRegionView,
+  TONE_GLYPH: shippedUi.TONE_GLYPH,
+  TONE_ICON: shippedUi.TONE_ICON,
 };
 
 // in-memory Storage → the screen's group-expand hydrate reads an empty store instead of failing
@@ -852,7 +854,7 @@ test("the summary's oldest-open link opens that document", async () => {
   assert.deepEqual(opened, [11]);
 });
 
-test("Created shows relative age with the date in a tooltip, and only an open row past seven days is tinted with a text label", async () => {
+test("Created shows relative age with the date in a tooltip, and only an open row past seven days is marked stale with a glyph and a text label", async () => {
   const screen = await loadDocsScreen();
   const props = listCardProps(() => undefined);
   props.rows = pipelineRows();
@@ -869,6 +871,7 @@ test("Created shows relative age with the date in a tooltip, and only an open ro
   assert.ok(staleCell, "age is the primary value");
   assert.match(String(staleCell.props.title), /^Created date\(/);
   assert.match(collectText(staleCell), /stale/i, "stale is said in words, not colour alone");
+  assert.equal(findNodes(staleCell, (n) => n.props.atom === "Icon" && n.props.className === "text-warn").length, 1, "the warn tone rides a glyph");
   assert.equal(ageCells.filter((td) => /stale/i.test(collectText(td))).length, 1);
 });
 
@@ -968,7 +971,7 @@ test("the open-summary rail titles each group with a level-2 heading and pairs e
     assert.equal(cells.length % 2, 0, "every label has a count");
     cells.forEach((type, i) => assert.equal(type, i % 2 === 0 ? "dt" : "dd", `cell ${i} alternates label then count`));
   }
-  const ageTerms = findNodes(rail, (n) => n.type === "dt").map((n) => collectText(n));
+  const ageTerms = findNodes(rail, (n) => n.type === "dt").map((n) => collectText(n).trim());
   assert.ok(ageTerms.includes("Over 7 days"), `age labels stand alone: ${ageTerms.join(" | ")}`);
 });
 
@@ -1003,4 +1006,265 @@ describe("the header hands its read state to the shell exactly once, with or wit
       if (row.direct) assert.deepEqual(plain(calls[0]), { at: null, regions: [row.state] });
     });
   }
+});
+
+const noop = () => undefined;
+const isDarkScope = (n: RenderedNode) => n.props["data-theme"] === "dark";
+const hasClass = (name: string) => (n: RenderedNode) => String(n.props.className ?? "").split(/\s+/).includes(name);
+const isAtom = (atom: string) => (n: RenderedNode) => n.props.atom === atom;
+type RenderedNode = ReturnType<typeof findNodes>[number];
+
+function isInDarkScope(tree: ReturnType<typeof renderScreen>, predicate: (n: RenderedNode) => boolean): boolean {
+  return findNodes(tree, isDarkScope).some((scope) => findNodes(scope, predicate).length > 0);
+}
+
+function viewerDoc(extra: Record<string, unknown> = {}) {
+  return { id: 9, title: "Doc 9", format: "txt", body: "probe", doc_status: "open", supersedes_id: null, superseded_by_id: null, ...extra };
+}
+
+function renderViewerPanel(screen: Record<string, unknown>, state: Record<string, unknown>) {
+  return renderScreen((screen.ViewerPanelCD as Component)({
+    state, pendingDelete: null, onDelete: noop, onClose: noop, onPickStage: noop, togglingIds: new Set(),
+    optimisticStatusOverrides: new Map(), onNavigate: noop, showToast: noop,
+  }));
+}
+
+test("the viewer chrome resolves the dark theme in either app theme, and the rendered document never takes that scope", async () => {
+  const screen = await loadDocsScreen();
+  const tree = renderViewerPanel(screen, { status: "ready", data: viewerDoc({ superseded_by_id: 10 }) });
+
+  assert.ok(isInDarkScope(tree, isAtom("CardHead")), "the viewer head");
+  assert.ok(isInDarkScope(tree, isAtom("AlertCard")), "the newer-version notice");
+  assert.ok(isInDarkScope(tree, (n) => n.type === "aside" && n.props["aria-label"] === "Document metadata"), "the metadata rail");
+  assert.equal(findNodes(tree, hasClass("doc-body-isolation")).length, 1);
+  assert.equal(isInDarkScope(tree, hasClass("doc-body-isolation")), false, "the rendered document keeps its own canvas");
+});
+
+describe("a viewer with no rendered document shows its state inside the dark chrome scope", () => {
+  const rows = [
+    { name: "idle", state: { status: "idle" }, shown: hasClass("doc-empty") },
+    { name: "loading", state: { status: "loading" }, shown: isAtom("LoadingPlaceholder") },
+    { name: "failed read", state: { status: "error", error: "HTTP 500" }, shown: isAtom("RegionUnavailable") },
+    { name: "body that cannot render", state: { status: "ready", data: viewerDoc({ format: "md", body: "# x" }) }, shown: isAtom("AlertCard") },
+  ];
+  for (const row of rows) {
+    test(row.name, async () => {
+      const screen = await loadDocsScreen();
+      const tree = renderViewerPanel(screen, row.state);
+      assert.ok(isInDarkScope(tree, row.shown), `${row.name}: state shown in the dark scope`);
+    });
+  }
+});
+
+test("a newer revision announces itself as one inset warn alert card whose action opens the latest revision", async () => {
+  const screen = await loadDocsScreen();
+  const opened: unknown[] = [];
+  const tree = renderScreen((screen.ViewerPanelCD as Component)({
+    state: { status: "ready", data: viewerDoc({ superseded_by_id: 10 }) }, pendingDelete: null, onDelete: noop, onClose: noop,
+    onPickStage: noop, togglingIds: new Set(), optimisticStatusOverrides: new Map(), onNavigate: (id: unknown) => opened.push(id), showToast: noop,
+  }));
+
+  const cards = findNodes(tree, isAtom("AlertCard"));
+  assert.equal(cards.length, 1);
+  assert.equal(cards[0].props.tone, "warn");
+  assert.equal(cards[0].props.surface, "inset");
+  const action = renderScreen(cards[0].props.actions);
+  const [button] = findNodes(action, (n) => n.type === "button");
+  assert.match(collectText(button), /View latest/);
+  (button.props.onClick as () => void)();
+  assert.deepEqual(opened, [10]);
+});
+
+test("an error banner speaks through the shared crit alert card, keeping its detail and its Retry", async () => {
+  const screen = await loadDocsScreen();
+  const retried: number[] = [];
+  const tree = renderScreen((screen.ErrorBannerCD as Component)({ title: "Couldn't load", detail: "HTTP 500", onRetry: () => retried.push(1) }));
+
+  const [card] = findNodes(tree, isAtom("AlertCard"));
+  assert.ok(card, "one alert card");
+  assert.equal(card.props.tone, "crit");
+  assert.equal(card.props.title, "Couldn't load");
+  assert.equal(card.props.body, "HTTP 500");
+  const [retry] = findNodes(renderScreen(card.props.actions), (n) => n.type === "button");
+  (retry.props.onClick as () => void)();
+  assert.deepEqual(retried, [1]);
+});
+
+test("a toast keeps a neutral shell with its tone class on the root, and its tone rides a leading glyph", async () => {
+  const screen = await loadDocsScreen();
+  const glyphs = shippedUi.TONE_GLYPH as Record<string, string>;
+  for (const tone of ["ok", "info", "warn", "crit"]) {
+    const tree = renderScreen((screen.DocToastCD as Component)({ toast: { tone, message: "Grouped 3" } }));
+    const [root] = findNodes(tree, hasClass("doc-toast"));
+    assert.ok(hasClass(tone)(root), `${tone}: tone class on the root`);
+    const [glyph] = findNodes(root, hasClass("doc-toast-glyph"));
+    assert.equal(glyph.props["aria-hidden"], "true");
+    assert.equal(collectText(glyph), glyphs[tone]);
+    assert.match(collectText(root), /Grouped 3/);
+  }
+});
+
+// stub state: the first object-shaped state with a status reads as the given one; null-initialised state reads as `nullAs`
+function stubbedStateReact(statusState: Record<string, unknown>, nullAs: unknown = null) {
+  return {
+    ...createReactStub(),
+    useState: (initial: unknown) => {
+      const value = typeof initial === "function" ? (initial as () => unknown)() : initial;
+      if (value && typeof value === "object" && "status" in value) return [statusState, noop];
+      return [value === null ? nullAs : value, noop];
+    },
+  };
+}
+
+// member rows come back as a bare array of rows → hosted in a tbody like the ledger does
+function inTbody(rows: unknown) {
+  return { __element: true, type: "tbody", props: { children: [rows] } };
+}
+
+const TONED_WORDS = /(?:^|[;{\s])(?:color|background(?:-color)?)\s*:\s*rgb\(var\(--(?:crit|warn|ok|info)\)/;
+
+test("no rule in the Documents style block paints words or a row fill in a severity tone", async () => {
+  const css = getScreenCss(await loadDocsScreen());
+  const toned = [...css.matchAll(/([^{}]+)\{([^{}]*)\}/g)].filter((m) => TONED_WORDS.test(m[2])).map((m) => m[1].trim());
+  assert.deepEqual(toned, []);
+});
+
+describe("a tone in the Documents screen rides a leading glyph while its words stay neutral", () => {
+  const member = { id: 21, title: "Member", doc_status: "open", format: "md", audience: "exposed", author: "a", created_at: "2026-09-01T00:00:00Z" };
+  const memberProps = {
+    folderId: 5, representativeId: 21, memberCount: 2, onReorder: noop, isSearchMode: false, hasTagsColumn: false,
+    selectedId: null, selectedIds: new Set(), pendingDelete: null, onSelect: noop, onToggleSelection: noop, onPickStage: noop,
+    togglingIds: new Set(), optimisticStatusOverrides: new Map(),
+  };
+  const rows = [
+    {
+      name: "a failed member load", tone: "crit", text: /Couldn't load group members/,
+      render: (s: Record<string, unknown>) => inTbody((s.GroupMembersRowsCD as Component)(memberProps)),
+      react: () => stubbedStateReact({ status: "error", data: null, error: "HTTP 500" }),
+    },
+    {
+      name: "a reorder that did not save", tone: "crit", text: /Order not saved/,
+      render: (s: Record<string, unknown>) => inTbody((s.GroupMembersRowsCD as Component)(memberProps)),
+      react: () => stubbedStateReact({ status: "ready", data: [member, { ...member, id: 22 }], error: null }, "Order not saved — reverted"),
+    },
+    {
+      name: "a previous revision that failed to load", tone: "warn", text: /Couldn't load previous revision/,
+      render: (s: Record<string, unknown>) => (s.PredecessorPanelCD as Component)({ predecessorId: 7, currentDoc: viewerDoc(), onNavigate: noop }),
+      react: () => stubbedStateReact({ status: "error", data: null, error: "HTTP 404" }),
+    },
+    {
+      name: "the stale age bucket in the open summary", tone: "warn", text: /Over 7 days/,
+      render: (s: Record<string, unknown>) => (s.DocOpenSummaryCD as Component)({
+        summary: { stages: [], buckets: { fresh: 0, aging: 0, stale: 2 }, oldest: null, openCount: 2 }, isPartial: false, onSelect: noop,
+      }),
+      react: () => createReactStub(),
+    },
+  ];
+  for (const row of rows) {
+    test(row.name, async () => {
+      const screen = await loadDocsScreen(row.react());
+      const tree = renderScreen(row.render(screen));
+      assert.match(collectText(tree), row.text);
+      const glyphs = findNodes(tree, (n) => n.props.atom === "Icon" && n.props.className === `text-${row.tone}`);
+      assert.equal(glyphs.length, 1, `${row.name}: one ${row.tone} glyph`);
+      const tonedInline = findNodes(tree, (n) => /--(?:crit|warn|ok|info)\)/.test(String((n.props.style as { color?: unknown } | undefined)?.color ?? "")));
+      assert.deepEqual(tonedInline.map((n) => collectText(n)), [], `${row.name}: no word painted in a tone`);
+    });
+  }
+});
+
+test("the version history names the current revision in ink, never in a severity tone", async () => {
+  const screen = await loadDocsScreen();
+  const tree = renderScreen((screen.PredecessorPanelCD as Component)({ predecessorId: 7, currentDoc: viewerDoc(), onNavigate: noop }));
+  const [label] = findNodes(tree, (n) => n.type === "span" && collectText(n).trim() === "Current revision");
+  assert.equal((label.props.style as { color: string }).color, "rgb(var(--ink))");
+});
+
+test("the viewer row and a pending delete each carry a non-colour cue: the open row is current, a pending row is busy behind a crit glyph", async () => {
+  const screen = await loadDocsScreen();
+  const tree = renderListCard(screen, { selectedId: 12, pendingDelete: { id: 11, expiresAt: Date.now() + 5000 } });
+  const docRows = findNodes(tree, (n) => n.type === "tr" && hasClass("doc-row")(n));
+  const byLabel = (label: string) => docRows.find((tr) => tr.props["aria-label"] === label) as RenderedNode;
+
+  assert.equal(byLabel("Doc 12").props["aria-current"], "true");
+  assert.equal(byLabel("Doc 11").props["aria-busy"], "true");
+  assert.equal(byLabel("Doc 12").props["aria-busy"], undefined);
+  assert.equal(findNodes(byLabel("Doc 11"), (n) => n.props.atom === "Icon" && n.props.className === "text-crit").length, 1);
+  assert.equal(findNodes(byLabel("Doc 12"), (n) => n.props.atom === "Icon" && n.props.className === "text-crit").length, 0);
+});
+
+test("ledger row states never draw a stripe, and hover, viewer focus, checked and both read as distinct fills", async () => {
+  const css = getScreenCss(await loadDocsScreen());
+  const alpha = (selector: string) => {
+    const match = cssRuleBody(css, selector).match(/background\s*:\s*rgb\(var\(--accent\)\s*\/\s*([\d.]+)\)/);
+    assert.ok(match, `${selector} fills with the accent`);
+    return Number(match[1]);
+  };
+  const fills = [".doc-row:hover", ".doc-row.is-selected", ".doc-row.is-multi-selected", ".doc-row.is-multi-selected.is-selected"].map(alpha);
+  assert.equal(new Set(fills).size, fills.length, `fills ${fills.join(" / ")} must differ`);
+  assert.doesNotMatch(css, /\.doc-row[^{]*\{[^}]*box-shadow\s*:\s*inset\s+\d+px\s+0/, "no stripe");
+  assert.match(cssRuleBody(css, ".doc-row.is-selected .doc-title-text"), /font-weight\s*:\s*600/);
+  assert.match(cssRuleBody(css, ".doc-row.is-pending-delete"), /opacity\s*:\s*0\.\d+/);
+});
+
+test("the Documents style block draws shadows only from the shadow tokens, a 1px ring or none", async () => {
+  const css = getScreenCss(await loadDocsScreen());
+  const shadows = [...css.matchAll(/box-shadow\s*:\s*([^;}]+)/g)].map((m) => m[1].trim());
+  const allowed = (value: string) => value === "none" || /^var\(--shadow-[\w-]+\)$/.test(value) || /^inset 0 0 0 1px /.test(value);
+  assert.deepEqual(shadows.filter((value) => !allowed(value)), []);
+  assert.match(cssRuleBody(css, ".doc-stage-menu"), /border-radius\s*:\s*var\(--radius-card\)/);
+});
+
+test("a ledger checkbox draws on theme tokens: neutral at rest, the one selected state when checked or mixed, and no transition", async () => {
+  const screen = await loadDocsScreen();
+  const css = getScreenCss(screen);
+  for (const props of [{ checked: false }, { checked: true }, { checked: false, indeterminate: true }]) {
+    const tree = renderScreen((screen.DocCheckboxCD as Component)({ ...props, onChange: noop, ariaLabel: "Select" }));
+    const [input] = findNodes(tree, (n) => n.type === "input");
+    const classes = String(input.props.className);
+    assert.ok(hasClass("doc-checkbox")(input), "token-drawn class");
+    assert.doesNotMatch(classes, /zinc-|emerald-|transition|duration-/);
+    const marks = findNodes(tree, (n) => n.props.atom === "Icon");
+    assert.equal(marks.length, props.checked || props.indeterminate ? 1 : 0);
+    for (const mark of marks) assert.ok(String(mark.props.className).includes("doc-checkbox-mark"));
+  }
+  assert.match(cssRuleBody(css, ".doc-checkbox"), /background\s*:\s*rgb\(var\(--elev\)\)/);
+  assert.match(cssRuleBody(css, ".doc-checkbox"), /border\s*:\s*1\.5px solid rgb\(var\(--faint\)\)/);
+  assert.match(cssRuleBody(css, ".doc-checkbox:checked, .doc-checkbox:indeterminate"), /background\s*:\s*rgb\(var\(--selected-fill\)\)/);
+  assert.match(cssRuleBody(css, ".doc-checkbox-mark"), /color\s*:\s*rgb\(var\(--selected-ink\)\)/);
+});
+
+function getReduceBlocks(css: string): { inside: string; outside: string } {
+  const opener = /@media\s*\(prefers-reduced-motion:\s*reduce\)\s*\{/g;
+  let inside = "";
+  let outside = "";
+  let cursor = 0;
+  for (let match = opener.exec(css); match; match = opener.exec(css)) {
+    outside += css.slice(cursor, match.index);
+    let depth = 1;
+    let index = match.index + match[0].length;
+    for (; depth > 0 && index < css.length; index++) depth += css[index] === "{" ? 1 : css[index] === "}" ? -1 : 0;
+    inside += css.slice(match.index + match[0].length, index - 1);
+    cursor = index;
+    opener.lastIndex = index;
+  }
+  return { inside, outside: outside + css.slice(cursor) };
+}
+
+test("every transition and animation in the Documents style block stops under reduced motion, and a disclosure chevron turns instantly", async () => {
+  const css = getScreenCss(await loadDocsScreen()).replace(/\/\*[\s\S]*?\*\//g, "");
+  const { inside, outside } = getReduceBlocks(css);
+  const rules = (source: string) => [...source.matchAll(/([^{}]+)\{([^{}]*)\}/g)].map((m) => ({ selectors: m[1].split(",").map((s) => s.trim()), body: m[2] }));
+  const moving = rules(outside).filter((r) => /(?:^|[;\s])(?:transition|animation)\s*:\s*(?!none)/.test(r.body)).flatMap((r) => r.selectors);
+  const stopped = new Set(rules(inside).filter((r) => /(?:transition|animation)\s*:\s*none/.test(r.body)).flatMap((r) => r.selectors));
+  assert.ok(moving.length > 0);
+  assert.deepEqual(moving.filter((selector) => !stopped.has(selector)), []);
+  assert.doesNotMatch(css, /\.chevron\s*\{[^}]*transition/);
+});
+
+test("a loading previous revision shows the shared loading placeholder, never an inline animated block", async () => {
+  const screen = await loadDocsScreen();
+  const tree = renderScreen((screen.PredecessorPanelCD as Component)({ predecessorId: 7, currentDoc: viewerDoc(), onNavigate: noop }));
+  assert.equal(findNodes(tree, isAtom("LoadingPlaceholder")).length, 1);
+  assert.deepEqual(findNodes(tree, (n) => (n.props.style as { animation?: unknown } | undefined)?.animation != null), []);
 });
