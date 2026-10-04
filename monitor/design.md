@@ -318,7 +318,12 @@
   - finder 2 (tone 을 칠한 라벨 · 수치): `grep -rnE "text-(crit|warn|ok|info)\b" public/src` + 보간 class `grep -rnE 'text-\$\{' public/src`.
     - 준수 hit: class 가 glyph · `Icon` · `SymI` 에 붙거나, 그 class 를 담는 tone 표 · 헬퍼 반환값 (`TONE_GLYPH_CLASS` · `TONE_SYMBOL` 계열) · 정렬 class (`` `text-${align}` ``) · 차트 막대 `currentColor`.
     - 단어를 감싸는 허용 hit 은 폼 오류 메시지뿐 (`model-config.jsx` field 메시지 · save-banner 요약 · `agents.jsx` 이름 불일치 메시지).
-  - full-opacity tone **fill** (`background` · SVG `fill` · `bg-<tone>`) 은 세 finder 밖 — 차트 data mark 와 사이드바 시스템 롤업 dot (§7.7, 롤업 단어 · glyph 와 짝) 외 소비처가 없어야 한다.
+  - finder 3 (full-opacity tone **fill** — `background` · SVG `fill` · `bg-<tone>`): `grep -rnE "(background(-color)?|fill) *: *[^;\"]*rgb\(var\(--(crit|warn|ok|info|alert-tone)\)\)|(background|backgroundColor|fill) *[:=] *[\"'{][^\"'}]*rgb\(var\(--(crit|warn|ok|info)\)\)|bg-(crit|warn|ok|info)\b[^/]" public/src public/styles`.
+    - 허용 hit — full-opacity tone fill 의 전체 목록:
+      - 차트 data mark: `wiki.jsx` status mix 막대 · `agents.jsx` latency `bg-info` 막대와 범례 swatch · quality-health 차트 (`RATIO` 축 라벨 · tooltip key swatch).
+      - 사이드바 시스템 롤업 dot (§7.7 `dotClass`) — 롤업 단어 · glyph 와 짝.
+      - light alert-card glyph well (`--alert-well-fill`, 위 alert-card 항목) — `--elev` knock-out glyph 를 담는 glyph carrier. dark 는 0.12 tint 라 hit 아님.
+      - destructive action `.btn.danger` (§7.4) · System map 링 badge glyph (`text.arch-ring-glyph` fill = glyph 의 tone) · 미소비 `.sev-bar` (§3.3, 쓰지 않음).
 - `.diff-line--add/--del` 의 옅은 tint 는 허용 — `+`/`−` glyph 가 1차 신호.
 - **미해결 예외 — 팔레트 결정 대기**: clauded-docs ledger 행 상태 fill (§7.5) 위 대비 쌍. tone shell 이 아니라 accent fill 의 명암 미달.
   - 측정 accent = 런타임 기본값 (`TWEAK_DEFAULTS.accent` 59 130 246, 양 테마 — §4.4). `tokens.css` fallback 은 mount 전에만 칠해져 측정 밖. 사용자가 고른 다른 accent 도 측정 밖.
@@ -780,7 +785,7 @@
 - [ ] 목록은 S/M/L slot 의 row budget + `Show all N` foot, stretched 행 안 중첩 스크롤 없음.
 
 **색 · severity**
-- [ ] severity = glyph + 색 + 단어. tone 은 glyph 에만 — shell · stripe · fill · border 아님 (§4.2 허용 예외: 폼 오류 · System map 링 · 범례). §4.2 finder 1 · 1b · 2 는 허용 hit 만.
+- [ ] severity = glyph + 색 + 단어. tone 은 glyph 에만 — shell · stripe · fill · border 아님 (예외는 §4.2 의 허용 예외 · finder 허용 hit 목록 그대로 — 롤업 dot · light alert-card well 포함). §4.2 finder 1 · 1b · 2 · 3 은 허용 hit 만.
 - [ ] severity 요소를 glass/blur 위에 올리지 않음 · `--cat-*` 는 분류(차트)에만, cat-2/4 text 금지 · focus 는 `--focus-ring` (`--accent` 아님).
 
 **유리 · 깊이**
