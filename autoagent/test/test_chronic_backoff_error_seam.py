@@ -1,7 +1,7 @@
-"""Behavioral tests for the chronic-timeout back-off error seam in run_cycle.
+"""Behavioral tests for the chronic-timeout back-off error seam in generation.
 
-``run_cycle`` fills ``PatchResult.error`` from ``proposal.rationale`` whenever the
-generation produced no diff — that error is what
+The generation unit (``build_patch_result``) fills ``PatchResult.error`` from
+``proposal.rationale`` whenever the generation produced no diff — that error is what
 ``_pg_push_autoagent_cycle._aggregate`` reads to flip the cycle to 'partial'. The
 chronic back-off branch is the ONE empty-diff path that must NOT set it: a target
 whose consecutive-timeout streak reached ``TIMEOUT_BACKOFF_THRESHOLD`` is skipped
@@ -20,12 +20,11 @@ Pinned invariants:
   (4) parse_mode='escalated' → haiku_status='ok:escalated', apply-eligible by the
       documented `ok` prefix — slow generation is a normal apply candidate.
 
-The cycle runs with ``skip_haiku=False`` on purpose: ``skip_haiku`` forces the
+The unit runs with ``skip_haiku=False`` on purpose: ``skip_haiku`` forces the
 streak to 0 and would bypass the branch under test. No network is reached — the
 back-off branch makes no Haiku call, and the fresh-timeout case stubs the
-generator. ``skip_loop_emit=True`` skips only the cycle's gated emits — the
-discharge head stage and the regression-gate reads run regardless — so setUp
-seals every PG path (``seal_pg_reach``).
+generator. The back-off branch reads the back-off state, so setUp seals every PG
+path (``seal_pg_reach``) and every run asserts nothing reached it.
 
 Run with either runner:
     python3 -m unittest autoagent.test.test_chronic_backoff_error_seam -v
@@ -70,7 +69,7 @@ _PROBE_AGENT = "backoff-seam-probe-agent"
 
 @unittest.skipIf(dc is None, f"import failed: {_IMPORT_ERROR}")
 class BackoffErrorSeam(unittest.TestCase):
-    """One cycle over a single backed-off target — no PG, no Haiku, no network."""
+    """One generation unit over a single backed-off target — no PG, no Haiku, no network."""
 
     def setUp(self) -> None:
         tmp = tempfile.TemporaryDirectory()
@@ -81,7 +80,7 @@ class BackoffErrorSeam(unittest.TestCase):
         self.target_md = self.agents_dir / f"{_PROBE_AGENT}.md"
         self.target_md.write_text("# probe agent\n", encoding="utf-8")
 
-        pattern = dc.Pattern(
+        self.pattern = dc.Pattern(
             date="2026-07-01",
             label="probe pattern",
             frequency="9",
@@ -91,15 +90,10 @@ class BackoffErrorSeam(unittest.TestCase):
             raw_line=f"pg:learning_log:1:probe pattern|{_PROBE_AGENT}",
             row_id=1,
         )
-        for target, repl in (
-            ("read_user_pending_patterns", lambda *a, **k: [pattern]),
-            ("fetch_generation_outcomes", lambda *a, **k: []),
-            # Intra-cycle spacing is a real sleep on the non-backoff branch.
-            ("INTER_CALL_SPACING_SEC", 0.0),
-        ):
-            patcher = mock.patch.object(dc, target, repl)
-            patcher.start()
-            self.addCleanup(patcher.stop)
+        # Intra-cycle spacing is a real sleep on the non-backoff branch.
+        patcher = mock.patch.object(dc, "INTER_CALL_SPACING_SEC", 0.0)
+        patcher.start()
+        self.addCleanup(patcher.stop)
         self.pg_reach = seal_pg_reach(self)
 
     def _run(self, *, streak: int, proposal: "dc.PatchProposal | None") -> "dc.PatchResult":
@@ -113,20 +107,19 @@ class BackoffErrorSeam(unittest.TestCase):
         with mock.patch.object(dc, "consecutive_timeout_count", lambda _t: streak):
             with mock.patch.object(dc, "generate_consolidated_proposal", _no_haiku):
                 with contextlib.redirect_stderr(io.StringIO()):
-                    report = dc.run_cycle(
-                        log_path=self.tmp_dir / "learning-log.md",
-                        outcomes_dir=self.tmp_dir,
+                    patch = dc.build_patch_result(
+                        _PROBE_AGENT,
+                        [self.pattern],
+                        [],
+                        cycle_date="2026-07-02",
                         agents_dir=self.agents_dir,
+                        seen_targets=set(),
                         skip_haiku=False,
                         skip_pre_verify=True,
                         skip_loop_emit=True,
                     )
-        self.assertEqual(len(report.patches), 1)
-        return report.patches[0]
-
-    def test_when_cycle_runs_then_no_postgres_seam_is_reached(self) -> None:
-        self._run(streak=dc.TIMEOUT_BACKOFF_THRESHOLD, proposal=None)
         self.assertEqual(self.pg_reach, [])
+        return patch
 
     def test_when_streak_at_threshold_then_error_empty(self) -> None:
         patch = self._run(streak=dc.TIMEOUT_BACKOFF_THRESHOLD, proposal=None)

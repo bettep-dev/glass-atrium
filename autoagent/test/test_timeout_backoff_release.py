@@ -368,7 +368,7 @@ class ReadSeamTest(unittest.TestCase):
         self.assertEqual(state.streak, 0)
 
     def test_when_count_wrapper_called_then_it_reports_the_state_streak(self):
-        # consecutive_timeout_count stays the run_cycle seam; the superseded-row
+        # consecutive_timeout_count stays the generation seam; the superseded-row
         # correction lands inside it rather than beside it.
         with mock.patch.object(
             dc,
@@ -385,7 +385,7 @@ _PROBE_AGENT = "backoff-release-probe-agent"
 
 @unittest.skipIf(dc is None, "daemon_cycle import failed: %s" % (_IMPORT_ERROR,))
 class CycleSeamTest(unittest.TestCase):
-    """run_cycle opens the gate for exactly the cycle the probe is due."""
+    """The generation unit opens the gate for exactly the cycle the probe is due."""
 
     def setUp(self) -> None:
         tmp = tempfile.TemporaryDirectory()
@@ -396,7 +396,7 @@ class CycleSeamTest(unittest.TestCase):
         self.target_md = self.agents_dir / f"{_PROBE_AGENT}.md"
         self.target_md.write_text("# probe agent\n", encoding="utf-8")
 
-        pattern = dc.Pattern(
+        self.pattern = dc.Pattern(
             date="2026-07-01",
             label="probe pattern",
             frequency="9",
@@ -406,14 +406,9 @@ class CycleSeamTest(unittest.TestCase):
             raw_line=f"pg:learning_log:1:probe pattern|{_PROBE_AGENT}",
             row_id=1,
         )
-        for target, repl in (
-            ("read_user_pending_patterns", lambda *a, **k: [pattern]),
-            ("fetch_generation_outcomes", lambda *a, **k: []),
-            ("INTER_CALL_SPACING_SEC", 0.0),
-        ):
-            patcher = mock.patch.object(dc, target, repl)
-            patcher.start()
-            self.addCleanup(patcher.stop)
+        patcher = mock.patch.object(dc, "INTER_CALL_SPACING_SEC", 0.0)
+        patcher.start()
+        self.addCleanup(patcher.stop)
         self.pg_reach = seal_pg_reach(self)
 
     def _run(self, *, state: "dc.BackoffState") -> tuple["dc.PatchResult", str]:
@@ -439,17 +434,19 @@ class CycleSeamTest(unittest.TestCase):
                     dc, "generate_consolidated_proposal", _probe_generation
                 ):
                     with _capture_stderr() as err:
-                        report = dc.run_cycle(
-                            log_path=self.tmp_dir / "learning-log.md",
-                            outcomes_dir=self.tmp_dir,
+                        patch = dc.build_patch_result(
+                            _PROBE_AGENT,
+                            [self.pattern],
+                            [],
+                            cycle_date="2026-07-02",
                             agents_dir=self.agents_dir,
+                            seen_targets=set(),
                             skip_haiku=False,
                             skip_pre_verify=True,
                             skip_loop_emit=True,
                         )
         self.assertEqual(self.pg_reach, [])
-        self.assertEqual(len(report.patches), 1)
-        return report.patches[0], err.getvalue()
+        return patch, err.getvalue()
 
     def test_when_probe_due_then_generation_attempted(self):
         patch, err = self._run(
