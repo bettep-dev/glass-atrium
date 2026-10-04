@@ -159,7 +159,7 @@ function TypeScaleStyle() {
   `}</style>;
 }
 
-// 증감 표시 — inverse=true 면 down=좋음/up=나쁨 (비용 증가 등 inverse 지표용). tone 은 화살표만, 수치는 neutral
+// 증감 표시 — 기본 up=나쁨(crit)/down=좋음(ok), inverse=true 면 반전 (상승이 좋은 지표용). tone 은 화살표만, 수치는 neutral
 function Delta({ value, inverse=false }) {
   const sign = value > 0 ? 'up' : value < 0 ? 'down' : 'flat';
   const isBad = inverse ? sign === 'down' : sign === 'up';
