@@ -456,10 +456,11 @@ class ExitCode(IntEnum):
 
 # Intra-cycle Haiku spacing (FIX #5) ----------------------------------------
 #
-# Bounded inter-call sleep between per-agent Haiku calls in the run_cycle loop
-# so the cycle does not self-contend its shared OAuth/usage window. Applied only
-# after a real call (not skip_haiku / not back-off). Small enough never to
-# materially lengthen a healthy cycle; env-overridable / 0 disables.
+# Bounded inter-call sleep between per-agent Haiku calls in _run_generation_loop
+# (no call while IS_GENERATION_CLOSED) so the cycle does not self-contend its
+# shared OAuth/usage window. Applied only after a real call (not skip_haiku /
+# not back-off). Small enough never to materially lengthen a healthy cycle;
+# env-overridable / 0 disables.
 INTER_CALL_SPACING_SEC = float(
     os.environ.get("AUTOAGENT_INTER_CALL_SPACING_SEC", "2.0") or "2.0"
 )
@@ -8555,7 +8556,7 @@ def supersede_prior_pending_for_agent(
     return len(superseded_ids)
 
 
-# -- Generation closed: stored pending auto rows ----------------------------
+# Generation closed: stored pending auto rows
 
 
 # Head of every generation-closed rationale; classify_failure_rationale
@@ -8848,9 +8849,9 @@ def drop_reject_streak_patterns(
     Args:
         agent: pattern target agent (group key).
         patterns: the agent's intake patterns (freq DESC).
-        rows: pre-fetched _fetch_proposal_history result — run_cycle shares one
-            fetch across both proposal-history gates (read-only here). None →
-            self-fetch (backward-compatible for direct callers).
+        rows: pre-fetched _fetch_proposal_history result — _run_generation_loop
+            shares one fetch across both proposal-history gates (read-only
+            here). None → self-fetch (backward-compatible for direct callers).
 
     Returns:
         surviving patterns, input order preserved.
@@ -8991,9 +8992,9 @@ def drop_apply_capped_patterns(
     Args:
         agent: pattern target agent (group key).
         patterns: the agent's intake patterns (freq DESC).
-        rows: pre-fetched _fetch_proposal_history result — run_cycle shares one
-            fetch across every proposal-history gate (read-only here). None →
-            self-fetch (backward-compatible for direct callers).
+        rows: pre-fetched _fetch_proposal_history result — _run_generation_loop
+            shares one fetch across every proposal-history gate (read-only
+            here). None → self-fetch (backward-compatible for direct callers).
 
     Returns:
         surviving patterns, input order preserved.
@@ -11092,99 +11093,6 @@ def _pg_import_degradation_lines() -> list[str]:
     return lines
 
 
-def _run_generation_loop(
-    report: CycleReport,
-    agent_groups: list[tuple[str, list[Pattern]]],
-    regression_gate: RegressionGateReport,
-    *,
-    gen_day_bounds: tuple[float, float],
-    outcomes_dir: Path,
-    agents_dir: Path,
-    skip_haiku: bool,
-    skip_pre_verify: bool,
-    skip_loop_emit: bool,
-) -> list[SolutionAttempt]:
-    """Per-agent generation loop — gates, outcomes, one routed row per agent.
-
-    Reached only once IS_GENERATION_CLOSED is lifted.
-    Appends each row to ``report.patches``; returns the cycle's Solution History
-    attempts. The promotion tier is a label only and
-    resolve_floor_terminalization terminalizes every auto candidate.
-    """
-    seen_targets: set[str] = set()
-    # AD-10 Solution History accumulator — one SolutionAttempt per generation
-    # outcome, pruned to the Pareto frontier after the loop (retain_pareto_winners).
-    solution_attempts: list[SolutionAttempt] = []
-    for agent, agent_patterns in agent_groups:
-        # Anti-fossil lifecycle gates — BEFORE any outcome fetch / Haiku spend.
-        # All five gates write PG (learning_log transition + skip loop events),
-        # so they run only in full-real mode: skip_haiku (test/preflight) bypasses
-        # them like the timeout back-off below, skip_loop_emit (no-PG-write
-        # mode) bypasses them like the supersede. Order matters — the four
-        # terminalizing gates (reverted, reject-streak, repeat-apply-cap,
-        # non-auto-fixable) run before the transient staleness snooze; reverted
-        # runs FIRST (a human back-out outranks every generation-side verdict).
-        # repeat-apply-cap follows reject-streak because an 'applied' row RESETS
-        # that streak: the alternating apply/reject fossil is invisible to the
-        # streak gate and is exactly what the cap exists to catch.
-        if not skip_haiku and not skip_loop_emit:
-            # One shared fetch serves both proposal-history gates (neither
-            # mutates rows). None (PG off / read error) → skip both, matching
-            # each gate's own fail-open branch without a doomed re-fetch.
-            history_rows = _fetch_proposal_history(agent)
-            if history_rows is not None:
-                agent_patterns = drop_reverted_patterns(
-                    agent, agent_patterns, rows=history_rows
-                )
-                agent_patterns = drop_reject_streak_patterns(
-                    agent, agent_patterns, rows=history_rows
-                )
-                agent_patterns = drop_apply_capped_patterns(
-                    agent, agent_patterns, rows=history_rows
-                )
-            agent_patterns = drop_non_auto_fixable_patterns(agent, agent_patterns)
-            agent_patterns = drop_stale_patterns(agent, agent_patterns)
-            # Non-terminalizing and reversible: the block lapses with the warning.
-            agent_patterns = drop_regression_blocked_patterns(
-                agent,
-                agent_patterns,
-                regression_gate,
-                live=regression_gate_live_enabled(),
-            )
-            if not agent_patterns:
-                continue
-        # GENERATION outcomes = all of yesterday (no sample cap) — separate from promotion stats.
-        outcomes = fetch_generation_outcomes(
-            agent,
-            day_bounds=gen_day_bounds,
-            outcomes_dir=outcomes_dir,
-        )
-        # AD-10 Solution History: bridge each generation outcome into a
-        # SolutionAttempt (OPRO 3-tuple). applied_date is the
-        # cycle day — the outcomes share the generation window, so recency is a
-        # per-cycle constant here; cross-cycle recency spread arrives with the
-        # durable store (deferred, see below). directive_hint is not on the
-        # Outcome dataclass, so it defaults empty.
-        solution_attempts.extend(
-            solution_attempt_from_outcome(outcome, report.cycle_date)
-            for outcome in outcomes
-        )
-        report.patches.append(
-            build_patch_result(
-                agent,
-                agent_patterns,
-                outcomes,
-                cycle_date=report.cycle_date,
-                agents_dir=agents_dir,
-                seen_targets=seen_targets,
-                skip_haiku=skip_haiku,
-                skip_pre_verify=skip_pre_verify,
-                skip_loop_emit=skip_loop_emit,
-            )
-        )
-    return solution_attempts
-
-
 def run_cycle(
     *,
     limit: int = DEFAULT_PATTERN_LIMIT,
@@ -11195,16 +11103,14 @@ def run_cycle(
     skip_pre_verify: bool = False,
     skip_loop_emit: bool = False,
 ) -> CycleReport:
-    """Full generation + pre-verify cycle — pattern → outcomes → patch proposal →
-    classification → pre-verify (4-axis) → routing hints.
+    """One daemon cycle — intake, gates and report; generation closed until live trials.
+
+    While IS_GENERATION_CLOSED: no generator call, no pre-verify, no patch; stored
+    pending auto rows terminalize unless skip_loop_emit; every post-loop step runs.
+    Once lifted, _run_generation_loop runs the per-agent flow — pattern → outcomes
+    → patch proposal → classification → pre-verify (4-axis) → routing hints.
 
     Returns the in-memory CycleReport. Caller decides where to persist it.
-
-    Pre-verify:
-    Each patch classified as `body-auto` is routed through `run_pre_verify`.
-    The verdict is attached to PatchResult and used to fill `approval_tier` /
-    `status` so the PG emit layer can route unverified patches to the user
-    pending queue without needing its own LLM call.
     """
     now = datetime.now(timezone.utc)
     # Optional-PG import degradation — surfaced LOUDLY once at daemon-cycle start
@@ -11255,10 +11161,11 @@ def run_cycle(
     report.patterns_processed = len(patterns)
     agent_groups = _group_patterns_by_agent(patterns, agent_cap=agent_cap)
 
-    sys.stderr.write(
-        "[daemon-cycle] INFO: generation closed until live trials — no generator "
-        "call and no auto-apply this cycle; stored pending auto rows terminalize\n"
-    )
+    if IS_GENERATION_CLOSED:
+        sys.stderr.write(
+            "[daemon-cycle] INFO: generation closed until live trials — no generator "
+            "call and no auto-apply this cycle\n"
+        )
 
     # T3 corpus/compliance telemetry — DETECTION-ONLY, fired ONCE per cycle.
     # Fully wrapped: any failure is swallowed so it can NEVER block or raise into
@@ -11284,7 +11191,12 @@ def run_cycle(
 
     if IS_GENERATION_CLOSED:
         solution_attempts: list[SolutionAttempt] = []
-        if not skip_loop_emit:
+        if skip_loop_emit:
+            sys.stderr.write(
+                "[daemon-cycle] INFO: generation-closed terminalization skipped — "
+                "no-write mode (skip_loop_emit)\n"
+            )
+        else:
             try:
                 update_generation_closed_proposals()
             except Exception as exc:  # noqa: BLE001 — fail-loud-and-skip; next cycle retries
@@ -11406,6 +11318,99 @@ def run_cycle(
     report.cost_guard["state"] = derive_cost_guard_state(report)
 
     return report
+
+
+def _run_generation_loop(
+    report: CycleReport,
+    agent_groups: list[tuple[str, list[Pattern]]],
+    regression_gate: RegressionGateReport,
+    *,
+    gen_day_bounds: tuple[float, float],
+    outcomes_dir: Path,
+    agents_dir: Path,
+    skip_haiku: bool,
+    skip_pre_verify: bool,
+    skip_loop_emit: bool,
+) -> list[SolutionAttempt]:
+    """Per-agent generation loop — gates, outcomes, one routed row per agent.
+
+    Reached only once IS_GENERATION_CLOSED is lifted.
+    Appends each row to ``report.patches``; returns the cycle's Solution History
+    attempts. The promotion tier is a label only and
+    resolve_floor_terminalization terminalizes every auto candidate.
+    """
+    seen_targets: set[str] = set()
+    # AD-10 Solution History accumulator — one SolutionAttempt per generation
+    # outcome, pruned to the Pareto frontier after the loop (retain_pareto_winners).
+    solution_attempts: list[SolutionAttempt] = []
+    for agent, agent_patterns in agent_groups:
+        # Anti-fossil lifecycle gates — BEFORE any outcome fetch / Haiku spend.
+        # All five gates write PG (learning_log transition + skip loop events),
+        # so they run only in full-real mode: skip_haiku (test/preflight) bypasses
+        # them like the timeout back-off below, skip_loop_emit (no-PG-write
+        # mode) bypasses them like the supersede. Order matters — the four
+        # terminalizing gates (reverted, reject-streak, repeat-apply-cap,
+        # non-auto-fixable) run before the transient staleness snooze; reverted
+        # runs FIRST (a human back-out outranks every generation-side verdict).
+        # repeat-apply-cap follows reject-streak because an 'applied' row RESETS
+        # that streak: the alternating apply/reject fossil is invisible to the
+        # streak gate and is exactly what the cap exists to catch.
+        if not skip_haiku and not skip_loop_emit:
+            # One shared fetch serves both proposal-history gates (neither
+            # mutates rows). None (PG off / read error) → skip both, matching
+            # each gate's own fail-open branch without a doomed re-fetch.
+            history_rows = _fetch_proposal_history(agent)
+            if history_rows is not None:
+                agent_patterns = drop_reverted_patterns(
+                    agent, agent_patterns, rows=history_rows
+                )
+                agent_patterns = drop_reject_streak_patterns(
+                    agent, agent_patterns, rows=history_rows
+                )
+                agent_patterns = drop_apply_capped_patterns(
+                    agent, agent_patterns, rows=history_rows
+                )
+            agent_patterns = drop_non_auto_fixable_patterns(agent, agent_patterns)
+            agent_patterns = drop_stale_patterns(agent, agent_patterns)
+            # Non-terminalizing and reversible: the block lapses with the warning.
+            agent_patterns = drop_regression_blocked_patterns(
+                agent,
+                agent_patterns,
+                regression_gate,
+                live=regression_gate_live_enabled(),
+            )
+            if not agent_patterns:
+                continue
+        # GENERATION outcomes = all of yesterday (no sample cap) — separate from promotion stats.
+        outcomes = fetch_generation_outcomes(
+            agent,
+            day_bounds=gen_day_bounds,
+            outcomes_dir=outcomes_dir,
+        )
+        # AD-10 Solution History: bridge each generation outcome into a
+        # SolutionAttempt (OPRO 3-tuple). applied_date is the
+        # cycle day — the outcomes share the generation window, so recency is a
+        # per-cycle constant here; cross-cycle recency spread arrives with the
+        # durable store (deferred, see below). directive_hint is not on the
+        # Outcome dataclass, so it defaults empty.
+        solution_attempts.extend(
+            solution_attempt_from_outcome(outcome, report.cycle_date)
+            for outcome in outcomes
+        )
+        report.patches.append(
+            build_patch_result(
+                agent,
+                agent_patterns,
+                outcomes,
+                cycle_date=report.cycle_date,
+                agents_dir=agents_dir,
+                seen_targets=seen_targets,
+                skip_haiku=skip_haiku,
+                skip_pre_verify=skip_pre_verify,
+                skip_loop_emit=skip_loop_emit,
+            )
+        )
+    return solution_attempts
 
 
 def build_patch_result(

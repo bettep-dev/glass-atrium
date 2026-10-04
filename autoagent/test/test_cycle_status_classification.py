@@ -81,9 +81,9 @@ class CycleStatusClassification(unittest.TestCase):
         self.assertEqual(writer._aggregate(payload)["status"], "partial")
 
     def test_when_chronic_backoff_skip_row_then_ok(self) -> None:
-        # Back-off skip shape as run_cycle emits it: empty error (the skip is
-        # intentional, not a cycle fault) carried alongside the distinguishing
-        # haiku_status/status. Pairs with the fresh-timeout pin above — the
+        # Back-off skip shape as the generation unit emits it: empty error (the
+        # skip is intentional, not a cycle fault) carried alongside the
+        # distinguishing haiku_status/status. Pairs with the fresh-timeout pin above — the
         # first N timeouts stay 'partial', only the backed-off row reads 'ok'.
         payload = {
             "patches": [
