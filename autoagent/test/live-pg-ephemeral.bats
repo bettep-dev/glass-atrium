@@ -62,7 +62,9 @@ _assert_live_module() {
   (( status == 0 )) || { echo "${output}"; return 1; }
   [[ "${output}" != *"... skipped"* ]] || { echo "${module}: a test skipped"; echo "${output}"; return 1; }
   for class in "$@"; do
-    [[ "${output}" == *"(${module}.${class}."*") ... ok"* ]] || {
+    # per-class verdict from the summary line — the -v test description differs across Python versions
+    run python3 -m unittest "${module}.${class}"
+    (( status == 0 )) && [[ "${output}" == *"Ran "[1-9]* && "${output}" != *"skipped="* ]] || {
       echo "${module}.${class}: no test ran ok"
       echo "${output}"
       return 1
