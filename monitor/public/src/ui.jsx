@@ -80,8 +80,7 @@ function Icon({ name, size=16, className='', stroke=1.6, ariaHidden=true }) {
 // 하드 규칙 (DESIGN.md §4.2/§7.3 neutral-shell 진화):
 //   · shell 은 모든 tone 에서 neutral(--sunken/--dim/--line) — tone-fill 을 .pill 껍데기에 칠하지 않는다.
 //   · tone 은 내부 심볼(Icon/glyph)에 text-{tone} 으로만 적용 → dual-encode = shape(글리프)+color+인접 label(DESIGN.md §8).
-//   · label 텍스트는 --dim 유지(AA-safe: --sunken 위 warn/ok/info tone 은 11px 3:1 sub-AA). 단 선행 심볼이 없으면(glyph=false status)
-//     tone 을 label 이 운반(유일 carrier) — shell 은 여전히 neutral.
+//   · label 텍스트는 --dim 유지(AA-safe: --sunken 위 warn/ok/info tone 은 11px 3:1 sub-AA) — glyph=false status 도 label 은 neutral.
 //   · metadata/count 는 톤을 받아도 항상 neutral (color≠metadata/count).
 // 변형: absent=true → .pill--absent(dashed/faint) · interactive=true → <button>+.pill--interactive(WCAG 2.2 §2.5.8 타깃)
 function Badge({ children, role='metadata', tone='neutral', absent=false, glyph=true, icon=false, interactive=false, title, onClick, className='' }) {
@@ -94,13 +93,10 @@ function Badge({ children, role='metadata', tone='neutral', absent=false, glyph=
   //   (shell 이 --dim 이라 상속으론 tone 이 안 옴). aria-hidden 장식, 의미는 인접 label.
   const leadIcon = showLead && icon ? <Icon name={TONE_ICON[tone]} size={12} className={toneTextClass} /> : null;
   const leadGlyph = showLead && !icon ? <span className={toneTextClass}>{TONE_GLYPH[tone]} </span> : null;
-  // 심볼이 없는 status(glyph=false) 는 label 이 유일 tone carrier → children 을 text-{tone} span 으로 감싼다(shell neutral 유지).
-  //   심볼이 있으면 label 은 --dim 유지 (tone 은 심볼 담당, AA-safe).
-  const body = hasTone && !showLead ? <span className={toneTextClass}>{children}</span> : children;
   // className passthrough — 호출부가 일회성 .pill 변형을 이 인스턴스에만 덧붙이게 (현재 상시 소비자 없음).
   const cls = ['pill', sizeClass, absent ? 'pill--absent' : '', interactive ? 'pill--interactive' : '', className].filter(Boolean).join(' ');
   const a11y = title ? { title } : {};
-  const content = <>{leadIcon}{leadGlyph}{body}</>;
+  const content = <>{leadIcon}{leadGlyph}{children}</>;
   return interactive
     ? <button type="button" className={cls} onClick={onClick} {...a11y}>{content}</button>
     : <span className={cls} {...a11y}>{content}</span>;
@@ -111,7 +107,7 @@ function Badge({ children, role='metadata', tone='neutral', absent=false, glyph=
 function Pill({ children, tone='neutral' }) {
   return tone === 'neutral'
     ? <Badge role="metadata" glyph={false}>{children}</Badge>
-    : <Badge role="status" tone={tone} glyph={false}>{children}</Badge>;
+    : <Badge role="status" tone={tone}>{children}</Badge>;
 }
 
 // 공용 빈-상태 atom (canonical) — 화면별 EmptyState* 복제 + 보드 dashed-col idiom 의 단일 SoT.
@@ -163,16 +159,14 @@ function TypeScaleStyle() {
   `}</style>;
 }
 
-// 증감 표시 — inverse=true 면 down=좋음/up=나쁨 (비용 증가 등 inverse 지표용)
+// 증감 표시 — inverse=true 면 down=좋음/up=나쁨 (비용 증가 등 inverse 지표용). tone 은 화살표만, 수치는 neutral
 function Delta({ value, inverse=false }) {
   const sign = value > 0 ? 'up' : value < 0 ? 'down' : 'flat';
-  let tone;
-  if (sign === 'flat') tone = 'flat';
-  else if (inverse) tone = sign === 'up' ? 'down' : 'up';
-  else tone = sign;
+  const isBad = inverse ? sign === 'down' : sign === 'up';
+  const tone = sign === 'flat' ? 'faint' : isBad ? 'crit' : 'ok';
   const iconName = sign === 'up' ? 'arrowU' : sign === 'down' ? 'arrowD' : 'minus';
-  return <span className={`kpi-delta ${tone}`}>
-    <Icon name={iconName} size={11} stroke={2.2} />
+  return <span className="kpi-delta">
+    <Icon name={iconName} size={11} stroke={2.2} className={`text-${tone}`} />
     {Math.abs(value).toFixed(1)}%
   </span>;
 }

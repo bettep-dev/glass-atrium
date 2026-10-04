@@ -180,7 +180,7 @@ details[open] > summary .chevron {
 }
 .btn.danger {
 	background: rgb(var(--crit));
-	color: white;
+	color: rgb(var(--elev)); /* knock-out like the alert-card glyph — white on the pale dark-theme crit is 2.77 */
 	border-color: rgb(var(--crit));
 }
 .btn.ghost {
@@ -524,15 +524,7 @@ details[open] > summary .chevron {
 	align-items: center;
 	gap: 4px;
 	margin-top: 4px;
-}
-.kpi-delta.up {
-	color: rgb(var(--crit));
-}
-.kpi-delta.down {
-	color: rgb(var(--ok));
-}
-.kpi-delta.flat {
-	color: rgb(var(--faint));
+	color: rgb(var(--dim)); /* tone rides on the arrow (Delta), never the numeral */
 }
 .kpi-spark {
 	position: absolute;
@@ -640,11 +632,6 @@ details[open] > summary .chevron {
 	padding: 1px 6px;
 	border-radius: 999px;
 	color: rgb(var(--dim));
-}
-.nav-badge.warn {
-	background: rgb(var(--warn) / 0.15);
-	color: rgb(var(--warn));
-	border-color: transparent;
 }
 
 .alert-row {
@@ -1095,7 +1082,9 @@ details[open] > summary .chevron {
 		animation: none;
 	}
 	.card.raised-2:hover,
-	.card.is-focused {
+	.card.is-focused,
+	.btn,
+	.kpi {
 		transition: none;
 	}
 }
@@ -1290,9 +1279,9 @@ details[open] > summary .chevron {
 	margin-left: auto;
 }
 
-/* ── Toast (S9 success / clauded-docs) — 최상위 transient 알림, --z-toast 스택.
-   shared SoT: clauded-docs + model-config 가 동일 클래스 소비 (screen-local 중복 제거).
-   transient 오버레이라 --shadow-overlay 토큰 사용 (기존 하드코딩 rgba drift 해소). */
+/* ── Toast — top-level transient notice on the --z-toast stack, shared by clauded-docs + model-config.
+   Opaque neutral overlay shell (it can sit over any surface, the dark document canvas included);
+   the tone class only names --toast-tone, which colours the leading .doc-toast-glyph. */
 .doc-toast {
 	position: fixed;
 	bottom: 24px;
@@ -1303,9 +1292,16 @@ details[open] > summary .chevron {
 	box-shadow: var(--shadow-overlay);
 	z-index: var(--z-toast);
 	max-width: 480px;
-	border: 1px solid;
+	background: rgb(var(--overlay-surface));
+	border: 1px solid rgb(var(--line));
+	color: rgb(var(--ink));
+	--toast-tone: var(--dim);
 }
-.doc-toast.info { background: rgb(var(--info) / 0.14); border-color: rgb(var(--info) / 0.4); color: rgb(var(--info)); }
-.doc-toast.ok   { background: rgb(var(--ok)   / 0.14); border-color: rgb(var(--ok)   / 0.4); color: rgb(var(--ok));   }
-.doc-toast.warn { background: rgb(var(--warn) / 0.14); border-color: rgb(var(--warn) / 0.4); color: rgb(var(--warn)); }
-.doc-toast.crit { background: rgb(var(--crit) / 0.14); border-color: rgb(var(--crit) / 0.4); color: rgb(var(--crit)); }
+.doc-toast.info { --toast-tone: var(--info); }
+.doc-toast.ok   { --toast-tone: var(--ok); }
+.doc-toast.warn { --toast-tone: var(--warn); }
+.doc-toast.crit { --toast-tone: var(--crit); }
+.doc-toast-glyph {
+	margin-right: 8px;
+	color: rgb(var(--toast-tone));
+}
