@@ -1503,8 +1503,8 @@ function RejectedCompactListI({ rows, onRowClick }) {
 					aria-expanded={isExpanded}
 					aria-label={
 						isExpanded
-							? "Show fewer declined suggestions"
-							: `View all declined suggestions (${formatIntI(moreCount)} more)`
+							? "Show fewer closed suggestions"
+							: `View all closed suggestions (${formatIntI(moreCount)} more)`
 					}
 				>
 					{isExpanded ? (
@@ -1522,7 +1522,7 @@ function RejectedCompactListI({ rows, onRowClick }) {
 	);
 }
 
-// Shared pattern label printed once as the group head, not on every declined row.
+// Shared pattern label printed once as the group head, not on every row.
 function RejectedGroupI({ label, rows, onRowClick }) {
 	return (
 		<div className="flex flex-col gap-1">
