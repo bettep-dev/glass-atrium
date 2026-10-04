@@ -41,16 +41,16 @@ teardown() {
 #       $2 = monitor_docs_html_root (default: the standard sandbox docs dir) ·
 #       $3 = [daemon.autoagent-cycle].time      (default 04:30) ·
 #       $4 = [daemon.wiki-compile].time         (default 04:50 — the corrected value) ·
-#       $5 = [daemon.daemon-daily-restart].time (default 05:30).
-# The schedule defaults mirror config.toml.example so the tz/upsert tests render
-# cleanly (the script loud-fails without all three [daemon.*].time keys). A
-# schedule arg of the literal sentinel '__OMIT__' drops that section's `time`
+#       $5 = retired [daemon.daemon-daily-restart].time (default '__ABSENT__' → no stanza).
+# The active schedule defaults mirror config.toml.example so the tz/upsert tests
+# render cleanly (the script loud-fails without both active [daemon.*].time keys).
+# A schedule arg of the literal sentinel '__OMIT__' drops that section's `time`
 # line (section header kept) to drive the missing-key loud-fail; any other value
 # (incl. a malformed one like '0430' or '25:00') is written verbatim to exercise
 # the malformed-time loud-fail.
 write_config() {
   local tz="$1" docs="${2:-${SANDBOX}/monitor/data/documents}"
-  local autoagent="${3:-04:30}" wiki="${4:-04:50}" daily="${5:-05:30}"
+  local autoagent="${3:-04:30}" wiki="${4:-04:50}" retired_daily="${5:-__ABSENT__}"
   {
     printf '[ports]\nmonitor = 17842\n\n[paths]\nmonitor_docs_html_root = "%s"\n' "${docs}"
     if [[ -n "${tz}" ]]; then
@@ -58,7 +58,9 @@ write_config() {
     fi
     emit_daemon_section "daemon.autoagent-cycle" "${autoagent}"
     emit_daemon_section "daemon.wiki-compile" "${wiki}"
-    emit_daemon_section "daemon.daemon-daily-restart" "${daily}"
+    if [[ "${retired_daily}" != "__ABSENT__" ]]; then
+      emit_daemon_section "daemon.daemon-daily-restart" "${retired_daily}"
+    fi
   } >"${SANDBOX}/config.toml"
 }
 
@@ -178,48 +180,87 @@ run_render() {
 }
 
 # ---------------------------------------------------------------------------
-# T4 — ATRIUM_SCHEDULE_* rendering ([daemon.*].time → three flat .env scalars)
+# T4 — ATRIUM_SCHEDULE_* rendering ([daemon.*].time → two flat .env scalars)
 #
 # The shell owns the config-job-name → monitor-logical-env-key transform
-# (autoagent-cycle→_AUTOAGENT, wiki-compile→_WIKI, daemon-daily-restart→
-# _DAILY_RESTART). All three [daemon.*].time keys are read + validated BEFORE any
-# upsert, so a missing/malformed time loud-fails non-zero with ZERO partial keys.
+# (autoagent-cycle→_AUTOAGENT, wiki-compile→_WIKI). Both active [daemon.*].time
+# keys are read + validated BEFORE any upsert, so a missing/malformed time
+# loud-fails non-zero with ZERO partial keys. The retired daemon-daily-restart
+# stanza, still present in existing installs' config.toml, is never read.
 # ---------------------------------------------------------------------------
 
-@test "fresh render writes all three ATRIUM_SCHEDULE_* keys from the config times" {
+@test "fresh render writes both active ATRIUM_SCHEDULE_* keys from the config times" {
   # Distinctive non-default times prove the values are read from config, not
   # hardcoded in the script.
-  write_config "auto" "" "01:05" "12:45" "23:15"
+  write_config "auto" "" "01:05" "12:45"
   run_render
-  [[ "${status}" -eq 0 ]]
+  [[ "${status}" -eq 0 ]] || {
+    echo "${output}"
+    return 1
+  }
   grep -q '^ATRIUM_SCHEDULE_AUTOAGENT=01:05$' "${SANDBOX}/monitor/.env"
   grep -q '^ATRIUM_SCHEDULE_WIKI=12:45$' "${SANDBOX}/monitor/.env"
-  grep -q '^ATRIUM_SCHEDULE_DAILY_RESTART=23:15$' "${SANDBOX}/monitor/.env"
+}
+
+@test "a retired [daemon.daemon-daily-restart] stanza neither gates the render nor reaches .env" {
+  # Rows: label|retired stanza time arg (__ABSENT__ → no stanza, __OMIT__ → no time line).
+  local rows=(
+    "stanza absent|__ABSENT__"
+    "stanza without a time line|__OMIT__"
+    "stanza with a valid time|05:30"
+    "stanza with an out-of-range time|25:00"
+  )
+  local row label retired_time env_file="${SANDBOX}/monitor/.env"
+  for row in "${rows[@]}"; do
+    label="${row%%|*}"
+    retired_time="${row#*|}"
+    : >"${env_file}"
+    write_config "auto" "" "04:30" "04:50" "${retired_time}"
+    run_render
+    [[ "${status}" -eq 0 ]] || {
+      echo "${label}: status ${status}: ${output}"
+      return 1
+    }
+    grep -q '^ATRIUM_SCHEDULE_AUTOAGENT=04:30$' "${env_file}" || {
+      echo "${label}: active autoagent key missing"
+      return 1
+    }
+    ! grep -q '^ATRIUM_SCHEDULE_DAILY_RESTART=' "${env_file}" || {
+      echo "${label}: retired daily-restart key rendered"
+      return 1
+    }
+  done
 }
 
 @test "missing [daemon.wiki-compile].time → non-zero exit, no .env (no partial keys)" {
-  write_config "auto" "" "04:30" "__OMIT__" "05:30"
+  write_config "auto" "" "04:30" "__OMIT__"
   run_render
-  [[ "${status}" -ne 0 ]]
-  [[ "${output}" == *"wiki-compile"* ]]
+  [[ "${status}" -ne 0 && "${output}" == *"wiki-compile"* ]] || {
+    echo "status ${status}: ${output}"
+    return 1
+  }
   # Loud-fail fires before ANY upsert → .env is never created (zero partial keys,
   # not even the non-schedule port/html-root/tz keys).
   [[ ! -f "${SANDBOX}/monitor/.env" ]]
 }
 
 @test "malformed [daemon.autoagent-cycle].time (no colon) → non-zero exit, no .env" {
-  write_config "auto" "" "0430" "04:50" "05:30"
+  write_config "auto" "" "0430" "04:50"
   run_render
-  [[ "${status}" -ne 0 ]]
-  [[ "${output}" == *"autoagent-cycle"* ]]
+  [[ "${status}" -ne 0 && "${output}" == *"autoagent-cycle"* ]] || {
+    echo "status ${status}: ${output}"
+    return 1
+  }
   [[ ! -f "${SANDBOX}/monitor/.env" ]]
 }
 
-@test "out-of-range [daemon.daemon-daily-restart].time (hour 25) → non-zero exit, no .env" {
-  write_config "auto" "" "04:30" "04:50" "25:00"
+@test "out-of-range [daemon.wiki-compile].time (hour 25) → non-zero exit, no .env" {
+  write_config "auto" "" "04:30" "25:00"
   run_render
-  [[ "${status}" -ne 0 ]]
-  [[ "${output}" == *"daemon-daily-restart"* ]]
+  [[ "${status}" -ne 0 && "${output}" == *"wiki-compile"*"out of range"* ]] || {
+    echo "status ${status}: ${output}"
+    return 1
+  }
   [[ ! -f "${SANDBOX}/monitor/.env" ]]
 }
 
@@ -227,7 +268,7 @@ run_render() {
 # T5 — config.toml.example template-drift guard
 #
 # Reuse the production parser (atrium_toml_get) against the REAL example so a
-# future template edit that drops a [daemon.*].time key fails this guard.
+# future template edit that drops an active [daemon.*].time key fails this guard.
 # render-monitor-env.sh loud-fails without these keys, so a fresh install must
 # ship them — this pins fresh-install render readiness.
 # ---------------------------------------------------------------------------
@@ -241,9 +282,9 @@ example_time() {
   ' _ "${GA}/scripts/lib/atrium-config.sh" "$1"
 }
 
-@test "config.toml.example carries an HH:MM time for all three [daemon.*] jobs (wiki = 04:50)" {
+@test "config.toml.example carries an HH:MM time for both active [daemon.*] jobs (wiki = 04:50)" {
   local section
-  for section in "[daemon.autoagent-cycle]" "[daemon.wiki-compile]" "[daemon.daemon-daily-restart]"; do
+  for section in "[daemon.autoagent-cycle]" "[daemon.wiki-compile]"; do
     example_time "${section}"
     [[ "${status}" -eq 0 ]] || {
       echo "no ${section}.time in config.toml.example (status=${status})"
