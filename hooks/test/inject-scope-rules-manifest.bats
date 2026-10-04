@@ -15,11 +15,13 @@
 #     AC4  an unwritable manifest sink leaves the injection and the exit status unchanged (fail-open).
 #     AC5  an absent digest tool still writes the line, without a digest field, exit status unchanged.
 #     AC7  the reader reports per-agent block coverage matching the fixture sink.
-#     AC9  every line carries the envelope's session_id as a path-safe key (`unknown` when absent),
-#          ahead of the line-final `blocks=`.
-#     AC10 the spawn-path delete is a backstop: a log at 64 MiB survives a spawn, one above it is deleted.
-#     AC11 the reader counts the live log plus every spool named by the rotation contract
-#          `<live log>.<UTC %Y%m%dT%H%M%SZ>.<pid>.spool`, and no other file beside it.
+#
+#   Session field, backstop and spool window pinned here:
+#     - every line carries the envelope's session_id as a path-safe key (`unknown` when absent),
+#       ahead of the line-final `blocks=`.
+#     - the spawn-path delete is a backstop: a log at 64 MiB survives a spawn, one above it is deleted.
+#     - the reader counts the live log plus every spool named by the rotation contract
+#       `<live log>.<UTC %Y%m%dT%H%M%SZ>.<pid>.spool`, and no other file beside it.
 #
 #   FAIL-AT-HEAD: 9 of the 11 C03 rows fail against the pre-C03 hook, which writes no manifest sink at all
 #   and treats the reader flag as an ordinary no-arg hook invocation. Every row that could pass VACUOUSLY
@@ -322,9 +324,7 @@ write_manifest_lines() {
   }
 }
 
-# ── AC9 — session_id rides every line, path-safe, ahead of the line-final blocks= ──────────────────
-
-@test "AC9: a manifest line carries the envelope session_id as a path-safe key, unknown when absent" {
+@test "a manifest line carries the envelope session_id as a path-safe key, unknown when absent" {
   local row name field want i=0
   local -a rows=(
     'uuid session id|,"session_id":"e0e449e3-7b17-4aa8-974d-62fcbbc8b541"|e0e449e3-7b17-4aa8-974d-62fcbbc8b541'
@@ -350,9 +350,8 @@ write_manifest_lines() {
   done
 }
 
-# ── AC10 — the spawn-path delete is a 64 MiB backstop (the daemon rotation owns the bound) ─────────
-
-@test "AC10: a log at the 64 MiB backstop survives a spawn and a log above it is deleted" {
+# Spawn-path delete is only a backstop — the daemon rotation owns the log bound.
+@test "a log at the 64 MiB backstop survives a spawn and a log above it is deleted" {
   local row name size want got i=0
   local -a rows=(
     'log at the backstop|67108864|kept'
@@ -379,9 +378,7 @@ write_manifest_lines() {
   done
 }
 
-# ── AC11 — the reader's window: live log + contract-named spools, nothing else ─────────────────────
-
-@test "AC11: --manifest-coverage counts the live log and contract-named spools, never a non-matching file" {
+@test "--manifest-coverage counts the live log and contract-named spools, never a non-matching file" {
   run_inject "glass-atrium-dev-front" "${BUDGET_FIT}"
   assert_status 0
   write_manifest_lines "${MANIFEST}.20261005T120000Z.4242.spool" "glass-atrium-dev-node" 2
@@ -407,7 +404,7 @@ write_manifest_lines() {
   }
 }
 
-@test "AC11: --manifest-coverage counts a pending spool when the live log was rotated away" {
+@test "--manifest-coverage counts a pending spool when the live log was rotated away" {
   write_manifest_lines "${MANIFEST}.20261005T120000Z.4242.spool" "glass-atrium-dev-node" 2
   [[ ! -e "${MANIFEST}" ]] || { echo "live log unexpectedly present"; return 1; }
   run_query --manifest-coverage
