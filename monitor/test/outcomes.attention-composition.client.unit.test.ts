@@ -344,10 +344,29 @@ test("AlarmLaneO: a stopped channel keeps its lane row, which names the channel 
   const lane = flattenNodes(helpers.AlarmLaneO({ channelLivenessState: silent, searchState: { status: "ready" } }));
   assert.ok(lane.some((n) => n.type === helpers.SilentChannelRowO), "the per-channel row stays in the lane");
 
-  const rowText = flattenNodes(helpers.SilentChannelRowO({ channels: ["subagent-stop"] }))
-    .flatMap((n) => n.children.filter((c) => typeof c === "string")).join("");
+  const { title, body } = helpers.SilentChannelRowO({ channels: ["subagent-stop"] }).props ?? {};
+  const rowText = [title, body].filter((slot) => typeof slot === "string").join(" ");
   assert.match(rowText, /subagent-stop/);
   assert.doesNotMatch(rowText, /Recording stopped|understated/, "the verdict above already states the stop and its effect");
+});
+
+describe("a lane alarm is the shared page-level alert card, its tone never painted on a local tinted shell", () => {
+  const alertCard = (helpers.window.UI as unknown as Record<string, unknown>).AlertCard;
+  const rows = [
+    { name: "a silent channel is critical", tone: "crit", details: undefined, node: () => helpers.SilentChannelRowO({ channels: ["subagent-stop"] }) },
+    { name: "a sustained outage warns, its raw answer behind Details", tone: "warn", details: "HTTP 503", node: () => (helpers.BlockedBannerO as (p: unknown) => RenderNode)({ detail: "HTTP 503" }) },
+  ];
+
+  for (const row of rows) {
+    test(row.name, () => {
+      const node = row.node();
+      assert.strictEqual(node.type, alertCard, "the row renders the shared AlertCard");
+      assert.strictEqual(node.props?.tone, row.tone);
+      assert.ok(node.props?.surface === undefined || node.props.surface === "raised", "a page-level lane row is a raised card");
+      assert.strictEqual(node.props?.style, undefined, "no local tint or tone border");
+      assert.strictEqual(node.props?.details, row.details, "a raw answer rides only the card's Details");
+    });
+  }
 });
 
 test("ledger: a failed read draws one banner at the ledger and its header follows the failed state", () => {

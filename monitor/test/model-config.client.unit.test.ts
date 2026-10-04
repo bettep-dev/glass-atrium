@@ -510,6 +510,7 @@ function getDisclosureOpenMc(kind: unknown, tone: unknown): boolean {
 // Real shared helpers the stubs above delegate to — typed once here.
 const getFreshnessVerdictMc = realUiMc.getFreshnessVerdict as (input: Record<string, unknown>) => { tone: unknown; label: unknown };
 const getAgentDisplayNameMc = realUiMc.getAgentDisplayName as (name: unknown) => string;
+const TONE_GLYPH_MC = realUiMc.TONE_GLYPH as Record<string, string>;
 
 // The drawer body rides in a marked slot → face text and drawer text stay separately readable.
 function cardHeadStubMc(p: Record<string, unknown>): McElement {
@@ -596,6 +597,17 @@ async function loadMcScreens(
     putRegionFailure: realUiMc.putRegionFailure,
     getErrorCopy: realUiMc.getErrorCopy,
     getFetchError: realUiMc.getFetchError,
+    TONE_GLYPH: realUiMc.TONE_GLYPH,
+    // tone and surface stay readable; the slots render as walkable children, the raw detail behind a Details fold as in the atom
+    AlertCard: (p: Record<string, unknown>) =>
+      hMc(
+        "div",
+        { "data-atom": "AlertCard", "data-tone": p.tone, "data-surface": p.surface ?? "raised" },
+        p.title,
+        p.body,
+        p.details ? hMc("details", null, p.details) : null,
+        p.actions,
+      ),
   };
   const ctx: Record<string, unknown> = {
     window: { UI: uiStub, addEventListener: () => {}, removeEventListener: () => {} },
@@ -1258,6 +1270,29 @@ test("a failed save names the next step and keeps the server's raw answer behind
   assert.strictEqual(textsMc(tagsMc(tree, "button")).filter((t) => t === "Retry").length, 1, "one Retry for the save");
 });
 
+describe("a config banner is the shared alert card, its tone never painted on a local tinted shell", () => {
+  const rows = [
+    { name: "drift warns", tone: "warn", render: () => renderComponentMc(screens.DriftBannerMC, { sync: "drift", onResync: () => {} }) },
+    {
+      name: "a failed save is critical",
+      tone: "crit",
+      render: () => renderComponentMc(screens.ErrorBannerMC, { title: "Couldn't save changes", detail: "HTTP 500", onRetry: () => {} }),
+    },
+  ];
+
+  for (const row of rows) {
+    test(row.name, () => {
+      const tree = row.render();
+      const cards = findAllMc(tree, (n) => n.props["data-atom"] === "AlertCard");
+      const tinted = findAllMc(tree, (n) => n.props.style !== undefined);
+
+      assert.deepStrictEqual(cards.map((n) => n.props["data-tone"]), [row.tone], "one alert card in the banner's tone");
+      assert.strictEqual(cards[0]?.props["data-surface"], "raised", "a page-level banner is a raised card");
+      assert.strictEqual(tinted.length, 0, "no element carries its own tint or tone border");
+    });
+  }
+});
+
 test("the drift banner triggers on any drifted model or budget row, not on the file state alone", () => {
   const hasDrift = sandboxFnMc<(data: unknown) => boolean>("hasRowDriftMC");
   assert.strictEqual(hasDrift({ domains: [], budgets: [] }), false, "nothing drifted → no trigger");
@@ -1494,6 +1529,21 @@ test("Cost & usage is linked once per ledger, and an unpriced tier says why its 
       `pricing_known=${pricingKnown}: the fallback note follows pricing_known`,
     );
   }
+});
+
+test("an unpriced tier's note carries its warning on a glyph, while its words stay neutral", () => {
+  const tree = renderComponentMc(
+    screens.DomainsSectionMC,
+    domainsPropsMc([{ ...DOMAIN_ROW_FIXTURE_MC[0], pricing_known: false }]),
+  );
+  const [words] = findAllMc(tree, (n) => n.children.some((c) => typeof c === "string" && c.includes("No price listed")));
+  const glyphs = findAllMc(tree, (n) => textMc(n.children) === TONE_GLYPH_MC.warn);
+
+  assert.ok(words, "the fallback note renders");
+  assert.doesNotMatch(String(words.props.className), /text-(warn|crit|ok|info)\b/, "the words carry no tone");
+  assert.strictEqual(glyphs.length, 1, "one warning glyph leads the note");
+  assert.match(String(glyphs[0].props.className), /\btext-warn\b/, "the glyph carries the warn tone");
+  assert.strictEqual(glyphs[0].props["aria-hidden"], "true", "the glyph is decoration — the words already say it");
 });
 
 const countMc = (text: string, needle: string): number => text.split(needle).length - 1;
@@ -1823,6 +1873,23 @@ async function renderSeededScreenMc(seed: Record<string, unknown>): Promise<McNo
   });
   return renderComponentMc(seeded.ScreenModelConfig, {});
 }
+
+describe("a toast keeps its tone class on the shell and shows the tone only as a leading glyph", () => {
+  for (const tone of ["ok", "crit"]) {
+    test(`${tone} toast`, async () => {
+      const tree = await renderSeededScreenMc({ toast: { tone, message: "Changes saved" } });
+      const [toast] = findAllMc(tree, (n) => String(n.props.className ?? "").split(" ").includes("doc-toast"));
+      assert.ok(toast, "the toast renders");
+      const [glyph] = findAllMc([toast], (n) => n.props.className === "doc-toast-glyph");
+
+      assert.ok(String(toast.props.className).split(" ").includes(tone), "the tone class stays on the root");
+      assert.strictEqual(textMc(glyph ? [glyph] : []), TONE_GLYPH_MC[tone], "the glyph is the tone's shared mark");
+      assert.strictEqual(glyph?.props["aria-hidden"], "true", "the glyph is decoration");
+      assert.ok(textMc(toast.children).startsWith(TONE_GLYPH_MC[tone]), "the glyph leads the message");
+      assert.ok(textMc(toast.children).includes("Changes saved"), "the message stays inside the toast");
+    });
+  }
+});
 
 describe("a config read that failed after an earlier read shows the last good read, never an all-clear", () => {
   const data = {

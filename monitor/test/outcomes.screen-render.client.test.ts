@@ -360,3 +360,63 @@ test("each recording channel's busiest recent day is drawn against the watch flo
     assert.equal(value >= target, row.peak >= floor, `${row.name}: fill reaches the floor marker only at or above the floor`);
   }
 });
+
+// [selector, body] for every flat rule of a stylesheet; nested @-blocks contribute their inner rules
+function getCssRules(css: string): Array<[string, string]> {
+  return [...css.matchAll(/([^{}]+)\{([^{}]*)\}/g)].flatMap((m) =>
+    m[1].split(",").map((selector) => [selector.trim(), m[2]] as [string, string]),
+  );
+}
+
+// the contents of every `@media (prefers-reduced-motion: reduce)` block
+function getReducedMotionCss(css: string): string {
+  return [...css.matchAll(/@media\s*\(prefers-reduced-motion:\s*reduce\)\s*\{/g)]
+    .map((m) => {
+      const start = (m.index ?? 0) + m[0].length;
+      let depth = 1;
+      let end = start;
+      for (; end < css.length && depth > 0; end++) depth += css[end] === "{" ? 1 : css[end] === "}" ? -1 : 0;
+      return css.slice(start, end - 1);
+    })
+    .join("\n");
+}
+
+function getDecl(body: string, prop: string): string | undefined {
+  return body.match(new RegExp(`(?:^|[;\\s])${prop}\\s*:\\s*([^;]+)`))?.[1].trim();
+}
+
+describe("the screen's own stylesheet keeps to the motion standard", async () => {
+  const { tree } = await renderOutcomesScreen(0);
+  const css = findNodes(tree, (n) => n.type === "style").map(collectText).join("\n").replace(/\/\*[\s\S]*?\*\//g, "");
+  const reduced = getReducedMotionCss(css);
+  const moving = getCssRules(css).flatMap(([selector, body]) =>
+    (["animation", "transition"] as const)
+      .filter((prop) => !/^none\b/.test(getDecl(body, prop) ?? "none"))
+      .map((prop) => ({ selector, prop, value: getDecl(body, prop) ?? "" })),
+  );
+
+  test("the scan finds the sheet's moving rules", () => {
+    assert.ok(moving.some((m) => m.prop === "animation") && moving.some((m) => m.prop === "transition"));
+  });
+
+  for (const { selector, prop, value } of moving) {
+    test(`${selector} stops its ${prop} under reduced motion`, () => {
+      const gate = getCssRules(reduced).filter(([s]) => s === selector).map(([, body]) => body).join(";");
+      assert.match(gate, new RegExp(`${prop}:\\s*none`));
+    });
+    if (prop === "transition") {
+      test(`${selector} changes state at the 120ms standard`, () => {
+        assert.deepStrictEqual(value.match(/\d+m?s/g), ["120ms"], `transition: ${value}`);
+      });
+    }
+  }
+});
+
+test("a loading skeleton pulses through its gated class, never through an inline animation", async () => {
+  const { tree } = await renderOutcomesScreen(0);
+  const inline = findNodes(tree, (n) => (n.props.style as Record<string, unknown> | undefined)?.animation !== undefined);
+  const pulsing = findNodes(tree, (n) => String(n.props.className ?? "").split(/\s+/).includes("skel-pulse-o"));
+
+  assert.ok(pulsing.length > 0, "the loading screen draws pulsing skeletons");
+  assert.equal(inline.length, 0, "no element animates through its own style");
+});
