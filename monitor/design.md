@@ -540,6 +540,7 @@
 - base: padding 6px 12px · min-height `--ctl-min-h` 32 · `--radius-control` 6 · `--fs-control` 14 · 500 · `--elev` fill · 1px `--line` · transition 120ms.
 - hover: `--sunken` + border `--faint`.
 - `.primary`: `--ink` fill + `--surface` text. `.danger`: `--crit` fill + white text. `.ghost`: 투명 · `--dim` → hover `--sunken` + `--ink`.
+  - `.danger` 명암비: light 4.83 · **dark 2.77 (< 4.5, 수정 대상)** — dark `--crit` 248 113 113 위 흰 글자.
 - `.sm`: padding 4px 9px · `--fs-meta`. `.icon`: 32×32 정사각, padding 0.
 - disabled: opacity 0.5 · `not-allowed`. pressed (`aria-pressed="true"`) = `--selected-fill` / `--selected-ink`.
 - 120ms 가 hover 표준 속도. glass 불필요.
