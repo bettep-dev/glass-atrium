@@ -81,6 +81,19 @@ _assert_live_module() {
   _assert_live_module test_pattern_lifecycle_gates TestRejectLearningPatternLivePg
 }
 
+@test "the poisoned-row aggregator live class runs against the migrated cluster, none skipped" {
+  _assert_live_module test_negative_signal_triggers TestPoisonedRowsEmitNoPattern
+}
+
+@test "the pattern-intake live classes run against the migrated cluster, none skipped" {
+  _assert_live_module test_pg_pattern_intake \
+    TestAggregatorUpsertVisibleToIntake TestIntakeRosterRenameContract
+}
+
+@test "the poisoned-window lookback live class runs against the migrated cluster, none skipped" {
+  _assert_live_module test_poisoned_window_exclusion TestPoisonedRowExcludedFromLookback
+}
+
 @test "an ambient PGHOSTADDR or PGSERVICE skips a live class with that variable named" {
   local row name
   for row in "PGHOSTADDR=127.0.0.1" "PGSERVICE=ga_seal_probe"; do

@@ -10,7 +10,8 @@ aggregator emit and the ``daemon_cycle.py`` staleness recompute — covered here
 (2) dead-signal detector WARNs when a trigger metric has 0 occurrences over a
     non-trivial batch (and stays quiet on tiny batches / live metrics);
 (3) poisoned_window rows produce NO pattern end-to-end (real reader against
-    live PG fixtures, inserted in an open never-committed transaction —
+    fixtures on the ephemeral cluster ``live-pg-ephemeral.bats`` builds — elsewhere
+    the class skips — inserted in an open never-committed transaction —
     rolled back on teardown, database left byte-identical);
 (4) a run over lesson-carrying rows writes no lesson store under its data root.
 
@@ -40,6 +41,11 @@ _REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 _HOOKS_DIR = _REPO_ROOT / "hooks"
 if str(_HOOKS_DIR) not in sys.path:
     sys.path.insert(0, str(_HOOKS_DIR))
+# unittest discover and ``-m unittest`` from another cwd leave this directory off sys.path.
+if str(Path(__file__).resolve().parent) not in sys.path:
+    sys.path.insert(0, str(Path(__file__).resolve().parent))
+
+from _pg_seal import get_ephemeral_connection
 
 try:
     import _pg_learning_dualwrite as pgdw
@@ -192,6 +198,7 @@ class _AggregatorRunFixture(unittest.TestCase):
 
     def setUp(self) -> None:
         self.upserts: list[dict] = []
+        self.pg_reach: list[str] = []
         self._tmpdir = tempfile.mkdtemp(prefix="ap3-agg-test-")
         self.addCleanup(self._cleanup_tmpdir)
         # Fixture roster for the registry allowlist gate — the probe agents exist ONLY
@@ -210,6 +217,29 @@ class _AggregatorRunFixture(unittest.TestCase):
                 }
             ),
             encoding="utf-8",
+        )
+
+    def _get_seal_patchers(self, module: ModuleType) -> tuple:
+        """Patchers for the PG seams a run leaves unstubbed, so no run reaches a database.
+
+        The aggregator's own libpq-default reads return ``[]``, their degrade value; a
+        write records its name in ``pg_reach`` and raises (callers assert it empty).
+        """
+
+        def _get_refusal(name: str):  # noqa: ANN202 — seam signatures differ
+            def _refuse(*_args: object, **_kwargs: object) -> None:
+                self.pg_reach.append(name)
+                raise AssertionError(f"PG reach from a sealed aggregator run: {name}")
+
+            return _refuse
+
+        return (
+            mock.patch.object(module, "_read_budget_overages", lambda since: []),
+            mock.patch.object(module, "_read_size_est_pairs", lambda since: []),
+            *(
+                mock.patch.object(module, name, _get_refusal(name))
+                for name in ("_pg_insert_audit_queue_rows", "_pg_insert_liveness_observation")
+            ),
         )
 
     def _cleanup_tmpdir(self) -> None:
@@ -241,6 +271,7 @@ class _AggregatorRunFixture(unittest.TestCase):
             mock.patch.object(module, "_pg_upsert_learning_pattern", _record_upsert),
             mock.patch.object(module, "_pg_update_aggregator_state", lambda **kw: None),
             mock.patch.object(module, "_pg_batch_complete", lambda summary: None),
+            *self._get_seal_patchers(module),
         )
         for patcher in patchers:
             patcher.start()
@@ -248,6 +279,7 @@ class _AggregatorRunFixture(unittest.TestCase):
         stderr = io.StringIO()
         with contextlib.redirect_stderr(stderr):
             module.main(registry_path=self.registry_path)
+        self.assertEqual(self.pg_reach, [])
         return stderr.getvalue()
 
     def _upsert_signatures(self) -> set[str]:
@@ -338,12 +370,7 @@ class TestPoisonedRowsEmitNoPattern(_AggregatorRunFixture):
 
     @classmethod
     def setUpClass(cls) -> None:
-        import psycopg
-
-        try:
-            cls.conn = psycopg.connect("dbname=glass_atrium", connect_timeout=2)
-        except Exception as exc:  # noqa: BLE001 — no PG → skip the live class
-            raise unittest.SkipTest(f"PG unreachable: {type(exc).__name__}: {exc}")
+        cls.conn = get_ephemeral_connection()
         cls.addClassCleanup(cls._rollback_and_close)
 
         now = time.time()
@@ -421,6 +448,7 @@ class TestPoisonedRowsEmitNoPattern(_AggregatorRunFixture):
             mock.patch.object(agg, "_pg_upsert_learning_pattern", _record_upsert),
             mock.patch.object(agg, "_pg_update_aggregator_state", lambda **kw: None),
             mock.patch.object(agg, "_pg_batch_complete", lambda summary: None),
+            *self._get_seal_patchers(agg),
         )
         for patcher in patchers:
             patcher.start()
@@ -428,6 +456,7 @@ class TestPoisonedRowsEmitNoPattern(_AggregatorRunFixture):
         stderr = io.StringIO()
         with contextlib.redirect_stderr(stderr):
             agg.main(registry_path=self.registry_path)
+        self.assertEqual(self.pg_reach, [])
         return stderr.getvalue()
 
     def test_when_rows_poisoned_then_no_pattern_for_agent(self) -> None:
