@@ -1493,50 +1493,17 @@ PromotionTier = Literal[
     "mention", "candidate", "proposal", "instruction-edit", "skill-candidate"
 ]
 
-# Apply-eligible promotion tiers — the SINGLE SoT shared with the apply-side
-# allowlist (daemon-apply.sh extract_backlog_patches). A row whose promotion_tier
-# is NOT in this set (only 'mention', the floor rung) is PERMANENTLY excluded by
-# auto-apply. Generation MUST NOT emit such a row as approval_tier='auto' +
-# status='pending' — that produces the auto+pending+mention limbo that fossilizes
-# as a standing "New suggestions" pile (apply excludes it; auto-tier is not a
-# human-approval candidate either). is_apply_eligible_promotion_tier() lets
-# generation terminalize a floor row to 'unadjudicated' instead, so GENERATION and
-# APPLY can never disagree on a single row's eligibility.
-#   NULL/None → legacy pre-feature rows (eligible) · "" → operator BYPASS,
-#   floorless (eligible) · the four above-floor tiers → eligible · "mention" →
-#   the ONLY excluded value (apply-side floor).
-APPLY_ELIGIBLE_PROMOTION_TIERS = frozenset(
-    {"", "candidate", "proposal", "instruction-edit", "skill-candidate"}
-)
-# Rationale persisted on a floor row terminalized at generation (vs. emitted as
-# auto-pending limbo). Distinct from a quality reject so the board reads true.
+# Rationale persisted on an auto candidate terminalized at generation (vs. emitted
+# as auto-pending limbo). Distinct from a quality reject so the board reads true.
 # Stable head of the confidence-floor reject reason. classify_failure_rationale
 # prefix-matches THIS literal to map a floor-terminalized row to a
 # non-adjudication class (so consecutive_reject_count looks past it) — keep the
 # reason string below derived from this prefix so the two cannot drift.
 _BELOW_FLOOR_REJECT_PREFIX = "deferred: below confidence floor"
 _BELOW_FLOOR_REJECT_REASON = (
-    f"{_BELOW_FLOOR_REJECT_PREFIX} (promotion_tier='mention') — observed only, "
-    "auto-apply ineligible this cycle; resurfaces when the pattern clears the floor"
+    f"{_BELOW_FLOOR_REJECT_PREFIX} — auto-apply closed until live trials; "
+    "the promotion tier is a label only"
 )
-
-
-def is_apply_eligible_promotion_tier(promotion_tier: str | None) -> bool:
-    """Whether a promotion_tier passes the apply-side auto-apply allowlist.
-
-    Single SoT mirroring daemon-apply.sh extract_backlog_patches' positive
-    allowlist (NULL / '' / candidate / proposal / instruction-edit /
-    skill-candidate). Only 'mention' (the floor rung) is excluded.
-
-    Args:
-        promotion_tier: the row's promotion_tier (None = legacy/pre-feature row).
-
-    Returns:
-        True when auto-apply may act on the row; False only for 'mention'.
-    """
-    if promotion_tier is None:
-        return True
-    return promotion_tier in APPLY_ELIGIBLE_PROMOTION_TIERS
 
 
 # Apply-eligible haiku_status prefix — the SINGLE SoT for the haiku-skip gate the
@@ -1625,11 +1592,11 @@ def is_apply_eligible_patch_dict(patch: dict[str, object]) -> bool:
 
 @dataclass(frozen=True)
 class FloorTerminalization:
-    """Resolved status of an auto candidate against the apply-side floor.
+    """Resolved status of a candidate while auto-apply is closed.
 
-    `terminalized` is True only when an auto+pending candidate's promotion_tier
-    is apply-ineligible — in that case the other fields carry the rewritten
-    terminal-reject values; otherwise they echo the inputs unchanged.
+    `terminalized` is True only for an auto+pending candidate — in that case the
+    routing fields carry the rewritten terminal-reject values; otherwise they echo
+    the inputs unchanged. `promotion_tier` always echoes its input (a label).
     """
 
     classification: str
@@ -1637,6 +1604,7 @@ class FloorTerminalization:
     status_value: str
     rationale: str
     terminalized: bool
+    promotion_tier: str
 
 
 def resolve_floor_terminalization(
@@ -1646,44 +1614,39 @@ def resolve_floor_terminalization(
     promotion_tier: str,
     rationale: str,
 ) -> FloorTerminalization:
-    """Terminalize an apply-ineligible auto candidate at the generation source.
+    """Terminalize every auto candidate at the generation source.
 
-    Closes the auto+pending+mention limbo: an auto candidate whose promotion_tier
-    the apply gate permanently excludes ('mention') would otherwise sit pending
-    forever — auto-apply never acts on it AND auto-tier is not a safety-queue
-    candidate. GENERATION and APPLY must agree on ONE acceptance predicate
-    (is_apply_eligible_promotion_tier), so an ineligible auto row is rewritten to
-    a terminal 'unadjudicated' row here rather than emitted as auto-pending — a
-    floor hold is not a gate verdict, so it never takes 'rejected'.
+    Auto-apply is closed until live trials, so an auto+pending candidate would sit
+    pending forever — auto-apply never acts on it AND auto-tier is not a
+    safety-queue candidate. It is rewritten to a terminal 'unadjudicated' row here
+    instead — a closed-apply hold is not a gate verdict, so it never takes
+    'rejected'.
 
-    Only the (approval_tier='auto', status='pending', ineligible-tier) shape is
-    rewritten. Safety tier (approval_tier='safety') and already-terminal rows
-    (rejected / snoozed) pass through unchanged — the human approval queue and the
-    existing reject/back-off paths are preserved.
+    The posterior's promotion tier is a label only: it never decides the verdict
+    and passes through unchanged. Only the (approval_tier='auto',
+    status='pending') shape is rewritten. Safety tier (approval_tier='safety') and
+    already-terminal rows (rejected / snoozed) pass through unchanged — the human
+    approval queue and the existing reject/back-off paths are preserved.
 
     Args:
         classification: JSON-side label ('body-auto' for an auto candidate).
         approval_tier: 'auto' / 'safety' / '' as resolved upstream.
         status_value: 'pending' / 'rejected' / 'snoozed' as resolved upstream.
-        promotion_tier: the resolved promotion tier ('mention' = floor rung).
+        promotion_tier: the candidate's promotion tier label (echoed unchanged).
         rationale: the candidate's current rationale.
 
     Returns:
         FloorTerminalization — rewritten reject values when terminalized, else the
         inputs echoed unchanged.
     """
-    should_terminalize = (
-        approval_tier == "auto"
-        and status_value == "pending"
-        and not is_apply_eligible_promotion_tier(promotion_tier)
-    )
-    if not should_terminalize:
+    if approval_tier != "auto" or status_value != "pending":
         return FloorTerminalization(
             classification=classification,
             approval_tier=approval_tier,
             status_value=status_value,
             rationale=rationale,
             terminalized=False,
+            promotion_tier=promotion_tier,
         )
     return FloorTerminalization(
         classification="reject",
@@ -1691,6 +1654,7 @@ def resolve_floor_terminalization(
         status_value="unadjudicated",
         rationale=_BELOW_FLOOR_REJECT_REASON,
         terminalized=True,
+        promotion_tier=promotion_tier,
     )
 
 
@@ -9263,9 +9227,9 @@ def classify_failure_rationale(rationale: str) -> str:
     if text.startswith("haiku transient overload"):
         return FAILURE_CLASS_TRANSIENT
     if text.startswith(_BELOW_FLOOR_REJECT_PREFIX):
-        # Confidence-floor terminalization (resolve_floor_terminalization) — a
-        # MECHANICAL, explicitly-recoverable reject ("resurfaces when the pattern
-        # clears the floor"), NOT a quality verdict. It persists 'unadjudicated'
+        # Closed-apply terminalization (resolve_floor_terminalization) — a
+        # MECHANICAL hold while auto-apply is closed, NOT a quality verdict.
+        # It persists 'unadjudicated'
         # ('rejected' on a pre-label schema) — no review side adjudicated it, so it MUST NOT advance
         # the kill streak (the exact de-conflation class for a new reject variant).
         return FAILURE_CLASS_SKIPPED
@@ -11130,12 +11094,12 @@ def run_cycle(
     report.patterns_processed = len(patterns)
     agent_groups = _group_patterns_by_agent(patterns, agent_cap=agent_cap)
 
-    # Promotion floor, identical on every install — no file, config or env input
-    # decides it. Every row is floored to promotion_tier='mention', so the
-    # apply-side `IS DISTINCT FROM 'mention'` gate excludes all of them.
+    # Auto-apply closed, identical on every install — no file, config or env input
+    # decides it. The promotion tier is a label only (the 'mention' floor rung on
+    # every row); resolve_floor_terminalization terminalizes every auto candidate.
     sys.stderr.write(
-        "[daemon-cycle] INFO: promotion floor — every row floored to "
-        "promotion_tier='mention'; no candidate is auto-apply eligible this cycle\n"
+        "[daemon-cycle] INFO: auto-apply closed — promotion_tier is a label only; "
+        "every auto candidate terminalizes this cycle\n"
     )
 
     # T3 corpus/compliance telemetry — DETECTION-ONLY, fired ONCE per cycle.
@@ -11433,13 +11397,11 @@ def run_cycle(
 
         promotion_tier = "mention"
 
-        # Floor terminalization — close the auto+pending+mention limbo at the
-        # SOURCE so every auto-tier candidate reaches a terminal state this cycle.
-        # An apply-ineligible auto candidate ('mention') would otherwise sit
-        # pending forever (apply excludes it; auto-tier is not a safety-queue
-        # candidate), fossilizing as a standing "New suggestions" pile. Safety tier
-        # is untouched (approval_tier='safety' → gate is auto-only) — the human
-        # queue is preserved.
+        # Closed-apply terminalization — close the auto+pending limbo at the SOURCE
+        # so every auto-tier candidate reaches a terminal state this cycle; it would
+        # otherwise sit pending forever, fossilizing as a standing "New
+        # suggestions" pile. Safety tier is untouched (the gate is auto-only) — the
+        # human queue is preserved.
         terminalize = resolve_floor_terminalization(
             classification=classification,
             approval_tier=approval_tier,
@@ -11453,9 +11415,9 @@ def run_cycle(
         effective_rationale = terminalize.rationale
         if terminalize.terminalized:
             sys.stderr.write(
-                "[daemon-cycle] INFO: floor terminalize — auto candidate for "
-                f"agent={agent} target={proposal.target_file} resolved to "
-                f"promotion_tier='{promotion_tier}' (auto-apply ineligible); "
+                "[daemon-cycle] INFO: closed-apply terminalize — auto candidate for "
+                f"agent={agent} target={proposal.target_file} "
+                f"(promotion_tier='{promotion_tier}', label only); "
                 "persisted status='unadjudicated' instead of auto-pending limbo\n"
             )
 
@@ -11541,7 +11503,7 @@ def run_cycle(
                 pre_verify_latency_ms=verify.latency_ms if verify is not None else 0,
                 approval_tier=approval_tier,
                 status=status_value,
-                promotion_tier=promotion_tier,
+                promotion_tier=terminalize.promotion_tier,
                 # Carry the structured Haiku-failure evidence from the proposal
                 # into the SERIALIZED row. Without this copy the dataclass
                 # defaults ('' / None) reach PG → failure_class stays empty and
