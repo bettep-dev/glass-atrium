@@ -885,7 +885,7 @@ test("M1 a live-overlay failure is named in the lane and names its own reason", 
   assert.ok(bare[0].note.length > 0, "a reasonless failure still needs a sentence");
 });
 
-test("M1 every tone the lane can paint has a rank, so no row sorts to nowhere", () => {
+test("every tone the lane can paint has a rank, so no row sorts to nowhere", () => {
   const ranks = readInCtx<Record<string, number>>("ALARM_TONE_RANK");
   const everyTrigger = { offWriters: [{ writer_name: "track-outcome" }], healthStoreErrors: ["PostgreSQL"], liveState: { status: "error", data: null, error: "x" } };
   const tones = [
