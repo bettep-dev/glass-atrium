@@ -30,6 +30,7 @@ import tempfile
 import unittest
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
+from types import SimpleNamespace
 from unittest import mock
 
 _REPO_ROOT = Path(__file__).resolve().parent.parent.parent
@@ -65,15 +66,15 @@ _CYCLE_DATE = date(2026, 6, 30)
 # cycle-level discriminators set a rejected row aside on its rationale class, so
 # a blank one here would silently drop the row the case under test needs.
 _QUALITY_RATIONALE = "quality reject — pre-verify failed"
-_BODY_RULE = "- Cite the file a finding comes from."
 _ADDED_RULE = "- Keep each synthesis section under five bullets."
 _SECOND_ADDED_RULE = "- Name the source of every figure."
-_BODY_WITH_EDIT = f"# Probe agent\n\n{_BODY_RULE}\n{_ADDED_RULE}\n{_SECOND_ADDED_RULE}\n"
+_BODY = SimpleNamespace(RULE="- Cite the file a finding comes from.")
+_BODY.WITH_EDIT = f"# Probe agent\n\n{_BODY.RULE}\n{_ADDED_RULE}\n{_SECOND_ADDED_RULE}\n"
 
 
 def _added_diff(*added: str) -> str:
     """Stored proposed_diff shape: one hunk appending ``added`` after the body rule."""
-    hunk = f"@@ -3,1 +3,{1 + len(added)} @@\n {_BODY_RULE}\n"
+    hunk = f"@@ -3,1 +3,{1 + len(added)} @@\n {_BODY.RULE}\n"
     return "--- a/probe.md\n+++ b/probe.md\n" + hunk + "".join(f"+{line}\n" for line in added)
 
 
@@ -275,7 +276,7 @@ class TestAlertPostApplyRegression(unittest.TestCase):
         scratch = tempfile.TemporaryDirectory()
         self.addCleanup(scratch.cleanup)
         self.target_path = Path(scratch.name) / "probe.md"
-        self.target_path.write_text(_BODY_WITH_EDIT, encoding="utf-8")
+        self.target_path.write_text(_BODY.WITH_EDIT, encoding="utf-8")
         self.diff_text = _added_diff(_ADDED_RULE)
         self.backup_root = Path(scratch.name) / "agents-bak"
         self.before_image = self.backup_root / f"{_CYCLE_DATE}_p{_PROPOSAL_ID}"
@@ -318,7 +319,7 @@ class TestAlertPostApplyRegression(unittest.TestCase):
     def _add_later_watched_row(self) -> None:
         """Queue a later applied row with its edit intact — its event proves the watch went on."""
         later_path = self.target_path.with_name("later.md")
-        later_path.write_text(_BODY_WITH_EDIT, encoding="utf-8")
+        later_path.write_text(_BODY.WITH_EDIT, encoding="utf-8")
         self.later_rows = [
             (
                 _LATER_PROPOSAL_ID,
