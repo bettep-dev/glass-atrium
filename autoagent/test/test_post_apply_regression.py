@@ -364,13 +364,21 @@ class TestAlertPostApplyRegression(unittest.TestCase):
                 self.assertEqual("WARN: post-apply regression" in err, expected_events == 1)
 
     def test_when_target_body_unreadable_then_skipped_with_named_line(self) -> None:
-        self.target_path.unlink()
-        self.window_rows = _windows(1, 10, 3, 5)
-        err = self._run()
+        # One unreadable body skips only its own row, never the whole watch.
+        rows = (
+            ("target file missing", lambda: self.target_path.unlink()),
+            ("target body not UTF-8", lambda: self.target_path.write_bytes(b"- \xff\xfe rule\n")),
+        )
+        for name, make_unreadable in rows:
+            with self.subTest(name):
+                self.emitted.clear()
+                make_unreadable()
+                self.window_rows = _windows(1, 10, 3, 5)
+                err = self._run()
 
-        self.assertEqual(self.emitted, [])
-        self.assertNotIn("WARN: post-apply regression", err)
-        self.assertIn(str(self.target_path), err)
+                self.assertEqual(self.emitted, [])
+                self.assertNotIn("WARN: post-apply regression", err)
+                self.assertIn(str(self.target_path), err)
 
     def test_when_same_cycle_rerun_then_dedup_key_is_identical(self) -> None:
         # The loop-event UPSERT keys on (event_ts, agent, eval_result); the

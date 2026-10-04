@@ -7303,8 +7303,8 @@ def _is_applied_edit_gone(proposed_diff: str | None, target_file: str) -> bool:
     """True iff no added content line of the applied diff remains in the target body.
 
     Verbatim line match, blank adds ignored (`_added_content_lines`). A diff with
-    no added content stays watched — its presence is undecidable. An unreadable
-    body holds none of the lines → True, with a named stderr line.
+    no added content stays watched — its presence is undecidable. An unreadable or
+    non-UTF-8 body holds none of the lines → True, with a named stderr line.
     """
     added = _added_content_lines(proposed_diff or "")
     if not added:
@@ -7314,7 +7314,7 @@ def _is_applied_edit_gone(proposed_diff: str | None, target_file: str) -> bool:
         target_path = ga_paths.get_base_root() / target_path
     try:
         body_lines = set(target_path.read_text(encoding="utf-8").splitlines())
-    except OSError as exc:
+    except (OSError, UnicodeDecodeError) as exc:
         sys.stderr.write(
             f"[daemon-cycle] post-apply watch: target body unreadable — {target_path} "
             f"({type(exc).__name__}); its applied edit counts as gone\n"
