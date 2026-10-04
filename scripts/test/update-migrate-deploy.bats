@@ -15,12 +15,12 @@
 #          migration actually lands, and the only rows that can observe an unreachable server
 #   T8-T9  position inside update_run: after the apply + wire step, and no rollback on failure
 #
-# NO LIVE DATABASE IS EVER CONTACTED. T6/T7 create their own throwaway database, and their monitor
-# fixture carries a prisma.config.ts that deliberately does NOT `import "dotenv/config"` — the live
-# monitor's .env (which names the production database) is therefore unreadable from the fixture,
-# and DATABASE_URL can only come from the environment this suite sets. Both rows skip when
-# PostgreSQL, createdb/dropdb or a built prisma CLI is unavailable, so a CI host without them stays
-# green rather than silently weakening the contract.
+# NO LIVE DATABASE IS EVER CONTACTED. T6/T7 start their own socket-only PostgreSQL cluster and
+# create their throwaway database on it, and their monitor fixture carries a prisma.config.ts that
+# deliberately does NOT `import "dotenv/config"` — the live monitor's .env (which names the
+# production database) is therefore unreadable from the fixture, and DATABASE_URL can only come from
+# the environment this suite sets. Both rows skip when the PostgreSQL tools or a built prisma CLI are
+# unavailable, so a CI host without them stays green rather than silently weakening the contract.
 #
 # Each row names its MUTATION — the single change that flips it — because a row that passes on both
 # sides of its own subject proves nothing. The stub-based rows record every invocation, so "prisma
@@ -325,8 +325,9 @@ datasource db {
 SCHEMA
 }
 
-# Skip unless a real prisma CLI and a usable local PostgreSQL are both present, and export the
-# fixture inputs the two rows below need. Sets REAL_NODE_MODULES / SCRATCH_DB / SCRATCH_URL.
+# Skip unless a real prisma CLI and the PostgreSQL tools are both present; start a private cluster
+# and export the fixture inputs the two rows below need. Sets REAL_NODE_MODULES / SCRATCH_DB /
+# SCRATCH_URL, and PGHOST/PGPORT = the cluster; teardown stops it.
 require_real_prisma_and_db() {
   local prisma_bin=""
   local candidate
@@ -341,22 +342,42 @@ require_real_prisma_and_db() {
   REAL_NODE_MODULES="$(cd -- "$(dirname -- "$(dirname -- "${prisma_bin}")")" && pwd -P)"
   PRISMA_STUB="${prisma_bin}" # the seam takes the REAL binary for these rows
 
-  command -v createdb >/dev/null 2>&1 || skip "createdb unavailable"
-  command -v dropdb >/dev/null 2>&1 || skip "dropdb unavailable"
-  command -v psql >/dev/null 2>&1 || skip "psql unavailable"
+  local tool
+  for tool in initdb pg_ctl createdb dropdb psql; do
+    command -v "${tool}" >/dev/null 2>&1 || skip "${tool} unavailable"
+  done
 
-  # A throwaway database of this suite's own making. The name is namespaced and carries the pid, so
-  # it can never collide with — or be mistaken for — the live one.
+  # A private socket-only cluster, never the default one: an ambient PGHOSTADDR would route the
+  # bring-up's own createdb/psql over TCP, so the libpq redirects are cleared before the first PG call.
+  unset PGPORT PGHOSTADDR PGSERVICE PGDATABASE PGPASSFILE
+  # shellcheck source-path=SCRIPTDIR source=../../hooks/test/lib/ephemeral-pg.bash
+  source "${GA}/hooks/test/lib/ephemeral-pg.bash"
+  EPH_DATADIR="${BATS_TEST_TMPDIR}/pgdata"
+  EPH_SOCKDIR="${BATS_TEST_TMPDIR}/sock"
+  EPH_PORT="55455"
+  eph_pg_start "${EPH_DATADIR}" "${EPH_SOCKDIR}" "${EPH_PORT}" "eph_bootstrap" || return 1
+  export PGHOST="${EPH_SOCKDIR}" PGPORT="${EPH_PORT}"
+  [[ "${PGHOST}" == "${EPH_SOCKDIR}" ]] || {
+    echo "PGHOST is not the ephemeral cluster's socket dir — refusing to write" >&2
+    return 1
+  }
+
   SCRATCH_DB="ga_upd_mig_bats_$$"
-  createdb "${SCRATCH_DB}" 2>/dev/null || skip "cannot create a throwaway database"
-  SCRATCH_URL="postgresql://${USER}@localhost/${SCRATCH_DB}?host=/tmp"
-  psql -d "${SCRATCH_URL}" -tAc 'SELECT 1' >/dev/null 2>&1 || skip "throwaway database unreachable over the socket URL"
+  createdb -h "${EPH_SOCKDIR}" -p "${EPH_PORT}" "${SCRATCH_DB}" || return 1
+  # The port rides the authority, the form libpq and prisma's engine both parse.
+  SCRATCH_URL="postgresql://${USER}@localhost:${EPH_PORT}/${SCRATCH_DB}?host=${EPH_SOCKDIR}"
+  psql -d "${SCRATCH_URL}" -tAc 'SELECT 1' >/dev/null || return 1
 }
 
 drop_scratch_db() {
-  [[ -n "${SCRATCH_DB:-}" ]] || return 0
-  dropdb --if-exists "${SCRATCH_DB}" >/dev/null 2>&1 || true
-  SCRATCH_DB=""
+  if [[ -n "${SCRATCH_DB:-}" ]]; then
+    dropdb -h "${EPH_SOCKDIR}" -p "${EPH_PORT}" --if-exists "${SCRATCH_DB}" >/dev/null 2>&1 || true
+    SCRATCH_DB=""
+  fi
+  if [[ -n "${EPH_DATADIR:-}" ]]; then
+    eph_pg_stop "${EPH_DATADIR}"
+    EPH_DATADIR=""
+  fi
 }
 
 # ── T6 — an unreachable database is a loud 15, carrying prisma's own connection diagnosis ───────
