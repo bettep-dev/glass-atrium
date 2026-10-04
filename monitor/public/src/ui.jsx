@@ -533,32 +533,6 @@ function StatusDot({ status }) {
   );
 }
 
-// 22px 원형 컬러 배지 + 이니셜. 색 = categorical agent 팔레트 토큰(tokens.css --agent-N, 테마 불변) —
-//   하드코딩 hex 제거. named agent 는 고정 슬롯, 그 외 id 해시로 안정 배정.
-const AGENT_NAMED_VAR = {
-  'glass-atrium-intel-planner':    '--agent-1',
-  'glass-atrium-intel-researcher': '--agent-2',
-  writer:   '--agent-3',
-  reviewer: '--agent-4',
-  coder:    '--agent-5',
-  analyst:  '--agent-6',
-};
-const AGENT_PALETTE_VARS = ['--agent-1', '--agent-2', '--agent-3', '--agent-4', '--agent-5', '--agent-6', '--agent-7', '--agent-8'];
-
-function AgentBadge({ a, size=22 }) {
-  const id = a?.id || a?.agent_id || '';
-  const name = a?.name || a?.agent_name || id || '?';
-  const initial = name[0] ? name[0].toUpperCase() : '?';
-  const colorVar = AGENT_NAMED_VAR[id] || AGENT_PALETTE_VARS[(strHash(id) >>> 0) % AGENT_PALETTE_VARS.length];
-  // 이니셜 전경 = 고정 dark ink(--agent-ink) → 밝은 amber/cyan fill 에서도 ≥3:1 대비 (기존 white ~2:1 회귀 해소).
-  //   팔레트 8색 전부 dark ink 로 ≥3.9:1 검증 완료 (fill 은 테마 불변 categorical).
-  return <span className="agent-badge inline-grid place-items-center font-mono font-semibold shrink-0"
-    style={{width:size, height:size, fontSize: size*0.5, borderRadius: size*0.3,
-      background: `rgb(var(${colorVar}))`, color: 'rgb(var(--agent-ink))', letterSpacing:'-0.02em'}}>
-    {initial}
-  </span>;
-}
-
 const AGENT_NAME_PREFIX = 'glass-atrium-';
 
 /** Display form of an agent name — the shared install prefix dropped; a missing name → '—'. */
@@ -582,15 +556,6 @@ function AgentName({ name, className = '' }) {
       <span className="sr-only">{full}</span>
     </span>
   );
-}
-
-// djb2-lite — 시각 팔레트용 결정적 해시 (crypto 불필요)
-function strHash(str) {
-  let h = 5381;
-  for (let i = 0; i < str.length; i++) {
-    h = ((h << 5) + h) + str.charCodeAt(i);
-  }
-  return h;
 }
 
 // Headline figure on the .kpi-value scale — tone rides a decorative glyph, the figure stays neutral ink.
@@ -2238,7 +2203,7 @@ function resolveOutcomeRate(data) {
 }
 
 window.UI = {
-  Icon, Pill, Badge, EmptyState, SubCard, Sparkline, MiniBars, Bar, BulletBar, StatusDot, AgentBadge, AgentName, getAgentDisplayName, KPI, KpiValue, DetailSurface, useDismissFocus, Popover, PopoverPanel, getTrapFocusTarget, getInertTargets, setSurfaceOpen, getTopSurface, Modal, Tabs, CardHead, CardInfo, Card, CARD_SLOTS, getSlotRows, ClampCell, ClampText, PageHeader,
+  Icon, Pill, Badge, EmptyState, SubCard, Sparkline, MiniBars, Bar, BulletBar, StatusDot, AgentName, getAgentDisplayName, KPI, KpiValue, DetailSurface, useDismissFocus, Popover, PopoverPanel, getTrapFocusTarget, getInertTargets, setSurfaceOpen, getTopSurface, Modal, Tabs, CardHead, CardInfo, Card, CARD_SLOTS, getSlotRows, ClampCell, ClampText, PageHeader,
   SectionLabel, Table, TableHead, DisclosureChevron, DisclosureButton, getSeverityTone, getWorstTone,
   Disclosure, getDisclosureOpen, SplitRow, SPLIT_ROW_RATIOS, SPLIT_ROW_LAYOUTS, SplitColumn, TileSplit,
   getRovingIndex, getRovingTabIndex, ROW_CONTROL_PROPS, getRowKeyAction, getRowFocusProps, ChipGroup,

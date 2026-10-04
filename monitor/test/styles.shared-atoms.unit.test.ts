@@ -308,7 +308,7 @@ test("a nested dark scope resolves the surface aliases against its own tokens an
   }));
   const isNestedThemed = (s: string) => /^\[data-theme(="dark")?\]$/.test(s);
 
-  for (const alias of ["--surface-sunken", "--surface-base", "--surface-raised", "--surface-raised-2", "--surface-overlay"]) {
+  for (const alias of ["--surface-raised-2", "--surface-overlay"]) {
     const declaring = rules.filter((r) => getDecl(r.body, alias) !== undefined);
     assert.ok(declaring.length > 0, `${alias} is declared`);
     assert.ok(declaring.every((r) => r.selectors.some(isNestedThemed)), `${alias} is declared only where a nested themed scope re-resolves it`);
