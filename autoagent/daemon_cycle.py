@@ -190,6 +190,7 @@ try:
             PROPOSAL_STATUS_SQL as _PG_PROPOSAL_STATUS_SQL,
             write_autoagent_loop_event as _pg_write_loop_event,
             write_autoagent_corpus_audit as _pg_write_corpus_audit,
+            get_proposal_status_label_state,
         )
     HAS_PG_LOOP_WRITE = True
 except Exception as _pg_loop_import_exc:  # noqa: BLE001 — psycopg or helper itself
@@ -445,6 +446,12 @@ class ExitCode(IntEnum):
     PARKED_GUARD_FAILURE = 8
     # rejected daemon-config.json tier knob — the CLI would silently run its default
     DAEMON_CONFIG_INVALID = 9
+    # unadjudicated backfill deferred: sandbox DB, unreadable ps listing, live cycle, label absent
+    BACKFILL_DEFERRED = 10
+    # unadjudicated backfill caller holds no .apply-lock in the mode's ancestor chain
+    BACKFILL_LOCK_NOT_HELD = 11
+    # unadjudicated backfill committed but its completion record or marker removal failed
+    BACKFILL_RECORD_FAILED = 13
 
 
 # Intra-cycle Haiku spacing (FIX #5) ----------------------------------------
@@ -8058,6 +8065,193 @@ def backfill_auth_mislabeled_proposals(
     return results
 
 
+# -- unadjudicated backfill (E2) ---------------------------------------------
+#
+# Relabels stored non-verdict 'rejected' rows to 'unadjudicated': rows written before
+# the label existed, plus the updater's unlanded rows. Writes status only, so the stored
+# actor survives. Every gate before the first connection needs no connection.
+_UNADJUDICATED_BACKFILL_PAGE_SIZE = 500
+_UNADJUDICATED_BACKFILL_LOG = "[daemon-cycle] unadjudicated backfill"
+_INSTALL_DB_NAME = "glass_atrium"
+_OPERATOR_ACTOR = "monitor-user"
+_UPDATER_RESOLVED_GAP_ACTOR = "updater-resolved-gap"
+_CYCLE_PROCESS_PATHS = ("autoagent/daemon-cycle.sh", "autoagent/daemon_cycle.py")
+_UNADJUDICATED_SELECT_SQL = (
+    "SELECT id, rationale, reviewed_by FROM core.autoagent_proposals "
+    "WHERE status = 'rejected' AND id > %s ORDER BY id LIMIT %s"
+)
+
+
+def backfill_unadjudicated_proposals(reports_dir: Path) -> int:
+    """Relabel non-verdict 'rejected' rows once the caller-held lock and every gate allow.
+
+    Gates in order: DB target, process listing, lock held by an ancestor, no live
+    cycle process, PG helper import, label present. Returns the `_main` exit code;
+    every non-zero leaves the re-arm marker and the completion record as found.
+    """
+    deferral = _get_backfill_deferral(reports_dir)
+    if deferral is not None:
+        return deferral
+    try:
+        with _pg_connect() as conn:
+            label_state = get_proposal_status_label_state(conn)
+            if label_state != "present":
+                _write_backfill_line(f"deferred — 'unadjudicated' label {label_state}")
+                return ExitCode.BACKFILL_DEFERRED
+            relabeled = _relabel_unadjudicated_rows(conn)
+            conn.commit()
+    except Exception as exc:  # noqa: BLE001 — any PG fault → named exit 7, nothing marked done
+        _write_backfill_line(f"aborted (PG): {type(exc).__name__}: {str(exc)[:200]}")
+        return ExitCode.BACKFILL_PG
+    return _complete_backfill(reports_dir, relabeled)
+
+
+def _get_backfill_deferral(reports_dir: Path) -> int | None:
+    """Exit code of the first connection-free gate that refuses, else None."""
+    db_name = os.environ.get("GA_DB_NAME") or _INSTALL_DB_NAME
+    if db_name != _INSTALL_DB_NAME:
+        _write_backfill_line(f"deferred — GA_DB_NAME={db_name!r} is not {_INSTALL_DB_NAME}")
+        return ExitCode.BACKFILL_DEFERRED
+    process_deferral = _get_process_deferral(reports_dir)
+    if process_deferral is not None:
+        return process_deferral
+    if not HAS_PG_LOOP_WRITE:
+        _write_backfill_line(f"aborted — PG helper import failed: {_PG_LOOP_IMPORT_EXC!r}")
+        return ExitCode.BACKFILL_PG
+    return None
+
+
+def _get_process_deferral(reports_dir: Path) -> int | None:
+    """Listing → lock held by an ancestor → no live cycle process; the first refusal's exit code."""
+    listing = _get_process_listing()
+    if listing is None:
+        return ExitCode.BACKFILL_DEFERRED
+    ancestors = _get_ancestor_pids(listing)
+    if ancestors is None:
+        _write_backfill_line("deferred — own pid absent from the ps listing")
+        return ExitCode.BACKFILL_DEFERRED
+    lock_pid = _get_lock_holder_pid(reports_dir / ".apply-lock" / "pid")
+    if lock_pid not in ancestors:
+        _write_backfill_line(f"refused — {reports_dir}/.apply-lock not held by this mode's caller")
+        return ExitCode.BACKFILL_LOCK_NOT_HELD
+    cycle_pid = _find_live_cycle_pid(listing, ancestors)
+    if cycle_pid is not None:
+        _write_backfill_line(f"deferred — live cycle process pid={cycle_pid}")
+        return ExitCode.BACKFILL_DEFERRED
+    return None
+
+
+def _get_process_listing() -> dict[int, tuple[int, str]] | None:
+    """`ps -A` as pid → (ppid, args); None, with a named line, when it fails or does not parse."""
+    ps_bin = os.environ.get("AUTOAGENT_PS_BIN", "ps")
+    try:
+        proc = subprocess.run(
+            [ps_bin, "-A", "-o", "pid=", "-o", "ppid=", "-o", "args="],
+            capture_output=True, text=True, encoding="utf-8", errors="replace",
+            timeout=10, check=False,
+        )
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        _write_backfill_line(f"deferred — ps listing failed: {type(exc).__name__}: {exc}")
+        return None
+    if proc.returncode != 0:
+        _write_backfill_line(f"deferred — ps listing failed: rc={proc.returncode}")
+        return None
+    return _parse_process_listing(proc.stdout)
+
+
+def _parse_process_listing(stdout: str) -> dict[int, tuple[int, str]] | None:
+    listing: dict[int, tuple[int, str]] = {}
+    for line in stdout.splitlines():
+        if not line.strip():
+            continue
+        fields = line.split(None, 2)
+        if len(fields) < 2 or not fields[0].isdigit() or not fields[1].isdigit():
+            _write_backfill_line(f"deferred — ps listing unparseable: {line[:80]!r}")
+            return None
+        listing[int(fields[0])] = (int(fields[1]), fields[2] if len(fields) > 2 else "")
+    return listing
+
+
+def _get_ancestor_pids(listing: dict[int, tuple[int, str]]) -> set[int] | None:
+    """This process and every ancestor the listing names; None when it lacks this process."""
+    pid = os.getpid()
+    if pid not in listing:
+        return None
+    chain: set[int] = set()
+    while pid in listing and pid not in chain:
+        chain.add(pid)
+        pid = listing[pid][0]
+    return chain
+
+
+def _get_lock_holder_pid(pid_file: Path) -> int | None:
+    try:
+        text = pid_file.read_text(encoding="utf-8").strip()
+    except OSError:
+        return None
+    return int(text) if text.isdigit() else None
+
+
+def _find_live_cycle_pid(listing: dict[int, tuple[int, str]], ancestors: set[int]) -> int | None:
+    for pid, (_ppid, args) in sorted(listing.items()):
+        if pid not in ancestors and any(path in args for path in _CYCLE_PROCESS_PATHS):
+            return pid
+    return None
+
+
+def _relabel_unadjudicated_rows(conn: object) -> int:
+    """Keyset-page the 'rejected' rows by id and relabel the targets; returns the count."""
+    update_sql = (
+        f"UPDATE core.autoagent_proposals SET status = {_PG_PROPOSAL_STATUS_SQL} "
+        "WHERE id = ANY(%s) AND status = 'rejected'"
+    )
+    relabeled, after_id = 0, 0
+    while True:
+        with conn.cursor() as cur:
+            cur.execute(_UNADJUDICATED_SELECT_SQL, (after_id, _UNADJUDICATED_BACKFILL_PAGE_SIZE))
+            page = cur.fetchall()
+        if not page:
+            return relabeled
+        after_id = page[-1][0]
+        ids = [row[0] for row in page if _is_unadjudicated_backfill_target(row[1], row[2])]
+        if ids:
+            with conn.cursor() as cur:
+                cur.execute(update_sql, ("unadjudicated", ids))
+                relabeled += cur.rowcount
+
+
+def _is_unadjudicated_backfill_target(rationale: str | None, reviewed_by: str | None) -> bool:
+    """An operator verdict never; an unlanded updater row always; else a non-verdict rationale."""
+    if reviewed_by == _OPERATOR_ACTOR:
+        return False
+    if reviewed_by == _UPDATER_RESOLVED_GAP_ACTOR:
+        return True
+    return classify_failure_rationale(rationale or "") in _NON_ADJUDICATION_CLASSES
+
+
+def _complete_backfill(reports_dir: Path, relabeled: int) -> int:
+    """Record the committed run (temp + rename), then drop the re-arm marker."""
+    record = reports_dir / ".unadjudicated-backfill-done"
+    payload = {"relabeled": relabeled, "written_at": datetime.now(timezone.utc).isoformat()}
+    try:
+        tmp = record.with_name(f"{record.name}.tmp.{os.getpid()}")
+        tmp.write_text(json.dumps(payload) + "\n", encoding="utf-8")
+        tmp.replace(record)
+        (reports_dir / ".unadjudicated-backfill-pending").unlink(missing_ok=True)
+    except OSError as exc:
+        _write_backfill_line(
+            f"committed {relabeled} row(s), but the record or marker write failed "
+            f"(re-run retries it): {type(exc).__name__}: {exc}"
+        )
+        return ExitCode.BACKFILL_RECORD_FAILED
+    _write_backfill_line(f"committed — {relabeled} row(s) relabeled unadjudicated")
+    return 0
+
+
+def _write_backfill_line(message: str) -> None:
+    sys.stderr.write(f"{_UNADJUDICATED_BACKFILL_LOG}: {message}\n")
+
+
 # -- single-proposal regen + validity gate (accept path) --------------------
 #
 # Accept path: user-accept → regen stale diff → validity check (pre_verify) →
@@ -11698,7 +11892,26 @@ def _main(argv: list[str]) -> int:
         help="With --parked-pattern-guard: transition guarded pending/snoozed proposals "
         "to rejected.",
     )
+    parser.add_argument(
+        "--backfill-unadjudicated",
+        action="store_true",
+        help="Relabel non-verdict rejected proposal rows to unadjudicated, then exit (no "
+        "cycle). Requires --reports-dir and the caller's .apply-lock there.",
+    )
+    parser.add_argument(
+        "--reports-dir",
+        type=Path,
+        default=None,
+        help="With --backfill-unadjudicated: dir holding .apply-lock, the re-arm marker "
+        "and the completion record.",
+    )
     args = parser.parse_args(argv)
+
+    if args.backfill_unadjudicated:
+        if args.reports_dir is None:
+            parser.error("--backfill-unadjudicated requires --reports-dir")
+        # Answered BEFORE the pause gate: its clean exit 0 would read as a committed run.
+        return backfill_unadjudicated_proposals(args.reports_dir)
 
     if args.reject_parked and not args.parked_pattern_guard:
         parser.error("--reject-parked requires --parked-pattern-guard")

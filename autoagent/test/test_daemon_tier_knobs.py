@@ -25,6 +25,9 @@ if str(_HOOKS_DIR) not in sys.path:
     sys.path.insert(0, str(_HOOKS_DIR))
 if str(_AUTOAGENT_DIR) not in sys.path:
     sys.path.insert(0, str(_AUTOAGENT_DIR))
+_TEST_DIR = Path(__file__).resolve().parent
+if str(_TEST_DIR) not in sys.path:
+    sys.path.insert(0, str(_TEST_DIR))
 
 try:
     import daemon_cycle as dc
@@ -34,6 +37,8 @@ try:
 except Exception as exc:  # noqa: BLE001 — import failure -> skip, not error
     dc = None  # type: ignore[assignment]
     _IMPORT_ERROR = exc
+
+from _pg_seal import seal_pg_reach  # noqa: E402 — test dir anchored above
 
 
 _STUB = """#!/bin/sh
@@ -155,6 +160,10 @@ class MainKnobGateTest(unittest.TestCase):
         ):
             patcher.start()
             self.addCleanup(patcher.stop)
+        self.pg_reach = seal_pg_reach(self)
+
+    def tearDown(self) -> None:
+        self.assertEqual(self.pg_reach, [])
 
     def _run_main(self, argv: list[str], knob_errors: dict[str, str]) -> tuple[int, str, str]:
         stdout, stderr = io.StringIO(), io.StringIO()
@@ -232,12 +241,39 @@ class MainKnobGateTest(unittest.TestCase):
             ),
             ("auth-mislabel backfill", ["--backfill-auth-mislabel"], "backfill_auth_mislabeled_proposals", []),
             ("stale sweep", ["--regenerate-stale"], "regenerate_stale_proposals", []),
+            (
+                "unadjudicated backfill",
+                ["--backfill-unadjudicated", "--reports-dir", "/nonexistent/daemon-reports"],
+                "backfill_unadjudicated_proposals",
+                0,
+            ),
         )
         for name, argv, handler, handler_return in rows:
             with self.subTest(name), mock.patch.object(dc, handler, return_value=handler_return):
                 rc, _stdout, stderr = self._run_main(argv, knob_errors)
                 self.assertEqual(rc, 0, stderr)
                 self.assertNotIn("FATAL", stderr)
+
+
+
+@unittest.skipIf(_IMPORT_ERROR is not None, f"module import failed: {_IMPORT_ERROR}")
+class ExitCodeContractTest(unittest.TestCase):
+    """The codes the shell legs branch on: each name one value, the backfill trio fixed."""
+
+    def test_every_exit_code_name_owns_a_distinct_value(self) -> None:
+        values = [int(member) for member in dc.ExitCode.__members__.values()]
+        self.assertEqual(len(values), len(set(values)))
+
+    def test_the_backfill_codes_keep_the_values_the_legs_branch_on(self) -> None:
+        self.assertEqual(
+            {
+                "BACKFILL_PG": int(dc.ExitCode.BACKFILL_PG),
+                "BACKFILL_DEFERRED": int(dc.ExitCode.BACKFILL_DEFERRED),
+                "BACKFILL_LOCK_NOT_HELD": int(dc.ExitCode.BACKFILL_LOCK_NOT_HELD),
+                "BACKFILL_RECORD_FAILED": int(dc.ExitCode.BACKFILL_RECORD_FAILED),
+            },
+            {"BACKFILL_PG": 7, "BACKFILL_DEFERRED": 10, "BACKFILL_LOCK_NOT_HELD": 11, "BACKFILL_RECORD_FAILED": 13},
+        )
 
 
 if __name__ == "__main__":
