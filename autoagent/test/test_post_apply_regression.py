@@ -277,11 +277,15 @@ class TestAlertPostApplyRegression(unittest.TestCase):
         self.addCleanup(scratch.cleanup)
         self.target_path = Path(scratch.name) / "probe.md"
         self.target_path.write_text(_BODY.WITH_EDIT, encoding="utf-8")
+        self.target_file = str(self.target_path)
         self.diff_text = _added_diff(_ADDED_RULE)
         self.backup_root = Path(scratch.name) / "agents-bak"
         self.before_image = self.backup_root / f"{_CYCLE_DATE}_p{_PROPOSAL_ID}"
         self.before_image.mkdir(parents=True)
-        env = mock.patch.dict(os.environ, {"AUTOAGENT_BACKUP_DIR": str(self.backup_root)})
+        env = mock.patch.dict(
+            os.environ,
+            {"AUTOAGENT_BACKUP_DIR": str(self.backup_root), "GA_DATA_ROOT": scratch.name},
+        )
         env.start()
         self.addCleanup(env.stop)
         self.pg_reach = seal_pg_reach(self)
@@ -297,7 +301,7 @@ class TestAlertPostApplyRegression(unittest.TestCase):
                         _PROBE_AGENT,
                         _CYCLE_DATE,
                         _APPLIED_TS,
-                        str(self.target_path),
+                        self.target_file,
                         self.diff_text,
                     ),
                     *self.later_rows,
@@ -370,25 +374,40 @@ class TestAlertPostApplyRegression(unittest.TestCase):
         # A skipped row never ends the watch → the later applied row still fires
         both = (_PROBE_AGENT, _LATER_AGENT)
         later_only = (_LATER_AGENT,)
+        absolute = str(self.target_path)
         rows = (
-            ("every added line in the body", _added_diff(_ADDED_RULE, _SECOND_ADDED_RULE), both),
+            (
+                "every added line in the body",
+                _added_diff(_ADDED_RULE, _SECOND_ADDED_RULE),
+                absolute,
+                both,
+            ),
             (
                 "one added line gone, one still in the body",
                 _added_diff(_ADDED_RULE, "- Gone."),
+                absolute,
                 both,
             ),
             (
                 "every added line gone from the body",
                 _added_diff("- Gone.", "- Also gone."),
+                absolute,
                 later_only,
             ),
-            ("diff adds no content line", _added_diff(""), both),
+            ("diff adds no content line", _added_diff(""), absolute, both),
+            (
+                "relative target_file read under the base root, edit intact",
+                _added_diff(_ADDED_RULE),
+                self.target_path.name,
+                both,
+            ),
         )
         self._add_later_watched_row()
-        for name, diff_text, warned_agents in rows:
+        for name, diff_text, target_file, warned_agents in rows:
             with self.subTest(name):
                 self.emitted.clear()
                 self.diff_text = diff_text
+                self.target_file = target_file
                 self.window_rows = _windows(1, 10, 3, 5)
                 err = self._run()
 
