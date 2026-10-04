@@ -327,8 +327,12 @@ PY
   make_doctor_stub 0
   chmod 644 "${WORK}/real/glass-atrium"
   run_driver --apply-only
-  [[ "${output}" == *"stage=doctor SKIP"* && "${output}" == *"not executable"* ]] || {
-    echo "driver output: ${output}" >&2
+  # the reason is read from the doctor's own line: the retire stage reads the same entry point and
+  # names the same condition on its own line, which would satisfy an output-wide match alone.
+  local doctor_line
+  doctor_line="$(grep -F 'stage=doctor SKIP' <<<"${output}" || true)"
+  [[ "${doctor_line}" == *"not executable"* ]] || {
+    echo "doctor skip line: ${doctor_line:-<none>}; driver output: ${output}" >&2
     return 1
   }
   [[ "${status}" -eq 0 ]] || {

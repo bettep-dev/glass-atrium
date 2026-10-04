@@ -96,10 +96,6 @@ run_driver() {
     bash "${DRIVER}" --out "${OUT_JSON}" "$@"
 }
 
-retire_calls() {
-  grep -c "^${RETIRE_CALL}" "${CALL_LOG}" || true
-}
-
 @test "the retirement call precedes the first stage of every dispatch mode" {
   local row name args first
   local -a argv
