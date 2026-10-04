@@ -279,7 +279,7 @@ test("a part's health verdict carries its tone on a tone-shaped glyph, its word 
 });
 
 // The row keeps its alert role and its data hooks; the shared AlertCard owns the look, tone riding its glyph well only.
-test("an alarm row is a bare alert wrapper around one inset AlertCard that leaves the announcing to it", async () => {
+test("an alarm row is a bare alert wrapper around one page-level AlertCard that leaves the announcing to it", async () => {
   const mod = await loadArch();
   const row = { key: "live-overlay", tone: "crit", title: "Couldn't load the live overlay", note: "The live endpoint did not answer.", detail: "ECONNREFUSED", badges: ["daemon"], retry: true };
   const onRetry = () => {};
@@ -296,8 +296,9 @@ test("an alarm row is a bare alert wrapper around one inset AlertCard that leave
   assert.equal(cards.length, 1, "one shared alert card renders the row");
   const card = cards[0].props;
   assert.deepEqual(
-    { tone: card.tone, surface: card.surface, hasLiveHost: card.hasLiveHost, title: card.title, body: card.body, details: card.details, subjects: card.subjects },
-    { tone: "crit", surface: "inset", hasLiveHost: true, title: row.title, body: row.note, details: row.detail, subjects: row.badges },
+    { tone: card.tone, hasLiveHost: card.hasLiveHost, title: card.title, body: card.body, details: card.details, subjects: card.subjects },
+    { tone: "crit", hasLiveHost: true, title: row.title, body: row.note, details: row.detail, subjects: row.badges },
   );
+  assert.notEqual(card.surface, "inset", "the lane sits on the page, not inside a card");
   assert.equal(findNodes(renderScreen(card.actions), (n) => n.type === "button" && n.props.onClick === onRetry).length, 1, "the row's Retry rides the card's actions");
 });

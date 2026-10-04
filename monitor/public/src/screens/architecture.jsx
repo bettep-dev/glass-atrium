@@ -2122,7 +2122,6 @@ function AlarmRowAR({ row, onRetry }) {
 		<div role="alert" data-alarm={row.key} data-alarm-tone={row.tone} className="arch-alarm-row">
 			<AlertCard
 				tone={row.tone}
-				surface="inset"
 				hasLiveHost
 				title={row.title}
 				body={row.note}
