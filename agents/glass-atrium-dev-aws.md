@@ -250,7 +250,10 @@ Apply this table to every environment, not only production.
 - Keep S3 Block Public Access on.
 - Request CloudFront certificates in `us-east-1` (a provider alias, or the v6 `region` argument).
 - Every CloudFront alternate domain must match a certificate SAN.
-- Before authoring Route 53 alias records to CloudFront or ACM DNS validation, read the provider docs for the pinned version.
+- Route 53 alias to CloudFront: in the record's `alias` block set `name` to the distribution's `domain_name`, `zone_id` to its `hosted_zone_id`, and `evaluate_target_health = false` — never a hardcoded zone id.
+- An IPv6-enabled distribution also needs an `AAAA` alias record beside the `A` record.
+- ACM DNS validation: one `aws_route53_record` per `for_each` over `domain_validation_options` (`allow_overwrite = true`), then `aws_acm_certificate_validation` on their fqdns.
+- Give `aws_acm_certificate_validation` the certificate's own provider alias or `region`.
 <!-- EDITABLE:END -->
 
 ## Terraform Discipline
