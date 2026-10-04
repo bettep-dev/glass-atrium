@@ -1410,7 +1410,7 @@
     "monitor/public/src/tweaks-panel.jsx": "2a636aed72aa9cf1850a142e7aa51608a7677b52d48d067ef42be9f4e2cd0d1f",
     "monitor/public/src/ui.jsx": "9c18a9766b7de6ac781623a220aa47d11d5a8c55481cf4a8367369e2c93d7049",
     "monitor/public/styles/base.css": "c07d1895ac6bbb9f397af49ba3c30035a51cd38f26d3417d36ad1f2b41c87d51",
-    "monitor/public/styles/tokens.css": "e6ecb73a98988de8fd8813f6aee4f81f77aef97c1a03474975f6abfb0a8c6aa9",
+    "monitor/public/styles/tokens.css": "fc748fe9658f50a18f2bfd7f2febae4c5fa5fa097a7bc6e50619d3eb201d4ad8",
     "monitor/scripts/oss-db-setup.sh": "361cf95e95df5ef5d3f38f900d1f7cb60c25321cec2c70c56915e5a2ab15a34e",
     "monitor/scripts/prune-dist.sh": "32c18313c1012de0a28f9bfb76939b4e207c464c7586513821868f64ebbd9347",
     "monitor/src/server/agents/circuit-breaker.ts": "cfce9e36a263d3d20f180f1fb0cbcda93ec1b5457217ea29b4ef379867908761",
