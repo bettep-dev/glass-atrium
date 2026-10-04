@@ -54,19 +54,39 @@ line3"
   [[ "${output}" != *"rotated:"* ]] || return 1
 }
 
-@test "oversized /tmp sink member: rotated, truncated in place, neighbours untouched" {
-  local sink="${MR_TMP}/tmpsink"
-  # 50 MiB threshold + 1 MiB, written once — the sink members are named, not globbed.
-  python3 -c "open('${sink}/wiki-daemon.log','wb').write(b'x'*(51*1024*1024))"
+@test "oversized /tmp sink: active job logs rotate in place, retired job logs and non-members stay untouched" {
+  local sink="${MR_TMP}/tmpsink" oversize=$((51 * 1024 * 1024))
+  # name|expected — the sink members are named, not globbed, so only active jobs' logs rotate.
+  local -a rows=(
+    "autoagent-daemon-loop.log|rotated"
+    "wiki-compile.log|rotated"
+    "autoagent-daemon.log|kept"
+    "wiki-daemon.log|kept"
+    "daemon-daily-restart.log|kept"
+    "unrelated.log|kept"
+  )
+  local row name size
+  for row in "${rows[@]}"; do
+    # sparse file 1 MiB past the fixed 50 MiB threshold
+    python3 -c "import sys; f = open(sys.argv[1], 'wb'); f.seek(int(sys.argv[2]) - 1); f.write(b'x')" \
+      "${sink}/${row%%|*}" "${oversize}"
+  done
   printf 'small\n' >"${sink}/pg-backup.log"
-  printf 'keep\n' >"${sink}/unrelated.log"
 
   run env HOME="${MR_TMP}" bash "${ROTATE_SH}"
   [ "${status}" -eq 0 ] || { echo "exit ${status}: ${output}"; return 1; }
 
-  [[ "${output}" == *"rotated: ${sink}/wiki-daemon.log."* ]] || { echo "sink member not rotated: ${output}"; return 1; }
-  [ ! -s "${sink}/wiki-daemon.log" ] || { echo "live log not truncated in place"; return 1; }
-  ls "${sink}"/wiki-daemon.log.*.gz >/dev/null 2>&1 || { echo "no archive produced"; return 1; }
+  for row in "${rows[@]}"; do
+    name="${row%%|*}"
+    if [[ "${row##*|}" == "rotated" ]]; then
+      [[ ! -s "${sink}/${name}" ]] && ls "${sink}/${name}".*.gz >/dev/null 2>&1 \
+        || { echo "${name}: not rotated and truncated in place: ${output}"; return 1; }
+    else
+      size="$(wc -c <"${sink}/${name}")"
+      [[ "${size}" -eq "${oversize}" ]] \
+        && ! ls "${sink}/${name}".*.gz >/dev/null 2>&1 \
+        || { echo "${name}: touched by the rotator: ${output}"; return 1; }
+    fi
+  done
   [ "$(cat "${sink}/pg-backup.log")" == "small" ] || { echo "below-threshold member mutated"; return 1; }
-  [ "$(cat "${sink}/unrelated.log")" == "keep" ] || { echo "non-member file touched"; return 1; }
 }

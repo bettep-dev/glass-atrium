@@ -37,12 +37,9 @@ readonly LOG_ROOT="${HOME}/.claude/logs"
 # is shared with unrelated files, so the members are named rather than globbed and the
 # archive prune is keyed to each member's own name. Overridable for test seeding only.
 readonly TMP_LOG_ROOT="${GA_TMP_LOG_ROOT:-/tmp}"
-readonly TMP_LOG_NAMES="autoagent-daemon.log
-autoagent-daemon-loop.log
-wiki-daemon.log
+readonly TMP_LOG_NAMES="autoagent-daemon-loop.log
 wiki-compile.log
 pg-backup.log
-daemon-daily-restart.log
 monitor-log-rotate.out.log
 monitor-log-rotate.err.log
 glass-atrium-update-oneshot.log"
