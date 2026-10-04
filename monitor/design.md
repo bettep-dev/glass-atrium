@@ -265,7 +265,7 @@
 - **CDN 런타임 class-scan 유지**: `index.html` → "Tailwind CDN (JIT) — viewer R6 path" 주석. PostCSS 빌드로 바꾸면 런타임 유틸이 조용히 빠진다.
 - **Shadow 는 `--shadow-*` 만.**
   - Tailwind `boxShadow.card` / `.float` 는 정의만 남아 있고 소비처가 없다 — 쓰지 않는다.
-  - 알려진 하드코딩 예외 (코드 수정 대상): `cost.jsx` · `agents.jsx` → `tooltipStyle` (`0 4px 12px rgba(0,0,0,0.12)`) · `improvement.jsx` toast inline (`0 8px 24px rgba(0,0,0,0.18)`) · `improvement.jsx` → `.i-card-shadow`.
+  - 알려진 하드코딩 예외 (코드 수정 대상) — 확인된 자리 (전수 아님), 더 찾는 법은 `grep -rnE "(boxShadow|box-shadow)[^;]*rgba\(" public/src` (`tweaks-panel.jsx` hit 은 §3.5 carve-out): `cost.jsx` · `agents.jsx` → `tooltipStyle` (`0 4px 12px rgba(0,0,0,0.12)`) · `improvement.jsx` toast inline (`0 8px 24px rgba(0,0,0,0.18)`) · `improvement.jsx` → `.i-card-shadow`.
 
 ### 3.5 tweaks-panel glass — dev-only carve-out
 
@@ -353,10 +353,11 @@
   - dark: tone 0.12 tinted well + tone glyph.
 - **severity 요소는 glass/blur 위에 두지 않는다** — desaturation 이 응급 신호를 약화 (§6.3).
 - **알려진 예외 (현재 코드, 수정 대상)** — 세 범위, 커버리지가 다르다.
-  - **범위 1 — alpha tint (fill · border) · inset stripe** = 아래 finder 1 hit 전부를 목록화.
-    - finder 1: `grep -rnE "var\(--(crit|warn|ok|info)\) */ *0?\.[0-9]+|(bg|border)-(crit|warn|ok|info)/|inset [0-9]+px 0 0 rgb\(var\(--(crit|warn|ok|info)\)\)" public/src public/styles`.
+  - **범위 1 — alpha tint (fill · border) · inset stripe** = 아래 목록은 확인된 자리 (전수 아님) — 더 찾는 법은 finder 1.
+    - finder 1: `grep -rnE "var\(--(crit|warn|ok|info|[$]\{[^}]+\})\) */ *0?\.[0-9]+|(bg|border)-(crit|warn|ok|info)/|inset [0-9]+px 0 0 rgb\(var\(--(crit|warn|ok|info)\)\)" public/src public/styles`.
+    - 보간 tone (`var(--${…})`) 도 잡는다 — tone 이 런타임 값인 shell (`AlarmRowAR`) 은 리터럴 tone 패턴으로는 안 보인다.
     - 차트 data mark(막대 fill · sparkline stroke) hit 은 shell 이 아니라 목록 밖.
-  - **범위 1b — full-opacity tone border · stroke · box-shadow** = finder 1b hit 전부를 분류. 수정 대상 hit 은 `clauded-docs.jsx` inset stripe 하나 (finder 1 과 겹침, 아래 목록).
+  - **범위 1b — full-opacity tone border · stroke · box-shadow** = finder 1b hit 을 분류 (finder 밖 자리는 전수 아님). 수정 대상 hit 은 `clauded-docs.jsx` inset stripe 하나 (finder 1 과 겹침, 아래 목록).
     - finder 1b: `grep -rnE "(border(-[a-z]+)?|stroke|outline|box-shadow) *: *[^;\"]*rgb\(var\(--(crit|warn|ok|info)\)\)|(border[A-Za-z]*|stroke|boxShadow) *: *[\"'][^\"']*rgb\(var\(--(crit|warn|ok|info)\)\)|stroke=\"rgb\(var\(--(crit|warn|ok|info)\)\)\"" public/src public/styles`.
     - 나머지 hit: 위 허용 예외(폼 오류 · System map 링 · 범례) · destructive action 버튼 · 차트 data mark (`agents.jsx` quality-health timeline 의 crit `Line`) · 미소비 `.pulse-ring` (§8).
   - full-opacity tone **fill** (`background` · SVG `fill` · `bg-<tone>`) 은 두 finder 밖 — 이 절은 그 범주를 전수라고 주장하지 않는다.
@@ -384,6 +385,7 @@
     - `.i-act-approve` / `.i-act-reject`: tone 텍스트 + tone 0.45 border + tone 0.1 fill (hover 0.2 / 0.7) → light ok 3.34 · crit 4.14.
     - `.i-await-banner`: warn 0.08 fill + warn 0.45 border · `.i-await-head` warn 텍스트 → light 2.93 (`--elev` 위) / 2.81 (`--surface` 위).
     - `.i-alarm-lane`: warn 0.06 fill + warn 0.45 border.
+  - **`architecture.jsx`**: `AlarmRowAR` (System map alarm lane 행, `.arch-alarm-row`) = tone 0.08 fill + tone 0.4 border (tone = 행의 `crit` · `warn`).
   - **`outcomes.jsx`**: `SilentChannelRowO` = crit 0.08 fill + crit 0.4 border · `BlockedBannerO` = warn 0.08 fill + warn 0.4 border.
   - **`model-config.jsx`**: `DriftBannerMC` = warn 0.08 fill + warn 0.4 border · `ErrorBannerMC` = crit 0.08 fill + crit 0.4 border.
   - **`clauded-docs.jsx`**:
@@ -623,7 +625,9 @@
 - hover: `--sunken` + border `--faint`.
 - `.primary`: `--ink` fill + `--surface` text. `.danger`: `--crit` fill + white text. `.ghost`: 투명 · `--dim` → hover `--sunken` + `--ink`.
   - `.danger` 명암비: light 4.83 · **dark 2.77 (< 4.5, 수정 대상)** — dark `--crit` 248 113 113 위 흰 글자.
-  - red-outline destructive 확인 = `.btn` variant 아님, screen-local inline style (`agents.jsx` → `DELETE_OUTLINE_STYLE` · `model-config.jsx` → `DiscardConfirmMC`): crit 텍스트 + crit border, `--elev` / overlay 면 위 light 4.83 · dark 6.32. Delete 는 inline style 이 background 를 덮지 않아 `.btn` hover 면 `--sunken` 에서 light 4.43 (< 4.5, 수정 대상) — Discard 는 `background: transparent` 고정. §4.2 destructive action.
+  - red-outline destructive 확인 = `.btn` variant 아님, screen-local inline style (`agents.jsx` → `DELETE_OUTLINE_STYLE` · `model-config.jsx` → `DiscardConfirmMC`): crit 텍스트 + crit border. §4.2 destructive action.
+    - Delete: inline style 이 background 를 덮지 않아 `.btn` 자체 `--elev` fill 위 → light 4.83 · dark 6.32. `.btn` hover 면 `--sunken` 에서 light 4.43 (< 4.5, 수정 대상).
+    - Discard: `background: transparent` 라 자체 면이 없다. `DetailSurface` `footer` 로 렌더돼 `.detail-foot` 의 `--sunken` 면 위에 놓인다 → rest · hover 모두 light 4.43 (< 4.5, 수정 대상) · dark 6.62.
 - `.sm`: padding 4px 9px · `--fs-meta`. `.icon`: 32×32 정사각, padding 0.
 - disabled: opacity 0.5 · `not-allowed`. pressed (`aria-pressed="true"`) = `--selected-fill` / `--selected-ink`.
 - 120ms 가 hover 표준 속도. glass 불필요.
@@ -815,7 +819,7 @@
 
 - hover/state-change 120ms · alert 진입 150ms · fullscreen/confirm 진입 180ms · drawer 진입 240ms · ambient 1.6s · skeleton 1.4s · spinner 0.7–0.9s.
 - informational 요소의 `animation: infinite` 는 `.live-dot` 과 로딩 표시 외 금지.
-- **표준 밖 (코드 수정 대상)**: `improvement.jsx` → `.i-await-banner` 진입 `iAwaitInI` 200ms ease-out, opacity + `translateY(-4px)`. alert 진입 표준(150ms effects-fast, opacity 만)과 시간 · 채널 둘 다 다르다. reduce 게이트는 있다 (§8.4).
+- **표준 밖 (코드 수정 대상)** — 확인된 자리 (전수 아님), 더 찾는 법은 §8.4 motion finder: `improvement.jsx` → `.i-await-banner` 진입 `iAwaitInI` 200ms ease-out, opacity + `translateY(-4px)`. alert 진입 표준(150ms effects-fast, opacity 만)과 시간 · 채널 둘 다 다르다. reduce 게이트는 있다 (§8.4).
 
 ### 8.4 prefers-reduced-motion 계약 (필수)
 
@@ -825,7 +829,8 @@
     - `.live-dot` 정지(opacity 0.8) · `.pulse-ring::after` · `.kpi-value.updated` · `[class*="valueFlash"]` · `.alert-card` 애니메이션 정지 · `.card.raised-2:hover` / `.is-focused` transition 제거.
     - `.field` · `.field-affix` transition 제거.
   - 화면별: `.ga-spin` · `.doc-action-spinner` · `.doc-group-toggle .chevron` · `.tbl.doc-ledger-busy` · `[class*="i-anim-"]` · `.i-act-spin` · `.i-await-banner` (`improvement.jsx` 두 번째 블록이 `@keyframes iAwaitInI` 를 opacity-only 로 재정의 — translate 제거, fade 유지) · architecture 노드 · `.arch-zoom-btn`.
-- **위반 (코드 수정 대상)**:
+- **위반 (코드 수정 대상)** — 확인된 자리 (전수 아님).
+  - motion finder: `grep -rnE "@keyframes|animation *:|transition *:|translateY" public/src public/styles` — hit 마다 같은 selector 를 잡는 `prefers-reduced-motion: reduce` 블록이 있는지 확인.
   - inline style skeleton 3개 — `cost.jsx` `skelPulseC` · `outcomes.jsx` `skelPulseO` · `clauded-docs.jsx` `skelPulseCD` — 에 reduce 게이트가 없다.
   - `improvement.jsx` → `.i-row-card`: hover lift (`transform: translateY(-1px)` + `box-shadow`, 120ms) 에 reduce 게이트가 없다 — 화면의 두 reduce 블록 어느 쪽도 `.i-row-card` 를 잡지 않는다. transform 은 §8.1 hover 채널(border-color · box-shadow) 밖이기도 하다.
 
