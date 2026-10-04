@@ -140,7 +140,7 @@ enum LearningStatus {
   applied
   rejected
   // Non-terminal: the aggregator's failed pair verdict or the daemon's roster mismatch.
-  // Leaves only on a new passing detection + confirmation pair → identified.
+  // Returns to identified only on a new passing detection + confirmation pair.
   dormant
 
   @@schema("core")

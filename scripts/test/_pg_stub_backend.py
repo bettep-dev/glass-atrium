@@ -61,8 +61,10 @@ _BLOCK_COMMENT = re.compile(r"/\*.*?\*/", re.S)
 _LINE_COMMENT = re.compile(r"--[^\n]*")
 _CAST = re.compile(r'::(?:\w+\.)?"?\w+"?')
 _NAMED = re.compile(r"%\((\w+)\)s")
-_MODEL_BLOCK = r"^model %s \{$(.*?)^\}$"
-_MODEL_NAME = re.compile(r"^model (\w+) \{$", re.M)
+_MODEL = SimpleNamespace(
+    BLOCK=r"^model %s \{$(.*?)^\}$",
+    NAME=re.compile(r"^model (\w+) \{$", re.M),
+)
 _FIELD = re.compile(r"^\s+(\w+)\s+(\w+)(\?)?(\[\])?(.*)$")
 _MAPPED = re.compile(r'@map\("(\w+)"\)')
 _ENUM = SimpleNamespace(
@@ -298,10 +300,10 @@ def _get_model_columns(model: str) -> list[str]:
     and drifts on the next migration.
     """
     schema_text = _SCHEMA.read_text(encoding="utf-8")
-    block = re.search(_MODEL_BLOCK % model, schema_text, re.M | re.S)
+    block = re.search(_MODEL.BLOCK % model, schema_text, re.M | re.S)
     if block is None:
         raise AssertionError("%s model not found in %s" % (model, _SCHEMA))
-    models = set(_MODEL_NAME.findall(schema_text))
+    models = set(_MODEL.NAME.findall(schema_text))
 
     columns: list[str] = []
     for line in block.group(1).splitlines():
