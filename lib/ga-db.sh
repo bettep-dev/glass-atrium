@@ -1,5 +1,5 @@
 # shellcheck shell=bash
-# shellcheck disable=SC2154  # references shared globals (DB_NAME/DB_SETUP_SCRIPT/RECREATE_DB/RECREATE_YES/PG_SOCKET/GA_ROOT/DRY_RUN/LOAD_LAUNCHD/BOOTSTRAP_EXIT_HEALTH/BOOTSTRAP_HEALTH_WINDOW_SECS) assigned by ga_init_env in ga-env.sh — present at runtime after lib/ga-core.sh sources every domain, unresolvable when linted standalone
+# shellcheck disable=SC2154  # references shared globals (DB_NAME/DB_SETUP_SCRIPT/RECREATE_DB/RECREATE_YES/PG_SOCKET/GA_ROOT/DRY_RUN/LOAD_LAUNCHD/LAUNCHD_JOBS/BOOTSTRAP_EXIT_HEALTH/BOOTSTRAP_HEALTH_WINDOW_SECS) assigned by ga_init_env in ga-env.sh — present at runtime after lib/ga-core.sh sources every domain, unresolvable when linted standalone
 # Glass Atrium — database provisioning/recreate + drop-with-backup + monitor health gate domain. Sourced in-process by lib/ga-core.sh; no file-scope strict mode / traps (owned by the entry point).
 
 # DB-setup precondition guard (recreate_db_gate / run_db_setup shared) — asserts the oss-db-setup.sh
@@ -444,7 +444,7 @@ bootstrap_health_gate() {
   if [[ "${http_code}" == "200" && "${listener_ok}" == "yes" && "${db_open}" == "yes" ]]; then
     log "== bootstrap: monitor health gate PASS (/api/health 200 + db:open in ${elapsed}s, port ${port}, listener=pid ${mon_pid}) =="
     if "${LOAD_LAUNCHD}"; then
-      log "== bootstrap: health gate passed — proceeding to --load-launchd (loading the 8 launchd jobs) =="
+      log "== bootstrap: health gate passed — proceeding to --load-launchd (loading the ${#LAUNCHD_JOBS[@]} launchd jobs) =="
     else
       log "== bootstrap COMPLETE — load launchd jobs manually (review-first): docs/INSTALL.md §7, or re-run with --load-launchd =="
     fi
