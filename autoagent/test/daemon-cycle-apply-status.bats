@@ -47,6 +47,8 @@
 #        generation verdict.
 #   AC22 recording provenance writes no new file into the report directory.
 #   AC23 the doctor's abort surface still FAILs on an unsuperseded abort after such a cycle.
+#   AC24 the dispatch tail runs no loop-events push: daemon_cycle.py writes those rows itself, so a
+#        push helper an older release left on the install is never invoked.
 #
 # Run via: bats autoagent/test/daemon-cycle-apply-status.bats
 # Requires: bats >= 1.5.0, bash 3.2+, python3
@@ -654,4 +656,22 @@ PY
     return 1
   }
   [[ "${status}" -ne 0 ]] || return 1
+}
+
+# ── AC24 — the dispatch tail runs no loop-events push ─────────────────────────────────────────
+
+@test "AC24: a dispatched cycle never runs a loop-events push helper left on the install" {
+  make_stage_stubs 0
+  make_helper 0
+  cat >"${FAKE_HOME}/.glass-atrium/scripts/_pg_push_autoagent_loop_events.py" <<EOF
+open("${CALL_LOG}", "a").write("loop-push\n")
+EOF
+  run_driver --apply-only
+  local calls
+  calls="$(cat "${CALL_LOG}")"
+  [[ "${calls}" != *"loop-push"* ]] || {
+    echo "calls: ${calls}"
+    echo "driver output: ${output}"
+    return 1
+  }
 }

@@ -11,8 +11,8 @@ FRESH under a HOME sandbox (with no GA_DATA_ROOT) and asserts:
     (daemon_config's DAEMON_CONFIG default path);
 (3) GA_DATA_ROOT redirects the root (env-override parity with the shell seam).
 
-Covered: the original set (project_key.py / _pg_push_autoagent_loop_events.py /
-learning-aggregator.py / autoagent-status-backfill.py) PLUS the seam-completion
+Covered: the original set (project_key.py / learning-aggregator.py /
+autoagent-status-backfill.py) PLUS the seam-completion
 consumers that previously still resolved the legacy ``.claude`` store:
 daemon_config.py (CONFIG_PATH + the DAEMON_CONFIG override), compliance_telemetry.py
 (WORKFLOW_GATE_LOG_FILE), autoagent/daemon_cycle.py
@@ -102,23 +102,6 @@ class DefaultResolutionTest(unittest.TestCase):
                 Path(_SANDBOX_HOME) / ".glass-atrium" / "data" / "learning",
             )
             self.assertNotIn(".claude", str(m._LEARNING_ROOT))
-
-    def test_loop_events_log_under_glass_atrium(self) -> None:
-        with mock.patch.dict("os.environ", {"HOME": _SANDBOX_HOME}, clear=False):
-            os.environ.pop("GA_DATA_ROOT", None)
-            m = _load_fresh(
-                _SCRIPTS / "_pg_push_autoagent_loop_events.py", "loop_events_probe"
-            )
-            self.assertEqual(
-                m.LOOP_LOG,
-                str(
-                    Path(_SANDBOX_HOME)
-                    / ".glass-atrium"
-                    / "logs"
-                    / "autoagent-loop.jsonl"
-                ),
-            )
-            self.assertNotIn(".claude", m.LOOP_LOG)
 
     def test_learning_aggregator_data_dir_under_glass_atrium(self) -> None:
         with mock.patch.dict("os.environ", {"HOME": _SANDBOX_HOME}, clear=False):
@@ -233,19 +216,6 @@ class OverrideParityTest(unittest.TestCase):
             m = _load_fresh(_LIB / "project_key.py", "project_key_override_probe")
             self.assertEqual(
                 m._LEARNING_ROOT, Path("/var/atrium-alt") / "data" / "learning"
-            )
-
-    def test_ga_data_root_redirects_loop_events(self) -> None:
-        with mock.patch.dict(
-            "os.environ",
-            {"GA_DATA_ROOT": "/var/atrium-alt", "HOME": _SANDBOX_HOME},
-            clear=False,
-        ):
-            m = _load_fresh(
-                _SCRIPTS / "_pg_push_autoagent_loop_events.py", "loop_override_probe"
-            )
-            self.assertEqual(
-                m.LOOP_LOG, str(Path("/var/atrium-alt") / "logs" / "autoagent-loop.jsonl")
             )
 
     def test_ga_data_root_redirects_daemon_config(self) -> None:

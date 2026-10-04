@@ -883,8 +883,8 @@ run_retire_stage() {
 # stage is OR-accumulated into PIPELINE_RC so the final exit can report a
 # degraded cycle (exit 1) instead of an unconditional clean exit 0. The PG_PUSH
 # stage now contributes: a write failure (DB down) returns non-zero and is
-# folded in so a DB-down cycle surfaces as degraded (DF-16). LOOP_PUSH stays a
-# best-effort sink. Helper: run a stage, fold its rc into PIPELINE_RC.
+# folded in so a DB-down cycle surfaces as degraded (DF-16). Helper: run a
+# stage, fold its rc into PIPELINE_RC.
 PIPELINE_RC=0
 record_stage_rc() {
     local rc="$1"
@@ -1009,30 +1009,6 @@ if [[ "${APPLY_RAN}" -eq 1 ]]; then
 fi
 # APPLY-HEALTH-COMPOSE-END
 
-# LOOP-EVENTS-DUALWRITE-BEGIN
-# After the weekly-heartbeat.sh publisher was archived, core.autoagent_loop_events
-# had no publisher and froze. Publish autoagent-loop.jsonl (append-only ndjson)
-# to PG right after each cycle.
-# Idempotent: helper's ON CONFLICT (event_ts, agent, eval_result) DO UPDATE.
-# dry-run skipped — consistent with cycle/apply/aggregate stage policy.
-# LOOP_PUSH uses the same logging pattern as PG_PUSH (start/end/skip); the
-# helper's `|| true` swallow is preserved but surfaced via loop_rc capture.
-LOOP_PUSH_PY="${HOME}/.glass-atrium/scripts/_pg_push_autoagent_loop_events.py"
-if [[ "${DRY_RUN}" -eq 0 && -f "${LOOP_PUSH_PY}" ]]; then
-    printf '[daemon-cycle] LOOP_PUSH start helper=%s\n' "${LOOP_PUSH_PY}" >&2
-    loop_rc=0
-    "${PYTHON_BIN}" "${LOOP_PUSH_PY}" || loop_rc=$?
-    printf '[daemon-cycle] LOOP_PUSH end rc=%d\n' "${loop_rc}" >&2
-else
-    loop_helper_label="missing"
-    if [[ -f "${LOOP_PUSH_PY}" ]]; then
-        loop_helper_label="present"
-    fi
-    printf '[daemon-cycle] LOOP_PUSH SKIP dry=%d helper=%s\n' \
-        "${DRY_RUN}" "${loop_helper_label}" >&2
-fi
-# LOOP-EVENTS-DUALWRITE-END
-
 # DOCTOR-STAGE-BEGIN
 # Terminal by construction: apply rc, the composed apply health and the run row are all written
 # above, so this stage observes the install and changes none of them. The rc goes through the same
@@ -1047,9 +1023,9 @@ record_stage_rc "${doctor_rc}"
 # Final exit reflects the aggregate dispatch result: 0 = all dispatched stages
 # clean · 1 = degraded (≥1 stage non-zero) · 2 = arg/stage-mode error · 3 =
 # python3 missing · 4 = claude missing. PG_PUSH now folds its write-failure rc
-# into this aggregate (DF-16 — a DB-down cycle is degraded); the LOOP_PUSH tail
-# sink stays best-effort. This lets launchd/monitoring distinguish a degraded
-# run from a clean one instead of always seeing success.
+# into this aggregate (DF-16 — a DB-down cycle is degraded). This lets
+# launchd/monitoring distinguish a degraded run from a clean one instead of
+# always seeing success.
 if [[ "${PIPELINE_RC}" -ne 0 ]]; then
     printf '[daemon-cycle] cycle finished DEGRADED — at least one stage returned non-zero (exit 1)\n' >&2
     exit 1

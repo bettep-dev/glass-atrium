@@ -182,7 +182,7 @@ listing() {
       echo "${name}: calls after the mode: $(cat "${CALL_LOG}")"
       return 1
     }
-    [[ "${output}" != *"PG_PUSH"* && "${output}" != *"LOOP_PUSH"* ]] || {
+    [[ "${output}" != *"PG_PUSH"* ]] || {
       echo "${name}: ${output}"
       return 1
     }
