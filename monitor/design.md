@@ -226,14 +226,36 @@
 | 레이아웃 | `SplitRow` · `SplitColumn` · `TileSplit` | `.split-row*` · `.split-col*` · `.tile-split` |
 | overlay | `DetailSurface` · `Modal`(= confirm 위임) · `Popover` | `.detail-*` · `.popover-*` |
 | 공개 | `Disclosure` · `DisclosureButton` | `.card.is-collapsed` |
-| 배지·상태 | `Badge` · `Pill`(→ Badge) · `StatusDot` · `AgentBadge` | `.pill*` |
-| 수치 | `KPI` · `KpiValue` · `Delta` · `Sparkline` · `TrendChart` · `Bar` · `BulletBar` | `.kpi*` |
+| 배지·상태 | `Badge` · `Pill`(→ Badge) · `StatusDot` | `.pill*` |
+| agent 이름 | `AgentName` | caller `className` (텍스트만) |
+| 수치 | `KPI` · `KpiValue` · `Sparkline` · `MiniBars` · `TrendChart` · `Bar` · `BulletBar` | `.kpi*` |
 | 표 | `Table` · `TableHead` · `ClampCell` · `ClampText` | `.tbl` · `.cell-clamp` · `.clamp-2` |
 | 페이지 | `PageHeader` · `PageVerdict` · `SectionLabel` · `EmptyState` | `.page-verdict*` · `.section-label` · `.placeholder` |
+| 신선도 | `FreshnessStamp` · `RefreshButton` | `.fs-meta` mono `--faint` · `.btn.ghost.sm` |
+| 로딩 | `LoadingPlaceholder` · `SkeletonRows` | `role="status"` `.fs-meta` `--dim` · inline bar |
+| 오류 · region | `RegionFailure`(→ `RegionUnavailable` / `RegionCovered`) · `PageErrorBanner`(→ `AlertCard`) · `AlertCard` · `RetryButton` | `.sub-card.bg-sunken` · `.alert-card*` · `.btn.sm` |
 | 기타 | `Icon` · `Tabs` · `ChipGroup` · `DetailField` | `.tabs` · `.seg` |
 
-- **예약 class (소비처 없음)**: `.glass-surface` · `.card-raised` · `.elev-overlay` 는 `base.css` 에 정의돼 있으나 `public/src` 소비처가 없다.
+- **KPI 내부 전용**: `Delta` (`.kpi-delta`) 는 `KPI` 의 `delta` prop 으로만 렌더된다 — `window.UI` export 아님.
+- **`AgentName`**: `glass-atrium-` prefix 를 뗀 짧은 이름을 보이고, 전체 이름은 sr-only 텍스트 + `title`. agent 식별은 이 텍스트로만 (아바타 없음 — §4.3).
+- **`MiniBars`**: `Sparkline` 과 같은 60×22 SVG 막대, `label` 이 있으면 `role="img"`, 없으면 aria-hidden.
+- **신선도**:
+  - `FreshnessStamp` = "as of HH:MM" · `--fs-meta` mono `--faint` · nowrap. 선행 tone glyph 만 색 — Fresh ✓ `--ok` · Stale / Partial ⚠ `--warn` · Not read ✕ `--crit` · Loading / Refreshing `…` `--faint`. 단어는 sr-only, 전체 시각은 `title`.
+  - 새로고침 중에는 직전 stamp 를 유지하고 `aria-busy`.
+  - `RefreshButton` = `btn ghost sm` 고정 폭 `w-28` · refresh icon `motion-safe:animate-spin` · 라벨 "Refreshing…"(직전 read 있음) / "Loading…"(첫 read).
+- **로딩**:
+  - `LoadingPlaceholder` = `role="status"` · `--fs-meta` `--dim` · refresh icon `motion-safe:animate-spin` + "Loading <label>…". `minHeight` 로 settled 높이를 예약해 도착 시 layout shift 0.
+  - `SkeletonRows` = 실제 `tbody` 안 · 실제 header 아래 · 실제 row 높이 · aria-hidden 행. 셀마다 정적 bar (높이 10 · 폭 70% · `--radius-inline` · `--faint` 0.3) — pulse 없음.
+- **오류 · region 상태**:
+  - 실패한 region 은 `RegionFailure` 하나로만 렌더 — banner 나 sibling region 이 같은 source 를 말하면 `RegionCovered`, 아니면 `RegionUnavailable`.
+  - `RegionUnavailable`: `.sub-card.bg-sunken` · crit icon + 원인 문장 `--fs-body` · 다음 단계 `--fs-meta` `--dim` · 접힌 Details(raw 응답) · `RetryButton`.
+  - `RegionCovered`: `.sub-card.bg-sunken` · region 이름 `--fs-body` `--dim` + "Not loaded — see the … notice" `--fs-meta` `--faint`. 문장 · Retry 없음.
+  - 둘 다 `minHeight` 로 grid slot 을 유지한다.
+  - 2개 이상 region 이 같은 장애를 공유하면 `PageErrorBanner` = `AlertCard tone="crit"` + `RetryButton` 1개 (§7.9). 복구 시 focus 는 첫 covered region 카드로.
+  - `RetryButton` · `RefreshButton`: busy 중에도 native `disabled` 를 쓰지 않는다 — `aria-disabled` + `aria-busy` + click guard 로 키보드 focus 유지. 라벨 "Retrying…".
+- **예약 class · atom (소비처 없음)**: `.glass-surface` · `.card-raised` · `.elev-overlay` 는 `base.css` 에, `AgentBadge` 는 `ui.jsx` 에 정의돼 있으나 `public/src/screens` · `app.jsx` 소비처가 없다.
   - `.glass-surface` 는 향후 transient glass 표면 전용. 상시 표면에 쓰지 않는다.
+  - `AgentBadge` 는 재도입하지 않는다 — floor · 명암 예외 (§4.3).
   - 표면이 필요하면 `Card` / `DetailSurface` / `Popover` atom 을 쓴다.
 
 ### 3.4 소비 경로 · shadow 규칙
@@ -280,7 +302,7 @@
 | `--pip-empty` | 138 132 127 | 120 113 108 | 빈 stage pip — 모든 면에서 ≥ 3:1 |
 
 - **텍스트 role 규칙**: primary = `--ink` · 읽는 캡션 = `--dim` · `--faint` 는 timestamp · ID · tick 같은 진짜 메타데이터에만 (`base.css` → `.card-sub` 주석).
-- **계산된 명암비** (WCAG 2.2 상대휘도, 이번 갱신에서 python 으로 계산):
+- **계산된 명암비** (WCAG 2.2 상대휘도):
 
 | fg | Light: elev / surface / sunken | Dark: elev / surface / sunken / elev-2 |
 |----|-------------------------------|----------------------------------------|
@@ -319,8 +341,12 @@
   - dark: tone 0.12 tinted well + tone glyph.
 - **severity 요소는 glass/blur 위에 두지 않는다** — desaturation 이 응급 신호를 약화 (§6.3).
 - **알려진 예외 (현재 코드, 수정 대상)**:
-  - `.nav-badge.warn` 과 `app.jsx` → `NAV_BADGE_CRIT_STYLE`: tone 0.15 tinted fill + tone 텍스트. light 명암비 warn 2.71 · crit 3.82 (< 4.5).
-  - `.doc-toast.<tone>`: tone 0.14 tinted fill + tone 텍스트(`--fs-body`). light 명암비 warn 2.64 · info 3.00 · ok 3.06 · crit 3.73 (< 4.5). dark 는 전부 ≥ 6.0.
+  - `.nav-badge.warn` 과 `app.jsx` → `NAV_BADGE_CRIT_STYLE`: tone 0.15 tinted fill + tone 텍스트.
+    - light 최악 = active · hover `.nav-item` 의 `--sunken` 위: warn 2.51 · crit 3.52 (< 4.5). 사이드바 `--elev` 위 2.71 / 3.82.
+    - dark 최악 = `--elev` 위: crit 5.05 · warn 7.53.
+  - `.doc-toast.<tone>`: tone 0.14 tinted fill + tone 텍스트(`--fs-body`). `position: fixed` 라 어떤 면 위에도 뜬다 → 수치는 가장 불리한 면 기준.
+    - light 최악 = `--sunken` 위: warn 2.53 · info 2.88 · ok 2.94 · crit 3.58 (< 4.5). `--surface` 위 2.64 / 3.00 / 3.06 / 3.73.
+    - dark 최악 = `--elev-2`(raised-2 카드) 위: crit 4.71 · ok 6.38 · info 6.74 · warn 7.05. `--elev` 위 crit 5.14 · `--surface` 위 crit 6.03.
   - `clauded-docs.jsx` → `.doc-row.is-selected` / `.is-pending-delete`: inset 4px accent / crit stripe.
   - light `--warn` glyph on `--sunken` 배지 shell = 2.92:1 (UI 3:1 미달).
 - `.diff-line--add/--del` 의 옅은 tint 는 허용 — `+`/`−` glyph 가 1차 신호.
@@ -336,9 +362,12 @@
 
 - severity 와 categorical 분리: cat-* 는 분류용, 위험도용 아님.
 - `--cat-2` 3.74:1 · `--cat-4` 4.60:1 on light `--elev` (sunken 에서 3.43 / 4.21) → **fill/swatch 한정, text 색 금지**.
-- **Agent 식별 팔레트** `--agent-1..8` + `--agent-ink`:
-  - `AgentBadge` 22px 원형 fill. named agent 는 고정 슬롯, 그 외는 id 해시로 배정.
-  - 테마 불변. 이니셜 전경 = `--agent-ink`(고정 dark), 8색 모두 ≥ 4.1:1.
+- **Agent 식별 팔레트 `--agent-1..8` + `--agent-ink` · `AgentBadge` — 정의만 있고 소비처 없음, 재도입 금지**:
+  - agent 식별은 `AgentName` 텍스트로만 (§3.3). Agents ledger 는 이니셜 아바타를 그리지 않는다 — 모든 agent 이름이 `glass-atrium-` 으로 시작해 이니셜이 전부 G (`agents.screen-render.client.test.ts`).
+  - atom 형태: 22px **둥근 사각** (`borderRadius` size×0.3 = 6.6px) fill, 테마 불변. named agent 는 고정 슬롯, 그 외는 id 해시로 배정. 이니셜 전경 = `--agent-ink`(고정 dark).
+  - 알려진 예외 (재도입 금지 근거):
+    - 이니셜 11px (`fontSize` size×0.5) — §5.2 의 13px floor 미달.
+    - 이니셜 명암비 4.13–8.14, 최저 `--agent-2` 4.13:1 — 11px 텍스트의 4.5:1 기준 (§2 원칙 2) 미달.
 
 ### 4.4 Accent
 
@@ -597,9 +626,15 @@
 - **scrim**: 솔리드 `rgba(0,0,0,0.42)` 가 기본, smoke 는 조건부 (§6.3 · §9.3). z: §6.5.
 - `.modal` / `.modal-backdrop` class 는 `clauded-docs.jsx` 의 다이얼로그 1곳에만 남아 있다. 새 다이얼로그는 `DetailSurface` 로.
 
-### 7.9 Alarm row · Alert card — `.alarm-row` · `.alert-card`
+### 7.9 Alarm row · Alert card — `.alarm-row` · `AlertCard` (`.alert-card`)
 
 - **`.alarm-row`**: flat hairline 행 — grid (glyph · 본문 · 액션) · gap 12 · padding 12px 16px · 하단 1px `--line`. tone 은 선행 glyph 색에만 (`data-tone`). stripe · tinted fill 없음.
+- **`AlertCard({ tone, surface, title, body, subjects, details, actions, hasLiveHost })`**: 조건부 알림 카드의 유일한 atom. `.alert-card` 를 직접 조립하지 않는다.
+  - `surface`: `raised`(기본, 페이지 레벨 `.card`) · `inset`(기존 카드 · 패널 안 `.sub-card.bg-sunken.is-inset`).
+  - tone: `crit` · `warn` · `info` · `ok` · `neutral`(well 색 `--dim`). title 앞 sr-only 단어 (Critical / Warning / Notice / Resolved).
+  - role: live 컨테이너 안이면 (`hasLiveHost`) 없음, 아니면 crit = `alert` · 그 외 = `status`.
+  - `subjects` = neutral `Badge` chip · `details` = 접힌 Details 의 raw 오류 · `actions` = `.btn.sm` 최대 2개.
+  - 소비처: dashboard alarm 카드 · `PageErrorBanner` (§3.3).
 - **`.alert-card`**: glyph well 카드 — grid (well · content · actions), padding 12px 16px.
   - well: 32×32 `--radius-tile` · `.is-inset` 이면 24×24 `--radius-control`. 채움 규칙 §4.2.
   - content: gap 4 · title line-height 20 · body max 72ch.
@@ -678,8 +713,9 @@
   - 컬럼당 frame 폭 하나 (가장 넓은 zone 기준).
 - **edge**:
   - spine edge 4개 (assigns work · tool calls · saves results · renders stored content) — 직선 수직.
-  - bus 2개: user → Orchestrator · Daemons → Orchestrator 가 gutter 중앙을 내려와 Orchestrator 좌측으로 진입. `_turn` id clone, `data-arch-edge="bus"`.
+  - bus 2개: user → Orchestrator · Daemons → Orchestrator 가 gutter 중앙을 내려와 Orchestrator 좌측으로 진입.
   - bypass 1개: "saves documents" (Agents → Store) 는 spine 오른쪽 60 lane (`BYPASS.LANE`), 라벨은 lane 오른쪽.
+  - 화면이 그리는 edge 3개 (bus 2 · bypass 1, `createScreenPathAR`) = 그려진 `path.flowchart-link` 의 clone — 같은 class · marker, id `L_<from>_<to>_screen`, `data-arch-edge="bus"` / `"bypass"`. 직교성 검사가 이 3개도 canvas link 로 센다 (`architecture.merged-surface.e2e`).
   - 총 link 7 · crossing 0 (`architecture.map-fit.e2e`).
 - **spine label**: 각 라벨은 **자기 edge 의 오른쪽**, edge 와 `LABEL_PAD` 16 · 다른 edge 와 ≥ 16.
   - r10 방향 문서의 "왼쪽 gutter lane" 과 다른 as-built 배치 — owner 확인 대기.
@@ -698,7 +734,9 @@
   - `.pulse-ring` 은 `tokens.css` 에 정의만 있고 소비처가 없다 — 쓰지 않는다. 새 상시 루프 신설 금지.
 - **로딩 표시 범주** (로딩 중에만 돈다):
   - skeleton pulse 1.4s ease-in-out: `skelPulseC`(cost) · `skelPulseO`(outcomes) · `skelPulseCD`(clauded-docs).
-  - spinner: `.ga-spin` 0.9s (dashboard) · `.doc-action-spinner` 900ms (clauded-docs) · `.i-act-spin` 0.7s (improvement) · `RefreshButton` `motion-safe:animate-spin`.
+  - spinner: `.ga-spin` 0.9s (dashboard) · `.doc-action-spinner` 900ms (clauded-docs) · `.i-act-spin` 0.7s (improvement) · `RefreshButton` · `LoadingPlaceholder` icon `motion-safe:animate-spin`.
+  - 정적 skeleton: `SkeletonRows` — 실제 row 높이의 정적 bar, 애니메이션 없음 (§3.3).
+  - 새 로딩 표시는 `LoadingPlaceholder` (region) · `SkeletonRows` (표) atom 으로. screen-local skeleton keyframe 을 새로 만들지 않는다.
   - 모두 reduced-motion 게이트 필수 (§8.4).
 
 ### 8.1 Motion hierarchy
@@ -845,7 +883,9 @@
 - **스택 사실 (코드 생성 전 필수)**:
   - Tailwind CDN-JIT + 런타임 `tailwind.config` 객체. Tailwind v4 `@theme` / Oxide / OKLCH 가 **아니다** → `@theme` 자동 토큰 · `text-[var(…)]` 색 파싱 가정 불가.
   - JSX 는 esbuild 로 precompile — `public/src` 를 고치면 `npm run build:jsx`.
-  - UI 는 `window.UI` atom 으로 생성 (`Card` · `CardHead` · `SplitRow` · `DetailSurface` · `Badge` · `Table`/`ClampCell` · `KPI` · `EmptyState`). `.glass-surface` · `.card-raised` · `.elev-overlay` 는 소비처 없는 예약 class — 생성하지 않는다.
+  - UI 는 `window.UI` atom 으로 생성 (`Card` · `CardHead` · `SplitRow` · `DetailSurface` · `Badge` · `Table`/`ClampCell` · `KPI` · `EmptyState` · `AgentName`).
+  - 로딩 · 오류 · 신선도 상태도 atom 으로: `LoadingPlaceholder` · `SkeletonRows` · `RegionFailure` · `PageErrorBanner` · `AlertCard` · `RetryButton` · `FreshnessStamp` · `RefreshButton` (§3.3).
+  - `.glass-surface` · `.card-raised` · `.elev-overlay` · `AgentBadge` 는 소비처 없는 예약 class · atom — 생성하지 않는다.
 
 **Non-negotiable**
 
