@@ -21,6 +21,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
+from collections.abc import Callable
 from datetime import datetime, timezone
 from pathlib import Path
 from unittest import mock
@@ -226,7 +227,9 @@ class TestManifestRotation(_IngestCase):
 
 
 class TestManifestCloseRecord(_IngestCase):
-    def test_a_closed_spool_records_lines_read_against_rows_present(self) -> None:
+    def test_a_closed_spool_reports_lines_read_against_rows_present_and_no_rule_line_change(
+        self,
+    ) -> None:
         self._append(self.live_log, _get_line() + "not a manifest line\n" + _get_line("b77"))
         self._ingest(_CYCLE_1)
         (spool,) = self._get_spools()
@@ -243,7 +246,7 @@ class TestManifestCloseRecord(_IngestCase):
                 event["changes_added"],
                 event["changes_removed"],
             ),
-            ("manifest-spool-closed", spool.name, 3, 1),
+            ("manifest-spool-closed", spool.name, 0, 0),
         )
         self.assertIn("1 line(s) without a row", self.stderr)
 
@@ -275,7 +278,7 @@ class TestManifestCoverageAfterRotation(_IngestCase):
 
 @unittest.skipIf(dc is None, f"daemon_cycle import failed: {_IMPORT_ERROR}")
 class TestManifestIngestCycleWiring(unittest.TestCase):
-    """run_cycle drives the ingest only outside the no-write mode, against the install log root."""
+    """run_cycle ingests the install log root first, except in the no-write mode."""
 
     def setUp(self) -> None:
         tmp = tempfile.TemporaryDirectory()
@@ -304,6 +307,41 @@ class TestManifestIngestCycleWiring(unittest.TestCase):
         self.assertEqual(self.pg_reach, [])
         return report, stderr.getvalue()
 
+    def _open_db_boundary(self) -> list[str]:
+        """Manifest writes + the pattern read answer, other PG calls refuse; all logged."""
+        calls: list[str] = []
+        table = _SpawnManifestTable()
+
+        def write(spool: str, rows: list[tuple[object, ...]]) -> int:
+            calls.append(f"manifest-write:{spool}")
+            return table.write(spool, rows)
+
+        def read_pending_patterns() -> list[dict[str, object]]:
+            calls.append("pattern-read")
+            return []
+
+        def get_unreachable(name: str) -> Callable[..., None]:
+            def refuse(*_args: object, **_kwargs: object) -> None:
+                calls.append(name)
+                raise ConnectionRefusedError(f"{name}: no database in this test")
+
+            return refuse
+
+        # After the seal: each replaces one seam the seal already covers.
+        for name, value in (
+            ("HAS_PG_LOOP_WRITE", True),
+            ("HAS_PG_PATTERN_READ", True),
+            ("_pg_count_spawn_manifest", table.count),
+            ("_pg_write_spawn_manifest", write),
+            ("_pg_read_pending_patterns", read_pending_patterns),
+            ("_pg_connect", get_unreachable("pg-connect")),
+            ("_pg_write_corpus_audit", get_unreachable("corpus-audit-write")),
+        ):
+            patcher = mock.patch.object(dc, name, value)
+            patcher.start()
+            self.addCleanup(patcher.stop)
+        return calls
+
     def test_a_no_write_cycle_neither_renames_nor_ingests(self) -> None:
         report, stderr = self._run(skip_loop_emit=True)
 
@@ -313,14 +351,19 @@ class TestManifestIngestCycleWiring(unittest.TestCase):
         self.assertIsNone(report.manifest_ingest)
         self.assertIn("manifest ingest skipped — no-write mode", stderr)
 
-    def test_a_writing_cycle_ingests_the_install_log_root_before_its_reads(self) -> None:
-        report, stderr = self._run(skip_loop_emit=False)
+    def test_a_writing_cycle_ingests_the_install_log_root_before_its_first_metric_read(
+        self,
+    ) -> None:
+        calls = self._open_db_boundary()
 
-        self.assertEqual(report.manifest_ingest.status, "skipped:PG write layer unavailable")
-        self.assertEqual(
-            sorted(p.name for p in self.live_log.parent.iterdir()), [dc.MANIFEST_LOG_NAME]
-        )
-        self.assertIn("WARN: manifest ingest skipped", stderr)
+        report, _ = self._run(skip_loop_emit=False)
+
+        spool = report.manifest_ingest.rotated_to
+        self.assertEqual(report.manifest_ingest.status, "ok")
+        self.assertTrue((self.live_log.parent / spool).is_file(), "spool not in the log root")
+        self.assertFalse(self.live_log.exists(), "the install live log was not rotated")
+        self.assertIn("pattern-read", calls)
+        self.assertEqual(calls[: calls.index("pattern-read")], [f"manifest-write:{spool}"])
 
 
 @unittest.skipIf(dc is None, f"daemon_cycle import failed: {_IMPORT_ERROR}")

@@ -763,14 +763,14 @@ class SubjectTooLong(CallerContractViolation):
 # Cause tokens whose row adjudicates ONE subject, so a correction of that subject
 # supersedes its predecessor. Declared here, not in daemon_cycle.py: that module
 # imports this one, so the reverse edge would be circular — and it does NOT read
-# this tuple, restating the same four tokens as its own DISCHARGE_EVENT_* names.
+# this tuple, restating each token as its own constant.
 # Sole reader outside this module: autoagent/test/test_discharge_wiring.py.
 LOOP_EVENT_VERDICT_CAUSES = (
     "discharge-read-failed",
     "discharge-unresolved",
     "discharge-covered-terminal",
     "discharge-intake-miss",
-    # Subject = the spool name; changes_added = lines read, changes_removed = lines with no row.
+    # Subject = the spool name.
     "manifest-spool-closed",
 )
 

@@ -47,7 +47,7 @@ from datetime import date, datetime, timedelta, timezone
 from enum import IntEnum
 from itertools import groupby
 from pathlib import Path, PurePosixPath
-from typing import Literal, NamedTuple
+from typing import Literal, NamedTuple, Optional
 
 # -- Constants --------------------------------------------------------------
 
@@ -11207,7 +11207,8 @@ _MANIFEST_UNKNOWN_ID = "unknown"
 _MANIFEST_AGENT_TYPE_MAX_CHARS = 64
 _PG_INTEGER_MAX = 2**31 - 1
 
-ManifestRow = tuple[int, str | None, str, str | None, datetime, int, str]
+# Optional, not `str | None`: an install's CLT python3 3.9 cannot evaluate the union.
+ManifestRow = tuple[int, Optional[str], str, Optional[str], datetime, int, str]  # noqa: UP045
 
 
 @dataclass
@@ -11352,8 +11353,9 @@ def _close_manifest_spool(spool: Path, *, event_ts: str) -> ManifestSpoolClose:
                 "event_ts": event_ts,
                 "agent": "daemon-cycle",
                 "eval_result": MANIFEST_SPOOL_CLOSED_EVAL_RESULT,
-                "changes_added": lines_read,
-                "changes_removed": max(0, lines_read - rows_present),
+                # Read as rule-line changes by the monitor → spool counts stay off.
+                "changes_added": 0,
+                "changes_removed": 0,
                 "rice": None,
                 "subject": spool.name,
             },
