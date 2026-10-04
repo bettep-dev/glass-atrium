@@ -107,7 +107,7 @@ readonly WIKI_UNTRUSTED_MARKER_END='<!-- AGENT-INJECT:WIKI-UNTRUSTED:END -->'
 # dev_roster − _BUDGET_DAEMON_CARRIERS — a new DEV agent is wired in automatically; the carrier
 # constant changes ONLY when the daemon adds/removes an in-body budget bullet (a manual
 # governance change).
-readonly BUDGET_DEV_AGENTS=" glass-atrium-dev-front glass-atrium-dev-angular glass-atrium-dev-gsap glass-atrium-dev-android glass-atrium-dev-node glass-atrium-dev-db glass-atrium-dev-rag glass-atrium-dev-animator glass-atrium-dev-swift "
+readonly BUDGET_DEV_AGENTS=" glass-atrium-dev-front glass-atrium-dev-angular glass-atrium-dev-gsap glass-atrium-dev-android glass-atrium-dev-node glass-atrium-dev-db glass-atrium-dev-rag glass-atrium-dev-animator glass-atrium-dev-swift glass-atrium-dev-aws "
 
 # budget-analysis scope-match — 6 curated analysis consumers. UNTRACKED-manual (no inject_sync
 # reconcile): the set is not roster-derivable (meta-agent IN / meta-prompt-engineer OUT /

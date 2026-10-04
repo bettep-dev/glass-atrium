@@ -1015,6 +1015,7 @@ _AGENT_SCOPE_MAP: dict[str, str] = {
     "glass-atrium-dev-animator": "scope-dev.md",
     "glass-atrium-dev-shell": "scope-dev.md",
     "glass-atrium-dev-swift": "scope-dev.md",
+    "glass-atrium-dev-aws": "scope-dev.md",
     # META scope
     "glass-atrium-meta-prompt-engineer": "scope-meta.md",
     "glass-atrium-meta-agent": "scope-meta.md",
