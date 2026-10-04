@@ -285,20 +285,23 @@ export interface ImprovementProseOnlyAddSummary {
   truncation_caveat: string;
 }
 
-// Rejected proposals split into three disjoint lifecycle buckets. An undivided reject
-// rate overstates substantive rejection: the measured population carries 40% infra
-// outcomes plus a mechanically superseded subset, and neither reached a quality verdict.
+// Rejected and unadjudicated proposals split into three disjoint lifecycle buckets. An
+// undivided reject rate overstates substantive rejection: the measured population carries
+// 40% infra outcomes plus a mechanically superseded subset, and neither reached a quality
+// verdict.
 //
-// Membership is ordered — a superseded row carries an 'ok' model status, so a pure
-// model-status split books it as a quality reject, which is the defect this shape exists
-// to prevent:
-//   1. lifecycle_count — superseded by a fresher same-agent proposal, terminated by the
-//      cycle rather than judged (daemon_cycle.py supersede_prior_pending_for_agent).
-//   2. infra_count     — the model call yielded no usable diff (quota-limit / transient /
+// Membership is ordered — a superseded, parked or unadjudicated row can carry an 'ok' model
+// status, so a pure model-status split books it as a quality reject, which is the defect
+// this shape exists to prevent:
+//   1. lifecycle_count — superseded by a fresher same-agent proposal or refused by a parked
+//      covering pattern, terminated by the cycle rather than judged
+//      (daemon_cycle.py supersede_prior_pending_for_agent / update_parked_proposal_status).
+//   2. infra_count     — every other unadjudicated row, whatever its model status, plus a
+//      rejected row whose model call yielded no usable diff (quota-limit / transient /
 //      auth, and any other non-'ok' status including a NULL one, which the daemon's own
 //      apply gate reads fail-closed).
-//   3. quality_count   — an 'ok' model status: a diff existed and was rejected on
-//      substance. The only bucket a reject rate may be read from.
+//   3. quality_count   — a rejected row with an 'ok' model status: a diff existed and was
+//      rejected on substance. The only bucket a reject rate may be read from.
 //
 // Updater-written merge-resolution rows sit outside all three and outside `total` —
 // release records, not daemon proposals.
