@@ -290,8 +290,10 @@ test("GET /api/improvement: a safety-routed proposal counts in the safety column
     return Number(inserted.id);
   };
   try {
-    const safetyId = await insert("user", "pending");
-    const autoId = await insert("auto", "applied");
+    const id = {
+      safety: await insert("user", "pending"),
+      auto: await insert("auto", "applied"),
+    };
     const res = await app.inject({ method: "GET", url: "/api/improvement?limit=50" });
     assert.strictEqual(res.statusCode, 200);
     const body = res.json() as {
@@ -304,12 +306,12 @@ test("GET /api/improvement: a safety-routed proposal counts in the safety column
     assert.deepStrictEqual(body.tier_distribution, { auto: 1, safety: 1 }, "tier_distribution");
     assert.deepStrictEqual(
       tierById(body.proposals),
-      { [safetyId]: "safety", [autoId]: "auto" },
+      { [id.safety]: "safety", [id.auto]: "auto" },
       "proposals[].approval_tier",
     );
     assert.deepStrictEqual(
       tierById(body.actionable_proposals),
-      { [safetyId]: "safety" },
+      { [id.safety]: "safety" },
       "the Awaiting approval feed",
     );
   } finally {
