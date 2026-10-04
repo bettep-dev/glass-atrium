@@ -15,6 +15,11 @@
 #     AC4  an unwritable manifest sink leaves the injection and the exit status unchanged (fail-open).
 #     AC5  an absent digest tool still writes the line, without a digest field, exit status unchanged.
 #     AC7  the reader reports per-agent block coverage matching the fixture sink.
+#     AC9  every line carries the envelope's session_id as a path-safe key (`unknown` when absent),
+#          ahead of the line-final `blocks=`.
+#     AC10 the spawn-path delete is a backstop: a log at 64 MiB survives a spawn, one above it is deleted.
+#     AC11 the reader counts the live log plus every spool named by the rotation contract
+#          `<live log>.<UTC %Y%m%dT%H%M%SZ>.<pid>.spool`, and no other file beside it.
 #
 #   FAIL-AT-HEAD: 9 of the 11 C03 rows fail against the pre-C03 hook, which writes no manifest sink at all
 #   and treats the reader flag as an ordinary no-arg hook invocation. Every row that could pass VACUOUSLY
@@ -59,13 +64,17 @@ setup() {
 
 # Drive the hook's SubagentStart injection path. All scope sources except the BUDGET-DEV block are
 # sandboxed to /nonexistent and the meter is off, so for a BUDGET_DEV_AGENTS member the assembly is
-# emit + budget-dev. $1=agent $2=budget source $3=extra env assignment (may be empty).
+# emit + budget-dev. HOME is the per-test sandbox, so the default log root never reaches the real one.
+# $1=agent $2=budget source $3=extra env assignment (may be empty) · SESSION_FIELD=optional JSON
+# fragment appended to the envelope (e.g. `,"session_id":"s1"`).
 run_inject() {
   local agent="${1}" budget_src="${2}" extra="${3:-IGNORED_BY_HOOK=1}"
   run bash -c '
     agent="$1"; hook="$2"; budget="$3"; extra="$4"
-    manifest="$5"; droplog="$6"; counter="$7"; ceiling="$8"
-    printf "%s" "{\"agent_type\":\"${agent}\",\"agent_id\":\"sess-A1\"}" | env \
+    manifest="$5"; droplog="$6"; counter="$7"; ceiling="$8"; session_field="$9"; home="${10}"
+    printf "%s" "{\"agent_type\":\"${agent}\",\"agent_id\":\"sess-A1\"${session_field}}" | env \
+      -u GA_DATA_ROOT \
+      HOME="${home}" \
       INJECT_SCOPE_RULES_MANIFEST_LOG="${manifest}" \
       INJECT_SCOPE_RULES_DROP_LOG="${droplog}" \
       INJECT_SCOPE_RULES_SPAWN_COUNTER="${counter}" \
@@ -77,19 +86,21 @@ run_inject() {
       "${extra}" \
       "${hook}"
   ' _ "${agent}" "${HOOK_SH}" "${budget_src}" "${extra}" \
-    "${MANIFEST}" "${DROPLOG}" "${COUNTER}" "${CEILING_OVERRIDE:-9984}"
+    "${MANIFEST}" "${DROPLOG}" "${COUNTER}" "${CEILING_OVERRIDE:-9984}" "${SESSION_FIELD:-}" \
+    "${BATS_TEST_TMPDIR}/home"
 }
 
 # Drive an operator introspection mode. stdin is /dev/null so a pre-C03 hook (no dispatch for the new
 # mode → hook_read_input's blocking cat) cannot hang the suite. $1=mode flag.
 run_query() {
   run bash -c '
-    hook="$1"; mode="$2"; manifest="$3"; droplog="$4"; counter="$5"
-    env INJECT_SCOPE_RULES_MANIFEST_LOG="${manifest}" \
+    hook="$1"; mode="$2"; manifest="$3"; droplog="$4"; counter="$5"; home="$6"
+    env -u GA_DATA_ROOT HOME="${home}" \
+      INJECT_SCOPE_RULES_MANIFEST_LOG="${manifest}" \
       INJECT_SCOPE_RULES_DROP_LOG="${droplog}" \
       INJECT_SCOPE_RULES_SPAWN_COUNTER="${counter}" \
       "${hook}" "${mode}" </dev/null
-  ' _ "${HOOK_SH}" "${1}" "${MANIFEST}" "${DROPLOG}" "${COUNTER}"
+  ' _ "${HOOK_SH}" "${1}" "${MANIFEST}" "${DROPLOG}" "${COUNTER}" "${BATS_TEST_TMPDIR}/home"
 }
 
 manifest_lines() {
@@ -119,6 +130,15 @@ assert_manifest_has() {
     echo "manifest missing '${1}' (log: $(cat "${MANIFEST}" 2>/dev/null))" >&2
     return 1
   }
+}
+
+# Append $3 hand-written MANIFEST lines for agent $2 to file $1 — a spool or decoy the hook never writes.
+write_manifest_lines() {
+  local file="${1}" agent="${2}" count="${3}" i
+  for ((i = 0; i < count; i++)); do
+    printf '2026-10-05T12:00:00Z [inject-scope-rules] MANIFEST agent_id=a%s session_id=s1 agent=%s ctx_bytes=10 blocks=emit:/e\n' \
+      "${i}" "${agent}" >>"${file}"
+  done
 }
 
 # ── AC1 — exactly one line per attempted spawn, naming kept labels + assembled bytes ───────────────
@@ -300,4 +320,98 @@ assert_manifest_has() {
   [[ "${roster}" == "${arms}" ]] || {
     echo "roster != case arms" >&2; echo "roster: ${roster}" >&2; echo "arms  : ${arms}" >&2; return 1
   }
+}
+
+# ── AC9 — session_id rides every line, path-safe, ahead of the line-final blocks= ──────────────────
+
+@test "AC9: a manifest line carries the envelope session_id as a path-safe key, unknown when absent" {
+  local row name field want i=0
+  local -a rows=(
+    'uuid session id|,"session_id":"e0e449e3-7b17-4aa8-974d-62fcbbc8b541"|e0e449e3-7b17-4aa8-974d-62fcbbc8b541'
+    'hostile session id|,"session_id":"../x y;z"|xyz'
+    'empty session id|,"session_id":""|unknown'
+    'absent session id||unknown'
+  )
+  for row in "${rows[@]}"; do
+    IFS='|' read -r name field want <<<"${row}"
+    i=$((i + 1))
+    MANIFEST="${BATS_TEST_TMPDIR}/session-${i}.log"
+    SESSION_FIELD="${field}"
+    run_inject "glass-atrium-dev-front" "${BUDGET_FIT}"
+    [[ "${status}" -eq 0 ]] || { echo "${name}: status ${status} (output: ${output})"; return 1; }
+    grep -qE " MANIFEST agent_id=[^ ]+ session_id=${want} .* blocks=" "${MANIFEST}" || {
+      echo "${name}: no session_id=${want} ahead of blocks= (log: $(cat "${MANIFEST}" 2>/dev/null))"
+      return 1
+    }
+    [[ "$(grep -o ' session_id=' "${MANIFEST}" | wc -l | tr -cd '0-9')" == "1" ]] || {
+      echo "${name}: expected exactly one session_id field (log: $(cat "${MANIFEST}"))"
+      return 1
+    }
+  done
+}
+
+# ── AC10 — the spawn-path delete is a 64 MiB backstop (the daemon rotation owns the bound) ─────────
+
+@test "AC10: a log at the 64 MiB backstop survives a spawn and a log above it is deleted" {
+  local row name size want got i=0
+  local -a rows=(
+    'log at the backstop|67108864|kept'
+    'log one byte above the backstop|67108865|deleted'
+  )
+  for row in "${rows[@]}"; do
+    IFS='|' read -r name size want <<<"${row}"
+    i=$((i + 1))
+    MANIFEST="${BATS_TEST_TMPDIR}/backstop-${i}.log"
+    printf 'sentinel-head\n' >"${MANIFEST}"
+    # Sparse extension to the exact size: stock macOS ships dd but no truncate.
+    dd if=/dev/zero of="${MANIFEST}" bs=1 count=0 seek="${size}" 2>/dev/null
+    got="$(wc -c <"${MANIFEST}" | tr -cd '0-9')"
+    [[ "${got}" == "${size}" ]] || { echo "${name}: fixture is ${got} bytes, want ${size}"; return 1; }
+    run_inject "glass-atrium-dev-front" "${BUDGET_FIT}"
+    [[ "${status}" -eq 0 ]] || { echo "${name}: status ${status} (output: ${output})"; return 1; }
+    got="$(head -n1 "${MANIFEST}")"
+    if [[ "${want}" == "kept" ]]; then
+      [[ "${got}" == "sentinel-head" ]] || { echo "${name}: the log was deleted (head: ${got:0:80})"; return 1; }
+      tail -n1 "${MANIFEST}" | grep -aq ' MANIFEST ' || { echo "${name}: no line appended to the kept log"; return 1; }
+    else
+      [[ "${got}" == *" MANIFEST "* ]] || { echo "${name}: the log was not replaced (head: ${got:0:80})"; return 1; }
+    fi
+  done
+}
+
+# ── AC11 — the reader's window: live log + contract-named spools, nothing else ─────────────────────
+
+@test "AC11: --manifest-coverage counts the live log and contract-named spools, never a non-matching file" {
+  run_inject "glass-atrium-dev-front" "${BUDGET_FIT}"
+  assert_status 0
+  write_manifest_lines "${MANIFEST}.20261005T120000Z.4242.spool" "glass-atrium-dev-node" 2
+  write_manifest_lines "${MANIFEST}.20261004T120000Z.17.spool" "glass-atrium-dev-node" 1
+  local decoy
+  for decoy in \
+    "${MANIFEST}.1" \
+    "${MANIFEST}.20261005T120000Z.spool" \
+    "${MANIFEST}.2026-10-05T12:00:00Z.4242.spool" \
+    "${MANIFEST}.20261005T120000Z.4242.spool.tmp" \
+    "${MANIFEST}.20261005T120000.4242.spool" \
+    "${BATS_TEST_TMPDIR}/other.log.20261005T120000Z.4242.spool"; do
+    write_manifest_lines "${decoy}" "decoy" 1
+  done
+  run_query --manifest-coverage
+  assert_status 0
+  assert_contains "records=4 agents=2"
+  assert_contains "agent=glass-atrium-dev-front spawns=1 blocks=emit:1,budget-dev:1"
+  assert_contains "agent=glass-atrium-dev-node spawns=3 blocks=emit:3"
+  ! printf '%s' "${output}" | grep -q 'agent=decoy' || {
+    echo "a non-contract file was counted (output: ${output})"
+    return 1
+  }
+}
+
+@test "AC11: --manifest-coverage counts a pending spool when the live log was rotated away" {
+  write_manifest_lines "${MANIFEST}.20261005T120000Z.4242.spool" "glass-atrium-dev-node" 2
+  [[ ! -e "${MANIFEST}" ]] || { echo "live log unexpectedly present"; return 1; }
+  run_query --manifest-coverage
+  assert_status 0
+  assert_contains "records=2 agents=1"
+  assert_contains "agent=glass-atrium-dev-node spawns=2 blocks=emit:2"
 }

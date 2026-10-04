@@ -38,7 +38,7 @@
 #
 # C03 — observability: the drop sink records only what was SHED, so "did this agent actually see that
 # rule at that spawn" was an assumption. One bounded MANIFEST line per injection-attempted spawn now
-# records what WAS injected (agent id/type · ordered kept labels with their source paths · assembled
+# records what WAS injected (agent id/type · session id · ordered kept labels with their source paths · assembled
 # bytes · an optional digest), into its OWN capped sink so the
 # drop-rate numerator's rotation is untouched. `--manifest-coverage` is its required reader.
 #
@@ -182,9 +182,14 @@ readonly INJECT_SPAWN_COUNTER="${INJECT_SCOPE_RULES_SPAWN_COUNTER:-${HOOK_LOG_DI
 # DENOMINATOR is monotonic and never resets, so ~1 manifest line per spawn would accelerate the
 # truncation and silently shrink the drop numerator against an un-reset denominator — corrupting an
 # existing signal. Env-overridable for the Bats sandbox (a sink without its constant cannot be
-# isolated per test). Cap is 4x the drop sink's: a drop is rare, a manifest line is per-spawn.
+# isolated per test). The daemon's rename-then-ingest bounds the log; the spawn-path delete is only a
+# backstop for an install whose cycle never runs, sized to months of peak per-spawn volume.
 readonly INJECT_MANIFEST_LOG="${INJECT_SCOPE_RULES_MANIFEST_LOG:-${HOOK_LOG_DIR}/inject-scope-rules.manifest.log}"
-readonly INJECT_MANIFEST_LOG_MAX_BYTES=4194304 # 4 MiB soft cap → truncate-on-exceed
+readonly INJECT_MANIFEST_LOG_MAX_BYTES=67108864 # 64 MiB backstop → delete-on-exceed
+
+# Rotation spool name contract, shared with the daemon ingest that renames the live log:
+# `<live log>.<UTC %Y%m%dT%H%M%SZ>.<pid>.spool`, beside the live log. Matched on the suffix only.
+readonly INJECT_MANIFEST_SPOOL_SUFFIX_RE='^[0-9]{8}T[0-9]{6}Z\.[0-9]+\.spool$'
 
 # Manifest digest tool — empty (default) probes shasum then sha256sum; a non-empty override names the
 # tool exactly. OPTIONAL BY CONTRACT: an absent tool degrades to a manifest line with NO digest field,
@@ -236,8 +241,21 @@ aggregate_drop_rate() {
 # aggregate_drop_rate. An absent sink reports records=0, NOT missing data. Parses by FIELD NAME, so the
 # optional digest field never shifts a position; `blocks=` is line-final, so a source path containing
 # spaces cannot truncate it. Per-agent label order is the fixed assembly order (deterministic output).
+# Window: lines not yet unlinked — every contract-named spool (oldest first) plus the live log, i.e.
+# one to two daemon cycles; older lines live only in the daemon's ingest table, which a shell reader
+# does not query.
 aggregate_manifest_coverage() {
-  if [[ ! -f "${INJECT_MANIFEST_LOG}" ]]; then
+  local -a sinks=()
+  local spool=""
+  for spool in "${INJECT_MANIFEST_LOG}".*.spool; do
+    if [[ -f "${spool}" && "${spool#"${INJECT_MANIFEST_LOG}".}" =~ ${INJECT_MANIFEST_SPOOL_SUFFIX_RE} ]]; then
+      sinks+=("${spool}")
+    fi
+  done
+  if [[ -f "${INJECT_MANIFEST_LOG}" ]]; then
+    sinks+=("${INJECT_MANIFEST_LOG}")
+  fi
+  if [[ ${#sinks[@]} -eq 0 ]]; then
     printf 'inject-scope-rules manifest-coverage: records=0 agents=0\n'
     return 0
   fi
@@ -272,7 +290,7 @@ aggregate_manifest_coverage() {
         printf "inject-scope-rules manifest-coverage: agent=%s spawns=%d blocks=%s\n", a, spawns[a], (line == "" ? "-" : line)
       }
     }
-  ' roster="${MANIFEST_BLOCK_LABELS}" "${INJECT_MANIFEST_LOG}" 2>/dev/null || true
+  ' roster="${MANIFEST_BLOCK_LABELS}" "${sinks[@]}" 2>/dev/null || true
   return 0
 }
 
@@ -598,38 +616,52 @@ build_manifest_blocks() {
 
 # C03: append the one-line positive-injection manifest. Fail-open on EVERY statement (identical idiom
 # to append_drop_log — a logging glitch must never trip the ERR trap into a spawn-suppressing exit) and
-# bounded by its OWN cap. `blocks=` is LAST so a source path containing spaces cannot truncate the
-# preceding fields; agent_id / agent_type come from the external envelope, so both are reduced to a
-# path-safe key before they reach the record (LLM01 — and it keeps every other field space-free).
+# bounded by its OWN backstop. `blocks=` is LAST so a source path containing spaces cannot truncate the
+# preceding fields; agent_id / session_id / agent_type come from the external envelope, so each is
+# reduced to a path-safe key before it reaches the record (LLM01 — and it keeps every other field
+# space-free).
 # Args: $1=assembled context $2=assembled byte size.
 append_manifest_log() {
   local ctx="${1}" ctx_size="${2}" log_dir="${INJECT_MANIFEST_LOG%/*}"
-  local sz="" ts="" raw_id="" agent_id="" safe_type="" digest="" digest_field="" blocks=""
+  local ts="" agent_id="" session_id="" safe_type="" digest="" digest_field="" blocks=""
   mkdir -p "${log_dir}" 2>/dev/null || return 0
-  if [[ -f "${INJECT_MANIFEST_LOG}" ]]; then
-    sz="$(wc -c <"${INJECT_MANIFEST_LOG}" 2>/dev/null | tr -cd '0-9' || true)"
-    if [[ -n "${sz}" && "${sz}" -gt "${INJECT_MANIFEST_LOG_MAX_BYTES}" ]]; then
-      # shellcheck disable=SC2310  # pure predicate — nothing inside it for errexit to catch
-      if ga_guard_path "${INJECT_MANIFEST_LOG}"; then
-        rm -f -- "${INJECT_MANIFEST_LOG:?}"
-      fi || true
-    fi
-  fi
+  delete_manifest_log_past_backstop
   # Each helper is internally guarded and always exits 0 (the codebase idiom for an in-hook call — a
   # `|| true` here would only add an SC2310 set -e suppression that buys nothing).
-  raw_id="$(hook_get_field "${INPUT}" "agent_id")"
-  agent_id="$(hook_path_safe_key "${raw_id}")"
-  [[ -z "${agent_id}" ]] && agent_id="unknown"
+  agent_id="$(get_manifest_envelope_key "agent_id")"
+  session_id="$(get_manifest_envelope_key "session_id")"
   safe_type="$(hook_path_safe_key "${AGENT_TYPE}")"
   [[ -z "${safe_type}" ]] && safe_type="unknown"
   digest="$(manifest_digest "${ctx}")"
   [[ -n "${digest}" ]] && digest_field=" digest=${digest}"
   blocks="$(build_manifest_blocks)"
   ts="$(date -u +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || true)"
-  printf '%s [inject-scope-rules] MANIFEST agent_id=%s agent=%s ctx_bytes=%s%s blocks=%s\n' \
-    "${ts}" "${agent_id}" "${safe_type}" "${ctx_size}" "${digest_field}" "${blocks}" \
+  printf '%s [inject-scope-rules] MANIFEST agent_id=%s session_id=%s agent=%s ctx_bytes=%s%s blocks=%s\n' \
+    "${ts}" "${agent_id}" "${session_id}" "${safe_type}" "${ctx_size}" "${digest_field}" "${blocks}" \
     >>"${INJECT_MANIFEST_LOG}" 2>/dev/null || true
   return 0
+}
+
+# Spawn-path backstop: delete the live log once it passes INJECT_MANIFEST_LOG_MAX_BYTES. Fail-open.
+delete_manifest_log_past_backstop() {
+  local sz=""
+  [[ -f "${INJECT_MANIFEST_LOG}" ]] || return 0
+  sz="$(wc -c <"${INJECT_MANIFEST_LOG}" 2>/dev/null | tr -cd '0-9' || true)"
+  if [[ -n "${sz}" && "${sz}" -gt "${INJECT_MANIFEST_LOG_MAX_BYTES}" ]]; then
+    # shellcheck disable=SC2310  # pure predicate — nothing inside it for errexit to catch
+    if ga_guard_path "${INJECT_MANIFEST_LOG}"; then
+      rm -f -- "${INJECT_MANIFEST_LOG:?}"
+    fi || true
+  fi
+  return 0
+}
+
+# Envelope field $1 as a path-safe key; `unknown` when absent or reduced to nothing.
+get_manifest_envelope_key() {
+  local raw="" key=""
+  raw="$(hook_get_field "${INPUT}" "${1}")"
+  key="$(hook_path_safe_key "${raw}")"
+  printf '%s' "${key:-unknown}"
 }
 
 # Join two context fragments with a blank-line delimiter, tolerating an empty left side (so the
