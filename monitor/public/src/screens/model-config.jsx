@@ -1600,18 +1600,7 @@ function DriftBannerMC({ sync, onResync, saving }) {
 }
 
 function getDriftCopyMC(sync) {
-	if (sync === "pending-migration") {
-		return {
-			title: "Config rows still carry their pre-rename names",
-			body: (
-				<>
-					Values below are read from the old rows. Run{" "}
-					<span className="font-mono">glass-atrium db-setup</span> to complete the
-					rename.
-				</>
-			),
-		};
-	}
+	if (sync === "pending-migration") return getMigrationCopyMC();
 	if (sync === "file-invalid") {
 		return {
 			title: "The daemon rejects a value in daemon-config.json",
@@ -1621,6 +1610,19 @@ function getDriftCopyMC(sync) {
 	return {
 		title: "Saved config not yet fully live",
 		body: "Save again to rewrite the surfaces that consume these values.",
+	};
+}
+
+function getMigrationCopyMC() {
+	return {
+		title: "Config rows still carry their pre-rename names",
+		body: (
+			<>
+				Values below are read from the old rows. Run{" "}
+				<span className="font-mono">glass-atrium db-setup</span> to complete the
+				rename.
+			</>
+		),
 	};
 }
 
