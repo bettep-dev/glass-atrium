@@ -28,6 +28,7 @@ from __future__ import annotations
 
 import contextlib
 import difflib
+import fcntl
 import io
 import json
 import os
@@ -191,6 +192,8 @@ try:
             write_autoagent_loop_event as _pg_write_loop_event,
             write_autoagent_corpus_audit as _pg_write_corpus_audit,
             get_proposal_status_label_state,
+            write_spawn_manifest_rows as _pg_write_spawn_manifest,
+            get_spawn_manifest_row_count as _pg_count_spawn_manifest,
         )
     HAS_PG_LOOP_WRITE = True
 except Exception as _pg_loop_import_exc:  # noqa: BLE001 — psycopg or helper itself
@@ -2250,6 +2253,8 @@ class CycleReport:
     # so an unattended launchd run STOPS reporting a clean exit 0. A quiet night
     # (patches=[]) leaves this 'ok'.
     cycle_status: str = "ok"
+    # None = the ingest did not run (no-write mode).
+    manifest_ingest: ManifestIngest | None = None
     # AD-10 Solution History: the per-(agent, task_type) Pareto winner frontier
     # retained THIS cycle (retain_pareto_winners over the generation outcomes).
     # In-memory only — tuple keys are not JSON-serializable, so _report_to_dict
@@ -6694,6 +6699,9 @@ def _report_to_dict(report: CycleReport) -> dict:
         "patterns_processed": report.patterns_processed,
         "cost_guard": report.cost_guard,
         "patches": [asdict(p) for p in report.patches],
+        "manifest_ingest": (
+            asdict(report.manifest_ingest) if report.manifest_ingest is not None else None
+        ),
         # AD-10 Solution History runtime observability — tuple-keyed
         # solution_winners is not JSON-serializable, so emit its count summary.
         "solution_history": {
@@ -11177,6 +11185,229 @@ def _pg_import_degradation_lines() -> list[str]:
     return lines
 
 
+# -- MANIFEST ingest and rotation (core.spawn_manifest) ----------------------
+#
+# The hook appends one MANIFEST line per spawn with O_APPEND and takes no lock, so
+# a truncate after a read would lose any line appended between them. The cycle
+# renames the live log instead: a rename keeps the inode, so a racing append
+# lands in the spool, and the next cycle's re-read stores it before the unlink.
+
+MANIFEST_LOG_NAME = "inject-scope-rules.manifest.log"
+# Spool name contract shared with hooks/inject-scope-rules.sh → INJECT_MANIFEST_SPOOL_SUFFIX_RE.
+MANIFEST_SPOOL_SUFFIX_RE = re.compile(r"[0-9]{8}T[0-9]{6}Z\.[0-9]+\.spool")
+MANIFEST_SPOOL_CLOSED_EVAL_RESULT = "manifest-spool-closed"
+_MANIFEST_LINE_RE = re.compile(
+    r"(?P<ts>\S+) \[inject-scope-rules\] MANIFEST agent_id=(?P<agent_id>\S+)"
+    r"(?: session_id=(?P<session_id>\S+))? agent=(?P<agent>\S+)"
+    r" ctx_bytes=(?P<ctx_bytes>[0-9]+)(?: digest=\S+)? blocks=(?P<blocks>.*)"
+)
+_MANIFEST_UNKNOWN_ID = "unknown"
+# core.spawn_manifest column bounds: a line past them could never insert, so it is
+# counted as a line without a row instead of failing every re-read of its spool.
+_MANIFEST_AGENT_TYPE_MAX_CHARS = 64
+_PG_INTEGER_MAX = 2**31 - 1
+
+ManifestRow = tuple[int, str | None, str, str | None, datetime, int, str]
+
+
+@dataclass
+class ManifestSpoolClose:
+    """One spool's final re-read, recorded at its unlink."""
+
+    spool: str
+    lines_read: int
+    rows_present: int
+
+
+@dataclass
+class ManifestIngest:
+    """One cycle's ingest: ``status`` is ``ok`` or ``skipped:<reason>``."""
+
+    status: str
+    closed: list[ManifestSpoolClose] = field(default_factory=list)
+    rotated_to: str | None = None
+
+
+def get_manifest_log_path() -> Path:
+    """The hook's live MANIFEST log under the install log root (hooks/hook-utils.sh → HOOK_LOG_DIR)."""
+    return ga_paths.get_log_root() / MANIFEST_LOG_NAME
+
+
+def get_manifest_ingest_lock_path(live_log: Path) -> Path:
+    """The lock serializing ingests of one live log; beside it, so every install resolves it alike."""
+    return live_log.with_name(f"{live_log.name}.ingest.lock")
+
+
+def ingest_manifest_log(live_log: Path, *, now: datetime) -> ManifestIngest:
+    """Store every MANIFEST line in core.spawn_manifest and rotate the live log; never raises.
+
+    Under the ingest lock: each pending spool — renamed by an earlier cycle, since a
+    rename happens only under this lock — is re-read in one transaction and unlinked
+    once that commit lands; with none left pending, the live log is renamed to a new
+    contract-named spool and ingested, staying for the next cycle's re-read.
+    (spool, line_offset) is the only position, so a crash at any step re-reads without
+    a duplicate row. PG unreachable, a table-absent schema, an insert failure or a
+    held lock → named WARN, every spool kept and the live log not renamed; the hook's
+    backstop bounds the live log meanwhile.
+    """
+    if not HAS_PG_LOOP_WRITE:
+        return _skip_manifest_ingest("PG write layer unavailable")
+    if not live_log.parent.is_dir():
+        return ManifestIngest(status="skipped:no log root")
+    new_spool = live_log.with_name(
+        f"{live_log.name}.{now.astimezone(timezone.utc):%Y%m%dT%H%M%SZ}.{os.getpid()}.spool"
+    )
+    # Probe before the lock file is created → an unreachable install's log root stays untouched.
+    try:
+        name_rows = _pg_count_spawn_manifest(new_spool.name)
+    except Exception as exc:  # noqa: BLE001 — psycopg and schema faults vary; named WARN below
+        return _skip_manifest_ingest(
+            f"PG unreachable or core.spawn_manifest absent: {type(exc).__name__}: {str(exc)[:160]}"
+        )
+    lock_path = get_manifest_ingest_lock_path(live_log)
+    event_ts = now.strftime("%Y-%m-%dT%H:%M:%S.000Z")
+    try:
+        with lock_path.open("a", encoding="utf-8") as lock:
+            try:
+                fcntl.flock(lock.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+            except BlockingIOError:
+                return _skip_manifest_ingest(f"{lock_path.name} held by another cycle")
+            # Released by the close below on every exit path, a crash included.
+            return _ingest_manifest_under_lock(
+                live_log, new_spool, is_name_free=name_rows == 0, event_ts=event_ts
+            )
+    except OSError as exc:
+        return _skip_manifest_ingest(f"ingest lock {lock_path} unusable: {exc}")
+
+
+def _skip_manifest_ingest(reason: str) -> ManifestIngest:
+    sys.stderr.write(
+        f"[daemon-cycle] WARN: manifest ingest skipped — {reason}; "
+        "spools and the live log left as they were\n"
+    )
+    return ManifestIngest(status=f"skipped:{reason}")
+
+
+def _ingest_manifest_under_lock(
+    live_log: Path, new_spool: Path, *, is_name_free: bool, event_ts: str
+) -> ManifestIngest:
+    ingest = ManifestIngest(status="ok")
+    for spool in _find_manifest_spools(live_log):
+        try:
+            ingest.closed.append(_close_manifest_spool(spool, event_ts=event_ts))
+        except Exception as exc:  # noqa: BLE001 — PG or filesystem fault; named WARN below
+            ingest.status = f"skipped:spool {spool.name} kept"
+            sys.stderr.write(
+                f"[daemon-cycle] WARN: manifest ingest: spool {spool.name} kept, live log "
+                f"not rotated — {type(exc).__name__}: {str(exc)[:160]}\n"
+            )
+            return ingest
+    if not live_log.is_file() or live_log.stat().st_size == 0:
+        return ingest
+    if not is_name_free:
+        ingest.status = f"skipped:spool name {new_spool.name} already ingested"
+        sys.stderr.write(
+            f"[daemon-cycle] WARN: manifest ingest: {new_spool.name} already holds rows — "
+            "live log not rotated this cycle\n"
+        )
+        return ingest
+    live_log.rename(new_spool)
+    ingest.rotated_to = new_spool.name
+    try:
+        rows, _ = _get_manifest_rows(new_spool.read_bytes(), is_final=False)
+        _pg_write_spawn_manifest(new_spool.name, rows)
+    except Exception as exc:  # noqa: BLE001 — the next cycle's re-read retries it; named WARN
+        ingest.status = f"skipped:spool {new_spool.name} kept"
+        sys.stderr.write(
+            f"[daemon-cycle] WARN: manifest ingest: spool {new_spool.name} kept for the next "
+            f"cycle's re-read — {type(exc).__name__}: {str(exc)[:160]}\n"
+        )
+    return ingest
+
+
+def _find_manifest_spools(live_log: Path) -> list[Path]:
+    prefix = f"{live_log.name}."
+    return sorted(
+        path
+        for path in live_log.parent.glob(f"{live_log.name}.*.spool")
+        if MANIFEST_SPOOL_SUFFIX_RE.fullmatch(path.name.removeprefix(prefix))
+    )
+
+
+def _close_manifest_spool(spool: Path, *, event_ts: str) -> ManifestSpoolClose:
+    """Final re-read → commit → unlink → the lines-read vs rows-present record."""
+    rows, lines_read = _get_manifest_rows(spool.read_bytes(), is_final=True)
+    rows_present = _pg_write_spawn_manifest(spool.name, rows)
+    spool.unlink()
+    close = ManifestSpoolClose(spool=spool.name, lines_read=lines_read, rows_present=rows_present)
+    if rows_present < lines_read:
+        sys.stderr.write(
+            f"[daemon-cycle] WARN: manifest spool {spool.name} closed with "
+            f"{lines_read - rows_present} line(s) without a row (unparseable)\n"
+        )
+    _invoke_pg_helper(
+        {
+            "op": "write_autoagent_loop_event",
+            "args": {
+                "event_ts": event_ts,
+                "agent": "daemon-cycle",
+                "eval_result": MANIFEST_SPOOL_CLOSED_EVAL_RESULT,
+                "changes_added": lines_read,
+                "changes_removed": max(0, lines_read - rows_present),
+                "rice": None,
+                "subject": spool.name,
+            },
+        }
+    )
+    return close
+
+
+def _get_manifest_rows(data: bytes, *, is_final: bool) -> tuple[list[ManifestRow], int]:
+    """Spool bytes → (rows, lines read); line_offset = the 0-based line ordinal.
+
+    An unterminated last line may still be mid-append, so only the final re-read takes it.
+    """
+    lines = data.split(b"\n")
+    tail = lines.pop()
+    if is_final and tail:
+        lines.append(tail)
+    rows = [
+        row
+        for offset, raw in enumerate(lines)
+        if (row := _get_manifest_row(offset, raw.decode("utf-8", "replace"))) is not None
+    ]
+    return rows, len(lines)
+
+
+def _get_manifest_row(offset: int, line: str) -> ManifestRow | None:
+    match = _MANIFEST_LINE_RE.fullmatch(line)
+    if match is None:
+        return None
+    try:
+        started_at = datetime.strptime(match["ts"], "%Y-%m-%dT%H:%M:%SZ").replace(
+            tzinfo=timezone.utc
+        )
+    except ValueError:
+        return None
+    ctx_bytes = int(match["ctx_bytes"])
+    agent_type = match["agent"]
+    if ctx_bytes > _PG_INTEGER_MAX or len(agent_type) > _MANIFEST_AGENT_TYPE_MAX_CHARS:
+        return None
+    return (
+        offset,
+        _get_manifest_id(match["agent_id"]),
+        agent_type,
+        _get_manifest_id(match["session_id"]),
+        started_at,
+        ctx_bytes,
+        match["blocks"],
+    )
+
+
+def _get_manifest_id(value: str | None) -> str | None:
+    return None if value in (None, _MANIFEST_UNKNOWN_ID) else value
+
+
 def run_cycle(
     *,
     limit: int = DEFAULT_PATTERN_LIMIT,
@@ -11223,6 +11454,14 @@ def run_cycle(
             "skip_pre_verify": str(skip_pre_verify),
         },
     )
+
+    # Ahead of every metric read, so this cycle's reads see every spawn the hook logged.
+    if skip_loop_emit:
+        sys.stderr.write(
+            "[daemon-cycle] INFO: manifest ingest skipped — no-write mode (skip_loop_emit)\n"
+        )
+    else:
+        report.manifest_ingest = ingest_manifest_log(get_manifest_log_path(), now=now)
 
     # per-TARGET (agent) flow: 1) read all user-pending patterns (agent cap applies
     # to agents, not patterns, so no slicing here) → 2) group by .agent → 3) apply

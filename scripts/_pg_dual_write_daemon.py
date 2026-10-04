@@ -14,6 +14,8 @@
 #                                       row, (event_ts, agent, subject) for a verdict row
 #       - write_autoagent_corpus_audit -> core.autoagent_corpus_audits UPSERT
 #                                       key (cycle_date)
+#       - write_spawn_manifest_rows  -> core.spawn_manifest INSERT ... DO NOTHING
+#                                       key (spool, line_offset); import-only, no op
 #
 # Retry/error/elapsed_ms convention:
 #   * 1 retry with 100ms backoff before giving up (fail-loud-and-skip).
@@ -768,6 +770,8 @@ LOOP_EVENT_VERDICT_CAUSES = (
     "discharge-unresolved",
     "discharge-covered-terminal",
     "discharge-intake-miss",
+    # Subject = the spool name; changes_added = lines read, changes_removed = lines with no row.
+    "manifest-spool-closed",
 )
 
 # The column whose presence selects the row class. Both arms' predicates, the verdict
@@ -978,6 +982,43 @@ def write_autoagent_corpus_audit(
             cur.fetchone()
         conn.commit()
     return (time.monotonic_ns() - start_ns) // 1_000_000
+
+
+_SPAWN_MANIFEST_COUNT_SQL = "SELECT count(*) FROM core.spawn_manifest WHERE spool = %s"
+
+
+def write_spawn_manifest_rows(spool, rows):
+    """INSERT one spool's MANIFEST lines in one transaction → the rows the spool now has.
+
+    rows: (line_offset, agent_id, agent_type, session_id, started_at, ctx_bytes,
+    blocks) tuples. (spool, line_offset) is the ingest position, so a re-read of the
+    same spool adds only lines appended since and a crash re-read adds nothing. The
+    count is read inside the same transaction: the caller unlinks the spool on it.
+    Raises on any PG fault, a schema without the table included.
+    """
+    sql = """
+        INSERT INTO core.spawn_manifest
+            (spool, line_offset, agent_id, agent_type, session_id, started_at,
+             ctx_bytes, blocks)
+        VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+        ON CONFLICT (spool, line_offset) DO NOTHING
+    """
+    with _connect() as conn:
+        with conn.cursor() as cur:
+            if rows:
+                cur.executemany(sql, [(spool, *row) for row in rows])
+            cur.execute(_SPAWN_MANIFEST_COUNT_SQL, (spool,))
+            rows_present = cur.fetchone()[0]
+        conn.commit()
+    return rows_present
+
+
+def get_spawn_manifest_row_count(spool):
+    """Rows stored for one spool; raises on any PG fault, a schema without the table included."""
+    with _connect() as conn:
+        with conn.cursor() as cur:
+            cur.execute(_SPAWN_MANIFEST_COUNT_SQL, (spool,))
+            return cur.fetchone()[0]
 
 
 # --- Failure observability -------------------------------------------------

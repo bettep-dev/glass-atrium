@@ -724,6 +724,7 @@ class RegressionGateInvarianceTest(unittest.TestCase):
                     dc.DISCHARGE_EVENT_UNRESOLVED,
                     dc.DISCHARGE_EVENT_COVERED_TERMINAL,
                     dc.DISCHARGE_EVENT_INTAKE_MISS,
+                    dc.MANIFEST_SPOOL_CLOSED_EVAL_RESULT,
                 )
             ),
         )

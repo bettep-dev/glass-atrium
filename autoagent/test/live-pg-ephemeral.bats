@@ -94,6 +94,10 @@ _assert_live_module() {
   _assert_live_module test_poisoned_window_exclusion TestPoisonedRowExcludedFromLookback
 }
 
+@test "the spawn-manifest writer live class runs against the migrated cluster, none skipped" {
+  _assert_live_module test_manifest_ingest TestSpawnManifestWriterLivePg
+}
+
 @test "an ambient PGHOSTADDR or PGSERVICE skips a live class with that variable named" {
   local row name
   for row in "PGHOSTADDR=127.0.0.1" "PGSERVICE=ga_seal_probe"; do
