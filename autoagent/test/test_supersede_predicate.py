@@ -344,8 +344,6 @@ class TestSupersedeCallSiteBinding(unittest.TestCase):
         seams = {
             "read_user_pending_patterns": lambda *a, **k: [self.lead, self.second],
             "fetch_generation_outcomes": lambda *a, **k: [],
-            # Absent flags file → the confidence filter resolves 'floor', so the
-            # promotion ladder never reaches PG for stats.
             "generate_consolidated_proposal": self._proposal,
             "classify_patch_area": lambda *a, **k: "body-auto",
             "classify_safety_tier": lambda *a, **k: "safety",

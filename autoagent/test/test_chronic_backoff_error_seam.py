@@ -94,8 +94,6 @@ class BackoffErrorSeam(unittest.TestCase):
         for target, repl in (
             ("read_user_pending_patterns", lambda *a, **k: [pattern]),
             ("fetch_generation_outcomes", lambda *a, **k: []),
-            # Absent flags file → confidence filter resolves 'floor', so the
-            # promotion ladder never reaches for PG stats.
             # Intra-cycle spacing is a real sleep on the non-backoff branch.
             ("INTER_CALL_SPACING_SEC", 0.0),
         ):
