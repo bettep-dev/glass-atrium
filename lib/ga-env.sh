@@ -88,11 +88,9 @@ ga_init_env() {
   )
   readonly LAUNCHD_RETIRED_JOBS
 
-  # GA_DAEMON_SESSIONS — the DETACHED daemon tmux session names. SoT = the bootstrap scripts' `readonly
-  # SESSION=` (scripts/wiki-daemon-bootstrap.sh:15 'claude-wiki-daemon' + scripts/autoagent-daemon-bootstrap.sh:16
-  # 'claude-autoagent-daemon'). These SURVIVE `launchctl bootout` (reparented to PID 1) + `claude plugin
-  # uninstall`, so uninstall/install must kill them explicitly. Same two-step idiom as LAUNCHD_JOBS so a
-  # cross-function `${GA_DAEMON_SESSIONS[@]}` stays defined under set -u.
+  # GA_DAEMON_SESSIONS — the retired detached daemon tmux sessions; this list is their sole record. They
+  # SURVIVE `launchctl bootout` (reparented to PID 1) + `claude plugin uninstall`, so the retirement routine
+  # and uninstall kill them explicitly. Same two-step idiom as LAUNCHD_JOBS (set -u, cross-function reads).
   GA_DAEMON_SESSIONS=(
     claude-wiki-daemon
     claude-autoagent-daemon
@@ -325,7 +323,7 @@ ga_init_env() {
   done
 
   # fakechat port-cleanup lib — the shared, STRICTLY PORT-SCOPED fakechat_free_port
-  # helper consumed by kill_daemon_tmux_sessions (install/uninstall teardown) to reap
+  # helper consumed by kill_daemon_tmux_sessions (retirement routine + uninstall teardown) to reap
   # the orphan bun squatting a daemon fakechat port. Loud-fail (die) on an absent lib
   # like the E5 libs — a missing lib is a broken install, never a silent skip
   # (shared-self-improve-hygiene Precondition Loud-Fail Principle).
