@@ -23,11 +23,11 @@ The self-improvement loop (`autoagent/daemon_cycle.py`) user-approval queue is *
 **Tier 1 — Auto (default)**:
 - Interim, closed on every install: no generator call and no auto-apply until live trials, so the safety queue receives no new rows meanwhile.
   - The cycle skips per-candidate generation; every other cycle step still runs (`daemon_cycle.py` → `run_cycle`).
-  - Each cycle terminalizes stored pending `auto` proposals, rationale prefixed `generation closed until live trials` (`daemon_cycle.py` → `update_generation_closed_proposals`).
+  - Each cycle outside no-write mode (`skip_loop_emit`, set by `--dry-run` or `--skip-loop-emit`) terminalizes stored pending `auto` proposals, rationale prefixed `generation closed until live trials` (`daemon_cycle.py` → `update_generation_closed_proposals`).
   - `autoagent/daemon-apply.sh` selects and applies nothing in batch mode; `--proposal-id` is its only apply path.
   - No flag, env or data-root input reopens either path, so every install behaves alike.
-  - A safety-routed proposal is stored under the `user` approval tier, never `auto`, so the apply backlog cannot select it once auto-apply reopens (`scripts/_pg_dual_write_daemon.py`).
 - Eligibility gate, kept for that reopening:
+  - A safety-routed proposal is stored under the `user` approval tier, never `auto`, so the apply backlog cannot select it (`scripts/_pg_dual_write_daemon.py` → `_APPROVAL_TIER_TO_ENUM`).
   - Scope: single agent, 5+ occurrences, ≤5 added lines per edit (`daemon_cycle.py` → `BODY_AUTO_LINE_LIMIT`).
   - Conditions: classification == "apply" + `haiku_status` starting with `ok` + diff non-empty + non-safety scope.
     - Prefix, never equality: the legitimate `ok:retried` / `ok:fuzzy-parsed` variants must pass the same gate, and a missing or `skipped:*` status fails closed (`daemon_cycle.py` → `is_apply_eligible_haiku_status`).
@@ -47,6 +47,7 @@ The self-improvement loop (`autoagent/daemon_cycle.py`) user-approval queue is *
   - weakening of GLASS_ATRIUM_GLOBAL_RULES / core-security.md absolute rules, or any change to `core-learning-log.md` — the Tier-2 trigger list's own home
     - Honest backing for that last clause: POLICY, not a path matcher. The daemon's sensitive-PATH tuple carries no row for this file, and both of its consumers are handed an `agents/<name>.md` body path, so a benign edit to this file classifies auto — `autoagent/test/test_sensitive_patterns.py` → `RuleFileRowsAreOutOfReach` pins exactly that. The sensitive-DIFF axis is what still catches a patch here, because several trigger lines above are themselves command-shaped: re-adding one as a `+` line routes the patch to safety. Never reflow those lines for tidiness — a reflowed line is an added line.
 - **non-safety quality issue** (rule-scope misapplication / minor instruction tuning, etc.) → absorbed by Tier 1 Auto + LLM retry — creating a user pending queue forbidden
+  - While Tier 1 is closed (its interim bullet), nothing is generated for it; Tier 1 absorbs it once it reopens.
 
 > Cross-ref: this section is the **approval-rule canonical (SoT)** for the 2-tier policy · `skills/glass-atrium-ops-orchestrator.md` Self-Improvement User-Approval Trigger carries only the orchestrator-side operational delta (Monitoring-phase routing + dashboard surfacing) and points here
 
