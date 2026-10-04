@@ -345,6 +345,8 @@ def _build_outcome_row(outcome):
     """Apply normalization. Returns dict ready for named-param INSERT."""
     agent = _norm_varchar(outcome.get("agent", ""), 64) or "unknown"
     effort = _norm_effort(outcome.get("effort"))
+    agent_id = outcome.get("agent_id")
+    session_id = outcome.get("session_id")
     row = {
         "record_ts": outcome.get("timestamp") or outcome.get("record_ts"),
         "agent": agent,
@@ -400,6 +402,12 @@ def _build_outcome_row(outcome):
         "effort": effort,
         "has_mixed_effort": (
             _norm_bool_or_null(outcome.get("has_mixed_effort")) if effort else None),
+        # Spawn provenance — the recorder's envelope ids and its own correction-detector verdict,
+        # stored as sent; the verdict sits beside the emitted correction fields, never derived
+        # from them. A non-string id NULLs rather than failing the TEXT bind for the whole row.
+        "agent_id": _norm_text_or_null(agent_id) if isinstance(agent_id, str) else None,
+        "session_id": _norm_text_or_null(session_id) if isinstance(session_id, str) else None,
+        "user_correction_detected": _norm_bool_or_null(outcome.get("user_correction_detected")),
     }
     # Membership guard at the single write seam: DETECT, never drop or rewrite. The agent value
     # is part of the ON CONFLICT key, so rewriting it would convert the upsert into a duplicate
@@ -438,7 +446,8 @@ INSERT INTO core.outcomes (
     grader_verdict, downgrade_origin,
     review_flag_reasons,
     grader_crosscheck,
-    effort, has_mixed_effort
+    effort, has_mixed_effort,
+    agent_id, session_id, user_correction_detected
 ) VALUES (
     %(record_ts)s, %(agent)s, %(task_type)s::core."TaskType",
     %(result)s::core."OutcomeResult",
@@ -452,7 +461,8 @@ INSERT INTO core.outcomes (
     %(downgrade_origin)s::core."DowngradeOrigin",
     %(review_flag_reasons)s,
     %(grader_crosscheck)s::core."GraderCrosscheck",
-    %(effort)s, %(has_mixed_effort)s
+    %(effort)s, %(has_mixed_effort)s,
+    %(agent_id)s, %(session_id)s, %(user_correction_detected)s
 )
 ON CONFLICT (record_ts, agent, task_type) DO UPDATE SET
     result = EXCLUDED.result,
@@ -479,7 +489,10 @@ ON CONFLICT (record_ts, agent, task_type) DO UPDATE SET
     review_flag_reasons = EXCLUDED.review_flag_reasons,
     grader_crosscheck = EXCLUDED.grader_crosscheck,
     effort = EXCLUDED.effort,
-    has_mixed_effort = EXCLUDED.has_mixed_effort
+    has_mixed_effort = EXCLUDED.has_mixed_effort,
+    agent_id = EXCLUDED.agent_id,
+    session_id = EXCLUDED.session_id,
+    user_correction_detected = EXCLUDED.user_correction_detected
 RETURNING id
 """
 
@@ -550,8 +563,24 @@ def _strip_effort(sql):
     return sql
 
 
-# One variant per (qa_score, review_flag_reasons, grader_crosscheck, effort pair) presence
-# tuple, each DERIVED from the single hand-maintained primary above so no variant drifts.
+def _strip_provenance(sql):
+    """Same expand-phase shim for the agent_id + session_id + user_correction_detected triple,
+    which one migration adds together — so one presence bit covers all three. Comma-anchored,
+    composing with the other strips in any order."""
+    fragments = (
+        (",\n    agent_id = EXCLUDED.agent_id,\n    session_id = EXCLUDED.session_id,"
+         "\n    user_correction_detected = EXCLUDED.user_correction_detected"),
+        ",\n    %(agent_id)s, %(session_id)s, %(user_correction_detected)s",
+        ",\n    agent_id, session_id, user_correction_detected",
+    )
+    for old in fragments:
+        sql = sql.replace(old, "")
+    return sql
+
+
+# One variant per (qa_score, review_flag_reasons, grader_crosscheck, effort pair, provenance
+# triple) presence tuple, each DERIVED from the single hand-maintained primary above so no
+# variant drifts.
 _INSERT_SQL_BY_SCHEMA = {}
 for _qa_present, _qa_sql in (
         (True, _OUTCOMES_INSERT_SQL), (False, _OUTCOMES_INSERT_SQL_NO_QA)):
@@ -560,17 +589,23 @@ for _qa_present, _qa_sql in (
         for _cc_present in (True, False):
             _cc_sql = _sql if _cc_present else _strip_grader_crosscheck(_sql)
             for _effort_present in (True, False):
-                _INSERT_SQL_BY_SCHEMA[
-                    (_qa_present, _reasons_present, _cc_present, _effort_present)] = (
-                    _cc_sql if _effort_present else _strip_effort(_cc_sql))
-for (_qa_present, _reasons_present, _cc_present, _effort_present), _variant in (
-        _INSERT_SQL_BY_SCHEMA.items()):
+                _effort_sql = _cc_sql if _effort_present else _strip_effort(_cc_sql)
+                for _provenance_present in (True, False):
+                    _INSERT_SQL_BY_SCHEMA[(
+                        _qa_present, _reasons_present, _cc_present, _effort_present,
+                        _provenance_present)] = (
+                        _effort_sql if _provenance_present
+                        else _strip_provenance(_effort_sql))
+for (_qa_present, _reasons_present, _cc_present, _effort_present,
+        _provenance_present), _variant in _INSERT_SQL_BY_SCHEMA.items():
     assert _reasons_present or "review_flag_reasons" not in _variant, \
         "legacy INSERT derivation failed to strip review_flag_reasons"
     assert _cc_present or "grader_crosscheck" not in _variant, \
         "legacy INSERT derivation failed to strip grader_crosscheck"
     assert _effort_present or "effort" not in _variant, \
         "legacy INSERT derivation failed to strip effort"
+    assert _provenance_present or "user_correction_detected" not in _variant, \
+        "legacy INSERT derivation failed to strip the provenance triple"
 
 # Per-process cache: None = unprobed, bool = column present/absent. The hook spawns one
 # helper process per outcome, so this is probed at most once per outcome write.
@@ -578,9 +613,12 @@ _qa_score_col_present = None
 _review_flag_reasons_col_present = None
 _grader_crosscheck_col_present = None
 _effort_cols_present = None
+_provenance_cols_present = None
 
+_PROVENANCE_OUTCOME_COLS = ("agent_id", "session_id", "user_correction_detected")
 _ADDITIVE_OUTCOME_COLS = (
-    "qa_score", "review_flag_reasons", "grader_crosscheck", "effort", "has_mixed_effort")
+    "qa_score", "review_flag_reasons", "grader_crosscheck", "effort", "has_mixed_effort",
+    *_PROVENANCE_OUTCOME_COLS)
 
 
 def _outcomes_insert_sql(cur):
@@ -588,9 +626,10 @@ def _outcomes_insert_sql(cur):
     The column probes share one cached catalog lookup, run inside the caller's open
     transaction (read-only, no lock)."""
     global _qa_score_col_present, _review_flag_reasons_col_present
-    global _grader_crosscheck_col_present, _effort_cols_present
+    global _grader_crosscheck_col_present, _effort_cols_present, _provenance_cols_present
     if (_qa_score_col_present is None or _review_flag_reasons_col_present is None
-            or _grader_crosscheck_col_present is None or _effort_cols_present is None):
+            or _grader_crosscheck_col_present is None or _effort_cols_present is None
+            or _provenance_cols_present is None):
         cur.execute(
             "SELECT column_name FROM information_schema.columns "
             "WHERE table_schema = 'core' AND table_name = 'outcomes' "
@@ -602,11 +641,13 @@ def _outcomes_insert_sql(cur):
         _review_flag_reasons_col_present = "review_flag_reasons" in present
         _grader_crosscheck_col_present = "grader_crosscheck" in present
         _effort_cols_present = {"effort", "has_mixed_effort"} <= present
+        _provenance_cols_present = set(_PROVENANCE_OUTCOME_COLS) <= present
     return _INSERT_SQL_BY_SCHEMA[(
         _qa_score_col_present,
         _review_flag_reasons_col_present,
         _grader_crosscheck_col_present,
-        _effort_cols_present)]
+        _effort_cols_present,
+        _provenance_cols_present)]
 
 
 _SIGNALS_INSERT_SQL = """
