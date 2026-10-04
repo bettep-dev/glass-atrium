@@ -11386,7 +11386,8 @@ def _get_manifest_rows(data: bytes, *, is_final: bool) -> tuple[list[ManifestRow
 
 def _get_manifest_row(offset: int, line: str) -> ManifestRow | None:
     match = MANIFEST.LINE_RE.fullmatch(line)
-    if match is None:
+    # NUL: psycopg refuses it in a text field → the spool's insert fails every cycle.
+    if match is None or "\x00" in line:
         return None
     try:
         started_at = datetime.strptime(match["ts"], "%Y-%m-%dT%H:%M:%SZ").replace(

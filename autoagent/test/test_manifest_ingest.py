@@ -71,6 +71,10 @@ class _SpawnManifestTable:
     def write(self, spool: str, rows: list[tuple[object, ...]]) -> int:
         if self.is_unreachable or self.is_insert_failing:
             raise RuntimeError('relation "core.spawn_manifest" does not exist')
+        texts = [value for row in rows for value in row if isinstance(value, str)]
+        if any("\x00" in text for text in texts):
+            # psycopg's client-side text dumper refuses NUL → the spool's insert fails.
+            raise ValueError("PostgreSQL text fields cannot contain NUL (0x00) bytes")
         for row in rows:
             self.rows.setdefault((spool, int(row[0])), row)
         return self.count(spool)
@@ -281,6 +285,22 @@ class TestManifestCloseRecord(_IngestCase):
             ("manifest-spool-closed", spool.name, 0, 0),
         )
         self.assertIn("1 line(s) without a row", self.stderr)
+
+    def test_a_nul_bearing_line_is_read_without_a_row_and_its_spool_still_closes(
+        self,
+    ) -> None:
+        zero_filled = _get_line("c03").replace("budget-dev", "budget-dev\x00\x00\x00")
+        self._append(self.live_log, _get_line() + zero_filled)
+        self._ingest(_CYCLE_1)
+        (spool,) = self._get_spools()
+
+        ingest = self._ingest(_CYCLE_2)
+
+        self.assertFalse(spool.exists(), "a NUL-bearing line kept its spool open")
+        (close,) = ingest.closed
+        self.assertEqual(
+            (close.spool, close.lines_read, close.rows_present), (spool.name, 2, 1)
+        )
 
 
 class TestManifestCoverageAfterRotation(_IngestCase):
