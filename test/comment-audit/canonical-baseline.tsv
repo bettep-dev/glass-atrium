@@ -52,7 +52,6 @@ hooks/lib/hook-utils.sh	38	41	0.9268	1	0	0	0
 hooks/lib/style-ref-consts.sh	43	21	2.0476	3	0	0	0
 scripts/audit-context.sh	20	255	0.0784	0	0	0	0
 scripts/autoagent-daemon-healthcheck.sh	69	83	0.8313	1	0	0	0
-scripts/daemon-inject-entry.sh	150	161	0.9317	1	0	0	0
 scripts/gate-audit.sh	65	153	0.4248	0	0	2	0
 scripts/generate-manifest.sh	156	166	0.9398	3	0	2	1
 scripts/llm-preflight.sh	44	98	0.4490	0	0	0	0
@@ -165,4 +164,4 @@ monitor/src/server/types/telemetry.ts	30	69	0.4348	0	0	0	4
 monitor/src/server/types/wiki.ts	62	64	0.9688	0	0	0	5
 monitor/src/server/update-status.ts	66	349	0.1891	0	0	0	5
 monitor/src/server/version.ts	21	60	0.3500	0	0	0	0
-TOTAL	15029	36804	0.4084	178	25	143	390	files=166
+TOTAL	14879	36643	0.4061	177	25	143	390	files=165

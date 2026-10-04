@@ -47,7 +47,6 @@ SCOPE_FILES=(
   scripts/autoagent-daemon-healthcheck.sh
   scripts/wiki-daemon-healthcheck.sh
   scripts/pii-scan.sh
-  scripts/daemon-inject-entry.sh
   scripts/pg-backup.sh
   scripts/monitor-log-rotate.sh
   scripts/lib/apply-lock.sh
