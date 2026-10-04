@@ -985,7 +985,7 @@ function ScreenClaudedDocs(/* { onNav } */) {
         .doc-meta-value { color: rgb(var(--ink)); word-break: normal; overflow-wrap: break-word; font-size: var(--fs-meta); }
         .doc-search-input { width: 100%; padding: 7px 10px 7px 32px; font-size: var(--fs-title); background: rgb(var(--surface)); border: 1px solid rgb(var(--line)); border-radius: var(--radius-badge); color: rgb(var(--ink)); font-family: 'Pretendard Variable', Pretendard, ui-sans-serif, system-ui, sans-serif; }
         .doc-search-input:focus { border-color: rgb(var(--accent)); }
-        /* .doc-toast → shared SoT in base.css (model-config 2nd consumer) */
+        /* .doc-toast → shared SoT in base.css */
         .doc-empty { padding: 28px; border: 1px dashed rgb(var(--faint) / 0.5); border-radius: 8px; color: rgb(var(--faint)); text-align: center; font-family: 'JetBrains Mono', monospace; font-size: var(--fs-body); }
         .doc-search-icon { position: absolute; left: 10px; top: 50%; transform: translateY(-50%); pointer-events: none; color: rgb(var(--faint)); }
         .doc-editor-input { width: 100%; padding: 8px 10px; font-size: var(--fs-title); background: rgb(var(--surface)); border: 1px solid rgb(var(--line)); border-radius: var(--radius-badge); color: rgb(var(--ink)); }
@@ -1146,7 +1146,7 @@ function ScreenClaudedDocs(/* { onNav } */) {
         }
         .doc-open-summary-note { font-size: var(--fs-meta); color: rgb(var(--faint)); }
         .doc-stage-note { font-size: var(--fs-meta); color: rgb(var(--dim)); }
-        .doc-stage-menu { position: absolute; top: calc(100% + 4px); left: 0; z-index: 5; display: flex; flex-direction: column; min-width: 148px; padding: 4px; background: rgb(var(--elev)); border: 1px solid rgb(var(--line)); border-radius: var(--radius-card); box-shadow: var(--shadow-overlay); }
+        .doc-stage-menu { position: absolute; top: calc(100% + 4px); left: 0; z-index: 5; display: flex; flex-direction: column; min-width: 148px; padding: 4px; background: rgb(var(--overlay-surface)); border: 1px solid rgb(var(--line)); border-radius: var(--radius-card); box-shadow: var(--shadow-overlay); }
         .doc-stage-menu-item { display: flex; align-items: center; gap: 8px; padding: 6px 8px; min-height: 28px; background: transparent; border: none; border-radius: var(--radius-badge); color: rgb(var(--ink)); font-size: var(--fs-meta); text-align: left; cursor: pointer; }
         .doc-stage-menu-item:hover { background: rgb(var(--line) / 0.6); }
         .doc-stage-menu-item[aria-checked="true"] { color: rgb(var(--accent)); }

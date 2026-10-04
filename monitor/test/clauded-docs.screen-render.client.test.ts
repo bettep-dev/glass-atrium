@@ -1201,6 +1201,13 @@ test("the Documents style block draws shadows only from the shadow tokens, a 1px
   assert.match(cssRuleBody(css, ".doc-stage-menu"), /border-radius\s*:\s*var\(--radius-card\)/);
 });
 
+test("the stage menu floats on the opaque overlay surface, ringed by the line token under the overlay shadow", async () => {
+  const menu = cssRuleBody(getScreenCss(await loadDocsScreen()), ".doc-stage-menu");
+  assert.match(menu, /background\s*:\s*rgb\(var\(--overlay-surface\)\)/);
+  assert.match(menu, /border\s*:\s*1px solid rgb\(var\(--line\)\)/);
+  assert.match(menu, /box-shadow\s*:\s*var\(--shadow-overlay\)/);
+});
+
 test("a ledger checkbox draws on theme tokens: neutral at rest, the one selected state when checked or mixed, and no transition", async () => {
   const screen = await loadDocsScreen();
   const css = getScreenCss(screen);
