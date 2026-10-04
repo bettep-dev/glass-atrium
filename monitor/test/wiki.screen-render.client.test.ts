@@ -686,3 +686,24 @@ test("the two status cards share the S slot inside their region hosts, the cover
   assert.equal(collectText(renderScreen(notes.props.foot)), "96 summary notes for 120 saved originals");
   assert.doesNotMatch(collectText(notes), /summary notes for/, "the coverage line leaves the body once it sits in the foot");
 });
+
+// The legend keys four bar segments by colour — each toned status also needs its own shape, or the key is colour-only.
+test("the run-status legend marks each toned status with its tone's own shape, usage limit with a neutral dot", async () => {
+  const mod = await loadWikiScreen();
+  const toneIcon = realUi.TONE_ICON as Record<string, string>;
+  const tree = renderScreen(mod.React.createElement(mod.WikiStatusMixW as Component, { mix: { ok: 70, partial: 15, error: 10, quota: 5 } }));
+  const keys = [
+    { label: "Healthy", icon: toneIcon.ok, tone: "text-ok" },
+    { label: "Warning", icon: toneIcon.warn, tone: "text-warn" },
+    { label: "Down", icon: toneIcon.crit, tone: "text-crit" },
+    { label: "Usage limit", icon: "circle", tone: "text-faint" },
+  ];
+
+  assert.equal(new Set(keys.map((k) => k.icon)).size, keys.length, "precondition: four distinct shapes");
+  for (const key of keys) {
+    const [item] = findNodes(tree, (n) => n.type === "span" && collectText(n).trim().startsWith(key.label));
+    const [glyph] = findNodes(item, (n) => n.props.atom === "Icon");
+    assert.equal(glyph?.props.name, key.icon, `${key.label} legend shape`);
+    assert.ok(classOf(glyph).split(/\s+/).includes(key.tone), `${key.label} legend glyph tone`);
+  }
+});
