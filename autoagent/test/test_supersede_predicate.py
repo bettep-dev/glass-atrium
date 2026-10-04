@@ -56,12 +56,13 @@ _AUTOAGENT_DIR = _REPO_ROOT / "autoagent"
 # unittest discover puts neither root on sys.path, and scripts/test/conftest.py
 # is a pytest-only anchor this runner never loads.
 _STUB_DIR = _REPO_ROOT / "scripts" / "test"
-for _anchor in (_AUTOAGENT_DIR, _STUB_DIR):
+for _anchor in (_AUTOAGENT_DIR, _STUB_DIR, Path(__file__).resolve().parent):
     if str(_anchor) not in sys.path:
         sys.path.insert(0, str(_anchor))
 
 import _pg_stub_backend as stub  # noqa: E402 — anchors pinned by the loop above
 import daemon_cycle as dc  # noqa: E402 — anchors pinned by the loop above
+from _pg_seal import seal_pg_reach  # noqa: E402 — anchors pinned by the loop above
 
 _ROUTE = _REPO_ROOT / "monitor" / "src" / "server" / "routes" / "improvement.ts"
 _ROUTE_MARKER = re.compile(r'SUPERSEDE_RATIONALE_LIKE\s*=\s*"([^"]*)"')
@@ -293,9 +294,9 @@ class TestSupersedeCallSiteBinding(unittest.TestCase):
     Seams are the loop's own gates, stubbed to reach the call deterministically —
     generation (no Haiku, no network), the apply-area verdict, and the safety
     tier (whose 'safety' route reaches 'pending' without an LLM pre-verify and
-    passes floor terminalization untouched). ``HAS_PG_LOOP_WRITE`` is off, so
-    every other emit in the cycle early-returns; the supersede seam is the only
-    live call site left.
+    passes floor terminalization untouched). ``seal_pg_reach`` turns every PG
+    path off, so every other emit in the cycle early-returns; the supersede seam
+    is the only live call site left.
     """
 
     def setUp(self) -> None:
@@ -310,6 +311,7 @@ class TestSupersedeCallSiteBinding(unittest.TestCase):
         self.lead = self._pattern("lead signal", "9", row_id=1)
         self.second = self._pattern("trailing signal", "4", row_id=2)
         self.calls: list[tuple[object, ...]] = []
+        self.pg_reach = seal_pg_reach(self)
 
     def _pattern(self, label: str, frequency: str, *, row_id: int) -> "dc.Pattern":
         return dc.Pattern(
@@ -345,7 +347,6 @@ class TestSupersedeCallSiteBinding(unittest.TestCase):
             # Absent flags file → the confidence filter resolves 'floor', so the
             # promotion ladder never reaches PG for stats.
             "FEATURE_FLAGS_FILE": self.tmp_dir / "no-such-flags.json",
-            "HAS_PG_LOOP_WRITE": False,
             "generate_consolidated_proposal": self._proposal,
             "classify_patch_area": lambda *a, **k: "body-auto",
             "classify_safety_tier": lambda *a, **k: "safety",
@@ -355,7 +356,7 @@ class TestSupersedeCallSiteBinding(unittest.TestCase):
             stack.enter_context(contextlib.redirect_stderr(io.StringIO()))
             for name, repl in seams.items():
                 stack.enter_context(mock.patch.object(dc, name, repl))
-            return dc.run_cycle(
+            report = dc.run_cycle(
                 log_path=self.tmp_dir / "learning-log.md",
                 outcomes_dir=self.tmp_dir,
                 agents_dir=self.agents_dir,
@@ -363,6 +364,8 @@ class TestSupersedeCallSiteBinding(unittest.TestCase):
                 skip_pre_verify=True,
                 skip_loop_emit=False,
             )
+        self.assertEqual(self.pg_reach, [])
+        return report
 
     def test_when_the_loop_supersedes_then_it_binds_its_own_date_and_label(self) -> None:
         report = self._drive_cycle()

@@ -31,6 +31,9 @@ if str(_HOOKS_DIR) not in sys.path:
     sys.path.insert(0, str(_HOOKS_DIR))
 if str(_AUTOAGENT_DIR) not in sys.path:
     sys.path.insert(0, str(_AUTOAGENT_DIR))
+_TEST_DIR = Path(__file__).resolve().parent
+if str(_TEST_DIR) not in sys.path:
+    sys.path.insert(0, str(_TEST_DIR))
 
 try:
     import daemon_cycle as dc
@@ -39,6 +42,8 @@ try:
 except Exception as exc:  # noqa: BLE001 — psycopg absent → skip, not error
     dc = None  # type: ignore[assignment]
     _IMPORT_ERROR = exc
+
+from _pg_seal import seal_pg_reach  # noqa: E402 — test dir anchored above
 
 _LABEL = "quality-reject-candidate"
 # A GENERATOR rationale — the candidate generated cleanly; only the verifier
@@ -126,20 +131,6 @@ class TestInfraFailureLeavesStreakUnchanged(unittest.TestCase):
 
 _ARM_PROBE_AGENT = "reject-arm-probe-agent"
 
-# Every daemon_cycle callable that opens a PG connection or forks the PG helper.
-_PG_REACH_SEAMS = (
-    "_pg_connect",
-    "_pg_read_pending_patterns",
-    "_pg_read_coverage_patterns",
-    "_pg_read_outcomes_since",
-    "_pg_count_outcomes_since",
-    "_pg_reject_learning_pattern",
-    "_pg_discharge_learning_pattern",
-    "_pg_write_loop_event",
-    "_pg_write_corpus_audit",
-    "_invoke_pg_helper_subprocess",
-)
-
 
 def _reject_arm_rows() -> list[tuple[str, str, str]]:
     """(row name, rationale, stored status) — one row per failure class the arm meets."""
@@ -177,8 +168,7 @@ class TestRunCycleRejectArmStatus(unittest.TestCase):
     One cycle per row over a single target whose stubbed generation returns an
     empty diff (classify_patch_area R3 → 'reject'). skip_loop_emit=True skips only
     the cycle's gated emits — the discharge head stage and the regression-gate
-    reads run regardless — so setUp turns the PG availability flags off and seals
-    every connect, read, write and helper-subprocess seam.
+    reads run regardless — so setUp seals every PG path (``seal_pg_reach``).
     """
 
     def setUp(self) -> None:
@@ -206,26 +196,11 @@ class TestRunCycleRejectArmStatus(unittest.TestCase):
             ("FEATURE_FLAGS_FILE", self.tmp_dir / "no-such-flags.json"),
             ("INTER_CALL_SPACING_SEC", 0.0),
             ("consecutive_timeout_count", lambda _t: 0),
-            # The cycle's own availability gates → every PG stage skips.
-            ("HAS_PG_LOOP_WRITE", False),
-            ("HAS_PG_PATTERN_READ", False),
-            ("HAS_PG_OUTCOME_READ", False),
         ):
             patcher = mock.patch.object(dc, target, repl)
             patcher.start()
             self.addCleanup(patcher.stop)
-        self.pg_reach: list[str] = []
-        for name in _PG_REACH_SEAMS:
-            patcher = mock.patch.object(dc, name, self._refuse_pg(name), create=True)
-            patcher.start()
-            self.addCleanup(patcher.stop)
-
-    def _refuse_pg(self, name: str):  # noqa: ANN202 — seam signatures differ
-        def _refuse(*_args: object, **_kwargs: object) -> None:
-            self.pg_reach.append(name)
-            raise AssertionError(f"PG reach from a sealed test: {name}")
-
-        return _refuse
+        self.pg_reach = seal_pg_reach(self)
 
     def _stored_status(self, rationale: str) -> str:
         proposal = dc.PatchProposal(

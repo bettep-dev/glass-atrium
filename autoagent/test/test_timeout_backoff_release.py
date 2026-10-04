@@ -59,8 +59,12 @@ if str(_AUTOAGENT_DIR) not in sys.path:
 _STUB_DIR = _REPO_ROOT / "scripts" / "test"
 if str(_STUB_DIR) not in sys.path:
     sys.path.insert(0, str(_STUB_DIR))
+_TEST_DIR = Path(__file__).resolve().parent
+if str(_TEST_DIR) not in sys.path:
+    sys.path.insert(0, str(_TEST_DIR))
 
 import _pg_stub_backend as stub  # noqa: E402 — stdlib-only, anchored above
+from _pg_seal import seal_pg_reach  # noqa: E402 — test dir anchored above
 
 try:
     import daemon_cycle as dc
@@ -411,6 +415,7 @@ class CycleSeamTest(unittest.TestCase):
             patcher = mock.patch.object(dc, target, repl)
             patcher.start()
             self.addCleanup(patcher.stop)
+        self.pg_reach = seal_pg_reach(self)
 
     def _run(self, *, state: "dc.BackoffState") -> tuple["dc.PatchResult", str]:
         self.generated = False
@@ -443,6 +448,7 @@ class CycleSeamTest(unittest.TestCase):
                             skip_pre_verify=True,
                             skip_loop_emit=True,
                         )
+        self.assertEqual(self.pg_reach, [])
         self.assertEqual(len(report.patches), 1)
         return report.patches[0], err.getvalue()
 

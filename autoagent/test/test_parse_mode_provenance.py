@@ -49,6 +49,9 @@ if str(_HOOKS_DIR) not in sys.path:
     sys.path.insert(0, str(_HOOKS_DIR))
 if str(_AUTOAGENT_DIR) not in sys.path:
     sys.path.insert(0, str(_AUTOAGENT_DIR))
+_TEST_DIR = Path(__file__).resolve().parent
+if str(_TEST_DIR) not in sys.path:
+    sys.path.insert(0, str(_TEST_DIR))
 
 try:
     import daemon_cycle as dc
@@ -57,6 +60,8 @@ try:
 except Exception as exc:  # noqa: BLE001 — psycopg absent → skip, not error
     dc = None  # type: ignore[assignment]
     _IMPORT_ERROR = exc
+
+from _pg_seal import seal_pg_reach  # noqa: E402 — test dir anchored above
 
 _PROBE_AGENT = "provenance-probe-agent"
 
@@ -270,6 +275,7 @@ class CycleStatusDerivation(unittest.TestCase):
             patcher = mock.patch.object(dc, target, repl)
             patcher.start()
             self.addCleanup(patcher.stop)
+        self.pg_reach = seal_pg_reach(self)
 
     def _run(self, proposal: "dc.PatchProposal") -> "dc.PatchResult":
         with mock.patch.object(dc, "consecutive_timeout_count", lambda _t: 0):
@@ -285,6 +291,7 @@ class CycleStatusDerivation(unittest.TestCase):
                         skip_pre_verify=True,
                         skip_loop_emit=True,
                     )
+        self.assertEqual(self.pg_reach, [])
         self.assertEqual(len(report.patches), 1)
         return report.patches[0]
 

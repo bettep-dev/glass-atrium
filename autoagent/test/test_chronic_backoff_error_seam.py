@@ -25,8 +25,7 @@ streak to 0 and would bypass the branch under test. No network is reached — th
 back-off branch makes no Haiku call, and the fresh-timeout case stubs the
 generator. ``skip_loop_emit=True`` skips only the cycle's gated emits — the
 discharge head stage and the regression-gate reads run regardless — so setUp
-turns the PG availability flags off and seals every connect, read, write and
-helper-subprocess seam.
+seals every PG path (``seal_pg_reach``).
 
 Run with either runner:
     python3 -m unittest autoagent.test.test_chronic_backoff_error_seam -v
@@ -52,6 +51,9 @@ if str(_HOOKS_DIR) not in sys.path:
     sys.path.insert(0, str(_HOOKS_DIR))
 if str(_AUTOAGENT_DIR) not in sys.path:
     sys.path.insert(0, str(_AUTOAGENT_DIR))
+_TEST_DIR = Path(__file__).resolve().parent
+if str(_TEST_DIR) not in sys.path:
+    sys.path.insert(0, str(_TEST_DIR))
 
 try:
     import daemon_cycle as dc
@@ -61,21 +63,9 @@ except Exception as exc:  # noqa: BLE001 — psycopg absent → skip, not error
     dc = None  # type: ignore[assignment]
     _IMPORT_ERROR = exc
 
-_PROBE_AGENT = "backoff-seam-probe-agent"
+from _pg_seal import seal_pg_reach  # noqa: E402 — test dir anchored above
 
-# Every daemon_cycle callable that opens a PG connection or forks the PG helper.
-_PG_REACH_SEAMS = (
-    "_pg_connect",
-    "_pg_read_pending_patterns",
-    "_pg_read_coverage_patterns",
-    "_pg_read_outcomes_since",
-    "_pg_count_outcomes_since",
-    "_pg_reject_learning_pattern",
-    "_pg_discharge_learning_pattern",
-    "_pg_write_loop_event",
-    "_pg_write_corpus_audit",
-    "_invoke_pg_helper_subprocess",
-)
+_PROBE_AGENT = "backoff-seam-probe-agent"
 
 
 @unittest.skipIf(dc is None, f"import failed: {_IMPORT_ERROR}")
@@ -109,26 +99,11 @@ class BackoffErrorSeam(unittest.TestCase):
             ("FEATURE_FLAGS_FILE", self.tmp_dir / "no-such-flags.json"),
             # Intra-cycle spacing is a real sleep on the non-backoff branch.
             ("INTER_CALL_SPACING_SEC", 0.0),
-            # The cycle's own availability gates → every PG stage skips.
-            ("HAS_PG_LOOP_WRITE", False),
-            ("HAS_PG_PATTERN_READ", False),
-            ("HAS_PG_OUTCOME_READ", False),
         ):
             patcher = mock.patch.object(dc, target, repl)
             patcher.start()
             self.addCleanup(patcher.stop)
-        self.pg_reach: list[str] = []
-        for name in _PG_REACH_SEAMS:
-            patcher = mock.patch.object(dc, name, self._refuse_pg(name), create=True)
-            patcher.start()
-            self.addCleanup(patcher.stop)
-
-    def _refuse_pg(self, name: str):  # noqa: ANN202 — seam signatures differ
-        def _refuse(*_args: object, **_kwargs: object) -> None:
-            self.pg_reach.append(name)
-            raise AssertionError(f"PG reach from a sealed test: {name}")
-
-        return _refuse
+        self.pg_reach = seal_pg_reach(self)
 
     def _run(self, *, streak: int, proposal: "dc.PatchProposal | None") -> "dc.PatchResult":
         def _no_haiku(*args: object, **kwargs: object) -> "dc.PatchProposal":
