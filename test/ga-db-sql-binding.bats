@@ -59,11 +59,12 @@ teardown() {
 }
 
 # setup_database presence-probe path — DB 'present' (psql echo 1) so no delegation.
-# Curated PATH: STUB_BIN + system coreutils only (real pg bindir excluded). The reports dir sits in
-# the sandbox: the DB-present branch writes the backfill re-arm marker there, never the live data dir.
+# Curated PATH: STUB_BIN + system coreutils only (real pg bindir excluded). GA_TARGET_HOME, GA_DATA_ROOT
+# and AUTOAGENT_REPORTS_DIR all resolve inside the sandbox: the DB-present branch writes the backfill
+# re-arm marker there, never the live data dir.
 run_setup_probe() {
   run env GA_TARGET_HOME="${TARGET}" GA_DB_NAME=claude_oss_e2e \
-    AUTOAGENT_REPORTS_DIR="${SANDBOX}/reports" \
+    GA_DATA_ROOT="${SANDBOX}/data-root" AUTOAGENT_REPORTS_DIR="${SANDBOX}/reports" \
     GA_REC="${REC}" PATH="${STUB_BIN}:/usr/bin:/bin" \
     bash -c '
       set -Eeuo pipefail

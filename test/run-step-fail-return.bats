@@ -126,8 +126,9 @@ teardown() {
 }
 
 # drive_db OSS_RC [NAME=VALUE…] — GA_LIB_DIR points ga_init_env's lib source at the real repo (the
-# sandbox root has none). Both data-root inputs point into the sandbox, so no row writes the live
-# backfill marker; trailing NAME=VALUE pairs override the defaults (env applies them in order).
+# sandbox root has none). GA_TARGET_HOME, GA_DATA_ROOT and AUTOAGENT_REPORTS_DIR all resolve inside
+# the sandbox, so no row writes a live path; trailing NAME=VALUE pairs override the defaults (env
+# applies them in order).
 drive_db() {
   local oss_rc="${1:-6}"
   shift || true
@@ -136,6 +137,7 @@ drive_db() {
     GA_SANDBOX_ROOT="${SANDBOX_ROOT}" \
     GA_LIB_DIR="${GA}/scripts/lib" \
     GA_DB_NAME="ga_fqclass_throwaway" \
+    GA_TARGET_HOME="${SANDBOX}/target-home" \
     GA_DATA_ROOT="${SANDBOX}/data-root" \
     AUTOAGENT_REPORTS_DIR="${SANDBOX}/reports" \
     OSS_DB_EXIT="${oss_rc}" \
@@ -177,7 +179,7 @@ drive_gate() {
 }
 
 # === Backfill re-arm marker — db-setup leg (setup_database → run_db_setup) =============================
-# Each row gets its own reports dir + bootstrap record, so no row reads a prior row's files.
+# Each row gets its own reports dir; only the re-arm table, which asserts on it, also gets its own bootstrap record.
 
 @test "setup_database re-arms the backfill marker on both branches that leave a usable DB" {
   local -a rows=(
