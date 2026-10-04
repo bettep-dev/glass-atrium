@@ -1,23 +1,21 @@
 // Render guard for ParkedLoopBannerI in public/src/screens/improvement.jsx.
 //
 // improvement.rearm-hint.unit.test.ts pins what the warning SAYS; nothing pinned
-// whether an operator can read it. `.card-sub` in public/styles/base.css is a
-// one-line clamp (white-space:nowrap + overflow:hidden + text-overflow:ellipsis),
-// and the hint is ~500 chars, so a `.card-sub` without the `.is-wrap` opt-out
-// truncates mid-sentence — at a point that reads like the retracted advice to
-// reset the status. A `title` tooltip is not an acceptable substitute: a warning
-// whose content is "do not do this" cannot live behind a hover.
+// whether an operator can read it. The hint is ~500 chars, so a host that clamps
+// to one line (`.card-sub` without `.is-wrap`, `truncate`, `line-clamp-*`) cuts it
+// mid-sentence — at a point that reads like the retracted advice to reset the
+// status. A `title` tooltip is not an acceptable substitute: a warning whose
+// content is "do not do this" cannot live behind a hover.
 //
 // This is a real render assertion, not a source-shape pin: the component is
 // invoked over the shipped source (esbuild + node:vm harness) with a recording
-// React.createElement, and the emitted element tree is walked for the node whose
-// child IS the rearm_hint. Its limit is that it asserts the class contract, not
-// computed CSS — the clamp/opt-out semantics of `.card-sub` / `.is-wrap` live in
-// base.css and are pinned there by the stylesheet, not here.
+// React.createElement, the shared AlertCard it returns is rendered one level, and
+// the emitted element tree is walked for the node whose child IS the rearm_hint.
+// Its limit is that it asserts the class contract, not computed CSS.
 //
 // Runner: npx tsx --test test/improvement.parked-loop-banner.client.unit.test.ts
 
-import test from "node:test";
+import test, { describe } from "node:test";
 import assert from "node:assert/strict";
 import { fileURLToPath } from "node:url";
 import { dirname, resolve } from "node:path";
@@ -51,6 +49,9 @@ interface BannerSandbox {
   TrendCardI: (props: { state: unknown; aggregate: unknown }) => RecordedElement | null;
   ChangeSummaryCardI: (props: { state: unknown; aggregate: unknown }) => RecordedElement | null;
   LedgerHeldSectionI: (props: { suppression: unknown; declined?: unknown }) => RecordedElement | null;
+  SymI: unknown;
+  ProposalCardI: unknown;
+  [component: string]: unknown;
 }
 
 const HINT = "the reset does NOT re-arm the cap; it only overwrites the park timestamp";
@@ -76,9 +77,16 @@ sandbox.React.createElement = (type: unknown, props: Record<string, unknown> | n
   props: { ...(props ?? {}), children: rest.length > 1 ? rest : rest[0] },
 });
 
-const rendered = sandbox.ParkedLoopBannerI({
+const banner = sandbox.ParkedLoopBannerI({
   applyCap: { capped_patterns: 2, capped_agents: 1, rearm_hint: HINT },
 });
+// renders a function-component root one level, so the shared AlertCard's own markup is walked
+function expandRoot(node: RecordedElement | null): unknown {
+  return node && typeof node.type === "function"
+    ? (node.type as (props: Record<string, unknown>) => unknown)(node.props)
+    : node;
+}
+const rendered = expandRoot(banner);
 // The bucket row asks the shared harness for one more window.UI member than the
 // module top level reads.
 Object.assign(sandbox.window.UI, { titleOf: (value: unknown) => value });
@@ -89,17 +97,15 @@ test("the rendered banner puts the hint in exactly one element", () => {
   assert.equal(hosts.length, 1, "the walk must find the hint's host to assert anything about it");
 });
 
-// The discriminating assertion: red against a plain `card-sub`, green with the opt-out.
-test("the hint's host opts out of the one-line card-sub clamp", () => {
+// The discriminating assertion: red against a plain `card-sub`, green with the opt-out or any wrapping host.
+test("the hint's host never clamps it to one line", () => {
   const host = hosts[0];
   assert.ok(host, "no host element found for the hint");
   const className = String(host.props.className ?? "");
-  assert.match(className, /\bcard-sub\b/, "the hint is styled as a card-sub");
-  assert.match(
-    className,
-    /\bis-wrap\b/,
-    "without is-wrap the ~500-char warning clamps to one ellipsised line",
-  );
+  const isClamped =
+    /\b(truncate|whitespace-nowrap|line-clamp-\d+)\b/.test(className) ||
+    (/\bcard-sub\b/.test(className) && !/\bis-wrap\b/.test(className));
+  assert.equal(isClamped, false, `the ~500-char warning clamps to one ellipsised line (${className})`);
 });
 
 test("the warning is not hidden behind a hover-only tooltip", () => {
@@ -112,13 +118,11 @@ test("the warning is not hidden behind a hover-only tooltip", () => {
   );
 });
 
-// ----- Stream-5 reconciliation guards: the lane's tint contract and the spine order ---
+// ----- The alarm lane: shared alert cards, no tint of its own, and the spine order ---
 //
-// The plan's standing decision is that tone rides on a glyph, a severity bar or a
-// container tint and NEVER on text — severity hue as text fails AA on the light
-// theme. Nothing pinned it, and the banner headline carried `text-warn` while the
-// glyph beside it already carried the same tone. These two assertions pin the
-// contract at the one surface that is allowed a tint at all.
+// Tone rides on a glyph or a severity bar and NEVER on text — severity hue as text
+// fails AA on the light theme. Every banner on the screen is the shared AlertCard,
+// whose glyph well alone carries the tone; the lane is a plain stack of them.
 
 const SEVERITY_TEXT_CLASS = /\btext-(warn|crit|ok)\b/;
 
@@ -131,30 +135,29 @@ function collectElements(node: unknown, out: RecordedElement[]): RecordedElement
   return out;
 }
 
-test("severity hue rides on the glyph, never on a text node", () => {
-  const tinted = collectElements(rendered, []).filter((el) =>
-    SEVERITY_TEXT_CLASS.test(String(el.props.className ?? "")),
-  );
-  assert.ok(tinted.length > 0, "the banner must carry its tone somewhere");
-  for (const el of tinted) {
-    assert.notEqual(
-      el.props.s,
-      undefined,
-      `severity hue on a non-glyph node (${String(el.props.className)}) — tone must ride on the glyph or the container tint`,
-    );
-  }
+test("the parked-loop banner is the shared alert card, its warn tone on the glyph well alone", () => {
+  assert.ok(isElement(banner), "a populated cap must render the banner");
+  assert.equal(banner.type, sandbox.window.UI.AlertCard, "a screen-local banner shell duplicates the alert card");
+  assert.equal(banner.props.tone, "warn");
+  const tintedText = collectElements(rendered, [])
+    .filter((el) => SEVERITY_TEXT_CLASS.test(String(el.props.className ?? "")))
+    .filter((el) => el.props.s === undefined);
+  assert.deepEqual(tintedText, [], "severity hue on a text node of the banner");
 });
 
-test("the alarm lane carries the tint on its container", () => {
+test("the alarm lane stacks alert cards and paints nothing of its own", () => {
   const lane = sandbox.AlarmLaneI({
     applyCap: { capped_patterns: 2, capped_agents: 1, rearm_hint: HINT },
   });
   assert.ok(isElement(lane), "a populated cap must render the lane");
-  assert.match(
-    String(lane.props.className ?? ""),
-    /\bi-alarm-lane\b/,
-    "the lane class is what carries the tint; a tinted child would put it on the wrong surface",
-  );
+  const laneClasses = String(lane.props.className ?? "").split(/\s+/).filter(Boolean);
+  const paintClasses = laneClasses.filter((name) => !/^(flex|flex-col|gap-\d+)$/.test(name));
+  assert.deepEqual(paintClasses, [], "the lane carries layout only — a tint or border on it frames the alarms twice");
+  const alarms = ([] as unknown[]).concat(lane.props.children).filter(isElement);
+  assert.ok(alarms.length > 0, "the lane renders its alarms");
+  for (const alarm of alarms) {
+    assert.equal(expandRoot(alarm) && (expandRoot(alarm) as RecordedElement).type, sandbox.window.UI.AlertCard);
+  }
 });
 
 // Source-order pin, deliberately NOT a render assertion: the operator view is the
@@ -185,28 +188,20 @@ test("the operator view keeps the five-surface spine order", async () => {
 });
 
 // Colour reaches this screen through tokens only — `var(--name)` directly, or an
-// interpolated token name. The single exemption is a neutral drop shadow, which
-// encodes no severity and has no token.
+// interpolated token name. Shadows included: depth comes from the --shadow-* tokens.
 test("colour is consumed through design tokens, never a raw literal", async () => {
   const { readFile } = await import("node:fs/promises");
   for (const path of [IMPROVEMENT_SRC, INSTRUMENTATION_SRC]) {
     const src = await readFile(path, "utf8");
     const hex = src.match(/#[0-9a-fA-F]{3,8}\b/g) ?? [];
     assert.deepEqual(hex, [], `hex colour literals bypass the token layer in ${path}`);
-    const rawFns = (src.match(/rgba?\([^)]*\)/g) ?? []).filter(
-      (decl) => !decl.includes("var(") && !/rgba?\(\s*0\s*,\s*0\s*,\s*0\s*[,)]/.test(decl),
-    );
-    assert.deepEqual(
-      rawFns,
-      [],
-      `only the neutral drop shadow may name a colour without a token in ${path}`,
-    );
+    const rawFns = (src.match(/rgba?\([^)]*\)/g) ?? []).filter((decl) => !decl.includes("var("));
+    assert.deepEqual(rawFns, [], `a colour function names a raw value instead of a token in ${path}`);
   }
 });
 
 // ----- The same contract on the REPORT surfaces --------------------------------
 //
-// The banner walk above covers the one surface the plan allows a container tint.
 // The ledger footer and the CTM/EPM bucket row are report surfaces, allowed no
 // tint at all, so a severity class there can only be sitting on text. Both are
 // invoked directly: the recorder stores a function child as `type` without calling
@@ -377,4 +372,119 @@ test("the status band never announces a failure the owning group already announc
     return kids.some((k) => typeof k === "string" && k.includes("Not read — see the"));
   });
   assert.equal(pointers.length, 4, "each tile points at its owning group");
+});
+
+// ----- Board headers, proposal actions and tiles: tone on the glyph, tiles on the sub-card ---
+
+type ScreenComponent = (props: Record<string, unknown>) => unknown;
+
+// Flattening walk over every prop value; renders screen-local components, never the
+// shared UI atoms, SymI or `stopAt` — those are judged by their own suites.
+function screenTree(node: unknown, stopAt: unknown[] = [], out: RecordedElement[] = []): RecordedElement[] {
+  if (Array.isArray(node)) {
+    for (const child of node) screenTree(child, stopAt, out);
+    return out;
+  }
+  if (!isElement(node)) return out;
+  out.push(node);
+  const uiAtoms = Object.values(sandbox.window.UI);
+  const isScreenLocal =
+    typeof node.type === "function" && !uiAtoms.includes(node.type) && node.type !== sandbox.SymI;
+  if (isScreenLocal && !stopAt.includes(node.type)) {
+    return screenTree((node.type as ScreenComponent)(node.props), stopAt, out);
+  }
+  for (const value of Object.values(node.props)) screenTree(value, stopAt, out);
+  return out;
+}
+
+const TONE_TEXT_ON_TEXT = /\btext-(warn|crit|ok|info)\b/;
+
+function getToneTextNodes(tree: RecordedElement[]): string[] {
+  return tree
+    .filter((el) => TONE_TEXT_ON_TEXT.test(String(el.props.className ?? "")))
+    .filter((el) => el.props.s === undefined)
+    .map((el) => String(el.props.className));
+}
+
+const component = (name: string) => sandbox[name] as ScreenComponent;
+const PROPOSAL = { id: 7, status: "pending", target_agent: "glass-atrium-dev-node", pattern_label: "Size overrun" };
+
+describe("board and action surfaces leave their tone on the glyph", () => {
+  const rows = [
+    { name: "the applied lane header", render: () => component("AppliedHeroHeaderI")({ count: 9, label: "Applied", symbol: "✓" }) },
+    {
+      name: "the rejected lane header",
+      render: () => component("RejectedHeaderI")({ rowCount: 4, summary: null, label: "Rejected", symbol: "✕", trend: [] }),
+    },
+    {
+      name: "a high-risk suggestion's actions",
+      render: () => component("ProposalActionsI")({ row: PROPOSAL, isSafety: true, onAction: () => {}, isPending: false }),
+    },
+    {
+      name: "the awaiting-approval banner",
+      render: () => component("AwaitingBannerI")({ rows: [PROPOSAL], onRowClick: () => {}, onAction: () => {}, pendingActionId: null }),
+    },
+  ];
+  for (const row of rows) {
+    test(row.name, () => {
+      const tree = screenTree(row.render(), [sandbox.ProposalCardI]);
+      assert.ok(tree.length > 0, "the surface renders");
+      assert.deepEqual(getToneTextNodes(tree), [], "a word or figure repeats the tone its glyph already declares");
+    });
+  }
+});
+
+test("the awaiting banner announces through its live zone as the shared warn alert card", () => {
+  const tree = screenTree(
+    component("AwaitingBannerI")({ rows: [PROPOSAL], onRowClick: () => {}, onAction: () => {}, pendingActionId: null }),
+    [sandbox.ProposalCardI],
+  );
+  const cards = tree.filter((el) => el.type === sandbox.window.UI.AlertCard);
+  assert.equal(cards.length, 1, "one alert card heads the awaiting list");
+  assert.equal(cards[0].props.tone, "warn");
+  assert.equal(cards[0].props.hasLiveHost, true, "the zone around it is already the live region");
+});
+
+test("approve and reject are shared buttons: approve keeps a neutral label, reject is the destructive outline", () => {
+  const tree = screenTree(component("ProposalActionsI")({ row: PROPOSAL, isSafety: false, onAction: () => {}, isPending: false }));
+  const [approve, reject] = tree.filter((el) => el.type === "button");
+  assert.ok(approve && reject, "both actions render");
+  for (const button of [approve, reject]) {
+    assert.match(String(button.props.className), /\bbtn\b.*\bsm\b|\bsm\b.*\bbtn\b/, "an action outside the shared .btn family");
+  }
+  const approveGlyph = screenTree(approve.props.children).find((el) => el.props.s === "✓");
+  assert.match(String(approveGlyph?.props.className ?? ""), /\btext-ok\b/, "the approve glyph carries the ok tone");
+  const style = (reject.props.style ?? {}) as Record<string, unknown>;
+  assert.equal(style.color, "rgb(var(--crit))", "the destructive label is crit");
+  assert.equal(style.borderColor, "rgb(var(--crit))", "the destructive outline is crit");
+  assert.equal(style.background, undefined, "the destructive outline carries no fill");
+});
+
+describe("tiles rest on the shared sub-card, and only an interactive tile answers hover", () => {
+  const rows = [
+    {
+      name: "a loading metric tile",
+      isInteractive: false,
+      render: () => component("TilePlaceholderI")({ status: "loading", label: "Applied", owner: "x", onRetry: () => {} }),
+    },
+    {
+      name: "a live candidate row",
+      isInteractive: true,
+      render: () =>
+        component("CandidateRowI")({
+          rank: 1,
+          pattern: { frequency: 3, status: "pending", pattern_signature: "size overrun", agent: "glass-atrium-dev-node" },
+          maxFreq: 5,
+          onClick: () => {},
+        }),
+    },
+  ];
+  for (const row of rows) {
+    test(row.name, () => {
+      const root = row.render() as RecordedElement;
+      const className = String(root.props.className ?? "");
+      assert.match(className, /\bsub-card\b/, "a tile drawing its own ring or shadow");
+      assert.equal(/\bi-tile-hover\b/.test(className), row.isInteractive, "hover affordance on a tile that does nothing");
+    });
+  }
 });
