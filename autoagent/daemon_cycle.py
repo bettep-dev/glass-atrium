@@ -11271,17 +11271,20 @@ def ingest_manifest_log(live_log: Path, *, now: datetime) -> ManifestIngest:
     lock_path = get_manifest_ingest_lock_path(live_log)
     event_ts = now.strftime("%Y-%m-%dT%H:%M:%S.000Z")
     try:
-        with lock_path.open("a", encoding="utf-8") as lock:
-            try:
-                fcntl.flock(lock.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
-            except BlockingIOError:
-                return _skip_manifest_ingest(f"{lock_path.name} held by another cycle")
-            # Released by the close below on every exit path, a crash included.
-            return _ingest_manifest_under_lock(
-                live_log, new_spool, is_name_free=name_rows == 0, event_ts=event_ts
-            )
+        lock = lock_path.open("a", encoding="utf-8")
     except OSError as exc:
         return _skip_manifest_ingest(f"ingest lock {lock_path} unusable: {exc}")
+    with lock:
+        try:
+            fcntl.flock(lock.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError:
+            return _skip_manifest_ingest(f"{lock_path.name} held by another cycle")
+        except OSError as exc:
+            return _skip_manifest_ingest(f"ingest lock {lock_path} unusable: {exc}")
+        # Released by the close below on every exit path, a crash included.
+        return _ingest_manifest_under_lock(
+            live_log, new_spool, is_name_free=name_rows == 0, event_ts=event_ts
+        )
 
 
 def _skip_manifest_ingest(reason: str) -> ManifestIngest:
@@ -11306,16 +11309,24 @@ def _ingest_manifest_under_lock(
                 f"not rotated — {type(exc).__name__}: {str(exc)[:160]}\n"
             )
             return ingest
-    if not live_log.is_file() or live_log.stat().st_size == 0:
-        return ingest
-    if not is_name_free:
-        ingest.status = f"skipped:spool name {new_spool.name} already ingested"
+    try:
+        if not live_log.is_file() or live_log.stat().st_size == 0:
+            return ingest
+        if not is_name_free:
+            ingest.status = f"skipped:spool name {new_spool.name} already ingested"
+            sys.stderr.write(
+                f"[daemon-cycle] WARN: manifest ingest: {new_spool.name} already holds "
+                "rows — live log not rotated this cycle\n"
+            )
+            return ingest
+        live_log.rename(new_spool)
+    except OSError as exc:  # e.g. the hook backstop removed the live log
+        ingest.status = f"skipped:rotation of {live_log.name} failed"
         sys.stderr.write(
-            f"[daemon-cycle] WARN: manifest ingest: {new_spool.name} already holds rows — "
-            "live log not rotated this cycle\n"
+            f"[daemon-cycle] WARN: manifest ingest: live log {live_log.name} not "
+            f"rotated — stat or rename failed: {type(exc).__name__}: {exc}\n"
         )
         return ingest
-    live_log.rename(new_spool)
     ingest.rotated_to = new_spool.name
     try:
         rows, _ = _get_manifest_rows(new_spool.read_bytes(), is_final=False)

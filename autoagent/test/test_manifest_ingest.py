@@ -234,6 +234,24 @@ class TestManifestRotation(_IngestCase):
         self.assertFalse(spool.exists(), "the lock or the spool stayed held after a failed cycle")
         self.assertFalse(self.live_log.exists())
 
+    def test_a_failed_rotation_keeps_the_closed_spool_record_and_names_the_rotation(
+        self,
+    ) -> None:
+        self._append(self.live_log, _get_line())
+        self._ingest(_CYCLE_1)
+        (spool,) = self._get_spools()
+        self._append(self.live_log, _get_line("next-cycle"))
+
+        removed = FileNotFoundError("live log removed by the hook backstop")
+        with mock.patch.object(Path, "rename", side_effect=removed):
+            ingest = self._ingest(_CYCLE_2)
+
+        self.assertEqual([close.spool for close in ingest.closed], [spool.name])
+        self.assertTrue(ingest.status.startswith("skipped:"), ingest.status)
+        self.assertIn("rotation", ingest.status)
+        self.assertIn(f"live log {self.live_log.name} not rotated", self.stderr)
+        self.assertNotIn("ingest lock", self.stderr)
+
     def test_pg_unreachable_leaves_the_log_root_untouched(self) -> None:
         self._append(self.live_log, _get_line())
         self.table.is_unreachable = True
