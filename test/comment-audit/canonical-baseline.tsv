@@ -51,7 +51,6 @@ hooks/lib/code-based-grader.sh	98	74	1.3243	2	0	6	0
 hooks/lib/hook-utils.sh	38	41	0.9268	1	0	0	0
 hooks/lib/style-ref-consts.sh	43	21	2.0476	3	0	0	0
 scripts/audit-context.sh	20	255	0.0784	0	0	0	0
-scripts/autoagent-daemon-bootstrap.sh	15	13	1.1538	2	0	0	0
 scripts/autoagent-daemon-healthcheck.sh	69	83	0.8313	1	0	0	0
 scripts/daemon-inject-entry.sh	150	161	0.9317	1	0	0	0
 scripts/gate-audit.sh	65	153	0.4248	0	0	2	0
@@ -67,7 +66,6 @@ scripts/render-launchd-plists.sh	64	291	0.2199	1	0	1	6
 scripts/render-monitor-env.sh	92	90	1.0222	1	0	0	5
 scripts/sync-registry-tools.sh	48	136	0.3529	0	0	1	0
 scripts/update.sh	721	1061	0.6795	16	3	8	40
-scripts/wiki-daemon-bootstrap.sh	14	13	1.0769	2	0	0	0
 scripts/wiki-daemon-cycle.sh	101	216	0.4676	0	0	1	0
 scripts/wiki-daemon-healthcheck.sh	69	83	0.8313	1	0	0	0
 scripts/wiki-daily-compile.sh	185	314	0.5892	2	0	1	0
@@ -106,7 +104,6 @@ hooks/test/track-outcome-workflow-root-synthesis.bats	59	169	0.3491	0	0	0	0
 scripts/test/apply-lock.bats	149	315	0.4730	0	1	0	18
 scripts/test/apply-spine.bats	61	253	0.2411	1	0	1	11
 scripts/test/atrium-config.bats	20	126	0.1587	0	0	0	1
-scripts/test/daemon-bootstrap-supervise.bats	66	265	0.2491	0	0	0	10
 scripts/test/generate-manifest.bats	23	141	0.1631	0	0	0	0
 scripts/test/glass-atrium-dispatch.bats	36	76	0.4737	0	0	0	2
 scripts/test/glass-atrium-install.bats	124	229	0.5415	0	0	0	7
@@ -169,4 +166,4 @@ monitor/src/server/types/telemetry.ts	30	69	0.4348	0	0	0	4
 monitor/src/server/types/wiki.ts	62	64	0.9688	0	0	0	5
 monitor/src/server/update-status.ts	66	349	0.1891	0	0	0	5
 monitor/src/server/version.ts	21	60	0.3500	0	0	0	0
-TOTAL	15337	37343	0.4107	185	25	144	400	files=170
+TOTAL	15242	37052	0.4114	181	25	144	390	files=167

@@ -8,7 +8,7 @@
 #   * env-port fallback: bootstrap_health_gate reads ATRIUM_MONITOR_PORT from
 #     monitor/.env, else defaults to 16145 — the curl target proves which port.
 #
-# Hermetic strategy (mirrors scripts/test/daemon-bootstrap-supervise.bats): copy
+# Hermetic strategy: copy
 # lib/ga-core.sh into a sandbox GA_ROOT (resolving the sandbox monitor/.env),
 # SOURCE the engine directly with strict mode + ERR trap, ga_init_env it, and
 # override run_install with a no-op so the bootstrap logic is isolated from the
