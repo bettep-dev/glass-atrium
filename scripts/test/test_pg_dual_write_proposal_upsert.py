@@ -89,6 +89,10 @@ _ACTOR_DECLARATIONS = {
         _DAEMON_CYCLE,
         '_SUPERSEDE_ACTOR = "daemon-cycle-supersede"',
     ),
+    "daemon-cycle-generation-closed": (
+        _DAEMON_CYCLE,
+        '_GENERATION_CLOSED_ACTOR = "daemon-cycle-generation-closed"',
+    ),
     "daemon-cycle-push": (
         _REPO_ROOT / "scripts" / "_pg_push_autoagent_cycle.py",
         '"reviewed_by": "daemon-cycle-push"',

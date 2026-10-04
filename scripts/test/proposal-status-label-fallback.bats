@@ -2,8 +2,8 @@
 # proposal-status-label-fallback.bats — proposal status writes on a schema with and without
 # the `unadjudicated` ProposalStatus label (new code running before its migration).
 #
-# Relationship: a write requesting `unadjudicated` — the cycle push, the supersede and the
-# parked guard — persists it where the label exists and persists `rejected` where it does
+# Relationship: a write requesting `unadjudicated` — the cycle push, the supersede, the
+# parked guard and the generation-closed statement — persists it where the label exists and persists `rejected` where it does
 # not; every other status persists as requested; a
 # stored terminal row survives a non-terminal re-push through both conflict arms on either
 # schema; the shared label probe answers present / absent, and unknown when the query
@@ -92,7 +92,7 @@ _doctor_probe() {
     _ "${BATS_TEST_DIRNAME}/../.."
 }
 
-# $1 mode (push <status> | probe | probe-closed | supersede | park) — drives the real helper
+# $1 mode (push <status> | probe | probe-closed | supersede | park | close) — drives the real helper
 # and the daemon's direct writers; refuses to run
 # unless libpq is pointed at this suite's cluster.
 _drive() {
@@ -148,6 +148,10 @@ elif mode == "park":
     daemon_cycle.update_parked_proposal_status(
         [{"proposal_id": proposal_id, "rows": [{"id": 1, "status": "rejected"}]}]
     )
+elif mode == "close":
+    import daemon_cycle
+
+    daemon_cycle.update_generation_closed_proposals()
 PY
 }
 
@@ -185,6 +189,25 @@ PY
     [[ "${status}" -eq 0 ]] || { echo "${row}: ${output}"; return 1; }
     [[ "$(_q "SELECT status FROM core.autoagent_proposals WHERE pattern_label = 'label-fallback'")" == "${expected}" ]] \
       || { echo "${row}: stored $(_q "SELECT status FROM core.autoagent_proposals")"; return 1; }
+  done
+}
+
+@test "the generation-closed statement stores unadjudicated with its reason, and rejected only where the label is absent" {
+  local rows=(
+    "label_present unadjudicated"
+    "label_absent rejected"
+  )
+  local row template expected stored
+  for row in "${rows[@]}"; do
+    read -r template expected <<<"${row}"
+    _use_db "${template}" || { echo "${row}: clone failed"; return 1; }
+    run _drive push pending
+    [[ "${status}" -eq 0 ]] || { echo "${row}: seed: ${output}"; return 1; }
+    run _drive close
+    [[ "${status}" -eq 0 ]] || { echo "${row}: ${output}"; return 1; }
+    stored="$(_q "SELECT status || '|' || rationale || '|' || reviewed_by FROM core.autoagent_proposals WHERE pattern_label = 'label-fallback'")"
+    [[ "${stored}" == "${expected}|generation closed until live trials: superseded by a later run in the same cycle|daemon-cycle-generation-closed" ]] \
+      || { echo "${row}: stored ${stored}"; return 1; }
   done
 }
 

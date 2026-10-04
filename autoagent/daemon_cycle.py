@@ -8555,6 +8555,67 @@ def supersede_prior_pending_for_agent(
     return len(superseded_ids)
 
 
+# -- Generation closed: stored pending auto rows ----------------------------
+
+
+# Head of every generation-closed rationale; classify_failure_rationale
+# prefix-tests against it, so the stored rationale follows it as a tail.
+_GENERATION_CLOSED_REASON = "generation closed until live trials"
+
+# Actor token from the closed set declared at monitor/prisma/schema.prisma →
+# AutoagentProposal.reviewedBy — a mechanical close, never a review.
+_GENERATION_CLOSED_ACTOR = "daemon-cycle-generation-closed"
+
+
+def update_generation_closed_proposals() -> int:
+    """Terminalize every stored pending auto proposal → 'unadjudicated'.
+
+    With generation closed no cycle re-decides a stored auto candidate, so it
+    would wait pending forever. One idempotent statement closes every such row
+    each cycle: the status fragment stores 'unadjudicated' ('rejected' on a
+    schema without that label, relabeled later by the backfill), the rationale
+    gains the closed reason as its head, the actor is the closed token, and
+    reviewed_at stays untouched — no verdict was made.
+
+    PG unavailable → named stderr line, returns 0, no connection. A PG error
+    propagates to the caller.
+
+    Returns:
+        count of rows terminalized.
+    """
+    if not HAS_PG_LOOP_WRITE:
+        sys.stderr.write(
+            "[daemon-cycle] generation-closed terminalization: PG unavailable "
+            "(psycopg/helper import failed) — skipped\n"
+        )
+        return 0
+    # ::text → the bound head and the stored text concatenate as text on PG.
+    update_sql = (
+        "UPDATE core.autoagent_proposals "
+        f"SET status = {_PG_PROPOSAL_STATUS_SQL}, "
+        "rationale = %s::text || COALESCE(rationale, ''), "
+        "reviewed_by = %s "
+        "WHERE status = 'pending' AND approval_tier = 'auto' "
+        "RETURNING id"
+    )
+    update_params = (
+        "unadjudicated",
+        f"{_GENERATION_CLOSED_REASON}: ",
+        _GENERATION_CLOSED_ACTOR,
+    )
+    with _pg_connect() as conn:
+        with conn.cursor() as cur:
+            cur.execute(update_sql, update_params)
+            closed_ids = [row[0] for row in cur.fetchall()]
+        conn.commit()
+    if closed_ids:
+        sys.stderr.write(
+            f"[daemon-cycle] generation closed: terminalized {len(closed_ids)} "
+            f"pending auto row(s) ids={closed_ids} → unadjudicated\n"
+        )
+    return len(closed_ids)
+
+
 # -- Chronic Haiku-timeout back-off (generation side) -----------------------
 
 
@@ -9209,6 +9270,9 @@ def classify_failure_rationale(rationale: str) -> str:
         return FAILURE_CLASS_SUPERSEDE
     if text.startswith(_PARKED_PATTERN_REASON):
         return FAILURE_CLASS_PARKED_PATTERN
+    if text.startswith(_GENERATION_CLOSED_REASON):
+        # Closed before any review side saw it — no verdict.
+        return FAILURE_CLASS_SKIPPED
     # Back-off marker ran no Haiku call → no verdict, as a timeout.
     if text.startswith(
         (HAIKU_TIMEOUT_RATIONALE_PREFIX, TIMEOUT_BACKOFF_RATIONALE_PREFIX)

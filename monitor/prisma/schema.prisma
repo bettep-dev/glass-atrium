@@ -571,6 +571,8 @@ model AutoagentProposal {
   //     `daemon-cycle-parked-guard` — parked guard
   //     `daemon-cycle-supersede` — machine supersede, NOT a review: an unadjudicated
   //       termination gets its own token and never the operator's
+  //     `daemon-cycle-generation-closed` — generation-closed terminalization, NOT a
+  //       review: a stored pending auto row closed while generation is off
   //     `daemon-cycle-push` — cycle push
   //     `updater-resolved-gap` — updater resolved-gap accountability row
   //     `status-backfill` — status backfill
