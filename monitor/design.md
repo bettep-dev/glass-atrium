@@ -257,7 +257,7 @@
 | `--accent` | 인터랙션 (fallback 값 — §4.4) |
 | `--focus-ring` | focus outline — theme-owned, accent 와 분리 |
 | `--selected-fill` / `--selected-ink` | 유일한 filled selected 상태 (§7.6) |
-| `--pip-empty` | 빈 stage pip — 불투명 면(surface · elev · sunken · elev-2)에서 ≥ 3:1 (accent 행 fill 위 미해결 쌍: §4.2) |
+| `--pip-empty` | 빈 stage pip — 불투명 면(surface · elev · sunken · elev-2)에서 ≥ 3:1 |
 
 - **계산된 명암비** (WCAG 2.2 상대휘도):
 
@@ -316,7 +316,7 @@
   - finder 1b (full-opacity tone border · stroke · box-shadow): `grep -rnE "(border(-[a-z]+)?|stroke|outline|box-shadow) *: *[^;\"]*rgb\(var\(--(crit|warn|ok|info)\)\)|(border[A-Za-z]*|stroke|boxShadow) *: *[\"'][^\"']*rgb\(var\(--(crit|warn|ok|info)\)\)|stroke=\"rgb\(var\(--(crit|warn|ok|info)\)\)\"" public/src public/styles`.
     - 허용 hit: 위 허용 예외 (폼 오류 · System map 링 · 범례) · destructive action (`.btn.danger` · `DELETE_OUTLINE_STYLE` · `REJECT_OUTLINE_STYLE` · `DiscardConfirmMC`) · 차트 (`agents.jsx` quality-health crit `Line` 과 그 tooltip key swatch) · 미소비 `.pulse-ring` (§8).
   - finder 2 (tone 을 칠한 라벨 · 수치): `grep -rnE "text-(crit|warn|ok|info)\b" public/src` + 보간 class `grep -rnE 'text-\$\{' public/src`.
-    - 준수 hit: class 가 glyph · `Icon` · `SymI` 에 붙거나, 그 class 를 담는 tone 표 · 헬퍼 반환값 (`TONE_GLYPH_CLASS` · `TONE_SYMBOL` 계열) · 정렬 class (`` `text-${align}` ``) · 차트 막대 `currentColor`.
+    - 준수 hit: class 가 glyph · `Icon` · `SymI` 에 붙거나, 그 class 를 담는 tone 표 · 헬퍼 반환값 (`improvement.jsx` → `TONE_TEXT_CLASS` · `clauded-docs.jsx` → `TONE_TEXT_CLASS_CD` · `architecture.jsx` → `TONE_GLYPH_CLASS`) · 정렬 class (`` `text-${align}` ``) · 차트 막대 `currentColor`.
     - 단어를 감싸는 허용 hit 은 폼 오류 메시지뿐 (`model-config.jsx` field 메시지 · save-banner 요약 · `agents.jsx` 이름 불일치 메시지).
   - finder 3 (full-opacity tone **fill** — `background` · SVG `fill` · `bg-<tone>`): `grep -rnE "(background(-color)?|fill) *: *[^;\"]*rgb\(var\(--(crit|warn|ok|info|alert-tone)\)\)|(background|backgroundColor|fill) *[:=] *[\"'{][^\"'}]*rgb\(var\(--(crit|warn|ok|info)\)\)|bg-(crit|warn|ok|info)\b[^/]" public/src public/styles`.
     - 허용 hit — full-opacity tone fill 의 전체 목록:
@@ -325,16 +325,6 @@
       - light alert-card glyph well (`--alert-well-fill`, 위 alert-card 항목) — `--elev` knock-out glyph 를 담는 glyph carrier. dark 는 0.12 tint 라 hit 아님.
       - destructive action `.btn.danger` (§7.4) · System map 링 badge glyph (`text.arch-ring-glyph` fill = glyph 의 tone) · 미소비 `.sev-bar` (§3.3, 쓰지 않음).
 - `.diff-line--add/--del` 의 옅은 tint 는 허용 — `+`/`−` glyph 가 1차 신호.
-- **미해결 예외 — 팔레트 결정 대기**: clauded-docs ledger 행 상태 fill (§7.5) 위 대비 쌍. tone shell 이 아니라 accent fill 의 명암 미달.
-  - 측정 accent = 런타임 기본값 (`TWEAK_DEFAULTS.accent` 59 130 246, 양 테마 — §4.4). `tokens.css` fallback 은 mount 전에만 칠해져 측정 밖. 사용자가 고른 다른 accent 도 측정 밖.
-
-| 행 상태 fill | 쌍 | Light | Dark |
-|---|---|---|---|
-| both (viewer + checked) `--accent` 0.16 | stale warn glyph | 2.86 | 8.64 |
-
-- floor 를 겨우 넘는 쌍 (binding): light checked 0.10 warn 3.07 · light both pip 3.07 · dark both pip 3.01.
-- 해법 후보: both fill alpha 를 낮추거나 light `--warn` triplet 조정 — owner 또는 designer 결정 대기.
-- `clauded-docs.ledger-row-states.e2e.test.ts` → `OPEN_BELOW_FLOOR` 가 이 쌍을 매 실행 todo 로 보고한다. key 는 미달인 동안만 유지 — floor 를 넘으면 suite 실패 → key 를 지워 binding floor 로. 그 밖의 미달 쌍도 suite 실패.
 
 ### 4.3 Categorical — 차트 · 식별 전용
 
@@ -548,10 +538,10 @@
 - clamp: `.cell-clamp` = 1줄 + `title` · `.clamp-2` = 2줄 + `title` + drawer 전문.
 - row: cursor pointer · hover `--sunken` · 마지막 행 border 없음. **row blur 금지.**
 - **행 상태 fill** (clauded-docs ledger, stripe 없음): selector `.tbl tbody tr.doc-row` 로 공용 hover 를 이기고 hover 중에도 유지.
-  - viewer 행 (`.is-selected`): `--accent` 0.06 + 제목 600 + `aria-current="true"`.
-  - checked (`.is-multi-selected`): `--accent` 0.10 · 비-색 cue = checkbox. viewer + checked = 0.16.
+  - viewer 행 (`.is-selected`): `--accent` 0.035 + 제목 600 + `aria-current="true"`.
+  - checked (`.is-multi-selected`): `--accent` 0.07 · 비-색 cue = checkbox. viewer + checked = 0.11.
   - 삭제 대기 (`.is-pending-delete`): 행 opacity 없음 — 제목 line-through + `aria-busy` + 제목 앞 crit glyph.
-  - 미해결 대비 쌍: §4.2.
+  - accent ladder 상한 = light warn glyph ≥ 3:1 (런타임 기본 accent 59 130 246 → α ≤ 0.12). binding: light both warn 3.03 · dark both pip 3.22 · light both pip 3.26 · light both faint 4.70. 사용자가 고른 다른 accent 는 측정 밖.
 - 그룹 행: `.is-grouped` 라벨 행 + `.row-desc` 전폭 설명 행 = 한 논리 행, hover 를 함께 밝힌다.
 - caption: 기본 sr-only, `isCaptionShown` 이면 section-label 스타일.
 

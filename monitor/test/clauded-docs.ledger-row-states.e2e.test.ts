@@ -42,12 +42,13 @@ const STATES = {
 } as const;
 type State = keyof typeof STATES;
 
-// the ledger sits in the list card's elev; the cells carry the screen's dim meta text, an empty stage pip, the stale flag's warn glyph, the crit glyph and the ink title
+// the ledger sits in the list card's elev; the cells carry the screen's dim meta text, the group member's faint placeholder, an empty stage pip, the stale flag's warn glyph, the crit glyph and the ink title
 const ledgerPage = (theme: string) => `<!doctype html><html data-theme="${theme}" style="--accent: ${RUNTIME_ACCENT};"><body style="margin: 0;">
   <div style="padding: 48px;"><div class="card"><table class="tbl"><tbody>
     ${Object.entries(STATES).map(([state, classes]) => `<tr id="${state}" class="doc-row ${classes}">
       <td><span class="doc-stage-meter"><span class="stage-pip"></span></span></td>
       <td class="dim" style="color: rgb(var(--dim));">2026-10-04<div class="doc-age-flag"><span class="glyph-warn" style="color: rgb(var(--warn));">!</span> stale</div></td>
+      <td><span class="faint" style="color: rgb(var(--faint));">—</span></td>
       <td class="title-cell"><span class="glyph-crit" style="color: rgb(var(--crit));">!</span> <span class="doc-title-text" style="color: rgb(var(--ink));">Plan</span></td>
     </tr>`).join("")}
   </tbody></table></div></div>
@@ -56,6 +57,7 @@ const ledgerPage = (theme: string) => `<!doctype html><html data-theme="${theme}
 interface RowReading {
   fill: Rgba;
   dim: Rgba;
+  faint: Rgba;
   ink: Rgba;
   pip: Rgba;
   glyph: { crit: Rgba; warn: Rgba };
@@ -76,12 +78,13 @@ async function readRow(page: Page, state: State): Promise<RowReading> {
     const row = document.getElementById(id)!;
     const style = getComputedStyle(row);
     // no named helper in here: tsx's keepNames wraps it in a __name call the page does not define
-    const [dim, title, pip, critGlyph, warnGlyph] = [".dim", ".doc-title-text", ".stage-pip", ".glyph-crit", ".glyph-warn"].map((selector) =>
+    const [dim, faint, title, pip, critGlyph, warnGlyph] = [".dim", ".faint", ".doc-title-text", ".stage-pip", ".glyph-crit", ".glyph-warn"].map((selector) =>
       getComputedStyle(row.querySelector(selector)!),
     );
     return {
       fill: style.backgroundColor,
       dim: dim.color,
+      faint: faint.color,
       ink: title.color,
       pip: pip.backgroundColor,
       glyph: { crit: critGlyph.color, warn: warnGlyph.color },
@@ -94,6 +97,7 @@ async function readRow(page: Page, state: State): Promise<RowReading> {
     ...raw,
     fill: parseColor(raw.fill),
     dim: parseColor(raw.dim),
+    faint: parseColor(raw.faint),
     ink: parseColor(raw.ink),
     pip: parseColor(raw.pip),
     glyph: { crit: parseColor(raw.glyph.crit), warn: parseColor(raw.glyph.warn) },
@@ -193,7 +197,7 @@ describe("pending-delete cue on every fill the row can paint", () => {
       const reading = readings[row.pointer][row.state];
       const twin = readings[row.pointer][TWIN[row.state]];
       const painted = (r: RowReading) =>
-        [paintedFill(r, card), ...[r.dim, r.ink, r.pip, r.glyph.crit, r.glyph.warn].map((color) => paintedText(color, r, card))].map(rgbKey);
+        [paintedFill(r, card), ...[r.dim, r.faint, r.ink, r.pip, r.glyph.crit, r.glyph.warn].map((color) => paintedText(color, r, card))].map(rgbKey);
       assert.deepEqual(painted(reading), painted(twin), `opacity ${reading.opacity}`);
       assert.match(reading.title.decoration, /line-through/);
       assert.doesNotMatch(twin.title.decoration, /line-through/);
@@ -203,42 +207,25 @@ describe("pending-delete cue on every fill the row can paint", () => {
 
 // every pair a row carries clears its WCAG floor on the fill it paints, at rest and hovered
 describe("row-state contrast floors on every fill", () => {
-  const FLOORS = { dim: 4.5, ink: 4.5, pip: 3, crit: 3, warn: 3 } as const;
+  const FLOORS = { dim: 4.5, faint: 4.5, ink: 4.5, pip: 3, crit: 3, warn: 3 } as const;
   type Pair = keyof typeof FLOORS;
   const pairColor = (r: RowReading, pair: Pair) => (pair === "crit" || pair === "warn" ? r.glyph[pair] : r[pair]);
-  // a pending row paints its twin's fill → it inherits the twin's open pairs
-  const FILL_OF: Record<State, State> = { plain: "plain", viewer: "viewer", checked: "checked", both: "both", pending: "plain", pendingChecked: "checked" };
-  // plan-pinned both (0.16) fill under the default accent → the below-floor pair waits on an owner palette decision, recorded in design.md §4.2
-  const OPEN_BELOW_FLOOR = new Set(["light both warn"]);
   const rows = THEMES.flatMap((theme) =>
     (Object.keys(STATES) as State[]).flatMap((state) =>
       (["rest", "hovered"] as const).map((pointer) => ({ name: `${theme} ${state} row ${pointer}`, theme, state, pointer })),
     ),
   );
   for (const row of rows) {
-    const pairs = Object.keys(FLOORS) as Pair[];
-    const isOpen = (pair: Pair) => OPEN_BELOW_FLOOR.has(`${row.theme} ${FILL_OF[row.state]} ${pair}`);
     const ratioOf = (pair: Pair) => {
       const { card, ...readings } = ledgers[row.theme];
       const reading = readings[row.pointer][row.state];
       return contrastRatio(paintedText(pairColor(reading, pair), reading, card), paintedFill(reading, card));
     };
 
-    test(`${row.name}: dim and ink ≥ 4.5:1, empty stage pip, crit and warn glyphs ≥ 3:1`, () => {
-      for (const pair of pairs.filter((p) => !isOpen(p))) {
+    test(`${row.name}: dim, faint and ink ≥ 4.5:1, empty stage pip, crit and warn glyphs ≥ 3:1`, () => {
+      for (const pair of Object.keys(FLOORS) as Pair[]) {
         assert.ok(ratioOf(pair) >= FLOORS[pair], `${pair} ${ratioOf(pair).toFixed(3)}:1`);
       }
     });
-
-    for (const pair of pairs.filter(isOpen)) {
-      test(`${row.name}: ${pair} ≥ ${FLOORS[pair]}:1`, { todo: "both fill alpha or light --warn awaits an owner decision" }, () => {
-        assert.ok(ratioOf(pair) >= FLOORS[pair], `${pair} ${ratioOf(pair).toFixed(3)}:1`);
-      });
-
-      // a listed pair that clears its floor is a stale exception → drop its key so the floor binds
-      test(`${row.name}: ${pair} stays listed open only while below ${FLOORS[pair]}:1`, () => {
-        assert.ok(ratioOf(pair) < FLOORS[pair], `${pair} ${ratioOf(pair).toFixed(3)}:1 clears its floor`);
-      });
-    }
   }
 });
