@@ -3504,8 +3504,8 @@ update_refresh_monitor_launchd() {
   # FILE tracks the current EnvironmentVariables/PATH — kickstart -k restarts the
   # service for the NEW BUILD but re-execs the ALREADY-LOADED definition (a kickstart
   # alone never picks up a plist env change), so this re-copy keeps the deployed plist
-  # current for the next full definition reload (daemon-daily-restart / reboot /
-  # --load-launchd). Guarded on the rendered SoT: a render gap warns, never aborts, and
+  # current for the next full definition reload (reboot / --load-launchd). Guarded on
+  # the rendered SoT: a render gap warns, never aborts, and
   # an unchanged plist is a no-op — the kickstart/bootstrap probe below is unchanged.
   rendered="$(update_rendered_launchd_dir)/${label}.plist"
   # Guard the mkdir so a create failure WARNs + skips the re-copy rather than aborting —
