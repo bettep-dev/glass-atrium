@@ -9610,7 +9610,9 @@ def _fetch_pre_verify_failures(
     diff shapes into its prompt so it learns to avoid them. SEPARATE from the
     shared ``_fetch_proposal_history`` projection (do NOT widen that one) — this
     SELECTs the pre-verify detail (``pre_verify_axes`` JSONB + ``rationale``)
-    and filters on ``pre_verify_passed = false``.
+    and filters on ``pre_verify_passed = false``, verifier verdicts only: an
+    ``error:*`` outage or a ``skipped:*`` skip judged no diff shape, so it is
+    excluded in SQL and never takes a ``limit`` slot.
 
     Mirrors ``_fetch_proposal_history``'s connection + fail-OPEN discipline:
     ``HAS_PG_LOOP_WRITE`` gate (``_pg_connect`` is unbound when psycopg is
@@ -9628,13 +9630,15 @@ def _fetch_pre_verify_failures(
         "SELECT pre_verify_axes, rationale "
         "FROM core.autoagent_proposals "
         "WHERE target_agent = %s AND pre_verify_passed = false "
+        "AND pre_verify_status NOT LIKE %s "
+        "AND pre_verify_status NOT LIKE %s "
         "ORDER BY cycle_date DESC, id DESC "
         "LIMIT %s"
     )
     try:
         with _pg_connect() as conn:
             with conn.cursor() as cur:
-                cur.execute(select_sql, (target_agent, limit))
+                cur.execute(select_sql, (target_agent, "error:%", "skipped:%", limit))
                 return [
                     (axes if isinstance(axes, dict) else {}, rationale or "")
                     for axes, rationale in cur.fetchall()
