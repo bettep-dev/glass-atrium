@@ -11,8 +11,8 @@ loud-fail fallback:
       silent 'ok' (pipeline loud-fail hygiene).
 Successful patches (empty error) are excluded from the failing-class set, so a
 cycle with successes alongside all-quota failures still reads 'quota_exceeded'.
-A chronic-timeout back-off row rides branch (3) for the same reason: run_cycle
-leaves its error empty because the skip is intentional, not a cycle fault.
+A chronic-timeout back-off row rides branch (3) for the same reason: the
+generation unit leaves its error empty because the skip is intentional, not a cycle fault.
 
 The same writer sends each patch's proposal status: a status the patch carries is
 forwarded as-is, and only an absent one falls back — `rejected` for a reject

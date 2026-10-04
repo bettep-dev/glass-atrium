@@ -162,13 +162,12 @@ def _reject_arm_rows() -> list[tuple[str, str, str]]:
 
 
 @unittest.skipIf(dc is None, f"import failed: {_IMPORT_ERROR}")
-class TestRunCycleRejectArmStatus(unittest.TestCase):
+class TestGenerationUnitRejectArmStatus(unittest.TestCase):
     """The reject arm stores a gate verdict as 'rejected', anything else as 'unadjudicated'.
 
-    One cycle per row over a single target whose stubbed generation returns an
-    empty diff (classify_patch_area R3 → 'reject'). skip_loop_emit=True skips only
-    the cycle's gated emits — the discharge head stage and the regression-gate
-    reads run regardless — so setUp seals every PG path (``seal_pg_reach``).
+    One generation-unit run per row over a single target whose stubbed generation
+    returns an empty diff (classify_patch_area R3 → 'reject'). setUp seals every
+    PG path (``seal_pg_reach``), so a stray reach is recorded, not made.
     """
 
     def setUp(self) -> None:
@@ -180,7 +179,7 @@ class TestRunCycleRejectArmStatus(unittest.TestCase):
         self.target_md = self.agents_dir / f"{_ARM_PROBE_AGENT}.md"
         self.target_md.write_text("# probe agent\n", encoding="utf-8")
 
-        pattern = dc.Pattern(
+        self.pattern = dc.Pattern(
             date="2026-07-01",
             label="reject arm probe pattern",
             frequency="9",
@@ -191,8 +190,6 @@ class TestRunCycleRejectArmStatus(unittest.TestCase):
             row_id=1,
         )
         for target, repl in (
-            ("read_user_pending_patterns", lambda *a, **k: [pattern]),
-            ("fetch_generation_outcomes", lambda *a, **k: []),
             ("INTER_CALL_SPACING_SEC", 0.0),
             ("consecutive_timeout_count", lambda _t: 0),
         ):
@@ -215,17 +212,19 @@ class TestRunCycleRejectArmStatus(unittest.TestCase):
             dc, "generate_consolidated_proposal", lambda *a, **k: proposal
         ):
             with contextlib.redirect_stderr(io.StringIO()):
-                report = dc.run_cycle(
-                    log_path=self.tmp_dir / "learning-log.md",
-                    outcomes_dir=self.tmp_dir,
+                patch = dc.build_patch_result(
+                    _ARM_PROBE_AGENT,
+                    [self.pattern],
+                    [],
+                    cycle_date="2026-07-02",
                     agents_dir=self.agents_dir,
+                    seen_targets=set(),
                     skip_haiku=False,
                     skip_pre_verify=True,
                     skip_loop_emit=True,
                 )
-        self.assertEqual(len(report.patches), 1)
-        self.assertEqual(report.patches[0].classification, "reject")
-        return report.patches[0].status
+        self.assertEqual(patch.classification, "reject")
+        return patch.status
 
     def test_reject_arm_stores_unadjudicated_only_for_non_adjudication_classes(
         self,
@@ -234,7 +233,7 @@ class TestRunCycleRejectArmStatus(unittest.TestCase):
             with self.subTest(row=name):
                 self.assertEqual(self._stored_status(rationale), expected, name)
 
-    def test_cycle_reaches_no_postgres_seam(self) -> None:
+    def test_unit_reaches_no_postgres_seam(self) -> None:
         self._stored_status(_GENERATOR_RATIONALE)
         self.assertEqual(self.pg_reach, [])
 

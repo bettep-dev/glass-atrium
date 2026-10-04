@@ -1,6 +1,7 @@
 """Behavioral tests for the generation-side anti-fossil gates (AP-4).
 
-``daemon_cycle.run_cycle`` filters intake patterns through a set of lifecycle
+The per-agent generation loop (``daemon_cycle._run_generation_loop``, not run while
+generation is closed) filters intake patterns through a set of lifecycle
 gates before any Haiku spend. Covered here:
 (1) reject-streak snooze — N consecutive genuinely-rejected proposals for the
     same pattern+agent transition the ``core.learning_log`` row to terminal

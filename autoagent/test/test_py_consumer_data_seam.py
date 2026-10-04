@@ -34,6 +34,7 @@ from __future__ import annotations
 import contextlib
 import importlib.util
 import io
+import json
 import os
 import sys
 import tempfile
@@ -309,7 +310,7 @@ _FLAG_PROBE_AGENT = "flag-file-probe-agent"
 
 
 class FlagFileIgnoredByCycleTest(unittest.TestCase):
-    """No file under the data root changes what a cycle does with a candidate."""
+    """With generation closed, a cycle on any data root calls no generator and applies nothing."""
 
     def setUp(self) -> None:
         tmp = tempfile.TemporaryDirectory()
@@ -327,8 +328,9 @@ class FlagFileIgnoredByCycleTest(unittest.TestCase):
         self.flags_file = self.root / "data" / "learning" / "feature-flags.json"
         self.agents_dir = self.root / "agents"
         self.agents_dir.mkdir()
-        self.target_md = self.agents_dir / f"{_FLAG_PROBE_AGENT}.md"
-        self.target_md.write_text("# probe agent\n", encoding="utf-8")
+        (self.agents_dir / f"{_FLAG_PROBE_AGENT}.md").write_text(
+            "# probe agent\n", encoding="utf-8"
+        )
         pattern = self.dc.Pattern(
             date="2026-07-01",
             label="probe pattern",
@@ -348,61 +350,44 @@ class FlagFileIgnoredByCycleTest(unittest.TestCase):
             patcher.start()
             self.addCleanup(patcher.stop)
         self.pg_reach = seal_pg_reach(self)
-
-    def _run(self) -> tuple[object, ...]:
-        """One cycle over a verified body-auto candidate → the row's routing fields."""
-        proposal = self.dc.PatchProposal(
-            target_file=str(self.target_md),
-            rationale="probe",
-            proposed_diff=(
-                f"--- a/{self.target_md.name}\n"
-                f"+++ b/{self.target_md.name}\n"
-                "@@ -1 +1,2 @@\n"
-                " # probe agent\n"
-                "+probe line\n"
-            ),
-            touched_frontmatter=False,
-            estimated_added_lines=1,
-            raw_response="",
-            parse_mode="strict",
-        )
-        verdict = self.dc.PreVerifyResult(
-            passed=True,
-            rationale="probe",
-            axes=dict.fromkeys(("C1", "C2", "C3", "C4"), True),
-            status="ok",
-            latency_ms=0,
-        )
-        with (
-            mock.patch.object(self.dc, "consecutive_timeout_count", lambda _t: 0),
-            mock.patch.object(
-                self.dc, "generate_consolidated_proposal", lambda *a, **k: proposal
-            ),
-            mock.patch.object(self.dc, "run_pre_verify", lambda *a, **k: verdict),
-            contextlib.redirect_stderr(io.StringIO()),
+        # Spies go on after the seal: each replaces one seam the seal already covers.
+        self.calls: list[str] = []
+        for name in (
+            "generate_consolidated_proposal",
+            "generate_patch_proposal",
+            "run_pre_verify",
+            "update_generation_closed_proposals",
+            "alert_post_apply_regression",
         ):
+            patcher = mock.patch.object(self.dc, name, self._get_spy(name))
+            patcher.start()
+            self.addCleanup(patcher.stop)
+
+    def _get_spy(self, name: str):
+        def _spy(*_args: object, **_kwargs: object) -> int:
+            self.calls.append(name)
+            return 0
+
+        return _spy
+
+    def _run(self, *, skip_loop_emit: bool = True) -> object:
+        """One cycle over a stored user-pending pattern → the report; reach list stays empty."""
+        self.calls.clear()
+        with contextlib.redirect_stderr(io.StringIO()):
             report = self.dc.run_cycle(
                 log_path=self.root / "learning-log.md",
                 outcomes_dir=self.root,
                 agents_dir=self.agents_dir,
                 skip_haiku=False,
                 skip_pre_verify=False,
-                skip_loop_emit=True,
+                skip_loop_emit=skip_loop_emit,
             )
         self.assertEqual(self.pg_reach, [])
-        (patch,) = report.patches
-        return (
-            patch.classification,
-            patch.approval_tier,
-            patch.status,
-            patch.promotion_tier,
-            patch.confidence_observed,
-            patch.project_key,
-            patch.rationale,
-        )
+        return report
 
     def test_each_flag_file_content_gives_the_cycle_run_without_one(self) -> None:
-        without_file = self._run()
+        report = self._run()
+        without_file = (report.patterns_processed, report.patches, list(self.calls))
         self.flags_file.parent.mkdir(parents=True)
         for name, content in (
             ("flag true", '{"confidence_filter_enabled": true}'),
@@ -413,13 +398,39 @@ class FlagFileIgnoredByCycleTest(unittest.TestCase):
         ):
             with self.subTest(name):
                 self.flags_file.write_text(content, encoding="utf-8")
-                self.assertEqual(self._run(), without_file)
+                report = self._run()
+                self.assertEqual(
+                    (report.patterns_processed, report.patches, self.calls),
+                    without_file,
+                )
 
-    def test_cycle_leaves_no_verified_auto_candidate_pending(self) -> None:
-        _, approval_tier, status, *_ = self._run()
+    def test_closed_cycle_calls_no_generator_and_routes_no_candidate(self) -> None:
+        for skip_loop_emit in (True, False):
+            with self.subTest(skip_loop_emit=skip_loop_emit):
+                report = self._run(skip_loop_emit=skip_loop_emit)
+                self.assertEqual(report.patches, [])
+                self.assertNotIn("generate_consolidated_proposal", self.calls)
+                self.assertNotIn("generate_patch_proposal", self.calls)
+                self.assertNotIn("run_pre_verify", self.calls)
 
-        self.assertNotEqual((approval_tier, status), ("auto", "pending"))
+    def test_closed_cycle_still_writes_a_report_naming_its_input(self) -> None:
+        out = self.root / "report.json"
+        self.dc.emit_report(self._run(), out)
+        self.assertEqual(
+            json.loads(out.read_text(encoding="utf-8"))["patterns_processed"], 1
+        )
 
+    def test_terminalization_runs_once_only_when_the_cycle_may_write(self) -> None:
+        for skip_loop_emit, expected in ((False, 1), (True, 0)):
+            with self.subTest(skip_loop_emit=skip_loop_emit):
+                self._run(skip_loop_emit=skip_loop_emit)
+                self.assertEqual(
+                    self.calls.count("update_generation_closed_proposals"), expected
+                )
+
+    def test_closed_cycle_still_runs_the_post_apply_regression_watch(self) -> None:
+        self._run(skip_loop_emit=False)
+        self.assertEqual(self.calls.count("alert_post_apply_regression"), 1)
 
 if __name__ == "__main__":
     unittest.main()

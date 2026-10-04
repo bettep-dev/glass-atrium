@@ -244,7 +244,9 @@ class TestGenerationClosedStatement(unittest.TestCase):
     def test_when_closed_then_the_stored_rationale_is_no_gate_verdict(self) -> None:
         self._close()
         stored = self._rows()["pending auto"]["rationale"]
-        self.assertIn(dc.classify_failure_rationale(stored), dc._NON_ADJUDICATION_CLASSES)
+        self.assertIn(
+            dc.classify_failure_rationale(stored), dc._NON_ADJUDICATION_CLASSES
+        )
 
 
 if __name__ == "__main__":

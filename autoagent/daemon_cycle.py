@@ -8566,6 +8566,10 @@ _GENERATION_CLOSED_REASON = "generation closed until live trials"
 # AutoagentProposal.reviewedBy — a mechanical close, never a review.
 _GENERATION_CLOSED_ACTOR = "daemon-cycle-generation-closed"
 
+# Generation is closed until live trials: a constant, never read from a file, env or
+# config, so every install runs run_cycle's closed branch.
+GENERATION_CLOSED = True
+
 
 def update_generation_closed_proposals() -> int:
     """Terminalize every stored pending auto proposal → 'unadjudicated'.
@@ -11088,106 +11092,25 @@ def _pg_import_degradation_lines() -> list[str]:
     return lines
 
 
-def run_cycle(
+def _run_generation_loop(
+    report: CycleReport,
+    agent_groups: list[tuple[str, list[Pattern]]],
+    regression_gate: RegressionGateReport,
     *,
-    limit: int = DEFAULT_PATTERN_LIMIT,
-    log_path: Path = DEFAULT_LEARNING_LOG,
-    outcomes_dir: Path = DEFAULT_OUTCOMES_DIR,
-    agents_dir: Path = DEFAULT_AGENTS_DIR,
-    skip_haiku: bool = False,
-    skip_pre_verify: bool = False,
-    skip_loop_emit: bool = False,
-) -> CycleReport:
-    """Full generation + pre-verify cycle — pattern → outcomes → patch proposal →
-    classification → pre-verify (4-axis) → routing hints.
+    gen_day_bounds: tuple[float, float],
+    outcomes_dir: Path,
+    agents_dir: Path,
+    skip_haiku: bool,
+    skip_pre_verify: bool,
+    skip_loop_emit: bool,
+) -> list[SolutionAttempt]:
+    """Per-agent generation loop — gates, outcomes, one routed row per agent.
 
-    Returns the in-memory CycleReport. Caller decides where to persist it.
-
-    Pre-verify:
-    Each patch classified as `body-auto` is routed through `run_pre_verify`.
-    The verdict is attached to PatchResult and used to fill `approval_tier` /
-    `status` so the PG emit layer can route unverified patches to the user
-    pending queue without needing its own LLM call.
+    Reached only once GENERATION_CLOSED is lifted.
+    Appends each row to ``report.patches``; returns the cycle's Solution History
+    attempts. The promotion tier is a label only and
+    resolve_floor_terminalization terminalizes every auto candidate.
     """
-    now = datetime.now(timezone.utc)
-    # Optional-PG import degradation — surfaced LOUDLY once at daemon-cycle start
-    # (Precondition Loud-Fail). The import-time stderr writes were removed so a
-    # bare CLI import of this module stays silent; run_cycle() is the daemon's
-    # real entry, so a degraded PG layer is reported here, before the first PG op.
-    for _warn_line in _pg_import_degradation_lines():
-        sys.stderr.write(_warn_line)
-    # GENERATION window = previous calendar day (LOCAL tz), shared by all agents in
-    # the cycle — computed once outside the loop (cycle-invariant). Distinct from
-    # the promotion-stats window.
-    gen_day_bounds = _local_day_bounds()
-    agent_cap = _resolve_agent_limit(limit)
-    report = CycleReport(
-        cycle_date=now.strftime("%Y-%m-%d"),
-        generated_at=now.strftime("%Y-%m-%dT%H:%M:%S.000Z"),
-        patterns_processed=0,
-        cost_guard={
-            # Per-target: 1 Haiku call per agent → max_haiku_calls = agent cap.
-            # Informational only (not a gate).
-            "max_haiku_calls": agent_cap,
-            "agent_cap": agent_cap,
-            "worker_max_budget_usd_per_call": WORKER_MAX_BUDGET_USD,
-            "pre_verify_max_budget_usd_per_call": PRE_VERIFY_MAX_BUDGET_USD,
-            "skip_haiku": str(skip_haiku),
-            "skip_pre_verify": str(skip_pre_verify),
-        },
-    )
-
-    # per-TARGET (agent) flow: 1) read all user-pending patterns (agent cap applies
-    # to agents, not patterns, so no slicing here) → 2) group by .agent → 3) apply
-    # agent cap → 4) one consolidated multi-hunk proposal per agent.
-    # Discharge first: a pattern whose patch already landed must not seed this
-    # cycle's intake. Dry-run by default — live transitioning is opt-in.
-    # One untruncated pattern read serves both consumers — the discharge and the
-    # regression gate ask the same coverage question of the same rows.
-    pattern_rows_by_agent = get_pattern_rows_by_agent()
-    discharge_applied_patterns(
-        _fetch_applied_for_discharge(),
-        pattern_rows_by_agent,
-        coverage_reader=get_coverage_rows_by_agent,
-        live=discharge_live_enabled(),
-    )
-    regression_gate = build_regression_gate_report(pattern_rows_by_agent)
-    patterns = read_user_pending_patterns(
-        log_path, UNLIMITED_AGENTS, agents_dir=agents_dir
-    )
-    report.patterns_processed = len(patterns)
-    agent_groups = _group_patterns_by_agent(patterns, agent_cap=agent_cap)
-
-    # Auto-apply closed, identical on every install — no file, config or env input
-    # decides it. The promotion tier is a label only (the 'mention' floor rung on
-    # every row); resolve_floor_terminalization terminalizes every auto candidate.
-    sys.stderr.write(
-        "[daemon-cycle] INFO: auto-apply closed — promotion_tier is a label only; "
-        "every auto candidate terminalizes this cycle\n"
-    )
-
-    # T3 corpus/compliance telemetry — DETECTION-ONLY, fired ONCE per cycle.
-    # Fully wrapped: any failure is swallowed so it can NEVER block or raise into
-    # the cycle (established fail-soft policy). Skipped under skip_loop_emit
-    # (no-PG-write / unit-test mode) like the other observation emits below.
-    if not skip_loop_emit:
-        try:
-            corpus_signal = audit_corpus_size(
-                rules_dir=DEFAULT_RULES_DIR,
-                global_rules_file=GLOBAL_RULES_FILE,
-                agents_dir=DEFAULT_AGENTS_DIR,
-            )
-        except Exception as exc:  # noqa: BLE001 — telemetry must never break the cycle
-            sys.stderr.write(
-                "[daemon-cycle] WARN: audit_corpus_size raised — corpus telemetry "
-                f"lost: {type(exc).__name__}: {str(exc)[:160]}\n"
-            )
-        else:
-            # Sink status is BRANCHED on, not absorbed: a False routes the loss
-            # through record_sink_degradation (named WARN + named channel) and the
-            # cycle continues.
-            emit_corpus_audit(corpus_signal, report.cycle_date)
-
     seen_targets: set[str] = set()
     # AD-10 Solution History accumulator — one SolutionAttempt per generation
     # outcome, pruned to the Pareto frontier after the loop (retain_pareto_winners).
@@ -11258,6 +11181,129 @@ def run_cycle(
                 skip_pre_verify=skip_pre_verify,
                 skip_loop_emit=skip_loop_emit,
             )
+        )
+    return solution_attempts
+
+
+def run_cycle(
+    *,
+    limit: int = DEFAULT_PATTERN_LIMIT,
+    log_path: Path = DEFAULT_LEARNING_LOG,
+    outcomes_dir: Path = DEFAULT_OUTCOMES_DIR,
+    agents_dir: Path = DEFAULT_AGENTS_DIR,
+    skip_haiku: bool = False,
+    skip_pre_verify: bool = False,
+    skip_loop_emit: bool = False,
+) -> CycleReport:
+    """Full generation + pre-verify cycle — pattern → outcomes → patch proposal →
+    classification → pre-verify (4-axis) → routing hints.
+
+    Returns the in-memory CycleReport. Caller decides where to persist it.
+
+    Pre-verify:
+    Each patch classified as `body-auto` is routed through `run_pre_verify`.
+    The verdict is attached to PatchResult and used to fill `approval_tier` /
+    `status` so the PG emit layer can route unverified patches to the user
+    pending queue without needing its own LLM call.
+    """
+    now = datetime.now(timezone.utc)
+    # Optional-PG import degradation — surfaced LOUDLY once at daemon-cycle start
+    # (Precondition Loud-Fail). The import-time stderr writes were removed so a
+    # bare CLI import of this module stays silent; run_cycle() is the daemon's
+    # real entry, so a degraded PG layer is reported here, before the first PG op.
+    for _warn_line in _pg_import_degradation_lines():
+        sys.stderr.write(_warn_line)
+    # GENERATION window = previous calendar day (LOCAL tz), shared by all agents in
+    # the cycle — computed once outside the loop (cycle-invariant). Distinct from
+    # the promotion-stats window.
+    gen_day_bounds = _local_day_bounds()
+    agent_cap = _resolve_agent_limit(limit)
+    report = CycleReport(
+        cycle_date=now.strftime("%Y-%m-%d"),
+        generated_at=now.strftime("%Y-%m-%dT%H:%M:%S.000Z"),
+        patterns_processed=0,
+        cost_guard={
+            # Per-target: 1 Haiku call per agent → max_haiku_calls = agent cap.
+            # Informational only (not a gate).
+            "max_haiku_calls": agent_cap,
+            "agent_cap": agent_cap,
+            "worker_max_budget_usd_per_call": WORKER_MAX_BUDGET_USD,
+            "pre_verify_max_budget_usd_per_call": PRE_VERIFY_MAX_BUDGET_USD,
+            "skip_haiku": str(skip_haiku),
+            "skip_pre_verify": str(skip_pre_verify),
+        },
+    )
+
+    # per-TARGET (agent) flow: 1) read all user-pending patterns (agent cap applies
+    # to agents, not patterns, so no slicing here) → 2) group by .agent → 3) apply
+    # agent cap → 4) one consolidated multi-hunk proposal per agent.
+    # Discharge first: a pattern whose patch already landed must not seed this
+    # cycle's intake. Dry-run by default — live transitioning is opt-in.
+    # One untruncated pattern read serves both consumers — the discharge and the
+    # regression gate ask the same coverage question of the same rows.
+    pattern_rows_by_agent = get_pattern_rows_by_agent()
+    discharge_applied_patterns(
+        _fetch_applied_for_discharge(),
+        pattern_rows_by_agent,
+        coverage_reader=get_coverage_rows_by_agent,
+        live=discharge_live_enabled(),
+    )
+    regression_gate = build_regression_gate_report(pattern_rows_by_agent)
+    patterns = read_user_pending_patterns(
+        log_path, UNLIMITED_AGENTS, agents_dir=agents_dir
+    )
+    report.patterns_processed = len(patterns)
+    agent_groups = _group_patterns_by_agent(patterns, agent_cap=agent_cap)
+
+    sys.stderr.write(
+        "[daemon-cycle] INFO: generation closed until live trials — no generator "
+        "call and no auto-apply this cycle; stored pending auto rows terminalize\n"
+    )
+
+    # T3 corpus/compliance telemetry — DETECTION-ONLY, fired ONCE per cycle.
+    # Fully wrapped: any failure is swallowed so it can NEVER block or raise into
+    # the cycle (established fail-soft policy). Skipped under skip_loop_emit
+    # (no-PG-write / unit-test mode) like the other observation emits below.
+    if not skip_loop_emit:
+        try:
+            corpus_signal = audit_corpus_size(
+                rules_dir=DEFAULT_RULES_DIR,
+                global_rules_file=GLOBAL_RULES_FILE,
+                agents_dir=DEFAULT_AGENTS_DIR,
+            )
+        except Exception as exc:  # noqa: BLE001 — telemetry must never break the cycle
+            sys.stderr.write(
+                "[daemon-cycle] WARN: audit_corpus_size raised — corpus telemetry "
+                f"lost: {type(exc).__name__}: {str(exc)[:160]}\n"
+            )
+        else:
+            # Sink status is BRANCHED on, not absorbed: a False routes the loss
+            # through record_sink_degradation (named WARN + named channel) and the
+            # cycle continues.
+            emit_corpus_audit(corpus_signal, report.cycle_date)
+
+    if GENERATION_CLOSED:
+        solution_attempts: list[SolutionAttempt] = []
+        if not skip_loop_emit:
+            try:
+                update_generation_closed_proposals()
+            except Exception as exc:  # noqa: BLE001 — fail-loud-and-skip; next cycle retries
+                sys.stderr.write(
+                    "[daemon-cycle] WARN: update_generation_closed_proposals raised — "
+                    f"pending auto rows left open: {type(exc).__name__}: "
+                    f"{str(exc)[:160]}\n"
+                )
+    else:
+        solution_attempts = _run_generation_loop(
+            report,
+            agent_groups,
+            regression_gate,
+            gen_day_bounds=gen_day_bounds,
+            outcomes_dir=outcomes_dir,
+            agents_dir=agents_dir,
+            skip_haiku=skip_haiku,
+            skip_pre_verify=skip_pre_verify,
+            skip_loop_emit=skip_loop_emit,
         )
 
     # Just before cycle end, UPSERT the loop_event row directly to PG.
