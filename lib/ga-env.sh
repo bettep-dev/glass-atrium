@@ -88,9 +88,10 @@ ga_init_env() {
   )
   readonly LAUNCHD_RETIRED_JOBS
 
-  # GA_DAEMON_SESSIONS — the retired detached daemon tmux sessions; this list is their sole record. They
-  # SURVIVE `launchctl bootout` (reparented to PID 1) + `claude plugin uninstall`, so the retirement routine
-  # and uninstall kill them explicitly. Same two-step idiom as LAUNCHD_JOBS (set -u, cross-function reads).
+  # GA_DAEMON_SESSIONS — SoT for the retired detached daemon tmux sessions; the standalone
+  # scripts/migrate-claude-to-ga-data.sh keeps a mirror → edit both. They SURVIVE `launchctl bootout`
+  # (reparented to PID 1) + `claude plugin uninstall`, so the retirement routine and uninstall kill
+  # them explicitly. Same two-step idiom as LAUNCHD_JOBS (set -u, cross-function reads).
   GA_DAEMON_SESSIONS=(
     claude-wiki-daemon
     claude-autoagent-daemon
