@@ -326,11 +326,11 @@ function TierBreakdownCardI({ state, tierBreakdown }) {
 				{cards.map(([sym, tone, label, value, hint]) => (
 					<div
 						key={label}
-						className="i-card-shadow bg-elev rounded-md p-2.5 min-w-0"
+						className="sub-card bg-elev p-2.5 min-w-0"
 					>
 						<div className="flex items-center gap-1.5 fs-meta font-mono">
 							<SymI s={sym} className={tone} size={12} />
-							<span className={tone}>{label}</span>
+							<span className="text-dim">{label}</span>
 						</div>
 						<div className="fs-stat font-semibold text-ink mt-1 font-mono">
 							{value}
@@ -449,11 +449,11 @@ function ConfidenceDistCardI({ state, confidenceDist }) {
 				{cards.map(([sym, tone, label, value, hint, bar]) => (
 					<div
 						key={label}
-						className="i-card-shadow bg-elev rounded-md p-2.5 min-w-0"
+						className="sub-card bg-elev p-2.5 min-w-0"
 					>
 						<div className="flex items-start gap-1.5 fs-meta font-mono min-h-[2.4em]">
 							<SymI s={sym} className={tone} size={12} />
-							<span className={tone}>{label}</span>
+							<span className="text-dim">{label}</span>
 						</div>
 						<div className="fs-stat font-semibold text-ink mt-1 font-mono">
 							{value}
@@ -505,11 +505,10 @@ function ConfidenceLaneTableI({ buckets }) {
 								<td className="text-right py-1.5 text-dim">
 									{formatIntI(Number(b.proposal_count ?? 0))}
 								</td>
-								<td
-									className={`py-1.5 pr-1.5 ${badge.tone} flex items-center justify-end gap-1.5`}
-								>
+								<td className="py-1.5 pr-1.5 text-ink flex items-center justify-end gap-1.5">
 									<SymI
 										s={avg === null || avg === undefined ? "ℹ" : badge.symbol}
+										className={badge.tone}
 										size={11}
 									/>{" "}
 									{formatRateI(avg)}
@@ -718,11 +717,11 @@ function StyleRefCardI({ state, styleRef }) {
 				{headlineCards.map(([sym, tone, label, value, hint, bar]) => (
 					<div
 						key={label}
-						className="i-card-shadow bg-elev rounded-md p-2.5 min-w-0"
+						className="sub-card bg-elev p-2.5 min-w-0"
 					>
 						<div className="flex items-start gap-1.5 fs-meta font-mono min-h-[2.4em]">
 							<SymI s={sym} className={tone} size={12} />
-							<span className={tone}>{label}</span>
+							<span className="text-dim">{label}</span>
 						</div>
 						<div className="fs-stat font-semibold text-ink mt-1 font-mono">
 							{value}
@@ -797,10 +796,10 @@ function StyleRefAgentTableI({ rows }) {
 								<td className="text-right py-1.5 text-ink">
 									{formatRateI(r.emission_rate)}
 								</td>
-								<td className="text-right py-1.5 text-ok">
+								<td className="text-right py-1.5 text-ink">
 									{formatIntI(corroborated)} / {formatIntI(eligible)}
 								</td>
-								<td className="text-right py-1.5 text-warn">
+								<td className="text-right py-1.5 text-ink">
 									{formatIntI(uncorroborated)}
 								</td>
 								<td className="text-right py-1.5 pr-1.5 text-faint">
@@ -825,17 +824,18 @@ function StyleRefSplitI({
 	uncorroboratedRate,
 }) {
 	const cells = [
-		["Corroborated", corroborated, "text-ok"],
-		["Uncorroborated", uncorroborated, "text-warn"],
-		["Unverifiable", unverifiable, "text-faint"],
-		["Greenfield", greenfield, "text-info"],
+		["Corroborated", corroborated, "✓", "text-ok"],
+		["Uncorroborated", uncorroborated, "⚠", "text-warn"],
+		["Unverifiable", unverifiable, "○", "text-faint"],
+		["Greenfield", greenfield, "ℹ", "text-info"],
 	];
 	return (
 		<div className="px-5 pb-1">
 			<div className="flex flex-wrap items-baseline gap-x-4 gap-y-1 fs-meta font-mono">
-				{cells.map(([label, count, tone]) => (
+				{cells.map(([label, count, symbol, tone]) => (
 					<span key={label} className="inline-flex items-baseline gap-1">
-						<span className={tone}>{label}</span>
+						<SymI s={symbol} className={tone} size={11} />
+						<span className="text-dim">{label}</span>
 						<span className="text-ink font-semibold">
 							{formatIntI(Number(count ?? 0))}
 						</span>
@@ -856,11 +856,11 @@ function StyleRefSplitI({
 	);
 }
 
-// v1.1 격상 게이트 dual-encoded badge — null-safe.
+// graduation-gate verdict, null-safe — symbol = the shared severity glyph of its tone
 // PASS: emission ≥ 0.50 AND uncorroborated < 0.10 → ✓ + text-ok
 // WARN: emission ≥ 0.50 AND uncorroborated ≥ 0.10 → ⚠ + text-warn
-// BLOCK: emission < 0.50 (데이터 부족 외)              → ⛔ + text-crit
-// PEND: 전체 NULL (데이터 부재)                          → ℹ + text-info
+// BLOCK: emission < 0.50                          → ✕ + text-crit
+// PEND: no reading                                → ℹ + text-info
 function styleRefGradeBadgeI(emissionRate, uncorroboratedRate) {
 	if (emissionRate === null && uncorroboratedRate === null) {
 		return {
@@ -880,7 +880,7 @@ function styleRefGradeBadgeI(emissionRate, uncorroboratedRate) {
 	}
 	if (emissionRate < 0.5) {
 		return {
-			symbol: "⛔",
+			symbol: "✕",
 			tone: "text-crit",
 			label: "block",
 			hint: `emission ${formatRateI(emissionRate)} < 50%`,
@@ -975,14 +975,15 @@ function CorrectionSignalsCardI({ state }) {
 				{/* 4-way disjoint 분해 — both / stage1-only / stage2-only / neither. */}
 				<div className="flex items-center gap-4 fs-meta font-mono text-faint flex-wrap">
 					<span>
-						<span className="text-ok">both</span> {formatIntI(agr.both_matched)}
+						<SymI s="✓" className="text-ok" size={11} /> <span className="text-dim">both</span>{" "}
+						{formatIntI(agr.both_matched)}
 					</span>
 					<span>
-						<span className="text-warn">stage1 only</span>{" "}
+						<SymI s="⚠" className="text-warn" size={11} /> <span className="text-dim">stage1 only</span>{" "}
 						{formatIntI(agr.stage1_only)}
 					</span>
 					<span>
-						<span className="text-warn">stage2 only</span>{" "}
+						<SymI s="⚠" className="text-warn" size={11} /> <span className="text-dim">stage2 only</span>{" "}
 						{formatIntI(agr.stage2_only)}
 					</span>
 					<span>
@@ -1039,7 +1040,7 @@ function CorpusGrowthCardI({ state }) {
 	const wordSeries = rows.map((r) => Number(r.word_count ?? 0)).reverse();
 	const delta = latest.trend_delta;
 	const hasDelta = typeof delta === "number";
-	// 색 단독 인코딩 금지 — ▲/▼/= 기호가 1차 신호, tone 은 보조.
+	// ▲/▼/= glyph carries the direction and the tone · the words stay dim
 	const deltaSymbol = !hasDelta ? "·" : delta > 0 ? "▲" : delta < 0 ? "▼" : "=";
 	const deltaTone =
 		!hasDelta || delta === 0
@@ -1066,8 +1067,8 @@ function CorpusGrowthCardI({ state }) {
 						{formatIntI(Number(latest.word_count ?? 0))}
 					</span>
 					<span className="fs-meta text-faint">words</span>
-					<span className={`fs-meta font-mono ${deltaTone}`}>
-						{deltaSymbol} {deltaLabel}
+					<span className="fs-meta font-mono text-dim">
+						<SymI s={deltaSymbol} className={deltaTone} /> {deltaLabel}
 					</span>
 					{/* 스파크는 텍스트 수치의 중복 표현 → 스크린리더에서 제외. */}
 					{wordSeries.length > 1 && (
@@ -1088,19 +1089,19 @@ function CorpusGrowthCardI({ state }) {
 						threshold {formatIntI(Number(latest.seeded_threshold ?? 0))}
 					</span>
 					{verdict.tone === "text-warn" && (
-						<span className="text-warn">
-							{verdict.symbol} {verdict.label}
+						<span className="text-dim">
+							<SymI s={verdict.symbol} className={verdict.tone} size={11} /> {verdict.label}
 						</span>
 					)}
 				</div>
 				<div className="flex items-center gap-4 fs-meta font-mono text-faint flex-wrap">
 					<span>
 						gate{" "}
-						<span className="text-ok">
+						<span className="text-ink">
 							{formatIntI(Number(latest.gate_pass_count ?? 0))}
 						</span>{" "}
 						pass ·{" "}
-						<span className="text-warn">
+						<span className="text-ink">
 							{formatIntI(Number(latest.gate_trip_count ?? 0))}
 						</span>{" "}
 						trip / {formatIntI(Number(latest.gate_total_count ?? 0))}
