@@ -301,16 +301,16 @@ test("GET /api/improvement: a safety-routed proposal counts in the safety column
       proposals: Array<{ id: number; approval_tier: string }>;
       actionable_proposals: Array<{ id: number; approval_tier: string }>;
     };
-    const tierById = (rows: Array<{ id: number; approval_tier: string }>): Record<number, string> =>
+    const buildTierById = (rows: Array<{ id: number; approval_tier: string }>): Record<number, string> =>
       Object.fromEntries(rows.map((p) => [p.id, p.approval_tier]));
     assert.deepStrictEqual(body.tier_distribution, { auto: 1, safety: 1 }, "tier_distribution");
     assert.deepStrictEqual(
-      tierById(body.proposals),
+      buildTierById(body.proposals),
       { [id.safety]: "safety", [id.auto]: "auto" },
       "proposals[].approval_tier",
     );
     assert.deepStrictEqual(
-      tierById(body.actionable_proposals),
+      buildTierById(body.actionable_proposals),
       { [id.safety]: "safety" },
       "the Awaiting approval feed",
     );
