@@ -192,6 +192,7 @@ class ProvenanceFieldsTest(unittest.TestCase):
             ("whitespace", {"agent_id": "  ", "session_id": "\t", "user_correction_detected": " "}),
             ("non-string ids, non-boolean verdict",
              {"agent_id": 123, "session_id": ["s"], "user_correction_detected": "maybe"}),
+            ("numeric verdict", {"user_correction_detected": 1}),
         )
         for name, fields in rows:
             with self.subTest(name):

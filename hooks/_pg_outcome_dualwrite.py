@@ -260,7 +260,10 @@ def _norm_bool_or_null(v):
     """Frontmatter strings 'true'/'false'/'' → bool/None for nullable bool col."""
     if v is True or v is False:
         return v
-    s = (v or "").strip().lower()
+    # Non-string (0/1, float, dict) → NULL; a raise here runs before the write's try → whole row lost
+    if not isinstance(v, str):
+        return None
+    s = v.strip().lower()
     if s == "true":
         return True
     if s == "false":
