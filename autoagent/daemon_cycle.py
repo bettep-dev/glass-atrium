@@ -8568,7 +8568,7 @@ _GENERATION_CLOSED_ACTOR = "daemon-cycle-generation-closed"
 
 # Generation is closed until live trials: a constant, never read from a file, env or
 # config, so every install runs run_cycle's closed branch.
-GENERATION_CLOSED = True
+IS_GENERATION_CLOSED = True
 
 
 def update_generation_closed_proposals() -> int:
@@ -11106,7 +11106,7 @@ def _run_generation_loop(
 ) -> list[SolutionAttempt]:
     """Per-agent generation loop — gates, outcomes, one routed row per agent.
 
-    Reached only once GENERATION_CLOSED is lifted.
+    Reached only once IS_GENERATION_CLOSED is lifted.
     Appends each row to ``report.patches``; returns the cycle's Solution History
     attempts. The promotion tier is a label only and
     resolve_floor_terminalization terminalizes every auto candidate.
@@ -11282,7 +11282,7 @@ def run_cycle(
             # cycle continues.
             emit_corpus_audit(corpus_signal, report.cycle_date)
 
-    if GENERATION_CLOSED:
+    if IS_GENERATION_CLOSED:
         solution_attempts: list[SolutionAttempt] = []
         if not skip_loop_emit:
             try:
