@@ -409,7 +409,6 @@ class CycleSeamTest(unittest.TestCase):
         for target, repl in (
             ("read_user_pending_patterns", lambda *a, **k: [pattern]),
             ("fetch_generation_outcomes", lambda *a, **k: []),
-            ("FEATURE_FLAGS_FILE", self.tmp_dir / "no-such-flags.json"),
             ("INTER_CALL_SPACING_SEC", 0.0),
         ):
             patcher = mock.patch.object(dc, target, repl)

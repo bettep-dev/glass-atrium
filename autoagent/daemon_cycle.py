@@ -1449,16 +1449,14 @@ try:
         POST_APPLY_REGRESSION_MIN_POST_OBSERVATIONS,
         POST_APPLY_REGRESSION_RATE_DELTA,
         beta_smoothed_rate,
-        compute_confidence_observed,
     )
-    from project_key import resolve_project_key  # noqa: E402
 
     HAS_CONFIDENCE_LIB = True
 except Exception as _conf_import_exc:  # noqa: BLE001 — lib missing → graceful skip
     HAS_CONFIDENCE_LIB = False
     sys.stderr.write(
-        f"[daemon-cycle] WARN: confidence/project_key lib import failed — "
-        f"promotion ladder disabled: "
+        f"[daemon-cycle] WARN: confidence lib import failed — "
+        f"post-apply regression alert disabled: "
         f"{type(_conf_import_exc).__name__}: {_conf_import_exc}\n"
     )
 
@@ -1478,12 +1476,6 @@ except Exception as _pause_import_exc:  # noqa: BLE001 — lib missing → grace
         f"[daemon-cycle] WARN: pause-flag lib import failed — update-pause gate "
         f"disabled: {type(_pause_import_exc).__name__}: {_pause_import_exc}\n"
     )
-
-# Feature-flag file — confidence_filter_enabled toggle (3-state):
-#   true → active (posterior gate ON) · false → bypass (floorless, operator OFF)
-#   · missing/malformed/unset → floor (fail-CLOSED — every row floored to 'mention').
-FEATURE_FLAGS_FILE = ga_paths.get_data_root() / "learning" / "feature-flags.json"
-_CONFIDENCE_FLAG_KEY = "confidence_filter_enabled"
 
 # Promotion ladder thresholds. The n>=MIN_OBSERVATIONS candidate floor gates on
 # the TRUE qualifying-outcome count (_count_outcome_signals — uncapped COUNT(*)
@@ -1700,83 +1692,6 @@ def resolve_floor_terminalization(
         rationale=_BELOW_FLOOR_REJECT_REASON,
         terminalized=True,
     )
-
-# Confidence-filter resolution — 3-state, fail-CLOSED on default/failure.
-#   active : explicit flag True  → run classify_promotion_tier (floor applies).
-#   bypass : explicit flag False → floorless (operator OFF — promotion_tier="",
-#            apply-side `IS DISTINCT FROM 'mention'` passes the row).
-#   floor  : lib-import failure OR flags.json absent / malformed / key-unset
-#            (default+failure states) → conservative floor: promotion_tier='mention'
-#            for every row, so the apply-side EXCLUDES them. Absent-config = safe.
-ConfidenceFilterState = Literal["active", "bypass", "floor"]
-
-
-def confidence_filter_state(flags_path: Path | None = None) -> ConfidenceFilterState:
-    """Resolve the confidence-filter 3-state from feature-flags.json (fail-CLOSED).
-
-    Three distinct states (default/failure are SAFE, not bypass):
-      - ``"active"`` : key explicitly ``True``  → posterior gate ON, floor applies.
-      - ``"bypass"`` : key explicitly ``False`` → operator OFF, floorless (preserved).
-      - ``"floor"``  : lib-import failure OR file absent / malformed / not-a-dict /
-        key-unset / non-bool value (all default+failure states) → conservative
-        floor (every row floored to 'mention' → apply-side auto-apply excludes them).
-
-    Only a literal JSON ``true`` activates and only a literal ``false`` bypasses;
-    every other shape collapses to ``"floor"`` (absent-config is the safe state).
-    Deterministic read-only — no side effects.
-
-    Args:
-        flags_path: feature-flags.json path (None → dynamic module-global
-            FEATURE_FLAGS_FILE lookup — avoids def-time binding for monkeypatch).
-
-    Returns:
-        ConfidenceFilterState — one of "active" / "bypass" / "floor".
-    """
-    if not HAS_CONFIDENCE_LIB:
-        # lib import failure = failure state → floor conservatively (fail-CLOSED).
-        return "floor"
-    # None → dynamic module-global lookup (honors test monkeypatch of FEATURE_FLAGS_FILE).
-    if flags_path is None:
-        flags_path = FEATURE_FLAGS_FILE
-    if not flags_path.exists():
-        # Absent config = default state → floor (the day-1 floorless gap).
-        return "floor"
-    try:
-        flags = json.loads(flags_path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError) as exc:
-        sys.stderr.write(
-            f"[daemon-cycle] WARN: feature-flags.json read failed — "
-            f"confidence filter FLOOR (fail-closed): {type(exc).__name__}: {exc}\n"
-        )
-        return "floor"
-    if not isinstance(flags, dict):
-        return "floor"
-    value = flags.get(_CONFIDENCE_FLAG_KEY)
-    if value is True:
-        return "active"
-    if value is False:
-        # Explicit operator OFF — legitimate bypass, floorless (NOT a default state).
-        return "bypass"
-    # Key unset / non-bool (e.g. "true", 1) = absent-config → floor (fail-CLOSED).
-    return "floor"
-
-
-def confidence_filter_enabled(flags_path: Path | None = None) -> bool:
-    """Whether the posterior gate runs ``classify_promotion_tier`` (active state).
-
-    Thin backward-compatible wrapper over :func:`confidence_filter_state` — True
-    only in the ``"active"`` state. ``"bypass"`` and ``"floor"`` both return False
-    (no classifier run), but they diverge in promotion_tier downstream: bypass→"",
-    floor→"mention". Use :func:`confidence_filter_state` when that distinction
-    matters; use this only for the boolean "should the classifier run?" question.
-
-    Args:
-        flags_path: feature-flags.json path (None → module-global lookup).
-
-    Returns:
-        bool — True only when the resolved state is ``"active"``.
-    """
-    return confidence_filter_state(flags_path) == "active"
 
 
 def _fetch_outcome_signals(
@@ -2329,10 +2244,9 @@ class PatchResult:
     # when pre-verify did not run, "auto" when verified, "user" when not.
     approval_tier: str = ""
     status: str = ""
-    # Confidence-weighted promotion ladder — filled in run_cycle when
-    # confidence_filter_enabled; left at defaults otherwise (JSON + PG push stay
-    # backward-compatible).
-    #   confidence_observed: Beta-Binomial posterior mean; None when the flag is off.
+    # Confidence-weighted promotion ladder — run_cycle sets only promotion_tier
+    # (the 'mention' floor); the other two stay at their defaults.
+    #   confidence_observed: Beta-Binomial posterior mean.
     #   project_key: resolve_project_key().key (12 hex) for project isolation.
     #   promotion_tier: mention/candidate/proposal/instruction-edit/skill-candidate.
     confidence_observed: float | None = None
@@ -11216,35 +11130,13 @@ def run_cycle(
     report.patterns_processed = len(patterns)
     agent_groups = _group_patterns_by_agent(patterns, agent_cap=agent_cap)
 
-    # Confidence-weighted promotion ladder gate, 3-state (fail-CLOSED).
-    # active → run classify_promotion_tier (floor applies).
-    # bypass (explicit flag false) → floorless (promotion_tier="" — operator OFF
-    # preserved). floor (lib-fail / flags absent — default+failure states) → set
-    # promotion_tier='mention' so the apply-side `IS DISTINCT FROM 'mention'`
-    # EXCLUDES every row (absent-config = safe). project_key is
-    # cycle-invariant — resolve once outside the loop (active state only).
-    promotion_state = confidence_filter_state()
-    promotion_enabled = promotion_state == "active"
-    cycle_project_key = resolve_project_key().key if promotion_enabled else ""
-
-    # Loud-fail visibility (shared-self-improve-hygiene Precondition Loud-Fail) —
-    # once per cycle, outside the per-agent loop. Distinguish BYPASS (explicit
-    # operator OFF → genuinely floorless) from FLOOR (default/failure → rows
-    # floored to 'mention', apply-side excludes them) so the operator sees which.
-    if promotion_state == "bypass":
-        sys.stderr.write(
-            "[daemon-cycle] WARN: confidence floor BYPASS "
-            f"({_CONFIDENCE_FLAG_KEY} explicitly false) — low-confidence patterns "
-            "are NOT floored; the apply-side promotion_tier='mention' gate passes "
-            "all rows this cycle (explicit operator opt-out)\n"
-        )
-    elif promotion_state == "floor":
-        sys.stderr.write(
-            "[daemon-cycle] WARN: confidence floor FLOOR "
-            f"({_CONFIDENCE_FLAG_KEY} unset / flags absent / lib unavailable) — "
-            "fail-CLOSED: every row floored to promotion_tier='mention'; the "
-            "apply-side gate EXCLUDES all rows from auto-apply this cycle\n"
-        )
+    # Promotion floor, identical on every install — no file, config or env input
+    # decides it. Every row is floored to promotion_tier='mention', so the
+    # apply-side `IS DISTINCT FROM 'mention'` gate excludes all of them.
+    sys.stderr.write(
+        "[daemon-cycle] INFO: promotion floor — every row floored to "
+        "promotion_tier='mention'; no candidate is auto-apply eligible this cycle\n"
+    )
 
     # T3 corpus/compliance telemetry — DETECTION-ONLY, fired ONCE per cycle.
     # Fully wrapped: any failure is swallowed so it can NEVER block or raise into
@@ -11539,38 +11431,7 @@ def run_cycle(
             approval_tier = ""
             status_value = get_reject_status(proposal.rationale)
 
-        # Confidence-weighted promotion ladder. Gate-OFF (flag false / lib missing)
-        # → defaults preserve the pre-feature behavior. Gate-ON → Beta-Binomial
-        # posterior (empirical signal) + observation count + 7-day sustain →
-        # promotion tier. project_key tags the row for per-project isolation.
-        #
-        # The promotion-stats window is separate from the GENERATION window — the
-        # Beta-Binomial ladder needs historical depth, so it is NOT moved to
-        # yesterday-only. _fetch_promotion_stats keeps its own 90-day lookback:
-        # posterior sample capped at OUTCOME_SAMPLE_LIMIT, observation_count
-        # uncapped (decoupled — a capped n could never reach the candidate
-        # floor, silently disabling unattended auto-apply).
-        # 3-state promotion_tier (fail-CLOSED):
-        #   active → classify_promotion_tier (posterior-derived tier; floor applies).
-        #   floor  → 'mention' (default/failure → apply-side `IS DISTINCT FROM
-        #            'mention'` EXCLUDES the row → nothing low-confidence auto-applies).
-        #   bypass → "" (operator OFF → apply-side passes the row, floorless).
-        confidence_observed: float | None = None
-        if promotion_state == "active":
-            signals, observation_count = _fetch_promotion_stats(agent)
-            # record_ts is preserved in signals, but time-decay activation
-            # (lambda_per_day<1) is DEFERRED → default λ=1.0 = legacy posterior.
-            confidence_observed = compute_confidence_observed(signals)
-            promotion_tier = classify_promotion_tier(
-                confidence_observed=confidence_observed,
-                observation_count=observation_count,
-                sustained=_is_sustained(_first_observation_ts(agent)),
-                touches_frontmatter=proposal.touched_frontmatter,
-            )
-        elif promotion_state == "floor":
-            promotion_tier = "mention"
-        else:  # bypass — explicit operator OFF, floorless (preserved pre-feature).
-            promotion_tier = ""
+        promotion_tier = "mention"
 
         # Floor terminalization — close the auto+pending+mention limbo at the
         # SOURCE so every auto-tier candidate reaches a terminal state this cycle.
@@ -11680,8 +11541,6 @@ def run_cycle(
                 pre_verify_latency_ms=verify.latency_ms if verify is not None else 0,
                 approval_tier=approval_tier,
                 status=status_value,
-                confidence_observed=confidence_observed,
-                project_key=cycle_project_key,
                 promotion_tier=promotion_tier,
                 # Carry the structured Haiku-failure evidence from the proposal
                 # into the SERIALIZED row. Without this copy the dataclass

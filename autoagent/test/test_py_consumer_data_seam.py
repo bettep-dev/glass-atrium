@@ -16,8 +16,8 @@ learning-aggregator.py / autoagent-status-backfill.py) PLUS the seam-completion
 consumers that previously still resolved the legacy ``.claude`` store:
 daemon_config.py (CONFIG_PATH + the DAEMON_CONFIG override), compliance_telemetry.py
 (WORKFLOW_GATE_LOG_FILE), autoagent/daemon_cycle.py
-(DEFAULT_OUTCOMES_DIR / DEFAULT_REPORTS_DIR / HAIKU_FAILURE_LOG_DIR /
-FEATURE_FLAGS_FILE), wiki_dedup.py (DEFAULT_VERIFIED_HASHES_PATH), and
+(DEFAULT_OUTCOMES_DIR / DEFAULT_REPORTS_DIR / HAIKU_FAILURE_LOG_DIR),
+wiki_dedup.py (DEFAULT_VERIFIED_HASHES_PATH), and
 wiki_daemon_cycle.py (DEFAULT_REPORTS_DIR). DEFAULT_LEARNING_LOG stays legacy — not
 part of the Tier-A migration and the daemon neither reads nor writes it.
 
@@ -36,6 +36,7 @@ import importlib.util
 import io
 import os
 import sys
+import tempfile
 import unittest
 from pathlib import Path
 from unittest import mock
@@ -48,9 +49,11 @@ _AUTOAGENT = _REPO_ROOT / "autoagent"
 
 # The consumer trees + the hooks dir that hosts ga_paths — the same inserts the
 # consumers do at runtime, so the fresh loads below resolve the seam.
-for _p in (_HOOKS, _LIB, _SCRIPTS, _AUTOAGENT):
+for _p in (_HOOKS, _LIB, _SCRIPTS, _AUTOAGENT, Path(__file__).resolve().parent):
     if str(_p) not in sys.path:
         sys.path.insert(0, str(_p))
+
+from _pg_seal import seal_pg_reach  # noqa: E402 — test dir anchored above
 
 # Fixed sandbox anchor (mirrors test_ga_paths.py) — no filesystem access happens at
 # consumer import, so a non-real HOME is safe and keeps the assertion deterministic.
@@ -175,14 +178,10 @@ class DefaultResolutionTest(unittest.TestCase):
             self.assertEqual(
                 m.HAIKU_FAILURE_LOG_DIR, ga / "logs" / "autoagent-haiku-failures"
             )
-            self.assertEqual(
-                m.FEATURE_FLAGS_FILE, ga / "data" / "learning" / "feature-flags.json"
-            )
             for _c in (
                 m.DEFAULT_OUTCOMES_DIR,
                 m.DEFAULT_REPORTS_DIR,
                 m.HAIKU_FAILURE_LOG_DIR,
-                m.FEATURE_FLAGS_FILE,
             ):
                 self.assertNotIn(".claude", str(_c))
 
@@ -304,6 +303,122 @@ class OverrideParityTest(unittest.TestCase):
                 m.HAIKU_FAILURE_LOG_DIR,
                 Path("/var/atrium-alt") / "logs" / "autoagent-haiku-failures",
             )
+
+
+_FLAG_PROBE_AGENT = "flag-file-probe-agent"
+
+
+class FlagFileIgnoredByCycleTest(unittest.TestCase):
+    """No file under the data root changes what a cycle does with a candidate."""
+
+    def setUp(self) -> None:
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        self.root = Path(tmp.name)
+        env = mock.patch.dict(
+            "os.environ", {"GA_DATA_ROOT": str(self.root), "HOME": str(self.root)}
+        )
+        env.start()
+        self.addCleanup(env.stop)
+        self.dc = _load_daemon_cycle()
+        modules = mock.patch.dict(sys.modules, {"daemon_cycle": self.dc})
+        modules.start()
+        self.addCleanup(modules.stop)
+        self.flags_file = self.root / "data" / "learning" / "feature-flags.json"
+        self.agents_dir = self.root / "agents"
+        self.agents_dir.mkdir()
+        self.target_md = self.agents_dir / f"{_FLAG_PROBE_AGENT}.md"
+        self.target_md.write_text("# probe agent\n", encoding="utf-8")
+        pattern = self.dc.Pattern(
+            date="2026-07-01",
+            label="probe pattern",
+            frequency="9",
+            agent=_FLAG_PROBE_AGENT,
+            status="identified",
+            tier="user-pending",
+            raw_line=f"pg:learning_log:1:probe pattern|{_FLAG_PROBE_AGENT}",
+            row_id=1,
+        )
+        for target, repl in (
+            ("read_user_pending_patterns", lambda *a, **k: [pattern]),
+            ("fetch_generation_outcomes", lambda *a, **k: []),
+            ("INTER_CALL_SPACING_SEC", 0.0),
+        ):
+            patcher = mock.patch.object(self.dc, target, repl)
+            patcher.start()
+            self.addCleanup(patcher.stop)
+        self.pg_reach = seal_pg_reach(self)
+
+    def _run(self) -> tuple[object, ...]:
+        """One cycle over a verified body-auto candidate → the row's routing fields."""
+        proposal = self.dc.PatchProposal(
+            target_file=str(self.target_md),
+            rationale="probe",
+            proposed_diff=(
+                f"--- a/{self.target_md.name}\n"
+                f"+++ b/{self.target_md.name}\n"
+                "@@ -1 +1,2 @@\n"
+                " # probe agent\n"
+                "+probe line\n"
+            ),
+            touched_frontmatter=False,
+            estimated_added_lines=1,
+            raw_response="",
+            parse_mode="strict",
+        )
+        verdict = self.dc.PreVerifyResult(
+            passed=True,
+            rationale="probe",
+            axes=dict.fromkeys(("C1", "C2", "C3", "C4"), True),
+            status="ok",
+            latency_ms=0,
+        )
+        with (
+            mock.patch.object(self.dc, "consecutive_timeout_count", lambda _t: 0),
+            mock.patch.object(
+                self.dc, "generate_consolidated_proposal", lambda *a, **k: proposal
+            ),
+            mock.patch.object(self.dc, "run_pre_verify", lambda *a, **k: verdict),
+            contextlib.redirect_stderr(io.StringIO()),
+        ):
+            report = self.dc.run_cycle(
+                log_path=self.root / "learning-log.md",
+                outcomes_dir=self.root,
+                agents_dir=self.agents_dir,
+                skip_haiku=False,
+                skip_pre_verify=False,
+                skip_loop_emit=True,
+            )
+        self.assertEqual(self.pg_reach, [])
+        (patch,) = report.patches
+        return (
+            patch.classification,
+            patch.approval_tier,
+            patch.status,
+            patch.promotion_tier,
+            patch.confidence_observed,
+            patch.project_key,
+            patch.rationale,
+        )
+
+    def test_each_flag_file_content_gives_the_cycle_run_without_one(self) -> None:
+        without_file = self._run()
+        self.flags_file.parent.mkdir(parents=True)
+        for name, content in (
+            ("flag true", '{"confidence_filter_enabled": true}'),
+            ("flag false", '{"confidence_filter_enabled": false}'),
+            ("flag unset", "{}"),
+            ("flag non-bool", '{"confidence_filter_enabled": "true"}'),
+            ("malformed json", "{"),
+        ):
+            with self.subTest(name):
+                self.flags_file.write_text(content, encoding="utf-8")
+                self.assertEqual(self._run(), without_file)
+
+    def test_cycle_leaves_no_verified_auto_candidate_pending(self) -> None:
+        _, approval_tier, status, *_ = self._run()
+
+        self.assertNotEqual((approval_tier, status), ("auto", "pending"))
 
 
 if __name__ == "__main__":

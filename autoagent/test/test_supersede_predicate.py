@@ -346,7 +346,6 @@ class TestSupersedeCallSiteBinding(unittest.TestCase):
             "fetch_generation_outcomes": lambda *a, **k: [],
             # Absent flags file → the confidence filter resolves 'floor', so the
             # promotion ladder never reaches PG for stats.
-            "FEATURE_FLAGS_FILE": self.tmp_dir / "no-such-flags.json",
             "generate_consolidated_proposal": self._proposal,
             "classify_patch_area": lambda *a, **k: "body-auto",
             "classify_safety_tier": lambda *a, **k: "safety",

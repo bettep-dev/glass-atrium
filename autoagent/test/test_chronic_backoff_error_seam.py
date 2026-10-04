@@ -96,7 +96,6 @@ class BackoffErrorSeam(unittest.TestCase):
             ("fetch_generation_outcomes", lambda *a, **k: []),
             # Absent flags file → confidence filter resolves 'floor', so the
             # promotion ladder never reaches for PG stats.
-            ("FEATURE_FLAGS_FILE", self.tmp_dir / "no-such-flags.json"),
             # Intra-cycle spacing is a real sleep on the non-backoff branch.
             ("INTER_CALL_SPACING_SEC", 0.0),
         ):
