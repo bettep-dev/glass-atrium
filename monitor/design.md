@@ -327,6 +327,7 @@
 
 - **인코딩 = glyph + 색 + 단어, neutral shell 위.**
   - tone 은 선행 glyph(또는 `Icon`, `TONE_ICON` check/warn/x/info)에만 `text-<tone>` 으로. 라벨 텍스트는 `--dim`/`--ink` 유지.
+    - 허용 예외: `.field.is-error` 의 오류 메시지 (`fs-meta text-crit`, `role="alert"`) — crit 텍스트가 ≥ 4.5 인 면 위에서만 (light `--elev` 4.83 · `--surface` 4.62 · dark ≥ 6.32). light `--sunken` 위는 4.43 이라 금지.
   - shell(배지 배경 · 카드 fill · 행 배경) · 좌측 stripe · tone border 에 tone 을 칠하지 않는다.
   - `StatusDot`: glyph + sr-only 단어(`STATUS_DOT_WORD` OK/Warning/Critical/Info). 미지 status 는 `–` + "Unknown" (`--faint`).
   - `KpiValue tone`: glyph 장식(aria-hidden), 수치는 neutral ink.
@@ -341,8 +342,12 @@
   - light: tone 색 **solid well + `--elev` knock-out glyph** — tinted light well 은 `--warn` glyph 를 2.81:1 로 떨어뜨린다.
   - dark: tone 0.12 tinted well + tone glyph.
 - **severity 요소는 glass/blur 위에 두지 않는다** — desaturation 이 응급 신호를 약화 (§6.3).
-- **알려진 예외 (현재 코드, 수정 대상)** — tone 을 shell · fill · border · stripe · 라벨 텍스트에 칠한 자리 전부.
-  - 찾는 법: `grep -nE "var\(--(crit|warn|ok|info)\) ?/ ?0?\.[0-9]+|(bg|border)-(crit|warn|ok|info)/" public/src public/styles`. 차트 data mark(막대 fill · sparkline stroke) hit 은 shell 이 아니라 목록 밖.
+- **알려진 예외 (현재 코드, 수정 대상)** — 두 범위, 커버리지가 다르다.
+  - tinted fill · tone border · tone stripe = 아래 finder 1 hit 전부를 목록화.
+    - finder 1: `grep -nE "var\(--(crit|warn|ok|info)\) ?/ ?0?\.[0-9]+|(bg|border)-(crit|warn|ok|info)/|inset [0-9]+px 0 0 rgb\(var\(--(crit|warn|ok|info)\)\)" public/src public/styles`.
+    - 차트 data mark(막대 fill · sparkline stroke) hit 은 shell 이 아니라 목록 밖.
+  - tone 을 칠한 라벨 · 수치 텍스트 = finder 1 로는 안 잡힌다. 아래 목록은 확인된 자리만 (전수 아님).
+    - finder 2: `grep -nE "text-(crit|warn|ok|info)\b" public/src` — hit 이 glyph · `Icon` · `SymI` 만 감싸면 규칙 준수, 단어 · 수치를 감싸면 예외 (§7.13 `.field.is-error` 메시지는 허용 예외).
   - 명암비 = WCAG 2.2, tint 를 아래 면에 합성한 값. 아래 tone 텍스트 쌍은 dark 에서 전부 ≥ 4.5 (최저 = toast crit on `--elev-2` 4.71) → 수치는 light 만 적는다 (toast · nav badge 제외).
   - **shell (`app.jsx` · `base.css`)**:
     - `.nav-badge.warn` 과 `app.jsx` → `NAV_BADGE_CRIT_STYLE`: tone 0.15 tinted fill + tone 텍스트.
@@ -373,6 +378,13 @@
     - `.doc-superseded-banner`: warn 0.12 fill + warn 0.4 하단 border + warn 텍스트 → light 2.80.
     - `ErrorBannerCD`: crit 0.1 fill + crit 0.4 border + crit 텍스트 → light 4.14.
     - `.doc-snippet mark`: 검색 hit 하이라이트 = warn 0.28 fill (severity hue 의 비-severity 사용).
+  - **tone 텍스트 (finder 2, 확인된 자리)** — shell 은 neutral `--elev` 카드, light 값 = warn 3.19 · ok 3.77 · info 3.68 (전부 < 4.5) · dark ≥ 9.1.
+    - `improvement-instrumentation.jsx`:
+      - agreement 분해: `both` (`text-ok`) · `stage1 only` / `stage2 only` (`text-warn`) 라벨.
+      - style_ref 표 셀: corroborated 수치 `text-ok` · uncorroborated 수치 `text-warn`.
+      - `StyleRefSplitI` 라벨: Corroborated `text-ok` · Uncorroborated `text-warn` · Greenfield `text-info`.
+      - corpus growth 카드: delta 줄 `▲/▼ … words vs previous` (warn/ok) · gate pass/trip 수치 (ok/warn) · verdict span `{verdict.symbol} {verdict.label}` (warn).
+    - `improvement.jsx` → `ProposalActionsI`: safety 행 `⚠ Your call` (`fs-meta text-warn`).
 - `.diff-line--add/--del` 의 옅은 tint 는 허용 — `+`/`−` glyph 가 1차 신호.
 
 ### 4.3 Categorical — 차트 · 식별 전용
@@ -714,7 +726,7 @@
 
 - **`.field`** (input · select):
   - min-height `--ctl-h` 32 · padding `--ctl-pad-y` × `--ctl-pad-x` · `--ctl-font` · `--elev` · 1px `--line` · `--ctl-radius`.
-  - hover border `--faint`. focus = `--accent` border + 전역 focus outline. error `.is-error` = `--crit` border (메시지는 `--fs-meta` crit 텍스트).
+  - hover border `--faint`. focus = `--accent` border + 전역 focus outline. error `.is-error` = `--crit` border (메시지는 `--fs-meta` crit 텍스트 — §4.2 허용 예외, crit ≥ 4.5 인 면 위에서만).
   - disabled opacity 0.5.
   - `.field--mono`: mono tnum. `.field-select`: 테마별 `--faint` 색 chevron.
   - `.field-affix` (`$` 등): wrapper 가 border · focus 를 소유, `:has(:focus-visible)` 로 outline.
@@ -745,7 +757,6 @@
   - 화면이 그리는 edge 3개 (bus 2 · bypass 1, `createScreenPathAR`) = 그려진 `path.flowchart-link` 의 clone — 같은 class · marker, id `L_<from>_<to>_screen`, `data-arch-edge="bus"` / `"bypass"`. 직교성 검사가 이 3개도 canvas link 로 센다 (`architecture.merged-surface.e2e`).
   - 총 link 7 · crossing 0 (`architecture.map-fit.e2e`).
 - **spine label**: 각 라벨은 **자기 edge 의 오른쪽**, edge 와 `LABEL_PAD` 16 · 다른 edge 와 ≥ 16.
-  - r10 방향 문서의 "왼쪽 gutter lane" 과 다른 as-built 배치 — owner 확인 대기.
 - **크기**: arrowhead 2× (`ARROW_SCALE`).
   - default view = contain fit 의 `DEFAULT_VIEW_SHARE` 0.9.
   - map pane 높이 floor 500px (`PANE.FLOOR_PX`) — 첫 화면 높이가 모자라면 floor 가 이기고 Part health 는 첫 화면 아래로.
@@ -796,7 +807,9 @@
   - `base.css` 블록 2: `DetailSurface` 3 variant 진입 `animation-duration: 0.01ms`.
   - `base.css` 블록 3: `.field` · `.field-affix` transition 제거.
   - 화면별: `.ga-spin` · `.doc-action-spinner` · `.doc-group-toggle .chevron` · `.tbl.doc-ledger-busy` · `[class*="i-anim-"]` · `.i-act-spin` · architecture 노드 · `.arch-zoom-btn`.
-- **위반 (코드 수정 대상)**: inline style skeleton 3개 — `cost.jsx` `skelPulseC` · `outcomes.jsx` `skelPulseO` · `clauded-docs.jsx` `skelPulseCD` — 에 reduce 게이트가 없다.
+- **위반 (코드 수정 대상)**:
+  - inline style skeleton 3개 — `cost.jsx` `skelPulseC` · `outcomes.jsx` `skelPulseO` · `clauded-docs.jsx` `skelPulseCD` — 에 reduce 게이트가 없다.
+  - `improvement.jsx` → `.i-row-card`: hover lift (`transform: translateY(-1px)` + `box-shadow`, 120ms) 에 reduce 게이트가 없다 — 화면 reduce 블록은 `[class*="i-anim-"]` · `.i-act-spin` 만 잡는다. transform 은 §8.1 hover 채널(border-color · box-shadow) 밖이기도 하다.
 
 ```css
 @media (prefers-reduced-motion: reduce) {
