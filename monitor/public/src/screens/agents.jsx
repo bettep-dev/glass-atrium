@@ -1153,7 +1153,8 @@ function AgentSummaryRow({ agent, days, isSelected, onSelect, focusProps, trend,
           <NotLoadedMarkAg title={failTitle}/>
         ) : breakage.count > 0 ? (
           <span className="inline-flex items-baseline justify-end gap-1.5">
-            <span className={failTone}>{failedCount > 0 ? formatIntAg(failedCount) : '—'}</span>
+            <FailShareGlyph tone={failTone} label={getFailShareLabel('failed')}/>
+            <span className={failedCount > 0 ? '' : 'text-faint'}>{failedCount > 0 ? formatIntAg(failedCount) : '—'}</span>
             {blockedCount > 0 && <span className="fs-meta text-dim">{formatIntAg(blockedCount)} blocked</span>}
           </span>
         ) : (
@@ -1163,7 +1164,7 @@ function AgentSummaryRow({ agent, days, isSelected, onSelect, focusProps, trend,
         {isFailureRead && breakage.count > 0 && (
           <Bar
             value={Math.max(breakage.rate, 0.01)}
-            tone={barToneFromClass(failTone)}
+            tone={failTone}
             ariaLabel={`breakage rate ${(breakage.rate * 100).toFixed(1)}%`}
           />
         )}
@@ -1967,7 +1968,7 @@ function AgentReliabilityBreakages({ drawerAgent, failureByAgent, failureState, 
       {failure && failure.total_breakages > 0 ? (
         <>
           <div className="flex items-center gap-2 flex-wrap">
-            <Badge role="status" tone={failureTone(failure.total_breakages, failure.breakage_rate) === 'text-crit' ? 'crit' : 'neutral'}>
+            <Badge role="status" tone={failureTone(failure.total_breakages, failure.breakage_rate)}>
               {formatIntAg(split.breakages)} failed or blocked{failure.reconstructed > 0 ? '' : ` · ${rateText}`}
             </Badge>
             {split.blocked.max > 0 && (
@@ -3012,6 +3013,7 @@ function LifecycleStatsRow({ row, onSelect, focusProps }) {
   const orphanRatio = startCount > 0 ? orphanCount / startCount : 0;
   const orphanTone = orphanRatioTone(orphanRatio);
   const p95Sec = row.p95_duration_sec == null ? null : Number(row.p95_duration_sec);
+  const { StatusDot } = window.UI;
 
   const handleClick = onSelect ? () => onSelect(row.agent_type) : undefined;
 
@@ -3028,7 +3030,8 @@ function LifecycleStatsRow({ row, onSelect, focusProps }) {
       </td>
       <td className="text-right text-dim px-2 py-1.5 border-b border-line">{formatIntAg(startCount)}</td>
       <td className="text-right text-dim px-2 py-1.5 border-b border-line">{formatIntAg(completedCount)}</td>
-      <td className={`text-right px-2 py-1.5 border-b border-line font-semibold ${orphanTone}`}>
+      <td className={`text-right px-2 py-1.5 border-b border-line font-semibold ${orphanTone ? 'text-ink' : 'text-dim'}`}>
+        {orphanTone && <StatusDot status={orphanTone}/>}
         {orphanCount > 0 ? `${formatIntAg(orphanCount)} · ${(orphanRatio * 100).toFixed(0)}%` : '0'}
       </td>
       <td className="text-right text-dim px-2 py-1.5 border-b border-line">
@@ -3497,17 +3500,17 @@ function getSummaryRateAg(agent) {
   return { successPct, needsContextCount, denominator, numerator, isLowSample, tone };
 }
 
-function getFailShareLabel() {
-  return `failed or blocked ≥ ${(window.UI.OUTCOME_BREAKAGE_CRIT_SHARE * 100).toFixed(0)}%`;
+function getFailShareLabel(outcome = 'failed or blocked') {
+  return `${outcome} ≥ ${(window.UI.OUTCOME_BREAKAGE_CRIT_SHARE * 100).toFixed(0)}%`;
 }
 
 // Tone rides a glyph beside the success numeral, never the numeral itself.
-function FailShareGlyph({ tone }) {
+function FailShareGlyph({ tone, label = getFailShareLabel() }) {
   if (tone !== 'crit') return null;
   const { Icon, TONE_ICON } = window.UI;
 
   return (
-    <span className="text-crit inline-flex items-center" title={getFailShareLabel()}>
+    <span className="text-crit inline-flex items-center" title={label}>
       <span aria-hidden="true"><Icon name={TONE_ICON.crit} size={12}/></span>
       <span className="sr-only">high failure share</span>
     </span>
@@ -3547,12 +3550,11 @@ function p95GlyphTone(p95Sec, warnSec = P95_AGENT.WARN_SEC) {
   return 'ok';
 }
 
-// Failed-or-blocked numeral — the one Agents rate scale over the agent's outcomes (population = count ÷ rate).
+// Failed-or-blocked share → tone KEY for its glyph and bar — the one Agents rate scale over the agent's outcomes (population = count ÷ rate).
 function failureTone(count, rate) {
-  if (count === 0) return 'text-faint';
-  const population = rate > 0 ? Math.round(count / rate) : 0;
-  if (population < window.UI.LOW_N_MIN) return '';
-  return getFailShareTone(count, population) === 'crit' ? 'text-crit' : '';
+  const population = count > 0 && rate > 0 ? Math.round(count / rate) : 0;
+  if (population < window.UI.LOW_N_MIN) return 'neutral';
+  return getFailShareTone(count, population) === 'crit' ? 'crit' : 'neutral';
 }
 
 // CSS-class 톤('text-ok' 등 · ''=무톤) → Bar/StatusDot KEY(ok|warn|crit|neutral) 변환.
@@ -3595,11 +3597,11 @@ function qualityHealthDriverPhrase(driver) {
   return `high rework ${driver.value.toFixed(2)}`;
 }
 
-// orphan spawn 비율(start 대비 미완) → 톤 — 높을수록 누수 심각.
+// orphan spawn 비율(start 대비 미완) → StatusDot tone KEY — 높을수록 누수 심각, 미달 = null.
 function orphanRatioTone(ratio) {
-  if (ratio >= ORPHAN_RATIO_CRIT_THRESHOLD) return 'text-crit';
-  if (ratio >= ORPHAN_RATIO_WARN_THRESHOLD) return 'text-warn';
-  return 'text-dim';
+  if (ratio >= ORPHAN_RATIO_CRIT_THRESHOLD) return 'crit';
+  if (ratio >= ORPHAN_RATIO_WARN_THRESHOLD) return 'warn';
+  return null;
 }
 
 // duration_sec → 인간화 (≥60s "Mm Ss") — 공용 formatDuration(ui.jsx SoT)에 위임, lifecycle p95 표시.

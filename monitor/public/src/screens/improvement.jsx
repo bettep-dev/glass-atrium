@@ -746,7 +746,7 @@ function InstrumentationStripI({ styleRef, corpusAuditState, at, onOpen }) {
 				>
 					<SymI s={chip.symbol} className={chip.tone} size={11} />
 					<span className="text-ink">{chip.name}</span>
-					<span className={chip.tone}>{chip.label}</span>
+					<span className="text-dim">{chip.label}</span>
 				</span>
 			))}
 			<button type="button" className="btn ghost sm" onClick={onOpen}>
@@ -2231,7 +2231,7 @@ function PreVerifyDetailI({ badge, rationale, axes, labelCls }) {
 			<div className="bg-sunken p-2.5 rounded-md flex flex-col gap-2">
 				<div className="flex items-center gap-1.5 fs-meta">
 					<SymI s={badge.symbol} className={badge.tone} size={13} />
-					<span className={badge.tone}>{badge.label}</span>
+					<span className="text-dim">{badge.label}</span>
 					{badge.titleHint && badge.titleHint !== badge.label && (
 						<span className="text-faint">· {badge.titleHint}</span>
 					)}

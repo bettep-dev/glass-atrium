@@ -424,6 +424,30 @@ describe("board and action surfaces leave their tone on the glyph", () => {
       name: "the awaiting-approval banner",
       render: () => component("AwaitingBannerI")({ rows: [PROPOSAL], onRowClick: () => {}, onAction: () => {}, pendingActionId: null }),
     },
+    {
+      name: "the operations-view instrumentation strip",
+      render: () => {
+        (sandbox.window as Record<string, unknown>).ImprovementInstrumentationVerdicts = {
+          styleRefGradeBadgeI: () => ({ symbol: "⚠", tone: "text-warn", label: "warn", hint: "emission below the gate" }),
+          getCorpusGrowthVerdictI: () => ({ symbol: "✕", tone: "text-crit", label: "Growth alert", hint: "corpus grew past the cap" }),
+        };
+        return component("InstrumentationStripI")({
+          styleRef: { overall_emission_rate: 0.3, overall_uncorroborated_rate: 0.2 },
+          corpusAuditState: { status: "ready", data: { audits: [{}] } },
+          onOpen: () => {},
+        });
+      },
+    },
+    {
+      name: "the pre-verify drawer header",
+      render: () =>
+        component("PreVerifyDetailI")({
+          badge: (sandbox.preVerifyBadgeI as (status: string, passed: null) => unknown)("error: budget wall", null),
+          rationale: null,
+          axes: [],
+          labelCls: "fs-meta",
+        }),
+    },
   ];
   for (const row of rows) {
     test(row.name, () => {

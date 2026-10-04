@@ -775,7 +775,20 @@ function findCellByTitle(tree: RenderedNode | string | null, pattern: RegExp): R
   return findNodes(tree, (n) => n.type === "td" && pattern.test(String(n.props?.title ?? "")))[0] ?? null;
 }
 
-test("the breakage count takes a tone only once its share of the agent's outcomes crosses the shared crit step", async () => {
+// Text a sighted reader sees — sr-only words excluded.
+function getVisibleText(node: RenderedNode | string): string {
+  if (typeof node === "string") return node;
+  if (/\bsr-only\b/.test(String(node.props?.className ?? ""))) return "";
+  return node.children.map(getVisibleText).join("");
+}
+
+// Toned classes wrapping visible words or figures — a tone may wrap a glyph alone.
+function getToneTextClasses(cell: RenderedNode | null): string[] {
+  return findNodes(cell, (n) => TONED_CLASS.test(String(n.props?.className ?? "")) && getVisibleText(n).trim() !== "")
+    .map((n) => String(n.props.className));
+}
+
+test("the breakage count takes a crit glyph only once its share of the agent's outcomes crosses the shared crit step, the numeral staying neutral", async () => {
   const mod = await loadAgentsScreen();
   // breakage_rate = total_breakages / total outcomes, so the population is recoverable from the pair.
   const rows = [
@@ -786,10 +799,35 @@ test("the breakage count takes a tone only once its share of the agent's outcome
   for (const row of rows) {
     const failure = { total_breakages: row.total_breakages, fail_count: row.total_breakages, blocked_count: 0, breakage_rate: row.breakage_rate };
     const cell = findCellByTitle(renderToneRow(mod, {}, failure), /^breakages/);
-    const tonedClasses = findNodes(cell, (n) => TONED_CLASS.test(String(n.props?.className ?? ""))).map((n) => String(n.props.className));
-    assert.deepEqual(tonedClasses, row.crit ? ["text-crit"] : [], `${row.name}: numeral tone`);
+    assert.deepEqual(getToneTextClasses(cell), [], `${row.name}: numeral tone`);
+    const glyphs = findNodes(cell, (n) => n.type === "FailShareGlyph" && n.props.tone === "crit");
+    assert.equal(glyphs.length, row.crit ? 1 : 0, `${row.name}: crit glyph beside the numeral`);
     const bar = findNodes(cell, (n) => n.props?.atom === "Bar")[0];
-    assert.equal(bar?.props.tone, row.crit ? "crit" : "neutral", `${row.name}: bar tone follows the numeral`);
+    assert.equal(bar?.props.tone, row.crit ? "crit" : "neutral", `${row.name}: bar tone follows the glyph`);
+  }
+});
+
+test("a lifecycle row's orphan figure stays neutral, its warn or crit share carried by a glyph alone", async () => {
+  const mod = await loadAgentsScreen();
+  const React = mod.React as { createElement: (t: unknown, p: unknown) => unknown };
+  // Steps: warn at a 20% orphan share, crit at 35%.
+  const rows = [
+    { name: "under the warn step", start_count: 10, completed_count: 9, glyph: [] as string[] },
+    { name: "on the warn step", start_count: 10, completed_count: 8, glyph: ["warn"] },
+    { name: "on the crit step", start_count: 20, completed_count: 13, glyph: ["crit"] },
+  ];
+  for (const row of rows) {
+    const tree = renderScreen(
+      React.createElement(mod.LifecycleStatsRow as Component, {
+        row: { agent_type: "glass-atrium-dev-react", stop_count: row.completed_count, p95_duration_sec: 60, ...row },
+        onSelect: null,
+      }),
+    );
+    const cell = findNodes(tree, (n) => n.type === "td" && /%|^0$/.test(getVisibleText(n).trim()))[0] ?? null;
+    assert.ok(cell, `${row.name}: orphan cell renders`);
+    assert.deepEqual(getToneTextClasses(cell), [], `${row.name}: the orphan figure takes no tone`);
+    const glyphTones = findAtoms(cell, "StatusDot").map((n) => String(n.props.status));
+    assert.deepEqual(glyphTones, row.glyph, `${row.name}: the status glyph names the share's tier`);
   }
 });
 
@@ -1011,7 +1049,7 @@ test("a ledger row leads with its failed count and keeps blocked as an untoned s
   // 1 fail + 29 blocked of 100 outcomes: a 30% breakage rate, but a 1% failed share.
   const failure = { total_breakages: 30, fail_count: 1, blocked_count: 29, breakage_rate: 0.3 };
   const cell = findCellByTitle(renderToneRow(mod, {}, failure), /^breakages/);
-  const text = collectText(cell);
+  const text = collectText(cell).trim();
   assert.match(text, /^1/, "the failed count leads");
   assert.match(text, /29\s+blocked/, "blocked rides as the secondary");
   const tonedClasses = findNodes(cell, (n) => TONED_CLASS.test(String(n.props?.className ?? "")));
