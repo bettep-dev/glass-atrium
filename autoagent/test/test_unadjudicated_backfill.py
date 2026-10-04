@@ -55,6 +55,7 @@ exit "${PS_STUB_RC:-0}"
 
 _ROOT = "/opt/ga"
 _STRANGER_PID = 99999901
+_SEEDED_RECORD = '{"relabeled": 3, "written_at": "2026-09-30T00:00:00+00:00"}\n'
 
 
 _TABLE_SQL = "core.autoagent_proposals"
@@ -424,6 +425,10 @@ class UnadjudicatedBackfillTest(unittest.TestCase):
                 f"{_STRANGER_PID}\n", encoding="utf-8"
             )
 
+        def foreign_lock_and_live_cycle() -> None:
+            foreign_lock()
+            self._set_listing([cycle_sh])
+
         def no_lock() -> None:
             (self.reports_dir / ".apply-lock" / "pid").unlink()
 
@@ -449,6 +454,13 @@ class UnadjudicatedBackfillTest(unittest.TestCase):
                 0,
             ),
             ("lock pid outside the ancestor chain", foreign_lock, 11, True, 0),
+            (
+                "lock foreign while daemon-cycle.sh is alive",
+                foreign_lock_and_live_cycle,
+                11,
+                True,
+                0,
+            ),
             ("lock pid file absent", no_lock, 11, True, 0),
             ("no cycle process", lambda: None, 0, True, 1),
             (
@@ -492,7 +504,9 @@ class UnadjudicatedBackfillTest(unittest.TestCase):
                 if rc != 0:
                     self.assertEqual(self.table.statements, [])
                     self.assertTrue(self.marker.exists())
-                    self.assertFalse(self.record.exists())
+                    self.assertEqual(
+                        self.record.read_text(encoding="utf-8"), _SEEDED_RECORD
+                    )
 
     def _reset_row(self) -> None:
         """Reset the per-row state the gate table mutates."""
@@ -504,23 +518,29 @@ class UnadjudicatedBackfillTest(unittest.TestCase):
             f"{os.getppid()}\n", encoding="utf-8"
         )
         self.marker.write_text("", encoding="utf-8")
-        self.record.unlink(missing_ok=True)
+        self.record.write_text(_SEEDED_RECORD, encoding="utf-8")
         self.connects.clear()
         self.table.statements.clear()
         self.label_state = "present"
 
-    def test_the_pause_flag_never_answers_for_the_mode(self) -> None:
-        self.table.rows = {1: _row(1, "haiku transient overload", None)}
+    def _run_paused(self) -> tuple[int, str]:
         with (
             mock.patch.object(dc, "HAS_PAUSE_LIB", True),
             mock.patch.object(dc, "_update_is_pause_active", lambda: True, create=True),
         ):
-            os.environ["GA_DB_NAME"] = "sbx_db"
-            deferred_rc, deferred_err = self._run()
-            os.environ.pop("GA_DB_NAME")
-            run_rc, run_err = self._run()
-        self.assertEqual(deferred_rc, dc.ExitCode.BACKFILL_DEFERRED, deferred_err)
-        self.assertEqual(run_rc, 0, run_err)
+            return self._run()
+
+    def test_an_active_pause_flag_leaves_a_deferring_gate_its_own_exit_code(
+        self,
+    ) -> None:
+        os.environ["GA_DB_NAME"] = "sbx_db"
+        rc, stderr = self._run_paused()
+        self.assertEqual(rc, dc.ExitCode.BACKFILL_DEFERRED, stderr)
+
+    def test_an_active_pause_flag_does_not_stop_a_run_whose_gates_clear(self) -> None:
+        self.table.rows = {1: _row(1, "haiku transient overload", None)}
+        rc, stderr = self._run_paused()
+        self.assertEqual(rc, 0, stderr)
         self.assertEqual(self.table.rows[1]["status"], "unadjudicated")
 
     def test_a_committed_run_writes_the_record_then_removes_the_marker(self) -> None:
@@ -557,15 +577,18 @@ class UnadjudicatedBackfillTest(unittest.TestCase):
         self.assertTrue(self.marker.exists())
         self.assertFalse(self.record.exists())
 
-    def test_lock_marker_and_record_derive_from_the_reports_dir_argument(self) -> None:
+    def test_the_lock_is_read_under_the_reports_dir_argument(self) -> None:
         other = self.tmp / "other-reports"
         other.mkdir()
         rc, stderr = self._run(other)
         self.assertEqual(rc, dc.ExitCode.BACKFILL_LOCK_NOT_HELD, stderr)
-        self._hold_lock(other / "nested", os.getppid())
-        rc, stderr = self._run(other / "nested")
+
+    def test_marker_and_record_are_kept_under_the_reports_dir_argument(self) -> None:
+        other = self.tmp / "other-reports"
+        self._hold_lock(other, os.getppid())
+        rc, stderr = self._run(other)
         self.assertEqual(rc, 0, stderr)
-        self.assertTrue((other / "nested" / ".unadjudicated-backfill-done").is_file())
+        self.assertTrue((other / ".unadjudicated-backfill-done").is_file())
         self.assertFalse(self.record.exists())
         self.assertTrue(self.marker.exists())
 
