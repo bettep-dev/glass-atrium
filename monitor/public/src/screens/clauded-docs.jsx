@@ -948,9 +948,9 @@ function ScreenClaudedDocs(/* { onNav } */) {
         /* viewer row → a fill apart from checked (0.10) and both (0.16); the heavier title is its non-colour cue */
         .tbl tbody tr.doc-row.is-selected { background: rgb(var(--accent) / 0.13); }
         .doc-row.is-selected .doc-title-text { font-weight: 600; }
-        /* awaiting delete confirmation → dimmed + aria-busy; the crit glyph before the title carries the tone.
-           0.85 keeps light dim cells ≥ 4.5:1 on every fill the row paints — checked 4.59, --sunken hover 4.79, rest 5.16 (0.8 drops checked to 4.08) */
-        .doc-row.is-pending-delete { opacity: 0.85; }
+        /* awaiting delete confirmation → struck-through title + aria-busy; the crit glyph before the title carries the tone.
+           no row opacity — any fade drops the light empty pip on a checked row below 3:1 (0.85: 2.59; unfaded 3.21) */
+        .doc-row.is-pending-delete .doc-title-text { text-decoration: line-through; }
         /* margin-left = lead slot 20px + title row gap 6px → the snippet starts under the title */
         .doc-snippet { margin-left: 26px; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; overflow-wrap: anywhere; }
         /* trailing title-line pills never shrink → the title text ellipsizes first */

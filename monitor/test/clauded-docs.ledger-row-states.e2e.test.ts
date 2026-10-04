@@ -35,12 +35,13 @@ const STATES = {
 } as const;
 type State = keyof typeof STATES;
 
-// the ledger sits in the list card's elev; the cells carry the screen's dim meta text, the crit glyph and the ink title
+// the ledger sits in the list card's elev; the cells carry the screen's dim meta text, an empty stage pip, the stale flag's warn glyph, the crit glyph and the ink title
 const ledgerPage = (theme: string) => `<!doctype html><html data-theme="${theme}"><body style="margin: 0;">
   <div style="padding: 48px;"><div class="card"><table class="tbl"><tbody>
     ${Object.entries(STATES).map(([state, classes]) => `<tr id="${state}" class="doc-row ${classes}">
-      <td class="dim" style="color: rgb(var(--dim));">2026-10-04</td>
-      <td class="title-cell"><span class="glyph" style="color: rgb(var(--crit));">!</span> <span class="doc-title-text" style="color: rgb(var(--ink));">Plan</span></td>
+      <td><span class="doc-stage-meter"><span class="stage-pip"></span></span></td>
+      <td class="dim" style="color: rgb(var(--dim));">2026-10-04<div class="doc-age-flag"><span class="glyph-warn" style="color: rgb(var(--warn));">!</span> stale</div></td>
+      <td class="title-cell"><span class="glyph-crit" style="color: rgb(var(--crit));">!</span> <span class="doc-title-text" style="color: rgb(var(--ink));">Plan</span></td>
     </tr>`).join("")}
   </tbody></table></div></div>
 </body></html>`;
@@ -49,10 +50,11 @@ interface RowReading {
   fill: Rgba;
   dim: Rgba;
   ink: Rgba;
-  glyph: Rgba;
+  pip: Rgba;
+  glyph: { crit: Rgba; warn: Rgba };
   opacity: number;
   boxShadow: string;
-  titleWeight: string;
+  title: { weight: string; decoration: string };
 }
 
 interface Ledger {
@@ -67,18 +69,28 @@ async function readRow(page: Page, state: State): Promise<RowReading> {
     const row = document.getElementById(id)!;
     const style = getComputedStyle(row);
     // no named helper in here: tsx's keepNames wraps it in a __name call the page does not define
-    const [dim, title, glyph] = [".dim", ".doc-title-text", ".glyph"].map((selector) => getComputedStyle(row.querySelector(selector)!));
+    const [dim, title, pip, critGlyph, warnGlyph] = [".dim", ".doc-title-text", ".stage-pip", ".glyph-crit", ".glyph-warn"].map((selector) =>
+      getComputedStyle(row.querySelector(selector)!),
+    );
     return {
       fill: style.backgroundColor,
       dim: dim.color,
       ink: title.color,
-      glyph: glyph.color,
+      pip: pip.backgroundColor,
+      glyph: { crit: critGlyph.color, warn: warnGlyph.color },
       opacity: Number(style.opacity),
       boxShadow: style.boxShadow,
-      titleWeight: title.fontWeight,
+      title: { weight: title.fontWeight, decoration: title.textDecorationLine },
     };
   }, state);
-  return { ...raw, fill: parseColor(raw.fill), dim: parseColor(raw.dim), ink: parseColor(raw.ink), glyph: parseColor(raw.glyph) };
+  return {
+    ...raw,
+    fill: parseColor(raw.fill),
+    dim: parseColor(raw.dim),
+    ink: parseColor(raw.ink),
+    pip: parseColor(raw.pip),
+    glyph: { crit: parseColor(raw.glyph.crit), warn: parseColor(raw.glyph.warn) },
+  };
 }
 
 async function readLedger(theme: string): Promise<Ledger> {
@@ -154,28 +166,41 @@ describe("ledger row fills under the shared table hover", () => {
     test(`${theme}: no row state draws a stripe, and the viewer row's title carries the heavier weight`, () => {
       const { rest, hovered } = ledgers[theme];
       for (const reading of [...Object.values(rest), ...Object.values(hovered)]) assert.equal(reading.boxShadow, "none");
-      assert.equal(rest.viewer.titleWeight, "600");
-      assert.equal(hovered.viewer.titleWeight, "600");
+      assert.equal(rest.viewer.title.weight, "600");
+      assert.equal(hovered.viewer.title.weight, "600");
     });
   }
 });
 
-describe("pending-delete dimming on every fill the row can paint", () => {
+// a pending row's cue must leave every pair it carries as its non-pending twin paints it → no floor the twin holds can drop
+describe("pending-delete cue on every fill the row can paint", () => {
+  const TWIN = { pending: "plain", pendingChecked: "checked" } as const;
   const rows = THEMES.flatMap((theme) =>
     (["pending", "pendingChecked"] as const).flatMap((state) =>
-      (["rest", "hovered"] as const).map((pointer) => ({ name: `${theme} ${state} row ${pointer}: dim and ink cells ≥ 4.5:1, crit glyph ≥ 3:1, row dimmed`, theme, state, pointer })),
+      (["rest", "hovered"] as const).map((pointer) => ({ name: `${theme} ${state} row ${pointer}`, theme, state, pointer })),
     ),
   );
   for (const row of rows) {
-    test(row.name, () => {
+    test(`${row.name}: paints the fill, text, pip and tone glyphs of its non-pending twin, and strikes the title through`, () => {
+      const { card, ...readings } = ledgers[row.theme];
+      const reading = readings[row.pointer][row.state];
+      const twin = readings[row.pointer][TWIN[row.state]];
+      const painted = (r: RowReading) =>
+        [paintedFill(r, card), ...[r.dim, r.ink, r.pip, r.glyph.crit, r.glyph.warn].map((color) => paintedText(color, r, card))].map(rgbKey);
+      assert.deepEqual(painted(reading), painted(twin), `opacity ${reading.opacity}`);
+      assert.match(reading.title.decoration, /line-through/);
+      assert.doesNotMatch(twin.title.decoration, /line-through/);
+    });
+
+    test(`${row.name}: dim and ink cells ≥ 4.5:1, empty stage pip and crit glyph ≥ 3:1`, () => {
       const { card, ...readings } = ledgers[row.theme];
       const reading = readings[row.pointer][row.state];
       const fill = paintedFill(reading, card);
       const ratio = (color: Rgba) => contrastRatio(paintedText(color, reading, card), fill);
-      assert.ok(reading.opacity < 1, "a pending row reads dimmed");
       assert.ok(ratio(reading.dim) >= 4.5, `dim cell ${ratio(reading.dim).toFixed(2)}:1`);
       assert.ok(ratio(reading.ink) >= 4.5, `ink title ${ratio(reading.ink).toFixed(2)}:1`);
-      assert.ok(ratio(reading.glyph) >= 3, `crit glyph ${ratio(reading.glyph).toFixed(2)}:1`);
+      assert.ok(ratio(reading.pip) >= 3, `empty stage pip ${ratio(reading.pip).toFixed(2)}:1`);
+      assert.ok(ratio(reading.glyph.crit) >= 3, `crit glyph ${ratio(reading.glyph.crit).toFixed(2)}:1`);
     });
   }
 });
