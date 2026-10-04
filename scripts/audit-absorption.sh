@@ -43,7 +43,6 @@ SCOPE_FILES=(
   autoagent/daemon-apply.sh
   autoagent/daemon-cycle.sh
   autoagent/lib/git-txn.sh
-  scripts/daemon-daily-restart.sh
   scripts/wiki-daily-compile.sh
   scripts/autoagent-daemon-healthcheck.sh
   scripts/wiki-daemon-healthcheck.sh

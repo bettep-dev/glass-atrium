@@ -1,6 +1,6 @@
 #!/usr/bin/env bats
 # Category-3 conversion suite (silent-fail absorption triage) — pins the
-# reporting-channel family in wiki-daily-compile.sh + daemon-daily-restart.sh:
+# reporting-channel family in wiki-daily-compile.sh:
 # a failed PG daemon-run report must surface on stderr AND land a durable record
 # on the pg-report-drops sink (AC-2), while never changing the caller's exit
 # contract (AC-3). Every assertion here fails against the pre-conversion `|| true`
@@ -21,7 +21,6 @@
 bats_require_minimum_version 1.5.0
 
 GA="$(cd -- "${BATS_TEST_DIRNAME}/../.." && pwd)"
-RESTART_SCRIPT="${GA}/scripts/daemon-daily-restart.sh"
 WIKI_SCRIPT="${GA}/scripts/wiki-daily-compile.sh"
 CONFIG_LIB="${GA}/scripts/lib/atrium-config.sh"
 SINK_LIB="${GA}/scripts/lib/pg-report-drop.sh"
@@ -31,7 +30,6 @@ REAL_PG_HELPER="${GA}/scripts/_pg_dual_write_daemon.py"
 source "${GA}/scripts/lib/path-guard.sh"
 
 setup() {
-  [[ -f "${RESTART_SCRIPT}" ]] || skip "daemon-daily-restart.sh not found: ${RESTART_SCRIPT}"
   [[ -f "${WIKI_SCRIPT}" ]] || skip "wiki-daily-compile.sh not found: ${WIKI_SCRIPT}"
   WORK="$(mktemp -d -t absorption-conv-bats.XXXXXX)"
   export GA_DATA_ROOT="${WORK}/ga-data"
@@ -46,16 +44,17 @@ teardown() {
 }
 
 # Extract one top-level writer function (declaration line → first column-0 brace)
-# on top of the real sink lib, into a sourceable shim.
-# $3 selects the donor script (default: daemon-daily-restart.sh).
+# on top of the real sink lib, into a sourceable shim. The donor's own PG_DROP_TAG
+# binding goes first, ahead of the source, as the sink lib requires.
 extract_sink_shim() {
-  local fn_name="$1" shim="$2" donor="${3:-${RESTART_SCRIPT}}"
-  printf 'PG_DROP_TAG="daemon-daily-restart"\n. "%s"\n' "${SINK_LIB}" >"${shim}"
+  local fn_name="$1" shim="$2"
+  grep -m1 '^PG_DROP_TAG=' "${WIKI_SCRIPT}" >"${shim}"
+  printf '. "%s"\n' "${SINK_LIB}" >>"${shim}"
   awk -v fn="${fn_name}" '
     $0 == fn "() {" { capture = 1 }
     capture { print }
     capture && /^\}/ { exit }
-  ' "${donor}" >>"${shim}"
+  ' "${WIKI_SCRIPT}" >>"${shim}"
   grep -q "^${fn_name}() {" "${shim}" || skip "function extraction failed: ${fn_name}"
 }
 
@@ -118,58 +117,27 @@ PY
   chmod +x "${dest}"
 }
 
-set_restart_globals() {
-  export ROLE="wiki"
-  export RUN_DATE="2026-06-10"
-  export STARTED_AT="2026-06-10T00:00:00Z"
+# The skip-branch run record the compile script delivers, exported for the shim's caller.
+set_report_globals() {
   export LOG_FILE="${WORK}/run.log"
   export PG_HELPER="${WORK}/_pg_dual_write_daemon.py"
+  export ENVELOPE='{"op":"write_daemon_run","args":{"daemon_name":"wiki","run_date":"2026-06-10","started_at":"2026-06-10T00:00:00Z","ended_at":"2026-06-10T00:01:00Z","status":"ok","compiled_count":0,"compiled_total":0,"notes":"wiki-daily-compile skipped: no unprocessed files"}}'
   make_failing_pg_helper "${PG_HELPER}"
-}
-
-# ---- daemon-daily-restart.sh: pg_write_run / pg_write_autoagent_run ----
-
-@test "AC-2 pg_write_run: a failed PG report emits a stderr diagnostic and a drop record" {
-  extract_sink_shim pg_write_run "${WORK}/shim.sh"
-  set_restart_globals
-  # shellcheck source=/dev/null
-  run bash -c "source '${WORK}/shim.sh'; pg_write_run ok 2026-06-10T00:01:00Z"
-  [ "$status" -eq 0 ]
-  [[ "$output" == *"WARN: PG daemon-run report failed (site=daily-restart-run"* ]]
-  grep -q 'PG_REPORT_DROP site=daily-restart-run exit=4' "${DROP_LOG}"
-}
-
-@test "AC-2 pg_write_autoagent_run: a failed PG report emits its own site-tagged drop record" {
-  extract_sink_shim pg_write_autoagent_run "${WORK}/shim.sh"
-  set_restart_globals
-  # shellcheck source=/dev/null
-  run bash -c "source '${WORK}/shim.sh'; pg_write_autoagent_run quota_exceeded 2026-06-10T00:01:00Z note"
-  [ "$status" -eq 0 ]
-  [[ "$output" == *"WARN: PG daemon-run report failed (site=autoagent-quota-run"* ]]
-  grep -q 'PG_REPORT_DROP site=autoagent-quota-run exit=4' "${DROP_LOG}"
-}
-
-@test "AC-3 pg_write_run: the conversion branch never changes the caller's status" {
-  extract_sink_shim pg_write_run "${WORK}/shim.sh"
-  set_restart_globals
-  # `set -e` + a following statement: a non-zero return would abort before the marker.
-  run bash -c "set -Eeuo pipefail; source '${WORK}/shim.sh'; pg_write_run error 2026-06-10T00:01:00Z fatal; echo REACHED"
-  [ "$status" -eq 0 ]
-  [[ "$output" == *"REACHED"* ]]
 }
 
 # ---- REAL helper: the sink contract pinned to the shipped exit codes ----
 
 @test "REAL helper psycopg-absent: the chain fires and the drop record pins exit=5" {
-  extract_sink_shim pg_write_run "${WORK}/shim.sh"
-  set_restart_globals
+  extract_sink_shim pg_write_report "${WORK}/shim.sh"
+  set_report_globals
   make_real_pg_helper
   force_psycopg_absent
-  run bash -c "set -Eeuo pipefail; source '${WORK}/shim.sh'; pg_write_run ok 2026-06-10T00:01:00Z; echo REACHED"
-  [ "$status" -eq 0 ]
-  [[ "$output" == *"REACHED"* ]] # AC-3: the primary work still completes under set -e
-  [[ "$output" == *"WARN: PG daemon-run report failed (site=daily-restart-run, exit=5)"* ]]
-  grep -q 'PG_REPORT_DROP site=daily-restart-run exit=5' "${DROP_LOG}"
+  run bash -c "set -Eeuo pipefail; source '${WORK}/shim.sh'; pg_write_report no-unprocessed-skip \"\${ENVELOPE}\"; echo REACHED"
+  [ "$status" -eq 0 ] || { echo "${output}"; return 1; }
+  # AC-3: the primary work still completes under set -e
+  [[ "$output" == *"REACHED"* ]] || { echo "${output}"; return 1; }
+  [[ "$output" == *"WARN: PG daemon-run report failed (site=no-unprocessed-skip, exit=5)"* ]] || { echo "${output}"; return 1; }
+  grep -q 'PG_REPORT_DROP site=no-unprocessed-skip exit=5' "${DROP_LOG}"
   # The helper's own diagnostic lands in LOG_FILE — the WARN above is the
   # separate stderr channel, not that redirected line.
   grep -q 'import_error' "${LOG_FILE}"
@@ -177,52 +145,52 @@ set_restart_globals() {
 
 @test "REAL helper pg-unreachable: the chain fires and the drop record pins exit=4" {
   require_psycopg
-  extract_sink_shim pg_write_run "${WORK}/shim.sh"
-  set_restart_globals
+  extract_sink_shim pg_write_report "${WORK}/shim.sh"
+  set_report_globals
   make_real_pg_helper
   force_pg_unreachable
-  run bash -c "set -Eeuo pipefail; source '${WORK}/shim.sh'; pg_write_run ok 2026-06-10T00:01:00Z; echo REACHED"
-  [ "$status" -eq 0 ]
-  [[ "$output" == *"REACHED"* ]]
-  [[ "$output" == *"WARN: PG daemon-run report failed (site=daily-restart-run, exit=4)"* ]]
-  grep -q 'PG_REPORT_DROP site=daily-restart-run exit=4' "${DROP_LOG}"
+  run bash -c "set -Eeuo pipefail; source '${WORK}/shim.sh'; pg_write_report no-unprocessed-skip \"\${ENVELOPE}\"; echo REACHED"
+  [ "$status" -eq 0 ] || { echo "${output}"; return 1; }
+  [[ "$output" == *"REACHED"* ]] || { echo "${output}"; return 1; }
+  [[ "$output" == *"WARN: PG daemon-run report failed (site=no-unprocessed-skip, exit=4)"* ]] || { echo "${output}"; return 1; }
+  grep -q 'PG_REPORT_DROP site=no-unprocessed-skip exit=4' "${DROP_LOG}"
   grep -q 'pg_write=fail' "${LOG_FILE}"
 }
 
 @test "REAL helper unknown-op: wiki pg_write_report records the named exit=3" {
   require_psycopg
-  extract_sink_shim pg_write_report "${WORK}/shim.sh" "${WIKI_SCRIPT}"
-  set_restart_globals
+  extract_sink_shim pg_write_report "${WORK}/shim.sh"
+  set_report_globals
   make_real_pg_helper
   printf '{"op":"no_such_op"}\n' >"${WORK}/envelope.json"
   run bash -c "set -euo pipefail; source '${WORK}/shim.sh'; pg_write_report probe-unknown-op \"\$(cat '${WORK}/envelope.json')\"; echo REACHED"
-  [ "$status" -eq 0 ]
-  [[ "$output" == *"REACHED"* ]]
-  [[ "$output" == *"WARN: PG daemon-run report failed (site=probe-unknown-op, exit=3)"* ]]
+  [ "$status" -eq 0 ] || { echo "${output}"; return 1; }
+  [[ "$output" == *"REACHED"* ]] || { echo "${output}"; return 1; }
+  [[ "$output" == *"WARN: PG daemon-run report failed (site=probe-unknown-op, exit=3)"* ]] || { echo "${output}"; return 1; }
   grep -q 'PG_REPORT_DROP site=probe-unknown-op exit=3' "${DROP_LOG}"
 }
 
 @test "sink rotation: a drop log above the byte ceiling is restarted, not appended forever" {
-  extract_sink_shim pg_write_run "${WORK}/shim.sh"
-  set_restart_globals
+  extract_sink_shim pg_write_report "${WORK}/shim.sh"
+  set_report_globals
   mkdir -p "${GA_DATA_ROOT}/data"
   head -c 70000 /dev/zero | tr '\0' 'x' >"${DROP_LOG}"
   run bash -c "source '${WORK}/shim.sh'; append_pg_drop probe-site 7"
-  [ "$status" -eq 0 ]
+  [ "$status" -eq 0 ] || { echo "${output}"; return 1; }
   [ "$(wc -c <"${DROP_LOG}" | tr -cd '0-9')" -lt 1000 ]
   grep -q 'PG_REPORT_DROP site=probe-site exit=7' "${DROP_LOG}"
 }
 
 @test "sink rotation: a drop log under a relative data root is never deleted and the refusal is loud" {
-  extract_sink_shim pg_write_run "${WORK}/shim.sh"
-  set_restart_globals
+  extract_sink_shim pg_write_report "${WORK}/shim.sh"
+  set_report_globals
   mkdir -p "${BATS_TEST_TMPDIR}/rel-ga/data"
   local log="${BATS_TEST_TMPDIR}/rel-ga/data/pg-report-drops.log"
   head -c 70000 /dev/zero | tr '\0' 'x' >"${log}"
   run bash -c "cd '${BATS_TEST_TMPDIR}' && GA_DATA_ROOT=rel-ga source '${WORK}/shim.sh' && append_pg_drop probe-site 7; echo REACHED"
-  [ "$status" -eq 0 ]
-  [[ "$output" == *"REACHED"* ]] || return 1
-  [[ "$output" == *"refusing a non-absolute delete target"* ]] || return 1
+  [ "$status" -eq 0 ] || { echo "${output}"; return 1; }
+  [[ "$output" == *"REACHED"* ]] || { echo "${output}"; return 1; }
+  [[ "$output" == *"refusing a non-absolute delete target"* ]] || { echo "${output}"; return 1; }
   [ "$(wc -c <"${log}" | tr -cd '0-9')" -gt 70000 ]
 }
 
@@ -236,8 +204,8 @@ set_restart_globals() {
 }
 
 @test "sink failure is terminal: an unwritable data root never aborts the caller or re-reports" {
-  extract_sink_shim pg_write_run "${WORK}/shim.sh"
-  set_restart_globals
+  extract_sink_shim pg_write_report "${WORK}/shim.sh"
+  set_report_globals
   # A regular file where the sink expects a parent directory: mkdir -p fails
   # with ENOTDIR for EVERY user — path resolution, not a permission check,
   # so no privilege level can bypass it.
@@ -252,13 +220,13 @@ set_restart_globals() {
   # The retained CI log carries no command trace, so that last step stands as
   # the only candidate consistent with the evidence, not as a confirmed one.
   printf 'blocker\n' >"${WORK}/blocked"
-  run bash -c "set -Eeuo pipefail; GA_DATA_ROOT='${WORK}/blocked/ga' source '${WORK}/shim.sh'; pg_write_run ok 2026-06-10T00:01:00Z; echo REACHED"
+  run bash -c "set -Eeuo pipefail; GA_DATA_ROOT='${WORK}/blocked/ga' source '${WORK}/shim.sh'; pg_write_report no-unprocessed-skip \"\${ENVELOPE}\"; echo REACHED"
   [ "$status" -eq 0 ] || {
     echo "unexpected abort: status=${status}"
     printf '%s\n' "${output}"
     false
   }
-  [[ "$output" == *"REACHED"* ]]
+  [[ "$output" == *"REACHED"* ]] || { echo "${output}"; return 1; }
   # Exactly one diagnostic channel fires — the sink failure itself is silent by design.
   [ "$(grep -c 'WARN: PG daemon-run report failed' <<<"$output")" -eq 1 ]
   [ ! -e "${WORK}/blocked/ga/data/pg-report-drops.log" ]
@@ -352,10 +320,10 @@ make_wiki_sandbox() {
 }
 
 @test "drop record format: ISO8601 UTC timestamp, script basename, site slug, exit status" {
-  extract_sink_shim pg_write_run "${WORK}/shim.sh"
-  set_restart_globals
+  extract_sink_shim pg_write_report "${WORK}/shim.sh"
+  set_report_globals
   run bash -c "source '${WORK}/shim.sh'; append_pg_drop fmt-probe 3"
-  [ "$status" -eq 0 ]
-  run grep -cE '^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z \[daemon-daily-restart\] PG_REPORT_DROP site=fmt-probe exit=3$' "${DROP_LOG}"
-  [ "$output" -eq 1 ]
+  [ "$status" -eq 0 ] || { echo "${output}"; return 1; }
+  run grep -cE '^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z \[wiki-daily-compile\] PG_REPORT_DROP site=fmt-probe exit=3$' "${DROP_LOG}"
+  [ "$output" -eq 1 ] || { cat "${DROP_LOG}"; return 1; }
 }
