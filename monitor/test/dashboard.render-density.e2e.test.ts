@@ -16,6 +16,8 @@ import fastifyStatic from "@fastify/static";
 import type { Browser, Page } from "playwright";
 import { chromium } from "playwright";
 
+import { getBelowFloorText } from "./lib/painted-text.js";
+
 const HERE = dirname(fileURLToPath(import.meta.url));
 const PUBLIC_ROOT = resolve(HERE, "..", "public");
 const PAYLOADS: Record<string, unknown> = JSON.parse(
@@ -237,10 +239,6 @@ describe("Runs by hour layout", () => {
   });
 });
 
-// The 13px meta floor covers every rendered text node: the page, the shell's nav rail and footer,
-// and the Tweaks panel the shell mounts in edit mode.
-const META_FLOOR_PX = 13;
-
 async function openDashboardWithTweaks(viewport: Viewport): Promise<Page> {
   const page = await openDashboard(viewport);
   await page.evaluate(() => window.postMessage({ type: "__activate_edit_mode" }, window.location.origin));
@@ -248,25 +246,8 @@ async function openDashboardWithTweaks(viewport: Viewport): Promise<Page> {
   return page;
 }
 
-// visible text nodes below the floor, as "<px> <tag.class>: <text>"
-async function getBelowFloorText(page: Page): Promise<string[]> {
-  return page.evaluate((floor) => {
-    const found: string[] = [];
-    const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
-    while (walker.nextNode()) {
-      const text = (walker.currentNode.textContent ?? "").trim();
-      const el = walker.currentNode.parentElement;
-      if (!text || !el) continue;
-      const style = getComputedStyle(el);
-      // clipped rail labels keep their accessible name but draw nothing
-      const isDrawn = el.getBoundingClientRect().width > 1 && style.visibility !== "hidden" && el.closest(".sr-only") === null;
-      const px = parseFloat(style.fontSize);
-      if (isDrawn && px < floor) found.push(`${px}px ${el.tagName.toLowerCase()}.${String(el.className)}: ${text.slice(0, 40)}`);
-    }
-    return found;
-  }, META_FLOOR_PX);
-}
-
+// The 13px meta floor covers every rendered text node: the page, the shell's nav rail and footer,
+// and the Tweaks panel the shell mounts in edit mode.
 describe("Type floor on the Dashboard page, shell and Tweaks panel included", () => {
   for (const viewport of [{ width: 1024, height: 768 }, { width: 1440, height: 900 }]) {
     test(`no drawn text sits below the 13px meta floor at ${viewport.width}`, async () => {

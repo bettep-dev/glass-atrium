@@ -24,6 +24,7 @@ import { chromium } from "playwright";
 import { disconnectPrisma, getPrisma } from "../src/server/db.js";
 import { registerClaudedDocsRoutes } from "../src/server/routes/clauded-docs.js";
 import { resetDocsRootCache } from "../src/server/clauded-docs/storage.js";
+import { getBelowFloorText } from "./lib/painted-text.js";
 
 // shared fixtures.
 
@@ -1276,27 +1277,6 @@ describe("open-summary rail: placement follows the ledger's minimum width", () =
 
 // The 13px meta floor covers every drawn text node on the Documents screen: the ledger with its open-summary rail and
 // bulk action bar, and the full-screen viewer with its metadata side, version history and stage menu open.
-const META_FLOOR_PX = 13;
-
-// visible text nodes below the floor, as "<px> <tag.class>: <text>"
-async function getBelowFloorText(page: Page): Promise<string[]> {
-  return page.evaluate((floor) => {
-    const found: string[] = [];
-    const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
-    while (walker.nextNode()) {
-      const text = (walker.currentNode.textContent ?? "").trim();
-      const el = walker.currentNode.parentElement;
-      if (!text || !el) continue;
-      const style = getComputedStyle(el);
-      // clipped rail labels keep their accessible name but draw nothing
-      const isDrawn = el.getBoundingClientRect().width > 1 && style.visibility !== "hidden" && el.closest(".sr-only") === null;
-      const px = parseFloat(style.fontSize);
-      if (isDrawn && px < floor) found.push(`${px}px ${el.tagName.toLowerCase()}.${String(el.className)}: ${text.slice(0, 40)}`);
-    }
-    return found;
-  }, META_FLOOR_PX);
-}
-
 describe("Type floor on the Documents screen, its viewer, version history and stage menu included", () => {
   const title = { predecessor: makeTitle("floor-pred", 0), successor: makeTitle("floor-succ", 0) };
   const seedIds: number[] = [];

@@ -15,6 +15,7 @@ import {
   renderScreen,
   type RenderedNode,
 } from "./lib/render-screen.js";
+import { getReducedMotionCss } from "./lib/css-source.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const UI_SRC = resolve(__dirname, "../public/src/ui.jsx");
@@ -366,19 +367,6 @@ function getCssRules(css: string): Array<[string, string]> {
   return [...css.matchAll(/([^{}]+)\{([^{}]*)\}/g)].flatMap((m) =>
     m[1].split(",").map((selector) => [selector.trim(), m[2]] as [string, string]),
   );
-}
-
-// the contents of every `@media (prefers-reduced-motion: reduce)` block
-function getReducedMotionCss(css: string): string {
-  return [...css.matchAll(/@media\s*\(prefers-reduced-motion:\s*reduce\)\s*\{/g)]
-    .map((m) => {
-      const start = (m.index ?? 0) + m[0].length;
-      let depth = 1;
-      let end = start;
-      for (; end < css.length && depth > 0; end++) depth += css[end] === "{" ? 1 : css[end] === "}" ? -1 : 0;
-      return css.slice(start, end - 1);
-    })
-    .join("\n");
 }
 
 function getDecl(body: string, prop: string): string | undefined {
