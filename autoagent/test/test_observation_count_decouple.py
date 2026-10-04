@@ -86,9 +86,11 @@ _QUALIFYING_ROWS = 12
 _SAMPLE_CAP = 5
 
 _APPLY_SH = _AUTOAGENT_DIR / "daemon-apply.sh"
-_GATE_CANDIDATE_LABEL = "f1-gate-candidate-fixture"
-_GATE_MENTION_LABEL = "f1-gate-mention-fixture"
-_GATE_SAFETY_LABEL = "f1-gate-safety-routed-fixture"
+_GATE_LABEL = {
+    "candidate": "f1-gate-candidate-fixture",
+    "mention": "f1-gate-mention-fixture",
+    "safety": "f1-gate-safety-routed-fixture",
+}
 # Columns of every backlog predicate other than approval_tier.
 _BACKLOG_PREDICATE_COLUMNS = (
     "classification::text, pre_verify_passed, status::text, promotion_tier"
@@ -292,9 +294,8 @@ class TestApplyGateAllowlist(unittest.TestCase):
     excludes 'mention' and excludes the safety-routed row."""
 
     conn = None
-    candidate_id: int = -1
-    mention_id: int = -1
-    safety_id: int = -1
+    # Not `id`: that would shadow TestCase.id(), which the runner calls to name each test.
+    proposal_id: dict[str, int]
 
     @classmethod
     def _backlog_sql(cls) -> str:
@@ -316,12 +317,12 @@ class TestApplyGateAllowlist(unittest.TestCase):
         cls.conn = get_ephemeral_connection()
         cls.addClassCleanup(cls._rollback_and_close)
 
+        cls.proposal_id = {}
         cycle_date = date.today()
         with cls.conn.cursor() as cur:
-            for label, tier, attr in (
-                (_GATE_CANDIDATE_LABEL, "candidate", "candidate_id"),
-                (_GATE_MENTION_LABEL, "mention", "mention_id"),
-            ):
+            # These two fixture classes are named after the promotion_tier they store.
+            for tier in ("candidate", "mention"):
+                label = _GATE_LABEL[tier]
                 cur.execute(
                     "INSERT INTO core.autoagent_proposals "
                     "(cycle_date, pattern_label, target_file, target_agent, "
@@ -347,21 +348,22 @@ class TestApplyGateAllowlist(unittest.TestCase):
                         tier,
                     ),
                 )
-                setattr(cls, attr, cur.fetchone()[0])
-        cls.safety_id = cls._write_safety_routed_row(cycle_date)
+                cls.proposal_id[tier] = cur.fetchone()[0]
+        cls.proposal_id["safety"] = cls._write_safety_routed_row(cycle_date)
 
     @classmethod
     def _write_safety_routed_row(cls, cycle_date: date) -> int:
         """Store a safety-routed body-auto proposal through the real writer, on the
         class transaction, eligible on every other backlog predicate."""
+        label = _GATE_LABEL["safety"]
         connect = mock.patch.object(
             dual_write, "_connect", lambda: _NonCommittingConn(cls.conn)
         )
         with connect:
             dual_write.write_autoagent_proposal(
                 cycle_date=cycle_date,
-                pattern_label=_GATE_SAFETY_LABEL,
-                target_file=f"/tmp/{_GATE_SAFETY_LABEL}.md",
+                pattern_label=label,
+                target_file=f"/tmp/{label}.md",
                 target_agent=_PROBE_AGENT,
                 classification="body-auto",
                 rationale="f1 gate fixture",
@@ -378,7 +380,7 @@ class TestApplyGateAllowlist(unittest.TestCase):
         with cls.conn.cursor() as cur:
             cur.execute(
                 "SELECT id FROM core.autoagent_proposals WHERE pattern_label = %s",
-                (_GATE_SAFETY_LABEL,),
+                (label,),
             )
             return cur.fetchone()[0]
 
@@ -394,26 +396,26 @@ class TestApplyGateAllowlist(unittest.TestCase):
         with self.conn.cursor() as cur:
             cur.execute(self._backlog_sql())
             selected_ids = {row[0] for row in cur.fetchall()}
-        self.assertIn(self.candidate_id, selected_ids)
-        self.assertNotIn(self.mention_id, selected_ids)
+        self.assertIn(self.proposal_id["candidate"], selected_ids)
+        self.assertNotIn(self.proposal_id["mention"], selected_ids)
 
     def test_when_gate_runs_then_safety_routed_row_is_not_selected(self) -> None:
         with self.conn.cursor() as cur:
             cur.execute(
                 f"SELECT id, {_BACKLOG_PREDICATE_COLUMNS} "
                 "FROM core.autoagent_proposals WHERE id IN (%s, %s)",
-                (self.candidate_id, self.safety_id),
+                (self.proposal_id["candidate"], self.proposal_id["safety"]),
             )
             predicate_values = {row[0]: row[1:] for row in cur.fetchall()}
             cur.execute(self._backlog_sql())
             selected_ids = {row[0] for row in cur.fetchall()}
         self.assertEqual(
-            predicate_values[self.safety_id],
-            predicate_values[self.candidate_id],
+            predicate_values[self.proposal_id["safety"]],
+            predicate_values[self.proposal_id["candidate"]],
             "the safety row must differ from the candidate row only in approval_tier",
         )
-        self.assertIn(self.candidate_id, selected_ids)
-        self.assertNotIn(self.safety_id, selected_ids)
+        self.assertIn(self.proposal_id["candidate"], selected_ids)
+        self.assertNotIn(self.proposal_id["safety"], selected_ids)
 
 
 if __name__ == "__main__":
