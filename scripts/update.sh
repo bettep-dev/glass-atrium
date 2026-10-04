@@ -160,7 +160,8 @@
 # production): ATRIUM_UPDATE_PSQL (psql) · ATRIUM_UPDATE_DB_NAME (glass_atrium) ·
 # ATRIUM_UPDATE_DB=off (disable update_job tracking only — the resolved-gap record
 # rides its own ATRIUM_UPDATE_PG_HELPER seam, not psql) ·
-# ATRIUM_UPDATE_PG_HELPER (resolved-gap dual-write CLI) · ATRIUM_UPDATE_JOB_ID (adopt a row the
+# ATRIUM_UPDATE_PG_HELPER (resolved-gap dual-write CLI) · ATRIUM_UPDATE_BACKFILL_PY (the
+# unadjudicated backfill mode, autoagent/daemon_cycle.py) · ATRIUM_UPDATE_JOB_ID (adopt a row the
 # web route pre-created instead of INSERTing) · ATRIUM_UPDATE_NPM (npm) ·
 # ATRIUM_UPDATE_LAUNCHCTL (launchctl) · ATRIUM_UPDATE_LAUNCH_AGENTS_DIR
 # (~/Library/LaunchAgents) · ATRIUM_UPDATE_RENDERED_LAUNCHD_DIR
@@ -2931,12 +2932,16 @@ update_wire_hooks_post_apply() {
 #     migrations directory itself ships with the release, so the state is reached by
 #     updating rather than by breaking anything. An EXPLICIT ATRIUM_UPDATE_PRISMA
 #     override bypasses the branch: naming a binary means use it.
+# None of the three runs the unadjudicated backfill, and neither does a deploy whose
+# target was overridden (the DB-target skip in update_run_unadjudicated_backfill); the
+# re-arm marker written first leaves each of them to the daemon cycle head.
 update_migrate_deploy_post_apply() {
   local root monitor_dir prisma_bin rc=0
   root="$(update_ga_root)"
   monitor_dir="${ATRIUM_UPDATE_MONITOR_DIR:-${root}/monitor}"
   prisma_bin="${ATRIUM_UPDATE_PRISMA:-${monitor_dir}/node_modules/.bin/prisma}"
 
+  update_rearm_unadjudicated_backfill
   if [[ -n "${GA_SKIP_DB_SETUP:-}" ]]; then
     update_log "migrate: SKIPPED (GA_SKIP_DB_SETUP set) — pending migrations stay pending; apply with '${root}/glass-atrium db-setup'"
     return 0
@@ -2963,6 +2968,63 @@ update_migrate_deploy_post_apply() {
     update_die_code 15 "prisma migrate deploy failed (rc=${rc}) — update files APPLIED but the database schema was NOT migrated (database unreachable, or a migration errored — see the prisma output above); the monitor was NOT restarted. Recover with '${root}/glass-atrium db-setup', then '${root}/glass-atrium doctor'"
   fi
   update_log "migrate: pending Prisma migrations applied"
+  update_run_unadjudicated_backfill "${root}"
+}
+
+# Re-arm marker the daemon cycle head reads: written on every applied update before any
+# no-op or failure can return, so the backfill still runs when the hand-off below does not.
+update_rearm_unadjudicated_backfill() {
+  local reports
+  reports="$(update_reports_dir)"
+  if ! { mkdir -p -- "${reports}" && : >"${reports}/.unadjudicated-backfill-pending"; }; then
+    update_log "WARN: could not write the unadjudicated-backfill re-arm marker under ${reports} — the update continues; the next update or '$(update_ga_root)/glass-atrium db-setup' re-arms it"
+  fi
+}
+
+# Run the unadjudicated backfill over the just-migrated schema, inside the updater's own
+# .apply-lock hold (the mode's lock gate reads it). Best-effort: no mode rc changes the
+# update rc, and every non-zero leaves the re-arm marker for the daemon cycle.
+update_run_unadjudicated_backfill() {
+  local root="$1" mode reports override rc=0
+  override="$(update_backfill_target_override)"
+  if [[ -n "${override}" ]]; then
+    update_log "migrate: unadjudicated backfill SKIPPED — ${override}; the re-arm marker leaves it to the daemon cycle"
+    return 0
+  fi
+  mode="${ATRIUM_UPDATE_BACKFILL_PY:-${root}/autoagent/daemon_cycle.py}"
+  if [[ ! -f "${mode}" ]]; then
+    update_log "WARN: unadjudicated backfill skipped — no entry point at ${mode}; the re-arm marker leaves it to the daemon cycle"
+    return 0
+  fi
+  reports="$(update_reports_dir)"
+  update_log "migrate: running the unadjudicated backfill (${reports})"
+  python3 "${mode}" --backfill-unadjudicated --reports-dir "${reports}" >&2 || rc=$?
+  update_log_backfill_rc "${rc}"
+}
+
+# Why the deploy's database may not be the one the backfill reaches (dbname=glass_atrium
+# on libpq's default target); empty when nothing overrides it. DATABASE_URL is tested
+# for set-ness only — its value is never expanded here.
+update_backfill_target_override() {
+  if [[ -n "${DATABASE_URL+set}" ]]; then
+    printf '%s
+' "DATABASE_URL is set, so the migrated database may not be glass_atrium, the only one the backfill reaches"
+  elif [[ -n "${ATRIUM_UPDATE_DB_NAME+set}" && "${ATRIUM_UPDATE_DB_NAME}" != glass_atrium ]]; then
+    printf '%s
+' "ATRIUM_UPDATE_DB_NAME=${ATRIUM_UPDATE_DB_NAME} is not glass_atrium, the only database the backfill reaches"
+  fi
+}
+
+# One named line per backfill exit code (autoagent/daemon_cycle.py → ExitCode).
+update_log_backfill_rc() {
+  local rc="$1" retry="the re-arm marker stays and the daemon cycle retries it (update continues)"
+  case "${rc}" in
+    0) update_log "migrate: unadjudicated backfill done" ;;
+    7) update_log "WARN: unadjudicated backfill hit a PostgreSQL fault (rc=7) — ${retry}" ;;
+    10) update_log "WARN: unadjudicated backfill deferred (rc=10) — a sandbox DB target, a live daemon cycle or a schema without the 'unadjudicated' label; ${retry}" ;;
+    11) update_log "WARN: unadjudicated backfill refused — apply lock not held (rc=11) — ${retry}" ;;
+    *) update_log "WARN: unadjudicated backfill failed (rc=${rc}) — ${retry}" ;;
+  esac
 }
 
 # ---------------------------------------------------------------------------

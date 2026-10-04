@@ -21,6 +21,8 @@
 # production database) is therefore unreadable from the fixture, and DATABASE_URL can only come from
 # the environment this suite sets. Both rows skip when the PostgreSQL tools or a built prisma CLI are
 # unavailable, so a CI host without them stays green rather than silently weakening the contract.
+# The backfill mode a clean deploy hands off to is always the recording stub at
+# ATRIUM_UPDATE_BACKFILL_PY, set in every driver below — no row runs the real mode.
 #
 # Each row names its MUTATION — the single change that flips it — because a row that passes on both
 # sides of its own subject proves nothing. The stub-based rows record every invocation, so "prisma
@@ -49,7 +51,10 @@ setup() {
   MONITOR="${INSTALL}/monitor"
   STATE="${WORK}/state"
   CALLS="${WORK}/calls.log" # every stub invocation, in order
+  REPORTS="${STATE}/daemon-reports"
+  BACKFILL_LOG="${WORK}/backfill.log" # every backfill-mode invocation, one line each
   mkdir -p "${INSTALL}" "${MONITOR}" "${STATE}"
+  seed_backfill_stub 0
   # Both roots the finalize retire step reads → sandboxed, so no run reaches a live store.
   export GA_DATA_ROOT="${WORK}/data-root"
   export GA_TARGET_HOME="${WORK}/target-home"
@@ -86,12 +91,41 @@ STUB
   chmod +x "${PRISMA_STUB}"
 }
 
-# Run the step alone, in a fresh strict-mode subprocess, against the sandbox.
-# Extra env assignments may be passed as NAME=VALUE arguments.
+# Recording backfill-mode stub: logs its argv plus whether the reports dir's .apply-lock pid names
+# one of its ancestors (the mode's own lock gate), then exits with $1.
+seed_backfill_stub() {
+  local rc="${1:-0}"
+  BACKFILL_STUB="${WORK}/backfill-stub.py"
+  cat >"${BACKFILL_STUB}" <<STUB
+import os, subprocess, sys
+args = sys.argv[1:]
+reports = args[args.index("--reports-dir") + 1] if "--reports-dir" in args else ""
+holder = "nolock"
+try:
+    with open(os.path.join(reports, ".apply-lock", "pid")) as handle:
+        lock_pid = int(handle.read().strip())
+    pid, chain = os.getpid(), []
+    while pid > 1:
+        ps = subprocess.run(["ps", "-o", "ppid=", "-p", str(pid)], capture_output=True, text=True)
+        pid = int(ps.stdout.strip() or 0)
+        chain.append(pid)
+    holder = "ancestor" if lock_pid in chain else "foreign"
+except (OSError, ValueError):
+    pass
+with open("${BACKFILL_LOG}", "a") as handle:
+    handle.write(" ".join(args) + " lock=" + holder + "\n")
+sys.exit(${rc})
+STUB
+}
+
+# Run the step alone, in a fresh strict-mode subprocess, against the sandbox. The DB-target inputs
+# are cleared first so the caller's shell cannot flip a row; extra env assignments may be passed as
+# NAME=VALUE arguments.
 run_step() {
-  run env \
+  run env -u DATABASE_URL -u ATRIUM_UPDATE_DB_NAME -u GA_SKIP_DB_SETUP -u GA_DB_NAME \
     GA_ROOT="${INSTALL}" \
-    AUTOAGENT_REPORTS_DIR="${STATE}/daemon-reports" \
+    AUTOAGENT_REPORTS_DIR="${REPORTS}" \
+    ATRIUM_UPDATE_BACKFILL_PY="${BACKFILL_STUB}" \
     ATRIUM_UPDATE_STATE_DIR="${STATE}/update-state" \
     ATRIUM_UPDATE_MONITOR_DIR="${MONITOR}" \
     ATRIUM_UPDATE_PRISMA="${PRISMA_STUB:-${WORK}/absent-prisma}" \
@@ -183,9 +217,10 @@ assert_prisma_never_ran() {
   seed_migrations # migrations present; node_modules deliberately absent
 
   # No ATRIUM_UPDATE_PRISMA override: the default derivation is what has to notice.
-  run env \
+  run env -u DATABASE_URL -u ATRIUM_UPDATE_DB_NAME -u GA_SKIP_DB_SETUP -u GA_DB_NAME \
     GA_ROOT="${INSTALL}" \
-    AUTOAGENT_REPORTS_DIR="${STATE}/daemon-reports" \
+    AUTOAGENT_REPORTS_DIR="${REPORTS}" \
+    ATRIUM_UPDATE_BACKFILL_PY="${BACKFILL_STUB}" \
     ATRIUM_UPDATE_STATE_DIR="${STATE}/update-state" \
     ATRIUM_UPDATE_MONITOR_DIR="${MONITOR}" \
     bash -c '
@@ -206,9 +241,10 @@ assert_prisma_never_ran() {
   # MUTATION — create node_modules WITHOUT a prisma binary in it, changing nothing else. The
   # install is now broken rather than uninstalled, and the same step loud-fails.
   mkdir -p -- "${MONITOR}/node_modules"
-  run env \
+  run env -u DATABASE_URL -u ATRIUM_UPDATE_DB_NAME -u GA_SKIP_DB_SETUP -u GA_DB_NAME \
     GA_ROOT="${INSTALL}" \
-    AUTOAGENT_REPORTS_DIR="${STATE}/daemon-reports" \
+    AUTOAGENT_REPORTS_DIR="${REPORTS}" \
+    ATRIUM_UPDATE_BACKFILL_PY="${BACKFILL_STUB}" \
     ATRIUM_UPDATE_STATE_DIR="${STATE}/update-state" \
     ATRIUM_UPDATE_MONITOR_DIR="${MONITOR}" \
     bash -c '
@@ -495,10 +531,11 @@ STUB
 }
 
 run_e2e() {
-  run env \
+  run env -u DATABASE_URL -u ATRIUM_UPDATE_DB_NAME -u GA_SKIP_DB_SETUP -u GA_DB_NAME \
     GA_ROOT="${INSTALL}" \
     GA_TARGET_HOME="${WORK}/facade" \
-    AUTOAGENT_REPORTS_DIR="${STATE}/daemon-reports" \
+    AUTOAGENT_REPORTS_DIR="${REPORTS}" \
+    ATRIUM_UPDATE_BACKFILL_PY="${BACKFILL_STUB}" \
     ATRIUM_UPDATE_STATE_DIR="${STATE}/update-state" \
     ATRIUM_UPDATE_SRC_DIR="${NEWSRC}" \
     ATRIUM_UPDATE_SRC_MANIFEST="${WORK}/manifest.json" \
@@ -561,4 +598,233 @@ run_e2e() {
   printf 'old' >"${INSTALL}/scripts/tool.sh"
   run_e2e
   [[ "${status}" -eq 0 ]] || return 1
+}
+
+# ── re-arm marker and the unadjudicated backfill hand-off ───────────────────────────────────────
+
+# The daemon cycle head runs the backfill while this marker exists, so the step writes it before any
+# branch can return; the step itself runs the mode only after a deploy that exited 0.
+marker_path() { printf '%s\n' "${REPORTS}/.unadjudicated-backfill-pending"; }
+
+assert_backfill_never_ran() {
+  [[ ! -s "${BACKFILL_LOG}" ]] || {
+    echo "the backfill mode ran when it must not have: $(cat -- "${BACKFILL_LOG}")" >&2
+    return 1
+  }
+}
+
+assert_backfill_ran_once_with() {
+  local reports="$1" lines
+  lines="$(wc -l <"${BACKFILL_LOG}" 2>/dev/null | tr -d ' ')"
+  [[ "${lines}" == "1" ]] || {
+    echo "expected exactly one backfill invocation, got '${lines}': $(cat -- "${BACKFILL_LOG}" 2>/dev/null)" >&2
+    return 1
+  }
+  grep -qF -- "--backfill-unadjudicated --reports-dir ${reports} lock=" "${BACKFILL_LOG}" || {
+    echo "backfill argv did not name the reports dir ${reports}: $(cat -- "${BACKFILL_LOG}")" >&2
+    return 1
+  }
+}
+
+@test "a failing deploy leaves the re-arm marker for the cycle and never runs the backfill" {
+  seed_migrations
+  seed_prisma_stub 3
+
+  run_step
+  [[ "${status}" -eq 15 ]] || {
+    echo "expected named exit 15, got ${status} — output:" >&2
+    echo "${output}" >&2
+    return 1
+  }
+  [[ -f "$(marker_path)" ]] || {
+    echo "no re-arm marker at $(marker_path) — output:" >&2
+    echo "${output}" >&2
+    return 1
+  }
+  assert_backfill_never_ran || return 1
+}
+
+@test "every documented no-op still writes the re-arm marker and never runs the backfill" {
+  local row name
+  for row in skip-opt-out no-migrations-dir no-node-modules; do
+    name="${row}"
+    MONITOR="${WORK}/${row}/monitor"
+    REPORTS="${WORK}/${row}/reports"
+    BACKFILL_LOG="${WORK}/${row}/backfill.log"
+    mkdir -p -- "${MONITOR}"
+    seed_backfill_stub 0
+    seed_prisma_stub 0
+    case "${row}" in
+      skip-opt-out)
+        seed_migrations
+        run_step GA_SKIP_DB_SETUP=1
+        ;;
+      no-migrations-dir) run_step ;;
+      no-node-modules)
+        seed_migrations
+        run_step ATRIUM_UPDATE_PRISMA=
+        ;;
+    esac
+    [[ "${status}" -eq 0 ]] || {
+      echo "${name}: expected rc 0, got ${status} — output:" >&2
+      echo "${output}" >&2
+      return 1
+    }
+    [[ -f "$(marker_path)" ]] || {
+      echo "${name}: no re-arm marker at $(marker_path) — output:" >&2
+      echo "${output}" >&2
+      return 1
+    }
+    assert_backfill_never_ran || {
+      echo "${name}" >&2
+      return 1
+    }
+  done
+}
+
+@test "a clean deploy runs the backfill once, under the reports dir the marker went to" {
+  local row
+  for row in reports-env data-root-only; do
+    seed_migrations
+    seed_prisma_stub 0
+    BACKFILL_LOG="${WORK}/${row}.log"
+    seed_backfill_stub 0
+    if [[ "${row}" == reports-env ]]; then
+      REPORTS="${WORK}/${row}/reports"
+      run_step
+    else
+      REPORTS="${WORK}/${row}/data/daemon-reports"
+      # a nested env drops the AUTOAGENT_REPORTS_DIR run_step sets, leaving GA_DATA_ROOT to decide
+      run_step env -u AUTOAGENT_REPORTS_DIR GA_DATA_ROOT="${WORK}/${row}"
+    fi
+    [[ "${status}" -eq 0 ]] || {
+      echo "${row}: expected rc 0, got ${status} — output:" >&2
+      echo "${output}" >&2
+      return 1
+    }
+    [[ -f "$(marker_path)" ]] || {
+      echo "${row}: no re-arm marker at $(marker_path) — output:" >&2
+      echo "${output}" >&2
+      return 1
+    }
+    assert_backfill_ran_once_with "${REPORTS}" || {
+      echo "${row}" >&2
+      return 1
+    }
+  done
+}
+
+@test "an overridden migrate target skips the backfill by name and leaves the update rc at 0" {
+  local row input expect_ran needle
+  local secret="postgresql://sentinel-user:sentinel-pass@db.invalid/elsewhere"
+  for row in database-url sandbox-db-name install-db-name; do
+    BACKFILL_LOG="${WORK}/${row}.log"
+    seed_backfill_stub 0
+    seed_migrations
+    seed_prisma_stub 0
+    case "${row}" in
+      database-url) input="DATABASE_URL=${secret}" expect_ran=0 needle="DATABASE_URL is set" ;;
+      sandbox-db-name) input="ATRIUM_UPDATE_DB_NAME=sbx_db" expect_ran=0 needle="ATRIUM_UPDATE_DB_NAME=sbx_db" ;;
+      install-db-name) input="ATRIUM_UPDATE_DB_NAME=glass_atrium" expect_ran=1 needle="" ;;
+    esac
+    run_step "${input}"
+    [[ "${status}" -eq 0 ]] || {
+      echo "${row}: expected rc 0, got ${status} — output:" >&2
+      echo "${output}" >&2
+      return 1
+    }
+    if [[ "${expect_ran}" -eq 1 ]]; then
+      assert_backfill_ran_once_with "${REPORTS}" || {
+        echo "${row}" >&2
+        return 1
+      }
+    else
+      assert_backfill_never_ran || {
+        echo "${row}" >&2
+        return 1
+      }
+      assert_has "unadjudicated backfill SKIPPED — ${needle}" || {
+        echo "${row}" >&2
+        return 1
+      }
+    fi
+    # The connection string is never expanded into the log.
+    assert_lacks "sentinel-pass" || {
+      echo "${row}" >&2
+      return 1
+    }
+  done
+}
+
+@test "each backfill exit code gets its own named line and never changes the update rc" {
+  local row rc needle
+  for row in "0|unadjudicated backfill done" \
+    "7|unadjudicated backfill hit a PostgreSQL fault (rc=7)" \
+    "10|unadjudicated backfill deferred (rc=10)" \
+    "11|unadjudicated backfill refused — apply lock not held (rc=11)" \
+    "13|unadjudicated backfill failed (rc=13)" \
+    "2|unadjudicated backfill failed (rc=2)"; do
+    rc="${row%%|*}"
+    needle="${row#*|}"
+    BACKFILL_LOG="${WORK}/rc-${rc}.log"
+    seed_backfill_stub "${rc}"
+    seed_migrations
+    seed_prisma_stub 0
+    run_step
+    [[ "${status}" -eq 0 ]] || {
+      echo "mode rc ${rc}: expected update rc 0, got ${status} — output:" >&2
+      echo "${output}" >&2
+      return 1
+    }
+    assert_has "${needle}" || {
+      echo "mode rc ${rc}" >&2
+      return 1
+    }
+  done
+}
+
+@test "a missing backfill entry point is a named warning, not a failed update" {
+  seed_migrations
+  seed_prisma_stub 0
+
+  run_step ATRIUM_UPDATE_BACKFILL_PY="${WORK}/absent-backfill.py"
+  [[ "${status}" -eq 0 ]] || {
+    echo "expected rc 0, got ${status} — output:" >&2
+    echo "${output}" >&2
+    return 1
+  }
+  assert_has "WARN: unadjudicated backfill skipped — no entry point at ${WORK}/absent-backfill.py" || return 1
+  [[ -f "$(marker_path)" ]] || return 1
+}
+
+@test "an unwritable reports dir warns by name and the deploy still runs" {
+  seed_migrations
+  seed_prisma_stub 0
+  printf 'not a directory' >"${WORK}/blocker"
+  REPORTS="${WORK}/blocker/reports"
+
+  run_step
+  [[ "${status}" -eq 0 ]] || {
+    echo "expected rc 0, got ${status} — output:" >&2
+    echo "${output}" >&2
+    return 1
+  }
+  assert_has "WARN: could not write the unadjudicated-backfill re-arm marker" || return 1
+  assert_prisma_ran || return 1
+}
+
+@test "update_run hands the backfill the reports dir while its own apply lock is held" {
+  seed_e2e
+  seed_prisma_stub 0
+
+  run_e2e
+  [[ "${status}" -eq 0 ]] || {
+    echo "the driven update did not succeed, got ${status} — output:" >&2
+    echo "${output}" >&2
+    return 1
+  }
+  grep -qF -- "--backfill-unadjudicated --reports-dir ${REPORTS} lock=ancestor" "${BACKFILL_LOG}" || {
+    echo "the backfill did not run under the updater's lock: $(cat -- "${BACKFILL_LOG}" 2>/dev/null)" >&2
+    return 1
+  }
 }
