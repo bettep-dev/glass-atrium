@@ -69,6 +69,11 @@ setup() {
   mkdir -p -- "${FAKE_HOME}/.glass-atrium/scripts" "${WORK}/real/autoagent" "${WORK}/bin"
   DRIVER="${WORK}/real/autoagent/daemon-cycle.sh"
   cp -p -- "${REAL_DRIVER}" "${DRIVER}"
+  # The driver's backfill head stage reads its trigger files here: a completion record and no re-arm
+  # marker keep it not pending, so it loads no lock lib (this copied tree carries none) and calls nothing.
+  BACKFILL_REPORTS="${WORK}/backfill-reports"
+  mkdir -p -- "${BACKFILL_REPORTS}"
+  : >"${BACKFILL_REPORTS}/.unadjudicated-backfill-done"
   # The report the cycle writes IS the durable channel the verdict lands in, so it has to exist for
   # the same reason it exists on a real cycle: the cycle stage wrote it before the terminal stage runs.
   OUT_JSON="${WORK}/cycle.json"
@@ -161,8 +166,8 @@ EOF
 # short-circuits the resolution the stub feeds.
 run_driver() {
   run env -u AUTOAGENT_CLAUDE_BIN \
-    HOME="${FAKE_HOME}" AUTOAGENT_PYTHON_BIN=python3 PATH="${WORK}/bin:${PATH}" \
-    bash "${DRIVER}" --out "${OUT_JSON}" "$@"
+    HOME="${FAKE_HOME}" AUTOAGENT_REPORTS_DIR="${BACKFILL_REPORTS}" AUTOAGENT_PYTHON_BIN=python3 \
+    PATH="${WORK}/bin:${PATH}" bash "${DRIVER}" --out "${OUT_JSON}" "$@"
 }
 
 # Behavioural presence probe: the stage announces itself on every path it takes (verdict, skip), so
