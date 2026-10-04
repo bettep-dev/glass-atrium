@@ -4,6 +4,9 @@
 # Invoked once per /loop wakeup. Runs stages in sequence; each is independent
 # (one stage's failure logs but does not abort the next):
 #
+#   0. backfill     — head stage, every mode: while pending (completion record
+#                     absent or re-arm marker present in the reports dir), run
+#                     daemon_cycle.py --backfill-unadjudicated under .apply-lock.
 #   1. cycle        — pattern → outcomes → Haiku patch → classification →
 #                     pre-verify (4-axis review per body-auto patch) → JSON.
 #                     Pre-verify is embedded inside the cycle stage so each
@@ -30,6 +33,8 @@
 #     daemon-cycle.sh --apply-only        # M5 only (against today's existing JSON)
 #     daemon-cycle.sh --regression-only   # DEPRECATED no-op — emits warning, exits 0
 #     daemon-cycle.sh --aggregate-only    # learning-aggregator.py only
+#     daemon-cycle.sh --backfill-only     # backfill head stage only, pending forced;
+#                                         # exits with its rc, nothing after it runs
 #     daemon-cycle.sh --full-cycle        # explicit alias for default
 #     daemon-cycle.sh --dry-run           # propagate dry-run to all stages
 #                                         # (also implies --skip-pre-verify on cycle stage)
@@ -56,6 +61,7 @@
 #     2 — argument error / unknown stage mode
 #     3 — python3 not found on PATH
 #     4 — claude binary not found on PATH/known locations
+#     130 / 143 — INT / TERM while the backfill stage holds .apply-lock (released first)
 
 set -euo pipefail
 IFS=$'\n\t'
@@ -174,7 +180,7 @@ APPLY_LIMIT="${AUTOAGENT_APPLY_LIMIT:-0}"
 DRY_RUN=0
 OUT_PATH=""
 EXTRA_ARGS=()
-STAGE_MODE="full"  # full | cycle | apply | regression | aggregate
+STAGE_MODE="full"  # full | cycle | apply | regression | aggregate | backfill
 # Tracks whether the `full` dispatch already ran run_pg_push_stage (between
 # cycle and apply) so the tail does NOT push a second time.
 FULL_MODE_PG_PUSHED=0
@@ -233,8 +239,12 @@ while [[ $# -gt 0 ]]; do
             STAGE_MODE="aggregate"
             shift
             ;;
+        --backfill-only)
+            STAGE_MODE="backfill"
+            shift
+            ;;
         -h|--help)
-            sed -n '2,30p' "${BASH_SOURCE[0]}"
+            sed -n '2,46p' "${BASH_SOURCE[0]}"
             exit 0
             ;;
         *)
@@ -738,6 +748,101 @@ run_doctor_stage() {
     return "${rc}"
 }
 
+# Unadjudicated-backfill head stage. The reports dir is the one daemon-apply.sh and update.sh lock,
+# so all three writers serialize on one .apply-lock; the mode derives lock, marker and record from it.
+BACKFILL_LOCK_LIB="${ATRIUM_APPLY_LOCK_LIB:-${SCRIPT_DIR}/../scripts/lib/apply-lock.sh}"
+BACKFILL_LOCK_DIR=""
+
+# Echo why the stage runs nothing — before any lib or lock is touched; empty → run it.
+# Pending = completion record absent OR re-arm marker present; --backfill-only forces it.
+get_backfill_skip_reason() {
+    local reports_dir="$1"
+    if [[ "${DRY_RUN}" -eq 1 ]]; then
+        printf 'dry-run\n'
+    elif [[ -n "${GA_SKIP_DB_SETUP:-}" ]]; then
+        printf 'GA_SKIP_DB_SETUP set\n'
+    elif [[ "${STAGE_MODE}" != "backfill" && -e "${reports_dir}/.unadjudicated-backfill-done" ]] \
+        && [[ ! -e "${reports_dir}/.unadjudicated-backfill-pending" ]]; then
+        printf 'not pending (completion record present, no re-arm marker in %s)\n' "${reports_dir}"
+    fi
+}
+
+load_backfill_lock_lib() {
+    if [[ ! -f "${BACKFILL_LOCK_LIB}" ]]; then
+        printf '[daemon-cycle] stage=backfill FAILED: apply-lock lib missing (%s) — cycle degraded\n' \
+            "${BACKFILL_LOCK_LIB}" >&2
+        return 1
+    fi
+    # shellcheck source-path=SCRIPTDIR
+    # shellcheck source=../scripts/lib/apply-lock.sh
+    if ! . "${BACKFILL_LOCK_LIB}"; then
+        printf '[daemon-cycle] stage=backfill FAILED: apply-lock lib failed to load (%s) — cycle degraded\n' \
+            "${BACKFILL_LOCK_LIB}" >&2
+        return 1
+    fi
+}
+
+# A fresh data dir has no reports dir yet; without it the acquire would read as a held lock.
+create_backfill_reports_dir() {
+    if ! mkdir -p -- "$1"; then
+        printf '[daemon-cycle] stage=backfill FAILED: reports dir not creatable (%s) — cycle degraded\n' \
+            "$1" >&2
+        return 1
+    fi
+}
+
+# Run the mode under the acquired lock. Direct foreground child (no substitution, no pipe), so an
+# INT/TERM trap fires as soon as it exits, with the mode's parent being this driver.
+run_backfill_mode() {
+    local reports_dir="$1" rc=0
+    trap 'apply_lock_release "${BACKFILL_LOCK_DIR}"' EXIT
+    trap 'apply_lock_release "${BACKFILL_LOCK_DIR}"; trap - EXIT; exit 130' INT
+    trap 'apply_lock_release "${BACKFILL_LOCK_DIR}"; trap - EXIT; exit 143' TERM
+    "${PYTHON_BIN}" "${PY_MODULE}" --backfill-unadjudicated --reports-dir "${reports_dir}" || rc=$?
+    apply_lock_release "${BACKFILL_LOCK_DIR}"
+    # an EXIT trap left armed would release, at cycle end, a lock another process is mid-acquiring
+    trap - EXIT INT TERM
+    return "${rc}"
+}
+
+# Mode rc → stage rc: 10 is a gate deferral (still pending, retried next cycle); any other
+# non-zero (PG fault, lock not held, record write, import or argparse failure) degrades the cycle.
+fold_backfill_rc() {
+    local rc="$1"
+    case "${rc}" in
+        0) printf '[daemon-cycle] stage=backfill rc=0\n' >&2 ;;
+        10) printf '[daemon-cycle] stage=backfill rc=10 DEFERRED — still pending, retried next cycle\n' >&2 ;;
+        *)
+            printf '[daemon-cycle] stage=backfill rc=%d FAILED — cycle degraded\n' "${rc}" >&2
+            return 1
+            ;;
+    esac
+}
+
+run_backfill_stage() {
+    local reports_dir="${AUTOAGENT_REPORTS_DIR:-${GA_DATA_ROOT:-${HOME}/.glass-atrium}/data/daemon-reports}"
+    local skip_reason rc=0
+    skip_reason="$(get_backfill_skip_reason "${reports_dir}")"
+    if [[ -n "${skip_reason}" ]]; then
+        printf '[daemon-cycle] stage=backfill SKIP: %s\n' "${skip_reason}" >&2
+        return 0
+    fi
+    # shellcheck disable=SC2310  # errexit is not relied on: every failure path returns explicitly
+    load_backfill_lock_lib || return 1
+    # shellcheck disable=SC2310  # errexit is not relied on: every failure path returns explicitly
+    create_backfill_reports_dir "${reports_dir}" || return 1
+    BACKFILL_LOCK_DIR="${reports_dir}/.apply-lock"
+    apply_lock_acquire "${BACKFILL_LOCK_DIR}"
+    if [[ "${apply_lock_acquired}" != true ]]; then
+        printf '[daemon-cycle] stage=backfill SKIP: %s held by another process — retried next cycle\n' \
+            "${BACKFILL_LOCK_DIR}" >&2
+        return 0
+    fi
+    # shellcheck disable=SC2310  # errexit is not relied on: every failure path returns explicitly
+    run_backfill_mode "${reports_dir}" || rc=$?
+    fold_backfill_rc "${rc}"
+}
+
 # -- Dispatch --------------------------------------------------------------
 
 # Aggregate exit tracking: each stage is independent (a failure logs its own rc
@@ -771,6 +876,15 @@ record_apply_rc() {
     APPLY_RAN=1
     APPLY_RC="$1"
 }
+
+# Head stage ahead of every dispatch mode; --backfill-only exits on its rc with nothing after it.
+backfill_rc=0
+# shellcheck disable=SC2310  # errexit is not relied on: every failure path returns explicitly
+run_backfill_stage || backfill_rc=$?
+if [[ "${STAGE_MODE}" == "backfill" ]]; then
+    exit "${backfill_rc}"
+fi
+record_stage_rc "${backfill_rc}"
 
 set +e
 case "${STAGE_MODE}" in
