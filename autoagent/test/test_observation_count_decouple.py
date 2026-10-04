@@ -356,10 +356,10 @@ class TestApplyGateAllowlist(unittest.TestCase):
         """Store a safety-routed body-auto proposal through the real writer, on the
         class transaction, eligible on every other backlog predicate."""
         label = _GATE_LABEL["safety"]
-        connect = mock.patch.object(
+        patcher = mock.patch.object(
             dual_write, "_connect", lambda: _NonCommittingConn(cls.conn)
         )
-        with connect:
+        with patcher:
             dual_write.write_autoagent_proposal(
                 cycle_date=cycle_date,
                 pattern_label=label,
