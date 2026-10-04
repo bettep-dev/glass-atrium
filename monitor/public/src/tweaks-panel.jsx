@@ -99,6 +99,10 @@ const __TWEAKS_STYLE = `
   @media (prefers-reduced-transparency: reduce){
     .twk-panel{-webkit-backdrop-filter:none;backdrop-filter:none;background:rgba(250,249,247,1)}
   }
+  /* reduced motion: thumb/knob jump to place, track colour still flips — the state change stays visible */
+  @media (prefers-reduced-motion: reduce){
+    .twk-seg-thumb,.twk-toggle,.twk-toggle i{transition:none}
+  }
 `;
 
 // tweak values 의 SoT. setTweak 은 host (__edit_mode_set_keys) 로 영속화 → host 가 디스크 EDITMODE 블록 재기록

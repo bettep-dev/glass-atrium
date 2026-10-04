@@ -1321,7 +1321,7 @@ function ageInUtcDaysW(runDate) {
 
 // Status mix bar + legend — colour-blind-safe 4-cell proportion with a text legend.
 function WikiStatusMixW({ mix }) {
-	const { Icon } = window.UI;
+	const { Icon, TONE_ICON } = window.UI;
 
 	return (
 		<>
@@ -1350,8 +1350,9 @@ function WikiStatusMixW({ mix }) {
 			<div className="flex flex-wrap gap-x-3 gap-y-1 fs-meta text-faint mt-1.5">
 				{["ok", "partial", "error", "quota"].map((k) => (
 					<span key={k} className="inline-flex items-center gap-1">
+						{/* tone shape per status (faint usage limit has none → neutral dot) — the key reads without colour */}
 						<Icon
-							name="circle"
+							name={TONE_ICON[STATUS_CHIP_META[k].tone] ?? "circle"}
 							size={9}
 							className={`text-${STATUS_CHIP_META[k].tone}`}
 						/>
