@@ -464,6 +464,14 @@ _CLASSIFICATION_TO_ENUM = {
     "reject": ("reject", "auto"),
 }
 
+# 'safety' (human-approval route; no enum label) → 'user', never the 'auto' backlog
+_APPROVAL_TIER_TO_ENUM = {
+    "auto": "auto",
+    "llm": "llm",
+    "user": "user",
+    "safety": "user",
+}
+
 
 def _coerce_classification(raw):
     """Return (classification_enum, approval_tier_enum) from daemon-emitted label.
@@ -604,9 +612,8 @@ def write_autoagent_proposal(
         pass
 
     cls_enum, tier_enum = _coerce_classification(classification)
-    # Caller-provided approval_tier overrides the coerced one (only when valid)
-    if approval_tier in ("auto", "llm", "user"):
-        tier_enum = approval_tier
+    # Caller-provided approval_tier overrides the coerced one (only when known)
+    tier_enum = _APPROVAL_TIER_TO_ENUM.get(approval_tier, tier_enum)
     if status not in (
         "pending", "approved", "rejected", "applied", "snoozed", "unadjudicated"
     ):

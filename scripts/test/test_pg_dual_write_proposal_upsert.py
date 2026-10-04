@@ -515,3 +515,35 @@ def test_the_exempted_marker_is_the_outcome_the_daemon_writes():
     # The helper cannot import the daemon, so the literal the upsert exempts is
     # tied to the daemon's own spelling here.
     assert f'"{_MARKER}"' in _DAEMON_CYCLE.read_text(encoding="utf-8")
+
+
+# DB tiers the monitor folds into its safety column (improvement.ts → foldTierCounts).
+_MONITOR_SAFETY_TIERS = ("user", "user-pending", "llm")
+
+
+@pytest.mark.parametrize(
+    ("classification", "route"),
+    [
+        pytest.param("body-auto", "safety", id="safety-routed body-auto"),
+        pytest.param(
+            "frontmatter-dryrun", "safety", id="safety-routed frontmatter dry-run"
+        ),
+        pytest.param("body-auto", "auto", id="verified body-auto"),
+    ],
+)
+def test_the_stored_tier_lands_in_the_monitor_column_of_its_route(
+    proposals: _Proposals, classification: str, route: str
+):
+    proposals.push_row(
+        "pending",
+        dict(
+            _SEEDED,
+            classification=classification,
+            approval_tier=route,
+            pre_verify_passed=True,
+        ),
+    )
+
+    stored = proposals.get_row()["approval_tier"]
+    column = "safety" if stored in _MONITOR_SAFETY_TIERS else stored
+    assert column == route, f"stored approval_tier {stored!r}"
