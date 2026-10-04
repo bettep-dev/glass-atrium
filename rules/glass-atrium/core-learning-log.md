@@ -21,12 +21,18 @@ Patterns are auto-extracted from accumulated Outcome Records and recorded in `me
 The self-improvement loop (`autoagent/daemon_cycle.py`) user-approval queue is **safety-only**. The spec is 2-tier (auto + safety).
 
 **Tier 1 — Auto (default)**:
-- Scope: single agent, 5+ occurrences, ≤5 added lines per edit (`daemon_cycle.py` → `BODY_AUTO_LINE_LIMIT`).
-- `autoagent/daemon-apply.sh` auto-applies.
-- Conditions: classification == "apply" + `haiku_status` starting with `ok` + diff non-empty + non-safety scope.
-  - Prefix, never equality: the legitimate `ok:retried` / `ok:fuzzy-parsed` variants must pass the same gate, and a missing or `skipped:*` status fails closed (`daemon_cycle.py` → `is_apply_eligible_haiku_status`).
-- Pre-verify quality issue (rule-scope misapplication / failure to add ≤5-line body, etc.) → 1 LLM retry on the daemon worker model (`WORKER_MODEL`), then Auto if re-verification passes / reject if it fails
-  - Entry into the user queue is forbidden on this path.
+- Interim, closed on every install: no generator call and no auto-apply until live trials, so the safety queue receives no new rows meanwhile.
+  - The cycle skips per-candidate generation; every other cycle step still runs (`daemon_cycle.py` → `run_cycle`).
+  - Each cycle terminalizes stored pending `auto` proposals, rationale prefixed `generation closed until live trials` (`daemon_cycle.py` → `update_generation_closed_proposals`).
+  - `autoagent/daemon-apply.sh` selects and applies nothing in batch mode; `--proposal-id` is its only apply path.
+  - No flag, env or data-root input reopens either path, so every install behaves alike.
+  - A safety-routed proposal is stored under the `user` approval tier, never `auto`, so the apply backlog cannot select it once auto-apply reopens (`scripts/_pg_dual_write_daemon.py`).
+- Eligibility gate, kept for that reopening:
+  - Scope: single agent, 5+ occurrences, ≤5 added lines per edit (`daemon_cycle.py` → `BODY_AUTO_LINE_LIMIT`).
+  - Conditions: classification == "apply" + `haiku_status` starting with `ok` + diff non-empty + non-safety scope.
+    - Prefix, never equality: the legitimate `ok:retried` / `ok:fuzzy-parsed` variants must pass the same gate, and a missing or `skipped:*` status fails closed (`daemon_cycle.py` → `is_apply_eligible_haiku_status`).
+  - Pre-verify quality issue (rule-scope misapplication / failure to add ≤5-line body, etc.) → 1 LLM retry on the daemon worker model (`WORKER_MODEL`), then Auto if re-verification passes / reject if it fails
+    - Entry into the user queue is forbidden on this path.
 
 **Tier 2 — Safety**:
 - **trigger** — irreversible + external-effect only (reuses the `core-security.md` "High-impact actions" definition). Any one of the following is a Tier-2 trigger:
