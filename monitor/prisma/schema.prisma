@@ -716,7 +716,8 @@ model UpdateJob {
   @@schema("core")
 }
 
-/// Source: autoagent-loop.jsonl (per plan §3.2 autoagent_loop_events)
+/// Source: autoagent daemon_cycle.py — every loop-event emitter writes through
+/// _pg_dual_write_daemon.py::write_autoagent_loop_event (census and verdict rows).
 model AutoagentLoopEvent {
   id             BigInt   @id @default(autoincrement())
   eventTs        DateTime @map("event_ts") @db.Timestamptz(6)

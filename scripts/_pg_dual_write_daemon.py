@@ -844,8 +844,8 @@ def write_autoagent_loop_event(
     idempotency key. A census row (subject absent) records one cause for one agent
     at one event_ts, keyed on (event_ts, agent, eval_result) at whatever instant the
     caller stamps — never a day unless the caller truncates to one. A re-emission
-    overwrites that row rather than incrementing it, which is what covers the
-    append-only autoagent-loop.jsonl replaying a line on log-rotation overlap.
+    overwrites that row rather than incrementing it, so emitting the same cycle
+    report twice lands one row.
     A verdict row adjudicates ONE subject, keyed on (event_ts, agent, subject),
     so a correction carrying a new cause supersedes the verdict it corrects
     instead of landing beside it.

@@ -79,8 +79,8 @@ def events(tmp_path):
 def test_when_one_cause_is_re_emitted_then_the_census_holds_one_row(
     events: _LoopEvents,
 ):
-    # Append-only source: log-rotation overlap replays a line, and a second row
-    # would double the recurrence count the cycle reports.
+    # A cycle report emitted twice re-emits the cause; a second row would double
+    # the recurrence count the cycle reports.
     events.emit(_CENSUS_CAUSES[0], changes_added=1)
 
     events.emit(_CENSUS_CAUSES[0], changes_added=9)
