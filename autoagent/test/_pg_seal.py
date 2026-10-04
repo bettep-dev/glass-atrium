@@ -12,23 +12,24 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
-# Seams bound by the ``_pg_learning_dualwrite`` import (``_PG_OUTCOME_IMPORT_EXC``).
-_OUTCOME_IMPORT_SEAMS = (
-    "_pg_read_pending_patterns",
-    "_pg_read_coverage_patterns",
-    "_pg_read_outcomes_since",
-    "_pg_count_outcomes_since",
-    "_pg_reject_learning_pattern",
-    "_pg_discharge_learning_pattern",
-)
-# Seams bound by the ``_pg_dual_write_daemon`` import (``_PG_LOOP_IMPORT_EXC``).
-_LOOP_IMPORT_SEAMS = (
-    "_pg_connect",
-    "_pg_write_loop_event",
-    "_pg_write_corpus_audit",
-)
-# Defined by ``daemon_cycle`` itself on every leg.
-_MODULE_SEAMS = ("_invoke_pg_helper_subprocess",)
+# Seam names keyed by the ``daemon_cycle`` import-exception attribute that binds them;
+# ``None`` = defined by ``daemon_cycle`` itself on every leg.
+_SEAMS: dict[str | None, tuple[str, ...]] = {
+    "_PG_OUTCOME_IMPORT_EXC": (  # ``_pg_learning_dualwrite`` import
+        "_pg_read_pending_patterns",
+        "_pg_read_coverage_patterns",
+        "_pg_read_outcomes_since",
+        "_pg_count_outcomes_since",
+        "_pg_reject_learning_pattern",
+        "_pg_discharge_learning_pattern",
+    ),
+    "_PG_LOOP_IMPORT_EXC": (  # ``_pg_dual_write_daemon`` import
+        "_pg_connect",
+        "_pg_write_loop_event",
+        "_pg_write_corpus_audit",
+    ),
+    None: ("_invoke_pg_helper_subprocess",),
+}
 
 _AVAILABILITY_FLAGS = ("HAS_PG_LOOP_WRITE", "HAS_PG_PATTERN_READ", "HAS_PG_OUTCOME_READ")
 
@@ -51,13 +52,9 @@ def seal_pg_reach(testcase: unittest.TestCase) -> list[str]:
     _patch(testcase, dc, "PG_DUAL_WRITE_HELPER", Path(absent_dir.name) / "absent-helper.py")
     for flag in _AVAILABILITY_FLAGS:
         _patch(testcase, dc, flag, False)
-    for seams, import_exc in (
-        (_OUTCOME_IMPORT_SEAMS, dc._PG_OUTCOME_IMPORT_EXC),
-        (_LOOP_IMPORT_SEAMS, dc._PG_LOOP_IMPORT_EXC),
-        (_MODULE_SEAMS, None),
-    ):
-        for name in seams:
-            is_unbound = import_exc is not None
+    for import_exc_name, names in _SEAMS.items():
+        is_unbound = import_exc_name is not None and getattr(dc, import_exc_name) is not None
+        for name in names:
             if not is_unbound and not hasattr(dc, name):
                 raise AssertionError(
                     f"PG seal seam missing on daemon_cycle: {name} — "
