@@ -408,7 +408,7 @@ const SCREEN_OUTCOMES_CSS = `
 .outcome-md pre { font-family: 'JetBrains Mono', monospace; font-size: var(--fs-meta); background: rgb(var(--sunken)); padding: 10px 12px; border-radius: 6px; border: 1px solid rgb(var(--line)); overflow-x: auto; }
 .outcome-md pre code { background: transparent; padding: 0; }
 .outcome-md blockquote { border-left: 3px solid rgb(var(--accent)); padding: 2px 12px; margin: 8px 0; color: rgb(var(--dim)); background: rgb(var(--sunken) / 0.4); }
-.outcome-md a { color: rgb(var(--accent)); text-decoration: underline; }
+.outcome-md a { color: rgb(var(--ink)); text-decoration: underline; text-underline-offset: 2px; }
 .outcome-md table { border-collapse: collapse; margin: 8px 0; font-size: var(--fs-meta); }
 .outcome-md th, .outcome-md td { border: 1px solid rgb(var(--line)); padding: 4px 8px; text-align: left; }
 .outcome-md th { background: rgb(var(--sunken)); font-weight: 500; }

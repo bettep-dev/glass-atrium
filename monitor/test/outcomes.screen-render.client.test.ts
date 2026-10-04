@@ -400,6 +400,17 @@ describe("the screen's own stylesheet keeps to the motion standard", async () =>
   }
 });
 
+test("a link in an outcome body draws in ink with a currentColor underline, never the user-picked accent", async () => {
+  const { tree } = await renderOutcomesScreen(0);
+  const css = findNodes(tree, (n) => n.type === "style").map(collectText).join("\n");
+  const link = getCssRules(css).filter(([s]) => s === ".outcome-md a").map(([, body]) => body).join(";");
+
+  assert.equal(getDecl(link, "color"), "rgb(var(--ink))");
+  assert.match(getDecl(link, "text-decoration") ?? "", /^underline\b/);
+  assert.match(getDecl(link, "text-decoration-color") ?? "currentColor", /^currentColor$/);
+  assert.doesNotMatch(link, /--accent/);
+});
+
 test("a loading skeleton pulses through its gated class, never through an inline animation", async () => {
   const { tree } = await renderOutcomesScreen(0);
   const inline = findNodes(tree, (n) => (n.props.style as Record<string, unknown> | undefined)?.animation !== undefined);
