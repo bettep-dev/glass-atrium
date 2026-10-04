@@ -412,18 +412,9 @@ ALL_REJECT_ALERT_EVAL_RESULT = "all-reject-alert"
 # eval_result stamped on the credential-outage loop event (grep-able).
 AUTH_OUTAGE_EVAL_RESULT = "auth-outage"
 
-# Post-apply regression watch (C1, DETECTION-ONLY) --------------------------
-#
-# Next-cycle step beside is_systemic_regression: per APPLIED proposal, the
-# target agent's post-apply soft-negative outcome rate is compared to the
-# pre-apply rate (both windows share the learning-signal exclusion scope of
-# the PG helper — attribution failures + poisoned_window excluded).
-# Degradation → ONE WARN loop event naming the proposal id + its agents-bak
-# before-image path (or that retention pruned it); a proposal whose added
-# lines all left the target body is skipped. NO auto-revert / agent-file
-# write / safety-queue insert — a weeks-latency revert would clobber
-# intervening user edits, and the safety queue is reserved for irreversible
-# external-effect triggers.
+# eval_result of the post-apply regression WARN loop event (alert_post_apply_regression)
+# DETECTION-ONLY, no auto-revert → a weeks-late revert clobbers intervening user edits
+# No safety-queue insert — that queue stays reserved for irreversible external effects
 POST_APPLY_REGRESSION_EVAL_RESULT = "post-apply-regression"
 
 # Days-since-last-applied corroborating crit (FIX #4) -----------------------

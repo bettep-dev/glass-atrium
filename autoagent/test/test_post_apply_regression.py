@@ -345,8 +345,8 @@ class TestAlertPostApplyRegression(unittest.TestCase):
         self.assertIn("DETECTION-ONLY", err)
 
     def test_warn_names_the_before_image_only_while_it_exists(self) -> None:
-        # Retention prunes before-images long before the watch window ends; a
-        # pruned one is named as pruned, never handed out as a restore path.
+        # Retention prunes before-images long before the watch window ends
+        # Pruned before-image → named as pruned, never offered as a restore path
         rows = (
             ("before-image on disk", True),
             ("before-image pruned", False),
@@ -365,9 +365,9 @@ class TestAlertPostApplyRegression(unittest.TestCase):
                 self.assertEqual("pruned" in err, not is_kept)
 
     def test_proposal_whose_added_lines_all_left_the_body_raises_no_warn(self) -> None:
-        # The WARN's subject is the applied edit: once none of its added lines is
-        # in the body, it points at nothing; any surviving added line keeps it.
-        # A skipped row never ends the watch — the later applied row still fires.
+        # WARN subject = the applied edit → no added line left in the body, nothing to point at
+        # Any surviving added line keeps the row watched
+        # A skipped row never ends the watch → the later applied row still fires
         both = (_PROBE_AGENT, _LATER_AGENT)
         later_only = (_LATER_AGENT,)
         rows = (
@@ -434,8 +434,7 @@ class TestAlertPostApplyRegression(unittest.TestCase):
         self.window_rows = _windows(1, 10, 3, 5)
         self._run()
 
-        # The seal refuses _pg_connect and _pg_reject_learning_pattern, and _run
-        # asserts neither was reached.
+        # Seal refuses _pg_connect + _pg_reject_learning_pattern → _run asserts neither reached
         self.assertEqual(
             {env.get("op") for env in self.emitted}, {"write_autoagent_loop_event"}
         )
