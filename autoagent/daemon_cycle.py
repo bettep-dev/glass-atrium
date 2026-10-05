@@ -9216,8 +9216,6 @@ def _get_pair_skip_reason(
     )
 
 
-# -- Intake power check (N69) ------------------------------------------------
-
 POWER = SimpleNamespace(
     VERDICT=SimpleNamespace(
         PASSING="passing",
@@ -9227,15 +9225,19 @@ POWER = SimpleNamespace(
     ),
     # eval_result = prefix + verdict; the longest fills the varchar(32) column exactly
     CHECK_EVAL_PREFIX="power-check-",
-    # a measured design effect replaces 1 only once S4a5b wires the A/A ledger (N69)
+    # 1 until a measured per-agent design effect is wired
     DESIGN_EFFECT=1.0,
 )
 
 
+class PowerUnits(NamedTuple):
+    projected: float
+    required: float | None  # None = no finite trial size at the baseline rate
+
+
 class PowerCheck(NamedTuple):
     verdict: str
-    projected_units: float
-    required_units: float | None  # None = no finite trial size at the baseline rate
+    units: PowerUnits
 
 
 def check_pattern_power(patterns: list[Pattern], *, skip_loop_emit: bool) -> dict[str, int]:
@@ -9243,7 +9245,7 @@ def check_pattern_power(patterns: list[Pattern], *, skip_loop_emit: bool) -> dic
 
     The floor is get_floor_verdict over the spawn read the power inputs come from, so
     both judge one history. Each verdict is a stderr line plus a census loop event
-    (none under skip_loop_emit); no status write — the park state lands with S5 (N50).
+    (none under skip_loop_emit); verdict only — no status write, no pattern parked or dropped.
     An unreadable history or missing trial math counts every keyed pattern unchecked,
     with a WARN, never passing.
 
@@ -9282,12 +9284,12 @@ def get_power_check(
     provenance_start: datetime | None,
     windows: PairWindows,
 ) -> PowerCheck:
-    """N69 power check of one floor-passing pattern.
+    """Power check of one floor-passing pattern.
 
     Projected units = the agent's spawns per day over the 28 days before D × the 84-day
-    horizon; NULL-agent_id spawns count nowhere (N60). Fewer than 28 provenance-covered
-    days → insufficient-history. Bound = 2 × the S2e per-arm maximum at the floor-half
-    baseline rate × POWER.DESIGN_EFFECT; a rate with no finite size is underpowered.
+    horizon; NULL-agent_id spawns count nowhere. Fewer than 28 provenance-covered
+    days → insufficient-history. Bound = 2 × the trial_design per-arm maximum at the
+    floor-half baseline rate × POWER.DESIGN_EFFECT; a rate with no finite size is underpowered.
     """
     history_start = windows.end - BASELINE.MIN_COVERED
     units = sum(
@@ -9307,7 +9309,7 @@ def get_power_check(
         verdict = POWER.VERDICT.PASSING
     else:
         verdict = POWER.VERDICT.UNDERPOWERED
-    return PowerCheck(verdict, projected, required)
+    return PowerCheck(verdict, PowerUnits(projected, required))
 
 
 def _is_bound_reached(units: int, required: float) -> bool:
@@ -9344,7 +9346,7 @@ def _read_power_history(
 
 
 def _get_maximum_sample_size(events: int, spawns: int) -> int | None:
-    """S2e per-arm maximum at the rate events/spawns; None outside (0, 1) — no finite size."""
+    """trial_design per-arm maximum at rate events/spawns; None outside (0, 1) — no finite size."""
     if not 0 < events < spawns:
         return None
     return trial_design.get_maximum_sample_size(events / spawns)
@@ -9352,11 +9354,12 @@ def _get_maximum_sample_size(events: int, spawns: int) -> int | None:
 
 def _get_power_detail(floor: FloorResult, check: PowerCheck) -> str:
     baseline = floor.baseline
-    required = "no finite size" if check.required_units is None else f"{check.required_units:.0f}"
+    units = check.units
+    required_label = "no finite size" if units.required is None else f"{units.required:.0f}"
     return (
         f"floor-half baseline {baseline.events}/{baseline.spawns}, projected "
-        f"{check.projected_units:.0f} units in {trial_design.HORIZON_DAYS} d vs required "
-        f"{required} (design effect {POWER.DESIGN_EFFECT:g})"
+        f"{units.projected:.0f} units in {trial_design.HORIZON_DAYS} d vs required "
+        f"{required_label} (design effect {POWER.DESIGN_EFFECT:g})"
     )
 
 
@@ -11421,7 +11424,7 @@ def run_cycle(
     )
     report.patterns_processed = len(patterns)
     agent_groups = _group_patterns_by_agent(patterns, agent_cap=agent_cap)
-    # Both generation branches: the verdict is recorded, never acted on (N50).
+    # Both generation branches: verdict only; no pattern is parked or dropped.
     report.power_check = check_pattern_power(patterns, skip_loop_emit=skip_loop_emit)
 
     if IS_GENERATION_CLOSED:
