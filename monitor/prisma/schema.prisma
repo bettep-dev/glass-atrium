@@ -739,8 +739,7 @@ model AutoagentApplyRecord {
   @@schema("core")
 }
 
-/// Trial ledger — one row per trial event: pre-registration, look, decision, graduation,
-/// retirement, removal, supersede, A/A restart, power-pass count.
+/// Trial ledger — one row per trial event, plus cycle-level rows that belong to no trial.
 ///
 /// Append-only via migration raw SQL only (20261008000000_add_trial_ledger_and_cycle_verdicts);
 /// the Prisma DSL declares neither part, so a squash MUST carry that SQL:
@@ -751,8 +750,7 @@ model AutoagentTrialLedger {
   id         BigInt   @id @default(autoincrement())
   recordedAt DateTime @default(now()) @map("recorded_at") @db.Timestamptz(6)
 
-  // sha256 hex of agent, learning_pattern_id, metric key and the passing pair's detection start.
-  // NULL on cycle-level rows (power-pass count, A/A restart), which belong to no trial.
+  // Whole 64-hex trial key composed by the ledger writer; NULL on cycle-level rows
   trialKey          String? @map("trial_key") @db.VarChar(64)
   agent             String? @db.VarChar(64)
   // No relation to LearningLog: an FK action on a learning_log delete would UPDATE an append-only row

@@ -14,10 +14,10 @@ import { disconnectPrisma, getPrisma } from "../src/server/db.js";
 /** Thrown last inside a case's transaction → the transaction rolls back and nothing persists. */
 class Rollback extends Error {}
 
-const TRIAL_KEY = createHash("sha256")
-  .update("glass-atrium-dev-node|4127|budget_overage|2026-09-24")
-  .digest("hex");
-const LOOK_KEY = `${TRIAL_KEY}:look:1`;
+const KEY = (() => {
+  const trial = createHash("sha256").update("glass-atrium-dev-node|4127|budget_overage|2026-09-24").digest("hex");
+  return { TRIAL: trial, LOOK: `${trial}:look:1` } as const;
+})();
 const CYCLE_DATE = new Date("2026-10-08T00:00:00.000Z");
 
 after(async () => {
@@ -27,13 +27,13 @@ after(async () => {
 function buildLedgerRow(): Prisma.AutoagentTrialLedgerCreateInput {
   return {
     recordedAt: new Date("2026-10-08T04:12:31.000Z"),
-    trialKey: TRIAL_KEY,
+    trialKey: KEY.TRIAL,
     agent: "glass-atrium-dev-node",
     learningPatternId: 4127n,
     event: "look",
     actor: "daemon-cycle-shadow",
     payload: { look: 1, tasks: { treatment: 41, control: 39 } },
-    dedupeKey: LOOK_KEY,
+    dedupeKey: KEY.LOOK,
   };
 }
 
@@ -53,7 +53,7 @@ function insertLedgerRow(tx: Prisma.TransactionClient, dedupeKey: string | null)
   return tx.$executeRaw`
     INSERT INTO "core"."autoagent_trial_ledger"
       ("trial_key", "agent", "learning_pattern_id", "event", "actor", "payload", "dedupe_key")
-    VALUES (${TRIAL_KEY}, 'glass-atrium-dev-node', 4127, 'look', 'daemon-cycle-shadow', '{"look": 1}'::jsonb, ${dedupeKey})
+    VALUES (${KEY.TRIAL}, 'glass-atrium-dev-node', 4127, 'look', 'daemon-cycle-shadow', '{"look": 1}'::jsonb, ${dedupeKey})
     ON CONFLICT ("dedupe_key") DO NOTHING`;
 }
 
@@ -125,8 +125,8 @@ describe("core.autoagent_trial_ledger rows as written", () => {
   test("a second insert with a taken dedupe key under ON CONFLICT DO NOTHING inserts nothing and raises nothing", async () => {
     await assert.rejects(
       runRolledBack(async (tx) => {
-        const inserted = [await insertLedgerRow(tx, LOOK_KEY), await insertLedgerRow(tx, LOOK_KEY)];
-        const stored = await tx.autoagentTrialLedger.count({ where: { dedupeKey: LOOK_KEY } });
+        const inserted = [await insertLedgerRow(tx, KEY.LOOK), await insertLedgerRow(tx, KEY.LOOK)];
+        const stored = await tx.autoagentTrialLedger.count({ where: { dedupeKey: KEY.LOOK } });
         assert.deepEqual({ inserted, stored }, { inserted: [1, 0], stored: 1 });
       }),
       Rollback,
@@ -137,7 +137,7 @@ describe("core.autoagent_trial_ledger rows as written", () => {
     await assert.rejects(
       runRolledBack(async (tx) => {
         const inserted = [await insertLedgerRow(tx, null), await insertLedgerRow(tx, null)];
-        const stored = await tx.autoagentTrialLedger.count({ where: { trialKey: TRIAL_KEY, dedupeKey: null } });
+        const stored = await tx.autoagentTrialLedger.count({ where: { trialKey: KEY.TRIAL, dedupeKey: null } });
         assert.deepEqual({ inserted, stored }, { inserted: [1, 1], stored: 2 });
       }),
       Rollback,
@@ -151,7 +151,7 @@ describe("core.autoagent_trial_ledger rows as written", () => {
   }[] = [
     {
       name: "rejects a trial key that is not a whole 64-hex digest",
-      override: { trialKey: TRIAL_KEY.slice(0, 63) },
+      override: { trialKey: KEY.TRIAL.slice(0, 63) },
       constraint: /autoagent_trial_ledger_trial_key_check/,
     },
     {
