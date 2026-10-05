@@ -8,7 +8,11 @@ Covered behaviors:
     design effect, and fails below it;
   * a smaller effect needs a larger sample; required units scale with the
     design effect;
-  * the projection horizon stops at 84 days; invalid inputs raise.
+  * the projection horizon stops at 84 days; invalid inputs raise;
+  * both design-effect estimators match hand-computed balanced and unbalanced
+    fixtures, and the power check takes the higher, never below 1;
+  * minimum detectable harm per guardrail matches two-sample reference
+    arithmetic: a fold rise on rates, a mean shift on the tool_use band.
 
 Every expected value is derived outside this module (published table, plan
 line, or hand arithmetic shown inline).
@@ -21,6 +25,7 @@ Run with either runner:
 from __future__ import annotations
 
 import math
+import random
 import sys
 import unittest
 from pathlib import Path
@@ -133,6 +138,113 @@ class PowerCheck(unittest.TestCase):
             td.get_projected_units(5.0, horizon_days=85)
 
 
+class DesignEffectEstimators(unittest.TestCase):
+    def test_balanced_clusters_give_both_estimators_the_hand_computed_value(self) -> None:
+        # Three clusters of 4 binary outcomes: 4/4, 0/4, 2/4 → N = 12, p̄ = 0.5
+        #   MSB = 4·(0.25 + 0.25 + 0) / 2 = 1 · MSW = (0 + 0 + 4·0.5·0.5) / (12 - 3) = 1/9
+        #   rho = (1 - 1/9) / (1 + 3·1/9) = 2/3 · balanced → n0 = Σm²/N = 4 → DE = 1 + 3·2/3 = 3
+        clusters = ([1, 1, 1, 1], [0, 0, 0, 0], [1, 1, 0, 0])
+        effect = td.get_design_effect(clusters)
+        self.assertAlmostEqual(effect.anova, 3.0)
+        self.assertAlmostEqual(effect.size_weighted, 3.0)
+        self.assertAlmostEqual(effect.selected, 3.0)
+
+    def test_unbalanced_clusters_give_each_estimator_its_hand_computed_value(self) -> None:
+        # Clusters 2/2, 0/4, 3/6 → N = 12, p̄ = 5/12, k = 3
+        #   SSB = 2(7/12)² + 4(5/12)² + 6(1/12)² = 17/12 → MSB = 17/24
+        #   SSW = 6·0.5·0.5 = 3/2 → MSW = (3/2) / 9 = 1/6
+        #   n0 = (12 - 56/12) / 2 = 11/3 · size-weighted size Σm²/N = 56/12 = 14/3
+        #   rho = (17/24 - 4/24) / (17/24 + (8/3)(1/6)) = (13/24) / (83/72) = 39/83
+        #   ANOVA DE = 1 + (8/3)(39/83) = 187/83 · size-weighted DE = 1 + (11/3)(39/83) = 226/83
+        clusters = ([1, 1], [0, 0, 0, 0], [1, 1, 1, 0, 0, 0])
+        effect = td.get_design_effect(clusters)
+        self.assertAlmostEqual(effect.anova, 187 / 83)
+        self.assertAlmostEqual(effect.size_weighted, 226 / 83)
+        self.assertAlmostEqual(effect.selected, 226 / 83)
+
+    def test_the_power_check_value_is_the_higher_estimator_and_never_below_one(self) -> None:
+        generator = random.Random(20261006)
+        for draw in range(200):
+            clusters = [
+                [generator.random() < rate for _ in range(generator.randint(1, 30))]
+                for rate in (generator.random() for _ in range(generator.randint(2, 12)))
+            ]
+            try:
+                effect = td.get_design_effect(clusters)
+            except ValueError:
+                continue  # a draw with no variance or only singleton clusters has no estimate
+            with self.subTest(draw=draw):
+                self.assertEqual(effect.selected, max(effect.anova, effect.size_weighted))
+                self.assertGreaterEqual(effect.size_weighted, effect.anova)
+                self.assertGreaterEqual(effect.anova, 1.0)
+
+    def test_less_between_cluster_variation_than_chance_gives_design_effect_one(self) -> None:
+        # MSB = 0, MSW = 1/2 → rho = -1, held at 0: a design effect below 1 would overstate power
+        effect = td.get_design_effect(([1, 0], [1, 0]))
+        self.assertEqual((effect.anova, effect.size_weighted), (1.0, 1.0))
+
+
+class RateHarm(unittest.TestCase):
+    def test_fold_matches_the_two_proportion_reference_arithmetic(self) -> None:
+        # Fleiss pooled-null, one-sided alpha 0.05, power 0.8, base 0.02 → 0.06 (3-fold):
+        #   p̄ = 0.04; 1.644854 √(2·0.04·0.96) = 1.644854 x 0.277128 = 0.455835
+        #   0.841621 √(0.0196 + 0.0564) = 0.841621 x 0.275681 = 0.232020
+        #   (0.455835 + 0.232020)² / 0.04² = 295.715 per arm
+        self.assertAlmostEqual(td.get_rate_harm(0.02, 295.715), 3.0, delta=1e-4)
+
+    def test_fold_is_the_smallest_rise_the_fixed_sample_size_detects_at_that_sample(self) -> None:
+        # pooled-null size is symmetric in the two rates → a rise from p0 to p0·f is the
+        # reduction from p0·f by 1 - 1/f
+        def get_size(base_rate: float, fold: float) -> int:
+            return td.get_fixed_sample_size(base_rate * fold, relative_reduction=1 - 1 / fold)
+
+        for base_rate, per_arm in ((0.006, 400), (0.02, 166), (0.1, 395), (0.29, 222)):
+            with self.subTest(base_rate=base_rate, per_arm=per_arm):
+                fold = td.get_rate_harm(base_rate, per_arm)
+                self.assertLessEqual(get_size(base_rate, fold * 1.001), per_arm)
+                self.assertGreater(get_size(base_rate, fold * 0.999), per_arm)
+
+    def test_a_larger_sample_detects_a_smaller_rise(self) -> None:
+        folds = [td.get_rate_harm(0.03, per_arm) for per_arm in (100, 300, 1000)]
+        self.assertGreater(folds[0], folds[1])
+        self.assertGreater(folds[1], folds[2])
+
+    def test_design_effect_shrinks_the_sample_the_rise_is_detected_at(self) -> None:
+        self.assertAlmostEqual(td.get_rate_harm(0.05, 400, design_effect=2.0), td.get_rate_harm(0.05, 200), places=9)
+
+    def test_no_rate_below_one_detectable_gives_an_infinite_fold(self) -> None:
+        # base 0.5 → rate 1: (1.644854 √0.375 + 0.841621 √0.25)² / 0.25 = 8.16 per arm needed
+        self.assertEqual(td.get_rate_harm(0.5, 8), math.inf)
+        self.assertLess(td.get_rate_harm(0.5, 9), 2.0)
+
+
+class ToolUseHarm(unittest.TestCase):
+    def test_shift_matches_the_two_sample_mean_reference_arithmetic(self) -> None:
+        # sd 20, 100 per arm → sd √(2/n) = 2.828427
+        #   two-sided: (1.959964 + 0.841621) x 2.828427 = 7.924080
+        #   upward:    (1.644854 + 0.841621) x 2.828427 = 7.032813
+        rows = (
+            ("overage-primary trial → upward only", True, 7.032813),
+            ("any other trial → two-sided", False, 7.924080),
+        )
+        for name, is_overage_primary, expected in rows:
+            with self.subTest(name):
+                shift = td.get_tool_use_harm(20.0, 100, is_overage_primary=is_overage_primary)
+                self.assertAlmostEqual(shift, expected, places=5)
+
+    def test_upward_shift_is_the_two_sided_one_scaled_by_the_critical_sums(self) -> None:
+        # plan 43378 → Guardrails: upward = two-sided x (1.645 + 0.842) / (1.960 + 0.842)
+        for sd, per_arm in ((14.0, 166), (21.0, 395)):
+            upward = td.get_tool_use_harm(sd, per_arm, is_overage_primary=True)
+            two_sided = td.get_tool_use_harm(sd, per_arm, is_overage_primary=False)
+            self.assertAlmostEqual(upward / two_sided, 0.887524, places=5, msg=f"sd {sd}, n {per_arm}")
+
+    def test_design_effect_inflates_the_shift_by_its_square_root(self) -> None:
+        base = td.get_tool_use_harm(18.0, 250, is_overage_primary=True)
+        inflated = td.get_tool_use_harm(18.0, 250, is_overage_primary=True, design_effect=4.0)
+        self.assertAlmostEqual(inflated, 2 * base)
+
+
 class InvalidInputs(unittest.TestCase):
     def test_out_of_range_parameters_raise_instead_of_sizing(self) -> None:
         rows = (
@@ -146,6 +258,15 @@ class InvalidInputs(unittest.TestCase):
             ("design effect of zero", lambda: td.get_required_units(100, design_effect=0.0)),
             ("maximum sample of zero", lambda: td.is_powered(500, 0)),
             ("negative daily units", lambda: td.get_projected_units(-1.0)),
+            ("a single cluster", lambda: td.get_design_effect(([1, 0, 1],))),
+            ("an empty cluster", lambda: td.get_design_effect(([1, 0], []))),
+            ("only singleton clusters", lambda: td.get_design_effect(([1], [0], [1]))),
+            ("no variance in any cluster", lambda: td.get_design_effect(([0, 0], [0, 0, 0]))),
+            ("harm at base rate zero", lambda: td.get_rate_harm(0.0, 300)),
+            ("harm at a sample below one", lambda: td.get_rate_harm(0.1, 0.5)),
+            ("harm at design effect zero", lambda: td.get_rate_harm(0.1, 300, design_effect=0.0)),
+            ("tool_use harm at sd zero", lambda: td.get_tool_use_harm(0.0, 100, is_overage_primary=True)),
+            ("tool_use harm at sample zero", lambda: td.get_tool_use_harm(20.0, 0, is_overage_primary=False)),
         )
         for name, call in rows:
             with self.subTest(name), self.assertRaises(ValueError):

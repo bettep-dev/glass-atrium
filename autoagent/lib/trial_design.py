@@ -1,4 +1,4 @@
-"""Group-sequential sizing and the power check for self-improvement trials.
+"""Group-sequential sizing, the power check, design effects and guardrail harm for self-improvement trials.
 
 Stdlib only, so the daemon imports it on an install's python3 3.9 floor with no
 third-party dependency. Boundaries are Lan-DeMets O'Brien-Fleming-type, efficacy
@@ -12,6 +12,7 @@ import math
 from collections.abc import Sequence
 from functools import cache
 from statistics import NormalDist
+from typing import NamedTuple
 
 DEFAULT_ALPHA = 0.05  # one-sided
 DEFAULT_POWER = 0.8
@@ -28,6 +29,18 @@ _BOUNDARY_SEARCH_MAX = 40.0
 
 # (score-scale point, Simpson weight x sub-density) pairs of the continuation region
 _Mass = list[tuple[float, float]]
+
+
+class DesignEffect(NamedTuple):
+    """Both design-effect estimators over one set of clusters; they share the ANOVA intraclass correlation."""
+
+    anova: float  # cluster size = the ANOVA-adjusted size n0
+    size_weighted: float  # cluster size = the size-weighted mean, sum(m^2) / N
+
+    @property
+    def selected(self) -> float:
+        """The higher estimator, which the power check uses: a lower design effect overstates power."""
+        return max(self.anova, self.size_weighted)
 
 
 def get_fixed_sample_size(
@@ -96,21 +109,119 @@ def get_projected_units(daily_units: float, *, horizon_days: float = HORIZON_DAY
     return daily_units * horizon_days
 
 
+def get_design_effect(clusters: Sequence[Sequence[float]]) -> DesignEffect:
+    """Design effect of clustering from per-cluster observations (0/1 for a rate metric).
+
+    One-way ANOVA intraclass correlation, held at 0 when negative so neither estimator falls below 1.
+    Raises ValueError when the correlation is undefined: fewer than 2 clusters, an empty cluster,
+    only singleton clusters, or no variance at all.
+    """
+    sizes = [len(cluster) for cluster in clusters]
+    if len(sizes) < 2 or min(sizes) == 0:
+        raise ValueError(f"need at least 2 non-empty clusters, got sizes {sizes}")
+    total = sum(sizes)
+    if total == len(sizes):
+        raise ValueError("only singleton clusters: within-cluster variance undefined")
+    between, within = _get_mean_squares(clusters, sizes)
+    weighted_size = math.fsum(size * size for size in sizes) / total
+    anova_size = (total - weighted_size) / (len(sizes) - 1)
+    denominator = between + (anova_size - 1) * within
+    if denominator <= 0:
+        raise ValueError("no variance in any cluster: intraclass correlation undefined")
+    correlation = max(0.0, (between - within) / denominator)
+    return DesignEffect(
+        anova=1 + (anova_size - 1) * correlation,
+        size_weighted=1 + (weighted_size - 1) * correlation,
+    )
+
+
+def get_rate_harm(
+    base_rate: float,
+    per_arm: float,
+    *,
+    alpha: float = DEFAULT_ALPHA,
+    power: float = DEFAULT_POWER,
+    design_effect: float = 1.0,
+) -> float:
+    """Minimum detectable fold rise of a rate guardrail (emit failure, verified_fail, re-delegation).
+
+    One-sided two-proportion test at the per-arm sample over the design effect; ``math.inf`` when
+    no rate below 1 is detectable at that sample.
+    """
+    _check_rate("base_rate", base_rate)
+    effective = _get_effective_sample(per_arm, design_effect)
+    _check_alpha(alpha)
+    _check_power(power, alpha)
+    if _get_two_proportion_size(base_rate, 1.0, alpha, power) > effective:
+        return math.inf
+    lower, upper = base_rate, 1.0
+    while upper - lower > _SEARCH_TOLERANCE * base_rate:
+        middle = (lower + upper) / 2
+        size = _get_two_proportion_size(base_rate, middle, alpha, power)
+        lower, upper = (middle, upper) if size > effective else (lower, middle)
+    return (lower + upper) / 2 / base_rate
+
+
+def get_tool_use_harm(
+    sd: float,
+    per_arm: float,
+    *,
+    is_overage_primary: bool,
+    alpha: float = DEFAULT_ALPHA,
+    power: float = DEFAULT_POWER,
+    design_effect: float = 1.0,
+) -> float:
+    """Minimum detectable tool_use mean shift, in tool uses, of a two-sample normal comparison.
+
+    Upward only (one-sided ``alpha``) on an overage-primary trial, where fewer tool uses is a real
+    win's route; two-sided otherwise.
+    """
+    _check_positive("sd", sd)
+    effective = _get_effective_sample(per_arm, design_effect)
+    _check_alpha(alpha)
+    _check_power(power, alpha)
+    tail = alpha if is_overage_primary else alpha / 2
+    critical_sum = _STANDARD_NORMAL.inv_cdf(1 - tail) + _STANDARD_NORMAL.inv_cdf(power)
+    return critical_sum * sd * math.sqrt(2 / effective)
+
+
+def _get_mean_squares(clusters: Sequence[Sequence[float]], sizes: list[int]) -> tuple[float, float]:
+    """One-way ANOVA (between-cluster, within-cluster) mean squares."""
+    total = sum(sizes)
+    means = [math.fsum(cluster) / size for cluster, size in zip(clusters, sizes)]
+    grand_mean = math.fsum(math.fsum(cluster) for cluster in clusters) / total
+    between = math.fsum(size * (mean - grand_mean) ** 2 for size, mean in zip(sizes, means))
+    within = math.fsum((value - mean) ** 2 for cluster, mean in zip(clusters, means) for value in cluster)
+    return between / (len(sizes) - 1), within / (total - len(sizes))
+
+
 def _get_fixed_size(baseline_rate: float, alpha: float, power: float, relative_reduction: float) -> float:
-    """Fleiss pooled-null two-proportion size, no continuity correction."""
-    if not 0 < baseline_rate < 1:
-        raise ValueError(f"baseline_rate must be in (0, 1), got {baseline_rate}")
+    _check_rate("baseline_rate", baseline_rate)
     if not 0 < relative_reduction < 1:
         raise ValueError(f"relative_reduction must be in (0, 1), got {relative_reduction}")
     _check_alpha(alpha)
     _check_power(power, alpha)
-    treated_rate = baseline_rate * (1 - relative_reduction)
-    pooled_rate = (baseline_rate + treated_rate) / 2
+    return _get_two_proportion_size(baseline_rate, baseline_rate * (1 - relative_reduction), alpha, power)
+
+
+def _get_two_proportion_size(rate: float, other_rate: float, alpha: float, power: float) -> float:
+    """Fleiss pooled-null two-proportion per-arm size, one-sided, no continuity correction."""
+    pooled_rate = (rate + other_rate) / 2
     null_term = _STANDARD_NORMAL.inv_cdf(1 - alpha) * math.sqrt(2 * pooled_rate * (1 - pooled_rate))
-    alternative_term = _STANDARD_NORMAL.inv_cdf(power) * math.sqrt(
-        baseline_rate * (1 - baseline_rate) + treated_rate * (1 - treated_rate)
-    )
-    return (null_term + alternative_term) ** 2 / (baseline_rate - treated_rate) ** 2
+    alternative_term = _STANDARD_NORMAL.inv_cdf(power) * math.sqrt(rate * (1 - rate) + other_rate * (1 - other_rate))
+    return (null_term + alternative_term) ** 2 / (rate - other_rate) ** 2
+
+
+def _get_effective_sample(per_arm: float, design_effect: float) -> float:
+    if not per_arm >= 1:
+        raise ValueError(f"per_arm must be >= 1, got {per_arm}")
+    _check_positive("design_effect", design_effect)
+    return per_arm / design_effect
+
+
+def _check_rate(name: str, rate: float) -> None:
+    if not 0 < rate < 1:
+        raise ValueError(f"{name} must be in (0, 1), got {rate}")
 
 
 def _check_alpha(alpha: float) -> None:
