@@ -13,8 +13,8 @@ Patterns are auto-extracted from accumulated Outcome Records and recorded in `me
 
 - **Duplicate-append prevention**: if the same pattern + agent combo already exists, update its frequency only — never append a second entry.
 - **Approval**: instruction improvement approval is 2-tier (Auto + Safety) — see "Instruction Improvement Approval Tier" below.
-- **Candidate variants**: each tier MAY generate up to 3 variants; the chosen variant goes to apply, the rest are logged to Solution History for the next cycle.
-  - Honest backing: SPEC, not running code — a read of `autoagent/daemon_cycle.py` found no multi-variant generation path (the loop builds one proposal per candidate agent), so nothing writes the non-chosen variants today.
+- **Candidate variants**: each tier MAY generate up to 3 variants; the chosen variant goes to apply, and the rest are not kept.
+  - Honest backing: SPEC, not running code — the generation loop builds one proposal per candidate agent (`autoagent/daemon_cycle.py` → `_run_generation_loop`), so no non-chosen variant exists today.
 
 ## Instruction Improvement Approval Tier
 
@@ -50,13 +50,6 @@ The self-improvement loop (`autoagent/daemon_cycle.py`) user-approval queue is *
   - While Tier 1 is closed (its interim bullet), nothing is generated for it; Tier 1 absorbs it once it reopens.
 
 > Cross-ref: this section is the **approval-rule canonical (SoT)** for the 2-tier policy · `skills/glass-atrium-ops-orchestrator.md` Self-Improvement User-Approval Trigger carries only the orchestrator-side operational delta (Monitoring-phase routing + dashboard surfacing) and points here
-
-## Solution History (OPRO-style)
-
-- Each instruction-improvement attempt is recorded as 3-tuple: `(instruction cell = agent + task_type, score 1–5, applied_date)`, plus a `directive_hint` field (`autoagent/daemon_cycle.py` → `SolutionAttempt`).
-  - Honest backing: the generation path (`run_cycle` → `solution_attempt_from_outcome`) passes no hint, so `directive_hint` is empty today.
-- Retention keeps the per-cell Pareto-nondominated frontier over (score, recency): multiple winners per cell survive, so an older-higher-score and a newer-lower-score variant both feed the next cycle. A cell with fewer than 5 attempts carries insufficient evidence and is dropped (`autoagent/daemon_cycle.py` → `retain_pareto_winners`).
-  - Honest backing: the cross-cycle durable store does NOT exist. Retention runs within one cycle — every attempt shares an `applied_date`, so the recency objective is constant and cells rarely reach the 5-attempt floor — and lands in the cycle report only. Nothing yet carries a frontier into the next optimizer's context.
 
 ## Correction Signal Capture
 
