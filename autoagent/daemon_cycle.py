@@ -9729,11 +9729,16 @@ def _emit_gate_loop_event(
     agent: str,
     event_ts: str,
     eval_result: str,
+    *,
+    event_subject: str | None = None,
 ) -> None:
     """Shared loop-event envelope for the pattern-gate observability helpers.
 
     Lives once so a schema change to core.autoagent_loop_events cannot land on the
     skip path and miss the fail-open path.
+
+    event_subject: None = census class, keyed per (day, agent, cause); a subject =
+    verdict class for a writer verdict cause — the writer refuses either mismatch.
     """
     _invoke_pg_helper(
         {
@@ -9745,7 +9750,7 @@ def _emit_gate_loop_event(
                 "changes_added": 0,
                 "changes_removed": 0,
                 "rice": None,
-                "subject": None,  # census class — the writer keys it per (day, agent, cause)
+                "subject": event_subject,
             },
         }
     )
@@ -9789,7 +9794,8 @@ def _build_row_status_text(rows: list[dict]) -> str:
     return ", ".join(f"{row['id']}:{row.get('status')}" for row in rows)
 
 
-# _get_uncovered_cause tokens — read by the parked guard + the writer's verdict-cause set.
+# _get_uncovered_cause tokens — read by the parked guard + the writer's verdict-cause set;
+# INTAKE_MISS is also the discharge stage's stranded-link event.
 DISCHARGE_EVENT_READ_FAILED = "discharge-read-failed"
 DISCHARGE_EVENT_UNRESOLVED = "discharge-unresolved"
 DISCHARGE_EVENT_COVERED_TERMINAL = "discharge-covered-terminal"
@@ -9936,7 +9942,8 @@ def discharge_applied_patterns(
 
     Only a linked row still in the intake index transitions: an unlinked proposal
     or a row the intake read dropped (terminal, dormant, outside the intake tiers)
-    is counted and skipped, never resolved another way. An unreadable input is an
+    is counted and skipped, never resolved another way — a dropped row that is not
+    terminal is also WARNed (_report_outside_intake). An unreadable input is an
     outage, so the stage can never fall back to an agent's whole row set.
 
     live: False in a no-write cycle — the rows that would transition are logged.
@@ -9951,15 +9958,18 @@ def discharge_applied_patterns(
 
     intake_ids = {row["id"] for rows in rows_by_agent.values() for row in rows}
     report = DischargeReport(False, [], [], [], [], [])
+    outside_links: list[tuple[int, int]] = []
     for proposal_id, pattern_id in applied_rows:
         if pattern_id is None:
             report.unlinked.append(proposal_id)
         elif pattern_id not in intake_ids:
             report.outside_intake.append(proposal_id)
+            outside_links.append((proposal_id, pattern_id))
         elif not live:
             report.would_discharge.append(pattern_id)
         else:
             _discharge_linked_row(proposal_id, pattern_id, report)
+    _report_outside_intake(outside_links, live=live)
 
     skipped_summary = (
         f"{len(report.unlinked)} unlinked proposal(s) skipped, "
@@ -9994,6 +10004,62 @@ def _discharge_linked_row(proposal_id: int, pattern_id: int, report: DischargeRe
             f"[daemon-cycle] WARN: discharge transition failed — "
             f"learning_log id={pattern_id} (proposal id={proposal_id}); the "
             "call never completed, retried next cycle\n"
+        )
+
+
+def _report_outside_intake(links: list[tuple[int, int]], *, live: bool) -> None:
+    """Classify each (proposal id, row id) link the intake read dropped.
+
+    A terminal row is the benign window overlap, left to the summary count. A
+    non-terminal one is stranded once the window passes and re-fires back in
+    intake, so it is loud (Precondition Loud-Fail's third leg). The status-agnostic
+    read runs only when such a link exists.
+    """
+    if not links:
+        return
+    coverage_by_agent = get_coverage_rows_by_agent()
+    if coverage_by_agent is None:
+        sys.stderr.write(
+            f"[daemon-cycle] WARN: discharge — status-agnostic read outage; "
+            f"{len(links)} link(s) outside intake unclassified (proposals "
+            f"{sorted(proposal_id for proposal_id, _ in links)}), a stranded row "
+            "is NOT ruled out\n"
+        )
+        return
+    rows_by_id = {row["id"]: row for rows in coverage_by_agent.values() for row in rows}
+    event_ts = datetime.now(timezone.utc).strftime("%Y-%m-%dT00:00:00.000Z")
+    for proposal_id, pattern_id in links:
+        _warn_stranded_link(
+            proposal_id, pattern_id, rows_by_id.get(pattern_id), event_ts, live=live
+        )
+
+
+def _warn_stranded_link(
+    proposal_id: int, pattern_id: int, row: dict | None, event_ts: str, *, live: bool
+) -> None:
+    """WARN for an absent or non-terminal linked row; the verdict event only in a writing cycle."""
+    if row is None:
+        sys.stderr.write(
+            f"[daemon-cycle] WARN: discharge — applied proposal id={proposal_id} links "
+            f"learning_log id={pattern_id}, absent from the status-agnostic read\n"
+        )
+        return
+    if row.get("status") in PATTERN_TERMINAL_STATUSES:
+        return
+    agent = row.get("agent") or ""
+    sys.stderr.write(
+        f"[daemon-cycle] WARN: pattern {DISCHARGE_EVENT_INTAKE_MISS} — agent={agent} "
+        f"({(row.get('pattern_signature') or '')[:80]!r}): applied proposal "
+        f"id={proposal_id} links non-terminal row {pattern_id} ({row.get('status')}) "
+        "absent from the intake read — not discharged, stranded once the window passes\n"
+    )
+    if live:
+        # Namespaced — a learning_log row id and a proposal id collide as bare integers.
+        _emit_gate_loop_event(
+            agent,
+            event_ts,
+            DISCHARGE_EVENT_INTAKE_MISS,
+            event_subject=f"proposal:{proposal_id}",
         )
 
 

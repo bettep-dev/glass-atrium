@@ -398,9 +398,23 @@ class DischargeStageTest(unittest.TestCase):
                 outcome, row_id if outcome == dc.DISCHARGE_APPLIED else None
             )
 
-        patcher = mock.patch.object(dc, "_pg_discharge_learning_pattern", _fake_discharge)
-        patcher.start()
-        self.addCleanup(patcher.stop)
+        _EMITTED.clear()
+        # Status-agnostic read the stage classifies an outside-intake link by; None = outage.
+        self.coverage_rows: tuple[dict, ...] | None = STORED_ROWS
+        for name, value in (
+            ("_pg_discharge_learning_pattern", _fake_discharge),
+            (
+                "get_coverage_rows_by_agent",
+                lambda: (
+                    None
+                    if self.coverage_rows is None
+                    else dc._index_rows_by_agent(list(self.coverage_rows))
+                ),
+            ),
+        ):
+            patcher = mock.patch.object(dc, name, value)
+            patcher.start()
+            self.addCleanup(patcher.stop)
 
     def _run(self, applied_rows, *, live=True, index=None):
         with _capture_stderr() as buf:
@@ -423,12 +437,54 @@ class DischargeStageTest(unittest.TestCase):
         self.assertEqual(report.discharged, [])
         self.assertIn("1 unlinked", err)
 
-    def test_when_the_linked_row_left_intake_then_nothing_transitions(self):
-        # Row 6 is stored but parked, so the intake read drops it.
-        report, _ = self._run([(13, 6)], index=_index(PARKED_INTAKE_ROWS))
-        self.assertEqual(self.calls, [])
-        self.assertEqual(report.outside_intake, [13])
-        self.assertEqual(report.discharged, [])
+    def test_when_the_linked_row_left_intake_then_nothing_transitions_and_only_terminal_is_quiet(
+        self,
+    ):
+        # Row 6 is parked, so the intake read drops it; a non-terminal row there is
+        # stranded once the window passes, so only a terminal one may stay quiet.
+        row_6 = next(row for row in STORED_ROWS if row["id"] == 6)
+        intake_miss_event = (
+            dc.DISCHARGE_EVENT_INTAKE_MISS,
+            "proposal:13",
+            "glass-atrium-dev-nestjs",
+        )
+        for name, coverage_rows, live, warning, events in (
+            ("terminal row", (dict(row_6, status="applied"),), True, "", []),
+            (
+                "non-terminal row, writing cycle",
+                (row_6,),
+                True,
+                "discharge-intake-miss",
+                [intake_miss_event],
+            ),
+            (
+                "non-terminal row, no-write cycle",
+                (row_6,),
+                False,
+                "discharge-intake-miss",
+                [],
+            ),
+            ("row absent from the status-agnostic read", (), True, "absent", []),
+            ("status-agnostic read outage", None, True, "outage", []),
+        ):
+            with self.subTest(name):
+                _EMITTED.clear()
+                self.coverage_rows = coverage_rows
+                report, err = self._run(
+                    [(13, 6)], live=live, index=_index(PARKED_INTAKE_ROWS)
+                )
+                warnings = "\n".join(line for line in err.splitlines() if "WARN" in line)
+                self.assertEqual(self.calls, [])
+                self.assertEqual(report.outside_intake, [13])
+                self.assertEqual(bool(warnings), bool(warning), err)
+                self.assertIn(warning, warnings)
+                self.assertEqual(
+                    [
+                        (e["args"]["eval_result"], e["args"]["subject"], e["args"]["agent"])
+                        for e in _EMITTED
+                    ],
+                    events,
+                )
 
     def test_when_dry_run_then_no_transition_and_the_linked_row_on_the_log_line(self):
         report, err = self._run([(11, 5), (12, None)], live=False)
@@ -506,10 +562,12 @@ class DischargeCycleWiringTest(unittest.TestCase):
             patcher.start()
             self.addCleanup(patcher.stop)
         # Knobs load at import from this install's daemon-config.json → pin all unset.
+        # The pause gate reads (and expires) the install's own update-state flag → off.
         unset = TierKnobs("", "")
         for patcher in (
             mock.patch.object(dc, "KNOB_ERRORS", {}),
             mock.patch.dict(dc.TIER_KNOBS, {"worker": unset, "pre_verify": unset}),
+            mock.patch.object(dc, "HAS_PAUSE_LIB", False),
         ):
             patcher.start()
             self.addCleanup(patcher.stop)
