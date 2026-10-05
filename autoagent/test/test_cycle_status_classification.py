@@ -16,7 +16,9 @@ generation unit leaves its error empty because the skip is intentional, not a cy
 
 The same writer sends each patch's proposal status: a status the patch carries is
 forwarded as-is, and only an absent one falls back — `rejected` for a reject
-classification (a gate verdict, never `unadjudicated`), `pending` otherwise.
+classification (a gate verdict, never `unadjudicated`), `pending` otherwise. The
+patch's pattern link and generator-input version reach the envelope as the patch
+carries them, and an absent one is sent as None.
 
 Run with either runner:
     python3 -m unittest autoagent.test.test_cycle_status_classification -v
@@ -26,6 +28,8 @@ Run with either runner:
 
 from __future__ import annotations
 
+import contextlib
+import io
 import json
 import sys
 import tempfile
@@ -34,11 +38,23 @@ from pathlib import Path
 from unittest import mock
 
 _REPO_ROOT = Path(__file__).resolve().parent.parent.parent
-_SCRIPTS_DIR = _REPO_ROOT / "scripts"
-if str(_SCRIPTS_DIR) not in sys.path:
-    sys.path.insert(0, str(_SCRIPTS_DIR))
+_TEST_DIR = Path(__file__).resolve().parent
+for _path in (_REPO_ROOT / "scripts", _REPO_ROOT / "hooks", _REPO_ROOT / "autoagent", _TEST_DIR):
+    if str(_path) not in sys.path:
+        sys.path.insert(0, str(_path))
 
 import _pg_push_autoagent_cycle as writer  # noqa: E402
+from _pg_seal import seal_pg_reach  # noqa: E402
+
+try:
+    import daemon_cycle as dc
+
+    _IMPORT_ERROR: Exception | None = None
+except Exception as exc:  # noqa: BLE001 — psycopg absent → skip, not error
+    dc = None  # type: ignore[assignment]
+    _IMPORT_ERROR = exc
+
+_PROBE_AGENT = "pattern-link-probe-agent"
 
 
 def _patch(**overrides: object) -> dict:
@@ -116,7 +132,7 @@ class CycleStatusClassification(unittest.TestCase):
 
 
 class ProposalStatusSent(unittest.TestCase):
-    def _get_sent_status(self, patch: dict) -> str:
+    def _get_sent_args(self, patch: dict) -> dict:
         sent: list[dict] = []
 
         def record(envelope: dict) -> bool:
@@ -133,7 +149,7 @@ class ProposalStatusSent(unittest.TestCase):
             ):
                 self.assertEqual(writer.main(), 0)
         (proposal,) = [e for e in sent if e["op"] == "write_autoagent_proposal"]
-        return proposal["args"]["status"]
+        return proposal["args"]
 
     def test_a_carried_status_is_sent_and_only_an_absent_one_falls_back(self) -> None:
         rows = [
@@ -145,7 +161,84 @@ class ProposalStatusSent(unittest.TestCase):
         ]
         for name, patch, expected in rows:
             with self.subTest(name):
-                self.assertEqual(self._get_sent_status(patch), expected)
+                self.assertEqual(self._get_sent_args(patch)["status"], expected)
+
+    def test_the_pattern_link_and_input_version_are_sent_as_the_patch_carries_them(
+        self,
+    ) -> None:
+        rows = [
+            (
+                "both carried",
+                _patch(learning_pattern_id=4127, generator_input_version="gen-inputs-2"),
+                (4127, "gen-inputs-2"),
+            ),
+            ("both absent", _patch(), (None, None)),
+        ]
+        for name, patch, expected in rows:
+            with self.subTest(name):
+                args = self._get_sent_args(patch)
+                self.assertEqual(
+                    (args["learning_pattern_id"], args["generator_input_version"]),
+                    expected,
+                )
+
+    @unittest.skipIf(dc is None, f"import failed: {_IMPORT_ERROR}")
+    def test_the_generation_unit_links_its_lead_pattern_through_the_report(self) -> None:
+        # Report JSON built by the cycle's own serializer, so a field the dataclass
+        # drops never reaches the envelope; a synthetic pattern (row_id 0) links nothing.
+        pg_reach = seal_pg_reach(self)
+        for name, row_id, expected in (
+            ("stored pattern", 4127, 4127),
+            ("synthetic pattern", 0, None),
+        ):
+            with self.subTest(name):
+                patch = self._build_report_patch(row_id)
+                args = self._get_sent_args(patch)
+                self.assertEqual(args["learning_pattern_id"], expected)
+                self.assertIsNone(args["generator_input_version"])
+        self.assertEqual(pg_reach, [])
+
+    def _build_report_patch(self, lead_row_id: int) -> dict:
+        lead, trailing = (
+            dc.Pattern(
+                date="2026-10-02",
+                label=label,
+                frequency=frequency,
+                agent=_PROBE_AGENT,
+                status="identified",
+                tier="user-pending",
+                raw_line=f"pg:learning_log:{row_id}:{label}|{_PROBE_AGENT}",
+                row_id=row_id,
+            )
+            for label, frequency, row_id in (
+                ("lead pattern", "9", lead_row_id),
+                ("trailing pattern", "3", 5000),
+            )
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            agents_dir = Path(tmp)
+            (agents_dir / f"{_PROBE_AGENT}.md").write_text("# probe\n", encoding="utf-8")
+            with contextlib.redirect_stderr(io.StringIO()):
+                result = dc.build_patch_result(
+                    _PROBE_AGENT,
+                    [lead, trailing],
+                    [],
+                    cycle_date="2026-10-03",
+                    agents_dir=agents_dir,
+                    seen_targets=set(),
+                    skip_haiku=True,
+                    skip_pre_verify=True,
+                    skip_loop_emit=True,
+                )
+        report = dc.CycleReport(
+            cycle_date="2026-10-03",
+            generated_at="2026-10-03T02:00:00.000Z",
+            patterns_processed=2,
+            cost_guard={},
+            patches=[result],
+        )
+        (patch,) = dc._report_to_dict(report)["patches"]
+        return patch
 
 
 if __name__ == "__main__":

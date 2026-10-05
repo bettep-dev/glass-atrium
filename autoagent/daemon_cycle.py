@@ -2192,6 +2192,10 @@ class PatchResult:
     failure_raw_head: str = ""
     # Mirror of the proposal's successful-call duration (None on every failure path).
     generation_duration_ms: int | None = None
+    # core.learning_log id of the lead pattern (None = synthetic); the discharge link.
+    learning_pattern_id: int | None = None
+    # Version of the generator's input set; None until the generation path stamps one.
+    generator_input_version: str | None = None
 
 
 @dataclass
@@ -11881,6 +11885,8 @@ def build_patch_result(
         # Same explicit-copy duty as the failure_* block above — an omitted
         # mirror silently reaches PG as the dataclass default.
         generation_duration_ms=proposal.generation_duration_ms,
+        # Lead pattern only: the column holds one link per proposal row.
+        learning_pattern_id=lead_pattern.row_id or None,
     )
 
 

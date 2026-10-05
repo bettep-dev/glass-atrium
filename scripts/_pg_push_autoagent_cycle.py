@@ -254,6 +254,9 @@ def main():
                 "confidence_observed": patch.get("confidence_observed"),
                 "project_key": patch.get("project_key") or "",
                 "promotion_tier": patch.get("promotion_tier") or "",
+                # Absent → None; the helper stores NULL and a re-push keeps a stored pair.
+                "learning_pattern_id": patch.get("learning_pattern_id"),
+                "generator_input_version": patch.get("generator_input_version"),
             },
         }
         all_writes_ok &= _invoke_helper(proposal_env)
