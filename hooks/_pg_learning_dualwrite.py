@@ -15,6 +15,7 @@
 
 import sys
 import time
+from datetime import datetime
 from typing import NamedTuple
 
 try:
@@ -1155,10 +1156,10 @@ _PROVENANCE_START_SQL = (
 
 
 def read_pattern_floor(
-    agent: str, metric_key: str, windows: PairWindows
+    agent: str, metric_key: str, windows: PairWindows, evaluated_at: datetime
 ) -> FloorResult | None:
-    """The occurrence floor of `agent` for `metric_key` over `windows`, read from
-    core.spawn_manifest and the facts joined by agent_id.
+    """The occurrence floor of `agent` for `metric_key` over `windows` at `evaluated_at`,
+    read from core.spawn_manifest and the facts joined by agent_id.
 
     None on ANY read failure — table-absent schema and PG unreachable included — so an
     outage fails closed and never reads as an empty window. Raises ValueError on a
@@ -1173,14 +1174,7 @@ def read_pattern_floor(
                 cur.execute(
                     _SPAWN_FACTS_SELECT_SQL, (agent, windows.start.baseline, windows.end)
                 )
-                spawns = [
-                    SpawnFacts(
-                        agent_id, session_id, started_at, int(overage_rows), bool(has_stop),
-                        tuple({"attribution_source": source} for source in attributions),
-                    )
-                    for agent_id, session_id, started_at, overage_rows, has_stop, attributions
-                    in cur.fetchall()
-                ]
+                spawns = _get_spawn_facts(cur.fetchall())
     except Exception as exc:  # noqa: BLE001 — every failure is an outage the caller fails closed on
         sys.stderr.write(
             '{"hook":"_pg_learning_dualwrite","op":"read_pattern_floor",'
@@ -1188,4 +1182,14 @@ def read_pattern_floor(
             % (type(exc).__name__, metric_key)
         )
         return None
-    return get_floor_verdict(spawns, metric_key, windows, provenance_start)
+    return get_floor_verdict(spawns, metric_key, windows, provenance_start, evaluated_at)
+
+
+def _get_spawn_facts(rows: list[tuple]) -> list[SpawnFacts]:
+    return [
+        SpawnFacts(
+            agent_id, session_id, started_at, int(overage_rows), bool(has_stop),
+            tuple({"attribution_source": source} for source in attributions),
+        )
+        for agent_id, session_id, started_at, overage_rows, has_stop, attributions in rows
+    ]

@@ -300,6 +300,8 @@ BASELINE = SimpleNamespace(
     MIN_COVERED=timedelta(days=28),  # the power check's projected-units window
 )
 FLOOR_MIN_SESSIONS = 5
+# a no-SubagentStop spawn younger than this at evaluation may still be running
+PENDING_GRACE = timedelta(hours=6)
 
 VERDICT_PASS = "pass"
 VERDICT_FAIL = "fail"
@@ -343,6 +345,7 @@ class FloorResult(NamedTuple):
     confirmation: WindowCount
     baseline: WindowCount  # floor half of the provenance-covered baseline
     unjoinable: int
+    pending: int  # spawns that may still be running at evaluation
 
 
 def get_pair_windows(now: datetime) -> PairWindows:
@@ -387,24 +390,34 @@ def is_metric_event(spawn: SpawnFacts, metric_key: str) -> bool:
     raise ValueError(f"is_metric_event: unknown metric key {metric_key!r}")
 
 
+def is_pending(spawn: SpawnFacts, evaluated_at: datetime) -> bool:
+    """May this spawn still be running? No SubagentStop yet, started within
+    PENDING_GRACE before `evaluated_at`."""
+    return not spawn.has_subagent_stop and spawn.started_at > evaluated_at - PENDING_GRACE
+
+
 def get_floor_verdict(
     spawns: Iterable[SpawnFacts],
     metric_key: str,
     windows: PairWindows,
     provenance_start: datetime | None,
+    evaluated_at: datetime,
 ) -> FloorResult:
     """Occurrence floor over windows, never over a batch.
 
     Pass: ≥ 5 event sessions in detection and in confirmation, confirmation rate above
     the floor-half baseline rate. `insufficient-baseline`, never a pass, while the
     provenance-covered baseline spans < 28 days or its floor half holds no spawn; a None
-    `provenance_start` covers nothing. Spawns before it count nowhere; NULL-agent_id
-    spawns count on no side and are returned as `unjoinable`."""
+    `provenance_start` covers nothing. Spawns before it count nowhere. NULL-agent_id
+    spawns and spawns pending at `evaluated_at` count on no side and are returned as
+    `unjoinable` and `pending`."""
     if metric_key not in METRIC_KEYS:
         raise ValueError(f"get_floor_verdict: unknown metric key {metric_key!r}")
     spawns = list(spawns)
     start = windows.end if provenance_start is None else provenance_start
-    counted = [s for s in spawns if s.agent_id is not None and s.started_at >= start]
+    joinable = [s for s in spawns if s.agent_id is not None]
+    settled = [s for s in joinable if not is_pending(s, evaluated_at)]
+    counted = [s for s in settled if s.started_at >= start]
     covered_start = max(windows.start.baseline, start)
     floor_half = [s for s in counted if is_floor_half(s.agent_id)]
     baseline = _get_window_count(floor_half, metric_key, covered_start, windows.start.detection)
@@ -414,8 +427,8 @@ def get_floor_verdict(
     confirmation = _get_window_count(counted, metric_key, windows.start.confirmation, windows.end)
     is_covered = windows.start.detection - covered_start >= BASELINE.MIN_COVERED
     verdict = _get_verdict(detection, confirmation, baseline, is_covered=is_covered)
-    unjoinable = sum(1 for s in spawns if s.agent_id is None)
-    return FloorResult(verdict, detection, confirmation, baseline, unjoinable)
+    unjoinable, pending = len(spawns) - len(joinable), len(joinable) - len(settled)
+    return FloorResult(verdict, detection, confirmation, baseline, unjoinable, pending)
 
 
 def _get_window_count(

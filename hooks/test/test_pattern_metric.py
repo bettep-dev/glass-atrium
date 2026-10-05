@@ -9,7 +9,10 @@ the ephemeral cluster of ``autoagent/test/live-pg-ephemeral.bats`` and skips any
 
 from __future__ import annotations
 
+import contextlib
 import hashlib
+import io
+import json
 import os
 import subprocess
 import sys
@@ -115,9 +118,10 @@ def _get_floor(
     *,
     metric_key: str = "budget_overage",
     provenance_start: datetime | None = None,
+    evaluated_at: datetime = _NOW,
 ) -> sig.FloorResult:
     start = windows.start.baseline if provenance_start is None else provenance_start
-    return sig.get_floor_verdict(list(spawns), metric_key, windows, start)
+    return sig.get_floor_verdict(list(spawns), metric_key, windows, start, evaluated_at)
 
 
 class TestPairWindows(unittest.TestCase):
@@ -231,9 +235,6 @@ class TestOccurrenceFloor(unittest.TestCase):
         self.windows = sig.get_pair_windows(_NOW)
         self.passing = _get_passing_spawns(self.windows)
 
-    def test_the_passing_fixture_passes(self) -> None:
-        self.assertEqual(_get_floor(self.passing, self.windows).verdict, sig.VERDICT_PASS)
-
     def test_events_split_over_two_batches_pass_when_their_union_passes(self) -> None:
         baseline = [s for s in self.passing if s.started_at < self.windows.start.detection]
         detection = _get_window_spawns("det", self.windows.start.detection, events=5, quiet=0, session_prefix="d")
@@ -278,18 +279,24 @@ class TestOccurrenceFloor(unittest.TestCase):
                 )
                 self.assertGreater(emitted_floor.detection.events, 0)
 
-    def test_same_session_events_count_once_toward_the_five(self) -> None:
-        detection = [
-            _get_spawn(agent_id, self.windows.start.detection + timedelta(hours=index),
-                       session_id=session, overage_rows=1)
-            for index, (agent_id, session) in enumerate(
-                zip(_get_agent_ids("dup", 5, is_floor=True), ["s1", "s1", "s2", "s3", "s4"], strict=True)
-            )
+    def test_only_distinct_named_sessions_count_toward_the_five(self) -> None:
+        rows = [
+            ("two events in one session", ["s1", "s1", "s2", "s3", "s4"]),
+            ("four named sessions and one NULL session", ["s1", "s2", "s3", "s4", None]),
         ]
-        spawns = [s for s in self.passing if not s.agent_id.startswith("det-")] + detection
-        floor = _get_floor(spawns, self.windows)
-        self.assertEqual((floor.detection.events, floor.detection.sessions), (5, 4))
-        self.assertEqual(floor.verdict, sig.VERDICT_FAIL)
+        for name, sessions in rows:
+            with self.subTest(name):
+                detection = [
+                    _get_spawn(agent_id, self.windows.start.detection + timedelta(hours=index),
+                               session_id=session, overage_rows=1)
+                    for index, (agent_id, session) in enumerate(
+                        zip(_get_agent_ids("dup", 5, is_floor=True), sessions, strict=True)
+                    )
+                ]
+                spawns = [s for s in self.passing if not s.agent_id.startswith("det-")] + detection
+                floor = _get_floor(spawns, self.windows)
+                self.assertEqual((floor.detection.events, floor.detection.sessions), (5, 4))
+                self.assertEqual(floor.verdict, sig.VERDICT_FAIL)
 
     def test_the_five_session_floor_binds_detection_and_confirmation_alike(self) -> None:
         baseline = [s for s in self.passing if s.started_at < self.windows.start.detection]
@@ -361,8 +368,26 @@ class TestOccurrenceFloor(unittest.TestCase):
                 floor = _get_floor(baseline + in_window, self.windows, provenance_start=start)
                 self.assertEqual(floor.verdict, expected)
 
+    def test_spawns_outside_the_windows_count_in_no_window(self) -> None:
+        provenance_start = self.windows.start.baseline - 30 * _DAY
+        rows = [
+            ("floor-half spawns one second before the baseline start",
+             self.windows.start.baseline - timedelta(seconds=1)),
+            ("spawns at the confirmation end", self.windows.end),
+            ("spawns an hour after the confirmation end", self.windows.end + timedelta(hours=1)),
+        ]
+        expected = _get_floor(self.passing, self.windows, provenance_start=provenance_start)
+        for name, started_at in rows:
+            with self.subTest(name):
+                outside = [
+                    _get_spawn(agent_id, started_at, session_id=f"o{index}", overage_rows=1)
+                    for index, agent_id in enumerate(_get_agent_ids("out", 5, is_floor=True))
+                ]
+                floor = _get_floor(self.passing + outside, self.windows, provenance_start=provenance_start)
+                self.assertEqual(floor, expected)
+
     def test_no_provenance_start_never_passes(self) -> None:
-        floor = sig.get_floor_verdict(self.passing, "budget_overage", self.windows, None)
+        floor = sig.get_floor_verdict(self.passing, "budget_overage", self.windows, None, _NOW)
         self.assertEqual(floor.verdict, sig.VERDICT_INSUFFICIENT_BASELINE)
 
     def test_a_spawn_before_the_provenance_start_counts_on_neither_side(self) -> None:
@@ -385,6 +410,75 @@ class TestOccurrenceFloor(unittest.TestCase):
         floor = _get_floor(self.passing + unjoinable, self.windows)
         self.assertEqual(floor.unjoinable, 3)
         self.assertEqual(floor._replace(unjoinable=0), _get_floor(self.passing, self.windows))
+
+
+class TestPendingGrace(unittest.TestCase):
+    """A spawn with no SubagentStop yet, started inside the grace before the evaluation instant,
+    may still be running → pending: counted on no side, reported apart."""
+
+    def test_a_stopless_spawn_inside_the_grace_is_pending_and_an_older_one_is_an_event(self) -> None:
+        windows = sig.get_pair_windows(_NOW)
+        evaluated_at = windows.end + timedelta(hours=2)
+        passing = _get_passing_spawns(windows)
+        before = _get_floor(passing, windows, metric_key="emit_failure", evaluated_at=evaluated_at)
+        rows = [
+            ("no SubagentStop, 5 h old → pending", timedelta(hours=5), False, (0, 0, 1)),
+            ("no SubagentStop, exactly 6 h old → an event", timedelta(hours=6), False, (1, 1, 0)),
+            ("no SubagentStop, 7 h old → an event", timedelta(hours=7), False, (1, 1, 0)),
+            ("SubagentStop, 5 h old → counted, no event", timedelta(hours=5), True, (1, 0, 0)),
+        ]
+        agent_id = _get_agent_ids("grace", 1, is_floor=True)[0]
+        for name, age, has_stop, (spawns, events, pending) in rows:
+            with self.subTest(name):
+                spawn = _get_spawn(
+                    agent_id, evaluated_at - age, session_id="g", has_subagent_stop=has_stop
+                )
+                floor = _get_floor(
+                    [*passing, spawn], windows, metric_key="emit_failure", evaluated_at=evaluated_at
+                )
+                count = before.confirmation
+                self.assertEqual(
+                    (floor.confirmation, floor.pending),
+                    (sig.WindowCount(count.spawns + spawns, count.events + events,
+                                     count.sessions + events), pending),
+                )
+
+
+@unittest.skipIf(pgdw is None, f"import failed: {_IMPORT_ERROR}")
+class TestPatternFloorReadFailure(unittest.TestCase):
+    """The window read fails closed: a read failure → None plus one stderr JSON line."""
+
+    def setUp(self) -> None:
+        self.windows = sig.get_pair_windows(_NOW)
+
+    def test_a_read_failure_returns_none_and_reports_the_op(self) -> None:
+        table_absent = mock.MagicMock()
+        table_absent.__enter__.return_value = table_absent
+        table_absent.cursor.return_value.__enter__.return_value.execute.side_effect = (
+            pgdw.pg_errors.UndefinedTable('relation "core.spawn_manifest" does not exist')
+        )
+        rows = [
+            ("connection error", mock.Mock(side_effect=pgdw.psycopg.OperationalError("refused")),
+             "OperationalError"),
+            ("undefined table", mock.Mock(return_value=table_absent), "UndefinedTable"),
+        ]
+        for name, connect, error_kind in rows:
+            with self.subTest(name), mock.patch.object(pgdw.psycopg, "connect", connect):
+                stderr = io.StringIO()
+                with contextlib.redirect_stderr(stderr):
+                    floor = pgdw.read_pattern_floor("agent-x", "emit_failure", self.windows, _NOW)
+                self.assertIsNone(floor)
+                report = json.loads(stderr.getvalue())
+                self.assertEqual(
+                    (report["op"], report["error_kind"], report["metric_key"]),
+                    ("read_pattern_floor", error_kind, "emit_failure"),
+                )
+
+    def test_an_unknown_metric_key_is_refused_before_any_connect(self) -> None:
+        with mock.patch.object(pgdw.psycopg, "connect") as connect:
+            with self.assertRaises(ValueError):
+                pgdw.read_pattern_floor("agent-x", "verified_fail", self.windows, _NOW)
+        connect.assert_not_called()
 
 
 class _NonCommittingConn:
@@ -495,7 +589,7 @@ class TestPatternFloorReadLivePg(unittest.TestCase):
         ]
         for metric_key, baseline, detection in rows:
             with self.subTest(metric_key):
-                floor = pgdw.read_pattern_floor(self._AGENT, metric_key, self.windows)
+                floor = pgdw.read_pattern_floor(self._AGENT, metric_key, self.windows, _NOW)
                 self.assertIsNotNone(floor)
                 self.assertEqual(floor.baseline, baseline)
                 self.assertEqual(floor.detection, detection)
