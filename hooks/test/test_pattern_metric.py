@@ -47,6 +47,7 @@ else:
 _UTC = timezone.utc
 _NOW = datetime(2026, 10, 5, 6, 30, tzinfo=_UTC)
 _DAY = timedelta(days=1)
+_MINUTE = timedelta(minutes=1)
 
 
 def _is_even_sha256(agent_id: str) -> bool:
@@ -922,6 +923,9 @@ class _NonCommittingConn:
     def cursor(self):  # noqa: ANN201 — real psycopg cursor, type lives upstream
         return self._conn.cursor()
 
+    def execute(self, *args: object):
+        return self._conn.execute(*args)
+
 
 @unittest.skipIf(pgdw is None, f"import failed: {_IMPORT_ERROR}")
 class TestPatternFloorReadLivePg(unittest.TestCase):
@@ -972,13 +976,15 @@ class TestPatternFloorReadLivePg(unittest.TestCase):
                 (event_ts, agent_id, self._AGENT),
             )
 
-    def _put_outcome(self, agent_id: str, record_ts: datetime, attribution: str, result: str) -> None:
+    def _put_outcome(self, agent_id: str, record_ts: datetime, attribution: str, result: str,
+                     *, grader_verdict: str | None = None, body_md: str | None = None) -> None:
         with self.conn.cursor() as cur:
             cur.execute(
                 "INSERT INTO core.outcomes (record_ts, agent, task_type, result, summary, "
-                ' attribution_source, agent_id) VALUES (%s, %s, \'feature\'::core."TaskType", '
-                ' %s::core."OutcomeResult", \'s2f fixture\', %s, %s)',
-                (record_ts, self._AGENT, result, attribution, agent_id),
+                ' attribution_source, agent_id, grader_verdict, body_md) VALUES (%s, %s, '
+                ' \'feature\'::core."TaskType", %s::core."OutcomeResult", \'s2f fixture\', %s, %s, '
+                ' %s::core."GraderVerdict", %s)',
+                (record_ts, self._AGENT, result, attribution, agent_id, grader_verdict, body_md),
             )
 
     def _seed(self) -> None:
@@ -1034,6 +1040,31 @@ class TestPatternFloorReadLivePg(unittest.TestCase):
         self.assertEqual(floors, expected)
         self.assertNotEqual(expected[(agents[0], "budget_overage")],
                             expected[(agents[1], "budget_overage")])
+
+    def test_the_evidence_read_gives_each_triggering_spawn_its_own_outcome_facts(self) -> None:
+        w = self.windows
+        self._put_spawn(0, "prov", w.start.baseline + _DAY, agent_type="glass-atrium-dev-shell")
+        graded, ungraded = "live-evidence-graded", "live-evidence-ungraded"
+        for offset, agent_id in enumerate((graded, ungraded), 1):
+            started = w.start.confirmation + offset * _DAY
+            self._put_spawn(offset, agent_id, started, session_id=f"c{offset}")
+            self._put_stop(agent_id, started + timedelta(minutes=5))
+            self._put_overages(agent_id, 1)
+        recorded = w.start.confirmation + 3 * _DAY
+        self._put_outcome(graded, recorded, "hook-input", "fail", grader_verdict="verified_fail",
+                          body_md="## Summary\n\nfixture\n- **Tool use**: actual=37 declared=30\n")
+        self._put_outcome(graded, recorded + _MINUTE, "hook-input", "done", grader_verdict="verified_pass",
+                          body_md="## Summary\n\nfixture\n- **Tool use**: actual=12\n")
+        self._put_outcome(ungraded, recorded + 2 * _MINUTE, "hook-input", "done", body_md="## Summary\n\nfixture\n")
+
+        evidence = pgdw.read_pattern_evidence(self._AGENT, self.windows, _NOW)
+
+        self.assertIsNotNone(evidence, "the evidence read failed — see the stderr op line")
+        facts = {
+            spawn.agent_id: (spawn.verified_fail_rows, spawn.tool_use_actual)
+            for spawn in evidence["budget_overage"].triggering
+        }
+        self.assertEqual(facts, {graded: (1, 37), ungraded: (0, None)})
 
 
 @unittest.skipIf(pgdw is None, f"import failed: {_IMPORT_ERROR}")
