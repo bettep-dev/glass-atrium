@@ -6383,12 +6383,12 @@ def create_cycle_verdicts(report: CycleReport, *, reports_dir: Path = DEFAULT_RE
                     f"absent (apply migration {_CYCLE_VERDICTS_MIGRATION})\n"
                 )
                 return 0
-            inserted = _insert_cycle_verdicts(cur, report, reports_dir)
+            inserted = _create_verdict_rows(cur, report, reports_dir)
         conn.commit()
     return inserted
 
 
-def _insert_cycle_verdicts(cur: object, report: CycleReport, reports_dir: Path) -> int:
+def _create_verdict_rows(cur: object, report: CycleReport, reports_dir: Path) -> int:
     cur.execute(
         "SELECT cycle_date::text FROM core.autoagent_cycle_verdicts WHERE cycle_date < %s::date",
         (report.cycle_date,),
