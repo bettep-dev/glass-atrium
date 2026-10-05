@@ -218,7 +218,8 @@ class TestEvidenceFieldsRendered(unittest.TestCase):
     """(b) each evidence field reaches both templates through the evidence read."""
 
     def setUp(self) -> None:
-        self._reach = seal_pg_reach(self)
+        reach = seal_pg_reach(self)
+        self.addCleanup(lambda: self.assertEqual(reach, []))
         self._captured = _capture_prompt(self)
         self._agents_dir = _make_agents_dir(self)
         self._evidence: dict | None = _get_evidence()
@@ -253,7 +254,6 @@ class TestEvidenceFieldsRendered(unittest.TestCase):
                 with self.subTest(template=template, field=field):
                     self.assertIn(rendered, prompt)
         self.assertEqual(self._reads, [_AGENT, _AGENT])
-        self.assertEqual(self._reach, [])
 
     def test_a_multiline_evidence_value_never_opens_a_prompt_line(self) -> None:
         self._evidence = _get_evidence(
