@@ -213,7 +213,7 @@ _KEYLESS_FAMILY_PREFIXES = (
 _PATTERN6_SUFFIX = " type low success rate"
 # Statuses the pair verdict moves between; every other status keeps its value.
 _PAIR_STATUSES = frozenset({"identified", "dormant"})
-# Lead of every status reason this aggregator writes — the monitor buckets on it.
+# Lead of every status reason this aggregator writes.
 PAIR_REASON_PREFIX = "aggregator-pair"
 # Window reads are `record_ts > since`; one second earlier keeps a row stamped exactly at
 # the detection start, and the exact bounds are re-applied in Python.
