@@ -633,6 +633,20 @@ class TestCycleVerdictsLivePg(unittest.TestCase):
         self.assertEqual(self._get_verdicts(), verdicts)
         self.assertEqual(dc._prior_all_reject_cycle_count(_CYCLE_DATE), 3)
 
+    def test_a_verdict_already_stored_for_the_current_date_is_not_a_prior_cycle(
+        self,
+    ) -> None:
+        self._use_database(self._TEMPLATE.FULL)
+        # run_cycle stores today's row before the walk → counting it fires the alert a cycle early
+        for day in ("2026-06-08", "2026-06-09", _CYCLE_DATE):
+            self._create_verdicts(_dated_report(day, ["rejected"]))
+        self.assertEqual(
+            self._get_verdicts(),
+            [("2026-06-08", "extends"), ("2026-06-09", "extends"), (_CYCLE_DATE, "extends")],
+        )
+
+        self.assertEqual(dc._prior_all_reject_cycle_count(_CYCLE_DATE), 2)
+
     def test_backfill_inserts_missing_dates_only_and_a_second_run_inserts_nothing(
         self,
     ) -> None:
