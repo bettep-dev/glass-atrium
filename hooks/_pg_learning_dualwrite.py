@@ -18,6 +18,7 @@ import time
 from collections import defaultdict
 from collections.abc import Iterable
 from datetime import datetime
+from types import SimpleNamespace
 from typing import NamedTuple
 
 try:
@@ -66,8 +67,11 @@ from _outcome_signal import (
     METRIC_KEYS,
     TOOL_USE_LINE_PATTERN,
     FloorResult,
+    OutcomeFacts,
     PairWindows,
+    PatternEvidence,
     SpawnFacts,
+    TriggeringSpawn,
     get_floor_verdict,
     is_metric_event,
     is_pending,
@@ -1181,7 +1185,7 @@ def read_outcomes_since(
     )
 
     sql = (
-        _OUTCOME_ROWS_SELECT_SQL + " AND ".join(where_clauses) + " "
+        _OUTCOME.ROWS_SELECT_SQL + " AND ".join(where_clauses) + " "
         "ORDER BY record_ts " + order_upper
     )
     if limit_int is not None:
@@ -1212,7 +1216,7 @@ def read_outcome_window(since_epoch: float) -> list[dict] | None:
 
     For a caller judging a window: an outage must never read as an empty window."""
     where_clauses, params = _learning_window_where(since_epoch, agent=None, task_type=None)
-    sql = _OUTCOME_ROWS_SELECT_SQL + " AND ".join(where_clauses) + " ORDER BY record_ts ASC"
+    sql = _OUTCOME.ROWS_SELECT_SQL + " AND ".join(where_clauses) + " ORDER BY record_ts ASC"
     try:
         return _fetch_outcome_rows(sql, params)
     except Exception as exc:  # noqa: BLE001 — every failure is an outage the caller fails closed on
@@ -1224,14 +1228,28 @@ def read_outcome_window(since_epoch: float) -> list[dict] | None:
         return None
 
 
-_OUTCOME_ROWS_SELECT_SQL = (
-    "SELECT record_ts, agent, task_type::text, result::text, "
-    "       confidence::text, metric_pass, metric_type, "
-    "       revision_count, evaluative_signal, directive_hint, "
-    "       lesson, concerns, files_modified, correlation_id, cid, "
-    "       summary, review_flag, grader_verdict::text, attribution_source "
-    "FROM core.outcomes "
-    "WHERE "
+_OUTCOME = SimpleNamespace(
+    ROWS_SELECT_SQL=(
+        "SELECT record_ts, agent, task_type::text, result::text, "
+        "       confidence::text, metric_pass, metric_type, "
+        "       revision_count, evaluative_signal, directive_hint, "
+        "       lesson, concerns, files_modified, correlation_id, cid, "
+        "       summary, review_flag, grader_verdict::text, attribution_source "
+        "FROM core.outcomes "
+        "WHERE "
+    ),
+    # Per agent_id: grader verified failures + recorder's tool_use actual (no column).
+    # Agent text fills CID/Files bullets + each '## ' section → whole line, header only.
+    # numeric cast → no digit run overflows the read.
+    FACTS_SELECT_SQL="""
+SELECT agent_id,
+       count(*) FILTER (WHERE grader_verdict::text = %s),
+       max(substring(split_part(body_md, chr(10) || '## ', 1)
+                     FROM '(?n)' || %s::text)::numeric)
+FROM core.outcomes
+WHERE agent_id = ANY(%s)
+GROUP BY agent_id
+""",
 )
 
 
@@ -1426,42 +1444,7 @@ def _read_spawn_facts(
     return provenance_start, spawns
 
 
-# ---------------------------------------------------------------------------
 # Generator evidence read
-# ---------------------------------------------------------------------------
-# Per agent_id: grader verified failures + the recorder's tool_use actual (no column).
-# Agent text fills CID / Files bullets + every '## ' section → whole line, header only.
-# numeric cast → no digit run overflows the read.
-_OUTCOME_FACTS_SELECT_SQL = """
-SELECT agent_id,
-       count(*) FILTER (WHERE grader_verdict::text = %s),
-       max(substring(split_part(body_md, chr(10) || '## ', 1)
-                     FROM '(?n)' || %s::text)::numeric)
-FROM core.outcomes
-WHERE agent_id = ANY(%s)
-GROUP BY agent_id
-"""
-
-
-class OutcomeFacts(NamedTuple):
-    verified_fail_rows: int
-    tool_use_actual: int | None  # None = no tool_use line recorded
-
-
-class TriggeringSpawn(NamedTuple):
-    """Machine facts of one triggering spawn — daemon-recorded, never agent-emitted."""
-
-    agent_id: str
-    started_at: datetime
-    overage_rows: int
-    attribution_sources: tuple[str, ...]
-    verified_fail_rows: int
-    tool_use_actual: int | None
-
-
-class PatternEvidence(NamedTuple):
-    floor: FloorResult
-    triggering: tuple[TriggeringSpawn, ...]  # newest first
 
 
 def read_pattern_evidence(
@@ -1550,7 +1533,7 @@ def _read_outcome_facts(agent_ids: list[str]) -> dict[str, OutcomeFacts]:
     with psycopg.connect(
         "dbname=glass_atrium", connect_timeout=2, autocommit=True
     ) as conn:
-        rows = conn.execute(_OUTCOME_FACTS_SELECT_SQL, params).fetchall()
+        rows = conn.execute(_OUTCOME.FACTS_SELECT_SQL, params).fetchall()
     return {
         agent_id: OutcomeFacts(
             int(verified_fails),

@@ -38,7 +38,7 @@ try:
     import daemon_cycle as dc
 
     _IMPORT_ERROR: Exception | None = None
-except Exception as exc:  # noqa: BLE001 — psycopg absent → skip, not error
+except Exception as exc:  # noqa: BLE001 — any import failure → skip, named in the reason
     dc = None  # type: ignore[assignment]
     _IMPORT_ERROR = exc
 
@@ -200,7 +200,7 @@ def _get_evidence(*, spawn_count: int = 1, attribution: str = "hook-input") -> d
         unjoinable=0,
         pending=0,
     )
-    spawn = pgdw.TriggeringSpawn(
+    spawn = sig.TriggeringSpawn(
         agent_id="agent-1",
         started_at=_WINDOWS.start.confirmation,
         overage_rows=3,
@@ -209,11 +209,11 @@ def _get_evidence(*, spawn_count: int = 1, attribution: str = "hook-input") -> d
         tool_use_actual=61,
     )
     return {
-        sig.METRIC_BUDGET_OVERAGE: pgdw.PatternEvidence(floor, (spawn,) * spawn_count)
+        sig.METRIC_BUDGET_OVERAGE: sig.PatternEvidence(floor, (spawn,) * spawn_count)
     }
 
 
-@unittest.skipIf(dc is None or pgdw is None, f"import failed: {_IMPORT_ERROR}")
+@unittest.skipIf(dc is None, f"daemon_cycle unimportable: {_IMPORT_ERROR}")
 class TestEvidenceFieldsRendered(unittest.TestCase):
     """(b) each evidence field reaches both templates through the evidence read."""
 
@@ -299,10 +299,18 @@ class TestTriggeringSpawnSelection(unittest.TestCase):
 
     def setUp(self) -> None:
         confirmation = _WINDOWS.start.confirmation
+        self._provenance_start: datetime | None = _WINDOWS.start.baseline
         self._spawns = [
             _get_spawn("confirmation-event", confirmation + timedelta(days=1)),
             _get_spawn(
                 "confirmation-quiet", confirmation + timedelta(days=1), overage_rows=0
+            ),
+            _get_spawn("confirmation-late-event", confirmation + timedelta(days=4)),
+            _get_spawn(
+                "confirmation-stopless",
+                confirmation + timedelta(days=5),
+                overage_rows=0,
+                is_stopped=False,
             ),
             _get_spawn("detection-event", _WINDOWS.start.detection + timedelta(days=1)),
             _get_spawn(None, confirmation + timedelta(days=2)),
@@ -316,11 +324,11 @@ class TestTriggeringSpawnSelection(unittest.TestCase):
         self._fact_reads: list[list[str]] = []
 
         def _read_spawn_facts(agents: list[str], windows: object) -> tuple:
-            return _WINDOWS.start.baseline, {_AGENT: list(self._spawns)}
+            return self._provenance_start, {_AGENT: list(self._spawns)}
 
         def _read_outcome_facts(agent_ids: list[str]) -> dict:
             self._fact_reads.append(agent_ids)
-            return {agent_id: pgdw.OutcomeFacts(2, 61) for agent_id in agent_ids}
+            return {agent_id: sig.OutcomeFacts(2, 61) for agent_id in agent_ids}
 
         for name, value in (
             ("_read_spawn_facts", _read_spawn_facts),
@@ -332,13 +340,46 @@ class TestTriggeringSpawnSelection(unittest.TestCase):
 
     def test_only_confirmation_window_metric_events_trigger(self) -> None:
         evidence = pgdw.read_pattern_evidence(_AGENT, _WINDOWS, _NOW)
-        triggering = evidence[sig.METRIC_BUDGET_OVERAGE].triggering
-        self.assertEqual([s.agent_id for s in triggering], ["confirmation-event"])
+        overage = evidence[sig.METRIC_BUDGET_OVERAGE].triggering
         self.assertEqual(
-            (triggering[0].verified_fail_rows, triggering[0].tool_use_actual), (2, 61)
+            [s.agent_id for s in overage],
+            ["confirmation-late-event", "confirmation-event"],
         )
-        self.assertEqual(self._fact_reads, [["confirmation-event"]])
-        self.assertEqual(evidence[sig.METRIC_EMIT_FAILURE].triggering, ())
+        self.assertEqual(
+            (overage[0].verified_fail_rows, overage[0].tool_use_actual), (2, 61)
+        )
+        emit_failure = evidence[sig.METRIC_EMIT_FAILURE].triggering
+        self.assertEqual([s.agent_id for s in emit_failure], ["confirmation-stopless"])
+        self.assertEqual(
+            self._fact_reads,
+            [
+                [
+                    "confirmation-event",
+                    "confirmation-late-event",
+                    "confirmation-stopless",
+                ]
+            ],
+        )
+
+    def test_triggering_count_equals_the_floor_confirmation_events(self) -> None:
+        confirmation = _WINDOWS.start.confirmation
+        provenance_starts = (
+            ("provenance before the baseline", _WINDOWS.start.baseline),
+            (
+                "provenance inside the confirmation window",
+                confirmation + timedelta(days=3),
+            ),
+            ("no provenance start", None),
+        )
+        for name, provenance_start in provenance_starts:
+            self._provenance_start = provenance_start
+            evidence = pgdw.read_pattern_evidence(_AGENT, _WINDOWS, _NOW)
+            for metric_key in sorted(sig.METRIC_KEYS):
+                with self.subTest(provenance=name, metric_key=metric_key):
+                    self.assertEqual(
+                        len(evidence[metric_key].triggering),
+                        evidence[metric_key].floor.confirmation.events,
+                    )
 
     def test_a_read_failure_returns_none(self) -> None:
         def _refuse(agent_ids: list[str]) -> dict:

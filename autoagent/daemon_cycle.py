@@ -162,7 +162,7 @@ except Exception as _pg_import_exc:  # noqa: BLE001 — psycopg or helper itself
         return DischargeResult(DISCHARGE_FAILED, None)
 
 if TYPE_CHECKING:
-    from _pg_learning_dualwrite import PatternEvidence, TriggeringSpawn
+    from _outcome_signal import PatternEvidence, TriggeringSpawn
 
 # PG outcome lookback window — PG is the single sink, so 90 days yields enough
 # history to sample 100+ rows per agent (cost: WHERE record_ts > now()-N index

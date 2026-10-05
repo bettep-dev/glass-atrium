@@ -351,6 +351,27 @@ class FloorResult(NamedTuple):
     pending: int  # spawns that may still be running at evaluation
 
 
+class OutcomeFacts(NamedTuple):
+    verified_fail_rows: int
+    tool_use_actual: int | None  # None = no tool_use line recorded
+
+
+class TriggeringSpawn(NamedTuple):
+    """Machine facts of one triggering spawn — daemon-recorded, never agent-emitted."""
+
+    agent_id: str
+    started_at: datetime
+    overage_rows: int
+    attribution_sources: tuple[str, ...]
+    verified_fail_rows: int
+    tool_use_actual: int | None
+
+
+class PatternEvidence(NamedTuple):
+    floor: FloorResult
+    triggering: tuple[TriggeringSpawn, ...]  # newest first
+
+
 def get_pair_windows(now: datetime) -> PairWindows:
     """Windows anchored on D, the most recent UTC midnight at or before `now`.
 
