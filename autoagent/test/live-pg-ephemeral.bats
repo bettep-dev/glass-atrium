@@ -98,6 +98,11 @@ _assert_live_module() {
   _assert_live_module test_manifest_ingest TestSpawnManifestWriterLivePg
 }
 
+@test "the pattern-metric window read runs against the migrated cluster, none skipped" {
+  cd "${BATS_TEST_DIRNAME}/../../hooks/test" || return 1
+  _assert_live_module test_pattern_metric TestPatternFloorReadLivePg
+}
+
 @test "an ambient PGHOSTADDR or PGSERVICE skips a live class with that variable named" {
   local row name
   for row in "PGHOSTADDR=127.0.0.1" "PGSERVICE=ga_seal_probe"; do

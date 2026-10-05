@@ -59,6 +59,13 @@ from _outcome_signal import (  # noqa: F401 — re-export surface, see above
     HARD_TEST_BAR_TASK_TYPES,
     ATTRIBUTION_SYNTHESIZED,
 )
+from _outcome_signal import (
+    METRIC_KEYS,
+    FloorResult,
+    PairWindows,
+    SpawnFacts,
+    get_floor_verdict,
+)
 
 
 # ---------------------------------------------------------------------------
@@ -1110,3 +1117,75 @@ def count_outcomes_since(
             )
         )
         return None
+
+
+# ---------------------------------------------------------------------------
+# Per-pattern metric window read
+# ---------------------------------------------------------------------------
+# One row per spawn: each joined table is pre-grouped by agent_id, so a spawn with N
+# overage or outcome rows is never multiplied into N rows (a spawn counts once).
+_SPAWN_FACTS_SELECT_SQL = """
+WITH spawns AS (
+    SELECT id, agent_id, session_id, started_at
+    FROM core.spawn_manifest
+    WHERE agent_type = %s AND started_at >= %s AND started_at < %s
+)
+SELECT s.agent_id, s.session_id, s.started_at,
+       COALESCE(b.overage_rows, 0), stop.agent_id IS NOT NULL,
+       COALESCE(o.attributions, '{}'::text[])
+FROM spawns s
+LEFT JOIN (
+    SELECT agent_id, count(*) AS overage_rows FROM core.budget_overages
+    WHERE agent_id IN (SELECT agent_id FROM spawns) GROUP BY agent_id
+) b ON b.agent_id = s.agent_id
+LEFT JOIN (
+    SELECT DISTINCT agent_id FROM core.agent_events
+    WHERE event_name = 'SubagentStop' AND agent_id IN (SELECT agent_id FROM spawns)
+) stop ON stop.agent_id = s.agent_id
+LEFT JOIN (
+    SELECT agent_id, array_agg(attribution_source) AS attributions FROM core.outcomes
+    WHERE agent_id IN (SELECT agent_id FROM spawns) GROUP BY agent_id
+) o ON o.agent_id = s.agent_id
+ORDER BY s.started_at, s.id
+"""
+# The install's provenance start (N60): its earliest MANIFEST row carrying a session id.
+_PROVENANCE_START_SQL = (
+    "SELECT min(started_at) FROM core.spawn_manifest WHERE session_id IS NOT NULL"
+)
+
+
+def read_pattern_floor(
+    agent: str, metric_key: str, windows: PairWindows
+) -> FloorResult | None:
+    """The occurrence floor of `agent` for `metric_key` over `windows`, read from
+    core.spawn_manifest and the facts joined by agent_id (N60).
+
+    None on ANY read failure — table-absent schema and PG unreachable included — so an
+    outage fails closed and never reads as an empty window. Raises ValueError on a
+    `metric_key` outside METRIC_KEYS, before any read."""
+    if metric_key not in METRIC_KEYS:
+        raise ValueError(f"read_pattern_floor: unknown metric key {metric_key!r}")
+    try:
+        with psycopg.connect("dbname=glass_atrium", connect_timeout=2, autocommit=True) as conn:
+            with conn.cursor() as cur:
+                cur.execute(_PROVENANCE_START_SQL)
+                provenance_start = cur.fetchone()[0]
+                cur.execute(
+                    _SPAWN_FACTS_SELECT_SQL, (agent, windows.baseline_start, windows.end)
+                )
+                spawns = [
+                    SpawnFacts(
+                        agent_id, session_id, started_at, int(overage_rows), bool(has_stop),
+                        tuple({"attribution_source": source} for source in attributions),
+                    )
+                    for agent_id, session_id, started_at, overage_rows, has_stop, attributions
+                    in cur.fetchall()
+                ]
+    except Exception as exc:  # noqa: BLE001 — every failure is an outage the caller fails closed on
+        sys.stderr.write(
+            '{"hook":"_pg_learning_dualwrite","op":"read_pattern_floor",'
+            '"error_kind":"%s","fallback":"none","metric_key":"%s"}\n'
+            % (type(exc).__name__, metric_key)
+        )
+        return None
+    return get_floor_verdict(spawns, metric_key, windows, provenance_start)

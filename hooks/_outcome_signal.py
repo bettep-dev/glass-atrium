@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
 # Pure outcome-signal rules — the SINGLE definition of the negative-signal
 # predicate (learning-aggregator pattern emit, daemon_cycle staleness
-# recompute) and of the Role → Allowed task_types
-# allowlist that predicate depends on.
+# recompute), of the Role → Allowed task_types
+# allowlist that predicate depends on, and of the per-pattern metric
+# (pair windows, spawn half, occurrence floor).
 #
 # STDLIB-ONLY BY CONTRACT, psycopg-free in particular. learning-aggregator imports
 # these rules OUTSIDE the guard that degrades it when the DB driver is missing, and
@@ -12,6 +13,16 @@
 # BaseException, so an `except Exception` fail-open guard around that import does
 # NOT catch it and the importing process dies instead of degrading. Any import with
 # a driver dependency added here re-opens that kill path.
+#
+# The daemon imports this module unguarded on an install's python3 3.9, so no 3.10+
+# construct may be evaluated at import — hence postponed annotations.
+
+from __future__ import annotations
+
+import hashlib
+from collections.abc import Iterable, Mapping
+from datetime import datetime, timedelta, timezone
+from typing import NamedTuple
 
 # ---------------------------------------------------------------------------
 # Role → Allowed task_types allowlist
@@ -261,3 +272,162 @@ def negative_signal_hits(row: dict) -> tuple[str, ...]:
 def is_negative_signal_outcome(row: dict) -> bool:
     """True when the row counts toward the per-agent negative-signal trigger."""
     return bool(negative_signal_hits(row))
+
+
+# ---------------------------------------------------------------------------
+# Per-pattern metric: pair windows, spawn half, occurrence floor
+# ---------------------------------------------------------------------------
+# One definition for every actor judging a keyed pattern — aggregator status, daemon
+# intake re-check, roster writer, power check, window replay. Fed by
+# _pg_learning_dualwrite.read_pattern_floor or by a replay-local read.
+
+METRIC_BUDGET_OVERAGE = "budget_overage"
+METRIC_EMIT_FAILURE = "emit_failure"
+METRIC_KEYS = frozenset({METRIC_BUDGET_OVERAGE, METRIC_EMIT_FAILURE})
+# Recorder-written outcome provenance: the agent emitted no [COMPLETION] of its own.
+ATTRIBUTION_TRUNCATED_COMPLETION = "truncated_completion"
+_EMIT_FAILURE_ATTRIBUTIONS = frozenset({
+    ATTRIBUTION_SYNTHESIZED,
+    ATTRIBUTION_STRUCTUREDOUTPUT_DERIVED,
+    ATTRIBUTION_BUDGET_TRUNCATION,
+    ATTRIBUTION_TRUNCATED_COMPLETION,
+})
+
+PAIR_WINDOW = timedelta(days=7)
+BASELINE_SPAN = timedelta(days=84)  # D3 horizon cap
+BASELINE_MIN_COVERED = timedelta(days=28)  # the power check's projected-units window
+FLOOR_MIN_SESSIONS = 5
+
+VERDICT_PASS = "pass"
+VERDICT_FAIL = "fail"
+VERDICT_INSUFFICIENT_BASELINE = "insufficient-baseline"
+
+
+class PairWindows(NamedTuple):
+    """Half-open UTC windows: baseline [baseline_start, detection_start) · detection
+    [detection_start, confirmation_start) · confirmation [confirmation_start, end)."""
+
+    baseline_start: datetime
+    detection_start: datetime
+    confirmation_start: datetime
+    end: datetime
+
+
+class SpawnFacts(NamedTuple):
+    """One core.spawn_manifest row plus the daemon-recorded facts joined by its agent_id."""
+
+    agent_id: str | None  # None = an `unknown` MANIFEST id → unjoinable
+    session_id: str | None
+    started_at: datetime
+    overage_rows: int  # core.budget_overages rows for agent_id
+    has_subagent_stop: bool
+    outcomes: tuple[Mapping[str, object], ...]  # core.outcomes rows for agent_id
+
+
+class WindowCount(NamedTuple):
+    spawns: int
+    events: int
+    sessions: int  # distinct non-NULL session ids among the event spawns
+
+
+class FloorResult(NamedTuple):
+    verdict: str
+    detection: WindowCount
+    confirmation: WindowCount
+    baseline: WindowCount  # floor half of the provenance-covered baseline
+    unjoinable: int
+
+
+def get_pair_windows(now: datetime) -> PairWindows:
+    """Windows anchored on D, the most recent UTC midnight at or before `now` (N59).
+
+    Raises ValueError on a naive `now` — a guessed zone shifts D by up to a day."""
+    if now.utcoffset() is None:
+        raise ValueError("get_pair_windows: `now` must be timezone-aware")
+    end = now.astimezone(timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0)
+    detection_start = end - 2 * PAIR_WINDOW
+    return PairWindows(
+        baseline_start=detection_start - BASELINE_SPAN,
+        detection_start=detection_start,
+        confirmation_start=end - PAIR_WINDOW,
+        end=end,
+    )
+
+
+def is_new_pair(windows: PairWindows, last_transition_at: datetime) -> bool:
+    """Does this pair count toward a `dormant` row's re-entry? Only when its detection
+    starts at or after the row's last transition (N59) — a row stays dormant ≥ 14 days."""
+    return windows.detection_start >= last_transition_at
+
+
+def is_floor_half(agent_id: str) -> bool:
+    """Floor half = even parity of sha256(agent_id); the reference half is the complement.
+
+    sha256, never hash(): the builtin is salted per process (PYTHONHASHSEED, N68)."""
+    return hashlib.sha256(agent_id.encode("utf-8")).digest()[-1] % 2 == 0
+
+
+def is_metric_event(spawn: SpawnFacts, metric_key: str) -> bool:
+    """Is this spawn an event of `metric_key`? Daemon-recorded facts only — no
+    agent-emitted outcome field (result, revision_count, …) can move it."""
+    if metric_key == METRIC_BUDGET_OVERAGE:
+        return spawn.overage_rows > 0
+    if metric_key == METRIC_EMIT_FAILURE:
+        return not spawn.has_subagent_stop or any(
+            (row.get("attribution_source") or "") in _EMIT_FAILURE_ATTRIBUTIONS
+            for row in spawn.outcomes
+        )
+    raise ValueError(f"is_metric_event: unknown metric key {metric_key!r}")
+
+
+def get_floor_verdict(
+    spawns: Iterable[SpawnFacts],
+    metric_key: str,
+    windows: PairWindows,
+    provenance_start: datetime | None,
+) -> FloorResult:
+    """Occurrence floor over windows, never over a batch (plan → Occurrence floor).
+
+    Pass: ≥ 5 event sessions in detection and in confirmation, confirmation rate above
+    the floor-half baseline rate. `insufficient-baseline`, never a pass, while the
+    provenance-covered baseline spans < 28 days or its floor half holds no spawn; a None
+    `provenance_start` covers nothing. Spawns before it count nowhere; NULL-agent_id
+    spawns count on no side and are returned as `unjoinable`."""
+    if metric_key not in METRIC_KEYS:
+        raise ValueError(f"get_floor_verdict: unknown metric key {metric_key!r}")
+    spawns = list(spawns)
+    start = windows.end if provenance_start is None else provenance_start
+    counted = [s for s in spawns if s.agent_id is not None and s.started_at >= start]
+    covered_start = max(windows.baseline_start, start)
+    floor_half = [s for s in counted if is_floor_half(s.agent_id)]
+    baseline = _get_window_count(floor_half, metric_key, covered_start, windows.detection_start)
+    detection = _get_window_count(
+        counted, metric_key, windows.detection_start, windows.confirmation_start
+    )
+    confirmation = _get_window_count(counted, metric_key, windows.confirmation_start, windows.end)
+    is_covered = windows.detection_start - covered_start >= BASELINE_MIN_COVERED
+    verdict = _get_verdict(detection, confirmation, baseline, is_covered=is_covered)
+    unjoinable = sum(1 for s in spawns if s.agent_id is None)
+    return FloorResult(verdict, detection, confirmation, baseline, unjoinable)
+
+
+def _get_window_count(
+    spawns: list[SpawnFacts], metric_key: str, start: datetime, end: datetime
+) -> WindowCount:
+    in_window = [s for s in spawns if start <= s.started_at < end]
+    events = [s for s in in_window if is_metric_event(s, metric_key)]
+    sessions = {s.session_id for s in events if s.session_id is not None}
+    return WindowCount(len(in_window), len(events), len(sessions))
+
+
+def _get_verdict(
+    detection: WindowCount, confirmation: WindowCount, baseline: WindowCount, *, is_covered: bool
+) -> str:
+    if not is_covered or baseline.spawns == 0:
+        return VERDICT_INSUFFICIENT_BASELINE
+    if min(detection.sessions, confirmation.sessions) < FLOOR_MIN_SESSIONS:
+        return VERDICT_FAIL
+    # rates compared by cross-multiplication → exact on integer counts
+    if confirmation.events * baseline.spawns > baseline.events * confirmation.spawns:
+        return VERDICT_PASS
+    return VERDICT_FAIL
