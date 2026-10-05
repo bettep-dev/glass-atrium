@@ -20,7 +20,9 @@
 from __future__ import annotations
 
 import hashlib
-from collections.abc import Iterable, Mapping
+import os
+from collections import defaultdict
+from collections.abc import Iterable, Mapping, Sequence
 from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 from typing import NamedTuple
@@ -305,6 +307,8 @@ BASELINE = SimpleNamespace(
 FLOOR_MIN_SESSIONS = 5
 # a no-SubagentStop spawn younger than this at evaluation may still be running
 PENDING_GRACE = timedelta(hours=6)
+# advisory-subagent-budget.sh → DEFAULT_TOOL_BUDGET, the budget its SUBAGENT_TOOL_BUDGET overrides
+DEFAULT_TOOL_BUDGET = 40
 
 VERDICT_PASS = "pass"
 VERDICT_FAIL = "fail"
@@ -334,10 +338,12 @@ class SpawnFacts(NamedTuple):
     overage_rows: int  # core.budget_overages rows for agent_id
     has_subagent_stop: bool
     outcomes: tuple[Mapping[str, object], ...]  # core.outcomes rows for agent_id
+    stopped_at: datetime | None = None  # earliest SubagentStop; None → no continuation follows
+    tool_use_actual: int | None = None  # recorder's header line; None = unrecorded
 
 
 class WindowCount(NamedTuple):
-    spawns: int
+    spawns: int  # tasks under budget_overage (one per spawn at W = 0)
     events: int
     sessions: int  # distinct non-NULL session ids among the event spawns
 
@@ -420,12 +426,68 @@ def is_pending(spawn: SpawnFacts, evaluated_at: datetime) -> bool:
     return not spawn.has_subagent_stop and spawn.started_at > evaluated_at - PENDING_GRACE
 
 
+def get_tool_budget(environ: Mapping[str, str]) -> int:
+    """One spawn's TOOL_USE budget as advisory-subagent-budget.sh resolves it from `environ`:
+    SUBAGENT_TOOL_BUDGET when a base-10 digit string above zero, else DEFAULT_TOOL_BUDGET."""
+    value = environ.get("SUBAGENT_TOOL_BUDGET", "")
+    if value.isascii() and value.isdigit() and int(value, 10) > 0:
+        return int(value, 10)
+    return DEFAULT_TOOL_BUDGET
+
+
+def get_tasks(
+    spawns: Iterable[SpawnFacts], redelegation_window: timedelta
+) -> list[tuple[SpawnFacts, ...]]:
+    """One agent type's spawns grouped into tasks, each ordered from its first spawn.
+
+    A spawn continues a task when it shares the parent session of the task's last member and
+    starts in [that member's SubagentStop, + `redelegation_window`); of several such tasks, the
+    one whose last member stopped latest. W = 0 → one task per spawn."""
+    tasks: list[list[SpawnFacts]] = []
+    open_tasks: defaultdict[str, list[list[SpawnFacts]]] = defaultdict(list)
+    for spawn in sorted(spawns, key=lambda s: (s.started_at, s.agent_id or "")):
+        candidates = open_tasks.get(spawn.session_id or "", ())
+        continued = [t for t in candidates if _is_continuation(t[-1], spawn, redelegation_window)]
+        if continued:
+            max(continued, key=lambda t: t[-1].stopped_at).append(spawn)
+            continue
+        task = [spawn]
+        tasks.append(task)
+        if spawn.session_id is not None:
+            open_tasks[spawn.session_id].append(task)
+    return [tuple(task) for task in tasks]
+
+
+def _is_continuation(prior: SpawnFacts, spawn: SpawnFacts, redelegation_window: timedelta) -> bool:
+    return (
+        prior.stopped_at is not None
+        and prior.session_id == spawn.session_id
+        and prior.stopped_at <= spawn.started_at < prior.stopped_at + redelegation_window
+    )
+
+
+def is_task_overrun(task: Sequence[SpawnFacts], tool_budget: int) -> bool:
+    """Any member records an overage, or the members' combined tool_use exceeds one spawn's
+    budget — an unrecorded member adds nothing, so the sum is a lower bound."""
+    return any(s.overage_rows > 0 for s in task) or (
+        sum(s.tool_use_actual or 0 for s in task) > tool_budget
+    )
+
+
+class _Unit(NamedTuple):
+    first: SpawnFacts  # its started_at, agent_id half and session place the unit
+    is_event: bool
+
+
 def get_floor_verdict(
     spawns: Iterable[SpawnFacts],
     metric_key: str,
     windows: PairWindows,
     provenance_start: datetime | None,
     evaluated_at: datetime,
+    *,
+    redelegation_window: timedelta = timedelta(0),
+    tool_budget: int | None = None,
 ) -> FloorResult:
     """Occurrence floor over windows, never over a batch.
 
@@ -434,32 +496,48 @@ def get_floor_verdict(
     provenance-covered baseline spans < 28 days or its floor half holds no spawn; a None
     `provenance_start` covers nothing. Spawns before it count nowhere. NULL-agent_id
     spawns and spawns pending at `evaluated_at` count on no side and are returned as
-    `unjoinable` and `pending`."""
+    `unjoinable` and `pending`.
+
+    `budget_overage` counts tasks (`get_tasks` over `redelegation_window`), each in its first
+    spawn's window and half; `emit_failure` counts spawns. `tool_budget` None → the budget
+    this process's environment resolves (`get_tool_budget`)."""
     if metric_key not in METRIC_KEYS:
         raise ValueError(f"get_floor_verdict: unknown metric key {metric_key!r}")
     spawns = list(spawns)
     start = windows.end if provenance_start is None else provenance_start
     joinable = [s for s in spawns if s.agent_id is not None]
     settled = [s for s in joinable if not is_pending(s, evaluated_at)]
-    counted = [s for s in settled if s.started_at >= start]
+    units = _get_units(settled, metric_key, redelegation_window, tool_budget)
+    counted = [u for u in units if u.first.started_at >= start]
     covered_start = max(windows.start.baseline, start)
-    floor_half = [s for s in counted if is_floor_half(s.agent_id)]
-    baseline = _get_window_count(floor_half, metric_key, covered_start, windows.start.detection)
-    detection = _get_window_count(
-        counted, metric_key, windows.start.detection, windows.start.confirmation
-    )
-    confirmation = _get_window_count(counted, metric_key, windows.start.confirmation, windows.end)
+    floor_half = [u for u in counted if is_floor_half(u.first.agent_id)]
+    baseline = _get_window_count(floor_half, covered_start, windows.start.detection)
+    detection = _get_window_count(counted, windows.start.detection, windows.start.confirmation)
+    confirmation = _get_window_count(counted, windows.start.confirmation, windows.end)
     is_covered = windows.start.detection - covered_start >= BASELINE.MIN_COVERED
     verdict = _get_verdict(detection, confirmation, baseline, is_covered=is_covered)
     unjoinable, pending = len(spawns) - len(joinable), len(joinable) - len(settled)
     return FloorResult(verdict, detection, confirmation, baseline, unjoinable, pending)
 
 
-def _get_window_count(
-    spawns: list[SpawnFacts], metric_key: str, start: datetime, end: datetime
-) -> WindowCount:
-    in_window = [s for s in spawns if start <= s.started_at < end]
-    events = [s for s in in_window if is_metric_event(s, metric_key)]
+def _get_units(
+    spawns: list[SpawnFacts],
+    metric_key: str,
+    redelegation_window: timedelta,
+    tool_budget: int | None,
+) -> list[_Unit]:
+    if metric_key != METRIC_BUDGET_OVERAGE:
+        return [_Unit(s, is_metric_event(s, metric_key)) for s in spawns]
+    budget = get_tool_budget(os.environ) if tool_budget is None else tool_budget
+    return [
+        _Unit(task[0], is_task_overrun(task, budget))
+        for task in get_tasks(spawns, redelegation_window)
+    ]
+
+
+def _get_window_count(units: list[_Unit], start: datetime, end: datetime) -> WindowCount:
+    in_window = [u for u in units if start <= u.first.started_at < end]
+    events = [u.first for u in in_window if u.is_event]
     sessions = {s.session_id for s in events if s.session_id is not None}
     return WindowCount(len(in_window), len(events), len(sessions))
 

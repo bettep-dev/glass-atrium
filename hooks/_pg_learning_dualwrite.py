@@ -17,7 +17,7 @@ import sys
 import time
 from collections import defaultdict
 from collections.abc import Iterable
-from datetime import datetime
+from datetime import datetime, timedelta
 from types import SimpleNamespace
 from typing import NamedTuple
 
@@ -1346,6 +1346,7 @@ def count_outcomes_since(
 # ---------------------------------------------------------------------------
 # One row per spawn of any listed agent type: each joined table is pre-grouped by agent_id,
 # so a spawn with N overage or outcome rows is never multiplied into N rows (a spawn counts once).
+# tool_use_actual: the recorder's header line, read as _OUTCOME.FACTS_SELECT_SQL reads it.
 _SPAWN_FACTS_SELECT_SQL = """
 WITH spawns AS (
     SELECT id, agent_id, agent_type, session_id, started_at
@@ -1353,19 +1354,23 @@ WITH spawns AS (
     WHERE agent_type = ANY(%s) AND started_at >= %s AND started_at < %s
 )
 SELECT s.agent_type, s.agent_id, s.session_id, s.started_at,
-       COALESCE(b.overage_rows, 0), stop.agent_id IS NOT NULL,
-       COALESCE(o.attributions, '{}'::text[])
+       COALESCE(b.overage_rows, 0), stop.stopped_at,
+       COALESCE(o.attributions, '{}'::text[]), o.tool_use_actual
 FROM spawns s
 LEFT JOIN (
     SELECT agent_id, count(*) AS overage_rows FROM core.budget_overages
     WHERE agent_id IN (SELECT agent_id FROM spawns) GROUP BY agent_id
 ) b ON b.agent_id = s.agent_id
 LEFT JOIN (
-    SELECT DISTINCT agent_id FROM core.agent_events
+    SELECT agent_id, min(event_ts) AS stopped_at FROM core.agent_events
     WHERE event_name = 'SubagentStop' AND agent_id IN (SELECT agent_id FROM spawns)
+    GROUP BY agent_id
 ) stop ON stop.agent_id = s.agent_id
 LEFT JOIN (
-    SELECT agent_id, array_agg(attribution_source) AS attributions FROM core.outcomes
+    SELECT agent_id, array_agg(attribution_source) AS attributions,
+           max(substring(split_part(body_md, chr(10) || '## ', 1)
+                         FROM '(?n)' || %s::text)::numeric) AS tool_use_actual
+    FROM core.outcomes
     WHERE agent_id IN (SELECT agent_id FROM spawns) GROUP BY agent_id
 ) o ON o.agent_id = s.agent_id
 ORDER BY s.agent_type, s.started_at, s.id
@@ -1377,10 +1382,16 @@ _PROVENANCE_START_SQL = (
 
 
 def read_pattern_floor(
-    agent: str, metric_key: str, windows: PairWindows, evaluated_at: datetime
+    agent: str,
+    metric_key: str,
+    windows: PairWindows,
+    evaluated_at: datetime,
+    *,
+    redelegation_window: timedelta = timedelta(0),
 ) -> FloorResult | None:
     """The occurrence floor of `agent` for `metric_key` over `windows` at `evaluated_at`,
-    read from core.spawn_manifest and the facts joined by agent_id.
+    read from core.spawn_manifest and the facts joined by agent_id; `budget_overage` over
+    tasks of `redelegation_window` (`get_floor_verdict`).
 
     None on ANY read failure — table-absent schema and PG unreachable included — so an
     outage fails closed and never reads as an empty window. Raises ValueError on a
@@ -1396,11 +1407,18 @@ def read_pattern_floor(
             % (type(exc).__name__, metric_key)
         )
         return None
-    return get_floor_verdict(spawns[agent], metric_key, windows, provenance_start, evaluated_at)
+    return get_floor_verdict(
+        spawns[agent], metric_key, windows, provenance_start, evaluated_at,
+        redelegation_window=redelegation_window,
+    )
 
 
 def read_pattern_floors(
-    agents: Iterable[str], windows: PairWindows, evaluated_at: datetime
+    agents: Iterable[str],
+    windows: PairWindows,
+    evaluated_at: datetime,
+    *,
+    redelegation_window: timedelta = timedelta(0),
 ) -> dict[tuple[str, str], FloorResult] | None:
     """Every metric key's floor for each of `agents`, keyed (agent, metric key), from one
     provenance read and one spawn read over all of them — never a read per agent or key.
@@ -1418,7 +1436,8 @@ def read_pattern_floors(
         return None
     return {
         (agent, metric_key): get_floor_verdict(
-            spawns[agent], metric_key, windows, provenance_start, evaluated_at
+            spawns[agent], metric_key, windows, provenance_start, evaluated_at,
+            redelegation_window=redelegation_window,
         )
         for agent in agents
         for metric_key in sorted(METRIC_KEYS)
@@ -1433,13 +1452,20 @@ def _read_spawn_facts(
         with conn.cursor() as cur:
             cur.execute(_PROVENANCE_START_SQL)
             provenance_start = cur.fetchone()[0]
-            cur.execute(_SPAWN_FACTS_SELECT_SQL, (agents, windows.start.baseline, windows.end))
+            cur.execute(
+                _SPAWN_FACTS_SELECT_SQL,
+                (agents, windows.start.baseline, windows.end, TOOL_USE_LINE_PATTERN),
+            )
             rows = cur.fetchall()
     spawns: defaultdict[str, list[SpawnFacts]] = defaultdict(list)
-    for agent_type, agent_id, session_id, started_at, overage_rows, has_stop, attributions in rows:
+    for (
+        agent_type, agent_id, session_id, started_at, overage_rows, stopped_at, attributions,
+        tool_use_actual,
+    ) in rows:
         spawns[agent_type].append(SpawnFacts(
-            agent_id, session_id, started_at, int(overage_rows), bool(has_stop),
+            agent_id, session_id, started_at, int(overage_rows), stopped_at is not None,
             tuple({"attribution_source": source} for source in attributions),
+            stopped_at, None if tool_use_actual is None else int(tool_use_actual),
         ))
     return provenance_start, spawns
 
