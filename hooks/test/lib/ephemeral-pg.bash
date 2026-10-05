@@ -165,16 +165,23 @@ eph_pg_start() {
 }
 
 # Create $3 on a running cluster and apply every monitor/prisma/migrations/*/migration.sql
-# in order. Args: $1=sockdir $2=port $3=dbname. Start the cluster on another bootstrap DB:
+# in order. Args: $1=sockdir $2=port $3=dbname [$4=migration dir name to skip — a schema
+# where that migration never landed]. Start the cluster on another bootstrap DB:
 # eph_pg_start's hand DDL on its own dbname collides with the migrations.
 eph_pg_create_migrated_db() {
-  local sockdir="${1}" port="${2}" dbname="${3}" migration
+  local sockdir="${1}" port="${2}" dbname="${3}" excluded="${4:-}" migration
   local migrations="${BASH_SOURCE[0]%/*}/../../../monitor/prisma/migrations"
+  # A misspelt name would silently build the full chain → every "migration absent" row passes vacuously.
+  if [[ -n "${excluded}" && ! -f "${migrations}/${excluded}/migration.sql" ]]; then
+    echo "eph_pg_create_migrated_db: no migration named ${excluded} under ${migrations}" >&2
+    return 1
+  fi
   LC_ALL=C createdb -h "${sockdir}" -p "${port}" "${dbname}" || {
     echo "eph_pg_create_migrated_db: createdb ${dbname} failed on ${sockdir}:${port}" >&2
     return 1
   }
   for migration in "${migrations}"/*/migration.sql; do
+    [[ -n "${excluded}" && "${migration}" == "${migrations}/${excluded}/migration.sql" ]] && continue
     LC_ALL=C psql -h "${sockdir}" -p "${port}" -d "${dbname}" -v ON_ERROR_STOP=1 -q \
       -f "${migration}" >/dev/null || {
       echo "eph_pg_create_migrated_db: ${migration} failed on ${dbname}" >&2
