@@ -722,9 +722,10 @@ def write_autoagent_proposal(
     verdict.
 
     Pattern evidence: `learning_pattern_id` (core.learning_log id) and
-    `generator_input_version`; None/""→NULL, and a NULL incoming value never clears a
-    stored one. A schema without the two columns still gets the row, without them,
-    and the missing migration is named on stderr.
+    `generator_input_version`; None/""→NULL for both, and a 0 id (the daemon's
+    no-pattern sentinel) →NULL too. A NULL incoming value never clears a stored one.
+    A schema without the two columns still gets the row, without them, and the
+    missing migration is named on stderr.
     """
     start_ns = time.monotonic_ns()
     if indexed_at is None:
@@ -777,7 +778,7 @@ def write_autoagent_proposal(
         project_key_param,
         promotion_tier_param,
     )
-    link_params = (learning_pattern_id, generator_input_version or None)
+    link_params = (learning_pattern_id or None, generator_input_version or None)
     is_degraded = False
     with _connect() as conn:
         try:

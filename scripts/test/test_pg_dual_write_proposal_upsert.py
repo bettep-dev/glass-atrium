@@ -394,6 +394,16 @@ def test_a_born_terminal_row_names_its_creator(proposals: _Proposals):
             {"learning_pattern_id": None, "generator_input_version": None},
             id="neither pushed",
         ),
+        pytest.param(
+            {**_SEEDED, "learning_pattern_id": ""},
+            {"learning_pattern_id": None, "generator_input_version": "gen-inputs-1"},
+            id="empty id pushed",
+        ),
+        pytest.param(
+            {**_SEEDED, "learning_pattern_id": 0},
+            {"learning_pattern_id": None, "generator_input_version": "gen-inputs-1"},
+            id="zero id pushed",
+        ),
     ],
 )
 def test_a_new_row_stores_the_pattern_link_and_input_version_it_was_pushed(
