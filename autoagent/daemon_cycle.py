@@ -1909,6 +1909,7 @@ class Pattern:
     # key on id — renamed rows keep a legacy signature suffix (…|nodejs-dev with
     # agent='dev-node'), so a "label|agent" reconstruction silently misses them.
     row_id: int = 0
+    metric_key: str | None = None  # one of the helper's METRIC_KEYS; None = keyless row
 
     @property
     def freq_int(self) -> int:
@@ -2400,6 +2401,7 @@ def read_user_pending_patterns(
                 tier=_TIER_USER_PENDING,
                 raw_line=f"pg:learning_log:{row['id']}:{signature}",
                 row_id=row["id"],
+                metric_key=row.get("metric_key"),
             )
         )
 

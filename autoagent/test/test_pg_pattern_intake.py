@@ -68,6 +68,8 @@ except Exception as exc:  # noqa: BLE001 — psycopg absent → skip, not error
 
 _PROBE_AGENT = "ap2-probe-agent"
 _PROBE_SIGNATURE = f"ap2 intake contract probe|{_PROBE_AGENT}"
+_KEYLESS_AGENT = "ap2-keyless-probe-agent"
+_KEYLESS_SIGNATURE = f"ap2 keyless probe|{_KEYLESS_AGENT}"
 _ROSTER_AGENT = "glass-atrium-dev-python"
 _ROSTER_SIGNATURE = f"ap2 roster probe|{_ROSTER_AGENT}"
 _MISMATCH_AGENT = "ap2-no-such-agent"
@@ -89,6 +91,10 @@ class _RecordingCursor:
 
     def fetchall(self) -> list:
         return []
+
+    def fetchone(self) -> tuple:
+        # answers the metric_key column-existence probe
+        return (True,)
 
 
 class _RecordingConn:
@@ -143,8 +149,9 @@ class TestIntakeSqlShape(unittest.TestCase):
         self,
     ) -> None:
         pgdw.read_pending_learning_patterns()
-        self.assertEqual(len(self._log), 1, "helper must execute exactly one SELECT")
-        sql = self._log[0][0]
+        intake_selects = [sql for sql, _ in self._log if "FROM core.learning_log" in sql]
+        self.assertEqual(len(intake_selects), 1, "helper must execute exactly one intake SELECT")
+        sql = intake_selects[0]
         self.assertIn("FROM core.learning_log", sql)
         self.assertIn("status = 'identified'", sql)
         self.assertIn("'user-pending'", sql)
@@ -189,7 +196,9 @@ class _LivePgFixture(unittest.TestCase):
         self.addCleanup(patcher.stop)
 
     @staticmethod
-    def _upsert_probe(signature: str, agent: str, frequency: int) -> None:
+    def _upsert_probe(
+        signature: str, agent: str, frequency: int, metric_key: str | None = None
+    ) -> None:
         # The exact function learning-aggregator.py writes through
         # (_pg_upsert_learning_pattern) — the write side of the contract.
         pgdw.upsert_learning_pattern(
@@ -199,23 +208,31 @@ class _LivePgFixture(unittest.TestCase):
             agent=agent,
             status="identified",
             approval_tier="user-pending",
+            metric_key=metric_key,
         )
+
+    @staticmethod
+    def _read_with_probe_roster(agent: str) -> list:
+        """Intake under a roster of `agent` alone, so that probe row is the whole intake."""
+        with tempfile.TemporaryDirectory() as tmp:
+            agents_dir = Path(tmp)
+            (agents_dir / f"{agent}.md").write_text("# probe", encoding="utf-8")
+            with contextlib.redirect_stderr(io.StringIO()):
+                return dc.read_user_pending_patterns(
+                    Path(tmp) / "no-such-learning-log.md",
+                    dc.UNLIMITED_AGENTS,
+                    agents_dir=agents_dir,
+                )
 
 
 class TestAggregatorUpsertVisibleToIntake(_LivePgFixture):
     """Write-target == read-target: an aggregator upsert reaches the intake."""
 
     def test_when_pattern_upserted_then_intake_returns_it(self) -> None:
-        self._upsert_probe(_PROBE_SIGNATURE, _PROBE_AGENT, frequency=9999)
-        with tempfile.TemporaryDirectory() as tmp:
-            agents_dir = Path(tmp)
-            (agents_dir / f"{_PROBE_AGENT}.md").write_text("# probe", encoding="utf-8")
-            with contextlib.redirect_stderr(io.StringIO()):
-                patterns = dc.read_user_pending_patterns(
-                    Path(tmp) / "no-such-learning-log.md",
-                    dc.UNLIMITED_AGENTS,
-                    agents_dir=agents_dir,
-                )
+        self._upsert_probe(
+            _PROBE_SIGNATURE, _PROBE_AGENT, frequency=9999, metric_key="budget_overage"
+        )
+        patterns = self._read_with_probe_roster(_PROBE_AGENT)
 
         # Probe roster contains ONLY the probe agent → live rows either mismatch
         # (recorded, skipped) or are cross-cutting (skipped) — the probe row is
@@ -227,7 +244,14 @@ class TestAggregatorUpsertVisibleToIntake(_LivePgFixture):
         self.assertEqual(probe.date, date.today().isoformat())
         self.assertEqual(probe.status, "identified")
         self.assertEqual(probe.tier, "user-pending")
+        self.assertEqual(probe.metric_key, "budget_overage")
         self.assertTrue(probe.raw_line.startswith("pg:learning_log:"))
+
+    def test_when_pattern_upserted_without_a_key_then_intake_reads_none(self) -> None:
+        self._upsert_probe(_KEYLESS_SIGNATURE, _KEYLESS_AGENT, frequency=9997)
+        patterns = self._read_with_probe_roster(_KEYLESS_AGENT)
+
+        self.assertEqual([(p.agent, p.metric_key) for p in patterns], [(_KEYLESS_AGENT, None)])
 
 
 class TestIntakeRosterRenameContract(_LivePgFixture):

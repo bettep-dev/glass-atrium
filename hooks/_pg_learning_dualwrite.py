@@ -974,15 +974,22 @@ def read_learning_log_signatures() -> dict:
 # intake tier band: 'user-pending' + 'llm' (the frozen DB value the retired
 # 'llm-pending' band maps to via _TIER_MAP — those rows fold into the
 # user-pending flow downstream, never dropped). Served by learning_log_status_tier_idx.
-_PENDING_PATTERNS_SELECT_SQL = """
+_PENDING_PATTERNS_SELECT_TEMPLATE = """
 SELECT id, discovered_date, pattern_signature, frequency, agent,
-       status::text, approval_tier::text
+       status::text, approval_tier::text, {metric_key_column}
 FROM core.learning_log
 WHERE status = 'identified'::core."LearningStatus"
   AND approval_tier IN ('user-pending'::core."ApprovalTier",
                         'llm'::core."ApprovalTier")
 ORDER BY frequency DESC, id
 """
+_PENDING_PATTERNS_SELECT_SQL = _PENDING_PATTERNS_SELECT_TEMPLATE.format(
+    metric_key_column="metric_key::text"
+)
+# a schema without the metric_key column rejects any statement naming it → NULL in its place
+_PENDING_PATTERNS_KEYLESS_SELECT_SQL = _PENDING_PATTERNS_SELECT_TEMPLATE.format(
+    metric_key_column="NULL::text"
+)
 
 
 def read_pending_learning_patterns() -> list[dict]:
@@ -994,18 +1001,26 @@ def read_pending_learning_patterns() -> list[dict]:
     predicate. The full intake predicate lives in _PENDING_PATTERNS_SELECT_SQL.
 
     Shape: [{"id": int, "discovered_date": date, "pattern_signature": str,
-    "frequency": int, "agent": str, "status": str, "approval_tier": str}],
-    frequency DESC. Falls back to [] on any failure — the daemon takes the
-    zero-pattern path (no generation this cycle; next cycle retries).
+    "frequency": int, "agent": str, "status": str, "approval_tier": str,
+    "metric_key": str | None}], frequency DESC. metric_key is None for a keyless
+    row and for every row of a schema without the column. Falls back to [] on
+    any failure — the daemon takes the zero-pattern path (no generation this
+    cycle; next cycle retries).
     """
     try:
         with psycopg.connect("dbname=glass_atrium", connect_timeout=1, autocommit=True) as conn:
             with conn.cursor() as cur:
-                cur.execute(_PENDING_PATTERNS_SELECT_SQL)
+                cur.execute(_METRIC_KEY_COLUMN_SQL)
+                has_metric_key = cur.fetchone()[0]
+                cur.execute(
+                    _PENDING_PATTERNS_SELECT_SQL
+                    if has_metric_key
+                    else _PENDING_PATTERNS_KEYLESS_SELECT_SQL
+                )
                 rows: list[dict] = []
                 for (
                     row_id, discovered_date, signature, frequency, agent,
-                    status, tier,
+                    status, tier, metric_key,
                 ) in cur.fetchall():
                     rows.append({
                         "id": row_id,
@@ -1015,6 +1030,7 @@ def read_pending_learning_patterns() -> list[dict]:
                         "agent": (agent or "").strip(),
                         "status": status or "identified",
                         "approval_tier": tier or "user-pending",
+                        "metric_key": metric_key,
                     })
                 return rows
     except Exception as exc:  # noqa: BLE001 — read fallback is loud (stderr) + safe

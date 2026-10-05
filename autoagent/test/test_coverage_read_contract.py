@@ -25,6 +25,7 @@ import io
 import re
 import sys
 import unittest
+from datetime import date
 from pathlib import Path
 from types import ModuleType, SimpleNamespace
 from unittest import mock
@@ -116,11 +117,16 @@ class _ScriptedCursor:
             raise RuntimeError("simulated non-driver failure mid-read")
         return list(self._conn.rows)
 
+    def fetchone(self) -> tuple:
+        # answers the metric_key column-existence probe
+        return (self._conn.has_metric_key,)
+
 
 class _ScriptedConn:
-    def __init__(self, rows: list[tuple], fail_at: str | None) -> None:
+    def __init__(self, rows: list[tuple], fail_at: str | None, has_metric_key: bool) -> None:
         self.rows = rows
         self.fail_at = fail_at
+        self.has_metric_key = has_metric_key
         self.statements: list[str] = []
 
     def __enter__(self) -> "_ScriptedConn":
@@ -133,9 +139,14 @@ class _ScriptedConn:
         return _ScriptedCursor(self)
 
 
-def _read(rows: list[tuple] | None = None, fail_at: str | None = None):
-    """Run the helper against a scripted driver; returns (result, conn, stderr)."""
-    conn = _ScriptedConn(rows or [], fail_at)
+def _read(
+    rows: list[tuple] | None = None,
+    fail_at: str | None = None,
+    reader_name: str = "read_coverage_learning_patterns",
+    has_metric_key: bool = True,
+):
+    """Run one helper reader against a scripted driver; returns (result, conn, stderr)."""
+    conn = _ScriptedConn(rows or [], fail_at, has_metric_key)
 
     def _connect(*_args: object, **_kwargs: object) -> _ScriptedConn:
         if fail_at == "connect":
@@ -145,7 +156,7 @@ def _read(rows: list[tuple] | None = None, fail_at: str | None = None):
     driver = SimpleNamespace(connect=_connect, OperationalError=_StubOperationalError)
     buf = io.StringIO()
     with mock.patch.object(pgdw, "psycopg", driver), contextlib.redirect_stderr(buf):
-        result = pgdw.read_coverage_learning_patterns()
+        result = getattr(pgdw, reader_name)()
     return result, conn, buf.getvalue()
 
 
@@ -179,6 +190,42 @@ class CoverageReadContractTest(unittest.TestCase):
         self.assertEqual(len(conn.statements), 1)
         self.assertNotRegex(conn.statements[0], re.compile(r"\bstatus\s*(=|IN\b)", re.I))
         self.assertNotEqual(conn.statements[0], pgdw._PENDING_PATTERNS_SELECT_SQL)
+
+
+def _pending_row(row_id: int, agent: str, metric_key: str | None) -> tuple:
+    """One intake row in _PENDING_PATTERNS_SELECT_SQL column order."""
+    return (
+        row_id, date(2026, 10, 1), f"budget-overage concentration|{agent}", 12, agent,
+        "identified", "user-pending", metric_key,
+    )
+
+
+class PendingReadMetricKeyTest(unittest.TestCase):
+    """The intake read carries each row's metric key; a schema without the column reads NULL."""
+
+    def test_when_the_column_exists_then_each_row_carries_its_stored_key_or_none(self) -> None:
+        rows = [
+            _pending_row(1, "glass-atrium-dev-shell", "budget_overage"),
+            _pending_row(2, "glass-atrium-dev-react", None),
+        ]
+        result, _, _ = _read(rows, reader_name="read_pending_learning_patterns")
+        self.assertEqual(
+            [(r["id"], r["metric_key"]) for r in result], [(1, "budget_overage"), (2, None)]
+        )
+
+    def test_when_the_column_is_absent_then_rows_read_null_and_the_select_never_names_it(self) -> None:
+        result, conn, err = _read(
+            [_pending_row(1, "glass-atrium-dev-shell", None)],
+            reader_name="read_pending_learning_patterns",
+            has_metric_key=False,
+        )
+        self.assertEqual(err, "")
+        self.assertEqual([(r["id"], r["metric_key"]) for r in result], [(1, None)])
+        # A real schema without the column rejects any statement naming it, which a
+        # scripted driver cannot do — so the absence is pinned on the executed SELECT.
+        intake_selects = [sql for sql in conn.statements if "FROM core.learning_log" in sql]
+        self.assertEqual(len(intake_selects), 1)
+        self.assertNotIn("metric_key", intake_selects[0])
 
 
 @unittest.skipIf(dc is None, "daemon_cycle import failed: %s" % (_DC_IMPORT_ERROR,))
