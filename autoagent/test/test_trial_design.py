@@ -169,11 +169,8 @@ class DesignEffectEstimators(unittest.TestCase):
                 [generator.random() < rate for _ in range(generator.randint(1, 30))]
                 for rate in (generator.random() for _ in range(generator.randint(2, 12)))
             ]
-            try:
-                effect = td.get_design_effect(clusters)
-            except ValueError:
-                continue  # a draw with no variance or only singleton clusters has no estimate
             with self.subTest(draw=draw):
+                effect = td.get_design_effect(clusters)
                 self.assertEqual(effect.selected, max(effect.anova, effect.size_weighted))
                 self.assertGreaterEqual(effect.size_weighted, effect.anova)
                 self.assertGreaterEqual(effect.anova, 1.0)
