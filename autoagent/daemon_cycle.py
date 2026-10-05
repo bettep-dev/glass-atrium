@@ -1902,8 +1902,7 @@ class Outcome:
     # source value → NEUTRAL (0), never silently bucketed as success.
     revision_count: int = 0       # >=2 marks a correction (core-learning-log.md)
     evaluative_signal: int = 0    # -1/0/+1; -1 = user-corrected, preserve verbatim
-    # Write-time provenance — carved out of FAILURE polarity for the synthesized
-    # measurement gap (completion-synthesized done_with_concerns). Absent → "".
+    # Write-time provenance — parsed only, no daemon_cycle reader. Absent → "".
     attribution_source: str = ""
 
 
@@ -2581,7 +2580,6 @@ def _fetch_outcomes_from_pg(
                 confidence=row.get("confidence", ""),
                 metric_pass=metric_pass_str,
                 summary=(row.get("summary") or "")[:240],
-                # provenance for the synthesized-measurement-gap FAILURE carve-out
                 attribution_source=str(row.get("attribution_source") or ""),
             )
         )
@@ -2735,7 +2733,6 @@ def _fetch_generation_outcomes_from_pg(
                 evaluative_signal=_coerce_evaluative_signal(
                     row.get("evaluative_signal")
                 ),
-                # provenance for the synthesized-measurement-gap FAILURE carve-out
                 attribution_source=str(row.get("attribution_source") or ""),
             )
         )
@@ -7008,9 +7005,8 @@ def _is_soft_negative_outcome(row: dict) -> bool:
     """Soft-negative for the post-apply regression watch — the shared trigger SoT.
 
     Thin named wrapper over _pg_learning_dualwrite.is_negative_signal_outcome,
-    the same predicate the aggregator emits on (the generation polarity
-    partition's sync mandate). Beyond
-    the retired hand-built composite this inherits the synthesized-measurement-
+    the same predicate the aggregator emits on, so the watch and the emit
+    cannot drift. Beyond the retired hand-built composite this inherits the synthesized-measurement-
     gap carve-out (a completion-synthesized done_with_concerns row is a
     measurement artifact, not a regression signal), the structural review_flag
     carve-out, and the grader_verdict=verified_fail term. Soft keying stays

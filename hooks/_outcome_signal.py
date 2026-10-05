@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # Pure outcome-signal rules — the SINGLE definition of the negative-signal
-# predicate (learning-aggregator pattern emit; daemon_cycle generation polarity
-# partition and post-apply regression watch), of the Role → Allowed task_types
+# predicate (learning-aggregator pattern emit; daemon_cycle post-apply
+# regression watch), of the Role → Allowed task_types
 # allowlist that predicate depends on, and of the per-pattern metric
 # (pair windows, spawn half, occurrence floor).
 #
