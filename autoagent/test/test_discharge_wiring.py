@@ -636,23 +636,16 @@ class CensusEmitClassTest(unittest.TestCase):
     def setUp(self):
         _EMITTED.clear()
 
-    def test_when_the_gate_skips_or_fails_open_then_the_row_carries_no_subject(self):
+    def test_when_the_gate_skips_then_the_row_carries_no_subject(self):
         with _capture_stderr():
             dc._warn_pattern_skip(
                 "glass-atrium-dev-react",
                 "some label|glass-atrium-dev-react",
                 "2026-09-21",
-                eval_result="stale-pattern-skip",
-                reason="reobservation window elapsed",
+                eval_result=dc.PAIR_FAIL_EVAL,
+                reason="budget_overage pair from 2026-09-07: fail",
             )
-            dc._warn_gate_fail_open(
-                "glass-atrium-dev-react",
-                "some label|glass-atrium-dev-react",
-                "2026-09-21",
-                eval_result=dc.STALE_UNKNOWN_FAMILY_EVAL,
-                reason="family unknown to the staleness table",
-            )
-        self.assertEqual([e["args"]["subject"] for e in _EMITTED], [None, None])
+        self.assertEqual([e["args"]["subject"] for e in _EMITTED], [None])
 
     def test_when_an_intake_row_is_off_roster_then_the_row_carries_no_subject(self):
         with _capture_stderr():

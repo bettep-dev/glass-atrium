@@ -13,16 +13,10 @@ gates before any Haiku spend. Covered here:
     an 'applied' row RESETS the reject streak, so the apply/reject alternation
     is invisible to that gate. 'rejected' here means STOP PROPOSING only — the
     underlying signal stays UNRESOLVED, pinned by TestApplyCapNamingBoundary;
-(2) staleness skip — the pattern's live rate recomputed from a rolling
-    outcomes window (poisoned rows excluded inside ``read_outcomes_since``)
-    below the aggregator's emit threshold → skipped this cycle with a logged
-    reason (``eval_result='stale-pattern-skip'``), no lifecycle transition;
-(2b) unknown-family fallback — the live-rate recompute covers two label families
-    and the aggregator emits more, so a family it does not know used to fail open
-    SILENTLY and forever. Now: no aggregator re-observation inside the window →
-    snoozed (``eval_result='stale-unobserved-skip'``); re-observed recently →
-    still kept, but LOUD (``eval_result='stale-gate-unknown-family'``). Both are
-    snoozes — neither writes a lifecycle transition.
+(2) intake pair re-check — a keyed row whose S2f pair (detection + confirmation
+    windows on the UTC day) does not pass, or cannot be read, is skipped this
+    cycle with a named reason (``eval_result='stale-pattern-skip'``); no status
+    write — the aggregator owns the move to 'dormant'.
 Terminal protection: a 'rejected' learning_log row can never resurrect to
 'identified' (state-machine pin), so a snoozed row generates no proposal on
 any later cycle.
@@ -45,8 +39,9 @@ import contextlib
 import io
 import sys
 import unittest
-from datetime import date
+from datetime import date, datetime, timezone
 from pathlib import Path
+from types import SimpleNamespace
 from unittest import mock
 
 _REPO_ROOT = Path(__file__).resolve().parent.parent.parent
@@ -64,7 +59,7 @@ if str(_AUTOAGENT_DIR) not in sys.path:
 if str(Path(__file__).resolve().parent) not in sys.path:
     sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from _pg_seal import get_ephemeral_connection
+from _pg_seal import get_ephemeral_connection, seal_pg_reach
 
 try:
     import _pg_learning_dualwrite as pgdw
@@ -83,23 +78,12 @@ _LEGACY_PROPOSAL_LABEL = "에이전트 지침 개선 후보 (실패율 62%)"
 _PROBE_AGENT = "ap4-snooze-probe-agent"
 
 
-def _today_iso() -> str:
-    """Today as the intake carries it (core.learning_log.discovered_date).
-
-    Computed, never a literal: a hardcoded date crosses the window as the suite
-    ages and silently flips a fail-open test into a snooze test.
-    """
-    return date.today().isoformat()
-
-
 def _pattern(
     label: str = _LEGACY_LABEL,
     agent: str = "wiki-curator",
     row_id: int = 15,
     discovered_date: str = "2026-06-01",
 ) -> "dc.Pattern":
-    # Named for the column it feeds, NOT `date` — a `date` parameter shadows the
-    # module-level `from datetime import date` that _today_iso() calls.
     return dc.Pattern(
         date=discovered_date,
         label=label,
@@ -121,6 +105,41 @@ def _reject(
 
 def _applied(label: str = _LEGACY_PROPOSAL_LABEL) -> tuple[str, str, str]:
     return ("applied", label, "landed")
+
+
+_NOW = datetime(2026, 10, 5, 23, 55, tzinfo=timezone.utc)
+_DETECTION = "2026-09-21"
+_KEYED_AGENT = "glass-atrium-dev-python"
+_BUDGET_KEY = "budget_overage"
+_EMIT_KEY = "emit_failure"
+_KEYED_LABELS = {_BUDGET_KEY: "budget-overage concentration", _EMIT_KEY: "emit-failure concentration"}
+
+
+def _keyed_pattern(metric_key: str, row_id: int = 21) -> "dc.Pattern":
+    label = _KEYED_LABELS[metric_key]
+    return dc.Pattern(
+        date=_DETECTION,
+        label=label,
+        frequency="4",
+        agent=_KEYED_AGENT,
+        status="identified",
+        tier="user-pending",
+        raw_line=f"pg:learning_log:{row_id}:{label}|{_KEYED_AGENT}",
+        row_id=row_id,
+        metric_key=metric_key,
+    )
+
+
+def _floor_key(metric_key: str) -> tuple[str, str]:
+    return (_KEYED_AGENT, metric_key)
+
+
+def _floor(verdict: str) -> SimpleNamespace:
+    count = SimpleNamespace(spawns=10, events=5, sessions=5)
+    return SimpleNamespace(
+        verdict=verdict, detection=count, confirmation=count,
+        baseline=SimpleNamespace(spawns=10, events=1, sessions=1),
+    )
 
 
 @unittest.skipIf(dc is None, f"import failed: {_IMPORT_ERROR}")
@@ -425,126 +444,80 @@ class TestApplyCapNamingBoundary(_GateFixture):
         self.assertEqual(self._event_results(), ["repeat-apply-cap"])
 
 
-class TestDropStalePatterns(_GateFixture):
-    """Below-live-threshold patterns are skipped with a reason (AP-4 test b)."""
+class TestDropPairFailingPatterns(_GateFixture):
+    """Intake re-check: a keyed row passes only while its S2f pair passes; no status write."""
 
-    def _drop(self, outcome_results, patterns):
-        rows = [{"result": r} for r in outcome_results]
-        patchers = (
-            mock.patch.object(dc, "HAS_PG_OUTCOME_READ", True),
-            mock.patch.object(dc, "_pg_read_outcomes_since", lambda *a, **k: rows),
-        )
-        for patcher in patchers:
+    def _drop(self, floors, patterns):
+        reach = seal_pg_reach(self)
+        self.floor_reads: list[tuple] = []
+
+        def _read_floors(agents, windows, evaluated_at):
+            self.floor_reads.append((list(agents), windows, evaluated_at))
+            return floors
+
+        for name, value in (
+            ("HAS_PG_PATTERN_READ", True),
+            ("_pg_read_pattern_floors", _read_floors),
+            ("_get_utc_now", lambda: _NOW),
+        ):
+            patcher = mock.patch.object(dc, name, value)
             patcher.start()
             self.addCleanup(patcher.stop)
         stderr = io.StringIO()
         with contextlib.redirect_stderr(stderr):
-            kept = dc.drop_stale_patterns("wiki-curator", patterns)
+            kept = dc.drop_pair_failing_patterns(_KEYED_AGENT, patterns)
+        self.assertEqual(reach, [])
         return kept, stderr.getvalue()
 
-    def test_when_live_rate_below_floor_then_rate_pattern_skips(self) -> None:
-        # Exact-equality on the event list, not assertIn: the three stale tokens
-        # must not collapse into one — an operator reading the eval_result
-        # distribution has to separate "recomputed and dropped" from "unobserved
-        # and dropped" from "kept unchecked". _pattern's default date is stale
-        # here too, so a re-observation check that ran on EVERY family would
-        # steal this row and emit a second, wrong token; assertIn would not see
-        # that.
-        kept, stderr_text = self._drop(
-            ["done"] * 10 + ["fail"], [_pattern(label=_LEGACY_LABEL)]
-        )
+    def test_a_row_failing_its_pair_is_skipped_with_a_named_reason_and_no_status_write(
+        self,
+    ) -> None:
+        rows = [
+            ("pair fails", {_floor_key(_BUDGET_KEY): _floor("fail")}, "fail"),
+            ("baseline too short", {_floor_key(_BUDGET_KEY): _floor("insufficient-baseline")},
+             "insufficient-baseline"),
+            ("floor unreadable", None, "floor unreadable"),
+            ("no floor for the key", {}, "floor unreadable"),
+        ]
+        for name, floors, reason in rows:
+            with self.subTest(name):
+                self.emitted.clear()
+                kept, stderr_text = self._drop(floors, [_keyed_pattern(_BUDGET_KEY)])
+                self.assertEqual(kept, [])
+                self.assertEqual(self._event_results(), [dc.PAIR_FAIL_EVAL])
+                self.assertIn(f"budget_overage pair from {_DETECTION}: {reason}", stderr_text)
+                self.assertEqual(self.transitions, [])
 
-        self.assertEqual(kept, [])
-        self.assertEqual(self._event_results(), ["stale-pattern-skip"])
-        self.assertIn("live negative-signal rate", stderr_text)
-
-    def test_when_live_rate_meets_floor_then_rate_pattern_survives(self) -> None:
-        pattern = _pattern(label="agent instruction-improvement candidate (failure rate %)")
-        kept, _ = self._drop(["fail", "blocked", "done"], [pattern])
-
+    def test_a_row_passing_its_pair_goes_on_to_the_next_gate(self) -> None:
+        pattern = _keyed_pattern(_BUDGET_KEY)
+        kept, _ = self._drop({_floor_key(_BUDGET_KEY): _floor("pass")}, [pattern])
         self.assertEqual(kept, [pattern])
         self.assertEqual(self.emitted, [])
 
-    def test_when_live_fail_count_below_three_then_count_pattern_skips(self) -> None:
-        kept, stderr_text = self._drop(
-            ["fail", "fail"] + ["done"] * 8,
-            [_pattern(label="동일 에이전트 반복 실패", row_id=9)],
+    def test_each_row_is_judged_by_its_own_key_from_one_floor_read(self) -> None:
+        budget, emit = _keyed_pattern(_BUDGET_KEY, 21), _keyed_pattern(_EMIT_KEY, 22)
+        floors = {_floor_key(_BUDGET_KEY): _floor("pass"), _floor_key(_EMIT_KEY): _floor("fail")}
+        kept, stderr_text = self._drop(floors, [budget, emit])
+        self.assertEqual(kept, [budget])
+        self.assertIn(f"emit_failure pair from {_DETECTION}: fail", stderr_text)
+        self.assertEqual(len(self.floor_reads), 1)
+
+    def test_the_pair_read_is_the_utc_day_pair_at_the_evaluation_instant(self) -> None:
+        self._drop({}, [_keyed_pattern(_BUDGET_KEY)])
+        agents, windows, evaluated_at = self.floor_reads[0]
+        self.assertEqual(
+            (agents, windows.start.detection, windows.end, evaluated_at),
+            ([_KEYED_AGENT], datetime(2026, 9, 21, tzinfo=timezone.utc),
+             datetime(2026, 10, 5, tzinfo=timezone.utc), _NOW),
         )
 
-        self.assertEqual(kept, [])
-        self.assertIn("live negative-signal count 2 < 3", stderr_text)
-
-    def test_when_blocked_only_rows_then_count_pattern_survives(self) -> None:
-        # AP-3 regression: a pattern sustained by non-'fail' signals (3 blocked,
-        # 0 fails) must NOT be mis-skipped as stale.
-        pattern = _pattern(label="동일 에이전트 반복 실패", row_id=9)
-        kept, _ = self._drop(["blocked"] * 3 + ["done"] * 2, [pattern])
-
-        self.assertEqual(kept, [pattern])
-        self.assertEqual(self.emitted, [])
-
-    def test_when_sample_insufficient_then_rate_pattern_skips(self) -> None:
-        kept, stderr_text = self._drop(["done"], [_pattern(label=_LEGACY_LABEL)])
-
-        self.assertEqual(kept, [])
-        self.assertIn("live sample 1 < 3", stderr_text)
-
-    def test_when_label_family_unknown_then_fail_open_is_loud(self) -> None:
-        # Fail-open is PRESERVED where it is still the right answer — the family is
-        # unrecomputable but the row was re-observed today, so nothing has gone
-        # quiet. What was wrong was the SILENCE: covering_apply_count counts
-        # applies, never re-observations, so the repeat-apply cap could not tell a
-        # dead pattern from a live one. Keeping is correct; keeping quietly is not.
-        # The date is what moves this row off the re-observation branch.
-        pattern = _pattern(
-            label="some future pattern family", discovered_date=_today_iso()
-        )
-        kept, stderr_text = self._drop([], [pattern])
-
-        self.assertEqual(kept, [pattern])
-        self.assertEqual(self._event_results(), [dc.STALE_UNKNOWN_FAMILY_EVAL])
-        self.assertIn("fail-open", stderr_text)
-
-    def test_when_unknown_family_not_reobserved_then_skipped(self) -> None:
-        # The gap itself: before this branch existed, an unknown family fell
-        # through to a silent keep FOREVER, so a pattern whose evidence stopped
-        # arriving could never be dropped. _pattern's default date is months old
-        # and no live-rate recompute covers this label.
-        pattern = _pattern(label="size-est under-estimate concentration (avg overrun)")
-        kept, stderr_text = self._drop([], [pattern])
-
-        self.assertEqual(kept, [])
-        self.assertEqual(self._event_results(), [dc.STALE_UNOBSERVED_EVAL])
-        self.assertIn("no aggregator re-observation", stderr_text)
-
-    def test_when_unknown_family_skipped_then_no_lifecycle_transition(self) -> None:
-        # Snooze, not terminalization. The re-observation signal reads a column
-        # named discovered_date for a last-observed meaning; if a future change
-        # stops refreshing it, every unknown-family row looks unobserved. A
-        # terminal transition would make that mistake permanent — a snooze
-        # re-arms on the next re-observation.
-        pattern = _pattern(label="size-est under-estimate concentration (avg overrun)")
-        self._drop([], [pattern])
-
-        self.assertEqual(self.transitions, [])
-
-    def test_when_unknown_family_date_unreadable_then_fail_open(self) -> None:
-        # A date we cannot parse is not evidence of silence. Fail OPEN, loudly —
-        # never snooze a pattern on an unreadable timestamp.
-        pattern = _pattern(
-            label="some future pattern family", discovered_date="not-a-date"
-        )
-        kept, _ = self._drop([], [pattern])
-
-        self.assertEqual(kept, [pattern])
-        self.assertEqual(self._event_results(), [dc.STALE_UNKNOWN_FAMILY_EVAL])
-
-    def test_when_pg_unavailable_then_fail_open(self) -> None:
-        pattern = _pattern(label=_LEGACY_LABEL)
-        with mock.patch.object(dc, "HAS_PG_OUTCOME_READ", False):
-            kept = dc.drop_stale_patterns("wiki-curator", [pattern])
-
-        self.assertEqual(kept, [pattern])
+    def test_reads_unavailable_skip_every_row_without_a_floor_read(self) -> None:
+        reach = seal_pg_reach(self)
+        stderr = io.StringIO()
+        with contextlib.redirect_stderr(stderr):
+            kept = dc.drop_pair_failing_patterns(_KEYED_AGENT, [_keyed_pattern(_BUDGET_KEY)])
+        self.assertEqual((kept, reach), ([], []))
+        self.assertIn("floor unreadable", stderr.getvalue())
 
 
 @unittest.skipIf(pgdw is None, f"import failed: {_IMPORT_ERROR}")

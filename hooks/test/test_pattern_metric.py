@@ -28,8 +28,9 @@ from unittest import mock
 
 _REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 _HOOKS_DIR = _REPO_ROOT / "hooks"
-_AUTOAGENT_TEST_DIR = _REPO_ROOT / "autoagent" / "test"
-for _path in (_HOOKS_DIR, _AUTOAGENT_TEST_DIR):
+_AUTOAGENT_DIR = _REPO_ROOT / "autoagent"
+_AUTOAGENT_TEST_DIR = _AUTOAGENT_DIR / "test"
+for _path in (_HOOKS_DIR, _AUTOAGENT_DIR, _AUTOAGENT_TEST_DIR):
     if str(_path) not in sys.path:
         sys.path.insert(0, str(_path))
 
@@ -824,6 +825,70 @@ class TestAggregatorPairStatus(_AggregatorRun):
             self.assertEqual(self.log.get_status(signature), "identified", signature)
         self.assertIn("no keyless pair verdict", stderr)
         self.assertIn("no keyed pair verdict", stderr)
+
+
+@unittest.skipIf(pgdw is None, f"import failed: {_IMPORT_ERROR}")
+class TestAggregatorAndIntakeAgree(unittest.TestCase):
+    """The aggregator's status sweep and the daemon's intake re-check read one pair: on one
+    UTC day, over one fixture, both reach the same verdict from the same rates."""
+
+    def test_both_actors_read_one_pair_on_one_utc_day(self) -> None:
+        import daemon_cycle as dc
+        from _pg_seal import seal_pg_reach
+
+        day = _WINDOWS.end
+        aggregated_at, rechecked_at = day + timedelta(minutes=5), day + timedelta(hours=23, minutes=55)
+        provenance_start = _WINDOWS.start.baseline
+        fixture = (provenance_start, {_PYTHON: _get_passing_spawns(_WINDOWS)})
+        log = _FakeLearningLog()
+        # re-entered from 'dormant' on a new pair today: the anchor gates no 'identified' row
+        log.put_row(f"{_BUDGET_CORE}|{_PYTHON}", "identified", day + timedelta(minutes=1))
+        log.put_row(f"{_EMIT_FAILURE_CORE}|{_PYTHON}", "identified")
+        daemon_floors: list[dict] = []
+
+        def _read_daemon_floors(agents, windows, evaluated_at):
+            daemon_floors.append(pgdw.read_pattern_floors(agents, windows, evaluated_at))
+            return daemon_floors[-1]
+
+        reach = seal_pg_reach(self)
+        with mock.patch.object(pgdw, "_read_spawn_facts", lambda agents, windows: fixture), \
+                mock.patch.object(agg, "_pg_put_learning_pattern_status", log.put_status), \
+                mock.patch.object(dc, "HAS_PG_PATTERN_READ", True), \
+                mock.patch.object(dc, "_pg_read_pattern_floors", _read_daemon_floors), \
+                mock.patch.object(dc, "_get_utc_now", lambda: rechecked_at), \
+                mock.patch.object(dc, "_invoke_pg_helper", lambda envelope: True), \
+                contextlib.redirect_stderr(io.StringIO()):
+            windows = sig.get_pair_windows(aggregated_at)
+            aggregator_floors = agg._get_keyed_floors({_PYTHON}, windows, aggregated_at)
+            agg._put_pair_statuses(log.read(), set(), aggregator_floors, windows)
+            patterns = [
+                _get_intake_pattern(dc, core, key, row["id"])
+                for core, key, row in (
+                    (_BUDGET_CORE, sig.METRIC_BUDGET_OVERAGE, log.rows[f"{_BUDGET_CORE}|{_PYTHON}"]),
+                    (_EMIT_FAILURE_CORE, sig.METRIC_EMIT_FAILURE,
+                     log.rows[f"{_EMIT_FAILURE_CORE}|{_PYTHON}"]),
+                )
+            ]
+            kept = dc.drop_pair_failing_patterns(_PYTHON, patterns)
+
+        self.assertEqual(reach, [])
+        self.assertEqual(
+            {(core, agent): floor for (core, agent), floor in aggregator_floors.items()},
+            {(core, _PYTHON): daemon_floors[0][(_PYTHON, key)]
+             for core, key in ((_BUDGET_CORE, sig.METRIC_BUDGET_OVERAGE),
+                               (_EMIT_FAILURE_CORE, sig.METRIC_EMIT_FAILURE))},
+        )
+        statuses = {core: log.get_status(f"{core}|{_PYTHON}") for core in (_BUDGET_CORE, _EMIT_FAILURE_CORE)}
+        self.assertEqual(statuses, {_BUDGET_CORE: "identified", _EMIT_FAILURE_CORE: "dormant"})
+        self.assertEqual([pattern.metric_key for pattern in kept], [sig.METRIC_BUDGET_OVERAGE])
+
+
+def _get_intake_pattern(dc: ModuleType, core: str, metric_key: str, row_id: int):
+    return dc.Pattern(
+        date=f"{_WINDOWS.end:%Y-%m-%d}", label=core, frequency="1", agent=_PYTHON,
+        status="identified", tier="user-pending",
+        raw_line=f"pg:learning_log:{row_id}:{core}|{_PYTHON}", row_id=row_id, metric_key=metric_key,
+    )
 
 
 @unittest.skipIf(pgdw is None, f"import failed: {_IMPORT_ERROR}")

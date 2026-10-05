@@ -677,11 +677,9 @@ INSERT INTO core.learning_log (
 ON CONFLICT (pattern_signature) DO UPDATE SET
     -- discovered_date is a LAST-observed date, not a first-observed one: the
     -- sibling writer (_pg_learning_dualwrite._LEARNING_LOG_UPSERT_SQL) refreshes
-    -- it on every re-emit, and daemon_cycle._reobservation_reason snoozes a
-    -- pattern on the strength of that. Omitting the refresh here made this
-    -- writer disagree with the column's only reader — harmless only for as long
-    -- as this path stays dormant (its sole producer, track-outcome.sh, emits
-    -- learning_hint: null), and a silent staleness snooze the moment it is wired.
+    -- it on every re-emit, so this writer refreshes it too and the column keeps
+    -- one meaning once this dormant path is wired (its sole producer,
+    -- track-outcome.sh, emits learning_hint: null).
     discovered_date = EXCLUDED.discovered_date,
     frequency = core.learning_log.frequency + EXCLUDED.frequency,
     last_updated = now()

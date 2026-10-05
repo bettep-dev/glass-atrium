@@ -135,8 +135,6 @@ STAGE1_DEFAULT_CHANGE_LINES = 6
 NOT_PATCHABLE_AGENTS = frozenset({"전체", "ALL", "all", ""})
 
 # Pattern-5 floors — ≥50% of an agent's outcomes carrying a negative signal over ≥3 samples.
-# Load-bearing mirror of daemon_cycle.py STALE_MIN_SAMPLE / STALE_FAILURE_RATE_FLOOR: the
-# staleness recompute uses the same floors, or a live pattern gets mis-skipped as stale.
 # (The OR-term predicate itself is shared via _outcome_signal.negative_signal_hits.)
 RATE_MIN_SAMPLE = 3
 RATE_FAILURE_FLOOR = 0.5
