@@ -35,8 +35,9 @@
 // database — a route that answers non-200 reds this suite, because it is the
 // sole guard on the route SQL and a self-skipping guard guards nothing. The
 // schema-absent case reads a second database on the same server from
-// MONITOR_TEST_LABEL_ABSENT_DATABASE_URL — every migration except the one adding
-// metric_key and 'dormant' — and skips when it is unset.
+// MONITOR_TEST_LABEL_ABSENT_DATABASE_URL and skips when it is unset. That database is
+// shared with the reject-buckets suite: every migration except 20261003000000
+// ('unadjudicated') and 20261005000000 (metric_key, 'dormant').
 //
 // Runner: npx tsx --test test/improvement.loop-suppression.route.test.ts
 

@@ -16,8 +16,10 @@
 // the same window cannot make the suite pass or fail by accident.
 //
 // DB: real Postgres. Skips gracefully when unreachable. The label-absent case reads a
-// second database on the same server from MONITOR_TEST_LABEL_ABSENT_DATABASE_URL — every
-// migration except the one adding the unadjudicated label — and skips when it is unset.
+// second database on the same server from MONITOR_TEST_LABEL_ABSENT_DATABASE_URL and
+// skips when it is unset. That database is shared with the loop-suppression suite: every
+// migration except 20261003000000 ('unadjudicated') and 20261005000000 (metric_key,
+// 'dormant').
 //
 // Runner: npx tsx --test test/improvement.reject-buckets.route.test.ts
 

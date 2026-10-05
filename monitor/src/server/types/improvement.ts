@@ -565,13 +565,14 @@ export interface ImprovementLoopSuppressionState {
   off_registry_parked: number;
 }
 
-// Dormant core.learning_log rows, bucketed by the transition-reason marker of the
-// writer that moved them; a row matching no marker, or carrying no reason, lands in
-// 'other'. Window-free like `parked`, so an old dormant row stays visible.
-//
-// UNGATED, unlike `parked`: a roster-mismatch row is dormant BECAUSE its agent is
-// not a roster stem, so the registry gate would drop the very rows that bucket
-// reports. `patterns` is bounded by the request `limit`; the totals stay on `buckets`.
+/**
+ * Dormant core.learning_log rows, bucketed by the transition-reason marker of the writer
+ * that moved them; no marker or no reason → 'other'.
+ * Window-free like `parked` → an old dormant row stays visible.
+ * UNGATED, unlike `parked`: a roster-mismatch row is dormant BECAUSE its agent is not a
+ * roster stem, so the registry gate would drop the very rows that bucket reports.
+ * `patterns` is bounded by the request `limit`; the totals stay on `buckets`.
+ */
 export interface ImprovementDormantState {
   buckets: ImprovementSuppressionBucket[];
   patterns: ImprovementParkedPatternRow[];

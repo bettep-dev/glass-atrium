@@ -387,9 +387,7 @@ const SUPPRESSION_REASON_PREFIXES = {
   "reverted-snooze": "reverted snooze:",
 } as const;
 
-// Opening literals of the dormant-transition reasons: learning-aggregator.py
-// PAIR_REASON_PREFIX, and the daemon's roster-mismatch intake drop. Hardcoded for
-// the same reason as the parked markers.
+// Dormant-reason openers (aggregator PAIR_REASON_PREFIX, roster-mismatch drop) — hardcoded as above
 const DORMANT_REASON_PREFIXES = {
   "aggregator-pair": "aggregator-pair",
   "roster-mismatch": "roster-mismatch",
@@ -501,9 +499,7 @@ const SUPPRESSION_CAUSE_COPY: Record<string, { label: string; hint: string }> = 
 // mechanism retired last month does not keep reporting.
 const SUPPRESSION_WINDOW_DAYS = 7;
 
-// The daemon's intake skip: a row with no metric key. Read through the row's jsonb
-// form so a schema without the column reads NULL — every row keyless, as the
-// daemon's intake reads that schema — instead of failing the whole statement.
+// Intake skip (no metric key) via jsonb → a column-less schema reads all rows keyless, as the daemon
 const KEYLESS_PREDICATE = Prisma.sql`(to_jsonb(learning_log) ->> 'metric_key') IS NULL`;
 
 interface SuppressionBucketDbRow {
@@ -523,10 +519,10 @@ interface PendingSplitDbRow {
   total: bigint;
 }
 
-// A cause with no copy entry still surfaces — an unlabelled bucket is a bug report,
-// an omitted one is a silent hole of exactly the kind this field exists to close.
-// Reason-marker CASE → bucket key, 'other' for no match or no reason. Each arm binds
-// its prefix as a parameter — no literal is concatenated into SQL.
+/**
+ * Reason-marker CASE → bucket key, 'other' for no match or no reason.
+ * Each arm binds its prefix as a parameter — no literal is concatenated into SQL.
+ */
 function buildReasonCase(prefixes: Readonly<Record<string, string>>): Prisma.Sql {
   return Prisma.sql`CASE ${Prisma.join(
     Object.entries(prefixes).map(
@@ -537,6 +533,8 @@ function buildReasonCase(prefixes: Readonly<Record<string, string>>): Prisma.Sql
   )} ELSE 'other' END`;
 }
 
+// A cause with no copy entry still surfaces — an unlabelled bucket is a bug report,
+// an omitted one is a silent hole of exactly the kind this field exists to close.
 function suppressionBucket(cause: string, count: number, agents: number) {
   const copy = SUPPRESSION_CAUSE_COPY[cause];
   return {
