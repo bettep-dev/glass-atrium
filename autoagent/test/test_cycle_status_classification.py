@@ -20,7 +20,8 @@ classification (a gate verdict, never `unadjudicated`), `pending` otherwise. The
 patch's pattern link and generator-input version reach the envelope as the patch
 carries them, and an absent one is sent as None.
 
-The report file the cycle writes for that writer carries no Solution History key.
+The report file the cycle writes for that writer carries no Solution History key,
+and a reported patch carries no prior-day outcome sample count.
 
 Run with either runner:
     python3 -m unittest autoagent.test.test_cycle_status_classification -v
@@ -198,6 +199,14 @@ class ProposalStatusSent(unittest.TestCase):
                 args = self._get_sent_args(patch)
                 self.assertEqual(args["learning_pattern_id"], expected)
                 self.assertIsNone(args["generator_input_version"])
+        self.assertEqual(pg_reach, [])
+
+    @unittest.skipIf(dc is None, f"import failed: {_IMPORT_ERROR}")
+    def test_a_reported_patch_carries_no_outcome_sample_count(self) -> None:
+        pg_reach = seal_pg_reach(self)
+        patch = self._build_report_patch(4127)
+        self.assertEqual(patch["pattern_agent"], _PROBE_AGENT)
+        self.assertNotIn("outcomes_sampled", patch)
         self.assertEqual(pg_reach, [])
 
     def _build_report_patch(self, lead_row_id: int) -> dict:

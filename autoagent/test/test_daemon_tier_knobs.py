@@ -274,7 +274,6 @@ def _cycle_report(failure_classes: tuple[str, ...], cycle_status: str) -> dc.Cyc
                 classification="reject",
                 rationale=f"{failure_class} fixture",
                 proposed_diff="",
-                outcomes_sampled=0,
                 haiku_status="skipped:fixture",
                 status="rejected",
                 failure_class=failure_class,

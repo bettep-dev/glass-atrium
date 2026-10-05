@@ -88,7 +88,6 @@ def _patch_result(
         classification="reject" if status in ("rejected", "unadjudicated") else "body-auto",
         rationale=rationale,
         proposed_diff="",
-        outcomes_sampled=0,
         haiku_status=haiku_status,
         status=status,
     )

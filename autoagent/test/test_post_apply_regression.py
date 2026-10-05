@@ -511,7 +511,6 @@ class TestRevertedStatusBranches(unittest.TestCase):
                     # rejected case passing on the reverted row alone.
                     rationale=_QUALITY_RATIONALE,
                     proposed_diff="",
-                    outcomes_sampled=0,
                     haiku_status="ok",
                     status=status,
                 )
@@ -564,7 +563,6 @@ class TestBackoffMarkerCycleRegression(unittest.TestCase):
                     classification="reject",
                     rationale=rationale,
                     proposed_diff="",
-                    outcomes_sampled=0,
                     haiku_status=haiku_status,
                     status=status,
                 )

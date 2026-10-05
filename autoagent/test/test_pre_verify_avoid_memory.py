@@ -447,7 +447,6 @@ class TestLoopEventRemovedLines(unittest.TestCase):
                     classification="body-auto",
                     rationale="fixture",
                     proposed_diff=proposal.proposed_diff,
-                    outcomes_sampled=0,
                     haiku_status="ok",
                     estimated_added_lines=proposal.estimated_added_lines,
                     estimated_removed_lines=proposal.estimated_removed_lines,

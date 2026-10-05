@@ -2044,7 +2044,6 @@ class PatchResult:
     classification: Classification
     rationale: str
     proposed_diff: str
-    outcomes_sampled: int
     # 'ok' | 'skipped:<reason>' | 'error:<short>'; updater-origin rows add
     # 'verified:<gate>' for a gate that ran without a model call.
     haiku_status: str
@@ -11722,7 +11721,6 @@ def build_patch_result(
         classification=classification,
         rationale=effective_rationale,
         proposed_diff=proposal.proposed_diff,
-        outcomes_sampled=len(outcomes),
         haiku_status=haiku_status,
         # Accurate count from the FULL diff (proposed_diff is stored
         # whole or, past STORED_DIFF_CHAR_LIMIT, refused and stored empty
