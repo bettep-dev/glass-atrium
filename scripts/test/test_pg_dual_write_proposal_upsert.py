@@ -40,6 +40,10 @@ Two rules sit above the co-movement arms:
   `unadjudicated` and lands the newer marker rationale, whose back-off prefix the
   classifier and the held-cycle count read unchanged. Outside the freeze every other
   column always takes the push; the exemption decides status and rationale alone.
+
+The pattern link and the generator-input version persist as pushed, NULL when the
+push names none, and a re-push naming none keeps the stored pair: an older report or
+another writer's envelope must not unlink a proposal from its pattern.
 """
 
 from __future__ import annotations
@@ -109,6 +113,7 @@ _ACTOR_DECLARATIONS = {
 _STORED_ACTOR = "daemon-cycle-parked-guard"
 _INCOMING_ACTOR = "daemon-cycle-push"
 _PROVENANCE = ("status", "rationale", "reviewed_by")
+_LINK = ("learning_pattern_id", "generator_input_version")
 
 # Every column the conflict arm assigns, distinct per variant → a leaked column shows.
 # pre_verify_axes stays None: the stdlib engine cannot bind the Jsonb adapter.
@@ -129,6 +134,8 @@ _SEEDED = {
     "confidence_observed": 0.9,
     "project_key": "aaaaaaaaaaaa",
     "promotion_tier": "proposal",
+    "learning_pattern_id": 4127,
+    "generator_input_version": "gen-inputs-1",
 }
 _REPUSHED = {
     "target_agent": "glass-atrium-dev-shell",
@@ -147,6 +154,8 @@ _REPUSHED = {
     "confidence_observed": 0.1,
     "project_key": "bbbbbbbbbbbb",
     "promotion_tier": "mention",
+    "learning_pattern_id": 4128,
+    "generator_input_version": "gen-inputs-2",
 }
 
 
@@ -190,6 +199,11 @@ class _Proposals:
 
     def get_stored(self) -> dict[str, str]:
         stored = backend.read_proposal(self._db_path, _KEY)
+        assert stored is not None, "the seeding push stored no row"
+        return stored
+
+    def get_link(self) -> dict[str, str]:
+        stored = backend.read_proposal(self._db_path, _KEY, _LINK)
         assert stored is not None, "the seeding push stored no row"
         return stored
 
@@ -364,6 +378,55 @@ def test_a_born_terminal_row_names_its_creator(proposals: _Proposals):
         "rationale": _stamp("rejected"),
         "reviewed_by": _STORED_ACTOR,
     }
+
+
+# The stub declares every column TEXT, so a stored integer link reads back as its text.
+@pytest.mark.parametrize(
+    ("content", "expected"),
+    [
+        pytest.param(
+            _SEEDED,
+            {"learning_pattern_id": "4127", "generator_input_version": "gen-inputs-1"},
+            id="both pushed",
+        ),
+        pytest.param(
+            {k: v for k, v in _SEEDED.items() if k not in _LINK},
+            {"learning_pattern_id": None, "generator_input_version": None},
+            id="neither pushed",
+        ),
+    ],
+)
+def test_a_new_row_stores_the_pattern_link_and_input_version_it_was_pushed(
+    proposals: _Proposals, content: dict, expected: dict
+):
+    proposals.push_row("pending", content)
+
+    assert proposals.get_link() == expected
+
+
+@pytest.mark.parametrize(
+    ("repush", "expected"),
+    [
+        pytest.param(
+            _REPUSHED,
+            {"learning_pattern_id": "4128", "generator_input_version": "gen-inputs-2"},
+            id="re-push names a new pair",
+        ),
+        pytest.param(
+            {k: v for k, v in _REPUSHED.items() if k not in _LINK},
+            {"learning_pattern_id": "4127", "generator_input_version": "gen-inputs-1"},
+            id="re-push names none",
+        ),
+    ],
+)
+def test_a_re_push_replaces_the_stored_link_only_with_one_it_names(
+    proposals: _Proposals, repush: dict, expected: dict
+):
+    proposals.push_row("pending", _SEEDED)
+
+    proposals.push_row("pending", repush)
+
+    assert proposals.get_link() == expected
 
 
 def test_when_the_status_label_exists_then_an_unadjudicated_push_persists_it(

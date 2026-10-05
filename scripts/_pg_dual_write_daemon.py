@@ -531,100 +531,24 @@ PROPOSAL_STATUS_SQL = f"""(
 """
 
 
-def get_proposal_status_label_state(conn):
-    """Whether core."ProposalStatus" carries the 'unadjudicated' label on `conn`.
-
-    Returns "present" or "absent" when the catalog answers, "unknown" when the query
-    cannot run (closed connection, server fault) — the caller decides what an unknown
-    schema means; the fault itself is named on stderr.
-    """
-    try:
-        with conn.cursor() as cur:
-            cur.execute(f"SELECT EXISTS ({_UNADJUDICATED_LABEL_SQL})")
-            row = cur.fetchone()
-    except psycopg.Error as exc:
-        sys.stderr.write(
-            json.dumps(
-                {
-                    "hook": "_pg_dual_write_daemon",
-                    "op": "get_proposal_status_label_state",
-                    "error_kind": _classify_error(exc),
-                    "message": str(exc),
-                }
-            )
-            + "\n"
-        )
-        return "unknown"
-    return "present" if row and row[0] else "absent"
+# Pattern-evidence proposal columns; absent where that migration did not land.
+PATTERN_EVIDENCE_MIGRATION = "20261005000000_add_pattern_evidence_provenance"
+_PROPOSAL_LINK_COLUMNS = ",\n             learning_pattern_id, generator_input_version"
+_PROPOSAL_LINK_VALUES = ",\n                %s, %s"
+# COALESCE → an envelope naming no link (an older report, another writer) never unlinks a row.
+_PROPOSAL_LINK_SET = """,
+            learning_pattern_id = COALESCE(EXCLUDED.learning_pattern_id,
+                                           core.autoagent_proposals.learning_pattern_id),
+            generator_input_version = COALESCE(EXCLUDED.generator_input_version,
+                                               core.autoagent_proposals.generator_input_version)"""
 
 
-def write_autoagent_proposal(
-    cycle_date,
-    pattern_label,
-    target_file,
-    target_agent,
-    classification,
-    rationale,
-    haiku_status,
-    approval_tier,
-    status,
-    proposed_diff,
-    cost_guard_state,
-    source_file,
-    source_file_mtime,
-    indexed_at=None,
-    pre_verify_passed=None,
-    pre_verify_status="",
-    pre_verify_rationale="",
-    pre_verify_axes=None,
-    confidence_observed=None,
-    project_key="",
-    promotion_tier="",
-    reviewed_by="",
-):
-    """UPSERT core.autoagent_proposals on (cycle_date, pattern_label, target_file).
-
-    Returns elapsed_ms. Parameter names mirror the SQL column names 1:1 and
-    the CLI envelope keys 1:1. `classification` and `approval_tier` accept
-    free-form daemon labels; the helper coerces via _coerce_classification when
-    one of them is unknown to the schema enum — caller MAY pass already-coerced
-    values, in which case the coercion is a no-op identity.
-
-    Pre-verify dual-write: 4 fields (pre_verify_passed/status/rationale/axes)
-    carry the daemon's pre-verification verdict; pre_verify_axes is JSONB (dict
-    serialized via Jsonb adapter), the other three are scalars.
-
-    Confidence-weighted promotion ladder: 3 fields —
-    confidence_observed (REAL, Beta-Binomial posterior; None → NULL when the
-    feature flag is off), project_key (TEXT, 12-hex isolation key; ""→NULL),
-    promotion_tier (TEXT, mention/candidate/proposal/instruction-edit/
-    skill-candidate; ""→NULL). All NULLable — older rows omit them.
-
-    Provenance: `reviewed_by` names the actor that produced the row's status, from
-    the closed token set declared at monitor/prisma/schema.prisma → AutoagentProposal.
-    Each envelope source passes its own token; ""→NULL, and a NULL incoming value
-    never clears a stored actor. No arm here writes `reviewed_at`: a push is not a
-    verdict.
-    """
-    start_ns = time.monotonic_ns()
-    if indexed_at is None:
-        # PG default is CURRENT_TIMESTAMP; pass NULL by omission of the column
-        # rather than computing wall-clock here. Sentinel sticks for explicit
-        # backfill timestamps (caller-supplied).
-        pass
-
-    cls_enum, tier_enum = _coerce_classification(classification)
-    # Caller-provided approval_tier overrides the coerced one (only when known)
-    tier_enum = _APPROVAL_TIER_TO_ENUM.get(approval_tier, tier_enum)
-    if status not in (
-        "pending", "approved", "rejected", "applied", "snoozed", "unadjudicated"
-    ):
-        # A reject-classification row with an empty/invalid status MUST settle as
-        # 'rejected', not 'pending' — else auto-reject proposals fossilize in the
-        # pending queue.
-        status = "rejected" if cls_enum == "reject" else "pending"
-
-    sql = f"""
+def _get_proposal_upsert_sql(has_link_columns):
+    """The proposal UPSERT, with or without the two pattern-evidence columns."""
+    link_columns = _PROPOSAL_LINK_COLUMNS if has_link_columns else ""
+    link_values = _PROPOSAL_LINK_VALUES if has_link_columns else ""
+    link_set = _PROPOSAL_LINK_SET if has_link_columns else ""
+    return f"""
         INSERT INTO core.autoagent_proposals
             (cycle_date, pattern_label, target_file, target_agent,
              classification, rationale, haiku_status, approval_tier, status,
@@ -633,7 +557,7 @@ def write_autoagent_proposal(
              indexed_at,
              pre_verify_passed, pre_verify_status, pre_verify_rationale,
              pre_verify_axes,
-             confidence_observed, project_key, promotion_tier)
+             confidence_observed, project_key, promotion_tier{link_columns})
         VALUES (%s, %s, %s, %s,
                 %s::core."ProposalClassification", %s, %s,
                 %s::core."ApprovalTier",
@@ -642,7 +566,7 @@ def write_autoagent_proposal(
                 %s, %s,
                 COALESCE(%s, CURRENT_TIMESTAMP),
                 %s, %s, %s, %s,
-                %s, %s, %s)
+                %s, %s, %s{link_values})
         ON CONFLICT (cycle_date, pattern_label, target_file) DO UPDATE SET
             target_agent = EXCLUDED.target_agent,
             classification = EXCLUDED.classification,
@@ -699,12 +623,114 @@ def write_autoagent_proposal(
             pre_verify_axes = EXCLUDED.pre_verify_axes,
             confidence_observed = EXCLUDED.confidence_observed,
             project_key = EXCLUDED.project_key,
-            promotion_tier = EXCLUDED.promotion_tier
+            promotion_tier = EXCLUDED.promotion_tier{link_set}
         -- Reviewed terminal row (apply flip or reject route) → frozen, all columns.
         WHERE NOT (core.autoagent_proposals.status::text IN {_TERMINAL_STATUS_SQL}
                    AND core.autoagent_proposals.reviewed_at IS NOT NULL)
         RETURNING id
     """
+
+
+def get_proposal_status_label_state(conn):
+    """Whether core."ProposalStatus" carries the 'unadjudicated' label on `conn`.
+
+    Returns "present" or "absent" when the catalog answers, "unknown" when the query
+    cannot run (closed connection, server fault) — the caller decides what an unknown
+    schema means; the fault itself is named on stderr.
+    """
+    try:
+        with conn.cursor() as cur:
+            cur.execute(f"SELECT EXISTS ({_UNADJUDICATED_LABEL_SQL})")
+            row = cur.fetchone()
+    except psycopg.Error as exc:
+        sys.stderr.write(
+            json.dumps(
+                {
+                    "hook": "_pg_dual_write_daemon",
+                    "op": "get_proposal_status_label_state",
+                    "error_kind": _classify_error(exc),
+                    "message": str(exc),
+                }
+            )
+            + "\n"
+        )
+        return "unknown"
+    return "present" if row and row[0] else "absent"
+
+
+def write_autoagent_proposal(
+    cycle_date,
+    pattern_label,
+    target_file,
+    target_agent,
+    classification,
+    rationale,
+    haiku_status,
+    approval_tier,
+    status,
+    proposed_diff,
+    cost_guard_state,
+    source_file,
+    source_file_mtime,
+    indexed_at=None,
+    pre_verify_passed=None,
+    pre_verify_status="",
+    pre_verify_rationale="",
+    pre_verify_axes=None,
+    confidence_observed=None,
+    project_key="",
+    promotion_tier="",
+    reviewed_by="",
+    learning_pattern_id=None,
+    generator_input_version=None,
+):
+    """UPSERT core.autoagent_proposals on (cycle_date, pattern_label, target_file).
+
+    Returns elapsed_ms. Parameter names mirror the SQL column names 1:1 and
+    the CLI envelope keys 1:1. `classification` and `approval_tier` accept
+    free-form daemon labels; the helper coerces via _coerce_classification when
+    one of them is unknown to the schema enum — caller MAY pass already-coerced
+    values, in which case the coercion is a no-op identity.
+
+    Pre-verify dual-write: 4 fields (pre_verify_passed/status/rationale/axes)
+    carry the daemon's pre-verification verdict; pre_verify_axes is JSONB (dict
+    serialized via Jsonb adapter), the other three are scalars.
+
+    Confidence-weighted promotion ladder: 3 fields —
+    confidence_observed (REAL, Beta-Binomial posterior; None → NULL when the
+    feature flag is off), project_key (TEXT, 12-hex isolation key; ""→NULL),
+    promotion_tier (TEXT, mention/candidate/proposal/instruction-edit/
+    skill-candidate; ""→NULL). All NULLable — older rows omit them.
+
+    Provenance: `reviewed_by` names the actor that produced the row's status, from
+    the closed token set declared at monitor/prisma/schema.prisma → AutoagentProposal.
+    Each envelope source passes its own token; ""→NULL, and a NULL incoming value
+    never clears a stored actor. No arm here writes `reviewed_at`: a push is not a
+    verdict.
+
+    Pattern evidence: `learning_pattern_id` (core.learning_log id) and
+    `generator_input_version`; None/""→NULL, and a NULL incoming value never clears a
+    stored one. A schema without the two columns still gets the row, without them,
+    and the missing migration is named on stderr.
+    """
+    start_ns = time.monotonic_ns()
+    if indexed_at is None:
+        # PG default is CURRENT_TIMESTAMP; pass NULL by omission of the column
+        # rather than computing wall-clock here. Sentinel sticks for explicit
+        # backfill timestamps (caller-supplied).
+        pass
+
+    cls_enum, tier_enum = _coerce_classification(classification)
+    # Caller-provided approval_tier overrides the coerced one (only when known)
+    tier_enum = _APPROVAL_TIER_TO_ENUM.get(approval_tier, tier_enum)
+    if status not in (
+        "pending", "approved", "rejected", "applied", "snoozed", "unadjudicated"
+    ):
+        # A reject-classification row with an empty/invalid status MUST settle as
+        # 'rejected', not 'pending' — else auto-reject proposals fossilize in the
+        # pending queue.
+        status = "rejected" if cls_enum == "reject" else "pending"
+
     # pre_verify_axes is JSONB. None / empty dict both pass through Jsonb() —
     # psycopg serializes {} as "{}" (valid JSON object), None as NULL.
     axes_param = Jsonb(pre_verify_axes) if pre_verify_axes is not None else None
@@ -714,37 +740,54 @@ def write_autoagent_proposal(
     promotion_tier_param = promotion_tier or None
     # ""→NULL: an unnamed actor is ABSENT, and the conflict arm coalesces it away.
     reviewed_by_param = reviewed_by or None
+    params = (
+        cycle_date,
+        pattern_label,
+        target_file,
+        target_agent,
+        cls_enum,
+        rationale,
+        haiku_status,
+        tier_enum,
+        status,
+        proposed_diff,
+        cost_guard_state,
+        reviewed_by_param,
+        source_file,
+        source_file_mtime,
+        indexed_at,
+        pre_verify_passed,
+        pre_verify_status,
+        pre_verify_rationale,
+        axes_param,
+        confidence_observed,
+        project_key_param,
+        promotion_tier_param,
+    )
+    link_params = (learning_pattern_id, generator_input_version or None)
+    is_degraded = False
     with _connect() as conn:
-        with conn.cursor() as cur:
-            cur.execute(
-                sql,
-                (
-                    cycle_date,
-                    pattern_label,
-                    target_file,
-                    target_agent,
-                    cls_enum,
-                    rationale,
-                    haiku_status,
-                    tier_enum,
-                    status,
-                    proposed_diff,
-                    cost_guard_state,
-                    reviewed_by_param,
-                    source_file,
-                    source_file_mtime,
-                    indexed_at,
-                    pre_verify_passed,
-                    pre_verify_status,
-                    pre_verify_rationale,
-                    axes_param,
-                    confidence_observed,
-                    project_key_param,
-                    promotion_tier_param,
-                ),
-            )
-            cur.fetchone()  # None when the reviewed-row freeze skips the update
+        try:
+            with conn.cursor() as cur:
+                cur.execute(_get_proposal_upsert_sql(True), params + link_params)
+                cur.fetchone()  # None when the reviewed-row freeze skips the update
+        except pg_errors.UndefinedColumn:
+            # SQLSTATE 42703 by class, as in compose_daemon_run_apply_status; a 42703 from
+            # the column-free statement is outside the try and propagates.
+            is_degraded = True
+            conn.rollback()
+            with conn.cursor() as cur:
+                cur.execute(_get_proposal_upsert_sql(False), params)
+                cur.fetchone()
         conn.commit()
+    if is_degraded:
+        sys.stderr.write(
+            "[autoagent-daemon] op=write_autoagent_proposal DEGRADED "
+            "columns=learning_pattern_id,generator_input_version absent "
+            "(cycle_date=%s, pattern_label=%s) — row written without its pattern link and "
+            "input version; apply migration %s and the next push records them\n"
+            % (cycle_date, pattern_label, PATTERN_EVIDENCE_MIGRATION)
+        )
     return (time.monotonic_ns() - start_ns) // 1_000_000
 
 

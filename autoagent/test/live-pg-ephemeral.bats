@@ -34,6 +34,10 @@ setup_file() {
   export EPH_PORT="55451"
   eph_pg_start "${EPH_DATADIR}" "${EPH_SOCKDIR}" "${EPH_PORT}" eph_bootstrap || return 1
   eph_pg_create_migrated_db "${EPH_SOCKDIR}" "${EPH_PORT}" glass_atrium || return 1
+  # Proposal writer rows: the full chain, and the chain minus the migration adding the link columns.
+  createdb -h "${EPH_SOCKDIR}" -p "${EPH_PORT}" -T glass_atrium proposal_link_full || return 1
+  eph_pg_create_migrated_db "${EPH_SOCKDIR}" "${EPH_PORT}" proposal_link_absent \
+    20261005000000_add_pattern_evidence_provenance || return 1
 }
 
 teardown_file() {
@@ -70,6 +74,91 @@ _assert_live_module() {
       return 1
     }
   done
+}
+
+# $1 database, $2 SQL → tuples-only output.
+_q_db() {
+  psql -h "${EPH_SOCKDIR}" -p "${EPH_PORT}" -d "${1}" -tAqc "${2}"
+}
+
+# $1 database → id of one seeded core.learning_log row.
+_seed_pattern() {
+  _q_db "${1}" "INSERT INTO core.learning_log (discovered_date, pattern_signature, frequency, agent,
+      status, approval_tier, last_updated)
+    VALUES ('2026-10-04', 'pattern-link|glass-atrium-dev-python', 3, 'glass-atrium-dev-python',
+      'identified', 'user-pending', now())
+    RETURNING id" | head -n 1
+}
+
+# $1 database, $2 learning_log id → one proposal pushed through the real helper with its pattern
+# link and input version; refuses to run unless libpq is pointed at this suite's cluster.
+_push_linked_proposal() {
+  LF_DB="${1}" LF_EXPECT_PGHOST="${EPH_SOCKDIR}" PYTHONPATH="${BATS_TEST_DIRNAME}/../../scripts" \
+    python3 - "${2}" <<'PY'
+import os
+import sys
+
+if os.environ.get("PGHOST") != os.environ["LF_EXPECT_PGHOST"]:
+    sys.exit("PGHOST is not the ephemeral cluster's socket dir — refusing to write")
+
+import psycopg
+
+import _pg_dual_write_daemon as helper
+
+# The helper names glass_atrium; this row's database is a sibling on the same cluster.
+helper._connect = lambda: psycopg.connect(dbname=os.environ["LF_DB"], connect_timeout=2)
+helper.write_autoagent_proposal(
+    cycle_date="2026-10-05",
+    pattern_label="pattern-link",
+    target_file="agents/glass-atrium-dev-python.md",
+    target_agent="glass-atrium-dev-python",
+    classification="apply",
+    rationale="pattern recurred across 3 outcomes",
+    haiku_status="ok",
+    approval_tier="auto",
+    status="pending",
+    proposed_diff="",
+    cost_guard_state="ok",
+    source_file="autoagent-2026-10-05.json",
+    source_file_mtime=0,
+    learning_pattern_id=int(sys.argv[1]),
+    generator_input_version="gen-inputs-1",
+)
+PY
+}
+
+@test "a proposal push stores its pattern link and input version on the migrated schema" {
+  local id
+  id="$(_seed_pattern proposal_link_full)"
+  [[ "${id}" =~ ^[0-9]+$ ]] || { echo "seed returned: ${id}"; return 1; }
+
+  run --separate-stderr _push_linked_proposal proposal_link_full "${id}"
+  (( status == 0 )) || { echo "${output}"; echo "${stderr}"; return 1; }
+
+  run _q_db proposal_link_full "SELECT learning_pattern_id || '|' || generator_input_version
+    FROM core.autoagent_proposals WHERE pattern_label = 'pattern-link'"
+  [[ "${output}" == "${id}|gen-inputs-1" ]] || { echo "${output}"; return 1; }
+}
+
+@test "a proposal push on a schema without the link columns still writes the row and names the migration" {
+  local id
+  run _q_db proposal_link_absent "SELECT count(*) FROM information_schema.columns
+    WHERE table_schema = 'core' AND table_name = 'autoagent_proposals'
+      AND column_name IN ('learning_pattern_id', 'generator_input_version')"
+  [[ "${output}" == "0" ]] || { echo "link columns present: ${output}"; return 1; }
+  id="$(_seed_pattern proposal_link_absent)"
+  [[ "${id}" =~ ^[0-9]+$ ]] || { echo "seed returned: ${id}"; return 1; }
+
+  run --separate-stderr _push_linked_proposal proposal_link_absent "${id}"
+  (( status == 0 )) || { echo "${output}"; echo "${stderr}"; return 1; }
+  [[ "${stderr}" == *"DEGRADED"*"20261005000000_add_pattern_evidence_provenance"* ]] || {
+    echo "${stderr}"
+    return 1
+  }
+
+  run _q_db proposal_link_absent \
+    "SELECT count(*) FROM core.autoagent_proposals WHERE pattern_label = 'pattern-link'"
+  [[ "${output}" == "1" ]] || { echo "${output}"; return 1; }
 }
 
 @test "the observation-count live classes run against the migrated cluster, none skipped" {
