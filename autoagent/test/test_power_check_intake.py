@@ -65,6 +65,9 @@ _REQUIRED_UNITS = trial_design.get_required_units(
 # 28-day spawn counts whose 84-day projection sits just at-or-above / just below the bound
 _UNITS_AT_BOUND = math.ceil(_REQUIRED_UNITS * 28 / 84)
 _UNITS_BELOW_BOUND = _UNITS_AT_BOUND - 1
+# baseline 21/50 → bound 366 = exactly 122 × 84 / 28, where (122 / 28) × 84 rounds below 366
+_EXACT_BOUND_BASELINE = WindowCount(spawns=50, events=21, sessions=21)
+_UNITS_AT_EXACT_BOUND = 122
 
 
 def _get_agent_ids(*, is_floor: bool):
@@ -149,6 +152,13 @@ class GetPowerCheckTest(unittest.TestCase):
                 _get_units(_UNITS_BELOW_BOUND),
                 provenance_covering,
                 dc.POWER_VERDICT.UNDERPOWERED,
+            ),
+            (
+                "a projection exactly equal to the bound → passing",
+                _floor(baseline=_EXACT_BOUND_BASELINE),
+                _get_units(_UNITS_AT_EXACT_BOUND),
+                provenance_covering,
+                dc.POWER_VERDICT.PASSING,
             ),
             (
                 "a spawn before the window or with no agent id adds no unit",

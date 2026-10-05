@@ -45,6 +45,7 @@ from collections.abc import Callable, Iterable
 from dataclasses import asdict, dataclass, field, replace
 from datetime import date, datetime, timedelta, timezone
 from enum import IntEnum
+from fractions import Fraction
 from itertools import groupby
 from pathlib import Path, PurePosixPath
 from types import SimpleNamespace
@@ -9300,11 +9301,19 @@ def get_power_check(
         required = trial_design.get_required_units(maximum, design_effect=POWER_DESIGN_EFFECT)
     if provenance_start is None or provenance_start > history_start:
         verdict = POWER_VERDICT.INSUFFICIENT_HISTORY
-    elif required is not None and projected >= required:
+    elif required is not None and _is_bound_reached(units, required):
         verdict = POWER_VERDICT.PASSING
     else:
         verdict = POWER_VERDICT.UNDERPOWERED
     return PowerCheck(verdict, projected, required)
+
+
+def _is_bound_reached(units: int, required: float) -> bool:
+    """units × horizon / window ≥ required, cross-multiplied → exact at the inclusive bound.
+
+    The float projection (units / 28) × 84 can round below an equal bound (122 → 365.99…).
+    """
+    return units * trial_design.HORIZON_DAYS >= Fraction(required) * BASELINE.MIN_COVERED.days
 
 
 def _get_power_counts() -> dict[str, int]:
