@@ -9152,7 +9152,9 @@ def drop_pair_failing_patterns(agent: str, patterns: list[Pattern]) -> list[Patt
 
     Reads the pair the aggregator's status sweep reads — the UTC-day windows of
     get_pair_windows and the floors of read_pattern_floors — so on one UTC day both
-    actors reach one verdict. Intake rows are 'identified', and the aggregator's
+    actors read identical windows. Their verdicts can still differ: each passes its own
+    evaluation instant, and a no-SubagentStop spawn pending at one instant is settled at
+    the other (open owner question Q-pending-instant). Intake rows are 'identified', and the aggregator's
     last_transition_at anchor gates only a 'dormant' row's re-entry, so no anchor
     applies here either. A failing or unreadable pair skips the pattern this cycle
     with a named reason (fail closed — an outage is never a pass); no status write,

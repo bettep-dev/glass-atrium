@@ -830,7 +830,8 @@ class TestAggregatorPairStatus(_AggregatorRun):
 @unittest.skipIf(pgdw is None, f"import failed: {_IMPORT_ERROR}")
 class TestAggregatorAndIntakeAgree(unittest.TestCase):
     """The aggregator's status sweep and the daemon's intake re-check read one pair: on one
-    UTC day, over one fixture, both reach the same verdict from the same rates."""
+    UTC day, over a fixture with no spawn pending at either instant, both reach the same
+    verdict from the same rates."""
 
     def test_both_actors_read_one_pair_on_one_utc_day(self) -> None:
         import daemon_cycle as dc

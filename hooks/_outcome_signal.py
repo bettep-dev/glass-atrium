@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # Pure outcome-signal rules — the SINGLE definition of the negative-signal
-# predicate (learning-aggregator pattern emit, daemon_cycle staleness
-# recompute), of the Role → Allowed task_types
+# predicate (learning-aggregator pattern emit; daemon_cycle generation polarity
+# partition and post-apply regression watch), of the Role → Allowed task_types
 # allowlist that predicate depends on, and of the per-pattern metric
 # (pair windows, spawn half, occurrence floor).
 #
@@ -69,10 +69,11 @@ def _role_task_type_allowed(agent, task_type):
 # ---------------------------------------------------------------------------
 # Negative-signal trigger predicate (AP-3)
 # ---------------------------------------------------------------------------
-# Every learning consumer keys on this ONE definition: the learning-aggregator
-# pattern emit (patterns 1/5) and the daemon_cycle staleness recompute — so the
-# emit condition and the live-window recompute cannot drift apart (drift = live
-# patterns mis-skipped as stale). Defined over the row dict
+# Every learning consumer keys on this ONE definition — the learning-aggregator
+# pattern emit (patterns 1/5); in daemon_cycle, the generation polarity partition
+# (_is_failure_outcome) and the post-apply regression watch
+# (_is_soft_negative_outcome) — so all of them count the same rows negative.
+# Defined over the row dict
 # _pg_learning_dualwrite.read_outcomes_since returns.
 
 # done_with_concerns stays negative by PAIRED CONTRACT with the Result-selection

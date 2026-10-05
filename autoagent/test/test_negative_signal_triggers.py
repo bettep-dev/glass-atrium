@@ -4,8 +4,9 @@ Per-agent candidate selection in ``hooks/learning-aggregator.py`` now keys on
 the live-signal OR-terms (result fail/blocked/done_with_concerns ·
 grader_verdict='verified_fail' · review_flag · revision_count>=2) instead of
 result='fail' alone. The OR-term predicate is the SINGLE shared definition in
-``_pg_learning_dualwrite`` (``negative_signal_hits``), imported by BOTH the
-aggregator emit and the ``daemon_cycle.py`` staleness recompute — covered here:
+``_outcome_signal`` (``negative_signal_hits``, re-exported by
+``_pg_learning_dualwrite``), read by the aggregator emit and by ``daemon_cycle.py``'s
+generation polarity partition and post-apply regression watch. Covered here:
 (1) per-agent pattern row emitted from >=3 blocked/done_with_concerns rows;
 (2) dead-signal detector WARNs when a trigger metric has 0 occurrences over a
     non-trivial batch (and stays quiet on tiny batches / live metrics);
