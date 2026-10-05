@@ -48,6 +48,7 @@ _UTC = timezone.utc
 _NOW = datetime(2026, 10, 5, 6, 30, tzinfo=_UTC)
 _DAY = timedelta(days=1)
 _MINUTE = timedelta(minutes=1)
+_TOOL_USE = "- **Tool use**: actual="  # track-outcome.sh TOOL_USE_LINE prefix
 
 
 def _is_even_sha256(agent_id: str) -> bool:
@@ -908,6 +909,13 @@ class TestOutcomeWindowReadFailure(unittest.TestCase):
         self.assertIn('"op":"read_outcome_window"', err.getvalue())
 
 
+def _get_outcome_body(header: tuple[str, ...], summary: str) -> str:
+    """A body in track-outcome.sh's BODY_MD layout: bullet header, then sections."""
+    bullets = "\n".join(("- **Agent**: glass-atrium-dev-python", *header))
+    sections = f"## Summary\n\n{summary}\n\n## Lesson\n\n(not recorded)\n"
+    return f"# Outcome Record\n\n{bullets}\n\n{sections}"
+
+
 class _NonCommittingConn:
     """Hand the read an open transaction; its context exit neither commits nor closes."""
 
@@ -1052,10 +1060,11 @@ class TestPatternFloorReadLivePg(unittest.TestCase):
             self._put_overages(agent_id, 1)
         recorded = w.start.confirmation + 3 * _DAY
         self._put_outcome(graded, recorded, "hook-input", "fail", grader_verdict="verified_fail",
-                          body_md="## Summary\n\nfixture\n- **Tool use**: actual=37 declared=30\n")
+                          body_md=_get_outcome_body((f"{_TOOL_USE}37 declared=30",), "fixture"))
         self._put_outcome(graded, recorded + _MINUTE, "hook-input", "done", grader_verdict="verified_pass",
-                          body_md="## Summary\n\nfixture\n- **Tool use**: actual=12\n")
-        self._put_outcome(ungraded, recorded + 2 * _MINUTE, "hook-input", "done", body_md="## Summary\n\nfixture\n")
+                          body_md=_get_outcome_body((f"{_TOOL_USE}12",), "fixture"))
+        self._put_outcome(ungraded, recorded + 2 * _MINUTE, "hook-input", "done",
+                          body_md=_get_outcome_body((), "fixture"))
 
         evidence = pgdw.read_pattern_evidence(self._AGENT, self.windows, _NOW)
 
@@ -1065,6 +1074,40 @@ class TestPatternFloorReadLivePg(unittest.TestCase):
             for spawn in evidence["budget_overage"].triggering
         }
         self.assertEqual(facts, {graded: (1, 37), ungraded: (0, None)})
+
+    def test_the_evidence_read_takes_tool_use_from_the_header_line_only(self) -> None:
+        recorder_line = f"{_TOOL_USE}12 declared=30"
+        oversized = "9" * 40
+        rows = [
+            ("a literal only in Summary with no recorder line stays unrecorded",
+             ("- **Correlation ID**: c-1",), f"{_TOOL_USE}88", None),
+            ("a CID line spoofing the literal ahead of the recorder line loses",
+             (f"- **Correlation ID**: {_TOOL_USE}999", recorder_line), "fixture", 12),
+            ("a Files line spoofing the literal ahead of the recorder line loses",
+             (f"- **Files**: a.py, {_TOOL_USE}999", recorder_line), "fixture", 12),
+            ("an oversized digit run in agent text leaves the read intact",
+             (), f"{_TOOL_USE}{oversized}", None),
+            ("an oversized recorder value is read, not fatal",
+             (f"{_TOOL_USE}{oversized[:12]}",), "fixture", 999_999_999_999),
+        ]
+        prov_started = self.windows.start.baseline + _DAY
+        self._put_spawn(0, "prov", prov_started, agent_type="glass-atrium-dev-shell")
+        started = self.windows.start.confirmation + _DAY
+        for offset, (name, header, summary, expected) in enumerate(rows, 1):
+            agent_id = f"live-evidence-row-{offset}"
+            # a savepoint per row: no row's outcome reaches another row's read
+            with self.subTest(name), self.conn.transaction(force_rollback=True):
+                self._put_spawn(offset, agent_id, started, session_id=f"c{offset}")
+                self._put_stop(agent_id, started + timedelta(minutes=5))
+                self._put_overages(agent_id, 1)
+                self._put_outcome(agent_id, started + _DAY, "hook-input", "done",
+                                  body_md=_get_outcome_body(header, summary))
+
+                evidence = pgdw.read_pattern_evidence(self._AGENT, self.windows, _NOW)
+
+                self.assertIsNotNone(evidence, "the evidence read failed — see stderr")
+                (spawn,) = evidence["budget_overage"].triggering
+                self.assertEqual(spawn.tool_use_actual, expected)
 
 
 @unittest.skipIf(pgdw is None, f"import failed: {_IMPORT_ERROR}")

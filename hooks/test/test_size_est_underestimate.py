@@ -11,9 +11,10 @@ systematically overrun. Covered here:
   - a measured-but-undeclared row is DROPPED, never counted as a non-overrun (counting it
     would dilute the rate toward silence on exactly the installs that declare least)
   - a null / cross-cutting agent has no patchable agent file and is dropped at intake
-  - the recorder's body-line literal and this reader's regex are pinned against each other
-    (the two live in different files and different languages; nothing else would catch a
-    silent divergence, which would leave the reader matching nothing forever)
+  - the recorder's body-line literal is pinned against both readers' patterns: this
+    aggregator regex and the evidence read's line pattern (they live in different
+    files and different languages; nothing else would catch a silent divergence,
+    which would leave a reader matching nothing forever)
 
 The clustering core is pure, so these run without a live DB. Mirrors the aggregator-test
 convention (importlib load of the dashed module, unittest, sys.path insertion).
@@ -34,6 +35,8 @@ _REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 _HOOKS_DIR = _REPO_ROOT / "hooks"
 if str(_HOOKS_DIR) not in sys.path:
     sys.path.insert(0, str(_HOOKS_DIR))
+
+import _outcome_signal as sig  # noqa: E402
 
 
 def _load_aggregator():
@@ -90,7 +93,7 @@ class ClusterSizeEstTest(unittest.TestCase):
 
 
 class BodyLineContractTest(unittest.TestCase):
-    """Cross-file pin: the recorder writes this grammar, the aggregator reads it."""
+    """Cross-file pin: the recorder writes this grammar; both readers parse it."""
 
     def test_recorder_literal_matches_reader_regex(self):
         recorder = (_HOOKS_DIR / "track-outcome.sh").read_text(encoding="utf-8")
@@ -105,6 +108,11 @@ class BodyLineContractTest(unittest.TestCase):
             )
             self.assertRegex(line, _AGG._TOOL_USE_BODY_RE)
             self.assertIn(_AGG.TOOL_USE_BODY_PREFIX, line)
+            # the evidence read runs this pattern newline-sensitively in SQL — re.M here
+            body = f"- **Files**: a.py\n{line}\n"
+            match = re.search(sig.TOOL_USE_LINE_PATTERN, body, re.M)
+            self.assertIsNotNone(match, f"evidence-read pattern rejects {line!r}")
+            self.assertEqual(match.group(1), "48", f"evidence-read misreads {line!r}")
 
 
 if __name__ == "__main__":

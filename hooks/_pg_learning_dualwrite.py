@@ -64,6 +64,7 @@ from _outcome_signal import (  # noqa: F401 — re-export surface, see above
 )
 from _outcome_signal import (
     METRIC_KEYS,
+    TOOL_USE_LINE_PATTERN,
     FloorResult,
     PairWindows,
     SpawnFacts,
@@ -1428,12 +1429,14 @@ def _read_spawn_facts(
 # ---------------------------------------------------------------------------
 # Generator evidence read
 # ---------------------------------------------------------------------------
-# Per spawn by agent_id: grader verified failures + the recorder's tool_use actual,
-# parsed from track-outcome.sh's TOOL_USE_LINE body line — no column holds it.
+# Per agent_id: grader verified failures + the recorder's tool_use actual (no column).
+# Agent text fills CID / Files bullets + every '## ' section → whole line, header only.
+# numeric cast → no digit run overflows the read.
 _OUTCOME_FACTS_SELECT_SQL = """
 SELECT agent_id,
        count(*) FILTER (WHERE grader_verdict::text = %s),
-       max(substring(body_md FROM '- [*][*]Tool use[*][*]: actual=([0-9]+)')::int)
+       max(substring(split_part(body_md, chr(10) || '## ', 1)
+                     FROM '(?n)' || %s::text)::numeric)
 FROM core.outcomes
 WHERE agent_id = ANY(%s)
 GROUP BY agent_id
@@ -1543,12 +1546,15 @@ def _get_triggering_spawn(
 
 def _read_outcome_facts(agent_ids: list[str]) -> dict[str, OutcomeFacts]:
     """Verified failures + tool_use actual per agent_id; raises on any failure."""
-    params = (GRADER_VERDICT_FAIL, agent_ids)
+    params = (GRADER_VERDICT_FAIL, TOOL_USE_LINE_PATTERN, agent_ids)
     with psycopg.connect(
         "dbname=glass_atrium", connect_timeout=2, autocommit=True
     ) as conn:
         rows = conn.execute(_OUTCOME_FACTS_SELECT_SQL, params).fetchall()
     return {
-        agent_id: OutcomeFacts(int(verified_fails), tool_use_actual)
+        agent_id: OutcomeFacts(
+            int(verified_fails),
+            None if tool_use_actual is None else int(tool_use_actual),
+        )
         for agent_id, verified_fails, tool_use_actual in rows
     }

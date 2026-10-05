@@ -291,6 +291,11 @@ _EMIT_FAILURE_ATTRIBUTIONS = frozenset({
     ATTRIBUTION_BUDGET_TRUNCATION,
     ATTRIBUTION_TRUNCATED_COMPLETION,
 })
+# track-outcome.sh TOOL_USE_LINE as one whole line, group 1 = actual
+# (pinned by test_size_est_underestimate.py)
+TOOL_USE_LINE_PATTERN = (
+    r"^- [*][*]Tool use[*][*]: actual=([0-9]+)(?: declared=[0-9]+)?$"
+)
 
 PAIR_WINDOW = timedelta(days=7)
 BASELINE = SimpleNamespace(
