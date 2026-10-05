@@ -580,7 +580,6 @@ class DischargeCycleWiringTest(unittest.TestCase):
         with _capture_stderr():
             dc.run_cycle(
                 log_path=self.root / "learning-log.md",
-                outcomes_dir=self.root,
                 agents_dir=self.root / "agents",
                 skip_haiku=True,
                 skip_pre_verify=True,
@@ -593,7 +592,6 @@ class DischargeCycleWiringTest(unittest.TestCase):
         argv = [
             "--dry-run",
             "--log-path", str(self.root / "learning-log.md"),
-            "--outcomes-dir", str(self.root),
             "--agents-dir", str(self.root / "agents"),
         ]
         with _capture_stderr() as err, contextlib.redirect_stdout(io.StringIO()):

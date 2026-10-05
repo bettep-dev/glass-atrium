@@ -4,7 +4,7 @@ Generation stays closed: every row renders through a template builder with the
 Haiku invoke stubbed at ``_run_haiku_with_retry``, never a live generator call.
 Covered here:
   (a) the generation loop reads no outcome record — a prior-day record on disk
-      is never listed or opened;
+      is never listed or opened, and no daemon entry accepts an outcome dir;
   (b) the evidence inputs — the pattern's metric key, its confirmation rate against
       the floor-half baseline and the triggering spawns' machine facts — reach both,
       each value flattened and quoted;
@@ -140,7 +140,7 @@ def _make_agents_dir(testcase: unittest.TestCase) -> Path:
 
 @unittest.skipIf(dc is None, f"import failed: {_IMPORT_ERROR}")
 class TestGenerationLoopReadsNoOutcome(unittest.TestCase):
-    """(a) the generation loop never reads an outcome record."""
+    """(a) the generation loop never reads an outcome record, nor takes one's dir."""
 
     def setUp(self) -> None:
         tmp = tempfile.TemporaryDirectory()
@@ -183,7 +183,6 @@ class TestGenerationLoopReadsNoOutcome(unittest.TestCase):
         ):
             report = dc.run_cycle(
                 log_path=self._root / "learning-log.md",
-                outcomes_dir=self._outcomes_dir,
                 agents_dir=self._agents_dir,
                 skip_haiku=True,
                 skip_pre_verify=True,
@@ -194,6 +193,52 @@ class TestGenerationLoopReadsNoOutcome(unittest.TestCase):
         self.assertEqual([patch.pattern_agent for patch in report.patches], [_AGENT])
         self.assertNotIn(str(self._outcomes_dir), listed)
         self.assertNotIn(str(self._record), read)
+        self.assertEqual(self._reach, [])
+
+    def test_no_daemon_entry_accepts_an_outcome_dir(self) -> None:
+        log_path = str(self._root / "learning-log.md")
+        # (name, rejection, exit code the rejection carries — argparse usage error = 2)
+        entries = (
+            (
+                "run_cycle keyword",
+                TypeError,
+                None,
+                lambda: dc.run_cycle(
+                    log_path=Path(log_path),
+                    outcomes_dir=self._outcomes_dir,
+                    agents_dir=self._agents_dir,
+                    skip_haiku=True,
+                    skip_pre_verify=True,
+                    skip_loop_emit=True,
+                ),
+            ),
+            (
+                "CLI flag",
+                SystemExit,
+                2,
+                lambda: dc._main(
+                    [
+                        "--dry-run",
+                        "--log-path",
+                        log_path,
+                        "--outcomes-dir",
+                        str(self._outcomes_dir),
+                        "--agents-dir",
+                        str(self._agents_dir),
+                    ]
+                ),
+            ),
+        )
+        for name, rejection, exit_code, call in entries:
+            with (
+                self.subTest(name),
+                mock.patch.object(dc, "HAS_PAUSE_LIB", False),
+                contextlib.redirect_stderr(io.StringIO()),
+                contextlib.redirect_stdout(io.StringIO()),
+            ):
+                with self.assertRaises(rejection) as caught:
+                    call()
+                self.assertEqual(getattr(caught.exception, "code", None), exit_code)
         self.assertEqual(self._reach, [])
 
 

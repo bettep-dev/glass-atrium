@@ -16,7 +16,7 @@ autoagent-status-backfill.py) PLUS the seam-completion
 consumers that previously still resolved the legacy ``.claude`` store:
 daemon_config.py (CONFIG_PATH + the DAEMON_CONFIG override), compliance_telemetry.py
 (WORKFLOW_GATE_LOG_FILE), autoagent/daemon_cycle.py
-(DEFAULT_OUTCOMES_DIR / DEFAULT_REPORTS_DIR / HAIKU_FAILURE_LOG_DIR),
+(DEFAULT_REPORTS_DIR / HAIKU_FAILURE_LOG_DIR),
 wiki_dedup.py (DEFAULT_VERIFIED_HASHES_PATH), and
 wiki_daemon_cycle.py (DEFAULT_REPORTS_DIR). DEFAULT_LEARNING_LOG stays legacy — not
 part of the Tier-A migration and the daemon neither reads nor writes it.
@@ -157,13 +157,11 @@ class DefaultResolutionTest(unittest.TestCase):
             os.environ.pop("GA_DATA_ROOT", None)
             m = _load_daemon_cycle()
             ga = Path(_SANDBOX_HOME) / ".glass-atrium"
-            self.assertEqual(m.DEFAULT_OUTCOMES_DIR, ga / "data" / "outcomes")
             self.assertEqual(m.DEFAULT_REPORTS_DIR, ga / "data" / "daemon-reports")
             self.assertEqual(
                 m.HAIKU_FAILURE_LOG_DIR, ga / "logs" / "autoagent-haiku-failures"
             )
             for _c in (
-                m.DEFAULT_OUTCOMES_DIR,
                 m.DEFAULT_REPORTS_DIR,
                 m.HAIKU_FAILURE_LOG_DIR,
             ):
@@ -268,7 +266,7 @@ class OverrideParityTest(unittest.TestCase):
         ):
             m = _load_daemon_cycle()
             self.assertEqual(
-                m.DEFAULT_OUTCOMES_DIR, Path("/var/atrium-alt") / "data" / "outcomes"
+                m.DEFAULT_REPORTS_DIR, Path("/var/atrium-alt") / "data" / "daemon-reports"
             )
             self.assertEqual(
                 m.HAIKU_FAILURE_LOG_DIR,
@@ -346,7 +344,6 @@ class FlagFileIgnoredByCycleTest(unittest.TestCase):
         with contextlib.redirect_stderr(self.stderr):
             report = self.dc.run_cycle(
                 log_path=self.root / "learning-log.md",
-                outcomes_dir=self.root,
                 agents_dir=self.agents_dir,
                 skip_haiku=False,
                 skip_pre_verify=False,

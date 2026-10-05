@@ -64,8 +64,8 @@ HOME = Path(os.environ.get("HOME", str(Path.home())))
 DEFAULT_LEARNING_LOG = HOME / ".claude" / "data" / "learning-log.md"
 # agents/ is the harness agent farm, not a migrated data store — stays legacy.
 DEFAULT_AGENTS_DIR = HOME / ".claude" / "agents"
-# DEFAULT_OUTCOMES_DIR / DEFAULT_REPORTS_DIR now derive from the ga_paths seam —
-# defined below, AFTER the hooks-dir sys.path insert that makes ga_paths importable.
+# DEFAULT_REPORTS_DIR derives from the ga_paths seam — defined below, AFTER the
+# hooks-dir sys.path insert that makes ga_paths importable.
 
 # PG read source — _pg_learning_dualwrite is the single helper SoT (same import
 # path + fallback policy as learning-aggregator.py). Missing psycopg →
@@ -102,9 +102,6 @@ from _outcome_signal import (  # noqa: E402 — hooks dir pinned by the loop abo
 # Runtime data roots via the shared ga_paths seam (.glass-atrium default,
 # GA_DATA_ROOT-overridable) — the SAME store project_key.py / learning-aggregator.py
 # resolve after the .claude→.glass-atrium data migration.
-# data/outcomes/ holds only legacy `.md` records — new records sink to
-# core.outcomes; the daemon reads neither the directory nor its files.
-DEFAULT_OUTCOMES_DIR = ga_paths.get_data_root() / "outcomes"
 DEFAULT_REPORTS_DIR = ga_paths.get_data_root() / "daemon-reports"
 # Optional-dependency import degradation is CAPTURED here, NOT written to stderr
 # at import time: a bare CLI import of this module (autoagent/lib/sensitive_patterns.py
@@ -10681,7 +10678,6 @@ def run_cycle(
     *,
     limit: int = DEFAULT_PATTERN_LIMIT,
     log_path: Path = DEFAULT_LEARNING_LOG,
-    outcomes_dir: Path = DEFAULT_OUTCOMES_DIR,
     agents_dir: Path = DEFAULT_AGENTS_DIR,
     skip_haiku: bool = False,
     skip_pre_verify: bool = False,
@@ -11336,7 +11332,6 @@ def _main(argv: list[str]) -> int:
     parser.add_argument("--out", type=Path, default=None)
     parser.add_argument("--log-path", type=Path, default=DEFAULT_LEARNING_LOG)
     parser.add_argument("--agents-dir", type=Path, default=DEFAULT_AGENTS_DIR)
-    parser.add_argument("--outcomes-dir", type=Path, default=DEFAULT_OUTCOMES_DIR)
     parser.add_argument(
         "--regenerate-stale",
         action="store_true",
@@ -11509,7 +11504,6 @@ def _main(argv: list[str]) -> int:
     report = run_cycle(
         limit=args.limit,
         log_path=args.log_path,
-        outcomes_dir=args.outcomes_dir,
         agents_dir=args.agents_dir,
         skip_haiku=args.skip_haiku or args.dry_run,
         skip_pre_verify=args.skip_pre_verify or args.skip_haiku or args.dry_run,

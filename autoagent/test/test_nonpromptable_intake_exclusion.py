@@ -243,7 +243,6 @@ class TestKeylessRowNeverReachesGeneration(unittest.TestCase):
         with contextlib.redirect_stderr(io.StringIO()):
             dc.run_cycle(
                 log_path=self.root / "learning-log.md",
-                outcomes_dir=self.root,
                 agents_dir=self.root / "agents",
                 skip_haiku=True,
                 skip_pre_verify=True,
