@@ -545,13 +545,15 @@ class TestTasks(unittest.TestCase):
                 self.assertEqual(sig.get_tasks([later, prior], self._WINDOW), expected)
                 self.assertEqual(sig.get_tasks([later, prior], timedelta(0)), [(prior,), (later,)])
 
-    def test_a_task_overruns_on_a_member_overage_or_combined_tool_use_above_a_budget(self) -> None:
+    def test_a_task_overruns_on_a_member_overage_or_combined_tool_use_reaching_a_budget(
+        self,
+    ) -> None:
         rows = [
-            ("combined tool_use at the budget", (0, 0), (25, 15), False),
-            ("combined tool_use above the budget", (0, 0), (25, 16), True),
+            ("combined tool_use one call below the budget", (0, 0), (25, 14), False),
+            ("combined tool_use reaching the budget", (0, 0), (25, 15), True),
             ("an unrecorded member adds nothing", (0, 0), (39, None), False),
             ("one member records an overage", (0, 1), (5, 5), True),
-            ("a single spawn above the budget", (0,), (41,), True),
+            ("a single spawn reaching the budget", (0,), (40,), True),
         ]
         for name, overages, tool_uses, expected in rows:
             with self.subTest(name):

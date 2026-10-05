@@ -467,10 +467,11 @@ def _is_continuation(prior: SpawnFacts, spawn: SpawnFacts, redelegation_window: 
 
 
 def is_task_overrun(task: Sequence[SpawnFacts], tool_budget: int) -> bool:
-    """Any member records an overage, or the members' combined tool_use exceeds one spawn's
-    budget — an unrecorded member adds nothing, so the sum is a lower bound."""
+    """Any member records an overage, or the members' combined tool_use reaches one spawn's
+    budget — the 100% crossing advisory-subagent-budget.sh records as an overage; an unrecorded
+    member adds nothing, so the sum is a lower bound."""
     return any(s.overage_rows > 0 for s in task) or (
-        sum(s.tool_use_actual or 0 for s in task) > tool_budget
+        sum(s.tool_use_actual or 0 for s in task) >= tool_budget
     )
 
 
