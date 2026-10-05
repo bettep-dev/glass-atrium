@@ -230,6 +230,7 @@ class TestKeylessRowNeverReachesGeneration(unittest.TestCase):
         for name, value in (
             ("HAS_PG_PATTERN_READ", True),
             ("_pg_read_pending_patterns", lambda: list(rows)),
+            ("_pg_read_spawn_facts", lambda _agents, _windows: (None, {})),
             ("_invoke_pg_helper", lambda _envelope: True),
             ("IS_GENERATION_CLOSED", False),
             ("_run_generation_loop", run_generation),

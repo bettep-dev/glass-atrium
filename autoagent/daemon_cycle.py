@@ -41,7 +41,7 @@ import sys
 import tempfile
 import time
 from collections import defaultdict
-from collections.abc import Callable
+from collections.abc import Callable, Iterable
 from dataclasses import asdict, dataclass, field, replace
 from datetime import date, datetime, timedelta, timezone
 from enum import IntEnum
@@ -90,8 +90,12 @@ import ga_paths  # noqa: E402 — hooks dir pinned by the loop above
 # try/except, and its functions stay defined on the psycopg-absent path.
 from _outcome_signal import (  # noqa: E402 — hooks dir pinned by the loop above
     ATTRIBUTION_STRUCTUREDOUTPUT_DERIVED,
+    BASELINE,
     VERDICT_PASS,
     FloorResult,
+    PairWindows,
+    SpawnFacts,
+    get_floor_verdict,
     get_pair_windows,
     is_negative_signal_outcome,
     _is_synthesized_measurement_gap as _shared_is_synthesized_measurement_gap,
@@ -127,6 +131,8 @@ try:
             discharge_learning_pattern as _pg_discharge_learning_pattern,
             is_negative_signal_outcome as _pg_is_negative_signal_outcome,
             read_pattern_floors as _pg_read_pattern_floors,
+            # the spawn read behind read_pattern_floors; the power check needs its rows
+            _read_spawn_facts as _pg_read_spawn_facts,
             DischargeResult,
             DISCHARGE_APPLIED,
             DISCHARGE_NOT_MATCHED,
@@ -1416,6 +1422,13 @@ except Exception as _conf_import_exc:  # noqa: BLE001 — lib missing → gracef
         f"{type(_conf_import_exc).__name__}: {_conf_import_exc}\n"
     )
 
+# Captured, not written: check_pattern_power reports a missing module once per cycle.
+_TRIAL_DESIGN_IMPORT_EXC: Exception | None = None
+try:
+    import trial_design  # noqa: E402
+except Exception as _trial_design_import_exc:  # noqa: BLE001 — lib missing → unchecked, loudly
+    _TRIAL_DESIGN_IMPORT_EXC = _trial_design_import_exc
+
 # Cooperative update pause-flag honor (T10) — the python twin of
 # scripts/lib/update-pause-flag.sh. While a Glass Atrium update swaps files it
 # holds a flag; the daemon cooperatively SUSPENDS its decision-to-run so a cycle
@@ -2223,6 +2236,8 @@ class CycleReport:
     solution_winners: dict[tuple[str, str], list[SolutionAttempt]] = field(
         default_factory=dict
     )
+    # check_pattern_power's verdict → count; every verdict present, zero included.
+    power_check: dict[str, int] = field(default_factory=lambda: _get_power_counts())
 
 
 # -- generation step 1: intake user-pending patterns (PG) -------------------
@@ -6663,6 +6678,7 @@ def _report_to_dict(report: CycleReport) -> dict:
         "manifest_ingest": (
             asdict(report.manifest_ingest) if report.manifest_ingest is not None else None
         ),
+        "power_check": report.power_check,
         # AD-10 Solution History runtime observability — tuple-keyed
         # solution_winners is not JSON-serializable, so emit its count summary.
         "solution_history": {
@@ -9199,6 +9215,151 @@ def _get_pair_skip_reason(
     )
 
 
+# -- Intake power check (N69) ------------------------------------------------
+
+POWER_VERDICT = SimpleNamespace(
+    PASSING="passing",
+    UNDERPOWERED="underpowered",
+    INSUFFICIENT_HISTORY="insufficient-history",
+    UNCHECKED="unchecked",  # history unreadable or trial math missing — never passing
+)
+# eval_result = prefix + verdict; the longest fills the varchar(32) column exactly
+POWER_CHECK_EVAL_PREFIX = "power-check-"
+# a measured design effect replaces 1 only once S4a5b wires the A/A ledger (N69)
+POWER_DESIGN_EFFECT = 1.0
+
+
+class PowerCheck(NamedTuple):
+    verdict: str
+    projected_units: float
+    required_units: float | None  # None = no finite trial size at the baseline rate
+
+
+def check_pattern_power(patterns: list[Pattern], *, skip_loop_emit: bool) -> dict[str, int]:
+    """Intake power check: each floor-passing keyed pattern → one counted verdict.
+
+    The floor is get_floor_verdict over the spawn read the power inputs come from, so
+    both judge one history. Each verdict is a stderr line plus a census loop event
+    (none under skip_loop_emit); no status write — the park state lands with S5 (N50).
+    An unreadable history or missing trial math counts every keyed pattern unchecked,
+    with a WARN, never passing.
+
+    Returns:
+        verdict → count, every verdict present.
+    """
+    counts = _get_power_counts()
+    keyed = [pattern for pattern in patterns if pattern.metric_key is not None]
+    if not keyed:
+        return counts
+    evaluated_at = _get_utc_now()
+    windows = get_pair_windows(evaluated_at)
+    event_ts = evaluated_at.strftime("%Y-%m-%dT00:00:00.000Z")
+    history = _read_power_history(sorted({pattern.agent for pattern in keyed}), windows)
+    for pattern in keyed:
+        if history is None:
+            verdict, detail = POWER_VERDICT.UNCHECKED, "spawn history unavailable"
+        else:
+            provenance_start, spawns = history
+            agent_spawns = spawns.get(pattern.agent, [])
+            floor = get_floor_verdict(
+                agent_spawns, pattern.metric_key, windows, provenance_start, evaluated_at
+            )
+            if floor.verdict != VERDICT_PASS:
+                continue
+            check = get_power_check(floor, agent_spawns, provenance_start, windows)
+            verdict, detail = check.verdict, _get_power_detail(floor, check)
+        counts[verdict] += 1
+        _send_power_verdict(pattern, verdict, detail, event_ts, skip_loop_emit=skip_loop_emit)
+    return counts
+
+
+def get_power_check(
+    floor: FloorResult,
+    spawns: Iterable[SpawnFacts],
+    provenance_start: datetime | None,
+    windows: PairWindows,
+) -> PowerCheck:
+    """N69 power check of one floor-passing pattern.
+
+    Projected units = the agent's spawns per day over the 28 days before D × the 84-day
+    horizon; NULL-agent_id spawns count nowhere (N60). Fewer than 28 provenance-covered
+    days → insufficient-history. Bound = 2 × the S2e per-arm maximum at the floor-half
+    baseline rate × POWER_DESIGN_EFFECT; a rate with no finite size is underpowered.
+    """
+    history_start = windows.end - BASELINE.MIN_COVERED
+    units = sum(
+        1
+        for spawn in spawns
+        if spawn.agent_id is not None and history_start <= spawn.started_at < windows.end
+    )
+    projected = trial_design.get_projected_units(units / BASELINE.MIN_COVERED.days)
+    maximum = _get_maximum_sample_size(floor.baseline.events, floor.baseline.spawns)
+    if maximum is None:
+        required = None
+    else:
+        required = trial_design.get_required_units(maximum, design_effect=POWER_DESIGN_EFFECT)
+    if provenance_start is None or provenance_start > history_start:
+        verdict = POWER_VERDICT.INSUFFICIENT_HISTORY
+    elif required is not None and projected >= required:
+        verdict = POWER_VERDICT.PASSING
+    else:
+        verdict = POWER_VERDICT.UNDERPOWERED
+    return PowerCheck(verdict, projected, required)
+
+
+def _get_power_counts() -> dict[str, int]:
+    return dict.fromkeys(vars(POWER_VERDICT).values(), 0)
+
+
+def _read_power_history(
+    agents: list[str], windows: PairWindows
+) -> tuple[datetime | None, dict[str, list[SpawnFacts]]] | None:
+    """Provenance start + each agent's spawns over the pair windows; None (WARN) when unusable."""
+    if _TRIAL_DESIGN_IMPORT_EXC is not None:
+        exc = _TRIAL_DESIGN_IMPORT_EXC
+        cause = f"trial_design import failed: {type(exc).__name__}: {str(exc)[:160]}"
+    elif not HAS_PG_PATTERN_READ:
+        cause = "PG pattern reads unavailable (helper import failed)"
+    else:
+        try:
+            return _pg_read_spawn_facts(agents, windows)
+        except Exception as exc:  # noqa: BLE001 — any read failure is an outage → fail closed
+            cause = f"spawn history unreadable: {type(exc).__name__}: {str(exc)[:160]}"
+    sys.stderr.write(
+        f"[daemon-cycle] WARN: power check — {cause}; every keyed intake pattern "
+        "counts unchecked, none passing\n"
+    )
+    return None
+
+
+def _get_maximum_sample_size(events: int, spawns: int) -> int | None:
+    """S2e per-arm maximum at the rate events/spawns; None outside (0, 1) — no finite size."""
+    if not 0 < events < spawns:
+        return None
+    return trial_design.get_maximum_sample_size(events / spawns)
+
+
+def _get_power_detail(floor: FloorResult, check: PowerCheck) -> str:
+    baseline = floor.baseline
+    required = "no finite size" if check.required_units is None else f"{check.required_units:.0f}"
+    return (
+        f"floor-half baseline {baseline.events}/{baseline.spawns}, projected "
+        f"{check.projected_units:.0f} units in {trial_design.HORIZON_DAYS} d vs required "
+        f"{required} (design effect {POWER_DESIGN_EFFECT:g})"
+    )
+
+
+def _send_power_verdict(
+    pattern: Pattern, verdict: str, detail: str, event_ts: str, *, skip_loop_emit: bool
+) -> None:
+    sys.stderr.write(
+        f"[daemon-cycle] INFO: power check — agent={pattern.agent} key={pattern.metric_key}: "
+        f"{verdict} — {detail}; status unchanged\n"
+    )
+    if not skip_loop_emit:
+        _emit_gate_loop_event(pattern.agent, event_ts, POWER_CHECK_EVAL_PREFIX + verdict)
+
+
 def classify_failure_rationale(rationale: str) -> str:
     """Map a persisted proposal rationale → its failure class (the single SoT).
 
@@ -11249,6 +11410,8 @@ def run_cycle(
     )
     report.patterns_processed = len(patterns)
     agent_groups = _group_patterns_by_agent(patterns, agent_cap=agent_cap)
+    # Both generation branches: the verdict is recorded, never acted on (N50).
+    report.power_check = check_pattern_power(patterns, skip_loop_emit=skip_loop_emit)
 
     if IS_GENERATION_CLOSED:
         sys.stderr.write(
