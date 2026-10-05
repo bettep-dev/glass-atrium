@@ -470,7 +470,6 @@ class TestPendingGrace(unittest.TestCase):
                 )
 
 
-@unittest.skipIf(pgdw is None, f"import failed: {_IMPORT_ERROR}")
 class TestTasks(unittest.TestCase):
     """A task = a spawn plus its re-delegated continuations; overage counts per task in its first
     spawn's arm and window, emit failure per spawn."""
@@ -611,6 +610,7 @@ class TestToolBudgetResolution(unittest.TestCase):
                 self.assertEqual(self._get_recorded_budget(environ, budget - 1), budget)
 
 
+@unittest.skipIf(pgdw is None, f"import failed: {_IMPORT_ERROR}")
 class TestPatternFloorReadFailure(unittest.TestCase):
     """The window read fails closed: a read failure → None plus one stderr JSON line."""
 
