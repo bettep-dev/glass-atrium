@@ -60,16 +60,19 @@ if str(Path(__file__).resolve().parent) not in sys.path:
 
 from _pg_seal import get_ephemeral_connection, seal_pg_reach
 
+_IMPORT_ERROR = SimpleNamespace(pgdw=None, dc=None)
 try:
     import _pg_learning_dualwrite as pgdw
-    import daemon_cycle as dc
-    from daemon_config import TierKnobs
-
-    _IMPORT_ERROR: Exception | None = None
 except Exception as exc:  # noqa: BLE001 — psycopg absent → skip, not error
     pgdw = None  # type: ignore[assignment]  # sentinel consumed by skipIf only
+    _IMPORT_ERROR.pgdw = exc
+# daemon_cycle imports without psycopg (degraded leg) → the stub-reader classes still run.
+try:
+    import daemon_cycle as dc
+    from daemon_config import TierKnobs
+except Exception as exc:  # noqa: BLE001 — daemon import broken → skip, not error
     dc = None  # type: ignore[assignment]
-    _IMPORT_ERROR = exc
+    _IMPORT_ERROR.dc = exc
 
 _PROBE_AGENT = "ap2-probe-agent"
 _PROBE_SIGNATURE = f"ap2 intake contract probe|{_PROBE_AGENT}"
@@ -143,7 +146,7 @@ class _NonCommittingConn:
         return None
 
 
-@unittest.skipIf(pgdw is None, f"import failed: {_IMPORT_ERROR}")
+@unittest.skipIf(pgdw is None, f"import failed: {_IMPORT_ERROR.pgdw}")
 class TestIntakeSqlShape(unittest.TestCase):
     """The intake predicate is baked into the helper's single SELECT."""
 
@@ -180,7 +183,7 @@ class _LivePgFixture(unittest.TestCase):
     @classmethod
     def setUpClass(cls) -> None:
         if pgdw is None:
-            raise unittest.SkipTest(f"import failed: {_IMPORT_ERROR}")
+            raise unittest.SkipTest(f"import failed: {_IMPORT_ERROR.pgdw}")
         cls.conn = get_ephemeral_connection()
         cls.addClassCleanup(cls._rollback_and_close)
 
@@ -361,7 +364,7 @@ def _intake_row(agent: str, row_id: int = 900001) -> dict:
     }
 
 
-@unittest.skipIf(dc is None, f"import failed: {_IMPORT_ERROR}")
+@unittest.skipIf(dc is None, f"import failed: {_IMPORT_ERROR.dc}")
 class TestIntakeRosterAlias(unittest.TestCase):
     """Bare↔prefixed alias rows rewrite Pattern.agent to the REAL roster stem
     (canonical = glass-atrium-<bare>); unresolvable rows keep the loud-fail
@@ -454,9 +457,9 @@ class _RosterDropHarness(unittest.TestCase):
     def setUp(self) -> None:
         self.pg_reach = seal_pg_reach(self)
         self.moves: list[tuple[int, str, str]] = []
-        self.move_outcome = pgdw.TRANSITION_MOVED
+        self.move_outcome = "moved"
         self.rows: list[dict] = []
-        # After the seal: each stands in for one seam the seal already covers.
+        # After the seal: these patches stand in for the DB boundary.
         for name, value in (
             ("HAS_PG_PATTERN_READ", True),
             ("_pg_read_pending_patterns", lambda: list(self.rows)),
@@ -469,7 +472,8 @@ class _RosterDropHarness(unittest.TestCase):
 
     def _record_move(self, pattern_id: int, status: str, reason: str):
         self.moves.append((pattern_id, status, reason))
-        return pgdw.TransitionResult(self.move_outcome, pattern_id)
+        # Stands in for the writer's TransitionResult; the daemon reads only `.outcome`.
+        return SimpleNamespace(outcome=self.move_outcome, row_id=pattern_id)
 
     def _read(self, stems: tuple[str, ...], *, live: bool) -> str:
         with tempfile.TemporaryDirectory() as d:
@@ -485,7 +489,7 @@ class _RosterDropHarness(unittest.TestCase):
         return stderr.getvalue()
 
 
-@unittest.skipIf(dc is None, f"import failed: {_IMPORT_ERROR}")
+@unittest.skipIf(dc is None, f"import failed: {_IMPORT_ERROR.dc}")
 class TestRosterMismatchMovesRowDormant(_RosterDropHarness):
     """A writing read moves exactly the off-roster rows to the non-terminal 'dormant' status."""
 
@@ -508,14 +512,14 @@ class TestRosterMismatchMovesRowDormant(_RosterDropHarness):
 
     def test_when_the_move_never_completes_then_it_is_reported_loudly(self) -> None:
         self.rows = [_intake_row("bug-fix", row_id=950021)]
-        self.move_outcome = pgdw.TRANSITION_FAILED
+        self.move_outcome = dc.TRANSITION_FAILED
         stderr_text = self._read(("glass-atrium-dev-python",), live=True)
         self.assertIn("WARN: roster mismatch", stderr_text)
         self.assertIn("learning_log id=950021", stderr_text)
         self.assertEqual(self.pg_reach, [])
 
 
-@unittest.skipIf(dc is None, f"import failed: {_IMPORT_ERROR}")
+@unittest.skipIf(dc is None, f"import failed: {_IMPORT_ERROR.dc}")
 class RosterMismatchCycleWiringTest(_RosterDropHarness):
     """The cycle moves off-roster rows with no opt-in; a --dry-run cycle moves none."""
 

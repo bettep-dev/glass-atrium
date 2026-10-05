@@ -2432,7 +2432,7 @@ def _put_roster_dormant(pattern_id: int, *, live: bool) -> None:
     'dormant' is non-terminal: the aggregator's next passing pair returns it to
     'identified', and an agent still off the roster is moved again by the next
     writing cycle. A not-matched answer (row moved since the read, or a schema
-    without the label) leaves it identified.
+    without the label) leaves the row in whatever status it holds.
     """
     if not live:
         sys.stderr.write(
