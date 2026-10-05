@@ -1093,6 +1093,17 @@ def out_wide(k, v, n):
 out('agent_type', agent_type)
 out('agent_id', agent_id)
 out('session_id', session_id)
+
+
+def _envelope_text(key):
+    value = d.get(key, '')
+    return value if isinstance(value, str) else ''
+
+
+# Spawn provenance for core.outcomes: the envelope's own ids, never a placeholder label
+# ('orchestrator', 'agent_id_missing', 'unknown') → a main-session row joins no spawn.
+out('envelope_agent_id', '' if hook_event in MAIN_SESSION_HOOKS else _envelope_text('agent_id'))
+out('envelope_session_id', _envelope_text('session_id'))
 out('cwd', cwd)
 # hook_event: lets the shell side gate the T2 loud-fail marker on SubagentStop (a real
 # subagent yielding 0 records) vs a quiet main-session conversational skip.
@@ -1452,6 +1463,9 @@ extract_field() {
 AGENT_TYPE=$(extract_field agent_type)
 AGENT_ID=$(extract_field agent_id)
 SESSION_ID=$(extract_field session_id)
+# Raw envelope ids for the core.outcomes provenance columns; empty = NULL.
+ENVELOPE_AGENT_ID=$(extract_field envelope_agent_id)
+ENVELOPE_SESSION_ID=$(extract_field envelope_session_id)
 # HOOK_EVENT: gates the T2 loud-fail marker (SubagentStop 0-record case) vs a quiet skip.
 HOOK_EVENT=$(extract_field hook_event)
 S_RESULT=$(extract_field c_result)
@@ -1991,7 +2005,8 @@ fi
 # them for the always-run scan would let the detector's prior+1 count override the agent-emitted
 # revision_count in the correction-signal sink, the one overwrite this cross-check must never do.
 # The agent's emitted fields stay authoritative; the always-run verdict feeds only the disagreement
-# review-flag reason. T9_CORRECTION_DETECTION=false disables the whole pipeline.
+# review-flag reason and its own user_correction_detected column. T9_CORRECTION_DETECTION=false
+# disables the whole pipeline.
 #
 # Cost: the bounded transcript tail read (T9_TAIL_WINDOW_BYTES, 64 KiB default) now runs on every
 # recorded stop rather than only in the no-emit window. SubagentStop has no block channel, so this is
@@ -3041,6 +3056,9 @@ if [ -x "${PG_HELPER}" ]; then
     --arg downgrade_origin "${DOWNGRADE_ORIGIN:-}" \
     --arg grader_crosscheck "${GRADER_CROSSCHECK:-}" \
     --arg files_modified "${FILES:-}" \
+    --arg agent_id "${ENVELOPE_AGENT_ID:-}" \
+    --arg session_id "${ENVELOPE_SESSION_ID:-}" \
+    --arg correction_verdict "${T9_DETECTOR_VERDICT:-}" \
     --arg sig_event_ts "${TIMESTAMP}" \
     --arg sig_task_type "${TASK_TYPE}" \
     --arg sig_emit "${SIG_EMIT}" \
@@ -3065,7 +3083,10 @@ if [ -x "${PG_HELPER}" ]; then
         has_mixed_effort: (if $effort == "" or $has_mixed_effort == "" then null else ($has_mixed_effort == "true") end),
         grader_verdict: (if $grader_verdict == "" then null else $grader_verdict end),
         downgrade_origin: (if $downgrade_origin == "" then null else $downgrade_origin end),
-        grader_crosscheck: (if $grader_crosscheck == "" then null else $grader_crosscheck end)
+        grader_crosscheck: (if $grader_crosscheck == "" then null else $grader_crosscheck end),
+        agent_id: (if $agent_id == "" then null else $agent_id end),
+        session_id: (if $session_id == "" then null else $session_id end),
+        user_correction_detected: (if $correction_verdict == "" then null else ($correction_verdict == "1") end)
       },
       signals: (
         if $sig_emit == "1" then [{
