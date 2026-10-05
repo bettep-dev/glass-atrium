@@ -32,6 +32,7 @@ _SEAMS: dict[str | None, tuple[str, ...]] = {
         "_pg_put_learning_pattern_status",
         "_pg_read_pattern_floors",
         "_pg_read_spawn_facts",
+        "_pg_read_pattern_evidence",
     ),
     "_PG_LOOP_IMPORT_EXC": (  # ``_pg_dual_write_daemon`` import
         "_pg_connect",

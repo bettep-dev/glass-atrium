@@ -223,6 +223,9 @@ class TestConsolidatedPromptInjection(unittest.TestCase):
     """
 
     def setUp(self) -> None:
+        # Builders reach PG reads (pattern evidence, landed history): sealed.
+        reach = seal_pg_reach(self)
+        self.addCleanup(lambda: self.assertEqual(reach, []))
         self._captured: dict[str, str] = {}
 
         def _capture(*, base_prompt, target_file, label_hint, claude_bin, timeout_sec):
@@ -349,6 +352,9 @@ class TestGenerationPromptWholeFile(unittest.TestCase):
         except (OSError, ValueError, json.JSONDecodeError) as exc:
             self.skipTest(f"registry corpus unreadable: {exc}")
 
+        # Builders reach PG reads (pattern evidence, landed history): sealed.
+        reach = seal_pg_reach(self)
+        self.addCleanup(lambda: self.assertEqual(reach, []))
         self._captured: dict[str, str] = {}
 
         def _capture(*, base_prompt, target_file, label_hint, claude_bin, timeout_sec):

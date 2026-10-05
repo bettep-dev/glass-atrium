@@ -37,6 +37,11 @@ if str(_HOOKS_DIR) not in sys.path:
     sys.path.insert(0, str(_HOOKS_DIR))
 if str(_AUTOAGENT_DIR) not in sys.path:
     sys.path.insert(0, str(_AUTOAGENT_DIR))
+_TEST_DIR = Path(__file__).resolve().parent
+if str(_TEST_DIR) not in sys.path:
+    sys.path.insert(0, str(_TEST_DIR))
+
+from _pg_seal import seal_pg_reach  # noqa: E402 — anchors pinned above
 
 try:
     import daemon_cycle as dc
@@ -154,6 +159,9 @@ class ConsolidatedPromptLandedHistoryTest(unittest.TestCase):
     """
 
     def setUp(self) -> None:
+        # Builders reach PG reads (pattern evidence, landed history): sealed.
+        reach = seal_pg_reach(self)
+        self.addCleanup(lambda: self.assertEqual(reach, []))
         self._captured: dict[str, str] = {}
 
         def _capture(*, base_prompt, target_file, label_hint, claude_bin, timeout_sec):

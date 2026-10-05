@@ -68,6 +68,8 @@ from _outcome_signal import (
     PairWindows,
     SpawnFacts,
     get_floor_verdict,
+    is_metric_event,
+    is_pending,
 )
 
 
@@ -1421,3 +1423,132 @@ def _read_spawn_facts(
             tuple({"attribution_source": source} for source in attributions),
         ))
     return provenance_start, spawns
+
+
+# ---------------------------------------------------------------------------
+# Generator evidence read
+# ---------------------------------------------------------------------------
+# Per spawn by agent_id: grader verified failures + the recorder's tool_use actual,
+# parsed from track-outcome.sh's TOOL_USE_LINE body line — no column holds it.
+_OUTCOME_FACTS_SELECT_SQL = """
+SELECT agent_id,
+       count(*) FILTER (WHERE grader_verdict::text = %s),
+       max(substring(body_md FROM '- [*][*]Tool use[*][*]: actual=([0-9]+)')::int)
+FROM core.outcomes
+WHERE agent_id = ANY(%s)
+GROUP BY agent_id
+"""
+
+
+class OutcomeFacts(NamedTuple):
+    verified_fail_rows: int
+    tool_use_actual: int | None  # None = no tool_use line recorded
+
+
+class TriggeringSpawn(NamedTuple):
+    """Machine facts of one triggering spawn — daemon-recorded, never agent-emitted."""
+
+    agent_id: str
+    started_at: datetime
+    overage_rows: int
+    attribution_sources: tuple[str, ...]
+    verified_fail_rows: int
+    tool_use_actual: int | None
+
+
+class PatternEvidence(NamedTuple):
+    floor: FloorResult
+    triggering: tuple[TriggeringSpawn, ...]  # newest first
+
+
+def read_pattern_evidence(
+    agent: str, windows: PairWindows, evaluated_at: datetime
+) -> dict[str, PatternEvidence] | None:
+    """Each metric key's floor and triggering spawns for `agent`, keyed by metric key.
+
+    Triggering spawns = the key's metric events in the confirmation window, counted as
+    the floor counts them (joinable, settled, at or after the provenance start). None on
+    ANY read failure — the caller renders the evidence unavailable."""
+    try:
+        provenance_start, spawns = _read_spawn_facts([agent], windows)
+        agent_spawns = spawns[agent]
+        events = {
+            metric_key: _get_triggering_spawns(
+                agent_spawns, metric_key, windows, provenance_start, evaluated_at
+            )
+            for metric_key in sorted(METRIC_KEYS)
+        }
+        agent_ids = sorted(
+            {spawn.agent_id for triggering in events.values() for spawn in triggering}
+        )
+        facts = _read_outcome_facts(agent_ids) if agent_ids else {}
+    except Exception as exc:  # every failure renders as unavailable evidence
+        sys.stderr.write(
+            '{"hook":"_pg_learning_dualwrite","op":"read_pattern_evidence",'
+            f'"error_kind":"{type(exc).__name__}","fallback":"none"}}\n'
+        )
+        return None
+    return {
+        metric_key: PatternEvidence(
+            get_floor_verdict(
+                agent_spawns, metric_key, windows, provenance_start, evaluated_at
+            ),
+            tuple(_get_triggering_spawn(spawn, facts) for spawn in events[metric_key]),
+        )
+        for metric_key in sorted(METRIC_KEYS)
+    }
+
+
+def _get_triggering_spawns(
+    spawns: list[SpawnFacts],
+    metric_key: str,
+    windows: PairWindows,
+    provenance_start: datetime | None,
+    evaluated_at: datetime,
+) -> list[SpawnFacts]:
+    start = (
+        windows.end
+        if provenance_start is None
+        else max(provenance_start, windows.start.confirmation)
+    )
+    triggering = [
+        spawn
+        for spawn in spawns
+        if spawn.agent_id is not None
+        and not is_pending(spawn, evaluated_at)
+        and start <= spawn.started_at < windows.end
+        and is_metric_event(spawn, metric_key)
+    ]
+    return sorted(triggering, key=lambda spawn: spawn.started_at, reverse=True)
+
+
+def _get_triggering_spawn(
+    spawn: SpawnFacts, facts: dict[str, OutcomeFacts]
+) -> TriggeringSpawn:
+    outcome = facts.get(spawn.agent_id, OutcomeFacts(0, None))
+    attributions = tuple(
+        str(row["attribution_source"])
+        for row in spawn.outcomes
+        if row.get("attribution_source")
+    )
+    return TriggeringSpawn(
+        spawn.agent_id,
+        spawn.started_at,
+        spawn.overage_rows,
+        attributions,
+        outcome.verified_fail_rows,
+        outcome.tool_use_actual,
+    )
+
+
+def _read_outcome_facts(agent_ids: list[str]) -> dict[str, OutcomeFacts]:
+    """Verified failures + tool_use actual per agent_id; raises on any failure."""
+    params = (GRADER_VERDICT_FAIL, agent_ids)
+    with psycopg.connect(
+        "dbname=glass_atrium", connect_timeout=2, autocommit=True
+    ) as conn:
+        rows = conn.execute(_OUTCOME_FACTS_SELECT_SQL, params).fetchall()
+    return {
+        agent_id: OutcomeFacts(int(verified_fails), tool_use_actual)
+        for agent_id, verified_fails, tool_use_actual in rows
+    }

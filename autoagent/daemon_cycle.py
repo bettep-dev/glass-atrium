@@ -49,7 +49,7 @@ from fractions import Fraction
 from itertools import groupby
 from pathlib import Path, PurePosixPath
 from types import SimpleNamespace
-from typing import Literal, NamedTuple, Optional
+from typing import TYPE_CHECKING, Literal, NamedTuple, Optional
 
 # -- Constants --------------------------------------------------------------
 
@@ -132,6 +132,7 @@ try:
             read_pattern_floors as _pg_read_pattern_floors,
             # the spawn read behind read_pattern_floors; the power check needs its rows
             _read_spawn_facts as _pg_read_spawn_facts,
+            read_pattern_evidence as _pg_read_pattern_evidence,
             DischargeResult,
             DISCHARGE_APPLIED,
             DISCHARGE_NOT_MATCHED,
@@ -159,6 +160,9 @@ except Exception as _pg_import_exc:  # noqa: BLE001 — psycopg or helper itself
 
     def _pg_discharge_learning_pattern(pattern_id: int, reason: str) -> DischargeResult:
         return DischargeResult(DISCHARGE_FAILED, None)
+
+if TYPE_CHECKING:
+    from _pg_learning_dualwrite import PatternEvidence, TriggeringSpawn
 
 # PG outcome lookback window — PG is the single sink, so 90 days yields enough
 # history to sample 100+ rows per agent (cost: WHERE record_ts > now()-N index
@@ -2856,6 +2860,7 @@ PATTERN:
 - agent: {pattern_agent}
 - label: {pattern_label}
 - frequency: {pattern_freq}
+{pattern_evidence}
 
 CURRENT AGENT INSTRUCTION FILE (target for patch):
 path: {agent_path}
@@ -3523,12 +3528,16 @@ def generate_patch_proposal(
 
     # Whole body: a head slice hides the editable regions the model must edit into.
     agent_text = target_file.read_text(encoding="utf-8")
+    evidence_lines = _render_pattern_evidence(
+        pattern, _fetch_pattern_evidence(pattern.agent)
+    )
 
     base_prompt = _PROMPT_TEMPLATE.format(
         pattern_date=pattern.date,
         pattern_agent=pattern.agent,
         pattern_label=_neutralize_field(pattern.label),
         pattern_freq=pattern.frequency,
+        pattern_evidence="\n".join(f"- {line}" for line in evidence_lines),
         agent_path=str(target_file),
         agent_excerpt=agent_text,
         agent_basename=target_file.name,
@@ -3599,7 +3608,7 @@ def generate_consolidated_proposal(
 
     # Whole body: a head slice hides the editable regions the model must edit into.
     agent_text = target_file.read_text(encoding="utf-8")
-    signals_block = _render_signals_block(patterns)
+    signals_block = _render_signals_block(patterns, _fetch_pattern_evidence(agent))
 
     # Optimizer-side memory (SkillOpt R2): prepend this agent's known-bad
     # diff shapes. PG-off / empty-history → "" → block omitted cleanly.
@@ -3964,12 +3973,11 @@ def _neutralize_field(text: str, *, cap: int = 160) -> str:
     return repr(" ".join((text or "")[:cap].splitlines()))
 
 
-def _render_signals_block(patterns: list[Pattern]) -> str:
-    """OBSERVED LEARNING SIGNALS block — 1-line summary of the agent's pattern signals.
-
-    Each signal is always a compact 1-line (date/frequency/label) — all included
-    regardless of sample cap.
-    """
+def _render_signals_block(
+    patterns: list[Pattern], evidence: dict[str, PatternEvidence] | None
+) -> str:
+    """OBSERVED LEARNING SIGNALS block — one date/frequency/label line per signal, then
+    its evidence lines indented beneath it."""
     if not patterns:
         return "(no patterns flagged)"
     lines: list[str] = []
@@ -3977,7 +3985,69 @@ def _render_signals_block(patterns: list[Pattern]) -> str:
         lines.append(
             f"{i}. [{p.date}] freq={p.frequency} — {_neutralize_field(p.label)}"
         )
+        lines.extend(f"   {line}" for line in _render_pattern_evidence(p, evidence))
     return "\n".join(lines)
+
+
+# Triggering spawns listed per pattern, newest first; the rest are counted.
+MACHINE_FACTS_SPAWN_LIMIT = 10
+
+
+def _fetch_pattern_evidence(agent: str) -> dict[str, PatternEvidence] | None:
+    """The agent's per-key evidence over today's pair windows; None = unavailable.
+
+    Fail-open like the pre-verify memory: intake already failed closed on the floor, and
+    a missing evidence read only thins the prompt.
+    """
+    if not HAS_PG_PATTERN_READ:
+        return None
+    evaluated_at = _get_utc_now()
+    return _pg_read_pattern_evidence(
+        agent, get_pair_windows(evaluated_at), evaluated_at
+    )
+
+
+def _render_pattern_evidence(
+    pattern: Pattern, evidence: dict[str, PatternEvidence] | None
+) -> list[str]:
+    """Metric key, confirmation rate vs the floor-half baseline, then the triggering
+    spawns' machine facts — every value through _neutralize_field (LLM01)."""
+    key_line = f"metric key: {_neutralize_field(str(pattern.metric_key))}"
+    found = None if evidence is None else evidence.get(pattern.metric_key or "")
+    if found is None:
+        return [key_line, f"evidence: {_neutralize_field('unavailable')}"]
+    confirmation, baseline = found.floor.confirmation, found.floor.baseline
+    confirmation_rate = _neutralize_field(
+        f"{confirmation.events}/{confirmation.spawns}"
+    )
+    baseline_rate = _neutralize_field(f"{baseline.events}/{baseline.spawns}")
+    lines = [
+        key_line,
+        f"confirmation rate: {confirmation_rate}"
+        f" vs floor-half baseline rate: {baseline_rate}",
+        "machine facts of the triggering spawns"
+        " (metric events in the confirmation window): "
+        f"{_neutralize_field(str(len(found.triggering)))}",
+    ]
+    listed = found.triggering[:MACHINE_FACTS_SPAWN_LIMIT]
+    lines.extend(_render_machine_facts(spawn) for spawn in listed)
+    if len(found.triggering) > len(listed):
+        omitted = len(found.triggering) - len(listed)
+        lines.append(f"more not listed: {_neutralize_field(str(omitted))}")
+    return lines
+
+
+def _render_machine_facts(spawn: TriggeringSpawn) -> str:
+    tool_use = (
+        "unrecorded" if spawn.tool_use_actual is None else str(spawn.tool_use_actual)
+    )
+    attribution = ",".join(spawn.attribution_sources) or "none recorded"
+    return (
+        f"spawn: overage_rows={_neutralize_field(str(spawn.overage_rows))}"
+        f" attribution_source={_neutralize_field(attribution)}"
+        f" verified_fail={_neutralize_field(str(spawn.verified_fail_rows))}"
+        f" tool_use_actual={_neutralize_field(tool_use)}"
+    )
 
 
 _HAIKU_RATIONALE_RE = re.compile(r"^RATIONALE:\s*(.+)$", re.MULTILINE)
