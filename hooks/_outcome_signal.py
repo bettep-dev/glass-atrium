@@ -280,7 +280,7 @@ def is_negative_signal_outcome(row: dict) -> bool:
 # ---------------------------------------------------------------------------
 # One definition for every actor judging a keyed pattern — aggregator status, daemon
 # intake re-check, roster writer, power check, window replay. Fed by
-# _pg_learning_dualwrite.read_pattern_floor or by a replay-local read.
+# _pg_learning_dualwrite.read_pattern_floors / read_pattern_floor or by a replay-local read.
 
 METRIC_BUDGET_OVERAGE = "budget_overage"
 METRIC_EMIT_FAILURE = "emit_failure"

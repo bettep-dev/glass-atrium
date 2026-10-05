@@ -15,6 +15,8 @@
 
 import sys
 import time
+from collections import defaultdict
+from collections.abc import Iterable
 from datetime import datetime
 from typing import NamedTuple
 
@@ -1305,15 +1307,15 @@ def count_outcomes_since(
 # ---------------------------------------------------------------------------
 # Per-pattern metric window read
 # ---------------------------------------------------------------------------
-# One row per spawn: each joined table is pre-grouped by agent_id, so a spawn with N
-# overage or outcome rows is never multiplied into N rows (a spawn counts once).
+# One row per spawn of any listed agent type: each joined table is pre-grouped by agent_id,
+# so a spawn with N overage or outcome rows is never multiplied into N rows (a spawn counts once).
 _SPAWN_FACTS_SELECT_SQL = """
 WITH spawns AS (
-    SELECT id, agent_id, session_id, started_at
+    SELECT id, agent_id, agent_type, session_id, started_at
     FROM core.spawn_manifest
-    WHERE agent_type = %s AND started_at >= %s AND started_at < %s
+    WHERE agent_type = ANY(%s) AND started_at >= %s AND started_at < %s
 )
-SELECT s.agent_id, s.session_id, s.started_at,
+SELECT s.agent_type, s.agent_id, s.session_id, s.started_at,
        COALESCE(b.overage_rows, 0), stop.agent_id IS NOT NULL,
        COALESCE(o.attributions, '{}'::text[])
 FROM spawns s
@@ -1329,7 +1331,7 @@ LEFT JOIN (
     SELECT agent_id, array_agg(attribution_source) AS attributions FROM core.outcomes
     WHERE agent_id IN (SELECT agent_id FROM spawns) GROUP BY agent_id
 ) o ON o.agent_id = s.agent_id
-ORDER BY s.started_at, s.id
+ORDER BY s.agent_type, s.started_at, s.id
 """
 # The install's provenance start: its earliest MANIFEST row carrying a session id.
 _PROVENANCE_START_SQL = (
@@ -1349,14 +1351,7 @@ def read_pattern_floor(
     if metric_key not in METRIC_KEYS:
         raise ValueError(f"read_pattern_floor: unknown metric key {metric_key!r}")
     try:
-        with psycopg.connect("dbname=glass_atrium", connect_timeout=2, autocommit=True) as conn:
-            with conn.cursor() as cur:
-                cur.execute(_PROVENANCE_START_SQL)
-                provenance_start = cur.fetchone()[0]
-                cur.execute(
-                    _SPAWN_FACTS_SELECT_SQL, (agent, windows.start.baseline, windows.end)
-                )
-                spawns = _get_spawn_facts(cur.fetchall())
+        provenance_start, spawns = _read_spawn_facts([agent], windows)
     except Exception as exc:  # noqa: BLE001 — every failure is an outage the caller fails closed on
         sys.stderr.write(
             '{"hook":"_pg_learning_dualwrite","op":"read_pattern_floor",'
@@ -1364,14 +1359,49 @@ def read_pattern_floor(
             % (type(exc).__name__, metric_key)
         )
         return None
-    return get_floor_verdict(spawns, metric_key, windows, provenance_start, evaluated_at)
+    return get_floor_verdict(spawns[agent], metric_key, windows, provenance_start, evaluated_at)
 
 
-def _get_spawn_facts(rows: list[tuple]) -> list[SpawnFacts]:
-    return [
-        SpawnFacts(
+def read_pattern_floors(
+    agents: Iterable[str], windows: PairWindows, evaluated_at: datetime
+) -> dict[tuple[str, str], FloorResult] | None:
+    """Every metric key's floor for each of `agents`, keyed (agent, metric key), from one
+    provenance read and one spawn read over all of them — never a read per agent or key.
+
+    None on ANY read failure, as `read_pattern_floor`: every floor fails closed together."""
+    agents = sorted(set(agents))
+    try:
+        provenance_start, spawns = _read_spawn_facts(agents, windows)
+    except Exception as exc:  # noqa: BLE001 — every failure is an outage the caller fails closed on
+        sys.stderr.write(
+            '{"hook":"_pg_learning_dualwrite","op":"read_pattern_floors",'
+            '"error_kind":"%s","fallback":"none","agents":%d}\n'
+            % (type(exc).__name__, len(agents))
+        )
+        return None
+    return {
+        (agent, metric_key): get_floor_verdict(
+            spawns[agent], metric_key, windows, provenance_start, evaluated_at
+        )
+        for agent in agents
+        for metric_key in sorted(METRIC_KEYS)
+    }
+
+
+def _read_spawn_facts(
+    agents: list[str], windows: PairWindows
+) -> tuple[datetime | None, defaultdict[str, list[SpawnFacts]]]:
+    """The provenance start and each agent's spawns over baseline..end; raises on any failure."""
+    with psycopg.connect("dbname=glass_atrium", connect_timeout=2, autocommit=True) as conn:
+        with conn.cursor() as cur:
+            cur.execute(_PROVENANCE_START_SQL)
+            provenance_start = cur.fetchone()[0]
+            cur.execute(_SPAWN_FACTS_SELECT_SQL, (agents, windows.start.baseline, windows.end))
+            rows = cur.fetchall()
+    spawns: defaultdict[str, list[SpawnFacts]] = defaultdict(list)
+    for agent_type, agent_id, session_id, started_at, overage_rows, has_stop, attributions in rows:
+        spawns[agent_type].append(SpawnFacts(
             agent_id, session_id, started_at, int(overage_rows), bool(has_stop),
             tuple({"attribution_source": source} for source in attributions),
-        )
-        for agent_id, session_id, started_at, overage_rows, has_stop, attributions in rows
-    ]
+        ))
+    return provenance_start, spawns

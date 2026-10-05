@@ -61,7 +61,7 @@ try:
         insert_liveness_observation as _pg_insert_liveness_observation,
         put_learning_pattern_status as _pg_put_learning_pattern_status,
         read_outcome_window as _pg_read_outcome_window,
-        read_pattern_floor as _pg_read_pattern_floor,
+        read_pattern_floors as _pg_read_pattern_floors,
         LivenessSinkMissing,
     )
     HAS_PG_DUALWRITE = True
@@ -1037,23 +1037,21 @@ def _get_keyed_agents(
 def _get_keyed_floors(
     agents: set[str], windows: PairWindows, evaluated_at: datetime
 ) -> dict[tuple[str, str], FloorResult]:
-    """S2f floor per (keyed label, agent). A missing pair = no verdict this run (read
-    failure or phase timeout): nothing is emitted for it and its stored row keeps its status."""
-    floors: dict[tuple[str, str], FloorResult] = {}
-    _reset_phase_deadline()
-    for agent in sorted(agents):
-        for label, metric_key in _KEYED_LABELS.items():
-            if _phase_deadline_exceeded():
-                print(
-                    "[learning-aggregator] WARN: floor reads timed out — the remaining "
-                    "keyed rows get no pair verdict this run",
-                    file=sys.stderr,
-                )
-                return floors
-            floor = _pg_read_pattern_floor(agent, metric_key, windows, evaluated_at)
-            if floor is not None:
-                floors[(label, agent)] = floor
-    return floors
+    """S2f floor per (keyed label, agent), every agent from one set read. Empty = the read
+    failed: no keyed row gets a verdict this run, nothing keyed is emitted, statuses hold."""
+    floors = _pg_read_pattern_floors(agents, windows, evaluated_at)
+    if floors is None:
+        print(
+            "[learning-aggregator] WARN: no keyed pair verdict this run — the floor read "
+            f"failed; keyed rows of {len(agents)} agents keep their status",
+            file=sys.stderr,
+        )
+        return {}
+    return {
+        (label, agent): floors[(agent, metric_key)]
+        for agent in agents
+        for label, metric_key in _KEYED_LABELS.items()
+    }
 
 
 def _get_keyed_emits(

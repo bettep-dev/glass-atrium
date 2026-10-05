@@ -486,11 +486,55 @@ class TestPatternFloorReadFailure(unittest.TestCase):
                     ("read_pattern_floor", error_kind, "emit_failure"),
                 )
 
+    def test_a_set_read_failure_returns_none_and_reports_the_op(self) -> None:
+        connect = mock.Mock(side_effect=pgdw.psycopg.OperationalError("refused"))
+        stderr = io.StringIO()
+        with mock.patch.object(pgdw.psycopg, "connect", connect):
+            with contextlib.redirect_stderr(stderr):
+                floors = pgdw.read_pattern_floors(["agent-x", "agent-y"], self.windows, _NOW)
+        self.assertIsNone(floors)
+        report = json.loads(stderr.getvalue())
+        self.assertEqual(
+            (report["op"], report["error_kind"], report["agents"]),
+            ("read_pattern_floors", "OperationalError", 2),
+        )
+
     def test_an_unknown_metric_key_is_refused_before_any_connect(self) -> None:
         with mock.patch.object(pgdw.psycopg, "connect") as connect:
             with self.assertRaises(ValueError):
                 pgdw.read_pattern_floor("agent-x", "verified_fail", self.windows, _NOW)
         connect.assert_not_called()
+
+
+@unittest.skipIf(pgdw is None, f"import failed: {_IMPORT_ERROR}")
+class TestPatternFloorsSetRead(unittest.TestCase):
+    """Every agent's floors come from one provenance read and one spawn read, per agent."""
+
+    def test_one_spawn_read_serves_both_keys_of_every_agent(self) -> None:
+        windows = sig.get_pair_windows(_NOW)
+        passing = _get_passing_spawns(windows)
+        rows = [("glass-atrium-dev-python", *spawn) for spawn in passing]
+        cursor = mock.MagicMock()
+        cursor.fetchone.return_value = (windows.start.baseline,)
+        cursor.fetchall.return_value = rows
+        conn = mock.MagicMock()
+        conn.__enter__.return_value = conn
+        conn.cursor.return_value.__enter__.return_value = cursor
+        agents = ["glass-atrium-dev-python", "glass-atrium-dev-shell", "glass-atrium-dev-python"]
+        with mock.patch.object(pgdw.psycopg, "connect", return_value=conn):
+            floors = pgdw.read_pattern_floors(agents, windows, _NOW)
+        spawn_reads = [c for c in cursor.execute.call_args_list if len(c.args) > 1]
+        self.assertEqual(
+            (cursor.execute.call_count, sorted(spawn_reads[0].args[1][0])),
+            (2, ["glass-atrium-dev-python", "glass-atrium-dev-shell"]),
+        )
+        spawns_by_agent = {"glass-atrium-dev-python": passing, "glass-atrium-dev-shell": []}
+        expected = {
+            (agent, key): _get_floor(spawns, windows, metric_key=key, evaluated_at=_NOW)
+            for agent, spawns in spawns_by_agent.items()
+            for key in sig.METRIC_KEYS
+        }
+        self.assertEqual(floors, expected)
 
 
 def _load_aggregator():  # noqa: ANN202 — module object
@@ -599,14 +643,21 @@ class _AggregatorRun(unittest.TestCase):
     def _run(self, *, batch: Iterable[dict] = (), window: list[dict] | None = None,
              floors: dict[tuple[str, str], str | None] | None = None,
              overages: Iterable[str] = (), size_est: Iterable[dict] = (),
-             aggregator: ModuleType | None = None) -> str:
+             is_floor_unreadable: bool = False, aggregator: ModuleType | None = None) -> str:
         floors = floors or {}
         batch, overages, size_est = list(batch), list(overages), list(size_est)
         module = aggregator or agg
+        self.floor_reads: list[list[str]] = []
 
-        def _read_floor(agent: str, metric_key: str, windows: object, evaluated_at: object):  # noqa: ANN202
-            verdict = floors.get((agent, metric_key), sig.VERDICT_FAIL)
-            return None if verdict is None else SimpleNamespace(verdict=verdict)
+        def _read_floors(agents: Iterable[str], windows: object, evaluated_at: object):  # noqa: ANN202
+            agents = list(agents)
+            self.floor_reads.append(agents)
+            if is_floor_unreadable:
+                return None
+            return {
+                (agent, key): SimpleNamespace(verdict=floors.get((agent, key), sig.VERDICT_FAIL))
+                for agent in agents for key in sig.METRIC_KEYS
+            }
 
         patches = {
             "HAS_PG_DUALWRITE": True,
@@ -619,7 +670,7 @@ class _AggregatorRun(unittest.TestCase):
             "_pg_read_learning_log_signatures": self.log.read,
             "_pg_upsert_learning_pattern": self.log.upsert,
             "_pg_put_learning_pattern_status": self.log.put_status,
-            "_pg_read_pattern_floor": _read_floor,
+            "_pg_read_pattern_floors": _read_floors,
             "_pg_update_aggregator_state": lambda **kw: None,
             "_pg_batch_complete": lambda summary: None,
             "_pg_insert_audit_queue_rows": lambda rows: 0,
@@ -654,6 +705,14 @@ class TestAggregatorKeyedEmit(_AggregatorRun):
                     (_SHELL, sig.METRIC_EMIT_FAILURE): sig.VERDICT_INSUFFICIENT_BASELINE},
         )
         self.assertEqual(self._get_keys(), {f"{_BUDGET_CORE}|{_PYTHON}": sig.METRIC_BUDGET_OVERAGE})
+
+    def test_one_floor_read_per_run_covers_each_candidate_agent_once(self) -> None:
+        stored_only = "glass-atrium-dev-db"
+        self.log.put_row(f"{_EMIT_FAILURE_CORE}|{stored_only}", "dormant")
+        self._run(window=[])
+        self.assertEqual(
+            [sorted(agents) for agents in self.floor_reads], [[stored_only, _PYTHON, _SHELL]]
+        )
 
     def test_each_family_row_carries_its_key_and_discovery_rows_none(self) -> None:
         self._run(
@@ -757,10 +816,11 @@ class TestAggregatorPairStatus(_AggregatorRun):
         signatures = (f"{_PATTERN5_CORE}|{_SHELL}", f"{_BUDGET_CORE}|{_SHELL}")
         for signature in signatures:
             self.log.put_row(signature, "identified")
-        stderr = self._run(window=None, floors={(_SHELL, sig.METRIC_BUDGET_OVERAGE): None})
+        stderr = self._run(window=None, is_floor_unreadable=True)
         for signature in signatures:
             self.assertEqual(self.log.get_status(signature), "identified", signature)
         self.assertIn("no keyless pair verdict", stderr)
+        self.assertIn("no keyed pair verdict", stderr)
 
 
 @unittest.skipIf(pgdw is None, f"import failed: {_IMPORT_ERROR}")
@@ -893,6 +953,18 @@ class TestPatternFloorReadLivePg(unittest.TestCase):
                 self.assertEqual(floor.confirmation, sig.WindowCount(0, 0, 0))
                 self.assertEqual(floor.unjoinable, 1)
                 self.assertEqual(floor.verdict, sig.VERDICT_FAIL)
+
+    def test_the_set_read_gives_each_agent_the_floors_of_its_own_read(self) -> None:
+        self._seed()
+        agents = [self._AGENT, "glass-atrium-dev-shell"]
+        floors = pgdw.read_pattern_floors(agents, self.windows, _NOW)
+        expected = {
+            (agent, key): pgdw.read_pattern_floor(agent, key, self.windows, _NOW)
+            for agent in agents for key in sig.METRIC_KEYS
+        }
+        self.assertEqual(floors, expected)
+        self.assertNotEqual(expected[(agents[0], "budget_overage")],
+                            expected[(agents[1], "budget_overage")])
 
 
 @unittest.skipIf(pgdw is None, f"import failed: {_IMPORT_ERROR}")
