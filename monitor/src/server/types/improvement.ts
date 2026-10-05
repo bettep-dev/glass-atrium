@@ -461,10 +461,10 @@ export interface ImprovementLearningLogRow {
   last_updated: string; // ISO8601 UTC
   last_transition_at: string | null; // ISO8601 UTC
   last_transition_reason: string | null;
-  // True when the pattern LABEL is one the daemon skips at intake
-  // (daemon_cycle.py NON_PROMPTABLE_LABELS). Label-keyed like the skip itself, so
-  // it is independent of status and of the registry gate: a marked row can never
-  // produce a proposal, whatever its lifecycle stage says.
+  // True when the row carries no metric key — the daemon's intake skips it every
+  // cycle (daemon_cycle.py NO_METRIC_KEY_EVAL). Key-only like the skip itself, so it
+  // is independent of status and of the registry gate. A schema without the
+  // metric_key column reads every row as keyless, as the intake does.
   intake_skipped: boolean;
 }
 
@@ -495,7 +495,7 @@ export interface ImprovementApplyCapState {
 }
 
 // One suppression cause, counted on its own. The buckets exist BECAUSE a single
-// number cannot carry this: the loop suppresses selections through five separate
+// number cannot carry this: the loop suppresses selections through several separate
 // mechanisms with different meanings and different remedies, and a total that adds
 // them together tells an operator something is wrong while hiding what — a worse
 // signal than the single-mechanism count it replaced, not a better one.
@@ -505,7 +505,7 @@ export interface ImprovementSuppressionBucket {
   cause: string;
   // Short operator-facing name.
   label: string;
-  // Parked buckets: learning_log rows. Per-cycle buckets: loop events in the
+  // Parked and dormant buckets: learning_log rows. Per-cycle buckets: loop events in the
   // window — a RECURRENCE count, not a row count, because these mechanisms write
   // no transition and re-suppress the same row every cycle.
   count: number;
@@ -517,13 +517,12 @@ export interface ImprovementSuppressionBucket {
 
 // How much of the improvement loop is suppressed, and by which mechanism.
 //
-// Only ONE of the five mechanisms writes a lifecycle transition (the repeat-apply
-// cap). The other four — intake non-promptable skip, staleness skip, the new
-// unknown-family fallback, and roster mismatch — leave the row at
-// status='identified' and drop it again on every cycle, so the row presents as a
-// healthy pending pattern in status_distribution while never being able to produce
-// a proposal. That asymmetry is the reason this state is reported over two
-// deliberately separate populations rather than one sum.
+// Three populations, never summed:
+//   - parked: terminal rows ('rejected'), written by the daemon's terminal gates;
+//   - dormant: non-terminal rows the aggregator's pair verdict or the daemon's roster
+//     mismatch set aside — they return to 'identified' on a new passing pair;
+//   - per-cycle: skips that write no transition (no metric key, the intake pair
+//     re-check) and leave the row at 'identified', re-suppressed every cycle.
 export interface ImprovementLoopSuppressionState {
   // Terminal core.learning_log rows, bucketed by transition-reason marker.
   // Window-independent for the same reason apply_cap_state is: a row parked weeks
@@ -535,6 +534,7 @@ export interface ImprovementLoopSuppressionState {
   // human. Registry-gated like `parked` and bounded by the request `limit`; the
   // untruncated per-cause totals stay on the buckets.
   parked_patterns: ImprovementParkedPatternRow[];
+  dormant: ImprovementDormantState;
   // Recurring per-cycle suppressions from core.autoagent_loop_events over
   // `per_cycle_window_days`. These write no transition, so a window is the only
   // way to count them at all.
@@ -543,13 +543,13 @@ export interface ImprovementLoopSuppressionState {
   per_cycle_window_days: number;
   // Distinct UTC cycle days with any loop event in the window — the coverage denominator.
   per_cycle_window_cycles: number;
-  // status='identified' rows whose pattern label is one the daemon skips at intake
-  // (NON_PROMPTABLE_LABELS). These are the rows that look like pending backlog and
+  // status='identified' rows with no metric key, which the daemon skips at intake
+  // (NO_METRIC_KEY_EVAL). These are the rows that look like pending backlog and
   // are not: no proposal can ever be generated from them.
   //
   // UNGATED — every agent, registry member or not. The intake skip keys on the
-  // label alone, so a registry-scoped count would answer a narrower question than
-  // the one the field asks. Both numbers below share that scope, so the ratio is
+  // metric key alone, so a registry-scoped count would answer a narrower question
+  // than the one the field asks. Both numbers below share that scope, so the ratio is
   // internally consistent; it does NOT agree with the registry-gated parked
   // buckets, and is not meant to.
   pending_unpromptable: number;
@@ -563,6 +563,18 @@ export interface ImprovementLoopSuppressionState {
   // field exists to fix. Registry fail-open (empty registry → no predicate) makes
   // this 0.
   off_registry_parked: number;
+}
+
+// Dormant core.learning_log rows, bucketed by the transition-reason marker of the
+// writer that moved them; a row matching no marker, or carrying no reason, lands in
+// 'other'. Window-free like `parked`, so an old dormant row stays visible.
+//
+// UNGATED, unlike `parked`: a roster-mismatch row is dormant BECAUSE its agent is
+// not a roster stem, so the registry gate would drop the very rows that bucket
+// reports. `patterns` is bounded by the request `limit`; the totals stay on `buckets`.
+export interface ImprovementDormantState {
+  buckets: ImprovementSuppressionBucket[];
+  patterns: ImprovementParkedPatternRow[];
 }
 
 // A parked row carried with the bucket cause that parked it, so the ledger groups

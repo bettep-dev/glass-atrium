@@ -4,9 +4,7 @@
 // core.autoagent_loop_events per cycle day (2026-08-24..08-31): ~25 non-promptable
 // intake skips, ~10 staleness skips and 5 roster mismatches for every 1 repeat-apply
 // cap — and only the cap reached an operator, under a banner reading "Loop parked".
-// Four mechanisms leave the row at status='identified', so the suppressed patterns
-// also presented as pending backlog (measured: 28 of 47 identified rows carried a
-// label the daemon skips at intake).
+// Skipped rows stay at status='identified', so they also presented as pending backlog.
 //
 // What each test discriminates against:
 //   - a single conflated total: every fixture seeds MULTIPLE causes with distinct
@@ -15,25 +13,30 @@
 //   - a parked/per-cycle merge: the two populations are seeded with deliberately
 //     different shapes (a terminal row is not a recurrence), and summing them is
 //     neither number;
-//   - a pending count that ignores the label: the unpromptable fixtures sit beside
-//     ordinary identified rows;
-//   - a registry-gated pending count: one unpromptable fixture sits on the
+//   - a pending count keyed on the retired label set: a keyed row carries a label
+//     the set named, and a keyless row carries one it did not;
+//   - a registry-gated pending count: one keyless fixture sits on the
 //     off-registry agent, so a gated implementation is one short;
 //   - the registry gate silently eating a parked row (F5): one fixture agent is
-//     absent from the registry fixture on purpose.
+//     absent from the registry fixture on purpose;
+//   - a dormant row leaving the board: dormant rows sit beside terminal and pending
+//     rows, one per reason, one with no reason, one off-registry, one aged.
 //
 // Hermetic registry — AGENT_REGISTRY_PATH points at a fixture holding only the two
 // registered agents, so the third is off-registry by construction. That isolates the
 // REGISTRY-GATED counts to this suite's rows exactly. The deliberately UNGATED
-// numbers (per-cycle events, off_registry_parked, the pending split) cannot be
-// isolated that way — the
-// gate is what would have hidden their subject — so those are asserted as DELTAS
-// against a pre-seed snapshot. A delta is the honest assertion for them: the counts
-// are over a live shared table, and pinning an absolute would pin production state.
+// numbers (per-cycle events, off_registry_parked, the pending split, the dormant
+// buckets) cannot be isolated that way — the gate is what would have hidden their
+// subject — so those are asserted as DELTAS against a pre-seed snapshot. A delta is
+// the honest assertion for them: the counts are over a live shared table, and pinning
+// an absolute would pin production state.
 //
 // DB: real Postgres. The skip gate covers ONLY an unreachable/unprovisioned
 // database — a route that answers non-200 reds this suite, because it is the
-// sole guard on the route SQL and a self-skipping guard guards nothing.
+// sole guard on the route SQL and a self-skipping guard guards nothing. The
+// schema-absent case reads a second database on the same server from
+// MONITOR_TEST_LABEL_ABSENT_DATABASE_URL — every migration except the one adding
+// metric_key and 'dormant' — and skips when it is unset.
 //
 // Runner: npx tsx --test test/improvement.loop-suppression.route.test.ts
 
@@ -51,6 +54,7 @@ import Fastify, { type FastifyInstance } from "fastify";
 import { disconnectPrisma, getPrisma } from "../src/server/db.js";
 import { resetAgentRegistryCache } from "../src/server/agents/registry.js";
 import { registerImprovementRoutes } from "../src/server/routes/improvement.js";
+import { LIVE_URL_ENV, TEST_URL_ENV, isSameDatabase, isSameServer } from "./lib/select-test-db.js";
 
 const SUITE_MARKER = `impr-suppress-${randomUUID().slice(0, 8)}`;
 const AGENT_A = `${SUITE_MARKER}-a`;
@@ -68,13 +72,24 @@ const NON_AUTO_REASON = "non-auto-fixable: proposal modifies a line OUTSIDE ever
 // buckets classify rather than count status.
 const OTHER_REASON = "superseded by a later pattern";
 
-// daemon_cycle.py NON_PROMPTABLE_LABELS member, in "<label>|<agent>" signature form.
-const UNPROMPTABLE_LABEL = "budget-overage concentration";
-// The legacy Korean member of the same set. Seeded because the route stores it as a
-// \u escape and a wrong escape decodes to a plausible-looking string that silently
-// matches nothing.
-const UNPROMPTABLE_LABEL_LEGACY = "동일 에이전트 반복 실패";
-const PROMPTABLE_LABEL = "agent instruction-improvement candidate (failure rate)";
+// Dormant reasons as their writers compose them: learning-aggregator.py
+// _put_pair_statuses (PAIR_REASON_PREFIX) and the daemon's roster-mismatch drop.
+const PAIR_FAIL_REASON = "aggregator-pair fail: family emit rule, pair from 2026-09-21";
+const PAIR_BASELINE_REASON =
+  "aggregator-pair insufficient-baseline: budget_overage floor, pair from 2026-09-21";
+const ROSTER_REASON = "roster-mismatch";
+
+// Labels the retired NON_PROMPTABLE_LABELS set named. Seeded on KEYED rows, which the
+// key rule admits — a label-keyed implementation marks them unpromptable.
+const BUDGET_LABEL = "budget-overage concentration";
+const EMIT_FAILURE_LABEL = "emit-failure concentration";
+// Pattern-1's legacy Korean label, keyless.
+const LEGACY_FAILURE_LABEL = "동일 에이전트 반복 실패";
+// A discovery label the retired set never named, keyless.
+const DISCOVERY_LABEL = "agent instruction-improvement candidate (failure rate)";
+
+const LABEL_ABSENT_URL_ENV = "MONITOR_TEST_LABEL_ABSENT_DATABASE_URL";
+const labelAbsentUrl = process.env[LABEL_ABSENT_URL_ENV];
 
 const REGISTRY_FIXTURE = {
   $schema: "agent-registry",
@@ -111,6 +126,7 @@ interface PatternRow {
 interface LoopSuppressionState {
   parked: SuppressionBucket[];
   parked_patterns: ParkedPatternRow[];
+  dormant: { buckets: SuppressionBucket[]; patterns: ParkedPatternRow[] };
   per_cycle: (SuppressionBucket & { cycles: number })[];
   per_cycle_window_days: number;
   per_cycle_window_cycles: number;
@@ -123,6 +139,14 @@ interface LearningLogBody {
   apply_cap_state: { capped_patterns: number };
   loop_suppression_state: LoopSuppressionState;
   patterns: PatternRow[];
+}
+
+interface SeedRow {
+  agent: string;
+  status: string;
+  reason: string | null;
+  label: string;
+  metricKey: string | null;
 }
 
 let app: FastifyInstance;
@@ -154,6 +178,14 @@ function cycleDelta(cause: string): number {
   return (
     count(body.loop_suppression_state.per_cycle, cause) -
     count(baseline.loop_suppression_state.per_cycle, cause)
+  );
+}
+
+// Same reasoning as cycleDelta: the dormant buckets are ungated.
+function dormantDelta(cause: string): number {
+  return (
+    count(body.loop_suppression_state.dormant.buckets, cause) -
+    count(baseline.loop_suppression_state.dormant.buckets, cause)
   );
 }
 
@@ -225,65 +257,79 @@ after(async () => {
 
 // Parked population: 2 caps (A, B) · 1 streak (A) · 1 non-auto-fixable (A) ·
 // 1 unmarked control (A) · 1 cap on the OFF-registry agent.
-// Pending population: 5 unpromptable-label rows (one legacy Korean, one on the
-// OFF-registry agent) + 2 ordinary rows.
+// Pending population: 4 keyless rows (one legacy Korean, one on the OFF-registry
+// agent) + 2 keyed rows carrying labels the retired set named.
+// Dormant population: 3 pair rows (one aged) · 1 roster-mismatch row on the
+// OFF-registry agent · 1 unmarked reason · 1 with no reason.
+const SEED_ROWS: SeedRow[] = [
+  { agent: AGENT_A, status: "rejected", reason: CAP_REASON, label: DISCOVERY_LABEL, metricKey: null },
+  { agent: AGENT_B, status: "rejected", reason: CAP_REASON, label: DISCOVERY_LABEL, metricKey: null },
+  { agent: AGENT_A, status: "rejected", reason: STREAK_REASON, label: DISCOVERY_LABEL, metricKey: null },
+  { agent: AGENT_A, status: "rejected", reason: NON_AUTO_REASON, label: DISCOVERY_LABEL, metricKey: null },
+  { agent: AGENT_A, status: "rejected", reason: OTHER_REASON, label: DISCOVERY_LABEL, metricKey: null },
+  { agent: AGENT_OFF, status: "rejected", reason: CAP_REASON, label: DISCOVERY_LABEL, metricKey: null },
+  { agent: AGENT_A, status: "identified", reason: null, label: DISCOVERY_LABEL, metricKey: null },
+  { agent: AGENT_B, status: "identified", reason: null, label: DISCOVERY_LABEL, metricKey: null },
+  { agent: AGENT_B, status: "identified", reason: null, label: LEGACY_FAILURE_LABEL, metricKey: null },
+  // Off-registry, and keyless all the same: the daemon's intake skip reads the key
+  // and never consults the registry. A gated count drops this row.
+  { agent: AGENT_OFF, status: "identified", reason: null, label: DISCOVERY_LABEL, metricKey: null },
+  { agent: AGENT_A, status: "identified", reason: null, label: BUDGET_LABEL, metricKey: "budget_overage" },
+  { agent: AGENT_B, status: "identified", reason: null, label: EMIT_FAILURE_LABEL, metricKey: "emit_failure" },
+  { agent: AGENT_A, status: "dormant", reason: PAIR_FAIL_REASON, label: DISCOVERY_LABEL, metricKey: null },
+  { agent: AGENT_B, status: "dormant", reason: PAIR_BASELINE_REASON, label: BUDGET_LABEL, metricKey: "budget_overage" },
+  { agent: AGENT_A, status: "dormant", reason: PAIR_FAIL_REASON, label: LEGACY_FAILURE_LABEL, metricKey: null },
+  { agent: AGENT_OFF, status: "dormant", reason: ROSTER_REASON, label: DISCOVERY_LABEL, metricKey: null },
+  { agent: AGENT_A, status: "dormant", reason: "held by an operator", label: DISCOVERY_LABEL, metricKey: null },
+  { agent: AGENT_B, status: "dormant", reason: null, label: DISCOVERY_LABEL, metricKey: null },
+];
+
+function seedSignature(index: number): string {
+  return `${SEED_ROWS[index]!.label}|${SUITE_MARKER}-${index}`;
+}
+
+// The streak row and one pair row are aged out of the pattern list's 7-day
+// discovery window on purpose — each is the discriminator for a window-free list.
+const AGED_STREAK_INDEX = 2;
+const AGED_DORMANT_INDEX = 14;
+
 async function seed(): Promise<void> {
   const prisma = getPrisma();
-  const rows: Array<{
-    agent: string;
-    status: string;
-    reason: string | null;
-    label: string;
-  }> = [
-    { agent: AGENT_A, status: "rejected", reason: CAP_REASON, label: PROMPTABLE_LABEL },
-    { agent: AGENT_B, status: "rejected", reason: CAP_REASON, label: PROMPTABLE_LABEL },
-    { agent: AGENT_A, status: "rejected", reason: STREAK_REASON, label: PROMPTABLE_LABEL },
-    { agent: AGENT_A, status: "rejected", reason: NON_AUTO_REASON, label: PROMPTABLE_LABEL },
-    { agent: AGENT_A, status: "rejected", reason: OTHER_REASON, label: PROMPTABLE_LABEL },
-    { agent: AGENT_OFF, status: "rejected", reason: CAP_REASON, label: PROMPTABLE_LABEL },
-    { agent: AGENT_A, status: "identified", reason: null, label: UNPROMPTABLE_LABEL },
-    { agent: AGENT_A, status: "identified", reason: null, label: UNPROMPTABLE_LABEL },
-    { agent: AGENT_B, status: "identified", reason: null, label: UNPROMPTABLE_LABEL },
-    { agent: AGENT_B, status: "identified", reason: null, label: UNPROMPTABLE_LABEL_LEGACY },
-    { agent: AGENT_A, status: "identified", reason: null, label: PROMPTABLE_LABEL },
-    { agent: AGENT_B, status: "identified", reason: null, label: PROMPTABLE_LABEL },
-    // Off-registry, and unpromptable all the same: the daemon's intake skip reads
-    // the label and never consults the registry. A gated count drops this row.
-    { agent: AGENT_OFF, status: "identified", reason: null, label: UNPROMPTABLE_LABEL },
-  ];
-  for (let i = 0; i < rows.length; i++) {
-    const row = rows[i]!;
+  for (let i = 0; i < SEED_ROWS.length; i++) {
+    const row = SEED_ROWS[i]!;
     await prisma.$executeRaw`
       INSERT INTO core.learning_log
         (discovered_date, pattern_signature, frequency, agent, status, approval_tier,
-         last_updated, last_transition_reason)
+         last_updated, last_transition_reason, metric_key)
       VALUES
         (CURRENT_DATE,
-         ${`${row.label}|${SUITE_MARKER}-${i}`},
+         ${seedSignature(i)},
          ${i + 1}::int,
          ${row.agent},
          ${row.status}::core."LearningStatus",
          'auto'::core."ApprovalTier",
          NOW(),
-         ${row.reason})
+         ${row.reason},
+         ${row.metricKey}::core."MetricKey")
     `;
   }
-
-  // The streak row is aged out of the pattern list's 7-day discovery window on
-  // purpose — it is the discriminator for the parked list, which must carry it
-  // anyway. The parked BUCKET counts are unaffected: they never window.
-  await prisma.$executeRaw`
-    UPDATE core.learning_log
-    SET discovered_date = CURRENT_DATE - 60
-    WHERE pattern_signature = ${`${PROMPTABLE_LABEL}|${SUITE_MARKER}-2`}
-  `;
+  for (const index of [AGED_STREAK_INDEX, AGED_DORMANT_INDEX]) {
+    await prisma.$executeRaw`
+      UPDATE core.learning_log
+      SET discovered_date = CURRENT_DATE - 60
+      WHERE pattern_signature = ${seedSignature(index)}
+    `;
+  }
 
   // Per-cycle population. subject is left NULL, so these are census rows and the key
   // in play is the census arm (event_ts, agent, eval_result) WHERE subject IS NULL —
   // a recurrence is therefore modelled as distinct days, which is exactly what it is.
   const events: Array<[string, string, number]> = [
-    ["non-promptable", AGENT_A, 0],
-    ["non-promptable", AGENT_A, 1],
+    ["no-metric-key", AGENT_A, 0],
+    ["no-metric-key", AGENT_A, 1],
+    ["no-metric-key", AGENT_B, 0],
+    // The retired label skip's token — still in the window on an install that ran
+    // the old daemon inside the last week.
     ["non-promptable", AGENT_B, 0],
     ["stale-pattern-skip", AGENT_A, 0],
     ["stale-unobserved-skip", AGENT_A, 0],
@@ -336,7 +382,8 @@ test("every parked bucket carries a distinct operator label and a remedy", async
 
 test("per-cycle suppressions are reported apart from parked rows, with the window they cover", async (t) => {
   if (!dbReady) return t.skip("DB unavailable");
-  assert.strictEqual(cycleDelta("non-promptable"), 3, "3 seeded recurrences");
+  assert.strictEqual(cycleDelta("no-metric-key"), 3, "3 seeded recurrences of the key skip");
+  assert.strictEqual(cycleDelta("non-promptable"), 1, "the retired token still in the window");
   assert.strictEqual(cycleDelta("stale-pattern-skip"), 1);
   assert.strictEqual(cycleDelta("stale-unobserved-skip"), 1);
   // The cap parked 2 rows here and emitted NO event: an implementation merging the
@@ -352,6 +399,18 @@ test("per-cycle suppressions are reported apart from parked rows, with the windo
   );
 });
 
+test("every per-cycle bucket a daemon token fills carries a distinct operator label and a remedy", async (t) => {
+  if (!dbReady) return t.skip("DB unavailable");
+  const buckets = body.loop_suppression_state.per_cycle;
+  assert.ok(bucket(buckets, "no-metric-key"), "the key skip has a bucket");
+  const labels = new Set(buckets.map((b) => b.label));
+  assert.strictEqual(labels.size, buckets.length, "two tokens sharing one label re-conflates them");
+  for (const b of buckets) {
+    assert.notStrictEqual(b.label, b.cause, `${b.cause} has no operator-facing label`);
+    assert.ok(b.hint.length > 0, `${b.cause} has no remedy text`);
+  }
+});
+
 test("each per-cycle bucket reports its cycle coverage within the window's cycle days", async (t) => {
   if (!dbReady) return t.skip("DB unavailable");
   const state = body.loop_suppression_state;
@@ -365,7 +424,7 @@ test("each per-cycle bucket reports its cycle coverage within the window's cycle
 
 test("the per-cycle counts are not registry-gated, or roster-mismatch self-erases", async (t) => {
   if (!dbReady) return t.skip("DB unavailable");
-  // roster-mismatch is emitted precisely BECAUSE the agent is not a roster stem, so
+  // roster-mismatch is emitted precisely BECAUSE the agent is not a real roster stem, so
   // applying the registry gate to this query would zero out the one bucket that
   // reports them — the count would silently exclude its own subject. The seeded
   // event is on AGENT_OFF, which the registry fixture deliberately omits.
@@ -378,9 +437,9 @@ test("the per-cycle counts are not registry-gated, or roster-mismatch self-erase
 
 test("a per-cycle recurrence count is not an agent count", async (t) => {
   if (!dbReady) return t.skip("DB unavailable");
-  // 3 non-promptable events across 2 agents. Equal totals would mean the route is
+  // 3 key-skip events across 2 agents. Equal totals would mean the route is
   // reporting one number twice.
-  const seen = bucket(body.loop_suppression_state.per_cycle, "non-promptable");
+  const seen = bucket(body.loop_suppression_state.per_cycle, "no-metric-key");
   assert.ok(seen, "the bucket must exist after seeding");
   assert.notStrictEqual(
     seen.count,
@@ -408,15 +467,15 @@ test("non-suppression loop events are never counted", async (t) => {
   assert.ok(!causes.includes("reject"), "a review reject is an adjudication, not a suppression");
 });
 
-test("pending rows that can never propose are separated from the backlog", async (t) => {
+test("pending rows with no metric key are separated from the backlog", async (t) => {
   if (!dbReady) return t.skip("DB unavailable");
-  assert.strictEqual(pendingDelta("pending_total"), 7, "7 seeded identified rows");
+  assert.strictEqual(pendingDelta("pending_total"), 6, "6 seeded identified rows — no dormant row");
   assert.strictEqual(
     pendingDelta("pending_unpromptable"),
-    5,
-    "5 carry an intake-skipped label (one the legacy Korean member, one on the " +
-      "off-registry agent) — an implementation counting all pending returns 7, one " +
-      "with a broken escape returns 3, one still registry-gated returns 4",
+    4,
+    "4 carry no metric key (one on the off-registry agent) — an implementation counting " +
+      "all pending returns 6, one keyed on the retired label set returns 2, one still " +
+      "registry-gated returns 3",
   );
   assert.notStrictEqual(
     body.loop_suppression_state.pending_unpromptable,
@@ -443,6 +502,12 @@ test("a parked pattern the registry gate hides is reported, not dropped (F5)", a
 // The rows this suite seeded, out of a payload counted over a shared live table.
 function seededParked(): ParkedPatternRow[] {
   return body.loop_suppression_state.parked_patterns.filter((row) =>
+    row.pattern_signature.includes(SUITE_MARKER),
+  );
+}
+
+function seededDormant(): ParkedPatternRow[] {
+  return body.loop_suppression_state.dormant.patterns.filter((row) =>
     row.pattern_signature.includes(SUITE_MARKER),
   );
 }
@@ -485,30 +550,149 @@ test("every parked row carries the bucket cause that counted it", async (t) => {
   assert.strictEqual(perCause("other"), 1, "the unmarked terminal row keeps its own bucket");
 });
 
-test("list rows the daemon skips at intake are marked, and the promptable ones are not", async (t) => {
+test("each dormant row is counted under the reason that moved it", async (t) => {
+  if (!dbReady) return t.skip("DB unavailable");
+  assert.deepStrictEqual(
+    [dormantDelta("aggregator-pair"), dormantDelta("roster-mismatch"), dormantDelta("other")],
+    [3, 1, 2],
+    "3 pair rows (keyed and keyless) · 1 roster mismatch · an unmarked reason and a missing " +
+      "reason both in 'other'",
+  );
+  assert.strictEqual(
+    count(body.loop_suppression_state.parked, "other"),
+    1,
+    "a dormant row is not terminal, so no parked bucket counts it",
+  );
+});
+
+test("every dormant row stays on the board, whatever its age or agent", async (t) => {
+  if (!dbReady) return t.skip("DB unavailable");
+  const mine = seededDormant();
+  assert.strictEqual(mine.length, 6, "all six dormant rows, the off-registry and the aged one included");
+  assert.ok(
+    mine.some((row) => row.agent === AGENT_OFF && row.cause === "roster-mismatch"),
+    "a roster-mismatch row names an off-roster agent; a registry gate would drop it",
+  );
+  const aged = mine.find((row) => row.pattern_signature === seedSignature(AGED_DORMANT_INDEX));
+  assert.ok(aged, "the row discovered 60 days ago is still dormant, so it is still listed");
+  assert.ok(
+    !seededListed().some((row) => row.pattern_signature === aged.pattern_signature),
+    "the windowed pattern list does not carry it — the dormant list is the only path it has",
+  );
+  const bucketCauses = new Set(body.loop_suppression_state.dormant.buckets.map((b) => b.cause));
+  for (const row of mine) {
+    assert.strictEqual(row.status, "dormant");
+    assert.ok(bucketCauses.has(row.cause), `row cause ${row.cause} matches no dormant bucket`);
+  }
+});
+
+test("every dormant bucket carries a distinct operator label and a remedy", async (t) => {
+  if (!dbReady) return t.skip("DB unavailable");
+  const named = body.loop_suppression_state.dormant.buckets.filter((b) => b.cause !== "other");
+  assert.ok(named.length >= 2, "the pair and roster-mismatch buckets are named");
+  const labels = new Set(named.map((b) => b.label));
+  assert.strictEqual(labels.size, named.length, "two causes sharing one label re-conflates them");
+  for (const b of named) {
+    assert.notStrictEqual(b.label, b.cause, `${b.cause} has no operator-facing label`);
+    assert.ok(b.hint.length > 0, `${b.cause} has no remedy text`);
+  }
+});
+
+test("list rows with no metric key are marked skipped at intake, and keyed ones are not", async (t) => {
   if (!dbReady) return t.skip("DB unavailable");
   const listed = seededListed();
-  const unpromptable = listed.filter(
-    (row) =>
-      row.pattern_signature.startsWith(`${UNPROMPTABLE_LABEL}|`) ||
-      row.pattern_signature.startsWith(`${UNPROMPTABLE_LABEL_LEGACY}|`),
+  const keyless = listed.filter((row) =>
+    SEED_ROWS.some((seedRow, i) => seedRow.metricKey === null && seedSignature(i) === row.pattern_signature),
   );
-  const promptable = listed.filter((row) =>
-    row.pattern_signature.startsWith(`${PROMPTABLE_LABEL}|`),
+  const keyed = listed.filter((row) =>
+    SEED_ROWS.some((seedRow, i) => seedRow.metricKey !== null && seedSignature(i) === row.pattern_signature),
   );
-  assert.ok(unpromptable.length > 0 && promptable.length > 0, "both classes must be listed");
-  for (const row of unpromptable) {
-    assert.strictEqual(
-      row.intake_skipped,
-      true,
-      `${row.pattern_signature} carries a label the daemon skips at intake`,
-    );
+  assert.ok(keyless.length > 0 && keyed.length > 0, "both classes must be listed");
+  for (const row of keyless) {
+    assert.strictEqual(row.intake_skipped, true, `${row.pattern_signature} carries no metric key`);
   }
-  for (const row of promptable) {
+  for (const row of keyed) {
     assert.strictEqual(
       row.intake_skipped,
       false,
-      "marking every row marks nothing — a promptable row must read false",
+      `${row.pattern_signature} carries a key — the retired label set would have marked it`,
     );
   }
 });
+
+/**
+ * Points the route's one DATABASE_URL at `url` for `read`, then restores it.
+ * Same-server is not safety: the live database can share the test server, so the caller
+ * refuses a `url` naming the live handle before swapping.
+ */
+async function withDatabase<T>(url: string, read: () => Promise<T>): Promise<T> {
+  const prior = process.env.DATABASE_URL;
+  await disconnectPrisma();
+  process.env.DATABASE_URL = url;
+  try {
+    return await read();
+  } finally {
+    await disconnectPrisma();
+    process.env.DATABASE_URL = prior;
+  }
+}
+
+test(
+  "the board answers on a database migrated without metric_key and 'dormant'",
+  { skip: labelAbsentUrl ? false : `${LABEL_ABSENT_URL_ENV} unset — no schema-absent database to read` },
+  async (t) => {
+    if (!dbReady) return t.skip("DB unavailable");
+    const testUrl = process.env[TEST_URL_ENV];
+    const url = { absent: labelAbsentUrl, live: process.env[LIVE_URL_ENV] };
+    assert.ok(testUrl && url.absent, "both database URLs are set");
+    assert.ok(
+      isSameServer(url.absent, testUrl),
+      `${LABEL_ABSENT_URL_ENV} must name the server of ${TEST_URL_ENV}`,
+    );
+    assert.ok(
+      !isSameDatabase(url.absent, testUrl),
+      `${LABEL_ABSENT_URL_ENV} must name a database other than ${TEST_URL_ENV}`,
+    );
+    assert.ok(
+      url.live === undefined || url.live.length === 0 || !isSameDatabase(url.absent, url.live),
+      `${LABEL_ABSENT_URL_ENV} names the live database (${LIVE_URL_ENV}) — refusing to write there`,
+    );
+    await withDatabase(url.absent, async () => {
+      const prisma = getPrisma();
+      const schema = await prisma.$queryRaw<Array<{ has_label: boolean; has_column: boolean }>>`
+        SELECT 'dormant' = ANY (enum_range(NULL::core."LearningStatus")::text[]) AS has_label,
+               EXISTS (SELECT 1 FROM information_schema.columns
+                       WHERE table_schema = 'core' AND table_name = 'learning_log'
+                         AND column_name = 'metric_key') AS has_column
+      `;
+      assert.deepStrictEqual(
+        [schema[0]?.has_label, schema[0]?.has_column],
+        [false, false],
+        "the database under test lacks the label and the column",
+      );
+      const start = await fetchState();
+      try {
+        await prisma.$executeRaw`
+          INSERT INTO core.learning_log
+            (discovered_date, pattern_signature, frequency, agent, status, approval_tier,
+             last_updated)
+          VALUES (CURRENT_DATE, ${`${DISCOVERY_LABEL}|${SUITE_MARKER}-absent`}, 1, ${AGENT_A},
+                  'identified'::core."LearningStatus", 'auto'::core."ApprovalTier", NOW())
+        `;
+        const end = await fetchState();
+        const moved = (field: "pending_total" | "pending_unpromptable"): number =>
+          end.loop_suppression_state[field] - start.loop_suppression_state[field];
+        assert.deepStrictEqual(
+          [moved("pending_total"), moved("pending_unpromptable")],
+          [1, 1],
+          "with no key column every row is keyless, as the daemon's intake reads it",
+        );
+        assert.deepStrictEqual(end.loop_suppression_state.dormant.buckets, [], "no row can be dormant");
+      } finally {
+        await prisma.$executeRaw`
+          DELETE FROM core.learning_log WHERE pattern_signature LIKE ${`%${SUITE_MARKER}%`}
+        `;
+      }
+    });
+  },
+);

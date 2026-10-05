@@ -363,25 +363,22 @@ interface ApplyCapDbRow {
 
 // -- Loop suppression surface ------------------------------------------------
 //
-// The repeat-apply cap is ONE of five mechanisms that stop a pattern from reaching
-// a proposal, and it is the only one that writes a lifecycle transition. Measured
-// per cycle day over 2026-08-24..08-31, the loop suppressed roughly 25
-// non-promptable selections, 10 staleness skips and 5 roster mismatches for every
-// 1 cap — and only the cap was visible anywhere. The banner that reported it said
-// "Loop parked", which reads as a statement about the loop.
+// The repeat-apply cap is one of several mechanisms that stop a pattern from
+// reaching a proposal. Measured per cycle day over 2026-08-24..08-31, the loop
+// suppressed roughly 25 non-promptable selections, 10 staleness skips and 5 roster
+// mismatches for every 1 cap — and only the cap was visible anywhere.
 //
-// Reported over two populations that are never summed — contract and the reason
+// Reported over three populations that are never summed — contract and the reason
 // on ImprovementLoopSuppressionState (types/improvement.ts).
 
 // Opening literals of the daemon's last_transition_reason stamps
 // (daemon_cycle.py APPLY_CAP_REASON_TEMPLATE / REJECT_STREAK_REASON_TEMPLATE /
-// NON_AUTO_FIXABLE_REASON / REVERTED_SNOOZE_REASON / NON_PROMPTABLE_REASON).
+// NON_AUTO_FIXABLE_REASON / REVERTED_SNOOZE_REASON).
 // Hardcoded rather than derived: a daemon rewording must surface as a bucket
 // dropping to zero, not as a silently tracked rename.
 //
-// 'non-promptable' matches the bare prefix on purpose — live rows carry an older
-// operator-decision wording alongside the current NON_PROMPTABLE_REASON literal,
-// and both begin here.
+// 'non-promptable' — no longer written; terminal rows stamped by the retired label
+// skip, in two wordings that share this bare prefix.
 const SUPPRESSION_REASON_PREFIXES = {
   "repeat-apply-cap": APPLY_CAP_REASON_PREFIX,
   "non-promptable": "non-promptable",
@@ -390,11 +387,22 @@ const SUPPRESSION_REASON_PREFIXES = {
   "reverted-snooze": "reverted snooze:",
 } as const;
 
+// Opening literals of the dormant-transition reasons: learning-aggregator.py
+// PAIR_REASON_PREFIX, and the daemon's roster-mismatch intake drop. Hardcoded for
+// the same reason as the parked markers.
+const DORMANT_REASON_PREFIXES = {
+  "aggregator-pair": "aggregator-pair",
+  "roster-mismatch": "roster-mismatch",
+} as const;
+
 // eval_result tokens the daemon emits when a gate DROPS or fails open on a
 // selection. 'stale-gate-unknown-family' is the loud fail-open: the pattern was
 // KEPT because no gate could judge it, which is a different fact from a drop and
-// is labelled as one.
+// is labelled as one. 'non-promptable', 'stale-unobserved-skip' and
+// 'stale-gate-unknown-family' are no longer emitted; kept so events still inside
+// the window stay counted.
 const SUPPRESSION_EVAL_RESULTS = [
+  "no-metric-key",
   "non-promptable",
   "stale-pattern-skip",
   "stale-unobserved-skip",
@@ -406,9 +414,9 @@ const SUPPRESSION_EVAL_RESULTS = [
   "non-auto-fixable-skip",
 ] as const;
 
-// Operator-facing name + remedy per cause. Shared by both populations: the same
-// mechanism can park a row AND recur per cycle (the cap does both), and a reader
-// comparing the two lists must not meet two different descriptions of one thing.
+// Operator-facing name + remedy per cause. Shared by every population: the same
+// mechanism can hold a row AND recur per cycle (the cap and roster mismatch do both),
+// and a reader comparing the lists must not meet two descriptions of one thing.
 const NON_AUTO_FIXABLE_COPY = {
   label: "Non-auto-fixable",
   hint:
@@ -424,38 +432,51 @@ const SUPPRESSION_CAUSE_COPY: Record<string, { label: string; hint: string }> = 
       "another. Terminal, and no status reset clears it — see the parked-pattern " +
       "warning below. Open design decision.",
   },
-  "non-promptable": {
-    label: "Non-promptable signal",
+  "no-metric-key": {
+    label: "No metric key",
     hint:
-      "An operational counter no agent-body sentence can decrement. Skipped at " +
-      "intake every cycle; abating it is a human design decision, not a patch.",
+      "A discovery row with no primary metric, so no trial can measure a patch " +
+      "against it. Skipped at intake every cycle; only a keyed pattern is eligible.",
+  },
+  "non-promptable": {
+    label: "Non-promptable signal (retired)",
+    hint:
+      "The retired label-set intake skip, now the no-metric-key skip. A terminal " +
+      "row stamped by it stays as it was; its events age out of the window.",
   },
   "stale-pattern-skip": {
-    label: "Staleness skip",
+    label: "Pair re-check skip",
     hint:
-      "The live outcome window no longer supports the pattern. Self re-arming — " +
-      "it returns on its own once the live rate crosses the floor again.",
+      "The intake re-check found the keyed pattern's detection and confirmation " +
+      "pair no longer passing. No status is written; the aggregator moves the row " +
+      "to dormant.",
   },
   "stale-unobserved-skip": {
-    label: "Not re-observed",
+    label: "Not re-observed (retired)",
     hint:
-      "The label family has no live-rate recompute, and the row has not been " +
-      "re-observed by the aggregator inside the window. Self re-arming on the " +
-      "next re-observation.",
+      "The retired staleness gate's skip for a family with no live-rate recompute. " +
+      "No longer emitted; its events age out of the window.",
   },
   "stale-gate-unknown-family": {
-    label: "Unchecked (unknown family)",
+    label: "Unchecked (unknown family, retired)",
     hint:
-      "NOT a suppression — the staleness gate could not judge this label family " +
-      "and let the pattern through. Listed because an unjudged pattern is what " +
-      "let a dead one sit in intake unnoticed; teaching the gate its family is " +
-      "the fix.",
+      "NOT a suppression — the retired staleness gate could not judge this label " +
+      "family and let the pattern through. No longer emitted; its events age out " +
+      "of the window.",
   },
   "roster-mismatch": {
     label: "Roster mismatch",
     hint:
       "The pattern's agent is not an agents/*.md stem, so no patch could land. " +
       "Fix the agent column or retire the row.",
+  },
+  "aggregator-pair": {
+    label: "Pair verdict not met",
+    hint:
+      "The aggregator's detection and confirmation windows no longer both support " +
+      "the pattern — a keyed row by its occurrence floor, a discovery row by its " +
+      "family rule. Self re-arming: a passing pair whose detection starts after " +
+      "the move returns it to identified.",
   },
   "reject-streak-snooze": {
     label: "Reject-streak snooze",
@@ -480,23 +501,10 @@ const SUPPRESSION_CAUSE_COPY: Record<string, { label: string; hint: string }> = 
 // mechanism retired last month does not keep reporting.
 const SUPPRESSION_WINDOW_DAYS = 7;
 
-// pattern_signature is "<label>|<agent>", and the daemon's intake skip matches the
-// LABEL by exact equality against NON_PROMPTABLE_LABELS — so a "<label>|" prefix
-// match here is that same predicate, not a looser one. Kept verbatim in step with
-// daemon_cycle.py NON_PROMPTABLE_LABELS.
-const NON_PROMPTABLE_LABELS = [
-  "budget-overage concentration",
-  "repeated failure by same agent",
-  "\uB3D9\uC77C \uC5D0\uC774\uC804\uD2B8 \uBC18\uBCF5 \uC2E4\uD328", // 동일 에이전트 반복 실패
-] as const;
-// A label is interpolated into a LIKE pattern below. `%` and `_` are LIKE
-// metacharacters, so a label carrying either would silently widen an exact
-// prefix match into a fuzzy one. Escaping is a NO-OP for the three labels above
-// (none contains %, _ or a backslash), so the emitted pattern is byte-identical
-// today — it exists so a future label stays the exact match the daemon's
-// equality predicate is.
-const escapeLikeLiteral = (value: string): string =>
-  value.replace(/[\\%_]/g, (ch) => `\\${ch}`);
+// The daemon's intake skip: a row with no metric key. Read through the row's jsonb
+// form so a schema without the column reads NULL — every row keyless, as the
+// daemon's intake reads that schema — instead of failing the whole statement.
+const KEYLESS_PREDICATE = Prisma.sql`(to_jsonb(learning_log) ->> 'metric_key') IS NULL`;
 
 interface SuppressionBucketDbRow {
   cause: string;
@@ -517,6 +525,18 @@ interface PendingSplitDbRow {
 
 // A cause with no copy entry still surfaces — an unlabelled bucket is a bug report,
 // an omitted one is a silent hole of exactly the kind this field exists to close.
+// Reason-marker CASE → bucket key, 'other' for no match or no reason. Each arm binds
+// its prefix as a parameter — no literal is concatenated into SQL.
+function buildReasonCase(prefixes: Readonly<Record<string, string>>): Prisma.Sql {
+  return Prisma.sql`CASE ${Prisma.join(
+    Object.entries(prefixes).map(
+      ([cause, prefix]) =>
+        Prisma.sql`WHEN last_transition_reason LIKE ${`${prefix}%`} THEN ${cause}`,
+    ),
+    " ",
+  )} ELSE 'other' END`;
+}
+
 function suppressionBucket(cause: string, count: number, agents: number) {
   const copy = SUPPRESSION_CAUSE_COPY[cause];
   return {
@@ -1351,29 +1371,16 @@ async function handleLearningLog(
     // AND-prefixed form to it.
     const agentAndFilter = buildAgentMembershipFilter(canonicalKeys);
 
-    // Bucketed suppression CASE, built from the daemon's reason stamps. Each arm
-    // binds its prefix as a parameter — no literal is concatenated into SQL.
-    const suppressionCase = Prisma.sql`CASE ${Prisma.join(
-      Object.entries(SUPPRESSION_REASON_PREFIXES).map(
-        ([cause, prefix]) =>
-          Prisma.sql`WHEN last_transition_reason LIKE ${`${prefix}%`} THEN ${cause}`,
-      ),
-      " ",
-    )} ELSE 'other' END`;
-    // Same predicate the daemon's intake skip applies, expressed over the
-    // "<label>|<agent>" signature.
-    const unpromptablePredicate = Prisma.sql`(${Prisma.join(
-      NON_PROMPTABLE_LABELS.map(
-        (label) =>
-          Prisma.sql`pattern_signature LIKE ${`${escapeLikeLiteral(label)}|%`} ESCAPE '\\'`,
-      ),
-      " OR ",
-    )})`;
-    // One column list for the pattern list and the parked rows — both map through rowToLearningLogSummary.
+    const suppressionCase = buildReasonCase(SUPPRESSION_REASON_PREFIXES);
+    const dormantCase = buildReasonCase(DORMANT_REASON_PREFIXES);
+    // 'dormant' compared as text: a schema without the label matches no row instead
+    // of failing the cast.
+    const dormantPredicate = Prisma.sql`status::text = 'dormant'`;
+    // One column list for the pattern list, the parked and the dormant rows — all map through rowToLearningLogSummary.
     const learningLogColumns = Prisma.sql`id, pattern_signature, frequency, agent,
                status::text AS status, approval_tier::text AS approval_tier,
                discovered_date, last_updated, last_transition_at, last_transition_reason,
-               ${unpromptablePredicate} AS intake_skipped`;
+               ${KEYLESS_PREDICATE} AS intake_skipped`;
 
     const [
       totalRows,
@@ -1383,6 +1390,8 @@ async function handleLearningLog(
       parkedBucketRows,
       parkedPatternRows,
       parkedUngatedRows,
+      dormantBucketRows,
+      dormantPatternRows,
       cycleBucketRows,
       pendingSplitRows,
     ] = await Promise.all([
@@ -1457,6 +1466,26 @@ async function handleLearningLog(
         WHERE status = 'rejected'::core."LearningStatus"
           AND last_transition_reason IS NOT NULL
       `,
+      // Dormant buckets and the rows behind them, window-free like the parked pair.
+      // Deliberately NOT registry-gated: a roster-mismatch row is dormant because its
+      // agent is not a roster stem, so the gate would drop the rows it reports.
+      prisma.$queryRaw<SuppressionBucketDbRow[]>`
+        SELECT ${dormantCase} AS cause,
+               COUNT(*)::bigint AS count,
+               COUNT(DISTINCT agent)::bigint AS agents
+        FROM core.learning_log
+        WHERE ${dormantPredicate}
+        GROUP BY 1
+        ORDER BY 2 DESC
+      `,
+      prisma.$queryRaw<ParkedPatternDbRow[]>`
+        SELECT ${learningLogColumns},
+               ${dormantCase} AS cause
+        FROM core.learning_log
+        WHERE ${dormantPredicate}
+        ORDER BY COALESCE(last_transition_at, last_updated) DESC, id DESC
+        LIMIT ${limit}
+      `,
       // Per-cycle buckets. Deliberately NOT registry-gated: roster-mismatch events
       // are emitted precisely BECAUSE the agent is not a real roster stem, so the
       // gate would zero out the one bucket that reports them and the count would
@@ -1481,7 +1510,7 @@ async function handleLearningLog(
       // never produce a proposal reads as capacity.
       //
       // Deliberately NOT registry-gated, for the same reason the per-cycle buckets
-      // are not: the daemon's intake skip keys on the pattern LABEL and never
+      // are not: the daemon's intake skip keys on the metric key and never
       // consults agent-registry.json, so gating this count would report a narrower
       // population than the mechanism it measures. Gated, the figure that motivated
       // this field read "6 of 20" against a measured 28 of 47 — a number that
@@ -1490,7 +1519,7 @@ async function handleLearningLog(
       // buckets and the lists, where it scopes a DISPLAY population rather than
       // a claim about what the loop skips.
       prisma.$queryRaw<PendingSplitDbRow[]>`
-        SELECT COUNT(*) FILTER (WHERE ${unpromptablePredicate})::bigint AS unpromptable,
+        SELECT COUNT(*) FILTER (WHERE ${KEYLESS_PREDICATE})::bigint AS unpromptable,
                COUNT(*)::bigint AS total
         FROM core.learning_log
         WHERE status = 'identified'::core."LearningStatus"
@@ -1508,6 +1537,12 @@ async function handleLearningLog(
     const loopSuppressionState: ImprovementLoopSuppressionState = {
       parked,
       parked_patterns: parkedPatternRows.map(rowToParkedPattern),
+      dormant: {
+        buckets: dormantBucketRows.map((row) =>
+          suppressionBucket(row.cause, bigintToNumber(row.count), bigintToNumber(row.agents)),
+        ),
+        patterns: dormantPatternRows.map(rowToParkedPattern),
+      },
       per_cycle: cycleBucketRows.map((row) => ({
         ...suppressionBucket(row.cause, bigintToNumber(row.count), bigintToNumber(row.agents)),
         cycles: bigintToNumber(row.cycles),
