@@ -62,6 +62,8 @@
 import json
 import sys
 import time
+from dataclasses import dataclass
+from types import SimpleNamespace
 
 # psycopg-absent must surface to an IMPORTER as a CATCHABLE ImportError so its
 # `except Exception` degrades gracefully — a module-scope sys.exit() raises
@@ -267,10 +269,13 @@ DECLINED_PREFIX = "declined:"
 # actually took has no other way back to the driver.
 _COMPOSE_PROVENANCE = None
 
-# The migration that adds apply_status_provenance, named in the degradation notice so one
-# stderr line tells an operator exactly what to apply — the same shape the driver's enum
-# probe uses when a core."DaemonStatus" label is missing.
-PROVENANCE_MIGRATION = "20260803000001_add_daemon_run_apply_status_provenance"
+# Migrations a DEGRADED notice names, so one stderr line tells an operator exactly what to
+# apply — the same shape the driver's enum probe uses when a core."DaemonStatus" label is missing.
+# PROVENANCE → apply_status_provenance · PATTERN_EVIDENCE → the two proposal link columns.
+MIGRATION = SimpleNamespace(
+    PROVENANCE="20260803000001_add_daemon_run_apply_status_provenance",
+    PATTERN_EVIDENCE="20261005000000_add_pattern_evidence_provenance",
+)
 
 
 def compose_daemon_run_apply_status(daemon_name, run_date, apply_status):
@@ -388,7 +393,7 @@ def compose_daemon_run_apply_status(daemon_name, run_date, apply_status):
             "[%s-daemon] op=compose_daemon_run_apply_status DEGRADED "
             "column=apply_status_provenance absent (run_date=%s) — status composed, provenance "
             "NOT recorded; apply migration %s and the next cycle records it\n"
-            % (daemon_name, run_date, PROVENANCE_MIGRATION)
+            % (daemon_name, run_date, MIGRATION.PROVENANCE)
         )
     # RETURNING rows, never the matched-row count: the count is 1 on BOTH arms because the row
     # is selected by key and not by the CASE condition, so it reports a hit for a compose that
@@ -531,23 +536,31 @@ PROPOSAL_STATUS_SQL = f"""(
 """
 
 
-# Pattern-evidence proposal columns; absent where that migration did not land.
-PATTERN_EVIDENCE_MIGRATION = "20261005000000_add_pattern_evidence_provenance"
-_PROPOSAL_LINK_COLUMNS = ",\n             learning_pattern_id, generator_input_version"
-_PROPOSAL_LINK_VALUES = ",\n                %s, %s"
-# COALESCE → an envelope naming no link (an older report, another writer) never unlinks a row.
-_PROPOSAL_LINK_SET = """,
+@dataclass(frozen=True)
+class _LinkSql:
+    """Per-clause UPSERT fragments for the pattern-evidence columns; empty → columns absent."""
+
+    columns: str = ""
+    values: str = ""
+    set: str = ""
+
+
+# Pattern-evidence proposal columns; absent where MIGRATION.PATTERN_EVIDENCE did not land.
+_PROPOSAL_LINK = _LinkSql(
+    columns=",\n             learning_pattern_id, generator_input_version",
+    values=",\n                %s, %s",
+    # COALESCE → an envelope naming no link (an older report, another writer) never unlinks a row.
+    set=""",
             learning_pattern_id = COALESCE(EXCLUDED.learning_pattern_id,
                                            core.autoagent_proposals.learning_pattern_id),
             generator_input_version = COALESCE(EXCLUDED.generator_input_version,
-                                               core.autoagent_proposals.generator_input_version)"""
+                                               core.autoagent_proposals.generator_input_version)""",
+)
 
 
 def _get_proposal_upsert_sql(has_link_columns):
     """The proposal UPSERT, with or without the two pattern-evidence columns."""
-    link_columns = _PROPOSAL_LINK_COLUMNS if has_link_columns else ""
-    link_values = _PROPOSAL_LINK_VALUES if has_link_columns else ""
-    link_set = _PROPOSAL_LINK_SET if has_link_columns else ""
+    link = _PROPOSAL_LINK if has_link_columns else _LinkSql()
     return f"""
         INSERT INTO core.autoagent_proposals
             (cycle_date, pattern_label, target_file, target_agent,
@@ -557,7 +570,7 @@ def _get_proposal_upsert_sql(has_link_columns):
              indexed_at,
              pre_verify_passed, pre_verify_status, pre_verify_rationale,
              pre_verify_axes,
-             confidence_observed, project_key, promotion_tier{link_columns})
+             confidence_observed, project_key, promotion_tier{link.columns})
         VALUES (%s, %s, %s, %s,
                 %s::core."ProposalClassification", %s, %s,
                 %s::core."ApprovalTier",
@@ -566,7 +579,7 @@ def _get_proposal_upsert_sql(has_link_columns):
                 %s, %s,
                 COALESCE(%s, CURRENT_TIMESTAMP),
                 %s, %s, %s, %s,
-                %s, %s, %s{link_values})
+                %s, %s, %s{link.values})
         ON CONFLICT (cycle_date, pattern_label, target_file) DO UPDATE SET
             target_agent = EXCLUDED.target_agent,
             classification = EXCLUDED.classification,
@@ -623,7 +636,7 @@ def _get_proposal_upsert_sql(has_link_columns):
             pre_verify_axes = EXCLUDED.pre_verify_axes,
             confidence_observed = EXCLUDED.confidence_observed,
             project_key = EXCLUDED.project_key,
-            promotion_tier = EXCLUDED.promotion_tier{link_set}
+            promotion_tier = EXCLUDED.promotion_tier{link.set}
         -- Reviewed terminal row (apply flip or reject route) → frozen, all columns.
         WHERE NOT (core.autoagent_proposals.status::text IN {_TERMINAL_STATUS_SQL}
                    AND core.autoagent_proposals.reviewed_at IS NOT NULL)
@@ -786,7 +799,7 @@ def write_autoagent_proposal(
             "columns=learning_pattern_id,generator_input_version absent "
             "(cycle_date=%s, pattern_label=%s) — row written without its pattern link and "
             "input version; apply migration %s and the next push records them\n"
-            % (cycle_date, pattern_label, PATTERN_EVIDENCE_MIGRATION)
+            % (cycle_date, pattern_label, MIGRATION.PATTERN_EVIDENCE)
         )
     return (time.monotonic_ns() - start_ns) // 1_000_000
 
