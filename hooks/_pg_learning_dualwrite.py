@@ -924,7 +924,8 @@ def read_aggregator_watermark(name: str) -> float:
 def read_learning_log_signatures() -> dict:
     """Return current learning_log signatures keyed by (pattern_signature_core, agent).
 
-    Shape: {(pat_core, agent): {"frequency": int, "status": str, "approval_tier": str}}.
+    Shape: {(pat_core, agent): {"id": int, "frequency": int, "status": str,
+    "approval_tier": str, "last_transition_at": datetime | None}}.
 
     pat_core = pattern signature stripped of surrounding whitespace; the caller
     does any further normalization (its own _NUMERIC_RE.sub() before dedup).
@@ -935,11 +936,12 @@ def read_learning_log_signatures() -> dict:
         with psycopg.connect("dbname=glass_atrium", connect_timeout=1, autocommit=True) as conn:
             with conn.cursor() as cur:
                 cur.execute(
-                    "SELECT pattern_signature, frequency, status, approval_tier, agent "
+                    "SELECT pattern_signature, frequency, status, approval_tier, agent, "
+                    "       id, last_transition_at "
                     "FROM core.learning_log"
                 )
                 out: dict = {}
-                for sig, freq, status, tier, agent in cur.fetchall():
+                for sig, freq, status, tier, agent, row_id, transition_at in cur.fetchall():
                     pat_core = (sig or "").strip()
                     # PG signature is "<pat_core>|<agent>" per aggregator's UPSERT
                     # contract — split back so caller can dedup against (pat_core, agent).
@@ -949,9 +951,11 @@ def read_learning_log_signatures() -> dict:
                     else:
                         key = (pat_core, (agent or "").strip())
                     out[key] = {
+                        "id": int(row_id),
                         "frequency": int(freq or 0),
                         "status": status or "identified",
                         "approval_tier": tier or "user-pending",
+                        "last_transition_at": transition_at,
                     }
                 return out
     except Exception as exc:  # noqa: BLE001
@@ -1156,61 +1160,15 @@ def read_outcomes_since(
     )
 
     sql = (
-        "SELECT record_ts, agent, task_type::text, result::text, "
-        "       confidence::text, metric_pass, metric_type, "
-        "       revision_count, evaluative_signal, directive_hint, "
-        "       lesson, concerns, files_modified, correlation_id, cid, "
-        "       summary, review_flag, grader_verdict::text, attribution_source "
-        "FROM core.outcomes "
-        "WHERE " + " AND ".join(where_clauses) + " "
+        _OUTCOME_ROWS_SELECT_SQL + " AND ".join(where_clauses) + " "
         "ORDER BY record_ts " + order_upper
     )
     if limit_int is not None:
         sql += " LIMIT %s"
         params.append(limit_int)
 
-    rows: list[dict] = []
     try:
-        with psycopg.connect("dbname=glass_atrium", connect_timeout=2, autocommit=True) as conn:
-            with conn.cursor() as cur:
-                cur.execute(sql, tuple(params))
-                for (
-                    record_ts, agent_, task_type_, result_, confidence, metric_pass,
-                    metric_type, revision_count, evaluative_signal, directive_hint,
-                    lesson, concerns, files_modified, correlation_id, cid, summary,
-                    review_flag, grader_verdict, attribution_source,
-                ) in cur.fetchall():
-                    # audit ref — file-path replacement identifier, for user grep tracing
-                    audit_ref = "pg:%s:%s:%s" % (
-                        record_ts.isoformat(timespec="seconds"),
-                        agent_ or "",
-                        task_type_ or "",
-                    )
-                    rows.append({
-                        "record_ts": record_ts,
-                        "pg_audit_ref": audit_ref,
-                        "agent": agent_ or "",
-                        "task_type": task_type_ or "",
-                        "result": result_ or "",
-                        "confidence": confidence or "",
-                        "metric_pass": metric_pass,
-                        "metric_type": metric_type or "",
-                        "revision_count": int(revision_count or 0),
-                        "evaluative_signal": evaluative_signal,
-                        "directive_hint": directive_hint or "",
-                        "lesson": lesson or "",
-                        "concerns": list(concerns or []),
-                        "files_modified": list(files_modified or []),
-                        "correlation_id": correlation_id or "",
-                        "cid": cid or "",
-                        "summary": summary or "",
-                        "review_flag": bool(review_flag),
-                        "grader_verdict": grader_verdict or "",
-                        # write-time provenance → downstream carve-outs see the
-                        # completion-synthesized marker
-                        "attribution_source": attribution_source or "",
-                    })
-        return rows
+        return _fetch_outcome_rows(sql, params)
     except Exception as exc:  # noqa: BLE001 — read fallback is silent + safe
         sys.stderr.write(
             '{"hook":"_pg_learning_dualwrite","op":"read_outcomes_since",'
@@ -1226,6 +1184,78 @@ def read_outcomes_since(
             )
         )
         return []
+
+
+def read_outcome_window(since_epoch: float) -> list[dict] | None:
+    """read_outcomes_since rows after since_epoch, ascending — None on ANY read failure.
+
+    For a caller judging a window: an outage must never read as an empty window."""
+    where_clauses, params = _learning_window_where(since_epoch, agent=None, task_type=None)
+    sql = _OUTCOME_ROWS_SELECT_SQL + " AND ".join(where_clauses) + " ORDER BY record_ts ASC"
+    try:
+        return _fetch_outcome_rows(sql, params)
+    except Exception as exc:  # noqa: BLE001 — every failure is an outage the caller fails closed on
+        sys.stderr.write(
+            '{"hook":"_pg_learning_dualwrite","op":"read_outcome_window",'
+            '"error_kind":"%s","fallback":"none","since_epoch":%s}\n'
+            % (type(exc).__name__, since_epoch)
+        )
+        return None
+
+
+_OUTCOME_ROWS_SELECT_SQL = (
+    "SELECT record_ts, agent, task_type::text, result::text, "
+    "       confidence::text, metric_pass, metric_type, "
+    "       revision_count, evaluative_signal, directive_hint, "
+    "       lesson, concerns, files_modified, correlation_id, cid, "
+    "       summary, review_flag, grader_verdict::text, attribution_source "
+    "FROM core.outcomes "
+    "WHERE "
+)
+
+
+def _fetch_outcome_rows(sql: str, params: list[object]) -> list[dict]:
+    rows: list[dict] = []
+    with psycopg.connect("dbname=glass_atrium", connect_timeout=2, autocommit=True) as conn:
+        with conn.cursor() as cur:
+            cur.execute(sql, tuple(params))
+            for (
+                record_ts, agent_, task_type_, result_, confidence, metric_pass,
+                metric_type, revision_count, evaluative_signal, directive_hint,
+                lesson, concerns, files_modified, correlation_id, cid, summary,
+                review_flag, grader_verdict, attribution_source,
+            ) in cur.fetchall():
+                # audit ref — file-path replacement identifier, for user grep tracing
+                audit_ref = "pg:%s:%s:%s" % (
+                    record_ts.isoformat(timespec="seconds"),
+                    agent_ or "",
+                    task_type_ or "",
+                )
+                rows.append({
+                    "record_ts": record_ts,
+                    "pg_audit_ref": audit_ref,
+                    "agent": agent_ or "",
+                    "task_type": task_type_ or "",
+                    "result": result_ or "",
+                    "confidence": confidence or "",
+                    "metric_pass": metric_pass,
+                    "metric_type": metric_type or "",
+                    "revision_count": int(revision_count or 0),
+                    "evaluative_signal": evaluative_signal,
+                    "directive_hint": directive_hint or "",
+                    "lesson": lesson or "",
+                    "concerns": list(concerns or []),
+                    "files_modified": list(files_modified or []),
+                    "correlation_id": correlation_id or "",
+                    "cid": cid or "",
+                    "summary": summary or "",
+                    "review_flag": bool(review_flag),
+                    "grader_verdict": grader_verdict or "",
+                    # write-time provenance → downstream carve-outs see the
+                    # completion-synthesized marker
+                    "attribution_source": attribution_source or "",
+                })
+    return rows
 
 
 def count_outcomes_since(

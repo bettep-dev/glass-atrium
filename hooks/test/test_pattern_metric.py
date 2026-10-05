@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
 """The shared per-pattern metric: pair windows, the sha256 spawn half and the occurrence floor.
 
-The pure classes need no database. ``TestPatternFloorReadLivePg`` runs the window read's SQL on
-the ephemeral cluster of ``autoagent/test/live-pg-ephemeral.bats`` and skips anywhere else.
+The pure classes need no database; the aggregator leg drives ``learning-aggregator.py`` → ``main``
+over fake PG seams. The ``*LivePg`` classes run their SQL on the ephemeral cluster of
+``autoagent/test/live-pg-ephemeral.bats`` and skip anywhere else.
 
     python3 -m unittest -v test_pattern_metric   (cwd: hooks/test)
 """
@@ -11,11 +12,13 @@ from __future__ import annotations
 
 import contextlib
 import hashlib
+import importlib.util
 import io
 import json
 import os
 import subprocess
 import sys
+import tempfile
 import unittest
 from collections.abc import Iterable
 from datetime import datetime, timedelta, timezone
@@ -490,6 +493,243 @@ class TestPatternFloorReadFailure(unittest.TestCase):
         connect.assert_not_called()
 
 
+def _load_aggregator():  # noqa: ANN202 — module object
+    """Import learning-aggregator.py despite its dashed name; loading runs no PG code."""
+    spec = importlib.util.spec_from_file_location(
+        "learning_aggregator", _HOOKS_DIR / "learning-aggregator.py"
+    )
+    module = importlib.util.module_from_spec(spec)
+    assert spec.loader is not None
+    with contextlib.redirect_stderr(io.StringIO()):
+        spec.loader.exec_module(module)
+    return module
+
+
+agg = _load_aggregator()
+_WINDOWS = sig.get_pair_windows(_NOW)
+_PYTHON = "glass-atrium-dev-python"
+_SHELL = "glass-atrium-dev-shell"
+_PATTERN1_CORE = "repeated failure by same agent"
+_PATTERN5_CORE = "agent instruction-improvement candidate (failure rate)"
+_BUDGET_CORE = "budget-overage concentration"
+_EMIT_FAILURE_CORE = "emit-failure concentration"
+
+
+def _get_outcome(agent: str, record_ts: datetime | None, result: str = "blocked") -> dict:
+    return {
+        "record_ts": record_ts, "pg_audit_ref": f"pg:{agent}", "agent": agent,
+        "task_type": "feature", "result": result, "revision_count": 0, "review_flag": False,
+        "grader_verdict": "", "metric_pass": None, "lesson": "pinned lesson",
+        "attribution_source": "hook-input",
+    }
+
+
+def _get_spike(agent: str, at: datetime) -> list[dict]:
+    """Three negative rows: patterns 1 and 5 both hold for `agent` over them."""
+    return [_get_outcome(agent, at + timedelta(minutes=m)) for m in range(3)]
+
+
+def _get_held_window(agent: str) -> list[dict]:
+    return _get_spike(agent, _WINDOWS.start.detection + _DAY) + _get_spike(
+        agent, _WINDOWS.start.confirmation + _DAY
+    )
+
+
+class _FakeLearningLog:
+    """core.learning_log stand-in with the writers' contracts: the upsert keeps a stored
+    'dormant'; the status writer moves only a row holding the other pair member."""
+
+    def __init__(self) -> None:
+        self.rows: dict[str, dict] = {}
+        self.upserts: list[dict] = []
+
+    def put_row(self, signature: str, status: str, transition_at: datetime | None = None) -> None:
+        self.rows[signature] = {
+            "id": len(self.rows) + 1, "frequency": 3, "status": status,
+            "last_transition_at": transition_at, "reason": None,
+        }
+
+    def read(self) -> dict:
+        out = {}
+        for signature, row in self.rows.items():
+            core, agent = signature.split("|", 1)
+            out[(core, agent)] = {**row, "approval_tier": "user-pending"}
+        return out
+
+    def upsert(self, **kwargs: object) -> None:
+        self.upserts.append(kwargs)
+        row = self.rows.get(kwargs["pattern_signature"])
+        if row is None:
+            self.put_row(kwargs["pattern_signature"], kwargs["status"])
+        elif row["status"] != "dormant":
+            row["status"] = kwargs["status"]
+
+    def put_status(self, pattern_id: int, status: str, reason: str) -> SimpleNamespace:
+        row = next(r for r in self.rows.values() if r["id"] == pattern_id)
+        if row["status"] == status or row["status"] not in ("identified", "dormant"):
+            return SimpleNamespace(outcome="not_matched", row_id=None)
+        row.update(status=status, reason=reason, last_transition_at=_NOW)
+        return SimpleNamespace(outcome="moved", row_id=pattern_id)
+
+    def get_status(self, signature: str) -> str:
+        return self.rows[signature]["status"]
+
+
+class _AggregatorRun(unittest.TestCase):
+    """main() over fake seams: batch and window outcome reads, floors, the learning log."""
+
+    def setUp(self) -> None:
+        self.log = _FakeLearningLog()
+        scratch = tempfile.TemporaryDirectory()
+        self.addCleanup(scratch.cleanup)
+        self.scratch = Path(scratch.name)
+        self.registry = self.scratch / "agent-registry.json"
+        roster = {"agents": {_PYTHON: {}, _SHELL: {}}}
+        self.registry.write_text(json.dumps(roster), encoding="utf-8")
+
+    def _run(self, *, batch: Iterable[dict] = (), window: list[dict] | None = None,
+             floors: dict[tuple[str, str], str | None] | None = None,
+             overages: Iterable[str] = ()) -> str:
+        floors = floors or {}
+        batch, overages = list(batch), list(overages)
+
+        def _read_floor(agent: str, metric_key: str, windows: object, evaluated_at: object):  # noqa: ANN202
+            verdict = floors.get((agent, metric_key), sig.VERDICT_FAIL)
+            return None if verdict is None else SimpleNamespace(verdict=verdict)
+
+        patches = {
+            "HAS_PG_DUALWRITE": True, "OUTCOMES_DIR": str(self.scratch),
+            "AUDIT_QUEUE_FILE": str(self.scratch / "audit-queue.txt"),
+            "AUDIT_QUEUE_PG_OFFSET_FILE": str(self.scratch / "audit-queue-pg-offset"),
+            "_get_utc_now": lambda: _NOW,
+            "_pg_read_aggregator_watermark": lambda name: 0.0,
+            "_pg_read_outcomes_since": lambda since: batch,
+            "_pg_read_outcome_window": lambda since: window,
+            "_pg_read_learning_log_signatures": self.log.read,
+            "_pg_upsert_learning_pattern": self.log.upsert,
+            "_pg_put_learning_pattern_status": self.log.put_status,
+            "_pg_read_pattern_floor": _read_floor,
+            "_pg_update_aggregator_state": lambda **kw: None,
+            "_pg_batch_complete": lambda summary: None,
+            "_pg_insert_audit_queue_rows": lambda rows: 0,
+            "_pg_insert_liveness_observation": lambda **kw: True,
+            "_read_budget_overages": lambda since: [{"agent_type": a} for a in overages],
+            "_read_size_est_pairs": lambda since: [],
+            "_read_size_est_window": lambda since: [] if window is not None else None,
+        }
+        for name, value in patches.items():
+            patcher = mock.patch.object(agg, name, value, create=True)
+            patcher.start()
+            self.addCleanup(patcher.stop)
+        stderr = io.StringIO()
+        with contextlib.redirect_stderr(stderr):
+            agg.main(registry_path=str(self.registry))
+        return stderr.getvalue()
+
+    def _get_keys(self) -> dict[str, object]:
+        return {u["pattern_signature"]: u.get("metric_key") for u in self.log.upserts}
+
+
+class TestAggregatorKeyedEmit(_AggregatorRun):
+    """A keyed pattern is written only when its S2f floor passes; discovery rows stay keyless."""
+
+    def test_a_keyed_row_is_emitted_only_when_its_floor_passes(self) -> None:
+        self._run(
+            batch=[_get_outcome(_PYTHON, _NOW, "done")],
+            window=[],
+            overages=[_PYTHON] * 3 + [_SHELL] * 3,
+            floors={(_PYTHON, sig.METRIC_BUDGET_OVERAGE): sig.VERDICT_PASS,
+                    (_SHELL, sig.METRIC_BUDGET_OVERAGE): sig.VERDICT_FAIL,
+                    (_SHELL, sig.METRIC_EMIT_FAILURE): sig.VERDICT_INSUFFICIENT_BASELINE},
+        )
+        self.assertEqual(self._get_keys(), {f"{_BUDGET_CORE}|{_PYTHON}": sig.METRIC_BUDGET_OVERAGE})
+
+    def test_each_family_row_carries_its_key_and_discovery_rows_none(self) -> None:
+        self._run(
+            batch=_get_spike(_PYTHON, _NOW - timedelta(hours=2)),
+            window=_get_held_window(_PYTHON),
+            floors={(_PYTHON, sig.METRIC_BUDGET_OVERAGE): sig.VERDICT_PASS,
+                    (_PYTHON, sig.METRIC_EMIT_FAILURE): sig.VERDICT_PASS},
+        )
+        self.assertEqual(self._get_keys(), {
+            f"{_PATTERN1_CORE}|{_PYTHON}": None,
+            f"{_PATTERN5_CORE}|{_PYTHON}": None,
+            f"{_BUDGET_CORE}|{_PYTHON}": sig.METRIC_BUDGET_OVERAGE,
+            f"{_EMIT_FAILURE_CORE}|{_PYTHON}": sig.METRIC_EMIT_FAILURE,
+        })
+
+
+class TestAggregatorPairStatus(_AggregatorRun):
+    """Every family row in the identified/dormant pair takes its status from the pair verdict."""
+
+    def test_a_keyless_row_emitted_in_one_batch_but_failing_its_pair_is_written_dormant(
+        self,
+    ) -> None:
+        self._run(batch=_get_spike(_PYTHON, _NOW - timedelta(hours=2)), window=[])
+        for core in (_PATTERN1_CORE, _PATTERN5_CORE):
+            row = self.log.rows[f"{core}|{_PYTHON}"]
+            self.assertEqual(row["status"], "dormant", core)
+            self.assertTrue(row["reason"].startswith(agg.PAIR_REASON_PREFIX), row["reason"])
+
+    def test_a_keyless_row_holding_its_rule_in_both_windows_stays_identified(self) -> None:
+        self._run(
+            batch=_get_spike(_PYTHON, _NOW - timedelta(hours=2)), window=_get_held_window(_PYTHON)
+        )
+        for core in (_PATTERN1_CORE, _PATTERN5_CORE):
+            self.assertEqual(self.log.get_status(f"{core}|{_PYTHON}"), "identified", core)
+
+    def test_a_dormant_row_returns_only_on_a_new_passing_pair(self) -> None:
+        detection = _WINDOWS.start.detection
+        rows = [
+            ("pair started before the transition", _PYTHON, detection + _DAY, "dormant"),
+            ("pair started after the transition", _SHELL, detection - _DAY, "identified"),
+        ]
+        for _, agent, transition_at, _ in rows:
+            self.log.put_row(f"{_PATTERN1_CORE}|{agent}", "dormant", transition_at)
+        self._run(window=_get_held_window(_PYTHON) + _get_held_window(_SHELL))
+        for name, agent, _, expected in rows:
+            self.assertEqual(self.log.get_status(f"{_PATTERN1_CORE}|{agent}"), expected, name)
+
+    def test_an_empty_batch_run_sweeps_rows_it_does_not_emit(self) -> None:
+        rows = [
+            ("legacy keyless row failing its pair", f"{_PATTERN5_CORE[:-1]} )|{_SHELL}", "dormant"),
+            ("keyless row holding its pair", f"{_PATTERN1_CORE}|{_PYTHON}", "identified"),
+            ("keyed row failing its floor", f"{_BUDGET_CORE}|{_SHELL}", "dormant"),
+            ("keyed row passing its floor", f"{_BUDGET_CORE}|{_PYTHON}", "identified"),
+            ("row of no aggregator family", f"hand-written pattern|{_SHELL}", "identified"),
+        ]
+        for _, signature, _ in rows:
+            self.log.put_row(signature, "identified")
+        self._run(window=_get_held_window(_PYTHON),
+                  floors={(_PYTHON, sig.METRIC_BUDGET_OVERAGE): sig.VERDICT_PASS})
+        for name, signature, expected in rows:
+            self.assertEqual(self.log.get_status(signature), expected, name)
+
+    def test_an_unreadable_window_or_floor_moves_no_row(self) -> None:
+        signatures = (f"{_PATTERN5_CORE}|{_SHELL}", f"{_BUDGET_CORE}|{_SHELL}")
+        for signature in signatures:
+            self.log.put_row(signature, "identified")
+        stderr = self._run(window=None, floors={(_SHELL, sig.METRIC_BUDGET_OVERAGE): None})
+        for signature in signatures:
+            self.assertEqual(self.log.get_status(signature), "identified", signature)
+        self.assertIn("no keyless pair verdict", stderr)
+
+
+@unittest.skipIf(pgdw is None, f"import failed: {_IMPORT_ERROR}")
+class TestOutcomeWindowReadFailure(unittest.TestCase):
+    """The window read reports an outage as None; the batch read keeps its empty fallback."""
+
+    def test_a_read_failure_is_none_for_the_window_and_empty_for_the_batch(self) -> None:
+        def _refuse(*_args: object, **_kwargs: object) -> None:
+            raise OSError("connection refused")
+
+        with mock.patch.object(pgdw, "psycopg", SimpleNamespace(connect=_refuse)), \
+                contextlib.redirect_stderr(io.StringIO()) as err:
+            self.assertIsNone(pgdw.read_outcome_window(0.0))
+            self.assertEqual(pgdw.read_outcomes_since(0.0), [])
+        self.assertIn('"op":"read_outcome_window"', err.getvalue())
+
+
 class _NonCommittingConn:
     """Hand the read an open transaction; its context exit neither commits nor closes."""
 
@@ -605,6 +845,37 @@ class TestPatternFloorReadLivePg(unittest.TestCase):
                 self.assertEqual(floor.confirmation, sig.WindowCount(0, 0, 0))
                 self.assertEqual(floor.unjoinable, 1)
                 self.assertEqual(floor.verdict, sig.VERDICT_FAIL)
+
+
+@unittest.skipIf(pgdw is None, f"import failed: {_IMPORT_ERROR}")
+class TestLearningLogSignatureReadLivePg(unittest.TestCase):
+    """The aggregator's stored-row read carries each row's id and last transition time."""
+
+    def setUp(self) -> None:
+        from _pg_seal import get_ephemeral_connection
+
+        self.conn = get_ephemeral_connection()
+        self.addCleanup(self.conn.close)
+        self.addCleanup(self.conn.rollback)
+        patcher = mock.patch.object(
+            pgdw, "psycopg", SimpleNamespace(connect=lambda *a, **k: _NonCommittingConn(self.conn))
+        )
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
+    def test_each_stored_row_reads_with_its_id_and_transition_time(self) -> None:
+        transition_at = datetime(2026, 9, 20, 4, 0, tzinfo=_UTC)
+        with self.conn.cursor() as cur:
+            cur.execute(
+                "INSERT INTO core.learning_log (discovered_date, pattern_signature, frequency, "
+                " agent, status, approval_tier, last_updated, last_transition_at) "
+                " VALUES ('2026-09-20', 'pair read probe|glass-atrium-dev-db', 4, "
+                " 'glass-atrium-dev-db', 'identified', 'user-pending', now(), %s) RETURNING id",
+                (transition_at,),
+            )
+            row_id = cur.fetchone()[0]
+        stored = pgdw.read_learning_log_signatures()[("pair read probe", "glass-atrium-dev-db")]
+        self.assertEqual((stored["id"], stored["last_transition_at"]), (row_id, transition_at))
 
 
 if __name__ == "__main__":

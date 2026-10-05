@@ -222,8 +222,9 @@ class _AggregatorRunFixture(unittest.TestCase):
     def _get_seal_patchers(self, module: ModuleType) -> tuple:
         """Patchers for the PG seams a run leaves unstubbed, so no run reaches a database.
 
-        The aggregator's own libpq-default reads return ``[]``, their degrade value; a
-        write records its name in ``pg_reach`` and raises (callers assert it empty).
+        The aggregator's own libpq-default reads return their degrade value (``[]``; ``None``
+        for the window and floor reads); a write records its name in ``pg_reach`` and raises
+        (callers assert it empty).
         """
 
         def _get_refusal(name: str):  # noqa: ANN202 — seam signatures differ
@@ -236,9 +237,18 @@ class _AggregatorRunFixture(unittest.TestCase):
         return (
             mock.patch.object(module, "_read_budget_overages", lambda since: []),
             mock.patch.object(module, "_read_size_est_pairs", lambda since: []),
+            mock.patch.object(module, "_read_size_est_window", lambda since: None),
+            mock.patch.object(module, "_pg_read_outcome_window", lambda since: None, create=True),
+            mock.patch.object(
+                module, "_pg_read_pattern_floor", lambda *args: None, create=True
+            ),
             *(
-                mock.patch.object(module, name, _get_refusal(name))
-                for name in ("_pg_insert_audit_queue_rows", "_pg_insert_liveness_observation")
+                mock.patch.object(module, name, _get_refusal(name), create=True)
+                for name in (
+                    "_pg_insert_audit_queue_rows",
+                    "_pg_insert_liveness_observation",
+                    "_pg_put_learning_pattern_status",
+                )
             ),
         )
 

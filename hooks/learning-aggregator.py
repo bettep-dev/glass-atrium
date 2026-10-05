@@ -12,8 +12,9 @@ import sys
 import tempfile
 import time
 from collections import defaultdict
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from typing import NamedTuple
 
 # Pin this hook's own dir on sys.path so the sibling ga_paths seam resolves under
 # any invocation (script or importlib). Unlike the fail-soft sibling imports below,
@@ -28,6 +29,16 @@ import ga_paths  # noqa: E402 — sys.path insert immediately above
 from _outcome_signal import (  # noqa: E402 — sys.path insert above
     negative_signal_hits as _negative_signal_hits,
     NEGATIVE_SIGNAL_NAMES as _NEGATIVE_SIGNAL_NAMES,
+    METRIC_BUDGET_OVERAGE,
+    METRIC_EMIT_FAILURE,
+    VERDICT_FAIL,
+    VERDICT_PASS,
+    FloorResult,
+    PairWindows,
+    get_pair_windows,
+    is_new_pair,
+    # the emit_failure metric's outcome leg — its batch rows are the pattern's frequency
+    _EMIT_FAILURE_ATTRIBUTIONS,
 )
 
 try:
@@ -48,6 +59,9 @@ try:
         read_outcomes_since as _pg_read_outcomes_since,
         insert_audit_queue_rows as _pg_insert_audit_queue_rows,
         insert_liveness_observation as _pg_insert_liveness_observation,
+        put_learning_pattern_status as _pg_put_learning_pattern_status,
+        read_outcome_window as _pg_read_outcome_window,
+        read_pattern_floor as _pg_read_pattern_floor,
         LivenessSinkMissing,
     )
     HAS_PG_DUALWRITE = True
@@ -138,13 +152,14 @@ RATE_FAILURE_FLOOR = 0.5
 # a null / cross-cutting agent_type has no agent file to patch and is dropped at
 # intake (_UNPREFIXABLE_AGENTS / _emit_xc).
 BUDGET_OVERAGE_LABEL = "budget-overage concentration"
-# Minimum same-agent_type overage count within one watermark window before a
-# cluster row is emitted — mirrors the established 3+ occurrence floor
-# (AUTO_FAILURE_THRESHOLD / RATE_MIN_SAMPLE), avoiding one-off noise. Single-batch
-# reachability limit (same as pattern-1's budget-truncation note): 1-2
-# overages/window never form a pattern; cross-window totals accrue via the
-# learning_log UPSERT frequency merge, not a lowered floor.
-BUDGET_OVERAGE_MIN_OCCURRENCE = 3
+# Spawns that ended without an agent-emitted [COMPLETION] (no SubagentStop, or a
+# recorder-synthesized outcome) — the emit discipline itself, per agent file.
+EMIT_FAILURE_LABEL = "emit-failure concentration"
+# Keyed families: emitted only on a passing S2f floor, never on a batch count.
+_KEYED_LABELS = {
+    BUDGET_OVERAGE_LABEL: METRIC_BUDGET_OVERAGE,
+    EMIT_FAILURE_LABEL: METRIC_EMIT_FAILURE,
+}
 
 # Pattern-8 (size-est under-estimate concentration) — the retrospective half of the
 # [SIZE-EST] attestation. track-outcome.sh records, on one body_md line, the MEASURED
@@ -183,6 +198,27 @@ PATTERN1_SOFT_LABEL = "recurring negative-signal concentration"
 # every other label derives its own signature unchanged (.get default = identity), so
 # pattern-5 ("agent instruction-improvement candidate …") and the legacy rows are untouched.
 _SIGNATURE_ANCHOR = {PATTERN1_SOFT_LABEL: PATTERN1_FAIL_LABEL}
+
+# Signature cores of the keyless discovery families (patterns 1, 2, 3, 5, 8; pattern 6 by
+# suffix) plus the legacy Korean pattern-1/5 labels. A stored row matching none is not
+# this aggregator's and keeps its status.
+_KEYLESS_FAMILY_PREFIXES = (
+    PATTERN1_FAIL_LABEL,
+    "동일 에이전트 반복 실패",
+    "high rework-request frequency (",
+    "metric_pass auto-judgment needs improvement",
+    "agent instruction-improvement candidate",
+    "에이전트 지침 개선 후보",
+    SIZE_EST_UNDER_LABEL,
+)
+_PATTERN6_SUFFIX = " type low success rate"
+# Statuses the pair verdict moves between; every other status keeps its value.
+_PAIR_STATUSES = frozenset({"identified", "dormant"})
+# Lead of every status reason this aggregator writes — the monitor buckets on it.
+PAIR_REASON_PREFIX = "aggregator-pair"
+# Window reads are `record_ts > since`; one second earlier keeps a row stamped exactly at
+# the detection start, and the exact bounds are re-applied in Python.
+_WINDOW_READ_MARGIN = timedelta(seconds=1)
 
 
 # Signature-residue guard (D-F4). _NUMERIC_RE strips a label's dynamic numeric but not the
@@ -754,20 +790,7 @@ def _read_size_est_pairs(since_epoch: float) -> list[dict]:
     if not HAS_PG_DUALWRITE:
         return []
     try:
-        import psycopg  # HAS_PG_DUALWRITE True guarantees this import succeeds
-    except ImportError:
-        return []
-    try:
-        with psycopg.connect(
-            "dbname=glass_atrium", connect_timeout=2, autocommit=True
-        ) as conn:
-            with conn.cursor() as cur:
-                cur.execute(
-                    "SELECT agent, body_md FROM core.outcomes "
-                    "WHERE record_ts > to_timestamp(%s) AND body_md LIKE %s",
-                    (since_epoch, f"%{TOOL_USE_BODY_PREFIX}%"),
-                )
-                return [{"agent": row[0], "body_md": row[1]} for row in cur.fetchall()]
+        return _fetch_size_est_pairs(since_epoch)
     except Exception as exc:  # noqa: BLE001 — read fallback is silent + safe
         print(
             f"[learning-aggregator] size-est actuals read failed, skip "
@@ -775,6 +798,37 @@ def _read_size_est_pairs(since_epoch: float) -> list[dict]:
             file=sys.stderr,
         )
         return []
+
+
+def _read_size_est_window(since_epoch: float) -> list[dict] | None:
+    """_read_size_est_pairs for a window judge — None on any failure, never an empty window."""
+    if not HAS_PG_DUALWRITE:
+        return None
+    try:
+        return _fetch_size_est_pairs(since_epoch)
+    except Exception as exc:  # noqa: BLE001 — every failure is an outage the caller fails closed on
+        print(
+            f"[learning-aggregator] size-est window read failed "
+            f"({type(exc).__name__}): {exc}",
+            file=sys.stderr,
+        )
+        return None
+
+
+def _fetch_size_est_pairs(since_epoch: float) -> list[dict]:
+    import psycopg  # HAS_PG_DUALWRITE True guarantees this import succeeds
+
+    with psycopg.connect("dbname=glass_atrium", connect_timeout=2, autocommit=True) as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                "SELECT agent, body_md, record_ts FROM core.outcomes "
+                "WHERE record_ts > to_timestamp(%s) AND body_md LIKE %s",
+                (since_epoch, f"%{TOOL_USE_BODY_PREFIX}%"),
+            )
+            return [
+                {"agent": row[0], "body_md": row[1], "record_ts": row[2]}
+                for row in cur.fetchall()
+            ]
 
 
 def _cluster_size_est_underestimates(rows: list[dict]) -> dict[str, dict[str, int]]:
@@ -826,6 +880,273 @@ def _load_registry_agents(path: str) -> frozenset[str] | None:
     return frozenset(agents)
 
 
+class _Emit(NamedTuple):
+    """One pattern a family rule raised: the learning-log entry's label, frequency text,
+    agent and count. Fleet-wide rows (patterns 2, 3, 6) skip the roster tally."""
+
+    label: str
+    freq: str
+    agent: str
+    count: int
+    is_fleet: bool = False
+
+
+class _OutcomeTally(NamedTuple):
+    negative: dict[str, int]  # rows tripping ANY negative-signal OR-term, per agent
+    hard_fail: dict[str, bool]  # agents with ≥ 1 actual result=fail among their negative rows
+    total: dict[str, int]
+    revisions: dict[str, list[int]]
+    metric_pass: dict[str, int]
+    task_results: dict[str, dict[str, int]]
+
+
+def _get_utc_now() -> datetime:
+    return datetime.now(timezone.utc)
+
+
+def _get_signature_core(pattern_label: str) -> str:
+    """Stable pattern_signature core: dynamic numerics stripped so repeated runs converge,
+    the residue normalized (D-F4), the pattern-1 display label anchored (P3a)."""
+    core = _normalize_signature_residue(_NUMERIC_RE.sub("", pattern_label)) or pattern_label
+    return _SIGNATURE_ANCHOR.get(core, core)
+
+
+def _get_outcome_tally(records: list[dict]) -> _OutcomeTally:
+    tally = _OutcomeTally(
+        defaultdict(int), defaultdict(bool), defaultdict(int), defaultdict(list),
+        {"true": 0, "false": 0}, defaultdict(lambda: {"done": 0, "total": 0}),
+    )
+    for data in records:
+        _add_outcome(tally, data)
+    return tally
+
+
+def _add_outcome(tally: _OutcomeTally, data: dict) -> None:
+    # canonical stem keys the per-agent counts — bare / prefixed / colon forms of one
+    # logical agent aggregate as ONE key
+    agent = _canonical_agent(data.get("agent", "unknown"))
+    result, task_type = data.get("result", ""), data.get("task_type", "")
+    tally.total[agent] += 1
+    # one row counts ONCE toward the agent trigger however many OR-terms it trips
+    hits = _negative_signal_hits(data)
+    if hits:
+        tally.negative[agent] += 1
+        tally.hard_fail[agent] |= "result=fail" in hits  # keeps pattern-1's verbatim label
+    metric_pass = data.get("metric_pass")
+    if metric_pass is not None:
+        is_pass = metric_pass is True or str(metric_pass).lower() == "true"
+        tally.metric_pass["true" if is_pass else "false"] += 1
+    if task_type and result:
+        tally.task_results[task_type]["total"] += 1
+        if result == "done":
+            tally.task_results[task_type]["done"] += 1
+    revision = data.get("revision_count", 0)
+    if revision:
+        try:
+            tally.revisions[task_type].append(int(revision))
+        except (ValueError, TypeError):
+            pass
+
+
+def _get_outcome_emits(records: list[dict]) -> list[_Emit]:
+    """Patterns 1, 5 (per agent) and 2, 3, 6 (fleet-wide) over included outcome records."""
+    tally = _get_outcome_tally(records)
+    return [*_get_agent_emits(tally), *_get_fleet_emits(tally)]
+
+
+def _get_agent_emits(tally: _OutcomeTally) -> list[_Emit]:
+    emits = []
+    # pattern 1: same agent tripping the negative-signal trigger 3+ times
+    for agent, count in tally.negative.items():
+        if count >= AUTO_FAILURE_THRESHOLD:
+            label = _pattern1_display_label(tally.hard_fail.get(agent, False))
+            emits.append(_Emit(label, str(count), agent, count))
+    # pattern 5: per-agent negative-signal rate (label kept verbatim — signature constraint)
+    for agent, negative in tally.negative.items():
+        total = tally.total.get(agent, 0)
+        if total >= RATE_MIN_SAMPLE and negative / total >= RATE_FAILURE_FLOOR:
+            rate = round(negative / total * 100)
+            label = f"agent instruction-improvement candidate (failure rate {rate}%)"
+            emits.append(_Emit(label, f"{negative}/{total}", agent, negative))
+    return emits
+
+
+def _get_fleet_emits(tally: _OutcomeTally) -> list[_Emit]:
+    """'전체' rows — _emit_xc blocks them (no agent file); the signal stays in the label."""
+    emits = []
+    for task_type, revs in tally.revisions.items():  # pattern 2: rework average 2+
+        if revs and sum(revs) / len(revs) >= 2:
+            avg = round(sum(revs) / len(revs), 1)
+            label = f"high rework-request frequency ({task_type}, avg {avg})"
+            emits.append(_Emit(label, str(len(revs)), "전체", len(revs), is_fleet=True))
+    mp_total = tally.metric_pass["true"] + tally.metric_pass["false"]
+    if mp_total > 0:  # pattern 3: metric_pass rate below 50%
+        mp_rate = round(tally.metric_pass["true"] / mp_total * 100, 1)
+        if mp_rate < 50:
+            label = f"metric_pass auto-judgment needs improvement ({mp_rate}%)"
+            emits.append(_Emit(label, str(mp_total), "전체", mp_total, is_fleet=True))
+    for task_type, counts in tally.task_results.items():  # pattern 6: success rate below 60%
+        total = counts["total"]
+        if total >= 3:
+            done_rate = round(counts["done"] / total * 100, 1)
+            if done_rate < 60:
+                label = f"{task_type} type low success rate ({done_rate}%)"
+                emits.append(_Emit(label, str(total), "전체", total, is_fleet=True))
+    return emits
+
+
+def _get_size_est_emits(stats: dict[str, dict[str, int]]) -> list[_Emit]:
+    """Pattern 8: an agent whose paired spawns overrun their declared [SIZE-EST]."""
+    emits = []
+    for agent, counts in stats.items():
+        under, paired, excess = counts["under"], counts["paired"], counts["excess"]
+        if under >= SIZE_EST_UNDER_MIN_OCCURRENCE and under / paired >= SIZE_EST_UNDER_RATE_FLOOR:
+            label = f"{SIZE_EST_UNDER_LABEL} (avg overrun +{round(excess / under)} tool_uses)"
+            emits.append(_Emit(label, f"{under}/{paired}", agent, under))
+    return emits
+
+
+def _cluster_emit_failures(records: list[dict]) -> dict[str, int]:
+    """Per-agent batch outcomes the recorder wrote for a spawn that emitted no
+    [COMPLETION] — the emit-failure pattern's frequency, never its gate."""
+    counts: dict[str, int] = defaultdict(int)
+    for row in records:
+        agent = _canonical_agent(row.get("agent"))
+        if agent in _UNPREFIXABLE_AGENTS:
+            continue
+        if (row.get("attribution_source") or "") in _EMIT_FAILURE_ATTRIBUTIONS:
+            counts[agent] += 1
+    return dict(counts)
+
+
+def _get_keyed_agents(
+    registry: frozenset[str] | None, stored: dict, contributions: dict[str, dict[str, int]]
+) -> set[str]:
+    """Agents whose floors this run reads: the roster, every keyed row the pair verdict can
+    move, and — with no roster to read — the agents of this batch's keyed events."""
+    agents = set(registry or ())
+    agents.update(
+        agent for (core, agent), row in stored.items()
+        if _get_signature_core(core) in _KEYED_LABELS and row.get("status") in _PAIR_STATUSES
+    )
+    if registry is None:
+        for counts in contributions.values():
+            agents.update(counts)
+    return agents
+
+
+def _get_keyed_floors(
+    agents: set[str], windows: PairWindows, evaluated_at: datetime
+) -> dict[tuple[str, str], FloorResult]:
+    """S2f floor per (keyed label, agent). A missing pair = no verdict this run (read
+    failure or phase timeout): nothing is emitted for it and its stored row keeps its status."""
+    floors: dict[tuple[str, str], FloorResult] = {}
+    _reset_phase_deadline()
+    for agent in sorted(agents):
+        for label, metric_key in _KEYED_LABELS.items():
+            if _phase_deadline_exceeded():
+                print(
+                    "[learning-aggregator] WARN: floor reads timed out — the remaining "
+                    "keyed rows get no pair verdict this run",
+                    file=sys.stderr,
+                )
+                return floors
+            floor = _pg_read_pattern_floor(agent, metric_key, windows, evaluated_at)
+            if floor is not None:
+                floors[(label, agent)] = floor
+    return floors
+
+
+def _get_keyed_emits(
+    floors: dict[tuple[str, str], FloorResult], contributions: dict[str, dict[str, int]]
+) -> list[_Emit]:
+    emits = []
+    for (label, agent), floor in sorted(floors.items()):
+        if floor.verdict == VERDICT_PASS:
+            count = contributions[label].get(agent, 0)
+            emits.append(_Emit(label, str(count), agent, count))
+    return emits
+
+
+def _get_keyless_pair_keys(windows: PairWindows) -> set[tuple[str, str]] | None:
+    """(signature core, agent) keys whose family emit rule holds in detection AND in
+    confirmation, over window rows — never a batch. None = a window read failed."""
+    since = (windows.start.detection - _WINDOW_READ_MARGIN).timestamp()
+    outcomes = _pg_read_outcome_window(since)
+    size_est = _read_size_est_window(since)
+    if outcomes is None or size_est is None:
+        return None
+    included = [row for row in outcomes if _should_include_outcome(row)[0]]
+    held = []
+    for start, end in (
+        (windows.start.detection, windows.start.confirmation),
+        (windows.start.confirmation, windows.end),
+    ):
+        emits = _get_outcome_emits(_get_rows_between(included, start, end))
+        size_est_stats = _cluster_size_est_underestimates(_get_rows_between(size_est, start, end))
+        emits += _get_size_est_emits(size_est_stats)
+        held.append({(_get_signature_core(e.label), e.agent) for e in emits})
+    return held[0] & held[1]
+
+
+def _get_rows_between(rows: list[dict], start: datetime, end: datetime) -> list[dict]:
+    return [r for r in rows if r.get("record_ts") is not None and start <= r["record_ts"] < end]
+
+
+def _is_keyless_family(core: str) -> bool:
+    return core.startswith(_KEYLESS_FAMILY_PREFIXES) or core.endswith(_PATTERN6_SUFFIX)
+
+
+def _get_pair_verdict(
+    core: str, agent: str, pair_keys: set[tuple[str, str]] | None,
+    floors: dict[tuple[str, str], FloorResult],
+) -> str | None:
+    """A stored row's pair verdict; None = not this aggregator's family, or no verdict this run."""
+    if core in _KEYED_LABELS:
+        floor = floors.get((core, agent))
+        return None if floor is None else floor.verdict
+    if pair_keys is None or not _is_keyless_family(core):
+        return None
+    return VERDICT_PASS if (core, agent) in pair_keys else VERDICT_FAIL
+
+
+def _get_pair_target(row: dict, verdict: str, windows: PairWindows) -> str | None:
+    """identified + a non-pass → dormant · dormant + a pass on a new pair (N59) → identified."""
+    if row.get("status") == "identified":
+        return None if verdict == VERDICT_PASS else "dormant"
+    transition_at = row.get("last_transition_at")
+    is_new = transition_at is None or is_new_pair(windows, transition_at)
+    return "identified" if verdict == VERDICT_PASS and is_new else None
+
+
+def _put_pair_statuses(
+    stored: dict, pair_keys: set[tuple[str, str]] | None,
+    floors: dict[tuple[str, str], FloorResult], windows: PairWindows,
+) -> None:
+    """Set every identified/dormant family row's status from its pair verdict, written or
+    not this run — a row the aggregator no longer emits leaves 'identified' too (39701 → E5)."""
+    moves: dict[str, int] = defaultdict(int)
+    detection = f"{windows.start.detection:%Y-%m-%d}"
+    for (stored_core, agent), row in stored.items():
+        if row.get("status") not in _PAIR_STATUSES:
+            continue
+        core = _get_signature_core(stored_core)
+        verdict = _get_pair_verdict(core, agent, pair_keys, floors)
+        target = None if verdict is None else _get_pair_target(row, verdict, windows)
+        if target is None:
+            continue
+        rule = f"{_KEYED_LABELS[core]} floor" if core in _KEYED_LABELS else "family emit rule"
+        reason = f"{PAIR_REASON_PREFIX} {verdict}: {rule}, pair from {detection}"
+        result = _pg_put_learning_pattern_status(row["id"], target, reason)
+        moves[f"{target}={result.outcome}"] += 1
+    if moves:
+        print(
+            "[learning-aggregator] pair status: "
+            + ", ".join(f"{name}:{n}" for name, n in sorted(moves.items())),
+            file=sys.stderr,
+        )
+
+
 def main(registry_path: str | None = None) -> None:
     """registry_path overrides the live AGENT_REGISTRY_FILE for the pattern-intake allowlist.
     None keeps the production default; a caller that must not depend on a live install injects
@@ -834,7 +1155,7 @@ def main(registry_path: str | None = None) -> None:
         return
 
     # Watermark + outcome discovery both from PG. Helper read failure → 0.0 / empty list (full
-    # scan / early-return); the aggregator never dies.
+    # scan / zero-record batch); the aggregator never dies.
     since = 0.0
     if HAS_PG_DUALWRITE:
         since = _pg_read_aggregator_watermark("learning-aggregator")
@@ -845,24 +1166,8 @@ def main(registry_path: str | None = None) -> None:
 
     # input-filter exclusion counts accumulated by the pattern-aggregation loop below
     exclusion_counts: dict[str, int] = defaultdict(int)
-    aggregated_count = 0
-
-    if not new_records:
-        _emit_exclusion_summary(aggregated_count, exclusion_counts)
-        # mirror any audit-queue appends into PG before the early return (fail-soft)
-        _sync_audit_queue_to_pg()
-        return
-
-    # pattern aggregation
-    agent_negative = defaultdict(int)  # rows tripping ANY negative-signal OR-term, per agent
-    # agents with >=1 actual result=fail among their negative rows → pattern-1 keeps the
-    # verbatim "repeated failure" DISPLAY label; soft-signal-only agents get the decoupled one.
-    agent_hard_fail: dict[str, bool] = defaultdict(bool)
-    agent_total = defaultdict(int)
-    task_revisions = defaultdict(list)
-    metric_pass_counts = {"true": 0, "false": 0}
+    included: list[dict] = []
     signal_counts: dict[str, int] = defaultdict(int)  # per-OR-term hits → dead-signal detector
-    task_type_results = defaultdict(lambda: {"done": 0, "total": 0})
 
     # watermark = MAX(record_ts) of processed records (data-progress point, not run time) → rerun
     # re-reads nothing (idempotent).
@@ -882,7 +1187,7 @@ def main(registry_path: str | None = None) -> None:
         # 'empty_lesson_only'/'cron_no_lesson' → count only (aggregation passes through)
         if reason in ("empty_lesson_only", "cron_no_lesson"):
             exclusion_counts[reason] += 1
-        aggregated_count += 1
+        included.append(data)
 
         # record_ts arrives monotonically increasing → last is the max
         rec_ts = data.get("record_ts")
@@ -891,45 +1196,9 @@ def main(registry_path: str | None = None) -> None:
                 max_record_epoch = max(max_record_epoch, rec_ts.timestamp())
             except (AttributeError, OSError):
                 pass
-
-        # canonical stem keys the per-agent counts + written patterns — bare /
-        # prefixed / colon forms of one logical agent must aggregate as ONE key
-        agent = _canonical_agent(data.get('agent', 'unknown'))
-        result = data.get('result', '')
-        task_type = data.get('task_type', '')
-        revision = data.get('revision_count', 0)
-
-        agent_total[agent] += 1
-        # negative-signal OR-terms (fail/blocked/done_with_concerns/verified_fail/
-        # review_flag/revision≥2/evaluative_signal=-1) — one row counts ONCE toward the
-        # agent trigger however many terms it trips; per-term counts feed the dead-signal WARN.
-        hits = _negative_signal_hits(data)
-        for hit in hits:
+        for hit in _negative_signal_hits(data):
             signal_counts[hit] += 1
-        if hits:
-            agent_negative[agent] += 1
-            # "result=fail" is the actual-failure OR-term name — its presence keeps
-            # pattern-1's verbatim "repeated failure" label (P3a decouple condition).
-            if "result=fail" in hits:
-                agent_hard_fail[agent] = True
-
-        metric_pass = data.get('metric_pass')
-        if metric_pass is not None:
-            if metric_pass is True or str(metric_pass).lower() == 'true':
-                metric_pass_counts["true"] += 1
-            else:
-                metric_pass_counts["false"] += 1
-
-        if task_type and result:
-            task_type_results[task_type]["total"] += 1
-            if result == 'done':
-                task_type_results[task_type]["done"] += 1
-
-        if revision:
-            try:
-                task_revisions[task_type].append(int(revision))
-            except (ValueError, TypeError):
-                pass
+    aggregated_count = len(included)
 
     # dead-signal detector — emit BEFORE pattern extraction so a starved trigger
     # is visible even on runs that produce zero entries.
@@ -939,9 +1208,10 @@ def main(registry_path: str | None = None) -> None:
     today = datetime.now().strftime("%Y-%m-%d")
     entries = []
 
-    # Roster allowlist for every agent-keyed pattern write (1/5/7) — fail-open loader, so an
-    # unreadable/malformed registry skips validation rather than dropping real patterns. _canonical_agent output and registry keys share the
-    # glass-atrium-<stem> form, so membership is a direct lookup.
+    # Roster allowlist for every agent-keyed pattern write — fail-open loader, so an
+    # unreadable/malformed registry skips validation rather than dropping real patterns.
+    # _canonical_agent output and registry keys share the glass-atrium-<stem> form, so
+    # membership is a direct lookup.
     registry = _load_registry_agents(registry_path or AGENT_REGISTRY_FILE)
     if registry is None:
         print(
@@ -951,82 +1221,43 @@ def main(registry_path: str | None = None) -> None:
         )
     emit_skips: dict[str, int] = defaultdict(int)
 
-    def emit_agent_pattern(entry: str, agent_label: str) -> None:
-        """Agent-keyed emit — routes patterns 1/5/7 through the one intake gate, tallying
-        drops so a filtered pattern stays visible as a run total, never a silent loss."""
-        reason = _emit_xc(entries, entry, agent_label, registry)
+    # Every run reads the pair windows, an empty batch included: the floor and the family
+    # rules read windows, so a row's verdict never waits for its agent's next batch.
+    stored: dict = _pg_read_learning_log_signatures() if HAS_PG_DUALWRITE else {}
+    evaluated_at = _get_utc_now()
+    windows = get_pair_windows(evaluated_at)
+    # Batch-side reads windowed by `since` so each overage / measurement counts once across
+    # runs; skipped on an empty batch, whose watermark does not advance.
+    overage_rows = _read_budget_overages(since) if new_records else []
+    size_est_rows = _read_size_est_pairs(since) if new_records else []
+    contributions = {
+        BUDGET_OVERAGE_LABEL: _cluster_budget_overages(overage_rows),
+        EMIT_FAILURE_LABEL: _cluster_emit_failures(included),
+    }
+    floors: dict[tuple[str, str], FloorResult] = {}
+    if HAS_PG_DUALWRITE:
+        floors = _get_keyed_floors(
+            _get_keyed_agents(registry, stored, contributions), windows, evaluated_at
+        )
+
+    # Patterns 7 and the emit-failure pattern are keyed (floor-gated); pattern 8 pairs the
+    # measured tool_use count against the declared [SIZE-EST] on one outcome row. The
+    # ORCHESTRATOR sizing failure mode is handled statically by the P4 calibration line,
+    # never through this per-agent loop (D4 routing split).
+    emits = [
+        *_get_outcome_emits(included),
+        *_get_keyed_emits(floors, contributions),
+        *_get_size_est_emits(_cluster_size_est_underestimates(size_est_rows)),
+    ]
+    for emit in emits:
+        entry = _build_entry(today, emit.label, emit.freq, emit.agent, emit.count)
+        if emit.is_fleet:
+            _emit_xc(entries, entry, emit.agent)
+            continue
+        # one intake gate for agent-keyed patterns; drops tallied, never a silent loss
+        reason = _emit_xc(entries, entry, emit.agent, registry)
         if reason:
             emit_skips[reason] += 1
-
-    # pattern 1: same agent tripping the negative-signal trigger 3+ times. The DISPLAY
-    # label is decoupled (P3a) — an actual result=fail keeps the verbatim
-    # PATTERN1_FAIL_LABEL, a soft-signal-only concentration gets the accurate
-    # PATTERN1_SOFT_LABEL. Both anchor to the SAME pattern_signature core via
-    # _SIGNATURE_ANCHOR in the upsert below, so pattern_signature derivation, the daemon
-    # _FAIL_COUNT_LABEL_PREFIXES staleness match, and accumulated learning_log rows are
-    # all preserved regardless of which label is shown.
-    for agent, count in agent_negative.items():
-        if count >= AUTO_FAILURE_THRESHOLD:
-            label = _pattern1_display_label(agent_hard_fail.get(agent, False))
-            emit_agent_pattern(_build_entry(today, label, str(count), agent, count), agent)
-
-    # pattern 2: revision_count average 2+. '전체' is in NOT_PATCHABLE_AGENTS so _emit_xc blocks it
-    # (no agent file to patch); the task_type signal is preserved in the label.
-    for task_type, revs in task_revisions.items():
-        if revs and sum(revs) / len(revs) >= 2:
-            avg = round(sum(revs) / len(revs), 1)
-            _emit_xc(entries, _build_entry(today, f"high rework-request frequency ({task_type}, avg {avg})", str(len(revs)), "전체", len(revs)), "전체")
-
-    # pattern 3: metric_pass rate below 50% ('전체' → blocked by _emit_xc, same as pattern 2)
-    mp_total = metric_pass_counts["true"] + metric_pass_counts["false"]
-    if mp_total > 0:
-        mp_rate = round(metric_pass_counts["true"] / mp_total * 100, 1)
-        if mp_rate < 50:
-            _emit_xc(entries, _build_entry(today, f"metric_pass auto-judgment needs improvement ({mp_rate}%)", str(mp_total), "전체", mp_total), "전체")
-
-    # pattern 5: per-agent negative-signal concentration (label kept verbatim —
-    # same signature/prefix constraint as pattern 1).
-    for agent, negative in agent_negative.items():
-        total = agent_total.get(agent, 0)
-        if total >= RATE_MIN_SAMPLE and negative / total >= RATE_FAILURE_FLOOR:
-            emit_agent_pattern(_build_entry(today, f"agent instruction-improvement candidate (failure rate {round(negative/total*100)}%)", f"{negative}/{total}", agent, negative), agent)
-
-    # pattern 6: per-task_type success rate ('전체' → blocked by _emit_xc, same as pattern 2)
-    for task_type, counts in task_type_results.items():
-        total = counts["total"]
-        if total >= 3:
-            done_rate = round(counts["done"] / total * 100, 1)
-            if done_rate < 60:
-                _emit_xc(entries, _build_entry(today, f"{task_type} type low success rate ({done_rate}%)", str(total), "전체", total), "전체")
-
-    # pattern 7: per-agent_type budget-overage concentration. Clusters the
-    # best-effort core.budget_overages rows (written at soft-budget crossings) into
-    # a per-agent_type instruction-improvement candidate targeting the AGENT FILE's
-    # emit discipline. Read is windowed by `since` (the run's entry watermark), so
-    # each overage counts once across runs; _emit_xc intake-gates cross-cutting
-    # agents. The ORCHESTRATOR sizing failure mode is handled statically by the P4
-    # calibration line, NOT through this loop (D4 routing split).
-    overage_counts = _cluster_budget_overages(_read_budget_overages(since))
-    for agent, overages in overage_counts.items():
-        if overages >= BUDGET_OVERAGE_MIN_OCCURRENCE:
-            emit_agent_pattern(
-                _build_entry(today, BUDGET_OVERAGE_LABEL, str(overages), agent, overages),
-                agent,
-            )
-
-    # pattern 8: per-agent [SIZE-EST] under-estimate concentration. Pairs the measured
-    # tool_use count against the declared estimate on the same outcome row, so no CID join
-    # is needed — both sides are recorded by one hook on one row. Windowed by `since` like
-    # pattern 7. Rows measured with nothing declared never reach the rate (they are dropped
-    # at clustering), so an install that declares no estimates emits nothing at all.
-    size_est_stats = _cluster_size_est_underestimates(_read_size_est_pairs(since))
-    for agent, stats in size_est_stats.items():
-        under, paired, excess = stats["under"], stats["paired"], stats["excess"]
-        if under >= SIZE_EST_UNDER_MIN_OCCURRENCE and under / paired >= SIZE_EST_UNDER_RATE_FLOOR:
-            label = f"{SIZE_EST_UNDER_LABEL} (avg overrun +{round(excess / under)} tool_uses)"
-            emit_agent_pattern(
-                _build_entry(today, label, f"{under}/{paired}", agent, under), agent
-            )
 
     # Outside the `if entries:` block on purpose — a run whose every pattern was gated still
     # reports the drop total, so the filtered signal never disappears with the rows.
@@ -1041,9 +1272,7 @@ def main(registry_path: str | None = None) -> None:
     # _pg_read_learning_log_signatures returns the same (pat_core, agent) key, so dedup is symmetric:
     # on match accumulate frequency + reclassify tier, on miss insert fresh.
     if entries:
-        existing_by_key: dict = {}
-        if HAS_PG_DUALWRITE:
-            existing_by_key = _pg_read_learning_log_signatures()
+        existing_by_key = stored
 
         new_count = 0
         updated_count = 0
@@ -1064,13 +1293,7 @@ def main(registry_path: str | None = None) -> None:
                 # strip dynamic numerics so repeated runs converge on the same signature,
                 # then normalize the residue so the dedup core is not forked by an orphan
                 # '(failure rate )' remnant the strip leaves (D-F4).
-                pat_core = _normalize_signature_residue(_NUMERIC_RE.sub('', pattern_label))
-                if not pat_core:
-                    pat_core = pattern_label
-                # P3a DISPLAY-only decouple: a decoupled soft label re-anchors to its
-                # stable signature core, keeping the daemon _FAIL_COUNT prefix + the
-                # existing learning_log row identity intact (no orphan, no fail-open).
-                pat_core = _SIGNATURE_ANCHOR.get(pat_core, pat_core)
+                pat_core = _get_signature_core(pattern_label)
                 signature = f"{pat_core}|{agent_label}"
 
                 freq_match = re.search(r'\d+', freq_str)  # "10/16" → 10, "23" → 23
@@ -1102,6 +1325,7 @@ def main(registry_path: str | None = None) -> None:
                         agent=agent_label[:64] if agent_label else None,
                         status=status_label if status_label in ("identified", "proposed", "approved", "applied", "rejected") else "identified",
                         approval_tier=merged_tier,
+                        metric_key=_KEYED_LABELS.get(pat_core),
                     )
                 except ValueError as ve:  # state-machine regression OR input validation
                     print(
@@ -1120,7 +1344,21 @@ def main(registry_path: str | None = None) -> None:
                 file=sys.stderr,
             )
 
+    if HAS_PG_DUALWRITE:
+        pair_keys = _get_keyless_pair_keys(windows)
+        if pair_keys is None:
+            print(
+                "[learning-aggregator] WARN: no keyless pair verdict this run — a window "
+                "read failed; keyless rows keep their status",
+                file=sys.stderr,
+            )
+        _put_pair_statuses(_pg_read_learning_log_signatures(), pair_keys, floors, windows)
+
     _emit_exclusion_summary(aggregated_count, exclusion_counts)
+    if not new_records:
+        # mirror any audit-queue appends into PG; an empty batch leaves the watermark alone
+        _sync_audit_queue_to_pg()
+        return
 
     # watermark = MAX(record_ts) of the processed batch (data-progress point, not run time → no
     # duplicate re-processing on rerun). Fallback when all records lack timestamps → time.time().
