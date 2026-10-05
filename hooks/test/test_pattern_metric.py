@@ -482,14 +482,14 @@ class TestTasks(unittest.TestCase):
     def _get_task_spawns(self, first_at: datetime) -> list[sig.SpawnFacts]:
         """A floor-half first spawn stopped 50 min after `first_at`, then a reference-half
         continuation in the same session 5 min after that stop, which records the overage."""
-        first_id = _get_agent_ids("task-first", 1, is_floor=True)[0]
-        continuation_id = _get_agent_ids("task-cont", 1, is_floor=False)[0]
+        first = _get_agent_ids("task-first", 1, is_floor=True)[0]
+        continuation = _get_agent_ids("task-cont", 1, is_floor=False)[0]
         stopped_at = first_at + 50 * _MINUTE
         continuation_at = stopped_at + 5 * _MINUTE
         return [
-            _get_spawn(first_id, first_at, session_id="t", stopped_at=stopped_at),
+            _get_spawn(first, first_at, session_id="t", stopped_at=stopped_at),
             _get_spawn(
-                continuation_id, continuation_at, session_id="t", overage_rows=1,
+                continuation, continuation_at, session_id="t", overage_rows=1,
                 stopped_at=continuation_at + 30 * _MINUTE,
             ),
         ]
@@ -544,6 +544,28 @@ class TestTasks(unittest.TestCase):
                 expected = [(prior, later)] if is_continuation else [(prior,), (later,)]
                 self.assertEqual(sig.get_tasks([later, prior], self._WINDOW), expected)
                 self.assertEqual(sig.get_tasks([later, prior], timedelta(0)), [(prior,), (later,)])
+
+    def test_a_continuation_joins_the_qualifying_task_whose_last_member_stopped_latest(
+        self,
+    ) -> None:
+        """The joined task decides which arm the continuation's overage counts in. Three open
+        tasks stop in another order than they were created → earliest-stopped, first-created
+        and last-created each pick a task other than the latest-stopped one."""
+        started_at = _NOW - _DAY
+        opened = [
+            _get_spawn(
+                agent_id, started_at + start * _MINUTE, session_id="t",
+                stopped_at=started_at + stop * _MINUTE,
+            )
+            for agent_id, start, stop in (
+                ("stops-mid", 0, 40), ("stops-last", 5, 50), ("stops-first", 10, 30)
+            )
+        ]
+        later = _get_spawn("later", started_at + 55 * _MINUTE, session_id="t")
+        self.assertEqual(
+            sig.get_tasks([later, *opened], self._WINDOW),
+            [(opened[0],), (opened[1], later), (opened[2],)],
+        )
 
     def test_a_task_overruns_on_a_member_overage_or_combined_tool_use_reaching_a_budget(
         self,
