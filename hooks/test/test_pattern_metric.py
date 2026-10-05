@@ -414,27 +414,36 @@ class TestOccurrenceFloor(unittest.TestCase):
 
 class TestPendingGrace(unittest.TestCase):
     """A spawn with no SubagentStop yet, started inside the grace before the evaluation instant,
-    may still be running → pending: counted on no side, reported apart."""
+    may still be running → pending under either metric key: counted on no side, reported apart."""
 
     def test_a_stopless_spawn_inside_the_grace_is_pending_and_an_older_one_is_an_event(self) -> None:
         windows = sig.get_pair_windows(_NOW)
         evaluated_at = windows.end + timedelta(hours=2)
         passing = _get_passing_spawns(windows)
-        before = _get_floor(passing, windows, metric_key="emit_failure", evaluated_at=evaluated_at)
         rows = [
-            ("no SubagentStop, 5 h old → pending", timedelta(hours=5), False, (0, 0, 1)),
-            ("no SubagentStop, exactly 6 h old → an event", timedelta(hours=6), False, (1, 1, 0)),
-            ("no SubagentStop, 7 h old → an event", timedelta(hours=7), False, (1, 1, 0)),
-            ("SubagentStop, 5 h old → counted, no event", timedelta(hours=5), True, (1, 0, 0)),
+            ("emit_failure, no SubagentStop, 5 h old → pending",
+             "emit_failure", timedelta(hours=5), False, 0, (0, 0, 1)),
+            ("emit_failure, no SubagentStop, exactly 6 h old → an event",
+             "emit_failure", timedelta(hours=6), False, 0, (1, 1, 0)),
+            ("emit_failure, no SubagentStop, 7 h old → an event",
+             "emit_failure", timedelta(hours=7), False, 0, (1, 1, 0)),
+            ("emit_failure, SubagentStop, 5 h old → counted, no event",
+             "emit_failure", timedelta(hours=5), True, 0, (1, 0, 0)),
+            ("budget_overage, no SubagentStop, overage row, 5 h old → pending",
+             "budget_overage", timedelta(hours=5), False, 1, (0, 0, 1)),
+            ("budget_overage, no SubagentStop, overage row, 7 h old → an event",
+             "budget_overage", timedelta(hours=7), False, 1, (1, 1, 0)),
         ]
         agent_id = _get_agent_ids("grace", 1, is_floor=True)[0]
-        for name, age, has_stop, (spawns, events, pending) in rows:
+        for name, metric_key, age, has_stop, overage_rows, (spawns, events, pending) in rows:
             with self.subTest(name):
                 spawn = _get_spawn(
-                    agent_id, evaluated_at - age, session_id="g", has_subagent_stop=has_stop
+                    agent_id, evaluated_at - age, session_id="g", has_subagent_stop=has_stop,
+                    overage_rows=overage_rows,
                 )
+                before = _get_floor(passing, windows, metric_key=metric_key, evaluated_at=evaluated_at)
                 floor = _get_floor(
-                    [*passing, spawn], windows, metric_key="emit_failure", evaluated_at=evaluated_at
+                    [*passing, spawn], windows, metric_key=metric_key, evaluated_at=evaluated_at
                 )
                 count = before.confirmation
                 self.assertEqual(
