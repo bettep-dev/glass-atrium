@@ -1941,113 +1941,6 @@ def _coerce_revision_count(raw: object) -> int:
         return 0
 
 
-# -- AD-10 Pareto variant retention (Solution History, GEPA precedent) -------
-
-# GEPA min-occurrence floor per (agent, task_type) cell — a cell with fewer
-# attempts than this carries insufficient evidence to retain any winner.
-SOLUTION_HISTORY_MIN_OCCURRENCE = 5
-
-
-@dataclass(frozen=True)
-class SolutionAttempt:
-    """One instruction-improvement attempt in Solution History.
-
-    OPRO 3-tuple (score / applied_date + the instruction cell) plus the
-    caller-supplied directive_hint. `score` is a 1-5 scalar; `applied_date` is
-    an ISO 'YYYY-MM-DD' string (lexical order == chronological).
-    """
-
-    agent: str
-    task_type: str
-    score: float
-    applied_date: str
-    directive_hint: str = ""
-
-
-def _solution_dominates(a: SolutionAttempt, b: SolutionAttempt) -> bool:
-    """Pareto domination over (score, recency).
-
-    `a` dominates `b` iff `a` is >= on BOTH objectives (higher score, newer
-    date) AND strictly greater on at least one. Ties are non-dominating, so
-    equally-good variants are BOTH retained — the diversity AD-10 preserves.
-    """
-    at_least = a.score >= b.score and a.applied_date >= b.applied_date
-    strictly = a.score > b.score or a.applied_date > b.applied_date
-    return at_least and strictly
-
-
-def retain_pareto_winners(
-    attempts: list[SolutionAttempt],
-    *,
-    min_occurrence: int = SOLUTION_HISTORY_MIN_OCCURRENCE,
-) -> dict[tuple[str, str], list[SolutionAttempt]]:
-    """Retain the per-(agent, task_type) Pareto-nondominated winner set.
-
-    AD-10 (GEPA): Solution History keeps MULTIPLE winners per cell — the
-    non-dominated frontier over (score, recency) — NOT a single scalar-best, so a
-    newer-but-lower-score variant survives alongside an older-but-higher one. A
-    cell is retained ONLY when it has >= `min_occurrence` attempts (GEPA
-    min-occurrence floor); thinner cells are dropped.
-
-    Returns dict[(agent, task_type)] -> winners, each list sorted score-desc then
-    date-desc (deterministic).
-    """
-    if min_occurrence < 1:
-        raise ValueError(f"min_occurrence must be >= 1, got {min_occurrence}")
-
-    cells: dict[tuple[str, str], list[SolutionAttempt]] = defaultdict(list)
-    for attempt in attempts:
-        cells[(attempt.agent, attempt.task_type)].append(attempt)
-
-    winners: dict[tuple[str, str], list[SolutionAttempt]] = {}
-    for cell_key, cell_attempts in cells.items():
-        if len(cell_attempts) < min_occurrence:
-            continue  # GEPA min-occurrence: insufficient evidence → drop cell
-        frontier = [
-            attempt
-            for attempt in cell_attempts
-            if not any(
-                _solution_dominates(other, attempt)
-                for other in cell_attempts
-                if other is not attempt
-            )
-        ]
-        # Stable-chain sort: date-desc first, then score-desc (score primary).
-        frontier.sort(key=lambda a: a.applied_date, reverse=True)
-        frontier.sort(key=lambda a: a.score, reverse=True)
-        winners[cell_key] = frontier
-    return winners
-
-
-def solution_attempt_from_outcome(
-    outcome: Outcome,
-    applied_date: str,
-    *,
-    directive_hint: str = "",
-) -> SolutionAttempt:
-    """Bridge an Outcome record into a SolutionAttempt (score from polarity).
-
-    Score derivation mirrors the loop's existing polarity signals: a passing
-    metric is the base, a user correction (evaluative_signal == -1 or a
-    revision) pulls it down, explicit praise (+1) lifts it. directive_hint is
-    passed in because it is not carried on the Outcome dataclass.
-    """
-    metric_true = str(outcome.metric_pass).strip().lower() == "true"
-    base = 4.0 if metric_true else 2.0
-    if outcome.evaluative_signal == 1:
-        base += 1.0
-    elif outcome.evaluative_signal == -1 or outcome.revision_count >= 2:
-        base -= 1.0
-    score = max(1.0, min(5.0, base))
-    return SolutionAttempt(
-        agent=outcome.agent,
-        task_type=outcome.task_type,
-        score=score,
-        applied_date=applied_date,
-        directive_hint=directive_hint,
-    )
-
-
 @dataclass(frozen=True)
 class PatchProposal:
     """Haiku output describing a proposed edit to a single agent .md file."""
@@ -2232,14 +2125,6 @@ class CycleReport:
     cycle_status: str = "ok"
     # None = the ingest did not run (no-write mode).
     manifest_ingest: ManifestIngest | None = None
-    # AD-10 Solution History: the per-(agent, task_type) Pareto winner frontier
-    # retained THIS cycle (retain_pareto_winners over the generation outcomes).
-    # In-memory only — tuple keys are not JSON-serializable, so _report_to_dict
-    # emits a serializable count summary rather than this dict. Feeds the next
-    # reflective-mutation cycle once a durable cross-cycle store lands (deferred).
-    solution_winners: dict[tuple[str, str], list[SolutionAttempt]] = field(
-        default_factory=dict
-    )
     # check_pattern_power's verdict → count; every verdict present, zero included.
     power_check: dict[str, int] = field(default_factory=lambda: _get_power_counts())
 
@@ -6576,14 +6461,6 @@ def _report_to_dict(report: CycleReport) -> dict:
             asdict(report.manifest_ingest) if report.manifest_ingest is not None else None
         ),
         "power_check": report.power_check,
-        # AD-10 Solution History runtime observability — tuple-keyed
-        # solution_winners is not JSON-serializable, so emit its count summary.
-        "solution_history": {
-            "cells_retained": len(report.solution_winners),
-            "winners_retained": sum(
-                len(v) for v in report.solution_winners.values()
-            ),
-        },
     }
 
 
@@ -11351,7 +11228,6 @@ def run_cycle(
             emit_corpus_audit(corpus_signal, report.cycle_date)
 
     if IS_GENERATION_CLOSED:
-        solution_attempts: list[SolutionAttempt] = []
         if skip_loop_emit:
             sys.stderr.write(
                 "[daemon-cycle] INFO: generation-closed terminalization skipped — "
@@ -11367,7 +11243,7 @@ def run_cycle(
                     f"{str(exc)[:160]}\n"
                 )
     else:
-        solution_attempts = _run_generation_loop(
+        _run_generation_loop(
             report,
             agent_groups,
             regression_gate,
@@ -11451,28 +11327,6 @@ def run_cycle(
                 f"{type(exc).__name__}: {str(exc)[:160]}\n"
             )
 
-    # AD-10 Solution History Pareto retention — prune this cycle's accumulated
-    # attempts to the per-(agent, task_type) non-dominated frontier (GEPA
-    # min-occurrence 5 floor). Runs unconditionally (pure computation, no PG
-    # write) so the AC is observable even on skip_loop_emit/skip_haiku preflight.
-    #
-    # DEFERRAL NOTE (AD-10 durable store): Solution History is designed as a
-    # cross-cycle accumulation feeding the next optimizer's OPRO context. That
-    # persistence layer does not exist yet — a within-cycle window shares one
-    # applied_date, so the recency objective is constant and cells rarely reach
-    # the 5+ floor. This wiring makes retention run + observable at runtime
-    # (report.solution_winners + the serialized count); durable persistence of the
-    # frontier across cycles is the follow-up once the store lands.
-    report.solution_winners = retain_pareto_winners(solution_attempts)
-    if report.solution_winners:
-        winner_total = sum(len(v) for v in report.solution_winners.values())
-        sys.stderr.write(
-            "[daemon-cycle] INFO: Solution History Pareto retention — "
-            f"{len(report.solution_winners)} cell(s), {winner_total} winner(s) "
-            f"retained from {len(solution_attempts)} attempt(s) "
-            f"(min-occurrence {SOLUTION_HISTORY_MIN_OCCURRENCE})\n"
-        )
-
     # Derive the cost-guard state from the aggregate per-patch failure classes so
     # the serialized cost_guard carries an explicit 'state' (_pg_push reads it as
     # explicit_state). An auth-failure night → 'infra_fault' (NOT a spending warn).
@@ -11492,18 +11346,14 @@ def _run_generation_loop(
     skip_haiku: bool,
     skip_pre_verify: bool,
     skip_loop_emit: bool,
-) -> list[SolutionAttempt]:
+) -> None:
     """Per-agent generation loop — gates, outcomes, one routed row per agent.
 
     Reached only once IS_GENERATION_CLOSED is lifted.
-    Appends each row to ``report.patches``; returns the cycle's Solution History
-    attempts. The promotion tier is a label only and
+    Appends each row to ``report.patches``. The promotion tier is a label only and
     resolve_floor_terminalization terminalizes every auto candidate.
     """
     seen_targets: set[str] = set()
-    # AD-10 Solution History accumulator — one SolutionAttempt per generation
-    # outcome, pruned to the Pareto frontier after the loop (retain_pareto_winners).
-    solution_attempts: list[SolutionAttempt] = []
     for agent, agent_patterns in agent_groups:
         # Anti-fossil lifecycle gates — BEFORE any outcome fetch / Haiku spend.
         # All five gates write PG (learning_log transition + skip loop events),
@@ -11548,16 +11398,6 @@ def _run_generation_loop(
             day_bounds=gen_day_bounds,
             outcomes_dir=outcomes_dir,
         )
-        # AD-10 Solution History: bridge each generation outcome into a
-        # SolutionAttempt (OPRO 3-tuple). applied_date is the
-        # cycle day — the outcomes share the generation window, so recency is a
-        # per-cycle constant here; cross-cycle recency spread arrives with the
-        # durable store (deferred, see below). directive_hint is not on the
-        # Outcome dataclass, so it defaults empty.
-        solution_attempts.extend(
-            solution_attempt_from_outcome(outcome, report.cycle_date)
-            for outcome in outcomes
-        )
         report.patches.append(
             build_patch_result(
                 agent,
@@ -11571,7 +11411,6 @@ def _run_generation_loop(
                 skip_loop_emit=skip_loop_emit,
             )
         )
-    return solution_attempts
 
 
 def build_patch_result(

@@ -224,9 +224,8 @@ class TestKeylessRowNeverReachesGeneration(unittest.TestCase):
         ]
         handed: list[int] = []
 
-        def run_generation(_report, agent_groups, *_args, **_kwargs) -> list:
+        def run_generation(_report, agent_groups, *_args, **_kwargs) -> None:
             handed.extend(p.row_id for _, group in agent_groups for p in group)
-            return []
 
         # After the seal: each replaces one seam the seal already covers.
         for name, value in (

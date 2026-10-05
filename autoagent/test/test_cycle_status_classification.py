@@ -20,6 +20,8 @@ classification (a gate verdict, never `unadjudicated`), `pending` otherwise. The
 patch's pattern link and generator-input version reach the envelope as the patch
 carries them, and an absent one is sent as None.
 
+The report file the cycle writes for that writer carries no Solution History key.
+
 Run with either runner:
     python3 -m unittest autoagent.test.test_cycle_status_classification -v
     uv run --python 3.13 --with pytest pytest \\
@@ -239,6 +241,23 @@ class ProposalStatusSent(unittest.TestCase):
         )
         (patch,) = dc._report_to_dict(report)["patches"]
         return patch
+
+
+@unittest.skipIf(dc is None, f"import failed: {_IMPORT_ERROR}")
+class CycleReportJson(unittest.TestCase):
+    def test_the_written_report_carries_no_solution_history(self) -> None:
+        report = dc.CycleReport(
+            cycle_date="2026-10-03",
+            generated_at="2026-10-03T02:00:00.000Z",
+            patterns_processed=0,
+            cost_guard={},
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            out = Path(tmp) / "autoagent-2026-10-03.json"
+            dc.emit_report(report, out)
+            written = json.loads(out.read_text(encoding="utf-8"))
+        self.assertEqual(written["cycle_date"], "2026-10-03")
+        self.assertNotIn("solution_history", written)
 
 
 if __name__ == "__main__":

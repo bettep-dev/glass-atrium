@@ -1,15 +1,10 @@
 #!/usr/bin/env python3
-# AD-9 evaluator independence + AD-10 Pareto variant retention regressions.
+# AD-9 evaluator independence regressions.
 #
 # AD-9 (CALM self-preference precedent): the pre-verify verifier model class
 # should differ from the proposal-author class where feasible; when infeasible
 # (same class) the run proceeds under a loud advisory, never blocking.
 # AC: verifier != author class when feasible.
-#
-# AD-10 (GEPA precedent): Solution History retains per-(agent, task_type)
-# Pareto WINNERS (not one scalar-best); a cell is retained only at the
-# min-occurrence floor (5+). AC: multiple winners retained per cell;
-# min-occurrence enforced.
 #
 # Run: python3 -m unittest autoagent.test.test_evaluator_independence_pareto
 #   (or, from autoagent/test/) python3 -m unittest test_evaluator_independence_pareto
@@ -88,136 +83,6 @@ class TestResolveVerifierModel(unittest.TestCase):
     def test_default_verifier_model_resolves(self) -> None:
         # The module-level PRE_VERIFY_MODEL default is a non-empty model id.
         self.assertTrue(dc.PRE_VERIFY_MODEL)
-
-
-@unittest.skipIf(dc is None, f"import failed: {_IMPORT_ERROR}")
-class TestRetainParetoWinners(unittest.TestCase):
-    @staticmethod
-    def _cell(n: int, agent: str = "dev-python", tt: str = "feature") -> list:
-        # n identical-cell attempts with strictly increasing score and date so
-        # exactly ONE is the frontier (baseline for the multi-winner contrast).
-        return [
-            dc.SolutionAttempt(
-                agent=agent,
-                task_type=tt,
-                score=float(i + 1),
-                applied_date=f"2026-07-{i + 1:02d}",
-                directive_hint=f"hint-{i}",
-            )
-            for i in range(n)
-        ]
-
-    def test_when_cell_below_min_occurrence_then_dropped(self) -> None:
-        # AC: min-occurrence enforced — 4 attempts (< 5) → cell dropped entirely.
-        winners = dc.retain_pareto_winners(self._cell(4))
-        self.assertEqual(winners, {})
-
-    def test_when_cell_at_min_occurrence_then_retained(self) -> None:
-        # Exactly 5 attempts (>= floor) → cell retained.
-        winners = dc.retain_pareto_winners(self._cell(5))
-        self.assertIn(("dev-python", "feature"), winners)
-
-    def test_when_score_recency_tradeoff_then_multiple_winners(self) -> None:
-        # AC: multiple winners retained per cell (not one scalar-best). Build a
-        # cell where the highest-score attempt is OLD and the newest attempt has
-        # a lower score → both are Pareto-nondominated (tradeoff frontier).
-        agent, tt = "dev-node", "refactor"
-        attempts = [
-            dc.SolutionAttempt(agent, tt, 5.0, "2026-01-01"),
-            dc.SolutionAttempt(agent, tt, 3.0, "2026-06-01"),
-            dc.SolutionAttempt(agent, tt, 2.0, "2026-03-01"),
-            dc.SolutionAttempt(agent, tt, 1.0, "2026-02-01"),
-            dc.SolutionAttempt(agent, tt, 4.0, "2026-04-01"),
-        ]
-        winners = dc.retain_pareto_winners(attempts)
-        cell = winners[(agent, tt)]
-        winner_dates = {w.applied_date for w in cell}
-        # 5.0@2026-01 (best score) and 3.0@2026-06 (best recency) both survive.
-        self.assertIn("2026-01-01", winner_dates)
-        self.assertIn("2026-06-01", winner_dates)
-        self.assertGreaterEqual(len(cell), 2)
-        # 4.0@2026-04 is newer than 5.0@2026-01 and higher-scored than
-        # 3.0@2026-06, so neither dominates it; 1.0@2026-02 is strictly worse
-        # than 2.0@2026-03 on both axes → removed.
-        self.assertNotIn("2026-02-01", winner_dates)
-
-    def test_winners_sorted_score_desc(self) -> None:
-        agent, tt = "dev-node", "bug-fix"
-        attempts = [
-            dc.SolutionAttempt(agent, tt, 5.0, "2026-01-01"),
-            dc.SolutionAttempt(agent, tt, 3.0, "2026-06-01"),
-            dc.SolutionAttempt(agent, tt, 4.0, "2026-05-01"),
-            dc.SolutionAttempt(agent, tt, 2.0, "2026-04-01"),
-            dc.SolutionAttempt(agent, tt, 1.0, "2026-03-01"),
-        ]
-        cell = dc.retain_pareto_winners(attempts)[(agent, tt)]
-        scores = [w.score for w in cell]
-        self.assertEqual(scores, sorted(scores, reverse=True))
-
-    def test_directive_hint_preserved_on_winners(self) -> None:
-        cell = dc.retain_pareto_winners(self._cell(5))[("dev-python", "feature")]
-        self.assertTrue(cell[0].directive_hint)
-
-    def test_separate_cells_retained_independently(self) -> None:
-        # Two distinct (agent, task_type) cells, each at the floor → both kept.
-        attempts = self._cell(5, agent="dev-python", tt="feature") + self._cell(
-            5, agent="dev-node", tt="review"
-        )
-        winners = dc.retain_pareto_winners(attempts)
-        self.assertIn(("dev-python", "feature"), winners)
-        self.assertIn(("dev-node", "review"), winners)
-
-    def test_when_min_occurrence_below_one_then_raises(self) -> None:
-        with self.assertRaises(ValueError):
-            dc.retain_pareto_winners(self._cell(5), min_occurrence=0)
-
-
-@unittest.skipIf(dc is None, f"import failed: {_IMPORT_ERROR}")
-class TestSolutionAttemptFromOutcome(unittest.TestCase):
-    @staticmethod
-    def _mk(**kw) -> object:
-        base = dict(
-            path="p",
-            agent="dev-python",
-            task_type="feature",
-            result="done",
-            confidence="high",
-            metric_pass="true",
-            summary="s",
-        )
-        base.update(kw)
-        return dc.Outcome(**base)
-
-    def test_metric_pass_true_scores_higher_than_false(self) -> None:
-        passing = dc.solution_attempt_from_outcome(
-            self._mk(metric_pass="true"), "2026-07-01"
-        )
-        failing = dc.solution_attempt_from_outcome(
-            self._mk(metric_pass="false"), "2026-07-01"
-        )
-        self.assertGreater(passing.score, failing.score)
-
-    def test_correction_pulls_score_down(self) -> None:
-        clean = dc.solution_attempt_from_outcome(
-            self._mk(evaluative_signal=0), "2026-07-01"
-        )
-        corrected = dc.solution_attempt_from_outcome(
-            self._mk(evaluative_signal=-1), "2026-07-01"
-        )
-        self.assertLess(corrected.score, clean.score)
-
-    def test_score_clamped_to_1_5(self) -> None:
-        att = dc.solution_attempt_from_outcome(
-            self._mk(metric_pass="true", evaluative_signal=1), "2026-07-01"
-        )
-        self.assertLessEqual(att.score, 5.0)
-        self.assertGreaterEqual(att.score, 1.0)
-
-    def test_directive_hint_passed_through(self) -> None:
-        att = dc.solution_attempt_from_outcome(
-            self._mk(), "2026-07-01", directive_hint="move the gate, not the regex"
-        )
-        self.assertEqual(att.directive_hint, "move the gate, not the regex")
 
 
 if __name__ == "__main__":
