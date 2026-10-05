@@ -251,20 +251,31 @@ class TestAggregatorUpsertVisibleToIntake(_LivePgFixture):
         self.assertEqual(probe.metric_key, "budget_overage")
         self.assertTrue(probe.raw_line.startswith("pg:learning_log:"))
 
-    def test_when_pattern_upserted_without_a_key_then_intake_reads_none(self) -> None:
+    def test_when_pattern_upserted_without_a_key_then_intake_skips_it_loudly(
+        self,
+    ) -> None:
         self._upsert_probe(_KEYLESS_SIGNATURE, _KEYLESS_AGENT, frequency=9997)
         patterns = self._read_with_probe_roster(_KEYLESS_AGENT)
 
-        self.assertEqual(
-            [(p.agent, p.metric_key) for p in patterns], [(_KEYLESS_AGENT, None)]
-        )
+        self.assertEqual(patterns, [])
+        skipped = [
+            env["args"]["agent"]
+            for env in self.emitted
+            if env.get("args", {}).get("eval_result") == "no-metric-key"
+        ]
+        self.assertIn(_KEYLESS_AGENT, skipped)
 
 
 class TestIntakeRosterRenameContract(_LivePgFixture):
     """Every intake agent is an agents/*.md stem; mismatches WARN, never silent."""
 
     def _read_with_real_roster(self) -> tuple[list, str]:
-        self._upsert_probe(_ROSTER_SIGNATURE, _ROSTER_AGENT, frequency=9999)
+        self._upsert_probe(
+            _ROSTER_SIGNATURE,
+            _ROSTER_AGENT,
+            frequency=9999,
+            metric_key="budget_overage",
+        )
         self._upsert_probe(_MISMATCH_SIGNATURE, _MISMATCH_AGENT, frequency=9998)
         stderr = io.StringIO()
         with contextlib.redirect_stderr(stderr):
@@ -315,6 +326,7 @@ def _intake_row(agent: str, row_id: int = 900001) -> dict:
         "frequency": 3,
         "status": "identified",
         "discovered_date": date(2026, 7, 1),
+        "metric_key": "budget_overage",
     }
 
 

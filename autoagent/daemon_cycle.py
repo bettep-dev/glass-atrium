@@ -620,28 +620,13 @@ STALE_UNKNOWN_FAMILY_EVAL = "stale-gate-unknown-family"
 # place an operator can tell WHICH gate suppressed a cycle's selection.
 STALE_UNOBSERVED_EVAL = "stale-unobserved-skip"
 
-# Intake exclusion set. These families report an OPERATIONAL COUNTER — turns spent
-# past a budget, outcomes recorded as negative — not an instruction defect, so no
-# sentence added to an agent body can decrement either. That is why the applied
-# patches never abated them and the repeat-apply cap (APPLY_CAP_THRESHOLD) fired
-# and parked the rows instead. Excluding at intake stops the regeneration at its
-# source; the counters keep recording, and abating them stays a human design
-# decision, NOT another patch.
-# Membership is equality against the STABLE pattern_signature core (never remapped
-# per G2), so the SOFT display remap cannot move a row in or out of the set.
-NON_PROMPTABLE_LABELS = frozenset(
-    {
-        # learning-aggregator.py BUDGET_OVERAGE_LABEL — copied verbatim rather than
-        # imported (daemon_cycle.py does not import the aggregator); keep in sync.
-        "budget-overage concentration",
-        PATTERN1_FAIL_LABEL_EN,
-        PATTERN1_FAIL_LABEL_KO,
-    }
-)
-# Reason literal carried by the intake skip row (stderr WARN + loop event).
-NON_PROMPTABLE_REASON = (
-    "non-promptable signal: an operational counter no agent-body sentence can "
-    "abate — skipped at intake; abatement needs a human design decision"
+# Intake eligibility is the primary metric key: a row without one is a discovery
+# row (a self-reported family) that no trial can measure, so intake skips it
+# loudly every cycle (stderr WARN + loop event) instead of generating from it.
+NO_METRIC_KEY_EVAL = "no-metric-key"
+NO_METRIC_KEY_REASON = (
+    "no metric key: a discovery row with no primary metric — skipped at intake; "
+    "only a keyed pattern is eligible"
 )
 
 # Pattern-1 DISPLAY label decouple (mirror of learning-aggregator.py P3a). The
@@ -1171,16 +1156,13 @@ TURN_BUDGET_NOT_APPLICABLE = (
 # LABEL leg. Membership is containment against the STABLE pattern_signature core,
 # never the free-text label tail: learning-aggregator.py emits
 # "size-est under-estimate concentration (avg overrun +N tool_uses)", so equality
-# (the NON_PROMPTABLE_LABELS shape) would miss every live row, and a display remap
-# or a multi-signal "(a / b)" join moves the core off position 0, so startswith
-# (the _FAIL_COUNT_LABEL_PREFIXES shape) would miss those. Copied verbatim from
+# would miss every live row, and a display remap or a multi-signal "(a / b)" join
+# moves the core off position 0, so startswith (the _FAIL_COUNT_LABEL_PREFIXES
+# shape) would miss those. Copied verbatim from
 # SIZE_EST_UNDER_LABEL there (daemon_cycle.py does not import the aggregator).
 #
-# BUDGET_OVERAGE_LABEL is deliberately NOT a member. It reports a different axis —
-# an operational counter — and it is already a NON_PROMPTABLE_LABELS member, i.e.
-# an exclusion set that drops the row BEFORE proposal generation; a row carrying
-# it therefore never reaches pre-verify at all, so naming it here could only
-# suppress the very patterns this source exists to serve.
+# BUDGET_OVERAGE_LABEL is deliberately NOT a member: it reports a different axis —
+# turns spent past a budget, not a size-est under-estimate.
 BUDGET_FAMILY_SIGNATURE_CORES = frozenset({"size-est under-estimate concentration"})
 
 # SITE leg. Basename-anchored like _SAFETY_SENSITIVE_PATH_PATTERNS, matched
@@ -2336,8 +2318,8 @@ def read_user_pending_patterns(
         - rows targeting agent='전체' or 'ALL' (cross-cutting → not patchable here)
         - roster-mismatch rows — agent is not an agents/*.md stem: stderr WARN
           + loop-event emit, never a silent drop (Precondition Loud-Fail)
-        - NON_PROMPTABLE_LABELS rows — the signal is an operational counter no
-          patch can abate: stderr WARN + loop-event emit, never a silent drop
+        - keyless rows — no primary metric key, so not eligible: stderr WARN +
+          loop-event emit, never a silent drop
 
     Returns at most `limit` entries, tier-normalized to 'user-pending'.
     """
@@ -2365,17 +2347,6 @@ def read_user_pending_patterns(
         # signature = "<label>|<agent>" (aggregator UPSERT contract).
         signature = row["pattern_signature"]
         label = signature.rsplit("|", 1)[0]
-        # Excluded before proposal generation: a proposal against a counter can
-        # only re-park, so it is dropped here loudly rather than generated.
-        if label in NON_PROMPTABLE_LABELS:
-            _warn_pattern_skip(
-                agent,
-                signature,
-                event_ts,
-                eval_result="non-promptable",
-                reason=NON_PROMPTABLE_REASON,
-            )
-            continue
         # Intake defense-in-depth — when the roster is known (glob succeeded), an
         # `agent` value that is not a real agents/*.md stem (e.g. a task_type
         # 'bug-fix' leaked into the column) cannot produce a landable patch →
@@ -2390,6 +2361,17 @@ def read_user_pending_patterns(
                 _warn_roster_mismatch(agent, row["pattern_signature"], event_ts)
                 continue
             agent = alias
+        # After the roster check, so a roster-absent row still reports
+        # roster-mismatch whether or not it carries a key.
+        if not row.get("metric_key"):
+            _warn_pattern_skip(
+                agent,
+                signature,
+                event_ts,
+                eval_result=NO_METRIC_KEY_EVAL,
+                reason=NO_METRIC_KEY_REASON,
+            )
+            continue
         discovered = row["discovered_date"]
         patterns.append(
             Pattern(
