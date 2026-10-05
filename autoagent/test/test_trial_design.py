@@ -10,7 +10,8 @@ Covered behaviors:
     design effect;
   * the projection horizon stops at 84 days; invalid inputs raise;
   * both design-effect estimators match hand-computed balanced and unbalanced
-    fixtures, and the power check takes the higher, never below 1;
+    fixtures, and the power check takes the higher, never below 1; only
+    singleton clusters give exactly 1;
   * minimum detectable harm per guardrail matches two-sample reference
     arithmetic: a fold rise on rates, a mean shift on the tool_use band.
 
@@ -180,6 +181,17 @@ class DesignEffectEstimators(unittest.TestCase):
         effect = td.get_design_effect(([1, 0], [1, 0]))
         self.assertEqual((effect.anova, effect.size_weighted), (1.0, 1.0))
 
+    def test_only_singleton_clusters_give_both_estimators_exactly_one(self) -> None:
+        # every size 1 → n0 = Σm²/N = 1 → DE = 1 + 0·rho whatever rho, even where rho is undefined
+        rows = (
+            ("varying outcomes", ([1], [0], [1])),
+            ("no variance at all", ([0], [0])),
+        )
+        for name, clusters in rows:
+            with self.subTest(name):
+                effect = td.get_design_effect(clusters)
+                self.assertEqual((effect.anova, effect.size_weighted), (1.0, 1.0))
+
 
 class RateHarm(unittest.TestCase):
     def test_fold_matches_the_two_proportion_reference_arithmetic(self) -> None:
@@ -259,8 +271,8 @@ class InvalidInputs(unittest.TestCase):
             ("negative daily units", lambda: td.get_projected_units(-1.0)),
             ("a single cluster", lambda: td.get_design_effect(([1, 0, 1],))),
             ("an empty cluster", lambda: td.get_design_effect(([1, 0], []))),
-            ("only singleton clusters", lambda: td.get_design_effect(([1], [0], [1]))),
             ("no variance in any cluster", lambda: td.get_design_effect(([0, 0], [0, 0, 0]))),
+            ("no variance with a singleton beside a larger cluster", lambda: td.get_design_effect(([0], [0, 0]))),
             ("harm at base rate zero", lambda: td.get_rate_harm(0.0, 300)),
             ("harm at a sample below one", lambda: td.get_rate_harm(0.1, 0.5)),
             ("harm at design effect zero", lambda: td.get_rate_harm(0.1, 300, design_effect=0.0)),

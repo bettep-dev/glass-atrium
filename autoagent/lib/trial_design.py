@@ -113,15 +113,16 @@ def get_design_effect(clusters: Sequence[Sequence[float]]) -> DesignEffect:
     """Design effect of clustering from per-cluster observations (0/1 for a rate metric).
 
     One-way ANOVA intraclass correlation, held at 0 when negative so neither estimator falls below 1.
-    Raises ValueError when the correlation is undefined: fewer than 2 clusters, an empty cluster,
-    only singleton clusters, or no variance at all.
+    Only singleton clusters give exactly 1 for both: each cluster size is 1, so the correlation never enters.
+    Otherwise raises ValueError when the correlation is undefined: fewer than 2 clusters, an empty
+    cluster, or no variance at all.
     """
     sizes = [len(cluster) for cluster in clusters]
     if len(sizes) < 2 or min(sizes) == 0:
         raise ValueError(f"need at least 2 non-empty clusters, got sizes {sizes}")
     total = sum(sizes)
     if total == len(sizes):
-        raise ValueError("only singleton clusters: within-cluster variance undefined")
+        return DesignEffect(anova=1.0, size_weighted=1.0)
     between, within = _get_mean_squares(clusters, sizes)
     weighted_size = math.fsum(size * size for size in sizes) / total
     anova_size = (total - weighted_size) / (len(sizes) - 1)
