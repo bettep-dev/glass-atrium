@@ -79,8 +79,10 @@ _ROSTER_AGENT = "glass-atrium-dev-python"
 _ROSTER_SIGNATURE = f"ap2 roster probe|{_ROSTER_AGENT}"
 _MISMATCH_AGENT = "ap2-no-such-agent"
 _MISMATCH_SIGNATURE = f"ap2 mismatch probe|{_MISMATCH_AGENT}"
-_DORMANT_AGENT = "ap2-retired-agent"
-_DORMANT_SIGNATURE = f"ap2 roster drop probe|{_DORMANT_AGENT}"
+_DORMANCY = SimpleNamespace(
+    AGENT="ap2-retired-agent",
+    SIGNATURE="ap2 roster drop probe|ap2-retired-agent",
+)
 
 
 class _RecordingCursor:
@@ -333,7 +335,7 @@ class TestRosterMismatchDormantOnLivePg(_LivePgFixture):
         self,
     ) -> None:
         self._upsert_probe(
-            _DORMANT_SIGNATURE, _DORMANT_AGENT, frequency=9996, metric_key="budget_overage"
+            _DORMANCY.SIGNATURE, _DORMANCY.AGENT, frequency=9996, metric_key="budget_overage"
         )
         self._read_with_probe_roster(_ROSTER_AGENT, live=True)
 
@@ -341,7 +343,7 @@ class TestRosterMismatchDormantOnLivePg(_LivePgFixture):
             cur.execute(
                 "SELECT status::text, last_transition_reason FROM core.learning_log "
                 "WHERE pattern_signature = %s",
-                (_DORMANT_SIGNATURE,),
+                (_DORMANCY.SIGNATURE,),
             )
             self.assertEqual(cur.fetchall(), [("dormant", "roster-mismatch")])
 
