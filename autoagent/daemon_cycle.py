@@ -9218,16 +9218,18 @@ def _get_pair_skip_reason(
 
 # -- Intake power check (N69) ------------------------------------------------
 
-POWER_VERDICT = SimpleNamespace(
-    PASSING="passing",
-    UNDERPOWERED="underpowered",
-    INSUFFICIENT_HISTORY="insufficient-history",
-    UNCHECKED="unchecked",  # history unreadable or trial math missing — never passing
+POWER = SimpleNamespace(
+    VERDICT=SimpleNamespace(
+        PASSING="passing",
+        UNDERPOWERED="underpowered",
+        INSUFFICIENT_HISTORY="insufficient-history",
+        UNCHECKED="unchecked",  # history unreadable or trial math missing — never passing
+    ),
+    # eval_result = prefix + verdict; the longest fills the varchar(32) column exactly
+    CHECK_EVAL_PREFIX="power-check-",
+    # a measured design effect replaces 1 only once S4a5b wires the A/A ledger (N69)
+    DESIGN_EFFECT=1.0,
 )
-# eval_result = prefix + verdict; the longest fills the varchar(32) column exactly
-POWER_CHECK_EVAL_PREFIX = "power-check-"
-# a measured design effect replaces 1 only once S4a5b wires the A/A ledger (N69)
-POWER_DESIGN_EFFECT = 1.0
 
 
 class PowerCheck(NamedTuple):
@@ -9258,7 +9260,7 @@ def check_pattern_power(patterns: list[Pattern], *, skip_loop_emit: bool) -> dic
     history = _read_power_history(sorted({pattern.agent for pattern in keyed}), windows)
     for pattern in keyed:
         if history is None:
-            verdict, detail = POWER_VERDICT.UNCHECKED, "spawn history unavailable"
+            verdict, detail = POWER.VERDICT.UNCHECKED, "spawn history unavailable"
         else:
             provenance_start, spawns = history
             agent_spawns = spawns.get(pattern.agent, [])
@@ -9285,7 +9287,7 @@ def get_power_check(
     Projected units = the agent's spawns per day over the 28 days before D × the 84-day
     horizon; NULL-agent_id spawns count nowhere (N60). Fewer than 28 provenance-covered
     days → insufficient-history. Bound = 2 × the S2e per-arm maximum at the floor-half
-    baseline rate × POWER_DESIGN_EFFECT; a rate with no finite size is underpowered.
+    baseline rate × POWER.DESIGN_EFFECT; a rate with no finite size is underpowered.
     """
     history_start = windows.end - BASELINE.MIN_COVERED
     units = sum(
@@ -9298,13 +9300,13 @@ def get_power_check(
     if maximum is None:
         required = None
     else:
-        required = trial_design.get_required_units(maximum, design_effect=POWER_DESIGN_EFFECT)
+        required = trial_design.get_required_units(maximum, design_effect=POWER.DESIGN_EFFECT)
     if provenance_start is None or provenance_start > history_start:
-        verdict = POWER_VERDICT.INSUFFICIENT_HISTORY
+        verdict = POWER.VERDICT.INSUFFICIENT_HISTORY
     elif required is not None and _is_bound_reached(units, required):
-        verdict = POWER_VERDICT.PASSING
+        verdict = POWER.VERDICT.PASSING
     else:
-        verdict = POWER_VERDICT.UNDERPOWERED
+        verdict = POWER.VERDICT.UNDERPOWERED
     return PowerCheck(verdict, projected, required)
 
 
@@ -9317,7 +9319,7 @@ def _is_bound_reached(units: int, required: float) -> bool:
 
 
 def _get_power_counts() -> dict[str, int]:
-    return dict.fromkeys(vars(POWER_VERDICT).values(), 0)
+    return dict.fromkeys(vars(POWER.VERDICT).values(), 0)
 
 
 def _read_power_history(
@@ -9354,7 +9356,7 @@ def _get_power_detail(floor: FloorResult, check: PowerCheck) -> str:
     return (
         f"floor-half baseline {baseline.events}/{baseline.spawns}, projected "
         f"{check.projected_units:.0f} units in {trial_design.HORIZON_DAYS} d vs required "
-        f"{required} (design effect {POWER_DESIGN_EFFECT:g})"
+        f"{required} (design effect {POWER.DESIGN_EFFECT:g})"
     )
 
 
@@ -9366,7 +9368,7 @@ def _send_power_verdict(
         f"{verdict} — {detail}; status unchanged\n"
     )
     if not skip_loop_emit:
-        _emit_gate_loop_event(pattern.agent, event_ts, POWER_CHECK_EVAL_PREFIX + verdict)
+        _emit_gate_loop_event(pattern.agent, event_ts, POWER.CHECK_EVAL_PREFIX + verdict)
 
 
 def classify_failure_rationale(rationale: str) -> str:

@@ -144,21 +144,21 @@ class GetPowerCheckTest(unittest.TestCase):
                 _floor(),
                 _get_units(_UNITS_AT_BOUND),
                 provenance_covering,
-                dc.POWER_VERDICT.PASSING,
+                dc.POWER.VERDICT.PASSING,
             ),
             (
                 "just below the bound → underpowered",
                 _floor(),
                 _get_units(_UNITS_BELOW_BOUND),
                 provenance_covering,
-                dc.POWER_VERDICT.UNDERPOWERED,
+                dc.POWER.VERDICT.UNDERPOWERED,
             ),
             (
                 "a projection exactly equal to the bound → passing",
                 _floor(baseline=_EXACT_BOUND_BASELINE),
                 _get_units(_UNITS_AT_EXACT_BOUND),
                 provenance_covering,
-                dc.POWER_VERDICT.PASSING,
+                dc.POWER.VERDICT.PASSING,
             ),
             (
                 "a spawn before the window or with no agent id adds no unit",
@@ -169,35 +169,35 @@ class GetPowerCheckTest(unittest.TestCase):
                     _spawn(_DAY - timedelta(days=1), agent_id=None),
                 ],
                 provenance_covering,
-                dc.POWER_VERDICT.UNDERPOWERED,
+                dc.POWER.VERDICT.UNDERPOWERED,
             ),
             (
                 "exactly 28 covered days → judged on the bound",
                 _floor(),
                 _get_units(_UNITS_AT_BOUND),
                 _DAY - timedelta(days=28),
-                dc.POWER_VERDICT.PASSING,
+                dc.POWER.VERDICT.PASSING,
             ),
             (
                 "27 covered days → insufficient-history at any volume",
                 _floor(),
                 _get_units(2 * _UNITS_AT_BOUND),
                 _DAY - timedelta(days=27),
-                dc.POWER_VERDICT.INSUFFICIENT_HISTORY,
+                dc.POWER.VERDICT.INSUFFICIENT_HISTORY,
             ),
             (
                 "no provenance start → insufficient-history",
                 _floor(),
                 _get_units(2 * _UNITS_AT_BOUND),
                 None,
-                dc.POWER_VERDICT.INSUFFICIENT_HISTORY,
+                dc.POWER.VERDICT.INSUFFICIENT_HISTORY,
             ),
             (
                 "a zero baseline rate has no finite size → underpowered at any volume",
                 _floor(baseline=WindowCount(spawns=200, events=0, sessions=0)),
                 _get_units(10 * _UNITS_AT_BOUND),
                 provenance_covering,
-                dc.POWER_VERDICT.UNDERPOWERED,
+                dc.POWER.VERDICT.UNDERPOWERED,
             ),
         ]
         for name, floor, spawns, provenance_start, verdict in rows:
@@ -317,8 +317,8 @@ class CheckPatternPowerTest(_StageFixture):
         self.assertTrue(all(event["subject"] is None for event in self.events))
 
     def test_every_verdict_token_fits_the_eval_result_column(self) -> None:
-        for verdict in vars(dc.POWER_VERDICT).values():
-            self.assertLessEqual(len(dc.POWER_CHECK_EVAL_PREFIX + verdict), 32, verdict)
+        for verdict in vars(dc.POWER.VERDICT).values():
+            self.assertLessEqual(len(dc.POWER.CHECK_EVAL_PREFIX + verdict), 32, verdict)
 
     def test_one_spawn_read_serves_every_agent(self) -> None:
         self._check(self.patterns)
