@@ -419,21 +419,39 @@ def _get_spawn(
     *,
     overage_rows: int = 1,
     is_stopped: bool = True,
+    session_id: str | None = None,
+    stopped_at: datetime | None = None,
+    tool_use_actual: int | None = None,
 ) -> sig.SpawnFacts:
     return sig.SpawnFacts(
-        agent_id, f"session-{agent_id}", started_at, overage_rows, is_stopped, ()
+        agent_id,
+        session_id or f"session-{agent_id}",
+        started_at,
+        overage_rows,
+        is_stopped,
+        (),
+        stopped_at,
+        tool_use_actual,
     )
 
 
 @unittest.skipIf(pgdw is None, "psycopg absent: _pg_learning_dualwrite unimportable")
 class TestTriggeringSpawnSelection(unittest.TestCase):
-    """(c) triggering = settled, joinable metric events in the confirmation window."""
+    """(c) triggering = every member of each settled, joinable metric event the floor counts
+    in the confirmation window — a task under budget_overage, a spawn otherwise."""
 
     def setUp(self) -> None:
         confirmation = _WINDOWS.start.confirmation
+        self._budget = sig.get_tool_budget(os.environ)
         self._provenance_start: datetime | None = _WINDOWS.start.baseline
         self._spawns = [
             _get_spawn("confirmation-event", confirmation + timedelta(days=1)),
+            _get_spawn(
+                "confirmation-tool-use-overrun",
+                confirmation + timedelta(days=2, hours=1),
+                overage_rows=0,
+                tool_use_actual=self._budget,
+            ),
             _get_spawn(
                 "confirmation-quiet", confirmation + timedelta(days=1), overage_rows=0
             ),
@@ -454,8 +472,16 @@ class TestTriggeringSpawnSelection(unittest.TestCase):
             ),
         ]
         self._fact_reads: list[list[str]] = []
+        self._spawn_read_windows: list[timedelta] = []
 
-        def _read_spawn_facts(agents: list[str], windows: object) -> tuple:
+        def _read_spawn_facts(
+            agents: list[str],
+            windows: object,
+            *,
+            evaluated_at: datetime | None = None,
+            redelegation_window: timedelta = timedelta(0),
+        ) -> tuple:
+            self._spawn_read_windows.append(redelegation_window)
             return self._provenance_start, {_AGENT: list(self._spawns)}
 
         def _read_outcome_facts(agent_ids: list[str]) -> dict:
@@ -475,7 +501,11 @@ class TestTriggeringSpawnSelection(unittest.TestCase):
         overage = evidence[sig.METRIC_BUDGET_OVERAGE].triggering
         self.assertEqual(
             [s.agent_id for s in overage],
-            ["confirmation-late-event", "confirmation-event"],
+            [
+                "confirmation-late-event",
+                "confirmation-tool-use-overrun",
+                "confirmation-event",
+            ],
         )
         self.assertEqual(
             (overage[0].verified_fail_rows, overage[0].tool_use_actual), (2, 61)
@@ -489,9 +519,37 @@ class TestTriggeringSpawnSelection(unittest.TestCase):
                     "confirmation-event",
                     "confirmation-late-event",
                     "confirmation-stopless",
+                    "confirmation-tool-use-overrun",
                 ]
             ],
         )
+
+    def test_every_member_of_a_task_overrunning_on_combined_tool_use_triggers_once(
+        self,
+    ) -> None:
+        window = timedelta(hours=1)
+        first_at = _WINDOWS.start.confirmation + timedelta(days=1)
+        first_stop = first_at + timedelta(minutes=20)
+        self._spawns = [
+            _get_spawn(
+                "task-first", first_at, overage_rows=0, session_id="t",
+                stopped_at=first_stop, tool_use_actual=self._budget - 15,
+            ),
+            _get_spawn(
+                "task-continuation", first_stop + timedelta(minutes=5), overage_rows=0,
+                session_id="t", stopped_at=first_stop + timedelta(minutes=30),
+                tool_use_actual=15,
+            ),
+        ]
+        evidence = pgdw.read_pattern_evidence(
+            _AGENT, _WINDOWS, _NOW, redelegation_window=window
+        )
+        overage = evidence[sig.METRIC_BUDGET_OVERAGE]
+        self.assertEqual(
+            [s.agent_id for s in overage.triggering], ["task-continuation", "task-first"]
+        )
+        self.assertEqual(overage.floor.confirmation, sig.WindowCount(1, 1, 1))
+        self.assertEqual(self._spawn_read_windows, [window])
 
     def test_triggering_count_equals_the_floor_confirmation_events(self) -> None:
         confirmation = _WINDOWS.start.confirmation

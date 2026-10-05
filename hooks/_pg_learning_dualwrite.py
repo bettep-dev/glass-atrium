@@ -72,9 +72,8 @@ from _outcome_signal import (
     PatternEvidence,
     SpawnFacts,
     TriggeringSpawn,
+    get_confirmation_events,
     get_floor_verdict,
-    is_metric_event,
-    is_pending,
 )
 
 
@@ -1346,12 +1345,17 @@ def count_outcomes_since(
 # ---------------------------------------------------------------------------
 # One row per spawn of any listed agent type: each joined table is pre-grouped by agent_id,
 # so a spawn with N overage or outcome rows is never multiplied into N rows (a spawn counts once).
+# Past [baseline, end) only task members: spawns up to the evaluation instant, and earlier spawns
+# stopped at or after baseline − W, the only ones an in-window spawn can continue.
 # tool_use_actual: the recorder's header line, read as _OUTCOME.FACTS_SELECT_SQL reads it.
 _SPAWN_FACTS_SELECT_SQL = """
 WITH spawns AS (
     SELECT id, agent_id, agent_type, session_id, started_at
     FROM core.spawn_manifest
-    WHERE agent_type = ANY(%s) AND started_at >= %s AND started_at < %s
+    WHERE agent_type = ANY(%s) AND started_at < %s
+      AND (started_at >= %s OR agent_id IN (
+          SELECT agent_id FROM core.agent_events
+          WHERE event_name = 'SubagentStop' AND event_ts >= %s))
 )
 SELECT s.agent_type, s.agent_id, s.session_id, s.started_at,
        COALESCE(b.overage_rows, 0), stop.stopped_at,
@@ -1399,7 +1403,9 @@ def read_pattern_floor(
     if metric_key not in METRIC_KEYS:
         raise ValueError(f"read_pattern_floor: unknown metric key {metric_key!r}")
     try:
-        provenance_start, spawns = _read_spawn_facts([agent], windows)
+        provenance_start, spawns = _read_spawn_facts(
+            [agent], windows, evaluated_at=evaluated_at, redelegation_window=redelegation_window
+        )
     except Exception as exc:  # noqa: BLE001 — every failure is an outage the caller fails closed on
         sys.stderr.write(
             '{"hook":"_pg_learning_dualwrite","op":"read_pattern_floor",'
@@ -1426,7 +1432,9 @@ def read_pattern_floors(
     None on ANY read failure, as `read_pattern_floor`: every floor fails closed together."""
     agents = sorted(set(agents))
     try:
-        provenance_start, spawns = _read_spawn_facts(agents, windows)
+        provenance_start, spawns = _read_spawn_facts(
+            agents, windows, evaluated_at=evaluated_at, redelegation_window=redelegation_window
+        )
     except Exception as exc:  # noqa: BLE001 — every failure is an outage the caller fails closed on
         sys.stderr.write(
             '{"hook":"_pg_learning_dualwrite","op":"read_pattern_floors",'
@@ -1445,17 +1453,25 @@ def read_pattern_floors(
 
 
 def _read_spawn_facts(
-    agents: list[str], windows: PairWindows
+    agents: list[str],
+    windows: PairWindows,
+    *,
+    evaluated_at: datetime | None = None,
+    redelegation_window: timedelta = timedelta(0),
 ) -> tuple[datetime | None, defaultdict[str, list[SpawnFacts]]]:
-    """The provenance start and each agent's spawns over baseline..end; raises on any failure."""
+    """The provenance start and each agent's spawns over baseline..end, plus the task members
+    `get_floor_verdict` places outside it (up to `evaluated_at`, None → windows.end); raises on
+    any failure."""
+    upper = windows.end if evaluated_at is None else max(windows.end, evaluated_at)
+    params = (
+        agents, upper, windows.start.baseline, windows.start.baseline - redelegation_window,
+        TOOL_USE_LINE_PATTERN,
+    )
     with psycopg.connect("dbname=glass_atrium", connect_timeout=2, autocommit=True) as conn:
         with conn.cursor() as cur:
             cur.execute(_PROVENANCE_START_SQL)
             provenance_start = cur.fetchone()[0]
-            cur.execute(
-                _SPAWN_FACTS_SELECT_SQL,
-                (agents, windows.start.baseline, windows.end, TOOL_USE_LINE_PATTERN),
-            )
+            cur.execute(_SPAWN_FACTS_SELECT_SQL, params)
             rows = cur.fetchall()
     spawns: defaultdict[str, list[SpawnFacts]] = defaultdict(list)
     for (
@@ -1474,19 +1490,26 @@ def _read_spawn_facts(
 
 
 def read_pattern_evidence(
-    agent: str, windows: PairWindows, evaluated_at: datetime
+    agent: str,
+    windows: PairWindows,
+    evaluated_at: datetime,
+    *,
+    redelegation_window: timedelta = timedelta(0),
 ) -> dict[str, PatternEvidence] | None:
     """Each metric key's floor and triggering spawns for `agent`, keyed by metric key.
 
-    Triggering spawns = the key's metric events in the confirmation window, counted as
-    the floor counts them (joinable, settled, at or after the provenance start). None on
-    ANY read failure — the caller renders the evidence unavailable."""
+    Triggering spawns = every member of each metric event the floor counts in the
+    confirmation window (`get_confirmation_events`), newest first. None on ANY read
+    failure — the caller renders the evidence unavailable."""
     try:
-        provenance_start, spawns = _read_spawn_facts([agent], windows)
+        provenance_start, spawns = _read_spawn_facts(
+            [agent], windows, evaluated_at=evaluated_at, redelegation_window=redelegation_window
+        )
         agent_spawns = spawns[agent]
         events = {
             metric_key: _get_triggering_spawns(
-                agent_spawns, metric_key, windows, provenance_start, evaluated_at
+                agent_spawns, metric_key, windows, provenance_start, evaluated_at,
+                redelegation_window,
             )
             for metric_key in sorted(METRIC_KEYS)
         }
@@ -1503,7 +1526,8 @@ def read_pattern_evidence(
     return {
         metric_key: PatternEvidence(
             get_floor_verdict(
-                agent_spawns, metric_key, windows, provenance_start, evaluated_at
+                agent_spawns, metric_key, windows, provenance_start, evaluated_at,
+                redelegation_window=redelegation_window,
             ),
             tuple(_get_triggering_spawn(spawn, facts) for spawn in events[metric_key]),
         )
@@ -1517,20 +1541,13 @@ def _get_triggering_spawns(
     windows: PairWindows,
     provenance_start: datetime | None,
     evaluated_at: datetime,
+    redelegation_window: timedelta,
 ) -> list[SpawnFacts]:
-    start = (
-        windows.end
-        if provenance_start is None
-        else max(provenance_start, windows.start.confirmation)
+    events = get_confirmation_events(
+        spawns, metric_key, windows, provenance_start, evaluated_at,
+        redelegation_window=redelegation_window,
     )
-    triggering = [
-        spawn
-        for spawn in spawns
-        if spawn.agent_id is not None
-        and not is_pending(spawn, evaluated_at)
-        and start <= spawn.started_at < windows.end
-        and is_metric_event(spawn, metric_key)
-    ]
+    triggering = [spawn for members in events for spawn in members]
     return sorted(triggering, key=lambda spawn: spawn.started_at, reverse=True)
 
 

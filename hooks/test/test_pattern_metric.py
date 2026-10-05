@@ -78,12 +78,6 @@ def _get_spawn(
     stopped_at: datetime | None = None,
     tool_use_actual: int | None = None,
 ) -> sig.SpawnFacts:
-    # task facts passed only when set → the S2f-only rows build on any SpawnFacts shape
-    task_facts = {
-        name: value
-        for name, value in (("stopped_at", stopped_at), ("tool_use_actual", tool_use_actual))
-        if value is not None
-    }
     return sig.SpawnFacts(
         agent_id=agent_id,
         session_id=session_id,
@@ -91,7 +85,8 @@ def _get_spawn(
         overage_rows=overage_rows,
         has_subagent_stop=has_subagent_stop,
         outcomes=outcomes,
-        **task_facts,
+        stopped_at=stopped_at,
+        tool_use_actual=tool_use_actual,
     )
 
 
@@ -134,11 +129,13 @@ def _get_floor(
     metric_key: str = "budget_overage",
     provenance_start: datetime | None = None,
     evaluated_at: datetime = _NOW,
-    redelegation_window: timedelta | None = None,
+    redelegation_window: timedelta = timedelta(0),
 ) -> sig.FloorResult:
     start = windows.start.baseline if provenance_start is None else provenance_start
-    options = {} if redelegation_window is None else {"redelegation_window": redelegation_window}
-    return sig.get_floor_verdict(list(spawns), metric_key, windows, start, evaluated_at, **options)
+    return sig.get_floor_verdict(
+        list(spawns), metric_key, windows, start, evaluated_at,
+        redelegation_window=redelegation_window,
+    )
 
 
 class TestPairWindows(unittest.TestCase):
@@ -585,6 +582,58 @@ class TestTasks(unittest.TestCase):
                     for index, (overage, tool_use) in facts
                 )
                 self.assertIs(sig.is_task_overrun(members, 40), expected)
+
+
+    def test_a_task_open_at_evaluation_counts_on_no_side_and_reports_its_spawns_pending(
+        self,
+    ) -> None:
+        """Open = a member may still be running, or a continuation may still start
+        (evaluated_at before the last stop + W)."""
+        end = self.windows.end
+        first = _get_agent_ids("open-first", 1, is_floor=True)[0]
+        last_stop = end - 5 * _MINUTE
+        stopped = _get_spawn(first, end - 40 * _MINUTE, overage_rows=1, stopped_at=last_stop)
+        pending_member = _get_spawn("open-cont", end - 20 * _MINUTE, has_subagent_stop=False)
+        before_pending = stopped._replace(stopped_at=end - 30 * _MINUTE)
+        rows = [
+            ("a member still pending", [before_pending, pending_member], self._WINDOW,
+             end + timedelta(hours=2), (0, 0, 0), 2),
+            ("W still open at evaluation", [stopped], self._WINDOW,
+             last_stop + self._WINDOW - _MINUTE, (0, 0, 0), 1),
+            ("W closed exactly at evaluation", [stopped], self._WINDOW,
+             last_stop + self._WINDOW, (1, 1, 1), 0),
+            ("W = 0 holds no stopped task open", [stopped], timedelta(0), last_stop, (1, 1, 1), 0),
+        ]
+        for name, spawns, window, evaluated_at, confirmation, pending in rows:
+            with self.subTest(name):
+                floor = _get_floor(
+                    spawns, self.windows, evaluated_at=evaluated_at, redelegation_window=window
+                )
+                self.assertEqual(
+                    (floor.confirmation, floor.pending), (sig.WindowCount(*confirmation), pending)
+                )
+
+    def test_a_spawn_read_only_as_a_task_member_adds_nothing_to_unjoinable_or_pending(
+        self,
+    ) -> None:
+        """The read takes spawns started in [windows.end, evaluated_at) as task members only."""
+        evaluated_at = self.windows.end + timedelta(hours=2)
+        after_end = self.windows.end + timedelta(hours=1)
+        passing = _get_passing_spawns(self.windows)
+        rows = [
+            ("a stopless spawn inside the grace", _get_spawn(
+                "late", after_end, session_id="late", has_subagent_stop=False)),
+            ("a NULL-agent_id spawn", _get_spawn(None, after_end, session_id="late")),
+        ]
+        for name, late in rows:
+            for metric_key in sorted(sig.METRIC_KEYS):
+                with self.subTest(name, metric_key=metric_key):
+                    self.assertEqual(
+                        _get_floor([*passing, late], self.windows, metric_key=metric_key,
+                                   evaluated_at=evaluated_at),
+                        _get_floor(passing, self.windows, metric_key=metric_key,
+                                   evaluated_at=evaluated_at),
+                    )
 
 
 class TestToolBudgetResolution(unittest.TestCase):
@@ -1036,7 +1085,7 @@ class TestAggregatorAndIntakeAgree(unittest.TestCase):
             return daemon_floors[-1]
 
         reach = seal_pg_reach(self)
-        with mock.patch.object(pgdw, "_read_spawn_facts", lambda agents, windows: fixture), \
+        with mock.patch.object(pgdw, "_read_spawn_facts", lambda *_args, **_options: fixture), \
                 mock.patch.object(agg, "_pg_put_learning_pattern_status", log.put_status), \
                 mock.patch.object(dc, "HAS_PG_PATTERN_READ", True), \
                 mock.patch.object(dc, "_pg_read_pattern_floors", _read_daemon_floors), \
@@ -1243,6 +1292,37 @@ class TestPatternFloorReadLivePg(unittest.TestCase):
                 )
                 self.assertIsNotNone(floor)
                 self.assertEqual(floor.detection, expected)
+
+    def test_the_read_takes_task_members_from_before_and_after_the_windows(self) -> None:
+        """A continuation started after windows.end counts in its first spawn's window; one of a
+        spawn started before windows.start.baseline counts nowhere."""
+        w = self.windows
+        tail_first, head_cont = _get_agent_ids("live-edge", 2, is_floor=True)
+        for offset, (agent_id, session, started_at, overage_rows) in enumerate((
+            (tail_first, "t-tail", w.end - 40 * _MINUTE, 0),
+            ("live-edge-tail-cont", "t-tail", w.end + 5 * _MINUTE, 1),
+            ("live-edge-head-prior", "t-head", w.start.baseline - 30 * _MINUTE, 0),
+            (head_cont, "t-head", w.start.baseline + 5 * _MINUTE, 1),
+        ), 30):
+            self._put_spawn(offset, agent_id, started_at, session_id=session)
+            self._put_stop(agent_id, started_at + 30 * _MINUTE)
+            self._put_overages(agent_id, overage_rows)
+        rows = [
+            ("one task each inside W", timedelta(hours=1),
+             sig.WindowCount(1, 1, 1), sig.WindowCount(0, 0, 0)),
+            ("one task per spawn at W = 0", timedelta(0),
+             sig.WindowCount(1, 0, 0), sig.WindowCount(1, 1, 1)),
+        ]
+        for name, window, confirmation, baseline in rows:
+            with self.subTest(name), mock.patch.dict(os.environ, {"SUBAGENT_TOOL_BUDGET": "40"}):
+                floor = pgdw.read_pattern_floor(
+                    self._AGENT, "budget_overage", w, _NOW, redelegation_window=window
+                )
+                self.assertIsNotNone(floor, "the floor read failed — see the stderr op line")
+                self.assertEqual(
+                    (floor.confirmation, floor.baseline, floor.unjoinable, floor.pending),
+                    (confirmation, baseline, 0, 0),
+                )
 
     def test_the_set_read_gives_each_agent_the_floors_of_its_own_read(self) -> None:
         self._seed()

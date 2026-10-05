@@ -476,8 +476,18 @@ def is_task_overrun(task: Sequence[SpawnFacts], tool_budget: int) -> bool:
 
 
 class _Unit(NamedTuple):
-    first: SpawnFacts  # its started_at, agent_id half and session place the unit
+    members: tuple[SpawnFacts, ...]  # its task under budget_overage, else the spawn alone
     is_event: bool
+
+    @property
+    def first(self) -> SpawnFacts:  # its started_at, agent_id half and session place the unit
+        return self.members[0]
+
+
+class _Units(NamedTuple):
+    counted: list[_Unit]
+    unjoinable: int
+    pending: int
 
 
 def get_floor_verdict(
@@ -499,41 +509,121 @@ def get_floor_verdict(
     spawns and spawns pending at `evaluated_at` count on no side and are returned as
     `unjoinable` and `pending`.
 
-    `budget_overage` counts tasks (`get_tasks` over `redelegation_window`), each in its first
-    spawn's window and half; `emit_failure` counts spawns. `tool_budget` None → the budget
-    this process's environment resolves (`get_tool_budget`)."""
+    `budget_overage` counts complete tasks (`get_tasks` over `redelegation_window`), each in
+    its first spawn's window and half; a task open at `evaluated_at` counts on no side, its
+    spawns in `pending`. `emit_failure` counts spawns. A spawn outside
+    [windows.start.baseline, windows.end) is a task member only. `tool_budget` None → the
+    budget this process's environment resolves (`get_tool_budget`)."""
     if metric_key not in METRIC_KEYS:
         raise ValueError(f"get_floor_verdict: unknown metric key {metric_key!r}")
-    spawns = list(spawns)
+    units = _get_counted_units(
+        list(spawns), metric_key, windows, provenance_start, evaluated_at,
+        redelegation_window, tool_budget,
+    )
     start = windows.end if provenance_start is None else provenance_start
-    joinable = [s for s in spawns if s.agent_id is not None]
-    settled = [s for s in joinable if not is_pending(s, evaluated_at)]
-    units = _get_units(settled, metric_key, redelegation_window, tool_budget)
-    counted = [u for u in units if u.first.started_at >= start]
     covered_start = max(windows.start.baseline, start)
-    floor_half = [u for u in counted if is_floor_half(u.first.agent_id)]
+    floor_half = [u for u in units.counted if is_floor_half(u.first.agent_id)]
     baseline = _get_window_count(floor_half, covered_start, windows.start.detection)
-    detection = _get_window_count(counted, windows.start.detection, windows.start.confirmation)
-    confirmation = _get_window_count(counted, windows.start.confirmation, windows.end)
+    detection = _get_window_count(
+        units.counted, windows.start.detection, windows.start.confirmation
+    )
+    confirmation = _get_window_count(units.counted, windows.start.confirmation, windows.end)
     is_covered = windows.start.detection - covered_start >= BASELINE.MIN_COVERED
     verdict = _get_verdict(detection, confirmation, baseline, is_covered=is_covered)
-    unjoinable, pending = len(spawns) - len(joinable), len(joinable) - len(settled)
-    return FloorResult(verdict, detection, confirmation, baseline, unjoinable, pending)
+    return FloorResult(
+        verdict, detection, confirmation, baseline, units.unjoinable, units.pending
+    )
 
 
-def _get_units(
+def get_confirmation_events(
+    spawns: Iterable[SpawnFacts],
+    metric_key: str,
+    windows: PairWindows,
+    provenance_start: datetime | None,
+    evaluated_at: datetime,
+    *,
+    redelegation_window: timedelta = timedelta(0),
+    tool_budget: int | None = None,
+) -> list[tuple[SpawnFacts, ...]]:
+    """The events `get_floor_verdict` counts in the confirmation window, each with every
+    member — a task under `budget_overage`, the spawn alone otherwise."""
+    if metric_key not in METRIC_KEYS:
+        raise ValueError(f"get_confirmation_events: unknown metric key {metric_key!r}")
+    units = _get_counted_units(
+        list(spawns), metric_key, windows, provenance_start, evaluated_at,
+        redelegation_window, tool_budget,
+    )
+    return [
+        unit.members
+        for unit in units.counted
+        if unit.is_event and windows.start.confirmation <= unit.first.started_at < windows.end
+    ]
+
+
+def _get_counted_units(
     spawns: list[SpawnFacts],
     metric_key: str,
+    windows: PairWindows,
+    provenance_start: datetime | None,
+    evaluated_at: datetime,
     redelegation_window: timedelta,
     tool_budget: int | None,
-) -> list[_Unit]:
-    if metric_key != METRIC_BUDGET_OVERAGE:
-        return [_Unit(s, is_metric_event(s, metric_key)) for s in spawns]
-    budget = get_tool_budget(os.environ) if tool_budget is None else tool_budget
-    return [
-        _Unit(task[0], is_task_overrun(task, budget))
-        for task in get_tasks(spawns, redelegation_window)
+) -> _Units:
+    joinable = [s for s in spawns if s.agent_id is not None]
+    if metric_key == METRIC_BUDGET_OVERAGE:
+        budget = get_tool_budget(os.environ) if tool_budget is None else tool_budget
+        units, pending = _get_task_units(
+            joinable, windows, evaluated_at, redelegation_window, budget
+        )
+    else:
+        units, pending = _get_spawn_units(joinable, metric_key, windows, evaluated_at)
+    start = windows.end if provenance_start is None else provenance_start
+    counted = [u for u in units if u.first.started_at >= start]
+    unjoinable = sum(1 for s in spawns if s.agent_id is None and _is_in_windows(s, windows))
+    return _Units(counted, unjoinable, pending)
+
+
+def _get_task_units(
+    joinable: list[SpawnFacts],
+    windows: PairWindows,
+    evaluated_at: datetime,
+    redelegation_window: timedelta,
+    tool_budget: int,
+) -> tuple[list[_Unit], int]:
+    tasks = [
+        task
+        for task in get_tasks(joinable, redelegation_window)
+        if _is_in_windows(task[0], windows)
     ]
+    closed = [t for t in tasks if not _is_task_open(t, evaluated_at, redelegation_window)]
+    pending = sum(len(t) for t in tasks) - sum(len(t) for t in closed)
+    return [_Unit(t, is_task_overrun(t, tool_budget)) for t in closed], pending
+
+
+def _get_spawn_units(
+    joinable: list[SpawnFacts], metric_key: str, windows: PairWindows, evaluated_at: datetime
+) -> tuple[list[_Unit], int]:
+    in_windows = [s for s in joinable if _is_in_windows(s, windows)]
+    settled = [s for s in in_windows if not is_pending(s, evaluated_at)]
+    units = [_Unit((s,), is_metric_event(s, metric_key)) for s in settled]
+    return units, len(in_windows) - len(settled)
+
+
+def _is_in_windows(spawn: SpawnFacts, windows: PairWindows) -> bool:
+    return windows.start.baseline <= spawn.started_at < windows.end
+
+
+def _is_task_open(
+    task: Sequence[SpawnFacts], evaluated_at: datetime, redelegation_window: timedelta
+) -> bool:
+    """A member may still be running, or a continuation may still start at or after
+    `evaluated_at` — before the last member's stop + W."""
+    last_stop = task[-1].stopped_at
+    return any(is_pending(s, evaluated_at) for s in task) or (
+        last_stop is not None
+        and redelegation_window > timedelta(0)
+        and evaluated_at < last_stop + redelegation_window
+    )
 
 
 def _get_window_count(units: list[_Unit], start: datetime, end: datetime) -> WindowCount:
