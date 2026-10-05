@@ -43,7 +43,7 @@ _DAY = timedelta(days=1)
 
 
 def _is_even_sha256(agent_id: str) -> bool:
-    """Independent oracle for the floor half (N68): even parity of sha256(agent_id)."""
+    """Independent oracle for the floor half: even parity of sha256(agent_id)."""
     return int(hashlib.sha256(agent_id.encode("utf-8")).hexdigest(), 16) % 2 == 0
 
 

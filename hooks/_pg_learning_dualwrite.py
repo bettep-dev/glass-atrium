@@ -1148,7 +1148,7 @@ LEFT JOIN (
 ) o ON o.agent_id = s.agent_id
 ORDER BY s.started_at, s.id
 """
-# The install's provenance start (N60): its earliest MANIFEST row carrying a session id.
+# The install's provenance start: its earliest MANIFEST row carrying a session id.
 _PROVENANCE_START_SQL = (
     "SELECT min(started_at) FROM core.spawn_manifest WHERE session_id IS NOT NULL"
 )
@@ -1158,7 +1158,7 @@ def read_pattern_floor(
     agent: str, metric_key: str, windows: PairWindows
 ) -> FloorResult | None:
     """The occurrence floor of `agent` for `metric_key` over `windows`, read from
-    core.spawn_manifest and the facts joined by agent_id (N60).
+    core.spawn_manifest and the facts joined by agent_id.
 
     None on ANY read failure — table-absent schema and PG unreachable included — so an
     outage fails closed and never reads as an empty window. Raises ValueError on a

@@ -294,7 +294,7 @@ _EMIT_FAILURE_ATTRIBUTIONS = frozenset({
 })
 
 PAIR_WINDOW = timedelta(days=7)
-BASELINE_SPAN = timedelta(days=84)  # D3 horizon cap
+BASELINE_SPAN = timedelta(days=84)  # baseline look-back cap
 BASELINE_MIN_COVERED = timedelta(days=28)  # the power check's projected-units window
 FLOOR_MIN_SESSIONS = 5
 
@@ -339,7 +339,7 @@ class FloorResult(NamedTuple):
 
 
 def get_pair_windows(now: datetime) -> PairWindows:
-    """Windows anchored on D, the most recent UTC midnight at or before `now` (N59).
+    """Windows anchored on D, the most recent UTC midnight at or before `now`.
 
     Raises ValueError on a naive `now` — a guessed zone shifts D by up to a day."""
     if now.utcoffset() is None:
@@ -356,14 +356,14 @@ def get_pair_windows(now: datetime) -> PairWindows:
 
 def is_new_pair(windows: PairWindows, last_transition_at: datetime) -> bool:
     """Does this pair count toward a `dormant` row's re-entry? Only when its detection
-    starts at or after the row's last transition (N59) — a row stays dormant ≥ 14 days."""
+    starts at or after the row's last transition — a row stays dormant ≥ 14 days."""
     return windows.detection_start >= last_transition_at
 
 
 def is_floor_half(agent_id: str) -> bool:
     """Floor half = even parity of sha256(agent_id); the reference half is the complement.
 
-    sha256, never hash(): the builtin is salted per process (PYTHONHASHSEED, N68)."""
+    sha256, never hash(): the builtin is salted per process (PYTHONHASHSEED)."""
     return hashlib.sha256(agent_id.encode("utf-8")).digest()[-1] % 2 == 0
 
 
@@ -386,7 +386,7 @@ def get_floor_verdict(
     windows: PairWindows,
     provenance_start: datetime | None,
 ) -> FloorResult:
-    """Occurrence floor over windows, never over a batch (plan → Occurrence floor).
+    """Occurrence floor over windows, never over a batch.
 
     Pass: ≥ 5 event sessions in detection and in confirmation, confirmation rate above
     the floor-half baseline rate. `insufficient-baseline`, never a pass, while the
