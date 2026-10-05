@@ -6415,7 +6415,8 @@ def _get_report_backfill(
     """(cycle_date, verdict) per horizon report date before the current one that has no row.
 
     A report counts only when every patch carries a status — older reports
-    predate the field. An unreadable report is named on stderr and skipped.
+    predate the field. An unreadable or malformed report is named on stderr and
+    skipped, so no report can suppress the current date's insert.
     """
     report_paths = {
         path.name.removeprefix("autoagent-").removesuffix(".json"): path
@@ -6430,19 +6431,37 @@ def _get_report_backfill(
         if day in stored_dates:
             continue
         try:
-            patches = json.loads(report_paths[day].read_text(encoding="utf-8"))["patches"]
+            rows = _get_report_rows(report_paths[day])
         except (OSError, ValueError, KeyError, TypeError) as exc:
             sys.stderr.write(
                 f"[daemon-cycle] cycle verdicts: WARN — report {report_paths[day]} "
-                f"unreadable, date left absent: {type(exc).__name__}\n"
+                f"unreadable or malformed, date left absent: {type(exc).__name__}: "
+                f"{str(exc)[:200]}\n"
             )
             continue
-        if not all(isinstance(patch, dict) and patch.get("status") for patch in patches):
-            continue
-        backfill.append(
-            (day, _get_date_verdict((p["status"], p.get("rationale")) for p in patches))
-        )
+        if rows is not None:
+            backfill.append((day, _get_date_verdict(rows)))
     return backfill
+
+
+def _get_report_rows(path: Path) -> list[tuple[str, str | None]] | None:
+    """A report's (status, rationale) rows; None when a patch predates the status field.
+
+    Raises ValueError on a shape no status-bearing report has, so the caller
+    names the file instead of deriving a verdict from it.
+    """
+    patches = json.loads(path.read_text(encoding="utf-8"))["patches"]
+    if not isinstance(patches, list):
+        raise ValueError("patches is not a list")
+    rows: list[tuple[str, str | None]] = []
+    for patch in patches:
+        if not isinstance(patch, dict):
+            raise ValueError("a patch is not an object")
+        status, rationale = patch.get("status"), patch.get("rationale")
+        if not all(value is None or isinstance(value, str) for value in (status, rationale)):
+            raise ValueError("a patch status or rationale is not a string")
+        rows.append((status, rationale))
+    return rows if all(status for status, _ in rows) else None
 
 
 def _is_iso_date(text: str) -> bool:

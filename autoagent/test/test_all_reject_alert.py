@@ -679,6 +679,48 @@ class TestCycleVerdictsLivePg(unittest.TestCase):
         self.assertEqual(first, 3)
         self.assertEqual((second, self._get_verdicts()), (0, stored))
 
+    def test_a_malformed_report_is_named_and_skipped_and_the_current_verdict_is_stored(
+        self,
+    ) -> None:
+        self._use_database(self._TEMPLATE.FULL)
+        malformed = {
+            "patches is null": (
+                "2026-06-09",
+                {"patches": None},
+            ),
+            "patches is not a list": (
+                "2026-06-08",
+                {"patches": "rejected"},
+            ),
+            "a patch is not an object": (
+                "2026-06-07",
+                {"patches": [["rejected"]]},
+            ),
+            "status is a list": (
+                "2026-06-06",
+                {"patches": [{"status": ["rejected"], "rationale": None}]},
+            ),
+            "status is a number": (
+                "2026-06-05",
+                {"patches": [{"status": 1, "rationale": None}]},
+            ),
+            "rationale is a number": (
+                "2026-06-04",
+                {"patches": [{"status": "rejected", "rationale": 7}]},
+            ),
+        }
+        for day, body in malformed.values():
+            (self.reports_dir / f"autoagent-{day}.json").write_text(
+                json.dumps({"cycle_date": day, **body}), encoding="utf-8"
+            )
+
+        inserted, err = self._create_verdicts(_dated_report(_CYCLE_DATE, ["rejected"]))
+
+        self.assertEqual((inserted, self._get_verdicts()), (1, [(_CYCLE_DATE, "extends")]))
+        for name, (day, _) in malformed.items():
+            with self.subTest(name):
+                self.assertIn(f"report {self.reports_dir / f'autoagent-{day}.json'} ", err)
+
     def test_a_same_day_re_run_keeps_the_first_verdict(self) -> None:
         self._use_database(self._TEMPLATE.FULL)
         self._create_verdicts(_dated_report(_CYCLE_DATE, ["rejected"]))
