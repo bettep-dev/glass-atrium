@@ -198,9 +198,11 @@ class RateHarm(unittest.TestCase):
         def get_size(base_rate: float, fold: float) -> int:
             return td.get_fixed_sample_size(base_rate * fold, relative_reduction=1 - 1 / fold)
 
-        for base_rate, per_arm in ((0.006, 400), (0.02, 166), (0.1, 395), (0.29, 222)):
+        # 1e-9 row: answer rate ~0.44 → one ULP there exceeds 1e-10 x base, the scale a base-relative stop needs
+        for base_rate, per_arm in ((1e-9, 10), (0.006, 400), (0.02, 166), (0.1, 395), (0.29, 222)):
             with self.subTest(base_rate=base_rate, per_arm=per_arm):
                 fold = td.get_rate_harm(base_rate, per_arm)
+                self.assertTrue(math.isfinite(fold))
                 self.assertLessEqual(get_size(base_rate, fold * 1.001), per_arm)
                 self.assertGreater(get_size(base_rate, fold * 0.999), per_arm)
 

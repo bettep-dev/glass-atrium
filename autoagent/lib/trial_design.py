@@ -155,7 +155,8 @@ def get_rate_harm(
     if _get_two_proportion_size(base_rate, 1.0, alpha, power) > effective:
         return math.inf
     lower, upper = base_rate, 1.0
-    while upper - lower > _SEARCH_TOLERANCE * base_rate:
+    # tolerance relative to the bracket, not base_rate → stays above one ULP of the answer at any base scale
+    while upper - lower > _SEARCH_TOLERANCE * lower:
         middle = (lower + upper) / 2
         size = _get_two_proportion_size(base_rate, middle, alpha, power)
         lower, upper = (middle, upper) if size > effective else (lower, middle)
