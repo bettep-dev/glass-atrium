@@ -1737,8 +1737,8 @@ fi
 # TERMINAL_SO=1 is reachable ONLY via the python completion_block promotion: a text-channel [COMPLETION]
 # sets parse_tier 1/2 BEFORE detect_terminal_structuredoutput runs → TERMINAL_SO=0, so this pairing
 # uniquely marks a writer block recovered from the terminal StructuredOutput input. A DISTINCT literal
-# (NOT the synthesized structuredoutput-derived, which daemon_cycle carves out of SUCCESS + the monitor
-# folds as reconstructed) keeps the recovered signal a clean SUCCESS exemplar + a 'healthy' monitor row.
+# (NOT the synthesized structuredoutput-derived, which the emit-failure metric counts + the monitor
+# folds as reconstructed) keeps the recovered row out of that metric + a 'healthy' monitor row.
 if [[ "${HAS_STRUCTURED}" = "true" ]] && [[ "${TERMINAL_SO}" = "1" ]] && [[ "${ATTRIBUTION_SOURCE}" = "hook-input" ]]; then
   ATTRIBUTION_SOURCE="structuredoutput-completion"
   printf '[outcome-record] structuredoutput-completion: writer [COMPLETION] recovered from terminal StructuredOutput input (attribution=%s, agent=%s)\n' \

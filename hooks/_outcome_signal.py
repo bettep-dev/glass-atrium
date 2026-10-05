@@ -98,10 +98,9 @@ ATTRIBUTION_BUDGET_TRUNCATION = "budget-truncation"
 # subagent's TERMINAL StructuredOutput was successfully consumed: result=done +
 # confidence=low + metric_pass=false, writer-unverified. 'done' is not in
 # NEGATIVE_SIGNAL_RESULTS, so the row's RESULT contributes nothing — but
-# track-outcome.sh now sets review_flag on it for degraded-row visibility, and that
+# track-outcome.sh sets review_flag on it for degraded-row visibility, and that
 # OR-term is excluded by _is_visibility_flag_row so the count stays neutral.
-# Polarity handling (NEUTRAL, never a SUCCESS exemplar) lives in daemon_cycle's
-# partition, which keys on this token.
+# Also a member of _EMIT_FAILURE_ATTRIBUTIONS (emit-failure metric).
 ATTRIBUTION_STRUCTUREDOUTPUT_DERIVED = "structuredoutput-derived"
 # Per-row floor mirroring the core-learning-log.md "revision_count 2+" process-
 # improvement bar — 1 rework request is normal iteration, 2+ marks a correction.
