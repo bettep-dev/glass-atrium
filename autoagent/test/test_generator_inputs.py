@@ -8,7 +8,8 @@ Covered here:
   (b) the evidence inputs — the pattern's metric key, its confirmation rate against
       the floor-half baseline and the triggering spawns' machine facts — reach both,
       each value flattened and quoted;
-  (c) the triggering spawns are the pattern's metric events in its confirmation window.
+  (c) the triggering spawns are the pattern's metric events in its confirmation window;
+  (d) every row the generation path returns carries the generator-input version.
 
 Run with either runner:
     uv run --with pytest pytest autoagent/test/test_generator_inputs.py -v
@@ -239,6 +240,71 @@ class TestGenerationLoopReadsNoOutcome(unittest.TestCase):
                 with self.assertRaises(rejection) as caught:
                     call()
                 self.assertEqual(getattr(caught.exception, "code", None), exit_code)
+        self.assertEqual(self._reach, [])
+
+
+# core.autoagent_proposals.generator_input_version is VARCHAR(64).
+_INPUT_VERSION_COLUMN_WIDTH = 64
+
+
+@unittest.skipIf(dc is None, f"import failed: {_IMPORT_ERROR}")
+class TestGeneratorInputVersionStamp(unittest.TestCase):
+    """(d) the generation path stamps one version literal on every routed row."""
+
+    def setUp(self) -> None:
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        self._root = Path(tmp.name)
+        self._agents_dir = _make_agents_dir(self)
+        (self._agents_dir / "dev-shell.md").write_text(
+            "---\nname: dev-shell\n---\n# Body\nShell rule line.\n", encoding="utf-8"
+        )
+        env = mock.patch.dict(os.environ, {"GA_DATA_ROOT": str(self._root)})
+        env.start()
+        self.addCleanup(env.stop)
+        self._reach = seal_pg_reach(self)
+        shell_pattern = dc.Pattern(
+            date="2026-10-04",
+            label="repeated emit failure",
+            frequency="4",
+            agent="dev-shell",
+            status="identified",
+            tier="user-pending",
+            raw_line="pg:learning_log:2:repeated emit failure|dev-shell",
+            row_id=2,
+            metric_key=sig.METRIC_EMIT_FAILURE,
+        )
+        for name, value in (
+            ("read_user_pending_patterns", lambda *a, **k: [_pattern(), shell_pattern]),
+            ("IS_GENERATION_CLOSED", False),
+        ):
+            patcher = mock.patch.object(dc, name, value)
+            patcher.start()
+            self.addCleanup(patcher.stop)
+
+    def test_every_routed_row_carries_the_version_the_column_can_hold(self) -> None:
+        with contextlib.redirect_stderr(io.StringIO()):
+            report = dc.run_cycle(
+                log_path=self._root / "learning-log.md",
+                agents_dir=self._agents_dir,
+                skip_haiku=True,
+                skip_pre_verify=True,
+                skip_loop_emit=True,
+            )
+
+        self.assertEqual(
+            sorted(patch.pattern_agent for patch in report.patches),
+            ["dev-python", "dev-shell"],
+        )
+        for patch in report.patches:
+            with self.subTest(agent=patch.pattern_agent):
+                self.assertEqual(
+                    patch.generator_input_version, dc.GENERATOR_INPUT_VERSION
+                )
+        self.assertTrue(dc.GENERATOR_INPUT_VERSION)
+        self.assertLessEqual(
+            len(dc.GENERATOR_INPUT_VERSION), _INPUT_VERSION_COLUMN_WIDTH
+        )
         self.assertEqual(self._reach, [])
 
 

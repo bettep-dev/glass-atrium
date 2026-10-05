@@ -2046,7 +2046,7 @@ class PatchResult:
     generation_duration_ms: int | None = None
     # core.learning_log id of the lead pattern (None = synthetic); the discharge link.
     learning_pattern_id: int | None = None
-    # Version of the generator's input set; None until the generation path stamps one.
+    # GENERATOR_INPUT_VERSION as build_patch_result stamps it; None on a row built elsewhere.
     generator_input_version: str | None = None
 
 
@@ -3424,6 +3424,9 @@ def _render_signals_block(
         lines.extend(f"   {line}" for line in _render_pattern_evidence(p, evidence))
     return "\n".join(lines)
 
+
+# Stamped on every proposal row; bump whenever the generation prompt's input set changes.
+GENERATOR_INPUT_VERSION = "gen-inputs-1"
 
 # Triggering spawns listed per pattern, newest first; the rest are counted.
 MACHINE_FACTS_SPAWN_LIMIT = 10
@@ -11302,6 +11305,7 @@ def build_patch_result(
         generation_duration_ms=proposal.generation_duration_ms,
         # Lead pattern only: the column holds one link per proposal row.
         learning_pattern_id=lead_pattern.row_id or None,
+        generator_input_version=GENERATOR_INPUT_VERSION,
     )
 
 

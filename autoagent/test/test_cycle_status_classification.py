@@ -186,7 +186,7 @@ class ProposalStatusSent(unittest.TestCase):
                 )
 
     @unittest.skipIf(dc is None, f"import failed: {_IMPORT_ERROR}")
-    def test_the_generation_unit_links_its_lead_pattern_through_the_report(self) -> None:
+    def test_the_generation_unit_sends_its_pattern_link_and_input_version(self) -> None:
         # Report JSON built by the cycle's own serializer, so a field the dataclass
         # drops never reaches the envelope; a synthetic pattern (row_id 0) links nothing.
         pg_reach = seal_pg_reach(self)
@@ -198,7 +198,9 @@ class ProposalStatusSent(unittest.TestCase):
                 patch = self._build_report_patch(row_id)
                 args = self._get_sent_args(patch)
                 self.assertEqual(args["learning_pattern_id"], expected)
-                self.assertIsNone(args["generator_input_version"])
+                self.assertEqual(
+                    args["generator_input_version"], dc.GENERATOR_INPUT_VERSION
+                )
         self.assertEqual(pg_reach, [])
 
     @unittest.skipIf(dc is None, f"import failed: {_IMPORT_ERROR}")
