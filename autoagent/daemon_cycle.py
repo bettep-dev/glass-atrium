@@ -2270,10 +2270,12 @@ def _agent_roster(agents_dir: Path) -> frozenset[str]:
         return frozenset()
 
 
-# Canonical roster stems carry this prefix (agents/glass-atrium-<bare>.md).
-_ROSTER_STEM_PREFIX = "glass-atrium-"
-# Opening literal the monitor's dormant-reason bucket matches (routes/improvement.ts).
-ROSTER_MISMATCH_REASON = "roster-mismatch"
+ROSTER = SimpleNamespace(
+    # canonical roster stems carry this prefix (agents/glass-atrium-<bare>.md)
+    STEM_PREFIX="glass-atrium-",
+    # opening literal the monitor's dormant-reason bucket matches (routes/improvement.ts)
+    MISMATCH_REASON="roster-mismatch",
+)
 
 
 def _get_roster_alias(agent: str, roster: frozenset[str]) -> str | None:
@@ -2286,11 +2288,11 @@ def _get_roster_alias(agent: str, roster: frozenset[str]) -> str | None:
     REAL stem so downstream target_file resolution (agents/<stem>.md) hits the
     file; no hit in either direction → None (caller keeps the loud-fail path).
     """
-    prefixed = _ROSTER_STEM_PREFIX + agent
+    prefixed = ROSTER.STEM_PREFIX + agent
     if prefixed in roster:
         return prefixed
-    if agent.startswith(_ROSTER_STEM_PREFIX):
-        bare = agent[len(_ROSTER_STEM_PREFIX):]
+    if agent.startswith(ROSTER.STEM_PREFIX):
+        bare = agent[len(ROSTER.STEM_PREFIX):]
         if bare in roster:
             return bare
     return None
@@ -2425,11 +2427,12 @@ def _warn_roster_mismatch(agent: str, signature: str, event_ts: str) -> None:
 
 
 def _put_roster_dormant(pattern_id: int, *, live: bool) -> None:
-    """Move an off-roster intake row to 'dormant' (N47) so it stops re-entering intake.
+    """Move an off-roster intake row to 'dormant' so it stops re-entering intake.
 
-    The aggregator's next passing pair returns it to 'identified'; an agent still
-    off the roster is moved again by the next writing cycle. A not-matched answer
-    (row moved since the read, or a schema without the label) leaves it identified.
+    'dormant' is non-terminal: the aggregator's next passing pair returns it to
+    'identified', and an agent still off the roster is moved again by the next
+    writing cycle. A not-matched answer (row moved since the read, or a schema
+    without the label) leaves it identified.
     """
     if not live:
         sys.stderr.write(
@@ -2437,7 +2440,7 @@ def _put_roster_dormant(pattern_id: int, *, live: bool) -> None:
             f"id={pattern_id} would move to dormant\n"
         )
         return
-    result = _pg_put_learning_pattern_status(pattern_id, "dormant", ROSTER_MISMATCH_REASON)
+    result = _pg_put_learning_pattern_status(pattern_id, "dormant", ROSTER.MISMATCH_REASON)
     if result.outcome == TRANSITION_FAILED:
         sys.stderr.write(
             f"[daemon-cycle] WARN: roster mismatch — learning_log id={pattern_id} not "
@@ -10032,8 +10035,8 @@ def _canon_agent_key(agent: str) -> str:
     string instead would silently drop the legacy bare-form rows.
     """
     stem = (agent or "").strip()
-    if stem.startswith(_ROSTER_STEM_PREFIX):
-        return stem[len(_ROSTER_STEM_PREFIX):]
+    if stem.startswith(ROSTER.STEM_PREFIX):
+        return stem[len(ROSTER.STEM_PREFIX):]
     return stem
 
 

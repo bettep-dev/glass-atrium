@@ -485,7 +485,7 @@ class _RosterDropHarness(unittest.TestCase):
 
 @unittest.skipIf(dc is None, f"import failed: {_IMPORT_ERROR}")
 class TestRosterMismatchMovesRowDormant(_RosterDropHarness):
-    """A writing read moves exactly the off-roster rows to 'dormant' (N47)."""
+    """A writing read moves exactly the off-roster rows to the non-terminal 'dormant' status."""
 
     def test_when_a_writing_read_runs_then_only_off_roster_rows_move_dormant(self) -> None:
         self.rows = [
