@@ -6255,64 +6255,104 @@ def _is_non_adjudication_reject(status: str, rationale: str | None) -> bool:
     )
 
 
-def _all_reject_streak_from_rows(rows: list[tuple[object, str, str | None]]) -> int:
-    """Leading run of all-reject dates over (cycle_date, status, rationale) rows.
+CYCLE_VERDICT = SimpleNamespace(
+    # core."CycleVerdict" labels — one cycle date's state in the all-reject walk
+    EXTENDS="extends",
+    NEUTRAL="neutral",
+    BREAKS="breaks",
+)
+_CYCLE_VERDICTS_MIGRATION = "20261008000000_add_trial_ledger_and_cycle_verdicts"
+# Walk horizon in DISTINCT DATES; the backfill reads the same horizon of reports
+_ALL_REJECT_HORIZON_DATES = 400
 
-    Rows arrive newest-date-first, so equal dates are contiguous. Per date:
-    any row that is not terminal-negative breaks the walk (a queued or applied
-    row is pipeline output); a date whose rejects ALL classify non-adjudicating
-    drops out like a quiet night — neither extending nor breaking; a date
-    carrying >=1 adjudicating reject extends.
+
+def _get_date_verdict(rows: Iterable[tuple[str, str | None]]) -> str:
+    """One cycle date's (status, rationale) rows → its CYCLE_VERDICT label.
+
+    Any row that is not terminal-negative breaks (a queued or applied row is
+    pipeline output); a date whose rejects ALL classify non-adjudicating is
+    neutral, like a quiet night; a date carrying >=1 adjudicating reject extends.
     """
+    verdict = CYCLE_VERDICT.NEUTRAL
+    for status, rationale in rows:
+        if status not in _TERMINAL_NEGATIVE_STATUSES:
+            return CYCLE_VERDICT.BREAKS
+        if not _is_non_adjudication_reject(status, rationale):
+            verdict = CYCLE_VERDICT.EXTENDS
+    return verdict
+
+
+def _get_streak_from_verdicts(verdicts: Iterable[str]) -> int:
+    """Leading run of extending dates over verdicts newest-first; neutral skips, breaks stops."""
     streak = 0
-    for _cycle_date, date_rows in groupby(rows, key=lambda row: row[0]):
-        extends = False
-        for _date, status, rationale in date_rows:
-            if status not in _TERMINAL_NEGATIVE_STATUSES:
-                return streak
-            if _is_non_adjudication_reject(status, rationale):
-                continue
-            extends = True
-        if extends:
+    for verdict in verdicts:
+        if verdict == CYCLE_VERDICT.BREAKS:
+            return streak
+        if verdict == CYCLE_VERDICT.EXTENDS:
             streak += 1
     return streak
 
 
-def _prior_all_reject_cycle_count(current_cycle_date: str) -> int:
-    """Leading run of persisted cycles whose proposals were ALL adjudicating rejects.
+def _all_reject_streak_from_rows(rows: list[tuple[object, str, str | None]]) -> int:
+    """Leading run of all-reject dates over (cycle_date, status, rationale) rows.
 
-    Reads (cycle_date, status, rationale) for every proposal on the most recent
-    cycle_dates STRICTLY BEFORE the current cycle (the current cycle is judged
-    from the in-memory report — excluding it here prevents a same-day re-run from
-    double-counting today) and hands them to _all_reject_streak_from_rows, which
-    applies the classify_failure_rationale SoT: the read cannot call it, so the
-    grouping and the classification happen in Python. A supersede / quota / auth /
-    chronic-timeout / skipped / below-floor / parked-pattern date drops out like a
-    quiet night, so a back-off marker date needs no status carve-out of its own.
-    PG unavailable / read error → 0 (fail-open: a read failure must never
-    fabricate an alert).
+    Rows arrive newest-date-first, so equal dates are contiguous; each date is
+    judged by _get_date_verdict — the same state a stored verdict row carries.
+    """
+    return _get_streak_from_verdicts(
+        _get_date_verdict((status, rationale) for _date, status, rationale in date_rows)
+        for _cycle_date, date_rows in groupby(rows, key=lambda row: row[0])
+    )
+
+
+def _has_cycle_verdicts_table(cur: object) -> bool:
+    cur.execute("SELECT to_regclass('core.autoagent_cycle_verdicts')")
+    row = cur.fetchone()
+    return bool(row and row[0])
+
+
+def _prior_all_reject_cycle_count(current_cycle_date: str) -> int:
+    """Leading run of persisted all-reject cycles STRICTLY BEFORE the current one.
+
+    Walks the stored cycle-time verdicts (core.autoagent_cycle_verdicts), so a
+    later status change on a past proposal cannot rewrite a past date. The
+    current cycle is judged from the in-memory report — excluding it here keeps
+    a same-day re-run from double-counting today. A schema without the verdict
+    table falls back to the proposals walk with a DEGRADED line naming the
+    migration. PG unavailable / read error → 0 (fail-open: a read failure must
+    never fabricate an alert).
     """
     if not HAS_PG_LOOP_WRITE or not current_cycle_date:
         return 0
 
-    select_sql = (
+    verdict_sql = (
+        "SELECT verdict::text FROM core.autoagent_cycle_verdicts "
+        "WHERE cycle_date < %s::date ORDER BY cycle_date DESC LIMIT %s"
+    )
+    proposals_sql = (
         "SELECT cycle_date, status::text, rationale "
         "FROM core.autoagent_proposals "
         # The bound is on DISTINCT DATES, not rows — the table carries several
         # rows per cycle_date, so a row-count LIMIT of the same size would
-        # quietly shrink the horizon and flatten a genuinely long streak. The
-        # walk still short-circuits at the first non-rejected cycle, so this
-        # only bounds the worst case (a genuinely long all-reject run).
+        # quietly shrink the horizon and flatten a genuinely long streak.
         "WHERE cycle_date IN ("
         "SELECT cycle_date FROM core.autoagent_proposals "
         "WHERE cycle_date < %s::date "
-        "GROUP BY cycle_date ORDER BY cycle_date DESC LIMIT 400) "
+        "GROUP BY cycle_date ORDER BY cycle_date DESC LIMIT %s) "
         "ORDER BY cycle_date DESC"
     )
     try:
         with _pg_connect() as conn:
             with conn.cursor() as cur:
-                cur.execute(select_sql, (current_cycle_date,))
+                if _has_cycle_verdicts_table(cur):
+                    cur.execute(verdict_sql, (current_cycle_date, _ALL_REJECT_HORIZON_DATES))
+                    return _get_streak_from_verdicts(row[0] for row in cur.fetchall())
+                sys.stderr.write(
+                    "[daemon-cycle] all-reject alert: DEGRADED — "
+                    "core.autoagent_cycle_verdicts absent (apply migration "
+                    f"{_CYCLE_VERDICTS_MIGRATION}); walking proposal statuses\n"
+                )
+                cur.execute(proposals_sql, (current_cycle_date, _ALL_REJECT_HORIZON_DATES))
                 rows = cur.fetchall()
     except Exception as exc:  # noqa: BLE001 — fail-OPEN: read error must not alert
         sys.stderr.write(
@@ -6322,6 +6362,94 @@ def _prior_all_reject_cycle_count(current_cycle_date: str) -> int:
         return 0
 
     return _all_reject_streak_from_rows(rows)
+
+
+def create_cycle_verdicts(report: CycleReport, *, reports_dir: Path = DEFAULT_REPORTS_DIR) -> int:
+    """Insert this cycle's verdict plus one per earlier report date with no row → rows inserted.
+
+    Insert-only (ON CONFLICT DO NOTHING): a same-day re-run and a repeated
+    backfill write nothing. The backfill reads the status-bearing cycle reports
+    of the walk's horizon; a date with neither a row nor such a report stays
+    absent. A schema without the table skips with a line naming the migration.
+    Raises on any other PG fault — the caller logs and skips.
+    """
+    if not HAS_PG_LOOP_WRITE or not report.cycle_date:
+        return 0
+    with _pg_connect() as conn:
+        with conn.cursor() as cur:
+            if not _has_cycle_verdicts_table(cur):
+                sys.stderr.write(
+                    "[daemon-cycle] cycle verdicts: SKIP — core.autoagent_cycle_verdicts "
+                    f"absent (apply migration {_CYCLE_VERDICTS_MIGRATION})\n"
+                )
+                return 0
+            inserted = _insert_cycle_verdicts(cur, report, reports_dir)
+        conn.commit()
+    return inserted
+
+
+def _insert_cycle_verdicts(cur: object, report: CycleReport, reports_dir: Path) -> int:
+    cur.execute(
+        "SELECT cycle_date::text FROM core.autoagent_cycle_verdicts WHERE cycle_date < %s::date",
+        (report.cycle_date,),
+    )
+    stored_dates = {row[0] for row in cur.fetchall()}
+    backfill = _get_report_backfill(reports_dir, report.cycle_date, stored_dates)
+    inserted = 0
+    for cycle_date, verdict in [(report.cycle_date, _get_report_verdict(report)), *backfill]:
+        cur.execute(
+            "INSERT INTO core.autoagent_cycle_verdicts (cycle_date, verdict) "
+            'VALUES (%s::date, %s::core."CycleVerdict") ON CONFLICT (cycle_date) DO NOTHING',
+            (cycle_date, verdict),
+        )
+        inserted += cur.rowcount == 1
+    sys.stderr.write(
+        f"[daemon-cycle] cycle verdicts: inserted={inserted} backfill_candidates={len(backfill)}\n"
+    )
+    return inserted
+
+
+def _get_report_backfill(
+    reports_dir: Path, current_cycle_date: str, stored_dates: set[str]
+) -> list[tuple[str, str]]:
+    """(cycle_date, verdict) per horizon report date before the current one that has no row.
+
+    A report counts only when every patch carries a status — older reports
+    predate the field. An unreadable report is named on stderr and skipped.
+    """
+    report_paths = {
+        path.name.removeprefix("autoagent-").removesuffix(".json"): path
+        for path in reports_dir.glob("autoagent-*.json")
+    }
+    horizon = sorted(
+        (day for day in report_paths if _is_iso_date(day) and day < current_cycle_date),
+        reverse=True,
+    )[:_ALL_REJECT_HORIZON_DATES]
+    backfill: list[tuple[str, str]] = []
+    for day in horizon:
+        if day in stored_dates:
+            continue
+        try:
+            patches = json.loads(report_paths[day].read_text(encoding="utf-8"))["patches"]
+        except (OSError, ValueError, KeyError, TypeError) as exc:
+            sys.stderr.write(
+                f"[daemon-cycle] cycle verdicts: WARN — report {report_paths[day]} "
+                f"unreadable, date left absent: {type(exc).__name__}\n"
+            )
+            continue
+        if not all(isinstance(patch, dict) and patch.get("status") for patch in patches):
+            continue
+        backfill.append(
+            (day, _get_date_verdict((p["status"], p.get("rationale")) for p in patches))
+        )
+    return backfill
+
+
+def _is_iso_date(text: str) -> bool:
+    try:
+        return date.fromisoformat(text).isoformat() == text
+    except ValueError:
+        return False
 
 
 def _days_since_last_applied(current_cycle_date: str | None) -> int:
@@ -6387,16 +6515,12 @@ def _all_rejected_this_cycle(report: CycleReport) -> bool:
     terminal-non-resurrectable, NOT live pipeline output, so it must never
     resurrect the healthy-output claim.
     """
-    counted_patches = [
-        patch
-        for patch in report.patches
-        if not _is_non_adjudication_reject(patch.status, patch.rationale)
-    ]
-    if not counted_patches:
-        return False
-    return all(
-        patch.status in _TERMINAL_NEGATIVE_STATUSES for patch in counted_patches
-    )
+    return _get_report_verdict(report) == CYCLE_VERDICT.EXTENDS
+
+
+def _get_report_verdict(report: CycleReport) -> str:
+    """The in-memory cycle's CYCLE_VERDICT — the state create_cycle_verdicts stores."""
+    return _get_date_verdict((patch.status, patch.rationale) for patch in report.patches)
 
 
 def is_systemic_regression(report: CycleReport) -> bool:
@@ -10806,6 +10930,13 @@ def run_cycle(
     # skip_loop_emit=True → block the PG call in unit-test / preflight paths.
     # patches=[] (patterns_processed=0) → _aggregate_loop_events returns [] → no-op.
     if not skip_loop_emit:
+        try:
+            create_cycle_verdicts(report)
+        except Exception as exc:  # noqa: BLE001 — fail-loud-and-skip; walk reads stored rows
+            sys.stderr.write(
+                "[daemon-cycle] WARN: create_cycle_verdicts raised — verdict not stored: "
+                f"{type(exc).__name__}: {str(exc)[:160]}\n"
+            )
         try:
             alert_all_reject_streak(report)
         except Exception as exc:  # noqa: BLE001 — fail-loud-and-skip

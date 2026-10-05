@@ -38,6 +38,10 @@ setup_file() {
   createdb -h "${EPH_SOCKDIR}" -p "${EPH_PORT}" -T glass_atrium proposal_link_full || return 1
   eph_pg_create_migrated_db "${EPH_SOCKDIR}" "${EPH_PORT}" proposal_link_absent \
     20261005000000_add_pattern_evidence_provenance || return 1
+  # Cycle-verdict templates: each test clones its own database, since the table is append-only.
+  createdb -h "${EPH_SOCKDIR}" -p "${EPH_PORT}" -T glass_atrium cycle_verdicts_tpl || return 1
+  eph_pg_create_migrated_db "${EPH_SOCKDIR}" "${EPH_PORT}" cycle_verdicts_absent_tpl \
+    20261008000000_add_trial_ledger_and_cycle_verdicts || return 1
 }
 
 teardown_file() {
@@ -186,6 +190,10 @@ PY
 
 @test "the spawn-manifest writer live class runs against the migrated cluster, none skipped" {
   _assert_live_module test_manifest_ingest TestSpawnManifestWriterLivePg
+}
+
+@test "the cycle-verdict writer and walk live class runs against the migrated cluster, none skipped" {
+  _assert_live_module test_all_reject_alert TestCycleVerdictsLivePg
 }
 
 @test "the pattern-metric window read runs against the migrated cluster, none skipped" {
