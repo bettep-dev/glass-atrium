@@ -149,8 +149,12 @@ class TestIntakeSqlShape(unittest.TestCase):
         self,
     ) -> None:
         pgdw.read_pending_learning_patterns()
-        intake_selects = [sql for sql, _ in self._log if "FROM core.learning_log" in sql]
-        self.assertEqual(len(intake_selects), 1, "helper must execute exactly one intake SELECT")
+        intake_selects = [
+            sql for sql, _ in self._log if "FROM core.learning_log" in sql
+        ]
+        self.assertEqual(
+            len(intake_selects), 1, "helper must execute exactly one intake SELECT"
+        )
         sql = intake_selects[0]
         self.assertIn("FROM core.learning_log", sql)
         self.assertIn("status = 'identified'", sql)
@@ -251,7 +255,9 @@ class TestAggregatorUpsertVisibleToIntake(_LivePgFixture):
         self._upsert_probe(_KEYLESS_SIGNATURE, _KEYLESS_AGENT, frequency=9997)
         patterns = self._read_with_probe_roster(_KEYLESS_AGENT)
 
-        self.assertEqual([(p.agent, p.metric_key) for p in patterns], [(_KEYLESS_AGENT, None)])
+        self.assertEqual(
+            [(p.agent, p.metric_key) for p in patterns], [(_KEYLESS_AGENT, None)]
+        )
 
 
 class TestIntakeRosterRenameContract(_LivePgFixture):
