@@ -69,7 +69,7 @@ DEFAULT_AGENTS_DIR = HOME / ".claude" / "agents"
 
 # PG read source — _pg_learning_dualwrite is the single helper SoT (same import
 # path + fallback policy as learning-aggregator.py). Missing psycopg →
-# HAS_PG_OUTCOME_READ=False → automatic file-system fallback for outcomes;
+# HAS_PG_OUTCOME_READ=False → outcome-signal reads return empty (cold start);
 # pattern intake has NO file fallback (PG is the intake SoT — a stale MD read
 # would regenerate proposals from fossil signals) → 0 patterns + loud WARN.
 _PG_HOOKS_DIR = HOME / ".claude" / "hooks"
@@ -102,9 +102,8 @@ from _outcome_signal import (  # noqa: E402 — hooks dir pinned by the loop abo
 # Runtime data roots via the shared ga_paths seam (.glass-atrium default,
 # GA_DATA_ROOT-overridable) — the SAME store project_key.py / learning-aggregator.py
 # resolve after the .claude→.glass-atrium data migration.
-# data/outcomes/ holds only the legacy `.md` fallback path — new records sink to
-# core.outcomes. fetch_related_outcomes() does PG-first + file-fallback. Directory
-# kept for residual `.md` + revision_count lookup (track-outcome.sh).
+# data/outcomes/ holds only legacy `.md` records — new records sink to
+# core.outcomes; the daemon reads neither the directory nor its files.
 DEFAULT_OUTCOMES_DIR = ga_paths.get_data_root() / "outcomes"
 DEFAULT_REPORTS_DIR = ga_paths.get_data_root() / "daemon-reports"
 # Optional-dependency import degradation is CAPTURED here, NOT written to stderr
@@ -262,11 +261,10 @@ from daemon_config import (  # noqa: E402 — hooks dir prepended above (repo-re
 # Positive int → ceiling. cost_guard is informational only (not a gate).
 UNLIMITED_AGENTS = 1_000_000
 
-# Outcome sampling cap — bounds LLM-context-sized samples only (the posterior's
-# recency sample + fetch_related_outcomes), NEVER evidence volume: the promotion
-# ladder's observation_count comes from _count_outcome_signals (uncapped
-# COUNT(*) over the same window), so this cap cannot starve the n>=10
-# candidate floor. The GENERATION path switched to prior-day-all.
+# Outcome sampling cap — bounds the posterior's recency sample only, NEVER
+# evidence volume: the promotion ladder's observation_count comes from
+# _count_outcome_signals (uncapped COUNT(*) over the same window), so this cap
+# cannot starve the n>=10 candidate floor.
 OUTCOME_SAMPLE_LIMIT = 5
 
 # Chronic Haiku-timeout back-off (generation side) -------------------------
@@ -1641,8 +1639,7 @@ def _fetch_outcome_signals(
 
     Input for the confidence.py posterior — the writer self-report ``confidence``
     enum is deliberately excluded; only the PG row's revision_count / result /
-    evaluative_signal are used (read via the raw helper dict, not the lossy
-    Outcome dataclass which drops those fields).
+    evaluative_signal are used (read via the raw helper dict).
 
     - PG unavailable → empty list → cold-start posterior 0.5 (fails the 0.7 gate
       → stays at mention, safe).
@@ -1888,57 +1885,6 @@ class Pattern:
         """Best-effort numeric frequency for sorting (returns 0 on failure)."""
         match = re.search(r"\d+", self.frequency)
         return int(match.group(0)) if match else 0
-
-
-@dataclass(frozen=True)
-class Outcome:
-    """A single outcome record sampled from data/outcomes/."""
-
-    path: str
-    agent: str
-    task_type: str
-    result: str
-    confidence: str
-    metric_pass: str
-    summary: str  # truncated to 240 chars
-    # Polarity signals — defaulted so every pre-existing Outcome(...) call site
-    # stays valid (frozen dataclass; defaults trail the required fields). Absent
-    # source value → NEUTRAL (0), never silently bucketed as success.
-    revision_count: int = 0       # >=2 marks a correction (core-learning-log.md)
-    evaluative_signal: int = 0    # -1/0/+1; -1 = user-corrected, preserve verbatim
-    # Write-time provenance — parsed only, no daemon_cycle reader. Absent → "".
-    attribution_source: str = ""
-
-
-def _coerce_evaluative_signal(raw: object) -> int:
-    """Normalize an evaluative_signal source value to the -1/0/+1 ternary.
-
-    None / missing / unparseable / out-of-range → 0 (NEUTRAL). A missing signal
-    is NOT coerced into +1 — that would mis-bucket legacy records as success and
-    poison the optimizer (core-outcome-record.md: absent and 0 are both neutral
-    here, only -1 carries failure polarity).
-    """
-    if raw is None:
-        return 0
-    try:
-        value = int(raw)
-    except (TypeError, ValueError):
-        return 0
-    return value if value in (-1, 0, 1) else 0
-
-
-def _coerce_revision_count(raw: object) -> int:
-    """Normalize a revision_count source value to a non-negative-safe int.
-
-    None / missing / unparseable → 0; a valid int is preserved as-is. Unifies the
-    PG-row and filesystem-frontmatter coercion idioms onto one sibling helper.
-    """
-    if raw is None:
-        return 0
-    try:
-        return int(raw)
-    except (TypeError, ValueError):
-        return 0
 
 
 @dataclass(frozen=True)
@@ -2332,40 +2278,6 @@ def _put_roster_dormant(pattern_id: int, *, live: bool) -> None:
         )
 
 
-# -- Generation window: previous calendar day (local tz) --------------------
-#
-# The GENERATION path uses prior-day-all (no 90-day rolling sample / 5-sample
-# cap), via an explicit day-boundary rather than trailing-24h epoch subtraction.
-# The promotion-stats path (_fetch_outcome_signals) is separate — not this function.
-
-
-def _local_day_bounds(
-    now: datetime | None = None,
-) -> tuple[float, float]:
-    """[start, end) epoch bounds of the previous calendar day, LOCAL timezone.
-
-    D = cycle run date (local). Returns [start_of(D-1), start_of(D)).
-    - lower: yesterday 00:00:00 (local) → epoch
-    - upper: today 00:00:00 (local) → epoch (exclusive)
-
-    Args:
-        now: reference time (test injection). None → datetime.now() (naive local).
-
-    Returns:
-        (yesterday_start_epoch, today_start_epoch) — both float epoch seconds.
-    """
-    base = now if now is not None else datetime.now()
-    # tz-aware input → convert to local naive so the local-midnight boundary
-    # is computed consistently.
-    if base.tzinfo is not None:
-        base = base.astimezone().replace(tzinfo=None)
-    today_start = base.replace(hour=0, minute=0, second=0, microsecond=0)
-    # timestamp() of the shifted datetime, NOT today_start - 86400: a fixed
-    # second offset misses yesterday's local midnight on DST-change days.
-    yesterday_start = today_start - timedelta(days=1)
-    return yesterday_start.timestamp(), today_start.timestamp()
-
-
 def _resolve_agent_limit(limit: int | None) -> int:
     """Normalize the per-cycle agent cap — 0/negative/None → unlimited sentinel.
 
@@ -2379,360 +2291,7 @@ def _resolve_agent_limit(limit: int | None) -> int:
     return limit
 
 
-# -- generation step 2: sample related outcome records ----------------------
-
-
-def fetch_related_outcomes(
-    agent: str,
-    task_type: str | None,
-    limit: int = OUTCOME_SAMPLE_LIMIT,
-    outcomes_dir: Path = DEFAULT_OUTCOMES_DIR,
-) -> list[Outcome]:
-    """Sample the most-recent N outcome records for the given agent (and task_type).
-
-    - PRIMARY: core.outcomes SELECT via the _pg_read_outcomes_since helper (PG is
-      the single source). Server-side agent + optional task_type filter,
-      record_ts DESC, top-N.
-    - FALLBACK: file-system glob (residual pre-cutover `.md`). PG 0 AND file 0 →
-      empty list (normal). PG 1+ → skip file fallback (PG is the single truth).
-
-    Filename convention for fallback:
-        YYYY-MM-DD-HHMM_<agent>_<task_type>.md
-    Sorting by filename = timestamp DESC (lex order works — fixed-width prefix).
-    """
-    pg_outcomes = _fetch_outcomes_from_pg(agent, task_type, limit)
-    if pg_outcomes:
-        # PG is the single truth — skip the file fallback (mixed-source ambiguity).
-        return pg_outcomes
-
-    return _fetch_outcomes_from_filesystem(agent, task_type, limit, outcomes_dir)
-
-
-def _fetch_outcomes_from_pg(
-    agent: str,
-    task_type: str | None,
-    limit: int,
-) -> list[Outcome]:
-    """PG core.outcomes → Outcome dataclass mapping.
-
-    The read_outcomes_since helper takes agent/task_type/limit/order kwargs →
-    server-side WHERE/ORDER BY/LIMIT eliminates ~1500× over-fetch (38MB → ~25KB
-    per cycle), using the outcomes_agent_ts_idx (agent, record_ts) index. No
-    client-side filter/sort/slice. PG unavailable → empty list (caller does the
-    file fallback).
-    """
-    if not HAS_PG_OUTCOME_READ:
-        return []
-    if not agent:
-        return []
-
-    # 90-day lookback — enough per-agent sample + agent_ts_idx index scan.
-    since_epoch = time.time() - PG_OUTCOME_LOOKBACK_DAYS * 86400
-    try:
-        rows = _pg_read_outcomes_since(
-            since_epoch,
-            agent=agent,
-            task_type=task_type,
-            limit=limit,
-            order="DESC",
-        )
-    except Exception as exc:  # noqa: BLE001 — read fallback is silent + safe
-        sys.stderr.write(
-            f"[daemon-cycle] WARN: PG outcome read failed, falling back to "
-            f"file system: {type(exc).__name__}: {exc}\n"
-        )
-        return []
-
-    outcomes: list[Outcome] = []
-    for row in rows:
-        record_ts = row.get("record_ts")
-        # PG record identifier — pg_audit_ref for grep traceability (helper convention).
-        pg_path = row.get("pg_audit_ref") or (
-            f"pg:{record_ts.isoformat(timespec='seconds') if record_ts else ''}"
-            f":{row.get('agent', '')}:{row.get('task_type', '')}"
-        )
-        metric_pass_value = row.get("metric_pass")
-        if metric_pass_value is None:
-            metric_pass_str = ""
-        elif isinstance(metric_pass_value, bool):
-            metric_pass_str = "true" if metric_pass_value else "false"
-        else:
-            metric_pass_str = str(metric_pass_value)
-
-        outcomes.append(
-            Outcome(
-                path=pg_path,
-                agent=row.get("agent", ""),
-                task_type=row.get("task_type", ""),
-                result=row.get("result", ""),
-                confidence=row.get("confidence", ""),
-                metric_pass=metric_pass_str,
-                summary=(row.get("summary") or "")[:240],
-                attribution_source=str(row.get("attribution_source") or ""),
-            )
-        )
-    return outcomes
-
-
-def _fetch_outcomes_from_filesystem(
-    agent: str,
-    task_type: str | None,
-    limit: int,
-    outcomes_dir: Path,
-) -> list[Outcome]:
-    """Legacy file-system path (pre-Phase-5 `.md` records).
-
-    Filename convention (set by pre-Phase-5 track-outcome.sh):
-        YYYY-MM-DD-HHMM_<agent>_<task_type>.md
-    """
-    if not outcomes_dir.exists():
-        return []
-
-    # Filter by filename token to avoid reading 2000+ files.
-    matches: list[Path] = []
-    needle_agent = f"_{agent}_"
-    needle_tt = f"_{task_type}." if task_type else ""
-
-    # listdir is faster than rglob for a flat dir of ~2.5k files.
-    for name in os.listdir(outcomes_dir):
-        if not name.endswith(".md"):
-            continue
-        if needle_agent not in name:
-            continue
-        if needle_tt and needle_tt not in name:
-            continue
-        matches.append(outcomes_dir / name)
-
-    matches.sort(key=lambda p: p.name, reverse=True)
-    matches = matches[:limit]
-
-    outcomes: list[Outcome] = []
-    for path in matches:
-        try:
-            outcomes.append(_parse_outcome_file(path))
-        except OSError as exc:
-            # Log silently to stderr — one bad file shouldn't kill the cycle.
-            print(
-                f"[daemon-cycle] WARN: outcome read failed: {path.name}: {exc}",
-                file=sys.stderr,
-            )
-    return outcomes
-
-
-def fetch_generation_outcomes(
-    agent: str,
-    *,
-    day_bounds: tuple[float, float] | None = None,
-    outcomes_dir: Path = DEFAULT_OUTCOMES_DIR,
-) -> list[Outcome]:
-    """GENERATION path — return ALL of an agent's previous-calendar-day outcomes.
-
-    Window = [start_of(D-1), start_of(D)) (LOCAL tz, _local_day_bounds), no sample
-    cap (all of yesterday feeds the analysis).
-
-    - The PG read helper supports only a LOWER bound (since_epoch), no UPPER bound,
-      so over-fetch with since=yesterday_start and CLIENT-SIDE drop rows with
-      record_ts >= today_start. Over-fetch spans only 2 days → negligible cost.
-    - PG 0 AND file 0 → empty list. PG 1+ → skip file fallback (single truth).
-    - file fallback matches yesterday's YYYY-MM-DD filename prefix.
-
-    Args:
-        agent: target agent.
-        day_bounds: (yesterday_start, today_start) epoch — test injection.
-                    None → computed via _local_day_bounds().
-        outcomes_dir: file-fallback directory.
-
-    Returns:
-        list[Outcome] (record_ts DESC, all of yesterday — no cap).
-    """
-    if not agent:
-        return []
-    y_start, t_start = day_bounds if day_bounds is not None else _local_day_bounds()
-
-    pg_outcomes = _fetch_generation_outcomes_from_pg(agent, y_start, t_start)
-    if pg_outcomes:
-        return pg_outcomes
-
-    return _fetch_generation_outcomes_from_filesystem(
-        agent, y_start, t_start, outcomes_dir
-    )
-
-
-def _fetch_generation_outcomes_from_pg(
-    agent: str,
-    yesterday_start: float,
-    today_start: float,
-) -> list[Outcome]:
-    """PG core.outcomes → all of yesterday's Outcomes (no cap, today excluded).
-
-    read_outcomes_since(since=yesterday_start, limit=None) fetches yesterday+today,
-    then client-side drops record_ts >= today_start. limit=None → helper omits the
-    LIMIT clause (over-fetch bounded to 2 days).
-    """
-    if not HAS_PG_OUTCOME_READ or not agent:
-        return []
-
-    try:
-        rows = _pg_read_outcomes_since(
-            yesterday_start,
-            agent=agent,
-            task_type=None,
-            limit=None,  # no cap — all of yesterday
-            order="DESC",
-        )
-    except Exception as exc:  # noqa: BLE001 — read fallback is logged + safe
-        sys.stderr.write(
-            f"[daemon-cycle] WARN: PG generation-outcome read failed for "
-            f"{agent}, falling back to file system: "
-            f"{type(exc).__name__}: {exc}\n"
-        )
-        return []
-
-    outcomes: list[Outcome] = []
-    for row in rows:
-        record_ts = row.get("record_ts")
-        # Exclude today (D) — helper has no UPPER bound, so cap client-side.
-        if record_ts is not None and record_ts.timestamp() >= today_start:
-            continue
-        pg_path = row.get("pg_audit_ref") or (
-            f"pg:{record_ts.isoformat(timespec='seconds') if record_ts else ''}"
-            f":{row.get('agent', '')}:{row.get('task_type', '')}"
-        )
-        metric_pass_value = row.get("metric_pass")
-        if metric_pass_value is None:
-            metric_pass_str = ""
-        elif isinstance(metric_pass_value, bool):
-            metric_pass_str = "true" if metric_pass_value else "false"
-        else:
-            metric_pass_str = str(metric_pass_value)
-        outcomes.append(
-            Outcome(
-                path=pg_path,
-                agent=row.get("agent", ""),
-                task_type=row.get("task_type", ""),
-                result=row.get("result", ""),
-                confidence=row.get("confidence", ""),
-                metric_pass=metric_pass_str,
-                summary=(row.get("summary") or "")[:240],
-                # revision_count: None/missing/unparseable → neutral 0.
-                # evaluative_signal: preserve -1/0/+1 (None → neutral 0); do NOT
-                # coerce a missing signal into success polarity.
-                revision_count=_coerce_revision_count(row.get("revision_count")),
-                evaluative_signal=_coerce_evaluative_signal(
-                    row.get("evaluative_signal")
-                ),
-                attribution_source=str(row.get("attribution_source") or ""),
-            )
-        )
-    return outcomes
-
-
-def _fetch_generation_outcomes_from_filesystem(
-    agent: str,
-    yesterday_start: float,
-    today_start: float,
-    outcomes_dir: Path,
-) -> list[Outcome]:
-    """Legacy file fallback — match yesterday only via the YYYY-MM-DD filename token.
-
-    filename: YYYY-MM-DD-HHMM_<agent>_<task_type>.md. Yesterday's date string is
-    computed in the same LOCAL tz as _local_day_bounds for prefix matching.
-    """
-    if not outcomes_dir.exists():
-        return []
-    # Yesterday's date string (LOCAL tz) — the day before today_start.
-    yesterday_date = datetime.fromtimestamp(yesterday_start).strftime("%Y-%m-%d")
-    needle_agent = f"_{agent}_"
-
-    matches: list[Path] = []
-    for name in os.listdir(outcomes_dir):
-        if not name.endswith(".md"):
-            continue
-        if needle_agent not in name:
-            continue
-        if not name.startswith(yesterday_date):
-            continue
-        matches.append(outcomes_dir / name)
-
-    matches.sort(key=lambda p: p.name, reverse=True)
-    outcomes: list[Outcome] = []
-    for path in matches:
-        try:
-            outcomes.append(_parse_outcome_file(path))
-        except OSError as exc:
-            print(
-                f"[daemon-cycle] WARN: outcome read failed: {path.name}: {exc}",
-                file=sys.stderr,
-            )
-    return outcomes
-
-
-_OUTCOME_FRONTMATTER_RE = re.compile(
-    r"^---\s*\n(.*?)\n---", re.DOTALL | re.MULTILINE
-)
-
-
-def _parse_outcome_file(path: Path) -> Outcome:
-    """Lightweight YAML frontmatter parser — enough for our known fields.
-
-    Polarity signals (revision_count / evaluative_signal) are parsed WHEN PRESENT
-    in the frontmatter; when ABSENT they default to NEUTRAL (0) — a legacy record
-    with no signal is treated as neutral polarity, never coerced into success.
-    """
-    text = path.read_text(encoding="utf-8", errors="replace")
-    m = _OUTCOME_FRONTMATTER_RE.match(text)
-    fields: dict[str, str] = {}
-    if m:
-        for line in m.group(1).splitlines():
-            if ":" not in line:
-                continue
-            k, _, v = line.partition(":")
-            fields[k.strip()] = v.strip().strip('"').strip("'")
-
-    body_after = text[m.end():] if m else text
-
-    # Best-effort summary extraction from markdown body.
-    summary = _extract_field(body_after, ["summary"])
-
-    # revision_count: absent/unparseable → 0. evaluative_signal: absent → 0
-    # (neutral); 0 and absent are both neutral here, only -1 is failure polarity.
-    revision_count = _coerce_revision_count(fields.get("revision_count"))
-    evaluative_signal = (
-        _coerce_evaluative_signal(fields["evaluative_signal"])
-        if "evaluative_signal" in fields
-        else 0
-    )
-
-    return Outcome(
-        path=str(path),
-        agent=fields.get("agent", ""),
-        task_type=fields.get("task_type", ""),
-        result=fields.get("result", ""),
-        confidence=fields.get("confidence", ""),
-        metric_pass=fields.get("metric_pass", ""),
-        summary=summary[:240],
-        revision_count=revision_count,
-        evaluative_signal=evaluative_signal,
-        # absent in legacy frontmatter → "" (neutral provenance)
-        attribution_source=fields.get("attribution_source", ""),
-    )
-
-
-def _extract_field(body: str, keys: list[str]) -> str:
-    """Return the first non-empty content under a Markdown heading matching any key."""
-    for key in keys:
-        # Match e.g. "## summary\n..." until next heading or blank-line block.
-        pat = re.compile(
-            rf"^#{{1,6}}\s+{re.escape(key)}\s*\n(.+?)(?=\n#{{1,6}}\s|\Z)",
-            re.MULTILINE | re.DOTALL,
-        )
-        match = pat.search(body)
-        if match:
-            return match.group(1).strip().replace("\n", " ")[:1000]
-    return ""
-
-
-# -- generation step 3: ask Haiku for a patch proposal ----------------------
+# -- generation step 2: ask Haiku for a patch proposal ----------------------
 
 
 _PROMPT_TEMPLATE = """You are an instruction-tuning assistant for AutoAgent.
@@ -3368,7 +2927,6 @@ def _invoke_haiku_cli(
 
 def generate_patch_proposal(
     pattern: Pattern,
-    outcomes: list[Outcome],
     agents_dir: Path = DEFAULT_AGENTS_DIR,
     *,
     claude_bin: str = CLAUDE_BIN,
@@ -3439,7 +2997,6 @@ def generate_patch_proposal(
 def generate_consolidated_proposal(
     agent: str,
     patterns: list[Pattern],
-    outcomes: list[Outcome],
     agents_dir: Path = DEFAULT_AGENTS_DIR,
     *,
     claude_bin: str = CLAUDE_BIN,
@@ -3449,9 +3006,8 @@ def generate_consolidated_proposal(
     """Author ONE consolidated multi-hunk proposal from all of an agent's signals.
 
     The per-TARGET (not per-PATTERN) core. `patterns` = all Patterns grouped for
-    that agent (≥1). `outcomes` is never rendered. Single current-file
-    snapshot diff → all hunks apply atomically via one `git apply` (no intra-run
-    cascade).
+    that agent (≥1). Single current-file snapshot diff → all hunks apply
+    atomically via one `git apply` (no intra-run cascade).
 
     `skip_haiku=True` → empty proposal (test/preflight). The Haiku
     invoke+parse+retry core is shared with generate_patch_proposal via
@@ -3460,7 +3016,6 @@ def generate_consolidated_proposal(
     Args:
         agent: target agent.
         patterns: Pattern list grouped for that agent (≥1).
-        outcomes: not rendered — self-reported outcome fields stay out of the prompt.
         agents_dir: agent .md directory.
         claude_bin / timeout_sec / skip_haiku: invoke options.
 
@@ -11136,8 +10691,8 @@ def run_cycle(
 
     While IS_GENERATION_CLOSED: no generator call, no pre-verify, no patch; stored
     pending auto rows terminalize unless skip_loop_emit; every post-loop step runs.
-    Once lifted, _run_generation_loop runs the per-agent flow — pattern → outcomes
-    → patch proposal → classification → pre-verify (4-axis) → routing hints.
+    Once lifted, _run_generation_loop runs the per-agent flow — pattern → patch
+    proposal → classification → pre-verify (4-axis) → routing hints.
 
     Returns the in-memory CycleReport. Caller decides where to persist it.
     """
@@ -11148,10 +10703,6 @@ def run_cycle(
     # real entry, so a degraded PG layer is reported here, before the first PG op.
     for _warn_line in _pg_import_degradation_lines():
         sys.stderr.write(_warn_line)
-    # GENERATION window = previous calendar day (LOCAL tz), shared by all agents in
-    # the cycle — computed once outside the loop (cycle-invariant). Distinct from
-    # the promotion-stats window.
-    gen_day_bounds = _local_day_bounds()
     agent_cap = _resolve_agent_limit(limit)
     report = CycleReport(
         cycle_date=now.strftime("%Y-%m-%d"),
@@ -11246,8 +10797,6 @@ def run_cycle(
             report,
             agent_groups,
             regression_gate,
-            gen_day_bounds=gen_day_bounds,
-            outcomes_dir=outcomes_dir,
             agents_dir=agents_dir,
             skip_haiku=skip_haiku,
             skip_pre_verify=skip_pre_verify,
@@ -11339,14 +10888,12 @@ def _run_generation_loop(
     agent_groups: list[tuple[str, list[Pattern]]],
     regression_gate: RegressionGateReport,
     *,
-    gen_day_bounds: tuple[float, float],
-    outcomes_dir: Path,
     agents_dir: Path,
     skip_haiku: bool,
     skip_pre_verify: bool,
     skip_loop_emit: bool,
 ) -> None:
-    """Per-agent generation loop — gates, outcomes, one routed row per agent.
+    """Per-agent generation loop — gates, then one routed row per agent.
 
     Reached only once IS_GENERATION_CLOSED is lifted.
     Appends each row to ``report.patches``. The promotion tier is a label only and
@@ -11354,7 +10901,7 @@ def _run_generation_loop(
     """
     seen_targets: set[str] = set()
     for agent, agent_patterns in agent_groups:
-        # Anti-fossil lifecycle gates — BEFORE any outcome fetch / Haiku spend.
+        # Anti-fossil lifecycle gates — BEFORE any Haiku spend.
         # All five gates write PG (learning_log transition + skip loop events),
         # so they run only in full-real mode: skip_haiku (test/preflight) bypasses
         # them like the timeout back-off below, skip_loop_emit (no-PG-write
@@ -11391,17 +10938,10 @@ def _run_generation_loop(
             )
             if not agent_patterns:
                 continue
-        # GENERATION outcomes = all of yesterday (no sample cap) — separate from promotion stats.
-        outcomes = fetch_generation_outcomes(
-            agent,
-            day_bounds=gen_day_bounds,
-            outcomes_dir=outcomes_dir,
-        )
         report.patches.append(
             build_patch_result(
                 agent,
                 agent_patterns,
-                outcomes,
                 cycle_date=report.cycle_date,
                 agents_dir=agents_dir,
                 seen_targets=seen_targets,
@@ -11415,7 +10955,6 @@ def _run_generation_loop(
 def build_patch_result(
     agent: str,
     agent_patterns: list[Pattern],
-    outcomes: list[Outcome],
     *,
     cycle_date: str,
     agents_dir: Path,
@@ -11468,7 +11007,6 @@ def build_patch_result(
         proposal = generate_consolidated_proposal(
             agent,
             agent_patterns,
-            outcomes,
             agents_dir=agents_dir,
             skip_haiku=skip_haiku,
         )

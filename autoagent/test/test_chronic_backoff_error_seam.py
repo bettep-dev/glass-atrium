@@ -110,7 +110,6 @@ class BackoffErrorSeam(unittest.TestCase):
                     patch = dc.build_patch_result(
                         _PROBE_AGENT,
                         [self.pattern],
-                        [],
                         cycle_date="2026-07-02",
                         agents_dir=self.agents_dir,
                         seen_targets=set(),

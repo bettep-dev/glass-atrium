@@ -192,7 +192,7 @@ class ConsolidatedPromptLandedHistoryTest(unittest.TestCase):
         with mock.patch.object(dc, "_fetch_landed_proposals", lambda agent: landed), \
              mock.patch.object(dc, "_fetch_pre_verify_failures", lambda agent: failures):
             dc.generate_consolidated_proposal(
-                _AGENT, [_pattern()], [], agents_dir=self._agents_dir
+                _AGENT, [_pattern()], agents_dir=self._agents_dir
             )
         return self._captured["prompt"]
 

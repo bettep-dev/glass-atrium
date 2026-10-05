@@ -313,7 +313,6 @@ class FlagFileIgnoredByCycleTest(unittest.TestCase):
         )
         for target, repl in (
             ("read_user_pending_patterns", lambda *a, **k: [pattern]),
-            ("fetch_generation_outcomes", lambda *a, **k: []),
             ("INTER_CALL_SPACING_SEC", 0.0),
         ):
             patcher = mock.patch.object(self.dc, target, repl)

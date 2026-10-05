@@ -260,7 +260,6 @@ class TestConsolidatedPromptInjection(unittest.TestCase):
             dc.generate_consolidated_proposal(
                 "dev-python",
                 [_pattern(dc)],
-                [],
                 agents_dir=self._agents_dir,
             )
         return self._captured["prompt"]
@@ -380,11 +379,11 @@ class TestGenerationPromptWholeFile(unittest.TestCase):
     def _assemble(self, site: str, body: str) -> str:
         (self._agents_dir / "dev-python.md").write_text(body, encoding="utf-8")
         if site == "patch":
-            dc.generate_patch_proposal(_pattern(dc), [], agents_dir=self._agents_dir)
+            dc.generate_patch_proposal(_pattern(dc), agents_dir=self._agents_dir)
         else:
             with mock.patch.object(dc, "_fetch_pre_verify_failures", lambda agent: None):
                 dc.generate_consolidated_proposal(
-                    "dev-python", [_pattern(dc)], [], agents_dir=self._agents_dir
+                    "dev-python", [_pattern(dc)], agents_dir=self._agents_dir
                 )
         return self._captured["prompt"]
 

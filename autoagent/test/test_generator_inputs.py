@@ -3,9 +3,8 @@
 Generation stays closed: every row renders through a template builder with the
 Haiku invoke stubbed at ``_run_haiku_with_retry``, never a live generator call.
 Covered here:
-  (a) an outcome record's self-reported fields — summary, lesson, directive_hint
-      and the result / confidence / metric_pass / task_type / revision_count /
-      evaluative_signal / attribution_source header — never reach either template;
+  (a) the generation loop reads no outcome record — a prior-day record on disk
+      is never listed or opened;
   (b) the evidence inputs — the pattern's metric key, its confirmation rate against
       the floor-half baseline and the triggering spawns' machine facts — reach both,
       each value flattened and quoted;
@@ -18,6 +17,9 @@ Run with either runner:
 
 from __future__ import annotations
 
+import contextlib
+import io
+import os
 import sys
 import tempfile
 import unittest
@@ -65,9 +67,10 @@ _SELF_REPORT_SENTINELS = {
 
 
 def _write_outcome_record(directory: Path) -> Path:
-    """A legacy outcome record carrying a sentinel in every self-reported field."""
+    """A prior-day outcome record carrying a sentinel in every self-reported field."""
     s = _SELF_REPORT_SENTINELS
-    record = directory / "2026-10-04-0900_dev-python_feature.md"
+    yesterday = datetime.now(timezone.utc).astimezone() - timedelta(days=1)
+    record = directory / f"{yesterday:%Y-%m-%d}-0900_dev-python_feature.md"
     record.write_text(
         "---\n"
         f"agent: {_AGENT}\n"
@@ -136,43 +139,61 @@ def _make_agents_dir(testcase: unittest.TestCase) -> Path:
 
 
 @unittest.skipIf(dc is None, f"import failed: {_IMPORT_ERROR}")
-class TestSelfReportedFieldsNeverRendered(unittest.TestCase):
-    """(a) no self-reported outcome field reaches the generation prompt."""
+class TestGenerationLoopReadsNoOutcome(unittest.TestCase):
+    """(a) the generation loop never reads an outcome record."""
 
     def setUp(self) -> None:
-        self._reach = seal_pg_reach(self)
-        self._captured = _capture_prompt(self)
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        self._root = Path(tmp.name)
+        self._outcomes_dir = self._root / "outcomes"
+        self._outcomes_dir.mkdir()
+        self._record = _write_outcome_record(self._outcomes_dir)
         self._agents_dir = _make_agents_dir(self)
-        self._record = dc._parse_outcome_file(_write_outcome_record(self._agents_dir))
+        env = mock.patch.dict(os.environ, {"GA_DATA_ROOT": str(self._root)})
+        env.start()
+        self.addCleanup(env.stop)
+        self._reach = seal_pg_reach(self)
+        # After the seal: intake hands the loop one pattern; generation opens.
+        for name, value in (
+            ("read_user_pending_patterns", lambda *a, **k: [_pattern()]),
+            ("IS_GENERATION_CLOSED", False),
+        ):
+            patcher = mock.patch.object(dc, name, value)
+            patcher.start()
+            self.addCleanup(patcher.stop)
 
-    def _render_single_pattern(self) -> None:
-        dc.generate_patch_proposal(
-            _pattern(), [self._record], agents_dir=self._agents_dir
-        )
+    def test_a_cycle_with_an_outcome_record_on_disk_never_reads_it(self) -> None:
+        real = {"listdir": os.listdir, "read_text": Path.read_text}
+        listed: list[str] = []
+        read: list[str] = []
 
-    def _render_consolidated(self) -> None:
-        dc.generate_consolidated_proposal(
-            _AGENT, [_pattern()], [self._record], agents_dir=self._agents_dir
-        )
+        def _listdir(path: object = ".") -> list[str]:
+            listed.append(str(path))
+            return real["listdir"](path)
 
-    def test_when_record_carries_self_report_then_no_field_reaches_either_template(
-        self,
-    ) -> None:
-        templates = (
-            ("single-pattern template", self._render_single_pattern),
-            ("consolidated template", self._render_consolidated),
-        )
-        for name, render in templates:
-            with self.subTest(template=name):
-                self._captured.clear()
-                render()
-                prompt = self._captured["prompt"]
-                # The builder ran end to end: the agent file reached the prompt.
-                self.assertIn("Work rule line.", prompt)
-                for field, sentinel in _SELF_REPORT_SENTINELS.items():
-                    self.assertNotIn(sentinel, prompt, f"{field} rendered")
-                self.assertNotIn(str(_REVISION_COUNT_SENTINEL), prompt)
-                self.assertNotIn("evaluative_signal=", prompt)
+        def _read_text(path: Path, *args: object, **kwargs: object) -> str:
+            read.append(str(path))
+            return real["read_text"](path, *args, **kwargs)
+
+        with (
+            mock.patch.object(os, "listdir", _listdir),
+            mock.patch.object(Path, "read_text", _read_text),
+            contextlib.redirect_stderr(io.StringIO()),
+        ):
+            report = dc.run_cycle(
+                log_path=self._root / "learning-log.md",
+                outcomes_dir=self._outcomes_dir,
+                agents_dir=self._agents_dir,
+                skip_haiku=True,
+                skip_pre_verify=True,
+                skip_loop_emit=True,
+            )
+
+        # The loop ran: one routed row for the pattern's agent.
+        self.assertEqual([patch.pattern_agent for patch in report.patches], [_AGENT])
+        self.assertNotIn(str(self._outcomes_dir), listed)
+        self.assertNotIn(str(self._record), read)
         self.assertEqual(self._reach, [])
 
 
@@ -240,10 +261,10 @@ class TestEvidenceFieldsRendered(unittest.TestCase):
 
     def _render_both(self) -> list[tuple[str, str]]:
         prompts = []
-        dc.generate_patch_proposal(_pattern(), [], agents_dir=self._agents_dir)
+        dc.generate_patch_proposal(_pattern(), agents_dir=self._agents_dir)
         prompts.append(("single-pattern template", self._captured["prompt"]))
         dc.generate_consolidated_proposal(
-            _AGENT, [_pattern()], [], agents_dir=self._agents_dir
+            _AGENT, [_pattern()], agents_dir=self._agents_dir
         )
         prompts.append(("consolidated template", self._captured["prompt"]))
         return prompts

@@ -233,7 +233,6 @@ class ProposalStatusSent(unittest.TestCase):
                 result = dc.build_patch_result(
                     _PROBE_AGENT,
                     [lead, trailing],
-                    [],
                     cycle_date="2026-10-03",
                     agents_dir=agents_dir,
                     seen_targets=set(),

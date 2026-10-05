@@ -359,7 +359,6 @@ class TestSupersedeCallSiteBinding(unittest.TestCase):
             dc.build_patch_result(
                 _AGENT,
                 [self.lead, self.second],
-                [],
                 cycle_date=_RUN_DATE,
                 agents_dir=self.agents_dir,
                 seen_targets=set(),
