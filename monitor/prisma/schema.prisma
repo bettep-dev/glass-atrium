@@ -739,6 +739,65 @@ model AutoagentApplyRecord {
   @@schema("core")
 }
 
+/// Trial ledger — one row per trial event: pre-registration, look, decision, graduation,
+/// retirement, removal, supersede, A/A restart, power-pass count.
+///
+/// Append-only via migration raw SQL only (20261008000000_add_trial_ledger_and_cycle_verdicts);
+/// the Prisma DSL declares neither part, so a squash MUST carry that SQL:
+///   - trigger autoagent_trial_ledger_append_only → rejects UPDATE, DELETE, TRUNCATE
+///   - CHECKs → trial_key a whole 64-hex digest; event, actor and dedupe_key non-empty
+/// Guards app code paths, not a security boundary (same limits as AutoagentApplyRecord).
+model AutoagentTrialLedger {
+  id         BigInt   @id @default(autoincrement())
+  recordedAt DateTime @default(now()) @map("recorded_at") @db.Timestamptz(6)
+
+  // sha256 hex of agent, learning_pattern_id, metric key and the passing pair's detection start.
+  // NULL on cycle-level rows (power-pass count, A/A restart), which belong to no trial.
+  trialKey          String? @map("trial_key") @db.VarChar(64)
+  agent             String? @db.VarChar(64)
+  // No relation to LearningLog: an FK action on a learning_log delete would UPDATE an append-only row
+  learningPatternId BigInt? @map("learning_pattern_id")
+
+  // Closed sets, each declared once at the ledger writer (scripts/_pg_dual_write_daemon.py)
+  // → a new value needs no migration
+  event   String @db.VarChar(64)
+  actor   String @db.VarChar(64)
+  payload Json
+
+  // Once-only events: an insert with a taken key under ON CONFLICT DO NOTHING adds nothing,
+  // since a duplicate can never be removed. NULL = a repeatable event; NULLs never conflict.
+  dedupeKey String? @unique(map: "autoagent_trial_ledger_dedupe_key_key") @map("dedupe_key")
+
+  @@map("autoagent_trial_ledger")
+  @@schema("core")
+}
+
+// The all-reject walk's state for one cycle date: extends the streak, drops out like a
+// quiet night, or breaks it.
+enum CycleVerdict {
+  extends
+  neutral
+  breaks
+
+  @@schema("core")
+}
+
+/// One immutable cycle-time verdict per cycle date, read by the all-reject streak walk.
+/// A later status change on a past proposal leaves that date's verdict as recorded.
+///
+/// Append-only via the same migration's raw SQL (trigger autoagent_cycle_verdicts_append_only
+/// → rejects UPDATE, DELETE, TRUNCATE); a squash MUST carry it.
+model AutoagentCycleVerdict {
+  id         BigInt       @id @default(autoincrement())
+  // Unique → a same-day re-run's ON CONFLICT DO NOTHING insert writes nothing
+  cycleDate  DateTime     @unique(map: "autoagent_cycle_verdicts_cycle_date_key") @map("cycle_date") @db.Date
+  verdict    CycleVerdict
+  recordedAt DateTime     @default(now()) @map("recorded_at") @db.Timestamptz(6)
+
+  @@map("autoagent_cycle_verdicts")
+  @@schema("core")
+}
+
 /// Source: P3 git-free self-update pipeline — single-active-job tracker for the
 /// route-enqueued updater. A crashed updater leaves a detectably-stale row
 /// (heartbeat_at frozen), swept via the status index. Single-active-job is NOT
