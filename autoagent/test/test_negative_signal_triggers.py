@@ -238,12 +238,10 @@ class _AggregatorRunFixture(unittest.TestCase):
             mock.patch.object(module, "_read_budget_overages", lambda since: []),
             mock.patch.object(module, "_read_size_est_pairs", lambda since: []),
             mock.patch.object(module, "_read_size_est_window", lambda since: None),
-            mock.patch.object(module, "_pg_read_outcome_window", lambda since: None, create=True),
-            mock.patch.object(
-                module, "_pg_read_pattern_floors", lambda *args: None, create=True
-            ),
+            mock.patch.object(module, "_pg_read_outcome_window", lambda since: None),
+            mock.patch.object(module, "_pg_read_pattern_floors", lambda *args: None),
             *(
-                mock.patch.object(module, name, _get_refusal(name), create=True)
+                mock.patch.object(module, name, _get_refusal(name))
                 for name in (
                     "_pg_insert_audit_queue_rows",
                     "_pg_insert_liveness_observation",

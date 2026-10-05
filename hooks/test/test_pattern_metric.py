@@ -679,8 +679,11 @@ class _AggregatorRun(unittest.TestCase):
             "_read_size_est_pairs": lambda since: [],
             "_read_size_est_window": lambda since: size_est if window is not None else None,
         }
+        # only a failed dual-write import leaves _pg_* seams absent; any other miss must raise
+        is_import_failed = not module.HAS_PG_DUALWRITE
         for name, value in patches.items():
-            patcher = mock.patch.object(module, name, value, create=True)
+            is_created = is_import_failed and name.startswith("_pg_")
+            patcher = mock.patch.object(module, name, value, create=is_created)
             patcher.start()
             self.addCleanup(patcher.stop)
         stderr = io.StringIO()
