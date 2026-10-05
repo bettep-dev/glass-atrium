@@ -85,12 +85,11 @@ for _hooks_dir in (_PG_HOOKS_DIR, _REPO_HOOKS_DIR):
         sys.path.insert(0, str(_hooks_dir))
 import ga_paths  # noqa: E402 — hooks dir pinned by the loop above
 
-# Negative-signal and pair-window SoT. UNGUARDED unlike the _pg_learning_dualwrite import
+# Pair-window and floor-verdict SoT. UNGUARDED unlike the _pg_learning_dualwrite import
 # below: _outcome_signal is stdlib-only by contract (no psycopg), so it has no SystemExit
 # path and writes no stderr — the silent bare-CLI-import contract holds without a
 # try/except, and its functions stay defined on the psycopg-absent path.
 from _outcome_signal import (  # noqa: E402 — hooks dir pinned by the loop above
-    ATTRIBUTION_STRUCTUREDOUTPUT_DERIVED,
     BASELINE,
     VERDICT_PASS,
     FloorResult,
@@ -98,8 +97,6 @@ from _outcome_signal import (  # noqa: E402 — hooks dir pinned by the loop abo
     SpawnFacts,
     get_floor_verdict,
     get_pair_windows,
-    is_negative_signal_outcome,
-    _is_synthesized_measurement_gap as _shared_is_synthesized_measurement_gap,
 )
 
 # Runtime data roots via the shared ga_paths seam (.glass-atrium default,
@@ -2863,9 +2860,6 @@ PATTERN:
 - label: {pattern_label}
 - frequency: {pattern_freq}
 
-RECENT OUTCOMES for this agent (most-recent first):
-{outcomes_block}
-
 CURRENT AGENT INSTRUCTION FILE (target for patch):
 path: {agent_path}
 ---
@@ -2920,9 +2914,6 @@ TARGET AGENT: {pattern_agent}
 OBSERVED LEARNING SIGNALS (patterns flagged for this agent):
 {signals_block}
 {avoid_patterns_block}{landed_history_block}
-PRIOR-DAY OUTCOMES for this agent (most-recent first — ALL of yesterday):
-{outcomes_block}
-
 CURRENT AGENT INSTRUCTION FILE (target for patch):
 path: {agent_path}
 ---
@@ -2968,13 +2959,6 @@ Rules for the DIFF block (it is applied with `git apply`, which reads these line
 - Place additions inside an `<!-- EDITABLE:BEGIN -->` / `<!-- EDITABLE:END -->`
   section when one exists for the topic — never edit outside editable regions.
 """
-
-# Prompt-token guard for the consolidated outcomes block. With no sample cap,
-# yesterday may hold many outcomes — every signal's compact 1-line summary is
-# always included, but if the verbatim summary BODY total exceeds budget,
-# only the BODY is truncated with an explicit (loud) note (never silent-drop).
-GENERATION_OUTCOMES_BODY_BUDGET_CHARS = 8000
-
 
 # IANA tz first components (+ legacy slash-bearing links like US/Pacific) — an
 # allowlist keeps the tz-stamped reset notice detectable for ANY user timezone
@@ -3515,7 +3499,7 @@ def generate_patch_proposal(
     worst case is 5 patterns × 2 calls, each bounded by the per-call cap (the
     cap's value lives in the daemon-config SoT, not restated here).
     Idempotency: retry prompt body is identical except for the strict suffix
-    (same PATTERN / OUTCOMES / AGENT FILE inputs → same expectations).
+    (same PATTERN / AGENT FILE inputs → same expectations).
     """
     target_file = agents_dir / f"{pattern.agent}.md"
     if not target_file.exists():
@@ -3543,13 +3527,11 @@ def generate_patch_proposal(
     # Whole body: a head slice hides the editable regions the model must edit into.
     agent_text = target_file.read_text(encoding="utf-8")
 
-    outcomes_block = _render_outcomes_block(outcomes) or "(no recent outcomes sampled)"
     base_prompt = _PROMPT_TEMPLATE.format(
         pattern_date=pattern.date,
         pattern_agent=pattern.agent,
         pattern_label=_neutralize_field(pattern.label),
         pattern_freq=pattern.frequency,
-        outcomes_block=outcomes_block,
         agent_path=str(target_file),
         agent_excerpt=agent_text,
         agent_basename=target_file.name,
@@ -3577,7 +3559,7 @@ def generate_consolidated_proposal(
     """Author ONE consolidated multi-hunk proposal from all of an agent's signals.
 
     The per-TARGET (not per-PATTERN) core. `patterns` = all Patterns grouped for
-    that agent (≥1). `outcomes` = all of yesterday (no cap). Single current-file
+    that agent (≥1). `outcomes` is never rendered. Single current-file
     snapshot diff → all hunks apply atomically via one `git apply` (no intra-run
     cascade).
 
@@ -3588,7 +3570,7 @@ def generate_consolidated_proposal(
     Args:
         agent: target agent.
         patterns: Pattern list grouped for that agent (≥1).
-        outcomes: all of yesterday's outcomes.
+        outcomes: not rendered — self-reported outcome fields stay out of the prompt.
         agents_dir: agent .md directory.
         claude_bin / timeout_sec / skip_haiku: invoke options.
 
@@ -3621,7 +3603,6 @@ def generate_consolidated_proposal(
     # Whole body: a head slice hides the editable regions the model must edit into.
     agent_text = target_file.read_text(encoding="utf-8")
     signals_block = _render_signals_block(patterns)
-    outcomes_block = _render_generation_outcomes_block(outcomes)
 
     # Optimizer-side memory (SkillOpt R2): prepend this agent's known-bad
     # diff shapes. PG-off / empty-history → "" → block omitted cleanly.
@@ -3651,7 +3632,6 @@ def generate_consolidated_proposal(
         signals_block=signals_block,
         avoid_patterns_block=avoid_patterns_block,
         landed_history_block=landed_history_block,
-        outcomes_block=outcomes_block,
         agent_path=str(target_file),
         agent_excerpt=agent_text,
         agent_basename=target_file.name,
@@ -3987,20 +3967,6 @@ def _neutralize_field(text: str, *, cap: int = 160) -> str:
     return repr(" ".join((text or "")[:cap].splitlines()))
 
 
-def _render_outcomes_block(outcomes: list[Outcome]) -> str:
-    if not outcomes:
-        return ""
-    lines: list[str] = []
-    for i, o in enumerate(outcomes, start=1):
-        lines.append(
-            f"{i}. result={o.result} confidence={o.confidence!r} "
-            f"metric_pass={o.metric_pass!r} task={o.task_type}"
-        )
-        if o.summary:
-            lines.append(f"   summary: {_neutralize_field(o.summary)}")
-    return "\n".join(lines)
-
-
 def _render_signals_block(patterns: list[Pattern]) -> str:
     """OBSERVED LEARNING SIGNALS block — 1-line summary of the agent's pattern signals.
 
@@ -4013,178 +3979,6 @@ def _render_signals_block(patterns: list[Pattern]) -> str:
     for i, p in enumerate(patterns, start=1):
         lines.append(
             f"{i}. [{p.date}] freq={p.frequency} — {_neutralize_field(p.label)}"
-        )
-    return "\n".join(lines)
-
-
-# -- generation outcome polarity partition ----------------------------------
-#
-# Negative-signal definition is the IMPORTED shared SoT
-# (_outcome_signal.is_negative_signal_outcome), unconditionally — the module is
-# stdlib-only, so the predicate stays bound on the psycopg-absent path and no
-# hand-mirrored copy exists to drift from it. The grader_verdict / review_flag
-# OR-terms are NOT carried by Outcome, so the shared predicate sees them absent
-# over this row shape — a strict subset of its definition, never a divergent one.
-
-
-def _is_synthesized_measurement_gap(o: Outcome) -> bool:
-    """True for a synthesized Outcome whose result is a synthesis artifact, not an
-    agent-emitted signal: completion-synthesized done_with_concerns (the synthesis
-    DEFAULT) and structuredoutput-derived done (schema-validated emit,
-    writer-unverified). Scoped to those exact provenance+result pairs so a real
-    agent's done_with_concerns still counts.
-
-    The structuredoutput-derived arm is checked HERE rather than delegated: the shared
-    predicate deliberately omits it (its docstring hands that success-side exclusion to
-    daemon_cycle), and without it such a row carrying revision_count>=2 would flip
-    NEUTRAL → FAILURE. Its attribution is disjoint from the shared arms, so checking it
-    first is order-safe; every other arm — including the budget-truncation
-    keep-clusterable guard — is the shared SoT's."""
-    if (
-        o.attribution_source == ATTRIBUTION_STRUCTUREDOUTPUT_DERIVED
-        and o.result == "done"
-    ):
-        return True
-    return _shared_is_synthesized_measurement_gap(_outcome_signal_row(o))
-
-
-def _outcome_signal_row(o: Outcome) -> dict[str, object]:
-    """Map an Outcome onto the dict shape is_negative_signal_outcome consumes."""
-    return {
-        "agent": o.agent,
-        "task_type": o.task_type,
-        "result": o.result,
-        "revision_count": o.revision_count,
-        # carries the synthesized marker so the imported SoT carve-out fires
-        "attribution_source": o.attribution_source,
-    }
-
-
-def _is_failure_outcome(o: Outcome) -> bool:
-    """FAILURE polarity: shared negative-signal predicate OR evaluative_signal==-1.
-
-    Synthesized-measurement-gap carve-out runs FIRST: a completion-synthesized
-    done_with_concerns row is never FAILURE polarity (it has no agent-emitted
-    evaluative_signal either, so the -1 short-circuit below never fires for it).
-    """
-    if _is_synthesized_measurement_gap(o):
-        return False
-    if o.evaluative_signal == -1:
-        return True
-    return bool(is_negative_signal_outcome(_outcome_signal_row(o)))
-
-
-def _is_success_outcome(o: Outcome) -> bool:
-    """SUCCESS polarity: clean first-try done — never an absent/missing signal.
-
-    structuredoutput-derived carve-out: that row's done is synthesis-assigned
-    (writer-unverified) → NEUTRAL, never a SUCCESS exemplar."""
-    if o.attribution_source == ATTRIBUTION_STRUCTUREDOUTPUT_DERIVED:
-        return False
-    return (
-        o.result == "done"
-        and o.revision_count == 0
-        # Defensive for standalone/test callers: the partition loop buckets
-        # failures first, so a -1 outcome never reaches here in normal flow.
-        and o.evaluative_signal != -1
-    )
-
-
-def _outcome_header(index: int, o: Outcome) -> str:
-    return (
-        f"{index}. result={o.result} confidence={o.confidence!r} "
-        f"metric_pass={o.metric_pass!r} task={o.task_type} "
-        f"revision_count={o.revision_count} "
-        f"evaluative_signal={o.evaluative_signal}"
-    )
-
-
-def _render_outcome_section(
-    outcomes: list[Outcome],
-    *,
-    body_chars_so_far: int,
-    body_budget: int,
-) -> tuple[list[str], int, int]:
-    """Render one polarity section's lines (header always kept, body budget-aware).
-
-    Returns (lines, updated body_chars, bodies_truncated). The body budget is
-    shared ACROSS sections (passed in / accumulated out) so the total prompt
-    body never exceeds body_budget regardless of how records split.
-    """
-    lines: list[str] = []
-    body_chars = body_chars_so_far
-    bodies_truncated = 0
-    for i, o in enumerate(outcomes, start=1):
-        lines.append(_outcome_header(i, o))  # header always — preserve count
-        body_text = (
-            f"   summary: {_neutralize_field(o.summary)}" if o.summary else ""
-        )
-        if body_text and body_chars + len(body_text) <= body_budget:
-            lines.append(body_text)
-            body_chars += len(body_text)
-        elif body_text:
-            # Over budget — drop BODY only (keep header), count the loud note.
-            bodies_truncated += 1
-    return lines, body_chars, bodies_truncated
-
-
-def _render_generation_outcomes_block(
-    outcomes: list[Outcome],
-    *,
-    body_budget: int = GENERATION_OUTCOMES_BODY_BUDGET_CHARS,
-) -> str:
-    """PRIOR-DAY OUTCOMES block — partitioned by polarity, budget-aware.
-
-    Records split into THREE labeled sections so the optimizer reads failure vs
-    success as distinct prompt signal (SkillOpt R3):
-      - FAILURE  = is_negative_signal_outcome(...) OR evaluative_signal == -1
-      - SUCCESS  = result == "done" AND revision_count == 0 AND signal != -1
-      - NEUTRAL  = everything else, incl. missing-signal legacy records — NEVER
-                   silently counted as success.
-
-    Each outcome's 1-line header is always included (lossless signal count); once
-    the verbatim summary BODY total exceeds body_budget (chars, shared
-    across all sections), later BODY text is dropped with an explicit loud note.
-    Sequential rendering — sample size is small (no ThreadPoolExecutor).
-    """
-    if not outcomes:
-        return "(no prior-day outcomes sampled)"
-
-    failures: list[Outcome] = []
-    successes: list[Outcome] = []
-    neutrals: list[Outcome] = []
-    for o in outcomes:
-        if _is_failure_outcome(o):
-            failures.append(o)
-        elif _is_success_outcome(o):
-            successes.append(o)
-        else:
-            neutrals.append(o)
-
-    lines: list[str] = []
-    body_chars = 0
-    bodies_truncated = 0
-    sections = (
-        ("FAILURE / CORRECTED OUTCOMES", failures),
-        ("SUCCESS OUTCOMES (clean first-try done)", successes),
-        ("NEUTRAL OUTCOMES (no clear polarity / missing signal)", neutrals),
-    )
-    for label, bucket in sections:
-        lines.append(f"== {label} ({len(bucket)}) ==")
-        if not bucket:
-            lines.append("   (none)")
-            continue
-        section_lines, body_chars, section_truncated = _render_outcome_section(
-            bucket, body_chars_so_far=body_chars, body_budget=body_budget
-        )
-        lines.extend(section_lines)
-        bodies_truncated += section_truncated
-
-    if bodies_truncated:
-        lines.append(
-            f"   [NOTE: {bodies_truncated} outcome bodies omitted to fit the "
-            f"{body_budget}-char prompt budget — headers above are complete; "
-            f"only verbatim summary text was truncated]"
         )
     return "\n".join(lines)
 

@@ -270,19 +270,19 @@ class TestConsolidatedPromptInjection(unittest.TestCase):
         self.assertIn("C2", prompt)
         # Neighboring blocks still intact.
         self.assertIn("OBSERVED LEARNING SIGNALS", prompt)
-        self.assertIn("PRIOR-DAY OUTCOMES", prompt)
+        self.assertIn("CURRENT AGENT INSTRUCTION FILE", prompt)
 
     def test_when_history_empty_then_block_omitted(self) -> None:
         prompt = self._run([])
         self.assertNotIn(_AVOID_HEADER, prompt)
         # Prompt is still well-formed — both neighboring blocks present.
         self.assertIn("OBSERVED LEARNING SIGNALS", prompt)
-        self.assertIn("PRIOR-DAY OUTCOMES", prompt)
+        self.assertIn("CURRENT AGENT INSTRUCTION FILE", prompt)
 
     def test_when_history_none_then_block_omitted(self) -> None:
         prompt = self._run(None)
         self.assertNotIn(_AVOID_HEADER, prompt)
-        self.assertIn("PRIOR-DAY OUTCOMES", prompt)
+        self.assertIn("CURRENT AGENT INSTRUCTION FILE", prompt)
 
     def test_when_oversized_failures_then_prompt_block_capped(self) -> None:
         rows = [({"C2": False}, "y" * 9000)]

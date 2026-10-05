@@ -70,9 +70,8 @@ def _role_task_type_allowed(agent, task_type):
 # Negative-signal trigger predicate (AP-3)
 # ---------------------------------------------------------------------------
 # Every learning consumer keys on this ONE definition — the learning-aggregator
-# pattern emit (patterns 1/5); in daemon_cycle, the generation polarity partition
-# (_is_failure_outcome) and the post-apply regression watch
-# (_is_soft_negative_outcome) — so all of them count the same rows negative.
+# pattern emit (patterns 1/5) and, in daemon_cycle, the post-apply regression watch
+# (_is_soft_negative_outcome) — so both count the same rows negative.
 # Defined over the row dict
 # _pg_learning_dualwrite.read_outcomes_since returns.
 
@@ -202,8 +201,7 @@ def _is_synthesized_measurement_gap(row: dict) -> bool:
     structuredoutput-derived (result=done, writer-unverified) is the third sibling
     provenance: its result contributes no OR-term, but its review_flag does — that
     term is excluded by _is_visibility_flag_row, not here, because the row is not a
-    done_with_concerns measurement gap. Its SUCCESS-side exclusion (NEUTRAL
-    polarity) lives in daemon_cycle._is_success_outcome."""
+    done_with_concerns measurement gap."""
     if (row.get("attribution_source") or "") == ATTRIBUTION_BUDGET_TRUNCATION:
         return False
     return (

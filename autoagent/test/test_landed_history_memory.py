@@ -196,7 +196,7 @@ class ConsolidatedPromptLandedHistoryTest(unittest.TestCase):
         self.assertIn(_LANDED_SENTINEL, prompt)
         # Neighboring blocks still intact.
         self.assertIn("OBSERVED LEARNING SIGNALS", prompt)
-        self.assertIn("PRIOR-DAY OUTCOMES", prompt)
+        self.assertIn("CURRENT AGENT INSTRUCTION FILE", prompt)
 
     def test_when_only_a_rejected_proposal_exists_then_its_text_is_absent(self) -> None:
         failures = [({"C2": False}, "rejected: added an unrelated rule")]
@@ -208,13 +208,13 @@ class ConsolidatedPromptLandedHistoryTest(unittest.TestCase):
         # Well-formed: the failure block and both neighbors survive the omission.
         self.assertIn("rejected: added an unrelated rule", prompt)
         self.assertIn("OBSERVED LEARNING SIGNALS", prompt)
-        self.assertIn("PRIOR-DAY OUTCOMES", prompt)
+        self.assertIn("CURRENT AGENT INSTRUCTION FILE", prompt)
 
     def test_when_pg_off_then_block_omitted_without_placeholder(self) -> None:
         prompt = self._run(None)
         self.assertNotIn(_LANDED_HEADER, prompt)
         self.assertNotIn("{landed_history_block}", prompt)
-        self.assertIn("PRIOR-DAY OUTCOMES", prompt)
+        self.assertIn("CURRENT AGENT INSTRUCTION FILE", prompt)
 
 
 if __name__ == "__main__":
