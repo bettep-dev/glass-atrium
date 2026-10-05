@@ -77,7 +77,6 @@ except Exception as _pg_import_exc:  # noqa: BLE001 — psycopg or helper itself
     )
 
 DATA_DIR = str(ga_paths.get_data_root())
-OUTCOMES_DIR = os.path.join(DATA_DIR, "outcomes")
 # Outcomes excluded by the input filter — append-only, deduped (grep target for missing signals).
 AUDIT_QUEUE_FILE = os.path.join(DATA_DIR, "outcomes-audit-queue.txt")
 # file→PG sync watermark — count of audit-queue lines already mirrored into core.audit_queue.
@@ -1151,9 +1150,6 @@ def main(registry_path: str | None = None) -> None:
     """registry_path overrides the live AGENT_REGISTRY_FILE for the pattern-intake allowlist.
     None keeps the production default; a caller that must not depend on a live install injects
     a roster."""
-    if not os.path.isdir(OUTCOMES_DIR):
-        return
-
     # Watermark + outcome discovery both from PG. Helper read failure → 0.0 / empty list (full
     # scan / zero-record batch); the aggregator never dies.
     since = 0.0

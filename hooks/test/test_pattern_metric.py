@@ -23,7 +23,7 @@ import unittest
 from collections.abc import Iterable
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from types import SimpleNamespace
+from types import ModuleType, SimpleNamespace
 from unittest import mock
 
 _REPO_ROOT = Path(__file__).resolve().parent.parent.parent
@@ -535,6 +535,15 @@ def _get_held_window(agent: str) -> list[dict]:
     )
 
 
+def _get_overrun_spike(agent: str, at: datetime) -> list[dict]:
+    """Three measured rows overrunning their declared [SIZE-EST]: pattern 8 holds over them."""
+    body = "# Outcome Record\n\n- **Tool use**: actual=40 declared=20\n"
+    return [
+        {"agent": agent, "body_md": body, "record_ts": at + timedelta(minutes=m)}
+        for m in range(3)
+    ]
+
+
 class _FakeLearningLog:
     """core.learning_log stand-in with the writers' contracts: the upsert keeps a stored
     'dormant'; the status writer moves only a row holding the other pair member."""
@@ -589,16 +598,18 @@ class _AggregatorRun(unittest.TestCase):
 
     def _run(self, *, batch: Iterable[dict] = (), window: list[dict] | None = None,
              floors: dict[tuple[str, str], str | None] | None = None,
-             overages: Iterable[str] = ()) -> str:
+             overages: Iterable[str] = (), size_est: Iterable[dict] = (),
+             aggregator: ModuleType | None = None) -> str:
         floors = floors or {}
-        batch, overages = list(batch), list(overages)
+        batch, overages, size_est = list(batch), list(overages), list(size_est)
+        module = aggregator or agg
 
         def _read_floor(agent: str, metric_key: str, windows: object, evaluated_at: object):  # noqa: ANN202
             verdict = floors.get((agent, metric_key), sig.VERDICT_FAIL)
             return None if verdict is None else SimpleNamespace(verdict=verdict)
 
         patches = {
-            "HAS_PG_DUALWRITE": True, "OUTCOMES_DIR": str(self.scratch),
+            "HAS_PG_DUALWRITE": True,
             "AUDIT_QUEUE_FILE": str(self.scratch / "audit-queue.txt"),
             "AUDIT_QUEUE_PG_OFFSET_FILE": str(self.scratch / "audit-queue-pg-offset"),
             "_get_utc_now": lambda: _NOW,
@@ -615,15 +626,15 @@ class _AggregatorRun(unittest.TestCase):
             "_pg_insert_liveness_observation": lambda **kw: True,
             "_read_budget_overages": lambda since: [{"agent_type": a} for a in overages],
             "_read_size_est_pairs": lambda since: [],
-            "_read_size_est_window": lambda since: [] if window is not None else None,
+            "_read_size_est_window": lambda since: size_est if window is not None else None,
         }
         for name, value in patches.items():
-            patcher = mock.patch.object(agg, name, value, create=True)
+            patcher = mock.patch.object(module, name, value, create=True)
             patcher.start()
             self.addCleanup(patcher.stop)
         stderr = io.StringIO()
         with contextlib.redirect_stderr(stderr):
-            agg.main(registry_path=str(self.registry))
+            module.main(registry_path=str(self.registry))
         return stderr.getvalue()
 
     def _get_keys(self) -> dict[str, object]:
@@ -704,6 +715,43 @@ class TestAggregatorPairStatus(_AggregatorRun):
                   floors={(_PYTHON, sig.METRIC_BUDGET_OVERAGE): sig.VERDICT_PASS})
         for name, signature, expected in rows:
             self.assertEqual(self.log.get_status(signature), expected, name)
+
+    def test_a_size_est_row_takes_its_status_from_both_windows(self) -> None:
+        core = agg._get_signature_core(f"{agg.SIZE_EST_UNDER_LABEL} (avg overrun +20 tool_uses)")
+        detection, confirmation = _WINDOWS.start.detection, _WINDOWS.start.confirmation
+        rows = [
+            ("rule holds in detection and confirmation", _PYTHON, "identified"),
+            ("rule holds in detection only", _SHELL, "dormant"),
+        ]
+        for _, agent, _ in rows:
+            self.log.put_row(f"{core}|{agent}", "identified")
+        self._run(
+            window=[],
+            size_est=_get_overrun_spike(_PYTHON, detection + _DAY)
+            + _get_overrun_spike(_PYTHON, confirmation + _DAY)
+            + _get_overrun_spike(_SHELL, detection + _DAY),
+        )
+        for name, agent, expected in rows:
+            self.assertEqual(self.log.get_status(f"{core}|{agent}"), expected, name)
+
+    def test_a_window_row_the_input_filter_excludes_contributes_to_no_pair(self) -> None:
+        signature = f"{_PATTERN1_CORE}|{_PYTHON}"
+        self.log.put_row(signature, "identified")
+        excluded = [
+            {**row, "attribution_source": "agent-id-missing"} for row in _get_held_window(_PYTHON)
+        ]
+        self._run(window=excluded)
+        self.assertEqual(self.log.get_status(signature), "dormant")
+
+    def test_a_data_root_without_an_outcomes_dir_still_sweeps(self) -> None:
+        base_root = self.scratch / "ga-root"
+        (base_root / "data").mkdir(parents=True)
+        with mock.patch.dict(os.environ, {"GA_DATA_ROOT": str(base_root)}):
+            scratch_agg = _load_aggregator()
+        signature = f"{_PATTERN1_CORE}|{_SHELL}"
+        self.log.put_row(signature, "identified")
+        self._run(window=[], aggregator=scratch_agg)
+        self.assertEqual(self.log.get_status(signature), "dormant")
 
     def test_an_unreadable_window_or_floor_moves_no_row(self) -> None:
         signatures = (f"{_PATTERN5_CORE}|{_SHELL}", f"{_BUDGET_CORE}|{_SHELL}")

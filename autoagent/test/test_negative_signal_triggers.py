@@ -266,7 +266,6 @@ class _AggregatorRunFixture(unittest.TestCase):
 
         patchers = (
             mock.patch.object(module, "HAS_PG_DUALWRITE", True),
-            mock.patch.object(module, "OUTCOMES_DIR", self._tmpdir),
             mock.patch.object(
                 module, "AUDIT_QUEUE_FILE", os.path.join(self._tmpdir, "audit-queue.txt")
             ),
@@ -442,7 +441,6 @@ class TestPoisonedRowsEmitNoPattern(_AggregatorRunFixture):
 
         patchers = (
             mock.patch.object(agg, "HAS_PG_DUALWRITE", True),
-            mock.patch.object(agg, "OUTCOMES_DIR", self._tmpdir),
             mock.patch.object(
                 agg, "AUDIT_QUEUE_FILE", os.path.join(self._tmpdir, "audit-queue.txt")
             ),
