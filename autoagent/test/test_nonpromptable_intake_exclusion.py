@@ -87,6 +87,7 @@ def _get_skips(events: list[dict]) -> list[dict]:
 class TestMetricKeyIntakeEligibility(unittest.TestCase):
     def _intake(self, rows: list[dict]) -> tuple[list, list, str]:
         events: list[dict] = []
+        pg_reach = seal_pg_reach(self)
         with tempfile.TemporaryDirectory() as d:
             agents_dir = Path(d)
             (agents_dir / f"{_AGENT}.md").write_text("probe", encoding="utf-8")
@@ -107,8 +108,9 @@ class TestMetricKeyIntakeEligibility(unittest.TestCase):
             stderr = io.StringIO()
             with contextlib.redirect_stderr(stderr):
                 patterns = dc.read_user_pending_patterns(
-                    agents_dir / "unused-log.md", 10, agents_dir=agents_dir
+                    agents_dir / "unused-log.md", 10, agents_dir=agents_dir, live=False
                 )
+        self.assertEqual(pg_reach, [])
         return patterns, events, stderr.getvalue()
 
     def test_a_keyless_row_is_skipped_with_one_named_row_whatever_its_label(

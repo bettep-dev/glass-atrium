@@ -130,6 +130,7 @@ try:
             read_coverage_learning_patterns as _pg_read_coverage_patterns,
             reject_learning_pattern as _pg_reject_learning_pattern,
             discharge_learning_pattern as _pg_discharge_learning_pattern,
+            put_learning_pattern_status as _pg_put_learning_pattern_status,
             is_negative_signal_outcome as _pg_is_negative_signal_outcome,
             read_pattern_floors as _pg_read_pattern_floors,
             # the spawn read behind read_pattern_floors; the power check needs its rows
@@ -138,6 +139,7 @@ try:
             DISCHARGE_APPLIED,
             DISCHARGE_NOT_MATCHED,
             DISCHARGE_FAILED,
+            TRANSITION_FAILED,
         )
     HAS_PG_OUTCOME_READ = True
     HAS_PG_PATTERN_READ = True
@@ -156,6 +158,7 @@ except Exception as _pg_import_exc:  # noqa: BLE001 — psycopg or helper itself
     DISCHARGE_APPLIED = "applied"
     DISCHARGE_NOT_MATCHED = "not_matched"
     DISCHARGE_FAILED = "failed"
+    TRANSITION_FAILED = "failed"
 
     def _pg_discharge_learning_pattern(pattern_id: int, reason: str) -> DischargeResult:
         return DischargeResult(DISCHARGE_FAILED, None)
@@ -2269,6 +2272,8 @@ def _agent_roster(agents_dir: Path) -> frozenset[str]:
 
 # Canonical roster stems carry this prefix (agents/glass-atrium-<bare>.md).
 _ROSTER_STEM_PREFIX = "glass-atrium-"
+# Opening literal the monitor's dormant-reason bucket matches (routes/improvement.ts).
+ROSTER_MISMATCH_REASON = "roster-mismatch"
 
 
 def _get_roster_alias(agent: str, roster: frozenset[str]) -> str | None:
@@ -2295,6 +2300,8 @@ def read_user_pending_patterns(
     log_path: Path,
     limit: int,
     agents_dir: Path = DEFAULT_AGENTS_DIR,
+    *,
+    live: bool,
 ) -> list[Pattern]:
     """Read intake rows from PG core.learning_log, sorted by frequency desc.
 
@@ -2309,9 +2316,12 @@ def read_user_pending_patterns(
     Skips:
         - rows targeting agent='전체' or 'ALL' (cross-cutting → not patchable here)
         - roster-mismatch rows — agent is not an agents/*.md stem: stderr WARN
-          + loop-event emit, never a silent drop (Precondition Loud-Fail)
+          + loop-event emit, never a silent drop (Precondition Loud-Fail); the
+          row moves to 'dormant' (_put_roster_dormant)
         - keyless rows — no primary metric key, so not eligible: stderr WARN +
           loop-event emit, never a silent drop
+
+    live: False in a no-write cycle — a roster-mismatch row's move is logged only.
 
     Returns at most `limit` entries, tier-normalized to 'user-pending'.
     """
@@ -2351,6 +2361,7 @@ def read_user_pending_patterns(
             alias = _get_roster_alias(agent, roster)
             if alias is None:
                 _warn_roster_mismatch(agent, row["pattern_signature"], event_ts)
+                _put_roster_dormant(row["id"], live=live)
                 continue
             agent = alias
         # After the roster check, so a roster-absent row still reports
@@ -2411,6 +2422,27 @@ def _warn_roster_mismatch(agent: str, signature: str, event_ts: str) -> None:
             },
         }
     )
+
+
+def _put_roster_dormant(pattern_id: int, *, live: bool) -> None:
+    """Move an off-roster intake row to 'dormant' (N47) so it stops re-entering intake.
+
+    The aggregator's next passing pair returns it to 'identified'; an agent still
+    off the roster is moved again by the next writing cycle. A not-matched answer
+    (row moved since the read, or a schema without the label) leaves it identified.
+    """
+    if not live:
+        sys.stderr.write(
+            f"[daemon-cycle] roster mismatch (no-write cycle): learning_log "
+            f"id={pattern_id} would move to dormant\n"
+        )
+        return
+    result = _pg_put_learning_pattern_status(pattern_id, "dormant", ROSTER_MISMATCH_REASON)
+    if result.outcome == TRANSITION_FAILED:
+        sys.stderr.write(
+            f"[daemon-cycle] WARN: roster mismatch — learning_log id={pattern_id} not "
+            "moved to dormant: the call never completed, retried next cycle\n"
+        )
 
 
 # -- Generation window: previous calendar day (local tz) --------------------
@@ -11420,7 +11452,7 @@ def run_cycle(
     )
     regression_gate = build_regression_gate_report(pattern_rows_by_agent)
     patterns = read_user_pending_patterns(
-        log_path, UNLIMITED_AGENTS, agents_dir=agents_dir
+        log_path, UNLIMITED_AGENTS, agents_dir=agents_dir, live=not skip_loop_emit
     )
     report.patterns_processed = len(patterns)
     agent_groups = _group_patterns_by_agent(patterns, agent_cap=agent_cap)

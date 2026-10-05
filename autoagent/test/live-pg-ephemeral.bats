@@ -176,7 +176,8 @@ PY
 
 @test "the pattern-intake live classes run against the migrated cluster, none skipped" {
   _assert_live_module test_pg_pattern_intake \
-    TestAggregatorUpsertVisibleToIntake TestIntakeRosterRenameContract
+    TestAggregatorUpsertVisibleToIntake TestIntakeRosterRenameContract \
+    TestRosterMismatchDormantOnLivePg
 }
 
 @test "the poisoned-window lookback live class runs against the migrated cluster, none skipped" {

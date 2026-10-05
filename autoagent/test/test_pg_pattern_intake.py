@@ -9,7 +9,10 @@ write target and read target cannot diverge. Protected invariants:
     (write-target == read-target);
 (2) rename contract — every agent in returned patterns is an ``agents/*.md``
     stem, and a roster-mismatch row produces a WARN record (stderr line +
-    ``eval_result='roster-mismatch'`` loop-event envelope), never a silent skip.
+    ``eval_result='roster-mismatch'`` loop-event envelope), never a silent skip;
+(3) roster drop — a writing cycle moves each off-roster row to ``dormant``
+    with reason ``roster-mismatch``; a no-write cycle and an unreadable roster
+    move none.
 
 Live-PG classes run only on the ephemeral cluster ``live-pg-ephemeral.bats``
 builds (elsewhere they skip, never touching an install's live database) and
@@ -30,6 +33,7 @@ from __future__ import annotations
 
 import contextlib
 import io
+import os
 import sys
 import tempfile
 import unittest
@@ -54,11 +58,12 @@ if str(_AUTOAGENT_DIR) not in sys.path:
 if str(Path(__file__).resolve().parent) not in sys.path:
     sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from _pg_seal import get_ephemeral_connection
+from _pg_seal import get_ephemeral_connection, seal_pg_reach
 
 try:
     import _pg_learning_dualwrite as pgdw
     import daemon_cycle as dc
+    from daemon_config import TierKnobs
 
     _IMPORT_ERROR: Exception | None = None
 except Exception as exc:  # noqa: BLE001 — psycopg absent → skip, not error
@@ -74,6 +79,8 @@ _ROSTER_AGENT = "glass-atrium-dev-python"
 _ROSTER_SIGNATURE = f"ap2 roster probe|{_ROSTER_AGENT}"
 _MISMATCH_AGENT = "ap2-no-such-agent"
 _MISMATCH_SIGNATURE = f"ap2 mismatch probe|{_MISMATCH_AGENT}"
+_DORMANT_AGENT = "ap2-retired-agent"
+_DORMANT_SIGNATURE = f"ap2 roster drop probe|{_DORMANT_AGENT}"
 
 
 class _RecordingCursor:
@@ -216,7 +223,7 @@ class _LivePgFixture(unittest.TestCase):
         )
 
     @staticmethod
-    def _read_with_probe_roster(agent: str) -> list:
+    def _read_with_probe_roster(agent: str, *, live: bool = False) -> list:
         """Intake under a roster of `agent` alone, so that probe row is the whole intake."""
         with tempfile.TemporaryDirectory() as tmp:
             agents_dir = Path(tmp)
@@ -226,6 +233,7 @@ class _LivePgFixture(unittest.TestCase):
                     Path(tmp) / "no-such-learning-log.md",
                     dc.UNLIMITED_AGENTS,
                     agents_dir=agents_dir,
+                    live=live,
                 )
 
 
@@ -283,6 +291,7 @@ class TestIntakeRosterRenameContract(_LivePgFixture):
                 Path("/no-such-learning-log.md"),
                 dc.UNLIMITED_AGENTS,
                 agents_dir=_AGENTS_DIR,
+                live=False,
             )
         return patterns, stderr.getvalue()
 
@@ -317,6 +326,26 @@ class TestIntakeRosterRenameContract(_LivePgFixture):
         self.assertEqual(probe_args["changes_removed"], 0)
 
 
+class TestRosterMismatchDormantOnLivePg(_LivePgFixture):
+    """The roster drop's real write: the off-roster row leaves intake as 'dormant'."""
+
+    def test_when_a_writing_read_meets_an_off_roster_row_then_it_is_stored_dormant(
+        self,
+    ) -> None:
+        self._upsert_probe(
+            _DORMANT_SIGNATURE, _DORMANT_AGENT, frequency=9996, metric_key="budget_overage"
+        )
+        self._read_with_probe_roster(_ROSTER_AGENT, live=True)
+
+        with self.conn.cursor() as cur:
+            cur.execute(
+                "SELECT status::text, last_transition_reason FROM core.learning_log "
+                "WHERE pattern_signature = %s",
+                (_DORMANT_SIGNATURE,),
+            )
+            self.assertEqual(cur.fetchall(), [("dormant", "roster-mismatch")])
+
+
 def _intake_row(agent: str, row_id: int = 900001) -> dict:
     """One stub reader-shaped intake row (read_pending_learning_patterns contract)."""
     return {
@@ -340,6 +369,7 @@ class TestIntakeRosterAlias(unittest.TestCase):
         self, rows: list[dict], stems: tuple[str, ...]
     ) -> tuple[list, list, str]:
         events: list[dict] = []
+        pg_reach = seal_pg_reach(self)
         with tempfile.TemporaryDirectory() as d:
             agents_dir = Path(d)
             for stem in stems:
@@ -361,8 +391,9 @@ class TestIntakeRosterAlias(unittest.TestCase):
             stderr = io.StringIO()
             with contextlib.redirect_stderr(stderr):
                 patterns = dc.read_user_pending_patterns(
-                    agents_dir / "unused-log.md", 10, agents_dir=agents_dir
+                    agents_dir / "unused-log.md", 10, agents_dir=agents_dir, live=False
                 )
+        self.assertEqual(pg_reach, [])
         return patterns, events, stderr.getvalue()
 
     def test_when_bare_agent_and_prefixed_stem_then_agent_rewritten(self) -> None:
@@ -413,6 +444,130 @@ class TestIntakeRosterAlias(unittest.TestCase):
             dc._get_roster_alias("glass-atrium-dev-python", roster), "dev-python"
         )
         self.assertIsNone(dc._get_roster_alias("bug-fix", roster))
+
+
+class _RosterDropHarness(unittest.TestCase):
+    """Sealed stub reader; the status writer and the loop emit record instead of writing."""
+
+    def setUp(self) -> None:
+        self.pg_reach = seal_pg_reach(self)
+        self.moves: list[tuple[int, str, str]] = []
+        self.move_outcome = pgdw.TRANSITION_MOVED
+        self.rows: list[dict] = []
+        # After the seal: each stands in for one seam the seal already covers.
+        for name, value in (
+            ("HAS_PG_PATTERN_READ", True),
+            ("_pg_read_pending_patterns", lambda: list(self.rows)),
+            ("_invoke_pg_helper", lambda _envelope: True),
+            ("_pg_put_learning_pattern_status", self._record_move),
+        ):
+            patcher = mock.patch.object(dc, name, value, create=True)
+            patcher.start()
+            self.addCleanup(patcher.stop)
+
+    def _record_move(self, pattern_id: int, status: str, reason: str):
+        self.moves.append((pattern_id, status, reason))
+        return pgdw.TransitionResult(self.move_outcome, pattern_id)
+
+    def _read(self, stems: tuple[str, ...], *, live: bool) -> str:
+        with tempfile.TemporaryDirectory() as d:
+            agents_dir = Path(d) / "agents"
+            agents_dir.mkdir()
+            for stem in stems:
+                (agents_dir / f"{stem}.md").write_text("probe", encoding="utf-8")
+            stderr = io.StringIO()
+            with contextlib.redirect_stderr(stderr):
+                dc.read_user_pending_patterns(
+                    agents_dir / "unused-log.md", 10, agents_dir=agents_dir, live=live
+                )
+        return stderr.getvalue()
+
+
+@unittest.skipIf(dc is None, f"import failed: {_IMPORT_ERROR}")
+class TestRosterMismatchMovesRowDormant(_RosterDropHarness):
+    """A writing read moves exactly the off-roster rows to 'dormant' (N47)."""
+
+    def test_when_a_writing_read_runs_then_only_off_roster_rows_move_dormant(self) -> None:
+        self.rows = [
+            _intake_row("bug-fix", row_id=950001),
+            _intake_row("glass-atrium-dev-python", row_id=950002),
+            _intake_row("dev-shell", row_id=950003),
+        ]
+        self._read(("glass-atrium-dev-python", "glass-atrium-dev-shell"), live=True)
+        self.assertEqual(self.moves, [(950001, "dormant", "roster-mismatch")])
+        self.assertEqual(self.pg_reach, [])
+
+    # An unreadable roster validates nothing, so it must not retire every row either.
+    def test_when_the_roster_reads_empty_then_no_row_moves(self) -> None:
+        self.rows = [_intake_row("bug-fix", row_id=950011)]
+        self._read((), live=True)
+        self.assertEqual(self.moves, [])
+        self.assertEqual(self.pg_reach, [])
+
+    def test_when_the_move_never_completes_then_it_is_reported_loudly(self) -> None:
+        self.rows = [_intake_row("bug-fix", row_id=950021)]
+        self.move_outcome = pgdw.TRANSITION_FAILED
+        stderr_text = self._read(("glass-atrium-dev-python",), live=True)
+        self.assertIn("WARN: roster mismatch", stderr_text)
+        self.assertIn("learning_log id=950021", stderr_text)
+        self.assertEqual(self.pg_reach, [])
+
+
+@unittest.skipIf(dc is None, f"import failed: {_IMPORT_ERROR}")
+class RosterMismatchCycleWiringTest(_RosterDropHarness):
+    """The cycle moves off-roster rows with no opt-in; a --dry-run cycle moves none."""
+
+    def setUp(self) -> None:
+        super().setUp()
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        self.root = Path(tmp.name)
+        (self.root / "agents").mkdir()
+        (self.root / "agents" / "glass-atrium-dev-python.md").write_text(
+            "probe", encoding="utf-8"
+        )
+        env = mock.patch.dict(os.environ, {"GA_DATA_ROOT": str(self.root)})
+        env.start()
+        self.addCleanup(env.stop)
+        self.rows = [_intake_row("bug-fix", row_id=950031)]
+        # Knobs load at import from this install's daemon-config.json → pin all unset.
+        # The pause gate reads (and expires) the install's own update-state flag → off.
+        unset = TierKnobs("", "")
+        for patcher in (
+            mock.patch.object(dc, "KNOB_ERRORS", {}),
+            mock.patch.dict(dc.TIER_KNOBS, {"worker": unset, "pre_verify": unset}),
+            mock.patch.object(dc, "HAS_PAUSE_LIB", False),
+        ):
+            patcher.start()
+            self.addCleanup(patcher.stop)
+
+    def test_when_a_writing_cycle_runs_then_the_off_roster_row_moves_dormant(self) -> None:
+        with contextlib.redirect_stderr(io.StringIO()):
+            dc.run_cycle(
+                log_path=self.root / "learning-log.md",
+                outcomes_dir=self.root,
+                agents_dir=self.root / "agents",
+                skip_haiku=True,
+                skip_pre_verify=True,
+                skip_loop_emit=False,
+            )
+        self.assertEqual(self.moves, [(950031, "dormant", "roster-mismatch")])
+        self.assertEqual(self.pg_reach, [])
+
+    def test_when_a_dry_run_cycle_runs_then_no_row_moves(self) -> None:
+        argv = [
+            "--dry-run",
+            "--log-path", str(self.root / "learning-log.md"),
+            "--outcomes-dir", str(self.root),
+            "--agents-dir", str(self.root / "agents"),
+        ]
+        stderr = io.StringIO()
+        with contextlib.redirect_stderr(stderr), contextlib.redirect_stdout(io.StringIO()):
+            rc = dc._main(argv)
+        self.assertEqual(rc, 0, stderr.getvalue())
+        self.assertEqual(self.moves, [])
+        self.assertIn("learning_log id=950031 would move to dormant", stderr.getvalue())
+        self.assertEqual(self.pg_reach, [])
 
 
 if __name__ == "__main__":

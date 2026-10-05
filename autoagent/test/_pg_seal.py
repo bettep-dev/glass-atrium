@@ -29,6 +29,7 @@ _SEAMS: dict[str | None, tuple[str, ...]] = {
         "_pg_count_outcomes_since",
         "_pg_reject_learning_pattern",
         "_pg_discharge_learning_pattern",
+        "_pg_put_learning_pattern_status",
         "_pg_read_pattern_floors",
         "_pg_read_spawn_facts",
     ),
