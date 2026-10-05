@@ -311,6 +311,19 @@ class CheckPatternPowerTest(_StageFixture):
         self.assertIn(f"agent={_AGENT.PASSING} key={_BUDGET_KEY}: passing", stderr_text)
         self.assertNotIn(_AGENT.FLOOR_FAILING, stderr_text)
 
+    def test_the_floor_is_judged_at_the_day_anchor_at_any_instant_of_the_day(self) -> None:
+        # stopless overage spawn 1 h before D: pending at D, the fifth event session once settled
+        late = _spawn(_DAY - timedelta(hours=1), is_event=True)._replace(has_subagent_stop=False)
+        self.histories = {_AGENT.PASSING: [*_get_floor_failing_history(), late]}
+        rows = [
+            ("just after the anchor", _DAY + timedelta(minutes=5)),
+            ("just before the next anchor", _DAY + timedelta(hours=23, minutes=55)),
+        ]
+        for name, instant in rows:
+            with self.subTest(name), mock.patch.object(dc, "_get_utc_now", lambda at=instant: at):
+                counts, _ = self._check([_pattern(_AGENT.PASSING, 1)])
+                self.assertEqual(sum(counts.values()), 0)
+
     def test_each_verdict_is_sent_as_a_census_loop_event(self) -> None:
         self._check(self.patterns)
         self.assertEqual(

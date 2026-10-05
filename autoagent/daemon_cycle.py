@@ -8641,10 +8641,10 @@ def drop_pair_failing_patterns(agent: str, patterns: list[Pattern]) -> list[Patt
     """Intake re-check: keep a keyed pattern only while its S2f pair passes (N49).
 
     Reads the pair the aggregator's status sweep reads — the UTC-day windows of
-    get_pair_windows and the floors of read_pattern_floors — so on one UTC day both
-    actors read identical windows. Their verdicts can still differ: each passes its own
-    evaluation instant, and a no-SubagentStop spawn pending at one instant is settled at
-    the other (open owner question Q-pending-instant). Intake rows are 'identified', and the aggregator's
+    get_pair_windows and the floors of read_pattern_floors — and, like it, evaluates pending
+    at the windows' end, the day anchor: on one UTC day both actors read identical windows
+    at one instant, so a no-SubagentStop spawn started within PENDING_GRACE before the anchor
+    is pending for both all day. Intake rows are 'identified', and the aggregator's
     last_transition_at anchor gates only a 'dormant' row's re-entry, so no anchor
     applies here either. A failing or unreadable pair skips the pattern this cycle
     with a named reason (fail closed — an outage is never a pass); no status write,
@@ -8652,8 +8652,8 @@ def drop_pair_failing_patterns(agent: str, patterns: list[Pattern]) -> list[Patt
     """
     if not patterns:
         return patterns
-    evaluated_at = _get_utc_now()
-    windows = get_pair_windows(evaluated_at)
+    windows = get_pair_windows(_get_utc_now())
+    evaluated_at = windows.end
     floors = (
         _pg_read_pattern_floors([agent], windows, evaluated_at) if HAS_PG_PATTERN_READ else None
     )
@@ -8725,8 +8725,8 @@ def check_pattern_power(patterns: list[Pattern], *, skip_loop_emit: bool) -> dic
     keyed = [pattern for pattern in patterns if pattern.metric_key is not None]
     if not keyed:
         return counts
-    evaluated_at = _get_utc_now()
-    windows = get_pair_windows(evaluated_at)
+    windows = get_pair_windows(_get_utc_now())
+    evaluated_at = windows.end  # the instant the intake re-check judged the floor at
     event_ts = evaluated_at.strftime("%Y-%m-%dT00:00:00.000Z")
     history = _read_power_history(sorted({pattern.agent for pattern in keyed}), windows)
     for pattern in keyed:

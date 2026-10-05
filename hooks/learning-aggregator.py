@@ -1216,8 +1216,10 @@ def main(registry_path: str | None = None) -> None:
     # Every run reads the pair windows, an empty batch included: the floor and the family
     # rules read windows, so a row's verdict never waits for its agent's next batch.
     stored: dict = _pg_read_learning_log_signatures() if HAS_PG_DUALWRITE else {}
-    evaluated_at = _get_utc_now()
-    windows = get_pair_windows(evaluated_at)
+    windows = get_pair_windows(_get_utc_now())
+    # pending judged at the day anchor, as the daemon's intake does → the verdict depends on
+    # the UTC day alone
+    evaluated_at = windows.end
     # Batch-side reads windowed by `since` so each overage / measurement counts once across
     # runs; skipped on an empty batch, whose watermark does not advance.
     overage_rows = _read_budget_overages(since) if new_records else []

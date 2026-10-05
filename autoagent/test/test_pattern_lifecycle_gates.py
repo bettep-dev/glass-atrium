@@ -502,13 +502,13 @@ class TestDropPairFailingPatterns(_GateFixture):
         self.assertIn(f"emit_failure pair from {_DETECTION}: fail", stderr_text)
         self.assertEqual(len(self.floor_reads), 1)
 
-    def test_the_pair_read_is_the_utc_day_pair_at_the_evaluation_instant(self) -> None:
+    def test_the_pair_read_is_the_utc_day_pair_evaluated_at_its_day_anchor(self) -> None:
         self._drop({}, [_keyed_pattern(_BUDGET_KEY)])
         agents, windows, evaluated_at = self.floor_reads[0]
+        day = datetime(2026, 10, 5, tzinfo=timezone.utc)
         self.assertEqual(
             (agents, windows.start.detection, windows.end, evaluated_at),
-            ([_KEYED_AGENT], datetime(2026, 9, 21, tzinfo=timezone.utc),
-             datetime(2026, 10, 5, tzinfo=timezone.utc), _NOW),
+            ([_KEYED_AGENT], datetime(2026, 9, 21, tzinfo=timezone.utc), day, day),
         )
 
     def test_reads_unavailable_skip_every_row_without_a_floor_read(self) -> None:

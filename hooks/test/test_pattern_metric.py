@@ -877,7 +877,8 @@ class _AggregatorRun(unittest.TestCase):
     def _run(self, *, batch: Iterable[dict] = (), window: list[dict] | None = None,
              floors: dict[tuple[str, str], str | None] | None = None,
              overages: Iterable[str] = (), size_est: Iterable[dict] = (),
-             is_floor_unreadable: bool = False, aggregator: ModuleType | None = None) -> str:
+             is_floor_unreadable: bool = False, aggregator: ModuleType | None = None,
+             read_floors: object = None, now: datetime = _NOW) -> str:
         floors = floors or {}
         batch, overages, size_est = list(batch), list(overages), list(size_est)
         module = aggregator or agg
@@ -897,14 +898,14 @@ class _AggregatorRun(unittest.TestCase):
             "HAS_PG_DUALWRITE": True,
             "AUDIT_QUEUE_FILE": str(self.scratch / "audit-queue.txt"),
             "AUDIT_QUEUE_PG_OFFSET_FILE": str(self.scratch / "audit-queue-pg-offset"),
-            "_get_utc_now": lambda: _NOW,
+            "_get_utc_now": lambda: now,
             "_pg_read_aggregator_watermark": lambda name: 0.0,
             "_pg_read_outcomes_since": lambda since: batch,
             "_pg_read_outcome_window": lambda since: window,
             "_pg_read_learning_log_signatures": self.log.read,
             "_pg_upsert_learning_pattern": self.log.upsert,
             "_pg_put_learning_pattern_status": self.log.put_status,
-            "_pg_read_pattern_floors": _read_floors,
+            "_pg_read_pattern_floors": read_floors or _read_floors,
             "_pg_update_aggregator_state": lambda **kw: None,
             "_pg_batch_complete": lambda summary: None,
             "_pg_insert_audit_queue_rows": lambda rows: 0,
@@ -1061,10 +1062,58 @@ class TestAggregatorPairStatus(_AggregatorRun):
 
 
 @unittest.skipIf(pgdw is None, f"import failed: {_IMPORT_ERROR}")
-class TestAggregatorAndIntakeAgree(unittest.TestCase):
-    """The aggregator's status sweep and the daemon's intake re-check read one pair: on one
-    UTC day, over a fixture with no spawn pending at either instant, both reach the same
-    verdict from the same rates."""
+class TestAggregatorAndIntakeAgree(_AggregatorRun):
+    """The aggregator's status sweep and the daemon's intake re-check read one pair and
+    evaluate pending at its end, the day anchor: on one UTC day both reach the same verdict
+    from the same rates, whatever instant each runs at."""
+
+    def test_a_stopless_spawn_started_in_the_grace_before_the_anchor_is_pending_all_day(
+        self,
+    ) -> None:
+        import daemon_cycle as dc
+        from _pg_seal import seal_pg_reach
+
+        day = _WINDOWS.end
+        late_id = _get_agent_ids("late", 1, is_floor=True)[0]
+        late = _get_spawn(late_id, day - timedelta(hours=1), session_id="c-late",
+                          has_subagent_stop=False)
+        spawns = _get_emit_failure_spawns(_WINDOWS)
+        spawns.remove(next(s for s in spawns if s.started_at >= _WINDOWS.start.confirmation
+                           and not s.has_subagent_stop))
+        fixture = (_WINDOWS.start.baseline, {_PYTHON: [*spawns, late], _SHELL: []})
+        signature = f"{_EMIT_FAILURE_CORE}|{_PYTHON}"
+        pattern = _get_intake_pattern(dc, _EMIT_FAILURE_CORE, sig.METRIC_EMIT_FAILURE, 1)
+        rows = [
+            ("aggregator and intake just after the anchor", day + timedelta(minutes=5)),
+            ("aggregator and intake just before the next anchor",
+             day + timedelta(hours=23, minutes=55)),
+        ]
+        reach = seal_pg_reach(self)
+        with mock.patch.object(pgdw, "_read_spawn_facts", lambda *_args, **_options: fixture):
+            for name, instant in rows:
+                with self.subTest(name):
+                    self.log = _FakeLearningLog()
+                    self.log.put_row(signature, "identified")
+                    floors: list[sig.FloorResult] = []
+
+                    def _read_floors(agents, windows, evaluated_at, floors=floors):
+                        read = pgdw.read_pattern_floors(agents, windows, evaluated_at)
+                        floors.append(read[(_PYTHON, sig.METRIC_EMIT_FAILURE)])
+                        return read
+
+                    self._run(window=[], read_floors=_read_floors, now=instant)
+                    with mock.patch.object(dc, "HAS_PG_PATTERN_READ", True), \
+                            mock.patch.object(dc, "_pg_read_pattern_floors", _read_floors), \
+                            mock.patch.object(dc, "_get_utc_now", lambda at=instant: at), \
+                            mock.patch.object(dc, "_invoke_pg_helper", lambda envelope: True), \
+                            contextlib.redirect_stderr(io.StringIO()):
+                        kept = dc.drop_pair_failing_patterns(_PYTHON, [pattern])
+                    self.assertEqual(
+                        [(f.verdict, f.confirmation, f.pending) for f in floors],
+                        [(sig.VERDICT_FAIL, sig.WindowCount(9, 4, 4), 1)] * 2,
+                    )
+                    self.assertEqual((self.log.get_status(signature), kept), ("dormant", []))
+        self.assertEqual(reach, [])
 
     def test_both_actors_read_one_pair_on_one_utc_day(self) -> None:
         import daemon_cycle as dc
@@ -1093,7 +1142,7 @@ class TestAggregatorAndIntakeAgree(unittest.TestCase):
                 mock.patch.object(dc, "_invoke_pg_helper", lambda envelope: True), \
                 contextlib.redirect_stderr(io.StringIO()):
             windows = sig.get_pair_windows(aggregated_at)
-            aggregator_floors = agg._get_keyed_floors({_PYTHON}, windows, aggregated_at)
+            aggregator_floors = agg._get_keyed_floors({_PYTHON}, windows, windows.end)
             agg._put_pair_statuses(log.read(), set(), aggregator_floors, windows)
             patterns = [
                 _get_intake_pattern(dc, core, key, row["id"])
@@ -1115,6 +1164,14 @@ class TestAggregatorAndIntakeAgree(unittest.TestCase):
         statuses = {core: log.get_status(f"{core}|{_PYTHON}") for core in (_BUDGET_CORE, _EMIT_FAILURE_CORE)}
         self.assertEqual(statuses, {_BUDGET_CORE: "identified", _EMIT_FAILURE_CORE: "dormant"})
         self.assertEqual([pattern.metric_key for pattern in kept], [sig.METRIC_BUDGET_OVERAGE])
+
+
+def _get_emit_failure_spawns(windows: sig.PairWindows) -> list[sig.SpawnFacts]:
+    """The passing fixture under emit_failure: each overage event becomes a stopless spawn."""
+    return [
+        s._replace(overage_rows=0, has_subagent_stop=s.overage_rows == 0)
+        for s in _get_passing_spawns(windows)
+    ]
 
 
 def _get_intake_pattern(dc: ModuleType, core: str, metric_key: str, row_id: int):
