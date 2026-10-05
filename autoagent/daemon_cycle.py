@@ -9789,7 +9789,7 @@ def _build_row_status_text(rows: list[dict]) -> str:
     return ", ".join(f"{row['id']}:{row.get('status')}" for row in rows)
 
 
-# Why an applied proposal matched no intake row — one eval_result per cause.
+# _get_uncovered_cause tokens — read by the parked guard + the writer's verdict-cause set.
 DISCHARGE_EVENT_READ_FAILED = "discharge-read-failed"
 DISCHARGE_EVENT_UNRESOLVED = "discharge-unresolved"
 DISCHARGE_EVENT_COVERED_TERMINAL = "discharge-covered-terminal"
@@ -9833,7 +9833,7 @@ def get_pattern_rows_by_agent() -> dict[str, list[dict]] | None:
 
     Deliberately NOT read_user_pending_patterns' result — that list is
     roster-filtered (cross-cutting and roster-mismatch rows skipped) and
-    agent-capped downstream, so a covered row outside it would never discharge,
+    agent-capped downstream, so a linked row outside it would never discharge,
     its frequency would keep growing, and it would re-fire.
 
     Helper import absent → None, reported by the caller as an OUTAGE. A read
@@ -10039,8 +10039,8 @@ def find_parked_proposals(
 ) -> list[dict]:
     """Selected proposals whose covered pattern rows are all terminal, with those rows.
 
-    Same rule as discharge's covered-terminal cause, so the two cannot drift: an empty
-    covered set or any non-terminal covered row applies as before.
+    Parked = _get_uncovered_cause yields its covered-terminal cause: an empty covered
+    set or any non-terminal covered row applies as before.
     """
     parked: list[dict] = []
     for triple in triples:

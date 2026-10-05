@@ -53,6 +53,7 @@ if str(Path(__file__).resolve().parent) not in sys.path:
 
 import daemon_cycle as dc  # noqa: E402 — autoagent dir pinned above
 from _pg_seal import seal_pg_reach
+from daemon_config import TierKnobs
 
 # The writer owns the cause-token→class map; the gate-invariance case compares the
 # daemon's own tokens against it rather than restating the set a second time.
@@ -105,8 +106,8 @@ def _seal_loop_event(envelope: dict) -> bool:
 
 
 def setUpModule() -> None:
-    """Seal the loop-event writer for every test in this file — an unresolved
-    proposal reaches the emit, and an unsealed run writes live PG rows."""
+    """Seal the loop-event writer for every test in this file — the census
+    emitters reach it, and an unsealed run writes live PG rows."""
     global _EMIT_PATCHER
     _EMIT_PATCHER = mock.patch.object(dc, "_invoke_pg_helper", _seal_loop_event)
     _EMIT_PATCHER.start()
@@ -211,13 +212,14 @@ REAL_CONSOLIDATIONS: tuple[tuple[str, str, frozenset[int]], ...] = (
     (LABEL_QA_DEBUGGER_2, "glass-atrium-qa-debugger", frozenset({9, 4})),
 )
 
-_STORED_IDS = frozenset(r["id"] for r in STORED_ROWS)
-
-# Intake read for an agent whose rows are all parked: the intake predicate
+# PARKED: an agent whose rows are all parked — the intake predicate
 # (status='identified', intake tiers) drops every dev-nestjs row.
-_PARKED_IDS = frozenset({8, 3, 6})
+_IDS = SimpleNamespace(
+    STORED=frozenset(r["id"] for r in STORED_ROWS),
+    PARKED=frozenset({8, 3, 6}),
+)
 PARKED_INTAKE_ROWS: tuple[dict, ...] = tuple(
-    r for r in STORED_ROWS if r["id"] not in _PARKED_IDS
+    r for r in STORED_ROWS if r["id"] not in _IDS.PARKED
 )
 
 
@@ -260,7 +262,7 @@ class CoverageResolutionTest(unittest.TestCase):
                 # Every resolved id is a REAL stored row — the silent no-op the
                 # retired label-first approach produced is exactly a resolution
                 # to something that is not in the corpus.
-                self.assertTrue(frozenset(covered) <= _STORED_IDS)
+                self.assertTrue(frozenset(covered) <= _IDS.STORED)
 
     def test_when_third_constituent_nests_parentheses_then_resolves_three_rows(self):
         covered = dc.find_covered_pattern_rows(
@@ -503,6 +505,14 @@ class DischargeCycleWiringTest(unittest.TestCase):
             patcher = mock.patch.object(dc, name, value)
             patcher.start()
             self.addCleanup(patcher.stop)
+        # Knobs load at import from this install's daemon-config.json → pin all unset.
+        unset = TierKnobs("", "")
+        for patcher in (
+            mock.patch.object(dc, "KNOB_ERRORS", {}),
+            mock.patch.dict(dc.TIER_KNOBS, {"worker": unset, "pre_verify": unset}),
+        ):
+            patcher.start()
+            self.addCleanup(patcher.stop)
 
     def _record_discharge(self, row_id: int, reason: str):
         self.discharged.append(row_id)
@@ -529,7 +539,8 @@ class DischargeCycleWiringTest(unittest.TestCase):
             "--agents-dir", str(self.root / "agents"),
         ]
         with _capture_stderr() as err, contextlib.redirect_stdout(io.StringIO()):
-            dc._main(argv)
+            rc = dc._main(argv)
+        self.assertEqual(rc, 0, err.getvalue())
         self.assertEqual(self.discharged, [])
         self.assertIn("would-discharge 1 row(s) [5]", err.getvalue())
         self.assertEqual(self.pg_reach, [])
