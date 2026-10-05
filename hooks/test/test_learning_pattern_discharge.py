@@ -1,4 +1,7 @@
-"""Contract tests for the pattern-discharge transition helper (R2 of clauded-docs/760).
+"""Contract tests for the core.learning_log status transitions: the state machine, the
+identified ↔ dormant status writer, and the pattern-discharge helper (R2 of clauded-docs/760).
+DB-level behaviour of the status writer (label-absent schema included) lives in
+``learning-pattern-label-fallback.bats``.
 
 ``discharge_learning_pattern`` in ``hooks/_pg_learning_dualwrite.py`` transitions one
 ``core.learning_log`` row to terminal ``'applied'`` with an audit reason, and returns a
@@ -337,6 +340,99 @@ class TestDischargeTriStateFailClosed(unittest.TestCase):
         with contextlib.redirect_stderr(io.StringIO()):
             no_match = pgdw.discharge_learning_pattern(_PROBE_ID, _PROBE_REASON)
         self.assertNotEqual(outage.outcome, no_match.outcome)
+
+
+class TestStatusTransitionRules(unittest.TestCase):
+    """dormant pairs with identified only; rejected and applied stay terminal."""
+
+    def test_transition_is_allowed_exactly_when_it_stays_inside_the_dormancy_rules(self) -> None:
+        rows = (
+            ("identified", "dormant", True),
+            ("dormant", "identified", True),
+            ("dormant", "dormant", True),
+            ("dormant", "rejected", True),
+            (None, "dormant", True),
+            ("rejected", "dormant", False),
+            ("applied", "dormant", False),
+            ("proposed", "dormant", False),
+            ("approved", "dormant", False),
+            ("dormant", "proposed", False),
+            ("dormant", "applied", False),
+        )
+        for old, new, allowed in rows:
+            with self.subTest(transition=f"{old} -> {new}"):
+                if allowed:
+                    pgdw._validate_status_transition(old, new)
+                else:
+                    with self.assertRaises(ValueError):
+                        pgdw._validate_status_transition(old, new)
+
+
+class TestStatusWriterInput(unittest.TestCase):
+    """The identified ↔ dormant writer validates before any connection is attempted."""
+
+    def setUp(self) -> None:
+        self.recorder = _Recorder()
+        patcher = mock.patch.object(pgdw, "psycopg", _stub_psycopg(self.recorder))
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
+    def test_status_outside_the_pair_is_refused_before_any_db_call(self) -> None:
+        for bad_status in ("proposed", "rejected", "applied", "", None):
+            with self.subTest(status=bad_status):
+                with self.assertRaises(ValueError):
+                    pgdw.put_learning_pattern_status(_PROBE_ID, bad_status, _PROBE_REASON)
+        self.assertEqual(self.recorder.connects, 0)
+
+    def test_missing_reason_or_bad_id_is_refused_before_any_db_call(self) -> None:
+        for pattern_id, reason in ((_PROBE_ID, ""), (_PROBE_ID, None), (0, _PROBE_REASON)):
+            with self.subTest(pattern_id=pattern_id, reason=reason):
+                with self.assertRaises(ValueError):
+                    pgdw.put_learning_pattern_status(pattern_id, "dormant", reason)
+        self.assertEqual(self.recorder.connects, 0)
+
+    def test_outage_reads_as_failed_never_as_not_matched(self) -> None:
+        recorder = _Recorder()
+        with mock.patch.object(pgdw, "psycopg", _stub_failing_psycopg(recorder)):
+            with contextlib.redirect_stderr(io.StringIO()):
+                result = pgdw.put_learning_pattern_status(_PROBE_ID, "dormant", _PROBE_REASON)
+        self.assertEqual(result.outcome, pgdw.TRANSITION_FAILED)
+        self.assertIsNone(result.row_id)
+
+
+class TestUpsertStatusAndKeyInput(unittest.TestCase):
+    """The upsert leaves dormancy to the status writer and takes only a closed-set key."""
+
+    def setUp(self) -> None:
+        self.recorder = _Recorder()
+        patcher = mock.patch.object(pgdw, "psycopg", _stub_psycopg(self.recorder))
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
+    def _upsert(self, **overrides: object) -> None:
+        kwargs = {
+            "pattern_signature": "budget-overage concentration|glass-atrium-dev-python",
+            "discovered_date": "2026-10-04",
+            "frequency": 5,
+            "agent": "glass-atrium-dev-python",
+            "status": "identified",
+            "approval_tier": "user-pending",
+            **overrides,
+        }
+        pgdw.upsert_learning_pattern(**kwargs)
+
+    def test_dormant_request_is_routed_to_the_status_writer_before_any_db_call(self) -> None:
+        with self.assertRaises(ValueError) as caught:
+            self._upsert(status="dormant")
+        self.assertIn("put_learning_pattern_status", str(caught.exception))
+        self.assertEqual(self.recorder.connects, 0)
+
+    def test_metric_key_outside_the_closed_set_is_refused_before_any_db_call(self) -> None:
+        for bad_key in ("verified_fail", "", 7):
+            with self.subTest(metric_key=bad_key):
+                with self.assertRaises(ValueError):
+                    self._upsert(metric_key=bad_key)
+        self.assertEqual(self.recorder.connects, 0)
 
 
 class TestDischargeMigrationDrift(unittest.TestCase):

@@ -83,7 +83,10 @@ _STATUS_RANK = {
     "applied": 3,
 }
 _TERMINAL_REJECT = "rejected"
-_VALID_STATUS = set(_STATUS_RANK) | {_TERMINAL_REJECT}
+# Non-terminal, unranked: leaves intake unjudged → returns on a new passing pair.
+_DORMANT = "dormant"
+_DORMANCY_PAIR = frozenset({"identified", _DORMANT})
+_VALID_STATUS = set(_STATUS_RANK) | {_TERMINAL_REJECT, _DORMANT}
 
 # Aggregator → PG tier mapping. The DB "ApprovalTier" enum keeps 'llm' for
 # read back-compat — do NOT drop or narrow _VALID_TIER, or legacy rows fail on
@@ -101,8 +104,10 @@ _VALID_TIER = {"auto", "llm", "user-pending", "user"}
 
 def _validate_status_transition(old_status: str | None, new_status: str) -> None:
     """Raise ValueError on illegal monotonic regression.
-    Permitted: None → any · identified→proposed→approved→applied · any-non-applied → rejected.
-    Forbidden: rank regression · applied→anything · rejected→anything (both terminal)."""
+    Permitted: None → any · identified→proposed→approved→applied · identified ↔ dormant ·
+    any-non-applied → rejected.
+    Forbidden: rank regression · applied→anything · rejected→anything (both terminal) ·
+    dormant with any status outside the identified pair, rejected excepted."""
     if new_status not in _VALID_STATUS:
         raise ValueError(
             "invalid status %r (allowed: %s)" % (new_status, sorted(_VALID_STATUS))
@@ -118,6 +123,15 @@ def _validate_status_transition(old_status: str | None, new_status: str) -> None
     if old_status == _TERMINAL_REJECT and new_status != _TERMINAL_REJECT:
         raise ValueError(
             "illegal transition: rejected → %s (rejected is terminal)" % new_status
+        )
+    if (
+        _DORMANT in (old_status, new_status)
+        and new_status != _TERMINAL_REJECT
+        and not {old_status, new_status} <= _DORMANCY_PAIR
+    ):
+        raise ValueError(
+            "illegal transition: %s → %s (dormant pairs with identified only)"
+            % (old_status, new_status)
         )
     if new_status in _STATUS_RANK and old_status in _STATUS_RANK:
         if _STATUS_RANK[new_status] < _STATUS_RANK[old_status]:
@@ -265,9 +279,26 @@ ON CONFLICT (pattern_signature) DO UPDATE SET
     discovered_date = EXCLUDED.discovered_date,
     frequency = EXCLUDED.frequency,
     agent = EXCLUDED.agent,
-    status = EXCLUDED.status,
+    -- text compare → valid without the dormant label; only put_learning_pattern_status leaves it
+    status = CASE
+                 WHEN core.learning_log.status::text = 'dormant' THEN core.learning_log.status
+                 ELSE EXCLUDED.status
+             END,
     approval_tier = EXCLUDED.approval_tier,
     last_updated = now()
+"""
+
+_METRIC_KEY_COLUMN_SQL = """
+SELECT EXISTS (
+    SELECT 1 FROM information_schema.columns
+     WHERE table_schema = 'core' AND table_name = 'learning_log' AND column_name = 'metric_key'
+)
+"""
+
+_LEARNING_LOG_METRIC_KEY_SQL = """
+UPDATE core.learning_log
+SET metric_key = %(metric_key)s::core."MetricKey"
+WHERE pattern_signature = %(pattern_signature)s
 """
 
 
@@ -278,18 +309,33 @@ def upsert_learning_pattern(
     agent: str | None,
     status: str,
     approval_tier: str,
+    metric_key: str | None = None,
 ) -> int:
     """UPSERT one row into core.learning_log keyed by pattern_signature.
 
     Validates the monotonic state transition before commit and raises ValueError
     on illegal regression (the caller catches, logs, and skips). Returns
     elapsed_ms; never raises on PG-side errors, only on input validation (status
-    enum, tier enum), which runs before connect so the caller sees a schema bug
-    clearly.
+    enum, tier enum, metric key), which runs before connect so the caller sees a
+    schema bug clearly.
+
+    A stored 'dormant' status survives the conflict update. metric_key (one of
+    METRIC_KEYS) is written only where the column exists — a schema without it
+    still gets the row; None leaves a stored key untouched.
     """
     # Input validation (raises ValueError before any PG call).
     if not pattern_signature or not isinstance(pattern_signature, str):
         raise ValueError("pattern_signature must be non-empty str")
+    if status == _DORMANT:
+        raise ValueError(
+            "status 'dormant' is written by put_learning_pattern_status, never by the upsert"
+        )
+    if metric_key is not None and (
+        not isinstance(metric_key, str) or metric_key not in METRIC_KEYS
+    ):
+        raise ValueError(
+            "metric_key %r not in %s" % (metric_key, sorted(METRIC_KEYS))
+        )
     if status not in _VALID_STATUS:
         raise ValueError(
             "status %r not in %s" % (status, sorted(_VALID_STATUS))
@@ -326,6 +372,13 @@ def upsert_learning_pattern(
                 # Raises ValueError (not psycopg) on illegal regression.
                 _validate_status_transition(old_status, status)
                 cur.execute(_LEARNING_LOG_UPSERT_SQL, row)
+                if metric_key is not None:
+                    cur.execute(_METRIC_KEY_COLUMN_SQL)
+                    if cur.fetchone()[0]:
+                        cur.execute(
+                            _LEARNING_LOG_METRIC_KEY_SQL,
+                            {"metric_key": metric_key, "pattern_signature": pattern_signature},
+                        )
             conn.commit()
 
     return _run_with_retry(
@@ -495,6 +548,105 @@ def discharge_learning_pattern(pattern_id: int, reason: str) -> DischargeResult:
     if updated:
         return DischargeResult(DISCHARGE_APPLIED, updated[0])
     return DischargeResult(DISCHARGE_NOT_MATCHED, None)
+
+
+# ---------------------------------------------------------------------------
+# Lifecycle transition: core.learning_log identified ↔ dormant
+# ---------------------------------------------------------------------------
+#
+# The one writer of 'dormant': a row whose evidence no longer passes its pair leaves
+# intake without a verdict, and returns to 'identified' on a new passing pair.
+# Same tri-state as the discharge — an outage must never read as "nothing to move".
+
+TRANSITION_MOVED = "moved"
+TRANSITION_NOT_MATCHED = "not_matched"
+TRANSITION_FAILED = "failed"
+
+
+class TransitionResult(NamedTuple):
+    """One of the three TRANSITION_* outcomes, with the row id on a move only."""
+
+    outcome: str
+    row_id: int | None
+
+
+# Label test + write in one statement (no probe-then-write window). Label absent (code ahead of
+# its migration) → nothing matches and the row stays identified; the scalar subquery defers
+# the enum cast to a matched row, so the absent label is never parsed.
+_DORMANT_LABEL_SQL = """
+    SELECT 1
+      FROM pg_catalog.pg_enum AS e
+      JOIN pg_catalog.pg_type AS t ON t.oid = e.enumtypid
+      JOIN pg_catalog.pg_namespace AS n ON n.oid = t.typnamespace
+     WHERE n.nspname = 'core'
+       AND t.typname = 'LearningStatus'
+       AND e.enumlabel = 'dormant'"""
+
+_LEARNING_LOG_STATUS_SQL = f"""
+UPDATE core.learning_log
+SET status = (SELECT %(status)s::text)::core."LearningStatus",
+    last_transition_at = now(),
+    last_transition_reason = %(reason)s,
+    last_updated = now()
+WHERE id = %(pattern_id)s
+  AND status::text = %(from_status)s
+  AND EXISTS ({_DORMANT_LABEL_SQL})
+RETURNING id
+"""
+
+
+def put_learning_pattern_status(
+    pattern_id: int, status: str, reason: str
+) -> TransitionResult:
+    """Move one core.learning_log row between 'identified' and 'dormant' + audit reason.
+
+    Only a row holding the other member of the pair moves; any other stored status,
+    and every row on a schema without the 'dormant' label, reports NOT_MATCHED.
+
+    Returns TRANSITION_MOVED with the row id, TRANSITION_NOT_MATCHED, or
+    TRANSITION_FAILED when the call never completed.
+    Raises ValueError on input validation only (before any PG call).
+    """
+    if not isinstance(pattern_id, int) or pattern_id <= 0:
+        raise ValueError("pattern_id must be positive int, got %r" % (pattern_id,))
+    if status not in _DORMANCY_PAIR:
+        raise ValueError("status %r not in %s" % (status, sorted(_DORMANCY_PAIR)))
+    if not reason or not isinstance(reason, str):
+        raise ValueError("reason must be non-empty str")
+
+    params = {
+        "pattern_id": pattern_id,
+        "status": status,
+        "from_status": next(iter(_DORMANCY_PAIR - {status})),
+        "reason": reason[:LEARNING_LOG_REASON_MAX],
+    }
+    updated: list[int] = []
+    committed: list[bool] = []
+
+    def _do():
+        # A retry re-runs the whole round-trip — a stale first-attempt id must not survive.
+        updated.clear()
+        committed.clear()
+        with psycopg.connect(
+            "dbname=glass_atrium", connect_timeout=1, autocommit=False
+        ) as conn:
+            with conn.cursor() as cur:
+                cur.execute(_LEARNING_LOG_STATUS_SQL, params)
+                updated.extend(row[0] for row in cur.fetchall())
+            conn.commit()
+        committed.append(True)
+
+    _run_with_retry(
+        op_name="put_learning_pattern_status",
+        target_table="core.learning_log",
+        payload_ref="learning_log:%d" % pattern_id,
+        fn=_do,
+    )
+    if not committed:
+        return TransitionResult(TRANSITION_FAILED, None)
+    if updated:
+        return TransitionResult(TRANSITION_MOVED, updated[0])
+    return TransitionResult(TRANSITION_NOT_MATCHED, None)
 
 
 # ---------------------------------------------------------------------------

@@ -9235,6 +9235,9 @@ def _reobservation_reason(pattern_date: str, today: date) -> str:
       3. _LEARNING_LOG_REJECT_SQL and 4. _LEARNING_LOG_DISCHARGE_SQL — the
          TERMINAL transitions. Neither touches discovered_date, and both remove
          the row from intake.
+      5. _LEARNING_LOG_STATUS_SQL — identified ↔ dormant, and
+         6. _LEARNING_LOG_METRIC_KEY_SQL — the pattern's metric key. Neither
+         touches discovered_date; a dormant row leaves intake.
 
     So a row reaching this gate at status='identified' carries the date of its
     last aggregator re-observation, from writer 1 or (once wired) writer 2.

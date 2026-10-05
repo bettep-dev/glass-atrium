@@ -89,15 +89,20 @@ class TestWritersAgreeOnLastObserved(unittest.TestCase):
         )
         self.assertIn("discovered_date = EXCLUDED.discovered_date", conflict)
 
-    def test_when_row_reaches_a_terminal_state_then_its_date_is_left_alone(
+    def test_when_a_row_changes_state_or_key_then_its_date_is_left_alone(
         self,
     ) -> None:
-        # The reject/discharge transitions remove the row from intake; restamping
-        # its date there would fabricate an observation that never happened.
-        for const in ("_LEARNING_LOG_REJECT_SQL", "_LEARNING_LOG_DISCHARGE_SQL"):
+        # A status move or a key write is not an observation; restamping the date
+        # there would fabricate one that never happened.
+        for const in (
+            "_LEARNING_LOG_REJECT_SQL",
+            "_LEARNING_LOG_DISCHARGE_SQL",
+            "_LEARNING_LOG_STATUS_SQL",
+            "_LEARNING_LOG_METRIC_KEY_SQL",
+        ):
             with self.subTest(sql=const):
                 match = re.search(
-                    rf'^{re.escape(const)}\s*=\s*"""(.*?)"""',
+                    rf'^{re.escape(const)}\s*=\s*f?"""(.*?)"""',
                     self.learning_src,
                     re.DOTALL | re.MULTILINE,
                 )
@@ -120,6 +125,8 @@ class TestWritersAgreeOnLastObserved(unittest.TestCase):
             sorted(writers),
             [
                 ("_pg_learning_dualwrite.py", "INSERT INTO core.learning_log"),
+                ("_pg_learning_dualwrite.py", "UPDATE core.learning_log"),
+                ("_pg_learning_dualwrite.py", "UPDATE core.learning_log"),
                 ("_pg_learning_dualwrite.py", "UPDATE core.learning_log"),
                 ("_pg_learning_dualwrite.py", "UPDATE core.learning_log"),
                 ("_pg_outcome_dualwrite.py", "INSERT INTO core.learning_log"),
