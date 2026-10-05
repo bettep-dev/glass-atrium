@@ -440,8 +440,8 @@ class TestAllRejectStreakWalk(unittest.TestCase):
 class TestPriorAllRejectCycleCountOnEngine(unittest.TestCase):
     """The fallback proposals walk's own SQL, run on the stdlib backend.
 
-    The schema-without-verdict-table leg: the stub has no to_regclass, so the
-    table probe answers absent. Grouping and classification live in
+    The schema-without-verdict-table leg: the table probe is patched absent
+    because the stub backend has no to_regclass. Grouping and classification live in
     _all_reject_streak_from_rows, so what only an engine can answer is pinned
     here: the projected columns, the newest-first ordering, and the LIMIT
     bounding DISTINCT DATES rather than rows.
