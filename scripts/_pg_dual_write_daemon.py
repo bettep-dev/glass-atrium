@@ -16,6 +16,8 @@
 #                                       key (cycle_date)
 #       - write_spawn_manifest_rows  -> core.spawn_manifest INSERT ... DO NOTHING
 #                                       key (spool, line_offset); import-only, no op
+#       - write_trial_ledger_row     -> core.autoagent_trial_ledger INSERT ... DO NOTHING
+#                                       key (dedupe_key); import-only, no op
 #
 # Retry/error/elapsed_ms convention:
 #   * 1 retry with 100ms backoff before giving up (fail-loud-and-skip).
@@ -271,10 +273,12 @@ _COMPOSE_PROVENANCE = None
 
 # Migrations a DEGRADED notice names, so one stderr line tells an operator exactly what to
 # apply — the same shape the driver's enum probe uses when a core."DaemonStatus" label is missing.
-# PROVENANCE → apply_status_provenance · PATTERN_EVIDENCE → the two proposal link columns.
+# PROVENANCE → apply_status_provenance · PATTERN_EVIDENCE → the two proposal link columns ·
+# TRIAL_LEDGER → core.autoagent_trial_ledger.
 MIGRATION = SimpleNamespace(
     PROVENANCE="20260803000001_add_daemon_run_apply_status_provenance",
     PATTERN_EVIDENCE="20261005000000_add_pattern_evidence_provenance",
+    TRIAL_LEDGER="20261008000000_add_trial_ledger_and_cycle_verdicts",
 )
 
 
@@ -1076,6 +1080,110 @@ def get_spawn_manifest_row_count(spool):
         with conn.cursor() as cur:
             cur.execute(_SPAWN_MANIFEST_COUNT_SQL, (spool,))
             return cur.fetchone()[0]
+
+
+class TrialLedgerValueUndeclared(CallerContractViolation):
+    """An event, actor or declared payload shape outside TRIAL_LEDGER."""
+
+
+_TRIAL_LEDGER_EVENT = SimpleNamespace(
+    SHADOW_PREREGISTRATION="shadow-preregistration",  # dedupe_key = <trial key>
+    SHADOW_LOOK="shadow-look",  # dedupe_key = <trial key>:look:<n>
+    POWER_PASS_COUNT="power-pass-count",  # dedupe_key = power-pass-count:<cycle date>
+    AA_RESTART="aa-restart",
+    # Session clustering; a period design effect (S4b) is its own event, never this one.
+    AA_SESSION_DESIGN_EFFECT="aa-session-design-effect",
+)
+
+# The ledger's closed sets, declared once: event and actor are VARCHAR columns, so nothing
+# below this writer refuses a misspelling, and an append-only row can never be corrected.
+# Writers and readers import these names; a second spelling elsewhere is a drift.
+TRIAL_LEDGER = SimpleNamespace(
+    EVENT=_TRIAL_LEDGER_EVENT,
+    ACTOR=SimpleNamespace(SHADOW="daemon-cycle-shadow", AA="daemon-cycle-aa"),
+    # Payload keys readers rely on; an event absent here carries a free-form object.
+    # anova / size_weighted = trial_design.DesignEffect fields; readers take the higher.
+    PAYLOAD_KEYS={
+        _TRIAL_LEDGER_EVENT.AA_SESSION_DESIGN_EFFECT: ("anova", "size_weighted")
+    },
+)
+
+
+def _check_trial_ledger_values(event, actor, payload):
+    """Refuse a row outside the declared sets, before any connection."""
+    if event not in vars(TRIAL_LEDGER.EVENT).values():
+        raise TrialLedgerValueUndeclared(
+            f"op=write_trial_ledger_row refused event={event!r} — undeclared "
+            "(TRIAL_LEDGER.EVENT), nothing written"
+        )
+    if actor not in vars(TRIAL_LEDGER.ACTOR).values():
+        raise TrialLedgerValueUndeclared(
+            f"op=write_trial_ledger_row refused actor={actor!r} — undeclared "
+            "(TRIAL_LEDGER.ACTOR), nothing written"
+        )
+    keys = TRIAL_LEDGER.PAYLOAD_KEYS.get(event)
+    if keys is not None and not (
+        isinstance(payload, dict) and set(payload) == set(keys)
+    ):
+        raise TrialLedgerValueUndeclared(
+            f"op=write_trial_ledger_row refused event={event!r} payload={payload!r} — keys "
+            f"must be exactly {', '.join(keys)}, nothing written"
+        )
+
+
+_TRIAL_LEDGER_INSERT_SQL = """
+    INSERT INTO core.autoagent_trial_ledger
+        (trial_key, agent, learning_pattern_id, event, actor, payload, dedupe_key)
+    VALUES (%s, %s, %s, %s, %s, %s, %s)
+    ON CONFLICT (dedupe_key) DO NOTHING
+"""
+
+
+def write_trial_ledger_row(
+    event,
+    actor,
+    payload,
+    *,
+    trial_key=None,
+    agent=None,
+    learning_pattern_id=None,
+    dedupe_key=None,
+):
+    """INSERT one append-only ledger row → 1 when it landed, 0 when it did not.
+
+    dedupe_key: a once-only event's identity (N67) — a taken key adds no row and raises
+    nothing, the stored row stays; None = a repeatable event. A schema without the table
+    (migrate-failed install) → named WARN on stderr, 0. Refuses (TrialLedgerValueUndeclared)
+    before connecting on a value outside TRIAL_LEDGER; raises on any other PG fault.
+    """
+    _check_trial_ledger_values(event, actor, payload)
+    row = (
+        trial_key,
+        agent,
+        learning_pattern_id,
+        event,
+        actor,
+        Jsonb(payload),
+        dedupe_key,
+    )
+    try:
+        with _connect() as conn:
+            with conn.cursor() as cur:
+                cur.execute(_TRIAL_LEDGER_INSERT_SQL, row)
+                inserted = cur.rowcount
+            conn.commit()
+    except pg_errors.UndefinedTable:
+        _warn_trial_ledger_absent(event, dedupe_key)
+        return 0
+    return inserted
+
+
+def _warn_trial_ledger_absent(event, dedupe_key):
+    sys.stderr.write(
+        "[autoagent-daemon] op=write_trial_ledger_row WARN table=core.autoagent_trial_ledger "
+        f"absent (event={event}, dedupe_key={dedupe_key}) — nothing recorded; "
+        f"apply migration {MIGRATION.TRIAL_LEDGER}\n"
+    )
 
 
 # --- Failure observability -------------------------------------------------

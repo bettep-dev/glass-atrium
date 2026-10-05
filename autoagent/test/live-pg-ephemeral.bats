@@ -42,6 +42,10 @@ setup_file() {
   createdb -h "${EPH_SOCKDIR}" -p "${EPH_PORT}" -T glass_atrium cycle_verdicts_tpl || return 1
   eph_pg_create_migrated_db "${EPH_SOCKDIR}" "${EPH_PORT}" cycle_verdicts_absent_tpl \
     20261008000000_add_trial_ledger_and_cycle_verdicts || return 1
+  # Trial-ledger templates, cloned per test (append-only); the absent one shares the excluded migration.
+  createdb -h "${EPH_SOCKDIR}" -p "${EPH_PORT}" -T glass_atrium trial_ledger_tpl || return 1
+  createdb -h "${EPH_SOCKDIR}" -p "${EPH_PORT}" -T cycle_verdicts_absent_tpl \
+    trial_ledger_absent_tpl || return 1
 }
 
 teardown_file() {
@@ -194,6 +198,11 @@ PY
 
 @test "the cycle-verdict writer and walk live class runs against the migrated cluster, none skipped" {
   _assert_live_module test_all_reject_alert TestCycleVerdictsLivePg
+}
+
+@test "the trial-ledger writer live class runs against the migrated cluster, none skipped" {
+  cd "${BATS_TEST_DIRNAME}/../../scripts/test" || return 1
+  _assert_live_module test_pg_dual_write_trial_ledger TestTrialLedgerWriterLivePg
 }
 
 @test "the pattern-metric window read runs against the migrated cluster, none skipped" {
