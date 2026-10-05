@@ -9711,30 +9711,24 @@ def _warn_pattern_skip(
     *,
     eval_result: str,
     reason: str,
-    event_subject: str | None = None,
 ) -> None:
     """Skipped/snoozed pattern → stderr WARN + loop-event emit, never silent.
 
     Same observability contract as _warn_roster_mismatch (Precondition
     Loud-Fail): eval_result rows in core.autoagent_loop_events surface the drop
     to the monitor; the stderr line carries the recompute / streak detail.
-
-    Census class by default; event_subject carries the adjudicated subject when
-    the caller passes a verdict cause — the writer refuses either mismatch.
     """
     sys.stderr.write(
         f"[daemon-cycle] WARN: pattern {eval_result} — agent={agent} "
         f"({signature[:80]!r}): {reason}\n"
     )
-    _emit_gate_loop_event(agent, event_ts, eval_result, event_subject=event_subject)
+    _emit_gate_loop_event(agent, event_ts, eval_result)
 
 
 def _emit_gate_loop_event(
     agent: str,
     event_ts: str,
     eval_result: str,
-    *,
-    event_subject: str | None = None,
 ) -> None:
     """Shared loop-event envelope for the pattern-gate observability helpers.
 
@@ -9751,37 +9745,36 @@ def _emit_gate_loop_event(
                 "changes_added": 0,
                 "changes_removed": 0,
                 "rice": None,
-                "subject": event_subject,
+                "subject": None,  # census class — the writer keys it per (day, agent, cause)
             },
         }
     )
 
 
-# -- Applied-proposal discharge (pattern-first coverage resolution) ----------
+# -- Applied-proposal discharge (link-keyed) ---------------------------------
 #
-# An applied proposal's patch lands but the core.learning_log rows it was
-# generated from stay 'identified', so their frequency keeps growing and the
-# same prose rule re-fires stricter every cycle. This stage resolves an applied
-# proposal to the rows it covers and discharges them to terminal 'applied'.
+# An applied proposal's patch lands but the core.learning_log row it was
+# generated from stays 'identified', so its frequency keeps growing and the
+# same prose rule re-fires stricter every cycle. This stage follows the
+# proposal's learning_pattern_id link to that row and discharges it to terminal
+# 'applied'. An unlinked (legacy) proposal discharges nothing: no label is read.
 #
-# Resolution is PATTERN-FIRST: iterate the agent's stored rows (row ids already
-# in hand) and ask _covers_pattern_label whether the proposal label covers each.
-# Nothing is reconstructed from the label, so a constituent's nested parentheses
-# sit inside the haystack instead of being parsed.
+# Coverage resolution below is PATTERN-FIRST: iterate the agent's stored rows
+# (row ids already in hand) and ask _covers_pattern_label whether a proposal
+# label covers each. Nothing is reconstructed from the label, so a constituent's
+# nested parentheses sit inside the haystack instead of being parsed.
 
-# Live transitioning is opt-in; dry-run is the default (file env convention).
-DISCHARGE_LIVE_ENV = "AUTOAGENT_DISCHARGE_LIVE"
 # Apply-side status-flip window. 2 days against a daily cycle = one cycle of
 # overlap; a re-discharge is a no-op (the SQL terminal guard reports not-matched).
 DISCHARGE_WINDOW_DAYS = int(
     os.environ.get("AUTOAGENT_DISCHARGE_WINDOW_DAYS", "2") or "2"
 )
 
+# Unlinked rows are selected too, so the stage can count the legacy rows it skips.
 _APPLIED_FOR_DISCHARGE_SELECT_SQL = (
-    "SELECT id, target_agent, pattern_label "
+    "SELECT id, learning_pattern_id "
     "FROM core.autoagent_proposals "
     "WHERE status::text = 'applied' AND reviewed_at IS NOT NULL "
-    "AND target_agent IS NOT NULL AND pattern_label IS NOT NULL "
     "AND reviewed_at > now() - make_interval(days => %s) "
     "ORDER BY reviewed_at DESC"
 )
@@ -9802,38 +9795,19 @@ DISCHARGE_EVENT_UNRESOLVED = "discharge-unresolved"
 DISCHARGE_EVENT_COVERED_TERMINAL = "discharge-covered-terminal"
 DISCHARGE_EVENT_INTAKE_MISS = "discharge-intake-miss"
 
-_UNCOVERED_WARN_REASONS = {
-    DISCHARGE_EVENT_READ_FAILED: (
-        "applied proposal id={proposal_id} matched no intake row and the "
-        "status-agnostic pattern read failed — cause unknown, nothing discharged"
-    ),
-    DISCHARGE_EVENT_UNRESOLVED: (
-        "applied proposal id={proposal_id}: no stored pattern row matches the "
-        "label, nothing discharged"
-    ),
-    DISCHARGE_EVENT_INTAKE_MISS: (
-        "applied proposal id={proposal_id} covers non-terminal row(s) [{rows}] "
-        "absent from the intake read (intake read failed, or row outside the "
-        "intake tier band), nothing discharged"
-    ),
-}
-
-
 class DischargeReport(NamedTuple):
     """Outcome of one discharge stage — an outage is never an empty result.
 
-    The last four fields partition the proposals that matched no intake row by
-    cause; `unresolved` holds only those whose label matches no stored row.
+    The first four row lists hold learning_log ids; `unlinked` and
+    `outside_intake` hold the proposal ids skipped for that cause.
     """
 
     outage: bool
     would_discharge: list[int]
     discharged: list[int]
     failed: list[int]
-    unresolved: list[int]
-    covered_terminal: list[int]
-    intake_miss: list[int]
-    read_failed: list[int]
+    unlinked: list[int]
+    outside_intake: list[int]
 
 
 def _canon_agent_key(agent: str) -> str:
@@ -9927,17 +9901,8 @@ def find_covered_pattern_rows(
     return covered
 
 
-def discharge_live_enabled() -> bool:
-    """True only on an explicit opt-in — dry-run is the default."""
-    return os.environ.get(DISCHARGE_LIVE_ENV, "").strip().lower() in {
-        "1",
-        "true",
-        "yes",
-    }
-
-
 def _fetch_applied_for_discharge() -> list[tuple] | None:
-    """(id, target_agent, pattern_label) for proposals applied inside the window.
+    """(id, learning_pattern_id) for proposals applied inside the window.
 
     Deliberately not _fetch_applied_proposals: that one carries LIMIT 50 and the
     90-day outcome-read horizon, so reusing it would re-import on the proposal
@@ -9965,19 +9930,16 @@ def discharge_applied_patterns(
     applied_rows: list[tuple] | None,
     rows_by_agent: dict[str, list[dict]] | None,
     *,
-    coverage_reader: Callable[[], dict[str, list[dict]] | None],
-    live: bool = False,
+    live: bool,
 ) -> DischargeReport:
-    """Discharge the pattern rows covered by each proposal applied this window.
+    """Discharge the pattern row each proposal applied this window links to.
 
-    Ambiguity discharges NOTHING: an unreadable input is an outage and a proposal
-    matching no intake row is a skip reported under its cause, so the stage can
-    never fall back to terminalizing an agent's whole row set. Only intake-index
-    rows are ever transitioned.
+    Only a linked row still in the intake index transitions: an unlinked proposal
+    or a row the intake read dropped (terminal, dormant, outside the intake tiers)
+    is counted and skipped, never resolved another way. An unreadable input is an
+    outage, so the stage can never fall back to an agent's whole row set.
 
-    coverage_reader: the status-agnostic index loader (get_coverage_rows_by_agent
-    in production) — called at most once, and only when some proposal matches no
-    intake row.
+    live: False in a no-write cycle — the rows that would transition are logged.
     """
     if applied_rows is None or rows_by_agent is None:
         sys.stderr.write(
@@ -9985,78 +9947,54 @@ def discharge_applied_patterns(
             "(applied-proposal or pattern read unavailable); this is NOT "
             "'nothing to discharge', and no row was transitioned\n"
         )
-        return DischargeReport(True, [], [], [], [], [], [], [])
+        return DischargeReport(True, [], [], [], [], [])
 
-    event_ts = datetime.now(timezone.utc).strftime("%Y-%m-%dT00:00:00.000Z")
-    would: list[int] = []
-    discharged: list[int] = []
-    failed: list[int] = []
-    uncovered: dict[str, list[int]] = {
-        cause: []
-        for cause in (
-            DISCHARGE_EVENT_UNRESOLVED,
-            DISCHARGE_EVENT_COVERED_TERMINAL,
-            DISCHARGE_EVENT_INTAKE_MISS,
-            DISCHARGE_EVENT_READ_FAILED,
-        )
-    }
+    intake_ids = {row["id"] for rows in rows_by_agent.values() for row in rows}
+    report = DischargeReport(False, [], [], [], [], [])
+    for proposal_id, pattern_id in applied_rows:
+        if pattern_id is None:
+            report.unlinked.append(proposal_id)
+        elif pattern_id not in intake_ids:
+            report.outside_intake.append(proposal_id)
+        elif not live:
+            report.would_discharge.append(pattern_id)
+        else:
+            _discharge_linked_row(proposal_id, pattern_id, report)
 
-    matches = [
-        (proposal_id, agent or "", label or "",
-         find_covered_pattern_rows(label or "", agent or "", rows_by_agent))
-        for proposal_id, agent, label in applied_rows
-    ]
-    has_uncovered = any(not covered for _, _, _, covered in matches)
-    coverage_by_agent = coverage_reader() if has_uncovered else None
-
-    for proposal_id, agent, label, covered in matches:
-        if not covered:
-            cause, covering = _get_uncovered_cause(label, agent, coverage_by_agent)
-            uncovered[cause].append(proposal_id)
-            _report_uncovered_proposal(proposal_id, agent, label, cause, covering, event_ts)
-            continue
-        if not live:
-            would.extend(covered)
-            continue
-        for row_id in covered:
-            result = _pg_discharge_learning_pattern(
-                row_id, f"discharged by applied proposal id={proposal_id}"
-            )
-            if result.outcome == DISCHARGE_APPLIED:
-                discharged.append(row_id)
-            elif result.outcome == DISCHARGE_FAILED:
-                failed.append(row_id)
-                sys.stderr.write(
-                    f"[daemon-cycle] WARN: discharge transition failed — "
-                    f"learning_log id={row_id} (proposal id={proposal_id}); the "
-                    "call never completed, retried next cycle\n"
-                )
-
-    unresolved = uncovered[DISCHARGE_EVENT_UNRESOLVED]
-    covered_terminal = uncovered[DISCHARGE_EVENT_COVERED_TERMINAL]
-    intake_miss = uncovered[DISCHARGE_EVENT_INTAKE_MISS]
-    read_failed = uncovered[DISCHARGE_EVENT_READ_FAILED]
-    uncovered_summary = (
-        f"{len(unresolved)} proposal(s) unresolved {sorted(unresolved)}, "
-        f"{len(covered_terminal)} covered-terminal {sorted(covered_terminal)}, "
-        f"{len(intake_miss)} intake-miss {sorted(intake_miss)}, "
-        f"{len(read_failed)} read-failed {sorted(read_failed)}"
+    skipped_summary = (
+        f"{len(report.unlinked)} unlinked proposal(s) skipped, "
+        f"{len(report.outside_intake)} linked to a row outside intake "
+        f"{sorted(report.outside_intake)}"
     )
     if live:
         sys.stderr.write(
-            f"[daemon-cycle] discharge: {len(discharged)} row(s) transitioned "
-            f"{sorted(discharged)}, {len(failed)} failed {sorted(failed)}, "
-            f"{uncovered_summary}\n"
+            f"[daemon-cycle] discharge: {len(report.discharged)} row(s) transitioned "
+            f"{sorted(report.discharged)}, {len(report.failed)} failed "
+            f"{sorted(report.failed)}; {skipped_summary}\n"
         )
     else:
         sys.stderr.write(
-            f"[daemon-cycle] discharge (dry-run, {DISCHARGE_LIVE_ENV} unset): "
-            f"would-discharge {len(would)} row(s) {sorted(would)}; "
-            f"{uncovered_summary}\n"
+            f"[daemon-cycle] discharge (dry-run, no-write cycle): would-discharge "
+            f"{len(report.would_discharge)} row(s) {sorted(report.would_discharge)}; "
+            f"{skipped_summary}\n"
         )
-    return DischargeReport(
-        False, would, discharged, failed, unresolved, covered_terminal, intake_miss, read_failed
+    return report
+
+
+def _discharge_linked_row(proposal_id: int, pattern_id: int, report: DischargeReport) -> None:
+    """One transition; a not-matched answer (row went terminal since the read) lands nowhere."""
+    result = _pg_discharge_learning_pattern(
+        pattern_id, f"discharged by applied proposal id={proposal_id}"
     )
+    if result.outcome == DISCHARGE_APPLIED:
+        report.discharged.append(pattern_id)
+    elif result.outcome == DISCHARGE_FAILED:
+        report.failed.append(pattern_id)
+        sys.stderr.write(
+            f"[daemon-cycle] WARN: discharge transition failed — "
+            f"learning_log id={pattern_id} (proposal id={proposal_id}); the "
+            "call never completed, retried next cycle\n"
+        )
 
 
 def _get_uncovered_cause(
@@ -10082,36 +10020,6 @@ def _get_uncovered_cause(
     if all(row.get("status") in PATTERN_TERMINAL_STATUSES for row in covering):
         return DISCHARGE_EVENT_COVERED_TERMINAL, covering
     return DISCHARGE_EVENT_INTAKE_MISS, covering
-
-
-def _report_uncovered_proposal(
-    proposal_id: int,
-    agent: str,
-    label: str,
-    cause: str,
-    covering: list[dict],
-    event_ts: str,
-) -> None:
-    """One stderr line + one loop event per uncovered proposal; covered-terminal is info.
-
-    All four causes are verdict-class: the row adjudicates ONE proposal, so a later
-    cause for that proposal supersedes this verdict instead of landing beside it.
-    """
-    rows = _build_row_status_text(covering)
-    # Namespaced — a learning_log row id and a proposal id collide as bare integers.
-    subject = f"proposal:{proposal_id}"
-    if cause != DISCHARGE_EVENT_COVERED_TERMINAL:
-        reason = _UNCOVERED_WARN_REASONS[cause].format(proposal_id=proposal_id, rows=rows)
-        _warn_pattern_skip(
-            agent, label, event_ts, eval_result=cause, reason=reason, event_subject=subject
-        )
-        return
-    sys.stderr.write(
-        f"[daemon-cycle] discharge: pattern {cause} — agent={agent} "
-        f"({label[:80]!r}): applied proposal id={proposal_id} covers only terminal "
-        f"row(s) [{rows}], nothing left to discharge\n"
-    )
-    _emit_gate_loop_event(agent, event_ts, cause, event_subject=subject)
 
 
 # -- Parked-pattern apply guard ----------------------------------------------
@@ -11261,15 +11169,13 @@ def run_cycle(
     # to agents, not patterns, so no slicing here) → 2) group by .agent → 3) apply
     # agent cap → 4) one consolidated multi-hunk proposal per agent.
     # Discharge first: a pattern whose patch already landed must not seed this
-    # cycle's intake. Dry-run by default — live transitioning is opt-in.
-    # One untruncated pattern read serves both consumers — the discharge and the
-    # regression gate ask the same coverage question of the same rows.
+    # cycle's intake. One untruncated pattern read serves the discharge's intake
+    # check and the regression gate's coverage question.
     pattern_rows_by_agent = get_pattern_rows_by_agent()
     discharge_applied_patterns(
         _fetch_applied_for_discharge(),
         pattern_rows_by_agent,
-        coverage_reader=get_coverage_rows_by_agent,
-        live=discharge_live_enabled(),
+        live=not skip_loop_emit,
     )
     regression_gate = build_regression_gate_report(pattern_rows_by_agent)
     patterns = read_user_pending_patterns(
