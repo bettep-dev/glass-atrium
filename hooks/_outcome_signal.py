@@ -22,6 +22,7 @@ from __future__ import annotations
 import hashlib
 from collections.abc import Iterable, Mapping
 from datetime import datetime, timedelta, timezone
+from types import SimpleNamespace
 from typing import NamedTuple
 
 # ---------------------------------------------------------------------------
@@ -294,8 +295,10 @@ _EMIT_FAILURE_ATTRIBUTIONS = frozenset({
 })
 
 PAIR_WINDOW = timedelta(days=7)
-BASELINE_SPAN = timedelta(days=84)  # baseline look-back cap
-BASELINE_MIN_COVERED = timedelta(days=28)  # the power check's projected-units window
+BASELINE = SimpleNamespace(
+    SPAN=timedelta(days=84),  # look-back cap
+    MIN_COVERED=timedelta(days=28),  # the power check's projected-units window
+)
 FLOOR_MIN_SESSIONS = 5
 
 VERDICT_PASS = "pass"
@@ -303,13 +306,17 @@ VERDICT_FAIL = "fail"
 VERDICT_INSUFFICIENT_BASELINE = "insufficient-baseline"
 
 
-class PairWindows(NamedTuple):
-    """Half-open UTC windows: baseline [baseline_start, detection_start) · detection
-    [detection_start, confirmation_start) · confirmation [confirmation_start, end)."""
+class WindowStarts(NamedTuple):
+    baseline: datetime
+    detection: datetime
+    confirmation: datetime
 
-    baseline_start: datetime
-    detection_start: datetime
-    confirmation_start: datetime
+
+class PairWindows(NamedTuple):
+    """Half-open UTC windows: baseline [start.baseline, start.detection) · detection
+    [start.detection, start.confirmation) · confirmation [start.confirmation, end)."""
+
+    start: WindowStarts
     end: datetime
 
 
@@ -346,18 +353,18 @@ def get_pair_windows(now: datetime) -> PairWindows:
         raise ValueError("get_pair_windows: `now` must be timezone-aware")
     end = now.astimezone(timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0)
     detection_start = end - 2 * PAIR_WINDOW
-    return PairWindows(
-        baseline_start=detection_start - BASELINE_SPAN,
-        detection_start=detection_start,
-        confirmation_start=end - PAIR_WINDOW,
-        end=end,
+    start = WindowStarts(
+        baseline=detection_start - BASELINE.SPAN,
+        detection=detection_start,
+        confirmation=end - PAIR_WINDOW,
     )
+    return PairWindows(start=start, end=end)
 
 
 def is_new_pair(windows: PairWindows, last_transition_at: datetime) -> bool:
     """Does this pair count toward a `dormant` row's re-entry? Only when its detection
     starts at or after the row's last transition — a row stays dormant ≥ 14 days."""
-    return windows.detection_start >= last_transition_at
+    return windows.start.detection >= last_transition_at
 
 
 def is_floor_half(agent_id: str) -> bool:
@@ -398,14 +405,14 @@ def get_floor_verdict(
     spawns = list(spawns)
     start = windows.end if provenance_start is None else provenance_start
     counted = [s for s in spawns if s.agent_id is not None and s.started_at >= start]
-    covered_start = max(windows.baseline_start, start)
+    covered_start = max(windows.start.baseline, start)
     floor_half = [s for s in counted if is_floor_half(s.agent_id)]
-    baseline = _get_window_count(floor_half, metric_key, covered_start, windows.detection_start)
+    baseline = _get_window_count(floor_half, metric_key, covered_start, windows.start.detection)
     detection = _get_window_count(
-        counted, metric_key, windows.detection_start, windows.confirmation_start
+        counted, metric_key, windows.start.detection, windows.start.confirmation
     )
-    confirmation = _get_window_count(counted, metric_key, windows.confirmation_start, windows.end)
-    is_covered = windows.detection_start - covered_start >= BASELINE_MIN_COVERED
+    confirmation = _get_window_count(counted, metric_key, windows.start.confirmation, windows.end)
+    is_covered = windows.start.detection - covered_start >= BASELINE.MIN_COVERED
     verdict = _get_verdict(detection, confirmation, baseline, is_covered=is_covered)
     unjoinable = sum(1 for s in spawns if s.agent_id is None)
     return FloorResult(verdict, detection, confirmation, baseline, unjoinable)

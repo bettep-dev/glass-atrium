@@ -78,7 +78,8 @@ def _get_spawn(
 
 
 def _get_window_spawns(
-    prefix: str, start: datetime, *, events: int, quiet: int, session_prefix: str
+    prefix: str, start: datetime, *, events: int, quiet: int, session_prefix: str,
+    is_floor: bool = True,
 ) -> list[sig.SpawnFacts]:
     """`events` overage spawns in distinct sessions, then `quiet` overage-free spawns."""
     spawns = [
@@ -86,11 +87,11 @@ def _get_window_spawns(
             agent_id, start + timedelta(hours=index), session_id=f"{session_prefix}-{index}",
             overage_rows=1,
         )
-        for index, agent_id in enumerate(_get_agent_ids(f"{prefix}-event", events, is_floor=True))
+        for index, agent_id in enumerate(_get_agent_ids(f"{prefix}-event", events, is_floor=is_floor))
     ]
     spawns += [
         _get_spawn(agent_id, start + timedelta(hours=index), session_id=f"{session_prefix}-q{index}")
-        for index, agent_id in enumerate(_get_agent_ids(f"{prefix}-quiet", quiet, is_floor=True))
+        for index, agent_id in enumerate(_get_agent_ids(f"{prefix}-quiet", quiet, is_floor=is_floor))
     ]
     return spawns
 
@@ -102,9 +103,9 @@ def _get_baseline_spawns(start: datetime, *, events: int, quiet: int) -> list[si
 def _get_passing_spawns(windows: sig.PairWindows) -> list[sig.SpawnFacts]:
     """Baseline rate 1/10, confirmation rate 5/10, five distinct event sessions per window."""
     return (
-        _get_baseline_spawns(windows.detection_start - 20 * _DAY, events=1, quiet=9)
-        + _get_window_spawns("det", windows.detection_start, events=5, quiet=0, session_prefix="d")
-        + _get_window_spawns("conf", windows.confirmation_start, events=5, quiet=5, session_prefix="c")
+        _get_baseline_spawns(windows.start.detection - 20 * _DAY, events=1, quiet=9)
+        + _get_window_spawns("det", windows.start.detection, events=5, quiet=0, session_prefix="d")
+        + _get_window_spawns("conf", windows.start.confirmation, events=5, quiet=5, session_prefix="c")
     )
 
 
@@ -115,7 +116,7 @@ def _get_floor(
     metric_key: str = "budget_overage",
     provenance_start: datetime | None = None,
 ) -> sig.FloorResult:
-    start = windows.baseline_start if provenance_start is None else provenance_start
+    start = windows.start.baseline if provenance_start is None else provenance_start
     return sig.get_floor_verdict(list(spawns), metric_key, windows, start)
 
 
@@ -134,9 +135,9 @@ class TestPairWindows(unittest.TestCase):
             with self.subTest(name):
                 windows = sig.get_pair_windows(now)
                 self.assertEqual(windows.end, midnight)
-                self.assertEqual(windows.confirmation_start, midnight - 7 * _DAY)
-                self.assertEqual(windows.detection_start, midnight - 14 * _DAY)
-                self.assertEqual(windows.baseline_start, midnight - 98 * _DAY)
+                self.assertEqual(windows.start.confirmation, midnight - 7 * _DAY)
+                self.assertEqual(windows.start.detection, midnight - 14 * _DAY)
+                self.assertEqual(windows.start.baseline, midnight - 98 * _DAY)
 
     def test_a_naive_now_is_refused(self) -> None:
         with self.assertRaises(ValueError):
@@ -149,9 +150,9 @@ class TestNewPairAnchor(unittest.TestCase):
     def test_a_pair_is_new_only_when_detection_starts_at_or_after_the_transition(self) -> None:
         windows = sig.get_pair_windows(_NOW)
         rows = [
-            ("transition one second after detection start", windows.detection_start + timedelta(seconds=1), False),
-            ("transition at detection start", windows.detection_start, True),
-            ("transition a day before detection start", windows.detection_start - _DAY, True),
+            ("transition one second after detection start", windows.start.detection + timedelta(seconds=1), False),
+            ("transition at detection start", windows.start.detection, True),
+            ("transition a day before detection start", windows.start.detection - _DAY, True),
         ]
         for name, transition_at, expected in rows:
             with self.subTest(name):
@@ -210,7 +211,7 @@ class TestMetricEvents(unittest.TestCase):
 
     def test_a_spawn_with_three_overage_rows_counts_once(self) -> None:
         windows = sig.get_pair_windows(_NOW)
-        single = _get_window_spawns("det", windows.detection_start, events=2, quiet=1, session_prefix="d")
+        single = _get_window_spawns("det", windows.start.detection, events=2, quiet=1, session_prefix="d")
         tripled = [
             _get_spawn(s.agent_id, s.started_at, session_id=s.session_id, overage_rows=s.overage_rows * 3)
             for s in single
@@ -234,10 +235,10 @@ class TestOccurrenceFloor(unittest.TestCase):
         self.assertEqual(_get_floor(self.passing, self.windows).verdict, sig.VERDICT_PASS)
 
     def test_events_split_over_two_batches_pass_when_their_union_passes(self) -> None:
-        baseline = [s for s in self.passing if s.started_at < self.windows.detection_start]
-        detection = _get_window_spawns("det", self.windows.detection_start, events=5, quiet=0, session_prefix="d")
+        baseline = [s for s in self.passing if s.started_at < self.windows.start.detection]
+        detection = _get_window_spawns("det", self.windows.start.detection, events=5, quiet=0, session_prefix="d")
         confirmation = _get_window_spawns(
-            "conf", self.windows.confirmation_start, events=5, quiet=5, session_prefix="c"
+            "conf", self.windows.start.confirmation, events=5, quiet=5, session_prefix="c"
         )
         first_batch = baseline + detection[:3] + confirmation[:3]
         second_batch = baseline + detection[3:] + confirmation[3:]
@@ -248,7 +249,7 @@ class TestOccurrenceFloor(unittest.TestCase):
 
     def test_reference_half_baseline_rows_move_no_verdict(self) -> None:
         reference = [
-            _get_spawn(agent_id, self.windows.detection_start - 10 * _DAY, overage_rows=1)
+            _get_spawn(agent_id, self.windows.start.detection - 10 * _DAY, overage_rows=1)
             for agent_id in _get_agent_ids("ref", 20, is_floor=False)
         ]
         self.assertEqual(
@@ -279,7 +280,7 @@ class TestOccurrenceFloor(unittest.TestCase):
 
     def test_same_session_events_count_once_toward_the_five(self) -> None:
         detection = [
-            _get_spawn(agent_id, self.windows.detection_start + timedelta(hours=index),
+            _get_spawn(agent_id, self.windows.start.detection + timedelta(hours=index),
                        session_id=session, overage_rows=1)
             for index, (agent_id, session) in enumerate(
                 zip(_get_agent_ids("dup", 5, is_floor=True), ["s1", "s1", "s2", "s3", "s4"], strict=True)
@@ -290,13 +291,64 @@ class TestOccurrenceFloor(unittest.TestCase):
         self.assertEqual((floor.detection.events, floor.detection.sessions), (5, 4))
         self.assertEqual(floor.verdict, sig.VERDICT_FAIL)
 
+    def test_the_five_session_floor_binds_detection_and_confirmation_alike(self) -> None:
+        baseline = [s for s in self.passing if s.started_at < self.windows.start.detection]
+        rows = [
+            ("five sessions in each window", 5, 5, sig.VERDICT_PASS),
+            ("confirmation one session short", 5, 4, sig.VERDICT_FAIL),
+            ("detection one session short", 4, 5, sig.VERDICT_FAIL),
+        ]
+        for name, detection_sessions, confirmation_sessions, expected in rows:
+            with self.subTest(name):
+                detection = _get_window_spawns(
+                    "det", self.windows.start.detection, events=detection_sessions, quiet=0,
+                    session_prefix="d",
+                )
+                confirmation = _get_window_spawns(
+                    "conf", self.windows.start.confirmation, events=confirmation_sessions,
+                    quiet=confirmation_sessions, session_prefix="c",
+                )
+                floor = _get_floor(baseline + detection + confirmation, self.windows)
+                self.assertEqual(floor.verdict, expected)
+
+    def test_only_a_confirmation_rate_above_the_baseline_rate_passes(self) -> None:
+        before_confirmation = [s for s in self.passing if s.started_at < self.windows.start.confirmation]
+        rows = [
+            ("5/49 is above the baseline 1/10", 44, sig.VERDICT_PASS),
+            ("5/50 equals the baseline 1/10", 45, sig.VERDICT_FAIL),
+        ]
+        for name, quiet, expected in rows:
+            with self.subTest(name):
+                confirmation = _get_window_spawns(
+                    "conf", self.windows.start.confirmation, events=5, quiet=quiet, session_prefix="c"
+                )
+                floor = _get_floor(before_confirmation + confirmation, self.windows)
+                self.assertEqual(floor.verdict, expected)
+
+    def test_detection_and_confirmation_count_spawns_of_both_halves(self) -> None:
+        before = _get_floor(self.passing, self.windows)
+        rows = [
+            ("reference-half spawns in detection", self.windows.start.detection, "detection"),
+            ("reference-half spawns in confirmation", self.windows.start.confirmation, "confirmation"),
+        ]
+        for name, start, window in rows:
+            with self.subTest(name):
+                reference = _get_window_spawns(
+                    "ref", start, events=2, quiet=1, session_prefix="r", is_floor=False
+                )
+                count = getattr(before, window)
+                self.assertEqual(
+                    getattr(_get_floor(self.passing + reference, self.windows), window),
+                    sig.WindowCount(count.spawns + 3, count.events + 2, count.sessions + 2),
+                )
+
     def test_covered_baseline_span_and_floor_half_gate_the_verdict(self) -> None:
-        recent_floor = _get_baseline_spawns(self.windows.detection_start - 5 * _DAY, events=1, quiet=9)
+        recent_floor = _get_baseline_spawns(self.windows.start.detection - 5 * _DAY, events=1, quiet=9)
         recent_reference = [
-            _get_spawn(agent_id, self.windows.detection_start - 5 * _DAY)
+            _get_spawn(agent_id, self.windows.start.detection - 5 * _DAY)
             for agent_id in _get_agent_ids("ref", 10, is_floor=False)
         ]
-        in_window = [s for s in self.passing if s.started_at >= self.windows.detection_start]
+        in_window = [s for s in self.passing if s.started_at >= self.windows.start.detection]
         rows = [
             ("27 covered days", 27, recent_floor, sig.VERDICT_INSUFFICIENT_BASELINE),
             ("28 covered days with a floor-half spawn", 28, recent_floor, sig.VERDICT_PASS),
@@ -305,7 +357,7 @@ class TestOccurrenceFloor(unittest.TestCase):
         ]
         for name, covered_days, baseline, expected in rows:
             with self.subTest(name):
-                start = self.windows.detection_start - covered_days * _DAY
+                start = self.windows.start.detection - covered_days * _DAY
                 floor = _get_floor(baseline + in_window, self.windows, provenance_start=start)
                 self.assertEqual(floor.verdict, expected)
 
@@ -314,7 +366,7 @@ class TestOccurrenceFloor(unittest.TestCase):
         self.assertEqual(floor.verdict, sig.VERDICT_INSUFFICIENT_BASELINE)
 
     def test_a_spawn_before_the_provenance_start_counts_on_neither_side(self) -> None:
-        provenance_start = self.windows.detection_start - 40 * _DAY
+        provenance_start = self.windows.start.detection - 40 * _DAY
         early = [
             _get_spawn(agent_id, provenance_start - timedelta(seconds=1), overage_rows=1)
             for agent_id in _get_agent_ids("early", 20, is_floor=True)
@@ -326,7 +378,7 @@ class TestOccurrenceFloor(unittest.TestCase):
 
     def test_null_agent_id_spawns_count_on_no_side_and_are_reported_unjoinable(self) -> None:
         unjoinable = [
-            _get_spawn(None, self.windows.confirmation_start + timedelta(hours=index),
+            _get_spawn(None, self.windows.start.confirmation + timedelta(hours=index),
                        session_id=f"u{index}", overage_rows=1)
             for index in range(3)
         ]
@@ -411,25 +463,28 @@ class TestPatternFloorReadLivePg(unittest.TestCase):
 
     def _seed(self) -> None:
         w = self.windows
-        self._put_spawn(0, "prov", w.baseline_start + _DAY, agent_type="glass-atrium-dev-shell")
+        # a session-less MANIFEST line before the provenance start → counted on no side
+        early = _get_agent_ids("live-early", 1, is_floor=True)
+        self._put_spawn(9, early[0], w.start.baseline + timedelta(hours=12), session_id=None)
+        self._put_spawn(0, "prov", w.start.baseline + _DAY, agent_type="glass-atrium-dev-shell")
         base_floor = _get_agent_ids("live-base", 2, is_floor=True)
         base_reference = _get_agent_ids("live-ref", 1, is_floor=False)
         detection = _get_agent_ids("live-det", 3, is_floor=True)
-        self._put_spawn(1, base_floor[0], w.baseline_start + 10 * _DAY)
+        self._put_spawn(1, base_floor[0], w.start.baseline + 10 * _DAY)
         self._put_overages(base_floor[0], 3)
-        self._put_spawn(2, base_floor[1], w.baseline_start + 11 * _DAY)
-        self._put_stop(base_floor[1], w.baseline_start + 11 * _DAY)
-        self._put_spawn(3, base_reference[0], w.baseline_start + 12 * _DAY)
+        self._put_spawn(2, base_floor[1], w.start.baseline + 11 * _DAY)
+        self._put_stop(base_floor[1], w.start.baseline + 11 * _DAY)
+        self._put_spawn(3, base_reference[0], w.start.baseline + 12 * _DAY)
         self._put_overages(base_reference[0], 1)
         for offset, (agent_id, session) in enumerate(zip(detection, ["d0", "d0", "d1"], strict=True), 4):
-            started = w.detection_start + offset * timedelta(hours=1)
+            started = w.start.detection + offset * timedelta(hours=1)
             self._put_spawn(offset, agent_id, started, session_id=session)
             self._put_stop(agent_id, started + timedelta(minutes=5))
         self._put_overages(detection[0], 2)
-        self._put_outcome(detection[1], w.detection_start + _DAY, "completion-synthesized", "done_with_concerns")
-        self._put_outcome(detection[2], w.detection_start + 2 * _DAY, "hook-input", "fail")
-        self._put_spawn(7, None, w.confirmation_start + _DAY, session_id="c0")
-        self._put_spawn(8, "other-agent", w.confirmation_start + _DAY, agent_type="glass-atrium-dev-shell")
+        self._put_outcome(detection[1], w.start.detection + _DAY, "completion-synthesized", "done_with_concerns")
+        self._put_outcome(detection[2], w.start.detection + 2 * _DAY, "hook-input", "fail")
+        self._put_spawn(7, None, w.start.confirmation + _DAY, session_id="c0")
+        self._put_spawn(8, "other-agent", w.start.confirmation + _DAY, agent_type="glass-atrium-dev-shell")
         self._put_overages("other-agent", 1)
 
     def test_the_window_read_returns_the_expected_per_agent_counts(self) -> None:

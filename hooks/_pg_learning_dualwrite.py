@@ -1171,7 +1171,7 @@ def read_pattern_floor(
                 cur.execute(_PROVENANCE_START_SQL)
                 provenance_start = cur.fetchone()[0]
                 cur.execute(
-                    _SPAWN_FACTS_SELECT_SQL, (agent, windows.baseline_start, windows.end)
+                    _SPAWN_FACTS_SELECT_SQL, (agent, windows.start.baseline, windows.end)
                 )
                 spawns = [
                     SpawnFacts(
