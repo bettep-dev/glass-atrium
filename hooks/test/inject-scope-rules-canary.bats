@@ -151,6 +151,11 @@ d = json.load(open(sys.argv[1])); d["expires_at"] = str(d["expires_at"]); json.d
       write_canary "${AGENT}" "$(padded_text 64)" 3600
       printf 'INJECT_SCOPE_RULES_DIGEST_CMD=%s\n' "${BATS_TEST_TMPDIR}/absent-digest-tool"
       ;;
+    # Variant entry names: a folding volume opens each through the exact path, so only a byte-exact
+    # match on the directory listing keeps delivery the same on every install.
+    "name-case variant") write_canary "$(printf '%s' "${AGENT}" | tr '[:lower:]' '[:upper:]')" "$(padded_text 64)" 3600 ;;
+    "extension-case variant") write_canary "${AGENT}" "$(padded_text 64)" 3600 && mv -- "${file}" "${CANARY_DIR}/${AGENT}.JSON" ;;
+    "Unicode-folding variant") write_canary "${AGENT//s/$(printf '\305\277')}" "$(padded_text 64)" 3600 ;; # U+017F, equal to s on a folding volume
     "symlink to a valid file")
       mkdir -p "${BATS_TEST_TMPDIR}/elsewhere"
       CANARY_DIR="${BATS_TEST_TMPDIR}/elsewhere" write_canary "${AGENT}" "$(padded_text 64)" 3600
@@ -170,6 +175,7 @@ d = json.load(open(sys.argv[1])); d["expires_at"] = str(d["expires_at"]); json.d
     "mtime in the future:0" "mtime unreadable:0" "mtime read by the BSD stat form:1"
     "mtime read by the GNU stat form:1" "at the cap:1"
     "over the cap by one byte:0" "no digest tool:0" "symlink to a valid file:0"
+    "name-case variant:0" "extension-case variant:0" "Unicode-folding variant:0"
   )
   for entry in "${rows[@]}"; do
     row="${entry%:*}"

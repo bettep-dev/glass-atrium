@@ -199,7 +199,7 @@ readonly INJECT_MANIFEST_SPOOL_SUFFIX_RE='^[0-9]{8}T[0-9]{6}Z\.[0-9]+\.spool$'
 readonly INJECT_MANIFEST_DIGEST_CMD="${INJECT_SCOPE_RULES_DIGEST_CMD:-}"
 
 # Per-agent canary file — daemon-written (temp file + rename), one per agent type, read under the file
-# contract at set_canary_block. No env override: the read follows the data-root seam alone, so no
+# contract at set_canary_block only when the directory lists its exact name. No env override: the read follows the data-root seam alone, so no
 # session env can aim it elsewhere. The write floor (enforce-harness-critical.sh) covers the directory —
 # Write, Edit and MultiEdit deterministically, Bash best-effort.
 readonly CANARY_DIR="${HOOK_DATA_DIR}/learning/canary"
@@ -608,6 +608,17 @@ get_file_mtime() {
   if [[ -n "${mtime}" && "${mtime}" != *[!0-9]* ]]; then printf '%s' "${mtime}"; fi
 }
 
+# 0 when the canary directory lists an entry named exactly $1, compared byte for byte — one in-shell
+# listing per spawn, sized by the daemon-swept directory. Opening the path alone would resolve through
+# the volume's case and Unicode folding, so a variant name would deliver on one install and not another.
+has_canary_entry() {
+  local entry=""
+  for entry in "${CANARY_DIR}"/*; do
+    if [[ "${entry##*/}" == "${1}" ]]; then return 0; fi
+  done
+  return 1
+}
+
 # 0 when $1 is a regular file (no symlink) within the size bound.
 is_canary_file_readable() {
   local size=""
@@ -677,6 +688,8 @@ set_canary_block() {
   CANARY_FILE="${CANARY_DIR}/${safe_type}.json"
   now="$(date +%s 2>/dev/null || true)"
   [[ -n "${safe_type}" && -n "${now}" && "${now}" != *[!0-9]* && "${MANIFEST_AGENT_ID}" != "unknown" ]] || return 0
+  # shellcheck disable=SC2310  # pure predicate — nothing inside it for errexit to catch
+  has_canary_entry "${safe_type}.json" || return 0
   # shellcheck disable=SC2310  # pure predicate — nothing inside it for errexit to catch
   is_canary_file_readable "${CANARY_FILE}" || return 0
   # Every capture guards its own failure inside the substitution: errtrace runs the ERR trap there.
