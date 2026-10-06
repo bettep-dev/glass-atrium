@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import contextlib
 import functools
+import hashlib
 import io
 import json
 import os
@@ -62,7 +63,7 @@ _SCOPED = {
     _MIGRATION.LEDGER: "4" * 64,
 }
 _UNSCOPED = {
-    "hooks/track-outcome.sh": "5" * 64,
+    "hooks/enforce-commit-guard.sh": "5" * 64,
     _MIGRATION.OTHER: "6" * 64,
     "rules/glass-atrium/core-security.md": "7" * 64,
 }
@@ -212,6 +213,7 @@ class _LedgerCursor:
                 newest.payload["fingerprint"],
                 newest.recorded_at,
                 start.payload["duration"],
+                newest.id,
             )
         ]
 
@@ -457,7 +459,18 @@ class AaRestartTest(_AaFixture):
                 "autoagent/lib/trial_design.py",
                 True,
             ),
-            ("an unscoped hook hash changes", "hooks/track-outcome.sh", False),
+            *(
+                (f"spawn- or evidence-path file {path} changes", path, True)
+                for path in (
+                    "hooks/hook-utils.sh",
+                    "hooks/enforce-harness-critical.sh",
+                    "hooks/track-outcome.sh",
+                    "hooks/_outcome_signal.py",
+                    "hooks/_pg_learning_dualwrite.py",
+                    "scripts/_pg_dual_write_daemon.py",
+                )
+            ),
+            ("an unscoped hook hash changes", "hooks/enforce-commit-guard.sh", False),
             ("a migration not naming the ledger changes", _MIGRATION.OTHER, False),
             ("a rule file hash changes", "rules/glass-atrium/core-security.md", False),
         )
@@ -658,6 +671,23 @@ def _spawn(
         int(facts.get("overage", 0)),
         bool(facts.get("stop", True)),
         (),
+        tool_use_actual=facts.get("tool_use"),
+    )
+
+
+def _get_arm(salt_id: int, agent_id: str) -> int:
+    """sha256 of the decimal salt then the MANIFEST agent_id, mod 2 — the hook's byte form."""
+    return int(hashlib.sha256(f"{salt_id}{agent_id}".encode()).hexdigest(), 16) % 2
+
+
+def _exposed(spawn: SpawnFacts, salt_id: int = 1) -> SpawnFacts:
+    """The spawn as the hook records it under `salt_id`: its arm, and delivery on treatment only."""
+    arm = _get_arm(salt_id, spawn.agent_id)
+    return spawn._replace(
+        arm=arm,
+        salt_id=salt_id,
+        is_delivered=arm == 1,
+        delivered_hash=hashlib.sha256(b"").hexdigest() if arm == 1 else None,
     )
 
 
@@ -733,9 +763,14 @@ class _AaResultFixture(_AaFixture):
         self.dir.reports.mkdir()
         # the shell agent's MANIFEST rows carry its bare alias
         self.spawns = {
-            "glass-atrium-dev-python": (_EARLIER_SPAWN, *_SPAWNS.python),
-            "dev-shell": _SPAWNS.shell,
+            "glass-atrium-dev-python": (
+                _EARLIER_SPAWN,
+                *map(_exposed, _SPAWNS.python),
+            ),
+            "dev-shell": tuple(map(_exposed, _SPAWNS.shell)),
         }
+        # balance tests an agent from 4 spawns here: both fixture agents are tested
+        self._patch_balance(minimum_spawns=4)
         self.spawn_reads: list[tuple[list[str], object]] = []
         self._patch("HAS_PG_PATTERN_READ", True)
         self._patch("_pg_read_spawn_facts", self._read_spawns)
@@ -744,6 +779,14 @@ class _AaResultFixture(_AaFixture):
         self.ledger.clock = _NOW
         self._add_outcomes(joined=19, unjoined=1)
         self._write_report(_START + timedelta(days=2), lines_read=10, rows_present=10)
+
+    def _patch_balance(self, *, minimum_spawns: int) -> None:
+        balance = SimpleNamespace(
+            **{**vars(dc.AA.BALANCE), "MINIMUM_SPAWNS": minimum_spawns}
+        )
+        patcher = mock.patch.object(dc.AA, "BALANCE", balance)
+        patcher.start()
+        self.addCleanup(patcher.stop)
 
     def _read_spawns(self, agents: list[str], windows: object) -> tuple[None, dict]:
         self.spawn_reads.append((sorted(agents), windows))
@@ -828,11 +871,14 @@ class AaResultTest(_AaResultFixture):
             {
                 "join_coverage": "pass",
                 "sink": "pass",
-                "engine": "pending-arms",
+                "balance": "pass",
+                "delivery": "pass",
+                "engine": "pass",
                 "design_effect": "pass",
             },
         )
-        self.assertEqual(result.payload["overall"], "pending-arms")
+        self.assertEqual(result.payload["overall"], "pass")
+        self.assertEqual(result.payload["criteria"]["engine"]["looks"], 4)
         self.assertEqual(len(self.spawn_reads), 1)
 
     def test_the_result_writes_the_higher_metric_design_effect_once_per_agent_for_the_power_readers(
@@ -935,13 +981,49 @@ class AaResultFailTest(_AaResultFixture):
 
         def _remove_every_event() -> None:
             self.spawns["glass-atrium-dev-python"] = tuple(
-                _spawn(f"q{index}", f"r{index % 3}", index + 1) for index in range(6)
+                _exposed(_spawn(f"q{index}", f"r{index % 3}", index + 1))
+                for index in range(6)
             )
+
+        def _put_every_python_spawn_in_treatment() -> None:
+            treated = (
+                f"t{index}" for index in range(100) if _get_arm(1, f"t{index}") == 1
+            )
+            self.spawns["glass-atrium-dev-python"] = tuple(
+                _exposed(spawn._replace(agent_id=agent_id))
+                for spawn, agent_id in zip(_SPAWNS.python, treated)
+            )
+
+        def _set_python_delivery(arm: int, is_delivered: bool) -> None:
+            spawns = list(self.spawns["glass-atrium-dev-python"])
+            index = next(
+                index for index, spawn in enumerate(spawns) if spawn.arm == arm
+            )
+            spawns[index] = spawns[index]._replace(is_delivered=is_delivered)
+            self.spawns["glass-atrium-dev-python"] = tuple(spawns)
 
         lost_now = dc.ManifestIngest(
             "ok", [dc.ManifestSpoolClose("manifest.log.spool", 4, 3)]
         )
         rows = (
+            (
+                "an agent's arm split fails the sample-ratio test",
+                _put_every_python_spawn_in_treatment,
+                None,
+                "balance",
+            ),
+            (
+                "a treatment spawn missed its delivery",
+                lambda: _set_python_delivery(1, False),
+                None,
+                "delivery",
+            ),
+            (
+                "a control spawn received the canary",
+                lambda: _set_python_delivery(0, True),
+                None,
+                "delivery",
+            ),
             (
                 "join coverage below 95%",
                 lambda: self._add_outcomes(joined=0, unjoined=2),
@@ -978,6 +1060,52 @@ class AaResultFailTest(_AaResultFixture):
                     [criterion],
                 )
                 self.assertEqual(self._get_results()[0].payload["overall"], "fail")
+
+
+class AaArmsResultTest(_AaResultFixture):
+    def test_a_hook_arm_differing_from_the_recomputed_arm_is_recorded_in_the_result(
+        self,
+    ) -> None:
+        spawns = list(self.spawns["dev-shell"])
+        spawns[0] = spawns[0]._replace(arm=1 - spawns[0].arm)
+        self.spawns["dev-shell"] = tuple(spawns)
+
+        self._evaluate()
+
+        (result,) = self._get_results()
+        delivery = result.payload["criteria"]["delivery"]
+        self.assertEqual(delivery["arm_mismatches"], {"glass-atrium-dev-shell": 1})
+        self.assertEqual(delivery["verdict"], "pass")
+
+    def test_the_arms_are_recomputed_from_the_newest_window_row_id_as_the_salt(
+        self,
+    ) -> None:
+        self._install()
+        self.ledger.clock = _START - timedelta(days=1)
+        self._open(_SMALL_DURATION)
+        self.ledger.clock = _START
+        self.ledger.write(
+            _get_trial_ledger().EVENT.AA_RESTART,
+            _get_trial_ledger().ACTOR.AA,
+            {"start_id": 1, "reason": "fingerprint-changed", "fingerprint": _SCOPED},
+            dedupe_key="aa-restart:1:2026-09-22",
+        )
+        self.ledger.clock = _NOW
+        self._add_outcomes(joined=19, unjoined=1)
+        self.spawns = {
+            "glass-atrium-dev-python": tuple(
+                _exposed(spawn, salt_id=2) for spawn in _SPAWNS.python
+            ),
+            "dev-shell": tuple(_exposed(spawn, salt_id=2) for spawn in _SPAWNS.shell),
+        }
+
+        self._evaluate()
+
+        (result,) = self._get_results()
+        delivery = result.payload["criteria"]["delivery"]
+        self.assertEqual(
+            (delivery["verdict"], delivery["arm_mismatches"]), ("pass", {})
+        )
 
 
 class AaReportWindowTest(_AaResultFixture):
@@ -1227,6 +1355,180 @@ class AaCriterionTest(unittest.TestCase):
                 self.assertEqual(dc.get_aa_overall(criteria), overall)
 
 
+def _armed(spawns: list[tuple[int, bool | None]], agent: str = "a") -> list[object]:
+    """(daemon arm, hook-recorded delivery) per spawn → armed spawns of `agent`."""
+    return [
+        dc.ArmedSpawn(
+            _spawn(f"{agent}{index}", "s", 1)._replace(arm=arm, is_delivered=delivered),
+            arm,
+        )
+        for index, (arm, delivered) in enumerate(spawns)
+    ]
+
+
+def _split(control: int, treatment: int) -> list[tuple[int, bool | None]]:
+    return [(0, False)] * control + [(1, True)] * treatment
+
+
+class AaArmCriterionTest(unittest.TestCase):
+    def test_balance_fails_an_agent_from_200_spawns_whose_split_a_sample_ratio_test_rejects_at_001(
+        self,
+    ) -> None:
+        # 200 spawns: |z| = |t - c| / √200 crosses 2.5758 between a 36 and a 38 difference
+        rows = (
+            ("an even split", {"a": (100, 100)}, "pass"),
+            ("a split just inside alpha 0.01", {"a": (82, 118)}, "pass"),
+            ("a split just past alpha 0.01", {"a": (81, 119)}, "fail"),
+            (
+                "a skewed agent below 200 spawns is not tested",
+                {"a": (100, 100), "b": (10, 60)},
+                "pass",
+            ),
+            ("no agent reaches 200 spawns", {"b": (60, 60)}, "fail"),
+        )
+        for name, splits, verdict in rows:
+            with self.subTest(name):
+                armed = {
+                    agent: _armed(_split(*split), agent)
+                    for agent, split in splits.items()
+                }
+                self.assertEqual(dc.get_aa_balance_criterion(armed).verdict, verdict)
+
+    def test_delivery_passes_from_99_percent_of_treatment_spawns_with_none_reaching_control(
+        self,
+    ) -> None:
+        rows = (
+            ("every treatment spawn delivered", [(1, True)] * 100, "pass"),
+            ("exactly 99%", [(1, True)] * 99 + [(1, False)], "pass"),
+            ("below 99%", [(1, True)] * 98 + [(1, False)] * 2, "fail"),
+            ("a control spawn delivered", [(1, True)] * 100 + [(0, True)], "fail"),
+            ("no treatment spawn", [(0, False)] * 100, "fail"),
+        )
+        for name, spawns, verdict in rows:
+            with self.subTest(name):
+                armed = {"a": _armed(spawns + [(0, False)] * 10)}
+                self.assertEqual(dc.get_aa_delivery_criterion(armed).verdict, verdict)
+
+    def test_a_spawn_with_no_hook_arm_is_filed_under_its_recomputed_arm_as_non_delivery(
+        self,
+    ) -> None:
+        treated = next(f"x{index}" for index in range(100) if _get_arm(7, f"x{index}"))
+        spawns = {"a": [_spawn(treated, "s", 1), _spawn(None, "s", 2)]}
+
+        armed = dc.get_aa_armed_spawns(spawns, 7)
+
+        self.assertEqual(
+            [(item.spawn.agent_id, item.arm) for item in armed["a"]], [(treated, 1)]
+        )
+        delivery = dc.get_aa_delivery_criterion(armed)
+        self.assertEqual(
+            (
+                delivery.verdict,
+                delivery.detail["treatment"],
+                delivery.detail["delivered"],
+            ),
+            ("fail", 1, 0),
+        )
+        self.assertEqual(delivery.detail["arm_mismatches"], {})
+
+    def test_the_tool_use_band_stops_at_its_harm_upward_only_on_an_overage_primary_look(
+        self,
+    ) -> None:
+        sd, per_arm = 6.0, 50
+        harm = {
+            is_primary: trial_design.get_tool_use_harm(
+                sd, per_arm, is_overage_primary=is_primary
+            )
+            for is_primary in (True, False)
+        }
+        balanced = _arms((20, 100), (19, 100))
+        rows = (
+            ("a shift at the harm", harm[True], True, "fail"),
+            ("a shift just below the harm", harm[True] * (1 - 1e-9), True, "pass"),
+            (
+                "an overage-primary look's downward shift of that size",
+                -harm[True],
+                True,
+                "pass",
+            ),
+            (
+                "a two-sided look's downward shift at its harm",
+                -harm[False],
+                False,
+                "fail",
+            ),
+            (
+                "a two-sided look's upward shift just below its harm",
+                harm[False] * (1 - 1e-9),
+                False,
+                "pass",
+            ),
+            ("a look with no tool_use reading", None, True, "pass"),
+        )
+        for name, shift, is_primary, verdict in rows:
+            with self.subTest(name):
+                reading = (
+                    None
+                    if shift is None
+                    else dc.ToolUseReading(shift, sd, per_arm, is_primary)
+                )
+                criterion = dc.get_aa_engine_criterion(
+                    [dc.AaLook(balanced, {}, reading)]
+                )
+                self.assertEqual(criterion.verdict, verdict)
+                self.assertEqual(
+                    criterion.detail["harm_stops"],
+                    ["tool_use"] if verdict == "fail" else [],
+                )
+
+    def test_looks_cumulate_settled_spawns_in_start_order_with_a_pooled_tool_use_reading(
+        self,
+    ) -> None:
+        def _armed_spawn(
+            agent_id: str, day: float, arm: int, **facts: object
+        ) -> object:
+            return dc.ArmedSpawn(_spawn(agent_id, "s", day, **facts), arm)
+
+        armed = {
+            "a": [
+                _armed_spawn("a1", 1, 0, tool_use=10, overage=1),
+                _armed_spawn("a2", 3, 1, tool_use=20, stop=False),
+                _armed_spawn("a3", 5, 0, tool_use=14),
+            ],
+            "b": [
+                _armed_spawn("b1", 2, 1, tool_use=30),
+                _armed_spawn("b2", 4, 1),  # no tool_use line: outside the reading
+                # still running at evaluation: on no side
+                dc.ArmedSpawn(
+                    _spawn("b3", "s", 1)._replace(
+                        started_at=_NOW - timedelta(hours=1), has_subagent_stop=False
+                    ),
+                    0,
+                ),
+            ],
+        }
+
+        looks = dc.get_aa_looks(armed, _NOW, tool_budget=40)
+
+        self.assertEqual(
+            [tuple(look.arms) for look in looks],
+            [
+                (dc.ArmCount(1, 1), dc.ArmCount(0, 1)),
+                (dc.ArmCount(1, 1), dc.ArmCount(0, 2)),
+                (dc.ArmCount(1, 1), dc.ArmCount(0, 3)),
+                (dc.ArmCount(1, 2), dc.ArmCount(0, 3)),
+            ],
+        )
+        last = looks[-1]
+        self.assertEqual(last.guardrails, {"emit_failure": _arms((0, 2), (1, 3))})
+        # control 10, 14 · treatment 20, 30: shift 25 - 12; pooled variance (8 + 50) / 2
+        self.assertEqual(
+            last.tool_use._replace(sd=0.0), dc.ToolUseReading(13.0, 0.0, 2, True)
+        )
+        self.assertAlmostEqual(last.tool_use.sd, 29**0.5, places=12)
+        self.assertIsNone(looks[0].tool_use)
+
+
 class _AaLivePgFixture(_AaFixture):
     """A read's real SQL on the ephemeral cluster; skips anywhere else.
 
@@ -1314,14 +1616,17 @@ class AaOpenReadLivePgTest(_AaLivePgFixture):
     ) -> None:
         self._use_database(self._TEMPLATE.FULL)
         start = self._insert_start({"a": "1"}, 0)
+        latest = dc._read_latest_aa_start()
         self.assertEqual(
-            dc._read_latest_aa_start()[3:],
-            (self._get_recorded_at(start), _DURATION),
+            (latest.window_start, latest.duration, latest.salt_id),
+            (self._get_recorded_at(start), _DURATION, start),
         )
 
         restart = self._insert_restart(start, {"a": "2"}, "2026-10-08")
+        latest = dc._read_latest_aa_start()
         self.assertEqual(
-            dc._read_latest_aa_start().window_start, self._get_recorded_at(restart)
+            (latest.window_start, latest.salt_id),
+            (self._get_recorded_at(restart), restart),
         )
 
     def test_an_empty_ledger_reads_no_start(self) -> None:

@@ -38,6 +38,7 @@ import random
 import re
 import signal
 import socket
+import statistics
 import subprocess
 import sys
 import tempfile
@@ -93,6 +94,7 @@ import ga_paths  # noqa: E402 — hooks dir pinned by the loop above
 # try/except, and its functions stay defined on the psycopg-absent path.
 from _outcome_signal import (  # noqa: E402 — hooks dir pinned by the loop above
     BASELINE,
+    METRIC_EMIT_FAILURE,
     METRIC_KEYS,
     VERDICT_PASS,
     FloorResult,
@@ -103,8 +105,10 @@ from _outcome_signal import (  # noqa: E402 — hooks dir pinned by the loop abo
     get_floor_verdict,
     get_pair_windows,
     get_tasks,
+    get_tool_budget,
     is_metric_event,
     is_pending,
+    is_task_overrun,
 )
 
 # Runtime data roots via the shared ga_paths seam (.glass-atrium default,
@@ -9239,13 +9243,14 @@ _INSTALL_ROOT = Path(__file__).resolve().parent.parent
 AA = SimpleNamespace(
     SQL=SimpleNamespace(
         # latest aa-start → its id, whether its aa-result exists, the fingerprint and recorded_at
-        # (window start) of the newest aa-start / aa-restart row since it, the start's frozen duration
+        # (window start) of the newest aa-start / aa-restart row since it, the start's frozen
+        # duration, and that newest row's id (the window's arm salt)
         LATEST_START=(
             "SELECT s.id, EXISTS (SELECT 1 FROM core.autoagent_trial_ledger r "
             "WHERE r.event = %(result)s AND r.dedupe_key = %(result_prefix)s::text || s.id::text), "
-            "f.payload->'fingerprint', f.recorded_at, s.payload->'duration' "
+            "f.payload->'fingerprint', f.recorded_at, s.payload->'duration', f.id "
             "FROM core.autoagent_trial_ledger s CROSS JOIN LATERAL ("
-            "SELECT payload, recorded_at FROM core.autoagent_trial_ledger "
+            "SELECT id, payload, recorded_at FROM core.autoagent_trial_ledger "
             "WHERE event = ANY(%(fingerprinted)s) AND id >= s.id ORDER BY id DESC LIMIT 1) f "
             "WHERE s.event = %(start)s ORDER BY s.id DESC LIMIT 1"
         ),
@@ -9258,6 +9263,10 @@ AA = SimpleNamespace(
         ),
     ),
     MINIMUM_JOIN_PERCENT=95,
+    # D2: a sample-ratio test on every agent from 200 spawns; delivery on 99% of treatment spawns
+    BALANCE=SimpleNamespace(MINIMUM_SPAWNS=200, ALPHA=0.01),
+    MINIMUM_DELIVERY_PERCENT=99,
+    TOOL_USE_GUARDRAIL="tool_use",
     VERDICT=SimpleNamespace(PASS="pass", FAIL="fail", PENDING_ARMS="pending-arms"),
     # frozen in the start row: 14 days; 28 when one of the five busiest agents has < 200 spawns
     DURATION={
@@ -9266,9 +9275,20 @@ AA = SimpleNamespace(
         "busiest_agents": 5,
         "minimum_spawns": 200,
     },
-    # installed manifest entries a restart keys on; live file bytes are never hashed
+    # installed manifest entries a restart keys on: the spawn path, the daemon, bodies, the ledger
+    # and the files carrying the arm and outcome evidence; live file bytes are never hashed
     SCOPE=SimpleNamespace(
-        FILES=frozenset({"hooks/inject-scope-rules.sh"}),
+        FILES=frozenset(
+            {
+                "hooks/inject-scope-rules.sh",
+                "hooks/hook-utils.sh",
+                "hooks/enforce-harness-critical.sh",
+                "hooks/track-outcome.sh",
+                "hooks/_outcome_signal.py",
+                "hooks/_pg_learning_dualwrite.py",
+                "scripts/_pg_dual_write_daemon.py",
+            }
+        ),
         DIRS=("autoagent/", "agents/"),
         MIGRATION=re.compile(r"monitor/prisma/migrations/[^/]+/migration\.sql"),
         LEDGER_NAME=re.compile(r'\bcore"?\."?autoagent_trial_ledger\b'),
@@ -9299,6 +9319,7 @@ class AaStart(NamedTuple):
     fingerprint: dict[str, str] | None  # None = recorded while unreadable
     window_start: datetime  # recorded_at of the start or its newest restart
     duration: dict  # the rule frozen in the start payload
+    salt_id: int  # id of the start or its newest restart — the window's arm salt
 
 
 class AaWindow(NamedTuple):
@@ -9333,11 +9354,26 @@ class AaCriterion(NamedTuple):
     detail: dict
 
 
+class ToolUseReading(NamedTuple):
+    """A look's tool_use band input over spawns with a recorded tool_use line."""
+
+    shift: float  # mean tool uses, treatment − control
+    sd: float  # pooled within-arm sample sd
+    per_arm: int  # the smaller arm's count
+    is_overage_primary: bool  # upward-only stop when True
+
+
 class AaLook(NamedTuple):
-    """One look of a trial fed the A/A: the primary metric's arms and each rate guardrail's."""
+    """One look of a trial fed the A/A: the primary metric's arms, each rate guardrail's, the tool_use reading."""
 
     arms: TrialArms
     guardrails: Mapping[str, TrialArms]
+    tool_use: ToolUseReading | None = None  # None → no tool_use stop at this look
+
+
+class ArmedSpawn(NamedTuple):
+    spawn: SpawnFacts
+    arm: int  # the daemon's recomputation, the analysis authority; 1 = treatment
 
 
 class AaRestart(NamedTuple):
@@ -9346,8 +9382,8 @@ class AaRestart(NamedTuple):
 
 
 def get_aa_fingerprint(root: Path) -> dict[str, str]:
-    """The installed manifest's `.hashes` entries in the A/A scope: the scope-rules hook,
-    `autoagent/`, `agents/`, and each migration whose installed SQL names the trial ledger.
+    """The installed manifest's `.hashes` entries in the A/A scope: the spawn- and evidence-path
+    files, `autoagent/`, `agents/`, and each migration whose installed SQL names the trial ledger.
 
     Raises AaFingerprintUnreadable on an unreadable or malformed manifest, an unreadable
     listed migration, or no scoped entry.
@@ -9522,7 +9558,7 @@ def _evaluate_aa(latest: AaStart, source: AaSource) -> None:
         )
         return
     if evidence is not None:
-        _write_aa_result(latest.id, evidence, source, now)
+        _write_aa_result(latest, evidence, source, now)
 
 
 def _read_aa_evidence(
@@ -9611,16 +9647,18 @@ def _read_aa_join_counts(names: list[str], window: AaWindow) -> tuple[int, int]:
 
 
 def _write_aa_result(
-    start_id: int, evidence: AaEvidence, source: AaSource, now: datetime
+    latest: AaStart, evidence: AaEvidence, source: AaSource, now: datetime
 ) -> None:
     """Design-effect rows first, then the aa-result row; a design-effect write fault defers both."""
+    start_id = latest.id
     effects, undefined = _get_aa_design_effects(evidence.spawns, now)
     if not _write_aa_design_effects(start_id, effects):
         return
+    armed = get_aa_armed_spawns(evidence.spawns, latest.salt_id)
     criteria = {
         "join_coverage": get_aa_join_criterion(*evidence.joins),
         "sink": _get_aa_sink_criterion(evidence.window, source),
-        "engine": get_aa_engine_criterion(None),  # no production arm source yet
+        **_get_aa_arm_criteria(armed, now),
         "design_effect": AaCriterion(
             AA.VERDICT.PASS if effects else AA.VERDICT.FAIL,
             {"written": sorted(effects), "undefined": undefined},
@@ -9711,6 +9749,174 @@ def _write_aa_design_effects(
     return is_complete
 
 
+def _get_aa_arm_criteria(
+    armed: Mapping[str, Sequence[ArmedSpawn]], now: datetime
+) -> dict[str, AaCriterion]:
+    looks = get_aa_looks(armed, now, tool_budget=get_tool_budget(os.environ))
+    return {
+        "balance": get_aa_balance_criterion(armed),
+        "delivery": get_aa_delivery_criterion(armed),
+        "engine": get_aa_engine_criterion(looks),
+    }
+
+
+def get_spawn_arm(salt_id: int, agent_id: str) -> int:
+    """sha256 over the decimal salt then the MANIFEST agent_id (the hook's `printf '%s%s'` bytes), mod 2."""
+    digest = hashlib.sha256(f"{salt_id}{agent_id}".encode("utf-8")).hexdigest()
+    return int(digest, 16) % 2
+
+
+def get_aa_armed_spawns(
+    spawns: Mapping[str, Sequence[SpawnFacts]], salt_id: int
+) -> dict[str, list[ArmedSpawn]]:
+    """Each agent's spawns under the recomputed arm, whatever the hook recorded; `unknown` ids excluded."""
+    return {
+        agent: [
+            ArmedSpawn(spawn, get_spawn_arm(salt_id, spawn.agent_id))
+            for spawn in agent_spawns
+            if spawn.agent_id is not None
+        ]
+        for agent, agent_spawns in spawns.items()
+    }
+
+
+def get_aa_balance_criterion(armed: Mapping[str, Sequence[ArmedSpawn]]) -> AaCriterion:
+    """Balance: every agent from BALANCE.MINIMUM_SPAWNS spawns keeps a sample-ratio p of at least
+    BALANCE.ALPHA against a 1:1 split; no agent that large fails."""
+    tested: dict[str, dict] = {}
+    for agent in sorted(armed):
+        treatment = sum(item.arm for item in armed[agent])
+        control = len(armed[agent]) - treatment
+        if control + treatment >= AA.BALANCE.MINIMUM_SPAWNS:
+            p_value = _get_sample_ratio_p(control, treatment)
+            tested[agent] = {"control": control, "treatment": treatment, "p": p_value}
+    failed = [agent for agent, split in tested.items() if split["p"] < AA.BALANCE.ALPHA]
+    return AaCriterion(
+        AA.VERDICT.PASS if tested and not failed else AA.VERDICT.FAIL,
+        {
+            "tested": tested,
+            "failed": failed,
+            "untested": sorted(set(armed) - set(tested)),
+        },
+    )
+
+
+def _get_sample_ratio_p(control: int, treatment: int) -> float:
+    """Two-sided p of a 1:1 split: chi-square goodness of fit, 1 df, no continuity correction."""
+    z = abs(treatment - control) / math.sqrt(control + treatment)
+    return 2 * (1 - statistics.NormalDist().cdf(z))
+
+
+def get_aa_delivery_criterion(armed: Mapping[str, Sequence[ArmedSpawn]]) -> AaCriterion:
+    """Delivery: the hook marked delivered on at least MINIMUM_DELIVERY_PERCENT of the treatment
+    spawns and on no control spawn; no treatment spawn fails. Hook arms that differ from the
+    recomputed arm are recorded per agent and decide nothing."""
+    items = [item for agent_items in armed.values() for item in agent_items]
+    treatment = [item for item in items if item.arm == 1]
+    delivered = sum(item.spawn.is_delivered is True for item in treatment)
+    control_delivered = sum(
+        item.spawn.is_delivered is True for item in items if item.arm == 0
+    )
+    is_met = (
+        bool(treatment)
+        and delivered * 100 >= len(treatment) * AA.MINIMUM_DELIVERY_PERCENT
+        and control_delivered == 0
+    )
+    return AaCriterion(
+        AA.VERDICT.PASS if is_met else AA.VERDICT.FAIL,
+        {
+            "treatment": len(treatment),
+            "delivered": delivered,
+            "control_delivered": control_delivered,
+            "arm_mismatches": _get_arm_mismatches(armed),
+        },
+    )
+
+
+def _get_arm_mismatches(armed: Mapping[str, Sequence[ArmedSpawn]]) -> dict[str, int]:
+    """agent → spawns whose hook-recorded arm differs from the recomputed one; no hook arm is no mismatch."""
+    counts = {
+        agent: sum(
+            item.spawn.arm is not None and item.spawn.arm != item.arm for item in items
+        )
+        for agent, items in sorted(armed.items())
+    }
+    return {agent: count for agent, count in counts.items() if count}
+
+
+def get_aa_looks(
+    armed: Mapping[str, Sequence[ArmedSpawn]], now: datetime, *, tool_budget: int
+) -> list[AaLook]:
+    """The roster's settled spawns fed the engine as one trial, a look at each LOOK_FRACTIONS share
+    in start order; primary = budget_overage per spawn, tool_use half included."""
+    settled = sorted(
+        (
+            item
+            for items in armed.values()
+            for item in items
+            if not is_pending(item.spawn, now)
+        ),
+        key=lambda item: (item.spawn.started_at, item.spawn.agent_id),
+    )
+    if not settled:
+        return []
+    return [
+        _get_aa_look(settled[: math.ceil(fraction * len(settled))], tool_budget)
+        for fraction in trial_design.LOOK_FRACTIONS
+    ]
+
+
+def _get_aa_look(items: Sequence[ArmedSpawn], tool_budget: int) -> AaLook:
+    return AaLook(
+        _get_aa_arms(items, lambda spawn: is_task_overrun((spawn,), tool_budget)),
+        {
+            METRIC_EMIT_FAILURE: _get_aa_arms(
+                items, lambda spawn: is_metric_event(spawn, METRIC_EMIT_FAILURE)
+            )
+        },
+        get_tool_use_reading(items, is_overage_primary=True),
+    )
+
+
+def _get_aa_arms(
+    items: Sequence[ArmedSpawn], is_event: Callable[[SpawnFacts], bool]
+) -> TrialArms:
+    control, treatment = (
+        ArmCount(
+            sum(is_event(item.spawn) for item in items if item.arm == arm),
+            sum(item.arm == arm for item in items),
+        )
+        for arm in (0, 1)
+    )
+    return TrialArms(control, treatment)
+
+
+def get_tool_use_reading(
+    items: Sequence[ArmedSpawn], *, is_overage_primary: bool
+) -> ToolUseReading | None:
+    """Mean shift and pooled sd over spawns with a recorded tool_use line; None below two per arm."""
+    control, treatment = (
+        [
+            item.spawn.tool_use_actual
+            for item in items
+            if item.arm == arm and item.spawn.tool_use_actual is not None
+        ]
+        for arm in (0, 1)
+    )
+    if min(len(control), len(treatment)) < 2:
+        return None
+    pooled_variance = (
+        (len(control) - 1) * statistics.variance(control)
+        + (len(treatment) - 1) * statistics.variance(treatment)
+    ) / (len(control) + len(treatment) - 2)
+    return ToolUseReading(
+        statistics.fmean(treatment) - statistics.fmean(control),
+        math.sqrt(pooled_variance),
+        min(len(control), len(treatment)),
+        is_overage_primary,
+    )
+
+
 def get_aa_join_criterion(outcomes: int, joined: int) -> AaCriterion:
     """Join coverage: at least MINIMUM_JOIN_PERCENT of the window's roster outcomes joined; none fails."""
     is_covered = outcomes > 0 and joined * 100 >= outcomes * AA.MINIMUM_JOIN_PERCENT
@@ -9782,7 +9988,8 @@ def get_aa_engine_criterion(
     """The engine fed the A/A as a trial: fails on a win or a harm stop; pending-arms without looks.
 
     Win: a look's pooled z at or above its boundary. Harm stop: a rate guardrail whose
-    treatment rate reaches its minimum detectable fold rise over control (trial_design).
+    treatment rate reaches its minimum detectable fold rise over control, or a tool_use
+    reading whose shift reaches its minimum detectable shift (trial_design).
     """
     if not looks:
         return AaCriterion(AA.VERDICT.PENDING_ARMS, {"looks": 0})
@@ -9798,6 +10005,11 @@ def get_aa_engine_criterion(
             for look in looks
             for name, arms in look.guardrails.items()
             if _is_harm_stop(arms, design_effect)
+        }
+        | {
+            AA.TOOL_USE_GUARDRAIL
+            for look in looks
+            if _is_tool_use_harm_stop(look.tool_use, design_effect)
         }
     )
     return AaCriterion(
@@ -9819,6 +10031,25 @@ def _is_harm_stop(arms: TrialArms, design_effect: float) -> bool:
     except ValueError:  # a control rate of 0 or 1 has no fold rise
         return False
     return treatment.events / treatment.units >= fold * base_rate
+
+
+def _is_tool_use_harm_stop(
+    reading: ToolUseReading | None, design_effect: float
+) -> bool:
+    """Overage-primary: shift ≥ harm, upward only; two-sided: |shift| ≥ harm."""
+    if reading is None:
+        return False
+    try:
+        harm = trial_design.get_tool_use_harm(
+            reading.sd,
+            reading.per_arm,
+            is_overage_primary=reading.is_overage_primary,
+            design_effect=design_effect,
+        )
+    except ValueError:  # a zero sd has no harm value, as a rate of 0 or 1 has none
+        return False
+    shift = reading.shift if reading.is_overage_primary else abs(reading.shift)
+    return shift >= harm
 
 
 def get_aa_overall(criteria: Mapping[str, AaCriterion]) -> str:
