@@ -18,6 +18,7 @@ Run with either runner:
 from __future__ import annotations
 
 import contextlib
+import functools
 import hashlib
 import io
 import itertools
@@ -30,6 +31,7 @@ import sys
 import tempfile
 import unittest
 import uuid
+from collections.abc import Callable
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from types import SimpleNamespace
@@ -123,6 +125,7 @@ class _Ledger:
         self.refused: list[str] = []
         self.faulted: set[str] = set()
         self.write_fault: Exception | None = None
+        self.faulted_events: set[str] = set()  # events whose writes fault, the rest land
         self.is_key_taken = False
         self.clock = _NOW  # recorded_at of the next row
         self.outcomes: list[_Outcome] = []
@@ -151,6 +154,8 @@ class _Ledger:
     ):
         if self.write_fault is not None:
             raise self.write_fault
+        if event in self.faulted_events:
+            raise ConnectionError("PG unreachable")
         if self.is_key_taken or (
             dedupe_key is not None
             and any(row.dedupe_key == dedupe_key for row in self.rows)
@@ -209,6 +214,12 @@ class _LedgerCursor:
                         for row in self.ledger.rows
                     ),
                 )
+            ]
+        elif statement == dc.AA.SQL.VERDICT_DAYS:
+            self.result = [
+                (row.payload["window_days"],)
+                for row in self.ledger.rows
+                if row.event == params["event"] and row.dedupe_key == params["dedupe_key"]
             ]
         else:
             self.ledger.refused.append(statement)
@@ -876,6 +887,25 @@ class _AaResultFixture(_AaFixture):
     def _get_instrument_verdicts(self) -> list[_LedgerRow]:
         return self.ledger.get_rows(stub.get_trial_ledger().EVENT.AA_INSTRUMENT_VERDICT)
 
+    def _land_verdict_then_evaluate(
+        self, faulted: str, days: int, change: Callable[[], None]
+    ) -> None:
+        """A cycle `days` into the window with `faulted` writes faulting, `change`, then a cycle a
+        day later."""
+        self._patch("_get_utc_now", lambda: _START + timedelta(days=days))
+        self.ledger.faulted_events = {faulted}
+        self._evaluate("2026-10-07")
+        self.ledger.faulted_events = set()
+        change()
+        self._patch("_get_utc_now", lambda: _START + timedelta(days=days + 1))
+        self._evaluate("2026-10-08")
+
+    def _get_verdict_windows(self) -> list[tuple[str, str, int]]:
+        return [
+            (row.dedupe_key, row.payload["verdict"], row.payload["window_days"])
+            for row in self._get_instrument_verdicts()
+        ]
+
 
 class AaResultTest(_AaResultFixture):
     def test_the_duration_end_writes_one_result_keyed_on_its_start_and_closes_the_aa(
@@ -1081,6 +1111,58 @@ class AaResultTest(_AaResultFixture):
             ("aa-instrument-verdict:1", 28, "relay"),
         )
 
+
+    def test_a_landed_verdict_is_read_back_instead_of_deciding_an_extension_at_a_later_cycle(
+        self,
+    ) -> None:
+        agent = "glass-atrium-dev-python"
+        reading = _get_expected_python_reading("budget_overage")
+        # inside the interval and above 1 → both readings straddle
+        straddled = {agent: (max(reading.lower, 1.0) + reading.upper) / 2}
+        event = stub.get_trial_ledger().EVENT
+        rows = (
+            ("the aa-result write faults", event.AA_RESULT),
+            ("a design-effect write faults", event.AA_ARM_DESIGN_EFFECT),
+        )
+        for name, faulted in rows:
+            with self.subTest(name):
+                self.setUp()
+                # above the interval → both readings hold R1 at the duration end
+                break_evens = {agent: reading.upper + 1}
+                self._patch(
+                    "_read_recomputed_break_evens",
+                    lambda agents, now, values=break_evens: values,
+                )
+                patcher = mock.patch.object(dc.INSTRUMENT.BREAK_EVEN, "REFERENCE", break_evens)
+                patcher.start()
+                self.addCleanup(patcher.stop)
+
+                self._land_verdict_then_evaluate(
+                    faulted, 15, functools.partial(break_evens.update, straddled)
+                )
+
+                self.assertEqual(
+                    self._get_verdict_windows(), [("aa-instrument-verdict:1", "r1-holds", 14)]
+                )
+                (result,) = self._get_results()
+                self.assertEqual(result.payload["window"]["days"], 14)
+
+    def test_a_landed_verdict_holds_the_window_at_its_days_when_late_spawns_would_shorten_it(
+        self,
+    ) -> None:
+        self.spawns["dev-shell"] = tuple(map(_exposed, _SPAWNS.shell[:3]))
+        # a spawn started before day 14, ingested after the 28-day verdict landed
+        late = {"dev-shell": tuple(map(_exposed, _SPAWNS.shell))}
+
+        self._land_verdict_then_evaluate(
+            stub.get_trial_ledger().EVENT.AA_RESULT,
+            29,
+            functools.partial(self.spawns.update, late),
+        )
+
+        self.assertEqual(self._get_verdict_windows(), [("aa-instrument-verdict:1", "relay", 28)])
+        (result,) = self._get_results()
+        self.assertEqual(result.payload["window"]["days"], 28)
 
 # the power check's history at the A/A's now: provenance 60 days before D, floor-half baseline
 # 20 events / 200 spawns, then only reference-half non-events in the 28 days before D
@@ -1463,10 +1545,10 @@ class AaOutageTest(_AaResultFixture):
     def test_a_design_effect_write_fault_defers_the_result_to_a_later_cycle(
         self,
     ) -> None:
-        self.ledger.write_fault = ConnectionError("PG unreachable")
+        self.ledger.faulted_events = {stub.get_trial_ledger().EVENT.AA_ARM_DESIGN_EFFECT}
 
         stderr_text = self._evaluate("2026-10-07")
-        self.ledger.write_fault = None
+        self.ledger.faulted_events = set()
         self._evaluate("2026-10-08")
 
         self.assertIn(
