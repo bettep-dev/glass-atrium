@@ -9280,6 +9280,11 @@ AA = SimpleNamespace(
             "SELECT subject, lines_read, lines_without_row FROM core.autoagent_loop_events "
             "WHERE eval_result = %(event)s AND event_ts >= %(start)s"
         ),
+        # whether the window's extension row (keyed on its start and salt) exists
+        EXTENSION=(
+            "SELECT EXISTS (SELECT 1 FROM core.autoagent_trial_ledger "
+            "WHERE event = %(event)s AND dedupe_key = %(dedupe_key)s)"
+        ),
     ),
     SPOOL_CLOSE_COUNTS_MIGRATION="20261010000000_add_loop_event_spool_close_counts",
     UNDEFINED_COLUMN_SQLSTATE="42703",
@@ -9587,6 +9592,8 @@ def run_aa_stage(
       agent's canary lease is renewed, and once the window's duration has ended the result
       lands — one design-effect row per agent and metric key, then the instrument verdict
       row, then the aa-result row — and every canary file is deleted.
+    - A verdict straddling at the duration end writes the window's extension row instead, once
+      per window; the A/A stays open and the result lands at the extended duration.
     - Open state unreadable → no file is deleted or renewed; each runs to its lease.
     A ledger or evidence fault WARNs by name and never fails the cycle; the caller skips the
     stage in no-write mode (--dry-run).
@@ -9845,10 +9852,11 @@ def _read_aa_evidence(
         raise AaEvidenceUnreadable(
             "PG pattern reads or trial_design unavailable (import failed)"
         )
+    is_extended = _read_aa_extension(latest)
     roster = _agent_roster(source.agents_dir)
     names = _get_roster_names(roster)
     spawns = _read_aa_spawns(roster, names, latest.window_start, now)
-    window = _get_aa_window(latest, roster, spawns, now)
+    window = _get_aa_window(latest, roster, spawns, now, is_extended=is_extended)
     if window is None:
         return None
     in_window = {
@@ -9861,6 +9869,24 @@ def _read_aa_evidence(
         _read_aa_join_counts(names, window),
         _read_aa_spool_closes(window.start),
     )
+
+
+def _read_aa_extension(latest: AaStart) -> bool:
+    """Whether the window was extended at its duration end. Raises on a PG fault."""
+    params = {
+        "event": TRIAL_LEDGER.EVENT.AA_INSTRUMENT_VERDICT,
+        "dedupe_key": _get_aa_extension_key(latest),
+    }
+    with _pg_connect() as conn, conn.cursor() as cur:
+        cur.execute(AA.SQL.EXTENSION, params)
+        (is_extended,) = cur.fetchone()
+    return is_extended
+
+
+def _get_aa_extension_key(latest: AaStart) -> str:
+    """Keyed on the window's salt: a restart opens a window that may extend again."""
+    event = TRIAL_LEDGER.EVENT.AA_INSTRUMENT_VERDICT
+    return f"{event}:{latest.id}:{INSTRUMENT.VERDICT.EXTEND}:{latest.salt_id}"
 
 
 def _get_roster_names(roster: frozenset[str]) -> list[str]:
@@ -9896,9 +9922,12 @@ def _get_aa_window(
     roster: frozenset[str],
     spawns: Mapping[str, list[SpawnFacts]],
     now: datetime,
+    *,
+    is_extended: bool,
 ) -> AaWindow | None:
-    """The window at its duration, or at the extended one when one of the busiest agents was
-    short of the minimum spawns when the duration ended; None while it runs."""
+    """The window at its duration, or at the extended one when the window was extended on a
+    straddle or one of the busiest agents was short of the minimum spawns when the duration
+    ended; None while it runs."""
     rule = latest.duration
     days = rule["days"]
     cutoff = latest.window_start + timedelta(days=days)
@@ -9910,7 +9939,11 @@ def _get_aa_window(
         reverse=True,
     )[: rule["busiest_agents"]]
     # fewer roster agents than the rule counts → the missing ones are short too
-    if len(counts) < rule["busiest_agents"] or min(counts) < rule["minimum_spawns"]:
+    if (
+        is_extended
+        or len(counts) < rule["busiest_agents"]
+        or min(counts) < rule["minimum_spawns"]
+    ):
         days = rule["extended_days"]
     end = latest.window_start + timedelta(days=days)
     return AaWindow(latest.window_start, end, days) if now >= end else None
@@ -9946,14 +9979,12 @@ def _write_aa_result(
     latest: AaStart, evidence: AaEvidence, source: AaSource, now: datetime
 ) -> bool:
     """Design-effect rows, then the instrument verdict row, then the aa-result row → True when
-    the aa-result landed; a design-effect or verdict write fault, or an unreadable break-even
-    history, defers the rows after it."""
+    the aa-result landed. An unreadable break-even history, a straddle that extends the window
+    or a design-effect or verdict write fault defers the rows after it."""
     start_id = latest.id
     armed = get_aa_armed_spawns(evidence.spawns, latest.salt_id)
     effects, undefined = _get_aa_design_effects(armed, now, start_id)
-    if not _write_aa_design_effects(start_id, effects):
-        return False
-    if not _write_instrument_verdict(latest, evidence.window, effects, now):
+    if not _write_aa_verdict_rows(latest, evidence.window, effects, now):
         return False
     criteria = {
         "join_coverage": get_aa_join_criterion(*evidence.joins),
@@ -10062,14 +10093,34 @@ def _write_aa_design_effects(
     return is_complete
 
 
-def _write_instrument_verdict(
+def _write_aa_verdict_rows(
     latest: AaStart,
     window: AaWindow,
     effects: Mapping[tuple[str, str], trial_design.ArmDesignEffect],
     now: datetime,
 ) -> bool:
-    """The D1 verdict row on INSTRUMENT.METRIC_KEY (a taken key = written earlier); False after a
-    WARNed fault, the result deferred."""
+    """The verdict decides first, before any start-keyed row: a straddle the window may still
+    extend writes the extension row alone; otherwise the design-effect rows, then the verdict
+    row. False when the A/A stays open or after a WARNed fault."""
+    payload = _get_instrument_verdict_payload(latest, window, effects, now)
+    if payload is None:
+        return False
+    if payload["verdict"] == INSTRUMENT.VERDICT.EXTEND:
+        _write_aa_extension(latest, payload)
+        return False
+    return _write_aa_design_effects(latest.id, effects) and _write_instrument_verdict(
+        latest.id, payload
+    )
+
+
+def _get_instrument_verdict_payload(
+    latest: AaStart,
+    window: AaWindow,
+    effects: Mapping[tuple[str, str], trial_design.ArmDesignEffect],
+    now: datetime,
+) -> dict | None:
+    """The D1 verdict row's payload on INSTRUMENT.METRIC_KEY; None after a WARNed break-even
+    history fault, the result deferred."""
     readings = {
         agent: reading
         for (agent, metric_key), reading in effects.items()
@@ -10082,13 +10133,13 @@ def _write_instrument_verdict(
             f"A/A {latest.id} break-even history unreadable: {_describe_fault(exc)}",
             "aa-result deferred to a later cycle",
         )
-        return False
+        return None
     reference = INSTRUMENT.REFERENCE_BREAK_EVEN
     positions = {
         "recomputed": get_instrument_reading(readings, recomputed),
         "reference": get_instrument_reading(readings, reference),
     }
-    payload = {
+    return {
         "start_id": latest.id,
         "metric_key": INSTRUMENT.METRIC_KEY,
         "window_days": window.days,
@@ -10110,10 +10161,27 @@ def _write_instrument_verdict(
             for agent, reading in readings.items()
         },
     }
+
+
+def _write_aa_extension(latest: AaStart, payload: dict) -> None:
+    """Durable, so later cycles read the extension instead of recomputing the verdict at a later
+    now, where it could flip and close the window early. A write fault WARNs; the next cycle retries."""
+    dedupe_key = _get_aa_extension_key(latest)
+    landed = _write_aa_row(TRIAL_LEDGER.EVENT.AA_INSTRUMENT_VERDICT, payload, dedupe_key)
+    if landed is not None:
+        sys.stderr.write(
+            f"[daemon-cycle] INFO: A/A {latest.id} straddles at {payload['window_days']} days;"
+            f" window extended to {latest.duration['extended_days']} ({dedupe_key})\n"
+        )
+
+
+def _write_instrument_verdict(start_id: int, payload: dict) -> bool:
+    """The D1 verdict row (a taken key = written earlier); False after a WARNed fault, the result
+    deferred."""
     event = TRIAL_LEDGER.EVENT.AA_INSTRUMENT_VERDICT
-    if _write_aa_row(event, payload, f"{event}:{latest.id}") is None:
+    if _write_aa_row(event, payload, f"{event}:{start_id}") is None:
         _warn_aa(
-            f"A/A {latest.id} instrument verdict not written",
+            f"A/A {start_id} instrument verdict not written",
             "aa-result deferred to a later cycle",
         )
         return False

@@ -1166,7 +1166,8 @@ _TRIAL_LEDGER_EVENT = SimpleNamespace(
     # Arm-difference design effect per agent and metric key, clustered by parent session;
     # dedupe_key = aa-arm-design-effect:<start id>:<agent>:<metric key>
     AA_ARM_DESIGN_EFFECT="aa-arm-design-effect",
-    # the D1 break-even verdict at the A/A result; dedupe_key = aa-instrument-verdict:<start id>
+    # the D1 break-even verdict at the A/A result; dedupe_key = aa-instrument-verdict:<start id>,
+    # or aa-instrument-verdict:<start id>:extend:<salt id> for a straddle's window extension
     AA_INSTRUMENT_VERDICT="aa-instrument-verdict",
     # a canary bound to no trial; dedupe_key = canary-unbound-delivery:<spool>:<line offset>
     CANARY_UNBOUND_DELIVERY="canary-unbound-delivery",

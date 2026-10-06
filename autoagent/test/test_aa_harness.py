@@ -200,6 +200,16 @@ class _LedgerCursor:
             self.result = self._get_spool_closes(params)
         elif statement in self.ledger.answered_empty:
             self.result = []
+        elif statement == dc.AA.SQL.EXTENSION:
+            self.result = [
+                (
+                    any(
+                        row.event == params["event"]
+                        and row.dedupe_key == params["dedupe_key"]
+                        for row in self.ledger.rows
+                    ),
+                )
+            ]
         else:
             self.ledger.refused.append(statement)
             raise AssertionError(f"statement outside the ledger fake: {statement[:80]}")
@@ -1040,6 +1050,39 @@ class AaResultTest(_AaResultFixture):
 
         (result,) = self._get_results()
         self.assertEqual(result.payload["window"]["days"], 28)
+
+    def test_a_straddle_at_the_duration_end_extends_the_window_once_and_keeps_the_aa_open(
+        self,
+    ) -> None:
+        agent = "glass-atrium-dev-python"
+        reading = _get_expected_python_reading("budget_overage")
+        self.assertLess(max(reading.lower, 1.0), reading.upper)
+        # above 1 and inside the interval → both readings straddle
+        straddled = {agent: (max(reading.lower, 1.0) + reading.upper) / 2}
+        self._patch("_read_recomputed_break_evens", lambda agents, now: straddled)
+        with mock.patch.object(dc.INSTRUMENT, "REFERENCE_BREAK_EVEN", straddled):
+            self._evaluate("2026-10-07")
+            self._evaluate("2026-10-08")
+            self.assertEqual((self._get_results(), self._get_design_effect_rows()), ([], []))
+            (extension,) = self._get_instrument_verdicts()
+            self.assertEqual(
+                (
+                    extension.dedupe_key,
+                    extension.payload["verdict"],
+                    extension.payload["window_days"],
+                ),
+                ("aa-instrument-verdict:1:extend:1", "extend", 14),
+            )
+            self._patch("_get_utc_now", lambda: _START + timedelta(days=29))
+            self._evaluate("2026-10-21")
+
+        (result,) = self._get_results()
+        self.assertEqual(result.payload["window"]["days"], 28)
+        final = self._get_instrument_verdicts()[-1]
+        self.assertEqual(
+            (final.dedupe_key, final.payload["window_days"], final.payload["verdict"]),
+            ("aa-instrument-verdict:1", 28, "relay"),
+        )
 
 
 # the power check's history at the A/A's now: provenance 60 days before D, floor-half baseline
@@ -2483,6 +2526,22 @@ class AaOpenReadLivePgTest(_AaLivePgFixture):
             (latest.window_start, latest.salt_id),
             (self._get_recorded_at(restart), restart),
         )
+
+    def test_the_extension_read_finds_only_the_current_window_s_extension_row(self) -> None:
+        self._use_database(self._TEMPLATE.FULL)
+        start = self._insert_start({"a": "1"}, 0)
+        self.assertFalse(dc._read_aa_extension(dc._read_latest_aa_start()))
+        verdict = {"verdict": "relay"}
+        self._insert("aa-instrument-verdict", verdict, f"aa-instrument-verdict:{start}")
+        self.assertFalse(dc._read_aa_extension(dc._read_latest_aa_start()))
+        extension = {"verdict": "extend"}
+        key = f"aa-instrument-verdict:{start}:extend:{start}"
+        self._insert("aa-instrument-verdict", extension, key)
+        self.assertTrue(dc._read_aa_extension(dc._read_latest_aa_start()))
+
+        # a restart opens a new window under a new salt, which may extend again
+        self._insert_restart(start, {"a": "2"}, "2026-10-08")
+        self.assertFalse(dc._read_aa_extension(dc._read_latest_aa_start()))
 
     def test_an_empty_ledger_reads_no_start(self) -> None:
         self._use_database(self._TEMPLATE.FULL)
