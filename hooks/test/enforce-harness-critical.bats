@@ -472,11 +472,11 @@ run_hook_relocated() {
   done
 }
 
-@test "default data root: the canary path blocks in its file form, its directory form and on the Write arm" {
+@test "default data root: the canary path blocks as a Bash write target, under cwd arming and on the Write arm" {
   local dir="${FAKE_HOME}/.glass-atrium/data/learning/canary" row label tool tin
   local rows=(
-    "file-form|Bash|$(bash_input 'cp /tmp/x ~/.glass-atrium/data/learning/canary/a.json')"
-    "directory-form|Bash|$(bash_input 'cd ~/.glass-atrium/data/learning/canary && cp /tmp/x a.json')"
+    "bash-write-target|Bash|$(bash_input 'cp /tmp/x ~/.glass-atrium/data/learning/canary/a.json')"
+    "bash-cwd-arming|Bash|$(bash_input 'cd ~/.glass-atrium/data/learning/canary && cp /tmp/x a.json')"
     "write-arm|Write|$(write_input "${dir}/a.json" 'x')"
   )
   for row in "${rows[@]}"; do

@@ -40,8 +40,8 @@
 #   (f) the live canary directory — the per-agent trial text inject-scope-rules.sh
 #       delivers at spawn (`<data root>/data/learning/canary/`). Derived from the
 #       data-root seam (hook-utils.sh → HOOK_DATA_DIR, GA_DATA_ROOT override), so a
-#       relocated root moves the protected directory; PROT_RE and PROT_DIR_RE carry
-#       the same derived directory for the Bash arm.
+#       relocated root moves the protected directory; PROT_DIR_RE carries the same
+#       derived directory for the Bash arm, its lookahead matching the file form too.
 #
 # Bash arm (best-effort, bar-raising ONLY). Three structural pre-passes feed every
 # recogniser: heredoc bodies whose consumer is NOT a shell are DATA and leave the
@@ -290,7 +290,6 @@ PROT_RE = re.compile(
         r"\.glass-atrium" + SEP + r"autoagent" + SEP,
         r"\.glass-atrium" + SEP + r"scripts" + SEP,
         r"\.glass-atrium" + SEP + r"skills" + SEP,
-        CANARY_DIR_RE + SEP,
         r"com\.(?:claude|glass-atrium)\.[^/]+\.plist",
     )),
     re.IGNORECASE,
