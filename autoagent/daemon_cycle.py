@@ -8697,12 +8697,11 @@ POWER = SimpleNamespace(
     ),
     # eval_result = prefix + verdict; the longest fills the varchar(32) column exactly
     CHECK_EVAL_PREFIX="power-check-",
-)
-
-# Latest A/A session design-effect row per agent; DISTINCT ON keeps the fetch to one row each.
-_POWER_DESIGN_EFFECT_SQL = (
-    "SELECT DISTINCT ON (agent) agent, payload FROM core.autoagent_trial_ledger "
-    "WHERE event = %s AND agent = ANY(%s) ORDER BY agent, recorded_at DESC, id DESC"
+    # latest A/A design-effect row per agent; DISTINCT ON keeps the fetch to one row each
+    DESIGN_EFFECT_SQL=(
+        "SELECT DISTINCT ON (agent) agent, payload FROM core.autoagent_trial_ledger "
+        "WHERE event = %s AND agent = ANY(%s) ORDER BY agent, recorded_at DESC, id DESC"
+    ),
 )
 
 
@@ -8865,7 +8864,7 @@ def _read_power_design_effects(agents: list[str]) -> dict[str, float] | None:
         try:
             with _pg_connect() as conn, conn.cursor() as cur:
                 event = TRIAL_LEDGER.EVENT.AA_SESSION_DESIGN_EFFECT
-                cur.execute(_POWER_DESIGN_EFFECT_SQL, (event, agents))
+                cur.execute(POWER.DESIGN_EFFECT_SQL, (event, agents))
                 rows = cur.fetchall()
             return {
                 agent: _get_selected_design_effect(payload) for agent, payload in rows

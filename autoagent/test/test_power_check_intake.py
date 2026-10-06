@@ -75,8 +75,8 @@ _DESIGN_EFFECT = 1.5
 _REQUIRED_UNITS = trial_design.get_required_units(
     trial_design.get_maximum_sample_size(_BASELINE_RATE), design_effect=_DESIGN_EFFECT
 )
-# baseline 21/50, design effect 1 → bound 366 = exactly 122 × 84 / 28, where (122 / 28) × 84
-# rounds below 366
+# baseline 21/50 at design effect 1 → bound 366 = exactly 122 × 84 / 28
+# (122 / 28) × 84 rounds below 366 in floating point
 _EXACT_BOUND_BASELINE = WindowCount(spawns=50, events=21, sessions=21)
 # 28-day spawn counts: 84-day projection just at-or-above / just below the bound; 122 at 21/50
 _UNITS = SimpleNamespace(
@@ -118,7 +118,7 @@ def _get_units(count: int) -> list[SpawnFacts]:
     ]
 
 
-def _design_effect_payload(
+def _build_design_effect_payload(
     anova: float = 1.2, size_weighted: float = _DESIGN_EFFECT
 ) -> dict:
     """An A/A design-effect row payload, in the writer's declared shape."""
@@ -322,24 +322,22 @@ class _LedgerConnection:
 class _StageFixture(unittest.TestCase):
     def setUp(self) -> None:
         self.pg_reach = seal_pg_reach(self)
-        self.history_reads: list[list[str]] = []
+        self.reads = SimpleNamespace(history=[], design_effect=[])
         self.histories: dict[str, list[SpawnFacts]] = {}
         self.provenance_start: datetime | None = _DAY - timedelta(days=60)
         self.events: list[dict] = []
-        self.design_effect_reads: list[list[str]] = []
         self.design_effects = {
-            agent: _design_effect_payload() for agent in vars(_AGENT).values()
+            agent: _build_design_effect_payload() for agent in vars(_AGENT).values()
         }
 
         def _read_spawn_facts(agents, windows):
             self.assertEqual(windows, _WINDOWS)
-            self.history_reads.append(list(agents))
+            self.reads.history.append(list(agents))
             return self.provenance_start, {
                 agent: self.histories.get(agent, []) for agent in agents
             }
 
-        # After the seal: the spawn read, the ledger connection and the loop-event helper are
-        # the database boundary.
+        # after the seal: spawn read, ledger connection, loop-event helper = the DB boundary
         for name, value in (
             ("HAS_PG_PATTERN_READ", True),
             ("_pg_read_spawn_facts", _read_spawn_facts),
@@ -363,7 +361,7 @@ class _StageFixture(unittest.TestCase):
 
     def _connect_ledger(self) -> contextlib.nullcontext[_LedgerConnection]:
         return contextlib.nullcontext(
-            _LedgerConnection(self.design_effects, self.design_effect_reads)
+            _LedgerConnection(self.design_effects, self.reads.design_effect)
         )
 
     def _record_event(self, envelope: dict) -> bool:
@@ -454,7 +452,7 @@ class CheckPatternPowerTest(_StageFixture):
         ]
         for name, anova, size_weighted, verdict in rows:
             with self.subTest(name):
-                self.design_effects[_AGENT.PASSING] = _design_effect_payload(
+                self.design_effects[_AGENT.PASSING] = _build_design_effect_payload(
                     anova, size_weighted
                 )
                 counts, _ = self._check([_pattern(_AGENT.PASSING, 1)])
@@ -467,7 +465,7 @@ class CheckPatternPowerTest(_StageFixture):
             ("an estimator below one", {"anova": 0.9, "size_weighted": 1.2}),
             ("a non-finite estimator", {"anova": 1.2, "size_weighted": "NaN"}),
             ("an estimator missing", {"anova": 1.2}),
-            ("an undeclared key", {**_design_effect_payload(), "period": 1.3}),
+            ("an undeclared key", {**_build_design_effect_payload(), "period": 1.3}),
         ]
         for name, payload in rows:
             with self.subTest(name):
@@ -517,7 +515,7 @@ class CheckPatternPowerTest(_StageFixture):
         self._check(self.patterns)
         agents = sorted([_AGENT.PASSING, _AGENT.UNDERPOWERED, _AGENT.FLOOR_FAILING])
         self.assertEqual(
-            (self.history_reads, self.design_effect_reads), ([agents], [agents])
+            (self.reads.history, self.reads.design_effect), ([agents], [agents])
         )
 
     def test_a_keyless_or_empty_intake_reads_nothing(self) -> None:
@@ -528,7 +526,7 @@ class CheckPatternPowerTest(_StageFixture):
             with self.subTest(name):
                 counts, _ = self._check(patterns)
                 self.assertEqual(sum(counts.values()), 0)
-                self.assertEqual(self.history_reads, [])
+                self.assertEqual(self.reads.history, [])
 
     def test_an_unreadable_history_or_ledger_counts_every_keyed_pattern_unchecked_and_never_passing(
         self,
@@ -616,12 +614,14 @@ class DesignEffectReadLivePgTest(_StageFixture):
     def test_the_latest_aa_design_effect_row_of_the_agent_sets_the_bound(self) -> None:
         self._use_database(self._TEMPLATE.FULL)
         event = dc.TRIAL_LEDGER.EVENT
-        raised = _design_effect_payload(1.0, _DESIGN_EFFECT * 1.2)
+        raised = _build_design_effect_payload(1.0, _DESIGN_EFFECT * 1.2)
         latest = _DAY - timedelta(days=1)
         # older and higher · a tie at the latest instant broken by insertion order · another event last
         self._insert(_DAY - timedelta(days=3), event.AA_SESSION_DESIGN_EFFECT, raised)
         self._insert(latest, event.AA_SESSION_DESIGN_EFFECT, raised)
-        self._insert(latest, event.AA_SESSION_DESIGN_EFFECT, _design_effect_payload())
+        self._insert(
+            latest, event.AA_SESSION_DESIGN_EFFECT, _build_design_effect_payload()
+        )
         self._insert(latest, event.AA_RESTART, {"reason": "fingerprint-changed"})
         counts, _ = self._check()
         self.assertEqual(counts["passing"], 1)
