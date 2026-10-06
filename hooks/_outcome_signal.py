@@ -340,6 +340,12 @@ class SpawnFacts(NamedTuple):
     outcomes: tuple[Mapping[str, object], ...]  # core.outcomes rows for agent_id
     stopped_at: datetime | None = None  # earliest SubagentStop; None → no continuation follows
     tool_use_actual: int | None = None  # recorder's header line; None = unrecorded
+    # Canary exposure fields of the MANIFEST line (core.spawn_manifest column comments);
+    # all None = a line predating them or a schema without their columns
+    arm: int | None = None  # 1 = treatment, 0 = control
+    salt_id: int | None = None
+    is_delivered: bool | None = None  # column `delivered`
+    delivered_hash: str | None = None
 
 
 class WindowCount(NamedTuple):

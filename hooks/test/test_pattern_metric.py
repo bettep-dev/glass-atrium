@@ -49,6 +49,15 @@ _NOW = datetime(2026, 10, 5, 6, 30, tzinfo=_UTC)
 _DAY = timedelta(days=1)
 _MINUTE = timedelta(minutes=1)
 _TOOL_USE = "- **Tool use**: actual="  # track-outcome.sh TOOL_USE_LINE prefix
+# (arm, salt_id, is_delivered, delivered_hash) as core.spawn_manifest stores a MANIFEST line
+_SALT_ID = 4398046511107
+_TREATED = (1, _SALT_ID, True, hashlib.sha256("canary text\n".encode("utf-8")).hexdigest())
+_CONTROL = (0, _SALT_ID, False, None)
+_PRE_FIELD = (None, None, None, None)
+
+
+def _get_exposure(spawn: sig.SpawnFacts) -> tuple[object, ...]:
+    return (spawn.arm, spawn.salt_id, spawn.is_delivered, spawn.delivered_hash)
 
 
 def _is_even_sha256(agent_id: str) -> bool:
@@ -240,6 +249,15 @@ class TestMetricEvents(unittest.TestCase):
     def test_an_unknown_metric_key_is_refused(self) -> None:
         with self.assertRaises(ValueError):
             sig.is_metric_event(_get_spawn("agent-x", _NOW), "verified_fail")
+
+
+class TestSpawnExposure(unittest.TestCase):
+    """A spawn's canary exposure facts: absent unless the MANIFEST line recorded them."""
+
+    def test_a_spawn_built_without_exposure_facts_reads_them_as_unrecorded(self) -> None:
+        spawn = sig.SpawnFacts("agent-x", "s", _NOW, 0, True, (), _NOW, 12)
+
+        self.assertEqual(_get_exposure(spawn), _PRE_FIELD)
 
 
 class TestOccurrenceFloor(unittest.TestCase):
@@ -735,7 +753,7 @@ class TestPatternFloorReadFailure(unittest.TestCase):
 
 @unittest.skipIf(pgdw is None, f"import failed: {_IMPORT_ERROR}")
 class TestPatternFloorsSetRead(unittest.TestCase):
-    """Every agent's floors come from one provenance read and one spawn read, per agent."""
+    """Every agent's floors come from one provenance read, one column probe and one spawn read."""
 
     def test_one_spawn_read_serves_both_keys_of_every_agent(self) -> None:
         windows = sig.get_pair_windows(_NOW)
@@ -745,11 +763,12 @@ class TestPatternFloorsSetRead(unittest.TestCase):
         ]
         rows = [
             ("glass-atrium-dev-python", s.agent_id, s.session_id, s.started_at, s.overage_rows,
-             s.stopped_at, [o["attribution_source"] for o in s.outcomes], s.tool_use_actual)
+             s.stopped_at, [o["attribution_source"] for o in s.outcomes], s.tool_use_actual,
+             *_PRE_FIELD)
             for s in passing
         ]
         cursor = mock.MagicMock()
-        cursor.fetchone.return_value = (windows.start.baseline,)
+        cursor.fetchone.side_effect = [(windows.start.baseline,), (True,)]
         cursor.fetchall.return_value = rows
         conn = mock.MagicMock()
         conn.__enter__.return_value = conn
@@ -760,7 +779,7 @@ class TestPatternFloorsSetRead(unittest.TestCase):
         spawn_reads = [c for c in cursor.execute.call_args_list if len(c.args) > 1]
         self.assertEqual(
             (cursor.execute.call_count, sorted(spawn_reads[0].args[1][0])),
-            (2, ["glass-atrium-dev-python", "glass-atrium-dev-shell"]),
+            (3, ["glass-atrium-dev-python", "glass-atrium-dev-shell"]),
         )
         spawns_by_agent = {"glass-atrium-dev-python": passing, "glass-atrium-dev-shell": []}
         expected = {
@@ -1247,12 +1266,18 @@ class TestPatternFloorReadLivePg(unittest.TestCase):
         self.addCleanup(patcher.stop)
 
     def _put_spawn(self, offset: int, agent_id: str | None, started_at: datetime,
-                   *, agent_type: str = _AGENT, session_id: str | None = "s") -> None:
-        with self.conn.cursor() as cur:
+                   *, agent_type: str = _AGENT, session_id: str | None = "s",
+                   exposure: tuple[object, ...] | None = None, conn: object = None) -> None:
+        """`exposure` None → the pre-field insert, the one a pre-exposure schema takes."""
+        columns, values = "", ()
+        if exposure is not None:
+            columns, values = ", arm, salt_id, delivered, delivered_hash", exposure
+        with (conn or self.conn).cursor() as cur:
             cur.execute(
                 "INSERT INTO core.spawn_manifest (spool, line_offset, agent_id, agent_type, session_id, "
-                " started_at, ctx_bytes, blocks) VALUES (%s, %s, %s, %s, %s, %s, 0, '')",
-                (self._SPOOL, offset, agent_id, agent_type, session_id, started_at),
+                f" started_at, ctx_bytes, blocks{columns}) VALUES (%s, %s, %s, %s, %s, %s, 0, ''"
+                f"{', %s' * len(values)})",
+                (self._SPOOL, offset, agent_id, agent_type, session_id, started_at, *values),
             )
 
     def _put_overages(self, agent_id: str, count: int) -> None:
@@ -1380,6 +1405,44 @@ class TestPatternFloorReadLivePg(unittest.TestCase):
                     (floor.confirmation, floor.baseline, floor.unjoinable, floor.pending),
                     (confirmation, baseline, 0, 0),
                 )
+
+    def test_the_spawn_read_returns_each_spawns_exposure_fields(self) -> None:
+        started = self.windows.start.confirmation + _DAY
+        rows = [("live-treated", _TREATED), ("live-control", _CONTROL), ("live-pre-field", None)]
+        for offset, (agent_id, exposure) in enumerate(rows):
+            self._put_spawn(offset, agent_id, started + offset * _MINUTE, exposure=exposure)
+
+        _, spawns = pgdw._read_spawn_facts([self._AGENT], self.windows)
+
+        self.assertEqual(
+            {spawn.agent_id: _get_exposure(spawn) for spawn in spawns[self._AGENT]},
+            {"live-treated": _TREATED, "live-control": _CONTROL, "live-pre-field": _PRE_FIELD},
+        )
+
+    def test_a_schema_without_the_exposure_columns_reads_its_spawns_unexposed(self) -> None:
+        import psycopg
+
+        # Built by live-pg-ephemeral.bats up to the migration adding the exposure columns.
+        absent = psycopg.connect(dbname="spawn_manifest_exposure_absent", connect_timeout=2)
+        self.addCleanup(absent.close)
+        self.addCleanup(absent.rollback)
+        with absent.cursor() as cur:
+            cur.execute(
+                "SELECT count(*) FROM information_schema.columns WHERE table_schema = 'core'"
+                " AND table_name = 'spawn_manifest' AND column_name = 'delivered'"
+            )
+            self.assertEqual(cur.fetchone()[0], 0, "the exposure columns are present")
+        started = self.windows.start.confirmation + _DAY
+        self._put_spawn(0, "live-absent", started, conn=absent)
+
+        with mock.patch.object(
+            pgdw, "psycopg", SimpleNamespace(connect=lambda *a, **k: _NonCommittingConn(absent))
+        ):
+            _, spawns = pgdw._read_spawn_facts([self._AGENT], self.windows)
+            floor = pgdw.read_pattern_floor(self._AGENT, "budget_overage", self.windows, _NOW)
+
+        self.assertEqual([_get_exposure(spawn) for spawn in spawns[self._AGENT]], [_PRE_FIELD])
+        self.assertIsNotNone(floor, "the floor read failed on the pre-exposure schema")
 
     def test_the_set_read_gives_each_agent_the_floors_of_its_own_read(self) -> None:
         self._seed()

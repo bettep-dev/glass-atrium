@@ -1350,9 +1350,9 @@ def count_outcomes_since(
 # Past [baseline, end) only task members: spawns up to the evaluation instant, and earlier spawns
 # stopped at or after baseline − W, the only ones an in-window spawn can continue.
 # tool_use_actual: the recorder's header line, read as _OUTCOME.FACTS_SELECT_SQL reads it.
-_SPAWN_FACTS_SELECT_SQL = """
+_SPAWN_FACTS_SELECT_TEMPLATE = """
 WITH spawns AS (
-    SELECT id, agent_id, agent_type, session_id, started_at
+    SELECT id, agent_id, agent_type, session_id, started_at, {exposure_columns}
     FROM core.spawn_manifest
     WHERE agent_type = ANY(%s) AND started_at < %s
       AND (started_at >= %s OR agent_id IN (
@@ -1361,7 +1361,8 @@ WITH spawns AS (
 )
 SELECT s.agent_type, s.agent_id, s.session_id, s.started_at,
        COALESCE(b.overage_rows, 0), stop.stopped_at,
-       COALESCE(o.attributions, '{}'::text[]), o.tool_use_actual
+       COALESCE(o.attributions, '{{}}'::text[]), o.tool_use_actual,
+       s.arm, s.salt_id, s.delivered, s.delivered_hash
 FROM spawns s
 LEFT JOIN (
     SELECT agent_id, count(*) AS overage_rows FROM core.budget_overages
@@ -1380,6 +1381,23 @@ LEFT JOIN (
     WHERE agent_id IN (SELECT agent_id FROM spawns) GROUP BY agent_id
 ) o ON o.agent_id = s.agent_id
 ORDER BY s.agent_type, s.started_at, s.id
+"""
+_SPAWN_FACTS_SELECT_SQL = SimpleNamespace(
+    FULL=_SPAWN_FACTS_SELECT_TEMPLATE.format(
+        exposure_columns="arm, salt_id, delivered, delivered_hash"
+    ),
+    # a schema without the exposure columns rejects a statement naming them → NULL in their place
+    PRE_EXPOSURE=_SPAWN_FACTS_SELECT_TEMPLATE.format(
+        exposure_columns="NULL::smallint AS arm, NULL::bigint AS salt_id,"
+        " NULL::boolean AS delivered, NULL::varchar AS delivered_hash"
+    ),
+)
+# Probed per read, as _METRIC_KEY_COLUMN_SQL: a probe failure fails the read closed like any other.
+_EXPOSURE_COLUMN_SQL = """
+SELECT EXISTS (
+    SELECT 1 FROM information_schema.columns
+     WHERE table_schema = 'core' AND table_name = 'spawn_manifest' AND column_name = 'delivered'
+)
 """
 # The install's provenance start: its earliest MANIFEST row carrying a session id.
 _PROVENANCE_START_SQL = (
@@ -1463,7 +1481,7 @@ def _read_spawn_facts(
 ) -> tuple[datetime | None, defaultdict[str, list[SpawnFacts]]]:
     """The provenance start and each agent's spawns over baseline..end, plus the task members
     `get_floor_verdict` places outside it (up to `evaluated_at`, None → windows.end); raises on
-    any failure."""
+    any failure. A schema without the canary exposure columns reads every spawn's as None."""
     upper = windows.end if evaluated_at is None else max(windows.end, evaluated_at)
     params = (
         agents, upper, windows.start.baseline, windows.start.baseline - redelegation_window,
@@ -1473,17 +1491,20 @@ def _read_spawn_facts(
         with conn.cursor() as cur:
             cur.execute(_PROVENANCE_START_SQL)
             provenance_start = cur.fetchone()[0]
-            cur.execute(_SPAWN_FACTS_SELECT_SQL, params)
+            cur.execute(_EXPOSURE_COLUMN_SQL)
+            has_exposure = cur.fetchone()[0]
+            select = _SPAWN_FACTS_SELECT_SQL
+            cur.execute(select.FULL if has_exposure else select.PRE_EXPOSURE, params)
             rows = cur.fetchall()
     spawns: defaultdict[str, list[SpawnFacts]] = defaultdict(list)
     for (
         agent_type, agent_id, session_id, started_at, overage_rows, stopped_at, attributions,
-        tool_use_actual,
+        tool_use_actual, *exposure,
     ) in rows:
         spawns[agent_type].append(SpawnFacts(
             agent_id, session_id, started_at, int(overage_rows), stopped_at is not None,
             tuple({"attribution_source": source} for source in attributions),
-            stopped_at, None if tool_use_actual is None else int(tool_use_actual),
+            stopped_at, None if tool_use_actual is None else int(tool_use_actual), *exposure,
         ))
     return provenance_start, spawns
 
