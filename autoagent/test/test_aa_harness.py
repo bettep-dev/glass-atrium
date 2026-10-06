@@ -1519,6 +1519,45 @@ class AaCanaryTest(_AaResultFixture):
                 self.assertFalse(path.exists(), name)
                 self.assertIn(f"canary {path} removed", stderr_text)
 
+    def test_an_entry_not_named_exactly_as_a_roster_canary_is_removed_unvoided_open_aa_or_not(
+        self,
+    ) -> None:
+        exact_names = {f"{stem}.json" for stem in _ROSTER}
+        variants = (
+            ("a name-case variant", "GLASS-ATRIUM-DEV-PYTHON.json"),
+            ("an extension-case variant", "glass-atrium-dev-python.JSON"),
+            ("a Unicode-folding variant", "glaſſ-atrium-dev-python.json"),
+        )
+        for name, entry in variants:
+            for is_open, kept_names in ((True, exact_names), (False, set())):
+                with self.subTest(name, is_open=is_open):
+                    self.ledger.rows = self._get_starts()  # the A/A open again
+                    self._move_window_start(_NOW - timedelta(days=1))
+                    if not is_open:
+                        self.ledger.write(
+                            _get_trial_ledger().EVENT.AA_RESULT,
+                            _get_trial_ledger().ACTOR.AA,
+                            {"overall": "pass"},
+                            dedupe_key=f"aa-result:{self._get_starts()[0].id}",
+                        )
+                    results_before = self._get_results()
+                    self.canary_dir.mkdir(parents=True, exist_ok=True)
+                    for stale in self.canary_dir.iterdir():
+                        stale.unlink()
+                    path = self.canary_dir / entry
+                    path.write_bytes(self._get_foreign_canary(b'""'))
+                    # the hook lists the directory byte-exactly, so the variant never delivers
+                    self.assertIn(" delivered=0 ", self._spawn_hook())
+
+                    stderr_text = self._evaluate_bounded()
+
+                    self.assertIn(f"canary {path} removed", stderr_text)
+                    self.assertEqual(self._get_results(), results_before)
+                    # the listing, not an open: a folding volume resolves the variant to the exact file
+                    self.assertEqual(
+                        {entry.name for entry in self.canary_dir.iterdir()}, kept_names
+                    )
+
     def test_a_roster_entry_the_hook_cannot_read_is_removed_unread_and_rewritten(
         self,
     ) -> None:
@@ -1607,37 +1646,51 @@ class AaCanaryTest(_AaResultFixture):
         foreign_sha256 = hashlib.sha256(_FOREIGN_TEXT).hexdigest()
         # under the size bound, past the parser's recursion limit on the Python 3.9 floor
         deep_nesting = b"[" * 8000 + b"]" * 8000
-        # (name, file bytes, outcome, sha256 of the text the hook delivers first or None)
+        # the void digest is the parsed text's; null where this interpreter parses no text
+        lone_surrogate_sha256 = hashlib.sha256(b"\xed\xb0\x80").hexdigest()
+        has_int_digit_limit = hasattr(sys, "get_int_max_str_digits")
+        # (name, file bytes, outcome, sha256 of the text the hook delivers first or None,
+        #  the void row's text_sha256)
         rows = (
-            ("the A/A's empty text", None, "kept", None),
-            ("an array nested past the recursion limit", deep_nesting, "voided", None),
+            ("the A/A's empty text", None, "kept", None, None),
+            (
+                "an array nested past the recursion limit",
+                deep_nesting,
+                "voided",
+                None,
+                None,
+            ),
             (
                 "a lone low-surrogate text jq delivers as U+FFFD",
                 self._get_foreign_canary(b'""', b"\\udc00", "�".encode()),
                 "voided",
                 hashlib.sha256("�".encode()).hexdigest(),
+                lone_surrogate_sha256,
             ),
             (
                 "a foreign text beside an invalid UTF-8 byte",
                 self._get_foreign_canary(b'"\xff"'),
                 "voided",
                 foreign_sha256,
+                None,
             ),
             (
                 "a foreign text beside an integer over 4300 digits",
                 self._get_foreign_canary(b"9" * 5000),
                 "voided",
                 foreign_sha256,
+                None if has_int_digit_limit else foreign_sha256,
             ),
             (
                 "a UTF-16 empty text hiding a foreign text in its non-NUL bytes",
                 self._get_utf16_canary(),
                 "voided",
                 foreign_sha256,
+                None,
             ),
         )
         path = self.canary_dir / "glass-atrium-dev-python.json"
-        for name, raw, outcome, delivered_sha256 in rows:
+        for name, raw, outcome, delivered_sha256, void_sha256 in rows:
             with self.subTest(name):
                 self.ledger.rows = self._get_starts()  # the A/A open again
                 self._move_window_start(_NOW - timedelta(days=1))
@@ -1661,9 +1714,7 @@ class AaCanaryTest(_AaResultFixture):
                     self.assertEqual(
                         result.payload["void"]["agent"], "glass-atrium-dev-python"
                     )
-                    self.assertNotEqual(
-                        result.payload["void"]["text_sha256"], _EMPTY_TEXT_SHA256
-                    )
+                    self.assertEqual(result.payload["void"]["text_sha256"], void_sha256)
                     self.assertEqual(self._get_canaries(), {})
                 else:
                     self.assertEqual(results, [])
@@ -1702,15 +1753,18 @@ class AaCanaryTest(_AaResultFixture):
     def test_an_unreadable_open_state_leaves_every_canary_byte_identical_and_warns(
         self,
     ) -> None:
+        # each row's fault is scoped to its own run, so no row inherits another's state
         rows = (
             (
                 "a ledger fault on the open-state read",
-                lambda: self.ledger.faulted.add(dc.AA.SQL.LATEST_START),
+                lambda: mock.patch.object(
+                    self.ledger, "faulted", {dc.AA.SQL.LATEST_START}
+                ),
                 "open state unreadable: ConnectionError",
             ),
             (
                 "the PG helper import failed",
-                lambda: self._patch("HAS_PG_LOOP_WRITE", False),
+                lambda: mock.patch.object(dc, "HAS_PG_LOOP_WRITE", False),
                 "open state unreadable: PG helper import failed",
             ),
         )
@@ -1723,9 +1777,9 @@ class AaCanaryTest(_AaResultFixture):
                     path.name: path.read_bytes()
                     for path in self.canary_dir.glob("*.json")
                 }
-                make_unreadable()
 
-                stderr_text = self._evaluate()
+                with make_unreadable():
+                    stderr_text = self._evaluate()
 
                 self.assertIn(f"WARN: A/A harness — {warning}", stderr_text)
                 self.assertEqual(
@@ -1793,6 +1847,22 @@ class AaCanaryTest(_AaResultFixture):
         )
         self.assertTrue(stray.exists())
         self.assertEqual(set(self._get_canaries()), {*_ROSTER, "glass-atrium-retired"})
+
+    def test_a_canary_directory_that_cannot_be_listed_warns_and_the_stage_goes_on(
+        self,
+    ) -> None:
+        self._move_window_start(_NOW - timedelta(days=1))
+        self.canary_dir.parent.mkdir(parents=True, exist_ok=True)
+        self.canary_dir.write_text("not a directory", encoding="utf-8")
+
+        stderr_text = self._evaluate()
+
+        self.assertIn(
+            "WARN: A/A harness — canary directory not listed: NotADirectoryError",
+            stderr_text,
+        )
+        self.assertEqual(self._get_results(), [])
+        self.assertEqual(self.canary_dir.read_text(encoding="utf-8"), "not a directory")
 
 
 class AaCriterionTest(unittest.TestCase):

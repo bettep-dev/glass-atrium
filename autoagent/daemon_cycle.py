@@ -9534,10 +9534,10 @@ def run_aa_stage(
 
     Canary files live under `${GA_DATA_ROOT:-$HOME/.glass-atrium}/data/learning/canary` — a
     test faking the ledger sandboxes GA_DATA_ROOT, or this stage deletes the real ones.
-    - No open A/A → every canary file is deleted.
-    - Open A/A, sweep first → a file for an agent outside the roster, or one the hook refuses
-      unread, is deleted; any other roster file not confirmed to hold the A/A's text voids the
-      A/A (every file deleted) and ends the stage.
+    - No open A/A → every entry in the canary directory is deleted.
+    - Open A/A, sweep first → an entry not named exactly as a roster agent's canary, or one the
+      hook refuses unread, is deleted; any other roster file not confirmed to hold the A/A's text
+      voids the A/A (every entry deleted) and ends the stage.
     - Then one aa-restart row per cycle date when the installed fingerprint moved or cannot be
       read, with every canary rewritten on the restart row's salt; otherwise each roster
       agent's canary lease is renewed, and once the window's duration has ended the result
@@ -9612,12 +9612,20 @@ def _get_canary_path(agent: str) -> Path:
 
 
 def _get_canary_files() -> list[Path]:
+    """Every entry in the canary directory, any name or extension case — the hook decides delivery
+    by an exact listed name, so the daemon lists by name too. Not listable → WARN, none."""
+    try:
+        entries = sorted(_get_canary_dir().iterdir())
+    except FileNotFoundError:
+        return []
+    except OSError as exc:
+        _warn_aa(
+            f"canary directory not listed: {_describe_fault(exc)}",
+            "no canary file is swept or removed this cycle",
+        )
+        return []
     # a real directory cannot be unlinked; a symlink to one can, and the hook refuses it
-    return [
-        path
-        for path in sorted(_get_canary_dir().glob("*.json"))
-        if path.is_symlink() or not path.is_dir()
-    ]
+    return [path for path in entries if path.is_symlink() or not path.is_dir()]
 
 
 def _get_text_sha256(text: str) -> str:
@@ -9653,16 +9661,17 @@ def _restart_aa_canaries(previous: AaStart, roster: frozenset[str]) -> None:
 
 
 def _sweep_aa_canaries(latest: AaStart, roster: frozenset[str]) -> bool:
-    """Check the canary directory against the open A/A before any rewrite. A file for an agent
-    outside the roster, or one the hook refuses unread, is removed. Any other roster file the hook
-    may deliver, so one not confirmed to hold the A/A's text voids the A/A — a parse the daemon's
-    Python cannot finish included, since jq parses more — and every file is removed.
-    True = voided."""
-    roster_files = {_get_canary_path(agent): agent for agent in roster}
+    """Check the canary directory against the open A/A before any rewrite. An entry not named
+    exactly as a roster agent's canary, or one the hook refuses unread, is removed. Any other
+    roster file the hook may deliver, so one not confirmed to hold the A/A's text voids the A/A —
+    a parse the daemon's Python cannot finish included, since jq parses more — and every file is
+    removed. True = voided."""
+    # str equality on listed names = byte equality (fsdecode is reversible), never volume folding
+    roster_names = {_get_canary_path(agent).name: agent for agent in roster}
     for path in _get_canary_files():
-        agent = roster_files.get(path)
+        agent = roster_names.get(path.name)
         if agent is None:
-            _delete_canaries([path], "no open A/A or trial for its agent")
+            _delete_canaries([path], "not an open A/A roster agent's exact canary name")
             continue
         raw = _read_canary_bytes(path)
         if raw is None:
