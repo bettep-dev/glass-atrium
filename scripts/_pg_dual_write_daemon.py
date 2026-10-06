@@ -1090,7 +1090,9 @@ _TRIAL_LEDGER_EVENT = SimpleNamespace(
     SHADOW_PREREGISTRATION="shadow-preregistration",  # dedupe_key = <trial key>
     SHADOW_LOOK="shadow-look",  # dedupe_key = <trial key>:look:<n>
     POWER_PASS_COUNT="power-pass-count",  # dedupe_key = power-pass-count:<cycle date>
-    AA_RESTART="aa-restart",
+    AA_START="aa-start",  # opens the A/A; dedupe_key = aa-start:after:<latest start id | 0>
+    AA_RESTART="aa-restart",  # dedupe_key = aa-restart:<start id>:<cycle date>
+    AA_RESULT="aa-result",  # closes the A/A; dedupe_key = aa-result:<start id>
     # Session clustering; a period (block-level) design effect is its own event, never this one.
     AA_SESSION_DESIGN_EFFECT="aa-session-design-effect",
 )
@@ -1103,8 +1105,11 @@ TRIAL_LEDGER = SimpleNamespace(
     ACTOR=SimpleNamespace(SHADOW="daemon-cycle-shadow", AA="daemon-cycle-aa"),
     # Payload keys readers rely on; an event absent here carries a free-form object.
     # anova / size_weighted = trial_design.DesignEffect fields; readers take the higher.
+    # aa-start / aa-restart: fingerprint = the installed manifest's scoped path → sha256 map.
     PAYLOAD_KEYS={
-        _TRIAL_LEDGER_EVENT.AA_SESSION_DESIGN_EFFECT: ("anova", "size_weighted")
+        _TRIAL_LEDGER_EVENT.AA_SESSION_DESIGN_EFFECT: ("anova", "size_weighted"),
+        _TRIAL_LEDGER_EVENT.AA_START: ("fingerprint", "started_at", "duration"),
+        _TRIAL_LEDGER_EVENT.AA_RESTART: ("start_id", "reason", "fingerprint"),
     },
 )
 

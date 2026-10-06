@@ -88,6 +88,65 @@ class TestTrialLedgerClosedSets(unittest.TestCase):
                         helper.write_trial_ledger_row(event, actor, payload)
                     connect.assert_not_called()
 
+    def test_an_aa_lifecycle_row_without_its_declared_payload_keys_is_refused(
+        self,
+    ) -> None:
+        with _load_helper() as helper:
+            ledger = helper.TRIAL_LEDGER
+            rows = (
+                (
+                    "aa-start payload missing the duration rule",
+                    "aa-start",
+                    {"fingerprint": {}, "started_at": "2026-10-07T00:00:00+00:00"},
+                ),
+                (
+                    "aa-restart payload missing the reason",
+                    ledger.EVENT.AA_RESTART,
+                    {"start_id": 7, "fingerprint": None},
+                ),
+            )
+            for name, event, payload in rows:
+                with (
+                    self.subTest(name),
+                    mock.patch.object(helper, "_connect") as connect,
+                ):
+                    with self.assertRaises(helper.TrialLedgerValueUndeclared):
+                        helper.write_trial_ledger_row(event, ledger.ACTOR.AA, payload)
+                    connect.assert_not_called()
+
+    def test_the_aa_lifecycle_rows_pass_the_closed_sets_and_reach_the_connection(
+        self,
+    ) -> None:
+        # aa-start opens the A/A, aa-result closes it; a refused value never connects.
+        rows = (
+            (
+                "aa-start",
+                {
+                    "fingerprint": {"agents/glass-atrium-dev-python.md": "b" * 64},
+                    "started_at": "2026-10-07T00:00:00+00:00",
+                    "duration": {"days": 14},
+                },
+            ),
+            ("aa-result", {"overall": "pass"}),
+            (
+                "aa-restart",
+                {
+                    "start_id": 7,
+                    "reason": "fingerprint-unreadable",
+                    "fingerprint": None,
+                },
+            ),
+        )
+        with _load_helper() as helper:
+            ledger = helper.TRIAL_LEDGER
+            for event, payload in rows:
+                with (
+                    self.subTest(event),
+                    mock.patch.object(helper, "_connect") as connect,
+                ):
+                    helper.write_trial_ledger_row(event, ledger.ACTOR.AA, payload)
+                    connect.assert_called_once()
+
     def test_the_design_effect_payload_keys_are_the_estimator_fields(self) -> None:
         # The A/A writer stores DesignEffect._asdict(); the power-check reader takes its keys.
         with _load_helper() as helper:
@@ -110,7 +169,9 @@ class TestTrialLedgerWriterLivePg(unittest.TestCase):
     the ledger is append-only, so rows cannot be cleaned up.
     """
 
-    _TEMPLATE = SimpleNamespace(FULL="trial_ledger_tpl", ABSENT="trial_ledger_absent_tpl")
+    _TEMPLATE = SimpleNamespace(
+        FULL="trial_ledger_tpl", ABSENT="trial_ledger_absent_tpl"
+    )
 
     def setUp(self) -> None:
         get_ephemeral_connection().close()
@@ -203,7 +264,11 @@ class TestTrialLedgerWriterLivePg(unittest.TestCase):
             self.writer.write_trial_ledger_row(
                 ledger.EVENT.AA_RESTART,
                 ledger.ACTOR.AA,
-                {"reason": "fingerprint-unreadable"},
+                {
+                    "start_id": 7,
+                    "reason": "fingerprint-unreadable",
+                    "fingerprint": None,
+                },
             )
 
         self.assertEqual(
@@ -221,7 +286,11 @@ class TestTrialLedgerWriterLivePg(unittest.TestCase):
             inserted = self.writer.write_trial_ledger_row(
                 ledger.EVENT.AA_RESTART,
                 ledger.ACTOR.AA,
-                {"reason": "fingerprint-unreadable"},
+                {
+                    "start_id": 7,
+                    "reason": "fingerprint-unreadable",
+                    "fingerprint": None,
+                },
             )
 
         self.assertEqual(inserted, 0)
