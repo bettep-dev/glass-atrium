@@ -399,8 +399,19 @@ class TestManifestRotation(_IngestCase):
         self.assertTrue(ingest.status.startswith("skipped:"), ingest.status)
         self.assertIn(f"spool {spool.name} kept", self.stderr)
 
+    def test_the_cycle_after_an_insert_failure_consumes_the_kept_spool_and_the_live_log(
+        self,
+    ) -> None:
+        self._append(self.live_log, _get_line())
+        self._ingest(_CYCLE_1)
+        (spool,) = self._get_spools()
+        self._append(self.live_log, _get_line("next-cycle"))
+        self.table.is_insert_failing = True
+        self._ingest(_CYCLE_2)
         self.table.is_insert_failing = False
+
         self._ingest(_CYCLE_3)
+
         self.assertFalse(spool.exists(), "the lock or the spool stayed held after a failed cycle")
         self.assertFalse(self.live_log.exists())
 
