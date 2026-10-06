@@ -99,6 +99,7 @@ _AA = SimpleNamespace(
 )
 _ROSTER = ("glass-atrium-dev-python", "glass-atrium-dev-shell", "glass-atrium-dev-node")
 _NO_TRIAL_RE = re.compile(r"WARN: manifest binding — (\S+) canary delivered with no open trial")
+_PLACEHOLDER_RE = re.compile(r"%\((\w+)\)s")
 
 
 def _get_delivery_line(
@@ -118,6 +119,7 @@ class _SpawnManifestTable:
     def __init__(self) -> None:
         self.rows: dict[tuple[str, int], tuple[object, ...]] = {}
         self.is_insert_failing = False
+        self.is_offsets_read_failing = False
         self.is_unreachable = False
 
     def write(self, spool: str, rows: list[tuple[object, ...]]) -> int:
@@ -139,13 +141,18 @@ class _SpawnManifestTable:
             raise RuntimeError("connection to server on socket failed")
         return frozenset(key[1] for key in self.rows if key[0] == spool)
 
+    def get_offset_rows(self, spool: str) -> list[tuple[int]]:
+        if self.is_offsets_read_failing:
+            raise ConnectionError("server closed the connection unexpectedly")
+        return [(offset,) for offset in sorted(self.get_offsets(spool))]
+
 
 class _TrialLedger:
-    """In-memory core.autoagent_trial_ledger: the open A/A, its salt rows, the rows written."""
+    """In-memory core.autoagent_trial_ledger: the open A/A, row events by id, the rows written."""
 
     def __init__(self) -> None:
         self.latest: object = None
-        self.aa_salts: frozenset[int] = frozenset()
+        self.event_by_id: dict[int, str] = {}
         self.fault: dict[str, Exception | None] = {"read": None, "salt": None}
         self.rows: list[tuple[str, dict[str, object], str]] = []
 
@@ -154,14 +161,54 @@ class _TrialLedger:
             raise fault
         return self.latest
 
-    def read_salts(self, salt_ids: frozenset[int]) -> frozenset[int]:
+    def get_salt_rows(self, events: list[str], ids: list[int]) -> list[tuple[int]]:
         if (fault := self.fault["salt"]) is not None:
             raise fault
-        return salt_ids & self.aa_salts
+        return [(row_id,) for row_id in ids if self.event_by_id.get(row_id) in events]
 
     def write(self, event: str, _actor: str, payload: dict[str, object], **kwargs: object) -> int:
         self.rows.append((event, payload, str(kwargs["dedupe_key"])))
         return 1
+
+
+class _Database:
+    """The ``_pg_connect`` boundary of the ingest's own reads: each statement answered from the
+    in-memory tables; a parameter dict psycopg would refuse is recorded in ``refused``."""
+
+    def __init__(self, table: _SpawnManifestTable, ledger: _TrialLedger) -> None:
+        self.table = table
+        self.ledger = ledger
+        self.refused: list[str] = []
+        self.result: list[tuple[int]] = []
+
+    def connect(self) -> contextlib.nullcontext[_Database]:
+        return contextlib.nullcontext(self)
+
+    def cursor(self) -> contextlib.nullcontext[_Database]:
+        return contextlib.nullcontext(self)
+
+    def execute(self, statement: str, params: dict) -> None:
+        refusal = _get_parameter_refusal(statement, params)
+        if refusal is None and statement == dc.MANIFEST.STORED_OFFSETS_SQL:
+            self.result = self.table.get_offset_rows(params["spool"])
+        elif refusal is None and statement == dc.AA.SQL.SALT_ROWS:
+            self.result = self.ledger.get_salt_rows(params["events"], params["ids"])
+        else:
+            self.refused.append(refusal or f"statement outside the fake: {statement[:80]}")
+            raise AssertionError(self.refused[-1])
+
+    def fetchall(self) -> list[tuple[int]]:
+        return self.result
+
+
+def _get_parameter_refusal(statement: str, params: dict) -> str | None:
+    """Why psycopg would refuse ``params`` for ``statement``; None when every name binds."""
+    names = set(_PLACEHOLDER_RE.findall(statement))
+    if set(params) != names:
+        return f"parameters {sorted(params)} ≠ placeholders {sorted(names)}: {statement[:60]}"
+    # psycopg adapts a list to an array; a set or frozenset raises ProgrammingError
+    sets = [n for n in names if f"ANY(%({n})s)" in statement and not isinstance(params[n], list)]
+    return f"ANY() parameters {sorted(sets)} not a list: {statement[:60]}" if sets else None
 
 
 @unittest.skipIf(dc is None, f"daemon_cycle import failed: {_IMPORT_ERROR}")
@@ -187,17 +234,16 @@ class _IngestCase(unittest.TestCase):
         self.pg_reach = seal_pg_reach(self)
         self.table = _SpawnManifestTable()
         self.ledger = _TrialLedger()
+        self.database = _Database(self.table, self.ledger)
         self.events: list[dict[str, object]] = []
-        # Fakes go on after the seal: each replaces one seam the seal already covers, or a read
-        # reaching the database only through the sealed _pg_connect.
+        # After the seal, each over a seam it covers or a read only the sealed _pg_connect reaches.
         for name, value in (
             ("HAS_PG_LOOP_WRITE", True),
+            ("_pg_connect", self.database.connect),  # the ingest's own reads run their SQL
             ("_pg_write_spawn_manifest", self.table.write),
             ("_pg_count_spawn_manifest", self.table.count),
             ("_pg_write_loop_event", self._record_event),
-            ("_read_stored_manifest_offsets", self.table.get_offsets),
-            ("_read_latest_aa_start", self.ledger.read_latest),
-            ("_read_aa_salt_ids", self.ledger.read_salts),
+            ("_read_latest_aa_start", self.ledger.read_latest),  # SQL run by test_aa_harness.py
             ("_pg_write_trial_ledger_row", self.ledger.write),
         ):
             patcher = mock.patch.object(dc, name, value)
@@ -220,6 +266,7 @@ class _IngestCase(unittest.TestCase):
             ingest = dc.ingest_manifest_log(self.live_log, now=now, agents_dir=self.agents_dir)
         self.stderr = stderr.getvalue()
         self.assertEqual(self.pg_reach, [])
+        self.assertEqual(self.database.refused, [])
         return ingest
 
     def _get_spools(self) -> list[Path]:
@@ -411,21 +458,46 @@ class TestManifestDeliveryBinding(_IngestCase):
     def _get_no_trial_agents(self) -> list[str]:
         return _NO_TRIAL_RE.findall(self.stderr)
 
-    def test_a_spool_re_read_at_the_next_cycle_binds_each_row_once(self) -> None:
-        self._append(self.live_log, _get_delivery_line(_ROSTER[0], salt="3"))
-        self._ingest(_CYCLE_1)
-        self.assertEqual(self._get_no_trial_agents(), [_ROSTER[0]])
+    def test_each_delivered_row_binds_once_at_the_ingest_that_first_stores_it(self) -> None:
+        first, racing = _ROSTER[:2]  # racing: appended to the spool right after cycle 1
+        # name, the faulted (read, cycle index), per cycle: (agents bound, spools left)
+        rows = (
+            ("no fault", None, (([first], 1), ([racing], 0), ([], 0))),
+            (
+                "an insert fault on the first read",
+                ("insert", 0),
+                (([], 1), ([first, racing], 0), ([], 0)),
+            ),
+            (
+                "an insert fault on the final re-read",
+                ("insert", 1),
+                (([first], 1), ([], 1), ([racing], 0)),
+            ),
+            (
+                "an offsets-read fault on the final re-read",
+                ("offsets", 1),
+                (([first], 1), ([], 1), ([racing], 0)),
+            ),
+        )
+        for hour, (name, fault, cycles) in enumerate(rows):
+            with self.subTest(name):
+                self.log_root = self.base_root / f"logs-{hour}"  # spools stay per row
+                self.log_root.mkdir()
+                self.live_log = self.log_root / dc.MANIFEST.LOG_NAME
+                self._append(self.live_log, _get_delivery_line(first, salt="3"))
+                for index, expected in enumerate(cycles):
+                    self.table.is_insert_failing = fault == ("insert", index)
+                    self.table.is_offsets_read_failing = fault == ("offsets", index)
+                    self._ingest(_CYCLE_1 + timedelta(days=index, hours=hour))
 
-        (spool,) = self._get_spools()
-        self._append(spool, _get_delivery_line(_ROSTER[1], salt="3"))  # a racing append
-        self._ingest(_CYCLE_2)
-
-        self.assertFalse(spool.exists(), "the re-read spool was not unlinked")
-        self.assertEqual(self._get_no_trial_agents(), [_ROSTER[1]], "a stored row was bound again")
+                    bound = (self._get_no_trial_agents(), len(self._get_spools()))
+                    self.assertEqual(bound, expected, f"{name}: cycle {index + 1}")
+                    if index == 0:
+                        self._append(self._get_spools()[0], _get_delivery_line(racing, salt="3"))
 
     def test_the_a_a_last_day_deliveries_never_read_as_no_trial_after_its_result(self) -> None:
         self._open_aa()
-        self.ledger.aa_salts = frozenset({int(_AA.SALT)})
+        self.ledger.event_by_id = {int(_AA.SALT): dc.TRIAL_LEDGER.EVENT.AA_START}
         self._put_canaries()
         last_day = _get_delivery_line(_ROSTER[0]) + _get_delivery_line(_ROSTER[1])
         self._append(self.live_log, last_day)
@@ -492,7 +564,8 @@ class TestManifestDeliveryBinding(_IngestCase):
     def test_outside_the_window_a_row_is_legit_only_with_an_a_a_salt_and_the_a_a_text(
         self,
     ) -> None:
-        self.ledger.aa_salts = frozenset({int(_AA.SALT)})  # the A/A closed or restarted since
+        # the A/A closed or restarted since
+        self.ledger.event_by_id = {int(_AA.SALT): dc.TRIAL_LEDGER.EVENT.AA_RESTART}
         self._put_canaries()
         lines = (
             _get_delivery_line(_ROSTER[0]),  # racing row of the A/A: its salt and its text
