@@ -1,7 +1,7 @@
 """A/A harness, part a: the --aa-start mode and the restart rows its fingerprint drives.
 
-An A/A opens only through --aa-start (N55), its fingerprint the installed manifest's scoped
-hashes (N66); while it is open each writing cycle compares the fingerprint and writes an
+An A/A opens only through --aa-start, its fingerprint the installed manifest's scoped
+hashes; while it is open each writing cycle compares the fingerprint and writes an
 aa-restart row when it moved or cannot be read. Every row outside the live class is
 database-free under ``seal_pg_reach``; the ledger is an in-memory append-only fake behind the
 writer and connection seams. The live class runs the open-state read's SQL on the cluster
@@ -63,7 +63,7 @@ _UNSCOPED = {
     _MIGRATION.OTHER: "6" * 64,
     "rules/glass-atrium/core-security.md": "7" * 64,
 }
-# D2: 14 days, 28 when any of the five busiest agents has < 200 spawns
+# 14 days, 28 when any of the five busiest agents has < 200 spawns
 _DURATION = {
     "days": 14,
     "extended_days": 28,

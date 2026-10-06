@@ -668,7 +668,15 @@ class DesignEffectReadLivePgTest(_StageFixture):
         self._insert(
             latest, event.AA_SESSION_DESIGN_EFFECT, _build_design_effect_payload()
         )
-        self._insert(latest, event.AA_RESTART, {"reason": "fingerprint-changed"})
+        self._insert(
+            latest,
+            event.AA_RESTART,
+            {
+                "start_id": 1,
+                "reason": dc.AA.RESTART_REASON.CHANGED,
+                "fingerprint": {"hooks/inject-scope-rules.sh": "1" * 64},
+            },
+        )
         counts, _ = self._check()
         self.assertEqual(counts["passing"], 1)
 

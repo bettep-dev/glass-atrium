@@ -469,8 +469,7 @@ class ExitCode(IntEnum):
     AUTH_OUTAGE = 12
     # unadjudicated backfill committed but its completion record or marker removal failed
     BACKFILL_RECORD_FAILED = 13
-    # --aa-start refused, nothing written — the stderr line names the cause (manifest
-    # unreadable, an A/A already open, ledger unreadable or unwritable)
+    # --aa-start refused, nothing written — the stderr line names the AA.REFUSAL cause
     AA_START_REFUSED = 14
 
 
@@ -9242,14 +9241,14 @@ AA = SimpleNamespace(
         "WHERE f.event = ANY(%(fingerprinted)s) AND f.id >= s.id ORDER BY f.id DESC LIMIT 1) "
         "FROM core.autoagent_trial_ledger s WHERE s.event = %(start)s ORDER BY s.id DESC LIMIT 1"
     ),
-    # D2, frozen in the start row: 14 days; 28 when one of the five busiest agents has < 200 spawns
+    # frozen in the start row: 14 days; 28 when one of the five busiest agents has < 200 spawns
     DURATION={
         "days": 14,
         "extended_days": 28,
         "busiest_agents": 5,
         "minimum_spawns": 200,
     },
-    # N66: installed manifest entries a restart keys on; live file bytes are never hashed
+    # installed manifest entries a restart keys on; live file bytes are never hashed
     SCOPE=SimpleNamespace(
         FILES=frozenset({"hooks/inject-scope-rules.sh"}),
         DIRS=("autoagent/", "agents/"),
@@ -9269,7 +9268,7 @@ AA = SimpleNamespace(
 
 
 class AaFingerprintUnreadable(Exception):
-    """The installed manifest cannot yield the A/A fingerprint — N66 fails closed."""
+    """The installed manifest cannot yield the A/A fingerprint → fails closed."""
 
 
 class AaStart(NamedTuple):
@@ -9284,7 +9283,7 @@ class AaRestart(NamedTuple):
 
 
 def get_aa_fingerprint(root: Path) -> dict[str, str]:
-    """The installed manifest's `.hashes` entries in the A/A scope (N66): the scope-rules hook,
+    """The installed manifest's `.hashes` entries in the A/A scope: the scope-rules hook,
     `autoagent/`, `agents/`, and each migration whose installed SQL names the trial ledger.
 
     Raises AaFingerprintUnreadable on an unreadable or malformed manifest, an unreadable
@@ -9332,7 +9331,7 @@ def _read_latest_aa_start() -> AaStart | None:
 
 
 def start_aa() -> int:
-    """--aa-start (N55): open an A/A on the installed fingerprint → 0; refused with a named
+    """--aa-start: open an A/A on the installed fingerprint → 0; refused with a named
     reason and nothing written → ExitCode.AA_START_REFUSED."""
     if not HAS_PG_LOOP_WRITE:
         return _refuse_aa_start(AA.REFUSAL.LEDGER_UNWRITABLE, "PG helper import failed")
@@ -9389,7 +9388,7 @@ def _refuse_aa_start(reason: str, detail: str) -> int:
 
 def run_aa_stage(cycle_date: str) -> None:
     """While an A/A is open: one aa-restart row per cycle date when the installed fingerprint
-    moved or cannot be read (N66). No open A/A → nothing. A ledger fault WARNs by name and
+    moved or cannot be read. No open A/A → nothing. A ledger fault WARNs by name and
     never fails the cycle; the caller skips the stage in no-write mode (--dry-run).
     """
     if not HAS_PG_LOOP_WRITE:
