@@ -442,10 +442,8 @@ class TestManifestRotation(_IngestCase):
 class TestManifestDeliveryBinding(_IngestCase):
     """Each delivered row binds once, at the ingest that first stores it (Read-side binding)."""
 
-    def _open_aa(self) -> None:
-        self.ledger.latest = dc.AaStart(
-            int(_AA.SALT), False, {}, _AA.WINDOW_START, {}, int(_AA.SALT)
-        )
+    def _open_aa(self, window_start: datetime = _AA.WINDOW_START) -> None:
+        self.ledger.latest = dc.AaStart(int(_AA.SALT), False, {}, window_start, {}, int(_AA.SALT))
 
     def _put_canaries(self, agents: tuple[str, ...] = _ROSTER) -> None:
         self.canary_dir.mkdir(parents=True, exist_ok=True)
@@ -560,6 +558,53 @@ class TestManifestDeliveryBinding(_IngestCase):
                     name,
                 )
                 self.assertEqual(self._get_canaries(), [], name)
+
+    def test_a_foreign_text_delivered_in_the_window_s_first_second_voids_it(self) -> None:
+        # recorded_at carries microseconds, a MANIFEST started_at whole seconds
+        self._open_aa(window_start=_AA.WINDOW_START + timedelta(microseconds=500_000))
+        self._put_canaries()
+        first_second = f"{_AA.WINDOW_START:%Y-%m-%dT%H:%M:%SZ}"
+        self._append(
+            self.live_log,
+            _get_delivery_line(_ROSTER[0], text_sha256=_PLAIN_SHA256, ts=first_second),
+        )
+        self._ingest(_CYCLE_1)
+
+        self.assertEqual([row[0] for row in self.ledger.rows], ["aa-result"])
+        self.assertEqual(self._get_no_trial_agents(), [])
+        self.assertEqual(self._get_canaries(), [])
+
+    def test_foreign_texts_in_one_ingest_void_the_a_a_once(self) -> None:
+        self._open_aa()
+        self._put_canaries()
+        lines = [_get_delivery_line(agent, text_sha256=_PLAIN_SHA256) for agent in _ROSTER[:2]]
+        self._append(self.live_log, "".join(lines))
+        self._ingest(_CYCLE_1)
+
+        ((event, payload, _),) = self.ledger.rows
+        self.assertEqual((event, payload["void"]["agent"]), ("aa-result", _ROSTER[0]))
+        self.assertEqual(self._get_canaries(), [])
+
+    def test_an_in_window_control_arm_line_binds_to_no_trial(self) -> None:
+        self._open_aa()
+        control = _get_line(exposure=_CONTROL.EXPOSURE)  # a roster agent, inside the window
+        # name, the spool's first read, the line appended before its final re-read
+        rows = (("the first read", control, ""), ("a final re-read", _get_line(), control))
+        for hour, (name, first_read, appended) in enumerate(rows):
+            with self.subTest(name):
+                self.log_root = self.base_root / f"logs-{hour}"  # spools stay per row
+                self.log_root.mkdir()
+                self.live_log = self.log_root / dc.MANIFEST.LOG_NAME
+                self.ledger.rows.clear()
+                self._put_canaries()
+                self._append(self.live_log, first_read)
+                self._ingest(_CYCLE_1 + timedelta(hours=hour))
+                self._append(self._get_spools()[0], appended)
+                self._ingest(_CYCLE_2 + timedelta(hours=hour))
+
+                self.assertEqual(self.ledger.rows, [], f"{name}: the open A/A was voided")
+                self.assertEqual(self._get_no_trial_agents(), [], name)
+                self.assertEqual(self._get_canaries(), sorted(_ROSTER), name)
 
     def test_outside_the_window_a_row_is_legit_only_with_an_a_a_salt_and_the_a_a_text(
         self,

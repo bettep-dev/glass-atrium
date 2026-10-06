@@ -12348,7 +12348,10 @@ def _read_binding_state(binding: DeliveryBinding) -> None:
 def _bind_to_open_aa(row: ManifestRow, binding: DeliveryBinding) -> bool:
     """True = the row binds to the open A/A; the first foreign hash voids it."""
     latest = binding.latest
-    if latest is None or row[2] not in binding.roster or row[4] < latest.window_start:
+    if latest is None or row[2] not in binding.roster:
+        return False
+    # started_at is whole seconds → floored start keeps a first-second delivery in the window
+    if row[4] < latest.window_start.replace(microsecond=0):
         return False
     if row[10] != _get_text_sha256(CANARY.AA_TEXT) and not binding.is_voided:
         binding.is_voided = True
