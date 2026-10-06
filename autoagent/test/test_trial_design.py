@@ -9,9 +9,9 @@ Covered behaviors:
   * a smaller effect needs a larger sample; required units scale with the
     design effect;
   * the projection horizon stops at 84 days; invalid inputs raise;
-  * both design-effect estimators match hand-computed balanced and unbalanced
-    fixtures, and the power check takes the higher, never below 1; only
-    singleton clusters give exactly 1;
+  * both session design-effect estimators match hand-computed balanced and
+    unbalanced fixtures; the size-weighted one is never below the ANOVA one,
+    neither falls below 1, and only singleton clusters give exactly 1;
   * the arm-difference design effect is the cluster-robust variance ratio of the
     treatment-minus-control rate, about 1 under per-spawn arms whatever the session
     effects; its session-bootstrap interval covers the truth at about its level;
@@ -166,7 +166,7 @@ class DesignEffectEstimators(unittest.TestCase):
         self.assertAlmostEqual(effect.size_weighted, 226 / 83)
         self.assertAlmostEqual(effect.selected, 226 / 83)
 
-    def test_the_power_check_value_is_the_higher_estimator_and_never_below_one(self) -> None:
+    def test_the_selected_value_is_the_higher_estimator_and_neither_falls_below_one(self) -> None:
         generator = random.Random(20261006)
         for draw in range(200):
             clusters = [
