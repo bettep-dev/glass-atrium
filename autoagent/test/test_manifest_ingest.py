@@ -415,7 +415,7 @@ class TestManifestArmParity(unittest.TestCase):
             ("empty text, id ending in a newline", 12, "a1\n", "", "a1"),
             (
                 "multibyte text and id",
-                44,
+                45,
                 "id-\ud55c\uae00-7",
                 "\ud55c\uae00 \u00b7 \u2192 \U0001f680",
                 "id--7",
@@ -442,6 +442,13 @@ class TestManifestArmParity(unittest.TestCase):
         # The table must exercise both arms and deliver each text shape, or a row proves nothing.
         self.assertEqual(arms, {"0", "1"})
         self.assertEqual(len(delivered_texts), 3, delivered_texts)
+        # The reduction row's raw and recorded ids split the arms, or a raw-id hash goes unseen.
+        raw_id_splits = {
+            name
+            for name, salt, raw_id, _, recorded_id in rows
+            if _get_arm(str(salt), raw_id) != _get_arm(str(salt), recorded_id)
+        }
+        self.assertIn("multibyte text and id", raw_id_splits)
 
     def test_an_empty_agent_id_records_unknown_with_no_arm(self) -> None:
         fields = self._spawn(5, "", "plain")
