@@ -58,8 +58,7 @@ from _pg_seal import get_ephemeral_connection, seal_pg_reach
 _NOW = datetime(2026, 10, 5, 6, 0, tzinfo=timezone.utc)
 _WINDOWS = get_pair_windows(_NOW)
 _DAY = _WINDOWS.end  # D, the most recent UTC midnight
-_BUDGET_KEY = "budget_overage"
-_EMIT_KEY = "emit_failure"
+_KEY = SimpleNamespace(BUDGET="budget_overage", EMIT="emit_failure")
 _AGENT = SimpleNamespace(
     PASSING="glass-atrium-dev-python",
     UNDERPOWERED="glass-atrium-dev-shell",
@@ -119,7 +118,7 @@ def _get_units(count: int) -> list[SpawnFacts]:
 
 
 def _build_design_effect_payload(
-    value: float = _DESIGN_EFFECT, metric_key: str = _BUDGET_KEY
+    value: float = _DESIGN_EFFECT, metric_key: str = _KEY.BUDGET
 ) -> dict:
     """An A/A arm-difference design-effect row payload, in the writer's declared shape."""
     reading = trial_design.ArmDesignEffect(value, 20, 200, value - 0.2, value + 0.3, 2000)
@@ -338,7 +337,7 @@ class _StageFixture(unittest.TestCase):
         self.design_effects = {
             (agent, key): _build_design_effect_payload(metric_key=key)
             for agent in vars(_AGENT).values()
-            for key in (_BUDGET_KEY, _EMIT_KEY)
+            for key in (_KEY.BUDGET, _KEY.EMIT)
         }
 
         def _read_spawn_facts(agents, windows):
@@ -390,7 +389,7 @@ def _fail_pg_read(*args: object) -> None:
 
 
 def _pattern(
-    agent: str, row_id: int, metric_key: str | None = _BUDGET_KEY
+    agent: str, row_id: int, metric_key: str | None = _KEY.BUDGET
 ) -> dc.Pattern:
     label = "budget-overage concentration"
     return dc.Pattern(
@@ -444,21 +443,21 @@ class CheckPatternPowerTest(_StageFixture):
                 "unchecked": 0,
             },
         )
-        self.assertIn(f"agent={_AGENT.PASSING} key={_BUDGET_KEY}: passing", stderr_text)
+        self.assertIn(f"agent={_AGENT.PASSING} key={_KEY.BUDGET}: passing", stderr_text)
         self.assertNotIn(_AGENT.FLOOR_FAILING, stderr_text)
 
     def test_an_agent_with_no_aa_design_effect_row_is_counted_design_unmeasured_never_passing(
         self,
     ) -> None:
         # a row on the agent's other key does not measure this pattern's key
-        del self.design_effects[(_AGENT.PASSING, _BUDGET_KEY)]
+        del self.design_effects[(_AGENT.PASSING, _KEY.BUDGET)]
         counts, stderr_text = self._check(self.patterns)
         self.assertEqual(
             (counts["passing"], counts["design-unmeasured"], counts["underpowered"]),
             (0, 1, 1),
         )
         self.assertIn(
-            f"agent={_AGENT.PASSING} key={_BUDGET_KEY}: design-unmeasured", stderr_text
+            f"agent={_AGENT.PASSING} key={_KEY.BUDGET}: design-unmeasured", stderr_text
         )
         self.assertIn(
             (_AGENT.PASSING, "power-check-design-unmeasured"), self._get_event_results()
@@ -473,11 +472,11 @@ class CheckPatternPowerTest(_StageFixture):
         ]
         for name, own, other, verdict in rows:
             with self.subTest(name):
-                self.design_effects[(_AGENT.PASSING, _BUDGET_KEY)] = (
-                    _build_design_effect_payload(own, _BUDGET_KEY)
+                self.design_effects[(_AGENT.PASSING, _KEY.BUDGET)] = (
+                    _build_design_effect_payload(own, _KEY.BUDGET)
                 )
-                self.design_effects[(_AGENT.PASSING, _EMIT_KEY)] = (
-                    _build_design_effect_payload(other, _EMIT_KEY)
+                self.design_effects[(_AGENT.PASSING, _KEY.EMIT)] = (
+                    _build_design_effect_payload(other, _KEY.EMIT)
                 )
                 counts, _ = self._check([_pattern(_AGENT.PASSING, 1)])
                 self.assertEqual(counts[verdict], 1)
@@ -487,7 +486,7 @@ class CheckPatternPowerTest(_StageFixture):
         rows = [("exactly one", 1.0), ("below one by noise", 0.82), ("far below one", 0.1)]
         for name, value in rows:
             with self.subTest(name):
-                self.design_effects[(_AGENT.PASSING, _BUDGET_KEY)] = (
+                self.design_effects[(_AGENT.PASSING, _KEY.BUDGET)] = (
                     _build_design_effect_payload(value)
                 )
                 counts, stderr_text = self._check([_pattern(_AGENT.PASSING, 1)])
@@ -507,7 +506,7 @@ class CheckPatternPowerTest(_StageFixture):
         ]
         for name, payload in rows:
             with self.subTest(name):
-                self.design_effects[(_AGENT.PASSING, _BUDGET_KEY)] = payload
+                self.design_effects[(_AGENT.PASSING, _KEY.BUDGET)] = payload
                 counts, stderr_text = self._check(self.patterns)
                 self.assertEqual(
                     (counts["unchecked"], counts["passing"], counts["underpowered"]),
@@ -677,7 +676,7 @@ class DesignEffectReadLivePgTest(_StageFixture):
         self._insert(
             latest,
             event.AA_ARM_DESIGN_EFFECT,
-            _build_design_effect_payload(_DESIGN_EFFECT * 1.2, _EMIT_KEY),
+            _build_design_effect_payload(_DESIGN_EFFECT * 1.2, _KEY.EMIT),
         )
         self._insert(
             latest,
@@ -743,7 +742,7 @@ class PowerCheckCycleReportTest(_StageFixture):
                 "frequency": 4,
                 "status": "identified",
                 "discovered_date": date(2026, 8, 1),
-                "metric_key": _BUDGET_KEY,
+                "metric_key": _KEY.BUDGET,
             }
             for row_id, agent in ((1, _AGENT.PASSING), (2, _AGENT.UNDERPOWERED))
         ]
