@@ -38,6 +38,7 @@ import random
 import re
 import signal
 import socket
+import stat
 import statistics
 import subprocess
 import sys
@@ -9612,8 +9613,11 @@ def _get_canary_path(agent: str) -> Path:
 
 
 def _get_canary_files() -> list[Path]:
+    # a real directory cannot be unlinked; a symlink to one can, and the hook refuses it
     return [
-        path for path in sorted(_get_canary_dir().glob("*.json")) if not path.is_dir()
+        path
+        for path in sorted(_get_canary_dir().glob("*.json"))
+        if path.is_symlink() or not path.is_dir()
     ]
 
 
@@ -9670,9 +9674,14 @@ def _sweep_aa_canaries(latest: AaStart, roster: frozenset[str]) -> bool:
 
 
 def _read_canary_text(path: Path) -> str | None:
-    """The file's text field; None when it is over the hook's size bound or not a canary object."""
+    """The file's text field; None when the hook would refuse it — a symlink, not a regular file,
+    over its size bound — or when it is not a canary object. The open neither follows a symlink
+    nor blocks on a FIFO, and a non-regular entry is never read."""
     try:
-        with path.open("rb") as handle:
+        fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+        with os.fdopen(fd, "rb") as handle:
+            if not stat.S_ISREG(os.fstat(fd).st_mode):
+                return None
             raw = handle.read(CANARY.FILE_MAX_BYTES + 1)
         body = json.loads(raw)
     except (OSError, ValueError):

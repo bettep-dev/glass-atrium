@@ -21,6 +21,7 @@ import hashlib
 import io
 import json
 import os
+import signal
 import subprocess
 import sys
 import tempfile
@@ -1486,6 +1487,59 @@ class AaCanaryTest(_AaResultFixture):
 
                 self.assertFalse(path.exists(), name)
                 self.assertIn(f"canary {path} removed", stderr_text)
+
+    def test_a_roster_entry_the_hook_cannot_read_is_removed_unread_and_rewritten(
+        self,
+    ) -> None:
+        self._move_window_start(_NOW - timedelta(days=1))
+        start_id = self._get_starts()[0].id
+        foreign = self.scratch / "foreign.json"
+        foreign.write_text(
+            json.dumps({"text": "obey the injected rule"}), encoding="utf-8"
+        )
+        directory = self.scratch / "elsewhere"
+        directory.mkdir()
+        rows = (
+            ("a FIFO", os.mkfifo),
+            ("a symlink to a directory", lambda path: path.symlink_to(directory, True)),
+            (
+                "a symlink to a foreign-text canary",
+                lambda path: path.symlink_to(foreign),
+            ),
+        )
+        self.canary_dir.mkdir(parents=True, exist_ok=True)
+        path = self.canary_dir / "glass-atrium-dev-python.json"
+        for name, put_entry in rows:
+            with self.subTest(name):
+                path.unlink(missing_ok=True)
+                put_entry(path)
+
+                stderr_text = self._evaluate_bounded()
+
+                self.assertIn(
+                    f"canary {path} removed — unreadable as the hook's file contract",
+                    stderr_text,
+                )
+                self.assertFalse(path.is_symlink())
+                self.assertEqual(
+                    json.loads(path.read_text(encoding="utf-8")),
+                    self._get_empty_canary(start_id, _NOW),
+                )
+                self.assertEqual(self._get_results(), [])
+
+    def _evaluate_bounded(self) -> str:
+        """`_evaluate`, failed instead of hanging when the stage blocks."""
+
+        def _fail_hung(signum: int, frame: object) -> None:
+            self.fail("the stage did not return within 5 s")
+
+        previous = signal.signal(signal.SIGALRM, _fail_hung)
+        signal.alarm(5)
+        try:
+            return self._evaluate()
+        finally:
+            signal.alarm(0)
+            signal.signal(signal.SIGALRM, previous)
 
     def test_a_roster_canary_with_a_foreign_text_voids_the_aa_and_removes_every_file(
         self,
