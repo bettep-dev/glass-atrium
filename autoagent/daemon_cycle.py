@@ -43,7 +43,7 @@ import sys
 import tempfile
 import time
 from collections import defaultdict
-from collections.abc import Callable, Iterable, Mapping
+from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import asdict, dataclass, field, replace
 from datetime import date, datetime, timedelta, timezone
 from enum import IntEnum
@@ -93,14 +93,18 @@ import ga_paths  # noqa: E402 — hooks dir pinned by the loop above
 # try/except, and its functions stay defined on the psycopg-absent path.
 from _outcome_signal import (  # noqa: E402 — hooks dir pinned by the loop above
     BASELINE,
+    METRIC_KEYS,
     VERDICT_PASS,
     FloorResult,
     PairWindows,
     SpawnFacts,
     WindowCount,
+    WindowStarts,
     get_floor_verdict,
     get_pair_windows,
     get_tasks,
+    is_metric_event,
+    is_pending,
 )
 
 # Runtime data roots via the shared ga_paths seam (.glass-atrium default,
@@ -9233,14 +9237,26 @@ def _warn_shadow(cause: str, scope: str) -> None:
 _INSTALL_ROOT = Path(__file__).resolve().parent.parent
 
 AA = SimpleNamespace(
-    # latest aa-start → its id, whether its aa-result exists, the newest fingerprint since it
+    # latest aa-start → its id, whether its aa-result exists, the fingerprint and recorded_at
+    # (window start) of the newest aa-start / aa-restart row since it, the start's frozen duration
     LATEST_START_SQL=(
         "SELECT s.id, EXISTS (SELECT 1 FROM core.autoagent_trial_ledger r "
         "WHERE r.event = %(result)s AND r.dedupe_key = %(result_prefix)s::text || s.id::text), "
-        "(SELECT f.payload->'fingerprint' FROM core.autoagent_trial_ledger f "
-        "WHERE f.event = ANY(%(fingerprinted)s) AND f.id >= s.id ORDER BY f.id DESC LIMIT 1) "
-        "FROM core.autoagent_trial_ledger s WHERE s.event = %(start)s ORDER BY s.id DESC LIMIT 1"
+        "f.payload->'fingerprint', f.recorded_at, s.payload->'duration' "
+        "FROM core.autoagent_trial_ledger s CROSS JOIN LATERAL ("
+        "SELECT payload, recorded_at FROM core.autoagent_trial_ledger "
+        "WHERE event = ANY(%(fingerprinted)s) AND id >= s.id ORDER BY id DESC LIMIT 1) f "
+        "WHERE s.event = %(start)s ORDER BY s.id DESC LIMIT 1"
     ),
+    # roster outcomes in the window → (all, those carrying agent_id + session_id that join a spawn)
+    JOIN_COVERAGE_SQL=(
+        "SELECT count(*), count(*) FILTER (WHERE o.agent_id IS NOT NULL "
+        "AND o.session_id IS NOT NULL AND EXISTS (SELECT 1 FROM core.spawn_manifest m "
+        "WHERE m.agent_id = o.agent_id)) FROM core.outcomes o "
+        "WHERE o.agent = ANY(%(agents)s) AND o.record_ts >= %(start)s AND o.record_ts < %(end)s"
+    ),
+    MINIMUM_JOIN_PERCENT=95,
+    VERDICT=SimpleNamespace(PASS="pass", FAIL="fail", PENDING_ARMS="pending-arms"),
     # frozen in the start row: 14 days; 28 when one of the five busiest agents has < 200 spawns
     DURATION={
         "days": 14,
@@ -9271,10 +9287,51 @@ class AaFingerprintUnreadable(Exception):
     """The installed manifest cannot yield the A/A fingerprint → fails closed."""
 
 
+class AaEvidenceUnreadable(Exception):
+    """A source the A/A result needs is unavailable this cycle."""
+
+
 class AaStart(NamedTuple):
     id: int
     is_closed: bool
     fingerprint: dict[str, str] | None  # None = recorded while unreadable
+    window_start: datetime  # recorded_at of the start or its newest restart
+    duration: dict  # the rule frozen in the start payload
+
+
+class AaWindow(NamedTuple):
+    start: datetime
+    end: datetime
+    days: int
+
+
+class AaSource(NamedTuple):
+    """The cycle's non-database inputs to the result."""
+
+    cycle_date: str
+    manifest_ingest: ManifestIngest | None
+    agents_dir: Path
+    reports_dir: Path
+
+
+class AaEvidence(NamedTuple):
+    window: AaWindow
+    spawns: dict[
+        str, list[SpawnFacts]
+    ]  # roster stem → its spawns started in the window
+    joins: tuple[int, int]  # (roster outcomes, joined ones)
+
+
+class AaCriterion(NamedTuple):
+    verdict: str
+    detail: dict
+
+
+class AaLook(NamedTuple):
+    """One look of a trial fed the A/A: the primary metric's arms and each rate guardrail's."""
+
+    arms: TrialArms
+    guardrails: Mapping[str, TrialArms]
 
 
 class AaRestart(NamedTuple):
@@ -9386,17 +9443,37 @@ def _refuse_aa_start(reason: str, detail: str) -> int:
     return ExitCode.AA_START_REFUSED
 
 
-def run_aa_stage(cycle_date: str) -> None:
+def run_aa_stage(
+    cycle_date: str,
+    *,
+    manifest_ingest: ManifestIngest | None = None,
+    agents_dir: Path = DEFAULT_AGENTS_DIR,
+    reports_dir: Path = DEFAULT_REPORTS_DIR,
+) -> None:
     """While an A/A is open: one aa-restart row per cycle date when the installed fingerprint
-    moved or cannot be read. No open A/A → nothing. A ledger fault WARNs by name and
-    never fails the cycle; the caller skips the stage in no-write mode (--dry-run).
+    moved or cannot be read; otherwise, once its window's duration has ended, the result —
+    one design-effect row per agent, then the aa-result row that closes it. No open A/A →
+    nothing. A ledger or evidence fault WARNs by name and never fails the cycle; the caller
+    skips the stage in no-write mode (--dry-run).
     """
+    latest = _read_open_aa_start()
+    if latest is None:
+        return
+    restart = _get_aa_restart(latest)
+    if restart is not None:
+        _write_aa_restart(latest.id, restart, cycle_date)
+        return  # the restart row starts a new window
+    _evaluate_aa(latest, AaSource(cycle_date, manifest_ingest, agents_dir, reports_dir))
+
+
+def _read_open_aa_start() -> AaStart | None:
+    """The open A/A; None when none is open or the open state is unreadable (WARNed)."""
     if not HAS_PG_LOOP_WRITE:
         _warn_aa(
             "open state unreadable: PG helper import failed",
             "no A/A evaluation this cycle",
         )
-        return
+        return None
     try:
         latest = _read_latest_aa_start()
     except Exception as exc:  # noqa: BLE001 — a ledger read fault never fails the cycle
@@ -9404,12 +9481,8 @@ def run_aa_stage(cycle_date: str) -> None:
             f"open state unreadable: {_describe_fault(exc)}",
             "no A/A evaluation this cycle",
         )
-        return
-    if latest is None or latest.is_closed:
-        return
-    restart = _get_aa_restart(latest)
-    if restart is not None:
-        _write_aa_restart(latest.id, restart, cycle_date)
+        return None
+    return None if latest is None or latest.is_closed else latest
 
 
 def _get_aa_restart(latest: AaStart) -> AaRestart | None:
@@ -9426,17 +9499,327 @@ def _get_aa_restart(latest: AaStart) -> AaRestart | None:
 def _write_aa_restart(start_id: int, restart: AaRestart, cycle_date: str) -> None:
     dedupe_key = f"{TRIAL_LEDGER.EVENT.AA_RESTART}:{start_id}:{cycle_date}"
     payload = {"start_id": start_id, **restart._asdict()}
+    _write_aa_row(TRIAL_LEDGER.EVENT.AA_RESTART, payload, dedupe_key)
+
+
+def _evaluate_aa(latest: AaStart, source: AaSource) -> None:
+    """Write the result once the window has ended; an evidence fault WARNs and waits for a later cycle."""
+    now = _get_utc_now()
     try:
-        _pg_write_trial_ledger_row(
-            TRIAL_LEDGER.EVENT.AA_RESTART,
-            TRIAL_LEDGER.ACTOR.AA,
-            payload,
-            dedupe_key=dedupe_key,
+        evidence = _read_aa_evidence(latest, source, now)
+    except Exception as exc:  # noqa: BLE001 — an evidence fault never fails the cycle
+        _warn_aa(
+            f"A/A {latest.id} evidence unreadable: {_describe_fault(exc)}",
+            "no A/A evaluation this cycle",
+        )
+        return
+    if evidence is not None:
+        _write_aa_result(latest.id, evidence, source, now)
+
+
+def _read_aa_evidence(
+    latest: AaStart, source: AaSource, now: datetime
+) -> AaEvidence | None:
+    """The ended window with its roster spawns and join counts; None while it runs. Raises on a fault."""
+    if now < latest.window_start + timedelta(days=latest.duration["days"]):
+        return None
+    if not HAS_PG_PATTERN_READ or _TRIAL_DESIGN_IMPORT_EXC is not None:
+        raise AaEvidenceUnreadable(
+            "PG pattern reads or trial_design unavailable (import failed)"
+        )
+    roster = _agent_roster(source.agents_dir)
+    names = _get_roster_names(roster)
+    spawns = _read_aa_spawns(roster, names, latest.window_start, now)
+    window = _get_aa_window(latest, roster, spawns, now)
+    if window is None:
+        return None
+    in_window = {
+        agent: [spawn for spawn in agent_spawns if spawn.started_at < window.end]
+        for agent, agent_spawns in spawns.items()
+    }
+    return AaEvidence(window, in_window, _read_aa_join_counts(names, window))
+
+
+def _get_roster_names(roster: frozenset[str]) -> list[str]:
+    """Every name the roster read resolves to a stem: the stems and their bare or prefixed aliases."""
+    prefix = ROSTER.STEM_PREFIX
+    bare = {stem[len(prefix) :] for stem in roster if stem.startswith(prefix)}
+    return sorted(roster | bare | {prefix + stem for stem in roster})
+
+
+def _read_aa_spawns(
+    roster: frozenset[str], names: list[str], start: datetime, now: datetime
+) -> dict[str, list[SpawnFacts]]:
+    """Each roster stem's spawns started in [start, now), MANIFEST aliases folded onto the stem."""
+    _, spawns_by_type = _pg_read_spawn_facts(
+        names, PairWindows(WindowStarts(start, start, start), now)
+    )
+    spawns: dict[str, list[SpawnFacts]] = defaultdict(list)
+    for agent_type, agent_spawns in spawns_by_type.items():
+        stem = (
+            agent_type
+            if agent_type in roster
+            else _get_roster_alias(agent_type, roster)
+        )
+        if stem is not None:
+            spawns[stem].extend(
+                spawn for spawn in agent_spawns if spawn.started_at >= start
+            )
+    return spawns
+
+
+def _get_aa_window(
+    latest: AaStart,
+    roster: frozenset[str],
+    spawns: Mapping[str, list[SpawnFacts]],
+    now: datetime,
+) -> AaWindow | None:
+    """The window at its duration, or at the extended one when one of the busiest agents was
+    short of the minimum spawns when the duration ended; None while it runs."""
+    rule = latest.duration
+    days = rule["days"]
+    cutoff = latest.window_start + timedelta(days=days)
+    counts = sorted(
+        (
+            sum(spawn.started_at < cutoff for spawn in spawns.get(stem, ()))
+            for stem in roster
+        ),
+        reverse=True,
+    )[: rule["busiest_agents"]]
+    # fewer roster agents than the rule counts → the missing ones are short too
+    if len(counts) < rule["busiest_agents"] or min(counts) < rule["minimum_spawns"]:
+        days = rule["extended_days"]
+    end = latest.window_start + timedelta(days=days)
+    return AaWindow(latest.window_start, end, days) if now >= end else None
+
+
+def _read_aa_join_counts(names: list[str], window: AaWindow) -> tuple[int, int]:
+    """(roster outcomes recorded in the window, those that join their spawn). Raises on a PG fault."""
+    params = {"agents": names, "start": window.start, "end": window.end}
+    with _pg_connect() as conn, conn.cursor() as cur:
+        cur.execute(AA.JOIN_COVERAGE_SQL, params)
+        outcomes, joined = cur.fetchone()
+    return outcomes, joined
+
+
+def _write_aa_result(
+    start_id: int, evidence: AaEvidence, source: AaSource, now: datetime
+) -> None:
+    """Design-effect rows first, then the aa-result row; a design-effect write fault defers both."""
+    effects, undefined = _get_aa_design_effects(evidence.spawns, now)
+    if not _write_aa_design_effects(start_id, effects):
+        return
+    criteria = {
+        "join_coverage": get_aa_join_criterion(*evidence.joins),
+        "sink": _get_aa_sink_criterion(evidence.window, source),
+        "engine": get_aa_engine_criterion(None),  # no production arm source yet
+        "design_effect": AaCriterion(
+            AA.VERDICT.PASS if effects else AA.VERDICT.FAIL,
+            {"written": sorted(effects), "undefined": undefined},
+        ),
+    }
+    payload = _get_aa_result_payload(evidence.window, criteria)
+    dedupe_key = f"{TRIAL_LEDGER.EVENT.AA_RESULT}:{start_id}"
+    if _write_aa_row(TRIAL_LEDGER.EVENT.AA_RESULT, payload, dedupe_key) is not None:
+        sys.stderr.write(
+            f"[daemon-cycle] INFO: A/A {start_id} result {payload['overall']} ({dedupe_key})\n"
+        )
+
+
+def _get_aa_result_payload(
+    window: AaWindow, criteria: Mapping[str, AaCriterion]
+) -> dict:
+    return {
+        "window": {
+            "start": window.start.isoformat(),
+            "end": window.end.isoformat(),
+            "days": window.days,
+        },
+        "criteria": {
+            name: {"verdict": criterion.verdict, **criterion.detail}
+            for name, criterion in criteria.items()
+        },
+        "overall": get_aa_overall(criteria),
+    }
+
+
+def _get_aa_design_effects(
+    spawns: Mapping[str, list[SpawnFacts]], now: datetime
+) -> tuple[dict[str, trial_design.DesignEffect], list[str]]:
+    """(agent → session design effect, agents whose correlation is undefined on every metric)."""
+    effects: dict[str, trial_design.DesignEffect] = {}
+    undefined: list[str] = []
+    for agent in sorted(spawns):
+        effect = _get_session_design_effect(spawns[agent], now)
+        if effect is None:
+            undefined.append(agent)
+        else:
+            effects[agent] = effect
+    return effects, undefined
+
+
+def _get_session_design_effect(
+    spawns: list[SpawnFacts], now: datetime
+) -> trial_design.DesignEffect | None:
+    """Session-clustered design effect of the metric whose selected value is higher; None when undefined on both.
+
+    Settled, joinable spawns only: a NULL agent_id or session_id counts on no side, a pending spawn waits.
+    """
+    settled = [
+        spawn
+        for spawn in spawns
+        if spawn.agent_id is not None
+        and spawn.session_id is not None
+        and not is_pending(spawn, now)
+    ]
+    effects: list[trial_design.DesignEffect] = []
+    for metric_key in sorted(METRIC_KEYS):
+        clusters: dict[str, list[float]] = defaultdict(list)
+        for spawn in settled:
+            clusters[spawn.session_id].append(float(is_metric_event(spawn, metric_key)))
+        with contextlib.suppress(
+            ValueError
+        ):  # undefined correlation → no value on this metric
+            effects.append(trial_design.get_design_effect(list(clusters.values())))
+    return max(effects, key=lambda effect: effect.selected, default=None)
+
+
+def _write_aa_design_effects(
+    start_id: int, effects: Mapping[str, trial_design.DesignEffect]
+) -> bool:
+    """One design-effect row per agent (a taken key = written earlier); False after a WARNed fault."""
+    event = TRIAL_LEDGER.EVENT.AA_SESSION_DESIGN_EFFECT
+    is_complete = True
+    for agent, effect in effects.items():
+        landed = _write_aa_row(
+            event, effect._asdict(), f"{event}:{start_id}:{agent}", agent=agent
+        )
+        is_complete = is_complete and landed is not None
+    if not is_complete:
+        _warn_aa(
+            f"A/A {start_id} design effects incomplete",
+            "aa-result deferred to a later cycle",
+        )
+    return is_complete
+
+
+def get_aa_join_criterion(outcomes: int, joined: int) -> AaCriterion:
+    """Join coverage: at least MINIMUM_JOIN_PERCENT of the window's roster outcomes joined; none fails."""
+    is_covered = outcomes > 0 and joined * 100 >= outcomes * AA.MINIMUM_JOIN_PERCENT
+    return AaCriterion(
+        AA.VERDICT.PASS if is_covered else AA.VERDICT.FAIL,
+        {"outcomes": outcomes, "joined": joined},
+    )
+
+
+def _get_aa_sink_criterion(window: AaWindow, source: AaSource) -> AaCriterion:
+    """Sink: every MANIFEST spool closed since the window start kept a row per line read — the
+    window's cycle reports plus this cycle's ingest; an unreadable report fails it."""
+    closes, unreadable = _read_aa_report_closes(window, source)
+    if source.manifest_ingest is not None:
+        closes.extend(
+            (close.lines_read, close.rows_present)
+            for close in source.manifest_ingest.closed
+        )
+    lost = sum(max(0, lines_read - rows_present) for lines_read, rows_present in closes)
+    return AaCriterion(
+        AA.VERDICT.PASS if lost == 0 and not unreadable else AA.VERDICT.FAIL,
+        {"spools": len(closes), "lines_lost": lost, "unreadable_reports": unreadable},
+    )
+
+
+def _read_aa_report_closes(
+    window: AaWindow, source: AaSource
+) -> tuple[list[tuple[int, int]], list[str]]:
+    """(lines read, rows present) per spool close in the reports dated from the window start to
+    before this cycle; reports that do not read, by name."""
+    first_day = window.start.date().isoformat()
+    closes: list[tuple[int, int]] = []
+    unreadable: list[str] = []
+    for path in sorted(source.reports_dir.glob("autoagent-*.json")):
+        day = path.name[len("autoagent-") : -len(".json")]
+        if not (_is_iso_date(day) and first_day <= day < source.cycle_date):
+            continue
+        try:
+            ingest = json.loads(path.read_text(encoding="utf-8"))["manifest_ingest"]
+            closed = [] if ingest is None else ingest["closed"]
+            closes.extend(
+                (int(close["lines_read"]), int(close["rows_present"]))
+                for close in closed
+            )
+        except (OSError, ValueError, KeyError, TypeError) as exc:
+            unreadable.append(f"{path.name}: {type(exc).__name__}")
+    return closes, unreadable
+
+
+def get_aa_engine_criterion(
+    looks: Sequence[AaLook] | None, *, design_effect: float = 1.0
+) -> AaCriterion:
+    """The engine fed the A/A as a trial: fails on a win or a harm stop; pending-arms without looks.
+
+    Win: a look's pooled z at or above its boundary. Harm stop: a rate guardrail whose
+    treatment rate reaches its minimum detectable fold rise over control (trial_design).
+    """
+    if not looks:
+        return AaCriterion(AA.VERDICT.PENDING_ARMS, {"looks": 0})
+    boundaries = trial_design.get_boundaries()
+    wins = [
+        number
+        for number, (look, boundary) in enumerate(zip(looks, boundaries), start=1)
+        if (z := _get_pooled_z(look.arms)) is not None and z >= boundary
+    ]
+    harms = sorted(
+        {
+            name
+            for look in looks
+            for name, arms in look.guardrails.items()
+            if _is_harm_stop(arms, design_effect)
+        }
+    )
+    return AaCriterion(
+        AA.VERDICT.FAIL if wins or harms else AA.VERDICT.PASS,
+        {"looks": len(looks), "win_looks": wins, "harm_stops": harms},
+    )
+
+
+def _is_harm_stop(arms: TrialArms, design_effect: float) -> bool:
+    control, treatment = arms
+    per_arm = min(control.units, treatment.units)
+    if per_arm < 1:
+        return False
+    base_rate = control.events / control.units
+    try:
+        fold = trial_design.get_rate_harm(
+            base_rate, per_arm, design_effect=design_effect
+        )
+    except ValueError:  # a control rate of 0 or 1 has no fold rise
+        return False
+    return treatment.events / treatment.units >= fold * base_rate
+
+
+def get_aa_overall(criteria: Mapping[str, AaCriterion]) -> str:
+    """Pass only when every criterion passes; a failure outranks pending arms."""
+    verdicts = {criterion.verdict for criterion in criteria.values()}
+    if AA.VERDICT.FAIL in verdicts:
+        return AA.VERDICT.FAIL
+    if AA.VERDICT.PENDING_ARMS in verdicts:
+        return AA.VERDICT.PENDING_ARMS
+    return AA.VERDICT.PASS
+
+
+def _write_aa_row(
+    event: str, payload: dict, dedupe_key: str, *, agent: str | None = None
+) -> int | None:
+    """Rows landed (0 = key taken or ledger absent); None after a WARNed fault."""
+    try:
+        return _pg_write_trial_ledger_row(
+            event, TRIAL_LEDGER.ACTOR.AA, payload, agent=agent, dedupe_key=dedupe_key
         )
     except Exception as exc:  # noqa: BLE001 — a ledger write fault never fails the cycle
         _warn_aa(
             f"{dedupe_key} not written: {_describe_fault(exc)}", "the cycle continues"
         )
+        return None
 
 
 def _describe_fault(exc: Exception) -> str:
@@ -11497,7 +11880,9 @@ def run_cycle(
     report.power_check = power.counts
     if not skip_loop_emit:  # no-write mode (--dry-run) writes no ledger row
         run_shadow_stage(power, report.cycle_date)
-        run_aa_stage(report.cycle_date)
+        run_aa_stage(
+            report.cycle_date, manifest_ingest=report.manifest_ingest, agents_dir=agents_dir
+        )
 
     if IS_GENERATION_CLOSED:
         sys.stderr.write(

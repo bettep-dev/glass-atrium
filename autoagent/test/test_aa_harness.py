@@ -1,8 +1,9 @@
-"""A/A harness, part a: the --aa-start mode and the restart rows its fingerprint drives.
+"""A/A harness: the --aa-start mode, the restart rows its fingerprint drives, and the result.
 
 An A/A opens only through --aa-start, its fingerprint the installed manifest's scoped
 hashes; while it is open each writing cycle compares the fingerprint and writes an
-aa-restart row when it moved or cannot be read. Every row outside the live class is
+aa-restart row when it moved or cannot be read. Once its window's duration ends, a cycle
+writes one design-effect row per agent and the aa-result row. Every row outside the live class is
 database-free under ``seal_pg_reach``; the ledger is an in-memory append-only fake behind the
 writer and connection seams. The live class runs the open-state read's SQL on the cluster
 ``autoagent/test/live-pg-ephemeral.bats`` provisions and skips elsewhere.
@@ -23,7 +24,7 @@ import sys
 import tempfile
 import unittest
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from types import SimpleNamespace
 from typing import NamedTuple
@@ -44,6 +45,8 @@ for _anchor in (
 
 import _pg_stub_backend as stub
 import daemon_cycle as dc
+import trial_design
+from _outcome_signal import SpawnFacts
 from _pg_seal import get_ephemeral_connection, seal_pg_reach
 
 _NOW = datetime(2026, 10, 7, 4, 30, tzinfo=timezone.utc)
@@ -89,6 +92,15 @@ class _LedgerRow(NamedTuple):
     actor: str
     payload: dict
     dedupe_key: str | None
+    agent: str | None
+    recorded_at: datetime
+
+
+class _Outcome(NamedTuple):
+    agent: str
+    record_ts: datetime
+    agent_id: str | None
+    session_id: str | None
 
 
 class _Ledger:
@@ -101,6 +113,9 @@ class _Ledger:
         self.faulted: set[str] = set()
         self.write_fault: Exception | None = None
         self.is_key_taken = False
+        self.clock = _NOW  # recorded_at of the next row
+        self.outcomes: list[_Outcome] = []
+        self.manifest_agent_ids: set[str] = set()
         # read only by a writing cycle's regression gate and discharge
         self.answered_empty = frozenset(
             {
@@ -111,7 +126,15 @@ class _Ledger:
         )
 
     def write(
-        self, event, actor, payload, *, trial_key=None, dedupe_key=None, **_columns
+        self,
+        event,
+        actor,
+        payload,
+        *,
+        trial_key=None,
+        dedupe_key=None,
+        agent=None,
+        **_columns,
     ):
         if self.write_fault is not None:
             raise self.write_fault
@@ -122,7 +145,16 @@ class _Ledger:
             return 0
         stored = json.loads(json.dumps(payload))
         self.rows.append(
-            _LedgerRow(len(self.rows) + 1, trial_key, event, actor, stored, dedupe_key)
+            _LedgerRow(
+                len(self.rows) + 1,
+                trial_key,
+                event,
+                actor,
+                stored,
+                dedupe_key,
+                agent,
+                self.clock,
+            )
         )
         return 1
 
@@ -149,6 +181,8 @@ class _LedgerCursor:
                 "the open-state read binds named parameters"
             )
             self.result = self._get_latest_start(params)
+        elif statement == dc.AA.JOIN_COVERAGE_SQL:
+            self.result = [self._get_join_counts(params)]
         elif statement in self.ledger.answered_empty:
             self.result = []
         else:
@@ -166,12 +200,35 @@ class _LedgerCursor:
             and row.dedupe_key == f"{params['result_prefix']}{start.id}"
             for row in rows
         )
-        fingerprints = [
-            row.payload["fingerprint"]
+        newest = [
+            row
             for row in rows
             if row.event in params["fingerprinted"] and row.id >= start.id
+        ][-1]
+        return [
+            (
+                start.id,
+                is_closed,
+                newest.payload["fingerprint"],
+                newest.recorded_at,
+                start.payload["duration"],
+            )
         ]
-        return [(start.id, is_closed, fingerprints[-1])]
+
+    def _get_join_counts(self, params: dict) -> tuple[int, int]:
+        outcomes = [
+            outcome
+            for outcome in self.ledger.outcomes
+            if outcome.agent in params["agents"]
+            and params["start"] <= outcome.record_ts < params["end"]
+        ]
+        joined = [
+            outcome
+            for outcome in outcomes
+            if outcome.session_id is not None
+            and outcome.agent_id in self.ledger.manifest_agent_ids
+        ]
+        return len(outcomes), len(joined)
 
     def fetchone(self) -> tuple | None:
         return self.result[0] if self.result else None
@@ -231,15 +288,15 @@ class _AaFixture(unittest.TestCase):
     def _set_hash(self, path: str, digest: str) -> None:
         self._write_manifest({**_SCOPED, **_UNSCOPED, path: digest})
 
-    def _open(self) -> None:
+    def _open(self, duration: dict = _DURATION) -> None:
         """An open A/A started on the current scoped fingerprint."""
         self.ledger.write(
             _get_trial_ledger().EVENT.AA_START,
             _get_trial_ledger().ACTOR.AA,
             {
                 "fingerprint": dict(_SCOPED),
-                "started_at": _NOW.isoformat(),
-                "duration": _DURATION,
+                "started_at": self.ledger.clock.isoformat(),
+                "duration": duration,
             },
             dedupe_key="aa-start:after:0",
         )
@@ -255,10 +312,10 @@ class _AaFixture(unittest.TestCase):
         self.assertEqual(self.ledger.refused, [])
         return code, stderr.getvalue()
 
-    def _cycle(self, cycle_date: str = _CYCLE_DATE) -> str:
+    def _cycle(self, cycle_date: str = _CYCLE_DATE, **sources: object) -> str:
         stderr = io.StringIO()
         with contextlib.redirect_stderr(stderr):
-            dc.run_aa_stage(cycle_date)
+            dc.run_aa_stage(cycle_date, **sources)
         self.assertEqual(self.pg_reach, [])
         self.assertEqual(self.ledger.refused, [])
         return stderr.getvalue()
@@ -628,6 +685,452 @@ class CycleWiringTest(_AaFixture):
         )
 
 
+_ROSTER = ("glass-atrium-dev-python", "glass-atrium-dev-shell")
+_START = _NOW - timedelta(days=15)
+# frozen rule small enough for a fixture: both roster agents need 4 spawns in the first 14 days
+_SMALL_DURATION = {
+    "days": 14,
+    "extended_days": 28,
+    "busiest_agents": 2,
+    "minimum_spawns": 4,
+}
+
+
+def _spawn(
+    agent_id: str | None, session_id: str | None, day: float, **facts: object
+) -> SpawnFacts:
+    """A settled spawn `day` days into the window; `overage` rows and a SubagentStop by default."""
+    return SpawnFacts(
+        agent_id,
+        session_id,
+        _START + timedelta(days=day),
+        int(facts.get("overage", 0)),
+        bool(facts.get("stop", True)),
+        (),
+    )
+
+
+# overage clustered by session (sessions a, b all events), emit failure spread within sessions
+_PYTHON_SPAWNS = (
+    _spawn("p1", "a", 1, overage=1),
+    _spawn("p2", "a", 2, overage=1, stop=False),
+    _spawn("p3", "b", 3, overage=1),
+    _spawn("p4", "b", 4, overage=1, stop=False),
+    _spawn("p5", "c", 5),
+    _spawn("p6", "c", 6, stop=False),
+    _spawn("p7", "d", 7),
+    _spawn("p8", "d", 8, stop=False),
+)
+# before the window: a task member the spawn read returns, never counted
+_EARLIER_SPAWN = _spawn("p0", "a", -1, overage=1, stop=False)
+# no event on either metric → no variance → undefined design effect
+_SHELL_SPAWNS = tuple(
+    _spawn(f"s{index}", f"t{index % 2}", index + 1) for index in range(4)
+)
+
+
+def _get_window_clusters(spawns: tuple[SpawnFacts, ...], is_event) -> list[list[float]]:
+    clusters: dict[str, list[float]] = {}
+    for spawn in spawns:
+        clusters.setdefault(spawn.session_id, []).append(float(is_event(spawn)))
+    return list(clusters.values())
+
+
+def _get_expected_python_effects() -> tuple[object, object]:
+    """(overage, emit failure) session design effects of the in-window Python spawns."""
+    overage = trial_design.get_design_effect(
+        _get_window_clusters(_PYTHON_SPAWNS, lambda spawn: spawn.overage_rows > 0)
+    )
+    emit = trial_design.get_design_effect(
+        _get_window_clusters(_PYTHON_SPAWNS, lambda spawn: not spawn.has_subagent_stop)
+    )
+    return overage, emit
+
+
+def _arms(control: tuple[int, int], treatment: tuple[int, int]) -> object:
+    return dc.TrialArms(dc.ArmCount(*control), dc.ArmCount(*treatment))
+
+
+class _AaResultFixture(_AaFixture):
+    """An A/A opened 15 days before now under the small duration rule, with evidence that passes."""
+
+    def setUp(self) -> None:
+        super().setUp()
+        self.agents_dir = self.scratch / "agents"
+        self.agents_dir.mkdir()
+        for stem in _ROSTER:
+            (self.agents_dir / f"{stem}.md").write_text("# body\n", encoding="utf-8")
+        self.reports_dir = self.scratch / "reports"
+        self.reports_dir.mkdir()
+        # the shell agent's MANIFEST rows carry its bare alias
+        self.spawns = {
+            "glass-atrium-dev-python": (_EARLIER_SPAWN, *_PYTHON_SPAWNS),
+            "dev-shell": _SHELL_SPAWNS,
+        }
+        self.spawn_reads: list[tuple[list[str], object]] = []
+        self._patch("HAS_PG_PATTERN_READ", True)
+        self._patch("_pg_read_spawn_facts", self._read_spawns)
+        self.ledger.clock = _START
+        self._open(_SMALL_DURATION)
+        self.ledger.clock = _NOW
+        self._add_outcomes(joined=19, unjoined=1)
+        self._write_report(_START + timedelta(days=2), lines_read=10, rows_present=10)
+
+    def _read_spawns(self, agents: list[str], windows: object) -> tuple[None, dict]:
+        self.spawn_reads.append((sorted(agents), windows))
+        return None, {agent: list(spawns) for agent, spawns in self.spawns.items()}
+
+    def _add_outcomes(self, *, joined: int, unjoined: int) -> None:
+        recorded = _START + timedelta(days=3)
+        for index in range(joined):
+            self.ledger.outcomes.append(
+                _Outcome("glass-atrium-dev-python", recorded, f"j{index}", "a")
+            )
+            self.ledger.manifest_agent_ids.add(f"j{index}")
+        for index in range(unjoined):
+            self.ledger.outcomes.append(
+                _Outcome("dev-shell", recorded, f"u{index}", None)
+            )
+        # main-session row: outside the roster, never counted
+        self.ledger.outcomes.append(_Outcome("orchestrator", recorded, None, None))
+
+    def _write_report(
+        self, day: datetime, *, lines_read: int, rows_present: int
+    ) -> None:
+        closed = [
+            {
+                "spool": "manifest.log.spool",
+                "lines_read": lines_read,
+                "rows_present": rows_present,
+            }
+        ]
+        report = {
+            "manifest_ingest": {"status": "ok", "closed": closed, "rotated_to": None}
+        }
+        path = self.reports_dir / f"autoagent-{day.date().isoformat()}.json"
+        path.write_text(json.dumps(report), encoding="utf-8")
+
+    def _evaluate(self, cycle_date: str = _CYCLE_DATE, ingest: object = None) -> str:
+        return self._cycle(
+            cycle_date,
+            manifest_ingest=ingest,
+            agents_dir=self.agents_dir,
+            reports_dir=self.reports_dir,
+        )
+
+    def _get_results(self) -> list[_LedgerRow]:
+        return self.ledger.get_rows(_get_trial_ledger().EVENT.AA_RESULT)
+
+    def _get_verdicts(self) -> dict[str, str]:
+        (result,) = self._get_results()
+        return {
+            name: criterion["verdict"]
+            for name, criterion in result.payload["criteria"].items()
+        }
+
+    def _get_design_effect_rows(self) -> list[_LedgerRow]:
+        return self.ledger.get_rows(_get_trial_ledger().EVENT.AA_SESSION_DESIGN_EFFECT)
+
+
+class AaResultTest(_AaResultFixture):
+    def test_the_duration_end_writes_one_result_keyed_on_its_start_and_closes_the_aa(
+        self,
+    ) -> None:
+        self._evaluate("2026-10-07")
+        self._evaluate("2026-10-08")
+
+        (result,) = self._get_results()
+        self.assertEqual(
+            (result.actor, result.dedupe_key), ("daemon-cycle-aa", "aa-result:1")
+        )
+        self.assertEqual(
+            result.payload["window"],
+            {
+                "start": _START.isoformat(),
+                "end": (_START + timedelta(days=14)).isoformat(),
+                "days": 14,
+            },
+        )
+        self.assertEqual(
+            self._get_verdicts(),
+            {
+                "join_coverage": "pass",
+                "sink": "pass",
+                "engine": "pending-arms",
+                "design_effect": "pass",
+            },
+        )
+        self.assertEqual(result.payload["overall"], "pending-arms")
+        self.assertEqual(len(self.spawn_reads), 1)
+
+    def test_the_result_writes_the_higher_metric_design_effect_once_per_agent_for_the_power_readers(
+        self,
+    ) -> None:
+        overage, emit = _get_expected_python_effects()
+        self.assertNotEqual(overage.selected, emit.selected)
+        expected = max(overage, emit, key=lambda effect: effect.selected)
+
+        self._evaluate()
+
+        rows = self._get_design_effect_rows()
+        self.assertEqual(
+            [(row.agent, row.actor, row.payload, row.dedupe_key) for row in rows],
+            [
+                (
+                    "glass-atrium-dev-python",
+                    "daemon-cycle-aa",
+                    expected._asdict(),
+                    "aa-session-design-effect:1:glass-atrium-dev-python",
+                )
+            ],
+        )
+        self.assertEqual(
+            dc._get_design_effects([(row.agent, row.payload) for row in rows]),
+            ({"glass-atrium-dev-python": expected.selected}, frozenset()),
+        )
+        (result,) = self._get_results()
+        self.assertEqual(
+            result.payload["criteria"]["design_effect"]["undefined"],
+            ["glass-atrium-dev-shell"],
+        )
+
+    def test_the_evidence_reads_cover_the_roster_with_its_aliases_from_the_window_start(
+        self,
+    ) -> None:
+        self._evaluate()
+
+        ((agents, windows),) = self.spawn_reads
+        self.assertTrue(set(_ROSTER) | {"dev-python", "dev-shell"} <= set(agents))
+        self.assertEqual(windows.start.baseline, _START)
+        (result,) = self._get_results()
+        self.assertEqual(
+            {
+                key: result.payload["criteria"]["join_coverage"][key]
+                for key in ("outcomes", "joined")
+            },
+            {"outcomes": 20, "joined": 19},
+        )
+
+    def test_no_result_before_the_duration_ends(self) -> None:
+        self._install()
+        self.ledger.clock = _NOW - timedelta(days=13)
+        self._open(_SMALL_DURATION)
+
+        self._evaluate()
+
+        self.assertEqual(self._get_results(), [])
+        self.assertEqual(self.spawn_reads, [])
+
+    def test_a_restart_restarts_the_window_the_duration_runs_from(self) -> None:
+        self.ledger.clock = _START + timedelta(days=10)
+        self.ledger.write(
+            _get_trial_ledger().EVENT.AA_RESTART,
+            _get_trial_ledger().ACTOR.AA,
+            {"start_id": 1, "reason": "fingerprint-changed", "fingerprint": _SCOPED},
+            dedupe_key="aa-restart:1:2026-10-02",
+        )
+
+        self._evaluate()
+
+        self.assertEqual(self._get_results(), [])
+
+    def test_a_short_busiest_agent_at_day_14_extends_the_window_to_its_longer_duration(
+        self,
+    ) -> None:
+        self.spawns["dev-shell"] = _SHELL_SPAWNS[:3]
+
+        self._evaluate("2026-10-07")
+        self.assertEqual(self._get_results(), [])
+        self._patch("_get_utc_now", lambda: _START + timedelta(days=29))
+        self._evaluate("2026-10-21")
+
+        (result,) = self._get_results()
+        self.assertEqual(result.payload["window"]["days"], 28)
+
+
+class AaResultFailTest(_AaResultFixture):
+    def test_each_failing_criterion_fails_the_result(self) -> None:
+        def _lose_a_line_in_the_window() -> None:
+            self._write_report(
+                _START + timedelta(days=5), lines_read=10, rows_present=9
+            )
+
+        def _corrupt_a_window_report() -> None:
+            (
+                self.reports_dir
+                / f"autoagent-{(_START + timedelta(days=6)).date()}.json"
+            ).write_text("{", encoding="utf-8")
+
+        def _remove_every_event() -> None:
+            self.spawns["glass-atrium-dev-python"] = tuple(
+                _spawn(f"q{index}", f"r{index % 3}", index + 1) for index in range(6)
+            )
+
+        lost_now = dc.ManifestIngest(
+            "ok", [dc.ManifestSpoolClose("manifest.log.spool", 4, 3)]
+        )
+        rows = (
+            (
+                "join coverage below 95%",
+                lambda: self._add_outcomes(joined=0, unjoined=2),
+                None,
+                "join_coverage",
+            ),
+            (
+                "no roster outcome in the window",
+                lambda: self.ledger.outcomes.clear(),
+                None,
+                "join_coverage",
+            ),
+            ("a window report lost a line", _lose_a_line_in_the_window, None, "sink"),
+            ("a window report unreadable", _corrupt_a_window_report, None, "sink"),
+            ("this cycle's close lost a line", lambda: None, lost_now, "sink"),
+            (
+                "no agent's design effect is defined",
+                _remove_every_event,
+                None,
+                "design_effect",
+            ),
+        )
+        for name, arrange, ingest, criterion in rows:
+            with self.subTest(name):
+                self.setUp()
+                arrange()
+
+                self._evaluate(ingest=ingest)
+
+                verdicts = self._get_verdicts()
+                self.assertEqual(verdicts[criterion], "fail")
+                self.assertEqual(
+                    [key for key, verdict in verdicts.items() if verdict == "fail"],
+                    [criterion],
+                )
+                self.assertEqual(self._get_results()[0].payload["overall"], "fail")
+
+    def test_a_report_dated_before_the_window_is_not_read(self) -> None:
+        self._write_report(_START - timedelta(days=1), lines_read=10, rows_present=0)
+
+        self._evaluate()
+
+        self.assertEqual(self._get_verdicts()["sink"], "pass")
+
+
+class AaOutageTest(_AaResultFixture):
+    def test_an_unreadable_evidence_source_warns_by_name_and_writes_nothing(
+        self,
+    ) -> None:
+        def _refuse_spawn_read(*args: object) -> None:
+            raise ConnectionError("PG unreachable")
+
+        rows = (
+            (
+                "the join read faults",
+                lambda: self.ledger.faulted.add(dc.AA.JOIN_COVERAGE_SQL),
+                "evidence unreadable: ConnectionError",
+            ),
+            (
+                "the spawn read faults",
+                lambda: self._patch("_pg_read_spawn_facts", _refuse_spawn_read),
+                "evidence unreadable: ConnectionError",
+            ),
+            (
+                "the pattern reads did not import",
+                lambda: self._patch("HAS_PG_PATTERN_READ", False),
+                "evidence unreadable: AaEvidenceUnreadable: PG pattern reads",
+            ),
+        )
+        for name, arrange, cause in rows:
+            with self.subTest(name):
+                self.setUp()
+                arrange()
+                rows_before = list(self.ledger.rows)
+
+                stderr_text = self._evaluate()
+
+                self.assertIn(f"WARN: A/A harness — A/A 1 {cause}", stderr_text)
+                self.assertIn("no A/A evaluation this cycle", stderr_text)
+                self.assertEqual(self.ledger.rows, rows_before)
+
+    def test_a_design_effect_write_fault_defers_the_result_to_a_later_cycle(
+        self,
+    ) -> None:
+        self.ledger.write_fault = ConnectionError("PG unreachable")
+
+        stderr_text = self._evaluate("2026-10-07")
+        self.ledger.write_fault = None
+        self._evaluate("2026-10-08")
+
+        self.assertIn(
+            "WARN: A/A harness — aa-session-design-effect:1:glass-atrium-dev-python not written",
+            stderr_text,
+        )
+        self.assertIn("aa-result deferred to a later cycle", stderr_text)
+        self.assertEqual(len(self._get_results()), 1)
+        self.assertEqual(len(self._get_design_effect_rows()), 1)
+
+
+class AaCriterionTest(unittest.TestCase):
+    def test_join_coverage_passes_from_95_percent_of_at_least_one_outcome(self) -> None:
+        rows = (
+            ("exactly 95%", 20, 19, "pass"),
+            ("every outcome joined", 3, 3, "pass"),
+            ("below 95%", 20, 18, "fail"),
+            ("no outcome", 0, 0, "fail"),
+        )
+        for name, outcomes, joined, verdict in rows:
+            with self.subTest(name):
+                self.assertEqual(
+                    dc.get_aa_join_criterion(outcomes, joined).verdict, verdict
+                )
+
+    def test_the_engine_fails_on_a_win_or_a_harm_stop_and_waits_for_arm_data(
+        self,
+    ) -> None:
+        balanced = _arms((20, 100), (19, 100))
+        quiet = {"emit_failure": _arms((10, 1000), (11, 1000))}
+        rows = (
+            ("no arm source", None, "pending-arms"),
+            ("no look yet", [], "pending-arms"),
+            ("balanced looks", [dc.AaLook(balanced, quiet)] * 4, "pass"),
+            (
+                "a look's pooled z reaches its boundary",
+                [
+                    dc.AaLook(balanced, quiet),
+                    dc.AaLook(_arms((45, 100), (2, 100)), quiet),
+                ],
+                "fail",
+            ),
+            (
+                "a rate guardrail reaches its minimum detectable harm",
+                [dc.AaLook(balanced, {"emit_failure": _arms((10, 1000), (90, 1000))})],
+                "fail",
+            ),
+            (
+                "a guardrail with a zero control rate has no harm value",
+                [dc.AaLook(balanced, {"emit_failure": _arms((0, 1000), (5, 1000))})],
+                "pass",
+            ),
+        )
+        for name, looks, verdict in rows:
+            with self.subTest(name):
+                self.assertEqual(dc.get_aa_engine_criterion(looks).verdict, verdict)
+
+    def test_the_overall_verdict_passes_only_when_every_criterion_passes(self) -> None:
+        rows = (
+            ("every criterion passes", ("pass", "pass"), "pass"),
+            ("one fails", ("pass", "fail"), "fail"),
+            ("arms pending, none failing", ("pass", "pending-arms"), "pending-arms"),
+            ("a failure outranks pending arms", ("fail", "pending-arms"), "fail"),
+        )
+        for name, verdicts, overall in rows:
+            with self.subTest(name):
+                criteria = {
+                    str(index): dc.AaCriterion(verdict, {})
+                    for index, verdict in enumerate(verdicts)
+                }
+                self.assertEqual(dc.get_aa_overall(criteria), overall)
+
+
 class AaOpenReadLivePgTest(_AaFixture):
     """The open-state read's real SQL on the ephemeral cluster; skips anywhere else.
 
@@ -677,10 +1180,17 @@ class AaOpenReadLivePgTest(_AaFixture):
         }
         return self._insert("aa-start", payload, f"aa-start:after:{previous}")
 
-    def _insert_restart(self, start: int, fingerprint: dict | None, day: str) -> None:
+    def _insert_restart(self, start: int, fingerprint: dict | None, day: str) -> int:
         reason = "fingerprint-changed" if fingerprint else "fingerprint-unreadable"
         payload = {"start_id": start, "reason": reason, "fingerprint": fingerprint}
-        self._insert("aa-restart", payload, f"aa-restart:{start}:{day}")
+        return self._insert("aa-restart", payload, f"aa-restart:{start}:{day}")
+
+    def _get_recorded_at(self, row_id: int) -> datetime:
+        with self._connect() as conn:
+            return conn.execute(
+                "SELECT recorded_at FROM core.autoagent_trial_ledger WHERE id = %s",
+                (row_id,),
+            ).fetchone()[0]
 
     def test_the_read_takes_the_latest_start_its_closure_and_its_newest_fingerprint(
         self,
@@ -690,20 +1200,70 @@ class AaOpenReadLivePgTest(_AaFixture):
         self._insert_restart(first, {"a": "2"}, "2026-10-01")
         self._insert("aa-result", {"overall": "fail"}, f"aa-result:{first}")
         latest = self._insert_start({"a": "3"}, first)
-        self.assertEqual(
-            dc._read_latest_aa_start(), dc.AaStart(latest, False, {"a": "3"})
-        )
+        self.assertEqual(dc._read_latest_aa_start()[:3], (latest, False, {"a": "3"}))
 
         self._insert_restart(latest, None, "2026-10-08")
-        self.assertEqual(dc._read_latest_aa_start(), dc.AaStart(latest, False, None))
+        self.assertEqual(dc._read_latest_aa_start()[:3], (latest, False, None))
         self._insert_restart(latest, {"a": "4"}, "2026-10-09")
-        self.assertEqual(
-            dc._read_latest_aa_start(), dc.AaStart(latest, False, {"a": "4"})
-        )
+        self.assertEqual(dc._read_latest_aa_start()[:3], (latest, False, {"a": "4"}))
         self._insert("aa-result", {"overall": "pass"}, f"aa-result:{latest}")
+        self.assertEqual(dc._read_latest_aa_start()[:3], (latest, True, {"a": "4"}))
+
+    def test_the_window_runs_from_the_newest_start_or_restart_under_the_frozen_duration(
+        self,
+    ) -> None:
+        self._use_database(self._TEMPLATE.FULL)
+        start = self._insert_start({"a": "1"}, 0)
         self.assertEqual(
-            dc._read_latest_aa_start(), dc.AaStart(latest, True, {"a": "4"})
+            dc._read_latest_aa_start()[3:],
+            (self._get_recorded_at(start), _DURATION),
         )
+
+        restart = self._insert_restart(start, {"a": "2"}, "2026-10-08")
+        self.assertEqual(
+            dc._read_latest_aa_start().window_start, self._get_recorded_at(restart)
+        )
+
+    def test_join_coverage_counts_roster_outcomes_in_the_window_carrying_both_ids_that_join_a_spawn(
+        self,
+    ) -> None:
+        self._use_database(self._TEMPLATE.FULL)
+        inside, outside = _START + timedelta(days=1), _START - timedelta(days=1)
+        with self._connect() as conn:
+            conn.execute(
+                "INSERT INTO core.spawn_manifest (spool, line_offset, agent_id, agent_type,"
+                " session_id, started_at, ctx_bytes, blocks)"
+                " VALUES ('s.spool', 0, 'a1', 'glass-atrium-dev-python', 's1', %s, 1, '')",
+                (inside,),
+            )
+            # distinct record_ts per row: outcomes_dedup is unique on (record_ts, agent, task_type)
+            for index, (agent, record_ts, agent_id, session_id) in enumerate(
+                (
+                    ("glass-atrium-dev-python", inside, "a1", "s1"),  # joined
+                    ("dev-python", inside, "a1", "s1"),  # joined, bare alias
+                    ("glass-atrium-dev-python", inside, "a1", None),  # no session id
+                    ("glass-atrium-dev-python", inside, "a9", "s1"),  # no spawn row
+                    ("orchestrator", inside, "a1", "s1"),  # outside the roster
+                    (
+                        "glass-atrium-dev-python",
+                        outside,
+                        "a1",
+                        "s1",
+                    ),  # before the window
+                )
+            ):
+                conn.execute(
+                    "INSERT INTO core.outcomes (record_ts, agent, task_type, result, summary,"
+                    " agent_id, session_id) VALUES (%s, %s, 'feature', 'done', 'x', %s, %s)",
+                    (record_ts + timedelta(seconds=index), agent, agent_id, session_id),
+                )
+
+        counts = dc._read_aa_join_counts(
+            ["glass-atrium-dev-python", "dev-python"],
+            dc.AaWindow(_START, _START + timedelta(days=14), 14),
+        )
+
+        self.assertEqual(counts, (4, 2))
 
     def test_an_empty_ledger_reads_no_start(self) -> None:
         self._use_database(self._TEMPLATE.FULL)
