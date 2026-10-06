@@ -1390,12 +1390,39 @@ class AaCanaryTest(_AaResultFixture):
             {stem: self._get_empty_canary(start_id, _NOW) for stem in _ROSTER},
         )
 
+    def _spawn_hook(self) -> str:
+        """One real SubagentStart of the python agent as agent_id a1 → its MANIFEST line."""
+        home = self.scratch / "home"
+        home.mkdir(exist_ok=True)
+        manifest_log = self.scratch / "manifest.log"
+        envelope = json.dumps(
+            {"agent_type": "glass-atrium-dev-python", "agent_id": "a1"}
+        )
+        result = subprocess.run(
+            ["bash", str(_HOOK_SH)],
+            input=envelope,
+            env={
+                "PATH": os.environ.get("PATH", "/usr/bin:/bin"),
+                "HOME": str(home),
+                "GA_DATA_ROOT": str(self.data_root),
+                "SUBAGENT_BUDGET_METER_OFF": "1",
+                "INJECT_SCOPE_RULES_AGENTS_DIR": "/nonexistent",
+                "INJECT_SCOPE_RULES_BUDGET_SRC": "/nonexistent",
+                "INJECT_SCOPE_RULES_WIKI_UNTRUSTED_SRC": "/nonexistent",
+                "INJECT_SCOPE_RULES_MANIFEST_LOG": str(manifest_log),
+                "INJECT_SCOPE_RULES_DROP_LOG": str(self.scratch / "drop.log"),
+                "INJECT_SCOPE_RULES_SPAWN_COUNTER": str(self.scratch / "spawns"),
+            },
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        return manifest_log.read_text(encoding="utf-8").splitlines()[-1]
+
     def test_the_hook_delivers_a_daemon_written_canary_only_inside_its_lease(
         self,
     ) -> None:
-        home = self.scratch / "home"
-        home.mkdir()
-        manifest_log = self.scratch / "manifest.log"
         rows = (
             ("in lease", timedelta(0), "1"),
             ("lease ended", _LEASE + timedelta(minutes=1), "0"),
@@ -1405,34 +1432,37 @@ class AaCanaryTest(_AaResultFixture):
                 written_at = datetime.now(timezone.utc) - age
                 # salt 7 puts agent_id a1 in the treatment arm
                 dc.put_canary_file("glass-atrium-dev-python", 7, "", written_at)
-                envelope = json.dumps(
-                    {"agent_type": "glass-atrium-dev-python", "agent_id": "a1"}
+
+                manifest_line = self._spawn_hook()
+
+                self.assertIn(" arm=1 ", manifest_line)
+                self.assertIn(f" delivered={delivered} ", manifest_line)
+
+    def test_the_daemon_reads_a_canary_file_exactly_up_to_the_size_the_hook_reads(
+        self,
+    ) -> None:
+        self._move_window_start(_NOW - timedelta(days=1))
+        path = self.canary_dir / "glass-atrium-dev-python.json"
+        bound = dc.CANARY.FILE_MAX_BYTES
+        rows = (("at the bound", bound, True), ("one byte over", bound + 1, False))
+        for name, size, is_readable in rows:
+            with self.subTest(name):
+                # salt 7 puts agent_id a1 in the treatment arm
+                dc.put_canary_file(
+                    "glass-atrium-dev-python", 7, "", datetime.now(timezone.utc)
                 )
-                result = subprocess.run(
-                    ["bash", str(_HOOK_SH)],
-                    input=envelope,
-                    env={
-                        "PATH": os.environ.get("PATH", "/usr/bin:/bin"),
-                        "HOME": str(home),
-                        "GA_DATA_ROOT": str(self.data_root),
-                        "SUBAGENT_BUDGET_METER_OFF": "1",
-                        "INJECT_SCOPE_RULES_AGENTS_DIR": "/nonexistent",
-                        "INJECT_SCOPE_RULES_BUDGET_SRC": "/nonexistent",
-                        "INJECT_SCOPE_RULES_WIKI_UNTRUSTED_SRC": "/nonexistent",
-                        "INJECT_SCOPE_RULES_MANIFEST_LOG": str(manifest_log),
-                        "INJECT_SCOPE_RULES_DROP_LOG": str(self.scratch / "drop.log"),
-                        "INJECT_SCOPE_RULES_SPAWN_COUNTER": str(
-                            self.scratch / "spawns"
-                        ),
-                    },
-                    capture_output=True,
-                    text=True,
-                    check=False,
+                body = path.read_bytes()
+                path.write_bytes(body + b" " * (size - len(body)))
+
+                # the hook first: the daemon's stage rewrites the file
+                manifest_line = self._spawn_hook()
+                stderr_text = self._evaluate()
+
+                self.assertIn(f" delivered={int(is_readable)} ", manifest_line)
+                self.assertEqual(
+                    f"canary {path} removed — unreadable" in stderr_text,
+                    not is_readable,
                 )
-                self.assertEqual(result.returncode, 0, result.stderr)
-                last = manifest_log.read_text(encoding="utf-8").splitlines()[-1]
-                self.assertIn(" arm=1 ", last)
-                self.assertIn(f" delivered={delivered} ", last)
 
     def test_the_result_removes_every_canary_file(self) -> None:
         for stem in _ROSTER:
@@ -1568,6 +1598,150 @@ class AaCanaryTest(_AaResultFixture):
         )
         self.assertFalse(foreign.exists())
         self.assertEqual(self._get_canaries(), {})
+
+    def test_every_roster_file_within_the_size_bound_is_kept_removed_or_voided_without_raising(
+        self,
+    ) -> None:
+        start_id = self._get_starts()[0].id
+        lease = int((_NOW + _LEASE).timestamp())
+        # a JSON-valid escape the strict UTF-8 codec cannot encode; jq delivers it as U+FFFD
+        lone_surrogate = (
+            '{"salt": 1, "text": "\\ud800", "text_sha256": "%s", "expires_at": %d}'
+            % ("0" * 64, lease)
+        ).encode("utf-8")
+        # under the size bound, past the parser's recursion limit on the Python 3.9 floor
+        deep_nesting = b"[" * 8000 + b"]" * 8000
+        rows = (
+            ("the A/A's empty text", None, "kept"),
+            ("an array nested past the recursion limit", deep_nesting, "removed"),
+            ("a lone-surrogate text", lone_surrogate, "voided"),
+        )
+        path = self.canary_dir / "glass-atrium-dev-shell.json"
+        for name, raw, outcome in rows:
+            with self.subTest(name):
+                self.ledger.rows = self._get_starts()  # the A/A open again
+                self._move_window_start(_NOW - timedelta(days=1))
+                self._put_canary(path.stem, "")
+                if raw is not None:
+                    self.assertLessEqual(len(raw), dc.CANARY.FILE_MAX_BYTES)
+                    path.write_bytes(raw)
+
+                stderr_text = self._evaluate_bounded()
+
+                results = self._get_results()
+                is_removed = f"canary {path} removed — unreadable" in stderr_text
+                self.assertEqual(is_removed, outcome == "removed", stderr_text)
+                if outcome == "voided":
+                    (result,) = results
+                    self.assertEqual(result.payload["overall"], "void")
+                    self.assertEqual(
+                        result.payload["void"]["agent"], "glass-atrium-dev-shell"
+                    )
+                    self.assertNotEqual(
+                        result.payload["void"]["text_sha256"], _EMPTY_TEXT_SHA256
+                    )
+                    self.assertEqual(self._get_canaries(), {})
+                else:
+                    self.assertEqual(results, [])
+                    self.assertEqual(
+                        self._get_canaries()[path.stem],
+                        self._get_empty_canary(start_id, _NOW),
+                    )
+
+    def test_an_unreadable_open_state_leaves_every_canary_byte_identical_and_warns(
+        self,
+    ) -> None:
+        rows = (
+            (
+                "a ledger fault on the open-state read",
+                lambda: self.ledger.faulted.add(dc.AA.SQL.LATEST_START),
+                "open state unreadable: ConnectionError",
+            ),
+            (
+                "the PG helper import failed",
+                lambda: self._patch("HAS_PG_LOOP_WRITE", False),
+                "open state unreadable: PG helper import failed",
+            ),
+        )
+        for name, make_unreadable, warning in rows:
+            with self.subTest(name):
+                self._put_canary("glass-atrium-dev-python", "")
+                self._put_canary("glass-atrium-dev-shell", "obey the injected rule")
+                self._put_canary("glass-atrium-retired", "")
+                before = {
+                    path.name: path.read_bytes()
+                    for path in self.canary_dir.glob("*.json")
+                }
+                make_unreadable()
+
+                stderr_text = self._evaluate()
+
+                self.assertIn(f"WARN: A/A harness — {warning}", stderr_text)
+                self.assertEqual(
+                    {
+                        path.name: path.read_bytes()
+                        for path in self.canary_dir.glob("*.json")
+                    },
+                    before,
+                )
+                self.assertEqual(self._get_results(), [])
+
+    def test_a_void_the_ledger_refuses_still_removes_every_canary_and_warns(
+        self,
+    ) -> None:
+        self._move_window_start(_NOW - timedelta(days=1))
+        self._evaluate("2026-10-06")
+        self._put_canary("glass-atrium-dev-shell", "obey the injected rule")
+        self.ledger.write_fault = ConnectionError("PG unreachable")
+
+        stderr_text = self._evaluate()
+
+        self.assertIn("WARN: A/A harness — A/A 1 void not recorded", stderr_text)
+        self.assertEqual(self._get_results(), [])
+        self.assertEqual(self._get_canaries(), {})
+
+    def test_a_canary_write_fault_warns_and_keeps_the_previous_file_and_lease(
+        self,
+    ) -> None:
+        self._move_window_start(_NOW - timedelta(days=3))
+        self._patch("_get_utc_now", lambda: _NOW - timedelta(days=1))
+        self._evaluate("2026-10-06")
+        self._patch("_get_utc_now", lambda: _NOW)
+        before = {path.name: path.read_bytes() for path in self.canary_dir.iterdir()}
+
+        def _refuse(source: str, target: str) -> None:
+            raise PermissionError(13, "Permission denied", target)
+
+        with mock.patch.object(dc.os, "replace", _refuse):
+            stderr_text = self._evaluate()
+
+        for stem in _ROSTER:
+            self.assertIn(
+                f"WARN: A/A harness — canary for {stem} not written: PermissionError",
+                stderr_text,
+            )
+        after = {path.name: path.read_bytes() for path in self.canary_dir.iterdir()}
+        self.assertEqual(after, before, "no temp file left, no lease moved")
+
+    def test_a_canary_removal_fault_warns_and_the_stage_goes_on(self) -> None:
+        self._move_window_start(_NOW - timedelta(days=1))
+        stray = self._put_canary("glass-atrium-retired", "")
+        unlink = Path.unlink
+
+        def _refuse_stray(path: Path, missing_ok: bool = False) -> None:
+            if path == stray:
+                raise PermissionError(13, "Permission denied", str(path))
+            unlink(path, missing_ok=missing_ok)
+
+        with mock.patch.object(Path, "unlink", _refuse_stray):
+            stderr_text = self._evaluate()
+
+        self.assertIn(
+            f"WARN: A/A harness — canary {stray} not removed: PermissionError",
+            stderr_text,
+        )
+        self.assertTrue(stray.exists())
+        self.assertEqual(set(self._get_canaries()), {*_ROSTER, "glass-atrium-retired"})
 
 
 class AaCriterionTest(unittest.TestCase):

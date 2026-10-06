@@ -9310,12 +9310,11 @@ AA = SimpleNamespace(
 
 # The per-agent canary files hooks/inject-scope-rules.sh reads at SubagentStart (set_canary_block).
 CANARY = SimpleNamespace(
-    # 3 daily cycle intervals; the hook's maximum lease (CANARY_MAX_LEASE_MINUTES, 96 h) is one
-    # interval longer, so its file-age bound never binds before this expiry
+    # 3 daily intervals, one under the hook's 96 h CANARY_MAX_LEASE_MINUTES file-age bound
     LEASE=timedelta(hours=72),
     # the A/A's pre-registered text: an empty canary, delivered as zero bytes
     AA_TEXT="",
-    # the hook refuses a larger file, so a larger one was never delivered
+    # = the hook's CANARY_FILE_MAX_BYTES: a larger file is refused, so never delivered
     FILE_MAX_BYTES=16384,
     # hook_path_safe_key: every byte outside A-Za-z0-9_- dropped
     UNSAFE_KEY=re.compile(r"[^A-Za-z0-9_-]"),
@@ -9658,7 +9657,6 @@ def _sweep_aa_canaries(latest: AaStart, roster: frozenset[str]) -> bool:
     outside the roster, or one the hook cannot read, is removed; a roster file whose text is not
     the A/A's voids the A/A and every file is removed. True = voided."""
     roster_files = {_get_canary_path(agent): agent for agent in roster}
-    expected = _get_text_sha256(CANARY.AA_TEXT)
     for path in _get_canary_files():
         agent = roster_files.get(path)
         if agent is None:
@@ -9667,8 +9665,10 @@ def _sweep_aa_canaries(latest: AaStart, roster: frozenset[str]) -> bool:
         text = _read_canary_text(path)
         if text is None:
             _delete_canaries([path], "unreadable as the hook's file contract")
-        elif _get_text_sha256(text) != expected:
-            _void_aa(latest, agent, _get_text_sha256(text))
+        elif text != CANARY.AA_TEXT:
+            # surrogatepass: a lone surrogate (JSON "\ud800") is foreign text, hashed not raised
+            digest = hashlib.sha256(text.encode("utf-8", "surrogatepass")).hexdigest()
+            _void_aa(latest, agent, digest)
             return True
     return False
 
@@ -9684,7 +9684,8 @@ def _read_canary_text(path: Path) -> str | None:
                 return None
             raw = handle.read(CANARY.FILE_MAX_BYTES + 1)
         body = json.loads(raw)
-    except (OSError, ValueError):
+    # ValueError spans JSONDecodeError and UnicodeError; RecursionError = nesting past the limit
+    except (OSError, ValueError, RecursionError):
         return None
     if len(raw) > CANARY.FILE_MAX_BYTES or not isinstance(body, dict):
         return None
