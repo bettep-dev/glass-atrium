@@ -1046,7 +1046,26 @@ def write_autoagent_corpus_audit(
     return (time.monotonic_ns() - start_ns) // 1_000_000
 
 
-_SPAWN_MANIFEST_COUNT_SQL = "SELECT count(*) FROM core.spawn_manifest WHERE spool = %s"
+_SPAWN_MANIFEST_SQL = SimpleNamespace(
+    COUNT="SELECT count(*) FROM core.spawn_manifest WHERE spool = %s",
+    INSERT=SimpleNamespace(
+        FULL="""
+            INSERT INTO core.spawn_manifest
+                (spool, line_offset, agent_id, agent_type, session_id, started_at,
+                 ctx_bytes, blocks, arm, salt_id, delivered, delivered_hash)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+            ON CONFLICT (spool, line_offset) DO NOTHING
+        """,
+        # A schema before MIGRATION.SPAWN_MANIFEST_EXPOSURE.
+        PRE_EXPOSURE="""
+            INSERT INTO core.spawn_manifest
+                (spool, line_offset, agent_id, agent_type, session_id, started_at,
+                 ctx_bytes, blocks)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+            ON CONFLICT (spool, line_offset) DO NOTHING
+        """,
+    ),
+)
 
 
 def write_spawn_manifest_rows(spool, rows):
@@ -1071,7 +1090,7 @@ def write_spawn_manifest_rows(spool, rows):
             conn.rollback()
             _insert_spawn_manifest_rows(conn, spool, rows, has_exposure=False)
         with conn.cursor() as cur:
-            cur.execute(_SPAWN_MANIFEST_COUNT_SQL, (spool,))
+            cur.execute(_SPAWN_MANIFEST_SQL.COUNT, (spool,))
             rows_present = cur.fetchone()[0]
         conn.commit()
     if is_degraded:
@@ -1088,38 +1107,19 @@ def _insert_spawn_manifest_rows(conn, spool, rows, *, has_exposure):
     if not rows:
         return
     if has_exposure:
-        sql, params = _SPAWN_MANIFEST_INSERT_SQL.FULL, [(spool, *row) for row in rows]
+        sql, params = _SPAWN_MANIFEST_SQL.INSERT.FULL, [(spool, *row) for row in rows]
     else:
-        sql = _SPAWN_MANIFEST_INSERT_SQL.PRE_EXPOSURE
+        sql = _SPAWN_MANIFEST_SQL.INSERT.PRE_EXPOSURE
         params = [(spool, *row[:7]) for row in rows]
     with conn.cursor() as cur:
         cur.executemany(sql, params)
-
-
-_SPAWN_MANIFEST_INSERT_SQL = SimpleNamespace(
-    FULL="""
-        INSERT INTO core.spawn_manifest
-            (spool, line_offset, agent_id, agent_type, session_id, started_at,
-             ctx_bytes, blocks, arm, salt_id, delivered, delivered_hash)
-        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
-        ON CONFLICT (spool, line_offset) DO NOTHING
-    """,
-    # A schema before MIGRATION.SPAWN_MANIFEST_EXPOSURE.
-    PRE_EXPOSURE="""
-        INSERT INTO core.spawn_manifest
-            (spool, line_offset, agent_id, agent_type, session_id, started_at,
-             ctx_bytes, blocks)
-        VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
-        ON CONFLICT (spool, line_offset) DO NOTHING
-    """,
-)
 
 
 def get_spawn_manifest_row_count(spool):
     """Rows stored for one spool; raises on any PG fault, a schema without the table included."""
     with _connect() as conn:
         with conn.cursor() as cur:
-            cur.execute(_SPAWN_MANIFEST_COUNT_SQL, (spool,))
+            cur.execute(_SPAWN_MANIFEST_SQL.COUNT, (spool,))
             return cur.fetchone()[0]
 
 

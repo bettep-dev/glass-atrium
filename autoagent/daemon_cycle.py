@@ -11604,22 +11604,23 @@ MANIFEST = SimpleNamespace(
     SPOOL_SUFFIX_RE=re.compile(r"[0-9]{8}T[0-9]{6}Z\.[0-9]+\.spool"),
     # Lesson fields: the v1.0.1 hook's shape, still in upgrading installs' live logs.
     # Exposure fields (inject-scope-rules.sh → get_canary_exposure_fields): a form no column holds → no match.
+    # Digit caps = COLUMN_MAX widths → int() never meets a run past its 4300-digit limit (Python ≥3.11).
     LINE_RE=re.compile(
         r"(?P<ts>\S+) \[inject-scope-rules\] MANIFEST agent_id=(?P<agent_id>\S+)"
         r"(?: session_id=(?P<session_id>\S+))? agent=(?P<agent>\S+)"
-        r" ctx_bytes=(?P<ctx_bytes>[0-9]+)(?: digest=\S+)?"
+        r" ctx_bytes=(?P<ctx_bytes>[0-9]{1,10})(?: digest=\S+)?"
         r"(?: lessons=\S+ lesson_truncated=[0-9]+)?"
-        r"(?: arm=(?P<arm>[01]|none) salt_id=(?P<salt_id>0|[1-9][0-9]*|none)"
+        r"(?: arm=(?P<arm>[01]|none) salt_id=(?P<salt_id>0|[1-9][0-9]{0,18}|none)"
         r" delivered=(?P<delivered>[01]) delivered_hash=(?P<delivered_hash>[0-9a-f]{64}|none))?"
         r" blocks=(?P<blocks>.*)"
     ),
     NONE_VALUE="none",
     UNKNOWN_ID="unknown",
     AGENT_TYPE_MAX_CHARS=64,
+    # PostgreSQL column types: ctx_bytes INTEGER, salt_id BIGINT.
+    COLUMN_MAX=SimpleNamespace(INTEGER=2**31 - 1, BIGINT=2**63 - 1),
 )
 MANIFEST_SPOOL_CLOSED_EVAL_RESULT = "manifest-spool-closed"
-_PG_INTEGER_MAX = 2**31 - 1
-_PG_BIGINT_MAX = 2**63 - 1
 
 # Optional, not `str | None`: an install's CLT python3 3.9 cannot evaluate the union.
 # arm, salt id, delivered, delivered hash — all None on a line predating the fields.
@@ -11842,9 +11843,9 @@ def _get_manifest_row(offset: int, line: str) -> ManifestRow | None:
 def _is_manifest_row_insertable(ctx_bytes: int, agent_type: str, salt_id: int | None) -> bool:
     # Over a spawn_manifest column bound → uninsertable → no row, not a stuck spool.
     return (
-        ctx_bytes <= _PG_INTEGER_MAX
+        ctx_bytes <= MANIFEST.COLUMN_MAX.INTEGER
         and len(agent_type) <= MANIFEST.AGENT_TYPE_MAX_CHARS
-        and (salt_id is None or salt_id <= _PG_BIGINT_MAX)
+        and (salt_id is None or salt_id <= MANIFEST.COLUMN_MAX.BIGINT)
     )
 
 

@@ -412,6 +412,10 @@ class TestManifestLineParse(unittest.TestCase):
         # An uninsertable value would fail the spool's insert on every cycle.
         rows = (
             ("salt past BIGINT", f" arm=1 salt_id={2**63} delivered=0 delivered_hash=none"),
+            (
+                "salt past the digits int() converts",
+                f" arm=1 salt_id=1{'0' * 5000} delivered=0 delivered_hash=none",
+            ),
             ("arm outside 0 and 1", " arm=2 salt_id=3 delivered=0 delivered_hash=none"),
             ("delivered not a flag", " arm=1 salt_id=3 delivered=yes delivered_hash=none"),
             (
@@ -422,6 +426,20 @@ class TestManifestLineParse(unittest.TestCase):
         for name, exposure in rows:
             with self.subTest(name):
                 line = _get_line(exposure=exposure).rstrip("\n")
+                self.assertIsNone(dc._get_manifest_row(0, line))
+
+    def test_a_ctx_bytes_no_column_can_hold_gives_no_row(self) -> None:
+        rows = (
+            ("ctx_bytes past INTEGER", str(2**31)),
+            ("ctx_bytes past the digits int() converts", f"1{'0' * 5000}"),
+        )
+        for name, ctx_bytes in rows:
+            with self.subTest(name):
+                line = (
+                    _get_line()
+                    .rstrip("\n")
+                    .replace("ctx_bytes=1166", f"ctx_bytes={ctx_bytes}")
+                )
                 self.assertIsNone(dc._get_manifest_row(0, line))
 
 
