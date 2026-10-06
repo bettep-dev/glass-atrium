@@ -20,7 +20,9 @@ from __future__ import annotations
 import contextlib
 import hashlib
 import io
+import itertools
 import json
+import math
 import os
 import signal
 import subprocess
@@ -50,7 +52,7 @@ for _anchor in (
 import _pg_stub_backend as stub
 import daemon_cycle as dc
 import trial_design
-from _outcome_signal import SpawnFacts
+from _outcome_signal import SpawnFacts, is_floor_half
 from _pg_seal import get_ephemeral_connection, seal_pg_reach
 
 _NOW = datetime(2026, 10, 7, 4, 30, tzinfo=timezone.utc)
@@ -1038,6 +1040,107 @@ class AaResultTest(_AaResultFixture):
 
         (result,) = self._get_results()
         self.assertEqual(result.payload["window"]["days"], 28)
+
+
+# the power check's history at the A/A's now: provenance 60 days before D, floor-half baseline
+# 20 events / 200 spawns, then only reference-half non-events in the 28 days before D
+_HISTORY = SimpleNamespace(
+    WINDOWS=dc.get_pair_windows(_NOW),
+    BASELINE=SimpleNamespace(SPAWNS=200, EVENTS=20),
+)
+_HISTORY.PROVENANCE_START = _HISTORY.WINDOWS.end - timedelta(days=60)
+# bound at design effect 1, from the trial_design reference module, not the code under test
+_HISTORY.REQUIRED_UNITS = trial_design.get_required_units(
+    trial_design.get_maximum_sample_size(_HISTORY.BASELINE.EVENTS / _HISTORY.BASELINE.SPAWNS),
+    design_effect=1.0,
+)
+
+
+def _get_history_spawns(
+    count: int, first: datetime, step: timedelta, *, is_floor: bool, events: int = 0
+) -> list[SpawnFacts]:
+    """`count` settled spawns of one sha256 half, one session each; the first `events` overrun."""
+    agent_ids = (
+        agent_id
+        for agent_id in (f"h{index:07x}" for index in itertools.count())
+        if is_floor_half(agent_id) is is_floor
+    )
+    return [
+        SpawnFacts(
+            agent_id, f"session-{agent_id}", first + step * index, int(index < events), True, ()
+        )
+        for index, agent_id in zip(range(count), agent_ids)
+    ]
+
+
+def _get_break_even_history(units: int) -> list[SpawnFacts]:
+    """Baseline hourly from D - 40 d, ending before D - 28 d → no unit; `units` by the minute
+    from D - 28 d."""
+    end = _HISTORY.WINDOWS.end
+    baseline = _get_history_spawns(
+        _HISTORY.BASELINE.SPAWNS,
+        end - timedelta(days=40),
+        timedelta(hours=1),
+        is_floor=True,
+        events=_HISTORY.BASELINE.EVENTS,
+    )
+    return [
+        *baseline,
+        *_get_history_spawns(units, end - timedelta(days=28), timedelta(minutes=1), is_floor=False),
+    ]
+
+
+class AaRecomputedBreakEvenTest(_AaResultFixture):
+    """The verdict's recomputed break-even is the power check's projection over its bound at
+    design effect 1, on the history the power check reads at the A/A's now."""
+
+    def setUp(self) -> None:
+        super().setUp()
+        agent = "glass-atrium-dev-python"
+        self.reading = _get_expected_python_reading("budget_overage")
+        # 28-day units whose break-even lies above the interval → the recomputed reading holds R1
+        units = math.ceil(
+            (self.reading.upper + 1) * _HISTORY.REQUIRED_UNITS * 28 / trial_design.HORIZON_DAYS
+        )
+        self.break_even = trial_design.get_projected_units(units / 28) / _HISTORY.REQUIRED_UNITS
+        history = (_HISTORY.PROVENANCE_START, {agent: _get_break_even_history(units)})
+        evidence_read = self._read_spawns
+        self._patch(
+            "_pg_read_spawn_facts",
+            lambda agents, windows: (
+                history if windows == _HISTORY.WINDOWS else evidence_read(agents, windows)
+            ),
+        )
+
+    def _get_verdict_payload(self, reference: float) -> dict:
+        agent = "glass-atrium-dev-python"
+        with mock.patch.object(dc.INSTRUMENT, "REFERENCE_BREAK_EVEN", {agent: reference}):
+            self._evaluate()
+        (row,) = self._get_instrument_verdicts()
+        return row.payload
+
+    def test_a_reference_equal_to_the_recomputed_break_even_gives_both_readings_and_the_verdict(
+        self,
+    ) -> None:
+        payload = self._get_verdict_payload(self.break_even)
+
+        break_even = payload["agents"]["glass-atrium-dev-python"]["break_even"]
+        self.assertAlmostEqual(break_even["recomputed"], self.break_even, places=9)
+        self.assertEqual(
+            (payload["readings"], payload["verdict"]),
+            ({"recomputed": "r1-holds", "reference": "r1-holds"}, "r1-holds"),
+        )
+
+    def test_a_reference_disagreeing_with_the_recomputed_break_even_relays_to_the_owner(
+        self,
+    ) -> None:
+        # the reference at the interval's lower bound → the reference reading switches to R2
+        payload = self._get_verdict_payload(self.reading.lower)
+
+        self.assertEqual(
+            (payload["readings"], payload["verdict"]),
+            ({"recomputed": "r1-holds", "reference": "switch-to-r2"}, "relay"),
+        )
 
 
 class AaResultFailTest(_AaResultFixture):
