@@ -121,19 +121,20 @@ Two SubagentStart channels carry text, and they divide the work by kind:
 | Channel | Code | What it carries |
 |---|---|---|
 | Part slots | `hooks/inject-scope-part-*.sh` → `hooks/lib/inject_chunk.py` | every `scoped/` file in the row's `scope` and `shared` entries, packed whole at heading boundaries (an over-cap section is named by an in-context marker instead); `.conditional` entries as path pointers only |
-| Slot 1 | `hooks/inject-scope-rules.sh` | the named marker blocks below, plus the emit-format directive and the turn-budget meter, which the hook builds rather than extracts |
+| Slot 1 | `hooks/inject-scope-rules.sh` | the named blocks below, plus the emit-format directive and turn-budget meter, built in the hook rather than extracted |
 
 - **Slot 1 MUST carry no scope-file text.** The comment-logging, style_ref, minimalism, naming and plan-gate cores ride the part slots only; `hooks/inject-scope-rules.sh` extracts none of them, and their source files carry no marker.
 - **Overflow audit**: `python3 hooks/lib/inject_chunk.py --audit` MUST report `events=none` for every agent. An OVERFLOW displaces a member band, and no slot-1 copy remains behind it.
 - **Degraded mode**: an install with no runnable python3, or an unreadable registry, delivers no scope-file text at all; `lib/ga-doctor.sh` MUST warn when a part slot is bound in that state.
 
-The slot-1 blocks are a curated, deliberate allowlist of named blocks against named rosters; any addition is a governance decision, never an ad-hoc generalization to another rule or scope.
+The slot-1 blocks are a curated, deliberate allowlist of named blocks, each gated by a named roster or by the spawning agent's own canary file; any addition is a governance decision, never an ad-hoc generalization to another rule or scope.
 
 | Block | Source | Roster |
 |---|---|---|
 | `AGENT-INJECT:BUDGET-DEV` | `scoped/shared-turn-budget.md` | `BUDGET_DEV_AGENTS` |
 | `AGENT-INJECT:BUDGET-ANALYSIS` | `scoped/shared-turn-budget.md` | `BUDGET_ANALYSIS_AGENTS` |
 | `AGENT-INJECT:WIKI-UNTRUSTED` | `rules/glass-atrium/core-wiki-reference.md` | `WIKI_UNTRUSTED_AGENTS` |
+| the canary block | the spawning agent type's daemon-written `<agent>.json`, in `hooks/inject-scope-rules.sh` → `CANARY_DIR` | none — gated by the agent's own canary file; treatment-arm spawns only |
 
 Those block rosters are declared in the hook itself. `STYLEREF_AGENTS`, single-sited in `hooks/lib/styleref-roster.sh`, is NOT an injection roster: it is the `style_ref` review_flag roster that `hooks/lib/style-ref-consts.sh` reads, and it equals the DEV rows whose `rules.scope` is `scoped/scope-dev.md`.
 
@@ -144,11 +145,13 @@ Roster curation — why each is the shape it is:
 - `WIKI_UNTRUSTED_AGENTS` — glass-atrium-intel-planner · glass-atrium-intel-reporter · glass-atrium-qa-code-reviewer · glass-atrium-qa-debugger · glass-atrium-design-designer · glass-atrium-wiki-curator, the LIGHT Bash-holding wiki-reader cluster.
   - The code-DEV agents hold Bash too and are deliberately NOT on it; they stay covered by the agent-independent write-side control and the read-time advisory. MANUAL-curated — a new heavy DEV agent is deliberately NOT added.
 
-Two injection sources are not rule files of this matrix, and neither gains membership by being injected:
+These injection sources are not rule files of this matrix, and none gains membership by being injected:
 
 - `scoped/shared-turn-budget.md` is an injection-TEXT source only — its policy SoT stays the Tier-1 `agents/GLASS_ATRIUM_GLOBAL_RULES.md` Turn Budget & Graceful Exit section, so it carries NO tier membership and no matrix row.
 - `AGENT-INJECT:WIKI-UNTRUSTED` is the ONLY injected block sourced from a **Tier-1** rule file, carrying that file's raw-store data-not-instruction clause [LLM01] to `WIKI_UNTRUSTED_AGENTS`.
   - `core-wiki-reference.md` is ALL-scope Tier 1, so its membership sits in the ALL column below and on no registry row; the injection delivers a clause body, grants no membership and changes no tier.
+- The canary block's file carries trial text, not a rule: the daemon writes it while that agent's trial or A/A is open.
+  - Its file contract: `hooks/inject-scope-rules.sh` → `set_canary_block`.
 
 ### Membership vs. Delivery (per tier)
 
