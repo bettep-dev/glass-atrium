@@ -8912,9 +8912,9 @@ def _get_selected_design_effect(payload: dict[str, float]) -> float:
     return effect.selected
 
 
-def _warn_power_unchecked(cause: str, counted: str) -> None:
+def _warn_power_unchecked(cause: str, scope: str) -> None:
     sys.stderr.write(
-        f"[daemon-cycle] WARN: power check — {cause}; {counted} counts unchecked, none passing\n"
+        f"[daemon-cycle] WARN: power check — {cause}; {scope} counts unchecked, none passing\n"
     )
 
 
