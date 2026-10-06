@@ -37,6 +37,18 @@ _TRIAL_KEY = "a" * 64
 _AGENT = "glass-atrium-dev-python"
 # Declared width of the event and actor columns in the ledger migration.
 _TOKEN_COLUMN_CHARS = 64
+_SPOOL = "inject-scope-rules.manifest.log.20261005T030000Z.spool"
+# A canary delivery the daemon bound to no trial; its key makes a spool re-read add no row.
+_UNBOUND_DELIVERY = SimpleNamespace(
+    EVENT="canary-unbound-delivery",
+    PAYLOAD={
+        "agent": _AGENT,
+        "spool": _SPOOL,
+        "line_offset": 0,
+        "salt_id": None,
+        "delivered_hash": "c" * 64,
+    },
+)
 
 
 @contextlib.contextmanager
@@ -90,6 +102,18 @@ class TestTrialLedgerClosedSets(unittest.TestCase):
                     ledger.ACTOR.AA,
                     {"start_id": 7, "fingerprint": None},
                 ),
+                (
+                    "unbound-delivery payload missing the salt",
+                    _UNBOUND_DELIVERY.EVENT,
+                    ledger.ACTOR.AA,
+                    {k: v for k, v in _UNBOUND_DELIVERY.PAYLOAD.items() if k != "salt_id"},
+                ),
+                (
+                    "unbound-delivery payload with an extra key",
+                    _UNBOUND_DELIVERY.EVENT,
+                    ledger.ACTOR.AA,
+                    {**_UNBOUND_DELIVERY.PAYLOAD, "trial": None},
+                ),
             )
             for name, event, actor, payload in rows:
                 with (
@@ -100,7 +124,7 @@ class TestTrialLedgerClosedSets(unittest.TestCase):
                         helper.write_trial_ledger_row(event, actor, payload)
                     connect.assert_not_called()
 
-    def test_the_aa_lifecycle_rows_pass_the_closed_sets_and_reach_the_connection(
+    def test_the_aa_harness_rows_pass_the_closed_sets_and_reach_the_connection(
         self,
     ) -> None:
         # aa-start opens the A/A, aa-result closes it; a refused value never connects.
@@ -122,6 +146,7 @@ class TestTrialLedgerClosedSets(unittest.TestCase):
                     "fingerprint": None,
                 },
             ),
+            (_UNBOUND_DELIVERY.EVENT, _UNBOUND_DELIVERY.PAYLOAD),
         )
         with _load_helper() as helper:
             ledger = helper.TRIAL_LEDGER
@@ -241,6 +266,32 @@ class TestTrialLedgerWriterLivePg(unittest.TestCase):
 
         self.assertEqual(counts, [1, 0])
         self.assertEqual([row[5] for row in self._get_rows()], [first])
+
+    def test_an_unbound_delivery_row_lands_once_per_spool_line(self) -> None:
+        self._use_database(self._TEMPLATE.FULL)
+        ledger = self.writer.TRIAL_LEDGER
+        event = _UNBOUND_DELIVERY.EVENT
+        second_line = {**_UNBOUND_DELIVERY.PAYLOAD, "line_offset": 1, "salt_id": 7}
+
+        counts = [
+            self.writer.write_trial_ledger_row(
+                event,
+                ledger.ACTOR.AA,
+                payload,
+                agent=_AGENT,
+                dedupe_key=f"{event}:{_SPOOL}:{payload['line_offset']}",
+            )
+            for payload in (_UNBOUND_DELIVERY.PAYLOAD, _UNBOUND_DELIVERY.PAYLOAD, second_line)
+        ]
+
+        self.assertEqual(counts, [1, 0, 1])
+        self.assertEqual(
+            [(row[1], row[3], row[4], row[5], row[6]) for row in self._get_rows()],
+            [
+                (_AGENT, event, "daemon-cycle-aa", payload, f"{event}:{_SPOOL}:{offset}")
+                for offset, payload in enumerate((_UNBOUND_DELIVERY.PAYLOAD, second_line))
+            ],
+        )
 
     def test_rows_without_a_dedupe_key_each_land(self) -> None:
         self._use_database(self._TEMPLATE.FULL)

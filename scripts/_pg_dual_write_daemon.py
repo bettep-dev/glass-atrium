@@ -1136,6 +1136,8 @@ _TRIAL_LEDGER_EVENT = SimpleNamespace(
     AA_RESULT="aa-result",  # closes the A/A; dedupe_key = aa-result:<start id>
     # Session clustering; a period (block-level) design effect is its own event, never this one.
     AA_SESSION_DESIGN_EFFECT="aa-session-design-effect",
+    # a canary bound to no trial; dedupe_key = canary-unbound-delivery:<spool>:<line offset>
+    CANARY_UNBOUND_DELIVERY="canary-unbound-delivery",
 )
 
 # The ledger's closed sets, declared once: event and actor are VARCHAR columns, so nothing
@@ -1151,6 +1153,13 @@ TRIAL_LEDGER = SimpleNamespace(
         _TRIAL_LEDGER_EVENT.AA_SESSION_DESIGN_EFFECT: ("anova", "size_weighted"),
         _TRIAL_LEDGER_EVENT.AA_START: ("fingerprint", "started_at", "duration"),
         _TRIAL_LEDGER_EVENT.AA_RESTART: ("start_id", "reason", "fingerprint"),
+        _TRIAL_LEDGER_EVENT.CANARY_UNBOUND_DELIVERY: (
+            "agent",
+            "spool",
+            "line_offset",
+            "salt_id",
+            "delivered_hash",
+        ),
     },
 )
 
