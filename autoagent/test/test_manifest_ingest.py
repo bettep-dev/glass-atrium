@@ -28,6 +28,7 @@ import unittest
 from collections.abc import Callable
 from datetime import datetime, timezone
 from pathlib import Path
+from types import SimpleNamespace
 from unittest import mock
 
 _REPO_ROOT = Path(__file__).resolve().parent.parent.parent
@@ -55,13 +56,31 @@ _CYCLE_2 = datetime(2026, 10, 6, 3, 0, 0, tzinfo=timezone.utc)
 _CYCLE_3 = datetime(2026, 10, 7, 3, 0, 0, tzinfo=timezone.utc)
 
 
-def _get_line(agent_id: str = "a41f0c2e9b", session_id: str | None = "e0e449e3-7b17") -> str:
-    """One hook MANIFEST line; session_id None = a line written before the session field."""
+def _get_line(
+    agent_id: str = "a41f0c2e9b", session_id: str | None = "e0e449e3-7b17", exposure: str = ""
+) -> str:
+    """One hook MANIFEST line; session_id None = a line written before the session field.
+
+    exposure "" = a line written before the canary exposure fields.
+    """
     session_field = "" if session_id is None else f" session_id={session_id}"
     return (
         f"2026-10-05T17:00:00Z [inject-scope-rules] MANIFEST agent_id={agent_id}{session_field}"
-        " agent=glass-atrium-dev-python ctx_bytes=1166 digest=9f2c blocks=emit,meter,budget-dev\n"
+        f" agent=glass-atrium-dev-python ctx_bytes=1166 digest=9f2c{exposure}"
+        " blocks=emit,meter,budget-dev\n"
     )
+
+
+_PLAIN_SHA256 = hashlib.sha256(b"plain").hexdigest()
+# A treatment spawn the canary reached, as the hook writes it, and the row fields it parses to.
+_TREATED = SimpleNamespace(
+    EXPOSURE=f" arm=1 salt_id=4398046511107 delivered=1 delivered_hash={_PLAIN_SHA256}",
+    FIELDS=(1, 4398046511107, True, _PLAIN_SHA256),
+)
+_CONTROL = SimpleNamespace(
+    EXPOSURE=" arm=0 salt_id=3 delivered=0 delivered_hash=none", FIELDS=(0, 3, False, None)
+)
+_PRE_FIELD = (None, None, None, None)
 
 
 class _SpawnManifestTable:
@@ -153,6 +172,17 @@ class TestManifestRotation(_IngestCase):
         self.assertEqual(len(self.table.rows), 4, "a line written across the rotation was lost")
         self.assertEqual(ingest.rotated_to, self._get_spools()[0].name)
 
+    def test_an_ingested_line_keeps_its_exposure_fields_across_a_rotation(self) -> None:
+        self._append(self.live_log, _get_line(exposure=_TREATED.EXPOSURE))
+        self._ingest(_CYCLE_1)
+        (spool,) = self._get_spools()
+        self._append(spool, _get_line("late-append", exposure=_CONTROL.EXPOSURE))
+        self._ingest(_CYCLE_2)
+
+        self.assertFalse(spool.exists(), "the re-read spool was not unlinked")
+        stored = [row[7:] for _, row in sorted(self.table.rows.items())]
+        self.assertEqual(stored, [_TREATED.FIELDS, _CONTROL.FIELDS])
+
     def test_an_unterminated_last_line_waits_for_the_re_read(self) -> None:
         self._append(self.live_log, _get_line() + _get_line("mid-write").rstrip("\n"))
         self._ingest(_CYCLE_1)
@@ -214,6 +244,7 @@ class TestManifestRotation(_IngestCase):
                     4392,
                     "emit:/Users/dev/.glass-atrium/hooks/inject-scope-rules.sh"
                     ";lesson:/Users/dev/.glass-atrium/data/lessons.json",
+                    *_PRE_FIELD,
                 )
             ],
         )
@@ -350,6 +381,50 @@ class TestManifestCoverageAfterRotation(_IngestCase):
         self.assertIn("records=3 agents=1", result.stdout)
 
 
+@unittest.skipIf(dc is None, f"daemon_cycle import failed: {_IMPORT_ERROR}")
+class TestManifestLineParse(unittest.TestCase):
+    """A MANIFEST line's canary exposure fields → the row's arm, salt id, delivered and hash."""
+
+    def test_exposure_fields_parse_to_their_column_values(self) -> None:
+        rows = (
+            ("line predating the fields", "", _PRE_FIELD),
+            ("treatment, delivered", _TREATED.EXPOSURE, _TREATED.FIELDS),
+            ("control, salt read", _CONTROL.EXPOSURE, _CONTROL.FIELDS),
+            (
+                "no salt read",
+                " arm=none salt_id=none delivered=0 delivered_hash=none",
+                (None, None, False, None),
+            ),
+            (
+                "salt at the BIGINT maximum",
+                f" arm=1 salt_id={2**63 - 1} delivered=0 delivered_hash=none",
+                (1, 2**63 - 1, False, None),
+            ),
+        )
+        for name, exposure, fields in rows:
+            with self.subTest(name):
+                row = dc._get_manifest_row(0, _get_line(exposure=exposure).rstrip("\n"))
+                self.assertIsNotNone(row)
+                self.assertEqual(row[7:], fields)
+                self.assertEqual(row[6], "emit,meter,budget-dev")
+
+    def test_exposure_fields_no_column_can_hold_give_no_row(self) -> None:
+        # An uninsertable value would fail the spool's insert on every cycle.
+        rows = (
+            ("salt past BIGINT", f" arm=1 salt_id={2**63} delivered=0 delivered_hash=none"),
+            ("arm outside 0 and 1", " arm=2 salt_id=3 delivered=0 delivered_hash=none"),
+            ("delivered not a flag", " arm=1 salt_id=3 delivered=yes delivered_hash=none"),
+            (
+                "hash past 64 characters",
+                f" arm=1 salt_id=3 delivered=1 delivered_hash={_PLAIN_SHA256}0",
+            ),
+        )
+        for name, exposure in rows:
+            with self.subTest(name):
+                line = _get_line(exposure=exposure).rstrip("\n")
+                self.assertIsNone(dc._get_manifest_row(0, line))
+
+
 _FIELD_RE = re.compile(r" (\w+)=(\S*)")
 
 
@@ -372,6 +447,10 @@ class TestManifestArmParity(unittest.TestCase):
         self.canary.parent.mkdir(parents=True)
 
     def _spawn(self, salt: int, raw_agent_id: str, text: str) -> dict[str, str]:
+        line = self._spawn_line(salt, raw_agent_id, text)
+        return dict(_FIELD_RE.findall(line.split(" blocks=", 1)[0]))
+
+    def _spawn_line(self, salt: int, raw_agent_id: str, text: str) -> str:
         self.canary.write_text(
             json.dumps(
                 {
@@ -405,8 +484,7 @@ class TestManifestArmParity(unittest.TestCase):
             check=False,
         )
         self.assertEqual(result.returncode, 0, result.stderr)
-        line = log.read_text(encoding="utf-8")
-        return dict(_FIELD_RE.findall(line.split(" blocks=", 1)[0]))
+        return log.read_text(encoding="utf-8")
 
     def test_the_arm_and_delivered_hash_equal_hashlib_over_the_recorded_values(self) -> None:
         # name, salt, raw envelope agent_id, canary text, the agent_id the MANIFEST records
@@ -449,6 +527,33 @@ class TestManifestArmParity(unittest.TestCase):
             if _get_arm(str(salt), raw_id) != _get_arm(str(salt), recorded_id)
         }
         self.assertIn("multibyte text and id", raw_id_splits)
+
+    @unittest.skipIf(dc is None, f"daemon_cycle import failed: {_IMPORT_ERROR}")
+    def test_a_hook_line_round_trips_through_the_parser_with_every_exposure_field(self) -> None:
+        rows = (
+            ("treatment, delivered", 7, "a1", "line one\nline two\n"),
+            ("control", 3, "a1", "plain"),
+            ("unknown agent_id, no arm", 5, "", "plain"),
+        )
+        arms = set()
+        for name, salt, raw_id, text in rows:
+            with self.subTest(name):
+                line = self._spawn_line(salt, raw_id, text)
+                fields = dict(_FIELD_RE.findall(line.split(" blocks=", 1)[0]))
+                row = dc._get_manifest_row(0, line.rstrip("\n"))
+                self.assertIsNotNone(row, line)
+                self.assertEqual(
+                    row[7:],
+                    (
+                        None if fields["arm"] == "none" else int(fields["arm"]),
+                        None if fields["salt_id"] == "none" else int(fields["salt_id"]),
+                        fields["delivered"] == "1",
+                        None if fields["delivered_hash"] == "none" else fields["delivered_hash"],
+                    ),
+                )
+                arms.add(fields["arm"])
+        # Both arms and the no-arm form, or a field form goes unexercised.
+        self.assertEqual(arms, {"0", "1", "none"})
 
     def test_an_empty_agent_id_records_unknown_with_no_arm(self) -> None:
         fields = self._spawn(5, "", "plain")
@@ -553,6 +658,8 @@ class TestSpawnManifestWriterLivePg(unittest.TestCase):
     """The writer's real SQL on the ephemeral cluster; skips anywhere else."""
 
     _SPOOL = "inject-scope-rules.manifest.log.20261005T030000Z.4242.spool"
+    # Built by live-pg-ephemeral.bats up to the migration adding the exposure columns.
+    _ABSENT_DB = "spawn_manifest_exposure_absent"
 
     def setUp(self) -> None:
         self.conn = get_ephemeral_connection()
@@ -560,12 +667,12 @@ class TestSpawnManifestWriterLivePg(unittest.TestCase):
         import _pg_dual_write_daemon as writer
 
         self.writer = writer
-        self.addCleanup(self._delete_rows)
+        self.addCleanup(self._delete_rows, self.conn)
 
-    def _delete_rows(self) -> None:
-        with self.conn.cursor() as cur:
+    def _delete_rows(self, conn) -> None:
+        with conn.cursor() as cur:
             cur.execute("DELETE FROM core.spawn_manifest WHERE spool = %s", (self._SPOOL,))
-        self.conn.commit()
+        conn.commit()
 
     def _get_rows(self, data: str, *, is_final: bool) -> list[tuple[object, ...]]:
         rows, _ = dc._get_manifest_rows(data.encode("utf-8"), is_final=is_final)
@@ -584,6 +691,52 @@ class TestSpawnManifestWriterLivePg(unittest.TestCase):
         self.assertEqual(self.writer.write_spawn_manifest_rows(self._SPOOL, reread), 3)
         self.assertEqual(self.writer.write_spawn_manifest_rows(self._SPOOL, reread), 3)
         self.assertEqual(self.writer.get_spawn_manifest_row_count(self._SPOOL), 3)
+
+    def test_exposure_fields_are_stored_and_a_pre_field_line_stores_nulls(self) -> None:
+        rows = self._get_rows(
+            _get_line(exposure=_TREATED.EXPOSURE) + _get_line(exposure=_CONTROL.EXPOSURE)
+            + _get_line(),
+            is_final=True,
+        )
+        self.writer.write_spawn_manifest_rows(self._SPOOL, rows)
+
+        with self.conn.cursor() as cur:
+            cur.execute(
+                "SELECT arm, salt_id, delivered, delivered_hash FROM core.spawn_manifest"
+                " WHERE spool = %s ORDER BY line_offset",
+                (self._SPOOL,),
+            )
+            stored = cur.fetchall()
+        self.assertEqual(stored, [_TREATED.FIELDS, _CONTROL.FIELDS, _PRE_FIELD])
+
+    def test_a_schema_without_the_exposure_columns_still_writes_the_row(self) -> None:
+        import psycopg
+
+        absent = psycopg.connect(dbname=self._ABSENT_DB, connect_timeout=2)
+        self.addCleanup(absent.close)
+        with absent.cursor() as cur:
+            cur.execute(
+                "SELECT count(*) FROM information_schema.columns WHERE table_schema = 'core'"
+                " AND table_name = 'spawn_manifest' AND column_name = 'delivered'"
+            )
+            self.assertEqual(cur.fetchone()[0], 0, "the exposure columns are present")
+        self.addCleanup(self._delete_rows, absent)
+        rows = self._get_rows(_get_line(exposure=_TREATED.EXPOSURE) * 2, is_final=True)
+        stderr = io.StringIO()
+        with (
+            mock.patch.object(
+                self.writer,
+                "_connect",
+                lambda: psycopg.connect(dbname=self._ABSENT_DB, connect_timeout=2),
+            ),
+            contextlib.redirect_stderr(stderr),
+        ):
+            rows_present = self.writer.write_spawn_manifest_rows(self._SPOOL, rows)
+
+        self.assertEqual(rows_present, 2)
+        self.assertRegex(
+            stderr.getvalue(), r"DEGRADED .*20261009000000_add_spawn_manifest_arm_fields"
+        )
 
     def test_unknown_id_lines_store_null_ids_on_separate_rows(self) -> None:
         rows = self._get_rows(_get_line("unknown", "unknown") * 2, is_final=True)

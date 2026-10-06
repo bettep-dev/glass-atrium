@@ -11603,20 +11603,31 @@ MANIFEST = SimpleNamespace(
     # Spool name contract shared with hooks/inject-scope-rules.sh → INJECT_MANIFEST_SPOOL_SUFFIX_RE.
     SPOOL_SUFFIX_RE=re.compile(r"[0-9]{8}T[0-9]{6}Z\.[0-9]+\.spool"),
     # Lesson fields: the v1.0.1 hook's shape, still in upgrading installs' live logs.
+    # Exposure fields (inject-scope-rules.sh → get_canary_exposure_fields): a form no column holds → no match.
     LINE_RE=re.compile(
         r"(?P<ts>\S+) \[inject-scope-rules\] MANIFEST agent_id=(?P<agent_id>\S+)"
         r"(?: session_id=(?P<session_id>\S+))? agent=(?P<agent>\S+)"
         r" ctx_bytes=(?P<ctx_bytes>[0-9]+)(?: digest=\S+)?"
-        r"(?: lessons=\S+ lesson_truncated=[0-9]+)? blocks=(?P<blocks>.*)"
+        r"(?: lessons=\S+ lesson_truncated=[0-9]+)?"
+        r"(?: arm=(?P<arm>[01]|none) salt_id=(?P<salt_id>0|[1-9][0-9]*|none)"
+        r" delivered=(?P<delivered>[01]) delivered_hash=(?P<delivered_hash>[0-9a-f]{64}|none))?"
+        r" blocks=(?P<blocks>.*)"
     ),
+    NONE_VALUE="none",
     UNKNOWN_ID="unknown",
     AGENT_TYPE_MAX_CHARS=64,
 )
 MANIFEST_SPOOL_CLOSED_EVAL_RESULT = "manifest-spool-closed"
 _PG_INTEGER_MAX = 2**31 - 1
+_PG_BIGINT_MAX = 2**63 - 1
 
 # Optional, not `str | None`: an install's CLT python3 3.9 cannot evaluate the union.
-ManifestRow = tuple[int, Optional[str], str, Optional[str], datetime, int, str]  # noqa: UP045
+# arm, salt id, delivered, delivered hash — all None on a line predating the fields.
+ManifestExposure = tuple[Optional[int], Optional[int], Optional[bool], Optional[str]]  # noqa: UP045
+ManifestRow = tuple[
+    int, Optional[str], str, Optional[str], datetime, int, str,  # noqa: UP045
+    Optional[int], Optional[int], Optional[bool], Optional[str],  # noqa: UP045
+]
 
 
 @dataclass
@@ -11813,8 +11824,8 @@ def _get_manifest_row(offset: int, line: str) -> ManifestRow | None:
         return None
     ctx_bytes = int(match["ctx_bytes"])
     agent_type = match["agent"]
-    # Over a spawn_manifest column bound → uninsertable → no row, not a stuck spool.
-    if ctx_bytes > _PG_INTEGER_MAX or len(agent_type) > MANIFEST.AGENT_TYPE_MAX_CHARS:
+    exposure = _get_manifest_exposure(match)
+    if not _is_manifest_row_insertable(ctx_bytes, agent_type, exposure[1]):
         return None
     return (
         offset,
@@ -11824,11 +11835,36 @@ def _get_manifest_row(offset: int, line: str) -> ManifestRow | None:
         started_at,
         ctx_bytes,
         match["blocks"],
+        *exposure,
+    )
+
+
+def _is_manifest_row_insertable(ctx_bytes: int, agent_type: str, salt_id: int | None) -> bool:
+    # Over a spawn_manifest column bound → uninsertable → no row, not a stuck spool.
+    return (
+        ctx_bytes <= _PG_INTEGER_MAX
+        and len(agent_type) <= MANIFEST.AGENT_TYPE_MAX_CHARS
+        and (salt_id is None or salt_id <= _PG_BIGINT_MAX)
     )
 
 
 def _get_manifest_id(value: str | None) -> str | None:
     return None if value in (None, MANIFEST.UNKNOWN_ID) else value
+
+
+def _get_manifest_exposure(match: re.Match[str]) -> ManifestExposure:
+    if match["delivered"] is None:
+        return (None, None, None, None)
+    return (
+        _get_manifest_number(match["arm"]),
+        _get_manifest_number(match["salt_id"]),
+        match["delivered"] == "1",
+        None if match["delivered_hash"] == MANIFEST.NONE_VALUE else match["delivered_hash"],
+    )
+
+
+def _get_manifest_number(value: str) -> int | None:
+    return None if value == MANIFEST.NONE_VALUE else int(value)
 
 
 def run_cycle(

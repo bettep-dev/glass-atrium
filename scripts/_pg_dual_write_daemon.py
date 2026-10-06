@@ -279,6 +279,7 @@ MIGRATION = SimpleNamespace(
     PROVENANCE="20260803000001_add_daemon_run_apply_status_provenance",
     PATTERN_EVIDENCE="20261005000000_add_pattern_evidence_provenance",
     TRIAL_LEDGER="20261008000000_add_trial_ledger_and_cycle_verdicts",
+    SPAWN_MANIFEST_EXPOSURE="20261009000000_add_spawn_manifest_arm_fields",
 )
 
 
@@ -1052,26 +1053,66 @@ def write_spawn_manifest_rows(spool, rows):
     """INSERT one spool's MANIFEST lines in one transaction → the rows the spool now has.
 
     rows: (line_offset, agent_id, agent_type, session_id, started_at, ctx_bytes,
-    blocks) tuples. (spool, line_offset) is the ingest position, so a re-read of the
-    same spool adds only lines appended since and a crash re-read adds nothing. The
-    count is read inside the same transaction: the caller unlinks the spool on it.
-    Raises on any PG fault, a schema without the table included.
+    blocks, arm, salt_id, delivered, delivered_hash) tuples. (spool, line_offset) is
+    the ingest position, so a re-read of the same spool adds only lines appended since
+    and a crash re-read adds nothing. The count is read inside the same transaction:
+    the caller unlinks the spool on it. A schema without the exposure columns stores
+    the row without them and names the migration on stderr. Raises on any other PG
+    fault, a schema without the table included.
     """
-    sql = """
+    is_degraded = False
+    with _connect() as conn:
+        try:
+            _insert_spawn_manifest_rows(conn, spool, rows, has_exposure=True)
+        except pg_errors.UndefinedColumn:
+            # SQLSTATE 42703 by class, as in compose_daemon_run_apply_status; a 42703 from
+            # the column-free statement is outside the try and propagates.
+            is_degraded = True
+            conn.rollback()
+            _insert_spawn_manifest_rows(conn, spool, rows, has_exposure=False)
+        with conn.cursor() as cur:
+            cur.execute(_SPAWN_MANIFEST_COUNT_SQL, (spool,))
+            rows_present = cur.fetchone()[0]
+        conn.commit()
+    if is_degraded:
+        sys.stderr.write(
+            "[autoagent-daemon] op=write_spawn_manifest_rows DEGRADED "
+            f"columns=arm,salt_id,delivered,delivered_hash absent (spool={spool}) — rows "
+            "written without their canary exposure fields; apply migration "
+            f"{MIGRATION.SPAWN_MANIFEST_EXPOSURE} and later lines record them\n"
+        )
+    return rows_present
+
+
+def _insert_spawn_manifest_rows(conn, spool, rows, *, has_exposure):
+    if not rows:
+        return
+    if has_exposure:
+        sql, params = _SPAWN_MANIFEST_INSERT_SQL.FULL, [(spool, *row) for row in rows]
+    else:
+        sql = _SPAWN_MANIFEST_INSERT_SQL.PRE_EXPOSURE
+        params = [(spool, *row[:7]) for row in rows]
+    with conn.cursor() as cur:
+        cur.executemany(sql, params)
+
+
+_SPAWN_MANIFEST_INSERT_SQL = SimpleNamespace(
+    FULL="""
+        INSERT INTO core.spawn_manifest
+            (spool, line_offset, agent_id, agent_type, session_id, started_at,
+             ctx_bytes, blocks, arm, salt_id, delivered, delivered_hash)
+        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+        ON CONFLICT (spool, line_offset) DO NOTHING
+    """,
+    # A schema before MIGRATION.SPAWN_MANIFEST_EXPOSURE.
+    PRE_EXPOSURE="""
         INSERT INTO core.spawn_manifest
             (spool, line_offset, agent_id, agent_type, session_id, started_at,
              ctx_bytes, blocks)
         VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
         ON CONFLICT (spool, line_offset) DO NOTHING
-    """
-    with _connect() as conn:
-        with conn.cursor() as cur:
-            if rows:
-                cur.executemany(sql, [(spool, *row) for row in rows])
-            cur.execute(_SPAWN_MANIFEST_COUNT_SQL, (spool,))
-            rows_present = cur.fetchone()[0]
-        conn.commit()
-    return rows_present
+    """,
+)
 
 
 def get_spawn_manifest_row_count(spool):

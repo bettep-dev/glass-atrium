@@ -46,6 +46,9 @@ setup_file() {
   createdb -h "${EPH_SOCKDIR}" -p "${EPH_PORT}" -T glass_atrium trial_ledger_tpl || return 1
   createdb -h "${EPH_SOCKDIR}" -p "${EPH_PORT}" -T cycle_verdicts_absent_tpl \
     trial_ledger_absent_tpl || return 1
+  # Spawn-manifest writer rows: the chain before the migration adding the canary exposure columns.
+  eph_pg_create_migrated_db "${EPH_SOCKDIR}" "${EPH_PORT}" spawn_manifest_exposure_absent \
+    20261009000000_add_spawn_manifest_arm_fields || return 1
 }
 
 teardown_file() {
