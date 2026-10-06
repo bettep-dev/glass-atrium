@@ -19,6 +19,8 @@
 #   Session field, backstop and spool window pinned here:
 #     - every line carries the envelope's session_id as a path-safe key (`unknown` when absent),
 #       ahead of the line-final `blocks=`.
+#     - every line carries the canary exposure fields arm, salt_id, delivered and delivered_hash, in that
+#       order, after ctx_bytes (and digest) and ahead of the line-final `blocks=`.
 #     - the spawn-path delete is a backstop: a log at 64 MiB survives a spawn, one above it is deleted.
 #     - the reader counts the live log plus every spool named by the rotation contract
 #       `<live log>.<UTC %Y%m%dT%H%M%SZ>.<pid>.spool`, and no other file beside it.
@@ -345,6 +347,49 @@ write_manifest_lines() {
     }
     [[ "$(grep -o ' session_id=' "${MANIFEST}" | wc -l | tr -cd '0-9')" == "1" ]] || {
       echo "${name}: expected exactly one session_id field (log: $(cat "${MANIFEST}"))"
+      return 1
+    }
+  done
+}
+
+# Write a valid canary for glass-atrium-dev-front under the sandbox data root with salt $1; prints the
+# text's Python hashlib hash, the daemon's side of the contract.
+write_front_canary() {
+  local dir="${BATS_TEST_TMPDIR}/home/.glass-atrium/data/learning/canary"
+  mkdir -p "${dir}"
+  python3 - "${dir}/glass-atrium-dev-front.json" "${1}" <<'PY'
+import hashlib, json, sys, time
+text = "CANARY_EXPOSURE_TEXT"
+digest = hashlib.sha256(text.encode("utf-8")).hexdigest()
+with open(sys.argv[1], "w", encoding="utf-8") as fh:
+    json.dump({"salt": int(sys.argv[2]), "text_sha256": digest, "expires_at": int(time.time()) + 3600, "text": text}, fh)
+print(digest, end="")
+PY
+}
+
+@test "a manifest line carries arm, salt_id, delivered and delivered_hash in order ahead of blocks=" {
+  command -v python3 >/dev/null 2>&1 || skip "python3 not on PATH"
+  local row name salt extra want hash i=0
+  # name|salt (empty = no canary file, so that row runs first)|extra env|want — salt 2 puts sess-A1 in
+  # the treatment arm, salt 8 in control; with no digest tool the arm is left to the daemon's recomputation.
+  local -a rows=(
+    'no canary file|||arm=none salt_id=none delivered=0 delivered_hash=none'
+    'treatment-arm canary|2||arm=1 salt_id=2 delivered=1 delivered_hash=HASH'
+    'control-arm canary|8||arm=0 salt_id=8 delivered=0 delivered_hash=none'
+    'no digest tool|2|INJECT_SCOPE_RULES_DIGEST_CMD=ga-no-such-digest-tool|arm=none salt_id=2 delivered=0 delivered_hash=none'
+  )
+  for row in "${rows[@]}"; do
+    IFS='|' read -r name salt extra want <<<"${row}"
+    i=$((i + 1))
+    MANIFEST="${BATS_TEST_TMPDIR}/exposure-${i}.log"
+    if [[ -n "${salt}" ]]; then
+      hash="$(write_front_canary "${salt}")" || { echo "${name}: fixture failed"; return 1; }
+      want="${want/HASH/${hash}}"
+    fi
+    run_inject "glass-atrium-dev-front" "${BUDGET_FIT}" "${extra}"
+    [[ "${status}" -eq 0 ]] || { echo "${name}: status ${status} (output: ${output})"; return 1; }
+    grep -qE " ctx_bytes=[0-9]+( digest=[0-9a-f]{64})? ${want} blocks=" "${MANIFEST}" || {
+      echo "${name}: want [${want}] between ctx_bytes and blocks= (log: $(cat "${MANIFEST}" 2>/dev/null))"
       return 1
     }
   done

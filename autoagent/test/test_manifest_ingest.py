@@ -15,8 +15,12 @@ from __future__ import annotations
 
 import contextlib
 import fcntl
+import hashlib
 import io
+import json
 import os
+import re
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -344,6 +348,107 @@ class TestManifestCoverageAfterRotation(_IngestCase):
 
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertIn("records=3 agents=1", result.stdout)
+
+
+_FIELD_RE = re.compile(r" (\w+)=(\S*)")
+
+
+def _get_arm(salt_id: str, agent_id: str) -> str:
+    """The daemon's recomputation: sha256 of the decimal salt then the MANIFEST agent_id, mod 2."""
+    return str(int(hashlib.sha256(f"{salt_id}{agent_id}".encode()).hexdigest(), 16) % 2)
+
+
+@unittest.skipUnless(shutil.which("jq") and shutil.which("bash"), "jq or bash not on PATH")
+class TestManifestArmParity(unittest.TestCase):
+    """The hook's MANIFEST arm and delivered hash equal Python hashlib over the line's values."""
+
+    _AGENT = "glass-atrium-dev-python"
+
+    def setUp(self) -> None:
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        self.root = Path(tmp.name)
+        self.canary = self.root / "data" / "learning" / "canary" / f"{self._AGENT}.json"
+        self.canary.parent.mkdir(parents=True)
+
+    def _spawn(self, salt: int, raw_agent_id: str, text: str) -> dict[str, str]:
+        self.canary.write_text(
+            json.dumps(
+                {
+                    "salt": salt,
+                    "text_sha256": hashlib.sha256(text.encode()).hexdigest(),
+                    "expires_at": int(datetime.now(timezone.utc).timestamp()) + 3600,
+                    "text": text,
+                }
+            ),
+            encoding="utf-8",
+        )
+        log = self.root / "manifest.log"
+        log.unlink(missing_ok=True)
+        result = subprocess.run(
+            ["bash", str(_HOOK_SH)],
+            input=json.dumps({"agent_type": self._AGENT, "agent_id": raw_agent_id}),
+            env={
+                "PATH": os.environ.get("PATH", "/usr/bin:/bin"),
+                "HOME": str(self.root / "home"),
+                "GA_DATA_ROOT": str(self.root),
+                "INJECT_SCOPE_RULES_MANIFEST_LOG": str(log),
+                "INJECT_SCOPE_RULES_DROP_LOG": str(self.root / "drop.log"),
+                "INJECT_SCOPE_RULES_SPAWN_COUNTER": str(self.root / "spawns.count"),
+                "INJECT_SCOPE_RULES_AGENTS_DIR": "/nonexistent",
+                "INJECT_SCOPE_RULES_BUDGET_SRC": "/nonexistent",
+                "INJECT_SCOPE_RULES_WIKI_UNTRUSTED_SRC": "/nonexistent",
+                "SUBAGENT_BUDGET_METER_OFF": "1",
+            },
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        line = log.read_text(encoding="utf-8")
+        return dict(_FIELD_RE.findall(line.split(" blocks=", 1)[0]))
+
+    def test_the_arm_and_delivered_hash_equal_hashlib_over_the_recorded_values(self) -> None:
+        # name, salt, raw envelope agent_id, canary text, the agent_id the MANIFEST records
+        rows = (
+            ("text ending in a newline", 7, "a1", "line one\nline two\n", "a1"),
+            ("empty text, id ending in a newline", 12, "a1\n", "", "a1"),
+            (
+                "multibyte text and id",
+                44,
+                "id-\ud55c\uae00-7",
+                "\ud55c\uae00 \u00b7 \u2192 \U0001f680",
+                "id--7",
+            ),
+            ("control arm", 3, "a1", "plain", "a1"),
+            ("salt past 32 bits", 2**40 + 3, "e0e449e3-7b17", "plain", "e0e449e3-7b17"),
+        )
+        delivered_texts = set()
+        arms = set()
+        for name, salt, raw_id, text, recorded_id in rows:
+            with self.subTest(name):
+                fields = self._spawn(salt, raw_id, text)
+                self.assertEqual((fields["agent_id"], fields["salt_id"]), (recorded_id, str(salt)))
+                self.assertEqual(fields["arm"], _get_arm(fields["salt_id"], fields["agent_id"]))
+                want_hash = hashlib.sha256(text.encode()).hexdigest()
+                treated = fields["arm"] == "1"
+                self.assertEqual(
+                    (fields["delivered"], fields["delivered_hash"]),
+                    ("1", want_hash) if treated else ("0", "none"),
+                )
+                arms.add(fields["arm"])
+                if treated:
+                    delivered_texts.add(name)
+        # The table must exercise both arms and deliver each text shape, or a row proves nothing.
+        self.assertEqual(arms, {"0", "1"})
+        self.assertEqual(len(delivered_texts), 3, delivered_texts)
+
+    def test_an_empty_agent_id_records_unknown_with_no_arm(self) -> None:
+        fields = self._spawn(5, "", "plain")
+
+        self.assertEqual(
+            (fields["agent_id"], fields["arm"], fields["delivered"]), ("unknown", "none", "0")
+        )
 
 
 @unittest.skipIf(dc is None, f"daemon_cycle import failed: {_IMPORT_ERROR}")

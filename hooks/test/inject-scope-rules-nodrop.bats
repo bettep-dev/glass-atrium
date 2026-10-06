@@ -93,19 +93,19 @@ setup() {
 }
 
 # Drive the hook with a SubagentStart envelope for $1, assembling from the REAL repo sources with the
-# meter ON. The drop log goes to the Bats tmpdir.
+# meter ON. The drop log goes to the Bats tmpdir. $2 (optional) is the envelope's agent_id.
 run_hook_real() {
-  local agent="${1}" droplog="${BATS_TEST_TMPDIR}/inject-drop.log"
+  local agent="${1}" agent_id="${2:-}" droplog="${BATS_TEST_TMPDIR}/inject-drop.log"
   run bash -c '
-    agent="$1"; hook="$2"; budget="$3"; wiki="$4"; agents="$5"; droplog="$6"
-    payload="$(jq -nc --arg a "${agent}" '\''{agent_type:$a}'\'')"
+    agent="$1"; hook="$2"; budget="$3"; wiki="$4"; agents="$5"; droplog="$6"; id="$7"
+    payload="$(jq -nc --arg a "${agent}" --arg i "${id}" '\''{agent_type:$a} + (if $i == "" then {} else {agent_id:$i} end)'\'')"
     printf "%s" "${payload}" | env -u SUBAGENT_BUDGET_METER_OFF \
       INJECT_SCOPE_RULES_BUDGET_SRC="${budget}" \
       INJECT_SCOPE_RULES_WIKI_UNTRUSTED_SRC="${wiki}" \
       INJECT_SCOPE_RULES_AGENTS_DIR="${agents}" \
       INJECT_SCOPE_RULES_DROP_LOG="${droplog}" \
       bash "${hook}"
-  ' _ "${agent}" "${HOOK_SH}" "${BUDGET_SRC}" "${WIKI_UNTRUSTED_SRC}" "${AGENTS_DIR}" "${droplog}"
+  ' _ "${agent}" "${HOOK_SH}" "${BUDGET_SRC}" "${WIKI_UNTRUSTED_SRC}" "${AGENTS_DIR}" "${droplog}" "${agent_id}"
 }
 
 # The additionalContext text one hook run emits for $1 under the extra env assignments in $2..; a
@@ -344,7 +344,8 @@ json.dump({"ctm": [dict(row, text="CTM_RECALL_SENTINEL")], "epm": [dict(row, tex
 }
 
 # (f) Slot-1 bound with the canary at its full 1200 B cap: every roster agent, real sources with the
-#     meter ON, still fits the ceiling with zero drops and keeps the canary whole.
+#     meter ON, still fits the ceiling with zero drops and keeps the canary whole. Salt 1 puts agent_id
+#     a1 in the treatment arm, the one arm that receives the text.
 
 @test "every roster agent with a full-cap canary (real sources, meter ON) → canary kept, zero drops, within the ceiling" {
   local canary_dir agent_file agent text
@@ -363,7 +364,7 @@ print(text, end="")
 PY
 )"
     [[ "$(printf '%s' "${text}" | wc -c | tr -cd '0-9')" -eq 1200 ]] || { echo "fixture for ${agent} is not 1200 B" >&2; return 1; }
-    run_hook_real "${agent}"
+    run_hook_real "${agent}" a1
     assert_status 0                      || { echo "FAIL agent=${agent} (status)" >&2; return 1; }
     assert_no_drop                       || { echo "FAIL agent=${agent} (drop)" >&2; return 1; }
     assert_ctx_contains "${text}"        || { echo "FAIL agent=${agent} (canary not delivered whole)" >&2; return 1; }

@@ -5,6 +5,8 @@
 #
 #   Delivered is read from two observables: the canary text in additionalContext, and a `canary:` entry
 #   in the manifest line's `blocks=` list (the only witness for an empty text, which adds no bytes).
+#   Only the treatment arm (sha256 of the salt then the agent_id, mod 2, equal to 1) receives the text;
+#   the fixtures' salt 7 puts agent_id a1 in that arm (test_manifest_ingest.py pins the arm to hashlib).
 #
 # BATS GATING NOTE: @test bodies run under errexit; a mid-body bare `[[ ]]` is inert on bash 3.2.57 but
 #   gates on CI's bash 5.x, so every assertion `return 1`s on mismatch.
@@ -31,15 +33,21 @@ setup() {
 }
 
 # Write a canary file for $1 holding text $2, expiring $3 seconds from now; $4 (optional) replaces the
-# stored hash. The stored hash is Python hashlib over the UTF-8 text — the daemon's side of the contract.
+# stored hash; $5 (optional, default 7) is the salt. The stored hash is Python hashlib over the UTF-8
+# text — the daemon's side of the contract.
 write_canary() {
-  python3 - "${CANARY_DIR}/${1}.json" "${2}" "${3}" "${4:-}" <<'PY'
+  python3 - "${CANARY_DIR}/${1}.json" "${2}" "${3}" "${4:-}" "${5:-7}" <<'PY'
 import hashlib, json, sys, time
-path, text, offset, forced = sys.argv[1], sys.argv[2], int(sys.argv[3]), sys.argv[4]
+path, text, offset, forced, salt = sys.argv[1], sys.argv[2], int(sys.argv[3]), sys.argv[4], int(sys.argv[5])
 digest = forced or hashlib.sha256(text.encode("utf-8")).hexdigest()
 with open(path, "w", encoding="utf-8") as fh:
-    json.dump({"salt": 7, "text_sha256": digest, "expires_at": int(time.time()) + offset, "text": text}, fh)
+    json.dump({"salt": salt, "text_sha256": digest, "expires_at": int(time.time()) + offset, "text": text}, fh)
 PY
+}
+
+# Value of field $1 on the last manifest line; empty when absent.
+manifest_field() {
+  tail -n 1 "${INJECT_SCOPE_RULES_MANIFEST_LOG}" 2>/dev/null | sed -n "s/.* ${1}=\([^ ]*\) .*/\1/p"
 }
 
 # Set $1's mtime to $2 minutes ago, ahead of now when negative (touch -t takes one form on BSD and GNU).
@@ -53,16 +61,18 @@ padded_text() {
 }
 
 # One spawn of $1 with the meter off and every rule source absent, so the context is emit + canary;
-# extra env assignments ride in $2... Writes the context to ${BATS_TEST_TMPDIR}/ctx.txt.
+# extra env assignments ride in $2... The envelope's agent_id is SPAWN_AGENT_ID (default a1; empty →
+# no agent_id field). Writes the context to ${BATS_TEST_TMPDIR}/ctx.txt.
 spawn() {
   local agent="${1}"
   shift
   run bash -c '
-    agent="$1"; hook="$2"; shift 2
-    jq -nc --arg a "${agent}" "{agent_type:\$a, agent_id:\"a1\"}" | env SUBAGENT_BUDGET_METER_OFF=1 \
+    agent="$1"; hook="$2"; id="$3"; shift 3
+    jq -nc --arg a "${agent}" --arg i "${id}" "{agent_type:\$a} + (if \$i == \"\" then {} else {agent_id:\$i} end)" \
+      | env SUBAGENT_BUDGET_METER_OFF=1 \
       INJECT_SCOPE_RULES_AGENTS_DIR=/nonexistent INJECT_SCOPE_RULES_BUDGET_SRC=/nonexistent \
       INJECT_SCOPE_RULES_WIKI_UNTRUSTED_SRC=/nonexistent "$@" bash "${hook}"
-  ' _ "${agent}" "${HOOK_SH}" "$@"
+  ' _ "${agent}" "${HOOK_SH}" "${SPAWN_AGENT_ID-a1}" "$@"
   printf '%s' "${output}" | python3 -c '
 import json, sys
 for line in sys.stdin:
@@ -229,12 +239,51 @@ sys.exit(0 if ctx.endswith(b"\n\n" + sys.argv[2].encode("utf-8")) else 1)
   ! manifest_lists_canary || { echo "control spawn lists a canary"; return 1; }
 
   write_canary "glass-atrium-qa-code-reviewer" "" 3600
-  run bash -c 'jq -nc "{agent_type:\"glass-atrium-qa-code-reviewer\"}" | env -u SUBAGENT_BUDGET_METER_OFF "$@" bash "'"${HOOK_SH}"'"' _ "${repo_env[@]}"
+  run bash -c 'jq -nc "{agent_type:\"glass-atrium-qa-code-reviewer\", agent_id:\"a1\"}" | env -u SUBAGENT_BUDGET_METER_OFF "$@" bash "'"${HOOK_SH}"'"' _ "${repo_env[@]}"
   [[ "${status}" -eq 0 ]] || { echo "treatment: ${output}"; return 1; }
   printf '%s' "${output}" | jq -j '.hookSpecificOutput.additionalContext' >"${BATS_TEST_TMPDIR}/treatment.txt"
   manifest_lists_canary || { echo "empty canary not recorded as delivered: $(tail -n 1 "${INJECT_SCOPE_RULES_MANIFEST_LOG}")"; return 1; }
+  # The record carries the empty text's hash, the value the daemon's hashlib computes for b"".
+  local empty_hash
+  empty_hash="$(python3 -c 'import hashlib; print(hashlib.sha256(b"").hexdigest())')"
+  [[ "${empty_hash}" == "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855" ]] || { echo "hashlib: ${empty_hash}"; return 1; }
+  [[ "$(manifest_field delivered)" == "1" && "$(manifest_field delivered_hash)" == "${empty_hash}" ]] || {
+    echo "empty canary record: $(tail -n 1 "${INJECT_SCOPE_RULES_MANIFEST_LOG}")"
+    return 1
+  }
   cmp -s "${BATS_TEST_TMPDIR}/control.txt" "${BATS_TEST_TMPDIR}/treatment.txt" || {
     echo "treatment context differs from control: $(wc -c <"${BATS_TEST_TMPDIR}/treatment.txt")B vs $(wc -c <"${BATS_TEST_TMPDIR}/control.txt")B"
+    return 1
+  }
+}
+
+@test "the canary reaches exactly the treatment-arm spawns, and the arms split near evenly" {
+  local i arm delivered in_ctx treated=0 n=48
+  write_canary "${AGENT}" "$(padded_text 64)" 3600
+  for ((i = 0; i < n; i++)); do
+    SPAWN_AGENT_ID="spawn-${i}" spawn "${AGENT}"
+    [[ "${status}" -eq 0 ]] || { echo "spawn-${i}: ${output}"; return 1; }
+    arm="$(manifest_field arm)"
+    delivered="$(manifest_field delivered)"
+    in_ctx=0
+    grep -qF "${SENTINEL}" "${BATS_TEST_TMPDIR}/ctx.txt" && in_ctx=1
+    [[ "${arm}" == "0" || "${arm}" == "1" ]] || { echo "spawn-${i}: arm [${arm}]"; return 1; }
+    [[ "${delivered}" == "${arm}" && "${in_ctx}" == "${arm}" ]] || {
+      echo "spawn-${i}: arm ${arm}, delivered ${delivered}, in context ${in_ctx}"
+      return 1
+    }
+    treated=$((treated + arm))
+  done
+  # Fixed ids, so the split is fixed; the bound is about 3 standard deviations of a fair split.
+  ((treated >= 14 && treated <= 34)) || { echo "treatment arm holds ${treated} of ${n}"; return 1; }
+}
+
+@test "a spawn with no agent_id gets no canary and no arm, even beside a valid file" {
+  write_canary "${AGENT}" "$(padded_text 64)" 3600
+  SPAWN_AGENT_ID="" spawn "${AGENT}"
+  assert_delivered 0 || return 1
+  [[ "$(manifest_field agent_id)" == "unknown" && "$(manifest_field arm)" == "none" ]] || {
+    echo "unknown spawn record: $(tail -n 1 "${INJECT_SCOPE_RULES_MANIFEST_LOG}")"
     return 1
   }
 }

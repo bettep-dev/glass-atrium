@@ -38,7 +38,7 @@
 #
 # C03 — observability: the drop sink records only what was SHED, so "did this agent actually see that
 # rule at that spawn" was an assumption. One bounded MANIFEST line per injection-attempted spawn now
-# records what WAS injected (agent id/type · session id · ordered kept labels with their source paths · assembled
+# records what WAS injected (agent id/type · session id · canary arm, salt and delivery · ordered kept labels with their source paths · assembled
 # bytes · an optional digest), into its OWN capped sink so the
 # drop-rate numerator's rotation is untouched. `--manifest-coverage` is its required reader.
 #
@@ -193,8 +193,8 @@ readonly INJECT_MANIFEST_SPOOL_SUFFIX_RE='^[0-9]{8}T[0-9]{6}Z\.[0-9]+\.spool$'
 
 # Manifest digest tool — empty (default) probes shasum then sha256sum; a non-empty override names the
 # tool exactly. OPTIONAL BY CONTRACT: an absent tool degrades to a manifest line with NO digest field,
-# never an unguarded call that would trip the fail-open ERR trap. The same tool hashes the canary text:
-# an absent tool matches no stored hash, so no canary is delivered. The Bats sandbox points this at an
+# never an unguarded call that would trip the fail-open ERR trap. The same tool hashes the canary text
+# and the canary arm: an absent tool matches no stored hash and assigns no arm, so no canary is delivered. The Bats sandbox points this at an
 # absent command to exercise that degradation without PATH surgery.
 readonly INJECT_MANIFEST_DIGEST_CMD="${INJECT_SCOPE_RULES_DIGEST_CMD:-}"
 
@@ -607,17 +607,43 @@ get_file_mtime() {
   if [[ -n "${mtime}" && "${mtime}" != *[!0-9]* ]]; then printf '%s' "${mtime}"; fi
 }
 
-# 0 when $1 is a regular file (no symlink) within the size bound, whose mtime lies less than the
-# maximum lease before now ($2, epoch seconds) and at most CANARY_MTIME_SKEW_SECONDS after it. An
-# unread mtime reads as not current.
-is_canary_file_current() {
-  local file="${1}" now="${2}" mtime="" size=""
-  [[ -f "${file}" && ! -L "${file}" ]] || return 1
-  mtime="$(get_file_mtime "${file}")"
-  [[ -n "${mtime}" ]] || return 1
-  ((mtime - now <= CANARY_MTIME_SKEW_SECONDS && now - mtime < CANARY_MAX_LEASE_MINUTES * 60)) || return 1
-  size="$(wc -c <"${file}" 2>/dev/null | tr -cd '0-9' || true)"
+# 0 when $1 is a regular file (no symlink) within the size bound.
+is_canary_file_readable() {
+  local size=""
+  [[ -f "${1}" && ! -L "${1}" ]] || return 1
+  size="$(wc -c <"${1}" 2>/dev/null | tr -cd '0-9' || true)"
   [[ -n "${size}" && "${size}" -le "${CANARY_FILE_MAX_BYTES}" ]]
+}
+
+# 0 when the mtime of $1 lies less than the maximum lease before now ($2, epoch seconds) and at most
+# CANARY_MTIME_SKEW_SECONDS after it. An unread mtime reads as not current.
+is_canary_file_current() {
+  local now="${2}" mtime=""
+  mtime="$(get_file_mtime "${1}")"
+  [[ -n "${mtime}" ]] || return 1
+  ((mtime - now <= CANARY_MTIME_SKEW_SECONDS && now - mtime < CANARY_MAX_LEASE_MINUTES * 60))
+}
+
+# Decimal salt of canary JSON $1 — one top-level object whose salt is a non-negative integer, printed
+# in canonical decimal (the daemon's str(salt)); a form jq prints otherwise reads as no salt.
+# stdout: salt or empty.
+get_canary_salt() {
+  local salt=""
+  salt="$(printf '%s' "${1}" | jq -ser '
+    if length == 1 then .[0] else empty end
+    | if type == "object" and (.salt | type == "number" and . >= 0 and . == floor)
+    then .salt else empty end' 2>/dev/null || true)"
+  if [[ "${salt}" =~ ^(0|[1-9][0-9]*)$ ]]; then printf '%s' "${salt}"; fi
+}
+
+# Arm of salt $1 and agent_id $2: sha256 over the bytes `printf '%s%s'` writes, mod 2 — the parity of
+# the last hex digit; 1 = treatment. No digest tool → empty: the daemon's recomputation is the arm.
+# stdout: 0, 1 or empty.
+get_canary_arm() {
+  local digest=""
+  digest="$(printf '%s%s' "${1}" "${2}" | get_stdin_digest)"
+  [[ "${digest}" =~ ^[0-9a-f]{64}$ ]] || return 0
+  printf '%s' "$((16#${digest: -1} % 2))"
 }
 
 # Stored text hash of canary JSON $1 at now $2 (epoch seconds) when well-formed and in lease, else
@@ -635,26 +661,42 @@ get_canary_stored_hash() {
     then .text_sha256 else empty end' 2>/dev/null || true
 }
 
-# Load this agent's canary file into CANARY_BLOCK under the file contract; CANARY_VALID=1 only when the
-# file is current, well-formed and in lease, sha256 of its exact text bytes (`jq -j .text` piped
-# straight into the digest tool, so a trailing newline counts, as in the daemon's Python hashlib)
-# equals the stored hash, and the text fits CANARY_MAX_BYTES. No digest tool → no match. Otherwise no
-# block, not delivered. The content is read ONCE, so every content check sees one snapshot of a file
-# the daemon replaces by rename.
-# The text is the rendered block, delivered verbatim: no hook-side wrapper, so an empty text adds zero
-# bytes and pre-registration sizes exactly what is delivered.
+# Read this agent's canary file: its readable salt and this spawn's arm into CANARY_SALT and
+# CANARY_ARM, then, for a treatment-arm spawn only, the block under the file contract. agent_id
+# `unknown` is excluded — no salt, no arm. The content is read ONCE, so every check sees one snapshot
+# of a file the daemon replaces by rename.
 set_canary_block() {
-  local safe_type="" now="" raw="" stored="" computed="" text="" text_bytes=""
-  CANARY_VALID=0
+  local safe_type="" now="" raw=""
+  CANARY_DELIVERABLE=0
   CANARY_BLOCK=""
+  CANARY_SALT=""
+  CANARY_ARM=""
+  CANARY_HASH=""
   safe_type="$(hook_path_safe_key "${AGENT_TYPE}")"
   CANARY_FILE="${CANARY_DIR}/${safe_type}.json"
   now="$(date +%s 2>/dev/null || true)"
-  [[ -n "${safe_type}" && -n "${now}" && "${now}" != *[!0-9]* ]] || return 0
+  [[ -n "${safe_type}" && -n "${now}" && "${now}" != *[!0-9]* && "${MANIFEST_AGENT_ID}" != "unknown" ]] || return 0
   # shellcheck disable=SC2310  # pure predicate — nothing inside it for errexit to catch
-  is_canary_file_current "${CANARY_FILE}" "${now}" || return 0
+  is_canary_file_readable "${CANARY_FILE}" || return 0
   # Every capture guards its own failure inside the substitution: errtrace runs the ERR trap there.
   raw="$(cat -- "${CANARY_FILE}" 2>/dev/null || true)"
+  CANARY_SALT="$(get_canary_salt "${raw}")"
+  [[ -n "${CANARY_SALT}" ]] || return 0
+  CANARY_ARM="$(get_canary_arm "${CANARY_SALT}" "${MANIFEST_AGENT_ID}")"
+  [[ "${CANARY_ARM}" == "1" ]] || return 0
+  set_canary_delivery "${raw}" "${now}"
+}
+
+# Treatment-arm delivery of canary JSON $1 at now $2: CANARY_DELIVERABLE=1 only when the file is
+# current, well-formed and in lease, sha256 of its exact text bytes (`jq -j .text` piped straight into
+# the digest tool, so a trailing newline counts, as in the daemon's Python hashlib) equals the stored
+# hash, and the text fits CANARY_MAX_BYTES. No digest tool → no match. Otherwise no block.
+# The text is the rendered block, delivered verbatim: no hook-side wrapper, so an empty text adds zero
+# bytes and pre-registration sizes exactly what is delivered.
+set_canary_delivery() {
+  local raw="${1}" now="${2}" stored="" computed="" text="" text_bytes=""
+  # shellcheck disable=SC2310  # pure predicate — nothing inside it for errexit to catch
+  is_canary_file_current "${CANARY_FILE}" "${now}" || return 0
   stored="$(get_canary_stored_hash "${raw}" "${now}")"
   # shellcheck disable=SC2310  # get_stdin_digest never fails; the guard catches a jq failure under pipefail
   computed="$(printf '%s' "${raw}" | jq -j '.text' 2>/dev/null | get_stdin_digest || true)"
@@ -666,7 +708,8 @@ set_canary_block() {
   text_bytes="$(byte_len "${text}")"
   [[ "${text_bytes}" -le "${CANARY_MAX_BYTES}" ]] || return 0
   CANARY_BLOCK="${text}"
-  CANARY_VALID=1
+  CANARY_HASH="${stored}"
+  CANARY_DELIVERABLE=1
 }
 
 # C03: the Read-resolvable source a kept block came from. Delegates the rule-doc blocks to
@@ -692,7 +735,7 @@ manifest_block_kept() {
     budget-dev) [[ "${keep_budget_dev}" -eq 1 && -n "${BUDGET_DEV_BLOCK}" ]] ;;
     budget-analysis) [[ "${keep_budget_analysis}" -eq 1 && -n "${BUDGET_ANALYSIS_BLOCK}" ]] ;;
     # An empty text adds no bytes, so the drop loop's flag flip never sheds it: delivered stays 1.
-    canary) [[ "${CANARY_VALID}" -eq 1 ]] && [[ "${keep_canary}" -eq 1 || -z "${CANARY_BLOCK}" ]] ;;
+    canary) [[ "${CANARY_DELIVERABLE}" -eq 1 ]] && [[ "${keep_canary}" -eq 1 || -z "${CANARY_BLOCK}" ]] ;;
     *) return 1 ;;
   esac
 }
@@ -728,23 +771,36 @@ build_manifest_blocks() {
 # Args: $1=assembled context $2=assembled byte size.
 append_manifest_log() {
   local ctx="${1}" ctx_size="${2}" log_dir="${INJECT_MANIFEST_LOG%/*}"
-  local ts="" agent_id="" session_id="" safe_type="" digest="" digest_field="" blocks=""
+  local ts="" session_id="" safe_type="" digest="" digest_field="" exposure="" blocks=""
   mkdir -p "${log_dir}" 2>/dev/null || return 0
   delete_manifest_log_past_backstop
   # Each helper is internally guarded and always exits 0 (the codebase idiom for an in-hook call — a
   # `|| true` here would only add an SC2310 set -e suppression that buys nothing).
-  agent_id="$(get_manifest_envelope_key "agent_id")"
   session_id="$(get_manifest_envelope_key "session_id")"
   safe_type="$(hook_path_safe_key "${AGENT_TYPE}")"
   [[ -z "${safe_type}" ]] && safe_type="unknown"
   digest="$(manifest_digest "${ctx}")"
   [[ -n "${digest}" ]] && digest_field=" digest=${digest}"
+  exposure="$(get_canary_exposure_fields)"
   blocks="$(build_manifest_blocks)"
   ts="$(date -u +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || true)"
-  printf '%s [inject-scope-rules] MANIFEST agent_id=%s session_id=%s agent=%s ctx_bytes=%s%s blocks=%s\n' \
-    "${ts}" "${agent_id}" "${session_id}" "${safe_type}" "${ctx_size}" "${digest_field}" "${blocks}" \
-    >>"${INJECT_MANIFEST_LOG}" 2>/dev/null || true
+  printf '%s [inject-scope-rules] MANIFEST agent_id=%s session_id=%s agent=%s ctx_bytes=%s%s%s blocks=%s\n' \
+    "${ts}" "${MANIFEST_AGENT_ID}" "${session_id}" "${safe_type}" "${ctx_size}" "${digest_field}" \
+    "${exposure}" "${blocks}" >>"${INJECT_MANIFEST_LOG}" 2>/dev/null || true
   return 0
+}
+
+# The canary exposure fields of this spawn, space-led: the arm and salt the hook read (`none` when
+# unread), whether the canary block reached the child, and the hash of the text it delivered.
+get_canary_exposure_fields() {
+  local delivered=0 delivered_hash="none"
+  # shellcheck disable=SC2310  # pure predicate — nothing inside it for errexit to catch
+  if manifest_block_kept "canary"; then
+    delivered=1
+    delivered_hash="${CANARY_HASH}"
+  fi
+  printf ' arm=%s salt_id=%s delivered=%s delivered_hash=%s' \
+    "${CANARY_ARM:-none}" "${CANARY_SALT:-none}" "${delivered}" "${delivered_hash}"
 }
 
 # Spawn-path backstop: delete the live log once it passes INJECT_MANIFEST_LOG_MAX_BYTES. Fail-open.
@@ -826,7 +882,10 @@ BUDGET_ANALYSIS_BLOCK="$(extract_scope_block "${BUDGET_ANALYSIS_AGENTS}" "${BUDG
 # empty extraction self-skips for every other agent).
 WIKI_UNTRUSTED_BLOCK="$(extract_scope_block "${WIKI_UNTRUSTED_AGENTS}" "${WIKI_UNTRUSTED_SRC_FILE}" "${WIKI_UNTRUSTED_MARKER_START}" "${WIKI_UNTRUSTED_MARKER_END}" "wiki-untrusted")"
 
-# Canary block — any agent whose canary file meets the contract (empty for every other spawn).
+# The envelope agent_id the MANIFEST records — the same reduced string the canary arm hashes.
+MANIFEST_AGENT_ID="$(get_manifest_envelope_key "agent_id")"
+
+# Canary block — a treatment-arm spawn whose agent's canary file meets the contract (empty otherwise).
 set_canary_block
 
 # Emit-format block — ALL subagents (universal, ALWAYS-ON), assembled FIRST. Unconditional:
