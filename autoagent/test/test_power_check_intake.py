@@ -432,7 +432,9 @@ class CheckPatternPowerTest(_StageFixture):
     def _check(self, patterns: list[dc.Pattern], *, skip_loop_emit: bool = False):
         stderr = io.StringIO()
         with contextlib.redirect_stderr(stderr):
-            counts = dc.check_pattern_power(patterns, skip_loop_emit=skip_loop_emit).counts
+            counts = dc.check_pattern_power(
+                patterns, skip_loop_emit=skip_loop_emit
+            ).counts
         self.assertEqual(self.pg_reach, [])
         self.assertEqual(self.statements.refused, [])
         return counts, stderr.getvalue()
@@ -651,7 +653,7 @@ class DesignEffectReadLivePgTest(_StageFixture):
         with contextlib.redirect_stderr(stderr):
             counts = dc.check_pattern_power(
                 patterns or [_pattern(_AGENT.PASSING, 1)], skip_loop_emit=True
-            )
+            ).counts
         self.assertEqual(self.pg_reach, [])
         return counts, stderr.getvalue()
 
