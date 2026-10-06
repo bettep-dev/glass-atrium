@@ -469,6 +469,9 @@ class ExitCode(IntEnum):
     AUTH_OUTAGE = 12
     # unadjudicated backfill committed but its completion record or marker removal failed
     BACKFILL_RECORD_FAILED = 13
+    # --aa-start refused, nothing written — the stderr line names the cause (manifest
+    # unreadable, an A/A already open, ledger unreadable or unwritable)
+    AA_START_REFUSED = 14
 
 
 # Intra-cycle Haiku spacing (FIX #5) ----------------------------------------
@@ -9228,6 +9231,223 @@ def _warn_shadow(cause: str, scope: str) -> None:
     sys.stderr.write(f"[daemon-cycle] WARN: shadow stage — {cause}; {scope}\n")
 
 
+_INSTALL_ROOT = Path(__file__).resolve().parent.parent
+
+AA = SimpleNamespace(
+    # latest aa-start → its id, whether its aa-result exists, the newest fingerprint since it
+    LATEST_START_SQL=(
+        "SELECT s.id, EXISTS (SELECT 1 FROM core.autoagent_trial_ledger r "
+        "WHERE r.event = %(result)s AND r.dedupe_key = %(result_prefix)s::text || s.id::text), "
+        "(SELECT f.payload->'fingerprint' FROM core.autoagent_trial_ledger f "
+        "WHERE f.event = ANY(%(fingerprinted)s) AND f.id >= s.id ORDER BY f.id DESC LIMIT 1) "
+        "FROM core.autoagent_trial_ledger s WHERE s.event = %(start)s ORDER BY s.id DESC LIMIT 1"
+    ),
+    # D2, frozen in the start row: 14 days; 28 when one of the five busiest agents has < 200 spawns
+    DURATION={
+        "days": 14,
+        "extended_days": 28,
+        "busiest_agents": 5,
+        "minimum_spawns": 200,
+    },
+    # N66: installed manifest entries a restart keys on; live file bytes are never hashed
+    SCOPE=SimpleNamespace(
+        FILES=frozenset({"hooks/inject-scope-rules.sh"}),
+        DIRS=("autoagent/", "agents/"),
+        MIGRATION=re.compile(r"monitor/prisma/migrations/[^/]+/migration\.sql"),
+        LEDGER_NAME=re.compile(r'\bcore"?\."?autoagent_trial_ledger\b'),
+    ),
+    RESTART_REASON=SimpleNamespace(
+        CHANGED="fingerprint-changed", UNREADABLE="fingerprint-unreadable"
+    ),
+    REFUSAL=SimpleNamespace(
+        MANIFEST_UNREADABLE="manifest-unreadable",
+        ALREADY_OPEN="already-open",
+        LEDGER_UNREADABLE="ledger-unreadable",
+        LEDGER_UNWRITABLE="ledger-unwritable",
+    ),
+)
+
+
+class AaFingerprintUnreadable(Exception):
+    """The installed manifest cannot yield the A/A fingerprint — N66 fails closed."""
+
+
+class AaStart(NamedTuple):
+    id: int
+    is_closed: bool
+    fingerprint: dict[str, str] | None  # None = recorded while unreadable
+
+
+class AaRestart(NamedTuple):
+    reason: str
+    fingerprint: dict[str, str] | None
+
+
+def get_aa_fingerprint(root: Path) -> dict[str, str]:
+    """The installed manifest's `.hashes` entries in the A/A scope (N66): the scope-rules hook,
+    `autoagent/`, `agents/`, and each migration whose installed SQL names the trial ledger.
+
+    Raises AaFingerprintUnreadable on an unreadable or malformed manifest, an unreadable
+    listed migration, or no scoped entry.
+    """
+    manifest = root / "manifest.json"
+    try:
+        hashes = json.loads(manifest.read_text(encoding="utf-8"))["hashes"]
+        fingerprint = {
+            path: digest for path, digest in hashes.items() if _is_aa_scoped(root, path)
+        }
+    except (OSError, ValueError, KeyError, TypeError, AttributeError) as exc:
+        raise AaFingerprintUnreadable(
+            f"{manifest}: {type(exc).__name__}: {str(exc)[:160]}"
+        ) from exc
+    if not fingerprint:
+        raise AaFingerprintUnreadable(f"{manifest}: no entry in the A/A scope")
+    return fingerprint
+
+
+def _is_aa_scoped(root: Path, path: str) -> bool:
+    if path in AA.SCOPE.FILES or path.startswith(AA.SCOPE.DIRS):
+        return True
+    if AA.SCOPE.MIGRATION.fullmatch(path) is None:
+        return False
+    # selection only: the installed SQL decides membership, its manifest hash is what is kept
+    return (
+        AA.SCOPE.LEDGER_NAME.search((root / path).read_text(encoding="utf-8"))
+        is not None
+    )
+
+
+def _read_latest_aa_start() -> AaStart | None:
+    """The latest aa-start row → AaStart; None when no A/A was ever started. Raises on a PG fault."""
+    params = {
+        "start": TRIAL_LEDGER.EVENT.AA_START,
+        "result": TRIAL_LEDGER.EVENT.AA_RESULT,
+        "result_prefix": f"{TRIAL_LEDGER.EVENT.AA_RESULT}:",
+        "fingerprinted": [TRIAL_LEDGER.EVENT.AA_START, TRIAL_LEDGER.EVENT.AA_RESTART],
+    }
+    with _pg_connect() as conn, conn.cursor() as cur:
+        cur.execute(AA.LATEST_START_SQL, params)
+        row = cur.fetchone()
+    return None if row is None else AaStart(*row)
+
+
+def start_aa() -> int:
+    """--aa-start (N55): open an A/A on the installed fingerprint → 0; refused with a named
+    reason and nothing written → ExitCode.AA_START_REFUSED."""
+    if not HAS_PG_LOOP_WRITE:
+        return _refuse_aa_start(AA.REFUSAL.LEDGER_UNWRITABLE, "PG helper import failed")
+    try:
+        fingerprint = get_aa_fingerprint(_INSTALL_ROOT)
+    except AaFingerprintUnreadable as exc:
+        return _refuse_aa_start(AA.REFUSAL.MANIFEST_UNREADABLE, str(exc))
+    try:
+        latest = _read_latest_aa_start()
+    except Exception as exc:  # noqa: BLE001 — refused by name, never a traceback
+        return _refuse_aa_start(AA.REFUSAL.LEDGER_UNREADABLE, _describe_fault(exc))
+    if latest is not None and not latest.is_closed:
+        return _refuse_aa_start(
+            AA.REFUSAL.ALREADY_OPEN, f"A/A {latest.id} has no aa-result"
+        )
+    return _write_aa_start(fingerprint, previous=0 if latest is None else latest.id)
+
+
+def _write_aa_start(fingerprint: dict[str, str], *, previous: int) -> int:
+    # keyed on the start it follows → of two racing starts only one lands
+    dedupe_key = f"{TRIAL_LEDGER.EVENT.AA_START}:after:{previous}"
+    payload = {
+        "fingerprint": fingerprint,
+        "started_at": _get_utc_now().isoformat(),
+        "duration": AA.DURATION,
+    }
+    try:
+        landed = _pg_write_trial_ledger_row(
+            TRIAL_LEDGER.EVENT.AA_START,
+            TRIAL_LEDGER.ACTOR.AA,
+            payload,
+            dedupe_key=dedupe_key,
+        )
+    except Exception as exc:  # noqa: BLE001 — refused by name, never a traceback
+        return _refuse_aa_start(AA.REFUSAL.LEDGER_UNWRITABLE, _describe_fault(exc))
+    if landed != 1:
+        return _refuse_aa_start(
+            AA.REFUSAL.ALREADY_OPEN,
+            f"start key {dedupe_key} taken by a concurrent --aa-start",
+        )
+    sys.stderr.write(
+        f"[daemon-cycle] INFO: A/A started ({dedupe_key}) on {len(fingerprint)} fingerprint "
+        "entries; each writing cycle evaluates it until its aa-result\n"
+    )
+    return 0
+
+
+def _refuse_aa_start(reason: str, detail: str) -> int:
+    sys.stderr.write(
+        f"[daemon-cycle] --aa-start refused: {reason} — {detail}; nothing written\n"
+    )
+    return ExitCode.AA_START_REFUSED
+
+
+def run_aa_stage(cycle_date: str) -> None:
+    """While an A/A is open: one aa-restart row per cycle date when the installed fingerprint
+    moved or cannot be read (N66). No open A/A → nothing. A ledger fault WARNs by name and
+    never fails the cycle; the caller skips the stage in no-write mode (--dry-run).
+    """
+    if not HAS_PG_LOOP_WRITE:
+        _warn_aa(
+            "open state unreadable: PG helper import failed",
+            "no A/A evaluation this cycle",
+        )
+        return
+    try:
+        latest = _read_latest_aa_start()
+    except Exception as exc:  # noqa: BLE001 — a ledger read fault never fails the cycle
+        _warn_aa(
+            f"open state unreadable: {_describe_fault(exc)}",
+            "no A/A evaluation this cycle",
+        )
+        return
+    if latest is None or latest.is_closed:
+        return
+    restart = _get_aa_restart(latest)
+    if restart is not None:
+        _write_aa_restart(latest.id, restart, cycle_date)
+
+
+def _get_aa_restart(latest: AaStart) -> AaRestart | None:
+    try:
+        fingerprint = get_aa_fingerprint(_INSTALL_ROOT)
+    except AaFingerprintUnreadable as exc:
+        _warn_aa(f"fingerprint unreadable: {exc}", f"A/A {latest.id} restarts")
+        return AaRestart(AA.RESTART_REASON.UNREADABLE, None)
+    if fingerprint == latest.fingerprint:
+        return None
+    return AaRestart(AA.RESTART_REASON.CHANGED, fingerprint)
+
+
+def _write_aa_restart(start_id: int, restart: AaRestart, cycle_date: str) -> None:
+    dedupe_key = f"{TRIAL_LEDGER.EVENT.AA_RESTART}:{start_id}:{cycle_date}"
+    payload = {"start_id": start_id, **restart._asdict()}
+    try:
+        _pg_write_trial_ledger_row(
+            TRIAL_LEDGER.EVENT.AA_RESTART,
+            TRIAL_LEDGER.ACTOR.AA,
+            payload,
+            dedupe_key=dedupe_key,
+        )
+    except Exception as exc:  # noqa: BLE001 — a ledger write fault never fails the cycle
+        _warn_aa(
+            f"{dedupe_key} not written: {_describe_fault(exc)}", "the cycle continues"
+        )
+
+
+def _describe_fault(exc: Exception) -> str:
+    return f"{type(exc).__name__}: {str(exc)[:160]}"
+
+
+def _warn_aa(cause: str, scope: str) -> None:
+    sys.stderr.write(f"[daemon-cycle] WARN: A/A harness — {cause}; {scope}\n")
+
+
 def classify_failure_rationale(rationale: str) -> str:
     """Map a persisted proposal rationale → its failure class (the single SoT).
 
@@ -11278,6 +11498,7 @@ def run_cycle(
     report.power_check = power.counts
     if not skip_loop_emit:  # no-write mode (--dry-run) writes no ledger row
         run_shadow_stage(power, report.cycle_date)
+        run_aa_stage(report.cycle_date)
 
     if IS_GENERATION_CLOSED:
         sys.stderr.write(
@@ -11944,7 +12165,19 @@ def _main(argv: list[str]) -> int:
         help="With --backfill-unadjudicated: dir holding .apply-lock, the re-arm marker "
         "and the completion record.",
     )
+    parser.add_argument(
+        "--aa-start",
+        action="store_true",
+        help="Open an A/A on the installed manifest fingerprint (one aa-start ledger row), "
+        "then exit (no cycle). Refused with exit 14 and a named reason; takes no --dry-run.",
+    )
     args = parser.parse_args(argv)
+
+    if args.aa_start:
+        if args.dry_run:
+            parser.error("--aa-start writes the ledger; it takes no --dry-run")
+        # Answered BEFORE the pause gate: its clean exit 0 would read as a started A/A.
+        return start_aa()
 
     if args.backfill_unadjudicated:
         if args.reports_dir is None:

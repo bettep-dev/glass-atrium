@@ -160,12 +160,13 @@ class _Ledger:
         self.design_effects: dict[str, dict] = {}
         self.refused: list[str] = []
         self.faulted: set[str] = set()
-        # read only by a cycle whose loop-write flag also opens these gate reads
+        # read only by a cycle whose loop-write flag also opens these gate reads and the A/A stage
         self.answered_empty = frozenset(
             {
                 dc._REGRESSION_WARNINGS_SELECT_SQL,
                 dc._REGRESSION_PROPOSALS_SELECT_SQL,
                 dc._APPLIED_FOR_DISCHARGE_SELECT_SQL,
+                dc.AA.LATEST_START_SQL,
             }
         )
 
@@ -245,6 +246,9 @@ class _LedgerCursor:
 
     def fetchall(self) -> list[tuple]:
         return self.result
+
+    def fetchone(self) -> tuple | None:
+        return self.result[0] if self.result else None
 
 
 def _pattern(*, last_transition_at: datetime | None = None) -> dc.Pattern:

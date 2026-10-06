@@ -213,6 +213,10 @@ PY
   _assert_live_module test_shadow_engine PreRegistrationReadLivePgTest
 }
 
+@test "the A/A harness's open-state ledger read runs against the migrated cluster, none skipped" {
+  _assert_live_module test_aa_harness AaOpenReadLivePgTest
+}
+
 @test "the pattern-metric window read runs against the migrated cluster, none skipped" {
   cd "${BATS_TEST_DIRNAME}/../../hooks/test" || return 1
   _assert_live_module test_pattern_metric TestPatternFloorReadLivePg
