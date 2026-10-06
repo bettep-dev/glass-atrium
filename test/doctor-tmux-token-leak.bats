@@ -129,7 +129,7 @@ warn_total_of_output() {
 
 # The token-leak term of the breakdown, or empty on a bare PASS.
 token_leak_term() {
-  printf '%s\n' "${output}" | sed -n 's/.* \([0-9][0-9]*\) token-leak — see above.*/\1/p' | head -n 1
+  printf '%s\n' "${output}" | sed -n 's/.* \([0-9][0-9]*\) token-leak .*/\1/p' | head -n 1
 }
 
 # Warning delta a scenario adds over the clean baseline, and its token-leak term.

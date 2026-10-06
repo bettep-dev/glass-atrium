@@ -403,12 +403,14 @@ run_doctor() {
   #       · only a scope-block DROP has a remedy (recompress the AGENT-INJECT source blocks), so only
   #         it warns. block=lesson rows (DROP + PARTIAL) in an existing log come from no current
   #         producer path and have no remedy → lifetime total only (_inject_drop_scan).
+  #       · a block=canary DROP costs a trial its delivery, not a rule its reach → counted apart, on
+  #         the canary-trial term (§28 reads the ledger half of that surface).
   #     Verdict shape mirrors §9e (age vs TTL, three outcomes). Mutation-free.
-  local inject_drop_warns=0
+  local inject_drop_warns=0 canary_warns=0
   # Must read the SAME root inject-scope-rules.sh writes to: GA_DATA_ROOT/logs (the migrated
   # Tier-A seam = the producer's INJECT_DROP_LOG = HOOK_LOG_DIR) — reader + producer share one root.
   local inject_drop_log="${GA_DATA_ROOT}/logs/inject-scope-rules.diag.log"
-  local drop_cutoff="" drop_counts="" win_drop=0 life_events=0
+  local drop_cutoff="" drop_counts="" win_drop=0 win_canary=0 life_events=0
   # A missing window boundary is the §9e un-ageable case: the condition cannot be ESTABLISHED, so the
   # elif below says so loudly instead of falling back to the lifetime total (which would restate the
   # defect this section exists to remove). SC2310/SC2311 disabled for the whole compound — the
@@ -421,10 +423,10 @@ run_doctor() {
     log "  warn : inject-scope-rules drop log present but un-windowable (${inject_drop_log}) — neither 'date -u -v-Nd' nor 'date -u -d \"N days ago\"' works here, so live sheds cannot be separated from history; install a BSD- or GNU-compatible date(1)"
     inject_drop_warns=1
   else
-    # Single stdout line, field order `<scope-block-drop> <lifetime>` — the
+    # Single stdout line, field order `<scope-block-drop> <canary-shed> <lifetime>` — the
     # multi-field verdict-line precedent already used by snapshot_staleness_scan. A failed scan
     # (no awk, unreadable log) or a malformed line is LOUD, never zeroed into a clean OK.
-    local drop_counts_re='^[0-9]+ [0-9]+$'
+    local drop_counts_re='^[0-9]+ [0-9]+ [0-9]+$'
     # shellcheck disable=SC2310,SC2311
     if ! drop_counts="$(_inject_drop_scan "${inject_drop_log}" "${drop_cutoff}")" \
       || [[ ! "${drop_counts}" =~ ${drop_counts_re} ]]; then
@@ -432,8 +434,8 @@ run_doctor() {
       inject_drop_warns=1
     else
       # Explicit IFS: the entry point runs under IFS=$'\n\t', which would NOT split this
-      # space-separated verdict line into its two fields.
-      IFS=' ' read -r win_drop life_events <<<"${drop_counts}"
+      # space-separated verdict line into its three fields.
+      IFS=' ' read -r win_drop win_canary life_events <<<"${drop_counts}"
       if [[ "${win_drop}" -gt 0 ]]; then
         log "  warn : ${win_drop} inject-scope-rules scope-block drop(s) in the last ${INJECT_DROP_WINDOW_DAYS}d (${inject_drop_log}) — a scope block exceeded INJECT_CTX_MAX_BYTES and was NOT injected into subagents; recompress the AGENT-INJECT source blocks"
         inject_drop_warns="${win_drop}"
@@ -441,12 +443,20 @@ run_doctor() {
         # Latest ACTIONABLE row: win_drop > 0 guarantees one exists inside the window, and the newest
         # non-lesson row is at least that recent. SC2312 — the lib carries no file-scope set -e.
         # shellcheck disable=SC2312
-        last_drop="$(grep 'inject-scope-rules] DROP ' "${inject_drop_log}" 2>/dev/null | grep -v 'block=lesson ' | tail -n1 || true)"
+        last_drop="$(grep 'inject-scope-rules] DROP ' "${inject_drop_log}" 2>/dev/null | grep -v -e 'block=lesson ' -e 'block=canary ' | tail -n1 || true)"
         [[ -n "${last_drop}" ]] && log "         latest: ${last_drop}"
       elif [[ "${life_events}" -gt 0 ]]; then
         log "  ok   : no inject-scope-rules scope-block drops in the last ${INJECT_DROP_WINDOW_DAYS}d (${life_events} historical event(s) on record in ${inject_drop_log})"
       else
         log "  ok   : no inject-scope-rules block-shed events recorded"
+      fi
+      if [[ "${win_canary}" -gt 0 ]]; then
+        log "  warn : ${win_canary} canary shed(s) in the last ${INJECT_DROP_WINDOW_DAYS}d (${inject_drop_log}) — a treatment-arm spawn lost its canary block, so the trial lost delivery on it; the canary sheds only after every droppable rule block, so an oversized AGENT-INJECT source caused it — recompress the source blocks"
+        canary_warns=$((canary_warns + win_canary))
+        local last_canary=""
+        # shellcheck disable=SC2312
+        last_canary="$(grep 'inject-scope-rules] DROP .*block=canary ' "${inject_drop_log}" 2>/dev/null | tail -n1 || true)"
+        [[ -n "${last_canary}" ]] && log "         latest: ${last_canary}"
       fi
     fi
   fi
@@ -1483,6 +1493,17 @@ run_doctor() {
   #     Branches come from the owner's shell setup, not from Atrium → report, never write into one.
   _doctor_report_profile_links
 
+  # 28. canary trial surface — registration kind A, on the canary_warns counter §10 opened with its
+  #     shed count. Read-only: a digest-tool probe and one ledger SELECT; the daemon owns every repair.
+  #     Branch states mirror §25: opt-out, psql-less mode, a database not there yet and a failed read
+  #     are notes, never a clean zero and never a warning.
+  # shellcheck disable=SC2310  # the helper rc IS the digest verdict
+  _doctor_report_canary_digest || canary_warns=$((canary_warns + 1))
+  local canary_ledger_warns=0
+  # shellcheck disable=SC2311  # stdout-only count; every branch inside prints one
+  canary_ledger_warns="$(_doctor_report_canary_ledger)"
+  canary_warns=$((canary_warns + canary_ledger_warns))
+
   if [[ "${fail}" -eq 0 ]]; then
     # Warning-summary registration contract — a new doctor row declares ONE kind.
     # A (counted warning, user-actionable): counter + this total + the PASS breakdown below, all
@@ -1490,7 +1511,7 @@ run_doctor() {
     # B (report-only): its log line ONLY — no counter, no total, no breakdown term, exit code
     #   unchanged. C (wording): the existing row's log line only.
     # Parity of the two expressions below is machine-checked by test/doctor-summary-contract.bats.
-    local warns=$((unbound + drift + undeployed_fresh + inject_drop_warns + launchd_drift + snapshot_stale + snapshot_path_anomaly + data_sep_stale + channel_silent + channel_blind + registry_warns + arbiter_warns + retired_residue + retired_refused + mig_pending + inject_slot_warns + token_leak))
+    local warns=$((unbound + drift + undeployed_fresh + inject_drop_warns + launchd_drift + snapshot_stale + snapshot_path_anomaly + data_sep_stale + channel_silent + channel_blind + registry_warns + arbiter_warns + retired_residue + retired_refused + mig_pending + inject_slot_warns + token_leak + canary_warns))
     if [[ "${warns}" -eq 0 ]]; then
       log "== doctor: PASS =="
     else
@@ -1498,7 +1519,7 @@ run_doctor() {
       # term happened to be last, so every downstream glob written against that term broke the next
       # time a category was appended (adding channel-silent did exactly that to
       # doctor-launchd-deploy-drift.bats). Leading, every term is `<n> <name>` and none is special.
-      log "== doctor: PASS (with ${warns} warning(s): ${unbound} dormant-hook + ${drift} manifest-drift + ${undeployed_fresh} fresh-undeployed + ${inject_drop_warns} inject-drop + ${launchd_drift} launchd-drift + ${snapshot_stale} snapshot-stale + ${snapshot_path_anomaly} snapshot-path-anomaly + ${data_sep_stale} data-sep-leftover + ${channel_silent} channel-silent + ${channel_blind} channel-blind + ${registry_warns} registry-reconcile + ${arbiter_warns} arbiter-gap + ${retired_residue} retired-residue + ${retired_refused} retired-refused-key + ${mig_pending} pending-migration + ${inject_slot_warns} inject-slot + ${token_leak} token-leak — see above) =="
+      log "== doctor: PASS (with ${warns} warning(s): ${unbound} dormant-hook + ${drift} manifest-drift + ${undeployed_fresh} fresh-undeployed + ${inject_drop_warns} inject-drop + ${launchd_drift} launchd-drift + ${snapshot_stale} snapshot-stale + ${snapshot_path_anomaly} snapshot-path-anomaly + ${data_sep_stale} data-sep-leftover + ${channel_silent} channel-silent + ${channel_blind} channel-blind + ${registry_warns} registry-reconcile + ${arbiter_warns} arbiter-gap + ${retired_residue} retired-residue + ${retired_refused} retired-refused-key + ${mig_pending} pending-migration + ${inject_slot_warns} inject-slot + ${token_leak} token-leak + ${canary_warns} canary-trial — see above) =="
     fi
     return 0
   fi
@@ -1531,6 +1552,85 @@ SELECT count(*),
 FROM core.autoagent_proposals
 WHERE status::text IN ('applied', 'approved', 'rejected', 'reverted', 'unadjudicated')
 SQL
+}
+
+# §28 ledger window (days) over core.autoagent_trial_ledger. Sized like §14's: the rows land once per
+# daily ingest, so a week of silence holds too few cycles to call a condition ended. Env-overridable
+# so a test can pin either side of the boundary.
+CANARY_TRIAL_WINDOW_DAYS="${CANARY_TRIAL_WINDOW_DAYS:-14}"
+
+# Canary trial rows of the last $2 days in database $1, one unit-separator line: void count for a
+# foreign canary hash, unbound-delivery count, then each population's agents. The literals are the
+# daemon's (CANARY.VOID_REASON, TRIAL_LEDGER.EVENT.CANARY_UNBOUND_DELIVERY). $2 rides as a quoted
+# psql literal cast to int, so a malformed window fails the read instead of entering the statement.
+_pg_canary_ledger_probe() {
+  # GA-ABSORB[handled@the read-failed unread branch of _doctor_report_canary_ledger]: stderr only — the rc is captured and branched on there
+  psql -h "${PG_SOCKET}" -d "$1" -v ON_ERROR_STOP=1 -v days="$2" -tA -F $'\x1f' 2>/dev/null <<'SQL'
+SELECT count(*) FILTER (WHERE payload->'void'->>'reason' = 'foreign-canary-hash'),
+       count(*) FILTER (WHERE event = 'canary-unbound-delivery'),
+       coalesce(string_agg(DISTINCT payload->'void'->>'agent', ',')
+         FILTER (WHERE payload->'void'->>'reason' = 'foreign-canary-hash'), ''),
+       coalesce(string_agg(DISTINCT agent, ',') FILTER (WHERE event = 'canary-unbound-delivery'), '')
+FROM core.autoagent_trial_ledger
+WHERE recorded_at >= now() - make_interval(days => :'days'::int)
+SQL
+}
+
+# §28 digest leg: rc 1 (after its warn line) when neither tool the hook's manifest_digest probes is
+# on PATH — the hook then assigns no arm and delivers no canary, so every trial voids for low
+# delivery only after its generator call.
+_doctor_report_canary_digest() {
+  local tool=""
+  # shellcheck disable=SC2311  # stdout-only resolver; empty output IS the absent case
+  tool="$(_resolve_sha256_cmd)"
+  if [[ -n "${tool}" ]]; then
+    log "  ok   : canary digest tool present (${tool%% *})"
+    return 0
+  fi
+  log "  warn : no canary digest tool — neither shasum nor sha256sum is on PATH, so the inject hook assigns no canary arm and every canary trial voids for low delivery; install either tool"
+  return 1
+}
+
+# §28 ledger leg: logs its verdict, stdout = the warning count it adds (0 on every unread branch).
+_doctor_report_canary_ledger() {
+  local probe="" answer="" voids="" unbound="" void_agents="" unbound_agents=""
+  local days="${CANARY_TRIAL_WINDOW_DAYS}"
+  # shellcheck disable=SC2310,SC2311  # rc-capturing probe calls: an unreachable server must stay distinguishable
+  if [[ -n "${GA_SKIP_DB_SETUP:-}" ]]; then
+    log "  note : canary trial ledger check skipped (GA_SKIP_DB_SETUP set)"
+  elif ! command -v psql >/dev/null 2>&1; then
+    log "  note : canary trial ledger check skipped — psql not found (supported mode; install PostgreSQL to see canary voids)"
+  elif ! probe="$(_pg_database_exists_probe "${DB_NAME}")"; then
+    log "  note : canary trial ledger unread — the '${DB_NAME}' existence probe failed (server down, or socket ${PG_SOCKET} unreachable); this run read no rows"
+  elif [[ "${probe}" != "1" ]]; then
+    log "  note : database '${DB_NAME}' absent — no canary trial rows to check"
+  elif ! answer="$(_pg_canary_ledger_probe "${DB_NAME}" "${days}")"; then
+    log "  note : canary trial ledger unread — the read against '${DB_NAME}' failed"
+  else
+    # Unit separator, never whitespace: an empty agent list is a field the split must keep.
+    IFS=$'\x1f' read -r voids unbound void_agents unbound_agents <<<"${answer}"
+    if ! [[ "${voids}" =~ ^[0-9]+$ ]] || ! [[ "${unbound}" =~ ^[0-9]+$ ]]; then
+      log "  note : canary trial ledger unread — the read against '${DB_NAME}' answered something other than two counts"
+    else
+      _log_canary_ledger_verdict "${voids}" "${unbound}" "${void_agents}" "${unbound_agents}" "${days}"
+      printf '%s' "$((voids + unbound))"
+      return 0
+    fi
+  fi
+  printf '0'
+}
+
+# Args: $1=void count $2=unbound count $3=void agents $4=unbound agents $5=window days.
+_log_canary_ledger_verdict() {
+  if [[ "$1" -gt 0 ]]; then
+    log "  warn : $1 canary trial void(s) for a foreign canary hash in the last $5d (agents: $3) — a delivered canary text was not the open trial's, so the daemon voided the trial and removed its canary files"
+  fi
+  if [[ "$2" -gt 0 ]]; then
+    log "  warn : $2 canary delivery(ies) bound to no open trial in the last $5d (agents: $4) — a spawn delivered canary text while no trial was open; the daemon removed those canary files"
+  fi
+  if [[ "$1" -eq 0 && "$2" -eq 0 ]]; then
+    log "  ok   : no canary void or unbound canary delivery in the last $5d"
+  fi
 }
 
 # Emit the UTC calendar date $1 days ago as YYYY-MM-DD, or NOTHING with rc 1 when neither date(1)
@@ -1726,7 +1826,8 @@ _doctor_report_profile_link_defect() {
 # ISO-8601 dates compare correctly as strings, so the window needs no date arithmetic per row.
 # A row whose timestamp field is EMPTY (the producer's date(1) failed, and its ts is fail-open) is
 # counted as IN-window: an un-ageable row is surfaced, never silently aged out.
-# Args: $1=log path $2=cutoff date · stdout: `<scope-block-drop> <lifetime>`.
+# A block=canary DROP is counted apart from the scope-block drops: its cost is a trial's delivery.
+# Args: $1=log path $2=cutoff date · stdout: `<scope-block-drop> <canary-shed> <lifetime>`.
 _inject_drop_scan() {
   awk -v cutoff="${2}" '
     index($0, "[inject-scope-rules]") == 0 { next }
@@ -1742,9 +1843,10 @@ _inject_drop_scan() {
         if (substr($i, 1, 6) == "block=") { block = substr($i, 7) }
       }
       life++
-      if (in_window && event == "DROP" && block != "lesson") { actionable++ }
+      if (in_window && event == "DROP" && block == "canary") { canary++ }
+      else if (in_window && event == "DROP" && block != "lesson") { actionable++ }
     }
-    END { printf "%d %d\n", actionable + 0, life + 0 }
+    END { printf "%d %d %d\n", actionable + 0, canary + 0, life + 0 }
   ' "${1}"
 }
 
