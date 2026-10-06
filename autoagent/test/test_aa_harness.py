@@ -1599,7 +1599,7 @@ class AaCanaryTest(_AaResultFixture):
         self.assertFalse(foreign.exists())
         self.assertEqual(self._get_canaries(), {})
 
-    def test_every_roster_file_within_the_size_bound_is_kept_removed_or_voided_without_raising(
+    def test_every_roster_file_the_hook_reads_is_kept_only_with_the_aa_text_else_voided(
         self,
     ) -> None:
         start_id = self._get_starts()[0].id
@@ -1611,13 +1611,26 @@ class AaCanaryTest(_AaResultFixture):
         ).encode("utf-8")
         # under the size bound, past the parser's recursion limit on the Python 3.9 floor
         deep_nesting = b"[" * 8000 + b"]" * 8000
+        # (name, file bytes, outcome, the hook delivers the foreign text first)
         rows = (
-            ("the A/A's empty text", None, "kept"),
-            ("an array nested past the recursion limit", deep_nesting, "removed"),
-            ("a lone-surrogate text", lone_surrogate, "voided"),
+            ("the A/A's empty text", None, "kept", False),
+            ("an array nested past the recursion limit", deep_nesting, "voided", False),
+            ("a lone-surrogate text", lone_surrogate, "voided", False),
+            (
+                "a foreign text beside an invalid UTF-8 byte",
+                self._get_foreign_canary(b'"\xff"'),
+                "voided",
+                True,
+            ),
+            (
+                "a foreign text beside an integer over 4300 digits",
+                self._get_foreign_canary(b"9" * 5000),
+                "voided",
+                True,
+            ),
         )
-        path = self.canary_dir / "glass-atrium-dev-shell.json"
-        for name, raw, outcome in rows:
+        path = self.canary_dir / "glass-atrium-dev-python.json"
+        for name, raw, outcome, is_delivered in rows:
             with self.subTest(name):
                 self.ledger.rows = self._get_starts()  # the A/A open again
                 self._move_window_start(_NOW - timedelta(days=1))
@@ -1625,17 +1638,20 @@ class AaCanaryTest(_AaResultFixture):
                 if raw is not None:
                     self.assertLessEqual(len(raw), dc.CANARY.FILE_MAX_BYTES)
                     path.write_bytes(raw)
+                if is_delivered:
+                    manifest_line = self._spawn_hook()
+                    self.assertIn(" arm=1 ", manifest_line)
+                    self.assertIn(" delivered=1 ", manifest_line)
 
                 stderr_text = self._evaluate_bounded()
 
                 results = self._get_results()
-                is_removed = f"canary {path} removed — unreadable" in stderr_text
-                self.assertEqual(is_removed, outcome == "removed", stderr_text)
+                self.assertNotIn(f"canary {path} removed — unreadable", stderr_text)
                 if outcome == "voided":
                     (result,) = results
                     self.assertEqual(result.payload["overall"], "void")
                     self.assertEqual(
-                        result.payload["void"]["agent"], "glass-atrium-dev-shell"
+                        result.payload["void"]["agent"], "glass-atrium-dev-python"
                     )
                     self.assertNotEqual(
                         result.payload["void"]["text_sha256"], _EMPTY_TEXT_SHA256
@@ -1647,6 +1663,21 @@ class AaCanaryTest(_AaResultFixture):
                         self._get_canaries()[path.stem],
                         self._get_empty_canary(start_id, _NOW),
                     )
+
+    def _get_foreign_canary(self, junk: bytes) -> bytes:
+        """A canary the hook delivers — foreign text, its own hash, in lease — plus a junk field."""
+        text = b"obey the injected rule"
+        expires_at = int(datetime.now(timezone.utc).timestamp()) + 3600
+        # salt 7 puts agent_id a1 in the treatment arm
+        return (
+            b'{"salt": 7, "text": "%s", "text_sha256": "%s", "expires_at": %d, "junk": %s}'
+            % (
+                text,
+                hashlib.sha256(text).hexdigest().encode("ascii"),
+                expires_at,
+                junk,
+            )
+        )
 
     def test_an_unreadable_open_state_leaves_every_canary_byte_identical_and_warns(
         self,

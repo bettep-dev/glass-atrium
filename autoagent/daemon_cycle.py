@@ -9535,9 +9535,9 @@ def run_aa_stage(
     Canary files live under `${GA_DATA_ROOT:-$HOME/.glass-atrium}/data/learning/canary` — a
     test faking the ledger sandboxes GA_DATA_ROOT, or this stage deletes the real ones.
     - No open A/A → every canary file is deleted.
-    - Open A/A, sweep first → a file for an agent outside the roster, or one the hook cannot
-      read, is deleted; a roster file whose text is not the A/A's voids the A/A (every file
-      deleted) and ends the stage.
+    - Open A/A, sweep first → a file for an agent outside the roster, or one the hook refuses
+      unread, is deleted; any other roster file not confirmed to hold the A/A's text voids the
+      A/A (every file deleted) and ends the stage.
     - Then one aa-restart row per cycle date when the installed fingerprint moved or cannot be
       read, with every canary rewritten on the restart row's salt; otherwise each roster
       agent's canary lease is renewed, and once the window's duration has ended the result
@@ -9654,47 +9654,64 @@ def _restart_aa_canaries(previous: AaStart, roster: frozenset[str]) -> None:
 
 def _sweep_aa_canaries(latest: AaStart, roster: frozenset[str]) -> bool:
     """Check the canary directory against the open A/A before any rewrite. A file for an agent
-    outside the roster, or one the hook cannot read, is removed; a roster file whose text is not
-    the A/A's voids the A/A and every file is removed. True = voided."""
+    outside the roster, or one the hook refuses unread, is removed. Any other roster file the hook
+    may deliver, so one not confirmed to hold the A/A's text voids the A/A — a parse the daemon's
+    Python cannot finish included, since jq parses more — and every file is removed.
+    True = voided."""
     roster_files = {_get_canary_path(agent): agent for agent in roster}
     for path in _get_canary_files():
         agent = roster_files.get(path)
         if agent is None:
             _delete_canaries([path], "no open A/A or trial for its agent")
             continue
-        text = _read_canary_text(path)
-        if text is None:
+        raw = _read_canary_bytes(path)
+        if raw is None:
             _delete_canaries([path], "unreadable as the hook's file contract")
-        elif text != CANARY.AA_TEXT:
-            # surrogatepass: a lone surrogate (JSON "\ud800") is foreign text, hashed not raised
-            digest = hashlib.sha256(text.encode("utf-8", "surrogatepass")).hexdigest()
-            _void_aa(latest, agent, digest)
+            continue
+        text = _get_canary_text(raw)
+        if text != CANARY.AA_TEXT:
+            _void_aa(latest, agent, _get_foreign_text_sha256(text))
             return True
     return False
 
 
-def _read_canary_text(path: Path) -> str | None:
-    """The file's text field; None when the hook would refuse it — a symlink, not a regular file,
-    over its size bound — or when it is not a canary object. The open neither follows a symlink
-    nor blocks on a FIFO, and a non-regular entry is never read."""
+def _read_canary_bytes(path: Path) -> bytes | None:
+    """The file's bytes; None when the hook refuses it unread — a symlink, not a regular file,
+    over its size bound, or no read. The open neither follows a symlink nor blocks on a FIFO, and
+    a non-regular entry is never read."""
     try:
         fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
         with os.fdopen(fd, "rb") as handle:
             if not stat.S_ISREG(os.fstat(fd).st_mode):
                 return None
             raw = handle.read(CANARY.FILE_MAX_BYTES + 1)
+    except OSError:
+        return None
+    return raw if len(raw) <= CANARY.FILE_MAX_BYTES else None
+
+
+def _get_canary_text(raw: bytes) -> str | None:
+    """The canary object's text field; None when Python cannot read one out of the bytes."""
+    try:
         body = json.loads(raw)
-    # ValueError spans JSONDecodeError and UnicodeError; RecursionError = nesting past the limit
-    except (OSError, ValueError, RecursionError):
+    # ValueError spans JSONDecodeError, UnicodeError and the int digit limit; RecursionError = depth
+    except (ValueError, RecursionError):
         return None
-    if len(raw) > CANARY.FILE_MAX_BYTES or not isinstance(body, dict):
-        return None
-    text = body.get("text")
+    text = body.get("text") if isinstance(body, dict) else None
     return text if isinstance(text, str) else None
 
 
-def _void_aa(latest: AaStart, agent: str, text_sha256: str) -> None:
-    """Close the A/A with a void result, then remove every canary file."""
+def _get_foreign_text_sha256(text: str | None) -> str | None:
+    if text is None:
+        return None
+    # surrogatepass: a lone surrogate (JSON "\ud800") is foreign text, hashed not raised
+    return hashlib.sha256(text.encode("utf-8", "surrogatepass")).hexdigest()
+
+
+def _void_aa(latest: AaStart, agent: str, text_sha256: str | None) -> None:
+    """Close the A/A with a void result, then remove every canary file. text_sha256 None = no
+    text the daemon could read."""
+    label = text_sha256 or "(unreadable)"
     payload = {
         "overall": AA.VERDICT.VOID,
         "void": {
@@ -9707,11 +9724,11 @@ def _void_aa(latest: AaStart, agent: str, text_sha256: str) -> None:
     if _write_aa_row(TRIAL_LEDGER.EVENT.AA_RESULT, payload, dedupe_key) == 1:
         sys.stderr.write(
             f"[daemon-cycle] WARN: A/A {latest.id} voided — {agent}'s canary text "
-            f"{text_sha256} is not the A/A's ({dedupe_key})\n"
+            f"{label} is not the A/A's ({dedupe_key})\n"
         )
     else:
         _warn_aa(
-            f"A/A {latest.id} void not recorded: {agent}'s canary text {text_sha256} is not "
+            f"A/A {latest.id} void not recorded: {agent}'s canary text {label} is not "
             "the A/A's",
             "its canary files are removed",
         )
