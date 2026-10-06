@@ -193,22 +193,28 @@ readonly INJECT_MANIFEST_SPOOL_SUFFIX_RE='^[0-9]{8}T[0-9]{6}Z\.[0-9]+\.spool$'
 
 # Manifest digest tool — empty (default) probes shasum then sha256sum; a non-empty override names the
 # tool exactly. OPTIONAL BY CONTRACT: an absent tool degrades to a manifest line with NO digest field,
-# never an unguarded call that would trip the fail-open ERR trap. The Bats sandbox points this at an
+# never an unguarded call that would trip the fail-open ERR trap. The same tool hashes the canary text:
+# an absent tool matches no stored hash, so no canary is delivered. The Bats sandbox points this at an
 # absent command to exercise that degradation without PATH surgery.
 readonly INJECT_MANIFEST_DIGEST_CMD="${INJECT_SCOPE_RULES_DIGEST_CMD:-}"
 
 # Per-agent canary file — daemon-written (temp file + rename), one per agent type, read under the file
-# contract at set_canary_block. No env override: the read follows the data-root seam alone, the seam
-# the write floor (enforce-harness-critical.sh) protects, so no session env can aim it elsewhere.
+# contract at set_canary_block. No env override: the read follows the data-root seam alone, so no
+# session env can aim it elsewhere. The write floor (enforce-harness-critical.sh) does not cover it.
 readonly CANARY_DIR="${HOOK_DATA_DIR}/learning/canary"
-# Rendered-block cap (the retired lesson block's) — over it the block is refused whole, never truncated.
+# Rendered-block cap — over it the block is refused whole, never truncated.
 readonly CANARY_MAX_BYTES=1200
-# Bounded spawn-path read: the capped text at worst-case JSON escaping (12 B per 4 B char) plus fields.
+# Bounded spawn-path read: the capped text at worst-case JSON escaping (\u00XX, 6 B per text byte →
+# 7200 B) plus the other fields.
 readonly CANARY_FILE_MAX_BYTES=16384
-# Maximum lease, minutes (96 h) — the file-age bound. The daemon renews each daily cycle with a 72 h
-# lease (3 intervals, so two skipped cycles keep delivery); the extra interval keeps this age check from
-# binding before a daemon-written expiry, so it bites only on a file no renewal rewrote.
+# Maximum lease, minutes (96 h) — bounds both the file age and the embedded expiry's distance from now,
+# so no writer-set expiry or mtime extends delivery past it. The daemon renews each daily cycle with a
+# 72 h lease (3 intervals, so two skipped cycles keep delivery); the extra interval keeps the age check
+# from binding before a daemon-written expiry, so it bites only on a file no renewal rewrote.
 readonly CANARY_MAX_LEASE_MINUTES=5760
+# Tolerance for a canary mtime ahead of now: a small backward clock step after the write. A file further
+# ahead is refused, so a future mtime stretches the age bound by at most this.
+readonly CANARY_MTIME_SKEW_SECONDS=300
 
 # Budget-meter maxTurns floor — below this the meter is SKIPPED. An 80% working ceiling of a <=3
 # maxTurns budget (glass-atrium-sec-guard's maxTurns:3 → ceiling 2) is a self-contradictory "stop
@@ -592,51 +598,64 @@ manifest_digest() {
   printf '%s' "${1}" | get_stdin_digest
 }
 
-# 0 when $1 is a regular file (no symlink), modified within the maximum lease and within the size
-# bound. find -mmin takes one form on BSD and GNU; a failed find reads as aged.
+# Epoch-seconds mtime of $1: BSD `stat -f %m`, then GNU `stat -c %Y`. GNU reads -f as --file-system,
+# so output other than one integer counts as unread. stdout: mtime or empty.
+get_file_mtime() {
+  local mtime=""
+  mtime="$(stat -f %m "${1}" 2>/dev/null || true)"
+  [[ -n "${mtime}" && "${mtime}" != *[!0-9]* ]] || mtime="$(stat -c %Y "${1}" 2>/dev/null || true)"
+  if [[ -n "${mtime}" && "${mtime}" != *[!0-9]* ]]; then printf '%s' "${mtime}"; fi
+}
+
+# 0 when $1 is a regular file (no symlink) within the size bound, whose mtime lies less than the
+# maximum lease before now ($2, epoch seconds) and at most CANARY_MTIME_SKEW_SECONDS after it. An
+# unread mtime reads as not current.
 is_canary_file_current() {
-  local file="${1}" size=""
+  local file="${1}" now="${2}" mtime="" size=""
   [[ -f "${file}" && ! -L "${file}" ]] || return 1
-  [[ -n "$(find "${file}" -mmin "-${CANARY_MAX_LEASE_MINUTES}" 2>/dev/null || true)" ]] || return 1
+  mtime="$(get_file_mtime "${file}")"
+  [[ -n "${mtime}" ]] || return 1
+  ((mtime - now <= CANARY_MTIME_SKEW_SECONDS && now - mtime < CANARY_MAX_LEASE_MINUTES * 60)) || return 1
   size="$(wc -c <"${file}" 2>/dev/null | tr -cd '0-9' || true)"
   [[ -n "${size}" && "${size}" -le "${CANARY_FILE_MAX_BYTES}" ]]
 }
 
-# Stored text hash of canary JSON $1 when well-formed and unexpired, else empty: a non-negative integer
-# salt, a NUL-free string text, a 64-hex hash and an expiry still ahead. stdout: hash or empty.
+# Stored text hash of canary JSON $1 at now $2 (epoch seconds) when well-formed and in lease, else
+# empty: exactly one top-level value (a stream of several is refused, as Python json.load refuses it),
+# holding a non-negative integer salt, a NUL-free string text, a 64-hex hash and an expiry ahead of now
+# by at most the maximum lease. stdout: hash or empty.
 get_canary_stored_hash() {
-  local now=""
-  now="$(date +%s 2>/dev/null || true)"
-  [[ -n "${now}" ]] || return 0
-  printf '%s' "${1}" | jq -er --argjson now "${now}" '
-    if type == "object"
+  printf '%s' "${1}" | jq -ser --argjson now "${2}" --argjson max_lease "$((CANARY_MAX_LEASE_MINUTES * 60))" '
+    if length == 1 then .[0] else empty end
+    | if type == "object"
       and (.salt | type == "number" and . >= 0 and . == floor)
       and (.text | type == "string" and index("\u0000") == null)
       and (.text_sha256 | type == "string" and test("^[0-9a-f]{64}$"))
-      and (.expires_at | type == "number" and . > $now)
+      and (.expires_at | type == "number" and . > $now and . <= $now + $max_lease)
     then .text_sha256 else empty end' 2>/dev/null || true
 }
 
 # Load this agent's canary file into CANARY_BLOCK under the file contract; CANARY_VALID=1 only when the
-# file is current and well-formed, sha256 of its exact text bytes (`jq -j .text` piped straight into the
-# digest tool, so a trailing newline counts, as in the daemon's Python hashlib) equals the stored hash,
-# and the text fits CANARY_MAX_BYTES. No digest tool → no match. Otherwise no block, not delivered.
-# The file is read ONCE, so every check sees one snapshot of a file the daemon replaces by rename.
+# file is current, well-formed and in lease, sha256 of its exact text bytes (`jq -j .text` piped
+# straight into the digest tool, so a trailing newline counts, as in the daemon's Python hashlib)
+# equals the stored hash, and the text fits CANARY_MAX_BYTES. No digest tool → no match. Otherwise no
+# block, not delivered. The content is read ONCE, so every content check sees one snapshot of a file
+# the daemon replaces by rename.
 # The text is the rendered block, delivered verbatim: no hook-side wrapper, so an empty text adds zero
 # bytes and pre-registration sizes exactly what is delivered.
 set_canary_block() {
-  local safe_type="" raw="" stored="" computed="" text="" text_bytes=""
+  local safe_type="" now="" raw="" stored="" computed="" text="" text_bytes=""
   CANARY_VALID=0
   CANARY_BLOCK=""
   safe_type="$(hook_path_safe_key "${AGENT_TYPE}")"
   CANARY_FILE="${CANARY_DIR}/${safe_type}.json"
+  now="$(date +%s 2>/dev/null || true)"
+  [[ -n "${safe_type}" && -n "${now}" && "${now}" != *[!0-9]* ]] || return 0
   # shellcheck disable=SC2310  # pure predicate — nothing inside it for errexit to catch
-  if [[ -z "${safe_type}" ]] || ! is_canary_file_current "${CANARY_FILE}"; then
-    return 0
-  fi
+  is_canary_file_current "${CANARY_FILE}" "${now}" || return 0
   # Every capture guards its own failure inside the substitution: errtrace runs the ERR trap there.
   raw="$(cat -- "${CANARY_FILE}" 2>/dev/null || true)"
-  stored="$(get_canary_stored_hash "${raw}")"
+  stored="$(get_canary_stored_hash "${raw}" "${now}")"
   # shellcheck disable=SC2310  # get_stdin_digest never fails; the guard catches a jq failure under pipefail
   computed="$(printf '%s' "${raw}" | jq -j '.text' 2>/dev/null | get_stdin_digest || true)"
   [[ -n "${stored}" && "${computed}" == "${stored}" ]] || return 0

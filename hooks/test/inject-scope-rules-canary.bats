@@ -14,8 +14,10 @@ REPO_ROOT="${BATS_TEST_DIRNAME}/../.."
 AGENT="glass-atrium-dev-front"
 EMIT_NEEDLE="REQUIRED by the outcome recorder"
 SENTINEL="CANARY_TRIAL_SENTINEL"
-# The hook's maximum lease (inject-scope-rules.sh → CANARY_MAX_LEASE_MINUTES), in hours.
-MAX_LEASE_HOURS=96
+# The hook's maximum lease (inject-scope-rules.sh → CANARY_MAX_LEASE_MINUTES), in minutes.
+MAX_LEASE_MINUTES=5760
+# The hook's tolerance for an mtime ahead of now (inject-scope-rules.sh → CANARY_MTIME_SKEW_SECONDS).
+MTIME_SKEW_MINUTES=5
 
 setup() {
   command -v jq >/dev/null 2>&1 || skip "jq not on PATH"
@@ -40,9 +42,9 @@ with open(path, "w", encoding="utf-8") as fh:
 PY
 }
 
-# Set $1's mtime to $2 hours ago (touch -t takes the same form on BSD and GNU).
+# Set $1's mtime to $2 minutes ago, ahead of now when negative (touch -t takes one form on BSD and GNU).
 age_file() {
-  touch -t "$(python3 -c 'import sys, time; print(time.strftime("%Y%m%d%H%M.%S", time.localtime(time.time() - float(sys.argv[1]) * 3600)))' "${2}")" "${1}"
+  touch -t "$(python3 -c 'import sys, time; print(time.strftime("%Y%m%d%H%M.%S", time.localtime(time.time() - float(sys.argv[1]) * 60)))' "${2}")" "${1}"
 }
 
 # Text of exactly $1 bytes opening with the sentinel.
@@ -90,6 +92,25 @@ assert_delivered() {
   grep -qF "${EMIT_NEEDLE}" "${BATS_TEST_TMPDIR}/ctx.txt" || { echo "emit block lost: ${output}"; return 1; }
 }
 
+# Put a stat stub first on PATH that answers only the $1 form (bsd: -f %m · gnu: -c %Y, with GNU's
+# --file-system text and exit 1 for -f · none: every call fails); prints the PATH assignment.
+stub_stat() {
+  local bin="${BATS_TEST_TMPDIR}/stub-bin-${1}"
+  mkdir -p "${bin}"
+  cat >"${bin}/stat" <<SH
+#!/bin/sh
+mtime() { python3 -c 'import os, sys; print(int(os.stat(sys.argv[1]).st_mtime))' "\$1"; }
+case "${1}:\$1 \$2" in
+  "bsd:-f %m") mtime "\$3" ;;
+  "gnu:-c %Y") mtime "\$3" ;;
+  "gnu:-f %m") printf '  File: "%s"\n    ID: 0 Namelen: 255\n' "\$3"; exit 1 ;;
+  *) exit 1 ;;
+esac
+SH
+  chmod +x "${bin}/stat"
+  printf 'PATH=%s\n' "${bin}:${PATH}"
+}
+
 # Bring the canary file for ${AGENT} into the state a file-contract row names; prints the extra env the
 # spawn needs (one assignment per line), if any.
 prepare_row() {
@@ -103,16 +124,17 @@ import json, sys
 d = json.load(open(sys.argv[1])); d["expires_at"] = str(d["expires_at"]); json.dump(d, open(sys.argv[1], "w"))
 ' "${file}" ;;
     "hash mismatch") write_canary "${AGENT}" "$(padded_text 64)" 3600 "$(printf '%064d' 0)" ;;
+    "two concatenated JSON values") write_canary "${AGENT}" "$(padded_text 64)" 3600 && printf '%s' '{"text": ""}' >>"${file}" ;;
     expired) write_canary "${AGENT}" "$(padded_text 64)" -60 ;;
-    "aged within the lease") write_canary "${AGENT}" "$(padded_text 64)" 3600 && age_file "${file}" $((MAX_LEASE_HOURS - 1)) ;;
-    "aged past the lease") write_canary "${AGENT}" "$(padded_text 64)" 3600 && age_file "${file}" $((MAX_LEASE_HOURS + 1)) ;;
-    "mtime unreadable")
-      write_canary "${AGENT}" "$(padded_text 64)" 3600
-      mkdir -p "${BATS_TEST_TMPDIR}/stub-bin"
-      printf '#!/bin/sh\nexit 1\n' >"${BATS_TEST_TMPDIR}/stub-bin/find"
-      chmod +x "${BATS_TEST_TMPDIR}/stub-bin/find"
-      printf 'PATH=%s\n' "${BATS_TEST_TMPDIR}/stub-bin:${PATH}"
-      ;;
+    "embedded expiry within the maximum lease") write_canary "${AGENT}" "$(padded_text 64)" $(((MAX_LEASE_MINUTES - 60) * 60)) ;;
+    "embedded expiry beyond now + maximum lease") write_canary "${AGENT}" "$(padded_text 64)" $(((MAX_LEASE_MINUTES + 60) * 60)) ;;
+    "aged within the lease") write_canary "${AGENT}" "$(padded_text 64)" 3600 && age_file "${file}" $((MAX_LEASE_MINUTES - 60)) ;;
+    "aged past the lease") write_canary "${AGENT}" "$(padded_text 64)" 3600 && age_file "${file}" $((MAX_LEASE_MINUTES + 60)) ;;
+    "mtime ahead within the skew tolerance") write_canary "${AGENT}" "$(padded_text 64)" 3600 && age_file "${file}" $((1 - MTIME_SKEW_MINUTES)) ;;
+    "mtime in the future") write_canary "${AGENT}" "$(padded_text 64)" 3600 && age_file "${file}" $((-1 - MTIME_SKEW_MINUTES)) ;;
+    "mtime unreadable") write_canary "${AGENT}" "$(padded_text 64)" 3600 && stub_stat none ;;
+    "mtime read by the BSD stat form") write_canary "${AGENT}" "$(padded_text 64)" 3600 && stub_stat bsd ;;
+    "mtime read by the GNU stat form") write_canary "${AGENT}" "$(padded_text 64)" 3600 && stub_stat gnu ;;
     "at the cap") write_canary "${AGENT}" "$(padded_text 1200)" 3600 ;;
     "over the cap by one byte") write_canary "${AGENT}" "$(padded_text 1201)" 3600 ;;
     "no digest tool")
@@ -131,8 +153,12 @@ d = json.load(open(sys.argv[1])); d["expires_at"] = str(d["expires_at"]); json.d
 @test "the canary text is delivered exactly when its file meets the file contract" {
   local row want env_lines line
   local -a extra rows=(
-    "absent:0" "valid:1" "unparseable:0" "field of the wrong type:0" "hash mismatch:0" "expired:0"
-    "aged within the lease:1" "aged past the lease:0" "mtime unreadable:0" "at the cap:1"
+    "absent:0" "valid:1" "unparseable:0" "two concatenated JSON values:0"
+    "field of the wrong type:0" "hash mismatch:0" "expired:0"
+    "embedded expiry within the maximum lease:1" "embedded expiry beyond now + maximum lease:0"
+    "aged within the lease:1" "aged past the lease:0" "mtime ahead within the skew tolerance:1"
+    "mtime in the future:0" "mtime unreadable:0" "mtime read by the BSD stat form:1"
+    "mtime read by the GNU stat form:1" "at the cap:1"
     "over the cap by one byte:0" "no digest tool:0" "symlink to a valid file:0"
   )
   for entry in "${rows[@]}"; do
