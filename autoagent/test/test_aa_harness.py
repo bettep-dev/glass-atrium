@@ -973,7 +973,7 @@ class AaResultTest(_AaResultFixture):
             (row.agent, row.actor, row.dedupe_key),
             (None, "daemon-cycle-aa", "aa-instrument-verdict:1"),
         )
-        reference = dc.INSTRUMENT.REFERENCE_BREAK_EVEN[agent]
+        reference = dc.INSTRUMENT.BREAK_EVEN.REFERENCE[agent]
         # the fixture history carries no provenance start → no recomputed break-even
         self.assertEqual(
             row.payload,
@@ -1057,7 +1057,7 @@ class AaResultTest(_AaResultFixture):
         # above 1 and inside the interval → both readings straddle
         straddled = {agent: (max(reading.lower, 1.0) + reading.upper) / 2}
         self._patch("_read_recomputed_break_evens", lambda agents, now: straddled)
-        with mock.patch.object(dc.INSTRUMENT, "REFERENCE_BREAK_EVEN", straddled):
+        with mock.patch.object(dc.INSTRUMENT.BREAK_EVEN, "REFERENCE", straddled):
             self._evaluate("2026-10-07")
             self._evaluate("2026-10-08")
             self.assertEqual((self._get_results(), self._get_design_effect_rows()), ([], []))
@@ -1154,7 +1154,7 @@ class AaRecomputedBreakEvenTest(_AaResultFixture):
 
     def _get_verdict_payload(self, reference: float) -> dict:
         agent = "glass-atrium-dev-python"
-        with mock.patch.object(dc.INSTRUMENT, "REFERENCE_BREAK_EVEN", {agent: reference}):
+        with mock.patch.object(dc.INSTRUMENT.BREAK_EVEN, "REFERENCE", {agent: reference}):
             self._evaluate()
         (row,) = self._get_instrument_verdicts()
         return row.payload

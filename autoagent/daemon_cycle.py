@@ -9368,25 +9368,27 @@ INSTRUMENT = SimpleNamespace(
     VERDICT=SimpleNamespace(
         HOLDS="r1-holds", SWITCH="switch-to-r2", EXTEND="extend", RELAY="relay"
     ),
-    # a break-even at or below this cannot decide a trial at design effect 1 → excluded, named
-    DECIDABLE_BREAK_EVEN=1.0,
-    # break-evens on spawns at 1x (method A) the owner's D1 figures rest on; a recomputed
-    # reading that disagrees goes to the owner, never replacing these
-    REFERENCE_BREAK_EVEN={
-        "glass-atrium-qa-code-reviewer": 3.27,
-        "glass-atrium-dev-shell": 5.13,
-        "glass-atrium-dev-nestjs": 1.70,
-        "glass-atrium-dev-react": 3.27,
-        "glass-atrium-meta-prompt-engineer": 1.68,
-        "glass-atrium-intel-planner": 0.89,
-        "glass-atrium-intel-reporter": 0.19,
-        "glass-atrium-dev-python": 0.41,
-        "glass-atrium-design-designer": 0.06,
-        "glass-atrium-intel-researcher": 0.15,
-        "glass-atrium-dev-node": 0.72,
-        "glass-atrium-qa-debugger": 0.55,
-        "glass-atrium-dev-front": 0.32,
-    },
+    BREAK_EVEN=SimpleNamespace(
+        # a break-even at or below this cannot decide a trial at design effect 1 → excluded, named
+        DECIDABLE=1.0,
+        # break-evens on spawns at 1x (method A) the owner's D1 figures rest on; a recomputed
+        # reading that disagrees goes to the owner, never replacing these
+        REFERENCE={
+            "glass-atrium-qa-code-reviewer": 3.27,
+            "glass-atrium-dev-shell": 5.13,
+            "glass-atrium-dev-nestjs": 1.70,
+            "glass-atrium-dev-react": 3.27,
+            "glass-atrium-meta-prompt-engineer": 1.68,
+            "glass-atrium-intel-planner": 0.89,
+            "glass-atrium-intel-reporter": 0.19,
+            "glass-atrium-dev-python": 0.41,
+            "glass-atrium-design-designer": 0.06,
+            "glass-atrium-intel-researcher": 0.15,
+            "glass-atrium-dev-node": 0.72,
+            "glass-atrium-qa-debugger": 0.55,
+            "glass-atrium-dev-front": 0.32,
+        },
+    ),
 )
 
 
@@ -10136,7 +10138,7 @@ def _get_instrument_verdict_payload(
             "aa-result deferred to a later cycle",
         )
         return None
-    reference = INSTRUMENT.REFERENCE_BREAK_EVEN
+    reference = INSTRUMENT.BREAK_EVEN.REFERENCE
     positions = {
         "recomputed": get_instrument_reading(readings, recomputed),
         "reference": get_instrument_reading(readings, reference),
@@ -10231,7 +10233,7 @@ def get_instrument_reading(
     agents = [
         agent
         for agent in _get_instrument_agents(readings, break_evens)
-        if break_evens[agent] > INSTRUMENT.DECIDABLE_BREAK_EVEN
+        if break_evens[agent] > INSTRUMENT.BREAK_EVEN.DECIDABLE
     ]
     if not agents:
         return INSTRUMENT.READING.UNDECIDED
@@ -10249,7 +10251,7 @@ def get_excluded_agents(
     return [
         agent
         for agent in _get_instrument_agents(readings, break_evens)
-        if break_evens[agent] <= INSTRUMENT.DECIDABLE_BREAK_EVEN
+        if break_evens[agent] <= INSTRUMENT.BREAK_EVEN.DECIDABLE
     ]
 
 
