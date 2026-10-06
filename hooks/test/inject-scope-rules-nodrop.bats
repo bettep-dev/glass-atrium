@@ -86,6 +86,10 @@ setup() {
   # C03: the positive-injection manifest sink writes on EVERY spawn and defaults under the live
   # ~/.glass-atrium/logs — sandbox it too (exported → inherited through each run helper's `env`).
   export INJECT_SCOPE_RULES_MANIFEST_LOG="${BATS_TEST_TMPDIR}/inject-manifest.log"
+
+  # The canary file is read under the data root; a sandbox root keeps a live install's canary out of
+  # every byte sum here.
+  export GA_DATA_ROOT="${BATS_TEST_TMPDIR}/data-root"
 }
 
 # Drive the hook with a SubagentStart envelope for $1, assembling from the REAL repo sources with the
@@ -337,4 +341,33 @@ json.dump({"ctm": [dict(row, text="CTM_RECALL_SENTINEL")], "epm": [dict(row, tex
     echo "manifest records a lesson: $(cat "${INJECT_SCOPE_RULES_MANIFEST_LOG}")" >&2
     return 1
   }
+}
+
+# (f) Slot-1 bound with the canary at its full 1200 B cap: every roster agent, real sources with the
+#     meter ON, still fits the ceiling with zero drops and keeps the canary whole.
+
+@test "every roster agent with a full-cap canary (real sources, meter ON) → canary kept, zero drops, within the ceiling" {
+  local canary_dir agent_file agent text
+  canary_dir="${GA_DATA_ROOT}/data/learning/canary"
+  mkdir -p "${canary_dir}"
+  for agent_file in "${AGENTS_DIR}"/glass-atrium-*.md; do
+    agent="$(basename "${agent_file}" .md)"
+    text="$(python3 - "${canary_dir}/${agent}.json" "${agent}" <<'PY'
+import hashlib, json, sys, time
+lead = "FULL_CAP_CANARY " + sys.argv[2] + " "
+text = lead + "C" * (1200 - len(lead))
+with open(sys.argv[1], "w", encoding="utf-8") as fh:
+    json.dump({"salt": 1, "text_sha256": hashlib.sha256(text.encode()).hexdigest(),
+               "expires_at": int(time.time()) + 3600, "text": text}, fh)
+print(text, end="")
+PY
+)"
+    [[ "$(printf '%s' "${text}" | wc -c | tr -cd '0-9')" -eq 1200 ]] || { echo "fixture for ${agent} is not 1200 B" >&2; return 1; }
+    run_hook_real "${agent}"
+    assert_status 0                      || { echo "FAIL agent=${agent} (status)" >&2; return 1; }
+    assert_no_drop                       || { echo "FAIL agent=${agent} (drop)" >&2; return 1; }
+    assert_ctx_contains "${text}"        || { echo "FAIL agent=${agent} (canary not delivered whole)" >&2; return 1; }
+    assert_ctx_contains "${EMIT_NEEDLE}" || { echo "FAIL agent=${agent} (emit)" >&2; return 1; }
+    assert_ctx_within_ceiling            || { echo "FAIL agent=${agent} (ceiling)" >&2; return 1; }
+  done
 }

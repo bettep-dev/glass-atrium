@@ -37,6 +37,10 @@ setup() {
   # ~/.glass-atrium/logs — sandbox it too (exported → inherited through each run helper's `env`).
   export INJECT_SCOPE_RULES_MANIFEST_LOG="${BATS_TEST_TMPDIR}/inject-manifest.log"
 
+  # The canary is a droppable block read under the data root; a sandbox root keeps a live install's
+  # canary out of the shed sequence and the measured base these rows derive their ceilings from.
+  export GA_DATA_ROOT="${BATS_TEST_TMPDIR}/data-root"
+
   # A BUDGET-DEV fixture that injects one small block well under the 9984 ceiling → no drop.
   BUDGET_FIT="${BATS_TEST_TMPDIR}/budget-fit.md"
   printf '%s\n' \
