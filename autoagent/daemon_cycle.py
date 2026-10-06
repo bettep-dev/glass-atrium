@@ -9267,7 +9267,9 @@ AA = SimpleNamespace(
     BALANCE=SimpleNamespace(MINIMUM_SPAWNS=200, ALPHA=0.01),
     MINIMUM_DELIVERY_PERCENT=99,
     TOOL_USE_GUARDRAIL="tool_use",
-    VERDICT=SimpleNamespace(PASS="pass", FAIL="fail", PENDING_ARMS="pending-arms"),
+    VERDICT=SimpleNamespace(
+        PASS="pass", FAIL="fail", PENDING_ARMS="pending-arms", VOID="void"
+    ),
     # frozen in the start row: 14 days; 28 when one of the five busiest agents has < 200 spawns
     DURATION={
         "days": 14,
@@ -9303,6 +9305,25 @@ AA = SimpleNamespace(
         LEDGER_UNWRITABLE="ledger-unwritable",
     ),
 )
+
+
+# The per-agent canary files hooks/inject-scope-rules.sh reads at SubagentStart (set_canary_block).
+CANARY = SimpleNamespace(
+    # 3 daily cycle intervals; the hook's maximum lease (CANARY_MAX_LEASE_MINUTES, 96 h) is one
+    # interval longer, so its file-age bound never binds before this expiry
+    LEASE=timedelta(hours=72),
+    # the A/A's pre-registered text: an empty canary, delivered as zero bytes
+    AA_TEXT="",
+    # the hook refuses a larger file, so a larger one was never delivered
+    FILE_MAX_BYTES=16384,
+    # hook_path_safe_key: every byte outside A-Za-z0-9_- dropped
+    UNSAFE_KEY=re.compile(r"[^A-Za-z0-9_-]"),
+    VOID_REASON="foreign-canary-hash",
+)
+
+
+class AaStateUnreadable(Exception):
+    """The open-A/A state cannot be read this cycle."""
 
 
 class AaFingerprintUnreadable(Exception):
@@ -9429,9 +9450,9 @@ def _read_latest_aa_start() -> AaStart | None:
     return None if row is None else AaStart(*row)
 
 
-def start_aa() -> int:
-    """--aa-start: open an A/A on the installed fingerprint → 0; refused with a named
-    reason and nothing written → ExitCode.AA_START_REFUSED."""
+def start_aa(agents_dir: Path = DEFAULT_AGENTS_DIR) -> int:
+    """--aa-start: open an A/A on the installed fingerprint and write each roster agent its
+    canary → 0; refused with a named reason and nothing written → ExitCode.AA_START_REFUSED."""
     if not HAS_PG_LOOP_WRITE:
         return _refuse_aa_start(AA.REFUSAL.LEDGER_UNWRITABLE, "PG helper import failed")
     try:
@@ -9446,7 +9467,24 @@ def start_aa() -> int:
         return _refuse_aa_start(
             AA.REFUSAL.ALREADY_OPEN, f"A/A {latest.id} has no aa-result"
         )
-    return _write_aa_start(fingerprint, previous=0 if latest is None else latest.id)
+    code = _write_aa_start(fingerprint, previous=0 if latest is None else latest.id)
+    if code == 0:
+        _start_aa_canaries(_agent_roster(agents_dir))
+    return code
+
+
+def _start_aa_canaries(roster: frozenset[str]) -> None:
+    """The salt is read back from the ledger (the writer returns a landed count, not the id)."""
+    try:
+        latest = _read_latest_aa_start()
+    except Exception as exc:  # noqa: BLE001 — the start row stands; renewal writes the files
+        _warn_aa(
+            f"canary files not written: start row unreadable: {_describe_fault(exc)}",
+            "the next writing cycle writes them",
+        )
+        return
+    if latest is not None and not latest.is_closed:
+        _put_aa_canaries(latest, roster)
 
 
 def _write_aa_start(fingerprint: dict[str, str], *, previous: int) -> int:
@@ -9498,35 +9536,178 @@ def run_aa_stage(
     nothing. A ledger or evidence fault WARNs by name and never fails the cycle; the caller
     skips the stage in no-write mode (--dry-run).
     """
-    latest = _read_open_aa_start()
+    try:
+        latest = _read_open_aa_start()
+    except AaStateUnreadable as exc:
+        # canary files are left to their lease: an unread state removes and renews nothing
+        _warn_aa(f"open state unreadable: {exc}", "no A/A evaluation this cycle")
+        return
     if latest is None:
+        _remove_canaries(_get_canary_files(), "no open A/A or trial")
+        return
+    roster = _agent_roster(agents_dir)
+    if _sweep_aa_canaries(latest, roster):
         return
     restart = _get_aa_restart(latest)
     if restart is not None:
         _write_aa_restart(latest.id, restart, cycle_date)
+        _restart_aa_canaries(latest, roster)
         return  # the restart row starts a new window
-    _evaluate_aa(
-        latest, AaSource(cycle_date, manifest_ingest, AaDir(agents_dir, reports_dir))
-    )
+    _put_aa_canaries(latest, roster)
+    source = AaSource(cycle_date, manifest_ingest, AaDir(agents_dir, reports_dir))
+    if _evaluate_aa(latest, source):
+        _remove_canaries(_get_canary_files(), "the A/A has its result")
 
 
 def _read_open_aa_start() -> AaStart | None:
-    """The open A/A; None when none is open or the open state is unreadable (WARNed)."""
+    """The open A/A; None when none is open. Raises AaStateUnreadable on a ledger read fault."""
     if not HAS_PG_LOOP_WRITE:
-        _warn_aa(
-            "open state unreadable: PG helper import failed",
-            "no A/A evaluation this cycle",
-        )
-        return None
+        raise AaStateUnreadable("PG helper import failed")
     try:
         latest = _read_latest_aa_start()
-    except Exception as exc:  # noqa: BLE001 — a ledger read fault never fails the cycle
-        _warn_aa(
-            f"open state unreadable: {_describe_fault(exc)}",
-            "no A/A evaluation this cycle",
-        )
-        return None
+    except Exception as exc:  # any read fault → the one state run_aa_stage WARNs on
+        raise AaStateUnreadable(_describe_fault(exc)) from exc
     return None if latest is None or latest.is_closed else latest
+
+
+def write_canary_file(agent: str, salt: int, text: str, now: datetime) -> None:
+    """Replace one agent's canary file whole — a temp file in its directory, then a rename — so a
+    SubagentStart read sees the previous file or this one, never a partial one. Raises OSError."""
+    path = _get_canary_path(agent)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    body = {
+        "salt": salt,
+        "text": text,
+        "text_sha256": _get_text_sha256(text),
+        "expires_at": int((now + CANARY.LEASE).timestamp()),
+    }
+    fd, temp = tempfile.mkstemp(dir=path.parent, prefix=f".{path.stem}.", suffix=".tmp")
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as handle:
+            json.dump(body, handle)
+        os.replace(temp, path)
+    except BaseException:
+        Path(temp).unlink(missing_ok=True)
+        raise
+
+
+def _get_canary_dir() -> Path:
+    """The hook's CANARY_DIR: `${GA_DATA_ROOT:-$HOME/.glass-atrium}/data/learning/canary`."""
+    return ga_paths.get_data_root() / "learning" / "canary"
+
+
+def _get_canary_path(agent: str) -> Path:
+    return _get_canary_dir() / f"{CANARY.UNSAFE_KEY.sub('', agent)}.json"
+
+
+def _get_canary_files() -> list[Path]:
+    return [
+        path for path in sorted(_get_canary_dir().glob("*.json")) if not path.is_dir()
+    ]
+
+
+def _get_text_sha256(text: str) -> str:
+    return hashlib.sha256(text.encode("utf-8")).hexdigest()
+
+
+def _put_aa_canaries(latest: AaStart, roster: frozenset[str]) -> None:
+    """Rewrite each roster agent's canary from the daemon's own record: the window's salt, the
+    A/A's empty text and a lease from now. A failed write WARNs; that agent keeps its old lease."""
+    now = _get_utc_now()
+    for agent in sorted(roster):
+        try:
+            write_canary_file(agent, latest.salt_id, CANARY.AA_TEXT, now)
+        except OSError as exc:
+            _warn_aa(
+                f"canary for {agent} not written: {_describe_fault(exc)}",
+                "its previous file stands until its lease ends",
+            )
+
+
+def _restart_aa_canaries(previous: AaStart, roster: frozenset[str]) -> None:
+    """Rewrite the canaries on the restart row's salt, read back as the window's newest row."""
+    try:
+        latest = _read_open_aa_start()
+    except AaStateUnreadable as exc:
+        _warn_aa(
+            f"A/A {previous.id} canaries keep the previous salt: open state unreadable: {exc}",
+            "the next writing cycle rewrites them",
+        )
+        return
+    if latest is not None:
+        _put_aa_canaries(latest, roster)
+
+
+def _sweep_aa_canaries(latest: AaStart, roster: frozenset[str]) -> bool:
+    """Check the canary directory against the open A/A before any rewrite. A file for an agent
+    outside the roster, or one the hook cannot read, is removed; a roster file whose text is not
+    the A/A's voids the A/A and every file is removed. True = voided."""
+    roster_files = {_get_canary_path(agent): agent for agent in roster}
+    expected = _get_text_sha256(CANARY.AA_TEXT)
+    for path in _get_canary_files():
+        agent = roster_files.get(path)
+        if agent is None:
+            _remove_canaries([path], "no open A/A or trial for its agent")
+            continue
+        text = _read_canary_text(path)
+        if text is None:
+            _remove_canaries([path], "unreadable as the hook's file contract")
+        elif _get_text_sha256(text) != expected:
+            _void_aa(latest, agent, _get_text_sha256(text))
+            return True
+    return False
+
+
+def _read_canary_text(path: Path) -> str | None:
+    """The file's text field; None when it is over the hook's size bound or not a canary object."""
+    try:
+        with path.open("rb") as handle:
+            raw = handle.read(CANARY.FILE_MAX_BYTES + 1)
+        body = json.loads(raw)
+    except (OSError, ValueError):
+        return None
+    if len(raw) > CANARY.FILE_MAX_BYTES or not isinstance(body, dict):
+        return None
+    text = body.get("text")
+    return text if isinstance(text, str) else None
+
+
+def _void_aa(latest: AaStart, agent: str, text_sha256: str) -> None:
+    """Close the A/A with a void result, then remove every canary file."""
+    payload = {
+        "overall": AA.VERDICT.VOID,
+        "void": {
+            "reason": CANARY.VOID_REASON,
+            "agent": agent,
+            "text_sha256": text_sha256,
+        },
+    }
+    dedupe_key = f"{TRIAL_LEDGER.EVENT.AA_RESULT}:{latest.id}"
+    if _write_aa_row(TRIAL_LEDGER.EVENT.AA_RESULT, payload, dedupe_key) == 1:
+        sys.stderr.write(
+            f"[daemon-cycle] WARN: A/A {latest.id} voided — {agent}'s canary text "
+            f"{text_sha256} is not the A/A's ({dedupe_key})\n"
+        )
+    else:
+        _warn_aa(
+            f"A/A {latest.id} void not recorded: {agent}'s canary text {text_sha256} is not "
+            "the A/A's",
+            "its canary files are removed",
+        )
+    _remove_canaries(_get_canary_files(), f"A/A {latest.id} voided")
+
+
+def _remove_canaries(paths: list[Path], reason: str) -> None:
+    for path in paths:
+        try:
+            path.unlink(missing_ok=True)
+        except OSError as exc:
+            _warn_aa(
+                f"canary {path} not removed: {_describe_fault(exc)}",
+                "the next writing cycle retries",
+            )
+            continue
+        sys.stderr.write(f"[daemon-cycle] INFO: canary {path} removed — {reason}\n")
 
 
 def _get_aa_restart(latest: AaStart) -> AaRestart | None:
@@ -9546,8 +9727,9 @@ def _write_aa_restart(start_id: int, restart: AaRestart, cycle_date: str) -> Non
     _write_aa_row(TRIAL_LEDGER.EVENT.AA_RESTART, payload, dedupe_key)
 
 
-def _evaluate_aa(latest: AaStart, source: AaSource) -> None:
-    """Write the result once the window has ended; an evidence fault WARNs and waits for a later cycle."""
+def _evaluate_aa(latest: AaStart, source: AaSource) -> bool:
+    """Write the result once the window has ended → True when it landed; an evidence fault WARNs
+    and waits for a later cycle."""
     now = _get_utc_now()
     try:
         evidence = _read_aa_evidence(latest, source, now)
@@ -9556,9 +9738,8 @@ def _evaluate_aa(latest: AaStart, source: AaSource) -> None:
             f"A/A {latest.id} evidence unreadable: {_describe_fault(exc)}",
             "no A/A evaluation this cycle",
         )
-        return
-    if evidence is not None:
-        _write_aa_result(latest, evidence, source, now)
+        return False
+    return evidence is not None and _write_aa_result(latest, evidence, source, now)
 
 
 def _read_aa_evidence(
@@ -9648,12 +9829,13 @@ def _read_aa_join_counts(names: list[str], window: AaWindow) -> tuple[int, int]:
 
 def _write_aa_result(
     latest: AaStart, evidence: AaEvidence, source: AaSource, now: datetime
-) -> None:
-    """Design-effect rows first, then the aa-result row; a design-effect write fault defers both."""
+) -> bool:
+    """Design-effect rows first, then the aa-result row → True when it landed; a design-effect
+    write fault defers both."""
     start_id = latest.id
     effects, undefined = _get_aa_design_effects(evidence.spawns, now)
     if not _write_aa_design_effects(start_id, effects):
-        return
+        return False
     armed = get_aa_armed_spawns(evidence.spawns, latest.salt_id)
     criteria = {
         "join_coverage": get_aa_join_criterion(*evidence.joins),
@@ -9666,10 +9848,12 @@ def _write_aa_result(
     }
     payload = _get_aa_result_payload(evidence.window, criteria)
     dedupe_key = f"{TRIAL_LEDGER.EVENT.AA_RESULT}:{start_id}"
-    if _write_aa_row(TRIAL_LEDGER.EVENT.AA_RESULT, payload, dedupe_key) is not None:
+    landed = _write_aa_row(TRIAL_LEDGER.EVENT.AA_RESULT, payload, dedupe_key)
+    if landed is not None:
         sys.stderr.write(
             f"[daemon-cycle] INFO: A/A {start_id} result {payload['overall']} ({dedupe_key})\n"
         )
+    return landed == 1
 
 
 def _get_aa_result_payload(
@@ -12853,7 +13037,7 @@ def _main(argv: list[str]) -> int:
         if args.dry_run:
             parser.error("--aa-start writes the ledger; it takes no --dry-run")
         # Answered BEFORE the pause gate: its clean exit 0 would read as a started A/A.
-        return start_aa()
+        return start_aa(args.agents_dir)
 
     if args.backfill_unadjudicated:
         if args.reports_dir is None:

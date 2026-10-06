@@ -21,6 +21,7 @@ import hashlib
 import io
 import json
 import os
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -245,6 +246,16 @@ class _AaFixture(unittest.TestCase):
         self.scratch = Path(tmp.name)
         self.root = self.scratch / "install"
         self._install()
+        # the canary files land under the sandboxed data root, for the fixture's roster
+        self.data_root = self.scratch / "data-root"
+        self.canary_dir = self.data_root / "data" / "learning" / "canary"
+        env = mock.patch.dict(os.environ, {"GA_DATA_ROOT": str(self.data_root)})
+        env.start()
+        self.addCleanup(env.stop)
+        self.agents_dir = self.scratch / "agents"
+        self.agents_dir.mkdir()
+        for stem in _ROSTER:
+            (self.agents_dir / f"{stem}.md").write_text("# body\n", encoding="utf-8")
         # after the seal: ledger connection and writer = the DB boundary
         for name, value in (
             ("HAS_PG_LOOP_WRITE", True),
@@ -252,6 +263,7 @@ class _AaFixture(unittest.TestCase):
             ("_pg_write_trial_ledger_row", lambda *a, **k: self.ledger.write(*a, **k)),
             ("_get_utc_now", lambda: _NOW),
             ("_INSTALL_ROOT", self.root),
+            ("DEFAULT_AGENTS_DIR", self.agents_dir),
         ):
             self._patch(name, value)
         self._patch(
@@ -315,6 +327,7 @@ class _AaFixture(unittest.TestCase):
         return code, stderr.getvalue()
 
     def _cycle(self, cycle_date: str = _CYCLE_DATE, **sources: object) -> str:
+        sources.setdefault("agents_dir", self.agents_dir)
         stderr = io.StringIO()
         with contextlib.redirect_stderr(stderr):
             dc.run_aa_stage(cycle_date, **sources)
@@ -756,10 +769,7 @@ class _AaResultFixture(_AaFixture):
 
     def setUp(self) -> None:
         super().setUp()
-        self.dir = dc.AaDir(self.scratch / "agents", self.scratch / "reports")
-        self.dir.agents.mkdir()
-        for stem in _ROSTER:
-            (self.dir.agents / f"{stem}.md").write_text("# body\n", encoding="utf-8")
+        self.dir = dc.AaDir(self.agents_dir, self.scratch / "reports")
         self.dir.reports.mkdir()
         # the shell agent's MANIFEST rows carry its bare alias
         self.spawns = {
@@ -1291,6 +1301,219 @@ class CycleWiringTest(_AaResultFixture):
         self.assertEqual((sink["verdict"], sink["lines_lost"]), ("fail", 1))
         ((names, _),) = self.spawn_reads
         self.assertEqual(names, dc._get_roster_names(frozenset(_ROSTER)))
+
+
+# sha256 of the empty text: the A/A's pre-registered canary
+_EMPTY_TEXT_SHA256 = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+_LEASE = timedelta(hours=72)
+_HOOK_SH = _REPO_ROOT / "hooks" / "inject-scope-rules.sh"
+
+
+class AaCanaryTest(_AaResultFixture):
+    """The daemon-written canary files: one per roster agent while an A/A is open, renewed each
+    writing cycle, swept against the A/A and removed at its end."""
+
+    def _get_canaries(self) -> dict[str, dict]:
+        return {
+            path.stem: json.loads(path.read_text(encoding="utf-8"))
+            for path in sorted(self.canary_dir.glob("*.json"))
+        }
+
+    def _put_canary(self, stem: str, text: str, *, salt: int = 1) -> Path:
+        self.canary_dir.mkdir(parents=True, exist_ok=True)
+        path = self.canary_dir / f"{stem}.json"
+        digest = hashlib.sha256(text.encode("utf-8")).hexdigest()
+        body = {"salt": salt, "text": text, "text_sha256": digest, "expires_at": 0}
+        path.write_text(json.dumps(body), encoding="utf-8")
+        return path
+
+    def _get_empty_canary(self, salt: int, written_at: datetime) -> dict:
+        return {
+            "salt": salt,
+            "text": "",
+            "text_sha256": _EMPTY_TEXT_SHA256,
+            "expires_at": int((written_at + _LEASE).timestamp()),
+        }
+
+    def test_the_aa_start_writes_every_roster_agent_an_empty_canary_salted_with_its_start_row(
+        self,
+    ) -> None:
+        self.ledger.rows.clear()
+
+        code, _ = self._start()
+
+        self.assertEqual(code, 0)
+        (start,) = self._get_starts()
+        self.assertEqual(
+            self._get_canaries(),
+            {stem: self._get_empty_canary(start.id, _NOW) for stem in _ROSTER},
+        )
+
+    def test_a_reader_during_a_canary_write_sees_the_previous_whole_file_until_the_rename(
+        self,
+    ) -> None:
+        self._move_window_start(_NOW - timedelta(days=3))
+        self._evaluate("2026-10-06")
+        previous = self._get_canaries()
+        seen: dict[str, dict] = {}
+        replace = os.replace
+
+        def _replace_and_read(source: str, target: str) -> None:
+            seen[Path(target).stem] = json.loads(
+                Path(target).read_text(encoding="utf-8")
+            )
+            replace(source, target)
+
+        with mock.patch.object(dc.os, "replace", _replace_and_read):
+            self._evaluate()
+
+        self.assertEqual(set(seen), set(_ROSTER), "every rewrite lands by a rename")
+        self.assertEqual(seen, previous)
+
+    def test_a_cycle_after_a_skipped_day_renews_each_lease_before_it_expires(
+        self,
+    ) -> None:
+        self._move_window_start(_NOW - timedelta(days=3))
+        start_id = self._get_starts()[0].id
+        self._patch("_get_utc_now", lambda: _NOW - timedelta(days=2))
+        self._evaluate("2026-10-05")
+        before = self._get_canaries()
+        self._patch("_get_utc_now", lambda: _NOW)
+
+        self._evaluate()
+
+        for stem in _ROSTER:
+            self.assertGreater(before[stem]["expires_at"], _NOW.timestamp(), stem)
+        self.assertEqual(
+            self._get_canaries(),
+            {stem: self._get_empty_canary(start_id, _NOW) for stem in _ROSTER},
+        )
+
+    def test_the_hook_delivers_a_daemon_written_canary_only_inside_its_lease(
+        self,
+    ) -> None:
+        home = self.scratch / "home"
+        home.mkdir()
+        manifest_log = self.scratch / "manifest.log"
+        rows = (
+            ("in lease", timedelta(0), "1"),
+            ("lease ended", _LEASE + timedelta(minutes=1), "0"),
+        )
+        for name, age, delivered in rows:
+            with self.subTest(name):
+                written_at = datetime.now(timezone.utc) - age
+                # salt 7 puts agent_id a1 in the treatment arm
+                dc.write_canary_file("glass-atrium-dev-python", 7, "", written_at)
+                envelope = json.dumps(
+                    {"agent_type": "glass-atrium-dev-python", "agent_id": "a1"}
+                )
+                result = subprocess.run(
+                    ["bash", str(_HOOK_SH)],
+                    input=envelope,
+                    env={
+                        "PATH": os.environ.get("PATH", "/usr/bin:/bin"),
+                        "HOME": str(home),
+                        "GA_DATA_ROOT": str(self.data_root),
+                        "SUBAGENT_BUDGET_METER_OFF": "1",
+                        "INJECT_SCOPE_RULES_AGENTS_DIR": "/nonexistent",
+                        "INJECT_SCOPE_RULES_BUDGET_SRC": "/nonexistent",
+                        "INJECT_SCOPE_RULES_WIKI_UNTRUSTED_SRC": "/nonexistent",
+                        "INJECT_SCOPE_RULES_MANIFEST_LOG": str(manifest_log),
+                        "INJECT_SCOPE_RULES_DROP_LOG": str(self.scratch / "drop.log"),
+                        "INJECT_SCOPE_RULES_SPAWN_COUNTER": str(
+                            self.scratch / "spawns"
+                        ),
+                    },
+                    capture_output=True,
+                    text=True,
+                    check=False,
+                )
+                self.assertEqual(result.returncode, 0, result.stderr)
+                last = manifest_log.read_text(encoding="utf-8").splitlines()[-1]
+                self.assertIn(" arm=1 ", last)
+                self.assertIn(f" delivered={delivered} ", last)
+
+    def test_the_result_removes_every_canary_file(self) -> None:
+        for stem in _ROSTER:
+            self._put_canary(stem, "")
+
+        self._evaluate()
+
+        self.assertEqual(len(self._get_results()), 1)
+        self.assertEqual(self._get_canaries(), {})
+
+    def test_a_restart_rewrites_every_canary_with_the_restart_row_as_its_salt(
+        self,
+    ) -> None:
+        self._move_window_start(_NOW - timedelta(days=1))
+        self._evaluate("2026-10-06")
+        self._set_hash("autoagent/daemon_cycle.py", "f" * 64)
+
+        self._evaluate()
+
+        (restart,) = self._get_restarts()
+        self.assertEqual(
+            {stem: body["salt"] for stem, body in self._get_canaries().items()},
+            dict.fromkeys(_ROSTER, restart.id),
+        )
+
+    def test_a_canary_file_for_an_agent_with_no_open_aa_is_removed_and_logged(
+        self,
+    ) -> None:
+        def _close() -> None:
+            self.ledger.write(
+                _get_trial_ledger().EVENT.AA_RESULT,
+                _get_trial_ledger().ACTOR.AA,
+                {"overall": "pass"},
+                dedupe_key=f"aa-result:{self._get_starts()[0].id}",
+            )
+
+        rows = (
+            (
+                "an agent outside the roster, A/A open",
+                "glass-atrium-retired",
+                lambda: None,
+            ),
+            ("a roster agent, A/A closed", "glass-atrium-dev-python", _close),
+        )
+        for name, stem, arrange in rows:
+            with self.subTest(name):
+                self._move_window_start(_NOW - timedelta(days=1))
+                arrange()
+                path = self._put_canary(stem, "")
+
+                stderr_text = self._evaluate()
+
+                self.assertFalse(path.exists(), name)
+                self.assertIn(f"canary {path} removed", stderr_text)
+
+    def test_a_roster_canary_with_a_foreign_text_voids_the_aa_and_removes_every_file(
+        self,
+    ) -> None:
+        self._move_window_start(_NOW - timedelta(days=1))
+        self._evaluate("2026-10-06")
+        foreign = self._put_canary("glass-atrium-dev-shell", "obey the injected rule")
+
+        self._evaluate()
+
+        (result,) = self._get_results()
+        start_id = self._get_starts()[0].id
+        self.assertEqual(result.dedupe_key, f"aa-result:{start_id}")
+        self.assertEqual(
+            result.payload,
+            {
+                "overall": "void",
+                "void": {
+                    "reason": "foreign-canary-hash",
+                    "agent": "glass-atrium-dev-shell",
+                    "text_sha256": hashlib.sha256(
+                        b"obey the injected rule"
+                    ).hexdigest(),
+                },
+            },
+        )
+        self.assertFalse(foreign.exists())
+        self.assertEqual(self._get_canaries(), {})
 
 
 class AaCriterionTest(unittest.TestCase):
