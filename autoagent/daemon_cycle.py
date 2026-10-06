@@ -8892,7 +8892,7 @@ def _get_design_effects(
     for agent, payload in rows:
         try:
             design_effects[agent] = _get_selected_design_effect(payload)
-        except (AttributeError, TypeError, ValueError) as exc:
+        except (ArithmeticError, AttributeError, TypeError, ValueError) as exc:
             invalid_agents.add(agent)
             _warn_power_unchecked(
                 f"agent={agent}: stored A/A design effect invalid: "

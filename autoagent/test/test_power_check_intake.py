@@ -489,6 +489,10 @@ class CheckPatternPowerTest(_StageFixture):
         rows = [
             ("an estimator below one", {"anova": 0.9, "size_weighted": 1.2}),
             ("a non-finite estimator", {"anova": 1.2, "size_weighted": "NaN"}),
+            (
+                "an estimator too large for a float",
+                {"anova": 10**400, "size_weighted": 1.2},
+            ),
             ("an estimator missing", {"anova": 1.2}),
             ("an undeclared key", {**_build_design_effect_payload(), "period": 1.3}),
         ]
