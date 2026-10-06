@@ -2,8 +2,10 @@
 
 The stage decides nothing: it pre-registers one trial per power-passing pattern, records each
 look milestone the accrued tasks reach, and counts the cycle's power verdicts once per cycle
-date. Every row is database-free under ``seal_pg_reach``; the ledger is an in-memory
-append-only fake behind the writer and connection seams.
+date. Every row outside the live class is database-free under ``seal_pg_reach``; the ledger is
+an in-memory append-only fake behind the writer and connection seams. The live class runs the
+pre-registration read's SQL on the cluster ``autoagent/test/live-pg-ephemeral.bats`` provisions
+and skips elsewhere.
 
 Run with either runner:
     uv run --with pytest pytest autoagent/test/test_shadow_engine.py -v
@@ -14,6 +16,7 @@ from __future__ import annotations
 
 import contextlib
 import functools
+import hashlib
 import io
 import itertools
 import json
@@ -23,6 +26,7 @@ import re
 import sys
 import tempfile
 import unittest
+import uuid
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from types import SimpleNamespace
@@ -46,7 +50,7 @@ import _pg_stub_backend as stub
 import daemon_cycle as dc
 import trial_design
 from _outcome_signal import SpawnFacts, get_pair_windows, is_floor_half
-from _pg_seal import seal_pg_reach
+from _pg_seal import get_ephemeral_connection, seal_pg_reach
 
 _NOW = datetime(2026, 10, 5, 6, 0, tzinfo=timezone.utc)
 _DAY = get_pair_windows(_NOW).end  # D
@@ -523,6 +527,125 @@ class LedgerFaultTest(_ShadowFixture):
                 stderr_text,
             )
             self.assertEqual(self._get_preregistrations(), [])
+
+
+class PreRegistrationReadLivePgTest(_ShadowFixture):
+    """The pre-registration read's real SQL on the ephemeral cluster; skips anywhere else.
+
+    Each test owns a database cloned from a template ``live-pg-ephemeral.bats`` builds — the
+    ledger is append-only, so rows cannot be cleaned up. The power check runs on the fake
+    ledger; only the stage's ledger connection then points at the clone.
+    """
+
+    _TEMPLATE = SimpleNamespace(
+        FULL="trial_ledger_tpl", ABSENT="trial_ledger_absent_tpl"
+    )
+
+    def setUp(self) -> None:
+        get_ephemeral_connection().close()
+        import psycopg
+
+        self.psycopg = psycopg
+        super().setUp()
+
+    def _use_database(self, template: str) -> None:
+        self.dbname = f"sh_{os.getpid()}_{uuid.uuid4().hex[:8]}"
+        self._run_admin(f'CREATE DATABASE "{self.dbname}" TEMPLATE "{template}"')
+        self.addCleanup(self._run_admin, f'DROP DATABASE "{self.dbname}" WITH (FORCE)')
+        self._patch("_pg_connect", self._connect)
+
+    def _run_admin(self, statement: str) -> None:
+        with self.psycopg.connect(
+            dbname="eph_bootstrap", connect_timeout=2, autocommit=True
+        ) as admin:
+            admin.execute(statement)
+
+    def _connect(self):
+        return self.psycopg.connect(dbname=self.dbname, connect_timeout=2)
+
+    def _insert(
+        self,
+        recorded_at: datetime,
+        event: str,
+        *,
+        agent: str = _AGENT,
+        pattern_id: int = _PATTERN_ID,
+    ) -> str:
+        """One ledger row for (agent, pattern_id, budget_overage) → its trial key."""
+        key = hashlib.sha256(
+            f"{agent}|{pattern_id}|{event}|{recorded_at.isoformat()}".encode()
+        ).hexdigest()
+        with self._connect() as conn:
+            conn.execute(
+                "INSERT INTO core.autoagent_trial_ledger (recorded_at, trial_key, agent,"
+                " learning_pattern_id, event, actor, payload, dedupe_key)"
+                " VALUES (%s, %s, %s, %s, %s, %s, %s::jsonb, %s)",
+                (
+                    recorded_at,
+                    key,
+                    agent,
+                    pattern_id,
+                    event,
+                    _get_trial_ledger().ACTOR.SHADOW,
+                    json.dumps({"metric_key": _BUDGET_KEY}),
+                    key,
+                ),
+            )
+        return key
+
+    def _check_power(self) -> dc.PowerResult:
+        with contextlib.redirect_stderr(io.StringIO()):
+            power = dc.check_pattern_power(self.patterns, skip_loop_emit=True)
+        self.assertEqual(len(power.passes), 1)
+        return power
+
+    def test_the_read_keeps_the_latest_preregistration_per_agent_pattern_and_metric_key(
+        self,
+    ) -> None:
+        power = self._check_power()
+        self._use_database(self._TEMPLATE.FULL)
+        event = _get_trial_ledger().EVENT
+        latest_at = _NOW - timedelta(days=1)
+        latest = self._insert(latest_at, event.SHADOW_PREREGISTRATION)
+        # older yet inserted later · another pattern · an agent outside the passes · a later look
+        self._insert(_NOW - timedelta(days=3), event.SHADOW_PREREGISTRATION)
+        other = self._insert(
+            _NOW - timedelta(days=2),
+            event.SHADOW_PREREGISTRATION,
+            pattern_id=_PATTERN_ID + 1,
+        )
+        self._insert(
+            latest_at, event.SHADOW_PREREGISTRATION, agent="glass-atrium-dev-shell"
+        )
+        self._insert(_NOW, event.SHADOW_LOOK)
+        trials = dc._read_shadow_trials(power.passes)
+        self.assertEqual(
+            {group: trial.key for group, trial in trials.items()},
+            {
+                (_AGENT, _PATTERN_ID, _BUDGET_KEY): latest,
+                (_AGENT, _PATTERN_ID + 1, _BUDGET_KEY): other,
+            },
+        )
+        trial = trials[(_AGENT, _PATTERN_ID, _BUDGET_KEY)]
+        self.assertIsNotNone(trial.recorded_at.tzinfo)
+        self.assertEqual(trial.recorded_at, latest_at)
+        self.assertEqual(trial.payload, {"metric_key": _BUDGET_KEY})
+
+    def test_a_schema_without_the_ledger_warns_on_the_read_and_preregisters_nothing(
+        self,
+    ) -> None:
+        power = self._check_power()
+        self._use_database(self._TEMPLATE.ABSENT)
+        stderr = io.StringIO()
+        with contextlib.redirect_stderr(stderr):
+            dc.run_shadow_stage(power, f"{_NOW:%Y-%m-%d}")
+        self.assertRegex(
+            stderr.getvalue(),
+            r"WARN: shadow stage — pre-registrations unreadable: UndefinedTable: "
+            r".*core\.autoagent_trial_ledger",
+        )
+        self.assertEqual(self._get_preregistrations(), [])
+        self.assertEqual(self.pg_reach, [])
 
 
 class SealTest(_ShadowFixture):
