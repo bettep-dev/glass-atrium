@@ -217,6 +217,10 @@ PY
   _assert_live_module test_aa_harness AaOpenReadLivePgTest
 }
 
+@test "the A/A harness's join-coverage read runs against the migrated cluster, none skipped" {
+  _assert_live_module test_aa_harness AaJoinCoverageReadLivePgTest
+}
+
 @test "the pattern-metric window read runs against the migrated cluster, none skipped" {
   cd "${BATS_TEST_DIRNAME}/../../hooks/test" || return 1
   _assert_live_module test_pattern_metric TestPatternFloorReadLivePg

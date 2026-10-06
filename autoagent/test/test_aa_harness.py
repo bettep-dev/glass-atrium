@@ -5,8 +5,8 @@ hashes; while it is open each writing cycle compares the fingerprint and writes 
 aa-restart row when it moved or cannot be read. Once its window's duration ends, a cycle
 writes one design-effect row per agent and the aa-result row. Every row outside the live class is
 database-free under ``seal_pg_reach``; the ledger is an in-memory append-only fake behind the
-writer and connection seams. The live class runs the open-state read's SQL on the cluster
-``autoagent/test/live-pg-ephemeral.bats`` provisions and skips elsewhere.
+writer and connection seams. The live classes run the open-state and join-coverage reads' SQL
+on the cluster ``autoagent/test/live-pg-ephemeral.bats`` provisions and skip elsewhere.
 
 Run with either runner:
     uv run --with pytest pytest autoagent/test/test_aa_harness.py -v
@@ -636,55 +636,6 @@ class SealTest(_AaFixture):
         self.assertEqual(reach, ["_pg_connect"])
 
 
-class CycleWiringTest(_AaFixture):
-    """run_cycle runs the stage on a writing cycle; no-write mode (--dry-run → skip_loop_emit) writes no ledger row."""
-
-    def setUp(self) -> None:
-        super().setUp()
-        (self.scratch / "agents").mkdir()
-        env = mock.patch.dict(
-            os.environ,
-            {
-                "GA_DATA_ROOT": str(self.scratch),
-                "AUTOAGENT_REPORTS_DIR": str(self.scratch / "reports"),
-            },
-        )
-        env.start()
-        self.addCleanup(env.stop)
-        self._patch("_pg_read_pending_patterns", list)
-        self._open()
-        self._set_hash("autoagent/daemon_cycle.py", "f" * 64)
-
-    def _run_cycle(self, *, skip_loop_emit: bool) -> None:
-        with contextlib.redirect_stderr(io.StringIO()):
-            dc.run_cycle(
-                log_path=self.scratch / "learning-log.md",
-                agents_dir=self.scratch / "agents",
-                skip_haiku=True,
-                skip_pre_verify=True,
-                skip_loop_emit=skip_loop_emit,
-            )
-        self.assertEqual(self.pg_reach, [])
-
-    def test_a_dry_run_cycle_writes_no_aa_row(self) -> None:
-        self._run_cycle(skip_loop_emit=True)
-        self.assertEqual(self._get_restarts(), [])
-
-    def test_a_writing_cycle_restarts_the_open_aa_on_a_moved_fingerprint(self) -> None:
-        def _refuse(*args: object, **kwargs: object) -> None:
-            raise ConnectionRefusedError("corpus audit: no database in this test")
-
-        self._patch("_pg_write_corpus_audit", _refuse)
-        self._patch("_pg_write_loop_event", lambda *args, **kwargs: True)
-
-        self._run_cycle(skip_loop_emit=False)
-
-        self.assertEqual(
-            [row.payload["reason"] for row in self._get_restarts()],
-            ["fingerprint-changed"],
-        )
-
-
 _ROSTER = ("glass-atrium-dev-python", "glass-atrium-dev-shell")
 _START = _NOW - timedelta(days=15)
 # frozen rule small enough for a fixture: both roster agents need 4 spawns in the first 14 days
@@ -775,12 +726,11 @@ class _AaResultFixture(_AaFixture):
 
     def setUp(self) -> None:
         super().setUp()
-        self.agents_dir = self.scratch / "agents"
-        self.agents_dir.mkdir()
+        self.dir = dc.AaDir(self.scratch / "agents", self.scratch / "reports")
+        self.dir.agents.mkdir()
         for stem in _ROSTER:
-            (self.agents_dir / f"{stem}.md").write_text("# body\n", encoding="utf-8")
-        self.reports_dir = self.scratch / "reports"
-        self.reports_dir.mkdir()
+            (self.dir.agents / f"{stem}.md").write_text("# body\n", encoding="utf-8")
+        self.dir.reports.mkdir()
         # the shell agent's MANIFEST rows carry its bare alias
         self.spawns = {
             "glass-atrium-dev-python": (_EARLIER_SPAWN, *_SPAWNS.python),
@@ -822,7 +772,7 @@ class _AaResultFixture(_AaFixture):
         self._put_report(generated_at.date().isoformat(), report)
 
     def _put_report(self, day: str, report: dict) -> None:
-        path = self.reports_dir / f"autoagent-{day}.json"
+        path = self.dir.reports / f"autoagent-{day}.json"
         path.write_text(json.dumps(report), encoding="utf-8")
 
     def _move_window_start(self, start: datetime) -> None:
@@ -836,8 +786,8 @@ class _AaResultFixture(_AaFixture):
         return self._cycle(
             cycle_date,
             manifest_ingest=ingest,
-            agents_dir=self.agents_dir,
-            reports_dir=self.reports_dir,
+            agents_dir=self.dir.agents,
+            reports_dir=self.dir.reports,
         )
 
     def _get_results(self) -> list[_LedgerRow]:
@@ -979,7 +929,7 @@ class AaResultFailTest(_AaResultFixture):
 
         def _corrupt_a_window_report() -> None:
             (
-                self.reports_dir
+                self.dir.reports
                 / f"autoagent-{(_START + timedelta(days=6)).date()}.json"
             ).write_text("{", encoding="utf-8")
 
@@ -1142,6 +1092,79 @@ class AaOutageTest(_AaResultFixture):
         self.assertEqual(len(self._get_design_effect_rows()), 1)
 
 
+class CycleWiringTest(_AaResultFixture):
+    """run_cycle runs the stage on a writing cycle, fed this cycle's MANIFEST ingest and its
+    agents_dir; no-write mode (--dry-run → skip_loop_emit) writes no ledger row."""
+
+    def setUp(self) -> None:
+        super().setUp()
+        env = mock.patch.dict(
+            os.environ,
+            {
+                "GA_DATA_ROOT": str(self.scratch),
+                "AUTOAGENT_REPORTS_DIR": str(self.dir.reports),
+            },
+        )
+        env.start()
+        self.addCleanup(env.stop)
+
+        def _refuse(*args: object, **kwargs: object) -> None:
+            raise ConnectionRefusedError("corpus audit: no database in this test")
+
+        self._patch("_pg_read_pending_patterns", list)
+        self._patch("_pg_write_corpus_audit", _refuse)
+        self._patch("_pg_write_loop_event", lambda *args, **kwargs: True)
+        # reports dir: run_cycle leaves it to the install default → pinned to the fixture's
+        self._patch(
+            "run_aa_stage",
+            functools.partial(dc.run_aa_stage, reports_dir=self.dir.reports),
+        )
+
+    def _run_cycle(self, *, skip_loop_emit: bool) -> None:
+        with contextlib.redirect_stderr(io.StringIO()):
+            dc.run_cycle(
+                log_path=self.scratch / "learning-log.md",
+                agents_dir=self.dir.agents,
+                skip_haiku=True,
+                skip_pre_verify=True,
+                skip_loop_emit=skip_loop_emit,
+            )
+        self.assertEqual(self.pg_reach, [])
+
+    def test_a_dry_run_cycle_writes_no_aa_row(self) -> None:
+        self._set_hash("autoagent/daemon_cycle.py", "f" * 64)
+
+        self._run_cycle(skip_loop_emit=True)
+
+        self.assertEqual(self._get_restarts(), [])
+
+    def test_a_writing_cycle_restarts_the_open_aa_on_a_moved_fingerprint(self) -> None:
+        self._set_hash("autoagent/daemon_cycle.py", "f" * 64)
+
+        self._run_cycle(skip_loop_emit=False)
+
+        self.assertEqual(
+            [row.payload["reason"] for row in self._get_restarts()],
+            ["fingerprint-changed"],
+        )
+
+    def test_a_writing_cycle_judges_the_ended_aa_on_its_own_manifest_closes_and_agents_dir_roster(
+        self,
+    ) -> None:
+        lost_now = dc.ManifestIngest(
+            "ok", [dc.ManifestSpoolClose("manifest.log.spool", 4, 3)]
+        )
+        self._patch("ingest_manifest_log", lambda *args, **kwargs: lost_now)
+
+        self._run_cycle(skip_loop_emit=False)
+
+        (result,) = self._get_results()
+        sink = result.payload["criteria"]["sink"]
+        self.assertEqual((sink["verdict"], sink["lines_lost"]), ("fail", 1))
+        ((names, _),) = self.spawn_reads
+        self.assertEqual(names, dc._get_roster_names(frozenset(_ROSTER)))
+
+
 class AaCriterionTest(unittest.TestCase):
     def test_join_coverage_passes_from_95_percent_of_at_least_one_outcome(self) -> None:
         rows = (
@@ -1204,8 +1227,8 @@ class AaCriterionTest(unittest.TestCase):
                 self.assertEqual(dc.get_aa_overall(criteria), overall)
 
 
-class AaOpenReadLivePgTest(_AaFixture):
-    """The open-state read's real SQL on the ephemeral cluster; skips anywhere else.
+class _AaLivePgFixture(_AaFixture):
+    """A read's real SQL on the ephemeral cluster; skips anywhere else.
 
     Each test owns a database cloned from a template ``live-pg-ephemeral.bats`` builds — the
     ledger is append-only, so rows cannot be cleaned up.
@@ -1236,6 +1259,10 @@ class AaOpenReadLivePgTest(_AaFixture):
 
     def _connect(self):
         return self.psycopg.connect(dbname=self.dbname, connect_timeout=2)
+
+
+class AaOpenReadLivePgTest(_AaLivePgFixture):
+    """The open-state read over the trial ledger."""
 
     def _insert(self, event: str, payload: dict, dedupe_key: str | None) -> int:
         with self._connect() as conn:
@@ -1297,6 +1324,25 @@ class AaOpenReadLivePgTest(_AaFixture):
             dc._read_latest_aa_start().window_start, self._get_recorded_at(restart)
         )
 
+    def test_an_empty_ledger_reads_no_start(self) -> None:
+        self._use_database(self._TEMPLATE.FULL)
+        self.assertIsNone(dc._read_latest_aa_start())
+
+    def test_a_schema_without_the_ledger_warns_on_the_read_and_writes_nothing(
+        self,
+    ) -> None:
+        self._use_database(self._TEMPLATE.ABSENT)
+        stderr_text = self._cycle()
+        self.assertRegex(
+            stderr_text,
+            r"WARN: A/A harness — open state unreadable: UndefinedTable: "
+            r".*core\.autoagent_trial_ledger",
+        )
+
+
+class AaJoinCoverageReadLivePgTest(_AaLivePgFixture):
+    """The join-coverage read over core.outcomes and core.spawn_manifest."""
+
     def test_join_coverage_counts_roster_outcomes_in_the_window_carrying_both_ids_that_join_a_spawn(
         self,
     ) -> None:
@@ -1337,21 +1383,6 @@ class AaOpenReadLivePgTest(_AaFixture):
         )
 
         self.assertEqual(counts, (4, 2))
-
-    def test_an_empty_ledger_reads_no_start(self) -> None:
-        self._use_database(self._TEMPLATE.FULL)
-        self.assertIsNone(dc._read_latest_aa_start())
-
-    def test_a_schema_without_the_ledger_warns_on_the_read_and_writes_nothing(
-        self,
-    ) -> None:
-        self._use_database(self._TEMPLATE.ABSENT)
-        stderr_text = self._cycle()
-        self.assertRegex(
-            stderr_text,
-            r"WARN: A/A harness — open state unreadable: UndefinedTable: "
-            r".*core\.autoagent_trial_ledger",
-        )
 
 
 if __name__ == "__main__":
