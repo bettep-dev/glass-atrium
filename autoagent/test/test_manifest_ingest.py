@@ -93,7 +93,10 @@ _PRE_FIELD = (None, None, None, None)
 _AA = SimpleNamespace(
     SHA256=hashlib.sha256(b"").hexdigest(),
     SALT="7",
-    WINDOW_START=datetime(2026, 10, 5, 12, 0, 0, tzinfo=timezone.utc),
+    # recorded_at carries microseconds, a MANIFEST started_at whole seconds; off the minute
+    WINDOW_START=datetime(2026, 10, 5, 12, 0, 37, 500_000, tzinfo=timezone.utc),
+    FIRST_SECOND="2026-10-05T12:00:37Z",
+    LAST_SECOND_BEFORE="2026-10-05T12:00:36Z",
     IN_WINDOW="2026-10-05T17:00:00Z",
     BEFORE_WINDOW="2026-10-04T17:00:00Z",
 )
@@ -442,8 +445,10 @@ class TestManifestRotation(_IngestCase):
 class TestManifestDeliveryBinding(_IngestCase):
     """Each delivered row binds once, at the ingest that first stores it (Read-side binding)."""
 
-    def _open_aa(self, window_start: datetime = _AA.WINDOW_START) -> None:
-        self.ledger.latest = dc.AaStart(int(_AA.SALT), False, {}, window_start, {}, int(_AA.SALT))
+    def _open_aa(self) -> None:
+        self.ledger.latest = dc.AaStart(
+            int(_AA.SALT), False, {}, _AA.WINDOW_START, {}, int(_AA.SALT)
+        )
 
     def _put_canaries(self, agents: tuple[str, ...] = _ROSTER) -> None:
         self.canary_dir.mkdir(parents=True, exist_ok=True)
@@ -513,7 +518,11 @@ class TestManifestDeliveryBinding(_IngestCase):
     def test_a_foreign_hash_row_outside_the_open_a_a_s_binding_never_voids_it(self) -> None:
         self._open_aa()
         rows = (
-            ("a roster row from before the window", _ROSTER[0], _AA.BEFORE_WINDOW),
+            (
+                "a roster row in the last second before the window",
+                _ROSTER[0],
+                _AA.LAST_SECOND_BEFORE,
+            ),
             ("a non-roster row inside the window", "glass-atrium-dev-react", _AA.IN_WINDOW),
         )
         for hour, (name, agent, ts) in enumerate(rows):
@@ -560,13 +569,11 @@ class TestManifestDeliveryBinding(_IngestCase):
                 self.assertEqual(self._get_canaries(), [], name)
 
     def test_a_foreign_text_delivered_in_the_window_s_first_second_voids_it(self) -> None:
-        # recorded_at carries microseconds, a MANIFEST started_at whole seconds
-        self._open_aa(window_start=_AA.WINDOW_START + timedelta(microseconds=500_000))
+        self._open_aa()
         self._put_canaries()
-        first_second = f"{_AA.WINDOW_START:%Y-%m-%dT%H:%M:%SZ}"
         self._append(
             self.live_log,
-            _get_delivery_line(_ROSTER[0], text_sha256=_PLAIN_SHA256, ts=first_second),
+            _get_delivery_line(_ROSTER[0], text_sha256=_PLAIN_SHA256, ts=_AA.FIRST_SECOND),
         )
         self._ingest(_CYCLE_1)
 
