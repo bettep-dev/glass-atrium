@@ -846,8 +846,10 @@ _LOOP_EVENT_CENSUS_PREDICATE = "%s IS NULL" % _LOOP_EVENT_SUBJECT_COLUMN
 _LOOP_EVENT_VERDICT_PREDICATE = "%s IS NOT NULL" % _LOOP_EVENT_SUBJECT_COLUMN
 # Declared width of that column in the split migration — the refusal boundary below.
 _LOOP_EVENT_SUBJECT_MAX_CHARS = 128
-# A MANIFEST spool close's counts; NULL on every other row.
-_LOOP_EVENT_COUNT_COLUMNS = ("lines_read", "lines_without_row")
+_LOOP_EVENT = SimpleNamespace(
+    # A MANIFEST spool close's counts; NULL on every other row.
+    COUNT_COLUMNS=("lines_read", "lines_without_row"),
+)
 
 
 def _check_loop_event_class(eval_result, subject):
@@ -886,7 +888,7 @@ def _get_loop_event_upsert_sql(eval_result, has_counts):
         "changes_added",
         "changes_removed",
         _LOOP_EVENT_SUBJECT_COLUMN,
-    ) + (_LOOP_EVENT_COUNT_COLUMNS if has_counts else ())
+    ) + (_LOOP_EVENT.COUNT_COLUMNS if has_counts else ())
     return "INSERT INTO core.autoagent_loop_events (%s) VALUES (%s) %s RETURNING id" % (
         ", ".join(columns),
         ", ".join(["%s"] * len(columns)),
@@ -909,7 +911,7 @@ def _get_loop_event_conflict_arm(eval_result, has_counts=False):
         key = ("event_ts", "agent", "eval_result")
         predicate = _LOOP_EVENT_CENSUS_PREDICATE
         updated = ("rice", "changes_added", "changes_removed")
-    updated += _LOOP_EVENT_COUNT_COLUMNS if has_counts else ()
+    updated += _LOOP_EVENT.COUNT_COLUMNS if has_counts else ()
     return "ON CONFLICT (%s) WHERE %s DO UPDATE SET %s" % (
         ", ".join(key),
         predicate,
