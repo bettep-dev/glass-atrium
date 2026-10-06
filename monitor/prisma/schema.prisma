@@ -850,6 +850,11 @@ model AutoagentLoopEvent {
   changesRemoved Int      @map("changes_removed")
   // Identity token of the subject a verdict adjudicates; NULL = census class.
   subject        String?  @db.VarChar(128)
+  // Spool-close counts of a `manifest-spool-closed` row (daemon_cycle.py → _close_manifest_spool), same writer.
+  // NULL = not a spool close, or a row that predates the columns
+  linesRead       Int?    @map("lines_read")
+  // MANIFEST lines read minus the spawn_manifest rows present for the spool = lines lost unparsed
+  linesWithoutRow Int?    @map("lines_without_row")
   insertedAt     DateTime @default(now()) @map("inserted_at") @db.Timestamptz(6)
 
   // Dedup is two partial UNIQUE indexes — census (event_ts, agent, eval_result)
