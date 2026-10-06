@@ -9600,8 +9600,9 @@ def run_aa_stage(
     - Then one aa-restart row per cycle date when the installed fingerprint moved or cannot be
       read, with every canary rewritten on the restart row's salt; otherwise each roster
       agent's canary lease is renewed, and once the window's duration has ended the result
-      lands — one design-effect row per agent and metric key, then the instrument verdict
-      row, then the aa-result row — and every canary file is deleted.
+      lands — the instrument verdict row, then one design-effect row per agent and metric key,
+      then the aa-result row — and every canary file is deleted. A landed verdict is read back,
+      never decided again.
     - A verdict straddling at the duration end writes the window's extension row instead, once
       per window; the A/A stays open and the result lands at the extended duration.
     - Open state unreadable → no file is deleted or renewed; each runs to its lease.
