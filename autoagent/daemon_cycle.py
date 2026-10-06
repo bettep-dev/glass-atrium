@@ -8693,7 +8693,7 @@ POWER = SimpleNamespace(
         UNDERPOWERED="underpowered",
         INSUFFICIENT_HISTORY="insufficient-history",
         DESIGN_UNMEASURED="design-unmeasured",  # no A/A design-effect row for the agent — never passing
-        UNCHECKED="unchecked",  # history or ledger unreadable, or trial math missing — never passing
+        UNCHECKED="unchecked",  # history, ledger or stored design effect unusable — never passing
     ),
     # eval_result = prefix + verdict; the longest fills the varchar(32) column exactly
     CHECK_EVAL_PREFIX="power-check-",
@@ -8721,6 +8721,8 @@ class PowerInputs(NamedTuple):
     spawns: dict[str, list[SpawnFacts]]
     # agent → its latest A/A design effect; an absent agent is unmeasured
     design_effects: dict[str, float]
+    # design effect unusable: every agent on a ledger fault, one agent on an invalid stored row
+    unchecked_agents: frozenset[str]
 
 
 def check_pattern_power(patterns: list[Pattern], *, skip_loop_emit: bool) -> dict[str, int]:
@@ -8729,8 +8731,9 @@ def check_pattern_power(patterns: list[Pattern], *, skip_loop_emit: bool) -> dic
     The floor is get_floor_verdict over the spawn read the power inputs come from, so
     both judge one history. Each verdict is a stderr line plus a census loop event
     (none under skip_loop_emit); verdict only — no status write, no pattern parked or dropped.
-    An unreadable history or ledger, an invalid stored design effect or missing trial math
-    counts every keyed pattern unchecked, with a WARN, never passing.
+    Each fault WARNs and never passes: an unreadable history or missing trial math counts
+    every keyed pattern unchecked; an unreadable ledger counts every floor-passing one
+    unchecked, an invalid stored design effect only that agent's.
 
     Returns:
         verdict → count, every verdict present.
@@ -8765,6 +8768,8 @@ def _get_pattern_power_verdict(
     )
     if floor.verdict != VERDICT_PASS:
         return None
+    if pattern.agent in inputs.unchecked_agents:
+        return POWER.VERDICT.UNCHECKED, "A/A design effect unusable"
     design_effect = inputs.design_effects.get(pattern.agent)
     check = get_power_check(
         floor, spawns, inputs.provenance_start, windows, design_effect=design_effect
@@ -8824,14 +8829,14 @@ def _get_power_counts() -> dict[str, int]:
 
 
 def _read_power_inputs(agents: list[str], windows: PairWindows) -> PowerInputs | None:
-    """Spawn history + latest A/A design effects of the agents; None (WARN) when either is unusable."""
+    """Spawn history + latest A/A design effects of the agents; None (WARN) when the history is unusable.
+
+    A ledger fault keeps the history, so the floor is still judged before anything counts.
+    """
     history = _read_power_history(agents, windows)
     if history is None:
         return None
-    design_effects = _read_power_design_effects(agents)
-    if design_effects is None:
-        return None
-    return PowerInputs(*history, design_effects)
+    return PowerInputs(*history, *_read_power_design_effects(agents))
 
 
 def _read_power_history(
@@ -8848,15 +8853,17 @@ def _read_power_history(
             return _pg_read_spawn_facts(agents, windows)
         except Exception as exc:  # noqa: BLE001 — any read failure is an outage → fail closed
             cause = f"spawn history unreadable: {type(exc).__name__}: {str(exc)[:160]}"
-    _warn_power_unchecked(cause)
+    _warn_power_unchecked(cause, "every keyed intake pattern")
     return None
 
 
-def _read_power_design_effects(agents: list[str]) -> dict[str, float] | None:
-    """Agent → the selected design effect of its latest A/A session row; None (WARN) when unusable.
+def _read_power_design_effects(
+    agents: list[str],
+) -> tuple[dict[str, float], frozenset[str]]:
+    """(agent → selected design effect of its latest A/A session row, unchecked agents), WARN per fault.
 
     An agent with no row is absent (design-unmeasured). A read fault — the table absent on a
-    migrate-failed schema included — or a stored payload that is not a design effect fails closed.
+    migrate-failed schema included — fails every agent closed.
     """
     if not HAS_PG_LOOP_WRITE:
         cause = "trial ledger unreadable: PG helper import failed"
@@ -8866,15 +8873,33 @@ def _read_power_design_effects(agents: list[str]) -> dict[str, float] | None:
                 event = TRIAL_LEDGER.EVENT.AA_SESSION_DESIGN_EFFECT
                 cur.execute(POWER.DESIGN_EFFECT_SQL, (event, agents))
                 rows = cur.fetchall()
-            return {
-                agent: _get_selected_design_effect(payload) for agent, payload in rows
-            }
-        except Exception as exc:  # noqa: BLE001 — a read fault or an invalid row → fail closed
+        except Exception as exc:  # noqa: BLE001 — any read fault is an outage → fail closed
             cause = (
                 f"A/A design effect unreadable: {type(exc).__name__}: {str(exc)[:160]}"
             )
-    _warn_power_unchecked(cause)
-    return None
+        else:
+            return _get_design_effects(rows)
+    _warn_power_unchecked(cause, "every floor-passing keyed intake pattern")
+    return {}, frozenset(agents)
+
+
+def _get_design_effects(
+    rows: list[tuple[str, dict[str, float]]],
+) -> tuple[dict[str, float], frozenset[str]]:
+    """(agent → selected design effect, agents whose stored row is not a design effect)."""
+    design_effects: dict[str, float] = {}
+    invalid_agents: set[str] = set()
+    for agent, payload in rows:
+        try:
+            design_effects[agent] = _get_selected_design_effect(payload)
+        except (AttributeError, TypeError, ValueError) as exc:
+            invalid_agents.add(agent)
+            _warn_power_unchecked(
+                f"agent={agent}: stored A/A design effect invalid: "
+                f"{type(exc).__name__}: {str(exc)[:160]}",
+                "every floor-passing keyed intake pattern of the agent",
+            )
+    return design_effects, frozenset(invalid_agents)
 
 
 def _get_selected_design_effect(payload: dict[str, float]) -> float:
@@ -8887,10 +8912,9 @@ def _get_selected_design_effect(payload: dict[str, float]) -> float:
     return effect.selected
 
 
-def _warn_power_unchecked(cause: str) -> None:
+def _warn_power_unchecked(cause: str, counted: str) -> None:
     sys.stderr.write(
-        f"[daemon-cycle] WARN: power check — {cause}; every keyed intake pattern "
-        "counts unchecked, none passing\n"
+        f"[daemon-cycle] WARN: power check — {cause}; {counted} counts unchecked, none passing\n"
     )
 
 

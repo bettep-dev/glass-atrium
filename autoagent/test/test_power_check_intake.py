@@ -392,6 +392,10 @@ class _StageFixture(unittest.TestCase):
         return sorted((event["agent"], event["eval_result"]) for event in self.events)
 
 
+def _fail_pg_read(*args: object) -> None:
+    raise ConnectionError("PG unreachable")
+
+
 def _pattern(
     agent: str, row_id: int, metric_key: str | None = _BUDGET_KEY
 ) -> dc.Pattern:
@@ -479,7 +483,7 @@ class CheckPatternPowerTest(_StageFixture):
                 counts, _ = self._check([_pattern(_AGENT.PASSING, 1)])
                 self.assertEqual(counts[verdict], 1)
 
-    def test_an_invalid_stored_design_effect_counts_every_keyed_pattern_unchecked(
+    def test_an_invalid_stored_design_effect_counts_only_that_agents_patterns_unchecked(
         self,
     ) -> None:
         rows = [
@@ -492,8 +496,13 @@ class CheckPatternPowerTest(_StageFixture):
             with self.subTest(name):
                 self.design_effects[_AGENT.PASSING] = payload
                 counts, stderr_text = self._check(self.patterns)
-                self.assertEqual((counts["unchecked"], counts["passing"]), (3, 0))
-                self.assertIn("WARN: power check", stderr_text)
+                self.assertEqual(
+                    (counts["unchecked"], counts["passing"], counts["underpowered"]),
+                    (1, 0, 1),
+                )
+                self.assertIn(
+                    f"WARN: power check — agent={_AGENT.PASSING}", stderr_text
+                )
 
     def test_the_floor_is_judged_at_the_day_anchor_at_any_instant_of_the_day(
         self,
@@ -549,22 +558,30 @@ class CheckPatternPowerTest(_StageFixture):
                 self.assertEqual(sum(counts.values()), 0)
                 self.assertEqual(self.reads.history, [])
 
-    def test_an_unreadable_history_or_ledger_counts_every_keyed_pattern_unchecked_and_never_passing(
+    def test_an_unreadable_history_counts_every_keyed_pattern_unchecked_and_never_passing(
         self,
     ) -> None:
-        def _fail(*args: object) -> None:
-            raise ConnectionError("PG unreachable")
-
         for name, patches in (
-            ("history read raises", {"_pg_read_spawn_facts": _fail}),
+            ("history read raises", {"_pg_read_spawn_facts": _fail_pg_read}),
             ("history reads unavailable", {"HAS_PG_PATTERN_READ": False}),
-            ("ledger read raises", {"_pg_connect": _fail}),
-            ("ledger helper unavailable", {"HAS_PG_LOOP_WRITE": False}),
         ):
             with self.subTest(name), mock.patch.multiple(dc, **patches):
                 counts, stderr_text = self._check(self.patterns)
                 self.assertEqual(counts["unchecked"], 3)
                 self.assertEqual(counts["passing"], 0)
+                self.assertIn("WARN: power check", stderr_text)
+
+    def test_an_unreadable_ledger_counts_only_the_floor_passing_patterns_unchecked(
+        self,
+    ) -> None:
+        for name, patches in (
+            ("ledger read raises", {"_pg_connect": _fail_pg_read}),
+            ("ledger helper unavailable", {"HAS_PG_LOOP_WRITE": False}),
+        ):
+            with self.subTest(name), mock.patch.multiple(dc, **patches):
+                counts, stderr_text = self._check(self.patterns)
+                self.assertEqual((counts["unchecked"], sum(counts.values())), (2, 2))
+                self.assertNotIn(_AGENT.FLOOR_FAILING, stderr_text)
                 self.assertIn("WARN: power check", stderr_text)
 
     def test_a_no_write_cycle_counts_but_sends_no_loop_event(self) -> None:
@@ -623,11 +640,13 @@ class DesignEffectReadLivePgTest(_StageFixture):
                 ),
             )
 
-    def _check(self) -> tuple[dict[str, int], str]:
+    def _check(
+        self, patterns: list[dc.Pattern] | None = None
+    ) -> tuple[dict[str, int], str]:
         stderr = io.StringIO()
         with contextlib.redirect_stderr(stderr):
             counts = dc.check_pattern_power(
-                [_pattern(_AGENT.PASSING, 1)], skip_loop_emit=True
+                patterns or [_pattern(_AGENT.PASSING, 1)], skip_loop_emit=True
             )
         self.assertEqual(self.pg_reach, [])
         return counts, stderr.getvalue()
@@ -654,12 +673,15 @@ class DesignEffectReadLivePgTest(_StageFixture):
         counts, _ = self._check()
         self.assertEqual((counts["design-unmeasured"], counts["passing"]), (1, 0))
 
-    def test_a_schema_without_the_ledger_counts_unchecked_with_a_warn_naming_the_table(
+    def test_a_schema_without_the_ledger_counts_only_floor_passing_patterns_unchecked(
         self,
     ) -> None:
         self._use_database(self._TEMPLATE.ABSENT)
-        counts, stderr_text = self._check()
-        self.assertEqual((counts["unchecked"], counts["passing"]), (1, 0))
+        self.histories[_AGENT.FLOOR_FAILING] = _get_floor_failing_history()
+        counts, stderr_text = self._check(
+            [_pattern(_AGENT.PASSING, 1), _pattern(_AGENT.FLOOR_FAILING, 2)]
+        )
+        self.assertEqual((counts["unchecked"], sum(counts.values())), (1, 1))
         self.assertIn("core.autoagent_trial_ledger", stderr_text)
 
 
