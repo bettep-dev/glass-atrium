@@ -352,38 +352,51 @@ write_manifest_lines() {
   done
 }
 
-# Write a valid canary for glass-atrium-dev-front under the sandbox data root with salt $1; prints the
-# text's Python hashlib hash, the daemon's side of the contract.
+# Write a canary for glass-atrium-dev-front under the sandbox data root with salt $1, valid unless $2
+# names one delivery-check failure (expired · aged past the lease · hash mismatch · over the cap);
+# prints the text's Python hashlib hash, the daemon's side of the contract.
 write_front_canary() {
   local dir="${BATS_TEST_TMPDIR}/home/.glass-atrium/data/learning/canary"
   mkdir -p "${dir}"
-  python3 - "${dir}/glass-atrium-dev-front.json" "${1}" <<'PY'
-import hashlib, json, sys, time
-text = "CANARY_EXPOSURE_TEXT"
+  python3 - "${dir}/glass-atrium-dev-front.json" "${1}" "${2:-valid}" <<'PY'
+import hashlib, json, os, sys, time
+path, salt, variant = sys.argv[1], int(sys.argv[2]), sys.argv[3]
+now = int(time.time())
+text = "C" * 1201 if variant == "overcap" else "CANARY_EXPOSURE_TEXT"
 digest = hashlib.sha256(text.encode("utf-8")).hexdigest()
-with open(sys.argv[1], "w", encoding="utf-8") as fh:
-    json.dump({"salt": int(sys.argv[2]), "text_sha256": digest, "expires_at": int(time.time()) + 3600, "text": text}, fh)
+stored = "0" * 64 if variant == "mismatch" else digest
+expires_at = now - 60 if variant == "expired" else now + 3600
+with open(path, "w", encoding="utf-8") as fh:
+    json.dump({"salt": salt, "text_sha256": stored, "expires_at": expires_at, "text": text}, fh)
+if variant == "aged":
+    aged = now - (5760 + 60) * 60
+    os.utime(path, (aged, aged))
 print(digest, end="")
 PY
 }
 
 @test "a manifest line carries arm, salt_id, delivered and delivered_hash in order ahead of blocks=" {
   command -v python3 >/dev/null 2>&1 || skip "python3 not on PATH"
-  local row name salt extra want hash i=0
-  # name|salt (empty = no canary file, so that row runs first)|extra env|want — salt 2 puts sess-A1 in
-  # the treatment arm, salt 8 in control; with no digest tool the arm is left to the daemon's recomputation.
+  local row name salt variant extra want hash i=0
+  # name|salt (empty = no canary file, so that row runs first)|fixture variant|extra env|want — salt 2
+  # puts sess-A1 in the treatment arm, salt 8 in control; with no digest tool the arm is left to the
+  # daemon's recomputation. A present file failing a delivery check still records its salt and arm.
   local -a rows=(
-    'no canary file|||arm=none salt_id=none delivered=0 delivered_hash=none'
-    'treatment-arm canary|2||arm=1 salt_id=2 delivered=1 delivered_hash=HASH'
-    'control-arm canary|8||arm=0 salt_id=8 delivered=0 delivered_hash=none'
-    'no digest tool|2|INJECT_SCOPE_RULES_DIGEST_CMD=ga-no-such-digest-tool|arm=none salt_id=2 delivered=0 delivered_hash=none'
+    'no canary file||||arm=none salt_id=none delivered=0 delivered_hash=none'
+    'treatment-arm canary|2|valid||arm=1 salt_id=2 delivered=1 delivered_hash=HASH'
+    'control-arm canary|8|valid||arm=0 salt_id=8 delivered=0 delivered_hash=none'
+    'no digest tool|2|valid|INJECT_SCOPE_RULES_DIGEST_CMD=ga-no-such-digest-tool|arm=none salt_id=2 delivered=0 delivered_hash=none'
+    'expired treatment-arm canary|2|expired||arm=1 salt_id=2 delivered=0 delivered_hash=none'
+    'treatment-arm canary aged past the lease|2|aged||arm=1 salt_id=2 delivered=0 delivered_hash=none'
+    'treatment-arm canary with a hash mismatch|2|mismatch||arm=1 salt_id=2 delivered=0 delivered_hash=none'
+    'treatment-arm canary over the cap|2|overcap||arm=1 salt_id=2 delivered=0 delivered_hash=none'
   )
   for row in "${rows[@]}"; do
-    IFS='|' read -r name salt extra want <<<"${row}"
+    IFS='|' read -r name salt variant extra want <<<"${row}"
     i=$((i + 1))
     MANIFEST="${BATS_TEST_TMPDIR}/exposure-${i}.log"
     if [[ -n "${salt}" ]]; then
-      hash="$(write_front_canary "${salt}")" || { echo "${name}: fixture failed"; return 1; }
+      hash="$(write_front_canary "${salt}" "${variant}")" || { echo "${name}: fixture failed"; return 1; }
       want="${want/HASH/${hash}}"
     fi
     run_inject "glass-atrium-dev-front" "${BUDGET_FIT}" "${extra}"
