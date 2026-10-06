@@ -26,7 +26,7 @@ import sys
 import tempfile
 import unittest
 from collections.abc import Callable
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from types import SimpleNamespace
 from unittest import mock
@@ -89,6 +89,28 @@ _CONTROL = SimpleNamespace(
 )
 _PRE_FIELD = (None, None, None, None)
 
+# The A/A's empty canary text, its window and salt, and the roster the binding tests use.
+_AA = SimpleNamespace(
+    SHA256=hashlib.sha256(b"").hexdigest(),
+    SALT="7",
+    WINDOW_START=datetime(2026, 10, 5, 12, 0, 0, tzinfo=timezone.utc),
+    IN_WINDOW="2026-10-05T17:00:00Z",
+    BEFORE_WINDOW="2026-10-04T17:00:00Z",
+)
+_ROSTER = ("glass-atrium-dev-python", "glass-atrium-dev-shell", "glass-atrium-dev-node")
+_NO_TRIAL_RE = re.compile(r"WARN: manifest binding — (\S+) canary delivered with no open trial")
+
+
+def _get_delivery_line(
+    agent: str, *, salt: str = _AA.SALT, text_sha256: str = _AA.SHA256, ts: str = _AA.IN_WINDOW
+) -> str:
+    """A treatment spawn the hook delivered a canary to, as its MANIFEST line."""
+    return (
+        f"{ts} [inject-scope-rules] MANIFEST agent_id=c5d8{agent[-4:]} session_id=e0e449e3-7b17"
+        f" agent={agent} ctx_bytes=1166 digest=9f2c arm=1 salt_id={salt} delivered=1"
+        f" delivered_hash={text_sha256} blocks=emit,meter,canary\n"
+    )
+
 
 class _SpawnManifestTable:
     """In-memory core.spawn_manifest: unique on (spool, line_offset), DO NOTHING on conflict."""
@@ -110,9 +132,37 @@ class _SpawnManifestTable:
         return self.count(spool)
 
     def count(self, spool: str) -> int:
+        return len(self.get_offsets(spool))
+
+    def get_offsets(self, spool: str) -> frozenset[int]:
         if self.is_unreachable:
             raise RuntimeError("connection to server on socket failed")
-        return sum(1 for key in self.rows if key[0] == spool)
+        return frozenset(key[1] for key in self.rows if key[0] == spool)
+
+
+class _TrialLedger:
+    """In-memory core.autoagent_trial_ledger: the open A/A, its salt rows, the rows written."""
+
+    def __init__(self) -> None:
+        self.latest: object = None
+        self.aa_salts: frozenset[int] = frozenset()
+        self.read_fault: Exception | None = None
+        self.salt_fault: Exception | None = None
+        self.rows: list[tuple[str, dict[str, object], str]] = []
+
+    def read_latest(self) -> object:
+        if self.read_fault is not None:
+            raise self.read_fault
+        return self.latest
+
+    def read_salts(self, salt_ids: frozenset[int]) -> frozenset[int]:
+        if self.salt_fault is not None:
+            raise self.salt_fault
+        return salt_ids & self.aa_salts
+
+    def write(self, event: str, _actor: str, payload: dict[str, object], **kwargs: object) -> int:
+        self.rows.append((event, payload, str(kwargs["dedupe_key"])))
+        return 1
 
 
 @unittest.skipIf(dc is None, f"daemon_cycle import failed: {_IMPORT_ERROR}")
@@ -126,19 +176,40 @@ class _IngestCase(unittest.TestCase):
         self.log_root = self.base_root / "logs"
         self.log_root.mkdir()
         self.live_log = self.log_root / dc.MANIFEST.LOG_NAME
+        self.agents_dir = self.base_root / "agents"
+        self.agents_dir.mkdir()
+        for agent in _ROSTER:
+            (self.agents_dir / f"{agent}.md").write_text("", encoding="utf-8")
+        # The binding removes canary files: the data root stays inside the temp root.
+        env = mock.patch.dict(os.environ, {"GA_DATA_ROOT": str(self.base_root)})
+        env.start()
+        self.addCleanup(env.stop)
+        self.canary_dir = self.base_root / "data" / "learning" / "canary"
         self.pg_reach = seal_pg_reach(self)
         self.table = _SpawnManifestTable()
+        self.ledger = _TrialLedger()
         self.events: list[dict[str, object]] = []
-        # Fakes go on after the seal: each replaces one seam the seal already covers.
+        # Fakes go on after the seal: each replaces one seam the seal already covers, or a read
+        # reaching the database only through the sealed _pg_connect.
         for name, value in (
             ("HAS_PG_LOOP_WRITE", True),
             ("_pg_write_spawn_manifest", self.table.write),
             ("_pg_count_spawn_manifest", self.table.count),
             ("_pg_write_loop_event", self._record_event),
+            ("_read_stored_manifest_offsets", self.table.get_offsets),
+            ("_read_latest_aa_start", self.ledger.read_latest),
+            ("_read_aa_salt_ids", self.ledger.read_salts),
+            ("_pg_write_trial_ledger_row", self.ledger.write),
         ):
             patcher = mock.patch.object(dc, name, value)
             patcher.start()
             self.addCleanup(patcher.stop)
+        # Armed loop flag → the void names TRIAL_LEDGER, unbound when psycopg is absent.
+        ledger_names = mock.patch.object(
+            dc, "TRIAL_LEDGER", stub.get_trial_ledger(), create=not hasattr(dc, "TRIAL_LEDGER")
+        )
+        ledger_names.start()
+        self.addCleanup(ledger_names.stop)
 
     def _record_event(self, **args: object) -> int:
         self.events.append(args)
@@ -147,7 +218,7 @@ class _IngestCase(unittest.TestCase):
     def _ingest(self, now: datetime) -> object:
         stderr = io.StringIO()
         with contextlib.redirect_stderr(stderr):
-            ingest = dc.ingest_manifest_log(self.live_log, now=now)
+            ingest = dc.ingest_manifest_log(self.live_log, now=now, agents_dir=self.agents_dir)
         self.stderr = stderr.getvalue()
         self.assertEqual(self.pg_reach, [])
         return ingest
@@ -320,6 +391,150 @@ class TestManifestRotation(_IngestCase):
         self.assertEqual(self.table.rows, before)
         self.assertTrue(ingest.status.startswith("skipped:"), ingest.status)
         self.assertIn("held by another cycle", self.stderr)
+
+
+class TestManifestDeliveryBinding(_IngestCase):
+    """Each delivered row binds once, at the ingest that first stores it (Read-side binding)."""
+
+    def _open_aa(self) -> None:
+        self.ledger.latest = dc.AaStart(
+            int(_AA.SALT), False, {}, _AA.WINDOW_START, {}, int(_AA.SALT)
+        )
+
+    def _put_canaries(self, agents: tuple[str, ...] = _ROSTER) -> None:
+        self.canary_dir.mkdir(parents=True, exist_ok=True)
+        for agent in agents:
+            (self.canary_dir / f"{agent}.json").write_text("{}", encoding="utf-8")
+
+    def _get_canaries(self) -> list[str]:
+        return sorted(path.stem for path in self.canary_dir.glob("*.json"))
+
+    def _get_no_trial_agents(self) -> list[str]:
+        return _NO_TRIAL_RE.findall(self.stderr)
+
+    def test_a_spool_re_read_at_the_next_cycle_binds_each_row_once(self) -> None:
+        self._append(self.live_log, _get_delivery_line(_ROSTER[0], salt="3"))
+        self._ingest(_CYCLE_1)
+        self.assertEqual(self._get_no_trial_agents(), [_ROSTER[0]])
+
+        (spool,) = self._get_spools()
+        self._append(spool, _get_delivery_line(_ROSTER[1], salt="3"))  # a racing append
+        self._ingest(_CYCLE_2)
+
+        self.assertFalse(spool.exists(), "the re-read spool was not unlinked")
+        self.assertEqual(self._get_no_trial_agents(), [_ROSTER[1]], "a stored row was bound again")
+
+    def test_the_a_a_last_day_deliveries_never_read_as_no_trial_after_its_result(self) -> None:
+        self._open_aa()
+        self.ledger.aa_salts = frozenset({int(_AA.SALT)})
+        self._put_canaries()
+        last_day = _get_delivery_line(_ROSTER[0]) + _get_delivery_line(_ROSTER[1])
+        self._append(self.live_log, last_day)
+        self._ingest(_CYCLE_1)
+        self.ledger.latest = None  # the result landed after the ingest
+
+        (spool,) = self._get_spools()
+        self._append(spool, _get_delivery_line(_ROSTER[2], text_sha256=_PLAIN_SHA256))
+        self._ingest(_CYCLE_2)
+
+        self.assertEqual(self._get_no_trial_agents(), [_ROSTER[2]])
+        self.assertEqual(self._get_canaries(), sorted(_ROSTER[:2]))
+        self.assertEqual(self.ledger.rows, [])
+
+    def test_an_old_foreign_hash_row_never_voids_a_fresh_a_a(self) -> None:
+        self._open_aa()
+        self._put_canaries()
+        self._append(
+            self.live_log,
+            _get_delivery_line(
+                _ROSTER[0], salt="3", text_sha256=_PLAIN_SHA256, ts=_AA.BEFORE_WINDOW
+            ),
+        )
+        self._ingest(_CYCLE_1)
+
+        self.assertEqual(self.ledger.rows, [], "the fresh A/A was voided")
+        self.assertEqual(self._get_no_trial_agents(), [_ROSTER[0]])
+        self.assertEqual(self._get_canaries(), sorted(_ROSTER[1:]))
+
+    def test_a_foreign_text_in_the_window_voids_whatever_salt_it_carries(self) -> None:
+        self._open_aa()
+        rows = (("the A/A's own salt", _AA.SALT), ("a forged salt", "3"), ("no salt", "none"))
+        for hour, (name, salt) in enumerate(rows):
+            with self.subTest(name):
+                self.ledger.rows.clear()
+                self._put_canaries()
+                self._append(
+                    self.live_log,
+                    _get_delivery_line(_ROSTER[0], salt=salt, text_sha256=_PLAIN_SHA256),
+                )
+                self._ingest(_CYCLE_1 + timedelta(hours=hour))
+
+                ((event, payload, dedupe_key),) = self.ledger.rows
+                self.assertEqual(
+                    (event, dedupe_key), ("aa-result", f"aa-result:{_AA.SALT}"), name
+                )
+                self.assertEqual(payload["overall"], "void", name)
+                self.assertEqual(
+                    payload["void"],
+                    {
+                        "reason": "foreign-canary-hash",
+                        "agent": _ROSTER[0],
+                        "text_sha256": _PLAIN_SHA256,
+                    },
+                    name,
+                )
+                self.assertEqual(self._get_canaries(), [], name)
+
+    def test_outside_the_window_a_row_is_legit_only_with_an_a_a_salt_and_the_a_a_text(
+        self,
+    ) -> None:
+        self.ledger.aa_salts = frozenset({int(_AA.SALT)})  # the A/A closed or restarted since
+        self._put_canaries()
+        lines = (
+            _get_delivery_line(_ROSTER[0]),  # racing row of the A/A: its salt and its text
+            _get_delivery_line(_ROSTER[1], salt="3"),  # the A/A text on a salt no A/A row has
+            _get_delivery_line(_ROSTER[2], text_sha256=_PLAIN_SHA256),  # A/A salt, foreign text
+        )
+        self._append(self.live_log, "".join(lines))
+        self._ingest(_CYCLE_1)
+
+        self.assertEqual(self._get_no_trial_agents(), list(_ROSTER[1:]))
+        self.assertEqual(self._get_canaries(), [_ROSTER[0]])
+        self.assertEqual(self.ledger.rows, [])
+
+    def test_an_unreadable_ledger_binds_no_row_and_warns_by_name(self) -> None:
+        rows = (
+            (
+                "open-state read fault",
+                "read_fault",
+                ConnectionError("server closed the connection"),
+            ),
+            (
+                "ledger-absent schema",
+                "read_fault",
+                RuntimeError('relation "core.autoagent_trial_ledger" does not exist'),
+            ),
+            ("salt-row read fault", "salt_fault", ConnectionError("server closed the connection")),
+        )
+        self._open_aa()
+        for hour, (name, fault_name, fault) in enumerate(rows):
+            with self.subTest(name):
+                self.ledger.read_fault = self.ledger.salt_fault = None
+                setattr(self.ledger, fault_name, fault)
+                self._put_canaries()
+                self._append(
+                    self.live_log,
+                    _get_delivery_line(
+                        _ROSTER[0], text_sha256=_PLAIN_SHA256, ts=_AA.BEFORE_WINDOW
+                    ),
+                )
+                ingest = self._ingest(_CYCLE_1 + timedelta(hours=hour))
+
+                self.assertEqual(ingest.status, "ok", name)
+                self.assertIn(str(fault)[:40], self.stderr, name)
+                self.assertIn("1 delivered row(s)", self.stderr, name)
+                self.assertIn("left unbound", self.stderr, name)
+                self.assertEqual((self.ledger.rows, self._get_canaries()), ([], sorted(_ROSTER)))
 
 
 class TestManifestCloseRecord(_IngestCase):

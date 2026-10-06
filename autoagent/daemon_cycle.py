@@ -9262,6 +9262,11 @@ AA = SimpleNamespace(
             "WHERE m.agent_id = o.agent_id)) FROM core.outcomes o "
             "WHERE o.agent = ANY(%(agents)s) AND o.record_ts >= %(start)s AND o.record_ts < %(end)s"
         ),
+        # the given salt ids that name an aa-start or aa-restart row
+        SALT_ROWS=(
+            "SELECT id FROM core.autoagent_trial_ledger "
+            "WHERE event = ANY(%(events)s) AND id = ANY(%(ids)s)"
+        ),
     ),
     MINIMUM_JOIN_PERCENT=95,
     # D2: a sample-ratio test on every agent from 200 spawns; delivery on 99% of treatment spawns
@@ -12083,6 +12088,7 @@ MANIFEST = SimpleNamespace(
     AGENT_TYPE_MAX_CHARS=64,
     # PostgreSQL column types: ctx_bytes INTEGER, salt_id BIGINT.
     COLUMN_MAX=SimpleNamespace(INTEGER=2**31 - 1, BIGINT=2**63 - 1),
+    STORED_OFFSETS_SQL="SELECT line_offset FROM core.spawn_manifest WHERE spool = %(spool)s",
 )
 MANIFEST_SPOOL_CLOSED_EVAL_RESULT = "manifest-spool-closed"
 
@@ -12105,6 +12111,18 @@ class ManifestSpoolClose:
 
 
 @dataclass
+class DeliveryBinding:
+    """One ingest's open-A/A state for its delivered rows: read at the first, voided at most once."""
+
+    agents_dir: Path
+    is_read: bool = False
+    roster: frozenset[str] = frozenset()  # roster agents in the hook_path_safe_key form
+    latest: AaStart | None = None
+    fault: str | None = None  # set → no row is bound this ingest
+    is_voided: bool = False
+
+
+@dataclass
 class ManifestIngest:
     """One cycle's ingest: ``status`` is ``ok`` or ``skipped:<reason>``."""
 
@@ -12123,7 +12141,9 @@ def get_manifest_ingest_lock_path(live_log: Path) -> Path:
     return live_log.with_name(f"{live_log.name}.ingest.lock")
 
 
-def ingest_manifest_log(live_log: Path, *, now: datetime) -> ManifestIngest:
+def ingest_manifest_log(
+    live_log: Path, *, now: datetime, agents_dir: Path = DEFAULT_AGENTS_DIR
+) -> ManifestIngest:
     """Store every MANIFEST line in core.spawn_manifest and rotate the live log; never raises.
 
     Under the ingest lock: each pending spool — renamed by an earlier cycle, since a
@@ -12133,7 +12153,8 @@ def ingest_manifest_log(live_log: Path, *, now: datetime) -> ManifestIngest:
     (spool, line_offset) is the only position, so a crash at any step re-reads without
     a duplicate row. PG unreachable, a table-absent schema, an insert failure or a
     held lock → named WARN, every spool kept and the live log not renamed; the hook's
-    backstop bounds the live log meanwhile.
+    backstop bounds the live log meanwhile. Each delivered row binds to a trial once, at
+    the ingest that first stores it (bind_manifest_deliveries).
     """
     if not HAS_PG_LOOP_WRITE:
         return _skip_manifest_ingest("PG write layer unavailable")
@@ -12164,7 +12185,11 @@ def ingest_manifest_log(live_log: Path, *, now: datetime) -> ManifestIngest:
             return _skip_manifest_ingest(f"ingest lock {lock_path} unusable: {exc}")
         # Released by the close below on every exit path, a crash included.
         return _ingest_manifest_under_lock(
-            live_log, new_spool, is_name_free=name_rows == 0, event_ts=event_ts
+            live_log,
+            new_spool,
+            is_name_free=name_rows == 0,
+            event_ts=event_ts,
+            binding=DeliveryBinding(agents_dir),
         )
 
 
@@ -12177,12 +12202,17 @@ def _skip_manifest_ingest(reason: str) -> ManifestIngest:
 
 
 def _ingest_manifest_under_lock(
-    live_log: Path, new_spool: Path, *, is_name_free: bool, event_ts: str
+    live_log: Path,
+    new_spool: Path,
+    *,
+    is_name_free: bool,
+    event_ts: str,
+    binding: DeliveryBinding,
 ) -> ManifestIngest:
     ingest = ManifestIngest(status="ok")
     for spool in _find_manifest_spools(live_log):
         try:
-            ingest.closed.append(_close_manifest_spool(spool, event_ts=event_ts))
+            ingest.closed.append(_close_manifest_spool(spool, event_ts=event_ts, binding=binding))
         except Exception as exc:  # noqa: BLE001 — PG or filesystem fault; named WARN below
             ingest.status = f"skipped:spool {spool.name} kept"
             sys.stderr.write(
@@ -12218,6 +12248,9 @@ def _ingest_manifest_under_lock(
             f"[daemon-cycle] WARN: manifest ingest: spool {new_spool.name} kept for the next "
             f"cycle's re-read — {type(exc).__name__}: {str(exc)[:160]}\n"
         )
+    else:
+        # is_name_free proved the spool held no row → every row read here is new
+        bind_manifest_deliveries(new_spool.name, rows, binding)
     return ingest
 
 
@@ -12230,10 +12263,15 @@ def _find_manifest_spools(live_log: Path) -> list[Path]:
     )
 
 
-def _close_manifest_spool(spool: Path, *, event_ts: str) -> ManifestSpoolClose:
-    """Final re-read → commit → unlink → the lines-read vs rows-present record."""
+def _close_manifest_spool(
+    spool: Path, *, event_ts: str, binding: DeliveryBinding
+) -> ManifestSpoolClose:
+    """Final re-read → commit → binding of the rows it added → unlink → the lines-read vs
+    rows-present record."""
     rows, lines_read = _get_manifest_rows(spool.read_bytes(), is_final=True)
+    unstored = _get_unstored_deliveries(spool.name, rows)
     rows_present = _pg_write_spawn_manifest(spool.name, rows)
+    bind_manifest_deliveries(spool.name, unstored, binding)
     spool.unlink()
     close = ManifestSpoolClose(spool=spool.name, lines_read=lines_read, rows_present=rows_present)
     if rows_present < lines_read:
@@ -12257,6 +12295,90 @@ def _close_manifest_spool(spool: Path, *, event_ts: str) -> ManifestSpoolClose:
         }
     )
     return close
+
+
+def _get_unstored_deliveries(spool: str, rows: list[ManifestRow]) -> list[ManifestRow]:
+    """Delivered rows the database does not hold yet — a re-read binds only these. Raises on a
+    PG fault, so the spool is kept."""
+    delivered = [row for row in rows if row[9]]
+    if not delivered:
+        return []
+    stored = _read_stored_manifest_offsets(spool)
+    return [row for row in delivered if row[0] not in stored]
+
+
+def bind_manifest_deliveries(
+    spool: str, rows: list[ManifestRow], binding: DeliveryBinding
+) -> None:
+    """Bind each delivered row to a trial (plan → Read-side binding); never raises.
+
+    - A roster agent's row started in the open A/A's window binds to it: a delivered hash other
+      than the A/A text's voids the A/A, whatever salt the row carries.
+    - Any other row is a delivery with no open trial, and its agent's canary file is removed —
+      unless its salt names an aa-start or aa-restart row and its hash is the A/A text: the
+      racing row of an A/A closed or restarted since.
+    - The open state or the salt rows unreadable → no row bound, a named WARN with the count;
+      those rows are never bound later.
+    """
+    delivered = [row for row in rows if row[9]]
+    if not delivered:
+        return
+    _read_binding_state(binding)
+    if binding.fault is not None:
+        _warn_unbound(spool, len(delivered), binding.fault)
+        return
+    outside = [row for row in delivered if not _bind_to_open_aa(row, binding)]
+    if outside:
+        _bind_outside_window(spool, outside)
+
+
+def _read_binding_state(binding: DeliveryBinding) -> None:
+    if binding.is_read:
+        return
+    binding.is_read = True
+    binding.roster = frozenset(
+        CANARY.UNSAFE_KEY.sub("", agent) for agent in _agent_roster(binding.agents_dir)
+    )
+    try:
+        binding.latest = _read_open_aa_start()
+    except AaStateUnreadable as exc:
+        binding.fault = f"open A/A state unreadable: {exc}"
+
+
+def _bind_to_open_aa(row: ManifestRow, binding: DeliveryBinding) -> bool:
+    """True = the row binds to the open A/A; the first foreign hash voids it."""
+    latest = binding.latest
+    if latest is None or row[2] not in binding.roster or row[4] < latest.window_start:
+        return False
+    if row[10] != _get_text_sha256(CANARY.AA_TEXT) and not binding.is_voided:
+        binding.is_voided = True
+        _void_aa(latest, row[2], row[10])
+    return True
+
+
+def _bind_outside_window(spool: str, rows: list[ManifestRow]) -> None:
+    salt_ids = frozenset(row[8] for row in rows if row[8] is not None)
+    try:
+        aa_salt_ids = _read_aa_salt_ids(salt_ids) if salt_ids else frozenset()
+    except Exception as exc:  # noqa: BLE001 — any read fault leaves the rows unbound, named
+        _warn_unbound(spool, len(rows), f"salt rows unreadable: {_describe_fault(exc)}")
+        return
+    aa_sha256 = _get_text_sha256(CANARY.AA_TEXT)
+    for row in rows:
+        if row[8] in aa_salt_ids and row[10] == aa_sha256:
+            continue
+        sys.stderr.write(
+            f"[daemon-cycle] WARN: manifest binding — {row[2]} canary delivered with no open "
+            f"trial ({spool} line {row[0]}, salt_id={row[8]}, delivered_hash={row[10]})\n"
+        )
+        _delete_canaries([_get_canary_path(row[2])], "delivered with no open trial")
+
+
+def _warn_unbound(spool: str, count: int, cause: str) -> None:
+    sys.stderr.write(
+        f"[daemon-cycle] WARN: manifest binding — {cause}; {count} delivered row(s) of {spool} "
+        "left unbound\n"
+    )
 
 
 def _get_manifest_rows(data: bytes, *, is_final: bool) -> tuple[list[ManifestRow], int]:
@@ -12332,6 +12454,24 @@ def _get_manifest_number(value: str) -> int | None:
     return None if value == MANIFEST.NONE_VALUE else int(value)
 
 
+def _read_stored_manifest_offsets(spool: str) -> frozenset[int]:
+    """The line offsets core.spawn_manifest already holds for one spool. Raises on a PG fault."""
+    with _pg_connect() as conn, conn.cursor() as cur:
+        cur.execute(MANIFEST.STORED_OFFSETS_SQL, {"spool": spool})
+        return frozenset(offset for (offset,) in cur.fetchall())
+
+
+def _read_aa_salt_ids(salt_ids: frozenset[int]) -> frozenset[int]:
+    """The given salt ids that name an aa-start or aa-restart row. Raises on a PG fault."""
+    params = {
+        "events": [TRIAL_LEDGER.EVENT.AA_START, TRIAL_LEDGER.EVENT.AA_RESTART],
+        "ids": sorted(salt_ids),
+    }
+    with _pg_connect() as conn, conn.cursor() as cur:
+        cur.execute(AA.SQL.SALT_ROWS, params)
+        return frozenset(row_id for (row_id,) in cur.fetchall())
+
+
 def run_cycle(
     *,
     limit: int = DEFAULT_PATTERN_LIMIT,
@@ -12380,7 +12520,9 @@ def run_cycle(
             "[daemon-cycle] INFO: manifest ingest skipped — no-write mode (skip_loop_emit)\n"
         )
     else:
-        report.manifest_ingest = ingest_manifest_log(get_manifest_log_path(), now=now)
+        report.manifest_ingest = ingest_manifest_log(
+            get_manifest_log_path(), now=now, agents_dir=agents_dir
+        )
 
     # per-TARGET (agent) flow: 1) read all user-pending patterns (agent cap applies
     # to agents, not patterns, so no slicing here) → 2) group by .agent → 3) apply
