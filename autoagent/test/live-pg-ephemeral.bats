@@ -205,6 +205,10 @@ PY
   _assert_live_module test_pg_dual_write_trial_ledger TestTrialLedgerWriterLivePg
 }
 
+@test "the power check's design-effect ledger read runs against the migrated cluster, none skipped" {
+  _assert_live_module test_power_check_intake DesignEffectReadLivePgTest
+}
+
 @test "the pattern-metric window read runs against the migrated cluster, none skipped" {
   cd "${BATS_TEST_DIRNAME}/../../hooks/test" || return 1
   _assert_live_module test_pattern_metric TestPatternFloorReadLivePg

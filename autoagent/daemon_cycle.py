@@ -31,6 +31,7 @@ import difflib
 import fcntl
 import io
 import json
+import math
 import os
 import random
 import re
@@ -206,6 +207,7 @@ try:
             get_proposal_status_label_state,
             write_spawn_manifest_rows as _pg_write_spawn_manifest,
             get_spawn_manifest_row_count as _pg_count_spawn_manifest,
+            TRIAL_LEDGER,
         )
     HAS_PG_LOOP_WRITE = True
 except Exception as _pg_loop_import_exc:  # noqa: BLE001 — psycopg or helper itself
@@ -8690,23 +8692,36 @@ POWER = SimpleNamespace(
         PASSING="passing",
         UNDERPOWERED="underpowered",
         INSUFFICIENT_HISTORY="insufficient-history",
-        UNCHECKED="unchecked",  # history unreadable or trial math missing — never passing
+        DESIGN_UNMEASURED="design-unmeasured",  # no A/A design-effect row for the agent — never passing
+        UNCHECKED="unchecked",  # history or ledger unreadable, or trial math missing — never passing
     ),
     # eval_result = prefix + verdict; the longest fills the varchar(32) column exactly
     CHECK_EVAL_PREFIX="power-check-",
-    # 1 until a measured per-agent design effect is wired
-    DESIGN_EFFECT=1.0,
+)
+
+# Latest A/A session design-effect row per agent; DISTINCT ON keeps the fetch to one row each.
+_POWER_DESIGN_EFFECT_SQL = (
+    "SELECT DISTINCT ON (agent) agent, payload FROM core.autoagent_trial_ledger "
+    "WHERE event = %s AND agent = ANY(%s) ORDER BY agent, recorded_at DESC, id DESC"
 )
 
 
 class PowerUnits(NamedTuple):
     projected: float
-    required: float | None  # None = no finite trial size at the baseline rate
+    # None = no finite trial size, or the design effect is unmeasured
+    required: float | None
 
 
 class PowerCheck(NamedTuple):
     verdict: str
     units: PowerUnits
+
+
+class PowerInputs(NamedTuple):
+    provenance_start: datetime | None
+    spawns: dict[str, list[SpawnFacts]]
+    # agent → its latest A/A design effect; an absent agent is unmeasured
+    design_effects: dict[str, float]
 
 
 def check_pattern_power(patterns: list[Pattern], *, skip_loop_emit: bool) -> dict[str, int]:
@@ -8715,8 +8730,8 @@ def check_pattern_power(patterns: list[Pattern], *, skip_loop_emit: bool) -> dic
     The floor is get_floor_verdict over the spawn read the power inputs come from, so
     both judge one history. Each verdict is a stderr line plus a census loop event
     (none under skip_loop_emit); verdict only — no status write, no pattern parked or dropped.
-    An unreadable history or missing trial math counts every keyed pattern unchecked,
-    with a WARN, never passing.
+    An unreadable history or ledger, an invalid stored design effect or missing trial math
+    counts every keyed pattern unchecked, with a WARN, never passing.
 
     Returns:
         verdict → count, every verdict present.
@@ -8726,25 +8741,36 @@ def check_pattern_power(patterns: list[Pattern], *, skip_loop_emit: bool) -> dic
     if not keyed:
         return counts
     windows = get_pair_windows(_get_utc_now())
-    evaluated_at = windows.end  # the instant the intake re-check judged the floor at
-    event_ts = evaluated_at.strftime("%Y-%m-%dT00:00:00.000Z")
-    history = _read_power_history(sorted({pattern.agent for pattern in keyed}), windows)
+    event_ts = windows.end.strftime("%Y-%m-%dT00:00:00.000Z")
+    inputs = _read_power_inputs(sorted({pattern.agent for pattern in keyed}), windows)
     for pattern in keyed:
-        if history is None:
-            verdict, detail = POWER.VERDICT.UNCHECKED, "spawn history unavailable"
-        else:
-            provenance_start, spawns = history
-            agent_spawns = spawns.get(pattern.agent, [])
-            floor = get_floor_verdict(
-                agent_spawns, pattern.metric_key, windows, provenance_start, evaluated_at
-            )
-            if floor.verdict != VERDICT_PASS:
-                continue
-            check = get_power_check(floor, agent_spawns, provenance_start, windows)
-            verdict, detail = check.verdict, _get_power_detail(floor, check)
+        judged = _get_pattern_power_verdict(pattern, inputs, windows)
+        if judged is None:
+            continue
+        verdict, detail = judged
         counts[verdict] += 1
         _send_power_verdict(pattern, verdict, detail, event_ts, skip_loop_emit=skip_loop_emit)
     return counts
+
+
+def _get_pattern_power_verdict(
+    pattern: Pattern, inputs: PowerInputs | None, windows: PairWindows
+) -> tuple[str, str] | None:
+    """(verdict, detail) of one keyed pattern; None when its floor does not pass."""
+    if inputs is None:
+        return POWER.VERDICT.UNCHECKED, "power inputs unavailable"
+    spawns = inputs.spawns.get(pattern.agent, [])
+    # judged at the day anchor, the instant the intake re-check judged the floor at
+    floor = get_floor_verdict(
+        spawns, pattern.metric_key, windows, inputs.provenance_start, windows.end
+    )
+    if floor.verdict != VERDICT_PASS:
+        return None
+    design_effect = inputs.design_effects.get(pattern.agent)
+    check = get_power_check(
+        floor, spawns, inputs.provenance_start, windows, design_effect=design_effect
+    )
+    return check.verdict, _get_power_detail(floor, check, design_effect)
 
 
 def get_power_check(
@@ -8752,13 +8778,16 @@ def get_power_check(
     spawns: Iterable[SpawnFacts],
     provenance_start: datetime | None,
     windows: PairWindows,
+    *,
+    design_effect: float | None,
 ) -> PowerCheck:
     """Power check of one floor-passing pattern.
 
     Projected units = the agent's spawns per day over the 28 days before D × the 84-day
-    horizon; NULL-agent_id spawns count nowhere. Fewer than 28 provenance-covered
-    days → insufficient-history. Bound = 2 × the trial_design per-arm maximum at the
-    floor-half baseline rate × POWER.DESIGN_EFFECT; a rate with no finite size is underpowered.
+    horizon; NULL-agent_id spawns count nowhere. Bound = 2 × the trial_design per-arm
+    maximum at the floor-half baseline rate × design_effect, the agent's measured A/A
+    design effect. In order: fewer than 28 provenance-covered days → insufficient-history;
+    design_effect None → design-unmeasured; a rate with no finite size → underpowered.
     """
     history_start = windows.end - BASELINE.MIN_COVERED
     units = sum(
@@ -8768,12 +8797,14 @@ def get_power_check(
     )
     projected = trial_design.get_projected_units(units / BASELINE.MIN_COVERED.days)
     maximum = _get_maximum_sample_size(floor.baseline.events, floor.baseline.spawns)
-    if maximum is None:
+    if maximum is None or design_effect is None:
         required = None
     else:
-        required = trial_design.get_required_units(maximum, design_effect=POWER.DESIGN_EFFECT)
+        required = trial_design.get_required_units(maximum, design_effect=design_effect)
     if provenance_start is None or provenance_start > history_start:
         verdict = POWER.VERDICT.INSUFFICIENT_HISTORY
+    elif design_effect is None:
+        verdict = POWER.VERDICT.DESIGN_UNMEASURED
     elif required is not None and _is_bound_reached(units, required):
         verdict = POWER.VERDICT.PASSING
     else:
@@ -8793,6 +8824,17 @@ def _get_power_counts() -> dict[str, int]:
     return dict.fromkeys(vars(POWER.VERDICT).values(), 0)
 
 
+def _read_power_inputs(agents: list[str], windows: PairWindows) -> PowerInputs | None:
+    """Spawn history + latest A/A design effects of the agents; None (WARN) when either is unusable."""
+    history = _read_power_history(agents, windows)
+    if history is None:
+        return None
+    design_effects = _read_power_design_effects(agents)
+    if design_effects is None:
+        return None
+    return PowerInputs(*history, design_effects)
+
+
 def _read_power_history(
     agents: list[str], windows: PairWindows
 ) -> tuple[datetime | None, dict[str, list[SpawnFacts]]] | None:
@@ -8807,11 +8849,50 @@ def _read_power_history(
             return _pg_read_spawn_facts(agents, windows)
         except Exception as exc:  # noqa: BLE001 — any read failure is an outage → fail closed
             cause = f"spawn history unreadable: {type(exc).__name__}: {str(exc)[:160]}"
+    _warn_power_unchecked(cause)
+    return None
+
+
+def _read_power_design_effects(agents: list[str]) -> dict[str, float] | None:
+    """Agent → the selected design effect of its latest A/A session row; None (WARN) when unusable.
+
+    An agent with no row is absent (design-unmeasured). A read fault — the table absent on a
+    migrate-failed schema included — or a stored payload that is not a design effect fails closed.
+    """
+    if not HAS_PG_LOOP_WRITE:
+        cause = "trial ledger unreadable: PG helper import failed"
+    else:
+        try:
+            with _pg_connect() as conn, conn.cursor() as cur:
+                event = TRIAL_LEDGER.EVENT.AA_SESSION_DESIGN_EFFECT
+                cur.execute(_POWER_DESIGN_EFFECT_SQL, (event, agents))
+                rows = cur.fetchall()
+            return {
+                agent: _get_selected_design_effect(payload) for agent, payload in rows
+            }
+        except Exception as exc:  # noqa: BLE001 — a read fault or an invalid row → fail closed
+            cause = (
+                f"A/A design effect unreadable: {type(exc).__name__}: {str(exc)[:160]}"
+            )
+    _warn_power_unchecked(cause)
+    return None
+
+
+def _get_selected_design_effect(payload: dict[str, float]) -> float:
+    """The higher estimator of one A/A row payload; raises unless both are finite values ≥ 1."""
+    effect = trial_design.DesignEffect(
+        **{key: float(value) for key, value in payload.items()}
+    )
+    if not all(math.isfinite(value) and value >= 1 for value in effect):
+        raise ValueError(f"stored design effect {effect} is not two finite values >= 1")
+    return effect.selected
+
+
+def _warn_power_unchecked(cause: str) -> None:
     sys.stderr.write(
         f"[daemon-cycle] WARN: power check — {cause}; every keyed intake pattern "
         "counts unchecked, none passing\n"
     )
-    return None
 
 
 def _get_maximum_sample_size(events: int, spawns: int) -> int | None:
@@ -8821,14 +8902,21 @@ def _get_maximum_sample_size(events: int, spawns: int) -> int | None:
     return trial_design.get_maximum_sample_size(events / spawns)
 
 
-def _get_power_detail(floor: FloorResult, check: PowerCheck) -> str:
+def _get_power_detail(
+    floor: FloorResult, check: PowerCheck, design_effect: float | None
+) -> str:
     baseline = floor.baseline
     units = check.units
-    required_label = "no finite size" if units.required is None else f"{units.required:.0f}"
+    if design_effect is None:
+        required_label = "unknown (design effect unmeasured: no A/A design-effect row)"
+    elif units.required is None:
+        required_label = f"no finite size (design effect {design_effect:g})"
+    else:
+        required_label = f"{units.required:.0f} (design effect {design_effect:g})"
     return (
         f"floor-half baseline {baseline.events}/{baseline.spawns}, projected "
         f"{units.projected:.0f} units in {trial_design.HORIZON_DAYS} d vs required "
-        f"{required_label} (design effect {POWER.DESIGN_EFFECT:g})"
+        f"{required_label}"
     )
 
 
