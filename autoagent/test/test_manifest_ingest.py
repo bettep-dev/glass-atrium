@@ -405,6 +405,7 @@ class TestManifestIngestCycleWiring(unittest.TestCase):
             ("_pg_read_pending_patterns", read_pending_patterns),
             ("_pg_connect", get_unreachable("pg-connect")),
             ("_pg_write_corpus_audit", get_unreachable("corpus-audit-write")),
+            ("_pg_write_trial_ledger_row", get_unreachable("trial-ledger-write")),
         ):
             patcher = mock.patch.object(dc, name, value)
             patcher.start()

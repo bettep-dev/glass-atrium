@@ -29,6 +29,7 @@ from __future__ import annotations
 import contextlib
 import difflib
 import fcntl
+import hashlib
 import io
 import json
 import math
@@ -42,7 +43,7 @@ import sys
 import tempfile
 import time
 from collections import defaultdict
-from collections.abc import Callable, Iterable
+from collections.abc import Callable, Iterable, Mapping
 from dataclasses import asdict, dataclass, field, replace
 from datetime import date, datetime, timedelta, timezone
 from enum import IntEnum
@@ -96,8 +97,10 @@ from _outcome_signal import (  # noqa: E402 — hooks dir pinned by the loop abo
     FloorResult,
     PairWindows,
     SpawnFacts,
+    WindowCount,
     get_floor_verdict,
     get_pair_windows,
+    get_tasks,
 )
 
 # Runtime data roots via the shared ga_paths seam (.glass-atrium default,
@@ -208,6 +211,7 @@ try:
             write_spawn_manifest_rows as _pg_write_spawn_manifest,
             get_spawn_manifest_row_count as _pg_count_spawn_manifest,
             TRIAL_LEDGER,
+            write_trial_ledger_row as _pg_write_trial_ledger_row,
         )
     HAS_PG_LOOP_WRITE = True
 except Exception as _pg_loop_import_exc:  # noqa: BLE001 — psycopg or helper itself
@@ -1878,6 +1882,7 @@ class Pattern:
     # agent='dev-node'), so a "label|agent" reconstruction silently misses them.
     row_id: int = 0
     metric_key: str | None = None  # one of the helper's METRIC_KEYS; None = keyless row
+    last_transition_at: datetime | None = None  # latest lifecycle move; None = never moved
 
     @property
     def freq_int(self) -> int:
@@ -2218,6 +2223,7 @@ def read_user_pending_patterns(
                 raw_line=f"pg:learning_log:{row['id']}:{signature}",
                 row_id=row["id"],
                 metric_key=row.get("metric_key"),
+                last_transition_at=row.get("last_transition_at"),
             )
         )
 
@@ -8716,6 +8722,22 @@ class PowerCheck(NamedTuple):
     units: PowerUnits
 
 
+class PowerPass(NamedTuple):
+    """One power-passing pattern with the evidence its shadow trial is pre-registered on."""
+
+    pattern: Pattern
+    baseline: WindowCount
+    design_effect: float
+    required: float  # both arms' units at design_effect
+    spawns: list[SpawnFacts]
+
+
+class PowerResult(NamedTuple):
+    counts: dict[str, int]  # verdict → count, every verdict present
+    passes: list[PowerPass]
+    windows: PairWindows | None  # None = no keyed pattern, nothing judged
+
+
 class PowerInputs(NamedTuple):
     provenance_start: datetime | None
     spawns: dict[str, list[SpawnFacts]]
@@ -8725,7 +8747,7 @@ class PowerInputs(NamedTuple):
     unchecked_agents: frozenset[str]
 
 
-def check_pattern_power(patterns: list[Pattern], *, skip_loop_emit: bool) -> dict[str, int]:
+def check_pattern_power(patterns: list[Pattern], *, skip_loop_emit: bool) -> PowerResult:
     """Intake power check: each floor-passing keyed pattern → one counted verdict.
 
     The floor is get_floor_verdict over the spawn read the power inputs come from, so
@@ -8736,12 +8758,14 @@ def check_pattern_power(patterns: list[Pattern], *, skip_loop_emit: bool) -> dic
     unchecked, an invalid stored design effect only that agent's.
 
     Returns:
-        verdict → count, every verdict present.
+        verdict counts (every verdict present), the passing patterns' evidence and the
+        windows they were judged on.
     """
     counts = _get_power_counts()
+    passes: list[PowerPass] = []
     keyed = [pattern for pattern in patterns if pattern.metric_key is not None]
     if not keyed:
-        return counts
+        return PowerResult(counts, passes, None)
     windows = get_pair_windows(_get_utc_now())
     event_ts = windows.end.strftime("%Y-%m-%dT00:00:00.000Z")
     inputs = _read_power_inputs(sorted({pattern.agent for pattern in keyed}), windows)
@@ -8749,18 +8773,20 @@ def check_pattern_power(patterns: list[Pattern], *, skip_loop_emit: bool) -> dic
         judged = _get_pattern_power_verdict(pattern, inputs, windows)
         if judged is None:
             continue
-        verdict, detail = judged
+        verdict, detail, power_pass = judged
         counts[verdict] += 1
+        if power_pass is not None:
+            passes.append(power_pass)
         _send_power_verdict(pattern, verdict, detail, event_ts, skip_loop_emit=skip_loop_emit)
-    return counts
+    return PowerResult(counts, passes, windows)
 
 
 def _get_pattern_power_verdict(
     pattern: Pattern, inputs: PowerInputs | None, windows: PairWindows
-) -> tuple[str, str] | None:
-    """(verdict, detail) of one keyed pattern; None when its floor does not pass."""
+) -> tuple[str, str, PowerPass | None] | None:
+    """(verdict, detail, evidence when passing) of one keyed pattern; None when its floor does not pass."""
     if inputs is None:
-        return POWER.VERDICT.UNCHECKED, "power inputs unavailable"
+        return POWER.VERDICT.UNCHECKED, "power inputs unavailable", None
     spawns = inputs.spawns.get(pattern.agent, [])
     # judged at the day anchor, the instant the intake re-check judged the floor at
     floor = get_floor_verdict(
@@ -8769,12 +8795,16 @@ def _get_pattern_power_verdict(
     if floor.verdict != VERDICT_PASS:
         return None
     if pattern.agent in inputs.unchecked_agents:
-        return POWER.VERDICT.UNCHECKED, "A/A design effect unusable"
+        return POWER.VERDICT.UNCHECKED, "A/A design effect unusable", None
     design_effect = inputs.design_effects.get(pattern.agent)
     check = get_power_check(
         floor, spawns, inputs.provenance_start, windows, design_effect=design_effect
     )
-    return check.verdict, _get_power_detail(floor, check, design_effect)
+    power_pass = None
+    required = check.units.required
+    if check.verdict == POWER.VERDICT.PASSING and design_effect is not None and required is not None:
+        power_pass = PowerPass(pattern, floor.baseline, design_effect, required, spawns)
+    return check.verdict, _get_power_detail(floor, check, design_effect), power_pass
 
 
 def get_power_check(
@@ -8952,6 +8982,221 @@ def _send_power_verdict(
     )
     if not skip_loop_emit:
         _emit_gate_loop_event(pattern.agent, event_ts, POWER.CHECK_EVAL_PREFIX + verdict)
+
+
+SHADOW = SimpleNamespace(
+    # latest pre-registration per (agent, pattern, metric key); DISTINCT ON keeps one row each
+    PREREGISTRATION_SQL=(
+        "SELECT DISTINCT ON (agent, learning_pattern_id, payload->>'metric_key') "
+        "agent, learning_pattern_id, payload->>'metric_key', trial_key, payload, recorded_at "
+        "FROM core.autoagent_trial_ledger WHERE event = %s AND agent = ANY(%s) "
+        "ORDER BY agent, learning_pattern_id, payload->>'metric_key', recorded_at DESC, id DESC"
+    ),
+    # S2f's per-spawn unit; the per-install W rule is S5's
+    TASK_WINDOW=timedelta(0),
+)
+
+
+class ShadowTrial(NamedTuple):
+    key: str
+    payload: dict  # the pre-registration payload, as stored
+    recorded_at: datetime
+
+
+class ArmCount(NamedTuple):
+    events: int
+    units: int
+
+
+class TrialArms(NamedTuple):
+    control: ArmCount
+    treatment: ArmCount
+
+
+def run_shadow_stage(power: PowerResult, cycle_date: str) -> None:
+    """Shadow engine: count the cycle's power verdicts, pre-register each passing pattern's
+    trial and record every look milestone its tasks reach; decides nothing.
+
+    One power-pass-count row per cycle date; one pre-registration per trial key; one row
+    per reached look. A trial is kept while its pre-registration was recorded at or after
+    the row's last_transition_at (a NULL anchor keeps it); otherwise the current pair
+    starts a new one. Tasks accrue from the pre-registration's recorded_at, so a trial
+    pre-registered this cycle has none. No production arm source exists yet, so look
+    rows carry accrual only. A ledger fault WARNs by name and never fails the cycle; the
+    caller skips the stage in no-write mode (--dry-run).
+    """
+    if not HAS_PG_LOOP_WRITE:
+        _warn_shadow("trial ledger unwritable: PG helper import failed", "no shadow row this cycle")
+        return
+    _write_shadow_row(
+        TRIAL_LEDGER.EVENT.POWER_PASS_COUNT,
+        power.counts,
+        dedupe_key=f"power-pass-count:{cycle_date}",
+    )
+    if not power.passes or power.windows is None:
+        return
+    trials = _read_shadow_trials(power.passes)
+    if trials is None:
+        return
+    for power_pass in power.passes:
+        pattern = power_pass.pattern
+        trial = trials.get((pattern.agent, pattern.row_id, pattern.metric_key))
+        if trial is None or not _is_trial_current(trial, pattern.last_transition_at):
+            _write_shadow_preregistration(power_pass, power.windows.start.detection)
+            continue
+        try:
+            _write_shadow_looks(trial, power_pass, power.windows.end)
+        except (KeyError, TypeError, ValueError) as exc:
+            _warn_shadow(
+                f"trial {trial.key}: stored pre-registration unusable: "
+                f"{type(exc).__name__}: {str(exc)[:160]}",
+                "no look recorded for it this cycle",
+            )
+
+
+def get_trial_key(pattern: Pattern, detection_start: datetime) -> str:
+    """64-hex sha256 of agent, learning_pattern_id, metric key and the pair's detection start (N67)."""
+    parts = (pattern.agent, str(pattern.row_id), str(pattern.metric_key), detection_start.isoformat())
+    return hashlib.sha256("\x1f".join(parts).encode("utf-8")).hexdigest()
+
+
+def get_preregistration_payload(power_pass: PowerPass, detection_start: datetime) -> dict:
+    """The trial's frozen sizing: S2e maximum and boundaries, look milestones on the required units."""
+    baseline = power_pass.baseline
+    boundaries = trial_design.get_boundaries()
+    looks = [
+        {"fraction": fraction, "milestone": fraction * power_pass.required, "boundary": boundary}
+        for fraction, boundary in zip(trial_design.LOOK_FRACTIONS, boundaries)
+    ]
+    return {
+        "metric_key": power_pass.pattern.metric_key,
+        "detection_start": detection_start.isoformat(),
+        "baseline": {"events": baseline.events, "spawns": baseline.spawns},
+        "maximum_per_arm": trial_design.get_maximum_sample_size(baseline.events / baseline.spawns),
+        "design_effect": power_pass.design_effect,
+        "required_units": power_pass.required,
+        "boundaries": list(boundaries),
+        "looks": looks,
+        "task_window_seconds": SHADOW.TASK_WINDOW.total_seconds(),
+    }
+
+
+def get_look_payload(
+    number: int, look: Mapping[str, float], accrued: int, arms: TrialArms | None = None
+) -> dict:
+    """One reached look: accrual beside its boundary; with arm data, the pooled z too — never a decision."""
+    payload: dict = {
+        "look": number,
+        "fraction": look["fraction"],
+        "milestone": look["milestone"],
+        "boundary": look["boundary"],
+        "accrued_tasks": accrued,
+    }
+    if arms is not None:
+        payload["arms"] = {name: arm._asdict() for name, arm in arms._asdict().items()}
+        payload["z"] = _get_pooled_z(arms)
+    return payload
+
+
+def _get_pooled_z(arms: TrialArms) -> float | None:
+    """Pooled two-proportion z, a reduction (control rate above treatment) positive; None without variance."""
+    control, treatment = arms
+    if control.units <= 0 or treatment.units <= 0:
+        return None
+    pooled = (control.events + treatment.events) / (control.units + treatment.units)
+    variance = pooled * (1 - pooled) * (1 / control.units + 1 / treatment.units)
+    if variance <= 0:
+        return None
+    return (control.events / control.units - treatment.events / treatment.units) / math.sqrt(variance)
+
+
+def _is_trial_current(trial: ShadowTrial, last_transition_at: datetime | None) -> bool:
+    return last_transition_at is None or trial.recorded_at >= last_transition_at
+
+
+def _read_shadow_trials(
+    passes: list[PowerPass],
+) -> dict[tuple[str, int, str | None], ShadowTrial] | None:
+    """(agent, pattern id, metric key) → latest pre-registration; None (WARN) on a read fault."""
+    agents = sorted({power_pass.pattern.agent for power_pass in passes})
+    try:
+        with _pg_connect() as conn, conn.cursor() as cur:
+            event = TRIAL_LEDGER.EVENT.SHADOW_PREREGISTRATION
+            cur.execute(SHADOW.PREREGISTRATION_SQL, (event, agents))
+            rows = cur.fetchall()
+    except Exception as exc:  # noqa: BLE001 — a ledger read fault never fails the cycle (N65)
+        _warn_shadow(
+            f"pre-registrations unreadable: {type(exc).__name__}: {str(exc)[:160]}",
+            "no pre-registration or look this cycle",
+        )
+        return None
+    return {
+        (agent, pattern_id, metric_key): ShadowTrial(key, payload, recorded_at)
+        for agent, pattern_id, metric_key, key, payload, recorded_at in rows
+    }
+
+
+def _write_shadow_preregistration(power_pass: PowerPass, detection_start: datetime) -> None:
+    key = get_trial_key(power_pass.pattern, detection_start)
+    _write_shadow_row(
+        TRIAL_LEDGER.EVENT.SHADOW_PREREGISTRATION,
+        get_preregistration_payload(power_pass, detection_start),
+        dedupe_key=key,
+        trial_key=key,
+        pattern=power_pass.pattern,
+    )
+
+
+def _write_shadow_looks(trial: ShadowTrial, power_pass: PowerPass, window_end: datetime) -> None:
+    accrued = len(
+        get_tasks(
+            (
+                spawn
+                for spawn in power_pass.spawns
+                if spawn.agent_id is not None and trial.recorded_at <= spawn.started_at < window_end
+            ),
+            SHADOW.TASK_WINDOW,
+        )
+    )
+    for number, look in enumerate(trial.payload["looks"], start=1):
+        if accrued < look["milestone"]:
+            return
+        _write_shadow_row(
+            TRIAL_LEDGER.EVENT.SHADOW_LOOK,
+            get_look_payload(number, look, accrued),
+            dedupe_key=f"{trial.key}:look:{number}",
+            trial_key=trial.key,
+            pattern=power_pass.pattern,
+        )
+
+
+def _write_shadow_row(
+    event: str,
+    payload: dict,
+    *,
+    dedupe_key: str,
+    trial_key: str | None = None,
+    pattern: Pattern | None = None,
+) -> None:
+    try:
+        _pg_write_trial_ledger_row(
+            event,
+            TRIAL_LEDGER.ACTOR.SHADOW,
+            payload,
+            trial_key=trial_key,
+            agent=None if pattern is None else pattern.agent,
+            learning_pattern_id=None if pattern is None else pattern.row_id,
+            dedupe_key=dedupe_key,
+        )
+    except Exception as exc:  # noqa: BLE001 — a ledger write fault never fails the cycle (N65)
+        _warn_shadow(
+            f"{event} {dedupe_key} not written: {type(exc).__name__}: {str(exc)[:160]}",
+            "the stage continues",
+        )
+
+
+def _warn_shadow(cause: str, scope: str) -> None:
+    sys.stderr.write(f"[daemon-cycle] WARN: shadow stage — {cause}; {scope}\n")
 
 
 def classify_failure_rationale(rationale: str) -> str:
@@ -11000,7 +11245,10 @@ def run_cycle(
     report.patterns_processed = len(patterns)
     agent_groups = _group_patterns_by_agent(patterns, agent_cap=agent_cap)
     # Both generation branches: verdict only; no pattern is parked or dropped.
-    report.power_check = check_pattern_power(patterns, skip_loop_emit=skip_loop_emit)
+    power = check_pattern_power(patterns, skip_loop_emit=skip_loop_emit)
+    report.power_check = power.counts
+    if not skip_loop_emit:  # no-write mode (--dry-run) writes no ledger row (N67)
+        run_shadow_stage(power, report.cycle_date)
 
     if IS_GENERATION_CLOSED:
         sys.stderr.write(

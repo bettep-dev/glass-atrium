@@ -432,7 +432,7 @@ class CheckPatternPowerTest(_StageFixture):
     def _check(self, patterns: list[dc.Pattern], *, skip_loop_emit: bool = False):
         stderr = io.StringIO()
         with contextlib.redirect_stderr(stderr):
-            counts = dc.check_pattern_power(patterns, skip_loop_emit=skip_loop_emit)
+            counts = dc.check_pattern_power(patterns, skip_loop_emit=skip_loop_emit).counts
         self.assertEqual(self.pg_reach, [])
         self.assertEqual(self.statements.refused, [])
         return counts, stderr.getvalue()

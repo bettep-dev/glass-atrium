@@ -41,6 +41,7 @@ _SEAMS: dict[str | None, tuple[str, ...]] = {
         "get_proposal_status_label_state",
         "_pg_write_spawn_manifest",
         "_pg_count_spawn_manifest",
+        "_pg_write_trial_ledger_row",
     ),
     None: ("_invoke_pg_helper_subprocess",),
 }
