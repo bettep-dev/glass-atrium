@@ -1091,7 +1091,7 @@ _TRIAL_LEDGER_EVENT = SimpleNamespace(
     SHADOW_LOOK="shadow-look",  # dedupe_key = <trial key>:look:<n>
     POWER_PASS_COUNT="power-pass-count",  # dedupe_key = power-pass-count:<cycle date>
     AA_RESTART="aa-restart",
-    # Session clustering; a period design effect (S4b) is its own event, never this one.
+    # Session clustering; a period (block-level) design effect is its own event, never this one.
     AA_SESSION_DESIGN_EFFECT="aa-session-design-effect",
 )
 
@@ -1151,7 +1151,7 @@ def write_trial_ledger_row(
 ):
     """INSERT one append-only ledger row → 1 when it landed, 0 when it did not.
 
-    dedupe_key: a once-only event's identity (N67) — a taken key adds no row and raises
+    dedupe_key: a once-only event's identity — a taken key adds no row and raises
     nothing, the stored row stays; None = a repeatable event. A schema without the table
     (migrate-failed install) → named WARN on stderr, 0. Refuses (TrialLedgerValueUndeclared)
     before connecting on a value outside TRIAL_LEDGER; raises on any other PG fault.

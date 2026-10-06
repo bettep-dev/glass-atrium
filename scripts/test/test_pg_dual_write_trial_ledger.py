@@ -17,6 +17,7 @@ import tempfile
 import unittest
 import uuid
 from pathlib import Path
+from types import SimpleNamespace
 from unittest import mock
 
 _REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -109,8 +110,7 @@ class TestTrialLedgerWriterLivePg(unittest.TestCase):
     the ledger is append-only, so rows cannot be cleaned up.
     """
 
-    _TEMPLATE_FULL = "trial_ledger_tpl"
-    _TEMPLATE_ABSENT = "trial_ledger_absent_tpl"
+    _TEMPLATE = SimpleNamespace(FULL="trial_ledger_tpl", ABSENT="trial_ledger_absent_tpl")
 
     def setUp(self) -> None:
         get_ephemeral_connection().close()
@@ -146,7 +146,7 @@ class TestTrialLedgerWriterLivePg(unittest.TestCase):
             return cur.fetchall()
 
     def test_an_insert_lands_with_every_column_it_was_given(self) -> None:
-        self._use_database(self._TEMPLATE_FULL)
+        self._use_database(self._TEMPLATE.FULL)
         ledger = self.writer.TRIAL_LEDGER
 
         inserted = self.writer.write_trial_ledger_row(
@@ -178,7 +178,7 @@ class TestTrialLedgerWriterLivePg(unittest.TestCase):
     def test_a_repeat_with_a_taken_dedupe_key_adds_no_row_and_keeps_the_first(
         self,
     ) -> None:
-        self._use_database(self._TEMPLATE_FULL)
+        self._use_database(self._TEMPLATE.FULL)
         ledger = self.writer.TRIAL_LEDGER
         first, repeat = ({"pass_count": 3}, {"pass_count": 5})
 
@@ -196,7 +196,7 @@ class TestTrialLedgerWriterLivePg(unittest.TestCase):
         self.assertEqual([row[5] for row in self._get_rows()], [first])
 
     def test_rows_without_a_dedupe_key_each_land(self) -> None:
-        self._use_database(self._TEMPLATE_FULL)
+        self._use_database(self._TEMPLATE.FULL)
         ledger = self.writer.TRIAL_LEDGER
 
         for _ in range(2):
@@ -213,7 +213,7 @@ class TestTrialLedgerWriterLivePg(unittest.TestCase):
     def test_without_the_ledger_table_the_write_skips_with_the_migration_named(
         self,
     ) -> None:
-        self._use_database(self._TEMPLATE_ABSENT)
+        self._use_database(self._TEMPLATE.ABSENT)
         ledger = self.writer.TRIAL_LEDGER
         stderr = io.StringIO()
 
