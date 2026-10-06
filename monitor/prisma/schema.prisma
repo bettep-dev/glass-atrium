@@ -350,7 +350,7 @@ model SpawnManifest {
   // Canary exposure fields of the line (inject-scope-rules.sh → get_canary_exposure_fields), same writer.
   // 1 = treatment, 0 = control; NULL = no arm (no readable salt, no digest tool, agent_id `unknown`)
   arm           Int?     @db.SmallInt
-  // Salt read from the canary file = the A/A start row's core.autoagent_trial_ledger.id; NULL = none read
+  // Salt read from the canary file = the core.autoagent_trial_ledger.id the daemon wrote there (open trial's start or latest restart row); NULL = none read
   saltId        BigInt?  @map("salt_id")
   // NULL = the line predates the exposure fields → the four are all NULL
   delivered     Boolean?
