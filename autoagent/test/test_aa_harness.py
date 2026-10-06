@@ -743,18 +743,24 @@ _SPAWNS = SimpleNamespace(
     # no event on either metric → no variance → undefined design effect
     shell=tuple(_spawn(f"s{index}", f"t{index % 2}", index + 1) for index in range(4)),
 )
+# SUBAGENT_TOOL_BUDGET for rows whose spawns carry tool_use counts
+_TOOL_BUDGET = 30
 # before the window: a task member the spawn read returns, never counted
 _EARLIER_SPAWN = _spawn("p0", "a", -1, overage=1, stop=False)
 
 
-def _get_expected_python_reading(metric_key: str) -> object:
-    """Arm-difference reading of the in-window Python spawns under salt 1, clustered by session."""
+def _get_expected_python_reading(
+    metric_key: str, spawns: tuple[SpawnFacts, ...] = _SPAWNS.python
+) -> object:
+    """Arm-difference reading of in-window Python spawns under salt 1, clustered by session."""
     is_event = {
-        "budget_overage": lambda spawn: spawn.overage_rows > 0,
+        "budget_overage": lambda spawn: (
+            spawn.overage_rows > 0 or (spawn.tool_use_actual or 0) >= _TOOL_BUDGET
+        ),
         "emit_failure": lambda spawn: not spawn.has_subagent_stop,
     }[metric_key]
     clusters: dict[str, list[tuple[int, float]]] = {}
-    for spawn in _SPAWNS.python:
+    for spawn in spawns:
         clusters.setdefault(spawn.session_id, []).append(
             (_get_arm(1, spawn.agent_id), float(is_event(spawn)))
         )
@@ -898,12 +904,19 @@ class AaResultTest(_AaResultFixture):
         self,
     ) -> None:
         agent = "glass-atrium-dev-python"
+        # p5 (session c) records no overage row but reaches the budget on tool_use alone
+        python = tuple(
+            spawn._replace(tool_use_actual=_TOOL_BUDGET) if spawn.agent_id == "p5" else spawn
+            for spawn in _SPAWNS.python
+        )
+        self.spawns[agent] = (_EARLIER_SPAWN, *map(_exposed, python))
         expected = {
-            key: _get_expected_python_reading(key)
+            key: _get_expected_python_reading(key, python)
             for key in ("budget_overage", "emit_failure")
         }
 
-        self._evaluate()
+        with mock.patch.dict(os.environ, {"SUBAGENT_TOOL_BUDGET": str(_TOOL_BUDGET)}):
+            self._evaluate()
 
         rows = self._get_design_effect_rows()
         self.assertEqual(
