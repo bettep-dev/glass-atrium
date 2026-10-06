@@ -296,12 +296,22 @@ ON CONFLICT (pattern_signature) DO UPDATE SET
     last_updated = now()
 """
 
-_METRIC_KEY_COLUMN_SQL = """
+# Column-presence probes, run on every call: a failed probe fails that call like any other query.
+_COLUMN_SQL = SimpleNamespace(
+    METRIC_KEY="""
 SELECT EXISTS (
     SELECT 1 FROM information_schema.columns
      WHERE table_schema = 'core' AND table_name = 'learning_log' AND column_name = 'metric_key'
 )
-"""
+""",
+    # 'delivered' stands for the four canary exposure columns, which one migration adds together
+    EXPOSURE="""
+SELECT EXISTS (
+    SELECT 1 FROM information_schema.columns
+     WHERE table_schema = 'core' AND table_name = 'spawn_manifest' AND column_name = 'delivered'
+)
+""",
+)
 
 _LEARNING_LOG_METRIC_KEY_SQL = """
 UPDATE core.learning_log
@@ -381,7 +391,7 @@ def upsert_learning_pattern(
                 _validate_status_transition(old_status, status)
                 cur.execute(_LEARNING_LOG_UPSERT_SQL, row)
                 if metric_key is not None:
-                    cur.execute(_METRIC_KEY_COLUMN_SQL)
+                    cur.execute(_COLUMN_SQL.METRIC_KEY)
                     if cur.fetchone()[0]:
                         cur.execute(
                             _LEARNING_LOG_METRIC_KEY_SQL,
@@ -1017,7 +1027,7 @@ def read_pending_learning_patterns() -> list[dict]:
     try:
         with psycopg.connect("dbname=glass_atrium", connect_timeout=1, autocommit=True) as conn:
             with conn.cursor() as cur:
-                cur.execute(_METRIC_KEY_COLUMN_SQL)
+                cur.execute(_COLUMN_SQL.METRIC_KEY)
                 has_metric_key = cur.fetchone()[0]
                 cur.execute(
                     _PENDING_PATTERNS_SELECT_SQL
@@ -1390,13 +1400,6 @@ ORDER BY s.agent_type, s.started_at, s.id
         " NULL::boolean AS delivered, NULL::varchar AS delivered_hash",
     ),
 )
-# Probed per read, as _METRIC_KEY_COLUMN_SQL: a probe failure fails the read closed like any other.
-_EXPOSURE_COLUMN_SQL = """
-SELECT EXISTS (
-    SELECT 1 FROM information_schema.columns
-     WHERE table_schema = 'core' AND table_name = 'spawn_manifest' AND column_name = 'delivered'
-)
-"""
 # The install's provenance start: its earliest MANIFEST row carrying a session id.
 _PROVENANCE_START_SQL = (
     "SELECT min(started_at) FROM core.spawn_manifest WHERE session_id IS NOT NULL"
@@ -1489,7 +1492,7 @@ def _read_spawn_facts(
         with conn.cursor() as cur:
             cur.execute(_PROVENANCE_START_SQL)
             provenance_start = cur.fetchone()[0]
-            cur.execute(_EXPOSURE_COLUMN_SQL)
+            cur.execute(_COLUMN_SQL.EXPOSURE)
             has_exposure = cur.fetchone()[0]
             variants = _SPAWN_FACTS_SELECT_SQL.EXPOSURE_COLUMNS
             columns = variants.FULL if has_exposure else variants.PRE_EXPOSURE
