@@ -293,19 +293,34 @@ class GetPowerCheckTest(unittest.TestCase):
 
 
 class _LedgerConnection:
-    """The trial-ledger read boundary: each requested agent's latest A/A design-effect row, as stored."""
+    """The trial-ledger read boundary: each requested agent's latest A/A design-effect row, as stored.
+
+    Every statement recorded as seen · one the test answers empty on purpose → no rows ·
+    any other but the design-effect read → recorded as refused + raised, never absorbed.
+    """
 
     def __init__(
-        self, latest_payloads: dict[str, dict], reads: list[list[str]]
+        self,
+        latest_payloads: dict[str, dict],
+        reads: list[list[str]],
+        statements: SimpleNamespace,
     ) -> None:
         self.latest_payloads = latest_payloads
         self.reads = reads
+        self.statements = statements
         self.rows: list[tuple[str, dict]] = []
 
     def cursor(self) -> contextlib.nullcontext[_LedgerConnection]:
         return contextlib.nullcontext(self)
 
-    def execute(self, statement: str, params: tuple[str, list[str]]) -> None:
+    def execute(self, statement: str, params: tuple[object, ...]) -> None:
+        self.statements.seen.append(statement)
+        if statement in self.statements.answered_empty:
+            self.rows = []
+            return
+        if statement != dc.POWER.DESIGN_EFFECT_SQL:
+            self.statements.refused.append(statement)
+            raise AssertionError(f"statement outside the ledger fake: {statement[:80]}")
         event, agents = params
         self.reads.append(list(agents))
         is_design_effect = event == _get_trial_ledger().EVENT.AA_SESSION_DESIGN_EFFECT
@@ -323,6 +338,9 @@ class _StageFixture(unittest.TestCase):
     def setUp(self) -> None:
         self.pg_reach = seal_pg_reach(self)
         self.reads = SimpleNamespace(history=[], design_effect=[])
+        self.statements = SimpleNamespace(
+            seen=[], refused=[], answered_empty=frozenset()
+        )
         self.histories: dict[str, list[SpawnFacts]] = {}
         self.provenance_start: datetime | None = _DAY - timedelta(days=60)
         self.events: list[dict] = []
@@ -361,7 +379,9 @@ class _StageFixture(unittest.TestCase):
 
     def _connect_ledger(self) -> contextlib.nullcontext[_LedgerConnection]:
         return contextlib.nullcontext(
-            _LedgerConnection(self.design_effects, self.reads.design_effect)
+            _LedgerConnection(
+                self.design_effects, self.reads.design_effect, self.statements
+            )
         )
 
     def _record_event(self, envelope: dict) -> bool:
@@ -410,6 +430,7 @@ class CheckPatternPowerTest(_StageFixture):
         with contextlib.redirect_stderr(stderr):
             counts = dc.check_pattern_power(patterns, skip_loop_emit=skip_loop_emit)
         self.assertEqual(self.pg_reach, [])
+        self.assertEqual(self.statements.refused, [])
         return counts, stderr.getvalue()
 
     def test_each_floor_passing_pattern_is_counted_under_its_verdict(self) -> None:
@@ -682,6 +703,14 @@ class PowerCheckCycleReportTest(_StageFixture):
         patcher = mock.patch.object(dc, "_pg_read_pending_patterns", lambda: list(rows))
         patcher.start()
         self.addCleanup(patcher.stop)
+        # the armed loop-write flag also opens the regression-gate and discharge reads
+        self.statements.answered_empty = frozenset(
+            {
+                dc._REGRESSION_WARNINGS_SELECT_SQL,
+                dc._REGRESSION_PROPOSALS_SELECT_SQL,
+                dc._APPLIED_FOR_DISCHARGE_SELECT_SQL,
+            }
+        )
 
     def test_the_report_counter_equals_the_passing_count(self) -> None:
         self.assertTrue(dc.IS_GENERATION_CLOSED)
@@ -694,6 +723,11 @@ class PowerCheckCycleReportTest(_StageFixture):
                 skip_loop_emit=True,
             )
         self.assertEqual(self.pg_reach, [])
+        self.assertEqual(self.statements.refused, [])
+        self.assertCountEqual(
+            self.statements.seen,
+            [dc.POWER.DESIGN_EFFECT_SQL, *self.statements.answered_empty],
+        )
         self.assertEqual(report.power_check["passing"], 1)
         self.assertEqual(dc._report_to_dict(report)["power_check"], report.power_check)
 
