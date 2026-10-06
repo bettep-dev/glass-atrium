@@ -9157,8 +9157,10 @@ def _read_shadow_trials(
 
 
 def _write_shadow_preregistration(power_pass: PowerPass, detection_start: datetime) -> None:
+    """Pre-register the current pair; a taken key (a lifecycle move on the earlier pre-registration's
+    UTC day, same detection start) lands 0 rows → named WARN, re-keyed on the next UTC day."""
     key = get_trial_key(power_pass.pattern, detection_start)
-    _write_shadow_row(
+    landed = _write_shadow_row(
         ShadowRow(
             TRIAL_LEDGER.EVENT.SHADOW_PREREGISTRATION,
             get_preregistration_payload(power_pass, detection_start),
@@ -9166,6 +9168,12 @@ def _write_shadow_preregistration(power_pass: PowerPass, detection_start: dateti
         ),
         TrialIdentity(key, power_pass.pattern),
     )
+    if landed == 0:
+        _warn_shadow(
+            f"trial {key}: pre-registration landed 0 rows — key taken by this UTC day's "
+            "earlier pre-registration (lifecycle move since)",
+            "no look for the pattern until the next UTC day re-keys it",
+        )
 
 
 def _write_shadow_looks(trial: ShadowTrial, power_pass: PowerPass, window_end: datetime) -> None:
@@ -9196,9 +9204,10 @@ def _get_accrued_task_count(trial: ShadowTrial, power_pass: PowerPass, window_en
     )
 
 
-def _write_shadow_row(row: ShadowRow, trial: TrialIdentity | None = None) -> None:
+def _write_shadow_row(row: ShadowRow, trial: TrialIdentity | None = None) -> int | None:
+    """Rows landed (0 = dedupe key taken or ledger absent); None after a WARNed fault."""
     try:
-        _pg_write_trial_ledger_row(
+        return _pg_write_trial_ledger_row(
             row.event,
             TRIAL_LEDGER.ACTOR.SHADOW,
             row.payload,
@@ -9212,6 +9221,7 @@ def _write_shadow_row(row: ShadowRow, trial: TrialIdentity | None = None) -> Non
             f"{row.event} {row.dedupe_key} not written: {type(exc).__name__}: {str(exc)[:160]}",
             "the stage continues",
         )
+        return None
 
 
 def _warn_shadow(cause: str, scope: str) -> None:

@@ -373,6 +373,17 @@ class PreRegistrationTest(_ShadowFixture):
                     ).start.detection.isoformat(),
                 )
 
+    def test_a_lifecycle_move_on_the_preregistrations_utc_day_lands_no_new_trial_and_warns_by_name(
+        self,
+    ) -> None:
+        first_stderr = self._cycle(_NOW)
+        self.patterns = [_pattern(last_transition_at=_NOW + timedelta(hours=1))]
+        second_stderr = self._cycle(_NOW + timedelta(hours=2))
+        [trial] = self._get_preregistrations()
+        warning = f"WARN: shadow stage — trial {trial.trial_key}: pre-registration landed 0 rows"
+        self.assertNotIn(warning, first_stderr)
+        self.assertIn(warning, second_stderr)
+
 
 class LookTest(_ShadowFixture):
     """Looks accrue on tasks from the pre-registration; each reached milestone is one row, never a decision."""
