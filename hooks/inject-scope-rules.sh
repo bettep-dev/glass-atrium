@@ -668,7 +668,7 @@ get_canary_stored_hash() {
 # of a file the daemon replaces by rename.
 set_canary_block() {
   local safe_type="" now="" raw=""
-  CANARY_DELIVERABLE=0
+  IS_CANARY_DELIVERABLE=0
   CANARY_BLOCK=""
   CANARY_SALT=""
   CANARY_ARM=""
@@ -688,7 +688,7 @@ set_canary_block() {
   set_canary_delivery "${raw}" "${now}"
 }
 
-# Treatment-arm delivery of canary JSON $1 at now $2: CANARY_DELIVERABLE=1 only when the file is
+# Treatment-arm delivery of canary JSON $1 at now $2: IS_CANARY_DELIVERABLE=1 only when the file is
 # current, well-formed and in lease, sha256 of its exact text bytes (`jq -j .text` piped straight into
 # the digest tool, so a trailing newline counts, as in the daemon's Python hashlib) equals the stored
 # hash, and the text fits CANARY_MAX_BYTES. No digest tool → no match. Otherwise no block.
@@ -710,7 +710,7 @@ set_canary_delivery() {
   [[ "${text_bytes}" -le "${CANARY_MAX_BYTES}" ]] || return 0
   CANARY_BLOCK="${text}"
   CANARY_HASH="${stored}"
-  CANARY_DELIVERABLE=1
+  IS_CANARY_DELIVERABLE=1
 }
 
 # C03: the Read-resolvable source a kept block came from. Delegates the rule-doc blocks to
@@ -736,7 +736,7 @@ manifest_block_kept() {
     budget-dev) [[ "${keep_budget_dev}" -eq 1 && -n "${BUDGET_DEV_BLOCK}" ]] ;;
     budget-analysis) [[ "${keep_budget_analysis}" -eq 1 && -n "${BUDGET_ANALYSIS_BLOCK}" ]] ;;
     # An empty text adds no bytes, so the drop loop's flag flip never sheds it: delivered stays 1.
-    canary) [[ "${CANARY_DELIVERABLE}" -eq 1 ]] && [[ "${keep_canary}" -eq 1 || -z "${CANARY_BLOCK}" ]] ;;
+    canary) [[ "${IS_CANARY_DELIVERABLE}" -eq 1 ]] && [[ "${keep_canary}" -eq 1 || -z "${CANARY_BLOCK}" ]] ;;
     *) return 1 ;;
   esac
 }
