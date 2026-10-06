@@ -8,7 +8,10 @@ score process (Armitage, McPherson & Rowe 1969), not from simulation.
 
 from __future__ import annotations
 
+import contextlib
 import math
+import random
+import statistics
 from collections.abc import Sequence
 from functools import cache
 from statistics import NormalDist
@@ -20,6 +23,9 @@ DEFAULT_RELATIVE_REDUCTION = 0.30
 LOOK_FRACTIONS = (0.25, 0.5, 0.75, 1.0)
 HORIZON_DAYS = 84
 ARM_COUNT = 2
+BOOTSTRAP_REPLICATES = 2000
+# one-sided 95% bounds = a two-sided 90% interval, matching the trials' one-sided alpha
+INTERVAL_CUTS = 20  # statistics.quantiles cut points at 5% steps → the first and last are the bounds
 
 _STANDARD_NORMAL = NormalDist()
 _GRID_POINTS = 201  # odd → Simpson's rule
@@ -41,6 +47,25 @@ class DesignEffect(NamedTuple):
     def selected(self) -> float:
         """The higher estimator, which the power check uses: a lower design effect overstates power."""
         return max(self.anova, self.size_weighted)
+
+
+class ArmDesignEffect(NamedTuple):
+    """One arm-difference design effect with the precision recorded beside it."""
+
+    value: float
+    sessions: int
+    spawns: int
+    lower: float | None  # None = fewer than 2 defined resamples
+    upper: float | None
+    replicates: int  # defined resamples; an undefined one (an arm empty, no variance) is dropped
+
+
+class _ArmTotals(NamedTuple):
+    """One session's per-arm sufficient statistics, indexed by arm (0 control, 1 treatment)."""
+
+    counts: tuple[int, int]
+    sums: tuple[float, float]
+    squares: tuple[float, float]
 
 
 def get_fixed_sample_size(
@@ -134,6 +159,89 @@ def get_design_effect(clusters: Sequence[Sequence[float]]) -> DesignEffect:
         anova=1 + (anova_size - 1) * correlation,
         size_weighted=1 + (weighted_size - 1) * correlation,
     )
+
+
+def get_arm_difference_design_effect(clusters: Sequence[Sequence[tuple[int, float]]]) -> float:
+    """Design effect of the treatment-minus-control rate: session-clustered over independent-spawn variance.
+
+    Clusters hold (arm, outcome) per spawn, arm 0 control / 1 treatment. The ratio is the
+    cluster-robust sandwich variance of the arm difference over its independent form, so per-spawn
+    arms give about 1 whatever the session effects; it may fall below 1 by noise. Raises ValueError
+    when undefined: fewer than 2 clusters, an empty cluster, an empty arm, or no variance in either arm.
+    """
+    return _get_arm_ratio(_get_arm_totals(clusters))
+
+
+def get_arm_design_effect_reading(
+    clusters: Sequence[Sequence[tuple[int, float]]],
+    *,
+    seed: str,
+    replicates: int = BOOTSTRAP_REPLICATES,
+) -> ArmDesignEffect:
+    """The arm-difference design effect with session count, spawn count and a session-bootstrap interval.
+
+    Sessions are resampled with replacement under a ``seed``-fixed generator, so one input gives one
+    reading. Raises ValueError where get_arm_difference_design_effect does.
+    """
+    totals = _get_arm_totals(clusters)
+    value = _get_arm_ratio(totals)
+    generator = random.Random(seed)
+    draws: list[float] = []
+    for _ in range(replicates):
+        with contextlib.suppress(ValueError):  # a resample without one arm or variance has no value
+            draws.append(_get_arm_ratio(generator.choices(totals, k=len(totals))))
+    lower, upper = _get_interval(draws)
+    spawns = sum(sum(total.counts) for total in totals)
+    return ArmDesignEffect(value, len(totals), spawns, lower, upper, len(draws))
+
+
+def _get_arm_totals(clusters: Sequence[Sequence[tuple[int, float]]]) -> list[_ArmTotals]:
+    sizes = [len(cluster) for cluster in clusters]
+    if len(sizes) < 2 or min(sizes) == 0:
+        raise ValueError(f"need at least 2 non-empty clusters, got sizes {sizes}")
+    totals: list[_ArmTotals] = []
+    for cluster in clusters:
+        counts, sums, squares = [0, 0], [0.0, 0.0], [0.0, 0.0]
+        for arm, outcome in cluster:
+            if arm not in (0, 1):
+                raise ValueError(f"arm must be 0 or 1, got {arm!r}")
+            counts[arm] += 1
+            sums[arm] += outcome
+            squares[arm] += outcome * outcome
+        totals.append(_ArmTotals((counts[0], counts[1]), (sums[0], sums[1]), (squares[0], squares[1])))
+    return totals
+
+
+def _get_arm_ratio(totals: Sequence[_ArmTotals]) -> float:
+    """Σ over sessions of (Σ z)² over Σ z², z = (outcome − arm mean) / arm size, signed + on treatment."""
+    sizes = [sum(total.counts[arm] for total in totals) for arm in (0, 1)]
+    if min(sizes) == 0:
+        raise ValueError(f"an arm has no spawns, sizes {sizes}: arm difference undefined")
+    means = [math.fsum(total.sums[arm] for total in totals) / sizes[arm] for arm in (0, 1)]
+    clustered = math.fsum(
+        (
+            (total.sums[1] - total.counts[1] * means[1]) / sizes[1]
+            - (total.sums[0] - total.counts[0] * means[0]) / sizes[0]
+        )
+        ** 2
+        for total in totals
+    )
+    independent = math.fsum(
+        (total.squares[arm] - 2 * means[arm] * total.sums[arm] + total.counts[arm] * means[arm] ** 2)
+        / sizes[arm] ** 2
+        for total in totals
+        for arm in (0, 1)
+    )
+    if independent <= 0:
+        raise ValueError("no variance in either arm: arm-difference design effect undefined")
+    return clustered / independent
+
+
+def _get_interval(draws: list[float]) -> tuple[float | None, float | None]:
+    if len(draws) < 2:
+        return None, None
+    cuts = statistics.quantiles(draws, n=INTERVAL_CUTS, method="inclusive")
+    return cuts[0], cuts[-1]
 
 
 def get_rate_harm(

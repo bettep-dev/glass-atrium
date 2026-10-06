@@ -12,6 +12,9 @@ Covered behaviors:
   * both design-effect estimators match hand-computed balanced and unbalanced
     fixtures, and the power check takes the higher, never below 1; only
     singleton clusters give exactly 1;
+  * the arm-difference design effect is the cluster-robust variance ratio of the
+    treatment-minus-control rate, about 1 under per-spawn arms whatever the session
+    effects; its session-bootstrap interval covers the truth at about its level;
   * minimum detectable harm per guardrail matches two-sample reference
     arithmetic: a fold rise on rates, a mean shift on the tool_use band.
 
@@ -191,6 +194,141 @@ class DesignEffectEstimators(unittest.TestCase):
             with self.subTest(name):
                 effect = td.get_design_effect(clusters)
                 self.assertEqual((effect.anova, effect.size_weighted), (1.0, 1.0))
+
+
+def _get_session_rate(generator: random.Random, spread: float) -> float:
+    """A session's event rate around 0.14, logit-normal with sd `spread` → session effects."""
+    return 1 / (1 + math.exp(1.8 - generator.gauss(0, spread)))
+
+
+def _get_arm_clusters(
+    generator: random.Random, *, sessions: int, spread: float, unit: str, treated: float = 0.5
+) -> list[list[tuple[int, float]]]:
+    """(arm, 0/1 outcome) per spawn, clustered by session; no arm effect.
+
+    unit `spawn` hashes every spawn on its own; `session` gives a whole session one arm.
+    """
+    clusters = []
+    for _ in range(sessions):
+        rate = _get_session_rate(generator, spread)
+        session_arm = int(generator.random() < treated)
+        clusters.append(
+            [
+                (
+                    int(generator.random() < treated) if unit == "spawn" else session_arm,
+                    float(generator.random() < rate),
+                )
+                for _ in range(generator.randint(1, 30))
+            ]
+        )
+    return clusters
+
+
+def _get_cluster_robust_ratio(clusters: list[list[tuple[int, float]]]) -> float:
+    """Clustered over independent sandwich variance of the treatment-minus-control mean.
+
+    Per spawn z = (outcome - its arm mean) / its arm size, signed + on treatment.
+    """
+    spawns = [item for cluster in clusters for item in cluster]
+    sizes = {arm: sum(1 for item_arm, _ in spawns if item_arm == arm) for arm in (0, 1)}
+    means = {
+        arm: sum(outcome for item_arm, outcome in spawns if item_arm == arm) / sizes[arm]
+        for arm in (0, 1)
+    }
+    residuals = [
+        [(1 if arm else -1) * (outcome - means[arm]) / sizes[arm] for arm, outcome in cluster]
+        for cluster in clusters
+    ]
+    clustered = sum(sum(cluster) ** 2 for cluster in residuals)
+    independent = sum(value * value for cluster in residuals for value in cluster)
+    return clustered / independent
+
+
+class ArmDifferenceDesignEffect(unittest.TestCase):
+    def test_the_arm_assignment_unit_not_the_session_effect_sets_the_value(self) -> None:
+        # same strong session effects; only the unit the arm is hashed on differs
+        rows = (
+            ("per-spawn arms", "spawn", 0.85, 1.15),
+            ("whole-session arms", "session", 2.0, math.inf),
+        )
+        for name, unit, low, high in rows:
+            with self.subTest(name):
+                clusters = _get_arm_clusters(
+                    random.Random(20261010), sessions=400, spread=2.5, unit=unit
+                )
+                outcomes = [[outcome for _, outcome in cluster] for cluster in clusters]
+                self.assertGreater(td.get_design_effect(outcomes).selected, 3.0)
+                value = td.get_arm_difference_design_effect(clusters)
+                self.assertTrue(low <= value < high, f"{name}: {value}")
+
+    def test_the_value_is_the_cluster_robust_variance_ratio_of_the_arm_difference(self) -> None:
+        generator = random.Random(20261011)
+        rows = (
+            ("balanced per-spawn arms", "spawn", 0.5),
+            ("unbalanced per-spawn arms", "spawn", 0.3),
+            ("balanced whole-session arms", "session", 0.5),
+            ("unbalanced whole-session arms", "session", 0.3),
+        )
+        for name, unit, treated in rows:
+            for draw in range(20):
+                with self.subTest(name, draw=draw):
+                    clusters = _get_arm_clusters(
+                        generator, sessions=40, spread=1.5, unit=unit, treated=treated
+                    )
+                    self.assertAlmostEqual(
+                        td.get_arm_difference_design_effect(clusters),
+                        _get_cluster_robust_ratio(clusters),
+                        places=9,
+                    )
+
+    def test_an_undefined_arm_difference_raises_and_singletons_give_one(self) -> None:
+        rows = (
+            ("one session", [[(0, 1.0), (1, 0.0), (1, 1.0)]]),
+            ("an empty session", [[(0, 1.0), (1, 0.0)], []]),
+            ("no treatment spawn", [[(0, 1.0), (0, 0.0)], [(0, 1.0)]]),
+            ("no variance in either arm", [[(0, 1.0), (1, 0.0)], [(0, 1.0), (1, 0.0)]]),
+        )
+        for name, clusters in rows:
+            with self.subTest(name), self.assertRaises(ValueError):
+                td.get_arm_difference_design_effect(clusters)
+        singletons = [[(0, 1.0)], [(1, 0.0)], [(0, 0.0)], [(1, 1.0)]]
+        self.assertEqual(td.get_arm_difference_design_effect(singletons), 1.0)
+
+    def test_the_session_bootstrap_interval_covers_the_truth_at_about_its_level(self) -> None:
+        # per-spawn arms → true value 1; a two-sided 90% interval → ~90% of datasets cover it
+        generator = random.Random(20261012)
+        covered = 0
+        datasets = 120
+        for draw in range(datasets):
+            clusters = _get_arm_clusters(generator, sessions=40, spread=2.0, unit="spawn")
+            reading = td.get_arm_design_effect_reading(
+                clusters, seed=f"coverage:{draw}", replicates=400
+            )
+            covered += reading.lower <= 1.0 <= reading.upper
+        self.assertTrue(0.8 <= covered / datasets <= 0.97, covered)
+
+    def test_the_reading_carries_its_counts_and_repeats_under_one_seed(self) -> None:
+        clusters = _get_arm_clusters(random.Random(5), sessions=30, spread=1.0, unit="spawn")
+        reading = td.get_arm_design_effect_reading(clusters, seed="agent:key:1", replicates=300)
+        self.assertEqual(
+            (reading.value, reading.sessions, reading.spawns),
+            (
+                td.get_arm_difference_design_effect(clusters),
+                30,
+                sum(len(cluster) for cluster in clusters),
+            ),
+        )
+        self.assertEqual(
+            reading,
+            td.get_arm_design_effect_reading(clusters, seed="agent:key:1", replicates=300),
+        )
+        self.assertLessEqual(reading.lower, reading.upper)
+
+    def test_undefined_resamples_are_dropped_from_the_interval(self) -> None:
+        # a resample drawing one session twice has one arm only → undefined, not counted
+        clusters = [[(0, 1.0), (0, 0.0)], [(1, 1.0), (1, 0.0)]]
+        reading = td.get_arm_design_effect_reading(clusters, seed="drop", replicates=200)
+        self.assertTrue(0 < reading.replicates < 200, reading.replicates)
 
 
 class RateHarm(unittest.TestCase):
