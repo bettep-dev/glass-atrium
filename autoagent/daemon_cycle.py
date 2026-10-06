@@ -9691,9 +9691,11 @@ def _read_canary_bytes(path: Path) -> bytes | None:
 
 
 def _get_canary_text(raw: bytes) -> str | None:
-    """The canary object's text field; None when Python cannot read one out of the bytes."""
+    """The canary object's text field as the hook reads it — the bytes as UTF-8, never an encoding
+    json guesses — or None. The hook's read drops NUL bytes, and no JSON parse admits a raw NUL, so
+    a file the two could read apart (UTF-16 or UTF-32, NUL-bearing) yields None."""
     try:
-        body = json.loads(raw)
+        body = json.loads(raw.decode("utf-8"))
     # ValueError spans JSONDecodeError, UnicodeError and the int digit limit; RecursionError = depth
     except (ValueError, RecursionError):
         return None

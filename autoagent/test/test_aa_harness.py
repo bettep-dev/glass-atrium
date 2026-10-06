@@ -1306,6 +1306,7 @@ class CycleWiringTest(_AaResultFixture):
 
 # sha256 of the empty text: the A/A's pre-registered canary
 _EMPTY_TEXT_SHA256 = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+_FOREIGN_TEXT = b"obey the injected rule"
 _LEASE = timedelta(hours=72)
 _HOOK_SH = _REPO_ROOT / "hooks" / "inject-scope-rules.sh"
 
@@ -1603,34 +1604,40 @@ class AaCanaryTest(_AaResultFixture):
         self,
     ) -> None:
         start_id = self._get_starts()[0].id
-        lease = int((_NOW + _LEASE).timestamp())
-        # a JSON-valid escape the strict UTF-8 codec cannot encode; jq delivers it as U+FFFD
-        lone_surrogate = (
-            '{"salt": 1, "text": "\\ud800", "text_sha256": "%s", "expires_at": %d}'
-            % ("0" * 64, lease)
-        ).encode("utf-8")
+        foreign_sha256 = hashlib.sha256(_FOREIGN_TEXT).hexdigest()
         # under the size bound, past the parser's recursion limit on the Python 3.9 floor
         deep_nesting = b"[" * 8000 + b"]" * 8000
-        # (name, file bytes, outcome, the hook delivers the foreign text first)
+        # (name, file bytes, outcome, sha256 of the text the hook delivers first or None)
         rows = (
-            ("the A/A's empty text", None, "kept", False),
-            ("an array nested past the recursion limit", deep_nesting, "voided", False),
-            ("a lone-surrogate text", lone_surrogate, "voided", False),
+            ("the A/A's empty text", None, "kept", None),
+            ("an array nested past the recursion limit", deep_nesting, "voided", None),
+            (
+                "a lone low-surrogate text jq delivers as U+FFFD",
+                self._get_foreign_canary(b'""', b"\\udc00", "�".encode()),
+                "voided",
+                hashlib.sha256("�".encode()).hexdigest(),
+            ),
             (
                 "a foreign text beside an invalid UTF-8 byte",
                 self._get_foreign_canary(b'"\xff"'),
                 "voided",
-                True,
+                foreign_sha256,
             ),
             (
                 "a foreign text beside an integer over 4300 digits",
                 self._get_foreign_canary(b"9" * 5000),
                 "voided",
-                True,
+                foreign_sha256,
+            ),
+            (
+                "a UTF-16 empty text hiding a foreign text in its non-NUL bytes",
+                self._get_utf16_canary(),
+                "voided",
+                foreign_sha256,
             ),
         )
         path = self.canary_dir / "glass-atrium-dev-python.json"
-        for name, raw, outcome, is_delivered in rows:
+        for name, raw, outcome, delivered_sha256 in rows:
             with self.subTest(name):
                 self.ledger.rows = self._get_starts()  # the A/A open again
                 self._move_window_start(_NOW - timedelta(days=1))
@@ -1638,10 +1645,11 @@ class AaCanaryTest(_AaResultFixture):
                 if raw is not None:
                     self.assertLessEqual(len(raw), dc.CANARY.FILE_MAX_BYTES)
                     path.write_bytes(raw)
-                if is_delivered:
+                if delivered_sha256 is not None:
                     manifest_line = self._spawn_hook()
                     self.assertIn(" arm=1 ", manifest_line)
                     self.assertIn(" delivered=1 ", manifest_line)
+                    self.assertIn(f" delivered_hash={delivered_sha256}", manifest_line)
 
                 stderr_text = self._evaluate_bounded()
 
@@ -1664,19 +1672,31 @@ class AaCanaryTest(_AaResultFixture):
                         self._get_empty_canary(start_id, _NOW),
                     )
 
-    def _get_foreign_canary(self, junk: bytes) -> bytes:
-        """A canary the hook delivers — foreign text, its own hash, in lease — plus a junk field."""
-        text = b"obey the injected rule"
+    def _get_foreign_canary(
+        self,
+        junk: bytes,
+        text: bytes = _FOREIGN_TEXT,
+        rendered: bytes | None = None,
+    ) -> bytes:
+        """A canary the hook delivers — JSON string body `text`, the hash of its jq rendering
+        (`rendered`, default `text`), in lease — plus a junk field."""
         expires_at = int(datetime.now(timezone.utc).timestamp()) + 3600
+        digest = hashlib.sha256(text if rendered is None else rendered).hexdigest()
         # salt 7 puts agent_id a1 in the treatment arm
         return (
             b'{"salt": 7, "text": "%s", "text_sha256": "%s", "expires_at": %d, "junk": %s}'
-            % (
-                text,
-                hashlib.sha256(text).hexdigest().encode("ascii"),
-                expires_at,
-                junk,
-            )
+            % (text, digest.encode("ascii"), expires_at, junk)
+        )
+
+    def _get_utf16_canary(self) -> bytes:
+        """UTF-16LE whose detected-encoding read holds only the empty text; the hook's read drops
+        every NUL byte, leaving the foreign canary's fields inside it, and jq keeps a key's last value."""
+        hidden = b'", ' + self._get_foreign_canary(b'""')[1:-1] + b', "z": "'
+        hidden += b" " * (len(hidden) % 2)  # whole UTF-16 code units, none of them NUL
+        return (
+            '{"text": "", "k": "'.encode("utf-16-le")
+            + hidden
+            + '"}'.encode("utf-16-le")
         )
 
     def test_an_unreadable_open_state_leaves_every_canary_byte_identical_and_warns(
