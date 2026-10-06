@@ -146,18 +146,17 @@ class _TrialLedger:
     def __init__(self) -> None:
         self.latest: object = None
         self.aa_salts: frozenset[int] = frozenset()
-        self.read_fault: Exception | None = None
-        self.salt_fault: Exception | None = None
+        self.fault: dict[str, Exception | None] = {"read": None, "salt": None}
         self.rows: list[tuple[str, dict[str, object], str]] = []
 
     def read_latest(self) -> object:
-        if self.read_fault is not None:
-            raise self.read_fault
+        if (fault := self.fault["read"]) is not None:
+            raise fault
         return self.latest
 
     def read_salts(self, salt_ids: frozenset[int]) -> frozenset[int]:
-        if self.salt_fault is not None:
-            raise self.salt_fault
+        if (fault := self.fault["salt"]) is not None:
+            raise fault
         return salt_ids & self.aa_salts
 
     def write(self, event: str, _actor: str, payload: dict[str, object], **kwargs: object) -> int:
@@ -441,20 +440,25 @@ class TestManifestDeliveryBinding(_IngestCase):
         self.assertEqual(self._get_canaries(), sorted(_ROSTER[:2]))
         self.assertEqual(self.ledger.rows, [])
 
-    def test_an_old_foreign_hash_row_never_voids_a_fresh_a_a(self) -> None:
+    def test_a_foreign_hash_row_outside_the_open_a_a_s_binding_never_voids_it(self) -> None:
         self._open_aa()
-        self._put_canaries()
-        self._append(
-            self.live_log,
-            _get_delivery_line(
-                _ROSTER[0], salt="3", text_sha256=_PLAIN_SHA256, ts=_AA.BEFORE_WINDOW
-            ),
+        rows = (
+            ("a roster row from before the window", _ROSTER[0], _AA.BEFORE_WINDOW),
+            ("a non-roster row inside the window", "glass-atrium-dev-react", _AA.IN_WINDOW),
         )
-        self._ingest(_CYCLE_1)
+        for hour, (name, agent, ts) in enumerate(rows):
+            with self.subTest(name):
+                self.ledger.rows.clear()
+                self._put_canaries()
+                self._append(
+                    self.live_log,
+                    _get_delivery_line(agent, salt="3", text_sha256=_PLAIN_SHA256, ts=ts),
+                )
+                self._ingest(_CYCLE_1 + timedelta(hours=hour))
 
-        self.assertEqual(self.ledger.rows, [], "the fresh A/A was voided")
-        self.assertEqual(self._get_no_trial_agents(), [_ROSTER[0]])
-        self.assertEqual(self._get_canaries(), sorted(_ROSTER[1:]))
+                self.assertEqual(self.ledger.rows, [], f"{name}: the open A/A was voided")
+                self.assertEqual(self._get_no_trial_agents(), [agent], name)
+                self.assertEqual(self._get_canaries(), sorted(set(_ROSTER) - {agent}), name)
 
     def test_a_foreign_text_in_the_window_voids_whatever_salt_it_carries(self) -> None:
         self._open_aa()
@@ -504,23 +508,19 @@ class TestManifestDeliveryBinding(_IngestCase):
 
     def test_an_unreadable_ledger_binds_no_row_and_warns_by_name(self) -> None:
         rows = (
-            (
-                "open-state read fault",
-                "read_fault",
-                ConnectionError("server closed the connection"),
-            ),
+            ("open-state read fault", "read", ConnectionError("server closed the connection")),
             (
                 "ledger-absent schema",
-                "read_fault",
+                "read",
                 RuntimeError('relation "core.autoagent_trial_ledger" does not exist'),
             ),
-            ("salt-row read fault", "salt_fault", ConnectionError("server closed the connection")),
+            ("salt-row read fault", "salt", ConnectionError("server closed the connection")),
         )
         self._open_aa()
-        for hour, (name, fault_name, fault) in enumerate(rows):
+        for hour, (name, seam, fault) in enumerate(rows):
             with self.subTest(name):
-                self.ledger.read_fault = self.ledger.salt_fault = None
-                setattr(self.ledger, fault_name, fault)
+                self.ledger.fault.update(read=None, salt=None)
+                self.ledger.fault[seam] = fault
                 self._put_canaries()
                 self._append(
                     self.live_log,
