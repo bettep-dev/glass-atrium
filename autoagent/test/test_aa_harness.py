@@ -3,7 +3,8 @@
 An A/A opens only through --aa-start, its fingerprint the installed manifest's scoped
 hashes; while it is open each writing cycle compares the fingerprint and writes an
 aa-restart row when it moved or cannot be read. Once its window's duration ends, a cycle
-writes one design-effect row per agent and the aa-result row. Every row outside the live class is
+writes one arm-difference design-effect row per agent and metric key, the instrument verdict
+row and the aa-result row. Every row outside the live class is
 database-free under ``seal_pg_reach``; the ledger is an in-memory append-only fake behind the
 writer and connection seams. The live classes run the open-state, join-coverage and spool-close
 reads' SQL, and the close-count writer, on the cluster ``autoagent/test/live-pg-ephemeral.bats``
@@ -746,22 +747,20 @@ _SPAWNS = SimpleNamespace(
 _EARLIER_SPAWN = _spawn("p0", "a", -1, overage=1, stop=False)
 
 
-def _get_window_clusters(spawns: tuple[SpawnFacts, ...], is_event) -> list[list[float]]:
-    clusters: dict[str, list[float]] = {}
-    for spawn in spawns:
-        clusters.setdefault(spawn.session_id, []).append(float(is_event(spawn)))
-    return list(clusters.values())
-
-
-def _get_expected_python_effects() -> tuple[object, object]:
-    """(overage, emit failure) session design effects of the in-window Python spawns."""
-    overage = trial_design.get_design_effect(
-        _get_window_clusters(_SPAWNS.python, lambda spawn: spawn.overage_rows > 0)
+def _get_expected_python_reading(metric_key: str) -> object:
+    """Arm-difference reading of the in-window Python spawns under salt 1, clustered by session."""
+    is_event = {
+        "budget_overage": lambda spawn: spawn.overage_rows > 0,
+        "emit_failure": lambda spawn: not spawn.has_subagent_stop,
+    }[metric_key]
+    clusters: dict[str, list[tuple[int, float]]] = {}
+    for spawn in _SPAWNS.python:
+        clusters.setdefault(spawn.session_id, []).append(
+            (_get_arm(1, spawn.agent_id), float(is_event(spawn)))
+        )
+    return trial_design.get_arm_design_effect_reading(
+        list(clusters.values()), seed=f"1:glass-atrium-dev-python:{metric_key}"
     )
-    emit = trial_design.get_design_effect(
-        _get_window_clusters(_SPAWNS.python, lambda spawn: not spawn.has_subagent_stop)
-    )
-    return overage, emit
 
 
 def _arms(control: tuple[int, int], treatment: tuple[int, int]) -> object:
@@ -854,7 +853,10 @@ class _AaResultFixture(_AaFixture):
         }
 
     def _get_design_effect_rows(self) -> list[_LedgerRow]:
-        return self.ledger.get_rows(stub.get_trial_ledger().EVENT.AA_SESSION_DESIGN_EFFECT)
+        return self.ledger.get_rows(stub.get_trial_ledger().EVENT.AA_ARM_DESIGN_EFFECT)
+
+    def _get_instrument_verdicts(self) -> list[_LedgerRow]:
+        return self.ledger.get_rows(stub.get_trial_ledger().EVENT.AA_INSTRUMENT_VERDICT)
 
 
 class AaResultTest(_AaResultFixture):
@@ -889,14 +891,17 @@ class AaResultTest(_AaResultFixture):
         )
         self.assertEqual(result.payload["overall"], "pass")
         self.assertEqual(result.payload["criteria"]["engine"]["looks"], 4)
-        self.assertEqual(len(self.spawn_reads), 1)
+        # the A/A evidence, then the power check's history for the recomputed break-evens
+        self.assertEqual(len(self.spawn_reads), 2)
 
-    def test_the_result_writes_the_higher_metric_design_effect_once_per_agent_for_the_power_readers(
+    def test_the_result_writes_one_arm_difference_row_per_agent_and_metric_key_for_the_power_readers(
         self,
     ) -> None:
-        overage, emit = _get_expected_python_effects()
-        self.assertNotEqual(overage.selected, emit.selected)
-        expected = max(overage, emit, key=lambda effect: effect.selected)
+        agent = "glass-atrium-dev-python"
+        expected = {
+            key: _get_expected_python_reading(key)
+            for key in ("budget_overage", "emit_failure")
+        }
 
         self._evaluate()
 
@@ -905,16 +910,23 @@ class AaResultTest(_AaResultFixture):
             [(row.agent, row.actor, row.payload, row.dedupe_key) for row in rows],
             [
                 (
-                    "glass-atrium-dev-python",
+                    agent,
                     "daemon-cycle-aa",
-                    expected._asdict(),
-                    "aa-session-design-effect:1:glass-atrium-dev-python",
+                    {"metric_key": key, **reading._asdict()},
+                    f"aa-arm-design-effect:1:{agent}:{key}",
                 )
+                for key, reading in expected.items()
             ],
         )
         self.assertEqual(
             dc._get_design_effects([(row.agent, row.payload) for row in rows]),
-            ({"glass-atrium-dev-python": expected.selected}, frozenset()),
+            (
+                {
+                    (agent, key): max(reading.value, 1.0)
+                    for key, reading in expected.items()
+                },
+                frozenset(),
+            ),
         )
         (result,) = self._get_results()
         self.assertEqual(
@@ -922,12 +934,51 @@ class AaResultTest(_AaResultFixture):
             ["glass-atrium-dev-shell"],
         )
 
+    def test_the_result_records_the_instrument_verdict_once_with_both_break_evens(
+        self,
+    ) -> None:
+        agent = "glass-atrium-dev-python"
+        reading = _get_expected_python_reading("budget_overage")
+
+        self._evaluate("2026-10-07")
+        self._evaluate("2026-10-08")
+
+        (row,) = self._get_instrument_verdicts()
+        self.assertEqual(
+            (row.agent, row.actor, row.dedupe_key),
+            (None, "daemon-cycle-aa", "aa-instrument-verdict:1"),
+        )
+        reference = dc.INSTRUMENT.REFERENCE_BREAK_EVEN[agent]
+        # the fixture history carries no provenance start → no recomputed break-even
+        self.assertEqual(
+            row.payload,
+            {
+                "start_id": 1,
+                "metric_key": "budget_overage",
+                "window_days": 14,
+                "readings": {
+                    "recomputed": "undecided",
+                    "reference": dc.get_instrument_reading(
+                        {agent: reading}, {agent: reference}
+                    ),
+                },
+                "verdict": "relay",
+                "agents": {
+                    agent: {
+                        **reading._asdict(),
+                        "break_even": {"recomputed": None, "reference": reference},
+                    }
+                },
+            },
+        )
+        self.assertLess(row.id, self._get_results()[0].id)
+
     def test_the_evidence_reads_cover_the_roster_with_its_aliases_from_the_window_start(
         self,
     ) -> None:
         self._evaluate()
 
-        ((agents, windows),) = self.spawn_reads
+        (agents, windows), _ = self.spawn_reads
         self.assertTrue(set(_ROSTER) | {"dev-python", "dev-shell"} <= set(agents))
         self.assertEqual(windows.start.baseline, _START)
         (result,) = self._get_results()
@@ -990,13 +1041,15 @@ class AaResultFailTest(_AaResultFixture):
                 for index in range(6)
             )
 
-        def _put_every_python_spawn_in_treatment() -> None:
-            treated = (
+        def _put_every_shell_spawn_in_treatment() -> None:
+            # the Python agent keeps both arms, so its arm-difference design effect stays defined;
+            # every shell spawn an overage → the pooled treatment rate stays at control's 3/4
+            treated = [
                 f"t{index}" for index in range(100) if _get_arm(1, f"t{index}") == 1
-            )
-            self.spawns["glass-atrium-dev-python"] = tuple(
-                _exposed(spawn._replace(agent_id=agent_id))
-                for spawn, agent_id in zip(_SPAWNS.python, treated)
+            ][:8]
+            self.spawns["dev-shell"] = tuple(
+                _exposed(_spawn(agent_id, f"t{index % 2}", index + 1, overage=1))
+                for index, agent_id in enumerate(treated)
             )
 
         def _set_python_delivery(arm: int, is_delivered: bool) -> None:
@@ -1013,7 +1066,7 @@ class AaResultFailTest(_AaResultFixture):
         rows = (
             (
                 "an agent's arm split fails the sample-ratio test",
-                _put_every_python_spawn_in_treatment,
+                _put_every_shell_spawn_in_treatment,
                 None,
                 "balance",
             ),
@@ -1260,12 +1313,26 @@ class AaOutageTest(_AaResultFixture):
         self._evaluate("2026-10-08")
 
         self.assertIn(
-            "WARN: A/A harness — aa-session-design-effect:1:glass-atrium-dev-python not written",
+            "WARN: A/A harness — aa-arm-design-effect:1:glass-atrium-dev-python:budget_overage"
+            " not written",
             stderr_text,
         )
         self.assertIn("aa-result deferred to a later cycle", stderr_text)
         self.assertEqual(len(self._get_results()), 1)
-        self.assertEqual(len(self._get_design_effect_rows()), 1)
+        self.assertEqual(len(self._get_design_effect_rows()), 2)
+        self.assertEqual(len(self._get_instrument_verdicts()), 1)
+
+    def test_an_unreadable_break_even_history_defers_the_verdict_and_the_result(
+        self,
+    ) -> None:
+        reads = iter((self._read_spawns, _fail_spawn_read))
+        self._patch("_pg_read_spawn_facts", lambda *args: next(reads)(*args))
+
+        stderr_text = self._evaluate()
+
+        self.assertIn("break-even history unreadable: ConnectionError", stderr_text)
+        self.assertIn("aa-result deferred to a later cycle", stderr_text)
+        self.assertEqual((self._get_instrument_verdicts(), self._get_results()), ([], []))
 
 
 class CycleWiringTest(_AaResultFixture):
@@ -1332,7 +1399,7 @@ class CycleWiringTest(_AaResultFixture):
         (result,) = self._get_results()
         sink = result.payload["criteria"]["sink"]
         self.assertEqual((sink["verdict"], sink["lines_lost"]), ("fail", 1))
-        ((names, _),) = self.spawn_reads
+        (names, _), _ = self.spawn_reads
         self.assertEqual(names, dc._get_roster_names(frozenset(_ROSTER)))
 
 
@@ -1895,6 +1962,74 @@ class AaCanaryTest(_AaResultFixture):
         )
         self.assertEqual(self._get_results(), [])
         self.assertEqual(self.canary_dir.read_text(encoding="utf-8"), "not a directory")
+
+
+def _fail_spawn_read(*args: object) -> None:
+    raise ConnectionError("PG unreachable")
+
+
+def _reading(lower: float, upper: float) -> object:
+    return trial_design.ArmDesignEffect((lower + upper) / 2, 30, 900, lower, upper, 2000)
+
+
+class AaInstrumentVerdictTest(unittest.TestCase):
+    def test_each_interval_position_against_its_break_even_decides_the_reading(
+        self,
+    ) -> None:
+        rows = (
+            (
+                "one whole interval below its break-even holds R1",
+                {"a": _reading(0.9, 1.2), "b": _reading(2.0, 6.0)},
+                {"a": 1.5, "b": 3.0},
+                "r1-holds",
+            ),
+            (
+                "every interval at or above its break-even switches",
+                {"a": _reading(1.5, 2.0), "b": _reading(3.1, 4.0)},
+                {"a": 1.5, "b": 3.0},
+                "switch-to-r2",
+            ),
+            (
+                "an upper bound at the break-even straddles",
+                {"a": _reading(1.0, 1.5), "b": _reading(3.1, 4.0)},
+                {"a": 1.5, "b": 3.0},
+                "straddle",
+            ),
+            (
+                "an agent without a break-even or an interval counts nowhere",
+                {
+                    "a": _reading(0.9, 1.1),
+                    "c": _reading(0.1, 0.2),
+                    "d": trial_design.ArmDesignEffect(0.5, 2, 3, None, None, 1),
+                },
+                {"a": 0.5, "d": 3.0},
+                "switch-to-r2",
+            ),
+            ("no agent with both", {"a": _reading(0.9, 1.1)}, {"b": 1.0}, "undecided"),
+        )
+        for name, readings, break_evens, expected in rows:
+            with self.subTest(name):
+                self.assertEqual(
+                    dc.get_instrument_reading(readings, break_evens), expected
+                )
+
+    def test_the_verdict_follows_both_readings_and_the_window_length(self) -> None:
+        rows = (
+            ("both hold R1", "r1-holds", "r1-holds", 14, "r1-holds"),
+            ("both switch", "switch-to-r2", "switch-to-r2", 14, "switch-to-r2"),
+            ("a straddle at the duration extends", "straddle", "straddle", 14, "extend"),
+            ("a straddle after the extension relays", "straddle", "straddle", 28, "relay"),
+            ("recomputed and reference disagree", "r1-holds", "switch-to-r2", 14, "relay"),
+            ("nothing decidable", "undecided", "undecided", 14, "relay"),
+        )
+        for name, recomputed, reference, days, expected in rows:
+            with self.subTest(name):
+                self.assertEqual(
+                    dc.get_instrument_verdict(
+                        recomputed, reference, window_days=days, extended_days=28
+                    ),
+                    expected,
+                )
 
 
 class AaCriterionTest(unittest.TestCase):

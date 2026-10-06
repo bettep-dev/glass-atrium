@@ -59,12 +59,14 @@ _NEXT_NOW = _NOW + timedelta(days=1)  # a cycle on D + 1
 _AGENT = "glass-atrium-dev-python"
 _PATTERN_ID = 41
 _BUDGET_KEY = "budget_overage"
-_DESIGN_EFFECT = trial_design.DesignEffect(anova=1.2, size_weighted=1.5)
+# the pattern key's A/A arm-difference design effect, as its ledger row stores it
+_DESIGN_EFFECT = trial_design.ArmDesignEffect(1.5, 20, 200, 1.3, 1.8, 2000)
+_DESIGN_EFFECT_PAYLOAD = {"metric_key": _BUDGET_KEY, **_DESIGN_EFFECT._asdict()}
 # floor-half baseline 20 events / 200 spawns → rate 0.1; the bound read from the reference module
 _BASELINE = SimpleNamespace(EVENTS=20, SPAWNS=200)
 _MAXIMUM = trial_design.get_maximum_sample_size(_BASELINE.EVENTS / _BASELINE.SPAWNS)
 _REQUIRED = trial_design.get_required_units(
-    _MAXIMUM, design_effect=_DESIGN_EFFECT.selected
+    _MAXIMUM, design_effect=_DESIGN_EFFECT.value
 )
 _MILESTONES = [fraction * _REQUIRED for fraction in trial_design.LOOK_FRACTIONS]
 _LOOK_KEYS = {"look", "fraction", "milestone", "boundary", "accrued_tasks"}
@@ -263,7 +265,7 @@ class _ShadowFixture(unittest.TestCase):
         self.pg_reach = seal_pg_reach(self)
         self.clock = SimpleNamespace(now=_NOW)
         self.ledger = _Ledger(self.clock)
-        self.ledger.design_effects[_AGENT] = _DESIGN_EFFECT._asdict()
+        self.ledger.design_effects[_AGENT] = _DESIGN_EFFECT_PAYLOAD
         self.history = list(_get_passing_history())
         self.patterns = [_pattern()]
         # after the seal: spawn read, ledger connection and writer = the DB boundary
@@ -320,7 +322,7 @@ class PreRegistrationTest(_ShadowFixture):
         self.assertEqual(payload["boundaries"], list(trial_design.get_boundaries()))
         self.assertEqual(len(payload["boundaries"]), 4)
         self.assertEqual(payload["maximum_per_arm"], _MAXIMUM)
-        self.assertEqual(payload["design_effect"], _DESIGN_EFFECT.selected)
+        self.assertEqual(payload["design_effect"], _DESIGN_EFFECT.value)
         self.assertEqual([look["milestone"] for look in payload["looks"]], _MILESTONES)
         self.assertEqual(
             (row.agent, row.learning_pattern_id, row.actor, row.dedupe_key),
@@ -492,14 +494,14 @@ class PowerPassCounterTest(_ShadowFixture):
     ) -> None:
         rows = [
             ("no A/A design-effect row → design-unmeasured, never passing", None, 0, 1),
-            ("an A/A row → its higher estimator sizes the trial", _DESIGN_EFFECT, 1, 0),
+            ("an A/A row on the pattern's key → its value sizes the trial", _DESIGN_EFFECT, 1, 0),
         ]
         for name, design_effect, passing, unmeasured in rows:
             with self.subTest(name):
                 self.ledger.rows.clear()
                 self.ledger.design_effects.clear()
                 if design_effect is not None:
-                    self.ledger.design_effects[_AGENT] = design_effect._asdict()
+                    self.ledger.design_effects[_AGENT] = _DESIGN_EFFECT_PAYLOAD
                 self._cycle(_NOW)
                 [counter] = self._get_counters()
                 self.assertEqual(
@@ -509,7 +511,7 @@ class PowerPassCounterTest(_ShadowFixture):
                 registered = self._get_preregistrations()
                 self.assertEqual(
                     [row.payload["design_effect"] for row in registered],
-                    [] if design_effect is None else [design_effect.selected],
+                    [] if design_effect is None else [design_effect.value],
                 )
 
 

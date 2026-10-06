@@ -95,6 +95,7 @@ import ga_paths  # noqa: E402 — hooks dir pinned by the loop above
 # try/except, and its functions stay defined on the psycopg-absent path.
 from _outcome_signal import (  # noqa: E402 — hooks dir pinned by the loop above
     BASELINE,
+    METRIC_BUDGET_OVERAGE,
     METRIC_EMIT_FAILURE,
     METRIC_KEYS,
     VERDICT_PASS,
@@ -8714,10 +8715,11 @@ POWER = SimpleNamespace(
     ),
     # eval_result = prefix + verdict; the longest fills the varchar(32) column exactly
     CHECK_EVAL_PREFIX="power-check-",
-    # latest A/A design-effect row per agent; DISTINCT ON keeps the fetch to one row each
+    # latest A/A design-effect row per agent and metric key; DISTINCT ON keeps the fetch to one row each
     DESIGN_EFFECT_SQL=(
-        "SELECT DISTINCT ON (agent) agent, payload FROM core.autoagent_trial_ledger "
-        "WHERE event = %s AND agent = ANY(%s) ORDER BY agent, recorded_at DESC, id DESC"
+        "SELECT DISTINCT ON (agent, payload->>'metric_key') agent, payload "
+        "FROM core.autoagent_trial_ledger WHERE event = %s AND agent = ANY(%s) "
+        "ORDER BY agent, payload->>'metric_key', recorded_at DESC, id DESC"
     ),
 )
 
@@ -8752,10 +8754,10 @@ class PowerResult(NamedTuple):
 class PowerInputs(NamedTuple):
     provenance_start: datetime | None
     spawns: dict[str, list[SpawnFacts]]
-    # agent → its latest A/A design effect; an absent agent is unmeasured
-    design_effects: dict[str, float]
-    # design effect unusable: every agent on a ledger fault, one agent on an invalid stored row
-    unchecked_agents: frozenset[str]
+    # (agent, metric key) → its latest A/A design effect; an absent pair is unmeasured
+    design_effects: dict[tuple[str, str], float]
+    # design effect unusable: every pair on a ledger fault, one pair on an invalid stored row
+    unchecked_keys: frozenset[tuple[str, str]]
 
 
 def check_pattern_power(patterns: list[Pattern], *, skip_loop_emit: bool) -> PowerResult:
@@ -8805,9 +8807,10 @@ def _get_pattern_power_verdict(
     )
     if floor.verdict != VERDICT_PASS:
         return None
-    if pattern.agent in inputs.unchecked_agents:
+    key = (pattern.agent, pattern.metric_key)
+    if key in inputs.unchecked_keys:
         return POWER.VERDICT.UNCHECKED, "A/A design effect unusable", None
-    design_effect = inputs.design_effects.get(pattern.agent)
+    design_effect = inputs.design_effects.get(key)
     check = get_power_check(
         floor, spawns, inputs.provenance_start, windows, design_effect=design_effect
     )
@@ -8900,18 +8903,18 @@ def _read_power_history(
 
 def _read_power_design_effects(
     agents: list[str],
-) -> tuple[dict[str, float], frozenset[str]]:
-    """(agent → selected design effect of its latest A/A session row, unchecked agents), WARN per fault.
+) -> tuple[dict[tuple[str, str], float], frozenset[tuple[str, str]]]:
+    """((agent, metric key) → design effect of its latest A/A row, unchecked pairs), WARN per fault.
 
-    An agent with no row is absent (design-unmeasured). A read fault — the table absent on a
-    migrate-failed schema included — fails every agent closed.
+    A pair with no row is absent (design-unmeasured). A read fault — the table absent on a
+    migrate-failed schema included — fails every pair closed.
     """
     if not HAS_PG_LOOP_WRITE:
         cause = "trial ledger unreadable: PG helper import failed"
     else:
         try:
             with _pg_connect() as conn, conn.cursor() as cur:
-                event = TRIAL_LEDGER.EVENT.AA_SESSION_DESIGN_EFFECT
+                event = TRIAL_LEDGER.EVENT.AA_ARM_DESIGN_EFFECT
                 cur.execute(POWER.DESIGN_EFFECT_SQL, (event, agents))
                 rows = cur.fetchall()
         except Exception as exc:  # noqa: BLE001 — any read fault is an outage → fail closed
@@ -8921,36 +8924,41 @@ def _read_power_design_effects(
         else:
             return _get_design_effects(rows)
     _warn_power_unchecked(cause, "every floor-passing keyed intake pattern")
-    return {}, frozenset(agents)
+    return {}, frozenset((agent, key) for agent in agents for key in METRIC_KEYS)
 
 
 def _get_design_effects(
-    rows: list[tuple[str, dict[str, float]]],
-) -> tuple[dict[str, float], frozenset[str]]:
-    """(agent → selected design effect, agents whose stored row is not a design effect)."""
-    design_effects: dict[str, float] = {}
-    invalid_agents: set[str] = set()
+    rows: list[tuple[str, dict]],
+) -> tuple[dict[tuple[str, str], float], frozenset[tuple[str, str]]]:
+    """((agent, metric key) → design effect read, pairs whose stored row is not a design effect)."""
+    design_effects: dict[tuple[str, str], float] = {}
+    invalid_keys: set[tuple[str, str]] = set()
     for agent, payload in rows:
+        metric_key = payload.get("metric_key") if isinstance(payload, dict) else None
         try:
-            design_effects[agent] = _get_selected_design_effect(payload)
+            design_effects[(agent, metric_key)] = _get_stored_design_effect(payload)
         except (ArithmeticError, AttributeError, TypeError, ValueError) as exc:
-            invalid_agents.add(agent)
+            invalid_keys.add((agent, metric_key))
             _warn_power_unchecked(
-                f"agent={agent}: stored A/A design effect invalid: "
+                f"agent={agent} key={metric_key}: stored A/A design effect invalid: "
                 f"{type(exc).__name__}: {str(exc)[:160]}",
-                "every floor-passing keyed intake pattern of the agent",
+                "every floor-passing intake pattern of the agent on that key",
             )
-    return design_effects, frozenset(invalid_agents)
+    return design_effects, frozenset(invalid_keys)
 
 
-def _get_selected_design_effect(payload: dict[str, float]) -> float:
-    """The higher estimator of one A/A row payload; raises unless both are finite values ≥ 1."""
-    effect = trial_design.DesignEffect(
-        **{key: float(value) for key, value in payload.items()}
-    )
-    if not all(math.isfinite(value) and value >= 1 for value in effect):
-        raise ValueError(f"stored design effect {effect} is not two finite values >= 1")
-    return effect.selected
+def _get_stored_design_effect(payload: dict) -> float:
+    """One A/A row's value, a value below 1 read as 1; raises unless the declared keys carry a finite value.
+
+    A near-1 estimate below 1 by noise then sizes as independent spawns, never as more power.
+    """
+    keys = TRIAL_LEDGER.PAYLOAD_KEYS[TRIAL_LEDGER.EVENT.AA_ARM_DESIGN_EFFECT]
+    if set(payload) != set(keys):
+        raise ValueError(f"stored keys {sorted(payload)} are not {', '.join(keys)}")
+    value = float(payload["value"])
+    if not math.isfinite(value):
+        raise ValueError(f"stored design effect {value} is not finite")
+    return max(value, 1.0)
 
 
 def _warn_power_unchecked(cause: str, scope: str) -> None:
@@ -9344,6 +9352,35 @@ class AaFingerprintUnreadable(Exception):
 
 class AaEvidenceUnreadable(Exception):
     """A source the A/A result needs is unavailable this cycle."""
+
+
+# D1 break-even rule: the A/A's switch between injection (R1) and the switchback (R2)
+INSTRUMENT = SimpleNamespace(
+    METRIC_KEY=METRIC_BUDGET_OVERAGE,  # per spawn, tool_use half included — the binding version
+    READING=SimpleNamespace(
+        HOLDS="r1-holds", SWITCH="switch-to-r2", STRADDLE="straddle", UNDECIDED="undecided"
+    ),
+    VERDICT=SimpleNamespace(
+        HOLDS="r1-holds", SWITCH="switch-to-r2", EXTEND="extend", RELAY="relay"
+    ),
+    # break-evens on spawns at 1x (method A) the owner's D1 figures rest on; a recomputed
+    # reading that disagrees goes to the owner, never replacing these
+    REFERENCE_BREAK_EVEN={
+        "glass-atrium-qa-code-reviewer": 3.27,
+        "glass-atrium-dev-shell": 5.13,
+        "glass-atrium-dev-nestjs": 1.70,
+        "glass-atrium-dev-react": 3.27,
+        "glass-atrium-meta-prompt-engineer": 1.68,
+        "glass-atrium-intel-planner": 0.89,
+        "glass-atrium-intel-reporter": 0.19,
+        "glass-atrium-dev-python": 0.41,
+        "glass-atrium-design-designer": 0.06,
+        "glass-atrium-intel-researcher": 0.15,
+        "glass-atrium-dev-node": 0.72,
+        "glass-atrium-qa-debugger": 0.55,
+        "glass-atrium-dev-front": 0.32,
+    },
+)
 
 
 class AaStart(NamedTuple):
@@ -9911,17 +9948,19 @@ def _write_aa_result(
     """Design-effect rows first, then the aa-result row → True when it landed; a design-effect
     write fault defers both."""
     start_id = latest.id
-    effects, undefined = _get_aa_design_effects(evidence.spawns, now)
+    armed = get_aa_armed_spawns(evidence.spawns, latest.salt_id)
+    effects, undefined = _get_aa_design_effects(armed, now, start_id)
     if not _write_aa_design_effects(start_id, effects):
         return False
-    armed = get_aa_armed_spawns(evidence.spawns, latest.salt_id)
+    if not _write_instrument_verdict(latest, evidence.window, effects, now):
+        return False
     criteria = {
         "join_coverage": get_aa_join_criterion(*evidence.joins),
         "sink": _get_aa_sink_criterion(evidence.closes, source.manifest_ingest),
         **_get_aa_arm_criteria(armed, now),
         "design_effect": AaCriterion(
             AA.VERDICT.PASS if effects else AA.VERDICT.FAIL,
-            {"written": sorted(effects), "undefined": undefined},
+            {"written": sorted({agent for agent, _ in effects}), "undefined": undefined},
         ),
     }
     payload = _get_aa_result_payload(evidence.window, criteria)
@@ -9952,55 +9991,66 @@ def _get_aa_result_payload(
 
 
 def _get_aa_design_effects(
-    spawns: Mapping[str, list[SpawnFacts]], now: datetime
-) -> tuple[dict[str, trial_design.DesignEffect], list[str]]:
-    """(agent → session design effect, agents whose correlation is undefined on every metric)."""
-    effects: dict[str, trial_design.DesignEffect] = {}
+    armed: Mapping[str, Sequence[ArmedSpawn]], now: datetime, start_id: int
+) -> tuple[dict[tuple[str, str], trial_design.ArmDesignEffect], list[str]]:
+    """((agent, metric key) → arm-difference reading, agents undefined on every key)."""
+    tool_budget = get_tool_budget(os.environ)
+    effects: dict[tuple[str, str], trial_design.ArmDesignEffect] = {}
     undefined: list[str] = []
-    for agent in sorted(spawns):
-        effect = _get_session_design_effect(spawns[agent], now)
-        if effect is None:
+    for agent in sorted(armed):
+        for metric_key in sorted(METRIC_KEYS):
+            is_event = _get_aa_event_test(metric_key, tool_budget)
+            reading = _get_arm_design_effect(
+                armed[agent], is_event, now, seed=f"{start_id}:{agent}:{metric_key}"
+            )
+            if reading is not None:
+                effects[(agent, metric_key)] = reading
+        if not any(key[0] == agent for key in effects):
             undefined.append(agent)
-        else:
-            effects[agent] = effect
     return effects, undefined
 
 
-def _get_session_design_effect(
-    spawns: list[SpawnFacts], now: datetime
-) -> trial_design.DesignEffect | None:
-    """Session-clustered design effect of the metric whose selected value is higher; None when undefined on both.
+def _get_aa_event_test(metric_key: str, tool_budget: int) -> Callable[[SpawnFacts], bool]:
+    """The A/A's event per metric key: budget_overage per spawn with the tool_use half, as the engine scores it."""
+    if metric_key == METRIC_BUDGET_OVERAGE:
+        return lambda spawn: is_task_overrun((spawn,), tool_budget)
+    return lambda spawn: is_metric_event(spawn, metric_key)
 
-    Settled, joinable spawns only: a NULL agent_id or session_id counts on no side, a pending spawn waits.
+
+def _get_arm_design_effect(
+    items: Sequence[ArmedSpawn],
+    is_event: Callable[[SpawnFacts], bool],
+    now: datetime,
+    *,
+    seed: str,
+) -> trial_design.ArmDesignEffect | None:
+    """Arm-difference design effect over parent-session clusters; None when undefined.
+
+    Settled spawns with a session only: a NULL session_id counts on no side, a pending spawn waits.
     """
-    settled = [
-        spawn
-        for spawn in spawns
-        if spawn.agent_id is not None
-        and spawn.session_id is not None
-        and not is_pending(spawn, now)
-    ]
-    effects: list[trial_design.DesignEffect] = []
-    for metric_key in sorted(METRIC_KEYS):
-        clusters: dict[str, list[float]] = defaultdict(list)
-        for spawn in settled:
-            clusters[spawn.session_id].append(float(is_metric_event(spawn, metric_key)))
-        with contextlib.suppress(
-            ValueError
-        ):  # undefined correlation → no value on this metric
-            effects.append(trial_design.get_design_effect(list(clusters.values())))
-    return max(effects, key=lambda effect: effect.selected, default=None)
+    clusters: dict[str, list[tuple[int, float]]] = defaultdict(list)
+    for item in items:
+        spawn = item.spawn
+        if spawn.session_id is not None and not is_pending(spawn, now):
+            clusters[spawn.session_id].append((item.arm, float(is_event(spawn))))
+    try:
+        return trial_design.get_arm_design_effect_reading(list(clusters.values()), seed=seed)
+    except ValueError:  # fewer than 2 sessions, an empty arm or no variance → no value
+        return None
 
 
 def _write_aa_design_effects(
-    start_id: int, effects: Mapping[str, trial_design.DesignEffect]
+    start_id: int, effects: Mapping[tuple[str, str], trial_design.ArmDesignEffect]
 ) -> bool:
-    """One design-effect row per agent (a taken key = written earlier); False after a WARNed fault."""
-    event = TRIAL_LEDGER.EVENT.AA_SESSION_DESIGN_EFFECT
+    """One row per agent and metric key (a taken key = written earlier); False after a WARNed fault."""
+    event = TRIAL_LEDGER.EVENT.AA_ARM_DESIGN_EFFECT
     is_complete = True
-    for agent, effect in effects.items():
+    for (agent, metric_key), reading in effects.items():
         landed = _write_aa_row(
-            event, effect._asdict(), f"{event}:{start_id}:{agent}", agent=agent
+            event,
+            {"metric_key": metric_key, **reading._asdict()},
+            f"{event}:{start_id}:{agent}:{metric_key}",
+            agent=agent,
         )
         is_complete = is_complete and landed is not None
     if not is_complete:
@@ -10009,6 +10059,125 @@ def _write_aa_design_effects(
             "aa-result deferred to a later cycle",
         )
     return is_complete
+
+
+def _write_instrument_verdict(
+    latest: AaStart,
+    window: AaWindow,
+    effects: Mapping[tuple[str, str], trial_design.ArmDesignEffect],
+    now: datetime,
+) -> bool:
+    """The D1 verdict row on INSTRUMENT.METRIC_KEY (a taken key = written earlier); False after a
+    WARNed fault, the result deferred."""
+    readings = {
+        agent: reading
+        for (agent, metric_key), reading in effects.items()
+        if metric_key == INSTRUMENT.METRIC_KEY
+    }
+    try:
+        recomputed = _read_recomputed_break_evens(sorted(readings), now)
+    except Exception as exc:  # noqa: BLE001 — any read fault is an outage → the verdict waits
+        _warn_aa(
+            f"A/A {latest.id} break-even history unreadable: {_describe_fault(exc)}",
+            "aa-result deferred to a later cycle",
+        )
+        return False
+    reference = INSTRUMENT.REFERENCE_BREAK_EVEN
+    positions = {
+        "recomputed": get_instrument_reading(readings, recomputed),
+        "reference": get_instrument_reading(readings, reference),
+    }
+    payload = {
+        "start_id": latest.id,
+        "metric_key": INSTRUMENT.METRIC_KEY,
+        "window_days": window.days,
+        "readings": positions,
+        "verdict": get_instrument_verdict(
+            positions["recomputed"],
+            positions["reference"],
+            window_days=window.days,
+            extended_days=latest.duration["extended_days"],
+        ),
+        "agents": {
+            agent: {
+                **reading._asdict(),
+                "break_even": {
+                    "recomputed": recomputed.get(agent),
+                    "reference": reference.get(agent),
+                },
+            }
+            for agent, reading in readings.items()
+        },
+    }
+    event = TRIAL_LEDGER.EVENT.AA_INSTRUMENT_VERDICT
+    if _write_aa_row(event, payload, f"{event}:{latest.id}") is None:
+        _warn_aa(
+            f"A/A {latest.id} instrument verdict not written",
+            "aa-result deferred to a later cycle",
+        )
+        return False
+    return True
+
+
+def _read_recomputed_break_evens(agents: list[str], now: datetime) -> dict[str, float]:
+    """agent → the design effect at which the shipped power check's projection meets its bound.
+
+    The power check's own inputs at now, at design effect 1: projected units over required units.
+    No entry when the history is insufficient or the rate has no finite size. Raises on a PG fault.
+    """
+    if not agents:
+        return {}
+    windows = get_pair_windows(now)
+    provenance_start, spawns = _pg_read_spawn_facts(agents, windows)
+    break_evens: dict[str, float] = {}
+    for agent in agents:
+        agent_spawns = spawns.get(agent, [])
+        floor = get_floor_verdict(
+            agent_spawns, INSTRUMENT.METRIC_KEY, windows, provenance_start, windows.end
+        )
+        check = get_power_check(
+            floor, agent_spawns, provenance_start, windows, design_effect=1.0
+        )
+        required = check.units.required
+        if check.verdict != POWER.VERDICT.INSUFFICIENT_HISTORY and required is not None:
+            break_evens[agent] = check.units.projected / required
+    return break_evens
+
+
+def get_instrument_reading(
+    readings: Mapping[str, trial_design.ArmDesignEffect], break_evens: Mapping[str, float]
+) -> str:
+    """D1 break-even rule over the agents with both an interval and a break-even.
+
+    One whole interval below its break-even → R1 holds; every interval at or above → switch to R2;
+    otherwise a straddle; no such agent → undecided.
+    """
+    agents = [
+        agent
+        for agent in sorted(readings)
+        if agent in break_evens and readings[agent].lower is not None
+    ]
+    if not agents:
+        return INSTRUMENT.READING.UNDECIDED
+    if any(readings[agent].upper < break_evens[agent] for agent in agents):
+        return INSTRUMENT.READING.HOLDS
+    if all(readings[agent].lower >= break_evens[agent] for agent in agents):
+        return INSTRUMENT.READING.SWITCH
+    return INSTRUMENT.READING.STRADDLE
+
+
+def get_instrument_verdict(
+    recomputed: str, reference: str, *, window_days: int, extended_days: int
+) -> str:
+    """The D1 verdict: the readings on both break-evens agree → that reading, a straddle extending
+    once; disagreeing readings, a straddle after the extension or nothing decidable → owner relay."""
+    if recomputed != reference:
+        return INSTRUMENT.VERDICT.RELAY
+    if recomputed in (INSTRUMENT.READING.HOLDS, INSTRUMENT.READING.SWITCH):
+        return recomputed
+    if recomputed == INSTRUMENT.READING.STRADDLE and window_days < extended_days:
+        return INSTRUMENT.VERDICT.EXTEND
+    return INSTRUMENT.VERDICT.RELAY
 
 
 def _get_aa_arm_criteria(

@@ -35,6 +35,11 @@ from _pg_seal import get_ephemeral_connection  # noqa: E402
 
 _TRIAL_KEY = "a" * 64
 _AGENT = "glass-atrium-dev-python"
+# an A/A arm-difference design-effect row in the writer's shape
+_DESIGN_EFFECT_PAYLOAD = {
+    "metric_key": "budget_overage",
+    **trial_design.ArmDesignEffect(1.1, 33, 1061, 0.8, 1.6, 2000)._asdict(),
+}
 # Declared width of the event and actor columns in the ledger migration.
 _TOKEN_COLUMN_CHARS = 64
 _SPOOL = "inject-scope-rules.manifest.log.20261005T030000Z.spool"
@@ -68,27 +73,33 @@ class TestTrialLedgerClosedSets(unittest.TestCase):
     ) -> None:
         with _load_helper() as helper:
             ledger = helper.TRIAL_LEDGER
-            design_effect = ledger.EVENT.AA_SESSION_DESIGN_EFFECT
+            design_effect = ledger.EVENT.AA_ARM_DESIGN_EFFECT
             rows = (
                 ("undeclared event", "shadow-decision", ledger.ACTOR.SHADOW, {}),
                 ("undeclared actor", ledger.EVENT.SHADOW_LOOK, "daemon-cycle-push", {}),
                 (
-                    "design-effect payload missing an estimator",
+                    "design-effect payload missing its metric key",
                     design_effect,
                     ledger.ACTOR.AA,
-                    {"anova": 1.4},
+                    {k: v for k, v in _DESIGN_EFFECT_PAYLOAD.items() if k != "metric_key"},
                 ),
                 (
                     "design-effect payload with an extra key",
                     design_effect,
                     ledger.ACTOR.AA,
-                    {"anova": 1.4, "size_weighted": 2.1, "selected": 2.1},
+                    {**_DESIGN_EFFECT_PAYLOAD, "selected": 2.1},
                 ),
                 (
                     "design-effect payload that is no object",
                     design_effect,
                     ledger.ACTOR.AA,
                     [1.4, 2.1],
+                ),
+                (
+                    "instrument verdict missing the verdict",
+                    ledger.EVENT.AA_INSTRUMENT_VERDICT,
+                    ledger.ACTOR.AA,
+                    {"start_id": 7, "metric_key": "budget_overage", "agents": {}},
                 ),
                 (
                     "aa-start payload missing the duration rule",
@@ -158,12 +169,14 @@ class TestTrialLedgerClosedSets(unittest.TestCase):
                     helper.write_trial_ledger_row(event, ledger.ACTOR.AA, payload)
                     connect.assert_called_once()
 
-    def test_the_design_effect_payload_keys_are_the_estimator_fields(self) -> None:
-        # The A/A writer stores DesignEffect._asdict(); the power-check reader takes its keys.
+    def test_the_design_effect_payload_keys_are_the_metric_key_and_the_reading_fields(
+        self,
+    ) -> None:
+        # The A/A writer stores the metric key plus ArmDesignEffect._asdict(); the power reader keys on both.
         with _load_helper() as helper:
             ledger = helper.TRIAL_LEDGER
-            keys = ledger.PAYLOAD_KEYS[ledger.EVENT.AA_SESSION_DESIGN_EFFECT]
-        self.assertEqual(tuple(keys), trial_design.DesignEffect._fields)
+            keys = ledger.PAYLOAD_KEYS[ledger.EVENT.AA_ARM_DESIGN_EFFECT]
+        self.assertEqual(tuple(keys), ("metric_key", *trial_design.ArmDesignEffect._fields))
 
     def test_every_declared_token_fits_its_column(self) -> None:
         with _load_helper() as helper:
@@ -222,9 +235,9 @@ class TestTrialLedgerWriterLivePg(unittest.TestCase):
         ledger = self.writer.TRIAL_LEDGER
 
         inserted = self.writer.write_trial_ledger_row(
-            ledger.EVENT.AA_SESSION_DESIGN_EFFECT,
+            ledger.EVENT.AA_ARM_DESIGN_EFFECT,
             ledger.ACTOR.AA,
-            {"anova": 1.4, "size_weighted": 2.1},
+            _DESIGN_EFFECT_PAYLOAD,
             trial_key=_TRIAL_KEY,
             agent=_AGENT,
             learning_pattern_id=42,
@@ -239,9 +252,9 @@ class TestTrialLedgerWriterLivePg(unittest.TestCase):
                     _TRIAL_KEY,
                     _AGENT,
                     42,
-                    "aa-session-design-effect",
+                    "aa-arm-design-effect",
                     "daemon-cycle-aa",
-                    {"anova": 1.4, "size_weighted": 2.1},
+                    _DESIGN_EFFECT_PAYLOAD,
                     f"{_TRIAL_KEY}:look:1",
                 )
             ],

@@ -1163,8 +1163,11 @@ _TRIAL_LEDGER_EVENT = SimpleNamespace(
     AA_START="aa-start",  # opens the A/A; dedupe_key = aa-start:after:<latest start id | 0>
     AA_RESTART="aa-restart",  # dedupe_key = aa-restart:<start id>:<cycle date>
     AA_RESULT="aa-result",  # closes the A/A; dedupe_key = aa-result:<start id>
-    # Session clustering; a period (block-level) design effect is its own event, never this one.
-    AA_SESSION_DESIGN_EFFECT="aa-session-design-effect",
+    # Arm-difference design effect per agent and metric key, clustered by parent session;
+    # dedupe_key = aa-arm-design-effect:<start id>:<agent>:<metric key>
+    AA_ARM_DESIGN_EFFECT="aa-arm-design-effect",
+    # the D1 break-even verdict at the A/A result; dedupe_key = aa-instrument-verdict:<start id>
+    AA_INSTRUMENT_VERDICT="aa-instrument-verdict",
     # a canary bound to no trial; dedupe_key = canary-unbound-delivery:<spool>:<line offset>
     CANARY_UNBOUND_DELIVERY="canary-unbound-delivery",
 )
@@ -1176,10 +1179,26 @@ TRIAL_LEDGER = SimpleNamespace(
     EVENT=_TRIAL_LEDGER_EVENT,
     ACTOR=SimpleNamespace(SHADOW="daemon-cycle-shadow", AA="daemon-cycle-aa"),
     # Payload keys readers rely on; an event absent here carries a free-form object.
-    # anova / size_weighted = trial_design.DesignEffect fields; readers take the higher.
+    # aa-arm-design-effect: metric_key + the trial_design.ArmDesignEffect fields; readers take value.
     # aa-start / aa-restart: fingerprint = the installed manifest's scoped path → sha256 map.
     PAYLOAD_KEYS={
-        _TRIAL_LEDGER_EVENT.AA_SESSION_DESIGN_EFFECT: ("anova", "size_weighted"),
+        _TRIAL_LEDGER_EVENT.AA_ARM_DESIGN_EFFECT: (
+            "metric_key",
+            "value",
+            "sessions",
+            "spawns",
+            "lower",
+            "upper",
+            "replicates",
+        ),
+        _TRIAL_LEDGER_EVENT.AA_INSTRUMENT_VERDICT: (
+            "start_id",
+            "metric_key",
+            "window_days",
+            "readings",
+            "verdict",
+            "agents",
+        ),
         _TRIAL_LEDGER_EVENT.AA_START: ("fingerprint", "started_at", "duration"),
         _TRIAL_LEDGER_EVENT.AA_RESTART: ("start_id", "reason", "fingerprint"),
         _TRIAL_LEDGER_EVENT.CANARY_UNBOUND_DELIVERY: (
