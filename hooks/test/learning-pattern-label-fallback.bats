@@ -1,6 +1,6 @@
 #!/usr/bin/env bats
 # learning-pattern-label-fallback.bats — learning-log writers on the full migration chain and on the
-# chain minus the pattern-evidence migration (new code running before its migration).
+# chain before the pattern-evidence migration (new code running before its migration).
 #
 # Relationship: the status writer moves a row identified ↔ dormant with its reason and transition time
 # where the dormant label exists, leaves the row identified where it does not, and never touches a row
@@ -107,7 +107,7 @@ else:
 PY
 }
 
-@test "the chain minus the pattern-evidence migration lacks the dormant label and the metric_key column" {
+@test "the chain before the pattern-evidence migration lacks the dormant label and the metric_key column" {
   _use_db chain_pre_evidence
   run _q "SELECT count(*) FROM pg_enum e JOIN pg_type t ON t.oid = e.enumtypid
           WHERE t.typname = 'LearningStatus' AND e.enumlabel = 'dormant'"

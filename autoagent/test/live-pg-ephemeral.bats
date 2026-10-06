@@ -34,7 +34,7 @@ setup_file() {
   export EPH_PORT="55451"
   eph_pg_start "${EPH_DATADIR}" "${EPH_SOCKDIR}" "${EPH_PORT}" eph_bootstrap || return 1
   eph_pg_create_migrated_db "${EPH_SOCKDIR}" "${EPH_PORT}" glass_atrium || return 1
-  # Proposal writer rows: the full chain, and the chain minus the migration adding the link columns.
+  # Proposal writer rows: the full chain, and the chain before the migration adding the link columns.
   createdb -h "${EPH_SOCKDIR}" -p "${EPH_PORT}" -T glass_atrium proposal_link_full || return 1
   eph_pg_create_migrated_db "${EPH_SOCKDIR}" "${EPH_PORT}" proposal_link_absent \
     20261005000000_add_pattern_evidence_provenance || return 1
@@ -42,7 +42,7 @@ setup_file() {
   createdb -h "${EPH_SOCKDIR}" -p "${EPH_PORT}" -T glass_atrium cycle_verdicts_tpl || return 1
   eph_pg_create_migrated_db "${EPH_SOCKDIR}" "${EPH_PORT}" cycle_verdicts_absent_tpl \
     20261008000000_add_trial_ledger_and_cycle_verdicts || return 1
-  # Trial-ledger templates, cloned per test (append-only); the absent one shares the excluded migration.
+  # Trial-ledger templates, cloned per test (append-only); the absent one shares the cut-off migration.
   createdb -h "${EPH_SOCKDIR}" -p "${EPH_PORT}" -T glass_atrium trial_ledger_tpl || return 1
   createdb -h "${EPH_SOCKDIR}" -p "${EPH_PORT}" -T cycle_verdicts_absent_tpl \
     trial_ledger_absent_tpl || return 1
