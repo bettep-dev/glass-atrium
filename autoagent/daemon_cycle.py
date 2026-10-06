@@ -9530,20 +9530,31 @@ def run_aa_stage(
     agents_dir: Path = DEFAULT_AGENTS_DIR,
     reports_dir: Path = DEFAULT_REPORTS_DIR,
 ) -> None:
-    """While an A/A is open: one aa-restart row per cycle date when the installed fingerprint
-    moved or cannot be read; otherwise, once its window's duration has ended, the result —
-    one design-effect row per agent, then the aa-result row that closes it. No open A/A →
-    nothing. A ledger or evidence fault WARNs by name and never fails the cycle; the caller
-    skips the stage in no-write mode (--dry-run).
+    """Advance the open A/A one writing cycle and keep the canary files in step with it.
+
+    Canary files live under `${GA_DATA_ROOT:-$HOME/.glass-atrium}/data/learning/canary` — a
+    test faking the ledger sandboxes GA_DATA_ROOT, or this stage deletes the real ones.
+    - No open A/A → every canary file is deleted.
+    - Open A/A, sweep first → a file for an agent outside the roster, or one the hook cannot
+      read, is deleted; a roster file whose text is not the A/A's voids the A/A (every file
+      deleted) and ends the stage.
+    - Then one aa-restart row per cycle date when the installed fingerprint moved or cannot be
+      read, with every canary rewritten on the restart row's salt; otherwise each roster
+      agent's canary lease is renewed, and once the window's duration has ended the result
+      lands — one design-effect row per agent, then the aa-result row — and every canary file
+      is deleted.
+    - Open state unreadable → no file is deleted or renewed; each runs to its lease.
+    A ledger or evidence fault WARNs by name and never fails the cycle; the caller skips the
+    stage in no-write mode (--dry-run).
     """
     try:
         latest = _read_open_aa_start()
     except AaStateUnreadable as exc:
-        # canary files are left to their lease: an unread state removes and renews nothing
+        # canary files are left to their lease: an unread state deletes and renews nothing
         _warn_aa(f"open state unreadable: {exc}", "no A/A evaluation this cycle")
         return
     if latest is None:
-        _remove_canaries(_get_canary_files(), "no open A/A or trial")
+        _delete_canaries(_get_canary_files(), "no open A/A or trial")
         return
     roster = _agent_roster(agents_dir)
     if _sweep_aa_canaries(latest, roster):
@@ -9556,7 +9567,7 @@ def run_aa_stage(
     _put_aa_canaries(latest, roster)
     source = AaSource(cycle_date, manifest_ingest, AaDir(agents_dir, reports_dir))
     if _evaluate_aa(latest, source):
-        _remove_canaries(_get_canary_files(), "the A/A has its result")
+        _delete_canaries(_get_canary_files(), "the A/A has its result")
 
 
 def _read_open_aa_start() -> AaStart | None:
@@ -9570,7 +9581,7 @@ def _read_open_aa_start() -> AaStart | None:
     return None if latest is None or latest.is_closed else latest
 
 
-def write_canary_file(agent: str, salt: int, text: str, now: datetime) -> None:
+def put_canary_file(agent: str, salt: int, text: str, now: datetime) -> None:
     """Replace one agent's canary file whole — a temp file in its directory, then a rename — so a
     SubagentStart read sees the previous file or this one, never a partial one. Raises OSError."""
     path = _get_canary_path(agent)
@@ -9616,7 +9627,7 @@ def _put_aa_canaries(latest: AaStart, roster: frozenset[str]) -> None:
     now = _get_utc_now()
     for agent in sorted(roster):
         try:
-            write_canary_file(agent, latest.salt_id, CANARY.AA_TEXT, now)
+            put_canary_file(agent, latest.salt_id, CANARY.AA_TEXT, now)
         except OSError as exc:
             _warn_aa(
                 f"canary for {agent} not written: {_describe_fault(exc)}",
@@ -9647,11 +9658,11 @@ def _sweep_aa_canaries(latest: AaStart, roster: frozenset[str]) -> bool:
     for path in _get_canary_files():
         agent = roster_files.get(path)
         if agent is None:
-            _remove_canaries([path], "no open A/A or trial for its agent")
+            _delete_canaries([path], "no open A/A or trial for its agent")
             continue
         text = _read_canary_text(path)
         if text is None:
-            _remove_canaries([path], "unreadable as the hook's file contract")
+            _delete_canaries([path], "unreadable as the hook's file contract")
         elif _get_text_sha256(text) != expected:
             _void_aa(latest, agent, _get_text_sha256(text))
             return True
@@ -9694,10 +9705,10 @@ def _void_aa(latest: AaStart, agent: str, text_sha256: str) -> None:
             "the A/A's",
             "its canary files are removed",
         )
-    _remove_canaries(_get_canary_files(), f"A/A {latest.id} voided")
+    _delete_canaries(_get_canary_files(), f"A/A {latest.id} voided")
 
 
-def _remove_canaries(paths: list[Path], reason: str) -> None:
+def _delete_canaries(paths: list[Path], reason: str) -> None:
     for path in paths:
         try:
             path.unlink(missing_ok=True)

@@ -1403,7 +1403,7 @@ class AaCanaryTest(_AaResultFixture):
             with self.subTest(name):
                 written_at = datetime.now(timezone.utc) - age
                 # salt 7 puts agent_id a1 in the treatment arm
-                dc.write_canary_file("glass-atrium-dev-python", 7, "", written_at)
+                dc.put_canary_file("glass-atrium-dev-python", 7, "", written_at)
                 envelope = json.dumps(
                     {"agent_type": "glass-atrium-dev-python", "agent_id": "a1"}
                 )
