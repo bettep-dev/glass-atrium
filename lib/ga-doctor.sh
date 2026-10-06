@@ -451,7 +451,7 @@ run_doctor() {
         log "  ok   : no inject-scope-rules block-shed events recorded"
       fi
       if [[ "${win_canary}" -gt 0 ]]; then
-        log "  warn : ${win_canary} canary shed(s) in the last ${INJECT_DROP_WINDOW_DAYS}d (${inject_drop_log}) — a treatment-arm spawn lost its canary block, so the trial lost delivery on it; the canary sheds only after every droppable rule block, so an oversized AGENT-INJECT source caused it — recompress the source blocks"
+        log "  warn : ${win_canary} canary shed(s) in the last ${INJECT_DROP_WINDOW_DAYS}d (${inject_drop_log}) — a treatment-arm spawn lost its canary block, so the trial lost delivery on it; every droppable rule block was already out of the assembly, so the emit and meter blocks, the capped canary and the drop marker alone exceeded the injection ceiling — check for a lowered INJECT_SCOPE_RULES_CTX_MAX_BYTES or grown emit/meter text in hooks/inject-scope-rules.sh"
         canary_warns=$((canary_warns + win_canary))
         local last_canary=""
         # shellcheck disable=SC2312

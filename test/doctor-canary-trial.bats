@@ -71,6 +71,8 @@ exit 0
 STUB
   chmod +x "${STUB}/psql"
   stub_out exists '1'
+  stub_rc exists 0
+  stub_rc ledger 0
   ledger_answer 0 0 '' ''
 }
 
@@ -88,10 +90,10 @@ ledger_answer() {
   printf '%s\x1f%s\x1f%s\x1f%s' "$1" "$2" "$3" "$4" >"${STUB_STATE}/ledger.out"
 }
 
-# A PATH with every command of the stub-first PATH except the names given: one directory of
-# symlinks, so dropping a tool never drops the interpreter beside it.
-path_without() {
-  local farm="${SANDBOX}/farm-bin" part name
+# A PATH with every command of the stub-first PATH except the two digest tools the inject hook
+# probes: one directory of symlinks, so dropping a tool never drops the interpreter beside it.
+path_without_digest_tools() {
+  local farm="${SANDBOX}/farm-bin" part
   local -a parts=()
   mkdir -p "${farm}"
   IFS=: read -r -a parts <<<"${STUB}:${PATH}"
@@ -100,9 +102,9 @@ path_without() {
     # a name already linked from an earlier entry keeps that link, mirroring PATH precedence
     ln -s -- "${part}"/* "${farm}/" 2>/dev/null || true
   done
-  for name in "$@"; do
-    if ga_guard_path "${farm}"; then rm -f -- "${farm:?}/${name}"; else return 1; fi
-  done
+  if ga_guard_path "${farm}"; then rm -f -- "${farm:?}/shasum"; fi
+  if ga_guard_path "${farm}"; then rm -f -- "${farm:?}/sha256sum"; fi
+  [[ ! -L "${farm}/shasum" && ! -L "${farm}/sha256sum" ]] || return 1
   printf '%s' "${farm}"
 }
 
@@ -172,11 +174,18 @@ utc_days_ago() {
   assert_canary_term 0
 }
 
-@test "an in-window canary shed warns on its own and is not counted as a scope-block drop" {
+@test "an in-window canary shed warns on its own, blames the injection ceiling, and is not counted as a scope-block drop" {
   shed_row "$(utc_days_ago 1)" canary
   run_doctor_sandbox
   assert_output_has "warn : 1 canary shed(s) in the last 7d" || return 1
   assert_output_has "block=canary" || return 1
+  # every rule block is out before the canary is weighed, so the AGENT-INJECT sources cannot cause it
+  local shed_line
+  shed_line="$(printf '%s\n' "${output}" | grep -F -- 'canary shed(s)' || true)"
+  [[ "${shed_line}" == *INJECT_SCOPE_RULES_CTX_MAX_BYTES* && "${shed_line}" != *AGENT-INJECT* ]] || {
+    echo "the canary shed remedy names a cause other than the injection ceiling: ${shed_line}" >&2
+    return 1
+  }
   assert_output_lacks "scope-block drop(s) in the last" || return 1
   assert_canary_term 1
 }
@@ -195,7 +204,14 @@ utc_days_ago() {
   run_doctor_sandbox
   assert_output_has "warn : 1 inject-scope-rules scope-block drop(s)" || return 1
   assert_output_has "warn : 2 canary shed(s) in the last 7d" || return 1
-  assert_canary_term 2
+  assert_canary_term 2 || return 1
+  local scope_latest
+  scope_latest="$(printf '%s\n' "${output}" | awk 'index($0, "scope-block drop(s)") { getline; print; exit }')"
+  [[ "${scope_latest}" == *"latest:"*"block=budget-dev "* ]] || {
+    echo "the scope-block latest: row is not the budget-dev row: '${scope_latest}' — output:" >&2
+    echo "${output}" >&2
+    return 1
+  }
 }
 
 @test "a hash-mismatch void in the ledger window warns and names the agent" {
@@ -236,7 +252,7 @@ utc_days_ago() {
 
 @test "an install with neither digest tool warns once" {
   local farm
-  farm="$(path_without shasum sha256sum)"
+  farm="$(path_without_digest_tools)"
   run_doctor_sandbox "${farm}"
   assert_output_has "warn : no canary digest tool" || return 1
   assert_canary_term 1
@@ -254,7 +270,6 @@ utc_days_ago() {
   for row in "${rows[@]}"; do
     IFS='|' read -r name kind want <<<"${row}"
     seed_psql_stub
-    rm -f -- "${STUB_STATE}"/*.rc
     unset GA_SKIP_DB_SETUP
     case "${kind}" in
       GA_SKIP_DB_SETUP) export GA_SKIP_DB_SETUP=1 ;;
