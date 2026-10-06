@@ -6342,36 +6342,11 @@ def _prior_all_reject_cycle_count(current_cycle_date: str) -> int:
     """
     if not HAS_PG_LOOP_WRITE or not current_cycle_date:
         return 0
-
-    verdict_sql = (
-        "SELECT verdict::text FROM core.autoagent_cycle_verdicts "
-        "WHERE cycle_date < %s::date ORDER BY cycle_date DESC LIMIT %s"
-    )
-    proposals_sql = (
-        "SELECT cycle_date, status::text, rationale "
-        "FROM core.autoagent_proposals "
-        # The bound is on DISTINCT DATES, not rows — the table carries several
-        # rows per cycle_date, so a row-count LIMIT of the same size would
-        # quietly shrink the horizon and flatten a genuinely long streak.
-        "WHERE cycle_date IN ("
-        "SELECT cycle_date FROM core.autoagent_proposals "
-        "WHERE cycle_date < %s::date "
-        "GROUP BY cycle_date ORDER BY cycle_date DESC LIMIT %s) "
-        "ORDER BY cycle_date DESC"
-    )
     try:
-        with _pg_connect() as conn:
-            with conn.cursor() as cur:
-                if _has_cycle_verdicts_table(cur):
-                    cur.execute(verdict_sql, (current_cycle_date, _ALL_REJECT_HORIZON_DATES))
-                    return _get_streak_from_verdicts(row[0] for row in cur.fetchall())
-                sys.stderr.write(
-                    "[daemon-cycle] all-reject alert: DEGRADED — "
-                    "core.autoagent_cycle_verdicts absent (apply migration "
-                    f"{_CYCLE_VERDICTS_MIGRATION}); walking proposal statuses\n"
-                )
-                cur.execute(proposals_sql, (current_cycle_date, _ALL_REJECT_HORIZON_DATES))
-                rows = cur.fetchall()
+        with _pg_connect() as conn, conn.cursor() as cur:
+            if _has_cycle_verdicts_table(cur):
+                return _get_stored_verdict_streak(cur, current_cycle_date)
+            rows = _get_proposal_streak_rows(cur, current_cycle_date)
     except Exception as exc:  # noqa: BLE001 — fail-OPEN: read error must not alert
         sys.stderr.write(
             f"[daemon-cycle] all-reject alert: PG read failed — "
@@ -6380,6 +6355,42 @@ def _prior_all_reject_cycle_count(current_cycle_date: str) -> int:
         return 0
 
     return _all_reject_streak_from_rows(rows)
+
+
+def _get_stored_verdict_streak(cur: object, current_cycle_date: str) -> int:
+    """Leading all-reject run over the stored verdicts of the horizon dates before the current."""
+    cur.execute(
+        "SELECT verdict::text FROM core.autoagent_cycle_verdicts "
+        "WHERE cycle_date < %s::date ORDER BY cycle_date DESC LIMIT %s",
+        (current_cycle_date, _ALL_REJECT_HORIZON_DATES),
+    )
+    return _get_streak_from_verdicts(row[0] for row in cur.fetchall())
+
+
+def _get_proposal_streak_rows(
+    cur: object, current_cycle_date: str
+) -> list[tuple[object, str, str | None]]:
+    """(cycle_date, status, rationale) rows of the horizon dates before the current, newest first.
+
+    The fallback walk for a schema without the verdict table — announced by a DEGRADED line.
+    """
+    sys.stderr.write(
+        "[daemon-cycle] all-reject alert: DEGRADED — "
+        "core.autoagent_cycle_verdicts absent (apply migration "
+        f"{_CYCLE_VERDICTS_MIGRATION}); walking proposal statuses\n"
+    )
+    cur.execute(
+        "SELECT cycle_date, status::text, rationale "
+        "FROM core.autoagent_proposals "
+        # bound on DISTINCT DATES — a row LIMIT would shrink the horizon, several rows per date
+        "WHERE cycle_date IN ("
+        "SELECT cycle_date FROM core.autoagent_proposals "
+        "WHERE cycle_date < %s::date "
+        "GROUP BY cycle_date ORDER BY cycle_date DESC LIMIT %s) "
+        "ORDER BY cycle_date DESC",
+        (current_cycle_date, _ALL_REJECT_HORIZON_DATES),
+    )
+    return cur.fetchall()
 
 
 def create_cycle_verdicts(report: CycleReport, *, reports_dir: Path = DEFAULT_REPORTS_DIR) -> int:
@@ -6436,6 +6447,18 @@ def _get_report_backfill(
     predate the field. An unreadable or malformed report is named on stderr and
     skipped, so no report can suppress the current date's insert.
     """
+    backfill: list[tuple[str, str]] = []
+    for day, path in _get_horizon_reports(reports_dir, current_cycle_date):
+        if day in stored_dates:
+            continue
+        rows = _get_readable_report_rows(path)
+        if rows is not None:
+            backfill.append((day, _get_date_verdict(rows)))
+    return backfill
+
+
+def _get_horizon_reports(reports_dir: Path, current_cycle_date: str) -> list[tuple[str, Path]]:
+    """(date, path) of the horizon's report dates before the current one, newest first."""
     report_paths = {
         path.name.removeprefix("autoagent-").removesuffix(".json"): path
         for path in reports_dir.glob("autoagent-*.json")
@@ -6444,22 +6467,20 @@ def _get_report_backfill(
         (day for day in report_paths if _is_iso_date(day) and day < current_cycle_date),
         reverse=True,
     )[:_ALL_REJECT_HORIZON_DATES]
-    backfill: list[tuple[str, str]] = []
-    for day in horizon:
-        if day in stored_dates:
-            continue
-        try:
-            rows = _get_report_rows(report_paths[day])
-        except (OSError, ValueError, KeyError, TypeError) as exc:
-            sys.stderr.write(
-                f"[daemon-cycle] cycle verdicts: WARN — report {report_paths[day]} "
-                f"unreadable or malformed, date left absent: {type(exc).__name__}: "
-                f"{str(exc)[:200]}\n"
-            )
-            continue
-        if rows is not None:
-            backfill.append((day, _get_date_verdict(rows)))
-    return backfill
+    return [(day, report_paths[day]) for day in horizon]
+
+
+def _get_readable_report_rows(path: Path) -> list[tuple[str, str | None]] | None:
+    """_get_report_rows of one report; None, named on stderr, when it is unreadable or malformed."""
+    try:
+        return _get_report_rows(path)
+    except (OSError, ValueError, KeyError, TypeError) as exc:
+        sys.stderr.write(
+            f"[daemon-cycle] cycle verdicts: WARN — report {path} "
+            f"unreadable or malformed, date left absent: {type(exc).__name__}: "
+            f"{str(exc)[:200]}\n"
+        )
+        return None
 
 
 def _get_report_rows(path: Path) -> list[tuple[str, str | None]] | None:
