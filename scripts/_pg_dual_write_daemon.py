@@ -280,6 +280,7 @@ MIGRATION = SimpleNamespace(
     PATTERN_EVIDENCE="20261005000000_add_pattern_evidence_provenance",
     TRIAL_LEDGER="20261008000000_add_trial_ledger_and_cycle_verdicts",
     SPAWN_MANIFEST_EXPOSURE="20261009000000_add_spawn_manifest_arm_fields",
+    SPOOL_CLOSE_COUNTS="20261010000000_add_loop_event_spool_close_counts",
 )
 
 
@@ -845,6 +846,8 @@ _LOOP_EVENT_CENSUS_PREDICATE = "%s IS NULL" % _LOOP_EVENT_SUBJECT_COLUMN
 _LOOP_EVENT_VERDICT_PREDICATE = "%s IS NOT NULL" % _LOOP_EVENT_SUBJECT_COLUMN
 # Declared width of that column in the split migration — the refusal boundary below.
 _LOOP_EVENT_SUBJECT_MAX_CHARS = 128
+# A MANIFEST spool close's counts; NULL on every other row.
+_LOOP_EVENT_COUNT_COLUMNS = ("lines_read", "lines_without_row")
 
 
 def _check_loop_event_class(eval_result, subject):
@@ -873,7 +876,25 @@ def _check_loop_event_class(eval_result, subject):
         )
 
 
-def _get_loop_event_conflict_arm(eval_result):
+def _get_loop_event_upsert_sql(eval_result, has_counts):
+    """The INSERT … ON CONFLICT for one row class, with the count columns when the row has counts."""
+    columns = (
+        "event_ts",
+        "agent",
+        "rice",
+        "eval_result",
+        "changes_added",
+        "changes_removed",
+        _LOOP_EVENT_SUBJECT_COLUMN,
+    ) + (_LOOP_EVENT_COUNT_COLUMNS if has_counts else ())
+    return "INSERT INTO core.autoagent_loop_events (%s) VALUES (%s) %s RETURNING id" % (
+        ", ".join(columns),
+        ", ".join(["%s"] * len(columns)),
+        _get_loop_event_conflict_arm(eval_result, has_counts),
+    )
+
+
+def _get_loop_event_conflict_arm(eval_result, has_counts=False):
     """The ON CONFLICT arm for one row class, named by the cause token.
 
     Each arm carries the predicate of the partial unique index it targets: both
@@ -888,6 +909,7 @@ def _get_loop_event_conflict_arm(eval_result):
         key = ("event_ts", "agent", "eval_result")
         predicate = _LOOP_EVENT_CENSUS_PREDICATE
         updated = ("rice", "changes_added", "changes_removed")
+    updated += _LOOP_EVENT_COUNT_COLUMNS if has_counts else ()
     return "ON CONFLICT (%s) WHERE %s DO UPDATE SET %s" % (
         ", ".join(key),
         predicate,
@@ -903,6 +925,8 @@ def write_autoagent_loop_event(
     changes_removed,
     rice=None,
     subject=None,
+    lines_read=None,
+    lines_without_row=None,
 ):
     """UPSERT core.autoagent_loop_events under the identity class `subject` selects.
 
@@ -919,6 +943,9 @@ def write_autoagent_loop_event(
     The cause token names the class and the subject must agree with it, either way
     round: a mismatch is REFUSED before connecting (CLI exit 6) rather than filed
     under the other class — see _check_loop_event_class.
+
+    A MANIFEST spool close carries lines_read / lines_without_row; a schema without those
+    columns still gets the row, without its counts, under a named DEGRADED line.
     """
     start_ns = time.monotonic_ns()
     # Trim before classing → a subject differing only by surrounding space is ONE
@@ -935,36 +962,36 @@ def write_autoagent_loop_event(
                 % (len(subject), _LOOP_EVENT_SUBJECT_MAX_CHARS, subject[:80])
             )
     _check_loop_event_class(eval_result, subject)
-    columns = (
-        "event_ts",
-        "agent",
-        "rice",
-        "eval_result",
-        "changes_added",
-        "changes_removed",
-        _LOOP_EVENT_SUBJECT_COLUMN,
-    )
-    sql = "INSERT INTO core.autoagent_loop_events (%s) VALUES (%s) %s RETURNING id" % (
-        ", ".join(columns),
-        ", ".join(["%s"] * len(columns)),
-        _get_loop_event_conflict_arm(eval_result),
-    )
+    params = (event_ts, agent, rice, eval_result, changes_added, changes_removed, subject)
+    counts = (lines_read, lines_without_row)
+    has_counts = counts != (None, None)
+    is_degraded = False
     with _connect() as conn:
-        with conn.cursor() as cur:
-            cur.execute(
-                sql,
-                (
-                    event_ts,
-                    agent,
-                    rice,
-                    eval_result,
-                    changes_added,
-                    changes_removed,
-                    subject,
-                ),
-            )
-            cur.fetchone()
+        try:
+            with conn.cursor() as cur:
+                cur.execute(
+                    _get_loop_event_upsert_sql(eval_result, has_counts),
+                    params + (counts if has_counts else ()),
+                )
+                cur.fetchone()
+        except pg_errors.UndefinedColumn:
+            # SQLSTATE 42703 by class, as in compose_daemon_run_apply_status; a row without
+            # counts names no count column, so its 42703 is another fault and propagates.
+            if not has_counts:
+                raise
+            is_degraded = True
+            conn.rollback()
+            with conn.cursor() as cur:
+                cur.execute(_get_loop_event_upsert_sql(eval_result, False), params)
+                cur.fetchone()
         conn.commit()
+    if is_degraded:
+        sys.stderr.write(
+            "[autoagent-daemon] op=write_autoagent_loop_event DEGRADED "
+            "columns=lines_read,lines_without_row absent (subject=%s) — close row written "
+            "without its counts; apply migration %s and later closes record them\n"
+            % (subject, MIGRATION.SPOOL_CLOSE_COUNTS)
+        )
     return (time.monotonic_ns() - start_ns) // 1_000_000
 
 
