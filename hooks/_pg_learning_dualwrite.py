@@ -568,13 +568,9 @@ def discharge_learning_pattern(pattern_id: int, reason: str) -> DischargeResult:
     return DischargeResult(DISCHARGE_NOT_MATCHED, None)
 
 
-# ---------------------------------------------------------------------------
-# Lifecycle transition: core.learning_log identified ↔ dormant
-# ---------------------------------------------------------------------------
-#
-# The one writer of 'dormant': a row whose evidence no longer passes its pair leaves
-# intake without a verdict, and returns to 'identified' on a new passing pair.
-# Same tri-state as the discharge — an outage must never read as "nothing to move".
+# core.learning_log identified ↔ dormant — the one writer of 'dormant'
+# pair no longer passing → dormant, no verdict; a new passing pair → identified
+# discharge's tri-state → an outage never reads as "nothing to move"
 
 TRANSITION_MOVED = "moved"
 TRANSITION_NOT_MATCHED = "not_matched"
@@ -588,9 +584,8 @@ class TransitionResult(NamedTuple):
     row_id: int | None
 
 
-# Label test + write in one statement (no probe-then-write window). Label absent (code ahead of
-# its migration) → nothing matches and the row stays identified; the scalar subquery defers
-# the enum cast to a matched row, so the absent label is never parsed.
+# Label test + write in one statement → no probe-then-write window
+# label absent (code ahead of migration) → no match, row stays identified, cast never parsed
 _DORMANT_LABEL_SQL = """
     SELECT 1
       FROM pg_catalog.pg_enum AS e
@@ -1301,8 +1296,7 @@ def _fetch_outcome_rows(sql: str, params: list[object]) -> list[dict]:
                     "summary": summary or "",
                     "review_flag": bool(review_flag),
                     "grader_verdict": grader_verdict or "",
-                    # write-time provenance → downstream carve-outs see the
-                    # completion-synthesized marker
+                    # write-time provenance → carve-outs see the completion-synthesized marker
                     "attribution_source": attribution_source or "",
                 })
     return rows
@@ -1352,14 +1346,10 @@ def count_outcomes_since(
         return None
 
 
-# ---------------------------------------------------------------------------
-# Per-pattern metric window read
-# ---------------------------------------------------------------------------
-# One row per spawn of any listed agent type: each joined table is pre-grouped by agent_id,
-# so a spawn with N overage or outcome rows is never multiplied into N rows (a spawn counts once).
-# Past [baseline, end) only task members: spawns up to the evaluation instant, and earlier spawns
-# stopped at or after baseline − W, the only ones an in-window spawn can continue.
-# tool_use_actual: the recorder's header line, read as _OUTCOME.FACTS_SELECT_SQL reads it.
+# Per-pattern metric window read: one row per spawn of any listed agent type
+# joined tables pre-grouped by agent_id → a spawn with N overage / outcome rows counts once
+# outside [baseline, end) task members only: up to evaluation + earlier ones stopped ≥ baseline − W
+# tool_use_actual: the recorder's header line, read as _OUTCOME.FACTS_SELECT_SQL reads it
 _SPAWN_FACTS_SELECT_SQL = SimpleNamespace(
     TEMPLATE="""
 WITH spawns AS (

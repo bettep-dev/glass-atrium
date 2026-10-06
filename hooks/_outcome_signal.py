@@ -13,10 +13,8 @@
 # BaseException, so an `except Exception` fail-open guard around that import does
 # NOT catch it and the importing process dies instead of degrading. Any import with
 # a driver dependency added here re-opens that kill path.
-#
-# The daemon imports this module unguarded on an install's python3 3.9, so no 3.10+
-# construct may be evaluated at import — hence postponed annotations.
 
+# daemon imports this unguarded on an install's python3 3.9 → no 3.10+ construct at import
 from __future__ import annotations
 
 import hashlib
@@ -71,11 +69,8 @@ def _role_task_type_allowed(agent, task_type):
 # ---------------------------------------------------------------------------
 # Negative-signal trigger predicate (AP-3)
 # ---------------------------------------------------------------------------
-# Every learning consumer keys on this ONE definition — the learning-aggregator
-# pattern emit (patterns 1/5) and, in daemon_cycle, the post-apply regression watch
-# (_is_soft_negative_outcome) — so both count the same rows negative.
-# Defined over the row dict
-# _pg_learning_dualwrite.read_outcomes_since returns.
+# One definition → aggregator pattern emit (1/5) + daemon_cycle._is_soft_negative_outcome
+# Input: a row dict of _pg_learning_dualwrite.read_outcomes_since
 
 # done_with_concerns stays negative by PAIRED CONTRACT with the Result-selection
 # criterion in core-outcome-record.md: that criterion admits the result only for the
@@ -275,12 +270,8 @@ def is_negative_signal_outcome(row: dict) -> bool:
     return bool(negative_signal_hits(row))
 
 
-# ---------------------------------------------------------------------------
-# Per-pattern metric: pair windows, spawn half, occurrence floor
-# ---------------------------------------------------------------------------
-# One definition for every actor judging a keyed pattern — aggregator status, daemon
-# intake re-check, roster writer, power check, window replay. Fed by
-# _pg_learning_dualwrite.read_pattern_floors / read_pattern_floor or by a replay-local read.
+# Per-pattern metric → aggregator status, intake re-check, roster writer, power check, replay
+# Input: _pg_learning_dualwrite.read_pattern_floors / read_pattern_floor, or a replay-local read
 
 METRIC_BUDGET_OVERAGE = "budget_overage"
 METRIC_EMIT_FAILURE = "emit_failure"
@@ -293,8 +284,7 @@ _EMIT_FAILURE_ATTRIBUTIONS = frozenset({
     ATTRIBUTION_BUDGET_TRUNCATION,
     ATTRIBUTION_TRUNCATED_COMPLETION,
 })
-# track-outcome.sh TOOL_USE_LINE as one whole line, group 1 = actual
-# (pinned by test_size_est_underestimate.py)
+# = track-outcome.sh TOOL_USE_LINE, whole line, group 1 = actual (test_size_est_underestimate.py)
 TOOL_USE_LINE_PATTERN = (
     r"^- [*][*]Tool use[*][*]: actual=([0-9]+)(?: declared=[0-9]+)?$"
 )
@@ -340,8 +330,7 @@ class SpawnFacts(NamedTuple):
     outcomes: tuple[Mapping[str, object], ...]  # core.outcomes rows for agent_id
     stopped_at: datetime | None = None  # earliest SubagentStop; None → no continuation follows
     tool_use_actual: int | None = None  # recorder's header line; None = unrecorded
-    # Canary exposure fields of the MANIFEST line (core.spawn_manifest column comments);
-    # all None = a line predating them or a schema without their columns
+    # canary exposure (core.spawn_manifest column comments); all None = older line or schema
     arm: int | None = None  # 1 = treatment, 0 = control
     salt_id: int | None = None
     is_delivered: bool | None = None  # column `delivered`
