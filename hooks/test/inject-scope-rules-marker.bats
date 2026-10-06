@@ -49,6 +49,10 @@ setup() {
   # C03: the positive-injection manifest sink writes on EVERY spawn and defaults under the live
   # ~/.glass-atrium/logs — sandbox it too (exported → inherited through each run helper's `env`).
   export INJECT_SCOPE_RULES_MANIFEST_LOG="${BATS_TEST_TMPDIR}/inject-manifest.log"
+
+  # The canary file is read under the data root; a sandbox root keeps a live install's canary out of
+  # every assembly here.
+  export GA_DATA_ROOT="${BATS_TEST_TMPDIR}/data-root"
 }
 
 # Write a marked fixture whose EXTRACTED block is exactly $1 bytes (a single line of x's, no header

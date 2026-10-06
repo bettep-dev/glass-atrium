@@ -56,6 +56,10 @@ setup() {
   export INJECT_SCOPE_RULES_SPAWN_COUNTER="${BATS_TEST_TMPDIR}/inject-spawns.count"
   # C03: the positive-injection manifest sink writes on EVERY spawn — sandbox it likewise.
   export INJECT_SCOPE_RULES_MANIFEST_LOG="${BATS_TEST_TMPDIR}/inject-manifest.log"
+
+  # The canary file is read under the data root; a sandbox root keeps a live install's canary out of
+  # every assembly here.
+  export GA_DATA_ROOT="${BATS_TEST_TMPDIR}/data-root"
 }
 
 # ---- raw-write fixtures (frontmatter + optional envelope) --------------------------------------
