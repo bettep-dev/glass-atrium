@@ -14,6 +14,7 @@ Run with either runner:
 
 from __future__ import annotations
 
+import ast
 import contextlib
 import functools
 import hashlib
@@ -678,6 +679,115 @@ class SealTest(_ShadowFixture):
         with contextlib.redirect_stderr(io.StringIO()):
             dc.run_shadow_stage(power, "2026-10-05")
         self.assertEqual(reach, ["_pg_write_trial_ledger_row"])
+
+
+def get_guarded_pg_names() -> dict[str, frozenset[str]]:
+    """Import-exception attribute → the names its guarded ``_pg_*`` import binds and its except branch does not."""
+    tree = ast.parse(Path(dc.__file__).read_text(encoding="utf-8"))
+    guarded: dict[str, frozenset[str]] = {}
+    for node in tree.body:
+        if not isinstance(node, ast.Try):
+            continue
+        bound = {
+            alias.asname or alias.name
+            for sub in itertools.chain.from_iterable(map(ast.walk, node.body))
+            if isinstance(sub, ast.ImportFrom) and (sub.module or "").startswith("_pg_")
+            for alias in sub.names
+        }
+        handled = [
+            sub
+            for handler in node.handlers
+            for sub in itertools.chain.from_iterable(map(ast.walk, handler.body))
+        ]
+        stored = {
+            sub.id
+            for sub in handled
+            if isinstance(sub, ast.Name) and isinstance(sub.ctx, ast.Store)
+        }
+        defined = {
+            sub.name
+            for sub in handled
+            if isinstance(sub, (ast.FunctionDef, ast.ClassDef))
+        }
+        exc_names = [name for name in stored if name.endswith("_IMPORT_EXC")]
+        if bound and len(exc_names) == 1:
+            guarded[exc_names[0]] = frozenset(bound - stored - defined)
+    return guarded
+
+
+def degrade_pg_imports(testcase: unittest.TestCase) -> list[str]:
+    """The psycopg-free install on any interpreter: each guarded import failed, its names unbound, then sealed."""
+    for exc_name, names in get_guarded_pg_names().items():
+        patcher = mock.patch.object(
+            dc, exc_name, ImportError("No module named 'psycopg'")
+        )
+        patcher.start()
+        testcase.addCleanup(patcher.stop)
+        for name in names:
+            if hasattr(dc, name):
+                testcase.addCleanup(setattr, dc, name, getattr(dc, name))
+                delattr(dc, name)
+    return seal_pg_reach(testcase)
+
+
+class DegradedImportTest(unittest.TestCase):
+    """With the PG helper imports failed, every guarded name is unbound and each stage takes its precondition WARN."""
+
+    _STAGE_WARN = (
+        "WARN: shadow stage — trial ledger unwritable: PG helper import failed"
+    )
+
+    def setUp(self) -> None:
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        self.root = Path(tmp.name)
+        (self.root / "agents").mkdir()
+        env = mock.patch.dict(
+            os.environ,
+            {
+                "GA_DATA_ROOT": str(self.root),
+                "AUTOAGENT_REPORTS_DIR": str(self.root / "reports"),
+            },
+        )
+        env.start()
+        self.addCleanup(env.stop)
+        self.pg_reach = degrade_pg_imports(self)
+
+    def test_both_guarded_imports_are_found_and_the_trial_ledger_is_unbound(
+        self,
+    ) -> None:
+        guarded = get_guarded_pg_names()
+
+        self.assertEqual(
+            set(guarded), {"_PG_OUTCOME_IMPORT_EXC", "_PG_LOOP_IMPORT_EXC"}
+        )
+        self.assertIn("TRIAL_LEDGER", guarded["_PG_LOOP_IMPORT_EXC"])
+        self.assertFalse(hasattr(dc, "TRIAL_LEDGER"))
+
+    def test_the_stage_warns_by_name_and_reaches_no_ledger(self) -> None:
+        stderr = io.StringIO()
+        with contextlib.redirect_stderr(stderr):
+            power = dc.check_pattern_power([_pattern()], skip_loop_emit=True)
+            dc.run_shadow_stage(power, "2026-10-05")
+
+        self.assertIn(self._STAGE_WARN, stderr.getvalue())
+        self.assertEqual(self.pg_reach, [])
+
+    def test_a_writing_cycle_completes_through_every_stage_on_its_precondition_warn(
+        self,
+    ) -> None:
+        stderr = io.StringIO()
+        with contextlib.redirect_stderr(stderr):
+            dc.run_cycle(
+                log_path=self.root / "learning-log.md",
+                agents_dir=self.root / "agents",
+                skip_haiku=True,
+                skip_pre_verify=True,
+                skip_loop_emit=False,
+            )
+
+        self.assertIn(self._STAGE_WARN, stderr.getvalue())
+        self.assertEqual(self.pg_reach, [])
 
 
 class CycleWiringTest(_ShadowFixture):
