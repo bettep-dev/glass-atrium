@@ -347,6 +347,15 @@ model SpawnManifest {
   startedAt  DateTime @map("started_at") @db.Timestamptz(6)
   ctxBytes   Int      @map("ctx_bytes")
   blocks     String
+  // Canary exposure fields of the line (inject-scope-rules.sh → get_canary_exposure_fields), same writer.
+  // 1 = treatment, 0 = control; NULL = no arm (no readable salt, no digest tool, agent_id `unknown`)
+  arm           Int?     @db.SmallInt
+  // Salt read from the canary file = the A/A start row's core.autoagent_trial_ledger.id; NULL = none read
+  saltId        BigInt?  @map("salt_id")
+  // NULL = the line predates the exposure fields → the four are all NULL
+  delivered     Boolean?
+  // sha256 hex of the delivered canary text; NULL unless delivered
+  deliveredHash String?  @map("delivered_hash") @db.VarChar(64)
 
   @@unique([spool, lineOffset], map: "spawn_manifest_spool_line_offset_key")
   @@index([agentId], map: "spawn_manifest_agent_id_idx")
