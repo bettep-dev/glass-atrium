@@ -9237,23 +9237,25 @@ def _warn_shadow(cause: str, scope: str) -> None:
 _INSTALL_ROOT = Path(__file__).resolve().parent.parent
 
 AA = SimpleNamespace(
-    # latest aa-start → its id, whether its aa-result exists, the fingerprint and recorded_at
-    # (window start) of the newest aa-start / aa-restart row since it, the start's frozen duration
-    LATEST_START_SQL=(
-        "SELECT s.id, EXISTS (SELECT 1 FROM core.autoagent_trial_ledger r "
-        "WHERE r.event = %(result)s AND r.dedupe_key = %(result_prefix)s::text || s.id::text), "
-        "f.payload->'fingerprint', f.recorded_at, s.payload->'duration' "
-        "FROM core.autoagent_trial_ledger s CROSS JOIN LATERAL ("
-        "SELECT payload, recorded_at FROM core.autoagent_trial_ledger "
-        "WHERE event = ANY(%(fingerprinted)s) AND id >= s.id ORDER BY id DESC LIMIT 1) f "
-        "WHERE s.event = %(start)s ORDER BY s.id DESC LIMIT 1"
-    ),
-    # roster outcomes in the window → (all, those carrying agent_id + session_id that join a spawn)
-    JOIN_COVERAGE_SQL=(
-        "SELECT count(*), count(*) FILTER (WHERE o.agent_id IS NOT NULL "
-        "AND o.session_id IS NOT NULL AND EXISTS (SELECT 1 FROM core.spawn_manifest m "
-        "WHERE m.agent_id = o.agent_id)) FROM core.outcomes o "
-        "WHERE o.agent = ANY(%(agents)s) AND o.record_ts >= %(start)s AND o.record_ts < %(end)s"
+    SQL=SimpleNamespace(
+        # latest aa-start → its id, whether its aa-result exists, the fingerprint and recorded_at
+        # (window start) of the newest aa-start / aa-restart row since it, the start's frozen duration
+        LATEST_START=(
+            "SELECT s.id, EXISTS (SELECT 1 FROM core.autoagent_trial_ledger r "
+            "WHERE r.event = %(result)s AND r.dedupe_key = %(result_prefix)s::text || s.id::text), "
+            "f.payload->'fingerprint', f.recorded_at, s.payload->'duration' "
+            "FROM core.autoagent_trial_ledger s CROSS JOIN LATERAL ("
+            "SELECT payload, recorded_at FROM core.autoagent_trial_ledger "
+            "WHERE event = ANY(%(fingerprinted)s) AND id >= s.id ORDER BY id DESC LIMIT 1) f "
+            "WHERE s.event = %(start)s ORDER BY s.id DESC LIMIT 1"
+        ),
+        # roster outcomes in the window → (all, those carrying agent_id + session_id that join a spawn)
+        JOIN_COVERAGE=(
+            "SELECT count(*), count(*) FILTER (WHERE o.agent_id IS NOT NULL "
+            "AND o.session_id IS NOT NULL AND EXISTS (SELECT 1 FROM core.spawn_manifest m "
+            "WHERE m.agent_id = o.agent_id)) FROM core.outcomes o "
+            "WHERE o.agent = ANY(%(agents)s) AND o.record_ts >= %(start)s AND o.record_ts < %(end)s"
+        ),
     ),
     MINIMUM_JOIN_PERCENT=95,
     VERDICT=SimpleNamespace(PASS="pass", FAIL="fail", PENDING_ARMS="pending-arms"),
@@ -9305,13 +9307,17 @@ class AaWindow(NamedTuple):
     days: int
 
 
+class AaDir(NamedTuple):
+    agents: Path
+    reports: Path
+
+
 class AaSource(NamedTuple):
     """The cycle's non-database inputs to the result."""
 
     cycle_date: str
     manifest_ingest: ManifestIngest | None
-    agents_dir: Path
-    reports_dir: Path
+    dir: AaDir
 
 
 class AaEvidence(NamedTuple):
@@ -9382,7 +9388,7 @@ def _read_latest_aa_start() -> AaStart | None:
         "fingerprinted": [TRIAL_LEDGER.EVENT.AA_START, TRIAL_LEDGER.EVENT.AA_RESTART],
     }
     with _pg_connect() as conn, conn.cursor() as cur:
-        cur.execute(AA.LATEST_START_SQL, params)
+        cur.execute(AA.SQL.LATEST_START, params)
         row = cur.fetchone()
     return None if row is None else AaStart(*row)
 
@@ -9463,7 +9469,9 @@ def run_aa_stage(
     if restart is not None:
         _write_aa_restart(latest.id, restart, cycle_date)
         return  # the restart row starts a new window
-    _evaluate_aa(latest, AaSource(cycle_date, manifest_ingest, agents_dir, reports_dir))
+    _evaluate_aa(
+        latest, AaSource(cycle_date, manifest_ingest, AaDir(agents_dir, reports_dir))
+    )
 
 
 def _read_open_aa_start() -> AaStart | None:
@@ -9527,7 +9535,7 @@ def _read_aa_evidence(
         raise AaEvidenceUnreadable(
             "PG pattern reads or trial_design unavailable (import failed)"
         )
-    roster = _agent_roster(source.agents_dir)
+    roster = _agent_roster(source.dir.agents)
     names = _get_roster_names(roster)
     spawns = _read_aa_spawns(roster, names, latest.window_start, now)
     window = _get_aa_window(latest, roster, spawns, now)
@@ -9597,7 +9605,7 @@ def _read_aa_join_counts(names: list[str], window: AaWindow) -> tuple[int, int]:
     """(roster outcomes recorded in the window, those that join their spawn). Raises on a PG fault."""
     params = {"agents": names, "start": window.start, "end": window.end}
     with _pg_connect() as conn, conn.cursor() as cur:
-        cur.execute(AA.JOIN_COVERAGE_SQL, params)
+        cur.execute(AA.SQL.JOIN_COVERAGE, params)
         outcomes, joined = cur.fetchone()
     return outcomes, joined
 
@@ -9739,7 +9747,7 @@ def _read_aa_report_closes(
     ).isoformat()
     closes: list[tuple[int, int]] = []
     unreadable: list[str] = []
-    for path in sorted(source.reports_dir.glob("autoagent-*.json")):
+    for path in sorted(source.dir.reports.glob("autoagent-*.json")):
         day = path.name[len("autoagent-") : -len(".json")]
         if not (_is_iso_date(day) and first_day <= day < source.cycle_date):
             continue

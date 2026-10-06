@@ -166,7 +166,7 @@ class _Ledger:
                 dc._REGRESSION_WARNINGS_SELECT_SQL,
                 dc._REGRESSION_PROPOSALS_SELECT_SQL,
                 dc._APPLIED_FOR_DISCHARGE_SELECT_SQL,
-                dc.AA.LATEST_START_SQL,
+                dc.AA.SQL.LATEST_START,
             }
         )
 

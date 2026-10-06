@@ -176,12 +176,12 @@ class _LedgerCursor:
     def execute(self, statement: str, params: dict | tuple = ()) -> None:
         if statement in self.ledger.faulted:
             raise ConnectionError("PG unreachable")
-        if statement == dc.AA.LATEST_START_SQL:
+        if statement == dc.AA.SQL.LATEST_START:
             assert isinstance(params, dict), (
                 "the open-state read binds named parameters"
             )
             self.result = self._get_latest_start(params)
-        elif statement == dc.AA.JOIN_COVERAGE_SQL:
+        elif statement == dc.AA.SQL.JOIN_COVERAGE:
             self.result = [self._get_join_counts(params)]
         elif statement in self.ledger.answered_empty:
             self.result = []
@@ -407,7 +407,7 @@ class AaStartRefusalTest(_AaFixture):
             ),
             (
                 "the open-state read faults",
-                lambda: self.ledger.faulted.add(dc.AA.LATEST_START_SQL),
+                lambda: self.ledger.faulted.add(dc.AA.SQL.LATEST_START),
                 "ledger-unreadable",
             ),
             (
@@ -602,7 +602,7 @@ class AaLedgerFaultTest(_AaFixture):
         self._open()
         self._set_hash("autoagent/daemon_cycle.py", "f" * 64)
         with self.subTest("the open-state read faults"):
-            self.ledger.faulted.add(dc.AA.LATEST_START_SQL)
+            self.ledger.faulted.add(dc.AA.SQL.LATEST_START)
             stderr_text = self._cycle()
             self.assertIn(
                 "WARN: A/A harness — open state unreadable: ConnectionError",
@@ -710,23 +710,23 @@ def _spawn(
     )
 
 
-# overage clustered by session (sessions a, b all events), emit failure spread within sessions
-_PYTHON_SPAWNS = (
-    _spawn("p1", "a", 1, overage=1),
-    _spawn("p2", "a", 2, overage=1, stop=False),
-    _spawn("p3", "b", 3, overage=1),
-    _spawn("p4", "b", 4, overage=1, stop=False),
-    _spawn("p5", "c", 5),
-    _spawn("p6", "c", 6, stop=False),
-    _spawn("p7", "d", 7),
-    _spawn("p8", "d", 8, stop=False),
+_SPAWNS = SimpleNamespace(
+    # overage clustered by session (sessions a, b all events), emit failure spread within sessions
+    python=(
+        _spawn("p1", "a", 1, overage=1),
+        _spawn("p2", "a", 2, overage=1, stop=False),
+        _spawn("p3", "b", 3, overage=1),
+        _spawn("p4", "b", 4, overage=1, stop=False),
+        _spawn("p5", "c", 5),
+        _spawn("p6", "c", 6, stop=False),
+        _spawn("p7", "d", 7),
+        _spawn("p8", "d", 8, stop=False),
+    ),
+    # no event on either metric → no variance → undefined design effect
+    shell=tuple(_spawn(f"s{index}", f"t{index % 2}", index + 1) for index in range(4)),
 )
 # before the window: a task member the spawn read returns, never counted
 _EARLIER_SPAWN = _spawn("p0", "a", -1, overage=1, stop=False)
-# no event on either metric → no variance → undefined design effect
-_SHELL_SPAWNS = tuple(
-    _spawn(f"s{index}", f"t{index % 2}", index + 1) for index in range(4)
-)
 
 
 def _get_window_clusters(spawns: tuple[SpawnFacts, ...], is_event) -> list[list[float]]:
@@ -739,10 +739,10 @@ def _get_window_clusters(spawns: tuple[SpawnFacts, ...], is_event) -> list[list[
 def _get_expected_python_effects() -> tuple[object, object]:
     """(overage, emit failure) session design effects of the in-window Python spawns."""
     overage = trial_design.get_design_effect(
-        _get_window_clusters(_PYTHON_SPAWNS, lambda spawn: spawn.overage_rows > 0)
+        _get_window_clusters(_SPAWNS.python, lambda spawn: spawn.overage_rows > 0)
     )
     emit = trial_design.get_design_effect(
-        _get_window_clusters(_PYTHON_SPAWNS, lambda spawn: not spawn.has_subagent_stop)
+        _get_window_clusters(_SPAWNS.python, lambda spawn: not spawn.has_subagent_stop)
     )
     return overage, emit
 
@@ -783,8 +783,8 @@ class _AaResultFixture(_AaFixture):
         self.reports_dir.mkdir()
         # the shell agent's MANIFEST rows carry its bare alias
         self.spawns = {
-            "glass-atrium-dev-python": (_EARLIER_SPAWN, *_PYTHON_SPAWNS),
-            "dev-shell": _SHELL_SPAWNS,
+            "glass-atrium-dev-python": (_EARLIER_SPAWN, *_SPAWNS.python),
+            "dev-shell": _SPAWNS.shell,
         }
         self.spawn_reads: list[tuple[list[str], object]] = []
         self._patch("HAS_PG_PATTERN_READ", True)
@@ -959,7 +959,7 @@ class AaResultTest(_AaResultFixture):
     def test_a_short_busiest_agent_at_day_14_extends_the_window_to_its_longer_duration(
         self,
     ) -> None:
-        self.spawns["dev-shell"] = _SHELL_SPAWNS[:3]
+        self.spawns["dev-shell"] = _SPAWNS.shell[:3]
 
         self._evaluate("2026-10-07")
         self.assertEqual(self._get_results(), [])
@@ -1098,7 +1098,7 @@ class AaOutageTest(_AaResultFixture):
         rows = (
             (
                 "the join read faults",
-                lambda: self.ledger.faulted.add(dc.AA.JOIN_COVERAGE_SQL),
+                lambda: self.ledger.faulted.add(dc.AA.SQL.JOIN_COVERAGE),
                 "evidence unreadable: ConnectionError",
             ),
             (
