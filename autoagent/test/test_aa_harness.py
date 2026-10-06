@@ -981,12 +981,9 @@ class AaResultTest(_AaResultFixture):
                 "start_id": 1,
                 "metric_key": "budget_overage",
                 "window_days": 14,
-                "readings": {
-                    "recomputed": "undecided",
-                    "reference": dc.get_instrument_reading(
-                        {agent: reading}, {agent: reference}
-                    ),
-                },
+                "readings": {"recomputed": "undecided", "reference": "undecided"},
+                # the reference break-even is at or below 1 → named, never read
+                "excluded": {"recomputed": [], "reference": [agent]},
                 "verdict": "relay",
                 "agents": {
                     agent: {
@@ -1177,12 +1174,13 @@ class AaRecomputedBreakEvenTest(_AaResultFixture):
     def test_a_reference_disagreeing_with_the_recomputed_break_even_relays_to_the_owner(
         self,
     ) -> None:
-        # the reference at the interval's lower bound → the reference reading switches to R2
-        payload = self._get_verdict_payload(self.reading.lower)
+        # the reference at the interval's upper bound, above 1 → the reference reading straddles
+        self.assertLess(1.0, self.reading.upper)
+        payload = self._get_verdict_payload(self.reading.upper)
 
         self.assertEqual(
             (payload["readings"], payload["verdict"]),
-            ({"recomputed": "r1-holds", "reference": "switch-to-r2"}, "relay"),
+            ({"recomputed": "r1-holds", "reference": "straddle"}, "relay"),
         )
 
 
@@ -2157,12 +2155,30 @@ class AaInstrumentVerdictTest(unittest.TestCase):
             (
                 "an agent without a break-even or an interval counts nowhere",
                 {
-                    "a": _reading(0.9, 1.1),
+                    "a": _reading(1.6, 2.0),
                     "c": _reading(0.1, 0.2),
                     "d": trial_design.ArmDesignEffect(0.5, 2, 3, None, None, 1),
                 },
-                {"a": 0.5, "d": 3.0},
+                {"a": 1.5, "d": 3.0},
                 "switch-to-r2",
+            ),
+            (
+                "a break-even at or below 1 cannot hold R1",
+                {"a": _reading(0.2, 0.5), "b": _reading(3.1, 4.0)},
+                {"a": 1.0, "b": 3.0},
+                "switch-to-r2",
+            ),
+            (
+                "a break-even at or below 1 cannot block the switch",
+                {"a": _reading(0.2, 1.5), "b": _reading(3.1, 4.0)},
+                {"a": 0.55, "b": 3.0},
+                "switch-to-r2",
+            ),
+            (
+                "only break-evens at or below 1 decide nothing",
+                {"a": _reading(0.2, 0.5)},
+                {"a": 0.41},
+                "undecided",
             ),
             ("no agent with both", {"a": _reading(0.9, 1.1)}, {"b": 1.0}, "undecided"),
         )
@@ -2171,6 +2187,19 @@ class AaInstrumentVerdictTest(unittest.TestCase):
                 self.assertEqual(
                     dc.get_instrument_reading(readings, break_evens), expected
                 )
+
+    def test_the_excluded_agents_are_those_read_against_a_break_even_at_or_below_1(
+        self,
+    ) -> None:
+        readings = {
+            "a": _reading(0.2, 0.5),
+            "b": _reading(3.1, 4.0),
+            "c": _reading(0.1, 0.2),
+            "d": trial_design.ArmDesignEffect(0.5, 2, 3, None, None, 1),
+        }
+        break_evens = {"a": 1.0, "b": 3.0, "d": 0.3}
+
+        self.assertEqual(dc.get_excluded_agents(readings, break_evens), ["a"])
 
     def test_the_verdict_follows_both_readings_and_the_window_length(self) -> None:
         rows = (

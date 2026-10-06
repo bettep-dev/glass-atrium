@@ -1197,6 +1197,7 @@ TRIAL_LEDGER = SimpleNamespace(
             "metric_key",
             "window_days",
             "readings",
+            "excluded",
             "verdict",
             "agents",
         ),

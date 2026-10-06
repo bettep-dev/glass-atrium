@@ -9368,6 +9368,8 @@ INSTRUMENT = SimpleNamespace(
     VERDICT=SimpleNamespace(
         HOLDS="r1-holds", SWITCH="switch-to-r2", EXTEND="extend", RELAY="relay"
     ),
+    # a break-even at or below this cannot decide a trial at design effect 1 → excluded, named
+    DECIDABLE_BREAK_EVEN=1.0,
     # break-evens on spawns at 1x (method A) the owner's D1 figures rest on; a recomputed
     # reading that disagrees goes to the owner, never replacing these
     REFERENCE_BREAK_EVEN={
@@ -10144,6 +10146,10 @@ def _get_instrument_verdict_payload(
         "metric_key": INSTRUMENT.METRIC_KEY,
         "window_days": window.days,
         "readings": positions,
+        "excluded": {
+            "recomputed": get_excluded_agents(readings, recomputed),
+            "reference": get_excluded_agents(readings, reference),
+        },
         "verdict": get_instrument_verdict(
             positions["recomputed"],
             positions["reference"],
@@ -10216,15 +10222,16 @@ def _read_recomputed_break_evens(agents: list[str], now: datetime) -> dict[str, 
 def get_instrument_reading(
     readings: Mapping[str, trial_design.ArmDesignEffect], break_evens: Mapping[str, float]
 ) -> str:
-    """D1 break-even rule over the agents with both an interval and a break-even.
+    """D1 break-even rule over the agents with an interval and a break-even above 1.
 
     One whole interval below its break-even → R1 holds; every interval at or above → switch to R2;
-    otherwise a straddle; no such agent → undecided.
+    otherwise a straddle; no such agent → undecided. A break-even at or below 1 cannot decide a
+    trial at design effect 1, so its agent is left out (get_excluded_agents).
     """
     agents = [
         agent
-        for agent in sorted(readings)
-        if agent in break_evens and readings[agent].lower is not None
+        for agent in _get_instrument_agents(readings, break_evens)
+        if break_evens[agent] > INSTRUMENT.DECIDABLE_BREAK_EVEN
     ]
     if not agents:
         return INSTRUMENT.READING.UNDECIDED
@@ -10233,6 +10240,27 @@ def get_instrument_reading(
     if all(readings[agent].lower >= break_evens[agent] for agent in agents):
         return INSTRUMENT.READING.SWITCH
     return INSTRUMENT.READING.STRADDLE
+
+
+def get_excluded_agents(
+    readings: Mapping[str, trial_design.ArmDesignEffect], break_evens: Mapping[str, float]
+) -> list[str]:
+    """The agents with an interval whose break-even is at or below 1 — left out of the reading."""
+    return [
+        agent
+        for agent in _get_instrument_agents(readings, break_evens)
+        if break_evens[agent] <= INSTRUMENT.DECIDABLE_BREAK_EVEN
+    ]
+
+
+def _get_instrument_agents(
+    readings: Mapping[str, trial_design.ArmDesignEffect], break_evens: Mapping[str, float]
+) -> list[str]:
+    return [
+        agent
+        for agent in sorted(readings)
+        if agent in break_evens and readings[agent].lower is not None
+    ]
 
 
 def get_instrument_verdict(
