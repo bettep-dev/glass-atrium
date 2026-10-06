@@ -8758,6 +8758,11 @@ class PowerInputs(NamedTuple):
     unchecked_keys: frozenset[tuple[str, str]]
 
 
+class PowerSubject(NamedTuple):
+    key: tuple[str, str]  # (agent, metric key) in the power inputs
+    floor: FloorResult
+
+
 def check_pattern_power(patterns: list[Pattern], *, skip_loop_emit: bool) -> PowerResult:
     """Intake power check: each floor-passing keyed pattern → one counted verdict.
 
@@ -8809,7 +8814,7 @@ def _get_pattern_power_verdict(
     if key in inputs.unchecked_keys:
         return POWER.VERDICT.UNCHECKED, "A/A design effect unusable", None
     design_effect = inputs.design_effects.get(key)
-    check = get_power_check(floor, inputs, key, windows)
+    check = get_power_check(PowerSubject(key, floor), inputs, windows)
     power_pass = None
     required = check.units.required
     if check.verdict == POWER.VERDICT.PASSING and design_effect is not None and required is not None:
@@ -8817,10 +8822,8 @@ def _get_pattern_power_verdict(
     return check.verdict, _get_power_detail(floor, check, design_effect), power_pass
 
 
-def get_power_check(
-    floor: FloorResult, inputs: PowerInputs, key: tuple[str, str], windows: PairWindows
-) -> PowerCheck:
-    """Power check of one floor-passing pattern, key = its (agent, metric key) in inputs.
+def get_power_check(subject: PowerSubject, inputs: PowerInputs, windows: PairWindows) -> PowerCheck:
+    """Power check of one floor-passing pattern, read from inputs at the subject's key.
 
     Projected units = the agent's spawns per day over the 28 days before D × the 84-day
     horizon; NULL-agent_id spawns count nowhere. Bound = 2 × the trial_design per-arm
@@ -8831,16 +8834,12 @@ def get_power_check(
     history_start = windows.end - BASELINE.MIN_COVERED
     units = sum(
         1
-        for spawn in inputs.spawns.get(key[0], [])
+        for spawn in inputs.spawns.get(subject.key[0], [])
         if spawn.agent_id is not None and history_start <= spawn.started_at < windows.end
     )
-    design_effect = inputs.design_effects.get(key)
+    design_effect = inputs.design_effects.get(subject.key)
     projected = trial_design.get_projected_units(units / BASELINE.MIN_COVERED.days)
-    maximum = _get_maximum_sample_size(floor.baseline.events, floor.baseline.spawns)
-    if maximum is None or design_effect is None:
-        required = None
-    else:
-        required = trial_design.get_required_units(maximum, design_effect=design_effect)
+    required = _get_required_units(subject.floor.baseline, design_effect)
     if inputs.provenance_start is None or inputs.provenance_start > history_start:
         verdict = POWER.VERDICT.INSUFFICIENT_HISTORY
     elif design_effect is None:
@@ -8850,6 +8849,14 @@ def get_power_check(
     else:
         verdict = POWER.VERDICT.UNDERPOWERED
     return PowerCheck(verdict, PowerUnits(projected, required))
+
+
+def _get_required_units(baseline: WindowCount, design_effect: float | None) -> float | None:
+    """Both arms' units of the bound; None when the rate has no finite size or no design effect."""
+    maximum = _get_maximum_sample_size(baseline.events, baseline.spawns)
+    if maximum is None or design_effect is None:
+        return None
+    return trial_design.get_required_units(maximum, design_effect=design_effect)
 
 
 def _is_bound_reached(units: int, required: float) -> bool:
@@ -10259,14 +10266,11 @@ def _read_recomputed_break_evens(agents: list[str], now: datetime) -> dict[str, 
     )
     break_evens: dict[str, float] = {}
     for agent in agents:
+        key = (agent, INSTRUMENT.METRIC_KEY)
         floor = get_floor_verdict(
-            inputs.spawns.get(agent, []),
-            INSTRUMENT.METRIC_KEY,
-            windows,
-            inputs.provenance_start,
-            windows.end,
+            inputs.spawns.get(agent, []), key[1], windows, inputs.provenance_start, windows.end
         )
-        check = get_power_check(floor, inputs, (agent, INSTRUMENT.METRIC_KEY), windows)
+        check = get_power_check(PowerSubject(key, floor), inputs, windows)
         required = check.units.required
         if check.verdict != POWER.VERDICT.INSUFFICIENT_HISTORY and required is not None:
             break_evens[agent] = check.units.projected / required

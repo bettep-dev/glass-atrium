@@ -269,9 +269,8 @@ class GetPowerCheckTest(unittest.TestCase):
         for name, floor, spawns, provenance_start, design_effect, verdict in rows:
             with self.subTest(name):
                 check = dc.get_power_check(
-                    floor,
+                    dc.PowerSubject((_AGENT.PASSING, _KEY.BUDGET), floor),
                     _get_power_inputs(spawns, provenance_start, design_effect),
-                    (_AGENT.PASSING, _KEY.BUDGET),
                     _WINDOWS,
                 )
                 self.assertEqual(check.verdict, verdict)
@@ -280,11 +279,10 @@ class GetPowerCheckTest(unittest.TestCase):
         self,
     ) -> None:
         check = dc.get_power_check(
-            _floor(),
+            dc.PowerSubject((_AGENT.PASSING, _KEY.BUDGET), _floor()),
             _get_power_inputs(
                 _get_units(_UNITS.AT_BOUND), _DAY - timedelta(days=60), _DESIGN_EFFECT
             ),
-            (_AGENT.PASSING, _KEY.BUDGET),
             _WINDOWS,
         )
         self.assertAlmostEqual(check.units.projected, _UNITS.AT_BOUND / 28 * 84)
