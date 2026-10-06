@@ -45,7 +45,7 @@ class DesignEffect(NamedTuple):
 
     @property
     def selected(self) -> float:
-        """The higher estimator, which the power check uses: a lower design effect overstates power."""
+        """The higher estimator: a lower design effect overstates a trial's power."""
         return max(self.anova, self.size_weighted)
 
 

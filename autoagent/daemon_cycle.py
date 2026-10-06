@@ -8768,7 +8768,7 @@ def check_pattern_power(patterns: list[Pattern], *, skip_loop_emit: bool) -> Pow
     (none under skip_loop_emit); verdict only — no status write, no pattern parked or dropped.
     Each fault WARNs and never passes: an unreadable history or missing trial math counts
     every keyed pattern unchecked; an unreadable ledger counts every floor-passing one
-    unchecked, an invalid stored design effect only that agent's.
+    unchecked, an invalid stored design effect only the patterns on that agent's metric key.
 
     Returns:
         verdict counts (every verdict present), the passing patterns' evidence and the
@@ -9585,8 +9585,8 @@ def run_aa_stage(
     - Then one aa-restart row per cycle date when the installed fingerprint moved or cannot be
       read, with every canary rewritten on the restart row's salt; otherwise each roster
       agent's canary lease is renewed, and once the window's duration has ended the result
-      lands — one design-effect row per agent, then the aa-result row — and every canary file
-      is deleted.
+      lands — one design-effect row per agent and metric key, then the instrument verdict
+      row, then the aa-result row — and every canary file is deleted.
     - Open state unreadable → no file is deleted or renewed; each runs to its lease.
     A ledger or evidence fault WARNs by name and never fails the cycle; the caller skips the
     stage in no-write mode (--dry-run).
@@ -9945,8 +9945,9 @@ def _read_aa_spool_closes(
 def _write_aa_result(
     latest: AaStart, evidence: AaEvidence, source: AaSource, now: datetime
 ) -> bool:
-    """Design-effect rows first, then the aa-result row → True when it landed; a design-effect
-    write fault defers both."""
+    """Design-effect rows, then the instrument verdict row, then the aa-result row → True when
+    the aa-result landed; a design-effect or verdict write fault, or an unreadable break-even
+    history, defers the rows after it."""
     start_id = latest.id
     armed = get_aa_armed_spawns(evidence.spawns, latest.salt_id)
     effects, undefined = _get_aa_design_effects(armed, now, start_id)
