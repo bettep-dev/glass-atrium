@@ -8992,7 +8992,7 @@ SHADOW = SimpleNamespace(
         "FROM core.autoagent_trial_ledger WHERE event = %s AND agent = ANY(%s) "
         "ORDER BY agent, learning_pattern_id, payload->>'metric_key', recorded_at DESC, id DESC"
     ),
-    # S2f's per-spawn unit; the per-install W rule is S5's
+    # W = 0 on every install → each spawn is its own task unit
     TASK_WINDOW=timedelta(0),
 )
 
@@ -9013,6 +9013,17 @@ class TrialArms(NamedTuple):
     treatment: ArmCount
 
 
+class ShadowRow(NamedTuple):
+    event: str
+    payload: dict
+    dedupe_key: str
+
+
+class TrialIdentity(NamedTuple):
+    key: str
+    pattern: Pattern
+
+
 def run_shadow_stage(power: PowerResult, cycle_date: str) -> None:
     """Shadow engine: count the cycle's power verdicts, pre-register each passing pattern's
     trial and record every look milestone its tasks reach; decides nothing.
@@ -9029,9 +9040,11 @@ def run_shadow_stage(power: PowerResult, cycle_date: str) -> None:
         _warn_shadow("trial ledger unwritable: PG helper import failed", "no shadow row this cycle")
         return
     _write_shadow_row(
-        TRIAL_LEDGER.EVENT.POWER_PASS_COUNT,
-        power.counts,
-        dedupe_key=f"power-pass-count:{cycle_date}",
+        ShadowRow(
+            TRIAL_LEDGER.EVENT.POWER_PASS_COUNT,
+            power.counts,
+            dedupe_key=f"power-pass-count:{cycle_date}",
+        )
     )
     if not power.passes or power.windows is None:
         return
@@ -9041,27 +9054,34 @@ def run_shadow_stage(power: PowerResult, cycle_date: str) -> None:
     for power_pass in power.passes:
         pattern = power_pass.pattern
         trial = trials.get((pattern.agent, pattern.row_id, pattern.metric_key))
-        if trial is None or not _is_trial_current(trial, pattern.last_transition_at):
-            _write_shadow_preregistration(power_pass, power.windows.start.detection)
-            continue
-        try:
-            _write_shadow_looks(trial, power_pass, power.windows.end)
-        except (KeyError, TypeError, ValueError) as exc:
-            _warn_shadow(
-                f"trial {trial.key}: stored pre-registration unusable: "
-                f"{type(exc).__name__}: {str(exc)[:160]}",
-                "no look recorded for it this cycle",
-            )
+        _write_shadow_pass(power_pass, trial, power.windows)
+
+
+def _write_shadow_pass(
+    power_pass: PowerPass, trial: ShadowTrial | None, windows: PairWindows
+) -> None:
+    """Keep a current trial and record its reached looks; otherwise pre-register the current pair."""
+    if trial is None or not _is_trial_current(trial, power_pass.pattern.last_transition_at):
+        _write_shadow_preregistration(power_pass, windows.start.detection)
+        return
+    try:
+        _write_shadow_looks(trial, power_pass, windows.end)
+    except (KeyError, TypeError, ValueError) as exc:
+        _warn_shadow(
+            f"trial {trial.key}: stored pre-registration unusable: "
+            f"{type(exc).__name__}: {str(exc)[:160]}",
+            "no look recorded for it this cycle",
+        )
 
 
 def get_trial_key(pattern: Pattern, detection_start: datetime) -> str:
-    """64-hex sha256 of agent, learning_pattern_id, metric key and the pair's detection start (N67)."""
+    """64-hex sha256 of agent, learning_pattern_id, metric key and the pair's detection start."""
     parts = (pattern.agent, str(pattern.row_id), str(pattern.metric_key), detection_start.isoformat())
     return hashlib.sha256("\x1f".join(parts).encode("utf-8")).hexdigest()
 
 
 def get_preregistration_payload(power_pass: PowerPass, detection_start: datetime) -> dict:
-    """The trial's frozen sizing: S2e maximum and boundaries, look milestones on the required units."""
+    """The trial's frozen sizing: trial_design's maximum and boundaries, look milestones on the required units."""
     baseline = power_pass.baseline
     boundaries = trial_design.get_boundaries()
     looks = [
@@ -9124,7 +9144,7 @@ def _read_shadow_trials(
             event = TRIAL_LEDGER.EVENT.SHADOW_PREREGISTRATION
             cur.execute(SHADOW.PREREGISTRATION_SQL, (event, agents))
             rows = cur.fetchall()
-    except Exception as exc:  # noqa: BLE001 — a ledger read fault never fails the cycle (N65)
+    except Exception as exc:  # noqa: BLE001 — a ledger read fault never fails the cycle
         _warn_shadow(
             f"pre-registrations unreadable: {type(exc).__name__}: {str(exc)[:160]}",
             "no pre-registration or look this cycle",
@@ -9139,16 +9159,32 @@ def _read_shadow_trials(
 def _write_shadow_preregistration(power_pass: PowerPass, detection_start: datetime) -> None:
     key = get_trial_key(power_pass.pattern, detection_start)
     _write_shadow_row(
-        TRIAL_LEDGER.EVENT.SHADOW_PREREGISTRATION,
-        get_preregistration_payload(power_pass, detection_start),
-        dedupe_key=key,
-        trial_key=key,
-        pattern=power_pass.pattern,
+        ShadowRow(
+            TRIAL_LEDGER.EVENT.SHADOW_PREREGISTRATION,
+            get_preregistration_payload(power_pass, detection_start),
+            dedupe_key=key,
+        ),
+        TrialIdentity(key, power_pass.pattern),
     )
 
 
 def _write_shadow_looks(trial: ShadowTrial, power_pass: PowerPass, window_end: datetime) -> None:
-    accrued = len(
+    accrued = _get_accrued_task_count(trial, power_pass, window_end)
+    for number, look in enumerate(trial.payload["looks"], start=1):
+        if accrued < look["milestone"]:
+            return
+        _write_shadow_row(
+            ShadowRow(
+                TRIAL_LEDGER.EVENT.SHADOW_LOOK,
+                get_look_payload(number, look, accrued),
+                dedupe_key=f"{trial.key}:look:{number}",
+            ),
+            TrialIdentity(trial.key, power_pass.pattern),
+        )
+
+
+def _get_accrued_task_count(trial: ShadowTrial, power_pass: PowerPass, window_end: datetime) -> int:
+    return len(
         get_tasks(
             (
                 spawn
@@ -9158,39 +9194,22 @@ def _write_shadow_looks(trial: ShadowTrial, power_pass: PowerPass, window_end: d
             SHADOW.TASK_WINDOW,
         )
     )
-    for number, look in enumerate(trial.payload["looks"], start=1):
-        if accrued < look["milestone"]:
-            return
-        _write_shadow_row(
-            TRIAL_LEDGER.EVENT.SHADOW_LOOK,
-            get_look_payload(number, look, accrued),
-            dedupe_key=f"{trial.key}:look:{number}",
-            trial_key=trial.key,
-            pattern=power_pass.pattern,
-        )
 
 
-def _write_shadow_row(
-    event: str,
-    payload: dict,
-    *,
-    dedupe_key: str,
-    trial_key: str | None = None,
-    pattern: Pattern | None = None,
-) -> None:
+def _write_shadow_row(row: ShadowRow, trial: TrialIdentity | None = None) -> None:
     try:
         _pg_write_trial_ledger_row(
-            event,
+            row.event,
             TRIAL_LEDGER.ACTOR.SHADOW,
-            payload,
-            trial_key=trial_key,
-            agent=None if pattern is None else pattern.agent,
-            learning_pattern_id=None if pattern is None else pattern.row_id,
-            dedupe_key=dedupe_key,
+            row.payload,
+            trial_key=None if trial is None else trial.key,
+            agent=None if trial is None else trial.pattern.agent,
+            learning_pattern_id=None if trial is None else trial.pattern.row_id,
+            dedupe_key=row.dedupe_key,
         )
-    except Exception as exc:  # noqa: BLE001 — a ledger write fault never fails the cycle (N65)
+    except Exception as exc:  # noqa: BLE001 — a ledger write fault never fails the cycle
         _warn_shadow(
-            f"{event} {dedupe_key} not written: {type(exc).__name__}: {str(exc)[:160]}",
+            f"{row.event} {row.dedupe_key} not written: {type(exc).__name__}: {str(exc)[:160]}",
             "the stage continues",
         )
 
@@ -11247,7 +11266,7 @@ def run_cycle(
     # Both generation branches: verdict only; no pattern is parked or dropped.
     power = check_pattern_power(patterns, skip_loop_emit=skip_loop_emit)
     report.power_check = power.counts
-    if not skip_loop_emit:  # no-write mode (--dry-run) writes no ledger row (N67)
+    if not skip_loop_emit:  # no-write mode (--dry-run) writes no ledger row
         run_shadow_stage(power, report.cycle_date)
 
     if IS_GENERATION_CLOSED:

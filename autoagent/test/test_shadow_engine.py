@@ -314,9 +314,9 @@ class _ShadowFixture(unittest.TestCase):
 
 
 class PreRegistrationTest(_ShadowFixture):
-    """One pre-registration per trial, its sizing frozen from the S2e reference module."""
+    """One pre-registration per trial, its sizing frozen from the trial-design module."""
 
-    def test_the_preregistration_freezes_the_s2e_boundaries_maximum_and_look_milestones(
+    def test_the_preregistration_freezes_the_trial_design_boundaries_maximum_and_look_milestones(
         self,
     ) -> None:
         self._cycle(_NOW)
