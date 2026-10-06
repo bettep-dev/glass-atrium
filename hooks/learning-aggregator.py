@@ -149,8 +149,7 @@ RATE_FAILURE_FLOOR = 0.5
 # a null / cross-cutting agent_type has no agent file to patch and is dropped at
 # intake (_UNPREFIXABLE_AGENTS / _emit_xc).
 BUDGET_OVERAGE_LABEL = "budget-overage concentration"
-# Spawns that ended without an agent-emitted [COMPLETION] (no SubagentStop, or a
-# recorder-synthesized outcome) — the emit discipline itself, per agent file.
+# Spawns ended with no own [COMPLETION] (no SubagentStop or recorder-synthesized) per agent
 EMIT_FAILURE_LABEL = "emit-failure concentration"
 # Keyed families: emitted only on a passing S2f floor, never on a batch count.
 _KEYED_LABELS = {
@@ -196,9 +195,8 @@ PATTERN1_SOFT_LABEL = "recurring negative-signal concentration"
 # pattern-5 ("agent instruction-improvement candidate …") and the legacy rows are untouched.
 _SIGNATURE_ANCHOR = {PATTERN1_SOFT_LABEL: PATTERN1_FAIL_LABEL}
 
-# Signature cores of the keyless discovery families (patterns 1, 2, 3, 5, 8; pattern 6 by
-# suffix) plus the legacy Korean pattern-1/5 labels. A stored row matching none is not
-# this aggregator's and keeps its status.
+# Keyless family signature cores (patterns 1, 2, 3, 5, 8; 6 by suffix) + legacy Korean 1/5
+# A stored row matching none is not this aggregator's → status kept
 _KEYLESS_FAMILY_PREFIXES = (
     PATTERN1_FAIL_LABEL,
     "동일 에이전트 반복 실패",
@@ -213,8 +211,7 @@ _PATTERN6_SUFFIX = " type low success rate"
 _PAIR_STATUSES = frozenset({"identified", "dormant"})
 # Lead of every status reason this aggregator writes.
 PAIR_REASON_PREFIX = "aggregator-pair"
-# Window reads are `record_ts > since`; one second earlier keeps a row stamped exactly at
-# the detection start, and the exact bounds are re-applied in Python.
+# `record_ts > since` reads → 1 s earlier keeps a detection-start row; Python re-applies bounds
 _WINDOW_READ_MARGIN = timedelta(seconds=1)
 
 
@@ -1213,14 +1210,12 @@ def main(registry_path: str | None = None) -> None:
         )
     emit_skips: dict[str, int] = defaultdict(int)
 
-    # Every run reads the pair windows, an empty batch included: the floor and the family
-    # rules read windows, so a row's verdict never waits for its agent's next batch.
+    # pair windows read every run, empty batch included → no verdict waits for a next batch
     stored: dict = _pg_read_learning_log_signatures() if HAS_PG_DUALWRITE else {}
     windows = get_pair_windows(_get_utc_now())
     # pending judged at the day anchor, as in the daemon intake
     evaluated_at = windows.end
-    # Batch-side reads windowed by `since` so each overage / measurement counts once across
-    # runs; skipped on an empty batch, whose watermark does not advance.
+    # batch reads windowed by `since` → counted once across runs; empty batch: skipped, no advance
     overage_rows = _read_budget_overages(since) if new_records else []
     size_est_rows = _read_size_est_pairs(since) if new_records else []
     contributions = {
