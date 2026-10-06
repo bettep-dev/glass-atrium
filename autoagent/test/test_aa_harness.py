@@ -5,8 +5,9 @@ hashes; while it is open each writing cycle compares the fingerprint and writes 
 aa-restart row when it moved or cannot be read. Once its window's duration ends, a cycle
 writes one design-effect row per agent and the aa-result row. Every row outside the live class is
 database-free under ``seal_pg_reach``; the ledger is an in-memory append-only fake behind the
-writer and connection seams. The live classes run the open-state and join-coverage reads' SQL
-on the cluster ``autoagent/test/live-pg-ephemeral.bats`` provisions and skip elsewhere.
+writer and connection seams. The live classes run the open-state, join-coverage and spool-close
+reads' SQL, and the close-count writer, on the cluster ``autoagent/test/live-pg-ephemeral.bats``
+provisions and skip elsewhere.
 
 Run with either runner:
     uv run --with pytest pytest autoagent/test/test_aa_harness.py -v
@@ -16,7 +17,6 @@ Run with either runner:
 from __future__ import annotations
 
 import contextlib
-import functools
 import hashlib
 import io
 import json
@@ -96,6 +96,21 @@ class _Outcome(NamedTuple):
     session_id: str | None
 
 
+class _SpoolClose(NamedTuple):
+    """A manifest-spool-closed loop-event row; NULL counts = written before the count columns."""
+
+    spool: str
+    event_ts: datetime
+    lines_read: int | None
+    lines_without_row: int | None
+
+
+class _UndefinedColumn(Exception):
+    """psycopg's UndefinedColumn as the sink read meets it: SQLSTATE 42703."""
+
+    sqlstate = "42703"
+
+
 class _Ledger:
     """core.autoagent_trial_ledger as the writer and the open-state read see it: append-only,
     a taken dedupe_key adds no row (ON CONFLICT DO NOTHING), payload stored as JSON."""
@@ -109,6 +124,8 @@ class _Ledger:
         self.clock = _NOW  # recorded_at of the next row
         self.outcomes: list[_Outcome] = []
         self.manifest_agent_ids: set[str] = set()
+        self.closes: list[_SpoolClose] = []
+        self.is_count_absent = False  # a schema without lines_read / lines_without_row
         # read only by a writing cycle's regression gate and discharge
         self.answered_empty = frozenset(
             {
@@ -176,6 +193,8 @@ class _LedgerCursor:
             self.result = self._get_latest_start(params)
         elif statement == dc.AA.SQL.JOIN_COVERAGE:
             self.result = [self._get_join_counts(params)]
+        elif statement == dc.AA.SQL.SPOOL_CLOSES:
+            self.result = self._get_spool_closes(params)
         elif statement in self.ledger.answered_empty:
             self.result = []
         else:
@@ -224,8 +243,21 @@ class _LedgerCursor:
         ]
         return len(outcomes), len(joined)
 
+    def _get_spool_closes(self, params: dict) -> list[tuple]:
+        if self.ledger.is_count_absent:
+            raise _UndefinedColumn('column "lines_read" does not exist')
+        assert params["event"] == dc.MANIFEST_SPOOL_CLOSED_EVAL_RESULT
+        return [
+            (close.spool, close.lines_read, close.lines_without_row)
+            for close in self.ledger.closes
+            if close.event_ts >= params["start"]
+        ]
+
     def fetchone(self) -> tuple | None:
         return self.result[0] if self.result else None
+
+    def fetchall(self) -> list[tuple]:
+        return list(self.result)
 
 
 class _AaFixture(unittest.TestCase):
@@ -732,25 +764,6 @@ def _get_expected_python_effects() -> tuple[object, object]:
     return overage, emit
 
 
-def _get_report_stamp(moment: datetime) -> str:
-    return moment.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.000Z")
-
-
-def _get_report(generated_at: datetime, *, lines_read: int, rows_present: int) -> dict:
-    """A cycle report as the cycle writes it: its start stamp and one closed MANIFEST spool."""
-    closed = [
-        {
-            "spool": "manifest.log.spool",
-            "lines_read": lines_read,
-            "rows_present": rows_present,
-        }
-    ]
-    return {
-        "generated_at": _get_report_stamp(generated_at),
-        "manifest_ingest": {"status": "ok", "closed": closed, "rotated_to": None},
-    }
-
-
 def _arms(control: tuple[int, int], treatment: tuple[int, int]) -> object:
     return dc.TrialArms(dc.ArmCount(*control), dc.ArmCount(*treatment))
 
@@ -760,8 +773,6 @@ class _AaResultFixture(_AaFixture):
 
     def setUp(self) -> None:
         super().setUp()
-        self.dir = dc.AaDir(self.agents_dir, self.scratch / "reports")
-        self.dir.reports.mkdir()
         # the shell agent's MANIFEST rows carry its bare alias
         self.spawns = {
             "glass-atrium-dev-python": (
@@ -779,7 +790,7 @@ class _AaResultFixture(_AaFixture):
         self._open(_SMALL_DURATION)
         self.ledger.clock = _NOW
         self._add_outcomes(joined=19, unjoined=1)
-        self._write_report(_START + timedelta(days=2), lines_read=10, rows_present=10)
+        self._add_close(_START + timedelta(days=2), lines_read=10, lines_without_row=0)
 
     def _patch_balance(self, *, minimum_spawns: int) -> None:
         balance = SimpleNamespace(
@@ -807,17 +818,16 @@ class _AaResultFixture(_AaFixture):
         # main-session row: outside the roster, never counted
         self.ledger.outcomes.append(_Outcome("orchestrator", recorded, None, None))
 
-    def _write_report(
-        self, generated_at: datetime, *, lines_read: int, rows_present: int
+    def _add_close(
+        self,
+        event_ts: datetime,
+        *,
+        lines_read: int | None,
+        lines_without_row: int | None,
+        spool: str | None = None,
     ) -> None:
-        report = _get_report(
-            generated_at, lines_read=lines_read, rows_present=rows_present
-        )
-        self._put_report(generated_at.date().isoformat(), report)
-
-    def _put_report(self, day: str, report: dict) -> None:
-        path = self.dir.reports / f"autoagent-{day}.json"
-        path.write_text(json.dumps(report), encoding="utf-8")
+        name = spool or f"manifest.log.{len(self.ledger.closes)}.spool"
+        self.ledger.closes.append(_SpoolClose(name, event_ts, lines_read, lines_without_row))
 
     def _move_window_start(self, start: datetime) -> None:
         event = stub.get_trial_ledger().EVENT.AA_START
@@ -830,8 +840,7 @@ class _AaResultFixture(_AaFixture):
         return self._cycle(
             cycle_date,
             manifest_ingest=ingest,
-            agents_dir=self.dir.agents,
-            reports_dir=self.dir.reports,
+            agents_dir=self.agents_dir,
         )
 
     def _get_results(self) -> list[_LedgerRow]:
@@ -970,15 +979,10 @@ class AaResultTest(_AaResultFixture):
 class AaResultFailTest(_AaResultFixture):
     def test_each_failing_criterion_fails_the_result(self) -> None:
         def _lose_a_line_in_the_window() -> None:
-            self._write_report(
-                _START + timedelta(days=5), lines_read=10, rows_present=9
-            )
+            self._add_close(_START + timedelta(days=5), lines_read=10, lines_without_row=1)
 
-        def _corrupt_a_window_report() -> None:
-            (
-                self.dir.reports
-                / f"autoagent-{(_START + timedelta(days=6)).date()}.json"
-            ).write_text("{", encoding="utf-8")
+        def _close_before_the_count_columns() -> None:
+            self._add_close(_START + timedelta(days=6), lines_read=None, lines_without_row=None)
 
         def _remove_every_event() -> None:
             self.spawns["glass-atrium-dev-python"] = tuple(
@@ -1037,8 +1041,13 @@ class AaResultFailTest(_AaResultFixture):
                 None,
                 "join_coverage",
             ),
-            ("a window report lost a line", _lose_a_line_in_the_window, None, "sink"),
-            ("a window report unreadable", _corrupt_a_window_report, None, "sink"),
+            ("a window close lost a line", _lose_a_line_in_the_window, None, "sink"),
+            (
+                "a window close recorded before the count columns",
+                _close_before_the_count_columns,
+                None,
+                "sink",
+            ),
             ("this cycle's close lost a line", lambda: None, lost_now, "sink"),
             (
                 "no agent's design effect is defined",
@@ -1109,62 +1118,95 @@ class AaArmsResultTest(_AaResultFixture):
         )
 
 
-class AaReportWindowTest(_AaResultFixture):
-    def test_the_sink_reads_a_report_exactly_when_its_cycle_ran_from_the_window_start(
-        self,
-    ) -> None:
-        late_start = datetime(2026, 9, 22, 18, 0, tzinfo=timezone.utc)
-        midnight_start = datetime(2026, 9, 22, 0, 0, 30, tzinfo=timezone.utc)
+class AaSinkTest(_AaResultFixture):
+    def _get_sink(self) -> dict:
+        (result,) = self._get_results()
+        return result.payload["criteria"]["sink"]
+
+    def test_the_sink_counts_each_close_recorded_from_the_window_start_once(self) -> None:
+        now_close = dc.ManifestSpoolClose("manifest.log.now.spool", 4, 3)
         rows = (
             (
-                "a report from the day before the window is not read",
-                _START,
-                "2026-09-21",
-                _get_report(_START - timedelta(days=1), lines_read=10, rows_present=0),
-                ("pass", 0),
-            ),
-            (
-                "an old-format report the start day's cycle wrote before the start is not read",
-                _START,
-                "2026-09-22",
-                {"generated_at": _get_report_stamp(_START - timedelta(hours=3))},
-                ("pass", 0),
-            ),
-            (
-                "a report written after a start late in the UTC day is read whatever offset the start carries",
-                late_start.astimezone(timezone(timedelta(hours=9))),
-                "2026-09-22",
-                _get_report(
-                    late_start + timedelta(hours=2), lines_read=10, rows_present=9
+                "a close recorded before the window start is not read",
+                lambda: self._add_close(
+                    _START - timedelta(seconds=1), lines_read=10, lines_without_row=10
                 ),
-                ("fail", 1),
+                None,
+                ("pass", 1, 0),
             ),
             (
-                "a report named the day before whose cycle stamped past midnight into the window is read",
-                midnight_start,
-                "2026-09-21",
-                _get_report(
-                    midnight_start + timedelta(seconds=30),
-                    lines_read=10,
-                    rows_present=9,
+                "a close recorded at the window start is read",
+                lambda: self._add_close(_START, lines_read=10, lines_without_row=1),
+                None,
+                ("fail", 2, 1),
+            ),
+            (
+                "two writing cycles on one UTC date keep both closes",
+                lambda: [
+                    self._add_close(
+                        _START + timedelta(days=3, hours=hour),
+                        lines_read=10,
+                        lines_without_row=1,
+                    )
+                    for hour in (1, 2)
+                ],
+                None,
+                ("fail", 3, 2),
+            ),
+            (
+                "this cycle's close counts once beside its own row",
+                lambda: self._add_close(
+                    _NOW, lines_read=4, lines_without_row=1, spool=now_close.spool
                 ),
-                ("fail", 1),
+                dc.ManifestIngest("ok", [now_close]),
+                ("fail", 2, 1),
             ),
         )
-        for name, start, day, report, (verdict, lost) in rows:
+        for name, arrange, ingest, expected in rows:
             with self.subTest(name):
                 self.setUp()
-                self._move_window_start(start)
-                self._put_report(day, report)
+                arrange()
 
-                self._evaluate()
+                self._evaluate(ingest=ingest)
 
-                (result,) = self._get_results()
-                sink = result.payload["criteria"]["sink"]
+                sink = self._get_sink()
                 self.assertEqual(
-                    (sink["verdict"], sink["lines_lost"], sink["unreadable_reports"]),
-                    (verdict, lost, []),
+                    (sink["verdict"], sink["spools"], sink["lines_lost"]), expected
                 )
+
+    def test_a_close_without_its_counts_fails_the_sink_by_name_not_as_zero_lost(
+        self,
+    ) -> None:
+        self._add_close(
+            _START + timedelta(days=4),
+            lines_read=None,
+            lines_without_row=None,
+            spool="manifest.log.pre-column.spool",
+        )
+
+        self._evaluate()
+
+        sink = self._get_sink()
+        self.assertEqual(
+            (sink["verdict"], sink["lines_lost"], sink["uncounted_closes"]),
+            ("fail", 0, ["manifest.log.pre-column.spool"]),
+        )
+
+    def test_a_schema_without_the_count_columns_fails_the_sink_with_a_named_warn(
+        self,
+    ) -> None:
+        self.ledger.is_count_absent = True
+
+        stderr_text = self._evaluate()
+
+        sink = self._get_sink()
+        self.assertEqual(sink["verdict"], "fail")
+        self.assertIs(sink["count_columns_absent"], True)
+        self.assertIn(
+            "WARN: A/A harness — sink: core.autoagent_loop_events has no lines_read / "
+            "lines_without_row (apply migration 20261010000000_add_loop_event_spool_close_counts)",
+            stderr_text,
+        )
 
 
 class AaOutageTest(_AaResultFixture):
@@ -1178,6 +1220,11 @@ class AaOutageTest(_AaResultFixture):
             (
                 "the join read faults",
                 lambda: self.ledger.faulted.add(dc.AA.SQL.JOIN_COVERAGE),
+                "evidence unreadable: ConnectionError",
+            ),
+            (
+                "the spool-close read faults",
+                lambda: self.ledger.faulted.add(dc.AA.SQL.SPOOL_CLOSES),
                 "evidence unreadable: ConnectionError",
             ),
             (
@@ -1231,7 +1278,7 @@ class CycleWiringTest(_AaResultFixture):
             os.environ,
             {
                 "GA_DATA_ROOT": str(self.scratch),
-                "AUTOAGENT_REPORTS_DIR": str(self.dir.reports),
+                "AUTOAGENT_REPORTS_DIR": str(self.scratch / "reports"),
             },
         )
         env.start()
@@ -1243,17 +1290,12 @@ class CycleWiringTest(_AaResultFixture):
         self._patch("_pg_read_pending_patterns", list)
         self._patch("_pg_write_corpus_audit", _refuse)
         self._patch("_pg_write_loop_event", lambda *args, **kwargs: True)
-        # reports dir: run_cycle leaves it to the install default → pinned to the fixture's
-        self._patch(
-            "run_aa_stage",
-            functools.partial(dc.run_aa_stage, reports_dir=self.dir.reports),
-        )
 
     def _run_cycle(self, *, skip_loop_emit: bool) -> None:
         with contextlib.redirect_stderr(io.StringIO()):
             dc.run_cycle(
                 log_path=self.scratch / "learning-log.md",
-                agents_dir=self.dir.agents,
+                agents_dir=self.agents_dir,
                 skip_haiku=True,
                 skip_pre_verify=True,
                 skip_loop_emit=skip_loop_emit,
@@ -2250,6 +2292,68 @@ class AaJoinCoverageReadLivePgTest(_AaLivePgFixture):
         )
 
         self.assertEqual(counts, (4, 2))
+
+
+class AaSpoolCloseLivePgTest(_AaLivePgFixture):
+    """The close-count writer and the sink's close read over core.autoagent_loop_events."""
+
+    # Built by live-pg-ephemeral.bats up to the migration adding the count columns.
+    _COUNT_ABSENT_TEMPLATE = "spool_close_counts_absent_tpl"
+
+    def _write_close(
+        self, event_ts: datetime, spool: str, lines_read: int, lines_without_row: int
+    ) -> None:
+        import _pg_dual_write_daemon as writer
+
+        with mock.patch.object(writer, "_connect", self._connect):
+            writer.write_autoagent_loop_event(
+                event_ts=event_ts.isoformat(),
+                agent="daemon-cycle",
+                eval_result=dc.MANIFEST_SPOOL_CLOSED_EVAL_RESULT,
+                changes_added=0,
+                changes_removed=0,
+                subject=spool,
+                lines_read=lines_read,
+                lines_without_row=lines_without_row,
+            )
+
+    def test_the_sink_reads_each_close_written_from_the_window_start_with_its_stored_counts(
+        self,
+    ) -> None:
+        self._use_database(self._TEMPLATE.FULL)
+        self._write_close(_START - timedelta(seconds=1), "before.spool", 9, 9)
+        self._write_close(_START, "at.spool", 10, 1)
+        # a close row written before the count columns existed
+        with self._connect() as conn:
+            conn.execute(
+                "INSERT INTO core.autoagent_loop_events (event_ts, agent, eval_result,"
+                " changes_added, changes_removed, subject) VALUES (%s, 'daemon-cycle', %s, 0, 0,"
+                " 'pre-column.spool')",
+                (_START + timedelta(hours=1), dc.MANIFEST_SPOOL_CLOSED_EVAL_RESULT),
+            )
+
+        closes = dc._read_aa_spool_closes(_START)
+
+        self.assertEqual(closes, {"at.spool": (10, 1), "pre-column.spool": (None, None)})
+
+    def test_a_schema_without_the_count_columns_keeps_the_close_row_and_reads_as_absent(
+        self,
+    ) -> None:
+        self._use_database(self._COUNT_ABSENT_TEMPLATE)
+        stderr = io.StringIO()
+
+        with contextlib.redirect_stderr(stderr):
+            self._write_close(_START, "absent.spool", 10, 1)
+
+        self.assertRegex(
+            stderr.getvalue(), r"DEGRADED .*20261010000000_add_loop_event_spool_close_counts"
+        )
+        with self._connect() as conn:
+            (subjects,) = conn.execute(
+                "SELECT array_agg(subject) FROM core.autoagent_loop_events"
+            ).fetchone()
+        self.assertEqual(subjects, ["absent.spool"])
+        self.assertIsNone(dc._read_aa_spool_closes(_START))
 
 
 if __name__ == "__main__":

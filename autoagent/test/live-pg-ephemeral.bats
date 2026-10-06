@@ -49,6 +49,9 @@ setup_file() {
   # Spawn-manifest writer rows: the chain before the migration adding the canary exposure columns.
   eph_pg_create_migrated_db "${EPH_SOCKDIR}" "${EPH_PORT}" spawn_manifest_exposure_absent \
     20261009000000_add_spawn_manifest_arm_fields || return 1
+  # Spool-close rows: the chain before the migration adding the loop-event count columns.
+  eph_pg_create_migrated_db "${EPH_SOCKDIR}" "${EPH_PORT}" spool_close_counts_absent_tpl \
+    20261010000000_add_loop_event_spool_close_counts || return 1
 }
 
 teardown_file() {
@@ -222,6 +225,10 @@ PY
 
 @test "the A/A harness's join-coverage read runs against the migrated cluster, none skipped" {
   _assert_live_module test_aa_harness AaJoinCoverageReadLivePgTest
+}
+
+@test "the spool-close count writer and the sink's close read run against the migrated cluster, none skipped" {
+  _assert_live_module test_aa_harness AaSpoolCloseLivePgTest
 }
 
 @test "the pattern-metric window read runs against the migrated cluster, none skipped" {

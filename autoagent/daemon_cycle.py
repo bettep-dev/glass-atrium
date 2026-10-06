@@ -9267,7 +9267,14 @@ AA = SimpleNamespace(
             "SELECT id FROM core.autoagent_trial_ledger "
             "WHERE event = ANY(%(events)s) AND id = ANY(%(ids)s)"
         ),
+        # MANIFEST spool closes recorded from the window start → (spool, lines read, lines without a row)
+        SPOOL_CLOSES=(
+            "SELECT subject, lines_read, lines_without_row FROM core.autoagent_loop_events "
+            "WHERE eval_result = %(event)s AND event_ts >= %(start)s"
+        ),
     ),
+    SPOOL_CLOSE_COUNTS_MIGRATION="20261010000000_add_loop_event_spool_close_counts",
+    UNDEFINED_COLUMN_SQLSTATE="42703",
     MINIMUM_JOIN_PERCENT=95,
     # D2: a sample-ratio test on every agent from 200 spawns; delivery on 99% of treatment spawns
     BALANCE=SimpleNamespace(MINIMUM_SPAWNS=200, ALPHA=0.01),
@@ -9354,17 +9361,11 @@ class AaWindow(NamedTuple):
     days: int
 
 
-class AaDir(NamedTuple):
-    agents: Path
-    reports: Path
-
-
 class AaSource(NamedTuple):
     """The cycle's non-database inputs to the result."""
 
-    cycle_date: str
     manifest_ingest: ManifestIngest | None
-    dir: AaDir
+    agents_dir: Path
 
 
 class AaEvidence(NamedTuple):
@@ -9373,6 +9374,8 @@ class AaEvidence(NamedTuple):
         str, list[SpawnFacts]
     ]  # roster stem → its spawns started in the window
     joins: tuple[int, int]  # (roster outcomes, joined ones)
+    # spool → (lines read, lines without a row), NULL on a pre-column row; None = no count columns
+    closes: dict[str, tuple[int | None, int | None]] | None
 
 
 class AaCriterion(NamedTuple):
@@ -9533,7 +9536,6 @@ def run_aa_stage(
     *,
     manifest_ingest: ManifestIngest | None = None,
     agents_dir: Path = DEFAULT_AGENTS_DIR,
-    reports_dir: Path = DEFAULT_REPORTS_DIR,
 ) -> None:
     """Advance the open A/A one writing cycle and keep the canary files in step with it.
 
@@ -9570,7 +9572,7 @@ def run_aa_stage(
         _restart_aa_canaries(latest, roster)
         return  # the restart row starts a new window
     _put_aa_canaries(latest, roster)
-    source = AaSource(cycle_date, manifest_ingest, AaDir(agents_dir, reports_dir))
+    source = AaSource(manifest_ingest, agents_dir)
     if _evaluate_aa(latest, source):
         _delete_canaries(_get_canary_files(), "the A/A has its result")
 
@@ -9806,7 +9808,7 @@ def _read_aa_evidence(
         raise AaEvidenceUnreadable(
             "PG pattern reads or trial_design unavailable (import failed)"
         )
-    roster = _agent_roster(source.dir.agents)
+    roster = _agent_roster(source.agents_dir)
     names = _get_roster_names(roster)
     spawns = _read_aa_spawns(roster, names, latest.window_start, now)
     window = _get_aa_window(latest, roster, spawns, now)
@@ -9816,7 +9818,12 @@ def _read_aa_evidence(
         agent: [spawn for spawn in agent_spawns if spawn.started_at < window.end]
         for agent, agent_spawns in spawns.items()
     }
-    return AaEvidence(window, in_window, _read_aa_join_counts(names, window))
+    return AaEvidence(
+        window,
+        in_window,
+        _read_aa_join_counts(names, window),
+        _read_aa_spool_closes(window.start),
+    )
 
 
 def _get_roster_names(roster: frozenset[str]) -> list[str]:
@@ -9881,6 +9888,23 @@ def _read_aa_join_counts(names: list[str], window: AaWindow) -> tuple[int, int]:
     return outcomes, joined
 
 
+def _read_aa_spool_closes(
+    start: datetime,
+) -> dict[str, tuple[int | None, int | None]] | None:
+    """Spool → (lines read, lines without a row) per close recorded from start; None on a schema
+    without the count columns. Raises on any other PG fault."""
+    params = {"event": MANIFEST_SPOOL_CLOSED_EVAL_RESULT, "start": start}
+    try:
+        with _pg_connect() as conn, conn.cursor() as cur:
+            cur.execute(AA.SQL.SPOOL_CLOSES, params)
+            rows = cur.fetchall()
+    except Exception as exc:
+        if getattr(exc, "sqlstate", None) != AA.UNDEFINED_COLUMN_SQLSTATE:
+            raise
+        return None
+    return {spool: (lines_read, lost) for spool, lines_read, lost in rows}
+
+
 def _write_aa_result(
     latest: AaStart, evidence: AaEvidence, source: AaSource, now: datetime
 ) -> bool:
@@ -9893,7 +9917,7 @@ def _write_aa_result(
     armed = get_aa_armed_spawns(evidence.spawns, latest.salt_id)
     criteria = {
         "join_coverage": get_aa_join_criterion(*evidence.joins),
-        "sink": _get_aa_sink_criterion(evidence.window, source),
+        "sink": _get_aa_sink_criterion(evidence.closes, source.manifest_ingest),
         **_get_aa_arm_criteria(armed, now),
         "design_effect": AaCriterion(
             AA.VERDICT.PASS if effects else AA.VERDICT.FAIL,
@@ -10164,60 +10188,36 @@ def get_aa_join_criterion(outcomes: int, joined: int) -> AaCriterion:
     )
 
 
-def _get_aa_sink_criterion(window: AaWindow, source: AaSource) -> AaCriterion:
-    """Sink: every MANIFEST spool closed since the window start kept a row per line read — the
-    window's cycle reports plus this cycle's ingest; an unreadable report fails it."""
-    closes, unreadable = _read_aa_report_closes(window, source)
-    if source.manifest_ingest is not None:
-        closes.extend(
-            (close.lines_read, close.rows_present)
-            for close in source.manifest_ingest.closed
-        )
-    lost = sum(max(0, lines_read - rows_present) for lines_read, rows_present in closes)
-    return AaCriterion(
-        AA.VERDICT.PASS if lost == 0 and not unreadable else AA.VERDICT.FAIL,
-        {"spools": len(closes), "lines_lost": lost, "unreadable_reports": unreadable},
-    )
+def _get_aa_sink_criterion(
+    closes: dict[str, tuple[int | None, int | None]] | None,
+    manifest_ingest: ManifestIngest | None,
+) -> AaCriterion:
+    """Sink: every MANIFEST spool closed since the window start kept a row per line read.
 
-
-def _read_aa_report_closes(
-    window: AaWindow, source: AaSource
-) -> tuple[list[tuple[int, int]], list[str]]:
-    """(lines read, rows present) per spool close in the reports of cycles that ran from the
-    window start, dated before this cycle; reports that do not read, by name."""
-    # named by the cycle's UTC date, stamped later → the day before the start may hold an in-window cycle
-    first_day = (
-        window.start.astimezone(timezone.utc).date() - timedelta(days=1)
-    ).isoformat()
-    closes: list[tuple[int, int]] = []
-    unreadable: list[str] = []
-    for path in sorted(source.dir.reports.glob("autoagent-*.json")):
-        day = path.name[len("autoagent-") : -len(".json")]
-        if not (_is_iso_date(day) and first_day <= day < source.cycle_date):
-            continue
-        try:
-            report = json.loads(path.read_text(encoding="utf-8"))
-            closes.extend(_get_aa_report_closes(report, window.start))
-        except (OSError, ValueError, KeyError, TypeError) as exc:
-            unreadable.append(f"{path.name}: {type(exc).__name__}")
-    return closes, unreadable
-
-
-def _get_aa_report_closes(
-    report: dict, window_start: datetime
-) -> list[tuple[int, int]]:
-    """The report's spool closes; none when its cycle ran before the window start.
-
-    Raises when it does not read.
+    The close rows plus this cycle's ingest, each spool once; a close without its counts fails it
+    by name, and a schema without the count columns fails it with a named WARN.
     """
-    generated_at = _as_utc(report["generated_at"])
-    if generated_at is None:
-        raise ValueError("generated_at is not a timestamp")
-    if generated_at < window_start:
-        return []
-    ingest = report["manifest_ingest"]
-    closed = [] if ingest is None else ingest["closed"]
-    return [(int(close["lines_read"]), int(close["rows_present"])) for close in closed]
+    if closes is None:
+        _warn_aa(
+            "sink: core.autoagent_loop_events has no lines_read / lines_without_row "
+            f"(apply migration {AA.SPOOL_CLOSE_COUNTS_MIGRATION})",
+            "the sink criterion fails",
+        )
+        return AaCriterion(AA.VERDICT.FAIL, {"count_columns_absent": True})
+    counts = dict(closes)
+    if manifest_ingest is not None:  # this cycle's own rows are among closes → keyed once by spool
+        counts.update(
+            (close.spool, (close.lines_read, _get_lines_without_row(close)))
+            for close in manifest_ingest.closed
+        )
+    uncounted = sorted(
+        spool for spool, (read, lost) in counts.items() if read is None or lost is None
+    )
+    lost = sum(lost for read, lost in counts.values() if read is not None and lost is not None)
+    return AaCriterion(
+        AA.VERDICT.PASS if lost == 0 and not uncounted else AA.VERDICT.FAIL,
+        {"spools": len(counts), "lines_lost": lost, "uncounted_closes": uncounted},
+    )
 
 
 def get_aa_engine_criterion(
@@ -12274,10 +12274,11 @@ def _close_manifest_spool(
     bind_manifest_deliveries(spool.name, unstored, binding)
     spool.unlink()
     close = ManifestSpoolClose(spool=spool.name, lines_read=lines_read, rows_present=rows_present)
-    if rows_present < lines_read:
+    lines_without_row = _get_lines_without_row(close)
+    if lines_without_row:
         sys.stderr.write(
             f"[daemon-cycle] WARN: manifest spool {spool.name} closed with "
-            f"{lines_read - rows_present} line(s) without a row (unparseable)\n"
+            f"{lines_without_row} line(s) without a row (unparseable)\n"
         )
     _invoke_pg_helper(
         {
@@ -12291,10 +12292,16 @@ def _close_manifest_spool(
                 "changes_removed": 0,
                 "rice": None,
                 "subject": spool.name,
+                "lines_read": lines_read,
+                "lines_without_row": lines_without_row,
             },
         }
     )
     return close
+
+
+def _get_lines_without_row(close: ManifestSpoolClose) -> int:
+    return max(0, close.lines_read - close.rows_present)
 
 
 def _get_unstored_deliveries(spool: str, rows: list[ManifestRow]) -> list[ManifestRow]:

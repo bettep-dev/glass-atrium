@@ -722,7 +722,7 @@ class TestManifestDeliveryBinding(_IngestCase):
 
 
 class TestManifestCloseRecord(_IngestCase):
-    def test_a_closed_spool_reports_lines_read_against_rows_present_and_no_rule_line_change(
+    def test_a_closed_spool_records_lines_read_and_lines_without_a_row_and_no_rule_line_change(
         self,
     ) -> None:
         self._append(self.live_log, _get_line() + "not a manifest line\n" + _get_line("b77"))
@@ -740,8 +740,10 @@ class TestManifestCloseRecord(_IngestCase):
                 event["subject"],
                 event["changes_added"],
                 event["changes_removed"],
+                event["lines_read"],
+                event["lines_without_row"],
             ),
-            ("manifest-spool-closed", spool.name, 0, 0),
+            ("manifest-spool-closed", spool.name, 0, 0, 3, 1),
         )
         self.assertIn("1 line(s) without a row", self.stderr)
 
