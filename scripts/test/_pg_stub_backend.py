@@ -32,11 +32,13 @@ stay live-Postgres verification steps, not acceptance criteria.
 
 from __future__ import annotations
 
+import functools
 import importlib.util
 import os
 import re
 import sqlite3
 import sys
+import tempfile
 from contextlib import closing, contextmanager
 from pathlib import Path
 from types import ModuleType, SimpleNamespace
@@ -461,3 +463,17 @@ def load_helper(db_path: Path):
                 sys.modules.pop(name, None)
             else:
                 sys.modules[name] = previous
+
+
+@functools.cache
+def get_trial_ledger() -> SimpleNamespace:
+    """The helper's declared trial-ledger names, so a psycopg-free leg has them.
+
+    Loaded once per process on a throwaway sqlite file; the names are vocabulary,
+    so the file is discarded the moment they are read.
+    """
+    with (
+        tempfile.TemporaryDirectory() as scratch,
+        load_helper(Path(scratch) / "stub.sqlite") as helper,
+    ):
+        return helper.TRIAL_LEDGER

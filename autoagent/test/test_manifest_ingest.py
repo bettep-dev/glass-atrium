@@ -37,10 +37,17 @@ _HOOKS_DIR = _REPO_ROOT / "hooks"
 _SCRIPTS_DIR = _REPO_ROOT / "scripts"
 _HOOK_SH = _HOOKS_DIR / "inject-scope-rules.sh"
 
-for _anchor in (_HOOKS_DIR, _AUTOAGENT_DIR, _SCRIPTS_DIR, Path(__file__).resolve().parent):
+for _anchor in (
+    _HOOKS_DIR,
+    _AUTOAGENT_DIR,
+    _SCRIPTS_DIR,
+    _SCRIPTS_DIR / "test",
+    Path(__file__).resolve().parent,
+):
     if str(_anchor) not in sys.path:
         sys.path.insert(0, str(_anchor))
 
+import _pg_stub_backend as stub  # noqa: E402 — anchors above
 from _pg_seal import get_ephemeral_connection, seal_pg_reach  # noqa: E402 — anchors above
 
 try:
@@ -645,6 +652,12 @@ class TestManifestIngestCycleWiring(unittest.TestCase):
             patcher = mock.patch.object(dc, name, value)
             patcher.start()
             self.addCleanup(patcher.stop)
+        # Armed loop flag → shadow stage reads TRIAL_LEDGER, unbound when psycopg is absent.
+        ledger = mock.patch.object(
+            dc, "TRIAL_LEDGER", stub.get_trial_ledger(), create=not hasattr(dc, "TRIAL_LEDGER")
+        )
+        ledger.start()
+        self.addCleanup(ledger.stop)
         return calls
 
     def test_a_no_write_cycle_neither_renames_nor_ingests(self) -> None:

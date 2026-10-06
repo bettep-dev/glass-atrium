@@ -78,16 +78,6 @@ _DURATION = {
 }
 
 
-@functools.cache
-def _get_trial_ledger() -> SimpleNamespace:
-    """The helper's declared ledger names, loaded on the stub backend so a psycopg-free leg has them."""
-    with (
-        tempfile.TemporaryDirectory() as scratch,
-        stub.load_helper(Path(scratch) / "stub.sqlite") as helper,
-    ):
-        return helper.TRIAL_LEDGER
-
-
 class _LedgerRow(NamedTuple):
     id: int
     trial_key: str | None
@@ -268,7 +258,7 @@ class _AaFixture(unittest.TestCase):
         ):
             self._patch(name, value)
         self._patch(
-            "TRIAL_LEDGER", _get_trial_ledger(), create=not hasattr(dc, "TRIAL_LEDGER")
+            "TRIAL_LEDGER", stub.get_trial_ledger(), create=not hasattr(dc, "TRIAL_LEDGER")
         )
 
     def _patch(self, name: str, value: object, *, create: bool = False) -> None:
@@ -306,8 +296,8 @@ class _AaFixture(unittest.TestCase):
     def _open(self, duration: dict = _DURATION) -> None:
         """An open A/A started on the current scoped fingerprint."""
         self.ledger.write(
-            _get_trial_ledger().EVENT.AA_START,
-            _get_trial_ledger().ACTOR.AA,
+            stub.get_trial_ledger().EVENT.AA_START,
+            stub.get_trial_ledger().ACTOR.AA,
             {
                 "fingerprint": dict(_SCOPED),
                 "started_at": self.ledger.clock.isoformat(),
@@ -337,10 +327,10 @@ class _AaFixture(unittest.TestCase):
         return stderr.getvalue()
 
     def _get_restarts(self) -> list[_LedgerRow]:
-        return self.ledger.get_rows(_get_trial_ledger().EVENT.AA_RESTART)
+        return self.ledger.get_rows(stub.get_trial_ledger().EVENT.AA_RESTART)
 
     def _get_starts(self) -> list[_LedgerRow]:
-        return self.ledger.get_rows(_get_trial_ledger().EVENT.AA_START)
+        return self.ledger.get_rows(stub.get_trial_ledger().EVENT.AA_START)
 
 
 class AaStartTest(_AaFixture):
@@ -371,8 +361,8 @@ class AaStartTest(_AaFixture):
     ) -> None:
         self._open()
         self.ledger.write(
-            _get_trial_ledger().EVENT.AA_RESULT,
-            _get_trial_ledger().ACTOR.AA,
+            stub.get_trial_ledger().EVENT.AA_RESULT,
+            stub.get_trial_ledger().ACTOR.AA,
             {"overall": "pass"},
             dedupe_key="aa-result:1",
         )
@@ -600,8 +590,8 @@ class NoOpenAaTest(_AaFixture):
         def _close() -> None:
             self._open()
             self.ledger.write(
-                _get_trial_ledger().EVENT.AA_RESULT,
-                _get_trial_ledger().ACTOR.AA,
+                stub.get_trial_ledger().EVENT.AA_RESULT,
+                stub.get_trial_ledger().ACTOR.AA,
                 {"overall": "pass"},
                 dedupe_key="aa-result:1",
             )
@@ -830,7 +820,7 @@ class _AaResultFixture(_AaFixture):
         path.write_text(json.dumps(report), encoding="utf-8")
 
     def _move_window_start(self, start: datetime) -> None:
-        event = _get_trial_ledger().EVENT.AA_START
+        event = stub.get_trial_ledger().EVENT.AA_START
         self.ledger.rows = [
             row._replace(recorded_at=start) if row.event == event else row
             for row in self.ledger.rows
@@ -845,7 +835,7 @@ class _AaResultFixture(_AaFixture):
         )
 
     def _get_results(self) -> list[_LedgerRow]:
-        return self.ledger.get_rows(_get_trial_ledger().EVENT.AA_RESULT)
+        return self.ledger.get_rows(stub.get_trial_ledger().EVENT.AA_RESULT)
 
     def _get_verdicts(self) -> dict[str, str]:
         (result,) = self._get_results()
@@ -855,7 +845,7 @@ class _AaResultFixture(_AaFixture):
         }
 
     def _get_design_effect_rows(self) -> list[_LedgerRow]:
-        return self.ledger.get_rows(_get_trial_ledger().EVENT.AA_SESSION_DESIGN_EFFECT)
+        return self.ledger.get_rows(stub.get_trial_ledger().EVENT.AA_SESSION_DESIGN_EFFECT)
 
 
 class AaResultTest(_AaResultFixture):
@@ -953,8 +943,8 @@ class AaResultTest(_AaResultFixture):
     def test_a_restart_restarts_the_window_the_duration_runs_from(self) -> None:
         self.ledger.clock = _START + timedelta(days=10)
         self.ledger.write(
-            _get_trial_ledger().EVENT.AA_RESTART,
-            _get_trial_ledger().ACTOR.AA,
+            stub.get_trial_ledger().EVENT.AA_RESTART,
+            stub.get_trial_ledger().ACTOR.AA,
             {"start_id": 1, "reason": "fingerprint-changed", "fingerprint": _SCOPED},
             dedupe_key="aa-restart:1:2026-10-02",
         )
@@ -1096,8 +1086,8 @@ class AaArmsResultTest(_AaResultFixture):
         self._open(_SMALL_DURATION)
         self.ledger.clock = _START
         self.ledger.write(
-            _get_trial_ledger().EVENT.AA_RESTART,
-            _get_trial_ledger().ACTOR.AA,
+            stub.get_trial_ledger().EVENT.AA_RESTART,
+            stub.get_trial_ledger().ACTOR.AA,
             {"start_id": 1, "reason": "fingerprint-changed", "fingerprint": _SCOPED},
             dedupe_key="aa-restart:1:2026-09-22",
         )
@@ -1494,8 +1484,8 @@ class AaCanaryTest(_AaResultFixture):
     ) -> None:
         def _close() -> None:
             self.ledger.write(
-                _get_trial_ledger().EVENT.AA_RESULT,
-                _get_trial_ledger().ACTOR.AA,
+                stub.get_trial_ledger().EVENT.AA_RESULT,
+                stub.get_trial_ledger().ACTOR.AA,
                 {"overall": "pass"},
                 dedupe_key=f"aa-result:{self._get_starts()[0].id}",
             )
@@ -1535,8 +1525,8 @@ class AaCanaryTest(_AaResultFixture):
                     self._move_window_start(_NOW - timedelta(days=1))
                     if not is_open:
                         self.ledger.write(
-                            _get_trial_ledger().EVENT.AA_RESULT,
-                            _get_trial_ledger().ACTOR.AA,
+                            stub.get_trial_ledger().EVENT.AA_RESULT,
+                            stub.get_trial_ledger().ACTOR.AA,
                             {"overall": "pass"},
                             dedupe_key=f"aa-result:{self._get_starts()[0].id}",
                         )
@@ -2143,7 +2133,7 @@ class AaOpenReadLivePgTest(_AaLivePgFixture):
             return conn.execute(
                 "INSERT INTO core.autoagent_trial_ledger (event, actor, payload, dedupe_key)"
                 " VALUES (%s, %s, %s::jsonb, %s) RETURNING id",
-                (event, _get_trial_ledger().ACTOR.AA, json.dumps(payload), dedupe_key),
+                (event, stub.get_trial_ledger().ACTOR.AA, json.dumps(payload), dedupe_key),
             ).fetchone()[0]
 
     def _insert_start(self, fingerprint: dict, previous: int) -> int:

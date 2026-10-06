@@ -16,7 +16,6 @@ Run with either runner:
 from __future__ import annotations
 
 import contextlib
-import functools
 import io
 import itertools
 import json
@@ -123,16 +122,6 @@ def _build_design_effect_payload(
 ) -> dict:
     """An A/A design-effect row payload, in the writer's declared shape."""
     return trial_design.DesignEffect(anova=anova, size_weighted=size_weighted)._asdict()
-
-
-@functools.cache
-def _get_trial_ledger() -> SimpleNamespace:
-    """The helper's declared ledger names, loaded on the stub backend so a psycopg-free leg has them."""
-    with (
-        tempfile.TemporaryDirectory() as scratch,
-        stub.load_helper(Path(scratch) / "stub.sqlite") as helper,
-    ):
-        return helper.TRIAL_LEDGER
 
 
 def _floor(verdict: str = "pass", baseline: WindowCount = _BASELINE) -> FloorResult:
@@ -323,7 +312,7 @@ class _LedgerConnection:
             raise AssertionError(f"statement outside the ledger fake: {statement[:80]}")
         event, agents = params
         self.reads.append(list(agents))
-        is_design_effect = event == _get_trial_ledger().EVENT.AA_SESSION_DESIGN_EFFECT
+        is_design_effect = event == stub.get_trial_ledger().EVENT.AA_SESSION_DESIGN_EFFECT
         self.rows = [
             (agent, self.latest_payloads[agent])
             for agent in agents
@@ -371,7 +360,7 @@ class _StageFixture(unittest.TestCase):
         patcher = mock.patch.object(
             dc,
             "TRIAL_LEDGER",
-            _get_trial_ledger(),
+            stub.get_trial_ledger(),
             create=not hasattr(dc, "TRIAL_LEDGER"),
         )
         patcher.start()

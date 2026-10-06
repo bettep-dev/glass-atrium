@@ -141,16 +141,6 @@ class _LedgerRow(NamedTuple):
     dedupe_key: str | None
 
 
-@functools.cache
-def _get_trial_ledger() -> SimpleNamespace:
-    """The helper's declared ledger names, loaded on the stub backend so a psycopg-free leg has them."""
-    with (
-        tempfile.TemporaryDirectory() as scratch,
-        stub.load_helper(Path(scratch) / "stub.sqlite") as helper,
-    ):
-        return helper.TRIAL_LEDGER
-
-
 class _Ledger:
     """core.autoagent_trial_ledger as the writer and the stage's reads see it: append-only,
     a taken dedupe_key adds no row (ON CONFLICT DO NOTHING), payload stored as JSON."""
@@ -287,7 +277,7 @@ class _ShadowFixture(unittest.TestCase):
         ):
             self._patch(name, value)
         self._patch(
-            "TRIAL_LEDGER", _get_trial_ledger(), create=not hasattr(dc, "TRIAL_LEDGER")
+            "TRIAL_LEDGER", stub.get_trial_ledger(), create=not hasattr(dc, "TRIAL_LEDGER")
         )
 
     def _patch(self, name: str, value: object, *, create: bool = False) -> None:
@@ -312,10 +302,10 @@ class _ShadowFixture(unittest.TestCase):
         return stderr.getvalue()
 
     def _get_preregistrations(self) -> list[_LedgerRow]:
-        return self.ledger.get_rows(_get_trial_ledger().EVENT.SHADOW_PREREGISTRATION)
+        return self.ledger.get_rows(stub.get_trial_ledger().EVENT.SHADOW_PREREGISTRATION)
 
     def _get_looks(self) -> list[_LedgerRow]:
-        return self.ledger.get_rows(_get_trial_ledger().EVENT.SHADOW_LOOK)
+        return self.ledger.get_rows(stub.get_trial_ledger().EVENT.SHADOW_LOOK)
 
 
 class PreRegistrationTest(_ShadowFixture):
@@ -334,7 +324,7 @@ class PreRegistrationTest(_ShadowFixture):
         self.assertEqual([look["milestone"] for look in payload["looks"]], _MILESTONES)
         self.assertEqual(
             (row.agent, row.learning_pattern_id, row.actor, row.dedupe_key),
-            (_AGENT, _PATTERN_ID, _get_trial_ledger().ACTOR.SHADOW, row.trial_key),
+            (_AGENT, _PATTERN_ID, stub.get_trial_ledger().ACTOR.SHADOW, row.trial_key),
         )
         self.assertRegex(row.trial_key, re.compile(r"^[0-9a-f]{64}$"))
 
@@ -344,7 +334,7 @@ class PreRegistrationTest(_ShadowFixture):
         self._cycle(_NOW)
         self._cycle(_NEXT_NOW)
         self.assertEqual(len(self._get_preregistrations()), 1)
-        counters = self.ledger.get_rows(_get_trial_ledger().EVENT.POWER_PASS_COUNT)
+        counters = self.ledger.get_rows(stub.get_trial_ledger().EVENT.POWER_PASS_COUNT)
         self.assertEqual([row.payload["passing"] for row in counters], [1, 1])
 
     def test_a_lifecycle_move_after_the_preregistration_starts_a_new_trial_on_the_current_pair(
@@ -463,7 +453,7 @@ class DuplicateTest(_ShadowFixture):
         self._cycle(_NEXT_NOW)
         self.assertEqual(self.ledger.rows, written)
         events = {row.event for row in written}
-        trial_ledger = _get_trial_ledger()
+        trial_ledger = stub.get_trial_ledger()
         self.assertEqual(
             events,
             {
@@ -478,7 +468,7 @@ class PowerPassCounterTest(_ShadowFixture):
     """The counter reuses the intake verdicts: one row per cycle date."""
 
     def _get_counters(self) -> list[_LedgerRow]:
-        return self.ledger.get_rows(_get_trial_ledger().EVENT.POWER_PASS_COUNT)
+        return self.ledger.get_rows(stub.get_trial_ledger().EVENT.POWER_PASS_COUNT)
 
     def test_the_counter_records_the_cycles_verdict_counts_once_per_cycle_date(
         self,
@@ -602,7 +592,7 @@ class PreRegistrationReadLivePgTest(_ShadowFixture):
                     agent,
                     pattern_id,
                     event,
-                    _get_trial_ledger().ACTOR.SHADOW,
+                    stub.get_trial_ledger().ACTOR.SHADOW,
                     json.dumps({"metric_key": _BUDGET_KEY}),
                     key,
                 ),
@@ -620,7 +610,7 @@ class PreRegistrationReadLivePgTest(_ShadowFixture):
     ) -> None:
         power = self._check_power()
         self._use_database(self._TEMPLATE.FULL)
-        event = _get_trial_ledger().EVENT
+        event = stub.get_trial_ledger().EVENT
         latest_at = _NOW - timedelta(days=1)
         latest = self._insert(latest_at, event.SHADOW_PREREGISTRATION)
         # older yet inserted later · another pattern · an agent outside the passes · a later look
@@ -857,7 +847,7 @@ class CycleWiringTest(_ShadowFixture):
             ],
             [],
         )
-        trial_ledger = _get_trial_ledger()
+        trial_ledger = stub.get_trial_ledger()
         self.assertEqual(
             sorted(row.event for row in self.ledger.rows),
             sorted(
