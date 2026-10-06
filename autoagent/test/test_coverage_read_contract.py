@@ -25,7 +25,7 @@ import io
 import re
 import sys
 import unittest
-from datetime import date
+from datetime import date, datetime, timezone
 from pathlib import Path
 from types import ModuleType, SimpleNamespace
 from unittest import mock
@@ -192,11 +192,13 @@ class CoverageReadContractTest(unittest.TestCase):
         self.assertNotEqual(conn.statements[0], pgdw._PENDING_PATTERNS_SELECT_SQL)
 
 
-def _pending_row(row_id: int, agent: str, metric_key: str | None) -> tuple:
+def _pending_row(
+    row_id: int, agent: str, metric_key: str | None, last_transition_at: datetime | None = None
+) -> tuple:
     """One intake row in _PENDING_PATTERNS_SELECT_SQL column order."""
     return (
         row_id, date(2026, 10, 1), f"budget-overage concentration|{agent}", 12, agent,
-        "identified", "user-pending", metric_key,
+        "identified", "user-pending", metric_key, last_transition_at,
     )
 
 
@@ -226,6 +228,22 @@ class PendingReadMetricKeyTest(unittest.TestCase):
         intake_selects = [sql for sql in conn.statements if "FROM core.learning_log" in sql]
         self.assertEqual(len(intake_selects), 1)
         self.assertNotIn("metric_key", intake_selects[0])
+
+
+class PendingReadTransitionAnchorTest(unittest.TestCase):
+    """The intake read carries each row's last_transition_at, the anchor shadow trials are kept against."""
+
+    def test_each_row_carries_its_last_transition_at_or_none(self) -> None:
+        moved_at = datetime(2026, 9, 1, 12, 0, tzinfo=timezone.utc)
+        rows = [
+            _pending_row(1, "glass-atrium-dev-shell", "budget_overage", moved_at),
+            _pending_row(2, "glass-atrium-dev-react", "budget_overage"),
+        ]
+        result, _, _ = _read(rows, reader_name="read_pending_learning_patterns")
+        self.assertEqual(
+            [(r["id"], r.get("last_transition_at", "absent")) for r in result],
+            [(1, moved_at), (2, None)],
+        )
 
 
 @unittest.skipIf(dc is None, "daemon_cycle import failed: %s" % (_DC_IMPORT_ERROR,))
