@@ -101,6 +101,8 @@ _AA = SimpleNamespace(
     BEFORE_WINDOW="2026-10-04T17:00:00Z",
 )
 _ROSTER = ("glass-atrium-dev-python", "glass-atrium-dev-shell", "glass-atrium-dev-node")
+# The ledger event of a delivery bound to no trial (_pg_dual_write_daemon.TRIAL_LEDGER).
+_UNBOUND = "canary-unbound-delivery"
 _NO_TRIAL_RE = re.compile(r"WARN: manifest binding — (\S+) canary delivered with no open trial")
 _PLACEHOLDER_RE = re.compile(r"%\((\w+)\)s")
 
@@ -158,6 +160,10 @@ class _TrialLedger:
         self.event_by_id: dict[int, str] = {}
         self.fault: dict[str, Exception | None] = {"read": None, "salt": None}
         self.rows: list[tuple[str, dict[str, object], str]] = []
+        self.write_outcome: int | Exception = 1  # 0 = key taken or ledger absent
+
+    def get_events(self) -> list[str]:
+        return [row[0] for row in self.rows]
 
     def read_latest(self) -> object:
         if (fault := self.fault["read"]) is not None:
@@ -170,8 +176,10 @@ class _TrialLedger:
         return [(row_id,) for row_id in ids if self.event_by_id.get(row_id) in events]
 
     def write(self, event: str, _actor: str, payload: dict[str, object], **kwargs: object) -> int:
+        if isinstance(self.write_outcome, Exception):
+            raise self.write_outcome
         self.rows.append((event, payload, str(kwargs["dedupe_key"])))
-        return 1
+        return self.write_outcome
 
 
 class _Database:
@@ -513,7 +521,7 @@ class TestManifestDeliveryBinding(_IngestCase):
 
         self.assertEqual(self._get_no_trial_agents(), [_ROSTER[2]])
         self.assertEqual(self._get_canaries(), sorted(_ROSTER[:2]))
-        self.assertEqual(self.ledger.rows, [])
+        self.assertEqual(self.ledger.get_events(), [_UNBOUND])
 
     def test_a_foreign_hash_row_outside_the_open_a_a_s_binding_never_voids_it(self) -> None:
         self._open_aa()
@@ -535,7 +543,9 @@ class TestManifestDeliveryBinding(_IngestCase):
                 )
                 self._ingest(_CYCLE_1 + timedelta(hours=hour))
 
-                self.assertEqual(self.ledger.rows, [], f"{name}: the open A/A was voided")
+                self.assertEqual(
+                    self.ledger.get_events(), [_UNBOUND], f"{name}: the open A/A was voided"
+                )
                 self.assertEqual(self._get_no_trial_agents(), [agent], name)
                 self.assertEqual(self._get_canaries(), sorted(set(_ROSTER) - {agent}), name)
 
@@ -629,7 +639,56 @@ class TestManifestDeliveryBinding(_IngestCase):
 
         self.assertEqual(self._get_no_trial_agents(), list(_ROSTER[1:]))
         self.assertEqual(self._get_canaries(), [_ROSTER[0]])
-        self.assertEqual(self.ledger.rows, [])
+        self.assertEqual(self.ledger.get_events(), [_UNBOUND, _UNBOUND])
+
+    def test_each_no_trial_delivery_writes_one_ledger_row_keyed_by_its_spool_line(self) -> None:
+        self._append(self.live_log, _get_delivery_line(_ROSTER[0], salt="3"))
+        self._ingest(_CYCLE_1)
+        (spool,) = self._get_spools()
+        racing = _get_delivery_line(_ROSTER[1], salt="none", text_sha256=_PLAIN_SHA256)
+        self._append(spool, racing)
+        self._ingest(_CYCLE_2)  # the final re-read: line 0 again, line 1 new
+
+        self.assertEqual(
+            self.ledger.rows,
+            [
+                (
+                    _UNBOUND,
+                    {
+                        "agent": agent,
+                        "spool": spool.name,
+                        "line_offset": offset,
+                        "salt_id": salt_id,
+                        "delivered_hash": text_sha256,
+                    },
+                    f"{_UNBOUND}:{spool.name}:{offset}",
+                )
+                for offset, (agent, salt_id, text_sha256) in enumerate(
+                    ((_ROSTER[0], 3, _AA.SHA256), (_ROSTER[1], None, _PLAIN_SHA256))
+                )
+            ],
+        )
+
+    def test_an_unbound_delivery_row_the_ledger_does_not_take_never_fails_the_ingest(
+        self,
+    ) -> None:
+        # name, the ledger write's outcome, whether the daemon names the row not written
+        rows = (
+            ("ledger absent or key taken", 0, False),  # the writer WARNs the absent table
+            ("ledger write fault", ConnectionError("server closed the connection"), True),
+        )
+        for hour, (name, outcome, is_named) in enumerate(rows):
+            with self.subTest(name):
+                self.ledger.write_outcome = outcome
+                self._put_canaries()
+                self._append(self.live_log, _get_delivery_line(_ROSTER[0], salt="3"))
+                ingest = self._ingest(_CYCLE_1 + timedelta(hours=hour))
+
+                self.assertEqual(ingest.status, "ok", name)
+                self.assertEqual(self._get_no_trial_agents(), [_ROSTER[0]], name)
+                self.assertEqual(self._get_canaries(), sorted(_ROSTER[1:]), name)
+                named = re.search(rf"WARN: A/A harness — {_UNBOUND}:\S+:0 not written", self.stderr)
+                self.assertEqual(named is not None, is_named, f"{name}: {self.stderr}")
 
     def test_an_unreadable_ledger_binds_no_row_and_warns_by_name(self) -> None:
         rows = (

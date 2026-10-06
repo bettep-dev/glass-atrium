@@ -12370,11 +12370,26 @@ def _bind_outside_window(spool: str, rows: list[ManifestRow]) -> None:
     for row in rows:
         if row[8] in aa_salt_ids and row[10] == aa_sha256:
             continue
+        _write_unbound_delivery(spool, row)
         sys.stderr.write(
             f"[daemon-cycle] WARN: manifest binding — {row[2]} canary delivered with no open "
             f"trial ({spool} line {row[0]}, salt_id={row[8]}, delivered_hash={row[10]})\n"
         )
         _delete_canaries([_get_canary_path(row[2])], "delivered with no open trial")
+
+
+def _write_unbound_delivery(spool: str, row: ManifestRow) -> None:
+    """The ledger row the doctor reads for a delivery bound to no trial; keyed by its spool line,
+    so a re-read adds none."""
+    event = TRIAL_LEDGER.EVENT.CANARY_UNBOUND_DELIVERY
+    payload = {
+        "agent": row[2],
+        "spool": spool,
+        "line_offset": row[0],
+        "salt_id": row[8],
+        "delivered_hash": row[10],
+    }
+    _write_aa_row(event, payload, f"{event}:{spool}:{row[0]}", agent=row[2])
 
 
 def _warn_unbound(spool: str, count: int, cause: str) -> None:
