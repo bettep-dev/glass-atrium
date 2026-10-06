@@ -747,6 +747,25 @@ def _get_expected_python_effects() -> tuple[object, object]:
     return overage, emit
 
 
+def _get_report_stamp(moment: datetime) -> str:
+    return moment.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.000Z")
+
+
+def _get_report(generated_at: datetime, *, lines_read: int, rows_present: int) -> dict:
+    """A cycle report as the cycle writes it: its start stamp and one closed MANIFEST spool."""
+    closed = [
+        {
+            "spool": "manifest.log.spool",
+            "lines_read": lines_read,
+            "rows_present": rows_present,
+        }
+    ]
+    return {
+        "generated_at": _get_report_stamp(generated_at),
+        "manifest_ingest": {"status": "ok", "closed": closed, "rotated_to": None},
+    }
+
+
 def _arms(control: tuple[int, int], treatment: tuple[int, int]) -> object:
     return dc.TrialArms(dc.ArmCount(*control), dc.ArmCount(*treatment))
 
@@ -795,20 +814,23 @@ class _AaResultFixture(_AaFixture):
         self.ledger.outcomes.append(_Outcome("orchestrator", recorded, None, None))
 
     def _write_report(
-        self, day: datetime, *, lines_read: int, rows_present: int
+        self, generated_at: datetime, *, lines_read: int, rows_present: int
     ) -> None:
-        closed = [
-            {
-                "spool": "manifest.log.spool",
-                "lines_read": lines_read,
-                "rows_present": rows_present,
-            }
-        ]
-        report = {
-            "manifest_ingest": {"status": "ok", "closed": closed, "rotated_to": None}
-        }
-        path = self.reports_dir / f"autoagent-{day.date().isoformat()}.json"
+        report = _get_report(
+            generated_at, lines_read=lines_read, rows_present=rows_present
+        )
+        self._put_report(generated_at.date().isoformat(), report)
+
+    def _put_report(self, day: str, report: dict) -> None:
+        path = self.reports_dir / f"autoagent-{day}.json"
         path.write_text(json.dumps(report), encoding="utf-8")
+
+    def _move_window_start(self, start: datetime) -> None:
+        event = _get_trial_ledger().EVENT.AA_START
+        self.ledger.rows = [
+            row._replace(recorded_at=start) if row.event == event else row
+            for row in self.ledger.rows
+        ]
 
     def _evaluate(self, cycle_date: str = _CYCLE_DATE, ingest: object = None) -> str:
         return self._cycle(
@@ -1007,12 +1029,63 @@ class AaResultFailTest(_AaResultFixture):
                 )
                 self.assertEqual(self._get_results()[0].payload["overall"], "fail")
 
-    def test_a_report_dated_before_the_window_is_not_read(self) -> None:
-        self._write_report(_START - timedelta(days=1), lines_read=10, rows_present=0)
 
-        self._evaluate()
+class AaReportWindowTest(_AaResultFixture):
+    def test_the_sink_reads_a_report_exactly_when_its_cycle_ran_from_the_window_start(
+        self,
+    ) -> None:
+        late_start = datetime(2026, 9, 22, 18, 0, tzinfo=timezone.utc)
+        midnight_start = datetime(2026, 9, 22, 0, 0, 30, tzinfo=timezone.utc)
+        rows = (
+            (
+                "a report from the day before the window is not read",
+                _START,
+                "2026-09-21",
+                _get_report(_START - timedelta(days=1), lines_read=10, rows_present=0),
+                ("pass", 0),
+            ),
+            (
+                "an old-format report the start day's cycle wrote before the start is not read",
+                _START,
+                "2026-09-22",
+                {"generated_at": _get_report_stamp(_START - timedelta(hours=3))},
+                ("pass", 0),
+            ),
+            (
+                "a report written after a start late in the UTC day is read whatever offset the start carries",
+                late_start.astimezone(timezone(timedelta(hours=9))),
+                "2026-09-22",
+                _get_report(
+                    late_start + timedelta(hours=2), lines_read=10, rows_present=9
+                ),
+                ("fail", 1),
+            ),
+            (
+                "a report named the day before whose cycle stamped past midnight into the window is read",
+                midnight_start,
+                "2026-09-21",
+                _get_report(
+                    midnight_start + timedelta(seconds=30),
+                    lines_read=10,
+                    rows_present=9,
+                ),
+                ("fail", 1),
+            ),
+        )
+        for name, start, day, report, (verdict, lost) in rows:
+            with self.subTest(name):
+                self.setUp()
+                self._move_window_start(start)
+                self._put_report(day, report)
 
-        self.assertEqual(self._get_verdicts()["sink"], "pass")
+                self._evaluate()
+
+                (result,) = self._get_results()
+                sink = result.payload["criteria"]["sink"]
+                self.assertEqual(
+                    (sink["verdict"], sink["lines_lost"], sink["unreadable_reports"]),
+                    (verdict, lost, []),
+                )
 
 
 class AaOutageTest(_AaResultFixture):

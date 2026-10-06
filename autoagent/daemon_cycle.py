@@ -9731,9 +9731,12 @@ def _get_aa_sink_criterion(window: AaWindow, source: AaSource) -> AaCriterion:
 def _read_aa_report_closes(
     window: AaWindow, source: AaSource
 ) -> tuple[list[tuple[int, int]], list[str]]:
-    """(lines read, rows present) per spool close in the reports dated from the window start to
-    before this cycle; reports that do not read, by name."""
-    first_day = window.start.date().isoformat()
+    """(lines read, rows present) per spool close in the reports of cycles that ran from the
+    window start, dated before this cycle; reports that do not read, by name."""
+    # named by the cycle's UTC date, stamped later → the day before the start may hold an in-window cycle
+    first_day = (
+        window.start.astimezone(timezone.utc).date() - timedelta(days=1)
+    ).isoformat()
     closes: list[tuple[int, int]] = []
     unreadable: list[str] = []
     for path in sorted(source.reports_dir.glob("autoagent-*.json")):
@@ -9741,15 +9744,28 @@ def _read_aa_report_closes(
         if not (_is_iso_date(day) and first_day <= day < source.cycle_date):
             continue
         try:
-            ingest = json.loads(path.read_text(encoding="utf-8"))["manifest_ingest"]
-            closed = [] if ingest is None else ingest["closed"]
-            closes.extend(
-                (int(close["lines_read"]), int(close["rows_present"]))
-                for close in closed
-            )
+            report = json.loads(path.read_text(encoding="utf-8"))
+            closes.extend(_get_aa_report_closes(report, window.start))
         except (OSError, ValueError, KeyError, TypeError) as exc:
             unreadable.append(f"{path.name}: {type(exc).__name__}")
     return closes, unreadable
+
+
+def _get_aa_report_closes(
+    report: dict, window_start: datetime
+) -> list[tuple[int, int]]:
+    """The report's spool closes; none when its cycle ran before the window start.
+
+    Raises when it does not read.
+    """
+    generated_at = _as_utc(report["generated_at"])
+    if generated_at is None:
+        raise ValueError("generated_at is not a timestamp")
+    if generated_at < window_start:
+        return []
+    ingest = report["manifest_ingest"]
+    closed = [] if ingest is None else ingest["closed"]
+    return [(int(close["lines_read"]), int(close["rows_present"])) for close in closed]
 
 
 def get_aa_engine_criterion(
