@@ -2647,10 +2647,8 @@ _TRANSIENT_TIMEOUT_BACKOFF_SEC = float(
 )
 
 
-# Strict re-prompt suffix for retry-on-parse-failure. Appended to the original
-# prompt on retry; the rest of the prompt (PATTERN / OUTCOMES / CURRENT AGENT
-# FILE) is identical to preserve idempotency. Header format is the canonical
-# contract that `_parse_haiku_response` strict regex expects.
+# Parse-failure retry suffix, appended to the unchanged base prompt
+# Header tokens = the `_parse_haiku_response` strict-regex contract
 _HAIKU_STRICT_RETRY_SUFFIX = """
 
 CRITICAL — STRICT FORMAT REQUIRED (retry attempt):
@@ -8811,9 +8809,7 @@ def _get_pattern_power_verdict(
     if key in inputs.unchecked_keys:
         return POWER.VERDICT.UNCHECKED, "A/A design effect unusable", None
     design_effect = inputs.design_effects.get(key)
-    check = get_power_check(
-        floor, spawns, inputs.provenance_start, windows, design_effect=design_effect
-    )
+    check = get_power_check(floor, inputs, key, windows)
     power_pass = None
     required = check.units.required
     if check.verdict == POWER.VERDICT.PASSING and design_effect is not None and required is not None:
@@ -8822,34 +8818,30 @@ def _get_pattern_power_verdict(
 
 
 def get_power_check(
-    floor: FloorResult,
-    spawns: Iterable[SpawnFacts],
-    provenance_start: datetime | None,
-    windows: PairWindows,
-    *,
-    design_effect: float | None,
+    floor: FloorResult, inputs: PowerInputs, key: tuple[str, str], windows: PairWindows
 ) -> PowerCheck:
-    """Power check of one floor-passing pattern.
+    """Power check of one floor-passing pattern, key = its (agent, metric key) in inputs.
 
     Projected units = the agent's spawns per day over the 28 days before D × the 84-day
     horizon; NULL-agent_id spawns count nowhere. Bound = 2 × the trial_design per-arm
-    maximum at the floor-half baseline rate × design_effect, the agent's measured A/A
-    design effect. In order: fewer than 28 provenance-covered days → insufficient-history;
-    design_effect None → design-unmeasured; a rate with no finite size → underpowered.
+    maximum at the floor-half baseline rate × the key's measured A/A design effect.
+    In order: fewer than 28 provenance-covered days → insufficient-history; no design
+    effect at the key → design-unmeasured; a rate with no finite size → underpowered.
     """
     history_start = windows.end - BASELINE.MIN_COVERED
     units = sum(
         1
-        for spawn in spawns
+        for spawn in inputs.spawns.get(key[0], [])
         if spawn.agent_id is not None and history_start <= spawn.started_at < windows.end
     )
+    design_effect = inputs.design_effects.get(key)
     projected = trial_design.get_projected_units(units / BASELINE.MIN_COVERED.days)
     maximum = _get_maximum_sample_size(floor.baseline.events, floor.baseline.spawns)
     if maximum is None or design_effect is None:
         required = None
     else:
         required = trial_design.get_required_units(maximum, design_effect=design_effect)
-    if provenance_start is None or provenance_start > history_start:
+    if inputs.provenance_start is None or inputs.provenance_start > history_start:
         verdict = POWER.VERDICT.INSUFFICIENT_HISTORY
     elif design_effect is None:
         verdict = POWER.VERDICT.DESIGN_UNMEASURED
@@ -9043,17 +9035,25 @@ class TrialIdentity(NamedTuple):
     pattern: Pattern
 
 
-def run_shadow_stage(power: PowerResult, cycle_date: str) -> None:
-    """Shadow engine: count the cycle's power verdicts, pre-register each passing pattern's
-    trial and record every look milestone its tasks reach; decides nothing.
+class Look(NamedTuple):
+    number: int  # 1-based, in pre-registration order
+    registration: Mapping[str, float]  # the pre-registered fraction, milestone and boundary
 
-    One power-pass-count row per cycle date; one pre-registration per trial key; one row
-    per reached look. A trial is kept while its pre-registration was recorded at or after
-    the row's last_transition_at (a NULL anchor keeps it); otherwise the current pair
-    starts a new one. Tasks accrue from the pre-registration's recorded_at, so a trial
-    pre-registered this cycle has none. No production arm source exists yet, so look
-    rows carry accrual only. A ledger fault WARNs by name and never fails the cycle; the
-    caller skips the stage in no-write mode (--dry-run).
+
+class LookAccrual(NamedTuple):
+    tasks: int
+    arms: TrialArms | None = None
+
+
+def run_shadow_stage(power: PowerResult, cycle_date: str) -> None:
+    """Shadow engine: count power verdicts, pre-register passing trials, record reached looks; decides nothing.
+
+    - rows: one power-pass-count per cycle date · one pre-registration per trial key · one per reached look
+    - trial kept: pre-registration recorded at or after the row's last_transition_at (a NULL anchor keeps it);
+      otherwise the current pair starts a new one
+    - accrual: tasks from the pre-registration's recorded_at → none in its pre-registration cycle
+    - arms: no production arm source yet → look rows carry accrual only
+    - ledger fault: named WARN, never a failed cycle · --dry-run: the caller skips the stage
     """
     if not HAS_PG_LOOP_WRITE:
         _warn_shadow("trial ledger unwritable: PG helper import failed", "no shadow row this cycle")
@@ -9120,20 +9120,18 @@ def get_preregistration_payload(power_pass: PowerPass, detection_start: datetime
     }
 
 
-def get_look_payload(
-    number: int, look: Mapping[str, float], accrued: int, arms: TrialArms | None = None
-) -> dict:
+def get_look_payload(look: Look, accrual: LookAccrual) -> dict:
     """One reached look: accrual beside its boundary; with arm data, the pooled z too — never a decision."""
     payload: dict = {
-        "look": number,
-        "fraction": look["fraction"],
-        "milestone": look["milestone"],
-        "boundary": look["boundary"],
-        "accrued_tasks": accrued,
+        "look": look.number,
+        "fraction": look.registration["fraction"],
+        "milestone": look.registration["milestone"],
+        "boundary": look.registration["boundary"],
+        "accrued_tasks": accrual.tasks,
     }
-    if arms is not None:
-        payload["arms"] = {name: arm._asdict() for name, arm in arms._asdict().items()}
-        payload["z"] = _get_pooled_z(arms)
+    if accrual.arms is not None:
+        payload["arms"] = {name: arm._asdict() for name, arm in accrual.arms._asdict().items()}
+        payload["z"] = _get_pooled_z(accrual.arms)
     return payload
 
 
@@ -9197,13 +9195,13 @@ def _write_shadow_preregistration(power_pass: PowerPass, detection_start: dateti
 
 def _write_shadow_looks(trial: ShadowTrial, power_pass: PowerPass, window_end: datetime) -> None:
     accrued = _get_accrued_task_count(trial, power_pass, window_end)
-    for number, look in enumerate(trial.payload["looks"], start=1):
-        if accrued < look["milestone"]:
+    for number, registration in enumerate(trial.payload["looks"], start=1):
+        if accrued < registration["milestone"]:
             return
         _write_shadow_row(
             ShadowRow(
                 TRIAL_LEDGER.EVENT.SHADOW_LOOK,
-                get_look_payload(number, look, accrued),
+                get_look_payload(Look(number, registration), LookAccrual(accrued)),
                 dedupe_key=f"{trial.key}:look:{number}",
             ),
             TrialIdentity(trial.key, power_pass.pattern),
@@ -10254,16 +10252,21 @@ def _read_recomputed_break_evens(agents: list[str], now: datetime) -> dict[str, 
     if not agents:
         return {}
     windows = get_pair_windows(now)
-    provenance_start, spawns = _pg_read_spawn_facts(agents, windows)
+    inputs = PowerInputs(
+        *_pg_read_spawn_facts(agents, windows),
+        dict.fromkeys(((agent, INSTRUMENT.METRIC_KEY) for agent in agents), 1.0),
+        frozenset(),
+    )
     break_evens: dict[str, float] = {}
     for agent in agents:
-        agent_spawns = spawns.get(agent, [])
         floor = get_floor_verdict(
-            agent_spawns, INSTRUMENT.METRIC_KEY, windows, provenance_start, windows.end
+            inputs.spawns.get(agent, []),
+            INSTRUMENT.METRIC_KEY,
+            windows,
+            inputs.provenance_start,
+            windows.end,
         )
-        check = get_power_check(
-            floor, agent_spawns, provenance_start, windows, design_effect=1.0
-        )
+        check = get_power_check(floor, inputs, (agent, INSTRUMENT.METRIC_KEY), windows)
         required = check.units.required
         if check.verdict != POWER.VERDICT.INSUFFICIENT_HISTORY and required is not None:
             break_evens[agent] = check.units.projected / required
@@ -12378,11 +12381,6 @@ def _pg_import_degradation_lines() -> list[str]:
 
 
 # -- MANIFEST ingest and rotation (core.spawn_manifest) ----------------------
-#
-# The hook appends one MANIFEST line per spawn with O_APPEND and takes no lock, so
-# a truncate after a read would lose any line appended between them. The cycle
-# renames the live log instead: a rename keeps the inode, so a racing append
-# lands in the spool, and the next cycle's re-read stores it before the unlink.
 
 MANIFEST = SimpleNamespace(
     LOG_NAME="inject-scope-rules.manifest.log",
@@ -12467,6 +12465,8 @@ def ingest_manifest_log(
     rename happens only under this lock — is re-read in one transaction and unlinked
     once that commit lands; with none left pending, the live log is renamed to a new
     contract-named spool and ingested, staying for the next cycle's re-read.
+    Rename, never truncate: the hook appends with O_APPEND and no lock, and a rename keeps
+    the inode, so a racing append lands in the spool for that re-read.
     (spool, line_offset) is the only position, so a crash at any step re-reads without
     a duplicate row. PG unreachable, a table-absent schema, an insert failure or a
     held lock → named WARN, every spool kept and the live log not renamed; the hook's

@@ -130,6 +130,15 @@ def _floor(verdict: str = "pass", baseline: WindowCount = _BASELINE) -> FloorRes
     return FloorResult(verdict, window, window, baseline, 0, 0)
 
 
+def _get_power_inputs(
+    spawns: list[SpawnFacts], provenance_start: datetime | None, design_effect: float | None
+) -> dc.PowerInputs:
+    """The passing agent's budget_overage inputs; design_effect None → no A/A row at the key."""
+    key = (_AGENT.PASSING, _KEY.BUDGET)
+    design_effects = {} if design_effect is None else {key: design_effect}
+    return dc.PowerInputs(provenance_start, {_AGENT.PASSING: spawns}, design_effects, frozenset())
+
+
 def _get_floor_passing_history(units: int) -> list[SpawnFacts]:
     """A history whose budget_overage pair passes at baseline rate 0.1, with `units` spawns
     in the last 28 days: floor-half baseline before that window, six event sessions in
@@ -261,10 +270,9 @@ class GetPowerCheckTest(unittest.TestCase):
             with self.subTest(name):
                 check = dc.get_power_check(
                     floor,
-                    spawns,
-                    provenance_start,
+                    _get_power_inputs(spawns, provenance_start, design_effect),
+                    (_AGENT.PASSING, _KEY.BUDGET),
                     _WINDOWS,
-                    design_effect=design_effect,
                 )
                 self.assertEqual(check.verdict, verdict)
 
@@ -273,10 +281,11 @@ class GetPowerCheckTest(unittest.TestCase):
     ) -> None:
         check = dc.get_power_check(
             _floor(),
-            _get_units(_UNITS.AT_BOUND),
-            _DAY - timedelta(days=60),
+            _get_power_inputs(
+                _get_units(_UNITS.AT_BOUND), _DAY - timedelta(days=60), _DESIGN_EFFECT
+            ),
+            (_AGENT.PASSING, _KEY.BUDGET),
             _WINDOWS,
-            design_effect=_DESIGN_EFFECT,
         )
         self.assertAlmostEqual(check.units.projected, _UNITS.AT_BOUND / 28 * 84)
         self.assertEqual(check.units.required, _REQUIRED_UNITS)

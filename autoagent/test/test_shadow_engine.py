@@ -430,7 +430,9 @@ class LookTest(_ShadowFixture):
                     "milestone": fraction * _REQUIRED,
                     "boundary": boundary,
                 }
-                payload = dc.get_look_payload(number, look, 200, arms)
+                payload = dc.get_look_payload(
+                    dc.Look(number, look), dc.LookAccrual(200, arms)
+                )
                 self.assertAlmostEqual(payload["z"], 3.5355339, places=6)
                 self.assertEqual(payload["boundary"], boundary)
                 self.assertEqual(set(payload), _LOOK_KEYS | {"arms", "z"})
@@ -441,7 +443,8 @@ class LookTest(_ShadowFixture):
             treatment=dc.ArmCount(events=0, units=50),
         )
         look = {"fraction": 0.25, "milestone": 25.0, "boundary": 4.0}
-        self.assertIsNone(dc.get_look_payload(1, look, 100, arms)["z"])
+        payload = dc.get_look_payload(dc.Look(1, look), dc.LookAccrual(100, arms))
+        self.assertIsNone(payload["z"])
 
 
 class DuplicateTest(_ShadowFixture):
