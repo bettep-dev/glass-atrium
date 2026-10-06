@@ -78,6 +78,18 @@ class TestTrialLedgerClosedSets(unittest.TestCase):
                     ledger.ACTOR.AA,
                     [1.4, 2.1],
                 ),
+                (
+                    "aa-start payload missing the duration rule",
+                    ledger.EVENT.AA_START,
+                    ledger.ACTOR.AA,
+                    {"fingerprint": {}, "started_at": "2026-10-07T00:00:00+00:00"},
+                ),
+                (
+                    "aa-restart payload missing the reason",
+                    ledger.EVENT.AA_RESTART,
+                    ledger.ACTOR.AA,
+                    {"start_id": 7, "fingerprint": None},
+                ),
             )
             for name, event, actor, payload in rows:
                 with (
@@ -86,32 +98,6 @@ class TestTrialLedgerClosedSets(unittest.TestCase):
                 ):
                     with self.assertRaises(helper.TrialLedgerValueUndeclared):
                         helper.write_trial_ledger_row(event, actor, payload)
-                    connect.assert_not_called()
-
-    def test_an_aa_lifecycle_row_without_its_declared_payload_keys_is_refused(
-        self,
-    ) -> None:
-        with _load_helper() as helper:
-            ledger = helper.TRIAL_LEDGER
-            rows = (
-                (
-                    "aa-start payload missing the duration rule",
-                    "aa-start",
-                    {"fingerprint": {}, "started_at": "2026-10-07T00:00:00+00:00"},
-                ),
-                (
-                    "aa-restart payload missing the reason",
-                    ledger.EVENT.AA_RESTART,
-                    {"start_id": 7, "fingerprint": None},
-                ),
-            )
-            for name, event, payload in rows:
-                with (
-                    self.subTest(name),
-                    mock.patch.object(helper, "_connect") as connect,
-                ):
-                    with self.assertRaises(helper.TrialLedgerValueUndeclared):
-                        helper.write_trial_ledger_row(event, ledger.ACTOR.AA, payload)
                     connect.assert_not_called()
 
     def test_the_aa_lifecycle_rows_pass_the_closed_sets_and_reach_the_connection(
