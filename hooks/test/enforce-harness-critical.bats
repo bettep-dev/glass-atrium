@@ -41,6 +41,8 @@ setup() {
   command -v python3 >/dev/null 2>&1 || skip "python3 required"
   command -v jq >/dev/null 2>&1 || skip "jq required"
   source "${BATS_TEST_DIRNAME}/lib/no-python3.bash"
+  # The canary directory derives from the data root: unset, it sits under FAKE_HOME.
+  unset GA_DATA_ROOT
 
   FAKE_HOME="${BATS_TEST_TMPDIR}/home"
   mkdir -p "${FAKE_HOME}/.claude/hooks" "${FAKE_HOME}/.claude/agents" \
@@ -438,6 +440,97 @@ MD
   [[ "${status}" -eq 0 ]] || return 1
 }
 
+# ── Canary directory: the per-agent trial text on the write floor ───────────
+#
+# inject-scope-rules.sh delivers ${HOOK_DATA_DIR}/learning/canary/<agent>.json at spawn. The floor
+# derives the same directory from the data-root seam, so GA_DATA_ROOT moves it.
+
+# Args: $1=GA_DATA_ROOT, then tool_name and tool_input as run_hook.
+run_hook_relocated() {
+  local root="${1}" envelope
+  envelope="$(jq -cn --arg t "${2}" --argjson ti "${3}" '{tool_name: $t, tool_input: $ti}')"
+  run env "HOME=${FAKE_HOME}" "GA_DATA_ROOT=${root}" "${HOOK_SH}" <<<"${envelope}"
+}
+
+@test "Write and Edit into the canary directory block for the main session and a subagent" {
+  local file="${FAKE_HOME}/.glass-atrium/data/learning/canary/glass-atrium-dev-front.json" tool agent tin
+  mkdir -p "${file%/*}"
+  printf '{"text":""}' >"${file}"
+  for tool in Write Edit; do
+    for agent in "" "a1"; do
+      if [[ "${tool}" == "Write" ]]; then
+        tin="$(write_input "${file}" '{"text":"x"}')"
+      else
+        tin="$(edit_input "${file}" '""' '"x"')"
+      fi
+      run_hook "${tool}" "${tin}" "${agent}"
+      [[ "${status}" -eq 2 && "${output}" == *"HAR-001"* && "${output}" == *"canary-dir"* ]] || {
+        echo "row ${tool} caller=${agent:-main}: status ${status}: ${output}"
+        return 1
+      }
+    done
+  done
+}
+
+@test "default data root: the canary path blocks in its file form, its directory form and on the Write arm" {
+  local dir="${FAKE_HOME}/.glass-atrium/data/learning/canary" row label tool tin
+  local rows=(
+    "file-form|Bash|$(bash_input 'cp /tmp/x ~/.glass-atrium/data/learning/canary/a.json')"
+    "directory-form|Bash|$(bash_input 'cd ~/.glass-atrium/data/learning/canary && cp /tmp/x a.json')"
+    "write-arm|Write|$(write_input "${dir}/a.json" 'x')"
+  )
+  for row in "${rows[@]}"; do
+    label="${row%%|*}"
+    row="${row#*|}"
+    tool="${row%%|*}"
+    tin="${row#*|}"
+    run_hook "${tool}" "${tin}"
+    [[ "${status}" -eq 2 ]] || { echo "row ${label}: status ${status}: ${output}"; return 1; }
+  done
+}
+
+@test "relocated GA_DATA_ROOT: the relocated canary directory blocks on both arms" {
+  local root="${BATS_TEST_TMPDIR}/relocated/ga-data" file
+  file="${root}/data/learning/canary/glass-atrium-dev-front.json"
+  run_hook_relocated "${root}" "Write" "$(write_input "${file}" 'x')"
+  [[ "${status}" -eq 2 && "${output}" == *"canary-dir"* ]] || { echo "write: status ${status}: ${output}"; return 1; }
+  run_hook_relocated "${root}" "Bash" "$(bash_input "cp /tmp/x ${file}")"
+  [[ "${status}" -eq 2 && "${output}" == *"HAR-002"* ]] || { echo "cp: status ${status}: ${output}"; return 1; }
+  run_hook_relocated "${root}" "Bash" "$(bash_input "cd ${root}/data/learning/canary && printf x > a.json")"
+  [[ "${status}" -eq 2 ]] || { echo "cwd-relative: status ${status}: ${output}"; return 1; }
+  # No root literal here: only the canary name, case-folded, carries the envelope past the prefilter.
+  run_hook_relocated "${root}" "Bash" "$(bash_input "cp /tmp/x ${root}/data/learning/CANARY/a.json")"
+  [[ "${status}" -eq 2 ]] || { echo "case-varied: status ${status}: ${output}"; return 1; }
+}
+
+@test "the canary file the injector delivers is the file the floor blocks" {
+  local root="${BATS_TEST_TMPDIR}/parity-root" agent="glass-atrium-dev-front" manifest delivered
+  manifest="${BATS_TEST_TMPDIR}/manifest.log"
+  mkdir -p "${root}/data/learning/canary"
+  python3 - "${root}/data/learning/canary/${agent}.json" <<'PY'
+import hashlib, json, sys, time
+text = "CANARY_PARITY_TEXT"
+with open(sys.argv[1], "w", encoding="utf-8") as fh:
+    json.dump({"salt": 7, "text_sha256": hashlib.sha256(text.encode("utf-8")).hexdigest(),
+               "expires_at": int(time.time()) + 3600, "text": text}, fh)
+PY
+  run bash -c 'jq -nc --arg a "$1" "{agent_type:\$a, agent_id:\"a1\"}" | env "HOME=$2" "GA_DATA_ROOT=$3" \
+      SUBAGENT_BUDGET_METER_OFF=1 INJECT_SCOPE_RULES_AGENTS_DIR=/nonexistent \
+      INJECT_SCOPE_RULES_BUDGET_SRC=/nonexistent INJECT_SCOPE_RULES_WIKI_UNTRUSTED_SRC=/nonexistent \
+      "INJECT_SCOPE_RULES_MANIFEST_LOG=$4" "INJECT_SCOPE_RULES_DROP_LOG=$5/drop.log" \
+      "INJECT_SCOPE_RULES_SPAWN_COUNTER=$5/spawns.count" bash "$6"' \
+    _ "${agent}" "${FAKE_HOME}" "${root}" "${manifest}" "${BATS_TEST_TMPDIR}" \
+    "${BATS_TEST_DIRNAME}/../inject-scope-rules.sh"
+  [[ "${status}" -eq 0 ]] || { echo "injector: status ${status}: ${output}"; return 1; }
+  delivered="$(tail -n 1 "${manifest}" | grep -oE 'canary:[^;]+' | sed 's/^canary://')"
+  [[ -n "${delivered}" ]] || { echo "no canary delivered: $(cat "${manifest}")"; return 1; }
+  run_hook_relocated "${root}" "Write" "$(write_input "${delivered}" 'x')"
+  [[ "${status}" -eq 2 && "${output}" == *"canary-dir"* ]] || {
+    echo "floor on ${delivered}: status ${status}: ${output}"
+    return 1
+  }
+}
+
 # ── AC2-3: launch-env approval grant ─────────────────────────────────────────
 
 @test "HARNESS_PROTECTION_APPROVE=1 launch env passes an otherwise-blocked write" {
@@ -559,11 +652,11 @@ MD
   [[ "${output}" == *"HAR-001"* ]] || return 1
 }
 
-# ── Hot-path prefilter: no protected-root literal → exit 0, zero python3 spawns ──
+# ── Hot-path prefilter: no protected literal → exit 0, zero python3 spawns ──
 
 @test "prefilter: non-protected envelope → pass without invoking python3" {
   # A recording python3 stub shadows the real one; the hook must exit 0 via the
-  # pure-bash prefilter (envelope carries neither ".claude" nor ".glass-atrium"),
+  # pure-bash prefilter (envelope carries no ".claude" / ".glass-atrium" / canary-name literal),
   # so the stub marker must stay absent.
   local stubdir="${BATS_TEST_TMPDIR}/stubbin" marker="${BATS_TEST_TMPDIR}/python3-called"
   mkdir -p "${stubdir}"
@@ -1544,6 +1637,7 @@ MD
     'BC8b legacy claude plist label::echo x | tee ~/Library/LaunchAgents/com.CLAUDE.monitor.plist' \
     'BC10 cwd arming, GA hooks dir::cd ~/.glass-atrium/Hooks && printf x > y.sh' \
     'BC10b cwd arming, legacy agents dir::cd ~/.claude/Agents && echo x | tee y.md' \
+    'BC11 canary dir::echo x | tee ~/.glass-atrium/Data/Learning/Canary/a.json' \
     'BC3 protected ROOT literal (prefilter layer)::echo x | tee ~/.Claude/hooks/x.sh'; do
     id="${row%%::*}"
     cmd="${row#*::}"
@@ -1563,7 +1657,8 @@ MD
     "K4 NEW agent file .MD::${FAKE_HOME}/.glass-atrium/agents/victim.MD" \
     "K6 live settings::${FAKE_HOME}/.claude/Settings.json" \
     "K7 live hooks dir::${FAKE_HOME}/.glass-atrium/Hooks/somehook.sh" \
-    "K8 scheduled-exec dir::${FAKE_HOME}/.glass-atrium/AutoAgent/daemon-apply.sh"; do
+    "K8 scheduled-exec dir::${FAKE_HOME}/.glass-atrium/AutoAgent/daemon-apply.sh" \
+    "K9 canary dir::${FAKE_HOME}/.glass-atrium/data/learning/Canary/a.json"; do
     id="${row%%::*}"
     path="${row#*::}"
     run_hook "Write" "$(write_input "${path}" 'echo pwn')"
