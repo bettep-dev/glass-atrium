@@ -2654,6 +2654,18 @@ class AaOpenReadLivePgTest(_AaLivePgFixture):
         self._insert_restart(start, {"a": "2"}, "2026-10-08")
         self.assertFalse(dc._read_aa_extension(dc._read_latest_aa_start()))
 
+    def test_the_verdict_days_read_finds_only_the_start_keyed_verdict_row(self) -> None:
+        self._use_database(self._TEMPLATE.FULL)
+        start = self._insert_start({"a": "1"}, 0)
+        self.assertIsNone(dc._read_aa_verdict_days(start))
+        extension = {"verdict": "extend", "window_days": 14}
+        key = f"aa-instrument-verdict:{start}:extend:{start}"
+        self._insert("aa-instrument-verdict", extension, key)
+        self.assertIsNone(dc._read_aa_verdict_days(start))
+        verdict = {"verdict": "r1-holds", "window_days": 28}
+        self._insert("aa-instrument-verdict", verdict, f"aa-instrument-verdict:{start}")
+        self.assertEqual(dc._read_aa_verdict_days(start), 28)
+
     def test_an_empty_ledger_reads_no_start(self) -> None:
         self._use_database(self._TEMPLATE.FULL)
         self.assertIsNone(dc._read_latest_aa_start())
