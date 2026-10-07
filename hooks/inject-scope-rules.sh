@@ -702,9 +702,9 @@ set_canary_block() {
 }
 
 # Treatment-arm delivery of canary JSON $1 at now $2: IS_CANARY_DELIVERABLE=1 only when the file is
-# current, well-formed and in lease, sha256 of its exact text bytes (`jq -j .text` piped straight into
-# the digest tool, so a trailing newline counts, as in the daemon's Python hashlib) equals the stored
-# hash, and the text fits CANARY_MAX_BYTES. No digest tool → no match. Otherwise no block.
+# current, well-formed and in lease, sha256 of its exact text bytes (a trailing newline counts, as in
+# the daemon's Python hashlib) equals the stored hash, and the text fits CANARY_MAX_BYTES. No digest
+# tool → no match. Otherwise no block.
 # The text is the rendered block, delivered verbatim: no hook-side wrapper, so an empty text adds zero
 # bytes and pre-registration sizes exactly what is delivered.
 set_canary_delivery() {
@@ -712,13 +712,14 @@ set_canary_delivery() {
   # shellcheck disable=SC2310  # pure predicate — nothing inside it for errexit to catch
   is_canary_file_current "${CANARY_FILE}" "${now}" || return 0
   stored="$(get_canary_stored_hash "${raw}" "${now}")"
-  # shellcheck disable=SC2310  # get_stdin_digest never fails; the guard catches a jq failure under pipefail
-  computed="$(printf '%s' "${raw}" | jq -j '.text' 2>/dev/null | get_stdin_digest || true)"
-  [[ -n "${stored}" && "${computed}" == "${stored}" ]] || return 0
+  [[ -n "${stored}" ]] || return 0
   # The appended dot survives the capture, so a text ending in a newline keeps it; no dot → jq failed.
+  # A stored hash implies a NUL-free text, so the captured variable holds every text byte.
   text="$({ printf '%s' "${raw}" | jq -j '.text' 2>/dev/null && printf '.'; } || true)"
   [[ "${text}" == *. ]] || return 0
   text="${text%.}"
+  computed="$(printf '%s' "${text}" | get_stdin_digest)"
+  [[ "${computed}" == "${stored}" ]] || return 0
   text_bytes="$(byte_len "${text}")"
   [[ "${text_bytes}" -le "${CANARY_MAX_BYTES}" ]] || return 0
   CANARY_BLOCK="${text}"
