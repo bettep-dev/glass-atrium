@@ -101,11 +101,16 @@ def _driver_on_sys_modules():
 
     Scoped, not permanent, and that scoping is load-bearing: sibling modules in the
     same discovery run key their own skip on psycopg being genuinely absent, so a stub
-    left behind would silently un-skip them. ``_pg_outcome_dualwrite`` is restored for
-    the same reason — a neighbouring test file imports it directly, so leaving it cached
-    would decide that file's skip for it.
+    left behind would silently un-skip them. ``_pg_outcome_dualwrite`` and
+    ``_pg_learning_dualwrite`` are restored for the same reason — neighbouring test files
+    import them directly, and a cached copy carries the stub as its ``psycopg`` binding.
     """
-    names = ("psycopg", "psycopg.errors", "_pg_outcome_dualwrite")
+    names = (
+        "psycopg",
+        "psycopg.errors",
+        "_pg_outcome_dualwrite",
+        "_pg_learning_dualwrite",
+    )
     saved = {name: sys.modules.get(name) for name in names}
     sys.modules["psycopg"] = _PSYCOPG
     sys.modules["psycopg.errors"] = _PSYCOPG.errors
@@ -196,6 +201,27 @@ def _stub_failing_psycopg(recorder: _Recorder):
         raise _PSYCOPG.OperationalError("simulated connection failure")
 
     return SimpleNamespace(connect=_connect, OperationalError=_PSYCOPG.OperationalError)
+
+
+@unittest.skipIf(
+    hasattr(_PSYCOPG, "__file__"), "real driver installed — only the stub can leak"
+)
+class TestStubDriverImportHermeticity(unittest.TestCase):
+    """Importing this file leaves no sys.modules entry bound to the stub driver."""
+
+    def test_when_file_imported_then_no_cached_module_binds_the_stub(self) -> None:
+        leaked = sorted(
+            name
+            for name, module in list(sys.modules.items())
+            if module is _PSYCOPG
+            or (
+                isinstance(module, ModuleType)
+                and vars(module).get("psycopg") is _PSYCOPG
+            )
+        )
+        self.assertEqual(
+            leaked, [], "a later suite would import these with the stub bound"
+        )
 
 
 class TestDischargeHelperSurface(unittest.TestCase):
