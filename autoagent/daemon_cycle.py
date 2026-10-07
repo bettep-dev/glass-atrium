@@ -12429,10 +12429,22 @@ MANIFEST_SPOOL_CLOSED_EVAL_RESULT = "manifest-spool-closed"
 # Optional, not `str | None`: an install's CLT python3 3.9 cannot evaluate the union.
 # arm, salt id, delivered, delivered hash — all None on a line predating the fields.
 ManifestExposure = tuple[Optional[int], Optional[int], Optional[bool], Optional[str]]  # noqa: UP045
-ManifestRow = tuple[
-    int, Optional[str], str, Optional[str], datetime, int, str,  # noqa: UP045
-    Optional[int], Optional[int], Optional[bool], Optional[str],  # noqa: UP045
-]
+
+
+class ManifestRow(NamedTuple):
+    """One MANIFEST line in core.spawn_manifest column order, the spool column excluded."""
+
+    line_offset: int
+    agent_id: str | None
+    agent_type: str
+    session_id: str | None
+    started_at: datetime
+    ctx_bytes: int
+    blocks: str
+    arm: int | None
+    salt_id: int | None
+    delivered: bool | None
+    delivered_hash: str | None
 
 
 @dataclass
@@ -12643,11 +12655,11 @@ def _get_lines_without_row(close: ManifestSpoolClose) -> int:
 def _get_unstored_deliveries(spool: str, rows: list[ManifestRow]) -> list[ManifestRow]:
     """Delivered rows the database does not hold yet — a re-read binds only these. Raises on a
     PG fault, so the spool is kept."""
-    delivered = [row for row in rows if row[9]]
+    delivered = [row for row in rows if row.delivered]
     if not delivered:
         return []
     stored = _read_stored_manifest_offsets(spool)
-    return [row for row in delivered if row[0] not in stored]
+    return [row for row in delivered if row.line_offset not in stored]
 
 
 def bind_manifest_deliveries(
@@ -12663,7 +12675,7 @@ def bind_manifest_deliveries(
     - The open state or the salt rows unreadable → no row bound, a named WARN with the count;
       those rows are never bound later.
     """
-    delivered = [row for row in rows if row[9]]
+    delivered = [row for row in rows if row.delivered]
     if not delivered:
         return
     _read_binding_state(binding)
@@ -12691,19 +12703,19 @@ def _read_binding_state(binding: DeliveryBinding) -> None:
 def _bind_to_open_aa(row: ManifestRow, binding: DeliveryBinding) -> bool:
     """True = the row binds to the open A/A; the first foreign hash voids it."""
     latest = binding.latest
-    if latest is None or row[2] not in binding.roster:
+    if latest is None or row.agent_type not in binding.roster:
         return False
     # started_at is whole seconds → floored start keeps a first-second delivery in the window
-    if row[4] < latest.window_start.replace(microsecond=0):
+    if row.started_at < latest.window_start.replace(microsecond=0):
         return False
-    if row[10] != _get_text_sha256(CANARY.AA_TEXT) and not binding.is_voided:
+    if row.delivered_hash != _get_text_sha256(CANARY.AA_TEXT) and not binding.is_voided:
         binding.is_voided = True
-        _void_aa(latest, row[2], row[10])
+        _void_aa(latest, row.agent_type, row.delivered_hash)
     return True
 
 
 def _bind_outside_window(spool: str, rows: list[ManifestRow]) -> None:
-    salt_ids = frozenset(row[8] for row in rows if row[8] is not None)
+    salt_ids = frozenset(row.salt_id for row in rows if row.salt_id is not None)
     try:
         aa_salt_ids = _read_aa_salt_ids(salt_ids) if salt_ids else frozenset()
     except Exception as exc:  # noqa: BLE001 — any read fault leaves the rows unbound, named
@@ -12711,14 +12723,15 @@ def _bind_outside_window(spool: str, rows: list[ManifestRow]) -> None:
         return
     aa_sha256 = _get_text_sha256(CANARY.AA_TEXT)
     for row in rows:
-        if row[8] in aa_salt_ids and row[10] == aa_sha256:
+        if row.salt_id in aa_salt_ids and row.delivered_hash == aa_sha256:
             continue
         _write_unbound_delivery(spool, row)
         sys.stderr.write(
-            f"[daemon-cycle] WARN: manifest binding — {row[2]} canary delivered with no open "
-            f"trial ({spool} line {row[0]}, salt_id={row[8]}, delivered_hash={row[10]})\n"
+            f"[daemon-cycle] WARN: manifest binding — {row.agent_type} canary delivered with no "
+            f"open trial ({spool} line {row.line_offset}, salt_id={row.salt_id}, "
+            f"delivered_hash={row.delivered_hash})\n"
         )
-        _delete_canaries([_get_canary_path(row[2])], "delivered with no open trial")
+        _delete_canaries([_get_canary_path(row.agent_type)], "delivered with no open trial")
 
 
 def _write_unbound_delivery(spool: str, row: ManifestRow) -> None:
@@ -12726,13 +12739,13 @@ def _write_unbound_delivery(spool: str, row: ManifestRow) -> None:
     so a re-read adds none."""
     event = TRIAL_LEDGER.EVENT.CANARY_UNBOUND_DELIVERY
     payload = {
-        "agent": row[2],
+        "agent": row.agent_type,
         "spool": spool,
-        "line_offset": row[0],
-        "salt_id": row[8],
-        "delivered_hash": row[10],
+        "line_offset": row.line_offset,
+        "salt_id": row.salt_id,
+        "delivered_hash": row.delivered_hash,
     }
-    _write_aa_row(event, payload, f"{event}:{spool}:{row[0]}", agent=row[2])
+    _write_aa_row(event, payload, f"{event}:{spool}:{row.line_offset}", agent=row.agent_type)
 
 
 def _warn_unbound(spool: str, count: int, cause: str) -> None:
@@ -12775,7 +12788,7 @@ def _get_manifest_row(offset: int, line: str) -> ManifestRow | None:
     exposure = _get_manifest_exposure(match)
     if not _is_manifest_row_insertable(ctx_bytes, agent_type, exposure[1]):
         return None
-    return (
+    return ManifestRow(
         offset,
         _get_manifest_id(match["agent_id"]),
         agent_type,
