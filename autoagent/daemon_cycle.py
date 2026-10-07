@@ -2364,14 +2364,15 @@ Rules for the DIFF block (it is applied with `git apply`, which reads these line
 """
 
 
-# Consolidated per-AGENT prompt — takes all of an agent's prior-day failure
+# Consolidated per-AGENT prompt — takes all of an agent's pair-passing
 # signals and authors one multi-hunk unified diff. All hunks share a single
 # current-file snapshot, so one `git apply` applies them atomically (no intra-run
 # cascade). Output format identical to the single-pattern _PROMPT_TEMPLATE.
 _CONSOLIDATED_PROMPT_TEMPLATE = """You are an instruction-tuning assistant for AutoAgent.
 
-Multiple learning signals for ONE agent have been observed over the previous
-calendar day and queued for review. Author ONE consolidated patch.
+Multiple learning signals for ONE agent have each passed a detection window and
+the confirmation window that follows it, and are queued for review. Author ONE
+consolidated patch.
 
 TARGET AGENT: {pattern_agent}
 
