@@ -8909,15 +8909,14 @@ def _read_power_history(
 ) -> tuple[datetime | None, dict[str, list[SpawnFacts]]] | None:
     """Provenance start + each agent's spawns over the pair windows; None (WARN) when unusable."""
     if _TRIAL_DESIGN_IMPORT_EXC is not None:
-        exc = _TRIAL_DESIGN_IMPORT_EXC
-        cause = f"trial_design import failed: {type(exc).__name__}: {str(exc)[:160]}"
+        cause = f"trial_design import failed: {_describe_fault(_TRIAL_DESIGN_IMPORT_EXC)}"
     elif not HAS_PG_PATTERN_READ:
         cause = "PG pattern reads unavailable (helper import failed)"
     else:
         try:
             return _pg_read_spawn_facts(agents, windows)
         except Exception as exc:  # noqa: BLE001 — any read failure is an outage → fail closed
-            cause = f"spawn history unreadable: {type(exc).__name__}: {str(exc)[:160]}"
+            cause = f"spawn history unreadable: {_describe_fault(exc)}"
     _warn_power_unchecked(cause, "every keyed intake pattern")
     return None
 
@@ -8939,9 +8938,7 @@ def _read_power_design_effects(
                 cur.execute(POWER.DESIGN_EFFECT_SQL, (event, agents))
                 rows = cur.fetchall()
         except Exception as exc:  # noqa: BLE001 — any read fault is an outage → fail closed
-            cause = (
-                f"A/A design effect unreadable: {type(exc).__name__}: {str(exc)[:160]}"
-            )
+            cause = f"A/A design effect unreadable: {_describe_fault(exc)}"
         else:
             return _get_design_effects(rows)
     _warn_power_unchecked(cause, "every floor-passing keyed intake pattern")
@@ -8962,7 +8959,7 @@ def _get_design_effects(
             invalid_keys.add((agent, metric_key))
             _warn_power_unchecked(
                 f"agent={agent} key={metric_key}: stored A/A design effect invalid: "
-                f"{type(exc).__name__}: {str(exc)[:160]}",
+                f"{_describe_fault(exc)}",
                 "every floor-passing intake pattern of the agent on that key",
             )
     return design_effects, frozenset(invalid_keys)
@@ -9116,8 +9113,7 @@ def _write_shadow_pass(
         _write_shadow_looks(trial, power_pass, windows.end)
     except (KeyError, TypeError, ValueError) as exc:
         _warn_shadow(
-            f"trial {trial.key}: stored pre-registration unusable: "
-            f"{type(exc).__name__}: {str(exc)[:160]}",
+            f"trial {trial.key}: stored pre-registration unusable: {_describe_fault(exc)}",
             "no look recorded for it this cycle",
         )
 
@@ -9192,7 +9188,7 @@ def _read_shadow_trials(
             rows = cur.fetchall()
     except Exception as exc:  # noqa: BLE001 — a ledger read fault never fails the cycle
         _warn_shadow(
-            f"pre-registrations unreadable: {type(exc).__name__}: {str(exc)[:160]}",
+            f"pre-registrations unreadable: {_describe_fault(exc)}",
             "no pre-registration or look this cycle",
         )
         return None
@@ -9264,7 +9260,7 @@ def _write_shadow_row(row: ShadowRow, trial: TrialIdentity | None = None) -> int
         )
     except Exception as exc:  # noqa: BLE001 — a ledger write fault never fails the cycle
         _warn_shadow(
-            f"{row.event} {row.dedupe_key} not written: {type(exc).__name__}: {str(exc)[:160]}",
+            f"{row.event} {row.dedupe_key} not written: {_describe_fault(exc)}",
             "the stage continues",
         )
         return None
@@ -9503,9 +9499,7 @@ def get_aa_fingerprint(root: Path) -> dict[str, str]:
             path: digest for path, digest in hashes.items() if _is_aa_scoped(root, path)
         }
     except (OSError, ValueError, KeyError, TypeError, AttributeError) as exc:
-        raise AaFingerprintUnreadable(
-            f"{manifest}: {type(exc).__name__}: {str(exc)[:160]}"
-        ) from exc
+        raise AaFingerprintUnreadable(f"{manifest}: {_describe_fault(exc)}") from exc
     if not fingerprint:
         raise AaFingerprintUnreadable(f"{manifest}: no entry in the A/A scope")
     return fingerprint
@@ -12511,7 +12505,7 @@ def ingest_manifest_log(
         name_rows = _pg_count_spawn_manifest(new_spool.name)
     except Exception as exc:  # noqa: BLE001 — psycopg and schema faults vary; named WARN below
         return _skip_manifest_ingest(
-            f"PG unreachable or core.spawn_manifest absent: {type(exc).__name__}: {str(exc)[:160]}"
+            f"PG unreachable or core.spawn_manifest absent: {_describe_fault(exc)}"
         )
     lock_path = get_manifest_ingest_lock_path(live_log)
     event_ts = now.strftime("%Y-%m-%dT%H:%M:%S.000Z")
@@ -12560,7 +12554,7 @@ def _ingest_manifest_under_lock(
             ingest.status = f"skipped:spool {spool.name} kept"
             sys.stderr.write(
                 f"[daemon-cycle] WARN: manifest ingest: spool {spool.name} kept, live log "
-                f"not rotated — {type(exc).__name__}: {str(exc)[:160]}\n"
+                f"not rotated — {_describe_fault(exc)}\n"
             )
             return ingest
     try:
@@ -12589,7 +12583,7 @@ def _ingest_manifest_under_lock(
         ingest.status = f"skipped:spool {new_spool.name} kept"
         sys.stderr.write(
             f"[daemon-cycle] WARN: manifest ingest: spool {new_spool.name} kept for the next "
-            f"cycle's re-read — {type(exc).__name__}: {str(exc)[:160]}\n"
+            f"cycle's re-read — {_describe_fault(exc)}\n"
         )
     else:
         # is_name_free proved the spool held no row → every row read here is new
