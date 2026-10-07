@@ -785,20 +785,12 @@ def write_autoagent_proposal(
         promotion_tier_param,
     )
     link_params = (learning_pattern_id or None, generator_input_version or None)
-    is_degraded = False
     with _connect() as conn:
-        try:
-            with conn.cursor() as cur:
-                cur.execute(_get_proposal_upsert_sql(True), params + link_params)
-                cur.fetchone()  # None when the reviewed-row freeze skips the update
-        except pg_errors.UndefinedColumn:
-            # SQLSTATE 42703 by class, as in compose_daemon_run_apply_status; a 42703 from
-            # the column-free statement is outside the try and propagates.
-            is_degraded = True
-            conn.rollback()
-            with conn.cursor() as cur:
-                cur.execute(_get_proposal_upsert_sql(False), params)
-                cur.fetchone()
+        is_degraded = _run_with_column_fallback(
+            conn,
+            lambda: _execute_upsert(conn, _get_proposal_upsert_sql(True), params + link_params),
+            fallback=lambda: _execute_upsert(conn, _get_proposal_upsert_sql(False), params),
+        )
         conn.commit()
     if is_degraded:
         sys.stderr.write(
@@ -809,6 +801,24 @@ def write_autoagent_proposal(
             % (cycle_date, pattern_label, MIGRATION.PATTERN_EVIDENCE)
         )
     return (time.monotonic_ns() - start_ns) // 1_000_000
+
+
+def _run_with_column_fallback(conn, run, *, fallback):
+    """run(); on SQLSTATE 42703 (by class, as in compose_daemon_run_apply_status) roll back
+    and run fallback() → True. A 42703 from fallback() propagates."""
+    try:
+        run()
+    except pg_errors.UndefinedColumn:
+        conn.rollback()
+        fallback()
+        return True
+    return False
+
+
+def _execute_upsert(conn, sql, params):
+    with conn.cursor() as cur:
+        cur.execute(sql, params)
+        cur.fetchone()  # None when a conflict arm's WHERE skips the update
 
 
 class VerdictSubjectMissing(CallerContractViolation):
@@ -966,26 +976,20 @@ def write_autoagent_loop_event(
     _check_loop_event_class(eval_result, subject)
     params = (event_ts, agent, rice, eval_result, changes_added, changes_removed, subject)
     counts = (lines_read, lines_without_row)
-    has_counts = counts != (None, None)
+    countless_sql = _get_loop_event_upsert_sql(eval_result, False)
     is_degraded = False
     with _connect() as conn:
-        try:
-            with conn.cursor() as cur:
-                cur.execute(
-                    _get_loop_event_upsert_sql(eval_result, has_counts),
-                    params + (counts if has_counts else ()),
-                )
-                cur.fetchone()
-        except pg_errors.UndefinedColumn:
-            # SQLSTATE 42703 by class, as in compose_daemon_run_apply_status; a row without
-            # counts names no count column, so its 42703 is another fault and propagates.
-            if not has_counts:
-                raise
-            is_degraded = True
-            conn.rollback()
-            with conn.cursor() as cur:
-                cur.execute(_get_loop_event_upsert_sql(eval_result, False), params)
-                cur.fetchone()
+        if counts == (None, None):
+            # names no count column → its 42703 is another fault and propagates
+            _execute_upsert(conn, countless_sql, params)
+        else:
+            is_degraded = _run_with_column_fallback(
+                conn,
+                lambda: _execute_upsert(
+                    conn, _get_loop_event_upsert_sql(eval_result, True), params + counts
+                ),
+                fallback=lambda: _execute_upsert(conn, countless_sql, params),
+            )
         conn.commit()
     if is_degraded:
         sys.stderr.write(
@@ -1108,16 +1112,12 @@ def write_spawn_manifest_rows(spool, rows):
     the row without them and names the migration on stderr. Raises on any other PG
     fault, a schema without the table included.
     """
-    is_degraded = False
     with _connect() as conn:
-        try:
-            _insert_spawn_manifest_rows(conn, spool, rows, has_exposure=True)
-        except pg_errors.UndefinedColumn:
-            # SQLSTATE 42703 by class, as in compose_daemon_run_apply_status; a 42703 from
-            # the column-free statement is outside the try and propagates.
-            is_degraded = True
-            conn.rollback()
-            _insert_spawn_manifest_rows(conn, spool, rows, has_exposure=False)
+        is_degraded = _run_with_column_fallback(
+            conn,
+            lambda: _insert_spawn_manifest_rows(conn, spool, rows, has_exposure=True),
+            fallback=lambda: _insert_spawn_manifest_rows(conn, spool, rows, has_exposure=False),
+        )
         with conn.cursor() as cur:
             cur.execute(_SPAWN_MANIFEST_SQL.COUNT, (spool,))
             rows_present = cur.fetchone()[0]
