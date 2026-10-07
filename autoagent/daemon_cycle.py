@@ -13214,65 +13214,8 @@ def build_patch_result(
     if classification != "reject" or proposal.proposed_diff.strip():
         seen_targets.add(str(target_path.resolve()))
 
-    # Map proposal.parse_mode to haiku_status so cycle JSON shows the
-    # explicit recovery path. NO silent coerce — fuzzy/retried states
-    # surface distinctly from strict happy path.
-    #
-    # parse_mode='quota-limit' → haiku_status='skipped:quota-limit'. Branch
-    # ordering: quota check comes BEFORE empty-diff fallback because quota
-    # always yields empty diff (would otherwise collapse to empty-or-error
-    # and lose the budget-exhaustion signal in monitor dashboard).
-    if skip_haiku:
-        haiku_status = "skipped:test"
-    elif is_backoff_skip:
-        # Chronic-timeout back-off — distinct status so the monitor dashboard
-        # can flag a backed-off candidate vs. a generic empty/error. Branch
-        # FIRST among the non-test cases (it always yields an empty diff and
-        # must not collapse into 'skipped:empty-or-error').
-        haiku_status = TIMEOUT_BACKOFF_HAIKU_STATUS
-    elif proposal.parse_mode == "budget-too-low":
-        # Local budget-config failure — distinct from external quota. Like quota,
-        # it always yields an empty diff, so branch before empty-or-error to
-        # preserve the signal.
-        haiku_status = "skipped:budget-too-low"
-    elif proposal.parse_mode == "quota-limit":
-        haiku_status = "skipped:quota-limit"
-    elif proposal.parse_mode == "transient-overload":
-        # Transient infra blip (Overloaded / 529 / connection reset / timeout)
-        # whose bounded retries were exhausted. Always an empty diff, so branch
-        # before empty-or-error to keep the infra-blip signal distinct from a
-        # genuinely empty / parse-failed output in the monitor dashboard.
-        haiku_status = "skipped:transient"
-    elif proposal.parse_mode == "auth-failure":
-        # 401/credential failure (expired non-interactive OAuth token). Always
-        # an empty diff, so branch before empty-or-error to keep the auth
-        # signal distinct from a genuinely empty / parse-failed output — the
-        # monitor cost-guard chip reads this to show "Auth fault", not a
-        # spending warning.
-        haiku_status = "skipped:auth"
-    elif proposal.parse_mode == "timeout-stall":
-        # Escalated-retry timeout — a TRUE stall (even the longer bound
-        # produced nothing), distinct from a slow generation that completed.
-        # Always an empty diff → branch before empty-or-error so the stall
-        # stays queryable.
-        haiku_status = "skipped:timeout-stall"
-    elif not proposal.proposed_diff:
-        haiku_status = "skipped:empty-or-error"
-    elif proposal.parse_mode == "escalated":
-        # Legacy tag — no longer produced, kept so a persisted or out-of-tree
-        # shape still resolves instead of collapsing into the plain 'ok' else.
-        haiku_status = "ok:escalated"
-    elif proposal.parse_mode == "retried":
-        haiku_status = "ok:retried"
-    elif proposal.parse_mode == "fuzzy":
-        haiku_status = "ok:fuzzy-parsed"
-    else:
-        haiku_status = "ok"
-
-    # Second axis: a clean parse at the escalated bound is slow generation,
-    # not a stall. Suffix-composed so the parse path above survives it.
-    haiku_status = build_escalated_haiku_status(
-        haiku_status, escalated_timeout=proposal.escalated_timeout
+    haiku_status = _get_haiku_status(
+        proposal, skip_haiku=skip_haiku, is_backoff_skip=is_backoff_skip
     )
 
     # Pre-verify gate. Only body-auto candidates pay the LLM cost;
@@ -13348,15 +13291,10 @@ def build_patch_result(
         verify = None
         approval_tier = "safety"
         status_value = "pending"
-    elif is_backoff_skip:
-        # Terminal — no apply or stale-drain selector re-picks a marker; no Haiku
-        # call ran, so the back-off rationale classifies non-adjudicating
-        verify = None
-        approval_tier = ""
-        status_value = get_reject_status(proposal.rationale)
     else:
-        # 'reject' classification — no further gating. Persist a terminal status
-        # explicitly (an empty sentinel was coerced to 'pending' → fossilized).
+        # 'reject' or a back-off marker → explicit terminal status, never re-picked by
+        # apply or stale-drain (an empty sentinel was coerced to 'pending' → fossilized);
+        # a marker ran no Haiku call, so its rationale classifies non-adjudicating
         verify = None
         approval_tier = ""
         status_value = get_reject_status(proposal.rationale)
@@ -13488,6 +13426,72 @@ def build_patch_result(
         # Lead pattern only: the column holds one link per proposal row.
         learning_pattern_id=lead_pattern.row_id or None,
         generator_input_version=GENERATOR_INPUT_VERSION,
+    )
+
+
+def _get_haiku_status(
+    proposal: PatchProposal, *, skip_haiku: bool, is_backoff_skip: bool
+) -> str:
+    """The proposal's haiku_status: its parse path, then the escalated-bound suffix."""
+    # Map proposal.parse_mode to haiku_status so cycle JSON shows the
+    # explicit recovery path. NO silent coerce — fuzzy/retried states
+    # surface distinctly from strict happy path.
+    #
+    # parse_mode='quota-limit' → haiku_status='skipped:quota-limit'. Branch
+    # ordering: quota check comes BEFORE empty-diff fallback because quota
+    # always yields empty diff (would otherwise collapse to empty-or-error
+    # and lose the budget-exhaustion signal in monitor dashboard).
+    if skip_haiku:
+        haiku_status = "skipped:test"
+    elif is_backoff_skip:
+        # Chronic-timeout back-off — distinct status so the monitor dashboard
+        # can flag a backed-off candidate vs. a generic empty/error. Branch
+        # FIRST among the non-test cases (it always yields an empty diff and
+        # must not collapse into 'skipped:empty-or-error').
+        haiku_status = TIMEOUT_BACKOFF_HAIKU_STATUS
+    elif proposal.parse_mode == "budget-too-low":
+        # Local budget-config failure — distinct from external quota. Like quota,
+        # it always yields an empty diff, so branch before empty-or-error to
+        # preserve the signal.
+        haiku_status = "skipped:budget-too-low"
+    elif proposal.parse_mode == "quota-limit":
+        haiku_status = "skipped:quota-limit"
+    elif proposal.parse_mode == "transient-overload":
+        # Transient infra blip (Overloaded / 529 / connection reset / timeout)
+        # whose bounded retries were exhausted. Always an empty diff, so branch
+        # before empty-or-error to keep the infra-blip signal distinct from a
+        # genuinely empty / parse-failed output in the monitor dashboard.
+        haiku_status = "skipped:transient"
+    elif proposal.parse_mode == "auth-failure":
+        # 401/credential failure (expired non-interactive OAuth token). Always
+        # an empty diff, so branch before empty-or-error to keep the auth
+        # signal distinct from a genuinely empty / parse-failed output — the
+        # monitor cost-guard chip reads this to show "Auth fault", not a
+        # spending warning.
+        haiku_status = "skipped:auth"
+    elif proposal.parse_mode == "timeout-stall":
+        # Escalated-retry timeout — a TRUE stall (even the longer bound
+        # produced nothing), distinct from a slow generation that completed.
+        # Always an empty diff → branch before empty-or-error so the stall
+        # stays queryable.
+        haiku_status = "skipped:timeout-stall"
+    elif not proposal.proposed_diff:
+        haiku_status = "skipped:empty-or-error"
+    elif proposal.parse_mode == "escalated":
+        # Legacy tag — no longer produced, kept so a persisted or out-of-tree
+        # shape still resolves instead of collapsing into the plain 'ok' else.
+        haiku_status = "ok:escalated"
+    elif proposal.parse_mode == "retried":
+        haiku_status = "ok:retried"
+    elif proposal.parse_mode == "fuzzy":
+        haiku_status = "ok:fuzzy-parsed"
+    else:
+        haiku_status = "ok"
+
+    # Second axis: a clean parse at the escalated bound is slow generation,
+    # not a stall. Suffix-composed so the parse path above survives it.
+    return build_escalated_haiku_status(
+        haiku_status, escalated_timeout=proposal.escalated_timeout
     )
 
 
