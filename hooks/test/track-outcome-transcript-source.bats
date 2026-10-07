@@ -17,8 +17,10 @@
 # diag log are redirected into the test temp dir. The PG helper is resolved by the hook as a
 # SIBLING of the script (setup skips when absent). psycopg lives in the
 # user site-packages (HOME-dependent), so PYTHONPATH is pinned to the real install and passed
-# into the sandboxed hook env. A UNIQUE per-run agent name scopes the count assertion + the
-# teardown DELETE within this file's ephemeral cluster.
+# into the sandboxed hook env, behind the sandbox recorder. Every connection — the hook's and this
+# file's own — reaches only a throwaway socket-only cluster carrying the real migration chain
+# (lib/ephemeral-pg.bash); the live database is never contacted. A UNIQUE per-run agent name
+# scopes the count assertion + the teardown DELETE.
 
 HOOKS_DIR="${BATS_TEST_DIRNAME}/.."
 HOOK_SH="${HOOKS_DIR}/track-outcome.sh"
@@ -26,18 +28,30 @@ PG_HELPER_SRC="${HOOKS_DIR}/_pg_outcome_dualwrite.py"
 
 # shellcheck source-path=SCRIPTDIR source=../../scripts/lib/path-guard.sh
 source "${BATS_TEST_DIRNAME}/../../scripts/lib/path-guard.sh"
+# shellcheck source-path=SCRIPTDIR source=lib/ephemeral-pg.bash
+source "${BATS_TEST_DIRNAME}/lib/ephemeral-pg.bash"
 
-# One throwaway cluster per file (lib/ephemeral-pg.bash), PGHOST/PGPORT exported at it → every
-# host-less connection here (row reads, teardown DELETE, the hook's own write)
-# lands in it, never in the invoking shell's database.
+# One cluster per file; PGHOST/PGPORT route every host-less "dbname=glass_atrium" connection to it.
 setup_file() {
-  # shellcheck source-path=SCRIPTDIR source=lib/ephemeral-pg.bash
-  source "${BATS_TEST_DIRNAME}/lib/ephemeral-pg.bash"
-  export EPH_DATADIR="${BATS_FILE_TMPDIR}/pgdata"
-  eph_pg_setup_recorder_file "${EPH_DATADIR}" "${BATS_FILE_TMPDIR}/sock" 55452
+  local bin
+  for bin in initdb pg_ctl createdb psql; do
+    if ! command -v "${bin}" >/dev/null 2>&1; then
+      export EPH_SKIP="missing required tool: ${bin} (PostgreSQL client/server)"
+      return 0
+    fi
+  done
+  export EPH_DB="glass_atrium" EPH_DATADIR="${BATS_FILE_TMPDIR}/pgdata" \
+    EPH_SOCKDIR="${BATS_FILE_TMPDIR}/sock" EPH_PORT="55465"
+  # eph_pg_start's hand DDL lands on the bootstrap DB; the hook's DB gets the real migrations.
+  eph_pg_start "${EPH_DATADIR}" "${EPH_SOCKDIR}" "${EPH_PORT}" "eph_boot" || return 1
+  eph_pg_create_migrated_db "${EPH_SOCKDIR}" "${EPH_PORT}" "${EPH_DB}" || return 1
+  export PGHOST="${EPH_SOCKDIR}" PGPORT="${EPH_PORT}"
 }
 
 teardown_file() {
+  if [[ -n "${EPH_SKIP:-}" ]]; then
+    return 0
+  fi
   eph_pg_stop "${EPH_DATADIR}"
 }
 
@@ -47,7 +61,13 @@ setup() {
   command -v python3 >/dev/null 2>&1 || skip "python3 required"
   command -v jq >/dev/null 2>&1 || skip "jq required"
 
-  [[ -z "${DB_SKIP}" ]] || skip "${DB_SKIP}"
+  # psycopg site-packages dir (HOME-dependent user install) — pin it for the sandboxed hook.
+  PSYCOPG_PP="$(python3 -c 'import psycopg,os;print(os.path.dirname(os.path.dirname(psycopg.__file__)))' 2>/dev/null || true)"
+  [[ -n "${PSYCOPG_PP}" ]] || skip "psycopg module not importable"
+  if [[ -n "${EPH_SKIP:-}" ]]; then
+    skip "${EPH_SKIP}"
+  fi
+  export GA_BATS_PG_RECORD="${BATS_TEST_TMPDIR:?}/pg-connect.log"
 
   TS_TMP="$(mktemp -d)"
   # Unique per-run agent + agent_id — scopes both the row-count assertion and the DELETE.
@@ -175,7 +195,7 @@ run_hook() {
   run env \
     HOME="${SANDBOX_HOME}" \
     CLAUDE_GATE_INFLIGHT="" \
-    PYTHONPATH="${PSYCOPG_PP}" \
+    PYTHONPATH="${EPH_PG_RECORDER_DIR}:${PSYCOPG_PP}" \
     bash -c 'bash "$1" < "$2" 2>&1' _ "${HOOK_SH}" "${PAYLOAD_FILE}"
 }
 
@@ -198,6 +218,7 @@ run_hook() {
   [[ "${output}" != *"LOUD-FAIL"* ]]
   # The PG helper must report a successful insert.
   [[ "${output}" == *"pg_insert=ok"* ]]
+  eph_assert_isolated 1 || return 1
 
   # Exactly one row landed.
   run count_rows

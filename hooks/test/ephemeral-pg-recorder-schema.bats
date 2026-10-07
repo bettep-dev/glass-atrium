@@ -1,6 +1,6 @@
 #!/usr/bin/env bats
-# ephemeral-pg-recorder-schema.bats — the recorder cluster (lib/ephemeral-pg.bash →
-# eph_pg_start_recorder) rejects every out-of-domain value production rejects, so a recorder
+# ephemeral-pg-recorder-schema.bats — the recorder suites' database (lib/ephemeral-pg.bash →
+# eph_pg_create_migrated_db) rejects every out-of-domain value production rejects, so a recorder
 # suite running on it cannot pass a write that would be a lost outcome in production.
 
 # shellcheck source-path=SCRIPTDIR
@@ -19,8 +19,12 @@ setup_file() {
   done
   # shellcheck source=lib/ephemeral-pg.bash
   source "${BATS_TEST_DIRNAME}/lib/ephemeral-pg.bash"
-  export EPH_DATADIR="${BATS_FILE_TMPDIR}/pgdata"
-  eph_pg_start_recorder "${EPH_DATADIR}" "${BATS_FILE_TMPDIR}/sock" 55453
+  export EPH_DATADIR="${BATS_FILE_TMPDIR}/pgdata" EPH_SOCKDIR="${BATS_FILE_TMPDIR}/sock" \
+    EPH_PORT="55453"
+  # eph_pg_start's hand DDL lands on the bootstrap DB; the probed DB gets the real migrations.
+  eph_pg_start "${EPH_DATADIR}" "${EPH_SOCKDIR}" "${EPH_PORT}" "eph_boot" || return 1
+  eph_pg_create_migrated_db "${EPH_SOCKDIR}" "${EPH_PORT}" glass_atrium || return 1
+  export PGHOST="${EPH_SOCKDIR}" PGPORT="${EPH_PORT}"
 }
 
 teardown_file() {

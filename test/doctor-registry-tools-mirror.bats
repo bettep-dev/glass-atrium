@@ -44,6 +44,8 @@ CONTRACT="${GA}/test/doctor-summary-contract.bats"
 source "${GA}/scripts/lib/path-guard.sh"
 
 setup() {
+  load 'lib/bats-db-seal'
+  ga_bats_db_seal
   # Loud, never `skip`, for the two SHIPPED tree members: their absence is a broken
   # tree rather than an unmet environment, and skipping would turn a deletion of the
   # section or its delegate into a fully-skipped GREEN suite. The daemon green gate

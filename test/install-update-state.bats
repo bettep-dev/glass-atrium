@@ -35,6 +35,8 @@ REAL_GA="${REAL_GA_DIR}/glass-atrium"
 source "${REAL_GA_DIR}/scripts/lib/path-guard.sh"
 
 setup() {
+  load 'lib/bats-db-seal'
+  ga_bats_db_seal
   command -v jq >/dev/null 2>&1 || skip "jq required"
   command -v python3 >/dev/null 2>&1 || skip "python3 required (doctor mtime probes)"
   command -v shasum >/dev/null 2>&1 || skip "shasum required"

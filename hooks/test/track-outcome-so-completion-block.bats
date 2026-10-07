@@ -24,8 +24,9 @@
 # rejects the INSERT and those cases FAIL, as production would lose the outcome.
 #
 # Isolation mirrors track-outcome-schema-mode-completion.bats exactly: HOME is sandboxed so the
-# transcript resolution + diag log stay in the tmp dir; a UNIQUE per-run agent scopes the row
-# assertions + the teardown DELETE within this file's ephemeral cluster.
+# transcript resolution + diag log stay in the tmp dir; every connection reaches only a throwaway
+# socket-only cluster (lib/ephemeral-pg.bash), never the live database; a UNIQUE per-run agent
+# scopes the row assertions + the teardown DELETE.
 
 HOOKS_DIR="${BATS_TEST_DIRNAME}/.."
 HOOK_SH="${HOOKS_DIR}/track-outcome.sh"
@@ -33,19 +34,33 @@ PG_HELPER_SRC="${HOOKS_DIR}/_pg_outcome_dualwrite.py"
 
 # shellcheck source-path=SCRIPTDIR source=../../scripts/lib/path-guard.sh
 source "${BATS_TEST_DIRNAME}/../../scripts/lib/path-guard.sh"
+# shellcheck source-path=SCRIPTDIR source=lib/ephemeral-pg.bash
+source "${BATS_TEST_DIRNAME}/lib/ephemeral-pg.bash"
 
 # One throwaway cluster per file (lib/ephemeral-pg.bash), PGHOST/PGPORT exported at it → every
 # host-less connection here (row reads, teardown DELETE, the hook's own write)
 # lands in it, never in the invoking shell's database.
 setup_file() {
-  # shellcheck source-path=SCRIPTDIR source=lib/ephemeral-pg.bash
-  source "${BATS_TEST_DIRNAME}/lib/ephemeral-pg.bash"
-  export EPH_DATADIR="${BATS_FILE_TMPDIR}/pgdata"
-  eph_pg_setup_recorder_file "${EPH_DATADIR}" "${BATS_FILE_TMPDIR}/sock" 55451
+  command -v python3 >/dev/null 2>&1 || return 0
+  PSYCOPG_PP="$(python3 -c 'import psycopg,os;print(os.path.dirname(os.path.dirname(psycopg.__file__)))' 2>/dev/null || true)"
+  export PSYCOPG_PP
+  export DB_OK=0
+  local bin
+  for bin in initdb pg_ctl createdb psql; do
+    command -v "${bin}" >/dev/null 2>&1 || return 0
+  done
+  export EPH_DB="glass_atrium" EPH_DATADIR="${BATS_FILE_TMPDIR}/pgdata" \
+    EPH_SOCKDIR="${BATS_FILE_TMPDIR}/sock" EPH_PORT="55463"
+  # eph_pg_start's hand DDL lands on the bootstrap DB; the hook's DB gets the real migrations.
+  eph_pg_start "${EPH_DATADIR}" "${EPH_SOCKDIR}" "${EPH_PORT}" "eph_boot" || return 1
+  eph_pg_create_migrated_db "${EPH_SOCKDIR}" "${EPH_PORT}" "${EPH_DB}" || return 1
+  # Every host-less "dbname=glass_atrium" connection — the hook's and this file's — reaches only it.
+  export PGHOST="${EPH_SOCKDIR}" PGPORT="${EPH_PORT}"
+  DB_OK=1
 }
 
 teardown_file() {
-  eph_pg_stop "${EPH_DATADIR}"
+  eph_pg_stop "${EPH_DATADIR:-}"
 }
 
 setup() {
@@ -54,6 +69,7 @@ setup() {
   command -v python3 >/dev/null 2>&1 || skip "python3 required"
   command -v jq >/dev/null 2>&1 || skip "jq required"
 
+  export GA_BATS_PG_RECORD="${BATS_TEST_TMPDIR:?}/pg-connect.log"
   CB_TMP="$(mktemp -d)"
   UNIQUE_AGENT="smoke-cb-$$-${RANDOM}"
   AGENT_ID="cbagent${$}x${RANDOM}"
@@ -76,7 +92,8 @@ setup() {
     *"[stderr]"* | *"[spool]"*) return 0 ;;
   esac
 
-  [[ -z "${DB_SKIP}" ]] || skip "${DB_SKIP}"
+  [[ -n "${PSYCOPG_PP}" ]] || skip "psycopg module not importable"
+  [[ "${DB_OK}" == "1" ]] || skip "no ephemeral cluster: a PostgreSQL server tool is missing"
 }
 
 teardown() {
@@ -362,14 +379,15 @@ spooled_field() {
   done
 }
 
-# DB-backed driver: the file's ephemeral cluster (inherited PGHOST, PYTHONPATH pinned to psycopg) —
-# proves recovered VALUES reach the row.
+# DB-backed driver: the ephemeral cluster (psycopg behind the sandbox recorder) — proves recovered
+# VALUES reach the row, and that every connection the hook made reached only that cluster.
 run_hook_db() {
   run env \
     HOME="${SANDBOX_HOME}" \
     CLAUDE_GATE_INFLIGHT="" \
-    PYTHONPATH="${PSYCOPG_PP}" \
+    PYTHONPATH="${EPH_PG_RECORDER_DIR}:${PSYCOPG_PP}" \
     bash -c 'bash "$1" < "$2" 2>&1' _ "${HOOK_SH}" "${PAYLOAD_FILE}"
+  eph_assert_isolated 1
 }
 
 # A bare intermediate [[ ]] is silently ignored on macOS bash 3.2; Linux bash 5 gates it (bats 1.13.0 both legs).

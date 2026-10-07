@@ -25,6 +25,10 @@ GA_BATS_KILLSWITCHES=(
   WORKTREE_LOCK_TTL_SECS
 )
 
+# libpq names that outrank or reroute PGHOST — cleared so only the dead PGHOST below routes a
+# host-less connection. One declaration: test/bats-db-seal.bats asserts each one cleared.
+GA_BATS_PG_ROUTING_NAMES=(PGPORT PGHOSTADDR PGSERVICE PGDATABASE PGPASSFILE)
+
 ga_bats_hermetic_env() {
   # Discovery sentinel — a bats version that stops auto-loading the setup file makes the
   # per-corpus sentinel assertion fail loudly instead of silently unpinning this baseline.
@@ -41,7 +45,17 @@ ga_bats_hermetic_env() {
     unset "${switch}"
   done
 
-  ga_bats_set_scratch_cwd
+  ga_bats_set_scratch_cwd || return 1
+
+  # Dead PGHOST: a host-less libpq connection (psql, a hook's psycopg "dbname=glass_atrium") fails on
+  # a socket path that never exists instead of reaching the live server on the default /tmp socket.
+  # Set here so every entrypoint inherits it — direct bats, CI per-file jobs, the live-suite runner.
+  # An ephemeral-cluster suite exports its own PGHOST over it.
+  export PGHOST="${BATS_RUN_TMPDIR}/no-pg-socket"
+  local name
+  for name in "${GA_BATS_PG_ROUTING_NAMES[@]}"; do
+    unset "${name}"
+  done
 }
 
 # Scratch-cwd seat: each test starts in BATS_SUITE_TMPDIR.

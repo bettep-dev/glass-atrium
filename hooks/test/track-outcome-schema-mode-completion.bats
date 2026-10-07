@@ -33,8 +33,10 @@
 # diag log are redirected into the test temp dir. The PG helper is resolved by the hook as a
 # SIBLING of the script (setup skips when absent). psycopg lives in the
 # user site-packages (HOME-dependent), so PYTHONPATH is pinned to the real install and passed
-# into the sandboxed hook env. A UNIQUE per-run agent name scopes the count assertion + the
-# teardown DELETE within this file's ephemeral cluster. The tool-budget counter dir
+# into the sandboxed hook env, behind the sandbox recorder. Every connection — the hook's and this
+# file's own — reaches only a throwaway socket-only cluster carrying the real migration chain
+# (lib/ephemeral-pg.bash); the live database is never contacted. A UNIQUE per-run agent name scopes
+# the count assertion + the teardown DELETE. The tool-budget counter dir
 # is redirected into the temp dir (counter absent ⇒ fail-open, only T4 seeds it).
 
 HOOKS_DIR="${BATS_TEST_DIRNAME}/.."
@@ -43,19 +45,32 @@ PG_HELPER_SRC="${HOOKS_DIR}/_pg_outcome_dualwrite.py"
 
 # shellcheck source-path=SCRIPTDIR source=../../scripts/lib/path-guard.sh
 source "${BATS_TEST_DIRNAME}/../../scripts/lib/path-guard.sh"
+# shellcheck source-path=SCRIPTDIR source=lib/ephemeral-pg.bash
+source "${BATS_TEST_DIRNAME}/lib/ephemeral-pg.bash"
 
-# One throwaway cluster per file (lib/ephemeral-pg.bash), PGHOST/PGPORT exported at it → every
-# host-less connection here (row reads, teardown DELETE, the hook's own write)
-# lands in it, never in the invoking shell's database.
+# The psycopg location and the cluster are session-invariant, so resolve them ONCE here and export
+# the results — per-test setup() reads the cached PSYCOPG_PP / DB_OK flags.
 setup_file() {
-  # shellcheck source-path=SCRIPTDIR source=lib/ephemeral-pg.bash
-  source "${BATS_TEST_DIRNAME}/lib/ephemeral-pg.bash"
-  export EPH_DATADIR="${BATS_FILE_TMPDIR}/pgdata"
-  eph_pg_setup_recorder_file "${EPH_DATADIR}" "${BATS_FILE_TMPDIR}/sock" 55450
+  command -v python3 >/dev/null 2>&1 || return 0
+  PSYCOPG_PP="$(python3 -c 'import psycopg,os;print(os.path.dirname(os.path.dirname(psycopg.__file__)))' 2>/dev/null || true)"
+  export PSYCOPG_PP
+  export DB_OK=0
+  local bin
+  for bin in initdb pg_ctl createdb psql; do
+    command -v "${bin}" >/dev/null 2>&1 || return 0
+  done
+  export EPH_DB="glass_atrium" EPH_DATADIR="${BATS_FILE_TMPDIR}/pgdata" \
+    EPH_SOCKDIR="${BATS_FILE_TMPDIR}/sock" EPH_PORT="55461"
+  # eph_pg_start's hand DDL lands on the bootstrap DB; the hook's DB gets the real migrations.
+  eph_pg_start "${EPH_DATADIR}" "${EPH_SOCKDIR}" "${EPH_PORT}" "eph_boot" || return 1
+  eph_pg_create_migrated_db "${EPH_SOCKDIR}" "${EPH_PORT}" "${EPH_DB}" || return 1
+  # Every host-less "dbname=glass_atrium" connection — the hook's and this file's — reaches only it.
+  export PGHOST="${EPH_SOCKDIR}" PGPORT="${EPH_PORT}"
+  DB_OK=1
 }
 
 teardown_file() {
-  eph_pg_stop "${EPH_DATADIR}"
+  eph_pg_stop "${EPH_DATADIR:-}"
 }
 
 setup() {
@@ -64,6 +79,7 @@ setup() {
   command -v python3 >/dev/null 2>&1 || skip "python3 required"
   command -v jq >/dev/null 2>&1 || skip "jq required"
 
+  export GA_BATS_PG_RECORD="${BATS_TEST_TMPDIR:?}/pg-connect.log"
   SM_TMP="$(mktemp -d)"
   # Unique per-run agent + agent_id — scopes both the row assertions and the DELETE.
   UNIQUE_AGENT="smoke-sm-$$-${RANDOM}"
@@ -88,14 +104,16 @@ setup() {
 
   # DB-free inline-tolerance cases (T4/T5, tagged [inline]) fail-open PG and read the decision off
   # the stderr diagnostic channel — no DB. They stop here so the psycopg/DB probe below never
-  # skips them (mirrors track-outcome-budget-truncation.bats: runs without a DB). The probe
+  # skips them (mirrors track-outcome-budget-truncation.bats: runs without a live DB). The probe
   # moved AFTER the tmp setup so the [inline] early-return keeps SANDBOX_HOME/PAYLOAD_FILE/BUDGET_DIR.
   case "${BATS_TEST_DESCRIPTION}" in
     *"[inline]"*) return 0 ;;
   esac
 
-  # DB-dependent cases: setup_file brought the cluster up or recorded why it could not.
-  [[ -z "${DB_SKIP}" ]] || skip "${DB_SKIP}"
+  # DB-dependent cases: the psycopg path + the cluster were resolved once in setup_file and
+  # exported as PSYCOPG_PP / DB_OK — read the cached flags (the row assertions cannot run without it).
+  [[ -n "${PSYCOPG_PP}" ]] || skip "psycopg module not importable"
+  [[ "${DB_OK}" == "1" ]] || skip "no ephemeral cluster: a PostgreSQL server tool is missing"
 }
 
 teardown() {
@@ -265,10 +283,15 @@ run_hook() {
   run env \
     HOME="${SANDBOX_HOME}" \
     CLAUDE_GATE_INFLIGHT="" \
-    PYTHONPATH="${PSYCOPG_PP}" \
+    PYTHONPATH="${EPH_PG_RECORDER_DIR}:${PSYCOPG_PP}" \
     SUBAGENT_TOOL_BUDGET_DIR="${BUDGET_DIR}" \
     SUBAGENT_TOOL_BUDGET="${SUBAGENT_TOOL_BUDGET:-40}" \
     bash -c 'bash "$1" < "$2" 2>&1' _ "${HOOK_SH}" "${PAYLOAD_FILE}"
+  # DB cases ([inline] stays DB-free): every connection the hook made reached only the cluster
+  case "${BATS_TEST_DESCRIPTION}" in
+    *"[inline]"*) ;;
+    *) eph_assert_isolated 1 ;;
+  esac
 }
 
 @test "T1 block-then-emit: [COMPLETION] text turn before StructuredOutput is honored (structured path)" {

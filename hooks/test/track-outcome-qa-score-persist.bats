@@ -16,8 +16,8 @@
 # psycopg.connect("dbname=glass_atrium"), so PGHOST/PGPORT redirect every write to
 # an EPHEMERAL single-file cluster (private Unix socket, no TCP) — never the
 # production /tmp glass_atrium. Every fixture agent is a unique "qs-..." literal
-# (production agents are glass-atrium-*), and each test asserts ZERO fixture rows
-# reached production. HOME is repointed to a temp dir so the hook's diag log and
+# (production agents are glass-atrium-*), and each test asserts
+# every connection the hook made reached only this cluster. HOME is repointed to a temp dir so the hook's diag log and
 # subagent-transcript resolution never touch the real ~/.claude; psycopg lives in
 # the HOME-derived user site-packages, so PYTHONPATH carries the REAL install
 # (captured before the override) to keep the helper's import alive.
@@ -68,6 +68,9 @@ CREATE UNIQUE INDEX "outcomes_dedup" ON "core"."outcomes" ("record_ts", "agent",
 SQL
 }
 
+# shellcheck source=SCRIPTDIR/lib/ephemeral-pg.bash disable=SC2154
+source "${BATS_TEST_DIRNAME}/lib/ephemeral-pg.bash"
+
 # BATS_TEST_DIRNAME is assigned by the bats runtime (SC2154 false positive).
 # shellcheck disable=SC2154
 setup_file() {
@@ -89,8 +92,6 @@ setup_file() {
     export EPH_SKIP="psycopg module not importable"
     return 0
   fi
-
-  source "${BATS_TEST_DIRNAME}/lib/ephemeral-pg.bash"
 
   export EPH_DB="glass_atrium"
   export EPH_DATADIR="${BATS_FILE_TMPDIR}/pgdata"
@@ -127,6 +128,7 @@ setup() {
   if [[ -n "${EPH_SKIP:-}" ]]; then
     skip "${EPH_SKIP}"
   fi
+  export GA_BATS_PG_RECORD="${BATS_TEST_TMPDIR:?}/pg-connect.log"
 }
 
 # Query the EPHEMERAL cluster (explicit -h/-p override any ambient env).
@@ -164,25 +166,9 @@ _mk_envelope() {
 # cluster. Positional args into `bash -c` avoid interpolation injection; stderr is
 # merged so a failure surfaces in ${output}.
 _run_helper() {
-  run env HOME="${EPH_HOME}" PYTHONPATH="${QS_PSYCOPG_PP}" \
+  run env HOME="${EPH_HOME}" PYTHONPATH="${EPH_PG_RECORDER_DIR}:${QS_PSYCOPG_PP}" \
     PGHOST="${EPH_SOCKDIR}" PGPORT="${EPH_PORT}" \
     bash -c 'printf "%s" "$1" | python3 "$2" 2>&1' _ "${1}" "${QS_PG_HELPER}"
-}
-
-# Definitive isolation gate: the fixture agent must have ZERO rows in production.
-# PGHOST/PGPORT are unset so this can ONLY reach the production default socket.
-# Production unreachable (or the column not yet deployed) → isolation holds by
-# construction (the hook only ever connects to the ephemeral PGHOST).
-_assert_prod_isolated() {
-  local agent="${1}" leaked
-  leaked="$(env -u PGHOST -u PGPORT psql -d "${EPH_DB}" -tAqc \
-    "SELECT count(*) FROM core.outcomes WHERE agent = '${agent}';" \
-    2>/dev/null || echo "SKIP")"
-  [[ "${leaked}" == "SKIP" ]] && return 0
-  [[ "${leaked}" -eq 0 ]] || {
-    echo "ISOLATION BREACH: ${leaked} fixture rows reached production" >&2
-    return 1
-  }
 }
 
 # Write the synthetic SubagentStop subagent transcript at the exact path the hook's
@@ -231,7 +217,7 @@ _e2e_run_hook() {
       hook_event_name: "SubagentStop", agent_type: $agent, agent_id: $aid,
       session_id: $sess, cwd: $cwd, transcript_path: "/nonexistent/parent.jsonl"
     }')"
-  run env HOME="${EPH_HOME}" PYTHONPATH="${QS_PSYCOPG_PP}" \
+  run env HOME="${EPH_HOME}" PYTHONPATH="${EPH_PG_RECORDER_DIR}:${QS_PSYCOPG_PP}" \
     PGHOST="${EPH_SOCKDIR}" PGPORT="${EPH_PORT}" CLAUDE_GATE_INFLIGHT="" \
     bash -c 'printf "%s" "$1" | bash "$2" 2>&1' _ "${payload}" "${QS_HOOK_SH}"
 }
@@ -247,7 +233,7 @@ _e2e_run_hook() {
   got="$(_q "SELECT qa_score FROM core.outcomes WHERE agent = '${agent}';")" || return 1
   [ "${got}" = "cov=4,ins=5,instr=3,clar=4" ] || { echo "qa_score='${got}'"; return 1; }
 
-  _assert_prod_isolated "${agent}" || return 1
+  eph_assert_isolated 1 || return 1
 }
 
 @test "envelope WITHOUT qa_score persists NULL (legacy / non-QA rows stay NULL)" {
@@ -259,7 +245,7 @@ _e2e_run_hook() {
   isnull="$(_q "SELECT qa_score IS NULL FROM core.outcomes WHERE agent = '${agent}';")" || return 1
   [ "${isnull}" = "t" ] || { echo "qa_score not NULL (IS NULL = '${isnull}')"; return 1; }
 
-  _assert_prod_isolated "${agent}" || return 1
+  eph_assert_isolated 1 || return 1
 }
 
 @test "UPSERT re-fire updates qa_score (ON CONFLICT DO UPDATE SET qa_score = EXCLUDED.qa_score)" {
@@ -279,7 +265,7 @@ _e2e_run_hook() {
   got="$(_q "SELECT qa_score FROM core.outcomes WHERE agent = '${agent}';")" || return 1
   [ "${got}" = "cov=5,ins=5,instr=5,clar=5" ] || { echo "qa_score='${got}' not updated"; return 1; }
 
-  _assert_prod_isolated "${agent}" || return 1
+  eph_assert_isolated 2 || return 1
 }
 
 @test "end-to-end: track-outcome.sh [COMPLETION] qa_score reaches the dual-write column" {
@@ -297,7 +283,7 @@ _e2e_run_hook() {
   got="$(_q "SELECT qa_score FROM core.outcomes WHERE agent = '${agent}';")" || return 1
   [ "${got}" = "cov=4,ins=5,instr=3,clar=4" ] || { echo "qa_score='${got}'"; return 1; }
 
-  _assert_prod_isolated "${agent}" || return 1
+  eph_assert_isolated 1 || return 1
 }
 
 @test "column-absent (pre-migration) schema still writes via the legacy _OUTCOMES_INSERT_SQL_NO_QA shim" {
@@ -327,5 +313,5 @@ _e2e_run_hook() {
   n="$(_q "SELECT count(*) FROM core.outcomes WHERE agent = '${agent}';")" || return 1
   [ "${n}" = "1" ] || { echo "row count ${n} != 1 (legacy write did not land)"; return 1; }
 
-  _assert_prod_isolated "${agent}" || return 1
+  eph_assert_isolated 1 || return 1
 }

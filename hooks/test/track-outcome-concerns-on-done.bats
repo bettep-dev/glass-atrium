@@ -16,8 +16,8 @@
 # psycopg.connect("dbname=glass_atrium"), so PGHOST/PGPORT redirect every write to
 # an EPHEMERAL single-file cluster (private Unix socket, no TCP) — never the
 # production /tmp glass_atrium. Every fixture agent is a unique "cd-..." literal
-# (production agents are glass-atrium-*), and each test asserts ZERO fixture rows
-# reached production. HOME is repointed to a temp dir so the hook's diag log and
+# (production agents are glass-atrium-*), and each test asserts
+# every connection the hook made reached only this cluster. HOME is repointed to a temp dir so the hook's diag log and
 # subagent-transcript resolution never touch the real ~/.claude; psycopg lives in
 # the HOME-derived user site-packages, so PYTHONPATH carries the REAL install
 # (captured before the override) to keep the helper's import alive.
@@ -67,6 +67,9 @@ CREATE UNIQUE INDEX "outcomes_dedup" ON "core"."outcomes" ("record_ts", "agent",
 SQL
 }
 
+# shellcheck source=SCRIPTDIR/lib/ephemeral-pg.bash disable=SC2154
+source "${BATS_TEST_DIRNAME}/lib/ephemeral-pg.bash"
+
 # BATS_TEST_DIRNAME is assigned by the bats runtime (SC2154 false positive).
 # shellcheck disable=SC2154
 setup_file() {
@@ -86,8 +89,6 @@ setup_file() {
     export EPH_SKIP="psycopg module not importable"
     return 0
   fi
-
-  source "${BATS_TEST_DIRNAME}/lib/ephemeral-pg.bash"
 
   export EPH_DB="glass_atrium"
   export EPH_DATADIR="${BATS_FILE_TMPDIR}/pgdata"
@@ -124,27 +125,12 @@ setup() {
   if [[ -n "${EPH_SKIP:-}" ]]; then
     skip "${EPH_SKIP}"
   fi
+  export GA_BATS_PG_RECORD="${BATS_TEST_TMPDIR:?}/pg-connect.log"
 }
 
 # Query the EPHEMERAL cluster (explicit -h/-p override any ambient env).
 _q() {
   psql -h "${EPH_SOCKDIR}" -p "${EPH_PORT}" -d "${EPH_DB}" -tAqc "${1}"
-}
-
-# Definitive isolation gate: the fixture agent must have ZERO rows in production.
-# PGHOST/PGPORT are unset so this can ONLY reach the production default socket.
-# Production unreachable → isolation holds by construction (the hook only ever
-# connects to the ephemeral PGHOST).
-_assert_prod_isolated() {
-  local agent="${1}" leaked
-  leaked="$(env -u PGHOST -u PGPORT psql -d "${EPH_DB}" -tAqc \
-    "SELECT count(*) FROM core.outcomes WHERE agent = '${agent}';" \
-    2>/dev/null || echo "SKIP")"
-  [[ "${leaked}" == "SKIP" ]] && return 0
-  [[ "${leaked}" -eq 0 ]] || {
-    echo "ISOLATION BREACH: ${leaked} fixture rows reached production" >&2
-    return 1
-  }
 }
 
 # Write the synthetic SubagentStop subagent transcript at the exact path the hook's
@@ -195,7 +181,7 @@ _e2e_run_hook() {
       hook_event_name: "SubagentStop", agent_type: $agent, agent_id: $aid,
       session_id: $sess, cwd: $cwd, transcript_path: "/nonexistent/parent.jsonl"
     }')"
-  run env HOME="${EPH_HOME}" PYTHONPATH="${CD_PSYCOPG_PP}" \
+  run env HOME="${EPH_HOME}" PYTHONPATH="${EPH_PG_RECORDER_DIR}:${CD_PSYCOPG_PP}" \
     PGHOST="${EPH_SOCKDIR}" PGPORT="${EPH_PORT}" CLAUDE_GATE_INFLIGHT="" \
     bash -c 'printf "%s" "$1" | bash "$2" 2>&1' _ "${payload}" "${CD_HOOK_SH}"
 }
@@ -224,7 +210,7 @@ _e2e_run_hook() {
     return 1
   }
 
-  _assert_prod_isolated "${agent}" || return 1
+  eph_assert_isolated 1 || return 1
 }
 
 @test "envelope result:done + concerns persists the array (dual-write is result-agnostic)" {
@@ -239,7 +225,7 @@ _e2e_run_hook() {
     signals: [], learning_hint: null
   }')"
 
-  run env HOME="${EPH_HOME}" PYTHONPATH="${CD_PSYCOPG_PP}" \
+  run env HOME="${EPH_HOME}" PYTHONPATH="${EPH_PG_RECORDER_DIR}:${CD_PSYCOPG_PP}" \
     PGHOST="${EPH_SOCKDIR}" PGPORT="${EPH_PORT}" \
     bash -c 'printf "%s" "$1" | python3 "$2" 2>&1' _ "${envelope}" "${CD_PG_HELPER}"
   [ "${status}" -eq 0 ] || { echo "helper exit ${status}: ${output}"; return 1; }
@@ -249,5 +235,5 @@ _e2e_run_hook() {
   got="$(_q "SELECT result || ' :: ' || array_to_string(concerns, '|') FROM core.outcomes WHERE agent = '${agent}';")" || return 1
   [ "${got}" = "done :: role-inherent limit|scope-external note" ] || { echo "row='${got}'"; return 1; }
 
-  _assert_prod_isolated "${agent}" || return 1
+  eph_assert_isolated 1 || return 1
 }

@@ -52,6 +52,8 @@ RETIRED_JOBS=(
 )
 
 setup() {
+  load 'lib/bats-db-seal'
+  ga_bats_db_seal
   command -v shasum >/dev/null 2>&1 || command -v sha256sum >/dev/null 2>&1 || skip "shasum/sha256sum required"
   [[ -f "${GA}/lib/ga-core.sh" ]] || skip "ga-core.sh not found: ${GA}/lib/ga-core.sh"
   [[ -f "${REAL_RENDERER}" ]] || skip "renderer not found: ${REAL_RENDERER}"

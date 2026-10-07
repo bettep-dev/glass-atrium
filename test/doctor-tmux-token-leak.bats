@@ -19,6 +19,8 @@ LEAK_NAME="CLAUDE_CODE_OAUTH_TOKEN"
 DUMMY_VALUE="dummy01"
 
 setup() {
+  load 'lib/bats-db-seal'
+  ga_bats_db_seal
   [[ -f "${GA}/lib/ga-core.sh" ]] || skip "ga-core.sh not found: ${GA}/lib/ga-core.sh"
 
   SANDBOX="$(mktemp -d -t ga-doctor-token-leak-bats.XXXXXX)"

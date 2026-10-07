@@ -29,6 +29,10 @@ setup() {
   AID="bats-live-child-aid-001"
 }
 
+teardown() {
+  eph_pg_stop "${EPH_DATADIR:-}"
+}
+
 # $1=hook_event_name $2=agent_id
 fire() {
   local payload
@@ -36,6 +40,16 @@ fire() {
     '{hook_event_name:$e, agent_id:$a, agent_type:$t}')"
   run bash -c 'printf "%s" "$1" | GA_DATA_ROOT="$2" PGHOST="/nonexistent-socket-xyzzy" bash "$3" 2>&1' \
     _ "${payload}" "${GA_DATA}" "${HOOK_SH}"
+}
+
+# $1=hook_event_name $2=agent_id — the hook's psycopg connections go through the sandbox recorder,
+# which logs each target and refuses any outside the cluster's socket dir before it dials.
+fire_on_sandbox() {
+  local payload
+  payload="$(jq -n --arg e "${1}" --arg a "${2}" --arg t "glass-atrium-dev-shell" \
+    '{hook_event_name:$e, agent_id:$a, agent_type:$t}')"
+  printf '%s' "${payload}" | env GA_DATA_ROOT="${GA_DATA}" PGHOST="${EPH_SOCKDIR}" PGPORT="${EPH_PORT}" \
+    PYTHONPATH="${EPH_PG_RECORDER_DIR}:${EPH_USER_SITE}" bash "${HOOK_SH}" >/dev/null 2>&1
 }
 
 @test "SubagentStart creates a live-child marker named after the agent id" {
@@ -98,16 +112,14 @@ fire() {
   done
 }
 
-@test "the tracker's event write never lands in the invoking shell's database" {
-  # Per-run id → a write is a NEW row, never absorbed by the ON CONFLICT arbiter of an earlier run.
-  local aid="bats-live-child-gate-$$-${RANDOM}" before after
-  local query="SELECT count(*) FROM core.agent_events WHERE agent_id = '${aid}';"
-  before="$(eph_pg_query_caller_target "${query}")"
-  fire "SubagentStart" "${aid}"
-  fire "SubagentStop" "${aid}"
-  after="$(eph_pg_query_caller_target "${query}")"
-  [[ "${before}" == "${after}" ]] || {
-    echo "fixture rows reached the invoking shell's database: before=${before} after=${after}" >&2
-    return 1
-  }
+@test "the tracker's event write reaches only the sandbox cluster, never the invoking shell's database" {
+  python3 -c 'import psycopg' 2>/dev/null || skip "psycopg not importable — the recorder sees psycopg connections only"
+  export EPH_DATADIR="${BATS_TEST_TMPDIR}/pgdata" EPH_SOCKDIR="${BATS_TEST_TMPDIR}/sock" \
+    EPH_PORT="55471" EPH_DB="glass_atrium"
+  export GA_BATS_PG_RECORD="${BATS_TEST_TMPDIR}/pg-connect.log"
+  EPH_USER_SITE="$(python3 -m site --user-site)"
+  eph_pg_start "${EPH_DATADIR}" "${EPH_SOCKDIR}" "${EPH_PORT}" "${EPH_DB}" || return 1
+  fire_on_sandbox "SubagentStart" "${AID}"
+  fire_on_sandbox "SubagentStop" "${AID}"
+  eph_assert_isolated 2 || return 1
 }

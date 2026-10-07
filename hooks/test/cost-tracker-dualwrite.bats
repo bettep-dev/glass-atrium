@@ -18,12 +18,9 @@
 # ISOLATION (non-negotiable): _pg_dual_write.py connects host/port-less via
 # psycopg.connect("dbname=glass_atrium"), so PGHOST/PGPORT redirect every write
 # in the hook chain to an EPHEMERAL single-file cluster (private Unix socket, no
-# TCP) — never the production /tmp glass_atrium (22k+ live rows). The definitive
-# proof is _assert_prod_isolated: the fixture session_id must hold ZERO rows in
-# production. A raw production before/after total is NOT used as the gate — the
-# live session's own cost-tracker writes to production during the run, so a
-# strict-equality total would flake; the fixture-session-row count is the
-# invariant that actually isolates.
+# TCP) — never the production /tmp glass_atrium. eph_assert_isolated
+# (lib/ephemeral-pg.bash) proves it without reading production: every psycopg
+# connection the recorder logged targeted this cluster, as many as the fires opened.
 #
 # HOME override: HOOK_LOG_DIR is ${HOME}/.glass-atrium/logs (the subagent mtime
 # cache), so HOME is repointed to a temp dir — the run leaves NO artifact under
@@ -34,6 +31,9 @@
 # BATS_TEST_DIRNAME is assigned by the bats runtime (SC2154 false positive).
 # shellcheck disable=SC2154
 EPH_MIGRATION_SQL="${BATS_TEST_DIRNAME}/../../monitor/prisma/migrations/20260930000000_add_effort_to_outcomes_and_cost_events/migration.sql"
+
+# shellcheck source=SCRIPTDIR/lib/ephemeral-pg.bash disable=SC2154
+source "${BATS_TEST_DIRNAME}/lib/ephemeral-pg.bash"
 
 # shellcheck disable=SC2154
 setup_file() {
@@ -48,8 +48,6 @@ setup_file() {
       return 0
     fi
   done
-
-  source "${BATS_TEST_DIRNAME}/lib/ephemeral-pg.bash"
 
   export EPH_DB="glass_atrium"
   # Distinctive fixture session id — production session ids are UUIDs, so this
@@ -78,12 +76,6 @@ setup_file() {
   export EPH_WRITER_PY
   EPH_WRITER_PY="$(cd "${BATS_TEST_DIRNAME}/.." && pwd)/_pg_dual_write.py"
 
-  # Production baseline total (default socket; PGHOST/PGPORT are never exported,
-  # so this hits production) — informational only, reported in teardown_file.
-  export EPH_PROD_BEFORE
-  EPH_PROD_BEFORE="$(env -u PGHOST -u PGPORT psql -d "${EPH_DB}" -tAqc \
-    "SELECT count(*) FROM core.cost_events;" 2>/dev/null || echo "unavailable")"
-
   eph_pg_start "${EPH_DATADIR}" "${EPH_SOCKDIR}" "${EPH_PORT}" "${EPH_DB}" || return 1
   # The effort columns come from the real migration file, which also alters core.outcomes.
   local ddl
@@ -99,13 +91,6 @@ teardown_file() {
     return 0
   fi
   eph_pg_stop "${EPH_DATADIR}"
-  # Report the production before/after total for visibility. Any delta is
-  # ambient live-session traffic, NOT a leak — the leak gate is the per-test
-  # zero-fixture-rows assertion. Emitted on fd 3 (bats diagnostic channel).
-  local after
-  after="$(env -u PGHOST -u PGPORT psql -d "${EPH_DB}" -tAqc \
-    "SELECT count(*) FROM core.cost_events;" 2>/dev/null || echo "unavailable")"
-  echo "# production core.cost_events total: before=${EPH_PROD_BEFORE} after=${after}" >&3
 }
 
 # shellcheck source-path=SCRIPTDIR source=../../scripts/lib/path-guard.sh
@@ -117,6 +102,7 @@ setup() {
   if [[ -n "${EPH_SKIP:-}" ]]; then
     skip "${EPH_SKIP}"
   fi
+  export GA_BATS_PG_RECORD="${BATS_TEST_TMPDIR:?}/pg-connect.log"
 }
 
 # Query the EPHEMERAL cluster (explicit -h/-p override any ambient env).
@@ -235,26 +221,10 @@ _fire_stop_on() {
   local stdin_json
   stdin_json="$(printf '{"session_id":"%s","transcript_path":"%s","cwd":"/tmp","permission_mode":"default","hook_event_name":"Stop"}' \
     "${1}" "${2}")"
-  env HOME="${EPH_HOME}" PYTHONPATH="${EPH_USER_SITE}" \
+  env HOME="${EPH_HOME}" PYTHONPATH="${EPH_PG_RECORDER_DIR}:${EPH_USER_SITE}" \
     PGHOST="${EPH_SOCKDIR}" PGPORT="${EPH_PORT}" \
     PRICING_REMOTE_DISABLE=1 COST_TRACKER_TODAY="2026-07-02" CLAUDE_SESSION_ID='' \
     bash -c 'printf "%s" "$1" | "$2" 2>"$3"' _ "${stdin_json}" "${EPH_HOOK_SH}" "${stderr_file}"
-}
-
-# Definitive isolation gate: every fixture session (EPH_SID prefix) must have ZERO rows in
-# production. PGHOST/PGPORT are never exported, but unset explicitly so this can
-# only reach the production default socket. Production unreachable → isolation
-# holds by construction (the hook only ever connects to the ephemeral PGHOST).
-_assert_prod_isolated() {
-  local leaked
-  leaked="$(env -u PGHOST -u PGPORT psql -d "${EPH_DB}" -tAqc \
-    "SELECT count(*) FROM core.cost_events WHERE session_id LIKE '${EPH_SID}%';" \
-    2>/dev/null || echo "SKIP")"
-  [[ "${leaked}" == "SKIP" ]] && return 0
-  [[ "${leaked}" -eq 0 ]] || {
-    echo "ISOLATION BREACH: ${leaked} fixture rows reached production" >&2
-    return 1
-  }
 }
 
 @test "SUM-invariance: token totals and row count are preserved through the per-row dual-write" {
@@ -273,7 +243,7 @@ _assert_prod_isolated() {
   [[ "${turns}" -eq 1 ]] || { echo "turn rows ${turns} != 1" >&2; return 1; }
   [[ "${subs}" -eq 2 ]] || { echo "subagent rows ${subs} != 2" >&2; return 1; }
 
-  _assert_prod_isolated || return 1
+  eph_assert_isolated 1 || return 1
 }
 
 @test "UPSERT idempotency: re-firing the same Stop re-aggregates identical rows (never doubles)" {
@@ -297,7 +267,7 @@ _assert_prod_isolated() {
   [[ "${rows}" -eq "${EPH_EXPECT_ROWS}" ]] || { echo "rows doubled: ${rows} != ${EPH_EXPECT_ROWS}" >&2; return 1; }
   [[ "${tok}" -eq "${EPH_EXPECT_TOKENS}" ]] || { echo "tokens additive: ${tok} != ${EPH_EXPECT_TOKENS}" >&2; return 1; }
 
-  _assert_prod_isolated || return 1
+  eph_assert_isolated 2 || return 1
 }
 
 @test "batch path fires exactly ONE writer subprocess per Stop (perf-invariant)" {
@@ -328,7 +298,7 @@ EOF
   local stdin_json
   stdin_json="$(printf '{"session_id":"%s","transcript_path":"%s","cwd":"/tmp","permission_mode":"default","hook_event_name":"Stop"}' \
     "${EPH_SID}" "${EPH_TX}")"
-  env PATH="${shimbin}:${PATH}" HOME="${EPH_HOME}" PYTHONPATH="${EPH_USER_SITE}" \
+  env PATH="${shimbin}:${PATH}" HOME="${EPH_HOME}" PYTHONPATH="${EPH_PG_RECORDER_DIR}:${EPH_USER_SITE}" \
     PGHOST="${EPH_SOCKDIR}" PGPORT="${EPH_PORT}" \
     PRICING_REMOTE_DISABLE=1 COST_TRACKER_TODAY="2026-07-02" CLAUDE_SESSION_ID='' \
     bash -c 'printf "%s" "$1" | "$2" 2>/dev/null' _ "${stdin_json}" "${EPH_HOOK_SH}" || return 1
@@ -344,7 +314,7 @@ EOF
   [[ "${rows}" -eq "${EPH_EXPECT_ROWS}" ]] || { echo "row count ${rows} != ${EPH_EXPECT_ROWS}" >&2; return 1; }
   [[ "${tok}" -eq "${EPH_EXPECT_TOKENS}" ]] || { echo "token sum ${tok} != ${EPH_EXPECT_TOKENS}" >&2; return 1; }
 
-  _assert_prod_isolated || return 1
+  eph_assert_isolated 1 || return 1
 }
 
 @test "partial-success: a mid-batch execute failure commits both siblings, exits 3, loud-fails the bad row" {
@@ -353,8 +323,8 @@ EOF
   # A mixed [good, bad, good] batch fed DIRECTLY to _pg_dual_write.py. The middle
   # row keeps an allowlisted target + columns (so it PASSES the identifier gate)
   # but carries a non-numeric input_tokens, so it fails at execute against the
-  # bigint column — the riskiest partial-success path. `session_id` = EPH_SID so
-  # the isolation gate covers these rows too; distinct dedup_keys avoid the
+  # bigint column — the riskiest partial-success path. `session_id` = EPH_SID like
+  # every fixture row; distinct dedup_keys avoid the
   # (session_id, dedup_key) UPSERT collapsing the two good rows into one.
   local envelope
   envelope=$(
@@ -370,7 +340,7 @@ JSON
   # Positional args into `bash -c` avoid any interpolation injection. The pipeline
   # exit is the writer's (last stage), so ${status} is the writer's exit code.
   local writer_stderr="${BATS_TEST_TMPDIR}/partial.stderr"
-  run env HOME="${EPH_HOME}" PYTHONPATH="${EPH_USER_SITE}" \
+  run env HOME="${EPH_HOME}" PYTHONPATH="${EPH_PG_RECORDER_DIR}:${EPH_USER_SITE}" \
     PGHOST="${EPH_SOCKDIR}" PGPORT="${EPH_PORT}" \
     bash -c 'printf "%s" "$1" | python3 "$2" 2>"$3"' _ "${envelope}" "${EPH_WRITER_PY}" "${writer_stderr}"
 
@@ -401,7 +371,8 @@ JSON
   # The structured per-row loud-fail line fired for the failed row (stderr JSON).
   grep -q '"dedup_key":"partial-bad"' "${writer_stderr}" || { echo "no structured per-row stderr for the failed row"; cat "${writer_stderr}"; return 1; }
 
-  _assert_prod_isolated || return 1
+  # the batch connection, plus the failed row's hook_failures record on its own connection
+  eph_assert_isolated 2 || return 1
 }
 
 @test "effort and the mixed-tier flag land beside model on turn and subagent rows" {
@@ -429,7 +400,7 @@ JSON
     }
   done
 
-  _assert_prod_isolated || return 1
+  eph_assert_isolated "${#rows[@]}" || return 1
 }
 
 @test "a re-fire refreshes effort and the mixed-tier flag on the same rows" {

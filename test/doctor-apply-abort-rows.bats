@@ -54,6 +54,8 @@ APPLY_SH="${GA}/autoagent/daemon-apply.sh"
 source "${GA}/scripts/lib/path-guard.sh"
 
 setup() {
+  load 'lib/bats-db-seal'
+  ga_bats_db_seal
   [[ -f "${REAL_GA}" ]] || skip "glass-atrium not found: ${REAL_GA}"
   [[ -f "${APPLY_SH}" ]] || skip "daemon-apply.sh not found: ${APPLY_SH}"
   TARGET="$(mktemp -d -t ga-doctor-abort-target.XXXXXX)"

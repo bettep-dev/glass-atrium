@@ -32,6 +32,8 @@ TUI="${GA}/glass-atrium"
 source "${GA}/scripts/lib/path-guard.sh"
 
 setup() {
+  load 'lib/bats-db-seal'
+  ga_bats_db_seal
   [[ -f "${TUI}" ]] || skip "glass-atrium launcher not found: ${TUI}"
   [[ -f "${GA}/lib/ga-core.sh" ]] || skip "launcher lib not found: ${GA}/lib/ga-core.sh"
   SANDBOX="$(mktemp -d -t ga-doctor-errtrap.XXXXXX)"

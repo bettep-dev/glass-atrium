@@ -30,7 +30,7 @@
 # psycopg.connect("dbname=glass_atrium"), so PGHOST/PGPORT redirect every write to an EPHEMERAL
 # single-file cluster (private Unix socket, no TCP) — never the production /tmp glass_atrium.
 # Every fixture agent is a unique "dc-..." literal (production agents are glass-atrium-* /
-# general-purpose), and each test asserts ZERO fixture rows reached production. HOME is repointed
+# general-purpose), and each test asserts every connection the hook made reached only this cluster. HOME is repointed
 # to a temp dir; psycopg lives in the HOME-derived user site-packages, so PYTHONPATH carries the
 # REAL install (captured before the override) to keep the helper's import alive.
 
@@ -89,6 +89,9 @@ CREATE UNIQUE INDEX "correction_signals_dedup" ON "core"."correction_signals" ("
 SQL
 }
 
+# shellcheck source=SCRIPTDIR/lib/ephemeral-pg.bash disable=SC2154
+source "${BATS_TEST_DIRNAME}/lib/ephemeral-pg.bash"
+
 # BATS_TEST_DIRNAME is assigned by the bats runtime (SC2154 false positive).
 # shellcheck disable=SC2154
 setup_file() {
@@ -109,8 +112,6 @@ setup_file() {
     export EPH_SKIP="psycopg module not importable"
     return 0
   fi
-
-  source "${BATS_TEST_DIRNAME}/lib/ephemeral-pg.bash"
 
   export EPH_DB="glass_atrium"
   export EPH_DATADIR="${BATS_FILE_TMPDIR}/pgdata"
@@ -144,6 +145,7 @@ setup() {
   if [[ -n "${EPH_SKIP:-}" ]]; then
     skip "${EPH_SKIP}"
   fi
+  export GA_BATS_PG_RECORD="${BATS_TEST_TMPDIR:?}/pg-connect.log"
 }
 
 # Query the EPHEMERAL cluster (explicit -h/-p override any ambient env).
@@ -171,22 +173,9 @@ _mk_envelope() {
 
 # Feed one envelope directly to the dual-write helper, redirected to the ephemeral cluster.
 _run_helper() {
-  run env HOME="${EPH_HOME}" PYTHONPATH="${DC_PSYCOPG_PP}" \
+  run env HOME="${EPH_HOME}" PYTHONPATH="${EPH_PG_RECORDER_DIR}:${DC_PSYCOPG_PP}" \
     PGHOST="${EPH_SOCKDIR}" PGPORT="${EPH_PORT}" \
     bash -c 'printf "%s" "$1" | python3 "$2" 2>&1' _ "${1}" "${DC_PG_HELPER}"
-}
-
-# Definitive isolation gate: the fixture agent must have ZERO rows in production.
-_assert_prod_isolated() {
-  local agent="${1}" leaked
-  leaked="$(env -u PGHOST -u PGPORT psql -d "${EPH_DB}" -tAqc \
-    "SELECT count(*) FROM core.outcomes WHERE agent = '${agent}';" \
-    2>/dev/null || echo "SKIP")"
-  [[ "${leaked}" == "SKIP" ]] && return 0
-  [[ "${leaked}" -eq 0 ]] || {
-    echo "ISOLATION BREACH: ${leaked} fixture rows reached production" >&2
-    return 1
-  }
 }
 
 # Write a synthetic SubagentStop subagent transcript at the path the hook's resolver globs
@@ -239,7 +228,7 @@ _e2e_run_hook() {
       hook_event_name: "SubagentStop", agent_type: $agent, agent_id: $aid,
       session_id: $sess, cwd: $cwd, transcript_path: "/nonexistent/parent.jsonl"
     }')"
-  run env HOME="${EPH_HOME}" PYTHONPATH="${DC_PSYCOPG_PP}" \
+  run env HOME="${EPH_HOME}" PYTHONPATH="${EPH_PG_RECORDER_DIR}:${DC_PSYCOPG_PP}" \
     PGHOST="${EPH_SOCKDIR}" PGPORT="${EPH_PORT}" CLAUDE_GATE_INFLIGHT="" \
     bash -c 'printf "%s" "$1" | bash "$2" 2>&1' _ "${payload}" "${DC_HOOK_SH}"
 }
@@ -267,7 +256,7 @@ _e2e_run_hook() {
   local seq; seq="$(_q "SELECT last_value FROM core.outcomes_id_seq;")" || return 1
   [ "${seq}" = "2" ] || { echo "seq last_value='${seq}' (expected 2 = a consumed-and-gapped id)"; return 1; }
 
-  _assert_prod_isolated "${agent}" || return 1
+  eph_assert_isolated 2 || return 1
 }
 
 @test "C2 DISTINCT (millisecond) record_ts for the same agent+task_type → BOTH rows survive" {
@@ -281,7 +270,7 @@ _e2e_run_hook() {
   local n; n="$(_q "SELECT count(*) FROM core.outcomes WHERE agent = '${agent}';")" || return 1
   [ "${n}" = "2" ] || { echo "row count ${n} != 2 (distinct ms keys must NOT collide)"; return 1; }
 
-  _assert_prod_isolated "${agent}" || return 1
+  eph_assert_isolated 2 || return 1
 }
 
 @test "C3 track-outcome.sh stamps record_ts at sub-second precision (python %f), date only as fallback" {
@@ -324,7 +313,7 @@ _e2e_run_hook() {
   local cs; cs="$(_q "SELECT count(*) FROM core.correction_signals cs JOIN core.outcomes o ON cs.outcome_id = o.id WHERE o.agent = '${agent}';")" || return 1
   [ "${cs}" = "1" ] || { echo "correction_signals rows ${cs} != 1 (correction WRITE path broke)"; return 1; }
 
-  _assert_prod_isolated "${agent}" || return 1
+  eph_assert_isolated 1 || return 1
 }
 
 @test "C5 end-to-end: two same-(agent,task_type) subagents both persist with DISTINCT record_ts" {
@@ -346,5 +335,5 @@ _e2e_run_hook() {
   local d; d="$(_q "SELECT count(DISTINCT record_ts) FROM core.outcomes WHERE agent = '${agent}';")" || return 1
   [ "${d}" = "2" ] || { echo "distinct record_ts ${d} != 2 (stamps must differ at sub-second)"; return 1; }
 
-  _assert_prod_isolated "${agent}" || return 1
+  eph_assert_isolated 2 || return 1
 }

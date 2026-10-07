@@ -11,7 +11,7 @@
 # its OWN sandbox HOME with the data-root env scrubbed alongside it (see the stages
 # themselves); stage 4 runs the scripts/test pytest suites under the SAME data-root
 # scrub but WITHOUT a sandbox HOME (measured reason at the stage), and only when pytest
-# is importable.
+# is importable. Every python stage runs on a dead PGHOST (reason at PG_ROUTING_SCRUB).
 #
 # TWO unittest roots because `unittest discover` takes a single -s — the same reason the
 # CI test-python leg loops over the identical pair. They are separate STAGES rather than
@@ -98,7 +98,14 @@ readonly DAEMON_ENV_SCRUB=(
   -u AUTOAGENT_CLAUDE_BIN
   -u CLAUDE_BIN
 )
-readonly PYTHON_STAGE_SCRUB=("${DAEMON_ENV_SCRUB[@]}" -u GA_DATA_ROOT -u ATRIUM_UPDATE_STATE_DIR)
+# libpq names that outrank or reroute PGHOST. The python stages run with these unset and PGHOST set to a
+# path that never exists, so a host-less connection (psycopg "dbname=glass_atrium") fails there instead
+# of reaching the live server on the default /tmp socket. Stage 1 gets the same from every corpus
+# setup_suite (test/lib/bats-hermetic-env.bash, GA_BATS_PG_ROUTING_NAMES — pinned equal by
+# scripts/test/run-bats-parallel.bats); a suite that needs a DB starts its own ephemeral cluster.
+readonly PG_ROUTING_SCRUB=(-u PGPORT -u PGHOSTADDR -u PGSERVICE -u PGDATABASE -u PGPASSFILE)
+readonly PYTHON_STAGE_SCRUB=("${DAEMON_ENV_SCRUB[@]}" -u GA_DATA_ROOT -u ATRIUM_UPDATE_STATE_DIR
+  "${PG_ROUTING_SCRUB[@]}")
 
 # One parent scratch dir; each unittest stage gets its OWN sandbox HOME beneath it, so
 # stage 3 never inherits what stage 2's suites left behind. The cleanup trap still tracks
@@ -252,10 +259,12 @@ main() {
   # under conditions this stage does not share.
   SANDBOX_ROOT="$(mktemp -d -t run-bats-parallel-home.XXXXXX)"
   mkdir -p "${SANDBOX_ROOT}/hooks" "${SANDBOX_ROOT}/autoagent"
+  # never created — the dead PGHOST every python stage runs on (PG_ROUTING_SCRUB)
+  local dead_pghost="PGHOST=${SANDBOX_ROOT}/no-pg-socket"
 
   run_stage "stage 2/4 ${HOOKS_TEST_ROOT} unittest" \
     env "${PYTHON_STAGE_SCRUB[@]}" \
-    "HOME=${SANDBOX_ROOT}/hooks" \
+    "HOME=${SANDBOX_ROOT}/hooks" "${dead_pghost}" \
     python3 -m unittest discover -s "${HOOKS_TEST_ROOT}" -p 'test_*.py'
 
   # Stage 3 is the autoagent twin of stage 2 and is NOT conditional: autoagent/test is a
@@ -272,7 +281,7 @@ main() {
   # run, so the probe cannot read green under conditions this stage does not share.
   run_stage "stage 3/4 ${AUTOAGENT_TEST_ROOT} unittest" \
     env "${PYTHON_STAGE_SCRUB[@]}" \
-    "HOME=${SANDBOX_ROOT}/autoagent" \
+    "HOME=${SANDBOX_ROOT}/autoagent" "${dead_pghost}" \
     python3 -m unittest discover -s "${AUTOAGENT_TEST_ROOT}" -p 'test_*.py'
 
   # Stage 4 is conditional: the live install has no pytest, and the honest outcome
@@ -295,7 +304,7 @@ main() {
   # added later from writing under HOME, which is exactly what the sandbox would buy.
   if python3 -c 'import pytest' >/dev/null 2>&1; then
     run_stage "stage 4/4 ${SCRIPTS_TEST_ROOT} pytest" \
-      env "${PYTHON_STAGE_SCRUB[@]}" \
+      env "${PYTHON_STAGE_SCRUB[@]}" "${dead_pghost}" \
       python3 -m pytest "${SCRIPTS_TEST_ROOT}/" --color=no
   else
     local python3_path
