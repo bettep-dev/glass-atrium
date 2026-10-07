@@ -1698,11 +1698,11 @@ class AaCanaryTest(_AaResultFixture):
         seen: dict[str, dict] = {}
         replace = os.replace
 
-        def _replace_and_read(source: str, target: str) -> None:
+        def _replace_and_read(source: str, target: str, **dir_fds: int) -> None:
             seen[Path(target).stem] = json.loads(
-                Path(target).read_text(encoding="utf-8")
+                (self.canary_dir / target).read_text(encoding="utf-8")
             )
-            replace(source, target)
+            replace(source, target, **dir_fds)
 
         with mock.patch.object(dc.os, "replace", _replace_and_read):
             self._evaluate()
@@ -2152,7 +2152,7 @@ class AaCanaryTest(_AaResultFixture):
         self._patch("_get_utc_now", lambda: _NOW)
         before = {path.name: path.read_bytes() for path in self.canary_dir.iterdir()}
 
-        def _refuse(source: str, target: str) -> None:
+        def _refuse(source: str, target: str, **dir_fds: int) -> None:
             raise PermissionError(13, "Permission denied", target)
 
         with mock.patch.object(dc.os, "replace", _refuse):
@@ -2169,14 +2169,14 @@ class AaCanaryTest(_AaResultFixture):
     def test_a_canary_removal_fault_warns_and_the_stage_goes_on(self) -> None:
         self._move_window_start(_NOW - timedelta(days=1))
         stray = self._put_canary("glass-atrium-retired", "")
-        unlink = Path.unlink
+        unlink = os.unlink
 
-        def _refuse_stray(path: Path, missing_ok: bool = False) -> None:
-            if path == stray:
-                raise PermissionError(13, "Permission denied", str(path))
-            unlink(path, missing_ok=missing_ok)
+        def _refuse_stray(name: str, *, dir_fd: int | None = None) -> None:
+            if name == stray.name:
+                raise PermissionError(13, "Permission denied", name)
+            unlink(name, dir_fd=dir_fd)
 
-        with mock.patch.object(Path, "unlink", _refuse_stray):
+        with mock.patch.object(dc.os, "unlink", _refuse_stray):
             stderr_text = self._evaluate()
 
         self.assertIn(
@@ -2186,21 +2186,63 @@ class AaCanaryTest(_AaResultFixture):
         self.assertTrue(stray.exists())
         self.assertEqual(set(self._get_canaries()), {*_ROSTER, "glass-atrium-retired"})
 
-    def test_a_canary_directory_that_cannot_be_listed_warns_and_the_stage_goes_on(
+    def test_a_canary_directory_not_reached_as_a_real_directory_is_never_emptied_or_written(
         self,
     ) -> None:
-        self._move_window_start(_NOW - timedelta(days=1))
-        self.canary_dir.parent.mkdir(parents=True, exist_ok=True)
-        self.canary_dir.write_text("not a directory", encoding="utf-8")
+        def _plant_file(planted: Path, segment: str) -> Path:
+            planted.write_text("not a directory", encoding="utf-8")
+            return planted
 
-        stderr_text = self._evaluate()
+        def _plant_link(planted: Path, segment: str) -> Path:
+            outside = Path(tempfile.mkdtemp(dir=self.scratch))
+            files = outside / Path("learning", "canary").relative_to(segment)
+            (files / "sub").mkdir(parents=True)
+            (files / "notes.txt").write_text("keep", encoding="utf-8")
+            (files / "glass-atrium-dev-python.json").write_text('{"text": "x"}', encoding="utf-8")
+            planted.symlink_to(outside, target_is_directory=True)
+            return outside
 
-        self.assertIn(
-            "WARN: A/A harness — canary directory not listed: NotADirectoryError",
-            stderr_text,
+        def _get_tree(root: Path) -> dict[str, bytes | None]:
+            if root.is_file():
+                return {".": root.read_bytes()}
+            return {
+                str(path.relative_to(root)): None if path.is_dir() else path.read_bytes()
+                for path in root.rglob("*")
+            }
+
+        def _close() -> None:
+            self.ledger.write(
+                stub.get_trial_ledger().EVENT.AA_RESULT,
+                stub.get_trial_ledger().ACTOR.AA,
+                {"overall": "pass"},
+                dedupe_key=f"aa-result:{self._get_starts()[0].id}",
+            )
+
+        # name, the planted segment below the data root, plant, arrange — the closing row last
+        rows = (
+            ("canary is a regular file", "learning/canary", _plant_file, lambda: None),
+            ("canary is a symlink, A/A open", "learning/canary", _plant_link, lambda: None),
+            ("learning is a symlink, A/A open", "learning", _plant_link, lambda: None),
+            ("canary is a symlink, no open A/A", "learning/canary", _plant_link, _close),
         )
-        self.assertEqual(self._get_results(), [])
-        self.assertEqual(self.canary_dir.read_text(encoding="utf-8"), "not a directory")
+        self._move_window_start(_NOW - timedelta(days=1))
+        for index, (name, segment, plant, arrange) in enumerate(rows):
+            data_root = self.scratch / f"data-root-{index}"
+            with self.subTest(name), mock.patch.dict(os.environ, {"GA_DATA_ROOT": str(data_root)}):
+                arrange()
+                planted = data_root / "data" / segment
+                planted.parent.mkdir(parents=True)
+                tree = plant(planted, segment)
+                before = (_get_tree(tree), self._get_results())
+
+                stderr_text = self._evaluate()
+
+                self.assertEqual((_get_tree(tree), self._get_results()), before, name)
+                self.assertIn(
+                    f"WARN: A/A harness — canary directory not a real directory: {planted} is "
+                    "a symlink or not a directory",
+                    stderr_text,
+                )
 
 
 def _fail_spawn_read(*args: object) -> None:

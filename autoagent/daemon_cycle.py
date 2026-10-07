@@ -28,6 +28,7 @@ from __future__ import annotations
 
 import contextlib
 import difflib
+import errno
 import fcntl
 import hashlib
 import io
@@ -45,7 +46,7 @@ import sys
 import tempfile
 import time
 from collections import defaultdict
-from collections.abc import Callable, Iterable, Mapping, Sequence
+from collections.abc import Callable, Iterable, Iterator, Mapping, Sequence
 from dataclasses import asdict, dataclass, field, replace
 from datetime import date, datetime, timedelta, timezone
 from enum import IntEnum
@@ -9372,7 +9373,13 @@ CANARY = SimpleNamespace(
     # hook_path_safe_key: every byte outside A-Za-z0-9_- dropped
     UNSAFE_KEY=re.compile(r"[^A-Za-z0-9_-]"),
     VOID_REASON="foreign-canary-hash",
+    # the hook's CANARY_DIR below the data root, each segment opened without following a symlink
+    DIR_SEGMENTS=("learning", "canary"),
 )
+
+
+class CanaryDirUnsafe(OSError):
+    """A canary directory segment below the data root is a symlink or not a directory."""
 
 
 class AaStateUnreadable(Exception):
@@ -9665,28 +9672,74 @@ def _read_open_aa_start() -> AaStart | None:
 
 def put_canary_file(agent: str, salt: int, text: str, now: datetime) -> None:
     """Replace one agent's canary file whole — a temp file in its directory, then a rename — so a
-    SubagentStart read sees the previous file or this one, never a partial one. Raises OSError."""
-    path = _get_canary_path(agent)
-    path.parent.mkdir(parents=True, exist_ok=True)
+    SubagentStart read sees the previous file or this one, never a partial one. Both land through a
+    descriptor on the canary directory. Raises OSError — CanaryDirUnsafe when not a real one."""
+    name = _get_canary_path(agent).name
     body = {
         "salt": salt,
         "text": text,
         "text_sha256": _get_text_sha256(text),
         "expires_at": int((now + CANARY.LEASE).timestamp()),
     }
-    fd, temp = tempfile.mkstemp(dir=path.parent, prefix=f".{path.stem}.", suffix=".tmp")
-    try:
-        with os.fdopen(fd, "w", encoding="utf-8") as handle:
-            json.dump(body, handle)
-        os.replace(temp, path)
-    except BaseException:
-        Path(temp).unlink(missing_ok=True)
-        raise
+    temp = f".{Path(name).stem}.{os.urandom(6).hex()}.tmp"
+    with _open_canary_dir(should_create=True) as dir_fd:
+        flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW
+        fd = os.open(temp, flags, 0o600, dir_fd=dir_fd)
+        try:
+            with os.fdopen(fd, "w", encoding="utf-8") as handle:
+                json.dump(body, handle)
+            os.replace(temp, name, src_dir_fd=dir_fd, dst_dir_fd=dir_fd)
+        except BaseException:
+            with contextlib.suppress(FileNotFoundError):
+                os.unlink(temp, dir_fd=dir_fd)
+            raise
 
 
 def _get_canary_dir() -> Path:
     """The hook's CANARY_DIR: `${GA_DATA_ROOT:-$HOME/.glass-atrium}/data/learning/canary`."""
-    return ga_paths.get_data_root() / "learning" / "canary"
+    return ga_paths.get_data_root().joinpath(*CANARY.DIR_SEGMENTS)
+
+
+@contextlib.contextmanager
+def _open_canary_dir(*, should_create: bool = False) -> Iterator[int]:
+    fd = _get_canary_dir_fd(should_create=should_create)
+    try:
+        yield fd
+    finally:
+        os.close(fd)
+
+
+def _get_canary_dir_fd(*, should_create: bool) -> int:
+    """An open descriptor on the canary directory — the data root as configured, each segment
+    below it opened without following a symlink, so a planted link never redirects a listing,
+    removal or write. Raises FileNotFoundError when absent and not created, CanaryDirUnsafe when a
+    segment is a symlink or not a directory, OSError on any other fault."""
+    root = ga_paths.get_data_root()
+    if should_create:
+        root.mkdir(parents=True, exist_ok=True)
+    fd = os.open(root, os.O_RDONLY | os.O_DIRECTORY)
+    for depth, segment in enumerate(CANARY.DIR_SEGMENTS, 1):
+        try:
+            child = _open_dir_segment(fd, segment, should_create=should_create)
+        except OSError as exc:
+            # macOS refuses a symlink opened O_DIRECTORY | O_NOFOLLOW with ENOTDIR, Linux with ELOOP
+            if exc.errno not in (errno.ENOTDIR, errno.ELOOP):
+                raise
+            planted = root.joinpath(*CANARY.DIR_SEGMENTS[:depth])
+            raise CanaryDirUnsafe(
+                f"canary directory not a real directory: {planted} is a symlink or not a directory"
+            ) from exc
+        finally:
+            os.close(fd)
+        fd = child
+    return fd
+
+
+def _open_dir_segment(parent: int, segment: str, *, should_create: bool) -> int:
+    if should_create:
+        with contextlib.suppress(FileExistsError):
+            os.mkdir(segment, dir_fd=parent)
+    return os.open(segment, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=parent)
 
 
 def _get_canary_path(agent: str) -> Path:
@@ -9695,10 +9748,18 @@ def _get_canary_path(agent: str) -> Path:
 
 def _get_canary_files() -> list[Path]:
     """Every entry in the canary directory, any name or extension case — the hook decides delivery
-    by an exact listed name, so the daemon lists by name too. Not listable → WARN, none."""
+    by an exact listed name, so the daemon lists by name too. Not listable, or not a real
+    directory → WARN, none."""
     try:
-        entries = sorted(_get_canary_dir().iterdir())
+        with _open_canary_dir() as dir_fd, os.scandir(dir_fd) as entries:
+            # a real directory cannot be unlinked; a symlink to one can, and the hook refuses it
+            names = sorted(
+                entry.name for entry in entries if not entry.is_dir(follow_symlinks=False)
+            )
     except FileNotFoundError:
+        return []
+    except CanaryDirUnsafe as exc:
+        _warn_aa(str(exc), "no canary file is swept or removed this cycle")
         return []
     except OSError as exc:
         _warn_aa(
@@ -9706,8 +9767,8 @@ def _get_canary_files() -> list[Path]:
             "no canary file is swept or removed this cycle",
         )
         return []
-    # a real directory cannot be unlinked; a symlink to one can, and the hook refuses it
-    return [path for path in entries if path.is_symlink() or not path.is_dir()]
+    canary_dir = _get_canary_dir()
+    return [canary_dir / name for name in names]
 
 
 def _get_text_sha256(text: str) -> str:
@@ -9721,6 +9782,9 @@ def _put_aa_canaries(latest: AaStart, roster: frozenset[str]) -> None:
     for agent in sorted(roster):
         try:
             put_canary_file(agent, latest.salt_id, CANARY.AA_TEXT, now)
+        except CanaryDirUnsafe as exc:
+            _warn_aa(str(exc), "no canary file is written this cycle")
+            return
         except OSError as exc:
             _warn_aa(
                 f"canary for {agent} not written: {_describe_fault(exc)}",
@@ -9829,16 +9893,36 @@ def _void_aa(latest: AaStart, agent: str, text_sha256: str | None) -> None:
 
 
 def _delete_canaries(paths: list[Path], reason: str) -> None:
-    for path in paths:
-        try:
-            path.unlink(missing_ok=True)
-        except OSError as exc:
-            _warn_aa(
-                f"canary {path} not removed: {_describe_fault(exc)}",
-                "the next writing cycle retries",
-            )
-            continue
-        sys.stderr.write(f"[daemon-cycle] INFO: canary {path} removed — {reason}\n")
+    """Remove each canary entry by name through a descriptor on the canary directory; not a real
+    directory → WARN, none removed."""
+    if not paths:
+        return
+    try:
+        with _open_canary_dir() as dir_fd:
+            for path in paths:
+                _delete_canary(dir_fd, path, reason)
+    except FileNotFoundError:
+        return  # no canary directory → no entry to remove
+    except CanaryDirUnsafe as exc:
+        _warn_aa(str(exc), "no canary file is removed this cycle")
+    except OSError as exc:
+        _warn_aa(
+            f"canary directory not opened: {_describe_fault(exc)}",
+            "the next writing cycle retries",
+        )
+
+
+def _delete_canary(dir_fd: int, path: Path, reason: str) -> None:
+    try:
+        with contextlib.suppress(FileNotFoundError):
+            os.unlink(path.name, dir_fd=dir_fd)
+    except OSError as exc:
+        _warn_aa(
+            f"canary {path} not removed: {_describe_fault(exc)}",
+            "the next writing cycle retries",
+        )
+        return
+    sys.stderr.write(f"[daemon-cycle] INFO: canary {path} removed — {reason}\n")
 
 
 def _get_aa_restart(latest: AaStart) -> AaRestart | None:

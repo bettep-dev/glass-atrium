@@ -652,6 +652,27 @@ class TestManifestDeliveryBinding(_IngestCase):
         self.assertEqual(self._get_canaries(), [_ROSTER[0]])
         self.assertEqual(self.ledger.get_events(), [_UNBOUND, _UNBOUND])
 
+    def test_a_no_trial_delivery_never_removes_a_file_through_a_symlinked_canary_directory(
+        self,
+    ) -> None:
+        outside = self.base_root / "outside"
+        outside.mkdir()
+        target = outside / f"{_ROSTER[0]}.json"
+        target.write_text("{}", encoding="utf-8")
+        self.canary_dir.parent.mkdir(parents=True, exist_ok=True)
+        self.canary_dir.symlink_to(outside, target_is_directory=True)
+        self._append(self.live_log, _get_delivery_line(_ROSTER[0], salt="3"))
+
+        self._ingest(_CYCLE_1)
+
+        self.assertEqual(self._get_no_trial_agents(), [_ROSTER[0]], "the removal was reached")
+        self.assertTrue(target.exists(), "a file outside the canary directory was removed")
+        self.assertIn(
+            f"canary directory not a real directory: {self.canary_dir} is a symlink or not a "
+            "directory",
+            self.stderr,
+        )
+
     def test_each_no_trial_delivery_writes_one_ledger_row_keyed_by_its_spool_line(self) -> None:
         self._append(self.live_log, _get_delivery_line(_ROSTER[0], salt="3"))
         self._ingest(_CYCLE_1)
