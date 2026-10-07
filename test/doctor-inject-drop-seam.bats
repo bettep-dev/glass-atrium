@@ -64,6 +64,7 @@ setup() {
   DATA_ROOT="$(mktemp -d -t ga-doctor-drop-data.XXXXXX)"
   mkdir -p "${TARGET}/bin" "${TARGET}/empty-reports" "${DATA_ROOT}/logs"
   DROPLOG="${DATA_ROOT}/logs/inject-scope-rules.diag.log"
+  MANIFESTLOG="${DATA_ROOT}/logs/inject-scope-rules.manifest.log"
   SPAWN_COUNTER="${TARGET}/spawns.count"
   # echo-OK claude stub → the post-§10 headless-auth advisory's self-test never networks.
   cat >"${TARGET}/bin/claude" <<'SH'
@@ -111,7 +112,9 @@ run_doctor_seam() {
 emit_shed_row() {
   local agent="${1}" ceiling="${2}" budget_src="${3}"
   printf '%s' "{\"agent_type\":\"${agent}\"}" | env \
+    GA_DATA_ROOT="${DATA_ROOT}" \
     INJECT_SCOPE_RULES_DROP_LOG="${DROPLOG}" \
+    INJECT_SCOPE_RULES_MANIFEST_LOG="${MANIFESTLOG}" \
     INJECT_SCOPE_RULES_SPAWN_COUNTER="${SPAWN_COUNTER}" \
     SUBAGENT_BUDGET_METER_OFF=1 \
     INJECT_SCOPE_RULES_AGENTS_DIR=/nonexistent \
@@ -174,6 +177,17 @@ ROLLUP='== doctor: PASS (with '
   # an actionable drop is a warning, so the aggregate must not report zero inject-drop warnings
   assert_output_has "${ROLLUP}" || return 1
   assert_output_lacks "0 inject-drop"
+}
+
+# The producer's per-spawn manifest line is ingested into the DB from the runtime log root, so a
+# fixture line must land in this suite's own data root and nowhere a daemon reads.
+@test "a producer run writes its spawn manifest line under the suite's data root" {
+  emit_shed_row "glass-atrium-dev-front" 9984 "${BUDGET_BIG}"
+  grep -q ' agent=glass-atrium-dev-front ' "${MANIFESTLOG}" || {
+    echo "no manifest line under ${DATA_ROOT}/logs — log:" >&2
+    cat -- "${MANIFESTLOG}" >&2 || true
+    return 1
+  }
 }
 
 # ── AC2 — lesson rows in an existing log are history, never a warning ──────────────────────────

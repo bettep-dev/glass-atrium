@@ -65,7 +65,7 @@ no() { [[ "${2}" != *"${1}"* ]] || { printf 'assert-omits FAILED: [%s] present i
 
 # run_hook <extra VAR=val ...> — direct hook invocation with stderr merged.
 run_hook() {
-  run env HOME="${SANDBOX_HOME}" PGHOST="/nonexistent-socket-xyzzy" CLAUDE_GATE_INFLIGHT="" "$@" \
+  run env -u GA_DATA_ROOT HOME="${SANDBOX_HOME}" PGHOST="/nonexistent-socket-xyzzy" CLAUDE_GATE_INFLIGHT="" "$@" \
     bash -c '"$1" < "$2" 2>&1' _ "${HOOK_SH}" "${PAYLOAD_FILE}"
 }
 

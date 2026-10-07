@@ -221,7 +221,7 @@ _fire_stop_on() {
   local stdin_json
   stdin_json="$(printf '{"session_id":"%s","transcript_path":"%s","cwd":"/tmp","permission_mode":"default","hook_event_name":"Stop"}' \
     "${1}" "${2}")"
-  env HOME="${EPH_HOME}" PYTHONPATH="${EPH_PG_RECORDER_DIR}:${EPH_USER_SITE}" \
+  env -u GA_DATA_ROOT HOME="${EPH_HOME}" PYTHONPATH="${EPH_PG_RECORDER_DIR}:${EPH_USER_SITE}" \
     PGHOST="${EPH_SOCKDIR}" PGPORT="${EPH_PORT}" \
     PRICING_REMOTE_DISABLE=1 COST_TRACKER_TODAY="2026-07-02" CLAUDE_SESSION_ID='' \
     bash -c 'printf "%s" "$1" | "$2" 2>"$3"' _ "${stdin_json}" "${EPH_HOOK_SH}" "${stderr_file}"
@@ -298,7 +298,7 @@ EOF
   local stdin_json
   stdin_json="$(printf '{"session_id":"%s","transcript_path":"%s","cwd":"/tmp","permission_mode":"default","hook_event_name":"Stop"}' \
     "${EPH_SID}" "${EPH_TX}")"
-  env PATH="${shimbin}:${PATH}" HOME="${EPH_HOME}" PYTHONPATH="${EPH_PG_RECORDER_DIR}:${EPH_USER_SITE}" \
+  env -u GA_DATA_ROOT PATH="${shimbin}:${PATH}" HOME="${EPH_HOME}" PYTHONPATH="${EPH_PG_RECORDER_DIR}:${EPH_USER_SITE}" \
     PGHOST="${EPH_SOCKDIR}" PGPORT="${EPH_PORT}" \
     PRICING_REMOTE_DISABLE=1 COST_TRACKER_TODAY="2026-07-02" CLAUDE_SESSION_ID='' \
     bash -c 'printf "%s" "$1" | "$2" 2>/dev/null' _ "${stdin_json}" "${EPH_HOOK_SH}" || return 1
@@ -340,7 +340,7 @@ JSON
   # Positional args into `bash -c` avoid any interpolation injection. The pipeline
   # exit is the writer's (last stage), so ${status} is the writer's exit code.
   local writer_stderr="${BATS_TEST_TMPDIR}/partial.stderr"
-  run env HOME="${EPH_HOME}" PYTHONPATH="${EPH_PG_RECORDER_DIR}:${EPH_USER_SITE}" \
+  run env -u GA_DATA_ROOT HOME="${EPH_HOME}" PYTHONPATH="${EPH_PG_RECORDER_DIR}:${EPH_USER_SITE}" \
     PGHOST="${EPH_SOCKDIR}" PGPORT="${EPH_PORT}" \
     bash -c 'printf "%s" "$1" | python3 "$2" 2>"$3"' _ "${envelope}" "${EPH_WRITER_PY}" "${writer_stderr}"
 

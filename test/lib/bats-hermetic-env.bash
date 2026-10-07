@@ -56,6 +56,16 @@ ga_bats_hermetic_env() {
   for name in "${GA_BATS_PG_ROUTING_NAMES[@]}"; do
     unset "${name}"
   done
+
+  # Runtime log/data root, same family as the dead PGHOST: shell hooks, python consumers and the
+  # launcher resolve logs/ and data/ from GA_DATA_ROOT before $HOME/.glass-atrium, so a hook a test
+  # runs with no seam of its own writes here, not into the live logs a daemon ingests.
+  # Overridden, never defaulted → an ambient live-root export (a launcher-driven run) cannot leak in.
+  # A suite whose subject IS the HOME fallback unsets it on the command it drives.
+  export GA_DATA_ROOT="${BATS_RUN_TMPDIR}/ga-data-root"
+  # the chunked part-hooks resolve their diag sink from the rules root, not GA_DATA_ROOT
+  export GA_CHUNK_SINK="${GA_DATA_ROOT}/logs/inject-scope-chunk.diag.log"
+  mkdir -p "${GA_DATA_ROOT}/logs" "${GA_DATA_ROOT}/data" || return 1
 }
 
 # Scratch-cwd seat: each test starts in BATS_SUITE_TMPDIR.
