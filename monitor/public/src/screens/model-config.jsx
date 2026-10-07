@@ -1912,10 +1912,9 @@ function headerSyncMC(data) {
 	return sync === "ok" && hasRowDriftMC(data) ? "drift" : sync;
 }
 
-// Row drift present — banner trigger, true on one drifted model or budget row.
+// Row drift present — banner trigger, true on one drifted row of any form group.
 function hasRowDriftMC(data) {
-	const rows = [...(data?.domains || []), ...(data?.budgets || [])];
-	return rows.some((r) => r.drift);
+	return Object.values(FORM_GROUP_ROWS_MC).some((rowsKey) => (data?.[rowsKey] || []).some((r) => r.drift));
 }
 
 function extractSurfaceResultsMC(data) {

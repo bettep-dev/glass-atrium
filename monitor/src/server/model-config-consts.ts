@@ -500,7 +500,7 @@ export type TierFileValue =
   | { state: "accepted"; value: string }
   | { state: "rejected"; reason: string };
 
-// Reason wording of hooks/daemon_config.py → _get_knob_error, so the row and the daemon's FATAL line read alike.
+// Reason wording of hooks/daemon_config.py → _get_knob_error — row and daemon FATAL line alike, except numbers (1.0 vs 1, NaN vs null) and integer-like object keys (JS lists them first).
 const TIER_FILE_REJECT_TAIL: Readonly<Record<TierDomainDef["kind"], string>> = {
   effort: `tier (allowed: ${EFFORT_LEVELS.join(", ")})`,
   "output-cap": "output cap (allowed: a positive integer string, 1-999999)",
