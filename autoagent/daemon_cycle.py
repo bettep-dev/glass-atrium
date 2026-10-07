@@ -3460,10 +3460,9 @@ def _fetch_pattern_evidence(agent: str) -> dict[str, PatternEvidence] | None:
     """
     if not HAS_PG_PATTERN_READ:
         return None
-    evaluated_at = _get_utc_now()
-    return _pg_read_pattern_evidence(
-        agent, get_pair_windows(evaluated_at), evaluated_at
-    )
+    windows = get_pair_windows(_get_utc_now())
+    # judged at the day anchor, the instant the intake re-check judged the floor at
+    return _pg_read_pattern_evidence(agent, windows, windows.end)
 
 
 def _render_pattern_evidence(
