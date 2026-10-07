@@ -108,8 +108,7 @@ def get_inflation_factor(
     look_fractions: Sequence[float] = LOOK_FRACTIONS,
 ) -> float:
     """Maximum information of the look schedule over a fixed design's, at equal alpha and power."""
-    _check_alpha(alpha)
-    _check_power(power, alpha)
+    _check_levels(alpha, power)
     return _get_inflation_factor(alpha, power, _get_checked_fractions(look_fractions))
 
 
@@ -259,8 +258,7 @@ def get_rate_harm(
     """
     _check_rate("base_rate", base_rate)
     effective = _get_effective_sample(per_arm, design_effect)
-    _check_alpha(alpha)
-    _check_power(power, alpha)
+    _check_levels(alpha, power)
     if _get_two_proportion_size(base_rate, 1.0, alpha, power) > effective:
         return math.inf
     lower, upper = base_rate, 1.0
@@ -288,8 +286,7 @@ def get_tool_use_harm(
     """
     _check_positive("sd", sd)
     effective = _get_effective_sample(per_arm, design_effect)
-    _check_alpha(alpha)
-    _check_power(power, alpha)
+    _check_levels(alpha, power)
     tail = alpha if is_overage_primary else alpha / 2
     critical_sum = _STANDARD_NORMAL.inv_cdf(1 - tail) + _STANDARD_NORMAL.inv_cdf(power)
     return critical_sum * sd * math.sqrt(2 / effective)
@@ -309,8 +306,7 @@ def _get_fixed_size(baseline_rate: float, alpha: float, power: float, relative_r
     _check_rate("baseline_rate", baseline_rate)
     if not 0 < relative_reduction < 1:
         raise ValueError(f"relative_reduction must be in (0, 1), got {relative_reduction}")
-    _check_alpha(alpha)
-    _check_power(power, alpha)
+    _check_levels(alpha, power)
     return _get_two_proportion_size(baseline_rate, baseline_rate * (1 - relative_reduction), alpha, power)
 
 
@@ -339,7 +335,8 @@ def _check_alpha(alpha: float) -> None:
         raise ValueError(f"alpha must be a one-sided level in (0, 0.5), got {alpha}")
 
 
-def _check_power(power: float, alpha: float) -> None:
+def _check_levels(alpha: float, power: float) -> None:
+    _check_alpha(alpha)
     if not alpha < power < 1:
         raise ValueError(f"power must be in (alpha, 1), got {power} at alpha {alpha}")
 
