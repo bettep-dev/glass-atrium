@@ -10,7 +10,7 @@
 #   0b.retire       — every mode but --backfill-only: the launcher's
 #                     retire-launchd-jobs routine retires the long-running
 #                     daemon jobs while any of their residue remains.
-#   1. cycle       — pattern → outcomes → Haiku patch → classification →
+#   1. cycle        — pattern → outcomes → Haiku patch → classification →
 #                     pre-verify (4-axis review per body-auto patch) → JSON.
 #                     Pre-verify is embedded inside the cycle stage so each
 #                     patch carries its `pre_verify_passed`/`approval_tier`

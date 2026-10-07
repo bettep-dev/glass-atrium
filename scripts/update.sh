@@ -3007,11 +3007,9 @@ update_run_unadjudicated_backfill() {
 # for set-ness only — its value is never expanded here.
 update_backfill_target_override() {
   if [[ -n "${DATABASE_URL+set}" ]]; then
-    printf '%s
-' "DATABASE_URL is set, so the migrated database may not be glass_atrium, the only one the backfill reaches"
+    printf '%s\n' "DATABASE_URL is set, so the migrated database may not be glass_atrium, the only one the backfill reaches"
   elif [[ -n "${ATRIUM_UPDATE_DB_NAME+set}" && "${ATRIUM_UPDATE_DB_NAME}" != glass_atrium ]]; then
-    printf '%s
-' "ATRIUM_UPDATE_DB_NAME=${ATRIUM_UPDATE_DB_NAME} is not glass_atrium, the only database the backfill reaches"
+    printf '%s\n' "ATRIUM_UPDATE_DB_NAME=${ATRIUM_UPDATE_DB_NAME} is not glass_atrium, the only database the backfill reaches"
   fi
 }
 
