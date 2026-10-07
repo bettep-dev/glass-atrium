@@ -3489,8 +3489,8 @@ def _render_pattern_evidence(
     ]
     listed = found.triggering[:MACHINE_FACTS_SPAWN_LIMIT]
     lines.extend(_render_machine_facts(spawn) for spawn in listed)
-    if len(found.triggering) > len(listed):
-        omitted = len(found.triggering) - len(listed)
+    omitted = len(found.triggering) - len(listed)
+    if omitted:
         lines.append(f"more not listed: {_neutralize_field(str(omitted))}")
     return lines
 
@@ -6815,17 +6815,18 @@ def _get_revert_hint(cycle_date: object, proposal_id: object) -> str:
     without a restore would record a revert that never happened — so the
     pruned branch names no revert path.
     """
+    detection_only = (
+        "DETECTION-ONLY — no auto-revert, no status mutation, no safety-queue insert; "
+        "loop event emitted"
+    )
     backup_subdir = _backup_subdir_path(cycle_date, proposal_id)
     if not backup_subdir.is_dir():
         return (
             "before-image: pruned by agents-bak retention — no file revert path; "
-            "DETECTION-ONLY — no auto-revert, no status mutation, no "
-            "safety-queue insert; loop event emitted"
+            f"{detection_only}"
         )
     return (
-        f"before-image: {backup_subdir}; "
-        "DETECTION-ONLY — no auto-revert, no status mutation, no "
-        "safety-queue insert; loop event emitted; revert path (human/CLI): "
+        f"before-image: {backup_subdir}; {detection_only}; revert path (human/CLI): "
         "restore the agent file from the before-image, then psql: "
         "UPDATE core.autoagent_proposals SET status='reverted' "
         f"WHERE id={proposal_id}"
