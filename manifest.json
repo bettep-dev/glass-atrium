@@ -1817,7 +1817,7 @@
     "test/hook-repoint-dualdir.bats": "95e9cda8a46d6b3434ce80ac3688d4268eb71586d1a718105b6b9ac9898ea3c0",
     "test/install-acceptance-untracked-listed.bats": "7ef5bf4b1bb0ba4901feb99de17927a58c6369226512c2a4d8ce52a690018ee7",
     "test/install-acceptance.sh": "573633904f4f9b442f926fd980b14f271fd8f119ed6e015aa2ccc4bbf4e86f11",
-    "test/install-bootstrap-subcommand.bats": "dd86e4a3502381d72ab1c5d14c308ff6af92c9e773030c863f3b557ce1f4965d",
+    "test/install-bootstrap-subcommand.bats": "e596f322e5cc26bb680c7f420b5cf965446e720a250b1b691b65ebee42e6c8b6",
     "test/install-orphan-ownership-exec-harness.sh": "ec322d0dcfb3e92dbbdc92900603f77a80c19f736b85becd7ad13ad5a11f7558",
     "test/install-orphan-ownership.bats": "e30dc7926eb2dce56afc530c14d8fa830162520c0123bc6fbdcc74d20843bc68",
     "test/install-prune.bats": "014baeed535ddc270d73cb735e58f2fbbed856c4100592768acd9ae02fdda0eb",

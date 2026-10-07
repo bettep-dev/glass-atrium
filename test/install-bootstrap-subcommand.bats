@@ -170,9 +170,12 @@ SLEEP
 # install path, and call the bootstrap function. Runs inside `bats run` so the
 # subshell exit code is captured; set -e + the ERR trap make a named-exit-code
 # path exit the subshell with that code. STUB_BIN is prepended so the stubs win.
+# The resolver's env seams are unset so the sandbox .env / 16145 default decides
+# the port, never the caller's ambient environment.
 source_and_call() {
   local fn="$1"
-  run env PATH="${STUB_BIN}:${PATH}" \
+  run env -u ATRIUM_MONITOR_PORT -u ATRIUM_MONITOR_ENV -u ATRIUM_CONFIG_TOML \
+    PATH="${STUB_BIN}:${PATH}" \
     STUB_NPM_BUILD_FAIL="${STUB_NPM_BUILD_FAIL:-0}" \
     STUB_HEALTH="${STUB_HEALTH:-fail}" \
     bash -c "
