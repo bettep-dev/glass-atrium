@@ -20,12 +20,13 @@
 # attribution decision is read off the diagnostic channel (computed BEFORE the PG INSERT), so the
 # regression holds even where the live CHECK is not yet widened to the 11th token. [spool] cases run
 # DB-free the same way and read the outcome the hook spools when its PG write fails. Only the DB-row
-# case (recovered VALUES reach core.outcomes) needs the live DB AND the widened CHECK → it self-skips
-# until the ALTER lands (orchestrator deploy step), mirroring schema-mode-completion.bats.
+# case (recovered VALUES reach core.outcomes) needs the ephemeral cluster AND a migrated CHECK carrying
+# the token → it self-skips otherwise, mirroring schema-mode-completion.bats.
 #
 # Isolation mirrors track-outcome-schema-mode-completion.bats exactly: HOME is sandboxed so the
-# transcript resolution + diag log stay in the tmp dir; a UNIQUE per-run agent scopes the row
-# assertions + the teardown DELETE so the shared glass_atrium DB is never polluted.
+# transcript resolution + diag log stay in the tmp dir; every connection reaches only a throwaway
+# socket-only cluster (lib/ephemeral-pg.bash), never the live database; a UNIQUE per-run agent
+# scopes the row assertions + the teardown DELETE.
 
 HOOKS_DIR="${BATS_TEST_DIRNAME}/.."
 HOOK_SH="${HOOKS_DIR}/track-outcome.sh"
@@ -33,18 +34,30 @@ PG_HELPER_SRC="${HOOKS_DIR}/_pg_outcome_dualwrite.py"
 
 # shellcheck source-path=SCRIPTDIR source=../../scripts/lib/path-guard.sh
 source "${BATS_TEST_DIRNAME}/../../scripts/lib/path-guard.sh"
+# shellcheck source-path=SCRIPTDIR source=lib/ephemeral-pg.bash
+source "${BATS_TEST_DIRNAME}/lib/ephemeral-pg.bash"
 
 setup_file() {
   command -v python3 >/dev/null 2>&1 || return 0
   PSYCOPG_PP="$(python3 -c 'import psycopg,os;print(os.path.dirname(os.path.dirname(psycopg.__file__)))' 2>/dev/null || true)"
   export PSYCOPG_PP
-  DB_OK=0
-  if [[ -n "${PSYCOPG_PP}" ]] && PYTHONPATH="${PSYCOPG_PP}" python3 -c \
-      'import psycopg; psycopg.connect("dbname=glass_atrium", connect_timeout=2).close()' \
-      >/dev/null 2>&1; then
-    DB_OK=1
-  fi
-  export DB_OK
+  export DB_OK=0
+  local bin
+  for bin in initdb pg_ctl createdb psql; do
+    command -v "${bin}" >/dev/null 2>&1 || return 0
+  done
+  export EPH_DB="glass_atrium" EPH_DATADIR="${BATS_FILE_TMPDIR}/pgdata" \
+    EPH_SOCKDIR="${BATS_FILE_TMPDIR}/sock" EPH_PORT="55463"
+  # eph_pg_start's hand DDL lands on the bootstrap DB; the hook's DB gets the real migrations.
+  eph_pg_start "${EPH_DATADIR}" "${EPH_SOCKDIR}" "${EPH_PORT}" "eph_boot" || return 1
+  eph_pg_create_migrated_db "${EPH_SOCKDIR}" "${EPH_PORT}" "${EPH_DB}" || return 1
+  # Every host-less "dbname=glass_atrium" connection — the hook's and this file's — reaches only it.
+  export PGHOST="${EPH_SOCKDIR}" PGPORT="${EPH_PORT}"
+  DB_OK=1
+}
+
+teardown_file() {
+  eph_pg_stop "${EPH_DATADIR:-}"
 }
 
 setup() {
@@ -53,6 +66,7 @@ setup() {
   command -v python3 >/dev/null 2>&1 || skip "python3 required"
   command -v jq >/dev/null 2>&1 || skip "jq required"
 
+  export GA_BATS_PG_RECORD="${BATS_TEST_TMPDIR:?}/pg-connect.log"
   CB_TMP="$(mktemp -d)"
   UNIQUE_AGENT="smoke-cb-$$-${RANDOM}"
   AGENT_ID="cbagent${$}x${RANDOM}"
@@ -69,14 +83,14 @@ setup() {
   PAYLOAD_FILE="${CB_TMP}/payload.json"
 
   # DB-free [stderr]/[spool] cases stop here so the psycopg/DB probe below never skips them (they
-  # read the stderr channel or the spool — no live DB). Mirrors the [inline] early-return in
+  # read the stderr channel or the spool — no DB). Mirrors the [inline] early-return in
   # track-outcome-schema-mode-completion.bats.
   case "${BATS_TEST_DESCRIPTION}" in
     *"[stderr]"* | *"[spool]"*) return 0 ;;
   esac
 
   [[ -n "${PSYCOPG_PP}" ]] || skip "psycopg module not importable"
-  [[ "${DB_OK}" == "1" ]] || skip "glass_atrium DB not reachable"
+  [[ "${DB_OK}" == "1" ]] || skip "no ephemeral cluster: a PostgreSQL server tool is missing"
 }
 
 teardown() {
@@ -362,13 +376,15 @@ spooled_field() {
   done
 }
 
-# DB-backed driver: real PG (PYTHONPATH pinned to psycopg) — proves recovered VALUES reach the row.
+# DB-backed driver: the ephemeral cluster (psycopg behind the sandbox recorder) — proves recovered
+# VALUES reach the row, and that every connection the hook made reached only that cluster.
 run_hook_db() {
   run env \
     HOME="${SANDBOX_HOME}" \
     CLAUDE_GATE_INFLIGHT="" \
-    PYTHONPATH="${PSYCOPG_PP}" \
+    PYTHONPATH="${EPH_PG_RECORDER_DIR}:${PSYCOPG_PP}" \
     bash -c 'bash "$1" < "$2" 2>&1' _ "${HOOK_SH}" "${PAYLOAD_FILE}"
+  eph_assert_isolated
 }
 
 # A bare intermediate [[ ]] is silently ignored on macOS bash 3.2; Linux bash 5 gates it (bats 1.13.0 both legs).
@@ -376,10 +392,9 @@ run_hook_db() {
 oc() { [[ "${2}" == *"${1}"* ]] || { printf 'assert-contains FAILED: [%s] absent from output:\n%s\n' "${1}" "${2}" >&2; return 1; }; }
 no() { [[ "${2}" != *"${1}"* ]] || { printf 'assert-omits FAILED: [%s] present in output:\n%s\n' "${1}" "${2}" >&2; return 1; }; }
 
-# Live-CHECK skip-probe — the VALID DB-row case INSERTs attribution_source =
-# 'structuredoutput-completion'; until the live CHECK is widened to the 11-value set (the ALTER is an
-# orchestrator deploy step) that INSERT violates the constraint → skip. A missing constraint rejects
-# nothing → run.
+# Constraint skip-probe — the VALID DB-row case INSERTs attribution_source =
+# 'structuredoutput-completion'; while the cluster's migrated CHECK lacks the 11-value set that INSERT
+# violates the constraint → skip. A missing constraint rejects nothing → run.
 skip_unless_live_check_allows_completion_token() {
   local con_def
   con_def="$(PYTHONPATH="${PSYCOPG_PP}" python3 - 2>/dev/null <<'PY'
@@ -395,7 +410,7 @@ PY
 )" || con_def=""
   case "${con_def}" in
     *structuredoutput-completion* | NO_CONSTRAINT) ;;
-    *) skip "live CHECK not yet widened to structuredoutput-completion (orchestrator deploy pending)" ;;
+    *) skip "the migrated CHECK lacks structuredoutput-completion" ;;
   esac
 }
 

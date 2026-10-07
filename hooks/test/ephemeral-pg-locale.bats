@@ -55,6 +55,8 @@ setup_file() {
     export LC_ALL=ko_KR.UTF-8 LANG=ko_KR.UTF-8
     eph_pg_start "${EPH_DATADIR}" "${EPH_SOCKDIR}" "${EPH_PORT}" "${EPH_DB}"
   ) || return 1
+  # eph_pg_start's seal exported PATH inside the subshell only → re-apply it where the tests inherit it
+  ga_bats_db_seal "${EPH_SOCKDIR}" || return 1
 }
 
 teardown_file() {
@@ -68,6 +70,19 @@ setup() {
   if [[ -n "${EPH_SKIP:-}" ]]; then
     skip "${EPH_SKIP}"
   fi
+}
+
+@test "eph-pg locale pin: the sandbox seal binds in a test body although the bring-up ran in a subshell" {
+  local client resolved
+  # shellcheck source=../../test/lib/bats-db-seal.bash
+  source "${BATS_TEST_DIRNAME}/../../test/lib/bats-db-seal.bash"
+  for client in "${GA_BATS_DB_CLIENTS[@]}"; do
+    resolved="$(command -v "${client}" || true)"
+    [[ "${resolved}" == */db-seal-bin/"${client}" ]] || {
+      echo "${client} resolves outside the sandbox seal: ${resolved:-<none>}"
+      return 1
+    }
+  done
 }
 
 @test "eph-pg locale pin: bring-up under hostile ko_KR caller locale succeeds" {
