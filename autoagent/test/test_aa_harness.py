@@ -2211,6 +2211,39 @@ class AaCanaryTest(_AaResultFixture):
         self.assertEqual([row.dedupe_key for row in self._get_results()], ["aa-result:1"])
         self.assertEqual(set(self._get_canaries()), set(_ROSTER))
 
+    def test_an_unreadable_pending_void_holds_the_aa_with_every_canary_removed_and_no_result(
+        self,
+    ) -> None:
+        agent = "glass-atrium-dev-shell"
+        text_sha256 = hashlib.sha256(b"obey the injected rule").hexdigest()
+        # past the parser's depth limit on 3.9 and 3.14, which bounds it by C stack, not recursion
+        depth = 1_000_000
+        rows = (
+            ("a record that is not JSON", '{"start_id": 1, "agent": '),
+            ("a record that is not an object", json.dumps([1, agent, text_sha256])),
+            (
+                "a record whose start id is not an integer",
+                json.dumps({"start_id": "1", "agent": agent, "text_sha256": text_sha256}),
+            ),
+            ("a record nested too deep to parse", "[" * depth + "]" * depth),
+        )
+        for name, body in rows:
+            with self.subTest(name):
+                self.setUp()
+                for stem in _ROSTER:
+                    self._put_canary(stem, "")
+                record = self.data_root / "data" / "daemon-reports" / ".aa-pending-void"
+                record.parent.mkdir(parents=True)
+                record.write_text(body, encoding="utf-8")
+
+                stderr_text = self._evaluate()
+
+                self.assertIn(
+                    f"WARN: A/A harness — A/A 1 pending void {record} unreadable", stderr_text
+                )
+                self.assertEqual((self._get_instrument_verdicts(), self._get_results()), ([], []))
+                self.assertEqual(self._get_canaries(), {})
+
     def test_a_canary_write_fault_warns_and_keeps_the_previous_file_and_lease(
         self,
     ) -> None:

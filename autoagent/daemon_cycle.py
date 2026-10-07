@@ -9373,10 +9373,14 @@ CANARY = SimpleNamespace(
     # hook_path_safe_key: every byte outside A-Za-z0-9_- dropped
     UNSAFE_KEY=re.compile(r"[^A-Za-z0-9_-]"),
     VOID_REASON="foreign-canary-hash",
-    # the hook's CANARY_DIR below the data root, each segment opened without following a symlink
-    DIR_SEGMENTS=("learning", "canary"),
-    # a void the ledger did not take, beside the daemon's other markers until a cycle records it
-    PENDING_VOID_SEGMENTS=("daemon-reports", ".aa-pending-void.json"),
+    # path segments below the data root
+    SEGMENTS=SimpleNamespace(
+        # the hook's CANARY_DIR, each segment opened without following a symlink
+        DIR=("learning", "canary"),
+        # a void the ledger did not take, beside the daemon's other markers until a cycle records it
+        # no .json suffix, as the other markers → outside the doctor's *.json cycle-report scan
+        PENDING_VOID=("daemon-reports", ".aa-pending-void"),
+    ),
 )
 
 
@@ -9712,7 +9716,7 @@ def put_canary_file(agent: str, salt: int, text: str, now: datetime) -> None:
 
 def _get_canary_dir() -> Path:
     """The hook's CANARY_DIR: `${GA_DATA_ROOT:-$HOME/.glass-atrium}/data/learning/canary`."""
-    return ga_paths.get_data_root().joinpath(*CANARY.DIR_SEGMENTS)
+    return ga_paths.get_data_root().joinpath(*CANARY.SEGMENTS.DIR)
 
 
 @contextlib.contextmanager
@@ -9733,14 +9737,14 @@ def _get_canary_dir_fd(*, should_create: bool) -> int:
     if should_create:
         root.mkdir(parents=True, exist_ok=True)
     fd = os.open(root, os.O_RDONLY | os.O_DIRECTORY)
-    for depth, segment in enumerate(CANARY.DIR_SEGMENTS, 1):
+    for depth, segment in enumerate(CANARY.SEGMENTS.DIR, 1):
         try:
             child = _open_dir_segment(fd, segment, should_create=should_create)
         except OSError as exc:
             # macOS refuses a symlink opened O_DIRECTORY | O_NOFOLLOW with ENOTDIR, Linux with ELOOP
             if exc.errno not in (errno.ENOTDIR, errno.ELOOP):
                 raise
-            planted = root.joinpath(*CANARY.DIR_SEGMENTS[:depth])
+            planted = root.joinpath(*CANARY.SEGMENTS.DIR[:depth])
             raise CanaryDirUnsafe(
                 f"canary directory not a real directory: {planted} is a symlink or not a directory"
             ) from exc
@@ -9921,7 +9925,7 @@ def _retry_pending_void(latest: AaStart) -> bool:
     path = _get_pending_void_path()
     try:
         pending = _read_pending_void(path)
-    except (OSError, ValueError, TypeError) as exc:
+    except (OSError, ValueError, TypeError, RecursionError) as exc:
         _warn_aa(
             f"A/A {latest.id} pending void {path} unreadable: {_describe_fault(exc)}",
             "no canary is renewed and no result lands while it stays unread",
@@ -9938,12 +9942,12 @@ def _retry_pending_void(latest: AaStart) -> bool:
 
 
 def _get_pending_void_path() -> Path:
-    return ga_paths.get_data_root().joinpath(*CANARY.PENDING_VOID_SEGMENTS)
+    return ga_paths.get_data_root().joinpath(*CANARY.SEGMENTS.PENDING_VOID)
 
 
 def _read_pending_void(path: Path) -> AaVoid | None:
-    """None when no void is pending. Raises OSError, ValueError or TypeError on a record not
-    readable as one."""
+    """None when no void is pending. Raises OSError, ValueError, TypeError or RecursionError (a
+    body nested past the parser's depth limit) on a record not readable as one."""
     try:
         record = json.loads(path.read_text(encoding="utf-8"))
     except FileNotFoundError:
