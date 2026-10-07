@@ -291,7 +291,7 @@ run_hook() {
   # DB cases ([inline] stays DB-free): every connection the hook made reached only the cluster
   case "${BATS_TEST_DESCRIPTION}" in
     *"[inline]"*) ;;
-    *) eph_assert_isolated ;;
+    *) eph_assert_isolated 1 ;;
   esac
 }
 

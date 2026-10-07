@@ -210,7 +210,7 @@ _e2e_run_hook() {
     return 1
   }
 
-  eph_assert_isolated || return 1
+  eph_assert_isolated 1 || return 1
 }
 
 @test "envelope result:done + concerns persists the array (dual-write is result-agnostic)" {
@@ -235,5 +235,5 @@ _e2e_run_hook() {
   got="$(_q "SELECT result || ' :: ' || array_to_string(concerns, '|') FROM core.outcomes WHERE agent = '${agent}';")" || return 1
   [ "${got}" = "done :: role-inherent limit|scope-external note" ] || { echo "row='${got}'"; return 1; }
 
-  eph_assert_isolated || return 1
+  eph_assert_isolated 1 || return 1
 }

@@ -15,7 +15,7 @@
 #
 # Isolation is asserted without reading production: eph_pg_start seals the file's postgres clients to
 # this cluster's socket dir (test/lib/bats-db-seal.bash), and eph_assert_isolated checks the psycopg
-# targets the sandbox recorder (pg-sandbox-recorder/usercustomize.py) logged.
+# targets the sandbox recorder (pg-sandbox-recorder/usercustomize.py) logged, and their count.
 
 # shellcheck source=SCRIPTDIR/../../../test/lib/bats-db-seal.bash
 source "${BASH_SOURCE[0]%/*}/../../../test/lib/bats-db-seal.bash"
@@ -178,11 +178,16 @@ eph_pg_start() {
   export GA_BATS_PG_SANDBOX="${sockdir}"
 }
 
-# Isolation gate that never reads production. Passes only when every postgres client on PATH is the
-# sandbox seal, and the recorder logged at least one psycopg connection, each one to this cluster
-# (EPH_SOCKDIR/EPH_PORT/EPH_DB) — a refused or foreign target fails it.
+# Isolation gate that never reads production. Arg: $1=sandbox connections the test's fires opened —
+# one per DB-writing fire, plus one per hook_failures record a failed row writes. Passes only when
+# every postgres client on PATH is the sandbox seal, and the recorder logged exactly $1 psycopg
+# connections, each to this cluster (EPH_SOCKDIR/EPH_PORT/EPH_DB) — a refused or foreign target fails
+# it, and so does a fire the recorder never saw.
+# Bound: the recorder sees psycopg 3 only — a psycopg2 connection (hooks/_pg-write.py) beside the
+# expected ones passes unseen.
 # shellcheck disable=SC2154  # EPH_SOCKDIR/EPH_PORT/EPH_DB are the calling suite's cluster identity
 eph_assert_isolated() {
+  local want_count="${1:?eph_assert_isolated needs the sandbox connection count}" count
   local record="${GA_BATS_PG_RECORD:-}" client resolved
   local want="allow host=${EPH_SOCKDIR} port=${EPH_PORT} dbname=${EPH_DB} hostaddr= service="
   for client in "${GA_BATS_DB_CLIENTS[@]}"; do
@@ -196,8 +201,9 @@ eph_assert_isolated() {
     echo "ISOLATION: no psycopg connection recorded in ${record:-<GA_BATS_PG_RECORD unset>}" >&2
     return 1
   }
-  if grep -qvxF -- "${want}" "${record}"; then
-    echo "ISOLATION BREACH: a connection left the sandbox (want only '${want}'):" >&2
+  count="$(grep -c '' -- "${record}")"
+  if grep -qvxF -- "${want}" "${record}" || [[ "${count}" -ne "${want_count}" ]]; then
+    echo "ISOLATION BREACH: want ${want_count} connections, each '${want}'; recorded ${count}:" >&2
     cat -- "${record}" >&2
     return 1
   fi

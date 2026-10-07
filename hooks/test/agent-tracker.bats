@@ -22,8 +22,8 @@
 # psycopg.connect("dbname=glass_atrium"), so PGHOST/PGPORT redirect every write in
 # the hook chain to an EPHEMERAL single-file cluster (private Unix socket, no TCP) —
 # never the production /tmp glass_atrium. eph_assert_isolated (lib/ephemeral-pg.bash)
-# proves it without reading production: every connection the hook made targeted this
-# cluster, and none was refused.
+# proves it without reading production: every psycopg connection the recorder logged
+# targeted this cluster, as many as the fires opened.
 #
 # HOME override: agent-tracker writes no artifact under HOME, but HOME is repointed
 # to a temp dir for parity + safety, and PYTHONPATH carries the REAL PEP 370 user
@@ -147,7 +147,7 @@ _fire_agent() {
   [[ "${stops}" -eq 1 ]] || { echo "SubagentStop rows ${stops} != 1" >&2; return 1; }
   [[ "${keyed}" -eq 2 ]] || { echo "agent_id/agent_type mismatch: ${keyed} != 2" >&2; return 1; }
 
-  eph_assert_isolated || return 1
+  eph_assert_isolated 2 || return 1
 }
 
 @test "UPSERT idempotency: re-firing SubagentStart with a fixed event_ts never doubles the row" {
@@ -168,7 +168,7 @@ _fire_agent() {
   rows="$(_eph_q "SELECT count(*) FROM core.agent_events;")" || return 1
   [[ "${rows}" -eq 1 ]] || { echo "rows doubled: ${rows} != 1 (arbiter DO NOTHING failed)" >&2; return 1; }
 
-  eph_assert_isolated || return 1
+  eph_assert_isolated 2 || return 1
 }
 
 @test "perf-invariant: consolidated agent-tracker fires exactly 2 python3 subprocesses per fire (was 5)" {
@@ -210,7 +210,7 @@ EOF
   rows="$(_eph_q "SELECT count(*) FROM core.agent_events;")" || return 1
   [[ "${rows}" -eq 1 ]] || { echo "row count ${rows} != 1 (single-row write dropped)" >&2; return 1; }
 
-  eph_assert_isolated || return 1
+  eph_assert_isolated 1 || return 1
 }
 
 @test "the isolation check fails when the hook is pointed at the default socket" {
@@ -235,7 +235,7 @@ EOF
   env -u PGHOST -u PGPORT "${hook_env[@]}" \
     bash -c 'printf "%s" "$1" | "$2" 2>/dev/null' _ "${stdin_json}" "${EPH_HOOK_SH}" || true
 
-  run eph_assert_isolated
+  run eph_assert_isolated 0
   [[ "${status}" -eq 1 && "${output}" == *"ISOLATION BREACH"*"refuse host= "* ]] || {
     echo "isolation check status ${status}, want 1 naming the refused default-socket target: ${output}"
     return 1
@@ -243,6 +243,26 @@ EOF
   rows="$(_eph_q "SELECT count(*) FROM core.agent_events;")" || return 1
   [[ "${rows}" -eq 0 ]] || {
     echo "the refused write landed ${rows} rows in the sandbox"
+    return 1
+  }
+}
+
+@test "the isolation check fails when a fire bypasses the sandbox recorder" {
+  _eph_q "TRUNCATE core.agent_events;" || return 1
+  local stdin_json foreign="${BATS_TEST_TMPDIR:?}/foreign-sock"
+  mkdir -p "${foreign}"
+  _fire_agent "SubagentStart" "${EPH_AID}" "${EPH_ATYPE}" || return 1
+  stdin_json="$(printf '{"hook_event_name":"SubagentStop","agent_id":"%s","agent_type":"%s"}' \
+    "${EPH_AID}" "${EPH_ATYPE}")"
+
+  # deliberate break: no recorder on PYTHONPATH and a foreign, server-less socket dir
+  # shellcheck disable=SC2016  # $1/$2 expand in the child shell
+  env PATH="${EPH_SHIMDIR}:${PATH}" HOME="${EPH_HOME}" PYTHONPATH="${EPH_USER_SITE}" PGHOST="${foreign}" \
+    bash -c 'printf "%s" "$1" | "$2" 2>/dev/null' _ "${stdin_json}" "${EPH_HOOK_SH}" || true
+
+  run eph_assert_isolated 2
+  [[ "${status}" -eq 1 && "${output}" == *"ISOLATION BREACH"*"recorded 1"* ]] || {
+    echo "isolation check status ${status}, want 1 for a fire the recorder never saw: ${output}"
     return 1
   }
 }

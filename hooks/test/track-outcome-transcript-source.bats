@@ -218,7 +218,7 @@ run_hook() {
   [[ "${output}" != *"LOUD-FAIL"* ]]
   # The PG helper must report a successful insert.
   [[ "${output}" == *"pg_insert=ok"* ]]
-  eph_assert_isolated || return 1
+  eph_assert_isolated 1 || return 1
 
   # Exactly one row landed.
   run count_rows

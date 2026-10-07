@@ -256,7 +256,7 @@ _e2e_run_hook() {
   local seq; seq="$(_q "SELECT last_value FROM core.outcomes_id_seq;")" || return 1
   [ "${seq}" = "2" ] || { echo "seq last_value='${seq}' (expected 2 = a consumed-and-gapped id)"; return 1; }
 
-  eph_assert_isolated || return 1
+  eph_assert_isolated 2 || return 1
 }
 
 @test "C2 DISTINCT (millisecond) record_ts for the same agent+task_type → BOTH rows survive" {
@@ -270,7 +270,7 @@ _e2e_run_hook() {
   local n; n="$(_q "SELECT count(*) FROM core.outcomes WHERE agent = '${agent}';")" || return 1
   [ "${n}" = "2" ] || { echo "row count ${n} != 2 (distinct ms keys must NOT collide)"; return 1; }
 
-  eph_assert_isolated || return 1
+  eph_assert_isolated 2 || return 1
 }
 
 @test "C3 track-outcome.sh stamps record_ts at sub-second precision (python %f), date only as fallback" {
@@ -313,7 +313,7 @@ _e2e_run_hook() {
   local cs; cs="$(_q "SELECT count(*) FROM core.correction_signals cs JOIN core.outcomes o ON cs.outcome_id = o.id WHERE o.agent = '${agent}';")" || return 1
   [ "${cs}" = "1" ] || { echo "correction_signals rows ${cs} != 1 (correction WRITE path broke)"; return 1; }
 
-  eph_assert_isolated || return 1
+  eph_assert_isolated 1 || return 1
 }
 
 @test "C5 end-to-end: two same-(agent,task_type) subagents both persist with DISTINCT record_ts" {
@@ -335,5 +335,5 @@ _e2e_run_hook() {
   local d; d="$(_q "SELECT count(DISTINCT record_ts) FROM core.outcomes WHERE agent = '${agent}';")" || return 1
   [ "${d}" = "2" ] || { echo "distinct record_ts ${d} != 2 (stamps must differ at sub-second)"; return 1; }
 
-  eph_assert_isolated || return 1
+  eph_assert_isolated 2 || return 1
 }

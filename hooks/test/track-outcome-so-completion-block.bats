@@ -384,7 +384,7 @@ run_hook_db() {
     CLAUDE_GATE_INFLIGHT="" \
     PYTHONPATH="${EPH_PG_RECORDER_DIR}:${PSYCOPG_PP}" \
     bash -c 'bash "$1" < "$2" 2>&1' _ "${HOOK_SH}" "${PAYLOAD_FILE}"
-  eph_assert_isolated
+  eph_assert_isolated 1
 }
 
 # A bare intermediate [[ ]] is silently ignored on macOS bash 3.2; Linux bash 5 gates it (bats 1.13.0 both legs).

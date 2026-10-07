@@ -19,8 +19,8 @@
 # psycopg.connect("dbname=glass_atrium"), so PGHOST/PGPORT redirect every write
 # in the hook chain to an EPHEMERAL single-file cluster (private Unix socket, no
 # TCP) — never the production /tmp glass_atrium. eph_assert_isolated
-# (lib/ephemeral-pg.bash) proves it without reading production: every connection
-# the hook made targeted this cluster, and none was refused.
+# (lib/ephemeral-pg.bash) proves it without reading production: every psycopg
+# connection the recorder logged targeted this cluster, as many as the fires opened.
 #
 # HOME override: HOOK_LOG_DIR is ${HOME}/.glass-atrium/logs (the subagent mtime
 # cache), so HOME is repointed to a temp dir — the run leaves NO artifact under
@@ -243,7 +243,7 @@ _fire_stop_on() {
   [[ "${turns}" -eq 1 ]] || { echo "turn rows ${turns} != 1" >&2; return 1; }
   [[ "${subs}" -eq 2 ]] || { echo "subagent rows ${subs} != 2" >&2; return 1; }
 
-  eph_assert_isolated || return 1
+  eph_assert_isolated 1 || return 1
 }
 
 @test "UPSERT idempotency: re-firing the same Stop re-aggregates identical rows (never doubles)" {
@@ -267,7 +267,7 @@ _fire_stop_on() {
   [[ "${rows}" -eq "${EPH_EXPECT_ROWS}" ]] || { echo "rows doubled: ${rows} != ${EPH_EXPECT_ROWS}" >&2; return 1; }
   [[ "${tok}" -eq "${EPH_EXPECT_TOKENS}" ]] || { echo "tokens additive: ${tok} != ${EPH_EXPECT_TOKENS}" >&2; return 1; }
 
-  eph_assert_isolated || return 1
+  eph_assert_isolated 2 || return 1
 }
 
 @test "batch path fires exactly ONE writer subprocess per Stop (perf-invariant)" {
@@ -314,7 +314,7 @@ EOF
   [[ "${rows}" -eq "${EPH_EXPECT_ROWS}" ]] || { echo "row count ${rows} != ${EPH_EXPECT_ROWS}" >&2; return 1; }
   [[ "${tok}" -eq "${EPH_EXPECT_TOKENS}" ]] || { echo "token sum ${tok} != ${EPH_EXPECT_TOKENS}" >&2; return 1; }
 
-  eph_assert_isolated || return 1
+  eph_assert_isolated 1 || return 1
 }
 
 @test "partial-success: a mid-batch execute failure commits both siblings, exits 3, loud-fails the bad row" {
@@ -371,7 +371,8 @@ JSON
   # The structured per-row loud-fail line fired for the failed row (stderr JSON).
   grep -q '"dedup_key":"partial-bad"' "${writer_stderr}" || { echo "no structured per-row stderr for the failed row"; cat "${writer_stderr}"; return 1; }
 
-  eph_assert_isolated || return 1
+  # the batch connection, plus the failed row's hook_failures record on its own connection
+  eph_assert_isolated 2 || return 1
 }
 
 @test "effort and the mixed-tier flag land beside model on turn and subagent rows" {
@@ -399,7 +400,7 @@ JSON
     }
   done
 
-  eph_assert_isolated || return 1
+  eph_assert_isolated "${#rows[@]}" || return 1
 }
 
 @test "a re-fire refreshes effort and the mixed-tier flag on the same rows" {

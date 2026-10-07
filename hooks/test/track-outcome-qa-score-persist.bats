@@ -233,7 +233,7 @@ _e2e_run_hook() {
   got="$(_q "SELECT qa_score FROM core.outcomes WHERE agent = '${agent}';")" || return 1
   [ "${got}" = "cov=4,ins=5,instr=3,clar=4" ] || { echo "qa_score='${got}'"; return 1; }
 
-  eph_assert_isolated || return 1
+  eph_assert_isolated 1 || return 1
 }
 
 @test "envelope WITHOUT qa_score persists NULL (legacy / non-QA rows stay NULL)" {
@@ -245,7 +245,7 @@ _e2e_run_hook() {
   isnull="$(_q "SELECT qa_score IS NULL FROM core.outcomes WHERE agent = '${agent}';")" || return 1
   [ "${isnull}" = "t" ] || { echo "qa_score not NULL (IS NULL = '${isnull}')"; return 1; }
 
-  eph_assert_isolated || return 1
+  eph_assert_isolated 1 || return 1
 }
 
 @test "UPSERT re-fire updates qa_score (ON CONFLICT DO UPDATE SET qa_score = EXCLUDED.qa_score)" {
@@ -265,7 +265,7 @@ _e2e_run_hook() {
   got="$(_q "SELECT qa_score FROM core.outcomes WHERE agent = '${agent}';")" || return 1
   [ "${got}" = "cov=5,ins=5,instr=5,clar=5" ] || { echo "qa_score='${got}' not updated"; return 1; }
 
-  eph_assert_isolated || return 1
+  eph_assert_isolated 2 || return 1
 }
 
 @test "end-to-end: track-outcome.sh [COMPLETION] qa_score reaches the dual-write column" {
@@ -283,7 +283,7 @@ _e2e_run_hook() {
   got="$(_q "SELECT qa_score FROM core.outcomes WHERE agent = '${agent}';")" || return 1
   [ "${got}" = "cov=4,ins=5,instr=3,clar=4" ] || { echo "qa_score='${got}'"; return 1; }
 
-  eph_assert_isolated || return 1
+  eph_assert_isolated 1 || return 1
 }
 
 @test "column-absent (pre-migration) schema still writes via the legacy _OUTCOMES_INSERT_SQL_NO_QA shim" {
@@ -313,5 +313,5 @@ _e2e_run_hook() {
   n="$(_q "SELECT count(*) FROM core.outcomes WHERE agent = '${agent}';")" || return 1
   [ "${n}" = "1" ] || { echo "row count ${n} != 1 (legacy write did not land)"; return 1; }
 
-  eph_assert_isolated || return 1
+  eph_assert_isolated 1 || return 1
 }
