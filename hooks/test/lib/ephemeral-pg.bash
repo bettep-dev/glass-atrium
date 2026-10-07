@@ -12,6 +12,17 @@
 # No test row can reach production.
 #
 # Bash 3.2+ (macOS stock). Callers source this and use the eph_* functions.
+#
+# Isolation is asserted without reading production: eph_pg_start seals the file's postgres clients to
+# this cluster's socket dir (test/lib/bats-db-seal.bash), and eph_assert_isolated checks the psycopg
+# targets the sandbox recorder (pg-sandbox-recorder/usercustomize.py) logged.
+
+# shellcheck source=SCRIPTDIR/../../../test/lib/bats-db-seal.bash
+source "${BASH_SOURCE[0]%/*}/../../../test/lib/bats-db-seal.bash"
+
+# Prepend to a hook's PYTHONPATH; the recorder logs to GA_BATS_PG_RECORD (exported per test).
+# shellcheck disable=SC2034  # read by the suites that source this file
+EPH_PG_RECORDER_DIR="${BASH_SOURCE[0]%/*}/pg-sandbox-recorder"
 
 # Expected fixture totals — SINGLE SOURCE OF TRUTH shared with the .bats asserts.
 # Derived from the token values eph_build_fixture writes below:
@@ -162,6 +173,34 @@ eph_pg_start() {
   schema="$(eph_pg_schema_sql)" || return 1
   LC_ALL=C psql -h "${sockdir}" -p "${port}" -d "${dbname}" -v ON_ERROR_STOP=1 -q \
     <<<"${schema}" || return 1
+  # From here on a postgres client reaches only this cluster, and the recorder allows only its socket.
+  ga_bats_db_seal "${sockdir}" || return 1
+  export GA_BATS_PG_SANDBOX="${sockdir}"
+}
+
+# Isolation gate that never reads production. Passes only when every postgres client on PATH is the
+# sandbox seal, and the recorder logged at least one psycopg connection, each one to this cluster
+# (EPH_SOCKDIR/EPH_PORT/EPH_DB) — a refused or foreign target fails it.
+# shellcheck disable=SC2154  # EPH_SOCKDIR/EPH_PORT/EPH_DB are the calling suite's cluster identity
+eph_assert_isolated() {
+  local record="${GA_BATS_PG_RECORD:-}" client resolved
+  local want="allow host=${EPH_SOCKDIR} port=${EPH_PORT} dbname=${EPH_DB} hostaddr= service="
+  for client in "${GA_BATS_DB_CLIENTS[@]}"; do
+    resolved="$(command -v "${client}" || true)"
+    [[ "${resolved}" == */db-seal-bin/"${client}" ]] || {
+      echo "ISOLATION: ${client} resolves outside the sandbox seal: ${resolved:-<none>}" >&2
+      return 1
+    }
+  done
+  [[ -s "${record}" ]] || {
+    echo "ISOLATION: no psycopg connection recorded in ${record:-<GA_BATS_PG_RECORD unset>}" >&2
+    return 1
+  }
+  if grep -qvxF -- "${want}" "${record}"; then
+    echo "ISOLATION BREACH: a connection left the sandbox (want only '${want}'):" >&2
+    cat -- "${record}" >&2
+    return 1
+  fi
 }
 
 # Create $3 on a running cluster and apply every monitor/prisma/migrations/*/migration.sql
