@@ -6,7 +6,8 @@
 # client is sealed — the doctor's DB checks run `psql -h /tmp`, and an ephemeral-cluster suite
 # drives psycopg hooks and psql, either of which an unsealed run could send to the live server.
 # A suite driving a DB-writing hook runs on a sandbox or on the hermetic baseline's dead PGHOST
-# (test/lib/bats-hermetic-env.bash), which a host-less psycopg connection follows.
+# (test/lib/bats-hermetic-env.bash), which a host-less psycopg connection follows. On a sandbox, a
+# fire that strips PGHOST runs behind the psycopg recorder, and an eph_assert_isolated follows it.
 # Suites that reach only their own scripted client stubs are not members.
 
 setup() {
@@ -28,14 +29,25 @@ loads_ephemeral_pg() {
     END { exit !found }' "$1"
 }
 
-# A non-comment eph_pg_start or `ga_bats_db_seal <sandbox>` call outside any subshell binds the
-# sandbox seal — inside `( … )` or `$( … )` its exported PATH dies with the subshell.
+# A non-comment eph_pg_start or `ga_bats_db_seal <sandbox>` call binds the sandbox seal only outside
+# every `( … )` / `$( … )` subshell, where its exported PATH would die. Depth rises on a statement
+# leaving `(` unclosed and falls only on one opening with `)` — a case pattern never closes a subshell.
+# A backslash-continued statement is read as one; heredoc bodies are not shell and are skipped.
 binds_ephemeral_seal() {
-  awk '/^[[:space:]]*#/ { next }
-    /^[[:space:]]*\([[:space:]]*$/ { depth++; next }
-    depth > 0 && /^[[:space:]]*\)/ { depth--; next }
+  awk 'heredoc != "" { if ($0 ~ "^\t*" heredoc "$") heredoc = ""; next }
+    /^[[:space:]]*#/ { next }
+    stmt != "" { $0 = stmt " " $0 }
+    /\\$/ { stmt = substr($0, 1, length($0) - 1); next }
+    { stmt = "" }
     depth == 0 && match($0, /(^|[^A-Za-z0-9_])(eph_pg_start|ga_bats_db_seal[[:space:]]+[^[:space:]|;&)])($|[^A-Za-z0-9_])/) \
       && substr($0, 1, RSTART) !~ /\(/ { found = 1; exit }
+    { line = $0; net = gsub(/\(/, "", line) - gsub(/\)/, "", line) }
+    net > 0 { depth += net }
+    net < 0 && /^[[:space:]]*\)/ { depth = (depth + net > 0) ? depth + net : 0 }
+    match($0, /(^|[^<])<<-?[[:space:]]*["'"'"'\\]?[A-Za-z_][A-Za-z0-9_]*/) {
+      heredoc = substr($0, RSTART, RLENGTH)
+      sub(/^[^<]*<<-?[[:space:]]*["'"'"'\\]?/, "", heredoc)
+    }
     END { exit !found }' "$1"
 }
 
@@ -62,16 +74,48 @@ runs_db_hook() {
     END { exit !found }' "$2" "$1"
 }
 
-# A non-comment line drops or reroutes the inherited dead PGHOST: `env -i`, an unset or `-u` of
-# PGHOST, PGHOST set empty or to the live default, or PGHOSTADDR / PGSERVICE set to a value.
+# awk strips(s): s drops or reroutes the inherited dead PGHOST — `env -i` or a bare `env -`, an unset,
+# -u or --unset of PGHOST, PGHOST set empty or to the live default (quoted or not), or PGHOSTADDR /
+# PGSERVICE set to a value. One declaration for both strip detectors below.
+STRIPS_PGHOST_AWK='function strips(s) {
+  return s ~ /(^|[^A-Za-z0-9_-])env[[:space:]]+-i?([[:space:]]|$)/ \
+    || s ~ /(-u[[:space:]]*|--unset[=[:space:]][[:space:]]*)PGHOST([^A-Za-z0-9_]|$)/ \
+    || s ~ /(^|[^A-Za-z0-9_])unset[[:space:]][^#]*PGHOST([^A-Za-z0-9_]|$)/ \
+    || s ~ /(^|[^A-Za-z0-9_])PGHOST=(""|'"''"'|["'"'"']?(\/tmp|\/private\/tmp|localhost|127\.)|[[:space:]]|$)/ \
+    || s ~ /(^|[^A-Za-z0-9_])PG(HOSTADDR|SERVICE)="?[^"[:space:]]/
+}'
+
+# A non-comment line strips the dead PGHOST (STRIPS_PGHOST_AWK).
 strips_dead_pghost() {
-  awk '/^[[:space:]]*#/ { next }
-    /(^|[^A-Za-z0-9_-])env[[:space:]]+-i([[:space:]]|$)/ { found = 1; exit }
-    /-u[[:space:]]+PGHOST([^A-Za-z0-9_]|$)/ { found = 1; exit }
-    /(^|[^A-Za-z0-9_])unset[[:space:]][^#]*PGHOST([^A-Za-z0-9_]|$)/ { found = 1; exit }
-    /(^|[^A-Za-z0-9_])PGHOST=(""|'"''"'|\/tmp|\/private\/tmp|localhost|127\.|[[:space:]]|$)/ { found = 1; exit }
-    /(^|[^A-Za-z0-9_])PG(HOSTADDR|SERVICE)="?[^"[:space:]]/ { found = 1; exit }
+  awk "${STRIPS_PGHOST_AWK}"'
+    /^[[:space:]]*#/ { next }
+    strips($0) { found = 1; exit }
     END { exit !found }' "$1"
+}
+
+# On a sandbox, a statement stripping PGHOST is guarded only when the psycopg recorder is on its
+# PYTHONPATH — named in it, or in a body-local array it expands — and an eph_assert_isolated follows it
+# in the same body. A backslash-continued statement is read as one. Status 0 = an unguarded strip.
+strips_pghost_unguarded() {
+  awk "${STRIPS_PGHOST_AWK}"'
+    function records(s) { return s ~ /PYTHONPATH=[^[:space:]]*(EPH_PG_RECORDER_DIR|pg-sandbox-recorder)/ }
+    function guarded(s, name) {
+      if (records(s)) return 1
+      for (name in arrays) if (index(s, "${" name "[@]}")) return 1
+      return 0
+    }
+    /^[[:space:]]*#/ { next }
+    /^(@test[[:space:]]|[A-Za-z_][A-Za-z0-9_]*\(\)[[:space:]]*\{)/ { split("", arrays); array = ""; owed = 0 }
+    stmt != "" { $0 = stmt " " $0 }
+    /\\$/ { stmt = substr($0, 1, length($0) - 1); next }
+    { stmt = "" }
+    match($0, /[A-Za-z_][A-Za-z0-9_]*=\(/) { array = substr($0, RSTART, RLENGTH - 2) }
+    array != "" && records($0) { arrays[array] = 1 }
+    array != "" && /\)/ { array = "" }
+    strips($0) { if (!guarded($0)) { found = 1; exit } owed = 1 }
+    /(^|[^A-Za-z0-9_])eph_assert_isolated([^A-Za-z0-9_]|$)/ { owed = 0 }
+    /^\}/ && owed { found = 1; exit }
+    END { exit !(found || owed) }' "$1"
 }
 
 # ga_bats_hermetic_env, run over hostile ambient values, leaves PGHOST naming a path that does not
@@ -199,13 +243,20 @@ seals_in_setup() {
     "sandbox URI in a non-dbname slot over a foreign -h|-|-|2|-h,/tmp,-d,x,-U,postgresql:///x?host=${sandbox}"
     "psql connect meta-command in -c|${sandbox}|-|2|-c,\\connect db - /tmp"
     "PGHOSTADDR routes past the socket host|${sandbox}|PGHOSTADDR=127.0.0.1|2|-d,x"
+    "-U takes an attached -h<sandbox> as its user name|-|-|2|-U,-h${sandbox},-d,x"
+    "-U takes a bare -h as its user name before a sandbox operand|-|-|2|-U,-h,${sandbox},-d,x"
+    "-- ends options before a -h<sandbox> operand|-|-|2|--,-h${sandbox}"
+    "POSIXLY_CORRECT stops option parsing at the first operand|-|POSIXLY_CORRECT=1|2|x,-h,${sandbox}"
+    "an option the seal does not model for the client|${sandbox}|-|2|--no-such-option,-d,x"
+    "a host flag ending a short-option cluster takes the next argument|-|-|0|-qh,${sandbox},-d,x"
+    "a cluster ending in a value option takes the next argument as its value|${sandbox}|-|0|-tAqc,select 1"
   )
   local row name pghost extra want argstr
   local -a args env_args
   for row in "${rows[@]}"; do
     IFS='|' read -r name pghost extra want argstr <<<"${row}"
     IFS=',' read -r -a args <<<"${argstr}"
-    env_args=(-u PGHOST -u PGHOSTADDR -u PGSERVICE)
+    env_args=(-u PGHOST -u PGHOSTADDR -u PGSERVICE -u POSIXLY_CORRECT)
     [[ "${pghost}" == "-" ]] || env_args+=(PGHOST="${pghost}")
     [[ "${extra}" == "-" ]] || env_args+=("${extra}")
     : >"${reached}"
@@ -240,6 +291,12 @@ seals_in_setup() {
     'refusing seal with no sandbox dir|binds_ephemeral_seal|  ga_bats_db_seal|1'
     'eph_pg_start named only in a comment|binds_ephemeral_seal|  # eph_pg_start seals the file|1'
     'an eph_pg_start-prefixed helper name only|binds_ephemeral_seal|  eph_pg_start_extra|1'
+    'cluster started inside a multi-line command substitution|binds_ephemeral_seal|  out="$(\n    eph_pg_start a b c d\n  )"|1'
+    'cluster started inside a subshell opened with a command|binds_ephemeral_seal|  ( cd "${D}" &&\n    eph_pg_start a b c d\n  )|1'
+    'a case pattern inside a subshell does not close it|binds_ephemeral_seal|  (\n    case "${x}" in\n      a) true ;;\n    esac\n    eph_pg_start a b c d\n  )|1'
+    'cluster started after a balanced command substitution|binds_ephemeral_seal|  d="$(mktemp -d)"\n  eph_pg_start a b c d|0'
+    'a command substitution closed on a continued line|binds_ephemeral_seal|  x="$(psql -c \\\n    "select 1")"\n  eph_pg_start a b c d|0'
+    "a heredoc body never opens a subshell|binds_ephemeral_seal|  cat <<'EOF' >f.js\nconfig({\nEOF\n  eph_pg_start a b c d|0"
   )
   local row name detector body want fixture="${BATS_TEST_TMPDIR:?}/suite.bats"
   for row in "${rows[@]}"; do
@@ -266,7 +323,7 @@ seals_in_setup() {
   }
 }
 
-@test "the DB-hook detectors count a named hook and a stripped PGHOST only on a non-comment line" {
+@test "the DB-hook detectors count a named hook, a stripped PGHOST and an unguarded sandbox strip only on a non-comment line" {
   local names="${BATS_TEST_TMPDIR:?}/db-hooks.txt" fixture="${BATS_TEST_TMPDIR:?}/suite.bats"
   printf '%s\n' agent-tracker.sh _pg_dual_write.py >"${names}"
   # shellcheck disable=SC2016  # fixture rows hold suite source text, never expanded here
@@ -283,11 +340,25 @@ seals_in_setup() {
     'only the reroute names unset|strips_dead_pghost|  unset PGHOSTADDR PGSERVICE PGDATABASE|1'
     'PGHOST pointed at a dead dir|strips_dead_pghost|  PGHOST="/nonexistent-socket-xyzzy" bash "${H}"|1'
     'env -u PGHOST named only in a comment|strips_dead_pghost|# never env -u PGHOST here|1'
+    'PGHOST double-quoted to the live default|strips_dead_pghost|  PGHOST="/tmp" bash "${H}"|0'
+    "PGHOST single-quoted to the live default|strips_dead_pghost|  PGHOST='/tmp' bash hook.sh|0"
+    'PGHOST exported double-quoted as localhost|strips_dead_pghost|  export PGHOST="localhost"|0'
+    'PGHOST double-quoted to a TCP loopback|strips_dead_pghost|  PGHOST="127.0.0.1" bash "${H}"|0'
+    'env --unset=PGHOST|strips_dead_pghost|  env --unset=PGHOST bash "${H}"|0'
+    'env -uPGHOST attached|strips_dead_pghost|  env -uPGHOST bash "${H}"|0'
+    'bare env - drops the environment|strips_dead_pghost|  env - PATH="${P}" bash "${H}"|0'
+    'PGHOST double-quoted to a sandbox variable|strips_dead_pghost|  PGHOST="${EPH_SOCKDIR}" bash "${H}"|1'
+    'strip behind the recorder with an isolation check after it|strips_pghost_unguarded|@test "x" {\n  env -u PGHOST PYTHONPATH="${EPH_PG_RECORDER_DIR}" bash "${H}"\n  eph_assert_isolated 0\n}|1'
+    'strip whose recorder rides a body-local array|strips_pghost_unguarded|@test "x" {\n  local e=(HOME="${E}"\n    PYTHONPATH="${EPH_PG_RECORDER_DIR}:${S}")\n  env -u PGHOST "${e[@]}" \\\n    bash "${H}"\n  run eph_assert_isolated 0\n}|1'
+    'strip with no recorder on PYTHONPATH|strips_pghost_unguarded|@test "x" {\n  env -u PGHOST PYTHONPATH="${S}" bash "${H}"\n  eph_assert_isolated 0\n}|0'
+    'strip with no isolation check after it|strips_pghost_unguarded|@test "x" {\n  env -u PGHOST PYTHONPATH="${EPH_PG_RECORDER_DIR}" bash "${H}"\n}|0'
+    'isolation check only before the strip|strips_pghost_unguarded|@test "x" {\n  eph_assert_isolated 0\n  env -u PGHOST PYTHONPATH="${EPH_PG_RECORDER_DIR}" bash "${H}"\n}|0'
+    'recorder array defined in another test body|strips_pghost_unguarded|@test "a" {\n  local e=(PYTHONPATH="${EPH_PG_RECORDER_DIR}")\n}\n@test "b" {\n  env -u PGHOST "${e[@]}" bash "${H}"\n  eph_assert_isolated 0\n}|0'
   )
   local row name detector body want
   for row in "${rows[@]}"; do
     IFS='|' read -r name detector body want <<<"${row}"
-    printf '%s\n' "${body}" >"${fixture}"
+    printf '%b\n' "${body}" >"${fixture}"
     if [[ "${detector}" == runs_db_hook ]]; then
       run runs_db_hook "${fixture}" "${names}"
     else
@@ -324,13 +395,20 @@ seals_in_setup() {
       seals_in_setup "${file}" || binds_ephemeral_seal "${file}" \
         || unsealed+=("loads ephemeral-pg but binds no seal outside a subshell: ${file#"${root}/"}")
     fi
-    # a DB-writing hook runs on a sandbox, else on the inherited dead PGHOST, which it must not strip
-    if runs_db_hook "${file}" "${db_hooks}" && ! binds_ephemeral_seal "${file}"; then
+    # a DB-writing hook runs on a sandbox, else on the inherited dead PGHOST, which it must not strip;
+    # on a sandbox a strip stays behind the recorder with an isolation check after it
+    if runs_db_hook "${file}" "${db_hooks}"; then
       members=$((members + 1))
-      [[ "${dead_default}" -eq 1 ]] \
-        || unsealed+=("runs a DB-writing hook with no sandbox and no dead PGHOST baseline: ${file#"${root}/"}")
-      if strips_dead_pghost "${file}"; then
-        unsealed+=("runs a DB-writing hook and strips the dead PGHOST with no sandbox: ${file#"${root}/"}")
+      if binds_ephemeral_seal "${file}"; then
+        if strips_pghost_unguarded "${file}"; then
+          unsealed+=("strips PGHOST on a sandbox without the recorder or a later eph_assert_isolated: ${file#"${root}/"}")
+        fi
+      else
+        [[ "${dead_default}" -eq 1 ]] \
+          || unsealed+=("runs a DB-writing hook with no sandbox and no dead PGHOST baseline: ${file#"${root}/"}")
+        if strips_dead_pghost "${file}"; then
+          unsealed+=("runs a DB-writing hook and strips the dead PGHOST with no sandbox: ${file#"${root}/"}")
+        fi
       fi
     fi
   done <"${suites}"

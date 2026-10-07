@@ -59,6 +59,9 @@
 # documented design. The per-root suite-hermeticity.bats probes scrub the same set on their
 # identical discover runs, so no probe can read green under conditions its stage lacks.
 #
+# The thirteenth pins the python stages onto a dead PGHOST with the libpq routing names unset — the
+# baseline stage 1 inherits from every corpus setup_suite, read from that baseline's own name list.
+#
 # The twelfth pins the runner's cwd seat, the FALLBACK seat:
 # - suite seat (test/lib/bats-hermetic-env.bash) → each test starts in BATS_SUITE_TMPDIR;
 # - bats process cwd → reaches a test only when that seat is not taken;
@@ -177,6 +180,12 @@ assert_daemon_env_scrubbed() {
   assert_stage_unset "${1}" "${2}" "${pairs[@]}"
 }
 
+# Prints the PG* record of the first python3 call whose argv contains $1.
+stage_pg_env() {
+  awk -v want="${1}" '/^CALL / { if (inside) exit; inside = index($0, want) > 0; next }
+    inside { print }' "${STUB_LOG_DIR}/python3-pg-env.log"
+}
+
 # The stage-1 twin. It reads the bats stub's log because stage 1 makes no python3 call at
 # all.
 assert_stage1_daemon_env_scrubbed() {
@@ -256,6 +265,12 @@ printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' "$*" "${GA_DATA_ROOT-__UNSET__
   "${AUTOAGENT_GIT_PATHSPEC-__UNSET__}" "${AUTOAGENT_AGENTS_DIR-__UNSET__}" \
   "${CLAUDE_BIN-__UNSET__}" "$(pwd -P)" \
   >>"${STUB_LOG_DIR}/python3-env.log"
+# Every PG* name the call inherited, plus whether its PGHOST path existed while the stage ran.
+{
+  printf 'CALL %s\n' "$*"
+  env | grep '^PG' || true
+  if [[ -e "${PGHOST:-}" ]]; then echo PGHOST_EXISTS=yes; else echo PGHOST_EXISTS=no; fi
+} >>"${STUB_LOG_DIR}/python3-pg-env.log"
 case "$*" in
   *'import pytest'*) exit "${STUB_PYTEST_IMPORT_RC:-0}" ;;
   *unittest*) exit "${STUB_UNITTEST_RC:-0}" ;;
@@ -649,5 +664,30 @@ STUB
       printf '%s ran from %s (want the repo root %s)\n' "${stage}" "${seen}" "${repo_phys}" >&2
       return 1
     }
+  done
+}
+
+@test "(13) every python stage runs on a dead PGHOST with every libpq routing name unset" {
+  # shellcheck source-path=SCRIPTDIR source=../../test/lib/bats-hermetic-env.bash
+  source "${BATS_TEST_DIRNAME}/../../test/lib/bats-hermetic-env.bash"
+  export PGHOST=/tmp PGPORT=5432 PGHOSTADDR=127.0.0.1 PGSERVICE=live PGDATABASE=glass_atrium \
+    PGPASSFILE=/dev/null
+  run_runner_expecting 0 || return 1
+
+  local stage record seen name
+  for stage in 'discover -s hooks/test' 'discover -s autoagent/test' '-m pytest'; do
+    record="$(stage_pg_env "${stage}")"
+    seen="$(sed -n 's/^PGHOST=//p' <<<"${record}")"
+    [[ "${seen}" == /* && "${seen}" != /tmp && "${record}" == *PGHOST_EXISTS=no* ]] || {
+      printf '%s ran with PGHOST=%s (want a path that does not exist); record:\n%s\n' \
+        "${stage}" "${seen:-<unset>}" "${record}" >&2
+      return 1
+    }
+    for name in "${GA_BATS_PG_ROUTING_NAMES[@]}"; do
+      ! grep -q "^${name}=" <<<"${record}" || {
+        printf '%s inherited %s; record:\n%s\n' "${stage}" "${name}" "${record}" >&2
+        return 1
+      }
+    done
   done
 }
