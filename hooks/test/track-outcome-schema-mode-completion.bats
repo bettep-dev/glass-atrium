@@ -24,18 +24,17 @@
 # T9 absent paired tool_result (kill mid-call) → no match, stays completion-synthesized
 # T10 budget pin → counter at budget + errored SO ⇒ budget-truncation (heuristic still live)
 #
-# R2-positive cases (T3/T4/T7/T8) run the DB-free stderr rescue regression UNCONDITIONALLY —
-# a terminal_so=1 event LANDS attribution=structuredoutput-derived on the stderr diagnostic
-# channel (computed BEFORE the PG INSERT), so the regression holds even in a token-absent CHECK
-# env. Only the DB-row assertions (which INSERT the 10th attribution token) are gated behind the
-# live-CHECK probe → they self-skip until the live ALTER lands (orchestrator deploy step).
+# R2-positive cases (T3/T4/T7/T8, RACE) assert attribution=structuredoutput-derived twice: on the
+# stderr diagnostic channel (computed BEFORE the PG INSERT) and on the persisted row. The cluster
+# carries the db-hygiene migration verbatim → a migration CHECK lacking the token rejects the
+# INSERT and the row assertions FAIL, as production would lose the outcome.
 #
 # Isolation: HOME is sandboxed so the transcript resolution (~/.claude/projects/...) and the
 # diag log are redirected into the test temp dir. The PG helper is resolved by the hook as a
 # SIBLING of the script (setup skips when absent). psycopg lives in the
 # user site-packages (HOME-dependent), so PYTHONPATH is pinned to the real install and passed
 # into the sandboxed hook env. A UNIQUE per-run agent name scopes the count assertion + the
-# teardown DELETE so the shared glass_atrium DB is never polluted. The tool-budget counter dir
+# teardown DELETE within this file's ephemeral cluster. The tool-budget counter dir
 # is redirected into the temp dir (counter absent ⇒ fail-open, only T4 seeds it).
 
 HOOKS_DIR="${BATS_TEST_DIRNAME}/.."
@@ -45,20 +44,18 @@ PG_HELPER_SRC="${HOOKS_DIR}/_pg_outcome_dualwrite.py"
 # shellcheck source-path=SCRIPTDIR source=../../scripts/lib/path-guard.sh
 source "${BATS_TEST_DIRNAME}/../../scripts/lib/path-guard.sh"
 
-# Both probes below are session-invariant (psycopg location + DB reachability never vary between
-# tests), so resolve them ONCE here and export the results — per-test setup() reads the cached
-# flags instead of re-spawning two python3 cold-starts per DB test.
+# One throwaway cluster per file (lib/ephemeral-pg.bash), PGHOST/PGPORT exported at it → every
+# host-less connection here (row reads, teardown DELETE, the hook's own write)
+# lands in it, never in the invoking shell's database.
 setup_file() {
-  command -v python3 >/dev/null 2>&1 || return 0
-  PSYCOPG_PP="$(python3 -c 'import psycopg,os;print(os.path.dirname(os.path.dirname(psycopg.__file__)))' 2>/dev/null || true)"
-  export PSYCOPG_PP
-  DB_OK=0
-  if [[ -n "${PSYCOPG_PP}" ]] && PYTHONPATH="${PSYCOPG_PP}" python3 -c \
-      'import psycopg; psycopg.connect("dbname=glass_atrium", connect_timeout=2).close()' \
-      >/dev/null 2>&1; then
-    DB_OK=1
-  fi
-  export DB_OK
+  # shellcheck source-path=SCRIPTDIR source=lib/ephemeral-pg.bash
+  source "${BATS_TEST_DIRNAME}/lib/ephemeral-pg.bash"
+  export EPH_DATADIR="${BATS_FILE_TMPDIR}/pgdata"
+  eph_pg_setup_recorder_file "${EPH_DATADIR}" "${BATS_FILE_TMPDIR}/sock" 55450
+}
+
+teardown_file() {
+  eph_pg_stop "${EPH_DATADIR}"
 }
 
 setup() {
@@ -90,17 +87,15 @@ setup() {
   PAYLOAD_FILE="${SM_TMP}/payload.json"
 
   # DB-free inline-tolerance cases (T4/T5, tagged [inline]) fail-open PG and read the decision off
-  # the stderr diagnostic channel — no live DB. They stop here so the psycopg/DB probe below never
-  # skips them (mirrors track-outcome-budget-truncation.bats: runs without a live DB). The probe
+  # the stderr diagnostic channel — no DB. They stop here so the psycopg/DB probe below never
+  # skips them (mirrors track-outcome-budget-truncation.bats: runs without a DB). The probe
   # moved AFTER the tmp setup so the [inline] early-return keeps SANDBOX_HOME/PAYLOAD_FILE/BUDGET_DIR.
   case "${BATS_TEST_DESCRIPTION}" in
     *"[inline]"*) return 0 ;;
   esac
 
-  # DB-dependent cases: the psycopg path + live-DB reachability were probed once in setup_file and
-  # exported as PSYCOPG_PP / DB_OK — read the cached flags (the row assertions cannot run without it).
-  [[ -n "${PSYCOPG_PP}" ]] || skip "psycopg module not importable"
-  [[ "${DB_OK}" == "1" ]] || skip "glass_atrium DB not reachable"
+  # DB-dependent cases: setup_file brought the cluster up or recorded why it could not.
+  [[ -z "${DB_SKIP}" ]] || skip "${DB_SKIP}"
 }
 
 teardown() {
@@ -276,30 +271,6 @@ run_hook() {
     bash -c 'bash "$1" < "$2" 2>&1' _ "${HOOK_SH}" "${PAYLOAD_FILE}"
 }
 
-# Live-constraint skip-probe — R2-positive cases INSERT attribution_source =
-# 'structuredoutput-derived' into the live-reachable DB; until the live CHECK is widened to the
-# 10-value set (the ALTER is an orchestrator deploy step, not this suite's job) that INSERT
-# violates the constraint → skip, mirroring the DB-unreachable skip in setup(). A missing
-# constraint rejects nothing → run.
-skip_unless_live_check_allows_r2_token() {
-  local con_def
-  con_def="$(PYTHONPATH="${PSYCOPG_PP}" python3 - 2>/dev/null <<'PY'
-import psycopg
-with psycopg.connect("dbname=glass_atrium", connect_timeout=2) as conn:
-    with conn.cursor() as cur:
-        cur.execute(
-            "SELECT pg_get_constraintdef(oid) FROM pg_constraint "
-            "WHERE conname = 'outcomes_attribution_source_check'")
-        row = cur.fetchone()
-        print("NO_CONSTRAINT" if row is None else row[0])
-PY
-)" || con_def=""
-  case "${con_def}" in
-    *structuredoutput-derived* | NO_CONSTRAINT) ;;
-    *) skip "live CHECK not yet widened to structuredoutput-derived (orchestrator deploy pending)" ;;
-  esac
-}
-
 @test "T1 block-then-emit: [COMPLETION] text turn before StructuredOutput is honored (structured path)" {
   write_transcript block-then-emit
   write_payload
@@ -369,21 +340,16 @@ PY
 
   run_hook
   [ "${status}" -eq 0 ] || return 1
-  # DB-free rescue regression (unconditional — survives a token-absent CHECK): the attribution
-  # decision rides the stderr diagnostic channel, computed BEFORE the PG INSERT, so a terminal_so=1
-  # event LANDS structuredoutput-derived even where the widened token would be rejected by the row
-  # INSERT below. This is the portable proof; the DB-row assertions are the extra confirmation.
+  # DB-free rescue regression: the attribution decision rides the stderr diagnostic channel,
+  # computed BEFORE the PG INSERT → a terminal_so=1 event LANDS structuredoutput-derived there; the
+  # DB-row assertions below confirm the persisted row.
   # Routed through oc/no (|| return 1) so each is load-bearing regardless of position — a bare
-  # intermediate [[ ]] is silently ignored under bash 3.2 on macOS (bash 5.3 on CI does abort), and
-  # these run BEFORE the skip gate, so the regression stays enforced even when the live CHECK/token
-  # is absent.
+  # intermediate [[ ]] is silently ignored under bash 3.2 on macOS (bash 5.3 on CI does abort).
   oc "terminal_structuredoutput=1" "${output}" || return 1
   oc "attribution=structuredoutput-derived" "${output}" || return 1
   no "attribution=completion-synthesized" "${output}" || return 1
   no "attribution=budget-truncation" "${output}" || return 1
 
-  # Gate ONLY the DB-row assertions on the live CHECK — the INSERT writes the widened token.
-  skip_unless_live_check_allows_r2_token
   run count_rows
   [ "${output}" = "1" ]
   # F2 tuple lock (structuredoutput-derived): done, but writer-unverified — confidence stays low +
@@ -411,18 +377,16 @@ PY
 
   run_hook
   [ "${status}" -eq 0 ] || return 1
-  # DB-free rescue regression (unconditional): direct terminal evidence beats the cumulative >=40
+  # DB-free rescue regression: direct terminal evidence beats the cumulative >=40
   # heuristic on the stderr channel, computed BEFORE the PG INSERT — a hard-kill cannot leave a
   # paired non-error tool_result in terminal position, and successful schema runs routinely sit
   # at/over 40 (the 40-52 band), so structuredoutput-derived (not budget-truncation) must win.
-  # Routed through oc/no (|| return 1) so each is load-bearing before the skip gate (a bare
+  # Routed through oc/no (|| return 1) so each is load-bearing mid-body (a bare
   # intermediate [[ ]] is silently ignored under bash 3.2 on macOS; bash 5.3 on CI does abort).
   oc "terminal_structuredoutput=1" "${output}" || return 1
   oc "attribution=structuredoutput-derived" "${output}" || return 1
   no "attribution=budget-truncation" "${output}" || return 1
 
-  # Gate ONLY the DB-row assertions on the live CHECK — the INSERT writes the widened token.
-  skip_unless_live_check_allows_r2_token
   run count_rows
   [ "${output}" = "1" ]
   run fetch_col attribution_source
@@ -482,16 +446,13 @@ PY
 
   run_hook
   [ "${status}" -eq 0 ] || return 1
-  # DB-free rescue regression (unconditional): the consumed emit supersedes the rate-limit keyword
-  # heuristic on the stderr channel, computed BEFORE the PG INSERT — terminal_so=1 LANDS
-  # structuredoutput-derived even in a token-absent CHECK env where the row INSERT below is rejected.
-  # Routed through oc (|| return 1) so each is load-bearing before the skip gate (a bare mid-body
+  # DB-free rescue regression: the consumed emit supersedes the rate-limit keyword heuristic on
+  # the stderr channel, computed BEFORE the PG INSERT — terminal_so=1 LANDS structuredoutput-derived.
+  # Routed through oc (|| return 1) so each is load-bearing mid-body (a bare mid-body
   # [[ ]] is silently ignored under bash 3.2 on macOS; bash 5.3 on CI does abort).
   oc "terminal_structuredoutput=1" "${output}" || return 1
   oc "attribution=structuredoutput-derived" "${output}" || return 1
 
-  # Gate ONLY the DB-row assertions on the live CHECK — the INSERT writes the widened token.
-  skip_unless_live_check_allows_r2_token
   run count_rows
   [ "${output}" = "1" ]
   # NOT blocked — a successfully consumed emit refutes the rate-limit-cut hypothesis even
@@ -506,16 +467,14 @@ PY
 
   run_hook
   [ "${status}" -eq 0 ] || return 1
-  # DB-free rescue regression (unconditional): adjacency-pairing would read the errored foreign-id
-  # decoy → completion-synthesized; strict tool_use_id pairing finds the real success result. This
-  # rides the stderr channel, computed BEFORE the PG INSERT, so it survives a token-absent CHECK.
-  # Routed through oc (|| return 1) so each is load-bearing before the skip gate (a bare mid-body
+  # DB-free rescue regression: adjacency-pairing would read the errored foreign-id decoy →
+  # completion-synthesized; strict tool_use_id pairing finds the real success result. This rides
+  # the stderr channel, computed BEFORE the PG INSERT.
+  # Routed through oc (|| return 1) so each is load-bearing mid-body (a bare mid-body
   # [[ ]] is silently ignored under bash 3.2 on macOS; bash 5.3 on CI does abort).
   oc "terminal_structuredoutput=1" "${output}" || return 1
   oc "attribution=structuredoutput-derived" "${output}" || return 1
 
-  # Gate ONLY the DB-row assertions on the live CHECK — the INSERT writes the widened token.
-  skip_unless_live_check_allows_r2_token
   run count_rows
   [ "${output}" = "1" ]
   run fetch_col result
@@ -557,19 +516,17 @@ PY
   run_hook
   wait "${appender_pid}" 2>/dev/null || true
   [ "${status}" -eq 0 ] || return 1
-  # DB-free rescue regression (unconditional): the re-read paired the late-flushed SO
+  # DB-free rescue regression: the re-read paired the late-flushed SO
   # result → terminal_so=1 LANDS structuredoutput-derived on the stderr channel,
   # computed BEFORE the PG INSERT. A single-snapshot read would have mislabeled this
   # as completion-synthesized (the pre-fix bug). Routed through oc/no so each is
-  # load-bearing before the skip gate.
+  # load-bearing mid-body.
   oc "terminal_structuredoutput=1" "${output}" || return 1
   oc "attribution=structuredoutput-derived" "${output}" || return 1
   no "attribution=completion-synthesized" "${output}" || return 1
 
-  # Gate ONLY the DB-row assertions on the live CHECK — the INSERT writes the token.
   # The `[ ]` builtin form already aborts under errexit on both platforms; the `|| return 1` on
   # each is kept for the diagnostic — it names the failing line rather than the test.
-  skip_unless_live_check_allows_r2_token
   run count_rows
   [ "${output}" = "1" ] || return 1
   run fetch_col result
@@ -703,7 +660,7 @@ il_run_hook() {
     bash -c 'bash "$1" < "$2" 2>&1' _ "${HOOK_SH}" "${PAYLOAD_FILE}"
 }
 
-# DB-backed variant: real PG (no PGHOST override, PYTHONPATH pinned to psycopg) — proves the
+# DB-backed variant: the file's ephemeral cluster (inherited PGHOST, PYTHONPATH pinned to psycopg) — proves the
 # recovered VALUES (metric_pass/confidence) reach the row, which the stderr channel does not expose.
 il_run_hook_db() {
   il_write_payload "$@"

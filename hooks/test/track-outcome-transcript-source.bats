@@ -18,7 +18,7 @@
 # SIBLING of the script (setup skips when absent). psycopg lives in the
 # user site-packages (HOME-dependent), so PYTHONPATH is pinned to the real install and passed
 # into the sandboxed hook env. A UNIQUE per-run agent name scopes the count assertion + the
-# teardown DELETE so the shared glass_atrium DB is never polluted.
+# teardown DELETE within this file's ephemeral cluster.
 
 HOOKS_DIR="${BATS_TEST_DIRNAME}/.."
 HOOK_SH="${HOOKS_DIR}/track-outcome.sh"
@@ -27,19 +27,27 @@ PG_HELPER_SRC="${HOOKS_DIR}/_pg_outcome_dualwrite.py"
 # shellcheck source-path=SCRIPTDIR source=../../scripts/lib/path-guard.sh
 source "${BATS_TEST_DIRNAME}/../../scripts/lib/path-guard.sh"
 
+# One throwaway cluster per file (lib/ephemeral-pg.bash), PGHOST/PGPORT exported at it → every
+# host-less connection here (row reads, teardown DELETE, the hook's own write)
+# lands in it, never in the invoking shell's database.
+setup_file() {
+  # shellcheck source-path=SCRIPTDIR source=lib/ephemeral-pg.bash
+  source "${BATS_TEST_DIRNAME}/lib/ephemeral-pg.bash"
+  export EPH_DATADIR="${BATS_FILE_TMPDIR}/pgdata"
+  eph_pg_setup_recorder_file "${EPH_DATADIR}" "${BATS_FILE_TMPDIR}/sock" 55452
+}
+
+teardown_file() {
+  eph_pg_stop "${EPH_DATADIR}"
+}
+
 setup() {
   [[ -f "${HOOK_SH}" ]] || skip "track-outcome.sh not found: ${HOOK_SH}"
   [[ -f "${PG_HELPER_SRC}" ]] || skip "_pg_outcome_dualwrite.py not found: ${PG_HELPER_SRC}"
   command -v python3 >/dev/null 2>&1 || skip "python3 required"
   command -v jq >/dev/null 2>&1 || skip "jq required"
 
-  # psycopg site-packages dir (HOME-dependent user install) — pin it for the sandboxed hook.
-  PSYCOPG_PP="$(python3 -c 'import psycopg,os;print(os.path.dirname(os.path.dirname(psycopg.__file__)))' 2>/dev/null || true)"
-  [[ -n "${PSYCOPG_PP}" ]] || skip "psycopg module not importable"
-  # DB must be reachable — otherwise the smoke assertion cannot run.
-  PYTHONPATH="${PSYCOPG_PP}" python3 -c \
-    'import psycopg; psycopg.connect("dbname=glass_atrium", connect_timeout=2).close()' \
-    >/dev/null 2>&1 || skip "glass_atrium DB not reachable"
+  [[ -z "${DB_SKIP}" ]] || skip "${DB_SKIP}"
 
   TS_TMP="$(mktemp -d)"
   # Unique per-run agent + agent_id — scopes both the row-count assertion and the DELETE.

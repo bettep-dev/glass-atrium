@@ -21,6 +21,8 @@ HOOK_SH="${BATS_TEST_DIRNAME}/../advisory-worktree-writer-lock.sh"
 TRACKER_SH="${BATS_TEST_DIRNAME}/../agent-tracker.sh"
 # shellcheck source-path=SCRIPTDIR source=../../scripts/lib/path-guard.sh
 source "${BATS_TEST_DIRNAME}/../../scripts/lib/path-guard.sh"
+# shellcheck source-path=SCRIPTDIR source=lib/ephemeral-pg.bash
+source "${BATS_TEST_DIRNAME}/lib/ephemeral-pg.bash"
 
 setup() {
   [[ -f "${HOOK_SH}" ]] || skip "advisory-worktree-writer-lock.sh not found: ${HOOK_SH}"
@@ -64,14 +66,14 @@ fire_raw() {
     _ "${1}" "${GA_DATA}" "${HOOK_SH}"
 }
 
-# $1=agent_id (empty → an envelope with NO agent_id at all) — SubagentStop through the real tracker
-# (its PG write is tolerated non-blocking).
+# $1=agent_id (empty → an envelope with NO agent_id at all) — SubagentStop through the real tracker,
+# its PG write pointed at a socket that cannot exist.
 fire_stop() {
   local payload
   payload="$(jq -n --arg a "${1}" \
     '{hook_event_name:"SubagentStop", agent_type:"glass-atrium-dev-shell"}
      + (if $a == "" then {} else {agent_id:$a} end)')"
-  run bash -c 'printf "%s" "$1" | GA_DATA_ROOT="$2" bash "$3" 2>&1' \
+  run bash -c 'printf "%s" "$1" | GA_DATA_ROOT="$2" PGHOST="/nonexistent-socket-xyzzy" bash "$3" 2>&1' \
     _ "${payload}" "${GA_DATA}" "${TRACKER_SH}"
 }
 
@@ -277,6 +279,19 @@ STUB
   }
   [[ -d "$(lock_dir_for "${WT2}")" ]] || {
     echo "another agent's lock was released" >&2
+    return 1
+  }
+}
+
+@test "the release arm's tracker write never lands in the invoking shell's database" {
+  # Per-run id → a write is a NEW row, never absorbed by the ON CONFLICT arbiter of an earlier run.
+  local aid="bats-lock-gate-$$-${RANDOM}" before after
+  local query="SELECT count(*) FROM core.agent_events WHERE agent_id = '${aid}';"
+  before="$(eph_pg_query_caller_target "${query}")"
+  fire_stop "${aid}"
+  after="$(eph_pg_query_caller_target "${query}")"
+  [[ "${before}" == "${after}" ]] || {
+    echo "fixture rows reached the invoking shell's database: before=${before} after=${after}" >&2
     return 1
   }
 }
