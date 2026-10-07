@@ -72,6 +72,8 @@ REAL_DRIVER="${GA}/autoagent/daemon-cycle.sh"
 source "${GA}/scripts/lib/path-guard.sh"
 
 setup() {
+  load '../../test/lib/bats-db-seal'
+  ga_bats_db_seal
   [[ -f "${REAL_DRIVER}" ]] || skip "daemon-cycle.sh not found: ${REAL_DRIVER}"
   WORK="$(cd -- "$(mktemp -d -t daemon-cycle-apply-status.XXXXXX)" && pwd -P)"
   FAKE_HOME="${WORK}/home"

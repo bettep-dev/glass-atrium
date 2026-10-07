@@ -22,6 +22,8 @@ REPO_MANIFEST="${GA}/manifest.json"
 source "${GA}/scripts/lib/path-guard.sh"
 
 setup() {
+  load 'lib/bats-db-seal'
+  ga_bats_db_seal
   command -v jq >/dev/null 2>&1 || skip "jq required"
   [[ -f "${REAL_GA}" ]] || skip "glass-atrium not found: ${REAL_GA}"
   TARGET="$(mktemp -d -t ga-doctor-bats.XXXXXX)"

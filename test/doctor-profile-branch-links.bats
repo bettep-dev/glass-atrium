@@ -21,6 +21,8 @@ source "${GA}/scripts/lib/path-guard.sh"
 REQUIRED=(agents rules skills settings.json)
 
 setup() {
+  load 'lib/bats-db-seal'
+  ga_bats_db_seal
   [[ -f "${GA}/lib/ga-core.sh" ]] || skip "ga-core.sh not found: ${GA}/lib/ga-core.sh"
   SANDBOX="$(mktemp -d -t ga-doctor-profile-link-bats.XXXXXX)"
   GA_SANDBOX="${SANDBOX}/ga"

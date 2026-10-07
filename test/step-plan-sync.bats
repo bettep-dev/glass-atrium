@@ -39,6 +39,8 @@ CORE="${GA}/lib/ga-core.sh"
 TUI="${GA}/glass-atrium"
 
 setup() {
+  load 'lib/bats-db-seal'
+  ga_bats_db_seal
   [[ -f "${CORE}" ]] || skip "ga-core.sh not found: ${CORE}"
   [[ -f "${TUI}" ]] || skip "glass-atrium not found: ${TUI}"
   command -v awk >/dev/null 2>&1 || skip "awk required"

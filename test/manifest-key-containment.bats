@@ -21,6 +21,8 @@ readonly ESCAPING_KEY_EXIT=25
 source "${GA}/scripts/lib/path-guard.sh"
 
 setup() {
+  load 'lib/bats-db-seal'
+  ga_bats_db_seal
   command -v jq >/dev/null 2>&1 || skip "jq required"
   [[ -f "${GA}/lib/ga-core.sh" ]] || skip "ga-core.sh not found: ${GA}/lib/ga-core.sh"
   SANDBOX="$(cd -- "$(mktemp -d -t ga-manifest-contain.XXXXXX)" && pwd -P)"

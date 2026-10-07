@@ -66,6 +66,8 @@ setup_file() {
 }
 
 setup() {
+  load 'lib/bats-db-seal'
+  ga_bats_db_seal
   [[ -f "${REAL_LIB}" ]] || skip "lib/ga-core.sh not found: ${REAL_LIB}"
   command -v git >/dev/null 2>&1 || skip "git required"
 
