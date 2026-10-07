@@ -106,12 +106,12 @@ export const DAEMON_CRON_SCHEDULE: Record<string, CronRule> = buildDaemonCronSch
 
 // Assemble one CronRule row per schedule key from validated HH:MM strings.
 function assembleSchedule(raw: Record<ScheduleKey, string>): Record<string, CronRule> {
-  const autoagent = parseHhMm(raw.autoagent, ENV_NAME.autoagent);
-  const wiki = parseHhMm(raw.wiki, ENV_NAME.wiki);
-  return {
-    autoagent: { type: "daily-at", hour: autoagent.hour, minute: autoagent.minute },
-    wiki: { type: "daily-at", hour: wiki.hour, minute: wiki.minute },
-  };
+  return Object.fromEntries(
+    SCHEDULE_KEYS.map((key): [ScheduleKey, CronRule] => [
+      key,
+      { type: "daily-at", ...parseHhMm(raw[key], ENV_NAME[key]) },
+    ]),
+  );
 }
 
 // Split a "HH:MM" wall-clock string into {hour, minute}, throwing with the env-var name on malformed/out-of-range input.

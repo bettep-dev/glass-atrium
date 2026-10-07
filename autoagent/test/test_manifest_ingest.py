@@ -613,6 +613,30 @@ class TestManifestDeliveryBinding(_IngestCase):
         self.assertEqual((event, payload["void"]["agent"]), ("aa-result", _ROSTER[0]))
         self.assertEqual(self._get_canaries(), [])
 
+    def test_a_void_the_ledger_refuses_at_ingest_lands_at_the_aa_stage_before_any_renewal(
+        self,
+    ) -> None:
+        self._open_aa()
+        self._put_canaries()
+        self.ledger.write_outcome = ConnectionError("server closed the connection")
+        self._append(self.live_log, _get_delivery_line(_ROSTER[0], text_sha256=_PLAIN_SHA256))
+        self._ingest(_CYCLE_1)
+        self.ledger.write_outcome = 1
+        # an install root with no manifest: a stage that goes on past the void restarts the A/A
+        install_root = mock.patch.object(dc, "_INSTALL_ROOT", self.base_root)
+
+        with install_root, contextlib.redirect_stderr(io.StringIO()):
+            dc.run_aa_stage("2026-10-05", agents_dir=self.agents_dir)
+
+        ((event, payload, dedupe_key),) = self.ledger.rows
+        self.assertEqual((event, dedupe_key), ("aa-result", f"aa-result:{_AA.SALT}"))
+        self.assertEqual(
+            payload["void"],
+            {"reason": "foreign-canary-hash", "agent": _ROSTER[0], "text_sha256": _PLAIN_SHA256},
+        )
+        self.assertEqual(self._get_canaries(), [])
+        self.assertEqual(self.pg_reach, [])
+
     def test_an_in_window_control_arm_line_binds_to_no_trial(self) -> None:
         self._open_aa()
         control = _get_line(exposure=_CONTROL.EXPOSURE)  # a roster agent, inside the window
@@ -651,6 +675,27 @@ class TestManifestDeliveryBinding(_IngestCase):
         self.assertEqual(self._get_no_trial_agents(), list(_ROSTER[1:]))
         self.assertEqual(self._get_canaries(), [_ROSTER[0]])
         self.assertEqual(self.ledger.get_events(), [_UNBOUND, _UNBOUND])
+
+    def test_a_no_trial_delivery_never_removes_a_file_through_a_symlinked_canary_directory(
+        self,
+    ) -> None:
+        outside = self.base_root / "outside"
+        outside.mkdir()
+        target = outside / f"{_ROSTER[0]}.json"
+        target.write_text("{}", encoding="utf-8")
+        self.canary_dir.parent.mkdir(parents=True, exist_ok=True)
+        self.canary_dir.symlink_to(outside, target_is_directory=True)
+        self._append(self.live_log, _get_delivery_line(_ROSTER[0], salt="3"))
+
+        self._ingest(_CYCLE_1)
+
+        self.assertEqual(self._get_no_trial_agents(), [_ROSTER[0]], "the removal was reached")
+        self.assertTrue(target.exists(), "a file outside the canary directory was removed")
+        self.assertIn(
+            f"canary directory not a real directory: {self.canary_dir} is a symlink or not a "
+            "directory",
+            self.stderr,
+        )
 
     def test_each_no_trial_delivery_writes_one_ledger_row_keyed_by_its_spool_line(self) -> None:
         self._append(self.live_log, _get_delivery_line(_ROSTER[0], salt="3"))

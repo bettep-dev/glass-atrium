@@ -49,7 +49,7 @@ tsv_header() {
   printf 'path\tcomment_lines\tcode_lines\tratio\tshellcheck_count\tsecurity_count\textref_count\tbanner_count\n'
 }
 
-# The D3 in-scope surface, as the committed baseline holds it: 84 shell + 27 bats + 52 TS = 163.
+# The D3 in-scope surface, as the committed baseline holds it: 83 shell + 27 bats + 52 TS = 162.
 # lib/ga-tui-*.sh and the launcher are Track A; scripts/agent_lifecycle is pure Python
 # (Non-Goal); monitor/src/generated/prisma is Prisma-generated — all excluded. Emits
 # paths relative to REPO_ROOT (the caller cd's there first).

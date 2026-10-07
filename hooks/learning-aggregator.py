@@ -1260,8 +1260,6 @@ def main(registry_path: str | None = None) -> None:
     # _pg_read_learning_log_signatures returns the same (pat_core, agent) key, so dedup is symmetric:
     # on match accumulate frequency + reclassify tier, on miss insert fresh.
     if entries:
-        existing_by_key = stored
-
         new_count = 0
         updated_count = 0
 
@@ -1278,9 +1276,6 @@ def main(registry_path: str | None = None) -> None:
                 status_label = cols[5]
                 tier_label = cols[6] if len(cols) > 6 else "user-pending"
 
-                # strip dynamic numerics so repeated runs converge on the same signature,
-                # then normalize the residue so the dedup core is not forked by an orphan
-                # '(failure rate )' remnant the strip leaves (D-F4).
                 pat_core = _get_signature_core(pattern_label)
                 signature = f"{pat_core}|{agent_label}"
 
@@ -1288,7 +1283,7 @@ def main(registry_path: str | None = None) -> None:
                 new_freq = int(freq_match.group()) if freq_match else 0
 
                 key = (pat_core, agent_label)
-                existing = existing_by_key.get(key)
+                existing = stored.get(key)
                 # terminal rows (rejected/applied) are already adjudicated — re-emitting as
                 # 'identified' is an illegal state-machine regression; skip (no signal lost).
                 if existing and existing.get("status") in ("rejected", "applied"):

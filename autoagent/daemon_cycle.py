@@ -28,6 +28,7 @@ from __future__ import annotations
 
 import contextlib
 import difflib
+import errno
 import fcntl
 import hashlib
 import io
@@ -45,7 +46,7 @@ import sys
 import tempfile
 import time
 from collections import defaultdict
-from collections.abc import Callable, Iterable, Mapping, Sequence
+from collections.abc import Callable, Iterable, Iterator, Mapping, Sequence
 from dataclasses import asdict, dataclass, field, replace
 from datetime import date, datetime, timedelta, timezone
 from enum import IntEnum
@@ -2363,14 +2364,15 @@ Rules for the DIFF block (it is applied with `git apply`, which reads these line
 """
 
 
-# Consolidated per-AGENT prompt — takes all of an agent's prior-day failure
+# Consolidated per-AGENT prompt — takes all of an agent's pair-passing
 # signals and authors one multi-hunk unified diff. All hunks share a single
 # current-file snapshot, so one `git apply` applies them atomically (no intra-run
 # cascade). Output format identical to the single-pattern _PROMPT_TEMPLATE.
 _CONSOLIDATED_PROMPT_TEMPLATE = """You are an instruction-tuning assistant for AutoAgent.
 
-Multiple learning signals for ONE agent have been observed over the previous
-calendar day and queued for review. Author ONE consolidated patch.
+Multiple learning signals for ONE agent have each passed a detection window and
+the confirmation window that follows it, and are queued for review. Author ONE
+consolidated patch.
 
 TARGET AGENT: {pattern_agent}
 
@@ -3459,10 +3461,9 @@ def _fetch_pattern_evidence(agent: str) -> dict[str, PatternEvidence] | None:
     """
     if not HAS_PG_PATTERN_READ:
         return None
-    evaluated_at = _get_utc_now()
-    return _pg_read_pattern_evidence(
-        agent, get_pair_windows(evaluated_at), evaluated_at
-    )
+    windows = get_pair_windows(_get_utc_now())
+    # judged at the day anchor, the instant the intake re-check judged the floor at
+    return _pg_read_pattern_evidence(agent, windows, windows.end)
 
 
 def _render_pattern_evidence(
@@ -3489,8 +3490,8 @@ def _render_pattern_evidence(
     ]
     listed = found.triggering[:MACHINE_FACTS_SPAWN_LIMIT]
     lines.extend(_render_machine_facts(spawn) for spawn in listed)
-    if len(found.triggering) > len(listed):
-        omitted = len(found.triggering) - len(listed)
+    omitted = len(found.triggering) - len(listed)
+    if omitted:
         lines.append(f"more not listed: {_neutralize_field(str(omitted))}")
     return lines
 
@@ -6677,8 +6678,7 @@ def alert_auth_outage(report: CycleReport, *, skip_loop_emit: bool) -> None:
         )
     except Exception as exc:  # noqa: BLE001 — fail-loud-and-skip; the exit code still reports it
         sys.stderr.write(
-            "[daemon-cycle] WARN: auth-outage loop event lost: "
-            f"{type(exc).__name__}: {str(exc)[:160]}\n"
+            f"[daemon-cycle] WARN: auth-outage loop event lost: {_describe_fault(exc)}\n"
         )
 
 
@@ -6816,17 +6816,18 @@ def _get_revert_hint(cycle_date: object, proposal_id: object) -> str:
     without a restore would record a revert that never happened — so the
     pruned branch names no revert path.
     """
+    detection_only = (
+        "DETECTION-ONLY — no auto-revert, no status mutation, no safety-queue insert; "
+        "loop event emitted"
+    )
     backup_subdir = _backup_subdir_path(cycle_date, proposal_id)
     if not backup_subdir.is_dir():
         return (
             "before-image: pruned by agents-bak retention — no file revert path; "
-            "DETECTION-ONLY — no auto-revert, no status mutation, no "
-            "safety-queue insert; loop event emitted"
+            f"{detection_only}"
         )
     return (
-        f"before-image: {backup_subdir}; "
-        "DETECTION-ONLY — no auto-revert, no status mutation, no "
-        "safety-queue insert; loop event emitted; revert path (human/CLI): "
+        f"before-image: {backup_subdir}; {detection_only}; revert path (human/CLI): "
         "restore the agent file from the before-image, then psql: "
         "UPDATE core.autoagent_proposals SET status='reverted' "
         f"WHERE id={proposal_id}"
@@ -8909,15 +8910,14 @@ def _read_power_history(
 ) -> tuple[datetime | None, dict[str, list[SpawnFacts]]] | None:
     """Provenance start + each agent's spawns over the pair windows; None (WARN) when unusable."""
     if _TRIAL_DESIGN_IMPORT_EXC is not None:
-        exc = _TRIAL_DESIGN_IMPORT_EXC
-        cause = f"trial_design import failed: {type(exc).__name__}: {str(exc)[:160]}"
+        cause = f"trial_design import failed: {_describe_fault(_TRIAL_DESIGN_IMPORT_EXC)}"
     elif not HAS_PG_PATTERN_READ:
         cause = "PG pattern reads unavailable (helper import failed)"
     else:
         try:
             return _pg_read_spawn_facts(agents, windows)
         except Exception as exc:  # noqa: BLE001 — any read failure is an outage → fail closed
-            cause = f"spawn history unreadable: {type(exc).__name__}: {str(exc)[:160]}"
+            cause = f"spawn history unreadable: {_describe_fault(exc)}"
     _warn_power_unchecked(cause, "every keyed intake pattern")
     return None
 
@@ -8939,9 +8939,7 @@ def _read_power_design_effects(
                 cur.execute(POWER.DESIGN_EFFECT_SQL, (event, agents))
                 rows = cur.fetchall()
         except Exception as exc:  # noqa: BLE001 — any read fault is an outage → fail closed
-            cause = (
-                f"A/A design effect unreadable: {type(exc).__name__}: {str(exc)[:160]}"
-            )
+            cause = f"A/A design effect unreadable: {_describe_fault(exc)}"
         else:
             return _get_design_effects(rows)
     _warn_power_unchecked(cause, "every floor-passing keyed intake pattern")
@@ -8962,7 +8960,7 @@ def _get_design_effects(
             invalid_keys.add((agent, metric_key))
             _warn_power_unchecked(
                 f"agent={agent} key={metric_key}: stored A/A design effect invalid: "
-                f"{type(exc).__name__}: {str(exc)[:160]}",
+                f"{_describe_fault(exc)}",
                 "every floor-passing intake pattern of the agent on that key",
             )
     return design_effects, frozenset(invalid_keys)
@@ -9116,8 +9114,7 @@ def _write_shadow_pass(
         _write_shadow_looks(trial, power_pass, windows.end)
     except (KeyError, TypeError, ValueError) as exc:
         _warn_shadow(
-            f"trial {trial.key}: stored pre-registration unusable: "
-            f"{type(exc).__name__}: {str(exc)[:160]}",
+            f"trial {trial.key}: stored pre-registration unusable: {_describe_fault(exc)}",
             "no look recorded for it this cycle",
         )
 
@@ -9192,7 +9189,7 @@ def _read_shadow_trials(
             rows = cur.fetchall()
     except Exception as exc:  # noqa: BLE001 — a ledger read fault never fails the cycle
         _warn_shadow(
-            f"pre-registrations unreadable: {type(exc).__name__}: {str(exc)[:160]}",
+            f"pre-registrations unreadable: {_describe_fault(exc)}",
             "no pre-registration or look this cycle",
         )
         return None
@@ -9264,7 +9261,7 @@ def _write_shadow_row(row: ShadowRow, trial: TrialIdentity | None = None) -> int
         )
     except Exception as exc:  # noqa: BLE001 — a ledger write fault never fails the cycle
         _warn_shadow(
-            f"{row.event} {row.dedupe_key} not written: {type(exc).__name__}: {str(exc)[:160]}",
+            f"{row.event} {row.dedupe_key} not written: {_describe_fault(exc)}",
             "the stage continues",
         )
         return None
@@ -9376,7 +9373,19 @@ CANARY = SimpleNamespace(
     # hook_path_safe_key: every byte outside A-Za-z0-9_- dropped
     UNSAFE_KEY=re.compile(r"[^A-Za-z0-9_-]"),
     VOID_REASON="foreign-canary-hash",
+    # path segments below the data root
+    SEGMENTS=SimpleNamespace(
+        # the hook's CANARY_DIR, each segment opened without following a symlink
+        DIR=("learning", "canary"),
+        # a void the ledger did not take, beside the daemon's other markers until a cycle records it
+        # no .json suffix, as the other markers → outside the doctor's *.json cycle-report scan
+        PENDING_VOID=("daemon-reports", ".aa-pending-void"),
+    ),
 )
+
+
+class CanaryDirUnsafe(OSError):
+    """A canary directory segment below the data root is a symlink or not a directory."""
 
 
 class AaStateUnreadable(Exception):
@@ -9448,9 +9457,8 @@ class AaSource(NamedTuple):
 
 class AaEvidence(NamedTuple):
     window: AaWindow
-    spawns: dict[
-        str, list[SpawnFacts]
-    ]  # roster stem → its spawns started in the window
+    # roster stem → its spawns started in the window
+    spawns: dict[str, list[SpawnFacts]]
     joins: tuple[int, int]  # (roster outcomes, joined ones)
     # spool → (lines read, lines without a row), NULL on a pre-column row; None = no count columns
     closes: dict[str, tuple[int | None, int | None]] | None
@@ -9489,6 +9497,14 @@ class AaRestart(NamedTuple):
     fingerprint: dict[str, str] | None
 
 
+class AaVoid(NamedTuple):
+    """A detected void of one A/A — also the pending record kept while the ledger refuses it."""
+
+    start_id: int
+    agent: str
+    text_sha256: str | None  # None = no text the daemon could read
+
+
 def get_aa_fingerprint(root: Path) -> dict[str, str]:
     """The installed manifest's `.hashes` entries in the A/A scope: the spawn- and evidence-path
     files, `autoagent/`, `agents/`, and each migration whose installed SQL names the trial ledger.
@@ -9503,9 +9519,7 @@ def get_aa_fingerprint(root: Path) -> dict[str, str]:
             path: digest for path, digest in hashes.items() if _is_aa_scoped(root, path)
         }
     except (OSError, ValueError, KeyError, TypeError, AttributeError) as exc:
-        raise AaFingerprintUnreadable(
-            f"{manifest}: {type(exc).__name__}: {str(exc)[:160]}"
-        ) from exc
+        raise AaFingerprintUnreadable(f"{manifest}: {_describe_fault(exc)}") from exc
     if not fingerprint:
         raise AaFingerprintUnreadable(f"{manifest}: no entry in the A/A scope")
     return fingerprint
@@ -9621,6 +9635,9 @@ def run_aa_stage(
     Canary files live under `${GA_DATA_ROOT:-$HOME/.glass-atrium}/data/learning/canary` — a
     test faking the ledger sandboxes GA_DATA_ROOT, or this stage deletes the real ones.
     - No open A/A → every entry in the canary directory is deleted.
+    - Open A/A with a void an earlier ingest or sweep detected and the ledger did not take → that
+      void is retried before anything else, and the stage ends: until it lands no canary is
+      renewed and no result is decided, so the A/A cannot pass.
     - Open A/A, sweep first → an entry not named exactly as a roster agent's canary, or one the
       hook refuses unread, is deleted; any other roster file not confirmed to hold the A/A's text
       voids the A/A (every entry deleted) and ends the stage.
@@ -9644,6 +9661,8 @@ def run_aa_stage(
         return
     if latest is None:
         _delete_canaries(_get_canary_files(), "no open A/A or trial")
+        return
+    if _retry_pending_void(latest):
         return
     roster = _agent_roster(agents_dir)
     if _sweep_aa_canaries(latest, roster):
@@ -9672,28 +9691,74 @@ def _read_open_aa_start() -> AaStart | None:
 
 def put_canary_file(agent: str, salt: int, text: str, now: datetime) -> None:
     """Replace one agent's canary file whole — a temp file in its directory, then a rename — so a
-    SubagentStart read sees the previous file or this one, never a partial one. Raises OSError."""
-    path = _get_canary_path(agent)
-    path.parent.mkdir(parents=True, exist_ok=True)
+    SubagentStart read sees the previous file or this one, never a partial one. Both land through a
+    descriptor on the canary directory. Raises OSError — CanaryDirUnsafe when not a real one."""
+    name = _get_canary_path(agent).name
     body = {
         "salt": salt,
         "text": text,
         "text_sha256": _get_text_sha256(text),
         "expires_at": int((now + CANARY.LEASE).timestamp()),
     }
-    fd, temp = tempfile.mkstemp(dir=path.parent, prefix=f".{path.stem}.", suffix=".tmp")
-    try:
-        with os.fdopen(fd, "w", encoding="utf-8") as handle:
-            json.dump(body, handle)
-        os.replace(temp, path)
-    except BaseException:
-        Path(temp).unlink(missing_ok=True)
-        raise
+    temp = f".{Path(name).stem}.{os.urandom(6).hex()}.tmp"
+    with _open_canary_dir(should_create=True) as dir_fd:
+        flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW
+        fd = os.open(temp, flags, 0o600, dir_fd=dir_fd)
+        try:
+            with os.fdopen(fd, "w", encoding="utf-8") as handle:
+                json.dump(body, handle)
+            os.replace(temp, name, src_dir_fd=dir_fd, dst_dir_fd=dir_fd)
+        except BaseException:
+            with contextlib.suppress(FileNotFoundError):
+                os.unlink(temp, dir_fd=dir_fd)
+            raise
 
 
 def _get_canary_dir() -> Path:
     """The hook's CANARY_DIR: `${GA_DATA_ROOT:-$HOME/.glass-atrium}/data/learning/canary`."""
-    return ga_paths.get_data_root() / "learning" / "canary"
+    return ga_paths.get_data_root().joinpath(*CANARY.SEGMENTS.DIR)
+
+
+@contextlib.contextmanager
+def _open_canary_dir(*, should_create: bool = False) -> Iterator[int]:
+    fd = _get_canary_dir_fd(should_create=should_create)
+    try:
+        yield fd
+    finally:
+        os.close(fd)
+
+
+def _get_canary_dir_fd(*, should_create: bool) -> int:
+    """An open descriptor on the canary directory — the data root as configured, each segment
+    below it opened without following a symlink, so a planted link never redirects a listing,
+    removal or write. Raises FileNotFoundError when absent and not created, CanaryDirUnsafe when a
+    segment is a symlink or not a directory, OSError on any other fault."""
+    root = ga_paths.get_data_root()
+    if should_create:
+        root.mkdir(parents=True, exist_ok=True)
+    fd = os.open(root, os.O_RDONLY | os.O_DIRECTORY)
+    for depth, segment in enumerate(CANARY.SEGMENTS.DIR, 1):
+        try:
+            child = _open_dir_segment(fd, segment, should_create=should_create)
+        except OSError as exc:
+            # macOS refuses a symlink opened O_DIRECTORY | O_NOFOLLOW with ENOTDIR, Linux with ELOOP
+            if exc.errno not in (errno.ENOTDIR, errno.ELOOP):
+                raise
+            planted = root.joinpath(*CANARY.SEGMENTS.DIR[:depth])
+            raise CanaryDirUnsafe(
+                f"canary directory not a real directory: {planted} is a symlink or not a directory"
+            ) from exc
+        finally:
+            os.close(fd)
+        fd = child
+    return fd
+
+
+def _open_dir_segment(parent: int, segment: str, *, should_create: bool) -> int:
+    if should_create:
+        with contextlib.suppress(FileExistsError):
+            os.mkdir(segment, dir_fd=parent)
+    return os.open(segment, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=parent)
 
 
 def _get_canary_path(agent: str) -> Path:
@@ -9702,10 +9767,18 @@ def _get_canary_path(agent: str) -> Path:
 
 def _get_canary_files() -> list[Path]:
     """Every entry in the canary directory, any name or extension case — the hook decides delivery
-    by an exact listed name, so the daemon lists by name too. Not listable → WARN, none."""
+    by an exact listed name, so the daemon lists by name too. Not listable, or not a real
+    directory → WARN, none."""
     try:
-        entries = sorted(_get_canary_dir().iterdir())
+        with _open_canary_dir() as dir_fd, os.scandir(dir_fd) as entries:
+            # a real directory cannot be unlinked; a symlink to one can, and the hook refuses it
+            names = sorted(
+                entry.name for entry in entries if not entry.is_dir(follow_symlinks=False)
+            )
     except FileNotFoundError:
+        return []
+    except CanaryDirUnsafe as exc:
+        _warn_aa(str(exc), "no canary file is swept or removed this cycle")
         return []
     except OSError as exc:
         _warn_aa(
@@ -9713,8 +9786,8 @@ def _get_canary_files() -> list[Path]:
             "no canary file is swept or removed this cycle",
         )
         return []
-    # a real directory cannot be unlinked; a symlink to one can, and the hook refuses it
-    return [path for path in entries if path.is_symlink() or not path.is_dir()]
+    canary_dir = _get_canary_dir()
+    return [canary_dir / name for name in names]
 
 
 def _get_text_sha256(text: str) -> str:
@@ -9728,6 +9801,9 @@ def _put_aa_canaries(latest: AaStart, roster: frozenset[str]) -> None:
     for agent in sorted(roster):
         try:
             put_canary_file(agent, latest.salt_id, CANARY.AA_TEXT, now)
+        except CanaryDirUnsafe as exc:
+            _warn_aa(str(exc), "no canary file is written this cycle")
+            return
         except OSError as exc:
             _warn_aa(
                 f"canary for {agent} not written: {_describe_fault(exc)}",
@@ -9809,43 +9885,140 @@ def _get_foreign_text_sha256(text: str | None) -> str | None:
 
 
 def _void_aa(latest: AaStart, agent: str, text_sha256: str | None) -> None:
-    """Close the A/A with a void result, then remove every canary file. text_sha256 None = no
-    text the daemon could read."""
-    label = text_sha256 or "(unreadable)"
-    payload = {
-        "overall": AA.VERDICT.VOID,
-        "void": {
-            "reason": CANARY.VOID_REASON,
-            "agent": agent,
-            "text_sha256": text_sha256,
-        },
-    }
-    dedupe_key = f"{TRIAL_LEDGER.EVENT.AA_RESULT}:{latest.id}"
+    """Close the A/A with a void result, then remove every canary file. A void the ledger does not
+    take stays pending: run_aa_stage retries it before any canary renewal, so the A/A cannot pass
+    meanwhile. text_sha256 None = no text the daemon could read."""
+    void = AaVoid(latest.id, agent, text_sha256)
+    is_recorded = _write_aa_void(void)
+    if is_recorded:
+        _delete_pending_void()
+    else:
+        _put_pending_void(void)
+    reason = "voided" if is_recorded else "void not recorded"
+    _delete_canaries(_get_canary_files(), f"A/A {latest.id} {reason}")
+
+
+def _write_aa_void(void: AaVoid) -> bool:
+    """The void aa-result row → True when it landed; a void the ledger did not take WARNs."""
+    label = void.text_sha256 or "(unreadable)"
+    dedupe_key = f"{TRIAL_LEDGER.EVENT.AA_RESULT}:{void.start_id}"
+    detail = {"reason": CANARY.VOID_REASON, "agent": void.agent, "text_sha256": void.text_sha256}
+    payload = {"overall": AA.VERDICT.VOID, "void": detail}
     if _write_aa_row(TRIAL_LEDGER.EVENT.AA_RESULT, payload, dedupe_key) == 1:
         sys.stderr.write(
-            f"[daemon-cycle] WARN: A/A {latest.id} voided — {agent}'s canary text "
+            f"[daemon-cycle] WARN: A/A {void.start_id} voided — {void.agent}'s canary text "
             f"{label} is not the A/A's ({dedupe_key})\n"
         )
-    else:
+        return True
+    _warn_aa(
+        f"A/A {void.start_id} void not recorded: {void.agent}'s canary text {label} is not "
+        "the A/A's",
+        "it stays pending — no canary is renewed and no result lands until a cycle records it",
+    )
+    return False
+
+
+def _retry_pending_void(latest: AaStart) -> bool:
+    """A void an earlier ingest or sweep detected and the ledger did not take → retried, True: the
+    stage ends there, so no canary is renewed and no result decided until it lands. A pending
+    record that cannot be read holds the A/A the same way."""
+    path = _get_pending_void_path()
+    try:
+        pending = _read_pending_void(path)
+    except (OSError, ValueError, TypeError, RecursionError) as exc:
         _warn_aa(
-            f"A/A {latest.id} void not recorded: {agent}'s canary text {label} is not "
-            "the A/A's",
-            "its canary files are removed",
+            f"A/A {latest.id} pending void {path} unreadable: {_describe_fault(exc)}",
+            "no canary is renewed and no result lands while it stays unread",
         )
-    _delete_canaries(_get_canary_files(), f"A/A {latest.id} voided")
+        _delete_canaries(_get_canary_files(), f"A/A {latest.id} void not recorded")
+        return True
+    if pending is None:
+        return False
+    if pending.start_id != latest.id:  # an A/A opens only after the previous one's result
+        _delete_pending_void()
+        return False
+    _void_aa(latest, pending.agent, pending.text_sha256)
+    return True
+
+
+def _get_pending_void_path() -> Path:
+    return ga_paths.get_data_root().joinpath(*CANARY.SEGMENTS.PENDING_VOID)
+
+
+def _read_pending_void(path: Path) -> AaVoid | None:
+    """None when no void is pending. Raises OSError, ValueError, TypeError or RecursionError (a
+    body nested past the parser's depth limit) on a record not readable as one."""
+    try:
+        record = json.loads(path.read_text(encoding="utf-8"))
+    except FileNotFoundError:
+        return None
+    pending = AaVoid(**record)
+    if not (
+        isinstance(pending.start_id, int)
+        and isinstance(pending.agent, str)
+        and isinstance(pending.text_sha256, (str, type(None)))
+    ):
+        raise TypeError(f"{path.name} is not an A/A void record")
+    return pending
+
+
+def _put_pending_void(void: AaVoid) -> None:
+    """Written whole — a temp file, then a rename — so a later read sees the record or none."""
+    path = _get_pending_void_path()
+    temp = path.with_name(f"{path.name}.{os.getpid()}.tmp")
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        temp.write_text(json.dumps(void._asdict()), encoding="utf-8")
+        temp.replace(path)
+    except OSError as exc:
+        _warn_aa(
+            f"A/A {void.start_id} pending void not kept at {path}: {_describe_fault(exc)}",
+            "no later cycle retries it",
+        )
+
+
+def _delete_pending_void() -> None:
+    path = _get_pending_void_path()
+    try:
+        path.unlink(missing_ok=True)
+    except OSError as exc:
+        _warn_aa(
+            f"pending void {path} not removed: {_describe_fault(exc)}",
+            "it is dropped once a newer A/A opens",
+        )
 
 
 def _delete_canaries(paths: list[Path], reason: str) -> None:
-    for path in paths:
-        try:
-            path.unlink(missing_ok=True)
-        except OSError as exc:
-            _warn_aa(
-                f"canary {path} not removed: {_describe_fault(exc)}",
-                "the next writing cycle retries",
-            )
-            continue
-        sys.stderr.write(f"[daemon-cycle] INFO: canary {path} removed — {reason}\n")
+    """Remove each canary entry by name through a descriptor on the canary directory; not a real
+    directory → WARN, none removed."""
+    if not paths:
+        return
+    try:
+        with _open_canary_dir() as dir_fd:
+            for path in paths:
+                _delete_canary(dir_fd, path, reason)
+    except FileNotFoundError:
+        return  # no canary directory → no entry to remove
+    except CanaryDirUnsafe as exc:
+        _warn_aa(str(exc), "no canary file is removed this cycle")
+    except OSError as exc:
+        _warn_aa(
+            f"canary directory not opened: {_describe_fault(exc)}",
+            "the next writing cycle retries",
+        )
+
+
+def _delete_canary(dir_fd: int, path: Path, reason: str) -> None:
+    try:
+        with contextlib.suppress(FileNotFoundError):
+            os.unlink(path.name, dir_fd=dir_fd)
+    except OSError as exc:
+        _warn_aa(
+            f"canary {path} not removed: {_describe_fault(exc)}",
+            "the next writing cycle retries",
+        )
+        return
+    sys.stderr.write(f"[daemon-cycle] INFO: canary {path} removed — {reason}\n")
 
 
 def _get_aa_restart(latest: AaStart) -> AaRestart | None:
@@ -10476,10 +10649,10 @@ def get_aa_looks(
 
 def _get_aa_look(items: Sequence[ArmedSpawn], tool_budget: int) -> AaLook:
     return AaLook(
-        _get_aa_arms(items, lambda spawn: is_task_overrun((spawn,), tool_budget)),
+        _get_aa_arms(items, _get_aa_event_test(METRIC_BUDGET_OVERAGE, tool_budget)),
         {
             METRIC_EMIT_FAILURE: _get_aa_arms(
-                items, lambda spawn: is_metric_event(spawn, METRIC_EMIT_FAILURE)
+                items, _get_aa_event_test(METRIC_EMIT_FAILURE, tool_budget)
             )
         },
         get_tool_use_reading(items, is_overage_primary=True),
@@ -12436,10 +12609,22 @@ MANIFEST_SPOOL_CLOSED_EVAL_RESULT = "manifest-spool-closed"
 # Optional, not `str | None`: an install's CLT python3 3.9 cannot evaluate the union.
 # arm, salt id, delivered, delivered hash — all None on a line predating the fields.
 ManifestExposure = tuple[Optional[int], Optional[int], Optional[bool], Optional[str]]  # noqa: UP045
-ManifestRow = tuple[
-    int, Optional[str], str, Optional[str], datetime, int, str,  # noqa: UP045
-    Optional[int], Optional[int], Optional[bool], Optional[str],  # noqa: UP045
-]
+
+
+class ManifestRow(NamedTuple):
+    """One MANIFEST line in core.spawn_manifest column order, the spool column excluded."""
+
+    line_offset: int
+    agent_id: str | None
+    agent_type: str
+    session_id: str | None
+    started_at: datetime
+    ctx_bytes: int
+    blocks: str
+    arm: int | None
+    salt_id: int | None
+    delivered: bool | None
+    delivered_hash: str | None
 
 
 @dataclass
@@ -12511,7 +12696,7 @@ def ingest_manifest_log(
         name_rows = _pg_count_spawn_manifest(new_spool.name)
     except Exception as exc:  # noqa: BLE001 — psycopg and schema faults vary; named WARN below
         return _skip_manifest_ingest(
-            f"PG unreachable or core.spawn_manifest absent: {type(exc).__name__}: {str(exc)[:160]}"
+            f"PG unreachable or core.spawn_manifest absent: {_describe_fault(exc)}"
         )
     lock_path = get_manifest_ingest_lock_path(live_log)
     event_ts = now.strftime("%Y-%m-%dT%H:%M:%S.000Z")
@@ -12560,7 +12745,7 @@ def _ingest_manifest_under_lock(
             ingest.status = f"skipped:spool {spool.name} kept"
             sys.stderr.write(
                 f"[daemon-cycle] WARN: manifest ingest: spool {spool.name} kept, live log "
-                f"not rotated — {type(exc).__name__}: {str(exc)[:160]}\n"
+                f"not rotated — {_describe_fault(exc)}\n"
             )
             return ingest
     try:
@@ -12589,7 +12774,7 @@ def _ingest_manifest_under_lock(
         ingest.status = f"skipped:spool {new_spool.name} kept"
         sys.stderr.write(
             f"[daemon-cycle] WARN: manifest ingest: spool {new_spool.name} kept for the next "
-            f"cycle's re-read — {type(exc).__name__}: {str(exc)[:160]}\n"
+            f"cycle's re-read — {_describe_fault(exc)}\n"
         )
     else:
         # is_name_free proved the spool held no row → every row read here is new
@@ -12650,11 +12835,11 @@ def _get_lines_without_row(close: ManifestSpoolClose) -> int:
 def _get_unstored_deliveries(spool: str, rows: list[ManifestRow]) -> list[ManifestRow]:
     """Delivered rows the database does not hold yet — a re-read binds only these. Raises on a
     PG fault, so the spool is kept."""
-    delivered = [row for row in rows if row[9]]
+    delivered = [row for row in rows if row.delivered]
     if not delivered:
         return []
     stored = _read_stored_manifest_offsets(spool)
-    return [row for row in delivered if row[0] not in stored]
+    return [row for row in delivered if row.line_offset not in stored]
 
 
 def bind_manifest_deliveries(
@@ -12670,7 +12855,7 @@ def bind_manifest_deliveries(
     - The open state or the salt rows unreadable → no row bound, a named WARN with the count;
       those rows are never bound later.
     """
-    delivered = [row for row in rows if row[9]]
+    delivered = [row for row in rows if row.delivered]
     if not delivered:
         return
     _read_binding_state(binding)
@@ -12698,19 +12883,19 @@ def _read_binding_state(binding: DeliveryBinding) -> None:
 def _bind_to_open_aa(row: ManifestRow, binding: DeliveryBinding) -> bool:
     """True = the row binds to the open A/A; the first foreign hash voids it."""
     latest = binding.latest
-    if latest is None or row[2] not in binding.roster:
+    if latest is None or row.agent_type not in binding.roster:
         return False
     # started_at is whole seconds → floored start keeps a first-second delivery in the window
-    if row[4] < latest.window_start.replace(microsecond=0):
+    if row.started_at < latest.window_start.replace(microsecond=0):
         return False
-    if row[10] != _get_text_sha256(CANARY.AA_TEXT) and not binding.is_voided:
+    if row.delivered_hash != _get_text_sha256(CANARY.AA_TEXT) and not binding.is_voided:
         binding.is_voided = True
-        _void_aa(latest, row[2], row[10])
+        _void_aa(latest, row.agent_type, row.delivered_hash)
     return True
 
 
 def _bind_outside_window(spool: str, rows: list[ManifestRow]) -> None:
-    salt_ids = frozenset(row[8] for row in rows if row[8] is not None)
+    salt_ids = frozenset(row.salt_id for row in rows if row.salt_id is not None)
     try:
         aa_salt_ids = _read_aa_salt_ids(salt_ids) if salt_ids else frozenset()
     except Exception as exc:  # noqa: BLE001 — any read fault leaves the rows unbound, named
@@ -12718,14 +12903,15 @@ def _bind_outside_window(spool: str, rows: list[ManifestRow]) -> None:
         return
     aa_sha256 = _get_text_sha256(CANARY.AA_TEXT)
     for row in rows:
-        if row[8] in aa_salt_ids and row[10] == aa_sha256:
+        if row.salt_id in aa_salt_ids and row.delivered_hash == aa_sha256:
             continue
         _write_unbound_delivery(spool, row)
         sys.stderr.write(
-            f"[daemon-cycle] WARN: manifest binding — {row[2]} canary delivered with no open "
-            f"trial ({spool} line {row[0]}, salt_id={row[8]}, delivered_hash={row[10]})\n"
+            f"[daemon-cycle] WARN: manifest binding — {row.agent_type} canary delivered with no "
+            f"open trial ({spool} line {row.line_offset}, salt_id={row.salt_id}, "
+            f"delivered_hash={row.delivered_hash})\n"
         )
-        _delete_canaries([_get_canary_path(row[2])], "delivered with no open trial")
+        _delete_canaries([_get_canary_path(row.agent_type)], "delivered with no open trial")
 
 
 def _write_unbound_delivery(spool: str, row: ManifestRow) -> None:
@@ -12733,13 +12919,13 @@ def _write_unbound_delivery(spool: str, row: ManifestRow) -> None:
     so a re-read adds none."""
     event = TRIAL_LEDGER.EVENT.CANARY_UNBOUND_DELIVERY
     payload = {
-        "agent": row[2],
+        "agent": row.agent_type,
         "spool": spool,
-        "line_offset": row[0],
-        "salt_id": row[8],
-        "delivered_hash": row[10],
+        "line_offset": row.line_offset,
+        "salt_id": row.salt_id,
+        "delivered_hash": row.delivered_hash,
     }
-    _write_aa_row(event, payload, f"{event}:{spool}:{row[0]}", agent=row[2])
+    _write_aa_row(event, payload, f"{event}:{spool}:{row.line_offset}", agent=row.agent_type)
 
 
 def _warn_unbound(spool: str, count: int, cause: str) -> None:
@@ -12782,7 +12968,7 @@ def _get_manifest_row(offset: int, line: str) -> ManifestRow | None:
     exposure = _get_manifest_exposure(match)
     if not _is_manifest_row_insertable(ctx_bytes, agent_type, exposure[1]):
         return None
-    return (
+    return ManifestRow(
         offset,
         _get_manifest_id(match["agent_id"]),
         agent_type,
@@ -12959,8 +13145,7 @@ def run_cycle(
             except Exception as exc:  # noqa: BLE001 — fail-loud-and-skip; next cycle retries
                 sys.stderr.write(
                     "[daemon-cycle] WARN: update_generation_closed_proposals raised — "
-                    f"pending auto rows left open: {type(exc).__name__}: "
-                    f"{str(exc)[:160]}\n"
+                    f"pending auto rows left open: {_describe_fault(exc)}\n"
                 )
     else:
         _run_generation_loop(
@@ -12982,7 +13167,7 @@ def run_cycle(
         except Exception as exc:  # noqa: BLE001 — fail-loud-and-skip; walk reads stored rows
             sys.stderr.write(
                 "[daemon-cycle] WARN: create_cycle_verdicts raised — verdict not stored: "
-                f"{type(exc).__name__}: {str(exc)[:160]}\n"
+                f"{_describe_fault(exc)}\n"
             )
         try:
             alert_all_reject_streak(report)
@@ -13210,65 +13395,8 @@ def build_patch_result(
     if classification != "reject" or proposal.proposed_diff.strip():
         seen_targets.add(str(target_path.resolve()))
 
-    # Map proposal.parse_mode to haiku_status so cycle JSON shows the
-    # explicit recovery path. NO silent coerce — fuzzy/retried states
-    # surface distinctly from strict happy path.
-    #
-    # parse_mode='quota-limit' → haiku_status='skipped:quota-limit'. Branch
-    # ordering: quota check comes BEFORE empty-diff fallback because quota
-    # always yields empty diff (would otherwise collapse to empty-or-error
-    # and lose the budget-exhaustion signal in monitor dashboard).
-    if skip_haiku:
-        haiku_status = "skipped:test"
-    elif is_backoff_skip:
-        # Chronic-timeout back-off — distinct status so the monitor dashboard
-        # can flag a backed-off candidate vs. a generic empty/error. Branch
-        # FIRST among the non-test cases (it always yields an empty diff and
-        # must not collapse into 'skipped:empty-or-error').
-        haiku_status = TIMEOUT_BACKOFF_HAIKU_STATUS
-    elif proposal.parse_mode == "budget-too-low":
-        # Local budget-config failure — distinct from external quota. Like quota,
-        # it always yields an empty diff, so branch before empty-or-error to
-        # preserve the signal.
-        haiku_status = "skipped:budget-too-low"
-    elif proposal.parse_mode == "quota-limit":
-        haiku_status = "skipped:quota-limit"
-    elif proposal.parse_mode == "transient-overload":
-        # Transient infra blip (Overloaded / 529 / connection reset / timeout)
-        # whose bounded retries were exhausted. Always an empty diff, so branch
-        # before empty-or-error to keep the infra-blip signal distinct from a
-        # genuinely empty / parse-failed output in the monitor dashboard.
-        haiku_status = "skipped:transient"
-    elif proposal.parse_mode == "auth-failure":
-        # 401/credential failure (expired non-interactive OAuth token). Always
-        # an empty diff, so branch before empty-or-error to keep the auth
-        # signal distinct from a genuinely empty / parse-failed output — the
-        # monitor cost-guard chip reads this to show "Auth fault", not a
-        # spending warning.
-        haiku_status = "skipped:auth"
-    elif proposal.parse_mode == "timeout-stall":
-        # Escalated-retry timeout — a TRUE stall (even the longer bound
-        # produced nothing), distinct from a slow generation that completed.
-        # Always an empty diff → branch before empty-or-error so the stall
-        # stays queryable.
-        haiku_status = "skipped:timeout-stall"
-    elif not proposal.proposed_diff:
-        haiku_status = "skipped:empty-or-error"
-    elif proposal.parse_mode == "escalated":
-        # Legacy tag — no longer produced, kept so a persisted or out-of-tree
-        # shape still resolves instead of collapsing into the plain 'ok' else.
-        haiku_status = "ok:escalated"
-    elif proposal.parse_mode == "retried":
-        haiku_status = "ok:retried"
-    elif proposal.parse_mode == "fuzzy":
-        haiku_status = "ok:fuzzy-parsed"
-    else:
-        haiku_status = "ok"
-
-    # Second axis: a clean parse at the escalated bound is slow generation,
-    # not a stall. Suffix-composed so the parse path above survives it.
-    haiku_status = build_escalated_haiku_status(
-        haiku_status, escalated_timeout=proposal.escalated_timeout
+    haiku_status = _get_haiku_status(
+        proposal, skip_haiku=skip_haiku, is_backoff_skip=is_backoff_skip
     )
 
     # Pre-verify gate. Only body-auto candidates pay the LLM cost;
@@ -13344,15 +13472,10 @@ def build_patch_result(
         verify = None
         approval_tier = "safety"
         status_value = "pending"
-    elif is_backoff_skip:
-        # Terminal — no apply or stale-drain selector re-picks a marker; no Haiku
-        # call ran, so the back-off rationale classifies non-adjudicating
-        verify = None
-        approval_tier = ""
-        status_value = get_reject_status(proposal.rationale)
     else:
-        # 'reject' classification — no further gating. Persist a terminal status
-        # explicitly (an empty sentinel was coerced to 'pending' → fossilized).
+        # 'reject' or a back-off marker → explicit terminal status, never re-picked by
+        # apply or stale-drain (an empty sentinel was coerced to 'pending' → fossilized);
+        # a marker ran no Haiku call, so its rationale classifies non-adjudicating
         verify = None
         approval_tier = ""
         status_value = get_reject_status(proposal.rationale)
@@ -13484,6 +13607,72 @@ def build_patch_result(
         # Lead pattern only: the column holds one link per proposal row.
         learning_pattern_id=lead_pattern.row_id or None,
         generator_input_version=GENERATOR_INPUT_VERSION,
+    )
+
+
+def _get_haiku_status(
+    proposal: PatchProposal, *, skip_haiku: bool, is_backoff_skip: bool
+) -> str:
+    """The proposal's haiku_status: its parse path, then the escalated-bound suffix."""
+    # Map proposal.parse_mode to haiku_status so cycle JSON shows the
+    # explicit recovery path. NO silent coerce — fuzzy/retried states
+    # surface distinctly from strict happy path.
+    #
+    # parse_mode='quota-limit' → haiku_status='skipped:quota-limit'. Branch
+    # ordering: quota check comes BEFORE empty-diff fallback because quota
+    # always yields empty diff (would otherwise collapse to empty-or-error
+    # and lose the budget-exhaustion signal in monitor dashboard).
+    if skip_haiku:
+        haiku_status = "skipped:test"
+    elif is_backoff_skip:
+        # Chronic-timeout back-off — distinct status so the monitor dashboard
+        # can flag a backed-off candidate vs. a generic empty/error. Branch
+        # FIRST among the non-test cases (it always yields an empty diff and
+        # must not collapse into 'skipped:empty-or-error').
+        haiku_status = TIMEOUT_BACKOFF_HAIKU_STATUS
+    elif proposal.parse_mode == "budget-too-low":
+        # Local budget-config failure — distinct from external quota. Like quota,
+        # it always yields an empty diff, so branch before empty-or-error to
+        # preserve the signal.
+        haiku_status = "skipped:budget-too-low"
+    elif proposal.parse_mode == "quota-limit":
+        haiku_status = "skipped:quota-limit"
+    elif proposal.parse_mode == "transient-overload":
+        # Transient infra blip (Overloaded / 529 / connection reset / timeout)
+        # whose bounded retries were exhausted. Always an empty diff, so branch
+        # before empty-or-error to keep the infra-blip signal distinct from a
+        # genuinely empty / parse-failed output in the monitor dashboard.
+        haiku_status = "skipped:transient"
+    elif proposal.parse_mode == "auth-failure":
+        # 401/credential failure (expired non-interactive OAuth token). Always
+        # an empty diff, so branch before empty-or-error to keep the auth
+        # signal distinct from a genuinely empty / parse-failed output — the
+        # monitor cost-guard chip reads this to show "Auth fault", not a
+        # spending warning.
+        haiku_status = "skipped:auth"
+    elif proposal.parse_mode == "timeout-stall":
+        # Escalated-retry timeout — a TRUE stall (even the longer bound
+        # produced nothing), distinct from a slow generation that completed.
+        # Always an empty diff → branch before empty-or-error so the stall
+        # stays queryable.
+        haiku_status = "skipped:timeout-stall"
+    elif not proposal.proposed_diff:
+        haiku_status = "skipped:empty-or-error"
+    elif proposal.parse_mode == "escalated":
+        # Legacy tag — no longer produced, kept so a persisted or out-of-tree
+        # shape still resolves instead of collapsing into the plain 'ok' else.
+        haiku_status = "ok:escalated"
+    elif proposal.parse_mode == "retried":
+        haiku_status = "ok:retried"
+    elif proposal.parse_mode == "fuzzy":
+        haiku_status = "ok:fuzzy-parsed"
+    else:
+        haiku_status = "ok"
+
+    # Second axis: a clean parse at the escalated bound is slow generation,
+    # not a stall. Suffix-composed so the parse path above survives it.
+    return build_escalated_haiku_status(
+        haiku_status, escalated_timeout=proposal.escalated_timeout
     )
 
 

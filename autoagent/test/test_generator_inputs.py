@@ -355,10 +355,10 @@ class TestEvidenceFieldsRendered(unittest.TestCase):
         self._captured = _capture_prompt(self)
         self._agents_dir = _make_agents_dir(self)
         self._evidence: dict | None = _get_evidence()
-        self._reads: list[str] = []
+        self._reads: list[tuple[str, object, object]] = []
 
         def _read(agent: str, windows: object, evaluated_at: object) -> dict | None:
-            self._reads.append(agent)
+            self._reads.append((agent, windows, evaluated_at))
             return self._evidence
 
         # Intentional fake after the seal: the evidence seam alone is armed.
@@ -385,7 +385,30 @@ class TestEvidenceFieldsRendered(unittest.TestCase):
             for field, rendered in _EVIDENCE_FIELDS:
                 with self.subTest(template=template, field=field):
                     self.assertIn(rendered, prompt)
-        self.assertEqual(self._reads, [_AGENT, _AGENT])
+        self.assertEqual([read[0] for read in self._reads], [_AGENT, _AGENT])
+
+    def test_evidence_is_read_at_the_intake_floors_windows_and_instant(self) -> None:
+        # the evidence lists what the admitting floor counts → one windows + instant pair
+        floor_reads: list[tuple[object, object]] = []
+
+        def _read_floors(
+            agents: list[str], windows: object, evaluated_at: object
+        ) -> dict:
+            floor_reads.append((windows, evaluated_at))
+            floor = _get_evidence()[sig.METRIC_BUDGET_OVERAGE].floor
+            return {(_AGENT, sig.METRIC_BUDGET_OVERAGE): floor}
+
+        for name, value in (
+            ("_get_utc_now", lambda: _NOW),
+            ("_pg_read_pattern_floors", _read_floors),
+        ):
+            patcher = mock.patch.object(dc, name, value)
+            patcher.start()
+            self.addCleanup(patcher.stop)
+        self.assertEqual(len(dc.drop_pair_failing_patterns(_AGENT, [_pattern()])), 1)
+        dc.generate_patch_proposal(_pattern(), agents_dir=self._agents_dir)
+        self.assertEqual([read[1:] for read in self._reads], floor_reads)
+        self.assertEqual(floor_reads, [(_WINDOWS, _WINDOWS.end)])
 
     def test_a_multiline_evidence_value_never_opens_a_prompt_line(self) -> None:
         self._evidence = _get_evidence(

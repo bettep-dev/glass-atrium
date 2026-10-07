@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # apply-spine.sh — deterministic safe-apply spine for the Glass Atrium update
 # system. Pure sourced library: function defs only, no top-level side effects
-# (same convention as atrium-config.sh / daemon-lock.sh).
+# (same convention as atrium-config.sh).
 #
 # Strict mode is the CALLER's responsibility — a sourced lib must not mutate the
 # caller's shell options; every fn is safe under `set -Eeuo pipefail` (the bats

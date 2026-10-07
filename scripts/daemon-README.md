@@ -53,7 +53,7 @@ tail -50 /tmp/wiki-daemon-loop.log
 ## Loading the launchd Plists
 
 > [!IMPORTANT]
-> Install loads the jobs itself, after its health gate. Opt out with `GA_NO_LOAD_LAUNCHD=1` (or `--no-load-launchd`), then review the plists and load them with the commands below.
+> Install from the interactive menu loads the jobs itself, after its health gate; the non-interactive bootstrap path loads them only with `--load-launchd`. Opt out of the menu load with `GA_NO_LOAD_LAUNCHD=1` (or `--no-load-launchd`), then review the plists and load them with the commands below.
 
 > [!NOTE]
 > The plist FILES are generated from the rendered `config.toml` by `glass-atrium render-plists` (or `scripts/render-launchd-plists.sh` directly) into `rendered/launchd/` — review them, copy into `~/Library/LaunchAgents`, then load below. The renderer never touches `launchctl`.
