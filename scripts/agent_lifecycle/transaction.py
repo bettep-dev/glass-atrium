@@ -6,8 +6,8 @@ Responsibilities:
     order. If a reverse-op ITSELF fails, STOP rolling back further, write a
     recovery marker file, emit a precise written-vs-cleaned manifest, and raise
     — never silently claim "orphan 0". This mirrors the Apply-Side Rollback
-    Contract + daemon-lock discipline: a half-rolled-back state is preserved for
-    user inspection, automatic resolution forbidden.
+    Contract: a half-rolled-back state is preserved for user inspection,
+    automatic resolution forbidden.
 
 The transaction itself performs no I/O on the stores — each step's forward and
 reverse work is supplied by the caller (the ADD/DELETE handlers in later waves),
