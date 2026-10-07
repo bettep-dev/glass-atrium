@@ -6677,8 +6677,7 @@ def alert_auth_outage(report: CycleReport, *, skip_loop_emit: bool) -> None:
         )
     except Exception as exc:  # noqa: BLE001 — fail-loud-and-skip; the exit code still reports it
         sys.stderr.write(
-            "[daemon-cycle] WARN: auth-outage loop event lost: "
-            f"{type(exc).__name__}: {str(exc)[:160]}\n"
+            f"[daemon-cycle] WARN: auth-outage loop event lost: {_describe_fault(exc)}\n"
         )
 
 
@@ -12965,8 +12964,7 @@ def run_cycle(
             except Exception as exc:  # noqa: BLE001 — fail-loud-and-skip; next cycle retries
                 sys.stderr.write(
                     "[daemon-cycle] WARN: update_generation_closed_proposals raised — "
-                    f"pending auto rows left open: {type(exc).__name__}: "
-                    f"{str(exc)[:160]}\n"
+                    f"pending auto rows left open: {_describe_fault(exc)}\n"
                 )
     else:
         _run_generation_loop(
@@ -12988,7 +12986,7 @@ def run_cycle(
         except Exception as exc:  # noqa: BLE001 — fail-loud-and-skip; walk reads stored rows
             sys.stderr.write(
                 "[daemon-cycle] WARN: create_cycle_verdicts raised — verdict not stored: "
-                f"{type(exc).__name__}: {str(exc)[:160]}\n"
+                f"{_describe_fault(exc)}\n"
             )
         try:
             alert_all_reject_streak(report)
