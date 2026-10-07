@@ -53,7 +53,7 @@ interface WikiHelpers {
     cyclesState: FetchState,
   ) => LaneModel;
   buildThroughputModel: (cyclesState: FetchState) => { isMixUniform: boolean; rows: unknown[] };
-  buildTileBandModel: (summaryState: FetchState, indexState: FetchState, backlogState: FetchState) => Tile[];
+  buildTileBandModel: (summaryState: FetchState, indexState: FetchState, backlogState: FetchState) => Array<Tile & { info?: string; hint?: string }>;
   readTileBandFailuresW: (summaryState: FetchState, indexState: FetchState) => Array<{ feeder: string; label: string }>;
   describeNotesByTypeW: (state: FetchState) => string;
   describeRunHistoryW: (cyclesState: FetchState, model: unknown, summaryState: FetchState) => string;
@@ -365,13 +365,24 @@ test("the run-history summary carries the cycle p95 exactly when the server repo
   helpers.window.UI.formatDuration = originalFormat;
 });
 
+test("the run-history summary fits the 32-character header-meta cap at its widest", () => {
+  const originalFormat = helpers.window.UI.formatDuration;
+  helpers.window.UI.formatDuration = (v: number, unit: string) => `${v}${unit}`;
+  const cycles = unchangedCycles(30);
+  const summary = helpers.describeRunHistoryW(cycles, helpers.buildThroughputModel(cycles), ready({ cycle_p95_ms: 125000 }));
+  helpers.window.UI.formatDuration = originalFormat;
+
+  assert.match(summary, /^30 runs in 30 d\b.*p95 125000ms$/);
+  assert.ok(summary.length <= 32, `"${summary}" is ${summary.length} chars`);
+});
+
 // Broken links ride the library tile's caption, not a line of their own.
 test("the library tile's caption carries the broken-link count, and says so when the backlog omits it", () => {
   const index = ready({ notes_total: 40 });
   const rows = [
     { name: "none found", deadlinks: [], expected: /0 broken links/ },
     { name: "one found", deadlinks: [{ from: "a", to: "b" }], expected: /1 broken link\b/ },
-    { name: "not reported", deadlinks: undefined, expected: /broken links not reported/ },
+    { name: "not reported", deadlinks: undefined, expected: /links unreported/ },
   ];
   for (const row of rows) {
     const backlog = ready({ backlog: { run_date: isoDaysAgo(0), true_backlog: 0, deadlink_dryrun: row.deadlinks } });
@@ -467,6 +478,7 @@ interface GlanceTile {
   key: string;
   value: string;
   sub?: string | null;
+  info?: string;
   tone: string;
 }
 const glanceHelpers = helpers as unknown as {
@@ -539,8 +551,8 @@ describe("the compiled tile names why it reads zero, adds the window total and t
   const cycles = ready({ cycles: [4, 0, 8].map((compiled_count, i) => ({ run_date: isoDaysAgo(i), compiled_count })) });
   const backlog = (waiting: number) => ready({ backlog: { run_date: isoDaysAgo(0), true_backlog: waiting } });
   const rows = [
-    { name: "idle — nothing waiting stays quiet", compiled: 0, waiting: 0, sub: /nothing to compile.* · 12 in 3 d$/i, tone: "neutral" },
-    { name: "stalled — originals waiting with none compiled tints", compiled: 0, waiting: 5, sub: /5 originals waiting.* · 12 in 3 d$/, tone: "warn" },
+    { name: "idle — nothing waiting stays quiet", compiled: 0, waiting: 0, sub: /^Nothing waiting · 12 in 3 d$/, tone: "neutral" },
+    { name: "stalled — originals waiting with none compiled tints", compiled: 0, waiting: 5, sub: /^Stalled · 5 waiting · 12 in 3 d$/, tone: "warn" },
     { name: "producing — a compiled cycle shows the window total only", compiled: 4, waiting: 5, sub: /^12 in 3 d$/, tone: "neutral" },
   ];
   for (const row of rows) {
@@ -549,6 +561,69 @@ describe("the compiled tile names why it reads zero, adds the window total and t
       assert.match(tile.sub ?? "", row.sub);
       assert.equal(tile.tone, row.tone);
     });
+  }
+});
+
+test("a stalled compiled tile keeps the full cause behind its info trigger", () => {
+  const cycles = ready({ cycles: [{ run_date: isoDaysAgo(0), compiled_count: 0 }] });
+  const tile = glanceHelpers.buildCompiledTileW(
+    healthySummary({ latest_compiled_count: 0 }),
+    ready({ backlog: { run_date: isoDaysAgo(0), true_backlog: 13 } }),
+    cycles,
+  );
+  assert.match(tile.info ?? "", /13 saved originals are waiting and the last cycle compiled none/);
+});
+
+// Widest realistic values: 4-digit counts, a 90-day window, the stalled and stale states.
+describe("every tile sub fits the 40-character KPI-hint cap at its widest", () => {
+  const ninetyDays = ready({
+    cycles: Array.from({ length: 90 }, (_, i) => ({ run_date: isoDaysAgo(i), compiled_count: i === 0 ? 9999 : 0 })),
+  });
+  const deadlinks = Array.from({ length: 9999 }, (_, i) => ({ from: `a${i}`, to: "b" }));
+  const backlog = (extra: Record<string, unknown>) =>
+    ready({ backlog: { run_date: isoDaysAgo(0), true_backlog: 9999, deadlink_dryrun: deadlinks, ...extra } });
+  const index = ready({ notes_total: 9999, has_dirty_flag: true, dirty: false });
+  const rows = [
+    { name: "compiled, stalled over 90 days", tile: () => glanceHelpers.buildCompiledTileW(healthySummary({ latest_compiled_count: 0 }), backlog({}), ninetyDays), sub: /^Stalled · 9,999 waiting · 9,999 in 90 d$/ },
+    { name: "compiled, idle over 90 days", tile: () => glanceHelpers.buildCompiledTileW(healthySummary({ latest_compiled_count: 0 }), backlog({ true_backlog: 0 }), ninetyDays), sub: /^Nothing waiting · 9,999 in 90 d$/ },
+    { name: "library, stale snapshot", tile: () => libraryTile(index, backlog({ run_date: isoDaysAgo(9) })), sub: /^9,999 waiting · 9,999 broken links$/ },
+    { name: "library, undated snapshot", tile: () => libraryTile(index, backlog({ run_date: null })), sub: /^9,999 waiting · 9,999 broken links$/ },
+    { name: "library, originals unreported", tile: () => libraryTile(index, backlog({ true_backlog: undefined })), sub: /^Waiting unreported · 9,999 broken links$/ },
+    { name: "library, both unreported", tile: () => libraryTile(index, backlog({ true_backlog: undefined, deadlink_dryrun: undefined })), sub: /^Waiting unreported · links unreported$/ },
+  ];
+  for (const row of rows) {
+    test(row.name, () => {
+      const sub = row.tile()?.sub ?? "";
+      assert.match(sub, row.sub);
+      assert.ok(sub.length <= 40, `"${sub}" is ${sub.length} chars`);
+    });
+  }
+});
+
+function libraryTile(index: FetchState, backlog: FetchState): (GlanceTile & { hint?: string }) | undefined {
+  return helpers.buildTileBandModel(ready({}), index, backlog).find((tile) => tile.key === "library");
+}
+
+test("a stale or undated library snapshot carries a visible warn cue, and its date rides the info trigger and tooltip", () => {
+  const index = ready({ notes_total: 40 });
+  const staleDate = isoDaysAgo(9);
+  const rows = [
+    { name: "stale", run_date: staleDate, tone: "warn", cue: /^Stale snapshot$/, dated: new RegExp(`as of ${staleDate}, cycle overdue`) },
+    { name: "undated", run_date: null, tone: "warn", cue: /^Undated snapshot$/, dated: /run date not reported/i },
+    { name: "current", run_date: isoDaysAgo(0), tone: "neutral", cue: undefined, dated: undefined },
+  ];
+  for (const row of rows) {
+    const tile = libraryTile(index, ready({ backlog: { run_date: row.run_date, true_backlog: 13, deadlink_dryrun: [] } })) as
+      | (GlanceTile & { hint?: string; toneLabel?: string })
+      | undefined;
+    assert.equal(tile?.tone, row.tone, `${row.name}: tone`);
+    if (!row.cue || !row.dated) {
+      assert.equal(tile?.toneLabel, undefined, `${row.name}: no cue`);
+      continue;
+    }
+    assert.match(tile?.toneLabel ?? "", row.cue, `${row.name}: cue`);
+    assert.match(tile?.info ?? "", row.dated, `${row.name}: info`);
+    assert.match(tile?.hint ?? "", row.dated, `${row.name}: tooltip`);
   }
 });
 
@@ -590,9 +665,26 @@ test("note types read as human labels with their share of all notes", () => {
 test("the per-run fold's summary states the unchanged stretch or how often it changed, so a one-row table needs no click", () => {
   const h = helpers as unknown as { describeRunTableW: (state: FetchState, days: number) => string };
   const same = Array.from({ length: 27 }, () => ["ok", 0, 3] as [string, number, number]);
-  assert.equal(h.describeRunTableW(ready({ reports: runs(same) }), 30), `27 healthy runs in a row since ${isoDaysAgo(26)}`);
-  assert.equal(h.describeRunTableW(ready({ reports: runs([["ok", 0, 3], ["error", 0, 3], ["ok", 0, 3]]) }), 30), "3 runs · status or backlog changed 2 times");
-  assert.equal(h.describeRunTableW(ready({ reports: runs([["ok", 0, 3], ["error", 0, 3], ["error", 0, 3]]) }), 30), "3 runs · status or backlog changed 1 time");
+  assert.equal(h.describeRunTableW(ready({ reports: runs(same) }), 30), "27 runs · all healthy");
+  assert.equal(h.describeRunTableW(ready({ reports: runs([["ok", 0, 3], ["error", 0, 3], ["ok", 0, 3]]) }), 30), "3 runs · 2 changes");
+  assert.equal(h.describeRunTableW(ready({ reports: runs([["ok", 0, 3], ["error", 0, 3], ["error", 0, 3]]) }), 30), "3 runs · 1 change");
+});
+
+// Widest realistic values: a 90-day window, a change every run, the longest status label and run date.
+test("the per-run fold's summary fits the 32-character header-meta cap at its widest", () => {
+  const h = helpers as unknown as { describeRunTableW: (state: FetchState, days: number) => string };
+  const alternating = Array.from({ length: 90 }, (_, i) => [i % 2 === 0 ? "ok" : "error", 0, 3] as [string, number, number]);
+  const quotaStreak = Array.from({ length: 90 }, () => ["quota_exceeded", 0, 3] as [string, number, number]);
+  const rows = [
+    { name: "90 runs, a change every run", state: ready({ reports: runs(alternating) }) },
+    { name: "90 runs at the usage limit", state: ready({ reports: runs(quotaStreak) }) },
+    { name: "one run at the usage limit", state: ready({ reports: runs(quotaStreak.slice(0, 1)) }) },
+    { name: "no runs in the window", state: ready({ reports: [] }) },
+  ];
+  for (const row of rows) {
+    const meta = h.describeRunTableW(row.state, 90);
+    assert.ok(meta.length <= 32, `${row.name}: "${meta}" is ${meta.length} chars`);
+  }
 });
 
 describe("the run trend fills every calendar day between its first and last run", () => {

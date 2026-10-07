@@ -246,3 +246,59 @@ test("a part's Open box action carries the bordered button style, not the border
   assert.match(String(action.props.className), /\bbtn\b/);
   assert.doesNotMatch(String(action.props.className), /\bghost\b/, "a ghost button draws no border");
 });
+
+// A part's verdict word sits at the meta step, where warn/ok/info text falls below 4.5:1 — the tone rides a glyph beside it.
+test("a part's health verdict carries its tone on a tone-shaped glyph, its word staying neutral", async (t) => {
+  const mod = await loadArch();
+  const now = Date.now();
+  const freshness = { at: new Date(now).toISOString(), regions: [], now };
+  const toneIcon = realUi.TONE_ICON as Record<string, string>;
+  const rows = [
+    { name: "crit", tone: "crit", statusLabel: "Overdue", textClass: "text-dim" },
+    { name: "warn", tone: "warn", statusLabel: "Late", textClass: "text-dim" },
+    { name: "info", tone: "info", statusLabel: "Idle", textClass: "text-dim" },
+    { name: "ok", tone: "ok", statusLabel: "Healthy", textClass: "text-dim" },
+    { name: "no verdict yet", tone: null, statusLabel: "Not loaded", textClass: "text-faint" },
+  ];
+  for (const row of rows) {
+    await t.test(row.name, () => {
+      const part = { id: "cron", name: "cron", tone: row.tone, statusLabel: row.statusLabel, nodeIds: [], lastRunAt: null, nextRunAt: null, cadenceMinutes: null, cause: null };
+      const tree = renderScreen(mod.React.createElement(mod.PartHealthRowAR, { row: part, freshness, nodeIndex: new Map(), onSelectNode: () => {} }));
+      const [status] = findNodes(tree, (n) => n.type === "span" && collectText(n).includes(row.statusLabel));
+      const glyphs = findNodes(status, (n) => n.props.atom === "Icon");
+      const classes = String(status.props.className).split(/\s+/);
+
+      assert.ok(classes.includes(row.textClass), `the ${row.name} verdict word reads ${row.textClass}`);
+      assert.deepEqual(classes.filter((c) => /^text-(ok|warn|crit|info)$/.test(c)), [], `the ${row.name} verdict word carries no tone`);
+      if (!row.tone) return assert.equal(glyphs.length, 0, "a part with no verdict shows no tone glyph");
+      assert.equal(glyphs.length, 1, `the ${row.name} verdict leads with one glyph`);
+      assert.equal(glyphs[0].props.name, toneIcon[row.tone], `the ${row.name} glyph takes its tone's shape`);
+      assert.match(String(glyphs[0].props.className), new RegExp(`\\btext-${row.tone}\\b`), `the ${row.name} glyph carries the tone`);
+    });
+  }
+});
+
+// The row keeps its alert role and its data hooks; the shared AlertCard owns the look, tone riding its glyph well only.
+test("an alarm row is a bare alert wrapper around one page-level AlertCard that leaves the announcing to it", async () => {
+  const mod = await loadArch();
+  const row = { key: "live-overlay", tone: "crit", title: "Couldn't load the live overlay", note: "The live endpoint did not answer.", detail: "ECONNREFUSED", badges: ["daemon"], retry: true };
+  const onRetry = () => {};
+
+  const tree = renderScreen(mod.React.createElement(mod.AlarmRowAR, { row, onRetry }));
+  const [wrapper] = findNodes(tree, (n) => n.props.role === "alert");
+  const cards = findNodes(tree, (n) => n.props.atom === "AlertCard");
+
+  assert.ok(wrapper, "the row declares the alert role");
+  assert.equal(wrapper.props["data-alarm"], "live-overlay");
+  assert.equal(wrapper.props["data-alarm-tone"], "crit");
+  assert.equal(String(wrapper.props.className), "arch-alarm-row", "the wrapper draws no tint, border or padding of its own");
+  assert.equal(wrapper.props.style, undefined, "the wrapper paints no tone fill");
+  assert.equal(cards.length, 1, "one shared alert card renders the row");
+  const card = cards[0].props;
+  assert.deepEqual(
+    { tone: card.tone, hasLiveHost: card.hasLiveHost, title: card.title, body: card.body, details: card.details, subjects: card.subjects },
+    { tone: "crit", hasLiveHost: true, title: row.title, body: row.note, details: row.detail, subjects: row.badges },
+  );
+  assert.notEqual(card.surface, "inset", "the lane sits on the page, not inside a card");
+  assert.equal(findNodes(renderScreen(card.actions), (n) => n.type === "button" && n.props.onClick === onRetry).length, 1, "the row's Retry rides the card's actions");
+});

@@ -130,8 +130,8 @@ test("AC-T-tone the glyph class table is read by icon elements only", () => {
   );
 });
 
-// ui.jsx Badge paints its label in text-{tone} when a status badge drops its glyph.
-test("AC-T-tone no status badge drops its glyph, which would put tone on the label", () => {
+// ui.jsx Badge keeps the label neutral and carries the tone on its glyph — a status badge without one carries no tone at all.
+test("no status badge drops its glyph, which would leave its status without a tone cue", () => {
   const offenders = (SCREEN_SRC.match(/<Badge\b[^>]*>/g) || []).filter(
     (tag) => tag.includes('role="status"') && tag.includes("glyph={false}"),
   );
@@ -149,7 +149,7 @@ test("alert role is declared by the alarm row only — region and page failures 
   assert.deepEqual(declarers.sort(), ["AlarmRowAR"]);
 });
 
-// the adoption floor is 12px — fs-micro (11px) is the one type step below it, by class or by variable
+// fs-micro is the retired type step, now an alias of fs-meta — the screen names the meta step directly, by class or by variable
 test("no text on the screen is set at the micro type step", () => {
   const sites = SCREEN_SRC.split("\n")
     .map((line, i) => [i + 1, line] as const)

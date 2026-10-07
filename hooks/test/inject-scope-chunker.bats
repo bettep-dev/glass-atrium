@@ -189,7 +189,7 @@ print("AGENTS=%d" % len(agents))
 print("BAD=%s" % (";".join(bad) or "none"))
 PY
   assert_ok
-  assert_has "AGENTS=23"
+  assert_has "AGENTS=24"
   assert_has "BAD=none"
 }
 

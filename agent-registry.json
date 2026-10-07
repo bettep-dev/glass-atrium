@@ -980,6 +980,61 @@
         ]
       },
       "origin": "user"
+    },
+    "glass-atrium-dev-aws": {
+      "domains": [
+        "aws",
+        "terraform-aws",
+        "infrastructure-as-code",
+        "iam",
+        "vpc-networking",
+        "ec2",
+        "rds",
+        "ssm-parameter-store",
+        "ssm-session-manager",
+        "s3",
+        "cloudfront",
+        "route53",
+        "acm",
+        "ecr",
+        "github-actions-aws-deploy",
+        "oidc-federation",
+        "aws-cost-optimization"
+      ],
+      "tools": [
+        "Read",
+        "Glob",
+        "Grep",
+        "Edit",
+        "Write",
+        "Bash"
+      ],
+      "phase": "implementation",
+      "dual_phase": true,
+      "origin": "shipped",
+      "rules": {
+        "scope": "scoped/scope-dev.md",
+        "shared": [
+          "scoped/shared-comment-logging.md",
+          "scoped/shared-performance.md",
+          "scoped/shared-search-first.md",
+          "scoped/shared-testing.md",
+          "scoped/shared-type-safety.md",
+          "scoped/shared-code-structure.md",
+          "scoped/shared-investigation-discipline.md",
+          "scoped/shared-naming.md"
+        ],
+        "conditional": [
+          {
+            "file": "rules/glass-atrium/shared-self-improve-hygiene.md",
+            "when": "the change scope includes autoagent/ paths, the self-improvement launchd configuration, the agent-lifecycle Python package (scripts/agent_lifecycle/), the compliance-matrix validator hook (hooks/validate-compliance-matrix.sh) or the launchd library (lib/ga-launchd.sh)"
+          },
+          {
+            "file": "scoped/shared-hook-capability-contract.md",
+            "when": "the task writes or modifies a hook under ~/.glass-atrium/hooks/"
+          }
+        ]
+      }
     }
   }
 }

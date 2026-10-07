@@ -1,6 +1,7 @@
 // Chart readout atom: a named image, a hover/focus readout per day, day ticks, and a width that follows its panel.
 import test, { describe } from "node:test";
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, resolve } from "node:path";
 import { collectText, findNodes, loadScreenModule, renderScreen, type RenderedNode } from "./lib/render-screen.js";
@@ -200,6 +201,14 @@ describe("edge ticks anchor by visible order, so neither end label spills past t
 });
 
 describe("tick labels thin out before they collide", () => {
+  // a JetBrains Mono glyph advances 0.6em, so the estimate must cover 0.6 × the meta step ticks render at
+  test("the per-character label estimate is never narrower than a mono glyph at the meta step", () => {
+    const tokens = readFileSync(resolve(__dirname, "../public/styles/tokens.css"), "utf8");
+    const metaPx = Number(tokens.match(/--fs-meta\s*:\s*(\d+)px/)?.[1]);
+    assert.ok(metaPx > 0, "tokens.css declares --fs-meta in px");
+    assert.ok(CHART_TICK_CHAR_PX >= metaPx * 0.6, `${CHART_TICK_CHAR_PX}px per char under a ${metaPx * 0.6}px glyph`);
+  });
+
   const dayLabels = (count: number): string[] => Array.from({ length: count }, (_, i) => `09-${String(i + 1).padStart(2, "0")}`);
   const getBoxes = (labels: string[], slots: TickSlot[], widthPx: number) => slots.map((slot) => {
     const width = labels[slot.index].length * CHART_TICK_CHAR_PX;

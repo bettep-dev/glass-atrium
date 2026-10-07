@@ -396,6 +396,7 @@ function crosstabConfidenceKeyO(confidence) {
 // 화면 전용 inline CSS — render 마다 string 재할당 회피 위해 모듈 상수.
 const SCREEN_OUTCOMES_CSS = `
 @keyframes skelPulseO { 0%,100%{opacity:.7} 50%{opacity:.35} }
+.skel-pulse-o { animation: skelPulseO 1.4s ease-in-out infinite; }
 .outcome-md { font-size: var(--fs-body); line-height: 1.65; color: rgb(var(--ink)); font-family: 'Pretendard Variable', Pretendard, ui-sans-serif, system-ui, sans-serif; }
 /* md 헤딩 3레벨 → title 토큰 공통 (동일 content-level) · 시각 위계는 font-weight 600 + margin 으로 보존 */
 .outcome-md h1, .outcome-md h2, .outcome-md h3, .outcome-md h4 { font-weight: 600; margin: 14px 0 6px; line-height: 1.3; }
@@ -407,12 +408,16 @@ const SCREEN_OUTCOMES_CSS = `
 .outcome-md pre { font-family: 'JetBrains Mono', monospace; font-size: var(--fs-meta); background: rgb(var(--sunken)); padding: 10px 12px; border-radius: 6px; border: 1px solid rgb(var(--line)); overflow-x: auto; }
 .outcome-md pre code { background: transparent; padding: 0; }
 .outcome-md blockquote { border-left: 3px solid rgb(var(--accent)); padding: 2px 12px; margin: 8px 0; color: rgb(var(--dim)); background: rgb(var(--sunken) / 0.4); }
-.outcome-md a { color: rgb(var(--accent)); text-decoration: underline; }
+.outcome-md a { color: rgb(var(--ink)); text-decoration: underline; text-underline-offset: 2px; }
 .outcome-md table { border-collapse: collapse; margin: 8px 0; font-size: var(--fs-meta); }
 .outcome-md th, .outcome-md td { border: 1px solid rgb(var(--line)); padding: 4px 8px; text-align: left; }
 .outcome-md th { background: rgb(var(--sunken)); font-weight: 500; }
-.outcome-row { transition: background 100ms; }
+.outcome-row { transition: background 120ms; }
 .outcome-row:hover { background: rgb(var(--accent) / 0.06); }
+@media (prefers-reduced-motion: reduce) {
+  .skel-pulse-o { animation: none; }
+  .outcome-row { transition: none; }
+}
 `;
 
 function ScreenOutcomes({ onNav }) {
@@ -758,13 +763,13 @@ function ScreenOutcomes({ onNav }) {
           <AttributionHealthCard state={attributionState} period={analyticsPeriod} {...regionRetry}/>
           <ChannelLivenessCard state={channelLivenessState} {...regionRetry}/>
         </window.UI.SplitRow>
-        <window.UI.Disclosure kind="detail" level={3} title="Daily breakdown and budget-killed subagents">
+        <window.UI.Disclosure kind="detail" level={3} title="Daily breakdown" sub="Budget-killed subagents">
           <AttributionBreakdownO state={attributionState}/>
         </window.UI.Disclosure>
       </window.UI.Disclosure>
 
       <window.UI.Disclosure kind="status" title="Self-report quality" sub={selfReportSummaryO(analyticsState)} className="mt-4">
-        <window.UI.SplitRow ratio="1:1">
+        <window.UI.SplitRow ratio="1:1" layout="content">
           <GraderBreakdownCard state={analyticsState} {...regionRetry}/>
           <CrosstabCard state={analyticsState} {...regionRetry}/>
         </window.UI.SplitRow>
@@ -810,18 +815,12 @@ function AlarmLaneO({ channelLivenessState, searchState }) {
 
 // 고volume 채널의 침묵은 다른 모든 카드에서 '품질 변화' 로 위장한다 → 레인 행 자격.
 function SilentChannelRowO({ channels }) {
-  const { Icon } = window.UI;
+  const { AlertCard } = window.UI;
   return (
-    <div
-      role="alert"
-      className="rounded-md border p-3 flex items-start gap-3 mx-3"
-      style={{ background: 'rgb(var(--crit) / 0.08)', borderColor: 'rgb(var(--crit) / 0.4)' }}>
-      <Icon name="x" size={16} className="text-crit mt-0.5"/>
-      <div className="flex-1 min-w-0">
-        <div className="fs-body font-medium text-ink">{channels.length === 1 ? 'Silent channel' : 'Silent channels'}: {channels.join(', ')}</div>
-        <div className="fs-meta text-dim mt-1">Was writing daily and has recorded nothing past the silence threshold.</div>
-      </div>
-    </div>
+    <AlertCard
+      tone="crit"
+      title={`${channels.length === 1 ? 'Silent channel' : 'Silent channels'}: ${channels.join(', ')}`}
+      body="Was writing daily and has recorded nothing past the silence threshold."/>
   );
 }
 
@@ -867,7 +866,7 @@ function reportingHealthSummaryO(channelLivenessState) {
 function selfReportSummaryO(analyticsState) {
   if (analyticsState.status !== 'ready') return getUnloadedSummaryO(analyticsState.status);
   const overall = analyticsState.data?.overall;
-  return `${formatIntO(window.UI.getWriterTotal(overall))} writer-emitted of ${formatIntO(Number(overall?.total) || 0)} records`;
+  return `${formatIntO(window.UI.getWriterTotal(overall))} of ${formatIntO(Number(overall?.total) || 0)} self-reported`;
 }
 
 function loopEventsSummaryO(loopEventsState) {
@@ -996,7 +995,7 @@ function formatDayRangeO({ period_start: start, period_end: end }) {
 }
 
 function StatusBandO({ analyticsState, attentionState, windowDays, freshness, onRetry, shared }) {
-  const { getRegionView, getFreshnessVerdict } = window.UI;
+  const { getRegionView, getFreshnessVerdict, CardInfo } = window.UI;
   const view = getRegionView(analyticsState);
   if (view === 'loading') {
     return (
@@ -1039,17 +1038,25 @@ function StatusBandO({ analyticsState, attentionState, windowDays, freshness, on
   const isAttentionFailed = getRegionView(attentionState) === 'error';
   const heroTile = tiles.find((tile) => tile.key === 'attention');
   const volumeTiles = getVolumeTilesO(tiles);
+  const labelId = `${REGION_CARD_IDS.statusBand}-label`;
+  // a jumpable hero is a button → the rules ⓘ sits in the volume column, never inside a tile control
+  const info = (
+    <CardInfo label="How the status band is counted" describedBy={labelId}>
+      <BandRulesO tiles={tiles}/>
+    </CardInfo>
+  );
 
   return (
     <div id={REGION_CARD_IDS.statusBand} className="mb-4 flex-shrink-0">
-      <div className="grid grid-cols-4 gap-3" role="group" aria-label="Status band">
+      <span id={labelId} className="sr-only">Status band</span>
+      <div className="grid grid-cols-4 gap-3" role="group" aria-labelledby={labelId}>
         <BandTileO
           tile={heroTile}
           windowLabel={windowLabel}
           unloadedText={getUnloadedSummaryO(attentionState.status)}
           reasons={buildNeedsYouReasonsO(analyticsState.data, attentionState.status === 'ready' ? attentionState.data : null)}
           className="col-span-3"/>
-        <VolumeTilesO tiles={volumeTiles} windowLabel={windowLabel}/>
+        <VolumeTilesO tiles={volumeTiles} windowLabel={windowLabel} info={info}/>
       </div>
       {isAttentionFailed && (
         <RegionErrorO source="the needs-you count" state={attentionState} onRetry={onRetry} shared={shared} focusTargetId={REGION_CARD_IDS.statusBand}/>
@@ -1091,8 +1098,7 @@ function BandTileO({ tile, windowLabel, unloadedText = '—', reasons = null, cl
     <Tag
       {...(canJump ? { type: 'button', onClick: () => focusLedgerSectionO(tile.jumpTo) } : { role: 'group' })}
       className={`${canJump ? 'kpi' : 'kpi cursor-default'} ${className}`.trim()}
-      aria-label={ariaLabel}
-      title={tile.hint}>
+      aria-label={ariaLabel}>
       {reasons ? <TileSplit lead={lead} detail={<NeedsYouReasonsO reasons={reasons}/>}/> : lead}
     </Tag>
   );
@@ -1129,7 +1135,7 @@ function PageVerdictO({ analyticsState, channelLivenessState, attentionState, wi
   const silent = channelLivenessState.status === 'ready' ? (channelLivenessState.data?.alerting || []) : [];
 
   if (silent.length > 0) {
-    return <PageVerdict tone="crit" freshness={freshness} className="mb-4">{`Recording stopped on ${silent.join(', ')} — every count on this page is understated until it resumes.`}</PageVerdict>;
+    return <PageVerdict tone="crit" freshness={freshness} className="mb-4">{`Recording stopped on ${silent.join(', ')} — every count here is understated.`}</PageVerdict>;
   }
   if (view !== 'ready') {
     const reason = view === 'loading' ? 'the window totals are still loading' : "the window totals didn't load";
@@ -1141,8 +1147,9 @@ function PageVerdictO({ analyticsState, channelLivenessState, attentionState, wi
   if (verdict.tone !== 'ok' || channelLivenessState.status === 'ready') {
     return <PageVerdict tone={verdict.tone} chips={verdict.chips} freshness={freshness} className="mb-4">{verdict.text}</PageVerdict>;
   }
-  const gap = channelLivenessState.status === 'loading' ? 'still checking the recording channels' : "couldn't check the recording channels";
-  return <PageVerdict tone="neutral" freshness={freshness} className="mb-4">{`${verdict.text.slice(0, -1)} — ${gap}.`}</PageVerdict>;
+  // the unchecked state rides the tone word → the shares keep the one-line cap
+  const label = channelLivenessState.status === 'loading' ? 'Checking channels' : "Couldn't check channels";
+  return <PageVerdict tone="neutral" label={label} freshness={freshness} className="mb-4">{verdict.text}</PageVerdict>;
 }
 
 const TONE_RANK_O = { neutral: 0, ok: 1, warn: 2, crit: 3 };
@@ -1156,7 +1163,7 @@ function getHeroFloorVerdictO(verdict, data, attentionState) {
   return {
     tone: hero.tone,
     chips: [LEDGER_JUMP_CHIP_O],
-    text: `${verdict.text.slice(0, -1)}, but ${formatIntO(count)} records (${formatShareO(count, hero.population)}) still need you.`,
+    text: `${formatShareO(count, hero.population)} need you · ${verdict.text}`,
   };
 }
 
@@ -1166,12 +1173,12 @@ function getRateVerdictO(rate, windowLabel) {
     return { tone: 'neutral', chips: [], text: `No task results written by agents in the ${windowLabel} to judge.` };
   }
   if (rate.status === 'low-n') {
-    return { tone: 'neutral', chips: [], text: `Only ${formatInt(rate.writerTotal)} agent-written records in the ${windowLabel} — too few to judge (needs ${LOW_N_MIN}).` };
+    return { tone: 'neutral', chips: [], text: `Only ${formatInt(rate.writerTotal)} records, ${windowLabel} — too few to judge (needs ${LOW_N_MIN}).` };
   }
   return {
     tone: rate.tone,
     chips: rate.tone === 'ok' ? [] : [LEDGER_JUMP_CHIP_O],
-    text: `${formatShareO(rate.breakage, rate.writerTotal)} of ${formatInt(rate.writerTotal)} agent-written records in the ${windowLabel} failed or were blocked, and ${formatShareO(rate.openCaveats, rate.writerTotal)} still carry an open caveat.`,
+    text: `${formatShareO(rate.breakage, rate.writerTotal)} failed or blocked · ${formatShareO(rate.openCaveats, rate.writerTotal)} caveat open · ${formatInt(rate.writerTotal)} records, ${windowLabel}.`,
   };
 }
 
@@ -1204,14 +1211,15 @@ function getVolumeTilesO(tiles) {
 }
 
 // volume facts demoted beside the hero; the Self-reported glyph stays the missing-report grade channel
-function VolumeTilesO({ tiles, windowLabel }) {
+function VolumeTilesO({ tiles, windowLabel, info = null }) {
   const { formatPctWithDenominator } = window.UI;
   return (
     <div className="kpi cursor-default fs-meta flex flex-col justify-between gap-2" role="group" aria-label={`Volume · ${windowLabel}`}>
+      {info && <div className="flex justify-end">{info}</div>}
       {tiles.map((tile) => {
         const glyph = getBandTileGlyphO(tile.tone);
         return (
-          <div key={tile.key} className="flex flex-wrap items-center gap-x-1 text-dim" title={tile.hint}>
+          <div key={tile.key} className="flex flex-wrap items-center gap-x-1 text-dim">
             {glyph && <span className={`text-${tile.tone}`} role="img" aria-label={tile.tone === 'crit' ? 'critical' : 'warning'}><GlyphO name={glyph} size={12}/></span>}
             {tile.label}
             <span className="ml-auto font-mono text-ink">{formatIntO(tile.count)}</span>
@@ -1221,6 +1229,19 @@ function VolumeTilesO({ tiles, windowLabel }) {
         );
       })}
     </div>
+  );
+}
+
+function BandRulesO({ tiles }) {
+  return (
+    <dl className="fs-body flex flex-col gap-3">
+      {tiles.map((tile) => (
+        <div key={tile.key}>
+          <dt className="text-ink">{tile.label}</dt>
+          <dd className="text-dim">{tile.hint}</dd>
+        </div>
+      ))}
+    </dl>
   );
 }
 
@@ -1286,7 +1307,8 @@ function AgentFailureTableO({ state, onRetry, shared }) {
 
   return (
     <div id={REGION_CARD_IDS.agentFailures} className="card">
-      <CardHead title="Failed or blocked by agent" sub="Registry agents only · non-zero rows · worst rate first"/>
+      <CardHead title="Failures by agent" sub="Worst failure rate first"
+        info={<p className="fs-body m-0">Failed or blocked records per registry agent. Agents with none are left out; the worst rate comes first.</p>}/>
       <div className="card-body" style={{ padding: 0 }}>
         <AgentFailureBodyO state={state} onRetry={onRetry} shared={shared} stickyStyle={STICKY_TH_STYLE}/>
       </div>
@@ -1325,7 +1347,7 @@ function AgentFailureSkeletonO({ stickyStyle }) {
         {[0, 1, 2].map((i) => (
           <tr key={i}>
             <td colSpan={AGENT_FAILURE_COLUMNS_O.length} className="px-3 py-2 border-b border-line">
-              <div style={{ height: 12, borderRadius: 4, background: 'rgb(var(--sunken))', animation: 'skelPulseO 1.4s ease-in-out infinite' }}/>
+              <div className="skel-pulse-o" style={{ height: 12, borderRadius: 4, background: 'rgb(var(--sunken))' }}/>
             </td>
           </tr>
         ))}
@@ -1408,12 +1430,12 @@ function KpiSkeletonO({ className = '' }) {
   return (
     <div className={`kpi ${className}`.trim()} aria-busy="true">
       <div
+        className="skel-pulse-o"
         style={{
           height: 70,
           borderRadius: 6,
           background: 'rgb(var(--sunken))',
           opacity: 0.7,
-          animation: 'skelPulseO 1.4s ease-in-out infinite',
         }}/>
     </div>
   );
@@ -2077,20 +2099,23 @@ function CrosstabCard({ state, onRetry, shared }) {
 
   const crosstab   = state.status === 'ready' ? state.data?.crosstab : null;
   const polarTotal = crosstab ? crosstab.polarTotal : 0;
-  const polarPct   = crosstab && crosstab.total > 0 ? (polarTotal / crosstab.total * 100) : 0;
   const confidentFailed = getConfidentFailedO(crosstab);
 
+  // the meta keeps the share (width capped at "100.0%"; a count widens with the install) → the count rides the hover title
   return (
     <div id={REGION_CARD_IDS.crosstab} className="card mb-4">
       <CardHead
-        title={confidentFailed
-          ? `Confident but failed: ${formatIntO(confidentFailed.count)} (${formatRateO(confidentFailed.share)})`
-          : 'Confident but failed'}
-        sub="High confidence, own check failed"
+        title="Confident but failed"
+        sub={confidentFailed && (
+          <span title={`${formatIntO(confidentFailed.count)} of ${formatIntO(crosstab.total)} records · ${formatRateO(confidentFailed.share)}`}>
+            {formatRateO(confidentFailed.share)}
+          </span>
+        )}
+        info={<p className="fs-body m-0">Records whose writer reported high confidence while the record's own check failed.</p>}
         right={
           state.status === 'ready' && (
             <Badge role="status" tone="warn" icon>
-              Mismatches: {formatIntO(polarTotal)} ({polarPct.toFixed(1)}%)
+              {formatIntO(polarTotal)} mismatches
             </Badge>
           )
         }
@@ -3328,31 +3353,13 @@ function PayloadUnavailableO({ label }) {
 // blocked banner — shown when 30s+ of repeated backend failures suggest an outage rather than a
 // transient network blip. User can still trigger refresh manually via the page header.
 function BlockedBannerO({ detail }) {
-  const { Icon } = window.UI;
+  const { AlertCard } = window.UI;
   return (
-    <div
-      role="alert"
-      className="rounded-md border p-4 m-3"
-      style={{
-        background: 'rgb(var(--warn) / 0.08)',
-        borderColor: 'rgb(var(--warn) / 0.4)',
-      }}>
-      <div className="flex items-start gap-3">
-        <Icon name="warn" size={18} className="text-warn mt-0.5"/>
-        <div className="flex-1 min-w-0">
-          <div className="fs-title font-medium text-ink">Server not responding (30 s timeout)</div>
-          <div className="fs-meta text-dim mt-1">
-            Not responding. Check the service or try again shortly.
-          </div>
-          {detail && (
-            <details className="fs-meta text-faint mt-2">
-              <summary className="cursor-pointer">Details</summary>
-              <code className="block mt-1 font-mono break-all">{detail}</code>
-            </details>
-          )}
-        </div>
-      </div>
-    </div>
+    <AlertCard
+      tone="warn"
+      title="Server not responding (30 s timeout)"
+      body="Not responding. Check the service or try again shortly."
+      details={detail}/>
   );
 }
 

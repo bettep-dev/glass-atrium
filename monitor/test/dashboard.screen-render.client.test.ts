@@ -209,12 +209,19 @@ describe("the week results panel", () => {
     }
   });
 
-  test("states that its caveat row counts every caveat while the tile counts only open ones", () => {
+  test("states that the tile, unlike its caveat row, counts only open caveats", () => {
     const panelText = collectText(renderResultPanel([{ result: "done", count: 10 }, { result: "done_with_concerns", count: 5 }]));
     const tile = buildOutcomeTile({ status: "ready", data: { status: "ok", tone: "ok", writerTotal: 40, breakage: 1, openCaveats: 2 } });
-    assert.match(String(tile.hint), /still open/i, "the tile's caveat figure says it counts open caveats");
-    assert.match(panelText, /Done with caveats counts every/i, "the panel defines its caveat row beside it");
-    assert.match(panelText, /tile counts only .*still open/i, "the panel names how the tile's figure differs");
+    assert.match(String(tile.hint), /open caveats/i, "the tile's caveat figure says it counts open caveats");
+    assert.match(panelText, /tile: open caveats only/i, "the panel names how the tile's figure differs");
+  });
+
+  test("every prose line on the panel fits the 90-char footnote cap", () => {
+    const FOOTNOTE_CAP = 90;
+    const tree = renderResultPanel([{ result: "done", count: 4_400 }, { result: "done_with_concerns", count: 83 }, { result: "fail", count: 52 }]);
+    const lines = findNodes(tree, (n) => n.type === "p").map((n) => collectText(n).replace(/\s+/g, " ").trim());
+    assert.ok(lines.length > 0, "the panel carries prose lines");
+    for (const line of lines) assert.ok(line.length <= FOOTNOTE_CAP, `"${line}" is ${line.length} chars`);
   });
 });
 
@@ -252,14 +259,70 @@ test("a tile's drill sits at the tile foot, and a tile with no destination has n
 });
 
 test("a ready tile puts its value on the lead side and its detail and hint on the detail side", () => {
-  const tile = { ...READY_TILE, detail: "7 of 40 failed", note: "Counts writer-emitted outcomes only." };
+  const tile = { ...READY_TILE, detail: "7 of 40 failed" };
   const tree = render("StatusTile", { tile, onNav: () => {}, onRetry: () => {} });
   const [lead] = findNodes(tree, (n) => classOf(n) === "tile-split-lead");
   const [detail] = findNodes(tree, (n) => classOf(n) === "tile-split-detail");
   assert.equal(findNodes(lead, (n) => n.props.atom === "KpiValue").length, 1, "the value leads");
   assert.equal(findNodes(detail, (n) => classOf(n).includes("dash-tile-detail")).length, 1);
-  const [hint] = findNodes(detail, (n) => classOf(n).includes("dash-tile-hint"));
-  assert.equal(hint.props.title, tile.note, "the counting note rides on the hint as a tooltip");
+  assert.equal(findNodes(detail, (n) => classOf(n).includes("dash-tile-hint")).length, 1);
+});
+
+test("a hint carrying data clamps only the data, keeping its authored words and figure whole", () => {
+  const hintData = { lead: "Most runs: ", data: "glass-atrium-intel-researcher", tail: ", 12,345" };
+  const tile = { ...READY_TILE, hint: "Most runs: glass-atrium-intel-researcher, 12,345", hintData };
+  const tree = render("StatusTile", { tile, onNav: () => {}, onRetry: () => {} });
+  const [hint] = findNodes(tree, (n) => classOf(n).includes("dash-tile-hint"));
+  assert.match(classOf(hint), /\bdash-tile-hint-line\b/, "the hint sets its data apart");
+  const partsOf = (node: RenderedNode) => node.children.map((child) => [classOf(child as RenderedNode), collectText(child as RenderedNode)]);
+  const [lead, rest] = hint.children as RenderedNode[];
+  assert.deepEqual(partsOf(hint)[0], ["dash-tile-hint-fixed", hintData.lead], "the label leads, whole");
+  // data + figure travel together → a narrow tile wraps them below the label as one unit
+  assert.equal(classOf(rest), "dash-tile-hint-rest");
+  assert.deepEqual(partsOf(rest), [
+    ["dash-tile-hint-data", hintData.data],
+    ["dash-tile-hint-fixed", hintData.tail],
+  ], "only the data part takes the ellipsis; the figure stays whole");
+  assert.equal(hint.children.length, 2, `unexpected parts: ${classOf(lead)}`);
+  const plain = render("StatusTile", { tile: READY_TILE, onNav: () => {}, onRetry: () => {} });
+  const [plainHint] = findNodes(plain, (n) => classOf(n).includes("dash-tile-hint"));
+  assert.doesNotMatch(classOf(plainHint), /dash-tile-hint-line/, "an authored hint keeps its two-line wrap");
+});
+
+test("a tile's note opens from a focusable ⓘ described by the tile heading, never from a hover-only title", () => {
+  const rows = [
+    { name: "a tile with a note", tile: { ...READY_TILE, note: "Counts writer-emitted outcomes only." }, infoCount: 1 },
+    { name: "a tile without one", tile: READY_TILE, infoCount: 0 },
+  ];
+  for (const row of rows) {
+    const tree = render("StatusTile", { tile: row.tile, onNav: () => {}, onRetry: () => {} });
+    const infos = findNodes(tree, (n) => n.props.atom === "CardInfo");
+    assert.equal(infos.length, row.infoCount, row.name);
+    assert.equal(findNodes(tree, (n) => n.props.title != null && n.props.atom == null).length, 0, `${row.name}: no hover-only title`);
+  }
+  const tree = render("StatusTile", { tile: rows[0].tile, onNav: () => {}, onRetry: () => {} });
+  const [heading] = findNodes(tree, (n) => n.type === "h2");
+  const [info] = findNodes(tree, (n) => n.props.atom === "CardInfo");
+  assert.ok(heading.props.id, "the heading carries an id");
+  assert.equal(info.props.describedBy, heading.props.id, "the ⓘ is described by the tile heading");
+  assert.match(collectText(info), /writer-emitted/, "the drawer carries the note");
+});
+
+test("the results panel's counting note opens from a focusable ⓘ described by the panel heading, never from a hover-only title", () => {
+  const loading = { data: null, error: null, busy: true };
+  const row = render("WeekRow", { spendState: loading, outcomesState: loading, heatmapState: loading, onRetrySpend: () => {}, onRetryHeatmap: () => {} });
+  const panels = findNodes(row, (n) => n.type === "section");
+  const infoCounts = Object.fromEntries(panels.map((panel) => [panel.props.id, findNodes(panel, (n) => n.props.atom === "CardInfo").length]));
+  assert.deepEqual(infoCounts, { "dash-week-results": 1, "dash-week-hours": 0, "dash-week-spend": 0 }, "only the results panel carries a counting note");
+
+  const results = panels.find((panel) => panel.props.id === "dash-week-results")!;
+  const [heading] = findNodes(results, (n) => n.type === "h2");
+  const [info] = findNodes(results, (n) => n.props.atom === "CardInfo");
+  assert.equal(info.props.describedBy, heading.props.id, "the ⓘ is described by the panel heading");
+  assert.match(collectText(info), /writer-emitted/, "the drawer carries the note");
+
+  const panel = renderResultPanel([{ result: "done", count: 40 }, { result: "fail", count: 2 }]);
+  assert.equal(findNodes(panel, (n) => n.props.title != null).length, 0, "no hover-only title on the panel body");
 });
 
 test("a unit renders on the value's own line so the number and its word read as one phrase", () => {

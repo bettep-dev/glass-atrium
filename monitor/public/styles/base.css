@@ -11,68 +11,53 @@ details[open] > summary .chevron {
 	transform: rotate(180deg);
 }
 
-/* ── Tier 3 — neue elevation/glass surfaces (§3.3, Tier 2 만 소비) ─────
-   .glass-surface 는 transient(모달 backdrop·flyout) 전용 — 상시 표면 금지(§6.3). */
-.glass-surface {
-	background: rgb(var(--glass-tint) / var(--material-glass-alpha));
-	backdrop-filter: blur(var(--glass-blur));
-	-webkit-backdrop-filter: blur(var(--glass-blur));
-	border: 1px solid rgb(var(--glass-border) / 0.15);
-}
-.card-raised {
-	background: rgb(var(--surface-raised));
-	box-shadow: var(--shadow-raised);
-	border: 1px solid rgb(var(--line));
-	border-radius: var(--radius-card);
-}
-.elev-overlay {
-	background: rgb(var(--surface-overlay));
-	box-shadow: var(--shadow-overlay);
-}
-/* glass 표면 솔리드 fallback (§9.3) — reduce 사용자에게 불투명 elev 복귀 */
-@media (prefers-reduced-transparency: reduce) {
-	.glass-surface {
-		background: rgb(var(--elev));
-		backdrop-filter: none;
-		-webkit-backdrop-filter: none;
-	}
-}
-
+/* flex column → the body takes the remaining height and the foot pins to the bottom edge.
+   Light rests on its 1px border alone (border-first elevation). */
 .card {
+	display: flex;
+	flex-direction: column;
 	background: rgb(var(--elev));
 	border: 1px solid rgb(var(--line));
 	border-radius: var(--radius-card);
 	overflow: hidden;
-	box-shadow: var(--shadow-raised);
 }
 /* 상단 inset 하이라이트는 다크 전용 — 라이트 순백(255) 위 흰선 비가시(§7.1) */
 [data-theme="dark"] .card {
 	box-shadow: var(--shadow-raised), inset 0 1px 0 rgb(var(--glass-border) / 0.06);
 }
-/* raised-2 (focused/hover) — 라이트=shadow step(인버전 회피), 다크=휘도 step + 보조 shadow.
-   선택형 카드 hover 시 적용. transform 없음 → reduced-motion 무관. */
-.card.raised-2:hover,
-.card.is-focused {
-	box-shadow: var(--shadow-raised-2);
-	border-color: rgb(var(--faint));
-	transition: border-color 0.12s, box-shadow 0.12s;
-}
-[data-theme="dark"] .card.raised-2:hover,
-[data-theme="dark"] .card.is-focused {
-	background: rgb(var(--surface-raised-2));
-	box-shadow: var(--shadow-raised-2), inset 0 1px 0 rgb(var(--glass-border) / 0.06);
-}
-/* 카드 padding: head 16x20 / body 20px — 8px 리듬 정합 */
+/* one 48px line: title + meta left, actions right · wraps only when the controls do not fit */
 .card-head {
+	flex: none;
 	display: flex;
 	flex-wrap: wrap;
-	align-items: flex-start;
-	gap: 12px;
-	padding: 16px 20px;
+	align-items: center;
+	gap: 8px 12px;
+	min-height: var(--card-head-h);
+	padding: 4px var(--card-pad);
 	border-bottom: 1px solid rgb(var(--line));
 }
+.card-head-text {
+	flex: 1 1 auto;
+	min-width: 0;
+	display: flex;
+	align-items: baseline;
+	gap: 8px;
+}
+.card-head-text > .card-title {
+	flex: 0 1 auto;
+	min-width: 0;
+	white-space: nowrap;
+	overflow: hidden;
+	text-overflow: ellipsis;
+}
+/* inline-size containment → the meta adds no width to the header's line-break size, so it ellipsizes before the controls wrap */
+.card-head-text > .card-sub {
+	flex: 1 1 0;
+	min-width: 0;
+	contain: inline-size;
+}
 .card-title {
-	font-size: var(--fs-title, 15px);
+	font-size: var(--fs-title);
 	font-weight: 600;
 	letter-spacing: -0.005em;
 }
@@ -80,7 +65,7 @@ details[open] > summary .chevron {
    --faint + mono 는 timestamp/id 같은 진짜 메타데이터 전용 (이 클래스 대상 아님).
    기본 1행 클램프(nowrap+ellipsis) → 전체 내용은 native title 툴팁으로 hover 노출. */
 .card-sub {
-	font-size: 14px;
+	font-size: var(--fs-meta);
 	color: rgb(var(--dim));
 	font-family: "Pretendard Variable", Pretendard, ui-sans-serif, system-ui, sans-serif;
 	line-height: 1.5;
@@ -95,15 +80,36 @@ details[open] > summary .chevron {
 	overflow: visible;
 	text-overflow: clip;
 }
-/* card-body 공통 max-height + 내부 스크롤 — 페이지 무한 길이 회피.
-   인라인 flex/overflow 또는 인라인 maxHeight 카드는 더 높은 specificity 로 본 규칙 override. */
+/* body fills the card · the 70vh inner scroll stays only on a lone unsized or L card */
 .card-body {
-	padding: 20px;
+	flex: 1 1 auto;
+	min-height: 0;
+	padding: var(--card-pad);
 	max-height: 70vh;
 	overflow-y: auto;
 }
+/* S/M lists cap by row count; a stretched row grows instead of nesting a scroller */
+.split-row--equal .card-body,
+.card--s .card-body,
+.card--m .card-body {
+	max-height: none;
+	overflow-y: visible;
+}
 .card-body.flush {
 	padding: 0;
+}
+/* pinned foot — "Show all N" / "Other" / one footnote line up across a stretched row */
+.card-foot {
+	flex: none;
+	margin-top: auto;
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	min-height: var(--row-h);
+	padding: 0 var(--card-pad);
+	border-top: 1px solid rgb(var(--line));
+	font-size: var(--fs-meta);
+	color: rgb(var(--dim));
 }
 
 .btn {
@@ -134,7 +140,7 @@ details[open] > summary .chevron {
 }
 .btn.danger {
 	background: rgb(var(--crit));
-	color: white;
+	color: rgb(var(--elev)); /* knock-out like the alert-card glyph — white on the pale dark-theme crit is 2.77 */
 	border-color: rgb(var(--crit));
 }
 .btn.ghost {
@@ -165,7 +171,7 @@ details[open] > summary .chevron {
 
 /* ── Badge shell — 단일 canonical FORM (전 role/변형 공용) ────────────────────
    window.UI.Badge(ui.jsx) 의 styling layer. 모든 role 이 이 neutral shell FORM 을 공유한다:
-   neutral(--sunken/--dim/--line) · min-height 22px + padding 3/8(border-box, 폼요소 패밀리 호흡) · --radius-badge · --fs-micro · weight 500.
+   neutral(--sunken/--dim/--line) · min-height 22px + padding 3/8(border-box, 폼요소 패밀리 호흡) · --radius-badge · --fs-meta · weight 500.
    tone 은 shell 에 칠하지 않는다 — 내부 심볼(Icon/glyph)에 text-{tone} 로만 (dead .pill.crit/.warn/.info/.ok 제거). */
 .pill {
 	display: inline-flex;
@@ -216,12 +222,6 @@ details[open] > summary .chevron {
 	margin: 0;
 	cursor: pointer;
 }
-/* icon-only variant — 정사각(label 텍스트 부재), glyph 중앙 정렬. 의미는 aria-label/title 로 운반(absent-text 규칙). */
-.pill--icon-only {
-	justify-content: center;
-	padding: 0;
-	aspect-ratio: 1;
-}
 
 /* ── Sub-card primitive (W1-T3) — 중첩 섹션/메트릭 타일 공용 면 ─────────────────
    발산하던 idiom(드로어 hairline · DetailMetric ring 타일 · i-card-shadow)을 단일 수렴점으로.
@@ -248,7 +248,6 @@ details[open] > summary .chevron {
 /* ── Spacing standard (W1-T3) — 16px 카드 채널 / 24px 섹션 채널 (8px 리듬 배수) ────────
    카드 그리드/스택 간격은 16px, 독립 섹션 사이는 24px. Tailwind gap/space-y 와 병용 가능. */
 .gap-card { gap: 16px; }
-.gap-section { gap: 24px; }
 .space-cards > * + * { margin-top: 16px; }
 .space-sections > * + * { margin-top: 24px; }
 
@@ -260,6 +259,15 @@ details[open] > summary .chevron {
 }
 .split-row--content { align-items: start; }
 .split-row--equal { align-items: stretch; }
+/* a wrapper grid item (region host) passes the stretched height on to its card */
+.split-row--equal > :not(.card, .split-col):has(> .card) {
+	display: flex;
+	flex-direction: column;
+}
+.split-row--equal > :not(.card, .split-col) > .card { flex: 1 1 auto; }
+/* a collapsed fold keeps its header height instead of stretching into an empty box */
+.split-row--equal > .card.is-collapsed { align-self: start; }
+.split-row--equal > * > .card.is-collapsed { flex: none; }
 
 /* Split column (SplitColumn) — a card stack in one SplitRow column; the rail variant pins it while the taller column scrolls (xl only) */
 .split-col {
@@ -285,8 +293,6 @@ details[open] > summary .chevron {
 
 @media (min-width: 1280px) {
 	.split-row--1-1 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-	.split-row--7-5 { grid-template-columns: minmax(0, 7fr) minmax(0, 5fr); }
-	.split-row--3-2 { grid-template-columns: minmax(0, 3fr) minmax(0, 2fr); }
 	.split-row--2-1 { grid-template-columns: minmax(0, 2fr) minmax(0, 1fr); }
 	.split-col--rail {
 		position: sticky;
@@ -298,7 +304,7 @@ details[open] > summary .chevron {
 .tbl {
 	width: 100%;
 	border-collapse: collapse;
-	font-size: 13px;
+	font-size: var(--fs-control);
 }
 .tbl th,
 .tbl td {
@@ -309,10 +315,13 @@ details[open] > summary .chevron {
 .tbl th {
 	font-weight: 500;
 	color: rgb(var(--dim));
-	font-size: 12px;
+	font-size: var(--fs-meta);
 	text-transform: uppercase;
 	letter-spacing: 0.04em;
 	background: rgb(var(--sunken));
+}
+.tbl td {
+	height: var(--row-h);
 }
 .tbl tbody tr {
 	cursor: pointer;
@@ -330,39 +339,8 @@ details[open] > summary .chevron {
 	white-space: nowrap;
 }
 
-/* 행 그룹 — 라벨 행(.is-grouped) + 전 컬럼 폭 설명 행(.row-desc) 2개 <tr> 이 한 논리 행.
-   좁은 첫 컬럼에 갇히던 산문 설명을 colSpan 행으로 빼 가로로 길게 흐르게 한다.
-   라벨 행은 구분선을 죽여 아래 경계를 설명 행이 소유 · 설명 행 위 패딩 제거로 라벨에 붙임.
-   hover 는 짝을 함께 밝힘 — 한쪽만 칠해지면 두 행이 남남으로 읽힌다(:has 로 역방향 커버). */
 .tbl tbody tr.is-grouped > td {
 	border-bottom: none;
-}
-.tbl tbody tr.row-desc > td {
-	padding-top: 0;
-}
-.tbl tbody tr.is-grouped:hover + .row-desc,
-.tbl tbody tr.is-grouped:has(+ .row-desc:hover) {
-	background: rgb(var(--sunken));
-}
-
-.tabs {
-	display: inline-flex;
-	padding: 3px;
-	background: rgb(var(--sunken));
-	border: 1px solid rgb(var(--line));
-	border-radius: var(--radius-control);
-	gap: 2px;
-}
-.tab {
-	padding: 4px 11px;
-	min-height: var(--ctl-min-h);
-	font-size: 12px;
-	border: none;
-	background: none;
-	color: rgb(var(--dim));
-	border-radius: var(--radius-inline);
-	font-weight: 500;
-	cursor: pointer;
 }
 
 .seg {
@@ -375,7 +353,7 @@ details[open] > summary .chevron {
 .seg button {
 	padding: 5px 10px;
 	min-height: var(--ctl-min-h);
-	font-size: 12px;
+	font-size: var(--fs-meta);
 	background: none;
 	border: none;
 	color: rgb(var(--dim));
@@ -389,8 +367,6 @@ details[open] > summary .chevron {
 .btn[aria-pressed="true"]:hover,
 .seg button.active,
 .seg button[aria-pressed="true"],
-.tab.active,
-.tab[aria-selected="true"],
 .pill--interactive[aria-pressed="true"] {
 	background: rgb(var(--selected-fill));
 	color: rgb(var(--selected-ink));
@@ -431,7 +407,7 @@ details[open] > summary .chevron {
 	margin-top: 2px;
 }
 .kpi-value {
-	font-size: 28px;
+	font-size: var(--fs-kpi);
 	line-height: 1.15;
 	font-weight: 600;
 	letter-spacing: -0.025em;
@@ -439,7 +415,7 @@ details[open] > summary .chevron {
 	font-family: "JetBrains Mono", monospace;
 }
 .kpi-value .unit {
-	font-size: 14px;
+	font-size: var(--fs-title); /* half of --fs-kpi → 2:1 figure-to-unit */
 	color: rgb(var(--dim));
 	font-weight: 500;
 	margin-left: 3px;
@@ -452,15 +428,7 @@ details[open] > summary .chevron {
 	align-items: center;
 	gap: 4px;
 	margin-top: 4px;
-}
-.kpi-delta.up {
-	color: rgb(var(--crit));
-}
-.kpi-delta.down {
-	color: rgb(var(--ok));
-}
-.kpi-delta.flat {
-	color: rgb(var(--faint));
+	color: rgb(var(--dim)); /* tone rides on the arrow (Delta), never the numeral */
 }
 .kpi-spark {
 	position: absolute;
@@ -532,7 +500,7 @@ details[open] > summary .chevron {
 	padding: 6px 10px;
 	border-radius: var(--radius-control);
 	color: rgb(var(--dim));
-	font-size: 13px;
+	font-size: var(--fs-control);
 	cursor: pointer;
 	border: none;
 	background: none;
@@ -549,16 +517,6 @@ details[open] > summary .chevron {
 	color: rgb(var(--ink));
 	font-weight: 500;
 }
-.nav-num {
-	font-family: "JetBrains Mono", monospace;
-	font-size: var(--fs-meta);
-	color: rgb(var(--faint));
-	width: 20px;
-	flex-shrink: 0;
-}
-.nav-item.active .nav-num {
-	color: rgb(var(--dim));
-}
 .nav-badge {
 	margin-left: auto;
 	font-family: "JetBrains Mono", monospace;
@@ -568,30 +526,6 @@ details[open] > summary .chevron {
 	padding: 1px 6px;
 	border-radius: 999px;
 	color: rgb(var(--dim));
-}
-.nav-badge.warn {
-	background: rgb(var(--warn) / 0.15);
-	color: rgb(var(--warn));
-	border-color: transparent;
-}
-
-.alert-row {
-	display: grid;
-	grid-template-columns: 4px 1fr auto;
-	gap: 14px;
-	padding: 12px 16px;
-	border-bottom: 1px solid rgb(var(--line));
-	align-items: center;
-	cursor: pointer;
-}
-.alert-row:hover {
-	background: rgb(var(--sunken));
-}
-.alert-row:last-child {
-	border-bottom: none;
-}
-.alert-row.acked {
-	opacity: 0.5;
 }
 
 /* flat hairline alarm row — tone rides on the leading glyph, never a stripe or tinted fill */
@@ -887,7 +821,7 @@ details[open] > summary .chevron {
 	gap: 8px;
 	flex-shrink: 0;
 }
-.detail-title { font-weight: 600; font-size: var(--fs-title, 13px); color: rgb(var(--ink)); }
+.detail-title { font-weight: 600; font-size: var(--fs-title); color: rgb(var(--ink)); }
 .detail-sub { margin-top: 2px; font-size: var(--fs-meta); color: rgb(var(--faint)); }
 .detail-body { padding: 18px 20px; overflow-y: auto; flex: 1 1 auto; }
 /* bare — children 이 자체 header/close 소유 시 padding 만 제거 (overflow/flex 스크롤 거동 유지) */
@@ -928,83 +862,7 @@ details[open] > summary .chevron {
 	color: rgb(var(--faint));
 	text-align: center;
 	font-family: "JetBrains Mono", monospace;
-	font-size: 12px;
-}
-
-.alert-detail {
-	font-size: var(--fs-control);
-}
-.alert-detail .detail-row {
-	margin-bottom: 8px;
-}
-.alert-detail .detail-row-label {
-	font-family: "JetBrains Mono", monospace;
 	font-size: var(--fs-meta);
-	color: rgb(var(--faint));
-	text-transform: uppercase;
-	letter-spacing: 0.04em;
-}
-.alert-detail .detail-row-value {
-	margin-top: 2px;
-}
-
-.agent-table-minibars {
-	/* DOM marker */
-}
-.agent-radar {
-	/* DOM marker */
-}
-.latency-bars {
-	/* DOM marker */
-}
-.agent-detail-panel {
-	/* DOM marker */
-}
-.agent-detail-classification {
-	/* DOM marker — "키워드 근사 분류" 라벨. .pill.warn 재사용. */
-}
-
-.console-log-viewer {
-	/* DOM marker — 스타일은 Tailwind h-[260px] overflow-y-auto font-mono bg-sunken. */
-}
-.run-result-grid {
-	/* DOM marker — 2개 자식 cell (status / 응답시간). */
-}
-
-/* ConfBar tone: conf>=90 ok / >=80 info / <80 warn.
-   conf 값은 core.learning_log 에 conf 컬럼 부재 → frequency 기반 근사 도출 (log 정규화). */
-.bp-learning-table-confbar {
-	/* DOM marker */
-}
-.conf-bar {
-	/* DOM marker — tone 클래스 ok/info/warn 추가. */
-}
-.bp-learning-detail {
-	/* DOM marker — ConfBar(large) + 검증 근거 KV. */
-}
-
-.bp-kpi-spark-autoagent {
-	/* DOM marker — .kpi 자식 4개 + .kpi-spark inline SVG. */
-}
-.bp-proposal-table {
-	/* DOM marker — .tbl 6컬럼 + risk/impact Pill. */
-}
-.bp-proposal-detail-codeblock {
-	/* DOM marker — .code-block + 효과 KV + 버튼 2개. */
-}
-
-/* ── Motion — data-change 신호 (§8.2) ──────────────────────────────
-   값 갱신 시 .updated 토글 → 0.35s flash 후 --ink 복귀. persistent 루프 아님(§8). */
-@keyframes valueFlash {
-	0% {
-		color: rgb(var(--ok));
-	}
-	100% {
-		color: rgb(var(--ink));
-	}
-}
-.kpi-value.updated {
-	animation: valueFlash 0.35s ease-out;
 }
 
 /* prefers-reduced-motion 계약 (§8.4) — 모든 신규/기존 모션 게이트.
@@ -1014,16 +872,11 @@ details[open] > summary .chevron {
 		animation: none;
 		opacity: 0.8;
 	}
-	.pulse-ring::after {
-		animation: none;
-	}
-	.kpi-value.updated,
-	[class*="valueFlash"],
 	.alert-card {
 		animation: none;
 	}
-	.card.raised-2:hover,
-	.card.is-focused {
+	.btn,
+	.kpi {
 		transition: none;
 	}
 }
@@ -1069,7 +922,7 @@ details[open] > summary .chevron {
 	font-feature-settings: "tnum" 1;
 }
 
-/* hover — line→faint 한 단계 (.kpi:hover / .card .raised-2 와 동일 강조 단계) */
+/* hover — line→faint 한 단계 (.kpi:hover 와 동일 강조 단계) */
 .field:hover:not(:disabled):not(:focus-visible) {
 	border-color: rgb(var(--faint));
 }
@@ -1167,35 +1020,6 @@ details[open] > summary .chevron {
 	.field, .field-affix { transition: none; }
 }
 
-/* ── Diff line (improvement S8) — 2색 git-diff 행. severity 색 단독 금지(§4.2):
-   +/− glyph 가 비색(non-color) 1차 신호, 색은 보조. mono+pre 로 코드 정렬 유지.
-   add/del fill 은 --ok/--crit 의 옅은 alpha (상시 표면, blur 없음). */
-.diff-line {
-	display: flex;
-	align-items: baseline;
-	gap: 8px;
-	font-family: "JetBrains Mono", ui-monospace, SFMono-Regular, monospace;
-	font-feature-settings: "tnum" 1;
-	font-size: 12px;
-	line-height: 1.5;
-	padding: 1px 8px;
-	white-space: pre-wrap;
-	word-break: break-all;
-	color: rgb(var(--ink));
-}
-/* glyph span — 색이 빠져도 +/− 부호만으로 add/del 판독 (dual-encode). */
-.diff-line__glyph {
-	flex-shrink: 0;
-	width: 1ch;
-	text-align: center;
-	user-select: none;
-	font-weight: 600;
-}
-.diff-line--add { background: rgb(var(--ok) / 0.10); }
-.diff-line--add .diff-line__glyph { color: rgb(var(--ok)); }
-.diff-line--del { background: rgb(var(--crit) / 0.10); }
-.diff-line--del .diff-line__glyph { color: rgb(var(--crit)); }
-
 /* ── Save banner (model-config S9) — sticky 하단 dirty-state 바.
    상시(permanent) 표면이라 불투명 --elev fill (reduced-transparency safe, blur 없음).
    상단 1px --line 경계 + 위로 향한 --shadow-overlay 로 콘텐츠 위에 떠 있음을 표현. */
@@ -1218,22 +1042,29 @@ details[open] > summary .chevron {
 	margin-left: auto;
 }
 
-/* ── Toast (S9 success / clauded-docs) — 최상위 transient 알림, --z-toast 스택.
-   shared SoT: clauded-docs + model-config 가 동일 클래스 소비 (screen-local 중복 제거).
-   transient 오버레이라 --shadow-overlay 토큰 사용 (기존 하드코딩 rgba drift 해소). */
+/* ── Toast — the one top-level transient notice on the --z-toast stack, shared by every screen that toasts.
+   Opaque neutral overlay shell (it can sit over any surface, the dark document canvas included);
+   the tone class only names --toast-tone, which colours the leading .doc-toast-glyph. */
 .doc-toast {
 	position: fixed;
 	bottom: 24px;
 	right: 24px;
 	padding: 10px 14px;
 	border-radius: var(--radius-tile);
-	font-size: var(--fs-body, 13px);
+	font-size: var(--fs-body);
 	box-shadow: var(--shadow-overlay);
 	z-index: var(--z-toast);
 	max-width: 480px;
-	border: 1px solid;
+	background: rgb(var(--overlay-surface));
+	border: 1px solid rgb(var(--line));
+	color: rgb(var(--ink));
+	--toast-tone: var(--dim);
 }
-.doc-toast.info { background: rgb(var(--info) / 0.14); border-color: rgb(var(--info) / 0.4); color: rgb(var(--info)); }
-.doc-toast.ok   { background: rgb(var(--ok)   / 0.14); border-color: rgb(var(--ok)   / 0.4); color: rgb(var(--ok));   }
-.doc-toast.warn { background: rgb(var(--warn) / 0.14); border-color: rgb(var(--warn) / 0.4); color: rgb(var(--warn)); }
-.doc-toast.crit { background: rgb(var(--crit) / 0.14); border-color: rgb(var(--crit) / 0.4); color: rgb(var(--crit)); }
+.doc-toast.info { --toast-tone: var(--info); }
+.doc-toast.ok   { --toast-tone: var(--ok); }
+.doc-toast.warn { --toast-tone: var(--warn); }
+.doc-toast.crit { --toast-tone: var(--crit); }
+.doc-toast-glyph {
+	margin-right: 8px;
+	color: rgb(var(--toast-tone));
+}
