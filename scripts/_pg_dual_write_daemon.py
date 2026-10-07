@@ -906,7 +906,7 @@ def _get_loop_event_upsert_sql(eval_result, has_counts):
     )
 
 
-def _get_loop_event_conflict_arm(eval_result, has_counts=False):
+def _get_loop_event_conflict_arm(eval_result, has_counts):
     """The ON CONFLICT arm for one row class, named by the cause token.
 
     Each arm carries the predicate of the partial unique index it targets: both
