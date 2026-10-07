@@ -9444,9 +9444,8 @@ class AaSource(NamedTuple):
 
 class AaEvidence(NamedTuple):
     window: AaWindow
-    spawns: dict[
-        str, list[SpawnFacts]
-    ]  # roster stem → its spawns started in the window
+    # roster stem → its spawns started in the window
+    spawns: dict[str, list[SpawnFacts]]
     joins: tuple[int, int]  # (roster outcomes, joined ones)
     # spool → (lines read, lines without a row), NULL on a pre-column row; None = no count columns
     closes: dict[str, tuple[int | None, int | None]] | None
@@ -10470,10 +10469,10 @@ def get_aa_looks(
 
 def _get_aa_look(items: Sequence[ArmedSpawn], tool_budget: int) -> AaLook:
     return AaLook(
-        _get_aa_arms(items, lambda spawn: is_task_overrun((spawn,), tool_budget)),
+        _get_aa_arms(items, _get_aa_event_test(METRIC_BUDGET_OVERAGE, tool_budget)),
         {
             METRIC_EMIT_FAILURE: _get_aa_arms(
-                items, lambda spawn: is_metric_event(spawn, METRIC_EMIT_FAILURE)
+                items, _get_aa_event_test(METRIC_EMIT_FAILURE, tool_budget)
             )
         },
         get_tool_use_reading(items, is_overage_primary=True),
