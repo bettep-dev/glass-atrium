@@ -613,6 +613,30 @@ class TestManifestDeliveryBinding(_IngestCase):
         self.assertEqual((event, payload["void"]["agent"]), ("aa-result", _ROSTER[0]))
         self.assertEqual(self._get_canaries(), [])
 
+    def test_a_void_the_ledger_refuses_at_ingest_lands_at_the_aa_stage_before_any_renewal(
+        self,
+    ) -> None:
+        self._open_aa()
+        self._put_canaries()
+        self.ledger.write_outcome = ConnectionError("server closed the connection")
+        self._append(self.live_log, _get_delivery_line(_ROSTER[0], text_sha256=_PLAIN_SHA256))
+        self._ingest(_CYCLE_1)
+        self.ledger.write_outcome = 1
+        # an install root with no manifest: a stage that goes on past the void restarts the A/A
+        install_root = mock.patch.object(dc, "_INSTALL_ROOT", self.base_root)
+
+        with install_root, contextlib.redirect_stderr(io.StringIO()):
+            dc.run_aa_stage("2026-10-05", agents_dir=self.agents_dir)
+
+        ((event, payload, dedupe_key),) = self.ledger.rows
+        self.assertEqual((event, dedupe_key), ("aa-result", f"aa-result:{_AA.SALT}"))
+        self.assertEqual(
+            payload["void"],
+            {"reason": "foreign-canary-hash", "agent": _ROSTER[0], "text_sha256": _PLAIN_SHA256},
+        )
+        self.assertEqual(self._get_canaries(), [])
+        self.assertEqual(self.pg_reach, [])
+
     def test_an_in_window_control_arm_line_binds_to_no_trial(self) -> None:
         self._open_aa()
         control = _get_line(exposure=_CONTROL.EXPOSURE)  # a roster agent, inside the window

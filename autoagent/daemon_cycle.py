@@ -9375,6 +9375,8 @@ CANARY = SimpleNamespace(
     VOID_REASON="foreign-canary-hash",
     # the hook's CANARY_DIR below the data root, each segment opened without following a symlink
     DIR_SEGMENTS=("learning", "canary"),
+    # a void the ledger did not take, beside the daemon's other markers until a cycle records it
+    PENDING_VOID_SEGMENTS=("daemon-reports", ".aa-pending-void.json"),
 )
 
 
@@ -9489,6 +9491,14 @@ class ArmedSpawn(NamedTuple):
 class AaRestart(NamedTuple):
     reason: str
     fingerprint: dict[str, str] | None
+
+
+class AaVoid(NamedTuple):
+    """A detected void of one A/A — also the pending record kept while the ledger refuses it."""
+
+    start_id: int
+    agent: str
+    text_sha256: str | None  # None = no text the daemon could read
 
 
 def get_aa_fingerprint(root: Path) -> dict[str, str]:
@@ -9621,6 +9631,9 @@ def run_aa_stage(
     Canary files live under `${GA_DATA_ROOT:-$HOME/.glass-atrium}/data/learning/canary` — a
     test faking the ledger sandboxes GA_DATA_ROOT, or this stage deletes the real ones.
     - No open A/A → every entry in the canary directory is deleted.
+    - Open A/A with a void an earlier ingest or sweep detected and the ledger did not take → that
+      void is retried before anything else, and the stage ends: until it lands no canary is
+      renewed and no result is decided, so the A/A cannot pass.
     - Open A/A, sweep first → an entry not named exactly as a roster agent's canary, or one the
       hook refuses unread, is deleted; any other roster file not confirmed to hold the A/A's text
       voids the A/A (every entry deleted) and ends the stage.
@@ -9644,6 +9657,8 @@ def run_aa_stage(
         return
     if latest is None:
         _delete_canaries(_get_canary_files(), "no open A/A or trial")
+        return
+    if _retry_pending_void(latest):
         return
     roster = _agent_roster(agents_dir)
     if _sweep_aa_canaries(latest, roster):
@@ -9866,30 +9881,107 @@ def _get_foreign_text_sha256(text: str | None) -> str | None:
 
 
 def _void_aa(latest: AaStart, agent: str, text_sha256: str | None) -> None:
-    """Close the A/A with a void result, then remove every canary file. text_sha256 None = no
-    text the daemon could read."""
-    label = text_sha256 or "(unreadable)"
-    payload = {
-        "overall": AA.VERDICT.VOID,
-        "void": {
-            "reason": CANARY.VOID_REASON,
-            "agent": agent,
-            "text_sha256": text_sha256,
-        },
-    }
-    dedupe_key = f"{TRIAL_LEDGER.EVENT.AA_RESULT}:{latest.id}"
+    """Close the A/A with a void result, then remove every canary file. A void the ledger does not
+    take stays pending: run_aa_stage retries it before any canary renewal, so the A/A cannot pass
+    meanwhile. text_sha256 None = no text the daemon could read."""
+    void = AaVoid(latest.id, agent, text_sha256)
+    is_recorded = _write_aa_void(void)
+    if is_recorded:
+        _delete_pending_void()
+    else:
+        _put_pending_void(void)
+    reason = "voided" if is_recorded else "void not recorded"
+    _delete_canaries(_get_canary_files(), f"A/A {latest.id} {reason}")
+
+
+def _write_aa_void(void: AaVoid) -> bool:
+    """The void aa-result row → True when it landed; a void the ledger did not take WARNs."""
+    label = void.text_sha256 or "(unreadable)"
+    dedupe_key = f"{TRIAL_LEDGER.EVENT.AA_RESULT}:{void.start_id}"
+    detail = {"reason": CANARY.VOID_REASON, "agent": void.agent, "text_sha256": void.text_sha256}
+    payload = {"overall": AA.VERDICT.VOID, "void": detail}
     if _write_aa_row(TRIAL_LEDGER.EVENT.AA_RESULT, payload, dedupe_key) == 1:
         sys.stderr.write(
-            f"[daemon-cycle] WARN: A/A {latest.id} voided — {agent}'s canary text "
+            f"[daemon-cycle] WARN: A/A {void.start_id} voided — {void.agent}'s canary text "
             f"{label} is not the A/A's ({dedupe_key})\n"
         )
-    else:
+        return True
+    _warn_aa(
+        f"A/A {void.start_id} void not recorded: {void.agent}'s canary text {label} is not "
+        "the A/A's",
+        "it stays pending — no canary is renewed and no result lands until a cycle records it",
+    )
+    return False
+
+
+def _retry_pending_void(latest: AaStart) -> bool:
+    """A void an earlier ingest or sweep detected and the ledger did not take → retried, True: the
+    stage ends there, so no canary is renewed and no result decided until it lands. A pending
+    record that cannot be read holds the A/A the same way."""
+    path = _get_pending_void_path()
+    try:
+        pending = _read_pending_void(path)
+    except (OSError, ValueError, TypeError) as exc:
         _warn_aa(
-            f"A/A {latest.id} void not recorded: {agent}'s canary text {label} is not "
-            "the A/A's",
-            "its canary files are removed",
+            f"A/A {latest.id} pending void {path} unreadable: {_describe_fault(exc)}",
+            "no canary is renewed and no result lands while it stays unread",
         )
-    _delete_canaries(_get_canary_files(), f"A/A {latest.id} voided")
+        _delete_canaries(_get_canary_files(), f"A/A {latest.id} void not recorded")
+        return True
+    if pending is None:
+        return False
+    if pending.start_id != latest.id:  # an A/A opens only after the previous one's result
+        _delete_pending_void()
+        return False
+    _void_aa(latest, pending.agent, pending.text_sha256)
+    return True
+
+
+def _get_pending_void_path() -> Path:
+    return ga_paths.get_data_root().joinpath(*CANARY.PENDING_VOID_SEGMENTS)
+
+
+def _read_pending_void(path: Path) -> AaVoid | None:
+    """None when no void is pending. Raises OSError, ValueError or TypeError on a record not
+    readable as one."""
+    try:
+        record = json.loads(path.read_text(encoding="utf-8"))
+    except FileNotFoundError:
+        return None
+    pending = AaVoid(**record)
+    if not (
+        isinstance(pending.start_id, int)
+        and isinstance(pending.agent, str)
+        and isinstance(pending.text_sha256, (str, type(None)))
+    ):
+        raise TypeError(f"{path.name} is not an A/A void record")
+    return pending
+
+
+def _put_pending_void(void: AaVoid) -> None:
+    """Written whole — a temp file, then a rename — so a later read sees the record or none."""
+    path = _get_pending_void_path()
+    temp = path.with_name(f"{path.name}.{os.getpid()}.tmp")
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        temp.write_text(json.dumps(void._asdict()), encoding="utf-8")
+        temp.replace(path)
+    except OSError as exc:
+        _warn_aa(
+            f"A/A {void.start_id} pending void not kept at {path}: {_describe_fault(exc)}",
+            "no later cycle retries it",
+        )
+
+
+def _delete_pending_void() -> None:
+    path = _get_pending_void_path()
+    try:
+        path.unlink(missing_ok=True)
+    except OSError as exc:
+        _warn_aa(
+            f"pending void {path} not removed: {_describe_fault(exc)}",
+            "it is dropped once a newer A/A opens",
+        )
 
 
 def _delete_canaries(paths: list[Path], reason: str) -> None:

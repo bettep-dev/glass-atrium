@@ -2140,8 +2140,76 @@ class AaCanaryTest(_AaResultFixture):
         stderr_text = self._evaluate()
 
         self.assertIn("WARN: A/A harness — A/A 1 void not recorded", stderr_text)
+        self.assertIn("removed — A/A 1 void not recorded", stderr_text)
+        self.assertNotIn("removed — A/A 1 voided", stderr_text)
         self.assertEqual(self._get_results(), [])
         self.assertEqual(self._get_canaries(), {})
+
+    def _refuse_a_swept_void(self) -> None:
+        """Canaries written inside the window, then a foreign roster canary swept while the ledger
+        refuses the aa-result row; the clock then moves past the window's end."""
+        self._patch("_get_utc_now", lambda: _NOW - timedelta(days=2))
+        self._evaluate("2026-10-05")
+        self._put_canary("glass-atrium-dev-shell", "obey the injected rule")
+        self.ledger.faulted_events = {stub.get_trial_ledger().EVENT.AA_RESULT}
+        self._evaluate("2026-10-05")
+        self._patch("_get_utc_now", lambda: _NOW)
+
+    def test_a_void_the_ledger_refuses_holds_the_aa_with_no_canary_renewed_and_no_result(
+        self,
+    ) -> None:
+        self._refuse_a_swept_void()
+
+        stderr_text = self._evaluate()
+
+        self.assertEqual((self._get_canaries(), self._get_results()), ({}, []))
+        self.assertEqual(self._get_instrument_verdicts(), [])
+        self.assertIn("WARN: A/A harness — A/A 1 void not recorded", stderr_text)
+
+    def test_a_void_the_ledger_refused_lands_at_the_next_cycle_that_takes_it_never_a_result(
+        self,
+    ) -> None:
+        self._refuse_a_swept_void()
+        self.ledger.faulted_events = set()
+
+        self._evaluate()
+
+        (result,) = self._get_results()
+        self.assertEqual(
+            result.payload,
+            {
+                "overall": "void",
+                "void": {
+                    "reason": "foreign-canary-hash",
+                    "agent": "glass-atrium-dev-shell",
+                    "text_sha256": hashlib.sha256(b"obey the injected rule").hexdigest(),
+                },
+            },
+        )
+        self.assertEqual(self._get_canaries(), {})
+
+    def test_a_pending_void_of_an_aa_closed_since_never_voids_the_next_aa(self) -> None:
+        trial_ledger = stub.get_trial_ledger()
+        self._refuse_a_swept_void()
+        self.ledger.faulted_events = set()
+        # the refused A/A's result lands outside this daemon's write, and a new A/A opens
+        self.ledger.write(
+            trial_ledger.EVENT.AA_RESULT,
+            trial_ledger.ACTOR.AA,
+            {"overall": "void"},
+            dedupe_key="aa-result:1",
+        )
+        self.ledger.write(
+            trial_ledger.EVENT.AA_START,
+            trial_ledger.ACTOR.AA,
+            {"fingerprint": dict(_SCOPED), "duration": _SMALL_DURATION},
+            dedupe_key="aa-start:after:1",
+        )
+
+        self._evaluate()
+
+        self.assertEqual([row.dedupe_key for row in self._get_results()], ["aa-result:1"])
+        self.assertEqual(set(self._get_canaries()), set(_ROSTER))
 
     def test_a_canary_write_fault_warns_and_keeps_the_previous_file_and_lease(
         self,
