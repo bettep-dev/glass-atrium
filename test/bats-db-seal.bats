@@ -32,10 +32,11 @@ loads_ephemeral_pg() {
 
 # A non-comment eph_pg_start or `ga_bats_db_seal <sandbox>` call binds the sandbox seal only outside
 # every subshell, where its exported PATH would die. Lexed as the shell does, across lines: a quoted
-# paren or call is text, `(` / `$(` / a backtick open a subshell that its own closer ends, and a case
-# pattern's `)` ends none. A backslash-continued statement is read as one; heredoc bodies are skipped.
+# paren or call is text, `(` / `$(` / a backtick open a subshell that its own closer ends and start a
+# word, and a case pattern's `)` ends none. A backslash-continued statement is read as one; heredoc
+# bodies are skipped.
 binds_ephemeral_seal() {
-  awk 'function scan(s,   i, n, c, top, rest) {
+  awk 'function scan(s,   i, n, c, top, rest, word_start) {
       n = length(s)
       for (i = 1; i <= n; i++) {
         c = substr(s, i, 1); top = ctx[sp]
@@ -43,16 +44,16 @@ binds_ephemeral_seal() {
         if (c == "\\") { i++; continue }
         if (top == "d") {
           if (c == "\"") sp--
-          else if (c == "`") ctx[++sp] = "b"
-          else if (substr(s, i, 2) == "$(") { ctx[++sp] = "p"; i++ }
+          else if (c == "`") { ctx[++sp] = "b"; word_start = i + 1 }
+          else if (substr(s, i, 2) == "$(") { ctx[++sp] = "p"; i++; word_start = i + 1 }
           continue
         }
         if (c == "'"'"'") ctx[++sp] = "q"
         else if (c == "\"") ctx[++sp] = "d"
-        else if (c == "`") { if (top == "b") sp--; else ctx[++sp] = "b" }
-        else if (c == "(") ctx[++sp] = "p"
+        else if (c == "`") { if (top == "b") sp--; else { ctx[++sp] = "b"; word_start = i + 1 } }
+        else if (c == "(") { ctx[++sp] = "p"; word_start = i + 1 }
         else if (c == ")") { if (top == "p" && !(cases && sp == base[cases])) sp-- }
-        else if (i == 1 || substr(s, i - 1, 1) ~ /[[:space:];&|]/) {
+        else if (i == 1 || i == word_start || substr(s, i - 1, 1) ~ /[[:space:];&|]/) {
           rest = substr(s, i)
           if (c == "#") return 0
           if (rest ~ /^case[[:space:]]/) base[++cases] = sp
@@ -365,6 +366,8 @@ seals_in_setup() {
     'an array closed on its last element|binds_ephemeral_seal|  local e=(a\n    b)\n  eph_pg_start a b c d|0'
     'a quoted paren inside a subshell does not close it|binds_ephemeral_seal|  (\n    echo "a)"\n    eph_pg_start a b c d\n  )|1'
     'eph_pg_start inside a quoted string is no call|binds_ephemeral_seal|  echo "eph_pg_start a b c d"|1'
+    'a case right after $( is still a case|binds_ephemeral_seal|  out=$(case "${y}" in a) eph_pg_start a b c d ;; esac)|1'
+    'a comment right after ( does not close its subshell|binds_ephemeral_seal|  (# a )\n    eph_pg_start a b c d\n  )|1'
   )
   local row name detector body want fixture="${BATS_TEST_TMPDIR:?}/suite.bats"
   for row in "${rows[@]}"; do
