@@ -30,20 +30,43 @@ loads_ephemeral_pg() {
 }
 
 # A non-comment eph_pg_start or `ga_bats_db_seal <sandbox>` call binds the sandbox seal only outside
-# every `( … )` / `$( … )` subshell, where its exported PATH would die. Depth rises on a statement
-# leaving `(` unclosed and falls only on one opening with `)` — a case pattern never closes a subshell.
-# A backslash-continued statement is read as one; heredoc bodies are not shell and are skipped.
+# every subshell, where its exported PATH would die. Lexed as the shell does, across lines: a quoted
+# paren or call is text, `(` / `$(` / a backtick open a subshell that its own closer ends, and a case
+# pattern's `)` ends none. A backslash-continued statement is read as one; heredoc bodies are skipped.
 binds_ephemeral_seal() {
-  awk 'heredoc != "" { if ($0 ~ "^\t*" heredoc "$") heredoc = ""; next }
-    /^[[:space:]]*#/ { next }
+  awk 'function scan(s,   i, n, c, top, rest) {
+      n = length(s)
+      for (i = 1; i <= n; i++) {
+        c = substr(s, i, 1); top = ctx[sp]
+        if (top == "q") { if (c == "'"'"'") sp--; continue }
+        if (c == "\\") { i++; continue }
+        if (top == "d") {
+          if (c == "\"") sp--
+          else if (c == "`") ctx[++sp] = "b"
+          else if (substr(s, i, 2) == "$(") { ctx[++sp] = "p"; i++ }
+          continue
+        }
+        if (c == "'"'"'") ctx[++sp] = "q"
+        else if (c == "\"") ctx[++sp] = "d"
+        else if (c == "`") { if (top == "b") sp--; else ctx[++sp] = "b" }
+        else if (c == "(") ctx[++sp] = "p"
+        else if (c == ")") { if (top == "p" && !(cases && sp == base[cases])) sp-- }
+        else if (i == 1 || substr(s, i - 1, 1) ~ /[[:space:];&|]/) {
+          rest = substr(s, i)
+          if (c == "#") return 0
+          if (rest ~ /^case[[:space:]]/) base[++cases] = sp
+          else if (cases && rest ~ /^esac([[:space:];&|)]|$)/) cases--
+          else if (sp == 0 && rest ~ /^(eph_pg_start|ga_bats_db_seal[[:space:]]+[^[:space:]|;&)])([^A-Za-z0-9_]|$)/) return 1
+        }
+      }
+      return 0
+    }
+    heredoc != "" { if ($0 ~ "^\t*" heredoc "$") heredoc = ""; next }
+    ctx[sp] !~ /^[qd]$/ && /^[[:space:]]*#/ { next }
     stmt != "" { $0 = stmt " " $0 }
     /\\$/ { stmt = substr($0, 1, length($0) - 1); next }
     { stmt = "" }
-    depth == 0 && match($0, /(^|[^A-Za-z0-9_])(eph_pg_start|ga_bats_db_seal[[:space:]]+[^[:space:]|;&)])($|[^A-Za-z0-9_])/) \
-      && substr($0, 1, RSTART) !~ /\(/ { found = 1; exit }
-    { line = $0; net = gsub(/\(/, "", line) - gsub(/\)/, "", line) }
-    net > 0 { depth += net }
-    net < 0 && /^[[:space:]]*\)/ { depth = (depth + net > 0) ? depth + net : 0 }
+    scan($0) { found = 1; exit }
     match($0, /(^|[^<])<<-?[[:space:]]*["'"'"'\\]?[A-Za-z_][A-Za-z0-9_]*/) {
       heredoc = substr($0, RSTART, RLENGTH)
       sub(/^[^<]*<<-?[[:space:]]*["'"'"'\\]?/, "", heredoc)
@@ -297,6 +320,10 @@ seals_in_setup() {
     'cluster started after a balanced command substitution|binds_ephemeral_seal|  d="$(mktemp -d)"\n  eph_pg_start a b c d|0'
     'a command substitution closed on a continued line|binds_ephemeral_seal|  x="$(psql -c \\\n    "select 1")"\n  eph_pg_start a b c d|0'
     "a heredoc body never opens a subshell|binds_ephemeral_seal|  cat <<'EOF' >f.js\nconfig({\nEOF\n  eph_pg_start a b c d|0"
+    "a command substitution closed after a multi-line quoted string|binds_ephemeral_seal|  x=\"\$(jq -n '{\n  a: 1\n} + (if true then {} else {} end)')\"\n  eph_pg_start a b c d|0"
+    'an array closed on its last element|binds_ephemeral_seal|  local e=(a\n    b)\n  eph_pg_start a b c d|0'
+    'a quoted paren inside a subshell does not close it|binds_ephemeral_seal|  (\n    echo "a)"\n    eph_pg_start a b c d\n  )|1'
+    'eph_pg_start inside a quoted string is no call|binds_ephemeral_seal|  echo "eph_pg_start a b c d"|1'
   )
   local row name detector body want fixture="${BATS_TEST_TMPDIR:?}/suite.bats"
   for row in "${rows[@]}"; do
