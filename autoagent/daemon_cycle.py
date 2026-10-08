@@ -9354,6 +9354,12 @@ AA = SimpleNamespace(
         MIGRATION=re.compile(r"monitor/prisma/migrations/[^/]+/migration\.sql"),
         LEDGER_NAME=re.compile(r'\bcore"?\."?autoagent_trial_ledger\b'),
     ),
+    # an install's rendered config names the code tree it was installed as
+    INSTALL=SimpleNamespace(
+        CONFIG="config.toml",
+        SECTION="[paths]",
+        ROOT_KEY=re.compile(r'\s*root\s*=\s*"?([^"#]*)'),
+    ),
     RESTART_REASON=SimpleNamespace(
         CHANGED="fingerprint-changed", UNREADABLE="fingerprint-unreadable"
     ),
@@ -9636,8 +9642,11 @@ def run_aa_stage(
 ) -> None:
     """Advance the open A/A one writing cycle and keep the canary files in step with it.
 
-    Canary files live under `${GA_DATA_ROOT:-$HOME/.glass-atrium}/data/learning/canary` — a
-    test faking the ledger sandboxes GA_DATA_ROOT, or this stage deletes the real ones.
+    Canary files live under `${GA_DATA_ROOT:-$HOME/.glass-atrium}/data/learning/canary`.
+    - Code tree not an install (no rendered config.toml declaring it as [paths].root) → refused
+      before any ledger read: no row read or written, no canary file deleted or written. A
+      source checkout or worktree has no such render, so a test running this stage unsealed
+      reaches nothing.
     - No open A/A → every entry in the canary directory is deleted.
     - Open A/A with a void an earlier ingest or sweep detected and the ledger did not take → that
       void is retried before anything else, and the stage ends: until it lands no canary is
@@ -9657,6 +9666,13 @@ def run_aa_stage(
     A ledger or evidence fault WARNs by name and never fails the cycle; the caller skips the
     stage in no-write mode (--dry-run).
     """
+    if not _is_install_tree(_INSTALL_ROOT):
+        _warn_aa(
+            f"code tree {_INSTALL_ROOT} is not the install its data root belongs to: no "
+            f"{AA.INSTALL.CONFIG} there declares it as {AA.INSTALL.SECTION} root",
+            "no ledger read or write and no canary file change this cycle",
+        )
+        return
     try:
         latest = _read_open_aa_start()
     except AaStateUnreadable as exc:
@@ -9680,6 +9696,36 @@ def run_aa_stage(
     source = AaSource(manifest_ingest, agents_dir)
     if _evaluate_aa(latest, source):
         _delete_canaries(_get_canary_files(), "the A/A has its result")
+
+
+def _is_install_tree(root: Path) -> bool:
+    """True when root is the install its own rendered config.toml declares as [paths].root.
+    Compared by identity, so a symlinked path to the install matches."""
+    declared = _get_config_root(root / AA.INSTALL.CONFIG)
+    if declared is None or not Path(declared).is_absolute():
+        return False
+    try:
+        return os.path.samefile(declared, root)
+    except OSError:
+        return False
+
+
+def _get_config_root(config: Path) -> str | None:
+    """[paths].root as scripts/lib/atrium-config.sh → atrium_toml_get reads it; None when the
+    file or the key is absent or unreadable."""
+    try:
+        lines = config.read_text(encoding="utf-8").splitlines()
+    except (OSError, ValueError):
+        return None
+    section = ""
+    for line in lines:
+        if line.lstrip().startswith("["):
+            section = "".join(line.split())
+        elif section == AA.INSTALL.SECTION:
+            match = AA.INSTALL.ROOT_KEY.match(line)
+            if match is not None:
+                return match.group(1).strip()
+    return None
 
 
 def _read_open_aa_start() -> AaStart | None:

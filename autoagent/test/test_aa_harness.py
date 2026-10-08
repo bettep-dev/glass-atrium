@@ -20,12 +20,14 @@ from __future__ import annotations
 import contextlib
 import functools
 import hashlib
+import importlib.util
 import io
 import itertools
 import json
 import math
 import os
 import signal
+import site
 import subprocess
 import sys
 import tempfile
@@ -81,6 +83,11 @@ _DURATION = {
     "busiest_agents": 5,
     "minimum_spawns": 200,
 }
+
+
+def _put_config(root: Path, declared: Path) -> None:
+    """The install's rendered config.toml, declaring `declared` as its [paths].root."""
+    (root / "config.toml").write_text(f'[paths]\nroot = "{declared}"\n', encoding="utf-8")
 
 
 class _LedgerRow(NamedTuple):
@@ -340,6 +347,7 @@ class _AaFixture(unittest.TestCase):
         ):
             (self.root / path).parent.mkdir(parents=True, exist_ok=True)
             (self.root / path).write_text(text, encoding="utf-8")
+        _put_config(self.root, self.root)
         self._write_manifest({**_SCOPED, **_UNSCOPED})
 
     def _write_manifest(
@@ -709,6 +717,128 @@ class SealTest(_AaFixture):
         with contextlib.redirect_stderr(io.StringIO()):
             dc.run_aa_stage(_CYCLE_DATE)
         self.assertEqual(reach, ["_pg_connect"])
+
+
+class AaSandboxDefaultTest(_AaFixture):
+    """The stage acts only from the install its data root belongs to — the code tree its own
+    rendered config.toml declares as [paths].root; any other tree reads, deletes and writes
+    nothing."""
+
+    def test_only_the_declared_install_reads_deletes_and_writes(self) -> None:
+        link = self.scratch / "install-link"
+        link.symlink_to(self.root)
+        rows = (
+            ("the declared install", self.root, self.root, True),
+            ("the declared install through a symlinked path", link, self.root, True),
+            ("a tree with no rendered config", self.root, None, False),
+            ("a tree whose config declares another root", self.root, self.scratch, False),
+        )
+        for name, install_root, declared, is_acting in rows:
+            with self.subTest(name):
+                connect = self._run_moved_open_aa(install_root, declared)
+                listing = sorted(path.name for path in self.canary_dir.iterdir())
+                self.assertEqual(
+                    (connect.called, bool(self._get_restarts()), "stray.json" in listing),
+                    (is_acting, is_acting, not is_acting),
+                )
+
+    def _run_moved_open_aa(self, install_root: Path, declared: Path | None) -> mock.Mock:
+        """An open A/A whose fingerprint moved, a stray canary file beside it."""
+        self._install()
+        if declared is None:
+            (self.root / "config.toml").unlink()
+        else:
+            _put_config(self.root, declared)
+        self._open()
+        self._set_hash("autoagent/daemon_cycle.py", "9" * 64)
+        self.canary_dir.mkdir(parents=True, exist_ok=True)
+        (self.canary_dir / "stray.json").write_text("{}", encoding="utf-8")
+        connect = mock.Mock(wraps=self.ledger.connect)
+        with (
+            mock.patch.object(dc, "_INSTALL_ROOT", install_root),
+            mock.patch.object(dc, "_pg_connect", connect),
+            contextlib.redirect_stderr(io.StringIO()),
+        ):
+            dc.run_aa_stage(_CYCLE_DATE, agents_dir=self.agents_dir)
+        return connect
+
+
+_PROBE = _TEST_DIR / "_aa_unsealed_probe.py"
+
+
+class AaUnsealedRunTest(unittest.TestCase):
+    """An unsealed run_aa_stage from this checkout, in a child whose "live" is a decoy: a temp HOME
+    holding the default data root and its canary files, PGHOST and PGPORT on an empty temp socket
+    dir, and neither GA_DATA_ROOT nor EPH_SOCKDIR."""
+
+    _RUNNERS = (
+        (
+            "unittest discover",
+            ("-m", "unittest", "discover", "-s", str(_TEST_DIR), "-p", _PROBE.name),
+        ),
+        ("unittest, one file", (str(_PROBE),)),
+        ("pytest, one file", ("-m", "pytest", "-q", "-s", "-p", "no:cacheprovider", str(_PROBE))),
+    )
+    _INHERITED = (
+        "GA_DATA_ROOT", "EPH_SOCKDIR", "EPH_PORT", "PGHOSTADDR", "PGSERVICE", "PGDATABASE"
+    )
+
+    def setUp(self) -> None:
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        self.home = Path(tmp.name) / "home"
+        self.data_root = self.home / ".glass-atrium"
+        canary_dir = self.data_root / "data" / "learning" / "canary"
+        canary_dir.mkdir(parents=True)
+        for name in ("glass-atrium-dev-python.json", "stray.json"):
+            (canary_dir / name).write_text('{"text": ""}', encoding="utf-8")
+        self.sockdir = Path(tmp.name) / "sock"
+        self.sockdir.mkdir()
+        self.env = {k: v for k, v in os.environ.items() if k not in self._INHERITED}
+        self.env.update(
+            HOME=str(self.home),
+            PGHOST=str(self.sockdir),
+            PGPORT="5432",
+            PYTHONDONTWRITEBYTECODE="1",
+            # the decoy HOME hides the user site-packages: keep this interpreter's own
+            PYTHONUSERBASE=site.getuserbase(),
+        )
+
+    def test_an_unsealed_run_from_a_checkout_reaches_no_socket_under_any_runner(self) -> None:
+        before = self._get_data_listing()
+        for name, args in self._RUNNERS:
+            with self.subTest(name):
+                if args[:2] == ("-m", "pytest") and importlib.util.find_spec("pytest") is None:
+                    self.skipTest("pytest not installed for this interpreter")
+                run = self._run_probe(args)
+                self.assertEqual(run.returncode, 0, run.stdout + run.stderr)
+                self.assertIn("is not the install", run.stderr)
+                self.assertNotIn(str(self.sockdir), run.stderr)
+                self.assertEqual(self._get_data_listing(), before)
+
+    def test_the_decoy_names_a_reach_once_the_code_tree_is_the_install(self) -> None:
+        # instrument check for the test above: a run that does reach the decoy names its socket
+        if importlib.util.find_spec("psycopg") is None:
+            self.skipTest("psycopg not installed: the stage makes no connect to observe")
+        install_root = self.home / "install"
+        install_root.mkdir()
+        _put_config(install_root, install_root)
+        run = self._run_probe(self._RUNNERS[0][1], AA_PROBE_INSTALL_ROOT=str(install_root))
+        self.assertIn(str(self.sockdir), run.stderr)
+
+    def _run_probe(self, args: tuple[str, ...], **env: str) -> subprocess.CompletedProcess[str]:
+        return subprocess.run(
+            [sys.executable, *args],
+            env={**self.env, **env},
+            cwd=self.home,
+            capture_output=True,
+            text=True,
+            timeout=120,
+            check=False,
+        )
+
+    def _get_data_listing(self) -> list[str]:
+        return sorted(str(path.relative_to(self.data_root)) for path in self.data_root.rglob("*"))
 
 
 _ROSTER = ("glass-atrium-dev-python", "glass-atrium-dev-shell")

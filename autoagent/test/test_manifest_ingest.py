@@ -623,6 +623,9 @@ class TestManifestDeliveryBinding(_IngestCase):
         self._ingest(_CYCLE_1)
         self.ledger.write_outcome = 1
         # an install root with no manifest: a stage that goes on past the void restarts the A/A
+        (self.base_root / "config.toml").write_text(
+            f'[paths]\nroot = "{self.base_root}"\n', encoding="utf-8"
+        )
         install_root = mock.patch.object(dc, "_INSTALL_ROOT", self.base_root)
 
         with install_root, contextlib.redirect_stderr(io.StringIO()):
