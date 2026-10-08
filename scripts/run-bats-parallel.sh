@@ -100,8 +100,9 @@ readonly DAEMON_ENV_SCRUB=(
 # libpq names that outrank or reroute PGHOST. The python stages run with these unset and PGHOST set to a
 # path that never exists, so a host-less connection (psycopg "dbname=glass_atrium") fails there instead
 # of reaching the live server on the default /tmp socket. Stage 1 gets the same from every corpus
-# setup_suite (test/lib/bats-hermetic-env.bash, GA_BATS_PG_ROUTING_NAMES — pinned equal by
-# scripts/test/run-bats-parallel.bats); a suite that needs a DB starts its own ephemeral cluster.
+# setup_suite (test/lib/bats-hermetic-env.bash, GA_BATS_PG_ROUTING_NAMES — each of those names is
+# pinned into this scrub by scripts/test/run-bats-parallel.bats (13); a name only here is not
+# pinned back). A suite that needs a DB starts its own ephemeral cluster.
 readonly PG_ROUTING_SCRUB=(-u PGPORT -u PGHOSTADDR -u PGSERVICE -u PGDATABASE -u PGPASSFILE)
 readonly PYTHON_STAGE_SCRUB=("${DAEMON_ENV_SCRUB[@]}" -u GA_DATA_ROOT -u ATRIUM_UPDATE_STATE_DIR
   "${PG_ROUTING_SCRUB[@]}")
