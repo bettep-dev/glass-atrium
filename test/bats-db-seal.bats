@@ -100,43 +100,59 @@ runs_db_hook() {
 }
 
 # awk strips(s): s drops or reroutes the inherited dead PGHOST — an env that drops the whole
-# environment or unsets PGHOST at any option position (env_strip), an unset of PGHOST, PGHOST set
-# empty or to the live default (quoted or not), or PGHOSTADDR / PGSERVICE set to a value. One
+# environment or unsets PGHOST at any option position (get_strip_kinds), an unset of PGHOST, PGHOST
+# set empty or to the live default (quoted or not), or PGHOSTADDR / PGSERVICE set to a value. One
 # declaration for both strip detectors below.
-STRIPS_PGHOST_AWK='function env_strip(s,   w, n, k, j, m, c, opt, arg, got) {
-  # env argv read as getopt does: W = the whole environment dropped, H = PGHOST unset, N = a recorder name unset
-  n = split(s, w, /[[:space:]]+/); got = ""
+STRIPS_PGHOST_AWK='function get_strip_kinds(s,   w, n, k, run, kinds) {
+  n = split(s, w, /[[:space:]]+/); kinds = ""
+  for (k = 1; k < n; k++)
+    if (w[k] ~ /(^|[^A-Za-z0-9_-])env$/) { get_option_run(w, n, k, run); kinds = kinds run["kinds"] }
+  return kinds
+}
+function get_dropping_env_operands(s,   w, n, k, j, run, operands) {
+  # what the last env dropping the recorder env (W or N) passes on: its words after the option run
+  n = split(s, w, /[[:space:]]+/); operands = ""
   for (k = 1; k < n; k++) {
     if (w[k] !~ /(^|[^A-Za-z0-9_-])env$/) continue
-    for (j = k + 1; j <= n && w[j] ~ /^-/ && w[j] != "--"; j++) {
-      arg = ""
-      if (w[j] == "-") got = got "W"
-      else if (w[j] ~ /^--/) {
-        opt = substr(w[j], 3); m = index(opt, "=")
-        if (m) { arg = substr(opt, m + 1); opt = substr(opt, 1, m - 1) }
-        if (length(opt) >= 8 && index("ignore-environment", opt) == 1) got = got "W"
-        else if (index("unset", opt) == 1) { if (!m) arg = w[++j] }
-        else if (!m && (index("chdir", opt) == 1 || index("split-string", opt) == 1 || index("argv0", opt) == 1)) j++
-        if (index("unset", opt) != 1) arg = ""
-      } else for (m = 2; m <= length(w[j]); m++) {
-        c = substr(w[j], m, 1)
-        if (c == "i") got = got "W"
-        else if (index("aCLPSUu", c)) {
-          arg = substr(w[j], m + 1)
-          if (arg == "") arg = w[++j]
-          if (c != "u") arg = ""
-          break
-        }
-      }
-      gsub(/["'"'"']/, "", arg)
-      if (arg == "PGHOST") got = got "H"
-      else if (arg ~ /^GA_BATS_PG_(SANDBOX|RECORD)$/) got = got "N"
-    }
+    get_option_run(w, n, k, run)
+    if (run["kinds"] !~ /[WN]/) continue
+    operands = ""
+    for (j = run["end"]; j <= n; j++) operands = operands " " w[j]
   }
-  return got
+  return operands
+}
+function get_option_run(w, n, k, run,   j, m, c, opt, arg, kinds) {
+  # argv of the env word w[k] read as getopt does, into run: kinds = W the whole environment dropped,
+  # H PGHOST unset, N a recorder name unset; end = the index of its first operand
+  kinds = ""
+  for (j = k + 1; j <= n && w[j] ~ /^-/ && w[j] != "--"; j++) {
+    arg = ""
+    if (w[j] == "-") kinds = kinds "W"
+    else if (w[j] ~ /^--/) {
+      opt = substr(w[j], 3); m = index(opt, "=")
+      if (m) { arg = substr(opt, m + 1); opt = substr(opt, 1, m - 1) }
+      if (length(opt) >= 8 && index("ignore-environment", opt) == 1) kinds = kinds "W"
+      else if (index("unset", opt) == 1) { if (!m) arg = w[++j] }
+      else if (!m && (index("chdir", opt) == 1 || index("split-string", opt) == 1 || index("argv0", opt) == 1)) j++
+      if (index("unset", opt) != 1) arg = ""
+    } else for (m = 2; m <= length(w[j]); m++) {
+      c = substr(w[j], m, 1)
+      if (c == "i") kinds = kinds "W"
+      else if (index("aCLPSUu", c)) {
+        arg = substr(w[j], m + 1)
+        if (arg == "") arg = w[++j]
+        if (c != "u") arg = ""
+        break
+      }
+    }
+    gsub(/["'"'"']/, "", arg)
+    if (arg == "PGHOST") kinds = kinds "H"
+    else if (arg ~ /^GA_BATS_PG_(SANDBOX|RECORD)$/) kinds = kinds "N"
+  }
+  run["kinds"] = kinds; run["end"] = j + (w[j] == "--")
 }
 function strips(s) {
-  return env_strip(s) ~ /[WH]/ \
+  return get_strip_kinds(s) ~ /[WH]/ \
     || s ~ /(-u[[:space:]]*|--unset[=[:space:]][[:space:]]*)PGHOST([^A-Za-z0-9_]|$)/ \
     || s ~ /(^|[^A-Za-z0-9_])unset[[:space:]][^#]*PGHOST([^A-Za-z0-9_]|$)/ \
     || s ~ /(^|[^A-Za-z0-9_])PGHOST=(""|'"''"'|["'"'"']?(\/tmp|\/private\/tmp|localhost|127\.)|[[:space:]]|$)/ \
@@ -155,19 +171,23 @@ strips_dead_pghost() {
 # PYTHONPATH — named in it, or in a body-local array it expands — and an eph_assert_isolated follows it
 # in the same body. A strip that drops the whole environment or a recorder name also passes
 # GA_BATS_PG_SANDBOX and GA_BATS_PG_RECORD non-empty: pg-sandbox-recorder/usercustomize.py → _install
-# loads nothing without both. A backslash-continued statement is read as one. Status 0 = unguarded.
+# loads nothing without both. Such a strip counts only the operands after its env's option run — an
+# assignment before env lands in env's own environment, which the strip drops. A backslash-continued
+# statement is read as one. Status 0 = unguarded.
 strips_pghost_unguarded() {
   awk "${STRIPS_PGHOST_AWK}"'
-    function keys(s,   k) {
-      k = (s ~ /PYTHONPATH=[^[:space:]]*(EPH_PG_RECORDER_DIR|pg-sandbox-recorder)/) ? "R" : ""
-      if (s ~ /(^|[^A-Za-z0-9_])GA_BATS_PG_SANDBOX=("[^"]|'"'"'[^'"'"']|[^[:space:]"'"'"'])/) k = k "S"
-      if (s ~ /(^|[^A-Za-z0-9_])GA_BATS_PG_RECORD=("[^"]|'"'"'[^'"'"']|[^[:space:]"'"'"'])/) k = k "C"
-      return k
+    function get_recorder_keys(s,   keys) {
+      keys = (s ~ /PYTHONPATH=[^[:space:]]*(EPH_PG_RECORDER_DIR|pg-sandbox-recorder)/) ? "R" : ""
+      if (s ~ /(^|[^A-Za-z0-9_])GA_BATS_PG_SANDBOX=("[^"]|'"'"'[^'"'"']|[^[:space:]"'"'"'])/) keys = keys "S"
+      if (s ~ /(^|[^A-Za-z0-9_])GA_BATS_PG_RECORD=("[^"]|'"'"'[^'"'"']|[^[:space:]"'"'"'])/) keys = keys "C"
+      return keys
     }
-    function guarded(s, dropped,   k, name) {
-      k = keys(s)
-      for (name in arrays) if (index(s, "${" name "[@]}")) k = k arrays[name]
-      return index(k, "R") && (!dropped || (index(k, "S") && index(k, "C")))
+    function is_guarded(s,   is_env_dropped, passed, keys, name) {
+      is_env_dropped = get_strip_kinds(s) ~ /[WN]/
+      passed = is_env_dropped ? get_dropping_env_operands(s) : s
+      keys = get_recorder_keys(passed)
+      for (name in arrays) if (index(passed, "${" name "[@]}")) keys = keys arrays[name]
+      return index(keys, "R") && (!is_env_dropped || (index(keys, "S") && index(keys, "C")))
     }
     /^[[:space:]]*#/ { next }
     /^(@test[[:space:]]|[A-Za-z_][A-Za-z0-9_]*\(\)[[:space:]]*\{)/ { split("", arrays); array = ""; owed = 0 }
@@ -175,9 +195,9 @@ strips_pghost_unguarded() {
     /\\$/ { stmt = substr($0, 1, length($0) - 1); next }
     { stmt = "" }
     match($0, /[A-Za-z_][A-Za-z0-9_]*=\(/) { array = substr($0, RSTART, RLENGTH - 2) }
-    array != "" { arrays[array] = arrays[array] keys($0) }
+    array != "" { arrays[array] = arrays[array] get_recorder_keys($0) }
     array != "" && /\)/ { array = "" }
-    strips($0) { if (!guarded($0, env_strip($0) ~ /[WN]/)) { found = 1; exit } owed = 1 }
+    strips($0) { if (!is_guarded($0)) { found = 1; exit } owed = 1 }
     /(^|[^A-Za-z0-9_])eph_assert_isolated([^A-Za-z0-9_]|$)/ { owed = 0 }
     /^\}/ && owed { found = 1; exit }
     END { exit !(found || owed) }' "$1"
@@ -439,6 +459,8 @@ seals_in_setup() {
     'bare env - strip behind the recorder without the sandbox names|strips_pghost_unguarded|@test "x" {\n  env - PATH="${P}" PYTHONPATH="${EPH_PG_RECORDER_DIR}" bash "${H}"\n  eph_assert_isolated 1\n}|0'
     'env -i strip passing a sandbox name empty|strips_pghost_unguarded|@test "x" {\n  env -i PYTHONPATH="${EPH_PG_RECORDER_DIR}" GA_BATS_PG_SANDBOX="" GA_BATS_PG_RECORD="${GA_BATS_PG_RECORD}" bash "${H}"\n  eph_assert_isolated 1\n}|0'
     'strip that also unsets a recorder name|strips_pghost_unguarded|@test "x" {\n  env -u PGHOST -u GA_BATS_PG_RECORD PYTHONPATH="${EPH_PG_RECORDER_DIR}" bash "${H}"\n  eph_assert_isolated 0\n}|0'
+    'env -i strip whose recorder env is assigned before env|strips_pghost_unguarded|@test "x" {\n  PYTHONPATH="${EPH_PG_RECORDER_DIR}" GA_BATS_PG_SANDBOX="${S}" GA_BATS_PG_RECORD="${R}" env -i bash "${H}"\n  eph_assert_isolated 1\n}|0'
+    'recorder name assigned before the env that unsets it|strips_pghost_unguarded|@test "x" {\n  GA_BATS_PG_RECORD="${R}" env -u PGHOST -u GA_BATS_PG_RECORD PYTHONPATH="${EPH_PG_RECORDER_DIR}" GA_BATS_PG_SANDBOX="${S}" bash "${H}"\n  eph_assert_isolated 0\n}|0'
     'env -i strip passing the recorder and both sandbox names|strips_pghost_unguarded|@test "x" {\n  env -i PATH="${P}" PYTHONPATH="${EPH_PG_RECORDER_DIR}" GA_BATS_PG_SANDBOX="${GA_BATS_PG_SANDBOX}" \\\n    GA_BATS_PG_RECORD="${GA_BATS_PG_RECORD}" bash "${H}"\n  eph_assert_isolated 1\n}|1'
     'env -i strip whose array carries the recorder and both sandbox names|strips_pghost_unguarded|@test "x" {\n  local e=(PYTHONPATH="${EPH_PG_RECORDER_DIR}"\n    GA_BATS_PG_SANDBOX="${GA_BATS_PG_SANDBOX}" GA_BATS_PG_RECORD="${GA_BATS_PG_RECORD}")\n  env -i "${e[@]}" bash "${H}"\n  eph_assert_isolated 1\n}|1'
   )
