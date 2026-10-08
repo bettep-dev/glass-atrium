@@ -7,7 +7,8 @@
 # drives psycopg hooks and psql, either of which an unsealed run could send to the live server.
 # A suite driving a DB-writing hook runs on a sandbox or on the hermetic baseline's dead PGHOST
 # (test/lib/bats-hermetic-env.bash), which a host-less psycopg connection follows. On a sandbox, a
-# fire that strips PGHOST runs behind the psycopg recorder, and an eph_assert_isolated follows it.
+# fire that strips PGHOST runs behind the psycopg recorder with its env intact, and an
+# eph_assert_isolated follows it.
 # Suites that reach only their own scripted client stubs are not members.
 
 setup() {
@@ -97,11 +98,44 @@ runs_db_hook() {
     END { exit !found }' "$2" "$1"
 }
 
-# awk strips(s): s drops or reroutes the inherited dead PGHOST — `env -i` or a bare `env -`, an unset,
-# -u or --unset of PGHOST, PGHOST set empty or to the live default (quoted or not), or PGHOSTADDR /
-# PGSERVICE set to a value. One declaration for both strip detectors below.
-STRIPS_PGHOST_AWK='function strips(s) {
-  return s ~ /(^|[^A-Za-z0-9_-])env[[:space:]]+-i?([[:space:]]|$)/ \
+# awk strips(s): s drops or reroutes the inherited dead PGHOST — an env that drops the whole
+# environment or unsets PGHOST at any option position (env_strip), an unset of PGHOST, PGHOST set
+# empty or to the live default (quoted or not), or PGHOSTADDR / PGSERVICE set to a value. One
+# declaration for both strip detectors below.
+STRIPS_PGHOST_AWK='function env_strip(s,   w, n, k, j, m, c, opt, arg, got) {
+  # env argv read as getopt does: W = the whole environment dropped, H = PGHOST unset, N = a recorder name unset
+  n = split(s, w, /[[:space:]]+/); got = ""
+  for (k = 1; k < n; k++) {
+    if (w[k] !~ /(^|[^A-Za-z0-9_-])env$/) continue
+    for (j = k + 1; j <= n && w[j] ~ /^-/ && w[j] != "--"; j++) {
+      arg = ""
+      if (w[j] == "-") got = got "W"
+      else if (w[j] ~ /^--/) {
+        opt = substr(w[j], 3); m = index(opt, "=")
+        if (m) { arg = substr(opt, m + 1); opt = substr(opt, 1, m - 1) }
+        if (length(opt) >= 8 && index("ignore-environment", opt) == 1) got = got "W"
+        else if (index("unset", opt) == 1) { if (!m) arg = w[++j] }
+        else if (!m && (index("chdir", opt) == 1 || index("split-string", opt) == 1 || index("argv0", opt) == 1)) j++
+        if (index("unset", opt) != 1) arg = ""
+      } else for (m = 2; m <= length(w[j]); m++) {
+        c = substr(w[j], m, 1)
+        if (c == "i") got = got "W"
+        else if (index("aCLPSUu", c)) {
+          arg = substr(w[j], m + 1)
+          if (arg == "") arg = w[++j]
+          if (c != "u") arg = ""
+          break
+        }
+      }
+      gsub(/["'"'"']/, "", arg)
+      if (arg == "PGHOST") got = got "H"
+      else if (arg ~ /^GA_BATS_PG_(SANDBOX|RECORD)$/) got = got "N"
+    }
+  }
+  return got
+}
+function strips(s) {
+  return env_strip(s) ~ /[WH]/ \
     || s ~ /(-u[[:space:]]*|--unset[=[:space:]][[:space:]]*)PGHOST([^A-Za-z0-9_]|$)/ \
     || s ~ /(^|[^A-Za-z0-9_])unset[[:space:]][^#]*PGHOST([^A-Za-z0-9_]|$)/ \
     || s ~ /(^|[^A-Za-z0-9_])PGHOST=(""|'"''"'|["'"'"']?(\/tmp|\/private\/tmp|localhost|127\.)|[[:space:]]|$)/ \
@@ -118,14 +152,21 @@ strips_dead_pghost() {
 
 # On a sandbox, a statement stripping PGHOST is guarded only when the psycopg recorder is on its
 # PYTHONPATH — named in it, or in a body-local array it expands — and an eph_assert_isolated follows it
-# in the same body. A backslash-continued statement is read as one. Status 0 = an unguarded strip.
+# in the same body. A strip that drops the whole environment or a recorder name also passes
+# GA_BATS_PG_SANDBOX and GA_BATS_PG_RECORD non-empty: pg-sandbox-recorder/usercustomize.py → _install
+# loads nothing without both. A backslash-continued statement is read as one. Status 0 = unguarded.
 strips_pghost_unguarded() {
   awk "${STRIPS_PGHOST_AWK}"'
-    function records(s) { return s ~ /PYTHONPATH=[^[:space:]]*(EPH_PG_RECORDER_DIR|pg-sandbox-recorder)/ }
-    function guarded(s, name) {
-      if (records(s)) return 1
-      for (name in arrays) if (index(s, "${" name "[@]}")) return 1
-      return 0
+    function keys(s,   k) {
+      k = (s ~ /PYTHONPATH=[^[:space:]]*(EPH_PG_RECORDER_DIR|pg-sandbox-recorder)/) ? "R" : ""
+      if (s ~ /(^|[^A-Za-z0-9_])GA_BATS_PG_SANDBOX=("[^"]|'"'"'[^'"'"']|[^[:space:]"'"'"'])/) k = k "S"
+      if (s ~ /(^|[^A-Za-z0-9_])GA_BATS_PG_RECORD=("[^"]|'"'"'[^'"'"']|[^[:space:]"'"'"'])/) k = k "C"
+      return k
+    }
+    function guarded(s, dropped,   k, name) {
+      k = keys(s)
+      for (name in arrays) if (index(s, "${" name "[@]}")) k = k arrays[name]
+      return index(k, "R") && (!dropped || (index(k, "S") && index(k, "C")))
     }
     /^[[:space:]]*#/ { next }
     /^(@test[[:space:]]|[A-Za-z_][A-Za-z0-9_]*\(\)[[:space:]]*\{)/ { split("", arrays); array = ""; owed = 0 }
@@ -133,9 +174,9 @@ strips_pghost_unguarded() {
     /\\$/ { stmt = substr($0, 1, length($0) - 1); next }
     { stmt = "" }
     match($0, /[A-Za-z_][A-Za-z0-9_]*=\(/) { array = substr($0, RSTART, RLENGTH - 2) }
-    array != "" && records($0) { arrays[array] = 1 }
+    array != "" { arrays[array] = arrays[array] keys($0) }
     array != "" && /\)/ { array = "" }
-    strips($0) { if (!guarded($0)) { found = 1; exit } owed = 1 }
+    strips($0) { if (!guarded($0, env_strip($0) ~ /[WN]/)) { found = 1; exit } owed = 1 }
     /(^|[^A-Za-z0-9_])eph_assert_isolated([^A-Za-z0-9_]|$)/ { owed = 0 }
     /^\}/ && owed { found = 1; exit }
     END { exit !(found || owed) }' "$1"
@@ -375,12 +416,28 @@ seals_in_setup() {
     'env -uPGHOST attached|strips_dead_pghost|  env -uPGHOST bash "${H}"|0'
     'bare env - drops the environment|strips_dead_pghost|  env - PATH="${P}" bash "${H}"|0'
     'PGHOST double-quoted to a sandbox variable|strips_dead_pghost|  PGHOST="${EPH_SOCKDIR}" bash "${H}"|1'
+    'env -i after another option|strips_dead_pghost|  env -u PGPORT -i PATH="${P}" bash "${H}"|0'
+    'env -i clustered after a flag|strips_dead_pghost|  env -vi PATH="${P}" bash "${H}"|0'
+    'env -i clustered before an unset|strips_dead_pghost|  env -iu PGPORT bash "${H}"|0'
+    'bare env - after an option|strips_dead_pghost|  env -u PGPORT - PATH="${P}" bash "${H}"|0'
+    'env --ignore-environment|strips_dead_pghost|  env --ignore-environment PATH="${P}" bash "${H}"|0'
+    'env --ignore-environment abbreviated|strips_dead_pghost|  env --ignore-env bash "${H}"|0'
+    'PGHOST unset clustered after a flag|strips_dead_pghost|  env -vuPGHOST bash "${H}"|0'
+    'env --unset abbreviated|strips_dead_pghost|  env --uns=PGHOST bash "${H}"|0'
+    'an -i the utility takes is no strip|strips_dead_pghost|  env PGPORT=1 bash -i "${H}"|1'
+    'an i that -u takes as its name is no strip|strips_dead_pghost|  env -ui bash "${H}"|1'
     'strip behind the recorder with an isolation check after it|strips_pghost_unguarded|@test "x" {\n  env -u PGHOST PYTHONPATH="${EPH_PG_RECORDER_DIR}" bash "${H}"\n  eph_assert_isolated 0\n}|1'
     'strip whose recorder rides a body-local array|strips_pghost_unguarded|@test "x" {\n  local e=(HOME="${E}"\n    PYTHONPATH="${EPH_PG_RECORDER_DIR}:${S}")\n  env -u PGHOST "${e[@]}" \\\n    bash "${H}"\n  run eph_assert_isolated 0\n}|1'
     'strip with no recorder on PYTHONPATH|strips_pghost_unguarded|@test "x" {\n  env -u PGHOST PYTHONPATH="${S}" bash "${H}"\n  eph_assert_isolated 0\n}|0'
     'strip with no isolation check after it|strips_pghost_unguarded|@test "x" {\n  env -u PGHOST PYTHONPATH="${EPH_PG_RECORDER_DIR}" bash "${H}"\n}|0'
     'isolation check only before the strip|strips_pghost_unguarded|@test "x" {\n  eph_assert_isolated 0\n  env -u PGHOST PYTHONPATH="${EPH_PG_RECORDER_DIR}" bash "${H}"\n}|0'
     'recorder array defined in another test body|strips_pghost_unguarded|@test "a" {\n  local e=(PYTHONPATH="${EPH_PG_RECORDER_DIR}")\n}\n@test "b" {\n  env -u PGHOST "${e[@]}" bash "${H}"\n  eph_assert_isolated 0\n}|0'
+    'env -i strip behind the recorder without the sandbox names|strips_pghost_unguarded|@test "x" {\n  env -i PATH="${P}" PYTHONPATH="${EPH_PG_RECORDER_DIR}" bash "${H}"\n  eph_assert_isolated 1\n}|0'
+    'bare env - strip behind the recorder without the sandbox names|strips_pghost_unguarded|@test "x" {\n  env - PATH="${P}" PYTHONPATH="${EPH_PG_RECORDER_DIR}" bash "${H}"\n  eph_assert_isolated 1\n}|0'
+    'env -i strip passing a sandbox name empty|strips_pghost_unguarded|@test "x" {\n  env -i PYTHONPATH="${EPH_PG_RECORDER_DIR}" GA_BATS_PG_SANDBOX="" GA_BATS_PG_RECORD="${GA_BATS_PG_RECORD}" bash "${H}"\n  eph_assert_isolated 1\n}|0'
+    'strip that also unsets a recorder name|strips_pghost_unguarded|@test "x" {\n  env -u PGHOST -u GA_BATS_PG_RECORD PYTHONPATH="${EPH_PG_RECORDER_DIR}" bash "${H}"\n  eph_assert_isolated 0\n}|0'
+    'env -i strip passing the recorder and both sandbox names|strips_pghost_unguarded|@test "x" {\n  env -i PATH="${P}" PYTHONPATH="${EPH_PG_RECORDER_DIR}" GA_BATS_PG_SANDBOX="${GA_BATS_PG_SANDBOX}" \\\n    GA_BATS_PG_RECORD="${GA_BATS_PG_RECORD}" bash "${H}"\n  eph_assert_isolated 1\n}|1'
+    'env -i strip whose array carries the recorder and both sandbox names|strips_pghost_unguarded|@test "x" {\n  local e=(PYTHONPATH="${EPH_PG_RECORDER_DIR}"\n    GA_BATS_PG_SANDBOX="${GA_BATS_PG_SANDBOX}" GA_BATS_PG_RECORD="${GA_BATS_PG_RECORD}")\n  env -i "${e[@]}" bash "${H}"\n  eph_assert_isolated 1\n}|1'
   )
   local row name detector body want
   for row in "${rows[@]}"; do
@@ -423,12 +480,12 @@ seals_in_setup() {
         || unsealed+=("loads ephemeral-pg but binds no seal outside a subshell: ${file#"${root}/"}")
     fi
     # a DB-writing hook runs on a sandbox, else on the inherited dead PGHOST, which it must not strip;
-    # on a sandbox a strip stays behind the recorder with an isolation check after it
+    # on a sandbox a strip stays behind the recorder and its env, with an isolation check after it
     if runs_db_hook "${file}" "${db_hooks}"; then
       members=$((members + 1))
       if binds_ephemeral_seal "${file}"; then
         if strips_pghost_unguarded "${file}"; then
-          unsealed+=("strips PGHOST on a sandbox without the recorder or a later eph_assert_isolated: ${file#"${root}/"}")
+          unsealed+=("strips PGHOST on a sandbox without the recorder and its env, or a later eph_assert_isolated: ${file#"${root}/"}")
         fi
       else
         [[ "${dead_default}" -eq 1 ]] \
