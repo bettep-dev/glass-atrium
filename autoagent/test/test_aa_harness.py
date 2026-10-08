@@ -303,6 +303,8 @@ class _AaFixture(unittest.TestCase):
         self.agents_dir.mkdir()
         for stem in _ROSTER:
             (self.agents_dir / f"{stem}.md").write_text("# body\n", encoding="utf-8")
+        # the installed agents dir also holds the charter, a rules file no spawn ever types
+        (self.agents_dir / "GLASS_ATRIUM_GLOBAL_RULES.md").write_text("# rules\n", encoding="utf-8")
         # after the seal: ledger connection and writer = the DB boundary
         for name, value in (
             ("HAS_PG_LOOP_WRITE", True),
@@ -1895,6 +1897,19 @@ class AaCanaryTest(_AaResultFixture):
                     self.assertEqual(
                         {entry.name for entry in self.canary_dir.iterdir()}, kept_names
                     )
+
+    def test_a_charter_canary_an_earlier_roster_wrote_is_removed_unvoided_by_the_next_cycle(
+        self,
+    ) -> None:
+        self._move_window_start(_NOW - timedelta(days=1))
+        stray = self._put_canary("GLASS_ATRIUM_GLOBAL_RULES", "")
+        results_before = self._get_results()
+
+        stderr_text = self._evaluate_bounded()
+
+        self.assertIn(f"canary {stray} removed", stderr_text)
+        self.assertEqual(self._get_results(), results_before)
+        self.assertEqual(set(self._get_canaries()), set(_ROSTER))
 
     def test_a_roster_entry_the_hook_cannot_read_is_removed_unread_and_rewritten(
         self,

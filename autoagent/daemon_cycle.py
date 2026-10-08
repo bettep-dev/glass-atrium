@@ -2104,7 +2104,9 @@ _TIER_USER_PENDING = "user-pending"
 
 
 def _agent_roster(agents_dir: Path) -> frozenset[str]:
-    """Real agent names = stems of `agents/*.md` (single SoT for the roster).
+    """Real agent names = stems of the top-level `agents/*.md`, the non-agent charter excluded
+    (single SoT for the roster; the agent set of `_get_agent_body_name` and of
+    `scripts/update.sh` → `update_roster_names_from_dir`).
 
     Intake validates the `agent` column against this set so a task_type value
     (e.g. 'bug-fix') accidentally written into the agent column never yields a
@@ -2113,7 +2115,9 @@ def _agent_roster(agents_dir: Path) -> frozenset[str]:
     legitimate patterns).
     """
     try:
-        return frozenset(p.stem for p in agents_dir.glob("*.md"))
+        return frozenset(
+            p.stem for p in agents_dir.glob("*.md") if p.name != GLOBAL_RULES_FILE.name
+        )
     except OSError:
         return frozenset()
 
