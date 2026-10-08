@@ -62,7 +62,7 @@ setup() {
 @test "git status failure loud-fails with exit 5 and the captured git stderr" {
   make_sandbox norepo
   run --separate-stderr -5 env \
-    HOME="${FAKE_HOME}" \
+    HOME="${FAKE_HOME}" GA_DATA_ROOT="${FAKE_HOME}/.glass-atrium" \
     GIT_CEILING_DIRECTORIES="${BATS_TEST_TMPDIR}" \
     AUTOAGENTS_EVAL_CLAUDE_BIN="${CLAUDE_STUB}" \
     bash "${REAL_SCRIPT}"
@@ -74,7 +74,7 @@ setup() {
 @test "legitimate no-match keeps the quiet no-changes exit 0" {
   make_sandbox repo
   run --separate-stderr -0 env \
-    HOME="${FAKE_HOME}" \
+    HOME="${FAKE_HOME}" GA_DATA_ROOT="${FAKE_HOME}/.glass-atrium" \
     GIT_CEILING_DIRECTORIES="${BATS_TEST_TMPDIR}" \
     AUTOAGENTS_EVAL_CLAUDE_BIN="${CLAUDE_STUB}" \
     bash "${REAL_SCRIPT}"
@@ -86,7 +86,7 @@ setup() {
   make_sandbox repo
   printf 'x\n' >"${AGENTS}/t2-probe.md"
   run --separate-stderr -1 env \
-    HOME="${FAKE_HOME}" \
+    HOME="${FAKE_HOME}" GA_DATA_ROOT="${FAKE_HOME}/.glass-atrium" \
     GIT_CEILING_DIRECTORIES="${BATS_TEST_TMPDIR}" \
     AUTOAGENTS_EVAL_CLAUDE_BIN="${CLAUDE_STUB}" \
     bash "${REAL_SCRIPT}"
@@ -97,7 +97,7 @@ setup() {
 @test "mode-2 --unstaged path is untouched by the conversion" {
   make_sandbox norepo
   run --separate-stderr -1 env \
-    HOME="${FAKE_HOME}" \
+    HOME="${FAKE_HOME}" GA_DATA_ROOT="${FAKE_HOME}/.glass-atrium" \
     GIT_CEILING_DIRECTORIES="${BATS_TEST_TMPDIR}" \
     AUTOAGENTS_EVAL_CLAUDE_BIN="${CLAUDE_STUB}" \
     bash "${REAL_SCRIPT}" --unstaged "t2-probe.md"
@@ -110,7 +110,7 @@ setup() {
   mv -- "${FAKE_HOME}/.glass-atrium/scripts/lib/path-guard.sh" "${BATS_TEST_TMPDIR}/path-guard.sh.moved"
   printf 'x\n' >"${AGENTS}/t2-probe.md"
   run --separate-stderr -6 env \
-    HOME="${FAKE_HOME}" \
+    HOME="${FAKE_HOME}" GA_DATA_ROOT="${FAKE_HOME}/.glass-atrium" \
     GIT_CEILING_DIRECTORIES="${BATS_TEST_TMPDIR}" \
     AUTOAGENTS_EVAL_CLAUDE_BIN="${CLAUDE_STUB}" \
     bash "${REAL_SCRIPT}"

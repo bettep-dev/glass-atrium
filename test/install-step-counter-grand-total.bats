@@ -285,7 +285,8 @@ _denom() { printf '%s' "$1" | sed -n 's/^BAR\[[0-9]*\/\([0-9]*\)\]$/\1/p'; }
   _preflight_fakechat_boxed() { return 0; }
   ga_detect_python_libs() { printf 'present'; }
   # the `[[ -x "${HOME}/.local/bin/claude" ]]` guard must be false -> point HOME at an empty dir.
-  HOME="$(mktemp -d -t ga-empty-home.XXXXXX)"
+  # shellcheck disable=SC2034  # GA_DATA_ROOT is exported by the hermetic baseline; it follows HOME
+  HOME="$(mktemp -d -t ga-empty-home.XXXXXX)" GA_DATA_ROOT="${HOME}/.glass-atrium"
   STEP_INDEX_BASE="sentinel"
   _run_dependency_preflight_boxed || return 1
   # the deliberate install handoff: GRAND_TOTAL + base SURVIVE (NOT reset on the success path).

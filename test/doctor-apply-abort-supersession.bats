@@ -103,7 +103,7 @@ emit_abort_row() {
   printf '%s\n' '{"patches": []}' >"${WORK}/report.json"
   # No test roots under the sandbox → the first preflight abort site fires (exit 16 + one row).
   env -u AUTOAGENT_ALLOW_UNVERIFIED -u AUTOAGENT_PREFLIGHT_ACTIVE \
-    HOME="${WORK}/home" AUTOAGENT_REPORTS_DIR="${REPORTS}" \
+    HOME="${WORK}/home" GA_DATA_ROOT="${WORK}/home/.glass-atrium" AUTOAGENT_REPORTS_DIR="${REPORTS}" \
     bash "${sandbox}/autoagent/daemon-apply.sh" \
     --report "${WORK}/report.json" --agents-dir "${WORK}/agents" >/dev/null 2>&1 || true
   [[ -s "${REPORTS}/autoagent-applied-${TODAY}.jsonl" ]] || return 1

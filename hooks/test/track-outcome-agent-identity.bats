@@ -116,7 +116,7 @@ write_sidecar() {
 # $1 = registry path override (defaults to the fixture registry).
 run_hook() {
   run env \
-    HOME="${SANDBOX_HOME}" \
+    HOME="${SANDBOX_HOME}" GA_DATA_ROOT="${SANDBOX_HOME}/.glass-atrium" \
     PATH="${SHIM_DIR}:${PATH}" \
     CLAUDE_AGENT_REGISTRY_FILE="${1:-${REGISTRY}}" \
     CLAUDE_GATE_INFLIGHT="" \

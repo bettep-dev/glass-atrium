@@ -87,7 +87,7 @@ setup() {
 
   # Hermetic git: throwaway HOME (no host global config / gpgsign leakage) + env identity
   # so a fixture commit needs no user config.
-  export HOME="${WORK}/home"
+  export HOME="${WORK}/home" GA_DATA_ROOT="${WORK}/home/.glass-atrium"
   export GIT_CONFIG_NOSYSTEM=1
   export GIT_AUTHOR_NAME='ga-fixture' GIT_AUTHOR_EMAIL='ga@fixture.invalid'
   export GIT_COMMITTER_NAME='ga-fixture' GIT_COMMITTER_EMAIL='ga@fixture.invalid'
@@ -138,7 +138,7 @@ run_scan() {
 
 # The REAL run_doctor against the sandbox GA root, so §13 scans the fixture repos.
 run_doctor_sandbox() {
-  run env HOME="${WORK}/home" GA_TARGET_HOME="${TARGET}" \
+  run env HOME="${WORK}/home" GA_DATA_ROOT="${WORK}/home/.glass-atrium" GA_TARGET_HOME="${TARGET}" \
     GA_MANIFEST="${FAKE_MANIFEST}" GA_GENERATE_MANIFEST="${GEN_STUB}" \
     bash -c '
       set -Eeuo pipefail

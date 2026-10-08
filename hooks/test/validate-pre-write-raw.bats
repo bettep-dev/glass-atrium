@@ -13,7 +13,7 @@ setup() {
   [[ -x "${RAW_HOOK}" ]] || skip "raw-write hook missing: ${RAW_HOOK}"
   # Raw store and HOME rooted in the Bats tmpdir — no real ~/.glass-atrium state is touched.
   export WIKI_ROOT="${BATS_TEST_TMPDIR}/wiki"
-  export HOME="${BATS_TEST_TMPDIR}/home"
+  export HOME="${BATS_TEST_TMPDIR}/home" GA_DATA_ROOT="${BATS_TEST_TMPDIR}/home/.glass-atrium"
 }
 
 # Valid 3-field frontmatter followed by $1 (body). Args: $1=body $2=source_url (default https://example.com/page).

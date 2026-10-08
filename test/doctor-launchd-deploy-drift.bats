@@ -83,7 +83,7 @@ setup() {
   # pre-render the reference plists with the SAME renderer + config + GA_SKIP_DEP_PROBE +
   # HOME doctor §11 uses internally, so a copied plist is byte-identical to doctor's re-render.
   GA_SKIP_DEP_PROBE=1 GA_CONFIG_TOML="${FAKE_CONFIG}" GA_PLIST_OUT="${REF}" \
-    HOME="${SANDBOX_HOME}" bash "${REAL_RENDERER}" >/dev/null 2>&1 \
+    HOME="${SANDBOX_HOME}" GA_DATA_ROOT="${SANDBOX_HOME}/.glass-atrium" bash "${REAL_RENDERER}" >/dev/null 2>&1 \
     || skip "reference render failed (renderer/plutil unavailable in this env)"
 }
 
@@ -146,7 +146,7 @@ assert_retired_warns() {
 # merge-decline record from GA_ROOT's sibling, so an open decline on the host would FAIL the run and
 # suppress the PASS-only warn rollup this test asserts on.
 run_doctor_sandbox() {
-  run env HOME="${SANDBOX_HOME}" GA_TARGET_HOME="${TARGET}" \
+  run env HOME="${SANDBOX_HOME}" GA_DATA_ROOT="${SANDBOX_HOME}/.glass-atrium" GA_TARGET_HOME="${TARGET}" \
     AUTOAGENT_BACKUP_DIR="${SANDBOX}/agents-bak" \
     GA_CONFIG_TOML="${FAKE_CONFIG}" GA_MANIFEST="${FAKE_MANIFEST}" \
     GA_GENERATE_MANIFEST="${GEN_STUB}" ATRIUM_MONITOR_PORT="${GA_DOCTOR_DEAD_PORT}" \
@@ -280,7 +280,7 @@ run_doctor_sandbox_mktemp_empty() {
   printf '#!/usr/bin/env bash\nexit 0\n' >"${stub_dir}/mktemp" # emits empty stdout, exit 0
   chmod +x "${stub_dir}/mktemp"
 
-  run env PATH="${stub_dir}:${PATH}" HOME="${SANDBOX_HOME}" GA_TARGET_HOME="${TARGET}" \
+  run env PATH="${stub_dir}:${PATH}" HOME="${SANDBOX_HOME}" GA_DATA_ROOT="${SANDBOX_HOME}/.glass-atrium" GA_TARGET_HOME="${TARGET}" \
     GA_CONFIG_TOML="${FAKE_CONFIG}" GA_MANIFEST="${FAKE_MANIFEST}" \
     GA_GENERATE_MANIFEST="${GEN_STUB}" ATRIUM_MONITOR_PORT="${GA_DOCTOR_DEAD_PORT}" \
     bash -c '

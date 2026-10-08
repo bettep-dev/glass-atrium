@@ -113,7 +113,7 @@ run_hook() {
   input="$(jq -n --arg sid "${SID}" --arg fp "${fp}" \
     '{session_id: $sid, tool_input: {file_path: $fp}}')"
   run env -u PLAN_FILE \
-    HOME="${WORK}" \
+    HOME="${WORK}" GA_DATA_ROOT="${WORK}/.glass-atrium" \
     ATRIUM_MONITOR_PORT=16145 \
     SCOPE_DRIFT_MONITOR_URL="http://127.0.0.1:16145/api/clauded-docs" \
     SCOPE_DRIFT_CACHE_DIR="${CACHE_DIR}" \

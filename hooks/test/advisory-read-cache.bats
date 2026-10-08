@@ -106,7 +106,7 @@ run_ctx() {
   local sid="${1}" input
   input="$(jq -n --arg sid "${sid}" '{tool_name:"Agent", session_id:$sid}')"
   run env -u CONTEXT_ADVISORY_TEST_TOKENS \
-    HOME="${WORK}" \
+    HOME="${WORK}" GA_DATA_ROOT="${WORK}/.glass-atrium" \
     PYTHONPATH="${PYDIR}" \
     FAKE_PG_VALUE="${FAKE_PG_VALUE:-500000}" \
     FAKE_PG_CONNECT_COUNT_FILE="${CONNCOUNT}" \
@@ -120,7 +120,7 @@ run_cost() {
   local sid="${1}" input
   input="$(jq -n --arg sid "${sid}" '{tool_name:"Agent", session_id:$sid}')"
   run env -u COST_ADVISORY_TEST_TOKENS \
-    HOME="${WORK}" \
+    HOME="${WORK}" GA_DATA_ROOT="${WORK}/.glass-atrium" \
     PYTHONPATH="${PYDIR}" \
     FAKE_PG_VALUE="${FAKE_PG_VALUE:-3000000}" \
     FAKE_PG_CONNECT_COUNT_FILE="${CONNCOUNT}" \

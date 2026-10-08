@@ -181,7 +181,7 @@ assert_row_landed() {
   local label="dryrun-seam-a-$$"
   local reports="${WORK}/reports"
   mkdir -p -- "${reports}"
-  run_dryrun "${label}" AUTOAGENT_REPORTS_DIR="${reports}" HOME="${FAKE_HOME}"
+  run_dryrun "${label}" AUTOAGENT_REPORTS_DIR="${reports}" HOME="${FAKE_HOME}" GA_DATA_ROOT="${FAKE_HOME}/.glass-atrium"
 
   [[ "${status}" -eq 0 ]] || { echo "status=${status} output=${output}" >&2; return 1; }
   assert_row_landed "${reports}" "${label}" || return 1

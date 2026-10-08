@@ -193,7 +193,7 @@ PY
 
 run_hook() {
   run env \
-    HOME="${SANDBOX_HOME}" \
+    HOME="${SANDBOX_HOME}" GA_DATA_ROOT="${SANDBOX_HOME}/.glass-atrium" \
     CLAUDE_GATE_INFLIGHT="" \
     PYTHONPATH="${EPH_PG_RECORDER_DIR}:${PSYCOPG_PP}" \
     bash -c 'bash "$1" < "$2" 2>&1' _ "${HOOK_SH}" "${PAYLOAD_FILE}"

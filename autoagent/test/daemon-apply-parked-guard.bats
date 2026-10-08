@@ -196,7 +196,7 @@ guarded_verdict() {
 }
 
 run_apply() {
-  run env -u AUTOAGENT_ALLOW_UNVERIFIED PATH="${STUB}:${MIRROR}" HOME="${WORK}/home" \
+  run env -u AUTOAGENT_ALLOW_UNVERIFIED PATH="${STUB}:${MIRROR}" HOME="${WORK}/home" GA_DATA_ROOT="${WORK}/home/.glass-atrium" \
     AUTOAGENT_REPORTS_DIR="${REPORTS}" AUTOAGENT_PREFLIGHT_ACTIVE=1 \
     AUTOAGENT_DAEMON_CYCLE_PY="${CYCLE_STUB}" \
     STUB_PSQL_LOG="${PSQL_LOG}" \

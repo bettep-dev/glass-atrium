@@ -124,7 +124,7 @@ _fire_agent() {
   local stdin_json
   stdin_json="$(printf '{"hook_event_name":"%s","agent_id":"%s","agent_type":"%s"}' \
     "${event_name}" "${agent_id}" "${agent_type}")"
-  env PATH="${EPH_SHIMDIR}:${PATH}" HOME="${EPH_HOME}" PYTHONPATH="${EPH_PG_RECORDER_DIR}:${EPH_USER_SITE}" \
+  env PATH="${EPH_SHIMDIR}:${PATH}" HOME="${EPH_HOME}" GA_DATA_ROOT="${EPH_HOME}/.glass-atrium" PYTHONPATH="${EPH_PG_RECORDER_DIR}:${EPH_USER_SITE}" \
     PGHOST="${EPH_SOCKDIR}" PGPORT="${EPH_PORT}" \
     bash -c 'printf "%s" "$1" | "$2" 2>/dev/null' _ "${stdin_json}" "${EPH_HOOK_SH}"
 }
@@ -197,7 +197,7 @@ EOF
   local stdin_json
   stdin_json="$(printf '{"hook_event_name":"SubagentStart","agent_id":"%s","agent_type":"%s"}' \
     "${EPH_AID}" "${EPH_ATYPE}")"
-  env PATH="${shimbin}:${EPH_SHIMDIR}:${PATH}" HOME="${EPH_HOME}" PYTHONPATH="${EPH_PG_RECORDER_DIR}:${EPH_USER_SITE}" \
+  env PATH="${shimbin}:${EPH_SHIMDIR}:${PATH}" HOME="${EPH_HOME}" GA_DATA_ROOT="${EPH_HOME}/.glass-atrium" PYTHONPATH="${EPH_PG_RECORDER_DIR}:${EPH_USER_SITE}" \
     PGHOST="${EPH_SOCKDIR}" PGPORT="${EPH_PORT}" \
     bash -c 'printf "%s" "$1" | "$2" 2>/dev/null' _ "${stdin_json}" "${EPH_HOOK_SH}" || return 1
 
@@ -216,7 +216,7 @@ EOF
 @test "the isolation check fails when the hook is pointed at the default socket" {
   _eph_q "TRUNCATE core.agent_events;" || return 1
   local stdin_json rows
-  local hook_env=(PATH="${EPH_SHIMDIR}:${PATH}" HOME="${EPH_HOME}"
+  local hook_env=(PATH="${EPH_SHIMDIR}:${PATH}" HOME="${EPH_HOME}" GA_DATA_ROOT="${EPH_HOME}/.glass-atrium"
     PYTHONPATH="${EPH_PG_RECORDER_DIR}:${EPH_USER_SITE}")
   stdin_json="$(printf '{"hook_event_name":"SubagentStart","agent_id":"%s","agent_type":"%s"}' \
     "${EPH_AID}" "${EPH_ATYPE}")"
@@ -257,7 +257,7 @@ EOF
 
   # deliberate break: no recorder on PYTHONPATH and a foreign, server-less socket dir
   # shellcheck disable=SC2016  # $1/$2 expand in the child shell
-  env PATH="${EPH_SHIMDIR}:${PATH}" HOME="${EPH_HOME}" PYTHONPATH="${EPH_USER_SITE}" PGHOST="${foreign}" \
+  env PATH="${EPH_SHIMDIR}:${PATH}" HOME="${EPH_HOME}" GA_DATA_ROOT="${EPH_HOME}/.glass-atrium" PYTHONPATH="${EPH_USER_SITE}" PGHOST="${foreign}" \
     bash -c 'printf "%s" "$1" | "$2" 2>/dev/null' _ "${stdin_json}" "${EPH_HOOK_SH}" || true
 
   run eph_assert_isolated 2

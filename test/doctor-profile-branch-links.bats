@@ -167,7 +167,7 @@ break_rules_link() {
       echo "${class}: fix line '${fix}' does not take the form '${form}'" >&2
       return 1
     }
-    HOME="${HOMEDIR}" bash -c "${fix}" || {
+    HOME="${HOMEDIR}" GA_DATA_ROOT="${HOMEDIR}/.glass-atrium" bash -c "${fix}" || {
       echo "${class}: fix line failed when run as printed: ${fix}" >&2
       return 1
     }

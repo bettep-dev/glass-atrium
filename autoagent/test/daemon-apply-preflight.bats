@@ -182,14 +182,14 @@ mirrored_toolchain_rc() {
 # under the green-suite). Extra env assignments are forwarded via $@.
 run_batch() {
   run env -u AUTOAGENT_ALLOW_UNVERIFIED -u AUTOAGENT_PREFLIGHT_ACTIVE \
-    HOME="${FAKE_HOME}" AUTOAGENT_REPORTS_DIR="${REPORTS}" \
+    HOME="${FAKE_HOME}" GA_DATA_ROOT="${FAKE_HOME}/.glass-atrium" AUTOAGENT_REPORTS_DIR="${REPORTS}" \
     "$@" \
     bash "${SANDBOX_SCRIPT}" --report "${WORK}/report.json" --agents-dir "${AGENTS}"
 }
 
 run_single() {
   run env -u AUTOAGENT_ALLOW_UNVERIFIED -u AUTOAGENT_PREFLIGHT_ACTIVE \
-    HOME="${FAKE_HOME}" AUTOAGENT_REPORTS_DIR="${REPORTS}" \
+    HOME="${FAKE_HOME}" GA_DATA_ROOT="${FAKE_HOME}/.glass-atrium" AUTOAGENT_REPORTS_DIR="${REPORTS}" \
     "$@" \
     bash "${SANDBOX_SCRIPT}" --proposal-id 999 --agents-dir "${AGENTS}"
 }
@@ -201,7 +201,7 @@ run_single() {
 @test "--help exits 0 (preflight runs after arg-parse)" {
   make_sandbox noroots
   run env -u AUTOAGENT_ALLOW_UNVERIFIED -u AUTOAGENT_PREFLIGHT_ACTIVE \
-    HOME="${FAKE_HOME}" bash "${SANDBOX_SCRIPT}" --help
+    HOME="${FAKE_HOME}" GA_DATA_ROOT="${FAKE_HOME}/.glass-atrium" bash "${SANDBOX_SCRIPT}" --help
   [[ "${status}" -eq 0 ]] || return 1
   [[ "${output}" != *"test root absent"* ]] || return 1
 }
@@ -240,7 +240,7 @@ run_single() {
 @test "override: AUTOAGENT_ALLOW_UNVERIFIED=1 proceeds past absent roots + logs UNVERIFIED" {
   make_sandbox noroots
   run env -u AUTOAGENT_PREFLIGHT_ACTIVE \
-    HOME="${FAKE_HOME}" AUTOAGENT_REPORTS_DIR="${REPORTS}" \
+    HOME="${FAKE_HOME}" GA_DATA_ROOT="${FAKE_HOME}/.glass-atrium" AUTOAGENT_REPORTS_DIR="${REPORTS}" \
     PATH="${PSQL_MASKED}" AUTOAGENT_ALLOW_UNVERIFIED=1 \
     bash "${SANDBOX_SCRIPT}" --report "${WORK}/report.json" --agents-dir "${AGENTS}"
   [[ "${status}" -ne 16 ]] || return 1
@@ -259,7 +259,7 @@ run_single() {
   [[ "${status}" -eq 16 ]] || return 1
   # Dry-run over the same absent roots does NOT abort.
   run env -u AUTOAGENT_ALLOW_UNVERIFIED -u AUTOAGENT_PREFLIGHT_ACTIVE \
-    HOME="${FAKE_HOME}" AUTOAGENT_REPORTS_DIR="${REPORTS}" \
+    HOME="${FAKE_HOME}" GA_DATA_ROOT="${FAKE_HOME}/.glass-atrium" AUTOAGENT_REPORTS_DIR="${REPORTS}" \
     bash "${SANDBOX_SCRIPT}" --dry-run --report "${WORK}/report.json" --agents-dir "${AGENTS}"
   [[ "${status}" -ne 16 ]] || return 1
   [[ "${output}" != *"test root absent"* ]] || return 1
@@ -276,7 +276,7 @@ run_single() {
   [[ "${status}" -eq 16 ]] || return 1
   # With the sentinel the gate is skipped.
   run env -u AUTOAGENT_ALLOW_UNVERIFIED \
-    HOME="${FAKE_HOME}" AUTOAGENT_REPORTS_DIR="${REPORTS}" \
+    HOME="${FAKE_HOME}" GA_DATA_ROOT="${FAKE_HOME}/.glass-atrium" AUTOAGENT_REPORTS_DIR="${REPORTS}" \
     PATH="${PSQL_MASKED}" AUTOAGENT_PREFLIGHT_ACTIVE=1 \
     bash "${SANDBOX_SCRIPT}" --report "${WORK}/report.json" --agents-dir "${AGENTS}"
   [[ "${status}" -ne 16 ]] || return 1
@@ -390,7 +390,7 @@ run_single() {
   # Sentineled batch skips the whole gate → the runner is never shelled.
   if ga_guard_path "${MARKER}"; then rm -f -- "${MARKER:?}"; fi
   run env -u AUTOAGENT_ALLOW_UNVERIFIED \
-    HOME="${FAKE_HOME}" AUTOAGENT_REPORTS_DIR="${REPORTS}" \
+    HOME="${FAKE_HOME}" GA_DATA_ROOT="${FAKE_HOME}/.glass-atrium" AUTOAGENT_REPORTS_DIR="${REPORTS}" \
     PATH="${PSQL_MASKED}" AUTOAGENT_PREFLIGHT_ACTIVE=1 \
     AUTOAGENT_BATS_RUNNER="${WORK}/runner.sh" \
     bash "${SANDBOX_SCRIPT}" --report "${WORK}/report.json" --agents-dir "${AGENTS}"
@@ -559,7 +559,7 @@ print("%s|%s|%s|%s" % (row["status"], row["reason"], row["exit_code"], row["suit
   mkdir -p -- "${unwritable}"
   chmod a-w "${unwritable}"
   run env -u AUTOAGENT_ALLOW_UNVERIFIED -u AUTOAGENT_PREFLIGHT_ACTIVE \
-    HOME="${FAKE_HOME}" AUTOAGENT_REPORTS_DIR="${unwritable}" \
+    HOME="${FAKE_HOME}" GA_DATA_ROOT="${FAKE_HOME}/.glass-atrium" AUTOAGENT_REPORTS_DIR="${unwritable}" \
     PATH="${PSQL_MASKED}" AUTOAGENT_BATS_RUNNER="${WORK}/runner-red.sh" \
     bash "${SANDBOX_SCRIPT}" --report "${WORK}/report.json" --agents-dir "${AGENTS}"
   # The gate's own named exit survives a failed persistence attempt.

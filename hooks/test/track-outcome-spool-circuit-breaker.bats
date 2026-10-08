@@ -114,7 +114,7 @@ write_payload() {
 # read from the calling test's shell vars.
 run_hook() {
   run env \
-    HOME="${SANDBOX_HOME}" \
+    HOME="${SANDBOX_HOME}" GA_DATA_ROOT="${SANDBOX_HOME}/.glass-atrium" \
     PATH="${SHIM_DIR}:${PATH}" \
     CLAUDE_GATE_INFLIGHT="" \
     T9_CORRECTION_DETECTION="false" \

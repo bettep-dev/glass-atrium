@@ -39,7 +39,7 @@ setup() {
 bash_hook() {
   local envelope
   envelope="$(jq -cn --arg c "${1}" '{tool_name: "Bash", tool_input: {command: $c}}')"
-  run env "HOME=${FAKE_HOME}" "${HOOK_SH}" <<<"${envelope}"
+  run env "HOME=${FAKE_HOME}" "GA_DATA_ROOT=${FAKE_HOME}/.glass-atrium" "${HOOK_SH}" <<<"${envelope}"
 }
 
 # ── T1-1.a — a redirect target in every varied spelling blocks ───────────────

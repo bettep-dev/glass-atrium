@@ -281,7 +281,7 @@ PY
 
 run_hook() {
   run env \
-    HOME="${SANDBOX_HOME}" \
+    HOME="${SANDBOX_HOME}" GA_DATA_ROOT="${SANDBOX_HOME}/.glass-atrium" \
     CLAUDE_GATE_INFLIGHT="" \
     PYTHONPATH="${EPH_PG_RECORDER_DIR}:${PSYCOPG_PP}" \
     SUBAGENT_TOOL_BUDGET_DIR="${BUDGET_DIR}" \
@@ -676,7 +676,7 @@ il_write_payload() {
 il_run_hook() {
   il_write_payload "$@"
   run env \
-    HOME="${SANDBOX_HOME}" \
+    HOME="${SANDBOX_HOME}" GA_DATA_ROOT="${SANDBOX_HOME}/.glass-atrium" \
     PGHOST="/nonexistent-socket-xyzzy" \
     CLAUDE_GATE_INFLIGHT="" \
     SUBAGENT_TOOL_BUDGET_DIR="${BUDGET_DIR}" \
@@ -688,7 +688,7 @@ il_run_hook() {
 il_run_hook_db() {
   il_write_payload "$@"
   run env \
-    HOME="${SANDBOX_HOME}" \
+    HOME="${SANDBOX_HOME}" GA_DATA_ROOT="${SANDBOX_HOME}/.glass-atrium" \
     CLAUDE_GATE_INFLIGHT="" \
     PYTHONPATH="${PSYCOPG_PP}" \
     SUBAGENT_TOOL_BUDGET_DIR="${BUDGET_DIR}" \

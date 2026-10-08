@@ -87,7 +87,7 @@ get_step_number() {
 
 # Run the hook with a session-start envelope on stdin under the sandbox HOME.
 run_hook() {
-  run env HOME="${FAKE_HOME}" bash "${HOOK_SH}" <<<'{"hook_event_name":"SessionStart","session_id":"sess-smoke"}'
+  run env HOME="${FAKE_HOME}" GA_DATA_ROOT="${FAKE_HOME}/.glass-atrium" bash "${HOOK_SH}" <<<'{"hook_event_name":"SessionStart","session_id":"sess-smoke"}'
 }
 
 # Runs the hook on a SessionStart envelope naming a corpus transcript.
@@ -96,7 +96,7 @@ run_session_source() {
   local envelope
   envelope="$(jq -cn --arg source "${1}" --arg transcript "${CORPUS}/${2}.jsonl" \
     '{hook_event_name: "SessionStart", session_id: "sess-smoke", source: $source, transcript_path: $transcript}')"
-  run env HOME="${FAKE_HOME}" CLAUDE_CODE_ENTRYPOINT="${3}" bash "${HOOK_SH}" <<<"${envelope}"
+  run env HOME="${FAKE_HOME}" GA_DATA_ROOT="${FAKE_HOME}/.glass-atrium" CLAUDE_CODE_ENTRYPOINT="${3}" bash "${HOOK_SH}" <<<"${envelope}"
 }
 
 # Prints the quote of the one [REPLY LANGUAGE] line in ${output}, `none` without one, or `malformed: <lines>`
@@ -167,7 +167,7 @@ get_pointer_quote() {
 
 @test "an empty or closed stdin still yields the session context, with no pointer line" {
   local got
-  run env HOME="${FAKE_HOME}" CLAUDE_CODE_ENTRYPOINT=cli bash "${HOOK_SH}" </dev/null
+  run env HOME="${FAKE_HOME}" GA_DATA_ROOT="${FAKE_HOME}/.glass-atrium" CLAUDE_CODE_ENTRYPOINT=cli bash "${HOOK_SH}" </dev/null
   got="$(get_pointer_quote)"
   [[ "${status}" -eq 0 && "${output}" == *"[ORCHESTRATOR SESSION]"* && "${got}" == none ]] || {
     echo "empty stdin: exit ${status}: ${output}"
@@ -175,7 +175,7 @@ get_pointer_quote() {
   }
   # Closed inside the child: a `run ... <&-` lets bats reuse fd 0 for its own capture pipe.
   # shellcheck disable=SC2016  # $1 expands in the child shell, not here
-  run env HOME="${FAKE_HOME}" CLAUDE_CODE_ENTRYPOINT=cli bash -c 'exec 0<&-; exec bash "$1"' _ "${HOOK_SH}"
+  run env HOME="${FAKE_HOME}" GA_DATA_ROOT="${FAKE_HOME}/.glass-atrium" CLAUDE_CODE_ENTRYPOINT=cli bash -c 'exec 0<&-; exec bash "$1"' _ "${HOOK_SH}"
   got="$(get_pointer_quote)"
   [[ "${status}" -eq 0 && "${output}" == *"[ORCHESTRATOR SESSION]"* && "${got}" == none ]] || {
     echo "closed stdin: exit ${status}: ${output}"
@@ -326,7 +326,7 @@ get_pointer_quote() {
     'printf "%s\n" "$*" >>"${CURL_LOG}"' \
     "printf '%s\\n' '{\"total\":0,\"rows\":[],${OPEN_STAGES_FILTER}}'" >"${stub}/curl"
   chmod +x "${stub}/curl"
-  run env HOME="${FAKE_HOME}" CURL_LOG="${log}" PATH="${stub}:${PATH}" bash "${HOOK_SH}" \
+  run env HOME="${FAKE_HOME}" GA_DATA_ROOT="${FAKE_HOME}/.glass-atrium" CURL_LOG="${log}" PATH="${stub}:${PATH}" bash "${HOOK_SH}" \
     <<<'{"hook_event_name":"SessionStart","session_id":"sess-smoke"}'
   [[ "${status}" -eq 0 && -f "${log}" ]] || {
     echo "exit ${status}, no curl call: ${output}"

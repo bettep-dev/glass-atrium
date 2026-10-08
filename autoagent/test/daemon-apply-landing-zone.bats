@@ -210,7 +210,7 @@ write_proposal_row() {
 # AUTOAGENT_PREFLIGHT_ACTIVE=1: this suite exercises the landing-zone guard, not
 # the test-suite preflight, so the sentinel lets the apply path run directly.
 run_apply() {
-  run env PATH="${STUB}" HOME="${WORK}/home" AUTOAGENT_REPORTS_DIR="${REPORTS}" \
+  run env PATH="${STUB}" HOME="${WORK}/home" GA_DATA_ROOT="${WORK}/home/.glass-atrium" AUTOAGENT_REPORTS_DIR="${REPORTS}" \
     AUTOAGENT_PREFLIGHT_ACTIVE=1 STUB_SINGLE_ROW="${WORK}/proposal.row" \
     AUTOAGENT_DAEMON_CYCLE_PY="${GUARD_SEAM}" \
     bash "${REAL_SCRIPT}" --proposal-id "${PROPOSAL_ID}" --agents-dir "${AGENTS}"
@@ -481,7 +481,7 @@ applied_log_path() {
   # child exits (the TERM trap cannot run while git is still in flight).
   local ready="${WORK}/git-apply.ready" resume="${WORK}/git-apply.resume"
 
-  env PATH="${STUB}" HOME="${WORK}/home" AUTOAGENT_REPORTS_DIR="${REPORTS}" \
+  env PATH="${STUB}" HOME="${WORK}/home" GA_DATA_ROOT="${WORK}/home/.glass-atrium" AUTOAGENT_REPORTS_DIR="${REPORTS}" \
     LZ_GIT_APPLY_READY="${ready}" LZ_GIT_APPLY_RESUME="${resume}" \
     AUTOAGENT_PREFLIGHT_ACTIVE=1 STUB_SINGLE_ROW="${WORK}/proposal.row" \
     AUTOAGENT_DAEMON_CYCLE_PY="${GUARD_SEAM}" \

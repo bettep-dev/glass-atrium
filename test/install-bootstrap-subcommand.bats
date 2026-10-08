@@ -371,7 +371,7 @@ SH
   t6_build_release_fixture 1.0.9
   t6_build_fetch_stub
   t6_build_stock_toolbin || return 1
-  run env -i PATH="${TOOLBIN}" HOME="${SANDBOX}" TMPDIR="${SANDBOX}" \
+  run env -i PATH="${TOOLBIN}" HOME="${SANDBOX}" GA_DATA_ROOT="${SANDBOX}/.glass-atrium" TMPDIR="${SANDBOX}" \
     FIXTURE_MANIFEST="${FIXTURE_MANIFEST}" FIXTURE_BUNDLE="${FIXTURE_BUNDLE}" \
     FETCH_URL_LOG="${FETCH_URL_LOG}" FETCH_ARGV_LOG="${FETCH_ARGV_LOG}" \
     GA_DIR="${SANDBOX}/ga-install" GA_RELEASE_REPO="owner/repo" GA_NO_RUN=1 \
@@ -388,7 +388,7 @@ SH
   t6_build_release_fixture 1.0.9
   t6_build_fetch_stub
   t6_build_stock_toolbin || return 1
-  run env -i PATH="${TOOLBIN}" HOME="${SANDBOX}" TMPDIR="${SANDBOX}" \
+  run env -i PATH="${TOOLBIN}" HOME="${SANDBOX}" GA_DATA_ROOT="${SANDBOX}/.glass-atrium" TMPDIR="${SANDBOX}" \
     FIXTURE_MANIFEST="${FIXTURE_MANIFEST}" FIXTURE_BUNDLE="${FIXTURE_BUNDLE}" \
     FETCH_URL_LOG="${FETCH_URL_LOG}" FETCH_ARGV_LOG="${FETCH_ARGV_LOG}" \
     GA_DIR="${SANDBOX}/ga-install" GA_RELEASE_REPO="owner/repo" GA_NO_RUN=1 \
