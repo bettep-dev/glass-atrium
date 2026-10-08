@@ -173,7 +173,7 @@ run_lint() {
   done < <(printf '%s' "${PATH}" | tr ':' '\n')
   [[ ! -e "${nocurl}/curl" ]] || { echo "curl leaked into the farm" >&2; return 1; }
 
-  run env -i PATH="${nocurl}" HOME="${WORK}" \
+  run env -i PATH="${nocurl}" HOME="${WORK}" GA_DATA_ROOT="${WORK}/.glass-atrium" \
     WORKFLOW_GATE_MONITOR_URL="http://127.0.0.1:16145/api/clauded-docs" \
     WORKFLOW_GATE_FIRED_LOG="${TRACE_LOG}" \
     bash -c '

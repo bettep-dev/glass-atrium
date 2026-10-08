@@ -37,7 +37,7 @@ run_hook_with_no_python3() {
   bindir="$(minimal_bin_without_python3)"
   # SC2016: the inner $1/$2 are the child bash's OWN positionals — no expansion here.
   # shellcheck disable=SC2016
-  run env "PATH=${bindir}" "HOME=${home}" bash -c '
+  run env "PATH=${bindir}" "HOME=${home}" "GA_DATA_ROOT=${home}/.glass-atrium" bash -c '
     printf "%s" "$1" | bash "$2"
   ' _ "${input}" "${hook}"
 }

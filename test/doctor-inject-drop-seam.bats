@@ -30,6 +30,7 @@
 #        let a live shed be reported as a wiring warn or the reverse.
 #   AC6  a BOUND part slot that cannot deliver — no runnable python3, or an unreadable agent-registry —
 #        WARNs and names the blocker; a healthy bound channel and an unbound broken one stay silent.
+#   SEAL a producer run writes its spawn manifest line under the suite's data root, never the live logs.
 #
 # Run via: bats test/doctor-inject-drop-seam.bats
 # Requires: bats, jq, bash 3.2+

@@ -108,7 +108,7 @@ write_payload() {
 
 run_hook() {
   run env \
-    HOME="${SANDBOX_HOME}" \
+    HOME="${SANDBOX_HOME}" GA_DATA_ROOT="${SANDBOX_HOME}/.glass-atrium" \
     PATH="${SHIM_DIR}:${PATH}" \
     TMPDIR="${CACHE_TMP}" \
     CLAUDE_GATE_INFLIGHT="" \
@@ -317,7 +317,7 @@ clean_block() {
   write_parent_transcript "진행해" 0
   write_payload "$(emitted_correction_block)"
   run env \
-    HOME="${SANDBOX_HOME}" \
+    HOME="${SANDBOX_HOME}" GA_DATA_ROOT="${SANDBOX_HOME}/.glass-atrium" \
     PATH="${SHIM_DIR}:${PATH}" \
     TMPDIR="${CACHE_TMP}" \
     CLAUDE_GATE_INFLIGHT="" \

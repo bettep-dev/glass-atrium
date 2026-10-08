@@ -35,7 +35,7 @@ line3"
   local before
   before="$(cat "${logdir}/monitor.out.log")"
 
-  run env HOME="${MR_TMP}" bash "${ROTATE_SH}"
+  run env HOME="${MR_TMP}" GA_DATA_ROOT="${MR_TMP}/.glass-atrium" bash "${ROTATE_SH}"
   # Old Linux `stat -f "%z"` would die in the ERR trap here — exit 0 is the portability proof.
   [ "${status}" -eq 0 ] || { echo "exit ${status}: ${output}"; return 1; }
 
@@ -49,7 +49,7 @@ line3"
 
 @test "missing log file: skipped silently, exit 0" {
   # No monitor.out.log / monitor.err.log present — rotate_one returns early per file.
-  run env HOME="${MR_TMP}" bash "${ROTATE_SH}"
+  run env HOME="${MR_TMP}" GA_DATA_ROOT="${MR_TMP}/.glass-atrium" bash "${ROTATE_SH}"
   [ "${status}" -eq 0 ] || { echo "exit ${status}: ${output}"; return 1; }
   [[ "${output}" != *"rotated:"* ]] || return 1
 }
@@ -73,7 +73,7 @@ line3"
   done
   printf 'small\n' >"${sink}/pg-backup.log"
 
-  run env HOME="${MR_TMP}" bash "${ROTATE_SH}"
+  run env HOME="${MR_TMP}" GA_DATA_ROOT="${MR_TMP}/.glass-atrium" bash "${ROTATE_SH}"
   [ "${status}" -eq 0 ] || { echo "exit ${status}: ${output}"; return 1; }
 
   for row in "${rows[@]}"; do

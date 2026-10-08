@@ -83,7 +83,7 @@ run_hook() {
   local tool="${1}" tin="${2}" envelope
   envelope="$(jq -cn --arg t "${tool}" --argjson ti "${tin}" \
     '{tool_name: $t, tool_input: $ti}')"
-  run env "HOME=${FAKE_HOME}" "${HOOK_SH}" <<<"${envelope}"
+  run env "HOME=${FAKE_HOME}" "GA_DATA_ROOT=${FAKE_HOME}/.glass-atrium" "${HOOK_SH}" <<<"${envelope}"
 }
 
 # Args: pairs of old,new → compact JSON array of edits elements.

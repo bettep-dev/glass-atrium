@@ -87,7 +87,7 @@ run_unload() {
   # is intentionally left on PATH — every deletion target lives in the sandbox)
   mkdir -p "${FAKEHOME}/Library/LaunchAgents"
   : >"${FAKEHOME}/Library/LaunchAgents/com.glass-atrium.monitor.plist"
-  run_unload -u GA_TARGET_HOME HOME="${FAKEHOME}"
+  run_unload -u GA_TARGET_HOME HOME="${FAKEHOME}" GA_DATA_ROOT="${FAKEHOME}/.glass-atrium"
   [[ "${status}" -eq 0 ]]
   [[ "${output}" == *"sandbox target — launchd domain untouched"* ]]
   [[ ! -e "${SANDBOX}/launchctl-args" ]]

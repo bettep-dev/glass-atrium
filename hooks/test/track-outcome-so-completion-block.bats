@@ -361,7 +361,7 @@ PY
 # The failed PG write spools the outcome envelope into ${CB_TMP}/spool.
 run_hook_stderr() {
   run env \
-    HOME="${SANDBOX_HOME}" \
+    HOME="${SANDBOX_HOME}" GA_DATA_ROOT="${SANDBOX_HOME}/.glass-atrium" \
     PGHOST="/nonexistent-socket-xyzzy" \
     CLAUDE_GATE_INFLIGHT="" \
     OUTCOME_SPOOL_DIR="${CB_TMP}/spool" \
@@ -380,7 +380,7 @@ spooled_field() {
 # VALUES reach the row, and that every connection the hook made reached only that cluster.
 run_hook_db() {
   run env \
-    HOME="${SANDBOX_HOME}" \
+    HOME="${SANDBOX_HOME}" GA_DATA_ROOT="${SANDBOX_HOME}/.glass-atrium" \
     CLAUDE_GATE_INFLIGHT="" \
     PYTHONPATH="${EPH_PG_RECORDER_DIR}:${PSYCOPG_PP}" \
     bash -c 'bash "$1" < "$2" 2>&1' _ "${HOOK_SH}" "${PAYLOAD_FILE}"

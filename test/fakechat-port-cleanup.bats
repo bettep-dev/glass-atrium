@@ -27,7 +27,7 @@ setup() {
   # captured before STUB_BIN joins PATH — teardown's removal must bypass the rm recorder.
   REAL_RM="$(command -v rm)"
   # ga_init_env + atrium_config_port read under HOME → a scratch home, never the live one.
-  export HOME="${SANDBOX}/home"
+  export HOME="${SANDBOX}/home" GA_DATA_ROOT="${SANDBOX}/home/.glass-atrium"
   mkdir -p "${HOME}"
   # settle-poll → instant (a real ceiling would busy-spin against the no-op sleep).
   export FAKECHAT_PORT_FREE_TIMEOUT_SECS=0

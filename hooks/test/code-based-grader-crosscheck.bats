@@ -68,7 +68,7 @@ grade_cc() {
     GR_WRITES="${8:-}" \
     GR_HOME="${9:-}" \
     bash -c '
-      [[ -n "${GR_HOME}" ]] && export HOME="${GR_HOME}"
+      [[ -n "${GR_HOME}" ]] && export HOME="${GR_HOME}" GA_DATA_ROOT="${GR_HOME}/.glass-atrium"
       source "$1"
       TASK_TYPE="${GR_TASK_TYPE}"
       METRIC_PASS="${GR_METRIC_PASS}"

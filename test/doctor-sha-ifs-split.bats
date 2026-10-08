@@ -44,6 +44,9 @@ FIXED_HASH="0000000000000000000000000000000000000000000000000000000000000000"
 setup() {
   load 'lib/bats-db-seal'
   ga_bats_db_seal
+  # the doctor reads its drop log, rewire marker and auth reports under GA_DATA_ROOT → this test's own root
+  export GA_DATA_ROOT="${BATS_TEST_TMPDIR:?}/ga-data-root"
+  mkdir -p "${GA_DATA_ROOT}/logs" "${GA_DATA_ROOT}/data"
   command -v jq >/dev/null 2>&1 || skip "jq required"
   [[ -f "${GA}/lib/ga-core.sh" ]] || skip "ga-core.sh not found: ${GA}/lib/ga-core.sh"
 

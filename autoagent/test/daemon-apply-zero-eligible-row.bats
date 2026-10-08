@@ -243,7 +243,7 @@ teardown() {
 run_apply() {
   local path="$1"
   shift
-  run env -u AUTOAGENT_ALLOW_UNVERIFIED PATH="${path}" HOME="${WORK}/home" \
+  run env -u AUTOAGENT_ALLOW_UNVERIFIED PATH="${path}" HOME="${WORK}/home" GA_DATA_ROOT="${WORK}/home/.glass-atrium" \
     AUTOAGENT_REPORTS_DIR="${REPORTS}" AUTOAGENT_PREFLIGHT_ACTIVE=1 \
     AUTOAGENT_DAEMON_CYCLE_PY="${CYCLE_STUB}" STUB_CYCLE_CALLS="${CYCLE_CALLS}" \
     STUB_PSQL_LOG="${PSQL_LOG}" STUB_TARGET="${AGENTS}/probe.md" \
@@ -364,7 +364,7 @@ print(json.dumps({"patches": rows}))
   cp -p -- "${GA}/scripts/lib/apply-lock.sh" "${sandbox}/scripts/lib/apply-lock.sh"
   cp -p -- "${GA}/scripts/lib/path-guard.sh" "${sandbox}/scripts/lib/path-guard.sh"
   run env -u AUTOAGENT_ALLOW_UNVERIFIED -u AUTOAGENT_PREFLIGHT_ACTIVE \
-    PATH="${MIRROR}" HOME="${WORK}/home" AUTOAGENT_REPORTS_DIR="${REPORTS}" \
+    PATH="${MIRROR}" HOME="${WORK}/home" GA_DATA_ROOT="${WORK}/home/.glass-atrium" AUTOAGENT_REPORTS_DIR="${REPORTS}" \
     bash "${sandbox}/autoagent/daemon-apply.sh" \
     --report "${WORK}/report.json" --agents-dir "${AGENTS}"
   [[ "${status}" -eq 16 ]] || {
@@ -454,7 +454,7 @@ run_apply_gate() {
   printf '#!/bin/bash\nexit 0\n' >"${runner}"
   chmod +x "${runner}"
   run env -u AUTOAGENT_ALLOW_UNVERIFIED -u AUTOAGENT_PREFLIGHT_ACTIVE \
-    PATH="${MIRROR}" HOME="${WORK}/home" AUTOAGENT_REPORTS_DIR="${REPORTS}" \
+    PATH="${MIRROR}" HOME="${WORK}/home" GA_DATA_ROOT="${WORK}/home/.glass-atrium" AUTOAGENT_REPORTS_DIR="${REPORTS}" \
     AUTOAGENT_BATS_RUNNER="${runner}" \
     bash "${REAL_SCRIPT}" --report "${WORK}/report.json" --agents-dir "${AGENTS}"
 }
@@ -472,7 +472,7 @@ run_apply_gate() {
 }
 
 @test "AC7: a cycle that SKIPPED the gate via the operator override writes gate=skipped" {
-  run env PATH="${MIRROR}" HOME="${WORK}/home" AUTOAGENT_REPORTS_DIR="${REPORTS}" \
+  run env PATH="${MIRROR}" HOME="${WORK}/home" GA_DATA_ROOT="${WORK}/home/.glass-atrium" AUTOAGENT_REPORTS_DIR="${REPORTS}" \
     AUTOAGENT_ALLOW_UNVERIFIED=1 \
     bash "${REAL_SCRIPT}" --report "${WORK}/report.json" --agents-dir "${AGENTS}"
   [[ "${status}" -eq 0 ]] || {

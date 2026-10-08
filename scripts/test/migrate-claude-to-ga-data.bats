@@ -43,7 +43,7 @@ teardown() {
 # run the migration op as a DIRECT command in fixture-root SANDBOX mode.
 run_migrate() {
   run env GA_MIGRATE_SRC_ROOT="${SRC}" GA_MIGRATE_DEST_ROOT="${DST}" \
-    GA_MIGRATE_TRASH_DIR="${TRASH}" HOME="${SANDBOX}" \
+    GA_MIGRATE_TRASH_DIR="${TRASH}" HOME="${SANDBOX}" GA_DATA_ROOT="${SANDBOX}/.glass-atrium" \
     "${SCRIPT}" "$@"
 }
 
@@ -191,7 +191,7 @@ run_migrate_host_lifecycle() {
     printf 'plist\n' >"${agents}/com.glass-atrium.${job}.plist"
   done
   run env -u GA_MIGRATE_SRC_ROOT GA_MIGRATE_DEST_ROOT="${DST}" GA_MIGRATE_TRASH_DIR="${TRASH}" \
-    HOME="${SANDBOX}" PATH="${bin}:${PATH}" "${SCRIPT}"
+    HOME="${SANDBOX}" GA_DATA_ROOT="${SANDBOX}/.glass-atrium" PATH="${bin}:${PATH}" "${SCRIPT}"
 }
 
 @test "migrate: quiesce boots out every retired label and kills every retired session" {

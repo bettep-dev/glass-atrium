@@ -136,7 +136,7 @@ build_release() {
 # GA_NO_RUN keeps handoff() from exec'ing the launcher; `run` sets the usual
 # $status/$output globals for the calling test.
 run_install() {
-  run env HOME="${FAKE_HOME}" \
+  run env HOME="${FAKE_HOME}" GA_DATA_ROOT="${FAKE_HOME}/.glass-atrium" \
     GA_DIR="${TARGET}" \
     GA_NO_RUN=1 \
     GA_FARM_CALL_LOG="${WORK}/farm-calls.log" \

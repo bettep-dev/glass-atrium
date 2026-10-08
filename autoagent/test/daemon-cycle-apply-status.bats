@@ -213,7 +213,7 @@ EOF
 # AUTOAGENT_CLAUDE_BIN is unset because an ambient value short-circuits the resolution the stub feeds.
 run_driver() {
   run env -u AUTOAGENT_CLAUDE_BIN \
-    HOME="${FAKE_HOME}" AUTOAGENT_REPORTS_DIR="${BACKFILL_REPORTS}" AUTOAGENT_PYTHON_BIN=python3 \
+    HOME="${FAKE_HOME}" GA_DATA_ROOT="${FAKE_HOME}/.glass-atrium" AUTOAGENT_REPORTS_DIR="${BACKFILL_REPORTS}" AUTOAGENT_PYTHON_BIN=python3 \
     PATH="${WORK}/bin:${PATH}" bash "${DRIVER}" --out "${OUT_JSON}" "$@"
 }
 

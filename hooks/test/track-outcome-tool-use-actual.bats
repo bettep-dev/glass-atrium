@@ -93,7 +93,7 @@ run_hook() {
     transcript_path: "/nonexistent/parent.jsonl"
   }' >"${PAYLOAD_FILE}"
   run env \
-    HOME="${TU_TMP}/home" \
+    HOME="${TU_TMP}/home" GA_DATA_ROOT="${TU_TMP}/home/.glass-atrium" \
     PGHOST="/nonexistent-socket-xyzzy" \
     CLAUDE_GATE_INFLIGHT="" \
     SUBAGENT_TOOL_BUDGET_DIR="${BUDGET_DIR}" \

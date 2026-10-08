@@ -41,6 +41,9 @@ TUI="${GA}/glass-atrium"
 setup() {
   load 'lib/bats-db-seal'
   ga_bats_db_seal
+  # the doctor reads its drop log, rewire marker and auth reports under GA_DATA_ROOT → this test's own root
+  export GA_DATA_ROOT="${BATS_TEST_TMPDIR:?}/ga-data-root"
+  mkdir -p "${GA_DATA_ROOT}/logs" "${GA_DATA_ROOT}/data"
   [[ -f "${CORE}" ]] || skip "ga-core.sh not found: ${CORE}"
   [[ -f "${TUI}" ]] || skip "glass-atrium not found: ${TUI}"
   command -v awk >/dev/null 2>&1 || skip "awk required"

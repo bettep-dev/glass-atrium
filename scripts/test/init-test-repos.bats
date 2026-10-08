@@ -20,7 +20,7 @@ setup() {
   printf 'fixture-c\n' >"${GA_ROOT}/scripts/test/c.txt"
   # Hermetic git: synthetic HOME (no global config / gpgsign leakage from the
   # host) + env identity so commits work without any user config.
-  export HOME="${WORK}/home"
+  export HOME="${WORK}/home" GA_DATA_ROOT="${WORK}/home/.glass-atrium"
   mkdir -p "${HOME}"
   export GIT_CONFIG_NOSYSTEM=1
   export GIT_AUTHOR_NAME='ga-fixture' GIT_AUTHOR_EMAIL='ga@fixture.invalid'

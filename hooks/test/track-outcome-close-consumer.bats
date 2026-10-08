@@ -95,7 +95,7 @@ run_hook() {
     ]
   }' >"${PAYLOAD_FILE}"
   run env \
-    HOME="${SANDBOX_HOME}" \
+    HOME="${SANDBOX_HOME}" GA_DATA_ROOT="${SANDBOX_HOME}/.glass-atrium" \
     PGHOST="/nonexistent-socket-xyzzy" \
     CLAUDE_GATE_INFLIGHT="" \
     ATRIUM_MONITOR_PORT="${2}" \

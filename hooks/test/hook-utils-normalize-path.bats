@@ -26,7 +26,7 @@ setup() {
 
 # Run hook_normalize_path under a pinned HOME. Args: $1=HOME value $2=input path.
 normalize_with_home() {
-  run env HOME="${1}" bash -c 'source "$1"; hook_normalize_path "$2"' _ "${REAL_LIB}" "${2}"
+  run env HOME="${1}" GA_DATA_ROOT="${1}/.glass-atrium" bash -c 'source "$1"; hook_normalize_path "$2"' _ "${REAL_LIB}" "${2}"
 }
 
 @test "exact ~ expands to HOME" {

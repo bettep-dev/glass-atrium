@@ -106,7 +106,7 @@ PY
 
 run_hook() {
   run env \
-    HOME="${SANDBOX_HOME}" \
+    HOME="${SANDBOX_HOME}" GA_DATA_ROOT="${SANDBOX_HOME}/.glass-atrium" \
     PATH="${SHIM_DIR}:${PATH}" \
     CLAUDE_GATE_INFLIGHT="" \
     T9_CORRECTION_DETECTION="false" \
@@ -207,7 +207,7 @@ completion_block() {
   printf '%s\n' 52 >"${BUDGET_DIR}/${AGENT_ID}"
   write_inline_payload "killed at the budget ceiling"
   run env \
-    HOME="${SANDBOX_HOME}" \
+    HOME="${SANDBOX_HOME}" GA_DATA_ROOT="${SANDBOX_HOME}/.glass-atrium" \
     PATH="${SHIM_DIR}:${PATH}" \
     CLAUDE_GATE_INFLIGHT="" \
     T9_CORRECTION_DETECTION="false" \

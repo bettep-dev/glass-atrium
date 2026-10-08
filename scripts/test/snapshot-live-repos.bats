@@ -51,7 +51,7 @@ setup() {
   # file rather than GIT_AUTHOR_* env (env would outrank the tool's own -c
   # identity and hide a regression in it), and gpgsign deliberately ON with an
   # unusable signer so an unsigned-commit regression loud-fails.
-  export HOME="${WORK}/home"
+  export HOME="${WORK}/home" GA_DATA_ROOT="${WORK}/home/.glass-atrium"
   mkdir -p "${HOME}"
   export GIT_CONFIG_NOSYSTEM=1
   cat >"${HOME}/.gitconfig" <<EOF

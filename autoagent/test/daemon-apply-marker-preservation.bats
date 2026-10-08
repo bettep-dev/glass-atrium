@@ -319,7 +319,7 @@ gutting_diff_b64() {
 # the pin stronger — the failure still fires with removals live.
 run_apply() {
   run env PATH="${STUB}:${PATH}" \
-    HOME="${FAKE_HOME}" \
+    HOME="${FAKE_HOME}" GA_DATA_ROOT="${FAKE_HOME}/.glass-atrium" \
     AUTOAGENT_REMOVAL_LIVE=1 \
     AUTOAGENT_REPORTS_DIR="${REPORTS}" \
     AUTOAGENT_PREFLIGHT_ACTIVE=1 \

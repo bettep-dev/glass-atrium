@@ -181,7 +181,7 @@ _e2e_run_hook() {
       hook_event_name: "SubagentStop", agent_type: $agent, agent_id: $aid,
       session_id: $sess, cwd: $cwd, transcript_path: "/nonexistent/parent.jsonl"
     }')"
-  run env HOME="${EPH_HOME}" PYTHONPATH="${EPH_PG_RECORDER_DIR}:${CD_PSYCOPG_PP}" \
+  run env HOME="${EPH_HOME}" GA_DATA_ROOT="${EPH_HOME}/.glass-atrium" PYTHONPATH="${EPH_PG_RECORDER_DIR}:${CD_PSYCOPG_PP}" \
     PGHOST="${EPH_SOCKDIR}" PGPORT="${EPH_PORT}" CLAUDE_GATE_INFLIGHT="" \
     bash -c 'printf "%s" "$1" | bash "$2" 2>&1' _ "${payload}" "${CD_HOOK_SH}"
 }
@@ -225,7 +225,7 @@ _e2e_run_hook() {
     signals: [], learning_hint: null
   }')"
 
-  run env HOME="${EPH_HOME}" PYTHONPATH="${EPH_PG_RECORDER_DIR}:${CD_PSYCOPG_PP}" \
+  run env HOME="${EPH_HOME}" GA_DATA_ROOT="${EPH_HOME}/.glass-atrium" PYTHONPATH="${EPH_PG_RECORDER_DIR}:${CD_PSYCOPG_PP}" \
     PGHOST="${EPH_SOCKDIR}" PGPORT="${EPH_PORT}" \
     bash -c 'printf "%s" "$1" | python3 "$2" 2>&1' _ "${envelope}" "${CD_PG_HELPER}"
   [ "${status}" -eq 0 ] || { echo "helper exit ${status}: ${output}"; return 1; }

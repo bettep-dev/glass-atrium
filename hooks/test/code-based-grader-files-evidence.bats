@@ -79,7 +79,7 @@ grade() {
     GR_FILES="${6:-}" \
     GR_HOME="${7:-}" \
     bash -c '
-      [[ -n "${GR_HOME}" ]] && export HOME="${GR_HOME}"
+      [[ -n "${GR_HOME}" ]] && export HOME="${GR_HOME}" GA_DATA_ROOT="${GR_HOME}/.glass-atrium"
       source "$1"
       TASK_TYPE="${GR_TASK_TYPE}"
       METRIC_PASS="${GR_METRIC_PASS}"

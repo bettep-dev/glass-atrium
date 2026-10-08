@@ -126,7 +126,7 @@ frontmatter_block() {
   local tin envelope
   tin="$(jq -cn --arg c "${cmd}" '{command: $c}')"
   envelope="$(jq -cn --argjson ti "${tin}" '{tool_name: "Bash", tool_input: $ti}')"
-  run env "HOME=${fake_home}" "${HOOK_SH}" <<<"${envelope}"
+  run env "HOME=${fake_home}" "GA_DATA_ROOT=${fake_home}/.glass-atrium" "${HOOK_SH}" <<<"${envelope}"
   [[ "${status}" -eq 2 ]]
 }
 

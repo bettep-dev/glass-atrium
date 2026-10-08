@@ -50,7 +50,7 @@ run_hook() {
   local tool="${1}" tin="${2}" envelope
   envelope="$(jq -cn --arg t "${tool}" --argjson ti "${tin}" \
     '{tool_name: $t, tool_input: $ti}')"
-  run env "HOME=${FAKE_HOME}" "${HOOK_SH}" <<<"${envelope}"
+  run env "HOME=${FAKE_HOME}" "GA_DATA_ROOT=${FAKE_HOME}/.glass-atrium" "${HOOK_SH}" <<<"${envelope}"
 }
 
 write_input() { jq -cn --arg p "${1}" --arg c "${2}" '{file_path: $p, content: $c}'; }
@@ -183,10 +183,10 @@ extract_detect_py() {
     "${FAKE_HOME}/.glass-atrium/wiki/../hooks" \
     "${FAKE_HOME}/.glass-atrium/hooks/../../work" \
     "${FAKE_HOME}/.glass-atrium/agents/glass-atrium-dev-shell.md"; do
-    py="$(env "HOME=${FAKE_HOME}" python3 -c \
+    py="$(env "HOME=${FAKE_HOME}" "GA_DATA_ROOT=${FAKE_HOME}/.glass-atrium" python3 -c \
       'import sys; sys.path.insert(0, sys.argv[1]); import detect_py; sys.stdout.write(detect_py.normalize_path(sys.argv[2]))' \
       "${dir}" "${p}")" || return 1
-    sh="$(env "HOME=${FAKE_HOME}" bash -c 'source "$0"; hook_normalize_path "$1"' "${HOOK_UTILS}" "${p}")" || return 1
+    sh="$(env "HOME=${FAKE_HOME}" "GA_DATA_ROOT=${FAKE_HOME}/.glass-atrium" bash -c 'source "$0"; hook_normalize_path "$1"' "${HOOK_UTILS}" "${p}")" || return 1
     [[ "${py}" == "${sh}" ]] || return 1
   done
 }
