@@ -54,7 +54,7 @@ for _p in (_HOOKS, _LIB, _SCRIPTS, _AUTOAGENT, Path(__file__).resolve().parent):
     if str(_p) not in sys.path:
         sys.path.insert(0, str(_p))
 
-from _pg_seal import seal_pg_reach  # noqa: E402 — test dir anchored above
+from _pg_seal import seal_pg_reach, set_install_tree  # noqa: E402 — test dir anchored above
 
 # Fixed sandbox anchor (mirrors test_ga_paths.py) — no filesystem access happens at
 # consumer import, so a non-real HOME is safe and keeps the assertion deterministic.
@@ -317,6 +317,7 @@ class FlagFileIgnoredByCycleTest(unittest.TestCase):
             patcher.start()
             self.addCleanup(patcher.stop)
         self.pg_reach = seal_pg_reach(self)
+        set_install_tree(self)
         # Spies go on after the seal: each replaces one seam the seal already covers.
         self.calls: list[str] = []
         for name in (

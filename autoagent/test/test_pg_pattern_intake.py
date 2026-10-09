@@ -58,7 +58,7 @@ if str(_AUTOAGENT_DIR) not in sys.path:
 if str(Path(__file__).resolve().parent) not in sys.path:
     sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from _pg_seal import get_ephemeral_connection, seal_pg_reach
+from _pg_seal import get_ephemeral_connection, seal_pg_reach, set_install_tree
 
 _IMPORT_ERROR = SimpleNamespace(pgdw=None, dc=None)
 try:
@@ -535,6 +535,7 @@ class RosterMismatchCycleWiringTest(_RosterDropHarness):
         env = mock.patch.dict(os.environ, {"GA_DATA_ROOT": str(self.root)})
         env.start()
         self.addCleanup(env.stop)
+        set_install_tree(self)
         self.rows = [_intake_row("bug-fix", row_id=950031)]
         # Knobs load at import from this install's daemon-config.json → pin all unset.
         # The pause gate reads (and expires) the install's own update-state flag → off.

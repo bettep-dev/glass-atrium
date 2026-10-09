@@ -52,7 +52,7 @@ if str(Path(__file__).resolve().parent) not in sys.path:
     sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import daemon_cycle as dc  # noqa: E402 — autoagent dir pinned above
-from _pg_seal import seal_pg_reach
+from _pg_seal import seal_pg_reach, set_install_tree
 from daemon_config import TierKnobs
 
 # The writer owns the cause-token→class map; the gate-invariance case compares the
@@ -550,6 +550,7 @@ class DischargeCycleWiringTest(unittest.TestCase):
         os.environ.pop("AUTOAGENT_DISCHARGE_LIVE", None)
         index = _index()
         self.pg_reach = seal_pg_reach(self)
+        set_install_tree(self)
         self.discharged: list[int] = []
         # After the seal: the fetch and the pattern read stand in for the database
         # boundary, and the transition seam records instead of refusing.

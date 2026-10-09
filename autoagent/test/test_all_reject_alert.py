@@ -45,7 +45,7 @@ if str(_STUB_DIR) not in sys.path:
     sys.path.insert(0, str(_STUB_DIR))
 
 import _pg_stub_backend as stub  # noqa: E402 — stdlib-only, anchored above
-from _pg_seal import get_ephemeral_connection, seal_pg_reach  # noqa: E402 — test dir anchored above
+from _pg_seal import get_ephemeral_connection, seal_pg_reach, set_install_tree  # noqa: E402 — test dir anchored above
 
 try:
     import daemon_cycle as dc
@@ -517,6 +517,7 @@ class TestCycleVerdictWiring(unittest.TestCase):
         env.start()
         self.addCleanup(env.stop)
         self.pg_reach = seal_pg_reach(self)
+        set_install_tree(self)
         self.stored: list[object] = []
         patcher = mock.patch.object(
             dc, "create_cycle_verdicts", side_effect=lambda report: self.stored.append(report)

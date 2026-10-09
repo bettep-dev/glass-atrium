@@ -1,7 +1,8 @@
 """Live-DB seal for the autoagent tests: no test reaches an install's live database.
 
 ``seal_pg_reach`` serves tests that drive ``daemon_cycle`` without a database;
-``get_ephemeral_connection`` serves classes that need real PostgreSQL.
+``get_ephemeral_connection`` serves classes that need real PostgreSQL;
+``set_install_tree`` gives a test a temp code tree that is its own install.
 Not a test module (no ``test_`` prefix): consumers anchor this directory on
 ``sys.path``; ``seal_pg_reach`` callers import ``daemon_cycle`` first.
 """
@@ -77,6 +78,20 @@ def seal_pg_reach(testcase: unittest.TestCase) -> list[str]:
                 )
             _patch(testcase, dc, name, _get_refusal(reach, name), create=is_unbound)
     return reach
+
+
+def set_install_tree(testcase: unittest.TestCase) -> None:
+    """Point ``daemon_cycle._INSTALL_ROOT`` at a fresh temp code tree for one test.
+
+    The tree's rendered ``config.toml`` declares the tree itself as ``[paths].root``,
+    so the install-identity check passes as at an install; the data root stays
+    wherever the test points ``GA_DATA_ROOT``.
+    """
+    tree = tempfile.TemporaryDirectory()
+    testcase.addCleanup(tree.cleanup)
+    root = Path(tree.name)
+    (root / "config.toml").write_text(f'[paths]\nroot = "{root}"\n', encoding="utf-8")
+    _patch(testcase, sys.modules["daemon_cycle"], "_INSTALL_ROOT", root)
 
 
 def _patch(
