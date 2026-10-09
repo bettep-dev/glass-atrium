@@ -382,6 +382,7 @@ class ExitCodeContractTest(unittest.TestCase):
                 "AUTH_OUTAGE": int(dc.ExitCode.AUTH_OUTAGE),
                 "BACKFILL_RECORD_FAILED": int(dc.ExitCode.BACKFILL_RECORD_FAILED),
                 "AA_START_REFUSED": int(dc.ExitCode.AA_START_REFUSED),
+                "CYCLE_INSTALL_REFUSED": int(dc.ExitCode.CYCLE_INSTALL_REFUSED),
             },
             {
                 "BACKFILL_PG": 7,
@@ -390,6 +391,7 @@ class ExitCodeContractTest(unittest.TestCase):
                 "AUTH_OUTAGE": 12,
                 "BACKFILL_RECORD_FAILED": 13,
                 "AA_START_REFUSED": 14,
+                "CYCLE_INSTALL_REFUSED": 15,
             },
         )
 

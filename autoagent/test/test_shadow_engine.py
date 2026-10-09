@@ -51,7 +51,7 @@ import _pg_stub_backend as stub
 import daemon_cycle as dc
 import trial_design
 from _outcome_signal import SpawnFacts, get_pair_windows, is_floor_half
-from _pg_seal import get_ephemeral_connection, seal_pg_reach
+from _pg_seal import get_ephemeral_connection, seal_pg_reach, set_install_tree
 
 _NOW = datetime(2026, 10, 5, 6, 0, tzinfo=timezone.utc)
 _DAY = get_pair_windows(_NOW).end  # D
@@ -747,6 +747,7 @@ class DegradedImportTest(unittest.TestCase):
         env.start()
         self.addCleanup(env.stop)
         self.pg_reach = degrade_pg_imports(self)
+        set_install_tree(self)
 
     def test_both_guarded_imports_are_found_and_the_trial_ledger_is_unbound(
         self,
@@ -804,6 +805,7 @@ class CycleWiringTest(_ShadowFixture):
         )
         env.start()
         self.addCleanup(env.stop)
+        set_install_tree(self)
         intake = {
             "id": _PATTERN_ID,
             "agent": _AGENT,

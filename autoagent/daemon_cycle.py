@@ -482,6 +482,8 @@ class ExitCode(IntEnum):
     BACKFILL_RECORD_FAILED = 13
     # --aa-start refused, nothing written — the stderr line names the AA.REFUSAL cause
     AA_START_REFUSED = 14
+    # writing cycle refused before any stage — the code tree is not its install
+    CYCLE_INSTALL_REFUSED = 15
 
 
 # Intra-cycle Haiku spacing (FIX #5) ----------------------------------------
@@ -2104,7 +2106,9 @@ _TIER_USER_PENDING = "user-pending"
 
 
 def _agent_roster(agents_dir: Path) -> frozenset[str]:
-    """Real agent names = stems of `agents/*.md` (single SoT for the roster).
+    """Real agent names = stems of the top-level `agents/*.md`, the non-agent charter excluded
+    (single SoT for the roster; the agent set of `_get_agent_body_name` and of
+    `scripts/update.sh` → `update_roster_names_from_dir`).
 
     Intake validates the `agent` column against this set so a task_type value
     (e.g. 'bug-fix') accidentally written into the agent column never yields a
@@ -2113,7 +2117,9 @@ def _agent_roster(agents_dir: Path) -> frozenset[str]:
     legitimate patterns).
     """
     try:
-        return frozenset(p.stem for p in agents_dir.glob("*.md"))
+        return frozenset(
+            p.stem for p in agents_dir.glob("*.md") if p.name != GLOBAL_RULES_FILE.name
+        )
     except OSError:
         return frozenset()
 
@@ -9350,6 +9356,12 @@ AA = SimpleNamespace(
         MIGRATION=re.compile(r"monitor/prisma/migrations/[^/]+/migration\.sql"),
         LEDGER_NAME=re.compile(r'\bcore"?\."?autoagent_trial_ledger\b'),
     ),
+    # an install's rendered config names the code tree it was installed as
+    INSTALL=SimpleNamespace(
+        CONFIG="config.toml",
+        SECTION="[paths]",
+        ROOT_KEY=re.compile(r'\s*root\s*=\s*"?([^"#]*)'),
+    ),
     RESTART_REASON=SimpleNamespace(
         CHANGED="fingerprint-changed", UNREADABLE="fingerprint-unreadable"
     ),
@@ -9632,8 +9644,9 @@ def run_aa_stage(
 ) -> None:
     """Advance the open A/A one writing cycle and keep the canary files in step with it.
 
-    Canary files live under `${GA_DATA_ROOT:-$HOME/.glass-atrium}/data/learning/canary` — a
-    test faking the ledger sandboxes GA_DATA_ROOT, or this stage deletes the real ones.
+    Canary files live under `${GA_DATA_ROOT:-$HOME/.glass-atrium}/data/learning/canary`.
+    - No config.toml in the code tree declaring that tree as its [paths].root → refused before
+      any ledger read: no row read or written, no canary file deleted or written.
     - No open A/A → every entry in the canary directory is deleted.
     - Open A/A with a void an earlier ingest or sweep detected and the ledger did not take → that
       void is retried before anything else, and the stage ends: until it lands no canary is
@@ -9653,6 +9666,10 @@ def run_aa_stage(
     A ledger or evidence fault WARNs by name and never fails the cycle; the caller skips the
     stage in no-write mode (--dry-run).
     """
+    refusal = _get_install_refusal(_INSTALL_ROOT)
+    if refusal is not None:
+        _warn_aa(refusal, "no ledger read or write and no canary file change this cycle")
+        return
     try:
         latest = _read_open_aa_start()
     except AaStateUnreadable as exc:
@@ -9676,6 +9693,60 @@ def run_aa_stage(
     source = AaSource(manifest_ingest, agents_dir)
     if _evaluate_aa(latest, source):
         _delete_canaries(_get_canary_files(), "the A/A has its result")
+
+
+class InstallRefusedError(RuntimeError):
+    """A writing run_cycle refused before any stage; message: _get_install_refusal's."""
+
+
+def _get_install_refusal(root: Path) -> str | None:
+    """None when root passes _is_install_tree; otherwise the refusal, naming only that check.
+
+    Guards exactly three entries, each as its first check:
+    - run_cycle when it writes (skip_loop_emit False): the whole cycle, reads included,
+      by raising InstallRefusedError, which _main ends with
+      ExitCode.CYCLE_INSTALL_REFUSED;
+    - run_aa_stage and ingest_manifest_log, whose own checks cover a direct call.
+    Not guarded: run_cycle in no-write mode (--dry-run, --skip-loop-emit), start_aa
+    (--aa-start, the owner's explicit command to open an A/A, never run by a cycle),
+    and a direct call to any other writing stage — run_shadow_stage among them.
+    """
+    if _is_install_tree(root):
+        return None
+    return (
+        f"no {AA.INSTALL.CONFIG} in code tree {root} declares that tree as its "
+        f"{AA.INSTALL.SECTION}.root"
+    )
+
+
+def _is_install_tree(root: Path) -> bool:
+    """True when root is the install its own rendered config.toml declares as [paths].root.
+    Compared by identity, so a symlinked path to the install matches."""
+    declared = _get_config_root(root / AA.INSTALL.CONFIG)
+    if declared is None or not Path(declared).is_absolute():
+        return False
+    try:
+        return os.path.samefile(declared, root)
+    except OSError:
+        return False
+
+
+def _get_config_root(config: Path) -> str | None:
+    """[paths].root as scripts/lib/atrium-config.sh → atrium_toml_get reads it; None when the
+    file or the key is absent or unreadable."""
+    try:
+        lines = config.read_text(encoding="utf-8").splitlines()
+    except (OSError, ValueError):
+        return None
+    section = ""
+    for line in lines:
+        if line.lstrip().startswith("["):
+            section = "".join(line.split())
+        elif section == AA.INSTALL.SECTION:
+            match = AA.INSTALL.ROOT_KEY.match(line)
+            if match is not None:
+                return match.group(1).strip()
+    return None
 
 
 def _read_open_aa_start() -> AaStart | None:
@@ -12683,7 +12754,13 @@ def ingest_manifest_log(
     held lock → named WARN, every spool kept and the live log not renamed; the hook's
     backstop bounds the live log meanwhile. Each delivered row binds to a trial once, at
     the ingest that first stores it (bind_manifest_deliveries).
+    No config.toml in the code tree declaring that tree as its [paths].root → named WARN before
+    any other check, whether or not the PG layer imports: no read, no lock file, no rename, no
+    binding.
     """
+    refusal = _get_install_refusal(_INSTALL_ROOT)
+    if refusal is not None:
+        return _skip_manifest_ingest(refusal)
     if not HAS_PG_LOOP_WRITE:
         return _skip_manifest_ingest("PG write layer unavailable")
     if not live_log.parent.is_dir():
@@ -13042,8 +13119,15 @@ def run_cycle(
     Once lifted, _run_generation_loop runs the per-agent flow — pattern → patch
     proposal → classification → pre-verify (4-axis) → routing hints.
 
+    A writing cycle (skip_loop_emit False) from a code tree that is not its install
+    raises InstallRefusedError before any stage, reads included.
+
     Returns the in-memory CycleReport. Caller decides where to persist it.
     """
+    if not skip_loop_emit:
+        refusal = _get_install_refusal(_INSTALL_ROOT)
+        if refusal is not None:
+            raise InstallRefusedError(refusal)
     now = datetime.now(timezone.utc)
     # Optional-PG import degradation — surfaced LOUDLY once at daemon-cycle start
     # (Precondition Loud-Fail). The import-time stderr writes were removed so a
@@ -13884,14 +13968,22 @@ def _main(argv: list[str]) -> int:
         return ExitCode.DAEMON_CONFIG_INVALID
 
     skip_loop_emit = args.skip_loop_emit or args.dry_run
-    report = run_cycle(
-        limit=args.limit,
-        log_path=args.log_path,
-        agents_dir=args.agents_dir,
-        skip_haiku=args.skip_haiku or args.dry_run,
-        skip_pre_verify=args.skip_pre_verify or args.skip_haiku or args.dry_run,
-        skip_loop_emit=skip_loop_emit,
-    )
+    try:
+        report = run_cycle(
+            limit=args.limit,
+            log_path=args.log_path,
+            agents_dir=args.agents_dir,
+            skip_haiku=args.skip_haiku or args.dry_run,
+            skip_pre_verify=args.skip_pre_verify or args.skip_haiku or args.dry_run,
+            skip_loop_emit=skip_loop_emit,
+        )
+    except InstallRefusedError as exc:
+        # no report emitted → the wrapper's PG push has no refused cycle to record
+        sys.stderr.write(
+            f"[daemon-cycle] FATAL: writing cycle refused before any stage — {exc}; "
+            f"exit {int(ExitCode.CYCLE_INSTALL_REFUSED)}\n"
+        )
+        return ExitCode.CYCLE_INSTALL_REFUSED
 
     payload = render_report_json(report)
 

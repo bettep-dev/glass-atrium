@@ -20,12 +20,15 @@ from __future__ import annotations
 import contextlib
 import functools
 import hashlib
+import importlib.util
 import io
 import itertools
 import json
 import math
 import os
+import shutil
 import signal
+import site
 import subprocess
 import sys
 import tempfile
@@ -81,6 +84,11 @@ _DURATION = {
     "busiest_agents": 5,
     "minimum_spawns": 200,
 }
+
+
+def _put_config(root: Path, declared: Path) -> None:
+    """The install's rendered config.toml, declaring `declared` as its [paths].root."""
+    (root / "config.toml").write_text(f'[paths]\nroot = "{declared}"\n', encoding="utf-8")
 
 
 class _LedgerRow(NamedTuple):
@@ -303,6 +311,8 @@ class _AaFixture(unittest.TestCase):
         self.agents_dir.mkdir()
         for stem in _ROSTER:
             (self.agents_dir / f"{stem}.md").write_text("# body\n", encoding="utf-8")
+        # the installed agents dir also holds the charter, a rules file no spawn ever types
+        (self.agents_dir / "GLASS_ATRIUM_GLOBAL_RULES.md").write_text("# rules\n", encoding="utf-8")
         # after the seal: ledger connection and writer = the DB boundary
         for name, value in (
             ("HAS_PG_LOOP_WRITE", True),
@@ -338,6 +348,7 @@ class _AaFixture(unittest.TestCase):
         ):
             (self.root / path).parent.mkdir(parents=True, exist_ok=True)
             (self.root / path).write_text(text, encoding="utf-8")
+        _put_config(self.root, self.root)
         self._write_manifest({**_SCOPED, **_UNSCOPED})
 
     def _write_manifest(
@@ -707,6 +718,171 @@ class SealTest(_AaFixture):
         with contextlib.redirect_stderr(io.StringIO()):
             dc.run_aa_stage(_CYCLE_DATE)
         self.assertEqual(reach, ["_pg_connect"])
+
+
+class AaSandboxDefaultTest(_AaFixture):
+    """The stage acts only from a code tree its own rendered config.toml declares as its
+    [paths].root; any other tree reads, deletes and writes nothing."""
+
+    def test_only_the_declared_install_reads_deletes_and_writes(self) -> None:
+        link = self.scratch / "install-link"
+        link.symlink_to(self.root)
+        rows = (
+            ("the declared install", self.root, self.root, True),
+            ("the declared install through a symlinked path", link, self.root, True),
+            ("a tree with no rendered config", self.root, None, False),
+            ("a tree whose config declares another root", self.root, self.scratch, False),
+        )
+        for name, install_root, declared, is_acting in rows:
+            with self.subTest(name):
+                connect = self._run_moved_open_aa(install_root, declared)
+                listing = sorted(path.name for path in self.canary_dir.iterdir())
+                self.assertEqual(
+                    (connect.called, bool(self._get_restarts()), "stray.json" in listing),
+                    (is_acting, is_acting, not is_acting),
+                )
+
+    def _run_moved_open_aa(self, install_root: Path, declared: Path | None) -> mock.Mock:
+        """An open A/A whose fingerprint moved, a stray canary file beside it."""
+        self._install()
+        if declared is None:
+            (self.root / "config.toml").unlink()
+        else:
+            _put_config(self.root, declared)
+        self._open()
+        self._set_hash("autoagent/daemon_cycle.py", "9" * 64)
+        self.canary_dir.mkdir(parents=True, exist_ok=True)
+        (self.canary_dir / "stray.json").write_text("{}", encoding="utf-8")
+        connect = mock.Mock(wraps=self.ledger.connect)
+        with (
+            mock.patch.object(dc, "_INSTALL_ROOT", install_root),
+            mock.patch.object(dc, "_pg_connect", connect),
+            contextlib.redirect_stderr(io.StringIO()),
+        ):
+            dc.run_aa_stage(_CYCLE_DATE, agents_dir=self.agents_dir)
+        return connect
+
+
+_PROBE = _TEST_DIR / "_aa_unsealed_probe.py"
+# the refusal every install-guarded entry names, from a tree no config.toml declares as its own root
+_REFUSAL = "declares that tree as its [paths].root"
+
+
+def _put_code_tree(root: Path) -> Path:
+    """A copy of the code the probe loads, rooted at `root` and holding no rendered config.toml;
+    the copied probe's path."""
+    for pattern in ("autoagent/*.py", "hooks/*.py", "scripts/*.py"):
+        for source in _REPO_ROOT.glob(pattern):
+            target = root / source.relative_to(_REPO_ROOT)
+            target.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(source, target)
+    shutil.copytree(
+        _REPO_ROOT / "autoagent" / "lib",
+        root / "autoagent" / "lib",
+        ignore=shutil.ignore_patterns("test", "__pycache__"),
+    )
+    probe = root / _PROBE.relative_to(_REPO_ROOT)
+    probe.parent.mkdir()
+    shutil.copy2(_PROBE, probe)
+    return probe
+
+
+class AaUnsealedRunTest(unittest.TestCase):
+    """The three install-guarded entries — a writing run_cycle through the CLI, run_aa_stage and
+    ingest_manifest_log, each refusing first, with or without the PG layer — unsealed, in a child
+    running a code tree this test copies, so the tree's install identity is the test's, never that
+    of the tree the suite runs from. The child's "live" is a decoy: a temp HOME holding the default data root with its canary files and
+    a live MANIFEST log, PGHOST and PGPORT on an empty temp socket dir, and neither GA_DATA_ROOT
+    nor EPH_SOCKDIR."""
+
+    _INHERITED = (
+        "GA_DATA_ROOT", "EPH_SOCKDIR", "EPH_PORT", "PGHOSTADDR", "PGSERVICE", "PGDATABASE"
+    )
+
+    def setUp(self) -> None:
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        self.home = Path(tmp.name) / "home"
+        self.data_root = self.home / ".glass-atrium"
+        canary_dir = self.data_root / "data" / "learning" / "canary"
+        canary_dir.mkdir(parents=True)
+        for name in ("glass-atrium-dev-python.json", "stray.json"):
+            (canary_dir / name).write_text('{"text": ""}', encoding="utf-8")
+        live_log = self.data_root / "logs" / dc.MANIFEST.LOG_NAME
+        live_log.parent.mkdir()
+        live_log.write_text('{"agent_type": "glass-atrium-dev-python"}\n', encoding="utf-8")
+        self.sockdir = Path(tmp.name) / "sock"
+        self.sockdir.mkdir()
+        self.code_root = Path(tmp.name).resolve() / "code"
+        self.probe = _put_code_tree(self.code_root)
+        self.env = {k: v for k, v in os.environ.items() if k not in self._INHERITED}
+        self.env.update(
+            HOME=str(self.home),
+            PGHOST=str(self.sockdir),
+            PGPORT="5432",
+            PYTHONDONTWRITEBYTECODE="1",
+            # the decoy HOME hides the user site-packages: keep this interpreter's own
+            PYTHONUSERBASE=site.getuserbase(),
+            AA_PROBE_CODE_ROOT=str(self.code_root),
+        )
+
+    def test_an_unsealed_run_from_a_non_install_tree_reaches_no_socket_under_any_runner(
+        self,
+    ) -> None:
+        before = self._get_data_listing()
+        for name, args in self._get_runners():
+            with self.subTest(name):
+                if args[:2] == ("-m", "pytest") and importlib.util.find_spec("pytest") is None:
+                    self.skipTest("pytest not installed for this interpreter")
+                run = self._run_probe(args)
+                self.assertEqual(run.returncode, 0, run.stdout + run.stderr)
+                self.assertEqual(run.stderr.count(_REFUSAL), 3, run.stderr)  # one per entry
+                self.assertNotIn(str(self.sockdir), run.stderr)
+                self.assertEqual(self._get_data_listing(), before)
+
+    def test_the_decoy_names_a_reach_from_each_entry_once_the_code_tree_is_the_install(
+        self,
+    ) -> None:
+        # instrument check for the test above: an entry that does reach the decoy names its socket
+        if importlib.util.find_spec("psycopg") is None:
+            self.skipTest("psycopg not installed: the entries make no connect to observe")
+        _put_config(self.code_root, self.code_root)
+        for method in (
+            "test_run_aa_stage_unsealed",
+            "test_ingest_manifest_log_unsealed",
+            "test_writing_run_cycle_unsealed",
+        ):
+            with self.subTest(method):
+                run = self._run_probe((str(self.probe), f"AaUnsealedProbe.{method}"))
+                self.assertIn(str(self.sockdir), run.stderr)
+                self.assertNotIn(_REFUSAL, run.stderr)
+
+    def _get_runners(self) -> tuple[tuple[str, tuple[str, ...]], ...]:
+        return (
+            (
+                "unittest discover",
+                ("-m", "unittest", "discover", "-s", str(self.probe.parent), "-p", _PROBE.name),
+            ),
+            ("unittest, one file", (str(self.probe),)),
+            (
+                "pytest, one file",
+                ("-m", "pytest", "-q", "-s", "-p", "no:cacheprovider", str(self.probe)),
+            ),
+        )
+
+    def _run_probe(self, args: tuple[str, ...]) -> subprocess.CompletedProcess[str]:
+        return subprocess.run(
+            [sys.executable, *args],
+            env=self.env,
+            cwd=self.home,
+            capture_output=True,
+            text=True,
+            timeout=120,
+            check=False,
+        )
+
+    def _get_data_listing(self) -> list[str]:
+        return sorted(str(path.relative_to(self.data_root)) for path in self.data_root.rglob("*"))
 
 
 _ROSTER = ("glass-atrium-dev-python", "glass-atrium-dev-shell")
@@ -1895,6 +2071,19 @@ class AaCanaryTest(_AaResultFixture):
                     self.assertEqual(
                         {entry.name for entry in self.canary_dir.iterdir()}, kept_names
                     )
+
+    def test_a_charter_canary_an_earlier_roster_wrote_is_removed_unvoided_by_the_next_cycle(
+        self,
+    ) -> None:
+        self._move_window_start(_NOW - timedelta(days=1))
+        stray = self._put_canary("GLASS_ATRIUM_GLOBAL_RULES", "")
+        results_before = self._get_results()
+
+        stderr_text = self._evaluate_bounded()
+
+        self.assertIn(f"canary {stray} removed", stderr_text)
+        self.assertEqual(self._get_results(), results_before)
+        self.assertEqual(set(self._get_canaries()), set(_ROSTER))
 
     def test_a_roster_entry_the_hook_cannot_read_is_removed_unread_and_rewritten(
         self,

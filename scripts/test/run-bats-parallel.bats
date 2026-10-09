@@ -686,11 +686,14 @@ STUB
 @test "(13) every python stage runs on a dead PGHOST with every libpq routing name unset" {
   # shellcheck source-path=SCRIPTDIR source=../../test/lib/bats-hermetic-env.bash
   source "${BATS_TEST_DIRNAME}/../../test/lib/bats-hermetic-env.bash"
-  export PGHOST=/tmp PGPORT=5432 PGHOSTADDR=127.0.0.1 PGSERVICE=live PGDATABASE=glass_atrium \
-    PGPASSFILE=/dev/null
+  local stage record seen name
+  export PGHOST=/tmp
+  # every baseline name arrives set, so one the runner's scrub lacks reaches the stage record
+  for name in "${GA_BATS_PG_ROUTING_NAMES[@]}"; do
+    export "${name}=live"
+  done
   run_runner_expecting 0 || return 1
 
-  local stage record seen name
   for stage in 'discover -s hooks/test' 'discover -s autoagent/test' '-m pytest'; do
     record="$(stage_pg_env "${stage}")"
     seen="$(sed -n 's/^PGHOST=//p' <<<"${record}")"
