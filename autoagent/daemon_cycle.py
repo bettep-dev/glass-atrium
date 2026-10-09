@@ -8775,6 +8775,7 @@ class PowerUnits(NamedTuple):
 class PowerCheck(NamedTuple):
     verdict: str
     units: PowerUnits
+    design_effect: float | None  # design effect the units were sized at; None = unmeasured
 
 
 class PowerPass(NamedTuple):
@@ -8857,13 +8858,13 @@ def _get_pattern_power_verdict(
     subject = PowerSubject((pattern.agent, pattern.metric_key), floor)
     if subject.key in inputs.unchecked_keys:
         return POWER.VERDICT.UNCHECKED, "A/A design effect unusable", None
-    design_effect = inputs.design_effects.get(subject.key)
     check = get_power_check(subject, inputs, windows)
     power_pass = None
-    required = check.units.required
+    design_effect, required = check.design_effect, check.units.required
     if check.verdict == POWER.VERDICT.PASSING and design_effect is not None and required is not None:
         power_pass = PowerPass(pattern, floor.baseline, design_effect, required, spawns)
-    return check.verdict, _get_pattern_power_detail(subject, check, inputs, windows), power_pass
+    method_b = _get_method_b_baseline(subject, inputs, windows)
+    return check.verdict, _get_pattern_power_detail(subject, check, method_b), power_pass
 
 
 def get_power_check(subject: PowerSubject, inputs: PowerInputs, windows: PairWindows) -> PowerCheck:
@@ -8893,7 +8894,7 @@ def get_power_check(subject: PowerSubject, inputs: PowerInputs, windows: PairWin
         verdict = POWER.VERDICT.PASSING
     else:
         verdict = POWER.VERDICT.UNDERPOWERED
-    return PowerCheck(verdict, PowerUnits(projected, required))
+    return PowerCheck(verdict, PowerUnits(projected, required), design_effect)
 
 
 def _get_required_units(baseline: WindowCount, design_effect: float | None) -> float | None:
@@ -9026,27 +9027,31 @@ def _get_maximum_sample_size(events: int, spawns: int) -> int | None:
     return trial_design.get_trial_sample_size(events / spawns)
 
 
-def _get_pattern_power_detail(
-    subject: PowerSubject, check: PowerCheck, inputs: PowerInputs, windows: PairWindows
-) -> str:
-    """Information-only detail of one checked pattern: power figures, method-B baseline, label."""
+def _get_method_b_baseline(
+    subject: PowerSubject, inputs: PowerInputs, windows: PairWindows
+) -> WindowCount:
+    """Method-B baseline, information only: floor read over the agent's session-mapped spawns."""
     agent, metric_key = subject.key
     mapped = [spawn for spawn in inputs.spawns.get(agent, []) if spawn.session_id is not None]
-    method_b = get_floor_verdict(
+    return get_floor_verdict(
         mapped, metric_key, windows, inputs.provenance_start, windows.end
     ).baseline
-    design_effect = inputs.design_effects.get(subject.key)
-    detail = _get_power_detail(subject.floor, check, design_effect, method_b)
-    if metric_key == METRIC_EMIT_FAILURE:
+
+
+def _get_pattern_power_detail(
+    subject: PowerSubject, check: PowerCheck, method_b: WindowCount
+) -> str:
+    """Information-only detail of one checked pattern: power figures, method-B baseline, label."""
+    detail = _get_power_detail(subject.floor, check, method_b)
+    if subject.key[1] == METRIC_EMIT_FAILURE:
         return f"{detail} ({POWER.LABEL.EMIT_FAILURE})"
     return detail
 
 
-def _get_power_detail(
-    floor: FloorResult, check: PowerCheck, design_effect: float | None, method_b: WindowCount
-) -> str:
+def _get_power_detail(floor: FloorResult, check: PowerCheck, method_b: WindowCount) -> str:
     baseline = floor.baseline
     units = check.units
+    design_effect = check.design_effect
     if design_effect is None:
         required_label = "unknown (design effect unmeasured: no design-effect row from a passed A/A)"
     elif units.required is None:
