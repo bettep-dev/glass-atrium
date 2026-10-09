@@ -8854,23 +8854,16 @@ def _get_pattern_power_verdict(
     )
     if floor.verdict != VERDICT_PASS:
         return None
-    key = (pattern.agent, pattern.metric_key)
-    if key in inputs.unchecked_keys:
+    subject = PowerSubject((pattern.agent, pattern.metric_key), floor)
+    if subject.key in inputs.unchecked_keys:
         return POWER.VERDICT.UNCHECKED, "A/A design effect unusable", None
-    design_effect = inputs.design_effects.get(key)
-    check = get_power_check(PowerSubject(key, floor), inputs, windows)
+    design_effect = inputs.design_effects.get(subject.key)
+    check = get_power_check(subject, inputs, windows)
     power_pass = None
     required = check.units.required
     if check.verdict == POWER.VERDICT.PASSING and design_effect is not None and required is not None:
         power_pass = PowerPass(pattern, floor.baseline, design_effect, required, spawns)
-    mapped = [spawn for spawn in spawns if spawn.session_id is not None]
-    method_b = get_floor_verdict(
-        mapped, pattern.metric_key, windows, inputs.provenance_start, windows.end
-    ).baseline
-    detail = _get_power_detail(floor, check, design_effect, method_b)
-    if pattern.metric_key == METRIC_EMIT_FAILURE:
-        detail = f"{detail} ({POWER.LABEL.EMIT_FAILURE})"
-    return check.verdict, detail, power_pass
+    return check.verdict, _get_pattern_power_detail(subject, check, inputs, windows), power_pass
 
 
 def get_power_check(subject: PowerSubject, inputs: PowerInputs, windows: PairWindows) -> PowerCheck:
@@ -9031,6 +9024,22 @@ def _get_maximum_sample_size(events: int, spawns: int) -> int | None:
     if not 0 < events < spawns:
         return None
     return trial_design.get_trial_sample_size(events / spawns)
+
+
+def _get_pattern_power_detail(
+    subject: PowerSubject, check: PowerCheck, inputs: PowerInputs, windows: PairWindows
+) -> str:
+    """Information-only detail of one checked pattern: power figures, method-B baseline, label."""
+    agent, metric_key = subject.key
+    mapped = [spawn for spawn in inputs.spawns.get(agent, []) if spawn.session_id is not None]
+    method_b = get_floor_verdict(
+        mapped, metric_key, windows, inputs.provenance_start, windows.end
+    ).baseline
+    design_effect = inputs.design_effects.get(subject.key)
+    detail = _get_power_detail(subject.floor, check, design_effect, method_b)
+    if metric_key == METRIC_EMIT_FAILURE:
+        return f"{detail} ({POWER.LABEL.EMIT_FAILURE})"
+    return detail
 
 
 def _get_power_detail(
