@@ -9696,9 +9696,10 @@ def run_aa_stage(
 def _get_install_refusal(root: Path) -> str | None:
     """None when root passes _is_install_tree; otherwise the refusal, naming only that check.
 
-    Guards the cycle entries that reach the ledger and the canary files: run_aa_stage and
-    ingest_manifest_log. start_aa stays unguarded — --aa-start is the owner's explicit command to
-    open an A/A, never run by a cycle.
+    Guards exactly two entries, each as its first check: run_aa_stage and ingest_manifest_log.
+    Not guarded: start_aa (--aa-start, the owner's explicit command to open an A/A, never run by a
+    cycle), and every other writing stage run_cycle runs — run_shadow_stage among them, whose
+    trial-ledger writes no install check gates.
     """
     if _is_install_tree(root):
         return None
@@ -12744,15 +12745,16 @@ def ingest_manifest_log(
     backstop bounds the live log meanwhile. Each delivered row binds to a trial once, at
     the ingest that first stores it (bind_manifest_deliveries).
     No config.toml in the code tree declaring that tree as its [paths].root → named WARN before
-    the PG probe: no read, no lock file, no rename, no binding.
+    any other check, whether or not the PG layer imports: no read, no lock file, no rename, no
+    binding.
     """
+    refusal = _get_install_refusal(_INSTALL_ROOT)
+    if refusal is not None:
+        return _skip_manifest_ingest(refusal)
     if not HAS_PG_LOOP_WRITE:
         return _skip_manifest_ingest("PG write layer unavailable")
     if not live_log.parent.is_dir():
         return ManifestIngest(status="skipped:no log root")
-    refusal = _get_install_refusal(_INSTALL_ROOT)
-    if refusal is not None:
-        return _skip_manifest_ingest(refusal)
     new_spool = live_log.with_name(
         f"{live_log.name}.{now.astimezone(timezone.utc):%Y%m%dT%H%M%SZ}.{os.getpid()}.spool"
     )

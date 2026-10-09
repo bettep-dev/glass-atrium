@@ -1,4 +1,4 @@
-"""The cycle entries that reach the ledger and the canary files, unsealed, as a
+"""The two install-guarded entries (run_aa_stage, ingest_manifest_log), unsealed, as a
 building agent's test would run them — nothing patched, nothing sealed. Not a test
 module (no ``test_`` prefix): ``test_aa_harness.AaUnsealedRunTest`` copies it into a
 code tree it sets up and runs it there, in a child whose HOME and PGHOST are decoys,
