@@ -149,7 +149,7 @@ RATE_FAILURE_FLOOR = 0.5
 # a null / cross-cutting agent_type has no agent file to patch and is dropped at
 # intake (_UNPREFIXABLE_AGENTS / _emit_xc).
 BUDGET_OVERAGE_LABEL = "budget-overage concentration"
-# Spawns ended with no own [COMPLETION] (no SubagentStop or recorder-synthesized) per agent
+# Per agent: recorder-synthesized, derived or truncated completions; cut-off leg = no_subagent_stop guardrail
 EMIT_FAILURE_LABEL = "emit-failure concentration"
 # Keyed families: emitted only on a passing S2f floor, never on a batch count.
 _KEYED_LABELS = {
