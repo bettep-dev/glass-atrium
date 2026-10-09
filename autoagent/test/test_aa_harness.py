@@ -58,7 +58,7 @@ import _pg_stub_backend as stub
 import daemon_cycle as dc
 import trial_design
 from _outcome_signal import SpawnFacts, is_floor_half
-from _pg_seal import get_ephemeral_connection, seal_pg_reach
+from _pg_seal import get_ephemeral_connection, put_install_config, seal_pg_reach
 
 _NOW = datetime(2026, 10, 7, 4, 30, tzinfo=timezone.utc)
 _CYCLE_DATE = "2026-10-07"
@@ -84,11 +84,6 @@ _DURATION = {
     "busiest_agents": 5,
     "minimum_spawns": 200,
 }
-
-
-def _put_config(root: Path, declared: Path) -> None:
-    """The install's rendered config.toml, declaring `declared` as its [paths].root."""
-    (root / "config.toml").write_text(f'[paths]\nroot = "{declared}"\n', encoding="utf-8")
 
 
 class _LedgerRow(NamedTuple):
@@ -348,7 +343,7 @@ class _AaFixture(unittest.TestCase):
         ):
             (self.root / path).parent.mkdir(parents=True, exist_ok=True)
             (self.root / path).write_text(text, encoding="utf-8")
-        _put_config(self.root, self.root)
+        put_install_config(self.root, self.root)
         self._write_manifest({**_SCOPED, **_UNSCOPED})
 
     def _write_manifest(
@@ -748,7 +743,7 @@ class AaSandboxDefaultTest(_AaFixture):
         if declared is None:
             (self.root / "config.toml").unlink()
         else:
-            _put_config(self.root, declared)
+            put_install_config(self.root, declared)
         self._open()
         self._set_hash("autoagent/daemon_cycle.py", "9" * 64)
         self.canary_dir.mkdir(parents=True, exist_ok=True)
@@ -846,7 +841,7 @@ class AaUnsealedRunTest(unittest.TestCase):
         # instrument check for the test above: an entry that does reach the decoy names its socket
         if importlib.util.find_spec("psycopg") is None:
             self.skipTest("psycopg not installed: the entries make no connect to observe")
-        _put_config(self.code_root, self.code_root)
+        put_install_config(self.code_root, self.code_root)
         for method in (
             "test_run_aa_stage_unsealed",
             "test_ingest_manifest_log_unsealed",

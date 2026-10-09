@@ -48,7 +48,12 @@ for _anchor in (
         sys.path.insert(0, str(_anchor))
 
 import _pg_stub_backend as stub  # noqa: E402 — anchors above
-from _pg_seal import get_ephemeral_connection, seal_pg_reach  # noqa: E402 — anchors above
+from _pg_seal import (  # noqa: E402 — anchors above
+    get_ephemeral_connection,
+    put_install_config,
+    seal_pg_reach,
+    set_install_tree,
+)
 
 try:
     import daemon_cycle as dc
@@ -116,11 +121,6 @@ def _get_delivery_line(
         f" agent={agent} ctx_bytes=1166 digest=9f2c arm=1 salt_id={salt} delivered=1"
         f" delivered_hash={text_sha256} blocks=emit,meter,canary\n"
     )
-
-
-def _put_config(root: Path, declared: Path) -> None:
-    """The install's rendered config.toml, declaring `declared` as its [paths].root."""
-    (root / "config.toml").write_text(f'[paths]\nroot = "{declared}"\n', encoding="utf-8")
 
 
 class _SpawnManifestTable:
@@ -247,7 +247,7 @@ class _IngestCase(unittest.TestCase):
         env.start()
         self.addCleanup(env.stop)
         self.canary_dir = self.base_root / "data" / "learning" / "canary"
-        _put_config(self.base_root, self.base_root)
+        put_install_config(self.base_root, self.base_root)
         self.pg_reach = seal_pg_reach(self)
         self.table = _SpawnManifestTable()
         self.ledger = _TrialLedger()
@@ -562,7 +562,7 @@ class TestManifestDeliveryBinding(_IngestCase):
         self._put_canaries()
         (self.base_root / "config.toml").unlink(missing_ok=True)
         if declared is not None:
-            _put_config(self.base_root, declared)
+            put_install_config(self.base_root, declared)
 
     def test_the_a_a_last_day_deliveries_never_read_as_no_trial_after_its_result(self) -> None:
         self._open_aa()
@@ -1106,10 +1106,7 @@ class TestManifestIngestCycleWiring(unittest.TestCase):
         env.start()
         self.addCleanup(env.stop)
         self.pg_reach = seal_pg_reach(self)
-        _put_config(self.root, self.root)
-        install_root = mock.patch.object(dc, "_INSTALL_ROOT", self.root)
-        install_root.start()
-        self.addCleanup(install_root.stop)
+        set_install_tree(self)
 
     def _run(self, *, skip_loop_emit: bool) -> tuple[object, str]:
         stderr = io.StringIO()

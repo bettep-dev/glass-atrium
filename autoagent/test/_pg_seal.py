@@ -2,7 +2,8 @@
 
 ``seal_pg_reach`` serves tests that drive ``daemon_cycle`` without a database;
 ``get_ephemeral_connection`` serves classes that need real PostgreSQL;
-``set_install_tree`` gives a test a temp code tree that is its own install.
+``set_install_tree`` gives a test a temp code tree that is its own install;
+``put_install_config`` writes the rendered config that names a tree's install root.
 Not a test module (no ``test_`` prefix): consumers anchor this directory on
 ``sys.path``; ``seal_pg_reach`` callers import ``daemon_cycle`` first.
 """
@@ -90,8 +91,13 @@ def set_install_tree(testcase: unittest.TestCase) -> None:
     tree = tempfile.TemporaryDirectory()
     testcase.addCleanup(tree.cleanup)
     root = Path(tree.name)
-    (root / "config.toml").write_text(f'[paths]\nroot = "{root}"\n', encoding="utf-8")
+    put_install_config(root, root)
     _patch(testcase, sys.modules["daemon_cycle"], "_INSTALL_ROOT", root)
+
+
+def put_install_config(root: Path, declared: Path) -> None:
+    """The install's rendered config.toml in `root`, declaring `declared` as its [paths].root."""
+    (root / "config.toml").write_text(f'[paths]\nroot = "{declared}"\n', encoding="utf-8")
 
 
 def _patch(
