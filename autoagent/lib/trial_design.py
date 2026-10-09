@@ -157,7 +157,7 @@ def get_graduation_probability(
     """
     fractions = _get_checked_fractions(look_fractions)
     drift = _get_efficacy_drift(baseline_rate, per_arm, alpha, power, relative_reduction)
-    return _get_sequential_graduation(drift, alpha, fractions, _get_checked_count(guardrail_count))
+    return _get_sequential_graduation(drift, alpha, fractions, _get_checked_guardrail_count(guardrail_count))
 
 
 def get_growth_factor(
@@ -177,14 +177,14 @@ def get_growth_factor(
     """
     fractions = _get_checked_fractions(look_fractions)
     drift = _get_efficacy_drift(baseline_rate, per_arm, alpha, power, relative_reduction)
-    count = _get_checked_count(guardrail_count)
+    guardrail_count = _get_checked_guardrail_count(guardrail_count)
 
     def get_graduation(factor: float) -> float:
-        return _get_sequential_graduation(drift * math.sqrt(factor), alpha, fractions, count)
+        return _get_sequential_graduation(drift * math.sqrt(factor), alpha, fractions, guardrail_count)
 
     if get_graduation(1.0) >= power:
         return 1.0
-    if (1 - _get_spent_alpha(alpha, fractions[0])) ** count <= power:
+    if (1 - _get_spent_alpha(alpha, fractions[0])) ** guardrail_count <= power:
         return math.inf
     lower, upper = 1.0, 2.0
     while get_graduation(upper) < power:
@@ -456,7 +456,7 @@ def _get_efficacy_drift(
     return critical_sum * math.sqrt(per_arm / fixed)
 
 
-def _get_checked_count(guardrail_count: int) -> int:
+def _get_checked_guardrail_count(guardrail_count: int) -> int:
     if guardrail_count < 0:
         raise ValueError(f"guardrail_count must be >= 0, got {guardrail_count}")
     return guardrail_count
