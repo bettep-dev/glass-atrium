@@ -482,6 +482,8 @@ class ExitCode(IntEnum):
     BACKFILL_RECORD_FAILED = 13
     # --aa-start refused, nothing written — the stderr line names the AA.REFUSAL cause
     AA_START_REFUSED = 14
+    # writing cycle refused before any stage — the code tree is not its install
+    CYCLE_INSTALL_REFUSED = 15
 
 
 # Intra-cycle Haiku spacing (FIX #5) ----------------------------------------
@@ -9693,13 +9695,21 @@ def run_aa_stage(
         _delete_canaries(_get_canary_files(), "the A/A has its result")
 
 
+class InstallRefusedError(RuntimeError):
+    """A writing run_cycle refused before any stage; message: _get_install_refusal's."""
+
+
 def _get_install_refusal(root: Path) -> str | None:
     """None when root passes _is_install_tree; otherwise the refusal, naming only that check.
 
-    Guards exactly two entries, each as its first check: run_aa_stage and ingest_manifest_log.
-    Not guarded: start_aa (--aa-start, the owner's explicit command to open an A/A, never run by a
-    cycle), and every other writing stage run_cycle runs — run_shadow_stage among them, whose
-    trial-ledger writes no install check gates.
+    Guards exactly three entries, each as its first check:
+    - run_cycle when it writes (skip_loop_emit False): the whole cycle, reads included,
+      by raising InstallRefusedError, which _main ends with
+      ExitCode.CYCLE_INSTALL_REFUSED;
+    - run_aa_stage and ingest_manifest_log, whose own checks cover a direct call.
+    Not guarded: run_cycle in no-write mode (--dry-run, --skip-loop-emit), start_aa
+    (--aa-start, the owner's explicit command to open an A/A, never run by a cycle),
+    and a direct call to any other writing stage — run_shadow_stage among them.
     """
     if _is_install_tree(root):
         return None
@@ -13109,8 +13119,15 @@ def run_cycle(
     Once lifted, _run_generation_loop runs the per-agent flow — pattern → patch
     proposal → classification → pre-verify (4-axis) → routing hints.
 
+    A writing cycle (skip_loop_emit False) from a code tree that is not its install
+    raises InstallRefusedError before any stage, reads included.
+
     Returns the in-memory CycleReport. Caller decides where to persist it.
     """
+    if not skip_loop_emit:
+        refusal = _get_install_refusal(_INSTALL_ROOT)
+        if refusal is not None:
+            raise InstallRefusedError(refusal)
     now = datetime.now(timezone.utc)
     # Optional-PG import degradation — surfaced LOUDLY once at daemon-cycle start
     # (Precondition Loud-Fail). The import-time stderr writes were removed so a
@@ -13951,14 +13968,22 @@ def _main(argv: list[str]) -> int:
         return ExitCode.DAEMON_CONFIG_INVALID
 
     skip_loop_emit = args.skip_loop_emit or args.dry_run
-    report = run_cycle(
-        limit=args.limit,
-        log_path=args.log_path,
-        agents_dir=args.agents_dir,
-        skip_haiku=args.skip_haiku or args.dry_run,
-        skip_pre_verify=args.skip_pre_verify or args.skip_haiku or args.dry_run,
-        skip_loop_emit=skip_loop_emit,
-    )
+    try:
+        report = run_cycle(
+            limit=args.limit,
+            log_path=args.log_path,
+            agents_dir=args.agents_dir,
+            skip_haiku=args.skip_haiku or args.dry_run,
+            skip_pre_verify=args.skip_pre_verify or args.skip_haiku or args.dry_run,
+            skip_loop_emit=skip_loop_emit,
+        )
+    except InstallRefusedError as exc:
+        # no report emitted → the wrapper's PG push has no refused cycle to record
+        sys.stderr.write(
+            f"[daemon-cycle] FATAL: writing cycle refused before any stage — {exc}; "
+            f"exit {int(ExitCode.CYCLE_INSTALL_REFUSED)}\n"
+        )
+        return ExitCode.CYCLE_INSTALL_REFUSED
 
     payload = render_report_json(report)
 

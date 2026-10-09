@@ -764,7 +764,7 @@ class AaSandboxDefaultTest(_AaFixture):
 
 
 _PROBE = _TEST_DIR / "_aa_unsealed_probe.py"
-# the refusal both cycle entries name, from a tree no config.toml declares as its own root
+# the refusal every install-guarded entry names, from a tree no config.toml declares as its own root
 _REFUSAL = "declares that tree as its [paths].root"
 
 
@@ -788,10 +788,10 @@ def _put_code_tree(root: Path) -> Path:
 
 
 class AaUnsealedRunTest(unittest.TestCase):
-    """The two install-guarded entries — run_aa_stage and ingest_manifest_log, each refusing first,
-    with or without the PG layer — unsealed, in a child running a code tree this test copies, so
-    the tree's install identity is the test's, never that of the tree the suite runs from. The
-    child's "live" is a decoy: a temp HOME holding the default data root with its canary files and
+    """The three install-guarded entries — a writing run_cycle through the CLI, run_aa_stage and
+    ingest_manifest_log, each refusing first, with or without the PG layer — unsealed, in a child
+    running a code tree this test copies, so the tree's install identity is the test's, never that
+    of the tree the suite runs from. The child's "live" is a decoy: a temp HOME holding the default data root with its canary files and
     a live MANIFEST log, PGHOST and PGPORT on an empty temp socket dir, and neither GA_DATA_ROOT
     nor EPH_SOCKDIR."""
 
@@ -836,7 +836,7 @@ class AaUnsealedRunTest(unittest.TestCase):
                     self.skipTest("pytest not installed for this interpreter")
                 run = self._run_probe(args)
                 self.assertEqual(run.returncode, 0, run.stdout + run.stderr)
-                self.assertEqual(run.stderr.count(_REFUSAL), 2, run.stderr)  # one per entry
+                self.assertEqual(run.stderr.count(_REFUSAL), 3, run.stderr)  # one per entry
                 self.assertNotIn(str(self.sockdir), run.stderr)
                 self.assertEqual(self._get_data_listing(), before)
 
@@ -847,7 +847,11 @@ class AaUnsealedRunTest(unittest.TestCase):
         if importlib.util.find_spec("psycopg") is None:
             self.skipTest("psycopg not installed: the entries make no connect to observe")
         _put_config(self.code_root, self.code_root)
-        for method in ("test_run_aa_stage_unsealed", "test_ingest_manifest_log_unsealed"):
+        for method in (
+            "test_run_aa_stage_unsealed",
+            "test_ingest_manifest_log_unsealed",
+            "test_writing_run_cycle_unsealed",
+        ):
             with self.subTest(method):
                 run = self._run_probe((str(self.probe), f"AaUnsealedProbe.{method}"))
                 self.assertIn(str(self.sockdir), run.stderr)

@@ -1,5 +1,6 @@
-"""The two install-guarded entries (run_aa_stage, ingest_manifest_log), unsealed, as a
-building agent's test would run them — nothing patched, nothing sealed. Not a test
+"""The three install-guarded entries (a writing run_cycle through the CLI,
+run_aa_stage, ingest_manifest_log), unsealed, as a building agent's test would
+run them — nothing patched, nothing sealed. Not a test
 module (no ``test_`` prefix): ``test_aa_harness.AaUnsealedRunTest`` copies it into a
 code tree it sets up and runs it there, in a child whose HOME and PGHOST are decoys,
 once per runner. Anywhere else it skips.
@@ -34,6 +35,9 @@ class AaUnsealedProbe(unittest.TestCase):
 
     def test_ingest_manifest_log_unsealed(self) -> None:
         dc.ingest_manifest_log(dc.get_manifest_log_path(), now=_NOW)
+
+    def test_writing_run_cycle_unsealed(self) -> None:
+        self.assertEqual(dc._main(["--skip-haiku"]), dc.ExitCode.CYCLE_INSTALL_REFUSED)
 
 
 if __name__ == "__main__":
