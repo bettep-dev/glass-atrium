@@ -1,4 +1,4 @@
-"""Group-sequential sizing, the power check, design effects and guardrail harm for self-improvement trials.
+"""Group-sequential sizing, the power check, graduation growth, design effects and guardrail harm for self-improvement trials.
 
 Stdlib only, so the daemon imports it on an install's python3 3.9 floor with no
 third-party dependency. Boundaries are Lan-DeMets O'Brien-Fleming-type, efficacy
@@ -20,6 +20,7 @@ from typing import NamedTuple
 DEFAULT_ALPHA = 0.05  # one-sided
 DEFAULT_POWER = 0.8
 DEFAULT_RELATIVE_REDUCTION = 0.30
+DEFAULT_RELATIVE_RISE = 0.30  # the primary key's harm margin
 LOOK_FRACTIONS = (0.25, 0.5, 0.75, 1.0)
 HORIZON_DAYS = 84
 ARM_COUNT = 2
@@ -91,6 +92,132 @@ def get_maximum_sample_size(
     fixed = _get_fixed_size(baseline_rate, alpha, power, relative_reduction)
     inflation = get_inflation_factor(alpha=alpha, power=power, look_fractions=look_fractions)
     return math.ceil(fixed * inflation)
+
+
+def get_harm_sample_size(
+    baseline_rate: float,
+    *,
+    alpha: float = DEFAULT_ALPHA,
+    power: float = DEFAULT_POWER,
+    relative_rise: float = DEFAULT_RELATIVE_RISE,
+    look_fractions: Sequence[float] = LOOK_FRACTIONS,
+) -> int | None:
+    """Per-arm maximum at which the primary key's harm check detects ``relative_rise`` at ``power``.
+
+    None when the risen rate reaches 1 (a baseline at or above 1 / (1 + rise)): no finite size.
+    """
+    _check_rate("baseline_rate", baseline_rate)
+    _check_positive("relative_rise", relative_rise)
+    _check_levels(alpha, power)
+    risen_rate = baseline_rate * (1 + relative_rise)
+    if risen_rate >= 1:
+        return None
+    fixed = _get_two_proportion_size(baseline_rate, risen_rate, alpha, power)
+    inflation = get_inflation_factor(alpha=alpha, power=power, look_fractions=look_fractions)
+    return math.ceil(fixed * inflation)
+
+
+def get_trial_sample_size(
+    baseline_rate: float,
+    *,
+    alpha: float = DEFAULT_ALPHA,
+    power: float = DEFAULT_POWER,
+    relative_reduction: float = DEFAULT_RELATIVE_REDUCTION,
+    relative_rise: float = DEFAULT_RELATIVE_RISE,
+    look_fractions: Sequence[float] = LOOK_FRACTIONS,
+) -> int | None:
+    """Per-arm maximum of a trial: the larger of its efficacy and primary-harm samples; None with no finite harm size."""
+    harm = get_harm_sample_size(
+        baseline_rate, alpha=alpha, power=power, relative_rise=relative_rise, look_fractions=look_fractions
+    )
+    if harm is None:
+        return None
+    efficacy = get_maximum_sample_size(
+        baseline_rate, alpha=alpha, power=power, relative_reduction=relative_reduction, look_fractions=look_fractions
+    )
+    return max(efficacy, harm)
+
+
+def get_graduation_probability(
+    baseline_rate: float,
+    per_arm: float,
+    *,
+    guardrail_count: int,
+    alpha: float = DEFAULT_ALPHA,
+    power: float = DEFAULT_POWER,
+    relative_reduction: float = DEFAULT_RELATIVE_REDUCTION,
+    look_fractions: Sequence[float] = LOOK_FRACTIONS,
+) -> float:
+    """Chance a true ``relative_reduction`` win graduates at ``per_arm``, on the sequential reading.
+
+    Graduation = the primary crossing its efficacy boundary at some look with no guardrail crossing at
+    or before that look; a win ends the trial, so later guardrail looks never run. Guardrails are
+    independent of each other and of the primary, each spending one-sided ``alpha`` over the primary's
+    looks; the primary's own harm crossing under a true win is negligible and left out.
+    """
+    fractions = _get_checked_fractions(look_fractions)
+    drift = _get_efficacy_drift(baseline_rate, per_arm, alpha, power, relative_reduction)
+    return _get_sequential_graduation(drift, alpha, fractions, _get_checked_count(guardrail_count))
+
+
+def get_growth_factor(
+    baseline_rate: float,
+    per_arm: float,
+    *,
+    guardrail_count: int,
+    alpha: float = DEFAULT_ALPHA,
+    power: float = DEFAULT_POWER,
+    relative_reduction: float = DEFAULT_RELATIVE_REDUCTION,
+    look_fractions: Sequence[float] = LOOK_FRACTIONS,
+) -> float:
+    """Smallest factor on ``per_arm`` at which sequential graduation reaches ``power``.
+
+    1.0 when ``per_arm`` already reaches it; ``math.inf`` when no sample does, since graduation never
+    exceeds the share of first-look efficacy crossings that no guardrail stops.
+    """
+    fractions = _get_checked_fractions(look_fractions)
+    drift = _get_efficacy_drift(baseline_rate, per_arm, alpha, power, relative_reduction)
+    count = _get_checked_count(guardrail_count)
+
+    def get_graduation(factor: float) -> float:
+        return _get_sequential_graduation(drift * math.sqrt(factor), alpha, fractions, count)
+
+    if get_graduation(1.0) >= power:
+        return 1.0
+    if (1 - _get_spent_alpha(alpha, fractions[0])) ** count <= power:
+        return math.inf
+    lower, upper = 1.0, 2.0
+    while get_graduation(upper) < power:
+        lower, upper = upper, 2 * upper
+    while upper - lower > _SEARCH_TOLERANCE * lower:
+        middle = (lower + upper) / 2
+        lower, upper = (middle, upper) if get_graduation(middle) < power else (lower, middle)
+    return upper  # the bracket end that reaches power
+
+
+def get_grown_sample_size(
+    baseline_rate: float,
+    per_arm: int,
+    *,
+    guardrail_count: int,
+    alpha: float = DEFAULT_ALPHA,
+    power: float = DEFAULT_POWER,
+    relative_reduction: float = DEFAULT_RELATIVE_REDUCTION,
+    look_fractions: Sequence[float] = LOOK_FRACTIONS,
+) -> int | None:
+    """Per-arm maximum grown until sequential graduation reaches ``power``; None when no sample reaches it."""
+    factor = get_growth_factor(
+        baseline_rate,
+        per_arm,
+        guardrail_count=guardrail_count,
+        alpha=alpha,
+        power=power,
+        relative_reduction=relative_reduction,
+        look_fractions=look_fractions,
+    )
+    if math.isinf(factor):
+        return None
+    return math.ceil(per_arm * factor)
 
 
 def get_boundaries(
@@ -318,6 +445,23 @@ def _get_two_proportion_size(rate: float, other_rate: float, alpha: float, power
     return (null_term + alternative_term) ** 2 / (rate - other_rate) ** 2
 
 
+def _get_efficacy_drift(
+    baseline_rate: float, per_arm: float, alpha: float, power: float, relative_reduction: float
+) -> float:
+    """z drift at full information of a ``per_arm`` trial, on the sizing's normal approximation."""
+    if not per_arm >= 1:
+        raise ValueError(f"per_arm must be >= 1, got {per_arm}")
+    fixed = _get_fixed_size(baseline_rate, alpha, power, relative_reduction)
+    critical_sum = _STANDARD_NORMAL.inv_cdf(1 - alpha) + _STANDARD_NORMAL.inv_cdf(power)
+    return critical_sum * math.sqrt(per_arm / fixed)
+
+
+def _get_checked_count(guardrail_count: int) -> int:
+    if guardrail_count < 0:
+        raise ValueError(f"guardrail_count must be >= 0, got {guardrail_count}")
+    return guardrail_count
+
+
 def _get_effective_sample(per_arm: float, design_effect: float) -> float:
     if not per_arm >= 1:
         raise ValueError(f"per_arm must be >= 1, got {per_arm}")
@@ -403,18 +547,33 @@ def _get_inflation_factor(alpha: float, power: float, fractions: tuple[float, ..
 
 def _get_power(drift: float, boundaries: tuple[float, ...], fractions: tuple[float, ...]) -> float:
     """Probability of crossing any look's boundary when the z drift at full information is ``drift``."""
-    total = 0.0
+    return sum(_get_crossings(drift, boundaries, fractions))
+
+
+def _get_sequential_graduation(drift: float, alpha: float, fractions: tuple[float, ...], guardrail_count: int) -> float:
+    """Σ over looks of P(first efficacy crossing there) x P(no guardrail crossed by then)."""
+    crossings = _get_crossings(drift, _get_boundaries(alpha, fractions), fractions)
+    # a guardrail's null crossing by a look = the alpha its boundaries spent by then
+    return math.fsum(
+        crossing * (1 - _get_spent_alpha(alpha, fraction)) ** guardrail_count
+        for crossing, fraction in zip(crossings, fractions)
+    )
+
+
+def _get_crossings(drift: float, boundaries: tuple[float, ...], fractions: tuple[float, ...]) -> list[float]:
+    """Per look, the probability that the score first crosses its boundary there."""
+    crossings: list[float] = []
     mass: _Mass = []
     previous_fraction = 0.0
     for boundary, fraction in zip(boundaries, fractions):
         boundary_score = boundary * math.sqrt(fraction)
         if previous_fraction == 0.0:
-            total += _get_upper_tail((boundary_score - drift * fraction) / math.sqrt(fraction))
+            crossings.append(_get_upper_tail((boundary_score - drift * fraction) / math.sqrt(fraction)))
         else:
-            total += _get_crossing(mass, drift, fraction - previous_fraction, boundary_score)
+            crossings.append(_get_crossing(mass, drift, fraction - previous_fraction, boundary_score))
         mass = _get_continuation_mass(mass, drift, previous_fraction, fraction, boundary)
         previous_fraction = fraction
-    return total
+    return crossings
 
 
 def _get_crossing(mass: _Mass, drift: float, step: float, boundary_score: float) -> float:
