@@ -58,7 +58,11 @@ from _pg_seal import get_ephemeral_connection, seal_pg_reach
 _NOW = datetime(2026, 10, 5, 6, 0, tzinfo=timezone.utc)
 _WINDOWS = get_pair_windows(_NOW)
 _DAY = _WINDOWS.end  # D, the most recent UTC midnight
-_KEY = SimpleNamespace(BUDGET="budget_overage", EMIT="emit_failure")
+# EMIT_ROW = the A/A row of emit_failure's attribution-leg definition; a row keyed EMIT is
+# the pre-split union event's
+_KEY = SimpleNamespace(
+    BUDGET="budget_overage", EMIT="emit_failure", EMIT_ROW="emit_failure_attribution"
+)
 _AGENT = SimpleNamespace(
     PASSING="glass-atrium-dev-python",
     UNDERPOWERED="glass-atrium-dev-shell",
@@ -344,7 +348,7 @@ class _StageFixture(unittest.TestCase):
         self.design_effects = {
             (agent, key): _build_design_effect_payload(metric_key=key)
             for agent in vars(_AGENT).values()
-            for key in (_KEY.BUDGET, _KEY.EMIT)
+            for key in (_KEY.BUDGET, _KEY.EMIT_ROW)
         }
 
         def _read_spawn_facts(agents, windows):
@@ -482,11 +486,38 @@ class CheckPatternPowerTest(_StageFixture):
                 self.design_effects[(_AGENT.PASSING, _KEY.BUDGET)] = (
                     _build_design_effect_payload(own, _KEY.BUDGET)
                 )
-                self.design_effects[(_AGENT.PASSING, _KEY.EMIT)] = (
-                    _build_design_effect_payload(other, _KEY.EMIT)
+                self.design_effects[(_AGENT.PASSING, _KEY.EMIT_ROW)] = (
+                    _build_design_effect_payload(other, _KEY.EMIT_ROW)
                 )
                 counts, _ = self._check([_pattern(_AGENT.PASSING, 1)])
                 self.assertEqual(counts[verdict], 1)
+
+    def test_a_row_measured_under_the_pre_split_union_event_sizes_no_emit_failure_pattern(
+        self,
+    ) -> None:
+        synthesized = ({"attribution_source": "completion-synthesized"},)
+        # the at-bound history's events as synthesized outcomes: its emit_failure pair passes
+        self.histories[_AGENT.PASSING] = [
+            spawn._replace(overage_rows=0, outcomes=synthesized if spawn.overage_rows else ())
+            for spawn in _get_floor_passing_history(_UNITS.AT_BOUND)
+        ]
+        rows = [
+            ("only the union row", {(_AGENT.PASSING, _KEY.EMIT)}, "design-unmeasured"),
+            ("the union row beside the attribution row",
+             {(_AGENT.PASSING, _KEY.EMIT), (_AGENT.PASSING, _KEY.EMIT_ROW)}, "passing"),
+        ]
+        for name, stored, verdict in rows:
+            with self.subTest(name):
+                self.design_effects = {
+                    key: _build_design_effect_payload(1.0, key[1]) for key in stored
+                }
+                counts, stderr_text = self._check([_pattern(_AGENT.PASSING, 1, _KEY.EMIT)])
+                self.assertEqual(counts[verdict], 1)
+                self.assertIn(f"agent={_AGENT.PASSING} key={_KEY.EMIT}: {verdict}", stderr_text)
+        union_row = _build_design_effect_payload(1.0, _KEY.EMIT)
+        self.assertEqual(
+            dc._get_design_effects([(_AGENT.PASSING, union_row)]), ({}, frozenset())
+        )
 
     def test_a_stored_value_below_one_reads_as_one_never_lower(self) -> None:
         # the at-bound history is sized for 1.5 → passing at 1, and identically at any value below 1
@@ -683,7 +714,7 @@ class DesignEffectReadLivePgTest(_StageFixture):
         self._insert(
             latest,
             event.AA_ARM_DESIGN_EFFECT,
-            _build_design_effect_payload(_DESIGN_EFFECT * 1.2, _KEY.EMIT),
+            _build_design_effect_payload(_DESIGN_EFFECT * 1.2, _KEY.EMIT_ROW),
         )
         self._insert(
             latest,

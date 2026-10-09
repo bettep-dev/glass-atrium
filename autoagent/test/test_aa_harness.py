@@ -906,7 +906,7 @@ def _spawn(
         _START + timedelta(days=day),
         int(facts.get("overage", 0)),
         bool(facts.get("stop", True)),
-        (),
+        tuple(facts.get("outcomes", ())),
         tool_use_actual=facts.get("tool_use"),
     )
 
@@ -956,7 +956,9 @@ def _get_expected_python_reading(
         "budget_overage": lambda spawn: (
             spawn.overage_rows > 0 or (spawn.tool_use_actual or 0) >= _TOOL_BUDGET
         ),
-        "emit_failure": lambda spawn: not spawn.has_subagent_stop,
+        # every outcome a fixture spawn carries is synthesized
+        "emit_failure_attribution": lambda spawn: bool(spawn.outcomes),
+        "no_subagent_stop": lambda spawn: not spawn.has_subagent_stop,
     }[metric_key]
     clusters: dict[str, list[tuple[int, float]]] = {}
     for spawn in spawns:
@@ -1122,16 +1124,24 @@ class AaResultTest(_AaResultFixture):
         self,
     ) -> None:
         agent = "glass-atrium-dev-python"
-        # p5 (session c) records no overage row but reaches the budget on tool_use alone
+        # p5 (session c) records no overage row but reaches the budget on tool_use alone;
+        # p3 and p5 carry a synthesized outcome, the emit-failure primary's leg
+        synthesized = ({"attribution_source": "completion-synthesized"},)
         python = tuple(
-            spawn._replace(tool_use_actual=_TOOL_BUDGET) if spawn.agent_id == "p5" else spawn
+            spawn._replace(
+                tool_use_actual=_TOOL_BUDGET if spawn.agent_id == "p5" else spawn.tool_use_actual,
+                outcomes=synthesized if spawn.agent_id in {"p3", "p5"} else (),
+            )
             for spawn in _SPAWNS.python
         )
         self.spawns[agent] = (_EARLIER_SPAWN, *map(_exposed, python))
-        expected = {
-            key: _get_expected_python_reading(key, python)
-            for key in ("budget_overage", "emit_failure")
+        # row key → the power read's key: the primary's row is named for its definition
+        power_keys = {
+            "budget_overage": "budget_overage",
+            "emit_failure_attribution": "emit_failure",
+            "no_subagent_stop": "no_subagent_stop",
         }
+        expected = {key: _get_expected_python_reading(key, python) for key in power_keys}
 
         with mock.patch.dict(os.environ, {"SUBAGENT_TOOL_BUDGET": str(_TOOL_BUDGET)}):
             self._evaluate()
@@ -1153,7 +1163,7 @@ class AaResultTest(_AaResultFixture):
             dc._get_design_effects([(row.agent, row.payload) for row in rows]),
             (
                 {
-                    (agent, key): max(reading.value, 1.0)
+                    (agent, power_keys[key]): max(reading.value, 1.0)
                     for key, reading in expected.items()
                 },
                 frozenset(),
@@ -2868,6 +2878,32 @@ class AaArmCriterionTest(unittest.TestCase):
         )
         self.assertAlmostEqual(last.tool_use.sd, 29**0.5, places=12)
         self.assertIsNone(looks[0].tool_use)
+
+    def test_the_engines_emit_failure_guardrail_reads_the_union_of_both_legs(self) -> None:
+        synthesized = ({"attribution_source": "completion-synthesized"},)
+        # one session per spawn, started a day apart: look n holds the first ceil(n × 6 / 4)
+        armed = {
+            "a": [
+                dc.ArmedSpawn(_spawn("killed", "s1", 1, stop=False), 0),
+                dc.ArmedSpawn(_spawn("synth", "s2", 2, outcomes=synthesized), 0),
+                dc.ArmedSpawn(_spawn("clean-0", "s3", 3), 0),
+                dc.ArmedSpawn(_spawn("killed-synth", "s4", 4, stop=False, outcomes=synthesized), 1),
+                dc.ArmedSpawn(_spawn("clean-1", "s5", 5), 1),
+                dc.ArmedSpawn(_spawn("synth-1", "s6", 6, outcomes=synthesized), 1),
+            ],
+        }
+
+        looks = dc.get_aa_looks(armed, _NOW, tool_budget=40)
+
+        self.assertEqual(
+            [look.guardrails for look in looks],
+            [
+                {"emit_failure": _arms((2, 2), (0, 0))},
+                {"emit_failure": _arms((2, 3), (0, 0))},
+                {"emit_failure": _arms((2, 3), (1, 2))},
+                {"emit_failure": _arms((2, 3), (2, 3))},
+            ],
+        )
 
 
 class _AaLivePgFixture(_AaFixture):

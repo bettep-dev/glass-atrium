@@ -217,16 +217,20 @@ class TestSpawnHalf(unittest.TestCase):
 class TestMetricEvents(unittest.TestCase):
     """Which spawn is a metric event, read from daemon-recorded facts only."""
 
-    def test_emit_failure_is_a_missing_stop_or_a_non_writer_outcome(self) -> None:
+    def test_emit_failure_counts_a_non_writer_outcome_and_its_guardrail_a_missing_stop(self) -> None:
+        # (emit_failure primary, no_subagent_stop guardrail)
         rows = [
-            ("stop and a writer-emitted outcome", True, ("hook-input",), False),
-            ("stop and no outcome row", True, (), False),
-            ("no SubagentStop", False, ("hook-input",), True),
-            ("synthesized outcome", True, ("completion-synthesized",), True),
-            ("structuredoutput-derived outcome", True, ("structuredoutput-derived",), True),
-            ("budget-truncation outcome", True, ("budget-truncation",), True),
-            ("truncated_completion outcome", True, ("truncated_completion",), True),
-            ("one writer and one synthesized outcome", True, ("hook-input", "completion-synthesized"), True),
+            ("stop and a writer-emitted outcome", True, ("hook-input",), (False, False)),
+            ("stop and no outcome row", True, (), (False, False)),
+            ("killed: no SubagentStop, no outcome row", False, (), (False, True)),
+            ("no SubagentStop, a writer-emitted outcome", False, ("hook-input",), (False, True)),
+            ("no SubagentStop, a synthesized outcome", False, ("completion-synthesized",), (True, True)),
+            ("synthesized outcome", True, ("completion-synthesized",), (True, False)),
+            ("structuredoutput-derived outcome", True, ("structuredoutput-derived",), (True, False)),
+            ("budget-truncation outcome", True, ("budget-truncation",), (True, False)),
+            ("truncated_completion outcome", True, ("truncated_completion",), (True, False)),
+            ("one writer and one synthesized outcome", True, ("hook-input", "completion-synthesized"),
+             (True, False)),
         ]
         for name, has_stop, attributions, expected in rows:
             with self.subTest(name):
@@ -234,7 +238,11 @@ class TestMetricEvents(unittest.TestCase):
                     "agent-x", _NOW, has_subagent_stop=has_stop,
                     outcomes=tuple({"attribution_source": source} for source in attributions),
                 )
-                self.assertIs(sig.is_metric_event(spawn, "emit_failure"), expected)
+                self.assertEqual(
+                    (sig.is_metric_event(spawn, "emit_failure"),
+                     sig.is_metric_event(spawn, "no_subagent_stop")),
+                    expected,
+                )
 
     def test_a_spawn_with_three_overage_rows_counts_once(self) -> None:
         windows = sig.get_pair_windows(_NOW)
@@ -446,32 +454,36 @@ class TestOccurrenceFloor(unittest.TestCase):
 
 class TestPendingGrace(unittest.TestCase):
     """A spawn with no SubagentStop yet, started inside the grace before the evaluation instant,
-    may still be running → pending under either metric key: counted on no side, reported apart."""
+    may still be running → pending under either metric key: counted on no side, reported apart.
+    An older one was killed: counted, an emit_failure event only with a non-writer outcome."""
 
-    def test_a_stopless_spawn_inside_the_grace_is_pending_and_an_older_one_is_an_event(self) -> None:
+    def test_a_stopless_spawn_inside_the_grace_is_pending_and_an_older_one_is_counted(self) -> None:
         windows = sig.get_pair_windows(_NOW)
         evaluated_at = windows.end + timedelta(hours=2)
         passing = _get_passing_spawns(windows)
+        synthesized = ({"attribution_source": "completion-synthesized"},)
         rows = [
             ("emit_failure, no SubagentStop, 5 h old → pending",
-             "emit_failure", timedelta(hours=5), False, 0, (0, 0, 1)),
-            ("emit_failure, no SubagentStop, exactly 6 h old → an event",
-             "emit_failure", timedelta(hours=6), False, 0, (1, 1, 0)),
-            ("emit_failure, no SubagentStop, 7 h old → an event",
-             "emit_failure", timedelta(hours=7), False, 0, (1, 1, 0)),
+             "emit_failure", timedelta(hours=5), False, 0, (), (0, 0, 1)),
+            ("emit_failure, killed, exactly 6 h old → counted, no event",
+             "emit_failure", timedelta(hours=6), False, 0, (), (1, 0, 0)),
+            ("emit_failure, killed, 7 h old → counted, no event",
+             "emit_failure", timedelta(hours=7), False, 0, (), (1, 0, 0)),
+            ("emit_failure, no SubagentStop, synthesized outcome, 7 h old → an event",
+             "emit_failure", timedelta(hours=7), False, 0, synthesized, (1, 1, 0)),
             ("emit_failure, SubagentStop, 5 h old → counted, no event",
-             "emit_failure", timedelta(hours=5), True, 0, (1, 0, 0)),
+             "emit_failure", timedelta(hours=5), True, 0, (), (1, 0, 0)),
             ("budget_overage, no SubagentStop, overage row, 5 h old → pending",
-             "budget_overage", timedelta(hours=5), False, 1, (0, 0, 1)),
+             "budget_overage", timedelta(hours=5), False, 1, (), (0, 0, 1)),
             ("budget_overage, no SubagentStop, overage row, 7 h old → an event",
-             "budget_overage", timedelta(hours=7), False, 1, (1, 1, 0)),
+             "budget_overage", timedelta(hours=7), False, 1, (), (1, 1, 0)),
         ]
         agent_id = _get_agent_ids("grace", 1, is_floor=True)[0]
-        for name, metric_key, age, has_stop, overage_rows, (spawns, events, pending) in rows:
+        for name, metric_key, age, has_stop, overage_rows, outcomes, (spawns, events, pending) in rows:
             with self.subTest(name):
                 spawn = _get_spawn(
                     agent_id, evaluated_at - age, session_id="g", has_subagent_stop=has_stop,
-                    overage_rows=overage_rows,
+                    overage_rows=overage_rows, outcomes=outcomes,
                 )
                 before = _get_floor(passing, windows, metric_key=metric_key, evaluated_at=evaluated_at)
                 floor = _get_floor(
@@ -529,14 +541,14 @@ class TestTasks(unittest.TestCase):
             (sig.WindowCount(1, 0, 0), sig.WindowCount(1, 1, 1)),
         )
 
-    def test_a_spawn_with_no_subagent_stop_counts_as_an_emit_failure_inside_a_task(self) -> None:
+    def test_emit_failure_counts_each_spawn_of_a_task_and_a_killed_member_is_no_event(self) -> None:
         spawns = self._get_task_spawns(self.windows.start.confirmation + _DAY)
         spawns[1] = spawns[1]._replace(has_subagent_stop=False, stopped_at=None)
         emit = _get_floor(
             spawns, self.windows, metric_key="emit_failure", redelegation_window=self._WINDOW
         )
         overage = _get_floor(spawns, self.windows, redelegation_window=self._WINDOW)
-        self.assertEqual(emit.confirmation, sig.WindowCount(2, 1, 1))
+        self.assertEqual(emit.confirmation, sig.WindowCount(2, 0, 0))
         self.assertEqual(overage.confirmation, sig.WindowCount(1, 1, 1))
 
     def test_a_spawn_continues_a_task_only_inside_the_window_after_the_prior_stop(self) -> None:
@@ -1098,7 +1110,7 @@ class TestAggregatorAndIntakeAgree(_AggregatorRun):
                           has_subagent_stop=False)
         spawns = _get_emit_failure_spawns(_WINDOWS)
         spawns.remove(next(s for s in spawns if s.started_at >= _WINDOWS.start.confirmation
-                           and not s.has_subagent_stop))
+                           and s.outcomes))
         fixture = (_WINDOWS.start.baseline, {_PYTHON: [*spawns, late], _SHELL: []})
         signature = f"{_EMIT_FAILURE_CORE}|{_PYTHON}"
         pattern = _get_intake_pattern(dc, _EMIT_FAILURE_CORE, sig.METRIC_EMIT_FAILURE, 1)
@@ -1186,9 +1198,12 @@ class TestAggregatorAndIntakeAgree(_AggregatorRun):
 
 
 def _get_emit_failure_spawns(windows: sig.PairWindows) -> list[sig.SpawnFacts]:
-    """The passing fixture under emit_failure: each overage event becomes a stopless spawn."""
+    """The passing fixture under emit_failure: each overage event becomes a synthesized
+    outcome, each quiet spawn a killed one — the guardrail's leg, no primary event."""
+    synthesized = ({"attribution_source": "completion-synthesized"},)
     return [
-        s._replace(overage_rows=0, has_subagent_stop=s.overage_rows == 0)
+        s._replace(overage_rows=0, has_subagent_stop=s.overage_rows > 0,
+                   outcomes=synthesized if s.overage_rows else ())
         for s in _get_passing_spawns(windows)
     ]
 
@@ -1338,7 +1353,7 @@ class TestPatternFloorReadLivePg(unittest.TestCase):
         self._seed()
         rows = [
             ("budget_overage", sig.WindowCount(2, 1, 1), sig.WindowCount(3, 1, 1)),
-            ("emit_failure", sig.WindowCount(2, 1, 1), sig.WindowCount(3, 1, 1)),
+            ("emit_failure", sig.WindowCount(2, 0, 0), sig.WindowCount(3, 1, 1)),
         ]
         for metric_key, baseline, detection in rows:
             with self.subTest(metric_key):

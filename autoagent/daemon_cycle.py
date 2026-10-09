@@ -96,9 +96,11 @@ import ga_paths  # noqa: E402 — hooks dir pinned by the loop above
 # try/except, and its functions stay defined on the psycopg-absent path.
 from _outcome_signal import (  # noqa: E402 — hooks dir pinned by the loop above
     BASELINE,
+    DESIGN_EFFECT_ROW_KEYS,
     METRIC_BUDGET_OVERAGE,
     METRIC_EMIT_FAILURE,
     METRIC_KEYS,
+    METRIC_NO_SUBAGENT_STOP,
     VERDICT_PASS,
     FloorResult,
     PairWindows,
@@ -8955,11 +8957,19 @@ def _read_power_design_effects(
 def _get_design_effects(
     rows: list[tuple[str, dict]],
 ) -> tuple[dict[tuple[str, str], float], frozenset[tuple[str, str]]]:
-    """((agent, metric key) → design effect read, pairs whose stored row is not a design effect)."""
+    """((agent, metric key) → design effect read, pairs whose stored row is not a design effect).
+
+    A row keyed outside DESIGN_EFFECT_ROW_KEYS — the pre-split union-event `emit_failure` row
+    included — was measured under no current definition and sizes nothing.
+    """
+    metric_keys = {row_key: key for key, row_key in DESIGN_EFFECT_ROW_KEYS.items()}
     design_effects: dict[tuple[str, str], float] = {}
     invalid_keys: set[tuple[str, str]] = set()
     for agent, payload in rows:
-        metric_key = payload.get("metric_key") if isinstance(payload, dict) else None
+        row_key = payload.get("metric_key") if isinstance(payload, dict) else None
+        if isinstance(payload, dict) and row_key not in metric_keys:
+            continue
+        metric_key = metric_keys.get(row_key)
         try:
             design_effects[(agent, metric_key)] = _get_stored_design_effect(payload)
         except (ArithmeticError, AttributeError, TypeError, ValueError) as exc:
@@ -10345,18 +10355,19 @@ def _get_aa_result_payload(
 def _get_aa_design_effects(
     armed: Mapping[str, Sequence[ArmedSpawn]], now: datetime, start_id: int
 ) -> tuple[dict[tuple[str, str], trial_design.ArmDesignEffect], list[str]]:
-    """((agent, metric key) → arm-difference reading, agents undefined on every key)."""
+    """((agent, row key) → arm-difference reading, agents undefined on every key): one row key
+    per metric definition (DESIGN_EFFECT_ROW_KEYS), emit failure's two split legs apart."""
     tool_budget = get_tool_budget(os.environ)
     effects: dict[tuple[str, str], trial_design.ArmDesignEffect] = {}
     undefined: list[str] = []
     for agent in sorted(armed):
-        for metric_key in sorted(METRIC_KEYS):
+        for metric_key, row_key in sorted(DESIGN_EFFECT_ROW_KEYS.items()):
             is_event = _get_aa_event_test(metric_key, tool_budget)
             reading = _get_arm_design_effect(
-                armed[agent], is_event, now, seed=f"{start_id}:{agent}:{metric_key}"
+                armed[agent], is_event, now, seed=f"{start_id}:{agent}:{row_key}"
             )
             if reading is not None:
-                effects[(agent, metric_key)] = reading
+                effects[(agent, row_key)] = reading
         if not any(key[0] == agent for key in effects):
             undefined.append(agent)
     return effects, undefined
@@ -10367,6 +10378,14 @@ def _get_aa_event_test(metric_key: str, tool_budget: int) -> Callable[[SpawnFact
     if metric_key == METRIC_BUDGET_OVERAGE:
         return lambda spawn: is_task_overrun((spawn,), tool_budget)
     return lambda spawn: is_metric_event(spawn, metric_key)
+
+
+def _is_aa_emit_failure(spawn: SpawnFacts) -> bool:
+    """The engine's emit-failure harm-stop event: the pre-split union of both legs, so the A/A's
+    criteria do not move with the split."""
+    return is_metric_event(spawn, METRIC_EMIT_FAILURE) or is_metric_event(
+        spawn, METRIC_NO_SUBAGENT_STOP
+    )
 
 
 def _get_arm_design_effect(
@@ -10721,11 +10740,7 @@ def get_aa_looks(
 def _get_aa_look(items: Sequence[ArmedSpawn], tool_budget: int) -> AaLook:
     return AaLook(
         _get_aa_arms(items, _get_aa_event_test(METRIC_BUDGET_OVERAGE, tool_budget)),
-        {
-            METRIC_EMIT_FAILURE: _get_aa_arms(
-                items, _get_aa_event_test(METRIC_EMIT_FAILURE, tool_budget)
-            )
-        },
+        {METRIC_EMIT_FAILURE: _get_aa_arms(items, _is_aa_emit_failure)},
         get_tool_use_reading(items, is_overage_primary=True),
     )
 
