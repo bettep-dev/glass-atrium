@@ -8744,12 +8744,23 @@ POWER = SimpleNamespace(
     ),
     # eval_result = prefix + verdict; the longest fills the varchar(32) column exactly
     CHECK_EVAL_PREFIX="power-check-",
-    # latest A/A design-effect row per agent and metric key; DISTINCT ON keeps the fetch to one row each
+    # latest design-effect row per agent and metric key among A/As whose aa-result passed; the start
+    # id in both dedupe keys joins them → one join for whole-roster and subset A/As alike
     DESIGN_EFFECT_SQL=(
-        "SELECT DISTINCT ON (agent, payload->>'metric_key') agent, payload "
-        "FROM core.autoagent_trial_ledger WHERE event = %s AND agent = ANY(%s) "
-        "ORDER BY agent, payload->>'metric_key', recorded_at DESC, id DESC"
+        "SELECT DISTINCT ON (effect.agent, effect.payload->>'metric_key') "
+        "effect.agent, effect.payload "
+        "FROM core.autoagent_trial_ledger AS effect "
+        "JOIN core.autoagent_trial_ledger AS aa_result "
+        "ON aa_result.dedupe_key = %s::text || split_part(effect.dedupe_key, ':', 2) "
+        "AND aa_result.payload->>'overall' = %s "
+        "WHERE effect.event = %s AND effect.agent = ANY(%s) "
+        "ORDER BY effect.agent, effect.payload->>'metric_key', "
+        "effect.recorded_at DESC, effect.id DESC"
     ),
+    # method B = the floor-half baseline over session-mapped spawns; reported, never decides
+    METHOD_B_LABEL="method B (session-mapped, information only)",
+    # the floor-half baseline runs above the projection window's rate → a smaller bound
+    EMIT_FAILURE_LABEL="emit_failure baseline pass-leaning, information only",
 )
 
 
@@ -8850,7 +8861,14 @@ def _get_pattern_power_verdict(
     required = check.units.required
     if check.verdict == POWER.VERDICT.PASSING and design_effect is not None and required is not None:
         power_pass = PowerPass(pattern, floor.baseline, design_effect, required, spawns)
-    return check.verdict, _get_power_detail(floor, check, design_effect), power_pass
+    mapped = [spawn for spawn in spawns if spawn.session_id is not None]
+    method_b = get_floor_verdict(
+        mapped, pattern.metric_key, windows, inputs.provenance_start, windows.end
+    ).baseline
+    detail = _get_power_detail(floor, check, design_effect, method_b)
+    if pattern.metric_key == METRIC_EMIT_FAILURE:
+        detail = f"{detail} ({POWER.EMIT_FAILURE_LABEL})"
+    return check.verdict, detail, power_pass
 
 
 def get_power_check(subject: PowerSubject, inputs: PowerInputs, windows: PairWindows) -> PowerCheck:
@@ -8858,7 +8876,8 @@ def get_power_check(subject: PowerSubject, inputs: PowerInputs, windows: PairWin
 
     Projected units = the agent's spawns per day over the 28 days before D × the 84-day
     horizon; NULL-agent_id spawns count nowhere. Bound = 2 × the trial_design per-arm
-    maximum at the floor-half baseline rate × the key's measured A/A design effect.
+    maximum — the larger of the efficacy and harm samples — at the floor-half baseline rate
+    × the key's design effect from a passed A/A.
     In order: fewer than 28 provenance-covered days → insufficient-history; no design
     effect at the key → design-unmeasured; a rate with no finite size → underpowered.
     """
@@ -8933,18 +8952,21 @@ def _read_power_history(
 def _read_power_design_effects(
     agents: list[str],
 ) -> tuple[dict[tuple[str, str], float], frozenset[tuple[str, str]]]:
-    """((agent, metric key) → design effect of its latest A/A row, unchecked pairs), WARN per fault.
+    """((agent, metric key) → design effect of its latest passed A/A's row, unchecked pairs).
 
-    A pair with no row is absent (design-unmeasured). A read fault — the table absent on a
-    migrate-failed schema included — fails every pair closed.
+    WARN per fault. A pair with no row from a passed A/A is absent (design-unmeasured). A read
+    fault — the table absent on a migrate-failed schema included — fails every pair closed.
     """
     if not HAS_PG_LOOP_WRITE:
         cause = "trial ledger unreadable: PG helper import failed"
     else:
         try:
             with _pg_connect() as conn, conn.cursor() as cur:
-                event = TRIAL_LEDGER.EVENT.AA_ARM_DESIGN_EFFECT
-                cur.execute(POWER.DESIGN_EFFECT_SQL, (event, agents))
+                event = TRIAL_LEDGER.EVENT
+                cur.execute(
+                    POWER.DESIGN_EFFECT_SQL,
+                    (f"{event.AA_RESULT}:", AA.VERDICT.PASS, event.AA_ARM_DESIGN_EFFECT, agents),
+                )
                 rows = cur.fetchall()
         except Exception as exc:  # noqa: BLE001 — any read fault is an outage → fail closed
             cause = f"A/A design effect unreadable: {_describe_fault(exc)}"
@@ -9003,14 +9025,14 @@ def _warn_power_unchecked(cause: str, scope: str) -> None:
 
 
 def _get_maximum_sample_size(events: int, spawns: int) -> int | None:
-    """trial_design per-arm maximum at rate events/spawns; None outside (0, 1) — no finite size."""
+    """trial_design per-arm trial maximum at rate events/spawns; None outside (0, 1) or unsized."""
     if not 0 < events < spawns:
         return None
-    return trial_design.get_maximum_sample_size(events / spawns)
+    return trial_design.get_trial_sample_size(events / spawns)
 
 
 def _get_power_detail(
-    floor: FloorResult, check: PowerCheck, design_effect: float | None
+    floor: FloorResult, check: PowerCheck, design_effect: float | None, method_b: WindowCount
 ) -> str:
     baseline = floor.baseline
     units = check.units
@@ -9023,7 +9045,7 @@ def _get_power_detail(
     return (
         f"floor-half baseline {baseline.events}/{baseline.spawns}, projected "
         f"{units.projected:.0f} units in {trial_design.HORIZON_DAYS} d vs required "
-        f"{required_label}"
+        f"{required_label}; {POWER.METHOD_B_LABEL} {method_b.events}/{method_b.spawns}"
     )
 
 
@@ -9153,7 +9175,7 @@ def get_preregistration_payload(power_pass: PowerPass, detection_start: datetime
         "metric_key": power_pass.pattern.metric_key,
         "detection_start": detection_start.isoformat(),
         "baseline": {"events": baseline.events, "spawns": baseline.spawns},
-        "maximum_per_arm": trial_design.get_maximum_sample_size(baseline.events / baseline.spawns),
+        "maximum_per_arm": _get_maximum_sample_size(baseline.events, baseline.spawns),
         "design_effect": power_pass.design_effect,
         "required_units": power_pass.required,
         "boundaries": list(boundaries),

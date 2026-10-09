@@ -64,7 +64,7 @@ _DESIGN_EFFECT = trial_design.ArmDesignEffect(1.5, 20, 200, 1.3, 1.8, 2000)
 _DESIGN_EFFECT_PAYLOAD = {"metric_key": _BUDGET_KEY, **_DESIGN_EFFECT._asdict()}
 # floor-half baseline 20 events / 200 spawns → rate 0.1; the bound read from the reference module
 _BASELINE = SimpleNamespace(EVENTS=20, SPAWNS=200)
-_MAXIMUM = trial_design.get_maximum_sample_size(_BASELINE.EVENTS / _BASELINE.SPAWNS)
+_MAXIMUM = trial_design.get_trial_sample_size(_BASELINE.EVENTS / _BASELINE.SPAWNS)
 _REQUIRED = trial_design.get_required_units(
     _MAXIMUM, design_effect=_DESIGN_EFFECT.value
 )
@@ -215,7 +215,7 @@ class _LedgerCursor:
         if statement in self.ledger.answered_empty:
             self.result = []
         elif statement == dc.POWER.DESIGN_EFFECT_SQL:
-            _, agents = params
+            agents = params[-1]
             self.result = [
                 (agent, self.ledger.design_effects[agent])
                 for agent in agents

@@ -1,10 +1,11 @@
 """Power check at intake: each floor-passing keyed pattern against the trial_design bound.
 
 Projected units = the agent's spawns per day over the last 28 provenance-covered days
-× the 84-day horizon; the bound = 2 × the trial_design per-arm maximum at the floor-half
-baseline rate × the agent's latest A/A design effect; no A/A row → design-unmeasured, never
-passing. The verdict is counted on the cycle report and sent as a loop event; no status is
-written and no pattern is parked or dropped. Every row is database-free under
+× the 84-day horizon; the bound = 2 × the trial_design per-arm maximum (the larger of the
+efficacy and harm samples) at the floor-half baseline rate × the agent's latest design effect
+from a passed A/A; no such row → design-unmeasured, never passing. The verdict is counted
+on the cycle report and sent as a loop event; no status is written and no pattern is parked
+or dropped. Every row is database-free under
 ``seal_pg_reach``, except the ledger-read live class, which runs only under
 ``autoagent/test/live-pg-ephemeral.bats`` and skips elsewhere.
 
@@ -76,15 +77,15 @@ _BASELINE_RATE = _BASELINE.events / _BASELINE.spawns
 _DESIGN_EFFECT = 1.5
 # the bound read from the trial_design reference module, never from the code under test
 _REQUIRED_UNITS = trial_design.get_required_units(
-    trial_design.get_maximum_sample_size(_BASELINE_RATE), design_effect=_DESIGN_EFFECT
+    trial_design.get_trial_sample_size(_BASELINE_RATE), design_effect=_DESIGN_EFFECT
 )
-# baseline 21/50 at design effect 1 → bound 366 = exactly 122 × 84 / 28
-# (122 / 28) × 84 rounds below 366 in floating point
-_EXACT_BOUND_BASELINE = WindowCount(spawns=50, events=21, sessions=21)
-# 28-day spawn counts: 84-day projection just at-or-above / just below the bound; 122 at 21/50
+# baseline 17/29 at design effect 1 → bound 204 = exactly 68 × 84 / 28
+# (68 / 28) × 84 rounds below 204 in floating point
+_EXACT_BOUND_BASELINE = WindowCount(spawns=29, events=17, sessions=17)
+# 28-day spawn counts: 84-day projection just at-or-above / just below the bound; 68 at 17/29
 _UNITS = SimpleNamespace(
     AT_BOUND=math.ceil(_REQUIRED_UNITS * 28 / 84),
-    AT_EXACT_BOUND=122,
+    AT_EXACT_BOUND=68,
 )
 _UNITS.BELOW_BOUND = _UNITS.AT_BOUND - 1
 
@@ -279,6 +280,49 @@ class GetPowerCheckTest(unittest.TestCase):
                 )
                 self.assertEqual(check.verdict, verdict)
 
+    def test_the_bound_sizes_on_the_larger_of_the_efficacy_and_harm_samples(self) -> None:
+        provenance_covering = _DAY - timedelta(days=60)
+        efficacy_bound = trial_design.get_required_units(
+            trial_design.get_maximum_sample_size(_BASELINE_RATE), design_effect=_DESIGN_EFFECT
+        )
+        # premise: at rate 0.1 the harm sample is the larger one
+        self.assertGreater(_REQUIRED_UNITS, efficacy_bound)
+        # rate 51/91 → the efficacy sample is the larger one
+        efficacy_binding = WindowCount(spawns=91, events=51, sessions=51)
+        rows = [
+            (
+                "harm larger: past the efficacy bound, short of the harm bound → underpowered",
+                _floor(),
+                math.ceil(efficacy_bound * 28 / 84),
+                _REQUIRED_UNITS,
+                dc.POWER.VERDICT.UNDERPOWERED,
+            ),
+            (
+                "efficacy larger: the bound is the efficacy sample",
+                _floor(baseline=efficacy_binding),
+                _UNITS.AT_BOUND,
+                trial_design.get_required_units(
+                    trial_design.get_maximum_sample_size(51 / 91), design_effect=_DESIGN_EFFECT
+                ),
+                dc.POWER.VERDICT.PASSING,
+            ),
+            (
+                "a baseline above 1/1.3 has no finite harm size → underpowered, no exception",
+                _floor(baseline=WindowCount(spawns=100, events=80, sessions=80)),
+                10 * _UNITS.AT_BOUND,
+                None,
+                dc.POWER.VERDICT.UNDERPOWERED,
+            ),
+        ]
+        for name, floor, units, required, verdict in rows:
+            with self.subTest(name):
+                check = dc.get_power_check(
+                    dc.PowerSubject((_AGENT.PASSING, _KEY.BUDGET), floor),
+                    _get_power_inputs(_get_units(units), provenance_covering, _DESIGN_EFFECT),
+                    _WINDOWS,
+                )
+                self.assertEqual((check.verdict, check.units.required), (verdict, required))
+
     def test_the_projection_is_the_daily_28_day_rate_over_the_84_day_horizon(
         self,
     ) -> None:
@@ -322,7 +366,7 @@ class _LedgerConnection:
         if statement != dc.POWER.DESIGN_EFFECT_SQL:
             self.statements.refused.append(statement)
             raise AssertionError(f"statement outside the ledger fake: {statement[:80]}")
-        event, agents = params
+        event, agents = params[-2:]
         self.reads.append(list(agents))
         is_design_effect = event == stub.get_trial_ledger().EVENT.AA_ARM_DESIGN_EFFECT
         self.rows = [
@@ -519,6 +563,75 @@ class CheckPatternPowerTest(_StageFixture):
             dc._get_design_effects([(_AGENT.PASSING, union_row)]), ({}, frozenset())
         )
 
+    def test_a_spawn_reaching_the_tool_budget_with_no_overage_row_is_a_budget_overage_event(
+        self,
+    ) -> None:
+        budget = 40
+        rows = [
+            ("tool_use at the budget → an event, the pair passes", budget, 1),
+            ("tool_use one below the budget → no event, the pair fails", budget - 1, 0),
+        ]
+        for name, tool_use, judged in rows:
+            with self.subTest(name), mock.patch.dict(
+                os.environ, {"SUBAGENT_TOOL_BUDGET": str(budget)}
+            ):
+                self.histories[_AGENT.PASSING] = [
+                    spawn._replace(
+                        overage_rows=0, tool_use_actual=tool_use if spawn.overage_rows else 0
+                    )
+                    for spawn in _get_floor_passing_history(_UNITS.AT_BOUND)
+                ]
+                counts, stderr_text = self._check([_pattern(_AGENT.PASSING, 1)])
+                self.assertEqual((counts["passing"], sum(counts.values())), (judged, judged))
+                if judged:
+                    self.assertIn("floor-half baseline 20/200", stderr_text)
+
+    def test_the_baseline_counts_unmapped_joinable_spawns_and_method_b_is_reported_only(
+        self,
+    ) -> None:
+        history = _get_floor_passing_history(_UNITS.AT_BOUND)
+        baseline = [s for s in history if s.started_at < _WINDOWS.start.detection]
+        events = [s for s in baseline if s.overage_rows]
+        quiet = [s for s in baseline if not s.overage_rows]
+        rows = [
+            ("unmapped spawns hold no event → method B 20/100", quiet[:100], "20/100"),
+            ("unmapped spawns hold half the events → method B 10/100", events[:10] + quiet[:90],
+             "10/100"),
+        ]
+        required = set()
+        for name, unmapped, method_b in rows:
+            with self.subTest(name):
+                self.histories[_AGENT.PASSING] = [
+                    s._replace(session_id=None) if s in unmapped else s for s in history
+                ]
+                counts, stderr_text = self._check([_pattern(_AGENT.PASSING, 1)])
+                self.assertEqual(counts["passing"], 1)
+                self.assertIn("floor-half baseline 20/200", stderr_text)
+                self.assertIn(
+                    f"method B (session-mapped, information only) {method_b}", stderr_text
+                )
+                required.add(stderr_text.split("vs required ")[1].split(" ")[0])
+        self.assertEqual(len(required), 1)
+
+    def test_only_an_emit_failure_power_line_labels_its_baseline_pass_leaning(self) -> None:
+        synthesized = ({"attribution_source": "completion-synthesized"},)
+        self.histories[_AGENT.UNDERPOWERED] = [
+            spawn._replace(overage_rows=0, outcomes=synthesized if spawn.overage_rows else ())
+            for spawn in _get_floor_passing_history(_UNITS.AT_BOUND)
+        ]
+        _, stderr_text = self._check(
+            [_pattern(_AGENT.PASSING, 1), _pattern(_AGENT.UNDERPOWERED, 2, _KEY.EMIT)]
+        )
+        lines = {
+            key: line
+            for line in stderr_text.splitlines()
+            for key in (_KEY.BUDGET, _KEY.EMIT)
+            if f"key={key}:" in line
+        }
+        label = "pass-leaning, information only"
+        self.assertIn(label, lines[_KEY.EMIT])
+        self.assertNotIn(label, lines[_KEY.BUDGET])
+
     def test_a_stored_value_below_one_reads_as_one_never_lower(self) -> None:
         # the at-bound history is sized for 1.5 → passing at 1, and identically at any value below 1
         rows = [("exactly one", 1.0), ("below one by noise", 0.82), ("far below one", 0.1)]
@@ -676,19 +789,33 @@ class DesignEffectReadLivePgTest(_StageFixture):
     def _connect(self):
         return self.psycopg.connect(dbname=self.dbname, connect_timeout=2)
 
-    def _insert(self, recorded_at: datetime, event: str, payload: dict) -> None:
+    def _insert(
+        self, recorded_at: datetime, event: str, payload: dict, dedupe_key: str | None = None
+    ) -> None:
         with self._connect() as conn:
             conn.execute(
-                "INSERT INTO core.autoagent_trial_ledger (recorded_at, agent, event, actor, payload)"
-                " VALUES (%s, %s, %s, %s, %s::jsonb)",
+                "INSERT INTO core.autoagent_trial_ledger"
+                " (recorded_at, agent, event, actor, payload, dedupe_key)"
+                " VALUES (%s, %s, %s, %s, %s::jsonb, %s)",
                 (
                     recorded_at,
                     _AGENT.PASSING,
                     event,
                     dc.TRIAL_LEDGER.ACTOR.AA,
                     json.dumps(payload),
+                    dedupe_key,
                 ),
             )
+
+    def _insert_design_effect(self, recorded_at: datetime, start_id: int, payload: dict) -> None:
+        """One A/A design-effect row, keyed as the writer keys it: event, start id, agent, key."""
+        event = dc.TRIAL_LEDGER.EVENT.AA_ARM_DESIGN_EFFECT
+        dedupe_key = f"{event}:{start_id}:{_AGENT.PASSING}:{payload['metric_key']}"
+        self._insert(recorded_at, event, payload, dedupe_key)
+
+    def _insert_result(self, recorded_at: datetime, start_id: int, overall: str) -> None:
+        event = dc.TRIAL_LEDGER.EVENT.AA_RESULT
+        self._insert(recorded_at, event, {"overall": overall}, f"{event}:{start_id}")
 
     def _check(
         self, patterns: list[dc.Pattern] | None = None
@@ -706,16 +833,16 @@ class DesignEffectReadLivePgTest(_StageFixture):
         event = dc.TRIAL_LEDGER.EVENT
         raised = _build_design_effect_payload(_DESIGN_EFFECT * 1.2)
         latest = _DAY - timedelta(days=1)
-        # older and higher · a tie at the latest instant broken by insertion order ·
-        # a higher row on the other key after it · another event last
-        self._insert(_DAY - timedelta(days=3), event.AA_ARM_DESIGN_EFFECT, raised)
-        self._insert(latest, event.AA_ARM_DESIGN_EFFECT, raised)
-        self._insert(latest, event.AA_ARM_DESIGN_EFFECT, _build_design_effect_payload())
-        self._insert(
-            latest,
-            event.AA_ARM_DESIGN_EFFECT,
-            _build_design_effect_payload(_DESIGN_EFFECT * 1.2, _KEY.EMIT_ROW),
+        # passed A/As 1-4: older and higher · a tie at the latest instant broken by insertion
+        # order · a higher row on the other key after it · another event last
+        self._insert_design_effect(_DAY - timedelta(days=3), 1, raised)
+        self._insert_design_effect(latest, 2, raised)
+        self._insert_design_effect(latest, 3, _build_design_effect_payload())
+        self._insert_design_effect(
+            latest, 4, _build_design_effect_payload(_DESIGN_EFFECT * 1.2, _KEY.EMIT_ROW)
         )
+        for start_id in range(1, 5):
+            self._insert_result(latest, start_id, dc.AA.VERDICT.PASS)
         self._insert(
             latest,
             event.AA_RESTART,
@@ -725,6 +852,35 @@ class DesignEffectReadLivePgTest(_StageFixture):
                 "fingerprint": {"hooks/inject-scope-rules.sh": "1" * 64},
             },
         )
+        counts, _ = self._check()
+        self.assertEqual(counts["passing"], 1)
+
+    def test_only_a_design_effect_row_whose_aa_passed_feeds_the_power_read(self) -> None:
+        verdict = dc.AA.VERDICT
+        rows = [
+            ("a passed A/A's row sizes the bound", verdict.PASS, "passing"),
+            ("a failed A/A's row never does", verdict.FAIL, "design-unmeasured"),
+            ("a pending-arms A/A's row never does", verdict.PENDING_ARMS, "design-unmeasured"),
+            ("a void A/A's row never does", verdict.VOID, "design-unmeasured"),
+            ("an A/A with no result yet never does", None, "design-unmeasured"),
+        ]
+        for name, overall, expected in rows:
+            with self.subTest(name):
+                self._use_database(self._TEMPLATE.FULL)
+                recorded_at = _DAY - timedelta(days=1)
+                self._insert_design_effect(recorded_at, 7, _build_design_effect_payload())
+                if overall is not None:
+                    self._insert_result(recorded_at, 7, overall)
+                counts, _ = self._check()
+                self.assertEqual(counts[expected], 1)
+
+    def test_a_later_unpassed_aa_leaves_the_last_passed_rows_value_in_force(self) -> None:
+        self._use_database(self._TEMPLATE.FULL)
+        self._insert_design_effect(_DAY - timedelta(days=3), 1, _build_design_effect_payload())
+        self._insert_result(_DAY - timedelta(days=3), 1, dc.AA.VERDICT.PASS)
+        raised = _build_design_effect_payload(_DESIGN_EFFECT * 1.2)
+        self._insert_design_effect(_DAY - timedelta(days=1), 2, raised)
+        self._insert_result(_DAY - timedelta(days=1), 2, dc.AA.VERDICT.FAIL)
         counts, _ = self._check()
         self.assertEqual(counts["passing"], 1)
 

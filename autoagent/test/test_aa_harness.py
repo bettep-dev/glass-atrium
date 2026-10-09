@@ -1359,7 +1359,7 @@ _HISTORY = SimpleNamespace(
 _HISTORY.PROVENANCE_START = _HISTORY.WINDOWS.end - timedelta(days=60)
 # bound at design effect 1, from the trial_design reference module, not the code under test
 _HISTORY.REQUIRED_UNITS = trial_design.get_required_units(
-    trial_design.get_maximum_sample_size(_HISTORY.BASELINE.EVENTS / _HISTORY.BASELINE.SPAWNS),
+    trial_design.get_trial_sample_size(_HISTORY.BASELINE.EVENTS / _HISTORY.BASELINE.SPAWNS),
     design_effect=1.0,
 )
 
