@@ -9643,10 +9643,8 @@ def run_aa_stage(
     """Advance the open A/A one writing cycle and keep the canary files in step with it.
 
     Canary files live under `${GA_DATA_ROOT:-$HOME/.glass-atrium}/data/learning/canary`.
-    - Code tree not an install (no rendered config.toml declaring it as [paths].root) → refused
-      before any ledger read: no row read or written, no canary file deleted or written. A
-      source checkout or worktree has no such render, so a test running this stage unsealed
-      reaches nothing.
+    - No config.toml in the code tree declaring that tree as its [paths].root → refused before
+      any ledger read: no row read or written, no canary file deleted or written.
     - No open A/A → every entry in the canary directory is deleted.
     - Open A/A with a void an earlier ingest or sweep detected and the ledger did not take → that
       void is retried before anything else, and the stage ends: until it lands no canary is
@@ -9666,12 +9664,9 @@ def run_aa_stage(
     A ledger or evidence fault WARNs by name and never fails the cycle; the caller skips the
     stage in no-write mode (--dry-run).
     """
-    if not _is_install_tree(_INSTALL_ROOT):
-        _warn_aa(
-            f"code tree {_INSTALL_ROOT} is not the install its data root belongs to: no "
-            f"{AA.INSTALL.CONFIG} there declares it as {AA.INSTALL.SECTION} root",
-            "no ledger read or write and no canary file change this cycle",
-        )
+    refusal = _get_install_refusal(_INSTALL_ROOT)
+    if refusal is not None:
+        _warn_aa(refusal, "no ledger read or write and no canary file change this cycle")
         return
     try:
         latest = _read_open_aa_start()
@@ -9696,6 +9691,21 @@ def run_aa_stage(
     source = AaSource(manifest_ingest, agents_dir)
     if _evaluate_aa(latest, source):
         _delete_canaries(_get_canary_files(), "the A/A has its result")
+
+
+def _get_install_refusal(root: Path) -> str | None:
+    """None when root passes _is_install_tree; otherwise the refusal, naming only that check.
+
+    Guards the cycle entries that reach the ledger and the canary files: run_aa_stage and
+    ingest_manifest_log. start_aa stays unguarded — --aa-start is the owner's explicit command to
+    open an A/A, never run by a cycle.
+    """
+    if _is_install_tree(root):
+        return None
+    return (
+        f"no {AA.INSTALL.CONFIG} in code tree {root} declares that tree as its "
+        f"{AA.INSTALL.SECTION}.root"
+    )
 
 
 def _is_install_tree(root: Path) -> bool:
@@ -12733,11 +12743,16 @@ def ingest_manifest_log(
     held lock → named WARN, every spool kept and the live log not renamed; the hook's
     backstop bounds the live log meanwhile. Each delivered row binds to a trial once, at
     the ingest that first stores it (bind_manifest_deliveries).
+    No config.toml in the code tree declaring that tree as its [paths].root → named WARN before
+    the PG probe: no read, no lock file, no rename, no binding.
     """
     if not HAS_PG_LOOP_WRITE:
         return _skip_manifest_ingest("PG write layer unavailable")
     if not live_log.parent.is_dir():
         return ManifestIngest(status="skipped:no log root")
+    refusal = _get_install_refusal(_INSTALL_ROOT)
+    if refusal is not None:
+        return _skip_manifest_ingest(refusal)
     new_spool = live_log.with_name(
         f"{live_log.name}.{now.astimezone(timezone.utc):%Y%m%dT%H%M%SZ}.{os.getpid()}.spool"
     )

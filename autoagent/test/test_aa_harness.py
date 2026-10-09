@@ -26,6 +26,7 @@ import itertools
 import json
 import math
 import os
+import shutil
 import signal
 import site
 import subprocess
@@ -720,9 +721,8 @@ class SealTest(_AaFixture):
 
 
 class AaSandboxDefaultTest(_AaFixture):
-    """The stage acts only from the install its data root belongs to — the code tree its own
-    rendered config.toml declares as [paths].root; any other tree reads, deletes and writes
-    nothing."""
+    """The stage acts only from a code tree its own rendered config.toml declares as its
+    [paths].root; any other tree reads, deletes and writes nothing."""
 
     def test_only_the_declared_install_reads_deletes_and_writes(self) -> None:
         link = self.scratch / "install-link"
@@ -764,21 +764,37 @@ class AaSandboxDefaultTest(_AaFixture):
 
 
 _PROBE = _TEST_DIR / "_aa_unsealed_probe.py"
+# the refusal both cycle entries name, from a tree no config.toml declares as its own root
+_REFUSAL = "declares that tree as its [paths].root"
+
+
+def _put_code_tree(root: Path) -> Path:
+    """A copy of the code the probe loads, rooted at `root` and holding no rendered config.toml;
+    the copied probe's path."""
+    for pattern in ("autoagent/*.py", "hooks/*.py", "scripts/*.py"):
+        for source in _REPO_ROOT.glob(pattern):
+            target = root / source.relative_to(_REPO_ROOT)
+            target.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(source, target)
+    shutil.copytree(
+        _REPO_ROOT / "autoagent" / "lib",
+        root / "autoagent" / "lib",
+        ignore=shutil.ignore_patterns("test", "__pycache__"),
+    )
+    probe = root / _PROBE.relative_to(_REPO_ROOT)
+    probe.parent.mkdir()
+    shutil.copy2(_PROBE, probe)
+    return probe
 
 
 class AaUnsealedRunTest(unittest.TestCase):
-    """An unsealed run_aa_stage from this checkout, in a child whose "live" is a decoy: a temp HOME
-    holding the default data root and its canary files, PGHOST and PGPORT on an empty temp socket
-    dir, and neither GA_DATA_ROOT nor EPH_SOCKDIR."""
+    """The cycle entries that reach the ledger and the canary files — run_aa_stage and
+    ingest_manifest_log — unsealed, in a child running a code tree this test copies, so the tree's
+    install identity is the test's, never that of the tree the suite runs from. The child's "live"
+    is a decoy: a temp HOME holding the default data root with its canary files and a live
+    MANIFEST log, PGHOST and PGPORT on an empty temp socket dir, and neither GA_DATA_ROOT nor
+    EPH_SOCKDIR."""
 
-    _RUNNERS = (
-        (
-            "unittest discover",
-            ("-m", "unittest", "discover", "-s", str(_TEST_DIR), "-p", _PROBE.name),
-        ),
-        ("unittest, one file", (str(_PROBE),)),
-        ("pytest, one file", ("-m", "pytest", "-q", "-s", "-p", "no:cacheprovider", str(_PROBE))),
-    )
     _INHERITED = (
         "GA_DATA_ROOT", "EPH_SOCKDIR", "EPH_PORT", "PGHOSTADDR", "PGSERVICE", "PGDATABASE"
     )
@@ -792,8 +808,13 @@ class AaUnsealedRunTest(unittest.TestCase):
         canary_dir.mkdir(parents=True)
         for name in ("glass-atrium-dev-python.json", "stray.json"):
             (canary_dir / name).write_text('{"text": ""}', encoding="utf-8")
+        live_log = self.data_root / "logs" / dc.MANIFEST.LOG_NAME
+        live_log.parent.mkdir()
+        live_log.write_text('{"agent_type": "glass-atrium-dev-python"}\n', encoding="utf-8")
         self.sockdir = Path(tmp.name) / "sock"
         self.sockdir.mkdir()
+        self.code_root = Path(tmp.name).resolve() / "code"
+        self.probe = _put_code_tree(self.code_root)
         self.env = {k: v for k, v in os.environ.items() if k not in self._INHERITED}
         self.env.update(
             HOME=str(self.home),
@@ -802,34 +823,53 @@ class AaUnsealedRunTest(unittest.TestCase):
             PYTHONDONTWRITEBYTECODE="1",
             # the decoy HOME hides the user site-packages: keep this interpreter's own
             PYTHONUSERBASE=site.getuserbase(),
+            AA_PROBE_CODE_ROOT=str(self.code_root),
         )
 
-    def test_an_unsealed_run_from_a_checkout_reaches_no_socket_under_any_runner(self) -> None:
+    def test_an_unsealed_run_from_a_non_install_tree_reaches_no_socket_under_any_runner(
+        self,
+    ) -> None:
         before = self._get_data_listing()
-        for name, args in self._RUNNERS:
+        for name, args in self._get_runners():
             with self.subTest(name):
                 if args[:2] == ("-m", "pytest") and importlib.util.find_spec("pytest") is None:
                     self.skipTest("pytest not installed for this interpreter")
                 run = self._run_probe(args)
                 self.assertEqual(run.returncode, 0, run.stdout + run.stderr)
-                self.assertIn("is not the install", run.stderr)
+                self.assertEqual(run.stderr.count(_REFUSAL), 2, run.stderr)  # one per entry
                 self.assertNotIn(str(self.sockdir), run.stderr)
                 self.assertEqual(self._get_data_listing(), before)
 
-    def test_the_decoy_names_a_reach_once_the_code_tree_is_the_install(self) -> None:
-        # instrument check for the test above: a run that does reach the decoy names its socket
+    def test_the_decoy_names_a_reach_from_each_entry_once_the_code_tree_is_the_install(
+        self,
+    ) -> None:
+        # instrument check for the test above: an entry that does reach the decoy names its socket
         if importlib.util.find_spec("psycopg") is None:
-            self.skipTest("psycopg not installed: the stage makes no connect to observe")
-        install_root = self.home / "install"
-        install_root.mkdir()
-        _put_config(install_root, install_root)
-        run = self._run_probe(self._RUNNERS[0][1], AA_PROBE_INSTALL_ROOT=str(install_root))
-        self.assertIn(str(self.sockdir), run.stderr)
+            self.skipTest("psycopg not installed: the entries make no connect to observe")
+        _put_config(self.code_root, self.code_root)
+        for method in ("test_run_aa_stage_unsealed", "test_ingest_manifest_log_unsealed"):
+            with self.subTest(method):
+                run = self._run_probe((str(self.probe), f"AaUnsealedProbe.{method}"))
+                self.assertIn(str(self.sockdir), run.stderr)
+                self.assertNotIn(_REFUSAL, run.stderr)
 
-    def _run_probe(self, args: tuple[str, ...], **env: str) -> subprocess.CompletedProcess[str]:
+    def _get_runners(self) -> tuple[tuple[str, tuple[str, ...]], ...]:
+        return (
+            (
+                "unittest discover",
+                ("-m", "unittest", "discover", "-s", str(self.probe.parent), "-p", _PROBE.name),
+            ),
+            ("unittest, one file", (str(self.probe),)),
+            (
+                "pytest, one file",
+                ("-m", "pytest", "-q", "-s", "-p", "no:cacheprovider", str(self.probe)),
+            ),
+        )
+
+    def _run_probe(self, args: tuple[str, ...]) -> subprocess.CompletedProcess[str]:
         return subprocess.run(
             [sys.executable, *args],
-            env={**self.env, **env},
+            env=self.env,
             cwd=self.home,
             capture_output=True,
             text=True,

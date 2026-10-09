@@ -118,6 +118,11 @@ def _get_delivery_line(
     )
 
 
+def _put_config(root: Path, declared: Path) -> None:
+    """The install's rendered config.toml, declaring `declared` as its [paths].root."""
+    (root / "config.toml").write_text(f'[paths]\nroot = "{declared}"\n', encoding="utf-8")
+
+
 class _SpawnManifestTable:
     """In-memory core.spawn_manifest: unique on (spool, line_offset), DO NOTHING on conflict."""
 
@@ -242,6 +247,7 @@ class _IngestCase(unittest.TestCase):
         env.start()
         self.addCleanup(env.stop)
         self.canary_dir = self.base_root / "data" / "learning" / "canary"
+        _put_config(self.base_root, self.base_root)
         self.pg_reach = seal_pg_reach(self)
         self.table = _SpawnManifestTable()
         self.ledger = _TrialLedger()
@@ -256,6 +262,7 @@ class _IngestCase(unittest.TestCase):
             ("_pg_write_loop_event", self._record_event),
             ("_read_latest_aa_start", self.ledger.read_latest),  # SQL run by test_aa_harness.py
             ("_pg_write_trial_ledger_row", self.ledger.write),
+            ("_INSTALL_ROOT", self.base_root),
         ):
             patcher = mock.patch.object(dc, name, value)
             patcher.start()
@@ -517,6 +524,46 @@ class TestManifestDeliveryBinding(_IngestCase):
                     if index == 0:
                         self._append(self._get_spools()[0], _get_delivery_line(racing, salt="3"))
 
+    def test_only_the_declared_install_probes_rotates_binds_and_deletes(self) -> None:
+        events = stub.get_trial_ledger().EVENT
+        void = (False, [events.AA_RESULT], [])
+        unbound = (False, [events.CANARY_UNBOUND_DELIVERY], sorted(_ROSTER[1:]))
+        untouched = (True, [], sorted(_ROSTER))
+        # name, declared root (None = no rendered config), A/A open, (live log kept, rows, canaries)
+        rows = (
+            ("in-window, the declared install", self.base_root, True, void),
+            ("out-of-window, the declared install", self.base_root, False, unbound),
+            ("in-window, no rendered config", None, True, untouched),
+            ("out-of-window, no rendered config", None, False, untouched),
+            ("in-window, a config declaring another root", self.log_root, True, untouched),
+            ("out-of-window, a config declaring another root", self.log_root, False, untouched),
+        )
+        for hour, (name, declared, is_open, expected) in enumerate(rows):
+            with self.subTest(name):
+                self._put_binding_case(f"logs-{hour}", declared, is_open=is_open)
+                count = mock.Mock(wraps=self.table.count)
+                with mock.patch.object(dc, "_pg_count_spawn_manifest", count):
+                    self._ingest(_CYCLE_1 + timedelta(hours=hour))
+
+                observed = (self.live_log.exists(), self.ledger.get_events(), self._get_canaries())
+                self.assertEqual(observed, expected)
+                self.assertEqual(count.called, declared == self.base_root)
+
+    def _put_binding_case(self, log_dir: str, declared: Path | None, *, is_open: bool) -> None:
+        """A live log holding one foreign-hash delivery, every roster canary, an A/A open or not."""
+        self.log_root = self.base_root / log_dir
+        self.log_root.mkdir()
+        self.live_log = self.log_root / dc.MANIFEST.LOG_NAME
+        self._append(self.live_log, _get_delivery_line(_ROSTER[0], text_sha256=_PLAIN_SHA256))
+        self.ledger.rows.clear()
+        self.ledger.latest = None
+        if is_open:
+            self._open_aa()
+        self._put_canaries()
+        (self.base_root / "config.toml").unlink(missing_ok=True)
+        if declared is not None:
+            _put_config(self.base_root, declared)
+
     def test_the_a_a_last_day_deliveries_never_read_as_no_trial_after_its_result(self) -> None:
         self._open_aa()
         self.ledger.event_by_id = {int(_AA.SALT): dc.TRIAL_LEDGER.EVENT.AA_START}
@@ -623,12 +670,7 @@ class TestManifestDeliveryBinding(_IngestCase):
         self._ingest(_CYCLE_1)
         self.ledger.write_outcome = 1
         # an install root with no manifest: a stage that goes on past the void restarts the A/A
-        (self.base_root / "config.toml").write_text(
-            f'[paths]\nroot = "{self.base_root}"\n', encoding="utf-8"
-        )
-        install_root = mock.patch.object(dc, "_INSTALL_ROOT", self.base_root)
-
-        with install_root, contextlib.redirect_stderr(io.StringIO()):
+        with contextlib.redirect_stderr(io.StringIO()):
             dc.run_aa_stage("2026-10-05", agents_dir=self.agents_dir)
 
         ((event, payload, dedupe_key),) = self.ledger.rows
@@ -1064,6 +1106,10 @@ class TestManifestIngestCycleWiring(unittest.TestCase):
         env.start()
         self.addCleanup(env.stop)
         self.pg_reach = seal_pg_reach(self)
+        _put_config(self.root, self.root)
+        install_root = mock.patch.object(dc, "_INSTALL_ROOT", self.root)
+        install_root.start()
+        self.addCleanup(install_root.stop)
 
     def _run(self, *, skip_loop_emit: bool) -> tuple[object, str]:
         stderr = io.StringIO()
