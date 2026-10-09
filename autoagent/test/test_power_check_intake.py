@@ -338,7 +338,7 @@ class GetPowerCheckTest(unittest.TestCase):
 
 
 class _LedgerConnection:
-    """The trial-ledger read boundary: each requested agent's latest A/A row per metric key, as stored.
+    """Trial-ledger read boundary: each requested agent's latest passed A/A row per key, as stored.
 
     Every statement recorded as seen · one the test answers empty on purpose → no rows ·
     any other but the design-effect read → recorded as refused + raised, never absorbed.
@@ -511,9 +511,13 @@ class CheckPatternPowerTest(_StageFixture):
             (counts["passing"], counts["design-unmeasured"], counts["underpowered"]),
             (0, 1, 1),
         )
-        self.assertIn(
-            f"agent={_AGENT.PASSING} key={_KEY.BUDGET}: design-unmeasured", stderr_text
+        line = next(
+            line
+            for line in stderr_text.splitlines()
+            if f"agent={_AGENT.PASSING} key={_KEY.BUDGET}: design-unmeasured" in line
         )
+        # an unpassed A/A's row also reads unmeasured → the line names the passed A/A
+        self.assertIn("no design-effect row from a passed A/A", line)
         self.assertIn(
             (_AGENT.PASSING, "power-check-design-unmeasured"), self._get_event_results()
         )

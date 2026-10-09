@@ -8739,7 +8739,7 @@ POWER = SimpleNamespace(
         PASSING="passing",
         UNDERPOWERED="underpowered",
         INSUFFICIENT_HISTORY="insufficient-history",
-        DESIGN_UNMEASURED="design-unmeasured",  # no A/A design-effect row for the agent — never passing
+        DESIGN_UNMEASURED="design-unmeasured",  # no design-effect row from a passed A/A — never passing
         UNCHECKED="unchecked",  # history, ledger or stored design effect unusable — never passing
     ),
     # eval_result = prefix + verdict; the longest fills the varchar(32) column exactly
@@ -8757,10 +8757,12 @@ POWER = SimpleNamespace(
         "ORDER BY effect.agent, effect.payload->>'metric_key', "
         "effect.recorded_at DESC, effect.id DESC"
     ),
-    # method B = the floor-half baseline over session-mapped spawns; reported, never decides
-    METHOD_B_LABEL="method B (session-mapped, information only)",
-    # the floor-half baseline runs above the projection window's rate → a smaller bound
-    EMIT_FAILURE_LABEL="emit_failure baseline pass-leaning, information only",
+    LABEL=SimpleNamespace(
+        # method B = the floor-half baseline over session-mapped spawns; reported, never decides
+        METHOD_B="method B (session-mapped, information only)",
+        # the floor-half baseline runs above the projection window's rate → a smaller bound
+        EMIT_FAILURE="emit_failure baseline pass-leaning, information only",
+    ),
 )
 
 
@@ -8794,7 +8796,7 @@ class PowerResult(NamedTuple):
 class PowerInputs(NamedTuple):
     provenance_start: datetime | None
     spawns: dict[str, list[SpawnFacts]]
-    # (agent, metric key) → its latest A/A design effect; an absent pair is unmeasured
+    # (agent, metric key) → its latest passed A/A design effect; an absent pair is unmeasured
     design_effects: dict[tuple[str, str], float]
     # design effect unusable: every pair on a ledger fault, one pair on an invalid stored row
     unchecked_keys: frozenset[tuple[str, str]]
@@ -8867,7 +8869,7 @@ def _get_pattern_power_verdict(
     ).baseline
     detail = _get_power_detail(floor, check, design_effect, method_b)
     if pattern.metric_key == METRIC_EMIT_FAILURE:
-        detail = f"{detail} ({POWER.EMIT_FAILURE_LABEL})"
+        detail = f"{detail} ({POWER.LABEL.EMIT_FAILURE})"
     return check.verdict, detail, power_pass
 
 
@@ -8922,7 +8924,7 @@ def _get_power_counts() -> dict[str, int]:
 
 
 def _read_power_inputs(agents: list[str], windows: PairWindows) -> PowerInputs | None:
-    """Spawn history + latest A/A design effects of the agents; None (WARN) when the history is unusable.
+    """Spawn history + latest passed A/A design effects; None (WARN) when the history is unusable.
 
     A ledger fault keeps the history, so the floor is still judged before anything counts.
     """
@@ -9037,7 +9039,7 @@ def _get_power_detail(
     baseline = floor.baseline
     units = check.units
     if design_effect is None:
-        required_label = "unknown (design effect unmeasured: no A/A design-effect row)"
+        required_label = "unknown (design effect unmeasured: no design-effect row from a passed A/A)"
     elif units.required is None:
         required_label = f"no finite size (design effect {design_effect:g})"
     else:
@@ -9045,7 +9047,7 @@ def _get_power_detail(
     return (
         f"floor-half baseline {baseline.events}/{baseline.spawns}, projected "
         f"{units.projected:.0f} units in {trial_design.HORIZON_DAYS} d vs required "
-        f"{required_label}; {POWER.METHOD_B_LABEL} {method_b.events}/{method_b.spawns}"
+        f"{required_label}; {POWER.LABEL.METHOD_B} {method_b.events}/{method_b.spawns}"
     )
 
 
