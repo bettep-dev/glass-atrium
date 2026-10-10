@@ -22,7 +22,7 @@ import os
 from collections import defaultdict
 from collections.abc import Iterable, Mapping, Sequence
 from datetime import datetime, timedelta, timezone
-from types import SimpleNamespace
+from types import MappingProxyType, SimpleNamespace
 from typing import NamedTuple
 
 # ---------------------------------------------------------------------------
@@ -276,6 +276,15 @@ def is_negative_signal_outcome(row: dict) -> bool:
 METRIC_BUDGET_OVERAGE = "budget_overage"
 METRIC_EMIT_FAILURE = "emit_failure"
 METRIC_KEYS = frozenset({METRIC_BUDGET_OVERAGE, METRIC_EMIT_FAILURE})
+# emit failure's cut-off leg (quota stop, user interrupt, kill): a guardrail, never a pattern key
+METRIC_NO_SUBAGENT_STOP = "no_subagent_stop"
+# A/A design-effect row key per metric definition; a row counts only for the definition it was
+# measured under → the pre-split union-event row, keyed `emit_failure`, sizes no key here
+DESIGN_EFFECT_ROW_KEYS = MappingProxyType({
+    METRIC_BUDGET_OVERAGE: METRIC_BUDGET_OVERAGE,
+    METRIC_EMIT_FAILURE: "emit_failure_attribution",
+    METRIC_NO_SUBAGENT_STOP: METRIC_NO_SUBAGENT_STOP,
+})
 # Recorder-written outcome provenance: the agent emitted no [COMPLETION] of its own.
 ATTRIBUTION_TRUNCATED_COMPLETION = "truncated_completion"
 _EMIT_FAILURE_ATTRIBUTIONS = frozenset({
@@ -408,10 +417,12 @@ def is_metric_event(spawn: SpawnFacts, metric_key: str) -> bool:
     if metric_key == METRIC_BUDGET_OVERAGE:
         return spawn.overage_rows > 0
     if metric_key == METRIC_EMIT_FAILURE:
-        return not spawn.has_subagent_stop or any(
+        return any(
             (row.get("attribution_source") or "") in _EMIT_FAILURE_ATTRIBUTIONS
             for row in spawn.outcomes
         )
+    if metric_key == METRIC_NO_SUBAGENT_STOP:
+        return not spawn.has_subagent_stop
     raise ValueError(f"is_metric_event: unknown metric key {metric_key!r}")
 
 

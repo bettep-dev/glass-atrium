@@ -480,6 +480,10 @@ class TestTriggeringSpawnSelection(unittest.TestCase):
             ),
             _get_spawn("confirmation-late-event", confirmation + timedelta(days=4)),
             _get_spawn(
+                "confirmation-synthesized", confirmation + timedelta(days=5), overage_rows=0
+            )._replace(outcomes=({"attribution_source": "completion-synthesized"},)),
+            # killed: the no-SubagentStop guardrail's leg, never an emit_failure trigger
+            _get_spawn(
                 "confirmation-stopless",
                 confirmation + timedelta(days=5),
                 overage_rows=0,
@@ -534,14 +538,14 @@ class TestTriggeringSpawnSelection(unittest.TestCase):
             (overage[0].verified_fail_rows, overage[0].tool_use_actual), (2, 61)
         )
         emit_failure = evidence[sig.METRIC_EMIT_FAILURE].triggering
-        self.assertEqual([s.agent_id for s in emit_failure], ["confirmation-stopless"])
+        self.assertEqual([s.agent_id for s in emit_failure], ["confirmation-synthesized"])
         self.assertEqual(
             self._fact_reads,
             [
                 [
                     "confirmation-event",
                     "confirmation-late-event",
-                    "confirmation-stopless",
+                    "confirmation-synthesized",
                     "confirmation-tool-use-overrun",
                 ]
             ],

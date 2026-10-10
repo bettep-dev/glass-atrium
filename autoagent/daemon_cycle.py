@@ -96,9 +96,11 @@ import ga_paths  # noqa: E402 — hooks dir pinned by the loop above
 # try/except, and its functions stay defined on the psycopg-absent path.
 from _outcome_signal import (  # noqa: E402 — hooks dir pinned by the loop above
     BASELINE,
+    DESIGN_EFFECT_ROW_KEYS,
     METRIC_BUDGET_OVERAGE,
     METRIC_EMIT_FAILURE,
     METRIC_KEYS,
+    METRIC_NO_SUBAGENT_STOP,
     VERDICT_PASS,
     FloorResult,
     PairWindows,
@@ -8737,16 +8739,29 @@ POWER = SimpleNamespace(
         PASSING="passing",
         UNDERPOWERED="underpowered",
         INSUFFICIENT_HISTORY="insufficient-history",
-        DESIGN_UNMEASURED="design-unmeasured",  # no A/A design-effect row for the agent — never passing
+        DESIGN_UNMEASURED="design-unmeasured",  # no design-effect row from a passed A/A — never passing
         UNCHECKED="unchecked",  # history, ledger or stored design effect unusable — never passing
     ),
     # eval_result = prefix + verdict; the longest fills the varchar(32) column exactly
     CHECK_EVAL_PREFIX="power-check-",
-    # latest A/A design-effect row per agent and metric key; DISTINCT ON keeps the fetch to one row each
+    # latest design-effect row per agent and metric key among A/As whose aa-result passed; the start
+    # id in both dedupe keys joins them → one join for whole-roster and subset A/As alike
     DESIGN_EFFECT_SQL=(
-        "SELECT DISTINCT ON (agent, payload->>'metric_key') agent, payload "
-        "FROM core.autoagent_trial_ledger WHERE event = %s AND agent = ANY(%s) "
-        "ORDER BY agent, payload->>'metric_key', recorded_at DESC, id DESC"
+        "SELECT DISTINCT ON (effect.agent, effect.payload->>'metric_key') "
+        "effect.agent, effect.payload "
+        "FROM core.autoagent_trial_ledger AS effect "
+        "JOIN core.autoagent_trial_ledger AS aa_result "
+        "ON aa_result.dedupe_key = %s::text || split_part(effect.dedupe_key, ':', 2) "
+        "AND aa_result.payload->>'overall' = %s "
+        "WHERE effect.event = %s AND effect.agent = ANY(%s) "
+        "ORDER BY effect.agent, effect.payload->>'metric_key', "
+        "effect.recorded_at DESC, effect.id DESC"
+    ),
+    LABEL=SimpleNamespace(
+        # method B = the floor-half baseline over session-mapped spawns; reported, never decides
+        METHOD_B="method B (session-mapped, information only)",
+        # the floor-half baseline runs above the projection window's rate → a smaller bound
+        EMIT_FAILURE="emit_failure baseline pass-leaning, information only",
     ),
 )
 
@@ -8760,6 +8775,7 @@ class PowerUnits(NamedTuple):
 class PowerCheck(NamedTuple):
     verdict: str
     units: PowerUnits
+    design_effect: float | None  # design effect the units were sized at; None = unmeasured
 
 
 class PowerPass(NamedTuple):
@@ -8781,7 +8797,7 @@ class PowerResult(NamedTuple):
 class PowerInputs(NamedTuple):
     provenance_start: datetime | None
     spawns: dict[str, list[SpawnFacts]]
-    # (agent, metric key) → its latest A/A design effect; an absent pair is unmeasured
+    # (agent, metric key) → its latest passed A/A design effect; an absent pair is unmeasured
     design_effects: dict[tuple[str, str], float]
     # design effect unusable: every pair on a ledger fault, one pair on an invalid stored row
     unchecked_keys: frozenset[tuple[str, str]]
@@ -8839,16 +8855,16 @@ def _get_pattern_power_verdict(
     )
     if floor.verdict != VERDICT_PASS:
         return None
-    key = (pattern.agent, pattern.metric_key)
-    if key in inputs.unchecked_keys:
+    subject = PowerSubject((pattern.agent, pattern.metric_key), floor)
+    if subject.key in inputs.unchecked_keys:
         return POWER.VERDICT.UNCHECKED, "A/A design effect unusable", None
-    design_effect = inputs.design_effects.get(key)
-    check = get_power_check(PowerSubject(key, floor), inputs, windows)
+    check = get_power_check(subject, inputs, windows)
     power_pass = None
-    required = check.units.required
+    design_effect, required = check.design_effect, check.units.required
     if check.verdict == POWER.VERDICT.PASSING and design_effect is not None and required is not None:
         power_pass = PowerPass(pattern, floor.baseline, design_effect, required, spawns)
-    return check.verdict, _get_power_detail(floor, check, design_effect), power_pass
+    method_b = _get_method_b_baseline(subject, inputs, windows)
+    return check.verdict, _get_pattern_power_detail(subject, check, method_b), power_pass
 
 
 def get_power_check(subject: PowerSubject, inputs: PowerInputs, windows: PairWindows) -> PowerCheck:
@@ -8856,7 +8872,8 @@ def get_power_check(subject: PowerSubject, inputs: PowerInputs, windows: PairWin
 
     Projected units = the agent's spawns per day over the 28 days before D × the 84-day
     horizon; NULL-agent_id spawns count nowhere. Bound = 2 × the trial_design per-arm
-    maximum at the floor-half baseline rate × the key's measured A/A design effect.
+    maximum — the larger of the efficacy and harm samples — at the floor-half baseline rate
+    × the key's design effect from a passed A/A.
     In order: fewer than 28 provenance-covered days → insufficient-history; no design
     effect at the key → design-unmeasured; a rate with no finite size → underpowered.
     """
@@ -8877,7 +8894,7 @@ def get_power_check(subject: PowerSubject, inputs: PowerInputs, windows: PairWin
         verdict = POWER.VERDICT.PASSING
     else:
         verdict = POWER.VERDICT.UNDERPOWERED
-    return PowerCheck(verdict, PowerUnits(projected, required))
+    return PowerCheck(verdict, PowerUnits(projected, required), design_effect)
 
 
 def _get_required_units(baseline: WindowCount, design_effect: float | None) -> float | None:
@@ -8901,7 +8918,7 @@ def _get_power_counts() -> dict[str, int]:
 
 
 def _read_power_inputs(agents: list[str], windows: PairWindows) -> PowerInputs | None:
-    """Spawn history + latest A/A design effects of the agents; None (WARN) when the history is unusable.
+    """Spawn history + latest passed A/A design effects; None (WARN) when the history is unusable.
 
     A ledger fault keeps the history, so the floor is still judged before anything counts.
     """
@@ -8931,18 +8948,21 @@ def _read_power_history(
 def _read_power_design_effects(
     agents: list[str],
 ) -> tuple[dict[tuple[str, str], float], frozenset[tuple[str, str]]]:
-    """((agent, metric key) → design effect of its latest A/A row, unchecked pairs), WARN per fault.
+    """((agent, metric key) → design effect of its latest passed A/A's row, unchecked pairs).
 
-    A pair with no row is absent (design-unmeasured). A read fault — the table absent on a
-    migrate-failed schema included — fails every pair closed.
+    WARN per fault. A pair with no row from a passed A/A is absent (design-unmeasured). A read
+    fault — the table absent on a migrate-failed schema included — fails every pair closed.
     """
     if not HAS_PG_LOOP_WRITE:
         cause = "trial ledger unreadable: PG helper import failed"
     else:
         try:
             with _pg_connect() as conn, conn.cursor() as cur:
-                event = TRIAL_LEDGER.EVENT.AA_ARM_DESIGN_EFFECT
-                cur.execute(POWER.DESIGN_EFFECT_SQL, (event, agents))
+                event = TRIAL_LEDGER.EVENT
+                cur.execute(
+                    POWER.DESIGN_EFFECT_SQL,
+                    (f"{event.AA_RESULT}:", AA.VERDICT.PASS, event.AA_ARM_DESIGN_EFFECT, agents),
+                )
                 rows = cur.fetchall()
         except Exception as exc:  # noqa: BLE001 — any read fault is an outage → fail closed
             cause = f"A/A design effect unreadable: {_describe_fault(exc)}"
@@ -8955,11 +8975,19 @@ def _read_power_design_effects(
 def _get_design_effects(
     rows: list[tuple[str, dict]],
 ) -> tuple[dict[tuple[str, str], float], frozenset[tuple[str, str]]]:
-    """((agent, metric key) → design effect read, pairs whose stored row is not a design effect)."""
+    """((agent, metric key) → design effect read, pairs whose stored row is not a design effect).
+
+    A row keyed outside DESIGN_EFFECT_ROW_KEYS — the pre-split union-event `emit_failure` row
+    included — was measured under no current definition and sizes nothing.
+    """
+    metric_keys = {row_key: key for key, row_key in DESIGN_EFFECT_ROW_KEYS.items()}
     design_effects: dict[tuple[str, str], float] = {}
     invalid_keys: set[tuple[str, str]] = set()
     for agent, payload in rows:
-        metric_key = payload.get("metric_key") if isinstance(payload, dict) else None
+        row_key = payload.get("metric_key") if isinstance(payload, dict) else None
+        if isinstance(payload, dict) and row_key not in metric_keys:
+            continue
+        metric_key = metric_keys.get(row_key)
         try:
             design_effects[(agent, metric_key)] = _get_stored_design_effect(payload)
         except (ArithmeticError, AttributeError, TypeError, ValueError) as exc:
@@ -8993,19 +9021,39 @@ def _warn_power_unchecked(cause: str, scope: str) -> None:
 
 
 def _get_maximum_sample_size(events: int, spawns: int) -> int | None:
-    """trial_design per-arm maximum at rate events/spawns; None outside (0, 1) — no finite size."""
+    """trial_design per-arm trial maximum at rate events/spawns; None outside (0, 1) or unsized."""
     if not 0 < events < spawns:
         return None
-    return trial_design.get_maximum_sample_size(events / spawns)
+    return trial_design.get_trial_sample_size(events / spawns)
 
 
-def _get_power_detail(
-    floor: FloorResult, check: PowerCheck, design_effect: float | None
+def _get_method_b_baseline(
+    subject: PowerSubject, inputs: PowerInputs, windows: PairWindows
+) -> WindowCount:
+    """Method-B baseline, information only: floor read over the agent's session-mapped spawns."""
+    agent, metric_key = subject.key
+    mapped = [spawn for spawn in inputs.spawns.get(agent, []) if spawn.session_id is not None]
+    return get_floor_verdict(
+        mapped, metric_key, windows, inputs.provenance_start, windows.end
+    ).baseline
+
+
+def _get_pattern_power_detail(
+    subject: PowerSubject, check: PowerCheck, method_b: WindowCount
 ) -> str:
+    """Information-only detail of one checked pattern: power figures, method-B baseline, label."""
+    detail = _get_power_detail(subject.floor, check, method_b)
+    if subject.key[1] == METRIC_EMIT_FAILURE:
+        return f"{detail} ({POWER.LABEL.EMIT_FAILURE})"
+    return detail
+
+
+def _get_power_detail(floor: FloorResult, check: PowerCheck, method_b: WindowCount) -> str:
     baseline = floor.baseline
     units = check.units
+    design_effect = check.design_effect
     if design_effect is None:
-        required_label = "unknown (design effect unmeasured: no A/A design-effect row)"
+        required_label = "unknown (design effect unmeasured: no design-effect row from a passed A/A)"
     elif units.required is None:
         required_label = f"no finite size (design effect {design_effect:g})"
     else:
@@ -9013,7 +9061,7 @@ def _get_power_detail(
     return (
         f"floor-half baseline {baseline.events}/{baseline.spawns}, projected "
         f"{units.projected:.0f} units in {trial_design.HORIZON_DAYS} d vs required "
-        f"{required_label}"
+        f"{required_label}; {POWER.LABEL.METHOD_B} {method_b.events}/{method_b.spawns}"
     )
 
 
@@ -9143,7 +9191,7 @@ def get_preregistration_payload(power_pass: PowerPass, detection_start: datetime
         "metric_key": power_pass.pattern.metric_key,
         "detection_start": detection_start.isoformat(),
         "baseline": {"events": baseline.events, "spawns": baseline.spawns},
-        "maximum_per_arm": trial_design.get_maximum_sample_size(baseline.events / baseline.spawns),
+        "maximum_per_arm": _get_maximum_sample_size(baseline.events, baseline.spawns),
         "design_effect": power_pass.design_effect,
         "required_units": power_pass.required,
         "boundaries": list(boundaries),
@@ -10345,18 +10393,19 @@ def _get_aa_result_payload(
 def _get_aa_design_effects(
     armed: Mapping[str, Sequence[ArmedSpawn]], now: datetime, start_id: int
 ) -> tuple[dict[tuple[str, str], trial_design.ArmDesignEffect], list[str]]:
-    """((agent, metric key) → arm-difference reading, agents undefined on every key)."""
+    """((agent, row key) → arm-difference reading, agents undefined on every key): one row key
+    per metric definition (DESIGN_EFFECT_ROW_KEYS), emit failure's two split legs apart."""
     tool_budget = get_tool_budget(os.environ)
     effects: dict[tuple[str, str], trial_design.ArmDesignEffect] = {}
     undefined: list[str] = []
     for agent in sorted(armed):
-        for metric_key in sorted(METRIC_KEYS):
+        for metric_key, row_key in sorted(DESIGN_EFFECT_ROW_KEYS.items()):
             is_event = _get_aa_event_test(metric_key, tool_budget)
             reading = _get_arm_design_effect(
-                armed[agent], is_event, now, seed=f"{start_id}:{agent}:{metric_key}"
+                armed[agent], is_event, now, seed=f"{start_id}:{agent}:{row_key}"
             )
             if reading is not None:
-                effects[(agent, metric_key)] = reading
+                effects[(agent, row_key)] = reading
         if not any(key[0] == agent for key in effects):
             undefined.append(agent)
     return effects, undefined
@@ -10367,6 +10416,14 @@ def _get_aa_event_test(metric_key: str, tool_budget: int) -> Callable[[SpawnFact
     if metric_key == METRIC_BUDGET_OVERAGE:
         return lambda spawn: is_task_overrun((spawn,), tool_budget)
     return lambda spawn: is_metric_event(spawn, metric_key)
+
+
+def _is_aa_emit_failure(spawn: SpawnFacts) -> bool:
+    """The engine's emit-failure harm-stop event: the pre-split union of both legs, so the A/A's
+    criteria do not move with the split."""
+    return is_metric_event(spawn, METRIC_EMIT_FAILURE) or is_metric_event(
+        spawn, METRIC_NO_SUBAGENT_STOP
+    )
 
 
 def _get_arm_design_effect(
@@ -10721,11 +10778,7 @@ def get_aa_looks(
 def _get_aa_look(items: Sequence[ArmedSpawn], tool_budget: int) -> AaLook:
     return AaLook(
         _get_aa_arms(items, _get_aa_event_test(METRIC_BUDGET_OVERAGE, tool_budget)),
-        {
-            METRIC_EMIT_FAILURE: _get_aa_arms(
-                items, _get_aa_event_test(METRIC_EMIT_FAILURE, tool_budget)
-            )
-        },
+        {METRIC_EMIT_FAILURE: _get_aa_arms(items, _is_aa_emit_failure)},
         get_tool_use_reading(items, is_overage_primary=True),
     )
 
