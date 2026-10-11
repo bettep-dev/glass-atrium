@@ -1353,35 +1353,33 @@ def write_autoagent_proposal_preregistration(preregistration_payload, **proposal
     naming the migration, never the plain writer's skip. Refuses before connecting a body
     that is no object or a value outside TRIAL_LEDGER.
     """
-    if not isinstance(preregistration_payload, dict):
-        raise PreregistrationPayloadNotObject(
-            "op=write_autoagent_proposal_preregistration refused preregistration_payload="
-            f"{preregistration_payload!r} — not an object, nothing written"
-        )
-    _check_trial_ledger_values(
-        TRIAL_LEDGER.EVENT.LIVE_PREREGISTRATION,
-        TRIAL_LEDGER.ACTOR.LIVE,
-        preregistration_payload,
-    )
+    _check_preregistration_payload(preregistration_payload)
     params, link_params = _get_proposal_params(**proposal)
     start_ns = time.monotonic_ns()
     with _connect() as conn:
         returned, is_degraded = _upsert_proposal(conn, params, link_params)
         if returned is not None:
             _insert_live_preregistration(
-                conn, returned[0], proposal, preregistration_payload
+                conn,
+                _get_live_preregistration_row(returned[0], proposal, preregistration_payload),
             )
         conn.commit()
-    op = "write_autoagent_proposal_preregistration"
-    if is_degraded:
-        _warn_proposal_degraded(op, proposal["cycle_date"], proposal["pattern_label"])
-    if returned is None:
-        sys.stderr.write(
-            f"[autoagent-daemon] op={op} frozen proposal row kept "
-            f"(cycle_date={proposal['cycle_date']}, pattern_label={proposal['pattern_label']}) "
-            "— reviewed terminal row, no live pre-registration written\n"
-        )
+    _report_preregistration_push(proposal, is_degraded, is_frozen=returned is None)
     return (time.monotonic_ns() - start_ns) // 1_000_000
+
+
+def _check_preregistration_payload(payload):
+    """Refuse a body that is no object or outside TRIAL_LEDGER, before any connection."""
+    if not isinstance(payload, dict):
+        raise PreregistrationPayloadNotObject(
+            "op=write_autoagent_proposal_preregistration refused preregistration_payload="
+            f"{payload!r} — not an object, nothing written"
+        )
+    _check_trial_ledger_values(
+        TRIAL_LEDGER.EVENT.LIVE_PREREGISTRATION,
+        TRIAL_LEDGER.ACTOR.LIVE,
+        payload,
+    )
 
 
 def get_live_trial_key(proposal_id):
@@ -1389,9 +1387,9 @@ def get_live_trial_key(proposal_id):
     return hashlib.sha256(f"live-trial\x1f{proposal_id}".encode()).hexdigest()
 
 
-def _insert_live_preregistration(conn, proposal_id, proposal, payload):
+def _get_live_preregistration_row(proposal_id, proposal, payload):
     key = get_live_trial_key(proposal_id)
-    row = (
+    return (
         key,
         proposal.get("target_agent"),
         proposal.get("learning_pattern_id") or None,
@@ -1400,6 +1398,9 @@ def _insert_live_preregistration(conn, proposal_id, proposal, payload):
         Jsonb({**payload, "proposal_id": proposal_id}),
         key,
     )
+
+
+def _insert_live_preregistration(conn, row):
     try:
         with conn.cursor() as cur:
             cur.execute(_TRIAL_LEDGER_INSERT_SQL, row)
@@ -1408,6 +1409,18 @@ def _insert_live_preregistration(conn, proposal_id, proposal, payload):
             "core.autoagent_trial_ledger absent — proposal and live pre-registration rolled "
             f"back; apply migration {MIGRATION.TRIAL_LEDGER}"
         ) from exc
+
+
+def _report_preregistration_push(proposal, is_degraded, *, is_frozen):
+    op = "write_autoagent_proposal_preregistration"
+    if is_degraded:
+        _warn_proposal_degraded(op, proposal["cycle_date"], proposal["pattern_label"])
+    if is_frozen:
+        sys.stderr.write(
+            f"[autoagent-daemon] op={op} frozen proposal row kept "
+            f"(cycle_date={proposal['cycle_date']}, pattern_label={proposal['pattern_label']}) "
+            "— reviewed terminal row, no live pre-registration written\n"
+        )
 
 
 def _warn_trial_ledger_absent(event, dedupe_key):

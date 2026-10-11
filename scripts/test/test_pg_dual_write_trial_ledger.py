@@ -37,11 +37,6 @@ from _pg_seal import get_ephemeral_connection  # noqa: E402
 
 _TRIAL_KEY = "a" * 64
 _AGENT = "glass-atrium-dev-python"
-# an A/A arm-difference design-effect row in the writer's shape
-_DESIGN_EFFECT_PAYLOAD = {
-    "metric_key": "budget_overage",
-    **trial_design.ArmDesignEffect(1.1, 33, 1061, 0.8, 1.6, 2000)._asdict(),
-}
 # Declared width of the event and actor columns in the ledger migration.
 _TOKEN_COLUMN_CHARS = 64
 _SPOOL = "inject-scope-rules.manifest.log.20261005T030000Z.spool"
@@ -78,18 +73,25 @@ _LIVE_PROPOSAL = {
 }
 _METRIC_KEY = "budget_overage"
 _DETECTION_START = datetime(2026, 9, 27, tzinfo=timezone.utc)
-# The cycle's pre-registration body (daemon_cycle.get_preregistration_payload's shape).
-_PREREGISTRATION_PAYLOAD = {
-    "metric_key": _METRIC_KEY,
-    "detection_start": _DETECTION_START.isoformat(),
-    "baseline": {"events": 40, "spawns": 1061},
-    "maximum_per_arm": 512,
-    "design_effect": 1.1,
-    "required_units": 1126,
-    "boundaries": [3.9, 2.9, 2.3, 2.0],
-    "looks": [{"fraction": 0.25, "milestone": 281.5, "boundary": 3.9}],
-    "task_window_seconds": 3600.0,
-}
+_PAYLOAD = SimpleNamespace(
+    # an A/A arm-difference design-effect row in the writer's shape
+    DESIGN_EFFECT={
+        "metric_key": _METRIC_KEY,
+        **trial_design.ArmDesignEffect(1.1, 33, 1061, 0.8, 1.6, 2000)._asdict(),
+    },
+    # the cycle's pre-registration body (daemon_cycle.get_preregistration_payload's shape)
+    PREREGISTRATION={
+        "metric_key": _METRIC_KEY,
+        "detection_start": _DETECTION_START.isoformat(),
+        "baseline": {"events": 40, "spawns": 1061},
+        "maximum_per_arm": 512,
+        "design_effect": 1.1,
+        "required_units": 1126,
+        "boundaries": [3.9, 2.9, 2.3, 2.0],
+        "looks": [{"fraction": 0.25, "milestone": 281.5, "boundary": 3.9}],
+        "task_window_seconds": 3600.0,
+    },
+)
 _TRIAL_LEDGER_MIGRATION = "20261008000000_add_trial_ledger_and_cycle_verdicts"
 
 
@@ -118,13 +120,13 @@ class TestTrialLedgerClosedSets(unittest.TestCase):
                     "design-effect payload missing its metric key",
                     design_effect,
                     ledger.ACTOR.AA,
-                    {k: v for k, v in _DESIGN_EFFECT_PAYLOAD.items() if k != "metric_key"},
+                    {k: v for k, v in _PAYLOAD.DESIGN_EFFECT.items() if k != "metric_key"},
                 ),
                 (
                     "design-effect payload with an extra key",
                     design_effect,
                     ledger.ACTOR.AA,
-                    {**_DESIGN_EFFECT_PAYLOAD, "selected": 2.1},
+                    {**_PAYLOAD.DESIGN_EFFECT, "selected": 2.1},
                 ),
                 (
                     "design-effect payload that is no object",
@@ -327,7 +329,7 @@ class TestTrialLedgerWriterLivePg(unittest.TestCase):
         inserted = self.writer.write_trial_ledger_row(
             ledger.EVENT.AA_ARM_DESIGN_EFFECT,
             ledger.ACTOR.AA,
-            _DESIGN_EFFECT_PAYLOAD,
+            _PAYLOAD.DESIGN_EFFECT,
             trial_key=_TRIAL_KEY,
             agent=_AGENT,
             learning_pattern_id=42,
@@ -344,7 +346,7 @@ class TestTrialLedgerWriterLivePg(unittest.TestCase):
                     42,
                     "aa-arm-design-effect",
                     "daemon-cycle-aa",
-                    _DESIGN_EFFECT_PAYLOAD,
+                    _PAYLOAD.DESIGN_EFFECT,
                     f"{_TRIAL_KEY}:look:1",
                 )
             ],
@@ -452,7 +454,7 @@ class TestTrialLedgerWriterLivePg(unittest.TestCase):
 
     def _write_bound(self, payload: object = None, **overrides: object) -> None:
         self.writer.write_autoagent_proposal_preregistration(
-            _PREREGISTRATION_PAYLOAD if payload is None else payload,
+            _PAYLOAD.PREREGISTRATION if payload is None else payload,
             **{**_LIVE_PROPOSAL, "learning_pattern_id": self.pattern_id, **overrides},
         )
 
@@ -483,7 +485,7 @@ class TestTrialLedgerWriterLivePg(unittest.TestCase):
                     self.pattern_id,
                     "live-preregistration",
                     "daemon-cycle-live",
-                    {**_PREREGISTRATION_PAYLOAD, "proposal_id": proposal_id},
+                    {**_PAYLOAD.PREREGISTRATION, "proposal_id": proposal_id},
                     key,
                 )
             ],
@@ -536,7 +538,7 @@ class TestTrialLedgerWriterLivePg(unittest.TestCase):
         self.writer.write_trial_ledger_row(
             ledger.EVENT.SHADOW_PREREGISTRATION,
             ledger.ACTOR.SHADOW,
-            _PREREGISTRATION_PAYLOAD,
+            _PAYLOAD.PREREGISTRATION,
             trial_key=shadow_key,
             agent=_AGENT,
             learning_pattern_id=self.pattern_id,
@@ -578,13 +580,13 @@ class TestTrialLedgerWriterLivePg(unittest.TestCase):
             (
                 "ledger table absent",
                 self._TEMPLATE.ABSENT,
-                _PREREGISTRATION_PAYLOAD,
+                _PAYLOAD.PREREGISTRATION,
                 "TrialLedgerAbsent",
             ),
             (
                 "body the ledger rejects as JSON",
                 self._TEMPLATE.FULL,
-                {**_PREREGISTRATION_PAYLOAD, "design_effect": float("nan")},
+                {**_PAYLOAD.PREREGISTRATION, "design_effect": float("nan")},
                 None,
             ),
         )
@@ -626,7 +628,7 @@ class TestTrialLedgerWriterLivePg(unittest.TestCase):
         self,
     ) -> None:
         self._use_bound_database(self._TEMPLATE.FULL)
-        recall = {**_PREREGISTRATION_PAYLOAD, "required_units": 2048}
+        recall = {**_PAYLOAD.PREREGISTRATION, "required_units": 2048}
 
         self._write_bound()
         self._write_bound(recall)
@@ -634,7 +636,7 @@ class TestTrialLedgerWriterLivePg(unittest.TestCase):
         (proposal_id,) = self._get_proposal_ids()
         self.assertEqual(
             [row[5] for row in self._get_rows()],
-            [{**_PREREGISTRATION_PAYLOAD, "proposal_id": proposal_id}],
+            [{**_PAYLOAD.PREREGISTRATION, "proposal_id": proposal_id}],
         )
 
 

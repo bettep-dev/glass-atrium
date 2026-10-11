@@ -40,6 +40,7 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from types import SimpleNamespace
 from unittest import mock
 
 _REPO_ROOT = Path(__file__).resolve().parent.parent.parent
@@ -60,8 +61,10 @@ except Exception as exc:  # noqa: BLE001 — psycopg absent → skip, not error
     _IMPORT_ERROR = exc
 
 _PROBE_AGENT = "pattern-link-probe-agent"
-_PLAIN_OP = "write_autoagent_proposal"
-_COMBINED_OP = "write_autoagent_proposal_preregistration"
+_OP = SimpleNamespace(
+    PLAIN="write_autoagent_proposal",
+    COMBINED="write_autoagent_proposal_preregistration",
+)
 _PREREGISTRATION_PAYLOAD = {
     "metric_key": "budget_overage",
     "looks": [{"fraction": 0.25, "milestone": 281.5, "boundary": 3.9}],
@@ -169,7 +172,7 @@ class ProposalStatusSent(unittest.TestCase):
     def _get_sent_args(self, patch: dict) -> dict:
         exit_code, sent, _ = self._push([patch])
         self.assertEqual(exit_code, 0)
-        (proposal,) = [e for e in sent if e["op"] == _PLAIN_OP]
+        (proposal,) = [e for e in sent if e["op"] == _OP.PLAIN]
         return proposal["args"]
 
     def test_a_carried_status_is_sent_and_only_an_absent_one_falls_back(self) -> None:
@@ -214,13 +217,13 @@ class ProposalStatusSent(unittest.TestCase):
         ):
             with self.subTest(name):
                 exit_code, sent, _ = self._push([self._build_report_patch(row_id)])
-                (args,) = [e["args"] for e in sent if e["op"] == _PLAIN_OP]
+                (args,) = [e["args"] for e in sent if e["op"] == _OP.PLAIN]
                 self.assertEqual(exit_code, 0)
                 self.assertEqual(args["learning_pattern_id"], expected)
                 self.assertEqual(
                     args["generator_input_version"], dc.GENERATOR_INPUT_VERSION
                 )
-                self.assertEqual([e for e in sent if e["op"] == _COMBINED_OP], [])
+                self.assertEqual([e for e in sent if e["op"] == _OP.COMBINED], [])
         self.assertEqual(pg_reach, [])
 
     def test_a_patch_carrying_a_preregistration_body_sends_one_combined_write_and_no_plain_one(
@@ -234,10 +237,10 @@ class ProposalStatusSent(unittest.TestCase):
                     [{**unbound, "preregistration_payload": payload}]
                 )
                 proposal_writes = [
-                    e for e in sent if e["op"] in (_PLAIN_OP, _COMBINED_OP)
+                    e for e in sent if e["op"] in (_OP.PLAIN, _OP.COMBINED)
                 ]
                 self.assertEqual(exit_code, 0)
-                self.assertEqual([e["op"] for e in proposal_writes], [_COMBINED_OP])
+                self.assertEqual([e["op"] for e in proposal_writes], [_OP.COMBINED])
                 self.assertEqual(
                     proposal_writes[0]["args"],
                     {**plain_args, "preregistration_payload": payload},
@@ -252,7 +255,7 @@ class ProposalStatusSent(unittest.TestCase):
         )
         later = _patch(pattern_label="q")
 
-        exit_code, sent, _ = self._push([bound, later], failing_op=_COMBINED_OP)
+        exit_code, sent, _ = self._push([bound, later], failing_op=_OP.COMBINED)
 
         self.assertEqual(exit_code, 1)
         self.assertEqual(
@@ -261,7 +264,7 @@ class ProposalStatusSent(unittest.TestCase):
                 for e in sent
                 if "pattern_label" in e["args"]
             ],
-            [(_COMBINED_OP, "p"), (_PLAIN_OP, "q")],
+            [(_OP.COMBINED, "p"), (_OP.PLAIN, "q")],
         )
 
     def test_a_preregistration_body_that_is_no_object_is_a_named_fault_for_its_patch_alone(
