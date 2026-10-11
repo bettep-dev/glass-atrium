@@ -812,24 +812,31 @@ class BoundPayloadTest(_ShadowFixture):
     def test_a_spawn_at_or_after_d_never_moves_an_own_tier_window(self) -> None:
         baseline_spawn, late_spawn = _get_late_next_start("own-late")
         self.roster.is_end_honoured = False  # the at-D spawn reaches the cut
+        # a floor-half member stopped a minute before D: its W is still open at D, so n leaves it out
+        open_member = baseline_spawn[0]._replace(agent_id=next(_IDS.FLOOR))
         member = _get_member("own-member")
-        self.history.append(member)
+        self.history.extend([member, open_member])
         own_spawns = [
             *_get_gap_spawns("own", range(1, 101)),
-            *baseline_spawn,
+            open_member,
             member,
-            _get_follow_up(member, 10),
+            # own gaps 1..100 → W = 91: past the default 60 → counted; at W → not
+            *(_get_follow_up(member, minutes) for minutes in (10, 90, 91)),
         ]
         row = self._get_window_row({_AGENT: own_spawns})
         late_row = self._get_window_row({_AGENT: [*own_spawns, late_spawn]})
-        self.assertEqual(row["tier"], "own")
-        self.assertEqual(row["follow_ups"], {"n": 1, "mean": 1.0, "sd": None})
+        self.assertEqual((row["tier"], row["minutes"]), ("own", 91))
+        self.assertEqual(row["follow_ups"], {"n": 1, "mean": 2.0, "sd": None})
         self.assertEqual(late_row, row)
 
     def test_a_spawn_at_or_after_d_never_moves_a_pooled_tier_window(self) -> None:
         baseline_spawn, late_spawn = _get_late_next_start("pool-late")
         self.roster.is_end_honoured = False  # the at-D spawn reaches the cut
-        member = _get_member("pool-member")
+        # stopped after the detection start, its W closed before D → counted at D alone
+        member = _get_member("pool-member")._replace(
+            started_at=_WINDOWS.start.detection - timedelta(hours=1),
+            stopped_at=_WINDOWS.start.detection + timedelta(hours=1),
+        )
         self.history.append(member)
         own_spawns = [*_get_gap_spawns("own", range(1, 11)), member, _get_follow_up(member, 10)]
         pool = _get_gap_spawns("pool", range(100, 190)) + baseline_spawn
