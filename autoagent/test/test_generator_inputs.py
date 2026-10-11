@@ -328,6 +328,9 @@ class TestGenerationLoopAppliesEveryGate(unittest.TestCase):
         self.assertEqual(
             (args, kwargs), ((self.regression_gate,), {"live": self.live_flag})
         )
+
+    def test_the_generation_unit_gets_the_runs_skip_flags(self) -> None:
+        self._loop()
         self.assertEqual(
             {
                 name: self.built[0][1][name]
