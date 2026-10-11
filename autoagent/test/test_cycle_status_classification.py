@@ -18,7 +18,9 @@ The same writer sends each patch's proposal status: a status the patch carries i
 forwarded as-is, and only an absent one falls back — `rejected` for a reject
 classification (a gate verdict, never `unadjudicated`), `pending` otherwise. The
 patch's pattern link and generator-input version reach the envelope as the patch
-carries them, and an absent one is sent as None.
+carries them, and an absent one is sent as None. A patch carrying a pre-registration
+body is sent as one combined proposal-and-pre-registration write; a body that is no
+object is a named fault for that patch alone, and the push exits non-zero.
 
 The report file the cycle writes for that writer carries no Solution History key,
 and a reported patch carries no prior-day outcome sample count.
@@ -58,6 +60,12 @@ except Exception as exc:  # noqa: BLE001 — psycopg absent → skip, not error
     _IMPORT_ERROR = exc
 
 _PROBE_AGENT = "pattern-link-probe-agent"
+_PLAIN_OP = "write_autoagent_proposal"
+_COMBINED_OP = "write_autoagent_proposal_preregistration"
+_PREREGISTRATION_PAYLOAD = {
+    "metric_key": "budget_overage",
+    "looks": [{"fraction": 0.25, "milestone": 281.5, "boundary": 3.9}],
+}
 
 
 def _patch(**overrides: object) -> dict:
@@ -135,23 +143,33 @@ class CycleStatusClassification(unittest.TestCase):
 
 
 class ProposalStatusSent(unittest.TestCase):
-    def _get_sent_args(self, patch: dict) -> dict:
+    def _push(
+        self, patches: list[dict], failing_op: str = ""
+    ) -> tuple[int, list[dict], str]:
+        """main() over one report → its exit code, every envelope sent, its stderr."""
         sent: list[dict] = []
 
         def record(envelope: dict) -> bool:
             sent.append(envelope)
-            return True
+            return envelope["op"] != failing_op
 
+        stderr = io.StringIO()
         with tempfile.TemporaryDirectory() as tmp:
             report = Path(tmp) / "autoagent-2026-10-03.json"
-            report.write_text(json.dumps({"patches": [patch]}), encoding="utf-8")
+            report.write_text(json.dumps({"patches": patches}), encoding="utf-8")
             with (
                 mock.patch.object(writer, "OUT_PATH", str(report)),
                 mock.patch.object(writer, "CYCLE_DATE", "2026-10-03"),
                 mock.patch.object(writer, "_invoke_helper", side_effect=record),
+                contextlib.redirect_stderr(stderr),
             ):
-                self.assertEqual(writer.main(), 0)
-        (proposal,) = [e for e in sent if e["op"] == "write_autoagent_proposal"]
+                exit_code = writer.main()
+        return exit_code, sent, stderr.getvalue()
+
+    def _get_sent_args(self, patch: dict) -> dict:
+        exit_code, sent, _ = self._push([patch])
+        self.assertEqual(exit_code, 0)
+        (proposal,) = [e for e in sent if e["op"] == _PLAIN_OP]
         return proposal["args"]
 
     def test_a_carried_status_is_sent_and_only_an_absent_one_falls_back(self) -> None:
@@ -195,13 +213,88 @@ class ProposalStatusSent(unittest.TestCase):
             ("synthetic pattern", 0, None),
         ):
             with self.subTest(name):
-                patch = self._build_report_patch(row_id)
-                args = self._get_sent_args(patch)
+                exit_code, sent, _ = self._push([self._build_report_patch(row_id)])
+                (args,) = [e["args"] for e in sent if e["op"] == _PLAIN_OP]
+                self.assertEqual(exit_code, 0)
                 self.assertEqual(args["learning_pattern_id"], expected)
                 self.assertEqual(
                     args["generator_input_version"], dc.GENERATOR_INPUT_VERSION
                 )
+                self.assertEqual([e for e in sent if e["op"] == _COMBINED_OP], [])
         self.assertEqual(pg_reach, [])
+
+    def test_a_patch_carrying_a_preregistration_body_sends_one_combined_write_and_no_plain_one(
+        self,
+    ) -> None:
+        unbound = _patch(classification="body-tweak", learning_pattern_id=4127)
+        plain_args = self._get_sent_args(unbound)
+        for name, payload in (("body", _PREREGISTRATION_PAYLOAD), ("empty object", {})):
+            with self.subTest(name):
+                exit_code, sent, _ = self._push(
+                    [{**unbound, "preregistration_payload": payload}]
+                )
+                proposal_writes = [
+                    e for e in sent if e["op"] in (_PLAIN_OP, _COMBINED_OP)
+                ]
+                self.assertEqual(exit_code, 0)
+                self.assertEqual([e["op"] for e in proposal_writes], [_COMBINED_OP])
+                self.assertEqual(
+                    proposal_writes[0]["args"],
+                    {**plain_args, "preregistration_payload": payload},
+                )
+
+    def test_a_failed_combined_write_lets_the_push_carry_on_and_exit_non_zero(
+        self,
+    ) -> None:
+        bound = _patch(
+            classification="body-tweak",
+            preregistration_payload=_PREREGISTRATION_PAYLOAD,
+        )
+        later = _patch(pattern_label="q")
+
+        exit_code, sent, _ = self._push([bound, later], failing_op=_COMBINED_OP)
+
+        self.assertEqual(exit_code, 1)
+        self.assertEqual(
+            [
+                (e["op"], e["args"]["pattern_label"])
+                for e in sent
+                if "pattern_label" in e["args"]
+            ],
+            [(_COMBINED_OP, "p"), (_PLAIN_OP, "q")],
+        )
+
+    def test_a_preregistration_body_that_is_no_object_is_a_named_fault_for_its_patch_alone(
+        self,
+    ) -> None:
+        rows = (
+            ("array (a serialized NamedTuple)", [0.25, 281.5]),
+            ("empty array", []),
+            ("text", "looks"),
+            ("number", 0),
+            ("false", False),
+        )
+        for name, payload in rows:
+            with self.subTest(name):
+                refused = _patch(
+                    classification="body-tweak", preregistration_payload=payload
+                )
+
+                exit_code, sent, stderr = self._push(
+                    [refused, _patch(pattern_label="q")]
+                )
+
+                self.assertEqual(exit_code, 1)
+                self.assertEqual(
+                    [
+                        e["args"]["pattern_label"]
+                        for e in sent
+                        if "pattern_label" in e["args"]
+                    ],
+                    ["q"],
+                )
+                self.assertIn("preregistration_payload", stderr)
+                self.assertIn("pattern_label=p", stderr)
 
     @unittest.skipIf(dc is None, f"import failed: {_IMPORT_ERROR}")
     def test_a_reported_patch_carries_no_outcome_sample_count(self) -> None:

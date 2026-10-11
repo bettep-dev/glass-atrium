@@ -9,6 +9,8 @@
 #       - write_daemon_run_payload   -> core.daemon_run_payload UPSERT (FK 1:1)
 #       - write_autoagent_proposal   -> core.autoagent_proposals UPSERT
 #                                       key (cycle_date, pattern_label, target_file)
+#       - write_autoagent_proposal_preregistration -> that UPSERT + the live
+#                                       pre-registration ledger row, one transaction
 #       - write_autoagent_loop_event -> core.autoagent_loop_events UPSERT
 #                                       key (event_ts, agent, eval_result) for a census
 #                                       row, (event_ts, agent, subject) for a verdict row
@@ -50,6 +52,8 @@
 #                                        "args": {"daemon_name": "autoagent", "run_date": "...", "apply_status": "ok|apply_failed|apply_unavailable"}}
 #   {"op": "write_daemon_run_payload",   "args": {"daemon_name": "wiki", "run_date": "...", "payload": {...}}}
 #   {"op": "write_autoagent_proposal",   "args": {"cycle_date": "...", "pattern_label": "...", "target_file": "...", ...}}
+#   {"op": "write_autoagent_proposal_preregistration",
+#                                        "args": {<write_autoagent_proposal args>, "preregistration_payload": {...}}}
 #   {"op": "write_autoagent_loop_event", "args": {"event_ts": "...", "agent": "...", "eval_result": "...", ...}}
 #   {"op": "write_autoagent_corpus_audit", "args": {"cycle_date": "...", "word_count": 0, "token_estimate": 0, ...}}
 #
@@ -61,6 +65,7 @@
 #   and the missing migration is named on stderr (exit stays 0 — see the docstring).
 # Stderr (always): structured op + elapsed_ms log line (parseable by daemon-reports).
 
+import hashlib
 import json
 import sys
 import time
@@ -733,7 +738,44 @@ def write_autoagent_proposal(
     A schema without the two columns still gets the row, without them, and the
     missing migration is named on stderr.
     """
+    # locals() at the first statement = exactly the parameters above.
+    params, link_params = _get_proposal_params(**locals())
     start_ns = time.monotonic_ns()
+    with _connect() as conn:
+        _, is_degraded = _upsert_proposal(conn, params, link_params)
+        conn.commit()
+    if is_degraded:
+        _warn_proposal_degraded("write_autoagent_proposal", cycle_date, pattern_label)
+    return (time.monotonic_ns() - start_ns) // 1_000_000
+
+
+def _get_proposal_params(
+    cycle_date,
+    pattern_label,
+    target_file,
+    target_agent,
+    classification,
+    rationale,
+    haiku_status,
+    approval_tier,
+    status,
+    proposed_diff,
+    cost_guard_state,
+    source_file,
+    source_file_mtime,
+    indexed_at=None,
+    pre_verify_passed=None,
+    pre_verify_status="",
+    pre_verify_rationale="",
+    pre_verify_axes=None,
+    confidence_observed=None,
+    project_key="",
+    promotion_tier="",
+    reviewed_by="",
+    learning_pattern_id=None,
+    generator_input_version=None,
+):
+    """write_autoagent_proposal's arguments → (the UPSERT's base params, its link params)."""
     if indexed_at is None:
         # PG default is CURRENT_TIMESTAMP; pass NULL by omission of the column
         # rather than computing wall-clock here. Sentinel sticks for explicit
@@ -784,41 +826,43 @@ def write_autoagent_proposal(
         project_key_param,
         promotion_tier_param,
     )
-    link_params = (learning_pattern_id or None, generator_input_version or None)
-    with _connect() as conn:
-        is_degraded = _run_with_column_fallback(
-            conn,
-            lambda: _execute_upsert(conn, _get_proposal_upsert_sql(True), params + link_params),
-            fallback=lambda: _execute_upsert(conn, _get_proposal_upsert_sql(False), params),
-        )
-        conn.commit()
-    if is_degraded:
-        sys.stderr.write(
-            "[autoagent-daemon] op=write_autoagent_proposal DEGRADED "
-            "columns=learning_pattern_id,generator_input_version absent "
-            "(cycle_date=%s, pattern_label=%s) — row written without its pattern link and "
-            "input version; apply migration %s and the next push records them\n"
-            % (cycle_date, pattern_label, MIGRATION.PATTERN_EVIDENCE)
-        )
-    return (time.monotonic_ns() - start_ns) // 1_000_000
+    return params, (learning_pattern_id or None, generator_input_version or None)
+
+
+def _upsert_proposal(conn, params, link_params):
+    """The proposal UPSERT on `conn`, uncommitted → (RETURNING row, None for a frozen row; degraded)."""
+    return _run_with_column_fallback(
+        conn,
+        lambda: _execute_upsert(conn, _get_proposal_upsert_sql(True), params + link_params),
+        fallback=lambda: _execute_upsert(conn, _get_proposal_upsert_sql(False), params),
+    )
+
+
+def _warn_proposal_degraded(op, cycle_date, pattern_label):
+    sys.stderr.write(
+        "[autoagent-daemon] op=%s DEGRADED "
+        "columns=learning_pattern_id,generator_input_version absent "
+        "(cycle_date=%s, pattern_label=%s) — row written without its pattern link and "
+        "input version; apply migration %s and the next push records them\n"
+        % (op, cycle_date, pattern_label, MIGRATION.PATTERN_EVIDENCE)
+    )
 
 
 def _run_with_column_fallback(conn, run, *, fallback):
-    """run(); on SQLSTATE 42703 (by class, as in compose_daemon_run_apply_status) roll back
-    and run fallback() → True. A 42703 from fallback() propagates."""
+    """run() → (its result, False); on SQLSTATE 42703 (by class, as in
+    compose_daemon_run_apply_status) roll back and run fallback() → (its result, True).
+    A 42703 from fallback() propagates."""
     try:
-        run()
+        return run(), False
     except pg_errors.UndefinedColumn:
         conn.rollback()
-        fallback()
-        return True
-    return False
+        return fallback(), True
 
 
 def _execute_upsert(conn, sql, params):
     with conn.cursor() as cur:
         cur.execute(sql, params)
-        cur.fetchone()  # None when a conflict arm's WHERE skips the update
+        return cur.fetchone()  # None when a conflict arm's WHERE skips the update
 
 
 class VerdictSubjectMissing(CallerContractViolation):
@@ -1113,7 +1157,7 @@ def write_spawn_manifest_rows(spool, rows):
     fault, a schema without the table included.
     """
     with _connect() as conn:
-        is_degraded = _run_with_column_fallback(
+        _, is_degraded = _run_with_column_fallback(
             conn,
             lambda: _insert_spawn_manifest_rows(conn, spool, rows, has_exposure=True),
             fallback=lambda: _insert_spawn_manifest_rows(conn, spool, rows, has_exposure=False),
@@ -1156,11 +1200,19 @@ class TrialLedgerValueUndeclared(CallerContractViolation):
     """An event, actor or declared payload shape outside TRIAL_LEDGER."""
 
 
+class PreregistrationPayloadNotObject(CallerContractViolation):
+    """A live pre-registration body that is no JSON object, so it cannot carry proposal_id."""
+
+
+class TrialLedgerAbsent(Exception):
+    """core.autoagent_trial_ledger missing inside a write that needs it; nothing committed."""
+
+
 _TRIAL_LEDGER_EVENT = SimpleNamespace(
     SHADOW_PREREGISTRATION="shadow-preregistration",  # dedupe_key = <trial key>
     SHADOW_LOOK="shadow-look",  # dedupe_key = <trial key>:look:<n>
     # live trial rows, written by ACTOR.LIVE
-    # live trial key carries the proposal id → a shadow row's <trial key> never takes it
+    # live trial key = get_live_trial_key(proposal id) → a shadow row's <trial key> never takes it
     LIVE_PREREGISTRATION="live-preregistration",  # dedupe_key = <live trial key>
     LIVE_LOOK="live-look",  # dedupe_key = <live trial key>:look:<n>
     # once per trial; a live pre-registration with no decision row is an open trial
@@ -1291,6 +1343,73 @@ def write_trial_ledger_row(
     return inserted
 
 
+def write_autoagent_proposal_preregistration(preregistration_payload, **proposal):
+    """UPSERT a proposal and INSERT its live pre-registration in one transaction → elapsed_ms.
+
+    proposal: write_autoagent_proposal's arguments. The ledger row's trial and dedupe key is
+    get_live_trial_key(<the UPSERT's RETURNING id>), its payload the cycle's body plus
+    proposal_id. A frozen proposal row returns no id and gets no ledger row; a taken key adds
+    none. Any ledger fault rolls back both rows — a missing table raises TrialLedgerAbsent
+    naming the migration, never the plain writer's skip. Refuses before connecting a body
+    that is no object or a value outside TRIAL_LEDGER.
+    """
+    if not isinstance(preregistration_payload, dict):
+        raise PreregistrationPayloadNotObject(
+            "op=write_autoagent_proposal_preregistration refused preregistration_payload="
+            f"{preregistration_payload!r} — not an object, nothing written"
+        )
+    _check_trial_ledger_values(
+        TRIAL_LEDGER.EVENT.LIVE_PREREGISTRATION,
+        TRIAL_LEDGER.ACTOR.LIVE,
+        preregistration_payload,
+    )
+    params, link_params = _get_proposal_params(**proposal)
+    start_ns = time.monotonic_ns()
+    with _connect() as conn:
+        returned, is_degraded = _upsert_proposal(conn, params, link_params)
+        if returned is not None:
+            _insert_live_preregistration(
+                conn, returned[0], proposal, preregistration_payload
+            )
+        conn.commit()
+    op = "write_autoagent_proposal_preregistration"
+    if is_degraded:
+        _warn_proposal_degraded(op, proposal["cycle_date"], proposal["pattern_label"])
+    if returned is None:
+        sys.stderr.write(
+            f"[autoagent-daemon] op={op} frozen proposal row kept "
+            f"(cycle_date={proposal['cycle_date']}, pattern_label={proposal['pattern_label']}) "
+            "— reviewed terminal row, no live pre-registration written\n"
+        )
+    return (time.monotonic_ns() - start_ns) // 1_000_000
+
+
+def get_live_trial_key(proposal_id):
+    """64-hex sha256 of the proposal id — the ledger's trial_key shape, apart from every shadow pair key."""
+    return hashlib.sha256(f"live-trial\x1f{proposal_id}".encode()).hexdigest()
+
+
+def _insert_live_preregistration(conn, proposal_id, proposal, payload):
+    key = get_live_trial_key(proposal_id)
+    row = (
+        key,
+        proposal.get("target_agent"),
+        proposal.get("learning_pattern_id") or None,
+        TRIAL_LEDGER.EVENT.LIVE_PREREGISTRATION,
+        TRIAL_LEDGER.ACTOR.LIVE,
+        Jsonb({**payload, "proposal_id": proposal_id}),
+        key,
+    )
+    try:
+        with conn.cursor() as cur:
+            cur.execute(_TRIAL_LEDGER_INSERT_SQL, row)
+    except pg_errors.UndefinedTable as exc:
+        raise TrialLedgerAbsent(
+            "core.autoagent_trial_ledger absent — proposal and live pre-registration rolled "
+            f"back; apply migration {MIGRATION.TRIAL_LEDGER}"
+        ) from exc
+
+
 def _warn_trial_ledger_absent(event, dedupe_key):
     sys.stderr.write(
         "[autoagent-daemon] op=write_trial_ledger_row WARN table=core.autoagent_trial_ledger "
@@ -1330,6 +1449,10 @@ OP_TABLE = {
     ),
     "write_daemon_run_payload": (write_daemon_run_payload, "core.daemon_run_payload"),
     "write_autoagent_proposal": (write_autoagent_proposal, "core.autoagent_proposals"),
+    "write_autoagent_proposal_preregistration": (
+        write_autoagent_proposal_preregistration,
+        "core.autoagent_proposals",
+    ),
     "write_autoagent_loop_event": (write_autoagent_loop_event, "core.autoagent_loop_events"),
     "write_autoagent_corpus_audit": (
         write_autoagent_corpus_audit,

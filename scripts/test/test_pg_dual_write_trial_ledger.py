@@ -16,6 +16,7 @@ import sys
 import tempfile
 import unittest
 import uuid
+from datetime import datetime, timezone
 from pathlib import Path
 from types import SimpleNamespace
 from unittest import mock
@@ -23,6 +24,7 @@ from unittest import mock
 _REPO_ROOT = Path(__file__).resolve().parents[2]
 for _path in (
     _REPO_ROOT / "scripts",
+    _REPO_ROOT / "autoagent",
     _REPO_ROOT / "autoagent" / "test",
     _REPO_ROOT / "autoagent" / "lib",
 ):
@@ -54,6 +56,41 @@ _UNBOUND_DELIVERY = SimpleNamespace(
         "delivered_hash": "c" * 64,
     },
 )
+
+
+# A verified non-safety auto candidate in the push's envelope shape.
+_LIVE_PROPOSAL = {
+    "cycle_date": "2026-10-11",
+    "pattern_label": "budget overage recurs",
+    "target_file": "agents/glass-atrium-dev-python.md",
+    "target_agent": _AGENT,
+    "classification": "apply",
+    "rationale": "pattern recurred across 9 outcomes",
+    "haiku_status": "ok",
+    "approval_tier": "auto",
+    "status": "pending",
+    "reviewed_by": "daemon-cycle-push",
+    "proposed_diff": "+keep the budget line",
+    "cost_guard_state": "ok",
+    "source_file": "autoagent-2026-10-11.json",
+    "source_file_mtime": 1,
+    "generator_input_version": "gen-inputs-2",
+}
+_METRIC_KEY = "budget_overage"
+_DETECTION_START = datetime(2026, 9, 27, tzinfo=timezone.utc)
+# The cycle's pre-registration body (daemon_cycle.get_preregistration_payload's shape).
+_PREREGISTRATION_PAYLOAD = {
+    "metric_key": _METRIC_KEY,
+    "detection_start": _DETECTION_START.isoformat(),
+    "baseline": {"events": 40, "spawns": 1061},
+    "maximum_per_arm": 512,
+    "design_effect": 1.1,
+    "required_units": 1126,
+    "boundaries": [3.9, 2.9, 2.3, 2.0],
+    "looks": [{"fraction": 0.25, "milestone": 281.5, "boundary": 3.9}],
+    "task_window_seconds": 3600.0,
+}
+_TRIAL_LEDGER_MIGRATION = "20261008000000_add_trial_ledger_and_cycle_verdicts"
 
 
 @contextlib.contextmanager
@@ -133,6 +170,29 @@ class TestTrialLedgerClosedSets(unittest.TestCase):
                 ):
                     with self.assertRaises(helper.TrialLedgerValueUndeclared):
                         helper.write_trial_ledger_row(event, actor, payload)
+                    connect.assert_not_called()
+
+    def test_a_preregistration_payload_that_is_no_object_is_refused_before_connecting(
+        self,
+    ) -> None:
+        # The push adds the proposal id to the body, so only an object can carry it.
+        rows = (
+            ("array (a serialized NamedTuple)", [0.25, 40]),
+            ("empty array", []),
+            ("text", "looks"),
+            ("number", 3),
+            ("false", False),
+        )
+        with _load_helper() as helper:
+            for name, payload in rows:
+                with (
+                    self.subTest(name),
+                    mock.patch.object(helper, "_connect") as connect,
+                ):
+                    with self.assertRaises(helper.PreregistrationPayloadNotObject):
+                        helper.write_autoagent_proposal_preregistration(
+                            payload, **_LIVE_PROPOSAL
+                        )
                     connect.assert_not_called()
 
     def test_the_aa_harness_rows_pass_the_closed_sets_and_reach_the_connection(
@@ -377,6 +437,204 @@ class TestTrialLedgerWriterLivePg(unittest.TestCase):
         self.assertIn("WARN", stderr.getvalue())
         self.assertIn(
             "20261008000000_add_trial_ledger_and_cycle_verdicts", stderr.getvalue()
+        )
+
+    def _seed_pattern(self) -> int:
+        with self._connect() as conn, conn.cursor() as cur:
+            cur.execute(
+                "INSERT INTO core.learning_log (discovered_date, pattern_signature, frequency,"
+                " agent, status, approval_tier, last_updated)"
+                " VALUES ('2026-10-04', %s, 9, %s, 'identified', 'user-pending', now())"
+                " RETURNING id",
+                (f"budget overage recurs|{_AGENT}", _AGENT),
+            )
+            return cur.fetchone()[0]
+
+    def _write_bound(self, payload: object = None, **overrides: object) -> None:
+        self.writer.write_autoagent_proposal_preregistration(
+            _PREREGISTRATION_PAYLOAD if payload is None else payload,
+            **{**_LIVE_PROPOSAL, "learning_pattern_id": self.pattern_id, **overrides},
+        )
+
+    def _get_proposal_ids(self) -> list[int]:
+        with self._connect() as conn, conn.cursor() as cur:
+            cur.execute("SELECT id FROM core.autoagent_proposals ORDER BY id")
+            return [row[0] for row in cur.fetchall()]
+
+    def _use_bound_database(self, template: str) -> None:
+        self._use_database(template)
+        self.pattern_id = self._seed_pattern()
+
+    def test_one_commit_writes_the_proposal_row_and_its_live_preregistration_keyed_by_its_id(
+        self,
+    ) -> None:
+        self._use_bound_database(self._TEMPLATE.FULL)
+
+        self._write_bound()
+
+        (proposal_id,) = self._get_proposal_ids()
+        key = self.writer.get_live_trial_key(proposal_id)
+        self.assertEqual(
+            self._get_rows(),
+            [
+                (
+                    key,
+                    _AGENT,
+                    self.pattern_id,
+                    "live-preregistration",
+                    "daemon-cycle-live",
+                    {**_PREREGISTRATION_PAYLOAD, "proposal_id": proposal_id},
+                    key,
+                )
+            ],
+        )
+
+    def test_the_written_preregistration_keys_are_the_cycle_body_keys_and_the_proposal_id(
+        self,
+    ) -> None:
+        # The keys the live readers take: -1b-2 joins on proposal_id, the look writer on looks.
+        self._use_bound_database(self._TEMPLATE.FULL)
+
+        self._write_bound()
+
+        (row,) = self._get_rows()
+        self.assertEqual(
+            sorted(row[5]),
+            [
+                "baseline",
+                "boundaries",
+                "design_effect",
+                "detection_start",
+                "looks",
+                "maximum_per_arm",
+                "metric_key",
+                "proposal_id",
+                "required_units",
+                "task_window_seconds",
+            ],
+        )
+
+    def test_a_stored_shadow_preregistration_of_the_same_pair_never_takes_the_live_row_key(
+        self,
+    ) -> None:
+        import daemon_cycle
+
+        self._use_bound_database(self._TEMPLATE.FULL)
+        ledger = self.writer.TRIAL_LEDGER
+        pattern = daemon_cycle.Pattern(
+            date="2026-10-04",
+            label="budget overage recurs",
+            frequency="9",
+            agent=_AGENT,
+            status="identified",
+            tier="user-pending",
+            raw_line=f"pg:learning_log:{self.pattern_id}:budget overage recurs|{_AGENT}",
+            row_id=self.pattern_id,
+            metric_key=_METRIC_KEY,
+        )
+        shadow_key = daemon_cycle.get_trial_key(pattern, _DETECTION_START)
+        self.writer.write_trial_ledger_row(
+            ledger.EVENT.SHADOW_PREREGISTRATION,
+            ledger.ACTOR.SHADOW,
+            _PREREGISTRATION_PAYLOAD,
+            trial_key=shadow_key,
+            agent=_AGENT,
+            learning_pattern_id=self.pattern_id,
+            dedupe_key=shadow_key,
+        )
+
+        self._write_bound()
+
+        (proposal_id,) = self._get_proposal_ids()
+        self.assertEqual(
+            [(row[3], row[6]) for row in self._get_rows()],
+            [
+                ("shadow-preregistration", shadow_key),
+                ("live-preregistration", self.writer.get_live_trial_key(proposal_id)),
+            ],
+        )
+
+    def test_the_same_pairs_proposal_on_another_day_gets_its_own_live_preregistration(
+        self,
+    ) -> None:
+        self._use_bound_database(self._TEMPLATE.FULL)
+
+        for cycle_date in ("2026-10-11", "2026-10-12"):
+            self._write_bound(cycle_date=cycle_date)
+
+        proposal_ids = self._get_proposal_ids()
+        self.assertEqual(len(proposal_ids), 2)
+        self.assertEqual(
+            [row[6] for row in self._get_rows()],
+            [
+                self.writer.get_live_trial_key(proposal_id)
+                for proposal_id in proposal_ids
+            ],
+        )
+
+    def test_a_ledger_fault_writes_neither_row_and_raises_a_named_fault(self) -> None:
+        # (name, template, body, the writer's named fault class | None = the driver's error)
+        rows = (
+            (
+                "ledger table absent",
+                self._TEMPLATE.ABSENT,
+                _PREREGISTRATION_PAYLOAD,
+                "TrialLedgerAbsent",
+            ),
+            (
+                "body the ledger rejects as JSON",
+                self._TEMPLATE.FULL,
+                {**_PREREGISTRATION_PAYLOAD, "design_effect": float("nan")},
+                None,
+            ),
+        )
+        for name, template, payload, fault_name in rows:
+            with self.subTest(name):
+                self._use_bound_database(template)
+                fault = (
+                    getattr(self.writer, fault_name)
+                    if fault_name
+                    else self.psycopg.Error
+                )
+
+                with self.assertRaises(fault) as raised:
+                    self._write_bound(payload)
+
+                self.assertEqual(self._get_proposal_ids(), [])
+                if fault_name:
+                    self.assertIn(_TRIAL_LEDGER_MIGRATION, str(raised.exception))
+                else:
+                    self.assertEqual(self._get_rows(), [])
+
+    def test_a_frozen_proposal_row_gets_no_live_preregistration(self) -> None:
+        self._use_bound_database(self._TEMPLATE.FULL)
+        self.writer.write_autoagent_proposal(
+            **{**_LIVE_PROPOSAL, "learning_pattern_id": self.pattern_id}
+        )
+        with self._connect() as conn:
+            conn.execute(
+                "UPDATE core.autoagent_proposals"
+                " SET status = 'rejected', reviewed_at = now()"
+            )
+
+        with contextlib.redirect_stderr(io.StringIO()):
+            self._write_bound()
+
+        self.assertEqual(self._get_rows(), [])
+
+    def test_a_same_key_recall_keeps_one_proposal_row_and_its_first_preregistration(
+        self,
+    ) -> None:
+        self._use_bound_database(self._TEMPLATE.FULL)
+        recall = {**_PREREGISTRATION_PAYLOAD, "required_units": 2048}
+
+        self._write_bound()
+        self._write_bound(recall)
+
+        (proposal_id,) = self._get_proposal_ids()
+        self.assertEqual(
+            [row[5] for row in self._get_rows()],
+            [{**_PREREGISTRATION_PAYLOAD, "proposal_id": proposal_id}],
         )
 
 
