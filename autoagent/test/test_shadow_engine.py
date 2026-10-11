@@ -24,7 +24,6 @@ import itertools
 import json
 import math
 import os
-import re
 import sys
 import tempfile
 import unittest
@@ -417,13 +416,15 @@ class BoundPayloadTest(_ShadowFixture):
     def _build(
         self,
         power: dc.PowerResult | None,
-        verdict: dc.PreVerifyResult = dc.PreVerifyResult(True, "ok", {}, "ok", 0),
+        verdict: dc.PreVerifyResult | None = None,
         *,
         safety: str = "non-safety",
         area: str = "body-auto",
         skip_loop_emit: bool = False,
     ) -> dc.PatchResult:
         """The generation unit over the pattern; generator and pre-verify faked at their call."""
+        if verdict is None:
+            verdict = dc.PreVerifyResult(True, "ok", {}, "ok", 0)
         with contextlib.ExitStack() as stack:
             stack.enter_context(contextlib.redirect_stderr(io.StringIO()))
             for name, value in self._seams(verdict, safety=safety, area=area).items():
@@ -1090,6 +1091,7 @@ class CycleWiringTest(_ShadowFixture):
         )
         self.assertEqual(self._get_looks(), [])
         self.assertEqual(stages, ["shadow", "aa"])
+
 
 if __name__ == "__main__":
     unittest.main()

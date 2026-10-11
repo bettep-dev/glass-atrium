@@ -329,7 +329,7 @@ class ProposalStatusSent(unittest.TestCase):
         )
         self.assertEqual(pg_reach, [])
 
-    def _build_bound_result(self) -> "dc.PatchResult":
+    def _build_bound_result(self) -> dc.PatchResult:
         """A writing cycle's generation unit on the bound path; generator and pre-verify faked."""
         pattern = dc.Pattern(
             date="2026-10-02",
