@@ -110,6 +110,7 @@ from _outcome_signal import (  # noqa: E402 — hooks dir pinned by the loop abo
     WindowCount,
     WindowStarts,
     get_floor_verdict,
+    get_follow_up_counts,
     get_overran_gaps,
     get_pair_windows,
     get_redelegation_window,
@@ -9432,23 +9433,132 @@ class PreregistrationSource(NamedTuple):
     roster: RosterSpawnRead
 
 
+# the re-delegation count's remaining blind spots, stated on every window row
+REDELEGATION_ROW = SimpleNamespace(
+    BLIND_SPOTS=(
+        (
+            "capture: a re-delegation later than W is not counted, and W comes from overran gaps "
+            "that fan-out also feeds, so the true capture is unmeasured"
+        ),
+        (
+            "watch: fan-out drift between the reference window and the watch enters the contrast; "
+            "the reference install's watch calibration read the drift its history held, not its "
+            "distribution, on period pairs whose separation is shorter than the design's — a "
+            "horizon-long reference ending at the trial's start, a watch starting after the "
+            "trial's run to graduation — so its no-crossing reading is a lower bound, not a pass"
+        ),
+        "scope: a re-delegation to another agent type, or in a new parent session, is not counted",
+        (
+            "unobserved: a spawn with no SubagentStop or no parent session is outside the count; "
+            "the no-SubagentStop guardrail covers the first"
+        ),
+        "does less: a spawn that does less and is never re-delegated passes the count",
+    ),
+)
+
+
+class FollowUpBaseline(NamedTuple):
+    """The count's statistics: follow-ups per counted spawn; None = no reading."""
+
+    n: int  # counted spawns
+    mean: float | None
+    sd: float | None  # None under two counted spawns
+
+
 def get_redelegation_row(
     spawns: RosterSpawns, power_pass: PowerPass, windows: PairWindows
 ) -> dict:
-    """W with its tier and gap count by `get_redelegation_window`, over the baseline window alone.
+    """W with its tier and gap count by `get_redelegation_window`, over the covered baseline,
+    beside the count's margin, statistics, baseline coverage and blind spots.
 
     Spawns started at or after D are cut before the primitives, so no spawn from the trial's
     start on moves the row; the pool is every roster type's gaps, the trial's agent included.
+    The gap window opens at the guardrail readings' covered start, so W reads no uncovered day.
     """
     cut = {
         agent_type: [spawn for spawn in agent_spawns if spawn.started_at < windows.end]
         for agent_type, agent_spawns in spawns.by_type.items()
     }
-    baseline = Window(windows.start.baseline, windows.start.detection)
-    gaps = get_overran_gaps(cut, baseline, tool_budget=spawns.tool_budget)
+    detection_start = windows.start.detection
+    covered_start = _get_covered_start(detection_start, power_pass.provenance_start)
+    gaps = get_overran_gaps(
+        cut, Window(covered_start, detection_start), tool_budget=spawns.tool_budget
+    )
     pooled_gaps = [gap for type_gaps in gaps.values() for gap in type_gaps]
     own_gaps = gaps.get(power_pass.pattern.agent, [])
-    return get_redelegation_window(own_gaps, pooled_gaps)._asdict()
+    window = get_redelegation_window(own_gaps, pooled_gaps)
+    follow_ups = _get_follow_up_baseline(
+        cut, power_pass, windows, redelegation_window=timedelta(minutes=window.minutes)
+    )
+    return {
+        **window._asdict(),
+        "margin": _get_redelegation_margin(power_pass.baseline),
+        "follow_ups": follow_ups._asdict(),
+        **_get_baseline_coverage(windows.start, covered_start),
+        "blind_spots": list(REDELEGATION_ROW.BLIND_SPOTS),
+    }
+
+
+def _get_follow_up_baseline(
+    spawns_by_type: Mapping[str, list[SpawnFacts]],
+    power_pass: PowerPass,
+    windows: PairWindows,
+    *,
+    redelegation_window: timedelta,
+) -> FollowUpBaseline:
+    """Computed once, for the row and the count's rise: the guardrail readings' floor-half
+    members that `get_follow_up_counts` counts at W evaluated at D, their follow-ups from every
+    same-type spawn, whichever half."""
+    detection_start = windows.start.detection
+    members = {
+        spawn.agent_id
+        for spawn in _get_guardrail_members(
+            power_pass.spawns, detection_start, power_pass.provenance_start
+        )
+    }
+    counts = [
+        count
+        for spawn, count in get_follow_up_counts(
+            spawns_by_type,
+            power_pass.pattern.agent,
+            Window(windows.start.baseline, detection_start),
+            redelegation_window=redelegation_window,
+            evaluated_at=windows.end,
+        )
+        if spawn.agent_id in members
+    ]
+    return FollowUpBaseline(
+        len(counts),
+        statistics.fmean(counts) if counts else None,
+        statistics.stdev(counts) if len(counts) > 1 else None,
+    )
+
+
+def _get_redelegation_margin(baseline: WindowCount) -> float | None:
+    """D6's: the trial's absolute primary effect, read as follow-ups per spawn."""
+    primary_rate = _get_primary_rate(baseline)
+    if primary_rate is None:
+        return None
+    return trial_design.DEFAULT_RELATIVE_REDUCTION * primary_rate
+
+
+def _get_primary_rate(baseline: WindowCount) -> float | None:
+    return baseline.events / baseline.spawns if baseline.spawns else None
+
+
+def _get_baseline_coverage(start: WindowStarts, covered_start: datetime) -> dict:
+    """The baseline window and its covered part: the covered start, its days beside the span's."""
+    return {
+        "coverage": {
+            "start": covered_start.isoformat(),
+            "days": (start.detection - covered_start) / timedelta(days=1),
+            "span_days": BASELINE.SPAN.days,
+        },
+        "baseline_window": {
+            "start": start.baseline.isoformat(),
+            "end": start.detection.isoformat(),
+        },
+    }
 
 
 def _get_looks(required: float, boundaries: Sequence[float]) -> list[dict]:
@@ -9476,7 +9586,7 @@ def _get_harm_payload(
     """Both samples, k and the harm checks, on the agent's own baseline rates."""
     baseline = power_pass.baseline
     guardrail_count = get_guardrail_count(power_pass.pattern.agent)
-    primary_rate = baseline.events / baseline.spawns if baseline.spawns else None
+    primary_rate = _get_primary_rate(baseline)
     readings = get_guardrail_baseline(
         power_pass.spawns, detection_start, power_pass.provenance_start
     )
@@ -9590,15 +9700,7 @@ def get_guardrail_baseline(
     has not reached sits in neither count, and none graded leaves it unread (None), never a
     measured zero.
     """
-    covered_start = detection_start if provenance_start is None else provenance_start
-    start = max(detection_start - BASELINE.SPAN, covered_start)
-    members = [
-        spawn
-        for spawn in spawns
-        if spawn.agent_id is not None
-        and start <= spawn.started_at < detection_start
-        and is_floor_half(spawn.agent_id)
-    ]
+    members = _get_guardrail_members(spawns, detection_start, provenance_start)
     graded = [
         row
         for spawn in members
@@ -9613,6 +9715,28 @@ def get_guardrail_baseline(
         ),
         _get_tool_use_baseline(members),
     )
+
+
+def _get_guardrail_members(
+    spawns: Iterable[SpawnFacts],
+    detection_start: datetime,
+    provenance_start: datetime | None,
+) -> list[SpawnFacts]:
+    """The floor half of the provenance-covered baseline."""
+    start = _get_covered_start(detection_start, provenance_start)
+    return [
+        spawn
+        for spawn in spawns
+        if spawn.agent_id is not None
+        and start <= spawn.started_at < detection_start
+        and is_floor_half(spawn.agent_id)
+    ]
+
+
+def _get_covered_start(detection_start: datetime, provenance_start: datetime | None) -> datetime:
+    """The baseline's provenance-covered start; no provenance start covers nothing."""
+    covered_start = detection_start if provenance_start is None else provenance_start
+    return max(detection_start - BASELINE.SPAN, covered_start)
 
 
 def _get_tool_use_baseline(spawns: list[SpawnFacts]) -> ToolUseBaseline:

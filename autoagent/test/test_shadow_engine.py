@@ -51,7 +51,7 @@ for _anchor in (
 import _pg_stub_backend as stub
 import daemon_cycle as dc
 import trial_design
-from _outcome_signal import SpawnFacts, get_pair_windows, is_floor_half
+from _outcome_signal import SpawnFacts, WindowStarts, get_pair_windows, is_floor_half
 from _pg_seal import get_ephemeral_connection, seal_pg_reach, set_install_tree
 
 _NOW = datetime(2026, 10, 5, 6, 0, tzinfo=timezone.utc)
@@ -93,10 +93,26 @@ _KEYS = SimpleNamespace(
         "canary",
         # an unstarted trial's void reads its horizon from the row
         "horizon_days",
-        # stated, read by no stop yet: the re-delegation guardrail's W with its tier and gap count
+        # stated, read by no stop yet: the re-delegation guardrail's window row
         "redelegation",
     },
     CANARY={"text", "text_sha256"},
+    # the window row; stated, read by no stop: the count's rise reads margin and follow_ups
+    REDELEGATION={
+        "minutes",
+        "tier",
+        "gap_count",
+        "margin",
+        "follow_ups",
+        "coverage",
+        "baseline_window",
+        "blind_spots",
+    },
+    REDELEGATION_INNER={
+        "follow_ups": {"n", "mean", "sd"},
+        "coverage": {"start", "days", "span_days"},
+        "baseline_window": {"start", "end"},
+    },
 )
 # the fixture history stops no spawn → no overran gap → the rule's default window
 _DEFAULT_WINDOW_ROW = {"minutes": 60, "tier": "default", "gap_count": 0}
@@ -169,12 +185,31 @@ def _get_passing_history() -> tuple[SpawnFacts, ...]:
 
 
 def _get_inputs(power: dc.PowerResult) -> dc.PreregistrationInputs:
-    """The fixture's per-candidate inputs: its detection start, probe canary and default row."""
+    """The fixture's per-candidate inputs: its detection start, probe canary and history row."""
     return dc.PreregistrationInputs(
         power.windows.start.detection,
         dc.get_canary_text(_PROBE_DIFF),
-        dict(_DEFAULT_WINDOW_ROW),
+        _get_history_row(power.windows.start),
     )
+
+
+def _get_history_row(start: WindowStarts) -> dict:
+    """The fixture history's window row: default W, no counted spawn, covered from P."""
+    return {
+        **_DEFAULT_WINDOW_ROW,
+        "margin": trial_design.DEFAULT_RELATIVE_REDUCTION * (_BASELINE.EVENTS / _BASELINE.SPAWNS),
+        "follow_ups": {"n": 0, "mean": None, "sd": None},
+        "coverage": {
+            "start": _PROVENANCE_START.isoformat(),
+            "days": (start.detection - _PROVENANCE_START) / timedelta(days=1),
+            "span_days": 84,
+        },
+        "baseline_window": {
+            "start": start.baseline.isoformat(),
+            "end": start.detection.isoformat(),
+        },
+        "blind_spots": list(dc.REDELEGATION_ROW.BLIND_SPOTS),
+    }
 
 
 _MINUTE = timedelta(minutes=1)
@@ -217,6 +252,19 @@ def _get_late_next_start(session: str) -> tuple[list[SpawnFacts], SpawnFacts]:
         stopped_at=_WINDOWS.end - _MINUTE,
     )
     return [baseline_spawn], SpawnFacts(f"{session}-d", session, _WINDOWS.end, 0, True, ())
+
+
+def _get_member(session: str, *, is_stopped: bool = True) -> SpawnFacts:
+    """A floor-half baseline spawn five days before the detection start, stopped an hour on."""
+    started_at = _WINDOWS.start.detection - timedelta(days=5)
+    stopped_at = started_at + timedelta(hours=1) if is_stopped else None
+    return SpawnFacts(next(_IDS.FLOOR), session, started_at, 0, True, (), stopped_at=stopped_at)
+
+
+def _get_follow_up(prior: SpawnFacts, minutes: int, *, is_floor: bool = False) -> SpawnFacts:
+    """A same-session spawn `minutes` after `prior`'s stop, never stopped itself."""
+    agent_id = next(_IDS.FLOOR if is_floor else _IDS.REFERENCE)
+    return SpawnFacts(agent_id, prior.session_id, prior.stopped_at + minutes * _MINUTE, 0, True, ())
 
 
 def _get_spawns_after(start: datetime, count: int) -> list[SpawnFacts]:
@@ -746,9 +794,7 @@ class BoundPayloadTest(_ShadowFixture):
         for name, minutes in rows:
             with self.subTest(name):
                 gaps = [float(gap) for gap in minutes]
-                window = self._get_window(
-                    {_AGENT: _get_gap_spawns("own", minutes) + detection_gap}
-                )
+                window = self._get_window({_AGENT: _get_gap_spawns("own", minutes) + detection_gap})
                 self.assertEqual(window, dc.get_redelegation_window(gaps, gaps)._asdict())
 
     def test_a_baseline_spawns_next_start_after_the_baseline_end_and_before_d_counts_its_gap(
@@ -766,20 +812,31 @@ class BoundPayloadTest(_ShadowFixture):
     def test_a_spawn_at_or_after_d_never_moves_an_own_tier_window(self) -> None:
         baseline_spawn, late_spawn = _get_late_next_start("own-late")
         self.roster.is_end_honoured = False  # the at-D spawn reaches the cut
-        own_spawns = _get_gap_spawns("own", range(1, 101)) + baseline_spawn
+        member = _get_member("own-member")
+        self.history.append(member)
+        own_spawns = [
+            *_get_gap_spawns("own", range(1, 101)),
+            *baseline_spawn,
+            member,
+            _get_follow_up(member, 10),
+        ]
         row = self._get_window_row({_AGENT: own_spawns})
         late_row = self._get_window_row({_AGENT: [*own_spawns, late_spawn]})
         self.assertEqual(row["tier"], "own")
+        self.assertEqual(row["follow_ups"], {"n": 1, "mean": 1.0, "sd": None})
         self.assertEqual(late_row, row)
 
     def test_a_spawn_at_or_after_d_never_moves_a_pooled_tier_window(self) -> None:
         baseline_spawn, late_spawn = _get_late_next_start("pool-late")
         self.roster.is_end_honoured = False  # the at-D spawn reaches the cut
-        own_spawns = _get_gap_spawns("own", range(1, 11))
+        member = _get_member("pool-member")
+        self.history.append(member)
+        own_spawns = [*_get_gap_spawns("own", range(1, 11)), member, _get_follow_up(member, 10)]
         pool = _get_gap_spawns("pool", range(100, 190)) + baseline_spawn
         row = self._get_window_row({_AGENT: own_spawns, _POOL_AGENT: pool})
         late_row = self._get_window_row({_AGENT: own_spawns, _POOL_AGENT: [*pool, late_spawn]})
         self.assertEqual(row["tier"], "pooled")
+        self.assertEqual(row["follow_ups"], {"n": 1, "mean": 1.0, "sd": None})
         self.assertEqual(late_row, row)
 
     def test_an_agent_under_100_own_gaps_takes_w_from_a_roster_type_no_keyed_pattern_names(
@@ -819,6 +876,113 @@ class BoundPayloadTest(_ShadowFixture):
             }
         )
         self.assertEqual(window, _DEFAULT_WINDOW_ROW | {"gap_count": 10})
+
+    def _get_row(self, roster_spawns: list[SpawnFacts], **changes: object) -> dict:
+        """The window row over the agent's `roster_spawns`, power pass fields replaced."""
+        [power_pass] = self._check_power().passes
+        roster = dc.RosterSpawns({_AGENT: roster_spawns}, dc.get_tool_budget({}))
+        return dc.get_redelegation_row(roster, power_pass._replace(**changes), _WINDOWS)
+
+    def test_the_row_states_the_margin_as_30_percent_of_the_primary_rate_beside_its_blind_spots(
+        self,
+    ) -> None:
+        [power_pass] = self._check_power().passes
+        # the recorded 0.019, 0.050 and 0.056 follow-ups per spawn at three spawn baselines
+        rows = (("a 6.2% primary rate", 62, 0.019), ("16.6%", 166, 0.050), ("18.5%", 185, 0.056))
+        for name, events, margin in rows:
+            with self.subTest(name):
+                baseline = power_pass.baseline._replace(events=events, spawns=1000)
+                self.assertEqual(round(self._get_row([], baseline=baseline)["margin"], 3), margin)
+        blind_spots = self._get_row([])["blind_spots"]
+        [watch] = [text for text in blind_spots if text.startswith("watch")]
+        self.assertIn("separation is shorter than the design's", watch)
+        self.assertIn("a lower bound, not a pass", watch)
+        self.assertEqual([text for text in blind_spots if "glass-atrium-" in text], [])
+
+    def test_the_follow_up_statistics_cover_the_floor_half_members_counted_at_w_alone(
+        self,
+    ) -> None:
+        counted, idle = _get_member("stats-counted"), _get_member("stats-idle")
+        unstopped = _get_member("stats-unstopped", is_stopped=False)
+        # two follow-ups from the reference half; the first stopped, so the count admits it too
+        first = _get_follow_up(counted, 10)
+        follow_ups = [
+            first._replace(stopped_at=first.started_at + _MINUTE),
+            _get_follow_up(counted, 20),
+        ]
+        roster = [counted, *follow_ups, idle, unstopped]
+        rows = (
+            (
+                "two counted members, the unstopped one out of n",
+                [counted, idle, unstopped],
+                {"n": 2, "mean": 1.0, "sd": math.sqrt(2)},
+            ),
+            ("one counted member → no sd", [counted, unstopped], {"n": 1, "mean": 2.0, "sd": None}),
+            ("no counted member → no mean", [unstopped], {"n": 0, "mean": None, "sd": None}),
+        )
+        for name, members, statistics in rows:
+            with self.subTest(name):
+                row = self._get_row(roster, spawns=[*members, *follow_ups])
+                self.assertEqual(row["follow_ups"], statistics)
+
+    def test_a_non_zero_guardrail_w_counts_follow_ups_and_leaves_the_floor_per_spawn(self) -> None:
+        # the first two non-event floor-half baseline spawns → a stopped spawn and its follow-up
+        index = _BASELINE.EVENTS
+        prior, later = self.history[index : index + 2]
+        member = prior._replace(session_id="non-zero-w", stopped_at=prior.started_at + _MINUTE)
+        follow_up = later._replace(
+            session_id="non-zero-w", started_at=member.stopped_at + 10 * _MINUTE
+        )
+        self.history[index : index + 2] = [member, follow_up]
+        self.roster.spawns = {_AGENT: [member, follow_up]}
+        payload = self._build(self._check_power()).preregistration_payload
+        row = payload["redelegation"]
+        self.assertEqual(row["minutes"], 60)
+        self.assertEqual(row["follow_ups"], {"n": 1, "mean": 1.0, "sd": None})
+        # both as one task at W → 199; redelegation_window 0 → one unit per spawn
+        self.assertEqual(payload["baseline"]["spawns"], _BASELINE.SPAWNS)
+
+    def test_the_gap_window_opens_at_the_covered_start_stated_beside_the_baseline_window(
+        self,
+    ) -> None:
+        # an overran spawn before the provenance start, its next start before it too
+        early_gap = _get_overran_pair(
+            _WINDOWS.start.baseline + timedelta(hours=1), 30 * _MINUTE, "pre-provenance"
+        )
+        gap_counts = [
+            len(
+                dc.get_overran_gaps(
+                    {_AGENT: early_gap},
+                    dc.Window(start, _WINDOWS.start.detection),
+                    tool_budget=dc.get_tool_budget({}),
+                )[_AGENT]
+            )
+            for start in (_WINDOWS.start.baseline, _PROVENANCE_START)
+        ]
+        self.assertEqual(gap_counts, [1, 0])
+        own_spawns = _get_gap_spawns("own", range(1, 11))
+        window = self._get_window({_AGENT: own_spawns})
+        row = self._get_window_row({_AGENT: [*own_spawns, *early_gap]})
+        self.assertEqual({key: row[key] for key in _DEFAULT_WINDOW_ROW}, window)
+        self.assertEqual(
+            row["coverage"],
+            {"start": _PROVENANCE_START.isoformat(), "days": 46.0, "span_days": 84},
+        )
+        self.assertLess(row["coverage"]["days"], 84)
+        self.assertEqual(
+            row["baseline_window"],
+            {
+                "start": _WINDOWS.start.baseline.isoformat(),
+                "end": _WINDOWS.start.detection.isoformat(),
+            },
+        )
+
+    def test_the_window_row_states_exactly_its_keys_and_inner_keys(self) -> None:
+        row = self._get_window_row({_AGENT: _get_gap_spawns("own", range(1, 11))})
+        self.assertEqual(set(row), _KEYS.REDELEGATION)
+        self.assertEqual(
+            {name: set(row[name]) for name in _KEYS.REDELEGATION_INNER}, _KEYS.REDELEGATION_INNER
+        )
 
     def test_the_roster_is_read_once_per_cycle_and_only_when_a_candidate_reaches_preregistration(
         self,
