@@ -378,7 +378,7 @@ def get_rate_harm(
     power: float = DEFAULT_POWER,
     design_effect: float = 1.0,
 ) -> float:
-    """Minimum detectable fold rise of a rate guardrail (emit failure, verified_fail, re-delegation).
+    """Minimum detectable fold rise of a rate guardrail (emit failure, verified_fail).
 
     One-sided two-proportion test at the per-arm sample over the design effect; ``math.inf`` when
     no rate below 1 is detectable at that sample.
@@ -417,6 +417,23 @@ def get_tool_use_harm(
     tail = alpha if is_overage_primary else alpha / 2
     critical_sum = _STANDARD_NORMAL.inv_cdf(1 - tail) + _STANDARD_NORMAL.inv_cdf(power)
     return critical_sum * sd * math.sqrt(2 / effective)
+
+
+def get_follow_up_harm(
+    sd: float,
+    per_arm: float,
+    *,
+    alpha: float = DEFAULT_ALPHA,
+    power: float = DEFAULT_POWER,
+    design_effect: float = 1.0,
+) -> float:
+    """Minimum detectable rise in follow-ups per spawn: the mean-shift form, upward only.
+
+    Raises on a non-positive ``sd``, as the mean-shift form does.
+    """
+    return get_tool_use_harm(
+        sd, per_arm, is_overage_primary=True, alpha=alpha, power=power, design_effect=design_effect
+    )
 
 
 def _get_mean_squares(clusters: Sequence[Sequence[float]], sizes: list[int]) -> tuple[float, float]:

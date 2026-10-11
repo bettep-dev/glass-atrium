@@ -549,6 +549,27 @@ class ToolUseHarm(unittest.TestCase):
         self.assertAlmostEqual(inflated, 2 * base)
 
 
+class FollowUpHarm(unittest.TestCase):
+    def test_the_counts_rise_is_the_upward_mean_shift_without_the_overage_flag(self) -> None:
+        rows = (
+            ("sd 1.5, 120 per arm, design effect 1", 1.5, 120, 1.0),
+            ("sd 0.8, 400 per arm, design effect 2", 0.8, 400, 2.0),
+        )
+        for name, sd, per_arm, design_effect in rows:
+            with self.subTest(name):
+                rise = td.get_follow_up_harm(sd, per_arm, design_effect=design_effect)
+                upward = td.get_tool_use_harm(
+                    sd, per_arm, is_overage_primary=True, design_effect=design_effect
+                )
+                self.assertEqual(rise, upward)
+                self.assertLess(
+                    rise,
+                    td.get_tool_use_harm(
+                        sd, per_arm, is_overage_primary=False, design_effect=design_effect
+                    ),
+                )
+
+
 class InvalidInputs(unittest.TestCase):
     def test_out_of_range_parameters_raise_instead_of_sizing(self) -> None:
         rows = (
@@ -563,6 +584,7 @@ class InvalidInputs(unittest.TestCase):
             ("maximum sample of zero", lambda: td.is_powered(500, 0)),
             ("negative daily units", lambda: td.get_projected_units(-1.0)),
             ("a single cluster", lambda: td.get_design_effect(([1, 0, 1],))),
+            ("follow-up rise at sd zero", lambda: td.get_follow_up_harm(0.0, 100)),
             ("an empty cluster", lambda: td.get_design_effect(([1, 0], []))),
             ("no variance in any cluster", lambda: td.get_design_effect(([0, 0], [0, 0, 0]))),
             ("no variance with a singleton beside a larger cluster", lambda: td.get_design_effect(([0], [0, 0]))),
