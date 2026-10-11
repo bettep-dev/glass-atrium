@@ -504,10 +504,10 @@ class BoundPayloadTest(_ShadowFixture):
         rows = [
             ("one added line", _PROBE_DIFF, "- probe rule\n"),
             (
-                "two hunks: added lines in diff order, context and removed lines left out",
+                "two hunks: added lines in diff order, context lines left out",
                 (
-                    "--- a\n+++ b\n@@ -1,2 +1,2 @@\n # probe agent\n-old\n+- first rule\n"
-                    "@@ -9 +9,2 @@\n tail\n+- second rule\n"
+                    "--- a\n+++ b\n@@ -1,2 +1,3 @@\n # probe agent\n intro\n+- first rule\n"
+                    "@@ -9 +10,2 @@\n tail\n+- second rule\n"
                 ),
                 "- first rule\n- second rule\n",
             ),
@@ -545,6 +545,32 @@ class BoundPayloadTest(_ShadowFixture):
                 self.assertIsNone(result.preregistration_payload)
                 self.assertNotEqual((result.approval_tier, result.status), ("auto", "pending"))
                 self.assertIn("1200 B cap", self.stderr.getvalue())
+
+    def test_a_candidate_whose_diff_removes_a_line_or_adds_none_is_refused_as_untrialable(
+        self,
+    ) -> None:
+        # injection can only add; an empty block is the A/A's own text
+        rows = [
+            (
+                "a removed line beside an added one",
+                "--- a\n+++ b\n@@ -1,2 +1,2 @@\n # probe agent\n-- old rule\n+- new rule\n",
+                "the diff removes a line",
+            ),
+            (
+                "no added line",
+                "--- a\n+++ b\n@@ -1 +1 @@\n # probe agent\n",
+                "the diff adds no line",
+            ),
+        ]
+        for name, diff, reason in rows:
+            with self.subTest(name):
+                self.ledger.rows.clear()
+                self.diff = diff
+                result = self._build(self._check_power())
+                self.assertIsNone(result.preregistration_payload)
+                self.assertNotEqual((result.approval_tier, result.status), ("auto", "pending"))
+                self.assertIn(f"live trial refused — agent={_AGENT}", self.stderr.getvalue())
+                self.assertIn(reason, self.stderr.getvalue())
 
     def test_the_bound_payload_carries_the_generator_input_version_its_proposal_is_stamped_with(
         self,

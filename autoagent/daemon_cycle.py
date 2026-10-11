@@ -9375,8 +9375,11 @@ def _get_looks(required: float, boundaries: Sequence[float]) -> list[dict]:
 
 
 def get_canary_text(diff: str) -> str:
-    """The rendered canary block: the patch's added lines, each with its newline — the bytes
-    graduation adds to the body, delivered verbatim by the hook."""
+    """The rendered canary block: the diff's added lines, '+' stripped, each with its newline.
+
+    Removed and context lines are left out, so only an add-only diff's block is the bytes
+    graduation adds to the body; pre-registration refuses any other diff.
+    """
     return "".join(
         f"{line[1:]}\n" for kind, line in _get_diff_line_kinds(diff) if kind == "added"
     )
@@ -9434,7 +9437,8 @@ class ToolUseBaseline(NamedTuple):
 
 
 class HarmSizing(NamedTuple):
-    """What a trial's harm checks are sized on: the primary's rate, the per-arm sample and k."""
+    """What a trial's harm checks are sized on: the primary's rate, the per-arm sample, k and the
+    guardrail design effects the no-SubagentStop leg and its proxy line are stated at."""
 
     primary_rate: float | None
     per_arm: int | None
@@ -14470,7 +14474,7 @@ def _get_bound_preregistration_payload(
         pattern = power_pass.pattern
         if (pattern.agent, pattern.row_id, pattern.metric_key) != lead_key:
             continue
-        canary_text = _get_canary_text_within_cap(diff, pattern)
+        canary_text = _get_trialable_canary_text(diff, pattern)
         if canary_text is None:
             return None
         return get_preregistration_payload(
@@ -14479,21 +14483,35 @@ def _get_bound_preregistration_payload(
     return None
 
 
-def _get_canary_text_within_cap(diff: str, pattern: Pattern) -> str | None:
-    """The diff's rendered canary block; None, with a WARN, when it exceeds the hook's cap.
-
-    Refused, never truncated: truncated text was never pre-registered, so a win would
-    describe text that never graduates.
-    """
+def _get_trialable_canary_text(diff: str, pattern: Pattern) -> str | None:
+    """The diff's rendered canary block; None, with a named WARN, when the diff is untrialable."""
     canary_text = get_canary_text(diff)
-    size = len(canary_text.encode("utf-8"))
-    if size <= CANARY.MAX_BYTES:
+    refusal = _get_canary_refusal(diff, canary_text)
+    if refusal is None:
         return canary_text
     sys.stderr.write(
         f"[daemon-cycle] WARN: live trial refused — agent={pattern.agent} "
-        f"pattern={pattern.row_id}: rendered canary block {size} B exceeds the "
-        f"{CANARY.MAX_BYTES} B cap; no pre-registration, the floor closes the candidate\n"
+        f"pattern={pattern.row_id}: {refusal}; no pre-registration, the floor closes "
+        "the candidate\n"
     )
+    return None
+
+
+def _get_canary_refusal(diff: str, canary_text: str) -> str | None:
+    """Why the diff cannot be trialled; None when it can.
+
+    - a removed line: injection can only add, so the canary never carries what graduation removes
+    - no added line: the empty block is the A/A's own text, so its delivery reads as the A/A's
+    - over the hook's cap: refused, never truncated — truncated text was never pre-registered,
+      so a win would describe text that never graduates
+    """
+    if _count_removed_lines(diff):
+        return "the diff removes a line"
+    if not _count_added_lines(diff):
+        return "the diff adds no line"
+    size = len(canary_text.encode("utf-8"))
+    if size > CANARY.MAX_BYTES:
+        return f"rendered canary block {size} B exceeds the {CANARY.MAX_BYTES} B cap"
     return None
 
 
