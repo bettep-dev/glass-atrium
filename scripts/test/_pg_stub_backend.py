@@ -110,12 +110,7 @@ class _Cursor:
         try:
             self._inner.execute(_rewrite(sql), params if params is not None else ())
         except sqlite3.OperationalError as exc:
-            # PG signals a missing column as SQLSTATE 42703, which psycopg raises as
-            # UndefinedColumn; sqlite signals it in the message text only, worded one way
-            # for a read or SET and another for an INSERT column list. Translating those
-            # two messages is what puts a caller's degradation arm under a real engine —
-            # every other sqlite fault surfaces unchanged, so this cannot green a failure
-            # the caller was supposed to see.
+            # sqlite missing-column text → UndefinedColumn (PG 42703); other faults re-raised as-is
             if any(text in str(exc) for text in _MISSING_COLUMN_MESSAGES):
                 raise UndefinedColumn(str(exc)) from exc
             raise
