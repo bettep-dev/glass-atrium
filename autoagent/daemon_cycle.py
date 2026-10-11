@@ -13951,7 +13951,7 @@ def _main(argv: list[str]) -> int:
         help="FU-3 single-proposal mode (requires --regenerate-stale): regen + "
         "pre-verify ONLY this proposal id. Emits a single-result JSON to stdout "
         "and routes the verdict (regenerated/already_applied/invalid/"
-        "unrecoverable) for the accept-path. Honors --dry-run.",
+        "unrecoverable/in_trial) for the accept-path. Honors --dry-run.",
     )
     parser.add_argument(
         "--skip-pre-verify-single",
@@ -14076,7 +14076,8 @@ def _main(argv: list[str]) -> int:
         # Single-proposal: one structured JSON object to stdout (machine),
         # human text already went to stderr. Exit code: 0 on a clean
         # determination (regenerated/already_applied), 1 on
-        # invalid/unrecoverable, ExitCode.DAEMON_CONFIG_INVALID on a rejected
+        # invalid/unrecoverable/in_trial (a refusal, no UPDATE),
+        # ExitCode.DAEMON_CONFIG_INVALID on a rejected
         # pre_verify_* knob — checked before any PG read and still answered with
         # the one stdout object, because the caller reads `.action`, not the code.
         knob_errors = _get_knob_errors("pre_verify")
