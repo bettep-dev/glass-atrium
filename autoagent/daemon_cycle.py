@@ -9446,9 +9446,9 @@ def get_redelegation_row(
     }
     baseline = Window(windows.start.baseline, windows.start.detection)
     gaps = get_overran_gaps(cut, baseline, tool_budget=spawns.tool_budget)
-    pooled = [gap for type_gaps in gaps.values() for gap in type_gaps]
-    own = gaps.get(power_pass.pattern.agent, [])
-    return get_redelegation_window(own, pooled)._asdict()
+    pooled_gaps = [gap for type_gaps in gaps.values() for gap in type_gaps]
+    own_gaps = gaps.get(power_pass.pattern.agent, [])
+    return get_redelegation_window(own_gaps, pooled_gaps)._asdict()
 
 
 def _get_looks(required: float, boundaries: Sequence[float]) -> list[dict]:

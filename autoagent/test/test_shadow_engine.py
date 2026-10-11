@@ -93,7 +93,7 @@ _KEYS = SimpleNamespace(
         "canary",
         # an unstarted trial's void reads its horizon from the row
         "horizon_days",
-        # the re-delegation guardrail's W with its tier and gap count; the count's looks read it
+        # stated, read by no stop yet: the re-delegation guardrail's W with its tier and gap count
         "redelegation",
     },
     CANARY={"text", "text_sha256"},
@@ -365,9 +365,9 @@ class _ShadowFixture(unittest.TestCase):
         self.ledger.design_effects[_AGENT] = _DESIGN_EFFECT_PAYLOAD
         self.history = list(_get_passing_history())
         self.patterns = [_pattern()]
-        # the roster read at its DB seam: spawns by MANIFEST type (None → the history under every
-        # name), answered from the asked start, to its end unless is_end_honoured is off; the
-        # names the last read asked for
+        # the roster read at its DB seam: spawns by MANIFEST type; None → the history, every name
+        # answered from the asked start; to the asked end unless is_end_honoured is off
+        # names: the names the last read asked for
         self.roster = SimpleNamespace(spawns=None, is_faulted=False, is_end_honoured=True, names=[])
         self.stages: list[str] = []
         # after the seal: spawn read, ledger connection and writer = the DB boundary
@@ -761,21 +761,21 @@ class BoundPayloadTest(_ShadowFixture):
     def test_a_spawn_at_or_after_d_never_moves_an_own_tier_window(self) -> None:
         baseline_spawn, late_spawn = _get_late_next_start("own-late")
         self.roster.is_end_honoured = False  # the at-D spawn reaches the cut
-        own = _get_gap_spawns("own", range(1, 101)) + baseline_spawn
-        without = self._get_window_row({_AGENT: own})
-        with_late = self._get_window_row({_AGENT: [*own, late_spawn]})
-        self.assertEqual(without["tier"], "own")
-        self.assertEqual(with_late, without)
+        own_spawns = _get_gap_spawns("own", range(1, 101)) + baseline_spawn
+        row = self._get_window_row({_AGENT: own_spawns})
+        late_row = self._get_window_row({_AGENT: [*own_spawns, late_spawn]})
+        self.assertEqual(row["tier"], "own")
+        self.assertEqual(late_row, row)
 
     def test_a_spawn_at_or_after_d_never_moves_a_pooled_tier_window(self) -> None:
         baseline_spawn, late_spawn = _get_late_next_start("pool-late")
         self.roster.is_end_honoured = False  # the at-D spawn reaches the cut
-        own = _get_gap_spawns("own", range(1, 11))
+        own_spawns = _get_gap_spawns("own", range(1, 11))
         pool = _get_gap_spawns("pool", range(100, 190)) + baseline_spawn
-        without = self._get_window_row({_AGENT: own, _POOL_AGENT: pool})
-        with_late = self._get_window_row({_AGENT: own, _POOL_AGENT: [*pool, late_spawn]})
-        self.assertEqual(without["tier"], "pooled")
-        self.assertEqual(with_late, without)
+        row = self._get_window_row({_AGENT: own_spawns, _POOL_AGENT: pool})
+        late_row = self._get_window_row({_AGENT: own_spawns, _POOL_AGENT: [*pool, late_spawn]})
+        self.assertEqual(row["tier"], "pooled")
+        self.assertEqual(late_row, row)
 
     def test_an_agent_under_100_own_gaps_takes_w_from_a_roster_type_no_keyed_pattern_names(
         self,
