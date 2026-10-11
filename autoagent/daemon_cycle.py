@@ -491,10 +491,9 @@ class ExitCode(IntEnum):
 # Intra-cycle Haiku spacing (FIX #5) ----------------------------------------
 #
 # Bounded inter-call sleep between per-agent Haiku calls in _run_generation_loop
-# (no call while IS_GENERATION_CLOSED) so the cycle does not self-contend its
-# shared OAuth/usage window. Applied only after a real call (not skip_haiku /
-# not back-off). Small enough never to materially lengthen a healthy cycle;
-# env-overridable / 0 disables.
+# so the cycle does not self-contend its shared OAuth/usage window. Applied only
+# after a real call (not skip_haiku / not back-off). Small enough never to
+# materially lengthen a healthy cycle; env-overridable / 0 disables.
 INTER_CALL_SPACING_SEC = float(
     os.environ.get("AUTOAGENT_INTER_CALL_SPACING_SEC", "2.0") or "2.0"
 )
@@ -8151,20 +8150,14 @@ _GENERATION_CLOSED_REASON = "generation closed until live trials"
 # AutoagentProposal.reviewedBy — a mechanical close, never a review.
 _GENERATION_CLOSED_ACTOR = "daemon-cycle-generation-closed"
 
-# Generation is closed until live trials: a constant, never read from a file, env or
-# config, so every install runs run_cycle's closed branch.
-IS_GENERATION_CLOSED = True
-
 
 def update_generation_closed_proposals() -> int:
     """Terminalize every stored pending auto proposal → 'unadjudicated'.
 
-    With generation closed no cycle re-decides a stored auto candidate, so it
-    would wait pending forever. One idempotent statement closes every such row
-    each cycle: the status fragment stores 'unadjudicated' ('rejected' on a
-    schema without that label, relabeled later by the backfill), the rationale
-    gains the closed reason as its head, the actor is the closed token, and
-    reviewed_at stays untouched — no verdict was made.
+    One idempotent statement closes every such row: the status fragment stores
+    'unadjudicated' ('rejected' on a schema without that label, relabeled later by
+    the backfill), the rationale gains the closed reason as its head, the actor is
+    the closed token, and reviewed_at stays untouched — no verdict was made.
 
     PG unavailable → named stderr line, returns 0, no connection. A PG error
     propagates to the caller.
@@ -13165,12 +13158,12 @@ def run_cycle(
     skip_pre_verify: bool = False,
     skip_loop_emit: bool = False,
 ) -> CycleReport:
-    """One daemon cycle — intake, gates and report; generation closed until live trials.
+    """One daemon cycle — intake, power check, generation, gates and report.
 
-    While IS_GENERATION_CLOSED: no generator call, no pre-verify, no patch; stored
-    pending auto rows terminalize unless skip_loop_emit; every post-loop step runs.
-    Once lifted, _run_generation_loop runs the per-agent flow — pattern → patch
-    proposal → classification → pre-verify (4-axis) → routing hints.
+    Only a power-passing pattern reaches generation: any other verdict parks it for
+    this cycle, counted and re-checked next cycle. _run_generation_loop runs the
+    per-agent flow — pattern → patch proposal → classification → pre-verify as a
+    compliance filter → safety routing; the floor terminalizes every auto candidate.
 
     A writing cycle (skip_loop_emit False) from a code tree that is not its install
     raises InstallRefusedError before any stage, reads included.
@@ -13232,20 +13225,15 @@ def run_cycle(
         log_path, UNLIMITED_AGENTS, agents_dir=agents_dir, live=not skip_loop_emit
     )
     report.patterns_processed = len(patterns)
-    agent_groups = _group_patterns_by_agent(patterns, agent_cap=agent_cap)
-    # Both generation branches: verdict only; no pattern is parked or dropped.
     power = check_pattern_power(patterns, skip_loop_emit=skip_loop_emit)
     report.power_check = power.counts
+    agent_groups = _group_patterns_by_agent(
+        [power_pass.pattern for power_pass in power.passes], agent_cap=agent_cap
+    )
     if not skip_loop_emit:  # no-write mode (--dry-run) writes no ledger row
         run_shadow_stage(power, report.cycle_date)
         run_aa_stage(
             report.cycle_date, manifest_ingest=report.manifest_ingest, agents_dir=agents_dir
-        )
-
-    if IS_GENERATION_CLOSED:
-        sys.stderr.write(
-            "[daemon-cycle] INFO: generation closed until live trials — no generator "
-            "call and no auto-apply this cycle\n"
         )
 
     # T3 corpus/compliance telemetry — DETECTION-ONLY, fired ONCE per cycle.
@@ -13270,32 +13258,17 @@ def run_cycle(
             # cycle continues.
             emit_corpus_audit(corpus_signal, report.cycle_date)
 
-    if IS_GENERATION_CLOSED:
-        if skip_loop_emit:
-            sys.stderr.write(
-                "[daemon-cycle] INFO: generation-closed terminalization skipped — "
-                "no-write mode (skip_loop_emit)\n"
-            )
-        else:
-            try:
-                update_generation_closed_proposals()
-            except Exception as exc:  # noqa: BLE001 — fail-loud-and-skip; next cycle retries
-                sys.stderr.write(
-                    "[daemon-cycle] WARN: update_generation_closed_proposals raised — "
-                    f"pending auto rows left open: {_describe_fault(exc)}\n"
-                )
-    else:
-        _run_generation_loop(
-            report,
-            agent_groups,
-            GenerationRun(
-                regression_gate=regression_gate,
-                agents_dir=agents_dir,
-                skip_haiku=skip_haiku,
-                skip_pre_verify=skip_pre_verify,
-                skip_loop_emit=skip_loop_emit,
-            ),
-        )
+    _run_generation_loop(
+        report,
+        agent_groups,
+        GenerationRun(
+            regression_gate=regression_gate,
+            agents_dir=agents_dir,
+            skip_haiku=skip_haiku,
+            skip_pre_verify=skip_pre_verify,
+            skip_loop_emit=skip_loop_emit,
+        ),
+    )
 
     # Just before cycle end, UPSERT the loop_event row directly to PG.
     # skip_loop_emit=True → block the PG call in unit-test / preflight paths.
@@ -13401,7 +13374,6 @@ def _run_generation_loop(
 ) -> None:
     """Per-agent generation loop — gates, then one routed row per agent.
 
-    Reached only once IS_GENERATION_CLOSED is lifted.
     Appends each row to ``report.patches``. The promotion tier is a label only and
     resolve_floor_terminalization terminalizes every auto candidate.
     """

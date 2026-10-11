@@ -224,6 +224,11 @@ class TestKeylessRowNeverReachesGeneration(unittest.TestCase):
         ]
         handed: list[int] = []
 
+        # every pattern the check judges passes: only its keyed filter decides
+        def _pass_power(pattern, _inputs, _windows):
+            power_pass = dc.PowerPass(pattern, None, 1.0, 1.0, [])
+            return dc.POWER.VERDICT.PASSING, "probe pass", power_pass
+
         def run_generation(_report, agent_groups, *_args, **_kwargs) -> None:
             handed.extend(p.row_id for _, group in agent_groups for p in group)
 
@@ -233,7 +238,8 @@ class TestKeylessRowNeverReachesGeneration(unittest.TestCase):
             ("_pg_read_pending_patterns", lambda: list(rows)),
             ("_pg_read_spawn_facts", lambda _agents, _windows: (None, {})),
             ("_invoke_pg_helper", lambda _envelope: True),
-            ("IS_GENERATION_CLOSED", False),
+            ("_read_power_inputs", lambda _agents, _windows: None),
+            ("_get_pattern_power_verdict", _pass_power),
             ("_run_generation_loop", run_generation),
         ):
             patcher = mock.patch.object(dc, name, value)

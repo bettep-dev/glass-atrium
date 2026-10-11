@@ -26,6 +26,7 @@ import tempfile
 import unittest
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from types import SimpleNamespace
 from unittest import mock
 
 _REPO_ROOT = Path(__file__).resolve().parent.parent.parent
@@ -91,8 +92,7 @@ def _write_outcome_record(directory: Path) -> Path:
     return record
 
 
-def _pattern():
-    label = "repeated budget overrun"
+def _pattern(label: str = "repeated budget overrun"):
     return dc.Pattern(
         date="2026-10-04",
         label=label,
@@ -128,6 +128,16 @@ def _capture_prompt(testcase: unittest.TestCase) -> dict[str, str]:
     return captured
 
 
+def _pass_keyed_power(patterns: list, *, skip_loop_emit: bool) -> object:
+    """Every keyed pattern passes the power check, the generation path's entry."""
+    passes = [
+        dc.PowerPass(pattern, None, 1.0, 1.0, [])
+        for pattern in patterns
+        if pattern.metric_key is not None
+    ]
+    return dc.PowerResult(dc._get_power_counts(), passes, None)
+
+
 def _make_agents_dir(testcase: unittest.TestCase) -> Path:
     tmp = tempfile.TemporaryDirectory()
     testcase.addCleanup(tmp.cleanup)
@@ -155,10 +165,10 @@ class TestGenerationLoopReadsNoOutcome(unittest.TestCase):
         env.start()
         self.addCleanup(env.stop)
         self._reach = seal_pg_reach(self)
-        # After the seal: intake hands the loop one pattern; generation opens.
+        # After the seal: intake hands the loop one pattern, which passes the power check.
         for name, value in (
             ("read_user_pending_patterns", lambda *a, **k: [_pattern()]),
-            ("IS_GENERATION_CLOSED", False),
+            ("check_pattern_power", _pass_keyed_power),
         ):
             patcher = mock.patch.object(dc, name, value)
             patcher.start()
@@ -243,6 +253,90 @@ class TestGenerationLoopReadsNoOutcome(unittest.TestCase):
         self.assertEqual(self._reach, [])
 
 
+# every gate _drop_gated_patterns applies, in its order
+_GATES = (
+    "drop_reverted_patterns",
+    "drop_reject_streak_patterns",
+    "drop_apply_capped_patterns",
+    "drop_non_auto_fixable_patterns",
+    "drop_pair_failing_patterns",
+    "drop_regression_blocked_patterns",
+)
+
+
+@unittest.skipIf(dc is None, f"import failed: {_IMPORT_ERROR}")
+class TestGenerationLoopAppliesEveryGate(unittest.TestCase):
+    """A writing generation loop runs every gate and its flags before the generation unit."""
+
+    def setUp(self) -> None:
+        self._reach = seal_pg_reach(self)
+        self.gate_calls: dict[str, tuple] = {}
+        self.built: list[tuple[list[str], dict]] = []
+        self.live_flag = object()
+        self.regression_gate = object()
+        # After the seal: each replaces one seam the seal already covers.
+        for name, value in (
+            ("_fetch_proposal_history", lambda _agent: []),
+            ("regression_gate_live_enabled", lambda: self.live_flag),
+            ("build_patch_result", self._build),
+            *((gate, self._get_gate(gate)) for gate in _GATES),
+        ):
+            patcher = mock.patch.object(dc, name, value)
+            patcher.start()
+            self.addCleanup(patcher.stop)
+
+    def _get_gate(self, gate: str):
+        """A gate that drops the pattern labelled with its own name."""
+
+        def _gate(_agent, agent_patterns, *args, **kwargs):
+            self.gate_calls[gate] = (args, kwargs)
+            return [pattern for pattern in agent_patterns if pattern.label != gate]
+
+        return _gate
+
+    def _build(self, _agent, agent_patterns, **kwargs) -> str:
+        self.built.append(([pattern.label for pattern in agent_patterns], kwargs))
+        return "routed row"
+
+    def _loop(self) -> list[str]:
+        report = SimpleNamespace(patches=[], cycle_date="2026-10-11")
+        patterns = [_pattern(label) for label in (*_GATES, "ungated pattern")]
+        dc._run_generation_loop(
+            report,
+            [(_AGENT, patterns)],
+            dc.GenerationRun(
+                regression_gate=self.regression_gate,
+                agents_dir=Path("agents"),
+                skip_haiku=False,
+                skip_pre_verify=True,
+                skip_loop_emit=False,
+            ),
+        )
+        self.assertEqual(self._reach, [])
+        return report.patches
+
+    def test_each_gate_drops_its_pattern_before_the_generation_unit(self) -> None:
+        self.assertEqual(self._loop(), ["routed row"])
+        built_labels = self.built[0][0]
+        for gate in _GATES:
+            self.assertNotIn(gate, built_labels, f"{gate} not applied")
+        self.assertEqual(built_labels, ["ungated pattern"])
+
+    def test_the_regression_gate_gets_the_runs_report_and_live_flag(self) -> None:
+        self._loop()
+        args, kwargs = self.gate_calls["drop_regression_blocked_patterns"]
+        self.assertEqual(
+            (args, kwargs), ((self.regression_gate,), {"live": self.live_flag})
+        )
+        self.assertEqual(
+            {
+                name: self.built[0][1][name]
+                for name in ("skip_haiku", "skip_pre_verify", "skip_loop_emit")
+            },
+            {"skip_haiku": False, "skip_pre_verify": True, "skip_loop_emit": False},
+        )
+
+
 # core.autoagent_proposals.generator_input_version is VARCHAR(64).
 _INPUT_VERSION_COLUMN_WIDTH = 64
 
@@ -276,7 +370,7 @@ class TestGeneratorInputVersionStamp(unittest.TestCase):
         )
         for name, value in (
             ("read_user_pending_patterns", lambda *a, **k: [_pattern(), shell_pattern]),
-            ("IS_GENERATION_CLOSED", False),
+            ("check_pattern_power", _pass_keyed_power),
         ):
             patcher = mock.patch.object(dc, name, value)
             patcher.start()

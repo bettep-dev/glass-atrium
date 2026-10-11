@@ -908,7 +908,7 @@ class DesignEffectReadLivePgTest(_StageFixture):
 
 
 class PowerCheckCycleReportTest(_StageFixture):
-    """run_cycle stores the counter on the report and in its JSON on the closed branch."""
+    """run_cycle stores the counter on the report and generates for power passes only."""
 
     def setUp(self) -> None:
         super().setUp()
@@ -956,16 +956,39 @@ class PowerCheckCycleReportTest(_StageFixture):
             }
         )
 
-    def test_the_report_counter_equals_the_passing_count(self) -> None:
-        self.assertTrue(dc.IS_GENERATION_CLOSED)
+    def _run(self) -> dc.CycleReport:
         with contextlib.redirect_stderr(io.StringIO()):
-            report = dc.run_cycle(
+            return dc.run_cycle(
                 log_path=self.root / "learning-log.md",
                 agents_dir=self.root / "agents",
                 skip_haiku=True,
                 skip_pre_verify=True,
                 skip_loop_emit=True,
             )
+
+    def _stub_generator(self, proposed_diff: str = "") -> list[str]:
+        """Generator calls land in the returned list, one agent name per call."""
+        generated: list[str] = []
+
+        def _generate(agent, _patterns, *, agents_dir, skip_haiku):
+            generated.append(agent)
+            return dc.PatchProposal(
+                target_file=str(agents_dir / f"{agent}.md"),
+                rationale="add one rule line",
+                proposed_diff=proposed_diff,
+                touched_frontmatter=False,
+                estimated_added_lines=1 if proposed_diff else 0,
+                raw_response="",
+                parse_mode="strict",
+            )
+
+        patcher = mock.patch.object(dc, "generate_consolidated_proposal", _generate)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+        return generated
+
+    def test_the_report_counter_equals_the_passing_count(self) -> None:
+        report = self._run()
         self.assertEqual(self.pg_reach, [])
         self.assertEqual(self.statements.refused, [])
         self.assertCountEqual(
@@ -974,6 +997,58 @@ class PowerCheckCycleReportTest(_StageFixture):
         )
         self.assertEqual(report.power_check["passing"], 1)
         self.assertEqual(dc._report_to_dict(report)["power_check"], report.power_check)
+
+    def test_an_underpowered_pattern_parks_with_no_generator_call_and_is_counted(
+        self,
+    ) -> None:
+        generated = self._stub_generator()
+        report = self._run()
+        self.assertEqual(generated, [_AGENT.PASSING])
+        self.assertEqual(
+            (report.power_check["passing"], report.power_check["underpowered"]), (1, 1)
+        )
+        self.assertEqual(self.pg_reach, [])
+
+    def test_the_cycle_date_reaches_the_generation_unit(self) -> None:
+        self._stub_generator()
+        handed: list[str] = []
+        real_build = dc.build_patch_result
+
+        def _build(agent, agent_patterns, **kwargs):
+            handed.append(kwargs["cycle_date"])
+            return real_build(agent, agent_patterns, **kwargs)
+
+        with mock.patch.object(dc, "build_patch_result", _build):
+            report = self._run()
+        self.assertEqual(handed, [report.cycle_date])
+
+    def test_a_verified_non_safety_auto_candidate_is_still_stored_as_the_floor_row(
+        self,
+    ) -> None:
+        self._stub_generator(proposed_diff="+- one added rule line\n")
+        verified = dc.PreVerifyResult(
+            passed=True,
+            rationale="all four axes pass",
+            axes=dict.fromkeys(("C1", "C2", "C3", "C4"), True),
+            status="ok",
+            latency_ms=0,
+        )
+        for name, value in (
+            ("classify_patch_area", lambda *_args, **_kwargs: "body-auto"),
+            ("run_pre_verify", lambda *_args, **_kwargs: verified),
+            ("classify_safety_tier", lambda _proposal: ""),
+        ):
+            patcher = mock.patch.object(dc, name, value)
+            patcher.start()
+            self.addCleanup(patcher.stop)
+        report = self._run()
+        self.assertEqual(
+            [
+                (patch.status, patch.approval_tier, patch.classification)
+                for patch in report.patches
+            ],
+            [("unadjudicated", "", "reject")],
+        )
 
 
 if __name__ == "__main__":
