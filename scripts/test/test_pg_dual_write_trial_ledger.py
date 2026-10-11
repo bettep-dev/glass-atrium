@@ -91,14 +91,14 @@ _PAYLOAD = SimpleNamespace(
         "looks": [{"fraction": 0.25, "milestone": 281.5, "boundary": 3.9}],
         "task_window_seconds": 3600.0,
     },
+    # a live trial's start: its canary file's first-written instant + the canary text hash
+    LIVE_START={
+        "started_at": "2026-10-12T03:00:00+00:00",
+        "text_sha256": "c" * 64,
+    },
 )
 _TRIAL_LEDGER_MIGRATION = "20261008000000_add_trial_ledger_and_cycle_verdicts"
 _LIVE_PROPOSAL_ID = 4127
-# a live trial's start: its canary file's first-written instant + the canary text hash
-_LIVE_START_PAYLOAD = {
-    "started_at": "2026-10-12T03:00:00+00:00",
-    "text_sha256": "c" * 64,
-}
 
 
 @contextlib.contextmanager
@@ -257,7 +257,7 @@ class TestTrialLedgerClosedSets(unittest.TestCase):
             ("look, empty object", "live-look", {}),
             ("decision", "live-decision", {"outcome": "win"}),
             ("decision, no object", "live-decision", ["horizon"]),
-            ("start", "live-start", _LIVE_START_PAYLOAD),
+            ("start", "live-start", _PAYLOAD.LIVE_START),
             ("start, empty object", "live-start", {}),
         )
         with _load_helper() as helper:
@@ -420,7 +420,7 @@ class TestTrialLedgerWriterLivePg(unittest.TestCase):
                 agent=_AGENT,
                 dedupe_key=f"{key}:start",
             )
-            for payload in (_LIVE_START_PAYLOAD, repeat)
+            for payload in (_PAYLOAD.LIVE_START, repeat)
         ]
 
         self.assertEqual(counts, [1, 0])
@@ -431,7 +431,7 @@ class TestTrialLedgerWriterLivePg(unittest.TestCase):
                     key,
                     "live-start",
                     "daemon-cycle-live",
-                    _LIVE_START_PAYLOAD,
+                    _PAYLOAD.LIVE_START,
                     f"{key}:start",
                 )
             ],
