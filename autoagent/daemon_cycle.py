@@ -9357,8 +9357,14 @@ class GuardrailBaseline(NamedTuple):
 
     no_stop_rate: float | None  # spawns ending without a SubagentStop
     verified_fail_rate: float | None  # graded outcome rows; None = no row carries a grader_verdict
-    tool_use_mean: float | None
-    tool_use_sd: float | None  # None under two recorded readings
+    tool_use: ToolUseBaseline
+
+
+class ToolUseBaseline(NamedTuple):
+    """Recorded tool uses per spawn; None = no reading."""
+
+    mean: float | None
+    sd: float | None  # None under two recorded readings
 
 
 # D6 margins and D9 R74 α on the pre-registration's harm checks
@@ -9423,8 +9429,10 @@ def get_guardrail_baseline(
             sum(row["grader_verdict"] == GRADER_VERDICT_FAIL for row in graded),
             len(graded),
         ),
-        statistics.fmean(tool_uses) if tool_uses else None,
-        statistics.stdev(tool_uses) if len(tool_uses) > 1 else None,
+        ToolUseBaseline(
+            statistics.fmean(tool_uses) if tool_uses else None,
+            statistics.stdev(tool_uses) if len(tool_uses) > 1 else None,
+        ),
     )
 
 
@@ -9538,17 +9546,17 @@ def _get_tool_use_check(
     sides = 1 if is_upward else 2
 
     def get_harm(alpha: float, design_effect: float) -> float | None:
-        if not readings.tool_use_sd or per_arm is None:
+        if not readings.tool_use.sd or per_arm is None:
             return None
         return trial_design.get_tool_use_harm(
-            readings.tool_use_sd,
+            readings.tool_use.sd,
             per_arm,
             is_overage_primary=is_upward,
             alpha=alpha,
             design_effect=design_effect,
         )
 
-    mean = readings.tool_use_mean
+    mean = readings.tool_use.mean
     row = {
         "unit": "tool uses",
         "baseline_mean": mean,

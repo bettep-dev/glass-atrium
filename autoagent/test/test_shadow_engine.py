@@ -1224,72 +1224,72 @@ _OFF_MAP_AGENT = "glass-atrium-user-added"
 _DESIGN_EFFECT_KEYS = ("design_effect_1", "design_effect_2")
 
 
-class _PreStep(NamedTuple):
-    """One deciding agent's pre-step 3 inputs and its minimum detectable harms, both stages."""
+class _RecordedMeasurement(NamedTuple):
+    """One deciding agent's recorded inputs and its minimum detectable harms, both stages."""
 
     agent: str
     guardrail_count: int
     primary_rate: float
     per_arm: int
-    readings: tuple  # GuardrailBaseline fields
+    readings: tuple  # GuardrailBaseline fields, tool_use as (mean, sd)
     # check → design effect → (trial at α 0.05, watch at 0.05/k)
     harms: dict
 
 
-_PRE_STEP = (
-    _PreStep(
+_RECORDED_MEASUREMENTS = (
+    _RecordedMeasurement(
         "glass-atrium-qa-code-reviewer",
         3,
         0.062,
         2432,
-        (246 / 3994, 0.01, 23.78, 15.37),
+        (246 / 3994, 0.01, (23.78, 15.37)),
         {
             "no_subagent_stop": ((1.30, 1.36), (1.43, 1.52)),
             "tool_use": ((1.10, 1.31), (1.55, 1.85)),
         },
     ),
-    _PreStep(
+    _RecordedMeasurement(
         "glass-atrium-dev-shell",
         4,
         0.166,
         790,
-        (119 / 2121, 21 / 2050, 27.11, 21.02),
+        (119 / 2121, 21 / 2050, (27.11, 21.02)),
         {
             "no_subagent_stop": ((1.58, 1.74), (1.85, 2.10)),
             "verified_fail": ((2.65, 3.19), (3.62, 4.55)),
             "tool_use": ((2.63, 3.26), (3.72, 4.61)),
         },
     ),
-    _PreStep(
+    _RecordedMeasurement(
         "glass-atrium-dev-nestjs",
         4,
         0.097,
         1485,
-        (29 / 1285, 36 / 1293, 25.12, 14.50),
+        (29 / 1285, 36 / 1293, (25.12, 14.50)),
         {
             "no_subagent_stop": ((1.69, 1.89), (2.04, 2.35)),
             "verified_fail": ((1.61, 1.78), (1.91, 2.18)),
             "tool_use": ((1.32, 1.64), (1.87, 2.32)),
         },
     ),
-    _PreStep(
+    _RecordedMeasurement(
         "glass-atrium-dev-react",
         4,
         0.185,
         690,
-        (87 / 1192, 10 / 1113, 16.25, 10.42),
+        (87 / 1192, 10 / 1113, (16.25, 10.42)),
         {
             "no_subagent_stop": ((1.53, 1.67), (1.78, 2.00)),
             "verified_fail": ((2.97, 3.64), (4.17, 5.34)),
             "tool_use": ((1.40, 1.73), (1.97, 2.45)),
         },
     ),
-    _PreStep(
+    _RecordedMeasurement(
         "glass-atrium-meta-prompt-engineer",
         3,
         0.150,
         899,
-        (58 / 787, 0.01, 26.01, 17.81),
+        (58 / 787, 0.01, (26.01, 17.81)),
         {
             "no_subagent_stop": ((1.46, 1.55), (1.67, 1.82)),
             "tool_use": ((2.09, 2.49), (2.95, 3.53)),
@@ -1298,12 +1298,17 @@ _PRE_STEP = (
 )
 
 
-def _get_harm_checks(row: _PreStep, *, metric_key: str = _BUDGET_KEY) -> dict:
+def _get_harm_checks(
+    row: _RecordedMeasurement, *, metric_key: str = _BUDGET_KEY
+) -> dict:
+    no_stop_rate, verified_fail_rate, tool_use = row.readings
     return dc.get_harm_checks(
         metric_key,
         row.primary_rate,
         row.per_arm,
-        dc.GuardrailBaseline(*row.readings),
+        dc.GuardrailBaseline(
+            no_stop_rate, verified_fail_rate, dc.ToolUseBaseline(*tool_use)
+        ),
         guardrail_count=row.guardrail_count,
     )
 
@@ -1314,7 +1319,7 @@ class HarmCheckTest(unittest.TestCase):
     def test_each_check_states_its_margin_alpha_and_trial_design_harm_with_absolute_margins_as_folds(
         self,
     ) -> None:
-        readings = dc.GuardrailBaseline(0.10, 0.02, 20.0, 12.0)
+        readings = dc.GuardrailBaseline(0.10, 0.02, dc.ToolUseBaseline(20.0, 12.0))
         checks = dc.get_harm_checks(_BUDGET_KEY, 0.05, 790, readings, guardrail_count=4)
         guardrails = checks["guardrails"]
         # the leg's margin: the trial's absolute effect 0.3 × 0.05 read as a fold at the leg's 0.10
@@ -1344,7 +1349,7 @@ class HarmCheckTest(unittest.TestCase):
     def test_alpha_is_005_per_check_in_the_trial_and_the_watch_shares_sum_to_005_two_sided_halved(
         self,
     ) -> None:
-        readings = dc.GuardrailBaseline(0.05, 0.02, 20.0, 12.0)
+        readings = dc.GuardrailBaseline(0.05, 0.02, dc.ToolUseBaseline(20.0, 12.0))
         for metric_key, sides in ((_BUDGET_KEY, 1), ("emit_failure", 2)):
             for count in (3, 4):
                 checks = dc.get_harm_checks(
@@ -1379,8 +1384,8 @@ class HarmCheckTest(unittest.TestCase):
                         msg=label,
                     )
 
-    def _assert_pre_step_column(self, column: int) -> None:
-        for row in _PRE_STEP:
+    def _assert_recorded_column(self, column: int) -> None:
+        for row in _RECORDED_MEASUREMENTS:
             guardrails = _get_harm_checks(row)["guardrails"]
             for name, by_design_effect in row.harms.items():
                 for key, pair in zip(_DESIGN_EFFECT_KEYS, by_design_effect):
@@ -1394,20 +1399,20 @@ class HarmCheckTest(unittest.TestCase):
                         msg=f"{row.agent} {name} {stage} {key}",
                     )
 
-    def test_trial_minimum_detectable_harms_reproduce_pre_step_3_at_alpha_005(
+    def test_trial_minimum_detectable_harms_reproduce_the_recorded_measurement_at_alpha_005(
         self,
     ) -> None:
-        self._assert_pre_step_column(0)
+        self._assert_recorded_column(0)
 
-    def test_watch_minimum_detectable_harms_reproduce_pre_step_3_at_the_family_share(
+    def test_watch_minimum_detectable_harms_reproduce_the_recorded_measurement_at_the_family_share(
         self,
     ) -> None:
-        self._assert_pre_step_column(1)
+        self._assert_recorded_column(1)
 
     def test_the_watch_widens_on_the_shipped_fixed_sample_drift_scale_by_1194_and_1240(
         self,
     ) -> None:
-        for row, ratio in ((_PRE_STEP[0], 1.194), (_PRE_STEP[1], 1.240)):
+        for row, ratio in ((_RECORDED_MEASUREMENTS[0], 1.194), (_RECORDED_MEASUREMENTS[1], 1.240)):
             guardrails = _get_harm_checks(row)["guardrails"]
             for name in row.harms:
                 self.assertAlmostEqual(
@@ -1421,7 +1426,7 @@ class HarmCheckTest(unittest.TestCase):
                     guardrails["tool_use"]["widening"]["own_unit"][key], ratio, places=3
                 )
         # a rate guardrail widens more in its own unit at these low rates (leg ×1.271-1.299 at k 4)
-        leg = _get_harm_checks(_PRE_STEP[1])["guardrails"]["no_subagent_stop"][
+        leg = _get_harm_checks(_RECORDED_MEASUREMENTS[1])["guardrails"]["no_subagent_stop"][
             "widening"
         ]["own_unit"]
         self.assertTrue(1.271 - 0.005 <= leg["design_effect_1"] <= 1.299 + 0.005, leg)
@@ -1429,7 +1434,7 @@ class HarmCheckTest(unittest.TestCase):
     def test_the_watch_widens_by_1187_and_1231_with_each_alphas_four_look_inflation(
         self,
     ) -> None:
-        for row, ratio in ((_PRE_STEP[0], 1.187), (_PRE_STEP[1], 1.231)):
+        for row, ratio in ((_RECORDED_MEASUREMENTS[0], 1.187), (_RECORDED_MEASUREMENTS[1], 1.231)):
             guardrails = _get_harm_checks(row)["guardrails"]
             for name in row.harms:
                 if name != "tool_use" or guardrails[name]["trial"]["sides"] == 1:
@@ -1440,7 +1445,7 @@ class HarmCheckTest(unittest.TestCase):
                     )
 
     def test_verified_fail_is_a_guardrail_only_never_a_primary_key(self) -> None:
-        readings = dc.GuardrailBaseline(0.05, 0.02, 20.0, 12.0)
+        readings = dc.GuardrailBaseline(0.05, 0.02, dc.ToolUseBaseline(20.0, 12.0))
         for metric_key in sorted(dc.METRIC_KEYS):
             checks = dc.get_harm_checks(
                 metric_key, 0.1, 900, readings, guardrail_count=4
