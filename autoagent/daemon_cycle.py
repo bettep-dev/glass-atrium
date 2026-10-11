@@ -9490,28 +9490,40 @@ REDELEGATION_ROW = SimpleNamespace(
             "test, and on the reference install its rise fell outside this bracket"
         ),
     ),
-    # part (d)'s read on the reference install, shipped as a dated snapshot
-    REFERENCE_READ_DATE="2026-10-10",
-    REFERENCE_LABELS=(
-        "on four looks",
-        "the reference install's, not the install's own",
-        "measured on budget_overage trials",
-        "on the calibration span's units",
-        "two of five deciding agents read through look 2 only",
-        "reference values only: no stop, size or power check reads them",
-    ),
-    STOP_SHIFT_LABELS=(
-        "the reference install's, not the install's own, and no install measures its own",
-        (
-            "measured on the metric key budget_overage, so a trial on another primary key "
-            "carries these values labelled as that key's, not its own"
+    # part (d)'s read on the reference install, shipped as a dated snapshot: both reference rows
+    REFERENCE=SimpleNamespace(
+        READ_DATE="2026-10-10",
+        LABELS=SimpleNamespace(
+            RISE=(
+                "on four looks",
+                "the reference install's, not the install's own",
+                "measured on budget_overage trials",
+                "on the calibration span's units",
+                "two of five deciding agents read through look 2 only",
+                "reference values only: no stop, size or power check reads them",
+            ),
+            STOP_SHIFT=(
+                (
+                    "the four-look false-stop share across the three agents read on four looks "
+                    "and both assumed shapes of a win"
+                ),
+                (
+                    "the shapes at the ends, both on one agent: 7.50 [6.38, 8.74] under a uniform "
+                    "shortening of a win, 3.55 under a concentrated one"
+                ),
+                "the reference install's, not the install's own, and no install measures its own",
+                (
+                    "measured on the metric key budget_overage, so a trial on another primary key "
+                    "carries these values labelled as that key's, not its own"
+                ),
+                (
+                    "the two shapes are assumptions: which one a real win resembles has no "
+                    "instrument before a live trial"
+                ),
+                "two of five deciding agents read through look 2 only",
+                "reference values only: no stop, size or power check reads them",
+            ),
         ),
-        (
-            "the two shapes are assumptions: which one a real win resembles has no instrument "
-            "before a live trial"
-        ),
-        "two of five deciding agents read through look 2 only",
-        "reference values only: no stop, size or power check reads them",
     ),
 )
 
@@ -9563,8 +9575,8 @@ def get_reference_rows() -> dict:
             "unit": "multiple of the margin",
             "margin_multiples": [11, 26, 36],
             "mean_count_percent": [9, 19],
-            "read_date": REDELEGATION_ROW.REFERENCE_READ_DATE,
-            "labels": list(REDELEGATION_ROW.REFERENCE_LABELS),
+            "read_date": REDELEGATION_ROW.REFERENCE.READ_DATE,
+            "labels": list(REDELEGATION_ROW.REFERENCE.LABELS.RISE),
         },
         "stop_shift": {
             "unit": "percent of true wins stopped falsely",
@@ -9572,8 +9584,8 @@ def get_reference_rows() -> dict:
             "false_stop_percent": [3.55, 7.50],
             "above_alpha_cell_percent": 7.50,
             "above_alpha_cell_interval_percent": [6.38, 8.74],
-            "read_date": REDELEGATION_ROW.REFERENCE_READ_DATE,
-            "labels": list(REDELEGATION_ROW.STOP_SHIFT_LABELS),
+            "read_date": REDELEGATION_ROW.REFERENCE.READ_DATE,
+            "labels": list(REDELEGATION_ROW.REFERENCE.LABELS.STOP_SHIFT),
         },
     }
 

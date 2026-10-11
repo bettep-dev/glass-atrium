@@ -1093,6 +1093,16 @@ class BoundPayloadTest(_ShadowFixture):
                 self.assertEqual(
                     len([text for text in stop_shift["labels"] if text.startswith(label)]), 1
                 )
+        # the range is a four-look share, and each end names the shape of a win it assumes
+        for wording in (
+            "the four-look false-stop share across the three agents read on four looks",
+            "7.50 [6.38, 8.74] under a uniform shortening of a win",
+            "3.55 under a concentrated one",
+        ):
+            with self.subTest(wording):
+                self.assertEqual(
+                    len([text for text in stop_shift["labels"] if wording in text]), 1
+                )
         self.assertEqual(_get_named_agents(stop_shift), [])
 
     def test_the_counts_rise_is_none_at_both_design_effects_and_the_payload_builds_at_sd_none_or_0(
