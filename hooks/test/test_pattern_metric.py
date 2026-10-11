@@ -713,13 +713,12 @@ class TestToolBudgetResolution(unittest.TestCase):
                 self.assertEqual(self._get_recorded_budget(environ, budget - 1), budget)
 
 
-_GAP_START = datetime(2026, 9, 1, tzinfo=_UTC)
-_GAP_END = _GAP_START + 28 * _DAY
-_GAP_END_MIN = 28 * 24 * 60
+_GAP = SimpleNamespace(START=datetime(2026, 9, 1, tzinfo=_UTC), END_MIN=28 * 24 * 60)
+_GAP.END = _GAP.START + _GAP.END_MIN * _MINUTE
 
 
 def _get_at(minutes: float) -> datetime:
-    return _GAP_START + minutes * _MINUTE
+    return _GAP.START + minutes * _MINUTE
 
 
 def _get_run(
@@ -731,7 +730,7 @@ def _get_run(
     overage_rows: int = 0,
     tool_use_actual: int | None = None,
 ) -> sig.SpawnFacts:
-    """A spawn starting and stopping `start_min` / `stop_min` minutes after `_GAP_START`."""
+    """A spawn starting and stopping `start_min` / `stop_min` minutes after `_GAP.START`."""
     return _get_spawn(
         agent_id, _get_at(start_min), session_id=session_id, overage_rows=overage_rows,
         has_subagent_stop=stop_min is not None,
@@ -743,7 +742,7 @@ class TestOverranGaps(unittest.TestCase):
     """An overran gap: an overran spawn's stop to the next same-type start in its session."""
 
     def _get_gaps(self, spawns: list[sig.SpawnFacts]) -> list[float]:
-        return sig.get_overran_gaps({"dev-shell": spawns}, _GAP_START, _GAP_END, 40)["dev-shell"]
+        return sig.get_overran_gaps({"dev-shell": spawns}, _GAP.START, _GAP.END, 40)["dev-shell"]
 
     def test_each_gap_runs_to_the_next_start_in_the_overran_spawns_session(self) -> None:
         overran = _get_run("o", 0, 10, overage_rows=1)
@@ -776,8 +775,8 @@ class TestOverranGaps(unittest.TestCase):
             ("started at the window start", 0, [5.0]),
             ("started a minute before the window start", -1, []),
             ("started a minute before the window end, its next start after the end",
-             _GAP_END_MIN - 1, [5.0]),
-            ("started at the window end", _GAP_END_MIN, []),
+             _GAP.END_MIN - 1, [5.0]),
+            ("started at the window end", _GAP.END_MIN, []),
         ]
         for name, start_min, expected in rows:
             with self.subTest(name):
@@ -796,7 +795,7 @@ class TestOverranGaps(unittest.TestCase):
                 _get_run("react-n", 52, None),
             ],
         }
-        gaps = sig.get_overran_gaps(spawns_by_type, _GAP_START, _GAP_END, 40)
+        gaps = sig.get_overran_gaps(spawns_by_type, _GAP.START, _GAP.END, 40)
         self.assertEqual(gaps, {"dev-shell": [20.0], "dev-react": [2.0]})
 
 
@@ -809,8 +808,8 @@ class TestRedelegationWindow(unittest.TestCase):
             ("own at 100 own gaps", [5.0] * 100, [50.0] * 200, (5, "own", 100)),
             ("pooled at 99 own gaps and 100 pooled gaps", [5.0] * 99, [50.0] * 100,
              (50, "pooled", 100)),
-            ("60 minutes below both, with the agent's own gap count", [5.0] * 99, [50.0] * 99,
-             (60, "default", 99)),
+            ("60 minutes below both, with the agent's own gap count", [5.0] * 40, [50.0] * 99,
+             (60, "default", 40)),
             ("60 minutes with no gap at all", [], [], (60, "default", 0)),
         ]
         for name, own, pooled, expected in rows:
@@ -839,19 +838,19 @@ class TestFollowUpCounts(unittest.TestCase):
     """A counted spawn's follow-ups: other same-type starts in its session in [stop, stop + W)."""
 
     _W = 60 * _MINUTE
-    _CLOSED = _GAP_END + 30 * _DAY  # every counted spawn's window closed
+    _CLOSED = _GAP.END + 30 * _DAY  # every counted spawn's window closed
 
     def _get_counts(
         self, spawns_by_type: dict[str, list[sig.SpawnFacts]], evaluated_at: datetime = _CLOSED
     ) -> dict[str | None, int]:
         counts = sig.get_follow_up_counts(
-            spawns_by_type, "dev-shell", _GAP_START, _GAP_END, self._W, evaluated_at
+            spawns_by_type, "dev-shell", _GAP.START, _GAP.END, self._W, evaluated_at
         )
         return {spawn.agent_id: count for spawn, count in counts}
 
     def test_each_follow_up_inside_w_counts_once_for_each_spawn_it_follows(self) -> None:
         spawn = _get_run("a", 0, 10)
-        end = _GAP_END_MIN
+        end = _GAP.END_MIN
         rows = [
             ("a stopless, non-overran follow-up inside W counts once",
              [spawn, _get_run("f", 30, None)], {"a": 1}),
@@ -884,7 +883,7 @@ class TestFollowUpCounts(unittest.TestCase):
             ("a spawn started at the window start", _get_run("a", 0, 10), {"a": 0}),
             ("a spawn started a minute before the window start", _get_run("a", -1, 10), {}),
             ("a spawn started at the window end",
-             _get_run("a", _GAP_END_MIN, _GAP_END_MIN + 10), {}),
+             _get_run("a", _GAP.END_MIN, _GAP.END_MIN + 10), {}),
         ]
         for name, spawn, expected in rows:
             with self.subTest(name):
