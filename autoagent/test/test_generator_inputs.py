@@ -405,6 +405,11 @@ class TestGeneratorInputVersionStamp(unittest.TestCase):
         self.assertEqual(self._reach, [])
 
 
+    def test_the_stamp_names_the_input_set_with_the_ledgers_prior_attempts(self) -> None:
+        # bumped with the prior-attempts block: N52's ledger copy tells the two input sets apart
+        self.assertEqual(dc.GENERATOR_INPUT_VERSION, "gen-inputs-2")
+
+
 _NOW = datetime(
     2026, 10, 5, 1, tzinfo=timezone.utc
 )  # 1 h past D: a stopless 23:00 spawn is pending

@@ -993,6 +993,11 @@ LANDED_HISTORY_CHAR_CAP = 4000
 LANDED_HISTORY_LIMIT = 5
 LANDED_HISTORY_ENTRY_CHAR_CAP = 400
 
+# Trialled proposals with their measured effect from the trial ledger; a landed one
+# renders here instead of in the landed-history block (N53). Same HARD cap discipline.
+PRIOR_ATTEMPTS_CHAR_CAP = 4000
+PRIOR_ATTEMPTS_LIMIT = 5
+
 # Agent → scope mapping (from core-compliance-matrix.md Scope Legend).
 # Used to pick the correct scope-*.md file for axis C3.
 _AGENT_SCOPE_MAP: dict[str, str] = {
@@ -2391,7 +2396,7 @@ TARGET AGENT: {pattern_agent}
 
 OBSERVED LEARNING SIGNALS (patterns flagged for this agent):
 {signals_block}
-{avoid_patterns_block}{landed_history_block}
+{avoid_patterns_block}{prior_attempts_block}{landed_history_block}
 CURRENT AGENT INSTRUCTION FILE (target for patch):
 path: {agent_path}
 ---
@@ -3091,9 +3096,26 @@ def generate_consolidated_proposal(
         else ""
     )
 
-    # Feedback half of that memory: what this agent already landed.
-    landed = _fetch_landed_proposals(agent)
-    landed_body = _render_landed_history_block(landed) if landed else ""
+    # Feedback half of that memory: what this agent already trialled, then what it
+    # landed with no ledger row. The id filter keeps a race between the two reads from
+    # rendering one proposal in both blocks.
+    attempts = _fetch_prior_attempts(agent) or []
+    attempts_body = _render_prior_attempts_block(attempts)
+    prior_attempts_block = (
+        "prior trial attempts for this agent, with their measured effect from the trial "
+        "ledger (an entry marked LANDED is already in the body — build on it, never "
+        "re-propose it; an entry marked NOT LANDED was trialled and did not land — never "
+        "re-propose it unchanged):\n" + attempts_body + "\n"
+        if attempts_body
+        else ""
+    )
+    attempted = {attempt.proposal_id for attempt in attempts}
+    landed = [
+        (label, diff)
+        for proposal_id, label, diff in _fetch_landed_proposals(agent) or []
+        if proposal_id not in attempted
+    ]
+    landed_body = _render_landed_history_block(landed)
     landed_history_block = (
         "rules that previously LANDED for this agent "
         "(already in the body — build on them, never re-propose them):\n"
@@ -3107,6 +3129,7 @@ def generate_consolidated_proposal(
         pattern_agent=agent,
         signals_block=signals_block,
         avoid_patterns_block=avoid_patterns_block,
+        prior_attempts_block=prior_attempts_block,
         landed_history_block=landed_history_block,
         agent_path=str(target_file),
         agent_excerpt=agent_text,
@@ -3460,7 +3483,7 @@ def _render_signals_block(
 
 
 # Stamped on every proposal row; bump whenever the generation prompt's input set changes.
-GENERATOR_INPUT_VERSION = "gen-inputs-1"
+GENERATOR_INPUT_VERSION = "gen-inputs-2"
 
 # Triggering spawns listed per pattern, newest first; the rest are counted.
 MACHINE_FACTS_SPAWN_LIMIT = 10
@@ -9260,7 +9283,10 @@ def get_trial_key(pattern: Pattern, detection_start: datetime) -> str:
 
 
 def get_preregistration_payload(power_pass: PowerPass, detection_start: datetime) -> dict:
-    """The trial's frozen sizing: trial_design's maximum and boundaries, look milestones on the required units."""
+    """The trial's frozen sizing: trial_design's maximum and boundaries, look milestones on the required units.
+
+    Also the generator-input version the proposal row is stamped with (N52).
+    """
     baseline = power_pass.baseline
     boundaries = trial_design.get_boundaries()
     looks = [
@@ -9277,6 +9303,7 @@ def get_preregistration_payload(power_pass: PowerPass, detection_start: datetime
         "boundaries": list(boundaries),
         "looks": looks,
         "task_window_seconds": SHADOW.TASK_WINDOW.total_seconds(),
+        "generator_input_version": GENERATOR_INPUT_VERSION,
     }
 
 
@@ -11440,35 +11467,149 @@ def _render_pre_verify_failures_block(
 def _fetch_landed_proposals(
     target_agent: str,
     limit: int = LANDED_HISTORY_LIMIT,
-) -> list[tuple[str, str]] | None:
-    """Recently APPLIED proposals for one agent, newest-first.
+) -> list[tuple[int, str, str]] | None:
+    """Recently APPLIED proposals with no live pre-registration, newest-first.
 
     The feedback half of the optimizer-side memory: the generator is told what it
     already landed so it builds on those rules instead of re-proposing them.
     SEPARATE projection from the sibling readers (do NOT widen theirs) — this one
-    SELECTs the patch text and filters on the terminal ``applied`` status.
+    SELECTs the patch text and filters on the terminal ``applied`` status. A trialled
+    proposal renders in the prior-attempts block instead (N53); it is dropped in SQL,
+    before the limit, so trialled rows never crowd out legacy ones.
 
     Mirrors the sibling fail-OPEN discipline: PG off / read error → ``None``
     (a memory miss must never block generation).
 
     Returns:
-        ``[(pattern_label, proposed_diff), ...]`` newest-first (≤ ``limit``),
-        ``[]`` when PG holds no applied rows, ``None`` on PG-off / read error.
+        ``[(proposal_id, pattern_label, proposed_diff), ...]`` newest-first
+        (≤ ``limit``), ``[]`` when PG holds no such rows, ``None`` on PG-off / read error.
     """
+    if not HAS_PG_LOOP_WRITE:
+        return None
     select_sql = (
-        "SELECT pattern_label, proposed_diff "
+        "SELECT id, pattern_label, proposed_diff "
         "FROM core.autoagent_proposals "
         "WHERE target_agent = %s AND status::text = 'applied' "
         "AND proposed_diff IS NOT NULL "
+        "AND NOT EXISTS (SELECT 1 FROM core.autoagent_trial_ledger t "
+        "WHERE t.event = %s AND (t.payload->>'proposal_id')::bigint = autoagent_proposals.id) "
         "ORDER BY cycle_date DESC, id DESC "
         "LIMIT %s"
     )
-    rows = _fetch_proposal_rows(
-        target_agent, select_sql, (target_agent, limit), "landed-history"
-    )
+    params = (target_agent, TRIAL_LEDGER.EVENT.LIVE_PREREGISTRATION, limit)
+    rows = _fetch_proposal_rows(target_agent, select_sql, params, "landed-history")
     if rows is None:
         return None
-    return [(label or "", diff or "") for label, diff in rows]
+    return [(proposal_id, label or "", diff or "") for proposal_id, label, diff in rows]
+
+
+class PriorAttempt(NamedTuple):
+    proposal_id: int
+    label: str
+    status: str
+    diff: str
+    look: dict | None  # the trial's latest live look payload
+    decision: dict | None  # its live decision payload
+
+
+def _fetch_prior_attempts(
+    target_agent: str,
+    limit: int = PRIOR_ATTEMPTS_LIMIT,
+) -> list[PriorAttempt] | None:
+    """The agent's trialled proposals, newest pre-registration first, with their ledger effect.
+
+    Joined by the proposal id the live pre-registration payload carries. Fail-OPEN as
+    the sibling readers: PG off / read error → ``None``.
+    """
+    if not HAS_PG_LOOP_WRITE:
+        return None
+    select_sql = (
+        "SELECT pr.id, pr.pattern_label, pr.status::text, pr.proposed_diff, "
+        "(SELECT l.payload FROM core.autoagent_trial_ledger l "
+        "WHERE l.event = %s AND l.trial_key = t.trial_key ORDER BY l.id DESC LIMIT 1), "
+        "(SELECT d.payload FROM core.autoagent_trial_ledger d "
+        "WHERE d.dedupe_key = t.trial_key || ':decision') "
+        "FROM core.autoagent_trial_ledger t JOIN core.autoagent_proposals pr "
+        "ON pr.id = (t.payload->>'proposal_id')::bigint "
+        "WHERE t.event = %s AND pr.target_agent = %s "
+        "ORDER BY t.id DESC LIMIT %s"
+    )
+    event = TRIAL_LEDGER.EVENT
+    params = (event.LIVE_LOOK, event.LIVE_PREREGISTRATION, target_agent, limit)
+    rows = _fetch_proposal_rows(target_agent, select_sql, params, "prior-attempts")
+    if rows is None:
+        return None
+    return [
+        PriorAttempt(
+            proposal_id,
+            label or "",
+            status or "",
+            diff or "",
+            look if isinstance(look, dict) else None,
+            decision if isinstance(decision, dict) else None,
+        )
+        for proposal_id, label, status, diff, look, decision in rows
+    ]
+
+
+def _render_prior_attempts_block(
+    attempts: list[PriorAttempt],
+    *,
+    char_cap: int = PRIOR_ATTEMPTS_CHAR_CAP,
+) -> str:
+    """Render the 'already trialled for this agent' block, HARD char-capped.
+
+    Each attempt → its label, its LANDED marker or status, its measured effect and
+    the lines its patch ADDED. Ledger and patch text re-enter a prompt, so every field
+    goes through ``_neutralize_field`` (LLM01). ``""`` for empty input.
+    """
+    if not attempts:
+        return ""
+    lines: list[str] = []
+    for attempt in attempts:
+        # status is the proposal_status enum's text, a closed set
+        marker = "LANDED" if attempt.status == "applied" else f"NOT LANDED (status {attempt.status})"
+        lines.append(
+            f"- [{_neutralize_field(attempt.label)}] {marker} · effect: "
+            f"{_get_effect_text(attempt)} · added: {_get_added_text(attempt.diff)}"
+        )
+    block = "\n".join(lines)
+    if len(block) > char_cap:
+        marker = f"\n[TRUNCATED: prior-attempts memory capped at {char_cap} chars]"
+        block = block[: char_cap - len(marker)] + marker
+    return block
+
+
+def _get_effect_text(attempt: PriorAttempt) -> str:
+    """The decision when one is recorded, else the latest look, else none reached."""
+    if attempt.decision is not None:
+        return _neutralize_field("decision: " + _flatten_payload(attempt.decision))
+    if attempt.look is not None:
+        return _neutralize_field("latest look: " + _flatten_payload(attempt.look))
+    return "no look reached"
+
+
+def _flatten_payload(payload: dict, prefix: str = "") -> str:
+    """Scalar fields as sorted ``key=value`` pairs, nested objects dotted, lists skipped."""
+    fields: list[str] = []
+    for key in sorted(payload):
+        value = payload[key]
+        if isinstance(value, dict):
+            nested = _flatten_payload(value, f"{prefix}{key}.")
+            if nested:
+                fields.append(nested)
+        elif not isinstance(value, list):
+            fields.append(f"{prefix}{key}={value}")
+    return ", ".join(fields)
+
+
+def _get_added_text(diff: str) -> str:
+    """The lines a patch ADDED, sanitized and capped; a placeholder when it added none."""
+    added = [line[1:].strip() for kind, line in _get_diff_line_kinds(diff) if kind == "added"]
+    added_text = " / ".join(text for text in added if text)
+    if not added_text:
+        return "(no added lines recorded)"
+    return _neutralize_field(added_text, cap=LANDED_HISTORY_ENTRY_CHAR_CAP)
 
 
 def _render_landed_history_block(
@@ -11489,20 +11630,7 @@ def _render_landed_history_block(
     if not rows:
         return ""
 
-    lines: list[str] = []
-    for label, diff in rows:
-        added = [
-            line[1:].strip()
-            for kind, line in _get_diff_line_kinds(diff)
-            if kind == "added"
-        ]
-        added_text = " / ".join(text for text in added if text)
-        rendered = (
-            _neutralize_field(added_text, cap=LANDED_HISTORY_ENTRY_CHAR_CAP)
-            if added_text
-            else "(no added lines recorded)"
-        )
-        lines.append(f"- [{_neutralize_field(label)}] {rendered}")
+    lines = [f"- [{_neutralize_field(label)}] {_get_added_text(diff)}" for label, diff in rows]
 
     block = "\n".join(lines)
     if len(block) > char_cap:

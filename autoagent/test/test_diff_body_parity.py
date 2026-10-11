@@ -704,6 +704,15 @@ class HeaderSitesReadBodyLines(unittest.TestCase):
         self.assertEqual(dc._iter_added_reference_lines(diff), [f"++ i{n}" for n in range(1, 9)])
         self.assertEqual(_count_landed_pieces(diff), 8)
 
+    def test_should_render_the_same_added_text_in_a_prior_attempt_as_in_landed_history(self) -> None:
+        for row_id, diff in {**_fixture_rows(), **self.rows}.items():
+            with self.subTest(row_id):
+                landed = dc._render_landed_history_block([("parity", diff)])
+                attempt = dc._render_prior_attempts_block(
+                    [dc.PriorAttempt(1, "parity", "applied", diff, None, None)]
+                )
+                self.assertTrue(attempt.endswith(landed.split("] ", 1)[1]))
+
     def test_should_count_a_column_zero_at_sign_body_line_as_context_as_git_recount_does(self) -> None:
         # git's recount_diff ends a hunk body only at "@@ " or "diff ", never at "@@x".
         diff = f"--- a/{_TARGET}\n+++ b/{_TARGET}\n@@ -1,4 +1,4 @@\n ctx\n@@x\n-a\n+b\n ctx\n"

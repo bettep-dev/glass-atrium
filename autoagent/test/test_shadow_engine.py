@@ -83,6 +83,8 @@ _KEYS = SimpleNamespace(
         "boundaries",
         "looks",
         "task_window_seconds",
+        # N52: the proposal's input-set stamp; no in-code reader yet (unit report, concerns)
+        "generator_input_version",
     },
 )
 # a live trial as the push stores it: trial and dedupe key from the proposal id
@@ -463,6 +465,15 @@ class BoundPayloadTest(_ShadowFixture):
         self.assertEqual([look["milestone"] for look in payload["looks"]], _MILESTONES)
         self.assertEqual((result.approval_tier, result.status), ("auto", "pending"))
 
+    def test_the_bound_payload_carries_the_generator_input_version_its_proposal_is_stamped_with(
+        self,
+    ) -> None:
+        result = self._build(self._check_power())
+        self.assertEqual(
+            result.preregistration_payload["generator_input_version"],
+            result.generator_input_version,
+        )
+
     def test_a_candidate_the_cycle_did_not_bind_carries_no_payload_and_never_stays_pending_auto(
         self,
     ) -> None:
@@ -778,7 +789,7 @@ class LedgerFaultTest(_ShadowFixture):
 
 
 class PreRegistrationReadLivePgTest(_ShadowFixture):
-    """The pre-registration read's real SQL on the ephemeral cluster; skips anywhere else.
+    """The live pre-registration reads' real SQL on the ephemeral cluster; skips anywhere else.
 
     Each test owns a database cloned from a template ``live-pg-ephemeral.bats`` builds — the
     ledger is append-only, so rows cannot be cleaned up. The power check runs on the fake
@@ -882,6 +893,77 @@ class PreRegistrationReadLivePgTest(_ShadowFixture):
         self.assertIsNotNone(trial.recorded_at.tzinfo)
         self.assertEqual(trial.recorded_at, latest_at)
         self.assertEqual(trial.payload, {"metric_key": _BUDGET_KEY})
+
+    def _insert_proposal(self, cycle_date: str, *, status: str = "applied", agent: str = _AGENT) -> int:
+        """One proposal row whose added line names its own label → its id."""
+        label = f"{agent} {status} {cycle_date} {uuid.uuid4().hex[:6]}"
+        with self._connect() as conn:
+            return conn.execute(
+                "INSERT INTO core.autoagent_proposals (cycle_date, pattern_label, target_file,"
+                " target_agent, classification, rationale, approval_tier, status, proposed_diff,"
+                " source_file, source_file_mtime) VALUES (%s, %s, %s, %s, 'apply', 'r', 'auto',"
+                " %s, %s, 'autoagent.json', 0) RETURNING id",
+                (cycle_date, label, f"agents/{agent}.md", agent, status, f"+- {label}\n"),
+            ).fetchone()[0]
+
+    def _insert_trial_row(self, proposal_id: int, event: str, payload: dict, *, suffix: str = "") -> None:
+        """A live trial row keyed by the proposal id as the push keys it."""
+        key = f"{proposal_id:064x}"
+        with self._connect() as conn:
+            conn.execute(
+                "INSERT INTO core.autoagent_trial_ledger (trial_key, agent, learning_pattern_id,"
+                " event, actor, payload, dedupe_key) VALUES (%s, %s, %s, %s, %s, %s::jsonb, %s)",
+                (
+                    key,
+                    _AGENT,
+                    _PATTERN_ID,
+                    event,
+                    stub.get_trial_ledger().ACTOR.LIVE,
+                    json.dumps(payload),
+                    key + suffix,
+                ),
+            )
+
+    def _preregister(self, proposal_id: int) -> None:
+        event = stub.get_trial_ledger().EVENT.LIVE_PREREGISTRATION
+        self._insert_trial_row(proposal_id, event, {"metric_key": _BUDGET_KEY, "proposal_id": proposal_id})
+
+    def test_the_prior_attempts_read_joins_each_preregistration_to_its_proposal_latest_look_and_decision(
+        self,
+    ) -> None:
+        self._use_database(self._TEMPLATE.FULL)
+        event = stub.get_trial_ledger().EVENT
+        landed = self._insert_proposal("2026-09-01")
+        decided = self._insert_proposal("2026-09-02", status="rejected")
+        foreign = self._insert_proposal("2026-09-03", agent="glass-atrium-dev-shell")
+        self._preregister(landed)
+        for number in (1, 2):
+            self._insert_trial_row(
+                landed, event.LIVE_LOOK, {"look": number}, suffix=f":look:{number}"
+            )
+        self._preregister(decided)
+        self._insert_trial_row(decided, event.LIVE_LOOK, {"look": 1}, suffix=":look:1")
+        self._insert_trial_row(decided, event.LIVE_DECISION, {"outcome": "stop"}, suffix=":decision")
+        self._preregister(foreign)
+        attempts = dc._fetch_prior_attempts(_AGENT)
+        self.assertEqual(
+            [(a.proposal_id, a.status, a.look, a.decision) for a in attempts],
+            [
+                (decided, "rejected", {"look": 1}, {"outcome": "stop"}),
+                (landed, "applied", {"look": 2}, None),
+            ],
+        )
+        self.assertTrue(all(a.label in a.diff for a in attempts))
+        self.assertEqual(self.pg_reach, [])
+
+    def test_the_landed_read_drops_trialled_proposals_before_its_limit(self) -> None:
+        self._use_database(self._TEMPLATE.FULL)
+        legacy = self._insert_proposal("2026-08-01")
+        for day in range(1, 7):
+            self._preregister(self._insert_proposal(f"2026-09-{day:02d}"))
+        landed = dc._fetch_landed_proposals(_AGENT)
+        self.assertEqual([proposal_id for proposal_id, _label, _diff in landed], [legacy])
+        self.assertEqual(self.pg_reach, [])
 
     def test_a_schema_without_the_ledger_warns_on_the_read_and_writes_no_look(
         self,
