@@ -365,9 +365,9 @@ class _ShadowFixture(unittest.TestCase):
         self.ledger.design_effects[_AGENT] = _DESIGN_EFFECT_PAYLOAD
         self.history = list(_get_passing_history())
         self.patterns = [_pattern()]
-        # the roster read's answer by MANIFEST type (None → the history under every name)
-        self.roster_spawns: dict[str, list[SpawnFacts]] | None = None
-        self.roster_fault = False
+        # the roster read at its DB seam: spawns by MANIFEST type (None → the history under every
+        # name), answered over the asked window; the names the last read asked for
+        self.roster = SimpleNamespace(spawns=None, is_faulted=False, names=[])
         self.stages: list[str] = []
         # after the seal: spawn read, ledger connection and writer = the DB boundary
         for name, value in (
@@ -392,10 +392,18 @@ class _ShadowFixture(unittest.TestCase):
         # the roster read asks from one instant: baseline, detection and confirmation starts equal
         if windows.start.baseline == windows.start.detection:
             self.stages.append("roster read")
-            if self.roster_fault:
+            self.roster.names = list(agents)
+            if self.roster.is_faulted:
                 raise ConnectionRefusedError("spawn read: no database in this test")
-            if self.roster_spawns is not None:
-                return None, {name: list(spawns) for name, spawns in self.roster_spawns.items()}
+            if self.roster.spawns is not None:
+                return None, {
+                    name: [
+                        spawn
+                        for spawn in spawns
+                        if windows.start.baseline <= spawn.started_at < windows.end
+                    ]
+                    for name, spawns in self.roster.spawns.items()
+                }
         return _DAY - timedelta(days=60), {
             agent: list(self.history) for agent in agents
         }
@@ -710,11 +718,11 @@ class BoundPayloadTest(_ShadowFixture):
                         expected is not None,
                     )
 
-    def _get_window_row(self, roster_spawns: dict[str, list[SpawnFacts]]) -> dict:
-        """The bound payload's window row when the roster read answers `roster_spawns`."""
+    def _get_window_row(self, spawns: dict[str, list[SpawnFacts]]) -> dict:
+        """The bound payload's window row when the roster read answers `spawns`."""
         for stem in (_AGENT, _POOL_AGENT):
             (self.agents_dir / f"{stem}.md").write_text("# probe agent\n", encoding="utf-8")
-        self.roster_spawns = roster_spawns
+        self.roster.spawns = spawns
         return self._build(self._check_power()).preregistration_payload["redelegation"]
 
     def test_the_window_row_is_the_rules_window_tier_and_gap_count_over_the_baseline_window_alone(
@@ -735,6 +743,18 @@ class BoundPayloadTest(_ShadowFixture):
                     {_AGENT: _get_gap_spawns("own", minutes) + detection_gap}
                 )
                 self.assertEqual(row, dc.get_redelegation_window(gaps, gaps)._asdict())
+
+    def test_a_baseline_spawns_next_start_after_the_baseline_end_and_before_d_counts_its_gap(
+        self,
+    ) -> None:
+        # stopped an hour before the baseline end, its next start an hour after it, before D
+        late_gap = _get_overran_pair(
+            _WINDOWS.start.detection - timedelta(hours=2), 120 * _MINUTE, "late-gap"
+        )
+        gaps = [*map(float, range(1, 100)), 120.0]
+        row = self._get_window_row({_AGENT: _get_gap_spawns("own", range(1, 100)) + late_gap})
+        self.assertEqual(row, dc.get_redelegation_window(gaps, gaps)._asdict())
+        self.assertEqual((row["tier"], row["gap_count"]), ("own", 100))
 
     def test_a_spawn_at_or_after_d_never_moves_an_own_tier_window(self) -> None:
         baseline_spawn, late_spawn = _get_late_next_start("own-late")
@@ -779,6 +799,7 @@ class BoundPayloadTest(_ShadowFixture):
                 _POOL_AGENT: pairs[1::2],
             }
         )
+        self.assertLessEqual({bare, _POOL_AGENT}, set(self.roster.names))
         self.assertEqual((row["tier"], row["gap_count"]), ("pooled", 100))
 
     def test_a_non_roster_types_gaps_never_enter_the_pool(self) -> None:
@@ -1436,7 +1457,8 @@ class CycleWiringTest(_ShadowFixture):
             "metric_key": _BUDGET_KEY,
             "last_transition_at": None,
         }
-        self._patch("_pg_read_pending_patterns", lambda: [dict(intake)])
+        self.intakes = [intake]
+        self._patch("_pg_read_pending_patterns", lambda: [dict(row) for row in self.intakes])
 
     def _run_cycle(self, *, skip_loop_emit: bool) -> dc.CycleReport:
         self.stderr = io.StringIO()
@@ -1449,7 +1471,7 @@ class CycleWiringTest(_ShadowFixture):
                 skip_loop_emit=skip_loop_emit,
             )
         self.assertEqual(self.pg_reach, [])
-        self.assertEqual(report.power_check["passing"], 1)
+        self.assertEqual(report.power_check["passing"], len(self.intakes))
         return report
 
     def test_a_dry_run_cycle_writes_no_ledger_row(self) -> None:
@@ -1509,6 +1531,17 @@ class CycleWiringTest(_ShadowFixture):
     def test_a_failed_roster_read_warns_once_preregisters_nothing_and_the_cycle_runs_on(
         self,
     ) -> None:
+        # a second agent group whose candidate also reaches pre-registration
+        (self.root / "agents" / f"{_POOL_AGENT}.md").write_text("probe", encoding="utf-8")
+        self.ledger.design_effects[_POOL_AGENT] = _DESIGN_EFFECT_PAYLOAD
+        self.intakes.append(
+            self.intakes[0]
+            | {
+                "id": _PATTERN_ID + 1,
+                "agent": _POOL_AGENT,
+                "pattern_signature": f"budget-overage concentration|{_POOL_AGENT}",
+            }
+        )
         shadow_stage = dc.run_shadow_stage
         self._patch(
             "run_shadow_stage",
@@ -1517,17 +1550,20 @@ class CycleWiringTest(_ShadowFixture):
         self._patch("run_aa_stage", lambda *args, **kwargs: self.stages.append("aa"))
         self._patch("create_cycle_verdicts", lambda report: self.stages.append("verdicts"))
         self._open_writing_stages()
-        proposal = dc.PatchProposal(
-            target_file=str(self.root / "agents" / f"{_AGENT}.md"),
-            rationale="probe rationale",
-            proposed_diff=_PROBE_DIFF,
-            touched_frontmatter=False,
-            estimated_added_lines=1,
-            raw_response="probe raw response",
-        )
-        # a candidate driven to pre-registration: generated, body-auto, non-safety, verified
+
+        def _get_proposal(agent: str, *_args: object, **_kwargs: object) -> dc.PatchProposal:
+            return dc.PatchProposal(
+                target_file=str(self.root / "agents" / f"{agent}.md"),
+                rationale="probe rationale",
+                proposed_diff=_PROBE_DIFF,
+                touched_frontmatter=False,
+                estimated_added_lines=1,
+                raw_response="probe raw response",
+            )
+
+        # each candidate driven to pre-registration: generated, body-auto, non-safety, verified
         for name, value in (
-            ("generate_consolidated_proposal", lambda *args, **kwargs: proposal),
+            ("generate_consolidated_proposal", _get_proposal),
             ("classify_patch_area", lambda *args, **kwargs: "body-auto"),
             ("classify_safety_tier", lambda *args, **kwargs: "non-safety"),
             ("run_pre_verify", lambda *args, **kwargs: dc.PreVerifyResult(True, "ok", {}, "ok", 0)),
@@ -1539,13 +1575,19 @@ class CycleWiringTest(_ShadowFixture):
             with self.subTest(name):
                 self.stages.clear()
                 self.ledger.rows.clear()
-                self.roster_fault = is_fault
+                self.roster.is_faulted = is_fault
                 report = self._run_cycle(skip_loop_emit=False)
-                bound = [
-                    patch for patch in report.patches if patch.preregistration_payload is not None
-                ]
                 self.assertEqual(self.stderr.getvalue().count(_ROSTER_WARN), int(is_fault))
-                self.assertEqual(len(bound), 0 if is_fault else 1)
+                self.assertEqual(
+                    sorted(
+                        (patch.pattern_agent, patch.preregistration_payload is None, patch.status)
+                        for patch in report.patches
+                    ),
+                    [
+                        (agent, is_fault, "unadjudicated" if is_fault else "pending")
+                        for agent in sorted((_AGENT, _POOL_AGENT))
+                    ],
+                )
                 self.assertEqual(self.stages, ["shadow", "aa", "roster read", "verdicts"])
                 self.assertIsInstance(report, dc.CycleReport)
 

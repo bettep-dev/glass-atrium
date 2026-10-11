@@ -9388,8 +9388,8 @@ class RosterSpawns(NamedTuple):
 class RosterSpawnRead:
     """The cycle's one roster spawn read: run on the first request, its spawns or its fault kept.
 
-    Read only once a candidate reaches pre-registration (R421); a failed read WARNs once and
-    leaves every candidate of the cycle without a pre-registration (R445).
+    Read only once a candidate reaches pre-registration; a failed read WARNs once and leaves
+    every candidate of the cycle without a pre-registration.
     """
 
     def __init__(self, agents_dir: Path, windows: PairWindows, tool_budget: int) -> None:
@@ -9435,7 +9435,7 @@ class PreregistrationSource(NamedTuple):
 def get_redelegation_row(
     spawns: RosterSpawns, power_pass: PowerPass, windows: PairWindows
 ) -> dict:
-    """W with its tier and gap count by S5b-1a-ii-0's rule, over the baseline window alone.
+    """W with its tier and gap count by `get_redelegation_window`, over the baseline window alone.
 
     Spawns started at or after D are cut before the primitives, so no spawn from the trial's
     start on moves the row; the pool is every roster type's gaps, the trial's agent included.
