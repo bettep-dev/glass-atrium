@@ -8433,7 +8433,7 @@ def drop_reject_streak_patterns(
     Args:
         agent: pattern target agent (group key).
         patterns: the agent's intake patterns (freq DESC).
-        rows: pre-fetched _fetch_proposal_history result — _run_generation_loop
+        rows: pre-fetched _fetch_proposal_history result — _drop_gated_patterns
             shares one fetch across both proposal-history gates (read-only
             here). None → self-fetch (backward-compatible for direct callers).
 
@@ -8571,7 +8571,7 @@ def drop_apply_capped_patterns(
     Args:
         agent: pattern target agent (group key).
         patterns: the agent's intake patterns (freq DESC).
-        rows: pre-fetched _fetch_proposal_history result — _run_generation_loop
+        rows: pre-fetched _fetch_proposal_history result — _drop_gated_patterns
             shares one fetch across every proposal-history gate (read-only
             here). None → self-fetch (backward-compatible for direct callers).
 
@@ -13288,11 +13288,13 @@ def run_cycle(
         _run_generation_loop(
             report,
             agent_groups,
-            regression_gate,
-            agents_dir=agents_dir,
-            skip_haiku=skip_haiku,
-            skip_pre_verify=skip_pre_verify,
-            skip_loop_emit=skip_loop_emit,
+            GenerationRun(
+                regression_gate=regression_gate,
+                agents_dir=agents_dir,
+                skip_haiku=skip_haiku,
+                skip_pre_verify=skip_pre_verify,
+                skip_loop_emit=skip_loop_emit,
+            ),
         )
 
     # Just before cycle end, UPSERT the loop_event row directly to PG.
@@ -13382,15 +13384,20 @@ def run_cycle(
     return report
 
 
+class GenerationRun(NamedTuple):
+    """One cycle's generation settings, shared by every agent group."""
+
+    regression_gate: RegressionGateReport
+    agents_dir: Path
+    skip_haiku: bool
+    skip_pre_verify: bool
+    skip_loop_emit: bool
+
+
 def _run_generation_loop(
     report: CycleReport,
     agent_groups: list[tuple[str, list[Pattern]]],
-    regression_gate: RegressionGateReport,
-    *,
-    agents_dir: Path,
-    skip_haiku: bool,
-    skip_pre_verify: bool,
-    skip_loop_emit: bool,
+    run: GenerationRun,
 ) -> None:
     """Per-agent generation loop — gates, then one routed row per agent.
 
@@ -13400,41 +13407,10 @@ def _run_generation_loop(
     """
     seen_targets: set[str] = set()
     for agent, agent_patterns in agent_groups:
-        # Anti-fossil lifecycle gates — BEFORE any Haiku spend.
-        # All five gates write PG (learning_log transition + skip loop events),
-        # so they run only in full-real mode: skip_haiku (test/preflight) bypasses
-        # them like the timeout back-off below, skip_loop_emit (no-PG-write
-        # mode) bypasses them like the supersede. Order matters — the four
-        # terminalizing gates (reverted, reject-streak, repeat-apply-cap,
-        # non-auto-fixable) run before the transient pair re-check; reverted
-        # runs FIRST (a human back-out outranks every generation-side verdict).
-        # repeat-apply-cap follows reject-streak because an 'applied' row RESETS
-        # that streak: the alternating apply/reject fossil is invisible to the
-        # streak gate and is exactly what the cap exists to catch.
-        if not skip_haiku and not skip_loop_emit:
-            # One shared fetch serves both proposal-history gates (neither
-            # mutates rows). None (PG off / read error) → skip both, matching
-            # each gate's own fail-open branch without a doomed re-fetch.
-            history_rows = _fetch_proposal_history(agent)
-            if history_rows is not None:
-                agent_patterns = drop_reverted_patterns(
-                    agent, agent_patterns, rows=history_rows
-                )
-                agent_patterns = drop_reject_streak_patterns(
-                    agent, agent_patterns, rows=history_rows
-                )
-                agent_patterns = drop_apply_capped_patterns(
-                    agent, agent_patterns, rows=history_rows
-                )
-            agent_patterns = drop_non_auto_fixable_patterns(agent, agent_patterns)
-            agent_patterns = drop_pair_failing_patterns(agent, agent_patterns)
-            # Non-terminalizing and reversible: the block lapses with the warning.
-            agent_patterns = drop_regression_blocked_patterns(
-                agent,
-                agent_patterns,
-                regression_gate,
-                live=regression_gate_live_enabled(),
-            )
+        # Gates write PG → full-real mode only: skip_haiku (test/preflight) bypasses
+        # them like the timeout back-off, skip_loop_emit (no-PG-write) like the supersede.
+        if not run.skip_haiku and not run.skip_loop_emit:
+            agent_patterns = _drop_gated_patterns(agent, agent_patterns, run.regression_gate)
             if not agent_patterns:
                 continue
         report.patches.append(
@@ -13442,13 +13418,46 @@ def _run_generation_loop(
                 agent,
                 agent_patterns,
                 cycle_date=report.cycle_date,
-                agents_dir=agents_dir,
+                agents_dir=run.agents_dir,
                 seen_targets=seen_targets,
-                skip_haiku=skip_haiku,
-                skip_pre_verify=skip_pre_verify,
-                skip_loop_emit=skip_loop_emit,
+                skip_haiku=run.skip_haiku,
+                skip_pre_verify=run.skip_pre_verify,
+                skip_loop_emit=run.skip_loop_emit,
             )
         )
+
+
+def _drop_gated_patterns(
+    agent: str,
+    agent_patterns: list[Pattern],
+    regression_gate: RegressionGateReport,
+) -> list[Pattern]:
+    """Anti-fossil lifecycle gates for one agent's patterns — BEFORE any Haiku spend.
+
+    The four terminalizing gates (reverted, reject-streak, repeat-apply-cap,
+    non-auto-fixable) run before the transient pair re-check; reverted runs FIRST
+    (a human back-out outranks every generation-side verdict). repeat-apply-cap
+    follows reject-streak because an 'applied' row RESETS that streak: the
+    alternating apply/reject fossil is invisible to the streak gate and is exactly
+    what the cap exists to catch.
+    """
+    # One shared fetch serves the proposal-history gates (none mutates rows).
+    # None (PG off / read error) → skip them, matching each gate's own fail-open
+    # branch without a doomed re-fetch.
+    history_rows = _fetch_proposal_history(agent)
+    if history_rows is not None:
+        agent_patterns = drop_reverted_patterns(agent, agent_patterns, rows=history_rows)
+        agent_patterns = drop_reject_streak_patterns(agent, agent_patterns, rows=history_rows)
+        agent_patterns = drop_apply_capped_patterns(agent, agent_patterns, rows=history_rows)
+    agent_patterns = drop_non_auto_fixable_patterns(agent, agent_patterns)
+    agent_patterns = drop_pair_failing_patterns(agent, agent_patterns)
+    # Non-terminalizing and reversible: the block lapses with the warning.
+    return drop_regression_blocked_patterns(
+        agent,
+        agent_patterns,
+        regression_gate,
+        live=regression_gate_live_enabled(),
+    )
 
 
 def build_patch_result(
