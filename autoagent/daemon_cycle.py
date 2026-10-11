@@ -9421,8 +9421,9 @@ def get_guardrail_baseline(
 ) -> GuardrailBaseline:
     """Readings over the floor half of the provenance-covered baseline: the spawns the primary counts.
 
-    verified_fail counts only outcome rows carrying a grader_verdict: a read without the
-    field leaves it unread (None), never a measured zero.
+    verified_fail counts only outcome rows with a non-None grader_verdict: a row the grader
+    has not reached sits in neither count, and none graded leaves it unread (None), never a
+    measured zero.
     """
     covered_start = detection_start if provenance_start is None else provenance_start
     start = max(detection_start - BASELINE.SPAN, covered_start)
@@ -9434,7 +9435,10 @@ def get_guardrail_baseline(
         and is_floor_half(spawn.agent_id)
     ]
     graded = [
-        row for spawn in members for row in spawn.outcomes if "grader_verdict" in row
+        row
+        for spawn in members
+        for row in spawn.outcomes
+        if row.get("grader_verdict") is not None
     ]
     return GuardrailBaseline(
         _get_share(sum(not spawn.has_subagent_stop for spawn in members), len(members)),

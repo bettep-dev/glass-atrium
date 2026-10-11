@@ -1350,6 +1350,7 @@ def count_outcomes_since(
 # joined tables pre-grouped by agent_id → a spawn with N overage / outcome rows counts once
 # outside [baseline, end) task members only: up to evaluation + earlier ones stopped ≥ baseline − W
 # tool_use_actual: the recorder's header line, read as _OUTCOME.FACTS_SELECT_SQL reads it
+# both outcome aggregates ORDER BY id → the two arrays zip row for row
 _SPAWN_FACTS_SELECT_SQL = SimpleNamespace(
     TEMPLATE="""
 WITH spawns AS (
@@ -1362,7 +1363,8 @@ WITH spawns AS (
 )
 SELECT s.agent_type, s.agent_id, s.session_id, s.started_at,
        COALESCE(b.overage_rows, 0), stop.stopped_at,
-       COALESCE(o.attributions, '{{}}'::text[]), o.tool_use_actual,
+       COALESCE(o.attributions, '{{}}'::text[]), COALESCE(o.verdicts, '{{}}'::text[]),
+       o.tool_use_actual,
        s.arm, s.salt_id, s.delivered, s.delivered_hash
 FROM spawns s
 LEFT JOIN (
@@ -1375,7 +1377,8 @@ LEFT JOIN (
     GROUP BY agent_id
 ) stop ON stop.agent_id = s.agent_id
 LEFT JOIN (
-    SELECT agent_id, array_agg(attribution_source) AS attributions,
+    SELECT agent_id, array_agg(attribution_source ORDER BY id) AS attributions,
+           array_agg(grader_verdict::text ORDER BY id) AS verdicts,
            max(substring(split_part(body_md, chr(10) || '## ', 1)
                          FROM '(?n)' || %s::text)::numeric) AS tool_use_actual
     FROM core.outcomes
@@ -1472,7 +1475,8 @@ def _read_spawn_facts(
 ) -> tuple[datetime | None, defaultdict[str, list[SpawnFacts]]]:
     """The provenance start and each agent's spawns over baseline..end, plus the task members
     `get_floor_verdict` places outside it (up to `evaluated_at`, None → windows.end); raises on
-    any failure. A schema without the canary exposure columns reads every spawn's as None."""
+    any failure. A schema without the canary exposure columns reads every spawn's as None.
+    Each outcome row carries its attribution_source and grader_verdict, None while ungraded."""
     upper = windows.end if evaluated_at is None else max(windows.end, evaluated_at)
     params = (
         agents, upper, windows.start.baseline, windows.start.baseline - redelegation_window,
@@ -1492,11 +1496,14 @@ def _read_spawn_facts(
     spawns: defaultdict[str, list[SpawnFacts]] = defaultdict(list)
     for (
         agent_type, agent_id, session_id, started_at, overage_rows, stopped_at, attributions,
-        tool_use_actual, *exposure,
+        verdicts, tool_use_actual, *exposure,
     ) in rows:
         spawns[agent_type].append(SpawnFacts(
             agent_id, session_id, started_at, int(overage_rows), stopped_at is not None,
-            tuple({"attribution_source": source} for source in attributions),
+            tuple(
+                {"attribution_source": source, "grader_verdict": verdict}
+                for source, verdict in zip(attributions, verdicts)
+            ),
             stopped_at, None if tool_use_actual is None else int(tool_use_actual), *exposure,
         ))
     return provenance_start, spawns

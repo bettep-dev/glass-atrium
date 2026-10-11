@@ -1546,12 +1546,43 @@ class HarmCheckPayloadTest(_ShadowFixture):
             )
             json.dumps(payload, allow_nan=False)
 
-    def test_outcomes_shaped_as_the_spawn_read_builds_them_leave_verified_fail_unread_not_a_measured_zero(
+    def test_verified_fail_counts_only_graded_outcome_rows(self) -> None:
+        rows = [
+            (
+                "an unverified row sits in the denominator",
+                ("verified_fail", "unverified"),
+                1 / 2,
+            ),
+            (
+                "graded rows alone",
+                ("verified_fail", "verified_pass", "unverified"),
+                1 / 3,
+            ),
+            (
+                "a not-yet-graded row beside them leaves the rate unchanged",
+                ("verified_fail", "verified_pass", "unverified", None),
+                1 / 3,
+            ),
+        ]
+        for name, verdicts, expected in rows:
+            outcomes = tuple(
+                {"attribution_source": "hook-input", "grader_verdict": verdict}
+                for verdict in verdicts
+            )
+            spawns = [spawn._replace(outcomes=outcomes) for spawn in self.history]
+            with self.subTest(name):
+                row = self._get_payload(_OFF_MAP_AGENT, spawns)["harm_checks"][
+                    "guardrails"
+                ]["verified_fail"]
+                self.assertAlmostEqual(row["baseline_rate"], expected)
+                self.assertEqual(row["reading"], dc.HARM_CHECK.READING.READ)
+
+    def test_outcomes_none_of_them_graded_leave_verified_fail_unread_not_a_measured_zero(
         self,
     ) -> None:
-        # the spawn-facts read carries each outcome's attribution_source and no grader_verdict
-        attributed = ({"attribution_source": "hook-input"},)
-        spawns = [spawn._replace(outcomes=attributed) for spawn in self.history]
+        # the spawn-facts read's shape for a row the grader has not reached: the key, value None
+        ungraded = ({"attribution_source": "hook-input", "grader_verdict": None},)
+        spawns = [spawn._replace(outcomes=ungraded) for spawn in self.history]
         row = self._get_payload(_OFF_MAP_AGENT, spawns)["harm_checks"]["guardrails"][
             "verified_fail"
         ]

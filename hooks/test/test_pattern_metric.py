@@ -996,7 +996,8 @@ class TestPatternFloorsSetRead(unittest.TestCase):
         ]
         rows = [
             ("glass-atrium-dev-python", s.agent_id, s.session_id, s.started_at, s.overage_rows,
-             s.stopped_at, [o["attribution_source"] for o in s.outcomes], s.tool_use_actual,
+             s.stopped_at, [o["attribution_source"] for o in s.outcomes],
+             [o.get("grader_verdict") for o in s.outcomes], s.tool_use_actual,
              *_PRE_FIELD)
             for s in passing
         ]
@@ -1534,14 +1535,19 @@ class TestPatternFloorReadLivePg(unittest.TestCase):
             )
 
     def _put_outcome(self, agent_id: str, record_ts: datetime, attribution: str, result: str,
-                     *, grader_verdict: str | None = None, body_md: str | None = None) -> None:
+                     *, grader_verdict: str | None = None, body_md: str | None = None,
+                     outcome_id: int | None = None) -> None:
+        """`outcome_id` None → the id the sequence assigns."""
+        columns, values = "", ()
+        if outcome_id is not None:
+            columns, values = "id, ", (outcome_id,)
         with self.conn.cursor() as cur:
             cur.execute(
-                "INSERT INTO core.outcomes (record_ts, agent, task_type, result, summary, "
-                ' attribution_source, agent_id, grader_verdict, body_md) VALUES (%s, %s, '
+                f"INSERT INTO core.outcomes ({columns}record_ts, agent, task_type, result, summary, "
+                f' attribution_source, agent_id, grader_verdict, body_md) VALUES ({"%s, " * len(values)}%s, %s, '
                 ' \'feature\'::core."TaskType", %s::core."OutcomeResult", \'s2f fixture\', %s, %s, '
                 ' %s::core."GraderVerdict", %s)',
-                (record_ts, self._AGENT, result, attribution, agent_id, grader_verdict, body_md),
+                (*values, record_ts, self._AGENT, result, attribution, agent_id, grader_verdict, body_md),
             )
 
     def _seed(self) -> None:
@@ -1654,6 +1660,39 @@ class TestPatternFloorReadLivePg(unittest.TestCase):
             {spawn.agent_id: _get_exposure(spawn) for spawn in spawns[self._AGENT]},
             {"live-treated": _TREATED, "live-control": _CONTROL, "live-pre-field": _PRE_FIELD},
         )
+
+    def test_the_spawn_read_keeps_each_outcomes_verdict_beside_its_own_attribution_in_id_order(
+        self,
+    ) -> None:
+        started = self.windows.start.confirmation + _DAY
+        self._put_spawn(0, "live-graded", started)
+        # stored out of id order → only the read's own ordering can line the rows up by id
+        stored = [
+            (900_003, "hook-input", "verified_fail"),
+            (900_001, "completion-synthesized", "verified_pass"),
+            (900_002, "structuredoutput-completion", "unverified"),
+        ]
+        for minutes, (outcome_id, attribution, verdict) in enumerate(stored, 1):
+            self._put_outcome("live-graded", started + minutes * _MINUTE, attribution, "done",
+                              grader_verdict=verdict, outcome_id=outcome_id)
+
+        _, spawns = pgdw._read_spawn_facts([self._AGENT], self.windows)
+
+        [spawn] = spawns[self._AGENT]
+        self.assertEqual(spawn.outcomes, tuple(
+            {"attribution_source": attribution, "grader_verdict": verdict}
+            for _, attribution, verdict in sorted(stored)
+        ))
+
+    def test_an_ungraded_outcome_reads_its_verdict_as_none_with_the_key_present(self) -> None:
+        started = self.windows.start.confirmation + _DAY
+        self._put_spawn(0, "live-ungraded", started)
+        self._put_outcome("live-ungraded", started + _MINUTE, "hook-input", "done")
+
+        _, spawns = pgdw._read_spawn_facts([self._AGENT], self.windows)
+
+        [spawn] = spawns[self._AGENT]
+        self.assertEqual(spawn.outcomes, ({"attribution_source": "hook-input", "grader_verdict": None},))
 
     def test_a_schema_without_the_exposure_columns_reads_its_spawns_unexposed(self) -> None:
         import psycopg
