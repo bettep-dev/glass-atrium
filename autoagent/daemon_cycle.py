@@ -9721,7 +9721,7 @@ def _get_harm_payload(
 
 
 def _get_samples(events: int, spawns: int) -> dict:
-    """The efficacy and primary-harm per-arm samples the maximum is the larger of; None outside (0, 1)."""
+    """The efficacy and primary-harm per-arm samples the payload states; None outside (0, 1)."""
     if not 0 < events < spawns:
         return {"efficacy": None, "harm": None}
     rate = events / spawns
