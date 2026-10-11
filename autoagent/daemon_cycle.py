@@ -9328,10 +9328,8 @@ def _get_harm_payload(
     )
     checks = get_harm_checks(
         power_pass.pattern.metric_key,
-        primary_rate,
-        maximum,
         readings,
-        guardrail_count=guardrail_count,
+        HarmSizing(primary_rate, maximum, guardrail_count),
     )
     samples = _get_samples(baseline.events, baseline.spawns)
     return {
@@ -9365,6 +9363,26 @@ class ToolUseBaseline(NamedTuple):
 
     mean: float | None
     sd: float | None  # None under two recorded readings
+
+
+class HarmSizing(NamedTuple):
+    """What a trial's harm checks are sized on: the primary's rate, the per-arm sample and k."""
+
+    primary_rate: float | None
+    per_arm: int | None
+    guardrail_count: int
+
+
+class HarmStage(NamedTuple):
+    """One check's per-stage inputs: the per-arm sample both stages size on, and each stage's α."""
+
+    per_arm: int | None
+    alpha: StageAlpha
+
+
+class StageAlpha(NamedTuple):
+    trial: float
+    watch: float  # a guardrail's family share 0.05/k; the primary's own trial α
 
 
 # D6 margins and D9 R74 α on the harm checks; α + margin read off trial_design at call time
@@ -9417,19 +9435,23 @@ def get_guardrail_baseline(
         and is_floor_half(spawn.agent_id)
     ]
     graded = [row for spawn in members for row in spawn.outcomes if "grader_verdict" in row]
-    tool_uses = [
-        spawn.tool_use_actual for spawn in members if spawn.tool_use_actual is not None
-    ]
     return GuardrailBaseline(
         _get_share(sum(not spawn.has_subagent_stop for spawn in members), len(members)),
         _get_share(
             sum(row["grader_verdict"] == GRADER_VERDICT_FAIL for row in graded),
             len(graded),
         ),
-        ToolUseBaseline(
-            statistics.fmean(tool_uses) if tool_uses else None,
-            statistics.stdev(tool_uses) if len(tool_uses) > 1 else None,
-        ),
+        _get_tool_use_baseline(members),
+    )
+
+
+def _get_tool_use_baseline(spawns: list[SpawnFacts]) -> ToolUseBaseline:
+    tool_uses = [
+        spawn.tool_use_actual for spawn in spawns if spawn.tool_use_actual is not None
+    ]
+    return ToolUseBaseline(
+        statistics.fmean(tool_uses) if tool_uses else None,
+        statistics.stdev(tool_uses) if len(tool_uses) > 1 else None,
     )
 
 
@@ -9438,68 +9460,51 @@ def _get_share(count: int, total: int) -> float | None:
 
 
 def get_harm_checks(
-    metric_key: str,
-    primary_rate: float | None,
-    per_arm: int | None,
-    readings: GuardrailBaseline,
-    *,
-    guardrail_count: int,
+    metric_key: str, readings: GuardrailBaseline, sizing: HarmSizing
 ) -> dict:
     """Per harm check its D6 margin, and per stage its R74 α and minimum detectable harm at that α.
 
     Each guardrail also states the watch's widening over the trial (R226); verified_fail is a
     guardrail only, present at k 4, its row labelled read or unread; re-delegation states its
-    α shares and model-based drift widening here, its margin elsewhere.
+    α shares and model-based widening here, its margin elsewhere.
     """
     if metric_key not in METRIC_KEYS:
         raise ValueError(f"harm checks: {metric_key!r} is not a primary metric key")
-    names, watch_alpha = HARM_CHECK.GUARDRAIL, trial_design.DEFAULT_ALPHA / guardrail_count
-    rate_checks = {
-        names.NO_STOP: (
-            readings.no_stop_rate,
-            _get_no_stop_margin(primary_rate, readings.no_stop_rate),
-        )
-    }
-    if guardrail_count == HARM_CHECK.GUARDRAIL_COUNT.CODE:
-        rate_checks[names.VERIFIED_FAIL] = (
-            readings.verified_fail_rate,
-            1 + trial_design.DEFAULT_RELATIVE_RISE,
-        )
-    guardrails = {
-        name: _get_rate_check(rate, margin, per_arm, watch_alpha)
-        for name, (rate, margin) in rate_checks.items()
-    }
-    if names.VERIFIED_FAIL in guardrails:
-        guardrails[names.VERIFIED_FAIL]["reading"] = (
-            HARM_CHECK.READING.UNREAD
-            if readings.verified_fail_rate is None
-            else HARM_CHECK.READING.READ
-        )
-    is_upward = metric_key == METRIC_BUDGET_OVERAGE
+    alpha = trial_design.DEFAULT_ALPHA
+    stage = HarmStage(sizing.per_arm, StageAlpha(alpha, alpha / sizing.guardrail_count))
+    names = HARM_CHECK.GUARDRAIL
+    guardrails = _get_rate_guardrails(readings, sizing, stage)
     guardrails[names.TOOL_USE] = _get_tool_use_check(
-        readings, per_arm, watch_alpha, is_upward=is_upward
+        readings.tool_use, stage, is_upward=metric_key == METRIC_BUDGET_OVERAGE
     )
-    drift = _get_drift_widening(watch_alpha, sides=1)
-    guardrails[names.REDELEGATION] = {
-        "trial": {"alpha": trial_design.DEFAULT_ALPHA},
-        "watch": {"alpha": watch_alpha},
-        # a mean shift like the band → widens by the drift ratio itself
-        "widening": {
-            "basis": "model-based",
-            "own_unit": {
-                f"design_effect_{value}": drift["fixed_sample"]
-                for value in HARM_CHECK.DESIGN_EFFECTS
-            },
-            "drift": drift,
-        },
-    }
+    guardrails[names.REDELEGATION] = _get_redelegation_check(stage.alpha)
     primary = _get_rate_row(
-        primary_rate,
+        sizing.primary_rate,
         1 + trial_design.DEFAULT_RELATIVE_RISE,
-        per_arm,
-        (trial_design.DEFAULT_ALPHA, trial_design.DEFAULT_ALPHA),
+        HarmStage(sizing.per_arm, StageAlpha(alpha, alpha)),
     )
     return {"primary": {"metric_key": metric_key, **primary}, "guardrails": guardrails}
+
+
+def _get_rate_guardrails(
+    readings: GuardrailBaseline, sizing: HarmSizing, stage: HarmStage
+) -> dict:
+    """The leg's check, and at k 4 verified_fail's, labelled read or unread."""
+    names = HARM_CHECK.GUARDRAIL
+    margin = _get_no_stop_margin(sizing.primary_rate, readings.no_stop_rate)
+    guardrails = {names.NO_STOP: _get_rate_check(readings.no_stop_rate, margin, stage)}
+    if sizing.guardrail_count != HARM_CHECK.GUARDRAIL_COUNT.CODE:
+        return guardrails
+    row = _get_rate_check(
+        readings.verified_fail_rate, 1 + trial_design.DEFAULT_RELATIVE_RISE, stage
+    )
+    row["reading"] = (
+        HARM_CHECK.READING.UNREAD
+        if readings.verified_fail_rate is None
+        else HARM_CHECK.READING.READ
+    )
+    guardrails[names.VERIFIED_FAIL] = row
+    return guardrails
 
 
 def _get_no_stop_margin(
@@ -9512,71 +9517,87 @@ def _get_no_stop_margin(
     return min(relative, 1 + trial_design.DEFAULT_RELATIVE_RISE * primary_rate / no_stop_rate)
 
 
-def _get_rate_check(
-    rate: float | None, margin: float, per_arm: int | None, watch_alpha: float
-) -> dict:
-    row = _get_rate_row(rate, margin, per_arm, (trial_design.DEFAULT_ALPHA, watch_alpha))
-    row["widening"] = _get_widening(row, watch_alpha, origin=1.0, sides=1)
+def _get_rate_check(rate: float | None, margin: float, stage: HarmStage) -> dict:
+    row = _get_rate_row(rate, margin, stage)
+    row["widening"] = _get_widening(row, origin=1.0)
     return row
 
 
-def _get_rate_row(
-    rate: float | None, margin: float, per_arm: int | None, alphas: tuple[float, float]
-) -> dict:
-    trial, watch = (
-        _get_stage(
-            alpha,
-            1,
-            lambda design_effect, alpha=alpha: _get_rate_harm(
-                rate, per_arm, alpha, design_effect
-            ),
+def _get_rate_row(rate: float | None, margin: float, stage: HarmStage) -> dict:
+    """Fold rise per stage at its α; None: no rate in (0, 1), no sample or no detectable rise."""
+
+    def get_harm(alpha: float, design_effect: float) -> float | None:
+        if rate is None or not 0 < rate < 1 or stage.per_arm is None:
+            return None
+        fold = trial_design.get_rate_harm(
+            rate, stage.per_arm, alpha=alpha, design_effect=design_effect
         )
-        for alpha in alphas
-    )
+        return None if math.isinf(fold) else fold
+
     return {
         "unit": "fold rise",
         "baseline_rate": rate,
         "margin": margin,
-        "trial": trial,
-        "watch": watch,
+        **_get_stages(stage.alpha, 1, get_harm),
     }
 
 
 def _get_tool_use_check(
-    readings: GuardrailBaseline,
-    per_arm: int | None,
-    watch_alpha: float,
-    *,
-    is_upward: bool,
+    tool_use: ToolUseBaseline, stage: HarmStage, *, is_upward: bool
 ) -> dict:
     """Upward only on an overage-primary trial, either way otherwise, in both stages (D6)."""
-    sides = 1 if is_upward else 2
+    sides, mean = (1 if is_upward else 2), tool_use.mean
 
     def get_harm(alpha: float, design_effect: float) -> float | None:
-        if not readings.tool_use.sd or per_arm is None:
+        if not tool_use.sd or stage.per_arm is None:
             return None
         return trial_design.get_tool_use_harm(
-            readings.tool_use.sd,
-            per_arm,
+            tool_use.sd,
+            stage.per_arm,
             is_overage_primary=is_upward,
             alpha=alpha,
             design_effect=design_effect,
         )
 
-    mean = readings.tool_use.mean
     row = {
         "unit": "tool uses",
         "baseline_mean": mean,
         "margin": None if mean is None else trial_design.DEFAULT_RELATIVE_RISE * mean,
+        **_get_stages(stage.alpha, sides, get_harm),
     }
-    for stage, alpha in (("trial", trial_design.DEFAULT_ALPHA), ("watch", watch_alpha)):
-        row[stage] = _get_stage(
-            alpha,
-            sides,
-            lambda design_effect, alpha=alpha: get_harm(alpha, design_effect),
-        )
-    row["widening"] = _get_widening(row, watch_alpha, origin=0.0, sides=sides)
+    row["widening"] = _get_widening(row, origin=0.0)
     return row
+
+
+def _get_redelegation_check(alpha: StageAlpha) -> dict:
+    drift = _get_drift_widening(alpha.watch, sides=1)
+    return {
+        "trial": {"alpha": alpha.trial},
+        "watch": {"alpha": alpha.watch},
+        # a mean shift like the band → widens by the drift ratio itself
+        "widening": {
+            "basis": "model-based",
+            "own_unit": {
+                f"design_effect_{value}": drift["fixed_sample"]
+                for value in HARM_CHECK.DESIGN_EFFECTS
+            },
+            "drift": drift,
+        },
+    }
+
+
+def _get_stages(
+    alpha: StageAlpha, sides: int, get_harm: Callable[[float, float], float | None]
+) -> dict:
+    """The trial and the watch stage, each at its own α."""
+    return {
+        name: _get_stage(
+            value,
+            sides,
+            lambda design_effect, value=value: get_harm(value, design_effect),
+        )
+        for name, value in alpha._asdict().items()
+    }
 
 
 def _get_stage(
@@ -9593,19 +9614,7 @@ def _get_stage(
     }
 
 
-def _get_rate_harm(
-    rate: float | None, per_arm: int | None, alpha: float, design_effect: float
-) -> float | None:
-    """trial_design's fold rise at that α; None with no rate in (0, 1), no sample or no detectable rise."""
-    if rate is None or not 0 < rate < 1 or per_arm is None:
-        return None
-    fold = trial_design.get_rate_harm(
-        rate, per_arm, alpha=alpha, design_effect=design_effect
-    )
-    return None if math.isinf(fold) else fold
-
-
-def _get_widening(row: dict, watch_alpha: float, *, origin: float, sides: int) -> dict:
+def _get_widening(row: dict, *, origin: float) -> dict:
     """The watch over the trial at equal sample: in the check's own unit (excess over ``origin``), and on the drift scale."""
     trial, watch = (
         row["trial"]["minimum_detectable"],
@@ -9617,7 +9626,8 @@ def _get_widening(row: dict, watch_alpha: float, *, origin: float, sides: int) -
         else (watch[key] - origin) / (trial[key] - origin)
         for key in trial
     }
-    return {"own_unit": own_unit, "drift": _get_drift_widening(watch_alpha, sides)}
+    drift = _get_drift_widening(row["watch"]["alpha"], row["watch"]["sides"])
+    return {"own_unit": own_unit, "drift": drift}
 
 
 def _get_drift_widening(watch_alpha: float, sides: int) -> dict:

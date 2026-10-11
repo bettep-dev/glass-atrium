@@ -1304,12 +1304,10 @@ def _get_harm_checks(
     no_stop_rate, verified_fail_rate, tool_use = row.readings
     return dc.get_harm_checks(
         metric_key,
-        row.primary_rate,
-        row.per_arm,
         dc.GuardrailBaseline(
             no_stop_rate, verified_fail_rate, dc.ToolUseBaseline(*tool_use)
         ),
-        guardrail_count=row.guardrail_count,
+        dc.HarmSizing(row.primary_rate, row.per_arm, row.guardrail_count),
     )
 
 
@@ -1320,7 +1318,7 @@ class HarmCheckTest(unittest.TestCase):
         self,
     ) -> None:
         readings = dc.GuardrailBaseline(0.10, 0.02, dc.ToolUseBaseline(20.0, 12.0))
-        checks = dc.get_harm_checks(_BUDGET_KEY, 0.05, 790, readings, guardrail_count=4)
+        checks = dc.get_harm_checks(_BUDGET_KEY, readings, dc.HarmSizing(0.05, 790, 4))
         guardrails = checks["guardrails"]
         # the leg's margin: the trial's absolute effect 0.3 × 0.05 read as a fold at the leg's 0.10
         self.assertAlmostEqual(guardrails["no_subagent_stop"]["margin"], 1.15)
@@ -1353,7 +1351,7 @@ class HarmCheckTest(unittest.TestCase):
         for metric_key, sides in ((_BUDGET_KEY, 1), ("emit_failure", 2)):
             for count in (3, 4):
                 checks = dc.get_harm_checks(
-                    metric_key, 0.1, 900, readings, guardrail_count=count
+                    metric_key, readings, dc.HarmSizing(0.1, 900, count)
                 )
                 guardrails = checks["guardrails"]
                 label = f"{metric_key} k {count}"
@@ -1457,13 +1455,11 @@ class HarmCheckTest(unittest.TestCase):
     def test_verified_fail_is_a_guardrail_only_never_a_primary_key(self) -> None:
         readings = dc.GuardrailBaseline(0.05, 0.02, dc.ToolUseBaseline(20.0, 12.0))
         for metric_key in sorted(dc.METRIC_KEYS):
-            checks = dc.get_harm_checks(
-                metric_key, 0.1, 900, readings, guardrail_count=4
-            )
+            checks = dc.get_harm_checks(metric_key, readings, dc.HarmSizing(0.1, 900, 4))
             self.assertEqual(checks["primary"]["metric_key"], metric_key)
             self.assertIn("verified_fail", checks["guardrails"])
         with self.assertRaises(ValueError):
-            dc.get_harm_checks("verified_fail", 0.1, 900, readings, guardrail_count=4)
+            dc.get_harm_checks("verified_fail", readings, dc.HarmSizing(0.1, 900, 4))
 
 
 class GuardrailCountTest(unittest.TestCase):
