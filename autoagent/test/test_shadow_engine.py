@@ -1425,11 +1425,15 @@ class HarmCheckTest(unittest.TestCase):
             self.assertEqual(
                 guardrails["redelegation"]["widening"]["basis"], "model-based"
             )
-            # the band is linear in the drift: its own-unit widening is the drift ratio itself
-            for key in _DESIGN_EFFECT_KEYS:
-                self.assertAlmostEqual(
-                    guardrails["tool_use"]["widening"]["own_unit"][key], ratio, places=3
-                )
+            # linear in the drift (band) or a mean shift like it (re-delegation) → own unit = drift
+            for name in ("tool_use", "redelegation"):
+                for key in _DESIGN_EFFECT_KEYS:
+                    self.assertAlmostEqual(
+                        guardrails[name]["widening"]["own_unit"][key],
+                        ratio,
+                        places=3,
+                        msg=f"{name} {key}",
+                    )
         # a rate guardrail widens more in its own unit at these low rates (leg ×1.271-1.299 at k 4)
         leg = _get_harm_checks(_RECORDED_MEASUREMENTS[1])["guardrails"]["no_subagent_stop"][
             "widening"

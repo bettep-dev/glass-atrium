@@ -9479,13 +9479,18 @@ def get_harm_checks(
     guardrails[names.TOOL_USE] = _get_tool_use_check(
         readings, per_arm, watch_alpha, is_upward=is_upward
     )
+    drift = _get_drift_widening(watch_alpha, sides=1)
     guardrails[names.REDELEGATION] = {
         "trial": {"alpha": trial_design.DEFAULT_ALPHA},
         "watch": {"alpha": watch_alpha},
         # a mean shift like the band → widens by the drift ratio itself
         "widening": {
             "basis": "model-based",
-            "drift": _get_drift_widening(watch_alpha, sides=1),
+            "own_unit": {
+                f"design_effect_{value}": drift["fixed_sample"]
+                for value in HARM_CHECK.DESIGN_EFFECTS
+            },
+            "drift": drift,
         },
     }
     primary = _get_rate_row(
