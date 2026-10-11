@@ -39,7 +39,11 @@ if str(_AUTOAGENT_DIR) not in sys.path:
 _TEST_DIR = Path(__file__).resolve().parent
 if str(_TEST_DIR) not in sys.path:
     sys.path.insert(0, str(_TEST_DIR))
+_STUB_DIR = _REPO_ROOT / "scripts" / "test"
+if str(_STUB_DIR) not in sys.path:
+    sys.path.insert(0, str(_STUB_DIR))
 
+import _pg_stub_backend as stub  # noqa: E402 — anchors pinned above
 from _pg_seal import seal_pg_reach  # noqa: E402 — anchors pinned above
 
 try:
@@ -73,6 +77,15 @@ _REJECTED_DIFF = (
 )
 
 
+def _bind_trial_ledger(testcase: unittest.TestCase) -> None:
+    # TRIAL_LEDGER binds only with psycopg; a stdlib-only run reads the helper's names
+    patcher = mock.patch.object(
+        dc, "TRIAL_LEDGER", stub.get_trial_ledger(), create=not hasattr(dc, "TRIAL_LEDGER")
+    )
+    patcher.start()
+    testcase.addCleanup(patcher.stop)
+
+
 def _pattern(label: str = "test signal", agent: str = _AGENT):
     return dc.Pattern(
         date="2026-08-17",
@@ -89,6 +102,9 @@ def _pattern(label: str = "test signal", agent: str = _AGENT):
 @unittest.skipIf(dc is None, f"import failed: {_IMPORT_ERROR}")
 class FetchLandedProposalsTest(unittest.TestCase):
     """(a) fail-OPEN discipline + the applied-only projection."""
+
+    def setUp(self) -> None:
+        _bind_trial_ledger(self)
 
     def test_when_pg_off_then_returns_none(self) -> None:
         with mock.patch.object(dc, "HAS_PG_LOOP_WRITE", False):
@@ -138,6 +154,9 @@ def _attempt(
 @unittest.skipIf(dc is None, f"import failed: {_IMPORT_ERROR}")
 class FetchPriorAttemptsTest(unittest.TestCase):
     """(a) fail-OPEN discipline + the row normalization."""
+
+    def setUp(self) -> None:
+        _bind_trial_ledger(self)
 
     def test_when_pg_off_then_returns_none(self) -> None:
         with mock.patch.object(dc, "HAS_PG_LOOP_WRITE", False):
