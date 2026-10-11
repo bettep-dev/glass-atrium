@@ -8807,6 +8807,8 @@ def check_pattern_power(patterns: list[Pattern], *, skip_loop_emit: bool) -> Pow
     The floor is get_floor_verdict over the spawn read the power inputs come from, so
     both judge one history. Each verdict is a stderr line plus a census loop event
     (none under skip_loop_emit); verdict only — no status write, no pattern parked or dropped.
+    A floor-failing keyed pattern gets no verdict and is not counted: it gets N49's named
+    stale-pattern-skip instead, the aggregator owning its move to 'dormant'.
     Each fault WARNs and never passes: an unreadable history or missing trial math counts
     every keyed pattern unchecked; an unreadable ledger counts every floor-passing one
     unchecked, an invalid stored design effect only the patterns on that agent's metric key.
@@ -8824,10 +8826,17 @@ def check_pattern_power(patterns: list[Pattern], *, skip_loop_emit: bool) -> Pow
     event_ts = windows.end.strftime("%Y-%m-%dT00:00:00.000Z")
     inputs = _read_power_inputs(sorted({pattern.agent for pattern in keyed}), windows)
     for pattern in keyed:
-        judged = _get_pattern_power_verdict(pattern, inputs, windows)
-        if judged is None:
+        verdict, detail, power_pass = _get_pattern_power_verdict(pattern, inputs, windows)
+        if verdict is None:
+            _warn_pattern_skip(
+                pattern.agent,
+                pattern.raw_line,
+                event_ts,
+                eval_result=PAIR_FAIL_EVAL,
+                reason=detail,
+                skip_loop_emit=skip_loop_emit,
+            )
             continue
-        verdict, detail, power_pass = judged
         counts[verdict] += 1
         if power_pass is not None:
             passes.append(power_pass)
@@ -8837,8 +8846,11 @@ def check_pattern_power(patterns: list[Pattern], *, skip_loop_emit: bool) -> Pow
 
 def _get_pattern_power_verdict(
     pattern: Pattern, inputs: PowerInputs | None, windows: PairWindows
-) -> tuple[str, str, PowerPass | None] | None:
-    """(verdict, detail, evidence when passing) of one keyed pattern; None when its floor does not pass."""
+) -> tuple[str | None, str, PowerPass | None]:
+    """(verdict, detail, evidence when passing) of one keyed pattern.
+
+    A floor that does not pass → no verdict (None) and the pair skip reason as detail.
+    """
     if inputs is None:
         return POWER.VERDICT.UNCHECKED, "power inputs unavailable", None
     spawns = inputs.spawns.get(pattern.agent, [])
@@ -8847,7 +8859,8 @@ def _get_pattern_power_verdict(
         spawns, pattern.metric_key, windows, inputs.provenance_start, windows.end
     )
     if floor.verdict != VERDICT_PASS:
-        return None
+        reason = _get_pair_skip_reason(pattern.metric_key, floor, windows.start.detection)
+        return None, reason, None
     subject = PowerSubject((pattern.agent, pattern.metric_key), floor)
     if subject.key in inputs.unchecked_keys:
         return POWER.VERDICT.UNCHECKED, "A/A design effect unusable", None
@@ -11471,18 +11484,21 @@ def _warn_pattern_skip(
     *,
     eval_result: str,
     reason: str,
+    skip_loop_emit: bool = False,
 ) -> None:
     """Skipped/snoozed pattern → stderr WARN + loop-event emit, never silent.
 
     Same observability contract as _warn_roster_mismatch (Precondition
     Loud-Fail): eval_result rows in core.autoagent_loop_events surface the drop
     to the monitor; the stderr line carries the recompute / streak detail.
+    skip_loop_emit (no-write cycle) keeps the WARN and writes no loop event.
     """
     sys.stderr.write(
         f"[daemon-cycle] WARN: pattern {eval_result} — agent={agent} "
         f"({signature[:80]!r}): {reason}\n"
     )
-    _emit_gate_loop_event(agent, event_ts, eval_result)
+    if not skip_loop_emit:
+        _emit_gate_loop_event(agent, event_ts, eval_result)
 
 
 def _emit_gate_loop_event(
@@ -12613,12 +12629,12 @@ def _group_patterns_by_agent(
     """Group patterns by .agent → list of (agent, [patterns]), agent cap applied.
 
     Group order = each agent's first-appearance order (input is freq DESC, so the
-    highest-frequency agent comes first — high-freq priority when agent_cap < total
+    highest-frequency agent comes first — high-freq priority when agent_cap < passing
     agents). Within-group pattern order also preserves the input (freq DESC).
 
     Args:
-        patterns: read_user_pending_patterns result (freq DESC).
-        agent_cap: max agents to process (UNLIMITED_AGENTS = unlimited).
+        patterns: the power check's passing patterns (freq DESC).
+        agent_cap: max passing agents to process (UNLIMITED_AGENTS = unlimited).
 
     Returns:
         list of (agent, patterns) tuples — at most agent_cap.
@@ -13161,7 +13177,9 @@ def run_cycle(
     """One daemon cycle — intake, power check, generation, gates and report.
 
     Only a power-passing pattern reaches generation: any other verdict parks it for
-    this cycle, counted and re-checked next cycle. _run_generation_loop runs the
+    this cycle, counted and re-checked next cycle; a floor-failing keyed pattern gets
+    no verdict, so it is not counted but skipped by name (N49's stale-pattern-skip).
+    _run_generation_loop runs the
     per-agent flow — pattern → patch proposal → classification → pre-verify as a
     compliance filter → safety routing; the floor terminalizes every auto candidate.
 
@@ -13209,8 +13227,9 @@ def run_cycle(
         )
 
     # per-TARGET (agent) flow: 1) read all user-pending patterns (agent cap applies
-    # to agents, not patterns, so no slicing here) → 2) group by .agent → 3) apply
-    # agent cap → 4) one consolidated multi-hunk proposal per agent.
+    # to agents, not patterns, so no slicing here) → 2) power check → 3) group its
+    # passes (freq DESC) by .agent → 4) agent cap on passing agents → 5) one
+    # consolidated multi-hunk proposal per agent.
     # Discharge first: a pattern whose patch already landed must not seed this
     # cycle's intake. One untruncated pattern read serves the discharge's intake
     # check and the regression gate's coverage question.

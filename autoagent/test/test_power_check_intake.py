@@ -499,7 +499,20 @@ class CheckPatternPowerTest(_StageFixture):
             },
         )
         self.assertIn(f"agent={_AGENT.PASSING} key={_KEY.BUDGET}: passing", stderr_text)
-        self.assertNotIn(_AGENT.FLOOR_FAILING, stderr_text)
+        self.assertNotIn(f"agent={_AGENT.FLOOR_FAILING} key=", stderr_text)
+
+    def test_a_floor_failing_pattern_is_uncounted_and_named_as_a_stale_pattern_skip(
+        self,
+    ) -> None:
+        counts, stderr_text = self._check(self.patterns)
+        self.assertEqual(sum(counts.values()), 2)
+        self.assertIn(
+            f"pattern stale-pattern-skip — agent={_AGENT.FLOOR_FAILING}", stderr_text
+        )
+        self.assertIn(f"{_KEY.BUDGET} pair from", stderr_text)
+        self.assertIn(
+            (_AGENT.FLOOR_FAILING, dc.PAIR_FAIL_EVAL), self._get_event_results()
+        )
 
     def test_an_agent_with_no_aa_design_effect_row_is_counted_design_unmeasured_never_passing(
         self,
@@ -693,8 +706,13 @@ class CheckPatternPowerTest(_StageFixture):
 
     def test_each_verdict_is_sent_as_a_census_loop_event(self) -> None:
         self._check(self.patterns)
+        power_events = [
+            (agent, eval_result)
+            for agent, eval_result in self._get_event_results()
+            if eval_result.startswith(dc.POWER.CHECK_EVAL_PREFIX)
+        ]
         self.assertEqual(
-            self._get_event_results(),
+            power_events,
             sorted(
                 [
                     (_AGENT.PASSING, "power-check-passing"),
@@ -748,7 +766,7 @@ class CheckPatternPowerTest(_StageFixture):
             with self.subTest(name), mock.patch.multiple(dc, **patches):
                 counts, stderr_text = self._check(self.patterns)
                 self.assertEqual((counts["unchecked"], sum(counts.values())), (2, 2))
-                self.assertNotIn(_AGENT.FLOOR_FAILING, stderr_text)
+                self.assertNotIn(f"agent={_AGENT.FLOOR_FAILING} key=", stderr_text)
                 self.assertIn("WARN: power check", stderr_text)
 
     def test_a_no_write_cycle_counts_but_sends_no_loop_event(self) -> None:
@@ -917,7 +935,7 @@ class PowerCheckCycleReportTest(_StageFixture):
         self.root = Path(tmp.name)
         agents_dir = self.root / "agents"
         agents_dir.mkdir()
-        for agent in (_AGENT.PASSING, _AGENT.UNDERPOWERED):
+        for agent in (_AGENT.PASSING, _AGENT.UNDERPOWERED, _AGENT.FLOOR_FAILING):
             (agents_dir / f"{agent}.md").write_text("probe", encoding="utf-8")
         env = mock.patch.dict(
             os.environ,
@@ -932,7 +950,7 @@ class PowerCheckCycleReportTest(_StageFixture):
             _AGENT.PASSING: _get_floor_passing_history(_UNITS.AT_BOUND),
             _AGENT.UNDERPOWERED: _get_floor_passing_history(_UNITS.BELOW_BOUND),
         }
-        rows = [
+        self.pattern_rows = rows = [
             {
                 "id": row_id,
                 "agent": agent,
@@ -957,14 +975,19 @@ class PowerCheckCycleReportTest(_StageFixture):
         )
 
     def _run(self) -> dc.CycleReport:
-        with contextlib.redirect_stderr(io.StringIO()):
-            return dc.run_cycle(
+        stderr = io.StringIO()
+        with contextlib.redirect_stderr(stderr):
+            report = dc.run_cycle(
                 log_path=self.root / "learning-log.md",
                 agents_dir=self.root / "agents",
                 skip_haiku=True,
                 skip_pre_verify=True,
                 skip_loop_emit=True,
             )
+        self.stderr_text = stderr.getvalue()
+        self.assertEqual(self.pg_reach, [])
+        self.assertEqual(self.statements.refused, [])
+        return report
 
     def _stub_generator(self, proposed_diff: str = "") -> list[str]:
         """Generator calls land in the returned list, one agent name per call."""
@@ -989,8 +1012,6 @@ class PowerCheckCycleReportTest(_StageFixture):
 
     def test_the_report_counter_equals_the_passing_count(self) -> None:
         report = self._run()
-        self.assertEqual(self.pg_reach, [])
-        self.assertEqual(self.statements.refused, [])
         self.assertCountEqual(
             self.statements.seen,
             [dc.POWER.DESIGN_EFFECT_SQL, *self.statements.answered_empty],
@@ -1007,7 +1028,25 @@ class PowerCheckCycleReportTest(_StageFixture):
         self.assertEqual(
             (report.power_check["passing"], report.power_check["underpowered"]), (1, 1)
         )
-        self.assertEqual(self.pg_reach, [])
+
+    def test_a_floor_failing_keyed_pattern_is_named_as_a_stale_pattern_skip_never_generated(
+        self,
+    ) -> None:
+        self.histories[_AGENT.FLOOR_FAILING] = _get_floor_failing_history()
+        self.pattern_rows.append(
+            {
+                **self.pattern_rows[0],
+                "id": 3,
+                "agent": _AGENT.FLOOR_FAILING,
+                "pattern_signature": f"budget-overage concentration|{_AGENT.FLOOR_FAILING}",
+            }
+        )
+        generated = self._stub_generator()
+        report = self._run()
+        self.assertEqual(generated, [_AGENT.PASSING])
+        self.assertEqual(sum(report.power_check.values()), 2)
+        skip_line = f"pattern stale-pattern-skip — agent={_AGENT.FLOOR_FAILING}"
+        self.assertIn(skip_line, self.stderr_text)
 
     def test_the_cycle_date_reaches_the_generation_unit(self) -> None:
         self._stub_generator()
