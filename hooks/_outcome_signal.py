@@ -329,6 +329,13 @@ class WindowStarts(NamedTuple):
     confirmation: datetime
 
 
+class Window(NamedTuple):
+    """One half-open UTC window [start, end)."""
+
+    start: datetime
+    end: datetime
+
+
 class PairWindows(NamedTuple):
     """Half-open UTC windows: baseline [start.baseline, start.detection) · detection
     [start.detection, start.confirmation) · confirmation [start.confirmation, end)."""
@@ -497,30 +504,29 @@ def is_task_overrun(task: Sequence[SpawnFacts], tool_budget: int) -> bool:
 
 
 def get_overran_gaps(
-    spawns_by_type: Mapping[str, Iterable[SpawnFacts]],
-    start: datetime,
-    end: datetime,
-    tool_budget: int,
+    spawns_by_type: Mapping[str, Iterable[SpawnFacts]], window: Window, *, tool_budget: int
 ) -> dict[str, list[float]]:
     """Each agent type's overran gaps, in minutes.
 
-    One gap per stopped, session-mapped spawn started in [start, end) that overruns alone
+    One gap per stopped, session-mapped spawn started in `window` that overruns alone
     (`is_task_overrun`): from its stop to the earliest other start of its own type in its parent
     session at or after that stop, wherever that start falls; no such start → no gap."""
     return {
-        agent_type: _get_type_overran_gaps(list(spawns), start, end, tool_budget)
+        agent_type: _get_type_overran_gaps(list(spawns), window, tool_budget=tool_budget)
         for agent_type, spawns in spawns_by_type.items()
     }
 
 
 def _get_type_overran_gaps(
-    spawns: list[SpawnFacts], start: datetime, end: datetime, tool_budget: int
+    spawns: list[SpawnFacts], window: Window, *, tool_budget: int
 ) -> list[float]:
     spawns_by_session = _get_spawns_by_session(spawns)
     gaps: list[float] = []
     for spawn in spawns:
         stop = spawn.stopped_at
-        if stop is None or spawn.session_id is None or not start <= spawn.started_at < end:
+        if stop is None or spawn.session_id is None:
+            continue
+        if not window.start <= spawn.started_at < window.end:
             continue
         if not is_task_overrun((spawn,), tool_budget):
             continue
@@ -567,14 +573,14 @@ def _get_p90_minutes(gaps: Sequence[float]) -> int:
 def get_follow_up_counts(
     spawns_by_type: Mapping[str, Iterable[SpawnFacts]],
     agent_type: str,
-    start: datetime,
-    end: datetime,
+    window: Window,
+    *,
     redelegation_window: timedelta,
     evaluated_at: datetime,
 ) -> list[tuple[SpawnFacts, int]]:
     """Each counted spawn of `agent_type` with its follow-up count.
 
-    Counted: stopped, session-mapped, started in [start, end), its window closed — stop +
+    Counted: stopped, session-mapped, started in `window`, its own window closed — stop +
     `redelegation_window` at or before `evaluated_at`. Follow-ups: every other `agent_type` spawn
     `_is_continuation` places after it, wherever it starts; one inside several windows counts
     for each."""
@@ -586,21 +592,19 @@ def get_follow_up_counts(
             if other is not spawn and _is_continuation(spawn, other, redelegation_window)
         ))
         for spawn in spawns
-        if _is_counted(spawn, start, end, redelegation_window, evaluated_at)
+        if _is_counted(
+            spawn, window, redelegation_window=redelegation_window, evaluated_at=evaluated_at
+        )
     ]
 
 
 def _is_counted(
-    spawn: SpawnFacts,
-    start: datetime,
-    end: datetime,
-    redelegation_window: timedelta,
-    evaluated_at: datetime,
+    spawn: SpawnFacts, window: Window, *, redelegation_window: timedelta, evaluated_at: datetime
 ) -> bool:
     return (
         spawn.stopped_at is not None
         and spawn.session_id is not None
-        and start <= spawn.started_at < end
+        and window.start <= spawn.started_at < window.end
         and spawn.stopped_at + redelegation_window <= evaluated_at
     )
 

@@ -742,7 +742,8 @@ class TestOverranGaps(unittest.TestCase):
     """An overran gap: an overran spawn's stop to the next same-type start in its session."""
 
     def _get_gaps(self, spawns: list[sig.SpawnFacts]) -> list[float]:
-        return sig.get_overran_gaps({"dev-shell": spawns}, _GAP.START, _GAP.END, 40)["dev-shell"]
+        window = sig.Window(_GAP.START, _GAP.END)
+        return sig.get_overran_gaps({"dev-shell": spawns}, window, tool_budget=40)["dev-shell"]
 
     def test_each_gap_runs_to_the_next_start_in_the_overran_spawns_session(self) -> None:
         overran = _get_run("o", 0, 10, overage_rows=1)
@@ -795,7 +796,9 @@ class TestOverranGaps(unittest.TestCase):
                 _get_run("react-n", 52, None),
             ],
         }
-        gaps = sig.get_overran_gaps(spawns_by_type, _GAP.START, _GAP.END, 40)
+        gaps = sig.get_overran_gaps(
+            spawns_by_type, sig.Window(_GAP.START, _GAP.END), tool_budget=40
+        )
         self.assertEqual(gaps, {"dev-shell": [20.0], "dev-react": [2.0]})
 
 
@@ -844,7 +847,11 @@ class TestFollowUpCounts(unittest.TestCase):
         self, spawns_by_type: dict[str, list[sig.SpawnFacts]], evaluated_at: datetime = _CLOSED
     ) -> dict[str | None, int]:
         counts = sig.get_follow_up_counts(
-            spawns_by_type, "dev-shell", _GAP.START, _GAP.END, self._W, evaluated_at
+            spawns_by_type,
+            "dev-shell",
+            sig.Window(_GAP.START, _GAP.END),
+            redelegation_window=self._W,
+            evaluated_at=evaluated_at,
         )
         return {spawn.agent_id: count for spawn, count in counts}
 
@@ -901,6 +908,31 @@ class TestFollowUpCounts(unittest.TestCase):
             with self.subTest(name):
                 self.assertEqual(self._get_counts(spawns, evaluated_at), expected)
 
+
+
+class TestWindowedPrimitiveCallShape(unittest.TestCase):
+    """The half-open window travels as one value and the scalars beside it go by keyword only,
+    so a misplaced scalar raises instead of counting under the wrong value."""
+
+    def test_each_primitive_refuses_its_keyword_only_options_by_position(self) -> None:
+        window = sig.Window(_GAP.START, _GAP.END)
+        spawns = [_get_run("a", 0, 10, overage_rows=1), _get_run("f", 30, None)]
+        spawns_by_type = {"dev-shell": spawns}
+        counting = {"redelegation_window": 60 * _MINUTE, "evaluated_at": _GAP.END + 30 * _DAY}
+        rows = [
+            ("get_overran_gaps", sig.get_overran_gaps, (spawns_by_type, window),
+             {"tool_budget": 40}),
+            ("_get_type_overran_gaps", sig._get_type_overran_gaps, (spawns, window),
+             {"tool_budget": 40}),
+            ("get_follow_up_counts", sig.get_follow_up_counts,
+             (spawns_by_type, "dev-shell", window), counting),
+            ("_is_counted", sig._is_counted, (spawns[0], window), counting),
+        ]
+        for name, primitive, positional, options in rows:
+            with self.subTest(name):
+                primitive(*positional, **options)
+                with self.assertRaises(TypeError):
+                    primitive(*positional, *options.values())
 
 @unittest.skipIf(pgdw is None, f"import failed: {_IMPORT_ERROR}")
 class TestPatternFloorReadFailure(unittest.TestCase):
