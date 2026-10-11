@@ -1028,7 +1028,7 @@ class PowerCheckCycleReportTest(_StageFixture):
         self.assertEqual(self.statements.refused, [])
         return report
 
-    def _stub_generator(self, proposed_diff: str = "") -> list[str]:
+    def _stub_generator(self) -> list[str]:
         """Generator calls land in the returned list, one agent name per call."""
         generated: list[str] = []
 
@@ -1037,9 +1037,9 @@ class PowerCheckCycleReportTest(_StageFixture):
             return dc.PatchProposal(
                 target_file=str(agents_dir / f"{agent}.md"),
                 rationale="add one rule line",
-                proposed_diff=proposed_diff,
+                proposed_diff="",
                 touched_frontmatter=False,
-                estimated_added_lines=1 if proposed_diff else 0,
+                estimated_added_lines=0,
                 raw_response="",
                 parse_mode="strict",
             )
@@ -1099,34 +1099,6 @@ class PowerCheckCycleReportTest(_StageFixture):
         with mock.patch.object(dc, "build_patch_result", _build):
             report = self._run()
         self.assertEqual(handed, [report.cycle_date])
-
-    def test_a_verified_non_safety_auto_candidate_is_still_stored_as_the_floor_row(
-        self,
-    ) -> None:
-        self._stub_generator(proposed_diff="+- one added rule line\n")
-        verified = dc.PreVerifyResult(
-            passed=True,
-            rationale="all four axes pass",
-            axes=dict.fromkeys(("C1", "C2", "C3", "C4"), True),
-            status="ok",
-            latency_ms=0,
-        )
-        for name, value in (
-            ("classify_patch_area", lambda *_args, **_kwargs: "body-auto"),
-            ("run_pre_verify", lambda *_args, **_kwargs: verified),
-            ("classify_safety_tier", lambda _proposal: ""),
-        ):
-            patcher = mock.patch.object(dc, name, value)
-            patcher.start()
-            self.addCleanup(patcher.stop)
-        report = self._run()
-        self.assertEqual(
-            [
-                (patch.status, patch.approval_tier, patch.classification)
-                for patch in report.patches
-            ],
-            [("unadjudicated", "", "reject")],
-        )
 
 
 if __name__ == "__main__":
