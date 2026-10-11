@@ -93,6 +93,12 @@ _PAYLOAD = SimpleNamespace(
     },
 )
 _TRIAL_LEDGER_MIGRATION = "20261008000000_add_trial_ledger_and_cycle_verdicts"
+_LIVE_PROPOSAL_ID = 4127
+# a live trial's start: its canary file's first-written instant + the canary text hash
+_LIVE_START_PAYLOAD = {
+    "started_at": "2026-10-12T03:00:00+00:00",
+    "text_sha256": "c" * 64,
+}
 
 
 @contextlib.contextmanager
@@ -251,6 +257,8 @@ class TestTrialLedgerClosedSets(unittest.TestCase):
             ("look, empty object", "live-look", {}),
             ("decision", "live-decision", {"outcome": "win"}),
             ("decision, no object", "live-decision", ["horizon"]),
+            ("start", "live-start", _LIVE_START_PAYLOAD),
+            ("start, empty object", "live-start", {}),
         )
         with _load_helper() as helper:
             for name, event, payload in rows:
@@ -397,6 +405,65 @@ class TestTrialLedgerWriterLivePg(unittest.TestCase):
                 for offset, payload in enumerate((_UNBOUND_DELIVERY.PAYLOAD, second_line))
             ],
         )
+
+    def test_a_live_start_row_lands_once_on_its_start_key(self) -> None:
+        self._use_database(self._TEMPLATE.FULL)
+        key = self.writer.get_live_trial_key(_LIVE_PROPOSAL_ID)
+        repeat = {"started_at": "2026-10-13T03:00:00+00:00", "text_sha256": "d" * 64}
+
+        counts = [
+            self.writer.write_trial_ledger_row(
+                "live-start",
+                "daemon-cycle-live",
+                payload,
+                trial_key=key,
+                agent=_AGENT,
+                dedupe_key=f"{key}:start",
+            )
+            for payload in (_LIVE_START_PAYLOAD, repeat)
+        ]
+
+        self.assertEqual(counts, [1, 0])
+        self.assertEqual(
+            [(row[0], row[3], row[4], row[5], row[6]) for row in self._get_rows()],
+            [
+                (
+                    key,
+                    "live-start",
+                    "daemon-cycle-live",
+                    _LIVE_START_PAYLOAD,
+                    f"{key}:start",
+                )
+            ],
+        )
+
+    def test_a_live_trials_start_key_collides_with_none_of_its_other_once_only_keys(
+        self,
+    ) -> None:
+        self._use_database(self._TEMPLATE.FULL)
+        key = self.writer.get_live_trial_key(_LIVE_PROPOSAL_ID)
+        # (event, dedupe_key) of every once-only row one live trial writes
+        rows = [
+            ("live-preregistration", key),
+            ("live-look", f"{key}:look:1"),
+            ("live-decision", f"{key}:decision"),
+            ("live-start", f"{key}:start"),
+        ]
+
+        counts = [
+            self.writer.write_trial_ledger_row(
+                event,
+                "daemon-cycle-live",
+                {},
+                trial_key=key,
+                agent=_AGENT,
+                dedupe_key=dedupe_key,
+            )
+            for event, dedupe_key in rows
+        ]
+
+        self.assertEqual(counts, [1, 1, 1, 1])
+        self.assertEqual([(row[3], row[6]) for row in self._get_rows()], rows)
 
     def test_rows_without_a_dedupe_key_each_land(self) -> None:
         self._use_database(self._TEMPLATE.FULL)

@@ -1224,6 +1224,8 @@ _TRIAL_LEDGER_EVENT = SimpleNamespace(
     LIVE_LOOK="live-look",  # dedupe_key = <live trial key>:look:<n>
     # once per trial; a live pre-registration with no decision row is an open trial
     LIVE_DECISION="live-decision",  # dedupe_key = <live trial key>:decision
+    # once per trial: its canary file's first-written instant and the canary text's hash
+    LIVE_START="live-start",  # dedupe_key = <live trial key>:start
     POWER_PASS_COUNT="power-pass-count",  # dedupe_key = power-pass-count:<cycle date>
     AA_START="aa-start",  # opens the A/A; dedupe_key = aa-start:after:<latest start id | 0>
     AA_RESTART="aa-restart",  # dedupe_key = aa-restart:<start id>:<cycle date>
