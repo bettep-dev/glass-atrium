@@ -5,8 +5,9 @@ terminal state while auto-apply is closed: it fossilizes as a standing "New
 suggestions" pile on the monitor LEARNING board.
 
 ``daemon_cycle.resolve_floor_terminalization`` closes that limbo at the GENERATION
-source: every auto+pending candidate is rewritten to a terminal
-``status='unadjudicated'``, while safety-tier rows stay pending for human approval.
+source: every auto+pending candidate the cycle bound to no live pre-registration is
+rewritten to a terminal ``status='unadjudicated'``; a bound candidate stays pending,
+in trial, and safety-tier rows stay pending for human approval.
 
 The posterior and its promotion tier are a label only: whatever tier the ladder
 assigns, the status, approval tier and terminalization verdict stay the same, and
@@ -97,22 +98,37 @@ class TestPromotionTierIsALabel(unittest.TestCase):
             with self.subTest(row=name):
                 self.assertEqual(tier, name)
 
-    def test_when_auto_pending_then_terminalized_whatever_its_tier(self) -> None:
-        for name, tier in _get_tier_rows():
-            with self.subTest(row=name):
-                result = dc.resolve_floor_terminalization(
-                    classification="body-auto",
-                    approval_tier="auto",
-                    status_value="pending",
-                    promotion_tier=tier,
-                    rationale="haiku rationale",
-                )
-                self.assertTrue(result.terminalized)
-                self.assertEqual(result.status_value, "unadjudicated")
-                self.assertEqual(result.approval_tier, "")
-                self.assertEqual(result.classification, "reject")
-                self.assertEqual(result.rationale, dc._BELOW_FLOOR_REJECT_REASON)
-                self.assertEqual(result.promotion_tier, tier)
+    def test_when_auto_pending_then_only_a_bound_candidate_stays_pending_whatever_its_tier(
+        self,
+    ) -> None:
+        bound = ("auto", "pending", "body-auto", "haiku rationale", False)
+        floored = ("", "unadjudicated", "reject", dc._BELOW_FLOOR_REJECT_REASON, True)
+        rows = (
+            ("bound — the cycle attached a pre-registration payload", True, bound),
+            ("unbound — no payload attached", False, floored),
+        )
+        for row_name, is_bound, expected in rows:
+            for name, tier in _get_tier_rows():
+                with self.subTest(candidate=row_name, row=name):
+                    result = dc.resolve_floor_terminalization(
+                        classification="body-auto",
+                        approval_tier="auto",
+                        status_value="pending",
+                        promotion_tier=tier,
+                        rationale="haiku rationale",
+                        is_bound=is_bound,
+                    )
+                    self.assertEqual(
+                        (
+                            result.approval_tier,
+                            result.status_value,
+                            result.classification,
+                            result.rationale,
+                            result.terminalized,
+                        ),
+                        expected,
+                    )
+                    self.assertEqual(result.promotion_tier, tier)
 
     def test_when_not_auto_pending_then_untouched_whatever_its_tier(self) -> None:
         # Safety tier is the human queue; rejected / snoozed rows are already

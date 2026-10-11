@@ -1,11 +1,12 @@
-"""Shadow engine stage: pre-registration, looks and the power-pass counter on the trial ledger.
+"""Live trial opening and the shadow stage: the bound payload, live looks and the pass counter.
 
-The stage decides nothing: it pre-registers one trial per power-passing pattern, records each
-look milestone the accrued tasks reach, and counts the cycle's power verdicts once per cycle
-date. Every row outside the live class is database-free under ``seal_pg_reach``; the ledger is
-an in-memory append-only fake behind the writer and connection seams. The live class runs the
-pre-registration read's SQL on the cluster ``autoagent/test/live-pg-ephemeral.bats`` provisions
-and skips elsewhere.
+The cycle attaches a pre-registration payload only to a verified non-safety candidate of a
+power-passing pattern; the push stores it as the live pre-registration. The stage decides
+nothing and pre-registers nothing: it counts the cycle's power verdicts once per cycle date
+and records each look milestone a live trial's accrued tasks reach. Every row outside the
+live class is database-free under ``seal_pg_reach``; the ledger is an in-memory append-only
+fake behind the writer and connection seams. The live class runs the pre-registration read's
+SQL on the cluster ``autoagent/test/live-pg-ephemeral.bats`` provisions and skips elsewhere.
 
 Run with either runner:
     uv run --with pytest pytest autoagent/test/test_shadow_engine.py -v
@@ -70,6 +71,21 @@ _REQUIRED = trial_design.get_required_units(
 )
 _MILESTONES = [fraction * _REQUIRED for fraction in trial_design.LOOK_FRACTIONS]
 _LOOK_KEYS = {"look", "fraction", "milestone", "boundary", "accrued_tasks"}
+# the payload's top-level keys the cycle builds; readers: metric_key (the read), looks (looks)
+_PREREGISTRATION_KEYS = {
+    "metric_key",
+    "detection_start",
+    "baseline",
+    "maximum_per_arm",
+    "design_effect",
+    "required_units",
+    "boundaries",
+    "looks",
+    "task_window_seconds",
+}
+# a live trial as the push stores it: trial and dedupe key from the proposal id
+_PROPOSAL_ID = 9001
+_LIVE_KEY = f"{_PROPOSAL_ID:064x}"
 
 
 def _get_agent_ids(*, is_floor: bool):
@@ -292,6 +308,12 @@ class _ShadowFixture(unittest.TestCase):
             agent: list(self.history) for agent in agents
         }
 
+    def _check_power(self) -> dc.PowerResult:
+        """The intake power check at the clock's now (stderr dropped); kept as the cycle's power."""
+        with contextlib.redirect_stderr(io.StringIO()):
+            self.power = dc.check_pattern_power(self.patterns, skip_loop_emit=True)
+        return self.power
+
     def _cycle(self, now: datetime) -> str:
         """One intake power check + shadow stage at `now`; returns its stderr."""
         self.clock.now = now
@@ -299,101 +321,246 @@ class _ShadowFixture(unittest.TestCase):
         with contextlib.redirect_stderr(stderr):
             power = dc.check_pattern_power(self.patterns, skip_loop_emit=True)
             dc.run_shadow_stage(power, now.strftime("%Y-%m-%d"))
+        self.power = power
         self.assertEqual(self.pg_reach, [])
         self.assertEqual(self.ledger.refused, [])
         return stderr.getvalue()
 
+    def _open_live_trial(self, *, event: str = "", missing: tuple[str, ...] = ()) -> str:
+        """The current pass's pre-registration, stored at the clock's now as the push does → its key.
+
+        `event` defaults to the live pre-registration; `missing` drops payload keys."""
+        trial_ledger = stub.get_trial_ledger()
+        power = self._check_power()
+        [power_pass] = power.passes
+        payload = dc.get_preregistration_payload(power_pass, power.windows.start.detection)
+        for key in missing:
+            del payload[key]
+        is_shadow = event == trial_ledger.EVENT.SHADOW_PREREGISTRATION
+        detection_start = power.windows.start.detection
+        key = dc.get_trial_key(power_pass.pattern, detection_start) if is_shadow else _LIVE_KEY
+        self.ledger.write(
+            event or trial_ledger.EVENT.LIVE_PREREGISTRATION,
+            trial_ledger.ACTOR.SHADOW if is_shadow else trial_ledger.ACTOR.LIVE,
+            payload if is_shadow else {**payload, "proposal_id": _PROPOSAL_ID},
+            trial_key=key,
+            agent=_AGENT,
+            learning_pattern_id=_PATTERN_ID,
+            dedupe_key=key,
+        )
+        return key
+
     def _get_preregistrations(self) -> list[_LedgerRow]:
-        return self.ledger.get_rows(stub.get_trial_ledger().EVENT.SHADOW_PREREGISTRATION)
+        event = stub.get_trial_ledger().EVENT
+        return [
+            row
+            for row in self.ledger.rows
+            if row.event in (event.SHADOW_PREREGISTRATION, event.LIVE_PREREGISTRATION)
+        ]
 
     def _get_looks(self) -> list[_LedgerRow]:
-        return self.ledger.get_rows(stub.get_trial_ledger().EVENT.SHADOW_LOOK)
+        event = stub.get_trial_ledger().EVENT
+        looks = (event.SHADOW_LOOK, event.LIVE_LOOK)
+        return [row for row in self.ledger.rows if row.event in looks]
 
 
-class PreRegistrationTest(_ShadowFixture):
-    """One pre-registration per trial, its sizing frozen from the trial-design module."""
+class BoundPayloadTest(_ShadowFixture):
+    """Only a verified non-safety candidate of a passing pattern is bound; only it stays pending auto."""
 
-    def test_the_preregistration_freezes_the_trial_design_boundaries_maximum_and_look_milestones(
+    def setUp(self) -> None:
+        super().setUp()
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        self.agents_dir = Path(tmp.name)
+        self.target = self.agents_dir / f"{_AGENT}.md"
+        self.target.write_text("# probe agent\n", encoding="utf-8")
+        self.generated: list[str] = []
+        # supersede, gate history and back-off: PG paths outside this unit's question
+        for name, value in (
+            ("supersede_prior_pending_for_agent", lambda *args, **kwargs: 0),
+            ("_drop_gated_patterns", lambda _agent, patterns, _gate: patterns),
+            ("consecutive_timeout_count", lambda *args: 0),
+            ("INTER_CALL_SPACING_SEC", 0),
+            ("_pg_read_open_trials", self._read_open_trials),
+        ):
+            self._patch(name, value)
+        self.clock.now = _NOW
+
+    def _read_open_trials(self) -> dict[str, list[int]]:
+        event = stub.get_trial_ledger().EVENT
+        decided = {row.dedupe_key for row in self.ledger.get_rows(event.LIVE_DECISION)}
+        open_trials: dict[str, list[int]] = {}
+        for row in self.ledger.get_rows(event.LIVE_PREREGISTRATION):
+            if f"{row.trial_key}:decision" not in decided:
+                open_trials.setdefault(row.agent, []).append(row.payload["proposal_id"])
+        return open_trials
+
+    def _proposal(self, agent: str, *_args: object, **_kwargs: object) -> dc.PatchProposal:
+        self.generated.append(agent)
+        return dc.PatchProposal(
+            target_file=str(self.target),
+            rationale="probe rationale",
+            proposed_diff="--- a\n+++ b\n@@ -1 +1,2 @@\n # probe agent\n+- probe rule\n",
+            touched_frontmatter=False,
+            estimated_added_lines=1,
+            raw_response="probe raw response",
+        )
+
+    def _seams(self, verdict: dc.PreVerifyResult, *, safety: str, area: str) -> dict:
+        return {
+            "generate_consolidated_proposal": self._proposal,
+            "classify_patch_area": lambda *args, **kwargs: area,
+            "classify_safety_tier": lambda *args, **kwargs: safety,
+            "run_pre_verify": lambda *args, **kwargs: verdict,
+        }
+
+    def _build(
+        self,
+        power: dc.PowerResult | None,
+        verdict: dc.PreVerifyResult = dc.PreVerifyResult(True, "ok", {}, "ok", 0),
+        *,
+        safety: str = "non-safety",
+        area: str = "body-auto",
+        skip_loop_emit: bool = False,
+    ) -> dc.PatchResult:
+        """The generation unit over the pattern; generator and pre-verify faked at their call."""
+        with contextlib.ExitStack() as stack:
+            stack.enter_context(contextlib.redirect_stderr(io.StringIO()))
+            for name, value in self._seams(verdict, safety=safety, area=area).items():
+                stack.enter_context(mock.patch.object(dc, name, value))
+            result = dc.build_patch_result(
+                _AGENT,
+                list(self.patterns),
+                cycle_date=f"{_NOW:%Y-%m-%d}",
+                agents_dir=self.agents_dir,
+                seen_targets=set(),
+                skip_haiku=True,
+                skip_pre_verify=False,
+                skip_loop_emit=skip_loop_emit,
+                power=power,
+            )
+        self.assertEqual(self.pg_reach, [])
+        return result
+
+    def test_the_bound_payload_freezes_the_trial_design_boundaries_maximum_and_look_milestones(
         self,
     ) -> None:
-        self._cycle(_NOW)
-        [row] = self._get_preregistrations()
-        payload = row.payload
+        power = self._check_power()
+        [power_pass] = power.passes
+        result = self._build(power)
+        payload = result.preregistration_payload
+        self.assertEqual(
+            payload, dc.get_preregistration_payload(power_pass, power.windows.start.detection)
+        )
+        self.assertEqual(set(payload), _PREREGISTRATION_KEYS)
         self.assertEqual(payload["boundaries"], list(trial_design.get_boundaries()))
-        self.assertEqual(len(payload["boundaries"]), 4)
         self.assertEqual(payload["maximum_per_arm"], _MAXIMUM)
         self.assertEqual(payload["design_effect"], _DESIGN_EFFECT.value)
         self.assertEqual([look["milestone"] for look in payload["looks"]], _MILESTONES)
-        self.assertEqual(
-            (row.agent, row.learning_pattern_id, row.actor, row.dedupe_key),
-            (_AGENT, _PATTERN_ID, stub.get_trial_ledger().ACTOR.SHADOW, row.trial_key),
+        self.assertEqual((result.approval_tier, result.status), ("auto", "pending"))
+
+    def test_a_candidate_the_cycle_did_not_bind_carries_no_payload_and_never_stays_pending_auto(
+        self,
+    ) -> None:
+        power = self._check_power()
+        no_pass = dc.PowerResult(power.counts, [], power.windows)
+        quality_fail = dc.PreVerifyResult(False, "C1 failed", {"C1": False}, "ok", 0)
+        c3_miss = dc.PreVerifyResult(
+            False,
+            "C3: FAIL — scope file unresolved",
+            {"C1": True, "C2": True, "C3": False, "C4": True},
+            "ok",
+            0,
         )
-        self.assertRegex(row.trial_key, re.compile(r"^[0-9a-f]{64}$"))
+        rows = (
+            ("a power pass with no candidate", {"power": power, "area": "reject"}),
+            ("a pre-verify fail", {"power": power, "verdict": quality_fail}),
+            ("a C3 miss", {"power": power, "verdict": c3_miss}),
+            ("a safety-routed candidate", {"power": power, "safety": "safety"}),
+            ("no-write mode", {"power": power, "skip_loop_emit": True}),
+            ("no power pass for the lead pattern", {"power": no_pass}),
+            ("no power result", {"power": None}),
+        )
+        for name, arguments in rows:
+            with self.subTest(name):
+                result = self._build(**arguments)
+                self.assertIsNone(result.preregistration_payload)
+                self.assertNotEqual((result.approval_tier, result.status), ("auto", "pending"))
 
-    def test_cycles_on_consecutive_days_over_a_still_passing_pattern_write_one_preregistration(
+    def test_an_agent_in_trial_gets_no_second_preregistration_until_its_trial_is_decided(
         self,
     ) -> None:
-        self._cycle(_NOW)
-        self._cycle(_NEXT_NOW)
-        self.assertEqual(len(self._get_preregistrations()), 1)
-        counters = self.ledger.get_rows(stub.get_trial_ledger().EVENT.POWER_PASS_COUNT)
-        self.assertEqual([row.payload["passing"] for row in counters], [1, 1])
-
-    def test_a_lifecycle_move_after_the_preregistration_starts_a_new_trial_on_the_current_pair(
-        self,
-    ) -> None:
-        rows = [
-            ("never transitioned → the trial is kept", None, 1),
-            (
-                "transitioned before the pre-registration → the trial is kept",
-                _NOW - timedelta(days=3),
-                1,
-            ),
-            (
-                "transitioned after the pre-registration → a new trial",
-                _NOW + timedelta(hours=2),
-                2,
-            ),
-        ]
-        for name, last_transition_at, preregistrations in rows:
+        trial_ledger = stub.get_trial_ledger()
+        rows = (("open trial", False, []), ("decided trial", True, [_AGENT]))
+        for name, is_decided, bound_agents in rows:
             with self.subTest(name):
                 self.ledger.rows.clear()
-                self.patterns = [_pattern(last_transition_at=last_transition_at)]
-                self._cycle(_NOW)
-                self._cycle(_NEXT_NOW)
-                registered = self._get_preregistrations()
-                self.assertEqual(len(registered), preregistrations)
+                key = self._open_live_trial()
+                if is_decided:
+                    self.ledger.write(
+                        trial_ledger.EVENT.LIVE_DECISION,
+                        trial_ledger.ACTOR.LIVE,
+                        {},
+                        trial_key=key,
+                        agent=_AGENT,
+                        dedupe_key=f"{key}:decision",
+                    )
+                report = SimpleNamespace(patches=[], cycle_date=f"{_NOW:%Y-%m-%d}")
+                verified = dc.PreVerifyResult(True, "ok", {}, "ok", 0)
+                with contextlib.ExitStack() as stack:
+                    stack.enter_context(contextlib.redirect_stderr(io.StringIO()))
+                    seams = self._seams(verified, safety="non-safety", area="body-auto")
+                    for seam, value in seams.items():
+                        stack.enter_context(mock.patch.object(dc, seam, value))
+                    dc._run_generation_loop(
+                        report,
+                        [(_AGENT, list(self.patterns))],
+                        dc.GenerationRun(
+                            regression_gate=object(),
+                            agents_dir=self.agents_dir,
+                            skip_haiku=False,
+                            skip_pre_verify=False,
+                            skip_loop_emit=False,
+                            power=self.power,
+                        ),
+                    )
                 self.assertEqual(
-                    registered[-1].payload["detection_start"],
-                    get_pair_windows(
-                        self.clock.now if preregistrations == 2 else _NOW
-                    ).start.detection.isoformat(),
+                    [
+                        patch.pattern_agent
+                        for patch in report.patches
+                        if patch.preregistration_payload is not None
+                    ],
+                    bound_agents,
                 )
+                self.assertEqual(self.pg_reach, [])
 
-    def test_a_lifecycle_move_on_the_preregistrations_utc_day_lands_no_new_trial_and_warns_by_name(
-        self,
-    ) -> None:
-        first_stderr = self._cycle(_NOW)
-        self.patterns = [_pattern(last_transition_at=_NOW + timedelta(hours=1))]
-        second_stderr = self._cycle(_NOW + timedelta(hours=2))
-        [trial] = self._get_preregistrations()
-        warning = f"WARN: shadow stage — trial {trial.trial_key}: pre-registration landed 0 rows"
-        self.assertNotIn(warning, first_stderr)
-        self.assertIn(warning, second_stderr)
+
+class ShadowStageTest(_ShadowFixture):
+    """The stage pre-registers nothing: the live pre-registration is the push's."""
+
+    def test_cycles_over_a_still_passing_pattern_write_only_the_counter(self) -> None:
+        self._cycle(_NOW)
+        self._cycle(_NEXT_NOW)
+        trial_ledger = stub.get_trial_ledger()
+        self.assertEqual(
+            [row.event for row in self.ledger.rows],
+            [trial_ledger.EVENT.POWER_PASS_COUNT] * 2,
+        )
 
 
 class LookTest(_ShadowFixture):
-    """Looks accrue on tasks from the pre-registration; each reached milestone is one row, never a decision."""
+    """Looks of live trials only: accrual from the pre-registration, one row per reached milestone."""
 
-    def test_each_reached_look_is_recorded_with_its_accrual_and_boundary_and_no_decision(
+    def test_each_reached_look_is_recorded_as_a_live_look_with_its_accrual_and_boundary(
         self,
     ) -> None:
+        key = self._open_live_trial()
         self._cycle(_NOW)
         accrued = math.ceil(_MILESTONES[1])  # looks 1 and 2 reached, 3 not
         self.history += _get_spawns_after(_NOW, accrued)
         self._cycle(_NEXT_NOW)
         looks = self._get_looks()
-        [trial] = self._get_preregistrations()
+        trial_ledger = stub.get_trial_ledger()
         boundaries = trial_design.get_boundaries()
         self.assertEqual([look.payload["look"] for look in looks], [1, 2])
         for look in looks:
@@ -401,14 +568,46 @@ class LookTest(_ShadowFixture):
             self.assertEqual(set(look.payload), _LOOK_KEYS)
             self.assertEqual(look.payload["accrued_tasks"], accrued)
             self.assertEqual(look.payload["boundary"], boundaries[number - 1])
-            self.assertEqual(look.dedupe_key, f"{trial.trial_key}:look:{number}")
+            self.assertEqual(
+                (look.event, look.actor, look.trial_key, look.dedupe_key),
+                (
+                    trial_ledger.EVENT.LIVE_LOOK,
+                    trial_ledger.ACTOR.LIVE,
+                    key,
+                    f"{key}:look:{number}",
+                ),
+            )
 
     def test_a_task_started_before_the_preregistration_accrues_nothing(self) -> None:
         self.history += _get_spawns_after(
             _NOW - timedelta(hours=1), math.ceil(_MILESTONES[0])
         )
+        self._open_live_trial()
         self._cycle(_NOW)
         self._cycle(_NEXT_NOW)
+        self.assertEqual(self._get_looks(), [])
+
+    def test_a_stored_pre_generation_row_never_counts_as_the_patterns_current_trial(
+        self,
+    ) -> None:
+        # same pair, same UTC day: the shadow row holds the pair's own key and reached milestones
+        self._open_live_trial(event=stub.get_trial_ledger().EVENT.SHADOW_PREREGISTRATION)
+        self.history += _get_spawns_after(_NOW, math.ceil(_MILESTONES[1]))
+        stored = list(self.ledger.rows)
+        self._cycle(_NEXT_NOW)
+        self.assertEqual(self._get_looks(), [])
+        self.assertEqual(self._get_preregistrations(), stored[:1])
+
+    def test_a_stored_live_preregistration_missing_looks_writes_no_look_and_warns_by_name(
+        self,
+    ) -> None:
+        key = self._open_live_trial(missing=("looks",))
+        self.history += _get_spawns_after(_NOW, math.ceil(_MILESTONES[1]))
+        stderr = self._cycle(_NEXT_NOW)
+        self.assertIn(
+            f"WARN: shadow stage — trial {key}: stored pre-registration unusable: KeyError",
+            stderr,
+        )
         self.assertEqual(self._get_looks(), [])
 
     def test_synthetic_two_arm_data_at_each_look_records_the_pooled_z_beside_the_boundary(
@@ -451,6 +650,7 @@ class DuplicateTest(_ShadowFixture):
     def test_a_second_cycle_over_the_same_evidence_writes_no_duplicate_row(
         self,
     ) -> None:
+        self._open_live_trial()
         self._cycle(_NOW)
         self.history += _get_spawns_after(_NOW, math.ceil(_MILESTONES[1]))
         self._cycle(_NEXT_NOW)
@@ -462,8 +662,8 @@ class DuplicateTest(_ShadowFixture):
         self.assertEqual(
             events,
             {
-                trial_ledger.EVENT.SHADOW_PREREGISTRATION,
-                trial_ledger.EVENT.SHADOW_LOOK,
+                trial_ledger.EVENT.LIVE_PREREGISTRATION,
+                trial_ledger.EVENT.LIVE_LOOK,
                 trial_ledger.EVENT.POWER_PASS_COUNT,
             },
         )
@@ -511,9 +711,8 @@ class PowerPassCounterTest(_ShadowFixture):
                     (counter.payload["passing"], counter.payload["design-unmeasured"]),
                     (passing, unmeasured),
                 )
-                registered = self._get_preregistrations()
                 self.assertEqual(
-                    [row.payload["design_effect"] for row in registered],
+                    [power_pass.design_effect for power_pass in self.power.passes],
                     [] if design_effect is None else [design_effect.value],
                 )
 
@@ -531,13 +730,15 @@ class LedgerFaultTest(_ShadowFixture):
             self.assertIn("WARN: shadow stage — power-pass-count", stderr_text)
             self.assertIn("ConnectionError", stderr_text)
         with self.subTest("the pre-registration read faults"):
+            self._open_live_trial()
+            self.history += _get_spawns_after(_NOW, math.ceil(_MILESTONES[1]))
             self.ledger.faulted.add(dc.SHADOW.PREREGISTRATION_SQL)
-            stderr_text = self._cycle(_NOW)
+            stderr_text = self._cycle(_NEXT_NOW)
             self.assertIn(
                 "WARN: shadow stage — pre-registrations unreadable: ConnectionError",
                 stderr_text,
             )
-            self.assertEqual(self._get_preregistrations(), [])
+            self.assertEqual(self._get_looks(), [])
 
 
 class PreRegistrationReadLivePgTest(_ShadowFixture):
@@ -582,10 +783,12 @@ class PreRegistrationReadLivePgTest(_ShadowFixture):
         agent: str = _AGENT,
         pattern_id: int = _PATTERN_ID,
     ) -> str:
-        """One ledger row for (agent, pattern_id, budget_overage) → its trial key."""
+        """One ledger row for (agent, pattern_id, budget_overage), actor by event → its trial key."""
         key = hashlib.sha256(
             f"{agent}|{pattern_id}|{event}|{recorded_at.isoformat()}".encode()
         ).hexdigest()
+        trial_ledger = stub.get_trial_ledger()
+        actor = (trial_ledger.ACTOR.SHADOW, trial_ledger.ACTOR.LIVE)
         with self._connect() as conn:
             conn.execute(
                 "INSERT INTO core.autoagent_trial_ledger (recorded_at, trial_key, agent,"
@@ -597,7 +800,7 @@ class PreRegistrationReadLivePgTest(_ShadowFixture):
                     agent,
                     pattern_id,
                     event,
-                    stub.get_trial_ledger().ACTOR.SHADOW,
+                    actor[event.startswith("live-")],
                     json.dumps({"metric_key": _BUDGET_KEY}),
                     key,
                 ),
@@ -617,18 +820,20 @@ class PreRegistrationReadLivePgTest(_ShadowFixture):
         self._use_database(self._TEMPLATE.FULL)
         event = stub.get_trial_ledger().EVENT
         latest_at = _NOW - timedelta(days=1)
-        latest = self._insert(latest_at, event.SHADOW_PREREGISTRATION)
-        # older yet inserted later · another pattern · an agent outside the passes · a later look
-        self._insert(_NOW - timedelta(days=3), event.SHADOW_PREREGISTRATION)
+        latest = self._insert(latest_at, event.LIVE_PREREGISTRATION)
+        # older yet inserted later · another pattern · an agent outside the passes · a later
+        # live look · a later stored pre-generation row for the same pair
+        self._insert(_NOW - timedelta(days=3), event.LIVE_PREREGISTRATION)
         other = self._insert(
             _NOW - timedelta(days=2),
-            event.SHADOW_PREREGISTRATION,
+            event.LIVE_PREREGISTRATION,
             pattern_id=_PATTERN_ID + 1,
         )
         self._insert(
-            latest_at, event.SHADOW_PREREGISTRATION, agent="glass-atrium-dev-shell"
+            latest_at, event.LIVE_PREREGISTRATION, agent="glass-atrium-dev-shell"
         )
-        self._insert(_NOW, event.SHADOW_LOOK)
+        self._insert(_NOW, event.LIVE_LOOK)
+        self._insert(_NOW, event.SHADOW_PREREGISTRATION)
         trials = dc._read_shadow_trials(power.passes)
         self.assertEqual(
             {group: trial.key for group, trial in trials.items()},
@@ -642,7 +847,7 @@ class PreRegistrationReadLivePgTest(_ShadowFixture):
         self.assertEqual(trial.recorded_at, latest_at)
         self.assertEqual(trial.payload, {"metric_key": _BUDGET_KEY})
 
-    def test_a_schema_without_the_ledger_warns_on_the_read_and_preregisters_nothing(
+    def test_a_schema_without_the_ledger_warns_on_the_read_and_writes_no_look(
         self,
     ) -> None:
         power = self._check_power()
@@ -655,7 +860,7 @@ class PreRegistrationReadLivePgTest(_ShadowFixture):
             r"WARN: shadow stage — pre-registrations unreadable: UndefinedTable: "
             r".*core\.autoagent_trial_ledger",
         )
-        self.assertEqual(self._get_preregistrations(), [])
+        self.assertEqual(self._get_looks(), [])
         self.assertEqual(self.pg_reach, [])
 
 
@@ -819,7 +1024,8 @@ class CycleWiringTest(_ShadowFixture):
         self._patch("_pg_read_pending_patterns", lambda: [dict(intake)])
 
     def _run_cycle(self, *, skip_loop_emit: bool) -> dc.CycleReport:
-        with contextlib.redirect_stderr(io.StringIO()):
+        self.stderr = io.StringIO()
+        with contextlib.redirect_stderr(self.stderr):
             report = dc.run_cycle(
                 log_path=self.root / "learning-log.md",
                 agents_dir=self.root / "agents",
@@ -836,7 +1042,7 @@ class CycleWiringTest(_ShadowFixture):
         self.assertEqual(self.ledger.refused, [])
         self.assertEqual(self.ledger.rows, [])
 
-    def test_a_writing_cycle_counts_and_preregisters_on_the_ledger(self) -> None:
+    def _open_writing_stages(self) -> None:
         def _refuse(*args: object, **kwargs: object) -> None:
             raise ConnectionRefusedError("corpus audit: no database in this test")
 
@@ -844,8 +1050,11 @@ class CycleWiringTest(_ShadowFixture):
         self._patch(
             "_pg_write_loop_event", lambda *args, **kwargs: True
         )  # census events: not under test
+
+    def test_a_writing_cycle_counts_on_the_ledger_and_preregisters_nothing(self) -> None:
+        self._open_writing_stages()
         self._run_cycle(skip_loop_emit=False)
-        # other writing stages' statements (pending-auto terminalization) are refused, not under test
+        # other writing stages' statements are refused, not under test
         self.assertEqual(
             [
                 statement
@@ -856,15 +1065,31 @@ class CycleWiringTest(_ShadowFixture):
         )
         trial_ledger = stub.get_trial_ledger()
         self.assertEqual(
-            sorted(row.event for row in self.ledger.rows),
-            sorted(
-                [
-                    trial_ledger.EVENT.POWER_PASS_COUNT,
-                    trial_ledger.EVENT.SHADOW_PREREGISTRATION,
-                ]
-            ),
+            [row.event for row in self.ledger.rows],
+            [trial_ledger.EVENT.POWER_PASS_COUNT],
         )
 
+    def test_an_unusable_stored_live_preregistration_leaves_the_cycle_running_through_the_aa_stage(
+        self,
+    ) -> None:
+        stages: list[str] = []
+        shadow_stage = dc.run_shadow_stage
+        self._patch(
+            "run_shadow_stage",
+            lambda *args: (shadow_stage(*args), stages.append("shadow")),
+        )
+        self._patch("run_aa_stage", lambda *args, **kwargs: stages.append("aa"))
+        self._open_writing_stages()
+        key = self._open_live_trial(missing=("looks",))
+        self.history += _get_spawns_after(_NOW, math.ceil(_MILESTONES[1]))
+        self.clock.now = _NEXT_NOW
+        self._run_cycle(skip_loop_emit=False)
+        self.assertIn(
+            f"WARN: shadow stage — trial {key}: stored pre-registration unusable",
+            self.stderr.getvalue(),
+        )
+        self.assertEqual(self._get_looks(), [])
+        self.assertEqual(stages, ["shadow", "aa"])
 
 if __name__ == "__main__":
     unittest.main()

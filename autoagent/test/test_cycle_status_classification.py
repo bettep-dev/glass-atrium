@@ -20,7 +20,9 @@ classification (a gate verdict, never `unadjudicated`), `pending` otherwise. The
 patch's pattern link and generator-input version reach the envelope as the patch
 carries them, and an absent one is sent as None. A patch carrying a pre-registration
 body is sent as one combined proposal-and-pre-registration write; a body that is no
-object is a named fault for that patch alone, and the push exits non-zero.
+object is a named fault for that patch alone, and the push exits non-zero. A bound
+candidate the cycle itself serialized reaches that combined write carrying the body the
+cycle built.
 
 The report file the cycle writes for that writer carries no Solution History key,
 and a reported patch carries no prior-day outcome sample count.
@@ -39,6 +41,7 @@ import json
 import sys
 import tempfile
 import unittest
+from datetime import datetime, timezone
 from pathlib import Path
 from types import SimpleNamespace
 from unittest import mock
@@ -298,6 +301,85 @@ class ProposalStatusSent(unittest.TestCase):
                 )
                 self.assertIn("preregistration_payload", stderr)
                 self.assertIn("pattern_label=p", stderr)
+
+    @unittest.skipIf(dc is None, f"import failed: {_IMPORT_ERROR}")
+    def test_a_bound_candidate_the_cycle_serializes_reaches_one_combined_write_with_its_payload(
+        self,
+    ) -> None:
+        pg_reach = seal_pg_reach(self)
+        result = self._build_bound_result()
+        report = dc.CycleReport(
+            cycle_date="2026-10-03",
+            generated_at="2026-10-03T02:00:00.000Z",
+            patterns_processed=1,
+            cost_guard={},
+            patches=[result],
+        )
+        (patch,) = dc._report_to_dict(report)["patches"]
+
+        exit_code, sent, _ = self._push([patch])
+
+        proposal_writes = [e for e in sent if e["op"] in (_OP.PLAIN, _OP.COMBINED)]
+        self.assertEqual(exit_code, 0)
+        self.assertIsInstance(result.preregistration_payload, dict)
+        self.assertEqual([e["op"] for e in proposal_writes], [_OP.COMBINED])
+        self.assertEqual(
+            proposal_writes[0]["args"]["preregistration_payload"],
+            result.preregistration_payload,
+        )
+        self.assertEqual(pg_reach, [])
+
+    def _build_bound_result(self) -> "dc.PatchResult":
+        """A writing cycle's generation unit on the bound path; generator and pre-verify faked."""
+        pattern = dc.Pattern(
+            date="2026-10-02",
+            label="budget-overage concentration",
+            frequency="9",
+            agent=_PROBE_AGENT,
+            status="identified",
+            tier="user-pending",
+            raw_line=f"pg:learning_log:4127:budget-overage concentration|{_PROBE_AGENT}",
+            row_id=4127,
+            metric_key="budget_overage",
+        )
+        baseline = dc.WindowCount(spawns=200, events=20, sessions=20)
+        power_pass = dc.PowerPass(pattern, baseline, 1.5, 500.0, [])
+        windows = dc.get_pair_windows(datetime(2026, 10, 3, 2, 0, tzinfo=timezone.utc))
+        power = dc.PowerResult({}, [power_pass], windows)
+        with tempfile.TemporaryDirectory() as tmp:
+            agents_dir = Path(tmp)
+            target = agents_dir / f"{_PROBE_AGENT}.md"
+            target.write_text("# probe\n", encoding="utf-8")
+            proposal = dc.PatchProposal(
+                target_file=str(target),
+                rationale="probe rationale",
+                proposed_diff="--- a\n+++ b\n@@ -1 +1,2 @@\n # probe\n+- probe rule\n",
+                touched_frontmatter=False,
+                estimated_added_lines=1,
+                raw_response="probe raw response",
+            )
+            with (
+                mock.patch.object(
+                    dc, "generate_consolidated_proposal", lambda *a, **k: proposal
+                ),
+                mock.patch.object(
+                    dc,
+                    "run_pre_verify",
+                    lambda *a, **k: dc.PreVerifyResult(True, "ok", {}, "ok", 0),
+                ),
+                contextlib.redirect_stderr(io.StringIO()),
+            ):
+                return dc.build_patch_result(
+                    _PROBE_AGENT,
+                    [pattern],
+                    cycle_date="2026-10-03",
+                    agents_dir=agents_dir,
+                    seen_targets=set(),
+                    skip_haiku=True,
+                    skip_pre_verify=False,
+                    skip_loop_emit=False,
+                    power=power,
+                )
 
     @unittest.skipIf(dc is None, f"import failed: {_IMPORT_ERROR}")
     def test_a_reported_patch_carries_no_outcome_sample_count(self) -> None:

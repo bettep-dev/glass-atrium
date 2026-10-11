@@ -1584,9 +1584,9 @@ def is_apply_eligible_patch_dict(patch: dict[str, object]) -> bool:
 
 @dataclass(frozen=True)
 class FloorTerminalization:
-    """Resolved status of a candidate while auto-apply is closed.
+    """Resolved status of a candidate at the floor.
 
-    `terminalized` is True only for an auto+pending candidate — in that case the
+    `terminalized` is True only for an unbound auto+pending candidate — in that case the
     routing fields carry the rewritten terminal-reject values; otherwise they echo
     the inputs unchanged. `promotion_tier` always echoes its input (a label).
     """
@@ -1605,17 +1605,19 @@ def resolve_floor_terminalization(
     status_value: str,
     promotion_tier: str,
     rationale: str,
+    *,
+    is_bound: bool = False,
 ) -> FloorTerminalization:
-    """Terminalize every auto candidate at the generation source.
+    """Terminalize every auto candidate the cycle bound to no live pre-registration.
 
-    Auto-apply is closed until live trials, so an auto+pending candidate would sit
-    pending forever — auto-apply never acts on it AND auto-tier is not a
-    safety-queue candidate. It is rewritten to a terminal 'unadjudicated' row here
-    instead — a closed-apply hold is not a gate verdict, so it never takes
-    'rejected'.
+    Only a bound candidate is stored pending auto, in trial; its trial's graduation is
+    its one apply path. Any other auto+pending candidate would sit pending forever —
+    nothing applies it AND auto-tier is not a safety-queue candidate. It is rewritten
+    to a terminal 'unadjudicated' row here instead — a hold is not a gate verdict, so
+    it never takes 'rejected'.
 
     The posterior's promotion tier is a label only: it never decides the verdict
-    and passes through unchanged. Only the (approval_tier='auto',
+    and passes through unchanged. Only the unbound (approval_tier='auto',
     status='pending') shape is rewritten. Safety tier (approval_tier='safety') and
     already-terminal rows (rejected / snoozed) pass through unchanged — the human
     approval queue and the existing reject/back-off paths are preserved.
@@ -1626,12 +1628,13 @@ def resolve_floor_terminalization(
         status_value: 'pending' / 'rejected' / 'snoozed' as resolved upstream.
         promotion_tier: the candidate's promotion tier label (echoed unchanged).
         rationale: the candidate's current rationale.
+        is_bound: the cycle attached a live pre-registration payload to the candidate.
 
     Returns:
         FloorTerminalization — rewritten reject values when terminalized, else the
         inputs echoed unchanged.
     """
-    if approval_tier != "auto" or status_value != "pending":
+    if is_bound or approval_tier != "auto" or status_value != "pending":
         return FloorTerminalization(
             classification=classification,
             approval_tier=approval_tier,
@@ -2072,6 +2075,9 @@ class PatchResult:
     learning_pattern_id: int | None = None
     # GENERATOR_INPUT_VERSION as build_patch_result stamps it; None on a row built elsewhere.
     generator_input_version: str | None = None
+    # A bound candidate's live pre-registration body, plain dicts only (asdict turns a
+    # NamedTuple into an array); the push writes it with the proposal in one transaction.
+    preregistration_payload: dict | None = None
 
 
 @dataclass
@@ -8811,7 +8817,7 @@ class PowerCheck(NamedTuple):
 
 
 class PowerPass(NamedTuple):
-    """One power-passing pattern with the evidence its shadow trial is pre-registered on."""
+    """One power-passing pattern with the evidence a bound candidate's live trial is sized on."""
 
     pattern: Pattern
     baseline: WindowCount
@@ -9122,7 +9128,7 @@ def _send_power_verdict(
 
 
 SHADOW = SimpleNamespace(
-    # latest pre-registration per (agent, pattern, metric key); DISTINCT ON keeps one row each
+    # latest pre-registration of the bound event per (agent, pattern, metric key); one row each
     PREREGISTRATION_SQL=(
         "SELECT DISTINCT ON (agent, learning_pattern_id, payload->>'metric_key') "
         "agent, learning_pattern_id, payload->>'metric_key', trial_key, payload, recorded_at "
@@ -9179,6 +9185,7 @@ class TrialArms(NamedTuple):
 
 class ShadowRow(NamedTuple):
     event: str
+    actor: str
     payload: dict
     dedupe_key: str
 
@@ -9199,12 +9206,13 @@ class LookAccrual(NamedTuple):
 
 
 def run_shadow_stage(power: PowerResult, cycle_date: str) -> None:
-    """Shadow engine: count power verdicts, pre-register passing trials, record reached looks; decides nothing.
+    """Shadow engine: count power verdicts, record reached looks of live trials; decides nothing.
 
-    - rows: one power-pass-count per cycle date · one pre-registration per trial key · one per reached look
-    - trial kept: pre-registration recorded at or after the row's last_transition_at (a NULL anchor keeps it);
-      otherwise the current pair starts a new one
-    - accrual: tasks from the pre-registration's recorded_at → none in its pre-registration cycle
+    - rows: one power-pass-count per cycle date · one live look per reached look; no
+      pre-registration — the push writes the live one with its bound candidate
+    - trial: a passing pattern's latest live pre-registration, current when recorded at or after
+      the row's last_transition_at (a NULL anchor keeps it); otherwise no look
+    - accrual (interim basis): tasks from the pre-registration's recorded_at → none in its cycle
     - arms: no production arm source yet → look rows carry accrual only
     - ledger fault: named WARN, never a failed cycle · --dry-run: the caller skips the stage
     """
@@ -9214,6 +9222,7 @@ def run_shadow_stage(power: PowerResult, cycle_date: str) -> None:
     _write_shadow_row(
         ShadowRow(
             TRIAL_LEDGER.EVENT.POWER_PASS_COUNT,
+            TRIAL_LEDGER.ACTOR.SHADOW,
             power.counts,
             dedupe_key=f"power-pass-count:{cycle_date}",
         )
@@ -9232,9 +9241,8 @@ def run_shadow_stage(power: PowerResult, cycle_date: str) -> None:
 def _write_shadow_pass(
     power_pass: PowerPass, trial: ShadowTrial | None, windows: PairWindows
 ) -> None:
-    """Keep a current trial and record its reached looks; otherwise pre-register the current pair."""
+    """Record a current live trial's reached looks; no current trial → nothing written."""
     if trial is None or not _is_trial_current(trial, power_pass.pattern.last_transition_at):
-        _write_shadow_preregistration(power_pass, windows.start.detection)
         return
     try:
         _write_shadow_looks(trial, power_pass, windows.end)
@@ -9306,43 +9314,23 @@ def _is_trial_current(trial: ShadowTrial, last_transition_at: datetime | None) -
 def _read_shadow_trials(
     passes: list[PowerPass],
 ) -> dict[tuple[str, int, str | None], ShadowTrial] | None:
-    """(agent, pattern id, metric key) → latest pre-registration; None (WARN) on a read fault."""
+    """(agent, pattern id, metric key) → latest live pre-registration; None (WARN) on a fault."""
     agents = sorted({power_pass.pattern.agent for power_pass in passes})
     try:
         with _pg_connect() as conn, conn.cursor() as cur:
-            event = TRIAL_LEDGER.EVENT.SHADOW_PREREGISTRATION
+            event = TRIAL_LEDGER.EVENT.LIVE_PREREGISTRATION
             cur.execute(SHADOW.PREREGISTRATION_SQL, (event, agents))
             rows = cur.fetchall()
     except Exception as exc:  # noqa: BLE001 — a ledger read fault never fails the cycle
         _warn_shadow(
             f"pre-registrations unreadable: {_describe_fault(exc)}",
-            "no pre-registration or look this cycle",
+            "no look this cycle",
         )
         return None
     return {
         (agent, pattern_id, metric_key): ShadowTrial(key, payload, recorded_at)
         for agent, pattern_id, metric_key, key, payload, recorded_at in rows
     }
-
-
-def _write_shadow_preregistration(power_pass: PowerPass, detection_start: datetime) -> None:
-    """Pre-register the current pair; a taken key (a lifecycle move on the earlier pre-registration's
-    UTC day, same detection start) lands 0 rows → named WARN, re-keyed on the next UTC day."""
-    key = get_trial_key(power_pass.pattern, detection_start)
-    landed = _write_shadow_row(
-        ShadowRow(
-            TRIAL_LEDGER.EVENT.SHADOW_PREREGISTRATION,
-            get_preregistration_payload(power_pass, detection_start),
-            dedupe_key=key,
-        ),
-        TrialIdentity(key, power_pass.pattern),
-    )
-    if landed == 0:
-        _warn_shadow(
-            f"trial {key}: pre-registration landed 0 rows — key taken by this UTC day's "
-            "earlier pre-registration (lifecycle move since)",
-            "no look for the pattern until the next UTC day re-keys it",
-        )
 
 
 def _write_shadow_looks(trial: ShadowTrial, power_pass: PowerPass, window_end: datetime) -> None:
@@ -9352,7 +9340,8 @@ def _write_shadow_looks(trial: ShadowTrial, power_pass: PowerPass, window_end: d
             return
         _write_shadow_row(
             ShadowRow(
-                TRIAL_LEDGER.EVENT.SHADOW_LOOK,
+                TRIAL_LEDGER.EVENT.LIVE_LOOK,
+                TRIAL_LEDGER.ACTOR.LIVE,
                 get_look_payload(Look(number, registration), LookAccrual(accrued)),
                 dedupe_key=f"{trial.key}:look:{number}",
             ),
@@ -9378,7 +9367,7 @@ def _write_shadow_row(row: ShadowRow, trial: TrialIdentity | None = None) -> int
     try:
         return _pg_write_trial_ledger_row(
             row.event,
-            TRIAL_LEDGER.ACTOR.SHADOW,
+            row.actor,
             row.payload,
             trial_key=None if trial is None else trial.key,
             agent=None if trial is None else trial.pattern.agent,
@@ -13247,7 +13236,8 @@ def run_cycle(
     no verdict, so it is not counted but skipped by name (N49's stale-pattern-skip).
     _run_generation_loop runs the
     per-agent flow — pattern → patch proposal → classification → pre-verify as a
-    compliance filter → safety routing; the floor terminalizes every auto candidate.
+    compliance filter → safety routing; a verified non-safety candidate gets its live
+    pre-registration payload, and the floor terminalizes every other auto candidate.
 
     A writing cycle (skip_loop_emit False) from a code tree that is not its install
     raises InstallRefusedError before any stage, reads included.
@@ -13352,6 +13342,7 @@ def run_cycle(
             skip_haiku=skip_haiku,
             skip_pre_verify=skip_pre_verify,
             skip_loop_emit=skip_loop_emit,
+            power=power,
         ),
     )
 
@@ -13450,6 +13441,7 @@ class GenerationRun(NamedTuple):
     skip_haiku: bool
     skip_pre_verify: bool
     skip_loop_emit: bool
+    power: PowerResult | None = None  # the passes a candidate's pre-registration is sized on
 
 
 def _run_generation_loop(
@@ -13459,8 +13451,9 @@ def _run_generation_loop(
 ) -> None:
     """Per-agent generation loop — gates, then one routed row per agent.
 
-    Appends each row to ``report.patches``. The promotion tier is a label only and
-    resolve_floor_terminalization terminalizes every auto candidate.
+    Appends each row to ``report.patches``. The promotion tier is a label only; a
+    candidate bound to a live pre-registration stays pending auto, and
+    resolve_floor_terminalization terminalizes every other auto candidate.
     """
     seen_targets: set[str] = set()
     # PG gates → full-real mode only: skip_haiku (test/preflight) bypasses them like the
@@ -13482,6 +13475,7 @@ def _run_generation_loop(
                 skip_haiku=run.skip_haiku,
                 skip_pre_verify=run.skip_pre_verify,
                 skip_loop_emit=run.skip_loop_emit,
+                power=run.power,
             )
         )
 
@@ -13556,13 +13550,14 @@ def build_patch_result(
     skip_haiku: bool,
     skip_pre_verify: bool,
     skip_loop_emit: bool,
+    power: PowerResult | None = None,
 ) -> PatchResult:
     """Generation unit — one agent's gated patterns → one routed proposal row.
 
     Runs the timeout back-off, the Haiku generation, classification, pre-verify
-    routing, closed-apply terminalization and the same-agent supersede.
+    routing, the live pre-registration payload, the floor and the same-agent supersede.
     ``seen_targets`` is the cycle's conflict set: read, then extended in place.
-    ``cycle_date`` is the identity the supersede spares.
+    ``cycle_date`` is the identity the supersede spares; ``power`` sizes the payload.
     """
     # Chronic Haiku-timeout back-off (generation side) — BEFORE the Haiku call.
     # A target that already timed out TIMEOUT_BACKOFF_THRESHOLD consecutive
@@ -13714,17 +13709,22 @@ def build_patch_result(
 
     promotion_tier = "mention"
 
-    # Closed-apply terminalization — close the auto+pending limbo at the SOURCE
-    # so every auto-tier candidate reaches a terminal state this cycle; it would
-    # otherwise sit pending forever, fossilizing as a standing "New
-    # suggestions" pile. Safety tier is untouched (the gate is auto-only) — the
-    # human queue is preserved.
+    # After pre-verify and safety routing: only a verified non-safety candidate of a
+    # passing lead pattern, in a writing cycle, is bound — its push opens the live trial.
+    # Off-map agents get no code-side stop: pre-verify's C3 directive is the only one.
+    preregistration_payload = _get_bound_preregistration_payload(
+        power, lead_pattern, (approval_tier, status_value), skip_loop_emit=skip_loop_emit
+    )
+    # The floor: every unbound auto candidate reaches a terminal state this cycle — it
+    # would otherwise sit pending forever with no apply path. Safety tier is untouched
+    # (the floor is auto-only) — the human queue is preserved.
     terminalize = resolve_floor_terminalization(
         classification=classification,
         approval_tier=approval_tier,
         status_value=status_value,
         promotion_tier=promotion_tier,
         rationale=proposal.rationale,
+        is_bound=preregistration_payload is not None,
     )
     classification = terminalize.classification
     approval_tier = terminalize.approval_tier
@@ -13736,6 +13736,12 @@ def build_patch_result(
             f"agent={agent} target={proposal.target_file} "
             f"(promotion_tier='{promotion_tier}', label only); "
             "persisted status='unadjudicated' instead of auto-pending limbo\n"
+        )
+    elif preregistration_payload is not None:
+        sys.stderr.write(
+            f"[daemon-cycle] INFO: live trial opening — auto candidate for agent={agent} "
+            f"target={proposal.target_file} bound to a live pre-registration; "
+            "stored pending auto, in trial\n"
         )
 
     # T4 prose-only-add detection — DETECTION-ONLY WARNING per candidate patch
@@ -13841,7 +13847,30 @@ def build_patch_result(
         # Lead pattern only: the column holds one link per proposal row.
         learning_pattern_id=lead_pattern.row_id or None,
         generator_input_version=GENERATOR_INPUT_VERSION,
+        preregistration_payload=preregistration_payload,
     )
+
+
+def _get_bound_preregistration_payload(
+    power: PowerResult | None,
+    lead_pattern: Pattern,
+    route: tuple[str, str],
+    *,
+    skip_loop_emit: bool,
+) -> dict | None:
+    """The live pre-registration payload of a bound candidate; None leaves it to the floor.
+
+    Bound: routed (approval tier, status) = ('auto', 'pending') in a writing cycle, its lead
+    pattern among the cycle's power passes — sized on that pass at the cycle's detection start.
+    """
+    if skip_loop_emit or route != ("auto", "pending") or power is None or power.windows is None:
+        return None
+    lead_key = (lead_pattern.agent, lead_pattern.row_id, lead_pattern.metric_key)
+    for power_pass in power.passes:
+        pattern = power_pass.pattern
+        if (pattern.agent, pattern.row_id, pattern.metric_key) == lead_key:
+            return get_preregistration_payload(power_pass, power.windows.start.detection)
+    return None
 
 
 def _get_haiku_status(
