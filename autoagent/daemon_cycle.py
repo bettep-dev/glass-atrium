@@ -9475,10 +9475,7 @@ def get_redelegation_row(
     start on moves the row; the pool is every roster type's gaps, the trial's agent included.
     The gap window opens at the guardrail readings' covered start, so W reads no uncovered day.
     """
-    cut = {
-        agent_type: [spawn for spawn in agent_spawns if spawn.started_at < windows.end]
-        for agent_type, agent_spawns in spawns.by_type.items()
-    }
+    cut = _get_spawns_before(spawns.by_type, windows.end)
     detection_start = windows.start.detection
     covered_start = _get_covered_start(detection_start, power_pass.provenance_start)
     gaps = get_overran_gaps(
@@ -9499,6 +9496,15 @@ def get_redelegation_row(
     }
 
 
+def _get_spawns_before(
+    spawns_by_type: Mapping[str, list[SpawnFacts]], end: datetime
+) -> dict[str, list[SpawnFacts]]:
+    return {
+        agent_type: [spawn for spawn in agent_spawns if spawn.started_at < end]
+        for agent_type, agent_spawns in spawns_by_type.items()
+    }
+
+
 def _get_follow_up_baseline(
     spawns_by_type: Mapping[str, list[SpawnFacts]],
     power_pass: PowerPass,
@@ -9510,12 +9516,7 @@ def _get_follow_up_baseline(
     members that `get_follow_up_counts` counts at W evaluated at D, their follow-ups from every
     same-type spawn, whichever half."""
     detection_start = windows.start.detection
-    members = {
-        spawn.agent_id
-        for spawn in _get_guardrail_members(
-            power_pass.spawns, detection_start, power_pass.provenance_start
-        )
-    }
+    member_ids = _get_member_ids(power_pass, detection_start)
     counts = [
         count
         for spawn, count in get_follow_up_counts(
@@ -9525,13 +9526,23 @@ def _get_follow_up_baseline(
             redelegation_window=redelegation_window,
             evaluated_at=windows.end,
         )
-        if spawn.agent_id in members
+        if spawn.agent_id in member_ids
     ]
     return FollowUpBaseline(
         len(counts),
         statistics.fmean(counts) if counts else None,
         statistics.stdev(counts) if len(counts) > 1 else None,
     )
+
+
+def _get_member_ids(power_pass: PowerPass, detection_start: datetime) -> set[str | None]:
+    """The guardrail readings' floor-half members, by agent id."""
+    return {
+        spawn.agent_id
+        for spawn in _get_guardrail_members(
+            power_pass.spawns, detection_start, power_pass.provenance_start
+        )
+    }
 
 
 def _get_redelegation_margin(baseline: WindowCount) -> float | None:
