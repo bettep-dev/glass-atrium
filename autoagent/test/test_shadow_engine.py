@@ -85,6 +85,10 @@ _KEYS = SimpleNamespace(
         "task_window_seconds",
         # the proposal's generator-input stamp, so a ledger read tells input sets apart
         "generator_input_version",
+        # stated, read by no stop yet: both samples, k and each harm check's margin, α and blind spot
+        "samples",
+        "guardrail_count",
+        "harm_checks",
     },
 )
 # a live trial as the push stores it: trial and dedupe key from the proposal id
@@ -1209,6 +1213,320 @@ class CycleWiringTest(_ShadowFixture):
         self.assertEqual(self._get_looks(), [])
         self.assertEqual(stages, ["shadow", "aa"])
 
+
+
+_CODE_AGENTS = (
+    "glass-atrium-dev-shell",
+    "glass-atrium-dev-react",
+    "glass-atrium-dev-nestjs",
+)
+_OFF_MAP_AGENT = "glass-atrium-user-added"
+_DESIGN_EFFECT_KEYS = ("design_effect_1", "design_effect_2")
+
+
+class _PreStep(NamedTuple):
+    """One deciding agent's pre-step 3 inputs and its minimum detectable harms, both stages."""
+
+    agent: str
+    guardrail_count: int
+    primary_rate: float
+    per_arm: int
+    readings: tuple  # GuardrailBaseline fields
+    # check → design effect → (trial at α 0.05, watch at 0.05/k)
+    harms: dict
+
+
+_PRE_STEP = (
+    _PreStep(
+        "glass-atrium-qa-code-reviewer",
+        3,
+        0.062,
+        2432,
+        (246 / 3994, 0.01, 23.78, 15.37),
+        {
+            "no_subagent_stop": ((1.30, 1.36), (1.43, 1.52)),
+            "tool_use": ((1.10, 1.31), (1.55, 1.85)),
+        },
+    ),
+    _PreStep(
+        "glass-atrium-dev-shell",
+        4,
+        0.166,
+        790,
+        (119 / 2121, 21 / 2050, 27.11, 21.02),
+        {
+            "no_subagent_stop": ((1.58, 1.74), (1.85, 2.10)),
+            "verified_fail": ((2.65, 3.19), (3.62, 4.55)),
+            "tool_use": ((2.63, 3.26), (3.72, 4.61)),
+        },
+    ),
+    _PreStep(
+        "glass-atrium-dev-nestjs",
+        4,
+        0.097,
+        1485,
+        (29 / 1285, 36 / 1293, 25.12, 14.50),
+        {
+            "no_subagent_stop": ((1.69, 1.89), (2.04, 2.35)),
+            "verified_fail": ((1.61, 1.78), (1.91, 2.18)),
+            "tool_use": ((1.32, 1.64), (1.87, 2.32)),
+        },
+    ),
+    _PreStep(
+        "glass-atrium-dev-react",
+        4,
+        0.185,
+        690,
+        (87 / 1192, 10 / 1113, 16.25, 10.42),
+        {
+            "no_subagent_stop": ((1.53, 1.67), (1.78, 2.00)),
+            "verified_fail": ((2.97, 3.64), (4.17, 5.34)),
+            "tool_use": ((1.40, 1.73), (1.97, 2.45)),
+        },
+    ),
+    _PreStep(
+        "glass-atrium-meta-prompt-engineer",
+        3,
+        0.150,
+        899,
+        (58 / 787, 0.01, 26.01, 17.81),
+        {
+            "no_subagent_stop": ((1.46, 1.55), (1.67, 1.82)),
+            "tool_use": ((2.09, 2.49), (2.95, 3.53)),
+        },
+    ),
+)
+
+
+def _get_harm_checks(row: _PreStep, *, metric_key: str = _BUDGET_KEY) -> dict:
+    return dc.get_harm_checks(
+        metric_key,
+        row.primary_rate,
+        row.per_arm,
+        dc.GuardrailBaseline(*row.readings),
+        guardrail_count=row.guardrail_count,
+    )
+
+
+class HarmCheckTest(unittest.TestCase):
+    """Each harm check's D6 margin, R74 α and minimum detectable harm, and R226's widening lines."""
+
+    def test_each_check_states_its_margin_alpha_and_trial_design_harm_with_absolute_margins_as_folds(
+        self,
+    ) -> None:
+        readings = dc.GuardrailBaseline(0.10, 0.02, 20.0, 12.0)
+        checks = dc.get_harm_checks(_BUDGET_KEY, 0.05, 790, readings, guardrail_count=4)
+        guardrails = checks["guardrails"]
+        # the leg's margin: the trial's absolute effect 0.3 × 0.05 read as a fold at the leg's 0.10
+        self.assertAlmostEqual(guardrails["no_subagent_stop"]["margin"], 1.15)
+        self.assertAlmostEqual(guardrails["verified_fail"]["margin"], 1.30)
+        self.assertAlmostEqual(checks["primary"]["margin"], 1.30)
+        self.assertAlmostEqual(guardrails["tool_use"]["margin"], 6.0)
+        rates = {"no_subagent_stop": 0.10, "verified_fail": 0.02}
+        for name, rate in rates.items():
+            for stage, alpha in (("trial", 0.05), ("watch", 0.0125)):
+                for key, design_effect in zip(_DESIGN_EFFECT_KEYS, (1, 2)):
+                    expected = trial_design.get_rate_harm(
+                        rate, 790, alpha=alpha, design_effect=design_effect
+                    )
+                    actual = guardrails[name][stage]["minimum_detectable"][key]
+                    self.assertAlmostEqual(
+                        actual, expected, msg=f"{name} {stage} {key}"
+                    )
+        expected = trial_design.get_tool_use_harm(
+            12.0, 790, is_overage_primary=True, alpha=0.0125, design_effect=2
+        )
+        self.assertAlmostEqual(
+            guardrails["tool_use"]["watch"]["minimum_detectable"]["design_effect_2"],
+            expected,
+        )
+
+    def test_alpha_is_005_per_check_in_the_trial_and_the_watch_shares_sum_to_005_two_sided_halved(
+        self,
+    ) -> None:
+        readings = dc.GuardrailBaseline(0.05, 0.02, 20.0, 12.0)
+        for metric_key, sides in ((_BUDGET_KEY, 1), ("emit_failure", 2)):
+            for count in (3, 4):
+                checks = dc.get_harm_checks(
+                    metric_key, 0.1, 900, readings, guardrail_count=count
+                )
+                guardrails = checks["guardrails"]
+                label = f"{metric_key} k {count}"
+                self.assertEqual(len(guardrails), count, label)
+                self.assertEqual(
+                    {row["trial"]["alpha"] for row in guardrails.values()},
+                    {0.05},
+                    label,
+                )
+                self.assertAlmostEqual(
+                    sum(row["watch"]["alpha"] for row in guardrails.values()),
+                    0.05,
+                    msg=label,
+                )
+                self.assertEqual(
+                    (
+                        checks["primary"]["trial"]["alpha"],
+                        checks["primary"]["watch"]["alpha"],
+                    ),
+                    (0.05, 0.05),
+                )
+                band = guardrails["tool_use"]
+                for stage in ("trial", "watch"):
+                    self.assertEqual(band[stage]["sides"], sides, label)
+                    self.assertAlmostEqual(
+                        band[stage]["alpha_per_side"],
+                        band[stage]["alpha"] / sides,
+                        msg=label,
+                    )
+
+    def _assert_pre_step_column(self, column: int) -> None:
+        for row in _PRE_STEP:
+            guardrails = _get_harm_checks(row)["guardrails"]
+            for name, by_design_effect in row.harms.items():
+                for key, pair in zip(_DESIGN_EFFECT_KEYS, by_design_effect):
+                    stage = ("trial", "watch")[column]
+                    actual = guardrails[name][stage]["minimum_detectable"][key]
+                    # inputs as recorded, each rounded → ±0.01 on the recorded figure
+                    self.assertAlmostEqual(
+                        actual,
+                        pair[column],
+                        delta=0.01,
+                        msg=f"{row.agent} {name} {stage} {key}",
+                    )
+
+    def test_trial_minimum_detectable_harms_reproduce_pre_step_3_at_alpha_005(
+        self,
+    ) -> None:
+        self._assert_pre_step_column(0)
+
+    def test_watch_minimum_detectable_harms_reproduce_pre_step_3_at_the_family_share(
+        self,
+    ) -> None:
+        self._assert_pre_step_column(1)
+
+    def test_the_watch_widens_on_the_shipped_fixed_sample_drift_scale_by_1194_and_1240(
+        self,
+    ) -> None:
+        for row, ratio in ((_PRE_STEP[0], 1.194), (_PRE_STEP[1], 1.240)):
+            guardrails = _get_harm_checks(row)["guardrails"]
+            for name in row.harms:
+                self.assertAlmostEqual(
+                    guardrails[name]["widening"]["drift"]["fixed_sample"],
+                    ratio,
+                    places=3,
+                )
+            # the band is linear in the drift: its own-unit widening is the drift ratio itself
+            for key in _DESIGN_EFFECT_KEYS:
+                self.assertAlmostEqual(
+                    guardrails["tool_use"]["widening"]["own_unit"][key], ratio, places=3
+                )
+        # a rate guardrail widens more in its own unit at these low rates (leg ×1.271-1.299 at k 4)
+        leg = _get_harm_checks(_PRE_STEP[1])["guardrails"]["no_subagent_stop"][
+            "widening"
+        ]["own_unit"]
+        self.assertTrue(1.271 - 0.005 <= leg["design_effect_1"] <= 1.299 + 0.005, leg)
+
+    def test_the_watch_widens_by_1187_and_1231_with_each_alphas_four_look_inflation(
+        self,
+    ) -> None:
+        for row, ratio in ((_PRE_STEP[0], 1.187), (_PRE_STEP[1], 1.231)):
+            guardrails = _get_harm_checks(row)["guardrails"]
+            for name in row.harms:
+                if name != "tool_use" or guardrails[name]["trial"]["sides"] == 1:
+                    self.assertAlmostEqual(
+                        guardrails[name]["widening"]["drift"]["four_look"],
+                        ratio,
+                        places=3,
+                    )
+
+    def test_verified_fail_is_a_guardrail_only_never_a_primary_key(self) -> None:
+        readings = dc.GuardrailBaseline(0.05, 0.02, 20.0, 12.0)
+        for metric_key in sorted(dc.METRIC_KEYS):
+            checks = dc.get_harm_checks(
+                metric_key, 0.1, 900, readings, guardrail_count=4
+            )
+            self.assertEqual(checks["primary"]["metric_key"], metric_key)
+            self.assertIn("verified_fail", checks["guardrails"])
+        with self.assertRaises(ValueError):
+            dc.get_harm_checks("verified_fail", 0.1, 900, readings, guardrail_count=4)
+
+
+class GuardrailCountTest(unittest.TestCase):
+    """k from the scope map alone (R4): 3 only where the map names a non-DEV scope file."""
+
+    def test_the_three_code_agents_have_four_guardrails(self) -> None:
+        for agent in _CODE_AGENTS:
+            self.assertEqual(dc.get_guardrail_count(agent), 4, agent)
+
+    def test_the_mapped_non_code_deciding_agents_have_three(self) -> None:
+        for agent in (
+            "glass-atrium-qa-code-reviewer",
+            "glass-atrium-meta-prompt-engineer",
+            "glass-atrium-intel-planner",
+        ):
+            self.assertEqual(dc.get_guardrail_count(agent), 3, agent)
+
+    def test_intel_researcher_and_meta_agent_have_three(self) -> None:
+        for agent in ("glass-atrium-intel-researcher", "glass-atrium-meta-agent"):
+            self.assertEqual(dc.get_guardrail_count(agent), 3, agent)
+
+    def test_three_exactly_where_the_map_names_a_scope_file_other_than_scope_dev(
+        self,
+    ) -> None:
+        for agent, scope_file in dc._AGENT_SCOPE_MAP.items():
+            expected = 4 if scope_file == "scope-dev.md" else 3
+            self.assertEqual(
+                dc.get_guardrail_count(agent), expected, f"{agent} → {scope_file}"
+            )
+
+
+class HarmCheckPayloadTest(_ShadowFixture):
+    """The pre-registration payload's harm checks for the agent it is built for."""
+
+    def _get_payload(self, agent: str, spawns: list[SpawnFacts] | None = None) -> dict:
+        power = self._check_power()
+        [power_pass] = power.passes
+        pattern = dataclasses.replace(power_pass.pattern, agent=agent)
+        power_pass = power_pass._replace(
+            pattern=pattern, spawns=spawns or power_pass.spawns
+        )
+        return dc.get_preregistration_payload(power_pass, power.windows.start.detection)
+
+    def test_an_agent_the_map_does_not_name_has_four_guardrails_on_the_helper_and_the_payload(
+        self,
+    ) -> None:
+        self.assertEqual(dc.get_guardrail_count(_OFF_MAP_AGENT), 4)
+        payload = self._get_payload(_OFF_MAP_AGENT)
+        self.assertEqual(payload["guardrail_count"], 4)
+        self.assertIn("verified_fail", payload["harm_checks"]["guardrails"])
+
+    def test_a_k4_agent_with_no_verified_fail_in_its_baseline_renders_the_row_without_raising(
+        self,
+    ) -> None:
+        graded = ({"grader_verdict": "verified_pass"},)
+        spawns = [
+            spawn._replace(outcomes=graded, tool_use_actual=10 + index % 7)
+            for index, spawn in enumerate(self.history)
+        ]
+        for agent in (_OFF_MAP_AGENT, "glass-atrium-dev-react"):
+            payload = self._get_payload(agent, spawns)
+            row = payload["harm_checks"]["guardrails"]["verified_fail"]
+            self.assertEqual(row["baseline_rate"], 0.0, agent)
+            self.assertEqual(
+                set(row["trial"]["minimum_detectable"].values()), {None}, agent
+            )
+            json.dumps(payload, allow_nan=False)
+
+    def test_the_payload_states_both_samples_its_maximum_is_the_larger_of(self) -> None:
+        payload = self._get_payload(_AGENT)
+        rate = _BASELINE.EVENTS / _BASELINE.SPAWNS
+        samples = {
+            "efficacy": trial_design.get_maximum_sample_size(rate),
+            "harm": trial_design.get_harm_sample_size(rate),
+        }
+        self.assertEqual(payload["samples"], samples)
+        self.assertEqual(payload["maximum_per_arm"], max(samples.values()))
+        self.assertEqual(payload["harm_checks"]["primary"]["baseline_rate"], rate)
 
 if __name__ == "__main__":
     unittest.main()
