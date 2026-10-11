@@ -8883,6 +8883,11 @@ class PowerSubject(NamedTuple):
     floor: FloorResult
 
 
+class CheckedSubject(NamedTuple):
+    subject: PowerSubject
+    check: PowerCheck
+
+
 def check_pattern_power(patterns: list[Pattern], *, skip_loop_emit: bool) -> PowerResult:
     """Intake power check: each floor-passing keyed pattern → one counted verdict.
 
@@ -8947,23 +8952,32 @@ def _get_pattern_power_verdict(
     if subject.key in inputs.unchecked_keys:
         return POWER.VERDICT.UNCHECKED, "A/A design effect unusable", None
     check = get_power_check(subject, inputs, windows)
-    power_pass = None
-    design_effect, required = check.design_effect, check.units.required
-    if check.verdict == POWER.VERDICT.PASSING and design_effect is not None and required is not None:
-        power_pass = PowerPass(
-            pattern,
-            floor.baseline,
-            design_effect,
-            required,
-            spawns,
-            inputs.provenance_start,
-            GuardrailDesignEffects(
-                inputs.design_effects.get((pattern.agent, METRIC_NO_SUBAGENT_STOP)),
-                inputs.proxy_design_effects.get(pattern.agent),
-            ),
-        )
+    power_pass = _get_power_pass(pattern, CheckedSubject(subject, check), inputs)
     method_b = _get_method_b_baseline(subject, inputs, windows)
-    return check.verdict, _get_pattern_power_detail(subject, check, method_b), power_pass
+    detail = _get_pattern_power_detail(subject, check, method_b)
+    return check.verdict, detail, power_pass
+
+
+def _get_power_pass(
+    pattern: Pattern, checked: CheckedSubject, inputs: PowerInputs
+) -> PowerPass | None:
+    """The pattern's live-trial evidence when its check passed with a finite size; else None."""
+    subject, check = checked
+    design_effect, required = check.design_effect, check.units.required
+    if check.verdict != POWER.VERDICT.PASSING or design_effect is None or required is None:
+        return None
+    return PowerPass(
+        pattern,
+        subject.floor.baseline,
+        design_effect,
+        required,
+        inputs.spawns.get(pattern.agent, []),
+        inputs.provenance_start,
+        GuardrailDesignEffects(
+            inputs.design_effects.get((pattern.agent, METRIC_NO_SUBAGENT_STOP)),
+            inputs.proxy_design_effects.get(pattern.agent),
+        ),
+    )
 
 
 def get_power_check(subject: PowerSubject, inputs: PowerInputs, windows: PairWindows) -> PowerCheck:
@@ -9334,10 +9348,6 @@ def get_preregistration_payload(
     """
     baseline = power_pass.baseline
     boundaries = trial_design.get_boundaries()
-    looks = [
-        {"fraction": fraction, "milestone": fraction * power_pass.required, "boundary": boundary}
-        for fraction, boundary in zip(trial_design.LOOK_FRACTIONS, boundaries)
-    ]
     maximum = _get_maximum_sample_size(baseline.events, baseline.spawns)
     return {
         "metric_key": power_pass.pattern.metric_key,
@@ -9347,13 +9357,21 @@ def get_preregistration_payload(
         "design_effect": power_pass.design_effect,
         "required_units": power_pass.required,
         "boundaries": list(boundaries),
-        "looks": looks,
+        "looks": _get_looks(power_pass.required, boundaries),
         "task_window_seconds": SHADOW.TASK_WINDOW.total_seconds(),
         "generator_input_version": GENERATOR_INPUT_VERSION,
         "horizon_days": trial_design.HORIZON_DAYS,
         "canary": {"text": canary_text, "text_sha256": _get_text_sha256(canary_text)},
         **_get_harm_payload(power_pass, detection_start, maximum),
     }
+
+
+def _get_looks(required: float, boundaries: Sequence[float]) -> list[dict]:
+    """One look per LOOK_FRACTIONS share: its milestone on the required units and its boundary."""
+    return [
+        {"fraction": fraction, "milestone": fraction * required, "boundary": boundary}
+        for fraction, boundary in zip(trial_design.LOOK_FRACTIONS, boundaries)
+    ]
 
 
 def get_canary_text(diff: str) -> str:
@@ -14443,8 +14461,6 @@ def _get_bound_preregistration_payload(
 
     Bound: routed (approval tier, status) = ('auto', 'pending') in a writing cycle, its lead
     pattern among the cycle's power passes — sized on that pass at the cycle's detection start.
-    A rendered canary block over the hook's cap is refused, never truncated: truncated text
-    was never pre-registered, so a win would describe text that never graduates.
     """
     lead_pattern, route, diff = candidate
     if skip_loop_emit or route != ("auto", "pending") or power is None or power.windows is None:
@@ -14454,18 +14470,30 @@ def _get_bound_preregistration_payload(
         pattern = power_pass.pattern
         if (pattern.agent, pattern.row_id, pattern.metric_key) != lead_key:
             continue
-        canary_text = get_canary_text(diff)
-        size = len(canary_text.encode("utf-8"))
-        if size > CANARY.MAX_BYTES:
-            sys.stderr.write(
-                f"[daemon-cycle] WARN: live trial refused — agent={pattern.agent} "
-                f"pattern={pattern.row_id}: rendered canary block {size} B exceeds the "
-                f"{CANARY.MAX_BYTES} B cap; no pre-registration, the floor closes the candidate\n"
-            )
+        canary_text = _get_canary_text_within_cap(diff, pattern)
+        if canary_text is None:
             return None
         return get_preregistration_payload(
             power_pass, power.windows.start.detection, canary_text
         )
+    return None
+
+
+def _get_canary_text_within_cap(diff: str, pattern: Pattern) -> str | None:
+    """The diff's rendered canary block; None, with a WARN, when it exceeds the hook's cap.
+
+    Refused, never truncated: truncated text was never pre-registered, so a win would
+    describe text that never graduates.
+    """
+    canary_text = get_canary_text(diff)
+    size = len(canary_text.encode("utf-8"))
+    if size <= CANARY.MAX_BYTES:
+        return canary_text
+    sys.stderr.write(
+        f"[daemon-cycle] WARN: live trial refused — agent={pattern.agent} "
+        f"pattern={pattern.row_id}: rendered canary block {size} B exceeds the "
+        f"{CANARY.MAX_BYTES} B cap; no pre-registration, the floor closes the candidate\n"
+    )
     return None
 
 
