@@ -348,7 +348,7 @@ class ConsolidatedPromptLandedHistoryTest(unittest.TestCase):
     def test_a_landed_proposal_with_a_ledger_row_renders_once_in_the_prior_attempts_block(
         self,
     ) -> None:
-        # the landed read races a pre-registration: it still returns the trialled row
+        # a landed reader that no longer drops trialled ids in SQL still renders the id once
         decision = {"outcome": "win"}
         prompt = self._run(
             [(7, "budget rule", _LANDED_DIFF)],

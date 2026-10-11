@@ -993,8 +993,8 @@ LANDED_HISTORY_CHAR_CAP = 4000
 LANDED_HISTORY_LIMIT = 5
 LANDED_HISTORY_ENTRY_CHAR_CAP = 400
 
-# Trialled proposals with their measured effect from the trial ledger; a landed one
-# renders here instead of in the landed-history block (N53). Same HARD cap discipline.
+# Trialled proposals + their ledger effect; a landed one renders here, not in landed history
+# Same HARD cap discipline as the landed-history block
 PRIOR_ATTEMPTS = SimpleNamespace(CHAR_CAP=4000, LIMIT=5)
 
 # Agent → scope mapping (from core-compliance-matrix.md Scope Legend).
@@ -3095,9 +3095,7 @@ def generate_consolidated_proposal(
         else ""
     )
 
-    # Feedback half of that memory: what this agent already trialled, then what it
-    # landed with no ledger row. The id filter keeps a race between the two reads from
-    # rendering one proposal in both blocks.
+    # Feedback half: what this agent already trialled, then what it landed with no ledger row
     attempts = _fetch_prior_attempts(agent) or []
     attempts_body = _render_prior_attempts_block(attempts)
     prior_attempts_block = (
@@ -3108,6 +3106,7 @@ def generate_consolidated_proposal(
         if attempts_body
         else ""
     )
+    # SQL already drops trialled ids; this keeps one block per id whatever the reader returns
     attempted = {attempt.proposal_id for attempt in attempts}
     landed = [
         (label, diff)
@@ -9284,7 +9283,7 @@ def get_trial_key(pattern: Pattern, detection_start: datetime) -> str:
 def get_preregistration_payload(power_pass: PowerPass, detection_start: datetime) -> dict:
     """The trial's frozen sizing: trial_design's maximum and boundaries, look milestones on the required units.
 
-    Also the generator-input version the proposal row is stamped with (N52).
+    Also the proposal row's generator-input version: the ledger's mark of the trial's input set.
     """
     baseline = power_pass.baseline
     boundaries = trial_design.get_boundaries()
@@ -11473,7 +11472,7 @@ def _fetch_landed_proposals(
     already landed so it builds on those rules instead of re-proposing them.
     SEPARATE projection from the sibling readers (do NOT widen theirs) — this one
     SELECTs the patch text and filters on the terminal ``applied`` status. A trialled
-    proposal renders in the prior-attempts block instead (N53); it is dropped in SQL,
+    proposal renders in the prior-attempts block instead; it is dropped in SQL,
     before the limit, so trialled rows never crowd out legacy ones.
 
     Mirrors the sibling fail-OPEN discipline: PG off / read error → ``None``

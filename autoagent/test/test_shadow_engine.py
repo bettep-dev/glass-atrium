@@ -83,7 +83,7 @@ _KEYS = SimpleNamespace(
         "boundaries",
         "looks",
         "task_window_seconds",
-        # N52: the proposal's input-set stamp; no in-code reader yet (unit report, concerns)
+        # the proposal's generator-input stamp, so a ledger read tells input sets apart
         "generator_input_version",
     },
 )

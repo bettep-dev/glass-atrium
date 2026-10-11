@@ -406,7 +406,7 @@ class TestGeneratorInputVersionStamp(unittest.TestCase):
 
 
     def test_the_stamp_names_the_input_set_with_the_ledgers_prior_attempts(self) -> None:
-        # bumped with the prior-attempts block: N52's ledger copy tells the two input sets apart
+        # the input set that carries the prior-attempts block; the ledger copy tells sets apart
         self.assertEqual(dc.GENERATOR_INPUT_VERSION, "gen-inputs-2")
 
 
