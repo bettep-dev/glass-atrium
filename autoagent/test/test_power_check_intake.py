@@ -2,8 +2,8 @@
 
 Projected units = the agent's spawns per day over the last 28 provenance-covered days
 × the 84-day horizon; the bound = 2 × the trial_design per-arm maximum (the larger of the
-efficacy and harm samples) at the floor-half baseline rate × the agent's latest design effect
-from a passed A/A; no such row → design-unmeasured, never passing. The verdict is counted
+efficacy and harm samples, grown at the agent's own k) at the floor-half baseline rate × the
+agent's latest design effect from a passed A/A; no such row → design-unmeasured, never passing. The verdict is counted
 on the cycle report and sent as a loop event; no status is written and no pattern is parked
 or dropped. Every row is database-free under
 ``seal_pg_reach``, except the ledger-read live class, which runs only under
