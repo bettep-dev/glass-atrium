@@ -106,10 +106,13 @@ from _outcome_signal import (  # noqa: E402 — hooks dir pinned by the loop abo
     FloorResult,
     PairWindows,
     SpawnFacts,
+    Window,
     WindowCount,
     WindowStarts,
     get_floor_verdict,
+    get_overran_gaps,
     get_pair_windows,
+    get_redelegation_window,
     get_tasks,
     get_tool_budget,
     is_floor_half,
@@ -9338,17 +9341,25 @@ def get_trial_key(pattern: Pattern, detection_start: datetime) -> str:
     return hashlib.sha256("\x1f".join(parts).encode("utf-8")).hexdigest()
 
 
-def get_preregistration_payload(
-    power_pass: PowerPass, detection_start: datetime, canary_text: str
-) -> dict:
+class PreregistrationInputs(NamedTuple):
+    """A bound candidate's inputs beside its power pass."""
+
+    detection_start: datetime
+    canary_text: str
+    redelegation: dict  # the window row, get_redelegation_row
+
+
+def get_preregistration_payload(power_pass: PowerPass, inputs: PreregistrationInputs) -> dict:
     """The trial's frozen sizing: trial_design's maximum and boundaries, look milestones on the required units.
 
     Also the proposal row's generator-input version: the ledger's mark of the trial's input set,
-    and the canary text beside its sha256 — the trial stage writes exactly that text.
+    the canary text beside its sha256 — the trial stage writes exactly that text — and the
+    re-delegation guardrail's window row.
     """
     baseline = power_pass.baseline
     boundaries = trial_design.get_boundaries()
     maximum = _get_maximum_sample_size(baseline.events, baseline.spawns)
+    detection_start, canary_text = inputs.detection_start, inputs.canary_text
     return {
         "metric_key": power_pass.pattern.metric_key,
         "detection_start": detection_start.isoformat(),
@@ -9362,8 +9373,82 @@ def get_preregistration_payload(
         "generator_input_version": GENERATOR_INPUT_VERSION,
         "horizon_days": trial_design.HORIZON_DAYS,
         "canary": {"text": canary_text, "text_sha256": _get_text_sha256(canary_text)},
+        "redelegation": inputs.redelegation,
         **_get_harm_payload(power_pass, detection_start, maximum),
     }
+
+
+class RosterSpawns(NamedTuple):
+    """The installed roster's spawns from the baseline start, MANIFEST aliases folded onto stems."""
+
+    by_type: dict[str, list[SpawnFacts]]
+    tool_budget: int  # the one-spawn budget a gap's spawn is judged overran at
+
+
+class RosterSpawnRead:
+    """The cycle's one roster spawn read: run on the first request, its spawns or its fault kept.
+
+    Read only once a candidate reaches pre-registration (R421); a failed read WARNs once and
+    leaves every candidate of the cycle without a pre-registration (R445).
+    """
+
+    def __init__(self, agents_dir: Path, windows: PairWindows, tool_budget: int) -> None:
+        self._agents_dir = agents_dir
+        self._windows = windows
+        self._tool_budget = tool_budget
+        self._is_read = False
+        self._spawns: RosterSpawns | None = None
+
+    def get_spawns(self) -> RosterSpawns | None:
+        """The roster's spawns over [baseline start, D); None after a failed read."""
+        if not self._is_read:
+            self._is_read = True
+            self._spawns = self._read_spawns()
+        return self._spawns
+
+    def _read_spawns(self) -> RosterSpawns | None:
+        if not HAS_PG_PATTERN_READ:
+            cause = "PG pattern reads unavailable (helper import failed)"
+        else:
+            roster = _agent_roster(self._agents_dir)
+            start, end = self._windows.start.baseline, self._windows.end
+            try:
+                by_type = _read_aa_spawns(roster, _get_roster_names(roster), start, end)
+            except Exception as exc:  # noqa: BLE001 — any read fault → no pre-registration
+                cause = f"roster spawns unreadable: {_describe_fault(exc)}"
+            else:
+                return RosterSpawns(by_type, self._tool_budget)
+        sys.stderr.write(
+            f"[daemon-cycle] WARN: re-delegation window — {cause}; "
+            "no live pre-registration this cycle\n"
+        )
+        return None
+
+
+class PreregistrationSource(NamedTuple):
+    """What a bound candidate's pre-registration is built from: the cycle's power, roster read."""
+
+    power: PowerResult
+    roster: RosterSpawnRead
+
+
+def get_redelegation_row(
+    spawns: RosterSpawns, power_pass: PowerPass, windows: PairWindows
+) -> dict:
+    """W with its tier and gap count by S5b-1a-ii-0's rule, over the baseline window alone.
+
+    Spawns started at or after D are cut before the primitives, so no spawn from the trial's
+    start on moves the row; the pool is every roster type's gaps, the trial's agent included.
+    """
+    cut = {
+        agent_type: [spawn for spawn in agent_spawns if spawn.started_at < windows.end]
+        for agent_type, agent_spawns in spawns.by_type.items()
+    }
+    baseline = Window(windows.start.baseline, windows.start.detection)
+    gaps = get_overran_gaps(cut, baseline, tool_budget=spawns.tool_budget)
+    pooled = [gap for type_gaps in gaps.values() for gap in type_gaps]
+    own = gaps.get(power_pass.pattern.agent, [])
+    return get_redelegation_window(own, pooled)._asdict()
 
 
 def _get_looks(required: float, boundaries: Sequence[float]) -> list[dict]:
@@ -14051,6 +14136,7 @@ def _run_generation_loop(
     resolve_floor_terminalization terminalizes every other auto candidate.
     """
     seen_targets: set[str] = set()
+    preregistration = _get_preregistration_source(run)
     # PG gates → full-real mode only: skip_haiku (test/preflight) bypasses them like the
     # timeout back-off, skip_loop_emit (no-PG-write) like the supersede.
     if not run.skip_haiku and not run.skip_loop_emit:
@@ -14070,9 +14156,17 @@ def _run_generation_loop(
                 skip_haiku=run.skip_haiku,
                 skip_pre_verify=run.skip_pre_verify,
                 skip_loop_emit=run.skip_loop_emit,
-                power=run.power,
+                preregistration=preregistration,
             )
         )
+
+
+def _get_preregistration_source(run: GenerationRun) -> PreregistrationSource | None:
+    """The cycle's power with its unread roster read; None when no windows were judged."""
+    if run.power is None or run.power.windows is None:
+        return None
+    read = RosterSpawnRead(run.agents_dir, run.power.windows, get_tool_budget(os.environ))
+    return PreregistrationSource(run.power, read)
 
 
 def _drop_trial_held_agents(
@@ -14145,14 +14239,15 @@ def build_patch_result(
     skip_haiku: bool,
     skip_pre_verify: bool,
     skip_loop_emit: bool,
-    power: PowerResult | None = None,
+    preregistration: PreregistrationSource | None = None,
 ) -> PatchResult:
     """Generation unit — one agent's gated patterns → one routed proposal row.
 
     Runs the timeout back-off, the Haiku generation, classification, pre-verify
     routing, the live pre-registration payload, the floor and the same-agent supersede.
     ``seen_targets`` is the cycle's conflict set: read, then extended in place.
-    ``cycle_date`` is the identity the supersede spares; ``power`` sizes the payload.
+    ``cycle_date`` is the identity the supersede spares; ``preregistration`` sizes the payload —
+    None, no payload.
     """
     # Chronic Haiku-timeout back-off (generation side) — BEFORE the Haiku call.
     # A target that already timed out TIMEOUT_BACKOFF_THRESHOLD consecutive
@@ -14308,7 +14403,7 @@ def build_patch_result(
     # passing lead pattern, in a writing cycle, is bound — its push opens the live trial.
     # Off-map agents get no code-side stop: pre-verify's C3 directive is the only one.
     preregistration_payload = _get_bound_preregistration_payload(
-        power,
+        preregistration,
         TrialCandidate(
             lead_pattern, (approval_tier, status_value), proposal.proposed_diff
         ),
@@ -14459,27 +14554,37 @@ class TrialCandidate(NamedTuple):
 
 
 def _get_bound_preregistration_payload(
-    power: PowerResult | None, candidate: TrialCandidate, *, skip_loop_emit: bool
+    source: PreregistrationSource | None, candidate: TrialCandidate, *, skip_loop_emit: bool
 ) -> dict | None:
     """The live pre-registration payload of a bound candidate; None leaves it to the floor.
 
     Bound: routed (approval tier, status) = ('auto', 'pending') in a writing cycle, its lead
-    pattern among the cycle's power passes — sized on that pass at the cycle's detection start.
+    pattern among the cycle's power passes — sized on that pass at the cycle's detection start,
+    its window row from the cycle's roster read; a failed read binds nothing.
     """
     lead_pattern, route, diff = candidate
-    if skip_loop_emit or route != ("auto", "pending") or power is None or power.windows is None:
+    if skip_loop_emit or route != ("auto", "pending") or source is None:
         return None
+    windows = source.power.windows
+    power_pass = _get_lead_pass(source.power, lead_pattern)
+    if windows is None or power_pass is None:
+        return None
+    canary_text = _get_trialable_canary_text(diff, power_pass.pattern)
+    spawns = None if canary_text is None else source.roster.get_spawns()
+    if spawns is None:
+        return None
+    row = get_redelegation_row(spawns, power_pass, windows)
+    inputs = PreregistrationInputs(windows.start.detection, canary_text, row)
+    return get_preregistration_payload(power_pass, inputs)
+
+
+def _get_lead_pass(power: PowerResult, lead_pattern: Pattern) -> PowerPass | None:
+    """The cycle's power pass of the candidate's own lead pattern; None when it has none."""
     lead_key = (lead_pattern.agent, lead_pattern.row_id, lead_pattern.metric_key)
     for power_pass in power.passes:
         pattern = power_pass.pattern
-        if (pattern.agent, pattern.row_id, pattern.metric_key) != lead_key:
-            continue
-        canary_text = _get_trialable_canary_text(diff, pattern)
-        if canary_text is None:
-            return None
-        return get_preregistration_payload(
-            power_pass, power.windows.start.detection, canary_text
-        )
+        if (pattern.agent, pattern.row_id, pattern.metric_key) == lead_key:
+            return power_pass
     return None
 
 

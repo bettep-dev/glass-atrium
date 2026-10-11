@@ -327,6 +327,7 @@ class ProposalStatusSent(unittest.TestCase):
             proposal_writes[0]["args"]["preregistration_payload"],
             result.preregistration_payload,
         )
+        self.assertIn("redelegation", result.preregistration_payload)
         self.assertEqual(pg_reach, [])
 
     def _build_bound_result(self) -> dc.PatchResult:
@@ -367,6 +368,13 @@ class ProposalStatusSent(unittest.TestCase):
                     "run_pre_verify",
                     lambda *a, **k: dc.PreVerifyResult(True, "ok", {}, "ok", 0),
                 ),
+                # the roster read at its DB seam: every roster name answered, no spawn
+                mock.patch.object(dc, "HAS_PG_PATTERN_READ", True),
+                mock.patch.object(
+                    dc,
+                    "_pg_read_spawn_facts",
+                    lambda names, _windows: (None, {name: [] for name in names}),
+                ),
                 contextlib.redirect_stderr(io.StringIO()),
             ):
                 return dc.build_patch_result(
@@ -378,7 +386,9 @@ class ProposalStatusSent(unittest.TestCase):
                     skip_haiku=True,
                     skip_pre_verify=False,
                     skip_loop_emit=False,
-                    power=power,
+                    preregistration=dc.PreregistrationSource(
+                        power, dc.RosterSpawnRead(agents_dir, windows, dc.get_tool_budget({}))
+                    ),
                 )
 
     @unittest.skipIf(dc is None, f"import failed: {_IMPORT_ERROR}")

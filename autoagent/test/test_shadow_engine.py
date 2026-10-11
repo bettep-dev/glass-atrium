@@ -93,9 +93,16 @@ _KEYS = SimpleNamespace(
         "canary",
         # an unstarted trial's void reads its horizon from the row
         "horizon_days",
+        # the re-delegation guardrail's W with its tier and gap count; the count's looks read it
+        "redelegation",
     },
     CANARY={"text", "text_sha256"},
 )
+# the fixture history stops no spawn → no overran gap → the rule's default window
+_DEFAULT_WINDOW_ROW = {"minutes": 60, "tier": "default", "gap_count": 0}
+_WINDOWS = get_pair_windows(_NOW)
+_POOL_AGENT = "glass-atrium-dev-node"  # a roster type no keyed pattern names
+_ROSTER_WARN = "WARN: re-delegation window — roster spawns unreadable"
 # the generator's patch in the fixture; its added line is the canary text a bound trial delivers
 _PROBE_DIFF = "--- a\n+++ b\n@@ -1 +1,2 @@\n # probe agent\n+- probe rule\n"
 # A/A design-effect rows beside the primary key's: the leg's own, and a pre-split union-event row
@@ -157,6 +164,57 @@ def _get_passing_history() -> tuple[SpawnFacts, ...]:
         for index in range(math.ceil(_REQUIRED * 28 / 84) + 1)
     ]
     return tuple(baseline + events + filler)
+
+
+def _get_inputs(power: dc.PowerResult) -> dc.PreregistrationInputs:
+    """The fixture's per-candidate inputs: its detection start, probe canary and default row."""
+    return dc.PreregistrationInputs(
+        power.windows.start.detection,
+        dc.get_canary_text(_PROBE_DIFF),
+        dict(_DEFAULT_WINDOW_ROW),
+    )
+
+
+_MINUTE = timedelta(minutes=1)
+
+
+def _get_overran_pair(
+    started_at: datetime, gap: timedelta, session: str, *, stopped_at: datetime | None = None
+) -> list[SpawnFacts]:
+    """An overran spawn and its session's next start `gap` after its stop (default: an hour on)."""
+    stop = stopped_at or started_at + timedelta(hours=1)
+    return [
+        SpawnFacts(f"{session}-a", session, started_at, 1, True, (), stopped_at=stop),
+        SpawnFacts(
+            f"{session}-b", session, stop + gap, 0, True, (), stopped_at=stop + gap + _MINUTE
+        ),
+    ]
+
+
+def _get_gap_spawns(session: str, minutes: range) -> list[SpawnFacts]:
+    """One overran baseline spawn per gap length, each in its own session."""
+    return [
+        spawn
+        for index, gap in enumerate(minutes)
+        for spawn in _get_overran_pair(
+            _WINDOWS.start.baseline + timedelta(hours=index + 1),
+            gap * _MINUTE,
+            f"{session}-{index}",
+        )
+    ]
+
+
+def _get_late_next_start(session: str) -> tuple[list[SpawnFacts], SpawnFacts]:
+    """A baseline spawn stopped a minute before D, and a spawn at D one minute later in its session.
+
+    The later spawn is the next start inside the earlier one's W, so only the cut keeps it out."""
+    baseline_spawn, _ = _get_overran_pair(
+        _WINDOWS.start.detection - timedelta(hours=1),
+        _MINUTE,
+        session,
+        stopped_at=_WINDOWS.end - _MINUTE,
+    )
+    return [baseline_spawn], SpawnFacts(f"{session}-d", session, _WINDOWS.end, 0, True, ())
 
 
 def _get_spawns_after(start: datetime, count: int) -> list[SpawnFacts]:
@@ -307,6 +365,10 @@ class _ShadowFixture(unittest.TestCase):
         self.ledger.design_effects[_AGENT] = _DESIGN_EFFECT_PAYLOAD
         self.history = list(_get_passing_history())
         self.patterns = [_pattern()]
+        # the roster read's answer by MANIFEST type (None → the history under every name)
+        self.roster_spawns: dict[str, list[SpawnFacts]] | None = None
+        self.roster_fault = False
+        self.stages: list[str] = []
         # after the seal: spawn read, ledger connection and writer = the DB boundary
         for name, value in (
             ("HAS_PG_PATTERN_READ", True),
@@ -327,6 +389,13 @@ class _ShadowFixture(unittest.TestCase):
         self.addCleanup(patcher.stop)
 
     def _read_spawn_facts(self, agents, windows):
+        # the roster read asks from one instant: baseline, detection and confirmation starts equal
+        if windows.start.baseline == windows.start.detection:
+            self.stages.append("roster read")
+            if self.roster_fault:
+                raise ConnectionRefusedError("spawn read: no database in this test")
+            if self.roster_spawns is not None:
+                return None, {name: list(spawns) for name, spawns in self.roster_spawns.items()}
         return _DAY - timedelta(days=60), {
             agent: list(self.history) for agent in agents
         }
@@ -356,9 +425,7 @@ class _ShadowFixture(unittest.TestCase):
         trial_ledger = stub.get_trial_ledger()
         power = self._check_power()
         [power_pass] = power.passes
-        payload = dc.get_preregistration_payload(
-            power_pass, power.windows.start.detection, dc.get_canary_text(_PROBE_DIFF)
-        )
+        payload = dc.get_preregistration_payload(power_pass, _get_inputs(power))
         for key in missing:
             del payload[key]
         is_shadow = event == trial_ledger.EVENT.SHADOW_PREREGISTRATION
@@ -425,7 +492,7 @@ class BoundPayloadTest(_ShadowFixture):
     def _proposal(self, agent: str, *_args: object, **_kwargs: object) -> dc.PatchProposal:
         self.generated.append(agent)
         return dc.PatchProposal(
-            target_file=str(self.target),
+            target_file=str(self.agents_dir / f"{agent}.md"),
             rationale="probe rationale",
             proposed_diff=self.diff,
             touched_frontmatter=False,
@@ -467,10 +534,14 @@ class BoundPayloadTest(_ShadowFixture):
                 skip_haiku=True,
                 skip_pre_verify=False,
                 skip_loop_emit=skip_loop_emit,
-                power=power,
+                preregistration=None if power is None else self._get_source(power),
             )
         self.assertEqual(self.pg_reach, [])
         return result
+
+    def _get_source(self, power: dc.PowerResult) -> dc.PreregistrationSource:
+        read = dc.RosterSpawnRead(self.agents_dir, power.windows, dc.get_tool_budget({}))
+        return dc.PreregistrationSource(power, read)
 
     def test_the_bound_payload_freezes_the_trial_design_boundaries_maximum_and_look_milestones(
         self,
@@ -481,9 +552,7 @@ class BoundPayloadTest(_ShadowFixture):
         payload = result.preregistration_payload
         self.assertEqual(
             payload,
-            dc.get_preregistration_payload(
-                power_pass, power.windows.start.detection, dc.get_canary_text(_PROBE_DIFF)
-            ),
+            dc.get_preregistration_payload(power_pass, _get_inputs(power)),
         )
         self.assertEqual(set(payload), _KEYS.PREREGISTRATION)
         self.assertEqual(set(payload["canary"]), _KEYS.CANARY)
@@ -611,9 +680,7 @@ class BoundPayloadTest(_ShadowFixture):
         power = self._check_power()
         [lead_pass] = power.passes
         lead, baseline = lead_pass.pattern, lead_pass.baseline
-        lead_payload = dc.get_preregistration_payload(
-            lead_pass, power.windows.start.detection, dc.get_canary_text(_PROBE_DIFF)
-        )
+        lead_payload = dc.get_preregistration_payload(lead_pass, _get_inputs(power))
         other_key = next(key for key in sorted(dc.METRIC_KEYS) if key != _BUDGET_KEY)
         # each other pattern's pass on its own baseline, so binding it changes the payload
         other_passes = (
@@ -626,9 +693,7 @@ class BoundPayloadTest(_ShadowFixture):
                 pattern=pattern, baseline=baseline._replace(events=baseline.events + offset)
             )
             self.assertNotEqual(
-                dc.get_preregistration_payload(
-                    other_pass, power.windows.start.detection, dc.get_canary_text(_PROBE_DIFF)
-                ),
+                dc.get_preregistration_payload(other_pass, _get_inputs(power)),
                 lead_payload,
             )
             # the other pass listed first: a check binding the first pass binds the wrong one
@@ -644,6 +709,127 @@ class BoundPayloadTest(_ShadowFixture):
                         (result.approval_tier, result.status) == ("auto", "pending"),
                         expected is not None,
                     )
+
+    def _get_window_row(self, roster_spawns: dict[str, list[SpawnFacts]]) -> dict:
+        """The bound payload's window row when the roster read answers `roster_spawns`."""
+        for stem in (_AGENT, _POOL_AGENT):
+            (self.agents_dir / f"{stem}.md").write_text("# probe agent\n", encoding="utf-8")
+        self.roster_spawns = roster_spawns
+        return self._build(self._check_power()).preregistration_payload["redelegation"]
+
+    def test_the_window_row_is_the_rules_window_tier_and_gap_count_over_the_baseline_window_alone(
+        self,
+    ) -> None:
+        # an overran spawn in the detection window would add a 500-minute gap if counted
+        detection_gap = _get_overran_pair(
+            _WINDOWS.start.detection + timedelta(hours=1), 500 * _MINUTE, "detection"
+        )
+        rows = (
+            ("100 own gaps → own tier", range(1, 101)),
+            ("99 own gaps and no pool → the default window", range(1, 100)),
+        )
+        for name, minutes in rows:
+            with self.subTest(name):
+                gaps = [float(gap) for gap in minutes]
+                row = self._get_window_row(
+                    {_AGENT: _get_gap_spawns("own", minutes) + detection_gap}
+                )
+                self.assertEqual(row, dc.get_redelegation_window(gaps, gaps)._asdict())
+
+    def test_a_spawn_at_or_after_d_never_moves_an_own_tier_window(self) -> None:
+        baseline_spawn, late_spawn = _get_late_next_start("own-late")
+        own = _get_gap_spawns("own", range(1, 101)) + baseline_spawn
+        without = self._get_window_row({_AGENT: own})
+        with_late = self._get_window_row({_AGENT: [*own, late_spawn]})
+        self.assertEqual(without["tier"], "own")
+        self.assertEqual(with_late, without)
+
+    def test_a_spawn_at_or_after_d_never_moves_a_pooled_tier_window(self) -> None:
+        baseline_spawn, late_spawn = _get_late_next_start("pool-late")
+        own = _get_gap_spawns("own", range(1, 11))
+        pool = _get_gap_spawns("pool", range(100, 190)) + baseline_spawn
+        without = self._get_window_row({_AGENT: own, _POOL_AGENT: pool})
+        with_late = self._get_window_row({_AGENT: own, _POOL_AGENT: [*pool, late_spawn]})
+        self.assertEqual(without["tier"], "pooled")
+        self.assertEqual(with_late, without)
+
+    def test_an_agent_under_100_own_gaps_takes_w_from_a_roster_type_no_keyed_pattern_names(
+        self,
+    ) -> None:
+        own_minutes, pool_minutes = range(1, 11), range(100, 190)
+        row = self._get_window_row(
+            {
+                _AGENT: _get_gap_spawns("own", own_minutes),
+                _POOL_AGENT: _get_gap_spawns("pool", pool_minutes),
+            }
+        )
+        pooled = [float(gap) for gap in (*own_minutes, *pool_minutes)]
+        self.assertEqual(row["tier"], "pooled")
+        self.assertEqual(row["gap_count"], 100)
+        self.assertEqual(row["minutes"], dc.get_redelegation_window([], pooled).minutes)
+
+    def test_one_stems_bare_and_prefixed_manifest_rows_form_one_type(self) -> None:
+        # each overran spawn under the bare name, its next start under the prefixed one
+        pairs = _get_gap_spawns("pool", range(100, 190))
+        bare = _POOL_AGENT.removeprefix(dc.ROSTER.STEM_PREFIX)
+        row = self._get_window_row(
+            {
+                _AGENT: _get_gap_spawns("own", range(1, 11)),
+                bare: pairs[0::2],
+                _POOL_AGENT: pairs[1::2],
+            }
+        )
+        self.assertEqual((row["tier"], row["gap_count"]), ("pooled", 100))
+
+    def test_a_non_roster_types_gaps_never_enter_the_pool(self) -> None:
+        row = self._get_window_row(
+            {
+                _AGENT: _get_gap_spawns("own", range(1, 11)),
+                "glass-atrium-retired-agent": _get_gap_spawns("retired", range(100, 190)),
+            }
+        )
+        self.assertEqual(row, _DEFAULT_WINDOW_ROW | {"gap_count": 10})
+
+    def test_the_roster_is_read_once_per_cycle_and_only_when_a_candidate_reaches_preregistration(
+        self,
+    ) -> None:
+        power = self._check_power()
+        [lead_pass] = power.passes
+        other = dataclasses.replace(lead_pass.pattern, agent=_POOL_AGENT)
+        (self.agents_dir / f"{_POOL_AGENT}.md").write_text("# probe agent\n", encoding="utf-8")
+        passes = [lead_pass, lead_pass._replace(pattern=other)]
+        groups = [(_AGENT, list(self.patterns)), (_POOL_AGENT, [other])]
+        rows = (
+            ("both candidates safety-routed: none reaches it → no read", "safety", 0, 0),
+            ("two candidates reach it → one read", "non-safety", 1, 2),
+        )
+        for name, safety, reads, bound in rows:
+            with self.subTest(name):
+                self.stages.clear()
+                report = SimpleNamespace(patches=[], cycle_date=f"{_NOW:%Y-%m-%d}")
+                verified = dc.PreVerifyResult(True, "ok", {}, "ok", 0)
+                with contextlib.ExitStack() as stack:
+                    stack.enter_context(contextlib.redirect_stderr(io.StringIO()))
+                    seams = self._seams(verified, safety=safety, area="body-auto")
+                    for seam, value in seams.items():
+                        stack.enter_context(mock.patch.object(dc, seam, value))
+                    dc._run_generation_loop(
+                        report,
+                        groups,
+                        dc.GenerationRun(
+                            regression_gate=object(),
+                            agents_dir=self.agents_dir,
+                            skip_haiku=False,
+                            skip_pre_verify=False,
+                            skip_loop_emit=False,
+                            power=dc.PowerResult(power.counts, passes, power.windows),
+                        ),
+                    )
+                self.assertEqual(self.stages.count("roster read"), reads)
+                self.assertEqual(
+                    sum(p.preregistration_payload is not None for p in report.patches), bound
+                )
+                self.assertEqual(self.pg_reach, [])
 
     def test_an_agent_in_trial_gets_no_second_preregistration_until_its_trial_is_decided(
         self,
@@ -1320,6 +1506,49 @@ class CycleWiringTest(_ShadowFixture):
         self.assertEqual(self._get_looks(), [])
         self.assertEqual(stages, ["shadow", "aa"])
 
+    def test_a_failed_roster_read_warns_once_preregisters_nothing_and_the_cycle_runs_on(
+        self,
+    ) -> None:
+        shadow_stage = dc.run_shadow_stage
+        self._patch(
+            "run_shadow_stage",
+            lambda *args: (shadow_stage(*args), self.stages.append("shadow")),
+        )
+        self._patch("run_aa_stage", lambda *args, **kwargs: self.stages.append("aa"))
+        self._patch("create_cycle_verdicts", lambda report: self.stages.append("verdicts"))
+        self._open_writing_stages()
+        proposal = dc.PatchProposal(
+            target_file=str(self.root / "agents" / f"{_AGENT}.md"),
+            rationale="probe rationale",
+            proposed_diff=_PROBE_DIFF,
+            touched_frontmatter=False,
+            estimated_added_lines=1,
+            raw_response="probe raw response",
+        )
+        # a candidate driven to pre-registration: generated, body-auto, non-safety, verified
+        for name, value in (
+            ("generate_consolidated_proposal", lambda *args, **kwargs: proposal),
+            ("classify_patch_area", lambda *args, **kwargs: "body-auto"),
+            ("classify_safety_tier", lambda *args, **kwargs: "non-safety"),
+            ("run_pre_verify", lambda *args, **kwargs: dc.PreVerifyResult(True, "ok", {}, "ok", 0)),
+            ("supersede_prior_pending_for_agent", lambda *args, **kwargs: 0),
+        ):
+            self._patch(name, value)
+        rows = (("the roster read answers", False), ("the roster read raises", True))
+        for name, is_fault in rows:
+            with self.subTest(name):
+                self.stages.clear()
+                self.ledger.rows.clear()
+                self.roster_fault = is_fault
+                report = self._run_cycle(skip_loop_emit=False)
+                bound = [
+                    patch for patch in report.patches if patch.preregistration_payload is not None
+                ]
+                self.assertEqual(self.stderr.getvalue().count(_ROSTER_WARN), int(is_fault))
+                self.assertEqual(len(bound), 0 if is_fault else 1)
+                self.assertEqual(self.stages, ["shadow", "aa", "roster read", "verdicts"])
+                self.assertIsInstance(report, dc.CycleReport)
+
 
 _CODE_AGENTS = (
     "glass-atrium-dev-shell",
@@ -1645,9 +1874,7 @@ class HarmCheckPayloadTest(_ShadowFixture):
         power_pass = power_pass._replace(
             pattern=pattern, spawns=spawns or power_pass.spawns
         )
-        return dc.get_preregistration_payload(
-            power_pass, power.windows.start.detection, dc.get_canary_text(_PROBE_DIFF)
-        )
+        return dc.get_preregistration_payload(power_pass, _get_inputs(power))
 
     def _get_leg_spawns(self) -> list[SpawnFacts]:
         """The fixture's history with every tenth spawn ending without a SubagentStop."""
