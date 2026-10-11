@@ -169,6 +169,36 @@ class TestTrialLedgerClosedSets(unittest.TestCase):
                     helper.write_trial_ledger_row(event, ledger.ACTOR.AA, payload)
                     connect.assert_called_once()
 
+    def test_the_live_trial_rows_pass_the_closed_sets_with_any_payload_and_reach_the_connection(
+        self,
+    ) -> None:
+        # Live payloads stay free-form until their key set is declared: any shape is written.
+        live_actor = "daemon-cycle-live"
+        rows = (
+            (
+                "pre-registration",
+                "live-preregistration",
+                {"proposal_id": 4127, "looks": [{"fraction": 0.25, "milestone": 40}]},
+            ),
+            (
+                "pre-registration, other keys",
+                "live-preregistration",
+                {"metric_key": "budget_overage"},
+            ),
+            ("look", "live-look", {"look": 1, "accrued": 40}),
+            ("look, empty object", "live-look", {}),
+            ("decision", "live-decision", {"outcome": "win"}),
+            ("decision, no object", "live-decision", ["horizon"]),
+        )
+        with _load_helper() as helper:
+            for name, event, payload in rows:
+                with (
+                    self.subTest(name),
+                    mock.patch.object(helper, "_connect") as connect,
+                ):
+                    helper.write_trial_ledger_row(event, live_actor, payload)
+                    connect.assert_called_once()
+
     def test_the_design_effect_payload_keys_are_the_metric_key_and_the_reading_fields(
         self,
     ) -> None:

@@ -1159,6 +1159,12 @@ class TrialLedgerValueUndeclared(CallerContractViolation):
 _TRIAL_LEDGER_EVENT = SimpleNamespace(
     SHADOW_PREREGISTRATION="shadow-preregistration",  # dedupe_key = <trial key>
     SHADOW_LOOK="shadow-look",  # dedupe_key = <trial key>:look:<n>
+    # live trial rows, written by ACTOR.LIVE
+    # live trial key carries the proposal id → a shadow row's <trial key> never takes it
+    LIVE_PREREGISTRATION="live-preregistration",  # dedupe_key = <live trial key>
+    LIVE_LOOK="live-look",  # dedupe_key = <live trial key>:look:<n>
+    # once per trial; a live pre-registration with no decision row is an open trial
+    LIVE_DECISION="live-decision",  # dedupe_key = <live trial key>:decision
     POWER_PASS_COUNT="power-pass-count",  # dedupe_key = power-pass-count:<cycle date>
     AA_START="aa-start",  # opens the A/A; dedupe_key = aa-start:after:<latest start id | 0>
     AA_RESTART="aa-restart",  # dedupe_key = aa-restart:<start id>:<cycle date>
@@ -1178,7 +1184,9 @@ _TRIAL_LEDGER_EVENT = SimpleNamespace(
 # Writers and readers import these names; a second spelling elsewhere is a drift.
 TRIAL_LEDGER = SimpleNamespace(
     EVENT=_TRIAL_LEDGER_EVENT,
-    ACTOR=SimpleNamespace(SHADOW="daemon-cycle-shadow", AA="daemon-cycle-aa"),
+    ACTOR=SimpleNamespace(
+        SHADOW="daemon-cycle-shadow", AA="daemon-cycle-aa", LIVE="daemon-cycle-live"
+    ),
     # Payload keys readers rely on; an event absent here carries a free-form object.
     # aa-arm-design-effect: metric_key + the trial_design.ArmDesignEffect fields; readers take value.
     # aa-start / aa-restart: fingerprint = the installed manifest's scoped path → sha256 map.
