@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import ast
 import contextlib
+import dataclasses
 import functools
 import hashlib
 import io
@@ -69,19 +70,21 @@ _REQUIRED = trial_design.get_required_units(
     _MAXIMUM, design_effect=_DESIGN_EFFECT.value
 )
 _MILESTONES = [fraction * _REQUIRED for fraction in trial_design.LOOK_FRACTIONS]
-_LOOK_KEYS = {"look", "fraction", "milestone", "boundary", "accrued_tasks"}
-# the payload's top-level keys the cycle builds; readers: metric_key (the read), looks (looks)
-_PREREGISTRATION_KEYS = {
-    "metric_key",
-    "detection_start",
-    "baseline",
-    "maximum_per_arm",
-    "design_effect",
-    "required_units",
-    "boundaries",
-    "looks",
-    "task_window_seconds",
-}
+_KEYS = SimpleNamespace(
+    LOOK={"look", "fraction", "milestone", "boundary", "accrued_tasks"},
+    # the payload's top-level keys the cycle builds; readers: metric_key (the read), looks (looks)
+    PREREGISTRATION={
+        "metric_key",
+        "detection_start",
+        "baseline",
+        "maximum_per_arm",
+        "design_effect",
+        "required_units",
+        "boundaries",
+        "looks",
+        "task_window_seconds",
+    },
+)
 # a live trial as the push stores it: trial and dedupe key from the proposal id
 _PROPOSAL_ID = 9001
 _LIVE_KEY = f"{_PROPOSAL_ID:064x}"
@@ -453,7 +456,7 @@ class BoundPayloadTest(_ShadowFixture):
         self.assertEqual(
             payload, dc.get_preregistration_payload(power_pass, power.windows.start.detection)
         )
-        self.assertEqual(set(payload), _PREREGISTRATION_KEYS)
+        self.assertEqual(set(payload), _KEYS.PREREGISTRATION)
         self.assertEqual(payload["boundaries"], list(trial_design.get_boundaries()))
         self.assertEqual(payload["maximum_per_arm"], _MAXIMUM)
         self.assertEqual(payload["design_effect"], _DESIGN_EFFECT.value)
@@ -464,7 +467,6 @@ class BoundPayloadTest(_ShadowFixture):
         self,
     ) -> None:
         power = self._check_power()
-        no_pass = dc.PowerResult(power.counts, [], power.windows)
         quality_fail = dc.PreVerifyResult(False, "C1 failed", {"C1": False}, "ok", 0)
         c3_miss = dc.PreVerifyResult(
             False,
@@ -479,7 +481,6 @@ class BoundPayloadTest(_ShadowFixture):
             ("a C3 miss", {"power": power, "verdict": c3_miss}),
             ("a safety-routed candidate", {"power": power, "safety": "safety"}),
             ("no-write mode", {"power": power, "skip_loop_emit": True}),
-            ("no power pass for the lead pattern", {"power": no_pass}),
             ("no power result", {"power": None}),
         )
         for name, arguments in rows:
@@ -487,6 +488,40 @@ class BoundPayloadTest(_ShadowFixture):
                 result = self._build(**arguments)
                 self.assertIsNone(result.preregistration_payload)
                 self.assertNotEqual((result.approval_tier, result.status), ("auto", "pending"))
+
+    def test_a_candidate_is_sized_only_on_its_own_lead_patterns_power_pass(self) -> None:
+        power = self._check_power()
+        [lead_pass] = power.passes
+        lead, baseline = lead_pass.pattern, lead_pass.baseline
+        lead_payload = dc.get_preregistration_payload(lead_pass, power.windows.start.detection)
+        other_key = next(key for key in sorted(dc.METRIC_KEYS) if key != _BUDGET_KEY)
+        # each other pattern's pass on its own baseline, so binding it changes the payload
+        other_passes = (
+            ("another agent", dataclasses.replace(lead, agent="glass-atrium-dev-node")),
+            ("the agent's other pattern", dataclasses.replace(lead, row_id=_PATTERN_ID + 1)),
+            ("the pattern on another metric key", dataclasses.replace(lead, metric_key=other_key)),
+        )
+        for offset, (owner, pattern) in enumerate(other_passes, start=1):
+            other_pass = lead_pass._replace(
+                pattern=pattern, baseline=baseline._replace(events=baseline.events + offset)
+            )
+            self.assertNotEqual(
+                dc.get_preregistration_payload(other_pass, power.windows.start.detection),
+                lead_payload,
+            )
+            # the other pass listed first: a check binding the first pass binds the wrong one
+            rows = (
+                (f"{owner}'s pass beside the lead pass", [other_pass, lead_pass], lead_payload),
+                (f"only {owner}'s pass", [other_pass], None),
+            )
+            for name, passes, expected in rows:
+                with self.subTest(name):
+                    result = self._build(dc.PowerResult(power.counts, passes, power.windows))
+                    self.assertEqual(result.preregistration_payload, expected)
+                    self.assertEqual(
+                        (result.approval_tier, result.status) == ("auto", "pending"),
+                        expected is not None,
+                    )
 
     def test_an_agent_in_trial_gets_no_second_preregistration_until_its_trial_is_decided(
         self,
@@ -566,7 +601,7 @@ class LookTest(_ShadowFixture):
         self.assertEqual([look.payload["look"] for look in looks], [1, 2])
         for look in looks:
             number = look.payload["look"]
-            self.assertEqual(set(look.payload), _LOOK_KEYS)
+            self.assertEqual(set(look.payload), _KEYS.LOOK)
             self.assertEqual(look.payload["accrued_tasks"], accrued)
             self.assertEqual(look.payload["boundary"], boundaries[number - 1])
             self.assertEqual(
@@ -635,7 +670,7 @@ class LookTest(_ShadowFixture):
                 )
                 self.assertAlmostEqual(payload["z"], 3.5355339, places=6)
                 self.assertEqual(payload["boundary"], boundary)
-                self.assertEqual(set(payload), _LOOK_KEYS | {"arms", "z"})
+                self.assertEqual(set(payload), _KEYS.LOOK | {"arms", "z"})
 
     def test_two_arms_with_no_variance_record_no_z(self) -> None:
         arms = dc.TrialArms(
