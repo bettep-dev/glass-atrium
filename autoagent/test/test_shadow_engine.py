@@ -101,6 +101,8 @@ _KEYS = SimpleNamespace(
 # the fixture history stops no spawn → no overran gap → the rule's default window
 _DEFAULT_WINDOW_ROW = {"minutes": 60, "tier": "default", "gap_count": 0}
 _WINDOWS = get_pair_windows(_NOW)
+# the fixture spawn read's provenance start, inside the baseline window
+_PROVENANCE_START = _DAY - timedelta(days=60)
 _POOL_AGENT = "glass-atrium-dev-node"  # a roster type no keyed pattern names
 _ROSTER_WARN = "WARN: re-delegation window — roster spawns unreadable"
 # the generator's patch in the fixture; its added line is the canary text a bound trial delivers
@@ -192,12 +194,12 @@ def _get_overran_pair(
 
 
 def _get_gap_spawns(session: str, minutes: range) -> list[SpawnFacts]:
-    """One overran baseline spawn per gap length, each in its own session."""
+    """One overran provenance-covered baseline spawn per gap length, each in its own session."""
     return [
         spawn
         for index, gap in enumerate(minutes)
         for spawn in _get_overran_pair(
-            _WINDOWS.start.baseline + timedelta(hours=index + 1),
+            _PROVENANCE_START + timedelta(hours=index + 1),
             gap * _MINUTE,
             f"{session}-{index}",
         )
@@ -406,9 +408,7 @@ class _ShadowFixture(unittest.TestCase):
                     ]
                     for name, spawns in self.roster.spawns.items()
                 }
-        return _DAY - timedelta(days=60), {
-            agent: list(self.history) for agent in agents
-        }
+        return _PROVENANCE_START, {agent: list(self.history) for agent in agents}
 
     def _check_power(self) -> dc.PowerResult:
         """The intake power check at the clock's now (stderr dropped); kept as the cycle's power."""
@@ -727,6 +727,11 @@ class BoundPayloadTest(_ShadowFixture):
         self.roster.spawns = spawns
         return self._build(self._check_power()).preregistration_payload["redelegation"]
 
+    def _get_window(self, spawns: dict[str, list[SpawnFacts]]) -> dict:
+        """The window row's W, tier and gap count alone."""
+        row = self._get_window_row(spawns)
+        return {key: row[key] for key in _DEFAULT_WINDOW_ROW}
+
     def test_the_window_row_is_the_rules_window_tier_and_gap_count_over_the_baseline_window_alone(
         self,
     ) -> None:
@@ -741,10 +746,10 @@ class BoundPayloadTest(_ShadowFixture):
         for name, minutes in rows:
             with self.subTest(name):
                 gaps = [float(gap) for gap in minutes]
-                row = self._get_window_row(
+                window = self._get_window(
                     {_AGENT: _get_gap_spawns("own", minutes) + detection_gap}
                 )
-                self.assertEqual(row, dc.get_redelegation_window(gaps, gaps)._asdict())
+                self.assertEqual(window, dc.get_redelegation_window(gaps, gaps)._asdict())
 
     def test_a_baseline_spawns_next_start_after_the_baseline_end_and_before_d_counts_its_gap(
         self,
@@ -754,9 +759,9 @@ class BoundPayloadTest(_ShadowFixture):
             _WINDOWS.start.detection - timedelta(hours=2), 120 * _MINUTE, "late-gap"
         )
         gaps = [*map(float, range(1, 100)), 120.0]
-        row = self._get_window_row({_AGENT: _get_gap_spawns("own", range(1, 100)) + late_gap})
-        self.assertEqual(row, dc.get_redelegation_window(gaps, gaps)._asdict())
-        self.assertEqual((row["tier"], row["gap_count"]), ("own", 100))
+        window = self._get_window({_AGENT: _get_gap_spawns("own", range(1, 100)) + late_gap})
+        self.assertEqual(window, dc.get_redelegation_window(gaps, gaps)._asdict())
+        self.assertEqual((window["tier"], window["gap_count"]), ("own", 100))
 
     def test_a_spawn_at_or_after_d_never_moves_an_own_tier_window(self) -> None:
         baseline_spawn, late_spawn = _get_late_next_start("own-late")
@@ -807,13 +812,13 @@ class BoundPayloadTest(_ShadowFixture):
         self.assertEqual((row["tier"], row["gap_count"]), ("pooled", 100))
 
     def test_a_non_roster_types_gaps_never_enter_the_pool(self) -> None:
-        row = self._get_window_row(
+        window = self._get_window(
             {
                 _AGENT: _get_gap_spawns("own", range(1, 11)),
                 "glass-atrium-retired-agent": _get_gap_spawns("retired", range(100, 190)),
             }
         )
-        self.assertEqual(row, _DEFAULT_WINDOW_ROW | {"gap_count": 10})
+        self.assertEqual(window, _DEFAULT_WINDOW_ROW | {"gap_count": 10})
 
     def test_the_roster_is_read_once_per_cycle_and_only_when_a_candidate_reaches_preregistration(
         self,
