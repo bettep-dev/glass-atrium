@@ -106,13 +106,35 @@ _KEYS = SimpleNamespace(
         "follow_ups",
         "coverage",
         "baseline_window",
+        "rise",
+        "reference_rise",
+        "stop_shift",
         "blind_spots",
     },
     REDELEGATION_INNER={
         "follow_ups": {"n", "mean", "sd"},
         "coverage": {"start", "days", "span_days"},
         "baseline_window": {"start", "end"},
+        "rise": {"unit", "design_effect_1", "design_effect_2", "labels"},
+        "reference_rise": {"unit", "margin_multiples", "mean_count_percent", "read_date", "labels"},
+        "stop_shift": {
+            "unit",
+            "metric_key",
+            "false_stop_percent",
+            "above_alpha_cell_percent",
+            "above_alpha_cell_interval_percent",
+            "read_date",
+            "labels",
+        },
     },
+)
+# the reference install's five deciding agents; a reference row names none of them
+_DECIDING_AGENTS = (
+    "qa-code-reviewer",
+    "dev-shell",
+    "dev-react",
+    "dev-nestjs",
+    "meta-prompt-engineer",
 )
 # the fixture history stops no spawn → no overran gap → the rule's default window
 _DEFAULT_WINDOW_ROW = {"minutes": 60, "tier": "default", "gap_count": 0}
@@ -208,8 +230,15 @@ def _get_history_row(start: WindowStarts) -> dict:
             "start": start.baseline.isoformat(),
             "end": start.detection.isoformat(),
         },
+        **dc.get_reference_rows(),
         "blind_spots": list(dc.REDELEGATION_ROW.BLIND_SPOTS),
     }
+
+
+def _get_named_agents(row: dict) -> list[str]:
+    """The deciding agents a row's text names."""
+    text = json.dumps(row)
+    return [agent for agent in _DECIDING_AGENTS if agent in text]
 
 
 _MINUTE = timedelta(minutes=1)
@@ -990,6 +1019,106 @@ class BoundPayloadTest(_ShadowFixture):
         self.assertEqual(
             {name: set(row[name]) for name in _KEYS.REDELEGATION_INNER}, _KEYS.REDELEGATION_INNER
         )
+
+    def _get_payload(self, row: dict, **changes: object) -> dict:
+        """The bound payload built over the window row `row`, power pass fields replaced."""
+        [power_pass] = self._check_power().passes
+        inputs = dc.PreregistrationInputs(
+            _WINDOWS.start.detection, dc.get_canary_text(_PROBE_DIFF), row
+        )
+        return dc.get_preregistration_payload(power_pass._replace(**changes), inputs)
+
+    def test_the_counts_rise_is_the_upward_mean_shift_of_the_rows_sd_at_the_trials_maximum(
+        self,
+    ) -> None:
+        follow_ups = {"n": 2, "mean": 1.0, "sd": math.sqrt(2)}
+        payload = self._get_payload(_get_history_row(_WINDOWS.start) | {"follow_ups": follow_ups})
+        self.assertEqual(payload["maximum_per_arm"], _MAXIMUM)
+        rise = payload["redelegation"]["rise"]
+        for design_effect in (1, 2):
+            with self.subTest(f"design effect {design_effect}"):
+                self.assertEqual(
+                    rise[f"design_effect_{design_effect}"],
+                    trial_design.get_follow_up_harm(
+                        math.sqrt(2), _MAXIMUM, design_effect=design_effect
+                    ),
+                )
+        self.assertEqual(rise["unit"], "follow-ups per spawn")
+        [unmeasured] = [label for label in rise["labels"] if label.startswith("unmeasured")]
+        self.assertIn("design effect 1 and 2", unmeasured)
+        model_based = [label for label in rise["labels"] if label.startswith("model-based")]
+        self.assertEqual(len(model_based), 1)
+
+    def test_the_reference_rise_is_a_dated_four_look_snapshot_the_rise_is_not_bounded_by(
+        self,
+    ) -> None:
+        reference = self._get_row([])["reference_rise"]
+        self.assertEqual(reference["margin_multiples"], [11, 26, 36])
+        self.assertEqual(reference["mean_count_percent"], [9, 19])
+        self.assertEqual(reference["read_date"], "2026-10-10")
+        labels = (
+            "on four looks",
+            "the reference install's, not the install's own",
+            "measured on budget_overage trials",
+            "on the calibration span's units",
+            "two of five deciding agents read through look 2 only",
+        )
+        for label in labels:
+            with self.subTest(label):
+                self.assertIn(label, reference["labels"])
+        self.assertEqual(_get_named_agents(reference), [])
+        rise = self._get_payload(_get_history_row(_WINDOWS.start))["redelegation"]["rise"]
+        bound = "does not bound the randomization test's rise"
+        self.assertEqual(len([label for label in rise["labels"] if label.startswith(bound)]), 1)
+
+    def test_the_stop_shift_is_the_reference_installs_dated_budget_overage_false_stop_share(
+        self,
+    ) -> None:
+        stop_shift = self._get_row([])["stop_shift"]
+        self.assertEqual(stop_shift["false_stop_percent"], [3.55, 7.50])
+        self.assertEqual(stop_shift["above_alpha_cell_percent"], 7.50)
+        self.assertEqual(stop_shift["above_alpha_cell_interval_percent"], [6.38, 8.74])
+        self.assertEqual(stop_shift["metric_key"], _BUDGET_KEY)
+        self.assertEqual(stop_shift["read_date"], "2026-10-10")
+        [install] = [label for label in stop_shift["labels"] if "install" in label]
+        self.assertIn("not the install's own", install)
+        self.assertIn("no install measures its own", install)
+        [metric_key] = [label for label in stop_shift["labels"] if _BUDGET_KEY in label]
+        self.assertIn("another primary key carries these values labelled as that key's", metric_key)
+        for label in (
+            "the two shapes are assumptions",
+            "two of five deciding agents read through look 2 only",
+        ):
+            with self.subTest(label):
+                self.assertEqual(
+                    len([text for text in stop_shift["labels"] if text.startswith(label)]), 1
+                )
+        self.assertEqual(_get_named_agents(stop_shift), [])
+
+    def test_the_counts_rise_is_none_at_both_design_effects_and_the_payload_builds_at_sd_none_or_0(
+        self,
+    ) -> None:
+        lone, first, second = (_get_member(f"rise-{name}") for name in ("lone", "first", "second"))
+        rows = (
+            ("sd None — one counted spawn", [lone, _get_follow_up(lone, 10)], [lone], None),
+            (
+                "sd 0 — two counted spawns with the same follow-up count",
+                [first, _get_follow_up(first, 10), second, _get_follow_up(second, 10)],
+                [first, second],
+                0.0,
+            ),
+        )
+        for name, roster_spawns, members, sd in rows:
+            with self.subTest(name):
+                row = self._get_row(roster_spawns, spawns=members)
+                self.assertEqual(row["follow_ups"]["sd"], sd)
+                payload = self._get_payload(row, spawns=members)
+                rise = payload["redelegation"]["rise"]
+                self.assertEqual((rise["design_effect_1"], rise["design_effect_2"]), (None, None))
+                self.assertEqual(
+                    len([label for label in rise["labels"] if label.startswith("unmeasured")]), 1
+                )
+                self.assertTrue(json.dumps(payload, allow_nan=False))
 
     def test_the_roster_is_read_once_per_cycle_and_only_when_a_candidate_reaches_preregistration(
         self,

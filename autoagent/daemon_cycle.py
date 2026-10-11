@@ -9374,8 +9374,30 @@ def get_preregistration_payload(power_pass: PowerPass, inputs: PreregistrationIn
         "generator_input_version": GENERATOR_INPUT_VERSION,
         "horizon_days": trial_design.HORIZON_DAYS,
         "canary": {"text": canary_text, "text_sha256": _get_text_sha256(canary_text)},
-        "redelegation": inputs.redelegation,
+        "redelegation": {
+            **inputs.redelegation,
+            "rise": _get_follow_up_rise(inputs.redelegation["follow_ups"]["sd"], maximum),
+        },
         **_get_harm_payload(power_pass, detection_start, maximum),
+    }
+
+
+def _get_follow_up_rise(sd: float | None, per_arm: int | None) -> dict:
+    """The count's minimum detectable rise in follow-ups per spawn at design effect 1 and 2.
+
+    None at both when the sd is None or 0 or the trial has no maximum: never 0, which would
+    read as any rise detectable.
+    """
+
+    def get_rise(design_effect: int) -> float | None:
+        if not sd or per_arm is None:
+            return None
+        return trial_design.get_follow_up_harm(sd, per_arm, design_effect=design_effect)
+
+    return {
+        "unit": "follow-ups per spawn",
+        **{f"design_effect_{value}": get_rise(value) for value in HARM_CHECK.DESIGN_EFFECTS},
+        "labels": list(REDELEGATION_ROW.RISE_LABELS),
     }
 
 
@@ -9454,6 +9476,43 @@ REDELEGATION_ROW = SimpleNamespace(
         ),
         "does less: a spawn that does less and is never re-delegated passes the count",
     ),
+    RISE_LABELS=(
+        (
+            "unmeasured: no A/A writes a design-effect row for this guardrail, stated at design "
+            "effect 1 and 2"
+        ),
+        (
+            "model-based: the two-sample mean-shift formula, one-sided upward, at the trial's "
+            "maximum sample"
+        ),
+        (
+            "does not bound the randomization test's rise: the trial's test is the randomization "
+            "test, and on the reference install its rise fell outside this bracket"
+        ),
+    ),
+    # part (d)'s read on the reference install, shipped as a dated snapshot
+    REFERENCE_READ_DATE="2026-10-10",
+    REFERENCE_LABELS=(
+        "on four looks",
+        "the reference install's, not the install's own",
+        "measured on budget_overage trials",
+        "on the calibration span's units",
+        "two of five deciding agents read through look 2 only",
+        "reference values only: no stop, size or power check reads them",
+    ),
+    STOP_SHIFT_LABELS=(
+        "the reference install's, not the install's own, and no install measures its own",
+        (
+            "measured on the metric key budget_overage, so a trial on another primary key "
+            "carries these values labelled as that key's, not its own"
+        ),
+        (
+            "the two shapes are assumptions: which one a real win resembles has no instrument "
+            "before a live trial"
+        ),
+        "two of five deciding agents read through look 2 only",
+        "reference values only: no stop, size or power check reads them",
+    ),
 )
 
 
@@ -9492,7 +9551,30 @@ def get_redelegation_row(
         "margin": _get_redelegation_margin(power_pass.baseline),
         "follow_ups": follow_ups._asdict(),
         **_get_baseline_coverage(windows.start, covered_start),
+        **get_reference_rows(),
         "blind_spots": list(REDELEGATION_ROW.BLIND_SPOTS),
+    }
+
+
+def get_reference_rows() -> dict:
+    """The count's rise and the stop shift as the reference install read them, on every install."""
+    return {
+        "reference_rise": {
+            "unit": "multiple of the margin",
+            "margin_multiples": [11, 26, 36],
+            "mean_count_percent": [9, 19],
+            "read_date": REDELEGATION_ROW.REFERENCE_READ_DATE,
+            "labels": list(REDELEGATION_ROW.REFERENCE_LABELS),
+        },
+        "stop_shift": {
+            "unit": "percent of true wins stopped falsely",
+            "metric_key": "budget_overage",
+            "false_stop_percent": [3.55, 7.50],
+            "above_alpha_cell_percent": 7.50,
+            "above_alpha_cell_interval_percent": [6.38, 8.74],
+            "read_date": REDELEGATION_ROW.REFERENCE_READ_DATE,
+            "labels": list(REDELEGATION_ROW.STOP_SHIFT_LABELS),
+        },
     }
 
 
