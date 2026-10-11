@@ -18,7 +18,9 @@
 from __future__ import annotations
 
 import hashlib
+import math
 import os
+import statistics
 from collections import defaultdict
 from collections.abc import Iterable, Mapping, Sequence
 from datetime import datetime, timedelta, timezone
@@ -308,6 +310,13 @@ FLOOR_MIN_SESSIONS = 5
 PENDING_GRACE = timedelta(hours=6)
 # advisory-subagent-budget.sh → DEFAULT_TOOL_BUDGET, the budget its SUBAGENT_TOOL_BUDGET overrides
 DEFAULT_TOOL_BUDGET = 40
+# re-delegation window rule; thresholds planner-set → moved only by a TEAM decision
+REDELEGATION = SimpleNamespace(
+    MIN_GAPS=100,
+    DEFAULT_MINUTES=60,
+    TIER=SimpleNamespace(OWN="own", POOLED="pooled", DEFAULT="default"),
+)
+_MINUTE = timedelta(minutes=1)
 
 VERDICT_PASS = "pass"
 VERDICT_FAIL = "fail"
@@ -344,6 +353,12 @@ class SpawnFacts(NamedTuple):
     salt_id: int | None = None
     is_delivered: bool | None = None  # column `delivered`
     delivered_hash: str | None = None
+
+
+class RedelegationWindow(NamedTuple):
+    minutes: int  # W
+    tier: str  # REDELEGATION.TIER
+    gap_count: int  # the tier's overran gaps; the agent's own under the default tier
 
 
 class WindowCount(NamedTuple):
@@ -478,6 +493,115 @@ def is_task_overrun(task: Sequence[SpawnFacts], tool_budget: int) -> bool:
     member adds nothing, so the sum is a lower bound."""
     return any(s.overage_rows > 0 for s in task) or (
         sum(s.tool_use_actual or 0 for s in task) >= tool_budget
+    )
+
+
+def get_overran_gaps(
+    spawns_by_type: Mapping[str, Iterable[SpawnFacts]],
+    start: datetime,
+    end: datetime,
+    tool_budget: int,
+) -> dict[str, list[float]]:
+    """Each agent type's overran gaps, in minutes.
+
+    One gap per stopped, session-mapped spawn started in [start, end) that overruns alone
+    (`is_task_overrun`): from its stop to the earliest other start of its own type in its parent
+    session at or after that stop, wherever that start falls; no such start → no gap."""
+    return {
+        agent_type: _get_type_overran_gaps(list(spawns), start, end, tool_budget)
+        for agent_type, spawns in spawns_by_type.items()
+    }
+
+
+def _get_type_overran_gaps(
+    spawns: list[SpawnFacts], start: datetime, end: datetime, tool_budget: int
+) -> list[float]:
+    spawns_by_session = _get_spawns_by_session(spawns)
+    gaps: list[float] = []
+    for spawn in spawns:
+        stop = spawn.stopped_at
+        if stop is None or spawn.session_id is None or not start <= spawn.started_at < end:
+            continue
+        if not is_task_overrun((spawn,), tool_budget):
+            continue
+        later = [
+            other.started_at
+            for other in spawns_by_session[spawn.session_id]
+            if other is not spawn and other.started_at >= stop
+        ]
+        if later:
+            gaps.append((min(later) - stop) / _MINUTE)
+    return gaps
+
+
+def _get_spawns_by_session(spawns: Iterable[SpawnFacts]) -> dict[str | None, list[SpawnFacts]]:
+    by_session: defaultdict[str | None, list[SpawnFacts]] = defaultdict(list)
+    for spawn in spawns:
+        by_session[spawn.session_id].append(spawn)
+    return by_session
+
+
+def get_redelegation_window(
+    own_gaps: Sequence[float], pooled_gaps: Sequence[float]
+) -> RedelegationWindow:
+    """W from the agent's own overran gaps and the pool — every agent type's (`get_overran_gaps`).
+
+    The own 90th percentile rounded up to a whole minute at ≥ REDELEGATION.MIN_GAPS own gaps;
+    else the pooled one at ≥ MIN_GAPS pooled gaps; else DEFAULT_MINUTES with the own gap count."""
+    if len(own_gaps) >= REDELEGATION.MIN_GAPS:
+        return RedelegationWindow(_get_p90_minutes(own_gaps), REDELEGATION.TIER.OWN, len(own_gaps))
+    if len(pooled_gaps) >= REDELEGATION.MIN_GAPS:
+        return RedelegationWindow(
+            _get_p90_minutes(pooled_gaps), REDELEGATION.TIER.POOLED, len(pooled_gaps)
+        )
+    return RedelegationWindow(
+        REDELEGATION.DEFAULT_MINUTES, REDELEGATION.TIER.DEFAULT, len(own_gaps)
+    )
+
+
+def _get_p90_minutes(gaps: Sequence[float]) -> int:
+    # inclusive → the gaps are the whole population, never extrapolated past their maximum
+    return math.ceil(statistics.quantiles(gaps, n=10, method="inclusive")[-1])
+
+
+def get_follow_up_counts(
+    spawns_by_type: Mapping[str, Iterable[SpawnFacts]],
+    agent_type: str,
+    start: datetime,
+    end: datetime,
+    redelegation_window: timedelta,
+    evaluated_at: datetime,
+) -> list[tuple[SpawnFacts, int]]:
+    """Each counted spawn of `agent_type` with its follow-up count.
+
+    Counted: stopped, session-mapped, started in [start, end), its window closed — stop +
+    `redelegation_window` at or before `evaluated_at`. Follow-ups: every other `agent_type` spawn
+    `_is_continuation` places after it, wherever it starts; one inside several windows counts
+    for each."""
+    spawns = list(spawns_by_type.get(agent_type, ()))
+    spawns_by_session = _get_spawns_by_session(spawns)
+    return [
+        (spawn, sum(
+            1 for other in spawns_by_session[spawn.session_id]
+            if other is not spawn and _is_continuation(spawn, other, redelegation_window)
+        ))
+        for spawn in spawns
+        if _is_counted(spawn, start, end, redelegation_window, evaluated_at)
+    ]
+
+
+def _is_counted(
+    spawn: SpawnFacts,
+    start: datetime,
+    end: datetime,
+    redelegation_window: timedelta,
+    evaluated_at: datetime,
+) -> bool:
+    return (
+        spawn.stopped_at is not None
+        and spawn.session_id is not None
+        and start <= spawn.started_at < end
+        and spawn.stopped_at + redelegation_window <= evaluated_at
     )
 
 

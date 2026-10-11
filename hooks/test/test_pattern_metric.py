@@ -713,6 +713,196 @@ class TestToolBudgetResolution(unittest.TestCase):
                 self.assertEqual(self._get_recorded_budget(environ, budget - 1), budget)
 
 
+_GAP_START = datetime(2026, 9, 1, tzinfo=_UTC)
+_GAP_END = _GAP_START + 28 * _DAY
+_GAP_END_MIN = 28 * 24 * 60
+
+
+def _get_at(minutes: float) -> datetime:
+    return _GAP_START + minutes * _MINUTE
+
+
+def _get_run(
+    agent_id: str,
+    start_min: float,
+    stop_min: float | None,
+    *,
+    session_id: str | None = "s",
+    overage_rows: int = 0,
+    tool_use_actual: int | None = None,
+) -> sig.SpawnFacts:
+    """A spawn starting and stopping `start_min` / `stop_min` minutes after `_GAP_START`."""
+    return _get_spawn(
+        agent_id, _get_at(start_min), session_id=session_id, overage_rows=overage_rows,
+        has_subagent_stop=stop_min is not None,
+        stopped_at=None if stop_min is None else _get_at(stop_min), tool_use_actual=tool_use_actual,
+    )
+
+
+class TestOverranGaps(unittest.TestCase):
+    """An overran gap: an overran spawn's stop to the next same-type start in its session."""
+
+    def _get_gaps(self, spawns: list[sig.SpawnFacts]) -> list[float]:
+        return sig.get_overran_gaps({"dev-shell": spawns}, _GAP_START, _GAP_END, 40)["dev-shell"]
+
+    def test_each_gap_runs_to_the_next_start_in_the_overran_spawns_session(self) -> None:
+        overran = _get_run("o", 0, 10, overage_rows=1)
+        rows = [
+            ("a start exactly at the stop is the next start, gap 0",
+             [overran, _get_run("n", 10, None)], [0.0]),
+            ("the earliest later start is the next start",
+             [overran, _get_run("late", 25, None), _get_run("n", 15.5, None)], [5.5]),
+            ("a start before the stop is never the next start",
+             [overran, _get_run("early", 5, 30)], []),
+            ("a spawn is never its own next start", [_get_run("zero", 10, 10, overage_rows=1)], []),
+            ("a start in another session is never the next start",
+             [overran, _get_run("t", 12, None, session_id="t"), _get_run("n", 30, None)], [20.0]),
+            ("a tool_use-only overrun reaching the budget is overran",
+             [_get_run("tu", 0, 10, tool_use_actual=40), _get_run("n", 13, None)], [3.0]),
+            ("tool_use one below the budget is not overran",
+             [_get_run("tu", 0, 10, tool_use_actual=39), _get_run("n", 13, None)], []),
+            ("a spawn with no SubagentStop adds no gap",
+             [_get_run("open", 0, None, overage_rows=1), _get_run("n", 13, None)], []),
+            ("a spawn with no parent session adds no gap",
+             [_get_run("x", 0, 10, session_id=None, overage_rows=1),
+              _get_run("n", 13, None, session_id=None)], []),
+        ]
+        for name, spawns, expected in rows:
+            with self.subTest(name):
+                self.assertEqual(self._get_gaps(spawns), expected)
+
+    def test_the_overran_spawns_own_start_places_its_gap_in_the_half_open_window(self) -> None:
+        rows = [
+            ("started at the window start", 0, [5.0]),
+            ("started a minute before the window start", -1, []),
+            ("started a minute before the window end, its next start after the end",
+             _GAP_END_MIN - 1, [5.0]),
+            ("started at the window end", _GAP_END_MIN, []),
+        ]
+        for name, start_min, expected in rows:
+            with self.subTest(name):
+                spawns = [
+                    _get_run("o", start_min, start_min + 0.5, overage_rows=1),
+                    _get_run("n", start_min + 5.5, None),
+                ]
+                self.assertEqual(self._get_gaps(spawns), expected)
+
+    def test_each_agent_types_gaps_are_measured_to_its_own_types_next_start(self) -> None:
+        spawns_by_type = {
+            "dev-shell": [_get_run("shell", 0, 10, overage_rows=1), _get_run("shell-n", 30, None)],
+            "dev-react": [
+                _get_run("react", 12, 20),
+                _get_run("react-o", 40, 50, overage_rows=1),
+                _get_run("react-n", 52, None),
+            ],
+        }
+        gaps = sig.get_overran_gaps(spawns_by_type, _GAP_START, _GAP_END, 40)
+        self.assertEqual(gaps, {"dev-shell": [20.0], "dev-react": [2.0]})
+
+
+class TestRedelegationWindow(unittest.TestCase):
+    """W: the own overran 90th percentile rounded up at ≥ 100 own gaps, else the pooled one at
+    ≥ 100 pooled gaps, else 60 minutes — each with its tier and gap count."""
+
+    def test_the_tier_follows_the_gap_counts(self) -> None:
+        rows = [
+            ("own at 100 own gaps", [5.0] * 100, [50.0] * 200, (5, "own", 100)),
+            ("pooled at 99 own gaps and 100 pooled gaps", [5.0] * 99, [50.0] * 100,
+             (50, "pooled", 100)),
+            ("60 minutes below both, with the agent's own gap count", [5.0] * 99, [50.0] * 99,
+             (60, "default", 99)),
+            ("60 minutes with no gap at all", [], [], (60, "default", 0)),
+        ]
+        for name, own, pooled, expected in rows:
+            with self.subTest(name):
+                self.assertEqual(
+                    sig.get_redelegation_window(own, pooled), sig.RedelegationWindow(*expected)
+                )
+
+    def test_w_is_the_inclusive_90th_percentile_rounded_up_to_a_whole_minute(self) -> None:
+        rows = [
+            # inclusive: position 0.9 × 99 = 89.1 → 10 + 0.1 × (20 − 10) = 11; exclusive gives 19
+            ("90 gaps of 10 and 10 of 20 give 11", [10.0] * 90 + [20.0] * 10, 11),
+            ("a 90th percentile of exactly 119 stays 119", [119.0] * 100, 119),
+            ("a fractional 90th percentile rounds up", [10.2] * 100, 11),
+        ]
+        for name, gaps, expected in rows:
+            with self.subTest(name):
+                self.assertEqual(sig.get_redelegation_window(gaps, gaps).minutes, expected)
+
+    def test_a_pooled_90th_percentile_of_59_1_minutes_yields_60(self) -> None:
+        window = sig.get_redelegation_window([5.0] * 20, [59.1] * 100)
+        self.assertEqual(window, sig.RedelegationWindow(60, "pooled", 100))
+
+
+class TestFollowUpCounts(unittest.TestCase):
+    """A counted spawn's follow-ups: other same-type starts in its session in [stop, stop + W)."""
+
+    _W = 60 * _MINUTE
+    _CLOSED = _GAP_END + 30 * _DAY  # every counted spawn's window closed
+
+    def _get_counts(
+        self, spawns_by_type: dict[str, list[sig.SpawnFacts]], evaluated_at: datetime = _CLOSED
+    ) -> dict[str | None, int]:
+        counts = sig.get_follow_up_counts(
+            spawns_by_type, "dev-shell", _GAP_START, _GAP_END, self._W, evaluated_at
+        )
+        return {spawn.agent_id: count for spawn, count in counts}
+
+    def test_each_follow_up_inside_w_counts_once_for_each_spawn_it_follows(self) -> None:
+        spawn = _get_run("a", 0, 10)
+        end = _GAP_END_MIN
+        rows = [
+            ("a stopless, non-overran follow-up inside W counts once",
+             [spawn, _get_run("f", 30, None)], {"a": 1}),
+            ("a follow-up exactly at the stop counts", [spawn, _get_run("f", 10, None)], {"a": 1}),
+            ("a follow-up at stop + W does not count", [spawn, _get_run("f", 70, None)], {"a": 0}),
+            ("a start before the stop is no follow-up", [spawn, _get_run("f", 5, None)], {"a": 0}),
+            ("one follow-up inside two spawns' windows counts for each",
+             [spawn, _get_run("c", 5, 20), _get_run("f", 30, None)], {"a": 1, "c": 1}),
+            ("a follow-up in another parent session counts for none",
+             [spawn, _get_run("f", 30, None, session_id="t")], {"a": 0}),
+            ("a spawn is never its own follow-up", [_get_run("z", 10, 10)], {"z": 0}),
+            ("a follow-up after the counting window ends, inside W, counts",
+             [_get_run("a", end - 20, end - 10), _get_run("f", end + 5, None)], {"a": 1}),
+        ]
+        for name, spawns, expected in rows:
+            with self.subTest(name):
+                self.assertEqual(self._get_counts({"dev-shell": spawns}), expected)
+
+    def test_a_follow_up_of_another_agent_type_counts_for_none(self) -> None:
+        spawns_by_type = {
+            "dev-shell": [_get_run("a", 0, 10)],
+            "dev-react": [_get_run("f", 30, None)],
+        }
+        self.assertEqual(self._get_counts(spawns_by_type), {"a": 0})
+
+    def test_only_a_stopped_session_mapped_spawn_started_in_the_window_is_counted(self) -> None:
+        rows = [
+            ("a spawn with no SubagentStop", _get_run("a", 0, None), {}),
+            ("a spawn with no parent session", _get_run("a", 0, 10, session_id=None), {}),
+            ("a spawn started at the window start", _get_run("a", 0, 10), {"a": 0}),
+            ("a spawn started a minute before the window start", _get_run("a", -1, 10), {}),
+            ("a spawn started at the window end",
+             _get_run("a", _GAP_END_MIN, _GAP_END_MIN + 10), {}),
+        ]
+        for name, spawn, expected in rows:
+            with self.subTest(name):
+                self.assertEqual(self._get_counts({"dev-shell": [spawn]}), expected)
+
+    def test_a_spawn_enters_the_count_once_its_stop_plus_w_reaches_the_evaluation_time(
+        self,
+    ) -> None:
+        spawns = {"dev-shell": [_get_run("a", 0, 10), _get_run("f", 30, None)]}
+        rows = [
+            ("stop + W a minute after the evaluation time", _get_at(69), {}),
+            ("stop + W equal to the evaluation time", _get_at(70), {"a": 1}),
+        ]
+        for name, evaluated_at, expected in rows:
+            with self.subTest(name):
+                self.assertEqual(self._get_counts(spawns, evaluated_at), expected)
+
+
 @unittest.skipIf(pgdw is None, f"import failed: {_IMPORT_ERROR}")
 class TestPatternFloorReadFailure(unittest.TestCase):
     """The window read fails closed: a read failure → None plus one stderr JSON line."""
