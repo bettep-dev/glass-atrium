@@ -2409,16 +2409,26 @@ class HarmCheckPayloadTest(_ShadowFixture):
         actual = self._get_payload(_OFF_MAP_AGENT, [*spawns, early])["harm_checks"]
         self.assertEqual(actual, expected)
 
-    def test_the_payload_states_both_samples_its_maximum_is_the_larger_of(self) -> None:
-        payload = self._get_payload(_AGENT)
-        rate = _BASELINE.EVENTS / _BASELINE.SPAWNS
-        samples = {
-            "efficacy": trial_design.get_maximum_sample_size(rate),
-            "harm": trial_design.get_harm_sample_size(rate),
-        }
-        self.assertEqual(payload["samples"], samples)
-        self.assertEqual(payload["maximum_per_arm"], max(samples.values()))
-        self.assertEqual(payload["harm_checks"]["primary"]["baseline_rate"], rate)
+    def test_the_payload_maximum_is_the_larger_sample_grown_at_the_agents_own_k(
+        self,
+    ) -> None:
+        # baseline 51/91: efficacy 112 > harm 103, grown to 142 at k 4 and 134 at k 3
+        rows = [
+            ("a k-4 agent", _AGENT, 142),
+            ("a k-3 agent", "glass-atrium-qa-code-reviewer", 134),
+        ]
+        for name, agent, maximum in rows:
+            with self.subTest(name):
+                power = self._check_power()
+                [power_pass] = power.passes
+                power_pass = power_pass._replace(
+                    pattern=dataclasses.replace(power_pass.pattern, agent=agent),
+                    baseline=power_pass.baseline._replace(events=51, spawns=91),
+                )
+                payload = dc.get_preregistration_payload(power_pass, _get_inputs(power))
+                self.assertEqual(payload["samples"], {"efficacy": 112, "harm": 103})
+                self.assertEqual(payload["maximum_per_arm"], maximum)
+                self.assertEqual(payload["harm_checks"]["primary"]["baseline_rate"], 51 / 91)
 
 
 if __name__ == "__main__":

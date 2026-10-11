@@ -8989,8 +8989,8 @@ def get_power_check(subject: PowerSubject, inputs: PowerInputs, windows: PairWin
 
     Projected units = the agent's spawns per day over the 28 days before D × the 84-day
     horizon; NULL-agent_id spawns count nowhere. Bound = 2 × the trial_design per-arm
-    maximum — the larger of the efficacy and harm samples — at the floor-half baseline rate
-    × the key's design effect from a passed A/A.
+    maximum — the larger of the efficacy and harm samples, grown at the agent's own k — at
+    the floor-half baseline rate × the key's design effect from a passed A/A.
     In order: fewer than 28 provenance-covered days → insufficient-history; no design
     effect at the key → design-unmeasured; a rate with no finite size → underpowered.
     """
@@ -9002,7 +9002,9 @@ def get_power_check(subject: PowerSubject, inputs: PowerInputs, windows: PairWin
     )
     design_effect = inputs.design_effects.get(subject.key)
     projected = trial_design.get_projected_units(units / BASELINE.MIN_COVERED.days)
-    required = _get_required_units(subject.floor.baseline, design_effect)
+    required = _get_required_units(
+        subject.floor.baseline, design_effect, get_guardrail_count(subject.key[0])
+    )
     if inputs.provenance_start is None or inputs.provenance_start > history_start:
         verdict = POWER.VERDICT.INSUFFICIENT_HISTORY
     elif design_effect is None:
@@ -9014,9 +9016,11 @@ def get_power_check(subject: PowerSubject, inputs: PowerInputs, windows: PairWin
     return PowerCheck(verdict, PowerUnits(projected, required), design_effect)
 
 
-def _get_required_units(baseline: WindowCount, design_effect: float | None) -> float | None:
+def _get_required_units(
+    baseline: WindowCount, design_effect: float | None, guardrail_count: int
+) -> float | None:
     """Both arms' units of the bound; None when the rate has no finite size or no design effect."""
-    maximum = _get_maximum_sample_size(baseline.events, baseline.spawns)
+    maximum = _get_maximum_sample_size(baseline.events, baseline.spawns, guardrail_count)
     if maximum is None or design_effect is None:
         return None
     return trial_design.get_required_units(maximum, design_effect=design_effect)
@@ -9154,11 +9158,15 @@ def _warn_power_unchecked(cause: str, scope: str) -> None:
     )
 
 
-def _get_maximum_sample_size(events: int, spawns: int) -> int | None:
-    """trial_design per-arm trial maximum at rate events/spawns; None outside (0, 1) or unsized."""
+def _get_maximum_sample_size(events: int, spawns: int, guardrail_count: int) -> int | None:
+    """Per-arm trial maximum at rate events/spawns, grown to power at k guardrails; None if unsized."""
     if not 0 < events < spawns:
         return None
-    return trial_design.get_trial_sample_size(events / spawns)
+    rate = events / spawns
+    maximum = trial_design.get_trial_sample_size(rate)
+    if maximum is None:
+        return None
+    return trial_design.get_grown_sample_size(rate, maximum, guardrail_count=guardrail_count)
 
 
 def _get_method_b_baseline(
@@ -9359,7 +9367,9 @@ def get_preregistration_payload(power_pass: PowerPass, inputs: PreregistrationIn
     """
     baseline = power_pass.baseline
     boundaries = trial_design.get_boundaries()
-    maximum = _get_maximum_sample_size(baseline.events, baseline.spawns)
+    maximum = _get_maximum_sample_size(
+        baseline.events, baseline.spawns, get_guardrail_count(power_pass.pattern.agent)
+    )
     detection_start, canary_text = inputs.detection_start, inputs.canary_text
     return {
         "metric_key": power_pass.pattern.metric_key,

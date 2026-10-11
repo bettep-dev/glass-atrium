@@ -80,13 +80,13 @@ _DESIGN_EFFECT = 1.5
 _REQUIRED_UNITS = trial_design.get_required_units(
     trial_design.get_trial_sample_size(_BASELINE_RATE), design_effect=_DESIGN_EFFECT
 )
-# baseline 17/29 at design effect 1 → bound 204 = exactly 68 × 84 / 28
-# (68 / 28) × 84 rounds below 204 in floating point
-_EXACT_BOUND_BASELINE = WindowCount(spawns=29, events=17, sessions=17)
-# 28-day spawn counts: 84-day projection just at-or-above / just below the bound; 68 at 17/29
+# baseline 19/39: maximum 146 grown to 183 at dev-python's k 4 → bound 366 at design effect 1
+# = exactly 122 × 84 / 28; (122 / 28) × 84 rounds below 366 in floating point
+_EXACT_BOUND_BASELINE = WindowCount(spawns=39, events=19, sessions=19)
+# 28-day spawn counts: 84-day projection just at-or-above / just below the bound; 122 at 19/39
 _UNITS = SimpleNamespace(
     AT_BOUND=math.ceil(_REQUIRED_UNITS * 28 / 84),
-    AT_EXACT_BOUND=68,
+    AT_EXACT_BOUND=122,
 )
 _UNITS.BELOW_BOUND = _UNITS.AT_BOUND - 1
 
@@ -137,12 +137,15 @@ def _floor(verdict: str = "pass", baseline: WindowCount = _BASELINE) -> FloorRes
 
 
 def _get_power_inputs(
-    spawns: list[SpawnFacts], provenance_start: datetime | None, design_effect: float | None
+    spawns: list[SpawnFacts],
+    provenance_start: datetime | None,
+    design_effect: float | None,
+    agent: str = _AGENT.PASSING,
 ) -> dc.PowerInputs:
-    """The passing agent's budget_overage inputs; design_effect None → no A/A row at the key."""
-    key = (_AGENT.PASSING, _KEY.BUDGET)
+    """The agent's budget_overage inputs; design_effect None → no A/A row at the key."""
+    key = (agent, _KEY.BUDGET)
     design_effects = {} if design_effect is None else {key: design_effect}
-    return dc.PowerInputs(provenance_start, {_AGENT.PASSING: spawns}, design_effects, frozenset())
+    return dc.PowerInputs(provenance_start, {agent: spawns}, design_effects, frozenset())
 
 
 def _get_floor_passing_history(units: int) -> list[SpawnFacts]:
@@ -299,12 +302,11 @@ class GetPowerCheckTest(unittest.TestCase):
                 dc.POWER.VERDICT.UNDERPOWERED,
             ),
             (
-                "efficacy larger: the bound is the efficacy sample",
+                "efficacy larger: the bound is the efficacy sample grown at the agent's k",
                 _floor(baseline=efficacy_binding),
                 _UNITS.AT_BOUND,
-                trial_design.get_required_units(
-                    trial_design.get_maximum_sample_size(51 / 91), design_effect=_DESIGN_EFFECT
-                ),
+                # efficacy 112 at 51/91, grown to 142 at dev-python's k 4
+                trial_design.get_required_units(142, design_effect=_DESIGN_EFFECT),
                 dc.POWER.VERDICT.PASSING,
             ),
             (
@@ -323,6 +325,66 @@ class GetPowerCheckTest(unittest.TestCase):
                     _WINDOWS,
                 )
                 self.assertEqual((check.verdict, check.units.required), (verdict, required))
+
+    def test_the_bound_sizes_the_trial_maximum_grown_at_the_agents_own_k(self) -> None:
+        # agent, baseline events / spawns, the ungrown per-arm maximum, the grown one
+        rows = [
+            ("dev-react grows ×1.008 at k 4", "glass-atrium-dev-react", 50, 270, 690, 696),
+            ("dev-shell stays ungrown at k 4", "glass-atrium-dev-shell", 81, 487, 790, 790),
+            ("dev-nestjs stays ungrown at k 4", "glass-atrium-dev-nestjs", 31, 319, 1485, 1485),
+            (
+                "qa-code-reviewer stays ungrown at k 3",
+                "glass-atrium-qa-code-reviewer",
+                90,
+                1450,
+                2432,
+                2432,
+            ),
+            (
+                "meta-prompt-engineer stays ungrown at k 3",
+                "glass-atrium-meta-prompt-engineer",
+                70,
+                468,
+                899,
+                899,
+            ),
+            (
+                "intel-planner stays ungrown at k 3",
+                "glass-atrium-intel-planner",
+                34,
+                347,
+                1472,
+                1472,
+            ),
+            (
+                "a k-3 agent grows 51/91 less than k 4",
+                "glass-atrium-qa-code-reviewer",
+                51,
+                91,
+                112,
+                134,
+            ),
+            ("a k-4 agent grows 51/91 more than k 3", _AGENT.PASSING, 51, 91, 112, 142),
+        ]
+        for name, agent, events, spawns, maximum, grown in rows:
+            with self.subTest(name):
+                rate = events / spawns
+                self.assertEqual(trial_design.get_trial_sample_size(rate), maximum)
+                baseline = WindowCount(spawns=spawns, events=events, sessions=events)
+                check = dc.get_power_check(
+                    dc.PowerSubject((agent, _KEY.BUDGET), _floor(baseline=baseline)),
+                    _get_power_inputs(
+                        _get_units(_UNITS.AT_BOUND),
+                        _DAY - timedelta(days=60),
+                        _DESIGN_EFFECT,
+                        agent,
+                    ),
+                    _WINDOWS,
+                )
+                self.assertEqual(
+                    check.units.required,
+                    trial_design.get_required_units(grown, design_effect=_DESIGN_EFFECT),
+                )
 
     def test_the_projection_is_the_daily_28_day_rate_over_the_84_day_horizon(
         self,
