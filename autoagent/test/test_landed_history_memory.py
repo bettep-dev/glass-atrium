@@ -25,6 +25,7 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from types import SimpleNamespace
 from unittest import mock
 
 _REPO_ROOT = Path(__file__).resolve().parent.parent.parent
@@ -50,8 +51,10 @@ except Exception as exc:  # noqa: BLE001 — psycopg absent → skip, not error
     _IMPORT_ERROR = exc
 
 _AGENT = "dev-python"
-_LANDED_HEADER = "rules that previously LANDED for this agent"
-_ATTEMPTS_HEADER = "prior trial attempts for this agent"
+_HEADER = SimpleNamespace(
+    LANDED="rules that previously LANDED for this agent",
+    ATTEMPTS="prior trial attempts for this agent",
+)
 _LANDED_SENTINEL = "LANDED-RULE-SENTINEL-7c21ae"
 _REJECTED_SENTINEL = "REJECTED-RULE-SENTINEL-7c21ae"
 _LANDED_DIFF = (
@@ -241,7 +244,7 @@ class RenderPriorAttemptsBlockTest(unittest.TestCase):
     def test_when_block_oversized_then_hard_capped_with_marker(self) -> None:
         attempts = [_attempt(n, diff="+" + "x" * 900 + "\n") for n in range(40)]
         out = dc._render_prior_attempts_block(attempts)
-        self.assertLessEqual(len(out), dc.PRIOR_ATTEMPTS_CHAR_CAP)
+        self.assertLessEqual(len(out), dc.PRIOR_ATTEMPTS.CHAR_CAP)
         self.assertIn("TRUNCATED: prior-attempts memory capped", out)
 
 
@@ -296,9 +299,9 @@ class ConsolidatedPromptLandedHistoryTest(unittest.TestCase):
         self,
     ) -> None:
         prompt = self._run([(7, "budget rule", _LANDED_DIFF)])
-        self.assertIn(_LANDED_HEADER, prompt)
+        self.assertIn(_HEADER.LANDED, prompt)
         self.assertIn(_LANDED_SENTINEL, prompt)
-        self.assertNotIn(_ATTEMPTS_HEADER, prompt)
+        self.assertNotIn(_HEADER.ATTEMPTS, prompt)
         # Neighboring blocks still intact.
         self.assertIn("OBSERVED LEARNING SIGNALS", prompt)
         self.assertIn("CURRENT AGENT INSTRUCTION FILE", prompt)
@@ -308,7 +311,7 @@ class ConsolidatedPromptLandedHistoryTest(unittest.TestCase):
         prompt = self._run([], failures=failures)
 
         self.assertNotIn(_REJECTED_SENTINEL, prompt)
-        self.assertNotIn(_LANDED_HEADER, prompt)
+        self.assertNotIn(_HEADER.LANDED, prompt)
         self.assertNotIn("{landed_history_block}", prompt)
         # Well-formed: the failure block and both neighbors survive the omission.
         self.assertIn("rejected: added an unrelated rule", prompt)
@@ -317,8 +320,8 @@ class ConsolidatedPromptLandedHistoryTest(unittest.TestCase):
 
     def test_when_pg_off_then_block_omitted_without_placeholder(self) -> None:
         prompt = self._run(None)
-        self.assertNotIn(_LANDED_HEADER, prompt)
-        self.assertNotIn(_ATTEMPTS_HEADER, prompt)
+        self.assertNotIn(_HEADER.LANDED, prompt)
+        self.assertNotIn(_HEADER.ATTEMPTS, prompt)
         self.assertNotIn("{landed_history_block}", prompt)
         self.assertNotIn("{prior_attempts_block}", prompt)
         self.assertIn("CURRENT AGENT INSTRUCTION FILE", prompt)
@@ -333,8 +336,8 @@ class ConsolidatedPromptLandedHistoryTest(unittest.TestCase):
             attempts=[_attempt(7, decision=decision)],
         )
         self.assertEqual(prompt.count(_LANDED_SENTINEL), 1)
-        self.assertNotIn(_LANDED_HEADER, prompt)
-        block = prompt[prompt.index(_ATTEMPTS_HEADER):prompt.index("CURRENT AGENT INSTRUCTION FILE")]
+        self.assertNotIn(_HEADER.LANDED, prompt)
+        block = prompt[prompt.index(_HEADER.ATTEMPTS):prompt.index("CURRENT AGENT INSTRUCTION FILE")]
         self.assertIn(_LANDED_SENTINEL, block)
         self.assertIn("outcome=win", block)
 
@@ -343,8 +346,8 @@ class ConsolidatedPromptLandedHistoryTest(unittest.TestCase):
             [(7, "budget rule", _LANDED_DIFF)],
             attempts=[_attempt(8, status="rejected", diff=_REJECTED_DIFF)],
         )
-        self.assertIn(_ATTEMPTS_HEADER, prompt)
-        landed = prompt[prompt.index(_LANDED_HEADER):prompt.index("CURRENT AGENT INSTRUCTION FILE")]
+        self.assertIn(_HEADER.ATTEMPTS, prompt)
+        landed = prompt[prompt.index(_HEADER.LANDED):prompt.index("CURRENT AGENT INSTRUCTION FILE")]
         self.assertIn(_LANDED_SENTINEL, landed)
         self.assertEqual(prompt.count(_LANDED_SENTINEL), 1)
         self.assertEqual(prompt.count(_REJECTED_SENTINEL), 1)

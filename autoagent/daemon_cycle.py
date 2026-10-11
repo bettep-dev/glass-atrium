@@ -995,8 +995,7 @@ LANDED_HISTORY_ENTRY_CHAR_CAP = 400
 
 # Trialled proposals with their measured effect from the trial ledger; a landed one
 # renders here instead of in the landed-history block (N53). Same HARD cap discipline.
-PRIOR_ATTEMPTS_CHAR_CAP = 4000
-PRIOR_ATTEMPTS_LIMIT = 5
+PRIOR_ATTEMPTS = SimpleNamespace(CHAR_CAP=4000, LIMIT=5)
 
 # Agent → scope mapping (from core-compliance-matrix.md Scope Legend).
 # Used to pick the correct scope-*.md file for axis C3.
@@ -11514,7 +11513,7 @@ class PriorAttempt(NamedTuple):
 
 def _fetch_prior_attempts(
     target_agent: str,
-    limit: int = PRIOR_ATTEMPTS_LIMIT,
+    limit: int = PRIOR_ATTEMPTS.LIMIT,
 ) -> list[PriorAttempt] | None:
     """The agent's trialled proposals, newest pre-registration first, with their ledger effect.
 
@@ -11555,7 +11554,7 @@ def _fetch_prior_attempts(
 def _render_prior_attempts_block(
     attempts: list[PriorAttempt],
     *,
-    char_cap: int = PRIOR_ATTEMPTS_CHAR_CAP,
+    char_cap: int = PRIOR_ATTEMPTS.CHAR_CAP,
 ) -> str:
     """Render the 'already trialled for this agent' block, HARD char-capped.
 
