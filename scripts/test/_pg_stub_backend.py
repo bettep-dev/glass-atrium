@@ -87,6 +87,9 @@ _INDEX_STMT = re.compile(
 )
 
 
+_MISSING_COLUMN_MESSAGES = ("no such column", "has no column named")
+
+
 def _rewrite(sql: str) -> str:
     """Cast-stripped, qmark-parameterised copy of the caller's own statement."""
     return _NAMED.sub(r":\1", _CAST.sub("", sql)).replace("%s", "?")
@@ -108,11 +111,12 @@ class _Cursor:
             self._inner.execute(_rewrite(sql), params if params is not None else ())
         except sqlite3.OperationalError as exc:
             # PG signals a missing column as SQLSTATE 42703, which psycopg raises as
-            # UndefinedColumn; sqlite signals it in the message text only. Translating
-            # that ONE message is what puts a caller's degradation arm under a real
-            # engine — every other sqlite fault surfaces unchanged, so this cannot
-            # green a failure the caller was supposed to see.
-            if "no such column" in str(exc):
+            # UndefinedColumn; sqlite signals it in the message text only, worded one way
+            # for a read or SET and another for an INSERT column list. Translating those
+            # two messages is what puts a caller's degradation arm under a real engine —
+            # every other sqlite fault surfaces unchanged, so this cannot green a failure
+            # the caller was supposed to see.
+            if any(text in str(exc) for text in _MISSING_COLUMN_MESSAGES):
                 raise UndefinedColumn(str(exc)) from exc
             raise
         self.rowcount = self._inner.rowcount
@@ -383,9 +387,17 @@ def _get_table_indexes(table: str) -> dict[str, str]:
     return live
 
 
-def create_loop_events_table(db_path: Path) -> None:
-    """Create core.autoagent_loop_events under the indexes the migrations declare."""
-    columns = _get_model_columns("AutoagentLoopEvent")
+def create_loop_events_table(db_path: Path, omitted_columns: tuple[str, ...] = ()) -> None:
+    """Create core.autoagent_loop_events under the indexes the migrations declare.
+
+    omitted_columns: model columns left out, standing in for an install that has not
+    applied the migration adding them.
+    """
+    columns = [
+        column
+        for column in _get_model_columns("AutoagentLoopEvent")
+        if column not in omitted_columns
+    ]
     indexes = _get_table_indexes(_LOOP_EVENTS_TABLE)
     if not any(ddl.startswith("CREATE UNIQUE") for ddl in indexes.values()):
         raise AssertionError(

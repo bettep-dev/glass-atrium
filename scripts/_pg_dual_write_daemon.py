@@ -38,8 +38,10 @@
 #   5 = psycopg absent, CLI mode only (import mode re-raises ImportError instead)
 #   6 = caller contract violation — an unsupported apply_status token, a
 #       loop-event cause whose class disagrees with its subject (verdict cause
-#       without one, census cause with one), or a loop-event subject wider than
-#       the column that keys the verdict arm. Refused BEFORE connecting, so
+#       without one, census cause with one), a loop-event subject wider than
+#       the column that keys the verdict arm, or a combined proposal push whose
+#       pre-registration body is no object or carries a value outside
+#       TRIAL_LEDGER. Refused BEFORE connecting, so
 #       nothing was written and no retry runs; a silent fall-through would report
 #       apply health the cycle never recorded, or file an adjudication under the
 #       recurrence census.
@@ -775,7 +777,12 @@ def _get_proposal_params(
     learning_pattern_id=None,
     generator_input_version=None,
 ):
-    """write_autoagent_proposal's arguments → (the UPSERT's base params, its link params)."""
+    """write_autoagent_proposal's arguments → (the UPSERT's base params, its link params).
+
+    Mirrors that keyword list rather than taking one object: the combined op's
+    **proposal reaches no other signature, so this one refuses a missing or unknown
+    envelope key there with the TypeError the plain write raises.
+    """
     if indexed_at is None:
         # PG default is CURRENT_TIMESTAMP; pass NULL by omission of the column
         # rather than computing wall-clock here. Sentinel sticks for explicit
@@ -1027,7 +1034,7 @@ def write_autoagent_loop_event(
             # names no count column → its 42703 is another fault and propagates
             _execute_upsert(conn, countless_sql, params)
         else:
-            is_degraded = _run_with_column_fallback(
+            _, is_degraded = _run_with_column_fallback(
                 conn,
                 lambda: _execute_upsert(
                     conn, _get_loop_event_upsert_sql(eval_result, True), params + counts

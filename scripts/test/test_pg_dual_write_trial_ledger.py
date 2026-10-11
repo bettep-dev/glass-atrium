@@ -494,7 +494,7 @@ class TestTrialLedgerWriterLivePg(unittest.TestCase):
     def test_the_written_preregistration_keys_are_the_cycle_body_keys_and_the_proposal_id(
         self,
     ) -> None:
-        # The keys the live readers take: -1b-2 joins on proposal_id, the look writer on looks.
+        # Live readers' keys: the trial-to-proposal join reads proposal_id, the look writer looks.
         self._use_bound_database(self._TEMPLATE.FULL)
 
         self._write_bound()
@@ -574,7 +574,9 @@ class TestTrialLedgerWriterLivePg(unittest.TestCase):
             ],
         )
 
-    def test_a_ledger_fault_writes_neither_row_and_raises_a_named_fault(self) -> None:
+    def test_a_ledger_fault_writes_neither_row_and_propagates_naming_an_absent_table_by_its_migration(
+        self,
+    ) -> None:
         # (name, template, body, the writer's named fault class | None = the driver's error)
         rows = (
             (
