@@ -1214,7 +1214,6 @@ class CycleWiringTest(_ShadowFixture):
         self.assertEqual(stages, ["shadow", "aa"])
 
 
-
 _CODE_AGENTS = (
     "glass-atrium-dev-shell",
     "glass-atrium-dev-react",
@@ -1344,6 +1343,17 @@ class HarmCheckTest(unittest.TestCase):
             expected,
         )
 
+    def test_the_legs_absolute_margin_is_the_reduction_the_trial_is_sized_to_find(
+        self,
+    ) -> None:
+        readings = dc.GuardrailBaseline(0.10, 0.02, dc.ToolUseBaseline(20.0, 12.0))
+        with mock.patch.object(trial_design, "DEFAULT_RELATIVE_REDUCTION", 0.50):
+            checks = dc.get_harm_checks(
+                _BUDGET_KEY, readings, dc.HarmSizing(0.05, 790, 4)
+            )
+        # 0.5 × 0.05 read as a fold at the leg's 0.10 → 1.25, under the 30% rise
+        self.assertAlmostEqual(checks["guardrails"]["no_subagent_stop"]["margin"], 1.25)
+
     def test_alpha_is_005_per_check_in_the_trial_and_the_watch_shares_sum_to_005_two_sided_halved(
         self,
     ) -> None:
@@ -1410,7 +1420,10 @@ class HarmCheckTest(unittest.TestCase):
     def test_the_watch_widens_on_the_shipped_fixed_sample_drift_scale_by_1194_and_1240(
         self,
     ) -> None:
-        for row, ratio in ((_RECORDED_MEASUREMENTS[0], 1.194), (_RECORDED_MEASUREMENTS[1], 1.240)):
+        for row, ratio in (
+            (_RECORDED_MEASUREMENTS[0], 1.194),
+            (_RECORDED_MEASUREMENTS[1], 1.240),
+        ):
             guardrails = _get_harm_checks(row)["guardrails"]
             # re-delegation is a mean shift like the band: its model-based columns widen the same
             for name in (*row.harms, "redelegation"):
@@ -1433,29 +1446,33 @@ class HarmCheckTest(unittest.TestCase):
                         msg=f"{name} {key}",
                     )
         # a rate guardrail widens more in its own unit at these low rates (leg ×1.271-1.299 at k 4)
-        leg = _get_harm_checks(_RECORDED_MEASUREMENTS[1])["guardrails"]["no_subagent_stop"][
-            "widening"
-        ]["own_unit"]
+        leg = _get_harm_checks(_RECORDED_MEASUREMENTS[1])["guardrails"][
+            "no_subagent_stop"
+        ]["widening"]["own_unit"]
         self.assertTrue(1.271 - 0.005 <= leg["design_effect_1"] <= 1.299 + 0.005, leg)
 
     def test_the_watch_widens_by_1187_and_1231_with_each_alphas_four_look_inflation(
         self,
     ) -> None:
-        for row, ratio in ((_RECORDED_MEASUREMENTS[0], 1.187), (_RECORDED_MEASUREMENTS[1], 1.231)):
+        for row, ratio in (
+            (_RECORDED_MEASUREMENTS[0], 1.187),
+            (_RECORDED_MEASUREMENTS[1], 1.231),
+        ):
             guardrails = _get_harm_checks(row)["guardrails"]
             for name in (*row.harms, "redelegation"):
-                if name != "tool_use" or guardrails[name]["trial"]["sides"] == 1:
-                    self.assertAlmostEqual(
-                        guardrails[name]["widening"]["drift"]["four_look"],
-                        ratio,
-                        places=3,
-                        msg=name,
-                    )
+                self.assertAlmostEqual(
+                    guardrails[name]["widening"]["drift"]["four_look"],
+                    ratio,
+                    places=3,
+                    msg=name,
+                )
 
     def test_verified_fail_is_a_guardrail_only_never_a_primary_key(self) -> None:
         readings = dc.GuardrailBaseline(0.05, 0.02, dc.ToolUseBaseline(20.0, 12.0))
         for metric_key in sorted(dc.METRIC_KEYS):
-            checks = dc.get_harm_checks(metric_key, readings, dc.HarmSizing(0.1, 900, 4))
+            checks = dc.get_harm_checks(
+                metric_key, readings, dc.HarmSizing(0.1, 900, 4)
+            )
             self.assertEqual(checks["primary"]["metric_key"], metric_key)
             self.assertIn("verified_fail", checks["guardrails"])
         with self.assertRaises(ValueError):
@@ -1573,6 +1590,7 @@ class HarmCheckPayloadTest(_ShadowFixture):
         self.assertEqual(payload["samples"], samples)
         self.assertEqual(payload["maximum_per_arm"], max(samples.values()))
         self.assertEqual(payload["harm_checks"]["primary"]["baseline_rate"], rate)
+
 
 if __name__ == "__main__":
     unittest.main()

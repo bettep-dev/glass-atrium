@@ -9315,7 +9315,6 @@ def get_preregistration_payload(power_pass: PowerPass, detection_start: datetime
     }
 
 
-
 def _get_harm_payload(
     power_pass: PowerPass, detection_start: datetime, maximum: int | None
 ) -> dict:
@@ -9354,7 +9353,7 @@ class GuardrailBaseline(NamedTuple):
     """An agent's own baseline readings its guardrail harm checks are stated on; None = no reading."""
 
     no_stop_rate: float | None  # spawns ending without a SubagentStop
-    verified_fail_rate: float | None  # graded outcome rows; None = no row carries a grader_verdict
+    verified_fail_rate: float | None  # over graded rows; None = no row graded
     tool_use: ToolUseBaseline
 
 
@@ -9385,7 +9384,7 @@ class StageAlpha(NamedTuple):
     watch: float  # a guardrail's family share 0.05/k; the primary's own trial α
 
 
-# D6 margins and D9 R74 α on the harm checks; α + margin read off trial_design at call time
+# harm-check constants: the design-effect bracket, k per family, reading labels, guardrail names
 HARM_CHECK = SimpleNamespace(
     DESIGN_EFFECTS=(1, 2),  # an unmeasured design effect's bracket
     GUARDRAIL_COUNT=SimpleNamespace(CODE=4, OTHER=3),
@@ -9434,7 +9433,9 @@ def get_guardrail_baseline(
         and start <= spawn.started_at < detection_start
         and is_floor_half(spawn.agent_id)
     ]
-    graded = [row for spawn in members for row in spawn.outcomes if "grader_verdict" in row]
+    graded = [
+        row for spawn in members for row in spawn.outcomes if "grader_verdict" in row
+    ]
     return GuardrailBaseline(
         _get_share(sum(not spawn.has_subagent_stop for spawn in members), len(members)),
         _get_share(
@@ -9514,7 +9515,8 @@ def _get_no_stop_margin(
     relative = 1 + trial_design.DEFAULT_RELATIVE_RISE
     if not primary_rate or not no_stop_rate:
         return relative
-    return min(relative, 1 + trial_design.DEFAULT_RELATIVE_RISE * primary_rate / no_stop_rate)
+    absolute = trial_design.DEFAULT_RELATIVE_REDUCTION * primary_rate
+    return min(relative, 1 + absolute / no_stop_rate)
 
 
 def _get_rate_check(rate: float | None, margin: float, stage: HarmStage) -> dict:
@@ -9644,6 +9646,7 @@ def _get_drift_widening(watch_alpha: float, sides: int) -> dict:
         alpha=watch_alpha / sides
     ) / trial_design.get_inflation_factor(alpha=trial_design.DEFAULT_ALPHA / sides)
     return {"fixed_sample": fixed, "four_look": fixed * math.sqrt(inflation)}
+
 
 def get_look_payload(look: Look, accrual: LookAccrual) -> dict:
     """One reached look: accrual beside its boundary; with arm data, the pooled z too — never a decision."""
