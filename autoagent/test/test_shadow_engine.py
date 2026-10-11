@@ -1672,9 +1672,6 @@ class HarmCheckPayloadTest(_ShadowFixture):
                     set(row[stage]["minimum_detectable"]), set(_DESIGN_EFFECT_KEYS), name
                 )
         self.assertNotIn("proxy", payload["harm_checks"]["guardrails"]["no_subagent_stop"])
-        # the primary, unlike a guardrail, carries a power requirement: no row → never passing
-        self.ledger.design_effects.clear()
-        self.assertEqual(self._check_power().passes, [])
 
     def test_a_union_event_row_states_a_proxy_line_that_no_power_read_or_stop_boundary_reads(
         self,

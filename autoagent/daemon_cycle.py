@@ -9689,32 +9689,33 @@ def _get_stages(
         name: _get_stage(
             value,
             sides,
-            lambda design_effect, value=value: get_harm(value, design_effect),
-            stage.design_effect,
+            _get_minimum_detectable(
+                lambda design_effect, value=value: get_harm(value, design_effect),
+                stage.design_effect,
+            ),
         )
         for name, value in stage.alpha._asdict().items()
     }
 
 
-def _get_stage(
-    alpha: float,
-    sides: int,
-    get_harm: Callable[[float], float | None],
-    design_effect: float | None,
-) -> dict:
-    """A measured design effect alone, else the unmeasured bracket's values."""
-    if design_effect is None:
-        minimum_detectable = {
-            f"design_effect_{value}": get_harm(value) for value in HARM_CHECK.DESIGN_EFFECTS
-        }
-    else:
-        minimum_detectable = {"design_effect_measured": get_harm(design_effect)}
+def _get_stage(alpha: float, sides: int, minimum_detectable: dict) -> dict:
     return {
         "alpha": alpha,
         "sides": sides,
         "alpha_per_side": alpha / sides,
         "minimum_detectable": minimum_detectable,
     }
+
+
+def _get_minimum_detectable(
+    get_harm: Callable[[float], float | None], design_effect: float | None
+) -> dict:
+    """A measured design effect alone, else the unmeasured bracket's values."""
+    if design_effect is None:
+        return {
+            f"design_effect_{value}": get_harm(value) for value in HARM_CHECK.DESIGN_EFFECTS
+        }
+    return {"design_effect_measured": get_harm(design_effect)}
 
 
 def _get_widening(row: dict, *, origin: float) -> dict:
@@ -14286,9 +14287,9 @@ def build_patch_result(
     # Off-map agents get no code-side stop: pre-verify's C3 directive is the only one.
     preregistration_payload = _get_bound_preregistration_payload(
         power,
-        lead_pattern,
-        (approval_tier, status_value),
-        proposal.proposed_diff,
+        TrialCandidate(
+            lead_pattern, (approval_tier, status_value), proposal.proposed_diff
+        ),
         skip_loop_emit=skip_loop_emit,
     )
     # The floor: every unbound auto candidate reaches a terminal state this cycle — it
@@ -14427,13 +14428,16 @@ def build_patch_result(
     )
 
 
+class TrialCandidate(NamedTuple):
+    """A routed candidate's inputs to its live pre-registration."""
+
+    lead_pattern: Pattern
+    route: tuple[str, str]  # (approval tier, status)
+    diff: str
+
+
 def _get_bound_preregistration_payload(
-    power: PowerResult | None,
-    lead_pattern: Pattern,
-    route: tuple[str, str],
-    diff: str,
-    *,
-    skip_loop_emit: bool,
+    power: PowerResult | None, candidate: TrialCandidate, *, skip_loop_emit: bool
 ) -> dict | None:
     """The live pre-registration payload of a bound candidate; None leaves it to the floor.
 
@@ -14442,6 +14446,7 @@ def _get_bound_preregistration_payload(
     A rendered canary block over the hook's cap is refused, never truncated: truncated text
     was never pre-registered, so a win would describe text that never graduates.
     """
+    lead_pattern, route, diff = candidate
     if skip_loop_emit or route != ("auto", "pending") or power is None or power.windows is None:
         return None
     lead_key = (lead_pattern.agent, lead_pattern.row_id, lead_pattern.metric_key)
