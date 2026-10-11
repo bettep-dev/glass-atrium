@@ -16,6 +16,7 @@ import tempfile
 import unittest
 from contextlib import closing, redirect_stderr, redirect_stdout
 from pathlib import Path
+from types import SimpleNamespace
 from unittest import mock
 
 _REPO_ROOT = Path(__file__).resolve().parent.parent.parent
@@ -373,8 +374,10 @@ class MainAuthOutageExitTest(unittest.TestCase):
                 self.assertEqual(self.envelopes, [])
 
 
-_STORED_DIFF = "--- a/probe.md\n+++ b/probe.md\n@@ -1 +1,2 @@\n probe\n+stored rule\n"
-_REDERIVED_DIFF = "--- a/probe.md\n+++ b/probe.md\n@@ -2 +2,2 @@\n probe\n+stored rule\n"
+_DIFF = SimpleNamespace(
+    STORED="--- a/probe.md\n+++ b/probe.md\n@@ -1 +1,2 @@\n probe\n+stored rule\n",
+    REDERIVED="--- a/probe.md\n+++ b/probe.md\n@@ -2 +2,2 @@\n probe\n+stored rule\n",
+)
 # (row label, live trial on the row: None | "open" | "decided")
 _REGEN_ROWS: tuple[tuple[str, str | None], ...] = (
     ("open trial", "open"),
@@ -402,7 +405,7 @@ class _RegenStoreFixture(unittest.TestCase):
                     " target_agent, target_file, approval_tier, status, proposed_diff)"
                     " VALUES (?, '2026-10-10', ?, 'glass-atrium-dev-python', ?, 'auto',"
                     " 'pending', ?)",
-                    (proposal_id, label, str(self.target), _STORED_DIFF),
+                    (proposal_id, label, str(self.target), _DIFF.STORED),
                 )
                 self.ids[label] = proposal_id
             db.commit()
@@ -417,7 +420,7 @@ class _RegenStoreFixture(unittest.TestCase):
             ("HAS_PG_LOOP_WRITE", True),
             ("_pg_connect", lambda: stub.create_connection(self.db)),
             ("_proposal_diff_is_stale", lambda *_args: True),
-            ("_rederive_diff_against_file", lambda *_args: _REDERIVED_DIFF),
+            ("_rederive_diff_against_file", lambda *_args: _DIFF.REDERIVED),
             ("_gate_validated_diff", lambda diff, *_args: diff),
         ):
             patcher = mock.patch.object(dc, name, value)
@@ -446,9 +449,9 @@ class StaleSweepTrialTest(_RegenStoreFixture):
         self.assertEqual(self.pg_reach, [])
         actions = {row["id"]: row["action"] for row in results}
         for label, expected_action, expected_diff in (
-            ("open trial", "skipped-in-trial", _STORED_DIFF),
-            ("no trial", "regenerated", _REDERIVED_DIFF),
-            ("decided trial", "regenerated", _REDERIVED_DIFF),
+            ("open trial", "skipped-in-trial", _DIFF.STORED),
+            ("no trial", "regenerated", _DIFF.REDERIVED),
+            ("decided trial", "regenerated", _DIFF.REDERIVED),
         ):
             with self.subTest(row=label):
                 self.assertEqual(actions[self.ids[label]], expected_action)
@@ -460,8 +463,8 @@ class SingleRegenTrialTest(_RegenStoreFixture):
 
     def test_the_single_path_refuses_exactly_an_open_trial_id(self) -> None:
         for label, expected_action, expected_diff in (
-            ("open trial", "in_trial", _STORED_DIFF),
-            ("decided trial", "regenerated", _REDERIVED_DIFF),
+            ("open trial", "in_trial", _DIFF.STORED),
+            ("decided trial", "regenerated", _DIFF.REDERIVED),
         ):
             with self.subTest(row=label):
                 classified: list[int] = []
@@ -474,7 +477,7 @@ class SingleRegenTrialTest(_RegenStoreFixture):
                         preverify_passed=True,
                         preverify_axes=None,
                         reason="fixture pass",
-                        new_diff=_REDERIVED_DIFF,
+                        new_diff=_DIFF.REDERIVED,
                     )
 
                 with (
