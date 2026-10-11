@@ -8850,6 +8850,7 @@ class PowerPass(NamedTuple):
     design_effect: float
     required: float  # both arms' units at design_effect
     spawns: list[SpawnFacts]
+    provenance_start: datetime | None  # the floor's; None covers nothing
 
 
 class PowerResult(NamedTuple):
@@ -8939,7 +8940,9 @@ def _get_pattern_power_verdict(
     power_pass = None
     design_effect, required = check.design_effect, check.units.required
     if check.verdict == POWER.VERDICT.PASSING and design_effect is not None and required is not None:
-        power_pass = PowerPass(pattern, floor.baseline, design_effect, required, spawns)
+        power_pass = PowerPass(
+            pattern, floor.baseline, design_effect, required, spawns, inputs.provenance_start
+        )
     method_b = _get_method_b_baseline(subject, inputs, windows)
     return check.verdict, _get_pattern_power_detail(subject, check, method_b), power_pass
 
@@ -9320,7 +9323,9 @@ def _get_harm_payload(
     baseline = power_pass.baseline
     guardrail_count = get_guardrail_count(power_pass.pattern.agent)
     primary_rate = baseline.events / baseline.spawns if baseline.spawns else None
-    readings = get_guardrail_baseline(power_pass.spawns, detection_start)
+    readings = get_guardrail_baseline(
+        power_pass.spawns, detection_start, power_pass.provenance_start
+    )
     checks = get_harm_checks(
         power_pass.pattern.metric_key,
         primary_rate,
@@ -9351,7 +9356,7 @@ class GuardrailBaseline(NamedTuple):
     """An agent's own baseline readings its guardrail harm checks are stated on; None = no reading."""
 
     no_stop_rate: float | None  # spawns ending without a SubagentStop
-    verified_fail_rate: float | None  # outcome rows graded verified_fail
+    verified_fail_rate: float | None  # graded outcome rows; None = no row carries a grader_verdict
     tool_use_mean: float | None
     tool_use_sd: float | None  # None under two recorded readings
 
@@ -9363,6 +9368,11 @@ HARM_CHECK = SimpleNamespace(
     MARGIN=trial_design.DEFAULT_RELATIVE_RISE,  # 30% of the check's own baseline
     DESIGN_EFFECTS=(1, 2),  # an unmeasured design effect's bracket
     GUARDRAIL_COUNT=SimpleNamespace(CODE=4, OTHER=3),
+    # verified_fail's baseline label: unread ≠ a measured zero
+    READING=SimpleNamespace(
+        READ="read",
+        UNREAD="unread: no baseline outcome row carries a grader_verdict",
+    ),
     GUARDRAIL=SimpleNamespace(
         TOOL_USE="tool_use",
         NO_STOP="no_subagent_stop",
@@ -9385,10 +9395,17 @@ def get_guardrail_count(agent: str) -> int:
 
 
 def get_guardrail_baseline(
-    spawns: Iterable[SpawnFacts], detection_start: datetime
+    spawns: Iterable[SpawnFacts],
+    detection_start: datetime,
+    provenance_start: datetime | None,
 ) -> GuardrailBaseline:
-    """Readings over the floor half of the pair baseline, the half the primary's baseline counts."""
-    start = detection_start - BASELINE.SPAN
+    """Readings over the floor half of the provenance-covered baseline: the spawns the primary counts.
+
+    verified_fail counts only outcome rows carrying a grader_verdict: a read without the
+    field leaves it unread (None), never a measured zero.
+    """
+    covered_start = detection_start if provenance_start is None else provenance_start
+    start = max(detection_start - BASELINE.SPAN, covered_start)
     members = [
         spawn
         for spawn in spawns
@@ -9396,15 +9413,15 @@ def get_guardrail_baseline(
         and start <= spawn.started_at < detection_start
         and is_floor_half(spawn.agent_id)
     ]
-    rows = [row for spawn in members for row in spawn.outcomes]
+    graded = [row for spawn in members for row in spawn.outcomes if "grader_verdict" in row]
     tool_uses = [
         spawn.tool_use_actual for spawn in members if spawn.tool_use_actual is not None
     ]
     return GuardrailBaseline(
         _get_share(sum(not spawn.has_subagent_stop for spawn in members), len(members)),
         _get_share(
-            sum(row.get("grader_verdict") == GRADER_VERDICT_FAIL for row in rows),
-            len(rows),
+            sum(row["grader_verdict"] == GRADER_VERDICT_FAIL for row in graded),
+            len(graded),
         ),
         statistics.fmean(tool_uses) if tool_uses else None,
         statistics.stdev(tool_uses) if len(tool_uses) > 1 else None,
@@ -9426,7 +9443,8 @@ def get_harm_checks(
     """Per harm check its D6 margin, and per stage its R74 α and minimum detectable harm at that α.
 
     Each guardrail also states the watch's widening over the trial (R226); verified_fail is a
-    guardrail only, present at k 4; re-delegation states its α shares here, its margin elsewhere.
+    guardrail only, present at k 4, its row labelled read or unread; re-delegation states its
+    α shares here, its margin elsewhere.
     """
     if metric_key not in METRIC_KEYS:
         raise ValueError(f"harm checks: {metric_key!r} is not a primary metric key")
@@ -9446,6 +9464,12 @@ def get_harm_checks(
         name: _get_rate_check(rate, margin, per_arm, watch_alpha)
         for name, (rate, margin) in rate_checks.items()
     }
+    if names.VERIFIED_FAIL in guardrails:
+        guardrails[names.VERIFIED_FAIL]["reading"] = (
+            HARM_CHECK.READING.UNREAD
+            if readings.verified_fail_rate is None
+            else HARM_CHECK.READING.READ
+        )
     is_upward = metric_key == METRIC_BUDGET_OVERAGE
     guardrails[names.TOOL_USE] = _get_tool_use_check(
         readings, per_arm, watch_alpha, is_upward=is_upward

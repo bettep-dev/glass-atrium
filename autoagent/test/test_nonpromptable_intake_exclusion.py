@@ -226,7 +226,7 @@ class TestKeylessRowNeverReachesGeneration(unittest.TestCase):
 
         # every pattern the check judges passes: only its keyed filter decides
         def _pass_power(pattern, _inputs, _windows):
-            power_pass = dc.PowerPass(pattern, None, 1.0, 1.0, [])
+            power_pass = dc.PowerPass(pattern, None, 1.0, 1.0, [], None)
             return dc.POWER.VERDICT.PASSING, "probe pass", power_pass
 
         def run_generation(_report, agent_groups, *_args, **_kwargs) -> None:

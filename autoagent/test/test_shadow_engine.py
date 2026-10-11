@@ -1512,10 +1512,45 @@ class HarmCheckPayloadTest(_ShadowFixture):
             payload = self._get_payload(agent, spawns)
             row = payload["harm_checks"]["guardrails"]["verified_fail"]
             self.assertEqual(row["baseline_rate"], 0.0, agent)
+            self.assertEqual(row["reading"], dc.HARM_CHECK.READING.READ, agent)
             self.assertEqual(
                 set(row["trial"]["minimum_detectable"].values()), {None}, agent
             )
             json.dumps(payload, allow_nan=False)
+
+    def test_outcomes_shaped_as_the_spawn_read_builds_them_leave_verified_fail_unread_not_a_measured_zero(
+        self,
+    ) -> None:
+        # the spawn-facts read carries each outcome's attribution_source and no grader_verdict
+        attributed = ({"attribution_source": "hook-input"},)
+        spawns = [spawn._replace(outcomes=attributed) for spawn in self.history]
+        row = self._get_payload(_OFF_MAP_AGENT, spawns)["harm_checks"]["guardrails"][
+            "verified_fail"
+        ]
+        self.assertIsNone(row["baseline_rate"])
+        self.assertEqual(row["reading"], dc.HARM_CHECK.READING.UNREAD)
+        for stage in ("trial", "watch"):
+            self.assertEqual(
+                set(row[stage]["minimum_detectable"].values()), {None}, stage
+            )
+
+    def test_a_floor_half_spawn_before_the_provenance_start_leaves_every_reading_unchanged(
+        self,
+    ) -> None:
+        graded = ({"grader_verdict": "verified_pass"},)
+        spawns = [
+            spawn._replace(outcomes=graded, tool_use_actual=10 + index % 7)
+            for index, spawn in enumerate(self.history)
+        ]
+        # inside the 84-day baseline, before the fixture's provenance start (D - 60 d)
+        early = _spawn(_DAY - timedelta(days=82), is_floor=True)._replace(
+            has_subagent_stop=False,
+            outcomes=({"grader_verdict": dc.GRADER_VERDICT_FAIL},),
+            tool_use_actual=900,
+        )
+        expected = self._get_payload(_OFF_MAP_AGENT, spawns)["harm_checks"]
+        actual = self._get_payload(_OFF_MAP_AGENT, [*spawns, early])["harm_checks"]
+        self.assertEqual(actual, expected)
 
     def test_the_payload_states_both_samples_its_maximum_is_the_larger_of(self) -> None:
         payload = self._get_payload(_AGENT)

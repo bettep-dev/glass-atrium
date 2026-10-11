@@ -131,7 +131,7 @@ def _capture_prompt(testcase: unittest.TestCase) -> dict[str, str]:
 def _pass_keyed_power(patterns: list, *, skip_loop_emit: bool) -> object:
     """Every keyed pattern passes the power check, the generation path's entry."""
     passes = [
-        dc.PowerPass(pattern, None, 1.0, 1.0, [])
+        dc.PowerPass(pattern, None, 1.0, 1.0, [], None)
         for pattern in patterns
         if pattern.metric_key is not None
     ]

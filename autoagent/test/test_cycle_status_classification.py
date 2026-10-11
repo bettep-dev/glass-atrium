@@ -343,7 +343,7 @@ class ProposalStatusSent(unittest.TestCase):
             metric_key="budget_overage",
         )
         baseline = dc.WindowCount(spawns=200, events=20, sessions=20)
-        power_pass = dc.PowerPass(pattern, baseline, 1.5, 500.0, [])
+        power_pass = dc.PowerPass(pattern, baseline, 1.5, 500.0, [], None)
         windows = dc.get_pair_windows(datetime(2026, 10, 3, 2, 0, tzinfo=timezone.utc))
         power = dc.PowerResult({}, [power_pass], windows)
         with tempfile.TemporaryDirectory() as tmp:
