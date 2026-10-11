@@ -1414,12 +1414,17 @@ class HarmCheckTest(unittest.TestCase):
     ) -> None:
         for row, ratio in ((_RECORDED_MEASUREMENTS[0], 1.194), (_RECORDED_MEASUREMENTS[1], 1.240)):
             guardrails = _get_harm_checks(row)["guardrails"]
-            for name in row.harms:
+            # re-delegation is a mean shift like the band: its model-based columns widen the same
+            for name in (*row.harms, "redelegation"):
                 self.assertAlmostEqual(
                     guardrails[name]["widening"]["drift"]["fixed_sample"],
                     ratio,
                     places=3,
+                    msg=name,
                 )
+            self.assertEqual(
+                guardrails["redelegation"]["widening"]["basis"], "model-based"
+            )
             # the band is linear in the drift: its own-unit widening is the drift ratio itself
             for key in _DESIGN_EFFECT_KEYS:
                 self.assertAlmostEqual(
@@ -1436,12 +1441,13 @@ class HarmCheckTest(unittest.TestCase):
     ) -> None:
         for row, ratio in ((_RECORDED_MEASUREMENTS[0], 1.187), (_RECORDED_MEASUREMENTS[1], 1.231)):
             guardrails = _get_harm_checks(row)["guardrails"]
-            for name in row.harms:
+            for name in (*row.harms, "redelegation"):
                 if name != "tool_use" or guardrails[name]["trial"]["sides"] == 1:
                     self.assertAlmostEqual(
                         guardrails[name]["widening"]["drift"]["four_look"],
                         ratio,
                         places=3,
+                        msg=name,
                     )
 
     def test_verified_fail_is_a_guardrail_only_never_a_primary_key(self) -> None:

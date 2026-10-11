@@ -22,6 +22,7 @@ import itertools
 import json
 import math
 import os
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -773,6 +774,44 @@ class CheckPatternPowerTest(_StageFixture):
         counts, _ = self._check(self.patterns, skip_loop_emit=True)
         self.assertEqual(counts["passing"], 1)
         self.assertEqual(self.events, [])
+
+
+class TrialDesignImportFailureTest(unittest.TestCase):
+    """An install whose trial_design cannot import still imports the cycle, the failure captured."""
+
+    _CHILD = "\n".join(
+        (
+            "import sys",
+            "sys.path[:0] = sys.argv[1:]",
+            "sys.modules['trial_design'] = None",
+            "import daemon_cycle as dc",
+            "print(isinstance(dc._TRIAL_DESIGN_IMPORT_EXC, ImportError))",
+        )
+    )
+
+    def test_daemon_cycle_imports_with_trial_design_unimportable_and_captures_the_failure(
+        self,
+    ) -> None:
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        env = {
+            key: value
+            for key, value in os.environ.items()
+            if key not in ("PGPORT", "PGHOSTADDR", "PGSERVICE", "PGDATABASE", "PGPASSFILE")
+        }
+        env.update(PGHOST=tmp.name, GA_DATA_ROOT=tmp.name, PYTHONDONTWRITEBYTECODE="1")
+        anchors = [str(_REPO_ROOT / name) for name in ("hooks", "autoagent", "autoagent/lib")]
+        flags = ["-S"] if sys.flags.no_site else []
+        run = subprocess.run(
+            [sys.executable, *flags, "-c", self._CHILD, *anchors],
+            capture_output=True,
+            text=True,
+            env=env,
+            cwd=tmp.name,
+            check=False,
+        )
+        self.assertEqual(run.returncode, 0, run.stderr)
+        self.assertEqual(run.stdout.strip(), "True", run.stderr)
 
 
 class DesignEffectReadLivePgTest(_StageFixture):

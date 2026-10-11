@@ -9367,11 +9367,8 @@ class ToolUseBaseline(NamedTuple):
     sd: float | None  # None under two recorded readings
 
 
-# D6 margins and D9 R74 α on the pre-registration's harm checks
+# D6 margins and D9 R74 α on the harm checks; α + margin read off trial_design at call time
 HARM_CHECK = SimpleNamespace(
-    # each check's trial α · the primary's α in both stages · the watch family's total, shared 1/k
-    ALPHA=trial_design.DEFAULT_ALPHA,
-    MARGIN=trial_design.DEFAULT_RELATIVE_RISE,  # 30% of the check's own baseline
     DESIGN_EFFECTS=(1, 2),  # an unmeasured design effect's bracket
     GUARDRAIL_COUNT=SimpleNamespace(CODE=4, OTHER=3),
     # verified_fail's baseline label: unread ≠ a measured zero
@@ -9452,11 +9449,11 @@ def get_harm_checks(
 
     Each guardrail also states the watch's widening over the trial (R226); verified_fail is a
     guardrail only, present at k 4, its row labelled read or unread; re-delegation states its
-    α shares here, its margin elsewhere.
+    α shares and model-based drift widening here, its margin elsewhere.
     """
     if metric_key not in METRIC_KEYS:
         raise ValueError(f"harm checks: {metric_key!r} is not a primary metric key")
-    names, watch_alpha = HARM_CHECK.GUARDRAIL, HARM_CHECK.ALPHA / guardrail_count
+    names, watch_alpha = HARM_CHECK.GUARDRAIL, trial_design.DEFAULT_ALPHA / guardrail_count
     rate_checks = {
         names.NO_STOP: (
             readings.no_stop_rate,
@@ -9466,7 +9463,7 @@ def get_harm_checks(
     if guardrail_count == HARM_CHECK.GUARDRAIL_COUNT.CODE:
         rate_checks[names.VERIFIED_FAIL] = (
             readings.verified_fail_rate,
-            1 + HARM_CHECK.MARGIN,
+            1 + trial_design.DEFAULT_RELATIVE_RISE,
         )
     guardrails = {
         name: _get_rate_check(rate, margin, per_arm, watch_alpha)
@@ -9483,14 +9480,19 @@ def get_harm_checks(
         readings, per_arm, watch_alpha, is_upward=is_upward
     )
     guardrails[names.REDELEGATION] = {
-        "trial": {"alpha": HARM_CHECK.ALPHA},
+        "trial": {"alpha": trial_design.DEFAULT_ALPHA},
         "watch": {"alpha": watch_alpha},
+        # a mean shift like the band → widens by the drift ratio itself
+        "widening": {
+            "basis": "model-based",
+            "drift": _get_drift_widening(watch_alpha, sides=1),
+        },
     }
     primary = _get_rate_row(
         primary_rate,
-        1 + HARM_CHECK.MARGIN,
+        1 + trial_design.DEFAULT_RELATIVE_RISE,
         per_arm,
-        (HARM_CHECK.ALPHA, HARM_CHECK.ALPHA),
+        (trial_design.DEFAULT_ALPHA, trial_design.DEFAULT_ALPHA),
     )
     return {"primary": {"metric_key": metric_key, **primary}, "guardrails": guardrails}
 
@@ -9499,16 +9501,16 @@ def _get_no_stop_margin(
     primary_rate: float | None, no_stop_rate: float | None
 ) -> float:
     """The stricter of the 30% rise and the trial's absolute primary effect, a fold at the leg's own rate."""
-    relative = 1 + HARM_CHECK.MARGIN
+    relative = 1 + trial_design.DEFAULT_RELATIVE_RISE
     if not primary_rate or not no_stop_rate:
         return relative
-    return min(relative, 1 + HARM_CHECK.MARGIN * primary_rate / no_stop_rate)
+    return min(relative, 1 + trial_design.DEFAULT_RELATIVE_RISE * primary_rate / no_stop_rate)
 
 
 def _get_rate_check(
     rate: float | None, margin: float, per_arm: int | None, watch_alpha: float
 ) -> dict:
-    row = _get_rate_row(rate, margin, per_arm, (HARM_CHECK.ALPHA, watch_alpha))
+    row = _get_rate_row(rate, margin, per_arm, (trial_design.DEFAULT_ALPHA, watch_alpha))
     row["widening"] = _get_widening(row, watch_alpha, origin=1.0, sides=1)
     return row
 
@@ -9560,9 +9562,9 @@ def _get_tool_use_check(
     row = {
         "unit": "tool uses",
         "baseline_mean": mean,
-        "margin": None if mean is None else HARM_CHECK.MARGIN * mean,
+        "margin": None if mean is None else trial_design.DEFAULT_RELATIVE_RISE * mean,
     }
-    for stage, alpha in (("trial", HARM_CHECK.ALPHA), ("watch", watch_alpha)):
+    for stage, alpha in (("trial", trial_design.DEFAULT_ALPHA), ("watch", watch_alpha)):
         row[stage] = _get_stage(
             alpha,
             sides,
@@ -9622,10 +9624,10 @@ def _get_drift_widening(watch_alpha: float, sides: int) -> dict:
             1.0, 1.0, is_overage_primary=is_upward, alpha=alpha
         )
 
-    fixed = get_drift(watch_alpha) / get_drift(HARM_CHECK.ALPHA)
+    fixed = get_drift(watch_alpha) / get_drift(trial_design.DEFAULT_ALPHA)
     inflation = trial_design.get_inflation_factor(
         alpha=watch_alpha / sides
-    ) / trial_design.get_inflation_factor(alpha=HARM_CHECK.ALPHA / sides)
+    ) / trial_design.get_inflation_factor(alpha=trial_design.DEFAULT_ALPHA / sides)
     return {"fixed_sample": fixed, "four_look": fixed * math.sqrt(inflation)}
 
 def get_look_payload(look: Look, accrual: LookAccrual) -> dict:
