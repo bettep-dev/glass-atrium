@@ -17,6 +17,10 @@ the same limbo for STORED rows: one idempotent statement moves every pending aut
 row to ``unadjudicated`` under the generation-closed reason and actor, and leaves
 every other row as it was.
 
+The one-running-trial gate keeps an agent holding an open live trial out of
+generation: its open trials are read once per cycle, a read fault makes no
+generator call that cycle, and the trial's pending row survives the cycle.
+
 Run with either runner:
     python3 -m unittest autoagent.test.test_floor_terminalization -v
     uv run --with pytest pytest autoagent/test/test_floor_terminalization.py -v
@@ -32,6 +36,7 @@ import tempfile
 import unittest
 from contextlib import closing
 from pathlib import Path
+from types import SimpleNamespace
 from unittest import mock
 
 _REPO_ROOT = Path(__file__).resolve().parent.parent.parent
@@ -44,7 +49,7 @@ for _anchor in (_HOOKS_DIR, _AUTOAGENT_DIR, _STUB_DIR, Path(__file__).resolve().
         sys.path.insert(0, str(_anchor))
 
 import _pg_stub_backend as stub  # noqa: E402 — anchors pinned by the loop above
-from _pg_seal import seal_pg_reach
+from _pg_seal import create_live_trial, create_trial_ledger_table, seal_pg_reach
 
 try:
     import daemon_cycle as dc
@@ -258,6 +263,152 @@ class TestGenerationClosedStatement(unittest.TestCase):
         self.assertIn(
             dc.classify_failure_rationale(stored), dc._NON_ADJUDICATION_CLASSES
         )
+
+
+_HOLDER = "glass-atrium-dev-python"  # holds an open live trial on its pending row
+_FREE = "glass-atrium-dev-shell"  # holds none
+_TRIAL_PROPOSAL_ID = 7
+# the gate's read, kept before any test's seal replaces it with a refusal
+_READ_OPEN_TRIALS = getattr(dc, "_pg_read_open_trials", None) if dc is not None else None
+
+
+@unittest.skipIf(dc is None, f"import failed: {_IMPORT_ERROR}")
+class TestOneRunningTrialGate(unittest.TestCase):
+    """No generator call for an agent holding an open trial; a read fault holds the whole cycle.
+
+    The generation loop's input is the cycle's power passes, so a pattern in an agent's
+    group is a pattern of that agent that passed power this cycle.
+    """
+
+    def setUp(self) -> None:
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        root = Path(tmp.name)
+        self.agents_dir = root / "agents"
+        self.agents_dir.mkdir()
+        for agent in (_HOLDER, _FREE):
+            (self.agents_dir / f"{agent}.md").write_text("# probe agent\n", encoding="utf-8")
+        self.db = root / "proposals.sqlite"
+        stub.create_proposals_table(self.db)
+        create_trial_ledger_table(self.db)
+        with closing(sqlite3.connect(self.db)) as db:
+            db.execute(
+                "INSERT INTO autoagent_proposals (id, cycle_date, pattern_label, target_agent,"
+                " target_file, approval_tier, status, rationale)"
+                " VALUES (?, '2026-10-10', 'in-trial pattern', ?, ?, 'auto', 'pending', 'trialled')",
+                (_TRIAL_PROPOSAL_ID, _HOLDER, self._target(_HOLDER)),
+            )
+            db.commit()
+        create_live_trial(self.db, _TRIAL_PROPOSAL_ID, _HOLDER)
+        self.generated: list[str] = []
+        self.reads: list[None] = []
+        self.pg_reach = seal_pg_reach(self)
+        with stub.load_helper(self.db) as helper:
+            fragment = helper.PROPOSAL_STATUS_SQL
+        # after the seal: the stand-in store is the DB boundary, the generator a recorder
+        for name, value, is_created in (
+            ("HAS_PG_LOOP_WRITE", True, False),
+            ("_pg_connect", lambda: stub.create_connection(self.db), False),
+            ("_pg_read_open_trials", self._read_open_trials, _READ_OPEN_TRIALS is None),
+            ("TRIAL_LEDGER", stub.get_trial_ledger(), not hasattr(dc, "TRIAL_LEDGER")),
+            ("_PG_PROPOSAL_STATUS_SQL", fragment, dc._PG_LOOP_IMPORT_EXC is not None),
+            ("_drop_gated_patterns", lambda _agent, patterns, _gate: patterns, False),
+            ("consecutive_timeout_count", lambda *_args: 0, False),
+            ("INTER_CALL_SPACING_SEC", 0, False),
+            ("generate_consolidated_proposal", self._generate, False),
+            ("classify_patch_area", lambda *a, **k: "body-auto", False),
+            # safety-routed → pending → the supersede runs over the agent's file
+            ("classify_safety_tier", lambda *a, **k: "safety", False),
+        ):
+            patcher = mock.patch.object(dc, name, value, create=is_created)
+            patcher.start()
+            self.addCleanup(patcher.stop)
+
+    def _target(self, agent: str) -> str:
+        return str(self.agents_dir / f"{agent}.md")
+
+    def _read_open_trials(self) -> object:
+        self.reads.append(None)
+        return _READ_OPEN_TRIALS()
+
+    def _generate(self, agent: str, *_args: object, **_kwargs: object) -> "dc.PatchProposal":
+        self.generated.append(agent)
+        return dc.PatchProposal(
+            target_file=self._target(agent),
+            rationale="probe rationale",
+            proposed_diff="--- a\n+++ b\n@@ -1 +1,2 @@\n # probe agent\n+- probe rule\n",
+            touched_frontmatter=False,
+            estimated_added_lines=1,
+            raw_response="probe raw response",
+        )
+
+    def _loop(self, *agents: str) -> str:
+        """One full-real generation loop over the agents' passing patterns → its stderr."""
+        report = SimpleNamespace(patches=[], cycle_date="2026-10-11")
+        groups = [(agent, [self._pattern(agent)]) for agent in agents]
+        err = io.StringIO()
+        with contextlib.redirect_stderr(err):
+            dc._run_generation_loop(
+                report,
+                groups,
+                dc.GenerationRun(
+                    regression_gate=object(),
+                    agents_dir=self.agents_dir,
+                    skip_haiku=False,
+                    skip_pre_verify=True,
+                    skip_loop_emit=False,
+                ),
+            )
+        self.assertEqual(self.pg_reach, [])
+        return err.getvalue()
+
+    @staticmethod
+    def _pattern(agent: str) -> "dc.Pattern":
+        return dc.Pattern(
+            date="2026-10-10",
+            label="another passing pattern",
+            frequency="5",
+            agent=agent,
+            status="identified",
+            tier="user-pending",
+            raw_line=f"pg:learning_log:11:another passing pattern|{agent}",
+            row_id=11,
+        )
+
+    def _get_ledger(self) -> list[tuple]:
+        with closing(sqlite3.connect(self.db)) as db:
+            return db.execute("SELECT * FROM autoagent_trial_ledger ORDER BY id").fetchall()
+
+    def test_an_agent_holding_an_open_trial_gets_no_generator_call(self) -> None:
+        self._loop(_HOLDER, _FREE)
+        self.assertEqual(self.generated, [_FREE])
+
+    def test_the_open_trials_are_read_once_per_cycle(self) -> None:
+        self._loop(_HOLDER, _FREE)
+        self.assertEqual(len(self.reads), 1)
+
+    def test_a_read_fault_warns_by_name_and_makes_no_generator_call_that_cycle(self) -> None:
+        def _fault() -> None:
+            raise sqlite3.OperationalError("no such table: core.autoagent_trial_ledger")
+
+        with mock.patch.object(dc, "_pg_read_open_trials", _fault):
+            err = self._loop(_HOLDER, _FREE)
+        self.assertEqual(self.generated, [])
+        self.assertIn(
+            "WARN: one-running-trial gate — open live trials unreadable: OperationalError",
+            err,
+        )
+
+    def test_the_in_trial_row_stays_pending_through_a_cycle_its_agent_passes_power(
+        self,
+    ) -> None:
+        ledger = self._get_ledger()
+        self._loop(_HOLDER)
+        stored = stub.read_proposal(
+            self.db, ("2026-10-10", "in-trial pattern", self._target(_HOLDER))
+        )
+        self.assertEqual(stored["status"], "pending")
+        self.assertEqual(self._get_ledger(), ledger)
 
 
 if __name__ == "__main__":

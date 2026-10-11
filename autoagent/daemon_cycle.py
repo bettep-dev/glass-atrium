@@ -7185,9 +7185,14 @@ def regenerate_stale_proposals(
     re-derivation failures (file missing, unrecoverable diff) are logged and
     SKIPPED (row left pending) — one bad row must not abort the whole sweep.
 
+    A row an open live trial names keeps its diff — the trial runs on the stored
+    text — and is reported "skipped-in-trial"; once its trial is decided, the next
+    sweep takes it back.
+
     Returns a list of per-row result dicts:
         {id, target_file, action, ...}  where action ∈
-        {"regenerated", "skipped-fresh", "skipped-unrecoverable", "dry-run"}.
+        {"regenerated", "skipped-fresh", "skipped-unrecoverable", "skipped-in-trial",
+        "dry-run"}.
     """
     if not HAS_PG_LOOP_WRITE:
         # _pg_connect import rides on the same try-block as the loop-write helper.
@@ -7198,7 +7203,7 @@ def regenerate_stale_proposals(
         raise RuntimeError("FU-3 requires PG (psycopg.connect dbname=glass_atrium)")
 
     select_sql = (
-        "SELECT id, target_file, proposed_diff "
+        f"SELECT id, target_file, proposed_diff, {LIVE_TRIAL.IS_PROPOSAL_IN_TRIAL_SQL} "
         "FROM core.autoagent_proposals "
         "WHERE status = 'pending' AND proposed_diff IS NOT NULL "
         "ORDER BY id"
@@ -7211,10 +7216,16 @@ def regenerate_stale_proposals(
     try:
         with _pg_connect() as conn:
             with conn.cursor() as cur:
-                cur.execute(select_sql)
+                cur.execute(select_sql, (TRIAL_LEDGER.EVENT.LIVE_PREREGISTRATION,))
                 rows = cur.fetchall()
             for row in rows:
                 proposal_id, target_file_str, stored_diff = row[0], row[1], row[2]
+                if row[3]:
+                    results.append(
+                        {"id": proposal_id, "target_file": target_file_str,
+                         "action": "skipped-in-trial", "reason": "open live trial"}
+                    )
+                    continue
                 if not stored_diff or not str(stored_diff).strip():
                     results.append(
                         {"id": proposal_id, "target_file": target_file_str,
@@ -7780,7 +7791,7 @@ class SingleRegenResult:
     """Single-proposal regen+validate result (source-of-truth for the stdout JSON)."""
 
     proposal_id: int
-    action: Literal["regenerated", "already_applied", "unrecoverable", "invalid"]
+    action: Literal["regenerated", "already_applied", "unrecoverable", "invalid", "in_trial"]
     preverify_passed: bool | None
     preverify_axes: dict[str, bool] | None
     reason: str
@@ -7905,8 +7916,9 @@ def regenerate_single_proposal(
     Steps:
       1. Fetch the id=N row from PG (id/target_file/target_agent/pattern_label/
          cycle_date/proposed_diff) — row absent → unrecoverable.
-      2. _classify_single_regen decides the action (already_applied/regenerated/
-         invalid/unrecoverable).
+      2. a row an open live trial names → in_trial, no UPDATE (the trial runs on
+         the stored diff); otherwise _classify_single_regen decides the action
+         (already_applied/regenerated/invalid/unrecoverable).
       3. action=regenerated AND not dry_run → UPDATE proposed_diff only
          (status/pattern_label/cycle_date unchanged — daemon-apply.sh drains the apply).
          already_applied/invalid/unrecoverable → no UPDATE.
@@ -7928,7 +7940,8 @@ def regenerate_single_proposal(
 
     select_sql = (
         "SELECT id, target_file, target_agent, pattern_label, cycle_date, "
-        "proposed_diff FROM core.autoagent_proposals WHERE id = %s"
+        f"proposed_diff, {LIVE_TRIAL.IS_PROPOSAL_IN_TRIAL_SQL} "
+        "FROM core.autoagent_proposals WHERE id = %s"
     )
     update_sql = (
         "UPDATE core.autoagent_proposals SET proposed_diff = %s WHERE id = %s"
@@ -7940,7 +7953,9 @@ def regenerate_single_proposal(
         # the SELECT's ACCESS SHARE lock / pinning the snapshot horizon.
         with _pg_connect() as conn:
             with conn.cursor() as cur:
-                cur.execute(select_sql, (proposal_id,))
+                cur.execute(
+                    select_sql, (TRIAL_LEDGER.EVENT.LIVE_PREREGISTRATION, proposal_id)
+                )
                 row = cur.fetchone()
 
         if row is None:
@@ -7953,6 +7968,19 @@ def regenerate_single_proposal(
                 preverify_passed=None,
                 preverify_axes=None,
                 reason=f"proposal id {proposal_id} not found in PG",
+            )
+
+        if row[6]:
+            sys.stderr.write(
+                f"[daemon-cycle] FU-3 single: id={proposal_id} action=in_trial "
+                "(no UPDATE) — an open live trial runs on the stored diff\n"
+            )
+            return SingleRegenResult(
+                proposal_id=proposal_id,
+                action="in_trial",
+                preverify_passed=None,
+                preverify_axes=None,
+                reason=f"proposal id {proposal_id} is in an open live trial",
             )
 
         target_file_str = row[1]
@@ -8040,6 +8068,7 @@ def supersede_prior_pending_for_agent(
     *,
     cycle_date: str,
     pattern_label: str,
+    candidate_tier: str = "",
 ) -> int:
     """Terminate the same agent's OTHER pending proposals → 'unadjudicated'.
 
@@ -8061,6 +8090,11 @@ def supersede_prior_pending_for_agent(
     per row: the run's own cycle date carries the same-cycle tail, an older row
     the cross-day tail.
 
+    A row an open live trial names is never terminated: the trial runs on that row.
+    An ``auto`` candidate (one bound to its own pre-registration) terminates only
+    ``auto`` rows, sparing the human queue and the ``llm`` rows; any other candidate
+    tier (safety, infra-pending's empty tier, the default) terminates every tier.
+
     Loud-fail: PG errors logged via named exception + re-raised. PG unavailable →
     return 0 (supersede skipped — the new proposal still emits normally).
 
@@ -8070,6 +8104,7 @@ def supersede_prior_pending_for_agent(
         cycle_date: the run's own cycle date (YYYY-MM-DD), date-cast in the
             statement because the column is date-typed.
         pattern_label: the consolidated label the run's own push will own.
+        candidate_tier: the new candidate's approval tier — the supersede's scope.
 
     Returns:
         count of other pending rows terminated.
@@ -8092,6 +8127,7 @@ def supersede_prior_pending_for_agent(
         )
         return 0
 
+    tier_clause = "AND approval_tier = 'auto' " if candidate_tier == "auto" else ""
     # The excluded triple IS the FU-1 dedup key — the identity the run's own push
     # will update, so it must survive its own supersede.
     update_sql = (
@@ -8101,8 +8137,10 @@ def supersede_prior_pending_for_agent(
         "reviewed_by = %s "
         "WHERE status = 'pending' "
         "AND target_agent = %s AND target_file = %s "
+        f"{tier_clause}"
         "AND NOT (cycle_date = %s::date AND pattern_label = %s "
         "AND target_file = %s) "
+        f"AND NOT {LIVE_TRIAL.IS_PROPOSAL_IN_TRIAL_SQL} "
         "RETURNING id"
     )
     update_params = (
@@ -8116,6 +8154,7 @@ def supersede_prior_pending_for_agent(
         cycle_date,
         pattern_label,
         target_file,
+        TRIAL_LEDGER.EVENT.LIVE_PREREGISTRATION,
     )
     try:
         with _pg_connect() as conn:
@@ -9093,6 +9132,33 @@ SHADOW = SimpleNamespace(
     # W = 0 on every install → each spawn is its own task unit
     TASK_WINDOW=timedelta(0),
 )
+
+
+# open live trial = a live pre-registration with no <live trial key>:decision row; one statement
+_OPEN_LIVE_TRIAL_SQL = (
+    "SELECT p.agent, (p.payload->>'proposal_id')::bigint AS proposal_id "
+    "FROM core.autoagent_trial_ledger p WHERE p.event = %s AND NOT EXISTS ("
+    "SELECT 1 FROM core.autoagent_trial_ledger d WHERE d.dedupe_key = p.trial_key || ':decision')"
+)
+LIVE_TRIAL = SimpleNamespace(
+    OPEN_SQL=_OPEN_LIVE_TRIAL_SQL,
+    # a proposals-row predicate over the same statement; binds the event as one parameter
+    IS_PROPOSAL_IN_TRIAL_SQL=(
+        f"EXISTS (SELECT 1 FROM ({_OPEN_LIVE_TRIAL_SQL}) AS open_trial "
+        "WHERE open_trial.proposal_id = autoagent_proposals.id)"
+    ),
+)
+
+
+def _pg_read_open_trials() -> dict[str, list[int]]:
+    """Agent → proposal ids of its open live trials; raises on any PG fault."""
+    with _pg_connect() as conn, conn.cursor() as cur:
+        cur.execute(LIVE_TRIAL.OPEN_SQL, (TRIAL_LEDGER.EVENT.LIVE_PREREGISTRATION,))
+        rows = cur.fetchall()
+    open_trials: dict[str, list[int]] = defaultdict(list)
+    for agent, proposal_id in rows:
+        open_trials[agent].append(proposal_id)
+    return dict(open_trials)
 
 
 class ShadowTrial(NamedTuple):
@@ -13397,9 +13463,11 @@ def _run_generation_loop(
     resolve_floor_terminalization terminalizes every auto candidate.
     """
     seen_targets: set[str] = set()
+    # PG gates → full-real mode only: skip_haiku (test/preflight) bypasses them like the
+    # timeout back-off, skip_loop_emit (no-PG-write) like the supersede.
+    if not run.skip_haiku and not run.skip_loop_emit:
+        agent_groups = _drop_trial_held_agents(agent_groups)
     for agent, agent_patterns in agent_groups:
-        # Gates write PG → full-real mode only: skip_haiku (test/preflight) bypasses
-        # them like the timeout back-off, skip_loop_emit (no-PG-write) like the supersede.
         if not run.skip_haiku and not run.skip_loop_emit:
             agent_patterns = _drop_gated_patterns(agent, agent_patterns, run.regression_gate)
             if not agent_patterns:
@@ -13416,6 +13484,33 @@ def _run_generation_loop(
                 skip_loop_emit=run.skip_loop_emit,
             )
         )
+
+
+def _drop_trial_held_agents(
+    agent_groups: list[tuple[str, list[Pattern]]],
+) -> list[tuple[str, list[Pattern]]]:
+    """One-running-trial gate — no generator call for an agent holding an open live trial.
+
+    Reads the open trials once per cycle. A read fault holds every agent this cycle
+    (named WARN; the cycle continues). No PG layer → nothing readable, so no hold.
+    """
+    if not agent_groups or not HAS_PG_LOOP_WRITE:
+        return agent_groups
+    try:
+        open_trials = _pg_read_open_trials()
+    except Exception as exc:  # noqa: BLE001 — a read fault holds generation, never the cycle
+        sys.stderr.write(
+            "[daemon-cycle] WARN: one-running-trial gate — open live trials unreadable: "
+            f"{_describe_fault(exc)} — no generator call this cycle\n"
+        )
+        return []
+    for agent, _ in agent_groups:
+        if agent in open_trials:
+            sys.stderr.write(
+                f"[daemon-cycle] INFO: one-running-trial gate — agent={agent} holds an open "
+                f"live trial (proposal ids {open_trials[agent]}) — no generator call this cycle\n"
+            )
+    return [group for group in agent_groups if group[0] not in open_trials]
 
 
 def _drop_gated_patterns(
@@ -13676,8 +13771,9 @@ def build_patch_result(
     # Same-agent supersede — only when the new proposal is an actual emit
     # target (pending), terminate the agent's OTHER pending rows (block
     # backlog re-accumulation). The skip_loop_emit (test/preflight) path does
-    # not touch PG → supersede also skipped. A floor-terminalized row is not
-    # pending → never a fresh emit → never triggers supersede.
+    # not touch PG → supersede also skipped. Its scope is the candidate's tier:
+    # a pending auto candidate closes auto rows only, safety and infra-pending
+    # every tier; a row an open live trial names is never closed.
     # The cycle date + consolidated label are the identity this run's own push
     # will update, so they are what the supersede must spare.
     if status_value == "pending" and not skip_loop_emit:
@@ -13686,6 +13782,7 @@ def build_patch_result(
             proposal.target_file,
             cycle_date=cycle_date,
             pattern_label=consolidated_label,
+            candidate_tier=approval_tier,
         )
 
     return PatchResult(

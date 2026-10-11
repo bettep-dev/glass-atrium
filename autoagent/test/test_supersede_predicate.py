@@ -20,9 +20,13 @@ Four properties are covered:
     identity through _pg_dual_write_daemon's UPSERT, and the run's own row is
     still live for its own push. Either fix reverted and this pair goes red;
 (4) the CALL-SITE binding — the generation unit passes its own cycle date and
-    the CONSOLIDATED label, untransposed. (1)-(3) drive the predicate directly
-    and so hold for any caller, including one handing it the lead pattern's
-    label: the exclusion is only as good as the identity the unit binds into it.
+    the CONSOLIDATED label, untransposed, and its candidate's approval tier.
+    (1)-(3) drive the predicate directly and so hold for any caller, including
+    one handing it the lead pattern's label: the exclusion is only as good as
+    the identity the unit binds into it;
+(5) the scope — a bound candidate (approval tier ``auto``) closes only the
+    agent's pending ``auto`` rows, an unbound one (safety, infra-pending) every
+    tier, and no candidate closes a row an open live trial names.
 
 Backend: the stdlib sqlite stand-in from ``scripts/test/_pg_stub_backend.py``
 runs the REAL statement text (cast-stripped, qmark-rewritten), so no Postgres
@@ -62,7 +66,11 @@ for _anchor in (_AUTOAGENT_DIR, _STUB_DIR, Path(__file__).resolve().parent):
 
 import _pg_stub_backend as stub  # noqa: E402 — anchors pinned by the loop above
 import daemon_cycle as dc  # noqa: E402 — anchors pinned by the loop above
-from _pg_seal import seal_pg_reach  # noqa: E402 — anchors pinned by the loop above
+from _pg_seal import (  # noqa: E402 — anchors pinned by the loop above
+    create_live_trial,
+    create_trial_ledger_table,
+    seal_pg_reach,
+)
 
 _ROUTE = _REPO_ROOT / "monitor" / "src" / "server" / "routes" / "improvement.ts"
 _ROUTE_MARKER = re.compile(r'SUPERSEDE_RATIONALE_LIKE\s*=\s*"([^"]*)"')
@@ -83,7 +91,19 @@ def _generation_text(run: int) -> str:
 
 
 
-def _run_supersede(testcase: unittest.TestCase, db_path: Path) -> None:
+def _create_store(testcase: unittest.TestCase) -> Path:
+    """A stand-in file holding the proposals table and the trial ledger."""
+    tmp = tempfile.TemporaryDirectory()
+    testcase.addCleanup(tmp.cleanup)
+    db_path = Path(tmp.name) / "proposals.sqlite"
+    stub.create_proposals_table(db_path)
+    create_trial_ledger_table(db_path)
+    return db_path
+
+
+def _run_supersede(
+    testcase: unittest.TestCase, db_path: Path, **scope: str
+) -> None:
     """Drive the real supersede statement against the stdlib backend."""
     # Sealed first: on the import-succeeded leg a renamed _pg_connect fails here,
     # never patched as a dead attribute while the real connect stays live.
@@ -100,9 +120,12 @@ def _run_supersede(testcase: unittest.TestCase, db_path: Path) -> None:
         fragment,
         create=dc._PG_LOOP_IMPORT_EXC is not None,
     )
-    with quiet, armed, seam, status:
+    ledger = mock.patch.object(
+        dc, "TRIAL_LEDGER", stub.get_trial_ledger(), create=not hasattr(dc, "TRIAL_LEDGER")
+    )
+    with quiet, armed, seam, status, ledger:
         dc.supersede_prior_pending_for_agent(
-            _AGENT, _TARGET, cycle_date=_RUN_DATE, pattern_label=_RUN_LABEL
+            _AGENT, _TARGET, cycle_date=_RUN_DATE, pattern_label=_RUN_LABEL, **scope
         )
     testcase.assertEqual(pg_reach, [])
 
@@ -111,10 +134,7 @@ class TestSupersedePredicate(unittest.TestCase):
     """The opposed triple: one row survives its own supersede, two transition."""
 
     def setUp(self) -> None:
-        tmp = tempfile.TemporaryDirectory()
-        self.addCleanup(tmp.cleanup)
-        self.db = Path(tmp.name) / "proposals.sqlite"
-        stub.create_proposals_table(self.db)
+        self.db = _create_store(self)
         self._seed(_RUN_DATE, _RUN_LABEL)
         self._seed(_RUN_DATE, _DRIFTED_LABEL)
         self._seed(_PRIOR_DATE, _RUN_LABEL)
@@ -215,10 +235,7 @@ class TestSupersedeStampSurvivesRepush(unittest.TestCase):
     """
 
     def setUp(self) -> None:
-        tmp = tempfile.TemporaryDirectory()
-        self.addCleanup(tmp.cleanup)
-        self.db = Path(tmp.name) / "proposals.sqlite"
-        stub.create_proposals_table(self.db)
+        self.db = _create_store(self)
         with stub.load_helper(self.db) as helper:
             self._push(helper, _RUN_LABEL, _generation_text(1))
             self._push(helper, _DRIFTED_LABEL, _generation_text(1))
@@ -279,6 +296,83 @@ class TestSupersedeStampSurvivesRepush(unittest.TestCase):
             ),
             {"status": "unadjudicated", "reviewed_by": dc._SUPERSEDE_ACTOR},
         )
+
+
+# (row label, stored approval tier, live trial on the row: None | "open" | "decided")
+_ScopeSeed = tuple[str, str, "str | None"]
+
+
+def _seed_scope_rows(db_path: Path, rows: tuple[_ScopeSeed, ...]) -> None:
+    """Prior-cycle pending rows of the probe agent and file, each with its own trial state."""
+    with closing(sqlite3.connect(db_path)) as db:
+        for proposal_id, (label, tier, _) in enumerate(rows, start=1):
+            db.execute(
+                "INSERT INTO autoagent_proposals (id, cycle_date, pattern_label, target_agent,"
+                " target_file, approval_tier, status, rationale)"
+                " VALUES (?, ?, ?, ?, ?, ?, 'pending', ?)",
+                (proposal_id, _PRIOR_DATE, label, _AGENT, _TARGET, tier, _SEED_RATIONALE),
+            )
+        db.commit()
+    for proposal_id, (_, _, trial) in enumerate(rows, start=1):
+        if trial is not None:
+            create_live_trial(db_path, proposal_id, _AGENT, is_decided=trial == "decided")
+
+
+def _get_statuses(db_path: Path, rows: tuple[_ScopeSeed, ...]) -> dict[str, str]:
+    return {
+        label: stub.read_proposal(db_path, (_PRIOR_DATE, label, _TARGET))["status"]
+        for label, _, _ in rows
+    }
+
+
+_TIER_ROWS: tuple[_ScopeSeed, ...] = (
+    ("pending auto", "auto", None),
+    ("pending user", "user", None),
+    ("pending llm", "llm", None),
+)
+_TRIAL_ROWS: tuple[_ScopeSeed, ...] = (
+    ("in trial", "auto", "open"),
+    ("trial decided", "auto", "decided"),
+    ("no trial", "auto", None),
+)
+
+
+class TestSupersedeScope(unittest.TestCase):
+    """A bound candidate closes only pending auto rows; an unbound one closes every tier."""
+
+    def _supersede(self, rows: tuple[_ScopeSeed, ...], candidate_tier: str) -> dict[str, str]:
+        db_path = _create_store(self)
+        _seed_scope_rows(db_path, rows)
+        _run_supersede(self, db_path, candidate_tier=candidate_tier)
+        return _get_statuses(db_path, rows)
+
+    def test_a_bound_candidate_closes_the_auto_row_and_spares_the_human_and_llm_rows(
+        self,
+    ) -> None:
+        self.assertEqual(
+            self._supersede(_TIER_ROWS, "auto"),
+            {"pending auto": "unadjudicated", "pending user": "pending", "pending llm": "pending"},
+        )
+
+    def test_an_unbound_candidate_closes_every_tier(self) -> None:
+        for name, candidate_tier in (("safety-routed", "safety"), ("infra-pending", "")):
+            with self.subTest(candidate=name):
+                self.assertEqual(
+                    set(self._supersede(_TIER_ROWS, candidate_tier).values()),
+                    {"unadjudicated"},
+                )
+
+    def test_an_unbound_candidate_never_closes_a_row_its_open_trial_names(self) -> None:
+        for name, candidate_tier in (("safety-routed", "safety"), ("infra-pending", "")):
+            with self.subTest(candidate=name):
+                self.assertEqual(
+                    self._supersede(_TRIAL_ROWS, candidate_tier),
+                    {
+                        "in trial": "pending",
+                        "trial decided": "unadjudicated",
+                        "no trial": "unadjudicated",
+                    },
+                )
 
 
 class TestSupersedeCallSiteBinding(unittest.TestCase):
@@ -344,13 +438,14 @@ class TestSupersedeCallSiteBinding(unittest.TestCase):
         self.calls.append((args, kwargs))
         return 0
 
-    def _generate(self) -> None:
+    def _generate(self, **overrides: object) -> None:
         """Run the unit over the two-pattern agent, recording the supersede call."""
         seams = {
             "generate_consolidated_proposal": self._proposal,
             "classify_patch_area": lambda *a, **k: "body-auto",
             "classify_safety_tier": lambda *a, **k: "safety",
             "supersede_prior_pending_for_agent": self._record,
+            **overrides,
         }
         with contextlib.ExitStack() as stack:
             stack.enter_context(contextlib.redirect_stderr(io.StringIO()))
@@ -384,9 +479,48 @@ class TestSupersedeCallSiteBinding(unittest.TestCase):
             self.calls[0],
             (
                 (_AGENT, str(self.target_md)),
-                {"cycle_date": _RUN_DATE, "pattern_label": consolidated},
+                {
+                    "cycle_date": _RUN_DATE,
+                    "pattern_label": consolidated,
+                    "candidate_tier": "safety",
+                },
             ),
         )
+
+    def test_each_candidate_passes_its_own_approval_tier_as_the_scope(self) -> None:
+        verified = dc.PreVerifyResult(True, "ok", {}, "ok", 0)
+        infra = dc.PreVerifyResult(False, "verifier down", {}, "error:timeout-90s", 0)
+        # The floor terminalizes every auto candidate until the live opening lands, so the
+        # bound row passes it through to reach the shape the opening stores.
+        rows = (
+            ("safety-routed", "safety", verified, False, "safety"),
+            ("infra-pending", "non-safety", infra, False, ""),
+            ("bound", "non-safety", verified, True, "auto"),
+        )
+        for name, safety_tier, verdict, is_floor_passed, expected in rows:
+            with self.subTest(candidate=name):
+                self.calls.clear()
+                seams = {
+                    "classify_safety_tier": lambda *a, _tier=safety_tier, **k: _tier,
+                    "run_pre_verify": lambda *a, _verdict=verdict, **k: _verdict,
+                }
+                if is_floor_passed:
+                    seams["resolve_floor_terminalization"] = _pass_floor
+                self._generate(**seams)
+                self.assertEqual(len(self.calls), 1, f"expected one supersede call: {self.calls}")
+                self.assertEqual(self.calls[0][1]["candidate_tier"], expected)
+
+def _pass_floor(**fields: str) -> "dc.FloorTerminalization":
+    """The floor's no-op shape for every input — the bound candidate stays pending auto."""
+    return dc.FloorTerminalization(
+        classification=fields["classification"],
+        approval_tier=fields["approval_tier"],
+        status_value=fields["status_value"],
+        rationale=fields["rationale"],
+        terminalized=False,
+        promotion_tier=fields["promotion_tier"],
+    )
+
 
 if __name__ == "__main__":
     unittest.main()

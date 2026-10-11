@@ -2,17 +2,22 @@
 
 ``seal_pg_reach`` serves tests that drive ``daemon_cycle`` without a database;
 ``get_ephemeral_connection`` serves classes that need real PostgreSQL;
-``set_install_tree`` gives a test a temp code tree that is its own install.
+``set_install_tree`` gives a test a temp code tree that is its own install;
+``create_trial_ledger_table`` / ``create_live_trial`` seed the trial ledger on the
+stdlib stand-in (``scripts/test/_pg_stub_backend.py``, anchored by the caller).
 Not a test module (no ``test_`` prefix): consumers anchor this directory on
 ``sys.path``; ``seal_pg_reach`` callers import ``daemon_cycle`` first.
 """
 
 from __future__ import annotations
 
+import json
 import os
+import sqlite3
 import sys
 import tempfile
 import unittest
+from contextlib import closing
 from pathlib import Path
 from typing import TYPE_CHECKING
 from unittest import mock
@@ -44,7 +49,7 @@ _SEAMS: dict[str | None, tuple[str, ...]] = {
         "_pg_count_spawn_manifest",
         "_pg_write_trial_ledger_row",
     ),
-    None: ("_invoke_pg_helper_subprocess",),
+    None: ("_invoke_pg_helper_subprocess", "_pg_read_open_trials"),
 }
 
 _AVAILABILITY_FLAGS = ("HAS_PG_LOOP_WRITE", "HAS_PG_PATTERN_READ", "HAS_PG_OUTCOME_READ")
@@ -92,6 +97,47 @@ def set_install_tree(testcase: unittest.TestCase) -> None:
     root = Path(tree.name)
     (root / "config.toml").write_text(f'[paths]\nroot = "{root}"\n', encoding="utf-8")
     _patch(testcase, sys.modules["daemon_cycle"], "_INSTALL_ROOT", root)
+
+
+def create_trial_ledger_table(db_path: Path) -> None:
+    """core.autoagent_trial_ledger in the stand-in's file, its columns read off the Prisma model."""
+    import _pg_stub_backend as stub
+
+    columns = stub._get_model_columns("AutoagentTrialLedger")
+    declared = ", ".join(
+        "id INTEGER PRIMARY KEY" if column == "id" else f"{column} TEXT" for column in columns
+    )
+    with closing(sqlite3.connect(db_path)) as db:
+        db.execute(f"CREATE TABLE autoagent_trial_ledger ({declared}, UNIQUE(dedupe_key))")
+        db.commit()
+
+
+def create_live_trial(
+    db_path: Path, proposal_id: int, agent: str, *, is_decided: bool = False
+) -> None:
+    """A live pre-registration naming ``proposal_id``; ``is_decided`` adds its decision row."""
+    import _pg_stub_backend as stub
+
+    event = stub.get_trial_ledger().EVENT
+    trial_key = f"{proposal_id:064x}"
+    rows = [
+        (
+            trial_key,
+            agent,
+            event.LIVE_PREREGISTRATION,
+            json.dumps({"proposal_id": proposal_id}),
+            trial_key,
+        )
+    ]
+    if is_decided:
+        rows.append((trial_key, agent, event.LIVE_DECISION, "{}", f"{trial_key}:decision"))
+    with closing(sqlite3.connect(db_path)) as db:
+        db.executemany(
+            "INSERT INTO autoagent_trial_ledger (trial_key, agent, event, payload, dedupe_key)"
+            " VALUES (?, ?, ?, ?, ?)",
+            rows,
+        )
+        db.commit()
 
 
 def _patch(
