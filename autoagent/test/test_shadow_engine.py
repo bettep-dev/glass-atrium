@@ -89,8 +89,21 @@ _KEYS = SimpleNamespace(
         "samples",
         "guardrail_count",
         "harm_checks",
+        # the trial stage's canary writer and the ingest binding read the text and its hash
+        "canary",
+        # an unstarted trial's void reads its horizon from the row
+        "horizon_days",
     },
+    CANARY={"text", "text_sha256"},
 )
+# the generator's patch in the fixture; its added line is the canary text a bound trial delivers
+_PROBE_DIFF = "--- a\n+++ b\n@@ -1 +1,2 @@\n # probe agent\n+- probe rule\n"
+# A/A design-effect rows beside the primary key's: the leg's own, and a pre-split union-event row
+_GUARDRAIL_ROWS = SimpleNamespace(
+    NO_STOP={"metric_key": "no_subagent_stop", **_DESIGN_EFFECT._replace(value=1.4)._asdict()},
+    UNION={"metric_key": "emit_failure", **_DESIGN_EFFECT._replace(value=1.6)._asdict()},
+)
+_PROXY_LABEL = "proxy — union definition, not used for sizing or stopping"
 # a live trial as the push stores it: trial and dedupe key from the proposal id
 _PROPOSAL_ID = 9001
 _LIVE_KEY = f"{_PROPOSAL_ID:064x}"
@@ -175,6 +188,8 @@ class _Ledger:
         self.clock = clock
         self.rows: list[_LedgerRow] = []
         self.design_effects: dict[str, dict] = {}
+        # further passed A/A rows per agent, beside the primary key's
+        self.guardrail_rows: list[tuple[str, dict]] = []
         self.refused: list[str] = []
         self.faulted: set[str] = set()
         # read only by a cycle whose loop-write flag also opens these gate reads and the A/A stage
@@ -244,7 +259,7 @@ class _LedgerCursor:
                 (agent, self.ledger.design_effects[agent])
                 for agent in agents
                 if agent in self.ledger.design_effects
-            ]
+            ] + [row for row in self.ledger.guardrail_rows if row[0] in agents]
         elif statement == dc.SHADOW.PREREGISTRATION_SQL:
             event, agents = params
             latest: dict[tuple, _LedgerRow] = {}
@@ -341,7 +356,9 @@ class _ShadowFixture(unittest.TestCase):
         trial_ledger = stub.get_trial_ledger()
         power = self._check_power()
         [power_pass] = power.passes
-        payload = dc.get_preregistration_payload(power_pass, power.windows.start.detection)
+        payload = dc.get_preregistration_payload(
+            power_pass, power.windows.start.detection, dc.get_canary_text(_PROBE_DIFF)
+        )
         for key in missing:
             del payload[key]
         is_shadow = event == trial_ledger.EVENT.SHADOW_PREREGISTRATION
@@ -383,6 +400,8 @@ class BoundPayloadTest(_ShadowFixture):
         self.target = self.agents_dir / f"{_AGENT}.md"
         self.target.write_text("# probe agent\n", encoding="utf-8")
         self.generated: list[str] = []
+        self.diff = _PROBE_DIFF
+        self.stderr = io.StringIO()
         # supersede, gate history and back-off: PG paths outside this unit's question
         for name, value in (
             ("supersede_prior_pending_for_agent", lambda *args, **kwargs: 0),
@@ -408,7 +427,7 @@ class BoundPayloadTest(_ShadowFixture):
         return dc.PatchProposal(
             target_file=str(self.target),
             rationale="probe rationale",
-            proposed_diff="--- a\n+++ b\n@@ -1 +1,2 @@\n # probe agent\n+- probe rule\n",
+            proposed_diff=self.diff,
             touched_frontmatter=False,
             estimated_added_lines=1,
             raw_response="probe raw response",
@@ -434,8 +453,9 @@ class BoundPayloadTest(_ShadowFixture):
         """The generation unit over the pattern; generator and pre-verify faked at their call."""
         if verdict is None:
             verdict = dc.PreVerifyResult(True, "ok", {}, "ok", 0)
+        self.stderr = io.StringIO()
         with contextlib.ExitStack() as stack:
-            stack.enter_context(contextlib.redirect_stderr(io.StringIO()))
+            stack.enter_context(contextlib.redirect_stderr(self.stderr))
             for name, value in self._seams(verdict, safety=safety, area=area).items():
                 stack.enter_context(mock.patch.object(dc, name, value))
             result = dc.build_patch_result(
@@ -460,14 +480,71 @@ class BoundPayloadTest(_ShadowFixture):
         result = self._build(power)
         payload = result.preregistration_payload
         self.assertEqual(
-            payload, dc.get_preregistration_payload(power_pass, power.windows.start.detection)
+            payload,
+            dc.get_preregistration_payload(
+                power_pass, power.windows.start.detection, dc.get_canary_text(_PROBE_DIFF)
+            ),
         )
         self.assertEqual(set(payload), _KEYS.PREREGISTRATION)
+        self.assertEqual(set(payload["canary"]), _KEYS.CANARY)
         self.assertEqual(payload["boundaries"], list(trial_design.get_boundaries()))
         self.assertEqual(payload["maximum_per_arm"], _MAXIMUM)
         self.assertEqual(payload["design_effect"], _DESIGN_EFFECT.value)
         self.assertEqual([look["milestone"] for look in payload["looks"]], _MILESTONES)
         self.assertEqual((result.approval_tier, result.status), ("auto", "pending"))
+
+    def test_the_bound_payload_states_the_trials_horizon_in_days(self) -> None:
+        payload = self._build(self._check_power()).preregistration_payload
+        self.assertEqual(payload["horizon_days"], trial_design.HORIZON_DAYS)
+        self.assertEqual(payload["horizon_days"], 84)
+
+    def test_the_canary_text_is_the_patchs_added_lines_beside_the_sha256_of_exactly_that_text(
+        self,
+    ) -> None:
+        rows = [
+            ("one added line", _PROBE_DIFF, "- probe rule\n"),
+            (
+                "two hunks: added lines in diff order, context and removed lines left out",
+                (
+                    "--- a\n+++ b\n@@ -1,2 +1,2 @@\n # probe agent\n-old\n+- first rule\n"
+                    "@@ -9 +9,2 @@\n tail\n+- second rule\n"
+                ),
+                "- first rule\n- second rule\n",
+            ),
+        ]
+        for name, diff, text in rows:
+            with self.subTest(name):
+                self.ledger.rows.clear()
+                self.diff = diff
+                canary = self._build(self._check_power()).preregistration_payload["canary"]
+                self.assertEqual(canary["text"], text)
+                self.assertEqual(
+                    canary["text_sha256"],
+                    hashlib.sha256(canary["text"].encode("utf-8")).hexdigest(),
+                )
+
+    def test_a_candidate_whose_rendered_block_exceeds_1200_bytes_is_refused_never_truncated(
+        self,
+    ) -> None:
+        # the rendered block is the added line plus its newline; the cap counts bytes
+        rows = [
+            ("exactly 1200 bytes → bound", "x" * 1199, True),
+            ("1201 bytes → refused", "x" * 1200, False),
+            ("1204 bytes in 402 characters → refused", "가" * 401, False),
+        ]
+        for name, added, is_bound in rows:
+            with self.subTest(name):
+                self.ledger.rows.clear()
+                self.diff = f"--- a\n+++ b\n@@ -1 +1,2 @@\n # probe agent\n+{added}\n"
+                result = self._build(self._check_power())
+                if is_bound:
+                    self.assertEqual(result.preregistration_payload["canary"]["text"], f"{added}\n")
+                    self.assertEqual((result.approval_tier, result.status), ("auto", "pending"))
+                    self.assertNotIn("1200 B cap", self.stderr.getvalue())
+                    continue
+                self.assertIsNone(result.preregistration_payload)
+                self.assertNotEqual((result.approval_tier, result.status), ("auto", "pending"))
+                self.assertIn("1200 B cap", self.stderr.getvalue())
 
     def test_the_bound_payload_carries_the_generator_input_version_its_proposal_is_stamped_with(
         self,
@@ -508,7 +585,9 @@ class BoundPayloadTest(_ShadowFixture):
         power = self._check_power()
         [lead_pass] = power.passes
         lead, baseline = lead_pass.pattern, lead_pass.baseline
-        lead_payload = dc.get_preregistration_payload(lead_pass, power.windows.start.detection)
+        lead_payload = dc.get_preregistration_payload(
+            lead_pass, power.windows.start.detection, dc.get_canary_text(_PROBE_DIFF)
+        )
         other_key = next(key for key in sorted(dc.METRIC_KEYS) if key != _BUDGET_KEY)
         # each other pattern's pass on its own baseline, so binding it changes the payload
         other_passes = (
@@ -521,7 +600,9 @@ class BoundPayloadTest(_ShadowFixture):
                 pattern=pattern, baseline=baseline._replace(events=baseline.events + offset)
             )
             self.assertNotEqual(
-                dc.get_preregistration_payload(other_pass, power.windows.start.detection),
+                dc.get_preregistration_payload(
+                    other_pass, power.windows.start.detection, dc.get_canary_text(_PROBE_DIFF)
+                ),
                 lead_payload,
             )
             # the other pass listed first: a check binding the first pass binds the wrong one
@@ -1467,6 +1548,26 @@ class HarmCheckTest(unittest.TestCase):
                     msg=name,
                 )
 
+    def test_a_two_sided_band_widens_at_its_per_side_alpha_on_both_drift_forms(self) -> None:
+        # a non-overage primary → the tool_use band is two-sided, each stage's α split per side
+        rows = [
+            ("k 3", _RECORDED_MEASUREMENTS[0], 1.155, 1.150),
+            ("k 4", _RECORDED_MEASUREMENTS[1], 1.192, 1.186),
+        ]
+        for name, row, fixed_sample, four_look in rows:
+            with self.subTest(name):
+                band = _get_harm_checks(row, metric_key="emit_failure")["guardrails"][
+                    "tool_use"
+                ]
+                self.assertEqual(band["watch"]["sides"], 2)
+                drift = band["widening"]["drift"]
+                self.assertAlmostEqual(drift["fixed_sample"], fixed_sample, places=3)
+                self.assertAlmostEqual(drift["four_look"], four_look, places=3)
+                for key in _DESIGN_EFFECT_KEYS:
+                    self.assertAlmostEqual(
+                        band["widening"]["own_unit"][key], fixed_sample, places=3, msg=key
+                    )
+
     def test_verified_fail_is_a_guardrail_only_never_a_primary_key(self) -> None:
         readings = dc.GuardrailBaseline(0.05, 0.02, dc.ToolUseBaseline(20.0, 12.0))
         for metric_key in sorted(dc.METRIC_KEYS):
@@ -1518,7 +1619,93 @@ class HarmCheckPayloadTest(_ShadowFixture):
         power_pass = power_pass._replace(
             pattern=pattern, spawns=spawns or power_pass.spawns
         )
-        return dc.get_preregistration_payload(power_pass, power.windows.start.detection)
+        return dc.get_preregistration_payload(
+            power_pass, power.windows.start.detection, dc.get_canary_text(_PROBE_DIFF)
+        )
+
+    def _get_leg_spawns(self) -> list[SpawnFacts]:
+        """The fixture's history with every tenth spawn ending without a SubagentStop."""
+        return [
+            spawn._replace(has_subagent_stop=index % 10 != 0)
+            for index, spawn in enumerate(self.history)
+        ]
+
+    def _get_harm_at(self, payload: dict, stage: str, design_effect: float) -> float:
+        leg = payload["harm_checks"]["guardrails"]["no_subagent_stop"]
+        return trial_design.get_rate_harm(
+            leg["baseline_rate"],
+            payload["maximum_per_arm"],
+            alpha=leg[stage]["alpha"],
+            design_effect=design_effect,
+        )
+
+    def test_a_guardrail_with_a_passed_aa_row_states_its_harm_at_that_design_effect_alone(
+        self,
+    ) -> None:
+        # a union-event row beside it adds no proxy line to a measured leg
+        self.ledger.guardrail_rows += [
+            (_AGENT, _GUARDRAIL_ROWS.NO_STOP),
+            (_AGENT, _GUARDRAIL_ROWS.UNION),
+        ]
+        payload = self._get_payload(_AGENT, self._get_leg_spawns())
+        leg = payload["harm_checks"]["guardrails"]["no_subagent_stop"]
+        self.assertEqual(leg["design_effect"], {"basis": "measured", "value": 1.4})
+        self.assertNotIn("proxy", leg)
+        for stage in ("trial", "watch"):
+            self.assertEqual(
+                leg[stage]["minimum_detectable"],
+                {"design_effect_measured": self._get_harm_at(payload, stage, 1.4)},
+                stage,
+            )
+
+    def test_a_guardrail_with_no_aa_row_states_design_effect_1_and_2_labelled_and_the_trial_opens(
+        self,
+    ) -> None:
+        payload = self._get_payload(_AGENT, self._get_leg_spawns())
+        self.assertEqual(len(self.power.passes), 1)
+        for name in ("no_subagent_stop", "verified_fail", "tool_use"):
+            row = payload["harm_checks"]["guardrails"][name]
+            self.assertEqual(row["design_effect"]["basis"], "unmeasured", name)
+            self.assertIn("design effect 1 and 2", row["design_effect"]["label"], name)
+            for stage in ("trial", "watch"):
+                self.assertEqual(
+                    set(row[stage]["minimum_detectable"]), set(_DESIGN_EFFECT_KEYS), name
+                )
+        self.assertNotIn("proxy", payload["harm_checks"]["guardrails"]["no_subagent_stop"])
+        # the primary, unlike a guardrail, carries a power requirement: no row → never passing
+        self.ledger.design_effects.clear()
+        self.assertEqual(self._check_power().passes, [])
+
+    def test_a_union_event_row_states_a_proxy_line_that_no_power_read_or_stop_boundary_reads(
+        self,
+    ) -> None:
+        unreadable = {**_GUARDRAIL_ROWS.UNION, "value": "not a number"}
+        rows = [
+            ("a union-event row → the proxy line at its design effect", _GUARDRAIL_ROWS.UNION, 1.6),
+            ("an unreadable union-event row → no proxy line", unreadable, None),
+        ]
+        spawns = self._get_leg_spawns()
+        expected = self._get_payload(_AGENT, spawns)
+        for name, union_row, design_effect in rows:
+            with self.subTest(name):
+                self.ledger.guardrail_rows[:] = [(_AGENT, union_row)]
+                payload = self._get_payload(_AGENT, spawns)
+                leg = payload["harm_checks"]["guardrails"]["no_subagent_stop"]
+                proxy = leg.pop("proxy", None)
+                # everything else — sizing, looks, boundaries, the leg's own bracket — unchanged
+                self.assertEqual(payload, expected)
+                if design_effect is None:
+                    self.assertIsNone(proxy)
+                    continue
+                self.assertEqual(proxy["label"], _PROXY_LABEL)
+                self.assertEqual(proxy["design_effect"], design_effect)
+                self.assertEqual(
+                    proxy["minimum_detectable"],
+                    {
+                        stage: self._get_harm_at(payload, stage, design_effect)
+                        for stage in ("trial", "watch")
+                    },
+                )
 
     def test_an_agent_the_map_does_not_name_has_four_guardrails_on_the_helper_and_the_payload(
         self,

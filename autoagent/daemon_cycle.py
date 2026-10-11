@@ -53,7 +53,7 @@ from enum import IntEnum
 from fractions import Fraction
 from itertools import groupby
 from pathlib import Path, PurePosixPath
-from types import SimpleNamespace
+from types import MappingProxyType, SimpleNamespace
 from typing import TYPE_CHECKING, Literal, NamedTuple, Optional
 
 # -- Constants --------------------------------------------------------------
@@ -8842,6 +8842,13 @@ class PowerCheck(NamedTuple):
     design_effect: float | None  # design effect the units were sized at; None = unmeasured
 
 
+class GuardrailDesignEffects(NamedTuple):
+    """The agent's guardrail rows from passed A/As; None = no row."""
+
+    no_stop: float | None  # the leg's own row: sizes its harm check
+    proxy: float | None  # the union-event emit_failure row: stated only, sizes and stops nothing
+
+
 class PowerPass(NamedTuple):
     """One power-passing pattern with the evidence a bound candidate's live trial is sized on."""
 
@@ -8851,6 +8858,7 @@ class PowerPass(NamedTuple):
     required: float  # both arms' units at design_effect
     spawns: list[SpawnFacts]
     provenance_start: datetime | None  # the floor's; None covers nothing
+    guardrail_design_effects: GuardrailDesignEffects = GuardrailDesignEffects(None, None)
 
 
 class PowerResult(NamedTuple):
@@ -8866,6 +8874,8 @@ class PowerInputs(NamedTuple):
     design_effects: dict[tuple[str, str], float]
     # design effect unusable: every pair on a ledger fault, one pair on an invalid stored row
     unchecked_keys: frozenset[tuple[str, str]]
+    # agent → its union-event row's design effect; never read by the power check
+    proxy_design_effects: Mapping[str, float] = MappingProxyType({})
 
 
 class PowerSubject(NamedTuple):
@@ -8941,7 +8951,16 @@ def _get_pattern_power_verdict(
     design_effect, required = check.design_effect, check.units.required
     if check.verdict == POWER.VERDICT.PASSING and design_effect is not None and required is not None:
         power_pass = PowerPass(
-            pattern, floor.baseline, design_effect, required, spawns, inputs.provenance_start
+            pattern,
+            floor.baseline,
+            design_effect,
+            required,
+            spawns,
+            inputs.provenance_start,
+            GuardrailDesignEffects(
+                inputs.design_effects.get((pattern.agent, METRIC_NO_SUBAGENT_STOP)),
+                inputs.proxy_design_effects.get(pattern.agent),
+            ),
         )
     method_b = _get_method_b_baseline(subject, inputs, windows)
     return check.verdict, _get_pattern_power_detail(subject, check, method_b), power_pass
@@ -9027,8 +9046,9 @@ def _read_power_history(
 
 def _read_power_design_effects(
     agents: list[str],
-) -> tuple[dict[tuple[str, str], float], frozenset[tuple[str, str]]]:
-    """((agent, metric key) → design effect of its latest passed A/A's row, unchecked pairs).
+) -> tuple[dict[tuple[str, str], float], frozenset[tuple[str, str]], dict[str, float]]:
+    """((agent, metric key) → design effect of its latest passed A/A's row, unchecked pairs,
+    agent → its union-event row's proxy design effect).
 
     WARN per fault. A pair with no row from a passed A/A is absent (design-unmeasured). A read
     fault — the table absent on a migrate-failed schema included — fails every pair closed.
@@ -9047,9 +9067,9 @@ def _read_power_design_effects(
         except Exception as exc:  # noqa: BLE001 — any read fault is an outage → fail closed
             cause = f"A/A design effect unreadable: {_describe_fault(exc)}"
         else:
-            return _get_design_effects(rows)
+            return (*_get_design_effects(rows), _get_proxy_design_effects(rows))
     _warn_power_unchecked(cause, "every floor-passing keyed intake pattern")
-    return {}, frozenset((agent, key) for agent in agents for key in METRIC_KEYS)
+    return {}, frozenset((agent, key) for agent in agents for key in METRIC_KEYS), {}
 
 
 def _get_design_effects(
@@ -9078,6 +9098,22 @@ def _get_design_effects(
                 "every floor-passing intake pattern of the agent on that key",
             )
     return design_effects, frozenset(invalid_keys)
+
+
+def _get_proxy_design_effects(rows: list[tuple[str, dict]]) -> dict[str, float]:
+    """agent → design effect of its pre-split union-event `emit_failure` row; an unreadable row → WARN, none."""
+    proxies: dict[str, float] = {}
+    for agent, payload in rows:
+        if not isinstance(payload, dict) or payload.get("metric_key") != METRIC_EMIT_FAILURE:
+            continue
+        try:
+            proxies[agent] = _get_stored_design_effect(payload)
+        except (ArithmeticError, AttributeError, TypeError, ValueError) as exc:
+            sys.stderr.write(
+                f"[daemon-cycle] WARN: agent={agent}: union-event A/A row unreadable: "
+                f"{_describe_fault(exc)}; no proxy line on its pre-registration\n"
+            )
+    return proxies
 
 
 def _get_stored_design_effect(payload: dict) -> float:
@@ -9288,10 +9324,13 @@ def get_trial_key(pattern: Pattern, detection_start: datetime) -> str:
     return hashlib.sha256("\x1f".join(parts).encode("utf-8")).hexdigest()
 
 
-def get_preregistration_payload(power_pass: PowerPass, detection_start: datetime) -> dict:
+def get_preregistration_payload(
+    power_pass: PowerPass, detection_start: datetime, canary_text: str
+) -> dict:
     """The trial's frozen sizing: trial_design's maximum and boundaries, look milestones on the required units.
 
-    Also the proposal row's generator-input version: the ledger's mark of the trial's input set.
+    Also the proposal row's generator-input version: the ledger's mark of the trial's input set,
+    and the canary text beside its sha256 — the trial stage writes exactly that text.
     """
     baseline = power_pass.baseline
     boundaries = trial_design.get_boundaries()
@@ -9311,8 +9350,18 @@ def get_preregistration_payload(power_pass: PowerPass, detection_start: datetime
         "looks": looks,
         "task_window_seconds": SHADOW.TASK_WINDOW.total_seconds(),
         "generator_input_version": GENERATOR_INPUT_VERSION,
+        "horizon_days": trial_design.HORIZON_DAYS,
+        "canary": {"text": canary_text, "text_sha256": _get_text_sha256(canary_text)},
         **_get_harm_payload(power_pass, detection_start, maximum),
     }
+
+
+def get_canary_text(diff: str) -> str:
+    """The rendered canary block: the patch's added lines, each with its newline — the bytes
+    graduation adds to the body, delivered verbatim by the hook."""
+    return "".join(
+        f"{line[1:]}\n" for kind, line in _get_diff_line_kinds(diff) if kind == "added"
+    )
 
 
 def _get_harm_payload(
@@ -9328,7 +9377,9 @@ def _get_harm_payload(
     checks = get_harm_checks(
         power_pass.pattern.metric_key,
         readings,
-        HarmSizing(primary_rate, maximum, guardrail_count),
+        HarmSizing(
+            primary_rate, maximum, guardrail_count, power_pass.guardrail_design_effects
+        ),
     )
     samples = _get_samples(baseline.events, baseline.spawns)
     return {
@@ -9370,13 +9421,16 @@ class HarmSizing(NamedTuple):
     primary_rate: float | None
     per_arm: int | None
     guardrail_count: int
+    design_effects: GuardrailDesignEffects = GuardrailDesignEffects(None, None)
 
 
 class HarmStage(NamedTuple):
-    """One check's per-stage inputs: the per-arm sample both stages size on, and each stage's α."""
+    """One check's per-stage inputs: the per-arm sample both stages size on, each stage's α, and
+    the design effect it is stated at — None states it at the unmeasured bracket."""
 
     per_arm: int | None
     alpha: StageAlpha
+    design_effect: float | None = None
 
 
 class StageAlpha(NamedTuple):
@@ -9387,6 +9441,10 @@ class StageAlpha(NamedTuple):
 # harm-check constants: the design-effect bracket, k per family, reading labels, guardrail names
 HARM_CHECK = SimpleNamespace(
     DESIGN_EFFECTS=(1, 2),  # an unmeasured design effect's bracket
+    DESIGN_EFFECT_LABEL=SimpleNamespace(
+        UNMEASURED="unmeasured: no design-effect row from a passed A/A, stated at design effect 1 and 2",
+        PROXY="proxy — union definition, not used for sizing or stopping",
+    ),
     GUARDRAIL_COUNT=SimpleNamespace(CODE=4, OTHER=3),
     # verified_fail's baseline label: unread ≠ a measured zero
     READING=SimpleNamespace(
@@ -9496,8 +9554,7 @@ def _get_rate_guardrails(
 ) -> dict:
     """The leg's check, and at k 4 verified_fail's, labelled read or unread."""
     names = HARM_CHECK.GUARDRAIL
-    margin = _get_no_stop_margin(sizing.primary_rate, readings.no_stop_rate)
-    guardrails = {names.NO_STOP: _get_rate_check(readings.no_stop_rate, margin, stage)}
+    guardrails = {names.NO_STOP: _get_no_stop_check(readings, sizing, stage)}
     if sizing.guardrail_count != HARM_CHECK.GUARDRAIL_COUNT.CODE:
         return guardrails
     row = _get_rate_check(
@@ -9510,6 +9567,30 @@ def _get_rate_guardrails(
     )
     guardrails[names.VERIFIED_FAIL] = row
     return guardrails
+
+
+def _get_no_stop_check(
+    readings: GuardrailBaseline, sizing: HarmSizing, stage: HarmStage
+) -> dict:
+    """The leg at its measured design effect, or at the bracket with the union row's proxy line."""
+    margin = _get_no_stop_margin(sizing.primary_rate, readings.no_stop_rate)
+    measured, proxy = sizing.design_effects
+    row = _get_rate_check(
+        readings.no_stop_rate, margin, stage._replace(design_effect=measured)
+    )
+    if measured is None and proxy is not None:
+        stated = _get_rate_row(
+            readings.no_stop_rate, margin, stage._replace(design_effect=proxy)
+        )
+        row["proxy"] = {
+            "label": HARM_CHECK.DESIGN_EFFECT_LABEL.PROXY,
+            "design_effect": proxy,
+            "minimum_detectable": {
+                name: stated[name]["minimum_detectable"]["design_effect_measured"]
+                for name in ("trial", "watch")
+            },
+        }
+    return row
 
 
 def _get_no_stop_margin(
@@ -9526,7 +9607,14 @@ def _get_no_stop_margin(
 def _get_rate_check(rate: float | None, margin: float, stage: HarmStage) -> dict:
     row = _get_rate_row(rate, margin, stage)
     row["widening"] = _get_widening(row, origin=1.0)
+    row["design_effect"] = _get_design_effect_line(stage.design_effect)
     return row
+
+
+def _get_design_effect_line(design_effect: float | None) -> dict:
+    if design_effect is None:
+        return {"basis": "unmeasured", "label": HARM_CHECK.DESIGN_EFFECT_LABEL.UNMEASURED}
+    return {"basis": "measured", "value": design_effect}
 
 
 def _get_rate_row(rate: float | None, margin: float, stage: HarmStage) -> dict:
@@ -9544,7 +9632,7 @@ def _get_rate_row(rate: float | None, margin: float, stage: HarmStage) -> dict:
         "unit": "fold rise",
         "baseline_rate": rate,
         "margin": margin,
-        **_get_stages(stage.alpha, 1, get_harm),
+        **_get_stages(stage, 1, get_harm),
     }
 
 
@@ -9569,9 +9657,10 @@ def _get_tool_use_check(
         "unit": "tool uses",
         "baseline_mean": mean,
         "margin": None if mean is None else trial_design.DEFAULT_RELATIVE_RISE * mean,
-        **_get_stages(stage.alpha, sides, get_harm),
+        **_get_stages(stage, sides, get_harm),
     }
     row["widening"] = _get_widening(row, origin=0.0)
+    row["design_effect"] = _get_design_effect_line(stage.design_effect)
     return row
 
 
@@ -9593,30 +9682,38 @@ def _get_redelegation_check(alpha: StageAlpha) -> dict:
 
 
 def _get_stages(
-    alpha: StageAlpha, sides: int, get_harm: Callable[[float, float], float | None]
+    stage: HarmStage, sides: int, get_harm: Callable[[float, float], float | None]
 ) -> dict:
-    """The trial and the watch stage, each at its own α."""
+    """The trial and the watch stage, each at its own α and the stage's design effect."""
     return {
         name: _get_stage(
             value,
             sides,
             lambda design_effect, value=value: get_harm(value, design_effect),
+            stage.design_effect,
         )
-        for name, value in alpha._asdict().items()
+        for name, value in stage.alpha._asdict().items()
     }
 
 
 def _get_stage(
-    alpha: float, sides: int, get_harm: Callable[[float], float | None]
+    alpha: float,
+    sides: int,
+    get_harm: Callable[[float], float | None],
+    design_effect: float | None,
 ) -> dict:
+    """A measured design effect alone, else the unmeasured bracket's values."""
+    if design_effect is None:
+        minimum_detectable = {
+            f"design_effect_{value}": get_harm(value) for value in HARM_CHECK.DESIGN_EFFECTS
+        }
+    else:
+        minimum_detectable = {"design_effect_measured": get_harm(design_effect)}
     return {
         "alpha": alpha,
         "sides": sides,
         "alpha_per_side": alpha / sides,
-        "minimum_detectable": {
-            f"design_effect_{value}": get_harm(value)
-            for value in HARM_CHECK.DESIGN_EFFECTS
-        },
+        "minimum_detectable": minimum_detectable,
     }
 
 
@@ -9863,6 +9960,8 @@ CANARY = SimpleNamespace(
     AA_TEXT="",
     # = the hook's CANARY_FILE_MAX_BYTES: a larger file is refused, so never delivered
     FILE_MAX_BYTES=16384,
+    # = the hook's CANARY_MAX_BYTES: a longer text is refused, so pre-registration refuses it too
+    MAX_BYTES=1200,
     # hook_path_safe_key: every byte outside A-Za-z0-9_- dropped
     UNSAFE_KEY=re.compile(r"[^A-Za-z0-9_-]"),
     VOID_REASON="foreign-canary-hash",
@@ -14186,7 +14285,11 @@ def build_patch_result(
     # passing lead pattern, in a writing cycle, is bound — its push opens the live trial.
     # Off-map agents get no code-side stop: pre-verify's C3 directive is the only one.
     preregistration_payload = _get_bound_preregistration_payload(
-        power, lead_pattern, (approval_tier, status_value), skip_loop_emit=skip_loop_emit
+        power,
+        lead_pattern,
+        (approval_tier, status_value),
+        proposal.proposed_diff,
+        skip_loop_emit=skip_loop_emit,
     )
     # The floor: every unbound auto candidate reaches a terminal state this cycle — it
     # would otherwise sit pending forever with no apply path. Safety tier is untouched
@@ -14328,6 +14431,7 @@ def _get_bound_preregistration_payload(
     power: PowerResult | None,
     lead_pattern: Pattern,
     route: tuple[str, str],
+    diff: str,
     *,
     skip_loop_emit: bool,
 ) -> dict | None:
@@ -14335,14 +14439,28 @@ def _get_bound_preregistration_payload(
 
     Bound: routed (approval tier, status) = ('auto', 'pending') in a writing cycle, its lead
     pattern among the cycle's power passes — sized on that pass at the cycle's detection start.
+    A rendered canary block over the hook's cap is refused, never truncated: truncated text
+    was never pre-registered, so a win would describe text that never graduates.
     """
     if skip_loop_emit or route != ("auto", "pending") or power is None or power.windows is None:
         return None
     lead_key = (lead_pattern.agent, lead_pattern.row_id, lead_pattern.metric_key)
     for power_pass in power.passes:
         pattern = power_pass.pattern
-        if (pattern.agent, pattern.row_id, pattern.metric_key) == lead_key:
-            return get_preregistration_payload(power_pass, power.windows.start.detection)
+        if (pattern.agent, pattern.row_id, pattern.metric_key) != lead_key:
+            continue
+        canary_text = get_canary_text(diff)
+        size = len(canary_text.encode("utf-8"))
+        if size > CANARY.MAX_BYTES:
+            sys.stderr.write(
+                f"[daemon-cycle] WARN: live trial refused — agent={pattern.agent} "
+                f"pattern={pattern.row_id}: rendered canary block {size} B exceeds the "
+                f"{CANARY.MAX_BYTES} B cap; no pre-registration, the floor closes the candidate\n"
+            )
+            return None
+        return get_preregistration_payload(
+            power_pass, power.windows.start.detection, canary_text
+        )
     return None
 
 
