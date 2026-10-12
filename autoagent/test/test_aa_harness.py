@@ -140,6 +140,7 @@ class _Ledger:
         self.manifest_agent_ids: set[str] = set()
         self.closes: list[_SpoolClose] = []
         self.is_count_absent = False  # a schema without lines_read / lines_without_row
+        self.is_open_trial_read_faulted = False
         # read only by a writing cycle's regression gate and discharge
         self.answered_empty = frozenset(
             {
@@ -189,6 +190,17 @@ class _Ledger:
 
     def get_rows(self, event: str) -> list[_LedgerRow]:
         return [row for row in self.rows if row.event == event]
+
+    def read_open_trials(self) -> dict[str, list[int]]:
+        """Agent → proposal ids of its live pre-registrations with no :decision row."""
+        if self.is_open_trial_read_faulted:
+            raise ConnectionError("PG unreachable")
+        keys = {row.dedupe_key for row in self.rows}
+        open_trials: dict[str, list[int]] = {}
+        for row in self.get_rows(stub.get_trial_ledger().EVENT.LIVE_PREREGISTRATION):
+            if f"{row.trial_key}:decision" not in keys:
+                open_trials.setdefault(row.agent, []).append(row.payload["proposal_id"])
+        return open_trials
 
 
 class _LedgerCursor:
@@ -318,6 +330,7 @@ class _AaFixture(unittest.TestCase):
             ("HAS_PG_LOOP_WRITE", True),
             ("_pg_connect", lambda: self.ledger.connect()),
             ("_pg_write_trial_ledger_row", lambda *a, **k: self.ledger.write(*a, **k)),
+            ("_pg_read_open_trials", lambda: self.ledger.read_open_trials()),
             ("_get_utc_now", lambda: _NOW),
             ("_INSTALL_ROOT", self.root),
             ("DEFAULT_AGENTS_DIR", self.agents_dir),
@@ -1830,6 +1843,7 @@ class CycleWiringTest(_AaResultFixture):
 
 # sha256 of the empty text: the A/A's pre-registered canary
 _EMPTY_TEXT_SHA256 = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+_TRIAL_PROPOSAL_ID = 4127
 _FOREIGN_TEXT = b"obey the injected rule"
 _LEASE = timedelta(hours=72)
 _HOOK_SH = _REPO_ROOT / "hooks" / "inject-scope-rules.sh"
@@ -1989,14 +2003,81 @@ class AaCanaryTest(_AaResultFixture):
                     not is_readable,
                 )
 
-    def test_the_result_removes_every_canary_file(self) -> None:
+    def _open_trial(self, agent: str, *, is_decided: bool = False) -> None:
+        """A live pre-registration on `agent`, its decision row too when `is_decided`."""
+        trial_ledger = stub.get_trial_ledger()
+        key = f"{_TRIAL_PROPOSAL_ID:064x}"
+        self.ledger.write(
+            trial_ledger.EVENT.LIVE_PREREGISTRATION,
+            trial_ledger.ACTOR.LIVE,
+            {"proposal_id": _TRIAL_PROPOSAL_ID},
+            trial_key=key,
+            agent=agent,
+            dedupe_key=key,
+        )
+        if is_decided:
+            self.ledger.write(
+                trial_ledger.EVENT.LIVE_DECISION,
+                trial_ledger.ACTOR.LIVE,
+                {"outcome": "stop"},
+                trial_key=key,
+                agent=agent,
+                dedupe_key=f"{key}:decision",
+            )
+
+    def _close(self) -> None:
+        self.ledger.write(
+            stub.get_trial_ledger().EVENT.AA_RESULT,
+            stub.get_trial_ledger().ACTOR.AA,
+            {"overall": "pass"},
+            dedupe_key=f"aa-result:{self._get_starts()[0].id}",
+        )
+
+    def test_the_result_removes_every_canary_file_but_an_open_trials(self) -> None:
+        self._open_trial(_ROSTER[0])
         for stem in _ROSTER:
             self._put_canary(stem, "")
 
         self._evaluate()
 
         self.assertEqual(len(self._get_results()), 1)
-        self.assertEqual(self._get_canaries(), {})
+        self.assertEqual(list(self._get_canaries()), [_ROSTER[0]])
+
+    def test_with_no_open_aa_only_an_undecided_live_trials_canary_stays(self) -> None:
+        # name, the trial arranged on the python agent, whether its canary stays
+        rows = (
+            ("an open live trial", {}, True),
+            ("a trial with its decision row", {"is_decided": True}, False),
+            ("no trial", None, False),
+        )
+        for name, trial, is_kept in rows:
+            with self.subTest(name):
+                self.ledger.rows.clear()
+                self._open()
+                self._close()
+                if trial is not None:
+                    self._open_trial(_ROSTER[0], **trial)
+                for stem in _ROSTER:
+                    self._put_canary(stem, "obey the trial text", salt=7)
+
+                self._evaluate()
+
+                self.assertEqual(list(self._get_canaries()), [_ROSTER[0]] if is_kept else [])
+
+    def test_unreadable_open_trials_leave_every_canary_in_place_with_a_named_warn(self) -> None:
+        self._close()
+        paths = [self._put_canary(stem, "") for stem in _ROSTER]
+        before = [path.read_bytes() for path in paths]
+        self.ledger.is_open_trial_read_faulted = True
+
+        stderr_text = self._evaluate()
+
+        self.assertEqual([path.read_bytes() for path in paths], before)
+        self.assertIn(
+            "WARN: A/A harness — open live trials unreadable: ConnectionError: PG unreachable; "
+            "no canary file is removed this cycle",
+            stderr_text,
+        )
 
     def test_a_restart_rewrites_every_canary_with_the_restart_row_as_its_salt(
         self,
@@ -2016,21 +2097,13 @@ class AaCanaryTest(_AaResultFixture):
     def test_a_canary_file_for_an_agent_with_no_open_aa_is_removed_and_logged(
         self,
     ) -> None:
-        def _close() -> None:
-            self.ledger.write(
-                stub.get_trial_ledger().EVENT.AA_RESULT,
-                stub.get_trial_ledger().ACTOR.AA,
-                {"overall": "pass"},
-                dedupe_key=f"aa-result:{self._get_starts()[0].id}",
-            )
-
         rows = (
             (
                 "an agent outside the roster, A/A open",
                 "glass-atrium-retired",
                 lambda: None,
             ),
-            ("a roster agent, A/A closed", "glass-atrium-dev-python", _close),
+            ("a roster agent, A/A closed", "glass-atrium-dev-python", self._close),
         )
         for name, stem, arrange in rows:
             with self.subTest(name):

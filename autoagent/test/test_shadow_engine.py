@@ -376,6 +376,15 @@ class _Ledger:
     def get_rows(self, event: str) -> list[_LedgerRow]:
         return [row for row in self.rows if row.event == event]
 
+    def read_open_trials(self) -> dict[str, list[int]]:
+        """Agent → proposal ids of its live pre-registrations with no :decision row."""
+        keys = {row.dedupe_key for row in self.rows}
+        open_trials: dict[str, list[int]] = {}
+        for row in self.get_rows(stub.get_trial_ledger().EVENT.LIVE_PREREGISTRATION):
+            if f"{row.trial_key}:decision" not in keys:
+                open_trials.setdefault(row.agent, []).append(row.payload["proposal_id"])
+        return open_trials
+
 
 class _LedgerCursor:
     def __init__(self, ledger: _Ledger) -> None:
@@ -409,9 +418,24 @@ class _LedgerCursor:
                 (*group, row.trial_key, row.payload, row.recorded_at)
                 for group, row in latest.items()
             ]
+        elif statement == dc.LIVE_TRIAL.CANARY_SQL:
+            self.result = [
+                (row.id, row.agent, row.trial_key, row.learning_pattern_id, row.payload, is_started)
+                for row, is_started in self._get_open_trials(params)
+            ]
         else:
             self.ledger.refused.append(statement)
             raise AssertionError(f"statement outside the ledger fake: {statement[:80]}")
+
+    def _get_open_trials(self, params: tuple) -> list[tuple[_LedgerRow, bool]]:
+        """Each open live pre-registration in id order; True = its :start row landed."""
+        (event,) = params
+        keys = {row.dedupe_key for row in self.ledger.rows}
+        return [
+            (row, f"{row.trial_key}:start" in keys)
+            for row in self.ledger.rows
+            if row.event == event and f"{row.trial_key}:decision" not in keys
+        ]
 
     def fetchall(self) -> list[tuple]:
         return self.result
@@ -456,6 +480,7 @@ class _ShadowFixture(unittest.TestCase):
             ("HAS_PG_LOOP_WRITE", True),
             ("_pg_connect", self.ledger.connect),
             ("_pg_write_trial_ledger_row", self.ledger.write),
+            ("_pg_read_open_trials", self.ledger.read_open_trials),
             ("_get_utc_now", lambda: self.clock.now),
         ):
             self._patch(name, value)
@@ -1746,6 +1771,207 @@ class DegradedImportTest(unittest.TestCase):
         self.assertEqual(self.pg_reach, [])
 
 
+_START_KEYS = {"started_at", "text_sha256"}
+_START_WARN = SimpleNamespace(
+    HASH="canary text hashes to",
+    FAULT="start record not written",
+    UNRECORDED="canary file has no start record",
+)
+
+
+class TrialCanaryTest(_ShadowFixture):
+    """The trial stage writes each open live trial's canary from its committed pre-registration and
+    records the trial's start at the first write; canary files land under a temporary data root."""
+
+    def setUp(self) -> None:
+        super().setUp()
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        self.canary_path = Path(tmp.name) / "data" / "learning" / "canary" / f"{_AGENT}.json"
+        env = mock.patch.dict(os.environ, {"GA_DATA_ROOT": tmp.name})
+        env.start()
+        self.addCleanup(env.stop)
+
+    def _stage(self, now: datetime) -> str:
+        self.clock.now = now
+        stderr = io.StringIO()
+        with contextlib.redirect_stderr(stderr):
+            dc.run_trial_stage()
+        self.assertEqual(self.pg_reach, [])
+        self.assertEqual(self.ledger.refused, [])
+        return stderr.getvalue()
+
+    def _get_canary(self) -> dict | None:
+        if not self.canary_path.exists():
+            return None
+        return json.loads(self.canary_path.read_text(encoding="utf-8"))
+
+    def _get_starts(self) -> list[_LedgerRow]:
+        return self.ledger.get_rows(stub.get_trial_ledger().EVENT.LIVE_START)
+
+    def _get_preregistration(self) -> _LedgerRow:
+        (row,) = self._get_preregistrations()
+        return row
+
+    def test_the_stage_writes_exactly_the_preregistered_text_salted_with_its_row(self) -> None:
+        self._open_live_trial()
+        preregistration = self._get_preregistration()
+
+        self._stage(_NOW)
+
+        canary = preregistration.payload["canary"]
+        self.assertEqual(
+            self._get_canary(),
+            {
+                "salt": preregistration.id,
+                "text": canary["text"],
+                "text_sha256": canary["text_sha256"],
+                "expires_at": int((_NOW + dc.CANARY.LEASE).timestamp()),
+            },
+        )
+
+    def test_a_text_not_matching_its_preregistered_hash_writes_no_file_and_warns_by_name(
+        self,
+    ) -> None:
+        key = self._open_live_trial()
+        self._get_preregistration().payload["canary"]["text_sha256"] = "0" * 64
+
+        stderr_text = self._stage(_NOW)
+
+        self.assertIsNone(self._get_canary())
+        self.assertEqual(self._get_starts(), [])
+        self.assertIn(
+            f"WARN: trial stage — trial {key}: {_AGENT}'s {_START_WARN.HASH}", stderr_text
+        )
+
+    def test_a_canary_appears_only_once_its_preregistration_is_committed(self) -> None:
+        power = self._check_power()
+        [power_pass] = power.passes
+        payload = dc.get_preregistration_payload(power_pass, _get_inputs(power))
+
+        self._stage(_NOW)
+        before_commit = self._get_canary()
+        self.ledger.write(
+            stub.get_trial_ledger().EVENT.LIVE_PREREGISTRATION,
+            stub.get_trial_ledger().ACTOR.LIVE,
+            {**payload, "proposal_id": _PROPOSAL_ID},
+            trial_key=_LIVE_KEY,
+            agent=_AGENT,
+            learning_pattern_id=_PATTERN_ID,
+            dedupe_key=_LIVE_KEY,
+        )
+        self._stage(_NEXT_NOW)
+
+        self.assertIsNone(before_commit)
+        self.assertEqual(self._get_canary()["text"], payload["canary"]["text"])
+
+    def test_the_first_write_records_one_start_with_its_instant_and_a_later_cycle_none(
+        self,
+    ) -> None:
+        key = self._open_live_trial()
+        first = _NOW + timedelta(microseconds=250_000)
+        digest = self._get_preregistration().payload["canary"]["text_sha256"]
+
+        self._stage(first)
+        self._stage(_NEXT_NOW)
+
+        self.assertEqual(
+            [
+                (row.trial_key, row.agent, row.learning_pattern_id, row.actor, row.dedupe_key)
+                for row in self._get_starts()
+            ],
+            [(key, _AGENT, _PATTERN_ID, stub.get_trial_ledger().ACTOR.LIVE, f"{key}:start")],
+        )
+        self.assertEqual(
+            self._get_starts()[0].payload,
+            {"started_at": first.isoformat(), "text_sha256": digest},
+        )
+        # the later cycle renews the lease from its own instant
+        self.assertEqual(
+            self._get_canary()["expires_at"], int((_NEXT_NOW + dc.CANARY.LEASE).timestamp())
+        )
+
+    def test_the_start_records_top_level_keys_are_the_instant_and_the_hash(self) -> None:
+        self._open_live_trial()
+
+        self._stage(_NOW)
+
+        self.assertEqual(set(self._get_starts()[0].payload), _START_KEYS)
+
+    def test_a_start_record_the_ledger_does_not_take_removes_the_file_until_a_cycle_records_it(
+        self,
+    ) -> None:
+        key = self._open_live_trial()
+        write = self.ledger.write
+        start_event = stub.get_trial_ledger().EVENT.LIVE_START
+        # name, the writer's answer to the start row
+        rows = (
+            ("a 0 return", lambda *args, **kwargs: 0),
+            ("a raised fault", mock.Mock(side_effect=ConnectionError("PG unreachable"))),
+        )
+        for name, refuse in rows:
+            with self.subTest(name):
+
+                def _write(event, *args, refuse=refuse, **kwargs):
+                    return (refuse if event == start_event else write)(event, *args, **kwargs)
+
+                self._patch("_pg_write_trial_ledger_row", _write)
+
+                stderr_text = self._stage(_NOW)
+
+                self.assertIsNone(self._get_canary())
+                self.assertEqual(self._get_starts(), [])
+                self.assertIn(
+                    f"WARN: trial stage — trial {key}: {_AGENT}'s {_START_WARN.FAULT}",
+                    stderr_text,
+                )
+        self._patch("_pg_write_trial_ledger_row", write)
+
+        self._stage(_NEXT_NOW)
+
+        self.assertEqual(len(self._get_starts()), 1)
+        self.assertEqual(self._get_canary()["salt"], self._get_preregistration().id)
+
+    def test_an_open_trials_file_with_no_start_record_is_removed_as_unrecorded_then_retried(
+        self,
+    ) -> None:
+        key = self._open_live_trial()
+        # a kill between the file's rename and its start row: the file stands, no row
+        self._stage(_NOW)
+        self.ledger.rows[:] = [row for row in self.ledger.rows if row not in self._get_starts()]
+
+        stderr_text = self._stage(_NEXT_NOW)
+        after_removal = self._get_canary()
+        self._stage(_NEXT_NOW + timedelta(days=1))
+
+        self.assertIsNone(after_removal)
+        self.assertIn(
+            f"WARN: trial stage — trial {key}: {_AGENT}'s {_START_WARN.UNRECORDED}", stderr_text
+        )
+        self.assertEqual(
+            [row.payload["started_at"] for row in self._get_starts()],
+            [(_NEXT_NOW + timedelta(days=1)).isoformat()],
+        )
+        self.assertIsNotNone(self._get_canary())
+
+    def test_a_decided_trial_gets_no_canary(self) -> None:
+        key = self._open_live_trial()
+        trial_ledger = stub.get_trial_ledger()
+        self.ledger.write(
+            trial_ledger.EVENT.LIVE_DECISION,
+            trial_ledger.ACTOR.LIVE,
+            {"outcome": "stop"},
+            trial_key=key,
+            agent=_AGENT,
+            dedupe_key=f"{key}:decision",
+        )
+
+        self._stage(_NOW)
+
+        self.assertIsNone(self._get_canary())
+        self.assertEqual(self._get_starts(), [])
+
+
 class CycleWiringTest(_ShadowFixture):
     """run_cycle runs the stage on a writing cycle; no-write mode (--dry-run → skip_loop_emit) writes no ledger row."""
 
@@ -1824,6 +2050,25 @@ class CycleWiringTest(_ShadowFixture):
             [row.event for row in self.ledger.rows],
             [trial_ledger.EVENT.POWER_PASS_COUNT],
         )
+
+    def test_a_writing_cycle_starts_an_open_trials_canary_and_a_dry_run_writes_neither(
+        self,
+    ) -> None:
+        self._open_writing_stages()
+        key = self._open_live_trial()
+        canary_path = self.root / "data" / "learning" / "canary" / f"{_AGENT}.json"
+        start_event = stub.get_trial_ledger().EVENT.LIVE_START
+        # name, skip_loop_emit, whether the canary and its start row land
+        rows = (("a dry run", True, False), ("a writing cycle", False, True))
+        for name, skip_loop_emit, is_started in rows:
+            with self.subTest(name):
+                self._run_cycle(skip_loop_emit=skip_loop_emit)
+
+                self.assertEqual(canary_path.exists(), is_started)
+                self.assertEqual(
+                    [row.dedupe_key for row in self.ledger.get_rows(start_event)],
+                    [f"{key}:start"] if is_started else [],
+                )
 
     def test_an_unusable_stored_live_preregistration_leaves_the_cycle_running_through_the_aa_stage(
         self,

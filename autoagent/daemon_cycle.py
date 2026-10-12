@@ -9232,13 +9232,23 @@ SHADOW = SimpleNamespace(
 
 
 # open live trial = a live pre-registration with no <live trial key>:decision row; one statement
-_OPEN_LIVE_TRIAL_SQL = (
-    "SELECT p.agent, (p.payload->>'proposal_id')::bigint AS proposal_id "
+_OPEN_LIVE_TRIAL_FROM = (
     "FROM core.autoagent_trial_ledger p WHERE p.event = %s AND NOT EXISTS ("
     "SELECT 1 FROM core.autoagent_trial_ledger d WHERE d.dedupe_key = p.trial_key || ':decision')"
 )
+_OPEN_LIVE_TRIAL_SQL = (
+    "SELECT p.agent, (p.payload->>'proposal_id')::bigint AS proposal_id " + _OPEN_LIVE_TRIAL_FROM
+)
 LIVE_TRIAL = SimpleNamespace(
     OPEN_SQL=_OPEN_LIVE_TRIAL_SQL,
+    # each open trial's committed pre-registration row — its id the canary's salt — and whether
+    # its <live trial key>:start row landed
+    CANARY_SQL=(
+        "SELECT p.id, p.agent, p.trial_key, p.learning_pattern_id, p.payload, EXISTS ("
+        "SELECT 1 FROM core.autoagent_trial_ledger s WHERE s.dedupe_key = p.trial_key || ':start') "
+        + _OPEN_LIVE_TRIAL_FROM
+        + " ORDER BY p.id"
+    ),
     # a proposals-row predicate over the same statement; binds the event as one parameter
     IS_PROPOSAL_IN_TRIAL_SQL=(
         f"EXISTS (SELECT 1 FROM ({_OPEN_LIVE_TRIAL_SQL}) AS open_trial "
@@ -10202,6 +10212,156 @@ def _warn_shadow(cause: str, scope: str) -> None:
     sys.stderr.write(f"[daemon-cycle] WARN: shadow stage — {cause}; {scope}\n")
 
 
+class TrialCanary(NamedTuple):
+    """An open live trial's canary source: its committed pre-registration row."""
+
+    salt_id: int  # the pre-registration row's id
+    agent: str
+    key: str  # the live trial key
+    pattern_id: int | None
+    payload: dict
+    is_started: bool  # its <live trial key>:start row landed
+
+
+def run_trial_stage() -> None:
+    """Write each open live trial's canary from its committed pre-registration; decides nothing.
+
+    - open trial: a live pre-registration with no <live trial key>:decision row, read from the
+      ledger → a pre-registration the push has not committed gets no canary
+    - text: exactly payload["canary"]["text"], salted with the pre-registration row id; a text
+      whose sha256 is not the pre-registered text_sha256 → named WARN, no file
+    - started trial (its :start row landed) → the file rewritten, its lease renewed
+    - first write: the instant taken immediately before the file becomes visible, then one
+      live-start row on <live trial key>:start carrying it and the hash; that row not landing →
+      the file removed, named WARN, the next writing cycle retries
+    - an unstarted trial's existing file (a kill between the write and its row) → unrecorded:
+      removed under the same rule
+    - ledger fault: named WARN, never a failed cycle · --dry-run: the caller skips the stage
+    """
+    if not HAS_PG_LOOP_WRITE:
+        _warn_trial(
+            "open live trials unreadable: PG helper import failed", "no trial canary written"
+        )
+        return
+    try:
+        trials = _read_trial_canaries()
+    except Exception as exc:  # noqa: BLE001 — a ledger read fault never fails the cycle
+        _warn_trial(
+            f"open live trials unreadable: {_describe_fault(exc)}",
+            "no trial canary written this cycle",
+        )
+        return
+    for trial in trials:
+        try:
+            _put_trial_canary(trial)
+        except CanaryDirUnsafe as exc:
+            _warn_trial(str(exc), "no trial canary written this cycle")
+            return
+
+
+def _read_trial_canaries() -> list[TrialCanary]:
+    with _pg_connect() as conn, conn.cursor() as cur:
+        cur.execute(LIVE_TRIAL.CANARY_SQL, (TRIAL_LEDGER.EVENT.LIVE_PREREGISTRATION,))
+        rows = cur.fetchall()
+    return [TrialCanary(*row) for row in rows]
+
+
+def _put_trial_canary(trial: TrialCanary) -> None:
+    """Raises CanaryDirUnsafe when the canary directory is not a real one."""
+    text = _get_trial_canary_text(trial)
+    if text is None:
+        return
+    if trial.is_started:
+        _put_trial_file(trial, text, _get_utc_now())
+        return
+    path = _get_canary_path(trial.agent)
+    if path in _get_canary_files():
+        _warn_trial(
+            f"trial {trial.key}: {trial.agent}'s canary file has no start record",
+            "removed as unrecorded; the next writing cycle writes it again",
+        )
+        _delete_canaries([path], f"trial {trial.key} start not recorded")
+        return
+    started_at = _get_utc_now()  # no later than the file becomes visible
+    if not _put_trial_file(trial, text, started_at):
+        return
+    fault = _write_trial_start(trial, started_at)
+    if fault is None:
+        sys.stderr.write(
+            f"[daemon-cycle] INFO: trial stage — trial {trial.key} started: {trial.agent}'s "
+            f"canary first written at {started_at.isoformat()}\n"
+        )
+        return
+    _warn_trial(
+        f"trial {trial.key}: {trial.agent}'s start record not written ({fault})",
+        "its canary file removed; the next writing cycle retries",
+    )
+    _delete_canaries([path], f"trial {trial.key} start not recorded")
+
+
+def _get_trial_canary_text(trial: TrialCanary) -> str | None:
+    """The pre-registered text when its sha256 is the pre-registered hash; else WARN, None."""
+    canary = trial.payload.get("canary") if isinstance(trial.payload, dict) else None
+    text = canary.get("text") if isinstance(canary, dict) else None
+    if not isinstance(text, str):
+        _warn_trial(
+            f"trial {trial.key}: {trial.agent}'s pre-registration carries no canary text",
+            "no canary file written",
+        )
+        return None
+    expected = canary.get("text_sha256")
+    # surrogatepass: a text no UTF-8 encodes hashes apart from every pre-registered hash
+    actual = _get_foreign_text_sha256(text)
+    if actual != expected:
+        _warn_trial(
+            f"trial {trial.key}: {trial.agent}'s canary text hashes to {actual}, not the "
+            f"pre-registered {expected}",
+            "no canary file written",
+        )
+        return None
+    return text
+
+
+def _put_trial_file(trial: TrialCanary, text: str, now: datetime) -> bool:
+    """True when the file landed; an OSError WARNs. Raises CanaryDirUnsafe."""
+    try:
+        put_canary_file(trial.agent, trial.salt_id, text, now)
+    except CanaryDirUnsafe:
+        raise
+    except OSError as exc:
+        _warn_trial(
+            f"trial {trial.key}: {trial.agent}'s canary not written: {_describe_fault(exc)}",
+            "its previous file, if any, stands until its lease ends",
+        )
+        return False
+    return True
+
+
+def _write_trial_start(trial: TrialCanary, started_at: datetime) -> str | None:
+    """None when the start row landed; otherwise why it did not."""
+    payload = {
+        "started_at": started_at.isoformat(),
+        "text_sha256": trial.payload["canary"]["text_sha256"],
+    }
+    try:
+        landed = _pg_write_trial_ledger_row(
+            TRIAL_LEDGER.EVENT.LIVE_START,
+            TRIAL_LEDGER.ACTOR.LIVE,
+            payload,
+            trial_key=trial.key,
+            agent=trial.agent,
+            learning_pattern_id=trial.pattern_id,
+            dedupe_key=f"{trial.key}:start",
+        )
+    except Exception as exc:  # noqa: BLE001 — a fault is a record fault, never a failed cycle
+        return _describe_fault(exc)
+    return None if landed == 1 else f"{landed} rows landed"
+
+
+def _warn_trial(cause: str, scope: str) -> None:
+    sys.stderr.write(f"[daemon-cycle] WARN: trial stage — {cause}; {scope}\n")
+
+
 _INSTALL_ROOT = Path(__file__).resolve().parent.parent
 
 AA = SimpleNamespace(
@@ -10574,7 +10734,7 @@ def run_aa_stage(
     Canary files live under `${GA_DATA_ROOT:-$HOME/.glass-atrium}/data/learning/canary`.
     - No config.toml in the code tree declaring that tree as its [paths].root → refused before
       any ledger read: no row read or written, no canary file deleted or written.
-    - No open A/A → every entry in the canary directory is deleted.
+    - No open A/A → every entry in the canary directory but an open live trial's is deleted.
     - Open A/A with a void an earlier ingest or sweep detected and the ledger did not take → that
       void is retried before anything else, and the stage ends: until it lands no canary is
       renewed and no result is decided, so the A/A cannot pass.
@@ -10585,11 +10745,12 @@ def run_aa_stage(
       read, with every canary rewritten on the restart row's salt; otherwise each roster
       agent's canary lease is renewed, and once the window's duration has ended the result
       lands — the instrument verdict row, then one design-effect row per agent and metric key,
-      then the aa-result row — and every canary file is deleted. A landed verdict is read back,
-      never decided again.
+      then the aa-result row — and every canary file but an open live trial's is deleted. A
+      landed verdict is read back, never decided again.
     - A verdict straddling at the duration end writes the window's extension row instead, once
       per window; the A/A stays open and the result lands at the extended duration.
-    - Open state unreadable → no file is deleted or renewed; each runs to its lease.
+    - Open state unreadable → no file is deleted or renewed; each runs to its lease. Open live
+      trials unreadable at a deletion → none deleted.
     A ledger or evidence fault WARNs by name and never fails the cycle; the caller skips the
     stage in no-write mode (--dry-run).
     """
@@ -10604,7 +10765,7 @@ def run_aa_stage(
         _warn_aa(f"open state unreadable: {exc}", "no A/A evaluation this cycle")
         return
     if latest is None:
-        _delete_canaries(_get_canary_files(), "no open A/A or trial")
+        _delete_aa_canaries("no open A/A or trial")
         return
     if _retry_pending_void(latest):
         return
@@ -10619,7 +10780,22 @@ def run_aa_stage(
     _put_aa_canaries(latest, roster)
     source = AaSource(manifest_ingest, agents_dir)
     if _evaluate_aa(latest, source):
-        _delete_canaries(_get_canary_files(), "the A/A has its result")
+        _delete_aa_canaries("the A/A has its result")
+
+
+def _delete_aa_canaries(reason: str) -> None:
+    """Remove every canary file but an open live trial's — the trial stage owns that one. Open
+    trials unreadable → WARN, none removed."""
+    try:
+        open_trials = _pg_read_open_trials()
+    except Exception as exc:  # noqa: BLE001 — an unread trial state removes no file
+        _warn_aa(
+            f"open live trials unreadable: {_describe_fault(exc)}",
+            "no canary file is removed this cycle",
+        )
+        return
+    kept = {_get_canary_path(agent).name for agent in open_trials}
+    _delete_canaries([path for path in _get_canary_files() if path.name not in kept], reason)
 
 
 class InstallRefusedError(RuntimeError):
@@ -14226,6 +14402,7 @@ def run_cycle(
     )
     if not skip_loop_emit:  # no-write mode (--dry-run) writes no ledger row
         run_shadow_stage(power, report.cycle_date)
+        run_trial_stage()
         run_aa_stage(
             report.cycle_date, manifest_ingest=report.manifest_ingest, agents_dir=agents_dir
         )
