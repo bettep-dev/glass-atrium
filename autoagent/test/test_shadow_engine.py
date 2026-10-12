@@ -422,7 +422,15 @@ class _LedgerCursor:
             ]
         elif statement == dc.LIVE_TRIAL.CANARY_SQL:
             self.result = [
-                (row.id, row.agent, row.trial_key, row.learning_pattern_id, row.payload, is_started)
+                (
+                    row.id,
+                    row.agent,
+                    row.trial_key,
+                    row.learning_pattern_id,
+                    row.payload,
+                    row.recorded_at,
+                    is_started,
+                )
                 for row, is_started in self._get_open_trials(params)
             ]
         else:
@@ -1650,6 +1658,14 @@ class PreRegistrationReadLivePgTest(_ShadowFixture):
         )
         self._insert_trial_row(decided, event.LIVE_DECISION, {"outcome": "stop"}, suffix=":decision")
 
+        with self._connect() as conn:
+            recorded_at = dict(
+                conn.execute(
+                    "SELECT id, recorded_at FROM core.autoagent_trial_ledger WHERE id = ANY(%s)",
+                    (list(ids.values()),),
+                ).fetchall()
+            )
+
         canaries = dc._read_trial_canaries()
 
         self.assertEqual(
@@ -1661,6 +1677,7 @@ class PreRegistrationReadLivePgTest(_ShadowFixture):
                     f"{proposal_id:064x}",
                     _PATTERN_ID,
                     {"metric_key": _BUDGET_KEY, "proposal_id": proposal_id},
+                    recorded_at[ids[proposal_id]],
                     is_started,
                 )
                 for proposal_id, is_started in ((unstarted, False), (started, True))
@@ -1816,6 +1833,8 @@ _START_WARN = SimpleNamespace(
     HASH="canary text hashes to",
     FAULT="start record not written",
     UNRECORDED="canary file has no start record",
+    NO_HORIZON="pre-registration states no horizon",
+    VOID_FAULT="unstarted void not recorded",
 )
 
 
@@ -2003,6 +2022,142 @@ class TrialCanaryTest(_ShadowFixture):
             [(_NEXT_NOW + timedelta(days=1)).isoformat()],
         )
         self.assertIsNotNone(self._get_canary())
+
+    def _get_decisions(self) -> list[_LedgerRow]:
+        return self.ledger.get_rows(stub.get_trial_ledger().EVENT.LIVE_DECISION)
+
+    def _get_bound(self) -> datetime:
+        """The pre-registration's recorded_at plus the horizon it states."""
+        preregistration = self._get_preregistration()
+        return preregistration.recorded_at + timedelta(
+            days=preregistration.payload["horizon_days"]
+        )
+
+    def _strip_starts(self) -> None:
+        """A kill between the file's rename and its start row: the file stands, no row."""
+        self.ledger.rows[:] = [row for row in self.ledger.rows if row not in self._get_starts()]
+
+    def test_an_unstarted_trial_at_its_stated_horizon_is_voided_its_file_removed_its_agent_released(
+        self,
+    ) -> None:
+        key = self._open_live_trial()
+        self._stage(_NOW)
+        self._strip_starts()
+
+        self._stage(self._get_bound())
+
+        self.assertEqual(
+            [
+                (row.trial_key, row.agent, row.learning_pattern_id, row.actor, row.dedupe_key)
+                for row in self._get_decisions()
+            ],
+            [(key, _AGENT, _PATTERN_ID, stub.get_trial_ledger().ACTOR.LIVE, f"{key}:decision")],
+        )
+        self.assertEqual(self._get_starts(), [])
+        self.assertIsNone(self._get_canary())
+        self.assertNotIn(_AGENT, self.ledger.read_open_trials())
+
+    def test_one_second_before_its_stated_horizon_an_unstarted_trial_is_written_not_voided(
+        self,
+    ) -> None:
+        self._open_live_trial()
+
+        self._stage(self._get_bound() - timedelta(seconds=1))
+
+        self.assertEqual(self._get_decisions(), [])
+        self.assertEqual(len(self._get_starts()), 1)
+        self.assertIsNotNone(self._get_canary())
+
+    def test_a_trial_started_before_its_preregistrations_horizon_is_not_voided_at_it(self) -> None:
+        self._open_live_trial()
+        self._stage(_NOW)
+        bound = self._get_bound()
+
+        self._stage(bound)
+
+        self.assertEqual(self._get_decisions(), [])
+        self.assertEqual(
+            self._get_canary()["expires_at"], int((bound + dc.CANARY.LEASE).timestamp())
+        )
+
+    def test_the_unstarted_void_rows_only_top_level_key_is_void_naming_its_reason_and_agent(
+        self,
+    ) -> None:
+        self._open_live_trial()
+
+        self._stage(self._get_bound())
+
+        (decision,) = self._get_decisions()
+        self.assertEqual(set(decision.payload), {"void"})
+        # the doctor counts an unstarted void by this reason literal and names its agent
+        self.assertEqual(decision.payload["void"], {"reason": "unstarted", "agent": _AGENT})
+
+    def test_an_unstarted_void_not_landing_still_removes_the_file_and_writes_none(self) -> None:
+        key = self._open_live_trial()
+        write = self.ledger.write
+        decision_event = stub.get_trial_ledger().EVENT.LIVE_DECISION
+        # name, the writer's answer to the decision row, the stderr line it leaves
+        rows = (
+            (
+                "a raised fault: a record fault, retried",
+                mock.Mock(side_effect=ConnectionError("PG unreachable")),
+                f"WARN: trial stage — trial {key}: {_AGENT}'s {_START_WARN.VOID_FAULT}",
+            ),
+            (
+                "a 0 return: the trial already decided",
+                lambda *args, **kwargs: 0,
+                f"INFO: trial stage — trial {key} already decided",
+            ),
+        )
+        for name, refuse, line in rows:
+            with self.subTest(name):
+                self._patch("_pg_write_trial_ledger_row", write)
+                self._stage(_NOW)
+                self._strip_starts()
+
+                def _write(event, *args, refuse=refuse, **kwargs):
+                    return (refuse if event == decision_event else write)(event, *args, **kwargs)
+
+                self._patch("_pg_write_trial_ledger_row", _write)
+
+                stderr_text = self._stage(self._get_bound())
+
+                self.assertIsNone(self._get_canary())
+                self.assertEqual(self._get_starts(), [])
+                self.assertIn(line, stderr_text)
+        self._patch("_pg_write_trial_ledger_row", write)
+
+        self._stage(self._get_bound() + timedelta(days=1))
+
+        self.assertEqual(len(self._get_decisions()), 1)
+
+    def test_a_preregistration_with_no_readable_horizon_warns_and_its_trial_is_written_not_voided(
+        self,
+    ) -> None:
+        key = self._open_live_trial()
+        payload = self._get_preregistration().payload
+        # name, the stored horizon_days (absent = no key)
+        rows = (
+            ("absent", None),
+            ("not a number", "84"),
+            ("a count no instant can hold", 1e300),
+        )
+        for name, horizon_days in rows:
+            with self.subTest(name):
+                payload.pop("horizon_days", None)
+                if horizon_days is not None:
+                    payload["horizon_days"] = horizon_days
+                self._strip_starts()
+                self.canary_path.unlink(missing_ok=True)
+
+                stderr_text = self._stage(_NOW + timedelta(days=400))
+
+                self.assertEqual(self._get_decisions(), [])
+                self.assertEqual(len(self._get_starts()), 1)
+                self.assertIn(
+                    f"WARN: trial stage — trial {key}: {_AGENT}'s {_START_WARN.NO_HORIZON}",
+                    stderr_text,
+                )
 
     def test_a_decided_trial_gets_no_canary(self) -> None:
         key = self._open_live_trial()

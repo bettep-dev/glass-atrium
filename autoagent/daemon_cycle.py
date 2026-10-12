@@ -9241,10 +9241,11 @@ _OPEN_LIVE_TRIAL_SQL = (
 )
 LIVE_TRIAL = SimpleNamespace(
     OPEN_SQL=_OPEN_LIVE_TRIAL_SQL,
-    # each open trial's committed pre-registration row — its id the canary's salt — and whether
-    # its <live trial key>:start row landed
+    # each open trial's committed pre-registration row — its id the canary's salt, its
+    # recorded_at the unstarted bound's origin — and whether its <live trial key>:start row landed
     CANARY_SQL=(
-        "SELECT p.id, p.agent, p.trial_key, p.learning_pattern_id, p.payload, EXISTS ("
+        "SELECT p.id, p.agent, p.trial_key, p.learning_pattern_id, p.payload, p.recorded_at, "
+        "EXISTS ("
         "SELECT 1 FROM core.autoagent_trial_ledger s WHERE s.dedupe_key = p.trial_key || ':start') "
         + _OPEN_LIVE_TRIAL_FROM
         + " ORDER BY p.id"
@@ -9254,6 +9255,8 @@ LIVE_TRIAL = SimpleNamespace(
         f"EXISTS (SELECT 1 FROM ({_OPEN_LIVE_TRIAL_SQL}) AS open_trial "
         "WHERE open_trial.proposal_id = autoagent_proposals.id)"
     ),
+    # an unstarted void's payload.void.reason; the doctor counts the void by this literal
+    UNSTARTED_REASON="unstarted",
 )
 
 
@@ -10220,6 +10223,7 @@ class TrialCanary(NamedTuple):
     key: str  # the live trial key
     pattern_id: int | None
     payload: dict
+    recorded_at: datetime
     is_started: bool  # its <live trial key>:start row landed
 
 
@@ -10236,6 +10240,8 @@ def run_trial_stage() -> None:
       the file removed, named WARN, the next writing cycle retries
     - an unstarted trial's existing file (a kill between the write and its row) → unrecorded:
       removed under the same rule
+    - unstarted at the pre-registration's recorded_at + the horizon it states → its unstarted
+      void decision row, any file it holds removed, no write; no stated horizon → named WARN
     - ledger fault: named WARN, never a failed cycle · --dry-run: the caller skips the stage
     """
     if not HAS_PG_LOOP_WRITE:
@@ -10268,6 +10274,9 @@ def _read_trial_canaries() -> list[TrialCanary]:
 
 def _put_trial_canary(trial: TrialCanary) -> None:
     """Raises CanaryDirUnsafe when the canary directory is not a real one."""
+    if not trial.is_started and _is_past_unstarted_bound(trial):
+        _void_unstarted_trial(trial)
+        return
     text = _get_trial_canary_text(trial)
     if text is None:
         return
@@ -10283,6 +10292,73 @@ def _put_trial_canary(trial: TrialCanary) -> None:
         _delete_canaries([path], f"trial {trial.key} start not recorded")
         return
     _create_trial_canary(trial, text, path)
+
+
+def _is_past_unstarted_bound(trial: TrialCanary) -> bool:
+    """The cycle instant is at or past recorded_at + the horizon the pre-registration states;
+    no readable horizon → named WARN, False — a daemon default is not the stated horizon."""
+    horizon_days = trial.payload.get("horizon_days") if isinstance(trial.payload, dict) else None
+    try:
+        # a bool is an int · `not > 0` also refuses NaN · an unrepresentable bound overflows
+        if isinstance(horizon_days, bool) or not horizon_days > 0:
+            raise ValueError("not a positive day count")
+        bound = trial.recorded_at + timedelta(days=horizon_days)
+    except (TypeError, ValueError, OverflowError):
+        _warn_trial(
+            f"trial {trial.key}: {trial.agent}'s pre-registration states no horizon "
+            f"({horizon_days!r})",
+            "no unstarted void; its canary write is attempted",
+        )
+        return False
+    return _get_utc_now() >= bound
+
+
+def _void_unstarted_trial(trial: TrialCanary) -> None:
+    """Its unstarted void decision row; the file it holds removed whether or not the row lands."""
+    payload = {"void": {"reason": LIVE_TRIAL.UNSTARTED_REASON, "agent": trial.agent}}
+    try:
+        landed = _write_live_decision(trial.key, trial.agent, trial.pattern_id, payload)
+    except Exception as exc:  # noqa: BLE001 — a record fault, never a failed cycle
+        _warn_trial(
+            f"trial {trial.key}: {trial.agent}'s unstarted void not recorded: "
+            f"{_describe_fault(exc)}",
+            "no canary written; the next writing cycle retries",
+        )
+    else:
+        _log_unstarted_void(trial, landed)
+    path = _get_canary_path(trial.agent)
+    if path in _get_canary_files():
+        _delete_canaries([path], f"trial {trial.key} unstarted")
+
+
+def _log_unstarted_void(trial: TrialCanary, landed: int) -> None:
+    if landed == 1:
+        sys.stderr.write(
+            f"[daemon-cycle] WARN: trial stage — trial {trial.key} voided: {trial.agent}'s "
+            f"canary never started by its stated horizon ({trial.key}:decision)\n"
+        )
+        return
+    # 0 = the once-only key taken by another decider (or the ledger absent) → decided, no fault
+    sys.stderr.write(
+        f"[daemon-cycle] INFO: trial stage — trial {trial.key} already decided: no unstarted "
+        "void written\n"
+    )
+
+
+def _write_live_decision(
+    trial_key: str, agent: str, pattern_id: int | None, payload: dict
+) -> int:
+    """The trial's one <live trial key>:decision row → rows landed (0 = already decided or the
+    ledger absent); raises on a PG fault."""
+    return _pg_write_trial_ledger_row(
+        TRIAL_LEDGER.EVENT.LIVE_DECISION,
+        TRIAL_LEDGER.ACTOR.LIVE,
+        payload,
+        trial_key=trial_key,
+        agent=agent,
+        learning_pattern_id=pattern_id,
+        dedupe_key=f"{trial_key}:decision",
+    )
 
 
 def _create_trial_canary(trial: TrialCanary, text: str, path: Path) -> None:
