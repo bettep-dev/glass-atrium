@@ -833,17 +833,31 @@ class TestManifestDeliveryBinding(_IngestCase):
         """A held entry under key's file name that no read turns into a void."""
         path = dc._get_pending_trial_void_path(key)
         path.parent.mkdir(parents=True, exist_ok=True)
+        void = {"key": key, "agent": "a", "pattern_id": 1, "text_sha256": None}
+        void |= {"spool": "s", "line_offset": 0}
+        contents = {
+            "not JSON": "{",
+            "fields of no void": json.dumps({"key": key}),
+            "a key of the wrong type": json.dumps({**void, "key": [key]}),
+            "a field of the wrong type": json.dumps({**void, "line_offset": "0"}),
+        }
         if kind == "a directory":
             path.mkdir()
         else:
-            content = "{" if kind == "not JSON" else json.dumps({"key": key})
-            path.write_text(content, encoding="utf-8")
+            path.write_text(contents[kind], encoding="utf-8")
         return path
 
     def test_an_unreadable_held_void_holds_only_the_open_trial_its_name_hashes_to(self) -> None:
         held, written, unstarted = _ROSTER
         past_horizon = _TRIAL.COMMIT + timedelta(days=85)  # the canary rows state 84
-        for hour, kind in enumerate(("not JSON", "fields of no void", "a directory")):
+        kinds = (
+            "not JSON",
+            "fields of no void",
+            "a key of the wrong type",
+            "a field of the wrong type",
+            "a directory",
+        )
+        for hour, kind in enumerate(kinds):
             with self.subTest(kind):
                 self._use_log_dir(hour)  # salts per row → no row reads another's entry
                 held_salt, written_salt, unstarted_salt = (f"9{hour}0{n}" for n in (1, 2, 3))

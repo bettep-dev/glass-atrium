@@ -14547,7 +14547,10 @@ def _list_pending_trial_voids() -> list[Path] | None:
 def _read_pending_trial_void(path: Path, key: str | None) -> TrialVoid | None:
     """None = unreadable, WARNed against the open trial `key` its name hashes to, if any."""
     try:
-        return TrialVoid(**json.loads(path.read_text(encoding="utf-8")))
+        void = TrialVoid(**json.loads(path.read_text(encoding="utf-8")))
+        if not _is_trial_void(void):
+            raise TypeError(f"{path.name} is not a trial void record")
+        return void
     except (OSError, ValueError, TypeError, RecursionError) as exc:
         if key is None:
             _warn_trial(
@@ -14560,6 +14563,17 @@ def _read_pending_trial_void(path: Path, key: str | None) -> TrialVoid | None:
                 "its canary is neither written nor renewed while it stays unread",
             )
         return None
+
+
+def _is_trial_void(void: TrialVoid) -> bool:
+    return (
+        isinstance(void.key, str)
+        and isinstance(void.agent, str)
+        and isinstance(void.pattern_id, (int, type(None)))
+        and isinstance(void.text_sha256, (str, type(None)))
+        and isinstance(void.spool, str)
+        and isinstance(void.line_offset, int)
+    )
 
 
 def _delete_pending_trial_void(path: Path) -> None:
