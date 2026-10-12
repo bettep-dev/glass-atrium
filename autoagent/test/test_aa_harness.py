@@ -2004,14 +2004,17 @@ class AaCanaryTest(_AaResultFixture):
                     not is_readable,
                 )
 
-    def _open_trial(self, agent: str, *, is_decided: bool = False) -> None:
-        """A live pre-registration on `agent`, its decision row too when `is_decided`."""
+    def _open_trial(
+        self, agent: str, *, is_decided: bool = False, proposal_id: int = _TRIAL_PROPOSAL_ID
+    ) -> None:
+        """A live pre-registration on `agent` keyed by `proposal_id`, its decision row too when
+        `is_decided`."""
         trial_ledger = stub.get_trial_ledger()
-        key = f"{_TRIAL_PROPOSAL_ID:064x}"
+        key = f"{proposal_id:064x}"
         self.ledger.write(
             trial_ledger.EVENT.LIVE_PREREGISTRATION,
             trial_ledger.ACTOR.LIVE,
-            {"proposal_id": _TRIAL_PROPOSAL_ID},
+            {"proposal_id": proposal_id},
             trial_key=key,
             agent=agent,
             dedupe_key=key,
@@ -2064,6 +2067,17 @@ class AaCanaryTest(_AaResultFixture):
                 self._evaluate()
 
                 self.assertEqual(list(self._get_canaries()), [_ROSTER[0]] if is_kept else [])
+
+    def test_with_no_open_aa_two_open_live_trials_both_keep_their_canaries(self) -> None:
+        self._close()
+        for offset, stem in enumerate(_ROSTER):
+            self._open_trial(stem, proposal_id=_TRIAL_PROPOSAL_ID + offset)
+            self._put_canary(stem, "obey the trial text", salt=7)
+        self._put_canary("glass-atrium-retired", "")
+
+        self._evaluate()
+
+        self.assertEqual(set(self._get_canaries()), set(_ROSTER))
 
     def test_unreadable_open_trials_leave_every_canary_in_place_with_a_named_warn(self) -> None:
         self._close()

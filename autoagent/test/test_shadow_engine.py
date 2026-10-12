@@ -2057,6 +2057,20 @@ class TrialCanaryTest(_ShadowFixture):
 
         self.assertEqual(set(self._get_starts()[0].payload), _KEYS.START)
 
+    def test_two_open_trials_on_two_agents_each_get_their_file_and_start_row(self) -> None:
+        first_key = self._open_live_trial()
+        later_key = self._open_trial_on(_POOL_AGENT, _PROPOSAL_ID + 1)
+
+        self._stage(_NOW)
+
+        self.assertEqual(
+            {
+                row.agent: (row.trial_key, dc._get_canary_path(row.agent).exists())
+                for row in self._get_starts()
+            },
+            {_AGENT: (first_key, True), _POOL_AGENT: (later_key, True)},
+        )
+
     def test_a_start_record_the_ledger_does_not_take_removes_the_file_until_a_cycle_records_it(
         self,
     ) -> None:
