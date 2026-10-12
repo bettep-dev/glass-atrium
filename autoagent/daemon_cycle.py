@@ -10256,7 +10256,9 @@ def run_trial_stage() -> None:
       holds a void back
     - canary directory not a real one → named WARN, no further canary written this cycle
     - a foreign-hash void an ingest held → retried first; while held, or once it lands, that
-      trial's canary is neither written nor renewed; a held record unreadable → none written
+      trial's canary is neither written nor renewed; a held record unreadable → the same for the
+      open trial its name hashes to, removed when it names none; the held directory unlistable
+      → none written
     - ledger fault: named WARN, never a failed cycle · --dry-run: the caller skips the stage
     """
     if not HAS_PG_LOOP_WRITE:
@@ -14508,29 +14510,56 @@ def _put_pending_trial_void(void: TrialVoid) -> None:
 
 def _retry_pending_trial_voids(trials: list[TrialCanary]) -> frozenset[str] | None:
     """Each held void retried before any canary write → the trial keys this stage writes no
-    canary for: still held, or decided by the retry. None = a held record unreadable → no trial
-    written."""
-    held_dir = ga_paths.get_data_root().joinpath(*CANARY.SEGMENTS.TRIAL_PENDING_VOIDS)
-    open_keys = {trial.key for trial in trials}
+    canary for: still held, unreadable, or decided by the retry. An entry is named by its trial
+    key's sha256 → an unreadable one holds only the open trial it names; one naming no open
+    trial is removed. None = the held directory unlistable → no trial written."""
+    key_by_name = {_get_pending_trial_void_path(trial.key).name: trial.key for trial in trials}
+    paths = _list_pending_trial_voids()
+    if paths is None:
+        return None
     skipped: set[str] = set()
+    for path in paths:
+        void = _read_pending_trial_void(path, key_by_name.get(path.name))
+        if void is None and path.name in key_by_name:
+            skipped.add(key_by_name[path.name])
+        elif void is None:
+            _delete_pending_trial_void(path)
+        elif void.key in key_by_name.values() and not _write_trial_void(void, "trial stage"):
+            skipped.add(void.key)
+        else:
+            skipped.add(void.key)
+            _delete_pending_trial_void(path)
+    return frozenset(skipped)
+
+
+def _list_pending_trial_voids() -> list[Path] | None:
+    held_dir = ga_paths.get_data_root().joinpath(*CANARY.SEGMENTS.TRIAL_PENDING_VOIDS)
     try:
-        paths = sorted(path for path in held_dir.glob("*") if not path.name.startswith("."))
-        voids = [
-            (path, TrialVoid(**json.loads(path.read_text(encoding="utf-8")))) for path in paths
-        ]
-    except (OSError, ValueError, TypeError, RecursionError) as exc:
+        return sorted(path for path in held_dir.glob("*") if not path.name.startswith("."))
+    except OSError as exc:
         _warn_trial(
-            f"pending trial voids in {held_dir} unreadable: {_describe_fault(exc)}",
+            f"pending trial voids in {held_dir} unlistable: {_describe_fault(exc)}",
             "no trial canary written or renewed while they stay unread",
         )
         return None
-    for path, void in voids:
-        if void.key in open_keys and not _write_trial_void(void, "trial stage"):
-            skipped.add(void.key)
-            continue
-        skipped.add(void.key)
-        _delete_pending_trial_void(path)
-    return frozenset(skipped)
+
+
+def _read_pending_trial_void(path: Path, key: str | None) -> TrialVoid | None:
+    """None = unreadable, WARNed against the open trial `key` its name hashes to, if any."""
+    try:
+        return TrialVoid(**json.loads(path.read_text(encoding="utf-8")))
+    except (OSError, ValueError, TypeError, RecursionError) as exc:
+        if key is None:
+            _warn_trial(
+                f"pending void {path} unreadable and names no open trial: {_describe_fault(exc)}",
+                "removed",
+            )
+        else:
+            _warn_trial(
+                f"trial {key}: pending void {path} unreadable: {_describe_fault(exc)}",
+                "its canary is neither written nor renewed while it stays unread",
+            )
+        return None
 
 
 def _delete_pending_trial_void(path: Path) -> None:

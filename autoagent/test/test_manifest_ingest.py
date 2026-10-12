@@ -132,6 +132,15 @@ _TRIAL_HELD_RE = re.compile(
     r"WARN: [a-z ]+ — trial (\S+) void not recorded: (\S+)'s canary text (\S+) is not the "
     r"pre-registered one .*; it stays pending — no canary is written or renewed for that trial"
 )
+# trial key of each unreadable held void that holds its open trial
+_HELD_UNREADABLE_RE = re.compile(
+    r"WARN: trial stage — trial (\S+): pending void \S+ unreadable: .*; its canary is neither "
+    r"written nor renewed while it stays unread"
+)
+# path of each unreadable held void that names no open trial
+_ORPHAN_UNREADABLE_RE = re.compile(
+    r"WARN: trial stage — pending void (\S+) unreadable and names no open trial: .*; removed"
+)
 
 
 def _get_delivery_line(
@@ -818,6 +827,49 @@ class TestManifestDeliveryBinding(_IngestCase):
         )
         self.assertEqual([key for *_, key in self.ledger.rows], [f"{_TRIAL.KEY}:decision"])
         self.assertNotIn(_ROSTER[0], self._get_canaries())
+        self.assertEqual(self._get_held_voids(), [])
+
+    def _put_unreadable_held_void(self, key: str, kind: str) -> Path:
+        """A held entry under key's file name that no read turns into a void."""
+        path = dc._get_pending_trial_void_path(key)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        if kind == "a directory":
+            path.mkdir()
+        else:
+            content = "{" if kind == "not JSON" else json.dumps({"key": key})
+            path.write_text(content, encoding="utf-8")
+        return path
+
+    def test_an_unreadable_held_void_holds_only_the_open_trial_its_name_hashes_to(self) -> None:
+        held, written, unstarted = _ROSTER
+        past_horizon = _TRIAL.COMMIT + timedelta(days=85)  # the canary rows state 84
+        for hour, kind in enumerate(("not JSON", "fields of no void", "a directory")):
+            with self.subTest(kind):
+                self._use_log_dir(hour)  # salts per row → no row reads another's entry
+                held_salt, written_salt, unstarted_salt = (f"9{hour}0{n}" for n in (1, 2, 3))
+                self._open_trial(held, salt=held_salt)
+                self._open_trial(written, salt=written_salt)
+                self._open_trial(unstarted, salt=unstarted_salt, started_at=None)
+                entry = self._put_unreadable_held_void(f"live-trial-{held_salt}", kind)
+                with mock.patch.object(dc, "_get_utc_now", lambda: past_horizon):
+                    stderr = self._run_trial_stage()
+
+                self.assertEqual(self._get_canaries(), [written], stderr)
+                self.assertEqual(
+                    [key for *_, key in self.ledger.rows], [f"live-trial-{unstarted_salt}:decision"]
+                )
+                self.assertEqual(_HELD_UNREADABLE_RE.findall(stderr), [f"live-trial-{held_salt}"])
+                self.assertIn(entry, self._get_held_voids())
+
+    def test_an_unreadable_held_void_of_no_open_trial_stops_nothing_and_is_removed(self) -> None:
+        self._open_trial(_ROSTER[0], salt="9001", is_decided=True)
+        self._open_trial(_ROSTER[1], salt="9002")
+        entry = self._put_unreadable_held_void("live-trial-9001", "not JSON")
+
+        stderr = self._run_trial_stage()
+
+        self.assertEqual(self._get_canaries(), [_ROSTER[1]], stderr)
+        self.assertEqual(_ORPHAN_UNREADABLE_RE.findall(stderr), [str(entry)])
         self.assertEqual(self._get_held_voids(), [])
 
     def test_each_delivered_row_binds_once_at_the_ingest_that_first_stores_it(self) -> None:
