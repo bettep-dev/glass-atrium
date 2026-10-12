@@ -105,6 +105,33 @@ _ROSTER = ("glass-atrium-dev-python", "glass-atrium-dev-shell", "glass-atrium-de
 _UNBOUND = "canary-unbound-delivery"
 _NO_TRIAL_RE = re.compile(r"WARN: manifest binding — (\S+) canary delivered with no open trial")
 _PLACEHOLDER_RE = re.compile(r"%\((\w+)\)s")
+# An open live trial of _ROSTER[0]: its pre-registration's commit, its start record and its canary.
+_TRIAL_TEXT = "Prefer one table of named rows over near-duplicate tests."
+_TRIAL = SimpleNamespace(
+    SALT="9001",
+    KEY="live-trial-9001",
+    TEXT=_TRIAL_TEXT,
+    SHA256=hashlib.sha256(_TRIAL_TEXT.encode("utf-8")).hexdigest(),
+    PATTERN_ID=41,
+    COMMIT=datetime(2026, 10, 5, 10, 0, 12, 250_000, tzinfo=timezone.utc),
+    START=datetime(2026, 10, 5, 12, 0, 37, 500_000, tzinfo=timezone.utc),
+    BEFORE_COMMIT="2026-10-05T10:00:11Z",
+    BEFORE_START="2026-10-05T11:00:00Z",
+    START_SECOND="2026-10-05T12:00:37Z",
+)
+_FILED_RE = re.compile(
+    r"INFO: manifest binding — trial (\S+): (\d+) delivered row\(s\) of \S+ bound, (\d+) filed "
+    r"at its start, (\d+) in no arm"
+)
+# (trial key, agent, delivered hash, spool, line, decision key) of each 'voided' WARN
+_TRIAL_VOIDED_RE = re.compile(
+    r"WARN: [a-z ]+ — trial (\S+) voided: (\S+)'s canary text (\S+) is not the pre-registered "
+    r"one \((\S+) line (\d+), (\S+)\)"
+)
+_TRIAL_HELD_RE = re.compile(
+    r"WARN: [a-z ]+ — trial (\S+) void not recorded: (\S+)'s canary text (\S+) is not the "
+    r"pre-registered one .*; it stays pending — no canary is written or renewed for that trial"
+)
 
 
 def _get_delivery_line(
@@ -158,14 +185,59 @@ class _SpawnManifestTable:
 
 
 class _TrialLedger:
-    """In-memory core.autoagent_trial_ledger: the open A/A, row events by id, the rows written."""
+    """In-memory core.autoagent_trial_ledger: the open A/A, row events by id, the live
+    pre-registrations, the rows written."""
 
     def __init__(self) -> None:
         self.latest: object = None
         self.event_by_id: dict[int, str] = {}
-        self.fault: dict[str, Exception | None] = {"read": None, "salt": None}
+        self.fault: dict[str, Exception | None] = {"read": None, "salt": None, "trials": None}
         self.rows: list[tuple[str, dict[str, object], str]] = []
+        self.writes: list[dict[str, object]] = []  # each landed write's whole call
         self.write_outcome: int | Exception = 1  # 0 = key taken or ledger absent
+        self.trials: list[dict[str, object]] = []  # live pre-registrations, open or decided
+
+    def get_decided_keys(self) -> set[str]:
+        written = {
+            key.removesuffix(":decision") for *_, key in self.rows if key.endswith(":decision")
+        }
+        return written | {str(trial["key"]) for trial in self.trials if trial["is_decided"]}
+
+    def get_open_trials(self) -> list[dict[str, object]]:
+        if (fault := self.fault["trials"]) is not None:
+            raise fault
+        decided = self.get_decided_keys()
+        return [trial for trial in self.trials if trial["key"] not in decided]
+
+    def get_binding_rows(self) -> list[tuple[object, ...]]:
+        return [
+            (
+                trial["agent"],
+                trial["key"],
+                _TRIAL.PATTERN_ID,
+                trial["sha256"],
+                trial["recorded_at"],
+                None if trial["started_at"] is None else trial["started_at"].isoformat(),
+            )
+            for trial in self.get_open_trials()
+        ]
+
+    def get_canary_rows(self) -> list[tuple[object, ...]]:
+        return [
+            (
+                int(trial["salt"]),
+                trial["agent"],
+                trial["key"],
+                _TRIAL.PATTERN_ID,
+                {
+                    "canary": {"text": trial["text"], "text_sha256": trial["sha256"]},
+                    "horizon_days": 84,
+                },
+                trial["recorded_at"],
+                trial["started_at"] is not None,
+            )
+            for trial in self.get_open_trials()
+        ]
 
     def get_events(self) -> list[str]:
         return [row[0] for row in self.rows]
@@ -175,15 +247,28 @@ class _TrialLedger:
             raise fault
         return self.latest
 
-    def get_salt_rows(self, events: list[str], ids: list[int]) -> list[tuple[int]]:
+    def get_salt_rows(self, events: list[str], ids: list[int]) -> list[tuple[object, ...]]:
+        """(id, event, agent, canary hash, is decided) of each given id naming one of events."""
         if (fault := self.fault["salt"]) is not None:
             raise fault
-        return [(row_id,) for row_id in ids if self.event_by_id.get(row_id) in events]
+        decided = self.get_decided_keys()
+        preregistration = dc.TRIAL_LEDGER.EVENT.LIVE_PREREGISTRATION
+        trial_by_id = {int(trial["salt"]): trial for trial in self.trials}
+        rows: list[tuple[object, ...]] = []
+        for row_id in ids:
+            if self.event_by_id.get(row_id) in events:
+                rows.append((row_id, self.event_by_id[row_id], None, None, False))
+            elif row_id in trial_by_id and preregistration in events:
+                trial = trial_by_id[row_id]
+                is_decided = trial["key"] in decided
+                rows.append((row_id, preregistration, trial["agent"], trial["sha256"], is_decided))
+        return rows
 
-    def write(self, event: str, _actor: str, payload: dict[str, object], **kwargs: object) -> int:
+    def write(self, event: str, actor: str, payload: dict[str, object], **kwargs: object) -> int:
         if isinstance(self.write_outcome, Exception):
             raise self.write_outcome
         self.rows.append((event, payload, str(kwargs["dedupe_key"])))
+        self.writes.append({"event": event, "actor": actor, "payload": payload, **kwargs})
         return self.write_outcome
 
 
@@ -195,7 +280,7 @@ class _Database:
         self.table = table
         self.ledger = ledger
         self.refused: list[str] = []
-        self.result: list[tuple[int]] = []
+        self.result: list[tuple[object, ...]] = []
 
     def connect(self) -> contextlib.nullcontext[_Database]:
         return contextlib.nullcontext(self)
@@ -209,16 +294,25 @@ class _Database:
             self.result = self.table.get_offset_rows(params["spool"])
         elif refusal is None and statement == dc.AA.SQL.SALT_ROWS:
             self.result = self.ledger.get_salt_rows(params["events"], params["ids"])
+        elif refusal is None and statement == dc.LIVE_TRIAL.CANARY_SQL:
+            self.result = self.ledger.get_canary_rows()
+        elif refusal is None and statement == dc.LIVE_TRIAL.BINDING_SQL:
+            self.result = self.ledger.get_binding_rows()
         else:
             self.refused.append(refusal or f"statement outside the fake: {statement[:80]}")
             raise AssertionError(self.refused[-1])
 
-    def fetchall(self) -> list[tuple[int]]:
+    def fetchall(self) -> list[tuple[object, ...]]:
         return self.result
 
 
-def _get_parameter_refusal(statement: str, params: dict) -> str | None:
-    """Why psycopg would refuse ``params`` for ``statement``; None when every name binds."""
+def _get_parameter_refusal(statement: str, params: dict | tuple) -> str | None:
+    """Why psycopg would refuse ``params`` for ``statement``; None when every name binds. A
+    positional statement here takes the live pre-registration event alone."""
+    if isinstance(params, tuple):
+        expected = (dc.TRIAL_LEDGER.EVENT.LIVE_PREREGISTRATION,)
+        is_bound = statement.count("%s") == len(params) and params == expected
+        return None if is_bound else f"parameters {params} ≠ {expected}: {statement[:60]}"
     names = set(_PLACEHOLDER_RE.findall(statement))
     if set(params) != names:
         return f"parameters {sorted(params)} ≠ placeholders {sorted(names)}: {statement[:60]}"
@@ -471,6 +565,8 @@ class TestManifestRotation(_IngestCase):
 class TestManifestDeliveryBinding(_IngestCase):
     """Each delivered row binds once, at the ingest that first stores it (Read-side binding)."""
 
+    cycle = _CYCLE_1
+
     def _open_aa(self) -> None:
         self.ledger.latest = dc.AaStart(
             int(_AA.SALT), False, {}, _AA.WINDOW_START, {}, int(_AA.SALT)
@@ -486,6 +582,243 @@ class TestManifestDeliveryBinding(_IngestCase):
 
     def _get_no_trial_agents(self) -> list[str]:
         return _NO_TRIAL_RE.findall(self.stderr)
+
+    def _open_trial(
+        self,
+        agent: str = _ROSTER[0],
+        *,
+        salt: str = _TRIAL.SALT,
+        text: str = _TRIAL.TEXT,
+        started_at: datetime | None = _TRIAL.START,
+        is_decided: bool = False,
+    ) -> str:
+        """A live pre-registration of agent, committed at _TRIAL.COMMIT; returns its canary hash."""
+        sha256 = hashlib.sha256(text.encode("utf-8")).hexdigest()
+        self.ledger.trials.append(
+            {
+                "salt": salt,
+                "agent": agent,
+                "key": f"live-trial-{salt}",
+                "text": text,
+                "sha256": sha256,
+                "recorded_at": _TRIAL.COMMIT,
+                "started_at": started_at,
+                "is_decided": is_decided,
+            }
+        )
+        return sha256
+
+    def _use_log_dir(self, hour: int) -> None:
+        """A fresh log root, ledger and spool name per table row, so no row re-reads another's."""
+        self.cycle = _CYCLE_1 + timedelta(hours=hour)
+        self.log_root = self.base_root / f"logs-{hour}"
+        self.log_root.mkdir()
+        self.live_log = self.log_root / dc.MANIFEST.LOG_NAME
+        self.ledger.rows.clear()
+        self.ledger.writes.clear()
+        self.ledger.trials.clear()
+
+    def _get_held_voids(self) -> list[Path]:
+        held_dir = dc.ga_paths.get_data_root().joinpath(*dc.CANARY.SEGMENTS.TRIAL_PENDING_VOIDS)
+        return sorted(held_dir.glob("*"))
+
+    def _run_trial_stage(self) -> str:
+        stderr = io.StringIO()
+        with contextlib.redirect_stderr(stderr):
+            dc.run_trial_stage()
+        self.assertEqual(self.pg_reach, [])
+        self.assertEqual(self.database.refused, [])
+        return stderr.getvalue()
+
+    def _ingest_trial_rows(self, *rows: dict[str, str]) -> str:
+        """Every roster canary, then one ingest of a delivery line per row; returns the spool."""
+        self._put_canaries()
+        lines = [
+            _get_delivery_line(
+                row.get("agent", _ROSTER[0]),
+                salt=row.get("salt", _TRIAL.SALT),
+                text_sha256=row.get("text_sha256", _TRIAL.SHA256),
+                ts=row.get("ts", _AA.IN_WINDOW),
+            )
+            for row in rows
+        ]
+        self._append(self.live_log, "".join(lines))
+        self._ingest(self.cycle)
+        return self._get_spools()[-1].name
+
+    def test_a_delivery_of_the_open_trial_s_canary_binds_to_it_and_keeps_its_file(self) -> None:
+        self._open_trial()
+        self._ingest_trial_rows({})
+
+        self.assertEqual(self.ledger.rows, [])
+        self.assertEqual(self._get_canaries(), sorted(_ROSTER))
+        self.assertEqual(self._get_no_trial_agents(), [])
+        self.assertEqual(_FILED_RE.findall(self.stderr), [(_TRIAL.KEY, "1", "1", "0")])
+
+    def test_a_foreign_hash_voids_the_open_trial_through_its_decision_row_by_name(self) -> None:
+        self._open_trial()
+        spool = self._ingest_trial_rows({"text_sha256": _PLAIN_SHA256})
+
+        (write,) = self.ledger.writes
+        self.assertEqual(
+            (write["event"], write["actor"], write["dedupe_key"]),
+            (
+                dc.TRIAL_LEDGER.EVENT.LIVE_DECISION,
+                dc.TRIAL_LEDGER.ACTOR.LIVE,
+                f"{_TRIAL.KEY}:decision",
+            ),
+        )
+        self.assertEqual(self._get_canaries(), sorted(_ROSTER[1:]))
+        self.assertEqual(
+            _TRIAL_VOIDED_RE.findall(self.stderr),
+            [(_TRIAL.KEY, _ROSTER[0], _PLAIN_SHA256, spool, "0", f"{_TRIAL.KEY}:decision")],
+        )
+        self.assertEqual(self._get_no_trial_agents(), [])
+
+    def test_the_foreign_hash_decision_row_carries_the_void_s_three_keys(self) -> None:
+        self._open_trial()
+        self._ingest_trial_rows({"text_sha256": _PLAIN_SHA256})
+
+        (write,) = self.ledger.writes
+        self.assertEqual(
+            {key: write[key] for key in ("trial_key", "agent", "learning_pattern_id")},
+            {
+                "trial_key": _TRIAL.KEY,
+                "agent": _ROSTER[0],
+                "learning_pattern_id": _TRIAL.PATTERN_ID,
+            },
+        )
+        self.assertEqual(
+            write["payload"],
+            {
+                "void": {
+                    "reason": "foreign-canary-hash",
+                    "agent": _ROSTER[0],
+                    "text_sha256": _PLAIN_SHA256,
+                }
+            },
+        )
+
+    def test_foreign_rows_of_one_trial_in_one_ingest_void_it_once(self) -> None:
+        self._open_trial()
+        self._ingest_trial_rows({"text_sha256": _PLAIN_SHA256}, {"text_sha256": _AA.SHA256})
+
+        self.assertEqual(len(self.ledger.writes), 1)
+        self.assertEqual(len(_TRIAL_VOIDED_RE.findall(self.stderr)), 1)
+        self.assertEqual(_TRIAL_HELD_RE.findall(self.stderr), [])
+        self.assertEqual(self._get_held_voids(), [])
+
+    def test_an_agent_without_an_open_trial_keeps_the_a_a_leg_and_the_no_trial_branch(
+        self,
+    ) -> None:
+        # name, A/A open, (ledger events, agents warned as no-trial)
+        rows = (
+            ("no open A/A", False, ([_UNBOUND], [_ROSTER[0]])),
+            ("an open A/A", True, (["aa-result"], [])),
+        )
+        for hour, (name, is_aa_open, expected) in enumerate(rows):
+            with self.subTest(name):
+                self._use_log_dir(hour)
+                self.ledger.latest = None
+                if is_aa_open:
+                    self._open_aa()
+                self._open_trial(_ROSTER[1])
+                self._ingest_trial_rows({"salt": "3", "text_sha256": _PLAIN_SHA256})
+
+                observed = (self.ledger.get_events(), self._get_no_trial_agents())
+                self.assertEqual(observed, expected, name)
+                self.assertNotIn(_ROSTER[0], self._get_canaries(), name)
+
+    def test_a_bound_row_is_filed_at_the_start_only_from_the_start_s_own_second(self) -> None:
+        # name, the start record's instant (None = its write faulted), the row's start, filing
+        rows = (
+            ("a delivery in the start's own second", _TRIAL.START, _TRIAL.START_SECOND, ("1", "0")),
+            ("a delivery after the start record's fault", None, _AA.IN_WINDOW, ("0", "1")),
+            (
+                "a delivery after the commit, before the start",
+                _TRIAL.START,
+                _TRIAL.BEFORE_START,
+                ("0", "1"),
+            ),
+        )
+        for hour, (name, started_at, ts, (filed, unfiled)) in enumerate(rows):
+            with self.subTest(name):
+                self._use_log_dir(hour)
+                self._open_trial(started_at=started_at)
+                self._ingest_trial_rows({"ts": ts})
+
+                self.assertEqual(self.ledger.rows, [], name)
+                self.assertEqual(self._get_canaries(), sorted(_ROSTER), name)
+                filing = _FILED_RE.findall(self.stderr)
+                self.assertEqual(filing, [(_TRIAL.KEY, "1", filed, unfiled)], name)
+
+    def test_a_racing_row_leaves_the_open_trial_open_unless_another_agent_s(self) -> None:
+        events = dc.TRIAL_LEDGER.EVENT
+        own_sha256 = hashlib.sha256(b"an earlier trial of the agent").hexdigest()
+        other_sha256 = hashlib.sha256(b"a trial of another agent").hexdigest()
+        # name, the row's salt, its hash, whether the open trial is voided
+        rows = (
+            ("the A/A text on an aa-start salt", _AA.SALT, _AA.SHA256, False),
+            ("the A/A text on an aa-restart salt", "8", _AA.SHA256, False),
+            ("its own decided pre-registration's salt and hash", "8800", own_sha256, False),
+            (
+                "another agent's decided pre-registration's salt and hash",
+                "8801",
+                other_sha256,
+                True,
+            ),
+        )
+        for hour, (name, salt, text_sha256, is_voided) in enumerate(rows):
+            with self.subTest(name):
+                self._use_log_dir(hour)
+                self.ledger.event_by_id = {int(_AA.SALT): events.AA_START, 8: events.AA_RESTART}
+                self._open_trial()
+                self._open_trial(salt="8800", text="an earlier trial of the agent", is_decided=True)
+                self._open_trial(
+                    _ROSTER[1], salt="8801", text="a trial of another agent", is_decided=True
+                )
+                self._ingest_trial_rows({"salt": salt, "text_sha256": text_sha256})
+
+                voided = [key for *_, key in self.ledger.rows]
+                self.assertEqual(voided, [f"{_TRIAL.KEY}:decision"] if is_voided else [], name)
+                self.assertEqual(_ROSTER[0] in self._get_canaries(), not is_voided, name)
+                self.assertEqual(self._get_no_trial_agents(), [], name)
+
+    def test_a_row_started_before_the_commit_never_voids_the_open_trial_nor_removes_its_file(
+        self,
+    ) -> None:
+        self._open_trial()
+        self._ingest_trial_rows(
+            {"salt": "3", "text_sha256": _PLAIN_SHA256, "ts": _TRIAL.BEFORE_COMMIT}
+        )
+
+        self.assertEqual(self.ledger.get_events(), [_UNBOUND])
+        self.assertEqual(self._get_no_trial_agents(), [_ROSTER[0]])
+        self.assertEqual(self._get_canaries(), sorted(_ROSTER))
+
+    def test_a_trial_void_the_ledger_refuses_is_held_until_a_trial_stage_records_it(
+        self,
+    ) -> None:
+        self._open_trial()
+        self.ledger.write_outcome = ConnectionError("server closed the connection")
+        spool = self._ingest_trial_rows({"text_sha256": _PLAIN_SHA256})
+        ingest_stderr = self.stderr
+        refused_stage = self._run_trial_stage()  # the same cycle: the ledger still refuses
+        canaries_while_held = self._get_canaries()
+        self.ledger.write_outcome = 1
+        next_stage = self._run_trial_stage()
+
+        held = [(_TRIAL.KEY, _ROSTER[0], _PLAIN_SHA256)]
+        self.assertEqual(_TRIAL_HELD_RE.findall(ingest_stderr), held)
+        self.assertEqual(_TRIAL_HELD_RE.findall(refused_stage), held)
+        self.assertNotIn(_ROSTER[0], canaries_while_held)
+        self.assertEqual(
+            _TRIAL_VOIDED_RE.findall(next_stage),
+            [(_TRIAL.KEY, _ROSTER[0], _PLAIN_SHA256, spool, "0", f"{_TRIAL.KEY}:decision")],
+        )
+        self.assertEqual([key for *_, key in self.ledger.rows], [f"{_TRIAL.KEY}:decision"])
+        self.assertNotIn(_ROSTER[0], self._get_canaries())
+        self.assertEqual(self._get_held_voids(), [])
 
     def test_each_delivered_row_binds_once_at_the_ingest_that_first_stores_it(self) -> None:
         first, racing = _ROSTER[:2]  # racing: appended to the spool right after cycle 1
@@ -703,23 +1036,41 @@ class TestManifestDeliveryBinding(_IngestCase):
                 self.assertEqual(self._get_no_trial_agents(), [], name)
                 self.assertEqual(self._get_canaries(), sorted(_ROSTER), name)
 
-    def test_outside_the_window_a_row_is_legit_only_with_an_a_a_salt_and_the_a_a_text(
+    def test_with_no_open_trial_only_a_racing_row_escapes_the_unbound_row_and_the_removal(
         self,
     ) -> None:
-        # the A/A closed or restarted since
-        self.ledger.event_by_id = {int(_AA.SALT): dc.TRIAL_LEDGER.EVENT.AA_RESTART}
-        self._put_canaries()
-        lines = (
-            _get_delivery_line(_ROSTER[0]),  # racing row of the A/A: its salt and its text
-            _get_delivery_line(_ROSTER[1], salt="3"),  # the A/A text on a salt no A/A row has
-            _get_delivery_line(_ROSTER[2], text_sha256=_PLAIN_SHA256),  # A/A salt, foreign text
+        events = dc.TRIAL_LEDGER.EVENT
+        own_sha256 = hashlib.sha256(b"an earlier trial of the agent").hexdigest()
+        other_sha256 = hashlib.sha256(b"a trial of another agent").hexdigest()
+        # name, the row's salt, its hash, whether it is unbound (row, WARN, file removed)
+        rows = (
+            ("the A/A's racing row: its salt and its text", _AA.SALT, _AA.SHA256, False),
+            ("the A/A text on a salt no A/A row has", "3", _AA.SHA256, True),
+            ("an A/A salt with a foreign text", _AA.SALT, _PLAIN_SHA256, True),
+            ("its own decided pre-registration's salt and hash", "8800", own_sha256, False),
+            ("its own decided pre-registration's salt, another hash", "8800", _PLAIN_SHA256, True),
+            ("that hash on a salt naming no decided pre-registration", "3", own_sha256, True),
+            (
+                "another agent's decided pre-registration's salt and hash",
+                "8801",
+                other_sha256,
+                True,
+            ),
         )
-        self._append(self.live_log, "".join(lines))
-        self._ingest(_CYCLE_1)
+        for hour, (name, salt, text_sha256, is_unbound) in enumerate(rows):
+            with self.subTest(name):
+                self._use_log_dir(hour)
+                # the A/A closed or restarted since; both pre-registrations decided since
+                self.ledger.event_by_id = {int(_AA.SALT): events.AA_RESTART}
+                self._open_trial(salt="8800", text="an earlier trial of the agent", is_decided=True)
+                self._open_trial(
+                    _ROSTER[1], salt="8801", text="a trial of another agent", is_decided=True
+                )
+                self._ingest_trial_rows({"salt": salt, "text_sha256": text_sha256})
 
-        self.assertEqual(self._get_no_trial_agents(), list(_ROSTER[1:]))
-        self.assertEqual(self._get_canaries(), [_ROSTER[0]])
-        self.assertEqual(self.ledger.get_events(), [_UNBOUND, _UNBOUND])
+                self.assertEqual(self.ledger.get_events(), [_UNBOUND] if is_unbound else [], name)
+                self.assertEqual(self._get_no_trial_agents(), [_ROSTER[0]] if is_unbound else [])
+                self.assertEqual(_ROSTER[0] in self._get_canaries(), not is_unbound, name)
 
     def test_a_no_trial_delivery_never_removes_a_file_through_a_symlinked_canary_directory(
         self,
@@ -800,18 +1151,17 @@ class TestManifestDeliveryBinding(_IngestCase):
                 RuntimeError('relation "core.autoagent_trial_ledger" does not exist'),
             ),
             ("salt-row read fault", "salt", ConnectionError("server closed the connection")),
+            ("open trial state read fault", "trials", ConnectionError("server closed the socket")),
         )
         self._open_aa()
         for hour, (name, seam, fault) in enumerate(rows):
             with self.subTest(name):
-                self.ledger.fault.update(read=None, salt=None)
+                self.ledger.fault.update(read=None, salt=None, trials=None)
                 self.ledger.fault[seam] = fault
                 self._put_canaries()
                 self._append(
                     self.live_log,
-                    _get_delivery_line(
-                        _ROSTER[0], text_sha256=_PLAIN_SHA256, ts=_AA.BEFORE_WINDOW
-                    ),
+                    _get_delivery_line(_ROSTER[0], text_sha256=_PLAIN_SHA256, ts=_AA.BEFORE_WINDOW),
                 )
                 ingest = self._ingest(_CYCLE_1 + timedelta(hours=hour))
 
@@ -860,9 +1210,7 @@ class TestManifestCloseRecord(_IngestCase):
 
         self.assertFalse(spool.exists(), "a NUL-bearing line kept its spool open")
         (close,) = ingest.closed
-        self.assertEqual(
-            (close.spool, close.lines_read, close.rows_present), (spool.name, 2, 1)
-        )
+        self.assertEqual((close.spool, close.lines_read, close.rows_present), (spool.name, 2, 1))
 
 
 class TestManifestCoverageAfterRotation(_IngestCase):
@@ -944,11 +1292,7 @@ class TestManifestLineParse(unittest.TestCase):
         )
         for name, ctx_bytes in rows:
             with self.subTest(name):
-                line = (
-                    _get_line()
-                    .rstrip("\n")
-                    .replace("ctx_bytes=1166", f"ctx_bytes={ctx_bytes}")
-                )
+                line = _get_line().rstrip("\n").replace("ctx_bytes=1166", f"ctx_bytes={ctx_bytes}")
                 self.assertIsNone(dc._get_manifest_row(0, line))
 
 
@@ -1231,7 +1575,8 @@ class TestSpawnManifestWriterLivePg(unittest.TestCase):
 
     def test_exposure_fields_are_stored_and_a_pre_field_line_stores_nulls(self) -> None:
         rows = self._get_rows(
-            _get_line(exposure=_TREATED.EXPOSURE) + _get_line(exposure=_CONTROL.EXPOSURE)
+            _get_line(exposure=_TREATED.EXPOSURE)
+            + _get_line(exposure=_CONTROL.EXPOSURE)
             + _get_line(),
             is_final=True,
         )

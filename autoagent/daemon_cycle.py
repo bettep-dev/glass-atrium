@@ -9257,6 +9257,15 @@ LIVE_TRIAL = SimpleNamespace(
     ),
     # an unstarted void's payload.void.reason; the doctor counts the void by this literal
     UNSTARTED_REASON="unstarted",
+    # each open trial as the ingest binds to it: agent, trial key, pattern id, canary hash, the
+    # pre-registration's commit instant and its start record's instant (NULL = no start record)
+    BINDING_SQL=(
+        "SELECT p.agent, p.trial_key, p.learning_pattern_id, p.payload->'canary'->>'text_sha256', "
+        "p.recorded_at, (SELECT s.payload->>'started_at' FROM core.autoagent_trial_ledger s "
+        "WHERE s.dedupe_key = p.trial_key || ':start' LIMIT 1) "
+        + _OPEN_LIVE_TRIAL_FROM
+        + " ORDER BY p.id"
+    ),
 )
 
 
@@ -10246,6 +10255,8 @@ def run_trial_stage() -> None:
       checked for every open trial before any write → another trial's directory refusal never
       holds a void back
     - canary directory not a real one → named WARN, no further canary written this cycle
+    - a foreign-hash void an ingest held → retried first; while held, or once it lands, that
+      trial's canary is neither written nor renewed; a held record unreadable → none written
     - ledger fault: named WARN, never a failed cycle · --dry-run: the caller skips the stage
     """
     if not HAS_PG_LOOP_WRITE:
@@ -10261,6 +10272,10 @@ def run_trial_stage() -> None:
             "no trial canary written this cycle",
         )
         return
+    skipped = _retry_pending_trial_voids(trials)
+    if skipped is None:
+        return
+    trials = [trial for trial in trials if trial.key not in skipped]
     past_bound = [trial for trial in trials if _is_unstarted_past_bound(trial)]
     for trial in past_bound:
         _void_unstarted_trial(trial)
@@ -10477,10 +10492,14 @@ AA = SimpleNamespace(
             "WHERE m.agent_id = o.agent_id)) FROM core.outcomes o "
             "WHERE o.agent = ANY(%(agents)s) AND o.record_ts >= %(start)s AND o.record_ts < %(end)s"
         ),
-        # the given salt ids that name an aa-start or aa-restart row
+        # the given salt ids that name one of the events → (id, event, agent, canary hash, whether
+        # its trial has a <live trial key>:decision row)
         SALT_ROWS=(
-            "SELECT id FROM core.autoagent_trial_ledger "
-            "WHERE event = ANY(%(events)s) AND id = ANY(%(ids)s)"
+            "SELECT s.id, s.event, s.agent, s.payload->'canary'->>'text_sha256', EXISTS ("
+            "SELECT 1 FROM core.autoagent_trial_ledger d "
+            "WHERE d.dedupe_key = s.trial_key || ':decision') "
+            "FROM core.autoagent_trial_ledger s "
+            "WHERE s.event = ANY(%(events)s) AND s.id = ANY(%(ids)s)"
         ),
         # MANIFEST spool closes recorded from the window start → (spool, lines read, lines without a row)
         SPOOL_CLOSES=(
@@ -10571,6 +10590,8 @@ CANARY = SimpleNamespace(
         # a void the ledger did not take, beside the daemon's other markers until a cycle records it
         # no .json suffix, as the other markers → outside the doctor's *.json cycle-report scan
         PENDING_VOID=("daemon-reports", ".aa-pending-void"),
+        # one entry per trial-leg void the ledger did not take, same rule
+        TRIAL_PENDING_VOIDS=("daemon-reports", ".trial-pending-voids"),
     ),
 )
 
@@ -14025,6 +14046,37 @@ class DeliveryBinding:
     latest: AaStart | None = None
     fault: str | None = None  # set → no row is bound this ingest
     is_voided: bool = False
+    trials: dict[str, TrialBinding] = field(default_factory=dict)  # agent → its open live trial
+    voided: set[str] = field(default_factory=set)  # trial keys voided this ingest
+
+
+class TrialBinding(NamedTuple):
+    """An open live trial as the ingest binds to it."""
+
+    agent: str
+    key: str
+    pattern_id: int | None
+    text_sha256: str | None
+    committed_at: datetime  # the pre-registration's recorded_at
+    started_at: datetime | None  # None = no start record readable
+
+
+class SaltRows(NamedTuple):
+    """One salt read: the A/A salt ids, and each decided live pre-registration's (agent, hash)."""
+
+    aa_ids: frozenset[int]
+    decided: dict[int, tuple[str, str | None]]
+
+
+class TrialVoid(NamedTuple):
+    """A trial-leg foreign-hash void — also its pending record while the ledger refuses it."""
+
+    key: str
+    agent: str
+    pattern_id: int | None
+    text_sha256: str | None  # None = no hash the hook recorded
+    spool: str
+    line_offset: int
 
 
 @dataclass
@@ -14232,11 +14284,19 @@ def bind_manifest_deliveries(
 ) -> None:
     """Bind each delivered row to a trial (plan → Read-side binding); never raises.
 
-    - A roster agent's row started in the open A/A's window binds to it: a delivered hash other
+    - A row of an agent with an open live trial, started at or after its pre-registration's
+      commit: the trial's canary hash binds — filed at the start when started at or after the
+      start record's second, else in no arm; a racing row is neither bound nor foreign; any
+      other hash voids the trial through its <live trial key>:decision row and the file is
+      removed — once per trial and ingest, a void the ledger does not take held until a trial
+      stage records it.
+    - Any other roster row started in the open A/A's window binds to it: a delivered hash other
       than the A/A text's voids the A/A, whatever salt the row carries.
-    - Any other row is a delivery with no open trial, and its agent's canary file is removed —
-      unless its salt names an aa-start or aa-restart row and its hash is the A/A text: the
-      racing row of an A/A closed or restarted since.
+    - Any other row is a delivery with no open trial: its unbound row, a named WARN, and its
+      agent's canary file removed unless the agent has an open trial — no racing row gets any.
+    - A racing row: its salt names an aa-start or aa-restart row and its hash is the A/A text's,
+      or its salt names a decided live pre-registration of its own agent and its hash is that
+      pre-registration's canary hash.
     - The open state or the salt rows unreadable → no row bound, a named WARN with the count;
       those rows are never bound later.
     """
@@ -14247,9 +14307,16 @@ def bind_manifest_deliveries(
     if binding.fault is not None:
         _warn_unbound(spool, len(delivered), binding.fault)
         return
-    outside = [row for row in delivered if not _bind_to_open_aa(row, binding)]
-    if outside:
-        _bind_outside_window(spool, outside)
+    in_trial = [row for row in delivered if _get_row_trial(row, binding) is not None]
+    trial_offsets = {row.line_offset for row in in_trial}
+    outside = [
+        row
+        for row in delivered
+        if row.line_offset not in trial_offsets and not _bind_to_open_aa(row, binding)
+    ]
+    foreign = [row for row in in_trial if not _is_trial_hash(row, binding)]
+    _log_trial_filing(spool, [row for row in in_trial if row not in foreign], binding)
+    _bind_unjudged(spool, foreign, outside, binding)
 
 
 def _read_binding_state(binding: DeliveryBinding) -> None:
@@ -14263,6 +14330,87 @@ def _read_binding_state(binding: DeliveryBinding) -> None:
         binding.latest = _read_open_aa_start()
     except AaStateUnreadable as exc:
         binding.fault = f"open A/A state unreadable: {exc}"
+        return
+    try:
+        binding.trials = _read_trial_bindings()
+    except Exception as exc:  # noqa: BLE001 — any read fault leaves the rows unbound, named
+        binding.fault = f"open trial state unreadable: {_describe_fault(exc)}"
+
+
+def _read_trial_bindings() -> dict[str, TrialBinding]:
+    """Agent (hook_path_safe_key form) → its open live trial, the latest when several; raises on a
+    PG fault."""
+    with _pg_connect() as conn, conn.cursor() as cur:
+        cur.execute(LIVE_TRIAL.BINDING_SQL, (TRIAL_LEDGER.EVENT.LIVE_PREREGISTRATION,))
+        rows = cur.fetchall()
+    return {
+        CANARY.UNSAFE_KEY.sub("", agent): TrialBinding(
+            agent, key, pattern_id, text_sha256, committed_at, _get_start_instant(started_at)
+        )
+        for agent, key, pattern_id, text_sha256, committed_at, started_at in rows
+    }
+
+
+def _get_start_instant(value: str | None) -> datetime | None:
+    """The start record's started_at; unreadable → None, so no row is filed at a guessed start."""
+    try:
+        return datetime.fromisoformat(value) if isinstance(value, str) else None
+    except ValueError:
+        return None
+
+
+def _get_row_trial(row: ManifestRow, binding: DeliveryBinding) -> TrialBinding | None:
+    """The agent's open trial when the row started at or after its commit's second."""
+    trial = binding.trials.get(row.agent_type)
+    if trial is None or row.started_at < trial.committed_at.replace(microsecond=0):
+        return None
+    return trial
+
+
+def _is_trial_hash(row: ManifestRow, binding: DeliveryBinding) -> bool:
+    return row.delivered_hash == binding.trials[row.agent_type].text_sha256
+
+
+def _log_trial_filing(spool: str, rows: list[ManifestRow], binding: DeliveryBinding) -> None:
+    """One INFO line per trial: its rows bound, and how many are filed at its start."""
+    by_trial: dict[str, list[ManifestRow]] = defaultdict(list)
+    for row in rows:
+        by_trial[row.agent_type].append(row)
+    for agent, bound in by_trial.items():
+        trial = binding.trials[agent]
+        start = trial.started_at.replace(microsecond=0) if trial.started_at else None
+        filed = sum(1 for row in bound if start is not None and row.started_at >= start)
+        sys.stderr.write(
+            f"[daemon-cycle] INFO: manifest binding — trial {trial.key}: {len(bound)} delivered "
+            f"row(s) of {spool} bound, {filed} filed at its start, {len(bound) - filed} in no arm\n"
+        )
+
+
+def _bind_unjudged(
+    spool: str, foreign: list[ManifestRow], outside: list[ManifestRow], binding: DeliveryBinding
+) -> None:
+    """The rows the racing predicate judges: one salt read; a fault leaves them unbound, named."""
+    rows = foreign + outside
+    if not rows:
+        return
+    try:
+        salts = _read_salt_rows(frozenset(row.salt_id for row in rows if row.salt_id is not None))
+    except Exception as exc:  # noqa: BLE001 — any read fault leaves the rows unbound, named
+        _warn_unbound(spool, len(rows), f"salt rows unreadable: {_describe_fault(exc)}")
+        return
+    for row in foreign:
+        if not _is_racing_row(row, salts):
+            _void_trial_row(spool, row, binding)
+    for row in outside:
+        if not _is_racing_row(row, salts):
+            _bind_outside_window(spool, row, binding)
+
+
+def _is_racing_row(row: ManifestRow, salts: SaltRows) -> bool:
+    if row.salt_id in salts.aa_ids:
+        return row.delivered_hash == _get_text_sha256(CANARY.AA_TEXT)
+    decided = salts.decided.get(row.salt_id) if row.salt_id is not None else None
+    return decided == (row.agent_type, row.delivered_hash)
 
 
 def _bind_to_open_aa(row: ManifestRow, binding: DeliveryBinding) -> bool:
@@ -14279,24 +14427,120 @@ def _bind_to_open_aa(row: ManifestRow, binding: DeliveryBinding) -> bool:
     return True
 
 
-def _bind_outside_window(spool: str, rows: list[ManifestRow]) -> None:
-    salt_ids = frozenset(row.salt_id for row in rows if row.salt_id is not None)
-    try:
-        aa_salt_ids = _read_aa_salt_ids(salt_ids) if salt_ids else frozenset()
-    except Exception as exc:  # noqa: BLE001 — any read fault leaves the rows unbound, named
-        _warn_unbound(spool, len(rows), f"salt rows unreadable: {_describe_fault(exc)}")
-        return
-    aa_sha256 = _get_text_sha256(CANARY.AA_TEXT)
-    for row in rows:
-        if row.salt_id in aa_salt_ids and row.delivered_hash == aa_sha256:
-            continue
-        _write_unbound_delivery(spool, row)
-        sys.stderr.write(
-            f"[daemon-cycle] WARN: manifest binding — {row.agent_type} canary delivered with no "
-            f"open trial ({spool} line {row.line_offset}, salt_id={row.salt_id}, "
-            f"delivered_hash={row.delivered_hash})\n"
-        )
+def _bind_outside_window(spool: str, row: ManifestRow, binding: DeliveryBinding) -> None:
+    """A delivery with no open trial: its unbound row and WARN; the file removed unless the agent
+    has an open trial, which owns it."""
+    _write_unbound_delivery(spool, row)
+    sys.stderr.write(
+        f"[daemon-cycle] WARN: manifest binding — {row.agent_type} canary delivered with no "
+        f"open trial ({spool} line {row.line_offset}, salt_id={row.salt_id}, "
+        f"delivered_hash={row.delivered_hash})\n"
+    )
+    if row.agent_type not in binding.trials:
         _delete_canaries([_get_canary_path(row.agent_type)], "delivered with no open trial")
+
+
+def _void_trial_row(spool: str, row: ManifestRow, binding: DeliveryBinding) -> None:
+    """The trial's first foreign row voids it and removes its file; a later one binds silently."""
+    trial = binding.trials[row.agent_type]
+    if trial.key in binding.voided:
+        return
+    binding.voided.add(trial.key)
+    void = TrialVoid(
+        trial.key, trial.agent, trial.pattern_id, row.delivered_hash, spool, row.line_offset
+    )
+    if not _write_trial_void(void, "manifest binding"):
+        _put_pending_trial_void(void)
+    _delete_canaries([_get_canary_path(trial.agent)], f"trial {trial.key} voided")
+
+
+def _write_trial_void(void: TrialVoid, area: str) -> bool:
+    """Its <live trial key>:decision row → True when it landed or the trial was already decided; a
+    void the ledger did not take WARNs, False."""
+    detail = {"reason": CANARY.VOID_REASON, "agent": void.agent, "text_sha256": void.text_sha256}
+    label = void.text_sha256 or "(unrecorded)"
+    cause = (
+        f"{void.agent}'s canary text {label} is not the pre-registered one ({void.spool} line "
+        f"{void.line_offset}"
+    )
+    try:
+        landed = _write_live_decision(void.key, void.agent, void.pattern_id, {"void": detail})
+    except Exception as exc:  # noqa: BLE001 — a record fault, never a failed cycle
+        sys.stderr.write(
+            f"[daemon-cycle] WARN: {area} — trial {void.key} void not recorded: {cause}): "
+            f"{_describe_fault(exc)}; it stays pending — no canary is written or renewed for "
+            "that trial until a cycle records it\n"
+        )
+        return False
+    if landed == 1:
+        sys.stderr.write(
+            f"[daemon-cycle] WARN: {area} — trial {void.key} voided: {cause}, "
+            f"{void.key}:decision)\n"
+        )
+    else:  # 0 = the once-only key taken by another decider (or the ledger absent)
+        sys.stderr.write(
+            f"[daemon-cycle] INFO: {area} — trial {void.key} already decided: no foreign-hash "
+            "void written\n"
+        )
+    return True
+
+
+def _get_pending_trial_void_path(key: str) -> Path:
+    # sha256 of the key → one entry per trial whatever bytes the key holds
+    name = hashlib.sha256(key.encode("utf-8")).hexdigest()
+    return ga_paths.get_data_root().joinpath(*CANARY.SEGMENTS.TRIAL_PENDING_VOIDS, name)
+
+
+def _put_pending_trial_void(void: TrialVoid) -> None:
+    """Written whole — a temp file, then a rename — so a later read sees the record or none."""
+    path = _get_pending_trial_void_path(void.key)
+    temp = path.with_name(f".{path.name}.{os.getpid()}.tmp")
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        temp.write_text(json.dumps(void._asdict()), encoding="utf-8")
+        temp.replace(path)
+    except OSError as exc:
+        _warn_trial(
+            f"trial {void.key} pending void not kept at {path}: {_describe_fault(exc)}",
+            "no later cycle retries it",
+        )
+
+
+def _retry_pending_trial_voids(trials: list[TrialCanary]) -> frozenset[str] | None:
+    """Each held void retried before any canary write → the trial keys this stage writes no
+    canary for: still held, or decided by the retry. None = a held record unreadable → no trial
+    written."""
+    held_dir = ga_paths.get_data_root().joinpath(*CANARY.SEGMENTS.TRIAL_PENDING_VOIDS)
+    open_keys = {trial.key for trial in trials}
+    skipped: set[str] = set()
+    try:
+        paths = sorted(path for path in held_dir.glob("*") if not path.name.startswith("."))
+        voids = [
+            (path, TrialVoid(**json.loads(path.read_text(encoding="utf-8")))) for path in paths
+        ]
+    except (OSError, ValueError, TypeError, RecursionError) as exc:
+        _warn_trial(
+            f"pending trial voids in {held_dir} unreadable: {_describe_fault(exc)}",
+            "no trial canary written or renewed while they stay unread",
+        )
+        return None
+    for path, void in voids:
+        if void.key in open_keys and not _write_trial_void(void, "trial stage"):
+            skipped.add(void.key)
+            continue
+        skipped.add(void.key)
+        _delete_pending_trial_void(path)
+    return frozenset(skipped)
+
+
+def _delete_pending_trial_void(path: Path) -> None:
+    try:
+        path.unlink(missing_ok=True)
+    except OSError as exc:
+        _warn_trial(
+            f"pending trial void {path} not removed: {_describe_fault(exc)}",
+            "the next writing cycle finds its trial decided and drops it",
+        )
 
 
 def _write_unbound_delivery(spool: str, row: ManifestRow) -> None:
@@ -14400,15 +14644,27 @@ def _read_stored_manifest_offsets(spool: str) -> frozenset[int]:
         return frozenset(offset for (offset,) in cur.fetchall())
 
 
-def _read_aa_salt_ids(salt_ids: frozenset[int]) -> frozenset[int]:
-    """The given salt ids that name an aa-start or aa-restart row. Raises on a PG fault."""
+def _read_salt_rows(salt_ids: frozenset[int]) -> SaltRows:
+    """The given salt ids naming an aa-start or aa-restart row, and those naming a decided live
+    pre-registration with its agent (hook_path_safe_key form) and canary hash. Raises on a PG
+    fault."""
+    if not salt_ids:
+        return SaltRows(frozenset(), {})
+    events = TRIAL_LEDGER.EVENT
     params = {
-        "events": [TRIAL_LEDGER.EVENT.AA_START, TRIAL_LEDGER.EVENT.AA_RESTART],
+        "events": [events.AA_START, events.AA_RESTART, events.LIVE_PREREGISTRATION],
         "ids": sorted(salt_ids),
     }
     with _pg_connect() as conn, conn.cursor() as cur:
         cur.execute(AA.SQL.SALT_ROWS, params)
-        return frozenset(row_id for (row_id,) in cur.fetchall())
+        rows = cur.fetchall()
+    aa_ids = frozenset(row_id for row_id, event, *_ in rows if event != events.LIVE_PREREGISTRATION)
+    decided = {
+        row_id: (CANARY.UNSAFE_KEY.sub("", agent), text_sha256)
+        for row_id, event, agent, text_sha256, is_decided in rows
+        if event == events.LIVE_PREREGISTRATION and is_decided
+    }
+    return SaltRows(aa_ids, decided)
 
 
 def run_cycle(
