@@ -25,6 +25,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
+import uuid
 from collections.abc import Callable
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -1602,11 +1603,14 @@ class TestManifestIngestCycleWiring(unittest.TestCase):
 
 @unittest.skipIf(dc is None, f"daemon_cycle import failed: {_IMPORT_ERROR}")
 class TestSpawnManifestWriterLivePg(unittest.TestCase):
-    """The writer's real SQL on the ephemeral cluster; skips anywhere else."""
+    """The writer's and the binding reads' real SQL on the ephemeral cluster; skips anywhere
+    else."""
 
     _SPOOL = "inject-scope-rules.manifest.log.20261005T030000Z.4242.spool"
     # Built by live-pg-ephemeral.bats up to the migration adding the exposure columns.
     _ABSENT_DB = "spawn_manifest_exposure_absent"
+    # Built by live-pg-ephemeral.bats; cloned per test — the ledger is append-only.
+    _LEDGER_TEMPLATE = "trial_ledger_tpl"
 
     def setUp(self) -> None:
         self.conn = get_ephemeral_connection()
@@ -1624,6 +1628,132 @@ class TestSpawnManifestWriterLivePg(unittest.TestCase):
     def _get_rows(self, data: str, *, is_final: bool) -> list[tuple[object, ...]]:
         rows, _ = dc._get_manifest_rows(data.encode("utf-8"), is_final=is_final)
         return rows
+
+    def _use_ledger(self) -> None:
+        """A ledger clone this test owns, the daemon's reads pointed at it."""
+        import psycopg
+
+        dbname = f"mi_{os.getpid()}_{uuid.uuid4().hex[:8]}"
+        self._run_admin(f'CREATE DATABASE "{dbname}" TEMPLATE "{self._LEDGER_TEMPLATE}"')
+        self.addCleanup(self._run_admin, f'DROP DATABASE "{dbname}" WITH (FORCE)')
+        self.ledger = lambda: psycopg.connect(dbname=dbname, connect_timeout=2)
+        patcher = mock.patch.object(dc, "_pg_connect", self.ledger)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
+    @staticmethod
+    def _run_admin(statement: str) -> None:
+        import psycopg
+
+        with psycopg.connect(dbname="eph_bootstrap", connect_timeout=2, autocommit=True) as admin:
+            admin.execute(statement)
+
+    def _create_ledger_row(
+        self,
+        event: str,
+        payload: dict[str, object],
+        dedupe_key: str,
+        trial: SimpleNamespace | None = None,
+        recorded_at: datetime | None = None,
+    ) -> int:
+        """One ledger row → its id; a live trial's row carries its key, agent and pattern id."""
+        ledger = stub.get_trial_ledger()
+        columns = (trial.key, trial.agent, trial.pattern_id) if trial else (None, None, None)
+        actor = ledger.ACTOR.LIVE if trial else ledger.ACTOR.AA
+        with self.ledger() as conn:
+            return conn.execute(
+                "INSERT INTO core.autoagent_trial_ledger (recorded_at, trial_key, agent,"
+                " learning_pattern_id, event, actor, payload, dedupe_key) VALUES"
+                " (COALESCE(%s::timestamptz, CURRENT_TIMESTAMP), %s, %s, %s, %s, %s, %s::jsonb, %s)"
+                " RETURNING id",
+                (recorded_at, *columns, event, actor, json.dumps(payload), dedupe_key),
+            ).fetchone()[0]
+
+    def _create_live_trial(self, agent: str, offset: int) -> SimpleNamespace:
+        """A live pre-registration of agent's trial → its row id, key, pattern id, canary hash
+        and commit instant."""
+        text = f"{_TRIAL_TEXT} ({agent})"
+        trial = SimpleNamespace(
+            key=f"{7101 + offset:064x}",
+            agent=agent,
+            pattern_id=51 + offset,
+            sha256=hashlib.sha256(text.encode("utf-8")).hexdigest(),
+            committed_at=_TRIAL.COMMIT + timedelta(minutes=offset),
+        )
+        payload = {
+            "proposal_id": 7101 + offset,
+            "canary": {"text": text, "text_sha256": trial.sha256},
+        }
+        event = stub.get_trial_ledger().EVENT.LIVE_PREREGISTRATION
+        trial.id = self._create_ledger_row(event, payload, trial.key, trial, trial.committed_at)
+        return trial
+
+    def _create_live_trials(self) -> SimpleNamespace:
+        """Three live trials: unstarted, started (a :start row) and decided (a :decision row
+        only) — with the decision row's id."""
+        states = ("unstarted", "started", "decided")
+        trials = SimpleNamespace(
+            **{
+                state: self._create_live_trial(agent, offset)
+                for offset, (state, agent) in enumerate(zip(states, _ROSTER, strict=True))
+            }
+        )
+        event = stub.get_trial_ledger().EVENT
+        started, decided = trials.started, trials.decided
+        start = {"started_at": _TRIAL.START.isoformat(), "text_sha256": started.sha256}
+        self._create_ledger_row(event.LIVE_START, start, f"{started.key}:start", started)
+        trials.decision_id = self._create_ledger_row(
+            event.LIVE_DECISION, {"outcome": "stop"}, f"{decided.key}:decision", decided
+        )
+        return trials
+
+    def test_the_binding_read_keys_each_undecided_live_trial_by_agent_with_its_hash_and_instants(
+        self,
+    ) -> None:
+        self._use_ledger()
+        trials = self._create_live_trials()
+
+        bindings = dc._read_trial_bindings()
+
+        self.assertEqual(
+            bindings,
+            {
+                trial.agent: dc.TrialBinding(
+                    trial.agent,
+                    trial.key,
+                    trial.pattern_id,
+                    trial.sha256,
+                    trial.committed_at,
+                    started_at,
+                )
+                for trial, started_at in ((trials.unstarted, None), (trials.started, _TRIAL.START))
+            },
+        )
+
+    def test_the_salt_read_names_given_aa_salts_and_decided_pre_registrations_with_agent_and_hash(
+        self,
+    ) -> None:
+        self._use_ledger()
+        trials = self._create_live_trials()
+        event = stub.get_trial_ledger().EVENT
+        aa_start = self._create_ledger_row(event.AA_START, {}, "aa-start:after:0")
+        aa_restart = self._create_ledger_row(
+            event.AA_RESTART, {}, f"aa-restart:{aa_start}:2026-10-06"
+        )
+        aa_result = self._create_ledger_row(event.AA_RESULT, {}, f"aa-result:{aa_start}")
+        self._create_ledger_row(event.AA_START, {}, f"aa-start:after:{aa_start}")  # not given
+        given = {aa_start, aa_restart, aa_result, trials.decision_id}
+        given |= {trial.id for trial in (trials.unstarted, trials.started, trials.decided)}
+
+        salts = dc._read_salt_rows(frozenset(given))
+
+        decided = trials.decided
+        self.assertEqual(
+            salts,
+            dc.SaltRows(
+                frozenset({aa_start, aa_restart}), {decided.id: (decided.agent, decided.sha256)}
+            ),
+        )
 
     def test_a_re_read_adds_only_lines_appended_since_and_counts_every_row(self) -> None:
         first = _get_line() * 2

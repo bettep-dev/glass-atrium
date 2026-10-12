@@ -198,7 +198,7 @@ PY
   _assert_live_module test_poisoned_window_exclusion TestPoisonedRowExcludedFromLookback
 }
 
-@test "the spawn-manifest writer live class runs against the migrated cluster, none skipped" {
+@test "the spawn-manifest writer and binding-read live class runs against the migrated cluster, none skipped" {
   _assert_live_module test_manifest_ingest TestSpawnManifestWriterLivePg
 }
 
