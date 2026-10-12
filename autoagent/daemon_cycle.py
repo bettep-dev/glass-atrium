@@ -10242,7 +10242,10 @@ def run_trial_stage() -> None:
     - an unstarted trial's existing file (a kill between the write and its row) → unrecorded:
       removed under the same rule
     - unstarted at the pre-registration's recorded_at + the horizon it states → its unstarted
-      void decision row, any file it holds removed, no write; no stated horizon → named WARN
+      void decision row, any file it holds removed, no write; no stated horizon → named WARN;
+      checked for every open trial before any write → another trial's directory refusal never
+      holds a void back
+    - canary directory not a real one → named WARN, no further canary written this cycle
     - ledger fault: named WARN, never a failed cycle · --dry-run: the caller skips the stage
     """
     if not HAS_PG_LOOP_WRITE:
@@ -10258,12 +10261,10 @@ def run_trial_stage() -> None:
             "no trial canary written this cycle",
         )
         return
-    for trial in trials:
-        try:
-            _put_trial_canary(trial)
-        except CanaryDirUnsafe as exc:
-            _warn_trial(str(exc), "no trial canary written this cycle")
-            return
+    past_bound = [trial for trial in trials if _is_unstarted_past_bound(trial)]
+    for trial in past_bound:
+        _void_unstarted_trial(trial)
+    _put_trial_canaries([trial for trial in trials if trial not in past_bound])
 
 
 def _read_trial_canaries() -> list[TrialCanary]:
@@ -10273,11 +10274,17 @@ def _read_trial_canaries() -> list[TrialCanary]:
     return [TrialCanary(*row) for row in rows]
 
 
+def _put_trial_canaries(trials: list[TrialCanary]) -> None:
+    for trial in trials:
+        try:
+            _put_trial_canary(trial)
+        except CanaryDirUnsafe as exc:
+            _warn_trial(str(exc), "no further trial canary written this cycle")
+            return
+
+
 def _put_trial_canary(trial: TrialCanary) -> None:
     """Raises CanaryDirUnsafe when the canary directory is not a real one."""
-    if not trial.is_started and _is_past_unstarted_bound(trial):
-        _void_unstarted_trial(trial)
-        return
     text = _get_trial_canary_text(trial)
     if text is None:
         return
@@ -10295,9 +10302,12 @@ def _put_trial_canary(trial: TrialCanary) -> None:
     _create_trial_canary(trial, text, path)
 
 
-def _is_past_unstarted_bound(trial: TrialCanary) -> bool:
-    """The cycle instant is at or past recorded_at + the horizon the pre-registration states;
-    no readable horizon → named WARN, False — a daemon default is not the stated horizon."""
+def _is_unstarted_past_bound(trial: TrialCanary) -> bool:
+    """Unstarted, and the cycle instant is at or past recorded_at + the horizon the
+    pre-registration states; no readable horizon → named WARN, False — a daemon default is not
+    the stated horizon."""
+    if trial.is_started:
+        return False
     horizon_days = trial.payload.get("horizon_days") if isinstance(trial.payload, dict) else None
     try:
         # a bool is an int · `not > 0` also refuses NaN · an unrepresentable bound overflows

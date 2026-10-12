@@ -2163,6 +2163,36 @@ class TrialCanaryTest(_ShadowFixture):
                     stderr_text,
                 )
 
+    def test_an_unstarted_trial_past_its_horizon_is_voided_though_an_earlier_write_is_refused(
+        self,
+    ) -> None:
+        self._open_live_trial()
+        self._stage(_NOW)  # the earlier trial started → its rewrite is the stage's first write
+        first = self._get_preregistration()
+        later_key = f"{_PROPOSAL_ID + 1:064x}"
+        self.ledger.write(
+            first.event,
+            first.actor,
+            {**first.payload, "proposal_id": _PROPOSAL_ID + 1},
+            trial_key=later_key,
+            agent=_POOL_AGENT,
+            learning_pattern_id=_PATTERN_ID,
+            dedupe_key=later_key,
+        )
+        learning = self.canary_path.parents[1]
+        outside = learning.parent.parent / "outside-learning"
+        learning.rename(outside)
+        learning.symlink_to(outside, target_is_directory=True)
+        bound = first.recorded_at + timedelta(days=first.payload["horizon_days"])
+
+        stderr_text = self._stage(bound)
+
+        self.assertEqual(
+            [(row.trial_key, row.agent) for row in self._get_decisions()],
+            [(later_key, _POOL_AGENT)],
+        )
+        self.assertIn("canary directory not a real directory", stderr_text)
+
     def test_a_decided_trial_gets_no_canary(self) -> None:
         key = self._open_live_trial()
         trial_ledger = stub.get_trial_ledger()
