@@ -10322,12 +10322,12 @@ def _put_trial_canary(trial: TrialCanary) -> None:
         _put_trial_file(trial, text, _get_utc_now())
         return
     path = _get_canary_path(trial.agent)
-    if path in _get_canary_files():
+    if path in _get_canary_files(STAGE_AREA.TRIAL):
         _warn_trial(
             f"trial {trial.key}: {trial.agent}'s canary file has no start record",
-            "removed as unrecorded; the next writing cycle writes it again",
+            "removal attempted as unrecorded; a writing cycle after it is gone writes it again",
         )
-        _delete_canaries([path], f"trial {trial.key} start not recorded")
+        _delete_canaries([path], f"trial {trial.key} start not recorded", STAGE_AREA.TRIAL)
         return
     _create_trial_canary(trial, text, path)
 
@@ -10368,8 +10368,8 @@ def _void_unstarted_trial(trial: TrialCanary) -> None:
     else:
         _log_unstarted_void(trial, landed)
     path = _get_canary_path(trial.agent)
-    if path in _get_canary_files():
-        _delete_canaries([path], f"trial {trial.key} unstarted")
+    if path in _get_canary_files(STAGE_AREA.TRIAL):
+        _delete_canaries([path], f"trial {trial.key} unstarted", STAGE_AREA.TRIAL)
 
 
 def _log_unstarted_void(trial: TrialCanary, landed: int) -> None:
@@ -10416,9 +10416,9 @@ def _create_trial_canary(trial: TrialCanary, text: str, path: Path) -> None:
         return
     _warn_trial(
         f"trial {trial.key}: {trial.agent}'s start record not written ({fault})",
-        "its canary file removed; the next writing cycle retries",
+        "removal attempted on its canary file; the next writing cycle retries",
     )
-    _delete_canaries([path], f"trial {trial.key} start not recorded")
+    _delete_canaries([path], f"trial {trial.key} start not recorded", STAGE_AREA.TRIAL)
 
 
 def _get_trial_canary_text(trial: TrialCanary) -> str | None:
@@ -10480,8 +10480,15 @@ def _write_trial_start(trial: TrialCanary, started_at: datetime) -> str | None:
     return None if landed == 1 else f"{landed} rows landed"
 
 
+STAGE_AREA = SimpleNamespace(AA="A/A harness", TRIAL="trial stage")
+
+
+def _warn_stage(area: str, cause: str, scope: str) -> None:
+    sys.stderr.write(f"[daemon-cycle] WARN: {area} — {cause}; {scope}\n")
+
+
 def _warn_trial(cause: str, scope: str) -> None:
-    sys.stderr.write(f"[daemon-cycle] WARN: trial stage — {cause}; {scope}\n")
+    _warn_stage(STAGE_AREA.TRIAL, cause, scope)
 
 
 _INSTALL_ROOT = Path(__file__).resolve().parent.parent
@@ -11068,10 +11075,10 @@ def _get_canary_path(agent: str) -> Path:
     return _get_canary_dir() / f"{CANARY.UNSAFE_KEY.sub('', agent)}.json"
 
 
-def _get_canary_files() -> list[Path]:
+def _get_canary_files(area: str = STAGE_AREA.AA) -> list[Path]:
     """Every entry in the canary directory, any name or extension case — the hook decides delivery
     by an exact listed name, so the daemon lists by name too. Not listable, or not a real
-    directory → WARN, none."""
+    directory → WARN under `area`, the calling stage; none."""
     try:
         with _open_canary_dir() as dir_fd, os.scandir(dir_fd) as entries:
             # a real directory cannot be unlinked; a symlink to one can, and the hook refuses it
@@ -11081,10 +11088,11 @@ def _get_canary_files() -> list[Path]:
     except FileNotFoundError:
         return []
     except CanaryDirUnsafe as exc:
-        _warn_aa(str(exc), "no canary file is swept or removed this cycle")
+        _warn_stage(area, str(exc), "no canary file is swept or removed this cycle")
         return []
     except OSError as exc:
-        _warn_aa(
+        _warn_stage(
+            area,
             f"canary directory not listed: {_describe_fault(exc)}",
             "no canary file is swept or removed this cycle",
         )
@@ -11291,37 +11299,46 @@ def _delete_pending_void() -> None:
         )
 
 
-def _delete_canaries(paths: list[Path], reason: str) -> None:
+class CanaryRemoval(NamedTuple):
+    """Why an entry is removed, and the stage a removal fault is named under."""
+
+    reason: str
+    area: str
+
+
+def _delete_canaries(paths: list[Path], reason: str, area: str = STAGE_AREA.AA) -> None:
     """Remove each canary entry by name through a descriptor on the canary directory; not a real
-    directory → WARN, none removed."""
+    directory → WARN, none removed. A fault is named under `area`, the calling stage."""
     if not paths:
         return
     try:
         with _open_canary_dir() as dir_fd:
             for path in paths:
-                _delete_canary(dir_fd, path, reason)
+                _delete_canary(dir_fd, path, CanaryRemoval(reason, area))
     except FileNotFoundError:
         return  # no canary directory → no entry to remove
     except CanaryDirUnsafe as exc:
-        _warn_aa(str(exc), "no canary file is removed this cycle")
+        _warn_stage(area, str(exc), "no canary file is removed this cycle")
     except OSError as exc:
-        _warn_aa(
+        _warn_stage(
+            area,
             f"canary directory not opened: {_describe_fault(exc)}",
             "the next writing cycle retries",
         )
 
 
-def _delete_canary(dir_fd: int, path: Path, reason: str) -> None:
+def _delete_canary(dir_fd: int, path: Path, removal: CanaryRemoval) -> None:
     try:
         with contextlib.suppress(FileNotFoundError):
             os.unlink(path.name, dir_fd=dir_fd)
     except OSError as exc:
-        _warn_aa(
+        _warn_stage(
+            removal.area,
             f"canary {path} not removed: {_describe_fault(exc)}",
             "the next writing cycle retries",
         )
         return
-    sys.stderr.write(f"[daemon-cycle] INFO: canary {path} removed — {reason}\n")
+    sys.stderr.write(f"[daemon-cycle] INFO: canary {path} removed — {removal.reason}\n")
 
 
 def _get_aa_restart(latest: AaStart) -> AaRestart | None:
@@ -12147,7 +12164,7 @@ def _describe_fault(exc: Exception) -> str:
 
 
 def _warn_aa(cause: str, scope: str) -> None:
-    sys.stderr.write(f"[daemon-cycle] WARN: A/A harness — {cause}; {scope}\n")
+    _warn_stage(STAGE_AREA.AA, cause, scope)
 
 
 def classify_failure_rationale(rationale: str) -> str:

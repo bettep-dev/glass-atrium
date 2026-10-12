@@ -2127,6 +2127,61 @@ class TrialCanaryTest(_ShadowFixture):
         )
         self.assertIsNotNone(self._get_canary())
 
+    def test_a_refused_canary_removal_is_stated_as_attempted_and_named_under_the_trial_stage(
+        self,
+    ) -> None:
+        write = self.ledger.write
+        start_event = stub.get_trial_ledger().EVENT.LIVE_START
+        unlink = os.unlink
+        path = dc._get_canary_path(_AGENT)
+        fault = f"WARN: trial stage — canary {path} not removed: PermissionError"
+
+        def _refuse_canary(name: str, *, dir_fd: int | None = None) -> None:
+            if name == path.name:
+                raise PermissionError(13, "Permission denied", name)
+            unlink(name, dir_fd=dir_fd)
+
+        def _refuse_start(event, *args, **kwargs):
+            return 0 if event == start_event else write(event, *args, **kwargs)
+
+        def _leave_unrecorded_file() -> None:
+            self._stage(_NOW)
+            self._strip_starts()
+
+        # name, the trial's own WARN cause, arrange — the next stage run attempts the removal
+        rows = (
+            ("an unrecorded file", _START_WARN.UNRECORDED, _leave_unrecorded_file),
+            (
+                "a start-record fault",
+                _START_WARN.FAULT,
+                lambda: self._patch("_pg_write_trial_ledger_row", _refuse_start),
+            ),
+        )
+        for name, cause, arrange in rows:
+            with self.subTest(name):
+                self._patch("_pg_write_trial_ledger_row", write)
+                self.ledger.rows.clear()
+                path.unlink(missing_ok=True)
+                self.clock.now = _NOW
+                self._open_live_trial()
+                arrange()
+
+                with mock.patch.object(dc.os, "unlink", _refuse_canary):
+                    stderr_text = self._stage(_NEXT_NOW)
+
+                lines = stderr_text.splitlines()
+                self.assertEqual(
+                    ["removal attempted" in line for line in lines if cause in line], [True], name
+                )
+                self.assertEqual(
+                    [line for line in lines if "removed" in line and "not removed" not in line],
+                    [],
+                    name,
+                )
+                self.assertEqual([fault in line for line in lines].count(True), 1, name)
+                self.assertNotIn("A/A harness —", stderr_text, name)
+                self.assertTrue(path.exists(), name)
+
     def _get_decisions(self) -> list[_LedgerRow]:
         return self.ledger.get_rows(stub.get_trial_ledger().EVENT.LIVE_DECISION)
 
@@ -2296,6 +2351,15 @@ class TrialCanaryTest(_ShadowFixture):
             [(later_key, _POOL_AGENT)],
         )
         self.assertIn("canary directory not a real directory", stderr_text)
+        self.assertEqual(
+            [
+                line
+                for line in stderr_text.splitlines()
+                if "canary directory not a real directory" in line
+                and ("trial stage —" not in line or "A/A harness —" in line)
+            ],
+            [],
+        )
 
     def test_a_decided_trial_gets_no_canary(self) -> None:
         key = self._open_live_trial()
