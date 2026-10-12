@@ -1,12 +1,14 @@
 #!/usr/bin/env bats
 # doctor-canary-trial.bats — pins run_doctor's canary-trial warnings (lib/ga-doctor.sh §10 + §28).
 #
-# Four conditions cost a canary trial its evidence without failing anything, so each one is a
+# Five conditions cost a canary trial its evidence without failing anything, so each one is a
 # counted warning under the `canary-trial` breakdown term:
 #   · a shed canary — a DROP row with block=canary in the §10 shed log, kept apart from the
 #     scope-block drop count, whose remedy names a different cause;
 #   · a hash-mismatch void and a delivery bound to no open trial — trial-ledger rows the daemon
 #     writes at MANIFEST ingest;
+#   · an unstarted void — the trial-ledger row the daemon's trial stage writes for a trial whose
+#     canary was never first written by its pre-registered horizon;
 #   · an install with neither digest tool the hook probes, where no canary is ever delivered.
 # Every leg is read-only: the ledger read is one SELECT, and nothing is written.
 #
@@ -75,7 +77,7 @@ STUB
   stub_out exists '1'
   stub_rc exists 0
   stub_rc ledger 0
-  ledger_answer 0 0 '' ''
+  ledger_answer 0 0 0 '' '' ''
 }
 
 stub_out() {
@@ -86,10 +88,11 @@ stub_rc() {
   printf '%s' "$2" >"${STUB_STATE}/$1.rc"
 }
 
-# The ledger read's one row: void count, unbound count, void agents, unbound agents — unit-separator
-# delimited, so an empty agent list survives the split.
+# The ledger read's one row: the foreign-hash void, unstarted void and unbound-delivery counts, then
+# each population's agents in that order — unit-separator delimited, so an empty agent list survives
+# the split.
 ledger_answer() {
-  printf '%s\x1f%s\x1f%s\x1f%s' "$1" "$2" "$3" "$4" >"${STUB_STATE}/ledger.out"
+  printf '%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s' "$1" "$2" "$3" "$4" "$5" "$6" >"${STUB_STATE}/ledger.out"
 }
 
 # A PATH with every command of the stub-first PATH except the two digest tools the inject hook
@@ -217,15 +220,35 @@ utc_days_ago() {
 }
 
 @test "a hash-mismatch void in the ledger window warns and names the agent" {
-  ledger_answer 1 0 'glass-atrium-dev-shell' ''
+  ledger_answer 1 0 0 'glass-atrium-dev-shell' '' ''
   run_doctor_sandbox
   assert_output_has "warn : 1 canary trial void(s) for a foreign canary hash in the last 14d" || return 1
   assert_output_has "glass-atrium-dev-shell" || return 1
   assert_canary_term 1
 }
 
+@test "an unstarted void in the ledger window warns, names the agent, and counts under canary-trial" {
+  ledger_answer 0 1 0 '' 'glass-atrium-dev-shell' ''
+  run_doctor_sandbox
+  assert_output_has "warn : 1 canary trial void(s) for a trial that never started in the last 14d (agents: glass-atrium-dev-shell)" || return 1
+  assert_output_lacks "ok   : no canary void" || return 1
+  assert_canary_term 1
+}
+
+@test "an unstarted void beside a hash-mismatch void leaves the hash-mismatch count and agents as they were" {
+  ledger_answer 1 1 0 'glass-atrium-dev-shell' 'glass-atrium-qa-debugger' ''
+  run_doctor_sandbox
+  local foreign_line
+  foreign_line="$(printf '%s\n' "${output}" | grep -F -- 'for a foreign canary hash' || true)"
+  [[ "${foreign_line}" == *"warn : 1 canary trial void(s) for a foreign canary hash in the last 14d (agents: glass-atrium-dev-shell) — "* ]] || {
+    echo "the hash-mismatch line moved beside an unstarted void: '${foreign_line}' — output:" >&2
+    echo "${output}" >&2
+    return 1
+  }
+}
+
 @test "a delivery bound to no open trial warns and names the agents" {
-  ledger_answer 0 2 '' 'glass-atrium-qa-debugger,glass-atrium-dev-shell'
+  ledger_answer 0 0 2 '' '' 'glass-atrium-qa-debugger,glass-atrium-dev-shell'
   run_doctor_sandbox
   assert_output_has "warn : 2 canary delivery(ies) bound to no open trial in the last 14d" || return 1
   assert_output_has "glass-atrium-qa-debugger,glass-atrium-dev-shell" || return 1
@@ -233,17 +256,18 @@ utc_days_ago() {
 }
 
 @test "the ledger read is one read-only statement over the windowed void and unbound rows" {
-  ledger_answer 1 1 'glass-atrium-dev-shell' 'glass-atrium-dev-shell'
+  ledger_answer 1 1 1 'glass-atrium-dev-shell' 'glass-atrium-dev-shell' 'glass-atrium-dev-shell'
   run_doctor_sandbox
-  assert_canary_term 2
+  assert_canary_term 3
   local sql
   sql="$(awk '/^ledger$/{getline; on=1; next} on && /^>>>$/{on=0} on' "${STUB_STATE}/calls.log")"
   [[ -n "${sql}" ]] || {
     echo "no ledger statement recorded: $(cat -- "${STUB_STATE}/calls.log")" >&2
     return 1
   }
-  [[ "${sql}" == *"'foreign-canary-hash'"* && "${sql}" == *"'canary-unbound-delivery'"* ]] || {
-    echo "the ledger statement lacks the void reason or the unbound event: ${sql}" >&2
+  [[ "${sql}" == *"'foreign-canary-hash'"* && "${sql}" == *"'unstarted'"* \
+    && "${sql}" == *"'canary-unbound-delivery'"* ]] || {
+    echo "the ledger statement lacks a void reason or the unbound event: ${sql}" >&2
     return 1
   }
   ! printf '%s' "${sql}" | grep -Eiq '(^|[^a-z_])(insert|update|delete|truncate|alter|drop|create)([^a-z_]|$)' || {
@@ -266,7 +290,7 @@ utc_days_ago() {
     "probe-fail|exists-rc|canary trial ledger unread — the 'ga_doctor_canary_sandbox' existence probe failed"
     "absent-db|exists-empty|database 'ga_doctor_canary_sandbox' absent — no canary trial rows to check"
     "read-fail|ledger-rc|canary trial ledger unread — the read against 'ga_doctor_canary_sandbox' failed"
-    "malformed|ledger-junk|canary trial ledger unread — the read against 'ga_doctor_canary_sandbox' answered something other than two counts"
+    "malformed|ledger-junk|canary trial ledger unread — the read against 'ga_doctor_canary_sandbox' answered something other than three counts"
   )
   local row name kind want
   for row in "${rows[@]}"; do
