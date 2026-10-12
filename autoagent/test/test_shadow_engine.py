@@ -1909,10 +1909,18 @@ class TrialCanaryTest(_ShadowFixture):
         self,
     ) -> None:
         key = self._open_live_trial()
-        first = _NOW + timedelta(microseconds=250_000)
         digest = self._get_preregistration().payload["canary"]["text_sha256"]
+        # each reading advances the clock and notes whether the canary file stood at that instant
+        readings: list[tuple[str, bool]] = []
 
-        self._stage(first)
+        def _read_advancing_clock() -> datetime:
+            self.clock.now += timedelta(microseconds=250_000)
+            readings.append((self.clock.now.isoformat(), self.canary_path.exists()))
+            return self.clock.now
+
+        self._patch("_get_utc_now", _read_advancing_clock)
+        self._stage(_NOW)
+        self._patch("_get_utc_now", lambda: self.clock.now)
         self._stage(_NEXT_NOW)
 
         self.assertEqual(
@@ -1922,9 +1930,11 @@ class TrialCanaryTest(_ShadowFixture):
             ],
             [(key, _AGENT, _PATTERN_ID, stub.get_trial_ledger().ACTOR.LIVE, f"{key}:start")],
         )
+        started_at = self._get_starts()[0].payload["started_at"]
+        # the instant is a reading taken while the file did not yet stand
+        self.assertIn((started_at, False), readings)
         self.assertEqual(
-            self._get_starts()[0].payload,
-            {"started_at": first.isoformat(), "text_sha256": digest},
+            self._get_starts()[0].payload, {"started_at": started_at, "text_sha256": digest}
         )
         # the later cycle renews the lease from its own instant
         self.assertEqual(
