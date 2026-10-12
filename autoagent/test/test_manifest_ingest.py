@@ -1210,25 +1210,57 @@ class TestManifestDeliveryBinding(_IngestCase):
                 self.assertEqual(named is not None, is_named, f"{name}: {self.stderr}")
 
     def test_an_unreadable_ledger_binds_no_row_and_warns_by_name(self) -> None:
+        # name, faulting read, fault, whether the row is a foreign-hash row of an open trial
         rows = (
-            ("open-state read fault", "read", ConnectionError("server closed the connection")),
+            (
+                "open-state read fault",
+                "read",
+                ConnectionError("server closed the connection"),
+                False,
+            ),
             (
                 "ledger-absent schema",
                 "read",
                 RuntimeError('relation "core.autoagent_trial_ledger" does not exist'),
+                False,
             ),
-            ("salt-row read fault", "salt", ConnectionError("server closed the connection")),
-            ("open trial state read fault", "trials", ConnectionError("server closed the socket")),
+            (
+                "salt-row read fault",
+                "salt",
+                ConnectionError("server closed the connection"),
+                False,
+            ),
+            (
+                "salt-row read fault on a foreign-hash trial row",
+                "salt",
+                ConnectionError("server closed the connection"),
+                True,
+            ),
+            (
+                "open trial state read fault",
+                "trials",
+                ConnectionError("server closed the socket"),
+                False,
+            ),
         )
         self._open_aa()
-        for hour, (name, seam, fault) in enumerate(rows):
+        for hour, (name, seam, fault, is_trial_row) in enumerate(rows):
             with self.subTest(name):
                 self.ledger.fault.update(read=None, salt=None, trials=None)
                 self.ledger.fault[seam] = fault
+                self.ledger.rows.clear()
+                self.ledger.trials.clear()
+                if is_trial_row:
+                    self._open_trial()
                 self._put_canaries()
                 self._append(
                     self.live_log,
-                    _get_delivery_line(_ROSTER[0], text_sha256=_PLAIN_SHA256, ts=_AA.BEFORE_WINDOW),
+                    _get_delivery_line(
+                        _ROSTER[0],
+                        salt=_TRIAL.SALT if is_trial_row else _AA.SALT,
+                        text_sha256=_PLAIN_SHA256,
+                        ts=_AA.IN_WINDOW if is_trial_row else _AA.BEFORE_WINDOW,
+                    ),
                 )
                 ingest = self._ingest(_CYCLE_1 + timedelta(hours=hour))
 
@@ -1277,7 +1309,9 @@ class TestManifestCloseRecord(_IngestCase):
 
         self.assertFalse(spool.exists(), "a NUL-bearing line kept its spool open")
         (close,) = ingest.closed
-        self.assertEqual((close.spool, close.lines_read, close.rows_present), (spool.name, 2, 1))
+        self.assertEqual(
+            (close.spool, close.lines_read, close.rows_present), (spool.name, 2, 1)
+        )
 
 
 class TestManifestCoverageAfterRotation(_IngestCase):
@@ -1359,7 +1393,11 @@ class TestManifestLineParse(unittest.TestCase):
         )
         for name, ctx_bytes in rows:
             with self.subTest(name):
-                line = _get_line().rstrip("\n").replace("ctx_bytes=1166", f"ctx_bytes={ctx_bytes}")
+                line = (
+                    _get_line()
+                    .rstrip("\n")
+                    .replace("ctx_bytes=1166", f"ctx_bytes={ctx_bytes}")
+                )
                 self.assertIsNone(dc._get_manifest_row(0, line))
 
 
@@ -1771,8 +1809,7 @@ class TestSpawnManifestWriterLivePg(unittest.TestCase):
 
     def test_exposure_fields_are_stored_and_a_pre_field_line_stores_nulls(self) -> None:
         rows = self._get_rows(
-            _get_line(exposure=_TREATED.EXPOSURE)
-            + _get_line(exposure=_CONTROL.EXPOSURE)
+            _get_line(exposure=_TREATED.EXPOSURE) + _get_line(exposure=_CONTROL.EXPOSURE)
             + _get_line(),
             is_final=True,
         )

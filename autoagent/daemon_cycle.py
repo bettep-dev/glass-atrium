@@ -14299,8 +14299,11 @@ def bind_manifest_deliveries(
     - A racing row: its salt names an aa-start or aa-restart row and its hash is the A/A text's,
       or its salt names a decided live pre-registration of its own agent and its hash is that
       pre-registration's canary hash.
-    - The open state or the salt rows unreadable → no row bound, a named WARN with the count;
-      those rows are never bound later.
+    - The open state unreadable → no row bound, a named WARN with the count; those rows are
+      never bound later.
+    - The salt rows unreadable → the rows the racing predicate judges (a trial row of another
+      hash, a row bound to no open trial or A/A) stay unbound, a named WARN with the count: no
+      trial voided, no file removed, never bound later; trial-hash and A/A rows still bind.
     """
     delivered = [row for row in rows if row.delivered]
     if not delivered:
