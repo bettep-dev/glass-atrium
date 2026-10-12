@@ -14036,6 +14036,21 @@ MANIFEST = SimpleNamespace(
     # PostgreSQL column types: ctx_bytes INTEGER, salt_id BIGINT.
     COLUMN_MAX=SimpleNamespace(INTEGER=2**31 - 1, BIGINT=2**63 - 1),
     STORED_OFFSETS_SQL="SELECT line_offset FROM core.spawn_manifest WHERE spool = %(spool)s",
+    # The migration adding arm, salt_id, delivered and delivered_hash.
+    EXPOSURE_MIGRATION="20261009000000_add_spawn_manifest_arm_fields",
+    # Every open trial's stored delivered rows of another canary text, in one statement: the
+    # three arrays run in parallel, one element per trial — its agent in the hook_path_safe_key
+    # form, its commit second, its canary hash. IS DISTINCT FROM: a delivered row with no hash
+    # is another text's row, which <> would drop.
+    OTHER_HASH_ROWS_SQL=(
+        "SELECT m.spool, m.line_offset, m.agent_id, m.agent_type, m.session_id, m.started_at, "
+        "m.ctx_bytes, m.blocks, m.arm, m.salt_id, m.delivered, m.delivered_hash "
+        "FROM core.spawn_manifest m JOIN unnest("
+        "%(agents)s::text[], %(floors)s::timestamptz[], %(hashes)s::text[]"
+        ") AS trial(agent, floor, text_sha256) ON m.agent_type = trial.agent "
+        "WHERE m.delivered AND m.started_at >= trial.floor "
+        "AND m.delivered_hash IS DISTINCT FROM trial.text_sha256 ORDER BY m.id"
+    ),
 )
 MANIFEST_SPOOL_CLOSED_EVAL_RESULT = "manifest-spool-closed"
 
@@ -14058,6 +14073,23 @@ class ManifestRow(NamedTuple):
     salt_id: int | None
     delivered: bool | None
     delivered_hash: str | None
+
+
+class StoredManifestRow(NamedTuple):
+    """A row read back from core.spawn_manifest, with the spool that names its line."""
+
+    spool: str
+    row: ManifestRow
+
+
+class ManifestExposureAbsent(Exception):
+    """core.spawn_manifest has no exposure columns: no stored row says what was delivered."""
+
+    def __init__(self) -> None:
+        super().__init__(
+            "core.spawn_manifest has no exposure columns "
+            f"(apply migration {MANIFEST.EXPOSURE_MIGRATION})"
+        )
 
 
 @dataclass
@@ -14398,9 +14430,14 @@ def _get_start_instant(value: str | None) -> datetime | None:
 def _get_row_trial(row: ManifestRow, binding: DeliveryBinding) -> TrialBinding | None:
     """The agent's open trial when the row started at or after its commit's second."""
     trial = binding.trials.get(row.agent_type)
-    if trial is None or row.started_at < trial.committed_at.replace(microsecond=0):
+    if trial is None or row.started_at < _get_trial_floor(trial):
         return None
     return trial
+
+
+def _get_trial_floor(trial: TrialBinding) -> datetime:
+    """The commit's second: a MANIFEST started_at carries whole seconds, recorded_at finer."""
+    return trial.committed_at.replace(microsecond=0)
 
 
 def _is_trial_hash(row: ManifestRow, binding: DeliveryBinding) -> bool:
@@ -14745,6 +14782,30 @@ def _read_salt_rows(salt_ids: frozenset[int]) -> SaltRows:
         if event == events.LIVE_PREREGISTRATION and is_decided
     }
     return SaltRows(aa_ids, decided)
+
+
+def _read_other_hash_rows(trials: Mapping[str, TrialBinding]) -> list[StoredManifestRow]:
+    """Each mapped agent's stored delivered rows from its trial's commit second whose hash is not
+    that trial's canary hash — a row with no hash included — in id order.
+
+    Raises ManifestExposureAbsent on a schema without the exposure columns, never an empty
+    result: 'no row' there would read as 'no other text delivered'. Raises on any other PG fault.
+    """
+    agents = sorted(trials)
+    params = {
+        "agents": agents,
+        "floors": [_get_trial_floor(trials[agent]) for agent in agents],
+        "hashes": [trials[agent].text_sha256 for agent in agents],
+    }
+    try:
+        with _pg_connect() as conn, conn.cursor() as cur:
+            cur.execute(MANIFEST.OTHER_HASH_ROWS_SQL, params)
+            rows = cur.fetchall()
+    except Exception as exc:
+        if getattr(exc, "sqlstate", None) != AA.UNDEFINED_COLUMN_SQLSTATE:
+            raise
+        raise ManifestExposureAbsent from exc
+    return [StoredManifestRow(spool, ManifestRow(*columns)) for spool, *columns in rows]
 
 
 def run_cycle(

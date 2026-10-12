@@ -161,6 +161,74 @@ def _get_delivery_line(
     )
 
 
+_EXPOSURE_MIGRATION = "20261009000000_add_spawn_manifest_arm_fields"
+
+
+class _UndefinedColumn(Exception):
+    """A store fault of SQLSTATE 42703, as psycopg raises it on a schema without a column."""
+
+    sqlstate = "42703"
+
+
+def _get_other_hash_case() -> SimpleNamespace:
+    """Two open trials as the ingest maps them — the second's ledger agent outside the hook's key
+    form, its commit an hour after the first's — and one spool of named lines, each marked
+    returned or left out by the stored-rows read."""
+    python, shell_key = _ROSTER[0], "glass-atriumdevshell"
+    shell_sha256 = hashlib.sha256(b"shell").hexdigest()
+    shell_commit = _TRIAL.COMMIT + timedelta(hours=1)
+    trials = {
+        python: dc.TrialBinding(
+            python, _TRIAL.KEY, _TRIAL.PATTERN_ID, _TRIAL.SHA256, _TRIAL.COMMIT, None
+        ),
+        shell_key: dc.TrialBinding(
+            "glass-atrium/dev.shell", "live-trial-9002", 42, shell_sha256, shell_commit, None
+        ),
+    }
+    lines = (
+        (
+            "another hash a second before the commit",
+            _get_delivery_line(python, text_sha256=_PLAIN_SHA256, ts=_TRIAL.BEFORE_COMMIT),
+            False,
+        ),
+        (
+            "another hash in the commit's own second",
+            _get_delivery_line(python, text_sha256=_PLAIN_SHA256, ts="2026-10-05T10:00:12Z"),
+            True,
+        ),
+        ("the trial's own hash", _get_delivery_line(python, text_sha256=_TRIAL.SHA256), False),
+        ("delivered with no hash", _get_delivery_line(python, text_sha256="none"), True),
+        ("undelivered", _get_line(exposure=_CONTROL.EXPOSURE), False),
+        ("written before the exposure fields", _get_line(), False),
+        (
+            "the key-form agent's row with the other trial's hash",
+            _get_delivery_line(shell_key, text_sha256=_TRIAL.SHA256),
+            True,
+        ),
+        (
+            "the key-form agent's own hash",
+            _get_delivery_line(shell_key, text_sha256=shell_sha256),
+            False,
+        ),
+        (
+            "after the first trial's commit, before its own trial's",
+            _get_delivery_line(shell_key, text_sha256=_TRIAL.SHA256, ts="2026-10-05T10:30:00Z"),
+            False,
+        ),
+        (
+            "an agent with no open trial",
+            _get_delivery_line(_ROSTER[2], text_sha256=_PLAIN_SHA256),
+            False,
+        ),
+    )
+    return SimpleNamespace(
+        trials=trials,
+        names=[name for name, _, _ in lines],
+        text="".join(line for _, line, _ in lines),
+        returned=[name for name, _, is_returned in lines if is_returned],
+    )
+
+
 def _put_config(root: Path, declared: Path) -> None:
     """The install's rendered config.toml, declaring `declared` as its [paths].root."""
     (root / "config.toml").write_text(f'[paths]\nroot = "{declared}"\n', encoding="utf-8")
@@ -174,6 +242,24 @@ class _SpawnManifestTable:
         self.is_insert_failing = False
         self.is_offsets_read_failing = False
         self.is_unreachable = False
+        self.other_hash_read_fault: Exception | None = None
+
+    def get_other_hash_rows(
+        self, agents: list[str], floors: list[datetime], hashes: list[str | None]
+    ) -> list[tuple[object, ...]]:
+        """(spool, *row) in insert order: delivered, a given agent's, from that agent's floor,
+        a hash other than that agent's — a row with no hash included."""
+        if self.other_hash_read_fault is not None:
+            raise self.other_hash_read_fault
+        trials = dict(zip(agents, zip(floors, hashes, strict=True), strict=True))
+        return [
+            (spool, *row)
+            for (spool, _), row in self.rows.items()
+            if row.delivered
+            and row.agent_type in trials
+            and row.started_at >= trials[row.agent_type][0]
+            and row.delivered_hash != trials[row.agent_type][1]
+        ]
 
     def write(self, spool: str, rows: list[tuple[object, ...]]) -> int:
         if self.is_unreachable or self.is_insert_failing:
@@ -314,6 +400,8 @@ class _Database:
             self.result = self.ledger.get_canary_rows()
         elif refusal is None and statement == dc.LIVE_TRIAL.BINDING_SQL:
             self.result = self.ledger.get_binding_rows()
+        elif refusal is None and statement == dc.MANIFEST.OTHER_HASH_ROWS_SQL:
+            self.result = self.table.get_other_hash_rows(**params)
         else:
             self.refused.append(refusal or f"statement outside the fake: {statement[:80]}")
             raise AssertionError(self.refused[-1])
@@ -1340,6 +1428,50 @@ class TestManifestDeliveryBinding(_IngestCase):
                 self.assertEqual((self.ledger.rows, self._get_canaries()), ([], sorted(_ROSTER)))
 
 
+class TestStoredOtherHashRows(_IngestCase):
+    """The stage's read of the open trials' stored delivered rows of another canary text."""
+
+    _SPOOL = "inject-scope-rules.manifest.log.20261005T030000Z.4242.spool"
+
+    def test_each_mapped_trial_s_delivered_other_hash_rows_from_its_commit_second_are_returned(
+        self,
+    ) -> None:
+        case = _get_other_hash_case()
+        rows, _ = dc._get_manifest_rows(case.text.encode("utf-8"), is_final=True)
+        self.table.write(self._SPOOL, rows)
+
+        stored = dc._read_other_hash_rows(case.trials)
+
+        self.assertEqual([case.names[item.row.line_offset] for item in stored], case.returned)
+        self.assertEqual(
+            stored,
+            [dc.StoredManifestRow(self._SPOOL, rows[item.row.line_offset]) for item in stored],
+        )
+        self.assertEqual(self.database.refused, [])
+
+    def test_a_read_fault_is_raised_and_absent_exposure_columns_name_their_migration(self) -> None:
+        dropped = ConnectionError("server closed the connection unexpectedly")
+        absent = _UndefinedColumn("column m.delivered does not exist")
+        faults = (
+            ("a store fault", dropped, ConnectionError, str(dropped)),
+            (
+                "the exposure columns absent",
+                absent,
+                dc.ManifestExposureAbsent,
+                f"apply migration {_EXPOSURE_MIGRATION}",
+            ),
+        )
+        for name, fault, raised_type, text in faults:
+            with self.subTest(name):
+                self.table.other_hash_read_fault = fault
+
+                with self.assertRaises(Exception) as raised:
+                    dc._read_other_hash_rows(_get_other_hash_case().trials)
+
+                self.assertIs(type(raised.exception), raised_type)
+                self.assertIn(text, str(raised.exception))
+
+
 class TestManifestCloseRecord(_IngestCase):
     def test_a_closed_spool_records_lines_read_and_lines_without_a_row_and_no_rule_line_change(
         self,
@@ -1710,8 +1842,8 @@ class TestManifestIngestCycleWiring(unittest.TestCase):
 
 @unittest.skipIf(dc is None, f"daemon_cycle import failed: {_IMPORT_ERROR}")
 class TestSpawnManifestWriterLivePg(unittest.TestCase):
-    """The writer's and the binding reads' real SQL on the ephemeral cluster; skips anywhere
-    else."""
+    """The writer's, the binding reads' and the stored-rows read's real SQL on the ephemeral
+    cluster; skips anywhere else."""
 
     _SPOOL = "inject-scope-rules.manifest.log.20261005T030000Z.4242.spool"
     # Built by live-pg-ephemeral.bats up to the migration adding the exposure columns.
@@ -1921,6 +2053,38 @@ class TestSpawnManifestWriterLivePg(unittest.TestCase):
         self.assertRegex(
             stderr.getvalue(), r"DEGRADED .*20261009000000_add_spawn_manifest_arm_fields"
         )
+
+    def test_the_stored_rows_read_returns_each_mapped_trial_s_other_hash_rows_in_one_statement(
+        self,
+    ) -> None:
+        case = _get_other_hash_case()
+        rows = self._get_rows(case.text, is_final=True)
+        self.writer.write_spawn_manifest_rows(self._SPOOL, rows)
+
+        stored = dc._read_other_hash_rows(case.trials)
+
+        self.assertEqual([case.names[item.row.line_offset] for item in stored], case.returned)
+        self.assertEqual(
+            stored,
+            [dc.StoredManifestRow(self._SPOOL, rows[item.row.line_offset]) for item in stored],
+        )
+
+    def test_the_stored_rows_read_on_a_schema_without_the_exposure_columns_names_the_migration(
+        self,
+    ) -> None:
+        import psycopg
+
+        absent = mock.patch.object(
+            dc, "_pg_connect", lambda: psycopg.connect(dbname=self._ABSENT_DB, connect_timeout=2)
+        )
+        absent.start()
+        self.addCleanup(absent.stop)
+
+        with self.assertRaises(dc.ManifestExposureAbsent) as raised:
+            dc._read_other_hash_rows(_get_other_hash_case().trials)
+
+        self.assertIn(f"apply migration {_EXPOSURE_MIGRATION}", str(raised.exception))
+        self.assertEqual(raised.exception.__cause__.sqlstate, "42703")
 
     def test_unknown_id_lines_store_null_ids_on_separate_rows(self) -> None:
         rows = self._get_rows(_get_line("unknown", "unknown") * 2, is_final=True)
