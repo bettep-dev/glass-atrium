@@ -10240,6 +10240,8 @@ def run_trial_stage() -> None:
     """Write each open live trial's canary from its committed pre-registration; its one decision
     is the unstarted void — no look-time outcome.
 
+    - no config.toml in the code tree declaring that tree as its [paths].root → refused before
+      any ledger read: no row read or written, no canary file or held void changed
     - open trial: a live pre-registration with no <live trial key>:decision row, read from the
       ledger → a pre-registration the push has not committed gets no canary
     - text: exactly payload["canary"]["text"], salted with the pre-registration row id; a text
@@ -10261,18 +10263,12 @@ def run_trial_stage() -> None:
       → none written
     - ledger fault: named WARN, never a failed cycle · --dry-run: the caller skips the stage
     """
-    if not HAS_PG_LOOP_WRITE:
-        _warn_trial(
-            "open live trials unreadable: PG helper import failed", "no trial canary written"
-        )
+    refusal = _get_install_refusal(_INSTALL_ROOT)
+    if refusal is not None:
+        _warn_trial(refusal, "no ledger read or write and no canary file change this cycle")
         return
-    try:
-        trials = _read_trial_canaries()
-    except Exception as exc:  # noqa: BLE001 — a ledger read fault never fails the cycle
-        _warn_trial(
-            f"open live trials unreadable: {_describe_fault(exc)}",
-            "no trial canary written this cycle",
-        )
+    trials = _get_open_trial_canaries()
+    if trials is None:
         return
     skipped = _retry_pending_trial_voids(trials)
     if skipped is None:
@@ -10282,6 +10278,23 @@ def run_trial_stage() -> None:
     for trial in past_bound:
         _void_unstarted_trial(trial)
     _put_trial_canaries([trial for trial in trials if trial not in past_bound])
+
+
+def _get_open_trial_canaries() -> list[TrialCanary] | None:
+    """The open live trials; None = unreadable, WARNed."""
+    if not HAS_PG_LOOP_WRITE:
+        _warn_trial(
+            "open live trials unreadable: PG helper import failed", "no trial canary written"
+        )
+        return None
+    try:
+        return _read_trial_canaries()
+    except Exception as exc:  # noqa: BLE001 — a ledger read fault never fails the cycle
+        _warn_trial(
+            f"open live trials unreadable: {_describe_fault(exc)}",
+            "no trial canary written this cycle",
+        )
+        return None
 
 
 def _read_trial_canaries() -> list[TrialCanary]:
@@ -10920,11 +10933,12 @@ class InstallRefusedError(RuntimeError):
 def _get_install_refusal(root: Path) -> str | None:
     """None when root passes _is_install_tree; otherwise the refusal, naming only that check.
 
-    Guards exactly three entries, each as its first check:
+    Guards exactly four entries, each as its first check:
     - run_cycle when it writes (skip_loop_emit False): the whole cycle, reads included,
       by raising InstallRefusedError, which _main ends with
       ExitCode.CYCLE_INSTALL_REFUSED;
-    - run_aa_stage and ingest_manifest_log, whose own checks cover a direct call.
+    - run_aa_stage, run_trial_stage and ingest_manifest_log, whose own checks cover a
+      direct call.
     Not guarded: run_cycle in no-write mode (--dry-run, --skip-loop-emit), start_aa
     (--aa-start, the owner's explicit command to open an A/A, never run by a cycle),
     and a direct call to any other writing stage — run_shadow_stage among them.

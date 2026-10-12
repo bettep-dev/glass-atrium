@@ -1836,6 +1836,24 @@ _START_WARN = SimpleNamespace(
     NO_HORIZON="pre-registration states no horizon",
     VOID_FAULT="unstarted void not recorded",
 )
+_HELD_AGENT = "glass-atrium-dev-shell"  # a third roster type: the trial a held void names
+
+
+def _put_config(root: Path, declared: Path | None) -> None:
+    """The tree's rendered config.toml declaring `declared` as its [paths].root; None = none."""
+    config = root / "config.toml"
+    if declared is None:
+        config.unlink()
+    else:
+        config.write_text(f'[paths]\nroot = "{declared}"\n', encoding="utf-8")
+
+
+def _get_tree(root: Path) -> dict[str, bytes | None]:
+    """Every entry below root → its bytes; None for a directory."""
+    return {
+        str(path.relative_to(root)): None if path.is_dir() else path.read_bytes()
+        for path in root.rglob("*")
+    }
 
 
 class TrialCanaryTest(_ShadowFixture):
@@ -1844,6 +1862,7 @@ class TrialCanaryTest(_ShadowFixture):
 
     def setUp(self) -> None:
         super().setUp()
+        set_install_tree(self)
         tmp = tempfile.TemporaryDirectory()
         self.addCleanup(tmp.cleanup)
         self.canary_path = Path(tmp.name) / "data" / "learning" / "canary" / f"{_AGENT}.json"
@@ -1871,6 +1890,77 @@ class TrialCanaryTest(_ShadowFixture):
     def _get_preregistration(self) -> _LedgerRow:
         (row,) = self._get_preregistrations()
         return row
+
+    def _open_trial_on(self, agent: str, proposal_id: int, **changes: object) -> str:
+        """A further live pre-registration: the first trial's payload on `agent`, `changes`
+        over it → its key."""
+        first = self._get_preregistrations()[0]
+        key = f"{proposal_id:064x}"
+        self.ledger.write(
+            first.event,
+            first.actor,
+            {**first.payload, "proposal_id": proposal_id, **changes},
+            trial_key=key,
+            agent=agent,
+            learning_pattern_id=_PATTERN_ID,
+            dedupe_key=key,
+        )
+        return key
+
+    def _seed_every_write_class(self) -> Path:
+        """One trial per write the stage makes, under the current data root: one due its first
+        canary, an unstarted one whose stated horizon ends a day on and which holds a file, and
+        one a held void names → the due trial's canary path."""
+        self.ledger.rows.clear()
+        self.clock.now = _NOW
+        self._open_live_trial()
+        self._open_trial_on(_POOL_AGENT, _PROPOSAL_ID + 1, horizon_days=1)
+        held_key = self._open_trial_on(_HELD_AGENT, _PROPOSAL_ID + 2)
+        unstarted = dc._get_canary_path(_POOL_AGENT)
+        unstarted.parent.mkdir(parents=True)
+        unstarted.write_text("{}", encoding="utf-8")
+        dc._put_pending_trial_void(
+            dc.TrialVoid(held_key, _HELD_AGENT, _PATTERN_ID, "f" * 64, "manifest.log.0.spool", 0)
+        )
+        return dc._get_canary_path(_AGENT)
+
+    def test_only_the_declared_install_reads_the_ledger_or_changes_a_canary_or_a_held_void(
+        self,
+    ) -> None:
+        root = dc._INSTALL_ROOT
+        # name, the root the tree's config.toml declares (None = none rendered), whether it acts
+        rows = (
+            ("the declared install", root, True),
+            ("a tree with no rendered config", None, False),
+            ("a tree whose config declares another root", root.parent, False),
+        )
+        refusal = (
+            f"WARN: trial stage — no config.toml in code tree {root} declares that tree as its "
+            "[paths].root; no ledger read or write and no canary file change this cycle"
+        )
+        for name, declared, is_acting in rows:
+            with (
+                self.subTest(name),
+                tempfile.TemporaryDirectory() as data_root,
+                mock.patch.dict(os.environ, {"GA_DATA_ROOT": data_root}),
+            ):
+                due = self._seed_every_write_class()
+                before = (list(self.ledger.rows), _get_tree(Path(data_root)))
+                _put_config(root, declared)
+                connect = mock.Mock(wraps=self.ledger.connect)
+                self._patch("_pg_connect", connect)
+
+                stderr_text = self._stage(_NOW + timedelta(days=2))
+
+                after = (list(self.ledger.rows), _get_tree(Path(data_root)))
+                self.assertEqual(
+                    (connect.called, due.exists(), len(self._get_starts())),
+                    (is_acting, is_acting, int(is_acting)),
+                )
+                # refused: no ledger row, no file written or removed, the held void kept
+                self.assertEqual(
+                    (after == before, refusal in stderr_text), (not is_acting, not is_acting)
+                )
 
     def test_the_stage_writes_exactly_the_preregistered_text_salted_with_its_row(self) -> None:
         self._open_live_trial()

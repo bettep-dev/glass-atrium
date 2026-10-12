@@ -1,6 +1,6 @@
-"""The three install-guarded entries (a writing run_cycle through the CLI,
-run_aa_stage, ingest_manifest_log), unsealed, as a building agent's test would
-run them — nothing patched, nothing sealed. Not a test
+"""The four install-guarded entries (a writing run_cycle through the CLI,
+run_aa_stage, run_trial_stage, ingest_manifest_log), unsealed, as a building agent's
+test would run them — nothing patched, nothing sealed. Not a test
 module (no ``test_`` prefix): ``test_aa_harness.AaUnsealedRunTest`` copies it into a
 code tree it sets up and runs it there, in a child whose HOME and PGHOST are decoys,
 once per runner. Anywhere else it skips.
@@ -32,6 +32,9 @@ import daemon_cycle as dc  # noqa: E402 — anchors above
 class AaUnsealedProbe(unittest.TestCase):
     def test_run_aa_stage_unsealed(self) -> None:
         dc.run_aa_stage(f"{_NOW:%Y-%m-%d}")
+
+    def test_run_trial_stage_unsealed(self) -> None:
+        dc.run_trial_stage()
 
     def test_ingest_manifest_log_unsealed(self) -> None:
         dc.ingest_manifest_log(dc.get_manifest_log_path(), now=_NOW)
