@@ -1,6 +1,7 @@
 #!/usr/bin/env bats
 # live-pg-ephemeral.bats — runner for the autoagent test classes whose relationship is SQL
-# behaviour on real PostgreSQL.
+# behaviour on real PostgreSQL, and for the doctor's canary-ledger statement (lib/ga-doctor.sh)
+# over the ledger rows the daemon writes.
 #
 # Each such class connects only through _pg_seal.get_ephemeral_connection(), which skips outside
 # this runner; here it reaches a throwaway socket-only cluster (hooks/test/lib/ephemeral-pg.bash)
@@ -209,6 +210,58 @@ PY
 @test "the trial-ledger writer live class runs against the migrated cluster, none skipped" {
   cd "${BATS_TEST_DIRNAME}/../../scripts/test" || return 1
   _assert_live_module test_pg_dual_write_trial_ledger TestTrialLedgerWriterLivePg
+}
+
+@test "the canary-ledger probe counts the windowed unstarted and foreign-hash voids the daemon writes, each with its agents" {
+  local db="doctor_canary_ledger" sep=$'\x1f' unstarted_reason want
+  createdb -h "${EPH_SOCKDIR}" -p "${EPH_PORT}" -T trial_ledger_tpl "${db}" || return 1
+
+  # three in-window decision rows through the daemon's own writer; stdout = its unstarted reason
+  # shellcheck disable=SC2154  # BATS_TEST_TMPDIR comes from bats
+  run --separate-stderr env LF_DB="${db}" LF_EXPECT_PGHOST="${EPH_SOCKDIR}" \
+    GA_DATA_ROOT="${BATS_TEST_TMPDIR}/data" \
+    PYTHONPATH="${BATS_TEST_DIRNAME}/../../scripts:${BATS_TEST_DIRNAME}/.." python3 - <<'PY'
+import os
+import sys
+
+if os.environ.get("PGHOST") != os.environ["LF_EXPECT_PGHOST"]:
+    sys.exit("PGHOST is not the ephemeral cluster's socket dir — refusing to write")
+
+import psycopg
+
+import _pg_dual_write_daemon as helper
+import daemon_cycle as daemon
+
+# The helper names glass_atrium; this row's database is a sibling on the same cluster.
+helper._connect = lambda: psycopg.connect(dbname=os.environ["LF_DB"], connect_timeout=2)
+unstarted, foreign = daemon.LIVE_TRIAL.UNSTARTED_REASON, daemon.CANARY.VOID_REASON
+rows = (
+    (1, "glass-atrium-dev-shell", unstarted),
+    (2, "glass-atrium-dev-python", unstarted),
+    (3, "glass-atrium-qa-debugger", foreign),
+)
+for proposal_id, agent, reason in rows:
+    void = {"void": {"reason": reason, "agent": agent}}
+    landed = daemon._write_live_decision(helper.get_live_trial_key(proposal_id), agent, None, void)
+    if landed != 1:
+        sys.exit(f"{agent}: decision row did not land ({landed})")
+print(unstarted)
+PY
+  (( status == 0 )) || { echo "${output}"; echo "${stderr}"; return 1; }
+  unstarted_reason="${output}"
+  [[ "${unstarted_reason}" =~ ^[a-z-]+$ ]] || { echo "unstarted reason: '${unstarted_reason}'"; return 1; }
+  # a fourth agent's unstarted void older than the window — the writer takes no recorded_at
+  _q_db "${db}" "INSERT INTO core.autoagent_trial_ledger (recorded_at, agent, event, actor, payload)
+    VALUES (now() - interval '30 days', 'glass-atrium-dev-node', 'live-decision', 'daemon-cycle-live',
+      jsonb_build_object('void', jsonb_build_object('reason', '${unstarted_reason}',
+        'agent', 'glass-atrium-dev-node')))" || return 1
+
+  # shellcheck disable=SC2016  # $1 and $2 expand in the child shell, not here
+  run env PG_SOCKET="${EPH_SOCKDIR}" bash -c \
+    'source "$1/lib/ga-doctor.sh" && _pg_canary_ledger_probe "$2" 14' _ "${BATS_TEST_DIRNAME}/../.." "${db}"
+  (( status == 0 )) || { echo "probe exit ${status}: ${output}"; return 1; }
+  want="1${sep}2${sep}0${sep}glass-atrium-qa-debugger${sep}glass-atrium-dev-python,glass-atrium-dev-shell${sep}"
+  [[ "${output}" == "${want}" ]] || { echo "counted ${output//${sep}/ | }"; return 1; }
 }
 
 @test "the power check's design-effect ledger read runs against the migrated cluster, none skipped" {
