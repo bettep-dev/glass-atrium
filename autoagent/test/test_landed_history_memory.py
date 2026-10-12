@@ -239,10 +239,27 @@ class RenderPriorAttemptsBlockTest(unittest.TestCase):
 
     def test_the_measured_effect_is_the_decision_else_the_latest_look(self) -> None:
         look = {"look": 2, "accrued_tasks": 40, "arms": {"control": {"events": 3}}}
-        decision = {"outcome": "retire-horizon", "z": 0.42}
+        # full-size, look-shaped: a look's own fields, both arms, the pooled z, then the outcome
+        full_size = {
+            "look": 3,
+            "fraction": 1.0,
+            "milestone": 412.5,
+            "boundary": 1.9881,
+            "accrued_tasks": 415,
+            "arms": {
+                "control": {"events": 31, "units": 208},
+                "treatment": {"events": 17, "units": 207},
+            },
+            "z": 2.0973,
+            "outcome": "retire-horizon",
+        }
         rows = (
-            ("a decision row", {"look": look, "decision": decision},
-             ("decision:", "outcome=retire-horizon", "z=0.42"), ("look 2",)),
+            ("a decision row", {"look": look, "decision": full_size},
+             ("decision:", "outcome=retire-horizon", "z=2.0973", "look=3", "milestone=412.5"),
+             ("latest look:",)),
+            ("a full-size look and no decision", {"look": full_size},
+             ("latest look:", "outcome=retire-horizon", "z=2.0973", "milestone=412.5"),
+             ("decision:",)),
             ("a look and no decision", {"look": look},
              ("latest look:", "accrued_tasks=40", "arms.control.events=3"), ("decision:",)),
             ("neither", {}, ("no look reached",), ("decision:", "latest look:")),

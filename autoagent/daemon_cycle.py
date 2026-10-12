@@ -12555,9 +12555,13 @@ def _render_prior_attempts_block(
 def _get_effect_text(attempt: PriorAttempt) -> str:
     """The decision when one is recorded, else the latest look, else none reached."""
     if attempt.decision is not None:
-        return _neutralize_field("decision: " + _flatten_payload(attempt.decision))
+        return _neutralize_field(
+            "decision: " + _flatten_payload(attempt.decision), cap=LANDED_HISTORY_ENTRY_CHAR_CAP
+        )
     if attempt.look is not None:
-        return _neutralize_field("latest look: " + _flatten_payload(attempt.look))
+        return _neutralize_field(
+            "latest look: " + _flatten_payload(attempt.look), cap=LANDED_HISTORY_ENTRY_CHAR_CAP
+        )
     return "no look reached"
 
 
