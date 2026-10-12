@@ -870,6 +870,8 @@ class TestManifestDeliveryBinding(_IngestCase):
         for hour, (kind, is_removed) in enumerate(kinds):
             with self.subTest(kind):
                 self._use_log_dir(hour)  # salts per row → no row reads another's entry
+                for earlier in self.canary_dir.glob("*.json"):  # only this row's stage writes
+                    earlier.unlink()
                 held_salt, written_salt, unstarted_salt = (f"9{hour}0{n}" for n in (1, 2, 3))
                 held_key, unstarted_key = f"live-trial-{held_salt}", f"live-trial-{unstarted_salt}"
                 self._open_trial(held, salt=held_salt)
