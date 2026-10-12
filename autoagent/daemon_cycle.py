@@ -10228,7 +10228,8 @@ class TrialCanary(NamedTuple):
 
 
 def run_trial_stage() -> None:
-    """Write each open live trial's canary from its committed pre-registration; decides nothing.
+    """Write each open live trial's canary from its committed pre-registration; its one decision
+    is the unstarted void — no look-time outcome.
 
     - open trial: a live pre-registration with no <live trial key>:decision row, read from the
       ledger → a pre-registration the push has not committed gets no canary

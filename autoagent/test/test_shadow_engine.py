@@ -2136,18 +2136,22 @@ class TrialCanaryTest(_ShadowFixture):
     ) -> None:
         key = self._open_live_trial()
         payload = self._get_preregistration().payload
+        open_rows = list(self.ledger.rows)
         # name, the stored horizon_days (absent = no key)
         rows = (
             ("absent", None),
             ("not a number", "84"),
             ("a count no instant can hold", 1e300),
+            ("a bool", True),
+            ("zero", 0),
+            ("a negative count", -3),
         )
         for name, horizon_days in rows:
             with self.subTest(name):
                 payload.pop("horizon_days", None)
                 if horizon_days is not None:
                     payload["horizon_days"] = horizon_days
-                self._strip_starts()
+                self.ledger.rows[:] = open_rows  # a row voided earlier never decides a later one
                 self.canary_path.unlink(missing_ok=True)
 
                 stderr_text = self._stage(_NOW + timedelta(days=400))
