@@ -10282,6 +10282,11 @@ def _put_trial_canary(trial: TrialCanary) -> None:
         )
         _delete_canaries([path], f"trial {trial.key} start not recorded")
         return
+    _create_trial_canary(trial, text, path)
+
+
+def _create_trial_canary(trial: TrialCanary, text: str, path: Path) -> None:
+    """First write: the file, then its start row; a row not landing removes the file."""
     started_at = _get_utc_now()  # no later than the file becomes visible
     if not _put_trial_file(trial, text, started_at):
         return
