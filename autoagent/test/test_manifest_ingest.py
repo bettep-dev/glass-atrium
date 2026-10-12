@@ -133,6 +133,12 @@ _TRIAL_HELD_RE = re.compile(
     r"WARN: [a-z ]+ — trial (\S+) void not recorded: (\S+)'s canary text (\S+) is not the "
     r"pre-registered one .*; it stays pending — no canary is written or renewed for that trial"
 )
+# (trial key, outcome, agent) of each void WARN whose cause is an unreadable held record
+_TRIAL_VOID_BY_NAME_RE = re.compile(
+    r"WARN: [a-z ]+ — trial (\S+) (voided|void not recorded): (\S+)'s canary text "
+    r"\(unrecorded\) is not the pre-registered one "
+    r"\(its held record unreadable — spool and line unrecorded[,)]"
+)
 # trial key of each unreadable held void written as its open trial's void by its name
 _HELD_UNREADABLE_RE = re.compile(
     r"WARN: trial stage — trial (\S+): pending void \S+ unreadable: .*; taken as that trial's "
@@ -890,6 +896,8 @@ class TestManifestDeliveryBinding(_IngestCase):
                 )
                 self.assertEqual(by_name["payload"], {"void": void}, kind)
                 self.assertEqual(_HELD_UNREADABLE_RE.findall(stderr), [held_key], kind)
+                by_name_warns = _TRIAL_VOID_BY_NAME_RE.findall(stderr)
+                self.assertEqual(by_name_warns, [(held_key, "voided", held)], kind)
                 self.assertEqual(self._get_canaries(), [written], stderr)
                 self.assertEqual(self._get_held_voids(), [] if is_removed else [entry], kind)
                 not_removed = stderr.count(f"pending trial void {entry} not removed")
@@ -912,6 +920,8 @@ class TestManifestDeliveryBinding(_IngestCase):
         self.assertEqual(while_refused, (held_bytes, [written], []))
         still_pending = _TRIAL_HELD_RE.findall(refused_stage)
         self.assertEqual(still_pending, [(_TRIAL.KEY, held, "(unrecorded)")])
+        by_name_warns = _TRIAL_VOID_BY_NAME_RE.findall(refused_stage)
+        self.assertEqual(by_name_warns, [(_TRIAL.KEY, "void not recorded", held)])
         by_name = {"reason": "foreign-canary-hash", "agent": held, "text_sha256": None}
         self.assertEqual(
             [(write["dedupe_key"], write["payload"]) for write in self.ledger.writes],
