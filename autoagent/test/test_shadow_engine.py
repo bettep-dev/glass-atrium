@@ -97,6 +97,8 @@ _KEYS = SimpleNamespace(
         "redelegation",
     },
     CANARY={"text", "text_sha256"},
+    # the live start row's payload, written at the trial's first canary write
+    START={"started_at", "text_sha256"},
     # the window row; stated, read by no stop: the count's rise reads margin and follow_ups
     REDELEGATION={
         "minutes",
@@ -1568,13 +1570,14 @@ class PreRegistrationReadLivePgTest(_ShadowFixture):
                 (cycle_date, label, f"agents/{agent}.md", agent, status, f"+- {label}\n"),
             ).fetchone()[0]
 
-    def _insert_trial_row(self, proposal_id: int, event: str, payload: dict, *, suffix: str = "") -> None:
-        """A live trial row keyed by the proposal id as the push keys it."""
+    def _insert_trial_row(self, proposal_id: int, event: str, payload: dict, *, suffix: str = "") -> int:
+        """A live trial row keyed by the proposal id as the push keys it → its id."""
         key = f"{proposal_id:064x}"
         with self._connect() as conn:
-            conn.execute(
+            return conn.execute(
                 "INSERT INTO core.autoagent_trial_ledger (trial_key, agent, learning_pattern_id,"
-                " event, actor, payload, dedupe_key) VALUES (%s, %s, %s, %s, %s, %s::jsonb, %s)",
+                " event, actor, payload, dedupe_key) VALUES (%s, %s, %s, %s, %s, %s::jsonb, %s)"
+                " RETURNING id",
                 (
                     key,
                     _AGENT,
@@ -1584,11 +1587,13 @@ class PreRegistrationReadLivePgTest(_ShadowFixture):
                     json.dumps(payload),
                     key + suffix,
                 ),
-            )
+            ).fetchone()[0]
 
-    def _preregister(self, proposal_id: int) -> None:
+    def _preregister(self, proposal_id: int) -> int:
         event = stub.get_trial_ledger().EVENT.LIVE_PREREGISTRATION
-        self._insert_trial_row(proposal_id, event, {"metric_key": _BUDGET_KEY, "proposal_id": proposal_id})
+        return self._insert_trial_row(
+            proposal_id, event, {"metric_key": _BUDGET_KEY, "proposal_id": proposal_id}
+        )
 
     def test_the_prior_attempts_read_joins_each_preregistration_to_its_proposal_latest_look_and_decision(
         self,
@@ -1625,6 +1630,42 @@ class PreRegistrationReadLivePgTest(_ShadowFixture):
             self._preregister(self._insert_proposal(f"2026-09-{day:02d}"))
         landed = dc._fetch_landed_proposals(_AGENT)
         self.assertEqual([proposal_id for proposal_id, _label, _diff in landed], [legacy])
+        self.assertEqual(self.pg_reach, [])
+
+    def test_the_canary_read_returns_each_undecided_live_trial_in_id_order_with_whether_it_started(
+        self,
+    ) -> None:
+        self._use_database(self._TEMPLATE.FULL)
+        event = stub.get_trial_ledger().EVENT
+        unstarted, started, decided = 7001, 7002, 7003
+        ids = {
+            proposal_id: self._preregister(proposal_id)
+            for proposal_id in (unstarted, started, decided)
+        }
+        self._insert_trial_row(
+            started,
+            event.LIVE_START,
+            {"started_at": _NOW.isoformat(), "text_sha256": "0" * 64},
+            suffix=":start",
+        )
+        self._insert_trial_row(decided, event.LIVE_DECISION, {"outcome": "stop"}, suffix=":decision")
+
+        canaries = dc._read_trial_canaries()
+
+        self.assertEqual(
+            canaries,
+            [
+                (
+                    ids[proposal_id],
+                    _AGENT,
+                    f"{proposal_id:064x}",
+                    _PATTERN_ID,
+                    {"metric_key": _BUDGET_KEY, "proposal_id": proposal_id},
+                    is_started,
+                )
+                for proposal_id, is_started in ((unstarted, False), (started, True))
+            ],
+        )
         self.assertEqual(self.pg_reach, [])
 
     def test_a_schema_without_the_ledger_warns_on_the_read_and_writes_no_look(
@@ -1771,7 +1812,6 @@ class DegradedImportTest(unittest.TestCase):
         self.assertEqual(self.pg_reach, [])
 
 
-_START_KEYS = {"started_at", "text_sha256"}
 _START_WARN = SimpleNamespace(
     HASH="canary text hashes to",
     FAULT="start record not written",
@@ -1896,7 +1936,7 @@ class TrialCanaryTest(_ShadowFixture):
 
         self._stage(_NOW)
 
-        self.assertEqual(set(self._get_starts()[0].payload), _START_KEYS)
+        self.assertEqual(set(self._get_starts()[0].payload), _KEYS.START)
 
     def test_a_start_record_the_ledger_does_not_take_removes_the_file_until_a_cycle_records_it(
         self,
