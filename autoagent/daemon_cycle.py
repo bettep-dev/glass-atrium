@@ -10258,9 +10258,9 @@ def run_trial_stage() -> None:
       holds a void back
     - canary directory not a real one → named WARN, no further canary written this cycle
     - a foreign-hash void an ingest held → retried first; while held, or once it lands, that
-      trial's canary is neither written nor renewed; a held record unreadable → the same for the
-      open trial its name hashes to, removed when it names none; the held directory unlistable
-      → none written
+      trial's canary is neither written nor renewed; a held record unreadable → written as the
+      void of the open trial its name hashes to, its hash unrecorded, under that same rule;
+      removed when it names none; the held directory unlistable → none written
     - ledger fault: named WARN, never a failed cycle · --dry-run: the caller skips the stage
     """
     refusal = _get_install_refusal(_INSTALL_ROOT)
@@ -14107,9 +14107,9 @@ class TrialVoid(NamedTuple):
     key: str
     agent: str
     pattern_id: int | None
-    text_sha256: str | None  # None = no hash the hook recorded
-    spool: str
-    line_offset: int
+    text_sha256: str | None  # None = no hash the hook recorded, or its held record unreadable
+    spool: str | None  # None with line_offset = a void by its name: the held record unreadable
+    line_offset: int | None
 
 
 @dataclass
@@ -14495,10 +14495,12 @@ def _write_trial_void(void: TrialVoid, area: str) -> bool:
     void the ledger did not take WARNs, False."""
     detail = {"reason": CANARY.VOID_REASON, "agent": void.agent, "text_sha256": void.text_sha256}
     label = void.text_sha256 or "(unrecorded)"
-    cause = (
-        f"{void.agent}'s canary text {label} is not the pre-registered one ({void.spool} line "
-        f"{void.line_offset}"
+    source = (
+        "its held record unreadable — spool and line unrecorded"
+        if void.spool is None
+        else f"{void.spool} line {void.line_offset}"
     )
+    cause = f"{void.agent}'s canary text {label} is not the pre-registered one ({source}"
     try:
         landed = _write_live_decision(void.key, void.agent, void.pattern_id, {"void": detail})
     except Exception as exc:  # noqa: BLE001 — a record fault, never a failed cycle
@@ -14544,24 +14546,23 @@ def _put_pending_trial_void(void: TrialVoid) -> None:
 
 def _retry_pending_trial_voids(trials: list[TrialCanary]) -> frozenset[str] | None:
     """Each held void retried before any canary write → the trial keys this stage writes no
-    canary for: still held, unreadable, or decided by the retry. An entry is named by its trial
-    key's sha256 → an unreadable one holds only the open trial it names; one naming no open
-    trial is removed. None = the held directory unlistable → no trial written."""
-    key_by_name = {_get_pending_trial_void_path(trial.key).name: trial.key for trial in trials}
+    canary for: still held, or decided by the retry. An entry is named by its trial key's
+    sha256 → an unreadable one is retried as the void of the open trial it names, its hash
+    unrecorded, and kept only while the ledger refuses it; one naming no open trial is removed.
+    None = the held directory unlistable → no trial written."""
+    trial_by_name = {_get_pending_trial_void_path(trial.key).name: trial for trial in trials}
+    open_keys = {trial.key for trial in trials}
     paths = _list_pending_trial_voids()
     if paths is None:
         return None
     skipped: set[str] = set()
     for path in paths:
-        void = _read_pending_trial_void(path, key_by_name.get(path.name))
-        if void is None and path.name in key_by_name:
-            skipped.add(key_by_name[path.name])
-        elif void is None:
+        void = _read_pending_trial_void(path, trial_by_name.get(path.name))
+        if void is None:
             _delete_pending_trial_void(path)
-        elif void.key in key_by_name.values() and not _write_trial_void(void, "trial stage"):
-            skipped.add(void.key)
-        else:
-            skipped.add(void.key)
+            continue
+        skipped.add(void.key)
+        if void.key not in open_keys or _write_trial_void(void, "trial stage"):
             _delete_pending_trial_void(path)
     return frozenset(skipped)
 
@@ -14578,25 +14579,27 @@ def _list_pending_trial_voids() -> list[Path] | None:
         return None
 
 
-def _read_pending_trial_void(path: Path, key: str | None) -> TrialVoid | None:
-    """None = unreadable, WARNed against the open trial `key` its name hashes to, if any."""
+def _read_pending_trial_void(path: Path, trial: TrialCanary | None) -> TrialVoid | None:
+    """An unreadable record, WARNed → the void of `trial`, the open trial its name hashes to,
+    by that name alone: only a foreign row the ledger refused writes an entry. None = it names
+    no open trial."""
     try:
         void = TrialVoid(**json.loads(path.read_text(encoding="utf-8")))
         if not _is_trial_void(void):
             raise TypeError(f"{path.name} is not a trial void record")
         return void
     except (OSError, ValueError, TypeError, RecursionError) as exc:
-        if key is None:
+        if trial is None:
             _warn_trial(
                 f"pending void {path} unreadable and names no open trial: {_describe_fault(exc)}",
                 "removed",
             )
-        else:
-            _warn_trial(
-                f"trial {key}: pending void {path} unreadable: {_describe_fault(exc)}",
-                "its canary is neither written nor renewed while it stays unread",
-            )
-        return None
+            return None
+        _warn_trial(
+            f"trial {trial.key}: pending void {path} unreadable: {_describe_fault(exc)}",
+            "taken as that trial's void by its name — its hash, spool and line unrecorded",
+        )
+        return TrialVoid(trial.key, trial.agent, trial.pattern_id, None, None, None)
 
 
 def _is_trial_void(void: TrialVoid) -> bool:

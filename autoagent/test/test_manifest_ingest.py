@@ -133,10 +133,10 @@ _TRIAL_HELD_RE = re.compile(
     r"WARN: [a-z ]+ — trial (\S+) void not recorded: (\S+)'s canary text (\S+) is not the "
     r"pre-registered one .*; it stays pending — no canary is written or renewed for that trial"
 )
-# trial key of each unreadable held void that holds its open trial
+# trial key of each unreadable held void written as its open trial's void by its name
 _HELD_UNREADABLE_RE = re.compile(
-    r"WARN: trial stage — trial (\S+): pending void \S+ unreadable: .*; its canary is neither "
-    r"written nor renewed while it stays unread"
+    r"WARN: trial stage — trial (\S+): pending void \S+ unreadable: .*; taken as that trial's "
+    r"void by its name — its hash, spool and line unrecorded"
 )
 # path of each unreadable held void that names no open trial
 _ORPHAN_UNREADABLE_RE = re.compile(
@@ -848,33 +848,90 @@ class TestManifestDeliveryBinding(_IngestCase):
             path.write_text(contents[kind], encoding="utf-8")
         return path
 
-    def test_an_unreadable_held_void_holds_only_the_open_trial_its_name_hashes_to(self) -> None:
+    def test_an_unreadable_held_void_voids_the_open_trial_its_name_hashes_to_by_that_name(
+        self,
+    ) -> None:
         held, written, unstarted = _ROSTER
         past_horizon = _TRIAL.COMMIT + timedelta(days=85)  # the canary rows state 84
+        # the unreadable kind, whether its entry's removal succeeds
         kinds = (
-            "not JSON",
-            "fields of no void",
-            "a key of the wrong type",
-            "a field of the wrong type",
-            "a directory",
+            ("not JSON", True),
+            ("fields of no void", True),
+            ("a key of the wrong type", True),
+            ("a field of the wrong type", True),
+            ("a directory", False),
         )
-        for hour, kind in enumerate(kinds):
+        for hour, (kind, is_removed) in enumerate(kinds):
             with self.subTest(kind):
                 self._use_log_dir(hour)  # salts per row → no row reads another's entry
                 held_salt, written_salt, unstarted_salt = (f"9{hour}0{n}" for n in (1, 2, 3))
+                held_key, unstarted_key = f"live-trial-{held_salt}", f"live-trial-{unstarted_salt}"
                 self._open_trial(held, salt=held_salt)
                 self._open_trial(written, salt=written_salt)
                 self._open_trial(unstarted, salt=unstarted_salt, started_at=None)
-                entry = self._put_unreadable_held_void(f"live-trial-{held_salt}", kind)
+                entry = self._put_unreadable_held_void(held_key, kind)
                 with mock.patch.object(dc, "_get_utc_now", lambda: past_horizon):
                     stderr = self._run_trial_stage()
 
-                self.assertEqual(self._get_canaries(), [written], stderr)
+                decided = [key for *_, key in self.ledger.rows]
                 self.assertEqual(
-                    [key for *_, key in self.ledger.rows], [f"live-trial-{unstarted_salt}:decision"]
+                    decided, [f"{held_key}:decision", f"{unstarted_key}:decision"], kind
                 )
-                self.assertEqual(_HELD_UNREADABLE_RE.findall(stderr), [f"live-trial-{held_salt}"])
-                self.assertIn(entry, self._get_held_voids())
+                by_name = self.ledger.writes[0]
+                void = {"reason": "foreign-canary-hash", "agent": held, "text_sha256": None}
+                self.assertEqual(
+                    {key: by_name[key] for key in ("trial_key", "agent", "learning_pattern_id")},
+                    {
+                        "trial_key": held_key,
+                        "agent": held,
+                        "learning_pattern_id": _TRIAL.PATTERN_ID,
+                    },
+                    kind,
+                )
+                self.assertEqual(by_name["payload"], {"void": void}, kind)
+                self.assertEqual(_HELD_UNREADABLE_RE.findall(stderr), [held_key], kind)
+                self.assertEqual(self._get_canaries(), [written], stderr)
+                self.assertEqual(self._get_held_voids(), [] if is_removed else [entry], kind)
+                not_removed = stderr.count(f"pending trial void {entry} not removed")
+                self.assertEqual(not_removed, 0 if is_removed else 1, kind)
+
+    def test_a_by_name_void_the_ledger_refuses_keeps_its_entry_until_a_stage_records_it(
+        self,
+    ) -> None:
+        held, written = _ROSTER[:2]
+        self._open_trial(held)
+        self._open_trial(written, salt="9002")
+        entry = self._put_unreadable_held_void(_TRIAL.KEY, "not JSON")
+        held_bytes = entry.read_bytes()
+        self.ledger.write_outcome = ConnectionError("server closed the connection")
+        refused_stage = self._run_trial_stage()
+        while_refused = (entry.read_bytes(), self._get_canaries(), list(self.ledger.rows))
+        self.ledger.write_outcome = 1
+        self._run_trial_stage()
+
+        self.assertEqual(while_refused, (held_bytes, [written], []))
+        still_pending = _TRIAL_HELD_RE.findall(refused_stage)
+        self.assertEqual(still_pending, [(_TRIAL.KEY, held, "(unrecorded)")])
+        by_name = {"reason": "foreign-canary-hash", "agent": held, "text_sha256": None}
+        self.assertEqual(
+            [(write["dedupe_key"], write["payload"]) for write in self.ledger.writes],
+            [(f"{_TRIAL.KEY}:decision", {"void": by_name})],
+        )
+        self.assertEqual(self._get_held_voids(), [])
+        self.assertEqual(self._get_canaries(), [written])
+
+    def test_an_unstarted_trial_past_its_bound_is_decided_once_by_its_unreadable_held_void(
+        self,
+    ) -> None:
+        past_horizon = _TRIAL.COMMIT + timedelta(days=85)  # the canary rows state 84
+        self._open_trial(started_at=None)
+        self._put_unreadable_held_void(_TRIAL.KEY, "not JSON")
+        with mock.patch.object(dc, "_get_utc_now", lambda: past_horizon):
+            self._run_trial_stage()
+
+        decisions = [(key, payload["void"]["reason"]) for _, payload, key in self.ledger.rows]
+        self.assertEqual(decisions, [(f"{_TRIAL.KEY}:decision", "foreign-canary-hash")])
+        self.assertEqual(self.ledger.get_open_trials(), [])
 
     def test_an_unreadable_held_void_of_no_open_trial_stops_nothing_and_is_removed(self) -> None:
         self._open_trial(_ROSTER[0], salt="9001", is_decided=True)
