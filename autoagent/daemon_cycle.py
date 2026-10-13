@@ -10301,7 +10301,11 @@ def run_trial_stage() -> frozenset[str]:
     if skipped is None:
         return frozenset()
     trials = [trial for trial in trials if trial.key not in skipped]
-    past_bound = [trial for trial in trials if _is_unstarted_past_bound(trial)]
+    past_bound = [
+        trial
+        for trial in trials
+        if _is_unstarted_past_bound(trial, is_judged=trial.key not in judgment.unjudged)
+    ]
     for trial in past_bound:
         _void_unstarted_trial(trial)
     unwritten = judgment.unjudged | {trial.key for trial in past_bound}
@@ -10470,10 +10474,11 @@ def _put_trial_canary(trial: TrialCanary) -> None:
     _create_trial_canary(trial, text, path)
 
 
-def _is_unstarted_past_bound(trial: TrialCanary) -> bool:
+def _is_unstarted_past_bound(trial: TrialCanary, *, is_judged: bool) -> bool:
     """Unstarted, and the cycle instant is at or past recorded_at + the horizon the
     pre-registration states; no readable horizon → named WARN, False — a daemon default is not
-    the stated horizon."""
+    the stated horizon. `is_judged` words that WARN's canary clause alone: the stage writes no
+    canary for a trial whose stored rows it left unjudged."""
     if trial.is_started:
         return False
     horizon_days = trial.payload.get("horizon_days") if isinstance(trial.payload, dict) else None
@@ -10483,10 +10488,11 @@ def _is_unstarted_past_bound(trial: TrialCanary) -> bool:
             raise ValueError("not a positive day count")
         bound = trial.recorded_at + timedelta(days=horizon_days)
     except (TypeError, ValueError, OverflowError):
+        unjudged = "no canary written or renewed — its stored rows are unjudged this cycle"
         _warn_trial(
             f"trial {trial.key}: {trial.agent}'s pre-registration states no horizon "
             f"({horizon_days!r})",
-            "no unstarted void; its canary write is attempted",
+            f"no unstarted void; {'its canary write is attempted' if is_judged else unjudged}",
         )
         return False
     return _get_utc_now() >= bound

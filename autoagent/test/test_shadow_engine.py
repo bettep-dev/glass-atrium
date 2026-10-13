@@ -2547,6 +2547,21 @@ class TrialCanaryTest(_ShadowFixture):
                     stderr_text,
                 )
 
+    def test_an_unjudged_trial_with_no_readable_horizon_is_warned_of_no_canary_write_and_gets_none(
+        self,
+    ) -> None:
+        key = self._open_live_trial()
+        self._get_preregistration().payload.pop("horizon_days", None)
+        self.ledger.faulted.add(dc.MANIFEST.OTHER_HASH_ROWS_SQL)
+
+        stderr_text = self._stage(_NOW + timedelta(days=400))
+
+        (warn,) = [line for line in stderr_text.splitlines() if _START_WARN.NO_HORIZON in line]
+        self.assertIn(f"WARN: trial stage — trial {key}: {_AGENT}'s {_START_WARN.NO_HORIZON}", warn)
+        self.assertIn("; no unstarted void; no canary written or renewed", warn)
+        self.assertIsNone(self._get_canary())
+        self.assertEqual((self._get_decisions(), self._get_starts()), ([], []))
+
     def test_an_unstarted_trial_past_its_horizon_is_voided_though_an_earlier_write_is_refused(
         self,
     ) -> None:
