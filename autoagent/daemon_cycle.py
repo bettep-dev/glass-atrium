@@ -10287,8 +10287,8 @@ def _write_shadow_looks(
     trial: StartedTrial, counted: Sequence[ArmedSpawn], inputs: CountInputs
 ) -> bool:
     """The reached looks in order on this cycle's accrual, each row with the cycle's
-    re-delegation count → True once a decision is recorded: a win at or over the look's
-    boundary, the maximum-sample retire at the last look, a validity void ahead of either."""
+    re-delegation count and harm checks → True once a decision is recorded: at a look whose
+    row lands, a validity void ahead of its harm stop, win or maximum-sample retire."""
     canary = trial.canary
     accrual = _get_look_accrual(trial, counted)
     looks = canary.payload["looks"]
@@ -10299,25 +10299,114 @@ def _write_shadow_looks(
         )
     )
     count = _get_look_count(trial, reached, inputs)
+    rises = _get_harm_rises(counted, accrual)
     for look in reached:
-        number, registration = look
-        payload = {**get_look_payload(look, accrual), "redelegation": count}
-        # read before the row lands → an unusable boundary records no look
-        is_win = accrual.z is not None and accrual.z >= registration["boundary"]
+        payload = _get_live_look_payload(canary, look, accrual, rises, count)
+        # read before the row lands → an unusable boundary or harm check records no look
+        decision = _get_look_decision(canary, payload, is_last=look.number == len(looks))
         row = ShadowRow(
             TRIAL_LEDGER.EVENT.LIVE_LOOK,
             TRIAL_LEDGER.ACTOR.LIVE,
             payload,
-            dedupe_key=f"{canary.key}:look:{number}",
+            dedupe_key=f"{canary.key}:look:{look.number}",
         )
         # 0 = a look already recorded, None = a faulted write → no decision on any later data
-        if _write_shadow_row(row, canary) != 1 or not (is_win or number == len(looks)):
+        if _write_shadow_row(row, canary) != 1 or decision is None:
             continue
-        retire = {"retire": {"reason": "maximum-sample", "agent": canary.agent}}
-        decision = {"win": payload} if is_win else retire
         void = _get_validity_void(canary, counted)
-        return _write_look_time_decision(canary, void or decision, f"look {number}")
+        return _write_look_time_decision(canary, void or decision, f"look {look.number}")
     return False
+
+
+def _get_live_look_payload(
+    canary: TrialCanary,
+    look: Look,
+    accrual: LookAccrual,
+    rises: Mapping[str, float | None],
+    count: dict | None,
+) -> dict:
+    """A live look's row: its accrual beside its boundary, the cycle's re-delegation count,
+    its harm checks."""
+    return {
+        **get_look_payload(look, accrual),
+        "redelegation": count,
+        "harm": _get_look_harm(canary, look, rises, count),
+    }
+
+
+def _get_look_decision(canary: TrialCanary, payload: dict, *, is_last: bool) -> dict | None:
+    """The decision a landing look takes, a validity void aside: the harm stop naming a crossed
+    check — the primary's ahead of a guardrail's, guardrails by name — else the win at or over
+    the boundary, else the last look's maximum-sample retire; None = none due."""
+    crossed = [name for name, check in payload["harm"].items() if check["is_crossed"]]
+    if crossed:
+        reason = min(crossed, key=lambda name: (name != "primary", name))
+        return {"harm": {"reason": reason, "agent": canary.agent}}
+    z = payload.get("z")
+    if z is not None and z >= payload["boundary"]:
+        return {"win": payload}
+    if is_last:
+        return {"retire": {"reason": "maximum-sample", "agent": canary.agent}}
+    return None
+
+
+def _get_harm_rises(
+    counted: Sequence[ArmedSpawn], accrual: LookAccrual
+) -> dict[str, float | None]:
+    """Each harm check's treatment-minus-control difference over its session-clustered standard
+    error, a rise positive, on the settled spawns the check reads: every one for the primary
+    and the no-SubagentStop leg, those with a recorded tool_use line, those with a graded
+    outcome row; None = undefined on this cycle's data."""
+    names = HARM_CHECK.GUARDRAIL
+    settled = _get_settled_spawns(counted)
+    reductions = {
+        "primary": accrual.z,
+        names.NO_STOP: _get_look_z(settled, lambda spawn: not spawn.has_subagent_stop),
+        names.TOOL_USE: _get_look_z(
+            [item for item in settled if item.spawn.tool_use_actual is not None],
+            lambda spawn: spawn.tool_use_actual,
+        ),
+        names.VERIFIED_FAIL: _get_look_z(
+            [item for item in settled if _get_verified_fail(item.spawn) is not None],
+            _get_verified_fail,
+        ),
+    }
+    return {name: None if z is None else -z for name, z in reductions.items()}
+
+
+def _get_verified_fail(spawn: SpawnFacts) -> bool | None:
+    """Whether a graded outcome row of the spawn failed verification; None = none graded, as
+    the baseline leaves an ungraded row in neither count."""
+    verdicts = [row.get("grader_verdict") for row in spawn.outcomes]
+    graded = [verdict for verdict in verdicts if verdict is not None]
+    return GRADER_VERDICT_FAIL in graded if graded else None
+
+
+def _get_look_harm(
+    canary: TrialCanary, look: Look, rises: Mapping[str, float | None], count: dict | None
+) -> dict:
+    """Per harm check the pre-registration states, this look's verdict: its rise beside the
+    O'Brien-Fleming-type boundary of the check's per-side alpha over the registered looks,
+    crossed at or over it — either way on a two-sided band; the re-delegation count carries
+    the cycle's own verdict, a muted or absent count not crossed."""
+    stated = canary.payload["harm_checks"]
+    fractions = [registration["fraction"] for registration in canary.payload["looks"]]
+    harm = {HARM_CHECK.GUARDRAIL.REDELEGATION: {"is_crossed": bool(count and count["is_crossed"])}}
+    for name, check in {"primary": stated["primary"], **stated["guardrails"]}.items():
+        if name in harm:
+            continue
+        stage, rise = check["trial"], rises[name]
+        boundary = trial_design.get_boundaries(
+            alpha=stage["alpha_per_side"], look_fractions=fractions
+        )[look.number - 1]
+        reach = rise if rise is None or stage["sides"] == 1 else abs(rise)
+        harm[name] = {
+            "z": rise,
+            "boundary": boundary,
+            "sides": stage["sides"],
+            "is_crossed": reach is not None and reach >= boundary,
+        }
+    return harm
 
 
 def _get_look_count(
@@ -10498,22 +10587,28 @@ def _get_look_accrual(trial: StartedTrial, counted: Sequence[ArmedSpawn]) -> Loo
     payload = trial.canary.payload
     is_event = _get_aa_event_test(payload["metric_key"], get_tool_budget(os.environ))
     tasks = get_tasks((item.spawn for item in counted), SHADOW.TASK_WINDOW)
-    # a spawn that may still be running has no outcome yet → in no arm, as get_aa_looks
-    now = _get_utc_now()
-    settled = [item for item in counted if not is_pending(item.spawn, now)]
+    settled = _get_settled_spawns(counted)
     return LookAccrual(len(tasks), _get_aa_arms(settled, is_event), _get_look_z(settled, is_event))
 
 
+def _get_settled_spawns(counted: Sequence[ArmedSpawn]) -> list[ArmedSpawn]:
+    """The counted spawns with an outcome to read: one that may still be running has none yet
+    → in no arm, as get_aa_looks."""
+    now = _get_utc_now()
+    return [item for item in counted if not is_pending(item.spawn, now)]
+
+
 def _get_look_z(
-    items: Sequence[ArmedSpawn], is_event: Callable[[SpawnFacts], bool]
+    items: Sequence[ArmedSpawn], get_value: Callable[[SpawnFacts], float]
 ) -> float | None:
-    """The reduction (control rate above treatment positive) over its standard error clustered
-    by parent session, a spawn without one its own cluster; None when undefined."""
+    """The reduction (control mean of a spawn's value above treatment's positive) over its
+    standard error clustered by parent session, a spawn without one its own cluster; None when
+    undefined."""
     clusters: dict[tuple[str | None, str | None], list[tuple[int, float]]] = defaultdict(list)
     for item in items:
         spawn = item.spawn
         orphan_id = spawn.agent_id if spawn.session_id is None else None
-        clusters[(spawn.session_id, orphan_id)].append((item.arm, float(is_event(spawn))))
+        clusters[(spawn.session_id, orphan_id)].append((item.arm, float(get_value(spawn))))
     try:
         z = trial_design.get_clustered_z(list(clusters.values()))
     except ValueError:  # fewer than 2 clusters or an empty arm → no value

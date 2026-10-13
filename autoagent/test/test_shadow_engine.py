@@ -4,7 +4,7 @@ The cycle attaches a pre-registration payload only to a verified non-safety cand
 power-passing pattern; the push stores it as the live pre-registration. The stage
 pre-registers nothing: it counts the cycle's power verdicts once per cycle date, records each
 look milestone a live trial's accrued tasks reach, and reads a decision only at a look whose
-row lands in the cycle — the win, or the retire at the last look or the horizon. Every row outside the
+row lands in the cycle — the harm stop, the win, or the retire at the last look or the horizon. Every row outside the
 live class is database-free under ``seal_pg_reach``; the ledger is an in-memory append-only
 fake behind the writer and connection seams. The live class runs the pre-registration read's
 SQL on the cluster ``autoagent/test/live-pg-ephemeral.bats`` provisions and skips elsewhere.
@@ -99,7 +99,20 @@ _KEYS = SimpleNamespace(
         "redelegation_test",
     },
     REDELEGATION_TEST={"redraws", "salt_namespace", "is_first_look_reachable"},
-    LOOK={"look", "fraction", "milestone", "boundary", "accrued_tasks", "arms", "z", "redelegation"},
+    LOOK={
+        "look",
+        "fraction",
+        "milestone",
+        "boundary",
+        "accrued_tasks",
+        "arms",
+        "z",
+        "redelegation",
+        "harm",
+    },
+    # the checks a code agent's overage-primary row states; the look's decision reads is_crossed
+    LOOK_HARM={"primary", "no_subagent_stop", "verified_fail", "tool_use", "redelegation"},
+    HARM_CHECK={"z", "boundary", "sides", "is_crossed"},
     # the count at a look; the next look reads crossed
     LOOK_COUNT={
         "window_minutes",
@@ -1473,6 +1486,11 @@ class LookTest(_ShadowFixture):
         [look] = self._get_looks()
         self.assertEqual(set(look.payload), _KEYS.LOOK)
         self.assertEqual(set(look.payload["redelegation"]), _KEYS.LOOK_COUNT)
+        harm = look.payload["harm"]
+        self.assertEqual(set(harm), _KEYS.LOOK_HARM)
+        self.assertEqual(harm["redelegation"], {"is_crossed": False})
+        for name in _KEYS.LOOK_HARM - {"redelegation"}:
+            self.assertEqual(set(harm[name]), _KEYS.HARM_CHECK, name)
 
     def test_the_look_counts_overage_per_spawn_under_each_spawns_recomputed_arm(self) -> None:
         _, salt_id = self._open_started_trial()
@@ -1918,17 +1936,31 @@ class LookDecisionTest(_ShadowFixture):
         self.assertLess(look.payload["z"], look.payload["boundary"])
         self.assertEqual(self._get_decisions(), [])
 
-    def test_a_trial_with_no_treatment_spawn_and_nothing_delivered_to_control_is_retired_at_its_horizon(
+    def test_a_trial_with_no_treatment_spawn_is_voided_at_its_horizon_only_when_a_control_spawn_was_delivered(
         self,
     ) -> None:
-        _, salt_id = self._open_started_trial()
-        self.history += _get_split_spawns(salt_id, (5, 0))
-        self._cycle(_NOW + timedelta(days=trial_design.HORIZON_DAYS))
-        self.assertEqual(self._get_looks(), [])
-        [decision] = self._get_decisions()
-        self.assertEqual(decision.payload, {"retire": {"reason": "horizon", "agent": _AGENT}})
+        # name, the control spawns carrying the treatment's delivery mark, the decision
+        rows = (
+            ("nothing delivered to control", 0, {"retire": {"reason": "horizon", "agent": _AGENT}}),
+            (
+                "one delivered control spawn",
+                1,
+                {"void": {"reason": "low-delivery", "agent": _AGENT}},
+            ),
+        )
+        for name, delivered, expected in rows:
+            with self.subTest(name):
+                self.ledger.rows.clear()
+                self.history = list(_get_passing_history())
+                self.clock.now = _NOW
+                _, salt_id = self._open_started_trial()
+                self.history += _get_split_spawns(salt_id, (5, 0), flipped=(delivered, 0))
+                self._cycle(_NOW + timedelta(days=trial_design.HORIZON_DAYS))
+                self.assertEqual(self._get_looks(), [], name)
+                [decision] = self._get_decisions()
+                self.assertEqual(decision.payload, expected, name)
 
-    def test_a_look_time_decision_row_has_one_top_level_key_win_retire_or_void_with_its_reason_and_agent(
+    def test_a_look_time_decision_row_has_one_top_level_key_win_retire_void_or_harm_with_its_reason_and_agent(
         self,
     ) -> None:
         look_keys = _KEYS.LOOK
@@ -1960,6 +1992,12 @@ class LookDecisionTest(_ShadowFixture):
                 {"void": reason_keys},
                 "low-delivery",
             ),
+            (
+                "harm stop on the primary's harm direction",
+                lambda: self._decide_at_look_one((100, 100), tenths=(1, 9)),
+                {"harm": reason_keys},
+                "primary",
+            ),
         )
         for name, decide, keys, reason in rows:
             with self.subTest(name):
@@ -1976,6 +2014,167 @@ class LookDecisionTest(_ShadowFixture):
                 self.assertEqual(
                     reason and body, reason and {"reason": reason, "agent": _AGENT}, name
                 )
+
+
+def _leave_unstopped(arm: int, index: int, spawn: SpawnFacts) -> SpawnFacts:
+    """No SubagentStop on 8 in 10 treatment spawns and 1 in 10 control spawns."""
+    return spawn._replace(has_subagent_stop=index % 10 >= (8 if arm else 1))
+
+
+def _fail_verification(arm: int, index: int, spawn: SpawnFacts) -> SpawnFacts:
+    """One graded outcome row per spawn: failed on 8 in 10 treatment spawns, 1 in 10 control."""
+    verdict = "verified_fail" if index % 10 < (8 if arm else 1) else "verified_pass"
+    return spawn._replace(outcomes=({"grader_verdict": verdict},))
+
+
+def _get_either_way_band() -> dict:
+    """The tool_use check as an emit-failure trial's pre-registration states it."""
+    readings = dc.GuardrailBaseline(0.10, 0.02, dc.ToolUseBaseline(20.0, 12.0))
+    checks = dc.get_harm_checks("emit_failure", readings, dc.HarmSizing(0.10, _MAXIMUM, 4))
+    return checks["guardrails"]["tool_use"]
+
+
+class HarmStopTest(_ShadowFixture):
+    """A harm check over its boundary at a look whose row lands in the cycle stops the trial
+    ahead of a win and behind a validity void; each check spends its own alpha 0.05 over the
+    four looks, on the sides its pre-registration states."""
+
+    def _land_look_one(
+        self,
+        units: tuple[int, int],
+        *,
+        tenths: tuple[int, int] = _TENTHS.FLAT,
+        change=None,
+        band: dict | None = None,
+    ) -> None:
+        """`units` control then treatment spawns on a started trial whose stored look 1 is
+        reached at exactly that many, one cycle; `change(arm, index, spawn)` → the spawn the
+        look reads, `index` its place in its arm; `band` → the stored row's tool_use check."""
+        _, salt_id = self._open_started_trial()
+        stored = self._get_preregistrations()[-1].payload
+        stored["looks"][0]["milestone"] = sum(units)
+        if band is not None:
+            stored["harm_checks"]["guardrails"]["tool_use"] = band
+        seen = [0, 0]
+        for spawn in _get_split_spawns(salt_id, units, tenths=tenths):
+            arm = _get_arm(salt_id, spawn.agent_id)
+            self.history.append(change(arm, seen[arm], spawn) if change else spawn)
+            seen[arm] += 1
+        self._cycle(_NEXT_NOW)
+
+    def test_a_harm_check_over_its_one_sided_boundary_at_a_landing_look_stops_the_trial_ahead_of_its_win(
+        self,
+    ) -> None:
+        # name, the overran tenths of each arm, the change on each spawn, the crossed check
+        rows = (
+            ("the primary's harm direction", (1, 9), None, "primary"),
+            (
+                "the no-SubagentStop leg at a look the primary wins",
+                _TENTHS.REDUCED,
+                _leave_unstopped,
+                "no_subagent_stop",
+            ),
+            (
+                "verified_fail at a look the primary wins",
+                _TENTHS.REDUCED,
+                _fail_verification,
+                "verified_fail",
+            ),
+        )
+        for name, tenths, change, check in rows:
+            with self.subTest(name):
+                self.ledger.rows.clear()
+                self.history = list(_get_passing_history())
+                self.clock.now = _NOW
+                self._land_look_one((100, 100), tenths=tenths, change=change)
+                [look] = self._get_looks()
+                [decision] = self._get_decisions()
+                harm = look.payload["harm"][check]
+                self.assertGreaterEqual(harm["z"], harm["boundary"], name)
+                is_win = look.payload["z"] >= look.payload["boundary"]
+                self.assertEqual(is_win, tenths == _TENTHS.REDUCED, name)
+                self.assertEqual(
+                    decision.payload, {"harm": {"reason": check, "agent": _AGENT}}, name
+                )
+
+    def test_a_rise_at_the_margin_under_its_boundary_does_not_stop_the_trial(self) -> None:
+        self._land_look_one((100, 100), tenths=(1, 2))
+        [look] = self._get_looks()
+        control, treatment = (look.payload["arms"][name] for name in ("control", "treatment"))
+        fold = (treatment["events"] / treatment["units"]) / (control["events"] / control["units"])
+        stated = self._get_preregistrations()[-1].payload["harm_checks"]["primary"]
+        harm = look.payload["harm"]["primary"]
+        self.assertGreaterEqual(fold, stated["margin"])
+        self.assertGreater(harm["z"], 0)
+        self.assertLess(harm["z"], harm["boundary"])
+        self.assertFalse(harm["is_crossed"])
+        self.assertEqual(self._get_decisions(), [])
+
+    def test_the_tool_use_band_stops_upward_only_on_an_overage_primary_trial_and_either_way_otherwise(
+        self,
+    ) -> None:
+        # name, the stored band (None: the overage-primary trial's own), the control then the
+        # treatment spawns' lowest tool_use, the band's sides, whether the trial stops
+        rows = (
+            ("overage-primary, treatment above control", None, (1, 7), 1, True),
+            ("overage-primary, treatment below control", None, (7, 1), 1, False),
+            ("another primary, treatment below control", _get_either_way_band(), (7, 1), 2, True),
+            ("another primary, treatment above control", _get_either_way_band(), (1, 7), 2, True),
+        )
+        stop = {"harm": {"reason": "tool_use", "agent": _AGENT}}
+        for name, band, lowest, sides, is_stopped in rows:
+            with self.subTest(name):
+                self.ledger.rows.clear()
+                self.history = list(_get_passing_history())
+                self.clock.now = _NOW
+
+                def _record(arm: int, index: int, spawn: SpawnFacts) -> SpawnFacts:
+                    return spawn._replace(tool_use_actual=lowest[arm] + index % 5)
+
+                self._land_look_one((100, 100), change=_record, band=band)
+                [look] = self._get_looks()
+                harm = look.payload["harm"]["tool_use"]
+                self.assertEqual((harm["sides"], harm["is_crossed"]), (sides, is_stopped), name)
+                self.assertGreater(abs(harm["z"]), harm["boundary"], name)
+                self.assertEqual(
+                    [decision.payload for decision in self._get_decisions()],
+                    [stop] if is_stopped else [],
+                    name,
+                )
+
+    def test_each_check_spends_alpha_005_over_the_four_looks_a_two_sided_band_0025_per_side(
+        self,
+    ) -> None:
+        # Lan-DeMets O'Brien-Fleming-type z at four equal looks, 3-decimal records: one-sided
+        # 0.05 (the lane's pre-step 3 record), and one-sided 0.025 (the published table)
+        one_sided = (3.750, 2.540, 2.016, 1.720)
+        per_side = (4.333, 2.963, 2.359, 2.014)
+        _, salt_id = self._open_started_trial()
+        stored = self._get_preregistrations()[-1].payload
+        stored["harm_checks"]["guardrails"]["tool_use"] = _get_either_way_band()
+        self.history += _get_arm_spawns(
+            (salt_id,), _NOW, math.ceil(_MILESTONES[-1]), tenths=_TENTHS.FLAT
+        )
+        self._cycle(_NEXT_NOW)
+        looks = self._get_looks()
+        self.assertEqual([look.payload["look"] for look in looks], [1, 2, 3, 4])
+        for look, single, double in zip(looks, one_sided, per_side):
+            harm = look.payload["harm"]
+            for name in ("primary", "no_subagent_stop", "verified_fail"):
+                self.assertEqual(harm[name]["sides"], 1, name)
+                self.assertAlmostEqual(harm[name]["boundary"], single, delta=1e-3, msg=name)
+            self.assertEqual(harm["tool_use"]["sides"], 2)
+            self.assertAlmostEqual(harm["tool_use"]["boundary"], double, delta=1e-3)
+
+    def test_a_harm_crossing_at_a_look_whose_validity_fails_voids_and_writes_no_harm_stop(
+        self,
+    ) -> None:
+        # an imbalanced split at 200 counted spawns, the primary's harm direction over its boundary
+        self._land_look_one((150, 50), tenths=(1, 9))
+        [look] = self._get_looks()
+        [decision] = self._get_decisions()
+        self.assertTrue(look.payload["harm"]["primary"]["is_crossed"])
+        self.assertEqual(decision.payload, {"void": {"reason": "arm-imbalance", "agent": _AGENT}})
 
 
 class FollowUpLookTest(_ShadowFixture):
@@ -2173,6 +2372,23 @@ class FollowUpLookTest(_ShadowFixture):
         )
         # every spawn carries its delivery mark → the last look retires, no validity void
         self.assertEqual([set(decision.payload) for decision in self._get_decisions()], [{"retire"}])
+
+    def test_a_count_crossing_at_a_landing_look_stops_the_trial_for_re_delegation(self) -> None:
+        salt_id = self._open_trial(1, 2)
+        # a treated spawn is followed six times more than a control one
+        for index in range(24):
+            spawn = _get_closed(index)
+            follow_ups = index % 2 + 6 * _get_arm(salt_id, spawn.agent_id)
+            session = [spawn, *(_get_follow_up(spawn, minute) for minute in range(follow_ups))]
+            self.history += [_get_hook_record(member, salt_id) for member in session]
+        self._cycle(_NEXT_NOW)
+        [look] = self._get_looks()
+        [decision] = self._get_decisions()
+        self.assertTrue(look.payload["redelegation"]["is_crossed"])
+        self.assertEqual(look.payload["harm"]["redelegation"], {"is_crossed": True})
+        self.assertEqual(
+            decision.payload, {"harm": {"reason": "redelegation", "agent": _AGENT}}
+        )
 
     def test_two_looks_reached_in_one_cycle_are_judged_once_at_the_alpha_spent_through_the_higher(
         self,
@@ -3860,6 +4076,23 @@ class HarmCheckTest(unittest.TestCase):
             guardrails["tool_use"]["watch"]["minimum_detectable"]["design_effect_2"],
             expected,
         )
+
+    def test_the_legs_margin_is_the_smaller_of_the_30_percent_rise_and_the_trials_absolute_effect(
+        self,
+    ) -> None:
+        # name, the primary's rate, the leg's rate, the margin as a fold at the leg's rate
+        rows = (
+            ("the absolute effect is smaller: 0.3 × 0.05 at 0.10", 0.05, 0.10, 1.15),
+            ("the 30% rise is smaller: 0.3 × 0.50 at 0.10 is 2.5-fold", 0.50, 0.10, 1.30),
+            ("both equal: 0.3 × 0.10 at 0.10", 0.10, 0.10, 1.30),
+        )
+        for name, primary_rate, leg_rate, margin in rows:
+            with self.subTest(name):
+                readings = dc.GuardrailBaseline(leg_rate, 0.02, dc.ToolUseBaseline(20.0, 12.0))
+                checks = dc.get_harm_checks(
+                    _BUDGET_KEY, readings, dc.HarmSizing(primary_rate, 790, 4)
+                )
+                self.assertAlmostEqual(checks["guardrails"]["no_subagent_stop"]["margin"], margin)
 
     def test_the_legs_absolute_margin_is_the_reduction_the_trial_is_sized_to_find(
         self,
