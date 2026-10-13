@@ -295,8 +295,6 @@ class TestConsolidatedPromptInjection(unittest.TestCase):
 
 _HEAD_SENTINEL = "HEAD_SENTINEL_9f3a21"
 _TAIL_SENTINEL = "TAIL_SENTINEL_9f3a21"
-_SUPERSEDE_ANCHOR = "REPLACES that one rule in place"
-_APPEND_ONLY_ANCHOR = "DO NOT rewrite existing rules — only ADD"
 
 
 def _largest_registry_body_chars() -> int:
@@ -407,19 +405,20 @@ class TestGenerationPromptWholeFile(unittest.TestCase):
 
 
 @unittest.skipIf(dc is None, f"import failed: {_IMPORT_ERROR}")
-class TestSupersedePermissionPrompt(unittest.TestCase):
-    """T5b-1 — conditional supersede permission replaces the append-only rule."""
+class TestPureAddPrompt(unittest.TestCase):
+    """Both generation templates ask for a pure ADD and invite no in-place replacement."""
 
-    def test_when_templates_read_then_permission_present_at_both_sites(self) -> None:
-        for template in (dc._PROMPT_TEMPLATE, dc._CONSOLIDATED_PROMPT_TEMPLATE):
-            self.assertIn(_SUPERSEDE_ANCHOR, template)
-            self.assertNotIn(_APPEND_ONLY_ANCHOR, template)
-
-    def test_when_templates_read_then_pure_add_still_required_without_a_rule(
+    def test_when_templates_read_then_each_requires_a_pure_add_and_invites_no_replace(
         self,
     ) -> None:
-        for template in (dc._PROMPT_TEMPLATE, dc._CONSOLIDATED_PROMPT_TEMPLATE):
-            self.assertIn("pure ADD", template)
+        templates = {
+            "single-pattern": dc._PROMPT_TEMPLATE,
+            "consolidated": dc._CONSOLIDATED_PROMPT_TEMPLATE,
+        }
+        for row_id, template in templates.items():
+            with self.subTest(row_id):
+                self.assertNotIn("REPLACE", template.upper())
+                self.assertIn("MUST be a pure ADD", template)
 
 
 @unittest.skipIf(dc is None, f"import failed: {_IMPORT_ERROR}")

@@ -2392,10 +2392,9 @@ Propose a SMALL, targeted patch (≤ 5 added lines) to the BODY (after the YAML
 frontmatter, i.e. after the second '---') that addresses the observed failure
 pattern. The patch should add a concrete guardrail, work-rule, or pre-execution
 check that prevents recurrence. DO NOT touch the frontmatter (name/description/
-tools/skills/scope). Where the file ALREADY carries a rule addressing this
-signal, you MAY propose a diff that REPLACES that one rule in place (remove its
-lines and add the superseding lines in the same hunk); where it does not, the
-diff MUST be a pure ADD. Never rewrite unrelated rules.
+tools/skills/scope). The diff MUST be a pure ADD: it adds lines and removes or
+rewrites none, even where the file ALREADY carries a rule addressing this
+signal — a diff that removes or rewrites an existing line is refused.
 
 Output STRICT format. The DIFF section MUST be raw unified-diff text with the
 following exact headers (no ```diff fences, no ``` of any kind, no surrounding
@@ -2449,10 +2448,10 @@ contain MULTIPLE hunks (one per distinct location/signal) — author them ALL in
 SINGLE unified diff computed against the file shown above, so every hunk applies
 atomically via one `git apply`. Each hunk adds a concrete guardrail, work-rule,
 or pre-execution check that prevents recurrence. DO NOT touch the frontmatter
-(name/description/tools/skills/scope). Where the file ALREADY carries a rule
-addressing a signal, you MAY propose a diff that REPLACES that one rule in place
-(remove its lines and add the superseding lines in the same hunk); where it does
-not, that hunk MUST be a pure ADD. Never rewrite unrelated rules.
+(name/description/tools/skills/scope). Every hunk MUST be a pure ADD: it adds
+lines and removes or rewrites none, even where the file ALREADY carries a rule
+addressing a signal — a diff that removes or rewrites an existing line is
+refused.
 Keep the TOTAL added lines small (≤ 5 across all hunks).
 
 Output STRICT format. The DIFF section MUST be raw unified-diff text with the
