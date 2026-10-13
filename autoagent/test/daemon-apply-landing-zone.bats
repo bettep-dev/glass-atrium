@@ -9,6 +9,11 @@
 #   * unreadable target      → read_error verdict → REJECT (fail-closed) + unchanged
 #   * mixed-hunk diff        → one in-region + one out-of-region hunk → REJECT the
 #                            WHOLE diff (no partial apply) + byte-unchanged
+#   * non-newline break      → an added line carrying U+2028 / U+0085 / FF / a lone
+#                            CR stays ONE line: a blank-anchored protected-zone hunk
+#                            → REJECT + byte-unchanged
+#   * lone-CR anchor         → a body line carrying a lone CR stays ONE line: an
+#                            in-region hunk anchored on it → ACCEPT
 #
 # GIT-FREE MODEL (P1-T2): the daemon no longer wraps applies in git commits. The
 # transaction is a before-image copy + `git apply --recount` (which lands a unified
@@ -457,7 +462,70 @@ applied_log_path() {
 }
 
 # ---------------------------------------------------------------------------
-# (h) SIGTERM mid-apply → the TERM trap releases the .apply-lock AND terminates
+# (h) the diff and the body are read at the newline alone, as git apply reads them
+# ---------------------------------------------------------------------------
+
+@test "a hunk anchored only on blank protected lines is rejected when its added line carries a non-newline break ahead of in-region text (byte-unchanged)" {
+  local names=('U+2028' 'U+0085' 'FF' 'CR not ending a line')
+  local seps=($'\xe2\x80\xa8' $'\xc2\x85' $'\f' $'\r')
+  local i diff
+  for i in 0 1 2 3; do
+    printf '%s\n' \
+      '# Probe Agent' '' '## Absolute Rules' '' '- protected rule line alpha' '' \
+      '## Goal' '<!-- EDITABLE:BEGIN -->' \
+      'editable rule alpha' 'editable rule beta' \
+      '<!-- EDITABLE:END -->' >"${AGENTS}/probe.md"
+    snapshot_pristine "${AGENTS}/probe.md"
+
+    # The text after the break is the rest of the ADDED line, never a context
+    # line: the hunk's one anchor is the blank protected line 4.
+    diff="$(printf '%s\n' '--- a/probe.md' '+++ b/probe.md' '@@ -4,1 +4,2 @@' \
+      "+new rule${seps[i]} editable rule alpha" ' ')"
+    write_proposal_row "${AGENTS}/probe.md" "probe-break-${i}" "${diff}"
+    run_apply
+
+    # The run's own output carries the verdict: the applied log appends across rows.
+    [[ "${output}" == *'landing_zone_reject verdict=out_of_region'* ]] \
+      || {
+        echo "${names[i]}: no out_of_region verdict"
+        echo "${output}"
+        return 1
+      }
+    cmp -s "${PRISTINE_SNAPSHOT}" "${AGENTS}/probe.md" \
+      || {
+        echo "${names[i]}: the target changed"
+        echo "${output}"
+        return 1
+      }
+  done
+}
+
+@test "an in-region hunk whose only anchor carries a lone CR lands (bytes applied, status=applied logged)" {
+  printf '%s\n' \
+    '# Probe Agent' '' '## Goal' '<!-- EDITABLE:BEGIN -->' \
+    $'editable anchor\rtail of the same line' 'editable goal line two' \
+    '<!-- EDITABLE:END -->' >"${AGENTS}/probe.md"
+
+  local diff log
+  diff="$(printf '%s\n' '--- a/probe.md' '+++ b/probe.md' '@@ -5,1 +5,2 @@' \
+    '+inserted editable line' $' editable anchor\rtail of the same line')"
+  write_proposal_row "${AGENTS}/probe.md" "probe-cr-anchor" "${diff}"
+  run_apply
+
+  [[ "${status}" -eq 0 ]] || {
+    echo "${output}"
+    return 1
+  }
+  grep -q 'inserted editable line' "${AGENTS}/probe.md" || {
+    echo "${output}"
+    return 1
+  }
+  log="$(applied_log_path)"
+  grep -q '"status":"applied"' "${log}"
+}
+
+# ---------------------------------------------------------------------------
+# (i) SIGTERM mid-apply → the TERM trap releases the .apply-lock AND terminates
 #     the daemon (exit 143, no post-signal mutations)
 # ---------------------------------------------------------------------------
 

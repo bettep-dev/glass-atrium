@@ -685,7 +685,9 @@ def _breaks_table(hunks):
 def main():
     target_path = sys.argv[1]
     diff_text = sys.stdin.read()
-    lines = diff_text.splitlines()
+    # git apply breaks a diff and a body at "\n" alone; str.splitlines and a
+    # translating open also break at FF, U+0085, U+2028 and a lone CR.
+    lines = [ln[:-1] if ln.endswith("\r") else ln for ln in diff_text.split("\n")]
 
     # Header-less Strategy-B fragment → EOF append, outside any region. Reject.
     has_minus_header = any(ln.startswith("--- ") for ln in lines)
@@ -695,7 +697,7 @@ def main():
         return
 
     try:
-        with open(target_path, "r", encoding="utf-8") as fh:
+        with open(target_path, "r", encoding="utf-8", newline="") as fh:
             current = fh.read()
     except OSError:
         sys.stdout.write("read_error")  # loud-fail: NEVER pass-through
