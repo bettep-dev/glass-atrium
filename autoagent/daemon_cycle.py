@@ -9336,6 +9336,14 @@ class CountInputs(NamedTuple):
     recorded: Mapping[int, dict]  # the trial's recorded look payloads, by look number
 
 
+class LookReadings(NamedTuple):
+    """One cycle's readings of a trial, as each reached look's row carries them."""
+
+    accrual: LookAccrual
+    rises: Mapping[str, float | None]  # per harm check; None = undefined on this cycle's data
+    redelegation: dict | None  # the cycle's count; None = every reached look already recorded
+
+
 def run_shadow_stage(power: PowerResult, cycle_date: str, judged_trials: frozenset[str]) -> None:
     """Shadow engine: count power verdicts, record reached looks of live trials, take their
     look-time decisions.
@@ -10299,9 +10307,9 @@ def _write_shadow_looks(
         )
     )
     count = _get_look_count(trial, reached, inputs)
-    rises = _get_harm_rises(counted, accrual)
+    readings = LookReadings(accrual, _get_harm_rises(counted, accrual), count)
     for look in reached:
-        payload = _get_live_look_payload(canary, look, accrual, rises, count)
+        payload = _get_live_look_payload(canary, look, readings)
         # read before the row lands → an unusable boundary or harm check records no look
         decision = _get_look_decision(canary, payload, is_last=look.number == len(looks))
         row = ShadowRow(
@@ -10318,19 +10326,13 @@ def _write_shadow_looks(
     return False
 
 
-def _get_live_look_payload(
-    canary: TrialCanary,
-    look: Look,
-    accrual: LookAccrual,
-    rises: Mapping[str, float | None],
-    count: dict | None,
-) -> dict:
+def _get_live_look_payload(canary: TrialCanary, look: Look, readings: LookReadings) -> dict:
     """A live look's row: its accrual beside its boundary, the cycle's re-delegation count,
     its harm checks."""
     return {
-        **get_look_payload(look, accrual),
-        "redelegation": count,
-        "harm": _get_look_harm(canary, look, rises, count),
+        **get_look_payload(look, readings.accrual),
+        "redelegation": readings.redelegation,
+        "harm": _get_look_harm(canary, look, readings),
     }
 
 
@@ -10382,20 +10384,19 @@ def _get_verified_fail(spawn: SpawnFacts) -> bool | None:
     return GRADER_VERDICT_FAIL in graded if graded else None
 
 
-def _get_look_harm(
-    canary: TrialCanary, look: Look, rises: Mapping[str, float | None], count: dict | None
-) -> dict:
+def _get_look_harm(canary: TrialCanary, look: Look, readings: LookReadings) -> dict:
     """Per harm check the pre-registration states, this look's verdict: its rise beside the
     O'Brien-Fleming-type boundary of the check's per-side alpha over the registered looks,
     crossed at or over it — either way on a two-sided band; the re-delegation count carries
     the cycle's own verdict, a muted or absent count not crossed."""
     stated = canary.payload["harm_checks"]
     fractions = [registration["fraction"] for registration in canary.payload["looks"]]
+    count = readings.redelegation
     harm = {HARM_CHECK.GUARDRAIL.REDELEGATION: {"is_crossed": bool(count and count["is_crossed"])}}
     for name, check in {"primary": stated["primary"], **stated["guardrails"]}.items():
         if name in harm:
             continue
-        stage, rise = check["trial"], rises[name]
+        stage, rise = check["trial"], readings.rises[name]
         boundary = trial_design.get_boundaries(
             alpha=stage["alpha_per_side"], look_fractions=fractions
         )[look.number - 1]
