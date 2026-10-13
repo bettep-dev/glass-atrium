@@ -1646,6 +1646,136 @@ class TestStoredRowsJudgment(_DeliveryCase):
             [("live-trial-9002", agent, older_sha256, spool, "2", decision)],
         )
 
+    def test_a_schema_without_the_exposure_columns_stops_every_canary_write_and_names_its_migration(
+        self,
+    ) -> None:
+        started, unstarted, past_bound = _ROSTER
+        self._open_trial(started)
+        self._open_trial(unstarted, salt="9002", started_at=None)
+        self._open_trial(past_bound, salt="9003", started_at=None)
+        self.ledger.trials[-1]["recorded_at"] = _TRIAL.COMMIT - timedelta(days=84)
+        self._put_canaries((started,))
+        self._store(self._get_foreign_line(started))
+        self.table.other_hash_read_fault = _UndefinedColumn("column m.delivered does not exist")
+
+        stderr = self._run_trial_stage()
+
+        # the unstarted void alone: no foreign-hash void from the store, no start row
+        unstarted_void = {"void": {"reason": dc.LIVE_TRIAL.UNSTARTED_REASON, "agent": past_bound}}
+        self.assertEqual(
+            self.ledger.rows,
+            [(dc.TRIAL_LEDGER.EVENT.LIVE_DECISION, unstarted_void, "live-trial-9003:decision")],
+        )
+        # one file not renewed, the other not written
+        self.assertEqual(self._get_canary_files(), {started: b"{}"})
+        warns = [line for line in stderr.splitlines() if "WARN:" in line]
+        (named,) = [line for line in warns if _EXPOSURE_MIGRATION in line]
+        self.assertIn(
+            "WARN: trial stage — core.spawn_manifest has no exposure columns "
+            f"(apply migration {_EXPOSURE_MIGRATION}); no open trial judged until",
+            named,
+        )
+        (voided,) = [line for line in warns if line != named]
+        self.assertIn("trial live-trial-9003 voided: ", voided)
+
+    def _get_verdict(
+        self, hour: int, line: str, open_trials: Callable[[], None], *, is_stage: bool
+    ) -> tuple[list[str], bool]:
+        """One delivery line in a fresh log root — judged by a fault-free ingest, or stored unbound
+        and judged by the stage → (the ledger keys written, whether _ROSTER[0]'s file stands)."""
+        self._use_log_dir(hour)
+        self.table.rows.clear()
+        open_trials()
+        self._put_canaries()
+        if is_stage:
+            self._store(line)
+            self._run_trial_stage()
+        else:
+            self._append(self.live_log, line)
+            self._ingest(self.cycle)
+        return self._get_decided_keys(), _ROSTER[0] in self._get_canary_files()
+
+    def test_the_stage_s_verdict_on_a_stored_row_equals_a_fault_free_ingest_s_on_the_same_line(
+        self,
+    ) -> None:
+        own_text, other_text = "an earlier trial of the agent", "a trial of another agent"
+        self.ledger.event_by_id = {int(_AA.SALT): dc.TRIAL_LEDGER.EVENT.AA_START}
+
+        def open_trials() -> None:
+            self._open_trial()
+            self._open_trial(salt="8800", text=own_text, is_decided=True)
+            self._open_trial(_ROSTER[1], salt="8801", text=other_text, is_decided=True)
+
+        void = ([f"{_TRIAL.KEY}:decision"], False)
+        no_void: tuple[list[str], bool] = ([], True)
+        # name, the row's salt, the text it delivered, both judges' verdict
+        rows = (
+            ("the A/A text on an aa-start salt", _AA.SALT, "", no_void),
+            ("its own decided pre-registration's salt and text", "8800", own_text, no_void),
+            ("another agent's decided pre-registration's salt and text", "8801", other_text, void),
+        )
+        for index, (name, salt, text, verdict) in enumerate(rows):
+            with self.subTest(name):
+                text_sha256 = hashlib.sha256(text.encode("utf-8")).hexdigest()
+                line = _get_delivery_line(_ROSTER[0], salt=salt, text_sha256=text_sha256)
+
+                at_ingest = self._get_verdict(2 * index, line, open_trials, is_stage=False)
+                at_stage = self._get_verdict(2 * index + 1, line, open_trials, is_stage=True)
+
+                self.assertEqual((at_ingest, at_stage), (verdict, verdict), name)
+
+    def test_a_foreign_row_voids_its_own_trial_alone_and_the_other_trial_s_canary_is_renewed(
+        self,
+    ) -> None:
+        voided, kept = _ROSTER[:2]
+        self._open_trial(voided)
+        self._open_trial(kept, salt="9002")
+        self._put_canaries((voided, kept))
+        self._store(self._get_foreign_line(voided))
+
+        self._run_trial_stage()
+
+        self.assertEqual(self._get_decided_keys(), [f"{_TRIAL.KEY}:decision"])
+        self.assertEqual(sorted(self._get_canary_files()), [kept])
+        self.assertEqual(self._get_lease_end(kept), int((self.now + dc.CANARY.LEASE).timestamp()))
+
+    def test_a_row_foreign_at_its_ingest_reads_racing_at_a_stage_after_its_other_trial_is_decided(
+        self,
+    ) -> None:
+        agent, other_text = _ROSTER[0], "the agent's other trial"
+        other_sha256 = hashlib.sha256(other_text.encode("utf-8")).hexdigest()
+        line = _get_delivery_line(agent, salt="8800", text_sha256=other_sha256)
+
+        def open_trials(*, is_other_decided: bool) -> None:
+            self._open_trial(agent, salt="8800", text=other_text, is_decided=is_other_decided)
+            self._open_trial(agent)
+
+        at_ingest = self._get_verdict(
+            0, line, lambda: open_trials(is_other_decided=False), is_stage=False
+        )
+        at_a_later_stage = self._get_verdict(
+            1, line, lambda: open_trials(is_other_decided=True), is_stage=True
+        )
+
+        self.assertEqual(at_ingest, ([f"{_TRIAL.KEY}:decision"], False))
+        self.assertEqual(at_a_later_stage, ([], True))
+
+    def test_a_stored_row_started_before_the_commit_s_second_voids_nothing(self) -> None:
+        self._open_trial()
+        self._put_canaries()
+        self._store(
+            _get_delivery_line(
+                _ROSTER[0], salt="3", text_sha256=_PLAIN_SHA256, ts=_TRIAL.BEFORE_COMMIT
+            )
+        )
+
+        self._run_trial_stage()
+
+        self.assertEqual(self.ledger.rows, [])
+        self.assertEqual(
+            self._get_lease_end(_ROSTER[0]), int((self.now + dc.CANARY.LEASE).timestamp())
+        )
+
 
 class TestStoredOtherHashRows(_IngestCase):
     """The stage's read of the open trials' stored delivered rows of another canary text."""

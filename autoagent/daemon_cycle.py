@@ -10253,6 +10253,8 @@ def run_trial_stage() -> None:
     - the stored rows or their salts unreadable → named WARN, nothing voided; an unjudged
       trial's canary is not written, renewed or removed — a file in place runs to its lease —
       and its unstarted void is still written
+    - core.spawn_manifest without the exposure columns → one WARN naming the migration, every
+      open trial unjudged under that same rule until it is applied
     - text: exactly payload["canary"]["text"], salted with the pre-registration row id; a text
       whose sha256 is not the pre-registered text_sha256 → named WARN, no file
     - started trial (its :start row landed) → the file rewritten, its lease renewed
@@ -10332,6 +10334,7 @@ def _judge_stored_rows(trials: list[TrialCanary]) -> StageJudgment:
       latest trial; an earlier trial of that agent is judged with no row
     - no open trial → no statement
     - the stored rows unreadable → every open trial unjudged, a named WARN, nothing voided
+    - core.spawn_manifest without the exposure columns → the same, its WARN naming the migration
     """
     if not trials:
         return StageJudgment(frozenset(), frozenset())
@@ -10339,16 +10342,25 @@ def _judge_stored_rows(trials: list[TrialCanary]) -> StageJudgment:
     binding = DeliveryBinding(
         DEFAULT_AGENTS_DIR, trials=_get_trial_bindings(map(_get_stage_binding, trials))
     )
+    unjudged = StageJudgment(frozenset(), frozenset(trial.key for trial in trials))
     try:
         stored = _read_other_hash_rows(binding.trials)
+    except ManifestExposureAbsent as exc:
+        _warn_unjudged(str(exc), "until that migration is applied")
+        return unjudged
     except Exception as exc:  # noqa: BLE001 — a read fault never fails the cycle
-        _warn_trial(
-            f"stored manifest rows unreadable: {_describe_fault(exc)}",
-            "no open trial judged this cycle — no canary written or renewed, a file in place "
-            "left to its lease",
-        )
-        return StageJudgment(frozenset(), frozenset(trial.key for trial in trials))
+        _warn_unjudged(f"stored manifest rows unreadable: {_describe_fault(exc)}", "this cycle")
+        return unjudged
     return _judge_other_hash_rows(stored, binding)
+
+
+def _warn_unjudged(cause: str, span: str) -> None:
+    """The one canary rule of every fault that leaves all open trials unjudged."""
+    _warn_trial(
+        cause,
+        f"no open trial judged {span} — no canary written or renewed, a file in place left to "
+        "its lease",
+    )
 
 
 def _get_stage_binding(trial: TrialCanary) -> TrialBinding:
