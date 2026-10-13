@@ -449,6 +449,26 @@ class ArmDifferenceDesignEffect(unittest.TestCase):
         singletons = [[(0, 1.0)], [(1, 0.0)], [(0, 0.0)], [(1, 1.0)]]
         self.assertEqual(td.get_arm_difference_design_effect(singletons), 1.0)
 
+    def test_the_clustered_z_is_the_arm_difference_over_its_session_clustered_standard_error(
+        self,
+    ) -> None:
+        # control 30/100, treatment 10/100, one spawn per session → the unpooled two-proportion
+        # form: se √(0.3·0.7/100 + 0.1·0.9/100) = √0.003 → z = (0.1 − 0.3) / 0.0547723
+        spawns = [(0, 1.0)] * 30 + [(0, 0.0)] * 70 + [(1, 1.0)] * 10 + [(1, 0.0)] * 90
+        rows = (
+            ("one spawn per session", [[spawn] for spawn in spawns]),
+            ("each spawn repeated inside its session", [[spawn] * 3 for spawn in spawns]),
+        )
+        for name, clusters in rows:
+            with self.subTest(name):
+                self.assertAlmostEqual(td.get_clustered_z(clusters), -3.6514837, places=6)
+
+    def test_an_arm_difference_without_clustered_variance_has_no_z(self) -> None:
+        constant = [[(0, 1.0)], [(1, 1.0)], [(0, 1.0)], [(1, 1.0)]]
+        self.assertIsNone(td.get_clustered_z(constant))
+        with self.assertRaises(ValueError):
+            td.get_clustered_z([[(0, 1.0), (1, 0.0)]])
+
     def test_the_session_bootstrap_interval_covers_the_truth_at_about_its_level(self) -> None:
         # per-spawn arms → true value 1; a two-sided 90% interval → ~90% of datasets cover it
         generator = random.Random(20261012)

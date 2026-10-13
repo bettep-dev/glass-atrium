@@ -69,6 +69,14 @@ class _ArmTotals(NamedTuple):
     squares: tuple[float, float]
 
 
+class _ArmDifference(NamedTuple):
+    """The treatment-minus-control mean beside both variance forms of it."""
+
+    value: float
+    clustered: float  # Σ over sessions of (Σ z)²
+    independent: float  # Σ z²
+
+
 def get_fixed_sample_size(
     baseline_rate: float,
     *,
@@ -338,8 +346,28 @@ def _get_arm_totals(clusters: Sequence[Sequence[tuple[int, float]]]) -> list[_Ar
     return totals
 
 
+def get_clustered_z(clusters: Sequence[Sequence[tuple[int, float]]]) -> float | None:
+    """The treatment-minus-control mean over its session-clustered standard error.
+
+    Clusters as get_arm_difference_design_effect takes them. None when the clustered variance
+    is 0; raises ValueError when the difference is undefined: fewer than 2 clusters, an empty
+    cluster or an empty arm.
+    """
+    difference = _get_arm_difference(_get_arm_totals(clusters))
+    if difference.clustered <= 0:
+        return None
+    return difference.value / math.sqrt(difference.clustered)
+
+
 def _get_arm_ratio(totals: Sequence[_ArmTotals]) -> float:
     """Σ over sessions of (Σ z)² over Σ z², z = (outcome − arm mean) / arm size, signed + on treatment."""
+    difference = _get_arm_difference(totals)
+    if difference.independent <= 0:
+        raise ValueError("no variance in either arm: arm-difference design effect undefined")
+    return difference.clustered / difference.independent
+
+
+def _get_arm_difference(totals: Sequence[_ArmTotals]) -> _ArmDifference:
     sizes = [sum(total.counts[arm] for total in totals) for arm in (0, 1)]
     if min(sizes) == 0:
         raise ValueError(f"an arm has no spawns, sizes {sizes}: arm difference undefined")
@@ -358,9 +386,7 @@ def _get_arm_ratio(totals: Sequence[_ArmTotals]) -> float:
         for total in totals
         for arm in (0, 1)
     )
-    if independent <= 0:
-        raise ValueError("no variance in either arm: arm-difference design effect undefined")
-    return clustered / independent
+    return _ArmDifference(means[1] - means[0], clustered, independent)
 
 
 def _get_interval(draws: list[float]) -> tuple[float | None, float | None]:

@@ -9316,6 +9316,14 @@ class Look(NamedTuple):
 class LookAccrual(NamedTuple):
     tasks: int
     arms: TrialArms | None = None
+    z: float | None = None  # the primary's reduction over its session-clustered standard error
+
+
+class LookOrigin(NamedTuple):
+    """Where a started trial's looks run from."""
+
+    salt_id: int  # the pre-registration row's id, the arm salt
+    started_at: datetime  # the start record's instant
 
 
 def run_shadow_stage(power: PowerResult, cycle_date: str, judged_trials: frozenset[str]) -> None:
@@ -9327,8 +9335,10 @@ def run_shadow_stage(power: PowerResult, cycle_date: str, judged_trials: frozens
       the row's last_transition_at (a NULL anchor keeps it); otherwise no look
     - judged_trials: the trial keys this cycle's trial stage judged and left open
       (run_trial_stage) → a trial outside it — unjudged, voided or decided — takes no look
-    - accrual (interim basis): tasks from the pre-registration's recorded_at → none in its cycle
-    - arms: no production arm source yet → look rows carry accrual only
+    - origin: the trial's start record → no start record, no look; units, arms and milestones
+      run from its second, so a spawn started before it is in no arm and no count
+    - arms: each counted spawn under its arm recomputed from the pre-registration row's id,
+      whatever the hook recorded; milestones on both arms' total
     - ledger fault: named WARN, never a failed cycle · --dry-run: the caller skips the stage
     """
     if not HAS_PG_LOOP_WRITE:
@@ -9347,26 +9357,30 @@ def run_shadow_stage(power: PowerResult, cycle_date: str, judged_trials: frozens
     trials = _read_shadow_trials(power.passes)
     if trials is None:
         return
+    origins = _read_look_origins(judged_trials)
+    if origins is None:
+        return
     for power_pass in power.passes:
         pattern = power_pass.pattern
         trial = trials.get((pattern.agent, pattern.row_id, pattern.metric_key))
-        _write_shadow_pass(power_pass, trial, power.windows, judged_trials)
+        _write_shadow_pass(power_pass, trial, power.windows, origins)
 
 
 def _write_shadow_pass(
     power_pass: PowerPass,
     trial: ShadowTrial | None,
     windows: PairWindows,
-    judged_trials: frozenset[str],
+    origins: Mapping[str, LookOrigin],
 ) -> None:
-    """Record a current live trial's reached looks; no current trial, or one this cycle's trial
-    stage did not judge and leave open → nothing written."""
-    if trial is None or trial.key not in judged_trials:
+    """Record a current live trial's reached looks; no current trial, or one with no origin —
+    not judged and left open by this cycle's trial stage, or not started → nothing written."""
+    if trial is None or not _is_trial_current(trial, power_pass.pattern.last_transition_at):
         return
-    if not _is_trial_current(trial, power_pass.pattern.last_transition_at):
+    origin = origins.get(trial.key)
+    if origin is None:
         return
     try:
-        _write_shadow_looks(trial, power_pass, windows.end)
+        _write_shadow_looks(trial, power_pass, windows.end, origin)
     except (KeyError, TypeError, ValueError) as exc:
         _warn_shadow(
             f"trial {trial.key}: stored pre-registration unusable: {_describe_fault(exc)}",
@@ -10137,7 +10151,7 @@ def get_look_payload(look: Look, accrual: LookAccrual) -> dict:
     }
     if accrual.arms is not None:
         payload["arms"] = {name: arm._asdict() for name, arm in accrual.arms._asdict().items()}
-        payload["z"] = _get_pooled_z(accrual.arms)
+        payload["z"] = accrual.z
     return payload
 
 
@@ -10179,33 +10193,76 @@ def _read_shadow_trials(
     }
 
 
-def _write_shadow_looks(trial: ShadowTrial, power_pass: PowerPass, window_end: datetime) -> None:
-    accrued = _get_accrued_task_count(trial, power_pass, window_end)
+def _read_look_origins(judged_trials: frozenset[str]) -> dict[str, LookOrigin] | None:
+    """Trial key → the arm salt and start instant of each trial in ``judged_trials`` with a
+    readable start record; none judged → no read; None (WARN) on a fault."""
+    if not judged_trials:
+        return {}
+    try:
+        salt_ids = {trial.key: trial.salt_id for trial in _read_trial_canaries()}
+        bindings = list(_read_trial_bindings().values())
+    except Exception as exc:  # noqa: BLE001 — a ledger read fault never fails the cycle
+        _warn_shadow(f"trial starts unreadable: {_describe_fault(exc)}", "no look this cycle")
+        return None
+    return {
+        binding.key: LookOrigin(salt_ids[binding.key], binding.started_at)
+        for binding in bindings
+        if binding.key in judged_trials
+        and binding.key in salt_ids
+        and binding.started_at is not None
+    }
+
+
+def _write_shadow_looks(
+    trial: ShadowTrial, power_pass: PowerPass, window_end: datetime, origin: LookOrigin
+) -> None:
+    accrual = _get_look_accrual(trial, power_pass, window_end, origin)
     for number, registration in enumerate(trial.payload["looks"], start=1):
-        if accrued < registration["milestone"]:
+        if accrual.tasks < registration["milestone"]:
             return
         _write_shadow_row(
             ShadowRow(
                 TRIAL_LEDGER.EVENT.LIVE_LOOK,
                 TRIAL_LEDGER.ACTOR.LIVE,
-                get_look_payload(Look(number, registration), LookAccrual(accrued)),
+                get_look_payload(Look(number, registration), accrual),
                 dedupe_key=f"{trial.key}:look:{number}",
             ),
             TrialIdentity(trial.key, power_pass.pattern),
         )
 
 
-def _get_accrued_task_count(trial: ShadowTrial, power_pass: PowerPass, window_end: datetime) -> int:
-    return len(
-        get_tasks(
-            (
-                spawn
-                for spawn in power_pass.spawns
-                if spawn.agent_id is not None and trial.recorded_at <= spawn.started_at < window_end
-            ),
-            SHADOW.TASK_WINDOW,
-        )
-    )
+def _get_look_accrual(
+    trial: ShadowTrial, power_pass: PowerPass, window_end: datetime, origin: LookOrigin
+) -> LookAccrual:
+    """The units counted from the start record: both arms' total tasks, each spawn under its
+    recomputed arm with the primary event per spawn, and the clustered z."""
+    # started_at is whole seconds → floored start keeps a first-second spawn, as _bind_to_open_aa
+    start = origin.started_at.replace(microsecond=0)
+    counted = [
+        ArmedSpawn(spawn, get_spawn_arm(origin.salt_id, spawn.agent_id))
+        for spawn in power_pass.spawns
+        if spawn.agent_id is not None and start <= spawn.started_at < window_end
+    ]
+    is_event = _get_aa_event_test(trial.payload["metric_key"], get_tool_budget(os.environ))
+    tasks = get_tasks((item.spawn for item in counted), SHADOW.TASK_WINDOW)
+    return LookAccrual(len(tasks), _get_aa_arms(counted, is_event), _get_look_z(counted, is_event))
+
+
+def _get_look_z(
+    items: Sequence[ArmedSpawn], is_event: Callable[[SpawnFacts], bool]
+) -> float | None:
+    """The reduction (control rate above treatment positive) over its standard error clustered
+    by parent session, a spawn without one its own cluster; None when undefined."""
+    clusters: dict[tuple[str | None, str | None], list[tuple[int, float]]] = defaultdict(list)
+    for item in items:
+        spawn = item.spawn
+        orphan_id = spawn.agent_id if spawn.session_id is None else None
+        clusters[(spawn.session_id, orphan_id)].append((item.arm, float(is_event(spawn))))
+    try:
+        z = trial_design.get_clustered_z(list(clusters.values()))
+    except ValueError:  # fewer than 2 clusters or an empty arm → no value
+        return None
+    return None if z is None else -z
 
 
 def _write_shadow_row(row: ShadowRow, trial: TrialIdentity | None = None) -> int | None:

@@ -71,7 +71,6 @@ _REQUIRED = trial_design.get_required_units(
 )
 _MILESTONES = [fraction * _REQUIRED for fraction in trial_design.LOOK_FRACTIONS]
 _KEYS = SimpleNamespace(
-    LOOK={"look", "fraction", "milestone", "boundary", "accrued_tasks"},
     # the payload's top-level keys the cycle builds; readers: metric_key (the read), looks (looks)
     PREREGISTRATION={
         "metric_key",
@@ -179,6 +178,11 @@ def _spawn(
     return SpawnFacts(
         agent_id, f"session-{agent_id}", started_at, int(is_event), True, ()
     )
+
+
+def _get_arm(salt_id: int, agent_id: str) -> int:
+    """The hook's arm rule: sha256 over the decimal salt then the agent id, mod 2."""
+    return int(hashlib.sha256(f"{salt_id}{agent_id}".encode("utf-8")).hexdigest(), 16) % 2
 
 
 @functools.cache
@@ -437,6 +441,19 @@ class _LedgerCursor:
                 )
                 for row, is_started in self._get_open_trials(params)
             ]
+        elif statement == dc.LIVE_TRIAL.BINDING_SQL:
+            payloads = {row.dedupe_key: row.payload for row in self.ledger.rows}
+            self.result = [
+                (
+                    row.agent,
+                    row.trial_key,
+                    row.learning_pattern_id,
+                    row.payload["canary"]["text_sha256"],
+                    row.recorded_at,
+                    payloads.get(f"{row.trial_key}:start", {}).get("started_at"),
+                )
+                for row, _ in self._get_open_trials(params)
+            ]
         elif statement == dc.MANIFEST.OTHER_HASH_ROWS_SQL:
             self.result = [row for row in self.ledger.stored_rows if row[3] in params["agents"]]
         elif statement == dc.AA.SQL.SALT_ROWS:
@@ -586,6 +603,23 @@ class _ShadowFixture(unittest.TestCase):
             dedupe_key=key,
         )
         return key
+
+    def _start_trial(self, key: str) -> None:
+        """The trial's start record at the clock's now, as its first canary write stores it."""
+        trial_ledger = stub.get_trial_ledger()
+        [preregistration] = [row for row in self.ledger.rows if row.dedupe_key == key]
+        self.ledger.write(
+            trial_ledger.EVENT.LIVE_START,
+            trial_ledger.ACTOR.LIVE,
+            {
+                "started_at": self.clock.now.isoformat(),
+                "text_sha256": preregistration.payload["canary"]["text_sha256"],
+            },
+            trial_key=key,
+            agent=preregistration.agent,
+            learning_pattern_id=preregistration.learning_pattern_id,
+            dedupe_key=f"{key}:start",
+        )
 
     def _get_preregistrations(self) -> list[_LedgerRow]:
         event = stub.get_trial_ledger().EVENT
@@ -1291,12 +1325,19 @@ class ShadowStageTest(_ShadowFixture):
 
 
 class LookTest(_ShadowFixture):
-    """Looks of live trials only: accrual from the pre-registration, one row per reached milestone."""
+    """Looks of started live trials only: units from the start record, each spawn under its
+    recomputed arm, one row per reached milestone."""
+
+    def _open_started_trial(self) -> tuple[str, int]:
+        """A live trial started at the clock's now → its key and its arm salt."""
+        key = self._open_live_trial()
+        self._start_trial(key)
+        return key, self._get_preregistrations()[-1].id
 
     def test_each_reached_look_is_recorded_as_a_live_look_with_its_accrual_and_boundary(
         self,
     ) -> None:
-        key = self._open_live_trial()
+        key, _ = self._open_started_trial()
         self._cycle(_NOW)
         accrued = math.ceil(_MILESTONES[1])  # looks 1 and 2 reached, 3 not
         self.history += _get_spawns_after(_NOW, accrued)
@@ -1307,7 +1348,6 @@ class LookTest(_ShadowFixture):
         self.assertEqual([look.payload["look"] for look in looks], [1, 2])
         for look in looks:
             number = look.payload["look"]
-            self.assertEqual(set(look.payload), _KEYS.LOOK)
             self.assertEqual(look.payload["accrued_tasks"], accrued)
             self.assertEqual(look.payload["boundary"], boundaries[number - 1])
             self.assertEqual(
@@ -1320,14 +1360,103 @@ class LookTest(_ShadowFixture):
                 ),
             )
 
-    def test_a_task_started_before_the_preregistration_accrues_nothing(self) -> None:
-        self.history += _get_spawns_after(
-            _NOW - timedelta(hours=1), math.ceil(_MILESTONES[0])
+    def test_a_live_look_row_carries_exactly_the_keys_this_stage_writes(self) -> None:
+        self._open_started_trial()
+        self.history += _get_spawns_after(_NOW, math.ceil(_MILESTONES[0]))
+        self._cycle(_NEXT_NOW)
+        [look] = self._get_looks()
+        self.assertEqual(
+            set(look.payload),
+            {"look", "fraction", "milestone", "boundary", "accrued_tasks", "arms", "z"},
         )
-        self._open_live_trial()
-        self._cycle(_NOW)
+
+    def test_the_look_counts_overage_per_spawn_under_each_spawns_recomputed_arm(self) -> None:
+        _, salt_id = self._open_started_trial()
+        # two spawns per parent session; two overage rows are one event, none is none
+        spawns = [
+            spawn._replace(
+                session_id=f"pair-{index // 2}",
+                overage_rows=0 if index % 16 == 5 else 1 + index % 2,
+            )
+            for index, spawn in enumerate(_get_spawns_after(_NOW, math.ceil(_MILESTONES[0])))
+        ]
+        self.history += spawns
+        self._cycle(_NEXT_NOW)
+        [look] = self._get_looks()
+        arms = [_get_arm(salt_id, spawn.agent_id) for spawn in spawns]
+        events = [spawn.overage_rows > 0 for spawn in spawns]
+        self.assertEqual(
+            look.payload["arms"],
+            {
+                name: {
+                    "events": sum(is_event for is_event, own in zip(events, arms) if own == arm),
+                    "units": arms.count(arm),
+                }
+                for arm, name in enumerate(("control", "treatment"))
+            },
+        )
+        self.assertEqual(look.payload["accrued_tasks"], len(spawns))
+        sessions: dict[str, list[tuple[int, float]]] = {}
+        for spawn, arm, is_event in zip(spawns, arms, events):
+            sessions.setdefault(spawn.session_id, []).append((arm, float(is_event)))
+        # a reduction counts positive: control rate above treatment
+        self.assertAlmostEqual(
+            look.payload["z"], -trial_design.get_clustered_z(list(sessions.values())), places=9
+        )
+
+    def test_a_spawn_whose_tool_use_reaches_the_budget_with_no_overage_row_is_an_overrun_at_the_look(
+        self,
+    ) -> None:
+        self._open_started_trial()
+        budget = dc.get_tool_budget(os.environ)
+        spawns = _get_spawns_after(_NOW, math.ceil(_MILESTONES[0]))
+        # no overage row on three: at the budget, one tool_use under it, unrecorded
+        for index, tool_use in enumerate((budget, budget - 1, None)):
+            spawns[index] = spawns[index]._replace(overage_rows=0, tool_use_actual=tool_use)
+        self.history += spawns
+        self._cycle(_NEXT_NOW)
+        [look] = self._get_looks()
+        self.assertEqual(
+            sum(arm["events"] for arm in look.payload["arms"].values()), len(spawns) - 2
+        )
+
+    def test_a_spawn_started_before_the_start_record_is_in_no_arm_and_no_looks_count(
+        self,
+    ) -> None:
+        key = self._open_live_trial()  # committed at _NOW
+        salt_id = self._get_preregistrations()[-1].id
+        start_second = _NOW + timedelta(hours=1)
+        self.clock.now = start_second + timedelta(microseconds=600_000)
+        self._start_trial(key)
+        reached = math.ceil(_MILESTONES[0])
+        # after the commit, inside the minute before the start's second, the hook's arm recorded
+        self.history += [
+            _spawn(start_second - timedelta(seconds=1 + index % 60), is_event=True)._replace(
+                arm=1, salt_id=salt_id
+            )
+            for index in range(reached)
+        ]
         self._cycle(_NEXT_NOW)
         self.assertEqual(self._get_looks(), [])
+        # the first of these starts in the start record's own second
+        self.history += _get_spawns_after(start_second, reached)
+        self._cycle(_NEXT_NOW)
+        [look] = self._get_looks()
+        self.assertEqual(look.payload["accrued_tasks"], reached)
+        self.assertEqual(sum(arm["units"] for arm in look.payload["arms"].values()), reached)
+
+    def test_a_preregistration_recorded_before_its_patterns_last_transition_takes_no_look(
+        self,
+    ) -> None:
+        self.patterns = [_pattern(last_transition_at=_NOW + timedelta(minutes=30))]
+        self._open_started_trial()
+        self.history += _get_spawns_after(_NOW, math.ceil(_MILESTONES[0]))
+        self._cycle(_NEXT_NOW)
+        self.assertEqual(self._get_looks(), [])
+        # a transition at the recording instant keeps the trial current
+        self.patterns = [_pattern(last_transition_at=_NOW)]
+        self._cycle(_NEXT_NOW)
+        self.assertEqual([look.payload["look"] for look in self._get_looks()], [1])
 
     def test_a_stored_pre_generation_row_never_counts_as_the_patterns_current_trial(
         self,
@@ -1345,6 +1474,7 @@ class LookTest(_ShadowFixture):
         self,
     ) -> None:
         key = self._open_live_trial(missing=("looks",))
+        self._start_trial(key)
         self.history += _get_spawns_after(_NOW, math.ceil(_MILESTONES[1]))
         stderr = self._cycle(_NEXT_NOW)
         self.assertIn(
@@ -1353,47 +1483,12 @@ class LookTest(_ShadowFixture):
         )
         self.assertEqual(self._get_looks(), [])
 
-    def test_synthetic_two_arm_data_at_each_look_records_the_pooled_z_beside_the_boundary(
-        self,
-    ) -> None:
-        # control 30/100, treatment 10/100: pooled 0.2 → se √(0.2·0.8·(1/100 + 1/100)) = √0.0032
-        #   z = (0.3 - 0.1) / 0.0565685 = 3.5355339 (a reduction counts positive)
-        arms = dc.TrialArms(
-            control=dc.ArmCount(events=30, units=100),
-            treatment=dc.ArmCount(events=10, units=100),
-        )
-        boundaries = trial_design.get_boundaries()
-        for number, (fraction, boundary) in enumerate(
-            zip(trial_design.LOOK_FRACTIONS, boundaries), start=1
-        ):
-            with self.subTest(look=number):
-                look = {
-                    "fraction": fraction,
-                    "milestone": fraction * _REQUIRED,
-                    "boundary": boundary,
-                }
-                payload = dc.get_look_payload(
-                    dc.Look(number, look), dc.LookAccrual(200, arms)
-                )
-                self.assertAlmostEqual(payload["z"], 3.5355339, places=6)
-                self.assertEqual(payload["boundary"], boundary)
-                self.assertEqual(set(payload), _KEYS.LOOK | {"arms", "z"})
-
-    def test_two_arms_with_no_variance_record_no_z(self) -> None:
-        arms = dc.TrialArms(
-            control=dc.ArmCount(events=0, units=50),
-            treatment=dc.ArmCount(events=0, units=50),
-        )
-        look = {"fraction": 0.25, "milestone": 25.0, "boundary": 4.0}
-        payload = dc.get_look_payload(dc.Look(1, look), dc.LookAccrual(100, arms))
-        self.assertIsNone(payload["z"])
-
 
 class DuplicateTest(_ShadowFixture):
     def test_a_second_cycle_over_the_same_evidence_writes_no_duplicate_row(
         self,
     ) -> None:
-        self._open_live_trial()
+        self._start_trial(self._open_live_trial())
         self._cycle(_NOW)
         self.history += _get_spawns_after(_NOW, math.ceil(_MILESTONES[1]))
         self._cycle(_NEXT_NOW)
@@ -1406,6 +1501,7 @@ class DuplicateTest(_ShadowFixture):
             events,
             {
                 trial_ledger.EVENT.LIVE_PREREGISTRATION,
+                trial_ledger.EVENT.LIVE_START,
                 trial_ledger.EVENT.LIVE_LOOK,
                 trial_ledger.EVENT.POWER_PASS_COUNT,
             },
@@ -2379,6 +2475,9 @@ class TrialCanaryTest(_ShadowFixture):
                 self.clock.now = _NOW
                 self._open_live_trial()
                 self._open_trial_on(_POOL_AGENT, _PROPOSAL_ID + 1)
+                self._start_trial(second)
+                if arrange is not _end_horizon:  # the unstarted void's trial never started
+                    self._start_trial(first)
                 self.patterns.append(_pattern(agent=_POOL_AGENT))
                 self.history = [
                     *_get_passing_history(),
@@ -2732,6 +2831,7 @@ class CycleWiringTest(_ShadowFixture):
     ) -> None:
         self._open_writing_stages()
         key = self._open_live_trial()
+        self._start_trial(key)
         self.history += _get_spawns_after(_NOW, math.ceil(_MILESTONES[1]))
         self.clock.now = _NEXT_NOW
         self.ledger.faulted.add(dc.MANIFEST.OTHER_HASH_ROWS_SQL)
