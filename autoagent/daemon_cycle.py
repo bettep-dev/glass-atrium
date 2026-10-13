@@ -9324,6 +9324,11 @@ def run_shadow_stage(power: PowerResult, cycle_date: str, judged_trials: frozens
       look with no win: retire, maximum-sample; the first decision ends the trial's looks
     - horizon: a trial with no decision recorded this cycle, at its start + the horizon its
       pre-registration states → retire, horizon; no milestone needed
+    - validity: where a win or a retire is due — never at a landed look with neither — a void
+      comes first, on the A/A's criteria over the trial's counted spawns: an imbalanced split
+      once its minimum spawns are counted → void, arm-imbalance; else delivery under the floor
+      on the treatment spawns, or to a control spawn → void, low-delivery; no treatment spawn
+      and nothing delivered to control → none
     - a decision write fault: named WARN, the trial left open — a recorded look is not read
       again, so a lost win can end as a retire
     - trial: identity and payload from its pre-registration row
@@ -9355,17 +9360,16 @@ def run_shadow_stage(power: PowerResult, cycle_date: str, judged_trials: frozens
     if spawns is None:
         return
     for trial in trials:
-        if not _write_trial_looks(trial, spawns.get(trial.canary.agent, []), windows.end):
-            _retire_past_horizon(trial)
+        counted = _get_counted_spawns(trial, spawns.get(trial.canary.agent, []), windows.end)
+        if not _write_trial_looks(trial, counted):
+            _write_horizon_decision(trial, counted)
 
 
-def _write_trial_looks(
-    trial: StartedTrial, spawns: list[SpawnFacts], window_end: datetime
-) -> bool:
+def _write_trial_looks(trial: StartedTrial, counted: Sequence[ArmedSpawn]) -> bool:
     """Record a judged, started trial's reached looks → True once a look-time decision is
     recorded; an unusable stored pre-registration → named WARN, nothing written for it."""
     try:
-        return _write_shadow_looks(trial, spawns, window_end)
+        return _write_shadow_looks(trial, counted)
     except (KeyError, TypeError, ValueError) as exc:
         _warn_shadow(
             f"trial {trial.canary.key}: stored pre-registration unusable: {_describe_fault(exc)}",
@@ -10190,13 +10194,12 @@ def _read_look_spawns(
     return None
 
 
-def _write_shadow_looks(
-    trial: StartedTrial, spawns: list[SpawnFacts], window_end: datetime
-) -> bool:
+def _write_shadow_looks(trial: StartedTrial, counted: Sequence[ArmedSpawn]) -> bool:
     """The reached looks in order on this cycle's accrual → True once a decision is recorded:
-    a win at or over the look's boundary, the maximum-sample retire at the last look."""
+    a win at or over the look's boundary, the maximum-sample retire at the last look, a
+    validity void ahead of either."""
     canary = trial.canary
-    accrual = _get_look_accrual(trial, spawns, window_end)
+    accrual = _get_look_accrual(trial, counted)
     looks = canary.payload["looks"]
     for number, registration in enumerate(looks, start=1):
         if accrual.tasks < registration["milestone"]:
@@ -10215,13 +10218,31 @@ def _write_shadow_looks(
             continue
         retire = {"retire": {"reason": "maximum-sample", "agent": canary.agent}}
         decision = {"win": payload} if is_win else retire
-        return _write_look_time_decision(canary, decision, f"look {number}")
+        void = _get_validity_void(canary, counted)
+        return _write_look_time_decision(canary, void or decision, f"look {number}")
     return False
 
 
-def _retire_past_horizon(trial: StartedTrial) -> None:
-    """Its horizon retire at the start record + the horizon the pre-registration states; no
-    readable horizon → named WARN, no retire."""
+def _get_validity_void(canary: TrialCanary, counted: Sequence[ArmedSpawn]) -> dict | None:
+    """The void due ahead of a win or a retire, on the A/A's criteria over the trial's counted
+    spawns: an imbalanced split once BALANCE.MINIMUM_SPAWNS are counted, else delivery under
+    MINIMUM_DELIVERY_PERCENT of the treatment spawns or to a control spawn; no treatment spawn
+    and nothing delivered to control → None."""
+    armed = {canary.agent: counted}
+    delivery = get_aa_delivery_criterion(armed)
+    is_delivery_read = delivery.detail["treatment"] or delivery.detail["control_delivered"]
+    if canary.agent in get_aa_balance_criterion(armed).detail["failed"]:
+        reason = "arm-imbalance"
+    elif delivery.verdict == AA.VERDICT.FAIL and is_delivery_read:
+        reason = "low-delivery"
+    else:
+        return None
+    return {"void": {"reason": reason, "agent": canary.agent}}
+
+
+def _write_horizon_decision(trial: StartedTrial, counted: Sequence[ArmedSpawn]) -> None:
+    """At the start record + the horizon the pre-registration states: a validity void, else
+    its horizon retire; no readable horizon → named WARN, no decision."""
     canary = trial.canary
     horizon_days = canary.payload.get("horizon_days") if isinstance(canary.payload, dict) else None
     try:
@@ -10238,7 +10259,8 @@ def _retire_past_horizon(trial: StartedTrial) -> None:
         return
     if _get_utc_now() >= bound:
         retire = {"retire": {"reason": "horizon", "agent": canary.agent}}
-        _write_look_time_decision(canary, retire, "its horizon")
+        void = _get_validity_void(canary, counted)
+        _write_look_time_decision(canary, void or retire, "its horizon")
 
 
 def _write_look_time_decision(canary: TrialCanary, payload: dict, at: str) -> bool:
@@ -10260,19 +10282,24 @@ def _write_look_time_decision(canary: TrialCanary, payload: dict, at: str) -> bo
     return True
 
 
-def _get_look_accrual(
+def _get_counted_spawns(
     trial: StartedTrial, spawns: list[SpawnFacts], window_end: datetime
-) -> LookAccrual:
-    """The units counted from the start record: both arms' total tasks; of the settled spawns,
-    each under its recomputed arm with the primary event per spawn, and the clustered z."""
+) -> list[ArmedSpawn]:
+    """The trial agent's spawns counted from the start record, each under its recomputed arm."""
     # started_at is whole seconds → floored start keeps a first-second spawn, as _bind_to_open_aa
     start = trial.started_at.replace(microsecond=0)
-    salt_id, payload = trial.canary.salt_id, trial.canary.payload
-    counted = [
+    salt_id = trial.canary.salt_id
+    return [
         ArmedSpawn(spawn, get_spawn_arm(salt_id, spawn.agent_id))
         for spawn in spawns
         if spawn.agent_id is not None and start <= spawn.started_at < window_end
     ]
+
+
+def _get_look_accrual(trial: StartedTrial, counted: Sequence[ArmedSpawn]) -> LookAccrual:
+    """Both arms' total tasks over the counted spawns; of the settled ones, each arm with the
+    primary event per spawn, and the clustered z."""
+    payload = trial.canary.payload
     is_event = _get_aa_event_test(payload["metric_key"], get_tool_budget(os.environ))
     tasks = get_tasks((item.spawn for item in counted), SHADOW.TASK_WINDOW)
     # a spawn that may still be running has no outcome yet → in no arm, as get_aa_looks

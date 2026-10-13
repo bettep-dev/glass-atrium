@@ -354,6 +354,26 @@ def _get_arm_spawns(
     return spawns
 
 
+def _get_split_spawns(
+    salt_id: int,
+    units: tuple[int, int],
+    *,
+    tenths: tuple[int, int] = _TENTHS.REDUCED,
+    flipped: tuple[int, int] = (0, 0),
+) -> list[SpawnFacts]:
+    """Exactly `units` control then treatment spawns from _NOW; the first `flipped` of each
+    arm carry the other arm's delivery mark."""
+    taken = [0, 0]
+    spawns = []
+    for spawn in _get_arm_spawns((salt_id,), _NOW, 4 * sum(units) + 64, tenths=tenths):
+        arm = _get_arm(salt_id, spawn.agent_id)
+        if taken[arm] < units[arm]:
+            is_flipped = taken[arm] < flipped[arm]
+            taken[arm] += 1
+            spawns.append(spawn._replace(is_delivered=(arm == 1) != is_flipped))
+    return spawns
+
+
 class _LedgerRow(NamedTuple):
     id: int
     recorded_at: datetime
@@ -1623,10 +1643,26 @@ class LookTest(_ShadowFixture):
 
 class LookDecisionTest(_ShadowFixture):
     """A look-time decision is read only at a look whose row lands in the cycle: the win at its
-    boundary, the retire at the last look; the horizon retire only when no such decision landed."""
+    boundary, the retire at the last look; the horizon retire only when no such decision landed;
+    a validity void ahead of each, read only where one of them is due."""
 
     def _add_spawns(self, salt_id: int, count: float, *, tenths: tuple[int, int]) -> None:
         self.history += _get_arm_spawns((salt_id,), _NOW, math.ceil(count), tenths=tenths)
+
+    def _decide_at_look_one(
+        self,
+        units: tuple[int, int],
+        *,
+        tenths: tuple[int, int] = _TENTHS.REDUCED,
+        flipped: tuple[int, int] = (0, 0),
+    ) -> None:
+        """`units` control then treatment spawns on a started trial whose stored look 1 is
+        reached at exactly that many, one cycle; `flipped` as _get_split_spawns takes it."""
+        _, salt_id = self._open_started_trial()
+        # the stored row's own milestone → a look under 200 counted spawns
+        self._get_preregistrations()[-1].payload["looks"][0]["milestone"] = sum(units)
+        self.history += _get_split_spawns(salt_id, units, tenths=tenths, flipped=flipped)
+        self._cycle(_NEXT_NOW)
 
     def _win(self) -> str:
         """Reduced arms past look 2's milestone, one cycle → the trial's key."""
@@ -1805,25 +1841,83 @@ class LookDecisionTest(_ShadowFixture):
             look.payload["z"], -trial_design.get_clustered_z(clusters), places=9
         )
 
-    def test_a_look_time_decision_row_has_one_top_level_key_win_or_retire_with_its_reason_and_agent(
+    def test_a_validity_void_due_at_a_look_lands_ahead_of_its_win(self) -> None:
+        # name, control and treatment spawns, those of each arm carrying the other's delivery
+        # mark, the void's reason (None: the win stands)
+        rows = (
+            (
+                "an imbalanced split at 200 counted spawns, its delivery below the floor too",
+                (150, 50),
+                (0, 2),
+                "arm-imbalance",
+            ),
+            ("the same split one spawn under 200, fully delivered", (149, 50), (0, 0), None),
+            ("98 of 100 treatment spawns delivered", (100, 100), (0, 2), "low-delivery"),
+            ("a delivered control spawn", (100, 100), (1, 0), "low-delivery"),
+        )
+        for name, units, flipped, reason in rows:
+            with self.subTest(name):
+                self.ledger.rows.clear()
+                self.history = list(_get_passing_history())
+                self.clock.now = _NOW
+                self._decide_at_look_one(units, flipped=flipped)
+                [look] = self._get_looks()
+                [decision] = self._get_decisions()
+                self.assertEqual(
+                    [arm["units"] for arm in look.payload["arms"].values()], list(units), name
+                )
+                self.assertGreaterEqual(look.payload["z"], look.payload["boundary"], name)
+                void = {"void": {"reason": reason, "agent": _AGENT}}
+                self.assertEqual(decision.payload, void if reason else {"win": look.payload}, name)
+
+    def test_a_landed_look_with_no_decision_due_reads_no_validity(self) -> None:
+        # an imbalanced split at 200 counted spawns, under its boundary, before the last look
+        self._decide_at_look_one((150, 50), tenths=_TENTHS.FLAT)
+        [look] = self._get_looks()
+        self.assertLess(look.payload["z"], look.payload["boundary"])
+        self.assertEqual(self._get_decisions(), [])
+
+    def test_a_trial_with_no_treatment_spawn_and_nothing_delivered_to_control_is_retired_at_its_horizon(
+        self,
+    ) -> None:
+        _, salt_id = self._open_started_trial()
+        self.history += _get_split_spawns(salt_id, (5, 0))
+        self._cycle(_NOW + timedelta(days=trial_design.HORIZON_DAYS))
+        self.assertEqual(self._get_looks(), [])
+        [decision] = self._get_decisions()
+        self.assertEqual(decision.payload, {"retire": {"reason": "horizon", "agent": _AGENT}})
+
+    def test_a_look_time_decision_row_has_one_top_level_key_win_retire_or_void_with_its_reason_and_agent(
         self,
     ) -> None:
         look_keys = {"look", "fraction", "milestone", "boundary", "accrued_tasks", "arms", "z"}
-        retire_keys = {"reason", "agent"}
-        # name, the cycles that decide, each top-level key's inner keys, the retire's reason
+        reason_keys = {"reason", "agent"}
+        # name, the cycles that decide, each top-level key's inner keys, the decision's reason
         rows = (
             ("win", self._win, {"win": look_keys}, None),
             (
                 "retire at the maximum sample",
                 self._retire_at_the_last_look,
-                {"retire": retire_keys},
+                {"retire": reason_keys},
                 "maximum-sample",
             ),
             (
                 "retire at the horizon",
                 self._retire_at_the_horizon,
-                {"retire": retire_keys},
+                {"retire": reason_keys},
                 "horizon",
+            ),
+            (
+                "void for an imbalanced split",
+                lambda: self._decide_at_look_one((150, 50)),
+                {"void": reason_keys},
+                "arm-imbalance",
+            ),
+            (
+                "void for low delivery",
+                lambda: self._decide_at_look_one((100, 100), flipped=(0, 2)),
+                {"void": reason_keys},
+                "low-delivery",
             ),
         )
         for name, decide, keys, reason in rows:
@@ -1837,10 +1931,9 @@ class LookDecisionTest(_ShadowFixture):
                 self.assertEqual(
                     {key: set(value) for key, value in decision.payload.items()}, keys, name
                 )
+                [body] = decision.payload.values()
                 self.assertEqual(
-                    decision.payload.get("retire"),
-                    reason and {"reason": reason, "agent": _AGENT},
-                    name,
+                    reason and body, reason and {"reason": reason, "agent": _AGENT}, name
                 )
 
 
@@ -2809,21 +2902,44 @@ class TrialCanaryTest(_ShadowFixture):
             [(second, {"win"}), (first, {"win"})],
         )
 
-    def test_a_trial_unjudged_through_its_horizon_is_retired_at_the_first_cycle_that_judges_it(
+    def test_a_trial_unjudged_through_its_horizon_takes_its_void_else_its_horizon_retire_at_the_first_cycle_that_judges_it(
         self,
     ) -> None:
-        key = self._open_live_trial()
-        self._start_trial(key)
-        bound = _NOW + timedelta(days=self._get_preregistration().payload["horizon_days"])
-        self.ledger.faulted.add(dc.MANIFEST.OTHER_HASH_ROWS_SQL)
+        # name, the treatment spawns after its start, none of them delivered, the decision
+        rows = (
+            ("no spawn after its start", 0, {"retire": {"reason": "horizon", "agent": _AGENT}}),
+            (
+                "delivery below the floor",
+                1,
+                {"void": {"reason": "low-delivery", "agent": _AGENT}},
+            ),
+        )
+        for name, undelivered, decision in rows:
+            with (
+                self.subTest(name),
+                tempfile.TemporaryDirectory() as data_root,
+                mock.patch.dict(os.environ, {"GA_DATA_ROOT": data_root}),
+            ):
+                self.ledger.rows.clear()
+                self.history = list(_get_passing_history())
+                self.clock.now = _NOW
+                key = self._open_live_trial()
+                self._start_trial(key)
+                preregistration = self._get_preregistration()
+                self.history += _get_split_spawns(
+                    preregistration.id, (0, undelivered), flipped=(0, undelivered)
+                )
+                bound = _NOW + timedelta(days=preregistration.payload["horizon_days"])
+                self.ledger.faulted.add(dc.MANIFEST.OTHER_HASH_ROWS_SQL)
 
-        self.assertEqual(self._judge_and_look(bound), frozenset())
-        self.assertEqual(self._get_decisions(), [])
+                self.assertEqual(self._judge_and_look(bound), frozenset(), name)
+                self.assertEqual(self._get_decisions(), [], name)
 
-        self.ledger.faulted.clear()
-        self.assertEqual(self._judge_and_look(bound + timedelta(days=1)), frozenset({key}))
-        [decision] = self._get_decisions()
-        self.assertEqual(decision.payload["retire"]["reason"], "horizon")
+                self.ledger.faulted.clear()
+                self.assertEqual(
+                    self._judge_and_look(bound + timedelta(days=1)), frozenset({key}), name
+                )
+                self.assertEqual([row.payload for row in self._get_decisions()], [decision], name)
 
     def _get_bound(self) -> datetime:
         """The pre-registration's recorded_at plus the horizon it states."""
