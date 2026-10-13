@@ -9309,22 +9309,32 @@ class StartedTrial(NamedTuple):
 
 
 def run_shadow_stage(power: PowerResult, cycle_date: str, judged_trials: frozenset[str]) -> None:
-    """Shadow engine: count power verdicts, record reached looks of live trials; decides nothing.
+    """Shadow engine: count power verdicts, record reached looks of live trials, take their
+    look-time decisions.
 
-    - rows: one power-pass-count per cycle date · one live look per reached look; no
-      pre-registration — the push writes the live one with its bound candidate
+    - rows: one power-pass-count per cycle date · one live look per reached look · at most one
+      <live trial key>:decision per trial; no pre-registration — the push writes the live one
+      with its bound candidate
     - judged_trials: the trial keys this cycle's trial stage judged and left open
       (run_trial_stage) → each of them with a start record takes its looks, whatever this
       cycle's power check said of its pattern; a trial outside the set — unjudged, voided or
-      decided — or with no start record takes none
+      decided — or with no start record takes no look and no decision
+    - decision: read only at a look whose row landed in this cycle, looks in order on this
+      cycle's accrual → z at or over the look's registered boundary: win; the last registered
+      look with no win: retire, maximum-sample; the first decision ends the trial's looks
+    - horizon: a trial with no decision recorded this cycle, at its start + the horizon its
+      pre-registration states → retire, horizon; no milestone needed
+    - a decision write fault: named WARN, the trial left open — a recorded look is not read
+      again, so a lost win can end as a retire
     - trial: identity and payload from its pre-registration row
     - units: the trial agent's spawns over the pair windows at this cycle's day anchor; units,
       arms and milestones run from the start record's second, so a spawn started before it is
       in no arm and no count
     - arms: each counted spawn under its arm recomputed from the pre-registration row's id,
-      whatever the hook recorded; milestones on both arms' total
-    - ledger or spawn read fault: named WARN, never a failed cycle · --dry-run: the caller
-      skips the stage
+      whatever the hook recorded; milestones on both arms' total, arms and z on the settled
+      spawns alone
+    - ledger or spawn read fault: named WARN, never a failed cycle; a faulted spawn read takes
+      no look and no horizon retire this cycle · --dry-run: the caller skips the stage
     """
     if not HAS_PG_LOOP_WRITE:
         _warn_shadow("trial ledger unwritable: PG helper import failed", "no shadow row this cycle")
@@ -9345,21 +9355,23 @@ def run_shadow_stage(power: PowerResult, cycle_date: str, judged_trials: frozens
     if spawns is None:
         return
     for trial in trials:
-        _write_trial_looks(trial, spawns.get(trial.canary.agent, []), windows.end)
+        if not _write_trial_looks(trial, spawns.get(trial.canary.agent, []), windows.end):
+            _retire_past_horizon(trial)
 
 
 def _write_trial_looks(
     trial: StartedTrial, spawns: list[SpawnFacts], window_end: datetime
-) -> None:
-    """Record a judged, started trial's reached looks; an unusable stored pre-registration →
-    named WARN, nothing written for it."""
+) -> bool:
+    """Record a judged, started trial's reached looks → True once a look-time decision is
+    recorded; an unusable stored pre-registration → named WARN, nothing written for it."""
     try:
-        _write_shadow_looks(trial, spawns, window_end)
+        return _write_shadow_looks(trial, spawns, window_end)
     except (KeyError, TypeError, ValueError) as exc:
         _warn_shadow(
             f"trial {trial.canary.key}: stored pre-registration unusable: {_describe_fault(exc)}",
             "no look recorded for it this cycle",
         )
+        return False
 
 
 def get_trial_key(pattern: Pattern, detection_start: datetime) -> str:
@@ -10115,7 +10127,7 @@ def _get_drift_widening(watch_alpha: float, sides: int) -> dict:
 
 
 def get_look_payload(look: Look, accrual: LookAccrual) -> dict:
-    """One reached look: accrual beside its boundary; with arm data, the pooled z too — never a decision."""
+    """One reached look: accrual beside its boundary; with arm data, the clustered z too."""
     payload: dict = {
         "look": look.number,
         "fraction": look.registration["fraction"],
@@ -10180,28 +10192,79 @@ def _read_look_spawns(
 
 def _write_shadow_looks(
     trial: StartedTrial, spawns: list[SpawnFacts], window_end: datetime
-) -> None:
+) -> bool:
+    """The reached looks in order on this cycle's accrual → True once a decision is recorded:
+    a win at or over the look's boundary, the maximum-sample retire at the last look."""
     canary = trial.canary
     accrual = _get_look_accrual(trial, spawns, window_end)
-    for number, registration in enumerate(canary.payload["looks"], start=1):
+    looks = canary.payload["looks"]
+    for number, registration in enumerate(looks, start=1):
         if accrual.tasks < registration["milestone"]:
-            return
-        _write_shadow_row(
-            ShadowRow(
-                TRIAL_LEDGER.EVENT.LIVE_LOOK,
-                TRIAL_LEDGER.ACTOR.LIVE,
-                get_look_payload(Look(number, registration), accrual),
-                dedupe_key=f"{canary.key}:look:{number}",
-            ),
-            canary,
+            break
+        payload = get_look_payload(Look(number, registration), accrual)
+        # read before the row lands → an unusable boundary records no look
+        is_win = accrual.z is not None and accrual.z >= registration["boundary"]
+        row = ShadowRow(
+            TRIAL_LEDGER.EVENT.LIVE_LOOK,
+            TRIAL_LEDGER.ACTOR.LIVE,
+            payload,
+            dedupe_key=f"{canary.key}:look:{number}",
         )
+        # 0 = a look already recorded, None = a faulted write → no decision on any later data
+        if _write_shadow_row(row, canary) != 1 or not (is_win or number == len(looks)):
+            continue
+        retire = {"retire": {"reason": "maximum-sample", "agent": canary.agent}}
+        decision = {"win": payload} if is_win else retire
+        return _write_look_time_decision(canary, decision, f"look {number}")
+    return False
+
+
+def _retire_past_horizon(trial: StartedTrial) -> None:
+    """Its horizon retire at the start record + the horizon the pre-registration states; no
+    readable horizon → named WARN, no retire."""
+    canary = trial.canary
+    horizon_days = canary.payload.get("horizon_days") if isinstance(canary.payload, dict) else None
+    try:
+        # parsed as _is_unstarted_past_bound parses it
+        if isinstance(horizon_days, bool) or not horizon_days > 0:
+            raise ValueError("not a positive day count")
+        bound = trial.started_at + timedelta(days=horizon_days)
+    except (TypeError, ValueError, OverflowError):
+        _warn_shadow(
+            f"trial {canary.key}: {canary.agent}'s pre-registration states no horizon "
+            f"({horizon_days!r})",
+            "no horizon retire",
+        )
+        return
+    if _get_utc_now() >= bound:
+        retire = {"retire": {"reason": "horizon", "agent": canary.agent}}
+        _write_look_time_decision(canary, retire, "its horizon")
+
+
+def _write_look_time_decision(canary: TrialCanary, payload: dict, at: str) -> bool:
+    """The trial's decision row, its one top-level key the outcome → True unless the write
+    faulted: named WARN, the trial left open."""
+    (outcome,) = payload
+    try:
+        landed = _write_live_decision(canary.key, canary.agent, canary.pattern_id, payload)
+    except Exception as exc:  # noqa: BLE001 — a record fault, never a failed cycle
+        _warn_shadow(
+            f"trial {canary.key}: {outcome} decision at {at} not recorded: {_describe_fault(exc)}",
+            "the trial stays open",
+        )
+        return False
+    sys.stderr.write(
+        f"[daemon-cycle] INFO: shadow stage — trial {canary.key}: {outcome} decision at {at} "
+        f"({landed} row landed)\n"
+    )
+    return True
 
 
 def _get_look_accrual(
     trial: StartedTrial, spawns: list[SpawnFacts], window_end: datetime
 ) -> LookAccrual:
-    """The units counted from the start record: both arms' total tasks, each spawn under its
-    recomputed arm with the primary event per spawn, and the clustered z."""
+    """The units counted from the start record: both arms' total tasks; of the settled spawns,
+    each under its recomputed arm with the primary event per spawn, and the clustered z."""
     # started_at is whole seconds → floored start keeps a first-second spawn, as _bind_to_open_aa
     start = trial.started_at.replace(microsecond=0)
     salt_id, payload = trial.canary.salt_id, trial.canary.payload
@@ -10212,7 +10275,10 @@ def _get_look_accrual(
     ]
     is_event = _get_aa_event_test(payload["metric_key"], get_tool_budget(os.environ))
     tasks = get_tasks((item.spawn for item in counted), SHADOW.TASK_WINDOW)
-    return LookAccrual(len(tasks), _get_aa_arms(counted, is_event), _get_look_z(counted, is_event))
+    # a spawn that may still be running has no outcome yet → in no arm, as get_aa_looks
+    now = _get_utc_now()
+    settled = [item for item in counted if not is_pending(item.spawn, now)]
+    return LookAccrual(len(tasks), _get_aa_arms(settled, is_event), _get_look_z(settled, is_event))
 
 
 def _get_look_z(
