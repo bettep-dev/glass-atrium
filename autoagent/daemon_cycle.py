@@ -9348,15 +9348,15 @@ def run_shadow_stage(power: PowerResult, cycle_date: str, judged_trials: frozens
       cycle's power check said of its pattern; a trial outside the set — unjudged, voided or
       decided — or with no start record takes no look and no decision
     - decision: read only at a look whose row landed in this cycle, looks in order on this
-      cycle's accrual → z at or over the look's registered boundary: win; the last registered
-      look with no win: retire, maximum-sample; the first decision ends the trial's looks
+      cycle's accrual → a crossed harm check: harm stop; else z at or over the look's boundary:
+      win; else the last registered look: retire, maximum-sample; the first decision ends the looks
     - horizon: a trial with no decision recorded this cycle, at its start + the horizon its
       pre-registration states → retire, horizon; no milestone needed
-    - validity: where a win or a retire is due — never at a landed look with neither — a void
-      comes first, on the A/A's criteria over the trial's counted spawns: an imbalanced split
-      once its minimum spawns are counted → void, arm-imbalance; else delivery under the floor
-      on the treatment spawns, or to a control spawn → void, low-delivery; no treatment spawn
-      and nothing delivered to control → none
+    - validity: where a harm stop, a win or a retire is due — never at a landed look with none
+      of them — a void comes first, on the A/A's criteria over the trial's counted spawns: an
+      imbalanced split once its minimum spawns are counted → void, arm-imbalance; else delivery
+      under the floor on the treatment spawns, or to a control spawn → void, low-delivery; no
+      treatment spawn and nothing delivered to control → none
     - a decision write fault: named WARN, the trial left open — a recorded look is not read
       again, so a lost win can end as a retire
     - trial: identity and payload from its pre-registration row
@@ -9370,7 +9370,7 @@ def run_shadow_stage(power: PowerResult, cycle_date: str, judged_trials: frozens
       the spawns from the start record whose window closed by the pair windows' end, each under
       its recomputed arm; judged once per cycle for the reached looks no row records yet, by the
       pre-registered randomization test at the alpha spent through the highest reached look, its
-      cut set on the crossings the latest recorded look's row carries; no decision is read from it
+      cut set on the crossings the latest recorded look's row carries; a crossed count: harm stop
     - a recorded look row without readable crossings: named WARN, no crossing at that look or
       any later one, labelled on the row · the recorded looks unreadable: named WARN, no look
       and no horizon retire for that trial this cycle
@@ -10509,10 +10509,10 @@ def _get_crossing_payload(look: trial_design.RandomizationLook | None) -> dict:
 
 
 def _get_validity_void(canary: TrialCanary, counted: Sequence[ArmedSpawn]) -> dict | None:
-    """The void due ahead of a win or a retire, on the A/A's criteria over the trial's counted
-    spawns: an imbalanced split once BALANCE.MINIMUM_SPAWNS are counted, else delivery under
-    MINIMUM_DELIVERY_PERCENT of the treatment spawns or to a control spawn; no treatment spawn
-    and nothing delivered to control → None."""
+    """The void due ahead of a harm stop, a win or a retire, on the A/A's criteria over the
+    trial's counted spawns: an imbalanced split once BALANCE.MINIMUM_SPAWNS are counted, else
+    delivery under MINIMUM_DELIVERY_PERCENT of the treatment spawns or to a control spawn; no
+    treatment spawn and nothing delivered to control → None."""
     armed = {canary.agent: counted}
     delivery = get_aa_delivery_criterion(armed)
     is_delivery_read = delivery.detail["treatment"] or delivery.detail["control_delivered"]
