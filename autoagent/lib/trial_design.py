@@ -12,7 +12,7 @@ import contextlib
 import math
 import random
 import statistics
-from collections.abc import Sequence
+from collections.abc import Callable, Collection, Sequence
 from functools import cache
 from statistics import NormalDist
 from typing import NamedTuple
@@ -33,6 +33,7 @@ _GRID_POINTS = 201  # odd → Simpson's rule
 _TAIL_SDS = 10.0
 _SEARCH_TOLERANCE = 1e-10
 _BOUNDARY_SEARCH_MAX = 40.0
+_OBSERVED_DRAW = 0  # the observed draw's member index in a randomization reference; re-draws count from 1
 
 # (score-scale point, Simpson weight x sub-density) pairs of the continuation region
 _Mass = list[tuple[float, float]]
@@ -59,6 +60,20 @@ class ArmDesignEffect(NamedTuple):
     lower: float | None  # None = fewer than 2 defined resamples
     upper: float | None
     replicates: int  # defined resamples; an undefined one (an arm empty, no variance) is dropped
+
+
+class RandomizationLook(NamedTuple):
+    """One look of the follow-up count's randomization test."""
+
+    statistic: float | None  # the observed draw's; None = undefined at this look
+    critical: float | None  # None = no member can cross at this look
+    budget: int  # members the alpha spent through this look admits as crossed; 0 = too few re-draws for it
+    crossed: frozenset[int]  # members past a cut at or before this look
+
+    @property
+    def is_crossed(self) -> bool:
+        """The observed draw crossed at or before this look."""
+        return _OBSERVED_DRAW in self.crossed
 
 
 class _ArmTotals(NamedTuple):
@@ -353,7 +368,105 @@ def get_clustered_z(clusters: Sequence[Sequence[tuple[int, float]]]) -> float | 
     is 0; raises ValueError when the difference is undefined: fewer than 2 clusters, an empty
     cluster or an empty arm.
     """
-    difference = _get_arm_difference(_get_arm_totals(clusters))
+    return _get_z(_get_arm_totals(clusters))
+
+
+def get_randomization_look(
+    clusters: Sequence[Sequence[tuple[str, int, float]]],
+    *,
+    get_arm: Callable[[str, str], int],
+    salt_namespace: str,
+    redraws: int,
+    fraction: float,
+    crossed: Collection[int] = (),
+    alpha: float = DEFAULT_ALPHA,
+) -> RandomizationLook:
+    """One look of the follow-up count's randomization test, upward only.
+
+    Clusters hold (agent_id, arm, follow-ups) per spawn, one cluster per session. The reference is the
+    observed draw plus ``redraws`` re-draws; re-draw i takes ``get_arm(salt, agent_id)`` under a salt of
+    ``salt_namespace`` and i alone, so it keeps that salt at every look. ``crossed`` is the look before's
+    result: with it, the members past a cut at or before this look never exceed the alpha spent through
+    ``fraction``. An undefined statistic never crosses; an empty session or an arm outside 0/1 raises.
+    """
+    _check_alpha(alpha)
+    carried = frozenset(crossed)
+    statistic = _get_studentized_difference(
+        [[(arm, follow_ups) for _, arm, follow_ups in cluster] for cluster in clusters]
+    )
+    defined = _get_redraw_statistics(clusters, get_arm, salt_namespace, redraws, carried)
+    if statistic is not None and _OBSERVED_DRAW not in carried:
+        defined[_OBSERVED_DRAW] = statistic
+    budget = math.floor(_get_spent_alpha(alpha, fraction) * (redraws + 1))
+    admitted = budget - len(carried)
+    ranked = sorted(defined.values(), reverse=True)
+    if not 0 < admitted < len(ranked):
+        return RandomizationLook(statistic, None, budget, carried)
+    critical = ranked[admitted]  # strictly above it → at most ``admitted`` members; a tie at the cut never crosses
+    passed = {member for member, value in defined.items() if value > critical}
+    return RandomizationLook(statistic, critical, budget, carried | passed)
+
+
+def get_randomization_looks(
+    looks: Sequence[Sequence[Sequence[tuple[str, int, float]]]],
+    *,
+    get_arm: Callable[[str, str], int],
+    salt_namespace: str,
+    redraws: int,
+    alpha: float = DEFAULT_ALPHA,
+    look_fractions: Sequence[float] = LOOK_FRACTIONS,
+) -> list[RandomizationLook]:
+    """get_randomization_look over each look's clusters in order, every cut carrying the crossings before it."""
+    results: list[RandomizationLook] = []
+    crossed: frozenset[int] = frozenset()
+    for clusters, fraction in zip(looks, _get_checked_fractions(look_fractions)):
+        look = get_randomization_look(
+            clusters,
+            get_arm=get_arm,
+            salt_namespace=salt_namespace,
+            redraws=redraws,
+            fraction=fraction,
+            crossed=crossed,
+            alpha=alpha,
+        )
+        results.append(look)
+        crossed = look.crossed
+    return results
+
+
+def _get_redraw_statistics(
+    clusters: Sequence[Sequence[tuple[str, int, float]]],
+    get_arm: Callable[[str, str], int],
+    salt_namespace: str,
+    redraws: int,
+    carried: frozenset[int],
+) -> dict[int, float]:
+    """Each uncrossed re-draw's statistic where defined, by its member index."""
+    defined: dict[int, float] = {}
+    for index in range(1, redraws + 1):
+        if index in carried:
+            continue
+        salt = f"{salt_namespace}:{index}:"  # the separators keep it off every decimal arm salt
+        value = _get_studentized_difference(
+            [[(get_arm(salt, agent_id), follow_ups) for agent_id, _, follow_ups in cluster] for cluster in clusters]
+        )
+        if value is not None:
+            defined[index] = value
+    return defined
+
+
+def _get_studentized_difference(clusters: Sequence[Sequence[tuple[int, float]]]) -> float | None:
+    """get_clustered_z with fewer than 2 clusters and an empty arm as None too, not raised."""
+    if len(clusters) < 2:
+        return None
+    totals = _get_arm_totals(clusters)
+    if any(all(total.counts[arm] == 0 for total in totals) for arm in (0, 1)):
+        return None
+    return _get_z(totals)
+
+
+def _get_z(totals: Sequence[_ArmTotals]) -> float | None:
+    difference = _get_arm_difference(totals)
     if difference.clustered <= 0:
         return None
     return difference.value / math.sqrt(difference.clustered)

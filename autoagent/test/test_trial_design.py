@@ -21,7 +21,10 @@ Covered behaviors:
     samples, reproducing the recorded per-arm maxima to the unit, with no finite
     size at a baseline of 1/1.3 or above;
   * sequential graduation and the growth to graduation 0.8 reproduce the
-    recorded per-agent figures.
+    recorded per-agent figures;
+  * the follow-up count's randomization test ranks the observed studentized arm
+    difference among re-drawn arms, and each look's cut keeps the share crossed
+    at or before it within the alpha spent through that look.
 
 Every expected value is derived outside this module (published table, plan
 line, or hand arithmetic shown inline).
@@ -33,6 +36,7 @@ Run with either runner:
 
 from __future__ import annotations
 
+import hashlib
 import math
 import random
 import sys
@@ -504,6 +508,224 @@ class ArmDifferenceDesignEffect(unittest.TestCase):
         clusters = [[(0, 1.0), (0, 0.0)], [(1, 1.0), (1, 0.0)]]
         reading = td.get_arm_design_effect_reading(clusters, seed="drop", replicates=200)
         self.assertTrue(0 < reading.replicates < 200, reading.replicates)
+
+
+_TRIAL_SALT = "7"  # a decimal arm salt, as the trial's
+# follow-ups per spawn, one row per session
+_SESSION_FOLLOW_UPS = (
+    (0, 2, 1, 0, 3),
+    (1, 0, 0),
+    (4, 1, 0, 2),
+    (0, 0, 1),
+    (2, 5, 0, 1, 1, 0),
+    (0, 1),
+    (3, 0, 0, 2),
+    (1, 1, 0),
+    (0, 4, 2),
+    (2, 0, 1, 0),
+    (0, 0, 3, 1),
+    (1, 2, 0),
+)
+_LOOK_SESSIONS = (3, 6, 9, 12)  # sessions closed by each look
+
+
+def _get_hash_arm(salt: str, agent_id: str) -> int:
+    """The trial's arm rule: sha256(salt ‖ agent_id) mod 2."""
+    return int(hashlib.sha256(f"{salt}{agent_id}".encode()).hexdigest(), 16) % 2
+
+
+class _RecordingArm:
+    """The trial's arm rule, keeping every salt it is asked under."""
+
+    def __init__(self) -> None:
+        self.salts: set[str] = set()
+
+    def __call__(self, salt: str, agent_id: str) -> int:
+        self.salts.add(salt)
+        return _get_hash_arm(salt, agent_id)
+
+
+def _get_sessions(rise: int = 0) -> list[list[tuple[str, int, float]]]:
+    """(agent_id, arm, follow-ups) per spawn, arms drawn under the trial salt; ``rise`` lands on treatment."""
+    sessions = []
+    for session, follow_ups in enumerate(_SESSION_FOLLOW_UPS):
+        agent_ids = [f"a{session:02d}{position:02d}" for position in range(len(follow_ups))]
+        arms = [_get_hash_arm(_TRIAL_SALT, agent_id) for agent_id in agent_ids]
+        sessions.append(
+            [(agent_id, arm, float(count + rise * arm)) for agent_id, arm, count in zip(agent_ids, arms, follow_ups)]
+        )
+    return sessions
+
+
+def _get_reference_z(clusters, salt: str, get_arm=_get_hash_arm) -> float | None:
+    """One reference member's statistic over the same spawns, None where undefined."""
+    armed = [[(get_arm(salt, agent_id), count) for agent_id, _, count in cluster] for cluster in clusters]
+    try:
+        return td.get_clustered_z(armed)
+    except ValueError:
+        return None
+
+
+class FollowUpRandomizationTest(unittest.TestCase):
+    def test_the_statistic_is_the_arm_difference_over_its_session_clustered_standard_error(self) -> None:
+        # control 30/100, treatment 10/100 → se √(0.3·0.7/100 + 0.1·0.9/100) = √0.003 → z = −0.2 / 0.0547723;
+        # a spawn repeated inside its session leaves the clustered term where it was, and would shrink
+        # an independent one by √3
+        spawns = [(0, 1.0)] * 30 + [(0, 0.0)] * 70 + [(1, 1.0)] * 10 + [(1, 0.0)] * 90
+        rows = (("one spawn per session", 1), ("each spawn repeated inside its session", 3))
+        for name, copies in rows:
+            clusters = [
+                [(f"a{index}-{copy}", arm, outcome) for copy in range(copies)]
+                for index, (arm, outcome) in enumerate(spawns)
+            ]
+            with self.subTest(name):
+                look = td.get_randomization_look(
+                    clusters, get_arm=_get_hash_arm, salt_namespace="redraw", redraws=1, fraction=1.0
+                )
+                self.assertAlmostEqual(look.statistic, -3.6514837, places=6)
+
+    def test_the_statistic_is_undefined_without_clustered_variance_though_spawns_vary(self) -> None:
+        # each session's deviations cancel inside each arm → clustered term 0, independent term above 0
+        clusters = [
+            [(f"a{session}{position}", arm, outcome) for position, (arm, outcome) in enumerate(spawns)]
+            for session, spawns in enumerate([[(0, 0.0), (0, 2.0), (1, 0.0), (1, 2.0)]] * 2)
+        ]
+        look = td.get_randomization_look(
+            clusters, get_arm=_get_hash_arm, salt_namespace="redraw", redraws=19, fraction=1.0
+        )
+        self.assertIsNone(look.statistic)
+        armed = [[(arm, outcome) for _, arm, outcome in cluster] for cluster in clusters]
+        self.assertEqual(td.get_arm_difference_design_effect(armed), 0.0)
+
+    def test_the_observed_draw_takes_a_place_in_the_reference(self) -> None:
+        # 179 re-draws + the observed draw = 180 members → one crossing admitted at look 2; the observed
+        # draw ranks first under the rise and takes it, so no re-draw crosses beside it
+        look = td.get_randomization_look(
+            _get_sessions(rise=50)[:6], get_arm=_get_hash_arm, salt_namespace="redraw", redraws=179, fraction=0.5
+        )
+        self.assertEqual((look.budget, look.crossed, look.is_crossed), (1, frozenset({0}), True))
+
+    def test_each_redraw_takes_the_arm_rule_under_one_namespace_salt_never_the_trial_salt(self) -> None:
+        arm = _RecordingArm()
+        sessions = _get_sessions()
+        td.get_randomization_looks(
+            [sessions[:end] for end in _LOOK_SESSIONS], get_arm=arm, salt_namespace="redraw", redraws=40
+        )
+        self.assertEqual(len(arm.salts), 40)  # one salt per re-draw across the four looks
+        self.assertTrue(all(salt.startswith("redraw") for salt in arm.salts), arm.salts)
+        self.assertNotIn(_TRIAL_SALT, arm.salts)
+
+    def test_a_redraw_salt_is_never_a_decimal_integer(self) -> None:
+        arm = _RecordingArm()
+        td.get_randomization_look(_get_sessions(), get_arm=arm, salt_namespace="2000", redraws=40, fraction=1.0)
+        self.assertEqual(len(arm.salts), 40)
+        self.assertFalse([salt for salt in arm.salts if salt.isdecimal()])
+
+    def test_each_look_cut_keeps_the_share_crossed_by_then_within_the_alpha_spent_through_it(self) -> None:
+        # one-sided 0.05 spent through each look, O'Brien-Fleming-type: 2(1 − Φ(1.959964 / √t))
+        spent = (8.857544e-05, 5.574597e-03, 2.362512e-02, 0.05)
+        arm = _RecordingArm()
+        sessions = _get_sessions()
+        looks = [sessions[:end] for end in _LOOK_SESSIONS]
+        results = td.get_randomization_looks(looks, get_arm=arm, salt_namespace="redraw", redraws=399)
+        paths = [[_get_reference_z(look, salt) for look in looks] for salt in sorted(arm.salts | {_TRIAL_SALT})]
+        for index, (result, level) in enumerate(zip(results, spent)):
+            crossed = sum(
+                any(
+                    z is not None and earlier.critical is not None and z > earlier.critical
+                    for z, earlier in zip(path, results[: index + 1])
+                )
+                for path in paths
+            )
+            with self.subTest(look=index + 1):
+                self.assertLessEqual(crossed / 400, level)
+                self.assertEqual(crossed, len(result.crossed))
+        self.assertTrue(results[-1].crossed)
+
+    def test_a_look_below_its_minimum_redraw_count_never_crosses_and_says_so(self) -> None:
+        # one member of 11,290 sits within look 1's 8.857544e-05, one of 180 within look 2's 5.574597e-03
+        sessions = _get_sessions(rise=50)[:6]
+        rows = (
+            ("look 1 one below its minimum", 0.25, 11_288, 0),
+            ("look 1 at its minimum", 0.25, 11_289, 1),
+            ("look 2 one below its minimum", 0.5, 178, 0),
+            ("look 2 at its minimum", 0.5, 179, 1),
+        )
+        for name, fraction, redraws, budget in rows:
+            look = td.get_randomization_look(
+                sessions, get_arm=_get_hash_arm, salt_namespace="redraw", redraws=redraws, fraction=fraction
+            )
+            with self.subTest(name):
+                self.assertEqual(look.budget, budget)
+                if not budget:
+                    self.assertEqual((look.critical, look.is_crossed), (None, False))
+
+    def test_a_redraw_with_an_undefined_statistic_never_crosses(self) -> None:
+        salts: set[str] = set()
+
+        def get_arm(salt: str, agent_id: str) -> int:
+            # about half the re-draws put every spawn on treatment → an empty control arm
+            salts.add(salt)
+            return _get_hash_arm(salt, "") or _get_hash_arm(salt, agent_id)
+
+        sessions = _get_sessions()
+        look = td.get_randomization_look(
+            sessions, get_arm=get_arm, salt_namespace="redraw", redraws=199, fraction=1.0
+        )
+        values = [_get_reference_z(sessions, salt, get_arm) for salt in sorted(salts)]
+        defined = [z for z in [*values, look.statistic] if z is not None]
+        self.assertLess(len(defined), 150)
+        self.assertTrue(look.crossed)
+        self.assertEqual(len(look.crossed), sum(z > look.critical for z in defined))
+
+    def test_an_undefined_observed_statistic_is_no_crossing_and_reads_undefined(self) -> None:
+        treated = [[(agent_id, 1, count) for agent_id, _, count in cluster] for cluster in _get_sessions()]
+        look = td.get_randomization_look(
+            treated, get_arm=_get_hash_arm, salt_namespace="redraw", redraws=199, fraction=1.0
+        )
+        self.assertEqual((look.statistic, look.is_crossed), (None, False))
+        self.assertTrue(look.crossed)  # the re-draws still fill the look's budget
+
+    def test_a_cut_set_from_carried_crossings_decides_as_the_one_call_path(self) -> None:
+        sessions = _get_sessions()
+        looks = [sessions[:end] for end in _LOOK_SESSIONS]
+        results = td.get_randomization_looks(looks, get_arm=_get_hash_arm, salt_namespace="redraw", redraws=399)
+        self.assertTrue(results[1].crossed)  # look 3 has crossings to carry
+        for index in range(1, len(looks)):
+            with self.subTest(look=index + 1):
+                carried = td.get_randomization_look(
+                    looks[index],
+                    get_arm=_get_hash_arm,
+                    salt_namespace="redraw",
+                    redraws=399,
+                    fraction=td.LOOK_FRACTIONS[index],
+                    crossed=sorted(results[index - 1].crossed),
+                )
+                self.assertEqual(carried, results[index])
+
+    def test_the_same_data_salts_and_redraw_count_give_the_same_decision(self) -> None:
+        sessions = _get_sessions()
+        rows = (
+            ("the same call again", sessions),
+            ("sessions and their spawns in another order", [cluster[::-1] for cluster in sessions[::-1]]),
+        )
+        first = td.get_randomization_look(
+            sessions, get_arm=_get_hash_arm, salt_namespace="redraw", redraws=199, fraction=1.0
+        )
+        for name, clusters in rows:
+            with self.subTest(name):
+                again = td.get_randomization_look(
+                    clusters, get_arm=_get_hash_arm, salt_namespace="redraw", redraws=199, fraction=1.0
+                )
+                self.assertEqual(again, first)
+
+    def test_a_large_injected_rise_crosses(self) -> None:
+        sessions = _get_sessions(rise=50)
+        results = td.get_randomization_looks(
+            [sessions[:end] for end in _LOOK_SESSIONS], get_arm=_get_hash_arm, salt_namespace="redraw", redraws=399
+        )
+        # look 1 admits no crossing at 400 members; look 2 is the first that can cross
+        self.assertEqual([result.is_crossed for result in results[:2]], [False, True])
 
 
 class RateHarm(unittest.TestCase):
