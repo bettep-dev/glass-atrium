@@ -634,7 +634,7 @@ class OffenderRowsReadAsBody(unittest.TestCase):
     def test_should_read_an_added_line_whole_when_a_non_newline_separator_sits_inside_it(self) -> None:
         # git apply ends a line at "\n" alone; the backslash-led tail is the shape a
         # wider split reads as a "\ No newline" marker and so never scans.
-        separators = {"u2028": " ", "u0085": "\u0085", "cr": "\r", "ff": "\f"}
+        separators = {"u2028": "\u2028", "u0085": "\u0085", "cr": "\r", "ff": "\f"}
         for row_id, separator in separators.items():
             with self.subTest(row_id):
                 added = f"note{separator}\\ {_SENSITIVE}"
