@@ -1404,6 +1404,27 @@ class LookTest(_ShadowFixture):
             look.payload["z"], -trial_design.get_clustered_z(list(sessions.values())), places=9
         )
 
+    def test_a_spawn_with_no_parent_session_is_its_own_cluster_in_the_looks_z(self) -> None:
+        _, salt_id = self._open_started_trial()
+        # every fourth spawn has no parent session; the rest share one per pair
+        spawns = [
+            spawn._replace(
+                session_id=None if index % 4 == 0 else f"pair-{index // 2}",
+                overage_rows=0 if index % 16 in (4, 5) else 1,
+            )
+            for index, spawn in enumerate(_get_spawns_after(_NOW, math.ceil(_MILESTONES[0])))
+        ]
+        self.history += spawns
+        self._cycle(_NEXT_NOW)
+        [look] = self._get_looks()
+        clusters: dict[str, list[tuple[int, float]]] = {}
+        for spawn in spawns:
+            unit = (_get_arm(salt_id, spawn.agent_id), float(spawn.overage_rows > 0))
+            clusters.setdefault(spawn.session_id or spawn.agent_id, []).append(unit)
+        self.assertAlmostEqual(
+            look.payload["z"], -trial_design.get_clustered_z(list(clusters.values())), places=9
+        )
+
     def test_a_spawn_whose_tool_use_reaches_the_budget_with_no_overage_row_is_an_overrun_at_the_look(
         self,
     ) -> None:
@@ -1444,6 +1465,34 @@ class LookTest(_ShadowFixture):
         [look] = self._get_looks()
         self.assertEqual(look.payload["accrued_tasks"], reached)
         self.assertEqual(sum(arm["units"] for arm in look.payload["arms"].values()), reached)
+
+    def test_a_judged_trial_whose_start_is_not_read_takes_no_look_until_it_is(self) -> None:
+        rows = (
+            ("no start record", None),
+            ("the open-trials read faults", dc.LIVE_TRIAL.CANARY_SQL),
+            ("the start read faults", dc.LIVE_TRIAL.BINDING_SQL),
+        )
+        warn = "WARN: shadow stage — trial starts unreadable: ConnectionError"
+        for name, faulted in rows:
+            with self.subTest(name):
+                self.ledger.rows.clear()
+                self.history = list(_get_passing_history())
+                self.clock.now = _NOW
+                key = self._open_live_trial()
+                if faulted is not None:
+                    self._start_trial(key)
+                    self.ledger.faulted.add(faulted)
+                self.history += _get_spawns_after(_NOW, math.ceil(_MILESTONES[0]))
+                stderr = self._cycle(_NEXT_NOW)
+                self.assertEqual(self._get_looks(), [])
+                self.assertEqual(warn in stderr, faulted is not None, stderr)
+                # the same spawns reach look 1 once the start is read
+                self.ledger.faulted.clear()
+                if faulted is None:
+                    self.clock.now = _NOW
+                    self._start_trial(key)
+                self._cycle(_NEXT_NOW)
+                self.assertEqual([look.payload["look"] for look in self._get_looks()], [1])
 
     def test_a_preregistration_recorded_before_its_patterns_last_transition_takes_no_look(
         self,
