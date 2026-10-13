@@ -538,14 +538,16 @@ class _ShadowFixture(unittest.TestCase):
             self.power = dc.check_pattern_power(self.patterns, skip_loop_emit=True)
         return self.power
 
-    def _cycle(self, now: datetime) -> str:
-        """One intake power check + shadow stage at `now`, every open live trial judged by that
-        cycle's trial stage; returns its stderr."""
+    def _cycle(self, now: datetime, *, judged: frozenset[str] | None = None) -> str:
+        """One intake power check + shadow stage at `now`; returns its stderr.
+
+        `judged` defaults to every open live trial: what a stage that judged them all returns."""
         self.clock.now = now
         stderr = io.StringIO()
         with contextlib.redirect_stderr(stderr):
             power = dc.check_pattern_power(self.patterns, skip_loop_emit=True)
-            dc.run_shadow_stage(power, now.strftime("%Y-%m-%d"), self._get_open_keys())
+            handed = self._get_open_keys() if judged is None else judged
+            dc.run_shadow_stage(power, now.strftime("%Y-%m-%d"), handed)
         self.power = power
         self.assertEqual(self.pg_reach, [])
         self.assertEqual(self.ledger.refused, [])
@@ -1331,10 +1333,11 @@ class LookTest(_ShadowFixture):
         self,
     ) -> None:
         # same pair, same UTC day: the shadow row holds the pair's own key and reached milestones
-        self._open_live_trial(event=stub.get_trial_ledger().EVENT.SHADOW_PREREGISTRATION)
+        key = self._open_live_trial(event=stub.get_trial_ledger().EVENT.SHADOW_PREREGISTRATION)
         self.history += _get_spawns_after(_NOW, math.ceil(_MILESTONES[1]))
         stored = list(self.ledger.rows)
-        self._cycle(_NEXT_NOW)
+        # its key in the handed set → only the read's event binding keeps the row from a look
+        self._cycle(_NEXT_NOW, judged=frozenset({key}))
         self.assertEqual(self._get_looks(), [])
         self.assertEqual(self._get_preregistrations(), stored[:1])
 
