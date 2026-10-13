@@ -212,11 +212,11 @@ PY
   _assert_live_module test_pg_dual_write_trial_ledger TestTrialLedgerWriterLivePg
 }
 
-@test "the canary-ledger probe counts the windowed unstarted and foreign-hash voids the daemon writes, each with its agents" {
+@test "the canary-ledger probe counts the windowed voids the daemon writes by reason, each with its agents" {
   local db="doctor_canary_ledger" sep=$'\x1f' unstarted_reason want
   createdb -h "${EPH_SOCKDIR}" -p "${EPH_PORT}" -T trial_ledger_tpl "${db}" || return 1
 
-  # three in-window decision rows through the daemon's own writer; stdout = its unstarted reason
+  # five in-window decision rows through the daemon's own writer; stdout = its unstarted reason
   # shellcheck disable=SC2154  # BATS_TEST_TMPDIR comes from bats
   run --separate-stderr env LF_DB="${db}" LF_EXPECT_PGHOST="${EPH_SOCKDIR}" \
     GA_DATA_ROOT="${BATS_TEST_TMPDIR}/data" \
@@ -239,6 +239,9 @@ rows = (
     (1, "glass-atrium-dev-shell", unstarted),
     (2, "glass-atrium-dev-python", unstarted),
     (3, "glass-atrium-qa-debugger", foreign),
+    # the daemon states these two inline (_get_validity_void), so there is no constant to read
+    (4, "glass-atrium-dev-react", "arm-imbalance"),
+    (5, "glass-atrium-dev-db", "low-delivery"),
 )
 for proposal_id, agent, reason in rows:
     void = {"void": {"reason": reason, "agent": agent}}
@@ -261,6 +264,7 @@ PY
     'source "$1/lib/ga-doctor.sh" && _pg_canary_ledger_probe "$2" 14' _ "${BATS_TEST_DIRNAME}/../.." "${db}"
   (( status == 0 )) || { echo "probe exit ${status}: ${output}"; return 1; }
   want="1${sep}2${sep}0${sep}glass-atrium-qa-debugger${sep}glass-atrium-dev-python,glass-atrium-dev-shell${sep}"
+  want+="${sep}1${sep}1${sep}glass-atrium-dev-react${sep}glass-atrium-dev-db"
   [[ "${output}" == "${want}" ]] || { echo "counted ${output//${sep}/ | }"; return 1; }
 }
 

@@ -1561,8 +1561,10 @@ CANARY_TRIAL_WINDOW_DAYS="${CANARY_TRIAL_WINDOW_DAYS:-14}"
 
 # Canary trial rows of the last $2 days in database $1, one unit-separator line: the void counts for
 # a foreign canary hash and for a trial that never started, the unbound-delivery count, then each
-# population's agents in that order (the unstarted ones sorted). The literals are the daemon's
-# (CANARY.VOID_REASON, LIVE_TRIAL.UNSTARTED_REASON, TRIAL_LEDGER.EVENT.CANARY_UNBOUND_DELIVERY).
+# population's agents in that order (the unstarted ones sorted), then the arm-imbalance and
+# low-delivery void counts and their sorted agents. The literals are the daemon's
+# (CANARY.VOID_REASON, LIVE_TRIAL.UNSTARTED_REASON, TRIAL_LEDGER.EVENT.CANARY_UNBOUND_DELIVERY,
+# _get_validity_void's two reasons).
 # $2 rides as a quoted psql literal cast to int, so a malformed window fails the read instead of
 # entering the statement.
 _pg_canary_ledger_probe() {
@@ -1575,7 +1577,13 @@ SELECT count(*) FILTER (WHERE payload->'void'->>'reason' = 'foreign-canary-hash'
          FILTER (WHERE payload->'void'->>'reason' = 'foreign-canary-hash'), ''),
        coalesce(string_agg(DISTINCT payload->'void'->>'agent', ',' ORDER BY payload->'void'->>'agent')
          FILTER (WHERE payload->'void'->>'reason' = 'unstarted'), ''),
-       coalesce(string_agg(DISTINCT agent, ',') FILTER (WHERE event = 'canary-unbound-delivery'), '')
+       coalesce(string_agg(DISTINCT agent, ',') FILTER (WHERE event = 'canary-unbound-delivery'), ''),
+       count(*) FILTER (WHERE payload->'void'->>'reason' = 'arm-imbalance'),
+       count(*) FILTER (WHERE payload->'void'->>'reason' = 'low-delivery'),
+       coalesce(string_agg(DISTINCT payload->'void'->>'agent', ',' ORDER BY payload->'void'->>'agent')
+         FILTER (WHERE payload->'void'->>'reason' = 'arm-imbalance'), ''),
+       coalesce(string_agg(DISTINCT payload->'void'->>'agent', ',' ORDER BY payload->'void'->>'agent')
+         FILTER (WHERE payload->'void'->>'reason' = 'low-delivery'), '')
 FROM core.autoagent_trial_ledger
 WHERE recorded_at >= now() - make_interval(days => :'days'::int)
 SQL
@@ -1600,6 +1608,7 @@ _doctor_report_canary_digest() {
 _doctor_report_canary_ledger() {
   local probe="" answer="" voids="" unstarted="" unbound=""
   local void_agents="" unstarted_agents="" unbound_agents=""
+  local imbalance="" low_delivery="" imbalance_agents="" low_delivery_agents=""
   local days="${CANARY_TRIAL_WINDOW_DAYS}"
   # shellcheck disable=SC2310,SC2311  # rc-capturing probe calls: an unreachable server must stay distinguishable
   if [[ -n "${GA_SKIP_DB_SETUP:-}" ]]; then
@@ -1614,13 +1623,15 @@ _doctor_report_canary_ledger() {
     log "  note : canary trial ledger unread — the read against '${DB_NAME}' failed"
   else
     # Unit separator, never whitespace: an empty agent list is a field the split must keep.
-    IFS=$'\x1f' read -r voids unstarted unbound void_agents unstarted_agents unbound_agents <<<"${answer}"
-    if ! [[ "${voids}" =~ ^[0-9]+$ ]] || ! [[ "${unstarted}" =~ ^[0-9]+$ ]] || ! [[ "${unbound}" =~ ^[0-9]+$ ]]; then
-      log "  note : canary trial ledger unread — the read against '${DB_NAME}' answered something other than three counts"
+    IFS=$'\x1f' read -r voids unstarted unbound void_agents unstarted_agents unbound_agents \
+      imbalance low_delivery imbalance_agents low_delivery_agents <<<"${answer}"
+    if ! [[ "${voids},${unstarted},${unbound},${imbalance},${low_delivery}" =~ ^[0-9]+(,[0-9]+){4}$ ]]; then
+      log "  note : canary trial ledger unread — the read against '${DB_NAME}' answered something other than five counts"
     else
       _log_canary_ledger_verdict "${voids}" "${unstarted}" "${unbound}" \
-        "${void_agents}" "${unstarted_agents}" "${unbound_agents}" "${days}"
-      printf '%s' "$((voids + unstarted + unbound))"
+        "${void_agents}" "${unstarted_agents}" "${unbound_agents}" "${days}" \
+        "${imbalance}" "${low_delivery}" "${imbalance_agents}" "${low_delivery_agents}"
+      printf '%s' "$((voids + unstarted + unbound + imbalance + low_delivery))"
       return 0
     fi
   fi
@@ -1628,7 +1639,8 @@ _doctor_report_canary_ledger() {
 }
 
 # Args: $1-$3 = the foreign-hash void, unstarted void and unbound-delivery counts, $4-$6 = their
-# agents in that order, $7 = window days.
+# agents in that order, $7 = window days, $8-$9 = the arm-imbalance and low-delivery void counts,
+# $10-$11 = their agents.
 _log_canary_ledger_verdict() {
   if [[ "$1" -gt 0 ]]; then
     log "  warn : $1 canary trial void(s) for a foreign canary hash in the last $7d (agents: $4) — a delivered canary text was not the open trial's, so the daemon voided the trial and removed its canary files"
@@ -1639,7 +1651,13 @@ _log_canary_ledger_verdict() {
   if [[ "$3" -gt 0 ]]; then
     log "  warn : $3 canary delivery(ies) bound to no open trial in the last $7d (agents: $6) — a spawn delivered canary text while no trial was open; the daemon removed those canary files"
   fi
-  if [[ "$1" -eq 0 && "$2" -eq 0 && "$3" -eq 0 ]]; then
+  if [[ "$8" -gt 0 ]]; then
+    log "  warn : $8 canary trial void(s) for arm imbalance in the last $7d (agents: ${10}) — the trial's counted spawns split unevenly between its arms, so the daemon voided it ahead of a win or a retire"
+  fi
+  if [[ "$9" -gt 0 ]]; then
+    log "  warn : $9 canary trial void(s) for low delivery in the last $7d (agents: ${11}) — the canary reached too few of the trial's treatment spawns, or reached a control spawn, so the daemon voided it ahead of a win or a retire"
+  fi
+  if [[ "$1" -eq 0 && "$2" -eq 0 && "$3" -eq 0 && "$8" -eq 0 && "$9" -eq 0 ]]; then
     log "  ok   : no canary void or unbound canary delivery in the last $7d"
   fi
 }

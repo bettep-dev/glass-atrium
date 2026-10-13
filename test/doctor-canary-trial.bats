@@ -1,7 +1,7 @@
 #!/usr/bin/env bats
 # doctor-canary-trial.bats — pins run_doctor's canary-trial warnings (lib/ga-doctor.sh §10 + §28).
 #
-# Five conditions cost a canary trial its evidence without failing anything, so each one is a
+# Seven conditions cost a canary trial its evidence without failing anything, so each one is a
 # counted warning under the `canary-trial` breakdown term:
 #   · a shed canary — a DROP row with block=canary in the §10 shed log, kept apart from the
 #     scope-block drop count, whose remedy names a different cause;
@@ -9,6 +9,8 @@
 #     writes at MANIFEST ingest;
 #   · an unstarted void — the trial-ledger row the daemon's trial stage writes for a trial whose
 #     canary was never first written by its pre-registered horizon;
+#   · an arm-imbalance void and a low-delivery void — the decision rows the daemon writes ahead of
+#     a trial's win or retire;
 #   · an install with neither digest tool the hook probes, where no canary is ever delivered.
 # Every leg is read-only: the ledger read is one SELECT, and nothing is written.
 #
@@ -90,9 +92,11 @@ stub_rc() {
 
 # The ledger read's one row: the foreign-hash void, unstarted void and unbound-delivery counts, then
 # each population's agents in that order — unit-separator delimited, so an empty agent list survives
-# the split.
+# the split. $7-$10 = the arm-imbalance and low-delivery void counts, then their agents; none when
+# omitted.
 ledger_answer() {
-  printf '%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s' "$1" "$2" "$3" "$4" "$5" "$6" >"${STUB_STATE}/ledger.out"
+  printf '%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s' "$1" "$2" "$3" "$4" "$5" "$6" \
+    "${7:-0}" "${8:-0}" "${9:-}" "${10:-}" >"${STUB_STATE}/ledger.out"
 }
 
 # A PATH with every command of the stub-first PATH except the two digest tools the inject hook
@@ -247,6 +251,34 @@ utc_days_ago() {
   }
 }
 
+@test "a void for arm imbalance or low delivery in the ledger window warns under its own reason, names the agent, and is never a clean read" {
+  local -a rows=(
+    "arm-imbalance|1|0|glass-atrium-dev-shell||warn : 1 canary trial void(s) for arm imbalance in the last 14d (agents: glass-atrium-dev-shell)"
+    "low-delivery|0|1||glass-atrium-qa-debugger|warn : 1 canary trial void(s) for low delivery in the last 14d (agents: glass-atrium-qa-debugger)"
+  )
+  local row name imbalance low_delivery imbalance_agents low_delivery_agents want
+  for row in "${rows[@]}"; do
+    IFS='|' read -r name imbalance low_delivery imbalance_agents low_delivery_agents want <<<"${row}"
+    ledger_answer 0 0 0 '' '' '' "${imbalance}" "${low_delivery}" "${imbalance_agents}" "${low_delivery_agents}"
+    run_doctor_sandbox
+    [[ "${output}" == *"${want}"* ]] || {
+      echo "${name}: missing '${want}' — output:"
+      echo "${output}"
+      return 1
+    }
+    [[ "${output}" != *"ok   : no canary void"* ]] || {
+      echo "${name}: a voided trial read as clean"
+      echo "${output}"
+      return 1
+    }
+    [[ "$(canary_term_of_output)" == "1" ]] || {
+      echo "${name}: the void is not counted under canary-trial"
+      echo "${output}"
+      return 1
+    }
+  done
+}
+
 @test "a delivery bound to no open trial warns and names the agents" {
   ledger_answer 0 0 2 '' '' 'glass-atrium-qa-debugger,glass-atrium-dev-shell'
   run_doctor_sandbox
@@ -290,7 +322,7 @@ utc_days_ago() {
     "probe-fail|exists-rc|canary trial ledger unread — the 'ga_doctor_canary_sandbox' existence probe failed"
     "absent-db|exists-empty|database 'ga_doctor_canary_sandbox' absent — no canary trial rows to check"
     "read-fail|ledger-rc|canary trial ledger unread — the read against 'ga_doctor_canary_sandbox' failed"
-    "malformed|ledger-junk|canary trial ledger unread — the read against 'ga_doctor_canary_sandbox' answered something other than three counts"
+    "malformed|ledger-junk|canary trial ledger unread — the read against 'ga_doctor_canary_sandbox' answered something other than five counts"
   )
   local row name kind want
   for row in "${rows[@]}"; do
