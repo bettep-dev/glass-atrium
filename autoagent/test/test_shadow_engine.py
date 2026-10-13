@@ -1530,6 +1530,16 @@ class LookTest(_ShadowFixture):
         self._cycle(_NEXT_NOW)
         self.assertEqual([look.payload["look"] for look in self._get_looks()], [1])
 
+    def test_a_failed_trial_design_import_warns_by_name_and_writes_no_look(self) -> None:
+        self._open_started_trial()
+        self.history += _get_spawns_after(_NOW, math.ceil(_MILESTONES[0]))
+        self._patch("_TRIAL_DESIGN_IMPORT_EXC", ImportError("No module named 'trial_design'"))
+        self.addCleanup(setattr, dc, "trial_design", dc.trial_design)
+        del dc.trial_design
+        stderr = self._cycle(_NEXT_NOW)
+        self.assertIn("WARN: shadow stage — trial_design import failed: ImportError", stderr)
+        self.assertEqual(self._get_looks(), [])
+
     def test_a_stored_pre_generation_row_takes_no_look(self) -> None:
         # same pair, same UTC day: the shadow row holds the pair's own key and reached milestones
         key = self._open_live_trial(event=stub.get_trial_ledger().EVENT.SHADOW_PREREGISTRATION)

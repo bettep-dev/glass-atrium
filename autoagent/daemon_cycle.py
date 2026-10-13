@@ -10164,13 +10164,18 @@ def _read_started_trials(judged_trials: frozenset[str]) -> list[StartedTrial] | 
 def _read_look_spawns(
     trials: list[StartedTrial], windows: PairWindows
 ) -> Mapping[str, list[SpawnFacts]] | None:
-    """Each trial agent's spawns over the pair windows; None (WARN) on a fault."""
-    agents = sorted({trial.canary.agent for trial in trials})
-    try:
-        return _pg_read_spawn_facts(agents, windows)[1]
-    except Exception as exc:  # noqa: BLE001 — a spawn read fault never fails the cycle
-        _warn_shadow(f"trial spawns unreadable: {_describe_fault(exc)}", "no look this cycle")
-        return None
+    """Each trial agent's spawns over the pair windows; None (WARN) on a fault, or when the
+    trial_design import failed — the look's z reads that module."""
+    if _TRIAL_DESIGN_IMPORT_EXC is not None:
+        cause = f"trial_design import failed: {_describe_fault(_TRIAL_DESIGN_IMPORT_EXC)}"
+    else:
+        agents = sorted({trial.canary.agent for trial in trials})
+        try:
+            return _pg_read_spawn_facts(agents, windows)[1]
+        except Exception as exc:  # noqa: BLE001 — a spawn read fault never fails the cycle
+            cause = f"trial spawns unreadable: {_describe_fault(exc)}"
+    _warn_shadow(cause, "no look this cycle")
+    return None
 
 
 def _write_shadow_looks(
