@@ -7247,7 +7247,7 @@ def regenerate_stale_proposals(
     re-derivation failures (file missing, unrecoverable diff) are logged and
     SKIPPED (row left pending) — one bad row must not abort the whole sweep.
 
-    A row an open live trial names keeps its diff — the trial runs on the stored
+    A row a held live trial names keeps its diff — the trial runs on the stored
     text — and is reported "skipped-in-trial"; once its trial is decided, the next
     sweep takes it back.
 
@@ -7285,7 +7285,7 @@ def regenerate_stale_proposals(
                 if row[3]:
                     results.append(
                         {"id": proposal_id, "target_file": target_file_str,
-                         "action": "skipped-in-trial", "reason": "open live trial"}
+                         "action": "skipped-in-trial", "reason": "held live trial"}
                     )
                     continue
                 if not stored_diff or not str(stored_diff).strip():
@@ -7978,7 +7978,7 @@ def regenerate_single_proposal(
     Steps:
       1. Fetch the id=N row from PG (id/target_file/target_agent/pattern_label/
          cycle_date/proposed_diff) — row absent → unrecoverable.
-      2. a row an open live trial names → in_trial, no UPDATE (the trial runs on
+      2. a row a held live trial names → in_trial, no UPDATE (the trial runs on
          the stored diff); otherwise _classify_single_regen decides the action
          (already_applied/regenerated/invalid/unrecoverable).
       3. action=regenerated AND not dry_run → UPDATE proposed_diff only
@@ -8035,14 +8035,14 @@ def regenerate_single_proposal(
         if row[6]:
             sys.stderr.write(
                 f"[daemon-cycle] FU-3 single: id={proposal_id} action=in_trial "
-                "(no UPDATE) — an open live trial runs on the stored diff\n"
+                "(no UPDATE) — a held live trial runs on the stored diff\n"
             )
             return SingleRegenResult(
                 proposal_id=proposal_id,
                 action="in_trial",
                 preverify_passed=None,
                 preverify_axes=None,
-                reason=f"proposal id {proposal_id} is in an open live trial",
+                reason=f"proposal id {proposal_id} is in a held live trial",
             )
 
         target_file_str = row[1]
@@ -8152,7 +8152,7 @@ def supersede_prior_pending_for_agent(
     per row: the run's own cycle date carries the same-cycle tail, an older row
     the cross-day tail.
 
-    A row an open live trial names is never terminated: the trial runs on that row.
+    A row a held live trial names is never terminated: the trial runs on that row.
     An ``auto`` candidate (one bound to its own pre-registration) terminates only
     ``auto`` rows, sparing the human queue and the ``llm`` rows; any other candidate
     tier (safety, infra-pending's empty tier, the default) terminates every tier.
@@ -9258,8 +9258,19 @@ _OPEN_LIVE_TRIAL_FROM = (
 _OPEN_LIVE_TRIAL_SQL = (
     "SELECT p.agent, (p.payload->>'proposal_id')::bigint AS proposal_id " + _OPEN_LIVE_TRIAL_FROM
 )
+# held live trial = an open one, or a won one whose proposal row is still pending — the win does
+# not end the trial's holds, the row leaving pending does; binds the event as one parameter
+_HELD_LIVE_TRIAL_SQL = (
+    "SELECT p.agent, (p.payload->>'proposal_id')::bigint AS proposal_id "
+    "FROM core.autoagent_trial_ledger p WHERE p.event = %s AND (NOT EXISTS ("
+    "SELECT 1 FROM core.autoagent_trial_ledger d WHERE d.dedupe_key = p.trial_key || ':decision') "
+    "OR EXISTS (SELECT 1 FROM core.autoagent_trial_ledger d, core.autoagent_proposals w "
+    "WHERE d.dedupe_key = p.trial_key || ':decision' AND d.payload->'win' IS NOT NULL "
+    "AND w.id = (p.payload->>'proposal_id')::bigint AND w.status = 'pending'))"
+)
 LIVE_TRIAL = SimpleNamespace(
     OPEN_SQL=_OPEN_LIVE_TRIAL_SQL,
+    HELD_SQL=_HELD_LIVE_TRIAL_SQL,
     # each open trial's committed pre-registration row — its id the canary's salt, its
     # recorded_at the unstarted bound's origin — and whether its <live trial key>:start row landed
     CANARY_SQL=(
@@ -9269,10 +9280,10 @@ LIVE_TRIAL = SimpleNamespace(
         + _OPEN_LIVE_TRIAL_FROM
         + " ORDER BY p.id"
     ),
-    # a proposals-row predicate over the same statement; binds the event as one parameter
+    # a proposals-row predicate over the held statement; binds the event as one parameter
     IS_PROPOSAL_IN_TRIAL_SQL=(
-        f"EXISTS (SELECT 1 FROM ({_OPEN_LIVE_TRIAL_SQL}) AS open_trial "
-        "WHERE open_trial.proposal_id = autoagent_proposals.id)"
+        f"EXISTS (SELECT 1 FROM ({_HELD_LIVE_TRIAL_SQL}) AS held_trial "
+        "WHERE held_trial.proposal_id = autoagent_proposals.id)"
     ),
     # an unstarted void's payload.void.reason; the doctor counts the void by this literal
     UNSTARTED_REASON="unstarted",
@@ -9295,13 +9306,22 @@ LIVE_TRIAL = SimpleNamespace(
 
 def _pg_read_open_trials() -> dict[str, list[int]]:
     """Agent → proposal ids of its open live trials; raises on any PG fault."""
+    return _pg_read_trials(LIVE_TRIAL.OPEN_SQL)
+
+
+def _pg_read_held_trials() -> dict[str, list[int]]:
+    """Agent → proposal ids of its held live trials; raises on any PG fault."""
+    return _pg_read_trials(LIVE_TRIAL.HELD_SQL)
+
+
+def _pg_read_trials(sql: str) -> dict[str, list[int]]:
     with _pg_connect() as conn, conn.cursor() as cur:
-        cur.execute(LIVE_TRIAL.OPEN_SQL, (TRIAL_LEDGER.EVENT.LIVE_PREREGISTRATION,))
+        cur.execute(sql, (TRIAL_LEDGER.EVENT.LIVE_PREREGISTRATION,))
         rows = cur.fetchall()
-    open_trials: dict[str, list[int]] = defaultdict(list)
+    trials: dict[str, list[int]] = defaultdict(list)
     for agent, proposal_id in rows:
-        open_trials[agent].append(proposal_id)
-    return dict(open_trials)
+        trials[agent].append(proposal_id)
+    return dict(trials)
 
 
 class ArmCount(NamedTuple):
@@ -15612,28 +15632,30 @@ def _get_preregistration_source(run: GenerationRun) -> PreregistrationSource | N
 def _drop_trial_held_agents(
     agent_groups: list[tuple[str, list[Pattern]]],
 ) -> list[tuple[str, list[Pattern]]]:
-    """One-running-trial gate — no generator call for an agent holding an open live trial.
+    """One-running-trial gate — no generator call for an agent holding a held live trial.
 
-    Reads the open trials once per cycle. A read fault holds every agent this cycle
-    (named WARN; the cycle continues). No PG layer → nothing readable, so no hold.
+    Held = open, or won with its proposal row still pending. Reads the held trials once per
+    cycle. A read fault holds every agent this cycle (named WARN; the cycle continues). No PG
+    layer → nothing readable, so no hold.
     """
     if not agent_groups or not HAS_PG_LOOP_WRITE:
         return agent_groups
     try:
-        open_trials = _pg_read_open_trials()
+        held_trials = _pg_read_held_trials()
     except Exception as exc:  # noqa: BLE001 — a read fault holds generation, never the cycle
         sys.stderr.write(
-            "[daemon-cycle] WARN: one-running-trial gate — open live trials unreadable: "
+            "[daemon-cycle] WARN: one-running-trial gate — held live trials unreadable: "
             f"{_describe_fault(exc)} — no generator call this cycle\n"
         )
         return []
     for agent, _ in agent_groups:
-        if agent in open_trials:
+        if agent in held_trials:
             sys.stderr.write(
-                f"[daemon-cycle] INFO: one-running-trial gate — agent={agent} holds an open "
-                f"live trial (proposal ids {open_trials[agent]}) — no generator call this cycle\n"
+                f"[daemon-cycle] INFO: one-running-trial gate — agent={agent} holds a live "
+                "trial, open or won with its row pending (proposal ids "
+                f"{held_trials[agent]}) — no generator call this cycle\n"
             )
-    return [group for group in agent_groups if group[0] not in open_trials]
+    return [group for group in agent_groups if group[0] not in held_trials]
 
 
 def _drop_gated_patterns(

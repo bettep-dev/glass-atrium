@@ -49,7 +49,7 @@ _SEAMS: dict[str | None, tuple[str, ...]] = {
         "_pg_count_spawn_manifest",
         "_pg_write_trial_ledger_row",
     ),
-    None: ("_invoke_pg_helper_subprocess", "_pg_read_open_trials"),
+    None: ("_invoke_pg_helper_subprocess", "_pg_read_open_trials", "_pg_read_held_trials"),
 }
 
 _AVAILABILITY_FLAGS = ("HAS_PG_LOOP_WRITE", "HAS_PG_PATTERN_READ", "HAS_PG_OUTCOME_READ")

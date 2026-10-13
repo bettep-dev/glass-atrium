@@ -18,9 +18,10 @@ the same limbo for STORED rows: one idempotent statement moves every pending aut
 row to ``unadjudicated`` under the generation-closed reason and actor, and leaves
 every other row as it was.
 
-The one-running-trial gate keeps an agent holding an open live trial out of
-generation: its open trials are read once per cycle, a read fault makes no
-generator call that cycle, and the trial's pending row survives the cycle.
+The one-running-trial gate keeps an agent holding a held live trial — open, or won
+with its row still pending — out of generation: the held trials are read once per
+cycle, a read fault makes no generator call that cycle, and the trial's pending row
+survives the cycle.
 
 Run with either runner:
     python3 -m unittest autoagent.test.test_floor_terminalization -v
@@ -31,6 +32,7 @@ from __future__ import annotations
 
 import contextlib
 import io
+import json
 import sqlite3
 import sys
 import tempfile
@@ -285,12 +287,13 @@ _HOLDER = "glass-atrium-dev-python"  # holds an open live trial on its pending r
 _FREE = "glass-atrium-dev-shell"  # holds none
 _TRIAL_PROPOSAL_ID = 7
 # the gate's read, kept before any test's seal replaces it with a refusal
-_READ_OPEN_TRIALS = getattr(dc, "_pg_read_open_trials", None) if dc is not None else None
+_READ_HELD_TRIALS = getattr(dc, "_pg_read_held_trials", None) if dc is not None else None
 
 
 @unittest.skipIf(dc is None, f"import failed: {_IMPORT_ERROR}")
 class TestOneRunningTrialGate(unittest.TestCase):
-    """No generator call for an agent holding an open trial; a read fault holds the whole cycle.
+    """No generator call for an agent holding an open trial or a won row still pending; a read
+    fault holds the whole cycle.
 
     The generation loop's input is the cycle's power passes, so a pattern in an agent's
     group is a pattern of that agent that passed power this cycle.
@@ -325,7 +328,7 @@ class TestOneRunningTrialGate(unittest.TestCase):
         for name, value, is_created in (
             ("HAS_PG_LOOP_WRITE", True, False),
             ("_pg_connect", lambda: stub.create_connection(self.db), False),
-            ("_pg_read_open_trials", self._read_open_trials, _READ_OPEN_TRIALS is None),
+            ("_pg_read_held_trials", self._read_held_trials, _READ_HELD_TRIALS is None),
             ("TRIAL_LEDGER", stub.get_trial_ledger(), not hasattr(dc, "TRIAL_LEDGER")),
             ("_PG_PROPOSAL_STATUS_SQL", fragment, dc._PG_LOOP_IMPORT_EXC is not None),
             ("_drop_gated_patterns", lambda _agent, patterns, _gate: patterns, False),
@@ -343,9 +346,9 @@ class TestOneRunningTrialGate(unittest.TestCase):
     def _target(self, agent: str) -> str:
         return str(self.agents_dir / f"{agent}.md")
 
-    def _read_open_trials(self) -> object:
+    def _read_held_trials(self) -> object:
         self.reads.append(None)
-        return _READ_OPEN_TRIALS()
+        return _READ_HELD_TRIALS()
 
     def _generate(self, agent: str, *_args: object, **_kwargs: object) -> "dc.PatchProposal":
         self.generated.append(agent)
@@ -399,7 +402,7 @@ class TestOneRunningTrialGate(unittest.TestCase):
         self._loop(_HOLDER, _FREE)
         self.assertEqual(self.generated, [_FREE])
 
-    def test_the_open_trials_are_read_once_per_cycle(self) -> None:
+    def test_the_held_trials_are_read_once_per_cycle(self) -> None:
         self._loop(_HOLDER, _FREE)
         self.assertEqual(len(self.reads), 1)
 
@@ -407,11 +410,11 @@ class TestOneRunningTrialGate(unittest.TestCase):
         def _fault() -> None:
             raise sqlite3.OperationalError("no such table: core.autoagent_trial_ledger")
 
-        with mock.patch.object(dc, "_pg_read_open_trials", _fault):
+        with mock.patch.object(dc, "_pg_read_held_trials", _fault):
             err = self._loop(_HOLDER, _FREE)
         self.assertEqual(self.generated, [])
         self.assertIn(
-            "WARN: one-running-trial gate — open live trials unreadable: OperationalError",
+            "WARN: one-running-trial gate — held live trials unreadable: OperationalError",
             err,
         )
 
@@ -425,6 +428,31 @@ class TestOneRunningTrialGate(unittest.TestCase):
         )
         self.assertEqual(stored["status"], "pending")
         self.assertEqual(self._get_ledger(), ledger)
+
+    def test_a_won_row_still_pending_holds_its_agent_from_the_winning_cycle_on(self) -> None:
+        key = f"{_TRIAL_PROPOSAL_ID:064x}"
+        with closing(sqlite3.connect(self.db)) as db:
+            # the win row lands in the shadow stage, ahead of the gate's read in the same cycle
+            db.execute(
+                "INSERT INTO autoagent_trial_ledger (trial_key, agent, event, payload, dedupe_key)"
+                " VALUES (?, ?, ?, ?, ?)",
+                (
+                    key,
+                    _HOLDER,
+                    stub.get_trial_ledger().EVENT.LIVE_DECISION,
+                    json.dumps({"win": {"look": 1}}),
+                    f"{key}:decision",
+                ),
+            )
+            db.commit()
+        self._loop(_HOLDER, _FREE)
+        with self.subTest("no generator call"):
+            self.assertEqual(self.generated, [_FREE])
+        with self.subTest("the won row is not superseded"):
+            stored = stub.read_proposal(
+                self.db, ("2026-10-10", "in-trial pattern", self._target(_HOLDER))
+            )
+            self.assertEqual(stored["status"], "pending")
 
 
 if __name__ == "__main__":

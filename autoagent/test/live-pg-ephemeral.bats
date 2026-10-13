@@ -276,6 +276,140 @@ PY
   _assert_live_module test_shadow_engine PreRegistrationReadLivePgTest
 }
 
+@test "a won row still pending stays held through every reader of the held predicate, and the open reads return the open trial alone" {
+  local db="held_predicate"
+  createdb -h "${EPH_SOCKDIR}" -p "${EPH_PORT}" -T trial_ledger_tpl "${db}" || return 1
+
+  # shellcheck disable=SC2154  # BATS_TEST_TMPDIR comes from bats
+  run --separate-stderr env LF_DB="${db}" LF_EXPECT_PGHOST="${EPH_SOCKDIR}" \
+    GA_DATA_ROOT="${BATS_TEST_TMPDIR}/data" \
+    PYTHONPATH="${BATS_TEST_DIRNAME}/../../scripts:${BATS_TEST_DIRNAME}/.." python3 - <<'PY'
+import os
+import sys
+from pathlib import Path
+
+if os.environ.get("PGHOST") != os.environ["LF_EXPECT_PGHOST"]:
+    sys.exit("PGHOST is not the ephemeral cluster's socket dir — refusing to write")
+
+import psycopg
+
+import _pg_dual_write_daemon as helper
+import daemon_cycle as daemon
+
+
+def connect():
+    return psycopg.connect(dbname=os.environ["LF_DB"], connect_timeout=2)
+
+
+# The helper and the daemon name glass_atrium; this table's database is a sibling on the same cluster.
+helper._connect = daemon._pg_connect = connect
+# the model call sits past the single path's read; the table reads the refusal ahead of it
+daemon._classify_single_regen = lambda **kwargs: daemon.SingleRegenResult(
+    proposal_id=kwargs["proposal_id"],
+    action="invalid",
+    preverify_passed=None,
+    preverify_axes=None,
+    reason="past the held read",
+)
+event, win = daemon.TRIAL_LEDGER.EVENT, {"win": {"look": 1}}
+sandbox = Path(os.environ["GA_DATA_ROOT"])
+# id, agent, proposal status, one trial per decision payload (None = no decision row), held
+table = (
+    ("open", "glass-atrium-dev-shell", "pending", (None,), True),
+    ("won and pending", "glass-atrium-dev-python", "pending", (win,), True),
+    ("won and applied", "glass-atrium-dev-react", "applied", (win,), False),
+    (
+        "void or retire",
+        "glass-atrium-dev-db",
+        "pending",
+        ({"void": {"reason": "unstarted"}}, {"retire": {"reason": "horizon"}}),
+        False,
+    ),
+)
+
+
+def seed(agent, status, label, decision):
+    """One proposal row, its live pre-registration and its decision row → the proposal id."""
+    with connect() as conn:
+        proposal_id = conn.execute(
+            "INSERT INTO core.autoagent_proposals (cycle_date, pattern_label, target_file,"
+            " target_agent, classification, rationale, approval_tier, status, proposed_diff,"
+            " source_file, source_file_mtime) VALUES ('2026-10-10', %s, %s, %s, 'apply', 'r',"
+            " 'auto', %s, '', 'autoagent.json', 0) RETURNING id",
+            (label, f"agents/{agent}.md", agent, status),
+        ).fetchone()[0]
+    key = helper.get_live_trial_key(proposal_id)
+    landed = daemon._pg_write_trial_ledger_row(
+        event.LIVE_PREREGISTRATION,
+        daemon.TRIAL_LEDGER.ACTOR.LIVE,
+        {"proposal_id": proposal_id},
+        trial_key=key,
+        agent=agent,
+        dedupe_key=key,
+    )
+    if decision is not None:
+        landed += daemon._write_live_decision(key, agent, None, decision)
+    if landed != 1 + (decision is not None):
+        sys.exit(f"{label}: a ledger row did not land ({landed})")
+    return proposal_id
+
+
+def fail(name, reader, read):
+    sys.exit(f"{name}: {reader} read {read!r}")
+
+
+seeded = [
+    (name, agent, status, held, [seed(agent, status, f"{name} {n}", d) for n, d in enumerate(decisions)])
+    for name, agent, status, decisions, held in table
+]
+
+for name, _agent, _status, held, ids in seeded:
+    for proposal_id in ids:
+        action = daemon.regenerate_single_proposal(
+            proposal_id, agents_dir=sandbox, dry_run=True
+        ).action
+        if (action == "in_trial") != held:
+            fail(name, "the single diff writer", action)
+
+stale = {
+    row["id"]: row["action"]
+    for row in daemon.regenerate_stale_proposals(agents_dir=sandbox, dry_run=True)
+}
+for name, _agent, _status, held, ids in seeded:
+    for proposal_id in ids:
+        if (stale.get(proposal_id) == "skipped-in-trial") != held:
+            fail(name, "the stale diff writer", stale.get(proposal_id))
+
+held_trials = daemon._pg_read_held_trials()
+for name, agent, _status, held, ids in seeded:
+    if held_trials.get(agent, []) != (ids if held else []):
+        fail(name, "the gate", held_trials.get(agent))
+
+with connect() as conn:
+    for reader, sql, agent_column in (
+        ("CANARY_SQL", daemon.LIVE_TRIAL.CANARY_SQL, 1),
+        ("BINDING_SQL", daemon.LIVE_TRIAL.BINDING_SQL, 0),
+    ):
+        agents = [row[agent_column] for row in conn.execute(sql, (event.LIVE_PREREGISTRATION,))]
+        if agents != [table[0][1]]:
+            sys.exit(f"{reader} returned {agents}, not the open trial alone")
+
+# last: it terminates the rows it does not spare
+for name, agent, status, held, ids in seeded:
+    daemon.supersede_prior_pending_for_agent(
+        agent, f"agents/{agent}.md", cycle_date="2026-10-12", pattern_label="a later candidate"
+    )
+    with connect() as conn:
+        for proposal_id in ids:
+            stored = conn.execute(
+                "SELECT status::text FROM core.autoagent_proposals WHERE id = %s", (proposal_id,)
+            ).fetchone()[0]
+            if (stored == status) != (held or status != "pending"):
+                fail(name, "the supersede", stored)
+PY
+  (( status == 0 )) || { echo "${output}"; echo "${stderr}"; return 1; }
+}
+
 @test "the A/A harness's open-state ledger read runs against the migrated cluster, none skipped" {
   _assert_live_module test_aa_harness AaOpenReadLivePgTest
 }

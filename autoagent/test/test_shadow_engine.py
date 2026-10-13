@@ -769,19 +769,25 @@ class BoundPayloadTest(_ShadowFixture):
             ("_drop_gated_patterns", lambda _agent, patterns, _gate: patterns),
             ("consecutive_timeout_count", lambda *args: 0),
             ("INTER_CALL_SPACING_SEC", 0),
-            ("_pg_read_open_trials", self._read_open_trials),
+            ("_pg_read_held_trials", self._read_held_trials),
         ):
             self._patch(name, value)
         self.clock.now = _NOW
 
-    def _read_open_trials(self) -> dict[str, list[int]]:
+    def _read_held_trials(self) -> dict[str, list[int]]:
+        """Agent → proposal ids of its trials with no decision row or a win one; no proposal
+        row is stored here, so every won row counts as pending."""
         event = stub.get_trial_ledger().EVENT
-        decided = {row.dedupe_key for row in self.ledger.get_rows(event.LIVE_DECISION)}
-        open_trials: dict[str, list[int]] = {}
+        released = {
+            row.dedupe_key
+            for row in self.ledger.get_rows(event.LIVE_DECISION)
+            if "win" not in row.payload
+        }
+        held_trials: dict[str, list[int]] = {}
         for row in self.ledger.get_rows(event.LIVE_PREREGISTRATION):
-            if f"{row.trial_key}:decision" not in decided:
-                open_trials.setdefault(row.agent, []).append(row.payload["proposal_id"])
-        return open_trials
+            if f"{row.trial_key}:decision" not in released:
+                held_trials.setdefault(row.agent, []).append(row.payload["proposal_id"])
+        return held_trials
 
     def _proposal(self, agent: str, *_args: object, **_kwargs: object) -> dc.PatchProposal:
         self.generated.append(agent)
