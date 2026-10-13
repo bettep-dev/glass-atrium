@@ -45,6 +45,7 @@ import random
 import sys
 import unittest
 from pathlib import Path
+from types import SimpleNamespace
 
 _LIB_DIR = Path(__file__).resolve().parent.parent / "lib"
 if str(_LIB_DIR) not in sys.path:
@@ -575,32 +576,34 @@ def _get_reference_z(clusters, salt: str, get_arm=_get_hash_arm) -> float | None
 # Source: the lane's S5 pre-step 3 (b) record → closed clusters and cluster sizes per look, dev-react —
 # the fewest look-1 sessions among the agents reaching all four looks. Spawns closed by looks 1-4, one
 # row per session: sessions 7 / 10 / 13 / 15, spawns 248 / 573 / 911 / 1256, largest 84 / 239 / 304 / 415
-_CALIBRATION_SESSIONS = (
-    (2, 3, 3, 3),
-    (5, 6, 6, 6),
-    (9, 12, 12, 12),
-    (25, 25, 25, 40),
-    (40, 46, 84, 89),
-    (83, 139, 239, 239),
-    (84, 239, 304, 415),
-    (0, 4, 4, 4),
-    (0, 25, 25, 84),
-    (0, 74, 150, 226),
-    (0, 0, 15, 15),
-    (0, 0, 22, 40),
-    (0, 0, 22, 41),
-    (0, 0, 0, 20),
-    (0, 0, 0, 22),
+_CALIBRATION = SimpleNamespace(
+    SESSIONS=(
+        (2, 3, 3, 3),
+        (5, 6, 6, 6),
+        (9, 12, 12, 12),
+        (25, 25, 25, 40),
+        (40, 46, 84, 89),
+        (83, 139, 239, 239),
+        (84, 239, 304, 415),
+        (0, 4, 4, 4),
+        (0, 25, 25, 84),
+        (0, 74, 150, 226),
+        (0, 0, 15, 15),
+        (0, 0, 22, 40),
+        (0, 0, 22, 41),
+        (0, 0, 0, 20),
+        (0, 0, 0, 22),
+    ),
+    SEED=20261013,
+    DRAWS=200,
+    REDRAWS=199,  # 200 reference members → resolution 0.005; looks 1-4 admit 0 / 1 / 4 / 10
 )
-_CALIBRATION_SEED = 20261013
-_CALIBRATION_DRAWS = 200
-_CALIBRATION_REDRAWS = 199  # 200 reference members → resolution 0.005; looks 1-4 admit 0 / 1 / 4 / 10
 
 
 def _get_fan_out_looks(generator: random.Random, salt: str) -> list[list[list[tuple[str, int, float]]]]:
     """One no-harm draw per look: a session's spawns share a Pareto fan-out level, arms under ``salt``."""
     sessions = []
-    for session, sizes in enumerate(_CALIBRATION_SESSIONS):
+    for session, sizes in enumerate(_CALIBRATION.SESSIONS):
         level = 5 * generator.paretovariate(1.5)  # mean 15 per spawn, inside the recorded 13-16; no finite variance
         agent_ids = [f"c{session:02d}{position:03d}" for position in range(sizes[-1])]
         sessions.append(
@@ -610,7 +613,7 @@ def _get_fan_out_looks(generator: random.Random, salt: str) -> list[list[list[tu
             ]
         )
     return [
-        [spawns[: sizes[look]] for spawns, sizes in zip(sessions, _CALIBRATION_SESSIONS) if sizes[look]]
+        [spawns[: sizes[look]] for spawns, sizes in zip(sessions, _CALIBRATION.SESSIONS) if sizes[look]]
         for look in range(len(td.LOOK_FRACTIONS))
     ]
 
@@ -781,13 +784,13 @@ class FollowUpRandomizationTest(unittest.TestCase):
     ) -> None:
         # tolerance = the simulation interval's upper bound at a true share of 0.05 over 200 draws:
         # P(Bin(200, 0.05) ≤ 16) = 0.9762 ≥ 0.975 > P(≤ 15) = 0.9556 → at most 16 draws cross
-        generator = random.Random(_CALIBRATION_SEED)
+        generator = random.Random(_CALIBRATION.SEED)
         get_arm = functools.cache(_get_hash_arm)  # a re-draw keeps its salt, so its arms repeat across draws
         crossed = 0
-        for draw in range(_CALIBRATION_DRAWS):
+        for draw in range(_CALIBRATION.DRAWS):
             looks = _get_fan_out_looks(generator, salt=str(draw))
             results = td.get_randomization_looks(
-                looks, get_arm=get_arm, salt_namespace="redraw", redraws=_CALIBRATION_REDRAWS
+                looks, get_arm=get_arm, salt_namespace="redraw", redraws=_CALIBRATION.REDRAWS
             )
             crossed += results[-1].is_crossed
         self.assertLessEqual(crossed, 16)
