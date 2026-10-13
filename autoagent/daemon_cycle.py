@@ -848,6 +848,22 @@ def match_sensitive_path(path: str) -> str | None:
 DiffLineKind = Literal["header", "hunk", "added", "removed", "other"]
 
 
+def _get_diff_lines(diff: str, *, keepends: bool = False) -> list[str]:
+    """Split a diff into lines at ``\\n`` alone, as ``git apply`` reads it.
+
+    ``str.splitlines`` also breaks at FF, U+0085, U+2028 and a lone CR, which hides
+    the rest of an added line from every reader. A ``\\r`` ending a line is dropped
+    with the newline unless ``keepends``.
+    """
+    lines = [f"{line}\n" for line in (diff or "").split("\n")]
+    lines[-1] = lines[-1][:-1]
+    if not lines[-1]:
+        lines.pop()
+    if keepends:
+        return lines
+    return [line.removesuffix("\n").removesuffix("\r") for line in lines]
+
+
 def _get_diff_line_kinds(diff: str) -> list[tuple[DiffLineKind, str]]:
     """Classify each diff line — the one body reading of the safety/count sites.
 
@@ -856,7 +872,7 @@ def _get_diff_line_kinds(diff: str) -> list[tuple[DiffLineKind, str]]:
     are ignored.
     A header is only a ``--- `` line directly followed by ``+++ `` before any hunk.
     """
-    lines = (diff or "").splitlines()
+    lines = _get_diff_lines(diff)
     kinds: list[tuple[DiffLineKind, str]] = []
     in_hunk = False
     for idx, line in enumerate(lines):
@@ -1228,7 +1244,7 @@ def _get_diff_header_pairs(diff: str) -> list[tuple[int, str, str]]:
     ``+++ `` is a header pair; inside a hunk the pair must also be followed by ``@@``,
     because ``git apply --recount`` applies any other ``--- ``/``+++ `` line as body.
     """
-    lines = (diff or "").splitlines()
+    lines = _get_diff_lines(diff)
     pairs: list[tuple[int, str, str]] = []
     in_hunk = False
     for idx, line in enumerate(lines):
@@ -3684,7 +3700,7 @@ def _recount_hunk_header(diff_text: str) -> str:
     if not diff_text:
         return diff_text
 
-    lines = diff_text.splitlines(keepends=True)
+    lines = _get_diff_lines(diff_text, keepends=True)
     kinds = _get_diff_line_kinds(diff_text)
     out: list[str] = []
     i = 0
@@ -3739,7 +3755,7 @@ def _stamp_implied_lengths(diff_text: str) -> str:
     if not diff_text:
         return diff_text
     out: list[str] = []
-    for line in diff_text.splitlines(keepends=True):
+    for line in _get_diff_lines(diff_text, keepends=True):
         m = _UNIFIED_HUNK_CAPTURE_RE.match(line.rstrip("\n"))
         if m is None:
             out.append(line)
@@ -4092,7 +4108,7 @@ def _get_declared_removals(diff_text: str) -> tuple[tuple[str, ...], bool]:
     declared: list[str] = []
     preamble_removal = False
     in_hunk = False
-    for raw in diff_text.splitlines():
+    for raw in _get_diff_lines(diff_text):
         if raw.startswith("@@"):
             in_hunk = True
             continue
@@ -4620,7 +4636,7 @@ def _diff_header_target_basename(diff: str) -> str | None:
     new_header_texts = {
         idx + 1: new_text for idx, _old_text, new_text in _get_diff_header_pairs(diff)
     }
-    for idx, line in enumerate(diff.splitlines()):
+    for idx, line in enumerate(_get_diff_lines(diff)):
         if not line.startswith("+++"):
             continue
         if idx in new_header_texts:
@@ -4994,7 +5010,7 @@ def _diff_touches_frontmatter(diff: str) -> bool:
     pattern = re.compile(
         rf"^[+-]\s*({'|'.join(re.escape(k) for k in FRONTMATTER_IDENTITY_FIELDS)})\s*:"
     )
-    return any(pattern.match(line) for line in diff.splitlines())
+    return any(pattern.match(line) for line in _get_diff_lines(diff))
 
 
 # -- T3/T4: corpus-size telemetry + prose-only-add detection ----------------
@@ -5763,7 +5779,7 @@ def _diff_excerpt(diff: str, cap: int) -> str:
     if len(diff) <= cap:
         return diff
 
-    lines = diff.splitlines(keepends=True)
+    lines = _get_diff_lines(diff, keepends=True)
     kept: list[str] = []
     used = 0
     for line in lines:
@@ -6988,7 +7004,7 @@ def _diff_context_lines(diff_text: str) -> list[str]:
     anchor correctly — the staleness probe.
     """
     out: list[str] = []
-    for line in diff_text.splitlines():
+    for line in _get_diff_lines(diff_text):
         if line.startswith("--- ") or line.startswith("+++ "):
             continue
         if line.startswith("@@") or line.startswith("\\"):

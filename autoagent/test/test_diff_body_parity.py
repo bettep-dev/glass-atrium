@@ -599,7 +599,7 @@ def _get_count(row: dict[str, object], column: str) -> int:
 
 @unittest.skipIf(_IMPORT_ERROR is not None, f"import failed: {_IMPORT_ERROR}")
 class OffenderRowsReadAsBody(unittest.TestCase):
-    """Raw '+++'/'---' lines inside a hunk are body, exactly as git apply --recount applies them."""
+    """A hunk's lines are read as git apply --recount applies them: raw '+++'/'---' as body, a line ended by a newline alone."""
 
     def setUp(self) -> None:
         self.rows = _offender_rows()
@@ -630,6 +630,18 @@ class OffenderRowsReadAsBody(unittest.TestCase):
                 self.assertEqual(results["safety"], "safety")
                 self.assertEqual((results["added"], results["removed"]), (2, 2))
                 self.assertEqual((results["split_added"], results["split_removed"]), (2, 2))
+
+    def test_should_read_an_added_line_whole_when_a_non_newline_separator_sits_inside_it(self) -> None:
+        # git apply ends a line at "\n" alone; the backslash-led tail is the shape a
+        # wider split reads as a "\ No newline" marker and so never scans.
+        separators = {"u2028": " ", "u0085": "\u0085", "cr": "\r", "ff": "\f"}
+        for row_id, separator in separators.items():
+            with self.subTest(row_id):
+                added = f"note{separator}\\ {_SENSITIVE}"
+                diff = f"--- a/{_TARGET}\n+++ b/{_TARGET}\n@@ -1,1 +1,2 @@\n ctx\n+{added}\n"
+                self.assertIsNotNone(dc.match_sensitive_diff(diff))
+                self.assertEqual(dc._count_added_lines(diff), 1)
+                self.assertEqual(dc.get_canary_text(diff), f"{added}\n")
 
 
 @unittest.skipIf(_IMPORT_ERROR is not None, f"import failed: {_IMPORT_ERROR}")
