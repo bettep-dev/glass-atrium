@@ -72,7 +72,7 @@ _PROBE_KINDS: dict[str, tuple[str, str]] = {
 }
 _CONTENTS: dict[str, str] = {"sensitive": _SENSITIVE, "benign": _BENIGN}
 # Characters str.splitlines ends a line at and git apply does not; "cr" never ends its line.
-_NON_NEWLINE_SEPARATORS: dict[str, str] = {"u2028": " ", "u0085": "\u0085", "cr": "\r", "ff": "\f"}
+_NON_NEWLINE_SEPARATORS: dict[str, str] = {"u2028": "\u2028", "u0085": "\u0085", "cr": "\r", "ff": "\f"}
 
 
 def _hunk(probe_prefix: str, side: str, content: str, *, valid: bool) -> str:
