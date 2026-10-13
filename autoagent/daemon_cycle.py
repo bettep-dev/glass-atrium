@@ -9318,13 +9318,15 @@ class LookAccrual(NamedTuple):
     arms: TrialArms | None = None
 
 
-def run_shadow_stage(power: PowerResult, cycle_date: str) -> None:
+def run_shadow_stage(power: PowerResult, cycle_date: str, judged_trials: frozenset[str]) -> None:
     """Shadow engine: count power verdicts, record reached looks of live trials; decides nothing.
 
     - rows: one power-pass-count per cycle date · one live look per reached look; no
       pre-registration — the push writes the live one with its bound candidate
     - trial: a passing pattern's latest live pre-registration, current when recorded at or after
       the row's last_transition_at (a NULL anchor keeps it); otherwise no look
+    - judged_trials: the trial keys this cycle's trial stage judged and left open
+      (run_trial_stage) → a trial outside it — unjudged, voided or decided — takes no look
     - accrual (interim basis): tasks from the pre-registration's recorded_at → none in its cycle
     - arms: no production arm source yet → look rows carry accrual only
     - ledger fault: named WARN, never a failed cycle · --dry-run: the caller skips the stage
@@ -9348,14 +9350,20 @@ def run_shadow_stage(power: PowerResult, cycle_date: str) -> None:
     for power_pass in power.passes:
         pattern = power_pass.pattern
         trial = trials.get((pattern.agent, pattern.row_id, pattern.metric_key))
-        _write_shadow_pass(power_pass, trial, power.windows)
+        _write_shadow_pass(power_pass, trial, power.windows, judged_trials)
 
 
 def _write_shadow_pass(
-    power_pass: PowerPass, trial: ShadowTrial | None, windows: PairWindows
+    power_pass: PowerPass,
+    trial: ShadowTrial | None,
+    windows: PairWindows,
+    judged_trials: frozenset[str],
 ) -> None:
-    """Record a current live trial's reached looks; no current trial → nothing written."""
-    if trial is None or not _is_trial_current(trial, power_pass.pattern.last_transition_at):
+    """Record a current live trial's reached looks; no current trial, or one this cycle's trial
+    stage did not judge and leave open → nothing written."""
+    if trial is None or trial.key not in judged_trials:
+        return
+    if not _is_trial_current(trial, power_pass.pattern.last_transition_at):
         return
     try:
         _write_shadow_looks(trial, power_pass, windows.end)
@@ -10236,11 +10244,15 @@ class TrialCanary(NamedTuple):
     is_started: bool  # its <live trial key>:start row landed
 
 
-def run_trial_stage() -> None:
+def run_trial_stage() -> frozenset[str]:
     """Judge each open live trial's stored rows, then write its canary from its committed
     pre-registration; its decisions are the foreign-hash void and the unstarted void — no
     look-time outcome.
 
+    - returns the trial keys it judged and left open — the only trials taking a look this cycle
+      (run_shadow_stage); never in it: an unjudged trial, and one whose foreign-hash or unstarted
+      void this stage wrote, was refused or holds; empty when the stage is refused or its open
+      trials or held voids are unread
     - no config.toml in the code tree declaring that tree as its [paths].root → refused before
       any ledger read: no row read or written, no canary file or held void changed
     - open trial: a live pre-registration with no <live trial key>:decision row, read from the
@@ -10279,21 +10291,23 @@ def run_trial_stage() -> None:
     refusal = _get_install_refusal(_INSTALL_ROOT)
     if refusal is not None:
         _warn_trial(refusal, "no ledger read or write and no canary file change this cycle")
-        return
+        return frozenset()
     trials = _get_open_trial_canaries()
     if trials is None:
-        return
+        return frozenset()
     judgment = _judge_stored_rows(trials)
     trials = [trial for trial in trials if trial.key not in judgment.voided]
     skipped = _retry_pending_trial_voids(trials)
     if skipped is None:
-        return
+        return frozenset()
     trials = [trial for trial in trials if trial.key not in skipped]
     past_bound = [trial for trial in trials if _is_unstarted_past_bound(trial)]
     for trial in past_bound:
         _void_unstarted_trial(trial)
     unwritten = judgment.unjudged | {trial.key for trial in past_bound}
-    _put_trial_canaries([trial for trial in trials if trial.key not in unwritten])
+    judged = [trial for trial in trials if trial.key not in unwritten]
+    _put_trial_canaries(judged)
+    return frozenset(trial.key for trial in judged)
 
 
 def _get_open_trial_canaries() -> list[TrialCanary] | None:
@@ -15028,8 +15042,9 @@ def run_cycle(
         [power_pass.pattern for power_pass in power.passes], agent_cap=agent_cap
     )
     if not skip_loop_emit:  # no-write mode (--dry-run) writes no ledger row
-        run_shadow_stage(power, report.cycle_date)
-        run_trial_stage()
+        # the trial stage ahead of the looks → a trial takes one only when that stage judged it
+        judged_trials = run_trial_stage()
+        run_shadow_stage(power, report.cycle_date, judged_trials)
         run_aa_stage(
             report.cycle_date, manifest_ingest=report.manifest_ingest, agents_dir=agents_dir
         )

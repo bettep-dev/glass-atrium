@@ -462,16 +462,18 @@ class _LedgerCursor:
         return self.result[0] if self.result else None
 
 
-def _pattern(*, last_transition_at: datetime | None = None) -> dc.Pattern:
+def _pattern(
+    *, last_transition_at: datetime | None = None, agent: str = _AGENT
+) -> dc.Pattern:
     label = "budget-overage concentration"
     return dc.Pattern(
         date="2026-08-01",
         label=label,
         frequency="4",
-        agent=_AGENT,
+        agent=agent,
         status="identified",
         tier="user-pending",
-        raw_line=f"{label}|{_AGENT}",
+        raw_line=f"{label}|{agent}",
         row_id=_PATTERN_ID,
         metric_key=_BUDGET_KEY,
         last_transition_at=last_transition_at,
@@ -537,16 +539,27 @@ class _ShadowFixture(unittest.TestCase):
         return self.power
 
     def _cycle(self, now: datetime) -> str:
-        """One intake power check + shadow stage at `now`; returns its stderr."""
+        """One intake power check + shadow stage at `now`, every open live trial judged by that
+        cycle's trial stage; returns its stderr."""
         self.clock.now = now
         stderr = io.StringIO()
         with contextlib.redirect_stderr(stderr):
             power = dc.check_pattern_power(self.patterns, skip_loop_emit=True)
-            dc.run_shadow_stage(power, now.strftime("%Y-%m-%d"))
+            dc.run_shadow_stage(power, now.strftime("%Y-%m-%d"), self._get_open_keys())
         self.power = power
         self.assertEqual(self.pg_reach, [])
         self.assertEqual(self.ledger.refused, [])
         return stderr.getvalue()
+
+    def _get_open_keys(self) -> frozenset[str]:
+        """Each open live trial's key: the set a trial stage that judged them all returns."""
+        event = stub.get_trial_ledger().EVENT.LIVE_PREREGISTRATION
+        taken = {row.dedupe_key for row in self.ledger.rows}
+        return frozenset(
+            row.trial_key
+            for row in self.ledger.get_rows(event)
+            if f"{row.trial_key}:decision" not in taken
+        )
 
     def _open_live_trial(self, *, event: str = "", missing: tuple[str, ...] = ()) -> str:
         """The current pass's pre-registration, stored at the clock's now as the push does → its key.
@@ -1700,7 +1713,7 @@ class PreRegistrationReadLivePgTest(_ShadowFixture):
         self._use_database(self._TEMPLATE.ABSENT)
         stderr = io.StringIO()
         with contextlib.redirect_stderr(stderr):
-            dc.run_shadow_stage(power, f"{_NOW:%Y-%m-%d}")
+            dc.run_shadow_stage(power, f"{_NOW:%Y-%m-%d}", frozenset())
         self.assertRegex(
             stderr.getvalue(),
             r"WARN: shadow stage — pre-registrations unreadable: UndefinedTable: "
@@ -1718,12 +1731,12 @@ class SealTest(_ShadowFixture):
         stderr = io.StringIO()
         with contextlib.redirect_stderr(stderr):
             power = dc.check_pattern_power(self.patterns, skip_loop_emit=True)
-            dc.run_shadow_stage(power, "2026-10-05")
+            dc.run_shadow_stage(power, "2026-10-05", frozenset())
         self.assertEqual(reach, [])
         self.assertIn("WARN: shadow stage", stderr.getvalue())
         self._patch("HAS_PG_LOOP_WRITE", True)
         with contextlib.redirect_stderr(io.StringIO()):
-            dc.run_shadow_stage(power, "2026-10-05")
+            dc.run_shadow_stage(power, "2026-10-05", frozenset())
         self.assertEqual(reach, ["_pg_write_trial_ledger_row"])
 
 
@@ -1815,7 +1828,7 @@ class DegradedImportTest(unittest.TestCase):
         stderr = io.StringIO()
         with contextlib.redirect_stderr(stderr):
             power = dc.check_pattern_power([_pattern()], skip_loop_emit=True)
-            dc.run_shadow_stage(power, "2026-10-05")
+            dc.run_shadow_stage(power, "2026-10-05", frozenset())
 
         self.assertIn(self._STAGE_WARN, stderr.getvalue())
         self.assertEqual(self.pg_reach, [])
@@ -1906,6 +1919,18 @@ class TrialCanaryTest(_ShadowFixture):
         self.assertEqual(self.pg_reach, [])
         self.assertEqual(self.ledger.refused, [])
         return stderr.getvalue()
+
+    def _judge_and_look(self, now: datetime) -> frozenset[str]:
+        """One cycle's power check, trial stage and shadow stage at `now`, the stage's judged set
+        handed to the look → that set."""
+        self.clock.now = now
+        with contextlib.redirect_stderr(io.StringIO()):
+            power = dc.check_pattern_power(self.patterns, skip_loop_emit=True)
+            judged = dc.run_trial_stage()
+            dc.run_shadow_stage(power, f"{now:%Y-%m-%d}", judged)
+        self.assertEqual(self.pg_reach, [])
+        self.assertEqual(self.ledger.refused, [])
+        return judged
 
     def _get_canary(self) -> dict | None:
         if not self.canary_path.exists():
@@ -2211,6 +2236,108 @@ class TrialCanaryTest(_ShadowFixture):
                 self.assertEqual([fault in line for line in lines].count(True), 1, name)
                 self.assertNotIn("A/A harness —", stderr_text, name)
                 self.assertTrue(path.exists(), name)
+
+    def test_a_trial_takes_a_look_only_in_a_cycle_whose_stage_judged_it(self) -> None:
+        root = dc._INSTALL_ROOT
+        write = self.ledger.write
+        trial_ledger = stub.get_trial_ledger()
+        first, second = _LIVE_KEY, f"{_PROPOSAL_ID + 1:064x}"
+        self.ledger.design_effects[_POOL_AGENT] = _DESIGN_EFFECT_PAYLOAD
+
+        def _store_foreign_row() -> None:
+            self.ledger.stored_rows.append(
+                _get_stored_row(_AGENT, _NOW + timedelta(hours=1), _FOREIGN_SHA256)
+            )
+
+        def _fault_salt_read() -> None:
+            _store_foreign_row()
+            self.ledger.faulted.add(dc.AA.SQL.SALT_ROWS)
+
+        def _refuse_decision(event, *args, **kwargs):
+            if event == trial_ledger.EVENT.LIVE_DECISION:
+                raise ConnectionError("PG unreachable")
+            return write(event, *args, **kwargs)
+
+        def _refuse_foreign_void() -> None:
+            _store_foreign_row()
+            self._patch("_pg_write_trial_ledger_row", _refuse_decision)
+
+        def _hold_void() -> None:
+            dc._put_pending_trial_void(
+                dc.TrialVoid(first, _AGENT, _PATTERN_ID, "f" * 64, "manifest.log.0.spool", 0)
+            )
+
+        def _end_horizon() -> None:
+            self._get_preregistrations()[0].payload["horizon_days"] = 1  # its bound: the cycle
+
+        def _decide() -> None:
+            write(
+                trial_ledger.EVENT.LIVE_DECISION,
+                trial_ledger.ACTOR.LIVE,
+                {"outcome": "stop"},
+                trial_key=first,
+                agent=_AGENT,
+                dedupe_key=f"{first}:decision",
+            )
+
+        # name, arrange over two open trials each past its second milestone, the trials looked at
+        rows = (
+            ("both judged and left open", lambda: None, {first, second}),
+            (
+                "the salt read faults on the first trial's other-hash row",
+                _fault_salt_read,
+                {second},
+            ),
+            (
+                "the stored-rows read faults",
+                lambda: self.ledger.faulted.add(dc.MANIFEST.OTHER_HASH_ROWS_SQL),
+                set(),
+            ),
+            ("the stage refused", lambda: _put_config(root, None), set()),
+            (
+                "the open state unreadable",
+                lambda: self.ledger.faulted.add(dc.LIVE_TRIAL.CANARY_SQL),
+                set(),
+            ),
+            ("the first trial's foreign void lands at that stage", _store_foreign_row, {second}),
+            (
+                "the first trial's foreign void refused by the ledger",
+                _refuse_foreign_void,
+                {second},
+            ),
+            ("the first trial's held void recorded at that stage", _hold_void, {second}),
+            ("the first trial's unstarted void lands at that stage", _end_horizon, {second}),
+            ("the first trial decided before that stage", _decide, {second}),
+        )
+        for name, arrange, looked_at in rows:
+            with (
+                self.subTest(name),
+                tempfile.TemporaryDirectory() as data_root,
+                mock.patch.dict(os.environ, {"GA_DATA_ROOT": data_root}),
+            ):
+                _put_config(root, root)
+                self._patch("_pg_write_trial_ledger_row", write)
+                self.ledger.rows.clear()
+                self.ledger.stored_rows.clear()
+                self.ledger.faulted.clear()
+                self.patterns = [_pattern()]
+                self.clock.now = _NOW
+                self._open_live_trial()
+                self._open_trial_on(_POOL_AGENT, _PROPOSAL_ID + 1)
+                self.patterns.append(_pattern(agent=_POOL_AGENT))
+                self.history = [
+                    *_get_passing_history(),
+                    *_get_spawns_after(_NOW, math.ceil(_MILESTONES[1])),
+                ]
+                arrange()
+
+                judged = self._judge_and_look(_NEXT_NOW)
+
+                looks: dict[str, list[int]] = {}
+                for look in self._get_looks():
+                    looks.setdefault(look.trial_key, []).append(look.payload["look"])
+                self.assertEqual(judged, frozenset(looked_at), name)
+                self.assertEqual(looks, {key: [1, 2] for key in looked_at}, name)
 
     def _get_decisions(self) -> list[_LedgerRow]:
         return self.ledger.get_rows(stub.get_trial_ledger().EVENT.LIVE_DECISION)
@@ -2529,6 +2656,46 @@ class CycleWiringTest(_ShadowFixture):
                     [row.dedupe_key for row in self.ledger.get_rows(start_event)],
                     [f"{key}:start"] if is_started else [],
                 )
+
+    def test_a_cycle_whose_trial_stage_faults_writes_no_look_and_the_next_judged_cycle_writes_it(
+        self,
+    ) -> None:
+        self._open_writing_stages()
+        key = self._open_live_trial()
+        self.history += _get_spawns_after(_NOW, math.ceil(_MILESTONES[1]))
+        self.clock.now = _NEXT_NOW
+        self.ledger.faulted.add(dc.MANIFEST.OTHER_HASH_ROWS_SQL)
+
+        self._run_cycle(skip_loop_emit=False)
+        unjudged_looks = self._get_looks()
+        self.ledger.faulted.clear()
+        self._run_cycle(skip_loop_emit=False)
+
+        self.assertEqual(unjudged_looks, [])
+        self.assertEqual(
+            [(look.trial_key, look.payload["look"]) for look in self._get_looks()],
+            [(key, 1), (key, 2)],
+        )
+
+    def test_a_writing_cycle_runs_the_ingest_the_trial_stage_the_shadow_stage_then_the_aa_stage(
+        self,
+    ) -> None:
+        stages: list[str] = []
+        handed: list[tuple] = []
+        judged = frozenset({_LIVE_KEY})
+        self._patch("ingest_manifest_log", lambda *args, **kwargs: stages.append("ingest"))
+        self._patch("run_trial_stage", lambda: (stages.append("trial"), judged)[1])
+        self._patch(
+            "run_shadow_stage",
+            lambda *args: (stages.append("shadow"), handed.append(args[2:])),
+        )
+        self._patch("run_aa_stage", lambda *args, **kwargs: stages.append("aa"))
+        self._open_writing_stages()
+
+        self._run_cycle(skip_loop_emit=False)
+
+        self.assertEqual(stages, ["ingest", "trial", "shadow", "aa"])
+        self.assertEqual(handed, [(judged,)])  # the trial stage's set, handed to the looks
 
     def test_an_unusable_stored_live_preregistration_leaves_the_cycle_running_through_the_aa_stage(
         self,
