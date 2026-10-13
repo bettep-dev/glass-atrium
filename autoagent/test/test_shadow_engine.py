@@ -2237,6 +2237,71 @@ class TrialCanaryTest(_ShadowFixture):
                 self.assertNotIn("A/A harness —", stderr_text, name)
                 self.assertTrue(path.exists(), name)
 
+    def test_a_canary_directory_fault_at_an_unstarted_trial_is_named_under_the_trial_stage(
+        self,
+    ) -> None:
+        path = dc._get_canary_path(_AGENT)
+        scandir, unlink = os.scandir, os.unlink
+
+        def _refuse_listing(target: object) -> object:
+            # the stage lists the canary directory through its descriptor; a listing by path passes
+            if isinstance(target, int):
+                raise PermissionError(13, "Permission denied")
+            return scandir(target)
+
+        def _refuse_canary(name: str, *, dir_fd: int | None = None) -> None:
+            if name == path.name:
+                raise PermissionError(13, "Permission denied", name)
+            unlink(name, dir_fd=dir_fd)
+
+        def _make_directory() -> datetime:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            return _NOW
+
+        def _leave_unstarted_file() -> datetime:
+            self._stage(_NOW)
+            self._strip_starts()
+            return self._get_bound()
+
+        # name, the os call refused, its double, arrange → the stage's instant, the fault's WARN
+        rows = (
+            (
+                "a listing fault on an unstarted trial's first write",
+                "scandir",
+                _refuse_listing,
+                _make_directory,
+                "canary directory not listed: PermissionError",
+            ),
+            (
+                "a refused unlink on an unstarted void's file",
+                "unlink",
+                _refuse_canary,
+                _leave_unstarted_file,
+                f"canary {path} not removed: PermissionError",
+            ),
+        )
+        for name, call, double, arrange, fault in rows:
+            with self.subTest(name):
+                self.ledger.rows.clear()
+                path.unlink(missing_ok=True)
+                self.clock.now = _NOW
+                self._open_live_trial()
+                now = arrange()
+
+                with mock.patch.object(dc.os, call, double):
+                    stderr_text = self._stage(now)
+
+                self.assertEqual(
+                    [
+                        f"WARN: trial stage — {fault}" in line
+                        for line in stderr_text.splitlines()
+                        if fault in line
+                    ],
+                    [True],
+                    name,
+                )
+                self.assertNotIn("A/A harness —", stderr_text, name)
+
     def test_a_trial_takes_a_look_only_in_a_cycle_whose_stage_judged_it(self) -> None:
         root = dc._INSTALL_ROOT
         write = self.ledger.write
