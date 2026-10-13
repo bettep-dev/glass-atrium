@@ -93,8 +93,23 @@ _KEYS = SimpleNamespace(
         "canary",
         # an unstarted trial's void reads its horizon from the row
         "horizon_days",
-        # stated, read by no stop yet: the re-delegation guardrail's window row
+        # the look's count reads W from the window row
         "redelegation",
+        # the count's randomization test; the look reads its re-draw count and salt namespace
+        "redelegation_test",
+    },
+    REDELEGATION_TEST={"redraws", "salt_namespace", "is_first_look_reachable"},
+    LOOK={"look", "fraction", "milestone", "boundary", "accrued_tasks", "arms", "z", "redelegation"},
+    # the count at a look; the next look reads crossed
+    LOOK_COUNT={
+        "window_minutes",
+        "arms",
+        "reference",
+        "statistic",
+        "critical",
+        "crossed",
+        "is_crossed",
+        "label",
     },
     CANARY={"text", "text_sha256"},
     # the live start row's payload, written at the trial's first canary write
@@ -374,6 +389,26 @@ def _get_split_spawns(
     return spawns
 
 
+def _get_closed(index: int) -> SpawnFacts:
+    """A spawn `index` minutes after _NOW, alone in its session and stopped a minute on."""
+    agent_id = next(_IDS.REFERENCE)
+    started_at = _NOW + index * _MINUTE
+    return SpawnFacts(
+        agent_id, f"session-{agent_id}", started_at, 0, True, (), stopped_at=started_at + _MINUTE
+    )
+
+
+def _get_count_clusters(
+    counts: list[tuple[SpawnFacts, int]], salt_id: int
+) -> list[list[tuple[str, int, float]]]:
+    """Per session, each spawn's id, its arm by the hook's rule and its follow-ups."""
+    sessions: dict[str, list[tuple[str, int, float]]] = {}
+    for spawn, count in counts:
+        arm = _get_arm(salt_id, spawn.agent_id)
+        sessions.setdefault(spawn.session_id, []).append((spawn.agent_id, arm, float(count)))
+    return list(sessions.values())
+
+
 class _LedgerRow(NamedTuple):
     id: int
     recorded_at: datetime
@@ -509,6 +544,13 @@ class _LedgerCursor:
             self.result = [row for row in self.ledger.stored_rows if row[3] in params["agents"]]
         elif statement == dc.AA.SQL.SALT_ROWS:
             self.result = []  # no stored row's salt names an A/A or a decided pre-registration
+        elif statement == dc.LIVE_TRIAL.LOOK_SQL:
+            event, trial_key = params
+            self.result = [
+                (row.payload,)
+                for row in self.ledger.rows
+                if row.event == event and row.trial_key == trial_key
+            ]
         else:
             self.ledger.refused.append(statement)
             raise AssertionError(f"statement outside the ledger fake: {statement[:80]}")
@@ -795,6 +837,7 @@ class BoundPayloadTest(_ShadowFixture):
         )
         self.assertEqual(set(payload), _KEYS.PREREGISTRATION)
         self.assertEqual(set(payload["canary"]), _KEYS.CANARY)
+        self.assertEqual(set(payload["redelegation_test"]), _KEYS.REDELEGATION_TEST)
         self.assertEqual(payload["boundaries"], list(trial_design.get_boundaries()))
         self.assertEqual(payload["maximum_per_arm"], _MAXIMUM)
         self.assertEqual(payload["design_effect"], _DESIGN_EFFECT.value)
@@ -1428,10 +1471,8 @@ class LookTest(_ShadowFixture):
         self.history += _get_spawns_after(_NOW, math.ceil(_MILESTONES[0]))
         self._cycle(_NEXT_NOW)
         [look] = self._get_looks()
-        self.assertEqual(
-            set(look.payload),
-            {"look", "fraction", "milestone", "boundary", "accrued_tasks", "arms", "z"},
-        )
+        self.assertEqual(set(look.payload), _KEYS.LOOK)
+        self.assertEqual(set(look.payload["redelegation"]), _KEYS.LOOK_COUNT)
 
     def test_the_look_counts_overage_per_spawn_under_each_spawns_recomputed_arm(self) -> None:
         _, salt_id = self._open_started_trial()
@@ -1890,7 +1931,7 @@ class LookDecisionTest(_ShadowFixture):
     def test_a_look_time_decision_row_has_one_top_level_key_win_retire_or_void_with_its_reason_and_agent(
         self,
     ) -> None:
-        look_keys = {"look", "fraction", "milestone", "boundary", "accrued_tasks", "arms", "z"}
+        look_keys = _KEYS.LOOK
         reason_keys = {"reason", "agent"}
         # name, the cycles that decide, each top-level key's inner keys, the decision's reason
         rows = (
@@ -1935,6 +1976,249 @@ class LookDecisionTest(_ShadowFixture):
                 self.assertEqual(
                     reason and body, reason and {"reason": reason, "agent": _AGENT}, name
                 )
+
+
+class FollowUpLookTest(_ShadowFixture):
+    """The re-delegation count at a live trial's looks: follow-ups per closed-window spawn at
+    the pre-registered W, under each spawn's recomputed arm, judged by the pre-registered
+    randomization test on the crossings the recorded looks carry."""
+
+    _REDRAWS = 400  # looks 2 and 3 admit 2 and 9 reference members, look 1 none
+    _THIRD_NOW = _NEXT_NOW + timedelta(days=1)  # a cycle on D + 2
+    _DAY_MINUTES = 24 * 60
+
+    def _open_trial(self, *milestones: int, minutes: int = 60) -> int:
+        """A started trial whose stored row holds `_REDRAWS`, W and its first looks'
+        milestones → its arm salt; no pattern stays, so the look's is the cycle's only read."""
+        _, self.salt_id = self._open_started_trial()
+        payload = self._get_preregistrations()[-1].payload
+        payload["redelegation_test"]["redraws"] = self._REDRAWS
+        payload["redelegation"]["minutes"] = minutes
+        for look, milestone in zip(payload["looks"], milestones):
+            look["milestone"] = milestone
+        self.patterns = []
+        return self.salt_id
+
+    def _add_sessions(
+        self, counts: list[int], *, first: int = 0
+    ) -> list[tuple[SpawnFacts, int]]:
+        """One closed spawn per session from minute `first`, each with its count of same-session
+        follow-ups inside W, every spawn with its hook record under the trial's salt →
+        (spawn, count)."""
+        added = []
+        for index, count in enumerate(counts, start=first):
+            spawn = _get_closed(index)
+            session = [spawn, *(_get_follow_up(spawn, minute) for minute in range(count))]
+            self.history += [_get_hook_record(member, self.salt_id) for member in session]
+            added.append((spawn, count))
+        return added
+
+    def _get_counts(self) -> list[dict]:
+        return [look.payload["redelegation"] for look in self._get_looks()]
+
+    def _get_namespace(self) -> str:
+        return self._get_preregistrations()[-1].payload["redelegation_test"]["salt_namespace"]
+
+    def test_each_look_counts_a_spawns_follow_ups_against_that_spawns_recomputed_arm(self) -> None:
+        salt_id = self._open_trial(1)
+        added = self._add_sessions([index % 4 for index in range(24)])
+        self._cycle(_NEXT_NOW)
+        [count] = self._get_counts()
+        arms = [_get_arm(salt_id, spawn.agent_id) for spawn, _ in added]
+        self.assertEqual(
+            count["arms"],
+            {
+                name: {
+                    "spawns": arms.count(arm),
+                    "follow_ups": sum(own for (_, own), of in zip(added, arms) if of == arm),
+                    "followed": sum(own > 0 for (_, own), of in zip(added, arms) if of == arm),
+                }
+                for arm, name in enumerate(("control", "treatment"))
+            },
+        )
+        clusters = _get_count_clusters(added, salt_id)
+        self.assertAlmostEqual(
+            count["statistic"],
+            trial_design.get_clustered_z([[row[1:] for row in cluster] for cluster in clusters]),
+            places=9,
+        )
+
+    def test_a_respawn_after_treated_spawns_raises_the_mean_count_by_the_added_share_while_the_share_followed_stays(
+        self,
+    ) -> None:
+        salt_id = self._open_trial(1)
+        # every spawn already has one fan-out follow-up inside W
+        added = self._add_sessions([1] * 40)
+        treated = [spawn for spawn, _ in added if _get_arm(salt_id, spawn.agent_id) == 1]
+        respawned = treated[::4]
+        self.history += [_get_follow_up(spawn, 30) for spawn in respawned]
+        self._cycle(_NEXT_NOW)
+        [count] = self._get_counts()
+        control, treatment = count["arms"]["control"], count["arms"]["treatment"]
+        self.assertAlmostEqual(
+            treatment["follow_ups"] / treatment["spawns"] - control["follow_ups"] / control["spawns"],
+            len(respawned) / len(treated),
+        )
+        self.assertEqual(
+            (control["followed"], treatment["followed"]), (control["spawns"], treatment["spawns"])
+        )
+
+    def test_a_spawn_whose_window_is_open_at_a_look_is_outside_its_count_and_enters_at_the_next(
+        self,
+    ) -> None:
+        self._open_trial(1, 30)
+        self._add_sessions([1] * 10)
+        # stopped 23:31 on D → its W ends after D + 1's evaluation instant
+        late_start = _DAY + timedelta(hours=23, minutes=30)
+        self.history.append(
+            _get_closed(0)._replace(started_at=late_start, stopped_at=late_start + _MINUTE)
+        )
+        self._cycle(_NEXT_NOW)
+        self._add_sessions([1] * 10, first=self._DAY_MINUTES)
+        self._cycle(self._THIRD_NOW)
+        self.assertEqual(
+            [sum(arm["spawns"] for arm in count["arms"].values()) for count in self._get_counts()],
+            [10, 21],
+        )
+
+    def test_the_count_reads_w_from_the_preregistration_row_not_from_the_history(self) -> None:
+        self._open_trial(1, minutes=120)  # the fixture history's own rule gives 60
+        spawn = _get_closed(0)
+        self.history += [spawn, _get_follow_up(spawn, 90)]
+        self._cycle(_NEXT_NOW)
+        [count] = self._get_counts()
+        follow_ups = sum(arm["follow_ups"] for arm in count["arms"].values())
+        self.assertEqual((count["window_minutes"], follow_ups), (120, 1))
+
+    def test_a_non_zero_w_leaves_the_looks_accrual_and_arms_per_spawn(self) -> None:
+        self._open_trial(1)
+        # three spawns per session, each started inside the first one's W
+        self._add_sessions([2] * 6)
+        self._cycle(_NEXT_NOW)
+        [look] = self._get_looks()
+        units = sum(arm["units"] for arm in look.payload["arms"].values())
+        self.assertEqual((look.payload["accrued_tasks"], units), (18, 18))
+
+    def test_the_preregistration_states_the_tests_redraw_count_namespace_and_whether_look_one_can_cross(
+        self,
+    ) -> None:
+        self.assertGreaterEqual(dc.REDELEGATION_ROW.TEST.REDRAWS, 11_289)
+        rows = (("look 1's minimum", 11_289, True), ("one re-draw under it", 11_288, False))
+        for name, redraws, is_reachable in rows:
+            with self.subTest(name), mock.patch.object(dc.REDELEGATION_ROW.TEST, "REDRAWS", redraws):
+                self.ledger.rows.clear()
+                self._open_live_trial()
+                test = self._get_preregistrations()[-1].payload["redelegation_test"]
+                self.assertEqual(
+                    (test["redraws"], test["is_first_look_reachable"]), (redraws, is_reachable), name
+                )
+                self.assertEqual(test["salt_namespace"], dc.REDELEGATION_ROW.TEST.SALT_NAMESPACE)
+                self.assertFalse(test["salt_namespace"].isdecimal(), name)
+
+    def test_a_look_judged_from_the_carried_row_decides_as_the_one_call_path_on_the_same_data(
+        self,
+    ) -> None:
+        # looks 1 to 3 in the first cycle, the last look in the next
+        salt_id = self._open_trial(1, 2, 3, 100)
+        first = self._add_sessions([7 * index % 11 for index in range(14)])
+        self._cycle(_NEXT_NOW)
+        second = first + self._add_sessions(
+            [5 * index % 9 for index in range(20)], first=self._DAY_MINUTES
+        )
+        self._cycle(self._THIRD_NOW)
+        expected = trial_design.get_randomization_looks(
+            [_get_count_clusters(counts, salt_id) for counts in (first, second)],
+            get_arm=_get_arm,
+            salt_namespace=self._get_namespace(),
+            redraws=self._REDRAWS,
+            look_fractions=trial_design.LOOK_FRACTIONS[2:],
+        )
+        self.assertTrue(expected[0].crossed)  # the last cut has members to carry
+        self.assertEqual(
+            [
+                (count["critical"], count["crossed"], count["is_crossed"])
+                for count in self._get_counts()[2:]
+            ],
+            [(look.critical, sorted(look.crossed), look.is_crossed) for look in expected],
+        )
+        # every spawn carries its delivery mark → the last look retires, no validity void
+        self.assertEqual([set(decision.payload) for decision in self._get_decisions()], [{"retire"}])
+
+    def test_two_looks_reached_in_one_cycle_are_judged_once_at_the_alpha_spent_through_the_higher(
+        self,
+    ) -> None:
+        salt_id = self._open_trial(1, 2)
+        added = self._add_sessions([7 * index % 11 for index in range(14)])
+        self._cycle(_NEXT_NOW)
+        lower, higher = self._get_counts()
+        at_the_higher = trial_design.get_randomization_look(
+            _get_count_clusters(added, salt_id),
+            get_arm=_get_arm,
+            salt_namespace=self._get_namespace(),
+            redraws=self._REDRAWS,
+            fraction=trial_design.LOOK_FRACTIONS[1],
+        )
+        self.assertIsNotNone(at_the_higher.critical)  # look 1's own alpha admits no member here
+        self.assertEqual(lower, higher)
+        self.assertEqual(
+            (higher["critical"], higher["crossed"]),
+            (at_the_higher.critical, sorted(at_the_higher.crossed)),
+        )
+
+    def test_an_earlier_look_row_without_readable_crossings_gives_no_crossing_and_says_so(
+        self,
+    ) -> None:
+        self._open_trial(1, 100)
+        self._add_sessions([7 * index % 11 for index in range(14)])
+        self._cycle(_NEXT_NOW)
+        [look] = self._get_looks()
+        del look.payload["redelegation"]["crossed"]
+        self._add_sessions([1] * 20, first=self._DAY_MINUTES)
+        stderr = self._cycle(self._THIRD_NOW)
+        count = self._get_counts()[1]
+        self.assertEqual(
+            (count["is_crossed"], count["crossed"], count["label"]),
+            (False, None, "unreadable-earlier-look"),
+        )
+        self.assertIn(
+            f"WARN: shadow stage — trial {_LIVE_KEY}: look 1's row holds no readable crossings",
+            stderr,
+        )
+
+    def test_a_faulted_read_of_the_recorded_looks_warns_by_name_and_the_next_cycle_takes_the_look(
+        self,
+    ) -> None:
+        self._open_trial(1)
+        self._add_sessions([1, 2])
+        self.ledger.faulted.add(dc.LIVE_TRIAL.LOOK_SQL)
+        stderr = self._cycle(_NEXT_NOW)
+        self.assertIn(
+            f"WARN: shadow stage — trial {_LIVE_KEY}: recorded looks unreadable: ConnectionError",
+            stderr,
+        )
+        self.assertEqual(self._get_looks(), [])
+        self.ledger.faulted.clear()
+        self._cycle(_NEXT_NOW)
+        self.assertEqual([look.payload["look"] for look in self._get_looks()], [1])
+
+    def test_a_look_with_no_closed_window_spawn_in_one_arm_gives_no_crossing_labelled_undefined(
+        self,
+    ) -> None:
+        salt_id = self._open_trial(1)
+        added = self._add_sessions([index % 3 for index in range(12)])
+        treated = {spawn.agent_id for spawn, _ in added if _get_arm(salt_id, spawn.agent_id) == 1}
+        # every treatment spawn stops late on D → its W is open at D + 1's evaluation instant
+        late_stop = _DAY + timedelta(hours=23, minutes=30)
+        self.history = [
+            spawn._replace(stopped_at=late_stop) if spawn.agent_id in treated else spawn
+            for spawn in self.history
+        ]
+        self._cycle(_NEXT_NOW)
+        [count] = self._get_counts()
+        self.assertEqual(count["arms"]["treatment"]["spawns"], 0)
+        self.assertEqual(
+            (count["statistic"], count["is_crossed"], count["label"]), (None, False, "undefined")
+        )
 
 
 class DuplicateTest(_ShadowFixture):
@@ -2179,6 +2463,26 @@ class PreRegistrationReadLivePgTest(_ShadowFixture):
                 )
                 for proposal_id, is_started in ((unstarted, False), (started, True))
             ],
+        )
+        self.assertEqual(self.pg_reach, [])
+
+    def test_the_look_read_returns_one_trials_recorded_looks_by_number(self) -> None:
+        self._use_database(self._TEMPLATE.FULL)
+        event = stub.get_trial_ledger().EVENT
+        read, other = 7101, 7102
+        for proposal_id, numbers in ((read, (1, 2)), (other, (1,))):
+            self._preregister(proposal_id)
+            for number in numbers:
+                self._insert_trial_row(
+                    proposal_id,
+                    event.LIVE_LOOK,
+                    {"look": number, "of": proposal_id},
+                    suffix=f":look:{number}",
+                )
+        self._insert_trial_row(read, event.LIVE_DECISION, {"outcome": "stop"}, suffix=":decision")
+        self.assertEqual(
+            dc._read_look_payloads(f"{read:064x}"),
+            {number: {"look": number, "of": read} for number in (1, 2)},
         )
         self.assertEqual(self.pg_reach, [])
 

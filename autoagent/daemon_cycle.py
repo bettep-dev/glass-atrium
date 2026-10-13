@@ -51,7 +51,7 @@ from dataclasses import asdict, dataclass, field, replace
 from datetime import date, datetime, timedelta, timezone
 from enum import IntEnum
 from fractions import Fraction
-from itertools import groupby
+from itertools import groupby, starmap, takewhile
 from pathlib import Path, PurePosixPath
 from types import MappingProxyType, SimpleNamespace
 from typing import TYPE_CHECKING, Literal, NamedTuple, Optional
@@ -9259,6 +9259,11 @@ LIVE_TRIAL = SimpleNamespace(
         + _OPEN_LIVE_TRIAL_FROM
         + " ORDER BY p.id"
     ),
+    # one trial's recorded looks in the order they landed; the count's crossings ride on them
+    LOOK_SQL=(
+        "SELECT payload FROM core.autoagent_trial_ledger "
+        "WHERE event = %s AND trial_key = %s ORDER BY id"
+    ),
 )
 
 
@@ -9308,6 +9313,14 @@ class StartedTrial(NamedTuple):
     started_at: datetime  # the start record's instant
 
 
+class CountInputs(NamedTuple):
+    """What the re-delegation count reads at one cycle's looks of a trial."""
+
+    spawns: Sequence[SpawnFacts]  # the trial agent's: every follow-up's source
+    evaluated_at: datetime  # the pair windows' end → a window closed at or before it is counted
+    recorded: Mapping[int, dict]  # the trial's recorded look payloads, by look number
+
+
 def run_shadow_stage(power: PowerResult, cycle_date: str, judged_trials: frozenset[str]) -> None:
     """Shadow engine: count power verdicts, record reached looks of live trials, take their
     look-time decisions.
@@ -9338,6 +9351,14 @@ def run_shadow_stage(power: PowerResult, cycle_date: str, judged_trials: frozens
     - arms: each counted spawn under its arm recomputed from the pre-registration row's id,
       whatever the hook recorded; milestones on both arms' total, arms and z on the settled
       spawns alone
+    - re-delegation count: on each look row, follow-ups per spawn at the pre-registered W over
+      the spawns from the start record whose window closed by the pair windows' end, each under
+      its recomputed arm; judged once per cycle for the reached looks no row records yet, by the
+      pre-registered randomization test at the alpha spent through the highest reached look, its
+      cut set on the crossings the latest recorded look's row carries; no decision is read from it
+    - a recorded look row without readable crossings: named WARN, no crossing at that look or
+      any later one, labelled on the row · the recorded looks unreadable: named WARN, no look
+      and no horizon retire for that trial this cycle
     - ledger or spawn read fault: named WARN, never a failed cycle; a faulted spawn read takes
       no look and no horizon retire this cycle · --dry-run: the caller skips the stage
     """
@@ -9360,16 +9381,42 @@ def run_shadow_stage(power: PowerResult, cycle_date: str, judged_trials: frozens
     if spawns is None:
         return
     for trial in trials:
-        counted = _get_counted_spawns(trial, spawns.get(trial.canary.agent, []), windows.end)
-        if not _write_trial_looks(trial, counted):
+        recorded = _read_recorded_looks(trial.canary)
+        if recorded is None:
+            continue
+        agent_spawns = spawns.get(trial.canary.agent, [])
+        counted = _get_counted_spawns(trial, agent_spawns, windows.end)
+        count = CountInputs(agent_spawns, windows.end, recorded)
+        if not _write_trial_looks(trial, counted, count):
             _write_horizon_decision(trial, counted)
 
 
-def _write_trial_looks(trial: StartedTrial, counted: Sequence[ArmedSpawn]) -> bool:
+def _read_recorded_looks(canary: TrialCanary) -> dict[int, dict] | None:
+    """The trial's recorded look payloads by look number; None (WARN) on a fault."""
+    try:
+        return _read_look_payloads(canary.key)
+    except Exception as exc:  # noqa: BLE001 — a ledger read fault never fails the cycle
+        _warn_shadow(
+            f"trial {canary.key}: recorded looks unreadable: {_describe_fault(exc)}",
+            "no look for it this cycle",
+        )
+        return None
+
+
+def _read_look_payloads(trial_key: str) -> dict[int, dict]:
+    with _pg_connect() as conn, conn.cursor() as cur:
+        cur.execute(LIVE_TRIAL.LOOK_SQL, (TRIAL_LEDGER.EVENT.LIVE_LOOK, trial_key))
+        rows = cur.fetchall()
+    return {payload["look"]: payload for (payload,) in rows}
+
+
+def _write_trial_looks(
+    trial: StartedTrial, counted: Sequence[ArmedSpawn], count: CountInputs
+) -> bool:
     """Record a judged, started trial's reached looks → True once a look-time decision is
     recorded; an unusable stored pre-registration → named WARN, nothing written for it."""
     try:
-        return _write_shadow_looks(trial, counted)
+        return _write_shadow_looks(trial, counted, count)
     except (KeyError, TypeError, ValueError) as exc:
         _warn_shadow(
             f"trial {trial.canary.key}: stored pre-registration unusable: {_describe_fault(exc)}",
@@ -9397,7 +9444,7 @@ def get_preregistration_payload(power_pass: PowerPass, inputs: PreregistrationIn
 
     Also the proposal row's generator-input version: the ledger's mark of the trial's input set,
     the canary text beside its sha256 — the trial stage writes exactly that text — and the
-    re-delegation guardrail's window row.
+    re-delegation guardrail's window row beside its randomization test's parameters.
     """
     baseline = power_pass.baseline
     boundaries = trial_design.get_boundaries()
@@ -9422,7 +9469,27 @@ def get_preregistration_payload(power_pass: PowerPass, inputs: PreregistrationIn
             **inputs.redelegation,
             "rise": _get_follow_up_rise(inputs.redelegation["follow_ups"]["sd"], maximum),
         },
+        "redelegation_test": get_redelegation_test(),
         **_get_harm_payload(power_pass, detection_start, maximum),
+    }
+
+
+def get_redelegation_test() -> dict:
+    """The count's randomization test as a trial pre-registers it: its re-draw count, its
+    re-draw salt namespace, and whether look 1 can cross at that count — by the library's own
+    budget for the first look."""
+    test = REDELEGATION_ROW.TEST
+    first_look = trial_design.get_randomization_look(
+        [],
+        get_arm=get_spawn_arm,
+        salt_namespace=test.SALT_NAMESPACE,
+        redraws=test.REDRAWS,
+        fraction=trial_design.LOOK_FRACTIONS[0],
+    )
+    return {
+        "redraws": test.REDRAWS,
+        "salt_namespace": test.SALT_NAMESPACE,
+        "is_first_look_reachable": first_look.budget > 0,
     }
 
 
@@ -9568,6 +9635,13 @@ REDELEGATION_ROW = SimpleNamespace(
                 "reference values only: no stop, size or power check reads them",
             ),
         ),
+    ),
+    # the count's randomization test, frozen on each pre-registration
+    TEST=SimpleNamespace(
+        # an 11,300-member reference: look 1 admits one member, the four looks 565 — alpha 0.05 exactly
+        REDRAWS=11_299,
+        # a re-draw's salt is "<namespace>:<index>:" → never a decimal arm salt
+        SALT_NAMESPACE="follow-up-redraw",
     ),
 )
 
@@ -10194,17 +10268,25 @@ def _read_look_spawns(
     return None
 
 
-def _write_shadow_looks(trial: StartedTrial, counted: Sequence[ArmedSpawn]) -> bool:
-    """The reached looks in order on this cycle's accrual → True once a decision is recorded:
-    a win at or over the look's boundary, the maximum-sample retire at the last look, a
-    validity void ahead of either."""
+def _write_shadow_looks(
+    trial: StartedTrial, counted: Sequence[ArmedSpawn], inputs: CountInputs
+) -> bool:
+    """The reached looks in order on this cycle's accrual, each row with the cycle's
+    re-delegation count → True once a decision is recorded: a win at or over the look's
+    boundary, the maximum-sample retire at the last look, a validity void ahead of either."""
     canary = trial.canary
     accrual = _get_look_accrual(trial, counted)
     looks = canary.payload["looks"]
-    for number, registration in enumerate(looks, start=1):
-        if accrual.tasks < registration["milestone"]:
-            break
-        payload = get_look_payload(Look(number, registration), accrual)
+    reached = list(
+        takewhile(
+            lambda look: accrual.tasks >= look.registration["milestone"],
+            starmap(Look, enumerate(looks, start=1)),
+        )
+    )
+    count = _get_look_count(trial, reached, inputs)
+    for look in reached:
+        number, registration = look
+        payload = {**get_look_payload(look, accrual), "redelegation": count}
         # read before the row lands → an unusable boundary records no look
         is_win = accrual.z is not None and accrual.z >= registration["boundary"]
         row = ShadowRow(
@@ -10221,6 +10303,105 @@ def _write_shadow_looks(trial: StartedTrial, counted: Sequence[ArmedSpawn]) -> b
         void = _get_validity_void(canary, counted)
         return _write_look_time_decision(canary, void or decision, f"look {number}")
     return False
+
+
+def _get_look_count(
+    trial: StartedTrial, reached: Sequence[Look], inputs: CountInputs
+) -> dict | None:
+    """The re-delegation count for the reached looks no row records yet: judged once, on this
+    cycle's data, at the alpha spent through the highest reached look, its cut set on the
+    crossings the latest recorded look carries; None when every reached look is recorded — a
+    recorded look is never judged again."""
+    if all(look.number in inputs.recorded for look in reached):
+        return None
+    payload = trial.canary.payload
+    test = payload["redelegation_test"]
+    clusters = _get_follow_up_clusters(trial, inputs)
+    carried = _get_carried_crossings(trial.canary, inputs.recorded)
+    judged = None if carried is None else trial_design.get_randomization_look(
+        clusters,
+        get_arm=get_spawn_arm,
+        salt_namespace=test["salt_namespace"],
+        redraws=test["redraws"],
+        fraction=reached[-1].registration["fraction"],
+        crossed=carried,
+    )
+    return {
+        "window_minutes": payload["redelegation"]["minutes"],
+        "arms": _get_follow_up_arms(clusters),
+        "reference": test["redraws"] + 1,
+        **_get_crossing_payload(judged),
+    }
+
+
+def _get_follow_up_clusters(
+    trial: StartedTrial, inputs: CountInputs
+) -> list[list[tuple[str, int, float]]]:
+    """Per parent session, each closed-window spawn from the start record's second with its
+    recomputed arm and its follow-ups at the pre-registered W; an `unknown` id is in no arm."""
+    canary = trial.canary
+    counts = get_follow_up_counts(
+        _get_spawns_before({canary.agent: list(inputs.spawns)}, inputs.evaluated_at),
+        canary.agent,
+        Window(trial.started_at.replace(microsecond=0), inputs.evaluated_at),
+        redelegation_window=timedelta(minutes=canary.payload["redelegation"]["minutes"]),
+        evaluated_at=inputs.evaluated_at,
+    )
+    clusters: dict[str | None, list[tuple[str, int, float]]] = defaultdict(list)
+    for spawn, follow_ups in counts:
+        if spawn.agent_id is not None:
+            arm = get_spawn_arm(canary.salt_id, spawn.agent_id)
+            clusters[spawn.session_id].append((spawn.agent_id, arm, float(follow_ups)))
+    return list(clusters.values())
+
+
+def _get_follow_up_arms(clusters: Sequence[Sequence[tuple[str, int, float]]]) -> dict:
+    """Per arm: its counted spawns, their follow-ups, and how many of them were followed at all."""
+    arms = {name: {"spawns": 0, "follow_ups": 0, "followed": 0} for name in TrialArms._fields}
+    for cluster in clusters:
+        for _, arm, follow_ups in cluster:
+            row = arms[TrialArms._fields[arm]]
+            row["spawns"] += 1
+            row["follow_ups"] += int(follow_ups)
+            row["followed"] += follow_ups > 0
+    return arms
+
+
+def _get_carried_crossings(canary: TrialCanary, recorded: Mapping[int, dict]) -> list[int] | None:
+    """The reference members crossed at or before the latest recorded look, as its row holds
+    them; no look recorded → none; None (WARN) when that row holds no readable set."""
+    if not recorded:
+        return []
+    latest = max(recorded)
+    count = recorded[latest].get("redelegation")
+    crossed = count.get("crossed") if isinstance(count, dict) else None
+    if isinstance(crossed, list) and all(type(member) is int for member in crossed):
+        return crossed
+    _warn_shadow(
+        f"trial {canary.key}: look {latest}'s row holds no readable crossings",
+        "no re-delegation crossing at this look",
+    )
+    return None
+
+
+def _get_crossing_payload(look: trial_design.RandomizationLook | None) -> dict:
+    """The count's verdict as the look row carries it; None = the carried crossings were
+    unreadable → no crossing, and none carried on."""
+    if look is None:
+        return {
+            "statistic": None,
+            "critical": None,
+            "crossed": None,
+            "is_crossed": False,
+            "label": "unreadable-earlier-look",
+        }
+    return {
+        "statistic": look.statistic,
+        "critical": look.critical,
+        "crossed": sorted(look.crossed),
+        "is_crossed": look.is_crossed,
+        "label": None if look.statistic is not None else "undefined",
+    }
 
 
 def _get_validity_void(canary: TrialCanary, counted: Sequence[ArmedSpawn]) -> dict | None:
@@ -12119,8 +12300,9 @@ def _get_aa_arm_criteria(
     }
 
 
-def get_spawn_arm(salt_id: int, agent_id: str) -> int:
-    """sha256 over the decimal salt then the MANIFEST agent_id (the hook's `printf '%s%s'` bytes), mod 2."""
+def get_spawn_arm(salt_id: int | str, agent_id: str) -> int:
+    """sha256 over the salt — a trial's decimal row id, or a re-draw's namespaced text — then
+    the MANIFEST agent_id (the hook's `printf '%s%s'` bytes), mod 2."""
     digest = hashlib.sha256(f"{salt_id}{agent_id}".encode("utf-8")).hexdigest()
     return int(digest, 16) % 2
 
