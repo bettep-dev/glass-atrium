@@ -666,8 +666,8 @@ class TestManifestRotation(_IngestCase):
         self.assertIn("held by another cycle", self.stderr)
 
 
-class TestManifestDeliveryBinding(_IngestCase):
-    """Each delivered row binds once, at the ingest that first stores it (Read-side binding)."""
+class _DeliveryCase(_IngestCase):
+    """An open A/A, open live trials and canary files over one ingest and one trial stage."""
 
     cycle = _CYCLE_1
 
@@ -749,6 +749,10 @@ class TestManifestDeliveryBinding(_IngestCase):
         self._append(self.live_log, "".join(lines))
         self._ingest(self.cycle)
         return self._get_spools()[-1].name
+
+
+class TestManifestDeliveryBinding(_DeliveryCase):
+    """Each delivered row binds once, at the ingest that first stores it (Read-side binding)."""
 
     def test_a_delivery_of_the_open_trial_s_canary_binds_to_it_and_keeps_its_file(self) -> None:
         self._open_trial()
@@ -1426,6 +1430,221 @@ class TestManifestDeliveryBinding(_IngestCase):
                 self.assertIn("1 delivered row(s)", self.stderr, name)
                 self.assertIn("left unbound", self.stderr, name)
                 self.assertEqual((self.ledger.rows, self._get_canaries()), ([], sorted(_ROSTER)))
+
+
+class TestStoredRowsJudgment(_DeliveryCase):
+    """Each trial stage judges every open trial's stored rows by the ingest's own rule, ahead of
+    its voids and canary writes (plan → The stored-rows judgment)."""
+
+    def setUp(self) -> None:
+        super().setUp()
+        # the stage's instant: a day after the trials' commit, inside every stated horizon
+        self.now = _CYCLE_2
+        clock = mock.patch.object(dc, "_get_utc_now", lambda: self.now)
+        clock.start()
+        self.addCleanup(clock.stop)
+
+    def _store(self, *lines: str) -> str:
+        """Delivery lines stored and never bound (a kill after the store's commit) → the spool."""
+        spool = f"{dc.MANIFEST.LOG_NAME}.{len(self.table.rows)}.spool"
+        rows, _ = dc._get_manifest_rows("".join(lines).encode("utf-8"), is_final=True)
+        self.table.write(spool, rows)
+        return spool
+
+    def _get_foreign_line(self, agent: str = _ROSTER[0], text_sha256: str = _PLAIN_SHA256) -> str:
+        """A delivery of another text to agent after its trial's commit, its salt naming no row."""
+        return _get_delivery_line(agent, salt="3", text_sha256=text_sha256)
+
+    def _get_canary_files(self) -> dict[str, bytes]:
+        return {path.stem: path.read_bytes() for path in self.canary_dir.glob("*.json")}
+
+    def _get_lease_end(self, agent: str) -> int:
+        return json.loads(self._get_canary_files()[agent])["expires_at"]
+
+    def _get_decided_keys(self) -> list[str]:
+        return [key for *_, key in self.ledger.rows]
+
+    def test_a_foreign_row_its_ingest_left_unjudged_is_voided_by_that_cycle_s_stage(self) -> None:
+        fault = ConnectionError("server closed the connection")
+        # name, the ledger read faulted at the ingest (None = the row stored and never bound)
+        rows = (
+            ("a salt-read fault at the ingest", "salt"),
+            ("the open trial state unreadable at the ingest", "trials"),
+            ("the open A/A state unreadable at the ingest", "read"),
+            ("a row stored and never bound", None),
+        )
+        for hour, (name, faulted) in enumerate(rows):
+            with self.subTest(name):
+                self._use_log_dir(hour)
+                self.table.rows.clear()
+                self._open_trial()
+                self._put_canaries()
+                if faulted is None:
+                    spool = self._store(self._get_foreign_line())
+                else:
+                    self.ledger.fault[faulted] = fault
+                    spool = self._ingest_trial_rows({"salt": "3", "text_sha256": _PLAIN_SHA256})
+                    self.ledger.fault[faulted] = None
+                left_by_the_ingest = self._get_decided_keys()
+
+                stderr = self._run_trial_stage()
+
+                decision = f"{_TRIAL.KEY}:decision"
+                self.assertEqual((left_by_the_ingest, self._get_decided_keys()), ([], [decision]))
+                self.assertEqual(
+                    _TRIAL_VOIDED_RE.findall(stderr),
+                    [(_TRIAL.KEY, _ROSTER[0], _PLAIN_SHA256, spool, "0", decision)],
+                    name,
+                )
+                warns = [line for line in stderr.splitlines() if "WARN:" in line]
+                self.assertEqual(
+                    [line for line in warns if "WARN: trial stage — " not in line], [], name
+                )
+                self.assertEqual(sorted(self._get_canary_files()), sorted(_ROSTER[1:]), name)
+                self.assertEqual(self._get_held_voids(), [], name)
+
+    def test_a_void_the_ledger_refuses_is_not_held_and_lands_at_the_stage_that_records_it(
+        self,
+    ) -> None:
+        self._open_trial()
+        self._put_canaries()
+        spool = self._store(self._get_foreign_line())
+        self.ledger.write_outcome = ConnectionError("server closed the connection")
+        refused_stage = self._run_trial_stage()
+        while_refused = (
+            self._get_decided_keys(),
+            sorted(self._get_canary_files()),
+            self._get_held_voids(),
+        )
+        self.ledger.write_outcome = 1
+        landing_stage = self._run_trial_stage()
+
+        decision = f"{_TRIAL.KEY}:decision"
+        self.assertEqual(while_refused, ([], sorted(_ROSTER[1:]), []))
+        self.assertEqual(
+            _TRIAL_HELD_RE.findall(refused_stage), [(_TRIAL.KEY, _ROSTER[0], _PLAIN_SHA256)]
+        )
+        self.assertEqual(self._get_decided_keys(), [decision])
+        self.assertEqual(
+            _TRIAL_VOIDED_RE.findall(landing_stage),
+            [(_TRIAL.KEY, _ROSTER[0], _PLAIN_SHA256, spool, "0", decision)],
+        )
+        self.assertNotIn(_ROSTER[0], self._get_canary_files())
+
+    def test_repeated_stages_over_own_hash_rows_decide_nothing_and_renew_the_canary(self) -> None:
+        self._open_trial()
+        self._ingest_trial_rows({}, {"ts": _TRIAL.START_SECOND})
+        instants = [_CYCLE_2, _CYCLE_3]
+        lease_ends = []
+        for instant in instants:
+            self.now = instant
+            self._run_trial_stage()
+            lease_ends.append(self._get_lease_end(_ROSTER[0]))
+
+        self.assertEqual(self._get_decided_keys(), [])
+        self.assertEqual(
+            lease_ends, [int((instant + dc.CANARY.LEASE).timestamp()) for instant in instants]
+        )
+
+    def test_two_foreign_rows_of_one_trial_void_it_once_naming_the_first_stored(self) -> None:
+        self._open_trial()
+        later = self._get_foreign_line(text_sha256=_AA.SHA256)
+        spool = self._store(self._get_foreign_line(), later)
+
+        stderr = self._run_trial_stage()
+
+        decision = f"{_TRIAL.KEY}:decision"
+        self.assertEqual(self._get_decided_keys(), [decision])
+        self.assertEqual(
+            _TRIAL_VOIDED_RE.findall(stderr),
+            [(_TRIAL.KEY, _ROSTER[0], _PLAIN_SHA256, spool, "0", decision)],
+        )
+
+    def test_the_stage_s_own_read_fault_voids_nothing_and_leaves_each_unjudged_canary_as_it_is(
+        self,
+    ) -> None:
+        fault = ConnectionError("server closed the connection")
+        started, unstarted = _ROSTER[:2]
+        keys = f"{_TRIAL.KEY}, live-trial-9002"
+        # name, the faulted read's switch, the WARN's cause, the trials it names unjudged
+        rows = (
+            (
+                "the stored-rows read",
+                lambda value: setattr(self.table, "other_hash_read_fault", value),
+                "stored manifest rows unreadable: ",
+                "; no open trial judged this cycle",
+            ),
+            (
+                "the salt read",
+                lambda value: self.ledger.fault.update(salt=value),
+                "salt rows unreadable: ",
+                f"; trial(s) {keys} not judged this cycle",
+            ),
+        )
+        for hour, (name, set_fault, cause, unjudged) in enumerate(rows):
+            with self.subTest(name):
+                self._use_log_dir(hour)
+                self.table.rows.clear()
+                for earlier in self.canary_dir.glob("*.json"):
+                    earlier.unlink()
+                self._open_trial(started)
+                self._open_trial(unstarted, salt="9002", started_at=None)
+                self._put_canaries((started,))
+                self._store(self._get_foreign_line(started), self._get_foreign_line(unstarted))
+                set_fault(fault)
+
+                stderr = self._run_trial_stage()
+                set_fault(None)
+
+                # no void, no start row · one file not renewed, the other not written
+                self.assertEqual(self.ledger.rows, [], name)
+                self.assertEqual(self._get_canary_files(), {started: b"{}"}, name)
+                (warn,) = [line for line in stderr.splitlines() if "unreadable" in line]
+                self.assertIn(f"WARN: trial stage — {cause}ConnectionError", warn, name)
+                self.assertIn(unjudged, warn, name)
+
+    def test_a_salt_read_fault_leaves_unjudged_only_a_trial_holding_an_other_hash_row(self) -> None:
+        holding, clean = _ROSTER[:2]
+        self._open_trial(holding)
+        self._open_trial(clean, salt="9002")
+        self._put_canaries((holding, clean))
+        self._store(self._get_foreign_line(holding))
+        self.ledger.fault["salt"] = ConnectionError("server closed the connection")
+
+        stderr = self._run_trial_stage()
+
+        self.assertEqual(self.ledger.rows, [])
+        self.assertEqual(self._get_canary_files()[holding], b"{}")
+        self.assertEqual(
+            self._get_lease_end(clean), int((self.now + dc.CANARY.LEASE).timestamp())
+        )
+        (warn,) = [line for line in stderr.splitlines() if "unreadable" in line]
+        self.assertIn(f"; trial(s) {_TRIAL.KEY} not judged this cycle", warn)
+
+    def test_two_open_trials_on_one_agent_judge_its_stored_rows_against_the_newer_alone(
+        self,
+    ) -> None:
+        agent = _ROSTER[0]
+        older_sha256 = self._open_trial(agent)
+        newer_sha256 = self._open_trial(agent, salt="9002", text="the newer trial's text")
+        self.ledger.trials[-1]["recorded_at"] = _TRIAL.COMMIT + timedelta(hours=1)
+        spool = self._store(
+            # after the older's commit, before the newer's: no trial's row at the stage
+            _get_delivery_line(
+                agent, salt="3", text_sha256=_PLAIN_SHA256, ts="2026-10-05T10:30:00Z"
+            ),
+            self._get_foreign_line(agent, newer_sha256),  # the newer's own text
+            self._get_foreign_line(agent, older_sha256),  # the older's text under the newer
+        )
+
+        stderr = self._run_trial_stage()
+
+        decision = "live-trial-9002:decision"
+        self.assertEqual(self._get_decided_keys(), [decision])
+        self.assertEqual(
+            _TRIAL_VOIDED_RE.findall(stderr),
+            [("live-trial-9002", agent, older_sha256, spool, "2", decision)],
+        )
 
 
 class TestStoredOtherHashRows(_IngestCase):

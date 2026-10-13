@@ -10237,13 +10237,22 @@ class TrialCanary(NamedTuple):
 
 
 def run_trial_stage() -> None:
-    """Write each open live trial's canary from its committed pre-registration; its one decision
-    is the unstarted void — no look-time outcome.
+    """Judge each open live trial's stored rows, then write its canary from its committed
+    pre-registration; its decisions are the foreign-hash void and the unstarted void — no
+    look-time outcome.
 
     - no config.toml in the code tree declaring that tree as its [paths].root → refused before
       any ledger read: no row read or written, no canary file or held void changed
     - open trial: a live pre-registration with no <live trial key>:decision row, read from the
       ledger → a pre-registration the push has not committed gets no canary
+    - stored rows: each open trial's delivered rows in core.spawn_manifest judged by the ingest's
+      own rule at every stage, before any void or canary write (_judge_stored_rows) → a row an
+      ingest stored and left unjudged is judged by that cycle's stage; a foreign row → the
+      trial's void, its file removed, nothing more for it this stage; a void the ledger refuses
+      is not held — the next stage reads the row again
+    - the stored rows or their salts unreadable → named WARN, nothing voided; an unjudged
+      trial's canary is not written, renewed or removed — a file in place runs to its lease —
+      and its unstarted void is still written
     - text: exactly payload["canary"]["text"], salted with the pre-registration row id; a text
       whose sha256 is not the pre-registered text_sha256 → named WARN, no file
     - started trial (its :start row landed) → the file rewritten, its lease renewed
@@ -10257,7 +10266,9 @@ def run_trial_stage() -> None:
       checked for every open trial before any write → another trial's directory refusal never
       holds a void back
     - canary directory not a real one → named WARN, no further canary written this cycle
-    - a foreign-hash void an ingest held → retried first; while held, or once it lands, that
+    - a foreign-hash void an ingest held → retried after that judgment for each trial it left
+      in the stage, its record dropped for a trial the judgment voided — that trial's stored
+      row is read again; while held, or once it lands, that
       trial's canary is neither written nor renewed; a held record unreadable → written as the
       void of the open trial its name hashes to, its hash unrecorded, under that same rule;
       removed when it names none; the held directory unlistable → none written
@@ -10270,6 +10281,8 @@ def run_trial_stage() -> None:
     trials = _get_open_trial_canaries()
     if trials is None:
         return
+    judgment = _judge_stored_rows(trials)
+    trials = [trial for trial in trials if trial.key not in judgment.voided]
     skipped = _retry_pending_trial_voids(trials)
     if skipped is None:
         return
@@ -10277,7 +10290,8 @@ def run_trial_stage() -> None:
     past_bound = [trial for trial in trials if _is_unstarted_past_bound(trial)]
     for trial in past_bound:
         _void_unstarted_trial(trial)
-    _put_trial_canaries([trial for trial in trials if trial not in past_bound])
+    unwritten = judgment.unjudged | {trial.key for trial in past_bound}
+    _put_trial_canaries([trial for trial in trials if trial.key not in unwritten])
 
 
 def _get_open_trial_canaries() -> list[TrialCanary] | None:
@@ -10302,6 +10316,104 @@ def _read_trial_canaries() -> list[TrialCanary]:
         cur.execute(LIVE_TRIAL.CANARY_SQL, (TRIAL_LEDGER.EVENT.LIVE_PREREGISTRATION,))
         rows = cur.fetchall()
     return [TrialCanary(*row) for row in rows]
+
+
+class StageJudgment(NamedTuple):
+    """One trial stage's verdict on its open trials' stored rows, by trial key."""
+
+    voided: frozenset[str]  # a foreign row's void written or refused → out of this stage
+    unjudged: frozenset[str]  # a read fault left its rows unjudged → no canary written or renewed
+
+
+def _judge_stored_rows(trials: list[TrialCanary]) -> StageJudgment:
+    """Each open trial's stored delivered rows under the ingest's own rule; never raises.
+
+    - the mapping: this stage's open-trials read through the ingest's builder → per agent its
+      latest trial; an earlier trial of that agent is judged with no row
+    - no open trial → no statement
+    - the stored rows unreadable → every open trial unjudged, a named WARN, nothing voided
+    """
+    if not trials:
+        return StageJudgment(frozenset(), frozenset())
+    # the ingest's rule reads binding.trials alone → the stage reads no roster and no A/A state
+    binding = DeliveryBinding(
+        DEFAULT_AGENTS_DIR, trials=_get_trial_bindings(map(_get_stage_binding, trials))
+    )
+    try:
+        stored = _read_other_hash_rows(binding.trials)
+    except Exception as exc:  # noqa: BLE001 — a read fault never fails the cycle
+        _warn_trial(
+            f"stored manifest rows unreadable: {_describe_fault(exc)}",
+            "no open trial judged this cycle — no canary written or renewed, a file in place "
+            "left to its lease",
+        )
+        return StageJudgment(frozenset(), frozenset(trial.key for trial in trials))
+    return _judge_other_hash_rows(stored, binding)
+
+
+def _get_stage_binding(trial: TrialCanary) -> TrialBinding:
+    """The open trial as the ingest's rule reads it: its canary hash when a text, its commit
+    instant, no start instant — the stage files no row."""
+    canary = trial.payload.get("canary") if isinstance(trial.payload, dict) else None
+    text_sha256 = canary.get("text_sha256") if isinstance(canary, dict) else None
+    return TrialBinding(
+        trial.agent,
+        trial.key,
+        trial.pattern_id,
+        text_sha256 if isinstance(text_sha256, str) else None,
+        trial.recorded_at,
+        None,
+    )
+
+
+def _judge_other_hash_rows(
+    stored: list[StoredManifestRow], binding: DeliveryBinding
+) -> StageJudgment:
+    """One salt read over the returned rows; unreadable → each trial holding a row unjudged, a
+    named WARN, nothing voided — a trial holding none is judged."""
+    in_trial = [
+        (item, trial)
+        for item in stored
+        if (trial := _get_row_trial(item.row, binding)) is not None
+    ]
+    salt_ids = frozenset(item.row.salt_id for item, _ in in_trial if item.row.salt_id is not None)
+    try:
+        salts = _read_salt_rows(salt_ids)
+    except Exception as exc:  # noqa: BLE001 — a read fault never fails the cycle
+        unjudged = frozenset(trial.key for _, trial in in_trial)
+        _warn_trial(
+            f"salt rows unreadable: {_describe_fault(exc)}",
+            f"trial(s) {', '.join(sorted(unjudged))} not judged this cycle — no canary written "
+            "or renewed for them, a file in place left to its lease",
+        )
+        return StageJudgment(frozenset(), unjudged)
+    return StageJudgment(_void_foreign_rows(in_trial, salts, binding), frozenset())
+
+
+def _void_foreign_rows(
+    in_trial: list[tuple[StoredManifestRow, TrialBinding]],
+    salts: SaltRows,
+    binding: DeliveryBinding,
+) -> frozenset[str]:
+    """Each trial's first foreign row in id order voids it → the trial keys voided."""
+    voided: set[str] = set()
+    for item, trial in in_trial:
+        is_foreign = not _is_trial_hash(item.row, binding) and not _is_racing_row(item.row, salts)
+        if is_foreign and trial.key not in voided:
+            voided.add(trial.key)
+            _void_stored_trial_row(item, trial)
+    return frozenset(voided)
+
+
+def _void_stored_trial_row(stored: StoredManifestRow, trial: TrialBinding) -> None:
+    """The trial's foreign-hash void by its stored row, its file removed whether or not the row
+    lands; a void the ledger refuses is not held — the next stage reads the row again."""
+    row = stored.row
+    void = TrialVoid(
+        trial.key, trial.agent, trial.pattern_id, row.delivered_hash, stored.spool, row.line_offset
+    )
+    _write_trial_void(void, STAGE_AREA.TRIAL)
+    _delete_canaries([_get_canary_path(trial.agent)], f"trial {trial.key} voided", STAGE_AREA.TRIAL)
 
 
 def _put_trial_canaries(trials: list[TrialCanary]) -> None:
@@ -14177,8 +14289,9 @@ def ingest_manifest_log(
     (spool, line_offset) is the only position, so a crash at any step re-reads without
     a duplicate row. PG unreachable, a table-absent schema, an insert failure or a
     held lock → named WARN, every spool kept and the live log not renamed; the hook's
-    backstop bounds the live log meanwhile. Each delivered row binds to a trial once, at
-    the ingest that first stores it (bind_manifest_deliveries).
+    backstop bounds the live log meanwhile. Each delivered row binds once, at the ingest
+    that first stores it (bind_manifest_deliveries); an open live trial's stored rows are
+    judged again at each trial stage (run_trial_stage).
     No config.toml in the code tree declaring that tree as its [paths].root → named WARN before
     any other check, whether or not the PG layer imports: no read, no lock file, no rename, no
     binding.
@@ -14362,11 +14475,14 @@ def bind_manifest_deliveries(
     - A racing row: its salt names an aa-start or aa-restart row and its hash is the A/A text's,
       or its salt names a decided live pre-registration of its own agent and its hash is that
       pre-registration's canary hash.
-    - The open state unreadable → no row bound, a named WARN with the count; those rows are
-      never bound later.
+    - The open state unreadable → no row bound, a named WARN with the count; on the A/A leg and
+      the no-trial branch those rows are never bound later — an open live trial's are judged
+      from the store at that cycle's trial stage (run_trial_stage).
     - The salt rows unreadable → the rows the racing predicate judges (a trial row of another
       hash, a row bound to no open trial or A/A) stay unbound, a named WARN with the count: no
-      trial voided, no file removed, never bound later; trial-hash and A/A rows still bind.
+      trial voided, no file removed; trial-hash and A/A rows still bind. A row bound to no open
+      trial or A/A is never bound later; a trial row of another hash is judged from the store
+      at that cycle's trial stage.
     """
     delivered = [row for row in rows if row.delivered]
     if not delivered:
@@ -14411,12 +14527,18 @@ def _read_trial_bindings() -> dict[str, TrialBinding]:
     with _pg_connect() as conn, conn.cursor() as cur:
         cur.execute(LIVE_TRIAL.BINDING_SQL, (TRIAL_LEDGER.EVENT.LIVE_PREREGISTRATION,))
         rows = cur.fetchall()
-    return {
-        CANARY.UNSAFE_KEY.sub("", agent): TrialBinding(
+    return _get_trial_bindings(
+        TrialBinding(
             agent, key, pattern_id, text_sha256, committed_at, _get_start_instant(started_at)
         )
         for agent, key, pattern_id, text_sha256, committed_at, started_at in rows
-    }
+    )
+
+
+def _get_trial_bindings(trials: Iterable[TrialBinding]) -> dict[str, TrialBinding]:
+    """The one mapping rule of the ingest and the trial stage: agent (hook_path_safe_key form) →
+    its open live trial; trials given in id order → the latest when several."""
+    return {CANARY.UNSAFE_KEY.sub("", trial.agent): trial for trial in trials}
 
 
 def _get_start_instant(value: str | None) -> datetime | None:

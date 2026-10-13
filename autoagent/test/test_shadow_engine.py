@@ -331,6 +331,9 @@ class _Ledger:
         self.guardrail_rows: list[tuple[str, dict]] = []
         self.refused: list[str] = []
         self.faulted: set[str] = set()
+        self.statements: list[str] = []  # each statement run, in order
+        # core.spawn_manifest's delivered rows as the stored-rows statement returns them
+        self.stored_rows: list[tuple] = []
         # read only by a cycle whose loop-write flag also opens these gate reads and the A/A stage
         self.answered_empty = frozenset(
             {
@@ -396,7 +399,8 @@ class _LedgerCursor:
     def cursor(self) -> contextlib.nullcontext:
         return contextlib.nullcontext(self)
 
-    def execute(self, statement: str, params: tuple = ()) -> None:
+    def execute(self, statement: str, params: tuple | dict = ()) -> None:
+        self.ledger.statements.append(statement)
         if statement in self.ledger.faulted:
             raise ConnectionError("PG unreachable")
         if statement in self.ledger.answered_empty:
@@ -433,6 +437,10 @@ class _LedgerCursor:
                 )
                 for row, is_started in self._get_open_trials(params)
             ]
+        elif statement == dc.MANIFEST.OTHER_HASH_ROWS_SQL:
+            self.result = [row for row in self.ledger.stored_rows if row[3] in params["agents"]]
+        elif statement == dc.AA.SQL.SALT_ROWS:
+            self.result = []  # no stored row's salt names an A/A or a decided pre-registration
         else:
             self.ledger.refused.append(statement)
             raise AssertionError(f"statement outside the ledger fake: {statement[:80]}")
@@ -1837,6 +1845,26 @@ _START_WARN = SimpleNamespace(
     VOID_FAULT="unstarted void not recorded",
 )
 _HELD_AGENT = "glass-atrium-dev-shell"  # a third roster type: the trial a held void names
+_FOREIGN_AGENT = "glass-atrium-dev-react"  # a fourth: the trial a stored foreign row voids
+_FOREIGN_SHA256 = "e" * 64
+
+
+def _get_stored_row(agent: str, started_at: datetime, text_sha256: str | None) -> tuple:
+    """(spool, *ManifestRow) of one delivered spawn, its salt naming no ledger row."""
+    return (
+        "manifest.log.0.spool",
+        0,
+        "c5d8",
+        agent,
+        "e0e449e3-7b17",
+        started_at,
+        1166,
+        "emit,meter,canary",
+        1,
+        3,
+        True,
+        text_sha256,
+    )
 
 
 def _put_config(root: Path, declared: Path | None) -> None:
@@ -1909,13 +1937,15 @@ class TrialCanaryTest(_ShadowFixture):
 
     def _seed_every_write_class(self) -> Path:
         """One trial per write the stage makes, under the current data root: one due its first
-        canary, an unstarted one whose stated horizon ends a day on and which holds a file, and
-        one a held void names → the due trial's canary path."""
+        canary, an unstarted one whose stated horizon ends a day on and which holds a file, one
+        a held void names, and one a stored foreign row voids → the due trial's canary path."""
         self.ledger.rows.clear()
         self.clock.now = _NOW
         self._open_live_trial()
         self._open_trial_on(_POOL_AGENT, _PROPOSAL_ID + 1, horizon_days=1)
         held_key = self._open_trial_on(_HELD_AGENT, _PROPOSAL_ID + 2)
+        self._open_trial_on(_FOREIGN_AGENT, _PROPOSAL_ID + 3)
+        self.ledger.stored_rows[:] = [_get_stored_row(_FOREIGN_AGENT, _NOW, _FOREIGN_SHA256)]
         unstarted = dc._get_canary_path(_POOL_AGENT)
         unstarted.parent.mkdir(parents=True)
         unstarted.write_text("{}", encoding="utf-8")
@@ -2360,6 +2390,29 @@ class TrialCanaryTest(_ShadowFixture):
             ],
             [],
         )
+
+    def test_an_unstarted_trial_past_its_bound_with_a_stored_foreign_row_is_decided_by_it_alone(
+        self,
+    ) -> None:
+        key = self._open_live_trial()
+        self.ledger.stored_rows.append(
+            _get_stored_row(_AGENT, _NOW + timedelta(hours=1), _FOREIGN_SHA256)
+        )
+
+        self._stage(self._get_bound())
+
+        void = {"reason": "foreign-canary-hash", "agent": _AGENT, "text_sha256": _FOREIGN_SHA256}
+        self.assertEqual(
+            [(row.dedupe_key, row.payload) for row in self._get_decisions()],
+            [(f"{key}:decision", {"void": void})],
+        )
+
+    def test_a_stage_with_no_open_trial_runs_no_statement_after_its_open_trials_read(self) -> None:
+        self.ledger.stored_rows.append(_get_stored_row(_AGENT, _NOW, _FOREIGN_SHA256))
+
+        self._stage(_NOW)
+
+        self.assertEqual(self.ledger.statements, [dc.LIVE_TRIAL.CANARY_SQL])
 
     def test_a_decided_trial_gets_no_canary(self) -> None:
         key = self._open_live_trial()
