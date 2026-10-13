@@ -1985,29 +1985,38 @@ class FollowUpLookTest(_ShadowFixture):
 
     _REDRAWS = 400  # looks 2 and 3 admit 2 and 9 reference members, look 1 none
     _THIRD_NOW = _NEXT_NOW + timedelta(days=1)  # a cycle on D + 2
+    _FOURTH_NOW = _NEXT_NOW + timedelta(days=2)  # a cycle on D + 3
     _DAY_MINUTES = 24 * 60
 
     def _open_trial(self, *milestones: int, minutes: int = 60) -> int:
-        """A started trial whose stored row holds `_REDRAWS`, W and its first looks'
-        milestones → its arm salt; no pattern stays, so the look's is the cycle's only read."""
-        _, self.salt_id = self._open_started_trial()
+        """A trial started half a second into _NOW's second, whose stored row holds `_REDRAWS`,
+        W and its first looks' milestones → its arm salt; no pattern stays, so the look's is the
+        cycle's only read. Minute 0's spawn starts inside the start's first second; a closed
+        spawn a minute before it is in the history, and in no row's count."""
+        key = self._open_live_trial()
+        self.clock.now = _NOW + timedelta(microseconds=500_000)
+        self._start_trial(key)
+        self.salt_id = self._get_preregistrations()[-1].id
         payload = self._get_preregistrations()[-1].payload
         payload["redelegation_test"]["redraws"] = self._REDRAWS
         payload["redelegation"]["minutes"] = minutes
         for look, milestone in zip(payload["looks"], milestones):
             look["milestone"] = milestone
         self.patterns = []
+        self.history.append(_get_closed(-1))
         return self.salt_id
 
     def _add_sessions(
-        self, counts: list[int], *, first: int = 0
+        self, counts: list[int], *, first: int = 0, joined: tuple[SpawnFacts, ...] = ()
     ) -> list[tuple[SpawnFacts, int]]:
-        """One closed spawn per session from minute `first`, each with its count of same-session
-        follow-ups inside W, every spawn with its hook record under the trial's salt →
-        (spawn, count)."""
+        """One closed spawn per count from minute `first` — alone in its session, or the nth in
+        the nth `joined` spawn's — each with its count of same-session follow-ups inside W, every
+        spawn with its hook record under the trial's salt → (spawn, count)."""
         added = []
-        for index, count in enumerate(counts, start=first):
-            spawn = _get_closed(index)
+        for offset, count in enumerate(counts):
+            spawn = _get_closed(first + offset)
+            if offset < len(joined):
+                spawn = spawn._replace(session_id=joined[offset].session_id)
             session = [spawn, *(_get_follow_up(spawn, minute) for minute in range(count))]
             self.history += [_get_hook_record(member, self.salt_id) for member in session]
             added.append((spawn, count))
@@ -2022,6 +2031,12 @@ class FollowUpLookTest(_ShadowFixture):
     def test_each_look_counts_a_spawns_follow_ups_against_that_spawns_recomputed_arm(self) -> None:
         salt_id = self._open_trial(1)
         added = self._add_sessions([index % 4 for index in range(24)])
+        # a second counted spawn in half the sessions, started once the first one's W has closed
+        added += self._add_sessions(
+            [(index + 1) % 3 for index in range(12)],
+            first=180,
+            joined=tuple(spawn for spawn, _ in added[:12]),
+        )
         self._cycle(_NEXT_NOW)
         [count] = self._get_counts()
         arms = [_get_arm(salt_id, spawn.agent_id) for spawn, _ in added]
@@ -2118,26 +2133,41 @@ class FollowUpLookTest(_ShadowFixture):
     def test_a_look_judged_from_the_carried_row_decides_as_the_one_call_path_on_the_same_data(
         self,
     ) -> None:
-        # looks 1 to 3 in the first cycle, the last look in the next
-        salt_id = self._open_trial(1, 2, 3, 100)
+        # looks 1 and 2 in the first cycle, look 3 in the next, the last look in the third
+        salt_id = self._open_trial(1, 2, 100, 200)
         first = self._add_sessions([7 * index % 11 for index in range(14)])
         self._cycle(_NEXT_NOW)
         second = first + self._add_sessions(
             [5 * index % 9 for index in range(20)], first=self._DAY_MINUTES
         )
         self._cycle(self._THIRD_NOW)
-        expected = trial_design.get_randomization_looks(
-            [_get_count_clusters(counts, salt_id) for counts in (first, second)],
-            get_arm=_get_arm,
-            salt_namespace=self._get_namespace(),
-            redraws=self._REDRAWS,
-            look_fractions=trial_design.LOOK_FRACTIONS[2:],
+        # outnumbering the earlier sessions → a member past look 3's cut can rank under the last
+        third = second + self._add_sessions(
+            [3 * index % 7 for index in range(120)], first=2 * self._DAY_MINUTES
         )
-        self.assertTrue(expected[0].crossed)  # the last cut has members to carry
+        self._cycle(self._FOURTH_NOW)
+        test = {
+            "get_arm": _get_arm,
+            "salt_namespace": self._get_namespace(),
+            "redraws": self._REDRAWS,
+        }
+        expected = trial_design.get_randomization_looks(
+            [_get_count_clusters(counts, salt_id) for counts in (first, second, third)],
+            look_fractions=trial_design.LOOK_FRACTIONS[1:],
+            **test,
+        )
+        # on the first cycle's set the last look decides otherwise → only the latest row serves
+        from_the_first_cycle = trial_design.get_randomization_look(
+            _get_count_clusters(third, salt_id),
+            fraction=trial_design.LOOK_FRACTIONS[-1],
+            crossed=expected[0].crossed,
+            **test,
+        )
+        self.assertNotEqual(from_the_first_cycle.crossed, expected[2].crossed)
         self.assertEqual(
             [
                 (count["critical"], count["crossed"], count["is_crossed"])
-                for count in self._get_counts()[2:]
+                for count in self._get_counts()[1:]
             ],
             [(look.critical, sorted(look.crossed), look.is_crossed) for look in expected],
         )
