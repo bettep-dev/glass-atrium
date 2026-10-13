@@ -173,17 +173,30 @@ _IDS = SimpleNamespace(
 
 
 def _spawn(
-    started_at: datetime, *, is_event: bool = False, is_floor: bool = False
+    started_at: datetime,
+    *,
+    is_event: bool = False,
+    is_floor: bool = False,
+    salt_id: int | None = None,
 ) -> SpawnFacts:
+    """`salt_id`: the trial's salt → the spawn carries its hook record under it."""
     agent_id = next(_IDS.FLOOR if is_floor else _IDS.REFERENCE)
-    return SpawnFacts(
+    spawn = SpawnFacts(
         agent_id, f"session-{agent_id}", started_at, int(is_event), True, ()
     )
+    return spawn if salt_id is None else _get_hook_record(spawn, salt_id)
 
 
 def _get_arm(salt_id: int, agent_id: str) -> int:
     """The hook's arm rule: sha256 over the decimal salt then the agent id, mod 2."""
     return int(hashlib.sha256(f"{salt_id}{agent_id}".encode("utf-8")).hexdigest(), 16) % 2
+
+
+def _get_hook_record(spawn: SpawnFacts, salt_id: int) -> SpawnFacts:
+    """The spawn under the trial's salt: delivered on the treatment arm alone; its recorded arm
+    the opposite of the recomputed one, which a look must not read."""
+    arm = _get_arm(salt_id, spawn.agent_id)
+    return spawn._replace(arm=1 - arm, salt_id=salt_id, is_delivered=arm == 1)
 
 
 @functools.cache
@@ -303,11 +316,13 @@ def _get_follow_up(prior: SpawnFacts, minutes: int, *, is_floor: bool = False) -
     return SpawnFacts(agent_id, prior.session_id, prior.stopped_at + minutes * _MINUTE, 0, True, ())
 
 
-def _get_spawns_after(start: datetime, count: int) -> list[SpawnFacts]:
+def _get_spawns_after(
+    start: datetime, count: int, salt_id: int | None = None
+) -> list[SpawnFacts]:
     """`count` single-spawn tasks from `start`, one second apart; event spawns, so the
-    confirmation half they land in keeps passing the floor."""
+    confirmation half they land in keeps passing the floor; `salt_id` as `_spawn` takes it."""
     return [
-        _spawn(start + timedelta(seconds=index), is_event=True)
+        _spawn(start + timedelta(seconds=index), is_event=True, salt_id=salt_id)
         for index in range(count)
     ]
 
@@ -320,7 +335,8 @@ def _get_arm_spawns(
     salts: tuple[int, ...], start: datetime, count: int, *, tenths: tuple[int, int]
 ) -> list[SpawnFacts]:
     """`count` single-spawn tasks from `start`, one second apart, each under one arm on every
-    salt; `tenths` of each arm's spawns overran, counted within the arm."""
+    salt and carrying its hook record; `tenths` of each arm's spawns overran, counted within
+    the arm."""
     agent_ids = (
         agent_id
         for agent_id in _IDS.REFERENCE
@@ -333,9 +349,8 @@ def _get_arm_spawns(
         overage_rows = int(seen[arm] % 10 < tenths[arm])
         seen[arm] += 1
         started_at = start + timedelta(seconds=index)
-        spawns.append(
-            SpawnFacts(agent_id, f"session-{agent_id}", started_at, overage_rows, True, ())
-        )
+        spawn = SpawnFacts(agent_id, f"session-{agent_id}", started_at, overage_rows, True, ())
+        spawns.append(_get_hook_record(spawn, salts[0]))
     return spawns
 
 
@@ -1406,7 +1421,9 @@ class LookTest(_ShadowFixture):
                 session_id=f"pair-{index // 2}",
                 overage_rows=0 if index % 16 == 5 else 1 + index % 2,
             )
-            for index, spawn in enumerate(_get_spawns_after(_NOW, math.ceil(_MILESTONES[0])))
+            for index, spawn in enumerate(
+                _get_spawns_after(_NOW, math.ceil(_MILESTONES[0]), salt_id)
+            )
         ]
         self.history += spawns
         self._cycle(_NEXT_NOW)
