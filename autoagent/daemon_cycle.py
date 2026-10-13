@@ -1001,7 +1001,22 @@ LANDED_HISTORY_ENTRY_CHAR_CAP = 400
 
 # Trialled proposals + their ledger effect; a landed one renders here, not in landed history
 # Same HARD cap discipline as the landed-history block
-PRIOR_ATTEMPTS = SimpleNamespace(CHAR_CAP=4000, LIMIT=5)
+PRIOR_ATTEMPTS = SimpleNamespace(
+    CHAR_CAP=4000,
+    LIMIT=5,
+    # the only look and decision fields the effect text renders, in order; a dot = a nested key
+    EFFECT_FIELDS=(
+        "reason",
+        "look",
+        "fraction",
+        "z",
+        "boundary",
+        "arms.control.events",
+        "arms.control.units",
+        "arms.treatment.events",
+        "arms.treatment.units",
+    ),
+)
 
 # Agent → scope file (core-compliance-matrix.md Scope Legend); two readers:
 # - axis C3 (_scope_file_for_agent): the scope-*.md the verifier judges against
@@ -13125,30 +13140,32 @@ def _render_prior_attempts_block(
 
 
 def _get_effect_text(attempt: PriorAttempt) -> str:
-    """The decision when one is recorded, else the latest look, else none reached."""
+    """The decision when one is recorded — its kind, then its fields — else the latest look,
+    else none reached."""
     if attempt.decision is not None:
-        return _neutralize_field(
-            "decision: " + _flatten_payload(attempt.decision), cap=LANDED_HISTORY_ENTRY_CHAR_CAP
-        )
-    if attempt.look is not None:
-        return _neutralize_field(
-            "latest look: " + _flatten_payload(attempt.look), cap=LANDED_HISTORY_ENTRY_CHAR_CAP
-        )
-    return "no look reached"
+        kind = next(iter(attempt.decision), "")
+        lead, fields = "decision: ", [kind, *_get_effect_fields(attempt.decision.get(kind))]
+    elif attempt.look is not None:
+        lead, fields = "latest look: ", _get_effect_fields(attempt.look)
+    else:
+        return "no look reached"
+    return _neutralize_field(lead + ", ".join(fields), cap=LANDED_HISTORY_ENTRY_CHAR_CAP)
 
 
-def _flatten_payload(payload: dict, prefix: str = "") -> str:
-    """Scalar fields as sorted ``key=value`` pairs, nested objects dotted, lists skipped."""
+def _get_effect_fields(row: object) -> list[str]:
+    """``key=value`` for each of PRIOR_ATTEMPTS.EFFECT_FIELDS the row holds as a scalar, in
+    that order; no other key on the row is rendered."""
     fields: list[str] = []
-    for key in sorted(payload):
-        value = payload[key]
-        if isinstance(value, dict):
-            nested = _flatten_payload(value, f"{prefix}{key}.")
-            if nested:
-                fields.append(nested)
-        elif not isinstance(value, list):
-            fields.append(f"{prefix}{key}={value}")
-    return ", ".join(fields)
+    for name in PRIOR_ATTEMPTS.EFFECT_FIELDS:
+        value = row
+        for key in name.split("."):
+            if not isinstance(value, dict) or key not in value:
+                break
+            value = value[key]
+        else:
+            if not isinstance(value, (dict, list)):
+                fields.append(f"{name}={value}")
+    return fields
 
 
 def _get_added_text(diff: str) -> str:

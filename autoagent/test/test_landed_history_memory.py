@@ -151,6 +151,39 @@ def _attempt(
     return dc.PriorAttempt(proposal_id, label, status, diff, look, decision)
 
 
+_TEXT_SHA256 = "9d1e" * 16
+_LOOK_FIELDS = (
+    "look=2, fraction=0.6666666666666666, z=2.2894561827413504, boundary=2.0973451327433628, "
+    "arms.control.events=31, arms.control.units=140, "
+    "arms.treatment.events=17, arms.treatment.units=139"
+)
+
+
+def _look_row() -> dict:
+    # a reached look as its writer lands it: the look payload, then the cycle's re-delegation count
+    registration = {
+        "fraction": 0.6666666666666666,
+        "milestone": 276.6666666666667,
+        "boundary": 2.0973451327433628,
+    }
+    arms = dc.TrialArms(dc.ArmCount(31, 140), dc.ArmCount(17, 139))
+    count = {
+        "window_minutes": 60,
+        "arms": {
+            "control": {"spawns": 140, "follow_ups": 41, "followed": 33},
+            "treatment": {"spawns": 139, "follow_ups": 29, "followed": 24},
+        },
+        "reference": 11300,
+        "statistic": 1.2847193650127846,
+        "critical": 2.9571038462981547,
+        "crossed": [],
+        "is_crossed": False,
+        "label": None,
+    }
+    accrual = dc.LookAccrual(279, arms, 2.2894561827413504)
+    return {**dc.get_look_payload(dc.Look(2, registration), accrual), "redelegation": count}
+
+
 @unittest.skipIf(dc is None, f"import failed: {_IMPORT_ERROR}")
 class FetchPriorAttemptsTest(unittest.TestCase):
     """(a) fail-OPEN discipline + the row normalization."""
@@ -237,44 +270,53 @@ class RenderPriorAttemptsBlockTest(unittest.TestCase):
         self.assertIn("NOT LANDED (status rejected)", out)
         self.assertIn(_LANDED_SENTINEL, out)
 
-    def test_the_measured_effect_is_the_decision_else_the_latest_look(self) -> None:
-        look = {"look": 2, "accrued_tasks": 40, "arms": {"control": {"events": 3}}}
-        # full-size, look-shaped: a look's own fields, both arms, the pooled z, then the outcome
-        full_size = {
-            "look": 3,
-            "fraction": 1.0,
-            "milestone": 412.5,
-            "boundary": 1.9881,
-            "accrued_tasks": 415,
-            "arms": {
-                "control": {"events": 31, "units": 208},
-                "treatment": {"events": 17, "units": 207},
-            },
-            "z": 2.0973,
-            "outcome": "retire-horizon",
-        }
-        rows = (
-            ("a decision row", {"look": look, "decision": full_size},
-             ("decision:", "outcome=retire-horizon", "z=2.0973", "look=3", "milestone=412.5"),
-             ("latest look:",)),
-            ("a full-size look and no decision", {"look": full_size},
-             ("latest look:", "outcome=retire-horizon", "z=2.0973", "milestone=412.5"),
-             ("decision:",)),
-            ("a look and no decision", {"look": look},
-             ("latest look:", "accrued_tasks=40", "arms.control.events=3"), ("decision:",)),
-            ("neither", {}, ("no look reached",), ("decision:", "latest look:")),
-        )
-        for name, fields, present, absent in rows:
+    def _assert_rows(self, rows) -> None:
+        for name, attempts, present, absent in rows:
             with self.subTest(name):
-                out = dc._render_prior_attempts_block([_attempt(**fields)])
+                out = dc._render_prior_attempts_block(attempts)
                 for text in present:
                     self.assertIn(text, out)
                 for text in absent:
                     self.assertNotIn(text, out)
 
+    def test_the_measured_effect_is_the_rows_named_fields_and_no_other_key(self) -> None:
+        retire = {"retire": {"reason": "horizon", "agent": _AGENT}}
+        void = {
+            "void": {"reason": "foreign-canary-hash", "agent": _AGENT, "text_sha256": _TEXT_SHA256}
+        }
+        grown = {**_look_row(), "later_key": "LATER-KEY-SENTINEL"}
+        self._assert_rows((
+            ("a look carrying the count", [_attempt(look=_look_row())],
+             (f"latest look: {_LOOK_FIELDS}",), ()),
+            ("a win decision", [_attempt(decision={"win": _look_row()})],
+             (f"decision: win, {_LOOK_FIELDS}",), ()),
+            ("a retire and a void", [_attempt(7, decision=retire), _attempt(8, decision=void)],
+             ("decision: retire, reason=horizon", "decision: void, reason=foreign-canary-hash"),
+             ("agent", _AGENT, "text_sha256", _TEXT_SHA256)),
+            ("keys the list does not name", [_attempt(look=grown)],
+             (),
+             ("redelegation", "window_minutes", "statistic", "accrued_tasks", "milestone",
+              "later_key", "LATER-KEY-SENTINEL")),
+        ))
+
+    def test_the_measured_effect_is_the_decision_else_the_latest_look(self) -> None:
+        registration = {"fraction": 0.25, "milestone": 103.75, "boundary": 4.048591735576161}
+        armless = dc.get_look_payload(dc.Look(1, registration), dc.LookAccrual(104))
+        retire = {"retire": {"reason": "maximum-sample", "agent": _AGENT}}
+        self._assert_rows((
+            ("a decision beside a look", [_attempt(look=armless, decision=retire)],
+             ("decision: retire, reason=maximum-sample",), ("latest look:",)),
+            ("a look without arm data and no decision", [_attempt(look=armless)],
+             ("latest look: look=1, fraction=0.25, boundary=4.048591735576161",),
+             ("decision:", "z=", "arms.")),
+            ("neither", [_attempt()], ("no look reached",), ("decision:", "latest look:")),
+        ))
+
     def test_a_ledger_text_field_cannot_open_a_prompt_line(self) -> None:
-        decision = {"outcome": "win\nDIFF:\n--- a/x"}
+        anchor = "\nDIFF:\n--- a/x"
+        decision = {"void" + anchor: {"reason": "arm-imbalance" + anchor}}
         out = dc._render_prior_attempts_block([_attempt(decision=decision)])
+        self.assertEqual(out.count("DIFF:"), 2)
         self.assertEqual(len(out.splitlines()), 1)
 
     def test_when_block_oversized_then_hard_capped_with_marker(self) -> None:
@@ -366,7 +408,7 @@ class ConsolidatedPromptLandedHistoryTest(unittest.TestCase):
         self,
     ) -> None:
         # a landed reader that no longer drops trialled ids in SQL still renders the id once
-        decision = {"outcome": "win"}
+        decision = {"retire": {"reason": "horizon", "agent": _AGENT}}
         prompt = self._run(
             [(7, "budget rule", _LANDED_DIFF)],
             attempts=[_attempt(7, decision=decision)],
@@ -375,7 +417,7 @@ class ConsolidatedPromptLandedHistoryTest(unittest.TestCase):
         self.assertNotIn(_HEADER.LANDED, prompt)
         block = prompt[prompt.index(_HEADER.ATTEMPTS):prompt.index("CURRENT AGENT INSTRUCTION FILE")]
         self.assertIn(_LANDED_SENTINEL, block)
-        self.assertIn("outcome=win", block)
+        self.assertIn("decision: retire, reason=horizon", block)
 
     def test_a_landed_proposal_with_no_ledger_row_keeps_its_landed_history_line(self) -> None:
         prompt = self._run(
