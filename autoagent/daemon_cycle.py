@@ -9366,7 +9366,7 @@ def run_shadow_stage(power: PowerResult, cycle_date: str, judged_trials: frozens
       (run_trial_stage) → each of them with a start record takes its looks, whatever this
       cycle's power check said of its pattern; a trial outside the set — unjudged, voided or
       decided — or with no start record takes no look and no decision
-    - decision: read only at a look whose row landed in this cycle, looks in order on this
+    - decision: read at a look whose row landed in this cycle, looks in order on this
       cycle's accrual → a crossed harm check: harm stop; else z at or over the look's boundary:
       win; else the last registered look: retire, maximum-sample; the first decision ends the looks
     - horizon: a trial with no decision recorded this cycle, at its start + the horizon its
@@ -9376,8 +9376,11 @@ def run_shadow_stage(power: PowerResult, cycle_date: str, judged_trials: frozens
       imbalanced split once its minimum spawns are counted → void, arm-imbalance; else delivery
       under the floor on the treatment spawns, or to a control spawn → void, low-delivery; no
       treatment spawn and nothing delivered to control → none
-    - a decision write fault: named WARN, the trial left open — a recorded look is not read
-      again, so a lost win can end as a retire
+    - a decision write fault: named WARN, the trial left open — of a recorded look only its
+      stored harm verdicts are read again: a crossed one → that look's harm stop at the next
+      cycle, a void first, ahead of every look; faulting again → WARN again, no look that
+      cycle · a win or a maximum-sample retire is not read again, so a lost win can end as a
+      retire
     - trial: identity and payload from its pre-registration row
     - units: the trial agent's spawns over the pair windows at this cycle's day anchor; units,
       arms and milestones run from the start record's second, so a spawn started before it is
@@ -10305,10 +10308,17 @@ def _read_look_spawns(
 def _write_shadow_looks(
     trial: StartedTrial, counted: Sequence[ArmedSpawn], inputs: CountInputs
 ) -> bool:
-    """The reached looks in order on this cycle's accrual, each row with the cycle's
-    re-delegation count and harm checks → True once a decision is recorded: at a look whose
-    row lands, a validity void ahead of its harm stop, win or maximum-sample retire."""
+    """The harm stop a recorded look left unwritten, else the reached looks in order on this
+    cycle's accrual, each row with the cycle's re-delegation count and harm checks → True once
+    a decision is recorded: at a look whose row lands, a validity void ahead of its harm stop,
+    win or maximum-sample retire."""
     canary = trial.canary
+    stop = _get_recorded_harm_stop(canary, inputs.recorded)
+    if stop is not None:
+        number, decision = stop
+        void = _get_validity_void(canary, counted)
+        # written or faulted, it ends the cycle's looks → no later look can win over a due stop
+        return _write_look_time_decision(canary, void or decision, f"look {number}")
     accrual = _get_look_accrual(trial, counted)
     looks = canary.payload["looks"]
     reached = list(
@@ -10348,18 +10358,43 @@ def _get_live_look_payload(canary: TrialCanary, look: Look, readings: LookReadin
 
 
 def _get_look_decision(canary: TrialCanary, payload: dict, *, is_last: bool) -> dict | None:
-    """The decision a landing look takes, a validity void aside: the harm stop naming a crossed
-    check — the primary's ahead of a guardrail's, guardrails by name — else the win at or over
-    the boundary, else the last look's maximum-sample retire; None = none due."""
+    """The decision a landing look takes, a validity void aside: the harm stop of its crossed
+    checks, else the win at or over the boundary, else the last look's maximum-sample retire;
+    None = none due."""
     crossed = [name for name, check in payload["harm"].items() if check["is_crossed"]]
     if crossed:
-        reason = min(crossed, key=lambda name: (name != "primary", name))
-        return {"harm": {"reason": reason, "agent": canary.agent}}
+        return _get_harm_stop(canary, crossed)
     z = payload.get("z")
     if z is not None and z >= payload["boundary"]:
         return {"win": payload}
     if is_last:
         return {"retire": {"reason": "maximum-sample", "agent": canary.agent}}
+    return None
+
+
+def _get_harm_stop(canary: TrialCanary, crossed: Sequence[str]) -> dict:
+    """The harm stop naming one crossed check: the primary's ahead of a guardrail's, guardrails
+    by name."""
+    reason = min(crossed, key=lambda name: (name != "primary", name))
+    return {"harm": {"reason": reason, "agent": canary.agent}}
+
+
+def _get_recorded_harm_stop(
+    canary: TrialCanary, recorded: Mapping[int, dict]
+) -> tuple[int, dict] | None:
+    """The earliest recorded look whose row stores a crossed harm check, beside its harm stop:
+    the verdict judged once, at its landing, read as stored — never judged on later data. A row
+    whose harm, or a check in it, is no dict stores none, as a row without the key."""
+    for number in sorted(recorded):
+        harm = recorded[number].get("harm")
+        checks = harm.items() if isinstance(harm, dict) else ()
+        crossed = [
+            name
+            for name, check in checks
+            if isinstance(check, dict) and check.get("is_crossed") is True
+        ]
+        if crossed:
+            return number, _get_harm_stop(canary, crossed)
     return None
 
 

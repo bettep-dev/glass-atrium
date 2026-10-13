@@ -1701,9 +1701,10 @@ class LookTest(_ShadowFixture):
 
 
 class LookDecisionTest(_ShadowFixture):
-    """A look-time decision is read only at a look whose row lands in the cycle: the win at its
+    """A look-time decision is read at a look whose row lands in the cycle: the win at its
     boundary, the retire at the last look; the horizon retire only when no such decision landed;
-    a validity void ahead of each, read only where one of them is due."""
+    a validity void ahead of each, read only where one of them is due; of a recorded look only
+    a stored harm crossing is read again."""
 
     def _add_spawns(self, salt_id: int, count: float, *, tenths: tuple[int, int]) -> None:
         self.history += _get_arm_spawns((salt_id,), _NOW, math.ceil(count), tenths=tenths)
@@ -1793,6 +1794,33 @@ class LookDecisionTest(_ShadowFixture):
         # one spawn more than the cycle before → that cycle's z was over look 1's boundary too
         self.assertGreater(win["z"], trial_design.get_boundaries()[0] + 1)
 
+    def test_a_recorded_look_whose_harm_check_passes_its_boundary_a_cycle_later_takes_no_stop_until_the_next_look_lands(
+        self,
+    ) -> None:
+        _, salt_id = self._open_started_trial()
+        first, second = (math.ceil(milestone) for milestone in _MILESTONES[:2])
+        self._add_spawns(salt_id, first, tenths=_TENTHS.FLAT)
+        self._cycle(_NEXT_NOW)
+        risen = _get_arm_spawns(
+            (salt_id,), _NOW + timedelta(hours=1), second - first, tenths=(1, 9)
+        )
+        self.history += risen[:-1]  # one task short of look 2
+        self._cycle(_NEXT_NOW)
+        [recorded] = self._get_looks()
+        self.assertEqual(recorded.payload["look"], 1)
+        self.assertEqual(self._get_decisions(), [])
+
+        self.history.append(risen[-1])
+        self._cycle(_NEXT_NOW)
+        [decision] = self._get_decisions()
+        self.assertEqual(decision.payload, {"harm": {"reason": "primary", "agent": _AGENT}})
+        landed = self._get_looks()[-1].payload
+        self.assertEqual(landed["look"], 2)
+        # one spawn more than the cycle before → that cycle's rise was over look 1's boundary too
+        self.assertGreater(
+            landed["harm"]["primary"]["z"], recorded.payload["harm"]["primary"]["boundary"] + 1
+        )
+
     def test_the_last_look_landing_with_no_win_retires_the_trial_at_its_maximum_sample(
         self,
     ) -> None:
@@ -1871,6 +1899,36 @@ class LookDecisionTest(_ShadowFixture):
         )
         self.assertEqual(self._get_decisions(), [])
         self.assertIn(_AGENT, self.ledger.read_open_trials())
+
+    def test_a_harm_stop_whose_decision_write_faulted_is_written_at_the_next_cycle_from_its_recorded_look_ahead_of_a_later_look_that_would_win(
+        self,
+    ) -> None:
+        write = self.ledger.write
+        decision_event = stub.get_trial_ledger().EVENT.LIVE_DECISION
+
+        def _refuse_decision(event, *args, **kwargs):
+            if event == decision_event:
+                raise ConnectionError("PG unreachable")
+            return write(event, *args, **kwargs)
+
+        with mock.patch.object(dc, "_pg_write_trial_ledger_row", _refuse_decision):
+            self._decide_at_look_one((100, 100), tenths=(1, 9))
+            [look] = self._get_looks()
+            self.assertTrue(look.payload["harm"]["primary"]["is_crossed"])
+            # the later cycles' data: reduced arms past look 2's milestone, a win on their own (_win)
+            self.history = list(_get_passing_history())
+            salt_id = self._get_preregistrations()[-1].id
+            self._add_spawns(salt_id, _MILESTONES[1], tenths=_TENTHS.REDUCED)
+            stderr = self._cycle(_NEXT_NOW)  # the stop faults again
+        self.assertIn("harm decision at look 1 not recorded: ConnectionError", stderr)
+        self.assertEqual(self._get_decisions(), [])
+
+        self._cycle(_NEXT_NOW)
+        self.assertEqual([row.payload["look"] for row in self._get_looks()], [1])
+        self.assertEqual(
+            [decision.payload for decision in self._get_decisions()],
+            [{"harm": {"reason": "primary", "agent": _AGENT}}],
+        )
 
     def test_a_spawn_not_yet_settled_at_the_look_counts_toward_its_milestone_and_is_in_no_arm_and_no_z(
         self,
