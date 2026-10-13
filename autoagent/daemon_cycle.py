@@ -849,7 +849,7 @@ DiffLineKind = Literal["header", "hunk", "added", "removed", "other"]
 
 
 def _get_diff_lines(diff: str, *, keepends: bool = False) -> list[str]:
-    """Split a diff into lines at ``\\n`` alone, as ``git apply`` reads it.
+    """Split a diff, or a body compared with one, at ``\\n`` alone, as ``git apply`` reads both.
 
     ``str.splitlines`` also breaks at FF, U+0085, U+2028 and a lone CR, which hides
     the rest of an added line from every reader. A ``\\r`` ending a line is dropped
@@ -4175,7 +4175,7 @@ def verify_removal_evidence(diff_text: str, target_text: str) -> RemovalEvidence
             False, REMOVAL_VERDICT_UNREADABLE, declared, "target body empty or unreadable"
         )
 
-    target_lines = target_text.splitlines()
+    target_lines = _get_diff_lines(target_text)
     spans = _editable_spans(target_lines)
     for removed in declared:
         protected = _get_protected_kind(removed)
@@ -4214,7 +4214,7 @@ def _emit_removal_evidence(diff_text: str, target_file: Path) -> int:
     verdict rather than raised — the caller fails closed on it either way.
     """
     try:
-        target_text = target_file.read_text(encoding="utf-8")
+        target_text = target_file.read_bytes().decode("utf-8")
     except OSError as exc:
         evidence = RemovalEvidence(
             False, REMOVAL_VERDICT_UNREADABLE, (), f"{type(exc).__name__}"
@@ -6868,7 +6868,7 @@ def _is_applied_edit_gone(proposed_diff: str | None, target_file: str) -> bool:
     if not target_path.is_absolute():
         target_path = ga_paths.get_base_root() / target_path
     try:
-        body_lines = set(target_path.read_text(encoding="utf-8").splitlines())
+        body_lines = set(_get_diff_lines(target_path.read_bytes().decode("utf-8")))
     except (OSError, UnicodeDecodeError) as exc:
         sys.stderr.write(
             f"[daemon-cycle] post-apply watch: target body unreadable — {target_path} "
@@ -7107,7 +7107,7 @@ def _proposal_diff_is_stale(diff_text: str, target_file: Path) -> bool:
         try:
             file_lines = {
                 ln.rstrip("\n")
-                for ln in target_file.read_text(encoding="utf-8").splitlines()
+                for ln in _get_diff_lines(target_file.read_bytes().decode("utf-8"))
             }
         except OSError:
             return True
@@ -7144,7 +7144,7 @@ def _diff_modifies_out_of_region(diff_text: str, target_file: Path) -> bool:
     if not target_file.exists():
         return False
     try:
-        target_lines = target_file.read_text(encoding="utf-8").splitlines(keepends=True)
+        target_lines = _get_diff_lines(target_file.read_bytes().decode("utf-8"))
     except OSError:
         return False
 
@@ -7153,7 +7153,7 @@ def _diff_modifies_out_of_region(diff_text: str, target_file: Path) -> bool:
         positions = [
             idx
             for idx, line in enumerate(target_lines, start=1)
-            if line.rstrip("\n") == needle
+            if line == needle
         ]
         if len(positions) != 1:
             continue  # ambiguous / absent → not decisive evidence
@@ -7841,7 +7841,7 @@ def _stored_diff_already_applied(diff_text: str, target_file: Path) -> bool:
     try:
         file_lines = {
             ln.rstrip("\n")
-            for ln in target_file.read_text(encoding="utf-8").splitlines()
+            for ln in _get_diff_lines(target_file.read_bytes().decode("utf-8"))
         }
     except OSError:
         return False
