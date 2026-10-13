@@ -10618,7 +10618,7 @@ def _write_trial_start(trial: TrialCanary, started_at: datetime) -> str | None:
     return None if landed == 1 else f"{landed} rows landed"
 
 
-STAGE_AREA = SimpleNamespace(AA="A/A harness", TRIAL="trial stage")
+STAGE_AREA = SimpleNamespace(AA="A/A harness", TRIAL="trial stage", BINDING="manifest binding")
 
 
 def _warn_stage(area: str, cause: str, scope: str) -> None:
@@ -14658,7 +14658,9 @@ def _bind_outside_window(spool: str, row: ManifestRow, binding: DeliveryBinding)
         f"delivered_hash={row.delivered_hash})\n"
     )
     if row.agent_type not in binding.trials:
-        _delete_canaries([_get_canary_path(row.agent_type)], "delivered with no open trial")
+        _delete_canaries(
+            [_get_canary_path(row.agent_type)], "delivered with no open trial", STAGE_AREA.BINDING
+        )
 
 
 def _void_trial_row(spool: str, row: ManifestRow, binding: DeliveryBinding) -> None:
@@ -14670,9 +14672,11 @@ def _void_trial_row(spool: str, row: ManifestRow, binding: DeliveryBinding) -> N
     void = TrialVoid(
         trial.key, trial.agent, trial.pattern_id, row.delivered_hash, spool, row.line_offset
     )
-    if not _write_trial_void(void, "manifest binding"):
+    if not _write_trial_void(void, STAGE_AREA.BINDING):
         _put_pending_trial_void(void)
-    _delete_canaries([_get_canary_path(trial.agent)], f"trial {trial.key} voided")
+    _delete_canaries(
+        [_get_canary_path(trial.agent)], f"trial {trial.key} voided", STAGE_AREA.BINDING
+    )
 
 
 def _write_trial_void(void: TrialVoid, area: str) -> bool:

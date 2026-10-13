@@ -1321,6 +1321,37 @@ class TestManifestDeliveryBinding(_DeliveryCase):
             self.stderr,
         )
 
+    def test_a_removal_fault_at_the_manifest_binding_is_named_under_the_manifest_binding_label(
+        self,
+    ) -> None:
+        unlink = os.unlink
+        path = dc._get_canary_path(_ROSTER[0])
+
+        def _refuse_canary(name: object, *, dir_fd: int | None = None) -> None:
+            if name == path.name:
+                raise PermissionError(13, "Permission denied", name)
+            unlink(name, dir_fd=dir_fd)
+
+        # name, whether the agent holds an open trial, the delivered row
+        rows = (
+            ("the no-open-trial delivery's removal", False, {"salt": "3"}),
+            ("the voided trial's removal", True, {"text_sha256": _PLAIN_SHA256}),
+        )
+        fault = f"canary {path} not removed: PermissionError"
+        for hour, (name, is_in_trial, row) in enumerate(rows):
+            with self.subTest(name):
+                self._use_log_dir(hour)
+                if is_in_trial:
+                    self._open_trial()
+                with mock.patch.object(dc.os, "unlink", _refuse_canary):
+                    self._ingest_trial_rows(row)
+
+                named = [line for line in self.stderr.splitlines() if fault in line]
+                self.assertEqual(
+                    [f"WARN: manifest binding — {fault}" in line for line in named], [True], name
+                )
+                self.assertIn(_ROSTER[0], self._get_canaries(), name)
+
     def test_each_no_trial_delivery_writes_one_ledger_row_keyed_by_its_spool_line(self) -> None:
         self._append(self.live_log, _get_delivery_line(_ROSTER[0], salt="3"))
         self._ingest(_CYCLE_1)
