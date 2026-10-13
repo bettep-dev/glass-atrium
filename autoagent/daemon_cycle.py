@@ -11389,10 +11389,11 @@ def start_aa(agents_dir: Path = DEFAULT_AGENTS_DIR) -> int:
         return _refuse_aa_start(
             AA.REFUSAL.ALREADY_OPEN, f"A/A {latest.id} has no aa-result"
         )
-    code = _write_aa_start(fingerprint, previous=0 if latest is None else latest.id)
-    if code == 0:
-        _start_aa_canaries(_agent_roster(agents_dir))
-    return code
+    refusal = _write_aa_start(fingerprint, previous=0 if latest is None else latest.id)
+    if refusal is not None:
+        return _refuse_aa_start(*refusal)
+    _start_aa_canaries(_agent_roster(agents_dir))
+    return 0
 
 
 def _start_aa_canaries(roster: frozenset[str]) -> None:
@@ -11409,7 +11410,8 @@ def _start_aa_canaries(roster: frozenset[str]) -> None:
         _put_aa_canaries(latest, roster)
 
 
-def _write_aa_start(fingerprint: dict[str, str], *, previous: int) -> int:
+def _write_aa_start(fingerprint: dict[str, str], *, previous: int) -> tuple[str, str] | None:
+    """Write the aa-start row → None; refused → (AA.REFUSAL reason, detail), nothing written."""
     # keyed on the start it follows → of two racing starts only one lands
     dedupe_key = f"{TRIAL_LEDGER.EVENT.AA_START}:after:{previous}"
     payload = {
@@ -11425,17 +11427,14 @@ def _write_aa_start(fingerprint: dict[str, str], *, previous: int) -> int:
             dedupe_key=dedupe_key,
         )
     except Exception as exc:  # noqa: BLE001 — refused by name, never a traceback
-        return _refuse_aa_start(AA.REFUSAL.LEDGER_UNWRITABLE, _describe_fault(exc))
+        return AA.REFUSAL.LEDGER_UNWRITABLE, _describe_fault(exc)
     if landed != 1:
-        return _refuse_aa_start(
-            AA.REFUSAL.ALREADY_OPEN,
-            f"start key {dedupe_key} taken by a concurrent --aa-start",
-        )
+        return AA.REFUSAL.ALREADY_OPEN, f"start key {dedupe_key} taken by a concurrent start"
     sys.stderr.write(
         f"[daemon-cycle] INFO: A/A started ({dedupe_key}) on {len(fingerprint)} fingerprint "
         "entries; each writing cycle evaluates it until its aa-result\n"
     )
-    return 0
+    return None
 
 
 def _refuse_aa_start(reason: str, detail: str) -> int:
@@ -11445,18 +11444,38 @@ def _refuse_aa_start(reason: str, detail: str) -> int:
     return ExitCode.AA_START_REFUSED
 
 
+def _start_first_aa(agents_dir: Path) -> None:
+    """A writing cycle's start on a ledger holding no aa-start row, on start_aa's path. Refused →
+    one WARN naming the AA.REFUSAL cause, nothing written — never an exit code or a raise."""
+    try:
+        fingerprint = get_aa_fingerprint(_INSTALL_ROOT)
+    except AaFingerprintUnreadable as exc:
+        refusal: tuple[str, str] | None = (AA.REFUSAL.MANIFEST_UNREADABLE, str(exc))
+    else:
+        refusal = _write_aa_start(fingerprint, previous=0)
+    if refusal is None:
+        _start_aa_canaries(_agent_roster(agents_dir))
+        return
+    reason, detail = refusal
+    _warn_aa(f"A/A not started: {reason} — {detail}", "nothing written this cycle")
+
+
 def run_aa_stage(
     cycle_date: str,
     *,
     manifest_ingest: ManifestIngest | None = None,
     agents_dir: Path = DEFAULT_AGENTS_DIR,
 ) -> None:
-    """Advance the open A/A one writing cycle and keep the canary files in step with it.
+    """Open the install's first A/A, or advance the open one a writing cycle, and keep the
+    canary files in step with it.
 
     Canary files live under `${GA_DATA_ROOT:-$HOME/.glass-atrium}/data/learning/canary`.
     - No config.toml in the code tree declaring that tree as its [paths].root → refused before
       any ledger read: no row read or written, no canary file deleted or written.
-    - No open A/A → every entry in the canary directory but an open live trial's is deleted.
+    - No aa-start row on the ledger → one A/A is opened as --aa-start opens it: the aa-start
+      row, then each roster agent's canary; a refused start WARNs and changes nothing. No other
+      state opens one.
+    - A closed A/A → every entry in the canary directory but an open live trial's is deleted.
     - Open A/A with a void an earlier ingest or sweep detected and the ledger did not take → that
       void is retried before anything else, and the stage ends: until it lands no canary is
       renewed and no result is decided, so the A/A cannot pass.
@@ -11471,8 +11490,8 @@ def run_aa_stage(
       landed verdict is read back, never decided again.
     - A verdict straddling at the duration end writes the window's extension row instead, once
       per window; the A/A stays open and the result lands at the extended duration.
-    - Open state unreadable → no file is deleted or renewed; each runs to its lease. Open live
-      trials unreadable at a deletion → none deleted.
+    - A/A state unreadable → no A/A is opened and no file is deleted or renewed; each runs to
+      its lease. Open live trials unreadable at a deletion → none deleted.
     A ledger or evidence fault WARNs by name and never fails the cycle; the caller skips the
     stage in no-write mode (--dry-run).
     """
@@ -11481,12 +11500,15 @@ def run_aa_stage(
         _warn_aa(refusal, "no ledger read or write and no canary file change this cycle")
         return
     try:
-        latest = _read_open_aa_start()
+        latest = _read_aa_state()
     except AaStateUnreadable as exc:
         # canary files are left to their lease: an unread state deletes and renews nothing
         _warn_aa(f"open state unreadable: {exc}", "no A/A evaluation this cycle")
         return
     if latest is None:
+        _start_first_aa(agents_dir)
+        return
+    if latest.is_closed:
         _delete_aa_canaries("no open A/A or trial")
         return
     if _retry_pending_void(latest):
@@ -11534,8 +11556,9 @@ def _get_install_refusal(root: Path) -> str | None:
     - run_aa_stage, run_trial_stage and ingest_manifest_log, whose own checks cover a
       direct call.
     Not guarded: run_cycle in no-write mode (--dry-run, --skip-loop-emit), start_aa
-    (--aa-start, the owner's explicit command to open an A/A, never run by a cycle),
-    and a direct call to any other writing stage — run_shadow_stage among them.
+    (--aa-start, the explicit command to open an A/A; a cycle opens its first one inside
+    run_aa_stage, behind that entry's check), and a direct call to any other writing stage —
+    run_shadow_stage among them.
     """
     if _is_install_tree(root):
         return None
@@ -11575,14 +11598,20 @@ def _get_config_root(config: Path) -> str | None:
     return None
 
 
-def _read_open_aa_start() -> AaStart | None:
-    """The open A/A; None when none is open. Raises AaStateUnreadable on a ledger read fault."""
+def _read_aa_state() -> AaStart | None:
+    """The latest A/A, open or closed; None when the ledger holds no aa-start row. Raises
+    AaStateUnreadable on a ledger read fault."""
     if not HAS_PG_LOOP_WRITE:
         raise AaStateUnreadable("PG helper import failed")
     try:
-        latest = _read_latest_aa_start()
+        return _read_latest_aa_start()
     except Exception as exc:  # any read fault → the one state run_aa_stage WARNs on
         raise AaStateUnreadable(_describe_fault(exc)) from exc
+
+
+def _read_open_aa_start() -> AaStart | None:
+    """The open A/A; None when none is open. Raises AaStateUnreadable on a ledger read fault."""
+    latest = _read_aa_state()
     return None if latest is None or latest.is_closed else latest
 
 

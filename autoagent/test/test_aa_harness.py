@@ -1,7 +1,8 @@
-"""A/A harness: the --aa-start mode, the restart rows its fingerprint drives, and the result.
+"""A/A harness: the start, the restart rows its fingerprint drives, and the result.
 
-An A/A opens only through --aa-start, its fingerprint the installed manifest's scoped
-hashes; while it is open each writing cycle compares the fingerprint and writes an
+An install's first A/A opens at a writing cycle on a ledger holding no aa-start row, any later
+one through --aa-start; its fingerprint is the installed manifest's scoped hashes. While it is
+open each writing cycle compares the fingerprint and writes an
 aa-restart row when it moved or cannot be read. Once its window's duration ends, a cycle
 writes one arm-difference design-effect row per agent and metric key, the instrument verdict
 row and the aa-result row. Every row outside the live class is
@@ -364,6 +365,27 @@ class _AaFixture(unittest.TestCase):
         _put_config(self.root, self.root)
         self._write_manifest({**_SCOPED, **_UNSCOPED})
 
+    def _install_fresh(self, roster: tuple[str, ...] | None = None) -> None:
+        """A fresh install on an empty ledger, with a data root and an agents dir of its own;
+        the fixture roster unless one is given."""
+        self._install()
+        base = Path(tempfile.mkdtemp(dir=self.scratch))
+        self.canary_dir = base / "data" / "learning" / "canary"
+        env = mock.patch.dict(os.environ, {"GA_DATA_ROOT": str(base)})
+        env.start()
+        self.addCleanup(env.stop)
+        self.agents_dir = base / "agents"
+        self.agents_dir.mkdir()
+        for stem in roster or _ROSTER:
+            (self.agents_dir / f"{stem}.md").write_text("# body\n", encoding="utf-8")
+        self._patch("DEFAULT_AGENTS_DIR", self.agents_dir)
+
+    def _get_canaries(self) -> dict[str, dict]:
+        return {
+            path.stem: json.loads(path.read_text(encoding="utf-8"))
+            for path in sorted(self.canary_dir.glob("*.json"))
+        }
+
     def _write_manifest(
         self, hashes: dict[str, str], *, version: str = "1.4.0"
     ) -> None:
@@ -665,23 +687,126 @@ class AaRestartTest(_AaFixture):
         )
 
 
+class AaCycleStartTest(_AaFixture):
+    """A writing cycle on a ledger holding no aa-start row opens the install's A/A on the
+    explicit start's path; a start it cannot write WARNs by name and writes nothing."""
+
+    def _get_opened(
+        self, open_aa: Callable[[], object], roster: tuple[str, ...]
+    ) -> tuple[list[_LedgerRow], dict[str, dict]]:
+        self._install_fresh(roster)
+        open_aa()
+        return list(self.ledger.rows), self._get_canaries()
+
+    def test_a_first_writing_cycle_opens_the_aa_an_explicit_start_opens_on_any_roster(
+        self,
+    ) -> None:
+        reference = set(dc.INSTRUMENT.BREAK_EVEN.REFERENCE)
+        rows = (
+            ("the fixture roster", _ROSTER, True),
+            (
+                "a roster sharing no name with the instrument reference",
+                ("acme-drafter", "acme-checker"),
+                False,
+            ),
+        )
+        for name, roster, is_referenced in rows:
+            with self.subTest(name):
+                self.assertEqual(bool(reference & set(roster)), is_referenced)
+                explicit = self._get_opened(self._start, roster)
+
+                cycled = self._get_opened(self._cycle, roster)
+
+                self.assertEqual(cycled, explicit)
+                (start,), canaries = cycled
+                self.assertEqual(
+                    (start.event, start.actor, start.dedupe_key),
+                    ("aa-start", "daemon-cycle-aa", "aa-start:after:0"),
+                )
+                self.assertEqual(
+                    {stem: (canary["salt"], canary["text"]) for stem, canary in canaries.items()},
+                    {stem: (start.id, "") for stem in roster},
+                )
+
+    def test_of_two_racing_cycles_one_writes_the_aa_start_row(self) -> None:
+        self._install_fresh()
+
+        def _write_after_the_other_start(*args: object, **kwargs: object) -> int:
+            self._open()  # the other cycle's start lands after this cycle's state read
+            return self.ledger.write(*args, **kwargs)
+
+        self._patch("_pg_write_trial_ledger_row", _write_after_the_other_start)
+
+        stderr_text = self._cycle()
+
+        self.assertEqual([row.dedupe_key for row in self.ledger.rows], ["aa-start:after:0"])
+        self.assertEqual(self._get_canaries(), {})
+        self.assertIn(
+            "WARN: A/A harness — A/A not started: already-open — start key aa-start:after:0 "
+            "taken by a concurrent start",
+            stderr_text,
+        )
+
+    def test_a_start_that_cannot_be_written_warns_by_name_and_a_later_cycle_opens_it(
+        self,
+    ) -> None:
+        rows = (
+            (
+                "the manifest unreadable",
+                lambda: self._write_manifest(dict(_UNSCOPED)),
+                lambda: self._write_manifest({**_SCOPED, **_UNSCOPED}),
+                "manifest-unreadable",
+            ),
+            (
+                "the ledger write faults",
+                lambda: setattr(self.ledger, "write_fault", ConnectionError("PG unreachable")),
+                lambda: setattr(self.ledger, "write_fault", None),
+                "ledger-unwritable",
+            ),
+        )
+        for name, arrange, repair, reason in rows:
+            with self.subTest(name):
+                self._install_fresh()
+                arrange()
+
+                stderr_text = self._cycle()
+
+                self.assertEqual((self.ledger.rows, self._get_canaries()), ([], {}))
+                self.assertEqual(stderr_text.count("WARN:"), 1, stderr_text)
+                self.assertIn(
+                    f"WARN: A/A harness — A/A not started: {reason} — ", stderr_text
+                )
+                repair()
+                self._cycle()
+                self.assertEqual(
+                    [row.dedupe_key for row in self.ledger.rows], ["aa-start:after:0"]
+                )
+
+
 class NoOpenAaTest(_AaFixture):
-    def test_no_aa_row_is_written_unless_an_aa_start_is_open(self) -> None:
-        def _close() -> None:
+    def test_an_install_holding_an_aa_row_opens_none_whatever_its_state(self) -> None:
+        ledger = stub.get_trial_ledger()
+
+        def _close(payload: dict) -> None:
             self._open()
             self.ledger.write(
-                stub.get_trial_ledger().EVENT.AA_RESULT,
-                stub.get_trial_ledger().ACTOR.AA,
-                {"overall": "pass"},
-                dedupe_key="aa-result:1",
+                ledger.EVENT.AA_RESULT, ledger.ACTOR.AA, payload, dedupe_key="aa-result:1"
             )
 
-        for name, arrange in (
-            ("no aa-start ever", lambda: None),
-            ("the A/A has its aa-result", _close),
-        ):
+        void = {
+            "overall": "void",
+            "void": {"reason": "foreign-canary-hash", "agent": _ROSTER[0], "text_sha256": None},
+        }
+        rows = (
+            # open → advanced as an open A/A is: the unreadable fingerprint restarts its window
+            ("open", self._open, [ledger.EVENT.AA_RESTART], False),
+            ("passed", functools.partial(_close, {"overall": "pass"}), [], True),
+            ("failed", functools.partial(_close, {"overall": "fail"}), [], True),
+            ("void", functools.partial(_close, void), [], True),
+        )
+        for name, arrange, written, is_silent in rows:
             with self.subTest(name):
-                self._install()
+                self._install_fresh()
                 arrange()
                 rows_before = list(self.ledger.rows)
                 self._write_manifest(
@@ -690,8 +815,12 @@ class NoOpenAaTest(_AaFixture):
 
                 stderr_text = self._cycle()
 
-                self.assertEqual(self.ledger.rows, rows_before)
-                self.assertEqual(stderr_text, "")
+                self.assertEqual(self.ledger.rows[: len(rows_before)], rows_before)
+                self.assertEqual(
+                    [row.event for row in self.ledger.rows[len(rows_before) :]], written
+                )
+                self.assertEqual(len(self._get_starts()), 1)
+                self.assertEqual(stderr_text == "", is_silent, stderr_text)
 
 
 class AaLedgerFaultTest(_AaFixture):
@@ -1809,11 +1938,21 @@ class CycleWiringTest(_AaResultFixture):
         self.assertEqual(self.pg_reach, [])
 
     def test_a_dry_run_cycle_writes_no_aa_row(self) -> None:
-        self._set_hash("autoagent/daemon_cycle.py", "f" * 64)
+        rows = (
+            (
+                "an open A/A on a moved fingerprint",
+                lambda: self._set_hash("autoagent/daemon_cycle.py", "f" * 64),
+            ),
+            ("no aa-start row", lambda: self.ledger.rows.clear()),
+        )
+        for name, arrange in rows:
+            with self.subTest(name):
+                arrange()
+                rows_before = list(self.ledger.rows)
 
-        self._run_cycle(skip_loop_emit=True)
+                self._run_cycle(skip_loop_emit=True)
 
-        self.assertEqual(self._get_restarts(), [])
+                self.assertEqual(self.ledger.rows, rows_before)
 
     def test_a_writing_cycle_restarts_the_open_aa_on_a_moved_fingerprint(self) -> None:
         self._set_hash("autoagent/daemon_cycle.py", "f" * 64)
@@ -1853,12 +1992,6 @@ _HOOK_SH = _REPO_ROOT / "hooks" / "inject-scope-rules.sh"
 class AaCanaryTest(_AaResultFixture):
     """The daemon-written canary files: one per roster agent while an A/A is open, renewed each
     writing cycle, swept against the A/A and removed at its end."""
-
-    def _get_canaries(self) -> dict[str, dict]:
-        return {
-            path.stem: json.loads(path.read_text(encoding="utf-8"))
-            for path in sorted(self.canary_dir.glob("*.json"))
-        }
 
     def _put_canary(self, stem: str, text: str, *, salt: int = 1) -> Path:
         self.canary_dir.mkdir(parents=True, exist_ok=True)
