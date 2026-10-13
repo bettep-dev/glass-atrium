@@ -480,6 +480,14 @@ class ArmDifferenceDesignEffect(unittest.TestCase):
         with self.assertRaises(ValueError):
             td.get_clustered_z([[(0, 1.0), (1, 0.0)]])
 
+    def test_the_statistic_is_undefined_when_its_clustered_term_is_zero_in_exact_arithmetic_whatever_the_float_residue(
+        self,
+    ) -> None:
+        # arm means 2/3 control, 1/3 treatment → each session's term (∓1/9) − (∓1/9) = 0 exactly;
+        # thirds leave a float residue above 0
+        cancelling = [[(0, 0.0), (0, 1.0), (1, 0.0)], [(0, 1.0), (1, 0.0), (1, 1.0)]]
+        self.assertIsNone(td.get_clustered_z(cancelling))
+
     def test_the_session_bootstrap_interval_covers_the_truth_at_about_its_level(self) -> None:
         # per-spawn arms → true value 1; a two-sided 90% interval → ~90% of datasets cover it
         generator = random.Random(20261012)

@@ -13,6 +13,7 @@ import math
 import random
 import statistics
 from collections.abc import Callable, Collection, Sequence
+from fractions import Fraction
 from functools import cache
 from statistics import NormalDist
 from typing import NamedTuple
@@ -365,8 +366,8 @@ def get_clustered_z(clusters: Sequence[Sequence[tuple[int, float]]]) -> float | 
     """The treatment-minus-control mean over its session-clustered standard error.
 
     Clusters as get_arm_difference_design_effect takes them. None when the clustered variance
-    is 0; raises ValueError when the difference is undefined: fewer than 2 clusters, an empty
-    cluster or an empty arm.
+    is 0 in exact arithmetic; raises ValueError when the difference is undefined: fewer than 2
+    clusters, an empty cluster or an empty arm.
     """
     return _get_z(_get_arm_totals(clusters))
 
@@ -467,9 +468,26 @@ def _get_studentized_difference(clusters: Sequence[Sequence[tuple[int, float]]])
 
 def _get_z(totals: Sequence[_ArmTotals]) -> float | None:
     difference = _get_arm_difference(totals)
-    if difference.clustered <= 0:
+    if difference.clustered <= 0 or _is_clustered_zero(totals):
         return None
     return difference.value / math.sqrt(difference.clustered)
+
+
+def _is_clustered_zero(totals: Sequence[_ArmTotals]) -> bool:
+    """Whether every session's term of the clustered variance is 0 in exact arithmetic over the
+    per-session totals; the float form keeps a residue where an arm mean has no exact float."""
+    sizes = [sum(total.counts[arm] for total in totals) for arm in (0, 1)]
+    sums = [sum(_get_exact(total.sums[arm]) for total in totals) for arm in (0, 1)]
+    return all(
+        (_get_exact(total.sums[1]) * sizes[1] - total.counts[1] * sums[1]) * sizes[0] ** 2
+        == (_get_exact(total.sums[0]) * sizes[0] - total.counts[0] * sums[0]) * sizes[1] ** 2
+        for total in totals
+    )
+
+
+def _get_exact(value: float) -> int | Fraction:
+    """The float's own value as an exact number: an int where it is whole → int arithmetic."""
+    return int(value) if value.is_integer() else Fraction(value)
 
 
 def _get_arm_ratio(totals: Sequence[_ArmTotals]) -> float:
