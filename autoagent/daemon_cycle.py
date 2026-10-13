@@ -3585,7 +3585,6 @@ def _render_machine_facts(spawn: TriggeringSpawn) -> str:
 
 _HAIKU_RATIONALE_RE = re.compile(r"^RATIONALE:\s*(.+)$", re.MULTILINE)
 _HAIKU_TOUCHES_RE = re.compile(r"^TOUCHES_FRONTMATTER:\s*(\S+)", re.MULTILINE)
-_HAIKU_LINES_RE = re.compile(r"^ADDED_LINES:\s*(\d+)", re.MULTILINE)
 _HAIKU_DIFF_RE = re.compile(r"^DIFF:\s*\n(.+)\Z", re.MULTILINE | re.DOTALL)
 
 # Fuzzy fallback regex — case-insensitive + tolerant of partial markers.
@@ -4869,7 +4868,6 @@ def _parse_haiku_response(stdout: str, target_file: Path) -> PatchProposal:
 
     rationale_m = _HAIKU_RATIONALE_RE.search(raw)
     touches_m = _HAIKU_TOUCHES_RE.search(raw)
-    lines_m = _HAIKU_LINES_RE.search(raw)
     diff_m = _HAIKU_DIFF_RE.search(raw)
 
     # parse_mode tracking — 'strict' if both rationale + diff parsed via canonical
@@ -4962,8 +4960,6 @@ def _parse_haiku_response(stdout: str, target_file: Path) -> PatchProposal:
     if not touches and diff:
         touches = _diff_touches_frontmatter(diff)
 
-    added = int(lines_m.group(1)) if lines_m else _count_added_lines(diff)
-
     # Storage entry -- REFUSE past the bound, never truncate (see
     # STORED_DIFF_CHAR_LIMIT for why a partial diff is the worse outcome). Stored
     # empty, exactly as the F2 gate rejects, so the empty-diff arm of
@@ -4985,7 +4981,7 @@ def _parse_haiku_response(stdout: str, target_file: Path) -> PatchProposal:
         rationale=rationale[:400],
         proposed_diff=stored_diff,
         touched_frontmatter=touches,
-        estimated_added_lines=added,
+        estimated_added_lines=_count_added_lines(diff),
         estimated_removed_lines=_count_removed_lines(diff),
         raw_response=raw[:4000],
         parse_mode=parse_mode,

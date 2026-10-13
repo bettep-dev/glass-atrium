@@ -424,7 +424,7 @@ class TestSupersedePermissionPrompt(unittest.TestCase):
 
 @unittest.skipIf(dc is None, f"import failed: {_IMPORT_ERROR}")
 class TestLoopEventRemovedLines(unittest.TestCase):
-    """T6 — changes_removed measured from the FULL diff, never the stored one."""
+    """Line counts are measured from the FULL diff — never the stored one, never the generator's claim."""
 
     def _proposal_from_raw(self, diff: str) -> "dc.PatchProposal":
         raw = f"RATIONALE: fixture\nTOUCHES_FRONTMATTER: false\nADDED_LINES: 1\nDIFF:\n{diff}"
@@ -494,6 +494,24 @@ class TestLoopEventRemovedLines(unittest.TestCase):
         )
         events = self._events(self._proposal_from_raw(diff))
         self.assertEqual(events[0]["args"]["changes_removed"], 0)
+
+    def test_when_claimed_added_count_is_under_the_cap_and_the_diff_is_over_it_then_not_body_auto(
+        self,
+    ) -> None:
+        over_cap = dc.BODY_AUTO_LINE_LIMIT + 1
+        diff = (
+            "--- a/dev-python.md\n"
+            "+++ b/dev-python.md\n"
+            f"@@ -1,1 +1,{over_cap + 1} @@\n"
+            " context line\n"
+            + "".join(f"+added rule line {i}\n" for i in range(over_cap))
+        )
+        proposal = self._proposal_from_raw(diff)
+        with tempfile.TemporaryDirectory() as tmp:
+            target = Path(tmp) / "dev-python.md"
+            target.write_text("context line\n", encoding="utf-8")
+            area = dc.classify_patch_area(proposal, target, agents_dir=Path(tmp))
+        self.assertEqual(area, "frontmatter-dryrun")
 
 
 if __name__ == "__main__":
