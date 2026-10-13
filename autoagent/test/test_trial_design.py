@@ -20,11 +20,13 @@ Covered behaviors:
   * the trial's maximum sample is the larger of its efficacy and primary-harm
     samples, reproducing the recorded per-arm maxima to the unit, with no finite
     size at a baseline of 1/1.3 or above;
-  * sequential graduation and the growth to graduation 0.8 reproduce the
-    recorded per-agent figures;
+  * sequential graduation, its no-harm ceiling and the growth to graduation 0.8
+    reproduce the recorded per-agent figures;
   * the follow-up count's randomization test ranks the observed studentized arm
     difference among re-drawn arms, and each look's cut keeps the share crossed
-    at or before it within the alpha spent through that look.
+    at or before it within the alpha spent through that look;
+  * under no harm, on sessions sharing a heavy-tailed fan-out, that test's
+    four-look crossing share stays within its alpha.
 
 Every expected value is derived outside this module (published table, plan
 line, or hand arithmetic shown inline).
@@ -36,6 +38,7 @@ Run with either runner:
 
 from __future__ import annotations
 
+import functools
 import hashlib
 import math
 import random
@@ -213,28 +216,31 @@ class TrialSampleSize(unittest.TestCase):
 
 
 class GraduationGrowth(unittest.TestCase):
-    def test_sequential_graduation_reproduces_the_recorded_per_agent_figures(self) -> None:
+    def test_sequential_graduation_and_its_ceiling_reproduce_the_recorded_per_agent_figures(self) -> None:
         # Source: the lane's S5 pre-step 2 record → per busiest agent, α 0.05 on each guardrail,
-        # graduation on the sequential reading at R33's per-arm maximum, guardrails independent
+        # the sequential reading at R33's per-arm maximum, guardrails independent, no harm;
+        # ceiling = the share of efficacy crossings no guardrail stops at or before the crossing look
         rows = (
-            # (name, baseline, R33 per-arm maximum, guardrails, graduation)
-            ("qa-code-reviewer spawns", 90 / 1450, 2432, 3, 0.830),
-            ("qa-code-reviewer tasks", 109 / 635, 760, 3, 0.818),
-            ("dev-shell spawns", 81 / 487, 790, 4, 0.800),
-            ("dev-shell tasks", 61 / 166, 255, 4, 0.765),
-            ("dev-nestjs spawns", 31 / 319, 1485, 4, 0.808),
-            ("dev-nestjs tasks", 31 / 110, 389, 4, 0.783),
-            ("dev-react spawns", 50 / 270, 690, 4, 0.798),
-            ("dev-react tasks", 29 / 118, 474, 4, 0.789),
-            ("meta-prompt-engineer spawns", 70 / 468, 899, 3, 0.821),
-            ("meta-prompt-engineer tasks", 62 / 176, 274, 3, 0.787),
-            ("intel-planner spawns", 34 / 347, 1472, 3, 0.827),
-            ("intel-planner tasks", 44 / 162, 411, 3, 0.803),
+            # (name, baseline, R33 per-arm maximum, guardrails, graduation, ceiling)
+            ("qa-code-reviewer spawns", 90 / 1450, 2432, 3, 0.830, 0.934),
+            ("qa-code-reviewer tasks", 109 / 635, 760, 3, 0.818, 0.932),
+            ("dev-shell spawns", 81 / 487, 790, 4, 0.800, 0.911),
+            ("dev-shell tasks", 61 / 166, 255, 4, 0.765, 0.907),
+            ("dev-nestjs spawns", 31 / 319, 1485, 4, 0.808, 0.913),
+            ("dev-nestjs tasks", 31 / 110, 389, 4, 0.783, 0.909),
+            ("dev-react spawns", 50 / 270, 690, 4, 0.798, 0.911),
+            ("dev-react tasks", 29 / 118, 474, 4, 0.789, 0.910),
+            ("meta-prompt-engineer spawns", 70 / 468, 899, 3, 0.821, 0.933),
+            ("meta-prompt-engineer tasks", 62 / 176, 274, 3, 0.787, 0.929),
+            ("intel-planner spawns", 34 / 347, 1472, 3, 0.827, 0.933),
+            ("intel-planner tasks", 44 / 162, 411, 3, 0.803, 0.931),
         )
-        for name, baseline, per_arm, guardrails, expected in rows:
+        for name, baseline, per_arm, guardrails, expected, ceiling in rows:
             with self.subTest(name):
                 graduation = td.get_graduation_probability(baseline, per_arm, guardrail_count=guardrails)
+                efficacy = td.get_graduation_probability(baseline, per_arm, guardrail_count=0)
                 self.assertAlmostEqual(graduation, expected, delta=5e-4)  # 3-decimal record
+                self.assertAlmostEqual(graduation / efficacy, ceiling, delta=5e-4)
 
     def test_the_grown_sample_is_the_smallest_reaching_graduation_0_8(self) -> None:
         # Source: the lane's S5 pre-step 2 record → R45's grown sample, sequential reading column
@@ -566,6 +572,49 @@ def _get_reference_z(clusters, salt: str, get_arm=_get_hash_arm) -> float | None
         return None
 
 
+# Source: the lane's S5 pre-step 3 (b) record → closed clusters and cluster sizes per look, dev-react —
+# the fewest look-1 sessions among the agents reaching all four looks. Spawns closed by looks 1-4, one
+# row per session: sessions 7 / 10 / 13 / 15, spawns 248 / 573 / 911 / 1256, largest 84 / 239 / 304 / 415
+_CALIBRATION_SESSIONS = (
+    (2, 3, 3, 3),
+    (5, 6, 6, 6),
+    (9, 12, 12, 12),
+    (25, 25, 25, 40),
+    (40, 46, 84, 89),
+    (83, 139, 239, 239),
+    (84, 239, 304, 415),
+    (0, 4, 4, 4),
+    (0, 25, 25, 84),
+    (0, 74, 150, 226),
+    (0, 0, 15, 15),
+    (0, 0, 22, 40),
+    (0, 0, 22, 41),
+    (0, 0, 0, 20),
+    (0, 0, 0, 22),
+)
+_CALIBRATION_SEED = 20261013
+_CALIBRATION_DRAWS = 200
+_CALIBRATION_REDRAWS = 199  # 200 reference members → resolution 0.005; looks 1-4 admit 0 / 1 / 4 / 10
+
+
+def _get_fan_out_looks(generator: random.Random, salt: str) -> list[list[list[tuple[str, int, float]]]]:
+    """One no-harm draw per look: a session's spawns share a Pareto fan-out level, arms under ``salt``."""
+    sessions = []
+    for session, sizes in enumerate(_CALIBRATION_SESSIONS):
+        level = 5 * generator.paretovariate(1.5)  # mean 15 per spawn, inside the recorded 13-16; no finite variance
+        agent_ids = [f"c{session:02d}{position:03d}" for position in range(sizes[-1])]
+        sessions.append(
+            [
+                (agent_id, _get_hash_arm(salt, agent_id), float(int(generator.expovariate(1 / level))))
+                for agent_id in agent_ids
+            ]
+        )
+    return [
+        [spawns[: sizes[look]] for spawns, sizes in zip(sessions, _CALIBRATION_SESSIONS) if sizes[look]]
+        for look in range(len(td.LOOK_FRACTIONS))
+    ]
+
+
 class FollowUpRandomizationTest(unittest.TestCase):
     def test_the_statistic_is_the_arm_difference_over_its_session_clustered_standard_error(self) -> None:
         # control 30/100, treatment 10/100 → se √(0.3·0.7/100 + 0.1·0.9/100) = √0.003 → z = −0.2 / 0.0547723;
@@ -726,6 +775,22 @@ class FollowUpRandomizationTest(unittest.TestCase):
         )
         # look 1 admits no crossing at 400 members; look 2 is the first that can cross
         self.assertEqual([result.is_crossed for result in results[:2]], [False, True])
+
+    def test_under_no_harm_on_heavy_tailed_session_fan_out_the_four_look_crossing_share_stays_within_alpha_005(
+        self,
+    ) -> None:
+        # tolerance = the simulation interval's upper bound at a true share of 0.05 over 200 draws:
+        # P(Bin(200, 0.05) ≤ 16) = 0.9762 ≥ 0.975 > P(≤ 15) = 0.9556 → at most 16 draws cross
+        generator = random.Random(_CALIBRATION_SEED)
+        get_arm = functools.cache(_get_hash_arm)  # a re-draw keeps its salt, so its arms repeat across draws
+        crossed = 0
+        for draw in range(_CALIBRATION_DRAWS):
+            looks = _get_fan_out_looks(generator, salt=str(draw))
+            results = td.get_randomization_looks(
+                looks, get_arm=get_arm, salt_namespace="redraw", redraws=_CALIBRATION_REDRAWS
+            )
+            crossed += results[-1].is_crossed
+        self.assertLessEqual(crossed, 16)
 
 
 class RateHarm(unittest.TestCase):
