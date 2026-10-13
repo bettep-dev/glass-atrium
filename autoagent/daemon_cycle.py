@@ -9219,13 +9219,6 @@ def _send_power_verdict(
 
 
 SHADOW = SimpleNamespace(
-    # latest pre-registration of the bound event per (agent, pattern, metric key); one row each
-    PREREGISTRATION_SQL=(
-        "SELECT DISTINCT ON (agent, learning_pattern_id, payload->>'metric_key') "
-        "agent, learning_pattern_id, payload->>'metric_key', trial_key, payload, recorded_at "
-        "FROM core.autoagent_trial_ledger WHERE event = %s AND agent = ANY(%s) "
-        "ORDER BY agent, learning_pattern_id, payload->>'metric_key', recorded_at DESC, id DESC"
-    ),
     # W = 0 on every install → each spawn is its own task unit
     TASK_WINDOW=timedelta(0),
 )
@@ -9280,12 +9273,6 @@ def _pg_read_open_trials() -> dict[str, list[int]]:
     return dict(open_trials)
 
 
-class ShadowTrial(NamedTuple):
-    key: str
-    payload: dict  # the pre-registration payload, as stored
-    recorded_at: datetime
-
-
 class ArmCount(NamedTuple):
     events: int
     units: int
@@ -9303,11 +9290,6 @@ class ShadowRow(NamedTuple):
     dedupe_key: str
 
 
-class TrialIdentity(NamedTuple):
-    key: str
-    pattern: Pattern
-
-
 class Look(NamedTuple):
     number: int  # 1-based, in pre-registration order
     registration: Mapping[str, float]  # the pre-registered fraction, milestone and boundary
@@ -9319,10 +9301,10 @@ class LookAccrual(NamedTuple):
     z: float | None = None  # the primary's reduction over its session-clustered standard error
 
 
-class LookOrigin(NamedTuple):
-    """Where a started trial's looks run from."""
+class StartedTrial(NamedTuple):
+    """A judged, started live trial as its looks read it."""
 
-    salt_id: int  # the pre-registration row's id, the arm salt
+    canary: TrialCanary  # its pre-registration row: identity, payload and the arm salt
     started_at: datetime  # the start record's instant
 
 
@@ -9331,15 +9313,18 @@ def run_shadow_stage(power: PowerResult, cycle_date: str, judged_trials: frozens
 
     - rows: one power-pass-count per cycle date · one live look per reached look; no
       pre-registration — the push writes the live one with its bound candidate
-    - trial: a passing pattern's latest live pre-registration, current when recorded at or after
-      the row's last_transition_at (a NULL anchor keeps it); otherwise no look
     - judged_trials: the trial keys this cycle's trial stage judged and left open
-      (run_trial_stage) → a trial outside it — unjudged, voided or decided — takes no look
-    - origin: the trial's start record → no start record, no look; units, arms and milestones
-      run from its second, so a spawn started before it is in no arm and no count
+      (run_trial_stage) → each of them with a start record takes its looks, whatever this
+      cycle's power check said of its pattern; a trial outside the set — unjudged, voided or
+      decided — or with no start record takes none
+    - trial: identity and payload from its pre-registration row
+    - units: the trial agent's spawns over the pair windows at this cycle's day anchor; units,
+      arms and milestones run from the start record's second, so a spawn started before it is
+      in no arm and no count
     - arms: each counted spawn under its arm recomputed from the pre-registration row's id,
       whatever the hook recorded; milestones on both arms' total
-    - ledger fault: named WARN, never a failed cycle · --dry-run: the caller skips the stage
+    - ledger or spawn read fault: named WARN, never a failed cycle · --dry-run: the caller
+      skips the stage
     """
     if not HAS_PG_LOOP_WRITE:
         _warn_shadow("trial ledger unwritable: PG helper import failed", "no shadow row this cycle")
@@ -9352,38 +9337,27 @@ def run_shadow_stage(power: PowerResult, cycle_date: str, judged_trials: frozens
             dedupe_key=f"power-pass-count:{cycle_date}",
         )
     )
-    if not power.passes or power.windows is None:
+    trials = _read_started_trials(judged_trials)
+    if not trials:
         return
-    trials = _read_shadow_trials(power.passes)
-    if trials is None:
+    windows = get_pair_windows(_get_utc_now())
+    spawns = _read_look_spawns(trials, windows)
+    if spawns is None:
         return
-    origins = _read_look_origins(judged_trials)
-    if origins is None:
-        return
-    for power_pass in power.passes:
-        pattern = power_pass.pattern
-        trial = trials.get((pattern.agent, pattern.row_id, pattern.metric_key))
-        _write_shadow_pass(power_pass, trial, power.windows, origins)
+    for trial in trials:
+        _write_trial_looks(trial, spawns.get(trial.canary.agent, []), windows.end)
 
 
-def _write_shadow_pass(
-    power_pass: PowerPass,
-    trial: ShadowTrial | None,
-    windows: PairWindows,
-    origins: Mapping[str, LookOrigin],
+def _write_trial_looks(
+    trial: StartedTrial, spawns: list[SpawnFacts], window_end: datetime
 ) -> None:
-    """Record a current live trial's reached looks; no current trial, or one with no origin —
-    not judged and left open by this cycle's trial stage, or not started → nothing written."""
-    if trial is None or not _is_trial_current(trial, power_pass.pattern.last_transition_at):
-        return
-    origin = origins.get(trial.key)
-    if origin is None:
-        return
+    """Record a judged, started trial's reached looks; an unusable stored pre-registration →
+    named WARN, nothing written for it."""
     try:
-        _write_shadow_looks(trial, power_pass, windows.end, origin)
+        _write_shadow_looks(trial, spawns, window_end)
     except (KeyError, TypeError, ValueError) as exc:
         _warn_shadow(
-            f"trial {trial.key}: stored pre-registration unusable: {_describe_fault(exc)}",
+            f"trial {trial.canary.key}: stored pre-registration unusable: {_describe_fault(exc)}",
             "no look recorded for it this cycle",
         )
 
@@ -10167,57 +10141,44 @@ def _get_pooled_z(arms: TrialArms) -> float | None:
     return (control.events / control.units - treatment.events / treatment.units) / math.sqrt(variance)
 
 
-def _is_trial_current(trial: ShadowTrial, last_transition_at: datetime | None) -> bool:
-    return last_transition_at is None or trial.recorded_at >= last_transition_at
-
-
-def _read_shadow_trials(
-    passes: list[PowerPass],
-) -> dict[tuple[str, int, str | None], ShadowTrial] | None:
-    """(agent, pattern id, metric key) → latest live pre-registration; None (WARN) on a fault."""
-    agents = sorted({power_pass.pattern.agent for power_pass in passes})
-    try:
-        with _pg_connect() as conn, conn.cursor() as cur:
-            event = TRIAL_LEDGER.EVENT.LIVE_PREREGISTRATION
-            cur.execute(SHADOW.PREREGISTRATION_SQL, (event, agents))
-            rows = cur.fetchall()
-    except Exception as exc:  # noqa: BLE001 — a ledger read fault never fails the cycle
-        _warn_shadow(
-            f"pre-registrations unreadable: {_describe_fault(exc)}",
-            "no look this cycle",
-        )
-        return None
-    return {
-        (agent, pattern_id, metric_key): ShadowTrial(key, payload, recorded_at)
-        for agent, pattern_id, metric_key, key, payload, recorded_at in rows
-    }
-
-
-def _read_look_origins(judged_trials: frozenset[str]) -> dict[str, LookOrigin] | None:
-    """Trial key → the arm salt and start instant of each trial in ``judged_trials`` with a
-    readable start record; none judged → no read; None (WARN) on a fault."""
+def _read_started_trials(judged_trials: frozenset[str]) -> list[StartedTrial] | None:
+    """Each trial in ``judged_trials`` with a readable start record, from its pre-registration
+    row; none judged → no read; None (WARN) on a fault."""
     if not judged_trials:
-        return {}
+        return []
     try:
-        salt_ids = {trial.key: trial.salt_id for trial in _read_trial_canaries()}
+        canaries = {trial.key: trial for trial in _read_trial_canaries()}
         bindings = list(_read_trial_bindings().values())
     except Exception as exc:  # noqa: BLE001 — a ledger read fault never fails the cycle
         _warn_shadow(f"trial starts unreadable: {_describe_fault(exc)}", "no look this cycle")
         return None
-    return {
-        binding.key: LookOrigin(salt_ids[binding.key], binding.started_at)
+    return [
+        StartedTrial(canaries[binding.key], binding.started_at)
         for binding in bindings
         if binding.key in judged_trials
-        and binding.key in salt_ids
+        and binding.key in canaries
         and binding.started_at is not None
-    }
+    ]
+
+
+def _read_look_spawns(
+    trials: list[StartedTrial], windows: PairWindows
+) -> Mapping[str, list[SpawnFacts]] | None:
+    """Each trial agent's spawns over the pair windows; None (WARN) on a fault."""
+    agents = sorted({trial.canary.agent for trial in trials})
+    try:
+        return _pg_read_spawn_facts(agents, windows)[1]
+    except Exception as exc:  # noqa: BLE001 — a spawn read fault never fails the cycle
+        _warn_shadow(f"trial spawns unreadable: {_describe_fault(exc)}", "no look this cycle")
+        return None
 
 
 def _write_shadow_looks(
-    trial: ShadowTrial, power_pass: PowerPass, window_end: datetime, origin: LookOrigin
+    trial: StartedTrial, spawns: list[SpawnFacts], window_end: datetime
 ) -> None:
-    accrual = _get_look_accrual(trial, power_pass, window_end, origin)
-    for number, registration in enumerate(trial.payload["looks"], start=1):
+    canary = trial.canary
+    accrual = _get_look_accrual(trial, spawns, window_end)
+    for number, registration in enumerate(canary.payload["looks"], start=1):
         if accrual.tasks < registration["milestone"]:
             return
         _write_shadow_row(
@@ -10225,25 +10186,26 @@ def _write_shadow_looks(
                 TRIAL_LEDGER.EVENT.LIVE_LOOK,
                 TRIAL_LEDGER.ACTOR.LIVE,
                 get_look_payload(Look(number, registration), accrual),
-                dedupe_key=f"{trial.key}:look:{number}",
+                dedupe_key=f"{canary.key}:look:{number}",
             ),
-            TrialIdentity(trial.key, power_pass.pattern),
+            canary,
         )
 
 
 def _get_look_accrual(
-    trial: ShadowTrial, power_pass: PowerPass, window_end: datetime, origin: LookOrigin
+    trial: StartedTrial, spawns: list[SpawnFacts], window_end: datetime
 ) -> LookAccrual:
     """The units counted from the start record: both arms' total tasks, each spawn under its
     recomputed arm with the primary event per spawn, and the clustered z."""
     # started_at is whole seconds → floored start keeps a first-second spawn, as _bind_to_open_aa
-    start = origin.started_at.replace(microsecond=0)
+    start = trial.started_at.replace(microsecond=0)
+    salt_id, payload = trial.canary.salt_id, trial.canary.payload
     counted = [
-        ArmedSpawn(spawn, get_spawn_arm(origin.salt_id, spawn.agent_id))
-        for spawn in power_pass.spawns
+        ArmedSpawn(spawn, get_spawn_arm(salt_id, spawn.agent_id))
+        for spawn in spawns
         if spawn.agent_id is not None and start <= spawn.started_at < window_end
     ]
-    is_event = _get_aa_event_test(trial.payload["metric_key"], get_tool_budget(os.environ))
+    is_event = _get_aa_event_test(payload["metric_key"], get_tool_budget(os.environ))
     tasks = get_tasks((item.spawn for item in counted), SHADOW.TASK_WINDOW)
     return LookAccrual(len(tasks), _get_aa_arms(counted, is_event), _get_look_z(counted, is_event))
 
@@ -10265,7 +10227,7 @@ def _get_look_z(
     return None if z is None else -z
 
 
-def _write_shadow_row(row: ShadowRow, trial: TrialIdentity | None = None) -> int | None:
+def _write_shadow_row(row: ShadowRow, trial: TrialCanary | None = None) -> int | None:
     """Rows landed (0 = dedupe key taken or ledger absent); None after a WARNed fault."""
     try:
         return _pg_write_trial_ledger_row(
@@ -10273,8 +10235,8 @@ def _write_shadow_row(row: ShadowRow, trial: TrialIdentity | None = None) -> int
             row.actor,
             row.payload,
             trial_key=None if trial is None else trial.key,
-            agent=None if trial is None else trial.pattern.agent,
-            learning_pattern_id=None if trial is None else trial.pattern.row_id,
+            agent=None if trial is None else trial.agent,
+            learning_pattern_id=None if trial is None else trial.pattern_id,
             dedupe_key=row.dedupe_key,
         )
     except Exception as exc:  # noqa: BLE001 — a ledger write fault never fails the cycle

@@ -416,18 +416,6 @@ class _LedgerCursor:
                 for agent in agents
                 if agent in self.ledger.design_effects
             ] + [row for row in self.ledger.guardrail_rows if row[0] in agents]
-        elif statement == dc.SHADOW.PREREGISTRATION_SQL:
-            event, agents = params
-            latest: dict[tuple, _LedgerRow] = {}
-            for row in self.ledger.rows:
-                if row.event == event and row.agent in agents:
-                    latest[
-                        (row.agent, row.learning_pattern_id, row.payload["metric_key"])
-                    ] = row
-            self.result = [
-                (*group, row.trial_key, row.payload, row.recorded_at)
-                for group, row in latest.items()
-            ]
         elif statement == dc.LIVE_TRIAL.CANARY_SQL:
             self.result = [
                 (
@@ -1494,22 +1482,55 @@ class LookTest(_ShadowFixture):
                 self._cycle(_NEXT_NOW)
                 self.assertEqual([look.payload["look"] for look in self._get_looks()], [1])
 
-    def test_a_preregistration_recorded_before_its_patterns_last_transition_takes_no_look(
+    def test_a_judged_started_trial_takes_its_reached_look_whatever_the_cycles_power_passes(
+        self,
+    ) -> None:
+        other = "glass-atrium-dev-shell"
+        self.ledger.design_effects[other] = _DESIGN_EFFECT_PAYLOAD
+        rows = (
+            ("no power pass in the cycle", []),
+            (
+                "another pattern passes, the trial's is absent from the intake",
+                [_pattern(agent=other)],
+            ),
+        )
+        for name, patterns in rows:
+            with self.subTest(name):
+                self.ledger.rows.clear()
+                self.history = list(_get_passing_history())
+                self.clock.now = _NOW
+                self.patterns = [_pattern()]
+                self._open_started_trial()
+                self.history += _get_spawns_after(_NOW, math.ceil(_MILESTONES[0]))
+                self.patterns = patterns
+                self._cycle(_NEXT_NOW)
+                self.assertEqual(len(self.power.passes), len(patterns))
+                self.assertEqual([look.payload["look"] for look in self._get_looks()], [1])
+
+    def test_a_trial_whose_pattern_transitioned_after_its_preregistration_takes_its_look(
         self,
     ) -> None:
         self.patterns = [_pattern(last_transition_at=_NOW + timedelta(minutes=30))]
         self._open_started_trial()
         self.history += _get_spawns_after(_NOW, math.ceil(_MILESTONES[0]))
         self._cycle(_NEXT_NOW)
+        self.assertEqual([look.payload["look"] for look in self._get_looks()], [1])
+
+    def test_a_faulted_read_of_the_trial_agents_spawns_warns_by_name_and_the_next_cycle_takes_the_look(
+        self,
+    ) -> None:
+        self._open_started_trial()
+        self.history += _get_spawns_after(_NOW, math.ceil(_MILESTONES[0]))
+        self.patterns = []  # no power check read → the look's is the cycle's only spawn read
+        fault = ConnectionError("PG unreachable")
+        with mock.patch.object(dc, "_pg_read_spawn_facts", side_effect=fault):
+            stderr = self._cycle(_NEXT_NOW)
+        self.assertIn("WARN: shadow stage — trial spawns unreadable: ConnectionError", stderr)
         self.assertEqual(self._get_looks(), [])
-        # a transition at the recording instant keeps the trial current
-        self.patterns = [_pattern(last_transition_at=_NOW)]
         self._cycle(_NEXT_NOW)
         self.assertEqual([look.payload["look"] for look in self._get_looks()], [1])
 
-    def test_a_stored_pre_generation_row_never_counts_as_the_patterns_current_trial(
-        self,
-    ) -> None:
+    def test_a_stored_pre_generation_row_takes_no_look(self) -> None:
         # same pair, same UTC day: the shadow row holds the pair's own key and reached milestones
         key = self._open_live_trial(event=stub.get_trial_ledger().EVENT.SHADOW_PREREGISTRATION)
         self.history += _get_spawns_after(_NOW, math.ceil(_MILESTONES[1]))
@@ -1617,16 +1638,6 @@ class LedgerFaultTest(_ShadowFixture):
             stderr_text = self._cycle(_NOW)
             self.assertIn("WARN: shadow stage — power-pass-count", stderr_text)
             self.assertIn("ConnectionError", stderr_text)
-        with self.subTest("the pre-registration read faults"):
-            self._open_live_trial()
-            self.history += _get_spawns_after(_NOW, math.ceil(_MILESTONES[1]))
-            self.ledger.faulted.add(dc.SHADOW.PREREGISTRATION_SQL)
-            stderr_text = self._cycle(_NEXT_NOW)
-            self.assertIn(
-                "WARN: shadow stage — pre-registrations unreadable: ConnectionError",
-                stderr_text,
-            )
-            self.assertEqual(self._get_looks(), [])
 
 
 class PreRegistrationReadLivePgTest(_ShadowFixture):
@@ -1663,77 +1674,11 @@ class PreRegistrationReadLivePgTest(_ShadowFixture):
     def _connect(self):
         return self.psycopg.connect(dbname=self.dbname, connect_timeout=2)
 
-    def _insert(
-        self,
-        recorded_at: datetime,
-        event: str,
-        *,
-        agent: str = _AGENT,
-        pattern_id: int = _PATTERN_ID,
-    ) -> str:
-        """One ledger row for (agent, pattern_id, budget_overage), actor by event → its trial key."""
-        key = hashlib.sha256(
-            f"{agent}|{pattern_id}|{event}|{recorded_at.isoformat()}".encode()
-        ).hexdigest()
-        trial_ledger = stub.get_trial_ledger()
-        actor = (trial_ledger.ACTOR.SHADOW, trial_ledger.ACTOR.LIVE)
-        with self._connect() as conn:
-            conn.execute(
-                "INSERT INTO core.autoagent_trial_ledger (recorded_at, trial_key, agent,"
-                " learning_pattern_id, event, actor, payload, dedupe_key)"
-                " VALUES (%s, %s, %s, %s, %s, %s, %s::jsonb, %s)",
-                (
-                    recorded_at,
-                    key,
-                    agent,
-                    pattern_id,
-                    event,
-                    actor[event.startswith("live-")],
-                    json.dumps({"metric_key": _BUDGET_KEY}),
-                    key,
-                ),
-            )
-        return key
-
     def _check_power(self) -> dc.PowerResult:
         with contextlib.redirect_stderr(io.StringIO()):
             power = dc.check_pattern_power(self.patterns, skip_loop_emit=True)
         self.assertEqual(len(power.passes), 1)
         return power
-
-    def test_the_read_keeps_the_latest_preregistration_per_agent_pattern_and_metric_key(
-        self,
-    ) -> None:
-        power = self._check_power()
-        self._use_database(self._TEMPLATE.FULL)
-        event = stub.get_trial_ledger().EVENT
-        latest_at = _NOW - timedelta(days=1)
-        latest = self._insert(latest_at, event.LIVE_PREREGISTRATION)
-        # older yet inserted later · another pattern · an agent outside the passes · a later
-        # live look · a later stored pre-generation row for the same pair
-        self._insert(_NOW - timedelta(days=3), event.LIVE_PREREGISTRATION)
-        other = self._insert(
-            _NOW - timedelta(days=2),
-            event.LIVE_PREREGISTRATION,
-            pattern_id=_PATTERN_ID + 1,
-        )
-        self._insert(
-            latest_at, event.LIVE_PREREGISTRATION, agent="glass-atrium-dev-shell"
-        )
-        self._insert(_NOW, event.LIVE_LOOK)
-        self._insert(_NOW, event.SHADOW_PREREGISTRATION)
-        trials = dc._read_shadow_trials(power.passes)
-        self.assertEqual(
-            {group: trial.key for group, trial in trials.items()},
-            {
-                (_AGENT, _PATTERN_ID, _BUDGET_KEY): latest,
-                (_AGENT, _PATTERN_ID + 1, _BUDGET_KEY): other,
-            },
-        )
-        trial = trials[(_AGENT, _PATTERN_ID, _BUDGET_KEY)]
-        self.assertIsNotNone(trial.recorded_at.tzinfo)
-        self.assertEqual(trial.recorded_at, latest_at)
-        self.assertEqual(trial.payload, {"metric_key": _BUDGET_KEY})
 
     def _insert_proposal(self, cycle_date: str, *, status: str = "applied", agent: str = _AGENT) -> int:
         """One proposal row whose added line names its own label → its id."""
@@ -1861,10 +1806,10 @@ class PreRegistrationReadLivePgTest(_ShadowFixture):
         self._use_database(self._TEMPLATE.ABSENT)
         stderr = io.StringIO()
         with contextlib.redirect_stderr(stderr):
-            dc.run_shadow_stage(power, f"{_NOW:%Y-%m-%d}", frozenset())
+            dc.run_shadow_stage(power, f"{_NOW:%Y-%m-%d}", frozenset({_LIVE_KEY}))
         self.assertRegex(
             stderr.getvalue(),
-            r"WARN: shadow stage — pre-registrations unreadable: UndefinedTable: "
+            r"WARN: shadow stage — trial starts unreadable: UndefinedTable: "
             r".*core\.autoagent_trial_ledger",
         )
         self.assertEqual(self._get_looks(), [])
