@@ -1860,8 +1860,7 @@ _START_WARN = SimpleNamespace(
     NO_HORIZON="pre-registration states no horizon",
     VOID_FAULT="unstarted void not recorded",
 )
-_HELD_AGENT = "glass-atrium-dev-shell"  # a third roster type: the trial a held void names
-_FOREIGN_AGENT = "glass-atrium-dev-react"  # a fourth: the trial a stored foreign row voids
+_FOREIGN_AGENT = "glass-atrium-dev-react"  # a third roster type: a stored foreign row voids it
 _FOREIGN_SHA256 = "e" * 64
 
 
@@ -1965,26 +1964,20 @@ class TrialCanaryTest(_ShadowFixture):
 
     def _seed_every_write_class(self) -> Path:
         """One trial per write the stage makes, under the current data root: one due its first
-        canary, an unstarted one whose stated horizon ends a day on and which holds a file, one
-        a held void names, and one a stored foreign row voids → the due trial's canary path."""
+        canary, an unstarted one whose stated horizon ends a day on and which holds a file, and
+        one a stored foreign row voids → the due trial's canary path."""
         self.ledger.rows.clear()
         self.clock.now = _NOW
         self._open_live_trial()
         self._open_trial_on(_POOL_AGENT, _PROPOSAL_ID + 1, horizon_days=1)
-        held_key = self._open_trial_on(_HELD_AGENT, _PROPOSAL_ID + 2)
-        self._open_trial_on(_FOREIGN_AGENT, _PROPOSAL_ID + 3)
+        self._open_trial_on(_FOREIGN_AGENT, _PROPOSAL_ID + 2)
         self.ledger.stored_rows[:] = [_get_stored_row(_FOREIGN_AGENT, _NOW, _FOREIGN_SHA256)]
         unstarted = dc._get_canary_path(_POOL_AGENT)
         unstarted.parent.mkdir(parents=True)
         unstarted.write_text("{}", encoding="utf-8")
-        dc._put_pending_trial_void(
-            dc.TrialVoid(held_key, _HELD_AGENT, _PATTERN_ID, "f" * 64, "manifest.log.0.spool", 0)
-        )
         return dc._get_canary_path(_AGENT)
 
-    def test_only_the_declared_install_reads_the_ledger_or_changes_a_canary_or_a_held_void(
-        self,
-    ) -> None:
+    def test_only_the_declared_install_reads_the_ledger_or_changes_a_canary(self) -> None:
         root = dc._INSTALL_ROOT
         # name, the root the tree's config.toml declares (None = none rendered), whether it acts
         rows = (
@@ -2015,7 +2008,7 @@ class TrialCanaryTest(_ShadowFixture):
                     (connect.called, due.exists(), len(self._get_starts())),
                     (is_acting, is_acting, int(is_acting)),
                 )
-                # refused: no ledger row, no file written or removed, the held void kept
+                # refused: no ledger row, no file written or removed
                 self.assertEqual(
                     (after == before, refusal in stderr_text), (not is_acting, not is_acting)
                 )
@@ -2330,11 +2323,6 @@ class TrialCanaryTest(_ShadowFixture):
             _store_foreign_row()
             self._patch("_pg_write_trial_ledger_row", _refuse_decision)
 
-        def _hold_void() -> None:
-            dc._put_pending_trial_void(
-                dc.TrialVoid(first, _AGENT, _PATTERN_ID, "f" * 64, "manifest.log.0.spool", 0)
-            )
-
         def _end_horizon() -> None:
             self._get_preregistrations()[0].payload["horizon_days"] = 1  # its bound: the cycle
 
@@ -2373,7 +2361,6 @@ class TrialCanaryTest(_ShadowFixture):
                 _refuse_foreign_void,
                 {second},
             ),
-            ("the first trial's held void recorded at that stage", _hold_void, {second}),
             ("the first trial's unstarted void lands at that stage", _end_horizon, {second}),
             ("the first trial decided before that stage", _decide, {second}),
         )

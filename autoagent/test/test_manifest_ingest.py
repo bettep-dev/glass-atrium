@@ -129,24 +129,12 @@ _TRIAL_VOIDED_RE = re.compile(
     r"WARN: [a-z ]+ — trial (\S+) voided: (\S+)'s canary text (\S+) is not the pre-registered "
     r"one \((\S+) line (\d+), (\S+)\)"
 )
-_TRIAL_HELD_RE = re.compile(
-    r"WARN: [a-z ]+ — trial (\S+) void not recorded: (\S+)'s canary text (\S+) is not the "
-    r"pre-registered one .*; it stays pending — no canary is written or renewed for that trial"
-)
-# (trial key, outcome, agent) of each void WARN whose cause is an unreadable held record
-_TRIAL_VOID_BY_NAME_RE = re.compile(
-    r"WARN: [a-z ]+ — trial (\S+) (voided|void not recorded): (\S+)'s canary text "
-    r"\(unrecorded\) is not the pre-registered one "
-    r"\(its held record unreadable — spool and line unrecorded[,)]"
-)
-# trial key of each unreadable held void written as its open trial's void by its name
-_HELD_UNREADABLE_RE = re.compile(
-    r"WARN: trial stage — trial (\S+): pending void \S+ unreadable: .*; taken as that trial's "
-    r"void by its name — its hash, spool and line unrecorded"
-)
-# path of each unreadable held void that names no open trial
-_ORPHAN_UNREADABLE_RE = re.compile(
-    r"WARN: trial stage — pending void (\S+) unreadable and names no open trial: .*; removed"
+# (area, trial key, agent, delivered hash) of each void the ledger refused
+_TRIAL_VOID_REFUSED_RE = re.compile(
+    r"WARN: ([a-z ]+) — trial (\S+) void not recorded: (\S+)'s canary text (\S+) is not the "
+    r"pre-registered one .*; not held — the next trial stage reads its stored row again; no "
+    r"canary is written or renewed for that trial at this cycle's trial stage$",
+    re.MULTILINE,
 )
 
 
@@ -722,9 +710,9 @@ class _DeliveryCase(_IngestCase):
         self.ledger.writes.clear()
         self.ledger.trials.clear()
 
-    def _get_held_voids(self) -> list[Path]:
-        held_dir = dc.ga_paths.get_data_root().joinpath(*dc.CANARY.SEGMENTS.TRIAL_PENDING_VOIDS)
-        return sorted(held_dir.glob("*"))
+    def _get_report_entries(self) -> list[Path]:
+        """Every entry under the data root's daemon-reports: the trial leg keeps no record there."""
+        return sorted(dc.ga_paths.get_data_root().joinpath("daemon-reports").rglob("*"))
 
     def _run_trial_stage(self) -> str:
         stderr = io.StringIO()
@@ -813,8 +801,7 @@ class TestManifestDeliveryBinding(_DeliveryCase):
 
         self.assertEqual(len(self.ledger.writes), 1)
         self.assertEqual(len(_TRIAL_VOIDED_RE.findall(self.stderr)), 1)
-        self.assertEqual(_TRIAL_HELD_RE.findall(self.stderr), [])
-        self.assertEqual(self._get_held_voids(), [])
+        self.assertEqual(_TRIAL_VOID_REFUSED_RE.findall(self.stderr), [])
 
     def test_an_agent_without_an_open_trial_keeps_the_a_a_leg_and_the_no_trial_branch(
         self,
@@ -903,150 +890,6 @@ class TestManifestDeliveryBinding(_DeliveryCase):
         self.assertEqual(self.ledger.get_events(), [_UNBOUND])
         self.assertEqual(self._get_no_trial_agents(), [_ROSTER[0]])
         self.assertEqual(self._get_canaries(), sorted(_ROSTER))
-
-    def test_a_trial_void_the_ledger_refuses_is_held_until_a_trial_stage_records_it(
-        self,
-    ) -> None:
-        self._open_trial()
-        self.ledger.write_outcome = ConnectionError("server closed the connection")
-        spool = self._ingest_trial_rows({"text_sha256": _PLAIN_SHA256})
-        ingest_stderr = self.stderr
-        refused_stage = self._run_trial_stage()  # the same cycle: the ledger still refuses
-        canaries_while_held = self._get_canaries()
-        self.ledger.write_outcome = 1
-        next_stage = self._run_trial_stage()
-
-        held = [(_TRIAL.KEY, _ROSTER[0], _PLAIN_SHA256)]
-        self.assertEqual(_TRIAL_HELD_RE.findall(ingest_stderr), held)
-        self.assertEqual(_TRIAL_HELD_RE.findall(refused_stage), held)
-        self.assertNotIn(_ROSTER[0], canaries_while_held)
-        self.assertEqual(
-            _TRIAL_VOIDED_RE.findall(next_stage),
-            [(_TRIAL.KEY, _ROSTER[0], _PLAIN_SHA256, spool, "0", f"{_TRIAL.KEY}:decision")],
-        )
-        self.assertEqual([key for *_, key in self.ledger.rows], [f"{_TRIAL.KEY}:decision"])
-        self.assertNotIn(_ROSTER[0], self._get_canaries())
-        self.assertEqual(self._get_held_voids(), [])
-
-    def _put_unreadable_held_void(self, key: str, kind: str) -> Path:
-        """A held entry under key's file name that no read turns into a void."""
-        path = dc._get_pending_trial_void_path(key)
-        path.parent.mkdir(parents=True, exist_ok=True)
-        void = {"key": key, "agent": "a", "pattern_id": 1, "text_sha256": None}
-        void |= {"spool": "s", "line_offset": 0}
-        contents = {
-            "not JSON": "{",
-            "fields of no void": json.dumps({"key": key}),
-            "a key of the wrong type": json.dumps({**void, "key": [key]}),
-            "a field of the wrong type": json.dumps({**void, "line_offset": "0"}),
-        }
-        if kind == "a directory":
-            path.mkdir()
-        else:
-            path.write_text(contents[kind], encoding="utf-8")
-        return path
-
-    def test_an_unreadable_held_void_voids_the_open_trial_its_name_hashes_to_by_that_name(
-        self,
-    ) -> None:
-        held, written, unstarted = _ROSTER
-        past_horizon = _TRIAL.COMMIT + timedelta(days=85)  # the canary rows state 84
-        # the unreadable kind, whether its entry's removal succeeds
-        kinds = (
-            ("not JSON", True),
-            ("fields of no void", True),
-            ("a key of the wrong type", True),
-            ("a field of the wrong type", True),
-            ("a directory", False),
-        )
-        for hour, (kind, is_removed) in enumerate(kinds):
-            with self.subTest(kind):
-                self._use_log_dir(hour)  # salts per row → no row reads another's entry
-                for earlier in self.canary_dir.glob("*.json"):  # only this row's stage writes
-                    earlier.unlink()
-                held_salt, written_salt, unstarted_salt = (f"9{hour}0{n}" for n in (1, 2, 3))
-                held_key, unstarted_key = f"live-trial-{held_salt}", f"live-trial-{unstarted_salt}"
-                self._open_trial(held, salt=held_salt)
-                self._open_trial(written, salt=written_salt)
-                self._open_trial(unstarted, salt=unstarted_salt, started_at=None)
-                entry = self._put_unreadable_held_void(held_key, kind)
-                with mock.patch.object(dc, "_get_utc_now", lambda: past_horizon):
-                    stderr = self._run_trial_stage()
-
-                decided = [key for *_, key in self.ledger.rows]
-                self.assertEqual(
-                    decided, [f"{held_key}:decision", f"{unstarted_key}:decision"], kind
-                )
-                by_name = self.ledger.writes[0]
-                void = {"reason": "foreign-canary-hash", "agent": held, "text_sha256": None}
-                self.assertEqual(
-                    {key: by_name[key] for key in ("trial_key", "agent", "learning_pattern_id")},
-                    {
-                        "trial_key": held_key,
-                        "agent": held,
-                        "learning_pattern_id": _TRIAL.PATTERN_ID,
-                    },
-                    kind,
-                )
-                self.assertEqual(by_name["payload"], {"void": void}, kind)
-                self.assertEqual(_HELD_UNREADABLE_RE.findall(stderr), [held_key], kind)
-                by_name_warns = _TRIAL_VOID_BY_NAME_RE.findall(stderr)
-                self.assertEqual(by_name_warns, [(held_key, "voided", held)], kind)
-                self.assertEqual(self._get_canaries(), [written], stderr)
-                self.assertEqual(self._get_held_voids(), [] if is_removed else [entry], kind)
-                not_removed = stderr.count(f"pending trial void {entry} not removed")
-                self.assertEqual(not_removed, 0 if is_removed else 1, kind)
-
-    def test_a_by_name_void_the_ledger_refuses_keeps_its_entry_until_a_stage_records_it(
-        self,
-    ) -> None:
-        held, written = _ROSTER[:2]
-        self._open_trial(held)
-        self._open_trial(written, salt="9002")
-        entry = self._put_unreadable_held_void(_TRIAL.KEY, "not JSON")
-        held_bytes = entry.read_bytes()
-        self.ledger.write_outcome = ConnectionError("server closed the connection")
-        refused_stage = self._run_trial_stage()
-        while_refused = (entry.read_bytes(), self._get_canaries(), list(self.ledger.rows))
-        self.ledger.write_outcome = 1
-        self._run_trial_stage()
-
-        self.assertEqual(while_refused, (held_bytes, [written], []))
-        still_pending = _TRIAL_HELD_RE.findall(refused_stage)
-        self.assertEqual(still_pending, [(_TRIAL.KEY, held, "(unrecorded)")])
-        by_name_warns = _TRIAL_VOID_BY_NAME_RE.findall(refused_stage)
-        self.assertEqual(by_name_warns, [(_TRIAL.KEY, "void not recorded", held)])
-        by_name = {"reason": "foreign-canary-hash", "agent": held, "text_sha256": None}
-        self.assertEqual(
-            [(write["dedupe_key"], write["payload"]) for write in self.ledger.writes],
-            [(f"{_TRIAL.KEY}:decision", {"void": by_name})],
-        )
-        self.assertEqual(self._get_held_voids(), [])
-        self.assertEqual(self._get_canaries(), [written])
-
-    def test_an_unstarted_trial_past_its_bound_is_decided_once_by_its_unreadable_held_void(
-        self,
-    ) -> None:
-        past_horizon = _TRIAL.COMMIT + timedelta(days=85)  # the canary rows state 84
-        self._open_trial(started_at=None)
-        self._put_unreadable_held_void(_TRIAL.KEY, "not JSON")
-        with mock.patch.object(dc, "_get_utc_now", lambda: past_horizon):
-            self._run_trial_stage()
-
-        decisions = [(key, payload["void"]["reason"]) for _, payload, key in self.ledger.rows]
-        self.assertEqual(decisions, [(f"{_TRIAL.KEY}:decision", "foreign-canary-hash")])
-        self.assertEqual(self.ledger.get_open_trials(), [])
-
-    def test_an_unreadable_held_void_of_no_open_trial_stops_nothing_and_is_removed(self) -> None:
-        self._open_trial(_ROSTER[0], salt="9001", is_decided=True)
-        self._open_trial(_ROSTER[1], salt="9002")
-        entry = self._put_unreadable_held_void("live-trial-9001", "not JSON")
-
-        stderr = self._run_trial_stage()
-
-        self.assertEqual(self._get_canaries(), [_ROSTER[1]], stderr)
-        self.assertEqual(_ORPHAN_UNREADABLE_RE.findall(stderr), [str(entry)])
-        self.assertEqual(self._get_held_voids(), [])
 
     def test_each_delivered_row_binds_once_at_the_ingest_that_first_stores_it(self) -> None:
         first, racing = _ROSTER[:2]  # racing: appended to the spool right after cycle 1
@@ -1532,35 +1375,107 @@ class TestStoredRowsJudgment(_DeliveryCase):
                     [line for line in warns if "WARN: trial stage — " not in line], [], name
                 )
                 self.assertEqual(sorted(self._get_canary_files()), sorted(_ROSTER[1:]), name)
-                self.assertEqual(self._get_held_voids(), [], name)
 
     def test_a_void_the_ledger_refuses_is_not_held_and_lands_at_the_stage_that_records_it(
         self,
     ) -> None:
-        self._open_trial()
-        self._put_canaries()
-        spool = self._store(self._get_foreign_line())
-        self.ledger.write_outcome = ConnectionError("server closed the connection")
-        refused_stage = self._run_trial_stage()
-        while_refused = (
-            self._get_decided_keys(),
-            sorted(self._get_canary_files()),
-            self._get_held_voids(),
-        )
-        self.ledger.write_outcome = 1
-        landing_stage = self._run_trial_stage()
-
         decision = f"{_TRIAL.KEY}:decision"
-        self.assertEqual(while_refused, ([], sorted(_ROSTER[1:]), []))
-        self.assertEqual(
-            _TRIAL_HELD_RE.findall(refused_stage), [(_TRIAL.KEY, _ROSTER[0], _PLAIN_SHA256)]
+        # name, whether an ingest's void is the first refused (False = the row stored and never
+        # bound), the trial stages the ledger refuses before one takes the void
+        rows = (
+            ("refused at the ingest, taken by the next stage", True, 0),
+            ("refused at the ingest and by the next stage", True, 1),
+            ("stored and never bound, refused by its first stage", False, 1),
         )
-        self.assertEqual(self._get_decided_keys(), [decision])
-        self.assertEqual(
-            _TRIAL_VOIDED_RE.findall(landing_stage),
-            [(_TRIAL.KEY, _ROSTER[0], _PLAIN_SHA256, spool, "0", decision)],
+        for hour, (name, is_ingest_void, refused_stages) in enumerate(rows):
+            with self.subTest(name):
+                self._use_log_dir(hour)
+                self.table.rows.clear()
+                self._open_trial()
+                self.ledger.write_outcome = ConnectionError("server closed the connection")
+                if is_ingest_void:
+                    spool = self._ingest_trial_rows({"salt": "3", "text_sha256": _PLAIN_SHA256})
+                    refused = [("manifest binding", self.stderr)]
+                else:
+                    self._put_canaries()
+                    spool = self._store(self._get_foreign_line())
+                    refused = []
+                refused += [("trial stage", self._run_trial_stage()) for _ in range(refused_stages)]
+                while_refused = (
+                    self._get_decided_keys(),
+                    sorted(self._get_canary_files()),
+                    self._get_report_entries(),
+                )
+                self.ledger.write_outcome = 1
+                landing_stage = self._run_trial_stage()
+                self._run_trial_stage()  # the trial decided → no second void
+
+                self.assertEqual(while_refused, ([], sorted(_ROSTER[1:]), []), name)
+                self.assertEqual(
+                    [_TRIAL_VOID_REFUSED_RE.findall(stderr) for _, stderr in refused],
+                    [[(area, _TRIAL.KEY, _ROSTER[0], _PLAIN_SHA256)] for area, _ in refused],
+                    name,
+                )
+                self.assertEqual(self._get_decided_keys(), [decision], name)
+                self.assertEqual(
+                    _TRIAL_VOIDED_RE.findall(landing_stage),
+                    [(_TRIAL.KEY, _ROSTER[0], _PLAIN_SHA256, spool, "0", decision)],
+                    name,
+                )
+                self.assertEqual(self._get_report_entries(), [], name)
+                self.assertNotIn(_ROSTER[0], self._get_canary_files(), name)
+
+    def test_a_void_refused_at_the_ingest_outlasts_a_faulted_stage_and_lands_at_the_next_that_reads(
+        self,
+    ) -> None:
+        decision = f"{_TRIAL.KEY}:decision"
+        closed = ConnectionError("server closed the connection")
+
+        def _set_store_fault(value: Exception | None) -> None:
+            self.table.other_hash_read_fault = value
+
+        def _set_salt_fault(value: Exception | None) -> None:
+            self.ledger.fault["salt"] = value
+
+        # name, the switch of the read that cycle's stage faults on, its fault
+        rows = (
+            ("the stored-rows read faults", _set_store_fault, closed),
+            (
+                "the store has no exposure columns",
+                _set_store_fault,
+                _UndefinedColumn("column m.delivered does not exist"),
+            ),
+            ("the salt read faults on the trial's other-hash row", _set_salt_fault, closed),
         )
-        self.assertNotIn(_ROSTER[0], self._get_canary_files())
+        for hour, (name, set_fault, fault) in enumerate(rows):
+            with self.subTest(name):
+                self._use_log_dir(hour)
+                self.table.rows.clear()
+                self._open_trial()
+                self.ledger.write_outcome = closed
+                spool = self._ingest_trial_rows({"salt": "3", "text_sha256": _PLAIN_SHA256})
+                self.ledger.write_outcome = 1  # the ledger takes a void: the read alone holds it
+                left_by_the_ingest = self._get_canary_files()
+                set_fault(fault)
+                faulted_stage = self._run_trial_stage()
+                set_fault(None)
+                after_the_fault = (
+                    self._get_decided_keys(),
+                    self._get_canary_files(),
+                    self._get_report_entries(),
+                )
+                reading_stage = self._run_trial_stage()
+                self._run_trial_stage()  # the trial decided → no second void
+
+                self.assertNotIn(_ROSTER[0], left_by_the_ingest, name)
+                self.assertEqual(after_the_fault, ([], left_by_the_ingest, []), name)
+                self.assertEqual(_TRIAL_VOIDED_RE.findall(faulted_stage), [], name)
+                self.assertEqual(
+                    _TRIAL_VOIDED_RE.findall(reading_stage),
+                    [(_TRIAL.KEY, _ROSTER[0], _PLAIN_SHA256, spool, "0", decision)],
+                    name,
+                )
+                self.assertEqual(self._get_decided_keys(), [decision], name)
 
     def test_repeated_stages_over_own_hash_rows_decide_nothing_and_renew_the_canary(self) -> None:
         self._open_trial()
