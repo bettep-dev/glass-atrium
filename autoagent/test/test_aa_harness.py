@@ -2778,6 +2778,25 @@ class AaCriterionTest(unittest.TestCase):
             with self.subTest(name):
                 self.assertEqual(dc.get_aa_engine_criterion(looks).verdict, verdict)
 
+    def test_a_look_wins_exactly_when_its_pooled_z_reaches_its_boundary(self) -> None:
+        # control 30/100, treatment 10/100: pooled 0.2 → se √(0.2·0.8·(1/100 + 1/100)) = √0.0032
+        #   z = (0.3 - 0.1) / 0.0565685 = 3.5355339 (a reduction counts positive)
+        reduction = _arms((30, 100), (10, 100))
+        quiet = {"emit_failure": _arms((10, 1000), (11, 1000))}
+        rows = (
+            ("a boundary just under the reduction's z", reduction, 3.5355338, [1]),
+            ("a boundary just over it", reduction, 3.5355340, []),
+            ("no event in either arm: no variance, no z", _arms((0, 50), (0, 50)), -math.inf, []),
+        )
+        for name, arms, boundary, win_looks in rows:
+            # the criterion states a z only as a win → the boundary sits either side of the value
+            with (
+                self.subTest(name),
+                mock.patch.object(trial_design, "get_boundaries", return_value=(boundary,)),
+            ):
+                criterion = dc.get_aa_engine_criterion([dc.AaLook(arms, quiet)])
+                self.assertEqual(criterion.detail["win_looks"], win_looks)
+
     def test_the_overall_verdict_passes_only_when_every_criterion_passes(self) -> None:
         rows = (
             ("every criterion passes", ("pass", "pass"), "pass"),
