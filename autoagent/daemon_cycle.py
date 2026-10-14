@@ -15390,8 +15390,11 @@ def run_cycle(
     compliance filter → safety routing; a verified non-safety candidate gets its live
     pre-registration payload, and the floor terminalizes every other auto candidate.
 
-    A writing cycle applies each won trial's still-pending row after the stages and
-    ahead of generation (run_graduation_stage), so generation reads the applied body.
+    A writing cycle calls the apply for each won trial's still-pending row after the
+    stages and ahead of generation (run_graduation_stage). The agent of a called row gets
+    no generator call that cycle, whatever the call's outcome — its intake was read before
+    the apply; its generation resumes at the first writing cycle whose stage makes no call
+    for it and whose one-running-trial gate finds no held trial.
 
     A writing cycle (skip_loop_emit False) from a code tree that is not its install
     raises InstallRefusedError before any stage, reads included.
@@ -15466,7 +15469,15 @@ def run_cycle(
         run_aa_stage(
             report.cycle_date, manifest_ingest=report.manifest_ingest, agents_dir=agents_dir
         )
-        run_graduation_stage()
+        # the intake above was read before the apply → a called row's agent sits this cycle out
+        graduating_agents = run_graduation_stage()
+        for agent, _ in agent_groups:
+            if agent in graduating_agents:
+                sys.stderr.write(
+                    f"[daemon-cycle] INFO: graduation — agent={agent}: apply called this cycle "
+                    "— no generator call this cycle\n"
+                )
+        agent_groups = [group for group in agent_groups if group[0] not in graduating_agents]
 
     # T3 corpus/compliance telemetry — DETECTION-ONLY, fired ONCE per cycle.
     # Fully wrapped: any failure is swallowed so it can NEVER block or raise into
@@ -15675,18 +15686,21 @@ def _drop_trial_held_agents(
     return [group for group in agent_groups if group[0] not in held_trials]
 
 
-def run_graduation_stage() -> None:
+def run_graduation_stage() -> frozenset[str]:
     """Graduation — one apply call for each won trial whose proposal row is still pending.
 
     Derived every writing cycle from stored rows: the win row is the decision, the apply its
     effect. A row still pending after its call → a named WARN, whatever the exit; the next
     writing cycle calls again, and the apply path's stale drain ends a diff that never lands.
+
+    Returns the agents of the rows it called the apply for, whatever each call's outcome:
+    run_cycle makes no generator call for them this cycle.
     """
-    won_ids = _read_won_pending_ids("no apply call this cycle")
-    if not won_ids:
-        return
-    outcomes = {proposal_id: _call_graduation_apply(proposal_id) for proposal_id in won_ids}
-    still_pending = _read_won_pending_ids(
+    won_agents = _read_won_pending_agents("no apply call this cycle")
+    if not won_agents:
+        return frozenset()
+    outcomes = {proposal_id: _call_graduation_apply(proposal_id) for proposal_id in won_agents}
+    still_pending = _read_won_pending_agents(
         "the apply outcomes go unreported, a row still pending is called again next writing cycle"
     )
     for proposal_id in still_pending or ():
@@ -15697,17 +15711,18 @@ def run_graduation_stage() -> None:
                 f"after its apply call ({outcomes[proposal_id]})",
                 "the next writing cycle calls again",
             )
+    return frozenset(won_agents.values())
 
 
-def _read_won_pending_ids(fault_scope: str) -> list[int] | None:
-    """Proposal ids of the won trials whose row is still pending: held and not open.
+def _read_won_pending_agents(fault_scope: str) -> dict[int, str] | None:
+    """Proposal id → agent of the won trials whose row is still pending: held and not open.
 
     None, with a named WARN, on a read fault. No PG layer → nothing readable. The open read
     follows the held one, so a trial decided between them is not taken for a won one only while
     the cycle is the sole decider.
     """
     if not HAS_PG_LOOP_WRITE:
-        return []
+        return {}
     try:
         held_trials = _pg_read_held_trials()
         open_trials = _pg_read_open_trials() if held_trials else {}
@@ -15716,11 +15731,13 @@ def _read_won_pending_ids(fault_scope: str) -> list[int] | None:
             STAGE_AREA.GRADUATION, f"won trials unreadable: {_describe_fault(exc)}", fault_scope
         )
         return None
-    return sorted(
-        proposal_id
-        for agent, proposal_ids in held_trials.items()
-        for proposal_id in proposal_ids
-        if proposal_id not in open_trials.get(agent, [])
+    return dict(
+        sorted(
+            (proposal_id, agent)
+            for agent, proposal_ids in held_trials.items()
+            for proposal_id in proposal_ids
+            if proposal_id not in open_trials.get(agent, [])
+        )
     )
 
 

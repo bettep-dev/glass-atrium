@@ -3955,7 +3955,11 @@ class GraduationApplyTest(_ShadowFixture):
 
 
 class CycleWiringTest(_ShadowFixture):
-    """run_cycle runs the stage on a writing cycle; no-write mode (--dry-run → skip_loop_emit) writes no ledger row."""
+    """run_cycle runs the stage on a writing cycle; no-write mode (--dry-run → skip_loop_emit) writes no ledger row.
+
+    An agent the cycle's graduation stage made an apply call for gets no generator call in that
+    cycle, whatever the call's outcome; its generation resumes at the first writing cycle whose
+    stage makes no call for it and whose gate finds no held trial."""
 
     def setUp(self) -> None:
         super().setUp()
@@ -4103,6 +4107,58 @@ class CycleWiringTest(_ShadowFixture):
         flags = ["--proposal-id", str(_PROPOSAL_ID), "--actor", "daemon-apply-flip"]
         self.assertEqual(called_ahead_of_generation, [[["bash", str(script), *flags]]])
 
+    def test_a_writing_cycle_whose_apply_lands_the_won_row_makes_no_generator_call_for_its_agent_until_the_next_cycle(
+        self,
+    ) -> None:
+        trial_ledger = stub.get_trial_ledger()
+        key = self._open_live_trial()
+        self.ledger.write(
+            trial_ledger.EVENT.LIVE_DECISION,
+            trial_ledger.ACTOR.LIVE,
+            {"win": {}},
+            trial_key=key,
+            agent=_AGENT,
+            dedupe_key=f"{key}:decision",
+        )
+        # a second agent group with no won row: the stage makes no call for it
+        (self.root / "agents" / f"{_POOL_AGENT}.md").write_text("probe", encoding="utf-8")
+        self.ledger.design_effects[_POOL_AGENT] = _DESIGN_EFFECT_PAYLOAD
+        self.intakes.append(
+            self.intakes[0]
+            | {
+                "id": _PATTERN_ID + 1,
+                "agent": _POOL_AGENT,
+                "pattern_signature": f"budget-overage concentration|{_POOL_AGENT}",
+            }
+        )
+        generated: list[list[str]] = []
+        for name, value in (
+            ("run_trial_stage", lambda: frozenset()),
+            ("run_shadow_stage", lambda *args: None),
+            ("run_aa_stage", lambda *args, **kwargs: None),
+            (
+                "_run_generation_loop",
+                lambda _report, groups, _run: generated.append(
+                    sorted(agent for agent, _ in dc._drop_trial_held_agents(groups))
+                ),
+            ),
+        ):
+            self._patch(name, value)
+        self._open_writing_stages()
+        calls = _fake_apply_script(self, (0,), leaves="applied")
+
+        self._run_cycle(skip_loop_emit=False)
+        landing_cycle_log = self.stderr.getvalue()
+        self._run_cycle(skip_loop_emit=False)
+
+        self.assertEqual(len(calls), 1)
+        self.assertEqual(generated, [[_POOL_AGENT], sorted((_AGENT, _POOL_AGENT))])
+        self.assertIn(
+            f"[daemon-cycle] INFO: graduation — agent={_AGENT}: apply called this cycle "
+            "— no generator call this cycle\n",
+            landing_cycle_log,
+        )
+
     def test_a_writing_cycle_runs_the_ingest_the_trial_the_shadow_and_the_aa_stage_then_graduation(
         self,
     ) -> None:
@@ -4116,7 +4172,7 @@ class CycleWiringTest(_ShadowFixture):
             lambda *args: (stages.append("shadow"), handed.append(args[2:])),
         )
         self._patch("run_aa_stage", lambda *args, **kwargs: stages.append("aa"))
-        self._patch("run_graduation_stage", lambda: stages.append("graduation"))
+        self._patch("run_graduation_stage", lambda: (stages.append("graduation"), frozenset())[1])
         self._open_writing_stages()
 
         self._run_cycle(skip_loop_emit=False)
