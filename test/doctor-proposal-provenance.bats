@@ -355,7 +355,7 @@ warn_total_of_output() {
   local answer
   # A NOTICE riding on the row, a reply to a different question, and a short row: none of the three
   # answers THIS question, and arithmetic over any of them would abort the whole run.
-  for answer in "NOTICE: relation rebuilt" "20260101000000_alpha	2026-01-01T00:00:00Z	" "271"; do
+  for answer in "NOTICE: relation rebuilt" "20260101000000_alpha	2026-01-01T00:00:00Z	" "240"; do
     printf '%s' "${answer}" >"${STUB_STATE}/provenance.out"
     run_doctor_sandbox
     [[ "${status}" -eq 0 ]] || {
