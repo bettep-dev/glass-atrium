@@ -461,8 +461,15 @@ applied_log_path() {
     sleep 0.1
     i=$((i + 1))
   done
-  [[ -e "${ready}" ]]               # daemon reached the apply (not a startup fail)
-  [[ -d "${REPORTS}/.apply-lock" ]] # the lock IS held at SIGTERM-delivery time
+  [[ -e "${ready}" ]] || {
+    echo "daemon never reached the apply (no handshake file)" >&2
+    cat "${WORK}/daemon.log" >&2
+    return 1
+  }
+  [[ -d "${REPORTS}/.apply-lock" ]] || {
+    echo "no .apply-lock held at SIGTERM-delivery time" >&2
+    return 1
+  }
 
   kill -TERM "${DAEMON_PID}" # delivered NOW, pending while git is in flight
   : >"${resume}"             # unblock the apply so the deferred trap can fire
@@ -485,13 +492,21 @@ applied_log_path() {
   wait "${DAEMON_PID}" 2>/dev/null || daemon_rc=$?
   DAEMON_PID=""
 
-  [[ ! -d "${REPORTS}/.apply-lock" ]] # trap released the lock — nothing stranded
+  [[ ! -d "${REPORTS}/.apply-lock" ]] || {
+    echo ".apply-lock stranded after SIGTERM — the trap did not release it" >&2
+    cat "${WORK}/daemon.log" >&2
+    return 1
+  }
 
   # Regression pin (signal-exit defect): the TERM handler must TERMINATE the
   # daemon with 128+SIGTERM=143. Pre-fix, bash RESUMED execution after the
   # shared handler released the lock, so the daemon ran to natural completion
   # (exit 0) — mutating agent files with NO mutual exclusion post-signal.
-  [[ "${daemon_rc}" -eq 143 ]]
+  [[ "${daemon_rc}" -eq 143 ]] || {
+    echo "daemon exited ${daemon_rc} after SIGTERM, want 143" >&2
+    cat "${WORK}/daemon.log" >&2
+    return 1
+  }
 
   # No post-signal mutations: the handler exits BEFORE verify/emit_log, so the
   # applied log must NOT record an applied row for this run (SC2314-safe
