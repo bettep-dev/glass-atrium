@@ -619,14 +619,20 @@ def _pattern(
     )
 
 
-def _fake_apply_script(testcase: unittest.TestCase, exit_codes: tuple[int, ...]) -> list[list[str]]:
+def _fake_apply_script(
+    testcase: _ShadowFixture, exit_codes: tuple[int, ...], leaves: str | None = None
+) -> list[list[str]]:
     """autoagent/daemon-apply.sh faked at its call boundary → the argv of each process the
-    module starts; a call exits with the next of `exit_codes`, 0 past them."""
+    module starts; a call exits with the next of `exit_codes`, 0 past them, and moves its
+    proposal row to the status `leaves` where one is given."""
     calls: list[list[str]] = []
     codes = iter(exit_codes)
 
     def _run(argv: list[str], **_kwargs: object) -> object:
         calls.append(list(argv))
+        if leaves is not None:
+            proposal_id = int(argv[argv.index("--proposal-id") + 1])
+            testcase.ledger.proposal_statuses[proposal_id] = leaves
         return dc.subprocess.CompletedProcess(argv, next(codes, 0))
 
     patcher = mock.patch.object(dc.subprocess, "run", _run)
@@ -3866,8 +3872,8 @@ class TrialCanaryTest(_ShadowFixture):
 
 class GraduationApplyTest(_ShadowFixture):
     """A won trial's proposal row is applied by the cycle while it stays pending: one apply call
-    a cycle, a named WARN while the row is still pending after it, no call once the row left
-    pending, and none for a trial still open."""
+    a cycle, a named WARN only while the row is still pending after it, whatever the call's
+    exit, no call once the row left pending, and none for a trial still open."""
 
     def _win(self) -> str:
         """A started trial won at look 2, one shadow stage → its key."""
@@ -3893,16 +3899,19 @@ class GraduationApplyTest(_ShadowFixture):
         key = self._win()
         self._open_trial_on(_POOL_AGENT, _PROPOSAL_ID + 1)  # another agent's trial, still open
         groups = [(_AGENT, self.patterns)]
-        # name, the proposal row's status, each cycle's apply exit, whether the agent stays held
+        # name, the proposal row's status, the status an apply call leaves it at, each call's
+        # exit, whether the agent stays held after both cycles
         rows = (
-            ("the call failed and the row is pending", "pending", (9, 0), True),
-            ("applied", "applied", (), False),
-            ("snoozed", "snoozed", (), False),
+            ("the call failed and the row is pending", "pending", "pending", (9, 0), True),
+            ("the call landed the patch", "pending", "applied", (0,), False),
+            ("the call ended the row without landing it", "pending", "snoozed", (9,), False),
+            ("applied", "applied", "applied", (), False),
+            ("snoozed", "snoozed", "snoozed", (), False),
         )
-        for name, status, exit_codes, is_held in rows:
+        for name, status, left, exit_codes, is_held in rows:
             with self.subTest(name):
                 self.ledger.proposal_statuses[_PROPOSAL_ID] = status
-                calls = _fake_apply_script(self, exit_codes)
+                calls = _fake_apply_script(self, exit_codes, leaves=left)
 
                 lines = self._graduate() + self._graduate()
                 with contextlib.redirect_stderr(io.StringIO()):
@@ -3919,6 +3928,7 @@ class GraduationApplyTest(_ShadowFixture):
                         f"still pending after its apply call (exit {exit_code}); "
                         "the next writing cycle calls again"
                         for exit_code in exit_codes
+                        if left == "pending"
                     ],
                 )
                 self.assertEqual(generated, [] if is_held else groups)
