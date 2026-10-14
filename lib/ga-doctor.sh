@@ -693,6 +693,11 @@ run_doctor() {
       if ga_guard_path "${ld_tmp}"; then rm -rf -- "${ld_tmp:?}"; fi
     fi
   fi
+  local launchd_unloaded=0
+  if [[ "${deployed_count}" -gt 0 ]]; then
+    # shellcheck disable=SC2311
+    launchd_unloaded="$(launchd_unloaded_probe)"
+  fi
 
   # 12. domain-data separation (D6) — relocation correctness. Asserts the new HOME-anchored runtime
   #     root (GA_DATA_ROOT/data) landed AND warns on stale Tier-A leftovers still under the legacy
@@ -1484,7 +1489,7 @@ run_doctor() {
     # B (report-only): its log line ONLY — no counter, no total, no breakdown term, exit code
     #   unchanged. C (wording): the existing row's log line only.
     # Parity of the two expressions below is machine-checked by test/doctor-summary-contract.bats.
-    local warns=$((unbound + drift + undeployed_fresh + inject_drop_warns + launchd_drift + snapshot_stale + snapshot_path_anomaly + data_sep_stale + channel_silent + channel_blind + registry_warns + arbiter_warns + retired_residue + retired_refused + mig_pending + inject_slot_warns + token_leak))
+    local warns=$((unbound + drift + undeployed_fresh + inject_drop_warns + launchd_drift + snapshot_stale + snapshot_path_anomaly + data_sep_stale + channel_silent + channel_blind + registry_warns + arbiter_warns + retired_residue + retired_refused + mig_pending + inject_slot_warns + launchd_unloaded + token_leak))
     if [[ "${warns}" -eq 0 ]]; then
       log "== doctor: PASS =="
     else
@@ -1492,7 +1497,7 @@ run_doctor() {
       # term happened to be last, so every downstream glob written against that term broke the next
       # time a category was appended (adding channel-silent did exactly that to
       # doctor-launchd-deploy-drift.bats). Leading, every term is `<n> <name>` and none is special.
-      log "== doctor: PASS (with ${warns} warning(s): ${unbound} dormant-hook + ${drift} manifest-drift + ${undeployed_fresh} fresh-undeployed + ${inject_drop_warns} inject-drop + ${launchd_drift} launchd-drift + ${snapshot_stale} snapshot-stale + ${snapshot_path_anomaly} snapshot-path-anomaly + ${data_sep_stale} data-sep-leftover + ${channel_silent} channel-silent + ${channel_blind} channel-blind + ${registry_warns} registry-reconcile + ${arbiter_warns} arbiter-gap + ${retired_residue} retired-residue + ${retired_refused} retired-refused-key + ${mig_pending} pending-migration + ${inject_slot_warns} inject-slot + ${token_leak} token-leak — see above) =="
+      log "== doctor: PASS (with ${warns} warning(s): ${unbound} dormant-hook + ${drift} manifest-drift + ${undeployed_fresh} fresh-undeployed + ${inject_drop_warns} inject-drop + ${launchd_drift} launchd-drift + ${snapshot_stale} snapshot-stale + ${snapshot_path_anomaly} snapshot-path-anomaly + ${data_sep_stale} data-sep-leftover + ${channel_silent} channel-silent + ${channel_blind} channel-blind + ${registry_warns} registry-reconcile + ${arbiter_warns} arbiter-gap + ${retired_residue} retired-residue + ${retired_refused} retired-refused-key + ${mig_pending} pending-migration + ${inject_slot_warns} inject-slot + ${launchd_unloaded} launchd-unloaded + ${token_leak} token-leak — see above) =="
     fi
     return 0
   fi
@@ -2041,6 +2046,30 @@ launchd_deploy_drift() {
     fi
   done
   printf '%d\n' "${drift}"
+}
+
+# launchd loaded-state probe — run_doctor §11 helper. Asks launchd about each DEPLOYED com.glass-atrium
+# plist, since a plist booted out after deploy still sha-matches its render. Each not-loaded job is logged
+# to stderr; the count is the stdout verdict. A sandbox target or a missing launchctl skips with a note.
+launchd_unloaded_probe() {
+  local ld_job label unloaded=0
+  # is_sandbox_target returns 0 by contract (stdout verdict) → masking is intentional
+  # shellcheck disable=SC2310,SC2311,SC2312
+  if [[ "$(is_sandbox_target)" == "yes" ]]; then
+    log "  note : launchd loaded-state probe skipped — sandbox target (launchd domain is per-UID, not per-HOME)"
+  elif ! command -v launchctl >/dev/null 2>&1; then
+    log "  note : launchd loaded-state probe skipped — launchctl not found"
+  else
+    for ld_job in "${LAUNCHD_JOBS[@]}"; do
+      label="${LAUNCHD_LABEL_PREFIX}.${ld_job}"
+      [[ -f "${LAUNCH_AGENTS}/${label}.plist" ]] || continue
+      if ! launchctl print "gui/${UID}/${label}" >/dev/null 2>&1; then
+        log "  warn : ${label} deployed but not loaded — run --load-launchd"
+        unloaded=$((unloaded + 1))
+      fi
+    done
+  fi
+  printf '%d\n' "${unloaded}"
 }
 
 # domain-data separation leftover scan (run_doctor §12 helper — D6). For each Tier-A ENUMERATED
