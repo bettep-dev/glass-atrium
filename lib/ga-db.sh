@@ -70,15 +70,18 @@ SELECT migration_name, coalesce(finished_at::text, ''), coalesce(rolled_back_at:
 SQL
 }
 
-# Classify history rows read on STDIN, one `applied <name>` / `failed <name>` line out per row.
-# APPLIED = finished_at non-empty AND rolled_back_at empty. Counting migration_name alone would
-# read a failed or rolled-back attempt as applied — the false-green this whole surface exists to
-# prevent, because re-applying never clears such a row.
+# Classify history rows read on STDIN, one `applied <name>` / `rolled_back <name>` / `failed <name>`
+# line out per row. APPLIED = finished_at non-empty AND rolled_back_at empty; ROLLED_BACK =
+# rolled_back_at set; FAILED = an unfinished row that was not rolled back. Counting migration_name
+# alone would read a failed or rolled-back attempt as applied — the false-green this whole surface
+# exists to prevent, because re-applying never clears such a row.
 get_migration_states() {
   local name finished rolled_back
   while IFS=$'\x1f' read -r name finished rolled_back; do
     [[ -n "${name}" ]] || continue
-    if [[ -n "${finished}" && -z "${rolled_back}" ]]; then
+    if [[ -n "${rolled_back}" ]]; then
+      printf 'rolled_back %s\n' "${name}"
+    elif [[ -n "${finished}" ]]; then
       printf 'applied %s\n' "${name}"
     else
       printf 'failed %s\n' "${name}"

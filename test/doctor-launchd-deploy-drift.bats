@@ -206,3 +206,83 @@ run_doctor_sandbox_mktemp_empty() {
   [[ "${output}" != *"stale-deployed launchd plist"* ]] || return 1
   [[ "${output}" != *"renderer anomaly"* ]] || return 1
 }
+
+# === 5. loaded-state probe: a deployed plist launchd has not loaded ===========
+
+# Run run_doctor with a recording launchctl stub first on PATH, so no real launchd domain is asked.
+# $1 = the stub's `print` exit code · $2 = an is_sandbox_target verdict shadowed inside the doctor
+# shell (empty → the real guard runs).
+run_doctor_launchctl_stub() {
+  local stub_dir="${SANDBOX}/launchctl-bin"
+  LAUNCHCTL_LOG="${SANDBOX}/launchctl.log"
+  mkdir -p -- "${stub_dir}"
+  : >"${LAUNCHCTL_LOG}"
+  cat >"${stub_dir}/launchctl" <<'STUB'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >>"${GA_TEST_LAUNCHCTL_LOG}"
+[[ "${1:-}" == "print" ]] && exit "${GA_TEST_PRINT_RC}"
+exit 0
+STUB
+  chmod +x "${stub_dir}/launchctl"
+
+  run env PATH="${stub_dir}:${PATH}" GA_TEST_LAUNCHCTL_LOG="${LAUNCHCTL_LOG}" \
+    GA_TEST_PRINT_RC="$1" GA_TEST_SANDBOX_VERDICT="$2" \
+    HOME="${SANDBOX_HOME}" GA_TARGET_HOME="${TARGET}" \
+    AUTOAGENT_BACKUP_DIR="${SANDBOX}/agents-bak" \
+    GA_CONFIG_TOML="${FAKE_CONFIG}" GA_MANIFEST="${FAKE_MANIFEST}" \
+    GA_GENERATE_MANIFEST="${GEN_STUB}" ATRIUM_MONITOR_PORT="${GA_DOCTOR_DEAD_PORT}" \
+    bash -c '
+      set -Eeuo pipefail
+      source "$1/lib/ga-core.sh"
+      ga_init_env "$1"
+      if [[ -n "${GA_TEST_SANDBOX_VERDICT}" ]]; then
+        is_sandbox_target() { printf "%s\n" "${GA_TEST_SANDBOX_VERDICT}"; }
+      fi
+      run_doctor
+    ' _ "${GA}"
+}
+
+# The N of `doctor: PASS (with N warning(s)`, 0 for a bare PASS, empty when the run did not PASS.
+pass_warning_total() {
+  if [[ "${output}" == *"== doctor: PASS =="* ]]; then
+    printf '0\n'
+    return 0
+  fi
+  printf '%s\n' "${output}" | sed -n 's/.*== doctor: PASS (with \([0-9][0-9]*\) warning(s).*/\1/p' | head -1
+}
+
+@test "a deployed plist launchd has not loaded -> one counted warn naming the label and --load-launchd" {
+  deploy_ref monitor
+  local warn="warn : com.glass-atrium.monitor deployed but not loaded — run --load-launchd"
+  local rows=("deployed and loaded|0|absent" "deployed but not loaded|113|present")
+  local row name rc expect total loaded_total="" unloaded_total=""
+
+  for row in "${rows[@]}"; do
+    IFS='|' read -r name rc expect <<<"${row}"
+    run_doctor_launchctl_stub "${rc}" no
+    [[ "${status}" -eq 0 ]] || { echo "${name}: status ${status}"; echo "${output}"; return 1; }
+    if [[ "${expect}" == "present" ]]; then
+      [[ "${output}" == *"${warn}"* ]] || { echo "${name}: warn missing"; echo "${output}"; return 1; }
+    else
+      [[ "${output}" != *"deployed but not loaded"* ]] || { echo "${name}: unexpected warn"; echo "${output}"; return 1; }
+    fi
+    total="$(pass_warning_total)"
+    [[ -n "${total}" ]] || { echo "${name}: no PASS warning total"; echo "${output}"; return 1; }
+    if [[ "${expect}" == "present" ]]; then unloaded_total="${total}"; else loaded_total="${total}"; fi
+  done
+
+  [[ "${unloaded_total}" -eq $((loaded_total + 1)) ]] \
+    || { echo "PASS warning total: loaded=${loaded_total} not-loaded=${unloaded_total}"; return 1; }
+}
+
+@test "a sandbox target never asks launchd for loaded state" {
+  deploy_ref monitor
+
+  run_doctor_launchctl_stub 113 ""
+
+  [[ "${status}" -eq 0 ]] || { echo "${output}"; return 1; }
+  # the §26 getenv call proves the stub was on PATH, so the absence of `print` is not vacuous.
+  grep -q '^getenv ' "${LAUNCHCTL_LOG}" || { cat "${LAUNCHCTL_LOG}"; return 1; }
+  ! grep -q '^print ' "${LAUNCHCTL_LOG}" || { cat "${LAUNCHCTL_LOG}"; return 1; }
+  [[ "${output}" != *"deployed but not loaded"* ]] || { echo "${output}"; return 1; }
+}

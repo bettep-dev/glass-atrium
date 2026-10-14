@@ -250,6 +250,8 @@ dispatch_action_uninstall_panel() {
   enter_run_state
   # Run the base uninstall plan in the box (VR-8 accent: C_ALERT amber, destructive).
   run_action_panel uninstall "Uninstall" "${C_ALERT}" || status=$?
+  # failed base plan → no purge offer; run_action_panel already showed the failure line + returned to nav
+  [[ "${status}" -eq 0 ]] || return "${status}"
   # The optional config purge is a SECOND typed confirm pre-gate, then a single box step.
   if _confirm_pregate "purge" "Also move the rendered config.toml to the Trash?"; then
     enter_run_state
