@@ -252,7 +252,7 @@ LLM-authored code carries a recurring defect set — every hit is [MUST FIX] or 
 
 - **Regression Risk** — label triggers: `scoped/scope-qa.md` → `## Regression Risk Estimation [QA]`.
 - **4-Dimension Score** — rubric and rework threshold: `scoped/scope-qa.md` → `### The four dimensions`.
-- **D8 Visual Sub-Pass** — user-requested HTML primary only.
+- **D8 Visual Sub-Pass** — user-requested HTML primary only; skip for agent-only token-optimized records, code review and other non-HTML artifacts.
   - d8 rollup rubric: `scoped/scope-qa.md` → `## D8 Visual Decision Sub-Pass (HTML Primary Deliverables) [QA]` → `### Rubric`.
   - Pass requires d8 ≥ 3 on top of the 4-dimension rework threshold.
   - **glass-atrium-design-anti-slop invoke obligation**: on entering HTML primary review, invoke the skill for its mechanical pattern scan.
