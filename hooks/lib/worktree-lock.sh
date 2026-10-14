@@ -29,8 +29,8 @@
 # becomes a silent no-op. Layout: <root>/worktree-locks/<key-of-worktree-root>/.apply-lock.
 #
 # TTL IS DOMINANT, liveness is not a veto: an agent_id has no kill -0 analog, and the live-children
-# marker cannot substitute because a truncated agent fires no SubagentStop at all, and a small
-# share of agents never fire SubagentStop. A liveness veto would therefore wedge that worktree's lock permanently on exactly the tail the TTL
+# marker cannot substitute because a truncated agent fires no SubagentStop at all. A liveness veto
+# would therefore wedge that worktree's lock permanently on exactly that truncated tail, which the TTL
 # exists to cover. Our lock dir carries no `pid` file, so apply-lock's _apply_lock_holder_live always
 # reports not-live and its `not-live AND aged` gate degenerates to age alone — by construction.
 #
