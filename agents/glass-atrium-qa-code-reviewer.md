@@ -160,7 +160,7 @@ Checks whose source is outside this agent's rule set — Read the source before 
 | Name states behavior plus condition; comments state what is protected | `### Names, comments and test data` |
 | No plan, task, incident or ticket ID in a test name, test file name or helper name | `### Names, comments and test data` → **ID ban** |
 | Realistic test data; a large byte-identical fixture becomes one named fixture | `### Names, comments and test data` |
-| Matches no row of the prohibited-shapes table | `### Meaningless-Test Prohibitions` → `#### The prohibited shapes` |
+| Matches no row of the prohibited-shapes table | `#### The prohibited shapes` · `### Detection signature per row, keyed by the Prohibited literal above` |
 | Mocks only at boundaries | `## Mocking Rules` |
 | Depth tracks risk: a risky path gets its relationship plus boundaries; glue gets one caller-facing check | `## Test Depth and Upkeep` → **Depth follows risk** |
 | A test the change made stale, obsolete or wrong is fixed in scope or named in `concerns`; none loosened to go green | `## Test Depth and Upkeep` → **Coupled-test check** |
