@@ -287,8 +287,8 @@ class GetPowerCheckTest(unittest.TestCase):
         )
         # premise: at rate 0.1 the harm sample is the larger one
         self.assertGreater(_REQUIRED_UNITS, efficacy_bound)
-        # rate 51/91 → the efficacy sample is the larger one
-        efficacy_binding = WindowCount(spawns=91, events=51, sessions=51)
+        # rate 55/100 → the efficacy sample is the larger one
+        efficacy_binding = WindowCount(spawns=100, events=55, sessions=55)
         rows = [
             (
                 "harm larger: past the efficacy bound, short of the harm bound → underpowered",
@@ -302,7 +302,7 @@ class GetPowerCheckTest(unittest.TestCase):
                 _floor(baseline=efficacy_binding),
                 _UNITS.AT_BOUND,
                 trial_design.get_required_units(
-                    trial_design.get_maximum_sample_size(51 / 91), design_effect=_DESIGN_EFFECT
+                    trial_design.get_maximum_sample_size(55 / 100), design_effect=_DESIGN_EFFECT
                 ),
                 dc.POWER.VERDICT.PASSING,
             ),
