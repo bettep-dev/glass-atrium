@@ -120,7 +120,7 @@ _INLINE_CORE_FIELDS = {'result', 'task_type', 'metric_pass', 'confidence', 'summ
 # to mis-encode). None of the four is regex-special inside a character class.
 _INLINE_DELIM_CLASS = '[' + ''.join(chr(_c) for _c in (0x7C, 0xB7, 0x2022, 0x22C5)) + ']'
 # Schema-mode (ultracode Workflow / StructuredOutput) subagents NEVER print the text-channel
-# [COMPLETION] block — the engine consumes ONLY the StructuredOutput tool call (0/129 observed).
+# [COMPLETION] block — the engine consumes ONLY the StructuredOutput tool call.
 # But the writer's fields survive inside the terminal SO input under this OPTIONAL string property:
 # the full multi-line [COMPLETION]...[/COMPLETION] text. Pinned as a constant so the recorder and
 # the orchestrator-side schema convention name the SAME field (a divergence silently loses recovery).
