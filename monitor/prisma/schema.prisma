@@ -395,7 +395,7 @@ model Outcome {
   //   - agent-id-missing       : Python label-clarification 분기
   //   - subagent-stop-missing  : R1 인스트루멘테이션 라벨
   //   - completion-missing     : [COMPLETION] block 부재 감지 (관측 라벨)
-  //   - conversation-only      : Tier-3 fallback — turn 0 tool_use (95.1% 노이즈 식별)
+  //   - conversation-only      : Tier-3 fallback — turn 0 tool_use (노이즈 식별)
   //   - truncated_completion   : Tier-2 fallback — open tag + close tag 부재 (실 truncation)
   //   - completion-synthesized : block 부재 → outcome-record.sh 결정론 합성 record (복구 산출물 · 2026-05-29 추가)
   //   - budget-truncation      : subagent 예산 초과 truncation 라벨 (dual-write source · 9번째 값)

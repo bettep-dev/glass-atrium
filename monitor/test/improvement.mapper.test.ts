@@ -46,7 +46,7 @@ function makeRow(overrides: Record<string, unknown> = {}): Parameters<typeof row
     pre_verify_axes: null,
     pre_verify_status: null,
     pre_verify_passed: null,
-    // Default all-NULL (current DB state: 25 rows NULL).
+    // Default all-NULL.
     confidence_observed: null,
     project_key: null,
     promotion_tier: null,
@@ -115,8 +115,8 @@ test("rowToProposalSummary: error:* pre_verify_status (budget-wall) preserved ve
 
 // per-proposal confidence fields.
 
-test("rowToProposalSummary: 3 confidence fields null → null pass-through (current DB state)", () => {
-  // All 25 existing rows are NULL — forward-looking until daemon-wiring spawn.
+test("rowToProposalSummary: 3 confidence fields null → null pass-through", () => {
+  // All-NULL fixture — forward-looking until the daemon wires the fields.
   const row = makeRow();
   const out = rowToProposalSummary(row);
 
@@ -230,7 +230,7 @@ test("foldTierBreakdownRow: all-zero PG row → all-zero response (empty cohort 
 
 // foldConfidenceDistribution — confidence_observed × promotion_tier distribution mapper.
 
-test("foldConfidenceDistribution: empty rows → empty buckets + null overall (current DB state)", () => {
+test("foldConfidenceDistribution: empty rows → empty buckets + null overall", () => {
   // No proposals in window OR column-gap degradation → empty-array input.
   const out = foldConfidenceDistribution([], 30);
 
@@ -240,16 +240,16 @@ test("foldConfidenceDistribution: empty rows → empty buckets + null overall (c
 });
 
 test("foldConfidenceDistribution: all-NULL avg lanes → buckets present, null avgs (forward-looking)", () => {
-  // Current state: 25 rows NULL confidence_observed — PG AVG returns NULL per lane.
+  // All-NULL confidence_observed lane — PG AVG returns NULL per lane.
   // Buckets still surface (lane labels + counts) but avgs are null → "not computed".
   const rows = [
-    { promotion_tier: "unassigned", proposal_count: 25n, confidence_observed_avg: null },
+    { promotion_tier: "unassigned", proposal_count: 3n, confidence_observed_avg: null },
   ];
   const out = foldConfidenceDistribution(rows, 30);
 
   assert.strictEqual(out.buckets.length, 1);
   assert.strictEqual(out.buckets[0].promotion_tier, "unassigned");
-  assert.strictEqual(out.buckets[0].proposal_count, 25);
+  assert.strictEqual(out.buckets[0].proposal_count, 3);
   assert.strictEqual(out.buckets[0].confidence_observed_avg, null, "all-NULL lane → null avg");
   assert.strictEqual(out.overall_confidence_observed_avg, null, "no populated rows → null rollup");
 });

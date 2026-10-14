@@ -1,9 +1,9 @@
 // Loop-suppression breakdown on GET /api/improvement/learning-log.
 //
-// The superseded payload reported ONE of five suppression mechanisms. Measured over
-// core.autoagent_loop_events per cycle day (2026-08-24..08-31): ~25 non-promptable
-// intake skips, ~10 staleness skips and 5 roster mismatches for every 1 repeat-apply
-// cap — and only the cap reached an operator, under a banner reading "Loop parked".
+// The superseded payload reported ONE of five suppression mechanisms. Each of the
+// other mechanisms (non-promptable intake skips, staleness skips, roster mismatches)
+// outnumbered the repeat-apply cap — and only the cap reached an operator, under a
+// banner reading "Loop parked".
 // Skipped rows stay at status='identified', so they also presented as pending backlog.
 //
 // What each test discriminates against:

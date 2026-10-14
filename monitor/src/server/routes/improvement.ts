@@ -364,9 +364,9 @@ interface ApplyCapDbRow {
 // -- Loop suppression surface ------------------------------------------------
 //
 // The repeat-apply cap is one of several mechanisms that stop a pattern from
-// reaching a proposal. Measured per cycle day over 2026-08-24..08-31, the loop
-// suppressed roughly 25 non-promptable selections, 10 staleness skips and 5 roster
-// mismatches for every 1 cap — and only the cap was visible anywhere.
+// reaching a proposal. Each of the other suppression mechanisms (non-promptable
+// selections, staleness skips, roster mismatches) outnumbered the repeat-apply cap,
+// and only the cap was visible anywhere.
 //
 // Reported over three populations that are never summed — contract and the reason
 // on ImprovementLoopSuppressionState (types/improvement.ts).
