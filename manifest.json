@@ -1625,7 +1625,7 @@
     "scripts/test/atrium-config.bats": "007c6eac6d60bc9a11b8e4ee1b19cbe0c7cf295d4e65df5f1dd53d3cd3ec862a",
     "scripts/test/audit-absorption.bats": "6fece1547f1e37fe1ea39f50f32340499c4c897b463a0f387871c75f3e3bb4f3",
     "scripts/test/audit-cli.bats": "ee394050945cb82a62d4f1af3fc71b1c7f0e0d02a827af465af42b43eb4d6a9d",
-    "scripts/test/audit-inert-assert.bats": "c5b3cd0490d28a79f03bf05bbbc8525f4b7bc5ecf965c871f028e0183988fff4",
+    "scripts/test/audit-inert-assert.bats": "ec2eea51e8e63a383040853dda4226a9237ff0684445779955502821ba855a2d",
     "scripts/test/audit-rm.bats": "f0c363eeb91f76ecd831c58e8b36c022d43e1f2e00cfccd5a6c152b70b5c93c5",
     "scripts/test/audit-test-smells.bats": "637c15c51e732ee827dc3bd02d9f921550cd604e127e01548595d41ffb27b479",
     "scripts/test/ci-change-filter-coverage.bats": "4852c6d38f429f7230ccebae1b2b624a63b54a7fa74b21d8f32d3ecb6c099c16",
