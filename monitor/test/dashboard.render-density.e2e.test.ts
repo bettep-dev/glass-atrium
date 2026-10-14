@@ -1,6 +1,6 @@
 // E2E chromium DENSITY harness for the Dashboard (screens/dashboard.jsx): where the content ends
 // against the viewport, and how much blank band each status tile holds above its drill link.
-// Payloads: test/fixtures/dashboard-payloads.json — one real served day, home paths rewritten.
+// Payloads: test/fixtures/dashboard-payloads.json — one served day per Dashboard endpoint, synthetic values of served magnitudes.
 //
 // Runner: npx tsx --test test/dashboard.render-density.e2e.test.ts
 // Prereqs (unmet → RED, no skip guard): `npm run build:client`, installed chromium, CDN network.

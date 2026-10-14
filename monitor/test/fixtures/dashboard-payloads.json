@@ -1,26 +1,26 @@
 {
  "/api/dashboard/kpi": {
-  "today_cost_usd": 1039.841812,
-  "yesterday_cost_usd": 1486.45237,
-  "yesterday_same_time_cost_usd": 992.132602,
+  "today_cost_usd": 1013.486948,
+  "yesterday_cost_usd": 1582.01014,
+  "yesterday_same_time_cost_usd": 974.210268,
   "last_1h_fail_count": 0,
   "fail_count_24h": 0,
-  "blocked_count_24h": 18,
-  "last_etl_at": "2026-09-30T09:57:37.000Z",
-  "today_session_count": 27,
-  "yesterday_session_count": 24,
-  "yesterday_same_time_session_count": 17,
+  "blocked_count_24h": 19,
+  "last_etl_at": "2026-08-19T08:34:19.659Z",
+  "today_session_count": 25,
+  "yesterday_session_count": 21,
+  "yesterday_same_time_session_count": 16,
   "timezone": "UTC",
   "day_bucket_timezone": "Asia/Seoul"
  },
  "/api/architecture/live": {
-  "computed_at": "2026-09-30T09:57:49.015Z",
+  "computed_at": "2026-08-19T08:34:31.674Z",
   "daemons": [
    {
     "daemon_name": "autoagent",
     "effective_status": "ok",
-    "last_run_at": "2026-09-29T19:30:04.000Z",
-    "staleness_minutes": 867,
+    "last_run_at": "2026-08-18T17:59:35.659Z",
+    "staleness_minutes": 874,
     "node_ids": [
      "autoagent_d"
     ],
@@ -29,8 +29,8 @@
    {
     "daemon_name": "wiki",
     "effective_status": "ok",
-    "last_run_at": "2026-09-29T19:50:29.000Z",
-    "staleness_minutes": 847,
+    "last_run_at": "2026-08-18T18:32:04.659Z",
+    "staleness_minutes": 842,
     "node_ids": [
      "wiki_d"
     ],
@@ -70,9 +70,9 @@
    }
   ],
   "recent_activity": {
-   "cost_events_last_hour": 532,
-   "agent_events_last_hour": 35,
-   "last_outcome_at": "2026-09-30T09:50:28.086Z"
+   "cost_events_last_hour": 594,
+   "agent_events_last_hour": 36,
+   "last_outcome_at": "2026-08-19T08:27:10.745Z"
   },
   "part_bindings": {
    "pg": [
@@ -100,7 +100,7 @@
   "status": "ok",
   "db": "open",
   "browser": "ok",
-  "browser_checked_at": "2026-09-30T06:14:24.295Z",
+  "browser_checked_at": "2026-08-19T04:51:06.954Z",
   "version": "1.0.1",
   "timezone": "Asia/Seoul"
  },
@@ -768,15 +768,15 @@
    }
   ],
   "source_path": "~/.claude/settings.json",
-  "source_mtime": "2026-09-29T20:44:00.087Z",
+  "source_mtime": "2026-08-18T19:20:42.746Z",
   "timezone": "UTC"
  },
  "/api/health/hook-failures": {
   "days": 30,
   "failures": [
    {
-    "id": 1433,
-    "failure_ts": "2026-09-23T08:05:44.564Z",
+    "id": 1609,
+    "failure_ts": "2026-08-12T06:42:27.223Z",
     "hook_name": "cost-tracker",
     "target_table": "core.cost_events",
     "error_kind": "unknown",
@@ -784,8 +784,8 @@
     "retry_attempted": false
    },
    {
-    "id": 1432,
-    "failure_ts": "2026-09-23T07:59:54.591Z",
+    "id": 1608,
+    "failure_ts": "2026-08-12T06:36:37.250Z",
     "hook_name": "cost-tracker",
     "target_table": "core.cost_events",
     "error_kind": "unknown",
@@ -793,8 +793,8 @@
     "retry_attempted": false
    },
    {
-    "id": 1431,
-    "failure_ts": "2026-09-23T07:57:59.820Z",
+    "id": 1607,
+    "failure_ts": "2026-08-12T06:34:42.479Z",
     "hook_name": "cost-tracker",
     "target_table": "core.cost_events",
     "error_kind": "unknown",
@@ -802,8 +802,8 @@
     "retry_attempted": false
    },
    {
-    "id": 1430,
-    "failure_ts": "2026-09-23T07:46:43.369Z",
+    "id": 1606,
+    "failure_ts": "2026-08-12T06:23:26.028Z",
     "hook_name": "cost-tracker",
     "target_table": "core.cost_events",
     "error_kind": "unknown",
@@ -811,8 +811,8 @@
     "retry_attempted": false
    },
    {
-    "id": 1429,
-    "failure_ts": "2026-09-23T06:43:55.570Z",
+    "id": 1605,
+    "failure_ts": "2026-08-12T05:20:38.229Z",
     "hook_name": "cost-tracker",
     "target_table": "core.cost_events",
     "error_kind": "unknown",
@@ -820,8 +820,8 @@
     "retry_attempted": false
    },
    {
-    "id": 1428,
-    "failure_ts": "2026-09-23T06:38:57.610Z",
+    "id": 1604,
+    "failure_ts": "2026-08-12T05:15:40.269Z",
     "hook_name": "cost-tracker",
     "target_table": "core.cost_events",
     "error_kind": "unknown",
@@ -829,8 +829,8 @@
     "retry_attempted": false
    },
    {
-    "id": 1427,
-    "failure_ts": "2026-09-23T06:36:47.689Z",
+    "id": 1603,
+    "failure_ts": "2026-08-12T05:13:30.348Z",
     "hook_name": "cost-tracker",
     "target_table": "core.cost_events",
     "error_kind": "unknown",
@@ -838,8 +838,8 @@
     "retry_attempted": false
    },
    {
-    "id": 1426,
-    "failure_ts": "2026-09-23T06:27:47.278Z",
+    "id": 1602,
+    "failure_ts": "2026-08-12T05:04:29.937Z",
     "hook_name": "cost-tracker",
     "target_table": "core.cost_events",
     "error_kind": "unknown",
@@ -847,8 +847,8 @@
     "retry_attempted": false
    },
    {
-    "id": 1425,
-    "failure_ts": "2026-09-23T06:22:39.257Z",
+    "id": 1601,
+    "failure_ts": "2026-08-12T04:59:21.916Z",
     "hook_name": "cost-tracker",
     "target_table": "core.cost_events",
     "error_kind": "unknown",
@@ -856,8 +856,8 @@
     "retry_attempted": false
    },
    {
-    "id": 1424,
-    "failure_ts": "2026-09-23T06:21:49.787Z",
+    "id": 1600,
+    "failure_ts": "2026-08-12T04:58:32.446Z",
     "hook_name": "cost-tracker",
     "target_table": "core.cost_events",
     "error_kind": "unknown",
@@ -870,32 +870,32 @@
     "error_kind": "unknown",
     "hook_name": "cost-tracker",
     "target_table": "core.cost_events",
-    "count": 239
+    "count": 250
    }
   ],
   "count_24h": 0,
   "unretried_count_24h": 0,
-  "last_failure_ts": "2026-09-23T08:05:44.564Z",
+  "last_failure_ts": "2026-08-12T06:42:27.223Z",
   "timezone": "UTC"
  },
  "/api/agents/summary": {
   "agents": [
    {
-    "agent_id": "glass-atrium-qa-code-reviewer",
-    "agent_name": "glass-atrium-qa-code-reviewer",
-    "runs": 1458,
+    "agent_id": "sample-agent-iota-unit-lane-r",
+    "agent_name": "sample-agent-iota-unit-lane-r",
+    "runs": 1698,
     "success_pct": 100,
-    "needs_context_count": 4,
+    "needs_context_count": 3,
     "cost": null,
-    "p95_ms": 661000,
+    "p95_ms": 617855,
     "status": "active",
-    "last_run_at": "2026-09-30T09:14:59.097Z",
+    "last_run_at": "2026-08-19T07:51:41.756Z",
     "compatibility": null,
-    "description": "Code quality, convention, and design review \u2014 project-rule-based code review agent.",
+    "description": "Sample agent for the density fixture \u2014 neutral description text of a fixed length,.",
     "dual_phase": false,
     "origin": "shipped",
-    "invocations": 1516,
-    "invocations_30d": 1516,
+    "invocations": 1362,
+    "invocations_30d": 1362,
     "circuit_breaker": {
      "suspended": false,
      "consecutive_fails": 0,
@@ -906,108 +906,108 @@
   "meta": {
    "days": 7,
    "total_agents": 16,
-   "period_start": "2026-09-23",
-   "period_end": "2026-09-30",
+   "period_start": "2026-08-12",
+   "period_end": "2026-08-19",
    "cost_attribution": "unavailable",
    "circuit_breaker": {
     "source": "loaded",
-    "registry_agents": 23,
+    "registry_agents": 27,
     "suspended_count": 0,
     "streak_count": 0,
     "alarms": []
    }
   },
-  "fetched_at": "2026-09-30T09:58:04.522Z"
+  "fetched_at": "2026-08-19T08:34:47.181Z"
  },
  "/api/dashboard/update-status": {
   "status": "current",
   "local_version": "1.0.1",
   "latest_version": "1.0.1",
   "reason": null,
-  "checked_at": "2026-09-30T09:57:49.089Z"
+  "checked_at": "2026-08-19T08:34:31.748Z"
  },
  "/api/dashboard/update-job": {
   "status": "completed",
-  "id": 1765,
+  "id": 1868,
   "target_version": "1.0.1",
-  "started_at": "2026-09-30T06:13:59.897Z",
-  "heartbeat_at": "2026-09-30T06:14:23.306Z",
+  "started_at": "2026-08-19T04:50:42.556Z",
+  "heartbeat_at": "2026-08-19T04:51:05.965Z",
   "failure_reason": null
  },
  "/api/cost/kpi": {
-  "today_cost_usd": 1039.841812,
-  "window_7d_cost_usd": 7919.665158,
-  "burn_rate_3h_usd_per_hour": 42.198162333333336,
-  "cost_per_done_usd": 1.9014802300120048,
-  "done_count_7d": 4165,
+  "today_cost_usd": 1013.486948,
+  "window_7d_cost_usd": 7744.07289,
+  "burn_rate_3h_usd_per_hour": 48.110918,
+  "cost_per_done_usd": 1.6689812262931036,
+  "done_count_7d": 4640,
   "day_bucket_timezone": "Asia/Seoul",
-  "fetched_at": "2026-09-30T09:58:04.576Z"
+  "fetched_at": "2026-08-19T08:34:47.235Z"
  },
  "/api/dashboard/cost-timeseries": {
   "days": 7,
   "points": [
    {
-    "date": "2026-09-24",
-    "input_tokens": 20790,
-    "output_tokens": 1907674,
-    "cache_read_tokens": 1807389797,
-    "cache_creation_tokens": 102383065,
-    "cost_usd": 909.267896,
-    "session_count": 14
+    "date": "2026-08-13",
+    "input_tokens": 22793,
+    "output_tokens": 1816610,
+    "cache_read_tokens": 1731902307,
+    "cache_creation_tokens": 100000000,
+    "cost_usd": 800.086162,
+    "session_count": 15
    },
    {
-    "date": "2026-09-25",
-    "input_tokens": 40042,
-    "output_tokens": 2732634,
-    "cache_read_tokens": 3320763330,
-    "cache_creation_tokens": 189567655,
-    "cost_usd": 1663.728278,
+    "date": "2026-08-14",
+    "input_tokens": 40696,
+    "output_tokens": 2329389,
+    "cache_read_tokens": 3332001439,
+    "cache_creation_tokens": 173931540,
+    "cost_usd": 1532.694493,
+    "session_count": 36
+   },
+   {
+    "date": "2026-08-15",
+    "input_tokens": 12131,
+    "output_tokens": 1339917,
+    "cache_read_tokens": 1195431583,
+    "cache_creation_tokens": 71779410,
+    "cost_usd": 539.448621,
     "session_count": 32
    },
    {
-    "date": "2026-09-26",
-    "input_tokens": 14684,
-    "output_tokens": 1529767,
-    "cache_read_tokens": 1307535412,
-    "cache_creation_tokens": 72152607,
-    "cost_usd": 646.677038,
-    "session_count": 31
+    "date": "2026-08-16",
+    "input_tokens": 23464,
+    "output_tokens": 1990306,
+    "cache_read_tokens": 2281874025,
+    "cache_creation_tokens": 143321797,
+    "cost_usd": 1173.658855,
+    "session_count": 21
    },
    {
-    "date": "2026-09-27",
-    "input_tokens": 27690,
-    "output_tokens": 2058185,
-    "cache_read_tokens": 2437687716,
-    "cache_creation_tokens": 123623921,
-    "cost_usd": 1140.746511,
-    "session_count": 23
+    "date": "2026-08-17",
+    "input_tokens": 24613,
+    "output_tokens": 1858935,
+    "cache_read_tokens": 2479545828,
+    "cache_creation_tokens": 100000000,
+    "cost_usd": 1102.687671,
+    "session_count": 49
    },
    {
-    "date": "2026-09-28",
-    "input_tokens": 26640,
-    "output_tokens": 1874295,
-    "cache_read_tokens": 2421755057,
-    "cache_creation_tokens": 103510578,
-    "cost_usd": 1032.951253,
-    "session_count": 47
+    "date": "2026-08-18",
+    "input_tokens": 36642,
+    "output_tokens": 3914273,
+    "cache_read_tokens": 3158270126,
+    "cache_creation_tokens": 146339049,
+    "cost_usd": 1582.01014,
+    "session_count": 21
    },
    {
-    "date": "2026-09-29",
-    "input_tokens": 36916,
-    "output_tokens": 3331975,
-    "cache_read_tokens": 3201758072,
-    "cache_creation_tokens": 156154995,
-    "cost_usd": 1486.45237,
-    "session_count": 24
-   },
-   {
-    "date": "2026-09-30",
-    "input_tokens": 26108,
-    "output_tokens": 1907943,
-    "cache_read_tokens": 2169313681,
-    "cache_creation_tokens": 112333411,
-    "cost_usd": 1039.841812,
-    "session_count": 27
+    "date": "2026-08-19",
+    "input_tokens": 28873,
+    "output_tokens": 1899849,
+    "cache_read_tokens": 1910184840,
+    "cache_creation_tokens": 128194333,
+    "cost_usd": 1013.486948,
+    "session_count": 25
    }
   ],
   "timezone": "UTC"
@@ -1023,20 +1023,20 @@
    "review_flag": null,
    "q": null
   },
-  "total": 4622,
-  "reconstructed_total": 14,
+  "total": 4673,
+  "reconstructed_total": 17,
   "excluded_poisoned_count": 0,
   "cells": [
    {
     "confidence": "high",
     "metric_pass": true,
-    "count": 3702,
+    "count": 3683,
     "is_polar_mismatch": false
    },
    {
     "confidence": "high",
     "metric_pass": false,
-    "count": 116,
+    "count": 132,
     "is_polar_mismatch": true
    },
    {
@@ -1048,13 +1048,13 @@
    {
     "confidence": "medium",
     "metric_pass": true,
-    "count": 687,
+    "count": 740,
     "is_polar_mismatch": false
    },
    {
     "confidence": "medium",
     "metric_pass": false,
-    "count": 97,
+    "count": 99,
     "is_polar_mismatch": false
    },
    {
@@ -1072,7 +1072,7 @@
    {
     "confidence": "low",
     "metric_pass": false,
-    "count": 20,
+    "count": 19,
     "is_polar_mismatch": false
    },
    {
@@ -1103,476 +1103,476 @@
   "by_result": [
    {
     "result": "done",
-    "count": 4233,
+    "count": 4269,
     "reconstructed_count": 0,
     "closed_count": 0,
-    "writer_open_count": 4233
+    "writer_open_count": 4269
    },
    {
     "result": "done_with_concerns",
-    "count": 257,
-    "reconstructed_count": 14,
-    "closed_count": 160,
-    "writer_open_count": 83
+    "count": 263,
+    "reconstructed_count": 17,
+    "closed_count": 171,
+    "writer_open_count": 75
    },
    {
     "result": "needs_context",
-    "count": 80,
+    "count": 82,
     "reconstructed_count": 0,
     "closed_count": 0,
-    "writer_open_count": 80
+    "writer_open_count": 82
    },
    {
     "result": "blocked",
-    "count": 52,
+    "count": 59,
     "reconstructed_count": 0,
     "closed_count": 0,
-    "writer_open_count": 52
+    "writer_open_count": 59
    }
   ],
   "by_agent_top_10": [
    {
-    "agent": "glass-atrium-qa-code-reviewer",
-    "count": 1519,
-    "reconstructed_count": 0,
-    "writer_open_count": 2
-   },
-   {
-    "agent": "glass-atrium-dev-shell",
-    "count": 931,
-    "reconstructed_count": 1,
-    "writer_open_count": 6
-   },
-   {
-    "agent": "glass-atrium-dev-react",
-    "count": 657,
-    "reconstructed_count": 0,
-    "writer_open_count": 50
-   },
-   {
-    "agent": "glass-atrium-dev-nestjs",
-    "count": 646,
+    "agent": "sample-agent-iota-unit-lane-r",
+    "count": 1561,
     "reconstructed_count": 0,
     "writer_open_count": 3
    },
    {
-    "agent": "glass-atrium-intel-planner",
-    "count": 228,
-    "reconstructed_count": 0,
-    "writer_open_count": 8
+    "agent": "sample-agent-theta-uni",
+    "count": 994,
+    "reconstructed_count": 2,
+    "writer_open_count": 7
    },
    {
-    "agent": "glass-atrium-meta-prompt-engineer",
-    "count": 193,
-    "reconstructed_count": 11,
-    "writer_open_count": 1
+    "agent": "sample-agent-bravo-uni",
+    "count": 687,
+    "reconstructed_count": 0,
+    "writer_open_count": 51
    },
    {
-    "agent": "glass-atrium-design-designer",
-    "count": 174,
+    "agent": "sample-agent-kappa-unit",
+    "count": 576,
     "reconstructed_count": 0,
+    "writer_open_count": 4
+   },
+   {
+    "agent": "sample-agent-alpha-unit-la",
+    "count": 232,
+    "reconstructed_count": 0,
+    "writer_open_count": 9
+   },
+   {
+    "agent": "sample-agent-sigma-unit-lane-role",
+    "count": 183,
+    "reconstructed_count": 12,
     "writer_open_count": 2
    },
    {
-    "agent": "glass-atrium-intel-reporter",
-    "count": 147,
+    "agent": "sample-agent-omega-unit-lane",
+    "count": 166,
     "reconstructed_count": 0,
-    "writer_open_count": 5
+    "writer_open_count": 3
    },
    {
-    "agent": "glass-atrium-intel-researcher",
-    "count": 55,
-    "reconstructed_count": 2,
-    "writer_open_count": 5
+    "agent": "sample-agent-gamma-unit-lan",
+    "count": 139,
+    "reconstructed_count": 0,
+    "writer_open_count": 6
    },
    {
-    "agent": "glass-atrium-qa-debugger",
-    "count": 27,
+    "agent": "sample-agent-delta-unit-lanex",
+    "count": 60,
+    "reconstructed_count": 3,
+    "writer_open_count": 4
+   },
+   {
+    "agent": "sample-agent-tau-unit-la",
+    "count": 25,
     "reconstructed_count": 0,
-    "writer_open_count": 1
+    "writer_open_count": 2
    }
   ],
   "by_agent_result": [
    {
-    "agent": "glass-atrium-intel-planner",
+    "agent": "sample-agent-alpha-unit-la",
     "result": "blocked",
-    "count": 1,
+    "count": 2,
     "reconstructed_count": 0
    },
    {
-    "agent": "glass-atrium-dev-react",
+    "agent": "sample-agent-bravo-uni",
     "result": "done",
-    "count": 536,
+    "count": 567,
     "reconstructed_count": 0
    },
    {
-    "agent": "glass-atrium-intel-researcher",
+    "agent": "sample-agent-delta-unit-lanex",
     "result": "done_with_concerns",
-    "count": 19,
-    "reconstructed_count": 2
+    "count": 20,
+    "reconstructed_count": 3
    },
    {
-    "agent": "glass-atrium-intel-reporter",
-    "result": "done",
-    "count": 138,
-    "reconstructed_count": 0
-   },
-   {
-    "agent": "glass-atrium-dev-nestjs",
-    "result": "needs_context",
-    "count": 11,
-    "reconstructed_count": 0
-   },
-   {
-    "agent": "glass-atrium-meta-prompt-engineer",
-    "result": "blocked",
-    "count": 6,
-    "reconstructed_count": 0
-   },
-   {
-    "agent": "glass-atrium-design-designer",
-    "result": "done",
-    "count": 165,
-    "reconstructed_count": 0
-   },
-   {
-    "agent": "glass-atrium-dev-shell",
-    "result": "blocked",
-    "count": 30,
-    "reconstructed_count": 0
-   },
-   {
-    "agent": "glass-atrium-meta-prompt-engineer",
+    "agent": "sample-agent-gamma-unit-lan",
     "result": "done",
     "count": 128,
     "reconstructed_count": 0
    },
    {
-    "agent": "glass-atrium-dev-front",
+    "agent": "sample-agent-kappa-unit",
     "result": "needs_context",
-    "count": 1,
+    "count": 12,
     "reconstructed_count": 0
    },
    {
-    "agent": "glass-atrium-dev-db",
-    "result": "blocked",
-    "count": 2,
-    "reconstructed_count": 0
-   },
-   {
-    "agent": "glass-atrium-dev-shell",
-    "result": "needs_context",
-    "count": 10,
-    "reconstructed_count": 0
-   },
-   {
-    "agent": "glass-atrium-qa-code-reviewer",
-    "result": "needs_context",
-    "count": 6,
-    "reconstructed_count": 0
-   },
-   {
-    "agent": "glass-atrium-intel-reporter",
-    "result": "done_with_concerns",
-    "count": 8,
-    "reconstructed_count": 0
-   },
-   {
-    "agent": "glass-atrium-dev-nestjs",
-    "result": "blocked",
-    "count": 5,
-    "reconstructed_count": 0
-   },
-   {
-    "agent": "glass-atrium-intel-planner",
-    "result": "done_with_concerns",
-    "count": 13,
-    "reconstructed_count": 0
-   },
-   {
-    "agent": "glass-atrium-qa-code-reviewer",
-    "result": "done",
-    "count": 1499,
-    "reconstructed_count": 0
-   },
-   {
-    "agent": "glass-atrium-dev-nestjs",
-    "result": "done",
-    "count": 592,
-    "reconstructed_count": 0
-   },
-   {
-    "agent": "glass-atrium-dev-node",
-    "result": "needs_context",
-    "count": 1,
-    "reconstructed_count": 0
-   },
-   {
-    "agent": "glass-atrium-intel-planner",
-    "result": "done",
-    "count": 212,
-    "reconstructed_count": 0
-   },
-   {
-    "agent": "glass-atrium-intel-researcher",
-    "result": "done",
-    "count": 36,
-    "reconstructed_count": 0
-   },
-   {
-    "agent": "glass-atrium-qa-debugger",
-    "result": "done",
-    "count": 24,
-    "reconstructed_count": 0
-   },
-   {
-    "agent": "glass-atrium-dev-db",
-    "result": "done",
-    "count": 14,
-    "reconstructed_count": 0
-   },
-   {
-    "agent": "glass-atrium-design-designer",
-    "result": "done_with_concerns",
-    "count": 2,
-    "reconstructed_count": 0
-   },
-   {
-    "agent": "glass-atrium-dev-react",
-    "result": "done_with_concerns",
-    "count": 73,
-    "reconstructed_count": 0
-   },
-   {
-    "agent": "glass-atrium-dev-python",
-    "result": "done",
-    "count": 3,
-    "reconstructed_count": 0
-   },
-   {
-    "agent": "glass-atrium-qa-debugger",
-    "result": "done_with_concerns",
-    "count": 3,
-    "reconstructed_count": 0
-   },
-   {
-    "agent": "glass-atrium-intel-planner",
-    "result": "needs_context",
-    "count": 2,
-    "reconstructed_count": 0
-   },
-   {
-    "agent": "glass-atrium-design-designer",
+    "agent": "sample-agent-sigma-unit-lane-role",
     "result": "blocked",
     "count": 7,
     "reconstructed_count": 0
    },
    {
-    "agent": "glass-atrium-dev-shell",
+    "agent": "sample-agent-omega-unit-lane",
     "result": "done",
-    "count": 862,
+    "count": 155,
     "reconstructed_count": 0
    },
    {
-    "agent": "glass-atrium-intel-reporter",
+    "agent": "sample-agent-theta-uni",
+    "result": "blocked",
+    "count": 31,
+    "reconstructed_count": 0
+   },
+   {
+    "agent": "sample-agent-sigma-unit-lane-role",
+    "result": "done",
+    "count": 119,
+    "reconstructed_count": 0
+   },
+   {
+    "agent": "sample-agent-lambda-un",
     "result": "needs_context",
-    "count": 1,
+    "count": 2,
     "reconstructed_count": 0
    },
    {
-    "agent": "glass-atrium-dev-node",
-    "result": "done",
-    "count": 4,
+    "agent": "sample-agent-zeta-u",
+    "result": "blocked",
+    "count": 3,
     "reconstructed_count": 0
    },
    {
-    "agent": "glass-atrium-qa-code-reviewer",
+    "agent": "sample-agent-theta-uni",
+    "result": "needs_context",
+    "count": 11,
+    "reconstructed_count": 0
+   },
+   {
+    "agent": "sample-agent-iota-unit-lane-r",
+    "result": "needs_context",
+    "count": 5,
+    "reconstructed_count": 0
+   },
+   {
+    "agent": "sample-agent-gamma-unit-lan",
     "result": "done_with_concerns",
+    "count": 9,
+    "reconstructed_count": 0
+   },
+   {
+    "agent": "sample-agent-kappa-unit",
+    "result": "blocked",
+    "count": 6,
+    "reconstructed_count": 0
+   },
+   {
+    "agent": "sample-agent-alpha-unit-la",
+    "result": "done_with_concerns",
+    "count": 14,
+    "reconstructed_count": 0
+   },
+   {
+    "agent": "sample-agent-iota-unit-lane-r",
+    "result": "done",
+    "count": 1543,
+    "reconstructed_count": 0
+   },
+   {
+    "agent": "sample-agent-kappa-unit",
+    "result": "done",
+    "count": 519,
+    "reconstructed_count": 0
+   },
+   {
+    "agent": "sample-agent-rho-unit",
+    "result": "needs_context",
+    "count": 2,
+    "reconstructed_count": 0
+   },
+   {
+    "agent": "sample-agent-alpha-unit-la",
+    "result": "done",
+    "count": 213,
+    "reconstructed_count": 0
+   },
+   {
+    "agent": "sample-agent-delta-unit-lanex",
+    "result": "done",
+    "count": 40,
+    "reconstructed_count": 0
+   },
+   {
+    "agent": "sample-agent-tau-unit-la",
+    "result": "done",
+    "count": 21,
+    "reconstructed_count": 0
+   },
+   {
+    "agent": "sample-agent-zeta-u",
+    "result": "done",
     "count": 13,
     "reconstructed_count": 0
    },
    {
-    "agent": "glass-atrium-qa-code-reviewer",
-    "result": "blocked",
-    "count": 1,
+    "agent": "sample-agent-omega-unit-lane",
+    "result": "done_with_concerns",
+    "count": 3,
     "reconstructed_count": 0
    },
    {
-    "agent": "glass-atrium-dev-front",
-    "result": "done",
-    "count": 15,
+    "agent": "sample-agent-bravo-uni",
+    "result": "done_with_concerns",
+    "count": 75,
     "reconstructed_count": 0
    },
    {
-    "agent": "glass-atrium-dev-react",
-    "result": "needs_context",
-    "count": 48,
-    "reconstructed_count": 0
-   },
-   {
-    "agent": "glass-atrium-sec-guard",
+    "agent": "sample-agent-phi-unit-l",
     "result": "done",
     "count": 4,
     "reconstructed_count": 0
    },
    {
-    "agent": "glass-atrium-dev-nestjs",
+    "agent": "sample-agent-tau-unit-la",
     "result": "done_with_concerns",
-    "count": 38,
+    "count": 4,
     "reconstructed_count": 0
    },
    {
-    "agent": "glass-atrium-meta-prompt-engineer",
-    "result": "done_with_concerns",
-    "count": 59,
-    "reconstructed_count": 11
+    "agent": "sample-agent-alpha-unit-la",
+    "result": "needs_context",
+    "count": 3,
+    "reconstructed_count": 0
    },
    {
-    "agent": "glass-atrium-dev-shell",
-    "result": "done_with_concerns",
-    "count": 29,
-    "reconstructed_count": 1
+    "agent": "sample-agent-omega-unit-lane",
+    "result": "blocked",
+    "count": 8,
+    "reconstructed_count": 0
    },
    {
-    "agent": "glass-atrium-dev-animator",
+    "agent": "sample-agent-theta-uni",
     "result": "done",
-    "count": 1,
+    "count": 921,
+    "reconstructed_count": 0
+   },
+   {
+    "agent": "sample-agent-gamma-unit-lan",
+    "result": "needs_context",
+    "count": 2,
+    "reconstructed_count": 0
+   },
+   {
+    "agent": "sample-agent-rho-unit",
+    "result": "done",
+    "count": 5,
+    "reconstructed_count": 0
+   },
+   {
+    "agent": "sample-agent-iota-unit-lane-r",
+    "result": "done_with_concerns",
+    "count": 11,
+    "reconstructed_count": 0
+   },
+   {
+    "agent": "sample-agent-iota-unit-lane-r",
+    "result": "blocked",
+    "count": 2,
+    "reconstructed_count": 0
+   },
+   {
+    "agent": "sample-agent-lambda-un",
+    "result": "done",
+    "count": 14,
+    "reconstructed_count": 0
+   },
+   {
+    "agent": "sample-agent-bravo-uni",
+    "result": "needs_context",
+    "count": 45,
+    "reconstructed_count": 0
+   },
+   {
+    "agent": "sample-agent-psi-unitx",
+    "result": "done",
+    "count": 5,
+    "reconstructed_count": 0
+   },
+   {
+    "agent": "sample-agent-kappa-unit",
+    "result": "done_with_concerns",
+    "count": 39,
+    "reconstructed_count": 0
+   },
+   {
+    "agent": "sample-agent-sigma-unit-lane-role",
+    "result": "done_with_concerns",
+    "count": 57,
+    "reconstructed_count": 12
+   },
+   {
+    "agent": "sample-agent-theta-uni",
+    "result": "done_with_concerns",
+    "count": 31,
+    "reconstructed_count": 2
+   },
+   {
+    "agent": "sample-agent-chi-unit-lan",
+    "result": "done",
+    "count": 2,
     "reconstructed_count": 0
    }
   ],
   "grader_breakdown": {
-   "verified_pass": 22,
-   "unverified": 4567,
-   "verified_fail": 33,
+   "verified_pass": 24,
+   "unverified": 4614,
+   "verified_fail": 35,
    "not_measured": 0,
-   "graded_total": 4622,
-   "verified_pass_rate": 0.00476,
-   "unverified_rate": 0.9881,
-   "verified_fail_rate": 0.00714
+   "graded_total": 4673,
+   "verified_pass_rate": 0.00514,
+   "unverified_rate": 0.98737,
+   "verified_fail_rate": 0.00749
   },
   "downgrade_breakdown": {
-   "writer_true_downgraded": 33,
-   "writer_false": 219,
-   "synthesized": 14,
-   "not_recorded": 4356
+   "writer_true_downgraded": 35,
+   "writer_false": 227,
+   "synthesized": 17,
+   "not_recorded": 4394
   },
   "task_type_grader_breakdown": [
    {
     "task_type": "bug-fix",
-    "verified_pass": 10,
-    "unverified": 278,
-    "verified_fail": 4,
+    "verified_pass": 11,
+    "unverified": 231,
+    "verified_fail": 5,
     "not_measured": 0,
-    "total": 292,
+    "total": 247,
     "by_design_unverified": false
    },
    {
     "task_type": "feature",
-    "verified_pass": 12,
-    "unverified": 447,
-    "verified_fail": 29,
+    "verified_pass": 13,
+    "unverified": 376,
+    "verified_fail": 30,
     "not_measured": 0,
-    "total": 488,
+    "total": 419,
     "by_design_unverified": false
    },
    {
     "task_type": "refactor",
     "verified_pass": 0,
-    "unverified": 567,
+    "unverified": 481,
     "verified_fail": 0,
     "not_measured": 0,
-    "total": 567,
+    "total": 481,
     "by_design_unverified": false
    },
    {
     "task_type": "research",
     "verified_pass": 0,
-    "unverified": 308,
+    "unverified": 335,
     "verified_fail": 0,
     "not_measured": 0,
-    "total": 308,
+    "total": 335,
     "by_design_unverified": false
    },
    {
     "task_type": "plan",
     "verified_pass": 0,
-    "unverified": 205,
+    "unverified": 236,
     "verified_fail": 0,
     "not_measured": 0,
-    "total": 205,
+    "total": 236,
     "by_design_unverified": false
    },
    {
     "task_type": "review",
     "verified_pass": 0,
-    "unverified": 1856,
+    "unverified": 2145,
     "verified_fail": 0,
     "not_measured": 0,
-    "total": 1856,
+    "total": 2145,
     "by_design_unverified": true
    },
    {
     "task_type": "diagnosis",
     "verified_pass": 0,
-    "unverified": 27,
+    "unverified": 26,
     "verified_fail": 0,
     "not_measured": 0,
-    "total": 27,
+    "total": 26,
     "by_design_unverified": true
    },
    {
     "task_type": "doc",
     "verified_pass": 0,
-    "unverified": 425,
+    "unverified": 403,
     "verified_fail": 0,
     "not_measured": 0,
-    "total": 425,
+    "total": 403,
     "by_design_unverified": true
    },
    {
     "task_type": "cleanup",
     "verified_pass": 0,
-    "unverified": 454,
+    "unverified": 381,
     "verified_fail": 0,
     "not_measured": 0,
-    "total": 454,
+    "total": 381,
     "by_design_unverified": true
    }
   ],
-  "fetched_at": "2026-09-30T09:58:16.408Z",
+  "fetched_at": "2026-08-19T08:34:59.067Z",
   "prior_window": {
-   "period_start": "2026-09-16",
-   "period_end": "2026-09-23",
-   "total": 3900,
-   "reconstructed_total": 10,
+   "period_start": "2026-08-05",
+   "period_end": "2026-08-12",
+   "total": 3422,
+   "reconstructed_total": 11,
    "by_result": [
     {
      "result": "done",
-     "count": 3809,
+     "count": 3820,
      "reconstructed_count": 0,
      "closed_count": 0,
-     "writer_open_count": 4233
+     "writer_open_count": 4269
     },
     {
      "result": "done_with_concerns",
-     "count": 231,
-     "reconstructed_count": 14,
-     "closed_count": 160,
-     "writer_open_count": 83
+     "count": 219,
+     "reconstructed_count": 17,
+     "closed_count": 171,
+     "writer_open_count": 75
     },
     {
      "result": "needs_context",
-     "count": 72,
+     "count": 67,
      "reconstructed_count": 0,
      "closed_count": 0,
-     "writer_open_count": 80
+     "writer_open_count": 82
     },
     {
      "result": "blocked",
-     "count": 46,
+     "count": 50,
      "reconstructed_count": 0,
      "closed_count": 0,
-     "writer_open_count": 52
+     "writer_open_count": 59
     }
    ]
   }
@@ -1580,196 +1580,196 @@
  "/api/outcomes/heatmap": {
   "data": [
    [
-    88,
-    5,
-    0,
-    0,
-    0,
-    0,
-    8,
     85,
-    30,
-    16,
-    38,
-    12,
+    6,
     0,
-    6,
-    6,
-    22,
-    6,
-    19,
-    15,
-    36,
-    62,
-    22,
-    31,
-    50
+    0,
+    0,
+    0,
+    9,
+    93,
+    35,
+    17,
+    44,
+    10,
+    0,
+    7,
+    7,
+    23,
+    7,
+    18,
+    14,
+    35,
+    58,
+    18,
+    29,
+    46
    ],
    [
-    62,
-    4,
-    21,
+    60,
+    5,
+    23,
+    7,
     6,
+    8,
     5,
     7,
-    4,
-    8,
-    24,
-    17,
-    21,
-    17,
-    13,
-    14,
-    21,
-    4,
-    35,
-    20,
-    43,
-    39,
-    25,
-    10,
-    66,
-    25
-   ],
-   [
     26,
-    1,
-    0,
-    0,
-    0,
-    0,
-    0,
-    12,
-    62,
-    43,
-    57,
-    63,
-    74,
-    24,
-    59,
-    78,
-    40,
-    22,
-    28,
-    38,
-    41,
-    78,
-    42,
-    62
-   ],
-   [
-    49,
-    40,
-    47,
     15,
-    9,
-    4,
-    21,
-    6,
     18,
-    88,
-    53,
+    18,
+    11,
     15,
-    56,
-    44,
-    60,
-    37,
+    22,
+    5,
     29,
-    30,
-    15,
-    32,
-    9,
-    14,
-    8,
-    5
-   ],
-   [
-    112,
-    26,
-    0,
-    0,
-    0,
-    0,
-    0,
-    0,
-    0,
-    23,
-    9,
-    42,
-    28,
-    0,
-    0,
-    0,
-    0,
-    0,
-    99,
+    17,
     44,
-    10,
-    90,
-    75,
-    106
-   ],
-   [
-    50,
-    22,
-    0,
-    0,
-    0,
-    0,
-    8,
-    67,
-    53,
-    72,
-    47,
     43,
-    41,
-    22,
-    97,
-    36,
-    108,
-    102,
-    74,
-    52,
-    20,
-    62,
-    44,
-    14
+    26,
+    11,
+    60,
+    22
    ],
    [
-    12,
-    1,
+    24,
+    2,
     0,
     0,
     0,
     0,
     0,
-    11,
+    13,
+    54,
+    42,
+    56,
+    73,
+    75,
+    25,
+    68,
+    75,
+    41,
+    21,
+    29,
     34,
-    11,
-    16,
-    18,
-    1,
-    0,
-    39,
-    47,
-    39,
-    1,
-    0,
-    18,
-    27,
-    6,
+    36,
+    65,
+    37,
+    57
+   ],
+   [
+    57,
+    42,
+    48,
+    13,
+    8,
+    3,
+    25,
     7,
-    31
+    19,
+    99,
+    60,
+    14,
+    54,
+    46,
+    69,
+    31,
+    32,
+    31,
+    17,
+    26,
+    8,
+    13,
+    9,
+    6
+   ],
+   [
+    116,
+    22,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    27,
+    8,
+    43,
+    32,
+    0,
+    0,
+    0,
+    0,
+    0,
+    93,
+    46,
+    11,
+    99,
+    88,
+    117
+   ],
+   [
+    56,
+    24,
+    0,
+    0,
+    0,
+    0,
+    9,
+    79,
+    61,
+    67,
+    48,
+    38,
+    43,
+    19,
+    93,
+    34,
+    104,
+    104,
+    64,
+    47,
+    21,
+    72,
+    37,
+    16
+   ],
+   [
+    11,
+    2,
+    0,
+    0,
+    0,
+    0,
+    0,
+    12,
+    33,
+    12,
+    15,
+    17,
+    2,
+    0,
+    36,
+    55,
+    37,
+    2,
+    0,
+    17,
+    23,
+    7,
+    6,
+    29
    ]
   ],
   "meta": {
    "days": 7,
    "result": "all",
-   "total_count": 4639,
-   "period_start": "2026-09-23",
-   "period_end": "2026-09-30",
+   "total_count": 4682,
+   "period_start": "2026-08-12",
+   "period_end": "2026-08-19",
    "timezone": "Asia/Seoul"
   },
-  "fetched_at": "2026-09-30T10:26:23.494Z"
+  "fetched_at": "2026-08-19T09:03:06.153Z"
  }
 }
