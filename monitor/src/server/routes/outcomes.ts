@@ -134,38 +134,39 @@ const ATTRIBUTION_DAILY_DAYS_DEFAULT = 30;
 // a verdict rather than re-deriving one.
 //
 // Calibrated against the false-positive population, not against the incident alone.
-// Replaying the rule hourly over 31 days of this machine's own outcomes (749
-// evaluations, the window containing the ~29.8h outage that motivated the watchdog):
+// Replaying the rule hourly over a month of this machine's own outcomes, a window that
+// contains the outage which motivated the watchdog, separates the two candidate shapes:
 //
-//   peak-over-window eligibility + 6h bound   43 alerting spans, 1 real →   2.3%, alerting 31.0% of wall-clock
-//   recency-gated eligibility  + 24h bound     1 alerting span,  1 real → 100.0%, alerting  0.8% of wall-clock
+//   peak-over-window eligibility + 6h bound   many alerting spans, one real → low precision, often alerting
+//   recency-gated eligibility  + 24h bound    one alerting span, the real one → full precision, rarely alerting
 //
 // Two findings drove the shape, and neither is visible from the incident:
 //
-//   1. The bound alone cannot separate them. Routine whole-day idleness reached 25.7h
-//      while the outage reached 29.8h, so the flat band that catches one and not the
-//      other is under 4h wide and a single longer day off closes it; at 30h the
-//      outage itself stops alerting. Deriving the bound from each channel's own
-//      recent maximum gap scores well and is disqualified for a worse reason — the
-//      outage enters its own history and lifts the bar (measured: 19.6h → 37.2h for
-//      the 7 days after it), so the instrument mutes itself exactly once it fires.
+//   1. The bound alone cannot separate them. Routine whole-day idleness came within a
+//      few hours of the outage's own length, so the flat band that catches one and not
+//      the other is narrow and a single longer day off closes it; a bound past the
+//      outage's length stops alerting on the outage itself. Deriving the bound from each
+//      channel's own recent maximum gap scores well and is disqualified for a worse
+//      reason — the outage enters its own history and lifts the bar above its own length
+//      for the days after it, so the instrument mutes itself exactly once it fires.
 //   2. The false positives were not long silences but channels that had STOPPED BEING
 //      USED. Peak-over-the-window asks "was this channel busy at some point in 7
 //      days", which stays true for a week after a channel legitimately winds down —
-//      completion-synthesized bursts to 171/day and then goes quiet for days by
+//      completion-synthesized bursts well past the floor and then goes quiet for days by
 //      design. Gating the floor on RECENT volume asks the question that makes silence
 //      news: is the channel busy NOW and yet silent?
 //
-// With the eligibility question fixed, the bound is insensitive across 18-28h (all
-// score 1/1 over the same replay), so 24h is chosen for a reason outside the sample:
-// a silence of a full day has covered every hour of the clock, so it can never be
-// explained away by when the machine happens to be idle.
+// With the eligibility question fixed, the bound is insensitive across a wide band
+// around one day (every bound in it catches the outage and nothing else over the same
+// replay), so 24h is chosen for a reason outside the sample: a silence of a full day
+// has covered every hour of the clock, so it can never be explained away by when the
+// machine happens to be idle.
 //
 // Accepted cost, stated rather than hidden: coverage is intermittent. While a channel
 // is itself running below the floor, its silence is not watched at all — on a quiet
-// week structuredoutput-completion drops to a recent peak in the 80s and stops being
-// eligible. That is the floor's original premise (a channel not carrying volume is not
-// news) made CURRENT instead of week-stale, and it is the price of the precision above.
+// week structuredoutput-completion drops to a recent peak below the floor and stops
+// being eligible. That is the floor's original premise (a channel not carrying volume is
+// not news) made CURRENT instead of week-stale, and it is the price of the precision above.
 const CHANNEL_ELIGIBILITY_DAILY_FLOOR = 100;
 // COUPLED to the bound below, and strictly greater than it (pinned by a test): an
 // outage suppresses the very rows that keep its channel eligible, so a recency window
@@ -1668,13 +1669,12 @@ async function handleChannelLiveness(
     // peak restricted to the recency window, which is the one eligibility reads. The
     // FILTER costs no extra scan.
     //
-    // Measured plan (EXPLAIN ANALYZE, 7d, 2026-08-17, 1102 rows scanned): Index Scan
-    // using outcomes_ts_idx on the record_ts predicate, then two HashAggregates —
-    // 1.4 ms warm. Row count and timing are point-in-time and move with the table and
-    // the cache, so read them as a date-stamped observation, not a current figure. The
-    // STRUCTURAL claim is the durable one: attribution_source is NOT indexed (no such
-    // index exists on core.outcomes), so it rides as a Filter on the time-bounded
-    // scan, which is why the window predicate is what has to stay index-covered here.
+    // Measured plan (EXPLAIN ANALYZE, 7d window): Index Scan using outcomes_ts_idx on
+    // the record_ts predicate, then two HashAggregates. Row count and timing move with
+    // the table and the cache, so none is recorded here. The STRUCTURAL claim is the
+    // durable one: attribution_source is NOT indexed (no such index exists on
+    // core.outcomes), so it rides as a Filter on the time-bounded scan, which is why the
+    // window predicate is what has to stay index-covered here.
     //
     // date_trunc('day', …) buckets in the PG session timezone, pinned to UTC in
     // db.ts — same convention as the /attribution-daily series.

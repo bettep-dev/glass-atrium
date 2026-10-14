@@ -1213,8 +1213,8 @@ model ModelConfig {
 // Wave 2 — Telemetry baseline (계획: clauded-docs/370 v2 후보 F)
 //   F = SkillActivation — agent activation 분포 측정 (Wave m9z3 cleanup 이전 skill+agent
 //       통합이었으나, Claude Code framework 가 Skill activation event 미지원 확인 →
-//       skill_name 컬럼·인덱스 drop · agent activation 단일 sink 로 좁힘. 1703 row 중
-//       skill_name nonempty 단 1건 (smoke-test) — 회귀 영향 없음).
+//       skill_name 컬럼·인덱스 drop · agent activation 단일 sink 로 좁힘. skill_name
+//       nonempty 행은 smoke-test 잔여분뿐 — 회귀 영향 없음).
 //   적재 빈도 가정 ≈ 100+ rows/hour → BigInt id · 시간축 + 이름축 + 필터축 index 의무.
 // ============================================================================
 

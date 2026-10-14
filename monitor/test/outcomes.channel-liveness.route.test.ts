@@ -215,8 +215,8 @@ test("/channel-liveness omits an eligible channel that is still recording", asyn
 //
 // This is the control the first three lacked. (b) exercises the eligibility floor and
 // (c) exercises a channel that is not silent at all, so a bound set below this
-// machine's routine overnight quiet satisfied every one of them while firing on 20 of
-// 21 threshold-crossing gaps in live data.
+// machine's routine overnight quiet satisfied every one of them while firing on nearly
+// every threshold-crossing gap, almost none of them an outage.
 
 test("/channel-liveness omits an eligible channel whose silence is an ordinary idle gap", async () => {
   const body = await fetchLiveness();
