@@ -39,7 +39,8 @@
 # 4=manifest --check failed (stale manifest, refuse to release) · 5=release repo
 # not configured (the pending user step) · 6=gh CLI absent · 7=release consistency
 # gate failed (GA_ROOT not a work tree, dirty tree, tag != v<manifest.version>, or a
-# remote tag already pointing at a DIFFERENT commit than the verified local HEAD) ·
+# remote tag already pointing at a DIFFERENT commit than the verified local HEAD, or a
+# HEAD not reachable from the remote's main / an unfetchable remote main) ·
 # 8=--replace-assets swap failed (release absent, a failed re-upload, or a post-swap
 # verify that found the release left WITHOUT its canonical assets — loud, never silent).
 set -Eeuo pipefail
@@ -169,7 +170,7 @@ publish_release_remote() {
 
 # Refuse to publish an inconsistent release. The bundle is tarred from the WORKING
 # TREE (build_assets), so the released bytes must already exist in a commit, and the
-# release tag must be the manifest version of record. Three fail-closed gates:
+# release tag must be the manifest version of record. Four fail-closed gates:
 #   (1) CLEAN-TREE  — GA_ROOT is a git work tree with no unstaged/staged changes
 #                     (whole-tree, so manifest.json — uploaded but outside the
 #                     manifest SCOPE_PATHS — is covered too).
@@ -181,6 +182,7 @@ publish_release_remote() {
 #                     A re-publish must never point a moved tag at a DIFFERENT commit
 #                     than the assets it ships. Tag absent on the remote (first publish)
 #                     or no remote configured → gate is a no-op.
+#   (4) MAIN-ANCESTRY — HEAD must be reachable from the remote's main; no remote → no-op.
 # The git probes use the `if ! ...` set -e exception. Loud-fails with exit 7.
 verify_publish_consistency() {
   local tag="$1" version="$2"
@@ -209,6 +211,22 @@ verify_publish_consistency() {
   fi
   remote="$(publish_release_remote)"
   [[ -n "${remote}" ]] || return 0 # no remote configured → nothing to compare against
+
+  # (4) MAIN-ANCESTRY — fail-closed on a failed fetch: this gate guards a delete-and-re-tag.
+  local main_sha
+  if ! git -C "${GA_ROOT}" fetch --quiet "${remote}" main; then
+    err "cannot fetch ${remote}/main — refusing to publish without the main-ancestry check"
+    exit 7
+  fi
+  if ! main_sha="$(git -C "${GA_ROOT}" rev-parse FETCH_HEAD)"; then
+    err "cannot resolve the fetched ${remote}/main — refusing to publish"
+    exit 7
+  fi
+  if ! git -C "${GA_ROOT}" merge-base --is-ancestor "${head_sha}" "${main_sha}"; then
+    err "HEAD ${head_sha} is not reachable from ${remote}/main (${main_sha}) — refusing to publish"
+    exit 7
+  fi
+
   local ls_out=""
   # ls-remote is a network round-trip; a FAILURE (unreachable remote) is not a MISMATCH,
   # so warn-and-proceed (gh still gates the actual push) — its stderr is NOT swallowed.

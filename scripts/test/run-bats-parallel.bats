@@ -68,9 +68,11 @@
 # - stage 1 → starts outside the repository;
 # - python stages → resolve their relative roots against the repository root.
 #
-# The thirteenth pins stage 1's per-root invocations. bats runs ONE setup_suite.bash per
+# The fourteenth pins stage 1's per-root invocations. bats runs ONE setup_suite.bash per
 # invocation — the first argument's directory's — so a shared invocation would hand test/'s
 # loader to every root and drop each root's own (hooks/test's database isolation among them).
+# The fifteenth and sixteenth pin the open-file preflight: stage 1 inherits a raised soft
+# limit, and a refused raise warns without becoming a stage verdict.
 
 bats_require_minimum_version 1.5.0
 
@@ -243,6 +245,7 @@ setup() {
 printf '%s\n' "$*" >>"${STUB_LOG_DIR}/bats-args.log"
 printf '%s\n' "$@" >>"${STUB_LOG_DIR}/bats-argv.log"
 pwd -P >>"${STUB_LOG_DIR}/bats-cwd.log"
+ulimit -Sn >>"${STUB_LOG_DIR}/bats-nofile.log"
 printf '%s\n' "${PYTHONDONTWRITEBYTECODE-__UNSET__}" >>"${STUB_LOG_DIR}/bats-env.log"
 # Stage 1 makes no python3 call, so this stub is the only recorder of its environment.
 # A separate log because scenario 1 asserts bats-env.log as a whole file.
@@ -731,6 +734,44 @@ STUB
   [[ "${got}" == "${want}" && "${per_call}" == "1" ]] || {
     printf 'stage 1 bats calls (want one per root, in root order):\n%s\n' \
       "$(cat "${STUB_LOG_DIR}/bats-args.log")" >&2
+    return 1
+  }
+}
+
+@test "(15) a lowered soft open-file limit is raised before stage 1 and logged old to new" {
+  builtin ulimit -Sn 256
+  run_runner_expecting 0 || return 1
+
+  local seen
+  seen="$(sort -u "${STUB_LOG_DIR}/bats-nofile.log")"
+  [[ "${seen}" == unlimited || "${seen}" -gt 256 ]] || {
+    printf 'stage 1 inherited soft limit %s (want above 256) stderr:\n%s\n' "${seen}" "${stderr}" >&2
+    return 1
+  }
+  [[ "${stderr}" == *"run-bats-parallel: open-file soft limit 256 -> ${seen}"* ]] || {
+    printf 'no old -> new open-file line for 256 -> %s; stderr:\n%s\n' "${seen}" "${stderr}" >&2
+    return 1
+  }
+}
+
+@test "(16) a refused open-file raise warns and leaves the runner rc to the stages" {
+  builtin ulimit -Sn 256
+  # Current kernels accept any soft value, so the refusal is mocked: bash imports an exported
+  # function into the runner, where it shadows the builtin for the raise alone.
+  ulimit() {
+    if [[ $# -ge 2 && "${1}" == -Sn ]]; then return 1; fi
+    builtin ulimit "$@"
+  }
+  export -f ulimit
+  run_runner_expecting 0 || return 1
+
+  [[ "${stderr}" == *"run-bats-parallel: WARN"*"256"* ]] || {
+    printf 'no WARN line naming the inherited 256; stderr:\n%s\n' "${stderr}" >&2
+    return 1
+  }
+  grep -qx 256 "${STUB_LOG_DIR}/bats-nofile.log" || {
+    printf 'stage 1 did not run at the inherited 256; recorded:\n' >&2
+    cat -- "${STUB_LOG_DIR}/bats-nofile.log" >&2 || true
     return 1
   }
 }

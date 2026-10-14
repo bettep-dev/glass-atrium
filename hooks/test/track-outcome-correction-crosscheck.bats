@@ -324,7 +324,11 @@ clean_block() {
     T9_CORRECTION_DETECTION="false" \
     OUTCOME_SPOOL_DIR="${SPOOL_DIR}" \
     bash -c '"$1" < "$2" 2>&1' _ "${HOOK_SH}" "${PAYLOAD_FILE}"
-  no "correction-disagreement" "$(spooled_field review_flag_reasons)" || return 1
+  [[ "${status}" -eq 0 ]] || { echo "${output}"; return 1; }
+  # Captured outside the `no` call: inside its argument, a missing envelope would read as empty.
+  local reasons
+  reasons="$(spooled_field review_flag_reasons)" || return 1
+  no "correction-disagreement" "${reasons}" || return 1
 }
 
 # ---------------------------------------------------------------------------

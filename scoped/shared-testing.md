@@ -28,7 +28,6 @@ Each step builds on the previous.
 ### Meaningless-Test Prohibitions
 
 - **Every row is reviewer-applied**: no row below is enforced by a gate — apply each one yourself. A hand-run advisory auditor reports shapes for a subset and never adjudicates whether a shape is a defect.
-- Detection signatures are ECOSYSTEM-SPECIFIC where the ecosystem changes what an assertion is.
 
 #### The prohibited shapes
 
@@ -44,32 +43,34 @@ Each step builds on the previous.
 | A test written per file, class or function by reflex, or to reach a count or coverage figure | coverage-driven test |
 | Control flow that can SKIP an assertion | conditional test logic |
 
-#### Detection signature per row, keyed by the Prohibited literal above
+#### Rules spanning the whole table
 
+- **DAMP carve-out (MUST — this is why duplication alone is never the trigger)**: repetition in arrange/setup is legitimate and often better than a shared helper. The prohibition targets duplicated assertion intent inside one equivalence class, never duplicated setup.
+  - The one exception is a large byte-identical fixture (`### Names, comments and test data` → **Shared fixture**).
+  - A duplication-percentage metric MUST NOT be used as the trigger.
+- **Deletion duty**: when a relationship test subsumes existing example tests of the same behavior, delete the subsumed tests in the same change. Adding without deleting is how a suite inflates — a coding agent has no deletion pressure of its own.
+  - Name every test a change removes, with its reason, in `concerns` — a subsumed test here, or a stale or obsolete one under **Coupled-test check**.
+
+### Detection signature per row, keyed by the Prohibited literal above
+
+- Detection signatures are ecosystem-specific where the ecosystem changes what an assertion is.
 - **A test with no assertion, or whose only claim is "it did not throw"**
   - **xUnit / JS**: zero assertion nodes in the test body.
-  - **Bats / shell**: a bare command whose non-zero exit fails the test IS the assertion, so "no assertion node" is meaningless here — the signature is instead `run <cmd>` invoked with neither `$status` nor `$output` / `${lines[` examined afterwards in the same body.
+  - **Bats / shell**: a bare command whose non-zero exit fails the test is the assertion — the signature is instead `run <cmd>` invoked with neither `$status` nor `$output` / `${lines[` examined afterwards in the same body.
 - **An assertion that cannot fail** — the asserted value is a literal compared to itself, or is the same variable the test set, with no call into the code under test between set and assert.
 - **Asserting back the value a mock was configured to return** — a literal or variable handed to a mock's return-configuration reappears untransformed in the same test's assertion.
   - JS/Python shapes only: the shell corpus has no mock-configuration form.
 - **An expected value copied from observed output** — full-object or snapshot equality over internal state; an expected literal nobody can derive from the spec.
-  - **Carve-out — a characterization test (Test Depth and Upkeep → Legitimate example tests) is EXEMPT**: copying observed output is its whole purpose, bounded by that carve-out's own expiry condition. A snapshot with no stated expiry is not a characterization test and is not exempt.
+  - **Carve-out — a characterization test (Test Depth and Upkeep → Legitimate example tests) is exempt**: copying observed output is its whole purpose, bounded by that carve-out's own expiry condition. A snapshot with no stated expiry is not exempt.
 - **An assertion on the source text or line order of the code under test** — a `grep`, regex or file read over the source file under test, or a comparison of two source lines' positions.
   - **Carve-out — a static fact that is itself the contract** (a file listed in the manifest) is asserted, in the file that owns that contract.
 - **Near-duplicate cases that one property or one parameterized table would cover** — 3+ test bodies differing only in literals, all inside ONE equivalence class.
-  - The DAMP carve-out below decides whether a given cluster is this smell.
-- **A test whose target has no branch and no logic** — the production target is a single assignment or return with no branch, and the test only sets then gets. Resolve that target by reading it; no tool resolves it for you.
+  - **DAMP carve-out** decides whether a given cluster is this smell.
+- **A test whose target has no branch and no logic** — the production target is a single assignment or return with no branch, and the test only sets then gets. Resolve that target by reading it.
 - **A test written per file, class or function by reflex, or to reach a count or coverage figure** — its relationship cannot be stated beyond "X runs" or "X calls Y" (one test per method of each new file · only internal-collaborator call assertions).
   - A call asserted on a boundary mock (`## Mocking Rules`) is observable behavior and is exempt.
 - **Control flow that can SKIP an assertion** — `if` / `while` / `try` inside a test body where the assertion sits on only one branch, so a run can finish having asserted nothing.
   - **Carve-out — data-driven iteration over a fixture table is NOT this smell**: a loop whose body asserts on EVERY element is the idiomatic parameterized form Decision procedure step 2 prefers. The trigger is a skippable assertion, never the presence of a loop keyword.
-
-#### Rules spanning the whole table
-
-- **DAMP carve-out (MUST — this is why duplication alone is never the trigger)**: repetition in arrange/setup is legitimate and often better than a shared helper. The prohibition targets duplicated ASSERTION intent inside one equivalence class, never duplicated setup. A duplication-percentage metric MUST NOT be used as the trigger.
-  - The one exception is a large byte-identical fixture (`### Names, comments and test data` → **Shared fixture**).
-- **Deletion duty**: when a relationship test subsumes existing example tests of the same behavior, delete the subsumed tests in the SAME change. Adding without deleting is how a suite inflates — a coding agent has no deletion pressure of its own.
-  - Name every test a change removes, with its reason, in `concerns` — a subsumed test here, or a stale or obsolete one under **Coupled-test check**.
 
 ## Mocking Rules
 
@@ -195,7 +196,7 @@ List every occurrence and classify by READING it; a command-word pattern is FORB
 
 - `grep -rn "clear_unmanaged_pg_orphan\|preflight_pg_utc_guard" test hooks/test scripts/test autoagent/test`
 - Read every line it returns. Do not filter first: under-enumeration is the dangerous direction here, because a missed executing site is indistinguishable from a pass.
-- Worked failure, why the shortcut is forbidden: a first-command-word regex over `test/poll-wallclock-ceiling.bats` returns the `@test` TITLE and MISSES the real call, which sits at the end of a `run_bounded` child-shell command string after a `;`. The pattern reported a naming site and hid the executing one.
+- Worked failure, why the shortcut is forbidden: a first-command-word regex over `test/poll-wallclock-ceiling.bats` returns the `@test` title and misses the real call, which sits at the end of a `run_bounded` child-shell command string after a `;`.
 - Derive the site list from the run; never carry a remembered count forward.
 
 ### Step 2 — Classify each occurrence
@@ -207,7 +208,7 @@ Classify each occurrence executing, naming, or neutralized — only executing si
 - Neutralized: a shadow definition (`<fn>() { return N; }`) that both precedes EVERY call it covers and sits in the SAME shell as that call — then those calls run the shadow, not the real function. Either half unproven → treat the calls as executing.
   - **In a bats file, "the SAME shell" is the SAME test body, and this is the rule, not a nuance**: each test body runs in its own shell, so a shadow defined in one body does NOT reach a call in any later body.
   - Therefore a call with no shadow inside its OWN body is EXECUTING even when a shadow of that name appears earlier in the file.
-  - Reading the file top-down invites the opposite conclusion, which is the exact misclassification this bucket exists to prevent — it silently converts a real executing site into a pass.
+  - Reading the file top-down invites the opposite conclusion — the misclassification that silently converts a real executing site into a pass.
   - The mirror of that rule, and the reason a control installed once still counts: whatever `setup` defines DOES reach every body, because it runs inside each one. A shadow or a PATH stub installed there covers the whole file; only a body-local one stops at its own body.
 
 ### Step 3 — Read the reached function body

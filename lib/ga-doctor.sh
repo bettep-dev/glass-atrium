@@ -709,6 +709,11 @@ run_doctor() {
   # shellcheck disable=SC2311
   launchd_retired="$(launchd_retired_deployed)"
   launchd_drift=$((launchd_drift + launchd_retired))
+  local launchd_unloaded=0
+  if [[ "${deployed_count}" -gt 0 ]]; then
+    # shellcheck disable=SC2311
+    launchd_unloaded="$(launchd_unloaded_probe)"
+  fi
 
   # 12. domain-data separation (D6) — relocation correctness. Asserts the new HOME-anchored runtime
   #     root (GA_DATA_ROOT/data) landed AND warns on stale Tier-A leftovers still under the legacy
@@ -1167,6 +1172,8 @@ run_doctor() {
   #     `note :` line. Prisma leaves such a row behind after `migrate resolve --rolled-back` plus a
   #     re-apply, so it can accompany a fully-applied set — the prefix keeps an `ok` verdict beside
   #     a `0 pending-migration` breakdown readable as one report, not as an unowned warning.
+  #     A rolled-back row whose migration ALSO has an applied row is that re-apply finished — it
+  #     gets its own kind-B `superseded` note without the inspect-by-hand advice.
   #     The existence probe is called in the rc-CAPTURING form: setup_database's `|| true` form
   #     would fold an unreachable server into "database absent" and report a healthy install as
   #     fully pending forever.
@@ -1174,6 +1181,7 @@ run_doctor() {
   local mig_dir="${GA_MIGRATIONS_DIR:-${GA_ROOT}/monitor/prisma/migrations}"
   local mig_entry mig_name mig_state mig_probe="" mig_table="" mig_rows=""
   local mig_expected="" mig_applied="" mig_missing="" mig_failed="" mig_total=0 mig_failed_count=0
+  local mig_rolled_back="" mig_superseded="" mig_superseded_count=0
   if [[ -d "${mig_dir}" ]]; then
     # Directories only: migration_lock.toml sits beside them and is not a migration.
     for mig_entry in "${mig_dir}"/*/; do
@@ -1208,6 +1216,8 @@ run_doctor() {
       [[ -n "${mig_name}" ]] || continue
       if [[ "${mig_state}" == "applied" ]]; then
         mig_applied="${mig_applied}${mig_name}"$'\n'
+      elif [[ "${mig_state}" == "rolled_back" ]]; then
+        mig_rolled_back="${mig_rolled_back}${mig_name}"$'\n'
       else
         mig_failed="${mig_failed}${mig_failed:+, }${mig_name}"
         mig_failed_count=$((mig_failed_count + 1))
@@ -1215,6 +1225,16 @@ run_doctor() {
     done < <(get_migration_states <<<"${mig_rows}")
     # Newline-fenced haystack, so one applied name cannot match another's suffix.
     mig_applied=$'\n'"${mig_applied}"
+    while IFS= read -r mig_name; do
+      [[ -n "${mig_name}" ]] || continue
+      if [[ "${mig_applied}" == *$'\n'"${mig_name}"$'\n'* ]]; then
+        mig_superseded="${mig_superseded}${mig_superseded:+, }${mig_name}"
+        mig_superseded_count=$((mig_superseded_count + 1))
+      else
+        mig_failed="${mig_failed}${mig_failed:+, }${mig_name}"
+        mig_failed_count=$((mig_failed_count + 1))
+      fi
+    done <<<"${mig_rolled_back}"
     while IFS= read -r mig_name; do
       [[ -n "${mig_name}" ]] || continue
       [[ "${mig_applied}" == *$'\n'"${mig_name}"$'\n'* ]] && continue
@@ -1229,6 +1249,9 @@ run_doctor() {
     fi
     if [[ "${mig_failed_count}" -gt 0 ]]; then
       log "  note : failed/rolled-back history row(s): ${mig_failed_count} — ${mig_failed} (a re-apply does not clear these; inspect ${mig_table} by hand)"
+    fi
+    if [[ "${mig_superseded_count}" -gt 0 ]]; then
+      log "  note : superseded rolled-back history row(s): ${mig_superseded_count} — ${mig_superseded} (each migration also has an applied row)"
     fi
   fi
 
@@ -1511,7 +1534,7 @@ run_doctor() {
     # B (report-only): its log line ONLY — no counter, no total, no breakdown term, exit code
     #   unchanged. C (wording): the existing row's log line only.
     # Parity of the two expressions below is machine-checked by test/doctor-summary-contract.bats.
-    local warns=$((unbound + drift + undeployed_fresh + inject_drop_warns + launchd_drift + snapshot_stale + snapshot_path_anomaly + data_sep_stale + channel_silent + channel_blind + registry_warns + arbiter_warns + retired_residue + retired_refused + mig_pending + inject_slot_warns + token_leak + canary_warns))
+    local warns=$((unbound + drift + undeployed_fresh + inject_drop_warns + launchd_drift + snapshot_stale + snapshot_path_anomaly + data_sep_stale + channel_silent + channel_blind + registry_warns + arbiter_warns + retired_residue + retired_refused + mig_pending + inject_slot_warns + launchd_unloaded + token_leak + canary_warns))
     if [[ "${warns}" -eq 0 ]]; then
       log "== doctor: PASS =="
     else
@@ -1519,7 +1542,7 @@ run_doctor() {
       # term happened to be last, so every downstream glob written against that term broke the next
       # time a category was appended (adding channel-silent did exactly that to
       # doctor-launchd-deploy-drift.bats). Leading, every term is `<n> <name>` and none is special.
-      log "== doctor: PASS (with ${warns} warning(s): ${unbound} dormant-hook + ${drift} manifest-drift + ${undeployed_fresh} fresh-undeployed + ${inject_drop_warns} inject-drop + ${launchd_drift} launchd-drift + ${snapshot_stale} snapshot-stale + ${snapshot_path_anomaly} snapshot-path-anomaly + ${data_sep_stale} data-sep-leftover + ${channel_silent} channel-silent + ${channel_blind} channel-blind + ${registry_warns} registry-reconcile + ${arbiter_warns} arbiter-gap + ${retired_residue} retired-residue + ${retired_refused} retired-refused-key + ${mig_pending} pending-migration + ${inject_slot_warns} inject-slot + ${token_leak} token-leak + ${canary_warns} canary-trial — see above) =="
+      log "== doctor: PASS (with ${warns} warning(s): ${unbound} dormant-hook + ${drift} manifest-drift + ${undeployed_fresh} fresh-undeployed + ${inject_drop_warns} inject-drop + ${launchd_drift} launchd-drift + ${snapshot_stale} snapshot-stale + ${snapshot_path_anomaly} snapshot-path-anomaly + ${data_sep_stale} data-sep-leftover + ${channel_silent} channel-silent + ${channel_blind} channel-blind + ${registry_warns} registry-reconcile + ${arbiter_warns} arbiter-gap + ${retired_residue} retired-residue + ${retired_refused} retired-refused-key + ${mig_pending} pending-migration + ${inject_slot_warns} inject-slot + ${launchd_unloaded} launchd-unloaded + ${token_leak} token-leak + ${canary_warns} canary-trial — see above) =="
     fi
     return 0
   fi
@@ -2163,6 +2186,30 @@ launchd_retired_deployed() {
     retired=$((retired + 1))
   done
   printf '%d\n' "${retired}"
+}
+
+# launchd loaded-state probe — run_doctor §11 helper. Asks launchd about each DEPLOYED com.glass-atrium
+# plist, since a plist booted out after deploy still sha-matches its render. Each not-loaded job is logged
+# to stderr; the count is the stdout verdict. A sandbox target or a missing launchctl skips with a note.
+launchd_unloaded_probe() {
+  local ld_job label unloaded=0
+  # is_sandbox_target returns 0 by contract (stdout verdict) → masking is intentional
+  # shellcheck disable=SC2310,SC2311,SC2312
+  if [[ "$(is_sandbox_target)" == "yes" ]]; then
+    log "  note : launchd loaded-state probe skipped — sandbox target (launchd domain is per-UID, not per-HOME)"
+  elif ! command -v launchctl >/dev/null 2>&1; then
+    log "  note : launchd loaded-state probe skipped — launchctl not found"
+  else
+    for ld_job in "${LAUNCHD_JOBS[@]}"; do
+      label="${LAUNCHD_LABEL_PREFIX}.${ld_job}"
+      [[ -f "${LAUNCH_AGENTS}/${label}.plist" ]] || continue
+      if ! launchctl print "gui/${UID}/${label}" >/dev/null 2>&1; then
+        log "  warn : ${label} deployed but not loaded — run --load-launchd"
+        unloaded=$((unloaded + 1))
+      fi
+    done
+  fi
+  printf '%d\n' "${unloaded}"
 }
 
 # domain-data separation leftover scan (run_doctor §12 helper — D6). For each Tier-A ENUMERATED

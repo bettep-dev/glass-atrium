@@ -68,6 +68,8 @@ git() {
     if [[ "${GIT_LSREMOTE_RC:-0}" -ne 0 ]]; then return "${GIT_LSREMOTE_RC}"; fi
     printf '%b' "${GIT_LSREMOTE:-}"
     ;;
+  *"merge-base --is-ancestor"*) return "${GIT_ANCESTOR_RC:-0}" ;;
+  *"fetch"*) return "${GIT_FETCH_RC:-0}" ;;
   *"remote"*) printf '%s\n' "${GIT_REMOTES-origin}" ;;
   *) : ;;
   esac
@@ -165,6 +167,18 @@ drive_replace() {
   [[ "${status}" -eq 0 ]] || return 1
   [[ "${output}" == *"remote-tag consistency check SKIPPED"* ]] || return 1
   [[ "${output}" == *"GATE_OK"* ]] || return 1
+}
+
+@test "a HEAD not reachable from the remote main refuses to publish" {
+  drive_consistency GIT_HEAD=abc123 GIT_REMOTES=origin GIT_ANCESTOR_RC=1
+  [[ "${status}" -eq 7 ]] || { echo "${output}"; return 1; }
+  [[ "${output}" == *"abc123 is not reachable from origin/main"* ]] || { echo "${output}"; return 1; }
+}
+
+@test "an unfetchable remote main refuses to publish" {
+  drive_consistency GIT_HEAD=abc123 GIT_REMOTES=origin GIT_FETCH_RC=1
+  [[ "${status}" -eq 7 ]] || { echo "${output}"; return 1; }
+  [[ "${output}" == *"cannot fetch origin/main"* ]] || { echo "${output}"; return 1; }
 }
 
 @test "item3 regression: gate 1 (dirty tree) still fails BEFORE the remote gate → exit 7" {

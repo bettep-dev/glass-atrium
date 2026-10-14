@@ -231,9 +231,9 @@ jobs:
       contents: read
     needs: [gate-lint, gate-typecheck, gate-doctor]
     outputs:
-      bash: ${{ steps.filter.outputs.bash }}
-      python: ${{ steps.filter.outputs.python }}
-      monitor: ${{ steps.filter.outputs.monitor }}
+      bash: ${{ steps.decide.outputs.bash }}
+      python: ${{ steps.decide.outputs.python }}
+      monitor: ${{ steps.decide.outputs.monitor }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -248,6 +248,7 @@ jobs:
           # is unresolvable (all-zeros before-SHA on a new-branch/force push),
           # the action reports every filter as changed — which is exactly the
           # fail-safe we want (run everything rather than false-green).
+          list-files: json
           filters: |
             bash:
               - 'hooks/**'
@@ -292,6 +293,35 @@ jobs:
               - 'hooks/lib/style-ref-consts.sh'
               - 'hooks/lib/styleref-roster.sh'
               - 'hooks/pricing.json'
+            # Catch-all: its file list feeds the unclaimed-path check below.
+            all:
+              - '**'
+
+      # A changed path no stack filter claims (manifest.json, LICENSE, release.yml)
+      # would skip every stack while ci-pass still goes green → run every stack.
+      # Pinned by scripts/test/ci-change-filter-coverage.bats.
+      - name: Decide stacks (an unclaimed path runs every stack)
+        id: decide
+        env:
+          ALL_FILES: ${{ steps.filter.outputs.all_files }}
+          BASH_FILES: ${{ steps.filter.outputs.bash_files }}
+          PYTHON_FILES: ${{ steps.filter.outputs.python_files }}
+          MONITOR_FILES: ${{ steps.filter.outputs.monitor_files }}
+          BASH_CHANGED: ${{ steps.filter.outputs.bash }}
+          PYTHON_CHANGED: ${{ steps.filter.outputs.python }}
+          MONITOR_CHANGED: ${{ steps.filter.outputs.monitor }}
+        run: |
+          set -Eeuo pipefail
+          unclaimed="$(jq -cn --argjson all "${ALL_FILES:-[]}" \
+            --argjson bash "${BASH_FILES:-[]}" --argjson python "${PYTHON_FILES:-[]}" \
+            --argjson monitor "${MONITOR_FILES:-[]}" '$all - $bash - $python - $monitor')"
+          if [[ "${unclaimed}" != '[]' ]]; then
+            echo "::notice title=Unclaimed paths run every stack::${unclaimed}"
+            printf 'bash=true\npython=true\nmonitor=true\n' >>"${GITHUB_OUTPUT}"
+          else
+            printf 'bash=%s\npython=%s\nmonitor=%s\n' \
+              "${BASH_CHANGED}" "${PYTHON_CHANGED}" "${MONITOR_CHANGED}" >>"${GITHUB_OUTPUT}"
+          fi
 
   # ---------------------------------------------------------------------------
   # Bats suites for hooks, operational scripts, the installer, AND the autoagent
