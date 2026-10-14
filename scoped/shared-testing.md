@@ -48,12 +48,12 @@ Each step builds on the previous.
 - **DAMP carve-out (MUST — this is why duplication alone is never the trigger)**: repetition in arrange/setup is legitimate and often better than a shared helper. The prohibition targets duplicated assertion intent inside one equivalence class, never duplicated setup.
   - The one exception is a large byte-identical fixture (`### Names, comments and test data` → **Shared fixture**).
   - A duplication-percentage metric MUST NOT be used as the trigger.
-- **Deletion duty**: when a relationship test subsumes existing example tests of the same behavior, delete the subsumed tests in the SAME change. Adding without deleting is how a suite inflates — a coding agent has no deletion pressure of its own.
+- **Deletion duty**: when a relationship test subsumes existing example tests of the same behavior, delete the subsumed tests in the same change. Adding without deleting is how a suite inflates — a coding agent has no deletion pressure of its own.
   - Name every test a change removes, with its reason, in `concerns` — a subsumed test here, or a stale or obsolete one under **Coupled-test check**.
 
 ### Detection signature per row, keyed by the Prohibited literal above
 
-- Detection signatures are ECOSYSTEM-SPECIFIC where the ecosystem changes what an assertion is.
+- Detection signatures are ecosystem-specific where the ecosystem changes what an assertion is.
 - **A test with no assertion, or whose only claim is "it did not throw"**
   - **xUnit / JS**: zero assertion nodes in the test body.
   - **Bats / shell**: a bare command whose non-zero exit fails the test is the assertion — the signature is instead `run <cmd>` invoked with neither `$status` nor `$output` / `${lines[` examined afterwards in the same body.
@@ -61,7 +61,7 @@ Each step builds on the previous.
 - **Asserting back the value a mock was configured to return** — a literal or variable handed to a mock's return-configuration reappears untransformed in the same test's assertion.
   - JS/Python shapes only: the shell corpus has no mock-configuration form.
 - **An expected value copied from observed output** — full-object or snapshot equality over internal state; an expected literal nobody can derive from the spec.
-  - **Carve-out — a characterization test (Test Depth and Upkeep → Legitimate example tests) is EXEMPT**: copying observed output is its whole purpose, bounded by that carve-out's own expiry condition. A snapshot with no stated expiry is not exempt.
+  - **Carve-out — a characterization test (Test Depth and Upkeep → Legitimate example tests) is exempt**: copying observed output is its whole purpose, bounded by that carve-out's own expiry condition. A snapshot with no stated expiry is not exempt.
 - **An assertion on the source text or line order of the code under test** — a `grep`, regex or file read over the source file under test, or a comparison of two source lines' positions.
   - **Carve-out — a static fact that is itself the contract** (a file listed in the manifest) is asserted, in the file that owns that contract.
 - **Near-duplicate cases that one property or one parameterized table would cover** — 3+ test bodies differing only in literals, all inside ONE equivalence class.
