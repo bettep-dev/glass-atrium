@@ -9350,7 +9350,7 @@ class Look(NamedTuple):
 class LookAccrual(NamedTuple):
     tasks: int
     arms: TrialArms | None = None
-    z: float | None = None  # the primary's reduction over its session-clustered standard error
+    z: float | None = None  # the primary's reduction over its independent-spawn standard error
 
 
 class StartedTrial(NamedTuple):
@@ -10265,7 +10265,7 @@ def _get_drift_widening(watch_alpha: float, sides: int) -> dict:
 
 
 def get_look_payload(look: Look, accrual: LookAccrual) -> dict:
-    """One reached look: accrual beside its boundary; with arm data, the clustered z too."""
+    """One reached look: accrual beside its boundary; with arm data, the primary's z too."""
     payload: dict = {
         "look": look.number,
         "fraction": look.registration["fraction"],
@@ -10424,7 +10424,7 @@ def _get_recorded_harm_stop(
 def _get_harm_rises(
     counted: Sequence[ArmedSpawn], accrual: LookAccrual
 ) -> dict[str, float | None]:
-    """Each harm check's treatment-minus-control difference over its session-clustered standard
+    """Each harm check's treatment-minus-control difference over its independent-spawn standard
     error, a rise positive, on the settled spawns the check reads: every one for the primary
     and the no-SubagentStop leg, those with a recorded tool_use line, those with a graded
     outcome row; None = undefined on this cycle's data."""
@@ -10657,7 +10657,7 @@ def _get_counted_spawns(
 
 def _get_look_accrual(trial: StartedTrial, counted: Sequence[ArmedSpawn]) -> LookAccrual:
     """Both arms' total tasks over the counted spawns; of the settled ones, each arm with the
-    primary event per spawn, and the clustered z."""
+    primary event per spawn, and the primary's z."""
     payload = trial.canary.payload
     is_event = _get_aa_event_test(payload["metric_key"], get_tool_budget(os.environ))
     tasks = get_tasks((item.spawn for item in counted), SHADOW.TASK_WINDOW)
@@ -10676,17 +10676,10 @@ def _get_look_z(
     items: Sequence[ArmedSpawn], get_value: Callable[[SpawnFacts], float]
 ) -> float | None:
     """The reduction (control mean of a spawn's value above treatment's positive) over its
-    standard error clustered by parent session, a spawn without one its own cluster; None when
-    undefined."""
-    clusters: dict[tuple[str | None, str | None], list[tuple[int, float]]] = defaultdict(list)
-    for item in items:
-        spawn = item.spawn
-        orphan_id = spawn.agent_id if spawn.session_id is None else None
-        clusters[(spawn.session_id, orphan_id)].append((item.arm, float(get_value(spawn))))
-    try:
-        z = trial_design.get_clustered_z(list(clusters.values()))
-    except ValueError:  # fewer than 2 clusters or an empty arm → no value
-        return None
+    independent-spawn standard error, whatever the spawns' sessions; None when undefined."""
+    z = trial_design.get_independent_z(
+        [(item.arm, float(get_value(item.spawn))) for item in items]
+    )
     return None if z is None else -z
 
 

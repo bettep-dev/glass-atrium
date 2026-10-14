@@ -1577,33 +1577,11 @@ class LookTest(_ShadowFixture):
             },
         )
         self.assertEqual(look.payload["accrued_tasks"], len(spawns))
-        sessions: dict[str, list[tuple[int, float]]] = {}
-        for spawn, arm, is_event in zip(spawns, arms, events):
-            sessions.setdefault(spawn.session_id, []).append((arm, float(is_event)))
         # a reduction counts positive: control rate above treatment
         self.assertAlmostEqual(
-            look.payload["z"], -trial_design.get_clustered_z(list(sessions.values())), places=9
-        )
-
-    def test_a_spawn_with_no_parent_session_is_its_own_cluster_in_the_looks_z(self) -> None:
-        _, salt_id = self._open_started_trial()
-        # every fourth spawn has no parent session; the rest share one per pair
-        spawns = [
-            spawn._replace(
-                session_id=None if index % 4 == 0 else f"pair-{index // 2}",
-                overage_rows=0 if index % 16 in (4, 5) else 1,
-            )
-            for index, spawn in enumerate(_get_spawns_after(_NOW, math.ceil(_MILESTONES[0])))
-        ]
-        self.history += spawns
-        self._cycle(_NEXT_NOW)
-        [look] = self._get_looks()
-        clusters: dict[str, list[tuple[int, float]]] = {}
-        for spawn in spawns:
-            unit = (_get_arm(salt_id, spawn.agent_id), float(spawn.overage_rows > 0))
-            clusters.setdefault(spawn.session_id or spawn.agent_id, []).append(unit)
-        self.assertAlmostEqual(
-            look.payload["z"], -trial_design.get_clustered_z(list(clusters.values())), places=9
+            look.payload["z"],
+            -trial_design.get_independent_z(list(zip(arms, map(float, events)))),
+            places=9,
         )
 
     def test_a_spawn_whose_tool_use_reaches_the_budget_with_no_overage_row_is_an_overrun_at_the_look(
@@ -1888,19 +1866,33 @@ class LookDecisionTest(_ShadowFixture):
             (decision.trial_key, decision.payload["retire"]["reason"]), (key, "maximum-sample")
         )
 
-    def test_a_look_whose_counted_spawns_share_one_session_records_its_row_with_no_z_and_takes_no_win(
+    def test_a_look_whose_counted_spawns_share_one_session_carries_its_z_and_one_whose_arms_have_no_spread_none(
         self,
     ) -> None:
-        _, salt_id = self._open_started_trial()
-        self._add_spawns(salt_id, _MILESTONES[0], tenths=_TENTHS.REDUCED)
-        started = len(_get_passing_history())
-        self.history[started:] = [
-            spawn._replace(session_id="one") for spawn in self.history[started:]
-        ]
-        self._cycle(_NEXT_NOW)
-        [look] = self._get_looks()
-        self.assertIsNone(look.payload["z"])
-        self.assertEqual(self._get_decisions(), [])
+        # name, the overran tenths of each arm, whether the look carries a z and takes its win
+        rows = (
+            ("one session, both arms with spread", _TENTHS.REDUCED, True),
+            ("one session, every control spawn overran and no treatment spawn", (10, 0), False),
+        )
+        for name, tenths, is_defined in rows:
+            with self.subTest(name):
+                self.ledger.rows.clear()
+                self.history = list(_get_passing_history())
+                self.clock.now = _NOW
+                _, salt_id = self._open_started_trial()
+                self._add_spawns(salt_id, _MILESTONES[0], tenths=tenths)
+                started = len(_get_passing_history())
+                self.history[started:] = [
+                    spawn._replace(session_id="one") for spawn in self.history[started:]
+                ]
+                self._cycle(_NEXT_NOW)
+                [look] = self._get_looks()
+                self.assertEqual(look.payload["z"] is not None, is_defined, name)
+                self.assertEqual(
+                    [set(decision.payload) for decision in self._get_decisions()],
+                    [{"win"}] if is_defined else [],
+                    name,
+                )
 
     def test_a_started_trial_is_retired_at_its_start_plus_its_stated_horizon_with_no_look_reached(
         self,
@@ -2037,13 +2029,10 @@ class LookDecisionTest(_ShadowFixture):
         self.assertEqual(
             sum(arm["units"] for arm in look.payload["arms"].values()), len(settled)
         )
-        clusters = [
-            [(_get_arm(salt_id, spawn.agent_id), float(spawn.overage_rows > 0))]
-            for spawn in settled
+        units = [
+            (_get_arm(salt_id, spawn.agent_id), float(spawn.overage_rows > 0)) for spawn in settled
         ]
-        self.assertAlmostEqual(
-            look.payload["z"], -trial_design.get_clustered_z(clusters), places=9
-        )
+        self.assertAlmostEqual(look.payload["z"], -trial_design.get_independent_z(units), places=9)
 
     def test_a_validity_void_due_at_a_look_lands_ahead_of_its_win(self) -> None:
         # name, control and treatment spawns, those of each arm carrying the other's delivery
@@ -2311,6 +2300,48 @@ class HarmStopTest(_ShadowFixture):
             self.assertEqual(harm["tool_use"]["sides"], 2)
             self.assertAlmostEqual(harm["tool_use"]["boundary"], double, delta=1e-3)
 
+    def test_a_look_over_a_boundary_on_the_session_clustered_term_and_under_it_on_the_independent_spawn_term_takes_no_win_and_no_stop(
+        self,
+    ) -> None:
+        # two sessions of 50 spawns per arm; marked: 16 + 14 of the higher arm, 10 + 10 of the lower
+        # → difference 0.1 over √(0.3·0.7/100 + 0.2·0.8/100) = 1.644 on independent spawns; each
+        # session's term ±0.01 → over √(2·0.01²) = 7.07 on the session-clustered term
+        def _is_marked(is_higher: bool, index: int) -> bool:
+            return index % 50 < ((16 if index < 50 else 14) if is_higher else 10)
+
+        sessions = [
+            [(arm, float(_is_marked(arm == 1, index))) for arm in (0, 1) for index in half]
+            for half in (range(50), range(50, 100))
+        ]
+        shrink = math.sqrt(trial_design.get_arm_difference_design_effect(sessions))
+        # name, the higher arm, the field a mark sets, the stored band, the check read (None: the win)
+        rows = (
+            ("the win", 0, "overage_rows", None, None),
+            ("the primary's harm check", 1, "overage_rows", None, "primary"),
+            ("the no-SubagentStop leg", 1, "has_subagent_stop", None, "no_subagent_stop"),
+            ("the tool_use band upward", 1, "tool_use_actual", _get_either_way_band(), "tool_use"),
+            ("the tool_use band downward", 0, "tool_use_actual", _get_either_way_band(), "tool_use"),
+        )
+        for name, higher, field, band, check in rows:
+            with self.subTest(name):
+                self.ledger.rows.clear()
+                self.history = list(_get_passing_history())
+                self.clock.now = _NOW
+
+                def _mark(arm: int, index: int, spawn: SpawnFacts) -> SpawnFacts:
+                    is_marked = _is_marked(arm == higher, index)
+                    value = not is_marked if field == "has_subagent_stop" else int(is_marked)
+                    session = "one" if index < 50 else "two"
+                    return spawn._replace(session_id=session, **{field: value})
+
+                self._land_look_one((100, 100), change=_mark, band=band)
+                [look] = self._get_looks()
+                read = look.payload if check is None else look.payload["harm"][check]
+                self.assertAlmostEqual(abs(read["z"]), 0.1 / math.sqrt(0.0037), places=9, msg=name)
+                self.assertLess(abs(read["z"]), read["boundary"], name)
+                self.assertGreater(abs(read["z"]) / shrink, read["boundary"], name)
+                self.assertEqual(self._get_decisions(), [], name)
+
     def test_a_harm_crossing_at_a_look_whose_validity_fails_voids_and_writes_no_harm_stop(
         self,
     ) -> None:
@@ -2395,12 +2426,14 @@ class FollowUpLookTest(_ShadowFixture):
                 for arm, name in enumerate(("control", "treatment"))
             },
         )
-        clusters = _get_count_clusters(added, salt_id)
-        self.assertAlmostEqual(
-            count["statistic"],
-            trial_design.get_clustered_z([[row[1:] for row in cluster] for cluster in clusters]),
-            places=9,
+        reference = trial_design.get_randomization_look(
+            _get_count_clusters(added, salt_id),
+            get_arm=_get_arm,
+            salt_namespace="",
+            redraws=0,
+            fraction=trial_design.LOOK_FRACTIONS[-1],
         )
+        self.assertAlmostEqual(count["statistic"], reference.statistic, places=9)
 
     def test_a_respawn_after_treated_spawns_raises_the_mean_count_by_the_added_share_while_the_share_followed_stays(
         self,

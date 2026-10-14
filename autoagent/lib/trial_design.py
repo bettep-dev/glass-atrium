@@ -362,16 +362,6 @@ def _get_arm_totals(clusters: Sequence[Sequence[tuple[int, float]]]) -> list[_Ar
     return totals
 
 
-def get_clustered_z(clusters: Sequence[Sequence[tuple[int, float]]]) -> float | None:
-    """The treatment-minus-control mean over its session-clustered standard error.
-
-    Clusters as get_arm_difference_design_effect takes them. None when the clustered variance
-    is 0 in exact arithmetic; raises ValueError when the difference is undefined: fewer than 2
-    clusters, an empty cluster or an empty arm.
-    """
-    return _get_z(_get_arm_totals(clusters))
-
-
 def get_independent_z(spawns: Sequence[tuple[int, float]]) -> float | None:
     """The treatment-minus-control mean over its independent-spawn standard error.
 
@@ -473,7 +463,9 @@ def _get_redraw_statistics(
 
 
 def _get_studentized_difference(clusters: Sequence[Sequence[tuple[int, float]]]) -> float | None:
-    """get_clustered_z with fewer than 2 clusters and an empty arm as None too, not raised."""
+    """The treatment-minus-control mean over its session-clustered standard error, clusters as
+    get_arm_difference_design_effect takes them. None when undefined: fewer than 2 clusters, an
+    empty arm, or a clustered variance of 0 in exact arithmetic; an empty cluster raises."""
     if len(clusters) < 2:
         return None
     totals = _get_arm_totals(clusters)

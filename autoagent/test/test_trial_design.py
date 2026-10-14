@@ -460,34 +460,6 @@ class ArmDifferenceDesignEffect(unittest.TestCase):
         singletons = [[(0, 1.0)], [(1, 0.0)], [(0, 0.0)], [(1, 1.0)]]
         self.assertEqual(td.get_arm_difference_design_effect(singletons), 1.0)
 
-    def test_the_clustered_z_is_the_arm_difference_over_its_session_clustered_standard_error(
-        self,
-    ) -> None:
-        # control 30/100, treatment 10/100, one spawn per session → the unpooled two-proportion
-        # form: se √(0.3·0.7/100 + 0.1·0.9/100) = √0.003 → z = (0.1 − 0.3) / 0.0547723
-        spawns = [(0, 1.0)] * 30 + [(0, 0.0)] * 70 + [(1, 1.0)] * 10 + [(1, 0.0)] * 90
-        rows = (
-            ("one spawn per session", [[spawn] for spawn in spawns]),
-            ("each spawn repeated inside its session", [[spawn] * 3 for spawn in spawns]),
-        )
-        for name, clusters in rows:
-            with self.subTest(name):
-                self.assertAlmostEqual(td.get_clustered_z(clusters), -3.6514837, places=6)
-
-    def test_an_arm_difference_without_clustered_variance_has_no_z(self) -> None:
-        constant = [[(0, 1.0)], [(1, 1.0)], [(0, 1.0)], [(1, 1.0)]]
-        self.assertIsNone(td.get_clustered_z(constant))
-        with self.assertRaises(ValueError):
-            td.get_clustered_z([[(0, 1.0), (1, 0.0)]])
-
-    def test_the_statistic_is_undefined_when_its_clustered_term_is_zero_in_exact_arithmetic_whatever_the_float_residue(
-        self,
-    ) -> None:
-        # arm means 2/3 control, 1/3 treatment → each session's term (∓1/9) − (∓1/9) = 0 exactly;
-        # thirds leave a float residue above 0
-        cancelling = [[(0, 0.0), (0, 1.0), (1, 0.0)], [(0, 1.0), (1, 0.0), (1, 1.0)]]
-        self.assertIsNone(td.get_clustered_z(cancelling))
-
     def test_the_independent_z_is_the_arm_difference_over_each_arms_variance_over_its_size_under_any_session_grouping(
         self,
     ) -> None:
@@ -610,11 +582,14 @@ def _get_sessions(rise: int = 0) -> list[list[tuple[str, int, float]]]:
 
 def _get_reference_z(clusters, salt: str, get_arm=_get_hash_arm) -> float | None:
     """One reference member's statistic over the same spawns, None where undefined."""
-    armed = [[(get_arm(salt, agent_id), count) for agent_id, _, count in cluster] for cluster in clusters]
-    try:
-        return td.get_clustered_z(armed)
-    except ValueError:
-        return None
+    armed = [[(agent_id, get_arm(salt, agent_id), count) for agent_id, _, count in cluster] for cluster in clusters]
+    return _get_statistic(armed)
+
+
+def _get_statistic(clusters) -> float | None:
+    """The count's statistic over (agent_id, arm, follow-ups) clusters as they stand: no re-draw taken."""
+    look = td.get_randomization_look(clusters, get_arm=_get_hash_arm, salt_namespace="", redraws=0, fraction=1.0)
+    return look.statistic
 
 
 # Source: the lane's S5 pre-step 3 (b) record → closed clusters and cluster sizes per look, dev-react —
@@ -692,6 +667,18 @@ class FollowUpRandomizationTest(unittest.TestCase):
         self.assertIsNone(look.statistic)
         armed = [[(arm, outcome) for _, arm, outcome in cluster] for cluster in clusters]
         self.assertEqual(td.get_arm_difference_design_effect(armed), 0.0)
+
+    def test_the_statistic_is_undefined_when_its_clustered_term_is_zero_in_exact_arithmetic_whatever_the_float_residue(
+        self,
+    ) -> None:
+        # arm means 2/3 control, 1/3 treatment → each session's term (∓1/9) − (∓1/9) = 0 exactly;
+        # thirds leave a float residue above 0
+        cancelling = [[(0, 0.0), (0, 1.0), (1, 0.0)], [(0, 1.0), (1, 0.0), (1, 1.0)]]
+        clusters = [
+            [(f"a{session}{position}", arm, outcome) for position, (arm, outcome) in enumerate(spawns)]
+            for session, spawns in enumerate(cancelling)
+        ]
+        self.assertIsNone(_get_statistic(clusters))
 
     def test_the_observed_draw_takes_a_place_in_the_reference(self) -> None:
         # 179 re-draws + the observed draw = 180 members → one crossing admitted at look 2; the observed
