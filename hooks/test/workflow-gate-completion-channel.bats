@@ -735,7 +735,7 @@ PYX
     echo "no schema-absent nudge -- ${output}" >&2
     return 1
   }
-  [[ "${output}" == *"16-25% depending on the window"* ]] || {
+  [[ "${output}" == *"recurs on a share of runs that varies by window"* ]] || {
     echo "the measured justification is missing from the nudge -- ${output}" >&2
     return 1
   }

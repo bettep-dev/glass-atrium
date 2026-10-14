@@ -1234,37 +1234,34 @@ Remedies and the Bad/Good example: this file → `#### Resilient Workflow Author
 
 ##### Where the figure lives, and who may change it
 
-This sub-section is the measurement SoT for the completion-channel non-emission range: change the range here first, then propagate.
+This sub-section is the measurement SoT for the completion-channel non-emission share: change its shape here first, then propagate.
 
-- `hooks/enforce-workflow-verify-stage.sh` quotes the range so an author reading stderr needs no lookup. Each quoting site names this sub-section as the SoT:
+- `hooks/enforce-workflow-verify-stage.sh` quotes the share's shape so an author reading stderr needs no lookup. Each quoting site names this sub-section as the SoT:
   - the header's fifth-advisory-pass block
   - `print_completion_channel_advisory` (property-absent)
   - `print_completion_schema_absent_advisory` (schema-absent)
-  - A new quoting site joins this list; never fork the figure.
-  - Machine-checked: `hooks/test/workflow-gate-completion-channel.bats` asserts the range literal in that hook's stderr — change it here, then in the hook, or that suite goes red.
-- Why the SoT sits here: a hook message is a fixed nudge, whereas the dated measurement and its re-derivation recipe need a home that is re-read and re-run.
+  - A new quoting site joins this list; never fork the wording.
+  - Machine-checked: `hooks/test/workflow-gate-completion-channel.bats` asserts the shape phrase in that hook's stderr — change it here, then in the hook, or that suite goes red.
+- Why the SoT sits here: a hook message is a fixed nudge, whereas the re-derivation recipe needs a home that is re-read and re-run.
 
 ##### The figure, and the population it is measured over
 
-- **The figure ships as a range with its definitions inline, never as a bare percentage or fraction**: measured text-channel non-emission runs **16-25% depending on the window**.
+- **The figure ships as a shape with its definitions inline, never as a percentage or fraction**: text-channel non-emission **recurs on a share of runs that varies by window**.
 - **Population and non-emission are named by attribution-token membership** (`core.outcomes.attribution_source`), never by prose.
   - Why: a prose definition silently absorbs or drops a token it did not anticipate (`subagent-stop-missing` is one). A token on neither list stays outside the measurement until it is added to one.
   - **Population** = `hook-input` ∪ `completion-synthesized` ∪ `budget-truncation`.
   - **Non-emission** = `completion-synthesized` ∪ `budget-truncation` — the two synthesis arms.
   - **Excluded: `structuredoutput-derived`** — a schema-mode recording gap (the reserved property absent, or present and unfilled), not a text-channel non-emission; folding it in measures two failures as one number.
-    - The exclusion is stated, not left to inference, because it is the measurement's own subject; the figure it moves is given below.
+    - The exclusion is stated, not left to inference, because it is the measurement's own subject; to see what it moves, add the token to both of the recipe's token lists below.
   - **Excluded: `structuredoutput-completion`** (writer-emitted through the schema channel — a healthy row) and **`subagent-stop-missing`**.
 
 ##### Dated measurement, and how to re-derive it
 
-**Dated measurement — 2026-08-17, read-only against `core.outcomes`.** It is a measurement, not a maintained figure, and is not updated in place.
+**Dated measurement — kept outside the repository.** A figure read off one install's `core.outcomes` is that install's data, so none ships here; the recipe below measures yours.
 
-- Lifetime: **24.2% (660 of 2,730)**.
-- Trailing seven days: **15.3% (90 of 587)**.
-- Folding the excluded `structuredoutput-derived` arm back in gives **30.1% (890 of 2,960)** lifetime — what the exclusion is worth.
-- On that date the trailing window sits below the range's 16% floor; one window dipping under a floor is how a range behaves, not a correction to it.
+- The trailing window and the lifetime window can disagree; that is how a window-dependent share behaves, not a correction to either.
 
-**Re-derivation recipe — run this rather than trusting the figures above** (read-only, `psql -d glass_atrium -X`):
+**Re-derivation recipe — run this rather than trusting any quoted figure** (read-only, `psql -d glass_atrium -X`):
 
 ```sql
 WITH pop AS (
@@ -1288,7 +1285,7 @@ WHERE record_ts >= now() - interval '7 days';
 ```
 
 - Both windows come from one query over one membership list, so the two figures cannot disagree about the population.
-- Re-derive before quoting the range into a promotion decision, a review or a new copy — first run `SELECT attribution_source, count(*) FROM core.outcomes GROUP BY 1` to see whether a token outside both lists has appeared.
+- Re-derive before quoting the share into a promotion decision, a review or a new copy — first run `SELECT attribution_source, count(*) FROM core.outcomes GROUP BY 1` to see whether a token outside both lists has appeared.
 
 ##### Where the shipped check's claim stops
 
