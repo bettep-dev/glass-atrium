@@ -410,6 +410,96 @@ PY
   (( status == 0 )) || { echo "${output}"; echo "${stderr}"; return 1; }
 }
 
+@test "the apply script's decision-state statement returns each trial's state beside its pre-registered text hash, and nothing for a proposal no trial names" {
+  local db="decision_state"
+  createdb -h "${EPH_SOCKDIR}" -p "${EPH_PORT}" -T trial_ledger_tpl "${db}" || return 1
+
+  # shellcheck disable=SC2154  # BATS_TEST_TMPDIR comes from bats
+  run --separate-stderr env LF_DB="${db}" LF_EXPECT_PGHOST="${EPH_SOCKDIR}" \
+    GA_DATA_ROOT="${BATS_TEST_TMPDIR}/data" \
+    PYTHONPATH="${BATS_TEST_DIRNAME}/../../scripts:${BATS_TEST_DIRNAME}/.." python3 - <<'PY'
+import os
+import sys
+
+if os.environ.get("PGHOST") != os.environ["LF_EXPECT_PGHOST"]:
+    sys.exit("PGHOST is not the ephemeral cluster's socket dir — refusing to write")
+
+import psycopg
+
+import _pg_dual_write_daemon as helper
+import daemon_cycle as daemon
+
+
+def connect():
+    return psycopg.connect(dbname=os.environ["LF_DB"], connect_timeout=2)
+
+
+# The helper and the daemon name glass_atrium; this table's database is a sibling on the same cluster.
+helper._connect = daemon._pg_connect = connect
+event, agent = daemon.TRIAL_LEDGER.EVENT, "glass-atrium-dev-shell"
+# id, whether a pre-registration names the row, its decision payload (None = no decision row), state
+table = (
+    ("open", True, None, "open"),
+    ("won", True, {"win": {"look": 1}}, "won"),
+    ("decided without a win", True, {"void": {"reason": "unstarted"}}, "decided"),
+    ("no pre-registration", False, None, ""),
+)
+for name, is_preregistered, decision, state in table:
+    with connect() as conn:
+        proposal_id = conn.execute(
+            "INSERT INTO core.autoagent_proposals (cycle_date, pattern_label, target_file,"
+            " target_agent, classification, rationale, approval_tier, status, proposed_diff,"
+            " source_file, source_file_mtime) VALUES ('2026-10-10', %s, %s, %s, 'apply', 'r',"
+            " 'auto', 'pending', '', 'autoagent.json', 0) RETURNING id",
+            (name, f"agents/{agent}.md", agent),
+        ).fetchone()[0]
+    expected = ""
+    if is_preregistered:
+        key = helper.get_live_trial_key(proposal_id)
+        text_sha256 = daemon._get_text_sha256(f"canary text of the {name} trial\n")
+        landed = daemon._pg_write_trial_ledger_row(
+            event.LIVE_PREREGISTRATION,
+            daemon.TRIAL_LEDGER.ACTOR.LIVE,
+            {"proposal_id": proposal_id, "canary": {"text_sha256": text_sha256}},
+            trial_key=key,
+            agent=agent,
+            dedupe_key=key,
+        )
+        if decision is not None:
+            landed += daemon._write_live_decision(key, agent, None, decision)
+        if landed != 1 + (decision is not None):
+            sys.exit(f"{name}: a ledger row did not land ({landed})")
+        expected = f"{state}|{text_sha256}"
+    print(f"{name}|{proposal_id}|{expected}")
+PY
+  (( status == 0 )) || { echo "${output}"; echo "${stderr}"; return 1; }
+
+  local rows=() row
+  while IFS= read -r row; do rows+=("${row}"); done <<<"${output}"
+  (( ${#rows[@]} == 4 )) || { echo "seeded ${#rows[@]} rows: ${output}"; return 1; }
+
+  local statement="${BATS_TEST_TMPDIR}/statement.sh" wrap="${BATS_TEST_TMPDIR}/bin"
+  awk 'index($0, "get_trial_decision_state() {") == 1 {f = 1} f {print} f && /^}/ {exit}' \
+    "${BATS_TEST_DIRNAME}/../daemon-apply.sh" >"${statement}"
+  # The script names glass_atrium; this table's database is a sibling on the same cluster.
+  mkdir -p "${wrap}"
+  # shellcheck disable=SC2016  # $@ expands inside the written wrapper, not here
+  printf '#!/usr/bin/env bash\nexec %q "${@/#glass_atrium/%s}"\n' "$(command -v psql)" "${db}" >"${wrap}/psql"
+  chmod +x "${wrap}/psql"
+
+  local name proposal_id expected
+  for row in "${rows[@]}"; do
+    IFS='|' read -r name proposal_id expected <<<"${row}"
+    # shellcheck disable=SC2016  # $1 expands in the child shell
+    run env PATH="${wrap}:${PATH}" PROPOSAL_ID="${proposal_id}" \
+      bash -c 'source "$1" && get_trial_decision_state' _ "${statement}"
+    (( status == 0 )) && [[ "${output}" == "${expected}" ]] || {
+      echo "${name}: exit ${status}, read '${output}', expected '${expected}'"
+      return 1
+    }
+  done
+}
+
 @test "the A/A harness's open-state ledger read runs against the migrated cluster, none skipped" {
   _assert_live_module test_aa_harness AaOpenReadLivePgTest
 }

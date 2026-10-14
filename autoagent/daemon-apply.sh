@@ -75,15 +75,18 @@
 #                                     # "Auto-regen mode" below). No-op without
 #                                     # --proposal-id (batch path never auto-regens).
 #
-# Single-proposal mode (interactive approval UI):
+# Single-proposal mode (operator approval and graduation):
 #   --proposal-id N applies EXACTLY one proposal (id=N) instead of the batch
-#   backlog. It is invoked ONLY by an explicit user button-click in the monitor
-#   #improvement UI (POST /api/improvement/:id/approve shells out to this).
-#   Because that click IS the human-in-the-loop decision, this path BYPASSES
+#   backlog. Two callers: a user button-click in the monitor #improvement UI
+#   (POST /api/improvement/:id/approve shells out to this as monitor-user), and
+#   the cycle's graduation of a won live trial (the machine actor).
+#   The click IS the human-in-the-loop decision, so this path BYPASSES
 #   the auto-tier gate AND the pre_verify_passed gate — a user MAY apply a
 #   safety/user-tier proposal here (the auto-batch path still excludes safety;
-#   only this explicit path bypasses). Selection: id=N only; the shell then
-#   branches on the row's status and generation outcome (exits 21/19/23/8/20 below).
+#   only this explicit path bypasses). A proposal a live trial pre-registered is
+#   not the click's to apply: its trial's decision state picks the actor (exit 27).
+#   Selection: id=N only; the shell then branches on the row's status, its live
+#   trial's decision state and its generation outcome (exits 21/19/23/8/27/20 below).
 #   Reuses the SAME apply_diff + update_db_status path.
 #
 # Review actor — the reviewed_at/reviewed_by contract and the closed token set are
@@ -199,7 +202,7 @@
 #
 # Patch-source read exit codes. Single path: select_single_proposal, then
 # assert_generation_outcome after the parked guard, checked in the order
-# 21 → 19 → 23 → 8 → 17/18 → 20 so the most specific answer wins. Batch path: the
+# 21 → 19 → 23 → 8 → 27 → 17/18 → 20 so the most specific answer wins. Batch path: the
 # source read itself (21 backlog · 23 backlog row · 22 report), before any row is
 # judged — a source that could not be read never lands the zero-eligible heartbeat:
 #     19 — --proposal-id: no proposal with that id. No-op.
@@ -245,6 +248,14 @@
 #          applied, so the row cannot be re-applied, and its JSONL applied row holds the record. The
 #          drain stops at that row; one abort row lands (reason apply_record_failed).
 #          Does NOT collide with 0/2-25.
+#
+# Live-trial exit code (assert_trial_decision_state — every --proposal-id selection, a dry run and the
+# --auto-regen re-select included; a proposal no live pre-registration names is not judged):
+#     27 — --proposal-id: REFUSED on the decision state of the live trial that pre-registered the
+#          proposal, the leg named on stderr. open (no decision row) and decided without a win refuse
+#          every actor; won refuses every actor but the machine one, the cycle's graduation. A state
+#          read that fails or answers anything but one state line exits 27 too, never read as "no
+#          trial". Nothing applied, row left as it was. Does NOT collide with 0/2-26.
 
 set -Eeuo pipefail
 IFS=$'\n\t'
@@ -1426,7 +1437,9 @@ PSQL
 
 # select_single_proposal — set PATCH_ROWS to proposal PROPOSAL_ID and SINGLE_HAIKU_STATUS to its
 # generation outcome, or exit: 21 lookup failed · 19 not found · 23 row unreadable · 8 already
-# terminal. The outcome refusal (20) waits for the parked guard, whose exit 18 is the better remedy
+# terminal · 27 refused on its live trial's decision state — ahead of the parked guard and the
+# outcome refusal, whose remedy (Reject) is wrong for a row a trial holds.
+# The outcome refusal (20) waits for the parked guard, whose exit 18 is the better remedy
 # for a row tripping both. The lookup is captured, not read through `< <(…)`, which would drop its
 # return code. The row is reassembled before its status is trusted: a row that does not decode, or
 # answers for another id, has no status worth branching on.
@@ -1456,8 +1469,57 @@ select_single_proposal() {
             ;;
         *) ;;
     esac
+    assert_trial_decision_state
     PATCH_ROWS=("${patch_row}")
     SINGLE_HAIKU_STATUS="${haiku_status}"
+}
+
+# assert_trial_decision_state — exit 27 unless the live trial that pre-registered PROPOSAL_ID lets
+# REVIEW_ACTOR apply it: no such trial → any actor · won → the machine actor alone, the cycle's
+# graduation · open or decided without a win → nobody. The row's status adds no leg: a won row
+# drained to snoozed is still the machine actor's alone. A read that fails or answers anything but
+# one state line is refused too — a trial that cannot be read is never "no trial".
+assert_trial_decision_state() {
+    local answer leg grammar='^(open|won|decided)\|[0-9a-f]*$'
+    if ! answer="$(get_trial_decision_state)"; then
+        answer='unread'
+    fi
+    if [[ -n "${answer}" ]] && ! [[ "${answer}" =~ ${grammar} ]]; then
+        printf '[daemon-apply] FATAL: proposal id=%s live-trial decision state could not be read — nothing applied (never read as no trial)\n' \
+            "${PROPOSAL_ID}" >&2
+        exit 27
+    fi
+    case "${answer%%|*}" in
+        '') return 0 ;;
+        won)
+            if [[ "${REVIEW_ACTOR}" == "${REVIEW_ACTOR_FLIP}" ]]; then
+                return 0
+            fi
+            leg="won — only the graduation actor ${REVIEW_ACTOR_FLIP} applies it"
+            ;;
+        open) leg='open — no decision yet, no actor applies it' ;;
+        *) leg='decided without a win — no actor applies it' ;;
+    esac
+    printf '[daemon-apply] REFUSED proposal id=%s actor=%s — its live trial is %s; nothing applied, row left as it was\n' \
+        "${PROPOSAL_ID}" "${REVIEW_ACTOR}" "${leg}" >&2
+    exit 27
+}
+
+# get_trial_decision_state — print `state|text_sha256` for the live pre-registration naming
+# PROPOSAL_ID, nothing when none does; non-zero when the read fails (psql's own stderr names why).
+# state: open = no <trial key>:decision row · won = that row holds a win · decided = any other
+# decision. text_sha256 is the pre-registered canary text's hash ('' when the payload holds none).
+get_trial_decision_state() {
+    psql -d glass_atrium -v ON_ERROR_STOP=1 -tAq -F'|' -v "pid=${PROPOSAL_ID}" <<'PSQL'
+SELECT CASE WHEN d.id IS NULL THEN 'open'
+            WHEN d.payload->'win' IS NOT NULL THEN 'won'
+            ELSE 'decided' END,
+       coalesce(p.payload->'canary'->>'text_sha256', '')
+FROM core.autoagent_trial_ledger p
+LEFT JOIN core.autoagent_trial_ledger d ON d.dedupe_key = p.trial_key || ':decision'
+WHERE p.event = 'live-preregistration'
+  AND p.payload->>'proposal_id' = :'pid';
+PSQL
 }
 
 # verify_target_in_agents — sanity check: target_file MUST live under agents_dir.
@@ -2556,7 +2618,7 @@ while IFS= read -r _row; do
 done <<<"${BATCH_PATCH_LINES}"
 
 # Empty here means a real empty backlog or report: a failed batch read exited 21/22/23 above, and the single
-# source exits 21/19/23/8 in select_single_proposal instead.
+# source exits 21/19/23/8/27 in select_single_proposal instead.
 if [[ ${#PATCH_ROWS[@]} -eq 0 ]]; then
     if [[ "${PATCH_SOURCE}" == "backlog" ]]; then
         printf '[daemon-apply] 0 pending backlog patches (source=PG)\n' >&2

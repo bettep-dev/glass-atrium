@@ -22,6 +22,8 @@ ROW_ID=2763
 # A quote inside the label: an inlined value would break or alter the SQL the stand-in receives.
 LABEL="probe 'landed' record"
 ADDED_LINE='record probe insertion'
+# The pre-registered text hash the decision-state stand-in answers beside a trial's state.
+TRIAL_SHA='0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef'
 
 setup() {
   [[ -x "${REAL_SCRIPT}" ]] || skip "daemon-apply.sh not executable: ${REAL_SCRIPT}"
@@ -58,6 +60,8 @@ teardown() {
 # install_psql_stub DIR — a stateful PG stand-in. Every -v binding of the flip and of the record
 # INSERT lands as one file per name (byte-exact, multi-line safe) with the statement text beside it.
 # STUB_PROBE answers the table probe (t | f | error); STUB_INSERT=error refuses the INSERT.
+# STUB_TRIAL answers the live-trial decision-state read: none (default) = no pre-registration names
+# the row · error = the read fails · any other value = the answer line itself.
 install_psql_stub() {
   cat >"$1/psql" <<'STUB'
 #!/usr/bin/env bash
@@ -117,6 +121,16 @@ case "${sql}" in
     ;;
   *stale_attempt_count*)
     printf 'incremented\n'
+    ;;
+  *"core.autoagent_trial_ledger"*)
+    case "${STUB_TRIAL:-none}" in
+      none) ;;
+      error)
+        printf 'ERROR:  relation "core.autoagent_trial_ledger" does not exist\n' >&2
+        exit 2
+        ;;
+      *) printf '%s\n' "${STUB_TRIAL}" ;;
+    esac
     ;;
   *) : ;;
 esac
@@ -455,4 +469,77 @@ has_abort_row() {
       return 1
     }
   done
+}
+
+@test "a live trial's decision state picks who may apply its proposal, and a proposal no trial pre-registered applies as before" {
+  # name | trial state | actor | exit | row status after | records written | the leg stderr names
+  local rows=(
+    "open, the machine actor|open|daemon-apply-flip|27|pending|0|live trial is open"
+    "open, the operator|open|monitor-user|27|pending|0|live trial is open"
+    "won, the machine actor|won|daemon-apply-flip|0|applied|1|"
+    "won, the operator|won|monitor-user|27|pending|0|live trial is won"
+    "decided without a win, the machine actor|decided|daemon-apply-flip|27|pending|0|live trial is decided without a win"
+    "decided without a win, the operator|decided|monitor-user|27|pending|0|live trial is decided without a win"
+    "no pre-registration, the machine actor|none|daemon-apply-flip|0|applied|1|"
+    "no pre-registration, the operator|none|monitor-user|0|applied|1|"
+  )
+  local row name state actor code row_status records leg answer changed
+  for row in "${rows[@]}"; do
+    IFS='|' read -r name state actor code row_status records leg <<<"${row}"
+    answer="none"
+    [[ "${state}" == "none" ]] || answer="${state}|${TRIAL_SHA}"
+    cp -p -- "${BEFORE}" "${PROBE}"
+    printf 'pending' >"${PG}/row-status"
+    : >"${PG}/inserts"
+    : >"$(applied_log_path)"
+    STUB_TRIAL="${answer}" run_apply offset_diff --proposal-id "${ROW_ID}" --actor "${actor}"
+    [[ "${status}" -eq "${code}" && "${output}" == *"${leg}"* ]] || {
+      echo "${name}: exit ${status}: ${output}"
+      return 1
+    }
+    changed=1
+    if cmp -s "${PROBE}" "${BEFORE}"; then changed=0; fi
+    [[ "${changed}" -eq "${records}" ]] || {
+      echo "${name}: target changed=${changed}: ${output}"
+      return 1
+    }
+    [[ "$(cat "${PG}/row-status")" == "${row_status}" && "$(insert_count)" -eq "${records}" ]] || {
+      echo "${name}: row $(cat "${PG}/row-status"), records $(insert_count): ${output}"
+      return 1
+    }
+  done
+}
+
+@test "a live-trial decision state that cannot be read applies nothing and exits 27, never read as no trial" {
+  local rows=("the read fails|error" "the answer is no state line|held")
+  local row name answer
+  for row in "${rows[@]}"; do
+    name="${row%%|*}"
+    answer="${row#*|}"
+    STUB_TRIAL="${answer}" run_apply offset_diff --proposal-id "${ROW_ID}"
+    [[ "${status}" -eq 27 && "${output}" == *"FATAL"*"decision state could not be read"* ]] || {
+      echo "${name}: exit ${status}: ${output}"
+      return 1
+    }
+    cmp -s "${PROBE}" "${BEFORE}" || {
+      echo "${name}: target changed"
+      return 1
+    }
+    [[ "$(cat "${PG}/row-status")" == "pending" && "$(insert_count)" -eq 0 ]] || {
+      echo "${name}: DB written"
+      return 1
+    }
+  done
+}
+
+@test "a graduation call on a won row still pending binds the machine actor onto the flip and writes one record" {
+  STUB_TRIAL="won|${TRIAL_SHA}" run_apply offset_diff --proposal-id "${ROW_ID}" --actor daemon-apply-flip
+  [[ "${status}" -eq 0 ]] || {
+    echo "${output}"
+    return 1
+  }
+  [[ "$(cat "${PG}/flip/actor")" == "daemon-apply-flip" && "$(insert_count)" -eq 1 ]] || {
+    echo "flip actor $(cat "${PG}/flip/actor"), records $(insert_count): ${output}"
+    return 1
+  }
 }
