@@ -372,6 +372,22 @@ def get_clustered_z(clusters: Sequence[Sequence[tuple[int, float]]]) -> float | 
     return _get_z(_get_arm_totals(clusters))
 
 
+def get_independent_z(spawns: Sequence[tuple[int, float]]) -> float | None:
+    """The treatment-minus-control mean over its independent-spawn standard error.
+
+    Spawns hold (arm, outcome), arm 0 control / 1 treatment; their sessions are not read. None
+    when undefined: an empty arm, or no spread in either arm in exact arithmetic.
+    """
+    if not {0, 1} <= {arm for arm, _ in spawns}:
+        return None
+    # one spawn per session → the clustered term is the independent one, and its exact zero test serves
+    totals = _get_arm_totals([[spawn] for spawn in spawns])
+    difference = _get_arm_difference(totals)
+    if difference.independent <= 0 or _is_clustered_zero(totals):
+        return None
+    return difference.value / math.sqrt(difference.independent)
+
+
 def get_randomization_look(
     clusters: Sequence[Sequence[tuple[str, int, float]]],
     *,

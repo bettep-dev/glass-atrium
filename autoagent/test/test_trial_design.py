@@ -488,6 +488,42 @@ class ArmDifferenceDesignEffect(unittest.TestCase):
         cancelling = [[(0, 0.0), (0, 1.0), (1, 0.0)], [(0, 1.0), (1, 0.0), (1, 1.0)]]
         self.assertIsNone(td.get_clustered_z(cancelling))
 
+    def test_the_independent_z_is_the_arm_difference_over_each_arms_variance_over_its_size_under_any_session_grouping(
+        self,
+    ) -> None:
+        # control 30/100, treatment 10/100 → se √(0.3·0.7/100 + 0.1·0.9/100) = √0.003 → z = −0.2 / 0.0547723
+        spawns = [(0, 1.0)] * 30 + [(0, 0.0)] * 70 + [(1, 1.0)] * 10 + [(1, 0.0)] * 90
+        rows = (
+            ("one spawn per session", [[spawn] for spawn in spawns]),
+            ("a session per arm", [spawns[:100], spawns[100:]]),
+            ("two sessions of both arms", [spawns[:40] + spawns[100:105], spawns[40:100] + spawns[105:]]),
+        )
+        effects = set()
+        for name, sessions in rows:
+            with self.subTest(name):
+                listed = [spawn for session in sessions for spawn in session]
+                self.assertAlmostEqual(td.get_independent_z(listed), -3.6514837, places=6)
+            effects.add(round(td.get_arm_difference_design_effect(sessions), 6))
+        # the session-clustered variance moved under every grouping
+        self.assertEqual(len(effects), len(rows))
+
+    def test_the_independent_z_is_undefined_only_on_an_empty_arm_or_arms_without_spread_whatever_the_float_residue(
+        self,
+    ) -> None:
+        # name, spawns, whether the z is defined
+        rows = (
+            ("no spawn", [], False),
+            ("no treatment spawn", [(0, 1.0), (0, 0.0)], False),
+            ("no control spawn", [(1, 1.0), (1, 0.0)], False),
+            ("neither arm has spread", [(0, 1.0), (0, 1.0), (1, 0.0), (1, 0.0)], False),
+            # fifths have no exact float → the float term stays above 0 where the exact one is 0
+            ("neither arm has spread, a float residue", [(0, 0.2)] * 3 + [(1, 0.1)] * 3, False),
+            ("one arm alone has spread", [(0, 1.0), (0, 1.0), (1, 0.0), (1, 1.0)], True),
+        )
+        for name, spawns, is_defined in rows:
+            with self.subTest(name):
+                self.assertEqual(td.get_independent_z(spawns) is not None, is_defined)
+
     def test_the_session_bootstrap_interval_covers_the_truth_at_about_its_level(self) -> None:
         # per-spawn arms → true value 1; a two-sided 90% interval → ~90% of datasets cover it
         generator = random.Random(20261012)
