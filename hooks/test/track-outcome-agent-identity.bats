@@ -162,7 +162,7 @@ spooled_field() {
 }
 
 @test "teammate task kind WITHOUT a registered-type key falls back to agentType" {
-  # 12 such sidecars exist in the live corpus — the task kind is not a hard gate.
+  # Such sidecars exist in practice — the task kind is not a hard gate.
   "${REAL_PY3}" - "${SIDECAR}" "${REGISTERED}" <<'PY'
 import json, sys
 with open(sys.argv[1], "w", encoding="utf-8") as f:

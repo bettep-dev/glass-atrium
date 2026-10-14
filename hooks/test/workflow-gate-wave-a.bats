@@ -176,7 +176,7 @@ size_token() { printf "log('[SIZE-EST] bundles=1 tool_uses~=10 — %s');\n" "${1
 }
 
 # ===================================================================================================
-# AC4 — the two highest-volume verdicts pinned directly (13 of the 23 measured catches).
+# AC4 — the two highest-volume verdicts pinned directly.
 # ===================================================================================================
 @test "AC4(norev): a declaration whose reviewer is never spawned blocks as block-norev" {
   run_hook_file_exec "${VERDICT_DIR}/block-norev.js"
