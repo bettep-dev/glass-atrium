@@ -53,8 +53,8 @@ Every section kept in the rule file is kept because a NAMED reader outside the f
 ## Backing honesty — Test Quality
 
 - The `## Test Quality` section is an adherence-layer convention with **no runtime backstop** — no hook or gate verifies that the decision procedure was run, and none can. Its only mechanical companion is the three-signal advisory auditor below, which never inspects the relationship claim itself.
-- The home-file, grouping, ID-ban, comment, test-data and table-form rules are reviewer-applied with no tooling at all. Extending the auditor to ID-bearing titles, incident-framed headers and source-grep pins is a deferred follow-up, not a current check.
-  - At the `feature/pa-ci` merge, co-edit this bullet: its auditor's advisory `id_title` and `incident_header` counts then cover ID-bearing titles and incident-framed headers, leaving source-grep pins as the deferred follow-up.
+- The home-file, grouping, test-data and table-form rules are reviewer-applied with no tooling at all. The ID-ban and comment rules have only the auditor's advisory `id_title` and `incident_header` counts, which cover ID-bearing titles and incident-framed headers.
+  - Extending the auditor to source-grep pins is a deferred follow-up, not a current check.
 
 ## Test-authoring delta — provenance
 
@@ -83,7 +83,7 @@ The rule file states only that every row is reviewer-applied. The mapping below 
 
 - MECHANICAL means decidable-in-principle by a script — NOT that a script exists. **No row on that table is enforced.**
 - Only signals (a) and (b) of `scripts/audit-test-smells.sh` back any row, and that auditor is **ADVISORY**: it exits 0 on findings, is **NOT wired into CI**, and is run by hand.
-  - The `feature/pa-ci` auditor also reports the advisory `id_title` and `incident_header` counts. They back the **ID ban** and **Comments** rules, not a row, and never change the exit status.
+  - The auditor also reports the advisory `id_title` and `incident_header` counts. They back the **ID ban** and **Comments** rules, not a row, and never change the exit status.
 - That auditor carries a THIRD signal no row states — (c) count-pin: an assertion comparing a non-zero integer literal against a census the same assertion derives by counting the tree or a source file. A signal-(c) finding therefore maps to no row, and is in particular not the tooling for the change-detector row.
 - A row marked `[no tooling]` below has no implementation at all and is reviewer-applied exactly like a JUDGMENT row.
 
