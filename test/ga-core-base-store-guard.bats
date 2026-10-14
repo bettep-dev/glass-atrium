@@ -5,7 +5,7 @@
 # DEFECT the guard closes: post-first-install ${GA_ROOT}/agents is the daemon-edited LIVE
 # surface (symlink farm), so a bundle-refresh install re-seeded base:=live. With base==local
 # every vendor-differing EDITABLE region resolves take-release, and live-only daemon lines
-# appear as vendor deletions — the shape that trimmed 83 lines from 11 agents on 2026-08-10.
+# appear as vendor deletions — the shape that silently trims live agent bodies.
 #
 # Contracts pinned:
 #   T1 first seed      — no existing entry → copied exactly as before (unchanged behavior).
