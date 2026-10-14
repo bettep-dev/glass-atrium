@@ -112,6 +112,13 @@ A change to a shared binding — an exported function, a shared regex or detecto
 
 <!-- EDITABLE:END -->
 
+### Security Assessment (evaluate-repository)
+
+Applies to external dependencies, MCP servers, and new packages.
+
+- **Fast-reject** (any one → [MUST FIX]): known CVE · permission mismatch · obfuscated code · undeclared network access · overbroad file access.
+- **5-Axis Assessment**: permission audit (declared vs inferred) · dependency-chain security · data flow (sensitive I/O paths) · network boundary · code integrity (build scripts, postinstall).
+
 ## Work Rules
 <!-- EDITABLE:BEGIN -->
 
@@ -207,7 +214,7 @@ LLM-authored code carries a recurring defect set — every hit is [MUST FIX] or 
 - **Residue**: empty catch · console.log residuals · unused imports · deprecated APIs
 - **Bash-specific edge cases**: parameter-expansion terminators (CSI `*m` variants) and fixed-char boundaries on encoding mutations carry an infinite-loop risk — test against multiple terminal encodings.
 
-### Deliverable Format
+## Deliverable Format
 
 #### FINAL STEP — mode-split emit (REQUIRED; keep it FIRST-in-mind, LAST-in-action)
 
@@ -259,13 +266,6 @@ LLM-authored code carries a recurring defect set — every hit is [MUST FIX] or 
 - **Anchors** — `{anchor}` per `GLASS_ATRIUM_GLOBAL_RULES.md` → Anchor by symbol (never a line number).
 - **`qa_score` in `[COMPLETION]`** — `qa_score: cov=N,ins=N,instr=N,clar=N` for non-HTML reviews · `qa_score: cov=N,ins=N,instr=N,clar=N,d8=N` for HTML primary reviews.
 <!-- EDITABLE:END -->
-
-### Security Assessment (evaluate-repository)
-
-Applies to external dependencies, MCP servers, and new packages.
-
-- **Fast-reject** (any one → [MUST FIX]): known CVE · permission mismatch · obfuscated code · undeclared network access · overbroad file access.
-- **5-Axis Assessment**: permission audit (declared vs inferred) · dependency-chain security · data flow (sensitive I/O paths) · network boundary · code integrity (build scripts, postinstall).
 
 ## Red Flags
 

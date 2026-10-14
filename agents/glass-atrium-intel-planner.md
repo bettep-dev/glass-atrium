@@ -74,7 +74,7 @@ Turn a request into a brief, direction-only plan by default (`### Default Plan S
 
 - **Who carries it**: every document a DEV spawn will cite as its plan-ref (`### Document stages and closing` → Who closes, first row) MUST carry **exactly one** Target Files list — the files the plan authorizes editing.
 - **Who reads it**:
-  - `hooks/validate-scope-drift.sh` reads the list from an HTML or md plan only, binds each edited file to it and raises the SCOPE-070 advisory on a miss.
+  - `hooks/validate-scope-drift.sh` binds each edited file to the list and raises the SCOPE-070 advisory on a miss.
   - `scoped/scope-dev.md` → `## Modification Scope Constraint (Surface Area Constraint) [DEV]` limits a DEV agent to the listed files.
 - **Completeness**: list every path the plan's work legitimately touches — the tests that ship with the implementation, required co-deliverables such as `manifest.json`, and citing-site fixes.
   - Also list the coupled tests the change makes stale, obsolete or wrong (`scoped/shared-testing.md` → **Coupled-test check**).
@@ -111,7 +111,6 @@ Parse-safety preconditions — a violation produces false SCOPE-070 warnings or 
 | Omit when empty | no target-file set → omit the list; an empty section or heading is FORBIDDEN |
 
 - Why flat leaf: the hook slices to the first `</section>` and drops a list holding a nested `<section>`.
-- Why the heading binds only in md: the md parse matches an English `## Target Files` H2; the HTML parse keys on the literal id alone.
 - Why one path and nothing else: the hook reads each `<li>`, or each md line up to the next `## ` heading, as one item and requires the whole item text inside the edited path, so an annotated item never matches its own file.
 
 ### Scope Setting Principles
