@@ -406,3 +406,46 @@ seed_fully_applied() {
     return 1
   }
 }
+
+# ── a rolled-back row superseded by an applied row of the same migration ───────────────────────
+
+@test "a rolled-back row whose migration also has an applied row is a superseded note, not a failed row" {
+  seed_fully_applied
+  run_doctor_sandbox
+  local base
+  base="$(warn_total_of_output)" || return 1
+
+  # `migrate resolve --rolled-back` plus a re-apply: gamma carries a rolled-back row AND an applied row.
+  stub_out history "$(
+    history_row 20260101000000_alpha 2026-01-01T00:00:00Z
+    history_row 20260202000000_beta 2026-02-02T00:00:00Z
+    history_row 20260303000000_gamma 2026-03-03T00:00:00Z 2026-03-04T00:00:00Z
+    history_row 20260303000000_gamma 2026-03-05T00:00:00Z
+  )"
+  run_doctor_sandbox
+  local superseded_line failed_line
+  superseded_line="$(printf '%s\n' "${output}" | grep -F -- 'superseded' || true)"
+  failed_line="$(printf '%s\n' "${output}" | grep -F -- 'failed/rolled-back' || true)"
+  [[ "${superseded_line}" == *"note :"*"20260303000000_gamma"* ]] || {
+    echo "no superseded note naming gamma — output:" >&2
+    echo "${output}" >&2
+    return 1
+  }
+  [[ "${failed_line}" != *"20260303000000_gamma"* ]] || {
+    echo "gamma still reported as failed/rolled-back — output:" >&2
+    echo "${output}" >&2
+    return 1
+  }
+  [[ "${superseded_line}" != *"inspect"* ]] || {
+    echo "the superseded note carries the inspect-by-hand advice — output:" >&2
+    echo "${output}" >&2
+    return 1
+  }
+  local withsuperseded
+  withsuperseded="$(warn_total_of_output)" || return 1
+  [[ "${withsuperseded}" -eq "${base}" ]] || {
+    echo "a superseded row moved the warning total: ${base} -> ${withsuperseded}" >&2
+    echo "${output}" >&2
+    return 1
+  }
+}

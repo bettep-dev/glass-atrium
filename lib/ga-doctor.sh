@@ -1156,6 +1156,8 @@ run_doctor() {
   #     `note :` line. Prisma leaves such a row behind after `migrate resolve --rolled-back` plus a
   #     re-apply, so it can accompany a fully-applied set — the prefix keeps an `ok` verdict beside
   #     a `0 pending-migration` breakdown readable as one report, not as an unowned warning.
+  #     A rolled-back row whose migration ALSO has an applied row is that re-apply finished — it
+  #     gets its own kind-B `superseded` note without the inspect-by-hand advice.
   #     The existence probe is called in the rc-CAPTURING form: setup_database's `|| true` form
   #     would fold an unreachable server into "database absent" and report a healthy install as
   #     fully pending forever.
@@ -1163,6 +1165,7 @@ run_doctor() {
   local mig_dir="${GA_MIGRATIONS_DIR:-${GA_ROOT}/monitor/prisma/migrations}"
   local mig_entry mig_name mig_state mig_probe="" mig_table="" mig_rows=""
   local mig_expected="" mig_applied="" mig_missing="" mig_failed="" mig_total=0 mig_failed_count=0
+  local mig_rolled_back="" mig_superseded="" mig_superseded_count=0
   if [[ -d "${mig_dir}" ]]; then
     # Directories only: migration_lock.toml sits beside them and is not a migration.
     for mig_entry in "${mig_dir}"/*/; do
@@ -1197,6 +1200,8 @@ run_doctor() {
       [[ -n "${mig_name}" ]] || continue
       if [[ "${mig_state}" == "applied" ]]; then
         mig_applied="${mig_applied}${mig_name}"$'\n'
+      elif [[ "${mig_state}" == "rolled_back" ]]; then
+        mig_rolled_back="${mig_rolled_back}${mig_name}"$'\n'
       else
         mig_failed="${mig_failed}${mig_failed:+, }${mig_name}"
         mig_failed_count=$((mig_failed_count + 1))
@@ -1204,6 +1209,16 @@ run_doctor() {
     done < <(get_migration_states <<<"${mig_rows}")
     # Newline-fenced haystack, so one applied name cannot match another's suffix.
     mig_applied=$'\n'"${mig_applied}"
+    while IFS= read -r mig_name; do
+      [[ -n "${mig_name}" ]] || continue
+      if [[ "${mig_applied}" == *$'\n'"${mig_name}"$'\n'* ]]; then
+        mig_superseded="${mig_superseded}${mig_superseded:+, }${mig_name}"
+        mig_superseded_count=$((mig_superseded_count + 1))
+      else
+        mig_failed="${mig_failed}${mig_failed:+, }${mig_name}"
+        mig_failed_count=$((mig_failed_count + 1))
+      fi
+    done <<<"${mig_rolled_back}"
     while IFS= read -r mig_name; do
       [[ -n "${mig_name}" ]] || continue
       [[ "${mig_applied}" == *$'\n'"${mig_name}"$'\n'* ]] && continue
@@ -1218,6 +1233,9 @@ run_doctor() {
     fi
     if [[ "${mig_failed_count}" -gt 0 ]]; then
       log "  note : failed/rolled-back history row(s): ${mig_failed_count} — ${mig_failed} (a re-apply does not clear these; inspect ${mig_table} by hand)"
+    fi
+    if [[ "${mig_superseded_count}" -gt 0 ]]; then
+      log "  note : superseded rolled-back history row(s): ${mig_superseded_count} — ${mig_superseded} (each migration also has an applied row)"
     fi
   fi
 
