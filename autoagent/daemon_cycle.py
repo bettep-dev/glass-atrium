@@ -954,10 +954,10 @@ TARGET_AGENT_EXCERPT_CHAR_CAP = 120_000
 # Bound on the diff handed to the verifier. NOT a content cap: past it the
 # excerpt is cut at a LINE boundary under an explicit marker (_diff_excerpt), so
 # the verifier is never asked to judge a fragment cut mid-word. Sized from the
-# measured incident — a 5331-char single-file EDITABLE-merge diff (one 1761-char
-# removed line, one 2034-char added line) overran the former 4000 bound and was
-# rejected on C3 as "truncated mid-sentence" — at roughly twice that, so a whole
-# hunk pair over an <= 8 KB agent body fits. A bound remains, unbounded excerpt
+# incident shape — a single-file EDITABLE-merge diff a little past the former 4000
+# bound, one removed and one added line each past ~1.5k chars, rejected on C3 as
+# "truncated mid-sentence" — at more than twice that, so a whole hunk pair over
+# an <= 8 KB agent body fits. A bound remains, unbounded excerpt
 # is forbidden (LLM10 unbounded consumption).
 DIFF_EXCERPT_CHAR_CAP = 12_000
 
