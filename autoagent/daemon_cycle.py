@@ -231,6 +231,7 @@ try:
             get_spawn_manifest_row_count as _pg_count_spawn_manifest,
             TRIAL_LEDGER,
             write_trial_ledger_row as _pg_write_trial_ledger_row,
+            get_live_trial_key,
         )
     HAS_PG_LOOP_WRITE = True
 except Exception as _pg_loop_import_exc:  # noqa: BLE001 — psycopg or helper itself
@@ -11096,7 +11097,11 @@ def _write_trial_start(trial: TrialCanary, started_at: datetime) -> str | None:
 
 
 STAGE_AREA = SimpleNamespace(
-    AA="A/A harness", TRIAL="trial stage", SHADOW="shadow stage", BINDING="manifest binding"
+    AA="A/A harness",
+    TRIAL="trial stage",
+    SHADOW="shadow stage",
+    BINDING="manifest binding",
+    GRADUATION="graduation",
 )
 
 
@@ -15385,6 +15390,9 @@ def run_cycle(
     compliance filter → safety routing; a verified non-safety candidate gets its live
     pre-registration payload, and the floor terminalizes every other auto candidate.
 
+    A writing cycle applies each won trial's still-pending row after the stages and
+    ahead of generation (run_graduation_stage), so generation reads the applied body.
+
     A writing cycle (skip_loop_emit False) from a code tree that is not its install
     raises InstallRefusedError before any stage, reads included.
 
@@ -15458,6 +15466,7 @@ def run_cycle(
         run_aa_stage(
             report.cycle_date, manifest_ingest=report.manifest_ingest, agents_dir=agents_dir
         )
+        run_graduation_stage()
 
     # T3 corpus/compliance telemetry — DETECTION-ONLY, fired ONCE per cycle.
     # Fully wrapped: any failure is swallowed so it can NEVER block or raise into
@@ -15664,6 +15673,72 @@ def _drop_trial_held_agents(
                 f"{held_trials[agent]}) — no generator call this cycle\n"
             )
     return [group for group in agent_groups if group[0] not in held_trials]
+
+
+def run_graduation_stage() -> None:
+    """Graduation — one apply call for each won trial whose proposal row is still pending.
+
+    Derived every writing cycle from stored rows: the win row is the decision, the apply its
+    effect. A row still pending after its call → a named WARN, whatever the exit; the next
+    writing cycle calls again, and the apply path's stale drain ends a diff that never lands.
+    """
+    won_ids = _read_won_pending_ids("no apply call this cycle")
+    if not won_ids:
+        return
+    outcomes = {proposal_id: _call_graduation_apply(proposal_id) for proposal_id in won_ids}
+    still_pending = _read_won_pending_ids(
+        "the apply outcomes go unreported, a row still pending is called again next writing cycle"
+    )
+    for proposal_id in still_pending or ():
+        if proposal_id in outcomes:
+            _warn_stage(
+                STAGE_AREA.GRADUATION,
+                f"trial {get_live_trial_key(proposal_id)}: proposal {proposal_id} still pending "
+                f"after its apply call ({outcomes[proposal_id]})",
+                "the next writing cycle calls again",
+            )
+
+
+def _read_won_pending_ids(fault_scope: str) -> list[int] | None:
+    """Proposal ids of the won trials whose row is still pending: held and not open.
+
+    None, with a named WARN, on a read fault. No PG layer → nothing readable. The open read
+    follows the held one, so a trial decided between them is not taken for a won one only while
+    the cycle is the sole decider.
+    """
+    if not HAS_PG_LOOP_WRITE:
+        return []
+    try:
+        held_trials = _pg_read_held_trials()
+        open_trials = _pg_read_open_trials() if held_trials else {}
+    except Exception as exc:  # noqa: BLE001 — a read fault holds the apply, never the cycle
+        _warn_stage(
+            STAGE_AREA.GRADUATION, f"won trials unreadable: {_describe_fault(exc)}", fault_scope
+        )
+        return None
+    return sorted(
+        proposal_id
+        for agent, proposal_ids in held_trials.items()
+        for proposal_id in proposal_ids
+        if proposal_id not in open_trials.get(agent, [])
+    )
+
+
+def _call_graduation_apply(proposal_id: int) -> str:
+    """The single-proposal apply with the daemon actor, never the regenerating path → its
+    outcome as the WARN names it. No timeout: a killed apply could stop between its file write
+    and its status write."""
+    script = _INSTALL_ROOT / "autoagent" / "daemon-apply.sh"
+    # the daemon's flip token — autoagent/daemon-apply.sh → REVIEW_ACTOR_FLIP
+    argv = ["bash", str(script), "--proposal-id", str(proposal_id), "--actor", "daemon-apply-flip"]
+    try:
+        # stdout dropped, stderr inherited: the script's own refusal line reaches the cycle log
+        completed = subprocess.run(  # nosec — list form, no shell=True
+            argv, stdout=subprocess.DEVNULL, check=False
+        )
+    except OSError as exc:
+        return f"not started: {_describe_fault(exc)}"
+    return f"exit {completed.returncode}"
 
 
 def _drop_gated_patterns(

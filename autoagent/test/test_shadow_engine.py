@@ -449,6 +449,8 @@ class _Ledger:
         self.statements: list[str] = []  # each statement run, in order
         # core.spawn_manifest's delivered rows as the stored-rows statement returns them
         self.stored_rows: list[tuple] = []
+        # core.autoagent_proposals status by proposal id; a row not named here is pending
+        self.proposal_statuses: dict[int, str] = {}
         # read only by a cycle whose loop-write flag also opens these gate reads and the A/A stage
         self.answered_empty = frozenset(
             {
@@ -504,6 +506,20 @@ class _Ledger:
             if f"{row.trial_key}:decision" not in keys:
                 open_trials.setdefault(row.agent, []).append(row.payload["proposal_id"])
         return open_trials
+
+    def read_held_trials(self) -> dict[str, list[int]]:
+        """Agent → proposal ids of its live pre-registrations with no :decision row, or a win
+        one while the proposal row is pending."""
+        event = stub.get_trial_ledger().EVENT
+        decisions = {row.dedupe_key: row.payload for row in self.get_rows(event.LIVE_DECISION)}
+        held_trials: dict[str, list[int]] = {}
+        for row in self.get_rows(event.LIVE_PREREGISTRATION):
+            proposal_id = row.payload["proposal_id"]
+            decision = decisions.get(f"{row.trial_key}:decision")
+            is_pending = self.proposal_statuses.get(proposal_id, "pending") == "pending"
+            if decision is None or ("win" in decision and is_pending):
+                held_trials.setdefault(row.agent, []).append(proposal_id)
+        return held_trials
 
 
 class _LedgerCursor:
@@ -603,6 +619,22 @@ def _pattern(
     )
 
 
+def _fake_apply_script(testcase: unittest.TestCase, exit_codes: tuple[int, ...]) -> list[list[str]]:
+    """autoagent/daemon-apply.sh faked at its call boundary → the argv of each process the
+    module starts; a call exits with the next of `exit_codes`, 0 past them."""
+    calls: list[list[str]] = []
+    codes = iter(exit_codes)
+
+    def _run(argv: list[str], **_kwargs: object) -> object:
+        calls.append(list(argv))
+        return dc.subprocess.CompletedProcess(argv, next(codes, 0))
+
+    patcher = mock.patch.object(dc.subprocess, "run", _run)
+    patcher.start()
+    testcase.addCleanup(patcher.stop)
+    return calls
+
+
 class _ShadowFixture(unittest.TestCase):
     def setUp(self) -> None:
         self.pg_reach = seal_pg_reach(self)
@@ -630,11 +662,18 @@ class _ShadowFixture(unittest.TestCase):
             ("_pg_connect", self.ledger.connect),
             ("_pg_write_trial_ledger_row", self.ledger.write),
             ("_pg_read_open_trials", self.ledger.read_open_trials),
+            ("_pg_read_held_trials", self.ledger.read_held_trials),
             ("_get_utc_now", lambda: self.clock.now),
         ):
             self._patch(name, value)
         self._patch(
             "TRIAL_LEDGER", stub.get_trial_ledger(), create=not hasattr(dc, "TRIAL_LEDGER")
+        )
+        # the stored key's shape here, as _LIVE_KEY has it
+        self._patch(
+            "get_live_trial_key",
+            lambda proposal_id: f"{proposal_id:064x}",
+            create=not hasattr(dc, "get_live_trial_key"),
         )
 
     def _patch(self, name: str, value: object, *, create: bool = False) -> None:
@@ -775,25 +814,9 @@ class BoundPayloadTest(_ShadowFixture):
             ("_drop_gated_patterns", lambda _agent, patterns, _gate: patterns),
             ("consecutive_timeout_count", lambda *args: 0),
             ("INTER_CALL_SPACING_SEC", 0),
-            ("_pg_read_held_trials", self._read_held_trials),
         ):
             self._patch(name, value)
         self.clock.now = _NOW
-
-    def _read_held_trials(self) -> dict[str, list[int]]:
-        """Agent → proposal ids of its trials with no decision row or a win one; no proposal
-        row is stored here, so every won row counts as pending."""
-        event = stub.get_trial_ledger().EVENT
-        released = {
-            row.dedupe_key
-            for row in self.ledger.get_rows(event.LIVE_DECISION)
-            if "win" not in row.payload
-        }
-        held_trials: dict[str, list[int]] = {}
-        for row in self.ledger.get_rows(event.LIVE_PREREGISTRATION):
-            if f"{row.trial_key}:decision" not in released:
-                held_trials.setdefault(row.agent, []).append(row.payload["proposal_id"])
-        return held_trials
 
     def _proposal(self, agent: str, *_args: object, **_kwargs: object) -> dc.PatchProposal:
         self.generated.append(agent)
@@ -3841,6 +3864,83 @@ class TrialCanaryTest(_ShadowFixture):
         self.assertIsNone(self._get_canary())
 
 
+class GraduationApplyTest(_ShadowFixture):
+    """A won trial's proposal row is applied by the cycle while it stays pending: one apply call
+    a cycle, a named WARN while the row is still pending after it, no call once the row left
+    pending."""
+
+    def _win(self) -> str:
+        """A started trial won at look 2, one shadow stage → its key."""
+        key, salt_id = self._open_started_trial()
+        self.history += _get_arm_spawns(
+            (salt_id,), _NOW, math.ceil(_MILESTONES[1]), tenths=_TENTHS.REDUCED
+        )
+        self._cycle(_NEXT_NOW)
+        self.assertEqual([list(row.payload) for row in self._get_decisions()], [["win"]])
+        return key
+
+    def _graduate(self) -> list[str]:
+        """One graduation stage → its stderr lines."""
+        stderr = io.StringIO()
+        with contextlib.redirect_stderr(stderr):
+            dc.run_graduation_stage()
+        self.assertEqual(self.pg_reach, [])
+        return stderr.getvalue().splitlines()
+
+    def test_the_cycles_after_a_win_call_the_apply_only_while_the_row_is_pending(self) -> None:
+        key = self._win()
+        groups = [(_AGENT, self.patterns)]
+        # name, the proposal row's status, each cycle's apply exit, whether the agent stays held
+        rows = (
+            ("the call failed and the row is pending", "pending", (9, 0), True),
+            ("applied", "applied", (), False),
+            ("snoozed", "snoozed", (), False),
+        )
+        for name, status, exit_codes, is_held in rows:
+            with self.subTest(name):
+                self.ledger.proposal_statuses[_PROPOSAL_ID] = status
+                calls = _fake_apply_script(self, exit_codes)
+
+                lines = self._graduate() + self._graduate()
+                with contextlib.redirect_stderr(io.StringIO()):
+                    generated = dc._drop_trial_held_agents(groups)
+
+                self.assertEqual(
+                    [call[call.index("--proposal-id") + 1] for call in calls],
+                    [str(_PROPOSAL_ID)] * len(exit_codes),
+                )
+                self.assertEqual(
+                    lines,
+                    [
+                        f"[daemon-cycle] WARN: graduation — trial {key}: proposal {_PROPOSAL_ID} "
+                        f"still pending after its apply call (exit {exit_code}); "
+                        "the next writing cycle calls again"
+                        for exit_code in exit_codes
+                    ],
+                )
+                self.assertEqual(generated, [] if is_held else groups)
+
+    def test_a_faulted_read_of_the_won_trials_warns_by_name_and_makes_no_apply_call(self) -> None:
+        self._win()
+        calls = _fake_apply_script(self, ())
+
+        def _fault() -> dict[str, list[int]]:
+            raise ConnectionError("PG unreachable")
+
+        self._patch("_pg_read_held_trials", _fault)
+
+        lines = self._graduate()
+
+        self.assertEqual(calls, [])
+        self.assertEqual(
+            lines,
+            [
+                "[daemon-cycle] WARN: graduation — won trials unreadable: "
+                "ConnectionError: PG unreachable; no apply call this cycle"
+            ],
+        )
+
+
 class CycleWiringTest(_ShadowFixture):
     """run_cycle runs the stage on a writing cycle; no-write mode (--dry-run → skip_loop_emit) writes no ledger row."""
 
@@ -3960,7 +4060,37 @@ class CycleWiringTest(_ShadowFixture):
             [(key, 1), (key, 2)],
         )
 
-    def test_a_writing_cycle_runs_the_ingest_the_trial_stage_the_shadow_stage_then_the_aa_stage(
+    def test_a_writing_cycle_applies_a_won_pending_row_with_the_daemon_actor_ahead_of_generation(
+        self,
+    ) -> None:
+        trial_ledger = stub.get_trial_ledger()
+        key = self._open_live_trial()
+        self.ledger.write(
+            trial_ledger.EVENT.LIVE_DECISION,
+            trial_ledger.ACTOR.LIVE,
+            {"win": {}},
+            trial_key=key,
+            agent=_AGENT,
+            dedupe_key=f"{key}:decision",
+        )
+        calls = _fake_apply_script(self, ())
+        called_ahead_of_generation: list[list[list[str]]] = []
+        for name, value in (
+            ("run_trial_stage", lambda: frozenset()),
+            ("run_shadow_stage", lambda *args: None),
+            ("run_aa_stage", lambda *args, **kwargs: None),
+            ("_run_generation_loop", lambda *args: called_ahead_of_generation.append(list(calls))),
+        ):
+            self._patch(name, value)
+        self._open_writing_stages()
+
+        self._run_cycle(skip_loop_emit=False)
+
+        script = dc._INSTALL_ROOT / "autoagent" / "daemon-apply.sh"
+        flags = ["--proposal-id", str(_PROPOSAL_ID), "--actor", "daemon-apply-flip"]
+        self.assertEqual(called_ahead_of_generation, [[["bash", str(script), *flags]]])
+
+    def test_a_writing_cycle_runs_the_ingest_the_trial_the_shadow_and_the_aa_stage_then_graduation(
         self,
     ) -> None:
         stages: list[str] = []
@@ -3973,11 +4103,12 @@ class CycleWiringTest(_ShadowFixture):
             lambda *args: (stages.append("shadow"), handed.append(args[2:])),
         )
         self._patch("run_aa_stage", lambda *args, **kwargs: stages.append("aa"))
+        self._patch("run_graduation_stage", lambda: stages.append("graduation"))
         self._open_writing_stages()
 
         self._run_cycle(skip_loop_emit=False)
 
-        self.assertEqual(stages, ["ingest", "trial", "shadow", "aa"])
+        self.assertEqual(stages, ["ingest", "trial", "shadow", "aa", "graduation"])
         self.assertEqual(handed, [(judged,)])  # the trial stage's set, handed to the looks
 
     def test_an_unusable_stored_live_preregistration_leaves_the_cycle_running_through_the_aa_stage(

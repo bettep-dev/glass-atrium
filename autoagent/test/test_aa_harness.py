@@ -332,6 +332,8 @@ class _AaFixture(unittest.TestCase):
             ("_pg_connect", lambda: self.ledger.connect()),
             ("_pg_write_trial_ledger_row", lambda *a, **k: self.ledger.write(*a, **k)),
             ("_pg_read_open_trials", lambda: self.ledger.read_open_trials()),
+            # no won trial is stored here → the held trials are the open ones
+            ("_pg_read_held_trials", lambda: self.ledger.read_open_trials()),
             ("_get_utc_now", lambda: _NOW),
             ("_INSTALL_ROOT", self.root),
             ("DEFAULT_AGENTS_DIR", self.agents_dir),

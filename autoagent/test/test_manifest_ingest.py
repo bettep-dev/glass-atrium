@@ -2099,6 +2099,7 @@ class TestManifestIngestCycleWiring(unittest.TestCase):
             ("_pg_connect", get_unreachable("pg-connect")),
             ("_pg_write_corpus_audit", get_unreachable("corpus-audit-write")),
             ("_pg_write_trial_ledger_row", get_unreachable("trial-ledger-write")),
+            ("_pg_read_held_trials", get_unreachable("held-trials-read")),
         ):
             patcher = mock.patch.object(dc, name, value)
             patcher.start()
