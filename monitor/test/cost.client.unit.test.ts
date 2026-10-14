@@ -628,8 +628,8 @@ test("a session's last-seen instant never lands after now, and a past instant pa
 });
 
 test("a session reads by the leading 8 characters of its id", () => {
-  const id = "b81996da-3c1e-4f7a-9d2b-0e5c6a7b8c9d";
-  assert.equal(cost.getSessionShortId(id), "b81996da");
+  const id = "12345678-9abc-4def-8123-456789abcdef";
+  assert.equal(cost.getSessionShortId(id), "12345678");
   assert.ok(id.startsWith(cost.getSessionShortId(id)), "the short form is a prefix, so it can be searched");
   assert.equal(cost.getSessionShortId("short"), "short", "an id at or under 8 characters is kept whole");
 });
@@ -637,7 +637,7 @@ test("a session reads by the leading 8 characters of its id", () => {
 test("the session drawer hides a field it has no value for, and keeps the full id", () => {
   const now = Date.parse("2026-09-25T00:48:00.000Z");
   const full = {
-    session_id: "b81996da-3c1e-4f7a-9d2b-0e5c6a7b8c9d",
+    session_id: "12345678-9abc-4def-8123-456789abcdef",
     top_model: "claude-opus-5",
     total_cost_usd: 12.5,
     total_tokens: 1000,
@@ -676,7 +676,7 @@ test("the session drawer's task-results link does not promise a session-scoped v
     return collectButtons(el.props.children, out);
   };
   const navCalls: unknown[][] = [];
-  const session = { session_id: "b81996da-3c1e-4f7a-9d2b-0e5c6a7b8c9d", total_cost_usd: 1 };
+  const session = { session_id: "12345678-9abc-4def-8123-456789abcdef", total_cost_usd: 1 };
   const drawer = sandbox.SessionDetailDrawerC({ session, onClose: () => {}, onNav: (...args: unknown[]) => navCalls.push(args) });
 
   const [link] = collectButtons(drawer, []).filter((b) => {
