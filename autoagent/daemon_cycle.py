@@ -597,7 +597,7 @@ APPLY_CAP_REASON_TEMPLATE = (
 # Mirrors learning-aggregator.py _NUMERIC_RE (pattern-signature normalization).
 # The proposal-history match must strip the SAME volatile numerics the aggregator
 # strips when computing pattern_signature, or legacy numeric proposal labels
-# ("failure rate 62%") never match their stripped signature ("failure rate "). Keep in sync;
+# ("failure rate 47%") never match their stripped signature ("failure rate "). Keep in sync;
 # drift fails OPEN (missed match → no snooze).
 _PATTERN_NUMERIC_RE = re.compile(
     r"\d[\d.]*%?|\d{4}-\d{2}-\d{2}|avg [\d.]+|score \d+|\d+/\d+"
@@ -11580,7 +11580,7 @@ PATTERN_TERMINAL_STATUSES = frozenset({"applied", "rejected"})
 
 
 def _build_row_status_text(rows: list[dict]) -> str:
-    """`3384:rejected, 6:applied` — lockstep with daemon-apply.sh's verdict heredoc copy."""
+    """`5120:rejected, 7:applied` — lockstep with daemon-apply.sh's verdict heredoc copy."""
     return ", ".join(f"{row['id']}:{row.get('status')}" for row in rows)
 
 
