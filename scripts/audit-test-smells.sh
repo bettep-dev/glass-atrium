@@ -108,7 +108,10 @@ readonly RE_TEST_CLOSE='^\}[[:space:]]*$'
 readonly RE_HEREDOC='<<(-?)[[:space:]]*["'"'"']?([A-Za-z_][A-Za-z0-9_]*)'
 readonly RE_RUN='(^|[[:space:]])run([[:space:]]|$)'
 readonly RE_RUN_EXEMPT='(^|[[:space:]])run[[:space:]]+(!|-[0-9]+|--separate-stderr)([[:space:]]|$)'
-readonly RE_HELPER='(^|[^[:alnum:]_])assert_[a-zA-Z_]+'
+readonly RE_HELPER='(^|[^[:alnum:]_])_?assert_[a-zA-Z_]+'
+# A substitution that fails yields empty text, which can never equal a non-empty literal — so a
+# positive `==` against one reads the run's effect loudly; `""`, `!=` and negative helpers do not.
+readonly RE_POSITIVE_COMPARE='\[\[[[:space:]]+"\$\(.*\)"[[:space:]]+==[[:space:]]+("[^"]+"|'"'"'[^'"'"']+'"'"')[[:space:]]+\]\]'
 # Both operands are captured with a class that excludes brackets, so a subscripted operand simply
 # falls out of the signal rather than being guessed at.
 readonly RE_COMPARE='(^|[^[:alnum:]_])\[\[?[[:space:]]+([^][:space:]]+)[[:space:]]+(=|==|-eq)[[:space:]]+([^][:space:]]+)[[:space:]]+\]\]?([^[:alnum:]_]|$)'
@@ -188,6 +191,8 @@ line_inspects() {
       ;;
     *) ;;
   esac
+  # Read from the text view: the code view blanks the quoted operands this shape depends on.
+  [[ "${text}" =~ ${RE_POSITIVE_COMPARE} ]] && return 0
   [[ "${code}" =~ ${RE_HELPER} ]]
 }
 
