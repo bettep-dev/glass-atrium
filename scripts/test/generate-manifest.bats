@@ -18,6 +18,17 @@ REAL_SPINE="${GA}/scripts/lib/apply-spine.sh"
 # shellcheck source-path=SCRIPTDIR source=../lib/path-guard.sh
 source "${GA}/scripts/lib/path-guard.sh"
 
+# A path's OWN octal permission (symlink not followed) — BSD stat first, GNU fallback.
+# Output-validated: GNU `stat -f` is filesystem status (statfs block on stdout), so
+# the exit code alone cannot select the right form.
+lstat_mode_of() {
+  local m
+  m="$(stat -f '%Lp' "$1" 2>/dev/null || true)"
+  [[ "${m}" =~ ^[0-7]{3,4}$ ]] || m="$(stat -c '%a' "$1" 2>/dev/null || true)"
+  [[ "${m}" =~ ^[0-7]{3,4}$ ]] || return 1
+  printf '%s\n' "${m}"
+}
+
 setup() {
   [[ -f "${REAL_SCRIPT}" ]] || skip "generate-manifest.sh not found: ${REAL_SCRIPT}"
   [[ -f "${REAL_SPINE}" ]] || skip "apply-spine.sh not found: ${REAL_SPINE}"
@@ -276,7 +287,7 @@ UNCARRIABLE_ROWS=(
   run "${SCRIPT}"
   [[ "${status}" -eq 0 ]] || return 1
   local link_lstat recorded
-  link_lstat="$(stat -f '%Lp' "${WORK}/rules/link.md" 2>/dev/null || stat -c '%a' "${WORK}/rules/link.md")"
+  link_lstat="$(lstat_mode_of "${WORK}/rules/link.md")"
   recorded="$(jq -r '.modes["rules/link.md"]' "${MANIFEST}")"
   # the link's own lstat bits are NOT 644 (755 macOS / 777 Linux) — proving a
   # recorded 644 came from dereferencing the link, not lstat'ing it.
@@ -285,6 +296,32 @@ UNCARRIABLE_ROWS=(
   [[ "${recorded}" == "644" ]] || return 1
   # the target's own entry is 644 too.
   [[ "$(jq -r '.modes["rules/target.md"]' "${MANIFEST}")" == "644" ]] || return 1
+}
+
+@test "lstat_mode_of reads one octal under a GNU stat whose -f prints a statfs block (PATH shim)" {
+  # GNU stat: -f is --file-system → statfs block on stdout, exit 1 ('%Lp' read as a
+  # missing path); -c '%a' → the mode. An exit-code-only chain appends the two.
+  local shim="${WORK}/gnu-shim"
+  mkdir -p "${shim}"
+  cat >"${shim}/stat" <<'SHIM'
+#!/usr/bin/env bash
+case "$1" in
+  -f)
+    printf '  File: "%s"\n' "${3:-}"
+    printf '    ID: 0 Namelen: 255     Type: overlayfs\n'
+    printf 'Blocks: Total: 1          Free: 1          Available: 1\n'
+    exit 1
+    ;;
+  -c) printf '777\n' ;;
+  *) exit 1 ;;
+esac
+SHIM
+  chmod 755 "${shim}/stat"
+  PATH="${shim}:${PATH}" run lstat_mode_of "${WORK}/rules/beta.md"
+  [[ "${status}" -eq 0 && "${output}" == "777" ]] || {
+    echo "${output}"
+    return 1
+  }
 }
 
 @test "--check: exit 0 on a freshly generated, matching tree" {
