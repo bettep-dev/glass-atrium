@@ -2,7 +2,8 @@
 # daemon-apply-landed-record.bats — the landed record every byte-landing apply writes: the unified diff
 # from the transaction's own before-image to the verified target, plus both whole-file sha256 digests.
 # Two copies: the applied JSONL row (durable) and core.autoagent_apply_records (queryable, written
-# after the status flip). Pins the table preflight (exit 25) and the record-failure exit (26).
+# after the status flip). Pins the table preflight (exit 25), the record-failure exit (26) and the
+# live-trial refusal (27).
 #
 # HERMETIC: temp agents tree, temp HOME, a stateful psql stand-in prepended to PATH, and the
 # daemon_cycle.py seam pointed at a stand-in. No live PG, no live install, no live agents dir.
@@ -365,22 +366,23 @@ has_abort_row() {
   }
 }
 
-# every probe answer on the gated --proposal-id source (the monitor Approve route)
-@test "a record table that cannot be confirmed stops the run before any apply with exit 25" {
+# the record table's migration precedes the ledger's, so an install lacking the record table cannot read
+# the ledger either: its single apply keeps exit 25, the abort row and the migration remedy
+@test "an install whose record table cannot be confirmed stops a single apply with exit 25 ahead of the live-trial read" {
   local rows=(
-    "table absent, single source|f|--proposal-id|${ROW_ID}"
-    "probe failed, single source|error|--proposal-id|${ROW_ID}"
+    "neither table exists — the migration has not run|f|error"
+    "the probe fails, and the ledger read with it|error|error"
   )
-  local row name answer flag value
+  local row name probe trial
   for row in "${rows[@]}"; do
-    IFS='|' read -r name answer flag value <<<"${row}"
+    IFS='|' read -r name probe trial <<<"${row}"
     : >"$(applied_log_path)"
-    STUB_PROBE="${answer}" run_apply offset_diff ${flag:+"${flag}" "${value}"}
+    STUB_PROBE="${probe}" STUB_TRIAL="${trial}" run_apply offset_diff --proposal-id "${ROW_ID}"
     [[ "${status}" -eq 25 ]] || {
-      echo "${name}: ${output}"
+      echo "${name}: exit ${status}: ${output}"
       return 1
     }
-    [[ "${output}" == *"FATAL"*"core.autoagent_apply_records"* ]] || {
+    [[ "${output}" == *"FATAL"*"core.autoagent_apply_records"*"run the pending monitor migration"* ]] || {
       echo "${name}: ${output}"
       return 1
     }

@@ -85,8 +85,9 @@
 #   safety/user-tier proposal here (the auto-batch path still excludes safety;
 #   only this explicit path bypasses). A proposal a live trial pre-registered is
 #   not the click's to apply: its trial's decision state picks the actor (exit 27).
-#   Selection: id=N only; the shell then branches on the row's status, its live
-#   trial's decision state and its generation outcome (exits 21/19/23/8/27/20 below).
+#   Selection: id=N only; the shell then branches on the row's status, the record
+#   table, its live trial's decision state and its generation outcome
+#   (exits 21/19/23/8/25/27/20 below).
 #   Reuses the SAME apply_diff + update_db_status path.
 #
 # Review actor — the reviewed_at/reviewed_by contract and the closed token set are
@@ -202,7 +203,7 @@
 #
 # Patch-source read exit codes. Single path: select_single_proposal, then
 # assert_generation_outcome after the parked guard, checked in the order
-# 21 → 19 → 23 → 8 → 27 → 17/18 → 20 so the most specific answer wins. Batch path: the
+# 21 → 19 → 23 → 8 → 25 → 27 → 17/18 → 20 so the most specific answer wins. Batch path: the
 # source read itself (21 backlog · 23 backlog row · 22 report), before any row is
 # judged — a source that could not be read never lands the zero-eligible heartbeat:
 #     19 — --proposal-id: no proposal with that id. No-op.
@@ -242,7 +243,9 @@
 #     25 — the record table could not be confirmed present: the probe answered anything but `t` (the
 #          monitor migration has not run) or the probe itself failed. Checked BEFORE the first apply,
 #          so nothing is applied and no row moves; one abort row lands (reason
-#          apply_record_table_unconfirmed). Does NOT collide with 0/2-24.
+#          apply_record_table_unconfirmed). --proposal-id: checked ahead of the live-trial read (27),
+#          whose table migrates after this one, so an un-migrated install answers 25.
+#          Does NOT collide with 0/2-24.
 #     26 — a landed apply's database record was NOT written: the INSERT failed, or a whole-file digest
 #          or the landed diff could not be computed. Raised AFTER the bytes landed and the row flipped
 #          applied, so the row cannot be re-applied, and its JSONL applied row holds the record. The
@@ -1437,8 +1440,9 @@ PSQL
 
 # select_single_proposal — set PATCH_ROWS to proposal PROPOSAL_ID and SINGLE_HAIKU_STATUS to its
 # generation outcome, or exit: 21 lookup failed · 19 not found · 23 row unreadable · 8 already
-# terminal · 27 refused on its live trial's decision state — ahead of the parked guard and the
-# outcome refusal, whose remedy (Reject) is wrong for a row a trial holds.
+# terminal · 25 record table unconfirmed (not on a dry run) · 27 refused on its live trial's decision
+# state — ahead of the parked guard and the outcome refusal, whose remedy (Reject) is wrong for a row
+# a trial holds.
 # The outcome refusal (20) waits for the parked guard, whose exit 18 is the better remedy
 # for a row tripping both. The lookup is captured, not read through `< <(…)`, which would drop its
 # return code. The row is reassembled before its status is trusted: a row that does not decode, or
@@ -1469,6 +1473,10 @@ select_single_proposal() {
             ;;
         *) ;;
     esac
+    # record table first: its migration precedes the ledger's → an un-migrated install answers 25 + its remedy
+    if [[ "${DRY_RUN}" -eq 0 ]]; then
+        assert_apply_record_table
+    fi
     assert_trial_decision_state
     PATCH_ROWS=("${patch_row}")
     SINGLE_HAIKU_STATUS="${haiku_status}"
@@ -2618,7 +2626,7 @@ while IFS= read -r _row; do
 done <<<"${BATCH_PATCH_LINES}"
 
 # Empty here means a real empty backlog or report: a failed batch read exited 21/22/23 above, and the single
-# source exits 21/19/23/8/27 in select_single_proposal instead.
+# source exits 21/19/23/8/25/27 in select_single_proposal instead.
 if [[ ${#PATCH_ROWS[@]} -eq 0 ]]; then
     if [[ "${PATCH_SOURCE}" == "backlog" ]]; then
         printf '[daemon-apply] 0 pending backlog patches (source=PG)\n' >&2
@@ -3188,9 +3196,10 @@ run_regen_for_single() {
 
 # -- Apply-record table preflight (exit 25) --------------------------------
 # Before the first apply AND before any housekeeping write: the sources whose landing writes a table
-# record must find the table, else nothing is applied. A dry run writes no record, and the report
+# record must find the table, else nothing is applied. The single source was checked in
+# select_single_proposal, ahead of its live-trial read. A dry run writes no record, and the report
 # fallback applies only with psql absent, so neither is checked.
-if [[ "${DRY_RUN}" -eq 0 ]] && { [[ "${PATCH_SOURCE}" == "backlog" ]] || [[ "${PATCH_SOURCE}" == "single" ]]; }; then
+if [[ "${DRY_RUN}" -eq 0 ]] && [[ "${PATCH_SOURCE}" == "backlog" ]]; then
     assert_apply_record_table
 fi
 
