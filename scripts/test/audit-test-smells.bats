@@ -133,6 +133,35 @@ audit_body() {
   done
 }
 
+@test "advisory ID-title and incident-header counts report exactly the files that carry an ID or date stamp" {
+  local -a table=(
+    $'a Bats title carrying a task ID is reported\x1fbats\x1f#!/usr/bin/env bats\\n%%test%% "T19: keeps the pin" {\\n  true\\n}\x1fid_title\x1f1'
+    $'a Bats title carrying a qualified task ID is reported\x1fbats\x1f#!/usr/bin/env bats\\n%%test%% "G7(static): reads the file" {\\n  true\\n}\x1fid_title\x1f1'
+    $'a Bats title carrying a hyphenated ticket ID is reported\x1fbats\x1f#!/usr/bin/env bats\\n%%test%% "AC-4: renders the label" {\\n  true\\n}\x1fid_title\x1f1'
+    $'a title whose digits are not an ID is not reported\x1fbats\x1f#!/usr/bin/env bats\\n%%test%% "runs under bash 3.2" {\\n  true\\n}\\n%%test%% "reports exit 143 on timeout" {\\n  true\\n}\\n%%test%% "hashes with sha256" {\\n  true\\n}\x1fid_title\x1f0'
+    $'a TS test title carrying an ID is reported\x1fts\x1fimport test from "node:test";\\ntest("P0-2 keeps the order", () => {});\\nit("renders the label", () => {});\x1fid_title\x1f1'
+    $'a Bats file header carrying an ID is reported\x1fbats\x1f#!/usr/bin/env bats\\n# Regression for #14 — keeps the pin.\\n%%test%% "keeps the pin" {\\n  true\\n}\x1fincident_header\x1f1'
+    $'a TS file header carrying a date stamp is reported\x1fts\x1f// Incident 2026-04-14: the label overflowed.\\nimport test from "node:test";\x1fincident_header\x1f1'
+    $'a purpose-only header is not reported\x1fbats\x1f#!/usr/bin/env bats\\n# Pins the retry budget of the poller.\\n\\n# Fixed by T19.\\n%%test%% "keeps the budget" {\\n  true\\n}\x1fincident_header\x1f0'
+    $'a shellcheck directive in the header is not an ID\x1fbats\x1f#!/usr/bin/env bats\\n# shellcheck disable=SC2034\\n# Pins the retry budget of the poller.\\n%%test%% "keeps the budget" {\\n  true\\n}\x1fincident_header\x1f0'
+  )
+  local row name ext content field want fixture out idx=0
+  for row in "${table[@]}"; do
+    IFS=$'\x1f' read -r name ext content field want <<<"${row}"
+    idx=$((idx + 1))
+    fixture="${TS_TMP}/row${idx}.${ext}"
+    printf '%b\n' "${content}" | write_fixture "${fixture}"
+    out="$(bash "${AUDIT_SH}" --path "${fixture}" --quiet)" || {
+      echo "${name}: exit $? ${out}"
+      return 1
+    }
+    [[ " ${out} " == *" ${field}=${want} "* ]] || {
+      echo "${name}: want ${field}=${want}, got ${out}"
+      return 1
+    }
+  done
+}
+
 @test "heredoc awareness: heredoc lines feed neither signal and a column-0 brace does not end the body" {
   write_fixture "${TS_TMP}/heredoc.bats" <<'OUTER'
 #!/usr/bin/env bats
@@ -218,6 +247,8 @@ EOF
 }
 EOF
   done
+  mkdir -p "${TS_TMP}/monitor/test"
+  printf '%s\n' 'test("P0-2 keeps the order", () => {});' >"${TS_TMP}/monitor/test/sample.test.ts"
   run bash "${AUDIT_SH}" --root "${TS_TMP}" --strict
   [ "${status}" -eq 1 ] || {
     echo "exit ${status}: ${output}"
@@ -227,12 +258,39 @@ EOF
     echo "${output}"
     return 1
   }
+  [[ "${output}" == *"id_title=1 "* ]] || {
+    echo "${output}"
+    return 1
+  }
   for dir in hooks/test scripts/test autoagent/test; do
     [[ "${output}" == *"${dir}/sample.bats"* ]] || {
       echo "scope dir ${dir} not walked: ${output}"
       return 1
     }
   done
+  [[ "${output}" == *"monitor/test/sample.test.ts"* ]] || {
+    echo "TS scope dir not walked: ${output}"
+    return 1
+  }
+}
+
+@test "the advisory counts never change the exit status, --strict included" {
+  write_fixture "${TS_TMP}/ids.bats" <<'EOF'
+#!/usr/bin/env bats
+# Regression for T19.
+%%test%% "T19: keeps the pin" {
+  true
+}
+EOF
+  run bash "${AUDIT_SH}" --path "${TS_TMP}/ids.bats" --strict
+  [[ "${status}" -eq 0 ]] || {
+    echo "exit ${status}: ${output}"
+    return 1
+  }
+  [[ "${output}" == *"id_title=1 incident_header=1"* ]] || {
+    echo "${output}"
+    return 1
+  }
 }
 
 @test "the ported exit convention: 2 on usage error, 3 on IO error, 0 on --help" {
