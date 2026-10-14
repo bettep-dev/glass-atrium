@@ -238,12 +238,24 @@ wait_for_log() {
   alive=0
   if kill -0 "${pid_a}" 2>/dev/null; then alive=$((alive + 1)); fi
   if kill -0 "${pid_b}" 2>/dev/null; then alive=$((alive + 1)); fi
-  [[ "${alive}" -eq 1 ]]
+  [[ "${alive}" -eq 1 ]] || {
+    echo "live supervisors after the race: ${alive}, want 1" >&2
+    cat "${TMPROOT}/boot-a.log" "${TMPROOT}/boot-b.log" >&2
+    return 1
+  }
   local entering yielding
   entering="$(cat "${TMPROOT}/boot-a.log" "${TMPROOT}/boot-b.log" | grep -cF 'entering self-health monitoring loop' || true)"
-  [[ "${entering}" -eq 1 ]]
+  [[ "${entering}" -eq 1 ]] || {
+    echo "bootstraps entering the monitor loop: ${entering}, want 1" >&2
+    cat "${TMPROOT}/boot-a.log" "${TMPROOT}/boot-b.log" >&2
+    return 1
+  }
   yielding="$(cat "${TMPROOT}/boot-a.log" "${TMPROOT}/boot-b.log" | grep -cF 'yielding (exactly one supervisor)' || true)"
-  [[ "${yielding}" -eq 1 ]]
+  [[ "${yielding}" -eq 1 ]] || {
+    echo "bootstraps yielding the supervisor lock: ${yielding}, want 1" >&2
+    cat "${TMPROOT}/boot-a.log" "${TMPROOT}/boot-b.log" >&2
+    return 1
+  }
   # exactly one inject — the create winner owns it
   [[ "$(wc -l <"${INJECT_CALLS}" | tr -d ' ')" -eq 1 ]]
 }
@@ -316,8 +328,16 @@ wait_for_log() {
   wait_for_log "${TMPROOT}/boot.log" "entering self-health monitoring loop" 10
   if ga_guard_path "${SESSION_MARKER}"; then rm -f -- "${SESSION_MARKER:?}"; fi
   wait "${pid}" || rc=$?
-  [[ "${rc}" -eq 3 ]]
-  [[ ! -L "${LOCK_DIR}/daemon-supervisor-wiki.lock" ]]
+  [[ "${rc}" -eq 3 ]] || {
+    echo "bootstrap exited ${rc} on a missing session, want 3" >&2
+    cat "${TMPROOT}/boot.log" >&2
+    return 1
+  }
+  [[ ! -L "${LOCK_DIR}/daemon-supervisor-wiki.lock" ]] || {
+    echo "supervisor lock stranded after exit 3: $(readlink "${LOCK_DIR}/daemon-supervisor-wiki.lock" || true)" >&2
+    cat "${TMPROOT}/boot.log" >&2
+    return 1
+  }
   grep -qF "missing — exit 3 (launchd respawn)" "${TMPROOT}/boot.log"
 }
 
