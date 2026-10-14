@@ -98,3 +98,54 @@ EOF
     return 1
   }
 }
+
+# Emits the dedented `run: |` body of the step carrying `id: decide`; stops at the next step.
+_decide_run_body() {
+  awk '
+    /^[[:space:]]*id:[[:space:]]*decide[[:space:]]*$/ { in_step = 1; next }
+    in_step && !in_run && /^[[:space:]]*- / { exit }
+    in_step && !in_run && /^[[:space:]]*run:[[:space:]]*\|[[:space:]]*$/ {
+      match($0, /^[[:space:]]*/); run_indent = RLENGTH; in_run = 1; next
+    }
+    in_run {
+      if ($0 ~ /^[[:space:]]*$/) { print ""; next }
+      match($0, /^[[:space:]]*/)
+      if (RLENGTH <= run_indent) exit
+      if (!body_indent) body_indent = RLENGTH
+      print substr($0, body_indent + 1)
+    }
+  ' "$1"
+}
+
+# A changed path no stack filter claims must not let every stack skip while ci-pass goes green.
+@test "decide: an unclaimed path runs every stack, a claimed path runs only the stacks it reaches" {
+  git -C "${GA}" rev-parse --is-inside-work-tree >/dev/null 2>&1 \
+    || skip "Repo-only: .github/workflows/ci.yml is a manifest non-member, absent from a consumer install"
+  local body="${BATS_TEST_TMPDIR:?}/decide.sh" out="${BATS_TEST_TMPDIR:?}/github-output"
+  _decide_run_body "${CI_YML}" >"${body}"
+  [[ -s "${body}" ]] || {
+    printf 'no run body for the decide step (id: decide) in %s\n' "${CI_YML}" >&2
+    return 1
+  }
+  local name all bash_files python_files monitor_files bash_on python_on monitor_on expected got
+  while IFS='|' read -r name all bash_files python_files monitor_files bash_on python_on monitor_on expected; do
+    : >"${out}"
+    run env ALL_FILES="${all}" BASH_FILES="${bash_files}" PYTHON_FILES="${python_files}" \
+      MONITOR_FILES="${monitor_files}" BASH_CHANGED="${bash_on}" PYTHON_CHANGED="${python_on}" \
+      MONITOR_CHANGED="${monitor_on}" GITHUB_OUTPUT="${out}" bash "${body}" </dev/null
+    [[ "${status}" -eq 0 ]] || {
+      echo "${name}: exit ${status}"
+      echo "${output}"
+      return 1
+    }
+    got="$(paste -sd ' ' "${out}")"
+    [[ "${got}" == "${expected}" ]] || {
+      echo "${name}: got '${got}', want '${expected}'"
+      echo "${output}"
+      return 1
+    }
+  done <<'EOF'
+an unclaimed path runs every stack|["manifest.json"]|[]|[]|[]|false|false|false|bash=true python=true monitor=true
+claimed paths skip the stacks they do not reach|["hooks/x.sh"]|["hooks/x.sh"]|[]|[]|true|false|false|bash=true python=false monitor=false
+EOF
+}
