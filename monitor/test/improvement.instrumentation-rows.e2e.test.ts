@@ -19,36 +19,36 @@ const PUBLIC_ROOT = resolve(HERE, "..", "public");
 // design.md §1: a stretched row is valid only when its shorter column's natural body is ≥ 75% of the taller one's
 const STRETCH_FLOOR = 0.75;
 
-// the shipped measurement roster: four agents with add-only patches, four confidence lanes, a code-checked cohort
+// synthetic payload in the shipped shape: four agents with add-only patches, four confidence lanes, a code-checked cohort
 const SUGGESTIONS = {
   proposals: [],
   prose_only_add_summary: {
     window_days: 30,
     agents: [
-      { agent: "glass-atrium-dev-db", count: 3 },
-      { agent: "glass-atrium-dev-nestjs", count: 9 },
-      { agent: "glass-atrium-dev-shell", count: 7 },
-      { agent: "glass-atrium-meta-prompt-engineer", count: 3 },
+      { agent: "glass-atrium-agent-a", count: 4 },
+      { agent: "glass-atrium-agent-b", count: 8 },
+      { agent: "glass-atrium-agent-c", count: 6 },
+      { agent: "glass-atrium-agent-d", count: 2 },
     ],
-    total: 22,
+    total: 20,
     truncation_caveat:
       "Floor, not a total — the verdict is derived from the stored diff, which is truncated before classification, so a longer patch whose removals fall past the cut is still classified prose-only-add.",
   },
   tier_breakdown_30d: {
     window_days: 30,
-    code_based_pass_30d: 10689,
-    code_based_fail_30d: 769,
+    code_based_pass_30d: 12406,
+    code_based_fail_30d: 538,
     pre_3tier_baseline_count: 0,
   },
   confidence_distribution: {
     window_days: 30,
     buckets: [
-      { promotion_tier: "candidate", proposal_count: 15, confidence_observed_avg: 0.8089 },
-      { promotion_tier: "instruction-edit", proposal_count: 16, confidence_observed_avg: 0.8571 },
-      { promotion_tier: "mention", proposal_count: 1, confidence_observed_avg: 0.6667 },
-      { promotion_tier: "unassigned", proposal_count: 6, confidence_observed_avg: null },
+      { promotion_tier: "candidate", proposal_count: 12, confidence_observed_avg: 0.75 },
+      { promotion_tier: "instruction-edit", proposal_count: 18, confidence_observed_avg: 0.8889 },
+      { promotion_tier: "mention", proposal_count: 2, confidence_observed_avg: 0.5 },
+      { promotion_tier: "unassigned", proposal_count: 5, confidence_observed_avg: null },
     ],
-    overall_confidence_observed_avg: 0.8286,
+    overall_confidence_observed_avg: 0.8125,
   },
 };
 

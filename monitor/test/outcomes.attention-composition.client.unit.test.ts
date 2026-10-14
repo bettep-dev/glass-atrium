@@ -1181,8 +1181,8 @@ test("ledger row: the needs-you reason is written on the row and in its accessib
 describe("getGraderSentenceO: automatic checks read as one sentence over the checkable records", () => {
   test("checked = passed + failed, out of every graded record", () => {
     assert.strictEqual(
-      helpers.getGraderSentenceO({ verified_pass: 58, unverified: 9106, verified_fail: 10, not_measured: 3, graded_total: 9174 }),
-      "Checked 68 of 9,174 records: 58 passed, 10 failed",
+      helpers.getGraderSentenceO({ verified_pass: 47, unverified: 8312, verified_fail: 14, not_measured: 5, graded_total: 8373 }),
+      "Checked 61 of 8,373 records: 47 passed, 14 failed",
     );
   });
   test("no breakdown → no sentence, never a sentence of zeros", () => {

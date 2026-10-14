@@ -1341,7 +1341,7 @@ test("a hit-rate series that reads as one figure at the shown precision is flat,
 });
 
 test("the cache tile says the list-price total matches the recorded total when both read the same, and names the gap when not", () => {
-  const match = cost.getCacheTotalNoteC({ listTotal: 29_267.2, recordedTotal: 29_267.4, days: 30 });
+  const match = cost.getCacheTotalNoteC({ listTotal: 14_520.3, recordedTotal: 14_520.1, days: 30 });
   assert.doesNotMatch(match, /not the recorded total/);
   assert.match(match, /matches the recorded total/);
   const differ = cost.getCacheTotalNoteC({ listTotal: 120, recordedTotal: 100, days: 30 });
