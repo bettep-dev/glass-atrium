@@ -177,7 +177,7 @@ class GuardVerdictRuleTest(unittest.TestCase):
     def test_should_judge_each_selected_proposal_independently(self) -> None:
         rows = [_row(5120, _SIZE_EST_CORE, "rejected"), _row(3, _FAIL_CORE, "identified")]
         stdin_text = "\n".join(
-            [_patch_line(8215, _SIZE_EST_CORE), _patch_line(7501, _FAIL_CORE)]
+            [_patch_line(8215, _SIZE_EST_CORE), _patch_line(8216, _FAIL_CORE)]
         )
         rc, stdout, stderr, _ = _run_guard(
             ["--parked-pattern-guard"], stdin_text, coverage=dc._index_rows_by_agent(rows)
@@ -236,7 +236,7 @@ class GuardedRejectWriteTest(unittest.TestCase):
 
     def test_should_reject_only_actionable_rows_with_the_parked_rationale(self) -> None:
         executed: list[tuple[str, tuple]] = []
-        returning = {8215: [(8215,)], 7501: []}  # 7501 turned non-actionable before the write
+        returning = {8215: [(8215,)], 8216: []}  # 8216 turned non-actionable before the write
 
         cursor = mock.MagicMock()
         cursor.execute.side_effect = lambda sql, params: executed.append((sql, params))
@@ -249,7 +249,7 @@ class GuardedRejectWriteTest(unittest.TestCase):
         parked = [
             {"proposal_id": 8215, "rows": [{"id": 5120, "status": "rejected"}]},
             {
-                "proposal_id": 7501,
+                "proposal_id": 8216,
                 "rows": [{"id": 8, "status": "rejected"}, {"id": 3, "status": "applied"}],
             },
         ]

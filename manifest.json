@@ -1039,7 +1039,7 @@
     "autoagent/test/suite-hermeticity.bats": "a073bfb63cee00274ffa9aaddca3ee5aeba903caedef1cadc1a0fa9ef706e2b6",
     "autoagent/test/test_aa_harness.py": "783906cfbd7d5e556613561f808ad941d9bae454db927686bf52c8fb0789bfbb",
     "autoagent/test/test_all_reject_alert.py": "67fe9022ae092bebc2d1b7c3d85f2cd19693d2da48c9f5ee5a6c389224977807",
-    "autoagent/test/test_apply_parked_guard.py": "fb3fb241a8f0d87c7e3e9499433788389a7d02aeeab3c302968cb3b28d176cca",
+    "autoagent/test/test_apply_parked_guard.py": "72179c4825d526d4bd97f20ba3fe0e0c3c069a7c3eb1102361432a1cd9165fb1",
     "autoagent/test/test_c3_scope_resolution.py": "8b8c68ed4103872a9aacc9da363e8021a0cc3983b845767450bd3272628feb21",
     "autoagent/test/test_c4_target_resolution.py": "84202e8d6c5c20ae37868ddb590df34f2efee5220489c1532fdb147b4b33c1cd",
     "autoagent/test/test_chronic_backoff_error_seam.py": "e84434458d83eb33a8090759791204a081120a6698321b1b95f0aef00447c26c",
