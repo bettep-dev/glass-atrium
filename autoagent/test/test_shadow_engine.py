@@ -616,6 +616,12 @@ class _ShadowFixture(unittest.TestCase):
         # names: the names the last read asked for
         self.roster = SimpleNamespace(spawns=None, is_faulted=False, is_end_honoured=True, names=[])
         self.stages: list[str] = []
+        # a win removes its trial's canary file → no stage run names an install's data root
+        data_root = tempfile.TemporaryDirectory()
+        self.addCleanup(data_root.cleanup)
+        env = mock.patch.dict(os.environ, {"GA_DATA_ROOT": data_root.name})
+        env.start()
+        self.addCleanup(env.stop)
         # after the seal: spawn read, ledger connection and writer = the DB boundary
         for name, value in (
             ("HAS_PG_PATTERN_READ", True),
@@ -1934,6 +1940,36 @@ class LookDecisionTest(_ShadowFixture):
         self.assertEqual(
             [decision.payload for decision in self._get_decisions()],
             [{"harm": {"reason": "primary", "agent": _AGENT}}],
+        )
+
+    def test_a_recorded_looks_harm_stop_due_in_a_cycle_failing_a_validity_criterion_lands_the_void_and_no_stop(
+        self,
+    ) -> None:
+        write = self.ledger.write
+        decision_event = stub.get_trial_ledger().EVENT.LIVE_DECISION
+
+        def _refuse_decision(event, *args, **kwargs):
+            if event == decision_event:
+                raise ConnectionError("PG unreachable")
+            return write(event, *args, **kwargs)
+
+        with mock.patch.object(dc, "_pg_write_trial_ledger_row", _refuse_decision):
+            self._decide_at_look_one((100, 100), tenths=(1, 9))
+        [look] = self._get_looks()
+        self.assertTrue(look.payload["harm"]["primary"]["is_crossed"])
+        self.assertEqual(self._get_decisions(), [])
+        # the next cycle's counted spawns: the same split, 98 of 100 treatment spawns delivered
+        salt_id = self._get_preregistrations()[-1].id
+        self.history = list(_get_passing_history()) + _get_split_spawns(
+            salt_id, (100, 100), tenths=(1, 9), flipped=(0, 2)
+        )
+
+        self._cycle(_NEXT_NOW)
+
+        self.assertEqual([row.payload["look"] for row in self._get_looks()], [1])
+        self.assertEqual(
+            [decision.payload for decision in self._get_decisions()],
+            [{"void": {"reason": "low-delivery", "agent": _AGENT}}],
         )
 
     def test_a_spawn_not_yet_settled_at_the_look_counts_toward_its_milestone_and_is_in_no_arm_and_no_z(
@@ -3785,6 +3821,24 @@ class TrialCanaryTest(_ShadowFixture):
 
         self.assertIsNone(self._get_canary())
         self.assertEqual(self._get_starts(), [])
+
+    def test_a_win_removes_its_trials_canary_file_in_the_cycle_that_decides_it(self) -> None:
+        key = self._open_live_trial()
+        self._stage(_NOW)  # the first write and its start record
+        self.history += _get_arm_spawns(
+            (self._get_preregistration().id,),
+            _NOW,
+            math.ceil(_MILESTONES[0]),
+            tenths=_TENTHS.REDUCED,
+        )
+        self.assertIsNotNone(self._get_canary())
+
+        self._judge_and_look(_NEXT_NOW)
+
+        self.assertEqual(
+            [(row.trial_key, set(row.payload)) for row in self._get_decisions()], [(key, {"win"})]
+        )
+        self.assertIsNone(self._get_canary())
 
 
 class CycleWiringTest(_ShadowFixture):
