@@ -10556,13 +10556,18 @@ def _read_reference_break_evens() -> dict[str, float] | None:
 
 
 def _is_break_even_map(body: object) -> bool:
-    return isinstance(body, dict) and all(
-        isinstance(agent, str)
-        and isinstance(value, (int, float))
-        and not isinstance(value, bool)
-        and math.isfinite(value)
-        for agent, value in body.items()
-    )
+    if not isinstance(body, dict):
+        return False
+    try:
+        return all(
+            isinstance(agent, str)
+            and isinstance(value, (int, float))
+            and not isinstance(value, bool)
+            and math.isfinite(value)
+            for agent, value in body.items()
+        )
+    except OverflowError:  # an int past the float range → malformed, not a cycle fault
+        return False
 
 
 def _write_aa_extension(latest: AaStart, payload: dict) -> None:

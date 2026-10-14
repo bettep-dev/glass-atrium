@@ -1484,6 +1484,12 @@ class AaRecomputedBreakEvenTest(_AaResultFixture):
             ("not JSON", "{"),
             ("JSON but not an object", "[0.5]"),
             ("a non-number value", '{"glass-atrium-dev-python": "0.5"}'),
+            (
+                "an integer past the float range",
+                '{"glass-atrium-dev-python": 1' + "0" * 400 + "}",
+            ),
+            ("a bool value", '{"glass-atrium-dev-python": true}'),
+            ("a non-finite value", '{"glass-atrium-dev-python": Infinity}'),
         )
         for name, body in rows:
             with self.subTest(name):
