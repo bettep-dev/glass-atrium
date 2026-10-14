@@ -47,6 +47,7 @@ setup() {
 
 teardown() {
   if ga_guard_path "${WORK:-}"; then rm -rf -- "${WORK:?}"; fi
+  if ga_guard_path "${BARE:-}"; then rm -rf -- "${BARE:?}"; fi
 }
 
 # Seed the minimal manifest the generator refuses to regenerate without
@@ -655,6 +656,52 @@ readonly FILES_KEY_ESCAPE_JQ='.files |= map(if . == "LICENSE" then "../../x" els
   rewrite_manifest "${MODES_KEY_SWAP_JQ}"
   run "${SCRIPT}" --validate "${MANIFEST}"
   [ "${status}" -eq 6 ] || return 1
+}
+
+# manifest.json: tracked but out of scope → the RETIRED-ADDITIONS gate stays quiet, only the key-set gate fires
+readonly HASHES_KEY_SWAP_JQ='.hashes["manifest.json"] = .hashes["LICENSE"] | del(.hashes["LICENSE"])'
+
+@test "--check: exit 1 lists both keys of a hashes entry swapped out of the files set" {
+  rewrite_manifest "${HASHES_KEY_SWAP_JQ}"
+  run "${SCRIPT}" --check
+  [[ "${status}" -eq 1 ]] || {
+    echo "${output}"
+    return 1
+  }
+  [[ "${output}" == *"HASHES key set differs from files:"* ]] || {
+    echo "${output}"
+    return 1
+  }
+  [[ "${output}" == *'+ "manifest.json"'* ]] || return 1
+  [[ "${output}" == *'- "LICENSE"'* ]] || return 1
+}
+
+@test "--validate: rejects a hashes entry swapped out of the files set" {
+  rewrite_manifest "${HASHES_KEY_SWAP_JQ}"
+  run "${SCRIPT}" --validate "${MANIFEST}"
+  [[ "${status}" -eq 6 ]] || {
+    echo "${output}"
+    return 1
+  }
+}
+
+@test "--validate: exit 0 on a valid manifest outside any git work tree" {
+  "${SCRIPT}"
+  BARE="$(mktemp -d)"
+  mkdir -p "${BARE}/scripts/lib"
+  cp "${SCRIPT}" "${BARE}/scripts/generate-manifest.sh"
+  cp "${WORK}/scripts/lib/apply-spine.sh" "${WORK}/scripts/lib/path-guard.sh" "${BARE}/scripts/lib/"
+  cp "${MANIFEST}" "${BARE}/manifest.json"
+  run git -C "${BARE}" rev-parse --is-inside-work-tree
+  [[ "${status}" -ne 0 ]] || {
+    echo "scratch dir sits inside a git work tree: ${BARE}"
+    return 1
+  }
+  run "${BARE}/scripts/generate-manifest.sh" --validate "${BARE}/manifest.json"
+  [[ "${status}" -eq 0 ]] || {
+    echo "${output}"
+    return 1
+  }
 }
 
 @test "--check: exit 1 names an escaping files entry" {
