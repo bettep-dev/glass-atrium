@@ -287,6 +287,10 @@ class _LedgerCursor:
         return list(self.result)
 
 
+# synthetic owner break-evens, no recorded figure: dev-python ≤ DECIDABLE → excluded, named
+_REFERENCE_BREAK_EVENS = {"glass-atrium-dev-python": 0.5}
+
+
 class _AaFixture(unittest.TestCase):
     def setUp(self) -> None:
         self.pg_reach = seal_pg_reach(self)
@@ -299,6 +303,7 @@ class _AaFixture(unittest.TestCase):
         # the canary files land under the sandboxed data root, for the fixture's roster
         self.data_root = self.scratch / "data-root"
         self.canary_dir = self.data_root / "data" / "learning" / "canary"
+        self.reference_path = self.data_root / "data" / "learning" / "instrument-reference.json"
         env = mock.patch.dict(os.environ, {"GA_DATA_ROOT": str(self.data_root)})
         env.start()
         self.addCleanup(env.stop)
@@ -321,6 +326,12 @@ class _AaFixture(unittest.TestCase):
         self._patch(
             "TRIAL_LEDGER", stub.get_trial_ledger(), create=not hasattr(dc, "TRIAL_LEDGER")
         )
+
+    def _put_reference(self, body: str | dict[str, float]) -> None:
+        """The owner's break-even file; a str body is written as is (a malformed file)."""
+        self.reference_path.parent.mkdir(parents=True, exist_ok=True)
+        text = body if isinstance(body, str) else json.dumps(body)
+        self.reference_path.write_text(text, encoding="utf-8")
 
     def _patch(self, name: str, value: object, *, create: bool = False) -> None:
         patcher = mock.patch.object(dc, name, value, create=create)
@@ -992,6 +1003,7 @@ class _AaResultFixture(_AaFixture):
         self.ledger.clock = _NOW
         self._add_outcomes(joined=19, unjoined=1)
         self._add_close(_START + timedelta(days=2), lines_read=10, lines_without_row=0)
+        self._put_reference(_REFERENCE_BREAK_EVENS)
 
     def _patch_balance(self, *, minimum_spawns: int) -> None:
         balance = SimpleNamespace(
@@ -1184,7 +1196,7 @@ class AaResultTest(_AaResultFixture):
             (row.agent, row.actor, row.dedupe_key),
             (None, "daemon-cycle-aa", "aa-instrument-verdict:1"),
         )
-        reference = dc.INSTRUMENT.BREAK_EVEN.REFERENCE[agent]
+        reference = _REFERENCE_BREAK_EVENS[agent]
         # the fixture history carries no provenance start → no recomputed break-even
         self.assertEqual(
             row.payload,
@@ -1268,21 +1280,21 @@ class AaResultTest(_AaResultFixture):
         # above 1 and inside the interval → both readings straddle
         straddled = {agent: (max(reading.lower, 1.0) + reading.upper) / 2}
         self._patch("_read_recomputed_break_evens", lambda agents, now: straddled)
-        with mock.patch.object(dc.INSTRUMENT.BREAK_EVEN, "REFERENCE", straddled):
-            self._evaluate("2026-10-07")
-            self._evaluate("2026-10-08")
-            self.assertEqual((self._get_results(), self._get_design_effect_rows()), ([], []))
-            (extension,) = self._get_instrument_verdicts()
-            self.assertEqual(
-                (
-                    extension.dedupe_key,
-                    extension.payload["verdict"],
-                    extension.payload["window_days"],
-                ),
-                ("aa-instrument-verdict:1:extend:1", "extend", 14),
-            )
-            self._patch("_get_utc_now", lambda: _START + timedelta(days=29))
-            self._evaluate("2026-10-21")
+        self._put_reference(straddled)
+        self._evaluate("2026-10-07")
+        self._evaluate("2026-10-08")
+        self.assertEqual((self._get_results(), self._get_design_effect_rows()), ([], []))
+        (extension,) = self._get_instrument_verdicts()
+        self.assertEqual(
+            (
+                extension.dedupe_key,
+                extension.payload["verdict"],
+                extension.payload["window_days"],
+            ),
+            ("aa-instrument-verdict:1:extend:1", "extend", 14),
+        )
+        self._patch("_get_utc_now", lambda: _START + timedelta(days=29))
+        self._evaluate("2026-10-21")
 
         (result,) = self._get_results()
         self.assertEqual(result.payload["window"]["days"], 28)
@@ -1314,13 +1326,13 @@ class AaResultTest(_AaResultFixture):
                     "_read_recomputed_break_evens",
                     lambda agents, now, values=break_evens: values,
                 )
-                patcher = mock.patch.object(dc.INSTRUMENT.BREAK_EVEN, "REFERENCE", break_evens)
-                patcher.start()
-                self.addCleanup(patcher.stop)
+                self._put_reference(break_evens)
 
-                self._land_verdict_then_evaluate(
-                    faulted, 15, functools.partial(break_evens.update, straddled)
-                )
+                def _straddle(values: dict[str, float] = break_evens) -> None:
+                    values.update(straddled)
+                    self._put_reference(values)
+
+                self._land_verdict_then_evaluate(faulted, 15, _straddle)
 
                 self.assertEqual(
                     self._get_verdict_windows(), [("aa-instrument-verdict:1", "r1-holds", 14)]
@@ -1417,8 +1429,8 @@ class AaRecomputedBreakEvenTest(_AaResultFixture):
 
     def _get_verdict_payload(self, reference: float) -> dict:
         agent = "glass-atrium-dev-python"
-        with mock.patch.object(dc.INSTRUMENT.BREAK_EVEN, "REFERENCE", {agent: reference}):
-            self._evaluate()
+        self._put_reference({agent: reference})
+        self._evaluate()
         (row,) = self._get_instrument_verdicts()
         return row.payload
 
@@ -1445,6 +1457,51 @@ class AaRecomputedBreakEvenTest(_AaResultFixture):
             (payload["readings"], payload["verdict"]),
             ({"recomputed": "r1-holds", "reference": "straddle"}, "relay"),
         )
+
+    def test_a_missing_reference_file_decides_the_verdict_on_the_recomputed_break_even_alone(
+        self,
+    ) -> None:
+        self.reference_path.unlink()
+
+        stderr_text = self._evaluate()
+
+        (row,) = self._get_instrument_verdicts()
+        payload = row.payload
+        self.assertEqual(
+            (payload["readings"], payload["excluded"]["reference"], payload["verdict"]),
+            ({"recomputed": "r1-holds", "reference": None}, None, "r1-holds"),
+        )
+        agent = payload["agents"]["glass-atrium-dev-python"]
+        self.assertIsNone(agent["break_even"]["reference"])
+        notes = [line for line in stderr_text.splitlines() if str(self.reference_path) in line]
+        self.assertEqual(len(notes), 1, stderr_text)
+        self.assertIn("INFO:", notes[0])
+
+    def test_a_malformed_reference_file_warns_once_and_decides_on_the_recomputed_break_even_alone(
+        self,
+    ) -> None:
+        rows = (
+            ("not JSON", "{"),
+            ("JSON but not an object", "[0.5]"),
+            ("a non-number value", '{"glass-atrium-dev-python": "0.5"}'),
+        )
+        for name, body in rows:
+            with self.subTest(name):
+                self.setUp()
+                self._put_reference(body)
+
+                stderr_text = self._evaluate()
+
+                (row,) = self._get_instrument_verdicts()
+                self.assertEqual(
+                    (row.payload["readings"]["reference"], row.payload["verdict"]),
+                    (None, "r1-holds"),
+                )
+                notes = [
+                    line for line in stderr_text.splitlines() if str(self.reference_path) in line
+                ]
+                self.assertEqual(len(notes), 1, stderr_text)
+                self.assertIn("WARN:", notes[0])
 
 
 class AaResultFailTest(_AaResultFixture):
@@ -2628,6 +2685,7 @@ class AaInstrumentVerdictTest(unittest.TestCase):
             ("a straddle after the extension relays", "straddle", "straddle", 28, "relay"),
             ("recomputed and reference disagree", "r1-holds", "switch-to-r2", 14, "relay"),
             ("nothing decidable", "undecided", "undecided", 14, "relay"),
+            ("no reference decides on the recomputed alone", "r1-holds", None, 14, "r1-holds"),
         )
         for name, recomputed, reference, days, expected in rows:
             with self.subTest(name):

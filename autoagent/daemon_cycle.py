@@ -9472,23 +9472,8 @@ INSTRUMENT = SimpleNamespace(
     BREAK_EVEN=SimpleNamespace(
         # a break-even at or below this cannot decide a trial at design effect 1 → excluded, named
         DECIDABLE=1.0,
-        # break-evens on spawns at 1x (method A) the owner's D1 figures rest on; a recomputed
-        # reading that disagrees goes to the owner, never replacing these
-        REFERENCE={
-            "glass-atrium-qa-code-reviewer": 3.27,
-            "glass-atrium-dev-shell": 5.13,
-            "glass-atrium-dev-nestjs": 1.70,
-            "glass-atrium-dev-react": 3.27,
-            "glass-atrium-meta-prompt-engineer": 1.68,
-            "glass-atrium-intel-planner": 0.89,
-            "glass-atrium-intel-reporter": 0.19,
-            "glass-atrium-dev-python": 0.41,
-            "glass-atrium-design-designer": 0.06,
-            "glass-atrium-intel-researcher": 0.15,
-            "glass-atrium-dev-node": 0.72,
-            "glass-atrium-qa-debugger": 0.55,
-            "glass-atrium-dev-front": 0.32,
-        },
+        # the owner's D1 break-evens: a local {agent: number} file in the data root, never shipped
+        REFERENCE_SEGMENTS=("learning", "instrument-reference.json"),
     ),
 )
 
@@ -10515,10 +10500,10 @@ def _get_instrument_verdict_payload(
             "aa-result deferred to a later cycle",
         )
         return None
-    reference = INSTRUMENT.BREAK_EVEN.REFERENCE
+    reference = _read_reference_break_evens()
     positions = {
         "recomputed": get_instrument_reading(readings, recomputed),
-        "reference": get_instrument_reading(readings, reference),
+        "reference": None if reference is None else get_instrument_reading(readings, reference),
     }
     return {
         "start_id": latest.id,
@@ -10527,7 +10512,7 @@ def _get_instrument_verdict_payload(
         "readings": positions,
         "excluded": {
             "recomputed": get_excluded_agents(readings, recomputed),
-            "reference": get_excluded_agents(readings, reference),
+            "reference": None if reference is None else get_excluded_agents(readings, reference),
         },
         "verdict": get_instrument_verdict(
             positions["recomputed"],
@@ -10540,12 +10525,44 @@ def _get_instrument_verdict_payload(
                 **reading._asdict(),
                 "break_even": {
                     "recomputed": recomputed.get(agent),
-                    "reference": reference.get(agent),
+                    "reference": None if reference is None else reference.get(agent),
                 },
             }
             for agent, reading in readings.items()
         },
     }
+
+
+def _read_reference_break_evens() -> dict[str, float] | None:
+    """agent → the owner's D1 break-even from this install's local file; None when the file is
+    absent (INFO) or unreadable / not an agent → number object (WARN) → no reference reading."""
+    path = ga_paths.get_data_root().joinpath(*INSTRUMENT.BREAK_EVEN.REFERENCE_SEGMENTS)
+    scope = "verdict on the recomputed break-even alone"
+    try:
+        body = json.loads(path.read_bytes().decode("utf-8"))
+    except FileNotFoundError:
+        sys.stderr.write(
+            f"[daemon-cycle] INFO: A/A instrument reference absent at {path}; {scope}\n"
+        )
+        return None
+    # ValueError spans JSONDecodeError, UnicodeError and the int digit limit; RecursionError = depth
+    except (OSError, ValueError, RecursionError) as exc:
+        _warn_aa(f"instrument reference unreadable at {path}: {_describe_fault(exc)}", scope)
+        return None
+    if not _is_break_even_map(body):
+        _warn_aa(f"instrument reference at {path} is not an agent → number object", scope)
+        return None
+    return {agent: float(value) for agent, value in body.items()}
+
+
+def _is_break_even_map(body: object) -> bool:
+    return isinstance(body, dict) and all(
+        isinstance(agent, str)
+        and isinstance(value, (int, float))
+        and not isinstance(value, bool)
+        and math.isfinite(value)
+        for agent, value in body.items()
+    )
 
 
 def _write_aa_extension(latest: AaStart, payload: dict) -> None:
@@ -10645,11 +10662,12 @@ def _get_instrument_agents(
 
 
 def get_instrument_verdict(
-    recomputed: str, reference: str, *, window_days: int, extended_days: int
+    recomputed: str, reference: str | None, *, window_days: int, extended_days: int
 ) -> str:
     """The D1 verdict: the readings on both break-evens agree → that reading, a straddle extending
-    once; disagreeing readings, a straddle after the extension or nothing decidable → owner relay."""
-    if recomputed != reference:
+    once; disagreeing readings, a straddle after the extension or nothing decidable → owner relay.
+    reference None = no owner file on this install → the recomputed reading decides alone."""
+    if reference is not None and recomputed != reference:
         return INSTRUMENT.VERDICT.RELAY
     if recomputed in (INSTRUMENT.READING.HOLDS, INSTRUMENT.READING.SWITCH):
         return recomputed
