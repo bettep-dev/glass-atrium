@@ -364,9 +364,9 @@ class TestManifestRotation(_IngestCase):
         # Shape written by the v1.0.1 hook: lesson fields between digest= and blocks=.
         self._append(
             self.live_log,
-            "2026-10-02T00:27:59Z [inject-scope-rules] MANIFEST"
-            " agent_id=a28df590243a1e0a2 agent=glass-atrium-qa-code-reviewer"
-            " ctx_bytes=4392 digest=a7332d0c467addde"
+            "2026-01-14T09:41:23Z [inject-scope-rules] MANIFEST"
+            " agent_id=a5e0c1d2b3f4a6978 agent=glass-atrium-qa-code-reviewer"
+            " ctx_bytes=3081 digest=b1c2d3e4f5a60718"
             " lessons=ctm:review/when-a-change-adds-s@5,"
             "epm:review/when-a-baseline-snap@5 lesson_truncated=1"
             " blocks=emit:/Users/dev/.glass-atrium/hooks/inject-scope-rules.sh"
@@ -379,11 +379,11 @@ class TestManifestRotation(_IngestCase):
             [
                 (
                     0,
-                    "a28df590243a1e0a2",
+                    "a5e0c1d2b3f4a6978",
                     "glass-atrium-qa-code-reviewer",
                     None,
-                    datetime(2026, 10, 2, 0, 27, 59, tzinfo=timezone.utc),
-                    4392,
+                    datetime(2026, 1, 14, 9, 41, 23, tzinfo=timezone.utc),
+                    3081,
                     "emit:/Users/dev/.glass-atrium/hooks/inject-scope-rules.sh"
                     ";lesson:/Users/dev/.glass-atrium/data/lessons.json",
                     *_PRE_FIELD,
