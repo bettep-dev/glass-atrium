@@ -125,7 +125,7 @@ class LegacyRowReKeyBenign(unittest.TestCase):
     """Documents the NO-DB-writes benign re-key: legacy rows keep their old stored core;
     new emits derive the clean core — a re-triggered agent inserts at most one new row."""
 
-    # The pre-fix stored signature core for the 4 legacy learning_log rows (id 5·6·41·42),
+    # The pre-fix stored signature core for the legacy learning_log rows,
     # carrying the orphan trailing space. NO DB writes: these rows are retained verbatim.
     _LEGACY_STORED_CORE = "agent instruction-improvement candidate (failure rate )"
 
