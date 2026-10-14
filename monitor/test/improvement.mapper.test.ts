@@ -46,7 +46,6 @@ function makeRow(overrides: Record<string, unknown> = {}): Parameters<typeof row
     pre_verify_axes: null,
     pre_verify_status: null,
     pre_verify_passed: null,
-    // Default all-NULL.
     confidence_observed: null,
     project_key: null,
     promotion_tier: null,
