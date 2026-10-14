@@ -2854,7 +2854,7 @@ PY
 
         # Bounded-retry → terminal-drain via the shared emit_stale_drain helper (also
         # called from the apply_rc==3 path below). WITHOUT this call an out_of_region row
-        # (e.g. proposal 1022) re-selects every cycle FOREVER — stale_attempt_count stays
+        # re-selects every cycle FOREVER — stale_attempt_count stays
         # 0 because ONLY the apply_rc==3 path drained. The helper owns the gate, the
         # enforce=1 loud-fail, and the verdict handling. This site runs BEFORE any apply
         # (no bytes written, nothing to restore) so — unlike apply_rc==3 — the single

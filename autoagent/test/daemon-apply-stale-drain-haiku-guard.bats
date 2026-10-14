@@ -198,8 +198,8 @@ run_single() {
   run env PATH="${STUB}" \
     AUTOAGENT_REPORTS_DIR="${REPORTS}" \
     STUB_PSQL_LOG="${PSQL_LOG}" \
-    STUB_ROW_ID="1022" \
-    STUB_CYCLE="2026-06-26" \
+    STUB_ROW_ID="7301" \
+    STUB_CYCLE="2026-03-09" \
     STUB_LABEL="${LABEL:-probe-stale}" \
     STUB_AGENT="probe" \
     STUB_TARGET="${AGENTS}/probe.md" \
@@ -212,7 +212,7 @@ run_single() {
     ${STUB_SINGLE_RC:+STUB_SINGLE_RC="${STUB_SINGLE_RC}"} \
     ${STUB_RAW_ROW:+STUB_RAW_ROW="${STUB_RAW_ROW}"} \
     ${ALLOW:+AUTOAGENT_ALLOW_HAIKU_SKIP="${ALLOW}"} \
-    bash "${REAL_SCRIPT}" --proposal-id 1022 --agents-dir "${AGENTS}" "$@"
+    bash "${REAL_SCRIPT}" --proposal-id 7301 --agents-dir "${AGENTS}" "$@"
 }
 
 applied_log_path() {
@@ -428,7 +428,7 @@ dryrun_log_path() {
   STUB_NO_ROW="1" run_single "ok"
 
   # Exit 19 means one psql call (the lookup), so the log holds exactly its SQL.
-  [[ "${status}" -eq 19 && "${output}" == *"id=1022 not found"* && "$(grep -c '=== psql invocation ===' "${PSQL_LOG}")" -eq 1 ]] || {
+  [[ "${status}" -eq 19 && "${output}" == *"id=7301 not found"* && "$(grep -c '=== psql invocation ===' "${PSQL_LOG}")" -eq 1 ]] || {
     echo "expected exit 19 naming the id after one lookup, got ${status}: ${output}" >&2
     return 1
   }
@@ -509,12 +509,12 @@ dryrun_log_path() {
   local target_b64 raw applied_log
   target_b64="$(printf '%s' "${AGENTS}/probe.md" | base64 | tr -d '\n')"
   for raw in \
-    "1022|2026-06-26|probe|stale|probe|${AGENTS}/probe.md|$(oor_diff_b64)|rejected|ok" \
-    "1023|2026-06-26|cHJvYmU=|cHJvYmU=|${target_b64}|$(oor_diff_b64)|rejected|ok"; do
+    "7301|2026-03-09|probe|stale|probe|${AGENTS}/probe.md|$(oor_diff_b64)|rejected|ok" \
+    "7302|2026-03-09|cHJvYmU=|cHJvYmU=|${target_b64}|$(oor_diff_b64)|rejected|ok"; do
     applied_log="$(applied_log_path)"
     if ga_guard_path "${applied_log}"; then rm -f -- "${applied_log:?}"; fi
     STUB_RAW_ROW="${raw}" run_single "ok"
-    [[ "${status}" -eq 23 && "${output}" == *"proposal id=1022 row is unreadable"* &&
+    [[ "${status}" -eq 23 && "${output}" == *"proposal id=7301 row is unreadable"* &&
       "${output}" != *"already terminal"* && "${output}" != *"lookup failed"* &&
       ! -f "$(applied_log_path)" ]] || {
       echo "row '${raw%%|*}|…': expected exit 23 naming the unreadable row and applying nothing, got ${status}: ${output}" >&2
