@@ -91,7 +91,7 @@ STUB
   # Default scenario: the database exists and every terminal row names its mover. Each test
   # overrides what it is about, so a row never silently depends on a state it did not set.
   stub_out exists '1'
-  provenance_counts 271 0 0
+  provenance_counts 240 0 0
 }
 
 # $1 = query kind (exists|provenance|other), $2 = stdout the stub returns for it.
@@ -245,17 +245,17 @@ warn_total_of_output() {
   run_doctor_sandbox
   local green
   green="$(warn_total_of_output)" || return 1
-  assert_output_has "all 271 terminal proposal row(s) name the actor that moved them" || return 1
+  assert_output_has "all 240 terminal proposal row(s) name the actor that moved them" || return 1
 
-  # The live shape this item measured: most terminal rows carry neither column, a smaller set
+  # The two-population shape: most terminal rows carry neither column, a smaller set
   # carries the stale drain's instant with no actor. Both numbers must survive into the line.
-  provenance_counts 271 84 175
+  provenance_counts 240 70 145
   run_doctor_sandbox
-  assert_output_has "259 of 271 terminal row(s) name no actor" || return 1
-  assert_output_has "84 carry a review instant with no actor" || return 1
-  assert_output_has "175 carry neither" || return 1
+  assert_output_has "215 of 240 terminal row(s) name no actor" || return 1
+  assert_output_has "70 carry a review instant with no actor" || return 1
+  assert_output_has "145 carry neither" || return 1
   assert_output_has "report-only" || return 1
-  assert_output_lacks "all 271 terminal proposal row(s) name the actor" || return 1
+  assert_output_lacks "all 240 terminal proposal row(s) name the actor" || return 1
 
   # Registration kind B: the line prints, the total does not move, the exit code does not change.
   local gap
@@ -266,7 +266,7 @@ warn_total_of_output() {
     return 1
   }
   [[ "${status}" -eq 0 ]] || {
-    echo "a 259-row provenance gap failed the doctor (exit ${status}) — it must never do that" >&2
+    echo "a 215-row provenance gap failed the doctor (exit ${status}) — it must never do that" >&2
     return 1
   }
   assert_output_lacks "provenance-gap" || return 1
@@ -275,15 +275,15 @@ warn_total_of_output() {
 # ── AC6 — one population alone still names which one it is ─────────────────────────────────────
 
 @test "AC6: a gap in one population alone keeps the split, never a bare total" {
-  provenance_counts 271 3 0
+  provenance_counts 240 3 0
   run_doctor_sandbox
-  assert_output_has "3 of 271 terminal row(s) name no actor" || return 1
+  assert_output_has "3 of 240 terminal row(s) name no actor" || return 1
   assert_output_has "3 carry a review instant with no actor" || return 1
   assert_output_has "0 carry neither" || return 1
 
-  provenance_counts 271 0 12
+  provenance_counts 240 0 12
   run_doctor_sandbox
-  assert_output_has "12 of 271 terminal row(s) name no actor" || return 1
+  assert_output_has "12 of 240 terminal row(s) name no actor" || return 1
   assert_output_has "0 carry a review instant with no actor" || return 1
   assert_output_has "12 carry neither" || return 1
 }

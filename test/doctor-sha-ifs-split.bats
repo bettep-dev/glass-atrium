@@ -8,7 +8,7 @@
 # it with `read -ra <arr> < <(_resolve_sha256_cmd)`. Under IFS=$'\n\t' that read does
 # NOT split on the spaces, so the array holds ONE word "shasum -a 256" → _sha_hex runs
 # it as a single command name → "command not found" (rc 127) → EVERY manifest hash
-# comparison aborts (357 false manifest-drift warnings live). Linux CI never saw it
+# comparison aborts (a false manifest-drift warning per listed file). Linux CI never saw it
 # because sha256sum (the CI-resolved tool) has no spaces to be swallowed.
 #
 # WHY THE EXISTING SUITE IS BLIND: doctor-consumer-install.bats drives run_doctor via
