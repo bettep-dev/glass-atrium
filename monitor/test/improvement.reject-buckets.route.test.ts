@@ -57,7 +57,7 @@ const SUPERSEDE_RATIONALE =
 
 // update_parked_proposal_status's rationale (head + rows tail), verbatim for the same reason
 const PARKED_PATTERN_RATIONALE =
-  "covering pattern parked before apply (rows 3384:rejected, 6:applied)";
+  "covering pattern parked before apply (rows 5120:rejected, 7:applied)";
 
 const LABEL_ABSENT_URL_ENV = "MONITOR_TEST_LABEL_ABSENT_DATABASE_URL";
 const labelAbsentUrl = process.env[LABEL_ABSENT_URL_ENV];
