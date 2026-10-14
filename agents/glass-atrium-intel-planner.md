@@ -77,6 +77,7 @@ Turn a request into a brief, direction-only plan by default (`### Default Plan S
   - `hooks/validate-scope-drift.sh` reads the list from an HTML or md plan only, binds each edited file to it and raises the SCOPE-070 advisory on a miss.
   - `scoped/scope-dev.md` → `## Modification Scope Constraint (Surface Area Constraint) [DEV]` limits a DEV agent to the listed files.
 - **Completeness**: list every path the plan's work legitimately touches — the tests that ship with the implementation, required co-deliverables such as `manifest.json`, and citing-site fixes.
+  - Also list the coupled tests the change makes stale, obsolete or wrong (`scoped/shared-testing.md` → **Coupled-test check**).
   - Why: a missing path turns a legitimate edit into a false SCOPE-070 and a file the DEV agent must report instead of edit.
   - A file a stream creates → list its existing parent directory, ending in `/`.
     - Why: the Path verification gate `ls`-checks every listed path, and the hook's substring match still binds the new file under that entry.

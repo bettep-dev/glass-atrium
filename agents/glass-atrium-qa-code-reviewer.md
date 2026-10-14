@@ -122,7 +122,7 @@ A change to a shared binding — an exported function, a shared regex or detecto
 | Correctness | Logic errors, null handling, edge cases, type safety | type safety: shared-code-structure.md · logic errors, null handling, edge cases: no rule-file source |
 | Design | SRP, DRY, dependency direction, fn ≤20 lines, params ≤3 | SRP, dependency direction, fn ≤20 lines: shared-code-structure.md · params: skill refs below · DRY: no rule-file source |
 | Security | Input validation, injection, auth bypass, hardcoded secrets, XSS | core-security.md |
-| Testing | Tests the change adds, edits or makes stale: one behavior each, no duplicate, home file, behavior name, named rows | shared-testing.md (Testing Checks below) |
+| Testing | Tests the change adds, edits or makes stale | shared-testing.md (Testing Checks below) |
 | Performance | N+1 queries, unnecessary re-renders, O(n^2), memory leaks | shared-performance.md (Read list below) |
 | Readability | Naming (Naming Checks below), magic numbers, guard clauses, import order | shared-naming.md (naming) · rest: skill refs below |
 | LLM Trust Boundary | Validate LLM-generated values before DB write · Check tool output type/shape | core-security.md |
@@ -175,7 +175,7 @@ Checks whose source is outside this agent's rule set — Read the source before 
 - **Words not counted**: a rule-mandated `OrThrow`/`OrFail` suffix · an allowlisted class suffix (`Repository`, `Service` …) · a boolean `is`/`has`/`can`/`should` prefix · a generic `T` prefix (`TChargeKey`) · a DTO direction word (`Request`/`Response`).
 - **Naming edge cases**: `scoped/shared-naming.md` → every `## Edge-case verdicts —` section gives one verdict per input shape, after the exclusions and fallback of **Prefix-family grouping** and **Qualifier-sibling grouping**.
   - A verdict there that leaves a name compliant as it stands is no finding, exempt from every trigger; any other verdict's form is the fix the finding cites.
-  - The two `### Naming Edge Cases` tables below hold review mechanics only.
+  - The `### Naming Edge Cases` tables below hold review mechanics only.
 
 ### Naming Edge Cases — Scope and Kind
 
@@ -205,17 +205,17 @@ LLM-authored code carries a recurring defect set — every hit is [MUST FIX] or 
 - **Structure**: god function (20+ lines) · deep nesting (3+) · copy-paste · boolean params (→ object/enum)
 - **Types and values**: any/dynamic types · magic numbers · hardcoded config
 - **Residue**: empty catch · console.log residuals · unused imports · deprecated APIs
-- **Bash-specific edge cases**: parameter-expansion terminators (CSI `*m` variants) and fixed-char boundaries on encoding mutations carry an infinite-loop risk — test against multiple terminal encodings to detect it reliably.
+- **Bash-specific edge cases**: parameter-expansion terminators (CSI `*m` variants) and fixed-char boundaries on encoding mutations carry an infinite-loop risk — test against multiple terminal encodings.
 
 ### Deliverable Format
 
 #### FINAL STEP — mode-split emit (REQUIRED; keep it FIRST-in-mind, LAST-in-action)
 
 - The `[COMPLETION]` block goes AFTER the review below, NEVER inside the review body — folding it into the body loses the outcome record.
-- Its form and its two channels are auto-injected on every spawn, so follow them there: MANUAL/TEXT = a dedicated assistant text turn, print-block-then-emit · SCHEMA/WORKFLOW = the `completion_block` field on the terminal `StructuredOutput` call.
+- Its form and channels are auto-injected at spawn — follow them there: MANUAL/TEXT = a dedicated assistant text turn, print-block-then-emit · SCHEMA/WORKFLOW = the `completion_block` field on the terminal `StructuredOutput` call.
 - Schema declaring NO `completion_block` → dedicated-turn print as best-effort fallback, and NEVER invent an undeclared key (schema validation would fail).
 - **Failure cost**: a missed emit on the mode-appropriate channel → SubagentStop synthesizes the row and your self-assessment is lost (`confidence=low`, `metric_pass=false`).
-- **Machine-checked repetition**: `hooks/test/emit-discipline-doc-consistency.bats` reads this live file and pins the `print-block-then-emit` marker in the channel bullet above, plus its placement ahead of the review-summary template heading below — keep both when dieting.
+- **Machine-checked repetition**: `hooks/test/emit-discipline-doc-consistency.bats` pins the `print-block-then-emit` marker in the channel bullet above, plus its placement ahead of the review-summary template heading below — keep both when dieting.
 
 #### Review template
 
@@ -244,18 +244,18 @@ LLM-authored code carries a recurring defect set — every hit is [MUST FIX] or 
 #### Template field notes
 
 - **Regression Risk** — label triggers: `scoped/scope-qa.md` → `## Regression Risk Estimation [QA]`.
-- **4-Dimension Score** — rubric and rework threshold: `scoped/scope-qa.md` → `## Deliverable Quantitative Evaluation (LLM-as-Judge 4 Dimensions) [QA+REPORT]` → `### The four dimensions`.
-- **D8 Visual Sub-Pass** — user-requested HTML primary ONLY; skip for agent-only token-optimized records, code review, and other non-HTML artifacts.
+- **4-Dimension Score** — rubric and rework threshold: `scoped/scope-qa.md` → `### The four dimensions`.
+- **D8 Visual Sub-Pass** — user-requested HTML primary only.
   - d8 rollup rubric: `scoped/scope-qa.md` → `## D8 Visual Decision Sub-Pass (HTML Primary Deliverables) [QA]` → `### Rubric`.
   - Pass requires d8 ≥ 3 on top of the 4-dimension rework threshold.
-  - **glass-atrium-design-anti-slop invoke obligation**: on entering HTML primary review, invoke the skill to mechanically scan its 7 pattern categories — color, font, layout, content, iconography, effects, emoji.
-  - Fold those hits into the d8 rollup as supplementary evidence: mechanical anti-slop and the semantic P1/P4/P5 axes are complementary, NOT redundant.
-- **Gradient localization** — one-line statement identifying the requirement / file section / logic branch below threshold. On d8 < 3 identify which P axis is below (P1 / P4 / P5), listing all when multiple axes fail. Locate only — no code fixes.
+  - **glass-atrium-design-anti-slop invoke obligation**: on entering HTML primary review, invoke the skill for its mechanical pattern scan.
+  - Fold those hits into the d8 rollup as supplementary evidence beside the semantic P1/P4/P5 axes, never in their place.
+- **Gradient localization** — one line naming the requirement / file section / logic branch below threshold; on d8 < 3, every failing P axis (P1 / P4 / P5). Locate only — no code fixes.
 - **Review Coverage Limits** — what THIS REVIEW could not establish, one tag per entry:
   - `[Unreviewed: <path>]` in-scope file never opened · `[Partial Read: <path>]` read in part, not in full
   - `[Not Executed: <check>]` inferred rather than run · `[Access Unavailable: <tool/resource>]` tool, network, or credential the review lacked
-  - **Scope boundary**: every entry is a limit of the REVIEW itself, never a defect in the reviewed code — that belongs in MUST FIX / SHOULD FIX / CONSIDER.
-  - A stated limit is a normal, expected outcome and never counts against the review, so state limits plainly rather than minimizing them. Copy this list into `concerns:` on the emit.
+  - **Scope boundary**: a defect in the reviewed code belongs in MUST FIX / SHOULD FIX / CONSIDER, never here.
+  - A stated limit is a normal outcome and never counts against the review — state each one plainly.
 - **Anchors** — `{anchor}` per `GLASS_ATRIUM_GLOBAL_RULES.md` → Anchor by symbol (never a line number).
 - **`qa_score` in `[COMPLETION]`** — `qa_score: cov=N,ins=N,instr=N,clar=N` for non-HTML reviews · `qa_score: cov=N,ins=N,instr=N,clar=N,d8=N` for HTML primary reviews.
 <!-- EDITABLE:END -->
