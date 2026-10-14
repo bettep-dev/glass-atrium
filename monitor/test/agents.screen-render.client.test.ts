@@ -1426,8 +1426,8 @@ test("the failing-pairs limit keeps a solid signal over a worse small sample whi
 test("the failing-pairs header meta counts failing over judged pairs within the 32-character meta cap", async () => {
   const mod = await loadAgentsScreen();
   const getSub = mod.getFailingPairsSub as (...a: unknown[]) => string;
-  const sub = getSub("ready", 117, 1404, 90);
-  assert.equal(sub, "117 of 1404 below 95% · 90d");
+  const sub = getSub("ready", 120, 1500, 90);
+  assert.equal(sub, "120 of 1500 below 95% · 90d");
   assert.ok(sub.length <= 32, `${sub.length} chars`);
 });
 

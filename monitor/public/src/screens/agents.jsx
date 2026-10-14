@@ -3482,7 +3482,7 @@ function getFailShareTone(failedCount, denominator) {
   return outcomeShareTone(failedCount, denominator, OUTCOME_BREAKAGE_CRIT_SHARE, 'crit');
 }
 
-// Live rates sit in 94–100%, where a 0–100 bar reads flat → a 90–100 window, the 95% target mid-bar.
+// Success rates cluster near the top of the scale, where a 0–100 bar reads flat → a 90–100 window, the 95% target mid-bar.
 const SUCCESS_WINDOW = { FLOOR_PCT: 90, TARGET: 0.5 };
 
 function getSuccessWindowAg(pct) {

@@ -286,8 +286,8 @@ export interface ImprovementProseOnlyAddSummary {
 }
 
 // Rejected and unadjudicated proposals split into three disjoint lifecycle buckets. An
-// undivided reject rate overstates substantive rejection: the measured population carries
-// 40% infra outcomes plus a mechanically superseded subset, and neither reached a quality
+// undivided reject rate overstates substantive rejection: the population carries a large
+// infra share plus a mechanically superseded subset, and neither reached a quality
 // verdict.
 //
 // Membership is ordered — a superseded, parked or unadjudicated row can carry an 'ok' model
