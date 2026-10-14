@@ -10556,10 +10556,8 @@ def _read_reference_break_evens() -> dict[str, float] | None:
 
 
 def _is_break_even_map(body: object) -> bool:
-    if not isinstance(body, dict):
-        return False
     try:
-        return all(
+        return isinstance(body, dict) and all(
             isinstance(agent, str)
             and isinstance(value, (int, float))
             and not isinstance(value, bool)
