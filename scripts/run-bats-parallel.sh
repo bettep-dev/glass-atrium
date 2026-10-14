@@ -160,6 +160,31 @@ probe_git_usable() {
   exit "${TOOLCHAIN_PRECONDITION_RC}"
 }
 
+# raise_open_file_limit — lift the soft open-file limit to the hard limit, capped at
+# kern.maxfilesperproc where sysctl reports it, so stage 1's --jobs fan-out does not run
+# out of descriptors. A soft limit already at or above that target is kept, never lowered.
+raise_open_file_limit() {
+  local soft hard target cap=""
+  soft="$(ulimit -Sn)"
+  hard="$(ulimit -Hn)"
+  target="${hard}"
+  if command -v sysctl >/dev/null 2>&1; then
+    cap="$(sysctl -n kern.maxfilesperproc 2>/dev/null || true)" # GA-ABSORB[benign]: no such key off macOS
+  fi
+  if [[ "${cap}" =~ ^[0-9]+$ ]] && [[ "${target}" == unlimited || "${target}" -gt "${cap}" ]]; then
+    target="${cap}"
+  fi
+  if [[ "${soft}" == unlimited ]] || [[ "${target}" != unlimited && "${soft}" -ge "${target}" ]]; then
+    target="${soft}"
+  fi
+  if ulimit -Sn "${target}"; then # GA-ABSORB[handled@raise_open_file_limit WARN branch]: refusal warns, runs on
+    printf 'run-bats-parallel: open-file soft limit %s -> %s\n' "${soft}" "${target}" >&2
+  else
+    printf 'run-bats-parallel: WARN — could not raise the open-file soft limit %s -> %s; continuing at %s\n' \
+      "${soft}" "${target}" "${soft}" >&2
+  fi
+}
+
 main() {
   # Exported at main entry so EVERY child — bats, unittest, pytest and anything they
   # spawn — inherits it. Without it a child that imports a module drops __pycache__
@@ -188,6 +213,7 @@ main() {
   # Presence is not usability, and the three checks above only answer presence. Probed
   # in the same block so a toolchain verdict is reached before any stage costs time.
   probe_git_usable
+  raise_open_file_limit
 
   # macOS ships no nproc (GNU coreutils only); sysctl hw.ncpu is the BSD core source.
   local job_count=""
