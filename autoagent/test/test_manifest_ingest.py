@@ -69,7 +69,7 @@ _CYCLE_3 = datetime(2026, 10, 7, 3, 0, 0, tzinfo=timezone.utc)
 
 
 def _get_line(
-    agent_id: str = "a41f0c2e9b", session_id: str | None = "e0e449e3-7b17", exposure: str = ""
+    agent_id: str = "a41f0c2e9b", session_id: str | None = "7c1b5a9e-3d42", exposure: str = ""
 ) -> str:
     """One hook MANIFEST line; session_id None = a line written before the session field.
 
@@ -117,7 +117,7 @@ def _get_delivery_line(
 ) -> str:
     """A treatment spawn the hook delivered a canary to, as its MANIFEST line."""
     return (
-        f"{ts} [inject-scope-rules] MANIFEST agent_id=c5d8{agent[-4:]} session_id=e0e449e3-7b17"
+        f"{ts} [inject-scope-rules] MANIFEST agent_id=c5d8{agent[-4:]} session_id=7c1b5a9e-3d42"
         f" agent={agent} ctx_bytes=1166 digest=9f2c arm=1 salt_id={salt} delivered=1"
         f" delivered_hash={text_sha256} blocks=emit,meter,canary\n"
     )
@@ -356,7 +356,7 @@ class TestManifestRotation(_IngestCase):
         self._ingest(_CYCLE_1)
 
         stored = [(row[1], row[3]) for _, row in sorted(self.table.rows.items())]
-        self.assertEqual(stored, [(None, None), (None, None), ("a41f0c2e9b", "e0e449e3-7b17")])
+        self.assertEqual(stored, [(None, None), (None, None), ("a41f0c2e9b", "7c1b5a9e-3d42")])
 
     def test_a_released_hook_line_with_lesson_fields_gives_one_row_with_its_fields(
         self,
@@ -1026,7 +1026,7 @@ class TestManifestArmParity(unittest.TestCase):
                 "id--7",
             ),
             ("control arm", 3, "a1", "plain", "a1"),
-            ("salt past 32 bits", 2**40 + 3, "e0e449e3-7b17", "plain", "e0e449e3-7b17"),
+            ("salt past 32 bits", 2**40 + 3, "7c1b5a9e-3d42", "plain", "7c1b5a9e-3d42"),
         )
         delivered_texts = set()
         arms = set()

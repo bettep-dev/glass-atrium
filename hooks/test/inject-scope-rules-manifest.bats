@@ -329,7 +329,7 @@ write_manifest_lines() {
 @test "a manifest line carries the envelope session_id as a path-safe key, unknown when absent" {
   local row name field want i=0
   local -a rows=(
-    'uuid session id|,"session_id":"e0e449e3-7b17-4aa8-974d-62fcbbc8b541"|e0e449e3-7b17-4aa8-974d-62fcbbc8b541'
+    'uuid session id|,"session_id":"7c1b5a9e-3d42-4f86-b0e7-25a9c4d813f6"|7c1b5a9e-3d42-4f86-b0e7-25a9c4d813f6'
     'hostile session id|,"session_id":"../x y;z"|xyz'
     'empty session id|,"session_id":""|unknown'
     'absent session id||unknown'

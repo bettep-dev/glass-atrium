@@ -172,11 +172,11 @@ class ProvenanceFieldsTest(unittest.TestCase):
         row = dw._build_outcome_row(_outcome(
             _REGISTERED,
             agent_id="a3f2c1d4e5b6f708",
-            session_id="e0e449e3-7b17-4aa8-974d-62fcbbc8b541",
+            session_id="7c1b5a9e-3d42-4f86-b0e7-25a9c4d813f6",
             user_correction_detected=True,
         ))
         self.assertEqual(row["agent_id"], "a3f2c1d4e5b6f708")
-        self.assertEqual(row["session_id"], "e0e449e3-7b17-4aa8-974d-62fcbbc8b541")
+        self.assertEqual(row["session_id"], "7c1b5a9e-3d42-4f86-b0e7-25a9c4d813f6")
         self.assertIs(row["user_correction_detected"], True)
 
     def test_detector_verdict_keeps_its_truth_value_false_included(self) -> None:
