@@ -1183,7 +1183,7 @@ Items 1-4 are the co-equal requirements consolidated at this file → "DEV-spawn
 6. **typed agentType on every spawn**.
 7. **author within the engine's runtime self-cap** — the script sets no concurrency number of its own.
 8. **schema-mode resilience + the completion channel** — wrap schema-mode agents in `robustAgent` retry-on-null + `.filter(Boolean)`, and have every schema-mode `agent({schema})` reserve an optional `completion_block` string property, with the delegation prompt instructing the agent to fill it with the full multi-line `[COMPLETION]` block.
-   - Contract: `GLASS_ATRIUM_GLOBAL_RULES.md` → `#### Emit-before-cap` · authoring detail: this file → `#### Resilient Workflow Authoring` · measured justification: `#### Completion-channel non-emission` below.
+   - Contract: `GLASS_ATRIUM_GLOBAL_RULES.md` → `#### Emit-before-cap` · authoring detail: this file → `#### Resilient Workflow Authoring` · justification and re-derivation recipe: `#### Completion-channel non-emission` below.
 9. **`[DOC-ROUTE]` stamp** — the user explicitly requested a local destination → stamp the `[DOC-ROUTE] user-requested-local:` token in the script.
    - Never stamped without an actual explicit user request; snippet: this file → "[DOC-ROUTE] token placement" · self-check: `### Reflexive [DOC-ROUTE] stamping guard`.
 10. **`implementing` write** — before submitting the first DEV-spawning script that carries a plan-ref, record the plan at `implementing`; skip it when the plan is already past `doc_review`.

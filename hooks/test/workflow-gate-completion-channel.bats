@@ -736,7 +736,7 @@ PYX
     return 1
   }
   [[ "${output}" == *"recurs on a share of runs that varies by window"* ]] || {
-    echo "the measured justification is missing from the nudge -- ${output}" >&2
+    echo "the non-emission justification is missing from the nudge -- ${output}" >&2
     return 1
   }
   [[ "${output}" != *"${NUDGE_PHRASE}"* ]] || {
