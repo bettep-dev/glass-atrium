@@ -38,7 +38,8 @@ readonly SCOPE_DIRS
 
 readonly RE_TEST_OPEN='^@test[[:space:]]+(.*[^[:space:]])[[:space:]]*\{[[:space:]]*$'
 readonly RE_TEST_CLOSE='^\}[[:space:]]*$'
-readonly RE_HEREDOC='<<(-?)[[:space:]]*["'"'"']?([A-Za-z_][A-Za-z0-9_]*)'
+readonly RE_HEREDOC='<<(-?)[[:space:]]*\\?([A-Za-z_][A-Za-z0-9_]*)'
+readonly RE_HEREDOC_QUOTED='(^|[^<])<<-?[[:space:]]*$'
 readonly RE_MARK='^([^'"'"'"#\\]*)(['"'"'"#\\])(.*)$'
 readonly RE_DQ_CLOSE='^(([^"\\]|\\.)*)"(.*)$'
 readonly RE_BARE='^(![[:space:]]+)?\[\[[[:space:]].*\]\][[:space:]]*;?$'
@@ -49,6 +50,7 @@ unscanned=0
 tests_scanned=0
 
 LINE_CODE=""
+HEREDOC_DELIM=""
 QUOTE_OPEN=""
 QUOTE_REST=""
 body_depth=0
@@ -71,8 +73,10 @@ close_quote() {
 
 # Sets LINE_CODE to the line with quoted spans blanked and any trailing comment dropped, carrying an
 # unclosed quote into QUOTE_OPEN for the next line. A line closing a carried span starts with `_`.
+# A quoted span right after a code-view `<<` is the raw heredoc delimiter → HEREDOC_DELIM.
 scan_line() {
   local rest="${1}" code="" mark=""
+  HEREDOC_DELIM=""
   if [[ -n "${QUOTE_OPEN}" ]]; then
     # shellcheck disable=SC2310  # an unclosed span is the expected outcome on an inner string line
     close_quote "${rest}" || {
@@ -106,6 +110,9 @@ scan_line() {
           rest=""
           break
         }
+        if [[ -z "${HEREDOC_DELIM}" && "${code}" =~ ${RE_HEREDOC_QUOTED} ]]; then
+          HEREDOC_DELIM="${rest%"${mark}${QUOTE_REST}"}"
+        fi
         rest="${QUOTE_REST}"
         ;;
     esac
@@ -207,7 +214,10 @@ audit_file() {
     fi
     # A `<<` inside a quoted span opens no heredoc, so detection reads the code view.
     probe="${LINE_CODE//<<</ }"
-    if [[ "${probe}" =~ ${RE_HEREDOC} ]]; then
+    if [[ -n "${HEREDOC_DELIM}" ]]; then
+      heredoc_delim="${HEREDOC_DELIM}"
+      in_heredoc=1
+    elif [[ "${probe}" =~ ${RE_HEREDOC} ]]; then
       heredoc_delim="${BASH_REMATCH[2]}"
       in_heredoc=1
     fi

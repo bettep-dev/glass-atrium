@@ -127,6 +127,33 @@ BATS
   }
 }
 
+@test "a quoted-delimiter heredoc body is data, not code: no early close, phantom quote or finding" {
+  audit_fixture <<'BATS'
+%%test%% "t" {
+  run foo <<'EOF'
+[[ -f /nonexistent ]]
+it's data
+}
+EOF
+  run bar <<"JSON"
+}
+[[ x ]]
+JSON
+  [[ "${output}" == y ]]
+  echo after
+}
+BATS
+  # Only line 11 is a real finding; every other `[[ ]]` and `}` sits inside a heredoc body.
+  [[ "${status}" -eq 0 && "${output}" == *"mid_body=1 nested=0 unscanned=0 tests_scanned=1"* ]] || {
+    echo "${output}"
+    return 1
+  }
+  [[ "${output}" == *"fixture.bats:11:"* && "${output}" != *"fixture.bats:3:"* && "${output}" != *"fixture.bats:9:"* ]] || {
+    echo "${output}"
+    return 1
+  }
+}
+
 @test "findings still exit 0 on --path and scope runs, test/ included; only --strict blocks" {
   local dir
   for dir in hooks/test scripts/test autoagent/test test; do
