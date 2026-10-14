@@ -11,8 +11,8 @@ comment:
 * **The recorded ceiling is recoverable.** Every timeout rationale carries the
   ceiling it was measured against, verbatim. A row recorded under a superseded
   ceiling is evidence about a regime that no longer exists and must not count
-  toward a streak evaluated against the current one — the three rows holding the
-  highest-overage agent were all measured at 90s while HEAD configures 180s.
+  toward a streak evaluated against the current one — the shape: every row of a
+  holding streak recorded under a superseded ceiling, current ceiling higher.
 * **A bounded hold admits one probe.** Back-off rows are looked past by the
   streak reader, so counting them separately is what yields "held for N cycles"
   and lets the gate open for exactly one cycle. That probe is the actor the
@@ -79,8 +79,8 @@ except Exception as exc:  # noqa: BLE001 — import failure → skip, not error
 # FROZEN FIXTURES — the three real emitted rationale shapes, transcribed
 # ---------------------------------------------------------------------------
 
-_SUPERSEDED_CEILING_SEC = 90  # what the three holding rows were measured at
-_CURRENT_CEILING_SEC = 180  # what HEAD and live configure
+_SUPERSEDED_CEILING_SEC = 90  # ceiling the superseded rows were recorded under
+_CURRENT_CEILING_SEC = 180  # current configured ceiling, higher
 
 
 def _timeout(ceiling_sec: int) -> str:
@@ -147,7 +147,7 @@ class SupersededCeilingTest(unittest.TestCase):
     """A row measured against a ceiling that no longer exists is not evidence."""
 
     def test_when_every_row_recorded_under_superseded_ceiling_then_no_hold(self):
-        # The live dev-shell shape: three 90s timeouts, ceiling now 180s.
+        # Rows recorded under a superseded ceiling, current ceiling higher.
         state = dc.build_backoff_state(
             [_timeout(_SUPERSEDED_CEILING_SEC)] * 3,
             ceiling_sec=_CURRENT_CEILING_SEC,
@@ -191,8 +191,7 @@ class BoundedHoldTest(unittest.TestCase):
     """Back-off rows are counted separately, so a held-for-N figure exists."""
 
     def test_when_held_beyond_bound_then_one_probe_admitted(self):
-        # The live dev-shell shape after the ceiling change: four consecutive
-        # back-off cycles over the underlying timeout history.
+        # Held one cycle past the probe bound over a current-ceiling streak.
         state = dc.build_backoff_state(
             [_backoff(3)] * 4 + [_timeout(_CURRENT_CEILING_SEC)] * 3,
             ceiling_sec=_CURRENT_CEILING_SEC,
