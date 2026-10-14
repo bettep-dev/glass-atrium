@@ -18,13 +18,13 @@ Covered behaviors:
   * minimum detectable harm per guardrail matches two-sample reference
     arithmetic: a fold rise on rates, a mean shift on the tool_use band;
   * the trial's maximum sample is the larger of its efficacy and primary-harm
-    samples, reproducing the recorded per-arm maxima to the unit, with no finite
-    size at a baseline of 1/1.3 or above;
-  * sequential graduation and the growth to graduation 0.8 reproduce the
-    recorded per-agent figures.
+    samples, reproducing per-arm maxima to the unit on synthetic baselines, with
+    no finite size at a baseline of 1/1.3 or above;
+  * sequential graduation and the growth to graduation 0.8 reproduce per-agent
+    figures on synthetic baselines.
 
 Every expected value is derived outside this module (published table, plan
-line, or hand arithmetic shown inline).
+line, hand arithmetic shown inline, or an independent group-sequential computation).
 
 Run with either runner:
     uv run --with pytest pytest autoagent/test/test_trial_design.py -v
@@ -118,10 +118,10 @@ class FixedSampleSize(unittest.TestCase):
 class TrialSampleSize(unittest.TestCase):
     def test_the_trial_maximum_is_the_larger_of_the_efficacy_and_primary_harm_samples(self) -> None:
         rows = (
-            # (name, baseline, binding leg) — 51/91 is the recorded row whose harm sample does not exceed its efficacy one
-            ("low baseline, harm binds", 0.034, "harm"),
-            ("mid baseline, harm binds", 0.228, "harm"),
-            ("dev-shell tasks method B with tool_use, efficacy binds", 51 / 91, "efficacy"),
+            # (name, baseline, binding leg) — at 55/100 the harm sample (108) does not exceed the efficacy one (116)
+            ("low baseline, harm binds", 0.040, "harm"),
+            ("mid baseline, harm binds", 0.240, "harm"),
+            ("high baseline, efficacy binds", 55 / 100, "efficacy"),
         )
         for name, baseline, binding in rows:
             with self.subTest(name):
@@ -130,62 +130,62 @@ class TrialSampleSize(unittest.TestCase):
                 self.assertEqual(td.get_trial_sample_size(baseline), max(efficacy, harm))
                 self.assertEqual(td.get_trial_sample_size(baseline), harm if binding == "harm" else efficacy)
 
-    def test_the_recorded_per_arm_maxima_reproduce_to_the_unit(self) -> None:
-        # Source: the lane's S5 pre-step 1 record — reference baselines and both per-arm-maxima
-        # tables (tasks W 60 method A, both versions; spawns W 0, methods A and B), efficacy → R33
+    def test_the_per_arm_maxima_reproduce_to_the_unit(self) -> None:
+        # synthetic baselines: reference rates + per-agent tables (tasks, both versions; spawns,
+        # methods A and B), rates 0.017-0.48 over 5-1500 units; efficacy → R33
         rows = (
-            ("reference 3.4%", 0.034, 3431, 4594),
-            ("reference 6.2%", 0.062, 1835, 2434),
-            ("reference 22.8%", 0.228, 424, 525),
-            ("tasks overage only, qa-code-reviewer", 59 / 635, 1190, 1562),
-            ("tasks overage only, dev-shell", 45 / 166, 341, 412),
-            ("tasks overage only, intel-planner", 26 / 162, 646, 825),
-            ("tasks overage only, meta-prompt-engineer", 44 / 176, 378, 463),
-            ("tasks overage only, dev-react", 26 / 118, 443, 550),
-            ("tasks overage only, dev-nestjs", 16 / 110, 723, 930),
-            ("tasks overage only, intel-reporter", 5 / 90, 2060, 2739),
-            ("tasks overage only, intel-researcher", 8 / 104, 1459, 1926),
-            ("tasks overage only, design-designer", 1 / 47, 5545, 7453),
-            ("tasks overage only, qa-debugger", 17 / 65, 357, 434),
-            ("tasks overage only, dev-node", 48 / 139, 245, 283),
-            ("tasks overage only, dev-python", 14 / 48, 309, 370),
-            ("tasks with tool_use, qa-code-reviewer", 109 / 635, 597, 760),
-            ("tasks with tool_use, dev-shell", 61 / 166, 224, 255),
-            ("tasks with tool_use, intel-planner", 44 / 162, 340, 411),
-            ("tasks with tool_use, meta-prompt-engineer", 62 / 176, 238, 274),
-            ("tasks with tool_use, dev-react", 29 / 118, 386, 474),
-            ("tasks with tool_use, dev-nestjs", 31 / 110, 324, 389),
-            ("tasks with tool_use, intel-reporter", 14 / 90, 670, 858),
-            ("tasks with tool_use, intel-researcher", 9 / 104, 1286, 1691),
-            ("tasks with tool_use, qa-debugger", 19 / 65, 308, 369),
-            ("tasks with tool_use, dev-node", 50 / 139, 231, 264),
-            ("tasks with tool_use, dev-python", 23 / 48, 148, 152),
-            ("spawns A, qa-code-reviewer", 90 / 1450, 1833, 2432),
-            ("spawns A, dev-shell", 81 / 487, 620, 790),
-            ("spawns A, dev-nestjs", 31 / 319, 1134, 1485),
-            ("spawns A, dev-react", 50 / 270, 546, 690),
-            ("spawns A, meta-prompt-engineer", 70 / 468, 701, 899),
-            ("spawns A, intel-planner", 34 / 347, 1124, 1472),
-            ("spawns A, intel-reporter", 6 / 175, 3402, 4554),
-            ("spawns A, dev-python", 19 / 163, 928, 1207),
-            ("spawns A, design-designer", 1 / 55, 6506, 8753),
-            ("spawns A, intel-researcher", 7 / 138, 2266, 3017),
-            ("spawns A, dev-node", 77 / 349, 442, 549),
-            ("spawns A, qa-debugger", 18 / 79, 425, 526),
-            ("spawns A, dev-front", 1 / 6, 618, 788),
-            ("spawns B, qa-code-reviewer", 75 / 1186, 1797, 2383),
-            ("spawns B, dev-shell", 71 / 412, 595, 756),
-            ("spawns B, dev-nestjs", 29 / 297, 1128, 1477),
-            ("spawns B, dev-react", 48 / 260, 548, 693),
-            ("spawns B, meta-prompt-engineer", 70 / 460, 687, 881),
-            ("spawns B, intel-planner", 29 / 320, 1223, 1606),
-            ("spawns B, intel-reporter", 6 / 168, 3262, 4364),
-            ("spawns B, dev-python", 19 / 161, 915, 1190),
-            ("spawns B, design-designer", 1 / 51, 6025, 8103),
-            ("spawns B, intel-researcher", 7 / 134, 2197, 2924),
-            ("spawns B, dev-node", 63 / 308, 485, 607),
-            ("spawns B, qa-debugger", 14 / 66, 464, 579),
-            ("spawns B, dev-front", 1 / 4, 378, 463),
+            ("reference 4.0%", 0.040, 2901, 3876),
+            ("reference 7.5%", 0.075, 1499, 1980),
+            ("reference 24.0%", 0.240, 398, 490),
+            ("tasks overage only, agent A", 52 / 600, 1284, 1688),
+            ("tasks overage only, agent B", 40 / 150, 348, 422),
+            ("tasks overage only, agent C", 30 / 170, 578, 734),
+            ("tasks overage only, agent D", 41 / 190, 454, 566),
+            ("tasks overage only, agent E", 24 / 125, 523, 659),
+            ("tasks overage only, agent F", 18 / 120, 698, 896),
+            ("tasks overage only, agent G", 6 / 95, 1800, 2386),
+            ("tasks overage only, agent H", 9 / 110, 1366, 1799),
+            ("tasks overage only, agent I", 1 / 52, 6145, 8266),
+            ("tasks overage only, agent J", 19 / 70, 340, 411),
+            ("tasks overage only, agent K", 45 / 130, 244, 282),
+            ("tasks overage only, agent L", 13 / 50, 359, 438),
+            ("tasks with tool_use, agent A", 98 / 600, 633, 808),
+            ("tasks with tool_use, agent B", 68 / 155, 171, 183),
+            ("tasks with tool_use, agent C", 48 / 170, 323, 388),
+            ("tasks with tool_use, agent D", 70 / 190, 223, 254),
+            ("tasks with tool_use, agent E", 30 / 124, 394, 484),
+            ("tasks with tool_use, agent F", 34 / 118, 314, 377),
+            ("tasks with tool_use, agent G", 15 / 95, 658, 842),
+            ("tasks with tool_use, agent H", 11 / 110, 1099, 1438),
+            ("tasks with tool_use, agent J", 21 / 70, 298, 354),
+            ("tasks with tool_use, agent K", 55 / 130, 181, 197),
+            ("tasks with tool_use, agent L", 24 / 50, 148, 151),
+            ("spawns A, agent A", 85 / 1500, 2018, 2681),
+            ("spawns A, agent B", 88 / 532, 624, 795),
+            ("spawns A, agent C", 38 / 360, 1036, 1353),
+            ("spawns A, agent D", 66 / 480, 771, 995),
+            ("spawns A, agent E", 50 / 282, 575, 729),
+            ("spawns A, agent F", 36 / 350, 1065, 1393),
+            ("spawns A, agent G", 7 / 180, 2987, 3993),
+            ("spawns A, agent H", 8 / 150, 2150, 2860),
+            ("spawns A, agent I", 1 / 60, 7107, 9566),
+            ("spawns A, agent J", 20 / 85, 408, 503),
+            ("spawns A, agent K", 72 / 330, 448, 558),
+            ("spawns A, agent L", 21 / 170, 870, 1128),
+            ("spawns A, agent M", 1 / 7, 738, 950),
+            ("spawns B, agent A", 70 / 1200, 1957, 2599),
+            ("spawns B, agent B", 76 / 440, 593, 754),
+            ("spawns B, agent C", 32 / 330, 1136, 1489),
+            ("spawns B, agent D", 64 / 450, 742, 955),
+            ("spawns B, agent E", 44 / 275, 648, 828),
+            ("spawns B, agent F", 33 / 310, 1026, 1340),
+            ("spawns B, agent G", 7 / 170, 2815, 3760),
+            ("spawns B, agent H", 8 / 140, 2000, 2657),
+            ("spawns B, agent I", 1 / 57, 6746, 9078),
+            ("spawns B, agent J", 15 / 70, 458, 571),
+            ("spawns B, agent K", 61 / 300, 488, 612),
+            ("spawns B, agent L", 21 / 165, 841, 1090),
+            ("spawns B, agent M", 1 / 5, 498, 625),
         )
         for name, baseline, efficacy, maximum in rows:
             with self.subTest(name):
@@ -209,23 +209,23 @@ class TrialSampleSize(unittest.TestCase):
 
 
 class GraduationGrowth(unittest.TestCase):
-    def test_sequential_graduation_reproduces_the_recorded_per_agent_figures(self) -> None:
-        # Source: the lane's S5 pre-step 2 record → per busiest agent, α 0.05 on each guardrail,
+    def test_sequential_graduation_reproduces_the_per_agent_figures(self) -> None:
+        # synthetic agents, spawns and tasks baselines → α 0.05 on each guardrail,
         # graduation on the sequential reading at R33's per-arm maximum, guardrails independent
         rows = (
             # (name, baseline, R33 per-arm maximum, guardrails, graduation)
-            ("qa-code-reviewer spawns", 90 / 1450, 2432, 3, 0.830),
-            ("qa-code-reviewer tasks", 109 / 635, 760, 3, 0.818),
-            ("dev-shell spawns", 81 / 487, 790, 4, 0.800),
-            ("dev-shell tasks", 61 / 166, 255, 4, 0.765),
-            ("dev-nestjs spawns", 31 / 319, 1485, 4, 0.808),
-            ("dev-nestjs tasks", 31 / 110, 389, 4, 0.783),
-            ("dev-react spawns", 50 / 270, 690, 4, 0.798),
-            ("dev-react tasks", 29 / 118, 474, 4, 0.789),
-            ("meta-prompt-engineer spawns", 70 / 468, 899, 3, 0.821),
-            ("meta-prompt-engineer tasks", 62 / 176, 274, 3, 0.787),
-            ("intel-planner spawns", 34 / 347, 1472, 3, 0.827),
-            ("intel-planner tasks", 44 / 162, 411, 3, 0.803),
+            ("agent A spawns", 85 / 1500, 2681, 3, 0.831),
+            ("agent A tasks", 98 / 600, 808, 3, 0.819),
+            ("agent B spawns", 88 / 532, 795, 4, 0.800),
+            ("agent B tasks", 68 / 155, 183, 4, 0.745),
+            ("agent F spawns", 36 / 350, 1393, 4, 0.808),
+            ("agent F tasks", 34 / 118, 377, 4, 0.782),
+            ("agent E spawns", 50 / 282, 729, 4, 0.799),
+            ("agent E tasks", 30 / 124, 484, 4, 0.789),
+            ("agent D spawns", 66 / 480, 995, 3, 0.822),
+            ("agent D tasks", 70 / 190, 254, 3, 0.784),
+            ("agent C spawns", 38 / 360, 1353, 3, 0.826),
+            ("agent C tasks", 48 / 170, 388, 3, 0.801),
         )
         for name, baseline, per_arm, guardrails, expected in rows:
             with self.subTest(name):
@@ -233,20 +233,20 @@ class GraduationGrowth(unittest.TestCase):
                 self.assertAlmostEqual(graduation, expected, delta=5e-4)  # 3-decimal record
 
     def test_the_grown_sample_is_the_smallest_reaching_graduation_0_8(self) -> None:
-        # Source: the lane's S5 pre-step 2 record → R45's grown sample, sequential reading column
+        # synthetic agents → R45's grown sample on the sequential reading
         rows = (
             # (name, baseline, R33 per-arm maximum, guardrails, growth factor, grown per-arm maximum)
-            ("qa-code-reviewer spawns, not grown", 90 / 1450, 2432, 3, 1.0, 2432),
-            ("dev-shell spawns, not grown at 0.800", 81 / 487, 790, 4, 1.0, 790),
-            ("dev-nestjs spawns, not grown", 31 / 319, 1485, 4, 1.0, 1485),
-            ("dev-react spawns, grown", 50 / 270, 690, 4, 1.008, 696),
-            ("meta-prompt-engineer spawns, not grown", 70 / 468, 899, 3, 1.0, 899),
-            ("intel-planner spawns, not grown", 34 / 347, 1472, 3, 1.0, 1472),
-            ("dev-shell tasks, grown", 61 / 166, 255, 4, 1.118, 286),
-            ("dev-nestjs tasks, grown", 31 / 110, 389, 4, 1.059, 412),
-            ("dev-react tasks, grown", 29 / 118, 474, 4, 1.037, 492),
-            ("meta-prompt-engineer tasks, grown", 62 / 176, 274, 3, 1.041, 286),
-            ("qa-code-reviewer tasks, not grown", 109 / 635, 760, 3, 1.0, 760),
+            ("agent A spawns, not grown", 85 / 1500, 2681, 3, 1.000, 2681),
+            ("agent B spawns, not grown", 88 / 532, 795, 4, 1.000, 795),
+            ("agent F spawns, not grown", 36 / 350, 1393, 4, 1.000, 1393),
+            ("agent E spawns, grown", 50 / 282, 729, 4, 1.004, 733),
+            ("agent D spawns, not grown", 66 / 480, 995, 3, 1.000, 995),
+            ("agent C spawns, not grown", 38 / 360, 1353, 3, 1.000, 1353),
+            ("agent B tasks, grown", 68 / 155, 183, 4, 1.189, 218),
+            ("agent F tasks, grown", 34 / 118, 377, 4, 1.061, 400),
+            ("agent E tasks, grown", 30 / 124, 484, 4, 1.036, 502),
+            ("agent D tasks, grown", 70 / 190, 254, 3, 1.053, 268),
+            ("agent A tasks, not grown", 98 / 600, 808, 3, 1.000, 808),
         )
         for name, baseline, per_arm, guardrails, factor, grown in rows:
             with self.subTest(name):
