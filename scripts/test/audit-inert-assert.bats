@@ -139,16 +139,20 @@ EOF
 }
 [[ x ]]
 JSON
+  run baz <<\EOF
+}
+[[ y ]]
+EOF
   [[ "${output}" == y ]]
   echo after
 }
 BATS
-  # Only line 11 is a real finding; every other `[[ ]]` and `}` sits inside a heredoc body.
+  # Only line 15 is a real finding; every other `[[ ]]` and `}` sits inside a heredoc body.
   [[ "${status}" -eq 0 && "${output}" == *"mid_body=1 nested=0 unscanned=0 tests_scanned=1"* ]] || {
     echo "${output}"
     return 1
   }
-  [[ "${output}" == *"fixture.bats:11:"* && "${output}" != *"fixture.bats:3:"* && "${output}" != *"fixture.bats:9:"* ]] || {
+  [[ "${output}" == *"fixture.bats:15:"* && "${output}" != *"fixture.bats:3:"* && "${output}" != *"fixture.bats:9:"* && "${output}" != *"fixture.bats:13:"* ]] || {
     echo "${output}"
     return 1
   }
