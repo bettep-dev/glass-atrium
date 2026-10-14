@@ -4019,8 +4019,13 @@ class CycleWiringTest(_ShadowFixture):
             "_pg_write_loop_event", lambda *args, **kwargs: True
         )  # census events: not under test
 
-    def test_a_writing_cycle_counts_on_the_ledger_and_preregisters_nothing(self) -> None:
+    def test_a_writing_cycle_counts_on_the_ledger_opens_the_first_aa_and_preregisters_nothing(
+        self,
+    ) -> None:
         self._open_writing_stages()
+        # the install's manifest, one entry in the A/A scope → the first A/A's fingerprint is readable
+        manifest = {"hashes": {"autoagent/daemon_cycle.py": "2" * 64}}
+        (dc._INSTALL_ROOT / "manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
         self._run_cycle(skip_loop_emit=False)
         # other writing stages' statements are refused, not under test
         self.assertEqual(
@@ -4032,9 +4037,10 @@ class CycleWiringTest(_ShadowFixture):
             [],
         )
         trial_ledger = stub.get_trial_ledger()
+        # the ledger holds no aa-start row → the cycle's A/A stage opens the install's first A/A
         self.assertEqual(
             [row.event for row in self.ledger.rows],
-            [trial_ledger.EVENT.POWER_PASS_COUNT],
+            [trial_ledger.EVENT.POWER_PASS_COUNT, trial_ledger.EVENT.AA_START],
         )
 
     def test_a_writing_cycle_starts_an_open_trials_canary_and_a_dry_run_writes_neither(
