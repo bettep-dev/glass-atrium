@@ -106,8 +106,11 @@ run_bounded() {
   # unset ambient PGCONNECT_TIMEOUT so the ONLY deadline the stub can see is the fn's own export —
   # that makes the assertion genuinely falsifiable (revert the export ⇒ unbounded ⇒ killed here).
   run_bounded "PATH='${stub}:${PATH}'; unset PGCONNECT_TIMEOUT; source '${DEPS_SH}'; PG_SOCKET=/tmp ga_detect_postgres" 5
-  [[ "${BOUNDED}" -eq 1 ]]                     # self-completed inside the ceiling (fail-before: killed)
-  [[ "${DETECT_OUT}" == "present-but-down" ]]  # returned the down verdict, never blocked unbounded
+  [[ "${BOUNDED}" -eq 1 ]] || {
+    echo "detect was killed at the ceiling; out=${DETECT_OUT}" >&2
+    return 1
+  }
+  [[ "${DETECT_OUT}" == "present-but-down" ]] # returned the down verdict, never blocked unbounded
 }
 
 @test "connect-deadline(behavioral): ga_detect_postgres_role bounds the FIRST role-path connect (site 308) too" {
@@ -116,7 +119,10 @@ run_bounded() {
   # role path opens TWO connects (rolname query @308 then the SELECT-1 re-probe @314); if 308 were
   # untimed it would block before 314 is ever reached. Both bounded ⇒ ~2s each, well under the ceiling.
   run_bounded "PATH='${stub}:${PATH}'; unset PGCONNECT_TIMEOUT; source '${DEPS_SH}'; PG_SOCKET=/tmp ga_detect_postgres_role" 8
-  [[ "${BOUNDED}" -eq 1 ]]
+  [[ "${BOUNDED}" -eq 1 ]] || {
+    echo "detect was killed at the ceiling; out=${DETECT_OUT}" >&2
+    return 1
+  }
   [[ "${DETECT_OUT}" == "present-but-down" ]]
 }
 

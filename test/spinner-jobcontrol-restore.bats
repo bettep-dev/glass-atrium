@@ -181,8 +181,12 @@ HARNESS
   export GA_LAUNCHER="${LAUNCHER}"
   unset GA_FORCE_JC
   run script -q /dev/null bash "${harness}"
-  [[ "${output}" == *A_OFF* ]]       # job control not left enabled
-  [[ "${output}" == *B_COMPLETED* ]] # the later terminal-mode stty completes (no SIGTTOU)
+  [[ "${output}" == *A_OFF* ]]            # job control not left enabled
+  [[ "${output}" == *B_COMPLETED* ]] || { # the later terminal-mode stty completes (no SIGTTOU)
+    echo "the later bg stty did not complete (no B_COMPLETED)" >&2
+    echo "${output}" >&2
+    return 1
+  }
   [[ "${output}" != *A_ON* ]]
   [[ "${output}" != *B_STOPPED* ]]
 }
@@ -196,7 +200,11 @@ HARNESS
   export GA_LAUNCHER="${LAUNCHER}"
   export GA_FORCE_JC=1
   run script -q /dev/null bash "${harness}"
-  [[ "${output}" == *A_ON* ]]      # the OLD restore leaves job control enabled
-  [[ "${output}" == *B_STOPPED* ]] # the later terminal-mode stty is SIGTTOU-stopped (the hang)
+  [[ "${output}" == *A_ON* ]]           # the OLD restore leaves job control enabled
+  [[ "${output}" == *B_STOPPED* ]] || { # the later terminal-mode stty is SIGTTOU-stopped (the hang)
+    echo "the harness did not detect the SIGTTOU stop (no B_STOPPED)" >&2
+    echo "${output}" >&2
+    return 1
+  }
   unset GA_FORCE_JC
 }

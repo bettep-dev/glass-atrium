@@ -9,9 +9,11 @@
 # assertion cannot (the earlier round shipped on bats-structure alone and a regression
 # slipped through).
 #
-# DO NOT EXECUTE unless kill, rm AND lsof are all shadowed — the GA_PG_SOCKET seam below does NOT
-# make this safe: at D4 the scratch socket is absent, so the port-scoped `lsof -ti tcp:5432`
-# fallback (socket-scope-blind) reaches the live postgres.
+# Live-postgres safety — D4 drives the REAL clear_unmanaged_pg_orphan; two controls, both required:
+#   pid  — a same-shell `lsof` shadow reporting NO owner → every lookup it reaches (socket, the
+#          socket-blind `lsof -ti tcp:5432` fallback, the poll) is empty → no `kill -INT` fires
+#   path — the GA_PG_SOCKET seam → PG_SOCKET is a per-run mktemp -d dir, never the live /tmp socket
+# Both bind only because preflight_pg_utc_guard runs in THIS shell — never drive it via a child shell.
 #
 # Faithful to production: the real preflight runs under `set +e; trap - ERR` (run_gate_quiet
 # wraps it — see preflight_bracket's own comment), so this harness runs it identically.
@@ -54,6 +56,9 @@ source "${GA_DIR_ROOT}/scripts/lib/path-guard.sh"
 # match run_gate_quiet's runtime: the preflight executes with -e off + no ERR trap.
 set +e
 trap - ERR EXIT INT TERM
+
+# pid control (header): defined after the source so it wins; binds in this shell + its command substitutions
+lsof() { return 0; }
 
 # === recorder =========================================================================
 GA_REC="$(mktemp "${SCRATCH_DIR}/ga-exec-rec.XXXXXX")"
