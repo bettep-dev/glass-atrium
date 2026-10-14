@@ -24,7 +24,8 @@ Every section kept in the rule file is kept because a NAMED reader outside the f
 
 | Section | Established reader | Where the inbound pointer lives |
 |---|---|---|
-| Test Quality (with Meaningless-Test Prohibitions) | whoever adjudicates a hand-run `audit-test-smells.sh` finding — it reports a shape, never a defect | `scripts/audit-test-smells.sh` header (Convention SoT) · `scripts/test/audit-test-smells.bats` header |
+| Test Quality (with Meaningless-Test Prohibitions) | whoever adjudicates a hand-run `audit-test-smells.sh` finding — it reports a shape, never a defect | `scripts/audit-test-smells.sh` header (Convention SoT) |
+| Test Quality (with Detection signature per row) | the same adjudicator — the conditional-logic row's data-driven carve-out | `scripts/test/audit-test-smells.bats` header |
 | Test Quality · Mocking Rules · Test Structure · Authoring scope | glass-atrium-qa-code-reviewer — its delivered checklist cites this file and it must cite a governing rule | `agents/glass-atrium-qa-code-reviewer.md` → `### Testing Checks` |
 | Test Structure | glass-atrium-dev-python — its naming and test-data lines | `agents/glass-atrium-dev-python.md` → `### Tests = Specification` · `### Testing` |
 | Rationalization Rejection (Testing) | every agent — via the charter's excuse→rebuttal home-file list and the `feature` note's exception pointer | `GLASS_ATRIUM_GLOBAL_RULES.md` → Rationalization Rejection · `core-outcome-record.md` → the `feature` note |
@@ -39,6 +40,7 @@ Every section kept in the rule file is kept because a NAMED reader outside the f
 | Test Depth and Upkeep | the orchestrator, declaring a DEV/PLANNING delegation's `[SCOPE] files=` | `rules/glass-atrium/orchestrator-role.md` → `### Context Handoff Size` → **`files=` completeness duty** |
 
 - **Heading stability**: `## Test Quality`, `### Meaningless-Test Prohibitions`, `## Destructive-Path Suite Safety (live-postgres reach)` and `## Mechanical Success Metrics` are named verbatim by the pointers above. Renaming one dangles its inbound pointer even though no suite reads the body.
+  - Also stable: `### Detection signature per row, keyed by the Prohibited literal above` — named in full by the reviewer row, and by its `Detection signature per row` prefix in the `scripts/test/audit-test-smells.bats` header.
   - Also stable: `## Rationalization Rejection (Testing)` and its bolded lead **Qualifier on the last row (the deliberate-break exception)** — the sandbox write-confinement lane edits one sentence under that lead, and `### What makes a test a test` → **Watch it fail** points at it.
   - A bold lead named verbatim binds the same way: the `core-outcome-record.md` `feature` note names **Qualifier on the last row (the deliberate-break exception)**, so renaming that lead dangles a Tier-1 pointer.
   - Cited by `agents/glass-atrium-qa-code-reviewer.md` → `### Testing Checks`, some also by in-file pointers — grep before renaming one:
@@ -52,6 +54,7 @@ Every section kept in the rule file is kept because a NAMED reader outside the f
 
 - The `## Test Quality` section is an adherence-layer convention with **no runtime backstop** — no hook or gate verifies that the decision procedure was run, and none can. Its only mechanical companion is the three-signal advisory auditor below, which never inspects the relationship claim itself.
 - The home-file, grouping, ID-ban, comment, test-data and table-form rules are reviewer-applied with no tooling at all. Extending the auditor to ID-bearing titles, incident-framed headers and source-grep pins is a deferred follow-up, not a current check.
+  - At the `feature/pa-ci` merge, co-edit this bullet: its auditor's advisory `id_title` and `incident_header` counts then cover ID-bearing titles and incident-framed headers, leaving source-grep pins as the deferred follow-up.
 
 ## Test-authoring delta — provenance
 
@@ -80,6 +83,7 @@ The rule file states only that every row is reviewer-applied. The mapping below 
 
 - MECHANICAL means decidable-in-principle by a script — NOT that a script exists. **No row on that table is enforced.**
 - Only signals (a) and (b) of `scripts/audit-test-smells.sh` back any row, and that auditor is **ADVISORY**: it exits 0 on findings, is **NOT wired into CI**, and is run by hand.
+  - The `feature/pa-ci` auditor also reports the advisory `id_title` and `incident_header` counts. They back the **ID ban** and **Comments** rules, not a row, and never change the exit status.
 - That auditor carries a THIRD signal no row states — (c) count-pin: an assertion comparing a non-zero integer literal against a census the same assertion derives by counting the tree or a source file. A signal-(c) finding therefore maps to no row, and is in particular not the tooling for the change-detector row.
 - A row marked `[no tooling]` below has no implementation at all and is reviewer-applied exactly like a JUDGMENT row.
 
@@ -122,7 +126,7 @@ The rule file states only that every row is reviewer-applied. The mapping below 
 - Step 3 names the read target and "the pid question is not answerable from the test file alone";
 - Step 4 carries "all of them resolving".
 
-`### Step 5` had no wrapper bullet and was left untouched. Net effect is dedentation only: no step lost a clause, and the section's byte size falls slightly rather than growing — which matters because this H2 is already the largest in the rule file and sits marginally over the 8 KB shape-cap guide, an overage accepted so the procedure stays single-sited under its inbound pointer.
+`### Step 5` had no wrapper bullet and was left untouched. Net effect is dedentation only: no step lost a clause, and the section's byte size falls slightly rather than growing — which matters because this H2 is the largest in the rule file and sits just under the 8 KB shape-cap guide, with little room to grow while the procedure stays single-sited under its inbound pointer.
 
 ## Mechanical Success Metrics — code pointer
 

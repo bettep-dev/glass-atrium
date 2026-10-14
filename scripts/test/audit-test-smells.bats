@@ -7,7 +7,7 @@
 # signal (c) "a count over a tree or source anchor is reported exactly when it is pinned to an exact
 # census, never when it states absence, a membership floor, or a sandbox artifact's behaviour".
 # A loop whose body asserts on EVERY row is the data-driven form the conditional-test-logic carve-out
-# in scoped/shared-testing.md -> Meaningless-Test Prohibitions explicitly permits.
+# in scoped/shared-testing.md -> Detection signature per row explicitly permits.
 #
 # Every fixture is written into a per-test temp tree — no repository file is read as a fixture.
 
