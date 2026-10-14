@@ -647,7 +647,7 @@ NO_METRIC_KEY_REASON = (
 # re-reading live outcomes (that would be R3, rejected for window-SoT drift). The R2
 # trigger (persist a soft/hard marker keyed on the first genuine result=fail
 # pattern-1) is documented but NOT built — premature for a signal that has never
-# once fired (0 result=fail across 4160 outcomes).
+# once fired (no result=fail row among the recorded outcomes).
 PATTERN1_SOFT_LABEL_EN = "recurring negative-signal concentration"
 PATTERN1_SOFT_LABEL_KO = "반복적 부정 신호 집중"
 # Forward DISPLAY map (FAIL literal → SOFT literal): applied to the persisted
@@ -6702,8 +6702,8 @@ def _is_soft_negative_outcome(row: dict) -> bool:
     gap carve-out (a completion-synthesized done_with_concerns row is a
     measurement artifact, not a regression signal), the structural review_flag
     carve-out, and the grader_verdict=verified_fail term. Soft keying stays
-    deliberate: 0 result=fail rows across 4160 lifetime outcomes make
-    hard-failure keying dead. Reachable only under HAS_PG_OUTCOME_READ (the
+    deliberate: with no result=fail row among the recorded outcomes,
+    hard-failure keying is dead. Reachable only under HAS_PG_OUTCOME_READ (the
     alert gate), where the imported alias is bound.
     """
     return _pg_is_negative_signal_outcome(row)
