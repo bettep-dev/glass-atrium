@@ -794,6 +794,22 @@ class _ShadowFixture(unittest.TestCase):
         self._start_trial(key)
         return key, self._get_preregistrations()[-1].id
 
+    def _open_trial_on(self, agent: str, proposal_id: int, **changes: object) -> str:
+        """A further live pre-registration: the first trial's payload on `agent`, `changes`
+        over it → its key."""
+        first = self._get_preregistrations()[0]
+        key = f"{proposal_id:064x}"
+        self.ledger.write(
+            first.event,
+            first.actor,
+            {**first.payload, "proposal_id": proposal_id, **changes},
+            trial_key=key,
+            agent=agent,
+            learning_pattern_id=_PATTERN_ID,
+            dedupe_key=key,
+        )
+        return key
+
 
 class BoundPayloadTest(_ShadowFixture):
     """Only a verified non-safety candidate of a passing pattern is bound; only it stays pending auto."""
@@ -3092,22 +3108,6 @@ class TrialCanaryTest(_ShadowFixture):
         (row,) = self._get_preregistrations()
         return row
 
-    def _open_trial_on(self, agent: str, proposal_id: int, **changes: object) -> str:
-        """A further live pre-registration: the first trial's payload on `agent`, `changes`
-        over it → its key."""
-        first = self._get_preregistrations()[0]
-        key = f"{proposal_id:064x}"
-        self.ledger.write(
-            first.event,
-            first.actor,
-            {**first.payload, "proposal_id": proposal_id, **changes},
-            trial_key=key,
-            agent=agent,
-            learning_pattern_id=_PATTERN_ID,
-            dedupe_key=key,
-        )
-        return key
-
     def _seed_every_write_class(self) -> Path:
         """One trial per write the stage makes, under the current data root: one due its first
         canary, an unstarted one whose stated horizon ends a day on and which holds a file, and
@@ -3867,7 +3867,7 @@ class TrialCanaryTest(_ShadowFixture):
 class GraduationApplyTest(_ShadowFixture):
     """A won trial's proposal row is applied by the cycle while it stays pending: one apply call
     a cycle, a named WARN while the row is still pending after it, no call once the row left
-    pending."""
+    pending, and none for a trial still open."""
 
     def _win(self) -> str:
         """A started trial won at look 2, one shadow stage → its key."""
@@ -3887,8 +3887,11 @@ class GraduationApplyTest(_ShadowFixture):
         self.assertEqual(self.pg_reach, [])
         return stderr.getvalue().splitlines()
 
-    def test_the_cycles_after_a_win_call_the_apply_only_while_the_row_is_pending(self) -> None:
+    def test_the_cycles_after_a_win_call_the_apply_for_the_won_row_alone_and_only_while_it_is_pending(
+        self,
+    ) -> None:
         key = self._win()
+        self._open_trial_on(_POOL_AGENT, _PROPOSAL_ID + 1)  # another agent's trial, still open
         groups = [(_AGENT, self.patterns)]
         # name, the proposal row's status, each cycle's apply exit, whether the agent stays held
         rows = (
