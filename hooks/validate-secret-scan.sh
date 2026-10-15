@@ -10,6 +10,8 @@ set -Eeuo pipefail
 IFS=$'\n\t'
 
 source "${BASH_SOURCE%/*}/hook-utils.sh"
+# shellcheck source=lib/pipe-drain.sh
+source "${BASH_SOURCE%/*}/lib/pipe-drain.sh"
 
 # WHY fail-closed: field extraction degrades to EMPTY without python3 (tool_name
 # mis-detects, content scans nothing), which would let a credential write through
@@ -65,7 +67,8 @@ scan_content() {
   for i in "${!PATTERNS[@]}"; do
     # `-i` for case-insensitive credential keys · `--` so a dash-leading PEM
     # pattern is not parsed as a grep option flag.
-    if printf '%s\n' "${blob}" | grep -qiE -- "${PATTERNS[${i}]}"; then
+    # shellcheck disable=SC2310  # the reader's status is the verdict; errexit has nothing else to catch
+    if printf '%s\n' "${blob}" | drain_after grep -qiE -- "${PATTERNS[${i}]}"; then
       emit_error "${CODES[${i}]}" "block" \
         "Secret pattern detected: ${NAMES_EN[${i}]}" \
         "Replace the hardcoded secret with an environment-variable reference (core-security.md -> Secret Management)" \
@@ -137,8 +140,9 @@ CRED_VALUE='(AKIA[0-9A-Z]{16}|ghp_[a-zA-Z0-9]{36}|sk-[a-zA-Z0-9]{20,}|AIza[0-9A-
 scan_bash_command() {
   local cmd="${1}"
   [[ -z "${cmd}" ]] && return 0
-  if printf '%s\n' "${cmd}" | grep -qiE -- "${SECRET_TARGET}" \
-    && printf '%s\n' "${cmd}" | grep -qiE -- "${CRED_VALUE}"; then
+  # shellcheck disable=SC2310  # the reader's status is the verdict; errexit has nothing else to catch
+  if printf '%s\n' "${cmd}" | drain_after grep -qiE -- "${SECRET_TARGET}" \
+    && printf '%s\n' "${cmd}" | drain_after grep -qiE -- "${CRED_VALUE}"; then
     emit_error "SEC-016" "block" \
       "Secret written to a dotenv/secrets file via Bash" \
       "Do not write credentials into .env/secrets files (redirect/heredoc/tee/dd/open/cp/mv/sed-i/install/ed); use env vars or a secret manager" \

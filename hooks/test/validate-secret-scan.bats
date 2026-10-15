@@ -73,3 +73,25 @@ run_hook() {
   [[ "${status}" -eq 0 ]] || return 1
   [[ -z "${output}" ]] || return 1
 }
+
+# ~160 KiB of JSON-escaped lines: above the 64 KiB pipe capacity, so a reader that stops at a
+# line-1 match leaves its writer to die of SIGPIPE, which pipefail reports as "no match".
+pipe_overflow_padding() {
+  seq -f 'padding line %05g of ordinary source text' 1 4000 | awk '{ printf "%s\\n", $0 }'
+}
+
+@test "Write channel: a secret on line 1 of content larger than the pipe buffer still blocks, exit 2" {
+  local padding
+  padding="$(pipe_overflow_padding)"
+  run_hook "{\"tool_name\":\"Write\",\"tool_input\":{\"file_path\":\"/tmp/x.ts\",\"content\":\"const k = ${AWS_FIXTURE}\\n${padding}\"}}"
+  [[ "${status}" -eq 2 ]] || { echo "${output}"; return 1; }
+  [[ "${output}" == *"SEC-001"* ]] || { echo "${output}"; return 1; }
+}
+
+@test "Bash channel: a .env credential write on line 1 of a command larger than the pipe buffer still blocks, exit 2" {
+  local padding
+  padding="$(pipe_overflow_padding)"
+  run_hook "{\"tool_name\":\"Bash\",\"tool_input\":{\"command\":\"echo ${CRED_FIXTURE} > .env\\n${padding}\"}}"
+  [[ "${status}" -eq 2 ]] || { echo "${output}"; return 1; }
+  [[ "${output}" == *"SEC-016"* ]] || { echo "${output}"; return 1; }
+}
