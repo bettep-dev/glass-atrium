@@ -53,7 +53,7 @@ run_drained_reader() {
 
 # Envelope for one consumer row, the trigger on line 1 above ~170 KiB of padding. The body reaches
 # jq on stdin → no argument nears Linux's 128 KiB per-string exec limit.
-# Args: $1 kind (bash | response | fetch | write | agent | raw-write) · $2 trigger · $3 padding.
+# Args: $1 kind (bash | response | fetch | write | agent | raw-write | raw-path) · $2 trigger · $3 padding.
 consumer_payload() {
   local body="$2"$'\n'"$3"
   case "$1" in
@@ -68,6 +68,12 @@ consumer_payload() {
     raw-write)
       printf -- '---\nsource_url: https://example.com/page\ncollected: 2026-07-22\ncollector: glass-atrium-intel-researcher\n---\n\n%s' "${body}" \
         | jq -Rsc --arg p "${WIKI_ROOT}/raw/page.md" '{tool_name:"Write", tool_input:{file_path:$p, content:.}}'
+      ;;
+    raw-path)
+      # Line 1 is the raw-store directory the write lands in, the rest the file's content.
+      printf -- '%s\n---\nsource_url: https://example.com/page\ncollected: 2026-07-22\ncollector: glass-atrium-intel-researcher\n---\n\n%s' "$3" "$2" \
+        | jq -Rsc --arg root "${WIKI_ROOT}" \
+          'index("\n") as $i | {tool_name:"Write", tool_input:{file_path:($root + "/raw/" + .[:$i] + "/page.md"), content:.[$i + 1:]}}'
       ;;
     *) return 1 ;;
   esac
@@ -186,6 +192,66 @@ SHIM
     }
     [[ ! -s "${refused}" ]] || {
       echo "${name}: refused exec of the commands below — status ${status}: ${output}"
+      cat "${refused}"
+      return 1
+    }
+  done
+}
+
+# Args: $1 byte count. Prints that many `x` bytes.
+filler() { python3 -Ic 'import sys; sys.stdout.write("x" * int(sys.argv[1]))' "$1"; }
+
+# Args: $1 padding spec · $2 trigger. Prints the padding the spec names:
+# context:<bytes> → a guard's `{"command":"<trigger>\n<padding>"}` context is that long ·
+# scope:<bytes> → one [SCOPE] line declaring 11 paths (one past the Deep-review count threshold)
+# of that many bytes together — few long paths, as the parser's string loops are quadratic ·
+# path:<bytes> → that many bytes.
+row_padding() {
+  local kind="${1%%:*}" size="${1#*:}" stem
+  case "${kind}" in
+    context) filler "$((size - 15 - ${#2}))" ;;
+    path) filler "${size}" ;;
+    scope)
+      stem="$(filler "$((size / 11))")"
+      printf '[SCOPE] files=src/%s0.sh' "${stem}"
+      printf ', src/%s%s.sh' "${stem}" 1 "${stem}" 2 "${stem}" 3 "${stem}" 4 "${stem}" 5 \
+        "${stem}" 6 "${stem}" 7 "${stem}" 8 "${stem}" 9 "${stem}" 10
+      printf ' · deliverable=code · out=none'
+      ;;
+    *) return 1 ;;
+  esac
+}
+
+# Names holding one edge of the payload, each sized so `name=value` alone crosses the limit: a
+# guard's context just under the 131072-byte cap that turns it into '{}' (`ctx` = emit_error's
+# local copy), the gate's [SCOPE] line and its file list, a raw write's path.
+@test "a hook keeps its verdict when a context, prompt line or path held under a name its caller exported crosses Linux's per-string exec limit" {
+  command -v jq >/dev/null 2>&1 || skip "jq required"
+  command -v python3 >/dev/null 2>&1 || skip "python3 required"
+  local refused="${BATS_TEST_TMPDIR}/exec-refused.log" bin row name hook kind trigger spec names expected_status needle
+  local padding payload index data_root="${BATS_TEST_TMPDIR}/ga"
+  local -a exported rows
+  bin="$(linux_exec_limit_bin "${refused}")"
+  export WIKI_ROOT="${BATS_TEST_TMPDIR}/wiki"
+  # Row: name | hook | payload kind | line-1 trigger | padding spec | exported names | expected status | needle.
+  rows=(
+    "no-verify flag|block-no-verify.sh|bash|git commit -m msg --no-verify|context:131071|context ctx|2|SEC-011"
+    "destructive git|enforce-commit-guard.sh|bash|git reset --hard|context:131071|context ctx|2|GIT-002"
+    "DEV spawn declaring a wide scope|enforce-verification-gate.sh|agent|[SIZE-EST] bundles=1 tool_uses~=5 [ENTRY-CLASS] simple-task: probe|scope:132000|decl scope_line files line scan|0|declares 11 [SCOPE] file(s)"
+    "raw write without envelope at a long path|validate-pre-write-raw.sh|raw-path|Fetched content with no envelope wrapper.|path:131100|FILE_PATH PARENT_DIR|2|SCOPE-006"
+  )
+  for row in "${rows[@]}"; do
+    IFS='|' read -r name hook kind trigger spec names expected_status needle <<<"${row}"
+    padding="$(row_padding "${spec}" "${trigger}")"
+    IFS=' ' read -r -a exported <<<"${names}"
+    for index in "${!exported[@]}"; do exported[index]="${exported[index]}=x"; done
+    payload="$(consumer_payload "${kind}" "${trigger}" "${padding}")"
+    : >"${refused}"
+    run env PATH="${bin}:${PATH}" GA_DATA_ROOT="${data_root}" HOOK_DATA_DIR="${data_root}/data" "${exported[@]}" \
+      bash "${HOOKS_DIR}/${hook}" <<<"${payload}"
+    [[ "${status}" -eq "${expected_status}" && "${output}" == *"${needle}"* ]] || {
+      echo "${name}: expected status ${expected_status} and ${needle}, got ${status}: ${output:0:600}"
+      echo "refused execs:"
       cat "${refused}"
       return 1
     }
