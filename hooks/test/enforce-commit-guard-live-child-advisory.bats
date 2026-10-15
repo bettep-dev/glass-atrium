@@ -65,7 +65,7 @@ run_guard() {
   [[ ! -e "${stale}" ]] || { echo "stale marker not swept" >&2; return 1; }
 }
 
-@test "git commit on line 1 of a command larger than the pipe buffer still raises GIT-ADV-001" {
+@test "git commit on line 1 of a command larger than the pipe buffer still raises the live-child advisory" {
   : >"${MARKER_DIR}/child-001"
   local padding
   padding="$(seq -f 'padding line %05g of an ordinary build log' 1 4000)"

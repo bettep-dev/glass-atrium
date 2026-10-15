@@ -52,7 +52,7 @@ pipe_overflow_padding() {
   seq -f 'padding line %05g of an ordinary build log' 1 4000 | awk '{ printf "%s\\n", $0 }'
 }
 
-@test "violating: a .env write on line 1 of a command larger than the pipe buffer still alerts SEC-017" {
+@test "violating: a .env write on line 1 of a command larger than the pipe buffer still raises the credential-content alert" {
   local padding
   padding="$(pipe_overflow_padding)"
   printf '%s\n' "${AWS_FIXTURE}" >"${SANDBOX}/leak.env"

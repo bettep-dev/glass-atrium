@@ -170,7 +170,7 @@ conforming_doc() {
 }
 
 # Content past the frontmatter is what the extraction leaves unread → large pages must still reach the V5/V6 verdict.
-@test "Write: an envelope-less raw write over the size limit blocks with SCOPE-005 and SCOPE-006 below and above the pipe capacity" {
+@test "Write: an envelope-less raw write over the size limit blocks on both its size and its missing envelope below and above the pipe capacity" {
   local row name lines bytes content
   # name | padding lines (~47 bytes each): one size between the 51200-byte limit and 64 KiB, one well past 64 KiB
   local rows=("below the pipe capacity|1250" "above the pipe capacity|4000")
