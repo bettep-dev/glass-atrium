@@ -22,12 +22,15 @@
 #     or `it(` call in a `.ts` file, that carries an ID.
 #   - incident_header: a file whose leading comment block — `#`, `//` or `/* */` lines after an
 #     optional shebang and leading blank lines, ending at the first blank or code line — carries an
-#     ID or a `YYYY-MM-DD` date. A `# shellcheck` directive line is tooling and is skipped.
+#     ID or a `YYYY-MM-DD` date. A `# shellcheck` directive line is tooling and is skipped. The
+#     finding names the first such line, at its own line number.
 #   - Scope: every `.bats` and `.ts` file under SCOPE_DIRS; monitor/test is the only TS root.
 #
 # Surface: ADVISORY by default — findings still exit 0 on every surface, including the scope-list
 # run. Only `--strict` applies blocking exit semantics; `--advisory` reports without failing
-# anywhere. The findings print identically in every mode. Promotion to blocking (and to CI wiring)
+# anywhere. The findings print identically in every mode. CI runs this auditor only through the
+# naming ratchet under scripts/, which compares the id_title and incident_header findings against a
+# committed baseline and leaves this exit contract as it is — no promotion. Promotion to blocking
 # follows the in-house precedent set by scripts/audit-absorption.sh, and the promotion condition it
 # must meet is stated ONCE, in rules/glass-atrium/shared-self-improve-hygiene.md → Auditor. Read it
 # there; a copy here is the drift this repo names. A day-one blocking gate is forbidden.
@@ -156,6 +159,8 @@ count_pin=0
 tests_scanned=0
 id_title=0
 incident_header=0
+HEADER_HIT_LINE=0
+HEADER_HIT_TEXT=""
 LINE_CODE=""
 LINE_TEXT=""
 
@@ -255,7 +260,8 @@ line_pins_count() {
   return 1
 }
 
-# True when the slurped file's leading comment block carries an ID or a date stamp.
+# True when the slurped file's leading comment block carries an ID or a date stamp; the first such
+# line lands in HEADER_HIT_LINE (1-based) and HEADER_HIT_TEXT (leading whitespace trimmed).
 header_is_incident() {
   local idx=0 trimmed="" started=0 in_block=0
   for ((idx = 0; idx < AUDIT_CLI_LINE_COUNT; idx++)); do
@@ -282,6 +288,8 @@ header_is_incident() {
       continue
     fi
     if [[ "${trimmed}" =~ ${RE_ID_TAG} || "${trimmed}" =~ ${RE_DATE_STAMP} ]]; then
+      HEADER_HIT_LINE=$((idx + 1))
+      HEADER_HIT_TEXT="${trimmed}"
       return 0
     fi
   done
@@ -309,7 +317,7 @@ audit_file() {
   # shellcheck disable=SC2310  # a false predicate is the unreported outcome, not an error
   if header_is_incident; then
     incident_header=$((incident_header + 1))
-    audit_cli_report INCIDENT_HEADER "${rel}:1" "leading comment block carries an ID or a date stamp"
+    audit_cli_report INCIDENT_HEADER "${rel}:${HEADER_HIT_LINE}" "${HEADER_HIT_TEXT}"
   fi
   if [[ "${abs}" == *.ts ]]; then
     audit_ts_titles "${rel}"
