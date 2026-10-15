@@ -363,6 +363,9 @@ else
   }
 fi
 
+# Payload names: an inherited export would carry them into every child's environment, capped per string on Linux.
+export -n input script_b64 script_src plan_refs ids
+
 # DEV-set — core-compliance-matrix.md Scope Legend canonical DEV agents. Space-separated tokens for
 # bash 3.2 (no declare -A). AUTO-SYNCED from the scope-dev.md DEV roster by agent_lifecycle (the
 # add/delete transaction + `python -m agent_lifecycle sync-gate-roster`) — do NOT hand-edit. Mirrors

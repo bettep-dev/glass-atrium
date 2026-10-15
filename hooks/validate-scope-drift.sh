@@ -89,6 +89,15 @@ extract_target_files_heading() {
   printf '%s\n' "${1}" | sed -E -n "/${heading_re}/,/^## /{ /${heading_re}/d; /^## /d; p; }"
 }
 
+# SCOPE-070 advisory. emit_error hands the context to jq as one argument; Linux refuses one of 131072
+# bytes or more, so a context carrying an over-long edit path goes as '{}'.
+# Args: $1=message  $2=suggestion  $3=context json
+emit_scope_drift() {
+  local context="${3}"
+  if (($(LC_ALL=C && printf '%s' "${#context}") >= 131072)); then context='{}'; fi
+  emit_error "SCOPE-070" "advisory" "${1}" "${2}" "${context}"
+}
+
 # Shared drift decision — match file_path against the resolved target list; on no-match emit the
 # SCOPE-070 advisory (exit 0, non-blocking). Called by BOTH the live-resolution and cache-hit
 # branches so the verdict is identical by construction, independent of where the list came from.
@@ -98,7 +107,7 @@ check_drift_and_emit() {
   # Intended predicate call (explicit return 0/1, no set -e reliance) → SC2310 disabled.
   # shellcheck disable=SC2310
   if ! match_file_against_allowed "${file_path}" "${allowed_files}"; then
-    emit_error "SCOPE-070" "advisory" \
+    emit_scope_drift \
       "Scope drift: file not in plan target list" \
       "Update plan target files or confirm the modification is intentional" \
       "{\"file\":\"${file_path}\",\"source\":\"plan-doc\",\"plan_id\":${plan_id}}"
@@ -155,6 +164,8 @@ scope_drift_write_cache() {
 
 # Drain stdin once — capture file_path before any branch (needed for the system-path
 # short-circuit). Non-zero/empty input → fail-open.
+# Payload names: an inherited export would carry them into every child's environment, capped per string on Linux.
+export -n INPUT FILE_PATH SESSION_ID SAFE_SID CACHE_FILE file_path context ctx
 INPUT=$(cat 2>/dev/null) || exit 0
 FILE_PATH=$(echo "${INPUT}" | jq -r '.tool_input.file_path // ""' 2>/dev/null)
 
@@ -231,7 +242,7 @@ if [[ -n "${FILE_PATH}" ]]; then
     if match_file_against_allowed "${FILE_PATH}" "${SCOPE_DECL_FILES}"; then
       exit 0
     fi
-    emit_error "SCOPE-070" "advisory" \
+    emit_scope_drift \
       "Scope drift: file not in the delegation [SCOPE] files= declaration" \
       "Widen the delegation [SCOPE] declaration or confirm the modification is intentional" \
       "{\"file\":\"${FILE_PATH}\",\"source\":\"scope-decl\"}"
@@ -351,7 +362,7 @@ ALLOWED_FILES="$(extract_target_files_heading "${PLAN_CONTENT}")"
 # Match → file outside the list → SCOPE-070 advisory (exit 0, non-blocking). SC2310 disabled (above).
 # shellcheck disable=SC2310
 if ! match_file_against_allowed "${FILE_PATH}" "${ALLOWED_FILES}"; then
-  emit_error "SCOPE-070" "advisory" \
+  emit_scope_drift \
     "Scope drift: file not in plan target list" \
     "Update plan target files or confirm the modification is intentional" \
     "{\"file\":\"${FILE_PATH}\",\"source\":\"plan-doc\"}"
