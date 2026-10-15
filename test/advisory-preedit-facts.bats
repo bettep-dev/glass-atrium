@@ -22,6 +22,7 @@ HOOK="${GA}/hooks/advisory-preedit-facts.sh"
 # The hook's tail window (must match _TAIL_WINDOW_BYTES in the hook). The large fixture below
 # is generated strictly larger than this so its head edit provably falls outside the window.
 TAIL_WINDOW_BYTES=1048576
+ADVISORY_PHRASE='ADVISORY: edited without a Pre-Edit Facts declaration'
 
 setup() {
   command -v python3 >/dev/null 2>&1 || skip "python3 required"
@@ -70,6 +71,13 @@ write_large_fixture() {
   printf '%s\n' '{"type":"assistant","message":{"content":[{"type":"tool_use","name":"Edit","input":{"file_path":"/tail/tailfile.txt"}}]}}' >>"$f"
 }
 
+# One assistant entry carrying a single Edit tool_use on $1, and no declaration.
+write_edit_transcript() {
+  jq -cn --arg fp "${1}" \
+    '{type: "assistant", message: {content: [{type: "tool_use", name: "Edit", input: {file_path: $fp}}]}}' \
+    >"${TRANSCRIPT}"
+}
+
 @test "current-turn declared edit -> silent (full-read-identical, start==0)" {
   write_declared_fixture "${TRANSCRIPT}"
   run_hook "${TRANSCRIPT}"
@@ -103,4 +111,19 @@ write_large_fixture() {
   # HEADFILE (undeclared, at byte 0) would flag "missing" on a full read; the bounded read never sees it.
   [[ "${output}" != *"HEADFILE"* ]] || return 1
   [[ "${output}" != *"ADVISORY"* ]] || return 1
+}
+
+# ~160 KiB of duplicated files-key lines: above the 64 KiB pipe capacity, so a reader that stops at
+# line 1 leaves its writer to die of SIGPIPE, which pipefail turns into an ERR-trap internal error.
+@test "an undeclared edit is reported with no internal error when its extracted field exceeds the pipe buffer" {
+  command -v jq >/dev/null 2>&1 || skip "jq not on PATH"
+  local padding
+  padding="$(seq -f '@@files@@padding line %05g of a duplicated files key' 1 3000)"
+  write_edit_transcript "/work/repo/edited.sh
+${padding}"
+
+  run_hook "${TRANSCRIPT}"
+  [[ "${status}" -eq 0 ]] || { echo "${output}"; return 1; }
+  [[ "${output}" == *"${ADVISORY_PHRASE}: edited.sh ("* ]] || { echo "${output}"; return 1; }
+  [[ "${output}" != *"internal error"* ]] || { echo "${output}"; return 1; }
 }
