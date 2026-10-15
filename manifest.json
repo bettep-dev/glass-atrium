@@ -1687,7 +1687,7 @@
     "scripts/test/mirror-farm.bats": "4c2ca5bb599fec6263195b4eb4f4c59949c6d97951d1a3ae384efe9f1a52a0dc",
     "scripts/test/monitor-log-rotate-size.bats": "0ddfae925dac8474d62599d410a68b6c9166b82fee37f95da61a730de7b30a93",
     "scripts/test/monitor-prune-dist.bats": "93d094a9a641c79503865b5332c6e24f130ff783ae074e9e5ece6e0720de6ba1",
-    "scripts/test/naming-ratchet.bats": "8f20e6235f9a64e58158814c8d1b184c335ae87f9a78d221bf2449e49ee85bce",
+    "scripts/test/naming-ratchet.bats": "86d4f87762810fafd94af3d581cae46ffcb4e109e309b98b3b997b946ff64329",
     "scripts/test/path-guard.bats": "e975454e1e159509bc576ba95533c96faf7bb712b6eab8e5da3ca5de04fe101f",
     "scripts/test/pii-scan.bats": "8421c7152424624d4e6605427e5dbfaf2272e7c7a652020d28c2c51f0885cf63",
     "scripts/test/proposal-status-label-fallback.bats": "3414edc0bcace83dbab78b7893a85eebc2796438d9197d3d00e30e7631d8bbe1",
