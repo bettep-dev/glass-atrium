@@ -4,11 +4,14 @@ set -Eeuo pipefail
 IFS=$'\n\t'
 
 source "${BASH_SOURCE%/*}/hook-utils.sh"
+# shellcheck source=lib/pipe-drain.sh
+source "${BASH_SOURCE%/*}/lib/pipe-drain.sh"
 
 INPUT=$(hook_read_input)
 CMD=$(hook_get_tool_input "${INPUT}" "command")
 
-if printf '%s' "${CMD}" | grep -qE '(git\s+commit\s+.*--no-verify|--no-gpg-sign|git\s+commit\s+.*\s-n\b)'; then
+# shellcheck disable=SC2310  # the reader's status is the verdict; errexit has nothing else to catch
+if printf '%s' "${CMD}" | drain_after grep -qE '(git\s+commit\s+.*--no-verify|--no-gpg-sign|git\s+commit\s+.*\s-n\b)'; then
   emit_error "SEC-011" "block" \
     "Hook bypass flag blocked" \
     "Remove --no-verify / -n / --no-gpg-sign so the pre-commit hooks run; if signing is not configured, set it up or set commit.gpgsign false explicitly (core-git-workflow.md -> Commits)" \
