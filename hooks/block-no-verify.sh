@@ -23,10 +23,13 @@ CMD=$(hook_get_tool_input "${INPUT}" "command")
 
 # shellcheck disable=SC2310  # the reader's status is the verdict; errexit has nothing else to catch
 if printf '%s' "${CMD}" | drain_after grep -qE '(git\s+commit\s+.*--no-verify|--no-gpg-sign|git\s+commit\s+.*\s-n\b)'; then
+  context="{\"command\":\"${CMD}\"}"
+  # emit_error hands the context to jq as one argument; Linux refuses one of 131072 bytes or more.
+  if (($(LC_ALL=C && printf '%s' "${#context}") >= 131072)); then context='{}'; fi
   emit_error "SEC-011" "block" \
     "Hook bypass flag blocked" \
     "Remove --no-verify / -n / --no-gpg-sign so the pre-commit hooks run; if signing is not configured, set it up or set commit.gpgsign false explicitly (core-git-workflow.md -> Commits)" \
-    "{\"command\":\"${CMD}\"}"
+    "${context}"
   exit 2
 fi
 exit 0
