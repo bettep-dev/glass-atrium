@@ -272,7 +272,7 @@ pipe_overflow_padding() {
   seq -f 'padding line %05g of an ordinary build log' 1 4000 | awk '{ printf "%s\\n", $0 }'
 }
 
-@test "R3: a raw-store path on line 1 of a command larger than the pipe buffer still gets the note" {
+@test "a raw-store path on line 1 of a command larger than the pipe buffer still gets the note" {
   local padding
   padding="$(pipe_overflow_padding)"
   run bash "${READ_HOOK}" <<<"{\"tool_name\":\"Bash\",\"tool_input\":{\"command\":\"cat ${WIKI_ROOT}/raw/page.md\\n${padding}\"}}"
