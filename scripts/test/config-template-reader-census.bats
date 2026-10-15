@@ -67,13 +67,12 @@ census_rows() {
 }
 
 @test "AC3 a claimed reader file exists and still carries its anchor literal" {
-  local broken="" top="" root=""
+  local broken="" top=""
   # GA's own toplevel, never BATS_TEST_DIRNAME's → an install's scripts/test/ is its own repo
   top="$(git -C "${GA}" rev-parse --show-toplevel 2>/dev/null || true)"
-  root="$(cd -P -- "${GA}" && pwd)"
   while IFS='|' read -r section key reader anchor _exempt; do
     [[ -n "${reader}" ]] || continue
-    [[ "${top}" == "${root}" ]] \
+    [[ "${top}" -ef "${GA}" ]] \
       || jq -e --arg p "${reader}" '.files | index($p)' "${GA}/manifest.json" >/dev/null 2>&1 \
       || continue
     if [[ ! -f "${GA}/${reader}" ]]; then

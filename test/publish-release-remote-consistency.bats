@@ -41,11 +41,10 @@ PUB="${GA}/scripts/publish-release.sh"
 source "${GA}/scripts/lib/path-guard.sh"
 
 setup() {
-  local top="" root=""
+  local top=""
   # GA's own toplevel, never BATS_TEST_DIRNAME's → an install's test/ is its own repo
   top="$(git -C "${GA}" rev-parse --show-toplevel 2>/dev/null || true)"
-  root="$(cd -P -- "${GA}" && pwd)"
-  [[ "${top}" == "${root}" ]] \
+  [[ "${top}" -ef "${GA}" ]] \
     || skip "not a repo checkout root: ${GA} — generate-manifest.sh EXCLUDE_RE keeps publish-release.sh out of every install"
   [[ -f "${PUB}" ]] || skip "publish-release.sh not found: ${PUB}"
   command -v jq >/dev/null 2>&1 || skip "jq required"
