@@ -46,6 +46,8 @@ trap 'printf "[egress-secret-advisory] internal error at line %d: %s — fail-op
 
 # shellcheck source=hook-utils.sh
 source "${BASH_SOURCE%/*}/hook-utils.sh"
+# shellcheck source=lib/pipe-drain.sh
+source "${BASH_SOURCE%/*}/lib/pipe-drain.sh"
 
 # Durable record sink (env-overridable for hermetic tests). DATA-tier via the resolved HOOK_DATA_DIR
 # seam (hook-utils.sh) — GA_DATA_ROOT-anchored, decoupled from the legacy ~/.claude location.
@@ -88,7 +90,8 @@ cred_shaped="$(hook_join_alt "${CRED_PATTERNS[@]}")"
 classify_cred() {
   local cmd="${1}" i
   for i in "${!CRED_PATTERNS[@]}"; do
-    if printf '%s\n' "${cmd}" | grep -qiE -- "${CRED_PATTERNS[${i}]}"; then
+    # shellcheck disable=SC2310  # the reader's status is the verdict; errexit has nothing else to catch
+    if printf '%s\n' "${cmd}" | drain_after grep -qiE -- "${CRED_PATTERNS[${i}]}"; then
       printf '%s\n' "${CRED_LABELS[${i}]}"
       return 0
     fi
@@ -99,9 +102,10 @@ classify_cred() {
 # Resolve the outbound-destination kind for the record. Args: $1 = command string.
 classify_outbound() {
   local cmd="${1}"
-  if printf '%s\n' "${cmd}" | grep -qE -- '(^|[^[:alnum:]_])curl([^[:alnum:]_]|$)'; then
+  # shellcheck disable=SC2310  # the reader's status is the verdict; errexit has nothing else to catch
+  if printf '%s\n' "${cmd}" | drain_after grep -qE -- '(^|[^[:alnum:]_])curl([^[:alnum:]_]|$)'; then
     printf '%s\n' "curl"
-  elif printf '%s\n' "${cmd}" | grep -qE -- '(^|[^[:alnum:]_])wget([^[:alnum:]_]|$)'; then
+  elif printf '%s\n' "${cmd}" | drain_after grep -qE -- '(^|[^[:alnum:]_])wget([^[:alnum:]_]|$)'; then
     printf '%s\n' "wget"
   else
     printf '%s\n' "url"
@@ -135,8 +139,10 @@ command_str="$(hook_get_tool_input "${input}" "command")"
 
 # 3. Dual-condition correlation gate: BOTH a credential-shaped literal AND an outbound token.
 #    Either alone → silent (the negative set: an ordinary network command carries no note).
-printf '%s\n' "${command_str}" | grep -qiE -- "${cred_shaped}" || exit 0
-printf '%s\n' "${command_str}" | grep -qiE -- "${OUTBOUND_DEST}" || exit 0
+# shellcheck disable=SC2310  # the reader's status is the verdict; errexit has nothing else to catch
+printf '%s\n' "${command_str}" | drain_after grep -qiE -- "${cred_shaped}" || exit 0
+# shellcheck disable=SC2310  # the reader's status is the verdict; errexit has nothing else to catch
+printf '%s\n' "${command_str}" | drain_after grep -qiE -- "${OUTBOUND_DEST}" || exit 0
 
 # 4. Correlated → resolve masked class/kind, write the durable record, emit the visible note, exit 0.
 session_id="$(hook_get_field "${input}" "session_id")"
