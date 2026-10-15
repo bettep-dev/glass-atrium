@@ -30,7 +30,7 @@ run_guard() {
   payload="$(printf '%s' "${1}" | jq -Rs --arg a "${2:-}" \
     '{tool_name:"Bash", tool_input:{command:.}}
      + (if $a == "" then {} else {agent_id:$a} end)')"
-  run bash -c 'GA_DATA_ROOT="$1" bash "$2" 2>&1' _ "${GA_DATA}" "${HOOK_SH}" <<<"${payload}"
+  run env GA_DATA_ROOT="${GA_DATA}" bash "${HOOK_SH}" <<<"${payload}"
 }
 
 @test "main-session git commit with a live child raises GIT-ADV-001 (advisory, exit 0)" {

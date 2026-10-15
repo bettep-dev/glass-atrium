@@ -55,7 +55,7 @@ teardown() {
 
 # Drive the hook with the given JSON on stdin; merge stderr so the SEC advisory lands in $output.
 run_hook() {
-  run env bash -c 'bash "$1" 2>&1' _ "${HOOK_SH}" <<<"${1}"
+  run bash "${HOOK_SH}" <<<"${1}"
 }
 # Same, with counting shims first on PATH; hook output discarded (perf measurement only).
 run_hook_counted() {
