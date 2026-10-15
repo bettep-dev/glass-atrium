@@ -118,8 +118,19 @@ source "${BASH_SOURCE%/*}/hook-utils.sh"
 # track-outcome.sh, so surfaces 4 and 5 cannot disagree with them about which line declares what.
 # shellcheck source=lib/scope-match.sh
 source "${BASH_SOURCE%/*}/lib/scope-match.sh"
-# shellcheck source=lib/pipe-drain.sh
-source "${BASH_SOURCE%/*}/lib/pipe-drain.sh"
+if [[ -r "${BASH_SOURCE%/*}/lib/pipe-drain.sh" ]]; then
+  # shellcheck source=lib/pipe-drain.sh
+  source "${BASH_SOURCE%/*}/lib/pipe-drain.sh"
+else
+  # Library missing or unreadable → the same drain_after in place, so the hook keeps its verdict.
+  # A test, not a failed source: bash 3.2 exits on a missing sourced file even inside a condition.
+  drain_after() {
+    local rc=0
+    "$@" || rc=$?
+    cat >/dev/null || true
+    return "${rc}"
+  }
+fi
 
 # Per-session marker line cap. The marker appends one subagent_type line per spawn with no
 # rotation; a marathon session would grow it unboundedly (the SessionStart reaper
