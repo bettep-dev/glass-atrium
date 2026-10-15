@@ -49,17 +49,17 @@ run_drained_reader() {
   done
 }
 
-# Envelope for one consumer row, the trigger on line 1 above ~170 KiB of padding.
+# Envelope for one consumer row, the trigger on line 1 above ~170 KiB of padding. The body reaches
+# jq on stdin → no argument nears Linux's 128 KiB per-string exec limit.
 # Args: $1 kind (bash | response | raw-write) · $2 trigger · $3 padding.
 consumer_payload() {
   local body="$2"$'\n'"$3"
   case "$1" in
-    bash) jq -nc --arg c "${body}" '{tool_name:"Bash", tool_input:{command:$c}}' ;;
-    response) jq -nc --arg r "${body}" '{tool_name:"Bash", tool_response:$r}' ;;
+    bash) printf '%s' "${body}" | jq -Rsc '{tool_name:"Bash", tool_input:{command:.}}' ;;
+    response) printf '%s' "${body}" | jq -Rsc '{tool_name:"Bash", tool_response:.}' ;;
     raw-write)
-      jq -nc --arg p "${WIKI_ROOT}/raw/page.md" \
-        --arg c "$(printf -- '---\nsource_url: https://example.com/page\ncollected: 2026-07-22\ncollector: glass-atrium-intel-researcher\n---\n\n%s' "${body}")" \
-        '{tool_name:"Write", tool_input:{file_path:$p, content:$c}}'
+      printf -- '---\nsource_url: https://example.com/page\ncollected: 2026-07-22\ncollector: glass-atrium-intel-researcher\n---\n\n%s' "${body}" \
+        | jq -Rsc --arg p "${WIKI_ROOT}/raw/page.md" '{tool_name:"Write", tool_input:{file_path:$p, content:.}}'
       ;;
     *) return 1 ;;
   esac

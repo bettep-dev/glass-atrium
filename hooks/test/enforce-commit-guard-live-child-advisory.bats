@@ -24,14 +24,13 @@ setup() {
   mkdir -p "${MARKER_DIR}"
 }
 
-# $1=command $2=agent_id (empty → main-session origin)
+# $1=command $2=agent_id (empty → main-session origin); the command travels on stdin, never as an argument.
 run_guard() {
   local payload
-  payload="$(jq -n --arg c "${1}" --arg a "${2:-}" \
-    '{tool_name:"Bash", tool_input:{command:$c}}
+  payload="$(printf '%s' "${1}" | jq -Rs --arg a "${2:-}" \
+    '{tool_name:"Bash", tool_input:{command:.}}
      + (if $a == "" then {} else {agent_id:$a} end)')"
-  run bash -c 'printf "%s" "$1" | GA_DATA_ROOT="$2" bash "$3" 2>&1' \
-    _ "${payload}" "${GA_DATA}" "${HOOK_SH}"
+  run bash -c 'GA_DATA_ROOT="$1" bash "$2" 2>&1' _ "${GA_DATA}" "${HOOK_SH}" <<<"${payload}"
 }
 
 @test "main-session git commit with a live child raises GIT-ADV-001 (advisory, exit 0)" {

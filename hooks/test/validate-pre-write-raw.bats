@@ -34,10 +34,11 @@ edit_payload() {
     '{tool_name:"Edit", tool_input:{file_path:$fp, old_string:$o, new_string:$n}}'
 }
 
-# A Write-tool envelope for a wiki/raw/ path carrying $1 as content. Args: $1=content.
+# A Write-tool envelope for a wiki/raw/ path carrying $1 as content, read by jq on stdin so a page
+# over Linux's 128 KiB per-string exec limit never becomes an argument. Args: $1=content.
 raw_write_payload() {
-  jq -nc --arg fp "${WIKI_ROOT}/raw/page.md" --arg c "${1}" \
-    '{tool_name:"Write", tool_input:{file_path:$fp, content:$c}}'
+  printf '%s' "${1}" | jq -Rsc --arg fp "${WIKI_ROOT}/raw/page.md" \
+    '{tool_name:"Write", tool_input:{file_path:$fp, content:.}}'
 }
 
 # A Write-tool envelope for an explicit destination. Args: $1=file_path $2=content.

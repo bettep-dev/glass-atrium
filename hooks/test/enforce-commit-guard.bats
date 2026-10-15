@@ -25,15 +25,16 @@ setup() {
   command -v jq >/dev/null 2>&1 || skip "jq required"
 }
 
-# Drive the hook as a Bash PreToolUse call. jq -n encodes the command safely.
+# Drive the hook as a Bash PreToolUse call. The command reaches jq and the hook on stdin → no
+# argument nears Linux's 128 KiB per-string exec limit.
 # stderr is captured to a file (GUARD_ERR) so the "no grep parse error" control can
 # distinguish the hook's own emit_error output from an invalid-regex grep leak.
 run_guard() {
   local cmd="$1" payload
-  payload="$(jq -n --arg c "${cmd}" '{tool_name:"Bash", tool_input:{command:$c}}')"
+  payload="$(printf '%s' "${cmd}" | jq -Rs '{tool_name:"Bash", tool_input:{command:.}}')"
   local err_file="${BATS_TEST_TMPDIR}/guard-stderr"
   : >"${err_file}"
-  run bash -c 'printf "%s" "$1" | bash "$2" 2>"$3"' _ "${payload}" "${HOOK_SH}" "${err_file}"
+  run bash -c 'bash "$1" 2>"$2"' _ "${HOOK_SH}" "${err_file}" <<<"${payload}"
   GUARD_ERR="$(cat "${err_file}")"
 }
 
