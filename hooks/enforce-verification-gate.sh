@@ -118,6 +118,8 @@ source "${BASH_SOURCE%/*}/hook-utils.sh"
 # track-outcome.sh, so surfaces 4 and 5 cannot disagree with them about which line declares what.
 # shellcheck source=lib/scope-match.sh
 source "${BASH_SOURCE%/*}/lib/scope-match.sh"
+# shellcheck source=lib/pipe-drain.sh
+source "${BASH_SOURCE%/*}/lib/pipe-drain.sh"
 
 # Per-session marker line cap. The marker appends one subagent_type line per spawn with no
 # rotation; a marathon session would grow it unboundedly (the SessionStart reaper
@@ -292,14 +294,6 @@ is_dev_agent() {
     *" ${candidate} "*) return 0 ;;
     *) return 1 ;;
   esac
-}
-
-# Drains stdin after the reader exits → the pipe writer never takes SIGPIPE under pipefail.
-drain_after() {
-  local rc=0
-  "$@" || rc=$?
-  cat >/dev/null || true
-  return "${rc}"
 }
 
 # Plan-reference — STRUCTURED match only: id ∪ plan-path ∪ id-bearing slug. A bare 'plan'
