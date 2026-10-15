@@ -14,7 +14,7 @@ setup() {
   WORK="$(mktemp -d)"
   WORK="$(cd -- "${WORK}" && pwd -P)"
   # Hermetic git: no host config, so a global gpgsign or hooksPath never reaches a fixture commit.
-  export HOME="${WORK}/home" GIT_CONFIG_NOSYSTEM=1
+  export HOME="${WORK}/home" GA_DATA_ROOT="${WORK}/home/.glass-atrium" GIT_CONFIG_NOSYSTEM=1
   export GIT_AUTHOR_NAME='ga-fixture' GIT_AUTHOR_EMAIL='ga@fixture.invalid'
   export GIT_COMMITTER_NAME='ga-fixture' GIT_COMMITTER_EMAIL='ga@fixture.invalid'
   mkdir -p "${HOME}"
