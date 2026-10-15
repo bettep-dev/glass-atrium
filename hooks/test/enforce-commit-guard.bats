@@ -138,8 +138,9 @@ run_guard() {
   # regex — the file contains backslashes) and confirm a harmless command is
   # BLOCKED with GIT-000 rather than silently passed through.
   local dir="${BATS_TEST_TMPDIR}/broken"
-  mkdir -p "${dir}"
+  mkdir -p "${dir}/lib"
   cp "${BATS_TEST_DIRNAME}/../hook-utils.sh" "${dir}/hook-utils.sh"
+  cp "${BATS_TEST_DIRNAME}/../lib/pipe-drain.sh" "${dir}/lib/pipe-drain.sh"
   python3 -c 'import sys
 src = open(sys.argv[1]).read()
 src = src.replace(r"git\s+reset\s+--hard", r"git\s+reset\s+(unbalanced")
@@ -157,4 +158,15 @@ open(sys.argv[2], "w").write(src)' "${HOOK_SH}" "${dir}/enforce-commit-guard.sh"
   run_guard 'echo hello world'
   [[ "${status}" -eq 0 ]] || return 1
   [[ -z "${GUARD_ERR}" ]] || return 1
+}
+
+# --- Input above the 64 KiB pipe capacity: a line-1 match must not read as "no match" ---
+
+@test "git reset --hard on line 1 of a command larger than the pipe buffer is still blocked with GIT-002" {
+  local padding
+  padding="$(seq -f 'padding line %05g of an ordinary build log' 1 4000)"
+  run_guard "git reset --hard
+${padding}"
+  [[ "${status}" -eq 2 ]] || { echo "${GUARD_ERR}"; return 1; }
+  [[ "${GUARD_ERR}" == *'"error_code":"GIT-002"'* ]] || { echo "${GUARD_ERR}"; return 1; }
 }

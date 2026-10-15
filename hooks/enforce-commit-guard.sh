@@ -5,6 +5,8 @@ set -Eeuo pipefail
 IFS=$'\n\t'
 
 source "${BASH_SOURCE%/*}/hook-utils.sh"
+# shellcheck source=lib/pipe-drain.sh
+source "${BASH_SOURCE%/*}/lib/pipe-drain.sh"
 
 INPUT=$(hook_read_input)
 COMMAND=$(hook_get_tool_input "${INPUT}" "command")
@@ -34,7 +36,8 @@ RULES=(
 pattern_compiles() {
   local pat="$1" rc
   # Empty-input probe: grep exits 1 (no match) for a valid regex, 2 for invalid.
-  printf '' | grep -qE -- "${pat}" 2>/dev/null && rc=0 || rc=$?
+  # shellcheck disable=SC2310  # the reader's status is the verdict; errexit has nothing else to catch
+  printf '' | drain_after grep -qE -- "${pat}" 2>/dev/null && rc=0 || rc=$?
   [[ "${rc}" -ne 2 ]]
 }
 
@@ -49,7 +52,8 @@ for rule in "${RULES[@]}"; do
       "{\"rule\":\"${code}\"}"
     exit 2
   fi
-  if printf '%s' "${COMMAND}" | grep -qE "${pattern}"; then
+  # shellcheck disable=SC2310  # the reader's status is the verdict; errexit has nothing else to catch
+  if printf '%s' "${COMMAND}" | drain_after grep -qE "${pattern}"; then
     emit_error "${code}" "block" \
       "${message}" "${suggestion}" \
       "{\"command\":\"${COMMAND}\"}"
@@ -90,10 +94,10 @@ count_live_children() {
   printf '%s' "${n}"
 }
 
-# SC2310: hook_is_subagent is a pure predicate — set -e disable under `if !` intended.
+# SC2310: hook_is_subagent and the drain_after reader yield verdicts — set -e disable under `if` intended.
 # shellcheck disable=SC2310
 if [[ -d "${live_child_dir}" ]] \
-  && printf '%s' "${COMMAND}" | grep -qE '(^|[^A-Za-z0-9_-])git([[:space:]]+-[^[:space:]]+)*[[:space:]]+commit([^A-Za-z0-9_-]|$)' \
+  && printf '%s' "${COMMAND}" | drain_after grep -qE '(^|[^A-Za-z0-9_-])git([[:space:]]+-[^[:space:]]+)*[[:space:]]+commit([^A-Za-z0-9_-]|$)' \
   && ! hook_is_subagent "${INPUT}"; then
   sweep_stale_markers
   live_count="$(count_live_children)"

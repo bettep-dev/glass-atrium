@@ -65,6 +65,16 @@ run_guard() {
   [[ ! -e "${stale}" ]] || { echo "stale marker not swept" >&2; return 1; }
 }
 
+@test "git commit on line 1 of a command larger than the pipe buffer still raises GIT-ADV-001" {
+  : >"${MARKER_DIR}/child-001"
+  local padding
+  padding="$(seq -f 'padding line %05g of an ordinary build log' 1 4000)"
+  run_guard "git commit -m wip
+${padding}"
+  [[ "${status}" -eq 0 ]] || { echo "advisory must never block (status ${status}): ${output:0:400}" >&2; return 1; }
+  [[ "${output}" == *'GIT-ADV-001'* ]] || { echo "no advisory in: ${output:0:400}" >&2; return 1; }
+}
+
 @test "a non-commit git command is silent even with a live child" {
   : >"${MARKER_DIR}/child-001"
   run_guard 'git status --short'
