@@ -60,6 +60,19 @@ ${DEV_BODY}"
   [[ "${output}" != *"${NUDGE_PHRASE}"* ]] || { echo "nudged despite the declaration -- ${output}" >&2; return 1; }
 }
 
+# ~130 KiB of comment lines: above the 64 KiB pipe capacity, so a reader that stops at a line-1
+# match leaves its writer to die of SIGPIPE, which pipefail reports as "no match".
+@test "a [SCOPE] declaration on line 1 of a script larger than the pipe buffer silences the advisory" {
+  local padding
+  padding="$(seq -f '// padding line %05g of an ordinary workflow script body' 1 2500)"
+  run_hook "log('[SCOPE] files=hooks/a.sh · deliverable=bug-fix · out=none')
+${DECL_TEAM}
+${DEV_BODY}
+${padding}"
+  [[ "${status}" -eq 0 ]] || { echo "${output}"; return 1; }
+  [[ "${output}" != *"${NUDGE_PHRASE}"* ]] || { echo "nudged despite the declaration -- ${output}" >&2; return 1; }
+}
+
 @test "a non-DEV workflow is never nudged (no DEV spawn to scope)" {
   run_hook "agent('glass-atrium-intel-researcher',{goal:'research only'})"
   [[ "${status}" -eq 0 ]] || return 1

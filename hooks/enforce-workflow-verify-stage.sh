@@ -349,6 +349,20 @@ IFS=$'\n\t'
 # fail-open ERR trap — a gate that errors MUST NOT block a legitimate workflow.
 trap 'printf "[enforce-workflow-verify-stage] internal error at line %d: %s — fail-open (exit 0)\n" "${LINENO}" "${BASH_COMMAND}" >&2; exit 0' ERR
 
+if [[ -r "${BASH_SOURCE%/*}/lib/pipe-drain.sh" ]]; then
+  # shellcheck source=lib/pipe-drain.sh
+  source "${BASH_SOURCE%/*}/lib/pipe-drain.sh"
+else
+  # Library missing or unreadable → the same drain_after in place, so the hook keeps its verdict.
+  # A test, not a failed source: bash 3.2 exits on a missing sourced file even inside a condition.
+  drain_after() {
+    local rc=0
+    "$@" || rc=$?
+    cat >/dev/null || true
+    return "${rc}"
+  }
+fi
+
 # DEV-set — core-compliance-matrix.md Scope Legend canonical DEV agents. Space-separated tokens for
 # bash 3.2 (no declare -A). AUTO-SYNCED from the scope-dev.md DEV roster by agent_lifecycle (the
 # add/delete transaction + `python -m agent_lifecycle sync-gate-roster`) — do NOT hand-edit. Mirrors
@@ -2598,7 +2612,8 @@ EOF
     *)
       # SCOPE ADVISORY — on the PASS arm only, so a fault in this newest check can never mask one of
       # the block verdicts above. Ordered before emit_trace so the tag rides the pass trace line.
-      if [[ "${dev_flag}" == "yes" ]] && ! printf '%s' "${script_src}" | grep -qF '[SCOPE]'; then
+      # shellcheck disable=SC2310  # the reader's status is the verdict; errexit has nothing else to catch
+      if [[ "${dev_flag}" == "yes" ]] && ! printf '%s' "${script_src}" | drain_after grep -qF '[SCOPE]'; then
         print_scope_advisory
         add_advisory "scope"
       fi
@@ -2612,7 +2627,8 @@ EOF
       # monitor walks are the only network reads here, so a blocked script never pays a loopback GET. The
       # three cheap conjuncts are ordered ahead of the walk, so a compliant or plan-ref-less workflow
       # issues zero chain GETs. Predicate + full fail-open list: header -> SEVENTH ADVISORY PASS.
-      if [[ "${dev_flag}" == "yes" ]] && ! printf '%s' "${script_src}" | grep -qF "${FIRST_LINK_LITERAL}"; then
+      # shellcheck disable=SC2310  # the reader's status is the verdict; errexit has nothing else to catch
+      if [[ "${dev_flag}" == "yes" ]] && ! printf '%s' "${script_src}" | drain_after grep -qF "${FIRST_LINK_LITERAL}"; then
         local plan_refs first_link_plan_id
         # The first clauded-docs/<N> id in file order — the SHAPE, unanchored to any plan-ref token, so
         # an earlier mention supplies it instead (header -> KNOWN FALSE NEGATIVES). No `head` in the pipe:
