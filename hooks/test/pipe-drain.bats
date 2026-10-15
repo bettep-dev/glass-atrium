@@ -53,9 +53,10 @@ run_drained_reader() {
 
 # Envelope for one consumer row, the trigger on line 1 above ~170 KiB of padding. The body reaches
 # jq on stdin → no argument nears Linux's 128 KiB per-string exec limit.
-# Args: $1 kind (bash | response | fetch | write | agent | raw-write | raw-path) · $2 trigger · $3 padding.
+# Args: $1 kind (bash | response | fetch | write | agent | agent-event | agent-session | raw-write |
+# raw-path | raw-link-path) · $2 trigger · $3 padding.
 consumer_payload() {
-  local body="$2"$'\n'"$3"
+  local body="$2"$'\n'"$3" root="${WIKI_ROOT:-}"
   case "$1" in
     bash) printf '%s' "${body}" | jq -Rsc '{tool_name:"Bash", tool_input:{command:.}}' ;;
     response) printf '%s' "${body}" | jq -Rsc '{tool_name:"Bash", tool_response:.}' ;;
@@ -65,14 +66,23 @@ consumer_payload() {
       printf '%s' "${body}" \
         | jq -Rsc '{tool_name:"Agent", hook_event_name:"PreToolUse", session_id:"pipe-drain", tool_input:{subagent_type:"glass-atrium-dev-shell", prompt:.}}'
       ;;
+    agent-event | agent-session)
+      # Line 1 is the padding appended to the hook event name or the session id, the rest the prompt.
+      printf '%s\n%s' "$3" "$2" \
+        | jq -Rsc --arg kind "$1" 'index("\n") as $i | .[:$i] as $pad
+          | {tool_name:"Agent", hook_event_name:"PreToolUse", session_id:"pipe-drain", tool_input:{subagent_type:"glass-atrium-dev-shell", prompt:.[$i + 1:]}}
+          | if $kind == "agent-event" then .hook_event_name += $pad else .session_id += $pad end'
+      ;;
     raw-write)
       printf -- '---\nsource_url: https://example.com/page\ncollected: 2026-07-22\ncollector: glass-atrium-intel-researcher\n---\n\n%s' "${body}" \
         | jq -Rsc --arg p "${WIKI_ROOT}/raw/page.md" '{tool_name:"Write", tool_input:{file_path:$p, content:.}}'
       ;;
-    raw-path)
+    raw-path | raw-link-path)
       # Line 1 is the raw-store directory the write lands in, the rest the file's content.
+      # raw-link-path reaches the store through the `${WIKI_ROOT}-link` symlink.
+      [[ "$1" == raw-path ]] || root="${WIKI_ROOT}-link"
       printf -- '%s\n---\nsource_url: https://example.com/page\ncollected: 2026-07-22\ncollector: glass-atrium-intel-researcher\n---\n\n%s' "$3" "$2" \
-        | jq -Rsc --arg root "${WIKI_ROOT}" \
+        | jq -Rsc --arg root "${root}" \
           'index("\n") as $i | {tool_name:"Write", tool_input:{file_path:($root + "/raw/" + .[:$i] + "/page.md"), content:.[$i + 1:]}}'
       ;;
     *) return 1 ;;
@@ -198,19 +208,21 @@ SHIM
   done
 }
 
-# Args: $1 byte count. Prints that many `x` bytes.
-filler() { python3 -Ic 'import sys; sys.stdout.write("x" * int(sys.argv[1]))' "$1"; }
+# Args: $1 byte count · $2 byte (default `x`). Prints that many of that byte.
+filler() { python3 -Ic 'import sys; sys.stdout.write(sys.argv[2] * int(sys.argv[1]))' "$1" "${2:-x}"; }
 
 # Args: $1 padding spec · $2 trigger. Prints the padding the spec names:
 # context:<bytes> → a guard's `{"command":"<trigger>\n<padding>"}` context is that long ·
 # scope:<bytes> → one [SCOPE] line declaring 11 paths (one past the Deep-review count threshold)
 # of that many bytes together — few long paths, as the parser's string loops are quadratic ·
-# path:<bytes> → that many bytes.
+# path:<bytes> → that many bytes · dots:<bytes> → that many `.` bytes, which the gate's
+# session-key allowlist strips.
 row_padding() {
   local kind="${1%%:*}" size="${1#*:}" stem index
   case "${kind}" in
     context) filler "$((size - 15 - ${#2}))" ;;
     path) filler "${size}" ;;
+    dots) filler "${size}" . ;;
     scope)
       stem="$(filler "$((size / 11))")"
       printf '[SCOPE] files=src/%s0.sh' "${stem}"
@@ -223,8 +235,9 @@ row_padding() {
 
 # Names holding one edge of the payload, each sized so `name=value` alone crosses the limit: a
 # guard's context just under the 131072-byte cap that turns it into '{}' (`ctx` = emit_error's
-# local copy), the gate's [SCOPE] line and its file list, a raw write's path.
-@test "a hook keeps its verdict when a context, prompt line or path held under a name its caller exported crosses Linux's per-string exec limit" {
+# local copy), the gate's [SCOPE] line and its file list, the gate's hook event name and session
+# id, a raw write's path, uncapped in its block context, and its physical form behind a symlink.
+@test "a hook keeps its verdict when a context, prompt line, envelope field or path held under a name its caller exported crosses Linux's per-string exec limit" {
   command -v jq >/dev/null 2>&1 || skip "jq required"
   command -v python3 >/dev/null 2>&1 || skip "python3 required"
   local refused="${BATS_TEST_TMPDIR}/exec-refused.log" bin row name hook kind trigger spec names expected_status needle
@@ -232,12 +245,17 @@ row_padding() {
   local -a exported rows
   bin="$(linux_exec_limit_bin "${refused}")"
   export WIKI_ROOT="${BATS_TEST_TMPDIR}/wiki"
+  mkdir -p "${WIKI_ROOT}/raw"
+  ln -s "${WIKI_ROOT}" "${WIKI_ROOT}-link"
   # Row: name | hook | payload kind | line-1 trigger | padding spec | exported names | expected status | needle.
   rows=(
     "no-verify flag|block-no-verify.sh|bash|git commit -m msg --no-verify|context:131071|context ctx|2|SEC-011"
     "destructive git|enforce-commit-guard.sh|bash|git reset --hard|context:131071|context ctx|2|GIT-002"
     "DEV spawn declaring a wide scope|enforce-verification-gate.sh|agent|[SIZE-EST] bundles=1 tool_uses~=5 [ENTRY-CLASS] simple-task: probe|scope:132000|decl scope_line files line scan|0|declares 11 [SCOPE] file(s)"
-    "raw write without envelope at a long path|validate-pre-write-raw.sh|raw-path|Fetched content with no envelope wrapper.|path:131100|FILE_PATH PARENT_DIR|2|SCOPE-006"
+    "DEV spawn under a long hook event name|enforce-verification-gate.sh|agent-event|fix the parser|dots:131100|hook_event|2|VGATE-SIZE-001"
+    "DEV spawn under a long session id|enforce-verification-gate.sh|agent-session|fix the parser|dots:131100|session_id|2|VGATE-SIZE-001"
+    "raw write without envelope at a long path|validate-pre-write-raw.sh|raw-path|Fetched content with no envelope wrapper.|path:131100|FILE_PATH PARENT_DIR ctx|2|SCOPE-006"
+    "raw write without envelope through a symlink into the store|validate-pre-write-raw.sh|raw-link-path|Fetched content with no envelope wrapper.|path:131100|PHYS_FILE|2|SCOPE-006"
   )
   for row in "${rows[@]}"; do
     IFS='|' read -r name hook kind trigger spec names expected_status needle <<<"${row}"
