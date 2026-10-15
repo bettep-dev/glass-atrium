@@ -5,6 +5,8 @@
 
 LIB_SH="${BATS_TEST_DIRNAME}/../lib/pipe-drain.sh"
 HOOKS_DIR="${BATS_TEST_DIRNAME}/.."
+# shellcheck source-path=SCRIPTDIR source=../../scripts/lib/path-guard.sh
+source "${BATS_TEST_DIRNAME}/../../scripts/lib/path-guard.sh"
 
 setup() {
   [[ -f "${LIB_SH}" ]] || skip "pipe-drain.sh not found: ${LIB_SH}"
@@ -68,7 +70,11 @@ consumer_payload() {
   command -v python3 >/dev/null 2>&1 || skip "python3 required"
   local copy="${BATS_TEST_TMPDIR}/hooks" padding row name hook kind trigger expected_status needle
   cp -R "${HOOKS_DIR}" "${copy}"
-  rm -f -- "${copy:?}/lib/pipe-drain.sh"
+  if ga_guard_path "${copy}"; then
+    rm -f -- "${copy:?}/lib/pipe-drain.sh"
+  else
+    return 1
+  fi
   padding="$(seq -f 'padding line %05g of an ordinary build log' 1 4000)"
   export WIKI_ROOT="${BATS_TEST_TMPDIR}/wiki"
   export RAW_STORE_READ_ADVISORY_FIRED_LOG="${BATS_TEST_TMPDIR}/raw-read-fired.log"
