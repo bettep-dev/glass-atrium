@@ -245,6 +245,8 @@ if [[ "${1:-}" == "--block-counts" ]]; then
 fi
 
 # stdin non-interactive → drain once, otherwise fail-open.
+# Payload names: an inherited export would carry them into every child's environment, capped per string on Linux.
+export -n input gate_tsv hook_event session_id prompt_b64 prompt_full text decl scope_line files line scan
 input=""
 if [[ ! -t 0 ]]; then
   input="$(cat 2>/dev/null)" || input=""

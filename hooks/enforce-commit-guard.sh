@@ -19,6 +19,8 @@ else
   }
 fi
 
+# Payload names: an inherited export would carry them into every child's environment, capped per string on Linux.
+export -n INPUT COMMAND context ctx input
 INPUT=$(hook_read_input)
 COMMAND=$(hook_get_tool_input "${INPUT}" "command")
 
@@ -65,9 +67,12 @@ for rule in "${RULES[@]}"; do
   fi
   # shellcheck disable=SC2310  # the reader's status is the verdict; errexit has nothing else to catch
   if printf '%s' "${COMMAND}" | drain_after grep -qE "${pattern}"; then
+    context="{\"command\":\"${COMMAND}\"}"
+    # emit_error hands the context to jq as one argument; Linux refuses one of 131072 bytes or more.
+    if (($(LC_ALL=C && printf '%s' "${#context}") >= 131072)); then context='{}'; fi
     emit_error "${code}" "block" \
       "${message}" "${suggestion}" \
-      "{\"command\":\"${COMMAND}\"}"
+      "${context}"
     exit 2
   fi
 done

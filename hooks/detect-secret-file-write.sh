@@ -133,6 +133,8 @@ scan_file_content() {
   return 0
 }
 
+# Payload names: an inherited export would carry them into every child's environment, capped per string on Linux.
+export -n INPUT CMD input
 INPUT="$(hook_read_input)"
 TOOL_NAME="$(hook_get_field "${INPUT}" "tool_name")"
 

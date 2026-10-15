@@ -30,6 +30,8 @@ else
   }
 fi
 
+# Payload names: an inherited export would carry them into every child's environment, capped per string on Linux.
+export -n INPUT CMD input
 INPUT=$(hook_read_input)
 
 # Fail-closed on a python3-less PATH, but ONLY when there is real input to guard.

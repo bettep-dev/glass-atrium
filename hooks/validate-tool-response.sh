@@ -29,6 +29,8 @@ else
   }
 fi
 
+# Payload names: an inherited export would carry them into every child's environment, capped per string on Linux.
+export -n INPUT TOOL_RESPONSE LOWER_RESPONSE input
 INPUT=$(hook_read_input)
 [[ "${INPUT}" == "{}" ]] && exit 0
 
