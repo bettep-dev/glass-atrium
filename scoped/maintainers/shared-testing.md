@@ -53,8 +53,10 @@ Every section kept in the rule file is kept because a NAMED reader outside the f
 ## Backing honesty — Test Quality
 
 - The `## Test Quality` section is an adherence-layer convention with **no runtime backstop** — no hook or gate verifies that the decision procedure was run, and none can. Its only mechanical companion is the three-signal advisory auditor below, which never inspects the relationship claim itself.
-- The home-file, grouping, test-data and table-form rules are reviewer-applied with no tooling at all. The ID-ban and comment rules have only the auditor's advisory `id_title` and `incident_header` counts, which cover ID-bearing titles and incident-framed headers.
-  - Extending the auditor to source-grep pins is a deferred follow-up, not a current check.
+- The home-file, grouping, test-data and table-form rules are reviewer-applied with no tooling at all.
+- The ID-ban and comment rules are CI-blocking for new findings only: `scripts/naming-ratchet.sh` fails the `test-naming-ratchet` job on an `id_title` or `incident_header` finding absent from its committed baseline `scripts/naming-ratchet-baseline.txt`, and on baseline growth.
+  - Not blocked: a finding already in the baseline, and a stale entry's exact text until `naming-ratchet.sh --write` drops it.
+- Extending the auditor to source-grep pins is a deferred follow-up, not a current check.
 
 ## Test-authoring delta — provenance
 
@@ -82,8 +84,9 @@ Every section kept in the rule file is kept because a NAMED reader outside the f
 The rule file states only that every row is reviewer-applied. The mapping below is for whoever adjudicates an auditor finding.
 
 - MECHANICAL means decidable-in-principle by a script — NOT that a script exists. **No row on that table is enforced.**
-- Only signals (a) and (b) of `scripts/audit-test-smells.sh` back any row, and that auditor is **ADVISORY**: it exits 0 on findings, is **NOT wired into CI**, and is run by hand.
-  - The auditor also reports the advisory `id_title` and `incident_header` counts. They back the **ID ban** and **Comments** rules, not a row, and never change the exit status.
+- Only signals (a) and (b) of `scripts/audit-test-smells.sh` back any row, and that auditor is **ADVISORY**: it exits 0 on findings, and its signals (a)-(c) — the third is below — are **NOT wired into CI** and are run by hand.
+  - The auditor also reports the advisory `id_title` and `incident_header` counts. They back the **ID ban** and **Comments** rules, not a row, and never change the auditor's exit status.
+  - CI blocks new findings of those two kinds through `scripts/naming-ratchet.sh` against its committed baseline; the ratchet, not the auditor, carries the failing exit (`## Backing honesty — Test Quality`).
 - That auditor carries a THIRD signal no row states — (c) count-pin: an assertion comparing a non-zero integer literal against a census the same assertion derives by counting the tree or a source file. A signal-(c) finding therefore maps to no row, and is in particular not the tooling for the change-detector row.
 - A row marked `[no tooling]` below has no implementation at all and is reviewer-applied exactly like a JUDGMENT row.
 
